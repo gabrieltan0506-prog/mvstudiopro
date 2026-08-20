@@ -1,0 +1,4770 @@
+[
+{
+"suffix": "longcanzhuyue",
+"name": "龙璨竹月",
+"gender": "女",
+"age": 26,
+"trait": "平实质朴音",
+"scene": "日常对话"
+},
+{
+"suffix": "longrongzhihe",
+"name": "龙蓉芷荷",
+"gender": "女",
+"age": 24,
+"trait": "电台质感音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlanghongmo",
+"name": "龙朗虹沫",
+"gender": "女",
+"age": 25,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longfengyueyao",
+"name": "龙风月瑶",
+"gender": "女",
+"age": 28,
+"trait": "直爽利落音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxiaoyuyue",
+"name": "龙潇煜月",
+"gender": "女",
+"age": 25,
+"trait": "惊奇讶异音",
+"scene": "日常对话"
+},
+{
+"suffix": "longtongxuxian",
+"name": "龙彤旭弦",
+"gender": "女",
+"age": 24,
+"trait": "活泼灵动音",
+"scene": "日常对话"
+},
+{
+"suffix": "longzhiqingxi",
+"name": "龙芷晴曦",
+"gender": "女",
+"age": 25,
+"trait": "紧张不安音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlanbaixian",
+"name": "龙嵐柏弦",
+"gender": "女",
+"age": 17,
+"trait": "惊悚恐怖音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyingsongliu",
+"name": "龙莹松柳",
+"gender": "男",
+"age": 32,
+"trait": "爽朗利落音",
+"scene": "日常对话"
+},
+{
+"suffix": "longzhengyaohe",
+"name": "龙筝瑶鹤",
+"gender": "男",
+"age": 38,
+"trait": "亢奋激昂音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlanyufu",
+"name": "龙岚煜芙",
+"gender": "男",
+"age": 22,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longnixiulian",
+"name": "龙霓岫涟",
+"gender": "男",
+"age": 25,
+"trait": "内敛含蓄音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxilingxuan",
+"name": "龙溪凌璇",
+"gender": "男",
+"age": 28,
+"trait": "不满犀利音",
+"scene": "日常对话"
+},
+{
+"suffix": "longchengtaohui",
+"name": "龙澄桃晦",
+"gender": "男",
+"age": 23,
+"trait": "不满犀利音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxinruixuan",
+"name": "龙昕蕊璇",
+"gender": "男",
+"age": 24,
+"trait": "自然亲和音",
+"scene": "日常对话"
+},
+{
+"suffix": "longqinheying",
+"name": "龙琴鹤莹",
+"gender": "男",
+"age": 24,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxianshuohui",
+"name": "龙弦朔晖",
+"gender": "男",
+"age": 68,
+"trait": "激昂朗诵音",
+"scene": "日常对话"
+},
+{
+"suffix": "longliannirong",
+"name": "龙涟霓蓉",
+"gender": "男",
+"age": 42,
+"trait": "平稳陈述音",
+"scene": "日常对话"
+},
+{
+"suffix": "longheweican",
+"name": "龙鹤薇璨",
+"gender": "男",
+"age": 42,
+"trait": "平稳陈述音",
+"scene": "日常对话"
+},
+{
+"suffix": "longzhishuoke",
+"name": "龙芷朔珂",
+"gender": "男",
+"age": 45,
+"trait": "平稳陈述音",
+"scene": "日常对话"
+},
+{
+"suffix": "longruifengyu",
+"name": "龙蕊风瑜",
+"gender": "男",
+"age": 42,
+"trait": "平稳陈述音",
+"scene": "日常对话"
+},
+{
+"suffix": "longluliuche",
+"name": "龙露柳澈",
+"gender": "男",
+"age": 34,
+"trait": "标准播音音",
+"scene": "新闻播报"
+},
+{
+"suffix": "longliuxulan",
+"name": "龙柳旭澜",
+"gender": "女",
+"age": 25,
+"trait": "标准播音音",
+"scene": "新闻播报"
+},
+{
+"suffix": "longjufuhe",
+"name": "龙菊芙荷",
+"gender": "女",
+"age": 7,
+"trait": "呆萌软糯音",
+"scene": "动漫配音"
+},
+{
+"suffix": "longxiamuyan",
+"name": "龙霞暮燕",
+"gender": "男",
+"age": 26,
+"trait": "专业解说音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyuzhihe",
+"name": "龙羽芷荷",
+"gender": "男",
+"age": 42,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyaolanshuang",
+"name": "龙瑶岚霜",
+"gender": "男",
+"age": 27,
+"trait": "鼓舞激励音",
+"scene": "日常对话"
+},
+{
+"suffix": "longsongyibai",
+"name": "龙松熠柏",
+"gender": "男",
+"age": 27,
+"trait": "鼓舞激励音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyanhuilu",
+"name": "龙燕辉露",
+"gender": "男",
+"age": 27,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longhuifengyi",
+"name": "龙辉峰漪",
+"gender": "男",
+"age": 26,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longshuojizhu",
+"name": "龙朔霁竹",
+"gender": "男",
+"age": 26,
+"trait": "标准播音音",
+"scene": "新闻播报"
+},
+{
+"suffix": "longhuiyanzhu",
+"name": "龙晖妍竹",
+"gender": "男",
+"age": 26,
+"trait": "标准播音音",
+"scene": "新闻播报"
+},
+{
+"suffix": "longbaixiuyun",
+"name": "龙柏岫云",
+"gender": "男",
+"age": 25,
+"trait": "标准播音音",
+"scene": "新闻播报"
+},
+{
+"suffix": "longxiaolanshan",
+"name": "龙潇嵐杉",
+"gender": "男",
+"age": 28,
+"trait": "标准播音音",
+"scene": "新闻播报"
+},
+{
+"suffix": "longyilincan",
+"name": "龙熠琳璨",
+"gender": "男",
+"age": 24,
+"trait": "标准播音音",
+"scene": "新闻播报"
+},
+{
+"suffix": "longsongyilan",
+"name": "龙松翼嵐",
+"gender": "男",
+"age": 26,
+"trait": "激动振奋音",
+"scene": "日常对话"
+},
+{
+"suffix": "longhuikeyuan",
+"name": "龙辉珂渊",
+"gender": "女",
+"age": 28,
+"trait": "标准播音音",
+"scene": "新闻播报"
+},
+{
+"suffix": "longyujunxuan",
+"name": "龙羽珺萱",
+"gender": "女",
+"age": 25,
+"trait": "温柔坚韧音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longchexini",
+"name": "龙澈溪霓",
+"gender": "女",
+"age": 23,
+"trait": "科普讲解音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlanlianlan",
+"name": "龙嵐涟兰",
+"gender": "女",
+"age": 23,
+"trait": "直播带货音",
+"scene": "电商直播"
+},
+{
+"suffix": "longlingtongfu",
+"name": "龙凌桐芙",
+"gender": "女",
+"age": 28,
+"trait": "直播带货音",
+"scene": "电商直播"
+},
+{
+"suffix": "longliumolan",
+"name": "龙柳沫岚",
+"gender": "女",
+"age": 24,
+"trait": "直播带货音",
+"scene": "电商直播"
+},
+{
+"suffix": "longtongjunfeng",
+"name": "龙彤珺凤",
+"gender": "女",
+"age": 25,
+"trait": "轻松闲聊音",
+"scene": "日常对话"
+},
+{
+"suffix": "longquetingqing",
+"name": "龙鹊汀晴",
+"gender": "女",
+"age": 24,
+"trait": "直播带货音",
+"scene": "电商直播"
+},
+{
+"suffix": "longzhiluyan",
+"name": "龙芷露妍",
+"gender": "女",
+"age": 7,
+"trait": "直播带货音",
+"scene": "电商直播"
+},
+{
+"suffix": "longxizhiyun",
+"name": "龙曦芷云",
+"gender": "女",
+"age": 25,
+"trait": "直播带货音",
+"scene": "电商直播"
+},
+{
+"suffix": "longruiloufeng",
+"name": "龙蕊露风",
+"gender": "女",
+"age": 23,
+"trait": "轻松闲聊音",
+"scene": "日常对话"
+},
+{
+"suffix": "longquanxiangxuan",
+"name": "龙泉湘萱",
+"gender": "女",
+"age": 25,
+"trait": "直播带货音",
+"scene": "电商直播"
+},
+{
+"suffix": "longronglinglin",
+"name": "龙蓉岭麟",
+"gender": "男",
+"age": 24,
+"trait": "活泼灵动音",
+"scene": "日常对话"
+},
+{
+"suffix": "longqinxinque",
+"name": "龙琴昕雀",
+"gender": "男",
+"age": 26,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlinfengni",
+"name": "龙麟峰霓",
+"gender": "男",
+"age": 38,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyufengni",
+"name": "龙雨凤霓",
+"gender": "男",
+"age": 25,
+"trait": "愤懑不平音",
+"scene": "日常对话"
+},
+{
+"suffix": "longrongtaolian",
+"name": "龙蓉桃涟",
+"gender": "男",
+"age": 34,
+"trait": "冷静沉稳音",
+"scene": "有声阅读"
+},
+{
+"suffix": "longyanfengying",
+"name": "龙燕枫莹",
+"gender": "男",
+"age": 24,
+"trait": "冷静沉稳音",
+"scene": "有声阅读"
+},
+{
+"suffix": "longquanqueling",
+"name": "龙泉鹊凌",
+"gender": "女",
+"age": 23,
+"trait": "娇嗲甜腻音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxumoxiao",
+"name": "龙旭沫晓",
+"gender": "女",
+"age": 26,
+"trait": "温柔细腻音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longtonglinyuan",
+"name": "龙桐麟渊",
+"gender": "女",
+"age": 26,
+"trait": "温柔细腻音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longfengyutong",
+"name": "龙凤雨桐",
+"gender": "女",
+"age": 27,
+"trait": "标准播音音",
+"scene": "新闻播报"
+},
+{
+"suffix": "longhongfuxiu",
+"name": "龙鸿芙岫",
+"gender": "女",
+"age": 42,
+"trait": "标准播音音",
+"scene": "新闻播报"
+},
+{
+"suffix": "longxiannixiao",
+"name": "龙弦霓霄",
+"gender": "女",
+"age": 26,
+"trait": "温柔细腻音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longsongtaoxuan",
+"name": "龙松桃璇",
+"gender": "女",
+"age": 25,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longmuhongmo",
+"name": "龙暮虹沫",
+"gender": "女",
+"age": 24,
+"trait": "温柔细腻音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyushuangmu",
+"name": "龙雨霜暮",
+"gender": "女",
+"age": 28,
+"trait": "直播讲解音",
+"scene": "电商直播"
+},
+{
+"suffix": "longyuxiangxi",
+"name": "龙雨湘溪",
+"gender": "女",
+"age": 28,
+"trait": "直播讲解音",
+"scene": "电商直播"
+},
+{
+"suffix": "longluhuilang",
+"name": "龙露辉朗",
+"gender": "女",
+"age": 25,
+"trait": "直播讲解音",
+"scene": "电商直播"
+},
+{
+"suffix": "longfengmeiche",
+"name": "龙凤梅澈",
+"gender": "女",
+"age": 25,
+"trait": "直播讲解音",
+"scene": "电商直播"
+},
+{
+"suffix": "longshuoxidie",
+"name": "龙烁溪蝶",
+"gender": "女",
+"age": 26,
+"trait": "直播讲解音",
+"scene": "电商直播"
+},
+{
+"suffix": "longfuyingxuan",
+"name": "龙芙樱暄",
+"gender": "女",
+"age": 26,
+"trait": "温柔细腻音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxuanfuluan",
+"name": "龙萱芙鸾",
+"gender": "男",
+"age": 28,
+"trait": "温柔细腻音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxiuyulan",
+"name": "龙岫瑜岚",
+"gender": "男",
+"age": 26,
+"trait": "温婉成熟音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxiushuoche",
+"name": "龙岫烁澈",
+"gender": "女",
+"age": 26,
+"trait": "温柔坚韧音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlianliuxiao",
+"name": "龙涟柳潇",
+"gender": "女",
+"age": 24,
+"trait": "温柔坚韧音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlanlurong",
+"name": "龙岚露蓉",
+"gender": "女",
+"age": 25,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longbaiquemo",
+"name": "龙柏鹊沫",
+"gender": "女",
+"age": 23,
+"trait": "委屈哀怨音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyanxuyi",
+"name": "龙焱旭漪",
+"gender": "女",
+"age": 24,
+"trait": "急躁焦灼音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxinzhenghe",
+"name": "龙昕筝荷",
+"gender": "女",
+"age": 42,
+"trait": "温柔坚韧音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longzhengxialing",
+"name": "龙筝霞凌",
+"gender": "女",
+"age": 25,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyingshuocan",
+"name": "龙樱朔璨",
+"gender": "男",
+"age": 25,
+"trait": "温稳沉着音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlinghuiyan",
+"name": "龙凌晦燕",
+"gender": "男",
+"age": 36,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longzhuquanwang",
+"name": "龙竹泉望",
+"gender": "女",
+"age": 14,
+"trait": "撒娇甜蜜音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyimuling",
+"name": "龙翼暮凌",
+"gender": "男",
+"age": 38,
+"trait": "沉稳有力音",
+"scene": "有声阅读"
+},
+{
+"suffix": "longlanxuejun",
+"name": "龙兰雪珺",
+"gender": "女",
+"age": 10,
+"trait": "温柔活泼音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlingyingshuo",
+"name": "龙翎樱朔",
+"gender": "女",
+"age": 24,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlingxiaolin",
+"name": "龙翎霄麟",
+"gender": "女",
+"age": 24,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longshanhongyue",
+"name": "龙杉虹玥",
+"gender": "女",
+"age": 28,
+"trait": "惊奇讶异音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxianzhenghe",
+"name": "龙弦筝鹤",
+"gender": "女",
+"age": 25,
+"trait": "激情澎湃音",
+"scene": "体育解说"
+},
+{
+"suffix": "longlingzhixing",
+"name": "龙岭芷杏",
+"gender": "男",
+"age": 68,
+"trait": "浑厚沉稳音",
+"scene": "有声阅读"
+},
+{
+"suffix": "longlanjunrui",
+"name": "龙岚珺蕊",
+"gender": "男",
+"age": 43,
+"trait": "浑厚沉稳音",
+"scene": "有声阅读"
+},
+{
+"suffix": "longxintaofeng",
+"name": "龙昕桃凤",
+"gender": "男",
+"age": 58,
+"trait": "浑厚沉稳音",
+"scene": "有声阅读"
+},
+{
+"suffix": "longluyinglan",
+"name": "龙露莹岚",
+"gender": "男",
+"age": 45,
+"trait": "惊恐不安音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlanglianyue",
+"name": "龙朗涟玥",
+"gender": "男",
+"age": 55,
+"trait": "浑厚沉稳音",
+"scene": "有声阅读"
+},
+{
+"suffix": "longfushanmu",
+"name": "龙芙杉暮",
+"gender": "男",
+"age": 56,
+"trait": "浑厚沉稳音",
+"scene": "有声阅读"
+},
+{
+"suffix": "longqueyuxiang",
+"name": "龙雀煜湘",
+"gender": "男",
+"age": 24,
+"trait": "撒娇甜蜜音",
+"scene": "日常对话"
+},
+{
+"suffix": "longchengtaolian",
+"name": "龙澄桃莲",
+"gender": "男",
+"age": 70,
+"trait": "灵动戏腔音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyuntinglian",
+"name": "龙云汀涟",
+"gender": "女",
+"age": 24,
+"trait": "撒娇甜蜜音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyuquelu",
+"name": "龙羽雀露",
+"gender": "女",
+"age": 25,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longjilinxiao",
+"name": "龙霁琳潇",
+"gender": "女",
+"age": 23,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyanchelin",
+"name": "龙焱澈琳",
+"gender": "男",
+"age": 7,
+"trait": "激动振奋音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlinjinying",
+"name": "龙琳瑾樱",
+"gender": "女",
+"age": 38,
+"trait": "耐心温和音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyaolanxuan",
+"name": "龙瑶岚萱",
+"gender": "男",
+"age": 25,
+"trait": "傲娇俏皮音",
+"scene": "日常对话"
+},
+{
+"suffix": "longzhixingju",
+"name": "龙芷杏菊",
+"gender": "女",
+"age": 27,
+"trait": "智能助手音",
+"scene": "日常对话"
+},
+{
+"suffix": "longronglingyan",
+"name": "龙蓉岭焱",
+"gender": "女",
+"age": 26,
+"trait": "智能助手音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxiudieyi",
+"name": "龙岫蝶熠",
+"gender": "女",
+"age": 25,
+"trait": "智能助手音",
+"scene": "日常对话"
+},
+{
+"suffix": "longtongxianhong",
+"name": "龙彤弦鸿",
+"gender": "男",
+"age": 26,
+"trait": "二次元活力音",
+"scene": "动漫配音"
+},
+{
+"suffix": "longrongjuxu",
+"name": "龙蓉菊旭",
+"gender": "男",
+"age": 25,
+"trait": "二次元活力音",
+"scene": "动漫配音"
+},
+{
+"suffix": "longlanzhengyan",
+"name": "龙岚筝燕",
+"gender": "男",
+"age": 24,
+"trait": "二次元活力音",
+"scene": "动漫配音"
+},
+{
+"suffix": "longxiantingfeng",
+"name": "龙弦汀峰",
+"gender": "男",
+"age": 25,
+"trait": "激动振奋音",
+"scene": "日常对话"
+},
+{
+"suffix": "longmeixiuhe",
+"name": "龙梅岫荷",
+"gender": "男",
+"age": 21,
+"trait": "二次元活力音",
+"scene": "动漫配音"
+},
+{
+"suffix": "longxuanyixiao",
+"name": "龙暄漪霄",
+"gender": "男",
+"age": 7,
+"trait": "二次元活力音",
+"scene": "动漫配音"
+},
+{
+"suffix": "longlanqueyan",
+"name": "龙岚鹊焱",
+"gender": "女",
+"age": 15,
+"trait": "动漫风格音",
+"scene": "日常对话"
+},
+{
+"suffix": "longtingyuanyi",
+"name": "龙汀渊熠",
+"gender": "女",
+"age": 23,
+"trait": "委屈哀怨音",
+"scene": "日常对话"
+},
+{
+"suffix": "longhesongrui",
+"name": "龙荷松蕊",
+"gender": "男",
+"age": 44,
+"trait": "叙事沉浸音",
+"scene": "日常对话"
+},
+{
+"suffix": "longsonghuiliu",
+"name": "龙松晦柳",
+"gender": "男",
+"age": 25,
+"trait": "不满犀利音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlinyuemo",
+"name": "龙麟玥沫",
+"gender": "男",
+"age": 28,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyuyingdie",
+"name": "龙雨樱蝶",
+"gender": "男",
+"age": 28,
+"trait": "智能助手音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxianxinglan",
+"name": "龙弦星嵐",
+"gender": "女",
+"age": 28,
+"trait": "自然聊天音",
+"scene": "日常对话"
+},
+{
+"suffix": "longchuanyunling",
+"name": "龙川云翎",
+"gender": "女",
+"age": 8,
+"trait": "搞怪逗趣音",
+"scene": "娱乐搞笑"
+},
+{
+"suffix": "longdielianxia",
+"name": "龙蝶涟霞",
+"gender": "女",
+"age": 26,
+"trait": "智能助手音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyuanzhiwei",
+"name": "龙渊芷薇",
+"gender": "男",
+"age": 22,
+"trait": "智能助手音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyuehongyan",
+"name": "龙月鸿妍",
+"gender": "男",
+"age": 7,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longjitongfeng",
+"name": "龙霁桐峰",
+"gender": "男",
+"age": 10,
+"trait": "惊恐不安音",
+"scene": "日常对话"
+},
+{
+"suffix": "longluanxiche",
+"name": "龙鸾曦澈",
+"gender": "男",
+"age": 8,
+"trait": "不屑倨傲音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxihuiyan",
+"name": "龙溪晖燕",
+"gender": "男",
+"age": 10,
+"trait": "自信笃定音",
+"scene": "日常对话"
+},
+{
+"suffix": "longfengshuangfu",
+"name": "龙枫霜芙",
+"gender": "男",
+"age": 27,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longliuxiuke",
+"name": "龙柳岫珂",
+"gender": "男",
+"age": 8,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyinglandie",
+"name": "龙莹岚蝶",
+"gender": "男",
+"age": 7,
+"trait": "撒娇甜蜜音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlingxingxia",
+"name": "龙岭星霞",
+"gender": "女",
+"age": 23,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlanzhixu",
+"name": "龙岚芷旭",
+"gender": "女",
+"age": 8,
+"trait": "自然亲和音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlanyuerong",
+"name": "龙岚月蓉",
+"gender": "女",
+"age": 9,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longshuosongxuan",
+"name": "龙烁松萱",
+"gender": "女",
+"age": 7,
+"trait": "欢乐明朗音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxuanzhuche",
+"name": "龙暄竹澈",
+"gender": "女",
+"age": 7,
+"trait": "欢乐明朗音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxianlianyi",
+"name": "龙弦莲翼",
+"gender": "女",
+"age": 7,
+"trait": "惊恐不安音",
+"scene": "日常对话"
+},
+{
+"suffix": "longbaijunzheng",
+"name": "龙柏珺筝",
+"gender": "女",
+"age": 7,
+"trait": "伤感低回音",
+"scene": "日常对话"
+},
+{
+"suffix": "longtongxingquan",
+"name": "龙彤杏泉",
+"gender": "男",
+"age": 42,
+"trait": "叙事沉浸音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyirongzheng",
+"name": "龙熠蓉筝",
+"gender": "男",
+"age": 8,
+"trait": "动漫风格音",
+"scene": "日常对话"
+},
+{
+"suffix": "longshuohuimei",
+"name": "龙朔辉梅",
+"gender": "男",
+"age": 70,
+"trait": "轻松闲聊音",
+"scene": "日常对话"
+},
+{
+"suffix": "longluxiaohui",
+"name": "龙露潇晖",
+"gender": "男",
+"age": 35,
+"trait": "亲切客服音",
+"scene": "智能客服"
+},
+{
+"suffix": "longshanniting",
+"name": "龙杉霓汀",
+"gender": "男",
+"age": 28,
+"trait": "亲切客服音",
+"scene": "智能客服"
+},
+{
+"suffix": "longnixiwei",
+"name": "龙霓曦薇",
+"gender": "男",
+"age": 38,
+"trait": "新闻联播音",
+"scene": "日常对话"
+},
+{
+"suffix": "longcheyanxuan",
+"name": "龙澈焱暄",
+"gender": "女",
+"age": 25,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyuelanke",
+"name": "龙月澜珂",
+"gender": "女",
+"age": 24,
+"trait": "期待向往音",
+"scene": "日常对话"
+},
+{
+"suffix": "longliulingfu",
+"name": "龙柳翎芙",
+"gender": "女",
+"age": 27,
+"trait": "忧郁低回音",
+"scene": "日常对话"
+},
+{
+"suffix": "longhuitongyuan",
+"name": "龙晖彤渊",
+"gender": "女",
+"age": 8,
+"trait": "娇嗲甜腻音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyaoxuanzhi",
+"name": "龙瑶璇芷",
+"gender": "女",
+"age": 24,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longjunxinmu",
+"name": "龙珺昕暮",
+"gender": "女",
+"age": 25,
+"trait": "灵动好奇音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlingyilan",
+"name": "龙凌漪岚",
+"gender": "女",
+"age": 25,
+"trait": "温柔坚韧音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlingxianxiu",
+"name": "龙翎弦岫",
+"gender": "女",
+"age": 24,
+"trait": "灵动好奇音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlianruimei",
+"name": "龙莲蕊梅",
+"gender": "女",
+"age": 24,
+"trait": "循循善诱音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyumeixia",
+"name": "龙瑜梅霞",
+"gender": "女",
+"age": 24,
+"trait": "叙事沉浸音",
+"scene": "日常对话"
+},
+{
+"suffix": "longtaoliuhong",
+"name": "龙桃柳虹",
+"gender": "女",
+"age": 24,
+"trait": "活泼灵动音",
+"scene": "日常对话"
+},
+{
+"suffix": "longjixilan",
+"name": "龙霁曦嵐",
+"gender": "女",
+"age": 25,
+"trait": "铿锵有力音",
+"scene": "日常对话"
+},
+{
+"suffix": "longqintaoxuan",
+"name": "龙琴桃璇",
+"gender": "女",
+"age": 26,
+"trait": "激动振奋音",
+"scene": "日常对话"
+},
+{
+"suffix": "longzhengxiaocheng",
+"name": "龙筝晓澄",
+"gender": "女",
+"age": 27,
+"trait": "铿锵有力音",
+"scene": "日常对话"
+},
+{
+"suffix": "longchuanqueyan",
+"name": "龙川鹊妍",
+"gender": "女",
+"age": 27,
+"trait": "铿锵有力音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlianchuanzhu",
+"name": "龙莲川竹",
+"gender": "男",
+"age": 42,
+"trait": "忧郁深沉音",
+"scene": "日常对话"
+},
+{
+"suffix": "longfengyuanquan",
+"name": "龙凤渊泉",
+"gender": "女",
+"age": 24,
+"trait": "甜萌可爱音",
+"scene": "动漫配音"
+},
+{
+"suffix": "longsongchelin",
+"name": "龙松澈琳",
+"gender": "男",
+"age": 40,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longmeixiaolan",
+"name": "龙梅霄嵐",
+"gender": "男",
+"age": 38,
+"trait": "爽朗利落音",
+"scene": "日常对话"
+},
+{
+"suffix": "longtingheqing",
+"name": "龙汀鹤晴",
+"gender": "男",
+"age": 25,
+"trait": "不屑倨傲音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxiyanjun",
+"name": "龙曦燕珺",
+"gender": "男",
+"age": 27,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyanhongqin",
+"name": "龙焱虹琴",
+"gender": "男",
+"age": 28,
+"trait": "犀利刻薄音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyiliufu",
+"name": "龙熠柳芙",
+"gender": "男",
+"age": 28,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longbaixuanshan",
+"name": "龙柏萱杉",
+"gender": "男",
+"age": 32,
+"trait": "鼓励认可音",
+"scene": "日常对话"
+},
+{
+"suffix": "longbaiyunlin",
+"name": "龙柏云麟",
+"gender": "女",
+"age": 23,
+"trait": "不满犀利音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxuanfengrui",
+"name": "龙璇风蕊",
+"gender": "女",
+"age": 15,
+"trait": "惊恐不安音",
+"scene": "日常对话"
+},
+{
+"suffix": "longweijuquan",
+"name": "龙薇菊泉",
+"gender": "男",
+"age": 40,
+"trait": "叙事沉浸音",
+"scene": "日常对话"
+},
+{
+"suffix": "longjunhuixia",
+"name": "龙珺辉霞",
+"gender": "女",
+"age": 24,
+"trait": "自然亲和音",
+"scene": "日常对话"
+},
+{
+"suffix": "longquemeifeng",
+"name": "龙鹊梅峰",
+"gender": "男",
+"age": 38,
+"trait": "谆谆劝导音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxianfengwei",
+"name": "龙弦凤薇",
+"gender": "女",
+"age": 26,
+"trait": "亲切客服音",
+"scene": "智能客服"
+},
+{
+"suffix": "longquexihui",
+"name": "龙鹊溪辉",
+"gender": "女",
+"age": 28,
+"trait": "智能助手音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyaoruilang",
+"name": "龙瑶蕊朗",
+"gender": "女",
+"age": 25,
+"trait": "惋惜叹惋音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlanlangwei",
+"name": "龙嵐朗薇",
+"gender": "女",
+"age": 24,
+"trait": "轻松愉悦音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyingfengmu",
+"name": "龙莹枫暮",
+"gender": "女",
+"age": 28,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyaolinglan",
+"name": "龙瑶岭岚",
+"gender": "女",
+"age": 25,
+"trait": "耐心温和音",
+"scene": "日常对话"
+},
+{
+"suffix": "longkexuanzheng",
+"name": "龙珂暄筝",
+"gender": "女",
+"age": 24,
+"trait": "激动振奋音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyuelinwang",
+"name": "龙玥麟望",
+"gender": "女",
+"age": 25,
+"trait": "亲切客服音",
+"scene": "智能客服"
+},
+{
+"suffix": "longtaotingyu",
+"name": "龙桃汀羽",
+"gender": "女",
+"age": 27,
+"trait": "亲切客服音",
+"scene": "智能客服"
+},
+{
+"suffix": "longxianyuanmei",
+"name": "龙弦渊梅",
+"gender": "女",
+"age": 34,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longhuibaijun",
+"name": "龙晦柏珺",
+"gender": "女",
+"age": 26,
+"trait": "温柔细腻音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlinglinyao",
+"name": "龙凌麟瑶",
+"gender": "男",
+"age": 27,
+"trait": "温柔细腻音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longfengmeihui",
+"name": "龙峰梅晖",
+"gender": "女",
+"age": 26,
+"trait": "利落麻利音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlantongxuan",
+"name": "龙澜彤璇",
+"gender": "女",
+"age": 24,
+"trait": "电台质感音",
+"scene": "日常对话"
+},
+{
+"suffix": "longdiechuanling",
+"name": "龙蝶川岭",
+"gender": "女",
+"age": 25,
+"trait": "叙事沉浸音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlingjuhong",
+"name": "龙凌菊鸿",
+"gender": "女",
+"age": 9,
+"trait": "温柔坚韧音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyunjinji",
+"name": "龙云瑾霁",
+"gender": "男",
+"age": 24,
+"trait": "撒娇甜蜜音",
+"scene": "日常对话"
+},
+{
+"suffix": "longsongqinglian",
+"name": "龙松晴涟",
+"gender": "男",
+"age": 24,
+"trait": "忧伤低回音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyuelinglan",
+"name": "龙玥凌嵐",
+"gender": "男",
+"age": 19,
+"trait": "激动振奋音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxiuketao",
+"name": "龙岫珂桃",
+"gender": "男",
+"age": 24,
+"trait": "傲娇俏皮音",
+"scene": "日常对话"
+},
+{
+"suffix": "longchenghongrui",
+"name": "龙澄鸿蕊",
+"gender": "男",
+"age": 28,
+"trait": "沮丧低落音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxueyuxia",
+"name": "龙雪瑜霞",
+"gender": "女",
+"age": 24,
+"trait": "温雅端庄音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longhongxinxu",
+"name": "龙鸿昕旭",
+"gender": "男",
+"age": 15,
+"trait": "自然亲和音",
+"scene": "日常对话"
+},
+{
+"suffix": "longfenglanxiao",
+"name": "龙风兰潇",
+"gender": "男",
+"age": 8,
+"trait": "元气活力音",
+"scene": "日常对话"
+},
+{
+"suffix": "longqinqueyi",
+"name": "龙琴鹊漪",
+"gender": "男",
+"age": 16,
+"trait": "自然亲和音",
+"scene": "日常对话"
+},
+{
+"suffix": "longquanlingfu",
+"name": "龙泉岭芙",
+"gender": "男",
+"age": 7,
+"trait": "惊恐不安音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxuxiyue",
+"name": "龙旭溪玥",
+"gender": "男",
+"age": 14,
+"trait": "惊恐不安音",
+"scene": "日常对话"
+},
+{
+"suffix": "longmofengshuo",
+"name": "龙沫风烁",
+"gender": "男",
+"age": 13,
+"trait": "自信从容音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyishuojin",
+"name": "龙熠朔瑾",
+"gender": "男",
+"age": 9,
+"trait": "不满犀利音",
+"scene": "日常对话"
+},
+{
+"suffix": "longqueqinlan",
+"name": "龙雀琴嵐",
+"gender": "女",
+"age": 22,
+"trait": "呆萌软糯音",
+"scene": "动漫配音"
+},
+{
+"suffix": "longquetongwang",
+"name": "龙鹊桐望",
+"gender": "女",
+"age": 8,
+"trait": "甜萌可爱音",
+"scene": "动漫配音"
+},
+{
+"suffix": "longxuekeyu",
+"name": "龙雪珂雨",
+"gender": "女",
+"age": 8,
+"trait": "智能助手音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyiqueju",
+"name": "龙翼雀菊",
+"gender": "女",
+"age": 7,
+"trait": "搞怪逗趣音",
+"scene": "娱乐搞笑"
+},
+{
+"suffix": "longcheshuofeng",
+"name": "龙澈朔枫",
+"gender": "女",
+"age": 9,
+"trait": "惊恐不安音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlanmuju",
+"name": "龙澜暮菊",
+"gender": "女",
+"age": 6,
+"trait": "伤感低回音",
+"scene": "日常对话"
+},
+{
+"suffix": "longcanlianxiu",
+"name": "龙璨莲岫",
+"gender": "女",
+"age": 8,
+"trait": "不耐烦躁音",
+"scene": "日常对话"
+},
+{
+"suffix": "longcanyanwang",
+"name": "龙璨燕望",
+"gender": "男",
+"age": 42,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlinxinghong",
+"name": "龙琳杏鸿",
+"gender": "女",
+"age": 25,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longchengxuanxian",
+"name": "龙澄璇弦",
+"gender": "女",
+"age": 25,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyuxialan",
+"name": "龙煜霞澜",
+"gender": "女",
+"age": 24,
+"trait": "惊喜意外音",
+"scene": "日常对话"
+},
+{
+"suffix": "longruiyuling",
+"name": "龙蕊煜翎",
+"gender": "女",
+"age": 24,
+"trait": "客观冷静音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyiqinhui",
+"name": "龙熠琴晖",
+"gender": "男",
+"age": 26,
+"trait": "憨萌逗趣音",
+"scene": "日常对话"
+},
+{
+"suffix": "longquefengmu",
+"name": "龙鹊风暮",
+"gender": "男",
+"age": 8,
+"trait": "青春朝气音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyaoxuanke",
+"name": "龙瑶璇珂",
+"gender": "女",
+"age": 7,
+"trait": "天真童趣音",
+"scene": "日常对话"
+},
+{
+"suffix": "longshanxinglan",
+"name": "龙杉杏兰",
+"gender": "女",
+"age": 8,
+"trait": "天真童趣音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyixiaowei",
+"name": "龙漪潇薇",
+"gender": "女",
+"age": 24,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlianchuanxuan",
+"name": "龙莲川璇",
+"gender": "男",
+"age": 29,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longzhufengquan",
+"name": "龙竹峰泉",
+"gender": "女",
+"age": 26,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlangjiluan",
+"name": "龙朗霁鸾",
+"gender": "男",
+"age": 27,
+"trait": "沉稳大气音",
+"scene": "有声阅读"
+},
+{
+"suffix": "longyuyaoluan",
+"name": "龙羽瑶鸾",
+"gender": "女",
+"age": 25,
+"trait": "沉稳大气音",
+"scene": "有声阅读"
+},
+{
+"suffix": "longlianmeixiu",
+"name": "龙涟梅岫",
+"gender": "女",
+"age": 24,
+"trait": "温稳沉着音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longmuhecan",
+"name": "龙暮鹤璨",
+"gender": "女",
+"age": 25,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlangruiling",
+"name": "龙朗蕊岭",
+"gender": "男",
+"age": 26,
+"trait": "青春朝气音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyanzhihui",
+"name": "龙焱芷晖",
+"gender": "男",
+"age": 25,
+"trait": "温润磁性音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxianlinxu",
+"name": "龙弦琳旭",
+"gender": "女",
+"age": 25,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longhexuefeng",
+"name": "龙荷雪风",
+"gender": "女",
+"age": 24,
+"trait": "角色模仿音",
+"scene": "日常对话"
+},
+{
+"suffix": "longzhuqinxuan",
+"name": "龙竹琴萱",
+"gender": "男",
+"age": 43,
+"trait": "角色模仿音",
+"scene": "日常对话"
+},
+{
+"suffix": "longhongxiuyi",
+"name": "龙鸿岫翼",
+"gender": "女",
+"age": 7,
+"trait": "天真童趣音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxixiani",
+"name": "龙曦霞霓",
+"gender": "女",
+"age": 7,
+"trait": "天真童趣音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxuqinyuan",
+"name": "龙旭琴渊",
+"gender": "男",
+"age": 26,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyingfengwang",
+"name": "龙莹风望",
+"gender": "女",
+"age": 26,
+"trait": "温柔邻家音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longquexuanyu",
+"name": "龙鹊萱羽",
+"gender": "男",
+"age": 56,
+"trait": "灵动戏腔音",
+"scene": "日常对话"
+},
+{
+"suffix": "longmohuiling",
+"name": "龙沫晖翎",
+"gender": "女",
+"age": 26,
+"trait": "御姐成熟音",
+"scene": "有声书配音"
+},
+{
+"suffix": "longyingtaomei",
+"name": "龙莹桃梅",
+"gender": "男",
+"age": 28,
+"trait": "温润磁性音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyaoxinliu",
+"name": "龙瑶昕柳",
+"gender": "女",
+"age": 25,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longshuangyuerong",
+"name": "龙霜玥蓉",
+"gender": "男",
+"age": 26,
+"trait": "青春朝气音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlulanling",
+"name": "龙露嵐凌",
+"gender": "男",
+"age": 25,
+"trait": "青春朝气音",
+"scene": "日常对话"
+},
+{
+"suffix": "longruiyueju",
+"name": "龙蕊玥菊",
+"gender": "女",
+"age": 25,
+"trait": "温婉干练音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyingjulan",
+"name": "龙莹菊兰",
+"gender": "女",
+"age": 25,
+"trait": "温稳沉着音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longshanzhuxin",
+"name": "龙杉竹昕",
+"gender": "女",
+"age": 25,
+"trait": "温柔老练音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlanxiaoling",
+"name": "龙兰晓翎",
+"gender": "女",
+"age": 25,
+"trait": "邻家亲切音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxikexing",
+"name": "龙曦珂星",
+"gender": "女",
+"age": 7,
+"trait": "慵懒童趣音",
+"scene": "日常对话"
+},
+{
+"suffix": "longshuanglanhong",
+"name": "龙霜兰虹",
+"gender": "女",
+"age": 9,
+"trait": "慵懒童趣音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxialuling",
+"name": "龙霞露岭",
+"gender": "女",
+"age": 9,
+"trait": "调皮少年音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxiangxizheng",
+"name": "龙湘曦筝",
+"gender": "女",
+"age": 22,
+"trait": "温柔活泼音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyanxueni",
+"name": "龙焱雪霓",
+"gender": "女",
+"age": 8,
+"trait": "慵懒童趣音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxiuhuiyue",
+"name": "龙岫晖月",
+"gender": "女",
+"age": 8,
+"trait": "角色模仿音",
+"scene": "日常对话"
+},
+{
+"suffix": "longfengyanshuo",
+"name": "龙凤燕朔",
+"gender": "女",
+"age": 10,
+"trait": "机灵少年音",
+"scene": "日常对话"
+},
+{
+"suffix": "longtongquequan",
+"name": "龙彤鹊泉",
+"gender": "女",
+"age": 10,
+"trait": "活泼灵动音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyujulu",
+"name": "龙煜菊露",
+"gender": "男",
+"age": 24,
+"trait": "青春朝气音",
+"scene": "日常对话"
+},
+{
+"suffix": "longshuocanmu",
+"name": "龙烁璨暮",
+"gender": "女",
+"age": 22,
+"trait": "青春朝气音",
+"scene": "日常对话"
+},
+{
+"suffix": "longhehuiyi",
+"name": "龙鹤辉漪",
+"gender": "女",
+"age": 25,
+"trait": "活泼灵动音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxiaoyuque",
+"name": "龙潇煜雀",
+"gender": "女",
+"age": 23,
+"trait": "活泼灵动音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxulingji",
+"name": "龙旭凌霁",
+"gender": "女",
+"age": 24,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longqueqingrui",
+"name": "龙雀晴蕊",
+"gender": "男",
+"age": 25,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxiufengdie",
+"name": "龙岫凤蝶",
+"gender": "女",
+"age": 24,
+"trait": "温柔知性音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyuyanxuan",
+"name": "龙瑜燕暄",
+"gender": "女",
+"age": 24,
+"trait": "温稳沉着音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longsongshuoling",
+"name": "龙松朔岭",
+"gender": "女",
+"age": 8,
+"trait": "活泼灵动音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxiyaoque",
+"name": "龙溪瑶雀",
+"gender": "男",
+"age": 25,
+"trait": "活泼灵动音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlanxiaoyu",
+"name": "龙兰霄雨",
+"gender": "女",
+"age": 21,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxuanmeilin",
+"name": "龙暄梅麟",
+"gender": "女",
+"age": 26,
+"trait": "温稳沉着音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longjishuangjin",
+"name": "龙霁霜瑾",
+"gender": "女",
+"age": 26,
+"trait": "角色模仿音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlingzhengcheng",
+"name": "龙翎筝澄",
+"gender": "女",
+"age": 23,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longsongxinchuan",
+"name": "龙松昕川",
+"gender": "女",
+"age": 23,
+"trait": "温柔邻家音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlanxiaoyi",
+"name": "龙岚霄翼",
+"gender": "女",
+"age": 23,
+"trait": "邻家亲切音",
+"scene": "日常对话"
+},
+{
+"suffix": "longchengzhiyan",
+"name": "龙澄芷燕",
+"gender": "女",
+"age": 25,
+"trait": "沉稳大气音",
+"scene": "有声阅读"
+},
+{
+"suffix": "longyuxinwang",
+"name": "龙煜昕望",
+"gender": "女",
+"age": 8,
+"trait": "角色模仿音",
+"scene": "日常对话"
+},
+{
+"suffix": "longfengweixian",
+"name": "龙枫薇弦",
+"gender": "女",
+"age": 24,
+"trait": "温柔知性音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyanlanyun",
+"name": "龙妍岚云",
+"gender": "女",
+"age": 25,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longchexinfeng",
+"name": "龙澈昕凤",
+"gender": "女",
+"age": 26,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longhongcanyue",
+"name": "龙虹璨月",
+"gender": "女",
+"age": 25,
+"trait": "活泼灵动音",
+"scene": "日常对话"
+},
+{
+"suffix": "longhediexiu",
+"name": "龙鹤蝶岫",
+"gender": "女",
+"age": 25,
+"trait": "温柔坚韧音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyijunji",
+"name": "龙翼珺霁",
+"gender": "女",
+"age": 23,
+"trait": "心机绿茶音",
+"scene": "日常对话"
+},
+{
+"suffix": "longshuangsongbai",
+"name": "龙霜松柏",
+"gender": "女",
+"age": 24,
+"trait": "温柔俏皮音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlangxiwei",
+"name": "龙朗溪薇",
+"gender": "女",
+"age": 25,
+"trait": "温婉成熟音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyuanyuque",
+"name": "龙渊煜鹊",
+"gender": "女",
+"age": 24,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longliulanxiang",
+"name": "龙柳岚湘",
+"gender": "女",
+"age": 25,
+"trait": "温柔青春音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longquezhujin",
+"name": "龙雀竹瑾",
+"gender": "女",
+"age": 16,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyixuanjun",
+"name": "龙漪暄珺",
+"gender": "女",
+"age": 36,
+"trait": "成熟沉稳音",
+"scene": "日常对话"
+},
+{
+"suffix": "longluanhuiyu",
+"name": "龙鸾辉雨",
+"gender": "女",
+"age": 24,
+"trait": "成熟沉稳音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlinliuhe",
+"name": "龙琳柳荷",
+"gender": "女",
+"age": 25,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxuankemei",
+"name": "龙璇珂梅",
+"gender": "女",
+"age": 24,
+"trait": "温婉成熟音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxiaqueshan",
+"name": "龙霞雀杉",
+"gender": "男",
+"age": 25,
+"trait": "搞怪逗趣音",
+"scene": "娱乐搞笑"
+},
+{
+"suffix": "longlianhuirui",
+"name": "龙涟晦蕊",
+"gender": "女",
+"age": 26,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longquanluanhong",
+"name": "龙泉鸾虹",
+"gender": "男",
+"age": 24,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxingxiuquan",
+"name": "龙星岫泉",
+"gender": "女",
+"age": 24,
+"trait": "温婉成熟音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longchengyanfeng",
+"name": "龙澄燕凤",
+"gender": "女",
+"age": 24,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxuanzhufeng",
+"name": "龙璇竹凤",
+"gender": "女",
+"age": 24,
+"trait": "温婉成熟音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longtongshuoxiu",
+"name": "龙桐烁岫",
+"gender": "女",
+"age": 25,
+"trait": "爽朗利落音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyaoquezheng",
+"name": "龙瑶雀筝",
+"gender": "女",
+"age": 25,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxifengyi",
+"name": "龙曦凤漪",
+"gender": "女",
+"age": 25,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longjunxiayan",
+"name": "龙珺霞妍",
+"gender": "女",
+"age": 8,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longtongquanxiang",
+"name": "龙桐泉湘",
+"gender": "女",
+"age": 25,
+"trait": "温婉成熟音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyixiangtao",
+"name": "龙漪湘桃",
+"gender": "女",
+"age": 27,
+"trait": "温婉成熟音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlannihui",
+"name": "龙岚霓晖",
+"gender": "女",
+"age": 25,
+"trait": "温柔青春音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxuanzhengju",
+"name": "龙萱筝菊",
+"gender": "女",
+"age": 26,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longshanyusong",
+"name": "龙杉煜松",
+"gender": "女",
+"age": 25,
+"trait": "平稳陈述音",
+"scene": "日常对话"
+},
+{
+"suffix": "longshanyilan",
+"name": "龙杉熠澜",
+"gender": "女",
+"age": 14,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longshuochehui",
+"name": "龙朔澈晖",
+"gender": "女",
+"age": 26,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyiyusong",
+"name": "龙熠瑜松",
+"gender": "女",
+"age": 24,
+"trait": "活泼灵动音",
+"scene": "社交互动"
+},
+{
+"suffix": "longlingqueyi",
+"name": "龙岭鹊熠",
+"gender": "女",
+"age": 24,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxiyuling",
+"name": "龙曦雨翎",
+"gender": "女",
+"age": 26,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longjunfengqing",
+"name": "龙珺峰晴",
+"gender": "女",
+"age": 24,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyijinquan",
+"name": "龙翼瑾泉",
+"gender": "女",
+"age": 28,
+"trait": "温婉成熟音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyanhuixiao",
+"name": "龙焱辉潇",
+"gender": "女",
+"age": 21,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longmulinghong",
+"name": "龙暮凌虹",
+"gender": "女",
+"age": 25,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longchengxutao",
+"name": "龙澄旭桃",
+"gender": "女",
+"age": 24,
+"trait": "活泼灵动音",
+"scene": "社交互动"
+},
+{
+"suffix": "longxiaosongyu",
+"name": "龙潇松雨",
+"gender": "女",
+"age": 24,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyantongxi",
+"name": "龙妍彤溪",
+"gender": "女",
+"age": 28,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxueronghui",
+"name": "龙雪蓉晦",
+"gender": "女",
+"age": 26,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyitingyan",
+"name": "龙漪汀焱",
+"gender": "女",
+"age": 25,
+"trait": "爽朗利落音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyijinhong",
+"name": "龙翼瑾鸿",
+"gender": "女",
+"age": 24,
+"trait": "爽朗利落音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlanghuishuang",
+"name": "龙朗辉霜",
+"gender": "女",
+"age": 25,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longluyueqin",
+"name": "龙露玥琴",
+"gender": "女",
+"age": 24,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longjinlianji",
+"name": "龙瑾莲霁",
+"gender": "女",
+"age": 25,
+"trait": "低沉压抑音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyueximu",
+"name": "龙玥溪暮",
+"gender": "女",
+"age": 25,
+"trait": "欢快明朗音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlanjunxu",
+"name": "龙岚珺旭",
+"gender": "女",
+"age": 25,
+"trait": "温柔青春音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlanhuihui",
+"name": "龙兰辉晦",
+"gender": "女",
+"age": 27,
+"trait": "搞怪逗趣音",
+"scene": "娱乐搞笑"
+},
+{
+"suffix": "longxiaohehui",
+"name": "龙霄鹤晖",
+"gender": "男",
+"age": 24,
+"trait": "低沉压抑音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlanxuanxian",
+"name": "龙兰暄弦",
+"gender": "女",
+"age": 26,
+"trait": "爽朗利落音",
+"scene": "日常对话"
+},
+{
+"suffix": "longhuixuanyan",
+"name": "龙晖暄燕",
+"gender": "女",
+"age": 24,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxingyujun",
+"name": "龙星羽珺",
+"gender": "女",
+"age": 25,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyanyuantao",
+"name": "龙妍渊桃",
+"gender": "男",
+"age": 37,
+"trait": "爽朗利落音",
+"scene": "日常对话"
+},
+{
+"suffix": "longsongquanxuan",
+"name": "龙松泉璇",
+"gender": "女",
+"age": 26,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxiaomohong",
+"name": "龙潇沫虹",
+"gender": "女",
+"age": 22,
+"trait": "活泼灵动音",
+"scene": "社交互动"
+},
+{
+"suffix": "longxinyanshuo",
+"name": "龙昕妍烁",
+"gender": "女",
+"age": 24,
+"trait": "活泼灵动音",
+"scene": "社交互动"
+},
+{
+"suffix": "longsongbaifeng",
+"name": "龙松柏枫",
+"gender": "男",
+"age": 22,
+"trait": "叙事沉浸音",
+"scene": "日常对话"
+},
+{
+"suffix": "longjiquexue",
+"name": "龙霁鹊雪",
+"gender": "男",
+"age": 24,
+"trait": "侠骨柔情音",
+"scene": "古风有声书"
+},
+{
+"suffix": "longlangjixuan",
+"name": "龙朗霁萱",
+"gender": "男",
+"age": 24,
+"trait": "电台质感音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlanxiaqing",
+"name": "龙岚霞晴",
+"gender": "男",
+"age": 22,
+"trait": "温润暖男音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longjunlingtao",
+"name": "龙珺岭桃",
+"gender": "男",
+"age": 24,
+"trait": "侠骨柔情音",
+"scene": "古风有声书"
+},
+{
+"suffix": "longfengjinhe",
+"name": "龙峰瑾鹤",
+"gender": "男",
+"age": 28,
+"trait": "沉稳大气音",
+"scene": "有声阅读"
+},
+{
+"suffix": "longbaixingyu",
+"name": "龙柏杏煜",
+"gender": "男",
+"age": 26,
+"trait": "侠骨柔情音",
+"scene": "古风有声书"
+},
+{
+"suffix": "longshuanghuichuan",
+"name": "龙霜晖川",
+"gender": "女",
+"age": 28,
+"trait": "叙事沉浸音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlingzhengtong",
+"name": "龙凌筝彤",
+"gender": "女",
+"age": 29,
+"trait": "叙事沉浸音",
+"scene": "日常对话"
+},
+{
+"suffix": "longjinxilan",
+"name": "龙瑾溪嵐",
+"gender": "女",
+"age": 25,
+"trait": "电台质感音",
+"scene": "日常对话"
+},
+{
+"suffix": "longqingxiangju",
+"name": "龙晴湘菊",
+"gender": "女",
+"age": 25,
+"trait": "电台质感音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyaozhiqing",
+"name": "龙瑶芷晴",
+"gender": "女",
+"age": 26,
+"trait": "电台质感音",
+"scene": "日常对话"
+},
+{
+"suffix": "longdieshuangluan",
+"name": "龙蝶霜鸾",
+"gender": "女",
+"age": 40,
+"trait": "电台质感音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxuanhongxi",
+"name": "龙萱鸿溪",
+"gender": "男",
+"age": 24,
+"trait": "活泼灵动音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyueyuqin",
+"name": "龙月瑜琴",
+"gender": "男",
+"age": 26,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longjuhefeng",
+"name": "龙菊荷风",
+"gender": "男",
+"age": 23,
+"trait": "中气充沛音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxianhelan",
+"name": "龙弦荷嵐",
+"gender": "男",
+"age": 28,
+"trait": "叙事沉浸音",
+"scene": "日常对话"
+},
+{
+"suffix": "longqingyanyun",
+"name": "龙晴焱云",
+"gender": "男",
+"age": 42,
+"trait": "侠气武侠音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlianliusong",
+"name": "龙莲柳松",
+"gender": "男",
+"age": 28,
+"trait": "侠气武侠音",
+"scene": "日常对话"
+},
+{
+"suffix": "longzhujinxuan",
+"name": "龙竹瑾萱",
+"gender": "男",
+"age": 26,
+"trait": "威严领导音",
+"scene": "日常对话"
+},
+{
+"suffix": "longshuangxuandie",
+"name": "龙霜萱蝶",
+"gender": "女",
+"age": 22,
+"trait": "爽朗利落音",
+"scene": "日常对话"
+},
+{
+"suffix": "longluzhulan",
+"name": "龙露竹澜",
+"gender": "女",
+"age": 22,
+"trait": "爽朗利落音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyixiangcheng",
+"name": "龙熠湘澄",
+"gender": "女",
+"age": 19,
+"trait": "活泼灵动音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxuanyanyun",
+"name": "龙璇燕云",
+"gender": "女",
+"age": 23,
+"trait": "阴郁深沉音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxuanchengdie",
+"name": "龙萱澄蝶",
+"gender": "女",
+"age": 23,
+"trait": "强势霸气音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyiyulu",
+"name": "龙漪羽露",
+"gender": "女",
+"age": 25,
+"trait": "阴狠毒辣音",
+"scene": "日常对话"
+},
+{
+"suffix": "longhonglingxue",
+"name": "龙鸿岭雪",
+"gender": "女",
+"age": 25,
+"trait": "阴狠毒辣音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyilianxia",
+"name": "龙翼莲霞",
+"gender": "女",
+"age": 28,
+"trait": "雍容宫廷音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlulanxuan",
+"name": "龙露岚萱",
+"gender": "女",
+"age": 27,
+"trait": "阴狠毒辣音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyizhengmu",
+"name": "龙熠筝暮",
+"gender": "女",
+"age": 24,
+"trait": "怯弱自卑音",
+"scene": "日常对话"
+},
+{
+"suffix": "longhexueling",
+"name": "龙荷雪翎",
+"gender": "女",
+"age": 22,
+"trait": "呆萌软糯音",
+"scene": "动漫配音"
+},
+{
+"suffix": "longhuishanshuo",
+"name": "龙晖杉朔",
+"gender": "女",
+"age": 16,
+"trait": "呆萌软糯音",
+"scene": "动漫配音"
+},
+{
+"suffix": "longyifenghe",
+"name": "龙熠枫荷",
+"gender": "女",
+"age": 22,
+"trait": "内敛含蓄音",
+"scene": "日常对话"
+},
+{
+"suffix": "longfengxuanxing",
+"name": "龙风璇杏",
+"gender": "女",
+"age": 22,
+"trait": "沉郁心事音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxueyujun",
+"name": "龙雪瑜珺",
+"gender": "女",
+"age": 21,
+"trait": "怯弱自卑音",
+"scene": "日常对话"
+},
+{
+"suffix": "longmolinglian",
+"name": "龙沫岭莲",
+"gender": "女",
+"age": 23,
+"trait": "平稳陈述音",
+"scene": "日常对话"
+},
+{
+"suffix": "longjinlingshuang",
+"name": "龙瑾翎霜",
+"gender": "女",
+"age": 22,
+"trait": "呆萌软糯音",
+"scene": "动漫配音"
+},
+{
+"suffix": "longweimeiyi",
+"name": "龙薇梅翼",
+"gender": "女",
+"age": 9,
+"trait": "呆萌软糯音",
+"scene": "动漫配音"
+},
+{
+"suffix": "longxiaquehong",
+"name": "龙霞鹊鸿",
+"gender": "女",
+"age": 22,
+"trait": "娇嗲甜腻音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlanwangyi",
+"name": "龙澜望翼",
+"gender": "女",
+"age": 21,
+"trait": "细腻深沉音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxiniyan",
+"name": "龙溪霓燕",
+"gender": "女",
+"age": 24,
+"trait": "善解人意音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyufengmo",
+"name": "龙煜枫沫",
+"gender": "女",
+"age": 22,
+"trait": "温柔坚韧音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longzhengxike",
+"name": "龙筝溪珂",
+"gender": "女",
+"age": 25,
+"trait": "温柔青春音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longjunqingyu",
+"name": "龙珺晴煜",
+"gender": "女",
+"age": 24,
+"trait": "大方温和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longtongwangque",
+"name": "龙桐望鹊",
+"gender": "女",
+"age": 24,
+"trait": "忧郁深沉音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxueniling",
+"name": "龙雪霓翎",
+"gender": "女",
+"age": 24,
+"trait": "电台质感音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyuxiangxia",
+"name": "龙羽湘霞",
+"gender": "女",
+"age": 25,
+"trait": "成熟知心音",
+"scene": "日常对话"
+},
+{
+"suffix": "longfenglanlu",
+"name": "龙风兰露",
+"gender": "男",
+"age": 25,
+"trait": "清朗少年音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyuhongche",
+"name": "龙羽鸿澈",
+"gender": "女",
+"age": 72,
+"trait": "神秘术士音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlangqingyi",
+"name": "龙朗晴翼",
+"gender": "女",
+"age": 25,
+"trait": "呆萌憨直音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlanquancheng",
+"name": "龙嵐泉澄",
+"gender": "女",
+"age": 25,
+"trait": "温柔贴心音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longluanyuxu",
+"name": "龙鸾瑜旭",
+"gender": "男",
+"age": 25,
+"trait": "正气凛然音",
+"scene": "日常对话"
+},
+{
+"suffix": "longtinghongxiao",
+"name": "龙汀鸿霄",
+"gender": "女",
+"age": 26,
+"trait": "活力童趣音",
+"scene": "日常对话"
+},
+{
+"suffix": "longfuhuiqing",
+"name": "龙芙晦晴",
+"gender": "女",
+"age": 38,
+"trait": "温柔贴心音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longwangyuanxing",
+"name": "龙望渊杏",
+"gender": "女",
+"age": 43,
+"trait": "憨厚诙谐音",
+"scene": "日常对话"
+},
+{
+"suffix": "longquanqingshan",
+"name": "龙泉晴杉",
+"gender": "女",
+"age": 8,
+"trait": "温柔贴心音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyaoshuoyu",
+"name": "龙瑶朔瑜",
+"gender": "女",
+"age": 26,
+"trait": "温柔贴心音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longhuiluling",
+"name": "龙晦露凌",
+"gender": "女",
+"age": 25,
+"trait": "温柔贴心音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlinbaitong",
+"name": "龙琳柏彤",
+"gender": "女",
+"age": 8,
+"trait": "欢乐卡通音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyuxiangzhi",
+"name": "龙羽湘芷",
+"gender": "女",
+"age": 22,
+"trait": "柔弱楚楚音",
+"scene": "日常对话"
+},
+{
+"suffix": "longhexuanlan",
+"name": "龙荷萱澜",
+"gender": "男",
+"age": 24,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlingchengyi",
+"name": "龙凌澄翼",
+"gender": "男",
+"age": 42,
+"trait": "清朗少年音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyanyaolu",
+"name": "龙焱瑶露",
+"gender": "男",
+"age": 42,
+"trait": "清俊少年音",
+"scene": "古风有声书"
+},
+{
+"suffix": "longtongjichuan",
+"name": "龙彤霁川",
+"gender": "女",
+"age": 25,
+"trait": "成熟知心音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlinchengquan",
+"name": "龙麟澄泉",
+"gender": "女",
+"age": 25,
+"trait": "柔怯温婉音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longhuiquanqing",
+"name": "龙晖泉晴",
+"gender": "女",
+"age": 7,
+"trait": "娇嗲甜腻音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlanlingcan",
+"name": "龙兰凌璨",
+"gender": "女",
+"age": 7,
+"trait": "纯真稚嫩音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlanquexiao",
+"name": "龙兰雀潇",
+"gender": "男",
+"age": 25,
+"trait": "温润暖男音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longmeitingsong",
+"name": "龙梅汀松",
+"gender": "男",
+"age": 29,
+"trait": "温婉成熟音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longbaikehui",
+"name": "龙柏珂晦",
+"gender": "男",
+"age": 26,
+"trait": "成熟知心音",
+"scene": "深夜电台"
+},
+{
+"suffix": "longtingjinxi",
+"name": "龙汀瑾溪",
+"gender": "男",
+"age": 25,
+"trait": "憨厚诙谐音",
+"scene": "日常对话"
+},
+{
+"suffix": "longcanlingying",
+"name": "龙璨凌莹",
+"gender": "女",
+"age": 25,
+"trait": "温柔贴心音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyanlianyao",
+"name": "龙焱涟瑶",
+"gender": "女",
+"age": 16,
+"trait": "灵动戏腔音",
+"scene": "日常对话"
+},
+{
+"suffix": "longximusong",
+"name": "龙曦暮松",
+"gender": "女",
+"age": 28,
+"trait": "鬼马调皮音",
+"scene": "日常对话"
+},
+{
+"suffix": "longchexueyue",
+"name": "龙澈雪月",
+"gender": "女",
+"age": 7,
+"trait": "憨厚诙谐音",
+"scene": "日常对话"
+},
+{
+"suffix": "longhuichengfu",
+"name": "龙晖澄芙",
+"gender": "男",
+"age": 8,
+"trait": "慵懒童趣音",
+"scene": "日常对话"
+},
+{
+"suffix": "longchengdieshuo",
+"name": "龙澄蝶烁",
+"gender": "男",
+"age": 24,
+"trait": "少年指挥音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlanyimo",
+"name": "龙澜熠沫",
+"gender": "女",
+"age": 25,
+"trait": "温柔贴心音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxiuquanwang",
+"name": "龙岫泉望",
+"gender": "女",
+"age": 25,
+"trait": "温甜柔美音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longquediechuan",
+"name": "龙鹊蝶川",
+"gender": "女",
+"age": 27,
+"trait": "温柔贴心音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyanyuju",
+"name": "龙妍煜菊",
+"gender": "女",
+"age": 25,
+"trait": "憨萌逗趣音",
+"scene": "日常对话"
+},
+{
+"suffix": "longnilanfeng",
+"name": "龙霓岚凤",
+"gender": "女",
+"age": 26,
+"trait": "成熟知心音",
+"scene": "有声阅读"
+},
+{
+"suffix": "longxiangxiaozheng",
+"name": "龙湘霄筝",
+"gender": "女",
+"age": 7,
+"trait": "活泼灵动音",
+"scene": "社交互动"
+},
+{
+"suffix": "longfengmeiwei",
+"name": "龙峰梅薇",
+"gender": "女",
+"age": 24,
+"trait": "温柔贴心音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longjuqinshuang",
+"name": "龙菊琴霜",
+"gender": "男",
+"age": 42,
+"trait": "温润暖男音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyandierong",
+"name": "龙焱蝶蓉",
+"gender": "男",
+"age": 24,
+"trait": "惊恐不安音",
+"scene": "日常对话"
+},
+{
+"suffix": "longkechengji",
+"name": "龙珂澄霁",
+"gender": "男",
+"age": 24,
+"trait": "清朗少年音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlanbailan",
+"name": "龙嵐柏澜",
+"gender": "女",
+"age": 25,
+"trait": "温柔贴心音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlanjunxing",
+"name": "龙澜珺星",
+"gender": "女",
+"age": 25,
+"trait": "温婉成熟音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longshuangjinlan",
+"name": "龙霜瑾澜",
+"gender": "女",
+"age": 25,
+"trait": "御姐成熟音",
+"scene": "有声书配音"
+},
+{
+"suffix": "longjinlianxiao",
+"name": "龙瑾涟晓",
+"gender": "女",
+"age": 26,
+"trait": "沉稳有力音",
+"scene": "有声阅读"
+},
+{
+"suffix": "longlanfengyu",
+"name": "龙嵐凤羽",
+"gender": "女",
+"age": 24,
+"trait": "成熟沉稳音",
+"scene": "日常对话"
+},
+{
+"suffix": "longshuangchexiao",
+"name": "龙霜澈霄",
+"gender": "女",
+"age": 23,
+"trait": "傲娇闺秀音",
+"scene": "古风有声书"
+},
+{
+"suffix": "longlingjinquan",
+"name": "龙凌瑾泉",
+"gender": "女",
+"age": 24,
+"trait": "元气少女音",
+"scene": "社交互动"
+},
+{
+"suffix": "longlanlingying",
+"name": "龙嵐凌莹",
+"gender": "女",
+"age": 24,
+"trait": "灵动少女音",
+"scene": "社交互动"
+},
+{
+"suffix": "longlanqinluan",
+"name": "龙兰琴鸾",
+"gender": "女",
+"age": 25,
+"trait": "沉稳知性音",
+"scene": "知识分享"
+},
+{
+"suffix": "longxiaoyulan",
+"name": "龙霄羽岚",
+"gender": "女",
+"age": 20,
+"trait": "成熟御姐音",
+"scene": "有声书配音"
+},
+{
+"suffix": "longyuxiangfeng",
+"name": "龙煜湘凤",
+"gender": "女",
+"age": 26,
+"trait": "温柔知性音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxuefenghe",
+"name": "龙雪风荷",
+"gender": "女",
+"age": 22,
+"trait": "甜萌可爱音",
+"scene": "社交互动"
+},
+{
+"suffix": "longlingtingxiu",
+"name": "龙岭汀岫",
+"gender": "女",
+"age": 29,
+"trait": "温柔邻家音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longkeyanyu",
+"name": "龙珂焱瑜",
+"gender": "女",
+"age": 26,
+"trait": "稳重沉着音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyanhonglin",
+"name": "龙焱虹琳",
+"gender": "女",
+"age": 27,
+"trait": "温柔俏皮音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxiaoxianglian",
+"name": "龙潇湘涟",
+"gender": "女",
+"age": 24,
+"trait": "御姐成熟音",
+"scene": "有声书配音"
+},
+{
+"suffix": "longlingxingyi",
+"name": "龙岭星翼",
+"gender": "女",
+"age": 27,
+"trait": "成熟御姐音",
+"scene": "有声书配音"
+},
+{
+"suffix": "longdiemujun",
+"name": "龙蝶暮珺",
+"gender": "女",
+"age": 9,
+"trait": "柔弱楚楚音",
+"scene": "日常对话"
+},
+{
+"suffix": "longhuilingfu",
+"name": "龙辉岭芙",
+"gender": "女",
+"age": 25,
+"trait": "温柔俏皮音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longjishuangmu",
+"name": "龙霁霜暮",
+"gender": "女",
+"age": 25,
+"trait": "善解人意音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longjushuorong",
+"name": "龙菊朔蓉",
+"gender": "女",
+"age": 25,
+"trait": "温柔知性音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longtaoxingque",
+"name": "龙桃星鹊",
+"gender": "男",
+"age": 25,
+"trait": "清朗少年音",
+"scene": "日常对话"
+},
+{
+"suffix": "longsonglinwang",
+"name": "龙松麟望",
+"gender": "男",
+"age": 36,
+"trait": "温润磁性音",
+"scene": "深夜电台"
+},
+{
+"suffix": "longxiaoyanling",
+"name": "龙潇焱岭",
+"gender": "男",
+"age": 28,
+"trait": "温润磁性音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longhuiheting",
+"name": "龙晦荷汀",
+"gender": "男",
+"age": 25,
+"trait": "清朗少年音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxinchuanyi",
+"name": "龙昕川漪",
+"gender": "男",
+"age": 24,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longshanxiulian",
+"name": "龙杉岫涟",
+"gender": "男",
+"age": 26,
+"trait": "善解人意音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlangjishuo",
+"name": "龙朗霁朔",
+"gender": "女",
+"age": 25,
+"trait": "温柔亲和音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyanchuantao",
+"name": "龙焱川桃",
+"gender": "女",
+"age": 25,
+"trait": "柔怯温婉音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxiaolinzhi",
+"name": "龙霄琳芷",
+"gender": "女",
+"age": 26,
+"trait": "温婉成熟音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longhuiyingwang",
+"name": "龙晦樱望",
+"gender": "女",
+"age": 24,
+"trait": "温柔知性音",
+"scene": "知识分享"
+},
+{
+"suffix": "longyuchuanlan",
+"name": "龙瑜川岚",
+"gender": "男",
+"age": 29,
+"trait": "温婉成熟音",
+"scene": "日常对话"
+},
+{
+"suffix": "longjinmeicheng",
+"name": "龙瑾梅澄",
+"gender": "男",
+"age": 27,
+"trait": "成熟沉稳音",
+"scene": "日常对话"
+},
+{
+"suffix": "longluanlanju",
+"name": "龙鸾岚菊",
+"gender": "女",
+"age": 25,
+"trait": "元气少女音",
+"scene": "社交互动"
+},
+{
+"suffix": "longjintongxi",
+"name": "龙瑾彤溪",
+"gender": "女",
+"age": 25,
+"trait": "雍容宫廷音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxulianxia",
+"name": "龙旭莲霞",
+"gender": "女",
+"age": 24,
+"trait": "温甜柔美音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxinglianwei",
+"name": "龙杏涟薇",
+"gender": "女",
+"age": 25,
+"trait": "雍容宫廷音",
+"scene": "日常对话"
+},
+{
+"suffix": "longweihezheng",
+"name": "龙薇荷筝",
+"gender": "女",
+"age": 21,
+"trait": "甜萌可爱音",
+"scene": "社交互动"
+},
+{
+"suffix": "longrongshuangxuan",
+"name": "龙蓉霜暄",
+"gender": "女",
+"age": 25,
+"trait": "温柔知性音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longcanruishuang",
+"name": "龙璨蕊霜",
+"gender": "女",
+"age": 8,
+"trait": "甜萌可爱音",
+"scene": "社交互动"
+},
+{
+"suffix": "longyuetongling",
+"name": "龙玥彤岭",
+"gender": "女",
+"age": 24,
+"trait": "温柔贴心音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyunlingbai",
+"name": "龙云凌柏",
+"gender": "女",
+"age": 8,
+"trait": "甜萌可爱音",
+"scene": "动漫配音"
+},
+{
+"suffix": "longchuanxuxing",
+"name": "龙川旭杏",
+"gender": "女",
+"age": 24,
+"trait": "温润磁性音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longkejinhui",
+"name": "龙珂瑾晖",
+"gender": "女",
+"age": 24,
+"trait": "温甜柔美音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxuchengrui",
+"name": "龙旭澄蕊",
+"gender": "女",
+"age": 24,
+"trait": "温柔贴心音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longshandiefeng",
+"name": "龙杉蝶风",
+"gender": "女",
+"age": 20,
+"trait": "温甜柔美音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlanfengxia",
+"name": "龙澜枫霞",
+"gender": "女",
+"age": 24,
+"trait": "温柔贴心音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longfengxiaolin",
+"name": "龙风晓琳",
+"gender": "男",
+"age": 25,
+"trait": "温润暖男音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyuejinxiu",
+"name": "龙玥瑾岫",
+"gender": "男",
+"age": 24,
+"trait": "成熟稳重音",
+"scene": "日常对话"
+},
+{
+"suffix": "longhexiaofeng",
+"name": "龙荷潇峰",
+"gender": "男",
+"age": 37,
+"trait": "硬朗阳刚音",
+"scene": "日常对话"
+},
+{
+"suffix": "longzhuyuebai",
+"name": "龙竹玥柏",
+"gender": "女",
+"age": 25,
+"trait": "阳光开朗音",
+"scene": "知识分享"
+},
+{
+"suffix": "longhuiliantong",
+"name": "龙晖莲彤",
+"gender": "女",
+"age": 25,
+"trait": "温柔贴心音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longhongyanxuan",
+"name": "龙虹妍璇",
+"gender": "女",
+"age": 25,
+"trait": "威严将领音",
+"scene": "体育解说"
+},
+{
+"suffix": "longshanyancan",
+"name": "龙杉焱璨",
+"gender": "女",
+"age": 25,
+"trait": "热忱推荐音",
+"scene": "商务汇报"
+},
+{
+"suffix": "longxiangkeyao",
+"name": "龙湘珂瑶",
+"gender": "女",
+"age": 24,
+"trait": "活泼开朗音",
+"scene": "日常对话"
+},
+{
+"suffix": "longfenghechuan",
+"name": "龙枫荷川",
+"gender": "女",
+"age": 25,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyunfuhong",
+"name": "龙云芙鸿",
+"gender": "女",
+"age": 25,
+"trait": "标准播音音",
+"scene": "新闻播报"
+},
+{
+"suffix": "longlanweiyue",
+"name": "龙岚薇玥",
+"gender": "女",
+"age": 25,
+"trait": "温柔知心音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longfuxuyu",
+"name": "龙芙旭羽",
+"gender": "女",
+"age": 24,
+"trait": "专业解说音",
+"scene": "体育解说"
+},
+{
+"suffix": "longyuxuanmei",
+"name": "龙雨暄梅",
+"gender": "女",
+"age": 24,
+"trait": "温柔哀婉音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longbaifengshuo",
+"name": "龙柏凤朔",
+"gender": "女",
+"age": 24,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longwangmeican",
+"name": "龙望梅璨",
+"gender": "女",
+"age": 23,
+"trait": "爽朗大笑音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyanzhihe",
+"name": "龙焱芷荷",
+"gender": "女",
+"age": 8,
+"trait": "温甜柔美音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxiuxiayu",
+"name": "龙岫霞煜",
+"gender": "女",
+"age": 24,
+"trait": "温甜柔美音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxianlingling",
+"name": "龙弦凌岭",
+"gender": "女",
+"age": 25,
+"trait": "磁性质感音",
+"scene": "深夜电台"
+},
+{
+"suffix": "longlanrongshuo",
+"name": "龙嵐蓉朔",
+"gender": "女",
+"age": 26,
+"trait": "搞怪卡通音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyiqinghui",
+"name": "龙漪晴晦",
+"gender": "女",
+"age": 60,
+"trait": "慈祥祖母音",
+"scene": "日常对话"
+},
+{
+"suffix": "longchezhuyu",
+"name": "龙澈竹雨",
+"gender": "女",
+"age": 25,
+"trait": "自然亲和音",
+"scene": "智能助手"
+},
+{
+"suffix": "longchengliansong",
+"name": "龙澄涟松",
+"gender": "女",
+"age": 23,
+"trait": "游戏解说音",
+"scene": "日常对话"
+},
+{
+"suffix": "longtingquezhu",
+"name": "龙汀鹊竹",
+"gender": "女",
+"age": 23,
+"trait": "运动喘息音",
+"scene": "日常对话"
+},
+{
+"suffix": "longtongmuyuan",
+"name": "龙彤暮渊",
+"gender": "男",
+"age": 38,
+"trait": "焦躁烦闷音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyuxiulan",
+"name": "龙雨岫兰",
+"gender": "男",
+"age": 19,
+"trait": "撒娇甜蜜音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxiucheyu",
+"name": "龙岫澈雨",
+"gender": "男",
+"age": 26,
+"trait": "温润磁性音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlangjunji",
+"name": "龙朗珺霁",
+"gender": "女",
+"age": 24,
+"trait": "温柔知性音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlianyunxia",
+"name": "龙莲云霞",
+"gender": "女",
+"age": 26,
+"trait": "凌厉剑气音",
+"scene": "日常对话"
+},
+{
+"suffix": "longmoyulu",
+"name": "龙沫雨露",
+"gender": "女",
+"age": 19,
+"trait": "热血激昂音",
+"scene": "体育解说"
+},
+{
+"suffix": "longjinlinfeng",
+"name": "龙瑾麟枫",
+"gender": "女",
+"age": 25,
+"trait": "大方温和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longqinghexi",
+"name": "龙晴鹤溪",
+"gender": "女",
+"age": 24,
+"trait": "温柔知心音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyilanni",
+"name": "龙漪兰霓",
+"gender": "女",
+"age": 21,
+"trait": "热血激昂音",
+"scene": "体育解说"
+},
+{
+"suffix": "longlanxinglin",
+"name": "龙岚星琳",
+"gender": "女",
+"age": 42,
+"trait": "智慧祖母音",
+"scene": "日常对话"
+},
+{
+"suffix": "longjimoyan",
+"name": "龙霁沫燕",
+"gender": "女",
+"age": 24,
+"trait": "温柔贴心音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longruirongxiu",
+"name": "龙蕊蓉岫",
+"gender": "男",
+"age": 26,
+"trait": "随性自在音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyingtaoji",
+"name": "龙莹桃霁",
+"gender": "男",
+"age": 25,
+"trait": "成熟稳重音",
+"scene": "日常对话"
+},
+{
+"suffix": "longfengxindie",
+"name": "龙风昕蝶",
+"gender": "女",
+"age": 26,
+"trait": "亲和自然音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxuanyinglu",
+"name": "龙萱樱露",
+"gender": "女",
+"age": 25,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longqinghuilang",
+"name": "龙晴辉朗",
+"gender": "女",
+"age": 24,
+"trait": "知性姐姐音",
+"scene": "知识分享"
+},
+{
+"suffix": "longronghongxue",
+"name": "龙蓉虹雪",
+"gender": "女",
+"age": 24,
+"trait": "专业解说音",
+"scene": "日常对话"
+},
+{
+"suffix": "longruimoliu",
+"name": "龙蕊沫柳",
+"gender": "女",
+"age": 28,
+"trait": "自然亲和音",
+"scene": "日常对话"
+},
+{
+"suffix": "longhexiaoxuan",
+"name": "龙荷潇璇",
+"gender": "男",
+"age": 38,
+"trait": "文雅书卷音",
+"scene": "古风有声书"
+},
+{
+"suffix": "longchengyuhui",
+"name": "龙澄瑜辉",
+"gender": "女",
+"age": 8,
+"trait": "调皮少年音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxuanlinju",
+"name": "龙萱琳菊",
+"gender": "女",
+"age": 22,
+"trait": "大方温和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlinlinying",
+"name": "龙麟琳莹",
+"gender": "女",
+"age": 22,
+"trait": "伤感低回音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyilangyan",
+"name": "龙熠朗燕",
+"gender": "女",
+"age": 24,
+"trait": "温柔知性音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longshuanglanhui",
+"name": "龙霜岚晖",
+"gender": "女",
+"age": 25,
+"trait": "大方温和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyiyuxian",
+"name": "龙漪瑜弦",
+"gender": "女",
+"age": 8,
+"trait": "温柔知性音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longsonglinhe",
+"name": "龙松琳鹤",
+"gender": "女",
+"age": 25,
+"trait": "温柔知性音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxuanzhilin",
+"name": "龙萱芷琳",
+"gender": "女",
+"age": 25,
+"trait": "耐心教导音",
+"scene": "日常对话"
+},
+{
+"suffix": "longfengyuxiao",
+"name": "龙峰雨霄",
+"gender": "男",
+"age": 29,
+"trait": "温润磁性音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxiaoyihe",
+"name": "龙霄漪荷",
+"gender": "男",
+"age": 42,
+"trait": "温润暖男音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlianyingyue",
+"name": "龙莲樱玥",
+"gender": "女",
+"age": 28,
+"trait": "成熟知心音",
+"scene": "日常对话"
+},
+{
+"suffix": "longqingyiyao",
+"name": "龙晴翼瑶",
+"gender": "女",
+"age": 25,
+"trait": "大方温和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longshuangweihe",
+"name": "龙霜薇鹤",
+"gender": "女",
+"age": 24,
+"trait": "惊奇讶异音",
+"scene": "日常对话"
+},
+{
+"suffix": "longquantaolan",
+"name": "龙泉桃嵐",
+"gender": "女",
+"age": 27,
+"trait": "成熟沉稳音",
+"scene": "日常对话"
+},
+{
+"suffix": "longchuanyingyue",
+"name": "龙川樱玥",
+"gender": "男",
+"age": 38,
+"trait": "腹黑深沉音",
+"scene": "日常对话"
+},
+{
+"suffix": "longliutaohong",
+"name": "龙柳桃虹",
+"gender": "女",
+"age": 22,
+"trait": "傲娇俏皮音",
+"scene": "社交互动"
+},
+{
+"suffix": "longrongxianyu",
+"name": "龙蓉弦煜",
+"gender": "女",
+"age": 26,
+"trait": "雍容宫廷音",
+"scene": "古风有声书"
+},
+{
+"suffix": "longluanxuanling",
+"name": "龙鸾萱凌",
+"gender": "女",
+"age": 25,
+"trait": "温柔姐姐音",
+"scene": "知识分享"
+},
+{
+"suffix": "longhefenglian",
+"name": "龙鹤峰涟",
+"gender": "女",
+"age": 24,
+"trait": "清亮明朗音",
+"scene": "日常对话"
+},
+{
+"suffix": "longjunfuyu",
+"name": "龙珺芙羽",
+"gender": "女",
+"age": 23,
+"trait": "慵懒童趣音",
+"scene": "日常对话"
+},
+{
+"suffix": "longfengqinji",
+"name": "龙峰琴霁",
+"gender": "女",
+"age": 26,
+"trait": "温润磁性音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyingyiyu",
+"name": "龙樱翼瑜",
+"gender": "女",
+"age": 23,
+"trait": "萌宠拟声音",
+"scene": "日常对话"
+},
+{
+"suffix": "longchezhihong",
+"name": "龙澈芷虹",
+"gender": "女",
+"age": 26,
+"trait": "耐心教导音",
+"scene": "日常对话"
+},
+{
+"suffix": "longfulingmu",
+"name": "龙芙凌暮",
+"gender": "女",
+"age": 24,
+"trait": "正太变声音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxuansongxing",
+"name": "龙璇松杏",
+"gender": "女",
+"age": 24,
+"trait": "柔弱楚楚音",
+"scene": "日常对话"
+},
+{
+"suffix": "longhecherong",
+"name": "龙鹤澈蓉",
+"gender": "女",
+"age": 16,
+"trait": "清亮明朗音",
+"scene": "动漫配音"
+},
+{
+"suffix": "longlianlanyuan",
+"name": "龙莲嵐渊",
+"gender": "女",
+"age": 25,
+"trait": "温柔贴心音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxiutongni",
+"name": "龙岫桐霓",
+"gender": "女",
+"age": 24,
+"trait": "清亮明朗音",
+"scene": "日常对话"
+},
+{
+"suffix": "longtongheji",
+"name": "龙桐荷霁",
+"gender": "女",
+"age": 25,
+"trait": "温润磁性音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longfengmohui",
+"name": "龙枫沫晖",
+"gender": "女",
+"age": 26,
+"trait": "温柔贴心音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longquanxuanshuang",
+"name": "龙泉暄霜",
+"gender": "女",
+"age": 23,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlinheyi",
+"name": "龙麟荷熠",
+"gender": "女",
+"age": 22,
+"trait": "温柔贴心音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longhuisongxiao",
+"name": "龙晦松晓",
+"gender": "女",
+"age": 27,
+"trait": "御姐成熟音",
+"scene": "有声书配音"
+},
+{
+"suffix": "longyiyushuo",
+"name": "龙翼雨烁",
+"gender": "女",
+"age": 14,
+"trait": "威严将领音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxinyuanxing",
+"name": "龙昕渊星",
+"gender": "女",
+"age": 7,
+"trait": "慵懒童趣音",
+"scene": "日常对话"
+},
+{
+"suffix": "longxiaoxingyi",
+"name": "龙晓星漪",
+"gender": "女",
+"age": 23,
+"trait": "灵动少女音",
+"scene": "社交互动"
+},
+{
+"suffix": "longlianjinxing",
+"name": "龙涟瑾星",
+"gender": "女",
+"age": 26,
+"trait": "温柔知性音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longshanzhengqin",
+"name": "龙杉筝琴",
+"gender": "女",
+"age": 24,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longxuantaoshuo",
+"name": "龙萱桃烁",
+"gender": "女",
+"age": 9,
+"trait": "元气活力音",
+"scene": "动漫配音"
+},
+{
+"suffix": "longlingweiluan",
+"name": "龙翎薇鸾",
+"gender": "女",
+"age": 24,
+"trait": "雍容宫廷音",
+"scene": "古风有声书"
+},
+{
+"suffix": "longfengxiuche",
+"name": "龙凤岫澈",
+"gender": "女",
+"age": 24,
+"trait": "温柔邻家音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longlinshuoxi",
+"name": "龙琳朔溪",
+"gender": "女",
+"age": 23,
+"trait": "温柔知性音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longyaofenghe",
+"name": "龙瑶凤鹤",
+"gender": "女",
+"age": 23,
+"trait": "磁性质感音",
+"scene": "深夜电台"
+},
+{
+"suffix": "longyucanxiao",
+"name": "龙雨璨晓",
+"gender": "女",
+"age": 22,
+"trait": "清亮明朗音",
+"scene": "社交互动"
+},
+{
+"suffix": "longxilanque",
+"name": "龙溪澜雀",
+"gender": "女",
+"age": 24,
+"trait": "柔怯温婉音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longcheqinyi",
+"name": "龙澈琴漪",
+"gender": "女",
+"age": 25,
+"trait": "清亮明朗音",
+"scene": "社交互动"
+},
+{
+"suffix": "longxuequanshuo",
+"name": "龙雪泉朔",
+"gender": "女",
+"age": 24,
+"trait": "磁性质感音",
+"scene": "深夜电台"
+},
+{
+"suffix": "longshanyuxing",
+"name": "龙杉瑜星",
+"gender": "女",
+"age": 25,
+"trait": "灵动少女音",
+"scene": "社交互动"
+},
+{
+"suffix": "longlantongluan",
+"name": "龙岚彤鸾",
+"gender": "女",
+"age": 24,
+"trait": "大气司仪音",
+"scene": "日常对话"
+},
+{
+"suffix": "longbaichexuan",
+"name": "龙柏澈萱",
+"gender": "男",
+"age": 28,
+"trait": "磁性质感音",
+"scene": "深夜电台"
+},
+{
+"suffix": "longlangmoyue",
+"name": "龙朗沫玥",
+"gender": "男",
+"age": 42,
+"trait": "沉稳内敛音",
+"scene": "有声阅读"
+},
+{
+"suffix": "longwangjixi",
+"name": "龙望霁溪",
+"gender": "男",
+"age": 25,
+"trait": "睿智亲和音",
+"scene": "日常对话"
+},
+{
+"suffix": "longshuangqinque",
+"name": "龙霜琴雀",
+"gender": "女",
+"age": 25,
+"trait": "成熟知心音",
+"scene": "日常对话"
+},
+{
+"suffix": "longkeyuecan",
+"name": "龙珂月璨",
+"gender": "女",
+"age": 7,
+"trait": "搞怪卡通音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyuanruiling",
+"name": "龙渊蕊翎",
+"gender": "女",
+"age": 23,
+"trait": "温柔知性音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longquefengshuo",
+"name": "龙雀枫朔",
+"gender": "女",
+"age": 26,
+"trait": "温柔姐姐音",
+"scene": "知识分享"
+},
+{
+"suffix": "longxishuoxuan",
+"name": "龙溪烁璇",
+"gender": "女",
+"age": 26,
+"trait": "清亮明朗音",
+"scene": "日常对话"
+},
+{
+"suffix": "longtongquanxi",
+"name": "龙彤泉溪",
+"gender": "女",
+"age": 24,
+"trait": "温柔姐姐音",
+"scene": "日常对话"
+},
+{
+"suffix": "longhetongcan",
+"name": "龙鹤彤璨",
+"gender": "女",
+"age": 25,
+"trait": "磁性质感音",
+"scene": "古风有声书"
+},
+{
+"suffix": "longyuyuzheng",
+"name": "龙瑜羽筝",
+"gender": "女",
+"age": 24,
+"trait": "温柔亲和音",
+"scene": "日常对话"
+},
+{
+"suffix": "longjunqueyu",
+"name": "龙珺鹊羽",
+"gender": "女",
+"age": 25,
+"trait": "自然亲和音",
+"scene": "日常对话"
+},
+{
+"suffix": "longzhenglanyao",
+"name": "龙筝兰瑶",
+"gender": "女",
+"age": 8,
+"trait": "清亮明朗音",
+"scene": "社交互动"
+},
+{
+"suffix": "longqingxiaoxiang",
+"name": "龙晴霄湘",
+"gender": "女",
+"age": 27,
+"trait": "自信从容音",
+"scene": "日常对话"
+},
+{
+"suffix": "longyueyaoling",
+"name": "龙月瑶翎",
+"gender": "男",
+"age": 25,
+"trait": "成熟沉稳音",
+"scene": "日常对话"
+},
+{
+"suffix": "longlinhongxi",
+"name": "龙麟鸿溪",
+"gender": "男",
+"age": 22,
+"trait": "青年朝气音",
+"scene": "日常对话"
+},
+{
+"suffix": "longchengtingtong",
+"name": "龙澄汀桐",
+"gender": "女",
+"age": 26,
+"trait": "尖亮穿透音",
+"scene": "新闻播报"
+},
+{
+"suffix": "longtonghewei",
+"name": "龙桐荷薇",
+"gender": "女",
+"age": 28,
+"trait": "低沉深邃音",
+"scene": "有声书配音"
+},
+{
+"suffix": "longlanjulu",
+"name": "龙澜菊露",
+"gender": "女",
+"age": 25,
+"trait": "磁性质感音",
+"scene": "深夜电台"
+},
+{
+"suffix": "longyingdielin",
+"name": "龙莹蝶琳",
+"gender": "男",
+"age": 42,
+"trait": "热血激昂音",
+"scene": "体育解说"
+},
+{
+"suffix": "longyulianrong",
+"name": "龙羽莲蓉",
+"gender": "男",
+"age": 28,
+"trait": "沉稳解说音",
+"scene": "有声阅读"
+},
+{
+"suffix": "longhuiyanxing",
+"name": "龙辉焱杏",
+"gender": "男",
+"age": 42,
+"trait": "沉稳解说音",
+"scene": "有声阅读"
+},
+{
+"suffix": "longquexuhui",
+"name": "龙雀旭辉",
+"gender": "女",
+"age": 35,
+"trait": "自然亲和音",
+"scene": "日常对话"
+},
+{
+"suffix": "longkeyuwang",
+"name": "龙珂煜望",
+"gender": "女",
+"age": 27,
+"trait": "专业解说音",
+"scene": "体育解说"
+},
+{
+"suffix": "longyushanluan",
+"name": "龙瑜杉鸾",
+"gender": "女",
+"age": 25,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "longweiquancheng",
+"name": "龙薇泉澄",
+"gender": "女",
+"age": 26,
+"trait": "温柔亲和音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "loongolivialin",
+"name": "Olivia Lin",
+"gender": "女",
+"age": 28,
+"trait": "温柔知性音",
+"scene": "情感陪伴"
+},
+{
+"suffix": "loonglunawang",
+"name": "Luna Wang",
+"gender": "女",
+"age": 21,
+"trait": "智能助手音",
+"scene": "日常对话"
+},
+{
+"suffix": "loongalexanderhu",
+"name": "Alexander Hu",
+"gender": "男",
+"age": 27,
+"trait": "复古磁带音",
+"scene": "日常对话"
+},
+{
+"suffix": "loongnorahu",
+"name": "Nora Hu",
+"gender": "女",
+"age": 25,
+"trait": "活泼灵动音",
+"scene": "日常对话"
+},
+{
+"suffix": "loongadriangao",
+"name": "Adrian Gao",
+"gender": "男",
+"age": 22,
+"trait": "沉稳大气音",
+"scene": "有声阅读"
+},
+{
+"suffix": "loongjameszhao",
+"name": "James Zhao",
+"gender": "男",
+"age": 28,
+"trait": "新闻播报音",
+"scene": "日常对话"
+},
+{
+"suffix": "loongryanma",
+"name": "Ryan Ma",
+"gender": "男",
+"age": 38,
+"trait": "电子潮流音",
+"scene": "日常对话"
+},
+{
+"suffix": "loongivyhu",
+"name": "Ivy Hu",
+"gender": "女",
+"age": 54,
+"trait": "自信从容音",
+"scene": "演讲朗诵"
+},
+{
+"suffix": "longyingbaozi",
+"name": "龙应宝子",
+"gender": "女",
+"age": 25,
+"trait": "邻家亲切音",
+"scene": "标准通用型客服"
+},
+{
+"suffix": "longyingyali",
+"name": "龙应压力",
+"gender": "男",
+"age": 27,
+"trait": "理性告知音",
+"scene": "初期催收提醒客服"
+},
+{
+"suffix": "longyingyueyue",
+"name": "龙应越越",
+"gender": "女",
+"age": 22,
+"trait": "耐心专业音",
+"scene": "讲解引导型客服"
+},
+{
+"suffix": "longyingxiaola",
+"name": "龙应小辣",
+"gender": "女",
+"age": 25,
+"trait": "稳健顾问音",
+"scene": "理财咨询型客服"
+},
+{
+"suffix": "longyingyifan",
+"name": "龙应一帆",
+"gender": "男",
+"age": 30,
+"trait": "启蒙导师音",
+"scene": "引导新手型客服"
+},
+{
+"suffix": "longyinglanxin",
+"name": "龙应岚心",
+"gender": "女",
+"age": 23,
+"trait": "理性告知音",
+"scene": "账单提醒型客服"
+},
+{
+"suffix": "longyingmuyu",
+"name": "龙应沐语",
+"gender": "女",
+"age": 25,
+"trait": "温柔亲和音",
+"scene": "标准通用型客服"
+},
+{
+"suffix": "longyingyulu",
+"name": "龙应玉路",
+"gender": "女",
+"age": 22,
+"trait": "真诚邀请音",
+"scene": "新品推荐型客服"
+},
+{
+"suffix": "longyingmomo",
+"name": "龙应末末",
+"gender": "男",
+"age": 30,
+"trait": "诚恳稳重音",
+"scene": "理财顾问型客服"
+},
+{
+"suffix": "longyingshiyu",
+"name": "龙应时渝",
+"gender": "女",
+"age": 30,
+"trait": "干练响应音",
+"scene": "标准通用型客服"
+},
+{
+"suffix": "longyinghaitai",
+"name": "龙应海台",
+"gender": "女",
+"age": 28,
+"trait": "耐心包容音",
+"scene": "医院社区引导型客服"
+},
+{
+"suffix": "longyinghaiyuan",
+"name": "龙应海远",
+"gender": "女",
+"age": 35,
+"trait": "克制礼貌音",
+"scene": "监察回访型客服"
+},
+{
+"suffix": "longyingwumao",
+"name": "龙应吾茂",
+"gender": "男",
+"age": 30,
+"trait": "客观冷静音",
+"scene": "核保理赔型客服"
+}
+]
