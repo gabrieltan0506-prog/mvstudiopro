@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   canvasGptImage2RefundKey,
+  CREATIVE_NANO_IMAGE_TIMEOUT_MS,
   isCanvasGptImage2Job,
+  paidImageLedgerTaskType,
   resolveFailedJobDisposition,
   resolveJobTimeoutMs,
 } from "./runner";
+import { buildCreativeNanoImageJobInput } from "../../shared/creativeNanoImageJobInput";
 
 const CANVAS_INPUT = { action: "canvas_gpt_image2", params: { prompt: "p" } };
 
@@ -18,10 +21,10 @@ describe("runner · canvas_gpt_image2 墙钟/重排/退款策略(七审 P0-2)", 
   it("失败处置:canvas 出图绝不重排(重排=第二次调付费上游),无论 attempts 几次", () => {
     expect(
       resolveFailedJobDisposition({ type: "image", input: CANVAS_INPUT, attempts: 0 }),
-    ).toBe("refund_and_fail_canvas_image");
+    ).toBe("refund_and_fail_paid_image");
     expect(
       resolveFailedJobDisposition({ type: "image", input: CANVAS_INPUT, attempts: 1 }),
-    ).toBe("refund_and_fail_canvas_image");
+    ).toBe("refund_and_fail_paid_image");
     // 其他任务维持旧策略:attempts<2 重排,否则失败
     expect(
       resolveFailedJobDisposition({ type: "image", input: { action: "kling_image" }, attempts: 1 }),
@@ -52,5 +55,22 @@ describe("runner · canvas_gpt_image2 墙钟/重排/退款策略(七审 P0-2)", 
     expect(isCanvasGptImage2Job({ action: "manhua_template_learn" })).toBe(false);
     expect(isCanvasGptImage2Job(null)).toBe(false);
     expect(isCanvasGptImage2Job([CANVAS_INPUT])).toBe(false);
+  });
+
+  it("Creative Nano 固定 8 分钟墙钟、持久账本类型，失败绝不重排烧第二次上游", () => {
+    const nano = buildCreativeNanoImageJobInput({ prompt: "p", aspectRatio: "16:9" });
+    expect(resolveJobTimeoutMs("image", nano)).toBe(CREATIVE_NANO_IMAGE_TIMEOUT_MS);
+    expect(paidImageLedgerTaskType(nano)).toBe("creativeNanoImage");
+    expect(resolveFailedJobDisposition({ type: "image", input: nano, attempts: 0 }))
+      .toBe("refund_and_fail_paid_image");
+  });
+
+  it("Canvas 标准图与资产标准化走各自账本目录", () => {
+    expect(paidImageLedgerTaskType(CANVAS_INPUT)).toBe("canvasGptImage2");
+    expect(paidImageLedgerTaskType({
+      action: "canvas_gpt_image2",
+      params: { assetStandardizeQuality: "high" },
+    })).toBe("manhuaAssetStandardize");
+    expect(paidImageLedgerTaskType({ action: "nano_image" })).toBeNull();
   });
 });

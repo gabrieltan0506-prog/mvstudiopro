@@ -4,17 +4,13 @@ import { describe, it, expect, vi } from "vitest";
 vi.setConfig({ testTimeout: 60_000 });
 
 // Test the veo module's helper functions and structure
-describe("Veo Video Generation", () => {
-  it("isVeoAvailable returns true when GEMINI_API_KEY is set", async () => {
-    // The env should have GEMINI_API_KEY set
+describe("已淘汰的 Veo 视频入口", () => {
+  it("无论环境变量如何都不再宣告可用", async () => {
     const { isVeoAvailable } = await import("./veo");
-    // In test env, the key may or may not be set, just verify the function works
-    const result = isVeoAvailable();
-    expect(typeof result).toBe("boolean");
+    expect(isVeoAvailable()).toBe(false);
   });
 
-  it("generateVideo rejects when video credentials are missing", async () => {
-    // Temporarily unset the key
+  it("生成调用在读取凭证或接触上游前硬拒绝", async () => {
     const originalKey = process.env.GEMINI_API_KEY;
     delete process.env.GEMINI_API_KEY;
 
@@ -25,9 +21,7 @@ describe("Veo Video Generation", () => {
     await expect(generateVideo({
       prompt: "test video",
       quality: "fast",
-      // 视频生成已从 Gemini API key 迁到 Vertex，缺凭证时抛的是 missing_env_VERTEX_*。
-      // 这里只锁「缺凭证必须硬失败」，不锁具体是哪个变量。
-    })).rejects.toThrow(/GEMINI_API_KEY|missing_env_VERTEX/);
+    })).rejects.toThrow(/video_engine_retired/);
 
     // Restore
     process.env.GEMINI_API_KEY = originalKey;

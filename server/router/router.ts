@@ -32,8 +32,8 @@ export function routeModel(kind: RouteKind, input: RouteInput = {}): RouteResult
 
   if (kind === "video") {
     return {
-      provider: "vertex",
-      model: input.preferredModel || "veo-3.1-generate-001",
+      provider: "kling",
+      model: input.preferredModel || "kling-v2-6",
       config: {},
     };
   }

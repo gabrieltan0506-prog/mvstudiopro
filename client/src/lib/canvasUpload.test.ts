@@ -8,7 +8,7 @@ import {
 
 vi.mock("@/lib/omniCanvasApi", () => ({
   uploadFileToSignedUrl: vi.fn(async () => undefined),
-  resolveOmniMaterialUrl: vi.fn(async (gcsUri: string) => `https://signed.example/${encodeURIComponent(gcsUri)}`),
+  resolveCanvasMaterialUrl: vi.fn(async (gcsUri: string) => `https://signed.example/${encodeURIComponent(gcsUri)}`),
 }));
 
 describe("canvasUpload", () => {

@@ -15,18 +15,13 @@ import {
   type AspectRatio169Or916,
 } from "@shared/jsonDirectorMiddleware";
 import { buildCanvasGptImage2JobInput } from "@shared/canvasGptImage2JobInput";
+import { buildCreativeNanoImageJobInput } from "@shared/creativeNanoImageJobInput";
 import { HAILUO_OPENROUTER_FIXED_DURATION_SEC } from "@shared/hailuoOpenRouterModels";
 import { Sparkles, Image as ImageIcon, Video, LoaderCircle } from "lucide-react";
 import Image2TemplatePicker from "@/components/Image2TemplatePicker";
 import { toast } from "sonner";
 
-/**
- * Veo 仍由前端扣（它不走 `api/jobs` 的成片接口）。
- * Seedance / H3 的价格已收口到 `shared/canvasGenerationPricing`，由服务端按时长扣，前端不再重复定价。
- */
-const CREATIVE_VIDEO_CREDITS_VEO_31 = 54;
-/** 成片时长：Veo 8s、Seedance 10s、H3 固定 15s（与 API 参数一致） */
-const CREATIVE_VIDEO_DURATION_VEO_SEC = 8;
+/** 成片时长：Seedance 10s、H3 固定 15s（与 API 参数一致） */
 const CREATIVE_VIDEO_DURATION_SEEDANCE_SEC = 10;
 const CREATIVE_VIDEO_DURATION_HAILUO_SEC = HAILUO_OPENROUTER_FIXED_DURATION_SEC;
 
@@ -42,7 +37,6 @@ export default function CreativePage() {
   const [videoAspect, setVideoAspect] = useState("16:9");
   const [imageModel, setImageModel] = useState("gemini-3.1-flash-image-preview");
   
-  const chargeStepMutation = trpc.workflow.chargeStep.useMutation();
   const optimizeCopyMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
 
   const subQuery = trpc.stripe.getSubscription.useQuery(undefined, {
@@ -134,22 +128,26 @@ export default function CreativePage() {
         if (!url) throw new Error("生图失败：未返回图片");
         setImageUrl(url);
       } else {
-        // 八审 P0-1:改用独立强制计费 op creativeNanoImage——服务端强制登录、锁死
-        // Flash/1K/定价35、失败自动退;前端不能靠省略字段免费,也不能传 Pro/4K 骗低价。
-        const res = await fetch(`/api/google?op=creativeNanoImage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({
-            prompt: imagePrompt,
-            aspectRatio,
-          })
+        /**
+         * Nano 与 GPT-image-2 一样只走 Fly 短入队：固定 Flash/1K/35 分，worker 持久
+         * 账本负责失败补退与成功结算。Vercel 同步入口已 410，不再承担扣费或生成。
+         */
+        const { jobId } = await createJobSameOrigin({
+          type: "image",
+          userId: user?.id ? String(user.id) : "",
+          input: buildCreativeNanoImageJobInput({ prompt: imagePrompt, aspectRatio }),
         });
-        const json = await res.json();
-        if (!res.ok || !json.imageUrl) {
-          throw new Error(json.error || json.message || "生图失败");
+        const job = await pollJobUntilTerminal(jobId, {
+          maxWaitMs: 10 * 60_000,
+          intervalMs: 2500,
+        });
+        if (job.status !== "succeeded") {
+          throw new Error(job.error || "生图失败");
         }
-        setImageUrl(json.imageUrl || json.imageUrls?.[0]);
+        const out = (job.output || {}) as { imageUrl?: string; imageUrls?: string[] };
+        const url = String(out.imageUrl || out.imageUrls?.[0] || "").trim();
+        if (!url) throw new Error("生图失败：未返回图片");
+        setImageUrl(url);
       }
     } catch (err: any) {
       setError(err.message || "生成图片失败");
@@ -175,21 +173,6 @@ export default function CreativePage() {
     setVideoUrl("");
     
     try {
-      /**
-       * Seedance 与 H3 的扣费已收口到服务端（`api/jobs.ts` 的 `chargeCanvasVideoAndRun`），
-       * 这里再扣一次就是双扣。Veo 走的不是那两个接口，仍由前端扣。
-       */
-      const chargeOnClient = videoModel === "veo-3.1";
-      if (chargeOnClient) {
-        // 七审 P0-1:客户端退款能力已下线;失败退款迁往服务端契约
-        await chargeStepMutation.mutateAsync({
-          step: "scene_video",
-          quantity: 1,
-          creditsOverride: CREATIVE_VIDEO_CREDITS_VEO_31,
-        });
-      }
-
-
       let finalVideoUrl = "";
 
       // 成片提示词原样进引擎（已废除微动三件套减法；仅去导演名）
@@ -203,7 +186,7 @@ export default function CreativePage() {
           fetch(seedanceUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            credentials: "omit",
+            credentials: "include",
             body: JSON.stringify({
               prompt: motionPrompt,
               imageUrl,
@@ -262,45 +245,6 @@ export default function CreativePage() {
           throw new Error(json.error || json.message || "成片生成失败");
         }
         finalVideoUrl = String(json.videoUrl);
-      } else {
-        /** Veo 3.1 Pro：走 Vertex `/api/google`（与 Test Lab 一致），勿用 `/api/jobs`（会 unknown_op） */
-        const createRes = await fetch(`/api/google?op=veoCreate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            prompt: motionPrompt,
-            imageUrl,
-            provider: "pro",
-            durationSeconds: CREATIVE_VIDEO_DURATION_VEO_SEC,
-            aspectRatio: videoAspect,
-            resolution: "720p",
-          }),
-        });
-        const createJson = await createRes.json().catch(() => ({}));
-        const taskId = String(createJson?.taskId || "").trim();
-        if (!createRes.ok || !taskId) {
-          throw new Error(createJson.error || createJson.message || "Veo 提交任务失败");
-        }
-
-        for (let i = 0; i < 120; i++) {
-          await new Promise((r) => setTimeout(r, 2500));
-          const pollRes = await fetch(
-            `/api/google?op=veoTask&provider=${encodeURIComponent("pro")}&taskId=${encodeURIComponent(taskId)}`,
-          );
-          if (!pollRes.ok) continue;
-          const pollJson = await pollRes.json().catch(() => ({}));
-          const status = String(pollJson?.status || "");
-          const url = String(pollJson?.videoUrl || "").trim();
-          if (url) {
-            finalVideoUrl = url;
-            break;
-          }
-          if (status.toLowerCase() === "failed") {
-            throw new Error(
-              String(pollJson?.raw?.error?.message || pollJson?.error || "Veo 任务失败"),
-            );
-          }
-        }
       }
       
       if (!finalVideoUrl) {
@@ -336,7 +280,7 @@ export default function CreativePage() {
                 <strong>生图</strong>：Nano Banana 2 每张 <strong>35</strong>；GPT-image-2 每张 <strong>54</strong>。
               </li>
               <li>
-                <strong>转视频</strong>：Veo 3.1，<strong>8 秒</strong> / <strong>54</strong> 积分。Seedance 2.0，<strong>10 秒</strong> /{" "}
+                <strong>转视频</strong>：Seedance 2.0，<strong>10 秒</strong> /{" "}
                 <strong>118</strong> 积分。失败退还。
               </li>
             </ul>
@@ -392,7 +336,6 @@ export default function CreativePage() {
                       onChange={(e) => setVideoModel(e.target.value)}
                       className="rounded-lg border border-white/15 bg-[#0b1020] p-2 text-sm text-white outline-none"
                     >
-                      <option value="veo-3.1">Veo 3.1</option>
                       <option value="seedance-2.0">成片·标准（限付费）</option>
                       <option value="seedance-2.0-fast">成片·快速（限付费）</option>
                       <option value="minimax-hailuo-3">成片·H3（2K · 限付费）</option>
@@ -422,9 +365,7 @@ export default function CreativePage() {
                     <div className="text-sm font-semibold text-white/50 border border-white/10 bg-white/5 px-3 py-1.5 rounded-lg">
                       {videoModel === "minimax-hailuo-3"
                         ? `${CREATIVE_VIDEO_DURATION_HAILUO_SEC} 秒`
-                        : videoModel === "seedance-2.0" || videoModel === "seedance-2.0-fast"
-                          ? `${CREATIVE_VIDEO_DURATION_SEEDANCE_SEC} 秒`
-                          : `${CREATIVE_VIDEO_DURATION_VEO_SEC} 秒`}
+                        : `${CREATIVE_VIDEO_DURATION_SEEDANCE_SEC} 秒`}
                     </div>
                   </div>
                 </div>

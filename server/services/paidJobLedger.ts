@@ -759,6 +759,48 @@ export interface ReapResult {
   cancelled: number;
 }
 
+export const PAID_JOB_LEDGER_REAP_INTERVAL_MS = 5 * 60 * 1000;
+
+/**
+ * 常驻补偿扫描器。过去只在启动/关机调用 reapStuckPaidJobs，进程长期不重启时，
+ * refund_pending/active 退款失败记录不会自动再试。这里每 5 分钟补扫一次，并用
+ * inFlight 防止上一轮 DB/卷 IO 尚未结束时重叠执行。
+ */
+export function startPaidJobLedgerReaper(options?: {
+  intervalMs?: number;
+  runImmediately?: boolean;
+  reap?: () => Promise<ReapResult>;
+}): { tick: () => Promise<ReapResult | null>; stop: () => void } {
+  const intervalMs = Math.max(
+    60_000,
+    Math.floor(Number(options?.intervalMs) || PAID_JOB_LEDGER_REAP_INTERVAL_MS),
+  );
+  const reap = options?.reap || (() => reapStuckPaidJobs());
+  let inFlight: Promise<ReapResult> | null = null;
+
+  const tick = async (): Promise<ReapResult | null> => {
+    if (inFlight) return null;
+    inFlight = reap();
+    try {
+      return await inFlight;
+    } catch (error) {
+      console.warn("[paidJobLedger] periodic reap failed:", error);
+      return null;
+    } finally {
+      inFlight = null;
+    }
+  };
+
+  const timer = setInterval(() => void tick(), intervalMs);
+  timer.unref?.();
+  if (options?.runImmediately !== false) void tick();
+
+  return {
+    tick,
+    stop: () => clearInterval(timer),
+  };
+}
+
 /**
  * 扫描所有 active hold：
  *   - lastHeartbeatAt 落后超过 staleMs（默认 5 分钟）→ 标 process_crashed + 退积分

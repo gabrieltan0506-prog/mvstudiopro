@@ -1,14 +1,10 @@
-import { DEFAULT_CANVAS_VIDEO_MODEL, isCanvasWan30VideoModel, type CanvasBlock } from "./canvasTypes";
+import { DEFAULT_CANVAS_VIDEO_MODEL, isCanvasWan30VideoModel, normalizeCanvasVideoModel, type CanvasBlock } from "./canvasTypes";
 import { isLocalMediaPointer, resolveUrlForCloudSync } from "./manhuaLocalMediaStore";
 import { withFlyHealthGate } from "./flyHealthGate";
 import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "./longJobsFlyOrigin";
 import { probeVideoDurationSec } from "./videoUpscaleApi";
 import { createJobSameOrigin, pollJobUntilTerminal } from "./jobs";
-import {
-  createOmniInteraction,
-  pollOmniInteractionUntilDone,
-  runGeminiScript,
-} from "./omniCanvasApi";
+import { runGeminiScript } from "./omniCanvasApi";
 import {
   compileI2VMotionPrompt,
   isManhuaSeedanceDirectorPrompt,
@@ -1040,68 +1036,9 @@ async function runHappyHorse(
   throw new Error(json.error || json.message || "成片生成失败");
 }
 
-export const OMNI_CLIP_DURATION_SECONDS = 10;
-
 /** 成片跟静帧：正向约束，不堆「禁止真人」以免上游拒答 */
 const MANHUA_VIDEO_FOLLOW_STILL_ZH =
   "【参考静帧】成片画面风格、人物造型、服装与场景材质请直接对齐本段参考静帧；以参考图为准做微动演绎。";
-
-export function normalizeOmniClipPrompt(rawPrompt: string): string {
-  const prompt = String(rawPrompt || "")
-    .replace(/(?:约|大约|目标约)?\s*15\s*(?:秒|s)\s*(?:成片|视频)?/gi, "10 秒成片")
-    .replace(/打斗短阶段/g, "动作短阶段")
-    .replace(/兵器交锋/g, "舞台化兵器走位")
-    .replace(/击打反馈/g, "动作反馈")
-    .replace(/攻击/g, "动作")
-    .replace(/(?:不出现|禁止出现)?\s*(?:伤口|流血|血迹)+/g, "保持克制")
-    .trim();
-  return [
-    `单次成片严格为 ${OMNI_CLIP_DURATION_SECONDS} 秒。`,
-    "动作采用非写实、无伤害的舞台化调度，保持克制与安全。",
-    prompt.includes("参考静帧") ? "" : MANHUA_VIDEO_FOLLOW_STILL_ZH,
-    prompt,
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-async function runOmniFlash(
-  prompt: string,
-  imageUrl: string | undefined,
-  aspectRatio: "9:16" | "16:9",
-  opts?: {
-    videoUrl?: string;
-    previousInteractionId?: string;
-    edit?: boolean;
-    referenceImageUrls?: string[];
-  },
-): Promise<string> {
-  const edit = Boolean(opts?.edit || opts?.videoUrl || opts?.previousInteractionId);
-  const refs = (opts?.referenceImageUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
-  const primary = imageUrl || refs[0];
-  const multiRefs = Array.from(new Set([primary, ...refs].filter(Boolean))) as string[];
-  const task = edit
-    ? ("edit" as const)
-    : multiRefs.length > 1
-      ? ("reference_to_video" as const)
-      : primary
-        ? ("image_to_video" as const)
-        : ("text_to_video" as const);
-  const created = await createOmniInteraction({
-    prompt: normalizeOmniClipPrompt(prompt),
-    task,
-    aspectRatio,
-    durationSeconds: OMNI_CLIP_DURATION_SECONDS,
-    imageUrl: edit ? undefined : primary,
-    referenceImageUrls: edit ? undefined : multiRefs.length > 1 ? multiRefs : undefined,
-    videoUrl: opts?.videoUrl,
-    previousInteractionId: opts?.previousInteractionId,
-  });
-  const result = await pollOmniInteractionUntilDone(created.id);
-  const outUrl = String(result.videoUrl || "");
-  if (!outUrl) throw new Error("视频改写未返回成片，请稍后重试");
-  return outUrl;
-}
 
 export function formatCanvasUpstreamPrompt(basePrompt: string, upstreamTexts: string[]): string {
   const trimmed = basePrompt.trim();
@@ -1445,7 +1382,7 @@ export async function runCanvasBlock(
     const motionPrompt = isClip
       ? stripManhuaAssetUrlsFromPrompt(appendManhuaClipEngineOptics(compiledMotion))
       : compiledMotion;
-    const videoModel = block.videoModel || DEFAULT_CANVAS_VIDEO_MODEL;
+    const videoModel = normalizeCanvasVideoModel(block.videoModel || DEFAULT_CANVAS_VIDEO_MODEL);
     const useHailuoH3 = isCanvasHailuoH3VideoModel(videoModel);
     const useHappyHorse = isCanvasHappyHorseVideoModel(videoModel);
     const useWan30 = isCanvasWan30VideoModel(videoModel);
@@ -1816,30 +1753,6 @@ export async function runCanvasBlock(
           );
         }
       }
-    } else {
-      // omni_edit / 续编：有上游成片时用 edit；否则段内静帧 I2V / 多图 reference_to_video
-      const isOmniEdit = block.id.startsWith("omni_edit-");
-      const editVideoUrl =
-        block.refVideoUrl ||
-        uploadedVideoUrl ||
-        (looksLikeVideo(refUrl) ? refUrl : undefined) ||
-        upstream.visionImages.find((i) => looksLikeVideo(i.url))?.url;
-      const useVideoContinuity =
-        Boolean(editVideoUrl && looksLikeVideo(editVideoUrl)) &&
-        (isOmniEdit || Boolean(block.refVideoUrl));
-      const omniRefs = Array.from(
-        new Set([stillRef || refUrl, ...fusionStillUrls].filter(Boolean) as string[]),
-      );
-      url = await runOmniFlash(
-        motionPrompt,
-        useVideoContinuity ? undefined : omniRefs[0],
-        ar,
-        {
-          edit: useVideoContinuity,
-          videoUrl: useVideoContinuity ? editVideoUrl : undefined,
-          referenceImageUrls: useVideoContinuity ? undefined : omniRefs,
-        },
-      );
     }
     let lastFrameUrl: string | undefined;
     if (url && /^https?:\/\//i.test(url) && block.id.startsWith("clip-")) {
@@ -1870,4 +1783,4 @@ export async function runCanvasBlock(
   throw new Error("未知方块类型");
 }
 
-export { uploadFileToSignedUrl, resolveOmniMaterialUrl } from "./omniCanvasApi";
+export { uploadFileToSignedUrl, resolveCanvasMaterialUrl } from "./omniCanvasApi";

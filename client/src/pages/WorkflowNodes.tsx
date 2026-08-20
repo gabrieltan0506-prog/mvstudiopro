@@ -347,11 +347,10 @@ export default function WorkflowNodes() {
   const [voiceVolume, setVoiceVolume] = useState("1");
   const [musicFadeInSec, setMusicFadeInSec] = useState("0");
   const [musicFadeOutSec, setMusicFadeOutSec] = useState("0");
-  type VideoEngineChoice = "veo" | "seedance";
-  const [videoEngine, setVideoEngine] = useState<VideoEngineChoice>("seedance");
+  const videoEngine = "seedance" as const;
   const [sceneVideoAspect, setSceneVideoAspect] = useState("16:9");
   const [sceneVideoResolution, setSceneVideoResolution] = useState<"720p" | "1080p">("720p");
-  /** Seedance：`auto` 或 4–15 的整数秒数字符串；Veo 固定（由 Vertex 参数决定） */
+  /** Seedance：`auto` 或 4–15 的整数秒数字符串 */
   const [sceneVideoDuration, setSceneVideoDuration] = useState<string>("8");
   const [generateSceneVideoAudio, setGenerateSceneVideoAudio] = useState(true);
   const [renderVoiceSceneMap, setRenderVoiceSceneMap] = useState<Record<string, boolean>>({});
@@ -404,13 +403,6 @@ export default function WorkflowNodes() {
       durationSec: durationForPricing,
     });
   }, [sceneVideoResolution, sceneVideoAspect, sceneVideoDuration]);
-
-  useEffect(() => {
-    if (videoEngine !== "veo") return;
-    if (sceneVideoAspect !== "16:9" && sceneVideoAspect !== "9:16") {
-      setSceneVideoAspect("16:9");
-    }
-  }, [videoEngine, sceneVideoAspect]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -673,7 +665,7 @@ export default function WorkflowNodes() {
     }
   }
 
-  // ─── 场景视频：Seedance（同步落 GCS + 播放器）或 Veo（异步轮询）─────────────────
+  // ─── 场景视频：Seedance（同步落 GCS + 播放器）─────────────────
   async function generateSceneVideo(sceneIndex: number, sceneBody: Record<string, any>) {
     const busyKey = `scene-video-${sceneIndex}`;
     setAuxBusyKey(busyKey);
@@ -683,28 +675,21 @@ export default function WorkflowNodes() {
       sceneVideoDuration === "auto"
         ? 8
         : Math.min(15, Math.max(4, Number(sceneVideoDuration) || 8));
-    const seedanceChargeCredits =
-      videoEngine === "seedance"
-        ? estimateSeedanceWorkflowCreditsForProduct({
-            resolution: sceneVideoResolution,
-            aspectRatio: sceneVideoAspect,
-            durationSec: durationForPricing,
-          }).credits
-        : null;
+    const seedanceChargeCredits = estimateSeedanceWorkflowCreditsForProduct({
+      resolution: sceneVideoResolution,
+      aspectRatio: sceneVideoAspect,
+      durationSec: durationForPricing,
+    }).credits;
 
     // 七审 P0-1:客户端退款能力已下线;失败退款迁往服务端契约,此处为空操作占位
     const refundSceneVideo = (_reason: string) => {};
 
     try {
-      if (videoEngine === "seedance" && seedanceChargeCredits != null) {
-        await chargeStepMutation.mutateAsync({
-          step: "scene_video",
-          quantity: 1,
-          creditsOverride: seedanceChargeCredits,
-        });
-      } else {
-        await chargeStepMutation.mutateAsync({ step: "scene_video", quantity: 1 });
-      }
+      await chargeStepMutation.mutateAsync({
+        step: "scene_video",
+        quantity: 1,
+        creditsOverride: seedanceChargeCredits,
+      });
     } catch (err: any) {
       setAuxError(err?.message || "Credits 不足，请前往充值页面购买积分");
       setAuxBusyKey("");
@@ -718,8 +703,8 @@ export default function WorkflowNodes() {
         videoEngine,
         aspectRatio: sceneVideoAspect,
         videoResolution: sceneVideoResolution,
-        videoDuration: videoEngine === "seedance" ? sceneVideoDuration : "8",
-        generateSceneVideoAudio: videoEngine === "seedance" ? generateSceneVideoAudio : false,
+        videoDuration: sceneVideoDuration,
+        generateSceneVideoAudio,
       });
       const startResult = await postJson("workflowGenerateSceneVideo", startPayload);
       if (!startResult.httpOk || startResult.json?.ok === false) {
@@ -734,62 +719,7 @@ export default function WorkflowNodes() {
         setAuxBusyKey("");
         return;
       }
-
-      const { taskId, veoModel, veoLocation } = startResult.json as {
-        taskId: string;
-        veoModel: string;
-        veoLocation: string;
-      };
-      if (!taskId) {
-        refundSceneVideo("veo_no_taskId 退款");
-        setAuxError("Veo 任务启动失败：未返回 taskId");
-        setAuxBusyKey("");
-        return;
-      }
-
-      let videoUrl = "";
-      for (let i = 0; i < 80; i++) {
-        await new Promise((r) => setTimeout(r, 5000));
-        const pollResult = await postJson("workflowVeoPoll", {
-          taskId,
-          veoModel,
-          veoLocation,
-          workflowId: effectiveWorkflowId,
-        });
-        if (!pollResult.httpOk) continue;
-        const { done, failed, videoUrl: url, error } = pollResult.json as {
-          done: boolean;
-          failed: boolean;
-          videoUrl: string;
-          error?: string;
-        };
-        if (failed) {
-          refundSceneVideo(`veo 生成失败退款: ${error || ""}`);
-          setAuxError(`Veo 生成失败: ${error || "unknown"}`);
-          setAuxBusyKey("");
-          return;
-        }
-        if (done && url) {
-          videoUrl = url;
-          break;
-        }
-      }
-
-      if (!videoUrl) {
-        refundSceneVideo("veo 超时退款");
-        setAuxError("Veo 生成超时（约 6.5 分钟），请重试");
-        setAuxBusyKey("");
-        return;
-      }
-
-      const saveResult = await postJson("workflowVeoSave", buildRequestBody({
-        sceneIndex,
-        videoUrl,
-        veoModel: veoModel || "veo-3.1-generate-001",
-      }));
-      if (saveResult.httpOk && saveResult.json?.ok !== false) {
-        writeBackWorkflow(saveResult.json);
-      }
+      setAuxError("Seedance 返回成功但缺少可播放视频地址");
     } catch (err: any) {
       refundSceneVideo(`${videoEngine} 异常退款`);
       setAuxError(err?.message || `${videoEngine}_error`);
@@ -1561,33 +1491,20 @@ export default function WorkflowNodes() {
   }
 
   function renderVideoPanel() {
-    const busyLabel =
-      videoEngine === "seedance"
-        ? "Seedance 生成中…（含下载与 GCS 签名）"
-        : "Veo 生成中…";
-    const idleBtn =
-      videoEngine === "seedance"
-        ? `生成场景视频 · Seedance 2.0（${seedancePricingPreview.credits} cr）`
-        : `生成场景视频 · Veo 3.1（${NODE_CREDIT_COST.video.cost} cr）`;
+    const busyLabel = "Seedance 生成中…（含下载与 GCS 签名）";
+    const idleBtn = `生成场景视频 · Seedance 2.0（${seedancePricingPreview.credits} cr）`;
 
     return (
       <div className="space-y-4">
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/70">
-          Scene Video 会读取当前分镜已选定的角色图与场景图。多人场景请走 Render Still。Seedance 支持自选比例与 720p/1080p；Veo 3 仅 API 支持 16:9 与 9:16，选 Veo 时其它比例会变暗不可选。
+          Scene Video 会读取当前分镜已选定的角色图与场景图。多人场景请走 Render Still。当前使用 Seedance，支持自选比例与 720p/1080p。
         </div>
 
         <div className="grid gap-3 rounded-2xl border border-sky-500/20 bg-sky-500/[0.06] p-4 md:grid-cols-2">
-          <label className="space-y-1 text-xs text-white/80">
+          <div className="space-y-1 text-xs text-white/80">
             <span className="font-semibold text-white">视频引擎</span>
-            <select
-              value={videoEngine}
-              onChange={(e) => setVideoEngine(e.target.value as VideoEngineChoice)}
-              className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-2 text-sm text-white"
-            >
-              <option value="seedance">Seedance 2.0（fal · image-to-video）</option>
-              <option value="veo">Veo 3.1（Vertex）</option>
-            </select>
-          </label>
+            <div className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-2 text-sm text-white">Seedance 2.0（fal · image-to-video）</div>
+          </div>
           <label className="space-y-1 text-xs text-white/80">
             <span className="font-semibold text-white">画面比例</span>
             <select
@@ -1595,12 +1512,12 @@ export default function WorkflowNodes() {
               onChange={(e) => setSceneVideoAspect(e.target.value)}
               className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-2 text-sm text-white"
             >
-              <option value="auto" disabled={videoEngine === "veo"}>auto（跟参考图）</option>
-              <option value="21:9" disabled={videoEngine === "veo"}>21:9</option>
+              <option value="auto">auto（跟参考图）</option>
+              <option value="21:9">21:9</option>
               <option value="16:9">16:9</option>
-              <option value="4:3" disabled={videoEngine === "veo"}>4:3</option>
-              <option value="1:1" disabled={videoEngine === "veo"}>1:1</option>
-              <option value="3:4" disabled={videoEngine === "veo"}>3:4</option>
+              <option value="4:3">4:3</option>
+              <option value="1:1">1:1</option>
+              <option value="3:4">3:4</option>
               <option value="9:16">9:16</option>
             </select>
           </label>
@@ -1620,7 +1537,6 @@ export default function WorkflowNodes() {
             <select
               value={sceneVideoDuration}
               onChange={(e) => setSceneVideoDuration(e.target.value)}
-              disabled={videoEngine !== "seedance"}
               className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-2 text-sm text-white disabled:opacity-40"
             >
               <option value="auto">auto（模型决定）</option>
@@ -1634,7 +1550,6 @@ export default function WorkflowNodes() {
               type="checkbox"
               checked={generateSceneVideoAudio}
               onChange={(e) => setGenerateSceneVideoAudio(e.target.checked)}
-              disabled={videoEngine !== "seedance"}
               className="h-4 w-4 rounded border-white/30"
             />
             <span>
@@ -1643,16 +1558,14 @@ export default function WorkflowNodes() {
           </label>
         </div>
 
-        {videoEngine === "seedance" ? (
-          <div className="rounded-xl border border-amber-400/25 bg-amber-400/5 p-3 text-[11px] leading-relaxed text-amber-100/90">
+        <div className="rounded-xl border border-amber-400/25 bg-amber-400/5 p-3 text-[11px] leading-relaxed text-amber-100/90">
             <div className="font-semibold text-amber-200">动态积分预览 · Seedance</div>
             <div className="mt-1 text-white/70">
               约 {seedancePricingPreview.credits} cr / 场景 · 输出 {seedancePricingPreview.estimate.width}×{seedancePricingPreview.estimate.height}{" "}
               · tokens≈{Math.round(seedancePricingPreview.estimate.tokens)}（
               {seedancePricingPreview.estimate.durationSec}s，pricing 按 auto 以 8s 估算）· fal 美元约 ${seedancePricingPreview.estimate.usdTotal.toFixed(3)}（秒 ${seedancePricingPreview.estimate.usdSecondsComponent.toFixed(3)} + token ${seedancePricingPreview.estimate.usdTokensComponent.toFixed(3)}）
             </div>
-          </div>
-        ) : null}
+        </div>
 
         {storyboard.map((scene) => {
           const bundle = storyboardImages.find((item) => Number(item.sceneIndex) === scene.sceneIndex);
@@ -1661,7 +1574,7 @@ export default function WorkflowNodes() {
               <div className="mb-2 flex items-center justify-between gap-3">
                 <div className="text-sm font-semibold text-white">Scene {scene.sceneIndex}</div>
                 <div className="text-xs text-white/55">
-                  {videoEngine === "veo" ? "Veo 模型" : sceneVideoDuration === "auto" ? "Seedance auto" : `Seedance ${sceneVideoDuration}s`}
+                  {sceneVideoDuration === "auto" ? "Seedance auto" : `Seedance ${sceneVideoDuration}s`}
                 </div>
               </div>
               <div className="text-xs text-white/60">Primary Subject: {scene.primarySubject || "--"}</div>
@@ -1671,7 +1584,7 @@ export default function WorkflowNodes() {
                   disabled={auxBusyKey === `scene-video-${scene.sceneIndex}`}
                   onClick={() => void generateSceneVideo(scene.sceneIndex, {
                     workflowId,
-                    duration: videoEngine === "seedance" ? sceneVideoDuration : "8s",
+                    duration: sceneVideoDuration,
                     scenePrompt: scene.scenePrompt,
                     primarySubject: scene.primarySubject,
                     character: scene.character,
@@ -1845,7 +1758,7 @@ export default function WorkflowNodes() {
                       if (node.id === "video") {
                         return (
                           <span className="rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold text-amber-300">
-                            Veo {NODE_CREDIT_COST.video.cost} / Seedance 动态
+                            Seedance 动态
                           </span>
                         );
                       }
@@ -1904,42 +1817,33 @@ export default function WorkflowNodes() {
         <div className="rounded-[28px] border border-sky-500/15 bg-sky-500/[0.04] p-4">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <div className="text-xs font-semibold uppercase tracking-wider text-sky-200">场景视频 · 引擎与规格</div>
-            {videoEngine === "seedance" ? (
-              <span className="rounded-full border border-amber-400/30 bg-amber-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-amber-200">
-                动态约 {seedancePricingPreview.credits} cr/镜
-              </span>
-            ) : (
-              <span className="rounded-full border border-white/15 bg-white/5 px-2.5 py-0.5 text-[10px] font-semibold text-white/70">
-                Veo 固定 {NODE_CREDIT_COST.video.cost} cr/镜
-              </span>
-            )}
+            <span className="rounded-full border border-amber-400/30 bg-amber-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-amber-200">
+              Seedance 动态约 {seedancePricingPreview.credits} cr/镜
+            </span>
           </div>
           <div className="flex flex-wrap gap-2 text-xs text-white/85">
-            <select value={videoEngine} onChange={(e) => setVideoEngine(e.target.value as VideoEngineChoice)} className="rounded-lg border border-white/15 bg-[#0b1020] px-2 py-1.5">
-              <option value="seedance">Seedance 2.0</option>
-              <option value="veo">Veo 3.1</option>
-            </select>
+            <span className="rounded-lg border border-white/15 bg-[#0b1020] px-2 py-1.5">Seedance 2.0</span>
             <select value={sceneVideoAspect} onChange={(e) => setSceneVideoAspect(e.target.value)} className="rounded-lg border border-white/15 bg-[#0b1020] px-2 py-1.5">
-              <option value="auto" disabled={videoEngine === "veo"}>auto</option>
-              <option value="21:9" disabled={videoEngine === "veo"}>21:9</option>
+              <option value="auto">auto</option>
+              <option value="21:9">21:9</option>
               <option value="16:9">16:9</option>
-              <option value="4:3" disabled={videoEngine === "veo"}>4:3</option>
-              <option value="1:1" disabled={videoEngine === "veo"}>1:1</option>
-              <option value="3:4" disabled={videoEngine === "veo"}>3:4</option>
+              <option value="4:3">4:3</option>
+              <option value="1:1">1:1</option>
+              <option value="3:4">3:4</option>
               <option value="9:16">9:16</option>
             </select>
             <select value={sceneVideoResolution} onChange={(e) => setSceneVideoResolution(e.target.value as "720p" | "1080p")} className="rounded-lg border border-white/15 bg-[#0b1020] px-2 py-1.5">
               <option value="720p">720p</option>
               <option value="1080p">1080p</option>
             </select>
-            <select value={sceneVideoDuration} onChange={(e) => setSceneVideoDuration(e.target.value)} disabled={videoEngine !== "seedance"} className="rounded-lg border border-white/15 bg-[#0b1020] px-2 py-1.5 disabled:opacity-40">
+            <select value={sceneVideoDuration} onChange={(e) => setSceneVideoDuration(e.target.value)} className="rounded-lg border border-white/15 bg-[#0b1020] px-2 py-1.5">
               <option value="auto">auto</option>
               {[4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].map((n) => (
                 <option key={n} value={String(n)}>{n}s</option>
               ))}
             </select>
             <label className="flex items-center gap-1.5 whitespace-nowrap">
-              <input type="checkbox" checked={generateSceneVideoAudio} onChange={(e) => setGenerateSceneVideoAudio(e.target.checked)} disabled={videoEngine !== "seedance"} className="h-3.5 w-3.5" />
+              <input type="checkbox" checked={generateSceneVideoAudio} onChange={(e) => setGenerateSceneVideoAudio(e.target.checked)} className="h-3.5 w-3.5" />
               场景音
             </label>
           </div>
@@ -1964,7 +1868,7 @@ export default function WorkflowNodes() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/60">
-                    {videoEngine === "veo" ? "Veo 模型" : sceneVideoDuration === "auto" ? "Seedance auto" : `Seedance ${sceneVideoDuration}s`}
+                    {sceneVideoDuration === "auto" ? "Seedance auto" : `Seedance ${sceneVideoDuration}s`}
                   </span>
                   <span className={`rounded-full border px-3 py-1 text-xs ${scene.renderStillNeeded ? "border-amber-400/30 bg-amber-400/10 text-amber-200" : "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"}`}>
                     {scene.renderStillNeeded ? "Render Still" : "Scene Video"}
@@ -2151,7 +2055,7 @@ export default function WorkflowNodes() {
                           disabled={busyVideo || !characterUrl || !sceneUrl || Boolean(scene.renderStillNeeded)}
                           onClick={() => void generateSceneVideo(scene.sceneIndex, {
                             workflowId,
-                            duration: videoEngine === "seedance" ? sceneVideoDuration : "8s",
+                            duration: sceneVideoDuration,
                             scenePrompt: scene.scenePrompt,
                             primarySubject: scene.primarySubject,
                             character: scene.character,
@@ -2162,10 +2066,8 @@ export default function WorkflowNodes() {
                           })}
                         >
                           {busyVideo
-                            ? (videoEngine === "seedance" ? "Seedance 生成中…" : "Veo 生成中…")
-                            : (videoEngine === "seedance"
-                              ? `生成视频 · Seedance（${seedancePricingPreview.credits} cr）`
-                              : `生成视频 · Veo（${NODE_CREDIT_COST.video.cost} cr）`)}
+                            ? "Seedance 生成中…"
+                            : `生成视频 · Seedance（${seedancePricingPreview.credits} cr）`}
                         </Button>
                       </div>
                     </div>
@@ -2262,7 +2164,7 @@ export default function WorkflowNodes() {
                   <span className="font-semibold text-white">分镜与素材</span> →{" "}
                   <span className="font-semibold text-white">场景视频</span>，并在同一条工作流里衔接{" "}
                   <span className="font-semibold text-white">旁白、配乐与成片</span>。
-                  引擎随步骤变化（Gemini / GPT-Image / Seedance 或 Veo 等），以左侧画布与上方流程图为准。
+                  引擎随步骤变化（Gemini / GPT-Image / Seedance 等），以左侧画布与上方流程图为准。
                 </p>
               </div>
               <div className="flex flex-wrap gap-3">

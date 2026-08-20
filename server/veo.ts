@@ -37,12 +37,18 @@ function pickVeoModel(quality: VeoGenerateOptions["quality"]) {
   return String(process.env.VERTEX_VEO_MODEL_STANDARD || "veo-3.1-generate-001").trim();
 }
 
+function rejectRetiredVeo(): void {
+  throw new Error("video_engine_retired: Veo 已下线，请使用当前成片引擎");
+}
+
 // ─── Phase-1: 启动 Veo 任务，立即返回 operationName（不阻塞）────────────────
 export async function startVideo(opts: VeoGenerateOptions): Promise<{
   operationName: string;
   model: string;
   location: string;
 }> {
+  rejectRetiredVeo();
+  /* c8 ignore start -- 历史实现暂留供旧产物审计，不再可执行 */
   const projectId = getVertexProjectId();
   const location = getVertexVideoLocation();
   const model = pickVeoModel(opts.quality);
@@ -83,6 +89,8 @@ export async function pollVideo(operationName: string, model: string, location: 
   videoUrl: string;
   error?: string;
 }> {
+  rejectRetiredVeo();
+  /* c8 ignore start -- 历史实现暂留供旧产物审计，不再可执行 */
   const projectId = getVertexProjectId();
   const baseUrl = baseUrlForVertex(location);
   const headers = await getVertexAuthHeaders();
@@ -117,6 +125,8 @@ export async function pollVideo(operationName: string, model: string, location: 
 
 // ─── 原有同步接口（供 runner.ts 等批处理场景使用）────────────────────────────
 export async function generateVideo(opts: VeoGenerateOptions): Promise<VeoResult> {
+  rejectRetiredVeo();
+  /* c8 ignore start -- 历史实现暂留供旧产物审计，不再可执行 */
   const projectId = getVertexProjectId();
   const location = getVertexVideoLocation();
   const model = pickVeoModel(opts.quality);
@@ -207,8 +217,5 @@ export async function generateVideo(opts: VeoGenerateOptions): Promise<VeoResult
 }
 
 export function isVeoAvailable() {
-  return Boolean(
-    String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim() &&
-      String(process.env.VERTEX_PROJECT_ID || "").trim(),
-  );
+  return false;
 }

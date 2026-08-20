@@ -50,6 +50,10 @@ import blobPutImageHandler from "../../api/blob-put-image";
 import exportHandler from "../../api/export";
 import googleHandler from "../../api/google";
 import klingImageHandler from "../../api/kling-image";
+import {
+  CREATIVE_NANO_IMAGE_ACTION,
+} from "../../shared/creativeNanoImageJobInput";
+import { hasSupervisorRole } from "../../shared/internalMediaEndpointPolicy";
 
 function isGrowthTrendSchedulerDisabled() {
   const raw = String(process.env.DISABLE_GROWTH_TREND_SCHEDULER || "").trim().toLowerCase();
@@ -292,7 +296,7 @@ async function startServer() {
       }
 
       const action = typeof (input as any).action === "string" ? String((input as any).action) : "";
-      if (action === "canvas_gpt_image2") {
+      if (action === "canvas_gpt_image2" || action === CREATIVE_NANO_IMAGE_ACTION) {
         /**
          * 五审 P0-2:这条队列调用付费 GPT-Image-2,曾允许匿名(public)入队+客户端
          * chargeOnServer 决定收费,省略两者即可免费打上游。现一律要求已登录的
@@ -301,6 +305,25 @@ async function startServer() {
          */
         if (!ctx.user || !Number.isFinite(Number(ctx.user.id)) || Number(ctx.user.id) <= 0) {
           return res.status(401).json({ error: "请先登录后再生成图片" });
+        }
+        if (type !== "image") {
+          return res.status(400).json({ error: `${action} only supports image jobs` });
+        }
+        resolvedUserId = String(ctx.user.id);
+      }
+      if (action === "nano_image" || action === "kling_image") {
+        /**
+         * 旧通用图片 action 没有服务端计费，且当前没有正式前端调用方。只留给监管探针；
+         * 普通用户必须走有固定价格和持久账本的产品 action，不能从队列旁路白打上游。
+         */
+        if (!ctx.user) {
+          return res.status(401).json({ error: "请先登录后再生成图片" });
+        }
+        if (!hasSupervisorRole(ctx.user.role)) {
+          return res.status(403).json({ error: "legacy_image_job_requires_supervisor" });
+        }
+        if (type !== "image") {
+          return res.status(400).json({ error: `${action} only supports image jobs` });
         }
         resolvedUserId = String(ctx.user.id);
       }
@@ -348,6 +371,8 @@ async function startServer() {
           ? "kling-cn"
           : action === "nano_image"
           ? "nano"
+          : action === CREATIVE_NANO_IMAGE_ACTION
+          ? "vertex-nano-banana-2"
           : action === "canvas_gpt_image2"
           ? "openai-gpt-image-2"
           : "kling-cn";
@@ -773,24 +798,9 @@ async function startServer() {
         console.warn("[canvasVideoTask] resume failed:", e),
       );
     }).catch(() => {});
-    // ── 付费任务持久账本：启动时清扫死任务（进程崩溃 / 部署中断 → 自动幂等退积分） ──
-    //   策略：默认 staleMs = 5 分钟（heartbeat 超过 5 分钟没刷的判定为僵尸任务）。
-    //   对 holdPausedAt 的任务（计划审核停留中）只在超过 30 天硬上限时才退。
-    import("../services/paidJobLedger").then(({ reapStuckPaidJobs }) => {
-      reapStuckPaidJobs()
-        .then((r) => {
-          if (r.refunded > 0 || r.errors > 0 || r.cancelled > 0) {
-            console.warn(
-              `[paidJobLedger] startup reap: 扫描 ${r.scanned}，` +
-                `退积分 ${r.refunded}（含 cancelled ${r.cancelled}），失败 ${r.errors}`,
-            );
-          } else {
-            console.log(
-              `[paidJobLedger] startup reap: 扫描 ${r.scanned}，无需退积分（系统正常）`,
-            );
-          }
-        })
-        .catch((e) => console.warn("[paidJobLedger] startup reap failed:", e?.message));
+    // 启动即扫 + 每 5 分钟常驻补扫；防止退款失败只有等下次部署才会恢复。
+    import("../services/paidJobLedger").then(({ startPaidJobLedgerReaper }) => {
+      startPaidJobLedgerReaper();
     }).catch(() => {});
     if (isGrowthTrendSchedulerDisabled()) {
       console.warn("[growth.scheduler] disabled by DISABLE_GROWTH_TREND_SCHEDULER");

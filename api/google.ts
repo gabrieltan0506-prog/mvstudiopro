@@ -19,6 +19,12 @@ import {
   buildManhuaClipQualityPrompt,
   parseManhuaClipQualityMarkdown,
 } from "../shared/manhuaClipQuality";
+import {
+  hasSupervisorRole,
+  isInternalGoogleMediaOp,
+  isRetiredGoogleVideoOp,
+} from "../shared/internalMediaEndpointPolicy";
+import { isAllowedCanvasMaterialGcsUri } from "../shared/canvasMaterialReadPolicy";
 export { runVertexUpscaleImage, type VertexUpscaleResult };
 
 /**
@@ -360,6 +366,52 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
     const b:any = req.method==="POST" ? getBody(req) : {};
     const op = s(q.op || b.op).trim();
     if(!op) return res.status(400).json({ok:false,error:"missing_op"});
+
+    if (op === "materialReadUrl") {
+      const viewer = await resolveGoogleGatewayUser(req);
+      if (!viewer) return res.status(401).json({ ok: false, error: "authentication_required" });
+      const gcsUri = s(b.gcsUri || q.gcsUri || "").trim();
+      const allowedBuckets = [
+        process.env.GCS_USER_UPLOAD_BUCKET,
+        process.env.GCS_PDF_EXPORT_BUCKET,
+        process.env.GCS_BUCKET_NAME,
+        process.env.GROWTH_CAMP_GCS_BUCKET,
+        process.env.VERTEX_GCS_BUCKET,
+        process.env.GOOGLE_CLOUD_STORAGE_BUCKET,
+        "mv-studio-pro-vertex-video-temp",
+      ];
+      if (!isAllowedCanvasMaterialGcsUri(gcsUri, allowedBuckets)) {
+        return res.status(403).json({ ok: false, error: "gcs_uri_not_allowed" });
+      }
+      try {
+        return res.status(200).json({ ok: true, gcsUri, url: signGsUriV4ReadUrl(gcsUri, 3600) });
+      } catch (error: any) {
+        return res.status(502).json({ ok: false, error: "sign_failed", message: error?.message || String(error) });
+      }
+    }
+
+    /** Veo 与 Google Omni 已淘汰；旧客户端在触达上游前得到明确 410。 */
+    if (isRetiredGoogleVideoOp(op)) {
+      return res.status(410).json({
+        ok: false,
+        code: "GOOGLE_VIDEO_MODEL_RETIRED",
+        error: "Veo 与 Google Omni 已下线，请改用当前成片引擎",
+      });
+    }
+    if (op === "creativeNanoImage") {
+      return res.status(410).json({
+        ok: false,
+        code: "CREATIVE_NANO_SYNC_REMOVED",
+        error: "Creative Nano 同步入口已停用，请通过异步图片任务生成",
+      });
+    }
+    if (isInternalGoogleMediaOp(op)) {
+      const viewer = await resolveGoogleGatewayUser(req);
+      if (!viewer) return res.status(401).json({ ok: false, error: "authentication_required" });
+      if (!hasSupervisorRole(viewer.role)) {
+        return res.status(403).json({ ok: false, error: "admin_or_supervisor_required" });
+      }
+    }
 
     const nanoForceInlineBase64 = /^(1|true|yes|on)$/i.test(s(q.inlineBase64 || b.inlineBase64));
 
@@ -963,36 +1015,19 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
      * - nanoImage(裸):曾是公网免登录免扣费旁门(省略 billing 即免费打付费上游)。
      *   收口为内部专用:强制登录 + supervisor/admin,普通/匿名一律 403。
      */
-    if(op === "nanoImage" || op === "creativeNanoImage"){
-      const isCreativeNano = op === "creativeNanoImage";
+    if(op === "nanoImage"){
       const prompt = s(b.prompt || q.prompt || "");
       if(!prompt) return res.status(400).json({ok:false,error:"missing_prompt"});
 
-      const nanoViewer = await resolveGoogleGatewayUser(req);
-      if (isCreativeNano) {
-        if (!nanoViewer) {
-          return res.status(401).json({ ok: false, error: "请先登录后再生成图片" });
-        }
-      } else {
-        // 裸 nanoImage 不再作公网免扣费入口:仅内部 admin/supervisor
-        if (!nanoViewer || (nanoViewer.role !== "admin" && nanoViewer.role !== "supervisor")) {
-          return res.status(403).json({
-            ok: false,
-            error: "generic_nano_image_requires_internal_or_admin_access",
-          });
-        }
-      }
-
-      // Creative 产品规格由服务端锁死;裸 nano(仅 admin)沿用客户端参数
-      const tier = isCreativeNano ? "flash" : s(b.tier || q.tier || "flash").toLowerCase(); // flash|pro
-      const size = isCreativeNano ? "1K" : s(b.imageSize || q.imageSize || "1K").toUpperCase(); // 1K|2K|4K
+      const tier = s(b.tier || q.tier || "flash").toLowerCase(); // flash|pro
+      const size = s(b.imageSize || q.imageSize || "1K").toUpperCase(); // 1K|2K|4K
       const aspectRatio = s(b.aspectRatio || q.aspectRatio || "16:9");
       const negativePrompt = s(b.negativePrompt || q.negativePrompt || "");
       const guidanceScale = Number(b.guidanceScale || q.guidanceScale || 0);
       const seed = q.seed != null || b.seed != null ? Number(b.seed || q.seed) : undefined;
       const personGeneration = s(b.personGeneration || q.personGeneration || "");
 
-      const rawModel = isCreativeNano ? "" : s(b.model || q.model || "");
+      const rawModel = s(b.model || q.model || "");
 
       const resolvedTier = rawModel
         ? (
@@ -1056,37 +1091,6 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         });
         return { ok: r.ok, status: r.status, imageUrls, bodyNb };
       };
-
-      /**
-       * 八审 P0-1:creativeNanoImage 是强制服务端计费 op(登录已在块首校验,规格已锁 Flash/1K)。
-       * 扣费/执行/失败退款同在 runPaidWorkflowStep 一个契约内——省略任何字段都免不了这 35 分,
-       * 传 Pro/4K 也已被块首强制降为 Flash/1K。裸 nanoImage(仅 admin)不计费,照原样出图。
-       */
-      if (isCreativeNano) {
-        const { runPaidWorkflowStep } = await import("../server/services/workflowStepBilling.js");
-        const { randomUUID } = await import("node:crypto");
-        try {
-          const out = await runPaidWorkflowStep({
-            userId: nanoViewer!.userId,
-            executionId: randomUUID(),
-            step: "scene_image",
-            totalCost: 35,
-            description: "Creative 生图 · Nano Banana 2 Flash（35 积分/张）",
-            run: async () => {
-              const result = await generateNanoOnce();
-              if (!result.ok || result.imageUrls.length === 0) {
-                throw new Error(
-                  (result.bodyNb as { error?: string })?.error || `nano_image_failed:${result.status}`,
-                );
-              }
-              return result;
-            },
-          });
-          return res.status(200).json(out.bodyNb);
-        } catch (e: any) {
-          return res.status(502).json({ ok: false, error: e?.message || "nano_image_failed" });
-        }
-      }
 
       const result = await generateNanoOnce();
       return res.status(result.ok ? 200 : 502).json(result.bodyNb);

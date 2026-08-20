@@ -94,7 +94,7 @@ import {
   type ManhuaAssetStashRole,
 } from "@shared/manhuaAssetStash";
 import { uploadCanvasFilesParallel } from "@/lib/canvasUpload";
-import { resolveOmniMaterialUrl } from "@/lib/omniCanvasApi";
+import { resolveCanvasMaterialUrl } from "@/lib/omniCanvasApi";
 import {
   MANHUA_FACTORY_STAGE_LABEL_ZH,
   MANHUA_FACTORY_STAGE_ORDER,
@@ -833,7 +833,7 @@ export default function OmniCanvas() {
       const resolved = await Promise.all(
         stale.map(async (r) => {
           try {
-            const url = await resolveOmniMaterialUrl(r.gcsUri!);
+            const url = await resolveCanvasMaterialUrl(r.gcsUri!);
             return { id: r.id, gcsUri: r.gcsUri!, url };
           } catch {
             return null;
@@ -870,7 +870,7 @@ export default function OmniCanvas() {
         const gcsUri = String(e?.gcsUri || "").trim();
         if (!Number.isFinite(ep) || !gcsUri) continue;
         try {
-          const url = await resolveOmniMaterialUrl(gcsUri);
+          const url = await resolveCanvasMaterialUrl(gcsUri);
           resolved.push({ ep, gcsUri, url });
         } catch {
           /* 保持旧 url，下次再试 */
@@ -911,7 +911,7 @@ export default function OmniCanvas() {
       const resolved: Array<{ ep: number; seg: number; gcsUri: string; url: string }> = [];
       for (const s of stale) {
         try {
-          resolved.push({ ...s, url: await resolveOmniMaterialUrl(s.gcsUri) });
+          resolved.push({ ...s, url: await resolveCanvasMaterialUrl(s.gcsUri) });
         } catch {
           /* 保持旧 url，下次再试 */
         }

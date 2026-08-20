@@ -15,7 +15,6 @@ import {
   startWorkflow as startCoreWorkflow,
   type WorkflowTask,
 } from "../server/vercel-api-core/workflow.js";
-import { generateVideoWithVeo } from "../server/models/veo.js";
 import { buildScriptPrompt } from "../server/workflow/prompts/scriptPrompt.js";
 import { buildStoryboardPrompt } from "../server/workflow/prompts/storyboardPrompt.js";
 import { buildStoryboardImagePrompt } from "../server/workflow/prompts/storyboardImagePrompt.js";
@@ -27,6 +26,10 @@ import { characterLockStep } from "../server/workflow/steps/characterLockStep.js
 import { backgroundRemoveStep } from "../server/workflow/steps/backgroundRemoveStep.js";
 import { synthesizeVoiceAudio } from "../server/models/voiceSynthesis.js";
 import { resolveSafeFlyPlatformImageReadPath } from "../server/services/flyVolumeGeneratedImages.js";
+import {
+  hasSupervisorRole,
+  isSupervisorWorkflowOp,
+} from "../shared/internalMediaEndpointPolicy.js";
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
 function getBody(req: VercelRequest): any {
@@ -91,12 +94,6 @@ function imageContentTypeToExtension(contentType: string) {
 }
 
 const WORKFLOW_VIDEO_REF_MAX_EDGE = 1280;
-
-function mapVeoAspectRatio(raw: string): "16:9" | "9:16" {
-  const a = s(raw).trim();
-  if (a === "9:16" || a === "3:4") return "9:16";
-  return "16:9";
-}
 
 /** Seedance：fal duration 枚举 4–15 或 auto */
 function parseSeedanceDurationInput(raw: any): number | "auto" {
@@ -1886,6 +1883,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const bodyOp = s(b.op || b.OP || b.Op || b.oP).trim();
     const op = queryOp || bodyOp;
     const opNormalized = op.toLowerCase();
+
+    /**
+     * 大师级视频基地是监管验收工具。整个 workflow 命名空间（含 test/status/poll/save
+     * 与未来新动作）以及 startWorkflow 都在任何读写或付费上游之前统一鉴权，避免手写
+     * 付费动作清单漏掉 workflowTest 这类可启动完整生成链的旁门。
+     */
+    if (isSupervisorWorkflowOp(opNormalized)) {
+      const wfUser = await resolveJobUser(req);
+      if (!wfUser) {
+        return res.status(401).json({ ok: false, error: "请先登录后再使用大师级视频基地" });
+      }
+      if (!hasSupervisorRole(wfUser.role)) {
+        return res.status(403).json({
+          ok: false,
+          code: "WORKFLOW_REQUIRES_SUPERVISOR",
+          error: "大师级视频基地仅供监管验收",
+        });
+      }
+    }
     if (!op) return res.status(400).json({ ok: false, error: "missing_op" });
 
     const KLING_BASE = (s(process.env.KLING_CN_BASE_URL) || "https://api-beijing.klingai.com").replace(/\/+$/, "");
@@ -2386,44 +2402,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         currentStep: "script",
         workflow: task,
       });
-    }
-
-    /**
-     * 八审 P0-3:大师级视频基地的付费生成 op 在 API 层既不鉴权也不扣费(客户端 chargeStep
-     * 与真实生成是两个独立请求,跳过 chargeStep 直接 POST 这些 op 即可免费调付费上游)。
-     * 收口到 runPaidWorkflowStep 之前先 fail-closed:这些 op 本就是内部工具(UI 已限
-     * supervisor/admin),API 层同样强制 supervisor/admin;计费服务端化后再逐个放开。
-     */
-    const PAID_WORKFLOW_OPS = new Set([
-      "workflowgeneratescript",
-      "workflowgeneratestoryboard",
-      "workflowgeneratestoryboardimages",
-      "workflowregeneratesceneimages",
-      "workflowgeneratesceneimage",
-      "workflowregeneratesceneasset",
-      "workflowgeneraterenderstill",
-      "workflowbackgroundremove",
-      "workflowlockcharacter",
-      "workflowgeneratevideo",
-      "workflowgeneratescenevideo",
-      "workflowgeneratevoice",
-      "workflowgeneratescenevoice",
-      "workflowgeneratemusic",
-      "workflowrendervideo",
-      "workflowrenderfinalvideo",
-    ]);
-    if (PAID_WORKFLOW_OPS.has(opNormalized)) {
-      const wfUser = await resolveJobUser(req);
-      if (!wfUser) {
-        return res.status(401).json({ ok: false, error: "请先登录后再使用大师级视频基地" });
-      }
-      if (wfUser.role !== "admin" && wfUser.role !== "supervisor") {
-        return res.status(403).json({
-          ok: false,
-          code: "WORKFLOW_PAID_OP_REQUIRES_SUPERVISOR",
-          error: "该付费步骤为内部工具，正在迁移服务端计费，暂不对外开放",
-        });
-      }
     }
 
     if (opNormalized === "workflowgeneratescript") {
@@ -3049,155 +3027,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!characterImageUrl) return res.status(400).json(fail("character image is required before scene video generation"));
       if (!sceneImageUrls.length) return res.status(400).json(fail("at least one scene image is required before scene video generation"));
 
+      const videoEngine = s(b.videoEngine || "seedance").trim().toLowerCase();
+      if (videoEngine !== "seedance") {
+        return res.status(410).json(fail("video_engine_retired", "Veo 已下线，请使用 Seedance"));
+      }
+
       const prompt = simplifySceneVideoPrompt(effectiveScene);
       const preparedReferenceImages = await Promise.all(
         referenceImages.map((imageUrl, idx) => uploadWorkflowImageToBlob(imageUrl, `scene-video-${sceneIndex}-ref-${idx + 1}`, { mode: "video" })),
       );
 
-      const videoEngine = s(b.videoEngine || "veo").trim().toLowerCase();
       const aspectRatioInput = s(b.aspectRatio || "16:9").trim() || "16:9";
       const videoResolution = s(b.videoResolution || "720p").trim() === "1080p" ? "1080p" : "720p";
 
-      if (videoEngine === "seedance") {
-        let sceneVideoUrl = "";
-        let videoDurationForUi = 8;
-        let videoModel = "seedance-2.0";
-        try {
-          const { isEvolinkSeedanceConfigured, runEvolinkSeedanceVideo } = await import(
-            "../server/services/evolinkSeedanceVideo.js"
-          );
-          if (!isEvolinkSeedanceConfigured()) {
-            return res.status(503).json(fail("evolink_not_configured", "EVOLINK_API_KEY 未配置，Seedance 仅支持 EvoLink"));
-          }
-          const durationInput = parseSeedanceDurationInput(b.videoDuration ?? b.duration ?? effectiveScene.duration);
-          const seedanceOut = await runEvolinkSeedanceVideo({
-            prompt,
-            imageUrl: preparedReferenceImages[0] || "",
-            quality: videoResolution,
-            duration: durationInput === "auto" ? 8 : durationInput,
-            aspectRatio: aspectRatioInput,
-            generateAudio: b.generateSceneVideoAudio !== false && b.generateSceneVideoAudio !== 0,
-            version: "2.0",
-          });
-          sceneVideoUrl = seedanceOut.videoUrl;
-          videoModel = seedanceOut.model;
-          videoDurationForUi = durationInput === "auto" ? 8 : durationInput;
-        } catch (err: any) {
-          return res.status(502).json(fail("seedance_failed", err?.message || "Seedance 视频生成失败"));
-        }
-
-        const scene: any = storyboard.find((item: any) => Number(item?.sceneIndex) === sceneIndex) || {};
-        const nextStoryboardImages = upsertStoryboardImageItem(storyboardImages, sceneIndex, (existing: any) => buildSceneAssetBundle(existing, sceneIndex, {
-          prompt: s(scene?.scenePrompt).trim(),
-          duration: videoDurationForUi,
-          sceneVideoUrl,
-          backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
-          characterLocked: Boolean(existing?.characterLocked),
-          referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
-          characterPngUrl: s(existing?.characterPngUrl).trim(),
-        }));
-        const next = saveWorkflowPatch(workflow, {
-          currentStep: "video",
-          outputs: {
-            script: s(b.script || workflow.outputs?.script).trim(),
-            storyboard: storyboard.map((item: any) =>
-              Number(item?.sceneIndex) === sceneIndex ? effectiveScene : item,
-            ),
-            storyboardImages: nextStoryboardImages,
-            videoProvider: "evolink",
-            videoModel,
-            sceneVideoAspectRatio: aspectRatioInput,
-            sceneVideoResolution: videoResolution,
-          },
-        });
-        return res.status(200).json({
-          ok: true,
-          workflow: next,
-          sceneVideoUrl,
-          sceneIndex,
-          status: "completed",
-          videoEngine: "seedance",
-        });
-      }
-
-      let operationName = "";
-      let veoModel = "veo-3.1-generate-001";
-      let veoLocation = "us-central1";
+      let sceneVideoUrl = "";
+      let videoDurationForUi = 8;
+      let videoModel = "seedance-2.0";
       try {
-        const { startVideo } = await import("../server/veo.js");
-        const started = await startVideo({
+        const { isEvolinkSeedanceConfigured, runEvolinkSeedanceVideo } = await import(
+          "../server/services/evolinkSeedanceVideo.js"
+        );
+        if (!isEvolinkSeedanceConfigured()) {
+          return res.status(503).json(fail("evolink_not_configured", "EVOLINK_API_KEY 未配置，Seedance 仅支持 EvoLink"));
+        }
+        const durationInput = parseSeedanceDurationInput(b.videoDuration ?? b.duration ?? effectiveScene.duration);
+        const seedanceOut = await runEvolinkSeedanceVideo({
           prompt,
           imageUrl: preparedReferenceImages[0] || "",
-          quality: "standard",
-          aspectRatio: mapVeoAspectRatio(aspectRatioInput),
-          resolution: videoResolution,
-          negativePrompt: "multiple people, extra limbs, duplicate subject, distorted face",
+          quality: videoResolution,
+          duration: durationInput === "auto" ? 8 : durationInput,
+          aspectRatio: aspectRatioInput,
+          generateAudio: b.generateSceneVideoAudio !== false && b.generateSceneVideoAudio !== 0,
+          version: "2.0",
         });
-        operationName = started.operationName;
-        veoModel = started.model;
-        veoLocation = started.location;
+        sceneVideoUrl = seedanceOut.videoUrl;
+        videoModel = seedanceOut.model;
+        videoDurationForUi = durationInput === "auto" ? 8 : durationInput;
       } catch (err: any) {
-        return res.status(502).json(fail("veo_start_failed", err?.message || "Veo 3.1 task creation failed"));
+        return res.status(502).json(fail("seedance_failed", err?.message || "Seedance 视频生成失败"));
       }
 
-      const next = saveWorkflowPatch(workflow, {
-        currentStep: "video",
-        outputs: {
-          script: s(b.script || workflow.outputs?.script).trim(),
-          storyboard: storyboard.map((item: any) =>
-            Number(item?.sceneIndex) === sceneIndex ? effectiveScene : item,
-          ),
-          storyboardImages: storyboardImages,
-          videoProvider: "vertex",
-          videoModel: veoModel,
-          sceneVideoAspectRatio: aspectRatioInput,
-          sceneVideoResolution: videoResolution,
-        },
-      });
-      return res.status(200).json({
-        ok: true,
-        workflow: next,
-        taskId: operationName,
-        veoModel,
-        veoLocation,
-        sceneIndex,
-        status: "pending",
-        videoEngine: "veo",
-      });
-    }
-
-    // ─── Veo 轮询（单次）────────────────────────────────────────────────────
-    if (opNormalized === "workflowveopoll") {
-      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
-      const taskId = s(b.taskId).trim();
-      const veoModel = s(b.veoModel || "veo-3.1-generate-001").trim();
-      const veoLocation = s(b.veoLocation || "us-central1").trim();
-      if (!taskId) return res.status(400).json(fail("taskId is required"));
-      try {
-        const { pollVideo } = await import("../server/veo.js");
-        const result = await pollVideo(taskId, veoModel, veoLocation);
-        return res.status(200).json({ ok: true, ...result });
-      } catch (err: any) {
-        return res.status(502).json(fail("veo_poll_failed", err?.message || "poll failed"));
-      }
-    }
-
-    // ─── 将完成的 Veo 视频 URL 保存回 workflow ──────────────────────────────
-    if (opNormalized === "workflowveosave") {
-      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
-      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
-      const sceneIndex = Number(b.sceneIndex || 0);
-      const videoUrl = s(b.videoUrl).trim();
-      if (!sceneIndex || !videoUrl) return res.status(400).json(fail("sceneIndex and videoUrl are required"));
-
-      const storyboard = getStoryboardDraftFromBody(workflow, b);
-      const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
-      const scene: any = storyboard.find((item: any) => Number(item?.sceneIndex) === sceneIndex) || {};
-
+      const savedScene: any = storyboard.find((item: any) => Number(item?.sceneIndex) === sceneIndex) || {};
       const nextStoryboardImages = upsertStoryboardImageItem(storyboardImages, sceneIndex, (existing: any) => buildSceneAssetBundle(existing, sceneIndex, {
-        prompt: s(scene?.scenePrompt).trim(),
-        duration: 8,
-        sceneVideoUrl: videoUrl,
+        prompt: s(savedScene?.scenePrompt).trim(),
+        duration: videoDurationForUi,
+        sceneVideoUrl,
         backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
         characterLocked: Boolean(existing?.characterLocked),
         referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
@@ -3206,12 +3080,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const next = saveWorkflowPatch(workflow, {
         currentStep: "video",
         outputs: {
+          script: s(b.script || workflow.outputs?.script).trim(),
+          storyboard: storyboard.map((item: any) =>
+            Number(item?.sceneIndex) === sceneIndex ? effectiveScene : item,
+          ),
           storyboardImages: nextStoryboardImages,
-          videoProvider: "vertex",
-          videoModel: s(b.veoModel || "veo-3.1-generate-001").trim(),
+          videoProvider: "evolink",
+          videoModel,
+          sceneVideoAspectRatio: aspectRatioInput,
+          sceneVideoResolution: videoResolution,
         },
       });
-      return res.status(200).json({ ok: true, workflow: next, sceneVideoUrl: videoUrl });
+      return res.status(200).json({
+        ok: true,
+        workflow: next,
+        sceneVideoUrl,
+        sceneIndex,
+        status: "completed",
+        videoEngine: "seedance",
+      });
+    }
+
+    if (opNormalized === "workflowveopoll" || opNormalized === "workflowveosave") {
+      return res.status(410).json(fail("video_engine_retired", "Veo 已下线，请使用 Seedance"));
     }
 
     if (opNormalized === "workflowgeneratevoice") {

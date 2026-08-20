@@ -60,10 +60,10 @@ export default function ActorStudioShell(props: Props) {
           </div>
         </Card>
 
-        <Card title="3. 视频生成" subtitle="Veo / Kling 双路线">
+        <Card title="3. 视频生成" subtitle="多引擎成片路线">
           <div style={{ display: "grid", gap: 12 }}>
             <button style={btnStyle}>生成视频片段</button>
-            <div style={hintStyle}>后续支持：Veo Rapid / Pro、Kling 2.6 / 3.0、透明 PNG 首帧优化。</div>
+            <div style={hintStyle}>后续支持：当前成片引擎、透明 PNG 首帧优化与角色连续性。</div>
           </div>
         </Card>
 
