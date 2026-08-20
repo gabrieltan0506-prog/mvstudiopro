@@ -53,14 +53,14 @@ describe("canvas spawn + defaults", () => {
     expect(normalizeCanvasVideoModel("wan30")).toBe("wan-3.0");
   });
 
-  /** Wan 公测排队不可控:漫剧段节点迁到同 30s 档 2.5,自由画布节点保留 */
-  it("migrates Wan 3.0 off manhua clip nodes but keeps it on free-canvas nodes", () => {
+  /** 用户拍板(0820):生成引擎让用户选——段成片节点也保留 Wan 3.0(直出30s正是段档) */
+  it("keeps Wan 3.0 selectable on both manhua clip nodes and free-canvas nodes", () => {
     const clip = normalizeCanvasBlock({
       ...defaultCanvasBlock("video", 0, 0),
       id: "clip-e01-s02",
       videoModel: "wan-3.0",
     });
-    expect(clip.videoModel).toBe("seedance-2.5");
+    expect(clip.videoModel).toBe("wan-3.0");
 
     const freeCanvas = normalizeCanvasBlock({
       ...defaultCanvasBlock("video", 0, 0),

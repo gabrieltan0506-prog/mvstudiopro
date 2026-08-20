@@ -1990,7 +1990,8 @@ export default function ManhuaScriptWorkbench({
             ) : null}
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-1.5">
+        {/* 主操作簇居中(用户 0820:高频按钮别压在最右上角,挪到画面上方中间) */}
+        <div className="mx-auto flex flex-wrap items-center justify-center gap-1.5">
           {factoryBusy && onStopFactory ? (
             <button
               type="button"

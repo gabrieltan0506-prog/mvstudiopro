@@ -20,6 +20,7 @@ export type ManhuaSeedanceLayoutVideoModel =
   | "seedance-2.0-fast"
   | "seedance-2.0"
   | "seedance-2.5"
+  | "wan-3.0"
   | typeof CANVAS_VIDEO_MODEL_HAILUO_H3;
 
 export type ManhuaSeedanceLayoutProfile = {
@@ -75,6 +76,17 @@ export const MANHUA_SEEDANCE_LAYOUT_CHOICES: readonly ManhuaSeedanceLayoutProfil
     videoModel: "seedance-2.5",
     labelZh: "Seedance 2.5",
     layoutHintZh: "4 段 × 约 30 秒（约 120 秒/集）",
+    segmentCount: 4,
+    segmentMin: 4,
+    segmentMax: 4,
+    durationSecPerSegment: 30,
+    targetSec: 120,
+    lengthTierId: "short",
+  },
+  {
+    videoModel: "wan-3.0",
+    labelZh: "Wan 3.0（公测）",
+    layoutHintZh: "4 段 × 约 30 秒（约 120 秒/集 · 公测排队较长，适合过夜出片）",
     segmentCount: 4,
     segmentMin: 4,
     segmentMax: 4,
@@ -142,6 +154,7 @@ export function isManhuaSeedanceLayoutVideoModel(
     k === "seedance-2.0-fast" ||
     k === "seedance-2.0" ||
     k === "seedance-2.5" ||
+    k === "wan-3.0" ||
     k === CANVAS_VIDEO_MODEL_HAILUO_H3
   );
 }
@@ -199,7 +212,8 @@ export function hasManhuaSeedanceLayoutChoice(
  * 成片单段最长秒数：仅 Seedance 2.5 到 30；其余引擎 15。
  */
 export function manhuaClipMaxDurationSecForVideoModel(videoModel?: string | null): number {
-  return String(videoModel || "").trim() === "seedance-2.5" ? 30 : 15;
+  const key = String(videoModel || "").trim();
+  return key === "seedance-2.5" || key === "wan-3.0" ? 30 : 15;
 }
 
 /** 将请求时长钳到该引擎允许上限（缺省按 15） */
@@ -227,6 +241,7 @@ export function manhuaSeedanceLayoutPinsSegmentTable(
   return (
     key === "seedance-2.0-mini" ||
     key === "seedance-2.5" ||
+    key === "wan-3.0" ||
     key === CANVAS_VIDEO_MODEL_HAILUO_H3
   );
 }

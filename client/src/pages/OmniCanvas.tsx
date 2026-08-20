@@ -7917,58 +7917,48 @@ export default function OmniCanvas() {
                 <p className="mt-0.5 text-[10px] leading-4 text-white/35">
                   先选再扩写：决定一集几段、每段几秒，并写入后续铺板。
                 </p>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {writerLayoutChoices.map((c) => {
-                    const on = writerVideoModel === c.videoModel;
-                    /**
-                     * 整集价必须跟着「单集时长」档走：2.0 / 2.0-fast 选长档是 12 段，
-                     * 拿 choices 里的默认 6 段算会把 2064 印成 1032。钉死段表的档不受影响。
-                     */
-                    const cardSegmentCount = resolveManhuaSeedanceLayoutProfile(
-                      c.videoModel,
-                      writerLengthTierId,
-                    ).segmentCount;
-                    return (
-                      <button
-                        key={c.videoModel}
-                        type="button"
-                        disabled={writerBusy || factoryBusy}
-                        title={c.layoutHintZh}
-                        onClick={() => {
-                          if (c.videoModel === "seedance-2.5" && !canUseSeedance25) {
-                            toast.error(
-                              seedance25Gate.message || SEEDANCE_25_PAID_ONLY_LABEL_ZH,
-                            );
-                            return;
-                          }
-                          setWriterVideoModel(c.videoModel);
-                          setWriterVideoModelPicked(true);
-                          setWriterConfirmed(false);
-                        }}
-                        className={`rounded-lg border px-2.5 py-1.5 text-left text-[11px] disabled:opacity-50 ${
-                          on
-                            ? "border-cyan-300/50 bg-cyan-500/20 text-cyan-50"
-                            : "border-white/12 bg-white/[0.03] text-white/70 hover:bg-white/[0.06]"
-                        }`}
-                      >
-                        <div className="font-semibold">{c.labelZh}</div>
-                        <div className="mt-0.5 max-w-[14rem] text-[9px] leading-snug text-white/40">
-                          {c.layoutHintZh}
-                        </div>
-                        <div className="mt-0.5 text-[9px] leading-snug text-amber-200/60">
+                <div className="mt-2">
+                  {/* 下拉式选单(用户 0820 拍板):替换旧卡片按钮组,选项一眼看全 */}
+                  <select
+                    value={hasManhuaSeedanceLayoutChoice(writerVideoModel) ? writerVideoModel : ""}
+                    disabled={writerBusy || factoryBusy}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (!next) return;
+                      if (next === "seedance-2.5" && !canUseSeedance25) {
+                        toast.error(seedance25Gate.message || SEEDANCE_25_PAID_ONLY_LABEL_ZH);
+                        return;
+                      }
+                      setWriterVideoModel(next as (typeof writerLayoutChoices)[number]["videoModel"]);
+                      setWriterVideoModelPicked(true);
+                      setWriterConfirmed(false);
+                    }}
+                    className="w-full rounded-lg border border-white/12 bg-black/40 px-2.5 py-2 text-[12px] text-white disabled:opacity-50"
+                  >
+                    <option value="" disabled>
+                      请选择成片引擎…
+                    </option>
+                    {writerLayoutChoices.map((c) => {
+                      const cardSegmentCount = resolveManhuaSeedanceLayoutProfile(
+                        c.videoModel,
+                        writerLengthTierId,
+                      ).segmentCount;
+                      return (
+                        <option key={c.videoModel} value={c.videoModel}>
+                          {c.labelZh} · {c.layoutHintZh} ·{" "}
                           {canvasVideoClipCredits({
                             isEpisodeSegment: true,
                             videoModel: c.videoModel,
-                          })}{" "}
+                          })}
                           积分/段 · 整集约{" "}
                           {manhuaEpisodeTotalCredits({
                             videoModel: c.videoModel,
                             segmentCount: cardSegmentCount,
                           })}
-                        </div>
-                      </button>
-                    );
-                  })}
+                        </option>
+                      );
+                    })}
+                  </select>
                 </div>
                 {hasManhuaSeedanceLayoutChoice(writerVideoModel) ? (
                   <p className="mt-1.5 text-[10px] text-cyan-100/70">

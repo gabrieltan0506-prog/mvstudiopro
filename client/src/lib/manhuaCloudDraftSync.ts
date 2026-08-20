@@ -155,7 +155,41 @@ export function slimBlocksForLocalPersist(blocks: CanvasBlock[]): CanvasBlock[] 
   });
 }
 
-/** 云同步前：blob:/local-media: → 溯源 https（有则带上；无则留给本机库） */
+
+/**
+ * GCS 签名链 → 站内永久链(/api/canvas-media/…,请求时现签现跳)。
+ * 签名时刻=生成时刻,快照里的七天签名链早晚过期(0820 回填丢图案);
+ * 只转换 generated/ 前缀的成图对象,其余原样返回。也顺手治愈旧快照里已过期的链接。
+ */
+export function toStableCanvasMediaUrl(u: unknown): string {
+  const raw = String(u || "").trim();
+  const m = raw.match(
+    /^https:\/\/storage\.googleapis\.com\/[^/]+\/(generated\/[^?]+\.(?:png|jpe?g|webp))(?:\?|$)/i,
+  );
+  if (!m) return raw;
+  return `/api/canvas-media/${m[1].split("/").map(encodeURIComponent).join("/")}`;
+}
+
+function stableOrUndefined(u: string | undefined): string | undefined {
+  if (!u) return undefined;
+  const out = toStableCanvasMediaUrl(u);
+  return out || undefined;
+}
+
+/**
+ * 回填双保险(0820 用户拍板:「本机有就用本机的,没有再拉云端」):
+ * 图先问本机媒体库(IndexedDB 指针),命中走本机零流量零过期;
+ * 未命中回落站内永久链(现签现跳拉云端)。
+ */
+function localFirstThenCloud(u: unknown): string | undefined {
+  const raw = String(u || "").trim();
+  if (!raw) return undefined;
+  const local = resolveUrlForLocalPersist(raw);
+  if (local && isLocalMediaPointer(local)) return local;
+  return toStableCanvasMediaUrl(raw) || raw;
+}
+
+/** 云同步前：blob:/local-media: → 溯源 https（有则带上；无则留给本机库）;GCS 签名链一律换永久链 */
 export function blocksForCloudDraftSync(blocks: CanvasBlock[]): CanvasBlock[] {
   return blocks.map((b) => {
     if (isManhuaCloudDraftVideoBlock(b)) {
@@ -163,25 +197,25 @@ export function blocksForCloudDraftSync(blocks: CanvasBlock[]): CanvasBlock[] {
         ...b,
         outputUrl: undefined,
         outputUrls: [],
-        refImageUrl: resolveUrlForCloudSync(b.refImageUrl),
+        refImageUrl: stableOrUndefined(resolveUrlForCloudSync(b.refImageUrl)),
       };
     }
     const outputUrls = (b.outputUrls || [])
-      .map((u) => resolveUrlForCloudSync(u))
+      .map((u) => stableOrUndefined(resolveUrlForCloudSync(u)))
       .filter((u): u is string => Boolean(u))
       .slice(0, 8);
-    const outputUrl = resolveUrlForCloudSync(b.outputUrl) || outputUrls[0];
+    const outputUrl = stableOrUndefined(resolveUrlForCloudSync(b.outputUrl)) || outputUrls[0];
     return {
       ...b,
       outputUrl,
       outputUrls: outputUrl && !outputUrls.includes(outputUrl) ? [outputUrl, ...outputUrls] : outputUrls,
-      refImageUrl: resolveUrlForCloudSync(b.refImageUrl),
+      refImageUrl: stableOrUndefined(resolveUrlForCloudSync(b.refImageUrl)),
       editFusionUrls: (b.editFusionUrls || [])
-        .map((u) => resolveUrlForCloudSync(u))
+        .map((u) => stableOrUndefined(resolveUrlForCloudSync(u)))
         .filter((u): u is string => Boolean(u))
         .slice(0, 15),
-      editMaskUrl: resolveUrlForCloudSync(b.editMaskUrl),
-      lastFrameUrl: resolveUrlForCloudSync(b.lastFrameUrl),
+      editMaskUrl: stableOrUndefined(resolveUrlForCloudSync(b.editMaskUrl)),
+      lastFrameUrl: stableOrUndefined(resolveUrlForCloudSync(b.lastFrameUrl)),
     };
   });
 }
@@ -325,10 +359,14 @@ export function cloudDraftBlocksToCanvas(
       episodeTitle: raw.episodeTitle,
       status: (raw.status as CanvasBlock["status"]) || "idle",
       outputText: raw.outputText,
-      outputUrl: raw.outputUrl,
-      outputUrls: raw.outputUrls || [],
-      refImageUrl: raw.refImageUrl,
-      editFusionUrls: raw.editFusionUrls || [],
+      outputUrl: localFirstThenCloud(raw.outputUrl),
+      outputUrls: (raw.outputUrls || [])
+        .map((u) => localFirstThenCloud(u))
+        .filter((u): u is string => Boolean(u)),
+      refImageUrl: localFirstThenCloud(raw.refImageUrl),
+      editFusionUrls: (raw.editFusionUrls || [])
+        .map((u) => localFirstThenCloud(u))
+        .filter((u): u is string => Boolean(u)),
       imageMode: raw.imageMode === "edit" ? "edit" : "generate",
       aspectRatio: raw.aspectRatio === "16:9" ? "16:9" : "9:16",
       pathCameraRecipeId: raw.pathCameraRecipeId,
@@ -499,13 +537,15 @@ export function chooseManhuaDraftHydrate(input: {
   return { source: "local", draft: localDraft! };
 }
 
-/** 把胜出草稿尽量写回本机（补写失败不抛） */
+/** 把胜出草稿尽量写回本机（补写失败不抛）;并把云端图立即回灌本机媒体库(生产资产本机备份,0820) */
 export function repairLocalFromCloudDraft(draft: ManhuaCloudDraftPayload): ManhuaLocalPersistResult {
+  const restoredBlocks = cloudDraftBlocksToCanvas(draft.canvas.blocks, {
+    videoModel: draft.writerSession?.videoModel,
+  });
+  scheduleCacheCanvasMediaToLocalStore(restoredBlocks);
   return persistManhuaDraftLocally({
     writerSession: draft.writerSession,
-    blocks: cloudDraftBlocksToCanvas(draft.canvas.blocks, {
-      videoModel: draft.writerSession?.videoModel,
-    }),
+    blocks: restoredBlocks,
     edges: draft.canvas.edges,
     factoryPrefs: draft.factoryPrefs,
     clientUpdatedAt: draft.clientUpdatedAt,

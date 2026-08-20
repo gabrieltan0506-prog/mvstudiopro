@@ -20,6 +20,7 @@ import {
   resolveNearestUpstreamImageUrl,
   SPAWN_KIND_OPTIONS,
   TEXT_MODEL_OPTIONS,
+  isCanvasProductVideoModel,
   isCanvasSeedance25VideoModel,
   type CanvasBlock,
   type CanvasBlockKind,
@@ -2216,11 +2217,7 @@ export default function FreeformCanvas({
                             <span className="shrink-0 text-white/45">成片档位</span>
                             <select
                               value={
-                                block.videoModel === "seedance-2.0" ||
-                                block.videoModel === "seedance-2.0-mini" ||
-                                block.videoModel === "seedance-2.5" ||
-                                block.videoModel === "minimax-hailuo-3" ||
-                                block.videoModel === "happyhorse-1.1"
+                                isCanvasProductVideoModel(block.videoModel)
                                   ? block.videoModel
                                   : DEFAULT_CANVAS_VIDEO_MODEL
                               }
@@ -2252,7 +2249,9 @@ export default function FreeformCanvas({
                                     ? "Minimax H3：2K 成片，多图参考，固定 15s"
                                     : block.videoModel === "happyhorse-1.1"
                                       ? "Happy Horse 1.1：首帧图生，最长 15s"
-                                      : "Seedance 2.0 fast：多图参考 + 运镜/动作/对白，更快更省，最长约 15s"}
+                                      : block.videoModel === "wan-3.0"
+                                        ? "Wan 3.0（公测）：多图参考 + 参考音频，可直出 30s；排队时间较长，适合不赶时间的镜头"
+                                        : "Seedance 2.0 fast：多图参考 + 运镜/动作/对白，更快更省，最长约 15s"}
                           </div>
                           {/* 画质只对标准档开放：快速档定位是便宜快，H3 固定 2K，2.5 固定 720p */}
                           {block.videoModel === "seedance-2.0" ? (

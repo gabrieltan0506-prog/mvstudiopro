@@ -447,10 +447,6 @@ export function migrateFactoryClipVideoModel(block: CanvasBlock): CanvasBlock {
   if (isClip && block.videoModel === "happyhorse-1.1") {
     return { ...block, videoModel: "seedance-2.0-fast" };
   }
-  if (isClip && block.videoModel === "wan-3.0") {
-    // Wan 公测排队时长不可控,不进整集流水线;clip 节点迁到同为 30s 档的 2.5
-    return { ...block, videoModel: "seedance-2.5" };
-  }
   if (isCanvasProductVideoModel(block.videoModel)) {
     return block;
   }

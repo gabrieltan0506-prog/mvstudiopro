@@ -421,6 +421,28 @@ async function startServer() {
     }
   });
 
+  // 画布生成图媒体:成图永久镜像在私有桶 generated/ 前缀下,快照里存本路由的固定地址,
+  // 请求时现签短时读链 302 跳转——根治「备份里的七天签名链过期=图消失」(2026-08-20 用户回填丢图案)。
+  app.get(/^\/api\/canvas-media\/(.+)$/, async (req, res) => {
+    try {
+      const objectPath = decodeURIComponent(String(req.params[0] || ""));
+      // 白名单:仅 generated/ 前缀的图片对象;防路径穿越/防签任意对象
+      if (
+        !/^generated\/[A-Za-z0-9_\/-]+\/[A-Za-z0-9_.-]+\.(png|jpg|jpeg|webp)$/.test(objectPath) ||
+        objectPath.includes("..")
+      ) {
+        return res.status(404).json({ error: "not found" });
+      }
+      const { signGcsObjectPathV4ReadUrl, getGcsBucketName } = await import("../services/gcs");
+      const url = signGcsObjectPathV4ReadUrl(getGcsBucketName(), objectPath, 3600);
+      res.setHeader("Cache-Control", "private, max-age=0");
+      return res.redirect(302, url);
+    } catch (error) {
+      console.error("[CanvasMedia] sign failed:", error);
+      return res.status(404).json({ error: "not found" });
+    }
+  });
+
   app.get("/api/jobs/manhua-learn", async (req, res) => {
     try {
       res.setHeader("Cache-Control", "private, no-store, max-age=0");
