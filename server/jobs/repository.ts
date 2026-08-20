@@ -746,7 +746,7 @@ export async function markJobSucceededWithRetry(
       await new Promise<void>((resolve) => setTimeout(resolve, delayMs * attempt));
     }
   }
-  console.error(`[JobsRepo] manhua learn terminal persistence exhausted: jobId=${id}`);
+  console.error(`[JobsRepo] terminal persistence exhausted: jobId=${id}`);
   return false;
 }
 
