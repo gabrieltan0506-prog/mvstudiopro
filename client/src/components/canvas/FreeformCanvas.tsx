@@ -2329,9 +2329,23 @@ export default function FreeformCanvas({
                               }}
                               className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
                             >
+                              {/* C7(UI 优化):换档带价——与服务端同一计价函数,按本节点段性/画质/时长口径 */}
                               {videoModelOptions.map((m) => (
                                 <option key={m.id} value={m.id}>
                                   {m.label}
+                                  {" · "}
+                                  {canvasVideoClipCredits({
+                                    videoModel: m.id,
+                                    isEpisodeSegment: Number(block.episodeIndex) > 0,
+                                    resolution:
+                                      m.id === "seedance-2.0"
+                                        ? normalizeCanvasVideoResolution(block.videoResolution)
+                                        : undefined,
+                                    durationSec:
+                                      parseManhuaClipDirectorCardSummary(block.prompt)
+                                        .durationSec ?? undefined,
+                                  })}
+                                  {" 积分/段"}
                                 </option>
                               ))}
                             </select>
@@ -2388,6 +2402,47 @@ export default function FreeformCanvas({
                           {!canUsePaidVideo ? (
                             <div className="rounded-lg border border-dashed border-amber-400/30 bg-amber-500/5 px-2 py-1.5 text-[10px] leading-5 text-amber-100/85">
                               {PAID_VIDEO_MEMBER_ONLY_LABEL_ZH}
+                            </div>
+                          ) : null}
+                          {/* C8(UI 优化):长排队任务状态徽章+可复制单号——Wan 公测以小时计,只有转圈用户会以为死了 */}
+                          {block.videoTaskId ? (
+                            <div
+                              className={`flex items-center justify-between gap-2 rounded-lg border px-2 py-1.5 text-[10px] ${
+                                block.videoTaskStatus === "succeeded"
+                                  ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-100"
+                                  : block.videoTaskStatus === "failed"
+                                    ? "border-red-400/30 bg-red-500/10 text-red-100"
+                                    : block.videoTaskStatus === "reconcile_manual" ||
+                                        block.videoTaskStatus === "timed_out_pending_reconcile"
+                                      ? "border-sky-400/30 bg-sky-500/10 text-sky-100"
+                                      : "border-amber-400/30 bg-amber-500/10 text-amber-100"
+                              }`}
+                            >
+                              <span className="min-w-0 truncate font-medium">
+                                {block.videoTaskStatus === "succeeded"
+                                  ? "后台任务已完成"
+                                  : block.videoTaskStatus === "failed"
+                                    ? "后台任务失败"
+                                    : block.videoTaskStatus === "reconcile_manual" ||
+                                        block.videoTaskStatus === "timed_out_pending_reconcile"
+                                      ? "结果确认中（费用按对账处理）"
+                                      : "排队/生成中 · 可关页，回来自动回填"}
+                                {block.videoTaskEngine ? ` · ${block.videoTaskEngine}` : ""}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void navigator.clipboard
+                                    .writeText(block.videoTaskId || "")
+                                    .then(() => toast.success("任务单号已复制"))
+                                    .catch(() => toast.error("复制失败，请手动选取"));
+                                }}
+                                className="shrink-0 rounded-md border border-white/15 bg-white/10 px-1.5 py-0.5 font-mono text-[9px] text-white/80 hover:bg-white/15"
+                                title={`复制任务单号：${block.videoTaskId}`}
+                              >
+                                单号 {block.videoTaskId.slice(0, 8)}… ⧉
+                              </button>
                             </div>
                           ) : null}
                           {block.videoModel === "seedance-2.5" && canUseSeedance25 ? (
