@@ -1,55 +1,59 @@
 /**
- * 镜级中间表示(IR)——防废片编译器的锚(0821 规格v1 §六第一刀)。
- * 口径:镜数由剧本节拍定,不由引擎定;段是把镜按引擎时长上限装箱的编译产物。
- * 换引擎 = 重装箱 + 重编方言,静帧(一镜一张)与 IR 本身零损失。
+ * 镜级中间表示(IR)——防废片编译器的锚。
+ * 口径:镜数与镜时长由剧本节拍定,不由引擎定;段是装箱产物。
+ * 引擎中立 IR 单镜上限 15s;超过必须上游拆镜,禁止静默钳制
+ * (否则 TTS 秒位与 BGM 总时长随引擎漂移)。
  */
+import {
+  CANVAS_VIDEO_MODEL_HAILUO_H3,
+  HAILUO_REFERENCE_MAX,
+} from "./hailuoOpenRouterModels.js";
+import {
+  SEEDANCE_25_REFERENCE_MAX,
+  SEEDANCE_REFERENCE_MAX,
+} from "./seedanceOpenRouterModels.js";
+import { WAN30_REFERENCE_MAX } from "./wanWavespeedModels.js";
 
 export type ShotDialogue = {
-  /** 说话人(与资产表人名对齐) */
   speakerZh: string;
-  /** 台词原文(编译时 Seedance 进 {},H3 进自然语言引号) */
   textZh: string;
-  /** 情绪/语气(TTS instruction 与演技铁令共用) */
   emotionZh?: string;
 };
 
-export type ShotImageRef = {
-  /** 参考图序号(1 起) */
+export type ShotMediaRefKind = "image" | "video" | "audio";
+
+export type ShotMediaRef = {
+  kind: ShotMediaRefKind;
+  /** 在同类型数组中的编号,从 1 开始 */
   n: number;
-  /** 该图职责(如"谢明彰定妆·锁脸"/"军械库空镜·锁场景光") */
+  /** 唯一职责,例如"沈曜锁脸""动作轨迹""玄璃声线" */
   roleZh: string;
+  /** 对应资产 ID;格式层不直接持有 URL */
+  sourceAssetId?: string;
+  /** 视频、音频时长;未知时由提交适配器探测 */
+  durationSec?: number;
 };
 
 export type ShotIR = {
-  /** 镜号(1 起,全集连续) */
   index: number;
-  /** 该镜时长(秒);由剧本节拍定 */
   durationSec: number;
-  /** 场景(与资产表 sceneZh 对齐) */
   sceneZh: string;
-  /** 主体动作(一镜一核心动作) */
   actionZh: string;
-  /** 运镜(可空,编译器按运动降维推默认) */
   cameraZh?: string;
-  /** 微表情/表演细节(可空,语义层补) */
   microExpressionZh?: string;
   dialogue?: ShotDialogue;
-  /** 音效提示(Seedance 进 <>) */
   sfxZh?: string;
-  imageRefs?: ShotImageRef[];
+  mediaRefs?: ShotMediaRef[];
 };
 
 export type EpisodeIR = {
   episodeIndex: number;
   titleZh?: string;
-  /** 风格句(风格包:色彩+光源+构图+情绪),编译进全局段 */
   styleZh?: string;
-  /** 题材(BGM brief 查表用,如"古风武侠") */
   genreZh?: string;
   shots: ShotIR[];
 };
 
-/** 段=镜的装箱产物 */
 export type SegmentPlan = {
   index: number;
   durationSec: number;
@@ -61,42 +65,189 @@ export type CompilerEngineId =
   | "seedance-2.0"
   | "seedance-2.0-fast"
   | "seedance-2.5"
-  | "minimax-h3";
+  | "wan-3.0"
+  | typeof CANVAS_VIDEO_MODEL_HAILUO_H3;
 
-/** 引擎硬限(编译期钳制;与服务端各适配器口径一致) */
-export const COMPILER_ENGINE_LIMITS: Record<
-  CompilerEngineId,
-  { maxSegmentSec: number; maxImageRefs: number; dialect: "seedance" | "h3" }
-> = {
-  "seedance-2.0-mini": { maxSegmentSec: 15, maxImageRefs: 9, dialect: "seedance" },
-  "seedance-2.0": { maxSegmentSec: 15, maxImageRefs: 9, dialect: "seedance" },
-  "seedance-2.0-fast": { maxSegmentSec: 15, maxImageRefs: 9, dialect: "seedance" },
-  "seedance-2.5": { maxSegmentSec: 30, maxImageRefs: 9, dialect: "seedance" },
-  "minimax-h3": { maxSegmentSec: 15, maxImageRefs: 9, dialect: "h3" },
+export type ReadyCompilerEngineId = Exclude<CompilerEngineId, "wan-3.0">;
+
+export type CompilerDialect = "seedance" | "h3" | "wan";
+export type CompilerSupportStatus = "ready" | "reserved";
+
+export type CompilerReferenceLimits = {
+  image: number;
+  video: number;
+  audio: number;
+  total?: number;
+  minVideoItemSec?: number;
+  maxVideoItemSec?: number;
+  maxVideoTotalSec?: number;
+  minAudioItemSec?: number;
+  maxAudioItemSec?: number;
+  maxAudioTotalSec?: number;
 };
 
-/**
- * 镜→段装箱:顺序装,装不下开新箱;单镜超上限时钳到上限(镜数守恒,绝不丢镜)。
- * 换引擎只是换 maxSegmentSec 重跑本函数。
- */
-export function packShotsIntoSegments(shots: ShotIR[], maxSegmentSec: number): SegmentPlan[] {
-  const cap = Math.max(2, maxSegmentSec);
+export type CompilerEngineProfile = {
+  minSegmentSec: number;
+  maxSegmentSec: number;
+  references: CompilerReferenceLimits;
+  dialect: CompilerDialect;
+  status: CompilerSupportStatus;
+  noteZh?: string;
+};
+
+export const COMPILER_ENGINE_LIMITS = {
+  "seedance-2.0-mini": {
+    minSegmentSec: 4,
+    maxSegmentSec: 15,
+    references: {
+      image: SEEDANCE_REFERENCE_MAX.image,
+      video: SEEDANCE_REFERENCE_MAX.video,
+      audio: SEEDANCE_REFERENCE_MAX.audio,
+    },
+    dialect: "seedance",
+    status: "ready",
+  },
+  "seedance-2.0": {
+    minSegmentSec: 4,
+    maxSegmentSec: 15,
+    references: {
+      image: SEEDANCE_REFERENCE_MAX.image,
+      video: SEEDANCE_REFERENCE_MAX.video,
+      audio: SEEDANCE_REFERENCE_MAX.audio,
+    },
+    dialect: "seedance",
+    status: "ready",
+  },
+  "seedance-2.0-fast": {
+    minSegmentSec: 4,
+    maxSegmentSec: 15,
+    references: {
+      image: SEEDANCE_REFERENCE_MAX.image,
+      video: SEEDANCE_REFERENCE_MAX.video,
+      audio: SEEDANCE_REFERENCE_MAX.audio,
+    },
+    dialect: "seedance",
+    status: "ready",
+  },
+  "seedance-2.5": {
+    minSegmentSec: 4,
+    maxSegmentSec: 30,
+    references: {
+      image: SEEDANCE_25_REFERENCE_MAX.image,
+      video: SEEDANCE_25_REFERENCE_MAX.video,
+      audio: SEEDANCE_25_REFERENCE_MAX.audio,
+    },
+    dialect: "seedance",
+    status: "ready",
+  },
+  [CANVAS_VIDEO_MODEL_HAILUO_H3]: {
+    minSegmentSec: 4,
+    maxSegmentSec: 15,
+    references: {
+      image: HAILUO_REFERENCE_MAX.image,
+      video: 3,
+      audio: 3,
+      total: 12,
+      minVideoItemSec: 2,
+      maxVideoItemSec: 15,
+      maxVideoTotalSec: 15,
+      minAudioItemSec: 2,
+      maxAudioItemSec: 15,
+      maxAudioTotalSec: 15,
+    },
+    dialect: "h3",
+    status: "ready",
+  },
+  "wan-3.0": {
+    minSegmentSec: 2,
+    maxSegmentSec: 30,
+    references: {
+      image: WAN30_REFERENCE_MAX.image,
+      video: WAN30_REFERENCE_MAX.video,
+      audio: WAN30_REFERENCE_MAX.audio,
+    },
+    dialect: "wan",
+    status: "reserved",
+    noteZh:
+      "Wan 3.0 独立提示词方言与参考职责适配器已预留,公开使用方式稳定前不提交编译结果",
+  },
+} satisfies Record<CompilerEngineId, CompilerEngineProfile>;
+
+export function normalizeCompilerEngineId(raw: unknown): CompilerEngineId | null {
+  const key = String(raw || "").trim().toLowerCase();
+  const normalized =
+    key === "minimax-h3" ||
+    key === "hailuo-3" ||
+    key === "minimax/hailuo-3" ||
+    key === "minimax-h3-reference-to-video"
+      ? CANVAS_VIDEO_MODEL_HAILUO_H3
+      : key === "wan30" || key === "wan3.0" || key === "alibaba/wan-3.0"
+        ? "wan-3.0"
+        : key;
+  return Object.hasOwn(COMPILER_ENGINE_LIMITS, normalized)
+    ? (normalized as CompilerEngineId)
+    : null;
+}
+
+export function isReadyCompilerEngineId(
+  engine: CompilerEngineId,
+): engine is ReadyCompilerEngineId {
+  return COMPILER_ENGINE_LIMITS[engine].status === "ready";
+}
+
+export function assertCompilerEngineReady(
+  engine: CompilerEngineId,
+): asserts engine is ReadyCompilerEngineId {
+  const profile = COMPILER_ENGINE_LIMITS[engine];
+  if (profile.status !== "ready") {
+    throw new Error(profile.noteZh || `${engine} 的提示词方言尚未接线`);
+  }
+}
+
+/** 引擎中立 IR 的单镜上限;超过必须上游拆镜 */
+export const COMPILER_IR_MAX_SHOT_SEC = 15;
+
+/** 镜→段装箱:时长只读不改写;非法/超限一律抛错要求上游处理 */
+export function packShotsIntoSegments(
+  shots: ShotIR[],
+  maxSegmentSec: number,
+): SegmentPlan[] {
+  const cap = Number(maxSegmentSec);
+  if (!Number.isFinite(cap) || cap < 2) {
+    throw new RangeError(`无效的单段时长上限：${maxSegmentSec}`);
+  }
+
   const segments: SegmentPlan[] = [];
   let current: ShotIR[] = [];
   let currentSec = 0;
 
   for (const raw of shots) {
+    const durationSec = Number(raw.durationSec);
+    if (!Number.isFinite(durationSec) || durationSec <= 0) {
+      throw new RangeError(`第 ${raw.index} 镜时长必须为正数`);
+    }
+    if (durationSec > COMPILER_IR_MAX_SHOT_SEC) {
+      throw new RangeError(
+        `第 ${raw.index} 镜为 ${durationSec}s，超过引擎中立 IR 的 ${COMPILER_IR_MAX_SHOT_SEC}s 上限，请先拆镜`,
+      );
+    }
+    if (durationSec > cap) {
+      throw new RangeError(`第 ${raw.index} 镜为 ${durationSec}s，超过当前引擎单段 ${cap}s 上限`);
+    }
+
     const shot: ShotIR = {
       ...raw,
-      durationSec: Math.max(1, Math.min(cap, Number(raw.durationSec) || 3)),
+      durationSec,
+      mediaRefs: raw.mediaRefs?.map((ref) => ({ ...ref })),
     };
-    if (current.length > 0 && currentSec + shot.durationSec > cap) {
+
+    if (current.length > 0 && currentSec + durationSec > cap) {
       segments.push({ index: segments.length + 1, durationSec: currentSec, shots: current });
       current = [];
       currentSec = 0;
     }
     current.push(shot);
-    currentSec += shot.durationSec;
+    currentSec += durationSec;
   }
   if (current.length > 0) {
     segments.push({ index: segments.length + 1, durationSec: currentSec, shots: current });

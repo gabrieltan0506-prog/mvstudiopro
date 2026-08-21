@@ -1,13 +1,18 @@
 /**
- * 防废片编译器第一刀测试:装箱守恒/方言分流/三产物/格式层归一与钳制。
+ * 防废片编译器测试(终审十一条):IR 不因引擎改写/拆镜抛错/双方言字段保全/
+ * H3 三类参考与上限/TTS 起止秒位/Wan 预留不产伪实现。
  */
 import { describe, expect, it } from "vitest";
-import { packShotsIntoSegments, type EpisodeIR, type ShotIR } from "./manhuaShotIR";
 import {
-  applyCensorReplacements,
-  formatPromptForEngine,
-  normalizeImageRefs,
-} from "./promptFormatLayer";
+  COMPILER_IR_MAX_SHOT_SEC,
+  isReadyCompilerEngineId,
+  normalizeCompilerEngineId,
+  packShotsIntoSegments,
+  type EpisodeIR,
+  type ShotIR,
+  type ShotMediaRef,
+} from "./manhuaShotIR";
+import { validateSegmentMediaRefs } from "./promptFormatLayer";
 import { buildTtsCueSheet, compileEpisode } from "./manhuaPromptCompiler";
 
 const shot = (index: number, sec: number, over: Partial<ShotIR> = {}): ShotIR => ({
@@ -24,10 +29,15 @@ const IR: EpisodeIR = {
   styleZh: "雨夜冷青色调,烛光侧光,竖屏电影感",
   shots: [
     shot(1, 5, {
+      cameraZh: "侧向跟拍",
+      microExpressionZh: "瞳孔骤缩",
       dialogue: { speakerZh: "谢明彰", textZh: "放你可以,向警方自首", emotionZh: "压着怒意" },
-      imageRefs: [{ n: 1, roleZh: "谢明彰定妆·锁脸" }],
+      mediaRefs: [
+        { kind: "image", n: 1, roleZh: "谢明彰锁脸" },
+        { kind: "audio", n: 1, roleZh: "谢明彰声线" },
+      ],
     }),
-    shot(2, 4, { sfxZh: "雨打伞棚" }),
+    shot(2, 4, { sfxZh: "雨打伞棚", mediaRefs: [{ kind: "video", n: 1, roleZh: "动作轨迹" }] }),
     shot(3, 6, { dialogue: { speakerZh: "库吏", textZh: "我认罪" } }),
     shot(4, 5),
     shot(5, 5),
@@ -35,89 +45,139 @@ const IR: EpisodeIR = {
   ],
 };
 
-describe("镜→段装箱(镜数守恒)", () => {
-  it("同一 IR:30s 引擎装成 1 段,15s 引擎装成 2 段,镜总数不变", () => {
+describe("IR 不因引擎切换被改写", () => {
+  it("15s/30s 引擎:镜数/镜号/时长/场景/动作全等,只许段边界变化", () => {
     const seg30 = packShotsIntoSegments(IR.shots, 30);
     const seg15 = packShotsIntoSegments(IR.shots, 15);
     expect(seg30).toHaveLength(1);
     expect(seg15).toHaveLength(2);
-    expect(seg30.flatMap((s) => s.shots)).toHaveLength(6);
-    expect(seg15.flatMap((s) => s.shots)).toHaveLength(6);
-    // 15s 箱:5+4+6=15 / 5+5+5=15
-    expect(seg15.map((s) => s.durationSec)).toEqual([15, 15]);
-  });
-
-  it("单镜超上限被钳到上限,不丢镜", () => {
-    const segs = packShotsIntoSegments([shot(1, 40)], 15);
-    expect(segs).toHaveLength(1);
-    expect(segs[0].shots[0].durationSec).toBe(15);
-  });
-});
-
-describe("方言分流", () => {
-  it("Seedance 段提示词带 {}对白/<>音效/@图N/段头【】与铁令段", () => {
-    const out = compileEpisode(IR, "seedance-2.5");
-    expect(out.segments).toHaveLength(1);
-    const p = out.segmentPrompts[0];
-    expect(p).toContain("{放你可以,向警方自首}");
-    expect(p).toContain("<雨打伞棚>");
-    expect(p).toContain("@图1 定义谢明彰定妆·锁脸");
-    expect(p).toContain("【第01段·30s】");
-    expect(p).toContain("毛孔");
-    expect(p).toContain("零文字零水印");
-  });
-
-  it("H3 段提示词无四标记,用 Image N 与自然语言台词", () => {
-    const out = compileEpisode(IR, "minimax-h3");
-    expect(out.segments).toHaveLength(2);
-    const p = out.segmentPrompts[0];
-    expect(p).not.toMatch(/[{}<>【】]/);
-    expect(p).toContain("Image 1");
-    expect(p).toContain("“放你可以,向警方自首”");
-  });
-});
-
-describe("三产物", () => {
-  it("TTS 台词表秒位=镜前时长和,情绪进 instruction", () => {
-    const cues = buildTtsCueSheet(packShotsIntoSegments(IR.shots, 30));
-    expect(cues).toHaveLength(2);
-    expect(cues[0]).toMatchObject({ startSec: 0, speakerZh: "谢明彰", instructionZh: "压着怒意" });
-    expect(cues[1]).toMatchObject({ startSec: 9, speakerZh: "库吏" });
-  });
-
-  it("BGM brief:题材查表出国风 style,纯音乐口径,总时长=段和+10 余量", () => {
-    const out = compileEpisode(IR, "seedance-2.5");
-    expect(out.bgmBrief.styleTags).toContain("guzheng");
-    expect(out.bgmBrief.negativeTags).toContain("vocals");
-    expect(out.bgmBrief.suno.instrumental).toBe(true);
-    expect(out.bgmBrief.suno.durationSec).toBe(40);
-    expect(out.bgmBrief.segments[0].moodZh).toBe("衬底不压对白");
-  });
-});
-
-describe("格式层", () => {
-  it("图引用归一:图一/图 2/[图3] → @图N", () => {
-    expect(normalizeImageRefs("图一的脸,按图 2 的光,[图3]构图")).toBe(
-      "@图1的脸,按@图2 的光,@图3构图",
+    const flat30 = seg30.flatMap((s) => s.shots);
+    const flat15 = seg15.flatMap((s) => s.shots);
+    expect(flat15.map((s) => [s.index, s.durationSec, s.sceneZh, s.actionZh])).toEqual(
+      flat30.map((s) => [s.index, s.durationSec, s.sceneZh, s.actionZh]),
     );
   });
 
-  it("避审替换与中文引号台词转 {}", () => {
-    const r = formatPromptForEngine("「他要开枪了」子弹时间放慢", "seedance-2.5");
-    expect(r.text).toContain("{他要武器击发了}");
-    expect(r.text).toContain("极慢速凝滞瞬间");
-    expect(r.issues.some((i) => i.kind === "censor")).toBe(true);
+  it("单镜超过 IR 上限 15s:抛错要求拆镜,不静默钳制", () => {
+    expect(() => packShotsIntoSegments([shot(1, COMPILER_IR_MAX_SHOT_SEC + 5)], 30)).toThrow(
+      /请先拆镜/,
+    );
   });
 
-  it("H3 方向:{}回转引号,@图N→Image N,时长超限钳制并出提示", () => {
-    const r = formatPromptForEngine("{我认罪} @图2 出场", "minimax-h3", { durationSec: 30 });
-    expect(r.text).toContain("“我认罪”");
-    expect(r.text).toContain("Image 2");
-    expect(r.clampedDurationSec).toBe(15);
-    expect(r.issues.some((i) => i.kind === "duration")).toBe(true);
+  it("非法时长/无效箱上限抛错", () => {
+    expect(() => packShotsIntoSegments([shot(1, 0)], 15)).toThrow(/正数/);
+    expect(() => packShotsIntoSegments(IR.shots, 1)).toThrow(/无效的单段时长上限/);
+  });
+});
+
+describe("双方言字段保全", () => {
+  it("Seedance:场景/动作/运镜/表演/{}对白/<>音效/@图@音频职责全在", () => {
+    const p = compileEpisode(IR, "seedance-2.5").segmentPrompts[0];
+    for (const part of [
+      "场景:军械库", "动作:第1镜动作", "运镜:侧向跟拍", "表演:瞳孔骤缩",
+      "{放你可以,向警方自首}", "<雨打伞棚>",
+      "@图1 定义谢明彰锁脸", "@音频1 定义谢明彰声线", "@视频1 定义动作轨迹",
+      "【第01段·30s】",
+    ]) {
+      expect(p).toContain(part);
+    }
   });
 
-  it("避审替换纯函数可单独调用", () => {
-    expect(applyCensorReplacements("杀了他").text).toBe("制服他");
+  it("H3:同字段自然语言保全;Image/Video/Audio N;无 @标记与 {}<>【】()", () => {
+    const out = compileEpisode(IR, "minimax-hailuo-3");
+    expect(out.segments).toHaveLength(2);
+    const all = out.segmentPrompts.join("\n");
+    for (const part of [
+      "场景为军械库", "人物动作是第1镜动作", "镜头侧向跟拍", "瞳孔骤缩",
+      "“放你可以,向警方自首”", "环境声为雨打伞棚",
+      "Image 1 仅用于谢明彰锁脸", "Audio 1 仅用于谢明彰声线", "Video 1 仅用于动作轨迹",
+    ]) {
+      expect(all).toContain(part);
+    }
+    expect(all).not.toMatch(/@图|@视频|@音频/);
+    expect(all).not.toMatch(/[{}<>【】()（）]/);
+  });
+});
+
+describe("H3 多模态参考上限(validateSegmentMediaRefs)", () => {
+  const H3_LIMITS = {
+    image: 9, video: 3, audio: 3, total: 12,
+    minVideoItemSec: 2, maxVideoItemSec: 15, maxVideoTotalSec: 15,
+    minAudioItemSec: 2, maxAudioItemSec: 15, maxAudioTotalSec: 15,
+  };
+  const refs = (kind: "image" | "video" | "audio", count: number, durationSec?: number): ShotMediaRef[] =>
+    Array.from({ length: count }, (_v, i) => ({ kind, n: i + 1, roleZh: `${kind}${i + 1}`, durationSec }));
+
+  it("9图/3视频/3音频/合计12 全通过", () => {
+    expect(
+      validateSegmentMediaRefs([...refs("image", 9), ...refs("video", 2, 5), ...refs("audio", 1, 5)], H3_LIMITS),
+    ).toEqual([]);
+  });
+
+  it("10图/4视频/4音频/合计13 各出对应 issue", () => {
+    expect(validateSegmentMediaRefs(refs("image", 10), H3_LIMITS).map((i) => i.kind)).toContain("image_refs");
+    expect(validateSegmentMediaRefs(refs("video", 4, 3), H3_LIMITS).map((i) => i.kind)).toContain("video_refs");
+    expect(validateSegmentMediaRefs(refs("audio", 4, 3), H3_LIMITS).map((i) => i.kind)).toContain("audio_refs");
+    const thirteen = [...refs("image", 8), ...refs("video", 3, 4), ...refs("audio", 2, 4)];
+    expect(validateSegmentMediaRefs(thirteen, H3_LIMITS).map((i) => i.kind)).toContain("total_refs");
+  });
+
+  it("视频/音频合计超 15s 出 total_duration;单段短于 2s 出 duration", () => {
+    expect(validateSegmentMediaRefs(refs("video", 3, 6), H3_LIMITS).map((i) => i.kind)).toContain(
+      "video_total_duration",
+    );
+    expect(validateSegmentMediaRefs(refs("audio", 3, 6), H3_LIMITS).map((i) => i.kind)).toContain(
+      "audio_total_duration",
+    );
+    expect(validateSegmentMediaRefs(refs("audio", 1, 1), H3_LIMITS).map((i) => i.kind)).toContain(
+      "audio_duration",
+    );
+  });
+
+  it("compileEpisode 把超限问题带 segmentIndex 上抛进 formatIssues,并出 referencePlans", () => {
+    const bad: EpisodeIR = {
+      ...IR,
+      shots: [shot(1, 5, { mediaRefs: refs("video", 4, 3) })],
+    };
+    const out = compileEpisode(bad, "minimax-hailuo-3");
+    expect(out.formatIssues.some((i) => i.kind === "video_refs" && i.segmentIndex === 1)).toBe(true);
+    expect(out.referencePlans[0]).toMatchObject({ segmentIndex: 1, mode: "h3_reference_to_video" });
+    expect(out.referencePlans[0].bindings).toHaveLength(4);
+  });
+});
+
+describe("TTS 起止秒位", () => {
+  it("每条含 startSec/endSec,end>start 且不超所在段时长", () => {
+    const segs = packShotsIntoSegments(IR.shots, 30);
+    const cues = buildTtsCueSheet(segs);
+    expect(cues).toHaveLength(2);
+    expect(cues[0]).toMatchObject({ startSec: 0, endSec: 5, speakerZh: "谢明彰" });
+    expect(cues[1]).toMatchObject({ startSec: 9, endSec: 15, speakerZh: "库吏" });
+    for (const c of cues) {
+      const seg = segs.find((s) => s.index === c.segmentIndex)!;
+      expect(c.endSec).toBeGreaterThan(c.startSec);
+      expect(c.endSec).toBeLessThanOrEqual(seg.durationSec);
+    }
+  });
+});
+
+describe("Wan 3.0 预留边界", () => {
+  it("别名归一/非 ready/编译明确拒绝,不产伪提示词", () => {
+    expect(normalizeCompilerEngineId("wan30")).toBe("wan-3.0");
+    expect(normalizeCompilerEngineId("minimax-h3")).toBe("minimax-hailuo-3");
+    expect(isReadyCompilerEngineId("wan-3.0")).toBe(false);
+    expect(() => compileEpisode(IR, "wan-3.0")).toThrow(/预留|尚未接线/);
+  });
+});
+
+describe("IR 入口校验", () => {
+  it("空镜表/镜号不连续/缺场景动作都抛错", () => {
+    expect(() => compileEpisode({ ...IR, shots: [] }, "seedance-2.5")).toThrow(/至少需要一镜/);
+    expect(() =>
+      compileEpisode({ ...IR, shots: [shot(2, 5)] }, "seedance-2.5"),
+    ).toThrow(/连续排列/);
+    expect(() =>
+      compileEpisode({ ...IR, shots: [shot(1, 5, { sceneZh: " " })] }, "seedance-2.5"),
+    ).toThrow(/缺少场景或动作/);
   });
 });
