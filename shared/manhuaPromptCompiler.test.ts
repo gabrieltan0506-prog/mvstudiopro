@@ -12,8 +12,8 @@ import {
   type ShotIR,
   type ShotMediaRef,
 } from "./manhuaShotIR";
-import { validateSegmentMediaRefs } from "./promptFormatLayer";
-import { buildTtsCueSheet, compileEpisode } from "./manhuaPromptCompiler";
+import { formatPromptForEngine, validateSegmentMediaRefs } from "./promptFormatLayer";
+import { buildTtsCueSheet, compileEpisode, compileSegmentPrompt } from "./manhuaPromptCompiler";
 
 const shot = (index: number, sec: number, over: Partial<ShotIR> = {}): ShotIR => ({
   index,
@@ -161,12 +161,83 @@ describe("TTS 起止秒位", () => {
   });
 });
 
-describe("Wan 3.0 预留边界", () => {
+describe("Wan 3.0 预留边界(三入口完整封闭)", () => {
   it("别名归一/非 ready/编译明确拒绝,不产伪提示词", () => {
     expect(normalizeCompilerEngineId("wan30")).toBe("wan-3.0");
     expect(normalizeCompilerEngineId("minimax-h3")).toBe("minimax-hailuo-3");
     expect(isReadyCompilerEngineId("wan-3.0")).toBe(false);
     expect(() => compileEpisode(IR, "wan-3.0")).toThrow(/预留|尚未接线/);
+  });
+
+  it("compileSegmentPrompt 与 formatPromptForEngine 同样拒绝 reserved 引擎", () => {
+    const seg = packShotsIntoSegments([shot(1, 5)], 15)[0];
+    expect(() => compileSegmentPrompt(seg, "wan-3.0")).toThrow(/预留|尚未接线/);
+    expect(() => formatPromptForEngine("@图1 人物特写", "wan-3.0")).toThrow(/预留|尚未接线/);
+  });
+});
+
+describe("H3 输出时长正式契约(4-15s 整数)", () => {
+  it("段 3s 低于最短 4s:抛错要求合并镜头", () => {
+    const seg = packShotsIntoSegments([shot(1, 3)], 15)[0];
+    expect(() => compileSegmentPrompt(seg, "minimax-hailuo-3")).toThrow(/最短/);
+  });
+
+  it("段 4.5s 小数:H3 抛错要求整数;Seedance 不受限", () => {
+    const seg = packShotsIntoSegments([shot(1, 4.5)], 15)[0];
+    expect(() => compileSegmentPrompt(seg, "minimax-hailuo-3")).toThrow(/整数/);
+    expect(compileSegmentPrompt(seg, "seedance-2.5")).toContain("场景:军械库");
+  });
+});
+
+describe("H3 模式按参考素材决定", () => {
+  it("有参考=reference_to_video;无参考=text_to_video", () => {
+    const out = compileEpisode(IR, "minimax-hailuo-3");
+    expect(out.referencePlans[0].mode).toBe("h3_reference_to_video");
+    expect(out.referencePlans[1].mode).toBe("h3_text_to_video");
+    expect(out.referencePlans[1].bindings).toHaveLength(0);
+  });
+});
+
+describe("参考编号与绑定校验", () => {
+  it("同编号不同职责:出 reference_conflict,绑定保留第一项", () => {
+    const conflicted: EpisodeIR = {
+      ...IR,
+      shots: [
+        shot(1, 5, { mediaRefs: [{ kind: "image", n: 1, roleZh: "谢明彰锁脸" }] }),
+        shot(2, 5, { mediaRefs: [{ kind: "image", n: 1, roleZh: "库吏锁脸" }] }),
+      ],
+    };
+    const out = compileEpisode(conflicted, "minimax-hailuo-3");
+    expect(out.formatIssues.some((i) => i.kind === "reference_conflict")).toBe(true);
+    expect(out.referencePlans[0].bindings).toEqual([
+      { kind: "image", n: 1, roleZh: "谢明彰锁脸" },
+    ]);
+  });
+
+  it("编号断号出 reference_sequence;非正整数出 reference_index", () => {
+    const gapped: EpisodeIR = {
+      ...IR,
+      shots: [shot(1, 5, { mediaRefs: [{ kind: "image", n: 2, roleZh: "谢明彰锁脸" }] })],
+    };
+    const gapOut = compileEpisode(gapped, "minimax-hailuo-3");
+    expect(gapOut.formatIssues.some((i) => i.kind === "reference_sequence")).toBe(true);
+
+    const invalid: EpisodeIR = {
+      ...IR,
+      shots: [shot(1, 5, { mediaRefs: [{ kind: "image", n: 0, roleZh: "谢明彰锁脸" }] })],
+    };
+    const invalidOut = compileEpisode(invalid, "minimax-hailuo-3");
+    expect(invalidOut.formatIssues.some((i) => i.kind === "reference_index")).toBe(true);
+  });
+});
+
+describe("格式层问题进入总编译结果", () => {
+  it("styleZh 撑到 7100 字符:H3 出 prompt_length;Seedance 无此限不报", () => {
+    const longStyle: EpisodeIR = { ...IR, shots: [shot(1, 5)], styleZh: "云".repeat(7100) };
+    const h3 = compileEpisode(longStyle, "minimax-hailuo-3");
+    expect(h3.formatIssues.some((i) => i.kind === "prompt_length")).toBe(true);
+    const seedance = compileEpisode(longStyle, "seedance-2.5");
+    expect(seedance.formatIssues.some((i) => i.kind === "prompt_length")).toBe(false);
   });
 });
 

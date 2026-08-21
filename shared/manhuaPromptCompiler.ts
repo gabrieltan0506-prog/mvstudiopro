@@ -8,6 +8,7 @@ import {
   COMPILER_ENGINE_LIMITS,
   packShotsIntoSegments,
   type CompilerEngineId,
+  type CompilerEngineProfile,
   type EpisodeIR,
   type SegmentPlan,
   type ShotMediaRef,
@@ -51,7 +52,11 @@ export type BgmBrief = {
 
 export type CompiledReferencePlan = {
   segmentIndex: number;
-  mode: "seedance_reference" | "h3_reference_to_video" | "wan_reserved";
+  mode:
+    | "seedance_reference"
+    | "h3_reference_to_video"
+    | "h3_text_to_video"
+    | "wan_reserved";
   bindings: ShotMediaRef[];
 };
 
@@ -113,13 +118,36 @@ function shotLineH3(shot: PositionedShot): string {
   return parts.join(",");
 }
 
-/** 单段提示词(方言分流;头=风格句+画质铁令,尾=正向锁定) */
-export function compileSegmentPrompt(
+/** 段时长终检:提交前最后一道闸,min/max/整数都在此抛错 */
+function assertSegmentDurationValid(segment: SegmentPlan, profile: CompilerEngineProfile): void {
+  if (segment.durationSec < profile.minSegmentSec) {
+    throw new RangeError(
+      `第 ${segment.index} 段为 ${segment.durationSec}s，低于该引擎单段最短 ${profile.minSegmentSec}s，请合并镜头或补拍`,
+    );
+  }
+  if (segment.durationSec > profile.maxSegmentSec) {
+    throw new RangeError(
+      `第 ${segment.index} 段为 ${segment.durationSec}s，超过该引擎单段最长 ${profile.maxSegmentSec}s`,
+    );
+  }
+  if (profile.requiresIntegerSegmentSec && !Number.isInteger(segment.durationSec)) {
+    throw new RangeError(
+      `第 ${segment.index} 段为 ${segment.durationSec}s，该引擎只接受整数时长，请调整镜时长`,
+    );
+  }
+}
+
+/** 单段提示词(方言分流;头=风格句+画质铁令,尾=正向锁定);内部版连问题一起返回 */
+function compileSegmentPromptResult(
   segment: SegmentPlan,
   engine: CompilerEngineId,
   styleZh?: string,
-): string {
-  const dialect = COMPILER_ENGINE_LIMITS[engine].dialect;
+): { prompt: string; issues: FormatIssue[] } {
+  assertCompilerEngineReady(engine);
+  const profile = COMPILER_ENGINE_LIMITS[engine];
+  assertSegmentDurationValid(segment, profile);
+
+  const dialect = profile.dialect;
   let startSec = 0;
   const lines: string[] = [];
   for (const shot of segment.shots) {
@@ -132,7 +160,17 @@ export function compileSegmentPrompt(
       ? `【第${String(segment.index).padStart(2, "0")}段·${segment.durationSec}s】${styleZh ? ` ${styleZh}` : ""}`
       : `${styleZh ? `${styleZh}。` : ""}本段时长约${segment.durationSec}秒。`;
   const raw = [head, QUALITY_LOCK_ZH, ...lines, POSITIVE_LOCK_ZH].join("\n");
-  return formatPromptForEngine(raw, engine, { durationSec: segment.durationSec }).text;
+  const formatted = formatPromptForEngine(raw, engine, { durationSec: segment.durationSec });
+  return { prompt: formatted.text, issues: formatted.issues };
+}
+
+/** 单段提示词公开入口:与内部版同一道闸(reserved 拒 + 时长终检) */
+export function compileSegmentPrompt(
+  segment: SegmentPlan,
+  engine: CompilerEngineId,
+  styleZh?: string,
+): string {
+  return compileSegmentPromptResult(segment, engine, styleZh).prompt;
 }
 
 /** TTS 台词表:段内起止秒位(秒锁母轨用) */
@@ -180,13 +218,21 @@ export function buildBgmBrief(ir: EpisodeIR, segments: SegmentPlan[]): BgmBrief 
   };
 }
 
-/** 段内参考去重收集(kind:n 全等) */
-function collectSegmentRefs(segment: SegmentPlan): ShotMediaRef[] {
-  return Array.from(
-    new Map(
-      segment.shots.flatMap((shot) => shot.mediaRefs ?? []).map((ref) => [`${ref.kind}:${ref.n}`, ref]),
-    ).values(),
-  );
+/** 段内参考原始收集(不去重,供冲突校验) */
+function collectRawSegmentRefs(segment: SegmentPlan): ShotMediaRef[] {
+  return segment.shots.flatMap((shot) => shot.mediaRefs ?? []);
+}
+
+/** 段内参考去重收集(kind:n 同槽保留第一项,与格式层口径一致) */
+function collectSegmentRefs(rawRefs: ShotMediaRef[]): ShotMediaRef[] {
+  const slotMap = new Map<string, ShotMediaRef>();
+  for (const ref of rawRefs) {
+    const key = `${ref.kind}:${ref.n}`;
+    if (!slotMap.has(key)) {
+      slotMap.set(key, ref);
+    }
+  }
+  return Array.from(slotMap.values());
 }
 
 /** 总入口:IR + 引擎 → 编译产物;reserved 引擎(wan-3.0)明确拒绝不产伪结果 */
@@ -209,12 +255,17 @@ export function compileEpisode(ir: EpisodeIR, engine: CompilerEngineId): Compile
   const segments = packShotsIntoSegments(ir.shots, profile.maxSegmentSec);
 
   const compiled = segments.map((segment) => {
-    const refs = collectSegmentRefs(segment);
+    const rawRefs = collectRawSegmentRefs(segment);
+    const refs = collectSegmentRefs(rawRefs);
+    const promptResult = compileSegmentPromptResult(segment, engine, ir.styleZh);
     return {
       segment,
-      prompt: compileSegmentPrompt(segment, engine, ir.styleZh),
+      prompt: promptResult.prompt,
       refs,
-      issues: validateSegmentMediaRefs(refs, profile.references),
+      issues: [
+        ...promptResult.issues,
+        ...validateSegmentMediaRefs(rawRefs, profile.references),
+      ],
     };
   });
 
@@ -227,7 +278,12 @@ export function compileEpisode(ir: EpisodeIR, engine: CompilerEngineId): Compile
     ),
     referencePlans: compiled.map((item) => ({
       segmentIndex: item.segment.index,
-      mode: profile.dialect === "h3" ? "h3_reference_to_video" : "seedance_reference",
+      mode:
+        profile.dialect === "h3"
+          ? item.refs.length > 0
+            ? "h3_reference_to_video"
+            : "h3_text_to_video"
+          : "seedance_reference",
       bindings: item.refs,
     })),
     ttsCueSheet: buildTtsCueSheet(segments),

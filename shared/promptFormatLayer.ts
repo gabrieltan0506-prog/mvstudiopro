@@ -3,8 +3,10 @@
  * 多模态参考数量与时长校验。确定性纯函数,「整理格式(免费)」按钮直调。
  */
 import {
+  assertCompilerEngineReady,
   COMPILER_ENGINE_LIMITS,
   type CompilerEngineId,
+  type CompilerEngineProfile,
   type CompilerReferenceLimits,
   type ShotMediaRef,
   type ShotMediaRefKind,
@@ -80,20 +82,25 @@ export function formatPromptForEngine(
   engine: CompilerEngineId,
   opts?: { durationSec?: number; imageRefCount?: number },
 ): FormatResult {
-  const limits = COMPILER_ENGINE_LIMITS[engine];
+  // 任何公开入口先拦 reserved:Wan 不许落进 H3 分支产伪结果
+  assertCompilerEngineReady(engine);
+
+  const limits: CompilerEngineProfile = COMPILER_ENGINE_LIMITS[engine];
   const issues: FormatIssue[] = [];
   let text = String(raw || "").trim();
 
   text = normalizeImageRefs(text);
   if (limits.dialect === "seedance") {
     text = normalizeDialogueMarkers(text);
-  } else {
-    // H3/wan 自然语言方向:三类参考编号化,剥四标记与括号
+  } else if (limits.dialect === "h3") {
+    // H3 自然语言方向:三类参考编号化,剥四标记与括号
     text = normalizeH3ReferenceMarkers(text);
     text = text.replace(/\{([^{}]{1,80})\}/g, "“$1”");
     text = text.replace(/[<＜]([^<>＜＞]{1,80})[>＞]/g, "$1");
     text = text.replace(/【([^【】]{1,80})】/g, "$1");
     text = text.replace(/[（(]([^()（）]{1,80})[)）]/g, "$1");
+  } else {
+    throw new Error(`${engine} 的提示词方言尚未接线`);
   }
 
   const censored = applyCensorReplacements(text);
@@ -103,19 +110,39 @@ export function formatPromptForEngine(
   }
 
   let clampedDurationSec: number | undefined;
-  const dur = Number(opts?.durationSec);
-  if (Number.isFinite(dur) && dur > limits.maxSegmentSec) {
-    clampedDurationSec = limits.maxSegmentSec;
-    issues.push({
-      kind: "duration",
-      detailZh: `该引擎单段上限 ${limits.maxSegmentSec}s,已按上限钳制(原 ${dur}s)`,
-    });
+  const duration = Number(opts?.durationSec);
+  if (Number.isFinite(duration)) {
+    if (duration < limits.minSegmentSec) {
+      issues.push({
+        kind: "duration_min",
+        detailZh: `该引擎单段最短 ${limits.minSegmentSec}s，当前 ${duration}s`,
+      });
+    }
+    if (duration > limits.maxSegmentSec) {
+      clampedDurationSec = limits.maxSegmentSec;
+      issues.push({
+        kind: "duration_max",
+        detailZh: `该引擎单段最长 ${limits.maxSegmentSec}s，当前 ${duration}s`,
+      });
+    }
+    if (limits.requiresIntegerSegmentSec && !Number.isInteger(duration)) {
+      issues.push({
+        kind: "duration_integer",
+        detailZh: `该引擎输出时长必须为整数，当前 ${duration}s`,
+      });
+    }
   }
-  const refs = Number(opts?.imageRefCount);
-  if (Number.isFinite(refs) && refs > limits.references.image) {
+  const imageRefCount = Number(opts?.imageRefCount);
+  if (Number.isFinite(imageRefCount) && imageRefCount > limits.references.image) {
     issues.push({
       kind: "image_refs",
-      detailZh: `该引擎参考图上限 ${limits.references.image} 张,当前 ${refs} 张,请精简`,
+      detailZh: `该引擎参考图上限 ${limits.references.image} 张，当前 ${imageRefCount} 张`,
+    });
+  }
+  if (limits.maxPromptChars !== undefined && text.length > limits.maxPromptChars) {
+    issues.push({
+      kind: "prompt_length",
+      detailZh: `该引擎提示词上限 ${limits.maxPromptChars} 字符，当前 ${text.length} 字符`,
     });
   }
 
@@ -128,17 +155,54 @@ export function validateSegmentMediaRefs(
   limits: CompilerReferenceLimits,
 ): FormatIssue[] {
   const issues: FormatIssue[] = [];
+  const slotMap = new Map<string, ShotMediaRef>();
 
-  const uniqueRefs = (kind: ShotMediaRefKind) =>
-    Array.from(
-      new Map(
-        refs.filter((ref) => ref.kind === kind).map((ref) => [`${ref.kind}:${ref.n}`, ref]),
-      ).values(),
-    );
+  for (const ref of refs) {
+    if (!Number.isInteger(ref.n) || ref.n < 1) {
+      issues.push({
+        kind: "reference_index",
+        detailZh: `${ref.kind} 参考编号必须为从 1 开始的正整数，当前为 ${ref.n}`,
+      });
+      continue;
+    }
+    const key = `${ref.kind}:${ref.n}`;
+    const previous = slotMap.get(key);
+    if (previous) {
+      const previousSource = String(previous.sourceAssetId || "").trim();
+      const currentSource = String(ref.sourceAssetId || "").trim();
+      if (previous.roleZh !== ref.roleZh || previousSource !== currentSource) {
+        issues.push({
+          kind: "reference_conflict",
+          detailZh: `${ref.kind} ${ref.n} 同时绑定“${previous.roleZh}”与“${ref.roleZh}”，请拆成不同编号`,
+        });
+      }
+      continue;
+    }
+    slotMap.set(key, ref);
+  }
+
+  const uniqueRefs = (kind: ShotMediaRefKind): ShotMediaRef[] =>
+    Array.from(slotMap.values()).filter((ref) => ref.kind === kind);
+
+  const validateSequence = (kind: ShotMediaRefKind, items: ShotMediaRef[]) => {
+    const numbers = items.map((item) => item.n).sort((a, b) => a - b);
+    const invalid = numbers.some((number, index) => number !== index + 1);
+    if (invalid) {
+      issues.push({
+        kind: "reference_sequence",
+        detailZh: `${kind} 参考编号必须从 1 连续排列，当前为 ${numbers.join(",")}`,
+      });
+    }
+  };
 
   const images = uniqueRefs("image");
   const videos = uniqueRefs("video");
   const audios = uniqueRefs("audio");
+
+  validateSequence("image", images);
+  validateSequence("video", videos);
+  validateSequence("audio", audios);
+
   const total = images.length + videos.length + audios.length;
 
   if (images.length > limits.image) {

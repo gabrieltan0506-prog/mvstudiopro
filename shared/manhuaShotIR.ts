@@ -92,6 +92,10 @@ export type CompilerEngineProfile = {
   references: CompilerReferenceLimits;
   dialect: CompilerDialect;
   status: CompilerSupportStatus;
+  /** 目标引擎提示词字符上限 */
+  maxPromptChars?: number;
+  /** 是否只接受整数输出时长 */
+  requiresIntegerSegmentSec?: boolean;
   noteZh?: string;
 };
 
@@ -143,6 +147,8 @@ export const COMPILER_ENGINE_LIMITS = {
   [CANVAS_VIDEO_MODEL_HAILUO_H3]: {
     minSegmentSec: 4,
     maxSegmentSec: 15,
+    maxPromptChars: 7000,
+    requiresIntegerSegmentSec: true,
     references: {
       image: HAILUO_REFERENCE_MAX.image,
       video: 3,
