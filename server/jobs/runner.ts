@@ -71,6 +71,11 @@ import {
   type JobType,
 } from "./repository";
 import { processPdfExportJob } from "./pdfExportJob";
+import {
+  invokePlatformAnalysisChat,
+  PLATFORM_ANALYSIS_FALLBACK_MODEL,
+  PLATFORM_ANALYSIS_PRIMARY_MODEL,
+} from "../services/platformAnalysisLlm.js";
 import { resolveGrowthCampJobServerTimeoutMs } from "../../shared/growthCampJobTiming.js";
 import {
   beginGrowthInteractiveWorkload,
@@ -1653,7 +1658,8 @@ async function processPlatformJob(
       const windowDays = Number(params.windowDays || 15);
       const snapshotSummary = (params.snapshotSummary || {}) as Record<string, unknown>;
 
-    // Stage 1: 3.1 Pro — deep original content blueprint (director mode, no trend data)
+    // Stage 1: GPT-5.6 sol(reasoning high) — deep original content blueprint (director mode, no trend data)
+    // 2026-08-21 用户拍板:双段由 Gemini 3.1 Pro 切 GPT-5.6 sol high(主力)/Kimi K3(兜底),治论文腔。
     // Strict: no outlines. Must output verbatim copy, precise shooting scripts, emotional direction.
     const stage1SystemInstruction = `你是一位顶级内容创作导演兼文案大师，你的产出标准绝对不接受大纲、空洞建议或模糊描述。
 
@@ -1668,9 +1674,7 @@ async function processPlatformJob(
 
 你的产出是创作者的「施工图纸」，拿到就能立刻开拍，没有任何理解成本。`;
 
-      const stage1Response = await invokeLLM({
-      provider: "vertex",
-      modelName: "gemini-3.1-pro-preview",
+      const stage1Response = await invokePlatformAnalysisChat({
       response_format: { type: "json_object" },
       // 長篇 contentBlueprints（多選題 + 長腳本）極易觸及預設輸出上限導致 JSON 截斷 → parse 失敗後變 {}，前端全空
       max_tokens: 65536,
@@ -1703,11 +1707,9 @@ async function processPlatformJob(
         contentResult = {};
       }
 
-    // Stage 2: Gemini 3.1 Pro — trend calibration + dashboard signals（與 Creator Growth Stage 2 文案同線，不用 2.5 Pro；2.5 Pro 僅用於豎封英文化）
+    // Stage 2: GPT-5.6 sol(reasoning high) — trend calibration + dashboard signals(与 Stage 1 同一主力/兜底链)
     const stage2SystemInstruction = "你是一位顶尖的平台趋势分析师。根据用户的脚本蓝图与平台快照数据，进行热点数据校准，计算关键指标，输出最终平台看板 JSON。";
-      const stage2Response = await invokeLLM({
-      provider: "vertex",
-      modelName: "gemini-3.1-pro-preview",
+      const stage2Response = await invokePlatformAnalysisChat({
       response_format: { type: "json_object" },
       max_tokens: 65536,
       temperature: 0.9,
@@ -1750,12 +1752,17 @@ async function processPlatformJob(
       }
 
       return {
-        provider: "vertex",
+        provider: "gpt56-sol",
         output: {
           platformDashboard: dashboardResult,
           platformContent: contentResult,
           completedAt: new Date().toISOString(),
-          engines: { stage1: "vertex/gemini-3.1-pro-preview", stage2: "vertex/gemini-3.1-pro-preview", snapshotDepth: "full" },
+          engines: {
+            stage1: `${PLATFORM_ANALYSIS_PRIMARY_MODEL}(high)`,
+            stage2: `${PLATFORM_ANALYSIS_PRIMARY_MODEL}(high)`,
+            fallback: PLATFORM_ANALYSIS_FALLBACK_MODEL,
+            snapshotDepth: "full",
+          },
         },
       };
     }
