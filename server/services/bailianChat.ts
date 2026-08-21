@@ -1,8 +1,10 @@
 /**
- * GLM-5.3 主力 + Qwen3.8-Max 兜底的四档聊天通道(2026-08-21 用户拍板)。
- * 顺序:百炼 GLM-5.3 → EvoLink GLM-5.3 → OpenRouter GLM-5.3 → EvoLink Qwen3.8-Max。
+ * GLM-5.3 主力 + Qwen3.8-Max 兜底的五档聊天通道(2026-08-21 用户拍板)。
+ * 顺序:百炼 GLM-5.3 → EvoLink GLM-5.3 → OpenRouter GLM-5.3
+ *      → Wan official(百炼直连) Qwen3.8-Max → EvoLink Qwen3.8-Max。
  * GLM-5.3 与 5.2 同价(¥8/¥28)但 1M 上下文、缓存命中 ¥2,同价换代直接升级;
- * 末档换 Qwen3.8-Max(EvoLink 比 OpenRouter 便宜约 12%),避免 GLM 全家桶同时抽风时无路可走。
+ * 末档换 Qwen3.8-Max:先 Wan official 百炼直连(与 GLM 同一把 WAN_OFFICIAL 钥匙、人民币计价),
+ * 再 EvoLink 兜底;避免 GLM 全家桶同时抽风时无路可走。
  * 复审三轮 P1-1/P1-3:
  * - 每个网关的响应必须过 validateContent 业务验真才算成功,否则继续降级;
  * - 全程记录 gatewayTrace(真实 HTTP 外呼),失败以 GlmGatewayError 携带轨迹上抛。
@@ -10,7 +12,7 @@
  */
 
 export const BAILIAN_GLM_MODEL = "glm-5.3";
-/** 末档兜底:GLM 全线不可用时换 Qwen3.8-Max(EvoLink 通道,与扩写链同 id) */
+/** 末档兜底:GLM 全线不可用时换 Qwen3.8-Max(Wan official 百炼直连 → EvoLink,与扩写链同 id) */
 export const GLM_CHAIN_FALLBACK_MODEL = "qwen3.8-max";
 
 function bailianBase(): string {
@@ -31,7 +33,7 @@ export type BailianChatResponse = {
 };
 
 export type GlmGatewayTraceEntry = {
-  gateway: "bailian" | "evolink" | "openrouter" | "evolink_qwen";
+  gateway: "bailian" | "evolink" | "openrouter" | "bailian_qwen" | "evolink_qwen";
   model: string;
   outcome: "ok" | "http_error" | "invalid_json" | "truncated" | "empty_content" | "content_invalid" | "network_error" | "skipped_not_configured";
   detail?: string;
@@ -39,7 +41,7 @@ export type GlmGatewayTraceEntry = {
 
 export type GlmChatSuccess = BailianChatResponse & {
   /** 实际交卷网关 */
-  gateway: "bailian" | "evolink" | "openrouter" | "evolink_qwen";
+  gateway: "bailian" | "evolink" | "openrouter" | "bailian_qwen" | "evolink_qwen";
   /** 本次调用的全部真实外呼轨迹(含之前失败的网关) */
   gatewayTrace: GlmGatewayTraceEntry[];
 };
@@ -65,7 +67,7 @@ type GlmParams = {
 export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): Promise<GlmChatSuccess> {
   const trace: GlmGatewayTraceEntry[] = [];
   const gateways: Array<{
-    name: "bailian" | "evolink" | "openrouter" | "evolink_qwen";
+    name: "bailian" | "evolink" | "openrouter" | "bailian_qwen" | "evolink_qwen";
     model: string;
     ready: boolean;
     url: string;
@@ -93,7 +95,15 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
       key: String(process.env.OPENROUTER_API_KEY || "").trim(),
     },
     {
-      // 末档:GLM 三网关全灭才换模型,保交付不保同型
+      // 末档一:GLM 三网关全灭才换模型;Wan official 百炼直连(同一把 WAN_OFFICIAL 钥匙)
+      name: "bailian_qwen",
+      model: GLM_CHAIN_FALLBACK_MODEL,
+      ready: isBailianChatConfigured(),
+      url: `${bailianBase()}/compatible-mode/v1/chat/completions`,
+      key: String(process.env.WAN_OFFICIAL_API_KEY || "").trim(),
+    },
+    {
+      // 末档二:百炼 Qwen 也不通才走 EvoLink,保交付不保同型
       name: "evolink_qwen",
       model: GLM_CHAIN_FALLBACK_MODEL,
       ready: Boolean(String(process.env.EVOLINK_API_KEY || "").trim()),
@@ -110,7 +120,7 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
       throw new GlmGatewayError("GLM 兜底已被硬截止取消", trace);
     }
     try {
-      const res = await invokeOneGlmGateway(params, g.url, g.key, g.model);
+      const res = await invokeOneGlmGateway(params, g.url, g.key, g.model, g.name);
       const content = res.choices?.[0]?.message?.content;
       const text = typeof content === "string" ? content.trim() : "";
       if (!text) {
@@ -156,6 +166,7 @@ async function invokeOneGlmGateway(
   url: string,
   key: string,
   model: string,
+  gateway: GlmGatewayTraceEntry["gateway"] = "bailian",
 ): Promise<BailianChatResponse> {
   const timeoutSignal = AbortSignal.timeout(240_000);
   const signal = params.abortSignal ? AbortSignal.any([params.abortSignal, timeoutSignal]) : timeoutSignal;
@@ -168,12 +179,16 @@ async function invokeOneGlmGateway(
       { role: "user", content: params.user },
     ],
   };
-  if (model === GLM_CHAIN_FALLBACK_MODEL) {
+  if (gateway === "evolink_qwen") {
     // EvoLink Qwen 档位 low|medium|xhigh(无 max);与扩写链同口径开顶档,
     // 且用 max_completion_tokens(传 max_tokens 会被静默忽略)
     body.enable_thinking = true;
     body.reasoning_effort = "xhigh";
     body.max_completion_tokens = budget;
+  } else if (gateway === "bailian_qwen") {
+    // 百炼兼容模式 Qwen:只认 enable_thinking(不认 reasoning_effort),预算走 max_tokens
+    body.enable_thinking = true;
+    body.max_tokens = budget;
   } else {
     body.max_tokens = budget;
   }

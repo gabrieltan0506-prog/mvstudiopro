@@ -99,11 +99,11 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链)", () => {
     expect(vi.mocked(fetch as any).mock.calls).toHaveLength(1);
   });
 
-  it("全链失败:GlmGatewayError 带完整轨迹(含 Qwen 末档);max_tokens/model/signal 透传正确", async () => {
+  it("全链失败:GlmGatewayError 带完整轨迹(含 Wan official / EvoLink 两档 Qwen);max_tokens/model/signal 透传正确", async () => {
     const calls = stubFetchSeq([() => ({ ok: false, status: 502, body: "bad" })]);
     const err = await invokeGlmJsonChatWithGatewayFallback({ system: "s", user: "u", maxTokens: 12_345 }).catch((e) => e);
     expect(err).toBeInstanceOf(GlmGatewayError);
-    expect(err.gatewayTrace.map((t: any) => t.gateway)).toEqual(["bailian", "evolink", "openrouter", "evolink_qwen"]);
+    expect(err.gatewayTrace.map((t: any) => t.gateway)).toEqual(["bailian", "evolink", "openrouter", "bailian_qwen", "evolink_qwen"]);
     expect(err.gatewayTrace.every((t: any) => t.outcome === "http_error")).toBe(true);
     const body0 = JSON.parse(String(calls[0].init?.body));
     expect(body0.max_tokens).toBe(12_345);
