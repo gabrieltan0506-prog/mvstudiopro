@@ -601,6 +601,28 @@ export async function claimNextQueuedJobExcluding(excludeTypes: string[]): Promi
   return claimQueuedJobById(db, next, "claimNextQueuedJobExcluding");
 }
 
+/** 本人后期任务列表(服务端 jobs 为任务记录主来源;前端 localStorage 仅作显示缓存) */
+export async function listPostProdJobsForUser(
+  userId: string,
+  limit = 30,
+): Promise<NormalizedJob[]> {
+  const db = await getDb();
+  if (!db) return [];
+
+  const rows = await db
+    .select()
+    .from(jobs)
+    .where(and(eq(jobs.userId, userId), eq(jobs.type, "post_prod")))
+    .orderBy(desc(jobs.createdAt))
+    .limit(Math.max(1, Math.min(100, Math.floor(limit))));
+
+  return rows.map((row) => ({
+    ...row,
+    input: parseMaybeJson(row.input),
+    output: parseMaybeJson(row.output),
+  }));
+}
+
 /** 独立通道任务类型:主队列不领取,各自专用领取函数串行消化 */
 export const MAIN_QUEUE_EXCLUDED_TYPES = ["pdf_export", "post_prod"] as const;
 

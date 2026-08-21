@@ -1,9 +1,8 @@
 /**
  * 后期工坊卡(成片坞内):拼接 / BGM 贴装 / 响度验收,纯 ffmpeg 零积分。
- * 服务端三件套已上线(queuePostProd/getPostProdJob);本卡只挂真实工序,
+ * 任务记录以服务端 jobs 为主来源(listPostProdJobs 恢复),localStorage 仅作
+ * 用户级显示缓存(按 uid 分 key);拼接/BGM 产物直接进入下一道工序(gcsUri 优先)。
  * 未接通的工序(改画面保声/重拍一镜)按反空壳约定画成灰禁用,不冒充可用。
- * 素材面=素材登记约束四类:本人成片(jobs 证据)/本人上传(uploads 前缀)/
- * 画布出图(登记簿)/后期自产;站外链接服务端会拒,前端只提供站内素材选择。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -11,45 +10,24 @@ import { Film, Layers, Loader2, Music4, Scissors, Volume2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { copyText } from "@/lib/copyText";
 import type { CanvasBlock } from "@/lib/canvasTypes";
+import {
+  ACTION_LABEL,
+  buildPostProdClipOptions,
+  jobsStorageKey,
+  loadStoredJobs,
+  mergeClipOptions,
+  mergeRemoteJobs,
+  persistJobs,
+  shouldNotifyTerminal,
+  type PostProdJobStatus,
+  type TrackedJob,
+} from "@/lib/postProdWorkshop";
 
-type PostProdJobStatus = "queued" | "running" | "succeeded" | "failed";
-
-type TrackedJob = {
-  jobId: string;
-  action: "concat" | "bgm_mount" | "loudness_check";
-  label: string;
-  status: PostProdJobStatus;
-  createdAt: number;
-  /** succeeded 时的产物(concat/bgm:签名链;loudness:报告) */
-  output?: Record<string, unknown> | null;
-  error?: string | null;
-};
-
-const JOBS_STORAGE_KEY = "postProd.jobs.v1";
 const AUDIO_EXT_RE = /\.(mp3|wav|m4a|aac|flac|ogg)(\?|$)/i;
 
-function loadStoredJobs(): TrackedJob[] {
-  try {
-    const raw = localStorage.getItem(JOBS_STORAGE_KEY);
-    const parsed = raw ? (JSON.parse(raw) as TrackedJob[]) : [];
-    return Array.isArray(parsed) ? parsed.slice(0, 30) : [];
-  } catch {
-    return [];
-  }
-}
-
-function persistJobs(jobs: TrackedJob[]): void {
-  try {
-    localStorage.setItem(JOBS_STORAGE_KEY, JSON.stringify(jobs.slice(0, 30)));
-  } catch {
-    /* 存不进就算了,列表仍在内存 */
-  }
-}
-
-const ACTION_LABEL: Record<TrackedJob["action"], string> = {
-  concat: "拼接成片",
-  bgm_mount: "BGM 贴装",
-  loudness_check: "响度验收",
+type PostProdWorkshopCardProps = {
+  blocks: CanvasBlock[];
+  userId: string;
 };
 
 function statusBadge(status: PostProdJobStatus): { text: string; cls: string } {
@@ -63,12 +41,13 @@ function statusBadge(status: PostProdJobStatus): { text: string; cls: string } {
   }
 }
 
-export default function PostProdWorkshopCard({ blocks }: { blocks: CanvasBlock[] }) {
+export default function PostProdWorkshopCard({ blocks, userId }: PostProdWorkshopCardProps) {
   const queueMutation = trpc.mvAnalysis.queuePostProd.useMutation();
   const utils = trpc.useUtils();
+  const storageKey = useMemo(() => jobsStorageKey(userId), [userId]);
 
-  /** 本集成片:视频节点已出片的(签名链走 jobs 证据放行) */
-  const clipOptions = useMemo(
+  /** 画布成片:视频节点已出片的(签名链走 jobs 证据放行) */
+  const blockClipOptions = useMemo(
     () =>
       blocks
         .filter((b) => b.kind === "video" && String(b.outputUrl || "").trim())
@@ -87,7 +66,8 @@ export default function PostProdWorkshopCard({ blocks }: { blocks: CanvasBlock[]
     const out: Array<{ id: string; url: string; label: string }> = [];
     for (const b of blocks) {
       for (const a of b.uploadedAssets ?? []) {
-        const isAudio = a.kind === "audio" || AUDIO_EXT_RE.test(a.fileName || "") || AUDIO_EXT_RE.test(a.url || "");
+        const isAudio =
+          a.kind === "audio" || AUDIO_EXT_RE.test(a.fileName || "") || AUDIO_EXT_RE.test(a.url || "");
         if (!isAudio) continue;
         const url = String(a.gcsUri || a.url || "").trim();
         if (!url) continue;
@@ -108,58 +88,121 @@ export default function PostProdWorkshopCard({ blocks }: { blocks: CanvasBlock[]
   const [bgmFadeOut, setBgmFadeOut] = useState(1);
   const [loudVideoUrl, setLoudVideoUrl] = useState("");
 
-  const [jobs, setJobs] = useState<TrackedJob[]>(() => loadStoredJobs());
+  const [jobs, setJobs] = useState<TrackedJob[]>(() =>
+    loadStoredJobs(jobsStorageKey(userId), localStorage),
+  );
   const jobsRef = useRef(jobs);
   jobsRef.current = jobs;
 
-  const updateJobs = useCallback((updater: (prev: TrackedJob[]) => TrackedJob[]) => {
-    setJobs((prev) => {
-      const next = updater(prev);
-      persistJobs(next);
-      return next;
-    });
-  }, []);
+  const updateJobs = useCallback(
+    (updater: (prev: TrackedJob[]) => TrackedJob[]) => {
+      setJobs((prev) => {
+        const next = updater(prev);
+        persistJobs(storageKey, next, localStorage);
+        return next;
+      });
+    },
+    [storageKey],
+  );
 
-  /** 15s 轮询未终态任务;卡挂载即恢复(刷新不丢单) */
+  /** 服务端为主来源:挂载/回焦拉取本人任务列表,缓存清空后由此恢复 */
+  const jobsQuery = trpc.mvAnalysis.listPostProdJobs.useQuery(
+    { limit: 30 },
+    { enabled: Boolean(userId), retry: false, refetchOnWindowFocus: true },
+  );
+  useEffect(() => {
+    const data = jobsQuery.data;
+    if (!data) return;
+    updateJobs((prev) =>
+      mergeRemoteJobs(
+        prev,
+        data
+          .filter((r): r is NonNullable<typeof r> => r != null)
+          .map((r) => ({
+            jobId: r.jobId,
+            action: r.action,
+            status: r.status,
+            output: r.output,
+            error: r.error,
+            createdAt: r.createdAt as unknown,
+          })),
+      ),
+    );
+  }, [jobsQuery.data, updateJobs]);
+
+  /** 15s 轮询未终态任务:上一轮未结束不开下一轮;终态只提示一次;403/404 收敛为失败 */
+  const pollingRef = useRef(false);
+  const notifiedJobsRef = useRef(new Set<string>());
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
-      const pending = jobsRef.current.filter(
-        (j) => j.status !== "succeeded" && j.status !== "failed",
-      );
-      for (const job of pending) {
-        try {
-          const res = await utils.mvAnalysis.getPostProdJob.fetch({ jobId: job.jobId });
-          if (cancelled) return;
-          updateJobs((prev) =>
-            prev.map((j) =>
-              j.jobId === job.jobId
-                ? {
-                    ...j,
-                    status: (res.status as PostProdJobStatus) || j.status,
-                    output: (res.output as Record<string, unknown> | null) ?? j.output,
-                    error: res.error ?? null,
-                  }
-                : j,
-            ),
-          );
-          if (res.status === "succeeded") {
-            toast.success(`后期任务完成:${job.label}`);
-          } else if (res.status === "failed") {
-            toast.error(`后期任务失败:${job.label}`, { description: res.error || undefined });
+      if (pollingRef.current) return;
+      pollingRef.current = true;
+      try {
+        const pending = jobsRef.current.filter(
+          (j) => j.status !== "succeeded" && j.status !== "failed",
+        );
+        for (const job of pending) {
+          try {
+            const res = await utils.mvAnalysis.getPostProdJob.fetch({ jobId: job.jobId });
+            if (cancelled || !res) return;
+            updateJobs((prev) =>
+              prev.map((j) =>
+                j.jobId === job.jobId
+                  ? {
+                      ...j,
+                      status: (res.status as PostProdJobStatus) || j.status,
+                      output: (res.output as Record<string, unknown> | null) ?? j.output,
+                      error: res.error ?? null,
+                    }
+                  : j,
+              ),
+            );
+            if (shouldNotifyTerminal(notifiedJobsRef.current, job.jobId, res.status)) {
+              if (res.status === "succeeded") {
+                toast.success(`后期任务完成：${job.label}`);
+              } else {
+                toast.error(`后期任务未完成：${job.label}`, {
+                  description: res.error || undefined,
+                });
+              }
+            }
+          } catch (error) {
+            const httpStatus = Number(
+              (error as { data?: { httpStatus?: unknown } })?.data?.httpStatus,
+            );
+            if (httpStatus === 403 || httpStatus === 404) {
+              // 记录当前不可用(被清理/无权):收敛为失败,停止后续轮询
+              updateJobs((prev) =>
+                prev.map((j) =>
+                  j.jobId === job.jobId
+                    ? { ...j, status: "failed", error: "任务记录当前不可用" }
+                    : j,
+                ),
+              );
+            }
+            /* 其余错误视为瞬态,下一轮再试 */
           }
-        } catch {
-          /* 单次查询失败视为瞬态,下一轮再试;404(被清理)按失败落档 */
         }
+      } finally {
+        pollingRef.current = false;
       }
     };
     void tick();
     const timer = window.setInterval(() => void tick(), 15_000);
     return () => {
       cancelled = true;
+      pollingRef.current = false;
       window.clearInterval(timer);
     };
   }, [updateJobs, utils]);
+
+  /** 后期产物直接进入下一道工序(gcsUri 优先);与画布成片合并去重 */
+  const postProdClipOptions = useMemo(() => buildPostProdClipOptions(jobs), [jobs]);
+  const clipOptions = useMemo(
+    () => mergeClipOptions(postProdClipOptions, blockClipOptions),
+    [postProdClipOptions, blockClipOptions],
+  );
 
   const submit = useCallback(
     async (
@@ -191,7 +234,7 @@ export default function PostProdWorkshopCard({ blocks }: { blocks: CanvasBlock[]
           },
           ...prev,
         ]);
-        toast.success(`已入队:${label}`, { description: `单号 ${res.jobId}` });
+        toast.success(`已入队：${label}`, { description: `单号 ${res.jobId}` });
       } catch (e) {
         toast.error("入队失败", {
           description: e instanceof Error ? e.message : "素材地址无法核对,请重新选择",
@@ -271,9 +314,7 @@ export default function PostProdWorkshopCard({ blocks }: { blocks: CanvasBlock[]
       };
       return (
         <span className="text-[11px] text-white/60">
-          {o.status === "no_audio"
-            ? "无音轨"
-            : `整体 ${o.integratedLufs} LUFS · ${o.durationSec}s`}
+          {o.status === "no_audio" ? "无音轨" : `整体 ${o.integratedLufs} LUFS · ${o.durationSec}s`}
         </span>
       );
     }
@@ -308,10 +349,7 @@ export default function PostProdWorkshopCard({ blocks }: { blocks: CanvasBlock[]
   };
 
   return (
-    <div
-      data-postprod-workshop
-      className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4"
-    >
+    <div data-postprod-workshop className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
       <div className="flex flex-wrap items-center gap-2">
         <Film className="h-4 w-4 text-cyan-300" />
         <span className="text-[14px] font-bold text-white">后期工坊</span>
@@ -319,7 +357,7 @@ export default function PostProdWorkshopCard({ blocks }: { blocks: CanvasBlock[]
           三件套 0 积分 · 纯算力
         </span>
         <span className="text-[11px] text-white/45">
-          拼接 / BGM 贴装 / 响度验收;产物落云端,7 天签名链
+          拼接 / BGM 贴装 / 响度验收;产物落云端,7 天签名链;成品可直接进下一道工序
         </span>
       </div>
 
@@ -415,8 +453,10 @@ export default function PostProdWorkshopCard({ blocks }: { blocks: CanvasBlock[]
               <label className="inline-flex items-center gap-1">
                 进场s
                 <input
-                  type="number" step={0.5} min={0} value={bgmEntrySec}
-                  onChange={(e) => setBgmEntrySec(Math.max(0, Number(e.target.value) || 0))}
+                  type="number" step={0.5} min={0} max={3600} value={bgmEntrySec}
+                  onChange={(e) =>
+                    setBgmEntrySec(Math.max(0, Math.min(3600, Number(e.target.value) || 0)))
+                  }
                   className={numCls}
                 />
               </label>
@@ -483,7 +523,7 @@ export default function PostProdWorkshopCard({ blocks }: { blocks: CanvasBlock[]
         </div>
       </div>
 
-      {/* 任务列表 */}
+      {/* 任务列表(服务端为主来源;此处为本人任务展示) */}
       {jobs.length > 0 ? (
         <div className="mt-3 space-y-1">
           {jobs.slice(0, 10).map((job) => {
