@@ -118,21 +118,69 @@ function shotLineH3(shot: PositionedShot): string {
   return parts.join(",");
 }
 
-/** 段时长终检:提交前最后一道闸,min/max/整数都在此抛错 */
-function assertSegmentDurationValid(segment: SegmentPlan, profile: CompilerEngineProfile): void {
-  if (segment.durationSec < profile.minSegmentSec) {
+/**
+ * 公开单段入口的完整结构终检。
+ * compileSegmentPrompt 是公开函数，必须自行拒绝 NaN、空镜、
+ * 镜头时长不一致和镜号倒序。
+ */
+function assertSegmentPlanValid(segment: SegmentPlan, profile: CompilerEngineProfile): void {
+  const duration = Number(segment.durationSec);
+
+  if (!Number.isFinite(duration)) {
+    throw new RangeError(`第 ${segment.index} 段时长必须为有限数字`);
+  }
+
+  if (!Array.isArray(segment.shots) || segment.shots.length === 0) {
+    throw new RangeError(`第 ${segment.index} 段至少需要一镜`);
+  }
+
+  let shotTotalSec = 0;
+  let previousShotIndex = -Infinity;
+
+  for (const shot of segment.shots) {
+    const shotDuration = Number(shot.durationSec);
+
+    if (!Number.isFinite(shotDuration) || shotDuration <= 0) {
+      throw new RangeError(`第 ${shot.index} 镜时长必须为有限正数`);
+    }
+
+    if (!Number.isInteger(shot.index) || shot.index < 1) {
+      throw new RangeError(`镜号必须为从 1 开始的正整数，当前为 ${shot.index}`);
+    }
+
+    if (shot.index <= previousShotIndex) {
+      throw new RangeError(`第 ${segment.index} 段镜号必须严格递增`);
+    }
+
+    if (!String(shot.sceneZh || "").trim() || !String(shot.actionZh || "").trim()) {
+      throw new RangeError(`第 ${shot.index} 镜缺少场景或动作`);
+    }
+
+    previousShotIndex = shot.index;
+    shotTotalSec += shotDuration;
+  }
+
+  if (Math.abs(shotTotalSec - duration) > 0.000001) {
     throw new RangeError(
-      `第 ${segment.index} 段为 ${segment.durationSec}s，低于该引擎单段最短 ${profile.minSegmentSec}s，请合并镜头或补拍`,
+      `第 ${segment.index} 段声明时长 ${duration}s，与镜头时长合计 ${shotTotalSec}s 不一致`,
     );
   }
-  if (segment.durationSec > profile.maxSegmentSec) {
+
+  if (duration < profile.minSegmentSec) {
     throw new RangeError(
-      `第 ${segment.index} 段为 ${segment.durationSec}s，超过该引擎单段最长 ${profile.maxSegmentSec}s`,
+      `第 ${segment.index} 段为 ${duration}s，低于该引擎单段最短 ${profile.minSegmentSec}s，请合并镜头或调整节拍`,
     );
   }
-  if (profile.requiresIntegerSegmentSec && !Number.isInteger(segment.durationSec)) {
+
+  if (duration > profile.maxSegmentSec) {
     throw new RangeError(
-      `第 ${segment.index} 段为 ${segment.durationSec}s，该引擎只接受整数时长，请调整镜时长`,
+      `第 ${segment.index} 段为 ${duration}s，超过该引擎单段最长 ${profile.maxSegmentSec}s`,
+    );
+  }
+
+  if (profile.requiresIntegerSegmentSec && !Number.isInteger(duration)) {
+    throw new RangeError(
+      `第 ${segment.index} 段为 ${duration}s，该引擎只接受整数时长，请调整镜时长`,
     );
   }
 }
@@ -145,7 +193,7 @@ function compileSegmentPromptResult(
 ): { prompt: string; issues: FormatIssue[] } {
   assertCompilerEngineReady(engine);
   const profile = COMPILER_ENGINE_LIMITS[engine];
-  assertSegmentDurationValid(segment, profile);
+  assertSegmentPlanValid(segment, profile);
 
   const dialect = profile.dialect;
   let startSec = 0;

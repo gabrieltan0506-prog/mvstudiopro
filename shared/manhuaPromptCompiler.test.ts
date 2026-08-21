@@ -12,7 +12,11 @@ import {
   type ShotIR,
   type ShotMediaRef,
 } from "./manhuaShotIR";
-import { formatPromptForEngine, validateSegmentMediaRefs } from "./promptFormatLayer";
+import {
+  formatPromptForEngine,
+  hasBlockingFormatIssues,
+  validateSegmentMediaRefs,
+} from "./promptFormatLayer";
 import { buildTtsCueSheet, compileEpisode, compileSegmentPrompt } from "./manhuaPromptCompiler";
 
 const shot = (index: number, sec: number, over: Partial<ShotIR> = {}): ShotIR => ({
@@ -238,6 +242,92 @@ describe("格式层问题进入总编译结果", () => {
     expect(h3.formatIssues.some((i) => i.kind === "prompt_length")).toBe(true);
     const seedance = compileEpisode(longStyle, "seedance-2.5");
     expect(seedance.formatIssues.some((i) => i.kind === "prompt_length")).toBe(false);
+  });
+});
+
+describe("公开单段入口完整结构校验", () => {
+  const validShot = shot(1, 5, { sceneZh: "升仙台", actionZh: "人物抬眼" });
+
+  it("段时长 NaN 时拒绝编译", () => {
+    expect(() =>
+      compileSegmentPrompt(
+        { index: 1, durationSec: Number.NaN, shots: [validShot] },
+        "seedance-2.5",
+      ),
+    ).toThrow(/有限数字/);
+  });
+
+  it("镜头时长 NaN 时拒绝编译", () => {
+    expect(() =>
+      compileSegmentPrompt(
+        { index: 1, durationSec: 5, shots: [{ ...validShot, durationSec: Number.NaN }] },
+        "seedance-2.5",
+      ),
+    ).toThrow(/有限正数/);
+  });
+
+  it("段声明时长与镜头时长合计不一致时拒绝编译", () => {
+    expect(() =>
+      compileSegmentPrompt(
+        { index: 1, durationSec: 5, shots: [validShot, { ...validShot, index: 2 }] },
+        "seedance-2.5",
+      ),
+    ).toThrow(/时长.*不一致/);
+  });
+
+  it("空镜表拒绝编译", () => {
+    expect(() =>
+      compileSegmentPrompt({ index: 1, durationSec: 5, shots: [] }, "seedance-2.5"),
+    ).toThrow(/至少需要一镜/);
+  });
+
+  it("镜号重复或倒序时拒绝编译", () => {
+    expect(() =>
+      compileSegmentPrompt(
+        { index: 1, durationSec: 10, shots: [validShot, { ...validShot, index: 1 }] },
+        "seedance-2.5",
+      ),
+    ).toThrow(/严格递增/);
+  });
+
+  it("缺场景或动作时拒绝编译", () => {
+    expect(() =>
+      compileSegmentPrompt(
+        { index: 1, durationSec: 5, shots: [{ ...validShot, sceneZh: " " }] },
+        "seedance-2.5",
+      ),
+    ).toThrow(/缺少场景或动作/);
+  });
+});
+
+describe("空提示词与阻止提交判定", () => {
+  it("空提示词产生 prompt_empty 并阻止提交", () => {
+    const result = formatPromptForEngine("", "minimax-hailuo-3");
+    expect(result).toEqual({
+      text: "",
+      issues: [{ kind: "prompt_empty", detailZh: "提示词不能为空" }],
+    });
+    expect(hasBlockingFormatIssues(result.issues)).toBe(true);
+  });
+
+  it("已经完成替换的 censor 记录不阻止提交", () => {
+    const result = formatPromptForEngine("杀了他", "minimax-hailuo-3", { durationSec: 5 });
+    expect(result.issues.some((issue) => issue.kind === "censor")).toBe(true);
+    expect(hasBlockingFormatIssues(result.issues)).toBe(false);
+  });
+
+  it("格式、引用与时长问题均阻止提交", () => {
+    for (const kind of [
+      "prompt_length",
+      "reference_conflict",
+      "reference_sequence",
+      "reference_index",
+      "duration_min",
+      "duration_max",
+      "duration_integer",
+    ]) {
+      expect(hasBlockingFormatIssues([{ kind, detailZh: "测试问题" }])).toBe(true);
+    }
   });
 });
 

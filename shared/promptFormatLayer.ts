@@ -66,6 +66,20 @@ export function applyCensorReplacements(text: string): { text: string; replaced:
 
 export type FormatIssue = { kind: string; detailZh: string };
 
+/**
+ * censor 表示确定性替换已经完成，只作为变更记录。
+ * 其余问题默认阻止后续提交。
+ */
+const NON_BLOCKING_FORMAT_ISSUE_KINDS = new Set<string>(["censor"]);
+
+export function isBlockingFormatIssue(issue: FormatIssue): boolean {
+  return !NON_BLOCKING_FORMAT_ISSUE_KINDS.has(issue.kind);
+}
+
+export function hasBlockingFormatIssues(issues: readonly FormatIssue[]): boolean {
+  return issues.some(isBlockingFormatIssue);
+}
+
 export type FormatResult = {
   text: string;
   issues: FormatIssue[];
@@ -88,6 +102,13 @@ export function formatPromptForEngine(
   const limits: CompilerEngineProfile = COMPILER_ENGINE_LIMITS[engine];
   const issues: FormatIssue[] = [];
   let text = String(raw || "").trim();
+
+  if (!text) {
+    return {
+      text: "",
+      issues: [{ kind: "prompt_empty", detailZh: "提示词不能为空" }],
+    };
+  }
 
   text = normalizeImageRefs(text);
   if (limits.dialect === "seedance") {
