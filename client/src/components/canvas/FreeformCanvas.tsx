@@ -110,6 +110,17 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { copyText } from "@/lib/copyText";
+import {
+  isReadyCompilerEngineId,
+  normalizeCompilerEngineId,
+} from "@shared/manhuaShotIR";
+import { formatPromptForEngine, hasBlockingFormatIssues } from "@shared/promptFormatLayer";
+import {
+  clearPromptEnhancePendingRequest,
+  nextPromptEnhanceRequest,
+  readPromptEnhancePendingRequest,
+  writePromptEnhancePendingRequest,
+} from "@/lib/promptEnhanceRequestState";
 
 /** 左栏节点列表标题（学参考画布：可读名 + 类型，不泄供应商） */
 function freeformNodeListLabel(block: CanvasBlock): string {
@@ -639,6 +650,11 @@ export default function FreeformCanvas({
   /** 世界缩放：让本集全部节点缩进可视区（≠节点自身 width/height） */
   const [viewScale, setViewScale] = useState(1);
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
+  const enhancePromptMutation = trpc.mvAnalysis.enhanceCanvasPrompt.useMutation();
+  // 每个 block 暂存尚未取得明确终态的增强请求编号:结果未知时复用同一编号,
+  // 服务端按 jobs 记录恢复结果,不重复调用模型不重复扣分。
+  // ref 是热缓存;sessionStorage 是刷新后的恢复源,两处同写同清。
+  const promptEnhanceRequestIdsRef = useRef(new Map<string, { requestId: string; localKey: string }>());
   const subQuery = trpc.stripe.getSubscription.useQuery(undefined, { retry: false });
   const userPlan = (subQuery.data?.plan || "free") as string;
   const { user: authUser, loading: authLoading } = useAuth();
@@ -2447,6 +2463,120 @@ export default function FreeformCanvas({
                               </button>
                             </div>
                           ) : null}
+                          {/* 防废片编译器两颗钮:整理格式(免费,纯前端规则引擎) / 语义增强(3积分,GLM链) */}
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const eng = normalizeCompilerEngineId(
+                                  block.videoModel || DEFAULT_CANVAS_VIDEO_MODEL,
+                                );
+                                if (!eng || !isReadyCompilerEngineId(eng)) {
+                                  toast.message("该引擎的提示词方言预留中,暂不整理");
+                                  return;
+                                }
+                                const r = formatPromptForEngine(String(block.prompt || ""), eng);
+                                if (hasBlockingFormatIssues(r.issues)) {
+                                  // 阻止级问题只展示不覆盖原文,留给用户改
+                                  toast.error("格式问题需处理", {
+                                    description: r.issues.map((i) => i.detailZh).join(";"),
+                                  });
+                                  return;
+                                }
+                                patchOne(block.id, { prompt: r.text });
+                                toast.success(
+                                  r.issues.length
+                                    ? `已整理格式(${r.issues.length} 处提示)`
+                                    : "已整理格式",
+                                  {
+                                    description: r.issues.map((i) => i.detailZh).join(";") || undefined,
+                                  },
+                                );
+                              }}
+                              className="rounded-lg border border-white/15 bg-white/[0.05] px-2 py-1 text-[10px] font-semibold text-white/75 hover:bg-white/[0.1]"
+                              title="按当前引擎方言归一标记/避审替换/钳制检查,免费秒回"
+                            >
+                              整理格式(免费)
+                            </button>
+                            <button
+                              type="button"
+                              disabled={
+                                enhancePromptMutation.isPending || authLoading || !authUser?.id
+                              }
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                // 登录态未就绪不许发起:空用户键写进 storage 刷新后对不上号
+                                if (authLoading || !authUser?.id) {
+                                  toast.message("正在确认账号状态,请稍后再试");
+                                  return;
+                                }
+                                const eng = normalizeCompilerEngineId(
+                                  block.videoModel || DEFAULT_CANVAS_VIDEO_MODEL,
+                                );
+                                if (!eng || !isReadyCompilerEngineId(eng)) {
+                                  toast.message("该引擎的提示词方言预留中,暂不增强");
+                                  return;
+                                }
+                                const prompt = String(block.prompt || "").trim();
+                                if (prompt.length < 4) {
+                                  toast.error("先写几句意图再增强");
+                                  return;
+                                }
+                                const precheck = formatPromptForEngine(prompt, eng);
+                                if (hasBlockingFormatIssues(precheck.issues)) {
+                                  // 阻止级问题不进付费 op:不扣费不建任务
+                                  toast.error("先处理格式问题再增强", {
+                                    description: precheck.issues.map((i) => i.detailZh).join(";"),
+                                  });
+                                  return;
+                                }
+                                if (!window.confirm("语义增强将扣 3 积分并覆盖当前提示词,继续?")) return;
+                                // 结果未知(网络中断/超时/刷新)保留编号下次复用;
+                                // 改了 prompt 或引擎则换新编号。刷新后从 sessionStorage 恢复。
+                                const userKey = String(authUser.id);
+                                const localKey = `${eng}\0${prompt}`;
+                                const staged =
+                                  promptEnhanceRequestIdsRef.current.get(block.id) ||
+                                  readPromptEnhancePendingRequest(userKey, block.id);
+                                const pending = nextPromptEnhanceRequest(staged, localKey, () =>
+                                  crypto.randomUUID(),
+                                );
+                                const billingRequestId = pending.requestId;
+                                promptEnhanceRequestIdsRef.current.set(block.id, pending);
+                                writePromptEnhancePendingRequest(userKey, block.id, pending);
+                                void enhancePromptMutation
+                                  .mutateAsync({ prompt, engine: eng, billingRequestId })
+                                  .then((r) => {
+                                    promptEnhanceRequestIdsRef.current.delete(block.id);
+                                    clearPromptEnhancePendingRequest(userKey, block.id);
+                                    patchOne(block.id, { prompt: r.enhancedPrompt });
+                                    toast.success(`增强完成(已扣 ${r.creditsBilled} 积分)`, {
+                                      description:
+                                        r.issues.map((i) => i.detailZh).join(";") || undefined,
+                                    });
+                                  })
+                                  .catch((err) => {
+                                    // 服务端明确终态(参数冲突/任务失败)才丢弃编号;结果未知保留待恢复
+                                    const code = (err as { data?: { code?: string } })?.data?.code;
+                                    if (code === "BAD_REQUEST" || code === "PRECONDITION_FAILED") {
+                                      promptEnhanceRequestIdsRef.current.delete(block.id);
+                                      clearPromptEnhancePendingRequest(userKey, block.id);
+                                    }
+                                    toast.error("增强未完成", {
+                                      description:
+                                        err instanceof Error
+                                          ? err.message
+                                          : "请按任务状态重试,系统会根据任务记录处理积分",
+                                    });
+                                  });
+                              }}
+                              className="rounded-lg border border-violet-300/40 bg-violet-500/15 px-2 py-1 text-[10px] font-semibold text-violet-100 hover:bg-violet-500/25 disabled:opacity-45"
+                              title="GLM 编译器按十字段满配扩写,成功才扣费"
+                            >
+                              {enhancePromptMutation.isPending ? "增强中…" : "增强提示词(3积分)"}
+                            </button>
+                          </div>
                           {block.videoModel === "seedance-2.5" && canUseSeedance25 ? (
                             <div className="space-y-2 rounded-lg border border-white/10 bg-white/[0.03] px-2 py-2">
                               <label className="flex items-center gap-2 text-[11px] text-white/70">
