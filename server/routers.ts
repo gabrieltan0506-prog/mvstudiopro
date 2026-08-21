@@ -16,6 +16,8 @@ import {
 } from "./_core/trpc";
 import { TRPCError } from "@trpc/server";
 import { postProdJobInputSchema } from "./jobs/postProdInput";
+import { getJobByIdStrict, listPostProdJobsForUser } from "./jobs/repository";
+import { buildPostProdJobResponse } from "./services/postProdJobResponse";
 import { resolvePostProdInputSources } from "./services/postProdMediaSource";
 import * as db from "./db";
 import * as sessionDb from "./sessionDb";
@@ -4304,26 +4306,27 @@ export const appRouter = router({
         return { jobId, status: "queued" as const };
       }),
 
-    /** 查询后期工坊任务(只许本人看,与 PDF 同口径) */
+    /** 查询后期工坊任务(只许本人看,与 PDF 同口径);产物按 gcsUri 现签新读链 */
     getPostProdJob: protectedProcedure
       .input(z.object({ jobId: z.string().min(1) }))
       .query(async ({ ctx, input }) => {
-        const job = await getJobById(input.jobId);
+        // 查询过程未完成时抛错交给客户端下一轮重试;只有确实无记录才 404
+        const job = await getJobByIdStrict(input.jobId);
         if (!job || job.type !== "post_prod") {
           throw new TRPCError({ code: "NOT_FOUND", message: "后期任务不存在" });
         }
         if (String(job.userId) !== String(ctx.user.id)) {
           throw new TRPCError({ code: "FORBIDDEN", message: "无权查看此任务" });
         }
-        return {
-          jobId: job.id,
-          status: job.status,
-          error: job.error,
-          output: job.output,
-          provider: job.provider,
-          createdAt: job.createdAt,
-          updatedAt: job.updatedAt,
-        };
+        return buildPostProdJobResponse(job);
+      }),
+
+    /** 本人后期任务列表:服务端 jobs 为任务记录主来源(前端缓存清空后由此恢复) */
+    listPostProdJobs: protectedProcedure
+      .input(z.object({ limit: z.number().int().min(1).max(100).default(30) }))
+      .query(async ({ ctx, input }) => {
+        const rows = await listPostProdJobsForUser(String(ctx.user.id), input.limit);
+        return rows.map((row) => buildPostProdJobResponse(row)).filter(Boolean);
       }),
 
     recordAnalysisSnapshot: protectedProcedure

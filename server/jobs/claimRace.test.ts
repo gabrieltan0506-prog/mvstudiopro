@@ -261,3 +261,50 @@ describe("markJobSucceededWithRetry:只重试状态写入", () => {
     ).resolves.toBe(false);
   });
 });
+
+describe("listPostProdJobsForUser:服务端为任务记录主来源", () => {
+  beforeEach(() => getDb.mockReset());
+
+  it("按当前用户 + post_prod 条件查询,input/output 解析成对象", async () => {
+    const whereArgs: unknown[] = [];
+    const chain = {
+      from: () => chain,
+      where: (cond: unknown) => {
+        whereArgs.push(cond);
+        return chain;
+      },
+      orderBy: () => chain,
+      limit: async () => [
+        {
+          ...QUEUED_ROW,
+          id: "pp-1",
+          type: "post_prod",
+          status: "succeeded",
+          input: JSON.stringify({ action: "concat", params: {} }),
+          output: JSON.stringify({ gcsUri: "gs://bucket-a/post-prod/7/x.mp4" }),
+        },
+      ],
+    };
+    getDb.mockResolvedValue({ select: () => chain });
+
+    const { listPostProdJobsForUser } = await import("./repository");
+    const rows = await listPostProdJobsForUser("7", 30);
+    expect(whereArgs).toHaveLength(1);
+    expect(rows).toHaveLength(1);
+    expect((rows[0].input as { action?: string }).action).toBe("concat");
+    expect((rows[0].output as { gcsUri?: string }).gcsUri).toBe("gs://bucket-a/post-prod/7/x.mp4");
+  });
+
+  it("数据库不可用抛错:不把查询过程未完成折成空列表(防前端误删任务)", async () => {
+    getDb.mockResolvedValue(null);
+    const { listPostProdJobsForUser } = await import("./repository");
+    await expect(listPostProdJobsForUser("7")).rejects.toThrow(/Database unavailable/);
+  });
+
+  it("getJobByIdStrict:数据库不可用抛错;getJobById 保持宽松兜底 null", async () => {
+    getDb.mockResolvedValue(null);
+    const { getJobByIdStrict, getJobById } = await import("./repository");
+    await expect(getJobByIdStrict("pp-1")).rejects.toThrow(/Database unavailable/);
+    await expect(getJobById("pp-1")).resolves.toBeNull();
+  });
+});

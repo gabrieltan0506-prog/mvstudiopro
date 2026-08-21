@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import Navbar from "@/components/Navbar";
 import FreeformCanvas from "@/components/canvas/FreeformCanvas";
 import ManhuaClipDock from "@/components/canvas/ManhuaClipDock";
+import PostProdWorkshopCard from "@/components/canvas/PostProdWorkshopCard";
 import type { CanvasBlock, CanvasEdge } from "@/lib/canvasTypes";
 import { defaultCanvasBlock, makeCanvasBlockId, normalizeCanvasBlock } from "@/lib/canvasTypes";
 import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
@@ -9329,6 +9330,10 @@ export default function OmniCanvas() {
                   openManhuaFactoryCanvas(id);
                 }}
               />
+              {/* 后期工坊(蓝图二):三件套已上线,卡内只挂真实工序;按用户挂载防串单 */}
+              {user?.id ? (
+                <PostProdWorkshopCard key={String(user.id)} blocks={blocks} userId={String(user.id)} />
+              ) : null}
             </div>
             </div>
             </>

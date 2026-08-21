@@ -1,10 +1,12 @@
 /**
  * 后期工坊素材登记约束(授权铁律:客户端可写数据不作授权依据)。
  *
- * 只放行三类素材,其余一律"素材尚未登记"拒绝、不创建任务:
+ * 只放行四类素材,其余一律"素材尚未登记"拒绝、不创建任务:
  * 1. gs://<系统桶>/post-prod/<userId>/…       —— 后期任务自己的产物;
- * 2. gs://<系统桶>/generated/…(登记簿验主)    —— 画布出图权威登记簿;
- * 3. gs://<系统桶>/<其他对象>                 —— 必须出现在该用户 succeeded 任务
+ * 2. gs://<系统桶>/uploads/u<userId>/…        —— 本人上传(对象名由服务端按用户前缀
+ *    +UUID 生成,客户端不可指定,见 getVideoUploadSignedUrl 收紧口径);
+ * 3. gs://<系统桶>/generated/…(登记簿验主)    —— 画布出图权威登记簿;
+ * 4. gs://<系统桶>/<其他对象>                 —— 必须出现在该用户 succeeded 任务
  *    output 的**明确产物字段**里(逐字段收集→解析成完整对象名→全等比较;
  *    prompt/outputText 等普通文本字段不计入)。
  * HTTPS 只接受系统生成地址:站内 /api/canvas-media/ 稳定链、或系统桶的
@@ -27,6 +29,11 @@ export function sanitizePostProdUserId(userId: string): string {
 
 export function postProdOutputPrefix(userId: string): string {
   return `post-prod/${sanitizePostProdUserId(userId)}/`;
+}
+
+/** 本人上传前缀(与 getVideoUploadSignedUrl 服务端生成的对象名同构) */
+export function userUploadsPrefix(userId: string): string {
+  return `uploads/u${sanitizePostProdUserId(userId)}/`;
 }
 
 export function parseGsUri(uri: string): { bucket: string; objectName: string } | null {
@@ -188,6 +195,7 @@ async function assertObjectAllowed(
   context: PostProdMediaContext,
 ): Promise<void> {
   if (objectName.startsWith(postProdOutputPrefix(userId))) return;
+  if (objectName.startsWith(userUploadsPrefix(userId))) return;
   const uidNum = Number(userId);
   if (
     CANVAS_MEDIA_OBJECT_RE.test(objectName) &&

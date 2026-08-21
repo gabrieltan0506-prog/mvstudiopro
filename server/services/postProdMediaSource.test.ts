@@ -261,3 +261,27 @@ describe("辅助函数", () => {
     expect(postProdOutputPrefix("7/../x")).toBe("post-prod/7x/");
   });
 });
+
+describe("本人上传前缀(第四类放行)", () => {
+  it("uploads/u<uid>/ 本人上传放行并规范化", async () => {
+    const src = "gs://bucket-a/uploads/u7/abc-def-bgm.mp3";
+    await expect(
+      resolveRegisteredPostProdMediaSource({ userId: "7", source: src }, deps()),
+    ).resolves.toBe(src);
+  });
+
+  it("他人上传前缀不放行(uid 全等,u77 不匹配 u7)", async () => {
+    await expect(
+      resolveRegisteredPostProdMediaSource(
+        { userId: "7", source: "gs://bucket-a/uploads/u8/x.mp3" },
+        deps(),
+      ),
+    ).rejects.toThrow(/尚未登记/);
+    await expect(
+      resolveRegisteredPostProdMediaSource(
+        { userId: "77", source: "gs://bucket-a/uploads/u7/x.mp3" },
+        deps(),
+      ),
+    ).rejects.toThrow(/尚未登记/);
+  });
+});
