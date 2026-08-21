@@ -117,6 +117,7 @@ import {
 import { formatPromptForEngine, hasBlockingFormatIssues } from "@shared/promptFormatLayer";
 import {
   clearPromptEnhancePendingRequest,
+  nextPromptEnhanceRequest,
   readPromptEnhancePendingRequest,
   writePromptEnhancePendingRequest,
 } from "@/lib/promptEnhanceRequestState";
@@ -2500,9 +2501,16 @@ export default function FreeformCanvas({
                             </button>
                             <button
                               type="button"
-                              disabled={enhancePromptMutation.isPending}
+                              disabled={
+                                enhancePromptMutation.isPending || authLoading || !authUser?.id
+                              }
                               onClick={(e) => {
                                 e.stopPropagation();
+                                // 登录态未就绪不许发起:空用户键写进 storage 刷新后对不上号
+                                if (authLoading || !authUser?.id) {
+                                  toast.message("正在确认账号状态,请稍后再试");
+                                  return;
+                                }
                                 const eng = normalizeCompilerEngineId(
                                   block.videoModel || DEFAULT_CANVAS_VIDEO_MODEL,
                                 );
@@ -2526,16 +2534,15 @@ export default function FreeformCanvas({
                                 if (!window.confirm("语义增强将扣 3 积分并覆盖当前提示词,继续?")) return;
                                 // 结果未知(网络中断/超时/刷新)保留编号下次复用;
                                 // 改了 prompt 或引擎则换新编号。刷新后从 sessionStorage 恢复。
-                                const userKey = String(authUser?.id || "");
+                                const userKey = String(authUser.id);
                                 const localKey = `${eng}\0${prompt}`;
                                 const staged =
                                   promptEnhanceRequestIdsRef.current.get(block.id) ||
                                   readPromptEnhancePendingRequest(userKey, block.id);
-                                const billingRequestId =
-                                  staged?.localKey === localKey
-                                    ? staged.requestId
-                                    : crypto.randomUUID();
-                                const pending = { requestId: billingRequestId, localKey };
+                                const pending = nextPromptEnhanceRequest(staged, localKey, () =>
+                                  crypto.randomUUID(),
+                                );
+                                const billingRequestId = pending.requestId;
                                 promptEnhanceRequestIdsRef.current.set(block.id, pending);
                                 writePromptEnhancePendingRequest(userKey, block.id, pending);
                                 void enhancePromptMutation

@@ -52,3 +52,15 @@ export function clearPromptEnhancePendingRequest(
     // 同上,清除失败不阻断
   }
 }
+
+/** 复用判定:localKey(engine+prompt)一致才复用旧编号,否则生成新编号 */
+export function nextPromptEnhanceRequest(
+  staged: PromptEnhancePendingRequest | null | undefined,
+  localKey: string,
+  generateId: () => string,
+): PromptEnhancePendingRequest {
+  if (staged && staged.localKey === localKey) {
+    return { requestId: staged.requestId, localKey };
+  }
+  return { requestId: generateId(), localKey };
+}

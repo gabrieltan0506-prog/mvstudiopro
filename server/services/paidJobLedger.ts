@@ -903,17 +903,31 @@ export async function reapStuckPaidJobs(opts?: {
 
       // 上一次退分中途崩过的：每轮 reaper 都对账补偿（与心跳/force 无关）
       if (hold.status === "refund_pending") {
+        if (hold.taskType === "promptEnhance") {
+          // 证据查询到此刻之间任务可能已转 succeeded:与 active 分支一致,
+          // 先 CAS 认领 failed;认领撞上 succeeded 就补 settled,绝不再退。
+          const { claimPromptEnhanceFailed } = await import("./promptEnhanceOperation.js");
+          const terminal = await claimPromptEnhanceFailed(
+            hold.jobId,
+            "提示词增强未完成，积分已退回",
+          );
+          if (terminal === "succeeded") {
+            const dir = await getLedgerDir();
+            hold.status = "settled";
+            hold.settledAt = new Date().toISOString();
+            await writeHoldFile(holdFilePath(dir, hold.taskType, hold.jobId), hold);
+            continue;
+          }
+          if (terminal !== "failed") {
+            throw new Error(`prompt_enhance_terminal_claim_failed:${hold.jobId}`);
+          }
+        }
         const dir = await getLedgerDir();
         const result = await reconcileRefundPendingHold(
           hold,
           holdFilePath(dir, hold.taskType, hold.jobId),
         );
         if (result.refunded) refunded += 1;
-        if (hold.taskType === "promptEnhance" && result.status === "refunded") {
-          // 退分已完成:认领 failed 终态(CAS,succeeded 在案时不覆盖——上方证据检查已拦)
-          const { claimPromptEnhanceFailed } = await import("./promptEnhanceOperation.js");
-          await claimPromptEnhanceFailed(hold.jobId, "提示词增强未完成，积分已退回");
-        }
         continue;
       }
 
@@ -922,12 +936,12 @@ export async function reapStuckPaidJobs(opts?: {
       if (hold.resumable) {
         const chargedAtMs = new Date(hold.chargedAt).getTime();
         if (Number.isFinite(chargedAtMs) && now - chargedAtMs > RESUMABLE_HARD_CAP_MS) {
-          await refundHoldAndSyncJob(
+          const outcome = await refundHoldAndSyncJob(
             hold,
             "task_timeout",
             `resumable hold over 24h hard cap · charged=${hold.chargedAt}`,
           );
-          refunded += 1;
+          if (outcome.refunded) refunded += 1;
         }
         continue;
       }
@@ -939,39 +953,43 @@ export async function reapStuckPaidJobs(opts?: {
           continue;
         }
         // 超期，按 task_failed 退分
-        await refundHoldAndSyncJob(hold, "task_failed", `paused over 30 days, hard cap force-refund`);
-        refunded += 1;
+        const outcome = await refundHoldAndSyncJob(
+          hold,
+          "task_failed",
+          `paused over 30 days, hard cap force-refund`,
+        );
+        if (outcome.refunded) refunded += 1;
         continue;
       }
 
       if (force) {
-        await refundHoldAndSyncJob(
+        const outcome = await refundHoldAndSyncJob(
           hold,
           opts?.reason ?? "deploy_killed",
           `forceAll reaper · lastHeartbeatLag=${Math.round(lag / 1000)}s`,
         );
-        refunded += 1;
+        if (outcome.refunded) refunded += 1;
         continue;
       }
 
       // 如果有用户主动取消但 worker 看起来已经死了 → 立刻退
       if (hold.cancelRequestedAt && lag > 30_000) {
-        await refundHoldAndSyncJob(
+        const outcome = await refundHoldAndSyncJob(
           hold,
           "user_cancelled",
           `worker pid=${hold.pid ?? "?"} 未响应取消 ${Math.round(lag / 1000)}s`,
         );
-        cancelled += 1;
+        if (outcome.refunded) cancelled += 1;
         continue;
       }
 
       if (lag > staleMs) {
-        await refundHoldAndSyncJob(
+        const outcome = await refundHoldAndSyncJob(
           hold,
           reasonForStale,
           `lastHeartbeatLag=${Math.round(lag / 1000)}s pid=${hold.pid ?? "?"}`,
         );
-        refunded += 1;
+        if (outcome.refunded) refunded += 1;
       }
     } catch (e: any) {
       errors += 1;

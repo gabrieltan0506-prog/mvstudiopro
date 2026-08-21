@@ -27,10 +27,23 @@ vi.mock("./services/promptEnhance", () => ({
 
 const getCredits = vi.fn(async (..._a: unknown[]) => ({ totalAvailable: 0 }));
 const deductCreditsAmount = vi.fn();
+const refundChargeByKey = vi.fn(async (..._a: unknown[]) => ({ refunded: 3 }));
 vi.mock("./credits", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getCredits: (...a: unknown[]) => getCredits(...a),
   deductCreditsAmount: (...a: unknown[]) => deductCreditsAmount(...a),
+  refundChargeByKey: (...a: unknown[]) => refundChargeByKey(...a),
+}));
+
+const registerActiveJob = vi.fn(async (..._a: unknown[]) => {});
+vi.mock("./services/paidJobLedger.js", () => ({
+  registerActiveJob: (...a: unknown[]) => registerActiveJob(...a),
+  refundCreditsOnFailure: async () => ({ refunded: false, creditsRefunded: 0, status: "missing" }),
+  unregisterActiveJob: async () => ({ ok: true }),
+  markSettlementPending: async () => true,
+  heartbeatActiveJob: async () => {},
+  canonicalRefundKey: (t: string, id: string) => `refund:[refundKey:${t}/${id}]`,
+  refundMarkerFor: (t: string, id: string) => `[refundKey:${t}/${id}]`,
 }));
 
 import { appRouter } from "./routers";
@@ -81,6 +94,52 @@ describe("enhanceCanvasPrompt · replay 与余额顺序", () => {
     expect(claimPromptEnhanceFailed).toHaveBeenCalledWith("prompt_enhance_y", "Credits 不足");
     expect(deductCreditsAmount).not.toHaveBeenCalled();
     expect(enhancePromptForEngine).not.toHaveBeenCalled();
+  });
+
+  it("扣分结果不明确:先按 chargeKey 对账退回(canonical 键),对账成功才写 failed", async () => {
+    reservePromptEnhanceOperation.mockResolvedValueOnce({
+      kind: "execute",
+      jobId: "prompt_enhance_z1",
+      requestFingerprint: "fp",
+    });
+    getCredits.mockResolvedValueOnce({ totalAvailable: 100 });
+    deductCreditsAmount.mockRejectedValueOnce(new Error("db 连接异常"));
+    refundChargeByKey.mockResolvedValueOnce({ refunded: 3 });
+    await expect(
+      caller().mvAnalysis.enhanceCanvasPrompt({
+        prompt: "雨夜巷战",
+        engine: "seedance-2.5",
+        billingRequestId: UUID,
+      }),
+    ).rejects.toThrow("db 连接异常");
+    expect(refundChargeByKey).toHaveBeenCalledTimes(1);
+    expect(refundChargeByKey.mock.calls[0][0]).toMatchObject({
+      userId: 7,
+      chargeKey: "promptEnhance/prompt_enhance_z1",
+      refundKey: "refund:[refundKey:promptEnhance/prompt_enhance_z1]",
+    });
+    expect(claimPromptEnhanceFailed).toHaveBeenCalledWith("prompt_enhance_z1", "db 连接异常");
+    expect(enhancePromptForEngine).not.toHaveBeenCalled();
+  });
+
+  it("对账本身失败:不写 failed,保持 running 交孤儿扫描接管", async () => {
+    claimPromptEnhanceFailed.mockClear();
+    reservePromptEnhanceOperation.mockResolvedValueOnce({
+      kind: "execute",
+      jobId: "prompt_enhance_z2",
+      requestFingerprint: "fp",
+    });
+    getCredits.mockResolvedValueOnce({ totalAvailable: 100 });
+    deductCreditsAmount.mockRejectedValueOnce(new Error("原始扣分异常"));
+    refundChargeByKey.mockRejectedValueOnce(new Error("对账也断了"));
+    await expect(
+      caller().mvAnalysis.enhanceCanvasPrompt({
+        prompt: "雨夜巷战",
+        engine: "seedance-2.5",
+        billingRequestId: UUID,
+      }),
+    ).rejects.toThrow("原始扣分异常");
+    expect(claimPromptEnhanceFailed).not.toHaveBeenCalled();
   });
 
   it("非 UUID 请求编号被 zod 拒绝", async () => {

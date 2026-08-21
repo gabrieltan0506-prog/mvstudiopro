@@ -163,6 +163,7 @@ import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
 import {
   deductCredits,
   deductCreditsAmount,
+  refundChargeByKey,
   getCredits,
   getUserPlan,
   addCredits,
@@ -4413,7 +4414,11 @@ export const appRouter = router({
           refundCreditsOnFailure,
           unregisterActiveJob,
           markSettlementPending,
+          canonicalRefundKey,
+          refundMarkerFor,
         } = await import("./services/paidJobLedger.js");
+        // 所有 promptEnhance 退回路径统一用同一把幂等键(与孤儿对账一致)
+        const refundKey = canonicalRefundKey(taskType, jobId);
 
         let deducted: Awaited<ReturnType<typeof deductCreditsAmount>>;
         try {
@@ -4425,10 +4430,26 @@ export const appRouter = router({
             { chargeKey },
           );
         } catch (error) {
-          await claimPromptEnhanceFailed(
-            jobId,
-            error instanceof Error ? error.message : "积分处理未完成",
-          );
+          // 扣分结果不明确(连接异常时 DB 可能已扣):先按确定的 chargeKey 对账
+          // 原路退回,对账成功才写 failed;对账失败保持 running 交孤儿扫描接管。
+          try {
+            await refundChargeByKey({
+              userId: ctx.user.id,
+              chargeKey,
+              reason: `提示词语义增强·扣分结果待对账·积分处理 ${refundMarkerFor(taskType, jobId)}`,
+              actionForLog: "promptEnhanceRefund",
+              refundKey,
+            });
+            const terminal = await claimPromptEnhanceFailed(
+              jobId,
+              error instanceof Error ? error.message : "积分处理未完成",
+            );
+            if (terminal !== "failed") {
+              throw new Error(`prompt_enhance_deduct_reconcile_terminal:${terminal}`);
+            }
+          } catch (reconcileError) {
+            console.error(`[promptEnhance] 扣分结果对账未完成 jobId=${jobId}`, reconcileError);
+          }
           throw error;
         }
 
@@ -4448,7 +4469,7 @@ export const appRouter = router({
             "提示词增强任务登记未完成,退回积分",
             deducted,
             "promptEnhanceRefund",
-            { refundKey: `refund:promptEnhance/register/${jobId}`.slice(0, 120) },
+            { refundKey },
           );
           await claimPromptEnhanceFailed(jobId, "任务登记未完成");
           throw error;

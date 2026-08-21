@@ -176,14 +176,28 @@ describe("promptEnhance 任务记录与账本双向对账", () => {
     expect((await readHold())?.status).toBe("refunded");
   });
 
-  it("failed 认领输给 succeeded(CAS 竞争):只补 settled,绝不退分", async () => {
+  it("failed 认领输给 succeeded(CAS 竞争):只补 settled,绝不退分,统计 refunded=0", async () => {
     await writeHold("active", { lastHeartbeatAt: new Date(Date.now() - 3_600_000).toISOString() });
     getJobByIdStrict.mockResolvedValue({ id: JOB_ID, status: "running" }); // 证据检查时还没成功
     claimPromptEnhanceFailed.mockResolvedValue("succeeded"); // 认领瞬间成功已落库
     const { reapStuckPaidJobs } = await ledger();
-    await reapStuckPaidJobs();
+    const result = await reapStuckPaidJobs();
     expect((await readHold())?.status).toBe("settled");
     expect(refundCredits).not.toHaveBeenCalled();
+    expect(result.refunded).toBe(0);
+  });
+
+  it("refund_pending 分支先 CAS:认领撞上 succeeded → 补 settled,不进对账不退分", async () => {
+    await writeHold("refund_pending");
+    getJobByIdStrict.mockResolvedValue({ id: JOB_ID, status: "running" }); // 证据查询时还在跑
+    claimPromptEnhanceFailed.mockResolvedValue("succeeded"); // 查询到处理之间转成功
+    markerRows = [{ id: 1 }]; // 即便真账里有记录,也不该走到对账
+    const { reapStuckPaidJobs } = await ledger();
+    const result = await reapStuckPaidJobs();
+    expect((await readHold())?.status).toBe("settled");
+    expect(refundCredits).not.toHaveBeenCalled();
+    expect(refundCreditsForDeductAmount).not.toHaveBeenCalled();
+    expect(result.refunded).toBe(0);
   });
 
   it("终态认领不明(missing):抛错计入 errors,绝不打款", async () => {
