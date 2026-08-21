@@ -295,9 +295,16 @@ describe("listPostProdJobsForUser:服务端为任务记录主来源", () => {
     expect((rows[0].output as { gcsUri?: string }).gcsUri).toBe("gs://bucket-a/post-prod/7/x.mp4");
   });
 
-  it("数据库不可用返回空列表(前端缓存仍可显示)", async () => {
+  it("数据库不可用抛错:不把查询过程未完成折成空列表(防前端误删任务)", async () => {
     getDb.mockResolvedValue(null);
     const { listPostProdJobsForUser } = await import("./repository");
-    await expect(listPostProdJobsForUser("7")).resolves.toEqual([]);
+    await expect(listPostProdJobsForUser("7")).rejects.toThrow(/Database unavailable/);
+  });
+
+  it("getJobByIdStrict:数据库不可用抛错;getJobById 保持宽松兜底 null", async () => {
+    getDb.mockResolvedValue(null);
+    const { getJobByIdStrict, getJobById } = await import("./repository");
+    await expect(getJobByIdStrict("pp-1")).rejects.toThrow(/Database unavailable/);
+    await expect(getJobById("pp-1")).resolves.toBeNull();
   });
 });

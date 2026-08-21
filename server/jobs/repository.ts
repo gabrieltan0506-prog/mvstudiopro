@@ -563,17 +563,22 @@ export async function listSucceededImageJobsPage(opts: {
   }
 }
 
-export async function getJobById(id: string): Promise<NormalizedJob | null> {
+/** 严格版:数据库/查询故障抛错,不把"查不到过程"折成"确实无记录"(404 语义只留给真无记录) */
+export async function getJobByIdStrict(id: string): Promise<NormalizedJob | null> {
   const db = await getDb();
-  if (!db) return null;
+  if (!db) throw new Error("Database unavailable — cannot query job");
 
+  const rows = await db.select().from(jobs).where(eq(jobs.id, id)).limit(1);
+  return rows.length > 0 ? normalizeJob(rows[0]) : null;
+}
+
+export async function getJobById(id: string): Promise<NormalizedJob | null> {
   try {
-    const rows = await db.select().from(jobs).where(eq(jobs.id, id)).limit(1);
-    if (rows.length > 0) return normalizeJob(rows[0]);
+    return await getJobByIdStrict(id);
   } catch (error) {
     console.error("[JobsRepo] getJobById failed:", error);
+    return null;
   }
-  return null;
 }
 
 export async function claimNextQueuedJobExcluding(excludeTypes: string[]): Promise<NormalizedJob | null> {
@@ -607,20 +612,26 @@ export async function listPostProdJobsForUser(
   limit = 30,
 ): Promise<NormalizedJob[]> {
   const db = await getDb();
-  if (!db) return [];
+  // 数据库不可用抛错:不能把"查不了"折成"空列表",否则前端会误删进行中的任务
+  if (!db) throw new Error("Database unavailable — cannot list post-prod jobs");
 
-  const rows = await db
-    .select()
-    .from(jobs)
-    .where(and(eq(jobs.userId, userId), eq(jobs.type, "post_prod")))
-    .orderBy(desc(jobs.createdAt))
-    .limit(Math.max(1, Math.min(100, Math.floor(limit))));
+  try {
+    const rows = await db
+      .select()
+      .from(jobs)
+      .where(and(eq(jobs.userId, userId), eq(jobs.type, "post_prod")))
+      .orderBy(
+        // 进行中的排前:limit 截断时不许把 queued/running 挤出列表
+        sql`case when ${jobs.status} in ('queued', 'running') then 0 else 1 end`,
+        desc(jobs.createdAt),
+      )
+      .limit(Math.max(1, Math.min(100, Math.floor(limit))));
 
-  return rows.map((row) => ({
-    ...row,
-    input: parseMaybeJson(row.input),
-    output: parseMaybeJson(row.output),
-  }));
+    return rows.map(normalizeJob);
+  } catch (error) {
+    console.error("[JobsRepo] listPostProdJobsForUser failed:", error);
+    throw error;
+  }
 }
 
 /** 独立通道任务类型:主队列不领取,各自专用领取函数串行消化 */

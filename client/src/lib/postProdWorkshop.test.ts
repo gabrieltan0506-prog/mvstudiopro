@@ -88,11 +88,12 @@ describe("服务端为主的恢复合并", () => {
     expect(merged[0].status).toBe("succeeded");
   });
 
-  it("本地展示字段保留,状态/产物以服务端为准;服务端没有的任务不保留", () => {
+  it("本地展示字段保留,状态/产物以服务端为准;本地独有的终态任务不保留", () => {
     const merged = mergeRemoteJobs(
       [
         job({ jobId: "r1", status: "queued", label: "拼接 3 段(720p)" }),
-        job({ jobId: "local-only", status: "running" }),
+        // 终态且服务端没有 → 不保留(进行中的保留场景见"合并时序缺口"组)
+        job({ jobId: "local-done", status: "succeeded" }),
       ],
       [
         {
@@ -156,5 +157,41 @@ describe("终态提示只弹一次", () => {
     expect(shouldNotifyTerminal(notified, "j1", "succeeded")).toBe(false);
     expect(shouldNotifyTerminal(notified, "j2", "failed")).toBe(true);
     expect(shouldNotifyTerminal(notified, "j2", "failed")).toBe(false);
+  });
+});
+
+describe("合并时序缺口(复审三轮)", () => {
+  it("较早返回的空列表不移除刚入队的本地任务", () => {
+    const merged = mergeRemoteJobs([job({ jobId: "fresh", status: "queued" })], []);
+    expect(merged.map((j) => j.jobId)).toEqual(["fresh"]);
+  });
+
+  it("服务端没有的本地终态任务不保留;进行中的保留并排前", () => {
+    const merged = mergeRemoteJobs(
+      [
+        job({ jobId: "done-local", status: "succeeded", createdAt: 3 }),
+        job({ jobId: "fresh", status: "running", createdAt: 1 }),
+      ],
+      [
+        {
+          jobId: "r1",
+          action: "concat",
+          status: "succeeded",
+          output: { gcsUri: "gs://b/post-prod/7/x.mp4" },
+          error: null,
+          createdAt: "2026-08-21T10:00:00Z",
+        },
+      ],
+    );
+    expect(merged[0].jobId).toBe("fresh");
+    expect(merged.map((j) => j.jobId)).toEqual(["fresh", "r1"]);
+  });
+
+  it("服务端明确返回 output=null 时清除旧缓存产物", () => {
+    const merged = mergeRemoteJobs(
+      [job({ jobId: "r1", output: { gcsUri: "gs://b/stale.mp4" } })],
+      [{ jobId: "r1", action: "concat", status: "running", output: null, error: null, createdAt: 1 }],
+    );
+    expect(merged[0].output).toBeNull();
   });
 });

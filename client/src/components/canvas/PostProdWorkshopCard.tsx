@@ -146,13 +146,18 @@ export default function PostProdWorkshopCard({ blocks, userId }: PostProdWorksho
           try {
             const res = await utils.mvAnalysis.getPostProdJob.fetch({ jobId: job.jobId });
             if (cancelled || !res) return;
+            const nextOutput =
+              res.output && typeof res.output === "object" && !Array.isArray(res.output)
+                ? (res.output as Record<string, unknown>)
+                : null;
             updateJobs((prev) =>
               prev.map((j) =>
                 j.jobId === job.jobId
                   ? {
                       ...j,
                       status: (res.status as PostProdJobStatus) || j.status,
-                      output: (res.output as Record<string, unknown> | null) ?? j.output,
+                      // 服务端明确返回 null 时清除旧缓存,不继续使用旧产物
+                      output: nextOutput,
                       error: res.error ?? null,
                     }
                   : j,

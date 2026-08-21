@@ -16,7 +16,7 @@ import {
 } from "./_core/trpc";
 import { TRPCError } from "@trpc/server";
 import { postProdJobInputSchema } from "./jobs/postProdInput";
-import { listPostProdJobsForUser } from "./jobs/repository";
+import { getJobByIdStrict, listPostProdJobsForUser } from "./jobs/repository";
 import { buildPostProdJobResponse } from "./services/postProdJobResponse";
 import { resolvePostProdInputSources } from "./services/postProdMediaSource";
 import * as db from "./db";
@@ -4310,7 +4310,8 @@ export const appRouter = router({
     getPostProdJob: protectedProcedure
       .input(z.object({ jobId: z.string().min(1) }))
       .query(async ({ ctx, input }) => {
-        const job = await getJobById(input.jobId);
+        // 查询过程未完成时抛错交给客户端下一轮重试;只有确实无记录才 404
+        const job = await getJobByIdStrict(input.jobId);
         if (!job || job.type !== "post_prod") {
           throw new TRPCError({ code: "NOT_FOUND", message: "后期任务不存在" });
         }

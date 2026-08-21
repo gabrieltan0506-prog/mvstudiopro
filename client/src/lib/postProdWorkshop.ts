@@ -84,7 +84,9 @@ export type RemotePostProdJob = {
  */
 export function mergeRemoteJobs(local: TrackedJob[], remote: RemotePostProdJob[]): TrackedJob[] {
   const localById = new Map(local.map((item) => [item.jobId, item]));
+  const remoteIds = new Set(remote.map((item) => item.jobId));
   const merged: TrackedJob[] = [];
+
   for (const r of remote) {
     const cached = localById.get(r.jobId);
     const action = ACTIONS.includes(String(r.action))
@@ -92,17 +94,41 @@ export function mergeRemoteJobs(local: TrackedJob[], remote: RemotePostProdJob[]
       : cached?.action;
     if (!action) continue;
     const createdAt = r.createdAt ? new Date(r.createdAt as string | number | Date).getTime() : 0;
+    const remoteOutput =
+      r.output && typeof r.output === "object" && !Array.isArray(r.output)
+        ? (r.output as Record<string, unknown>)
+        : null;
     merged.push({
       jobId: r.jobId,
       action,
       label: cached?.label ?? ACTION_LABEL[action],
       status: (STATUSES.includes(r.status) ? r.status : "failed") as PostProdJobStatus,
       createdAt: Number.isFinite(createdAt) && createdAt > 0 ? createdAt : cached?.createdAt ?? 0,
-      output: (r.output as Record<string, unknown> | null) ?? cached?.output ?? null,
+      // 服务端明确返回 null 时清除旧缓存,不继续使用旧产物
+      output: remoteOutput,
       error: r.error ?? null,
     });
   }
-  return merged;
+
+  // 列表请求可能早于刚完成的入队请求;保留尚未终态的本地任务,
+  // 后续由单任务查询确认。服务端确实不存在时,轮询会收到 404 并收敛。
+  for (const cached of local) {
+    if (
+      !remoteIds.has(cached.jobId) &&
+      (cached.status === "queued" || cached.status === "running")
+    ) {
+      merged.push(cached);
+    }
+  }
+
+  return merged
+    .sort((a, b) => {
+      const aPending = a.status === "queued" || a.status === "running";
+      const bPending = b.status === "queued" || b.status === "running";
+      if (aPending !== bPending) return aPending ? -1 : 1;
+      return b.createdAt - a.createdAt;
+    })
+    .slice(0, 30);
 }
 
 export type ClipOption = { id: string; url: string; label: string };
