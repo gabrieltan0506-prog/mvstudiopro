@@ -18,7 +18,12 @@ import { TRPCError } from "@trpc/server";
 import { postProdJobInputSchema } from "./jobs/postProdInput";
 import { getJobByIdStrict, listPostProdJobsForUser } from "./jobs/repository";
 import { buildPostProdJobResponse } from "./services/postProdJobResponse";
-import { enhancePromptForEngine, PROMPT_ENHANCE_CREDITS } from "./services/promptEnhance";
+import { enhancePromptForEngine, PROMPT_ENHANCE_CREDITS, type PromptEnhanceResult } from "./services/promptEnhance";
+import {
+  markPromptEnhanceFailed,
+  markPromptEnhanceSucceededWithRetry,
+  reservePromptEnhanceOperation,
+} from "./services/promptEnhanceOperation";
 import {
   isReadyCompilerEngineId,
   normalizeCompilerEngineId,
@@ -4343,7 +4348,7 @@ export const appRouter = router({
         z.object({
           prompt: z.string().trim().min(4).max(8000),
           engine: z.string().min(1).max(64),
-          billingRequestId: z.string().min(8).max(64),
+          billingRequestId: z.string().uuid(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -4357,6 +4362,7 @@ export const appRouter = router({
             message: "该引擎的提示词方言尚未接线(预留中),暂不提供增强",
           });
         }
+        // 余额检查仅作提前提示;最终能否执行以 deductCreditsAmount 的原子结果为准
         const creditsInfo = await getCredits(ctx.user.id);
         if (creditsInfo.totalAvailable < PROMPT_ENHANCE_CREDITS) {
           throw new TRPCError({
@@ -4364,15 +4370,123 @@ export const appRouter = router({
             message: `Credits 不足,提示词增强需要 ${PROMPT_ENHANCE_CREDITS} Credits(当前余额:${creditsInfo.totalAvailable})`,
           });
         }
-        // 先跑上游后扣费:失败不收钱,免退款路径;chargeKey 幂等防重试双扣
-        const result = await enhancePromptForEngine({ prompt: input.prompt, engine });
-        await deductCreditsAmount(
-          ctx.user.id,
-          PROMPT_ENHANCE_CREDITS,
-          "promptEnhance",
-          `提示词语义增强(${engine})`,
-          { chargeKey: `prompt-enhance:${ctx.user.id}:${input.billingRequestId}` },
-        );
+
+        // 顺序:任务占位→扣积分→账本登记→模型调用→结果持久化→结算→返回
+        const operation = await reservePromptEnhanceOperation({
+          userId: ctx.user.id,
+          billingRequestId: input.billingRequestId,
+          engine,
+          prompt: input.prompt,
+        });
+
+        if (operation.kind === "mismatch") {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "同一请求编号已绑定不同的增强内容,请刷新后重新发起",
+          });
+        }
+        if (operation.kind === "replay") {
+          return operation.result;
+        }
+        if (operation.kind === "running") {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "该增强任务仍在处理中,请稍后重试",
+          });
+        }
+        if (operation.kind === "failed") {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: operation.message || "该增强任务未完成,请重新发起",
+          });
+        }
+
+        const jobId = operation.jobId;
+        const taskType = "promptEnhance";
+        const chargeKey = `promptEnhance/${jobId}`.slice(0, 120);
+        const {
+          registerActiveJob,
+          refundCreditsOnFailure,
+          unregisterActiveJob,
+          markSettlementPending,
+        } = await import("./services/paidJobLedger.js");
+
+        let deducted: Awaited<ReturnType<typeof deductCreditsAmount>>;
+        try {
+          deducted = await deductCreditsAmount(
+            ctx.user.id,
+            PROMPT_ENHANCE_CREDITS,
+            "promptEnhance",
+            `提示词语义增强(${engine})`,
+            { chargeKey },
+          );
+        } catch (error) {
+          await markPromptEnhanceFailed(
+            jobId,
+            error instanceof Error ? error.message : "积分处理未完成",
+          );
+          throw error;
+        }
+
+        try {
+          await registerActiveJob({
+            jobId,
+            taskType,
+            userId: ctx.user.id,
+            creditsBilled: deducted.cost,
+            action: `提示词语义增强(${engine})`,
+            deduct: deducted,
+            metadata: { engine, requestFingerprint: operation.requestFingerprint },
+          });
+        } catch (error) {
+          await refundCreditsForDeductAmount(
+            ctx.user.id,
+            "提示词增强任务登记未完成,退回积分",
+            deducted,
+            "promptEnhanceRefund",
+            { refundKey: `refund:promptEnhance/register/${jobId}`.slice(0, 120) },
+          );
+          await markPromptEnhanceFailed(jobId, "任务登记未完成");
+          throw error;
+        }
+
+        let result: PromptEnhanceResult;
+        try {
+          result = await enhancePromptForEngine({ prompt: input.prompt, engine });
+          const persisted = await markPromptEnhanceSucceededWithRetry(jobId, {
+            action: "prompt_enhance_done",
+            requestFingerprint: operation.requestFingerprint,
+            ...result,
+            engine,
+            creditsBilled: PROMPT_ENHANCE_CREDITS,
+          });
+          if (!persisted) {
+            throw new Error("prompt_enhance_result_persist_failed");
+          }
+        } catch (error) {
+          await refundCreditsOnFailure(
+            jobId,
+            taskType,
+            "task_failed",
+            error instanceof Error ? error.message : String(error),
+          );
+          await markPromptEnhanceFailed(
+            jobId,
+            error instanceof Error ? error.message : "增强未完成",
+          );
+          throw error;
+        }
+
+        // 到这里成功结果已落 jobs;后面的结算异常绝不进失败退分分支
+        try {
+          await unregisterActiveJob(jobId, taskType, "settled");
+        } catch {
+          const recorded = await markSettlementPending(jobId, taskType);
+          if (!recorded) {
+            throw new Error("prompt_enhance_settlement_state_persist_failed");
+          }
+        }
+
         return { ...result, engine, creditsBilled: PROMPT_ENHANCE_CREDITS };
       }),
 

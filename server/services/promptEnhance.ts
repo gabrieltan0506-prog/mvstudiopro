@@ -6,6 +6,7 @@
  */
 import { invokeGlmJsonChatWithGatewayFallback } from "./bailianChat.js";
 import {
+  assertCompilerEngineReady,
   COMPILER_ENGINE_LIMITS,
   type CompilerEngineId,
 } from "../../shared/manhuaShotIR.js";
@@ -35,12 +36,14 @@ export type PromptEnhanceResult = {
   gateway: string;
 };
 
-/** 语义增强(不计费,纯上游调用);reserved 引擎由调用方前置拦截 */
+/** 语义增强(不计费,纯上游调用);导出函数自身必须拒 reserved,不依赖 UI/路由拦截 */
 export async function enhancePromptForEngine(params: {
   prompt: string;
   engine: CompilerEngineId;
   abortSignal?: AbortSignal;
 }): Promise<PromptEnhanceResult> {
+  assertCompilerEngineReady(params.engine);
+
   const profile = COMPILER_ENGINE_LIMITS[params.engine];
   const dialectHint =
     profile.dialect === "seedance"

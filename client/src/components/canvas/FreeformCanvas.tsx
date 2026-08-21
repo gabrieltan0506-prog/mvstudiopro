@@ -645,6 +645,9 @@ export default function FreeformCanvas({
   const [viewScale, setViewScale] = useState(1);
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const enhancePromptMutation = trpc.mvAnalysis.enhanceCanvasPrompt.useMutation();
+  // 每个 block 暂存尚未取得明确终态的增强请求编号:结果未知时复用同一编号,
+  // 服务端按 jobs 记录恢复结果,不重复调用模型不重复扣分。
+  const promptEnhanceRequestIdsRef = useRef(new Map<string, { requestId: string; localKey: string }>());
   const subQuery = trpc.stripe.getSubscription.useQuery(undefined, { retry: false });
   const userPlan = (subQuery.data?.plan || "free") as string;
   const { user: authUser, loading: authLoading } = useAuth();
@@ -2515,24 +2518,40 @@ export default function FreeformCanvas({
                                   return;
                                 }
                                 if (!window.confirm("语义增强将扣 3 积分并覆盖当前提示词,继续?")) return;
+                                // 结果未知(网络中断/超时)保留编号下次复用;改了 prompt 或引擎则换新编号
+                                const localKey = `${eng}\0${prompt}`;
+                                const staged = promptEnhanceRequestIdsRef.current.get(block.id);
+                                const billingRequestId =
+                                  staged && staged.localKey === localKey
+                                    ? staged.requestId
+                                    : crypto.randomUUID();
+                                promptEnhanceRequestIdsRef.current.set(block.id, {
+                                  requestId: billingRequestId,
+                                  localKey,
+                                });
                                 void enhancePromptMutation
-                                  .mutateAsync({
-                                    prompt,
-                                    engine: eng,
-                                    billingRequestId: crypto.randomUUID(),
-                                  })
+                                  .mutateAsync({ prompt, engine: eng, billingRequestId })
                                   .then((r) => {
+                                    promptEnhanceRequestIdsRef.current.delete(block.id);
                                     patchOne(block.id, { prompt: r.enhancedPrompt });
                                     toast.success(`增强完成(已扣 ${r.creditsBilled} 积分)`, {
                                       description:
                                         r.issues.map((i) => i.detailZh).join(";") || undefined,
                                     });
                                   })
-                                  .catch((err) =>
-                                    toast.error("增强失败,未扣费", {
-                                      description: err instanceof Error ? err.message : undefined,
-                                    }),
-                                  );
+                                  .catch((err) => {
+                                    // 服务端明确终态(参数冲突/任务失败)才丢弃编号;结果未知保留待恢复
+                                    const code = (err as { data?: { code?: string } })?.data?.code;
+                                    if (code === "BAD_REQUEST" || code === "PRECONDITION_FAILED") {
+                                      promptEnhanceRequestIdsRef.current.delete(block.id);
+                                    }
+                                    toast.error("增强未完成", {
+                                      description:
+                                        err instanceof Error
+                                          ? err.message
+                                          : "请按任务状态重试,系统会根据任务记录处理积分",
+                                    });
+                                  });
                               }}
                               className="rounded-lg border border-violet-300/40 bg-violet-500/15 px-2 py-1 text-[10px] font-semibold text-violet-100 hover:bg-violet-500/25 disabled:opacity-45"
                               title="GLM 编译器按十字段满配扩写,成功才扣费"

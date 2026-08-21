@@ -22,6 +22,21 @@ describe("enhancePromptForEngine", () => {
     expect(r.gateway).toBe("bailian");
   });
 
+  it("reserved 引擎直接调用:服务层自拒,模型 0 次", async () => {
+    const before = invoke.mock.calls.length;
+    await expect(
+      enhancePromptForEngine({ prompt: "写打斗", engine: "wan-3.0" }),
+    ).rejects.toThrow(/预留|尚未接线/);
+    expect(invoke.mock.calls.length).toBe(before);
+  });
+
+  it("增强结果含阻止级问题(prompt_length):抛错不返回成功", async () => {
+    invoke.mockResolvedValueOnce(ok("云".repeat(7100)));
+    await expect(
+      enhancePromptForEngine({ prompt: "认罪戏", engine: "minimax-hailuo-3" }),
+    ).rejects.toThrow(/未过格式关/);
+  });
+
   it("H3:方言提示禁标记;validateContent 拒空 enhancedPrompt", async () => {
     invoke.mockImplementationOnce(async (p: { validateContent?: (t: string) => void }) => {
       expect(() => p.validateContent?.(JSON.stringify({ enhancedPrompt: " " }))).toThrow(

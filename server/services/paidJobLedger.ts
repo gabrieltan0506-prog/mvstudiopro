@@ -830,6 +830,20 @@ export async function reapStuckPaidJobs(opts?: {
   let errors = 0;
   let cancelled = 0;
 
+  // promptEnhance:退分完成后同步任务终态(jobs=running + hold=refunded 不许永久停在处理中)
+  const refundHoldAndSyncJob = async (
+    hold: PaidJobHold,
+    reason: PaidJobRefundReason,
+    detail?: string,
+  ) => {
+    const result = await refundCreditsOnFailure(hold.jobId, hold.taskType, reason, detail);
+    if (hold.taskType === "promptEnhance" && result.status === "refunded") {
+      const { markJobFailed } = await import("../jobs/repository.js");
+      await markJobFailed(hold.jobId, "提示词增强未完成，积分已退回");
+    }
+    return result;
+  };
+
   // 30 天硬上限：即便 holdPausedAt 一直挂着也不能无限压住，超期就强行退积分
   const PAUSE_HARD_CAP_MS = 30 * 24 * 60 * 60 * 1000;
   // 可恢复任务（resumable）不吃 5 分钟心跳线，只兜 24 小时硬底：
@@ -840,6 +854,33 @@ export async function reapStuckPaidJobs(opts?: {
       const lastBeat = new Date(hold.lastHeartbeatAt).getTime();
       const lag = now - lastBeat;
       const force = opts?.forceAll === true;
+
+      // promptEnhance 成功证据检查:jobs=succeeded 时无论 hold 处于
+      // active/refund_pending/settlement_pending 都只补 settled,绝不退分;
+      // 证据查询失败(DB 不可用)时跳过本轮,不许在证据缺席下走退分。
+      if (hold.taskType === "promptEnhance") {
+        let evidence: { status: string } | null | undefined;
+        try {
+          const { getJobByIdStrict } = await import("../jobs/repository.js");
+          evidence = await getJobByIdStrict(hold.jobId);
+        } catch (e: any) {
+          console.warn(
+            `[paidJobLedger] promptEnhance 成功证据查询失败,跳过本轮 jobId=${hold.jobId}: ${e?.message}`,
+          );
+          continue;
+        }
+        if (evidence?.status === "succeeded") {
+          const dir = await getLedgerDir();
+          const file = holdFilePath(dir, hold.taskType, hold.jobId);
+          hold.status = "settled";
+          hold.settledAt = new Date().toISOString();
+          await writeHoldFile(file, hold);
+          console.log(
+            `[paidJobLedger] ✓ promptEnhance 成功证据在案,补 settled jobId=${hold.jobId}`,
+          );
+          continue;
+        }
+      }
 
       // 业务已成功、只欠结算的：补 settle，绝不退款（第七轮 P0·5）
       if (hold.status === "settlement_pending") {
@@ -857,6 +898,10 @@ export async function reapStuckPaidJobs(opts?: {
           holdFilePath(dir, hold.taskType, hold.jobId),
         );
         if (result.refunded) refunded += 1;
+        if (hold.taskType === "promptEnhance" && result.status === "refunded") {
+          const { markJobFailed } = await import("../jobs/repository.js");
+          await markJobFailed(hold.jobId, "提示词增强未完成，积分已退回");
+        }
         continue;
       }
 
@@ -865,9 +910,8 @@ export async function reapStuckPaidJobs(opts?: {
       if (hold.resumable) {
         const chargedAtMs = new Date(hold.chargedAt).getTime();
         if (Number.isFinite(chargedAtMs) && now - chargedAtMs > RESUMABLE_HARD_CAP_MS) {
-          await refundCreditsOnFailure(
-            hold.jobId,
-            hold.taskType,
+          await refundHoldAndSyncJob(
+            hold,
             "task_timeout",
             `resumable hold over 24h hard cap · charged=${hold.chargedAt}`,
           );
@@ -883,20 +927,14 @@ export async function reapStuckPaidJobs(opts?: {
           continue;
         }
         // 超期，按 task_failed 退分
-        await refundCreditsOnFailure(
-          hold.jobId,
-          hold.taskType,
-          "task_failed",
-          `paused over 30 days, hard cap force-refund`,
-        );
+        await refundHoldAndSyncJob(hold, "task_failed", `paused over 30 days, hard cap force-refund`);
         refunded += 1;
         continue;
       }
 
       if (force) {
-        await refundCreditsOnFailure(
-          hold.jobId,
-          hold.taskType,
+        await refundHoldAndSyncJob(
+          hold,
           opts?.reason ?? "deploy_killed",
           `forceAll reaper · lastHeartbeatLag=${Math.round(lag / 1000)}s`,
         );
@@ -906,9 +944,8 @@ export async function reapStuckPaidJobs(opts?: {
 
       // 如果有用户主动取消但 worker 看起来已经死了 → 立刻退
       if (hold.cancelRequestedAt && lag > 30_000) {
-        await refundCreditsOnFailure(
-          hold.jobId,
-          hold.taskType,
+        await refundHoldAndSyncJob(
+          hold,
           "user_cancelled",
           `worker pid=${hold.pid ?? "?"} 未响应取消 ${Math.round(lag / 1000)}s`,
         );
@@ -917,9 +954,8 @@ export async function reapStuckPaidJobs(opts?: {
       }
 
       if (lag > staleMs) {
-        await refundCreditsOnFailure(
-          hold.jobId,
-          hold.taskType,
+        await refundHoldAndSyncJob(
+          hold,
           reasonForStale,
           `lastHeartbeatLag=${Math.round(lag / 1000)}s pid=${hold.pid ?? "?"}`,
         );
@@ -931,6 +967,44 @@ export async function reapStuckPaidJobs(opts?: {
         `[paidJobLedger] reaper error jobId=${hold.jobId} taskType=${hold.taskType}: ${e?.message}`,
       );
     }
+  }
+
+  // promptEnhance 孤儿对账:jobs=running 且 hold 缺失且超处理时限——按确定的
+  // chargeKey 原路退回(查不到扣分记录 refunded=0),再把 jobs 标 failed。
+  // 只扫 action=prompt_enhance,绝不碰其他 platform 任务。
+  try {
+    const { listStalePromptEnhanceRunningJobs } = await import("./promptEnhanceOperation.js");
+    const staleJobs = await listStalePromptEnhanceRunningJobs();
+    for (const staleJob of staleJobs) {
+      try {
+        const dir = await getLedgerDir();
+        const hold = await readHoldFile(holdFilePath(dir, "promptEnhance", staleJob.id));
+        if (hold) continue; // hold 在:由上面的 hold 扫描处理
+        const userIdNum = Number(staleJob.userId);
+        if (!Number.isFinite(userIdNum)) continue;
+        const { refundChargeByKey } = await import("../credits");
+        const { refunded: creditsBack } = await refundChargeByKey({
+          userId: userIdNum,
+          chargeKey: `promptEnhance/${staleJob.id}`.slice(0, 120),
+          reason: `提示词语义增强 · task_timeout · 积分已退还至您的账户 ${refundMarkerFor("promptEnhance", staleJob.id)}`,
+          actionForLog: "promptEnhanceRefund",
+          refundKey: canonicalRefundKey("promptEnhance", staleJob.id),
+        });
+        const { markJobFailed } = await import("../jobs/repository.js");
+        await markJobFailed(staleJob.id, "提示词增强未完成，积分已退回");
+        if (creditsBack > 0) refunded += 1;
+        console.log(
+          `[paidJobLedger] ↺ promptEnhance 孤儿对账 jobId=${staleJob.id} refunded=${creditsBack}`,
+        );
+      } catch (e: any) {
+        errors += 1;
+        console.error(
+          `[paidJobLedger] promptEnhance 孤儿对账失败 jobId=${staleJob.id}: ${e?.message}`,
+        );
+      }
+    }
+  } catch (e: any) {
+    console.warn(`[paidJobLedger] promptEnhance 孤儿扫描不可用(下轮再试): ${e?.message}`);
   }
 
   if (refunded + errors + cancelled > 0 || all.length > 0) {
