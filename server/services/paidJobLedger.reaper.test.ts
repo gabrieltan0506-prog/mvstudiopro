@@ -34,9 +34,20 @@ const listStalePromptEnhanceRunningJobs = vi.fn(
 const claimPromptEnhanceFailed = vi.fn(
   async (..._a: unknown[]) => "failed" as "failed" | "succeeded" | "missing",
 );
+const claimPromptEnhanceRefundPending = vi.fn(
+  async (..._a: unknown[]) => "failed" as "failed" | "succeeded" | "missing",
+);
+const listPromptEnhanceRefundPendingJobs = vi.fn(
+  async (..._a: unknown[]) => [] as Array<{ id: string; userId: string }>,
+);
+const markPromptEnhanceRefundReconciled = vi.fn(async (..._a: unknown[]) => true);
 vi.mock("./promptEnhanceOperation.js", () => ({
   listStalePromptEnhanceRunningJobs: (...a: unknown[]) => listStalePromptEnhanceRunningJobs(...a),
   claimPromptEnhanceFailed: (...a: unknown[]) => claimPromptEnhanceFailed(...a),
+  claimPromptEnhanceRefundPending: (...a: unknown[]) => claimPromptEnhanceRefundPending(...a),
+  listPromptEnhanceRefundPendingJobs: (...a: unknown[]) =>
+    listPromptEnhanceRefundPendingJobs(...a),
+  markPromptEnhanceRefundReconciled: (...a: unknown[]) => markPromptEnhanceRefundReconciled(...a),
 }));
 
 const EMPTY: ReapResult = { scanned: 0, refunded: 0, errors: 0, cancelled: 0 };
@@ -84,6 +95,12 @@ describe("promptEnhance 任务记录与账本双向对账", () => {
     getJobByIdStrict.mockReset();
     claimPromptEnhanceFailed.mockReset();
     claimPromptEnhanceFailed.mockResolvedValue("failed");
+    claimPromptEnhanceRefundPending.mockReset();
+    claimPromptEnhanceRefundPending.mockResolvedValue("failed");
+    listPromptEnhanceRefundPendingJobs.mockReset();
+    listPromptEnhanceRefundPendingJobs.mockResolvedValue([]);
+    markPromptEnhanceRefundReconciled.mockReset();
+    markPromptEnhanceRefundReconciled.mockResolvedValue(true);
     listStalePromptEnhanceRunningJobs.mockReset();
     listStalePromptEnhanceRunningJobs.mockResolvedValue([]);
     markerRows = [];
@@ -221,36 +238,89 @@ describe("promptEnhance 任务记录与账本双向对账", () => {
     expect(claimPromptEnhanceFailed).toHaveBeenCalledWith(JOB_ID, "提示词增强未完成，积分已退回");
   });
 
-  it("jobs=running + hold 缺失且超时:先认领 failed 再按 chargeKey 原路退一次", async () => {
+  it("jobs=running + hold 缺失且超时:认领 refund_pending 再按 chargeKey 原路退并收口", async () => {
     getJobByIdStrict.mockResolvedValue({ id: JOB_ID, status: "running" });
     listStalePromptEnhanceRunningJobs.mockResolvedValue([{ id: JOB_ID, userId: "7" }]);
     const { reapStuckPaidJobs } = await ledger();
     const result = await reapStuckPaidJobs();
-    expect(claimPromptEnhanceFailed).toHaveBeenCalledWith(JOB_ID, "提示词增强未完成，积分已退回");
+    expect(claimPromptEnhanceRefundPending).toHaveBeenCalledWith(
+      JOB_ID,
+      "提示词增强未完成，积分对账处理中",
+    );
     expect(refundChargeByKey).toHaveBeenCalledTimes(1);
     expect(refundChargeByKey.mock.calls[0][0]).toMatchObject({
       userId: 7,
       chargeKey: `promptEnhance/${JOB_ID}`,
       refundKey: `refund:[refundKey:promptEnhance/${JOB_ID}]`,
     });
+    expect(markPromptEnhanceRefundReconciled).toHaveBeenCalledWith(JOB_ID, 3);
     expect(result.refunded).toBe(1);
   });
 
   it("孤儿认领撞上成功结果(succeeded):跳过,不退不标", async () => {
     listStalePromptEnhanceRunningJobs.mockResolvedValue([{ id: JOB_ID, userId: "7" }]);
-    claimPromptEnhanceFailed.mockResolvedValue("succeeded");
+    claimPromptEnhanceRefundPending.mockResolvedValue("succeeded");
     const { reapStuckPaidJobs } = await ledger();
     await reapStuckPaidJobs();
     expect(refundChargeByKey).not.toHaveBeenCalled();
+    expect(markPromptEnhanceRefundReconciled).not.toHaveBeenCalled();
   });
 
-  it("孤儿对账查不到扣分记录:refunded=0,failed 终态已认领", async () => {
+  it("孤儿对账查不到扣分记录:refunded=0,pending 已收口", async () => {
     listStalePromptEnhanceRunningJobs.mockResolvedValue([{ id: JOB_ID, userId: "7" }]);
     refundChargeByKey.mockResolvedValueOnce({ refunded: 0 });
     const { reapStuckPaidJobs } = await ledger();
     const result = await reapStuckPaidJobs();
-    expect(claimPromptEnhanceFailed).toHaveBeenCalledWith(JOB_ID, "提示词增强未完成，积分已退回");
+    expect(markPromptEnhanceRefundReconciled).toHaveBeenCalledWith(JOB_ID, 0);
     expect(result.refunded).toBe(0);
+  });
+
+  it("孤儿对账首次失败后保持 refund_pending,下一轮继续处理", async () => {
+    listStalePromptEnhanceRunningJobs.mockResolvedValueOnce([{ id: JOB_ID, userId: "7" }]);
+    listPromptEnhanceRefundPendingJobs.mockResolvedValueOnce([]);
+    claimPromptEnhanceRefundPending.mockResolvedValueOnce("failed");
+    refundChargeByKey.mockRejectedValueOnce(new Error("对账服务暂时不可用"));
+    const { reapStuckPaidJobs } = await ledger();
+    const first = await reapStuckPaidJobs();
+    expect(first.errors).toBe(1);
+    expect(markPromptEnhanceRefundReconciled).not.toHaveBeenCalled();
+
+    listStalePromptEnhanceRunningJobs.mockResolvedValueOnce([]);
+    listPromptEnhanceRefundPendingJobs.mockResolvedValueOnce([{ id: JOB_ID, userId: "7" }]);
+    refundChargeByKey.mockResolvedValueOnce({ refunded: 3 });
+    markPromptEnhanceRefundReconciled.mockResolvedValueOnce(true);
+    const second = await reapStuckPaidJobs();
+    expect(second.errors).toBe(0);
+    expect(second.refunded).toBe(1);
+    expect(refundChargeByKey).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        userId: 7,
+        chargeKey: `promptEnhance/${JOB_ID}`,
+        refundKey: `refund:[refundKey:promptEnhance/${JOB_ID}]`,
+      }),
+    );
+    expect(markPromptEnhanceRefundReconciled).toHaveBeenCalledWith(JOB_ID, 3);
+  });
+
+  it("对账已完成但终态写入失败时,下轮使用同一幂等键继续收口", async () => {
+    listStalePromptEnhanceRunningJobs.mockResolvedValue([]);
+    listPromptEnhanceRefundPendingJobs.mockResolvedValue([{ id: JOB_ID, userId: "7" }]);
+    refundChargeByKey
+      .mockResolvedValueOnce({ refunded: 3 })
+      .mockResolvedValueOnce({ refunded: 0 });
+    markPromptEnhanceRefundReconciled
+      .mockRejectedValueOnce(new Error("终态写入暂时失败"))
+      .mockResolvedValueOnce(true);
+    const { reapStuckPaidJobs } = await ledger();
+    const first = await reapStuckPaidJobs();
+    const second = await reapStuckPaidJobs();
+    expect(first.errors).toBe(1);
+    expect(second.errors).toBe(0);
+    expect(refundChargeByKey).toHaveBeenCalledTimes(2);
+    const firstRefundKey = (refundChargeByKey.mock.calls[0][0] as { refundKey: string }).refundKey;
+    const secondRefundKey = (refundChargeByKey.mock.calls[1][0] as { refundKey: string }).refundKey;
+    expect(firstRefundKey).toBe(secondRefundKey);
+    expect(markPromptEnhanceRefundReconciled).toHaveBeenCalledTimes(2);
   });
 
   it("hold 尚在时孤儿扫描不重复处理(交 hold 扫描)", async () => {

@@ -17,6 +17,10 @@ export const PROMPT_ENHANCE_DONE_ACTION = "prompt_enhance_done";
 /** jobs=running 且 hold 缺失的孤儿判定线:超过该时限视为处理失败,进对账退分 */
 export const PROMPT_ENHANCE_STALE_MS = 10 * 60 * 1000;
 
+export const PROMPT_ENHANCE_REFUND_PENDING_ACTION = "prompt_enhance_refund_pending";
+
+export const PROMPT_ENHANCE_REFUND_RECONCILED_ACTION = "prompt_enhance_refund_reconciled";
+
 export type PromptEnhanceResponse = {
   action: typeof PROMPT_ENHANCE_DONE_ACTION;
   requestFingerprint: string;
@@ -135,7 +139,118 @@ export async function reservePromptEnhanceOperation(input: {
   return { kind: "running", jobId };
 }
 
+function extractOutputAction(output: unknown): string {
+  if (!output || typeof output !== "object" || Array.isArray(output)) return "";
+  return String((output as { action?: unknown }).action || "");
+}
+
 export type PromptEnhanceFailureClaim = "failed" | "succeeded" | "missing";
+
+/**
+ * 原子认领孤儿任务的积分对账。
+ * running 转 failed 时同时写入 refund_pending，保证对账暂时失败后仍可继续扫描。
+ */
+export async function claimPromptEnhanceRefundPending(
+  jobId: string,
+  message: string,
+): Promise<PromptEnhanceFailureClaim> {
+  const db = await getDb();
+  if (!db) {
+    throw new Error("Database unavailable — cannot mark prompt enhance refund pending");
+  }
+
+  const changed = await db
+    .update(jobs)
+    .set({
+      status: "failed",
+      error: String(message || "增强未完成，积分对账处理中").slice(0, 2000),
+      output: { action: PROMPT_ENHANCE_REFUND_PENDING_ACTION } as InsertJob["output"],
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(jobs.id, jobId),
+        eq(jobs.status, "running"),
+        sql`${jobs.input}->>'action' = ${PROMPT_ENHANCE_JOB_ACTION}`,
+      ),
+    )
+    .returning({ id: jobs.id });
+
+  if (changed.length > 0) return "failed";
+
+  const existing = await getJobByIdStrict(jobId);
+  if (!existing) return "missing";
+  if (existing.status === "succeeded") return "succeeded";
+  if (
+    existing.status === "failed" &&
+    extractOutputAction(existing.output) === PROMPT_ENHANCE_REFUND_PENDING_ACTION
+  ) {
+    return "failed";
+  }
+  return "missing";
+}
+
+/** 对账完成后清除 pending，避免后续扫描重复读取。 */
+export async function markPromptEnhanceRefundReconciled(
+  jobId: string,
+  creditsRefunded: number,
+): Promise<boolean> {
+  const db = await getDb();
+  if (!db) {
+    throw new Error("Database unavailable — cannot finish prompt enhance refund reconciliation");
+  }
+
+  const changed = await db
+    .update(jobs)
+    .set({
+      output: {
+        action: PROMPT_ENHANCE_REFUND_RECONCILED_ACTION,
+        creditsRefunded,
+      } as InsertJob["output"],
+      error: "提示词增强未完成，积分对账已完成",
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(jobs.id, jobId),
+        eq(jobs.status, "failed"),
+        sql`${jobs.output}->>'action' = ${PROMPT_ENHANCE_REFUND_PENDING_ACTION}`,
+      ),
+    )
+    .returning({ id: jobs.id });
+
+  if (changed.length > 0) return true;
+
+  const existing = await getJobByIdStrict(jobId);
+  return (
+    existing?.status === "failed" &&
+    extractOutputAction(existing.output) === PROMPT_ENHANCE_REFUND_RECONCILED_ACTION
+  );
+}
+
+/** 读取尚未完成积分对账的 promptEnhance 任务。 */
+export async function listPromptEnhanceRefundPendingJobs(): Promise<
+  Array<{ id: string; userId: string }>
+> {
+  const db = await getDb();
+  if (!db) {
+    throw new Error("Database unavailable — cannot scan prompt enhance refund pending jobs");
+  }
+
+  const rows = await db
+    .select({ id: jobs.id, userId: jobs.userId })
+    .from(jobs)
+    .where(
+      and(
+        eq(jobs.type, "platform"),
+        eq(jobs.status, "failed"),
+        sql`${jobs.input}->>'action' = ${PROMPT_ENHANCE_JOB_ACTION}`,
+        sql`${jobs.output}->>'action' = ${PROMPT_ENHANCE_REFUND_PENDING_ACTION}`,
+      ),
+    );
+
+  return rows.map((row) => ({ id: String(row.id), userId: String(row.userId) }));
+}
 
 /**
  * 原子认领 failed 终态:只有 running 能转 failed(CAS),与成功写入竞争时

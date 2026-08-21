@@ -1003,26 +1003,51 @@ export async function reapStuckPaidJobs(opts?: {
   // chargeKey 原路退回(查不到扣分记录 refunded=0),再把 jobs 标 failed。
   // 只扫 action=prompt_enhance,绝不碰其他 platform 任务。
   try {
-    const { claimPromptEnhanceFailed, listStalePromptEnhanceRunningJobs } = await import(
-      "./promptEnhanceOperation.js"
+    const {
+      claimPromptEnhanceRefundPending,
+      listStalePromptEnhanceRunningJobs,
+      listPromptEnhanceRefundPendingJobs,
+      markPromptEnhanceRefundReconciled,
+    } = await import("./promptEnhanceOperation.js");
+
+    const [staleJobs, pendingJobs] = await Promise.all([
+      listStalePromptEnhanceRunningJobs(),
+      listPromptEnhanceRefundPendingJobs(),
+    ]);
+
+    const candidates = [
+      ...staleJobs.map((job) => ({ ...job, state: "running" as const })),
+      ...pendingJobs.map((job) => ({ ...job, state: "refund_pending" as const })),
+    ];
+    const uniqueCandidates = Array.from(
+      new Map(candidates.map((job) => [job.id, job])).values(),
     );
-    const staleJobs = await listStalePromptEnhanceRunningJobs();
-    for (const staleJob of staleJobs) {
+
+    for (const staleJob of uniqueCandidates) {
       try {
         const dir = await getLedgerDir();
         const hold = await readHoldFile(holdFilePath(dir, "promptEnhance", staleJob.id));
-        if (hold) continue; // hold 在:由上面的 hold 扫描处理
+
+        // running 且已有 hold 时交给账本主链处理。
+        // refund_pending 即使后来出现 hold，也使用同一 canonical key 完成对账。
+        if (staleJob.state === "running" && hold) continue;
+
         const userIdNum = Number(staleJob.userId);
-        if (!Number.isFinite(userIdNum)) continue;
-        // 先原子认领 failed:成功结果已在案就跳过,终态不明抛错,认领到才退
-        const terminal = await claimPromptEnhanceFailed(
-          staleJob.id,
-          "提示词增强未完成，积分已退回",
-        );
-        if (terminal === "succeeded") continue;
-        if (terminal !== "failed") {
-          throw new Error(`prompt_enhance_orphan_terminal_claim_failed:${staleJob.id}`);
+        if (!Number.isFinite(userIdNum)) {
+          throw new Error(`prompt_enhance_invalid_user_id:${staleJob.id}`);
         }
+
+        if (staleJob.state === "running") {
+          const terminal = await claimPromptEnhanceRefundPending(
+            staleJob.id,
+            "提示词增强未完成，积分对账处理中",
+          );
+          if (terminal === "succeeded") continue;
+          if (terminal !== "failed") {
+            throw new Error(`prompt_enhance_orphan_terminal_claim_failed:${staleJob.id}`);
+          }
+        }
+
         const { refundChargeByKey } = await import("../credits");
         const { refunded: creditsBack } = await refundChargeByKey({
           userId: userIdNum,
@@ -1031,14 +1056,20 @@ export async function reapStuckPaidJobs(opts?: {
           actionForLog: "promptEnhanceRefund",
           refundKey: canonicalRefundKey("promptEnhance", staleJob.id),
         });
+
+        const reconciled = await markPromptEnhanceRefundReconciled(staleJob.id, creditsBack);
+        if (!reconciled) {
+          throw new Error(`prompt_enhance_refund_reconciled_persist_failed:${staleJob.id}`);
+        }
+
         if (creditsBack > 0) refunded += 1;
         console.log(
-          `[paidJobLedger] ↺ promptEnhance 孤儿对账 jobId=${staleJob.id} refunded=${creditsBack}`,
+          `[paidJobLedger] promptEnhance 孤儿对账完成 jobId=${staleJob.id} refunded=${creditsBack}`,
         );
-      } catch (e: any) {
+      } catch (error: any) {
         errors += 1;
         console.error(
-          `[paidJobLedger] promptEnhance 孤儿对账失败 jobId=${staleJob.id}: ${e?.message}`,
+          `[paidJobLedger] promptEnhance 孤儿对账待下轮处理 jobId=${staleJob.id}: ${error?.message}`,
         );
       }
     }

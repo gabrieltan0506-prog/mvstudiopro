@@ -25,10 +25,19 @@ vi.mock("../credits", () => ({
 // 返回结构,桩掉保证测试输出干净(真实扫描异常不被同名警告淹没)
 const listStalePromptEnhanceRunningJobs = vi.fn(async (..._a: unknown[]) => []);
 const claimPromptEnhanceFailed = vi.fn(async (..._a: unknown[]) => "failed" as const);
+const claimPromptEnhanceRefundPending = vi.fn(async (..._a: unknown[]) => "failed" as const);
+const listPromptEnhanceRefundPendingJobs = vi.fn(async (..._a: unknown[]) => []);
+const markPromptEnhanceRefundReconciled = vi.fn(async (..._a: unknown[]) => true);
 vi.mock("./promptEnhanceOperation.js", () => ({
   listStalePromptEnhanceRunningJobs: (...args: unknown[]) =>
     listStalePromptEnhanceRunningJobs(...args),
   claimPromptEnhanceFailed: (...args: unknown[]) => claimPromptEnhanceFailed(...args),
+  claimPromptEnhanceRefundPending: (...args: unknown[]) =>
+    claimPromptEnhanceRefundPending(...args),
+  listPromptEnhanceRefundPendingJobs: (...args: unknown[]) =>
+    listPromptEnhanceRefundPendingJobs(...args),
+  markPromptEnhanceRefundReconciled: (...args: unknown[]) =>
+    markPromptEnhanceRefundReconciled(...args),
 }));
 
 /** hasRefundMarker 的真账查询桩：markerRows 非空 = 账里已有这笔退分 */

@@ -7,8 +7,11 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 let dbAvailable = true;
 let insertReturning: Array<{ id: string }> = [];
 let selectRows: Array<{ id: string; userId: string }> = [];
-/** CAS 状态机:update 只在 rowStatus==="running" 时生效并翻转状态(模拟 WHERE status='running') */
-let rowStatus: "running" | "succeeded" | "failed" = "running";
+/** CAS 状态机:带 status 的 update 只在 running 时生效;对账终态写入要求 failed+pending */
+const dbState = {
+  status: "running" as "running" | "succeeded" | "failed",
+  output: null as unknown,
+};
 const insertValues = vi.fn();
 vi.mock("../db", () => ({
   getDb: async () => {
@@ -24,11 +27,24 @@ vi.mock("../db", () => ({
       }),
       select: () => ({ from: () => ({ where: async () => selectRows }) }),
       update: () => ({
-        set: (v: { status: "succeeded" | "failed" }) => ({
+        set: (v: { status?: "succeeded" | "failed"; output?: unknown }) => ({
           where: () => ({
             returning: async () => {
-              if (rowStatus !== "running") return [];
-              rowStatus = v.status;
+              if (v.status === "succeeded" || v.status === "failed") {
+                if (dbState.status !== "running") return [];
+                dbState.status = v.status;
+                if ("output" in v) dbState.output = v.output;
+                return [{ id: "whatever" }];
+              }
+              // 对账终态写入:WHERE status='failed' AND output.action=refund_pending
+              const action =
+                dbState.output && typeof dbState.output === "object"
+                  ? String((dbState.output as { action?: unknown }).action || "")
+                  : "";
+              if (dbState.status !== "failed" || action !== "prompt_enhance_refund_pending") {
+                return [];
+              }
+              dbState.output = v.output;
               return [{ id: "whatever" }];
             },
           }),
@@ -44,8 +60,14 @@ vi.mock("../jobs/repository.js", () => ({
 }));
 
 import {
+  PROMPT_ENHANCE_DONE_ACTION,
+  PROMPT_ENHANCE_REFUND_PENDING_ACTION,
+  PROMPT_ENHANCE_REFUND_RECONCILED_ACTION,
   claimPromptEnhanceFailed,
+  claimPromptEnhanceRefundPending,
+  listPromptEnhanceRefundPendingJobs,
   listStalePromptEnhanceRunningJobs,
+  markPromptEnhanceRefundReconciled,
   markPromptEnhanceSucceededWithRetry,
   promptEnhanceOperationId,
   promptEnhanceRequestFingerprint,
@@ -76,16 +98,17 @@ beforeEach(() => {
   dbAvailable = true;
   insertReturning = [{ id: JOB_ID }];
   selectRows = [];
-  rowStatus = "running";
+  dbState.status = "running";
+  dbState.output = null;
   insertValues.mockClear();
   getJobByIdStrict.mockReset();
   // strict 读取跟随 CAS 状态机
   getJobByIdStrict.mockImplementation(async () => ({
     id: JOB_ID,
-    status: rowStatus,
-    error: rowStatus === "failed" ? "增强未完成" : null,
+    status: dbState.status,
+    error: dbState.status === "failed" ? "增强未完成" : null,
     input: { requestFingerprint: FP },
-    output: rowStatus === "succeeded" ? doneOutput : null,
+    output: dbState.output ?? (dbState.status === "succeeded" ? doneOutput : null),
   }));
 });
 
@@ -191,22 +214,22 @@ describe("终态 CAS 竞争(只有 running 能转终态,先写者赢)", () => {
   it("success CAS 先落:succeeded 保留;failed 认领返回 succeeded(不退分信号)", async () => {
     const ok = await markPromptEnhanceSucceededWithRetry(JOB_ID, doneOutput as never);
     expect(ok).toBe(true);
-    expect(rowStatus).toBe("succeeded");
+    expect(dbState.status).toBe("succeeded");
     const claim = await claimPromptEnhanceFailed(JOB_ID, "心跳过期");
     expect(claim).toBe("succeeded");
-    expect(rowStatus).toBe("succeeded"); // failed 不覆盖 succeeded
+    expect(dbState.status).toBe("succeeded"); // failed 不覆盖 succeeded
   });
 
   it("failed CAS 先落:failed 保留;success 写入返回 false(调用方退分)", async () => {
     const claim = await claimPromptEnhanceFailed(JOB_ID, "心跳过期");
     expect(claim).toBe("failed");
-    expect(rowStatus).toBe("failed");
+    expect(dbState.status).toBe("failed");
     const ok = await markPromptEnhanceSucceededWithRetry(JOB_ID, doneOutput as never, {
       attempts: 2,
       delayMs: 0,
     });
     expect(ok).toBe(false);
-    expect(rowStatus).toBe("failed"); // 成功结果不得覆盖 failed
+    expect(dbState.status).toBe("failed"); // 成功结果不得覆盖 failed
   });
 
   it("Promise.all 并发:终态只能二选一,信号与终态严格一致", async () => {
@@ -214,8 +237,8 @@ describe("终态 CAS 竞争(只有 running 能转终态,先写者赢)", () => {
       markPromptEnhanceSucceededWithRetry(JOB_ID, doneOutput as never, { attempts: 1 }),
       claimPromptEnhanceFailed(JOB_ID, "心跳过期"),
     ]);
-    expect(rowStatus === "succeeded" || rowStatus === "failed").toBe(true);
-    if (rowStatus === "succeeded") {
+    expect(dbState.status === "succeeded" || dbState.status === "failed").toBe(true);
+    if (dbState.status === "succeeded") {
       expect(ok).toBe(true);
       expect(claim).toBe("succeeded"); // 不能出现 succeeded + 已退积分
     } else {
@@ -225,11 +248,35 @@ describe("终态 CAS 竞争(只有 running 能转终态,先写者赢)", () => {
   });
 
   it("同指纹成功记录已在库:重试写入按同一份结果返回 true", async () => {
-    rowStatus = "succeeded"; // 先前 attempt 已写进去
+    dbState.status = "succeeded"; // 先前 attempt 已写进去
     const ok = await markPromptEnhanceSucceededWithRetry(JOB_ID, doneOutput as never, {
       attempts: 1,
     });
     expect(ok).toBe(true);
+  });
+
+  it("孤儿认领同时写入 refund_pending,对账完成后写 reconciled", async () => {
+    dbState.status = "running";
+    dbState.output = null;
+    expect(await claimPromptEnhanceRefundPending(JOB_ID, "积分对账处理中")).toBe("failed");
+    expect(dbState.status).toBe("failed");
+    expect(dbState.output).toMatchObject({ action: PROMPT_ENHANCE_REFUND_PENDING_ACTION });
+
+    selectRows = [{ id: JOB_ID, userId: "7" }];
+    expect(await listPromptEnhanceRefundPendingJobs()).toEqual([{ id: JOB_ID, userId: "7" }]);
+
+    expect(await markPromptEnhanceRefundReconciled(JOB_ID, 3)).toBe(true);
+    expect(dbState.output).toMatchObject({
+      action: PROMPT_ENHANCE_REFUND_RECONCILED_ACTION,
+      creditsRefunded: 3,
+    });
+  });
+
+  it("孤儿认领撞上 succeeded 时不写 refund_pending", async () => {
+    dbState.status = "succeeded";
+    dbState.output = { action: PROMPT_ENHANCE_DONE_ACTION, enhancedPrompt: "已完成" };
+    expect(await claimPromptEnhanceRefundPending(JOB_ID, "积分对账处理中")).toBe("succeeded");
+    expect(dbState.output).not.toMatchObject({ action: PROMPT_ENHANCE_REFUND_PENDING_ACTION });
   });
 
   it("claim 在 db 不可用时抛错,不得默认放行退分", async () => {
