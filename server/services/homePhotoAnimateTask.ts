@@ -82,6 +82,8 @@ export type HomePhotoAnimateTaskRecord = {
   pollingUrl?: string;
   /** 百炼官方 HappyHorse 异步任务 id(主通道;OpenRouter 兜底时为空) */
   bailianTaskId?: string;
+  /** 提交百炼用的国内可达镜像图 URL(阿里云拉不动 GCS,见 2026-08-21 排障) */
+  bailianImageUrl?: string;
   /** 官方提交失败回落网关时的原因摘要 */
   fallbackReason?: string;
   model?: string;
@@ -253,6 +255,46 @@ async function succeedTask(
   return task;
 }
 
+/**
+ * 百炼(阿里云北京)的 worker 拉不动 storage.googleapis.com——GCS 在大陆不可达,
+ * 首帧签名 URL 直接透传会让任务建单成功、执行期报 "Failed to download <url>"
+ * (2026-08-21 四连挂实锤)。提交百炼前把图镜像到自有域名(Fly 卷图床,
+ * mvstudiopro.com 的国内可达性被日常业务验证);OpenRouter 国际通道不受影响,
+ * 继续用原 URL。镜像结果落 task.bailianImageUrl,重试不重复下载。
+ */
+/* export 仅为单测 */
+export async function ensureBailianReachableImageUrl(
+  task: HomePhotoAnimateTaskRecord,
+): Promise<string> {
+  if (task.bailianImageUrl) return task.bailianImageUrl;
+  const src = String(task.imageUrl || "").trim();
+  const ownRoot = String(process.env.OAUTH_SERVER_URL || "").trim().replace(/\/+$/, "") || "https://mvstudiopro.com";
+  if (src.startsWith(ownRoot) || src.includes("op=flyVolumeMedia")) {
+    return src; // 已是自有域,阿里可达
+  }
+  const res = await fetch(src, { signal: AbortSignal.timeout(120_000) });
+  if (!res.ok) throw new Error(`镜像首帧图下载失败 HTTP ${res.status}`);
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if (!buffer.length || buffer.length > 30 * 1024 * 1024) {
+    throw new Error(`镜像首帧图大小异常: ${buffer.length} bytes`);
+  }
+  const isJpeg = buffer[0] === 0xff && buffer[1] === 0xd8;
+  const isWebp = buffer.length > 11 && buffer.toString("ascii", 8, 12) === "WEBP";
+  const contentType = isJpeg ? "image/jpeg" : isWebp ? "image/webp" : "image/png";
+  const { writeFlyPlatformImageBuffer, buildFlyPlatformImagePublicUrl } = await import(
+    "./flyVolumeGeneratedImages.js"
+  );
+  const { relPath } = await writeFlyPlatformImageBuffer({
+    subdir: "home-photo-animate-src",
+    buffer,
+    contentType,
+  });
+  const publicUrl = buildFlyPlatformImagePublicUrl(relPath);
+  task.bailianImageUrl = publicUrl;
+  await writeTask(task);
+  return publicUrl;
+}
+
 async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord | null> {
   if (inflight.has(taskId)) {
     return readTask(taskId);
@@ -274,10 +316,22 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
     // 尚未提交上游:百炼官方为主通道(0820 拍板),提交失败回落 OpenRouter 网关
     if (!task.pollingUrl && !task.bailianTaskId) {
       if (isBailianHappyHorseConfigured()) {
+        let bailianImageUrl: string | null = null;
+        try {
+          bailianImageUrl = await ensureBailianReachableImageUrl(task);
+        } catch (mirrorError) {
+          // 镜像失败=完全没触达百炼,按"明确拒绝"语义直接回落 OpenRouter,不误伤
+          const reason = mirrorError instanceof Error ? mirrorError.message : String(mirrorError);
+          console.warn(
+            `[homePhotoAnimateTask] 首帧镜像失败,跳过百炼回落 OpenRouter · task=${task.taskId} · ${reason}`,
+          );
+          task.fallbackReason = `首帧镜像失败: ${reason}`.slice(0, 200);
+        }
+        if (bailianImageUrl) {
         try {
           const submitted = await submitBailianHappyHorseVideo({
             prompt: task.prompt,
-            imageUrl: task.imageUrl,
+            imageUrl: bailianImageUrl,
             duration: task.duration,
             resolution: task.resolution,
           });
@@ -308,6 +362,7 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
           );
           task.fallbackReason = reason.slice(0, 200);
           task.bailianTaskId = undefined;
+        }
         }
       }
       try {
