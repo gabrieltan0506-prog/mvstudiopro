@@ -20,9 +20,10 @@ import { getJobByIdStrict, listPostProdJobsForUser } from "./jobs/repository";
 import { buildPostProdJobResponse } from "./services/postProdJobResponse";
 import { enhancePromptForEngine, PROMPT_ENHANCE_CREDITS, type PromptEnhanceResult } from "./services/promptEnhance";
 import {
-  markPromptEnhanceFailed,
+  claimPromptEnhanceFailed,
   markPromptEnhanceSucceededWithRetry,
   reservePromptEnhanceOperation,
+  withPromptEnhanceHeartbeat,
 } from "./services/promptEnhanceOperation";
 import {
   isReadyCompilerEngineId,
@@ -4362,16 +4363,9 @@ export const appRouter = router({
             message: "该引擎的提示词方言尚未接线(预留中),暂不提供增强",
           });
         }
-        // 余额检查仅作提前提示;最终能否执行以 deductCreditsAmount 的原子结果为准
-        const creditsInfo = await getCredits(ctx.user.id);
-        if (creditsInfo.totalAvailable < PROMPT_ENHANCE_CREDITS) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: `Credits 不足,提示词增强需要 ${PROMPT_ENHANCE_CREDITS} Credits(当前余额:${creditsInfo.totalAvailable})`,
-          });
-        }
-
-        // 顺序:任务占位→扣积分→账本登记→模型调用→结果持久化→结算→返回
+        // 顺序:任务占位→(replay 恢复)→余额检查→扣积分→账本登记→模型调用→
+        // 结果持久化→结算→返回。余额检查在 replay 之后:已付费的结果恢复
+        // 不受当前余额影响。
         const operation = await reservePromptEnhanceOperation({
           userId: ctx.user.id,
           billingRequestId: input.billingRequestId,
@@ -4401,6 +4395,16 @@ export const appRouter = router({
           });
         }
 
+        // 只有取得 execute 权的新任务才检查余额(提前提示;最终以扣费原子结果为准)
+        const creditsInfo = await getCredits(ctx.user.id);
+        if (creditsInfo.totalAvailable < PROMPT_ENHANCE_CREDITS) {
+          await claimPromptEnhanceFailed(operation.jobId, "Credits 不足");
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Credits 不足,提示词增强需要 ${PROMPT_ENHANCE_CREDITS} Credits(当前余额:${creditsInfo.totalAvailable})`,
+          });
+        }
+
         const jobId = operation.jobId;
         const taskType = "promptEnhance";
         const chargeKey = `promptEnhance/${jobId}`.slice(0, 120);
@@ -4421,7 +4425,7 @@ export const appRouter = router({
             { chargeKey },
           );
         } catch (error) {
-          await markPromptEnhanceFailed(
+          await claimPromptEnhanceFailed(
             jobId,
             error instanceof Error ? error.message : "积分处理未完成",
           );
@@ -4446,34 +4450,41 @@ export const appRouter = router({
             "promptEnhanceRefund",
             { refundKey: `refund:promptEnhance/register/${jobId}`.slice(0, 120) },
           );
-          await markPromptEnhanceFailed(jobId, "任务登记未完成");
+          await claimPromptEnhanceFailed(jobId, "任务登记未完成");
           throw error;
         }
 
         let result: PromptEnhanceResult;
         try {
-          result = await enhancePromptForEngine({ prompt: input.prompt, engine });
-          const persisted = await markPromptEnhanceSucceededWithRetry(jobId, {
-            action: "prompt_enhance_done",
-            requestFingerprint: operation.requestFingerprint,
-            ...result,
-            engine,
-            creditsBilled: PROMPT_ENHANCE_CREDITS,
+          // 模型链最长约 5×240s,心跳每 60s 刷 hold,防被 5 分钟线误判停更退分
+          result = await withPromptEnhanceHeartbeat(jobId, async () => {
+            const enhanced = await enhancePromptForEngine({ prompt: input.prompt, engine });
+            const persisted = await markPromptEnhanceSucceededWithRetry(jobId, {
+              action: "prompt_enhance_done",
+              requestFingerprint: operation.requestFingerprint,
+              ...enhanced,
+              engine,
+              creditsBilled: deducted.cost,
+            });
+            if (!persisted) {
+              throw new Error("prompt_enhance_result_persist_failed");
+            }
+            return enhanced;
           });
-          if (!persisted) {
-            throw new Error("prompt_enhance_result_persist_failed");
-          }
         } catch (error) {
-          await refundCreditsOnFailure(
-            jobId,
-            taskType,
-            "task_failed",
-            error instanceof Error ? error.message : String(error),
-          );
-          await markPromptEnhanceFailed(
+          // 先原子认领 failed:成功结果已在案(竞争输了)就绝不退分
+          const terminal = await claimPromptEnhanceFailed(
             jobId,
             error instanceof Error ? error.message : "增强未完成",
           );
+          if (terminal !== "succeeded") {
+            await refundCreditsOnFailure(
+              jobId,
+              taskType,
+              "task_failed",
+              error instanceof Error ? error.message : String(error),
+            );
+          }
           throw error;
         }
 
@@ -4487,7 +4498,7 @@ export const appRouter = router({
           }
         }
 
-        return { ...result, engine, creditsBilled: PROMPT_ENHANCE_CREDITS };
+        return { ...result, engine, creditsBilled: deducted.cost };
       }),
 
     recordAnalysisSnapshot: protectedProcedure

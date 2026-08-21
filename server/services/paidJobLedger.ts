@@ -830,18 +830,29 @@ export async function reapStuckPaidJobs(opts?: {
   let errors = 0;
   let cancelled = 0;
 
-  // promptEnhance:退分完成后同步任务终态(jobs=running + hold=refunded 不许永久停在处理中)
+  // promptEnhance:退分前必须先原子认领 failed 终态(只有 running 能转 failed)。
+  // 认领结果 succeeded = 成功结果已在案 → 只补 settled 绝不退分;
+  // 认领失败(missing 等)抛错,不许在终态不明时打款。
   const refundHoldAndSyncJob = async (
     hold: PaidJobHold,
     reason: PaidJobRefundReason,
     detail?: string,
   ) => {
-    const result = await refundCreditsOnFailure(hold.jobId, hold.taskType, reason, detail);
-    if (hold.taskType === "promptEnhance" && result.status === "refunded") {
-      const { markJobFailed } = await import("../jobs/repository.js");
-      await markJobFailed(hold.jobId, "提示词增强未完成，积分已退回");
+    if (hold.taskType === "promptEnhance") {
+      const { claimPromptEnhanceFailed } = await import("./promptEnhanceOperation.js");
+      const terminal = await claimPromptEnhanceFailed(
+        hold.jobId,
+        "提示词增强未完成，积分已退回",
+      );
+      if (terminal === "succeeded") {
+        await unregisterActiveJob(hold.jobId, "promptEnhance", "settled");
+        return { refunded: false, creditsRefunded: 0, status: "settled" as PaidJobStatus };
+      }
+      if (terminal !== "failed") {
+        throw new Error(`prompt_enhance_terminal_claim_failed:${hold.jobId}`);
+      }
     }
-    return result;
+    return refundCreditsOnFailure(hold.jobId, hold.taskType, reason, detail);
   };
 
   // 30 天硬上限：即便 holdPausedAt 一直挂着也不能无限压住，超期就强行退积分
@@ -899,8 +910,9 @@ export async function reapStuckPaidJobs(opts?: {
         );
         if (result.refunded) refunded += 1;
         if (hold.taskType === "promptEnhance" && result.status === "refunded") {
-          const { markJobFailed } = await import("../jobs/repository.js");
-          await markJobFailed(hold.jobId, "提示词增强未完成，积分已退回");
+          // 退分已完成:认领 failed 终态(CAS,succeeded 在案时不覆盖——上方证据检查已拦)
+          const { claimPromptEnhanceFailed } = await import("./promptEnhanceOperation.js");
+          await claimPromptEnhanceFailed(hold.jobId, "提示词增强未完成，积分已退回");
         }
         continue;
       }
@@ -973,7 +985,9 @@ export async function reapStuckPaidJobs(opts?: {
   // chargeKey 原路退回(查不到扣分记录 refunded=0),再把 jobs 标 failed。
   // 只扫 action=prompt_enhance,绝不碰其他 platform 任务。
   try {
-    const { listStalePromptEnhanceRunningJobs } = await import("./promptEnhanceOperation.js");
+    const { claimPromptEnhanceFailed, listStalePromptEnhanceRunningJobs } = await import(
+      "./promptEnhanceOperation.js"
+    );
     const staleJobs = await listStalePromptEnhanceRunningJobs();
     for (const staleJob of staleJobs) {
       try {
@@ -982,6 +996,15 @@ export async function reapStuckPaidJobs(opts?: {
         if (hold) continue; // hold 在:由上面的 hold 扫描处理
         const userIdNum = Number(staleJob.userId);
         if (!Number.isFinite(userIdNum)) continue;
+        // 先原子认领 failed:成功结果已在案就跳过,终态不明抛错,认领到才退
+        const terminal = await claimPromptEnhanceFailed(
+          staleJob.id,
+          "提示词增强未完成，积分已退回",
+        );
+        if (terminal === "succeeded") continue;
+        if (terminal !== "failed") {
+          throw new Error(`prompt_enhance_orphan_terminal_claim_failed:${staleJob.id}`);
+        }
         const { refundChargeByKey } = await import("../credits");
         const { refunded: creditsBack } = await refundChargeByKey({
           userId: userIdNum,
@@ -990,8 +1013,6 @@ export async function reapStuckPaidJobs(opts?: {
           actionForLog: "promptEnhanceRefund",
           refundKey: canonicalRefundKey("promptEnhance", staleJob.id),
         });
-        const { markJobFailed } = await import("../jobs/repository.js");
-        await markJobFailed(staleJob.id, "提示词增强未完成，积分已退回");
         if (creditsBack > 0) refunded += 1;
         console.log(
           `[paidJobLedger] ↺ promptEnhance 孤儿对账 jobId=${staleJob.id} refunded=${creditsBack}`,

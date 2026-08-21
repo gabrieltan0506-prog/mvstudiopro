@@ -8,11 +8,7 @@ import { createHash } from "node:crypto";
 import { and, eq, lt, sql } from "drizzle-orm";
 import { jobs, type InsertJob } from "../../drizzle/schema";
 import { getDb } from "../db";
-import {
-  getJobByIdStrict,
-  markJobFailed,
-  markJobSucceededWithRetry,
-} from "../jobs/repository.js";
+import { getJobByIdStrict } from "../jobs/repository.js";
 import type { CompilerEngineId } from "../../shared/manhuaShotIR.js";
 import type { FormatIssue } from "../../shared/promptFormatLayer.js";
 
@@ -139,16 +135,132 @@ export async function reservePromptEnhanceOperation(input: {
   return { kind: "running", jobId };
 }
 
-/** 成功结果落库:只重试数据库写入,绝不重调模型(复用通用终态重试) */
+export type PromptEnhanceFailureClaim = "failed" | "succeeded" | "missing";
+
+/**
+ * 原子认领 failed 终态:只有 running 能转 failed(CAS),与成功写入竞争时
+ * 先落库的一方赢。返回 "succeeded" 表示成功结果已在案——调用方绝不能退分。
+ */
+export async function claimPromptEnhanceFailed(
+  jobId: string,
+  message: string,
+): Promise<PromptEnhanceFailureClaim> {
+  const db = await getDb();
+  if (!db) {
+    throw new Error("Database unavailable — cannot close prompt enhance operation");
+  }
+
+  const changed = await db
+    .update(jobs)
+    .set({
+      status: "failed",
+      error: String(message || "增强未完成").slice(0, 2000),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(jobs.id, jobId),
+        eq(jobs.status, "running"),
+        sql`${jobs.input}->>'action' = ${PROMPT_ENHANCE_JOB_ACTION}`,
+      ),
+    )
+    .returning({ id: jobs.id });
+
+  if (changed.length > 0) return "failed";
+
+  const existing = await getJobByIdStrict(jobId);
+  if (!existing) return "missing";
+  if (existing.status === "succeeded") return "succeeded";
+  if (existing.status === "failed") return "failed";
+  return "missing";
+}
+
+/**
+ * 成功结果落库(CAS):只有 running 能转 succeeded;竞争输给 failed 时返回 false
+ * (调用方按失败退分)。只重试数据库写入,绝不重调模型。
+ */
 export async function markPromptEnhanceSucceededWithRetry(
   jobId: string,
   result: PromptEnhanceResponse,
+  options?: { attempts?: number; delayMs?: number },
 ): Promise<boolean> {
-  return markJobSucceededWithRetry(jobId, result);
+  const attempts = Math.max(1, Math.min(6, Math.floor(options?.attempts ?? 4)));
+  const delayMs = Math.max(0, Math.min(5_000, Math.floor(options?.delayMs ?? 250)));
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const db = await getDb();
+    if (!db) {
+      if (attempt === attempts) return false;
+    } else {
+      try {
+        const changed = await db
+          .update(jobs)
+          .set({
+            status: "succeeded",
+            output: result as InsertJob["output"],
+            error: null,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(jobs.id, jobId),
+              eq(jobs.status, "running"),
+              sql`${jobs.input}->>'action' = ${PROMPT_ENHANCE_JOB_ACTION}`,
+            ),
+          )
+          .returning({ id: jobs.id });
+
+        if (changed.length > 0) return true;
+
+        const existing = await getJobByIdStrict(jobId);
+        if (existing?.status === "succeeded") {
+          // 已被同一请求的先前写入落成成功:指纹相同才视为同一份结果
+          const stored = parseStoredResponse(existing.output);
+          return Boolean(stored && stored.requestFingerprint === result.requestFingerprint);
+        }
+        if (existing?.status === "failed") {
+          return false; // failed 已先落库(reaper 已退分):成功结果不得覆盖
+        }
+      } catch {
+        // 只重试数据库终态写入,不重新调用模型
+      }
+    }
+
+    if (attempt < attempts && delayMs > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs * attempt));
+    }
+  }
+  return false;
 }
 
-export async function markPromptEnhanceFailed(jobId: string, message: string): Promise<void> {
-  await markJobFailed(jobId, message);
+/**
+ * 增强调用期间的心跳包装:注册 hold 后每 60s 刷一次,防止长网关链
+ * (最长约 5×240s)期间被 5 分钟心跳线误判停更退分。
+ */
+export async function withPromptEnhanceHeartbeat<T>(
+  jobId: string,
+  work: () => Promise<T>,
+  options?: {
+    intervalMs?: number;
+    heartbeat?: (jobId: string) => Promise<void>;
+  },
+): Promise<T> {
+  const intervalMs = Math.max(5_000, Math.floor(options?.intervalMs ?? 60_000));
+  const beat =
+    options?.heartbeat ??
+    (async (id: string) => {
+      const { heartbeatActiveJob } = await import("./paidJobLedger.js");
+      await heartbeatActiveJob(id, "promptEnhance");
+    });
+  const timer = setInterval(() => {
+    void beat(jobId).catch(() => {});
+  }, intervalMs);
+  (timer as { unref?: () => void }).unref?.();
+  try {
+    return await work();
+  } finally {
+    clearInterval(timer);
+  }
 }
 
 /**

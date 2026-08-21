@@ -7,6 +7,8 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 let dbAvailable = true;
 let insertReturning: Array<{ id: string }> = [];
 let selectRows: Array<{ id: string; userId: string }> = [];
+/** CAS 状态机:update 只在 rowStatus==="running" 时生效并翻转状态(模拟 WHERE status='running') */
+let rowStatus: "running" | "succeeded" | "failed" = "running";
 const insertValues = vi.fn();
 vi.mock("../db", () => ({
   getDb: async () => {
@@ -21,26 +23,34 @@ vi.mock("../db", () => ({
         },
       }),
       select: () => ({ from: () => ({ where: async () => selectRows }) }),
+      update: () => ({
+        set: (v: { status: "succeeded" | "failed" }) => ({
+          where: () => ({
+            returning: async () => {
+              if (rowStatus !== "running") return [];
+              rowStatus = v.status;
+              return [{ id: "whatever" }];
+            },
+          }),
+        }),
+      }),
     };
   },
 }));
 
 const getJobByIdStrict = vi.fn();
-const markJobFailed = vi.fn(async () => {});
-const markJobSucceededWithRetry = vi.fn(async () => true);
 vi.mock("../jobs/repository.js", () => ({
   getJobByIdStrict: (...a: unknown[]) => getJobByIdStrict(...a),
-  markJobFailed: (...a: unknown[]) => (markJobFailed as (...x: unknown[]) => Promise<void>)(...a),
-  markJobSucceededWithRetry: (...a: unknown[]) =>
-    (markJobSucceededWithRetry as (...x: unknown[]) => Promise<boolean>)(...a),
 }));
 
 import {
+  claimPromptEnhanceFailed,
   listStalePromptEnhanceRunningJobs,
   markPromptEnhanceSucceededWithRetry,
   promptEnhanceOperationId,
   promptEnhanceRequestFingerprint,
   reservePromptEnhanceOperation,
+  withPromptEnhanceHeartbeat,
 } from "./promptEnhanceOperation";
 
 const BASE = {
@@ -66,10 +76,17 @@ beforeEach(() => {
   dbAvailable = true;
   insertReturning = [{ id: JOB_ID }];
   selectRows = [];
+  rowStatus = "running";
   insertValues.mockClear();
   getJobByIdStrict.mockReset();
-  markJobFailed.mockClear();
-  markJobSucceededWithRetry.mockClear();
+  // strict 读取跟随 CAS 状态机
+  getJobByIdStrict.mockImplementation(async () => ({
+    id: JOB_ID,
+    status: rowStatus,
+    error: rowStatus === "failed" ? "增强未完成" : null,
+    input: { requestFingerprint: FP },
+    output: rowStatus === "succeeded" ? doneOutput : null,
+  }));
 });
 
 describe("promptEnhanceOperationId / requestFingerprint", () => {
@@ -101,9 +118,6 @@ describe("reservePromptEnhanceOperation", () => {
   it("并发同 requestId:ON CONFLICT 只放行一方 execute,另一方读回 running", async () => {
     // DB 主键唯一约束保证并发下只有一条 INSERT 带 RETURNING 行:
     // 赢家返回行 → execute;输家空返回 → 冲突路径读回 running
-    getJobByIdStrict.mockResolvedValue({
-      id: JOB_ID, status: "running", input: { requestFingerprint: FP }, output: null,
-    });
     insertReturning = [{ id: JOB_ID }];
     const winner = await reservePromptEnhanceOperation(BASE);
     insertReturning = [];
@@ -173,12 +187,97 @@ describe("reservePromptEnhanceOperation", () => {
   });
 });
 
-describe("终态写入与孤儿扫描", () => {
-  it("成功落库走通用终态重试:同参转发,不重调模型", async () => {
+describe("终态 CAS 竞争(只有 running 能转终态,先写者赢)", () => {
+  it("success CAS 先落:succeeded 保留;failed 认领返回 succeeded(不退分信号)", async () => {
     const ok = await markPromptEnhanceSucceededWithRetry(JOB_ID, doneOutput as never);
     expect(ok).toBe(true);
-    expect(markJobSucceededWithRetry).toHaveBeenCalledWith(JOB_ID, doneOutput);
+    expect(rowStatus).toBe("succeeded");
+    const claim = await claimPromptEnhanceFailed(JOB_ID, "心跳过期");
+    expect(claim).toBe("succeeded");
+    expect(rowStatus).toBe("succeeded"); // failed 不覆盖 succeeded
   });
+
+  it("failed CAS 先落:failed 保留;success 写入返回 false(调用方退分)", async () => {
+    const claim = await claimPromptEnhanceFailed(JOB_ID, "心跳过期");
+    expect(claim).toBe("failed");
+    expect(rowStatus).toBe("failed");
+    const ok = await markPromptEnhanceSucceededWithRetry(JOB_ID, doneOutput as never, {
+      attempts: 2,
+      delayMs: 0,
+    });
+    expect(ok).toBe(false);
+    expect(rowStatus).toBe("failed"); // 成功结果不得覆盖 failed
+  });
+
+  it("Promise.all 并发:终态只能二选一,信号与终态严格一致", async () => {
+    const [ok, claim] = await Promise.all([
+      markPromptEnhanceSucceededWithRetry(JOB_ID, doneOutput as never, { attempts: 1 }),
+      claimPromptEnhanceFailed(JOB_ID, "心跳过期"),
+    ]);
+    expect(rowStatus === "succeeded" || rowStatus === "failed").toBe(true);
+    if (rowStatus === "succeeded") {
+      expect(ok).toBe(true);
+      expect(claim).toBe("succeeded"); // 不能出现 succeeded + 已退积分
+    } else {
+      expect(ok).toBe(false);
+      expect(claim).toBe("failed"); // 不能出现 failed + 未进入退分处理
+    }
+  });
+
+  it("同指纹成功记录已在库:重试写入按同一份结果返回 true", async () => {
+    rowStatus = "succeeded"; // 先前 attempt 已写进去
+    const ok = await markPromptEnhanceSucceededWithRetry(JOB_ID, doneOutput as never, {
+      attempts: 1,
+    });
+    expect(ok).toBe(true);
+  });
+
+  it("claim 在 db 不可用时抛错,不得默认放行退分", async () => {
+    dbAvailable = false;
+    await expect(claimPromptEnhanceFailed(JOB_ID, "x")).rejects.toThrow(/Database unavailable/);
+  });
+});
+
+describe("增强调用期间的心跳", () => {
+  it("模型 pending 期间每 60s 刷 hold;完成后定时器停止", async () => {
+    vi.useFakeTimers();
+    try {
+      const beat = vi.fn(async () => {});
+      let release!: (v: string) => void;
+      const work = new Promise<string>((resolve) => { release = resolve; });
+      const running = withPromptEnhanceHeartbeat(JOB_ID, () => work, { heartbeat: beat });
+      await vi.advanceTimersByTimeAsync(4 * 60_000); // 模拟长网关链:4 分钟仍未返回
+      expect(beat.mock.calls.length).toBeGreaterThanOrEqual(3); // hold 不会过 5 分钟线
+      expect(beat).toHaveBeenCalledWith(JOB_ID);
+      const beatsWhileRunning = beat.mock.calls.length;
+      release("done");
+      await expect(running).resolves.toBe("done");
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(beat.mock.calls.length).toBe(beatsWhileRunning); // 完成即停,不再空刷
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("work 抛错也停表并透传错误", async () => {
+    vi.useFakeTimers();
+    try {
+      const beat = vi.fn(async () => {});
+      await expect(
+        withPromptEnhanceHeartbeat(JOB_ID, async () => { throw new Error("上游失败"); }, {
+          heartbeat: beat,
+        }),
+      ).rejects.toThrow("上游失败");
+      const count = beat.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(beat.mock.calls.length).toBe(count);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("孤儿扫描", () => {
 
   it("孤儿扫描:db 不可用抛错;可用时按行映射返回", async () => {
     dbAvailable = false;

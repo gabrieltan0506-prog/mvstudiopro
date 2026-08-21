@@ -21,6 +21,16 @@ vi.mock("../credits", () => ({
   refundCreditsForDeductAmount: (...args: unknown[]) => refundCreditsForDeductAmount(...args),
 }));
 
+// 新增孤儿扫描会动态加载真实 promptEnhanceOperation;本文件的 DB 桩不满足其
+// 返回结构,桩掉保证测试输出干净(真实扫描异常不被同名警告淹没)
+const listStalePromptEnhanceRunningJobs = vi.fn(async (..._a: unknown[]) => []);
+const claimPromptEnhanceFailed = vi.fn(async (..._a: unknown[]) => "failed" as const);
+vi.mock("./promptEnhanceOperation.js", () => ({
+  listStalePromptEnhanceRunningJobs: (...args: unknown[]) =>
+    listStalePromptEnhanceRunningJobs(...args),
+  claimPromptEnhanceFailed: (...args: unknown[]) => claimPromptEnhanceFailed(...args),
+}));
+
 /** hasRefundMarker 的真账查询桩：markerRows 非空 = 账里已有这笔退分 */
 let markerRows: Array<{ id: number }> = [];
 let dbAvailable = true;

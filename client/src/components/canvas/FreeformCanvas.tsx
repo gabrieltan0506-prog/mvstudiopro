@@ -115,6 +115,11 @@ import {
   normalizeCompilerEngineId,
 } from "@shared/manhuaShotIR";
 import { formatPromptForEngine, hasBlockingFormatIssues } from "@shared/promptFormatLayer";
+import {
+  clearPromptEnhancePendingRequest,
+  readPromptEnhancePendingRequest,
+  writePromptEnhancePendingRequest,
+} from "@/lib/promptEnhanceRequestState";
 
 /** 左栏节点列表标题（学参考画布：可读名 + 类型，不泄供应商） */
 function freeformNodeListLabel(block: CanvasBlock): string {
@@ -647,6 +652,7 @@ export default function FreeformCanvas({
   const enhancePromptMutation = trpc.mvAnalysis.enhanceCanvasPrompt.useMutation();
   // 每个 block 暂存尚未取得明确终态的增强请求编号:结果未知时复用同一编号,
   // 服务端按 jobs 记录恢复结果,不重复调用模型不重复扣分。
+  // ref 是热缓存;sessionStorage 是刷新后的恢复源,两处同写同清。
   const promptEnhanceRequestIdsRef = useRef(new Map<string, { requestId: string; localKey: string }>());
   const subQuery = trpc.stripe.getSubscription.useQuery(undefined, { retry: false });
   const userPlan = (subQuery.data?.plan || "free") as string;
@@ -2518,21 +2524,25 @@ export default function FreeformCanvas({
                                   return;
                                 }
                                 if (!window.confirm("语义增强将扣 3 积分并覆盖当前提示词,继续?")) return;
-                                // 结果未知(网络中断/超时)保留编号下次复用;改了 prompt 或引擎则换新编号
+                                // 结果未知(网络中断/超时/刷新)保留编号下次复用;
+                                // 改了 prompt 或引擎则换新编号。刷新后从 sessionStorage 恢复。
+                                const userKey = String(authUser?.id || "");
                                 const localKey = `${eng}\0${prompt}`;
-                                const staged = promptEnhanceRequestIdsRef.current.get(block.id);
+                                const staged =
+                                  promptEnhanceRequestIdsRef.current.get(block.id) ||
+                                  readPromptEnhancePendingRequest(userKey, block.id);
                                 const billingRequestId =
-                                  staged && staged.localKey === localKey
+                                  staged?.localKey === localKey
                                     ? staged.requestId
                                     : crypto.randomUUID();
-                                promptEnhanceRequestIdsRef.current.set(block.id, {
-                                  requestId: billingRequestId,
-                                  localKey,
-                                });
+                                const pending = { requestId: billingRequestId, localKey };
+                                promptEnhanceRequestIdsRef.current.set(block.id, pending);
+                                writePromptEnhancePendingRequest(userKey, block.id, pending);
                                 void enhancePromptMutation
                                   .mutateAsync({ prompt, engine: eng, billingRequestId })
                                   .then((r) => {
                                     promptEnhanceRequestIdsRef.current.delete(block.id);
+                                    clearPromptEnhancePendingRequest(userKey, block.id);
                                     patchOne(block.id, { prompt: r.enhancedPrompt });
                                     toast.success(`增强完成(已扣 ${r.creditsBilled} 积分)`, {
                                       description:
@@ -2544,6 +2554,7 @@ export default function FreeformCanvas({
                                     const code = (err as { data?: { code?: string } })?.data?.code;
                                     if (code === "BAD_REQUEST" || code === "PRECONDITION_FAILED") {
                                       promptEnhanceRequestIdsRef.current.delete(block.id);
+                                      clearPromptEnhancePendingRequest(userKey, block.id);
                                     }
                                     toast.error("增强未完成", {
                                       description:
