@@ -18,6 +18,11 @@ import { TRPCError } from "@trpc/server";
 import { postProdJobInputSchema } from "./jobs/postProdInput";
 import { getJobByIdStrict, listPostProdJobsForUser } from "./jobs/repository";
 import { buildPostProdJobResponse } from "./services/postProdJobResponse";
+import { enhancePromptForEngine, PROMPT_ENHANCE_CREDITS } from "./services/promptEnhance";
+import {
+  isReadyCompilerEngineId,
+  normalizeCompilerEngineId,
+} from "../shared/manhuaShotIR.js";
 import { resolvePostProdInputSources } from "./services/postProdMediaSource";
 import * as db from "./db";
 import * as sessionDb from "./sessionDb";
@@ -4327,6 +4332,48 @@ export const appRouter = router({
       .query(async ({ ctx, input }) => {
         const rows = await listPostProdJobsForUser(String(ctx.user.id), input.limit);
         return rows.map((row) => buildPostProdJobResponse(row)).filter(Boolean);
+      }),
+
+    /**
+     * 提示词语义增强(防废片编译器语义层):GLM-5.3 链,成功才扣费,
+     * chargeKey 按 billingRequestId 幂等(重试不双扣)。reserved 引擎明确拒绝。
+     */
+    enhanceCanvasPrompt: protectedProcedure
+      .input(
+        z.object({
+          prompt: z.string().trim().min(4).max(8000),
+          engine: z.string().min(1).max(64),
+          billingRequestId: z.string().min(8).max(64),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const engine = normalizeCompilerEngineId(input.engine);
+        if (!engine) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "未知的成片引擎" });
+        }
+        if (!isReadyCompilerEngineId(engine)) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "该引擎的提示词方言尚未接线(预留中),暂不提供增强",
+          });
+        }
+        const creditsInfo = await getCredits(ctx.user.id);
+        if (creditsInfo.totalAvailable < PROMPT_ENHANCE_CREDITS) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Credits 不足,提示词增强需要 ${PROMPT_ENHANCE_CREDITS} Credits(当前余额:${creditsInfo.totalAvailable})`,
+          });
+        }
+        // 先跑上游后扣费:失败不收钱,免退款路径;chargeKey 幂等防重试双扣
+        const result = await enhancePromptForEngine({ prompt: input.prompt, engine });
+        await deductCreditsAmount(
+          ctx.user.id,
+          PROMPT_ENHANCE_CREDITS,
+          "promptEnhance",
+          `提示词语义增强(${engine})`,
+          { chargeKey: `prompt-enhance:${ctx.user.id}:${input.billingRequestId}` },
+        );
+        return { ...result, engine, creditsBilled: PROMPT_ENHANCE_CREDITS };
       }),
 
     recordAnalysisSnapshot: protectedProcedure

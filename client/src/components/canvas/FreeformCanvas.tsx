@@ -110,6 +110,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { copyText } from "@/lib/copyText";
+import {
+  isReadyCompilerEngineId,
+  normalizeCompilerEngineId,
+} from "@shared/manhuaShotIR";
+import { formatPromptForEngine, hasBlockingFormatIssues } from "@shared/promptFormatLayer";
 
 /** 左栏节点列表标题（学参考画布：可读名 + 类型，不泄供应商） */
 function freeformNodeListLabel(block: CanvasBlock): string {
@@ -639,6 +644,7 @@ export default function FreeformCanvas({
   /** 世界缩放：让本集全部节点缩进可视区（≠节点自身 width/height） */
   const [viewScale, setViewScale] = useState(1);
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
+  const enhancePromptMutation = trpc.mvAnalysis.enhanceCanvasPrompt.useMutation();
   const subQuery = trpc.stripe.getSubscription.useQuery(undefined, { retry: false });
   const userPlan = (subQuery.data?.plan || "free") as string;
   const { user: authUser, loading: authLoading } = useAuth();
@@ -2447,6 +2453,93 @@ export default function FreeformCanvas({
                               </button>
                             </div>
                           ) : null}
+                          {/* 防废片编译器两颗钮:整理格式(免费,纯前端规则引擎) / 语义增强(3积分,GLM链) */}
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const eng = normalizeCompilerEngineId(
+                                  block.videoModel || DEFAULT_CANVAS_VIDEO_MODEL,
+                                );
+                                if (!eng || !isReadyCompilerEngineId(eng)) {
+                                  toast.message("该引擎的提示词方言预留中,暂不整理");
+                                  return;
+                                }
+                                const r = formatPromptForEngine(String(block.prompt || ""), eng);
+                                if (hasBlockingFormatIssues(r.issues)) {
+                                  // 阻止级问题只展示不覆盖原文,留给用户改
+                                  toast.error("格式问题需处理", {
+                                    description: r.issues.map((i) => i.detailZh).join(";"),
+                                  });
+                                  return;
+                                }
+                                patchOne(block.id, { prompt: r.text });
+                                toast.success(
+                                  r.issues.length
+                                    ? `已整理格式(${r.issues.length} 处提示)`
+                                    : "已整理格式",
+                                  {
+                                    description: r.issues.map((i) => i.detailZh).join(";") || undefined,
+                                  },
+                                );
+                              }}
+                              className="rounded-lg border border-white/15 bg-white/[0.05] px-2 py-1 text-[10px] font-semibold text-white/75 hover:bg-white/[0.1]"
+                              title="按当前引擎方言归一标记/避审替换/钳制检查,免费秒回"
+                            >
+                              整理格式(免费)
+                            </button>
+                            <button
+                              type="button"
+                              disabled={enhancePromptMutation.isPending}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const eng = normalizeCompilerEngineId(
+                                  block.videoModel || DEFAULT_CANVAS_VIDEO_MODEL,
+                                );
+                                if (!eng || !isReadyCompilerEngineId(eng)) {
+                                  toast.message("该引擎的提示词方言预留中,暂不增强");
+                                  return;
+                                }
+                                const prompt = String(block.prompt || "").trim();
+                                if (prompt.length < 4) {
+                                  toast.error("先写几句意图再增强");
+                                  return;
+                                }
+                                const precheck = formatPromptForEngine(prompt, eng);
+                                if (hasBlockingFormatIssues(precheck.issues)) {
+                                  // 阻止级问题不进付费 op:不扣费不建任务
+                                  toast.error("先处理格式问题再增强", {
+                                    description: precheck.issues.map((i) => i.detailZh).join(";"),
+                                  });
+                                  return;
+                                }
+                                if (!window.confirm("语义增强将扣 3 积分并覆盖当前提示词,继续?")) return;
+                                void enhancePromptMutation
+                                  .mutateAsync({
+                                    prompt,
+                                    engine: eng,
+                                    billingRequestId: crypto.randomUUID(),
+                                  })
+                                  .then((r) => {
+                                    patchOne(block.id, { prompt: r.enhancedPrompt });
+                                    toast.success(`增强完成(已扣 ${r.creditsBilled} 积分)`, {
+                                      description:
+                                        r.issues.map((i) => i.detailZh).join(";") || undefined,
+                                    });
+                                  })
+                                  .catch((err) =>
+                                    toast.error("增强失败,未扣费", {
+                                      description: err instanceof Error ? err.message : undefined,
+                                    }),
+                                  );
+                              }}
+                              className="rounded-lg border border-violet-300/40 bg-violet-500/15 px-2 py-1 text-[10px] font-semibold text-violet-100 hover:bg-violet-500/25 disabled:opacity-45"
+                              title="GLM 编译器按十字段满配扩写,成功才扣费"
+                            >
+                              {enhancePromptMutation.isPending ? "增强中…" : "增强提示词(3积分)"}
+                            </button>
+                          </div>
                           {block.videoModel === "seedance-2.5" && canUseSeedance25 ? (
                             <div className="space-y-2 rounded-lg border border-white/10 bg-white/[0.03] px-2 py-2">
                               <label className="flex items-center gap-2 text-[11px] text-white/70">
