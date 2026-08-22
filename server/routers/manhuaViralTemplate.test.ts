@@ -287,9 +287,21 @@ describe("owner 模板查看与优化", () => {
   it("owner 即使没有监管角色，也能查看并批准自己的优化修订", async () => {
     vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
     const owner = (await loadRouter()).createCaller(makeCtx("user", undefined, "owner-open-id"));
-    expect((await owner.listProposals()).items).toMatchObject([
+    const proposals = (await owner.listProposals()).items;
+    expect(proposals).toMatchObject([
       { id: revisionCard.id, revisionOf: secretCard.id },
     ]);
+    // 审批可见性：结构字段必须下发，来源 URL 必须不下发。
+    expect(proposals[0]).toMatchObject({
+      beatGrid: secretCard.beatGrid,
+      scenePoolHints: secretCard.scenePoolHints,
+      castShape: secretCard.castShape,
+      densityHints: secretCard.densityHints,
+      sourceRefCount: 1,
+    });
+    expect(proposals[0]).not.toHaveProperty("sourceRefs");
+    expect(JSON.stringify(proposals)).not.toContain("SECRET_URL");
+
     await expect(owner.approve({
       id: revisionCard.id,
       confirmApprove: true,

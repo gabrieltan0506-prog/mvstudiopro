@@ -2966,12 +2966,24 @@ export default function PlatformPage() {
   const askPlatformSkillQaMutation = trpc.mvAnalysis.askPlatformSkillQa.useMutation();
   const confirmPlatformSkillQaImageMutation = trpc.mvAnalysis.confirmPlatformSkillQaImage.useMutation();
   const approveManhuaViralTemplateMutation = trpc.manhuaViralTemplate.approve.useMutation();
+
+  const manhuaTemplateOwnerCapabilitiesQuery =
+    trpc.manhuaViralTemplate.getOwnerOptimizeCapabilities.useQuery(undefined, {
+      enabled: trendInsightTab === "ai_manhua" && Boolean(user?.id),
+      staleTime: 5 * 60_000,
+      retry: false,
+    });
+  const ownerTemplateOptimizeAllowed =
+    manhuaTemplateOwnerCapabilitiesQuery.data?.allowed === true;
+  const ownerTemplateOptimizeModels =
+    manhuaTemplateOwnerCapabilitiesQuery.data?.models || [];
+
   const manhuaViralProposalsQuery = trpc.manhuaViralTemplate.listProposals.useQuery(
     undefined,
     {
       enabled:
         trendInsightTab === "ai_manhua" &&
-        hasSupervisorOpsAccess,
+        (hasSupervisorOpsAccess || ownerTemplateOptimizeAllowed),
       staleTime: 30_000,
       retry: false,
     },
@@ -3076,16 +3088,6 @@ export default function PlatformPage() {
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [refreshManhuaLearnServerJobs, hasSupervisorOpsAccess, trendInsightTab, user?.id]);
-  const manhuaTemplateOwnerCapabilitiesQuery =
-    trpc.manhuaViralTemplate.getOwnerOptimizeCapabilities.useQuery(undefined, {
-      enabled: trendInsightTab === "ai_manhua" && Boolean(user?.id),
-      staleTime: 5 * 60_000,
-      retry: false,
-    });
-  const ownerTemplateOptimizeAllowed =
-    manhuaTemplateOwnerCapabilitiesQuery.data?.allowed === true;
-  const ownerTemplateOptimizeModels =
-    manhuaTemplateOwnerCapabilitiesQuery.data?.models || [];
   /** owner 专用完整库；先通过能力查询再请求，其他监管账号不会触发私有列表请求。 */
   const manhuaViralApprovedQuery = trpc.manhuaViralTemplate.listApprovedPrivate.useQuery(
     undefined,
@@ -12880,8 +12882,8 @@ export default function PlatformPage() {
                                 {selectedManhuaProposal.beatGrid?.length
                                   ? ` · ${selectedManhuaProposal.beatGrid.length} 个节拍`
                                   : ""}
-                                {selectedManhuaProposal.sourceRefs?.length
-                                  ? ` · 来源 ${selectedManhuaProposal.sourceRefs.length} 条`
+                                {selectedManhuaProposal.sourceRefCount
+                                  ? ` · 来源 ${selectedManhuaProposal.sourceRefCount} 条`
                                   : ""}
                               </summary>
                               {selectedManhuaProposal.castShape ? (

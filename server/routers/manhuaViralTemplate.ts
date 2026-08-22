@@ -207,7 +207,9 @@ export const manhuaViralTemplateRouter = router({
           scenePoolHints: c.scenePoolHints,
           castShape: c.castShape,
           densityHints: c.densityHints,
-          sourceRefs: c.sourceRefs,
+          // 列表只展示来源数量，不下发来源 URL：listProposals 对 admin/supervisor
+          // 也开放，下发完整 sourceRefs 会扩大来源地址的暴露面。
+          sourceRefCount: c.sourceRefs.length,
         })),
       };
     }),
