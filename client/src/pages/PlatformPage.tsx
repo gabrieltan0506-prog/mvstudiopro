@@ -2966,12 +2966,24 @@ export default function PlatformPage() {
   const askPlatformSkillQaMutation = trpc.mvAnalysis.askPlatformSkillQa.useMutation();
   const confirmPlatformSkillQaImageMutation = trpc.mvAnalysis.confirmPlatformSkillQaImage.useMutation();
   const approveManhuaViralTemplateMutation = trpc.manhuaViralTemplate.approve.useMutation();
+
+  const manhuaTemplateOwnerCapabilitiesQuery =
+    trpc.manhuaViralTemplate.getOwnerOptimizeCapabilities.useQuery(undefined, {
+      enabled: trendInsightTab === "ai_manhua" && Boolean(user?.id),
+      staleTime: 5 * 60_000,
+      retry: false,
+    });
+  const ownerTemplateOptimizeAllowed =
+    manhuaTemplateOwnerCapabilitiesQuery.data?.allowed === true;
+  const ownerTemplateOptimizeModels =
+    manhuaTemplateOwnerCapabilitiesQuery.data?.models || [];
+
   const manhuaViralProposalsQuery = trpc.manhuaViralTemplate.listProposals.useQuery(
     undefined,
     {
       enabled:
         trendInsightTab === "ai_manhua" &&
-        hasSupervisorOpsAccess,
+        (hasSupervisorOpsAccess || ownerTemplateOptimizeAllowed),
       staleTime: 30_000,
       retry: false,
     },
@@ -3076,16 +3088,6 @@ export default function PlatformPage() {
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [refreshManhuaLearnServerJobs, hasSupervisorOpsAccess, trendInsightTab, user?.id]);
-  const manhuaTemplateOwnerCapabilitiesQuery =
-    trpc.manhuaViralTemplate.getOwnerOptimizeCapabilities.useQuery(undefined, {
-      enabled: trendInsightTab === "ai_manhua" && Boolean(user?.id),
-      staleTime: 5 * 60_000,
-      retry: false,
-    });
-  const ownerTemplateOptimizeAllowed =
-    manhuaTemplateOwnerCapabilitiesQuery.data?.allowed === true;
-  const ownerTemplateOptimizeModels =
-    manhuaTemplateOwnerCapabilitiesQuery.data?.models || [];
   /** owner 专用完整库；先通过能力查询再请求，其他监管账号不会触发私有列表请求。 */
   const manhuaViralApprovedQuery = trpc.manhuaViralTemplate.listApprovedPrivate.useQuery(
     undefined,
@@ -12866,6 +12868,74 @@ export default function PlatformPage() {
                                 <p key={reason.field}>{reason.field}：{reason.reasonZh}</p>
                               ))}
                             </div>
+                          ) : null}
+                          {/* 审批可见性：批准前把学到的结构摊开，不让人盲批 */}
+                          {selectedManhuaProposal.beatGrid?.length ||
+                          selectedManhuaProposal.scenePoolHints?.length ||
+                          selectedManhuaProposal.castShape ? (
+                            <details
+                              open
+                              className="mt-2 rounded-lg border border-white/12 bg-black/25 px-2.5 py-2"
+                            >
+                              <summary className="cursor-pointer select-none text-[11px] font-semibold text-white/70">
+                                学到的结构（批准前请看完）
+                                {selectedManhuaProposal.beatGrid?.length
+                                  ? ` · ${selectedManhuaProposal.beatGrid.length} 个节拍`
+                                  : ""}
+                                {selectedManhuaProposal.sourceRefCount
+                                  ? ` · 来源 ${selectedManhuaProposal.sourceRefCount} 条`
+                                  : ""}
+                              </summary>
+                              {selectedManhuaProposal.castShape ? (
+                                <div className="mt-2 text-[10px] leading-relaxed text-[#c9c0e6]/60">
+                                  <span className="text-white/45">角色结构｜</span>
+                                  主角欲望：{selectedManhuaProposal.castShape.leadDesireZh || "—"}
+                                  ｜压力：{selectedManhuaProposal.castShape.pressureZh || "—"}
+                                  {selectedManhuaProposal.castShape.foilZh
+                                    ? `｜对照：${selectedManhuaProposal.castShape.foilZh}`
+                                    : ""}
+                                </div>
+                              ) : null}
+                              {selectedManhuaProposal.scenePoolHints?.length ? (
+                                <div className="mt-1.5 text-[10px] leading-relaxed text-[#c9c0e6]/60">
+                                  <span className="text-white/45">场景池｜</span>
+                                  {selectedManhuaProposal.scenePoolHints.join(" · ")}
+                                </div>
+                              ) : null}
+                              {selectedManhuaProposal.densityHints ? (
+                                <div className="mt-1.5 text-[10px] text-[#c9c0e6]/50">
+                                  <span className="text-white/45">密度下限｜</span>
+                                  正文 {selectedManhuaProposal.densityHints.minBodyChars} 字 ｜ 对白{" "}
+                                  {selectedManhuaProposal.densityHints.minDialogueLines} 行 ｜ 场景{" "}
+                                  {selectedManhuaProposal.densityHints.minLocationHits} 处
+                                </div>
+                              ) : null}
+                              {selectedManhuaProposal.beatGrid?.length ? (
+                                <div className="mt-2">
+                                  <div className="text-[10px] text-white/45">
+                                    节拍网格（秒位 · 冲突 · 可拍动作）
+                                  </div>
+                                  <div className="mt-1 max-h-56 overflow-y-auto rounded border border-white/10">
+                                    {selectedManhuaProposal.beatGrid.map((beat, index) => (
+                                      <div
+                                        key={`${beat.atSec}-${index}`}
+                                        className="flex gap-2 border-b border-white/5 px-2 py-1 text-[10px] last:border-b-0"
+                                      >
+                                        <span className="w-10 shrink-0 tabular-nums text-[#8cefff]/70">
+                                          {Math.round(Number(beat.atSec) || 0)}s
+                                        </span>
+                                        <span className="w-24 shrink-0 text-[#c9c0e6]/70">
+                                          {beat.conflictZh}
+                                        </span>
+                                        <span className="min-w-0 flex-1 text-[#c9c0e6]/50">
+                                          {beat.visualZh}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : null}
+                            </details>
                           ) : null}
                         </div>
                       ) : null}
