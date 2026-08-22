@@ -201,6 +201,13 @@ export const manhuaViralTemplateRouter = router({
           revisionOf: c.revision?.parentTemplateId,
           changedFields: c.revision?.changedFields,
           reasons: c.revision?.reasons,
+          // 审批可见性：批准前必须看得见学到了什么，不能盲批。
+          // 这几项一直落盘，此前被这个白名单 map 过滤掉，前端连数据都收不到。
+          beatGrid: c.beatGrid,
+          scenePoolHints: c.scenePoolHints,
+          castShape: c.castShape,
+          densityHints: c.densityHints,
+          sourceRefs: c.sourceRefs,
         })),
       };
     }),
