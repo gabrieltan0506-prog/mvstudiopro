@@ -28,6 +28,7 @@ import {
   queuedManhuaKeyartBlocks,
   stageKeyFromBlockId,
 } from "@/lib/canvasDramaStudio";
+import { manhuaClipQualityAllowsAssemble } from "@shared/manhuaClipQuality";
 import { tryLocalMediaDisplayForBlock } from "@/lib/manhuaLocalMediaStore";
 import {
   getManhuaCharacterById,
@@ -1662,9 +1663,21 @@ export default function ManhuaScriptWorkbench({
         };
       }
       if (stage === "clip") {
-        // 阶段状态同理：垫图不算出片
+        /**
+         * 判据与「能不能进成片坞合成」收口到同一个函数。
+         *
+         * 原来硬写 status === "passed"：没盖到质检报告的段是 undefined，直接判 false。
+         * 而质检报告缺失是常态（失败只给第 1 段盖报告、手点重跑不补质检），
+         * 于是出现「片子能合成、阶段却永远算不完成、剪辑永远待开始」——
+         * 同一个业务判断两处各写一遍，合成那条修了并写了注释，这条没跟着改。
+         */
         const has = episodeClips.some(
-          (b) => b.status === "done" && b.manhuaClipQuality?.status === "passed" && clipOutputUrl(b),
+          (b) =>
+            b.status === "done" &&
+            manhuaClipQualityAllowsAssemble({
+              outputUrl: clipOutputUrl(b),
+              quality: b.manhuaClipQuality,
+            }),
         );
         return {
           stage,
@@ -1708,9 +1721,14 @@ export default function ManhuaScriptWorkbench({
       { id: "outline", label: "剧本大纲", complete: outlineComplete },
       { id: "assets", label: "资产设定", complete: assetsComplete },
       {
+        /**
+         * 原来是「或」：只要有静帧就算分镜完成，哪怕一段成片都没出。
+         * 于是用户看到「分镜视频 ✅」以为能进剪辑，点进去发现待开始，
+         * 而且没有任何提示说还差什么。改成与剪辑同源：至少一段成片可用。
+         */
         id: "storyboard",
         label: "分镜视频",
-        complete: Boolean(byStage.get("clip")?.has) || episodeStillCount > 0,
+        complete: Boolean(byStage.get("clip")?.has),
       },
       {
         id: "edit",
