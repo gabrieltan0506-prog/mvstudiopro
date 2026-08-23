@@ -109,7 +109,6 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链)", () => {
       "bailian",
       "bailian_sg",
       "openrouter",
-      "evolink",
       "bailian_qwen",
       "evolink_qwen",
     ]);

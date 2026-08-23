@@ -12,7 +12,7 @@ import {
 import { getAncientArchetypeById } from "./manhuaAncientArchetypeLibrary.js";
 import {
   getManhuaCharacterPreviewUrl,
-  getManhuaArtStyleFamily,
+  getManhuaArtStyleExecutionLockZh,
   normalizeManhuaArtStyleId,
 } from "./manhuaCharacterAssetLibrary.js";
 import {
@@ -152,7 +152,7 @@ export function planManhuaKeyartEditFusion(opts?: {
     .map((id) => String(id || "").trim())
     .filter(Boolean);
   const isAncientLane = ancientIds.length > 0;
-  const isCgDrama = getManhuaArtStyleFamily(opts?.artStyleId) === "cg";
+  const styleExecutionLockZh = getManhuaArtStyleExecutionLockZh(opts?.artStyleId);
   const hardLockZh = buildManhuaKeyartAncientHardLockZh(ancientIds);
   void opts?.identityImageUrls;
 
@@ -267,10 +267,6 @@ export function planManhuaKeyartEditFusion(opts?: {
       : `用户上传参考 ${customTagged.length} 张（已按人物/场景/服装道具勾选）：与人物库垫图一并融图；勿被无关主体带跑。`
     : "";
 
-  const cgStyleLockZh = isCgDrama
-    ? "【画风执行·CG 漫剧】本集已选手绘 CG：必须半写实二次元/国乙厚涂，禁止仿真人皮肤、纪实摄影、真人剧照；构图与场面以【分镜·静帧】动作为准。垫图只借五官轮廓与服化色块，必须整身 CG 改绘。"
-    : "";
-
   const libraryPadHintZh = libraryCastPaths.length
     ? "【静帧·人物库垫图·改图】底图来自人物库预览（已服务端垫进竖版画幅）：请在垫图上改绘分镜动作与场面，保持身份连续；禁止抛开垫图纯文生无关主体。"
     : customChars.length
@@ -296,7 +292,7 @@ export function planManhuaKeyartEditFusion(opts?: {
         : "【静帧·示范图融图】",
     assetLock.promptBlockZh,
     hardLockZh,
-    cgStyleLockZh,
+    styleExecutionLockZh,
     castCountLock,
     customHint,
     canEdit

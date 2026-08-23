@@ -220,6 +220,7 @@ export function composeInfographicScriptContext(opts: {
     CONTENT_LOCK_ZH,
     `海报主标题应贴近：${subject}`,
     `Layout prompt (style only):\n${t.layoutPromptEn}`,
+    `Render depth (style only):\n${getInfographicRenderDepthLockEn(t.heroMode)}`,
     "",
     "【用户正文·唯一内容来源】",
     userCopy,

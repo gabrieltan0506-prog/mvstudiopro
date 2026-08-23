@@ -222,6 +222,25 @@ export function normalizeManhuaArtStyleId(id?: string | null): ManhuaArtStyleId 
   return MANHUA_ART_STYLE_IDS.includes(raw) ? raw : DEFAULT_MANHUA_ART_STYLE_ID;
 }
 
+/**
+ * 画风执行锁：注入静帧/改图链路的一句硬约束。
+ *
+ * 必须按**具体档位**分支，不能按家族——`cg_3d` 属 CG 家族但绝不能吃「国乙厚涂」，
+ * 那会把 3D 渲染质感当场打回平涂插画。0824 审阅抓到的就是这个冲突。
+ */
+export function getManhuaArtStyleExecutionLockZh(id?: string | null): string {
+  switch (normalizeManhuaArtStyleId(id)) {
+    case "cg_drama":
+      return "【画风执行·CG 漫剧】本集已选手绘 CG：必须半写实二次元/国乙厚涂，禁止仿真人皮肤、纪实摄影、真人剧照；构图与场面以【分镜·静帧】动作为准。垫图只借五官轮廓与服化色块，必须整身 CG 改绘。";
+    case "cg_3d":
+      return "【画风执行·3D CG】本集已选电影级 3D CG 动画渲染：保持 PBR 材质、SSS 皮肤厚度、AO 接触阴影、发丝各向异性高光与真实空间景深；垫图只锁身份和服化，禁止降级成国乙厚涂、平涂描边或真人剧照。";
+    case "photoreal_3d":
+      return "【画风执行·3D 仿真人】本集已选影视级数字人渲染：保留毛孔、细绒、独立发丝、PBR 材质与真实体积光；垫图只锁身份和服化，禁止蜡像塑料光、卡通比例、平涂描边或直接复制成真人照片。";
+    default:
+      return "";
+  }
+}
+
 export function getManhuaArtStylePreset(id?: string | null): ManhuaArtStylePreset {
   const key = normalizeManhuaArtStyleId(id);
   return (

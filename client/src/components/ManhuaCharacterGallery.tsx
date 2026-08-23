@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   MANHUA_ART_STYLE_PRESETS,
-  getManhuaArtStyleFamily,
+  getManhuaCharacterPreviewUrl,
   isManhua3dArtStyle,
   MANHUA_COUPLE_PACKS,
   buildManhuaCharacterClipboardText,
@@ -1438,10 +1438,8 @@ export default function ManhuaCharacterGallery({
           {MANHUA_ART_STYLE_PRESETS.map((p) => {
             const selected = artStyleId === p.id;
             const sampleId = selectedFemale?.id || selectedMale?.id || "char_f_01";
-            const sampleUrl =
-              getManhuaArtStyleFamily(p.id) === "photoreal"
-                ? `/manhua-characters/photoreal/${sampleId}_sheet.jpg`
-                : `/manhua-characters/${sampleId}_sheet.jpg`;
+            // CG 根目录只有 char_xxx.jpg，没有 _sheet 后缀；统一走解析器避免空白卡
+            const sampleUrl = getManhuaCharacterPreviewUrl(sampleId, { artStyleId: p.id });
             const is3d = isManhua3dArtStyle(p.id);
             return (
               <button

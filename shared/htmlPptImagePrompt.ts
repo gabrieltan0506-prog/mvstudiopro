@@ -12,6 +12,7 @@ import {
   INFOGRAPHIC_LAYOUT_META_ZH,
   INFOGRAPHIC_NOTE_TEMPLATES,
   getInfographicNoteTemplate,
+  getInfographicRenderDepthLockEn,
 } from "./infographicNoteTemplates";
 
 const CONTENT_LOCK_ZH = `【内容锁定·强制】
@@ -130,6 +131,7 @@ export function buildHtmlPptSlideImagePrompt(input: HtmlPptSlideImagePromptInput
     CONTENT_LOCK_ZH,
     `海报主标题应贴近：${subject}`,
     `Layout prompt (style only):\n${layoutEn}`,
+    `Render depth (style only):\n${getInfographicRenderDepthLockEn(t?.heroMode || "exploded")}`,
     "",
     "【本页内容·唯一内容来源】",
     userCopy,

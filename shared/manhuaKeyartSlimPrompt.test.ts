@@ -141,3 +141,35 @@ describe("image/video prompt size risk (post-slim)", () => {
     expect(demoOnly).toContain("【道具短锁】丝绒戒指盒");
   });
 });
+
+describe("3D 画风档（0824 审阅修复）", () => {
+  it("cg_3d 完整带出渲染锁，且不被 CG 漫剧的国乙厚涂污染", () => {
+    const prompt = buildManhuaKeyartSlimPrompt({
+      artStyleId: "cg_3d",
+      characterIds: ["char_f_01"],
+      sceneId: "scene_12",
+    });
+    // STYLE_PROMPT_CAP 原为 220，会把 1000+ 字符的渲染锁截断到只剩开头
+    expect(prompt).toContain("PBR surfaces");
+    expect(prompt).toContain("ambient occlusion");
+    expect(prompt).toContain("anisotropic highlights");
+    // 执行锁必须按档位分支，不能按家族——cg_3d 属 CG 家族但绝不能吃厚涂
+    expect(prompt).toContain("画风执行·3D CG");
+    // 注意：3D 档的锁里本就有「禁止降级成国乙厚涂」这句**禁令**，
+    // 所以要断言的是 CG 漫剧那句**要求**没混进来，不是裸词不存在
+    expect(prompt).not.toContain("必须半写实二次元/国乙厚涂");
+    expect(prompt).not.toContain("画风执行·CG 漫剧");
+    expect(prompt).toContain("禁止降级成国乙厚涂");
+    expect(prompt.length).toBeLessThan(MANHUA_KEYART_SLIM_SOFT_MAX);
+  });
+
+  it("cg_drama 仍走厚涂执行锁，不受 3D 档影响", () => {
+    const prompt = buildManhuaKeyartSlimPrompt({
+      artStyleId: "cg_drama",
+      characterIds: ["char_f_01"],
+      sceneId: "scene_12",
+    });
+    expect(prompt).toContain("必须半写实二次元/国乙厚涂");
+    expect(prompt).not.toContain("画风执行·3D CG");
+  });
+});

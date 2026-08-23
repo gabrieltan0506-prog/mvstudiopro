@@ -114,3 +114,23 @@ describe("HB prompt assets", () => {
     expect(listInfographicTemplatesByMode().length).toBeGreaterThanOrEqual(3);
   });
 });
+
+describe("渲染质感锁进入脚本上下文（0824 审阅修复）", () => {
+  it("信息海报走完整 3D 渲染锁；融合类走水彩安全版，两者不串", () => {
+    const userCopy = "# 材料工艺拆解\n\n从原料到成品的全流程。";
+    const ctx = composeInfographicScriptContext({
+      templateId: "infographic_material_lab",
+      userCopy,
+    });
+    expect(ctx).toContain("ambient occlusion");
+    expect(ctx).toContain("subsurface scattering");
+
+    // 融合类是水彩洇边 + 纸底，PBR/SSS 会毁掉这套美学
+    const fusionCtx = composeInfographicScriptContext({
+      templateId: "fusion_coastal_lighthouse",
+      userCopy,
+    });
+    expect(fusionCtx).toContain("watercolor ink-bleed edges");
+    expect(fusionCtx).not.toContain("subsurface scattering");
+  });
+});

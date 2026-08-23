@@ -25,6 +25,7 @@ import {
   serializeManhuaFavoriteIds,
   suggestManhuaContrastPartner,
   suggestManhuaSameFieldPartner,
+  getManhuaArtStyleExecutionLockZh,
 } from "./manhuaCharacterAssetLibrary";
 
 describe("manhuaCharacterAssetLibrary", () => {
@@ -193,5 +194,27 @@ describe("manhuaCharacterAssetLibrary", () => {
     expect(brief).toContain("女主：沈清辞");
     expect(brief).toContain("男主：傅临渊");
     expect(brief).toContain("仿真人");
+  });
+});
+
+describe("3D 档资产复用（0824 审阅修复）", () => {
+  it("预览路径按家族解析：CG 家族用根目录 .jpg，仿真人家族用 photoreal/_sheet.jpg", () => {
+    // CG 根目录只有 char_xxx.jpg，没有 _sheet 后缀——拼错会出空白卡
+    expect(getManhuaCharacterPreviewUrl("char_f_07", { artStyleId: "cg_3d" })).toBe(
+      "/manhua-characters/char_f_07.jpg",
+    );
+    expect(getManhuaCharacterPreviewUrl("char_f_07", { artStyleId: "photoreal_3d" })).toBe(
+      "/manhua-characters/photoreal/char_f_07_sheet.jpg",
+    );
+  });
+
+  it("执行锁按档位分支，四档互不串味", () => {
+    expect(getManhuaArtStyleExecutionLockZh("cg_drama")).toContain("必须半写实二次元/国乙厚涂");
+    expect(getManhuaArtStyleExecutionLockZh("cg_3d")).toContain("PBR 材质");
+    // 3D 档只把厚涂写进禁令，不能出现在要求句里
+    expect(getManhuaArtStyleExecutionLockZh("cg_3d")).toContain("禁止降级成国乙厚涂");
+    expect(getManhuaArtStyleExecutionLockZh("cg_3d")).not.toContain("必须半写实二次元");
+    expect(getManhuaArtStyleExecutionLockZh("photoreal_3d")).toContain("毛孔");
+    expect(getManhuaArtStyleExecutionLockZh("photoreal")).toBe("");
   });
 });

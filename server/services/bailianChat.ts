@@ -21,15 +21,12 @@ export type GlmGatewayName =
   | "bailian"
   | "bailian_sg"
   | "openrouter"
-  | "evolink"
   | "bailian_qwen"
   | "evolink_qwen";
 
 export const BAILIAN_GLM_MODEL = "ZHIPU/GLM-5.3";
 /** OpenRouter 档（与百炼不同名，不能由 BAILIAN_GLM_MODEL 拼接得到） */
 export const OPENROUTER_GLM_MODEL = "z-ai/glm-5.3";
-/** EvoLink 档：至今未上线 5.3，保留占位以便它上线后无需改结构 */
-export const EVOLINK_GLM_MODEL = "glm-5.3";
 /** 末档兜底:GLM 全线不可用时换 Qwen3.8-Max(Wan official 百炼直连 → EvoLink,与扩写链同 id) */
 export const GLM_CHAIN_FALLBACK_MODEL = "qwen3.8-max";
 
@@ -117,14 +114,6 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
       ready: Boolean(String(process.env.OPENROUTER_API_KEY || "").trim()),
       url: "https://openrouter.ai/api/v1/chat/completions",
       key: String(process.env.OPENROUTER_API_KEY || "").trim(),
-    },
-    {
-      // 顺位第四：EvoLink 至今未上线 5.3，这一跳目前必失败，留位不留期待
-      name: "evolink",
-      model: EVOLINK_GLM_MODEL,
-      ready: Boolean(String(process.env.EVOLINK_API_KEY || "").trim()),
-      url: "https://api.evolink.ai/v1/chat/completions",
-      key: String(process.env.EVOLINK_API_KEY || "").trim(),
     },
     {
       // 末档一:GLM 三网关全灭才换模型;Wan official 百炼直连(同一把 WAN_OFFICIAL 钥匙)
