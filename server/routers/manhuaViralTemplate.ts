@@ -8,6 +8,7 @@ import {
   resolvePlatformSupervisorOpsAllowed,
   resolveSiteOwnerOnlyAllowed,
 } from "../services/access-policy";
+import { describeManhuaTemplateLearnSourceZh } from "../../shared/manhuaViralTemplateBank";
 
 function assertSupervisorOps(
   user: { id?: number | null; role?: string | null },
@@ -213,6 +214,9 @@ export const manhuaViralTemplateRouter = router({
           // 列表只展示来源数量，不下发来源 URL：listProposals 对 admin/supervisor
           // 也开放，下发完整 sourceRefs 会扩大来源地址的暴露面。
           sourceRefCount: c.sourceRefs.length,
+          // 学习来源摘要：卡落库了却不下发，审批人分辨不出精读卡与抽帧卡，
+          // 也看不见静默丢镜/触顶抽稀 —— 等于没落库。只给摘要，不给成本与地址。
+          learnSourceZh: describeManhuaTemplateLearnSourceZh(c.provenance),
         })),
       };
     }),

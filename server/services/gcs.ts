@@ -326,10 +326,18 @@ export async function listGcsObjectNamesByPrefix(params: {
   prefix: string;
   maxResults?: number;
   bucket?: string;
+  /**
+   * true 时按调用方给出的文件名前缀原样查询，不自动补目录分隔符。
+   * 默认仍按目录前缀处理，保持现有调用点行为。
+   */
+  literalPrefix?: boolean;
 }): Promise<string[]> {
   const bucket = params.bucket || getGcsBucketName();
   if (!bucket) throw new Error("GCS bucket is not configured");
-  const prefix = normalizeObjectName(String(params.prefix || "").replace(/\/?$/, "/")).replace(/\/?$/, "/");
+  const requestedPrefix = String(params.prefix || "");
+  const prefix = params.literalPrefix
+    ? normalizeObjectName(requestedPrefix)
+    : normalizeObjectName(requestedPrefix.replace(/\/?$/, "/")).replace(/\/?$/, "/");
   const maxResults = Math.max(1, Math.min(500, Math.floor(Number(params.maxResults) || 100)));
   const accessToken = await getVertexAccessToken();
   const userProject = getGcsUserProject();

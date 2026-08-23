@@ -47,6 +47,14 @@ export type NativeDeepReadOutput = {
   beatGrid: ManhuaViralTemplateBeat[];
   reusableZh?: string;
   genPromptHintZh?: string;
+  /**
+   * 情绪推进与节奏结构（0824 接出）。
+   *
+   * 这两栏 schema 一直在解析，却没进过输出——落库时卡片的 summaryZh / hook3sZh
+   * 就只能靠拼装编出来。接出来之后，卡面上那两行是**真学到的**，不是模板话术。
+   */
+  moodArcZh?: string;
+  beatStructureZh?: string;
   /** 解析到的段数与镜头总数，供落库时记进 provenance */
   segmentCount: number;
   shotCount: number;
@@ -140,6 +148,8 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
     beatGrid,
     reusableZh: joinField((s) => s.reusableZh),
     genPromptHintZh: joinField((s) => s.genPromptHintZh),
+    moodArcZh: joinField((s) => s.moodArcZh),
+    beatStructureZh: joinField((s) => s.beatStructureZh),
     segmentCount: ok.length,
     shotCount: beatGrid.length,
     failedSegmentCount: rows.length - ok.length,
