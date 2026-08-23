@@ -11,7 +11,25 @@
  * 配置:聊天端点优先 BAILIAN_COMPAT_BASE_URL,兼容回退 WAN_OFFICIAL_BASE(与 Wan 视频同 key)。
  */
 
-export const BAILIAN_GLM_MODEL = "glm-5.3";
+/**
+ * GLM-5.3 在三个通道上的模型名互不相同，混用即静默失败后回落。
+ * 0824 实况：百炼这一跳一直发 "glm-5.3"（百炼上不存在），
+ * 于是首选形同虚设，实跑一直落到第三跳。
+ */
+/** GLM 兜底链的通道名（顺位即数组顺序，改动请同步 bailianChat.test.ts 的断言） */
+export type GlmGatewayName =
+  | "bailian"
+  | "bailian_sg"
+  | "openrouter"
+  | "evolink"
+  | "bailian_qwen"
+  | "evolink_qwen";
+
+export const BAILIAN_GLM_MODEL = "ZHIPU/GLM-5.3";
+/** OpenRouter 档（与百炼不同名，不能由 BAILIAN_GLM_MODEL 拼接得到） */
+export const OPENROUTER_GLM_MODEL = "z-ai/glm-5.3";
+/** EvoLink 档：至今未上线 5.3，保留占位以便它上线后无需改结构 */
+export const EVOLINK_GLM_MODEL = "glm-5.3";
 /** 末档兜底:GLM 全线不可用时换 Qwen3.8-Max(Wan official 百炼直连 → EvoLink,与扩写链同 id) */
 export const GLM_CHAIN_FALLBACK_MODEL = "qwen3.8-max";
 
@@ -33,7 +51,7 @@ export type BailianChatResponse = {
 };
 
 export type GlmGatewayTraceEntry = {
-  gateway: "bailian" | "evolink" | "openrouter" | "bailian_qwen" | "evolink_qwen";
+  gateway: GlmGatewayName;
   model: string;
   outcome: "ok" | "http_error" | "invalid_json" | "truncated" | "empty_content" | "content_invalid" | "network_error" | "skipped_not_configured";
   detail?: string;
@@ -41,7 +59,7 @@ export type GlmGatewayTraceEntry = {
 
 export type GlmChatSuccess = BailianChatResponse & {
   /** 实际交卷网关 */
-  gateway: "bailian" | "evolink" | "openrouter" | "bailian_qwen" | "evolink_qwen";
+  gateway: GlmGatewayName;
   /** 本次调用的全部真实外呼轨迹(含之前失败的网关) */
   gatewayTrace: GlmGatewayTraceEntry[];
 };
@@ -67,7 +85,7 @@ type GlmParams = {
 export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): Promise<GlmChatSuccess> {
   const trace: GlmGatewayTraceEntry[] = [];
   const gateways: Array<{
-    name: "bailian" | "evolink" | "openrouter" | "bailian_qwen" | "evolink_qwen";
+    name: GlmGatewayName;
     model: string;
     ready: boolean;
     url: string;
@@ -81,18 +99,32 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
       key: String(process.env.WAN_OFFICIAL_API_KEY || "").trim(),
     },
     {
-      name: "evolink",
+      // 顺位第二：新加坡百炼同样在架 ZHIPU/GLM-5.3（0824 实测 162 个模型里有）
+      // ⚠️ 5.3 不在新加坡套餐白名单（套餐只有 glm-5.2），这一跳仍是按量付费
+      name: "bailian_sg",
       model: BAILIAN_GLM_MODEL,
-      ready: Boolean(String(process.env.EVOLINK_API_KEY || "").trim()),
-      url: "https://api.evolink.ai/v1/chat/completions",
-      key: String(process.env.EVOLINK_API_KEY || "").trim(),
+      ready: Boolean(
+        String(process.env.DASHSCOPE_SG_BASE || "").trim() &&
+          String(process.env.DASHSCOPE_SG_API_KEY || "").trim(),
+      ),
+      url: `${String(process.env.DASHSCOPE_SG_BASE || "").trim().replace(/\/$/, "")}/compatible-mode/v1/chat/completions`,
+      key: String(process.env.DASHSCOPE_SG_API_KEY || "").trim(),
     },
     {
+      // 顺位第三：OpenRouter 是 5.3 在架的第三家（EvoLink 未上线，见下）
       name: "openrouter",
-      model: `z-ai/${BAILIAN_GLM_MODEL}`,
+      model: OPENROUTER_GLM_MODEL,
       ready: Boolean(String(process.env.OPENROUTER_API_KEY || "").trim()),
       url: "https://openrouter.ai/api/v1/chat/completions",
       key: String(process.env.OPENROUTER_API_KEY || "").trim(),
+    },
+    {
+      // 顺位第四：EvoLink 至今未上线 5.3，这一跳目前必失败，留位不留期待
+      name: "evolink",
+      model: EVOLINK_GLM_MODEL,
+      ready: Boolean(String(process.env.EVOLINK_API_KEY || "").trim()),
+      url: "https://api.evolink.ai/v1/chat/completions",
+      key: String(process.env.EVOLINK_API_KEY || "").trim(),
     },
     {
       // 末档一:GLM 三网关全灭才换模型;Wan official 百炼直连(同一把 WAN_OFFICIAL 钥匙)
