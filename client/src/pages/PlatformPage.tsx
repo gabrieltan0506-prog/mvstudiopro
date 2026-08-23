@@ -99,6 +99,7 @@ import {
   skipManhuaLearnServerEpisode,
   type ManhuaLearnServerJob,
 } from "@/lib/jobs";
+import { isNativeVideoLearnedTemplate } from "@shared/manhuaViralTemplateBank";
 import { trpc } from "@/lib/trpc";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
 import { shouldSkipLocalLearnFallback } from "@shared/manhuaLearnYtdlp";
@@ -2966,6 +2967,9 @@ export default function PlatformPage() {
   const askPlatformSkillQaMutation = trpc.mvAnalysis.askPlatformSkillQa.useMutation();
   const confirmPlatformSkillQaImageMutation = trpc.mvAnalysis.confirmPlatformSkillQaImage.useMutation();
   const approveManhuaViralTemplateMutation = trpc.manhuaViralTemplate.approve.useMutation();
+  /** 下架待确认的模板 id：点第一次进入确认态，再点一次才真下架 */
+  const [archiveConfirmId, setArchiveConfirmId] = useState("");
+  const archiveManhuaTemplateMutation = trpc.manhuaViralTemplate.archiveApproved.useMutation();
 
   const manhuaTemplateOwnerCapabilitiesQuery =
     trpc.manhuaViralTemplate.getOwnerOptimizeCapabilities.useQuery(undefined, {
@@ -12750,6 +12754,21 @@ export default function PlatformPage() {
                                       className="flex flex-wrap items-center gap-1.5 rounded-lg border border-emerald-300/25 bg-black/25 px-2 py-1 text-[10px] text-emerald-50/80"
                                     >
                                       <span className="font-semibold">{tpl.nameZh}</span>
+                                      {isNativeVideoLearnedTemplate(tpl) ? (
+                                        <span
+                                          title="原生视频精读：含逐镜六栏（景别/机位/运镜/光影/动作/转场）与可复用手法"
+                                          className="shrink-0 rounded border border-cyan-300/45 bg-cyan-400/15 px-1 text-[9px] font-bold text-cyan-100"
+                                        >
+                                          🎬 精读
+                                        </span>
+                                      ) : (
+                                        <span
+                                          title="抽帧学习（旧形态）：只有节拍三栏，没有运镜/转场——这些是帧间差分，抽帧学不到"
+                                          className="shrink-0 rounded border border-white/15 bg-white/[0.04] px-1 text-[9px] text-white/40"
+                                        >
+                                          抽帧
+                                        </span>
+                                      )}
                                       {ownerTemplateOptimizeAllowed ? (
                                         <>
                                           <select
@@ -12774,6 +12793,39 @@ export default function PlatformPage() {
                                             className="rounded-md border border-amber-300/25 bg-amber-400/10 px-2 py-0.5 font-semibold text-amber-100 hover:bg-amber-400/15"
                                           >
                                             查看
+                                          </button>
+                                          <button
+                                            type="button"
+                                            title="下架＝移入归档，文件保留可恢复，不是物理删除"
+                                            disabled={archiveManhuaTemplateMutation.isPending}
+                                            onClick={async () => {
+                                              if (archiveConfirmId !== tpl.id) {
+                                                setArchiveConfirmId(tpl.id);
+                                                window.setTimeout(() => {
+                                                  setArchiveConfirmId((cur) => (cur === tpl.id ? "" : cur));
+                                                }, 5000);
+                                                return;
+                                              }
+                                              setArchiveConfirmId("");
+                                              try {
+                                                await archiveManhuaTemplateMutation.mutateAsync({
+                                                  id: tpl.id,
+                                                  confirmArchive: true,
+                                                });
+                                                void manhuaViralApprovedQuery.refetch();
+                                              } catch (e) {
+                                                window.alert(
+                                                  `下架失败：${e instanceof Error ? e.message : "未知错误"}`,
+                                                );
+                                              }
+                                            }}
+                                            className={`rounded-md border px-2 py-0.5 font-semibold transition disabled:opacity-45 ${
+                                              archiveConfirmId === tpl.id
+                                                ? "border-rose-300/60 bg-rose-500/25 text-rose-50"
+                                                : "border-white/15 bg-white/[0.04] text-white/55 hover:border-rose-300/40 hover:text-rose-100"
+                                            }`}
+                                          >
+                                            {archiveConfirmId === tpl.id ? "再点一次确认下架" : "下架"}
                                           </button>
                                         </>
                                       ) : null}

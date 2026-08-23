@@ -20,6 +20,7 @@ import {
   downloadGcsObject,
   listGcsObjectNamesByPrefix,
   uploadBufferToGcs,
+  deleteGcsObject,
 } from "./gcs.js";
 
 export const MANHUA_VIRAL_PROPOSALS_PREFIX = "manhua-template-learn/proposals/";
@@ -204,6 +205,39 @@ export async function resolveViralTemplateForExpand(requestedTemplateId: string)
       nameZh: makeAnonymousTemplateNameZh(card.laneZh, code),
     },
   };
+}
+
+/**
+ * 下架正式模板（0824 新增）：从 approved/ 移入 archive/，**不做物理删除**。
+ *
+ * 为什么是归档不是删除：
+ *  - 模板是真金白银学出来的（一部 58 分钟合辑约 $1.075），误删无法重建
+ *  - 旧抽帧模板要被新精读模板淘汰，但「淘汰」不等于「销毁」，日后对照分析仍要用
+ *
+ * ⚠️ 顺序不可颠倒：**先写归档、确认成功后才删原件**。
+ * 反过来一旦删成功、写失败，数据就没了；这样最坏情况只是两处各留一份冗余。
+ */
+export async function archiveApprovedManhuaViralTemplate(
+  id: string,
+): Promise<ManhuaViralTemplateCard> {
+  const key = String(id || "").trim();
+  if (!key) throw new Error("缺少模板 id");
+  const card = await getGcsManhuaViralApproved(key);
+  if (!card) throw new Error("正式模板不存在或已下架");
+  if (card.status !== "approved") throw new Error("该模板不是已批准状态，无需下架");
+
+  const now = new Date().toISOString();
+  const stamp = now.replace(/[^0-9]/g, "").slice(0, 17);
+  const archived: ManhuaViralTemplateCard = { ...card, status: "rejected", updatedAt: now };
+
+  await uploadBufferToGcs({
+    objectName: `${MANHUA_VIRAL_ARCHIVE_PREFIX}${card.id}/${stamp}-archived.json`,
+    buffer: Buffer.from(`${JSON.stringify(archived, null, 2)}\n`, "utf8"),
+    contentType: "application/json",
+  });
+  // 归档已落盘，此时删原件才是安全的
+  await deleteGcsObject({ objectName: `${MANHUA_VIRAL_APPROVED_PREFIX}${card.id}.json` });
+  return archived;
 }
 
 export async function approveManhuaViralTemplate(input: {
