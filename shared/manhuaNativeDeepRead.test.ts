@@ -110,3 +110,56 @@ describe("原生精读产出 → 模板卡（真实形状往返）", () => {
     expect(out.shotCount).toBe(6);
   });
 });
+
+describe("适配器失败与超限语义（复审第六项）", () => {
+  const seg = (shots: unknown[], extra?: Record<string, unknown>) => ({
+    seg: 0,
+    startSec: 0,
+    text: JSON.stringify({ shots, beatStructureZh: "憋4秒后爆", reusableZh: "手法" }),
+    ...extra,
+  });
+  const shot = (i: number, patch?: Record<string, unknown>) => ({
+    startSec: i,
+    endSec: i + 1,
+    shotSizeZh: "特写",
+    actionZh: `动作${i}`,
+    ...patch,
+  });
+
+  it("finish=length 的段整段丢弃，并计入 failedSegmentCount", () => {
+    const out = mapNativeDeepReadSegments([
+      seg([shot(0), shot(1)]),
+      seg([shot(2)], { seg: 1, startSec: 30, finish: "length" }),
+    ]);
+    expect(out.segmentCount).toBe(1);
+    expect(out.shotCount).toBe(2);
+    expect(out.failedSegmentCount).toBe(1);
+  });
+
+  it("动作为空的镜头丢弃而不是写「未标注」占位", () => {
+    const out = mapNativeDeepReadSegments([
+      seg([shot(0), shot(1, { actionZh: "" }), shot(2, { actionZh: "   " })]),
+    ]);
+    expect(out.shotCount).toBe(1);
+    expect(out.droppedCount).toBe(2);
+    expect(JSON.stringify(out.beatGrid)).not.toContain("未标注");
+  });
+
+  it("超过 128 镜等距抽稀并标 truncated，不静默取前 128", () => {
+    const out = mapNativeDeepReadSegments([
+      seg(Array.from({ length: 130 }, (_, i) => shot(i))),
+    ]);
+    expect(out.truncated).toBe(true);
+    expect(out.shotCount).toBe(128);
+    // 末镜必须来自尾部；若是静默 slice(0,128) 会停在 动作127
+    expect(out.beatGrid[out.beatGrid.length - 1]!.visualZh).toBe("动作129");
+  });
+
+  it("未超限时 truncated=false 且一镜不少", () => {
+    const out = mapNativeDeepReadSegments([
+      seg(Array.from({ length: 95 }, (_, i) => shot(i))),
+    ]);
+    expect(out.truncated).toBe(false);
+    expect(out.shotCount).toBe(95);
+  });
+});

@@ -21,6 +21,9 @@ import {
   listGcsObjectNamesByPrefix,
   uploadBufferToGcs,
   deleteGcsObject,
+  downloadGcsObjectVersioned,
+  uploadBufferToGcsIfAbsent,
+  getGcsBucketName,
 } from "./gcs.js";
 
 export const MANHUA_VIRAL_PROPOSALS_PREFIX = "manhua-template-learn/proposals/";
@@ -222,21 +225,45 @@ export async function archiveApprovedManhuaViralTemplate(
 ): Promise<ManhuaViralTemplateCard> {
   const key = String(id || "").trim();
   if (!key) throw new Error("缺少模板 id");
-  const card = await getGcsManhuaViralApproved(key);
-  if (!card) throw new Error("正式模板不存在或已下架");
+
+  const bucket = getGcsBucketName();
+  const objectName = `${MANHUA_VIRAL_APPROVED_PREFIX}${key}.json`;
+
+  // 取内容的同时拿到 generation：后面删除只删这一版，
+  // 期间若有人批准了新版本，条件删除会 412 而不是把新版本毁掉
+  let versioned: { buffer: Buffer; generation: string };
+  try {
+    versioned = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` });
+  } catch {
+    throw new Error("正式模板不存在或已下架");
+  }
+
+  const card = parseManhuaViralTemplateCard(JSON.parse(versioned.buffer.toString("utf8")));
+  if (!card) throw new Error("正式模板内容无法解析");
   if (card.status !== "approved") throw new Error("该模板不是已批准状态，无需下架");
 
-  const now = new Date().toISOString();
-  const stamp = now.replace(/[^0-9]/g, "").slice(0, 17);
-  const archived: ManhuaViralTemplateCard = { ...card, status: "rejected", updatedAt: now };
+  const archived: ManhuaViralTemplateCard = {
+    ...card,
+    status: "rejected",
+    updatedAt: new Date().toISOString(),
+  };
 
-  await uploadBufferToGcs({
-    objectName: `${MANHUA_VIRAL_ARCHIVE_PREFIX}${card.id}/${stamp}-archived.json`,
+  // 归档名用 generation：同一版重复下架只会写出同一个对象，天然幂等
+  await uploadBufferToGcsIfAbsent({
+    objectName: `${MANHUA_VIRAL_ARCHIVE_PREFIX}${card.id}/${versioned.generation}.json`,
     buffer: Buffer.from(`${JSON.stringify(archived, null, 2)}\n`, "utf8"),
     contentType: "application/json",
   });
-  // 归档已落盘，此时删原件才是安全的
-  await deleteGcsObject({ objectName: `${MANHUA_VIRAL_APPROVED_PREFIX}${card.id}.json` });
+
+  // 归档已落盘，此时才删原件；且只删我们读到的那一版
+  try {
+    await deleteGcsObject({ objectName, ifGenerationMatch: versioned.generation });
+  } catch (e) {
+    if (e instanceof Error && e.message === "gcs_delete_generation_conflict") {
+      throw new Error("模板已更新，请刷新后重试");
+    }
+    throw e;
+  }
   return archived;
 }
 

@@ -12813,6 +12813,10 @@ export default function PlatformPage() {
                                                   confirmArchive: true,
                                                 });
                                                 void manhuaViralApprovedQuery.refetch();
+                                                // 编剧室（/canvas）读的是 listApprovedPublic，跨页面拿不到实例，
+                                                // 失效缓存让它下次挂载时重新拉，否则下架的模板还能被选中
+                                                void trpcUtils.manhuaViralTemplate.listApprovedPublic.invalidate();
+                                                void trpcUtils.manhuaViralTemplate.listProposals.invalidate();
                                               } catch (e) {
                                                 window.alert(
                                                   `下架失败：${e instanceof Error ? e.message : "未知错误"}`,

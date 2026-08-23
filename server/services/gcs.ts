@@ -369,6 +369,12 @@ export async function listGcsObjectNamesByPrefix(params: {
 export async function deleteGcsObject(params: {
   bucket?: string;
   objectName: string;
+  /**
+   * 条件删除：只有对象仍是这个 generation 才删。
+   * 用于「读旧版 → 归档 → 删原件」这类流程——期间若有人写入新版本，
+   * 无条件 DELETE 会把刚写的新版本一起删掉。
+   */
+  ifGenerationMatch?: string;
 }): Promise<void> {
   const bucket = params.bucket || getGcsBucketName();
   if (!bucket) {
@@ -382,6 +388,9 @@ export async function deleteGcsObject(params: {
   if (userProject) {
     deleteUrl.searchParams.set("userProject", userProject);
   }
+  if (params.ifGenerationMatch) {
+    deleteUrl.searchParams.set("ifGenerationMatch", params.ifGenerationMatch);
+  }
 
   const response = await fetch(deleteUrl, {
     method: "DELETE",
@@ -391,10 +400,59 @@ export async function deleteGcsObject(params: {
   });
 
   if (response.status === 404) return;
+  // 412 = 对象已被别的写入替换，此时删除会毁掉新版本，必须停手
+  if (response.status === 412) {
+    throw new Error("gcs_delete_generation_conflict");
+  }
   if (!response.ok) {
     const json = await response.json().catch(() => null);
     throw new Error(`gcs_delete_failed:${response.status}:${JSON.stringify(json || {})}`);
   }
+}
+
+/**
+ * 带版本号下载：同时取回内容与 generation，供后续条件删除使用。
+ * 分两次请求（先 metadata 拿 generation，再按该 generation 取 media），
+ * 保证拿到的内容与 generation 是同一版。
+ */
+export async function downloadGcsObjectVersioned(params: {
+  gcsUri: string;
+}): Promise<{ buffer: Buffer; bucket: string; objectName: string; generation: string }> {
+  const { bucket, objectName } = parseGsUri(params.gcsUri);
+  const accessToken = await getVertexAccessToken();
+  const userProject = getGcsUserProject();
+
+  const metaUrl = new URL(
+    `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}`,
+  );
+  if (userProject) metaUrl.searchParams.set("userProject", userProject);
+  const metaRes = await fetch(metaUrl, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!metaRes.ok) {
+    throw new Error(`gcs_stat_failed:${metaRes.status}`);
+  }
+  const meta = (await metaRes.json()) as { generation?: string };
+  const generation = String(meta.generation || "").trim();
+  if (!generation) throw new Error("gcs_stat_no_generation");
+
+  const mediaUrl = new URL(metaUrl.toString());
+  mediaUrl.searchParams.set("alt", "media");
+  mediaUrl.searchParams.set("generation", generation);
+  const mediaRes = await fetch(mediaUrl, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!mediaRes.ok) {
+    throw new Error(`gcs_download_failed:${mediaRes.status}`);
+  }
+  return {
+    buffer: Buffer.from(await mediaRes.arrayBuffer()),
+    bucket,
+    objectName,
+    generation,
+  };
 }
 
 /**

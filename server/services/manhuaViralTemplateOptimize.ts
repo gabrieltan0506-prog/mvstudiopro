@@ -9,6 +9,7 @@ import {
   type ManhuaViralTemplateOptimizeField,
   type ManhuaViralTemplateOptimizeModel,
   isNativeVideoLearnedTemplate,
+  type ManhuaViralTemplateBeat,
 } from "../../shared/manhuaViralTemplateBank.js";
 import {
   extractFirstChoicePlainText,
@@ -137,6 +138,46 @@ export function diffManhuaViralTemplateFields(
   );
 }
 
+/** 逐镜六栏＋endSec：抽帧给不出，一旦丢失无法重建 */
+const NATIVE_BEAT_FIELDS = [
+  "endSec",
+  "shotSizeZh",
+  "angleZh",
+  "cameraMoveZh",
+  "lightingZh",
+  "transitionInZh",
+] as const satisfies readonly (keyof ManhuaViralTemplateBeat)[];
+
+/**
+ * 原生精读模板的防丢门禁。
+ *
+ * ⚠️ 只比镜头数量拦不住：实测上游会返回同样 95 镜、却把六栏整体省略，
+ * 还给出一条 beatGrid 的修改理由，于是修订「成功」而数据已经没了。
+ * 所以必须逐镜比对——原来有的字段，改完不能变成 undefined。
+ */
+function assertNativeBeatMetadataNotDropped(
+  original: ManhuaViralTemplateCard,
+  candidate: ManhuaViralTemplateCard,
+): void {
+  if (!isNativeVideoLearnedTemplate(original)) return;
+
+  if (candidate.beatGrid.length !== original.beatGrid.length) {
+    throw new Error(
+      `原生精读镜头数量发生变化（原 ${original.beatGrid.length} → 新 ${candidate.beatGrid.length}），未生成待审修订`,
+    );
+  }
+
+  for (let index = 0; index < original.beatGrid.length; index += 1) {
+    const before = original.beatGrid[index]!;
+    const after = candidate.beatGrid[index]!;
+    for (const field of NATIVE_BEAT_FIELDS) {
+      if (before[field] !== undefined && after[field] === undefined) {
+        throw new Error(`原生精读第 ${index + 1} 镜缺少 ${field}，未生成待审修订`);
+      }
+    }
+  }
+}
+
 function buildOptimizePrompt(card: ManhuaViralTemplateCard, promptZh: string): string {
   const protectedSource = {
     id: card.id,
@@ -223,18 +264,7 @@ export async function optimizeApprovedManhuaViralTemplate(input: {
     updatedAt: new Date().toISOString(),
   });
   if (!candidateBase) throw new Error("模板优化结果未通过卡片校验");
-  /**
-   * 原生精读模板的镜头数是硬资产（实测 262 秒出 95 镜，$0.566 学来的）。
-   * 上游模型少还一条就是永久丢失——宁可整次优化失败，也不能静默裁切。
-   */
-  if (
-    isNativeVideoLearnedTemplate(input.card) &&
-    candidateBase.beatGrid.length !== input.card.beatGrid.length
-  ) {
-    throw new Error(
-      `原生精读镜头数量发生变化（原 ${input.card.beatGrid.length} → 新 ${candidateBase.beatGrid.length}），未生成待审修订`,
-    );
-  }
+  assertNativeBeatMetadataNotDropped(input.card, candidateBase);
   const changedFields = diffManhuaViralTemplateFields(input.card, candidateBase);
   if (!changedFields.length) throw new Error("优化结果与原模板完全相同，未生成待审修订");
   const reasonByField = new Map(parsed.reasons.map((reason) => [reason.field, reason.reasonZh]));

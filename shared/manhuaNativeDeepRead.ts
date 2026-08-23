@@ -50,7 +50,16 @@ export type NativeDeepReadOutput = {
   /** 解析到的段数与镜头总数，供落库时记进 provenance */
   segmentCount: number;
   shotCount: number;
+  /** 被丢弃的段数：failed / finish=length / 非法 JSON —— producer 必须检查 */
+  failedSegmentCount: number;
+  /** 被丢弃的镜头数：动作或节奏结构为空。**不写「未标注」占位**，空就是没学到 */
+  droppedCount: number;
+  /** 是否触顶 128 被抽稀 —— 触顶说明学习产出超出模板承载，需人工确认 */
+  truncated: boolean;
 };
+
+/** beatGrid 硬上限，与 manhuaViralTemplateBank 的解析上限一致 */
+export const NATIVE_DEEP_READ_MAX_BEATS = 128;
 
 const cut = (v: string | undefined, max: number): string | undefined => {
   const t = String(v || "").trim().slice(0, max);
@@ -65,8 +74,15 @@ const cut = (v: string | undefined, max: number): string | undefined => {
  */
 export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepReadOutput {
   const parsed = rows.map((row) => {
-    const outer = (row || {}) as { text?: unknown; startSec?: unknown; failed?: unknown };
+    const outer = (row || {}) as {
+      text?: unknown;
+      startSec?: unknown;
+      failed?: unknown;
+      finish?: unknown;
+    };
     if (outer.failed) return null;
+    // finish=length 表示上游被截断，这一段的镜头必然不全，整段丢弃比留半截安全
+    if (String(outer.finish || "") === "length") return null;
     const rawInner = typeof outer.text === "string" ? safeJson(outer.text) : outer.text;
     if (!rawInner) return null;
     const seg = nativeDeepReadSegmentSchema.safeParse(rawInner);
@@ -75,26 +91,41 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
   });
   const ok = parsed.filter(Boolean) as Array<{ seg: NativeDeepReadSegment; offsetSec: number }>;
 
-  const beatGrid: ManhuaViralTemplateBeat[] = ok
-    .flatMap(({ seg, offsetSec }) =>
-      seg.shots.map((shot) => {
-        const start = offsetSec + Math.floor(Number(shot.startSec) || 0);
-        const end = offsetSec + Math.floor(Number(shot.endSec) || 0);
-        return {
+  let droppedCount = 0;
+  const allBeats: ManhuaViralTemplateBeat[] = ok.flatMap(({ seg, offsetSec }) => {
+    const conflictZh = String(seg.beatStructureZh || "").trim().slice(0, 40);
+    return seg.shots.flatMap((shot) => {
+      const visualZh = String(shot.actionZh || "").trim().slice(0, 80);
+      // 空值不写「未标注」占位：占位会让下游以为学到了东西，实际是空的
+      if (!conflictZh || !visualZh) {
+        droppedCount += 1;
+        return [];
+      }
+      const start = offsetSec + Math.floor(Number(shot.startSec) || 0);
+      const end = offsetSec + Math.floor(Number(shot.endSec) || 0);
+      return [
+        {
           atSec: Math.max(0, start),
           endSec: end > start ? end : undefined,
-          // 段级节奏结构当冲突列；镜级动作当可拍动作
-          conflictZh: String(seg.beatStructureZh || "").trim().slice(0, 40) || "未标注",
-          visualZh: String(shot.actionZh || "").trim().slice(0, 80) || "未标注",
+          conflictZh,
+          visualZh,
           shotSizeZh: cut(shot.shotSizeZh, 16),
           angleZh: cut(shot.angleZh, 16),
           cameraMoveZh: cut(shot.cameraMoveZh, 60),
           lightingZh: cut(shot.lightingZh, 60),
           transitionInZh: cut(shot.transitionInZh, 20),
-        } satisfies ManhuaViralTemplateBeat;
-      }),
-    )
-    .slice(0, 128);
+        } satisfies ManhuaViralTemplateBeat,
+      ];
+    });
+  });
+
+  // 触顶不静默取前 128（那等于只保留全片前段）：等距抽稀并标记，让 producer 决定
+  const truncated = allBeats.length > NATIVE_DEEP_READ_MAX_BEATS;
+  const beatGrid = truncated
+    ? Array.from({ length: NATIVE_DEEP_READ_MAX_BEATS }, (_, i) =>
+        allBeats[Math.round((i * (allBeats.length - 1)) / (NATIVE_DEEP_READ_MAX_BEATS - 1))]!,
+      )
+    : allBeats;
 
   const joinField = (pick: (s: NativeDeepReadSegment) => string | undefined) =>
     cut(
@@ -111,6 +142,9 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
     genPromptHintZh: joinField((s) => s.genPromptHintZh),
     segmentCount: ok.length,
     shotCount: beatGrid.length,
+    failedSegmentCount: rows.length - ok.length,
+    droppedCount,
+    truncated,
   };
 }
 

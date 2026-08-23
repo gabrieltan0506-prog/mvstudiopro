@@ -119,6 +119,27 @@ export async function logPlatformTopicShortlistFreeUse(params: {
   });
 }
 
+/**
+ * 扩写结果必须是**能用的** blueprint，不能只是「能解析的 JSON」。
+ * 少了 title/copywriting/detailedScript 任一项，下游就会退回固定骨架 —— 
+ * 那时钱已经计了，用户拿到的是空壳。所以这一关要在换通道之前把住。
+ */
+function assertUsableExpandedBlueprint(raw: string): void {
+  const parsed = extractJsonObject(raw) as Record<string, unknown> | null;
+  const bp =
+    parsed && typeof parsed.blueprint === "object" && parsed.blueprint
+      ? (parsed.blueprint as Record<string, unknown>)
+      : parsed;
+  if (
+    !bp ||
+    typeof bp.title !== "string" ||
+    typeof bp.copywriting !== "string" ||
+    typeof bp.detailedScript !== "string"
+  ) {
+    throw new Error("扩写结果缺少完整 blueprint");
+  }
+}
+
 function extractJsonObject(raw: string): unknown {
   const t = String(raw || "").trim();
   if (!t) return null;
@@ -759,13 +780,22 @@ async function invokeExpandViaBailianPlan(params: {
       enable_thinking: true,
       max_tokens: EXPAND_QWEN_MAX_COMPLETION_TOKENS,
     }),
+    // 没有时限，上游卡住会把整批扩写拖死
+    signal: AbortSignal.timeout(240_000),
   });
   if (!res.ok) {
     const errText = (await res.text().catch(() => "")).slice(0, 300);
     throw new Error(`百炼套餐扩写失败 HTTP ${res.status}：${errText}`);
   }
-  const json = (await res.json()) as { choices?: Array<{ message?: { content?: unknown } }> };
-  const content = json.choices?.[0]?.message?.content;
+  const json = (await res.json()) as {
+    choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }>;
+  };
+  const choice = json.choices?.[0];
+  // 截断的半截 JSON 会被下游当成功收下，然后落成空壳还照样计费
+  if (choice?.finish_reason === "length") {
+    throw new Error("套餐扩写输出被截断");
+  }
+  const content = choice?.message?.content;
   return typeof content === "string" ? content.trim() : "";
 }
 
@@ -927,6 +957,8 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
     /** 套餐首跳：额度不用即归零，优先于任何按量通道 */
     const invokeExpandPlan = (model: PlatformTopicExpandEngine) => () =>
       invokeExpandViaBailianPlan({ model, system, user });
+    /** 带网关名，便于诊断核对套餐是否真的替下了按量调用 */
+    const named = (gateway: string, run: () => Promise<string>) => ({ gateway, run });
     const planReady = Boolean(
       String(process.env.WAN_PLAN_API_KEY || "").trim() &&
         String(process.env.WAN_PLAN_BASE || "").trim(),
@@ -937,28 +969,27 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
     // Qwen 3.8 Max Evolink（$1.765/$5.295）比 OpenRouter（$2/$6）便宜 ~12%，
     // 主走 Evolink、兜底 OpenRouter（qwen/qwen3.8-max）。
     const engine: PlatformTopicExpandEngine = normalizePlatformTopicExpandEngine(params.engine);
-    const attempts =
+    const attempts: Array<{ gateway: string; run: () => Promise<string> }> =
       engine === "deepseek-v4"
         ? [
-            // 经济档：OpenRouter 两次抖动后兜底轻快档（Evolink Qwen），保交付不保档位
-            () => invokeExpandViaDeepSeek({ system, user }),
-            () => invokeExpandViaDeepSeek({ system, user }),
+            named("deepseek", () => invokeExpandViaDeepSeek({ system, user })),
+            named("deepseek#2", () => invokeExpandViaDeepSeek({ system, user })),
             // 兜底档同样先走套餐，再落按量
-            ...(planReady ? [invokeExpandPlan("qwen3.8-max")] : []),
-            invokeExpandEvolink("qwen3.8-max"),
+            ...(planReady ? [named("bailian_plan", invokeExpandPlan("qwen3.8-max"))] : []),
+            named("evolink", invokeExpandEvolink("qwen3.8-max")),
           ]
         : engine === "qwen3.8-max"
           ? [
               // 套餐额度优先（零新增支出），未配则自然跳过走原有按量链
-              ...(planReady ? [invokeExpandPlan("qwen3.8-max")] : []),
-              invokeExpandEvolink("qwen3.8-max"),
-              invokeExpandEvolink("qwen3.8-max"),
-              invokeExpandOpenRouter("qwen/qwen3.8-max"),
+              ...(planReady ? [named("bailian_plan", invokeExpandPlan("qwen3.8-max"))] : []),
+              named("evolink", invokeExpandEvolink("qwen3.8-max")),
+              named("evolink#2", invokeExpandEvolink("qwen3.8-max")),
+              named("openrouter", invokeExpandOpenRouter("qwen/qwen3.8-max")),
             ]
           : [
-              invokeExpandOpenRouter(getPlatformStage2OpenAiModel()),
-              invokeExpandOpenRouter(getPlatformStage2OpenAiModel()),
-              invokeExpandEvolink("kimi-k3"),
+              named("openrouter", invokeExpandOpenRouter(getPlatformStage2OpenAiModel())),
+              named("openrouter#2", invokeExpandOpenRouter(getPlatformStage2OpenAiModel())),
+              named("evolink", invokeExpandEvolink("kimi-k3")),
             ];
 
     console.info(
@@ -971,38 +1002,43 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
      */
     let llmText = "";
     let lastErr: unknown = null;
+    let successfulGateway = "";
+    /**
+     * 逐通道按顺序试，每次都验完整 blueprint 才算成功。
+     * 原来有条「非瞬时错直切最后通道」的旁路，会跳过中间通道；
+     * 套餐排在首位后，那条旁路等于让套餐一失败就直奔按量家，顺序形同虚设。
+     */
     for (let attempt = 1; attempt <= attempts.length; attempt++) {
+      const step = attempts[attempt - 1]!;
       try {
-        llmText = await attempts[attempt - 1]!();
-        if (llmText) break;
-        console.warn(
-          `[expandPlatformTopicPicks] 空回（第 ${attempt} 次）· ${i + 1}/${uniquePicks.length}`,
-        );
+        const candidate = await step.run();
+        if (!candidate) {
+          console.warn(
+            `[expandPlatformTopicPicks] 空回 ${step.gateway}（${attempt}/${attempts.length}）· ${i + 1}/${uniquePicks.length}`,
+          );
+          continue;
+        }
+        // 能解析 ≠ 能用：缺字段的会在下游退回骨架，那时钱已经计了
+        assertUsableExpandedBlueprint(candidate);
+        llmText = candidate;
+        successfulGateway = step.gateway;
+        break;
       } catch (e) {
         lastErr = e;
-        // 换通道前不因「非瞬时错」提前放弃：Evolink 兜底是最后一搏
-        if (attempt === attempts.length) break;
-        if (!isTransientLlmError(e) && attempt < attempts.length - 1) {
-          // 非瞬时错直接跳到最后的兜底通道
-          console.warn(
-            `[expandPlatformTopicPicks] 非瞬时错，直切兜底通道 · ${i + 1}/${uniquePicks.length} · ${
-              e instanceof Error ? e.message.slice(0, 160) : e
-            }`,
-          );
-          try {
-            llmText = await attempts[attempts.length - 1]!();
-          } catch (e2) {
-            lastErr = e2;
-          }
-          break;
-        }
         console.warn(
-          `[expandPlatformTopicPicks] 上游抖动重试 ${attempt}/${attempts.length} · ${i + 1}/${uniquePicks.length} · ${
+          `[expandPlatformTopicPicks] ${step.gateway} 失败（${attempt}/${attempts.length}）· ${i + 1}/${uniquePicks.length} · ${
             e instanceof Error ? e.message.slice(0, 160) : e
           }`,
         );
-        await new Promise((r) => setTimeout(r, attempt * 4000));
+        if (attempt < attempts.length && isTransientLlmError(e)) {
+          await new Promise((r) => setTimeout(r, attempt * 4000));
+        }
       }
+    }
+    if (successfulGateway) {
+      console.info(
+        `[expandPlatformTopicPicks] 成功通道=${successfulGateway} · ${i + 1}/${uniquePicks.length}`,
+      );
     }
     if (!llmText && !lastErr) {
       // 三通道全空回但没抛错：也算失败进清单（可退款/免重跑），不许落骨架空壳照收费
