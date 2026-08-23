@@ -94,7 +94,7 @@ export function getManhuaCharacterDisplayName(
 ): string {
   const c = getManhuaCharacterById(id);
   if (!c) return "";
-  if (String(opts?.artStyleId || "").trim() === "photoreal") {
+  if (getManhuaArtStyleFamily(opts?.artStyleId) === "photoreal") {
     return MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh;
   }
   return c.nameZh;
@@ -107,7 +107,7 @@ const MANHUA_CHARACTER_ID_RE =
 export function getManhuaCharacterPreviewUrl(id: string, opts?: { artStyleId?: string | null }): string {
   const key = String(id || "").trim();
   if (!MANHUA_CHARACTER_ID_RE.test(key)) return "";
-  if (String(opts?.artStyleId || "").trim() === "photoreal") {
+  if (getManhuaArtStyleFamily(opts?.artStyleId) === "photoreal") {
     return `/manhua-characters/photoreal/${key}_sheet.jpg`;
   }
   // 老人/儿童目前仅仿真人资产
@@ -117,8 +117,29 @@ export function getManhuaCharacterPreviewUrl(id: string, opts?: { artStyleId?: s
   return `/manhua-characters/${key}.jpg`;
 }
 
-/** 角色/场景须统一的画风：仿真人 / CG 漫剧（旧 manga_2d 归一为 CG） */
-export type ManhuaArtStyleId = "photoreal" | "cg_drama";
+/**
+ * 角色/场景须统一的画风（旧 manga_2d 归一为 CG）。
+ * 四档 = 两个家族 × 二维/三维：
+ *   photoreal / photoreal_3d  → 仿真人家族
+ *   cg_drama  / cg_3d         → CG 家族
+ */
+export type ManhuaArtStyleId = "photoreal" | "cg_drama" | "cg_3d" | "photoreal_3d";
+
+/**
+ * 3D 渲染质感锁（0823 从 S+ 级成片的 95 个镜头精读产出里提炼，重绘实测有效）。
+ * 要点：3D 感来自「光的物理行为 + 表面着色」，不是几何维度。
+ * 术语一律用英文原词——PBR/SSS/AO/fresnel 这些在训练语料里几乎只以英文出现，
+ * 中文译名的语料密度低几个量级，实测材质执行明显更弱。
+ */
+const CG_3D_RENDER_LOCK_EN =
+  "MATERIALS: PBR surfaces with wear, scratch and roughness variation; subsurface scattering on skin and ears so flesh reads as having thickness; anisotropic highlights along hair strands; woven fabric with visible thread. " +
+  "SHADING: ambient occlusion deepening every crevice, seam and underside; contact shadows anchoring subjects to ground; fresnel edge light so silhouettes are defined by light transition, never by outline strokes; micro-roughness varying across one surface. " +
+  "LIGHTING: strong backlight rim; single warm key against cool ambient; volumetric fog with god rays. " +
+  "DEPTH: shallow depth of field, subject sharp, background softly defocused, aerial perspective fading distance.";
+
+/** 反向项单独拎出：正向为主，避免堆禁令触发上游拒答 */
+const CG_3D_AVOID_EN =
+  "Avoid flat cel shading, outline strokes, uniform sharpness across the frame, painted flat backgrounds.";
 
 export type ManhuaArtStylePreset = {
   id: ManhuaArtStyleId;
@@ -148,18 +169,65 @@ export const MANHUA_ART_STYLE_PRESETS: ManhuaArtStylePreset[] = [
       "画风：半写实二次元国乙立绘质感，韩系厚涂，电影柔光，漫剧成片级插画 CG；角色与场景同一画风。" +
       "五官略二次元比例，笔触与体积光可读，保持插画成片感。",
   },
+  {
+    id: "cg_3d",
+    labelZh: "3D CG 漫剧",
+    shortZh: "S+ 级质感 · 立体渲染",
+    promptZh:
+      "画风：电影级 3D CG 动画渲染，角色与场景同一画风；五官可略二次元比例但须有真实体积与转折。\n" +
+      CG_3D_RENDER_LOCK_EN +
+      "\n" +
+      CG_3D_AVOID_EN,
+  },
+  {
+    id: "photoreal_3d",
+    labelZh: "3D 仿真人",
+    shortZh: "影视级数字人质感",
+    promptZh:
+      "画风硬锁：影视级 3D 写实人物渲染，真实人体比例，非卡通非塑料感；角色与场景同一画风。\n" +
+      CG_3D_RENDER_LOCK_EN +
+      "\n" +
+      "Skin shows pores and peach fuzz under raking light; hair rendered as individual strands, not clumps. " +
+      "Avoid waxy CGI sheen, cel shading, cartoon proportions.\n" +
+      PHOTOREAL_ANTI_AI_LOCK_ZH +
+      "\n" +
+      PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH,
+  },
 ];
+
+/** 画风家族：3D 档暂无独立资产图，预览/命名复用同族 2D 资产，避免 404 */
+export function getManhuaArtStyleFamily(id?: string | null): "photoreal" | "cg" {
+  const key = normalizeManhuaArtStyleId(id);
+  return key === "photoreal" || key === "photoreal_3d" ? "photoreal" : "cg";
+}
+
+/** 是否 3D 渲染档（供 UI 打标与提示词分支用） */
+export function isManhua3dArtStyle(id?: string | null): boolean {
+  const key = normalizeManhuaArtStyleId(id);
+  return key === "cg_3d" || key === "photoreal_3d";
+}
 
 export const DEFAULT_MANHUA_ART_STYLE_ID: ManhuaArtStyleId = "cg_drama";
 
-/** 旧会话 manga_2d 等非法值 → CG 漫剧 */
+const MANHUA_ART_STYLE_IDS: readonly ManhuaArtStyleId[] = [
+  "photoreal",
+  "cg_drama",
+  "cg_3d",
+  "photoreal_3d",
+];
+
+/** 旧会话 manga_2d 等非法值 → CG 漫剧。白名单式，新增档位只需改上面的数组 */
 export function normalizeManhuaArtStyleId(id?: string | null): ManhuaArtStyleId {
-  return String(id || "").trim() === "photoreal" ? "photoreal" : DEFAULT_MANHUA_ART_STYLE_ID;
+  const raw = String(id || "").trim() as ManhuaArtStyleId;
+  return MANHUA_ART_STYLE_IDS.includes(raw) ? raw : DEFAULT_MANHUA_ART_STYLE_ID;
 }
 
 export function getManhuaArtStylePreset(id?: string | null): ManhuaArtStylePreset {
   const key = normalizeManhuaArtStyleId(id);
-  return MANHUA_ART_STYLE_PRESETS.find((p) => p.id === key) || MANHUA_ART_STYLE_PRESETS[1]!;
+  return (
+    MANHUA_ART_STYLE_PRESETS.find((p) => p.id === key) ||
+    MANHUA_ART_STYLE_PRESETS.find((p) => p.id === DEFAULT_MANHUA_ART_STYLE_ID)!
+  );
 }
 
 /** 题材 → 画风软推荐（可手改；仅仿真人 / CG） */
@@ -1138,7 +1206,7 @@ export function buildManhuaCharacterSheetGenPrompt(opts?: {
   const hint = String(opts?.userHint || "").trim();
   const lifeStageBlock = photorealLifeStagePromptBlock(stage);
   const antiAi =
-    style.id === "photoreal"
+    getManhuaArtStyleFamily(style.id) === "photoreal"
       ? `\n${PHOTOREAL_ANTI_AI_LOCK_ZH}${lifeStageBlock ? `\n${lifeStageBlock}` : ""}`
       : "";
   return [
@@ -1185,7 +1253,7 @@ export function buildManhuaCharacterPromptBlock(
   const picked = ids.map(getManhuaCharacterById).filter(Boolean) as ManhuaCharacterTemplate[];
   if (!picked.length) return "";
   const style = getManhuaArtStylePreset(opts?.artStyleId);
-  const isPhotoreal = style.id === "photoreal";
+  const isPhotoreal = getManhuaArtStyleFamily(style.id) === "photoreal";
   const linesOut = picked.map((c, i) => {
     const tags = c.temperamentTags.join("·");
     const age = c.age ? `${c.age}岁` : "";

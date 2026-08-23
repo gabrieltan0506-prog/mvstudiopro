@@ -8,6 +8,7 @@ import {
   getManhuaArtStylePreset,
   getManhuaCharacterById,
   getManhuaCharacterDisplayName,
+  getManhuaArtStyleFamily,
   normalizeManhuaArtStyleId,
 } from "./manhuaCharacterAssetLibrary";
 import { customRefsByRole, type ManhuaCustomAssetRef } from "./manhuaCustomAssetRefs";
@@ -143,7 +144,7 @@ export function buildManhuaKeyartSlimPrompt(input: ManhuaKeyartSlimPromptInput):
       customRefs: input.customRefs,
     });
 
-  const isCg = normalizeManhuaArtStyleId(input.artStyleId) === "cg_drama";
+  const isCg = getManhuaArtStyleFamily(input.artStyleId) === "cg";
   const parts = [
     "【静帧·源头短包】只含本镜画面指令与短锁；完整设定见角色卡/节拍，勿重复长文。",
     buildManhuaKeyartSlimStyleLock(input.artStyleId),

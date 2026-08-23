@@ -12,6 +12,7 @@ import {
 import { getAncientArchetypeById } from "./manhuaAncientArchetypeLibrary.js";
 import {
   getManhuaCharacterPreviewUrl,
+  getManhuaArtStyleFamily,
   normalizeManhuaArtStyleId,
 } from "./manhuaCharacterAssetLibrary.js";
 import {
@@ -151,7 +152,7 @@ export function planManhuaKeyartEditFusion(opts?: {
     .map((id) => String(id || "").trim())
     .filter(Boolean);
   const isAncientLane = ancientIds.length > 0;
-  const isCgDrama = normalizeManhuaArtStyleId(opts?.artStyleId) === "cg_drama";
+  const isCgDrama = getManhuaArtStyleFamily(opts?.artStyleId) === "cg";
   const hardLockZh = buildManhuaKeyartAncientHardLockZh(ancientIds);
   void opts?.identityImageUrls;
 
