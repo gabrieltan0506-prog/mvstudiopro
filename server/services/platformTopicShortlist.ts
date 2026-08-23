@@ -63,6 +63,21 @@ function startOfTodayLocal(): Date {
   return d;
 }
 
+/**
+ * 成功通道计数。
+ *
+ * 抽成导出函数是因为测试原先自建了一份一样的 reduce —— 生产实现被删掉或改错，
+ * 测试照样全绿。测的是复制品就等于没测。
+ */
+export function countSuccessfulGateways(
+  rows: readonly { gateway: string }[],
+): Record<string, number> {
+  return rows.reduce<Record<string, number>>((counts, item) => {
+    counts[item.gateway] = (counts[item.gateway] || 0) + 1;
+    return counts;
+  }, {});
+}
+
 export async function countPlatformTopicShortlistFreeEver(userId: number): Promise<number> {
   const { getDb } = await import("../db.js");
   const { stripeUsageLogs } = await import("../../drizzle/schema.js");
@@ -1203,10 +1218,7 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
       failedPicks: failed,
       // 套餐到底替下了多少按量调用，只能从这里核对
       successfulGateways,
-      successfulGatewayCounts: successfulGateways.reduce<Record<string, number>>((counts, item) => {
-        counts[item.gateway] = (counts[item.gateway] || 0) + 1;
-        return counts;
-      }, {}),
+      successfulGatewayCounts: countSuccessfulGateways(successfulGateways),
     },
   };
 }
