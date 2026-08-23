@@ -6943,7 +6943,7 @@ export default function OmniCanvas() {
                     type="button"
                     className="underline underline-offset-2 hover:text-white/75"
                     onClick={() => {
-                      setImmersiveExtrasOpen(false);
+                      closeClipDockToWorkbench();
                       setManhuaUiMode("form");
                     }}
                   >
