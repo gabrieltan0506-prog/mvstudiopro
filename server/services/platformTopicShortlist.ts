@@ -730,6 +730,45 @@ async function invokeExpandViaDeepSeek(params: { system: string; user: string })
   return typeof content === "string" ? content.trim() : "";
 }
 
+/**
+ * 百炼 Token Plan 套餐扩写（0824 接线）。
+ *
+ * 为什么排在 EvoLink 之前：套餐额度是**已付费且不用即归零**的，
+ * 而 EvoLink / OpenRouter 每一次都扣充值余额——
+ * 「EvoLink 比 OpenRouter 便宜 12%」在「套餐零新增支出」面前不成立。
+ *
+ * ⚠️ 仅 qwen3.8-max 可走：套餐白名单 11 个模型里有它，没有 kimi-k3。
+ */
+async function invokeExpandViaBailianPlan(params: {
+  model: PlatformTopicExpandEngine;
+  system: string;
+  user: string;
+}): Promise<string> {
+  const key = String(process.env.WAN_PLAN_API_KEY || "").trim();
+  const base = String(process.env.WAN_PLAN_BASE || "").trim().replace(/\/$/, "");
+  if (!key || !base) throw new Error("百炼套餐通道未配置");
+  const res = await fetch(`${base}/compatible-mode/v1/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: params.model,
+      messages: [
+        { role: "system", content: params.system },
+        { role: "user", content: params.user },
+      ],
+      enable_thinking: true,
+      max_tokens: EXPAND_QWEN_MAX_COMPLETION_TOKENS,
+    }),
+  });
+  if (!res.ok) {
+    const errText = (await res.text().catch(() => "")).slice(0, 300);
+    throw new Error(`百炼套餐扩写失败 HTTP ${res.status}：${errText}`);
+  }
+  const json = (await res.json()) as { choices?: Array<{ message?: { content?: unknown } }> };
+  const content = json.choices?.[0]?.message?.content;
+  return typeof content === "string" ? content.trim() : "";
+}
+
 async function invokeExpandViaEvolink(params: {
   model: PlatformTopicExpandEngine;
   system: string;
@@ -885,6 +924,13 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
     };
     const invokeExpandEvolink = (model: PlatformTopicExpandEngine) => () =>
       invokeExpandViaEvolink({ model, system, user });
+    /** 套餐首跳：额度不用即归零，优先于任何按量通道 */
+    const invokeExpandPlan = (model: PlatformTopicExpandEngine) => () =>
+      invokeExpandViaBailianPlan({ model, system, user });
+    const planReady = Boolean(
+      String(process.env.WAN_PLAN_API_KEY || "").trim() &&
+        String(process.env.WAN_PLAN_BASE || "").trim(),
+    );
 
     // 双通道编排（2026-08-12 用户拍板：哪家便宜哪家先，另一家兜底）——
     // Kimi K3 两家同价（$3/$15），主走 OpenRouter、两次抖动后切 Evolink 保稳；
@@ -897,10 +943,14 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
             // 经济档：OpenRouter 两次抖动后兜底轻快档（Evolink Qwen），保交付不保档位
             () => invokeExpandViaDeepSeek({ system, user }),
             () => invokeExpandViaDeepSeek({ system, user }),
+            // 兜底档同样先走套餐，再落按量
+            ...(planReady ? [invokeExpandPlan("qwen3.8-max")] : []),
             invokeExpandEvolink("qwen3.8-max"),
           ]
         : engine === "qwen3.8-max"
           ? [
+              // 套餐额度优先（零新增支出），未配则自然跳过走原有按量链
+              ...(planReady ? [invokeExpandPlan("qwen3.8-max")] : []),
               invokeExpandEvolink("qwen3.8-max"),
               invokeExpandEvolink("qwen3.8-max"),
               invokeExpandOpenRouter("qwen/qwen3.8-max"),
