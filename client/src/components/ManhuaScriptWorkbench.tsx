@@ -170,6 +170,10 @@ import {
   isManhuaAssetCardExpanded,
   shouldShowManhuaAssetRoleChip,
 } from "@/lib/manhuaAssetCardFold";
+import {
+  shouldShowToolbarAssetWallEntry,
+  shouldShowToolbarCharacterLibraryEntry,
+} from "@/lib/manhuaCharacterEntry";
 
 type WorkflowPhaseId = "outline" | "assets" | "storyboard" | "edit";
 
@@ -2351,20 +2355,28 @@ export default function ManhuaScriptWorkbench({
           ) : null}
           {!compactUi ? (
             <>
-              <button
-                type="button"
-                onClick={() => onOpenCharacterCard?.()}
-                className="rounded-lg border border-white/12 px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.06]"
-              >
-                角色库
-              </button>
-              <button
-                type="button"
-                onClick={() => onOpenAssetWall?.()}
-                className="rounded-lg border border-white/12 px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.06]"
-              >
-                资产墙
-              </button>
+              {/* 入口去重：资产阶段人物卡旁边就有「去选人物 / 更换人物」，
+                  同去处的远端按钮让位；其它阶段没有就近入口，这个必须留着 */}
+              {shouldShowToolbarCharacterLibraryEntry({ activePhase, compactUi }) ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenCharacterCard?.()}
+                  className="rounded-lg border border-white/12 px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.06]"
+                >
+                  角色库
+                </button>
+              ) : null}
+              {/* 同上：资产阶段已有 5 个就近入口（库场景·道具 / 更换 / 尚未选场景…），
+                  远端这个让位；其它阶段留着当唯一通路 */}
+              {shouldShowToolbarAssetWallEntry({ activePhase, compactUi }) ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenAssetWall?.()}
+                  className="rounded-lg border border-white/12 px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.06]"
+                >
+                  资产墙
+                </button>
+              ) : null}
             </>
           ) : null}
         </div>
