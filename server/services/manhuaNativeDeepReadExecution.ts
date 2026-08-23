@@ -20,6 +20,7 @@ import {
   isManhuaNativeDeepReadEnabled,
   runManhuaNativeDeepRead,
   validateNativeDeepReadSegments,
+  type NativeDeepReadRunError,
   type NativeDeepReadSegmentSpec,
 } from "./manhuaNativeDeepReadRunner.js";
 import {
@@ -73,19 +74,34 @@ export async function executeAndIngestNativeDeepReadEpisode(
   if (!deps.isEnabled()) throw new Error("原生精读开关未开启");
   if (input.abortSignal?.aborted) throw new Error("用户已停止学习");
 
+  // 单集入口也走同一份预检，不能只依赖批处理调用方。
+  validateNativeDeepReadBatchPlan([input], { maxEpisodes: 1, seriesKey: input.seriesKey });
+
   // 原子占位必须在 runner 之前：#1295 的 ifGenerationMatch 在模型跑完之后，
   // 只能防卡片覆盖，防不了两个进程各付一次费
   const claim = await deps.acquireClaim(input.seriesKey, input.episodeIndex);
   const startedAt = Date.now();
 
-  const result = await deps.run({
-    resolveNodes: input.resolveNodes,
-    segments: input.segments,
-    abortSignal: input.abortSignal,
-  });
+  let result: Awaited<ReturnType<typeof runManhuaNativeDeepRead>>;
+  try {
+    result = await deps.run({
+      resolveNodes: input.resolveNodes,
+      segments: input.segments,
+      abortSignal: input.abortSignal,
+    });
+  } catch (error) {
+    const knownCost = Number((error as NativeDeepReadRunError)?.nativeDeepReadCostCny) || 0;
+    throw Object.assign(
+      new Error(error instanceof Error ? error.message : String(error), { cause: error }),
+      { costCny: knownCost, elapsedMs: Date.now() - startedAt },
+    );
+  }
   const costCny = Number(result.usage?.costCny) || 0;
   if (input.abortSignal?.aborted) {
-    throw Object.assign(new Error("用户已停止学习"), { costCny });
+    throw Object.assign(new Error("用户已停止学习"), {
+      costCny,
+      elapsedMs: Date.now() - startedAt,
+    });
   }
 
   // 门禁在写之前：空卡、全段失败不进库。**钱已经花了，错误里要带上**
@@ -97,14 +113,22 @@ export async function executeAndIngestNativeDeepReadEpisode(
     );
   }
 
-  const stored = await deps.ingest({
-    seriesKey: input.seriesKey,
-    episodeIndex: input.episodeIndex,
-    sourceUrl: input.sourceUrl,
-    durationSec: input.durationSec,
-    laneHintZh: input.laneHintZh,
-    result,
-  });
+  let stored: NativeDeepReadIngestResult;
+  try {
+    stored = await deps.ingest({
+      seriesKey: input.seriesKey,
+      episodeIndex: input.episodeIndex,
+      sourceUrl: input.sourceUrl,
+      durationSec: input.durationSec,
+      laneHintZh: input.laneHintZh,
+      result,
+    });
+  } catch (error) {
+    throw Object.assign(
+      new Error(error instanceof Error ? error.message : String(error), { cause: error }),
+      { costCny, elapsedMs: Date.now() - startedAt },
+    );
+  }
 
   // 卡已入库就是成功；占位清不掉不改判失败，下一轮会先被已入库卡跳过
   try {
@@ -158,7 +182,7 @@ export type NativeDeepReadBatchPlan = {
  */
 export function validateNativeDeepReadBatchPlan(
   episodes: readonly NativeDeepReadBatchEpisode[],
-  opts: { maxEpisodes?: number } = {},
+  opts: { maxEpisodes?: number; seriesKey?: string } = {},
 ): NativeDeepReadBatchPlan {
   if (!episodes.length) throw new Error("发车清单为空");
   const ceiling = Math.max(
@@ -204,9 +228,10 @@ export function validateNativeDeepReadBatchPlan(
     totalSegments += segments.length;
     totalDurationSec += duration;
   }
-  const canonical = JSON.stringify(
-    episodes.map(({ resolveNodes: _drop, ...rest }) => rest),
-  );
+  const canonical = JSON.stringify({
+    seriesKey: String(opts.seriesKey || ""),
+    episodes: episodes.map(({ resolveNodes: _drop, ...rest }) => rest),
+  });
   return {
     totalEpisodes: episodes.length,
     totalSegments,
@@ -217,7 +242,7 @@ export function validateNativeDeepReadBatchPlan(
 
 export type NativeDeepReadBatchOutcome = {
   episodeIndex: number;
-  status: "ingested" | "skipped" | "failed";
+  status: "ingested" | "skipped" | "failed" | "aborted";
   gcsUri?: string;
   errorZh?: string;
   /** 实际发生的模型费用；**门禁拒收也要记**，钱已经花了 */
@@ -256,7 +281,7 @@ export async function runNativeDeepReadBatch(input: {
   if (!deps.isEnabled()) throw new Error("原生精读开关未开启");
 
   // 预检在 GCS 列举与任何模型动作之前：清单里写两次第 1 集会真的跑两次模型
-  const plan = validateNativeDeepReadBatchPlan(input.episodes);
+  const plan = validateNativeDeepReadBatchPlan(input.episodes, { seriesKey: input.seriesKey });
   const alreadyIngested = await deps.listIngested(input.seriesKey);
   const outcomes: NativeDeepReadBatchOutcome[] = [];
   const batchStartedAt = Date.now();
@@ -297,6 +322,16 @@ export async function runNativeDeepReadBatch(input: {
     } catch (e) {
       // 中止不记成「这集失败」——那会让人以为素材有问题
       if (input.abortSignal?.aborted) {
+        const carried = e as { costCny?: number; elapsedMs?: number };
+        const stopped: NativeDeepReadBatchOutcome = {
+          episodeIndex: episode.episodeIndex,
+          status: "aborted",
+          errorZh: "用户已停止学习",
+          costCny: Number(carried?.costCny) || 0,
+          elapsedMs: Number(carried?.elapsedMs) || 0,
+        };
+        outcomes.push(stopped);
+        await input.onProgress?.(stopped);
         aborted = true;
         break;
       }

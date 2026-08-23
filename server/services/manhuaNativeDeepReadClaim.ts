@@ -17,6 +17,7 @@ import {
   deleteGcsObject,
   downloadGcsObjectVersioned,
   getGcsBucketName,
+  listGcsObjectNamesByPrefix,
   uploadBufferToGcsIfAbsent,
 } from "./gcs.js";
 import { nativeDeepReadProposalId } from "./manhuaNativeDeepReadIngest.js";
@@ -81,3 +82,27 @@ export async function acquireNativeDeepReadEpisodeClaim(
     },
   };
 }
+
+/** 干跑时列出仍在占位、必须人工核对后才能重跑的集号。 */
+export async function listNativeDeepReadEpisodeClaims(seriesKey: string): Promise<Set<number>> {
+  const idPrefix = nativeDeepReadProposalId(seriesKey, 1).replace(/ep001$/, "ep");
+  const names = await listGcsObjectNamesByPrefix({
+    prefix: `${NATIVE_DEEP_READ_CLAIM_PREFIX}${idPrefix}`,
+    literalPrefix: true,
+    maxResults: NATIVE_DEEP_READ_BATCH_CLAIM_SCAN_LIMIT,
+  });
+  const escaped = idPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`/${escaped}(\\d{3})\\.json$`);
+  const episodes = new Set<number>();
+  for (const name of names) {
+    const match = name.match(pattern);
+    const episodeIndex = Number(match?.[1]);
+    if (Number.isInteger(episodeIndex) && episodeIndex >= 1 && episodeIndex <= 999) {
+      episodes.add(episodeIndex);
+    }
+  }
+  return episodes;
+}
+
+/** 与批次硬保险一致；这里只防失控列举，不是发车集数限制。 */
+const NATIVE_DEEP_READ_BATCH_CLAIM_SCAN_LIMIT = 500;

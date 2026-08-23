@@ -161,6 +161,11 @@ export type NativeDeepReadRunResult = NativeDeepReadOutput & {
   model: string;
 };
 
+export type NativeDeepReadRunError = Error & {
+  /** 中止前已取得用量回执的成本；当前在途请求可能尚无回执。 */
+  nativeDeepReadCostCny?: number;
+};
+
 /** 精读模型名：**只在这里写一次**，provenance 记的必须是真跑的这个 */
 export const NATIVE_DEEP_READ_MODEL = "qwen3.8-max";
 
@@ -577,35 +582,43 @@ export async function runManhuaNativeDeepRead(params: {
   let inputTokens = 0;
   let outputTokens = 0;
 
-  for (const spec of validatedSegments) {
-    if (params.abortSignal?.aborted) throw new Error("已取消");
-    // 地址约 8 分钟失效，跨段时先看是否过期
-    if (Date.now() - resolvedAt > RESOLVE_TTL_MS) await refreshNodes();
-    try {
-      const { row, usage } = await runOneSegment({
-        nodeUrls: nodes,
-        refreshNodes,
-        spec,
-        apiKey,
-        endpoint,
-        tmpDir,
-        abortSignal: params.abortSignal,
-      });
-      inputTokens += usage.inputTokens;
-      outputTokens += usage.outputTokens;
-      if (row) rows.push(row);
-    } catch (error) {
-      // 原先没有 catch：前 3 段付费成功、第 4 段 HTTP/JSON 失败，
-      // 整体 reject，前 3 段的钱连同产出一起丢，也进不了逐集入库。
-      // 改为停止后续段但把已完成的带回去，由入库门禁决定收不收。
-      if (params.abortSignal?.aborted) throw error;
-      console.warn(
-        `[nativeDeepRead] 第 ${spec.startSec}-${spec.endSec}s 段未完成，停止后续段并保留已完成结果：${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      break;
+  try {
+    for (const spec of validatedSegments) {
+      if (params.abortSignal?.aborted) throw new Error("已取消");
+      // 地址约 8 分钟失效，跨段时先看是否过期
+      if (Date.now() - resolvedAt > RESOLVE_TTL_MS) await refreshNodes();
+      try {
+        const { row, usage } = await runOneSegment({
+          nodeUrls: nodes,
+          refreshNodes,
+          spec,
+          apiKey,
+          endpoint,
+          tmpDir,
+          abortSignal: params.abortSignal,
+        });
+        inputTokens += usage.inputTokens;
+        outputTokens += usage.outputTokens;
+        if (row) rows.push(row);
+      } catch (error) {
+        // 原先没有 catch：前 3 段付费成功、第 4 段 HTTP/JSON 失败，
+        // 整体 reject，前 3 段的钱连同产出一起丢，也进不了逐集入库。
+        // 改为停止后续段但把已完成的带回去，由入库门禁决定收不收。
+        if (params.abortSignal?.aborted) throw error;
+        console.warn(
+          `[nativeDeepRead] 第 ${spec.startSec}-${spec.endSec}s 段未完成，停止后续段并保留已完成结果：${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        break;
+      }
     }
+  } catch (error) {
+    if (!params.abortSignal?.aborted) throw error;
+    const stopped = (error instanceof Error ? error : new Error(String(error))) as NativeDeepReadRunError;
+    stopped.nativeDeepReadCostCny =
+      (inputTokens * PRICE_IN_PER_M) / 1e6 + (outputTokens * PRICE_OUT_PER_M) / 1e6;
+    throw stopped;
   }
 
   const mapped = mapNativeDeepReadSegments(rows);

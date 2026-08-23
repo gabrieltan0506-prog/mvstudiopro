@@ -140,16 +140,23 @@ describe("批次预检：在任何模型动作之前", () => {
   });
 
   it("同一份清单确认码稳定，改一个字段就变 —— 真跑靠它绑定干跑那份计划", () => {
-    const a = validateNativeDeepReadBatchPlan([ep(1)]).planHash;
-    expect(validateNativeDeepReadBatchPlan([ep(1)]).planHash).toBe(a);
+    const a = validateNativeDeepReadBatchPlan([ep(1)], { seriesKey: "series_a" }).planHash;
+    expect(validateNativeDeepReadBatchPlan([ep(1)], { seriesKey: "series_a" }).planHash).toBe(a);
     // 改任一入参确认码就变：干跑确认过的计划改了字段，真跑必须重新确认
     expect(
-      validateNativeDeepReadBatchPlan([ep(1, { sourceUrl: "https://example.com/e9" })]).planHash,
+      validateNativeDeepReadBatchPlan(
+        [ep(1, { sourceUrl: "https://example.com/e9" })],
+        { seriesKey: "series_a" },
+      ).planHash,
     ).not.toBe(a);
     expect(
-      validateNativeDeepReadBatchPlan([
-        ep(1, { segments: [{ startSec: 0, endSec: 500 }] }),
-      ]).planHash,
+      validateNativeDeepReadBatchPlan(
+        [ep(1, { segments: [{ startSec: 0, endSec: 500 }] })],
+        { seriesKey: "series_a" },
+      ).planHash,
+    ).not.toBe(a);
+    expect(
+      validateNativeDeepReadBatchPlan([ep(1)], { seriesKey: "series_b" }).planHash,
     ).not.toBe(a);
   });
 });
@@ -187,6 +194,21 @@ describe("并发与计费", () => {
     const r = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1)] }, deps);
     expect(r.failedCount).toBe(1);
     expect(r.totalCostCny).toBeCloseTo(2.5);
+  });
+
+  it("模型已返回后入库写入异常也要保留成本与占位", async () => {
+    const release = vi.fn(async () => undefined);
+    deps.acquireClaim = vi.fn(async () => ({
+      claimUri: "gs://b/c",
+      objectName: "c",
+      runId: "r",
+      releaseAfterSuccess: release,
+    }));
+    deps.ingest = vi.fn(async () => { throw new Error("入库暂时不可用"); }) as never;
+    const r = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1)] }, deps);
+    expect(r.failedCount).toBe(1);
+    expect(r.totalCostCny).toBeCloseTo(0.5);
+    expect(release).not.toHaveBeenCalled();
   });
 
   it("成功集汇总实际成本与耗时", async () => {
@@ -281,6 +303,8 @@ describe("批量发车", () => {
     );
     expect(r.aborted).toBe(true);
     expect(r.failedCount).toBe(0);
+    expect(r.totalCostCny).toBeCloseTo(0.5);
+    expect(r.outcomes[0]).toMatchObject({ status: "aborted", costCny: 0.5 });
     expect(deps.run).toHaveBeenCalledTimes(1);
   });
 
