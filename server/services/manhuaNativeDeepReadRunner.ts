@@ -65,7 +65,12 @@ export type NativeDeepReadRunResult = NativeDeepReadOutput & {
   attemptedSegments: number;
   /** 这一轮是否吃的套餐额度；false 表示扣了充值余额，对账要看这个 */
   usingPlanQuota?: boolean;
+  /** 真跑的模型名，落 provenance 用（不让入库端自己再写一遍常量） */
+  model: string;
 };
+
+/** 精读模型名：**只在这里写一次**，provenance 记的必须是真跑的这个 */
+export const NATIVE_DEEP_READ_MODEL = "qwen3.8-max";
 
 /** 北京百炼单价（¥/M token），套餐 key 走同一端点 */
 const PRICE_IN_PER_M = 12;
@@ -304,7 +309,7 @@ async function runOneSegment(params: {
   try {
     const res = await postLong(
       {
-        model: "qwen3.8-max",
+        model: NATIVE_DEEP_READ_MODEL,
         input: {
           messages: [
             {
@@ -408,6 +413,7 @@ export async function runManhuaNativeDeepRead(params: {
     // rows 里已剔除切片失败的段，这里补回真实失败数
     failedSegmentCount: params.segments.length - mapped.segmentCount,
     attemptedSegments: params.segments.length,
+    model: NATIVE_DEEP_READ_MODEL,
     usingPlanQuota: params.apiKey ? undefined : creds.usingPlan,
     usage: {
       inputTokens,

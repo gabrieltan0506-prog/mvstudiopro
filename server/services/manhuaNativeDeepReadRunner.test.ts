@@ -2,8 +2,10 @@
  * 原生精读执行器：开关、format 挑选、prompt 硬约束。
  * 网络与文件系统部分不在此测（那需要真实 CDN/OSS），此处只锁纯逻辑。
  */
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  NATIVE_DEEP_READ_MODEL,
   buildNativeDeepReadPrompt,
   isManhuaNativeDeepReadEnabled,
   pickSmallestVideoFormat,
@@ -55,6 +57,19 @@ describe("pickSmallestVideoFormat：按体积挑，不按分辨率", () => {
       { format_id: "bytevc1_540p_known", url: "https://known", filesize: 50 * 1048576 },
     ]);
     expect(hit?.url).toBe("https://known");
+  });
+});
+
+describe("模型名收口", () => {
+  it("常量与请求体同源 —— provenance 记的必须是真跑的那个模型", () => {
+    const src = readFileSync(
+      new URL("./manhuaNativeDeepReadRunner.ts", import.meta.url),
+      "utf8",
+    );
+    // 请求体里只允许引用常量；再出现字面量就是又写了第二遍
+    expect(src).toContain("model: NATIVE_DEEP_READ_MODEL,");
+    expect(src.match(/model: "qwen[^"]*"/g)).toBeNull();
+    expect(NATIVE_DEEP_READ_MODEL).toBe("qwen3.8-max");
   });
 });
 
