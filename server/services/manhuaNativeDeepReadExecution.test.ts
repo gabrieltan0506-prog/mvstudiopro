@@ -6,8 +6,11 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  NATIVE_DEEP_READ_MAX_SEGMENT_SEC,
   executeAndIngestNativeDeepReadEpisode,
   runNativeDeepReadBatch,
+  validateNativeDeepReadBatchPlan,
+  type NativeDeepReadBatchEpisode,
   type NativeDeepReadExecutionDeps,
 } from "./manhuaNativeDeepReadExecution";
 
@@ -33,11 +36,18 @@ function makeResult(over: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * 18 分钟一集必须拆段：fps=2 · max_frames=2000 → 单段完整覆盖上限 1000s，
+ * 单段 0–1080s 模型看不完整（审阅点名的坏例子，现在被预检拦下）。
+ */
 const episode = {
   episodeIndex: 1,
   sourceUrl: "https://example.com/e1",
   durationSec: 1080,
-  segments: [{ startSec: 0, endSec: 1080 }],
+  segments: [
+    { startSec: 0, endSec: 540 },
+    { startSec: 540, endSec: 1080 },
+  ],
   resolveNodes: async () => ["https://cdn/1.mp4"],
 };
 
@@ -54,7 +64,138 @@ beforeEach(() => {
       created: true,
     })) as never,
     listIngested: vi.fn(async () => new Set<number>()),
+    acquireClaim: vi.fn(async () => ({
+      claimUri: "gs://b/claim.json",
+      objectName: "claim.json",
+      runId: "r1",
+      releaseAfterSuccess: async () => {},
+    })),
   } as never;
+});
+
+const ep = (i: number, over: Partial<NativeDeepReadBatchEpisode> = {}) => ({
+  ...episode,
+  episodeIndex: i,
+  ...over,
+});
+
+describe("批次预检：在任何模型动作之前", () => {
+  it("清单重复同一集直接拒 —— 实测原先会真的跑两次、付两次钱", async () => {
+    await expect(
+      runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1), ep(1)] }, deps),
+    ).rejects.toThrow("重复第1集");
+    expect(deps.run).not.toHaveBeenCalled();
+    expect(deps.listIngested).not.toHaveBeenCalled();
+  });
+
+  it("非法集号零调用拒绝", async () => {
+    await expect(
+      runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(0)] }, deps),
+    ).rejects.toThrow("1–999");
+    expect(deps.run).not.toHaveBeenCalled();
+  });
+
+  it("单段超过 max_frames/fps 覆盖上限要求拆段（模型看不完整）", () => {
+    expect(() =>
+      validateNativeDeepReadBatchPlan([
+        ep(1, { durationSec: 1200, segments: [{ startSec: 0, endSec: 1080 }] }),
+      ]),
+    ).toThrow("请拆段");
+    expect(NATIVE_DEEP_READ_MAX_SEGMENT_SEC).toBe(1000);
+  });
+
+  it("切片超出片长拒绝", () => {
+    expect(() =>
+      validateNativeDeepReadBatchPlan([
+        ep(1, { durationSec: 100, segments: [{ startSec: 0, endSec: 900 }] }),
+      ]),
+    ).toThrow("超出片长");
+  });
+
+  it("非 HTTPS 来源拒绝", () => {
+    expect(() =>
+      validateNativeDeepReadBatchPlan([ep(1, { sourceUrl: "http://x/e1" })]),
+    ).toThrow("HTTPS");
+  });
+
+  it("计费单位是 segment 不是集：20 集各 6 段 = 120 次", () => {
+    const many = Array.from({ length: 20 }, (_, i) =>
+      ep(i + 1, {
+        durationSec: 1200,
+        segments: Array.from({ length: 6 }, (_, k) => ({
+          startSec: k * 100,
+          endSec: k * 100 + 90,
+        })),
+      }),
+    );
+    const plan = validateNativeDeepReadBatchPlan(many);
+    expect(plan.totalEpisodes).toBe(20);
+    expect(plan.totalSegments).toBe(120);
+  });
+
+  it("上限由调用方指定，不写死 20", () => {
+    const five = [1, 2, 3, 4, 5].map((i) => ep(i));
+    expect(() => validateNativeDeepReadBatchPlan(five, { maxEpisodes: 3 })).toThrow("超过上限 3 集");
+    expect(validateNativeDeepReadBatchPlan(five, { maxEpisodes: 50 }).totalEpisodes).toBe(5);
+  });
+
+  it("同一份清单确认码稳定，改一个字段就变 —— 真跑靠它绑定干跑那份计划", () => {
+    const a = validateNativeDeepReadBatchPlan([ep(1)]).planHash;
+    expect(validateNativeDeepReadBatchPlan([ep(1)]).planHash).toBe(a);
+    // 改任一入参确认码就变：干跑确认过的计划改了字段，真跑必须重新确认
+    expect(
+      validateNativeDeepReadBatchPlan([ep(1, { sourceUrl: "https://example.com/e9" })]).planHash,
+    ).not.toBe(a);
+    expect(
+      validateNativeDeepReadBatchPlan([
+        ep(1, { segments: [{ startSec: 0, endSec: 500 }] }),
+      ]).planHash,
+    ).not.toBe(a);
+  });
+});
+
+describe("并发与计费", () => {
+  it("占位在 runner 之前 —— 抢不到就停手，不是跑完才发现重复", async () => {
+    deps.acquireClaim = vi.fn(async () => {
+      throw new Error("第1集已有精读任务占位；禁止自动重跑");
+    });
+    const r = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1)] }, deps);
+    expect(deps.run).not.toHaveBeenCalled();
+    expect(r.failedCount).toBe(1);
+    expect(r.outcomes[0]!.errorZh).toContain("占位");
+  });
+
+  it("两个批次跑同一集，只有一个抢到占位，模型总共只调一次", async () => {
+    let held = false;
+    const claim = vi.fn(async () => {
+      if (held) throw new Error("已有精读任务占位");
+      held = true;
+      return { claimUri: "gs://b/c", objectName: "c", runId: "r", releaseAfterSuccess: async () => {} };
+    });
+    const shared = { ...deps, acquireClaim: claim } as NativeDeepReadExecutionDeps;
+    const [a, b] = await Promise.all([
+      runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1)] }, shared),
+      runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1)] }, shared),
+    ]);
+    expect(shared.run).toHaveBeenCalledTimes(1);
+    expect(a.ingestedCount + b.ingestedCount).toBe(1);
+    expect(a.failedCount + b.failedCount).toBe(1);
+  });
+
+  it("门禁拒收也要记成本 —— 钱已经花了，只统计成功卡会算漏", async () => {
+    deps.run = vi.fn(async () => makeResult({ segmentCount: 0, beatGrid: [], usage: { costCny: 2.5 } }) as never);
+    const r = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1)] }, deps);
+    expect(r.failedCount).toBe(1);
+    expect(r.totalCostCny).toBeCloseTo(2.5);
+  });
+
+  it("成功集汇总实际成本与耗时", async () => {
+    const r = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1), ep(2)] }, deps);
+    expect(r.ingestedCount).toBe(2);
+    expect(r.totalCostCny).toBeCloseTo(1.0);
+    expect(r.totalElapsedMs).toBeGreaterThanOrEqual(0);
+    expect(r.plan.totalSegments).toBe(4);
+  });
 });
 
 describe("单集执行", () => {

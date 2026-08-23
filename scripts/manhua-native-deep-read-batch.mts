@@ -34,7 +34,11 @@ import {
 } from "../server/services/manhuaNativeDeepReadRunner.ts";
 import { listIngestedNativeDeepReadEpisodes } from "../server/services/manhuaNativeDeepReadIngest.ts";
 import {
+  NATIVE_DEEP_READ_BATCH_HARD_CEILING,
+  NATIVE_DEEP_READ_DEFAULT_BATCH_EPISODES,
+  NATIVE_DEEP_READ_MAX_SEGMENT_SEC,
   runNativeDeepReadBatch,
+  validateNativeDeepReadBatchPlan,
   type NativeDeepReadBatchEpisode,
 } from "../server/services/manhuaNativeDeepReadExecution.ts";
 import { execFile } from "node:child_process";
@@ -66,7 +70,15 @@ if (!listPath) fail("缺 --list=<episodes.json>");
 
 /** 默认干跑：不加 --go 一律不发模型请求 */
 const isGo = args.get("go") === "1";
-const limit = Math.max(1, Math.floor(Number(args.get("limit")) || 999));
+/**
+ * 跑几集由你定：`--limit=N`。省略时取默认值，避免手滑把整份清单一口气跑了
+ * （原来默认 999，等于「有多少跑多少」）。
+ * 真正拦住误发的不是这个数，是下面的确认码 ＋ --max-calls。
+ */
+const limit = Math.min(
+  NATIVE_DEEP_READ_BATCH_HARD_CEILING,
+  Math.max(1, Math.floor(Number(args.get("limit")) || NATIVE_DEEP_READ_DEFAULT_BATCH_EPISODES)),
+);
 
 type EpisodeInput = {
   episodeIndex: number;
@@ -80,12 +92,16 @@ const raw = JSON.parse(await fs.readFile(listPath, "utf8")) as EpisodeInput[];
 if (!Array.isArray(raw) || !raw.length) fail(`${listPath} 里没有可执行的集`);
 const wanted = raw.slice(0, limit);
 
-/** 解析该集的 CDN 节点副本：只拿地址，不下载 —— 模型自己去 CDN 拉流 */
-async function resolveNodeUrls(sourceUrl: string): Promise<string[]> {
+/**
+ * 解析该集的 CDN 节点副本：只拿地址，不下载 —— 模型自己去 CDN 拉流。
+ * signal + timeout 必带：否则 SIGINT 落在解析阶段时要等 yt-dlp 自己结束，
+ * 甚至可能一直停在这里。
+ */
+async function resolveNodeUrls(sourceUrl: string, signal: AbortSignal): Promise<string[]> {
   const { stdout } = await execFileAsync(
     "yt-dlp",
     ["-J", "--no-warnings", ...(process.env.DOUYIN_COOKIE ? ["--add-header", `Cookie:${process.env.DOUYIN_COOKIE}`] : []), sourceUrl],
-    { maxBuffer: 1 << 28 },
+    { maxBuffer: 1 << 28, timeout: 120_000, signal },
   );
   const info = JSON.parse(stdout) as { formats?: Array<Record<string, unknown>> };
   const best = pickSmallestVideoFormat(info.formats || []);
@@ -93,41 +109,65 @@ async function resolveNodeUrls(sourceUrl: string): Promise<string[]> {
   return [best.url];
 }
 
+const controller = new AbortController();
+const stop = () => controller.abort(new Error("用户已停止学习"));
+process.once("SIGINT", () => {
+  console.log("\n收到中断，停止后续集（已入库的集保留）…");
+  stop();
+});
+process.once("SIGTERM", stop);
+
+const toBatchEpisode = (e: EpisodeInput): NativeDeepReadBatchEpisode => ({
+  episodeIndex: e.episodeIndex,
+  sourceUrl: e.sourceUrl,
+  durationSec: e.durationSec,
+  laneHintZh: e.laneHintZh,
+  segments: e.segments,
+  resolveNodes: () => resolveNodeUrls(e.sourceUrl, controller.signal),
+});
+
+// 预检在列 GCS 之前：清单里写两次同一集、集号非法、单段超 1000s 都在这里拒
+let plan;
+try {
+  plan = validateNativeDeepReadBatchPlan(wanted.map(toBatchEpisode), { maxEpisodes: limit });
+} catch (e) {
+  fail(`发车清单预检未过：${e instanceof Error ? e.message : String(e)}`);
+}
+
 const alreadyIngested = await listIngestedNativeDeepReadEpisodes(seriesKey);
 const todo = wanted.filter((e) => !alreadyIngested.has(e.episodeIndex));
 
 console.log("──────── 原生精读发车计划 ────────");
 console.log(`合集        ${seriesKey}`);
-console.log(`清单        ${listPath} · 共 ${raw.length} 集，本次取前 ${wanted.length} 集`);
+console.log(`清单        ${listPath} · 共 ${raw.length} 集，本次取前 ${wanted.length} 集（--limit=${limit}）`);
 console.log(`已入库      ${alreadyIngested.size} 集 [${[...alreadyIngested].sort((a, b) => a - b).join(",") || "—"}]`);
 console.log(`本次要跑    ${todo.length} 集 [${todo.map((e) => e.episodeIndex).join(",") || "—"}]`);
-console.log(`总时长      ${Math.round(todo.reduce((s, e) => s + (e.durationSec || 0), 0) / 60)} 分钟`);
+console.log(`总时长      ${Math.round(plan.totalDurationSec / 60)} 分钟`);
+console.log(`模型API次数  ${plan.totalSegments}   ← 计费单位是 segment，不是集`);
+console.log(`单段上限    ${NATIVE_DEEP_READ_MAX_SEGMENT_SEC}s（fps=2 · max_frames=2000）`);
+console.log(`计划确认码   ${plan.planHash}`);
 console.log(`模式        ${isGo ? "🔴 真跑（会花钱）" : "🟢 干跑（不发任何模型请求）"}`);
 console.log("──────────────────────────────");
 
 if (!isGo) {
-  console.log("干跑结束。确认无误后加 --go 发车。");
+  console.log(
+    `干跑结束。确认无误后：--go --confirm=${plan.planHash} --max-calls=${plan.totalSegments}`,
+  );
   process.exit(0);
+}
+
+// 真跑必须带上干跑打印的同一份计划，保证发的就是确认过的那份
+const confirmed = String(args.get("confirm") || "");
+const maxCalls = Number(args.get("max-calls"));
+if (confirmed !== plan.planHash || maxCalls !== plan.totalSegments) {
+  fail(`真跑必须携带 --confirm=${plan.planHash} --max-calls=${plan.totalSegments}`);
 }
 if (!todo.length) {
   console.log("没有要跑的集，退出。");
   process.exit(0);
 }
 
-const episodes: NativeDeepReadBatchEpisode[] = todo.map((e) => ({
-  episodeIndex: e.episodeIndex,
-  sourceUrl: e.sourceUrl,
-  durationSec: e.durationSec,
-  laneHintZh: e.laneHintZh,
-  segments: e.segments,
-  resolveNodes: () => resolveNodeUrls(e.sourceUrl),
-}));
-
-const controller = new AbortController();
-process.on("SIGINT", () => {
-  console.log("\n收到中断，停止后续集（已入库的集保留）…");
-  controller.abort();
-});
+const episodes: NativeDeepReadBatchEpisode[] = todo.map(toBatchEpisode);
 
 const result = await runNativeDeepReadBatch({
   seriesKey,
@@ -135,10 +175,18 @@ const result = await runNativeDeepReadBatch({
   abortSignal: controller.signal,
   onProgress: (o) => {
     const mark = o.status === "ingested" ? "✅" : o.status === "skipped" ? "⏭" : "✗";
-    console.log(`${mark} 第${o.episodeIndex}集 · ${o.status}${o.gcsUri ? ` · ${o.gcsUri}` : ""}${o.errorZh ? ` · ${o.errorZh}` : ""}`);
+    const cost = o.costCny ? ` · ¥${o.costCny.toFixed(4)}` : "";
+    const took = o.elapsedMs ? ` · ${Math.round(o.elapsedMs / 1000)}s` : "";
+    console.log(`${mark} 第${o.episodeIndex}集 · ${o.status}${cost}${took}${o.gcsUri ? ` · ${o.gcsUri}` : ""}${o.errorZh ? ` · ${o.errorZh}` : ""}`);
   },
 });
 
 console.log("──────── 结果 ────────");
 console.log(`入库 ${result.ingestedCount} · 跳过 ${result.skippedCount} · 失败 ${result.failedCount}${result.aborted ? " · 被中止" : ""}`);
+// 只报成功卡会把「花了钱没入库」那部分算漏
+console.log(`实际成本    ¥${result.totalCostCny.toFixed(4)}`);
+console.log(`总耗时      ${Math.round(result.totalElapsedMs / 1000)} 秒`);
+console.log(
+  `⚠️ 失败或中止的集会留下占位对象（native-claims/），不会自动清理也不会自动重跑，请人工核对`,
+);
 process.exit(result.failedCount > 0 ? 1 : 0);
