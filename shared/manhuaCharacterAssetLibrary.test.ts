@@ -26,6 +26,7 @@ import {
   suggestManhuaContrastPartner,
   suggestManhuaSameFieldPartner,
   getManhuaArtStyleExecutionLockZh,
+  getManhuaArtStylePreset,
 } from "./manhuaCharacterAssetLibrary";
 
 describe("manhuaCharacterAssetLibrary", () => {
@@ -216,5 +217,53 @@ describe("3D 档资产复用（0824 审阅修复）", () => {
     expect(getManhuaArtStyleExecutionLockZh("cg_3d")).not.toContain("必须半写实二次元");
     expect(getManhuaArtStyleExecutionLockZh("photoreal_3d")).toContain("毛孔");
     expect(getManhuaArtStyleExecutionLockZh("photoreal")).toBe("");
+  });
+});
+
+describe("3D 档不混入旧二维渲染词（0824 审阅第二轮）", () => {
+  const forbiddenLegacyStyle =
+    /半写实(?:二次元|动漫)|(?:国乙(?:游戏)?|乙女游戏)立绘|(?:韩系|韩国)(?:精致)?厚涂|电影剧照写实/;
+
+  it("三条角色生产入口在 3D 档只送外形，不送二维画风", () => {
+    const sheet = buildManhuaCharacterSheetGenPrompt({
+      characterId: "char_f_01",
+      artStyleId: "cg_3d",
+    });
+    const anchor = buildManhuaCharacterPromptBlock(["char_f_01", "char_m_14"], {
+      artStyleId: "cg_3d",
+    });
+    const clipboard = buildManhuaCharacterClipboardText("char_f_16", {
+      artStyleId: "cg_3d",
+    });
+
+    for (const output of [sheet, anchor, clipboard]) {
+      expect(output).toContain("3D");
+      expect(output).toContain("PBR");
+      expect(output).not.toMatch(forbiddenLegacyStyle);
+    }
+
+    // 原有二维 CG 档行为保持不变
+    expect(
+      buildManhuaCharacterSheetGenPrompt({ characterId: "char_f_01", artStyleId: "cg_drama" }),
+    ).toMatch(/厚涂/);
+  });
+
+  it("3D 仿真人不再「同时要求 SSS 又禁止 CG 次表面散射」", () => {
+    const preset = getManhuaArtStylePreset("photoreal_3d").promptZh;
+    const sheet = buildManhuaCharacterSheetGenPrompt({
+      characterId: "char_f_01",
+      artStyleId: "photoreal_3d",
+    });
+    expect(preset).toMatch(/subsurface scattering|SSS/i);
+    expect(preset).toContain("3D 数字人皮肤与演算锁");
+    // 旧摄影锁里的这句会与 SSS 要求自相矛盾，3D 档不该继承
+    expect(preset).not.toContain("禁止 CG 次表面散射假光滑");
+    expect(sheet).not.toContain("禁止 CG 次表面散射假光滑");
+    expect(sheet).not.toMatch(forbiddenLegacyStyle);
+
+    // 原仿真人档仍保留完整摄影锁
+    expect(
+      buildManhuaCharacterSheetGenPrompt({ characterId: "char_f_01", artStyleId: "photoreal" }),
+    ).toContain("禁止 CG 次表面散射假光滑");
   });
 });

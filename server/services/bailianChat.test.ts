@@ -48,7 +48,7 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链)", () => {
     expect(r.gatewayTrace).toEqual([{ gateway: "bailian", model: "ZHIPU/GLM-5.3", outcome: "ok" }]);
   });
 
-  it("北京百炼 HTTP 500 后降级新加坡百炼成功（顺位：北京→新加坡→OpenRouter→EvoLink）", async () => {
+  it("北京百炼 HTTP 500 后降级新加坡百炼成功（顺位：北京→新加坡→OpenRouter）", async () => {
     const calls = stubFetchSeq([
       () => ({ ok: false, status: 500, body: "boom" }),
       () => ({ ok: true, status: 200, body: okBody(GOOD) }),

@@ -37,3 +37,18 @@ describe("resolveManhuaCustomAssetReference", () => {
     expect(hit?.previewPath).toBeTruthy();
   });
 });
+
+describe("3D 档库种子只送外形（0824 审阅第二轮）", () => {
+  it("付费资产生成入口不把旧二维画风带进去", () => {
+    const hit = resolveManhuaCustomAssetReference({
+      role: "character",
+      seedLibraryId: "char_m_14",
+      artStyleId: "cg_3d",
+    });
+    expect(hit?.strategy).toBe("exact");
+    expect(hit?.promptZh).toContain("椭圆脸");
+    expect(hit?.promptZh).not.toMatch(
+      /半写实(?:二次元|动漫)|(?:国乙(?:游戏)?|乙女游戏)立绘|(?:韩系|韩国)(?:精致)?厚涂/,
+    );
+  });
+});

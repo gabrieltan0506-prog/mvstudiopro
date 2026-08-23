@@ -1,6 +1,6 @@
 /**
  * GLM-5.3 主力 + Qwen3.8-Max 兜底的五档聊天通道(2026-08-21 用户拍板)。
- * 顺序:百炼 GLM-5.3 → EvoLink GLM-5.3 → OpenRouter GLM-5.3
+ * 顺序:北京百炼 GLM-5.3 → 新加坡百炼 GLM-5.3 → OpenRouter GLM-5.3
  *      → Wan official(百炼直连) Qwen3.8-Max → EvoLink Qwen3.8-Max。
  * GLM-5.3 与 5.2 同价(¥8/¥28)但 1M 上下文、缓存命中 ¥2,同价换代直接升级;
  * 末档换 Qwen3.8-Max:先 Wan official 百炼直连(与 GLM 同一把 WAN_OFFICIAL 钥匙、人民币计价),

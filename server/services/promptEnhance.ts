@@ -1,6 +1,6 @@
 /**
  * 防废片编译器·语义增强层(PR B):五要素散文 → 十字段满配提示词。
- * 主力 GLM-5.3 链(百炼→EvoLink→OpenRouter→Qwen 末档,复用 bailianChat 网关兜底);
+ * 主力 GLM-5.3 链(北京百炼→新加坡百炼→OpenRouter→Qwen 末档,复用 bailianChat 网关兜底);
  * 固定 system prompt(知识库工艺蒸馏)吃百炼缓存价。本层只产文本,计费在路由层
  * (成功才扣,chargeKey 幂等);格式层最后把关目标方言。
  */

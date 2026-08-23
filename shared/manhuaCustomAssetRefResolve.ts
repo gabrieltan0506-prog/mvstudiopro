@@ -3,6 +3,7 @@
  */
 import { getAncientArchetypeById } from "./manhuaAncientArchetypeLibrary.js";
 import {
+  getManhuaCharacterAppearancePromptZh,
   getManhuaCharacterById,
   getManhuaCharacterPreviewUrl,
 } from "./manhuaCharacterAssetLibrary.js";
@@ -194,13 +195,17 @@ export function resolveManhuaCustomAssetReference(opts: {
     }
     const c = getManhuaCharacterById(id);
     if (!c) return null;
+    // 付费资产生成入口：3D 档只送外形，不把旧二维画风带进去
+    const promptZh = getManhuaCharacterAppearancePromptZh(c, {
+      artStyleId: opts.artStyleId,
+    });
     const path = getManhuaCharacterPreviewUrl(id, { artStyleId: opts.artStyleId }) || "";
     if (path) {
       return {
         role: "character",
         seedLibraryId: id,
         labelZh: c.nameZh,
-        promptZh: c.promptZh,
+        promptZh,
         previewPath: path,
         strategy: "exact",
         referenceLibraryId: id,
@@ -210,7 +215,7 @@ export function resolveManhuaCustomAssetReference(opts: {
       role: "character",
       seedLibraryId: id,
       labelZh: c.nameZh,
-      promptZh: c.promptZh,
+      promptZh,
       previewPath: "",
       strategy: "text",
       referenceNoteZh: "无可用库图，纯文案出定妆",

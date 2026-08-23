@@ -141,6 +141,19 @@ const CG_3D_RENDER_LOCK_EN =
 const CG_3D_AVOID_EN =
   "Avoid flat cel shading, outline strokes, uniform sharpness across the frame, painted flat backgrounds.";
 
+/**
+ * 3D 数字人专用皮肤锁。
+ *
+ * ⚠️ 不能复用 PHOTOREAL_ANTI_AI_LOCK_ZH：它内含
+ * 「禁止 CG 次表面散射假光滑」（见 photorealCharacterPrompt.ts 的皮肤质感锁），
+ * 而 3D 档要求的正是 SSS —— 两句同时进 prompt 会自相矛盾，模型只能二选一乱猜。
+ */
+const PHOTOREAL_3D_DIGITAL_HUMAN_LOCK_ZH = `【3D 数字人皮肤与演算锁】
+- 皮肤必须使用物理可信的 SSS 表现耳廓、鼻翼和面颊的组织厚度，同时保留毛孔、细绒、肤色微差与轻微自然不对称。
+- 高光随皮肤粗糙度变化，额头、鼻尖、嘴唇与面颊不可使用同一塑料反光；禁止蜡像光、瓷器皮与全脸均匀磨皮。
+- 眼球、泪线、牙齿、发丝与衣料分别使用对应材质，接触阴影和 AO 必须把五官、头发与服装锚定在真实空间。
+- 明确保持影视级 3D 数字人渲染，不降级为二维厚涂，也不直接复制成真人照片。`.trim();
+
 export type ManhuaArtStylePreset = {
   id: ManhuaArtStyleId;
   labelZh: string;
@@ -189,7 +202,7 @@ export const MANHUA_ART_STYLE_PRESETS: ManhuaArtStylePreset[] = [
       "\n" +
       "Skin shows pores and peach fuzz under raking light; hair rendered as individual strands, not clumps. " +
       "Avoid waxy CGI sheen, cel shading, cartoon proportions.\n" +
-      PHOTOREAL_ANTI_AI_LOCK_ZH +
+      PHOTOREAL_3D_DIGITAL_HUMAN_LOCK_ZH +
       "\n" +
       PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH,
   },
@@ -239,6 +252,34 @@ export function getManhuaArtStyleExecutionLockZh(id?: string | null): string {
     default:
       return "";
   }
+}
+
+/**
+ * 角色库历史 promptZh 内含固定的二维渲染词
+ * （实测：半写实二次元 31 处 / 国乙立绘 28 / 韩系厚涂 28 / 超写实8K 30）。
+ *
+ * 这些词继续服务原有 CG 漫剧、仿真人两档；进入新增 3D 档时只保留脸型、发型、
+ * 服装、职业、气质与道具，**渲染方式统一由当前画风 preset 决定**，
+ * 否则 3D 档会在角色定妆、角色锚点、库生成新资产三条入口混进二维画风。
+ */
+export function getManhuaCharacterAppearancePromptZh(
+  character: Pick<ManhuaCharacterTemplate, "promptZh"> | null | undefined,
+  opts?: { artStyleId?: string | null },
+): string {
+  const raw = String(character?.promptZh || "").trim();
+  if (!raw || !isManhua3dArtStyle(opts?.artStyleId)) return raw;
+
+  return raw
+    .replace(/半写实(?:二次元|动漫)[，,]?/g, "")
+    .replace(/(?:国乙(?:游戏)?|乙女游戏)立绘(?:质感|品质)?[，,]?/g, "")
+    .replace(/(?:韩系|韩国)(?:精致)?厚涂[，,]?/g, "")
+    .replace(/电影剧照写实[，,]?/g, "")
+    .replace(/电影(?:感柔和光影|级柔光|柔光)[，,]?/g, "")
+    .replace(/超写实8K[。.]?/gi, "")
+    .replace(/[，,]{2,}/g, "，")
+    .replace(/[，,]\s*[。.!！]/g, "。")
+    .replace(/^[\s，,；;]+|[\s，,；;]+$/g, "")
+    .trim();
 }
 
 export function getManhuaArtStylePreset(id?: string | null): ManhuaArtStylePreset {
@@ -1204,6 +1245,9 @@ export function buildManhuaCharacterSheetGenPrompt(opts?: {
 }): string {
   const style = getManhuaArtStylePreset(opts?.artStyleId);
   const base = opts?.characterId ? getManhuaCharacterById(opts.characterId) : null;
+  const appearancePrompt = getManhuaCharacterAppearancePromptZh(base, {
+    artStyleId: style.id,
+  });
   const gender: ManhuaCharacterGender =
     base?.gender || (opts?.gender === "male" ? "male" : "female");
   const stage = getManhuaCharacterLifeStage(base);
@@ -1220,14 +1264,19 @@ export function buildManhuaCharacterSheetGenPrompt(opts?: {
           ? "女主"
           : "男主";
   const seed = base
-    ? `以「${base.nameZh}」为气质种子（${base.jobZh}；${base.temperamentTags.join("·")}），生成**新面孔新人**，避免复刻同一张脸。\n请画出的外形：${base.promptZh}`
+    ? `以「${base.nameZh}」为气质种子（${base.jobZh}；${base.temperamentTags.join("·")}），生成**新面孔新人**，避免复刻同一张脸。\n请画出的外形：${appearancePrompt}`
     : `生成一名都市现代向${roleZh}新人定妆半身像，气质鲜明、可连载锁脸。`;
   const hint = String(opts?.userHint || "").trim();
   const lifeStageBlock = photorealLifeStagePromptBlock(stage);
-  const antiAi =
-    getManhuaArtStyleFamily(style.id) === "photoreal"
-      ? `\n${PHOTOREAL_ANTI_AI_LOCK_ZH}${lifeStageBlock ? `\n${lifeStageBlock}` : ""}`
-      : "";
+  const isPhotorealFamily = getManhuaArtStyleFamily(style.id) === "photoreal";
+  const antiAi = [
+    // 真实摄影锁只服务原仿真人档：它禁止 CG 次表面散射，
+    // 3D 仿真人改用 preset 内的数字人专用锁，避免自相矛盾
+    style.id === "photoreal" ? PHOTOREAL_ANTI_AI_LOCK_ZH : "",
+    isPhotorealFamily ? lifeStageBlock : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
   return [
     "生成一张竖版漫剧角色定妆参考（白底或浅灰干净背景，9:16）：单人半身或胸像，脸与服饰清楚。",
     "按人物来画；姓名、标签、三视图标注、对白与海报书法作隐藏意图，绝不能画进画面。少用名人脸。",
@@ -1253,12 +1302,15 @@ export function buildManhuaCharacterClipboardText(
   const c = getManhuaCharacterById(id);
   if (!c) return "";
   const style = getManhuaArtStylePreset(opts?.artStyleId);
+  const appearancePrompt = getManhuaCharacterAppearancePromptZh(c, {
+    artStyleId: style.id,
+  });
   return [
     `${c.nameZh}（${c.gender === "female" ? "女主" : "男主"}·${c.jobZh}${c.age ? `·${c.age}岁` : ""}）`,
     `气质：${c.temperamentTags.join("·")}`,
     `画风：${style.labelZh}`,
     style.promptZh,
-    `提示词：${c.promptZh}`,
+    `提示词：${appearancePrompt}`,
   ]
     .filter(Boolean)
     .join("\n");
@@ -1294,7 +1346,10 @@ export function buildManhuaCharacterPromptBlock(
     const bone = isPhotoreal ? `\n${formatPhotorealFaceShapeBlock(c.id, c.gender)}` : "";
     const life = isPhotoreal ? photorealLifeStagePromptBlock(stage) : "";
     const lifeLine = life ? `\n${life}` : "";
-    return `${i + 1}. ${display}（${roleLabel}·${c.jobZh}${age ? "·" + age : ""}）气质：${tags}\n提示词：${c.promptZh}${bone}${lifeLine}`;
+    const appearancePrompt = getManhuaCharacterAppearancePromptZh(c, {
+      artStyleId: style.id,
+    });
+    return `${i + 1}. ${display}（${roleLabel}·${c.jobZh}${age ? "·" + age : ""}）气质：${tags}\n提示词：${appearancePrompt}${bone}${lifeLine}`;
   });
   const identity = String(opts?.identityLockZh || "").trim();
   const castLock =
