@@ -36,6 +36,7 @@ import {
   mergeEpisodeDigestsIntoProposal,
   mergeManhuaLearnChunkIntoDigest,
   deriveManhuaLearnPaywallState,
+  guessLane,
   nextManhuaLearnEpisodeFailureStreak,
   pickNextEpisodeIndexes,
   pickManhuaLearnEpisodeGapMs,
@@ -380,16 +381,6 @@ async function resolveManhuaSeriesKey(input: {
   });
 }
 
-function guessLane(text: string): ManhuaViralTemplateLane {
-  const t = text;
-  if (/种田|边关|古言|开荒/.test(t)) return "古言种田";
-  if (/系统|吞噬|进化|觉醒/.test(t)) return "系统觉醒";
-  if (/电竞|游戏|操作|竞技/.test(t)) return "游戏竞技";
-  if (/甜宠|恋爱|霸总/.test(t)) return "甜宠";
-  if (/悬疑|权谋|宫斗/.test(t)) return "悬疑权谋";
-  if (/沙雕|搞笑/.test(t)) return "搞笑沙雕";
-  return "爽文逆袭";
-}
 
 function episodeObjectName(seriesKey: string, episodeIndex: number): string {
   return `manhua-template-learn/series/${seriesKey}/episodes/ep_${String(episodeIndex).padStart(4, "0")}.json`;

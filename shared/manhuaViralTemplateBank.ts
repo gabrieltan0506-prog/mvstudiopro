@@ -195,6 +195,28 @@ export type ManhuaViralTemplateProvenance = {
     /** true = 润色失败、卡面是启发式草稿 */
     degraded?: boolean;
   };
+  /**
+   * 原生视频精读来源（0824）。
+   *
+   * 与 frameVision 并列而非替代：一张卡到底是抽帧学的还是精读学的，
+   * 审批人和后续对账都要能分辨。失败/丢弃/截断三个计数必须落库——
+   * 静默少几个镜头比整体失败更难发现。
+   */
+  nativeVideoDeepRead?: {
+    model: string;
+    /** 计划精读的段数与实际成功段数 */
+    attemptedSegments: number;
+    successSegments: number;
+    /** 落库的镜头数 */
+    shotCount: number;
+    /** 因动作或节奏结构为空而丢弃的镜头数 */
+    droppedCount: number;
+    /** 是否触顶 128 被等距抽稀 */
+    truncated: boolean;
+    /** 走的是套餐额度还是按量付费 —— 对账要看这个 */
+    usingPlanQuota?: boolean;
+    costCny: number;
+  };
   /** 关键帧 API 已同时产出底稿字段；这里证明系列卡由程序聚合且没有第二次模型调用。 */
   seriesAggregation?: {
     mode: "frame_vision_deterministic";
@@ -211,6 +233,40 @@ const DEFAULT_DENSITY: ManhuaViralTemplateDensityHints = {
 
 /** 出厂种子已清空（见文件头）；保留常量名给合并逻辑与测试注入用 */
 export const MANHUA_VIRAL_TEMPLATE_BANK: readonly ManhuaViralTemplateCard[] = [];
+
+/**
+ * 一句话说清「这张卡是怎么学来的」。
+ *
+ * 审批人必须能分辨精读卡与抽帧卡：两者门槛差很多，精读卡带可复用手法与生成要素，
+ * 抽帧卡没有。丢镜数与触顶抽稀也必须露出来——**静默少几个镜头比整体失败更难发现**。
+ *
+ * 判据只此一处，路由与前端都引用，不各自拼串。
+ * 不含成本：审批看的是内容质量，成本走对账口径。
+ */
+export function describeManhuaTemplateLearnSourceZh(
+  provenance: ManhuaViralTemplateProvenance | undefined,
+): string | undefined {
+  const n = provenance?.nativeVideoDeepRead;
+  if (n) {
+    const parts = [
+      "原生精读",
+      n.model,
+      `${n.shotCount}镜`,
+      `${n.successSegments}/${n.attemptedSegments}段`,
+    ].filter(Boolean);
+    if (n.droppedCount > 0) parts.push(`丢弃${n.droppedCount}镜`);
+    if (n.truncated) parts.push("触顶抽稀");
+    if (n.usingPlanQuota === false) parts.push("按量付费");
+    return parts.join(" · ");
+  }
+  const f = provenance?.frameVision;
+  if (f) {
+    return ["抽帧读图", f.model, `${f.successChunks}/${f.attemptedChunks}块`]
+      .filter(Boolean)
+      .join(" · ");
+  }
+  return undefined;
+}
 
 export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateCard | null {
   if (!raw || typeof raw !== "object") return null;
@@ -426,6 +482,19 @@ function parseManhuaViralTemplateProvenance(
       successChunks: Math.max(0, Math.floor(Number(o.frameVision.successChunks) || 0)),
     };
   }
+  if (o.nativeVideoDeepRead && typeof o.nativeVideoDeepRead === "object") {
+    const n = o.nativeVideoDeepRead;
+    out.nativeVideoDeepRead = {
+      model: String(n.model || "").slice(0, 60),
+      attemptedSegments: Math.max(0, Math.floor(Number(n.attemptedSegments) || 0)),
+      successSegments: Math.max(0, Math.floor(Number(n.successSegments) || 0)),
+      shotCount: Math.max(0, Math.floor(Number(n.shotCount) || 0)),
+      droppedCount: Math.max(0, Math.floor(Number(n.droppedCount) || 0)),
+      truncated: Boolean(n.truncated),
+      usingPlanQuota: typeof n.usingPlanQuota === "boolean" ? n.usingPlanQuota : undefined,
+      costCny: Math.max(0, Number(n.costCny) || 0),
+    };
+  }
   if (o.proposalPolish && typeof o.proposalPolish === "object") {
     out.proposalPolish = {
       provider: String(o.proposalPolish.provider || "").slice(0, 20),
@@ -442,7 +511,11 @@ function parseManhuaViralTemplateProvenance(
       success: o.seriesAggregation.success === true,
     };
   }
-  return out.frameVision || out.proposalPolish || out.seriesAggregation ? out : undefined;
+  // 判据收口（0824）：原先在这里逐个列举已知字段，等于把「这份 provenance 有没有内容」
+  // 写了第二遍——加 nativeVideoDeepRead 时只改了上面的解析分支，这里没跟着改，
+  // 结果卡片写得进、读出来 provenance 恒为 undefined，且**不报错**。
+  // 改成按键数判断：以后再加来源，不需要再同步改这一行。
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /**
