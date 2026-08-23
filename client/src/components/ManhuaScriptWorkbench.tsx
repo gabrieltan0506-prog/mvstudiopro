@@ -174,6 +174,7 @@ import {
   shouldShowToolbarAssetWallEntry,
   shouldShowToolbarCharacterLibraryEntry,
 } from "@/lib/manhuaCharacterEntry";
+import { manhuaToolbarActionCost } from "@/lib/manhuaToolbarGroups";
 
 type WorkflowPhaseId = "outline" | "assets" | "storyboard" | "edit";
 
@@ -2013,8 +2014,18 @@ export default function ManhuaScriptWorkbench({
             ) : null}
           </div>
         </div>
-        {/* 主操作簇居中(用户 0820:高频按钮别压在最右上角,挪到画面上方中间) */}
-        <div className="mx-auto flex flex-wrap items-center justify-center gap-1.5">
+        {/*
+          主操作簇居中(用户 0820:高频按钮别压在最右上角,挪到画面上方中间)。
+
+          花钱动作统一带 data-manhua-action-cost="spend"，样式上给一圈暖色描边，
+          与「对齐画布竖排」这类无害动作区分开 ——
+          本仓有过误点烧掉一整批积分（曾清掉 18 张）的事故，
+          双重确认拦的是点下去之后，颜色分组拦的是**点错本身**。
+        */}
+        <div
+          data-manhua-toolbar-cluster
+          className="mx-auto flex flex-wrap items-center justify-center gap-1.5 [&_[data-manhua-action-cost=spend]]:ring-1 [&_[data-manhua-action-cost=spend]]:ring-amber-300/35 [&_[data-manhua-action-cost=spend]]:ring-offset-1 [&_[data-manhua-action-cost=spend]]:ring-offset-[#0a121c]"
+        >
           {factoryBusy && onStopFactory ? (
             <button
               type="button"
@@ -2032,6 +2043,7 @@ export default function ManhuaScriptWorkbench({
                 <button
                   type="button"
                   data-manhua-action="generate-all-keyarts"
+                  data-manhua-action-cost={manhuaToolbarActionCost("generate-all-keyarts")}
                   disabled={Boolean(factoryBusy)}
                   onClick={runGenerateAllKeyarts}
                   className={`inline-flex items-center gap-1 rounded-lg border border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 px-3 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-45 ${
@@ -2049,6 +2061,7 @@ export default function ManhuaScriptWorkbench({
               <button
                 type="button"
                 data-manhua-action="review-clip-prompts"
+                  data-manhua-action-cost={manhuaToolbarActionCost("review-clip-prompts")}
                 disabled={Boolean(factoryBusy)}
                 onClick={openClipPromptReview}
                 className="inline-flex items-center gap-1 rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-45"
@@ -2190,6 +2203,7 @@ export default function ManhuaScriptWorkbench({
                 type="button"
                 hidden={compactUi && activePhase !== "storyboard"}
                 data-manhua-action="generate-fragment"
+                  data-manhua-action-cost={manhuaToolbarActionCost("generate-fragment")}
                 disabled={Boolean(factoryBusy)}
                 onClick={runGenerateFragment}
                 className="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[10px] font-semibold text-white/75 hover:bg-white/[0.08] disabled:opacity-45"
@@ -2204,6 +2218,7 @@ export default function ManhuaScriptWorkbench({
             <button
               type="button"
               data-manhua-action="layout-readable-chain"
+                  data-manhua-action-cost={manhuaToolbarActionCost("layout-readable-chain")}
               disabled={Boolean(factoryBusy)}
               onClick={() => {
                 if (activePhase !== "storyboard") setActivePhase("storyboard");
@@ -2219,6 +2234,7 @@ export default function ManhuaScriptWorkbench({
             <button
               type="button"
               data-manhua-action="generate-selected-fragments"
+                  data-manhua-action-cost={manhuaToolbarActionCost("generate-selected-fragments")}
               disabled={Boolean(factoryBusy)}
               onClick={() => {
                 if (refuseIfBlocked(clipGateHint)) return;
@@ -2246,6 +2262,7 @@ export default function ManhuaScriptWorkbench({
             <button
               type="button"
               data-manhua-action="generate-missing-fragments"
+                  data-manhua-action-cost={manhuaToolbarActionCost("generate-missing-fragments")}
               disabled={Boolean(factoryBusy)}
               onClick={() => {
                 if (refuseIfBlocked(clipGateHint)) return;
@@ -2280,6 +2297,7 @@ export default function ManhuaScriptWorkbench({
               type="button"
               hidden={compactUi}
               data-manhua-action="rerun-keyarts"
+                  data-manhua-action-cost={manhuaToolbarActionCost("rerun-keyarts")}
               disabled={Boolean(factoryBusy)}
               onClick={() => {
                 if (refuseIfBlocked(keyartGateHint)) return;
