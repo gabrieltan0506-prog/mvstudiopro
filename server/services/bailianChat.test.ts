@@ -29,6 +29,8 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链)", () => {
   beforeEach(() => {
     vi.stubEnv("WAN_OFFICIAL_BASE", "https://ws.example.cn");
     vi.stubEnv("WAN_OFFICIAL_API_KEY", "bl-key");
+    vi.stubEnv("DASHSCOPE_SG_BASE", "https://sg.example.com");
+    vi.stubEnv("DASHSCOPE_SG_API_KEY", "sg-key");
     vi.stubEnv("EVOLINK_API_KEY", "evo-key");
     vi.stubEnv("OPENROUTER_API_KEY", "or-key");
   });
@@ -43,18 +45,18 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链)", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toContain("ws.example.cn/compatible-mode");
     expect(r.gateway).toBe("bailian");
-    expect(r.gatewayTrace).toEqual([{ gateway: "bailian", model: "glm-5.3", outcome: "ok" }]);
+    expect(r.gatewayTrace).toEqual([{ gateway: "bailian", model: "ZHIPU/GLM-5.3", outcome: "ok" }]);
   });
 
-  it("百炼 HTTP 500 后降级 EvoLink 成功", async () => {
+  it("北京百炼 HTTP 500 后降级新加坡百炼成功（顺位：北京→新加坡→OpenRouter）", async () => {
     const calls = stubFetchSeq([
       () => ({ ok: false, status: 500, body: "boom" }),
       () => ({ ok: true, status: 200, body: okBody(GOOD) }),
     ]);
     const r = await invokeGlmJsonChatWithGatewayFallback({ system: "s", user: "u" });
     expect(calls).toHaveLength(2);
-    expect(calls[1].url).toContain("evolink.ai");
-    expect(r.gateway).toBe("evolink");
+    expect(calls[1].url).toContain("sg.example.com/compatible-mode");
+    expect(r.gateway).toBe("bailian_sg");
     expect(r.gatewayTrace[0]).toMatchObject({ gateway: "bailian", outcome: "http_error" });
   });
 
@@ -71,7 +73,7 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链)", () => {
       },
     });
     expect(calls).toHaveLength(2);
-    expect(r.gateway).toBe("evolink");
+    expect(r.gateway).toBe("bailian_sg");
     expect(r.gatewayTrace[0]).toMatchObject({ gateway: "bailian", outcome: "content_invalid" });
   });
 
@@ -103,11 +105,20 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链)", () => {
     const calls = stubFetchSeq([() => ({ ok: false, status: 502, body: "bad" })]);
     const err = await invokeGlmJsonChatWithGatewayFallback({ system: "s", user: "u", maxTokens: 12_345 }).catch((e) => e);
     expect(err).toBeInstanceOf(GlmGatewayError);
-    expect(err.gatewayTrace.map((t: any) => t.gateway)).toEqual(["bailian", "evolink", "openrouter", "bailian_qwen", "evolink_qwen"]);
+    expect(err.gatewayTrace.map((t: any) => t.gateway)).toEqual([
+      "bailian",
+      "bailian_sg",
+      "openrouter",
+      "bailian_qwen",
+      "evolink_qwen",
+    ]);
     expect(err.gatewayTrace.every((t: any) => t.outcome === "http_error")).toBe(true);
     const body0 = JSON.parse(String(calls[0].init?.body));
     expect(body0.max_tokens).toBe(12_345);
-    expect(body0.model).toBe("glm-5.3");
+    expect(body0.model).toBe("ZHIPU/GLM-5.3");
+    // calls[1]=新加坡百炼（同为 ZHIPU/GLM-5.3），calls[2]=OpenRouter（独立命名）
+    const body1 = JSON.parse(String(calls[1].init?.body));
+    expect(body1.model).toBe("ZHIPU/GLM-5.3");
     const body2 = JSON.parse(String(calls[2].init?.body));
     expect(body2.model).toBe("z-ai/glm-5.3");
     expect(calls[0].init?.signal).toBeInstanceOf(AbortSignal);

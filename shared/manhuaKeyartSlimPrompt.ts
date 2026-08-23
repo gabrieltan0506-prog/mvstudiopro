@@ -8,6 +8,7 @@ import {
   getManhuaArtStylePreset,
   getManhuaCharacterById,
   getManhuaCharacterDisplayName,
+  getManhuaArtStyleExecutionLockZh,
   normalizeManhuaArtStyleId,
 } from "./manhuaCharacterAssetLibrary";
 import { customRefsByRole, type ManhuaCustomAssetRef } from "./manhuaCustomAssetRefs";
@@ -25,7 +26,9 @@ import {
 /** 源头短包：单镜出图目标远低于上游 32k */
 export const MANHUA_KEYART_SLIM_SOFT_MAX = 8_000;
 
-const STYLE_PROMPT_CAP = 220;
+// 3D 档的 promptZh 含完整渲染锁（PBR/SSS/AO/fresnel），1000+ 字符；
+// 220 会把质感锁截断到只剩开头一句，等于 3D 档白选
+const STYLE_PROMPT_CAP = 1_800;
 const EDIT_ADDON_CAP = 900;
 
 function capText(s: string, max: number): string {
@@ -143,7 +146,6 @@ export function buildManhuaKeyartSlimPrompt(input: ManhuaKeyartSlimPromptInput):
       customRefs: input.customRefs,
     });
 
-  const isCg = normalizeManhuaArtStyleId(input.artStyleId) === "cg_drama";
   const parts = [
     "【静帧·源头短包】只含本镜画面指令与短锁；完整设定见角色卡/节拍，勿重复长文。",
     buildManhuaKeyartSlimStyleLock(input.artStyleId),
@@ -154,9 +156,7 @@ export function buildManhuaKeyartSlimPrompt(input: ManhuaKeyartSlimPromptInput):
     }),
     buildManhuaKeyartSlimSceneLock(input.sceneId),
     buildManhuaKeyartSlimPropLock(input.propIds, input.customRefs),
-    isCg
-      ? "【画风执行·CG】半写实二次元/国乙厚涂；禁止仿真人皮肤与纪实摄影。"
-      : "",
+    getManhuaArtStyleExecutionLockZh(input.artStyleId),
     buildManhuaKeyartSlimEditAddon(editPlan),
     input.shot ? formatWorkbenchShotInjectBlock(input.shot) : "",
   ].filter(Boolean);

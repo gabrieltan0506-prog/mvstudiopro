@@ -32,7 +32,10 @@ import {
   planKnowledgeCardPages,
   stripKnowledgeCardInternalDirectives,
 } from "../../shared/knowledgeCardPagination.js";
-import { getInfographicNoteTemplate } from "../../shared/infographicNoteTemplates.js";
+import {
+  getInfographicNoteTemplate,
+  getInfographicRenderDepthLockEn,
+} from "../../shared/infographicNoteTemplates.js";
 
 /** 舊 API 別名：歷史 `storyboard_sheet_portrait` 與橫版 16:9·2×4 分鏡表為同一產物，一律正規化為 `storyboard_sheet_landscape`。 */
 export function normalizeCompositeSheetKind(
@@ -476,7 +479,8 @@ function buildKnowledgeCardLayoutDirective(templateId?: string | null): string {
 - Composition reference (layout only, never render these words): ${t.layoutPromptEn
     .replace(/^LAYOUT ONLY\s*—\s*/i, "")
     .replace(/\s*--ar\s+\d+:\d+\s*$/i, "")
-    .trim()}`;
+    .trim()}
+- Render depth (style only, never render these words): ${getInfographicRenderDepthLockEn(t.heroMode)}`;
 }
 
 /**

@@ -79,3 +79,17 @@ describe("htmlPptImagePrompt", () => {
     expect(prompt).toContain("左右对半对比");
   });
 });
+
+describe("PPT 单页插图带渲染质感锁（0824 审阅修复）", () => {
+  it("插图 prompt 含 ambient occlusion", () => {
+    const prompt = buildHtmlPptSlideImagePrompt({
+      templateId: "infographic_material_lab",
+      deckTitle: "工艺拆解",
+      page: {
+        title: "结构分解",
+        bullets: ["外壳", "机芯", "缓冲层"],
+      } as never,
+    });
+    expect(prompt).toContain("ambient occlusion");
+  });
+});

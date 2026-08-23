@@ -58,3 +58,27 @@ describe("buildSinglePageKnowledgeCardImagePrompt · 版式指令", () => {
     expect(prompt).toContain("什么是 FDE");
   });
 });
+
+describe("知识卡正式出图带渲染质感锁（0824 审阅修复）", () => {
+  const markdown = ["# 材料工艺", "## 结构", "外壳、机芯与缓冲层的关系。"].join("\n\n");
+
+  it("信息海报版式带 3D 渲染锁", () => {
+    const prompt = buildSinglePageKnowledgeCardImagePrompt(markdown, {
+      notePageIndex: 1,
+      notePageTotal: 1,
+      infographicTemplateId: "infographic_material_lab",
+    });
+    expect(prompt).toContain("ambient occlusion");
+    expect(prompt).toContain("subsurface scattering");
+  });
+
+  it("融合版式带水彩安全版，不带 PBR/SSS", () => {
+    const prompt = buildSinglePageKnowledgeCardImagePrompt(markdown, {
+      notePageIndex: 1,
+      notePageTotal: 1,
+      infographicTemplateId: "fusion_coastal_lighthouse",
+    });
+    expect(prompt).toContain("watercolor ink-bleed edges");
+    expect(prompt).not.toContain("subsurface scattering");
+  });
+});

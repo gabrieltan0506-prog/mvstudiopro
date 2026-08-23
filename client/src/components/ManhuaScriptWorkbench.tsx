@@ -34,6 +34,9 @@ import {
   getManhuaCharacterDisplayName,
   getManhuaCharacterPreviewUrl,
   MANHUA_ART_STYLE_PRESETS,
+  getManhuaArtStylePreset,
+  isManhua3dArtStyle,
+  normalizeManhuaArtStyleId,
   type ManhuaArtStyleId,
 } from "@shared/manhuaCharacterAssetLibrary";
 import { getAncientArchetypeById } from "@shared/manhuaAncientArchetypeLibrary";
@@ -632,8 +635,7 @@ export default function ManhuaScriptWorkbench({
     keyartFromPrevStill: true,
     clipFromPrevTail: true,
   };
-  const activeArtStyleId: ManhuaArtStyleId =
-    artStyleId === "photoreal" ? "photoreal" : "cg_drama";
+  const activeArtStyleId: ManhuaArtStyleId = normalizeManhuaArtStyleId(artStyleId);
   const [shotIndex, setShotIndex] = useState(0);
   const [clipPromptReviewOpen, setClipPromptReviewOpen] = useState(false);
   /** 免费裁字弹层：拖框选保留区，框外（含烧字边缘）裁掉 */
@@ -3444,6 +3446,55 @@ export default function ManhuaScriptWorkbench({
                 </div>
               )}
             </div>
+
+            {onArtStyleChange ? (
+              <div
+                data-manhua-art-style-picker
+                className="mt-3 rounded-xl border border-cyan-400/30 bg-cyan-500/[0.07] p-3"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <div className="text-[11px] font-semibold text-cyan-50/95">成片画风 · 4 档</div>
+                    <p className="mh-hint mt-0.5 text-[10px] leading-4 text-white/45">
+                      决定角色卡与全部分镜的渲染语言。中途更换会让前后画风不一致，建议出图前定好。
+                    </p>
+                  </div>
+                  <span className="shrink-0 rounded-md border border-cyan-300/30 bg-cyan-400/10 px-1.5 py-0.5 text-[10px] text-cyan-100/85">
+                    当前 · {getManhuaArtStylePreset(activeArtStyleId).labelZh}
+                  </span>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {MANHUA_ART_STYLE_PRESETS.map((preset) => {
+                    const selected = activeArtStyleId === preset.id;
+                    const is3d = isManhua3dArtStyle(preset.id);
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        data-manhua-art-style-id={preset.id}
+                        aria-pressed={selected}
+                        onClick={() => onArtStyleChange(preset.id)}
+                        className={`rounded-lg border px-2.5 py-2 text-left transition ${
+                          selected
+                            ? "border-cyan-400/60 bg-cyan-500/20 shadow-[0_0_0_1px_rgba(34,211,238,0.35)]"
+                            : "border-white/10 bg-white/[0.03] hover:border-white/25"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-[11px] font-semibold text-white">{preset.labelZh}</span>
+                          {is3d ? (
+                            <span className="shrink-0 rounded border border-amber-300/40 bg-amber-400/15 px-1 text-[9px] font-bold text-amber-100">
+                              3D
+                            </span>
+                          ) : null}
+                        </div>
+                        <p className="mt-0.5 text-[10px] leading-4 text-white/45">{preset.shortZh}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
 
             <div
               data-manhua-cast-selected

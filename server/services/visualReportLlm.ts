@@ -1,6 +1,6 @@
 /**
  * 趋势 PNG 报表三攻路由（2026-08-21 用户拍板改口径）：
- * attempt 1-2 走 GLM-5.3 链(百炼→EvoLink→OpenRouter→Qwen3.8-Max 末档),
+ * attempt 1-2 走 GLM-5.3 链(北京百炼→新加坡百炼→OpenRouter→Qwen3.8-Max 末档),
  * attempt 3 兜底 DeepSeek 经济档。遥测同时记录逻辑尝试(llm)与真实外呼(gateway)两层次数。
  * 遥测以本模块返回的真实路由为准（审查 P1-3：禁止把 OpenRouter 记成 Evolink）。
  */

@@ -191,3 +191,33 @@ describe("manhuaKeyartEditFusion", () => {
     expect(plan.editPromptAddonZh).toMatch(/禁止.*纯文生|禁止以现代人物参考图为底/);
   });
 });
+
+describe("3D 画风执行锁（0824 审阅修复）", () => {
+  it("cg_3d / photoreal_3d 各走自己的执行锁，都不带国乙厚涂", () => {
+    const cg3d = planManhuaKeyartEditFusion({
+      characterIds: ["char_f_01"],
+      sceneId: "scene_12",
+      artStyleId: "cg_3d",
+    });
+    expect(cg3d.editPromptAddonZh).toContain("画风执行·3D CG");
+    expect(cg3d.editPromptAddonZh).not.toContain("必须半写实二次元/国乙厚涂");
+    expect(cg3d.editPromptAddonZh).not.toContain("画风执行·CG 漫剧");
+
+    const photoreal3d = planManhuaKeyartEditFusion({
+      characterIds: ["char_f_01"],
+      sceneId: "scene_12",
+      artStyleId: "photoreal_3d",
+    });
+    expect(photoreal3d.editPromptAddonZh).toContain("画风执行·3D 仿真人");
+    expect(photoreal3d.editPromptAddonZh).not.toContain("国乙厚涂");
+    expect(photoreal3d.editPromptAddonZh).not.toContain("画风执行·CG 漫剧");
+
+    // 旧档不受影响
+    const cgDrama = planManhuaKeyartEditFusion({
+      characterIds: ["char_f_01"],
+      sceneId: "scene_12",
+      artStyleId: "cg_drama",
+    });
+    expect(cgDrama.editPromptAddonZh).toContain("必须半写实二次元/国乙厚涂");
+  });
+});

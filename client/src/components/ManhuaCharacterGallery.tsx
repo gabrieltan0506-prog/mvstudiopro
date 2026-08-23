@@ -5,6 +5,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   MANHUA_ART_STYLE_PRESETS,
+  getManhuaCharacterPreviewUrl,
+  isManhua3dArtStyle,
   MANHUA_COUPLE_PACKS,
   buildManhuaCharacterClipboardText,
   buildManhuaDualLeadBrief,
@@ -1423,7 +1425,7 @@ export default function ManhuaCharacterGallery({
 
       <div className="sticky bottom-0 z-10 mt-3 rounded-xl border border-white/15 bg-[#0b0a12]/95 p-3 shadow-[0_-8px_32px_rgba(0,0,0,0.45)] backdrop-blur-md">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="text-[11px] font-semibold text-white/80">成片画风（点选即可，不硬套）</div>
+          <div className="text-[11px] font-semibold text-white/80">成片画风 · 4 档（点选即可，不硬套）</div>
           {artStyleAutoApplied ? (
             <span className="rounded-md border border-white/15 bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-white/55">
               题材软推荐 · 可改
@@ -1436,10 +1438,9 @@ export default function ManhuaCharacterGallery({
           {MANHUA_ART_STYLE_PRESETS.map((p) => {
             const selected = artStyleId === p.id;
             const sampleId = selectedFemale?.id || selectedMale?.id || "char_f_01";
-            const sampleUrl =
-              p.id === "photoreal"
-                ? `/manhua-characters/photoreal/${sampleId}_sheet.jpg`
-                : `/manhua-characters/${sampleId}_sheet.jpg`;
+            // CG 根目录只有 char_xxx.jpg，没有 _sheet 后缀；统一走解析器避免空白卡
+            const sampleUrl = getManhuaCharacterPreviewUrl(sampleId, { artStyleId: p.id });
+            const is3d = isManhua3dArtStyle(p.id);
             return (
               <button
                 key={p.id}
@@ -1473,6 +1474,11 @@ export default function ManhuaCharacterGallery({
                 <div className="px-3 py-2">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[12px] font-semibold text-white">{p.labelZh}</span>
+                    {is3d ? (
+                      <span className="shrink-0 rounded border border-amber-300/40 bg-amber-400/15 px-1 text-[9px] font-bold text-amber-100">
+                        3D
+                      </span>
+                    ) : null}
                   </div>
                   <p className="mt-0.5 text-[10px] text-white/45">{p.shortZh}</p>
                 </div>
