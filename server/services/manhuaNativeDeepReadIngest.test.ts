@@ -56,8 +56,11 @@ describe("入库对象名与 id", () => {
     );
   });
 
-  it("seriesKey 里的非法字符被剥掉，避免拼出非法对象名", () => {
-    expect(nativeDeepReadProposalId("a/b?c#1", 1)).toBe("tpl_native_abc1_ep001");
+  it("非法 seriesKey 与非 1-based 集号直接拒绝，不静默改写成别的卡", () => {
+    // 剥非法字符会让 "a/b" 与 "ab" 落到同一张卡，后写的覆盖先写的且不报错
+    expect(() => nativeDeepReadProposalId("a/b?c#1", 1)).toThrow("seriesKey");
+    expect(() => nativeDeepReadProposalId("abc123", 0)).toThrow("episodeIndex");
+    expect(() => nativeDeepReadProposalId("abc123", 1000)).toThrow("episodeIndex");
   });
 
   it("对象名能反解回集号——断点续跑靠它，写入与查询必须对得上", () => {
@@ -96,6 +99,24 @@ describe("入库门禁", () => {
 
   it("触顶抽稀不拦：学得多不该整集丢掉，卡面标出来即可", () => {
     expect(checkNativeDeepReadIngestable(makeResult({ truncated: true }))).toEqual({ ok: true });
+  });
+
+  it("六个空镜头不能靠数组长度绕过门禁——解析器会把它们全滤掉，落库变空卡", () => {
+    const beatGrid = Array.from({ length: NATIVE_DEEP_READ_MIN_SHOTS }, (_, i) => ({
+      atSec: i,
+      conflictZh: "",
+      visualZh: "",
+    }));
+    const r = checkNativeDeepReadIngestable(makeResult({ beatGrid, shotCount: beatGrid.length }));
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.reasonZh).toContain("有效镜头");
+  });
+
+  it("来源计数互相矛盾时拒收，不写假账 provenance", () => {
+    expect(checkNativeDeepReadIngestable(makeResult({ failedSegmentCount: 1 })).ok).toBe(false);
+    expect(checkNativeDeepReadIngestable(makeResult({ shotCount: 99 })).ok).toBe(false);
+    expect(checkNativeDeepReadIngestable(makeResult({ model: "" })).ok).toBe(false);
+    expect(checkNativeDeepReadIngestable(makeResult({ attemptedSegments: 0 })).ok).toBe(false);
   });
 });
 
@@ -179,6 +200,12 @@ describe("装卡", () => {
         ...baseInput,
         result: makeResult({ segmentCount: 0, beatGrid: [] }),
       }),
+    ).toBeNull();
+  });
+
+  it("来源地址为空时不装卡——说不清出处的卡不该进库", () => {
+    expect(
+      buildNativeDeepReadProposalCard({ ...baseInput, sourceUrl: "   ", result: makeResult() }),
     ).toBeNull();
   });
 

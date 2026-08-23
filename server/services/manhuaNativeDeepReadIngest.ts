@@ -16,7 +16,12 @@
  * 3. **门禁在写之前**。空卡、全段失败的卡不许进库——审批人点开一张没有镜头的卡，
  *    比根本没有这张卡更浪费时间，而且会掩盖「这集其实没学到」的事实。
  */
-import { listGcsObjectNamesByPrefix, uploadBufferToGcs, downloadGcsObject } from "./gcs.js";
+import {
+  downloadGcsObject,
+  getGcsBucketName,
+  listGcsObjectNamesByPrefix,
+  uploadBufferToGcsIfAbsent,
+} from "./gcs.js";
 import { guessLane } from "../../shared/manhuaTemplateLearnSeries.js";
 import {
   parseManhuaViralTemplateCard,
@@ -67,11 +72,16 @@ export type NativeDeepReadIngestInput = {
  * 就会出现「写进去的和查出来的对不上，于是每次重跑都重烧一遍」。
  */
 export function nativeDeepReadProposalId(seriesKey: string, episodeIndex: number): string {
-  const key = String(seriesKey || "")
-    .trim()
-    .replace(/[^0-9A-Za-z_-]/g, "")
-    .slice(0, 40) || "series";
-  const ep = String(Math.max(1, Math.floor(Number(episodeIndex) || 1))).padStart(3, "0");
+  // 剥非法字符会让 "a/b" 与 "ab" 落到同一张卡，后写的覆盖先写的且不报错 —— 宁可拒绝
+  const key = String(seriesKey || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,40}$/.test(key)) {
+    throw new Error("seriesKey 格式无效，拒绝静默改写以免不同合集发生碰撞");
+  }
+  const episode = Number(episodeIndex);
+  if (!Number.isInteger(episode) || episode < 1 || episode > 999) {
+    throw new Error("episodeIndex 必须是 1–999 的整数");
+  }
+  const ep = String(episode).padStart(3, "0");
   return `tpl_native_${key}_ep${ep}`;
 }
 
@@ -110,13 +120,47 @@ export function checkNativeDeepReadIngestable(
   if (!result || !Array.isArray(result.beatGrid)) {
     return { ok: false, reasonZh: "精读产出为空" };
   }
-  if (result.segmentCount <= 0) {
+
+  const attemptedSegments = Number(result.attemptedSegments);
+  const segmentCount = Number(result.segmentCount);
+  const failedSegmentCount = Number(result.failedSegmentCount);
+
+  if (!String(result.model || "").trim()) {
+    return { ok: false, reasonZh: "精读产出缺少模型标识" };
+  }
+  if (!Number.isInteger(attemptedSegments) || attemptedSegments < 1) {
+    return { ok: false, reasonZh: "计划精读段数无效" };
+  }
+  if (!Number.isInteger(segmentCount) || segmentCount < 0 || segmentCount > attemptedSegments) {
+    return { ok: false, reasonZh: "成功段数超出计划范围" };
+  }
+  if (segmentCount === 0) {
     return { ok: false, reasonZh: `全部 ${result.attemptedSegments} 段精读失败，没有可入库的结构` };
   }
-  if (result.beatGrid.length < NATIVE_DEEP_READ_MIN_SHOTS) {
+  // 计数自相矛盾说明上游装配出错，此时写出来的 provenance 是假账，宁可拒收
+  if (
+    !Number.isInteger(failedSegmentCount)
+    || failedSegmentCount < 0
+    || failedSegmentCount !== attemptedSegments - segmentCount
+  ) {
+    return { ok: false, reasonZh: "成功段数与失败段数不一致，未写入来源记录" };
+  }
+  if (Number(result.shotCount) !== result.beatGrid.length) {
+    return { ok: false, reasonZh: "镜头计数与镜头表长度不一致" };
+  }
+  if (!Number.isInteger(Number(result.droppedCount)) || Number(result.droppedCount) < 0) {
+    return { ok: false, reasonZh: "丢弃镜头计数无效" };
+  }
+
+  // 按数组长度判会被空镜头骗过去：解析器随后会把空镜头全滤掉，落库变成空卡
+  const usableShotCount = result.beatGrid.filter(
+    (beat) => String(beat?.conflictZh || "").trim() && String(beat?.visualZh || "").trim(),
+  ).length;
+
+  if (usableShotCount < NATIVE_DEEP_READ_MIN_SHOTS) {
     return {
       ok: false,
-      reasonZh: `仅解析到 ${result.beatGrid.length} 镜（低于 ${NATIVE_DEEP_READ_MIN_SHOTS} 镜下限），判为没学到`,
+      reasonZh: `仅解析到 ${usableShotCount} 个有效镜头（低于 ${NATIVE_DEEP_READ_MIN_SHOTS} 镜下限），判为没学到`,
     };
   }
   return { ok: true };
@@ -138,6 +182,10 @@ export function buildNativeDeepReadProposalCard(
 ): ManhuaViralTemplateCard | null {
   const gate = checkNativeDeepReadIngestable(input.result);
   if (!gate.ok) return null;
+  // 没有来源地址的卡无法溯源，等于学到的东西说不清出处
+  const sourceUrl = String(input.sourceUrl || "").trim();
+  if (!sourceUrl) return null;
+
   const r = input.result;
   const today = new Date().toISOString().slice(0, 10);
   const laneZh = input.laneZh
@@ -182,7 +230,7 @@ export function buildNativeDeepReadProposalCard(
     densityHints: { minBodyChars: 280, minDialogueLines: 8, minLocationHits: 2 },
     sourceRefs: [
       {
-        url: input.sourceUrl || "native://deep-read",
+        url: sourceUrl,
         fetchedAt: today,
         noteZh: cut(
           `第${input.episodeIndex}集 · ${r.model} · 丢弃${r.droppedCount}镜 · `
@@ -206,52 +254,66 @@ export function buildNativeDeepReadProposalCard(
       },
     },
   };
-  // 过一次库里的解析器：入库形状与读取形状必须同源，否则写得进读不出
-  return parseManhuaViralTemplateCard(card);
-}
-
-function bucketHint(): string {
-  return String(
-    process.env.GCS_BUCKET_NAME
-      || process.env.GROWTH_CAMP_GCS_BUCKET
-      || process.env.VERTEX_GCS_BUCKET
-      || process.env.GOOGLE_CLOUD_STORAGE_BUCKET
-      || "mv-studio-pro-vertex-video-temp",
-  ).trim();
+  // 过一次库里的解析器：入库形状与读取形状必须同源，否则写得进读不出。
+  // 解析器会滤掉空镜头，故解析后再验一次镜头数——门禁看的是入参，这里看的是落库实物
+  const parsed = parseManhuaViralTemplateCard(card);
+  return parsed && parsed.beatGrid.length >= NATIVE_DEEP_READ_MIN_SHOTS ? parsed : null;
 }
 
 /**
  * 断点续跑：列出该合集已入库的集号。
  *
- * 只认**内容有效**的卡——对象存在但解析不出卡、或镜头数为 0，都算没学到，
- * 该集要重跑。否则一次半截写入会让这集永远被跳过。
+ * 只认**内容有效**的卡。列表或单卡状态无法确认时**直接停止续跑**——
+ * 把「未知」当成「未跑」会让 20 集全部重烧一遍，钱是真花出去的；
+ * 内容异常交人工核对，不在这里自动覆盖。
+ *
+ * ⚠️ prefix 必须走 literalPrefix：目录前缀模式会给末尾补 `/`，
+ * 查出来永远是 `tpl_native_<key>_ep/`，匹配不到任何 `ep001.json`，
+ * 于是续跑恒返回空集、每次重跑都重烧。
  */
 export async function listIngestedNativeDeepReadEpisodes(
   seriesKey: string,
   maxEpisodes = 200,
 ): Promise<Set<number>> {
   const done = new Set<number>();
-  const prefix = `${NATIVE_DEEP_READ_PROPOSAL_PREFIX}${nativeDeepReadProposalId(seriesKey, 1).replace(/ep001$/, "")}`;
-  let names: string[] = [];
+  const prefix =
+    `${NATIVE_DEEP_READ_PROPOSAL_PREFIX}`
+    + nativeDeepReadProposalId(seriesKey, 1).replace(/\d{3}$/, "");
+
+  let names: string[];
   try {
-    names = await listGcsObjectNamesByPrefix({ prefix, maxResults: maxEpisodes });
+    names = await listGcsObjectNamesByPrefix({
+      prefix,
+      maxResults: maxEpisodes,
+      literalPrefix: true,
+    });
   } catch (e) {
-    // 列不动就当作「都没跑过」——重跑会覆盖同名对象，代价是重烧，不会写坏
-    console.warn(
-      "[nativeDeepReadIngest] 列已入库集失败，按全未跑处理:",
-      e instanceof Error ? e.message : e,
+    throw new Error(
+      `无法核对已入库集，已停止续跑以避免重复精读：${e instanceof Error ? e.message : e}`,
     );
-    return done;
   }
+
   for (const name of names) {
     const idx = parseNativeDeepReadEpisodeIndex(name, seriesKey);
     if (!idx) continue;
     try {
-      const { buffer } = await downloadGcsObject({ gcsUri: `gs://${bucketHint()}/${name}` });
+      const { buffer } = await downloadGcsObject({
+        gcsUri: `gs://${getGcsBucketName()}/${name}`,
+      });
       const card = parseManhuaViralTemplateCard(JSON.parse(buffer.toString("utf8")));
-      if (card && card.beatGrid.length >= NATIVE_DEEP_READ_MIN_SHOTS) done.add(idx);
-    } catch {
-      // 读不出＝这集要重跑，不加进 done
+      if (
+        !card
+        || card.id !== nativeDeepReadProposalId(seriesKey, idx)
+        || !card.provenance?.nativeVideoDeepRead
+        || card.beatGrid.length < NATIVE_DEEP_READ_MIN_SHOTS
+      ) {
+        throw new Error("卡片形状或来源记录无效");
+      }
+      done.add(idx);
+    } catch (e) {
+      throw new Error(
+        `第${idx}集已有对象但无法确认内容，已停止续跑：${e instanceof Error ? e.message : e}`,
+      );
     }
   }
   return done;
@@ -261,6 +323,8 @@ export type NativeDeepReadIngestResult = {
   card: ManhuaViralTemplateCard;
   gcsUri: string;
   objectName: string;
+  /** false 表示同一集已经由另一任务先写入，本次复用已有卡 */
+  created: boolean;
 };
 
 /**
@@ -275,13 +339,37 @@ export async function ingestNativeDeepReadEpisode(
   if (!gate.ok) {
     throw new Error(`第${input.episodeIndex}集精读不满足入库门禁：${gate.reasonZh}`);
   }
+  if (!String(input.sourceUrl || "").trim()) {
+    throw new Error(`第${input.episodeIndex}集缺少来源地址，未写入不可追溯的模板卡`);
+  }
+
   const card = buildNativeDeepReadProposalCard(input);
   if (!card) throw new Error(`第${input.episodeIndex}集精读装卡失败（解析器拒收）`);
+
   const objectName = nativeDeepReadProposalObjectName(input.seriesKey, input.episodeIndex);
-  const uploaded = await uploadBufferToGcs({
+  const bucket = getGcsBucketName();
+  const gcsUri = `gs://${bucket}/${objectName}`;
+  // 条件创建（ifGenerationMatch=0）：两个任务同时跑同一集时，后到者不覆盖先写入的
+  const uploaded = await uploadBufferToGcsIfAbsent({
+    bucket,
     objectName,
     buffer: Buffer.from(`${JSON.stringify(card, null, 2)}\n`, "utf8"),
     contentType: "application/json",
   });
-  return { card, gcsUri: uploaded.gcsUri, objectName };
+
+  if (!uploaded.created) {
+    const { buffer } = await downloadGcsObject({ gcsUri });
+    const existing = parseManhuaViralTemplateCard(JSON.parse(buffer.toString("utf8")));
+    if (
+      !existing
+      || existing.id !== card.id
+      || !existing.provenance?.nativeVideoDeepRead
+      || existing.beatGrid.length < NATIVE_DEEP_READ_MIN_SHOTS
+    ) {
+      throw new Error(`第${input.episodeIndex}集同名对象已存在但内容无效，未覆盖，请人工核对`);
+    }
+    return { card: existing, gcsUri, objectName, created: false };
+  }
+
+  return { card, gcsUri, objectName, created: true };
 }
