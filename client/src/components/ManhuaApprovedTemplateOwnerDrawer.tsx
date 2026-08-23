@@ -29,6 +29,8 @@ const FIELD_LABELS: Record<ManhuaViralTemplateOptimizeField, string> = {
   summaryZh: "用途摘要",
   hook3sZh: "前三秒钩子",
   beatGrid: "节拍格",
+  reusableZh: "可复用手法",
+  genPromptHintZh: "生成要素",
   scenePoolHints: "场景池",
   castShape: "人物关系",
   densityHints: "内容密度",

@@ -42,6 +42,26 @@ export type ManhuaViralTemplateBeat = {
   conflictZh: string;
   /** 可视觉化动作一句 */
   visualZh: string;
+
+  /**
+   * 以下为**原生视频精读**产出（0824 新增）。
+   *
+   * 全部可选，因为抽帧链路给不出这些——运镜、转场、力度是**帧与帧之间的差分**，
+   * 不存在于任何单帧里，抽帧在采样那一刻就丢了。
+   * 已入库的抽帧产出不带这些字段，必须继续有效。
+   */
+  /** 景别：极特写/特写/近景/中景/全景/大远景 */
+  shotSizeZh?: string;
+  /** 机位：平视/仰拍/俯拍/过肩/主观 */
+  angleZh?: string;
+  /** 运镜：方向与速度，看不出运动写「固定机位」——严禁无依据的「镜头拉远」 */
+  cameraMoveZh?: string;
+  /** 光影：光位、色调、明暗对比 */
+  lightingZh?: string;
+  /** 进入这一镜的转场：硬切/闪白/黑场/遮挡转场/叠化 */
+  transitionInZh?: string;
+  /** 这一镜结束秒（精读逐镜才有；抽帧只有起点） */
+  endSec?: number;
 };
 
 export type ManhuaViralTemplateDensityHints = {
@@ -65,6 +85,8 @@ export const MANHUA_VIRAL_TEMPLATE_OPTIMIZE_FIELDS = [
   "summaryZh",
   "hook3sZh",
   "beatGrid",
+  "reusableZh",
+  "genPromptHintZh",
   "scenePoolHints",
   "castShape",
   "densityHints",
@@ -98,6 +120,23 @@ export type ManhuaViralTemplateRevision = {
   createdAt: string;
 };
 
+/**
+ * 这张卡是不是**原生视频精读**学出来的（0824 新增）。
+ *
+ * 判据取「抽帧链路物理上给不出的东西」：逐镜六栏与可复用手法。
+ * 运镜/转场是帧间差分，抽帧在采样那一刻就丢了——有这些字段，就必然来自原生视频链路。
+ * 用于 UI 上区分新旧形态模板，也用于后续淘汰旧库时筛选。
+ */
+export function isNativeVideoLearnedTemplate(
+  card: Pick<ManhuaViralTemplateCard, "beatGrid" | "reusableZh" | "genPromptHintZh">,
+): boolean {
+  if (String(card.reusableZh || "").trim()) return true;
+  if (String(card.genPromptHintZh || "").trim()) return true;
+  return (card.beatGrid || []).some(
+    (b) => b.shotSizeZh || b.angleZh || b.cameraMoveZh || b.lightingZh || b.transitionInZh,
+  );
+}
+
 export type ManhuaViralTemplateCard = {
   id: string;
   /** UI 短名（中性，不写竞品剧名） */
@@ -107,6 +146,20 @@ export type ManhuaViralTemplateCard = {
   summaryZh: string;
   hook3sZh: string;
   beatGrid: ManhuaViralTemplateBeat[];
+
+  /**
+   * 可复用手法：**脱离本剧剧情**写成的通用做法（0824 新增，原生视频精读独有）。
+   *
+   * 这是学习产出里最有门槛的一栏——剧情复述谁看一遍片子都写得出，
+   * 而「用机位稳定性区分攻守」「力量不拍光效拍环境反应」要懂导演手法才写得出来。
+   * 抽帧链路给不出，故可选。
+   */
+  reusableZh?: string;
+  /**
+   * 生成提示词要素：若用 AI 生成类似片段，画面提示词该写哪几个要素。
+   * 这是**学习产出通向生产输入的那座桥**——学到的东西能不能直接投产，看这一栏。
+   */
+  genPromptHintZh?: string;
   scenePoolHints: string[];
   castShape: {
     leadDesireZh: string;
@@ -171,13 +224,28 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
   if (status !== "proposed" && status !== "approved" && status !== "rejected") return null;
   const beatGrid = Array.isArray(o.beatGrid)
     ? o.beatGrid
-        .map((b) => ({
-          atSec: Math.max(0, Math.floor(Number((b as ManhuaViralTemplateBeat).atSec) || 0)),
-          conflictZh: String((b as ManhuaViralTemplateBeat).conflictZh || "").trim().slice(0, 40),
-          visualZh: String((b as ManhuaViralTemplateBeat).visualZh || "").trim().slice(0, 80),
-        }))
+        .map((raw) => {
+          const b = raw as ManhuaViralTemplateBeat;
+          /** 空串归 undefined：抽帧产出没有这些字段，不该在库里留一堆空字符串 */
+          const opt = (v: unknown, max: number): string | undefined =>
+            String(v || "").trim().slice(0, max) || undefined;
+          const endSec = Math.floor(Number(b.endSec) || 0);
+          return {
+            atSec: Math.max(0, Math.floor(Number(b.atSec) || 0)),
+            conflictZh: String(b.conflictZh || "").trim().slice(0, 40),
+            visualZh: String(b.visualZh || "").trim().slice(0, 80),
+            shotSizeZh: opt(b.shotSizeZh, 16),
+            angleZh: opt(b.angleZh, 16),
+            cameraMoveZh: opt(b.cameraMoveZh, 60),
+            lightingZh: opt(b.lightingZh, 60),
+            transitionInZh: opt(b.transitionInZh, 20),
+            endSec: endSec > 0 ? endSec : undefined,
+          };
+        })
         .filter((b) => b.conflictZh && b.visualZh)
-        .slice(0, 24)
+        // 抽帧链路一集 ~24 拍够用；原生视频精读是逐镜，实测 262 秒出 95 镜，
+        // 卡在 24 会把大部分镜头静默截断
+        .slice(0, 128)
     : [];
   const cast = o.castShape || { leadDesireZh: "", pressureZh: "" };
   const revision = parseManhuaViralTemplateRevision(o.revision);
@@ -190,6 +258,8 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
     summaryZh: String(o.summaryZh || "").trim().slice(0, 120),
     hook3sZh: String(o.hook3sZh || "").trim().slice(0, 200),
     beatGrid,
+    reusableZh: String(o.reusableZh || "").trim().slice(0, 600) || undefined,
+    genPromptHintZh: String(o.genPromptHintZh || "").trim().slice(0, 600) || undefined,
     scenePoolHints: (Array.isArray(o.scenePoolHints) ? o.scenePoolHints : [])
       .map((s) => String(s || "").trim())
       .filter(Boolean)
