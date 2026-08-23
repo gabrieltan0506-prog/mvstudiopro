@@ -12943,6 +12943,14 @@ export default function PlatformPage() {
                                   ? ` · 来源 ${selectedManhuaProposal.sourceRefCount} 条`
                                   : ""}
                               </summary>
+                              {/* 来源摘要：精读卡与抽帧卡门槛差很多，批准前必须能分辨；
+                                  丢镜与触顶抽稀也在这行，静默少几个镜头比整体失败更难发现 */}
+                              {selectedManhuaProposal.learnSourceZh ? (
+                                <div className="mt-2 text-[10px] leading-relaxed text-[#8cefff]/70">
+                                  <span className="text-white/45">学习来源｜</span>
+                                  {selectedManhuaProposal.learnSourceZh}
+                                </div>
+                              ) : null}
                               {selectedManhuaProposal.reusableZh ? (
                                 <div className="mt-2 text-[10px] leading-relaxed text-[#c9c0e6]/60">
                                   <span className="text-white/45">可复用手法｜</span>

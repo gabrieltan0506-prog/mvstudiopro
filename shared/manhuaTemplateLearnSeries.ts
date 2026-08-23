@@ -466,7 +466,14 @@ export function isManhuaLearnListComplete(
   return listed.every((n) => done.has(n));
 }
 
-function guessLane(text: string): ManhuaViralTemplateLane {
+/**
+ * 赛道推断：**全站唯一判据**。
+ *
+ * 0824 收口——此前 `manhuaTemplateLearnService.ts` 里有一份逐字相同的副本。
+ * 两份当时还一致，正因为一致才危险：改了一处另一处就成暗雷，而这种雷不报错，
+ * 只会让两条链路悄悄分赛道（canvas 闭环断一个月就是同一个病）。
+ */
+export function guessLane(text: string): ManhuaViralTemplateLane {
   const t = text;
   if (/种田|边关|古言|开荒/.test(t)) return "古言种田";
   if (/系统|吞噬|进化|觉醒/.test(t)) return "系统觉醒";
