@@ -151,6 +151,22 @@ export async function getEvolinkSunoTask(
  * 一次请求会返回**多个变体**（文档："Each request generates multiple music
  * variations"），全部返回交由调用方选，不擅自只取第一条。
  */
+/** 明确的音频字段名 —— 不按键名模糊匹配 */
+const AUDIO_URL_KEYS = new Set(["audio_url", "audioUrl", "download_url", "stream_url"]);
+/** 扩展名兜底：字段名对了还要看真是音频 */
+const AUDIO_PATH_RE = /\.(?:mp3|wav|m4a|aac|flac|ogg)(?:$|[?#])/i;
+
+/**
+ * 从任务详情里挑音频地址。
+ *
+ * ⚠️ 上一版按「键名或 URL 里含 audio/mp3」模糊匹配，
+ * 结果 `audio_image_url` 的封面 jpg **排在真音频前面**被选中（已复现）。
+ * 现在只认明确字段名 ＋ 音频扩展名。
+ *
+ * 一次请求返回**多个变体**（文档："Each request generates multiple music
+ * variations"），全部返回交调用方选 —— skill 要求「先量再听」，
+ * 只留第一条就没法量。
+ */
 export function pickEvolinkSunoAudioUrls(raw: unknown): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -162,11 +178,13 @@ export function pickEvolinkSunoAudioUrls(raw: unknown): string[] {
     }
     if (typeof node !== "object") return;
     for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-      if (typeof v === "string" && /^https:\/\//.test(v) && /audio|mp3|wav|m4a/i.test(`${k}${v}`)) {
-        if (!seen.has(v)) {
-          seen.add(v);
-          out.push(v);
-        }
+      if (typeof v === "string") {
+        if (!AUDIO_URL_KEYS.has(k)) continue;
+        if (!/^https:\/\//.test(v)) continue;
+        if (!AUDIO_PATH_RE.test(v)) continue;
+        if (seen.has(v)) continue;
+        seen.add(v);
+        out.push(v);
       } else {
         walk(v, depth + 1);
       }

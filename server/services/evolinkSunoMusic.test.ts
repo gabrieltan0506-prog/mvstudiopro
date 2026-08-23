@@ -105,6 +105,19 @@ describe("取音频地址", () => {
     expect(pickEvolinkSunoAudioUrls(raw)).toEqual(["https://a/1.mp3"]);
   });
 
+  it("封面图不当音频 —— 上一版 audio_image_url 的 jpg 排在真音频前面", () => {
+    expect(
+      pickEvolinkSunoAudioUrls({
+        audio_image_url: "https://cdn/cover.jpg",
+        audio_url: "https://cdn/song.mp3",
+      }),
+    ).toEqual(["https://cdn/song.mp3"]);
+  });
+
+  it("字段名对但不是音频扩展名也不收", () => {
+    expect(pickEvolinkSunoAudioUrls({ audio_url: "https://cdn/thing.json" })).toEqual([]);
+  });
+
   it("没有音频时返回空数组，不抛", () => {
     expect(pickEvolinkSunoAudioUrls({ status: "pending" })).toEqual([]);
   });

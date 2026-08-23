@@ -18,6 +18,7 @@ import {
   pickEvolinkSunoAudioUrls,
 } from "./evolinkSunoMusic.js";
 import { signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs.js";
+import { postProdOutputPrefix } from "./postProdMediaSource.js";
 
 export type ScoringRoomRequest = {
   /** 赛道，决定器乐底色 */
@@ -42,16 +43,42 @@ export type ScoringRoomRequest = {
   hasSilenceBreak?: boolean;
 };
 
-export type ScoringRoomResult = {
+export type ScoringRoomVariant = {
+  index: number;
   gcsUri: string;
   /** 供试听；进 bgm_mount 用 gcsUri */
   previewUrl: string;
   bytes: number;
+};
+
+export type ScoringRoomResult = {
   taskId: string;
-  /** 一次请求出多个变体，这里记下总数，采用的是第几条 */
-  variantCount: number;
+  /**
+   * 一次请求出多个变体，**全部转存后返回**。
+   * skill 要求「先量再听」——只留第一条就没法逐 0.5 秒量电平对结构。
+   */
+  variants: ScoringRoomVariant[];
+  elapsedMs: number;
   brief: ReturnType<typeof buildManhuaBgmBrief>;
 };
+
+/**
+ * BGM 落**本人后期工坊前缀**。
+ *
+ * 上一版写 `manhua-bgm/<日期>/…`，而 resolvePostProdInputSources 只放行四类
+ * （本人 post-prod 产物 / 本人上传 / 登记簿验主的画布素材 / 该用户 succeeded
+ * 任务的明确产物）。那个前缀一类都不沾，真去贴装会被判「素材尚未登记」——
+ * 生成出来了却进不了 bgm_mount，等于白花。
+ */
+export function scoringBgmObjectName(
+  userId: string,
+  taskId: string,
+  variantIndex: number,
+): string {
+  const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const safeTask = String(taskId).replace(/[^0-9A-Za-z_-]/g, "").slice(0, 60);
+  return `${postProdOutputPrefix(userId)}bgm/${stamp}/${safeTask}-v${variantIndex}.mp3`;
+}
 
 /** 轮询上限：文档给的预估是 120s，留三倍余量 */
 const POLL_TIMEOUT_MS = 6 * 60_000;
@@ -79,8 +106,12 @@ const sleep = (ms: number, signal?: AbortSignal) =>
  */
 export async function generateManhuaBgm(
   req: ScoringRoomRequest,
-  opts: { abortSignal?: AbortSignal; variantIndex?: number } = {},
+  opts: { userId: string; abortSignal?: AbortSignal },
 ): Promise<ScoringRoomResult> {
+  const userId = String(opts.userId || "").trim();
+  if (!userId) throw new Error("配乐缺少会话用户，无法落本人后期前缀");
+  const startedAt = Date.now();
+
   const brief = buildManhuaBgmBrief({
     laneZh: req.laneZh,
     moods: req.moods,
@@ -101,7 +132,9 @@ export async function generateManhuaBgm(
   let raw: unknown = null;
   for (;;) {
     if (opts.abortSignal?.aborted) throw new Error("已取消");
-    if (Date.now() > deadline) throw new Error(`配乐任务 ${task.id} 超过 ${POLL_TIMEOUT_MS / 60000} 分钟未完成`);
+    if (Date.now() > deadline) {
+      throw new Error(`配乐任务 ${task.id} 超过 ${POLL_TIMEOUT_MS / 60000} 分钟未完成`);
+    }
     await sleep(POLL_INTERVAL_MS, opts.abortSignal);
     const polled = await getEvolinkSunoTask(task.id, { abortSignal: opts.abortSignal });
     if (polled.task.status === "completed") {
@@ -115,30 +148,28 @@ export async function generateManhuaBgm(
 
   const urls = pickEvolinkSunoAudioUrls(raw);
   if (!urls.length) throw new Error(`配乐任务 ${task.id} 完成但没有音频地址`);
-  const pick = urls[Math.min(Math.max(0, opts.variantIndex ?? 0), urls.length - 1)]!;
 
-  // Suno 产物 72h 过期，直链不能进库 —— 即取即转
-  const got = await fetch(pick, { signal: opts.abortSignal });
-  if (!got.ok) throw new Error(`取回配乐失败 HTTP ${got.status}`);
-  const audio = Buffer.from(await got.arrayBuffer());
-  if (!audio.length) throw new Error("配乐音频为空");
+  // Suno 产物 72h 过期，直链不能进库 —— 全部变体即取即转
+  const variants: ScoringRoomVariant[] = [];
+  for (let i = 0; i < urls.length; i += 1) {
+    const got = await fetch(urls[i]!, { signal: opts.abortSignal });
+    if (!got.ok) throw new Error(`取回配乐变体 ${i} 失败 HTTP ${got.status}`);
+    const audio = Buffer.from(await got.arrayBuffer());
+    if (!audio.length) throw new Error(`配乐变体 ${i} 为空`);
+    const { gcsUri } = await uploadBufferToGcs({
+      objectName: scoringBgmObjectName(userId, task.id, i),
+      buffer: audio,
+      contentType: "audio/mpeg",
+    });
+    variants.push({
+      index: i,
+      gcsUri,
+      previewUrl: signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600),
+      bytes: audio.length,
+    });
+  }
 
-  const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  const rand = Math.random().toString(36).slice(2, 8);
-  const { gcsUri } = await uploadBufferToGcs({
-    objectName: `manhua-bgm/${stamp}/${task.id}-${rand}.mp3`,
-    buffer: audio,
-    contentType: "audio/mpeg",
-  });
-
-  return {
-    gcsUri,
-    previewUrl: signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600),
-    bytes: audio.length,
-    taskId: task.id,
-    variantCount: urls.length,
-    brief,
-  };
+  return { taskId: task.id, variants, elapsedMs: Date.now() - startedAt, brief };
 }
 
 /**
@@ -149,7 +180,8 @@ export async function generateManhuaBgm(
  */
 export function buildBgmMountParamsFromScoring(input: {
   videoUri: string;
-  bgm: Pick<ScoringRoomResult, "gcsUri">;
+  /** 用户选定的那条变体 */
+  bgm: Pick<ScoringRoomVariant, "gcsUri">;
   /** 0.48 规实弹默认 */
   bgmVolume?: number;
   entrySec?: number;

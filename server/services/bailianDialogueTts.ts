@@ -16,6 +16,11 @@
  *   ② WAN_PLAN_API_KEY       + token-plan.cn-beijing.maas.aliyuncs.com
  * key 与 base **必须配对**：套餐 key 打工作空间域是 401 InvalidApiKey（0823 实测）。
  */
+import {
+  QWEN_TTS_VOICE_CATALOG,
+  buildQwenTtsVoiceId,
+} from "../../shared/qwenTtsVoiceCatalog.js";
+
 export const BAILIAN_TTS_PATH = "/api/v1/services/audio/tts/SpeechSynthesizer";
 export const BAILIAN_TTS_MODEL = "qwen-audio-3.0-tts-plus";
 
@@ -74,14 +79,33 @@ export function assertNoBracketEmotionTags(text: string): void {
   }
 }
 
-/** voice 参数补全：597 席要带完整模型前缀，系统短名（含 _v）原样透传 */
+/**
+ * 已入库的 597 席音色（`shared/qwenTtsVoiceCatalog.ts`）。
+ * 上一版任何字符串都自动加前缀就送上游，等于没校验 —— 拼错一个字母，
+ * 要等异步返回才知道白花一次。
+ */
+const CATALOG_VOICES = new Set(
+  QWEN_TTS_VOICE_CATALOG.map((e) => buildQwenTtsVoiceId("plus", e.suffix)),
+);
+
+/** 只放真实验证过的系统短名；`/_v\d/` 那种形状匹配会放行任意乱写 */
+const VERIFIED_SHORT_VOICES = new Set([
+  "longanhuan_v3.6",
+  "longhongyanxuan_v3.6",
+  "longweijuquan_v3.6",
+  "longfushanmu_v3.6",
+]);
+
+/** voice 参数补全＋校验：597 席带完整前缀，系统短名走白名单 */
 export function normalizeBailianTtsVoice(voice: string): string {
   const v = String(voice || "").trim();
   if (!v) throw new Error("对白配音缺少 voice");
-  if (v.startsWith(BAILIAN_TTS_VOICE_PREFIX)) return v;
-  // longanhuan_v3.6 这类系统音色是独立命名，不加前缀
-  if (/_v\d/.test(v)) return v;
-  return `${BAILIAN_TTS_VOICE_PREFIX}${v}`;
+  if (VERIFIED_SHORT_VOICES.has(v)) return v;
+  const full = v.startsWith(BAILIAN_TTS_VOICE_PREFIX) ? v : `${BAILIAN_TTS_VOICE_PREFIX}${v}`;
+  if (!CATALOG_VOICES.has(full)) {
+    throw new Error(`voice 不在已入库音色目录：${v}`);
+  }
+  return full;
 }
 
 export type BailianTtsRequest = {
@@ -89,6 +113,8 @@ export type BailianTtsRequest = {
   voice: string;
   /** 情绪与语气的中文指令，例如「压低声音，带着颤抖」 */
   instructionZh?: string;
+  /** 固定则可复现；上一版路由收了却没往下传，被静默丢弃 */
+  seed?: number;
 };
 
 export function buildBailianTtsBody(req: BailianTtsRequest): Record<string, unknown> {
@@ -104,6 +130,7 @@ export function buildBailianTtsBody(req: BailianTtsRequest): Record<string, unkn
       voice: normalizeBailianTtsVoice(req.voice),
       ...(instruction ? { instruction } : {}),
     },
+    ...(Number.isInteger(req.seed) ? { parameters: { seed: req.seed } } : {}),
   };
 }
 
@@ -128,32 +155,49 @@ const execFileAsync = promisify(execFile);
  * **不能拿容器总时长冒充** —— 补过静音的音频容器达标而人声没变。
  * 这里用 ffmpeg silencedetect 把静音段总长扣掉，剩下的才算发声。
  */
+export function sumSilenceDuration(stderr: string): number {
+  let total = 0;
+  const re = /silence_duration:\s*([\d.]+)/g;
+  for (let m = re.exec(stderr); m; m = re.exec(stderr)) total += Number(m[1]) || 0;
+  return total;
+}
+
+/**
+ * 量有效人声时长。
+ *
+ * ⚠️ **上一版是错的，而且错得没有症状**：silencedetect 的输出写在
+ * `ffmpeg -f null -` **成功那一次**的 stderr 里（真 ffmpeg 复现：exit=0，
+ * stderr 里两条 silence_duration 共 2.0 秒），而代码只在 catch 里读 stderr。
+ * 于是 silentTotal 恒为 0、voicedSec 恒等于 totalSec ——
+ * 3 秒容器里只有 1 秒人声也会被判成 3 秒放行，2.5 秒硬闸完全失效。
+ *
+ * 现在从**成功结果**里读 stderr。量不到时长直接抛，不返回可疑数字。
+ */
 export async function measureDialogueVoiced(
   filePath: string,
   abortSignal?: AbortSignal,
 ): Promise<{ totalSec: number; voicedSec: number }> {
-  const { stdout: durOut } = await execFileAsync(
+  const signal = abortSignal
+    ? AbortSignal.any([abortSignal, AbortSignal.timeout(120_000)])
+    : AbortSignal.timeout(120_000);
+
+  const { stdout } = await execFileAsync(
     "ffprobe",
     ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", filePath],
-    { timeout: 60_000, signal: abortSignal },
+    { signal },
   );
-  const totalSec = Number(String(durOut).trim()) || 0;
-
-  // silencedetect 走 stderr；-40dB / 0.2s 是对白的常用阈值
-  let stderr = "";
-  try {
-    await execFileAsync(
-      "ffmpeg",
-      ["-v", "info", "-i", filePath, "-af", "silencedetect=noise=-40dB:d=0.2", "-f", "null", "-"],
-      { timeout: 120_000, signal: abortSignal },
-    );
-  } catch (e) {
-    stderr = String((e as { stderr?: string }).stderr || "");
+  const totalSec = Number(String(stdout).trim());
+  if (!Number.isFinite(totalSec) || totalSec <= 0) {
+    throw new Error("ffprobe 未返回有效音频时长");
   }
-  let silentTotal = 0;
-  const re = /silence_duration:\s*([\d.]+)/g;
-  for (let m = re.exec(stderr); m; m = re.exec(stderr)) silentTotal += Number(m[1]) || 0;
-  const voicedSec = Math.max(0, totalSec - silentTotal);
+
+  const { stderr } = await execFileAsync(
+    "ffmpeg",
+    ["-v", "info", "-i", filePath, "-af", "silencedetect=noise=-40dB:d=0.2", "-f", "null", "-"],
+    { signal },
+  );
+
+  const voicedSec = Math.max(0, totalSec - sumSilenceDuration(String(stderr)));
   return { totalSec, voicedSec };
 }
 
@@ -175,6 +219,65 @@ export type BailianDialogueResult = {
  * 回落只针对**请求本身失败**（网络/5xx/凭证）。参数错误（4xx）不回落——
  * 换个区一样错，只会白花第二次。
  */
+type BailianAudioTicket = { region: BailianTtsRegion; audioUrl: string };
+
+/**
+ * 只做一件事：**拿到第一张成功的取件票**。
+ *
+ * 上一版把「发请求 → 取音频 → 上传 GCS → ffmpeg 量测 → 签名」全包在
+ * 区域循环的同一个 try 里。新加坡已经 HTTP 200 之后，只要取件、GCS、
+ * ffmpeg 或签名任一步失败，就会拿北京凭证**再合成一次** ——
+ * 那不是通道回落，是同一句话付两次钱。
+ *
+ * 4xx 不回落：参数错误换个区一样错，只会白花第二次。
+ */
+async function requestBailianAudioTicket(
+  body: Record<string, unknown>,
+  creds: readonly BailianTtsCredential[],
+  abortSignal?: AbortSignal,
+): Promise<BailianAudioTicket> {
+  let lastError: unknown = null;
+  for (const cred of creds) {
+    try {
+      const signal = abortSignal
+        ? AbortSignal.any([abortSignal, AbortSignal.timeout(120_000)])
+        : AbortSignal.timeout(120_000);
+      const response = await fetch(cred.endpoint, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${cred.apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal,
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        output?: { audio?: { url?: string } };
+        message?: string;
+      } | null;
+      if (response.status >= 400 && response.status < 500) {
+        throw new Error(
+          `对白配音参数未通过 HTTP ${response.status}：${String(payload?.message || "").slice(0, 160)}`,
+        );
+      }
+      if (!response.ok) {
+        lastError = new Error(`${cred.region} HTTP ${response.status}`);
+        continue;
+      }
+      const audioUrl = String(payload?.output?.audio?.url || "").trim();
+      if (!audioUrl) throw new Error("对白配音返回缺少音频地址");
+      return { region: cred.region, audioUrl };
+    } catch (e) {
+      if (abortSignal?.aborted) throw e;
+      if (e instanceof Error && /参数未通过|缺少音频地址/.test(e.message)) throw e;
+      lastError = e;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("对白配音通道均未完成");
+}
+
+/**
+ * 合成一段对白：新加坡套餐优先，失败回落北京套餐。
+ *
+ * **回落只覆盖取件那一步**；下载、量测、上传都在循环之外，只跑一次。
+ */
 export async function synthesizeBailianDialogue(
   req: BailianTtsRequest,
   opts: { abortSignal?: AbortSignal } = {},
@@ -185,85 +288,71 @@ export async function synthesizeBailianDialogue(
     throw new Error("对白配音缺少套餐凭证（DASHSCOPE_SG_PLAN_KEY 或 WAN_PLAN_API_KEY）");
   }
 
-  let lastErr: unknown = null;
-  for (const cred of creds) {
-    try {
-      const res = await fetch(cred.endpoint, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${cred.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-        signal: opts.abortSignal,
-      });
-      const text = await res.text();
-      if (!res.ok) {
-        // 4xx 是参数问题，换区还是错；只有 5xx / 网络问题才值得回落
-        if (res.status < 500) {
-          throw new Error(`对白配音参数错误 HTTP ${res.status}：${text.slice(0, 200)}`);
-        }
-        lastErr = new Error(`${cred.region} HTTP ${res.status}：${text.slice(0, 160)}`);
-        continue;
-      }
-      const json = JSON.parse(text) as { output?: { audio?: { url?: string } } };
-      const audioUrl = String(json.output?.audio?.url || "").trim();
-      if (!audioUrl) throw new Error("对白配音返回里没有 output.audio.url");
+  const ticket = await requestBailianAudioTicket(body, creds, opts.abortSignal);
 
-      // 阿里 OSS 直链有 expires_at，必须即取即转 GCS
-      const got = await fetch(audioUrl, { signal: opts.abortSignal });
-      if (!got.ok) throw new Error(`取回配音音频失败 HTTP ${got.status}`);
-      const audio = Buffer.from(await got.arrayBuffer());
-      if (!audio.length) throw new Error("配音音频为空");
+  // ── 以下只执行一次，失败不再触发第二次合成 ──
+  const fetchSignal = opts.abortSignal
+    ? AbortSignal.any([opts.abortSignal, AbortSignal.timeout(120_000)])
+    : AbortSignal.timeout(120_000);
+  const got = await fetch(ticket.audioUrl, { signal: fetchSignal });
+  if (!got.ok) throw new Error(`取回配音音频失败 HTTP ${got.status}`);
+  const audio = await readAudioWithLimit(got, MAX_DIALOGUE_AUDIO_BYTES);
 
-      const voice = String((body.input as Record<string, unknown>).voice);
-      const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-      const rand = Math.random().toString(36).slice(2, 8);
-      const { gcsUri } = await uploadBufferToGcs({
-        objectName: `manhua-dialogue-tts/${stamp}/${voice}-${rand}.mp3`,
-        buffer: audio,
-        contentType: "audio/mpeg",
-      });
+  const voice = String((body.input as Record<string, unknown>).voice);
+  const dir = await mkdtemp(path.join(tmpdir(), "mvtts-"));
+  const local = path.join(dir, "a.mp3");
+  try {
+    await writeFile(local, audio);
+    const measured = await measureDialogueVoiced(local, opts.abortSignal);
+    const gate = checkManhuaDialogueVoice(measured);
 
-      // 量测跑在本地临时文件上，量完即删
-      const dir = await mkdtemp(path.join(tmpdir(), "mvtts-"));
-      const local = path.join(dir, "a.mp3");
-      let measured = { totalSec: 0, voicedSec: 0 };
-      try {
-        await writeFile(local, audio);
-        measured = await measureDialogueVoiced(local, opts.abortSignal);
-      } catch (e) {
-        // 量不到就不能放行：硬指标是「有效人声 ≥2.5s」，量不到＝无法证明达标
-        console.warn("[bailianTts] 有效人声量测失败：", e instanceof Error ? e.message : e);
-      } finally {
-        await rm(dir, { recursive: true, force: true }).catch(() => {});
-      }
-      const gate: ManhuaVoiceGateVerdict = measured.totalSec
-        ? checkManhuaDialogueVoice(measured)
-        : {
-            ok: false,
-            reasonZh: "未能量测有效人声",
-            actionZh: "确认运行环境有 ffmpeg/ffprobe 后重量测；量不到不得放行进视频模型",
-          };
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const rand = Math.random().toString(36).slice(2, 8);
+    const { gcsUri } = await uploadBufferToGcs({
+      objectName: `manhua-dialogue-tts/${stamp}/${voice}-${rand}.mp3`,
+      buffer: audio,
+      contentType: "audio/mpeg",
+    });
 
-      return {
-        audioUrl: signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600),
-        gcsUri,
-        bytes: audio.length,
-        voice,
-        region: cred.region,
-        totalSec: measured.totalSec,
-        voicedSec: measured.voicedSec,
-        gate,
-      };
-    } catch (e) {
-      if (opts.abortSignal?.aborted) throw e;
-      // 参数错误不再换区重试，直接抛
-      if (e instanceof Error && /参数错误|没有 output|为空/.test(e.message)) throw e;
-      lastErr = e;
-    }
+    return {
+      audioUrl: signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600),
+      gcsUri,
+      bytes: audio.length,
+      voice,
+      region: ticket.region,
+      totalSec: measured.totalSec,
+      voicedSec: measured.voicedSec,
+      gate,
+    };
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
-  throw new Error(
-    `对白配音全部通道失败：${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
-  );
+}
+
+/** 单段对白上限：32MB 足够，超了说明上游给错了东西 */
+const MAX_DIALOGUE_AUDIO_BYTES = 32 * 1024 * 1024;
+
+/** 流式累计字节，不先整体 arrayBuffer 再检查 —— 那时内存已经吃进去了 */
+async function readAudioWithLimit(res: Response, maxBytes: number): Promise<Buffer> {
+  const reader = res.body?.getReader();
+  if (!reader) {
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > maxBytes) throw new Error(`配音音频超过 ${maxBytes} 字节上限`);
+    return buf;
+  }
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      throw new Error(`配音音频超过 ${maxBytes} 字节上限`);
+    }
+    chunks.push(Buffer.from(value));
+  }
+  if (!total) throw new Error("配音音频为空");
+  return Buffer.concat(chunks);
 }

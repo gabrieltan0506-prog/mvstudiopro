@@ -9498,7 +9498,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
            * openrouter = 旧通道（按量，只有两个系统音色，情绪走方括号标签）
            * 默认百炼：套餐额度不用即归零，而 openrouter 扣的是充值余额。
            */
-          provider: z.enum(["bailian", "openrouter"]).default("bailian"),
+          /**
+           * 默认**保持旧通道**：静默改默认会让既有调用方换了计费口径而不自知。
+           * 要走套餐额度请显式传 bailian。
+           */
+          provider: z.enum(["bailian", "openrouter"]).default("openrouter"),
           /** 情绪与语气的中文指令，仅 bailian 通道支持 */
           instructionZh: z.string().max(200).optional(),
         }),
@@ -9513,6 +9517,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               text: input.input,
               voice: input.voice || "longcanzhuyue",
               instructionZh: input.instructionZh,
+              seed: input.seed,
             });
           }
           const { synthesizeQwenDialogue, QWEN_TTS_SYSTEM_VOICES } = await import(
@@ -9577,13 +9582,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           hasSilenceBreak: z.boolean().optional(),
           /** 用户在卡面改过的 music prompt；给了就原样用 */
           styleOverrideZh: z.string().max(1000).optional(),
-          variantIndex: z.number().int().min(0).max(7).optional(),
         }),
       )
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const { generateManhuaBgm } = await import("./services/manhuaScoringRoom.js");
         try {
-          return await generateManhuaBgm(input, { variantIndex: input.variantIndex });
+          // userId 必传：BGM 要落本人 post-prod 前缀才过得了 bgm_mount 的登记核对
+          return await generateManhuaBgm(input, { userId: String(ctx.user.id) });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           throw new TRPCError({

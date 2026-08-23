@@ -84,8 +84,17 @@ describe("voice 参数补全", () => {
     expect(normalizeBailianTtsVoice(full)).toBe(full);
   });
 
-  it("系统音色短名原样透传，不加前缀", () => {
+  it("已验证的系统短名原样透传，不加前缀", () => {
     expect(normalizeBailianTtsVoice("longanhuan_v3.6")).toBe("longanhuan_v3.6");
+  });
+
+  it("不在 597 席目录里的 voice 拒绝 —— 上一版任意字符串都加前缀就送上游", () => {
+    expect(() => normalizeBailianTtsVoice("longcanzhuyu")).toThrow("不在已入库音色目录");
+    expect(() => normalizeBailianTtsVoice("随便写的")).toThrow("不在已入库音色目录");
+  });
+
+  it("形状像系统短名但没验证过的一样拒 —— /_v\\d/ 会放行任意乱写", () => {
+    expect(() => normalizeBailianTtsVoice("bogus_v9.9")).toThrow("不在已入库音色目录");
   });
 
   it("空 voice 拒绝", () => {
@@ -115,5 +124,18 @@ describe("请求体", () => {
 
   it("空文本拒绝", () => {
     expect(() => buildBailianTtsBody({ text: "  ", voice: "longcanzhuyue" })).toThrow("文本");
+  });
+
+  it("seed 传得下去 —— 上一版路由收了却被静默丢弃", () => {
+    const b = buildBailianTtsBody({ text: "台词", voice: "longcanzhuyue", seed: 42 }) as {
+      parameters?: { seed?: number };
+    };
+    expect(b.parameters?.seed).toBe(42);
+  });
+
+  it("没给 seed 就不带 parameters，不塞空字段", () => {
+    expect("parameters" in buildBailianTtsBody({ text: "台词", voice: "longcanzhuyue" })).toBe(
+      false,
+    );
   });
 });
