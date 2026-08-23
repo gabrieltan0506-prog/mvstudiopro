@@ -10,6 +10,7 @@ import {
   prefersInventoryGraphicNote,
   textHasAuthorityCite,
 } from "../../shared/platformTopicShortlist.js";
+import { countSuccessfulGateways } from "./platformTopicShortlist";
 import { assertUsableExpandedBlueprint } from "./platformTopicShortlist";
 
 describe("deriveTopicDedupeKey", () => {
@@ -145,12 +146,11 @@ describe("assertUsableExpandedBlueprint（0824 审阅补齐：空串必须拒）
 });
 
 describe("successfulGatewayCounts 汇总口径（0824 审阅补齐）", () => {
-  /** 与 expandPlatformTopicPicks 里的 reduce 同构：日志会被轮转冲掉，对账只能看这个 */
-  const countBy = (rows: Array<{ gateway: string }>) =>
-    rows.reduce<Record<string, number>>((counts, item) => {
-      counts[item.gateway] = (counts[item.gateway] || 0) + 1;
-      return counts;
-    }, {});
+  /**
+   * 直接测生产实现。原先这里自建了一份同构的 reduce ——
+   * 生产实现被删掉或改错，测试照样全绿，测的是复制品等于没测。
+   */
+  const countBy = countSuccessfulGateways;
 
   it("能区分套餐与按量通道各成功了几条", () => {
     expect(

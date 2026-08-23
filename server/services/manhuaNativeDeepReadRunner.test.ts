@@ -6,10 +6,13 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   NATIVE_DEEP_READ_MODEL,
+  assertNativeDeepReadPieceSize,
   buildNativeDeepReadPrompt,
   isManhuaNativeDeepReadEnabled,
   pickSmallestVideoFormat,
   resolveNativeDeepReadCredentials,
+  resolveNativeDeepReadExecutionCredentials,
+  validateNativeDeepReadSegments,
 } from "./manhuaNativeDeepReadRunner";
 
 afterEach(() => vi.unstubAllEnvs());
@@ -70,6 +73,115 @@ describe("模型名收口", () => {
     expect(src).toContain("model: NATIVE_DEEP_READ_MODEL,");
     expect(src.match(/model: "qwen[^"]*"/g)).toBeNull();
     expect(NATIVE_DEEP_READ_MODEL).toBe("qwen3.8-max");
+  });
+});
+
+describe("凭证裁决：组合必须成对，按量通道不许自动接管", () => {
+  it("只传 apiKey 拒绝 —— 会把一类凭证配到另一类端点", () => {
+    expect(() =>
+      resolveNativeDeepReadExecutionCredentials({ apiKey: "sk-sp-x" }),
+    ).toThrow("必须同时提供");
+  });
+
+  it("只传 endpoint 拒绝", () => {
+    expect(() =>
+      resolveNativeDeepReadExecutionCredentials({ endpoint: "https://a/b" }),
+    ).toThrow("必须同时提供");
+  });
+
+  it("自定义 endpoint 必须 HTTPS", () => {
+    expect(() =>
+      resolveNativeDeepReadExecutionCredentials({ apiKey: "k", endpoint: "http://a/b" }),
+    ).toThrow("HTTPS");
+  });
+
+  it("成对传入时放行，usingPlanQuota 留空（不是套餐也不是按量，是调用方自带）", () => {
+    const c = resolveNativeDeepReadExecutionCredentials({
+      apiKey: "k",
+      endpoint: "https://a/b",
+    });
+    expect(c).toEqual({ apiKey: "k", endpoint: "https://a/b", usingPlan: undefined });
+  });
+
+  it("套餐没配且没开 ALLOW_PAYG 一律停手 —— 计划报的是套餐，实扣充值余额，检查单拦不住", () => {
+    vi.stubEnv("WAN_PLAN_API_KEY", "");
+    vi.stubEnv("WAN_OFFICIAL_API_KEY", "sk-ws-pay");
+    vi.stubEnv("MANHUA_NATIVE_DEEP_READ_ALLOW_PAYG", "");
+    expect(() => resolveNativeDeepReadExecutionCredentials({})).toThrow("ALLOW_PAYG");
+  });
+
+  it("显式 ALLOW_PAYG=1 才允许按量", () => {
+    vi.stubEnv("WAN_PLAN_API_KEY", "");
+    vi.stubEnv("WAN_OFFICIAL_API_KEY", "sk-ws-pay");
+    vi.stubEnv("MANHUA_NATIVE_DEEP_READ_ALLOW_PAYG", "1");
+    expect(resolveNativeDeepReadExecutionCredentials({}).usingPlan).toBe(false);
+  });
+
+  it("套餐配了就走套餐，不需要任何额外开关", () => {
+    vi.stubEnv("WAN_PLAN_API_KEY", "sk-sp-plan");
+    expect(resolveNativeDeepReadExecutionCredentials({}).usingPlan).toBe(true);
+  });
+
+  it("两把 key 都没有时报缺 key", () => {
+    vi.stubEnv("WAN_PLAN_API_KEY", "");
+    vi.stubEnv("WAN_OFFICIAL_API_KEY", "");
+    expect(() => resolveNativeDeepReadExecutionCredentials({})).toThrow("缺少 API key");
+  });
+});
+
+describe("切片体积闸（原先只是个没人读的常量）", () => {
+  it("99,999 字节拒绝 —— CDN 抖动切出的残片喂给模型会报 Invalid video file", () => {
+    expect(() => assertNativeDeepReadPieceSize(99_999)).toThrow("字节");
+  });
+
+  it("90MB 整放行", () => {
+    expect(() => assertNativeDeepReadPieceSize(90 * 1024 * 1024)).not.toThrow();
+  });
+
+  it("超过 90MB 拒绝 —— 服务端下载 120 秒超时，超了必挂", () => {
+    expect(() => assertNativeDeepReadPieceSize(90 * 1024 * 1024 + 1)).toThrow("上限");
+  });
+
+  it("NaN 拒绝", () => {
+    expect(() => assertNativeDeepReadPieceSize(Number.NaN)).toThrow();
+  });
+});
+
+describe("段规格前置校验（任何网络动作之前）", () => {
+  it("空数组拒绝", () => {
+    expect(() => validateNativeDeepReadSegments([])).toThrow("没有可执行片段");
+  });
+
+  it("秒位反了拒绝", () => {
+    expect(() =>
+      validateNativeDeepReadSegments([{ startSec: 30, endSec: 10 }]),
+    ).toThrow("秒位无效");
+  });
+
+  it("NaN 拒绝", () => {
+    expect(() =>
+      validateNativeDeepReadSegments([{ startSec: Number.NaN, endSec: 10 }]),
+    ).toThrow("秒位无效");
+  });
+
+  it("重复片段拒绝 —— 同段跑两遍，钱花两次、卡里镜头还重复", () => {
+    expect(() =>
+      validateNativeDeepReadSegments([
+        { startSec: 0, endSec: 10 },
+        { startSec: 0, endSec: 10 },
+      ]),
+    ).toThrow("重复片段");
+  });
+
+  it("超过 32 段拒绝", () => {
+    const many = Array.from({ length: 33 }, (_, i) => ({ startSec: i * 10, endSec: i * 10 + 5 }));
+    expect(() => validateNativeDeepReadSegments(many)).toThrow("32段");
+  });
+
+  it("合法段原样返回并把秒位归一成数字", () => {
+    expect(
+      validateNativeDeepReadSegments([{ startSec: "3" as never, endSec: "9" as never }]),
+    ).toEqual([{ startSec: 3, endSec: 9 }]);
   });
 });
 

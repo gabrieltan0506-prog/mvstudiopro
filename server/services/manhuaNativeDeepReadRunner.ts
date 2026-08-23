@@ -46,8 +46,73 @@ export function resolveNativeDeepReadCredentials(): { apiKey: string; endpoint: 
   };
 }
 
-/** 服务端下载超时约 120 秒、CDN 实测 1.56 MB/s → 单片体积上限取 90MB 留一半余量 */
-const PIECE_SIZE_CAP_MB = 90;
+export type NativeDeepReadExecutionCredentials = {
+  apiKey: string;
+  endpoint: string;
+  usingPlan?: boolean;
+};
+
+/**
+ * 凭证最终裁决：**成对给或都不给**，且按量通道不许自动接管。
+ *
+ * 原来允许只传 apiKey 或只传 endpoint —— 那会把套餐 key 拼到公共 dashscope 端点
+ * （401），或把按量 key 拼到套餐端点。更糟的是套餐临时缺配时**自动回落按量**，
+ * 只打一行日志：计划里报的是套餐额度，实际扣的是充值余额，
+ * 而发车检查单在这一步之后，拦不住。
+ */
+export function resolveNativeDeepReadExecutionCredentials(params: {
+  apiKey?: string;
+  endpoint?: string;
+}): NativeDeepReadExecutionCredentials {
+  const explicitKey = String(params.apiKey || "").trim();
+  const explicitEndpoint = String(params.endpoint || "").trim();
+
+  if (Boolean(explicitKey) !== Boolean(explicitEndpoint)) {
+    throw new Error("原生精读自定义凭证必须同时提供 apiKey 与 endpoint");
+  }
+
+  if (explicitKey && explicitEndpoint) {
+    const url = new URL(explicitEndpoint);
+    if (url.protocol !== "https:") {
+      throw new Error("原生精读 endpoint 必须使用 HTTPS");
+    }
+    return { apiKey: explicitKey, endpoint: explicitEndpoint, usingPlan: undefined };
+  }
+
+  const resolved = resolveNativeDeepReadCredentials();
+  if (!resolved.apiKey) {
+    throw new Error("原生精读缺少 API key");
+  }
+  if (
+    !resolved.usingPlan
+    && String(process.env.MANHUA_NATIVE_DEEP_READ_ALLOW_PAYG || "").trim() !== "1"
+  ) {
+    throw new Error(
+      "套餐通道未配置，已停止原生精读；如确认使用按量通道，请显式配置 MANHUA_NATIVE_DEEP_READ_ALLOW_PAYG=1",
+    );
+  }
+  return resolved;
+}
+
+/**
+ * 服务端下载超时约 120 秒、CDN 实测 1.56 MB/s → 单片体积上限取 90MB 留一半余量。
+ *
+ * ⚠️ 此前这个常量只声明、全文件零处读取 —— 文档里写的「单片上限 90MB」
+ * 在代码里根本不存在。下面的 assert 才是真正生效的那道闸。
+ */
+const PIECE_SIZE_CAP_BYTES = 90 * 1024 * 1024;
+/** 响应体上限：模型异常时可能吐超大 body，不设限会把内存吃干 */
+const NATIVE_RESPONSE_CAP_BYTES = 4 * 1024 * 1024;
+
+export function assertNativeDeepReadPieceSize(size: number): void {
+  // CDN 抖动时会切出 0 字节或异常小的文件，模型收到会报 Invalid video file
+  if (!Number.isFinite(size) || size < 100_000) {
+    throw new Error(`切片仅 ${size} 字节`);
+  }
+  if (size > PIECE_SIZE_CAP_BYTES) {
+    throw new Error(`切片超过 ${Math.round(PIECE_SIZE_CAP_BYTES / 1024 / 1024)}MB 处理上限`);
+  }
+}
 /** 抖音地址约 8 分钟失效；每片重新解析，不复用 */
 const RESOLVE_TTL_MS = 6 * 60_000;
 
@@ -76,10 +141,20 @@ export const NATIVE_DEEP_READ_MODEL = "qwen3.8-max";
 const PRICE_IN_PER_M = 12;
 const PRICE_OUT_PER_M = 36;
 
-function run(cmd: string, args: string[], timeoutMs = 600_000): Promise<string> {
+function run(
+  cmd: string,
+  args: string[],
+  timeoutMs = 600_000,
+  abortSignal?: AbortSignal,
+): Promise<string> {
   return new Promise((resolve, reject) =>
-    execFile(cmd, args, { maxBuffer: 1 << 28, timeout: timeoutMs }, (err, stdout, stderr) =>
-      err ? reject(new Error(String(stderr || err).slice(0, 300))) : resolve(stdout),
+    // signal 直通：取消时 ffmpeg 会被杀掉，否则一段 18 分钟的切片要跑完才停
+    execFile(
+      cmd,
+      args,
+      { maxBuffer: 1 << 28, timeout: timeoutMs, signal: abortSignal },
+      (err, stdout, stderr) =>
+        err ? reject(new Error(String(stderr || err).slice(0, 300))) : resolve(stdout),
     ),
   );
 }
@@ -93,15 +168,32 @@ function postLong(
   apiKey: string,
   endpoint: string,
   timeoutMs = 1_800_000,
+  abortSignal?: AbortSignal,
 ): Promise<{ status: number; text: string }> {
   return new Promise((resolve, reject) => {
     const u = new URL(endpoint);
     const payload = Buffer.from(JSON.stringify(body));
+    let settled = false;
+    let receivedBytes = 0;
+    // socket idle timeout 只管「多久没数据」；服务端细水长流地吐能绕过它，
+    // 所以另设一道总时限
+    const totalTimer = setTimeout(
+      () => req.destroy(new Error("原生精读请求超过总时限")),
+      timeoutMs,
+    );
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(totalTimer);
+      fn();
+    };
     const req = https.request(
       {
         hostname: u.hostname,
-        path: u.pathname,
+        port: u.port || undefined,
+        path: `${u.pathname}${u.search}`,
         method: "POST",
+        signal: abortSignal,
         headers: {
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
@@ -111,12 +203,19 @@ function postLong(
       (res) => {
         let d = "";
         res.setEncoding("utf8");
-        res.on("data", (c) => (d += c));
-        res.on("end", () => resolve({ status: res.statusCode || 0, text: d }));
+        res.on("data", (c: string) => {
+          receivedBytes += Buffer.byteLength(c);
+          if (receivedBytes > NATIVE_RESPONSE_CAP_BYTES) {
+            req.destroy(new Error("原生精读响应超过处理上限"));
+            return;
+          }
+          d += c;
+        });
+        res.on("end", () => finish(() => resolve({ status: res.statusCode || 0, text: d })));
       },
     );
-    req.setTimeout(timeoutMs, () => req.destroy(new Error("socket idle timeout")));
-    req.on("error", reject);
+    req.setTimeout(120_000, () => req.destroy(new Error("原生精读连接长时间无数据")));
+    req.on("error", (e) => finish(() => reject(e)));
     req.write(payload);
     req.end();
   });
@@ -136,7 +235,7 @@ function ossHost(): string {
   return `${String(process.env.OSS_BUCKET || "").trim()}.${String(process.env.OSS_ENDPOINT || "").trim()}`;
 }
 
-function ossPut(key: string, buf: Buffer, contentType = "video/mp4"): Promise<void> {
+function ossPut(key: string, buf: Buffer, contentType = "video/mp4", abortSignal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     const date = new Date().toUTCString();
     const req = https.request(
@@ -144,6 +243,7 @@ function ossPut(key: string, buf: Buffer, contentType = "video/mp4"): Promise<vo
         hostname: ossHost(),
         path: `/${encodeURI(key)}`,
         method: "PUT",
+        signal: abortSignal,
         headers: {
           Date: date,
           "Content-Type": contentType,
@@ -168,10 +268,18 @@ function ossPut(key: string, buf: Buffer, contentType = "video/mp4"): Promise<vo
   });
 }
 
-/** 阅后即焚：删失败不阻断（桶侧另有 1 天生命周期兜底） */
+/**
+ * 阅后即焚：删失败不阻断（桶侧另有 1 天生命周期兜底）。
+ * 加 30 秒总时限——清理步骤挂住会把整轮精读拖死在 finally 里。
+ */
 function ossDelete(key: string): Promise<void> {
   return new Promise((resolve) => {
     const date = new Date().toUTCString();
+    const guard = setTimeout(() => {
+      try { req.destroy(); } catch { /* 已结束 */ }
+      resolve();
+    }, 30_000);
+    const done = () => { clearTimeout(guard); resolve(); };
     const req = https.request(
       {
         hostname: ossHost(),
@@ -184,10 +292,10 @@ function ossDelete(key: string): Promise<void> {
       },
       (res) => {
         res.resume();
-        res.on("end", () => resolve());
+        res.on("end", done);
       },
     );
-    req.on("error", () => resolve());
+    req.on("error", done);
     req.end();
   });
 }
@@ -252,16 +360,16 @@ async function cutSegment(
   startSec: number,
   lenSec: number,
   localPath: string,
+  abortSignal?: AbortSignal,
 ): Promise<number> {
   await run("ffmpeg", [
     "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
     "-user_agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36",
     "-ss", String(startSec), "-i", url,
     "-t", String(lenSec), "-c", "copy", localPath,
-  ]);
+  ], 600_000, abortSignal);
   const size = statSync(localPath).size;
-  // CDN 抖动时会切出 0 字节或异常小的文件，模型收到会报 Invalid video file
-  if (size < 100_000) throw new Error(`切片仅 ${size} 字节`);
+  assertNativeDeepReadPieceSize(size);
   return size;
 }
 
@@ -284,7 +392,7 @@ async function runOneSegment(params: {
   const { spec } = params;
   const lenSec = Math.max(1, Math.round(spec.endSec - spec.startSec));
   const localPath = `${params.tmpDir}/ndr_${spec.startSec}_${lenSec}.mp4`;
-  const objectKey = `deep-read/${Date.now()}_${spec.startSec}.mp4`;
+  const objectKey = `deep-read/${Date.now()}_${crypto.randomUUID()}_${Math.max(0, Math.floor(spec.startSec))}.mp4`;
   let nodes = params.nodeUrls;
 
   let cut = false;
@@ -297,16 +405,20 @@ async function runOneSegment(params: {
     } catch (e) {
       if (attempt >= 3) {
         console.warn(`[nativeDeepRead] 段 ${spec.startSec}-${spec.endSec}s 三次切片全败：${String((e as Error).message).slice(0, 120)}`);
+        // 失败也可能留下 0 字节或半截文件，不清会在 /tmp 里越堆越多
+        try { unlinkSync(localPath); } catch { /* 本就不存在 */ }
         return { row: null, usage: { inputTokens: 0, outputTokens: 0 } };
       }
       await new Promise((r) => setTimeout(r, [0, 5000, 15000][attempt]!));
     }
   }
 
-  await ossPut(objectKey, readFileSync(localPath));
-  try { unlinkSync(localPath); } catch { /* 本地临时文件，删不掉不阻断 */ }
-
+  let uploaded = false;
   try {
+    // ossPut 原先在 try 之外：它一失败，本地切片就永远留在 /tmp
+    await ossPut(objectKey, readFileSync(localPath), "video/mp4", params.abortSignal);
+    uploaded = true;
+
     const res = await postLong(
       {
         model: NATIVE_DEEP_READ_MODEL,
@@ -325,6 +437,8 @@ async function runOneSegment(params: {
       },
       params.apiKey,
       params.endpoint,
+      1_800_000,
+      params.abortSignal,
     );
     if (res.status >= 300) throw new Error(`native_deep_read_http_${res.status}:${res.text.slice(0, 200)}`);
     const json = JSON.parse(res.text) as {
@@ -349,9 +463,42 @@ async function runOneSegment(params: {
       },
     };
   } finally {
-    // 阅后即焚：产出已在返回值里，OSS 上不留素材
-    await ossDelete(objectKey);
+    // 本地临时文件无论走哪条路都要删
+    try { unlinkSync(localPath); } catch { /* 本就不存在 */ }
+    // 阅后即焚：产出已在返回值里，OSS 上不留素材。没传上去就不用删
+    if (uploaded) await ossDelete(objectKey);
   }
+}
+
+/**
+ * 段规格前置校验：**在 resolveNodes 与任何网络动作之前**。
+ *
+ * 秒位反了、NaN、重复段，走到 ffmpeg 才炸就已经解析过地址、可能已经切过片；
+ * 重复段更糟——同一段跑两遍，钱花两次、卡里镜头还重复。
+ */
+export function validateNativeDeepReadSegments(
+  segments: readonly NativeDeepReadSegmentSpec[],
+): NativeDeepReadSegmentSpec[] {
+  if (!segments.length) throw new Error("原生精读没有可执行片段");
+  if (segments.length > 32) throw new Error("原生精读单次最多处理32段");
+
+  const seen = new Set<string>();
+  return segments.map((segment, index) => {
+    const startSec = Number(segment.startSec);
+    const endSec = Number(segment.endSec);
+    if (
+      !Number.isFinite(startSec)
+      || !Number.isFinite(endSec)
+      || startSec < 0
+      || endSec <= startSec
+    ) {
+      throw new Error(`原生精读第${index + 1}段秒位无效`);
+    }
+    const key = `${startSec}:${endSec}`;
+    if (seen.has(key)) throw new Error(`原生精读存在重复片段：${key}`);
+    seen.add(key);
+    return { ...segment, startSec, endSec };
+  });
 }
 
 /**
@@ -369,13 +516,13 @@ export async function runManhuaNativeDeepRead(params: {
   tmpDir?: string;
   abortSignal?: AbortSignal;
 }): Promise<NativeDeepReadRunResult> {
-  const creds = resolveNativeDeepReadCredentials();
-  const apiKey = params.apiKey || creds.apiKey;
-  const endpoint = params.endpoint || creds.endpoint;
-  if (!apiKey) throw new Error("原生精读缺少 API key（WAN_PLAN_API_KEY 或 WAN_OFFICIAL_API_KEY）");
-  if (!params.apiKey && !creds.usingPlan) {
-    console.warn("[nativeDeepRead] 套餐 key 未配，回落按量付费通道（会扣充值余额）");
-  }
+  const validatedSegments = validateNativeDeepReadSegments(params.segments);
+  const creds = resolveNativeDeepReadExecutionCredentials({
+    apiKey: params.apiKey,
+    endpoint: params.endpoint,
+  });
+  const apiKey = creds.apiKey;
+  const endpoint = creds.endpoint;
   const tmpDir = params.tmpDir || "/tmp";
   let nodes = await params.resolveNodes();
   let resolvedAt = Date.now();
@@ -389,32 +536,45 @@ export async function runManhuaNativeDeepRead(params: {
   let inputTokens = 0;
   let outputTokens = 0;
 
-  for (const spec of params.segments) {
+  for (const spec of validatedSegments) {
     if (params.abortSignal?.aborted) throw new Error("已取消");
     // 地址约 8 分钟失效，跨段时先看是否过期
     if (Date.now() - resolvedAt > RESOLVE_TTL_MS) await refreshNodes();
-    const { row, usage } = await runOneSegment({
-      nodeUrls: nodes,
-      refreshNodes,
-      spec,
-      apiKey,
-      endpoint,
-      tmpDir,
-      abortSignal: params.abortSignal,
-    });
-    inputTokens += usage.inputTokens;
-    outputTokens += usage.outputTokens;
-    if (row) rows.push(row);
+    try {
+      const { row, usage } = await runOneSegment({
+        nodeUrls: nodes,
+        refreshNodes,
+        spec,
+        apiKey,
+        endpoint,
+        tmpDir,
+        abortSignal: params.abortSignal,
+      });
+      inputTokens += usage.inputTokens;
+      outputTokens += usage.outputTokens;
+      if (row) rows.push(row);
+    } catch (error) {
+      // 原先没有 catch：前 3 段付费成功、第 4 段 HTTP/JSON 失败，
+      // 整体 reject，前 3 段的钱连同产出一起丢，也进不了逐集入库。
+      // 改为停止后续段但把已完成的带回去，由入库门禁决定收不收。
+      if (params.abortSignal?.aborted) throw error;
+      console.warn(
+        `[nativeDeepRead] 第 ${spec.startSec}-${spec.endSec}s 段未完成，停止后续段并保留已完成结果：${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      break;
+    }
   }
 
   const mapped = mapNativeDeepReadSegments(rows);
   return {
     ...mapped,
     // rows 里已剔除切片失败的段，这里补回真实失败数
-    failedSegmentCount: params.segments.length - mapped.segmentCount,
-    attemptedSegments: params.segments.length,
+    failedSegmentCount: validatedSegments.length - mapped.segmentCount,
+    attemptedSegments: validatedSegments.length,
     model: NATIVE_DEEP_READ_MODEL,
-    usingPlanQuota: params.apiKey ? undefined : creds.usingPlan,
+    usingPlanQuota: creds.usingPlan,
     usage: {
       inputTokens,
       outputTokens,
