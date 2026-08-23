@@ -28,6 +28,7 @@ import {
   queuedManhuaKeyartBlocks,
   stageKeyFromBlockId,
 } from "@/lib/canvasDramaStudio";
+import { manhuaClipQualityAllowsAssemble } from "@shared/manhuaClipQuality";
 import { tryLocalMediaDisplayForBlock } from "@/lib/manhuaLocalMediaStore";
 import {
   getManhuaCharacterById,
@@ -175,8 +176,10 @@ import {
   shouldShowToolbarCharacterLibraryEntry,
 } from "@/lib/manhuaCharacterEntry";
 import { manhuaToolbarActionCost } from "@/lib/manhuaToolbarGroups";
+import type { ManhuaWorkflowPhase } from "@shared/manhuaWriterSession";
 
-type WorkflowPhaseId = "outline" | "assets" | "storyboard" | "edit";
+/** 阶段枚举收口在 shared：此处只取别名，不再另写一份 */
+type WorkflowPhaseId = ManhuaWorkflowPhase;
 
 /** 剧本设定表能出图的三类；与 planManhuaAssetImageSpawns 的 kind 对齐 */
 type ManhuaCanonSheetKind = "charsheet" | "sceneplate" | "propsheet";
@@ -1684,9 +1687,21 @@ export default function ManhuaScriptWorkbench({
         };
       }
       if (stage === "clip") {
-        // 阶段状态同理：垫图不算出片
+        /**
+         * 判据与「能不能进成片坞合成」收口到同一个函数。
+         *
+         * 原来硬写 status === "passed"：没盖到质检报告的段是 undefined，直接判 false。
+         * 而质检报告缺失是常态（失败只给第 1 段盖报告、手点重跑不补质检），
+         * 于是出现「片子能合成、阶段却永远算不完成、剪辑永远待开始」——
+         * 同一个业务判断两处各写一遍，合成那条修了并写了注释，这条没跟着改。
+         */
         const has = episodeClips.some(
-          (b) => b.status === "done" && b.manhuaClipQuality?.status === "passed" && clipOutputUrl(b),
+          (b) =>
+            b.status === "done" &&
+            manhuaClipQualityAllowsAssemble({
+              outputUrl: clipOutputUrl(b),
+              quality: b.manhuaClipQuality,
+            }),
         );
         return {
           stage,
@@ -1716,28 +1731,95 @@ export default function ManhuaScriptWorkbench({
     shots.length,
     keyartsPixelLocked,
   ]);
+  /** 勾选集是 Set：直接进依赖数组不会因元素增减触发重算，取 size */
+  const dockSelectedCount = dockSelectedIds?.size ?? 0;
+
   const storyboardReadyEnough =
     assetsComplete && (shots.length > 0 || Boolean(episodeStillCount));
 
   const workflowPhases = useMemo(() => {
     const byStage = new Map(stageStrip.map((item) => [item.stage, item]));
     // 大纲 → 资产 → 分镜 → 剪辑
+    const clipHas = Boolean(byStage.get("clip")?.has);
+    const clipDone = episodeClips.filter(
+      (b) =>
+        b.status === "done" &&
+        manhuaClipQualityAllowsAssemble({
+          outputUrl: clipOutputUrl(b),
+          quality: b.manhuaClipQuality,
+        }),
+    ).length;
+    const clipTotal = Math.max(episodeClips.length, segments.length || 0);
+
+    /**
+     * 每格都要能回答「我为什么是这个状态、还差什么」。
+     * 只显示「已完成 / 待开始」而不显示缺口，等于把调试成本转嫁给用户 ——
+     * 0823 实况：资产标「已完成」而底部准入检查同时显示「尚未选角色」。
+     */
+    const assetsGapZh = assetsComplete
+      ? ""
+      : [
+          assetGate.missingCastIds?.length ? `缺角色 ${assetGate.missingCastIds.length}` : "",
+          assetGate.missingScene ? "未选场景" : "",
+          assetScriptStaleHintZh ? "剧本已改，资产待重出" : "",
+        ]
+          .filter(Boolean)
+          .join(" · ") || assetGate.hintZh || "资产未齐";
+
     const definitions: Array<{
       id: WorkflowPhaseId;
       label: string;
       complete: boolean;
+      gapZh?: string;
     }> = [
-      { id: "outline", label: "剧本大纲", complete: outlineComplete },
-      { id: "assets", label: "资产设定", complete: assetsComplete },
       {
+        id: "outline",
+        label: "剧本大纲",
+        complete: outlineComplete,
+        gapZh: outlineComplete ? "" : "请先确认剧本大纲",
+      },
+      { id: "assets", label: "资产设定", complete: assetsComplete, gapZh: assetsGapZh },
+      {
+        /**
+         * 原来是「或」：只要有静帧就算分镜完成，哪怕一段成片都没出。
+         * 于是用户看到「分镜视频 ✅」以为能进剪辑，点进去发现待开始，
+         * 而且没有任何提示说还差什么。改成与剪辑同源：至少一段成片可用。
+         */
         id: "storyboard",
         label: "分镜视频",
-        complete: Boolean(byStage.get("clip")?.has) || episodeStillCount > 0,
+        complete: clipHas,
+        gapZh: clipHas
+          ? ""
+          : clipTotal
+            ? `静帧 ${episodeStillCount}/${Math.max(episodeKeyarts.length || shots.length, 1)} · 成片 ${clipDone}/${clipTotal}`
+            : "先出静帧再出成片",
       },
       {
         id: "edit",
         label: "剪辑",
-        complete: Boolean(byStage.get("clip")?.has) && roughClips.length > 0,
+        complete: clipHas && roughClips.length > 0,
+        gapZh: clipHas
+          ? roughClips.length
+            ? ""
+            : "本集还没有可排的镜头"
+          : "需先出至少 1 段成片",
+      },
+      {
+        /**
+         * 第五格：后期三件套（拼接 / BGM / 响度）都做完了，却不在流程条里 ——
+         * 用户走到「剪辑 ✅」就以为到头了，根本不知道还有成片这一步，
+         * 于是画布上永远没有长片。闭环的最后一格必须看得见。
+         */
+        id: "final",
+        label: "成片",
+        complete: Boolean(finalVideoUrl),
+        gapZh: finalVideoUrl
+          ? ""
+          : !clipHas
+            ? "需先出至少 1 段成片"
+            : dockSelectedCount
+              ? `已勾选 ${dockSelectedCount} 段 · 待合成`
+              : "成片坞未勾选镜头",
       },
     ];
     return definitions.map((phase, index) => ({
@@ -1751,7 +1833,15 @@ export default function ManhuaScriptWorkbench({
     assetsComplete,
     activePhase,
     episodeStillCount,
+    episodeKeyarts.length,
+    episodeClips,
+    shots.length,
+    segments.length,
     roughClips.length,
+    assetGate,
+    assetScriptStaleHintZh,
+    finalVideoUrl,
+    dockSelectedCount,
   ]);
 
   useEffect(() => {
@@ -1786,6 +1876,13 @@ export default function ManhuaScriptWorkbench({
         description: "剪辑台需要分镜就绪后再进入",
       });
       setActivePhase("storyboard");
+      return;
+    }
+    if (phase === "final") {
+      // 坞渲染在 extras 视图（沉浸工作台下 display:none），
+      // 组件内部滚动对隐藏元素无效，必须由父级先切视图
+      setActivePhase("final");
+      onOpenClipDock?.();
       return;
     }
     setActivePhase(phase);
@@ -2477,7 +2574,7 @@ export default function ManhuaScriptWorkbench({
         </div>
       ) : null}
 
-      {/* 阿硕式：只留一条阶段轨（大纲→资产→分镜→剪辑），勿叠第二套进度 */}
+      {/* 阿硕式：只留一条阶段轨（大纲→资产→分镜→剪辑→成片），勿叠第二套进度 */}
       <div
         data-manhua-workflow-rail
         data-manhua-ashuo-stepper
@@ -2516,10 +2613,22 @@ export default function ManhuaScriptWorkbench({
               >
                 {phase.complete ? <CheckCircle2 className="h-3.5 w-3.5" /> : phase.index}
               </span>
-              <span className="whitespace-nowrap text-[11px] font-semibold">
-                {phase.id === "assets" ? "资产设定" : phase.label}
+              <span className="min-w-0 flex-1">
+                <span className="block whitespace-nowrap text-[11px] font-semibold">
+                  {phase.id === "assets" ? "资产设定" : phase.label}
+                </span>
+                {/* 缺口一直算了却没渲染：只显示「待开始」等于把排查成本推给用户 */}
+                {phase.gapZh ? (
+                  <span
+                    data-manhua-phase-gap
+                    title={phase.gapZh}
+                    className="block truncate text-[8px] leading-tight opacity-70"
+                  >
+                    {phase.gapZh}
+                  </span>
+                ) : null}
               </span>
-              <span className="ml-auto shrink-0 text-[8px] opacity-60">
+              <span className="ml-auto shrink-0 self-start text-[8px] opacity-60">
                 {phase.complete ? "已完成" : phase.current ? "当前" : "待开始"}
               </span>
             </button>

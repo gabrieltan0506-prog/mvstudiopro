@@ -3,7 +3,15 @@
  * 底栏只留「上一步 / 生成本步内容（或生成全部）」，文案与阶段页标题一致。
  */
 
-export type ManhuaWorkbenchPhaseId = "outline" | "assets" | "storyboard" | "edit";
+/**
+ * 第五份阶段枚举（0824 收口）。
+ *
+ * 上一轮把四处收成一处时漏了这份 —— 探针搜的是 `workflowPhase`，
+ * 而它叫 `ManhuaWorkbenchPhaseId`，名字不同就搜不到。
+ * 现在改成别名，新增阶段不会再漏改。
+ */
+import type { ManhuaWorkflowPhase } from "./manhuaWriterSession.js";
+export type ManhuaWorkbenchPhaseId = ManhuaWorkflowPhase;
 
 export type ManhuaWorkbenchNextCtaKind =
   | "confirm_outline"

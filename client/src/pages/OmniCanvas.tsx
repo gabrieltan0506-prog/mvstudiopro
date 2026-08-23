@@ -178,10 +178,17 @@ import {
   formatWriterAssetCanonIdentityLock,
 } from "@shared/manhuaWriterAssetCanon";
 import {
+  phaseAfterLeavingClipDock,
+  resolveFinalVideoUrlFromBlocks,
+  shouldOpenClipDockForPhase,
+} from "@shared/manhuaFinalPhaseRecovery";
+import {
   healManhuaWriterSessionCanonDrift,
   loadManhuaWriterSessionFromStorage,
   migrateManhuaWriterTemplateId,
+  parseManhuaWorkflowPhase,
   saveManhuaWriterSessionToStorage,
+  type ManhuaWorkflowPhase,
 } from "@shared/manhuaWriterSession";
 import {
   makeManhuaCharacterVoiceLockId,
@@ -963,13 +970,31 @@ export default function OmniCanvas() {
   const [shareAssetToLibrary, setShareAssetToLibrary] = useState(
     () => Boolean(initialWriterSession?.shareAssetToLibrary),
   );
-  const [workflowPhase, setWorkflowPhase] = useState<
-    "outline" | "assets" | "storyboard" | "edit"
-  >(
-    () =>
-      initialWriterSession?.workflowPhase ||
-      (initialWriterSession?.writerConfirmed ? "storyboard" : "outline"),
+  const [workflowPhase, setWorkflowPhase] = useState<ManhuaWorkflowPhase>(() =>
+    parseManhuaWorkflowPhase(
+      initialWriterSession?.workflowPhase,
+      Boolean(initialWriterSession?.writerConfirmed),
+    ),
   );
+  /**
+   * 第五格「成片」的面板就是成片坞，而坞在 extras 视图里、其可见性不持久化。
+   * 只存 workflowPhase 不存 extras，刷新后 phase 还是 final、坞却关着，
+   * 而工作台内部只渲染 outline/assets/storyboard/edit 四个面板 —— 结果是**空白工作台**。
+   * 这里把两者绑定：进 final 就开坞。
+   */
+  useEffect(() => {
+    if (shouldOpenClipDockForPhase(workflowPhase)) setImmersiveExtrasOpen(true);
+  }, [workflowPhase]);
+
+  /**
+   * 离开成片坞的唯一收口：关坞的同时把 final 收回 edit。
+   * 各入口原本只关坞不改 phase，一样会留在没有面板的 final 态。
+   */
+  const closeClipDockToWorkbench = useCallback(() => {
+    setWorkflowPhase(phaseAfterLeavingClipDock);
+    setImmersiveExtrasOpen(false);
+  }, []);
+
   /** 工厂运行范围：焦点集（默认）或成片坞已勾选集 */
   const [factoryRunScope, setFactoryRunScope] = useState<"focus" | "dock">("focus");
   const [dockSelectedIds, setDockSelectedIds] = useState<Set<string>>(() => new Set());
@@ -1023,7 +1048,16 @@ export default function OmniCanvas() {
   );
   const [canvasMode, setCanvasMode] = useState<CanvasWorkspaceMode>(() => loadCanvasWorkspaceMode());
   const [assembleBusy, setAssembleBusy] = useState(false);
-  const [finalAssembleVideoUrl, setFinalAssembleVideoUrl] = useState<string | null>(null);
+  /**
+   * 成片地址从**画布节点**派生，不再只活在 React state 里。
+   *
+   * 原来是 useState：刷新后恒为 null，已经合成好的成片会被第五格判成「未完成」。
+   * 成片节点本来就落在画布上（final-eXX），照着真实产物读才是可信口径。
+   */
+  const finalAssembleVideoUrl = useMemo(
+    () => resolveFinalVideoUrlFromBlocks(blocks, writerFocusEpisode),
+    [blocks, writerFocusEpisode],
+  );
   const abortRef = useRef<AbortController | null>(null);
   const chargeWorkflowStepMutation = trpc.workflow.chargeStep.useMutation();
   /** 登录后云端草稿：与本机双通路，互不放弃 */
@@ -1637,13 +1671,7 @@ export default function OmniCanvas() {
     if (session.cineVocabLocale) setFactoryCineVocabLocale(session.cineVocabLocale);
     if (session.chainIgnoreByScene) setChainIgnoreByScene(session.chainIgnoreByScene);
     setWorkflowPhase(
-      session.workflowPhase === "assets" ||
-        session.workflowPhase === "storyboard" ||
-        session.workflowPhase === "edit"
-        ? session.workflowPhase
-        : session.writerConfirmed
-          ? "storyboard"
-          : "outline",
+      parseManhuaWorkflowPhase(session.workflowPhase, Boolean(session.writerConfirmed)),
     );
     const prefs = draft.factoryPrefs || {};
     const restoredScope = String(prefs.assetSelectionScopeKey || "").trim();
@@ -2610,7 +2638,7 @@ export default function OmniCanvas() {
         };
         const finalVideoUrl = String(out.finalVideoUrl || out.videoUrl || "").trim();
         if (!finalVideoUrl) throw new Error("合成完成但未返回成片地址");
-        setFinalAssembleVideoUrl(finalVideoUrl);
+        // 不再 setState：下面把成片节点写进 blocks，finalAssembleVideoUrl 会自动跟上
         // 整集节点落画布（段列制最右收口）：成片不再只活在坞面板的 state 里
         setBlocks((prev) => {
           const finalId = `final-e${String(writerFocusEpisode).padStart(2, "0")}`;
@@ -6915,7 +6943,7 @@ export default function OmniCanvas() {
                     type="button"
                     className="underline underline-offset-2 hover:text-white/75"
                     onClick={() => {
-                      setImmersiveExtrasOpen(false);
+                      closeClipDockToWorkbench();
                       setManhuaUiMode("form");
                     }}
                   >
@@ -7947,7 +7975,10 @@ export default function OmniCanvas() {
                     <button
                       type="button"
                       className="underline underline-offset-2 hover:text-white/70"
-                      onClick={() => setManhuaUiMode("form")}
+                      onClick={() => {
+                        closeClipDockToWorkbench();
+                        setManhuaUiMode("form");
+                      }}
                     >
                       切经典表单编导
                     </button>
@@ -7973,7 +8004,7 @@ export default function OmniCanvas() {
                 <button
                   type="button"
                   className="rounded-lg border border-white/15 px-2.5 py-1 text-[11px] text-white/70 hover:bg-white/5"
-                  onClick={() => setImmersiveExtrasOpen(false)}
+                  onClick={closeClipDockToWorkbench}
                 >
                   回到剧本工作室
                 </button>
@@ -8669,7 +8700,10 @@ export default function OmniCanvas() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setManhuaUiMode("form")}
+                    onClick={() => {
+                      closeClipDockToWorkbench();
+                      setManhuaUiMode("form");
+                    }}
                     className={`rounded-md px-2.5 py-1 text-[11px] font-semibold ${
                       manhuaUiMode === "form"
                         ? "bg-white/15 text-white/90"
@@ -9309,7 +9343,7 @@ export default function OmniCanvas() {
                 }}
                 onGoWorkbench={() => {
                   setManhuaUiMode("workbench");
-                  setImmersiveExtrasOpen(false);
+                  closeClipDockToWorkbench();
                   window.setTimeout(() => {
                     document.querySelector("#manhua-workbench-zone")?.scrollIntoView({
                       behavior: "smooth",
@@ -9319,6 +9353,8 @@ export default function OmniCanvas() {
                 }}
                 onSelectEpisode={(ep) => {
                   setWriterFocusEpisode(ep);
+                  // 换集必须离开 final：新集大概率还没合成，留在 final 就是空面板
+                  setWorkflowPhase("storyboard");
                   setManhuaUiMode("workbench");
                   setImmersiveExtrasOpen(false);
                 }}
