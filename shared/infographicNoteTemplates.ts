@@ -42,6 +42,40 @@ const CONTENT_LOCK_ZH = `【内容锁定·强制】
 2. 海报主标题优先取用户正文首个标题或核心命题；图中文字概括用户要点，不得编造无关实体名。
 3. 模板只提供构图与信息密度风格，不提供题材。`;
 
+/**
+ * 渲染质感锁（0823 从 S+ 级成片的 95 个镜头精读产出里提炼，重绘实测有效）。
+ *
+ * 核心判断：立体感来自「光的物理行为 + 表面着色」，不是几何维度——
+ * 平面感的根子是光是平的（无体积雾、无逆光、无景深，所有东西一样清楚）。
+ *
+ * 术语一律英文原词：PBR / AO / SSS / fresnel 这些在训练语料里几乎只以英文出现，
+ * 中文译名语料密度低几个量级，同图同参数实测材质执行明显更弱。
+ */
+const RENDER_DEPTH_LOCK_EN =
+  "RENDER DEPTH — ambient occlusion deepening every crevice, seam and underside; " +
+  "contact shadows anchoring each element so nothing floats; " +
+  "fresnel edge light defining silhouettes by light transition rather than outline strokes; " +
+  "subsurface scattering wherever material is translucent; " +
+  "micro-roughness varying across a single surface (worn / oiled / dry patches); " +
+  "shallow depth of field separating foreground, subject and background; " +
+  "one dominant key light with clear direction plus cooler fill, never flat even lighting.";
+
+/**
+ * 融合类是「水彩洇边 + 米白纸底」，PBR 金属与 CGI 光泽会直接毁掉这套美学。
+ * 所以只取风格中立的那半：分层景深、接触阴影、明确光位、叠加透明度。
+ */
+const FUSION_DEPTH_LOCK_EN =
+  "RENDER DEPTH — distinct foreground / midground / background planes with atmospheric haze between them; " +
+  "contact shadows so elements sit on the paper instead of floating; " +
+  "one dominant light direction with soft falloff, never flat even lighting; " +
+  "layered wash translucency so overlapping areas read as depth; " +
+  "keep watercolor ink-bleed edges and paper grain intact — no PBR metal, no plastic sheen, no CGI gloss.";
+
+/** 按版式取质感锁：融合类走水彩安全版，其余走完整 3D 渲染锁 */
+export function getInfographicRenderDepthLockEn(heroMode: InfographicHeroMode): string {
+  return heroMode === "fusion" ? FUSION_DEPTH_LOCK_EN : RENDER_DEPTH_LOCK_EN;
+}
+
 export const INFOGRAPHIC_NOTE_TEMPLATES: readonly InfographicNoteTemplate[] = [
   {
     id: "infographic_material_lab",
@@ -149,6 +183,7 @@ export function fillInfographicTemplatePrompt(templateId: string, subject: strin
       "",
       `主题：${sub}`,
       `Prompt: LAYOUT ONLY — encyclopedic 3:4 hub infographic about "${sub}". No sample brands. --ar 3:4`,
+      RENDER_DEPTH_LOCK_EN,
     ].join("\n");
   }
   return [
@@ -157,6 +192,7 @@ export function fillInfographicTemplatePrompt(templateId: string, subject: strin
     "",
     `主题：${sub}`,
     `Prompt: ${t.layoutPromptEn}`,
+    getInfographicRenderDepthLockEn(t.heroMode),
     `User topic title: ${sub}`,
   ].join("\n");
 }
