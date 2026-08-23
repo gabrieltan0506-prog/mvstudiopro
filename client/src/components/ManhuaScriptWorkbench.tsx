@@ -1713,13 +1713,45 @@ export default function ManhuaScriptWorkbench({
   const workflowPhases = useMemo(() => {
     const byStage = new Map(stageStrip.map((item) => [item.stage, item]));
     // 大纲 → 资产 → 分镜 → 剪辑
+    const clipHas = Boolean(byStage.get("clip")?.has);
+    const clipDone = episodeClips.filter(
+      (b) =>
+        b.status === "done" &&
+        manhuaClipQualityAllowsAssemble({
+          outputUrl: clipOutputUrl(b),
+          quality: b.manhuaClipQuality,
+        }),
+    ).length;
+    const clipTotal = Math.max(episodeClips.length, segments.length || 0);
+
+    /**
+     * 每格都要能回答「我为什么是这个状态、还差什么」。
+     * 只显示「已完成 / 待开始」而不显示缺口，等于把调试成本转嫁给用户 ——
+     * 0823 实况：资产标「已完成」而底部准入检查同时显示「尚未选角色」。
+     */
+    const assetsGapZh = assetsComplete
+      ? ""
+      : [
+          assetGate.missingCastIds?.length ? `缺角色 ${assetGate.missingCastIds.length}` : "",
+          assetGate.missingScene ? "未选场景" : "",
+          assetScriptStaleHintZh ? "剧本已改，资产待重出" : "",
+        ]
+          .filter(Boolean)
+          .join(" · ") || assetGate.hintZh || "资产未齐";
+
     const definitions: Array<{
       id: WorkflowPhaseId;
       label: string;
       complete: boolean;
+      gapZh?: string;
     }> = [
-      { id: "outline", label: "剧本大纲", complete: outlineComplete },
-      { id: "assets", label: "资产设定", complete: assetsComplete },
+      {
+        id: "outline",
+        label: "剧本大纲",
+        complete: outlineComplete,
+        gapZh: outlineComplete ? "" : "请先确认剧本大纲",
+      },
+      { id: "assets", label: "资产设定", complete: assetsComplete, gapZh: assetsGapZh },
       {
         /**
          * 原来是「或」：只要有静帧就算分镜完成，哪怕一段成片都没出。
@@ -1728,12 +1760,22 @@ export default function ManhuaScriptWorkbench({
          */
         id: "storyboard",
         label: "分镜视频",
-        complete: Boolean(byStage.get("clip")?.has),
+        complete: clipHas,
+        gapZh: clipHas
+          ? ""
+          : clipTotal
+            ? `静帧 ${episodeStillCount}/${Math.max(episodeKeyarts.length || shots.length, 1)} · 成片 ${clipDone}/${clipTotal}`
+            : "先出静帧再出成片",
       },
       {
         id: "edit",
         label: "剪辑",
-        complete: Boolean(byStage.get("clip")?.has) && roughClips.length > 0,
+        complete: clipHas && roughClips.length > 0,
+        gapZh: clipHas
+          ? roughClips.length
+            ? ""
+            : "本集还没有可排的镜头"
+          : "需先出至少 1 段成片",
       },
     ];
     return definitions.map((phase, index) => ({
@@ -1747,7 +1789,13 @@ export default function ManhuaScriptWorkbench({
     assetsComplete,
     activePhase,
     episodeStillCount,
+    episodeKeyarts.length,
+    episodeClips,
+    shots.length,
+    segments.length,
     roughClips.length,
+    assetGate,
+    assetScriptStaleHintZh,
   ]);
 
   useEffect(() => {

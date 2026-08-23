@@ -10,6 +10,7 @@ import {
   prefersInventoryGraphicNote,
   textHasAuthorityCite,
 } from "../../shared/platformTopicShortlist.js";
+import { assertUsableExpandedBlueprint } from "./platformTopicShortlist";
 
 describe("deriveTopicDedupeKey", () => {
   it("collapses 王安石 variants", () => {
@@ -93,5 +94,83 @@ describe("inventory graphic note fallback", () => {
     expect(pages.some((p) => p.role === "inventory_index")).toBe(true);
     expect(pages.filter((p) => p.role === "detail_card").length).toBeGreaterThanOrEqual(2);
     expect(pages.length).toBeGreaterThanOrEqual(8);
+  });
+});
+
+describe("assertUsableExpandedBlueprint（0824 审阅补齐：空串必须拒）", () => {
+  const ok = {
+    title: "标题",
+    copywriting: "正文",
+    detailedScript: "【封面】",
+  };
+  const wrap = (bp: Record<string, unknown>) => JSON.stringify({ blueprint: bp });
+
+  it("三字段齐全且非空 → 通过", () => {
+    expect(() => assertUsableExpandedBlueprint(wrap(ok))).not.toThrow();
+  });
+
+  it("裸对象（无 blueprint 包装）也接受", () => {
+    expect(() => assertUsableExpandedBlueprint(JSON.stringify(ok))).not.toThrow();
+  });
+
+  it('title="" 拒绝 —— 空串也是 string，只查 typeof 会放它过去', () => {
+    expect(() => assertUsableExpandedBlueprint(wrap({ ...ok, title: "" }))).toThrow(/title/);
+  });
+
+  it('copywriting="   " 拒绝 —— 纯空白同样是空', () => {
+    expect(() => assertUsableExpandedBlueprint(wrap({ ...ok, copywriting: "   " }))).toThrow(
+      /copywriting/,
+    );
+  });
+
+  it('detailedScript="" 拒绝', () => {
+    expect(() => assertUsableExpandedBlueprint(wrap({ ...ok, detailedScript: "" }))).toThrow(
+      /detailedScript/,
+    );
+  });
+
+  it("多个字段同时缺 → 错误信息把它们都点出来", () => {
+    expect(() =>
+      assertUsableExpandedBlueprint(wrap({ title: "", copywriting: "", detailedScript: "x" })),
+    ).toThrow(/title,copywriting/);
+  });
+
+  it("非 JSON → 三个字段全部报缺（bp 为 null 时每项都取不到）", () => {
+    // 注意：实现里的 `missing.join(",") || "blueprint"` 后半段是死分支——
+    // bp 为 null 时 missing 必然是全部三项，永远轮不到 "blueprint"
+    expect(() => assertUsableExpandedBlueprint("不是 JSON")).toThrow(
+      /title,copywriting,detailedScript/,
+    );
+  });
+});
+
+describe("successfulGatewayCounts 汇总口径（0824 审阅补齐）", () => {
+  /** 与 expandPlatformTopicPicks 里的 reduce 同构：日志会被轮转冲掉，对账只能看这个 */
+  const countBy = (rows: Array<{ gateway: string }>) =>
+    rows.reduce<Record<string, number>>((counts, item) => {
+      counts[item.gateway] = (counts[item.gateway] || 0) + 1;
+      return counts;
+    }, {});
+
+  it("能区分套餐与按量通道各成功了几条", () => {
+    expect(
+      countBy([
+        { gateway: "bailian_plan" },
+        { gateway: "bailian_plan" },
+        { gateway: "evolink" },
+        { gateway: "openrouter" },
+        { gateway: "bailian_plan" },
+      ]),
+    ).toEqual({ bailian_plan: 3, evolink: 1, openrouter: 1 });
+  });
+
+  it("全部走套餐时按量通道不出现在计数里", () => {
+    expect(countBy([{ gateway: "bailian_plan" }, { gateway: "bailian_plan" }])).toEqual({
+      bailian_plan: 2,
+    });
+  });
+
+  it("空结果返回空对象，不是 undefined", () => {
+    expect(countBy([])).toEqual({});
   });
 });

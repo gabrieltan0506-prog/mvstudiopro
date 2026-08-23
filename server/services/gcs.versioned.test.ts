@@ -74,7 +74,10 @@ describe("downloadGcsObjectVersioned / deleteGcsObject 条件删除", () => {
     );
   });
 
-  it("同一路径并发写归档：ifGenerationMatch=0 保证只有首个创建成功", async () => {
+  // ⚠️ 这是**顺序模拟**（先 200 后 412），不是真并发 —— 真并发要多进程打同一个桶，
+  // 本地跑不了。这里锁的是两点：条件写参数发对了、412 被当成「已存在」而不是失败。
+  // 真正的互斥由 GCS 服务端的 ifGenerationMatch=0 语义保证。
+  it("条件写入：对象已存在时返回 created=false 而不抛错，且参数带 ifGenerationMatch=0", async () => {
     let first = true;
     stubFetch(() => {
       if (first) {
