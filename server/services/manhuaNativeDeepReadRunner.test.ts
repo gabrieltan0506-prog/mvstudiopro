@@ -7,6 +7,7 @@ import {
   buildNativeDeepReadPrompt,
   isManhuaNativeDeepReadEnabled,
   pickSmallestVideoFormat,
+  resolveNativeDeepReadCredentials,
 } from "./manhuaNativeDeepReadRunner";
 
 afterEach(() => vi.unstubAllEnvs());
@@ -81,5 +82,41 @@ describe("精读 prompt 的四条硬约束", () => {
   it("段落提示为空时不留空括号", () => {
     expect(buildNativeDeepReadPrompt(32)).toContain("32 秒的高潮片段，");
     expect(buildNativeDeepReadPrompt(32)).not.toContain("（）");
+  });
+});
+
+
+describe("凭证解析：套餐优先（0824 线路实测已验通）", () => {
+  it("配了套餐 key 就走 token-plan 端点，不碰按量通道", () => {
+    vi.stubEnv("WAN_PLAN_API_KEY", "sk-sp-plan");
+    vi.stubEnv("WAN_OFFICIAL_API_KEY", "sk-ws-payg");
+    const c = resolveNativeDeepReadCredentials();
+    expect(c.usingPlan).toBe(true);
+    expect(c.apiKey).toBe("sk-sp-plan");
+    expect(c.endpoint).toContain("token-plan.cn-beijing.maas.aliyuncs.com");
+    expect(c.endpoint).toContain("/api/v1/services/aigc/multimodal-generation/generation");
+  });
+
+  it("套餐没配才回落按量 —— 套餐额度不用即归零，默认不能选扣钱那条", () => {
+    vi.stubEnv("WAN_PLAN_API_KEY", "");
+    vi.stubEnv("WAN_OFFICIAL_API_KEY", "sk-ws-payg");
+    const c = resolveNativeDeepReadCredentials();
+    expect(c.usingPlan).toBe(false);
+    expect(c.apiKey).toBe("sk-ws-payg");
+    expect(c.endpoint).toContain("dashscope.aliyuncs.com");
+  });
+
+  it("WAN_PLAN_BASE 可覆盖，且末尾斜杠不会拼出双斜杠", () => {
+    vi.stubEnv("WAN_PLAN_API_KEY", "sk-sp-plan");
+    vi.stubEnv("WAN_PLAN_BASE", "https://custom.example.com/");
+    expect(resolveNativeDeepReadCredentials().endpoint).toBe(
+      "https://custom.example.com/api/v1/services/aigc/multimodal-generation/generation",
+    );
+  });
+
+  it("端点与 key 必须配对：套餐 key 绝不能拼到公共 dashscope 端点上（会 401）", () => {
+    vi.stubEnv("WAN_PLAN_API_KEY", "sk-sp-plan");
+    const c = resolveNativeDeepReadCredentials();
+    expect(c.apiKey.startsWith("sk-sp-") && c.endpoint.includes("token-plan")).toBe(true);
   });
 });

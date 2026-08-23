@@ -22,8 +22,29 @@ export function isManhuaNativeDeepReadEnabled(): boolean {
   return String(process.env.MANHUA_NATIVE_DEEP_READ || "").trim() === "1";
 }
 
-const DASHSCOPE_NATIVE_ENDPOINT =
-  "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
+const NATIVE_GENERATION_PATH = "/api/v1/services/aigc/multimodal-generation/generation";
+
+/**
+ * 端点与 key 必须配对，且**套餐优先**。
+ *
+ * 套餐额度已付费且不用即归零，而 WAN_OFFICIAL（`sk-ws-`）扣的是充值余额。
+ * 0823 全天的精读走的都是后者，套餐买了五天一次没用上 —— 这里默认选套餐，
+ * 只有套餐没配时才回落按量，避免接线时又悄悄落回扣钱那条。
+ */
+export function resolveNativeDeepReadCredentials(): { apiKey: string; endpoint: string; usingPlan: boolean } {
+  const planKey = String(process.env.WAN_PLAN_API_KEY || "").trim();
+  const planBase = String(process.env.WAN_PLAN_BASE || "https://token-plan.cn-beijing.maas.aliyuncs.com")
+    .trim()
+    .replace(/\/$/, "");
+  if (planKey) {
+    return { apiKey: planKey, endpoint: `${planBase}${NATIVE_GENERATION_PATH}`, usingPlan: true };
+  }
+  return {
+    apiKey: String(process.env.WAN_OFFICIAL_API_KEY || "").trim(),
+    endpoint: `https://dashscope.aliyuncs.com${NATIVE_GENERATION_PATH}`,
+    usingPlan: false,
+  };
+}
 
 /** 服务端下载超时约 120 秒、CDN 实测 1.56 MB/s → 单片体积上限取 90MB 留一半余量 */
 const PIECE_SIZE_CAP_MB = 90;
@@ -42,6 +63,8 @@ export type NativeDeepReadRunResult = NativeDeepReadOutput & {
   /** 实际计费用量，供 provenance 落库 */
   usage: { inputTokens: number; outputTokens: number; costCny: number };
   attemptedSegments: number;
+  /** 这一轮是否吃的套餐额度；false 表示扣了充值余额，对账要看这个 */
+  usingPlanQuota?: boolean;
 };
 
 /** 北京百炼单价（¥/M token），套餐 key 走同一端点 */
@@ -63,10 +86,11 @@ function run(cmd: string, args: string[], timeoutMs = 600_000): Promise<string> 
 function postLong(
   body: unknown,
   apiKey: string,
+  endpoint: string,
   timeoutMs = 1_800_000,
 ): Promise<{ status: number; text: string }> {
   return new Promise((resolve, reject) => {
-    const u = new URL(DASHSCOPE_NATIVE_ENDPOINT);
+    const u = new URL(endpoint);
     const payload = Buffer.from(JSON.stringify(body));
     const req = https.request(
       {
@@ -248,6 +272,7 @@ async function runOneSegment(params: {
   refreshNodes: () => Promise<string[]>;
   spec: NativeDeepReadSegmentSpec;
   apiKey: string;
+  endpoint: string;
   tmpDir: string;
   abortSignal?: AbortSignal;
 }): Promise<{ row: Record<string, unknown> | null; usage: { inputTokens: number; outputTokens: number } }> {
@@ -294,6 +319,7 @@ async function runOneSegment(params: {
         parameters: { modalities: ["text"], enable_thinking: true, max_frames: 2000, max_tokens: 60_000 },
       },
       params.apiKey,
+      params.endpoint,
     );
     if (res.status >= 300) throw new Error(`native_deep_read_http_${res.status}:${res.text.slice(0, 200)}`);
     const json = JSON.parse(res.text) as {
@@ -326,16 +352,25 @@ async function runOneSegment(params: {
 /**
  * 对若干爆点段做精读，返回可直接写进模板卡的 beatGrid 与两栏。
  *
- * ⚠️ 调用方必须检查 failedSegmentCount / droppedCount / truncated —— 
+ * ⚠️ 调用方必须检查 failedSegmentCount / droppedCount / truncated ——
  * 静默少几个镜头比整体失败更难发现。
  */
 export async function runManhuaNativeDeepRead(params: {
   resolveNodes: () => Promise<string[]>;
   segments: readonly NativeDeepReadSegmentSpec[];
-  apiKey: string;
+  /** 缺省走 resolveNativeDeepReadCredentials()：套餐优先 */
+  apiKey?: string;
+  endpoint?: string;
   tmpDir?: string;
   abortSignal?: AbortSignal;
 }): Promise<NativeDeepReadRunResult> {
+  const creds = resolveNativeDeepReadCredentials();
+  const apiKey = params.apiKey || creds.apiKey;
+  const endpoint = params.endpoint || creds.endpoint;
+  if (!apiKey) throw new Error("原生精读缺少 API key（WAN_PLAN_API_KEY 或 WAN_OFFICIAL_API_KEY）");
+  if (!params.apiKey && !creds.usingPlan) {
+    console.warn("[nativeDeepRead] 套餐 key 未配，回落按量付费通道（会扣充值余额）");
+  }
   const tmpDir = params.tmpDir || "/tmp";
   let nodes = await params.resolveNodes();
   let resolvedAt = Date.now();
@@ -357,7 +392,8 @@ export async function runManhuaNativeDeepRead(params: {
       nodeUrls: nodes,
       refreshNodes,
       spec,
-      apiKey: params.apiKey,
+      apiKey,
+      endpoint,
       tmpDir,
       abortSignal: params.abortSignal,
     });
@@ -372,6 +408,7 @@ export async function runManhuaNativeDeepRead(params: {
     // rows 里已剔除切片失败的段，这里补回真实失败数
     failedSegmentCount: params.segments.length - mapped.segmentCount,
     attemptedSegments: params.segments.length,
+    usingPlanQuota: params.apiKey ? undefined : creds.usingPlan,
     usage: {
       inputTokens,
       outputTokens,
