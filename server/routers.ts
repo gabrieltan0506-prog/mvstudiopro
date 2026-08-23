@@ -9493,13 +9493,31 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           input: z.string().min(1).max(4000),
           voice: z.string().min(1).max(80).optional(),
           seed: z.number().int().optional(),
+          /**
+           * bailian = 百炼直连（套餐额度，597 席音色，情绪走 instruction 中文指令）
+           * openrouter = 旧通道（按量，只有两个系统音色，情绪走方括号标签）
+           * 默认百炼：套餐额度不用即归零，而 openrouter 扣的是充值余额。
+           */
+          provider: z.enum(["bailian", "openrouter"]).default("bailian"),
+          /** 情绪与语气的中文指令，仅 bailian 通道支持 */
+          instructionZh: z.string().max(200).optional(),
         }),
       )
       .mutation(async ({ input }) => {
-        const { synthesizeQwenDialogue, QWEN_TTS_SYSTEM_VOICES } = await import(
-          "./services/qwenDialogueTts.js"
-        );
         try {
+          if (input.provider === "bailian") {
+            const { synthesizeBailianDialogue } = await import(
+              "./services/bailianDialogueTts.js"
+            );
+            return await synthesizeBailianDialogue({
+              text: input.input,
+              voice: input.voice || "longcanzhuyue",
+              instructionZh: input.instructionZh,
+            });
+          }
+          const { synthesizeQwenDialogue, QWEN_TTS_SYSTEM_VOICES } = await import(
+            "./services/qwenDialogueTts.js"
+          );
           return await synthesizeQwenDialogue({
             input: input.input,
             voice: input.voice || QWEN_TTS_SYSTEM_VOICES[0].id,
@@ -9510,6 +9528,67 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           throw new TRPCError({
             code: "SERVICE_UNAVAILABLE",
             message: `对白配音暂时不可用：${msg.slice(0, 200)}`,
+          });
+        }
+      }),
+
+    /**
+     * 配乐间：剧情段表 → BGM → 可直接喂 bgm_mount 的 gs://。
+     * **会花钱**（Suno per_call），故限 admin。
+     */
+    /**
+     * 起草 music prompt：**零成本**，不碰上游。
+     * 卡面拿它把 style/duration 显示出来给用户改，改完再走 manhuaGenerateBgm。
+     */
+    manhuaComposeBgmBrief: adminProcedure
+      .input(
+        z.object({
+          laneZh: z.string().min(1).max(20),
+          durationSec: z.number().int().min(10).max(360),
+          moods: z.array(z.enum(["蓄力", "冲突", "反转", "收束"])).min(1).max(8),
+          /** 读片得到的情绪弧线；片后配乐优先用它 */
+          moodArcZh: z.string().max(300).optional(),
+          endingZh: z.string().max(120).optional(),
+          tempoPlanZh: z.string().max(120).optional(),
+          bpm: z.number().int().min(40).max(220).optional(),
+          styleAnchorZh: z.string().max(120).optional(),
+          titleZh: z.string().max(80).optional(),
+          hasSilenceBreak: z.boolean().optional(),
+        }),
+      )
+      .query(async ({ input }) => {
+        const { buildManhuaBgmBrief } = await import("../shared/manhuaBgmBrief.js");
+        return buildManhuaBgmBrief(input);
+      }),
+
+    manhuaGenerateBgm: adminProcedure
+      .input(
+        z.object({
+          laneZh: z.string().min(1).max(20),
+          /** 时长由用户指定 */
+          durationSec: z.number().int().min(10).max(360),
+          moods: z.array(z.enum(["蓄力", "冲突", "反转", "收束"])).min(1).max(8),
+          moodArcZh: z.string().max(300).optional(),
+          endingZh: z.string().max(120).optional(),
+          tempoPlanZh: z.string().max(120).optional(),
+          bpm: z.number().int().min(40).max(220).optional(),
+          styleAnchorZh: z.string().max(120).optional(),
+          titleZh: z.string().max(80).optional(),
+          hasSilenceBreak: z.boolean().optional(),
+          /** 用户在卡面改过的 music prompt；给了就原样用 */
+          styleOverrideZh: z.string().max(1000).optional(),
+          variantIndex: z.number().int().min(0).max(7).optional(),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const { generateManhuaBgm } = await import("./services/manhuaScoringRoom.js");
+        try {
+          return await generateManhuaBgm(input, { variantIndex: input.variantIndex });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new TRPCError({
+            code: "SERVICE_UNAVAILABLE",
+            message: `配乐生成失败：${msg.slice(0, 200)}`,
           });
         }
       }),

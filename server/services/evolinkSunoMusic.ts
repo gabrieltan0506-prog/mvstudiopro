@@ -42,6 +42,10 @@ export type EvolinkSunoRequest = {
   prompt?: string;
   duration?: number;
   negative_tags?: string;
+  /** 要它听话就往上：0.75–0.82 */
+  style_weight?: number;
+  /** 配乐要托底不抢戏：0.2–0.3 */
+  weirdness_constraint?: number;
 };
 
 /**

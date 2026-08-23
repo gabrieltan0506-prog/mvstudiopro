@@ -106,3 +106,164 @@ export function buildBailianTtsBody(req: BailianTtsRequest): Record<string, unkn
     },
   };
 }
+
+/* ────────────────────────── 真实合成 ────────────────────────── */
+
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs.js";
+import {
+  checkManhuaDialogueVoice,
+  type ManhuaVoiceGateVerdict,
+} from "../../shared/manhuaDialogueVoiceGate.js";
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * 量有效人声时长。
+ *
+ * **不能拿容器总时长冒充** —— 补过静音的音频容器达标而人声没变。
+ * 这里用 ffmpeg silencedetect 把静音段总长扣掉，剩下的才算发声。
+ */
+export async function measureDialogueVoiced(
+  filePath: string,
+  abortSignal?: AbortSignal,
+): Promise<{ totalSec: number; voicedSec: number }> {
+  const { stdout: durOut } = await execFileAsync(
+    "ffprobe",
+    ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", filePath],
+    { timeout: 60_000, signal: abortSignal },
+  );
+  const totalSec = Number(String(durOut).trim()) || 0;
+
+  // silencedetect 走 stderr；-40dB / 0.2s 是对白的常用阈值
+  let stderr = "";
+  try {
+    await execFileAsync(
+      "ffmpeg",
+      ["-v", "info", "-i", filePath, "-af", "silencedetect=noise=-40dB:d=0.2", "-f", "null", "-"],
+      { timeout: 120_000, signal: abortSignal },
+    );
+  } catch (e) {
+    stderr = String((e as { stderr?: string }).stderr || "");
+  }
+  let silentTotal = 0;
+  const re = /silence_duration:\s*([\d.]+)/g;
+  for (let m = re.exec(stderr); m; m = re.exec(stderr)) silentTotal += Number(m[1]) || 0;
+  const voicedSec = Math.max(0, totalSec - silentTotal);
+  return { totalSec, voicedSec };
+}
+
+export type BailianDialogueResult = {
+  audioUrl: string;
+  gcsUri: string;
+  bytes: number;
+  voice: string;
+  region: BailianTtsRegion;
+  totalSec: number;
+  voicedSec: number;
+  /** 有效人声门禁结论；**ok=false 的音频不许进视频模型** */
+  gate: ManhuaVoiceGateVerdict;
+};
+
+/**
+ * 合成一段对白：新加坡套餐优先，失败回落北京套餐。
+ *
+ * 回落只针对**请求本身失败**（网络/5xx/凭证）。参数错误（4xx）不回落——
+ * 换个区一样错，只会白花第二次。
+ */
+export async function synthesizeBailianDialogue(
+  req: BailianTtsRequest,
+  opts: { abortSignal?: AbortSignal } = {},
+): Promise<BailianDialogueResult> {
+  const body = buildBailianTtsBody(req);
+  const creds = listBailianTtsCredentials();
+  if (!creds.length) {
+    throw new Error("对白配音缺少套餐凭证（DASHSCOPE_SG_PLAN_KEY 或 WAN_PLAN_API_KEY）");
+  }
+
+  let lastErr: unknown = null;
+  for (const cred of creds) {
+    try {
+      const res = await fetch(cred.endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${cred.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+        signal: opts.abortSignal,
+      });
+      const text = await res.text();
+      if (!res.ok) {
+        // 4xx 是参数问题，换区还是错；只有 5xx / 网络问题才值得回落
+        if (res.status < 500) {
+          throw new Error(`对白配音参数错误 HTTP ${res.status}：${text.slice(0, 200)}`);
+        }
+        lastErr = new Error(`${cred.region} HTTP ${res.status}：${text.slice(0, 160)}`);
+        continue;
+      }
+      const json = JSON.parse(text) as { output?: { audio?: { url?: string } } };
+      const audioUrl = String(json.output?.audio?.url || "").trim();
+      if (!audioUrl) throw new Error("对白配音返回里没有 output.audio.url");
+
+      // 阿里 OSS 直链有 expires_at，必须即取即转 GCS
+      const got = await fetch(audioUrl, { signal: opts.abortSignal });
+      if (!got.ok) throw new Error(`取回配音音频失败 HTTP ${got.status}`);
+      const audio = Buffer.from(await got.arrayBuffer());
+      if (!audio.length) throw new Error("配音音频为空");
+
+      const voice = String((body.input as Record<string, unknown>).voice);
+      const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      const rand = Math.random().toString(36).slice(2, 8);
+      const { gcsUri } = await uploadBufferToGcs({
+        objectName: `manhua-dialogue-tts/${stamp}/${voice}-${rand}.mp3`,
+        buffer: audio,
+        contentType: "audio/mpeg",
+      });
+
+      // 量测跑在本地临时文件上，量完即删
+      const dir = await mkdtemp(path.join(tmpdir(), "mvtts-"));
+      const local = path.join(dir, "a.mp3");
+      let measured = { totalSec: 0, voicedSec: 0 };
+      try {
+        await writeFile(local, audio);
+        measured = await measureDialogueVoiced(local, opts.abortSignal);
+      } catch (e) {
+        // 量不到就不能放行：硬指标是「有效人声 ≥2.5s」，量不到＝无法证明达标
+        console.warn("[bailianTts] 有效人声量测失败：", e instanceof Error ? e.message : e);
+      } finally {
+        await rm(dir, { recursive: true, force: true }).catch(() => {});
+      }
+      const gate: ManhuaVoiceGateVerdict = measured.totalSec
+        ? checkManhuaDialogueVoice(measured)
+        : {
+            ok: false,
+            reasonZh: "未能量测有效人声",
+            actionZh: "确认运行环境有 ffmpeg/ffprobe 后重量测；量不到不得放行进视频模型",
+          };
+
+      return {
+        audioUrl: signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600),
+        gcsUri,
+        bytes: audio.length,
+        voice,
+        region: cred.region,
+        totalSec: measured.totalSec,
+        voicedSec: measured.voicedSec,
+        gate,
+      };
+    } catch (e) {
+      if (opts.abortSignal?.aborted) throw e;
+      // 参数错误不再换区重试，直接抛
+      if (e instanceof Error && /参数错误|没有 output|为空/.test(e.message)) throw e;
+      lastErr = e;
+    }
+  }
+  throw new Error(
+    `对白配音全部通道失败：${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
+  );
+}

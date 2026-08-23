@@ -1,88 +1,144 @@
+/**
+ * 编译器口径按 bgm-scoring skill（七条实弹 prompt 蒸馏）验收。
+ */
 import { describe, expect, it } from "vitest";
 import {
   BGM_DURATION_MAX_SEC,
   BGM_DURATION_MIN_SEC,
-  BGM_STYLE_MAX_CHARS,
+  BGM_STYLE_MAX_DESCRIPTORS,
+  buildBgmStructurePrompt,
   buildManhuaBgmBrief,
   clampBgmDurationSec,
+  countBgmStyleDescriptors,
+  looksLikeArtistName,
+  resolveBgmDurationSec,
 } from "./manhuaBgmBrief";
 
-describe("BGM brief 编译器", () => {
-  it("永远按 custom_mode=true 组织 —— simple mode 下这些字段全部不生效", () => {
-    const b = buildManhuaBgmBrief({ laneZh: "爽文逆袭", moods: ["冲突"], durationSec: 30 });
-    expect(b.model).toBe("suno-v5.5-beta");
-    expect(b.custom_mode).toBe(true);
-    expect(b.instrumental).toBe(true);
+const base = { laneZh: "悬疑权谋", moods: ["蓄力", "冲突", "收束"] as const, durationSec: 18 };
+
+describe("五要素写法", () => {
+  it("情绪弧线写「从哪到哪」，不是「是什么」", () => {
+    const b = buildManhuaBgmBrief(base);
+    // 没有弧线的 prompt 出来的曲子是一条平的，混进片子只能当底噪
+    expect(b.style).toContain("转为");
+    expect(b.style.startsWith("压抑积压")).toBe(true);
   });
 
-  it("题材查表决定器乐底色，不问模型", () => {
-    expect(buildManhuaBgmBrief({ laneZh: "古言种田", moods: ["蓄力"], durationSec: 30 }).style)
-      .toContain("guzheng");
-    expect(buildManhuaBgmBrief({ laneZh: "游戏竞技", moods: ["冲突"], durationSec: 30 }).style)
-      .toContain("electronic rock");
+  it("读片得到的弧线优先于剧本猜的 —— 片后配乐看到的比片前猜的准", () => {
+    const b = buildManhuaBgmBrief({ ...base, moodArcZh: "绝望到底，突然夺回胜局" });
+    expect(b.style).toContain("绝望到底，突然夺回胜局");
+    expect(b.style).not.toContain("压抑积压");
   });
 
-  it("未知题材回落到通用电影配乐，不抛错", () => {
-    const b = buildManhuaBgmBrief({ laneZh: "没这个赛道", moods: ["蓄力"], durationSec: 30 });
-    expect(b.style).toContain("cinematic orchestral");
+  it("乐器点名带演奏法 —— 只写乐器名模型自由发挥", () => {
+    expect(buildManhuaBgmBrief({ ...base, laneZh: "古言种田" }).style).toContain("轮指扫弦");
+    expect(buildManhuaBgmBrief(base).style).toContain("由疏到密");
   });
 
-  it("段情绪按顺序拼进 style，描述曲式走向", () => {
-    const b = buildManhuaBgmBrief({
-      laneZh: "悬疑权谋",
-      moods: ["蓄力", "冲突", "收束"],
-      durationSec: 60,
-    });
-    expect(b.style).toContain("slow build");
-    expect(b.style).toContain("driving rhythm");
-    expect(b.style).toContain("resolving");
+  it("收尾必须写死；不给就用默认，不留空", () => {
+    expect(buildManhuaBgmBrief(base).style).toContain("最后两秒淡出");
+    expect(buildManhuaBgmBrief({ ...base, endingZh: "瞬间用战鼓收尾" }).style).toContain(
+      "瞬间用战鼓收尾",
+    );
   });
 
-  it("纯音乐两道保险：instrumental=true ＋ negative_tags 排人声", () => {
-    const b = buildManhuaBgmBrief({ laneZh: "甜宠", moods: ["收束"], durationSec: 20 });
-    expect(b.instrumental).toBe(true);
-    expect(b.negative_tags).toContain("vocals");
-    expect(b.style).toContain("no vocals");
+  it("分段 bpm 比单一 bpm 精确，给了就用它", () => {
+    const b = buildManhuaBgmBrief({ ...base, tempoPlanZh: "1-6秒60bpm，7-13秒70bpm" });
+    expect(b.style).toContain("60bpm");
   });
 
-  it("标题中性，不带外部剧名", () => {
-    const b = buildManhuaBgmBrief({ laneZh: "爽文逆袭", moods: ["冲突"], durationSec: 30 });
-    expect(b.title).toBe("爽文逆袭·配乐");
+  it("硬参数齐：时长 + 采样率", () => {
+    const b = buildManhuaBgmBrief(base);
+    expect(b.style).toContain("44.1KHz");
+    expect(b.style).toContain(`${b.duration}秒`);
   });
 
-  it("style 不超过 1000 字符上限", () => {
-    const b = buildManhuaBgmBrief({
-      laneZh: "爽文逆袭",
-      moods: ["蓄力", "冲突", "反转", "收束"],
-      durationSec: 30,
-      ambienceEn: "x".repeat(2000),
-    });
-    expect(b.style.length).toBeLessThanOrEqual(BGM_STYLE_MAX_CHARS);
+  it("描述词不超过 12 个 —— 同义词堆叠会互相稀释", () => {
+    const b = buildManhuaBgmBrief(base);
+    expect(countBgmStyleDescriptors(b.style)).toBeLessThanOrEqual(BGM_STYLE_MAX_DESCRIPTORS);
   });
 });
 
-describe("时长夹取", () => {
-  it("低于下限补到 10 —— 越界会被上游判参数错误，异步任务要轮询才知道失败", () => {
-    expect(clampBgmDurationSec(3)).toBe(BGM_DURATION_MIN_SEC);
-    expect(clampBgmDurationSec(0)).toBe(BGM_DURATION_MIN_SEC);
-    expect(clampBgmDurationSec(-5)).toBe(BGM_DURATION_MIN_SEC);
+describe("结构标签（多数人漏掉的一层）", () => {
+  it("instrumental 下 prompt 放结构标签，不是留空", () => {
+    expect(buildManhuaBgmBrief(base).prompt).toContain("[Intro");
   });
 
-  it("高于上限截到 360", () => {
-    expect(clampBgmDurationSec(999)).toBe(BGM_DURATION_MAX_SEC);
+  it("[End] 必须在 —— 治「长档偏短」的正解（22s 档给 21.4s 就是漏了它）", () => {
+    expect(buildManhuaBgmBrief(base).prompt.trim().endsWith("[End]")).toBe(true);
   });
 
-  it("小数取整（上游只收整数）", () => {
-    expect(clampBgmDurationSec(30.6)).toBe(31);
+  it("画面有静音停顿时插 [Break]，让模型自己留空", () => {
+    const p = buildBgmStructurePrompt({ moods: ["蓄力", "冲突"], hasSilenceBreak: true });
+    expect(p).toContain("[Break");
+    // [Break] 必须在爆点之前——那口「憋」是最大一刀之前的呼吸
+    expect(p.indexOf("[Break")).toBeLessThan(p.indexOf("[Peak"));
   });
 
-  it("NaN 回落下限，不产出非法值", () => {
+  it("没有静音停顿就不插 [Break]", () => {
+    expect(buildBgmStructurePrompt({ moods: ["蓄力", "冲突"] })).not.toContain("[Break");
+  });
+
+  it("段情绪拆成每段的 Performance Cue，不全堆 style 里", () => {
+    const p = buildManhuaBgmBrief(base).prompt;
+    expect(p).toContain("压迫渐增");
+    expect(p).toContain("断裂点砸下");
+  });
+
+  it("总有 Outro，收尾方式带进去", () => {
+    expect(buildManhuaBgmBrief({ ...base, moods: ["蓄力"], endingZh: "悬在不解决的和弦" }).prompt)
+      .toContain("悬在不解决的和弦");
+  });
+});
+
+describe("生成参数", () => {
+  it("纯音乐双保险：instrumental ＋ negative_tags（概率抑制不是硬过滤，两道都要）", () => {
+    const b = buildManhuaBgmBrief(base);
+    expect(b.instrumental).toBe(true);
+    expect(b.negative_tags).toContain("vocals");
+  });
+
+  it("style_weight 要它听话，weirdness 压低让配乐托底不抢戏", () => {
+    const b = buildManhuaBgmBrief(base);
+    expect(b.style_weight).toBeGreaterThanOrEqual(0.75);
+    expect(b.style_weight).toBeLessThanOrEqual(0.82);
+    expect(b.weirdness_constraint).toBeLessThanOrEqual(0.3);
+  });
+
+  it("duration 只在 v5.5 + custom_mode 生效，故两者写死", () => {
+    const b = buildManhuaBgmBrief(base);
+    expect(b.model).toBe("suno-v5.5-beta");
+    expect(b.custom_mode).toBe(true);
+  });
+});
+
+describe("时长", () => {
+  it("比画面长 2–4 秒留裁切余量 —— 长档还偏短", () => {
+    expect(resolveBgmDurationSec(18)).toBe(21);
+  });
+
+  it("夹到 10–360", () => {
+    expect(resolveBgmDurationSec(1)).toBe(BGM_DURATION_MIN_SEC);
+    expect(resolveBgmDurationSec(1e9)).toBe(BGM_DURATION_MAX_SEC);
     expect(clampBgmDurationSec(Number.NaN)).toBe(BGM_DURATION_MIN_SEC);
   });
+});
 
-  it("brief 里的 duration 一定是合法整数", () => {
-    const b = buildManhuaBgmBrief({ laneZh: "甜宠", moods: ["收束"], durationSec: 1e9 });
-    expect(Number.isInteger(b.duration)).toBe(true);
-    expect(b.duration).toBe(BGM_DURATION_MAX_SEC);
+describe("艺人名检测", () => {
+  it("在世音乐家点名会被 Suno 拦，要提示转译成可听特征", () => {
+    expect(looksLikeArtistName("cello是Yo Yo Ma的悠扬风格")).toBe(true);
+    expect(looksLikeArtistName("久石让 风格")).toBe(true);
+  });
+
+  it("作品名可以用（Mission Impossible / 十面埋伏 实测有效）", () => {
+    expect(looksLikeArtistName("Mission Impossible 风格，节奏高燃")).toBe(false);
+    expect(looksLikeArtistName("琵琶十面埋伏拨弦三次")).toBe(false);
+  });
+});
+
+describe("用户改写", () => {
+  it("改过的 style 原样送上游，不在用户文本上追加标签", () => {
+    const b = buildManhuaBgmBrief({ ...base, styleOverrideZh: "我自己写的一段" });
+    expect(b.style).toBe("我自己写的一段");
   });
 });
