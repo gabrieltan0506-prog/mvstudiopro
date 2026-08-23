@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   phaseAfterLeavingClipDock,
   resolveFinalVideoUrlFromBlocks,
+  resolveLatestFinalVideoUrlFromBlocks,
   shouldOpenClipDockForPhase,
 } from "./manhuaFinalPhaseRecovery";
 import { parseManhuaWorkflowPhase } from "./manhuaWriterSession";
@@ -36,10 +37,22 @@ describe("成片地址从画布节点恢复", () => {
     );
   });
 
-  it("优先当前集，没有才回落到最近一条已完成成片", () => {
+  it("严格按集号取，不同集互不串", () => {
     const blocks = [done("final-e01", "https://x/1.mp4"), done("final-e02", "https://x/2.mp4")];
+    expect(resolveFinalVideoUrlFromBlocks(blocks, 1)).toBe("https://x/1.mp4");
     expect(resolveFinalVideoUrlFromBlocks(blocks, 2)).toBe("https://x/2.mp4");
-    expect(resolveFinalVideoUrlFromBlocks(blocks, 9)).toBe("https://x/2.mp4");
+  });
+
+  it("当前集没有 final 节点时不借用其它集成片", () => {
+    // 回落会让第 9 集被标成「已完成」并播放/下载第 2 集的视频
+    const blocks = [done("final-e01", "https://x/1.mp4"), done("final-e02", "https://x/2.mp4")];
+    expect(resolveFinalVideoUrlFromBlocks(blocks, 9)).toBeNull();
+  });
+
+  it("「库里最近一条成片」是另一个函数，不与当前集状态共用一个值", () => {
+    const blocks = [done("final-e01", "https://x/1.mp4"), done("final-e02", "https://x/2.mp4")];
+    expect(resolveLatestFinalVideoUrlFromBlocks(blocks)).toBe("https://x/2.mp4");
+    expect(resolveLatestFinalVideoUrlFromBlocks([])).toBeNull();
   });
 
   it("未完成或空地址的节点不算数", () => {

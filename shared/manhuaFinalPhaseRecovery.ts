@@ -27,21 +27,45 @@ export type FinalBlockLike = {
 };
 
 /**
- * 从画布节点解析当前集的成片地址。
+ * 解析**当前集**的成片地址。严格按集号，找不到就是 null。
  *
- * 原实现把地址只放在 React state 里，刷新后恒为 null。
- * 成片节点本来就落在画布上（`final-eXX`），照真实产物读才是可信口径：
- * 先找当前集，找不到再回落到最近一条已完成的整集成片。
+ * ⚠️ 原实现找不到当前集时回落到「最近一条已完成成片」，而这个返回值直接喂给
+ * `hasFinalVideo`、第五格 complete、预览与下载按钮 ——
+ * 焦点在第 9 集、库里只有 final-e02 时，第 9 集会被标成「已完成」
+ * 并播放/下载**第 2 集的视频**。回落在这里等于串集。
+ *
+ * 成片坞若另需「最近一条成片」，用 `resolveLatestFinalVideoUrlFromBlocks()`，
+ * 不要复用当前集状态。
  */
 export function resolveFinalVideoUrlFromBlocks(
   blocks: readonly FinalBlockLike[],
   focusEpisode: number,
 ): string | null {
   const preferredId = `final-e${String(Math.max(1, Math.floor(focusEpisode) || 1)).padStart(2, "0")}`;
-  const usable = (b: FinalBlockLike) =>
-    b.status === "done" && Boolean(String(b.outputUrl || "").trim());
-  const preferred = blocks.find((b) => b.id === preferredId && usable(b));
-  if (preferred) return String(preferred.outputUrl).trim();
-  const latest = [...blocks].reverse().find((b) => /^final-e\d+$/i.test(b.id) && usable(b));
+  const preferred = blocks.find(
+    (b) =>
+      b.id === preferredId
+      && b.status === "done"
+      && Boolean(String(b.outputUrl || "").trim()),
+  );
+  return preferred ? String(preferred.outputUrl).trim() : null;
+}
+
+/**
+ * 最近一条已完成整集成片，**与当前集无关**。
+ *
+ * 单独一个函数，就是为了不让「当前集完成了没」和「库里有没有成片」两件事共用一个值。
+ */
+export function resolveLatestFinalVideoUrlFromBlocks(
+  blocks: readonly FinalBlockLike[],
+): string | null {
+  const latest = [...blocks]
+    .reverse()
+    .find(
+      (b) =>
+        /^final-e\d+$/i.test(b.id)
+        && b.status === "done"
+        && Boolean(String(b.outputUrl || "").trim()),
+    );
   return latest ? String(latest.outputUrl).trim() : null;
 }

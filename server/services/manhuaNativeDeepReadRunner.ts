@@ -113,6 +113,33 @@ export function assertNativeDeepReadPieceSize(size: number): void {
     throw new Error(`切片超过 ${Math.round(PIECE_SIZE_CAP_BYTES / 1024 / 1024)}MB 处理上限`);
   }
 }
+function abortReason(signal?: AbortSignal): Error {
+  return signal?.reason instanceof Error ? signal.reason : new Error("已取消");
+}
+
+/**
+ * 可被中止的重试等待。
+ *
+ * 原来是裸 `setTimeout`：用户点了停止，还要空等 5 或 15 秒才反应，
+ * 而且醒来后照样进下一次切片。
+ */
+export function waitNativeDeepReadRetry(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(abortReason(signal));
+  return new Promise((resolve, reject) => {
+    const cleanup = () => signal?.removeEventListener("abort", onAbort);
+    const onAbort = () => {
+      clearTimeout(timer);
+      cleanup();
+      reject(abortReason(signal));
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 /** 抖音地址约 8 分钟失效；每片重新解析，不复用 */
 const RESOLVE_TTL_MS = 6 * 60_000;
 
@@ -400,16 +427,30 @@ async function runOneSegment(params: {
     if (params.abortSignal?.aborted) throw new Error("已取消");
     try {
       if (attempt === 3) nodes = await params.refreshNodes();
-      await cutSegment(nodes[(attempt - 1) % nodes.length]!, spec.startSec, lenSec, localPath);
+      if (!nodes.length) throw new Error("未解析到可用媒体节点");
+      await cutSegment(
+        nodes[(attempt - 1) % nodes.length]!,
+        spec.startSec,
+        lenSec,
+        localPath,
+        // 原实现漏了这一项：cutSegment 接了参数，调用处没传，等于没接
+        params.abortSignal,
+      );
       cut = true;
     } catch (e) {
+      // 中止必须原样抛出。原来它被当成普通切片错误：等 5/15 秒再重试，
+      // 三次之后还返回 { row: null } —— 用户点了停止，看到的是「这段没学到」
+      if (params.abortSignal?.aborted) {
+        try { unlinkSync(localPath); } catch { /* 本就不存在 */ }
+        throw abortReason(params.abortSignal);
+      }
       if (attempt >= 3) {
         console.warn(`[nativeDeepRead] 段 ${spec.startSec}-${spec.endSec}s 三次切片全败：${String((e as Error).message).slice(0, 120)}`);
         // 失败也可能留下 0 字节或半截文件，不清会在 /tmp 里越堆越多
         try { unlinkSync(localPath); } catch { /* 本就不存在 */ }
         return { row: null, usage: { inputTokens: 0, outputTokens: 0 } };
       }
-      await new Promise((r) => setTimeout(r, [0, 5000, 15000][attempt]!));
+      await waitNativeDeepReadRetry([0, 5_000, 15_000][attempt]!, params.abortSignal);
     }
   }
 

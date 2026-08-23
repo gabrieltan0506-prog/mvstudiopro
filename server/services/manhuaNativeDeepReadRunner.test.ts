@@ -13,6 +13,7 @@ import {
   resolveNativeDeepReadCredentials,
   resolveNativeDeepReadExecutionCredentials,
   validateNativeDeepReadSegments,
+  waitNativeDeepReadRetry,
 } from "./manhuaNativeDeepReadRunner";
 
 afterEach(() => vi.unstubAllEnvs());
@@ -73,6 +74,64 @@ describe("模型名收口", () => {
     expect(src).toContain("model: NATIVE_DEEP_READ_MODEL,");
     expect(src.match(/model: "qwen[^"]*"/g)).toBeNull();
     expect(NATIVE_DEEP_READ_MODEL).toBe("qwen3.8-max");
+  });
+});
+
+describe("中止必须真的能打断", () => {
+  it("等待期间 abort 立即 reject —— 原来是裸 setTimeout，点了停止还要空等 15 秒", async () => {
+    const c = new AbortController();
+    const p = waitNativeDeepReadRetry(15_000, c.signal);
+    const started = Date.now();
+    c.abort();
+    // 不断言文案：未给 reason 时抛的是标准 AbortError（DOMException），
+    // 关键是**立刻**拒绝，而不是等满 15 秒
+    await expect(p).rejects.toThrow();
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it("已中止时直接 reject，不排这次等待", async () => {
+    const c = new AbortController();
+    c.abort();
+    await expect(waitNativeDeepReadRetry(15_000, c.signal)).rejects.toThrow();
+  });
+
+  it("没有 signal 时正常等待并 resolve", async () => {
+    await expect(waitNativeDeepReadRetry(1)).resolves.toBeUndefined();
+  });
+
+  it("abort 携带的 reason 原样抛出，不被替换成通用文案", async () => {
+    const c = new AbortController();
+    const why = new Error("用户已停止学习");
+    const p = waitNativeDeepReadRetry(15_000, c.signal);
+    c.abort(why);
+    await expect(p).rejects.toBe(why);
+  });
+});
+
+describe("切片重试的中止契约（源码级）", () => {
+  const SRC = readFileSync(
+    new URL("./manhuaNativeDeepReadRunner.ts", import.meta.url),
+    "utf8",
+  );
+
+  it("cutSegment 调用处必须传 abortSignal —— 接了参数不传等于没接", () => {
+    const at = SRC.indexOf("await cutSegment(");
+    expect(at).toBeGreaterThan(0);
+    expect(SRC.slice(at, at + 260)).toContain("params.abortSignal");
+  });
+
+  it("重试 catch 必须先认中止再谈重试，否则中止会被当成普通切片失败", () => {
+    const at = SRC.indexOf("await cutSegment(");
+    const after = SRC.slice(at, at + 900);
+    const abortAt = after.indexOf("params.abortSignal?.aborted");
+    const retryAt = after.indexOf("attempt >= 3");
+    expect(abortAt).toBeGreaterThan(0);
+    expect(abortAt).toBeLessThan(retryAt);
+  });
+
+  it("重试等待必须走可中断版本，不许裸 setTimeout", () => {
+    expect(SRC).toContain("waitNativeDeepReadRetry([0, 5_000, 15_000][attempt]!");
+    expect(SRC).not.toMatch(/new Promise\(\(r\) => setTimeout\(r,/);
   });
 });
 
