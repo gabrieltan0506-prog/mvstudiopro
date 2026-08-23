@@ -550,7 +550,9 @@ export function fitManhuaViralBeatGridToSegments(
   beatGrid: readonly ManhuaViralTemplateBeat[],
   segments: number,
 ): ManhuaViralTemplateBeat[] {
-  const src = beatGrid.slice(0, 16);
+  // 原来先 slice(0,16) 再等距抽：抽帧 24 拍时无碍，但精读 95 镜会只用到前 16 个
+  // （相当于只看全片前 1/6），后段的爆点与收束全部拿不到。改为在完整镜头集上等距采样。
+  const src = beatGrid.filter(Boolean);
   const want = Math.max(1, Math.floor(segments));
   if (!src.length) return [];
   const picked =
@@ -626,8 +628,14 @@ export function formatManhuaViralTemplateWriterSkillFromCard(
   return [
     `分类：${tpl.laneZh}`,
     `能力简介：${tpl.summaryZh}`,
+    // 原生精读独有的两栏：不带进来，学到的导演手法就永远进不了扩写模型，
+    // 等于花钱学了一份只能看不能用的报告
+    tpl.reusableZh ? `可复用导演手法：${tpl.reusableZh}` : "",
+    tpl.genPromptHintZh ? `生成画面要素：${tpl.genPromptHintZh}` : "",
     "请结合当前题材自由发挥，不照搬来源剧情，不强制复刻固定节拍。",
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /** 注入编剧扩写：节拍格 + 密度 + 场景池关键词（不泄漏出处剧名） */
