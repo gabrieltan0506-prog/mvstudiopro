@@ -100,6 +100,7 @@ import {
   type ManhuaLearnServerJob,
 } from "@/lib/jobs";
 import { isNativeVideoLearnedTemplate } from "@shared/manhuaViralTemplateBank";
+import { formatManhuaTemplateNativeBeatZh } from "@/lib/manhuaTemplateNativeBeat";
 import { trpc } from "@/lib/trpc";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
 import { shouldSkipLocalLearnFallback } from "@shared/manhuaLearnYtdlp";
@@ -3358,7 +3359,6 @@ export default function PlatformPage() {
     retry: false,
     staleTime: 60_000,
   });
-  const expandTopicPicksMutation = trpc.mvAnalysis.expandPlatformTopicPicks.useMutation();
   /** 扩写引擎（用户可选，2026-08-12）：稳定档主走 OpenRouter 抖动自动换备用通道；轻快档直走备用通道 */
   const [platformExpandEngine, setPlatformExpandEngine] = useState<PlatformTopicExpandEngineId>(() => {
     try {
@@ -3981,7 +3981,7 @@ export default function PlatformPage() {
         toast.error("请先勾选至少一条选题");
         return;
       }
-      if (expandTopicPicksMutation.isPending || shortlistExpandBusy) return;
+      if (shortlistExpandBusy) return;
       // 按条计费（2026-08-12 拍板，单价见 CREDIT_COSTS）
       const cost = CREDIT_COSTS.platformTopicExpand * picks.length;
       if (
@@ -4131,7 +4131,6 @@ export default function PlatformPage() {
       }
     },
     [
-      expandTopicPicksMutation,
       enqueueTopicExpandMutation,
       shortlistExpandBusy,
       supervisorAccess,
@@ -12927,6 +12926,8 @@ export default function PlatformPage() {
                           ) : null}
                           {/* 审批可见性：批准前把学到的结构摊开，不让人盲批 */}
                           {selectedManhuaProposal.beatGrid?.length ||
+                          selectedManhuaProposal.reusableZh ||
+                          selectedManhuaProposal.genPromptHintZh ||
                           selectedManhuaProposal.scenePoolHints?.length ||
                           selectedManhuaProposal.castShape ? (
                             <details
@@ -12942,6 +12943,18 @@ export default function PlatformPage() {
                                   ? ` · 来源 ${selectedManhuaProposal.sourceRefCount} 条`
                                   : ""}
                               </summary>
+                              {selectedManhuaProposal.reusableZh ? (
+                                <div className="mt-2 text-[10px] leading-relaxed text-[#c9c0e6]/60">
+                                  <span className="text-white/45">可复用手法｜</span>
+                                  {selectedManhuaProposal.reusableZh}
+                                </div>
+                              ) : null}
+                              {selectedManhuaProposal.genPromptHintZh ? (
+                                <div className="mt-1.5 text-[10px] leading-relaxed text-[#c9c0e6]/60">
+                                  <span className="text-white/45">生成要素｜</span>
+                                  {selectedManhuaProposal.genPromptHintZh}
+                                </div>
+                              ) : null}
                               {selectedManhuaProposal.castShape ? (
                                 <div className="mt-2 text-[10px] leading-relaxed text-[#c9c0e6]/60">
                                   <span className="text-white/45">角色结构｜</span>
@@ -12985,6 +12998,11 @@ export default function PlatformPage() {
                                         </span>
                                         <span className="min-w-0 flex-1 text-[#c9c0e6]/50">
                                           {beat.visualZh}
+                                          {formatManhuaTemplateNativeBeatZh(beat) ? (
+                                            <span className="mt-0.5 block text-[9px] text-[#8cefff]/45">
+                                              {formatManhuaTemplateNativeBeatZh(beat)}
+                                            </span>
+                                          ) : null}
                                         </span>
                                       </div>
                                     ))}

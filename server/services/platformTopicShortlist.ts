@@ -119,24 +119,28 @@ export async function logPlatformTopicShortlistFreeUse(params: {
   });
 }
 
+const EXPANDED_BLUEPRINT_REQUIRED_FIELDS = ["title", "copywriting", "detailedScript"] as const;
+
 /**
- * 扩写结果必须是**能用的** blueprint，不能只是「能解析的 JSON」。
- * 少了 title/copywriting/detailedScript 任一项，下游就会退回固定骨架 —— 
- * 那时钱已经计了，用户拿到的是空壳。所以这一关要在换通道之前把住。
+ * 扩写结果必须是**能用的** blueprint，不只是「能解析的 JSON」。
+ *
+ * 只查 typeof === "string" 不够：`title: ""` 也是 string，会一路通过门禁，
+ * 到下游变成空标题的空壳，而钱已经计了。所以空串与纯空白同样判失败。
  */
-function assertUsableExpandedBlueprint(raw: string): void {
+export function assertUsableExpandedBlueprint(raw: string): void {
   const parsed = extractJsonObject(raw) as Record<string, unknown> | null;
   const bp =
     parsed && typeof parsed.blueprint === "object" && parsed.blueprint
       ? (parsed.blueprint as Record<string, unknown>)
       : parsed;
-  if (
-    !bp ||
-    typeof bp.title !== "string" ||
-    typeof bp.copywriting !== "string" ||
-    typeof bp.detailedScript !== "string"
-  ) {
-    throw new Error("扩写结果缺少完整 blueprint");
+
+  const missing = EXPANDED_BLUEPRINT_REQUIRED_FIELDS.filter((field) => {
+    const value = bp?.[field];
+    return typeof value !== "string" || value.trim().length === 0;
+  });
+
+  if (!bp || missing.length > 0) {
+    throw new Error(`扩写结果缺少可用字段：${missing.join(",") || "blueprint"}`);
   }
 }
 
@@ -894,6 +898,8 @@ export async function expandPlatformTopicPicks(params: {
   const results: Array<Record<string, unknown>> = [];
   /** 逐条失败清单：整批不再一起完蛋，失败的交给前端提示可重跑 */
   const failed: Array<{ id: string; title: string; reason: string }> = [];
+  /** 每条实际成功的通道：日志会被轮转冲掉，对账要看结构化 diagnostics */
+  const successfulGateways: Array<{ id: string; title: string; gateway: string }> = [];
   const startedAt = Date.now();
   for (let i = 0; i < uniquePicks.length; i++) {
     const pick = uniquePicks[i]!;
@@ -1072,17 +1078,9 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
           ? parsed
           : null;
     if (!bp) {
-      console.warn(`[expandPlatformTopicPicks] 解析失败，用骨架兜底 · ${pick.title.slice(0, 40)}`);
-      bp = {
-        title: pick.title,
-        format: pick.formatHint,
-        hook: pick.hookSketch,
-        copywriting: `${pick.conveyGoal}\n\n在这里我先分享一些可对照的生活动作。`,
-        detailedScript: "【封面】\n【图2】痛点\n【图3】分享要点\n【图4】清单\n【末页】评论钩子",
-        suitablePlatforms: ["小红书"],
-        actionableSteps: ["按图文页发布", "评论区置顶生活钩子"],
-        publishingAdvice: "优先小红书图文测收藏",
-      };
+      // 门禁已经验过一次，走到这里还解析不出说明流程本身有问题。
+      // 绝不能落骨架继续走：那等于收了钱交空壳，且失败条不会进对账清单。
+      throw new Error("扩写结果通过门禁后仍无法解析，已停止写入");
     }
 
     bp.title = String(bp.title || pick.title);
@@ -1173,6 +1171,7 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
     }
 
     results.push(bp);
+    successfulGateways.push({ id: pick.id, title: pick.title, gateway: successfulGateway });
     if (params.onItem) {
       try {
         await params.onItem({
@@ -1202,6 +1201,12 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
       authorityPatched: results.filter((r) => r.authorityCitePatched).length,
       failedCount: failed.length,
       failedPicks: failed,
+      // 套餐到底替下了多少按量调用，只能从这里核对
+      successfulGateways,
+      successfulGatewayCounts: successfulGateways.reduce<Record<string, number>>((counts, item) => {
+        counts[item.gateway] = (counts[item.gateway] || 0) + 1;
+        return counts;
+      }, {}),
     },
   };
 }

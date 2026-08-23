@@ -234,8 +234,18 @@ export async function archiveApprovedManhuaViralTemplate(
   let versioned: { buffer: Buffer; generation: string };
   try {
     versioned = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` });
-  } catch {
-    throw new Error("正式模板不存在或已下架");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    // 只有真的 404 才叫「不存在」。401/403/429/5xx/凭证/网络错误必须原样上抛——
+    // 把它们全说成「模板不存在」，用户会去重建一份本来还在的模板。
+    if (message.startsWith("gcs_stat_failed:404")) {
+      throw new Error("正式模板不存在或已下架");
+    }
+    if (message.startsWith("gcs_download_failed:404")) {
+      // metadata 拿到了 generation，取 media 却 404：说明期间被替换
+      throw new Error("模板已更新，请刷新后重试");
+    }
+    throw error;
   }
 
   const card = parseManhuaViralTemplateCard(JSON.parse(versioned.buffer.toString("utf8")));
