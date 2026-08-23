@@ -4,6 +4,7 @@ import type {
   ManhuaViralTemplateOptimizeField,
   ManhuaViralTemplateOptimizeModel,
 } from "@shared/manhuaViralTemplateBank";
+import { formatManhuaTemplateNativeBeatZh } from "@/lib/manhuaTemplateNativeBeat";
 import { X } from "lucide-react";
 import {
   changedManhuaTemplateBeatIndexes,
@@ -29,6 +30,8 @@ const FIELD_LABELS: Record<ManhuaViralTemplateOptimizeField, string> = {
   summaryZh: "用途摘要",
   hook3sZh: "前三秒钩子",
   beatGrid: "节拍格",
+  reusableZh: "可复用手法",
+  genPromptHintZh: "生成要素",
   scenePoolHints: "场景池",
   castShape: "人物关系",
   densityHints: "内容密度",
@@ -81,6 +84,14 @@ function TemplateColumn({
         <TextValue value={card.hook3sZh} changed={changed("hook3sZh")} />
       </div>
       <div>
+        <div className="mb-1 text-[10px] text-white/40">可复用手法</div>
+        <TextValue value={card.reusableZh || ""} changed={changed("reusableZh")} />
+      </div>
+      <div>
+        <div className="mb-1 text-[10px] text-white/40">生成要素</div>
+        <TextValue value={card.genPromptHintZh || ""} changed={changed("genPromptHintZh")} />
+      </div>
+      <div>
         <div className="mb-1 text-[10px] text-white/40">节拍格</div>
         <div className="space-y-1.5">
           {card.beatGrid.map((beat, index) => {
@@ -92,6 +103,11 @@ function TemplateColumn({
               >
                 <div className="font-semibold">{beat.atSec}s · {beat.conflictZh}</div>
                 <div className="mt-0.5 opacity-80">{beat.visualZh}</div>
+                {formatManhuaTemplateNativeBeatZh(beat) ? (
+                  <div className="mt-1 text-[10px] leading-relaxed opacity-60">
+                    {formatManhuaTemplateNativeBeatZh(beat)}
+                  </div>
+                ) : null}
               </div>
             );
           })}

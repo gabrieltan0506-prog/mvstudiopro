@@ -145,3 +145,112 @@ describe("optimizeApprovedManhuaViralTemplate", () => {
     })).rejects.toThrow("输出被截断");
   });
 });
+
+
+/** 原生精读卡：95 镜、逐镜带六栏（与实测规模一致） */
+function nativeCard(): ManhuaViralTemplateCard {
+  const base = approvedCard();
+  return {
+    ...base,
+    id: "tpl_series_native95",
+    beatGrid: Array.from({ length: 95 }, (_, i) => ({
+      atSec: i * 3,
+      endSec: i * 3 + 2,
+      conflictZh: `c${i}`,
+      visualZh: `v${i}`,
+      shotSizeZh: "特写",
+      angleZh: "平视",
+      cameraMoveZh: "固定机位",
+      lightingZh: "冷光",
+      transitionInZh: "硬切",
+    })),
+    reusableZh: "用机位稳定性区分攻守。",
+    genPromptHintZh: "体积雾 · 逆光轮廓光 · 浅景深。",
+  };
+}
+
+function nativeOutput(
+  beatGrid: ManhuaViralTemplateCard["beatGrid"],
+  reasons: Array<{ field: string; reasonZh: string }>,
+  patch?: Partial<ManhuaViralTemplateCard>,
+) {
+  const c = nativeCard();
+  return {
+    candidate: {
+      nameZh: c.nameZh,
+      laneZh: c.laneZh,
+      summaryZh: c.summaryZh,
+      hook3sZh: c.hook3sZh,
+      beatGrid,
+      reusableZh: c.reusableZh,
+      genPromptHintZh: c.genPromptHintZh,
+      scenePoolHints: c.scenePoolHints,
+      castShape: c.castShape,
+      densityHints: c.densityHints,
+      ...patch,
+    },
+    reasons,
+  };
+}
+
+const runNative = (out: unknown, requestId: string) =>
+  optimizeApprovedManhuaViralTemplate({
+    card: nativeCard(),
+    model: "deepseek_v4_0813_high",
+    promptZh: "优化节奏。",
+    requestId,
+    userId: 7,
+    invoke: async () => resultWith(out),
+  });
+
+describe("原生精读模板防丢门禁（复审 P0-1）", () => {
+  it("镜头数相同但省略六栏 —— 必须拒绝（只比数量拦不住这种）", async () => {
+    const stripped = nativeCard().beatGrid.map((b) => ({
+      atSec: b.atSec,
+      conflictZh: b.conflictZh,
+      visualZh: b.visualZh,
+    }));
+    await expect(
+      runNative(
+        nativeOutput(stripped as ManhuaViralTemplateCard["beatGrid"], [
+          { field: "summaryZh", reasonZh: "精简摘要。" },
+          { field: "beatGrid", reasonZh: "重排节拍。" },
+        ], { summaryZh: "更紧凑的绝境开场。" }),
+        "req_native_strip",
+      ),
+    ).rejects.toThrow(/缺少 endSec|缺少 shotSizeZh|缺少 cameraMoveZh/);
+  });
+
+  it("六栏完整、只改 conflictZh/visualZh —— 允许", async () => {
+    const edited = nativeCard().beatGrid.map((b, i) =>
+      i === 0 ? { ...b, conflictZh: "开场压制", visualZh: "两人对峙" } : b,
+    );
+    const out = await runNative(
+      nativeOutput(edited, [{ field: "beatGrid", reasonZh: "首镜冲突写具体。" }]),
+      "req_native_ok1",
+    );
+    expect(out.proposal.beatGrid).toHaveLength(95);
+    expect(out.proposal.beatGrid[0]!.cameraMoveZh).toBe("固定机位");
+  });
+
+  it("六栏完整且明确优化 cameraMoveZh —— 允许", async () => {
+    const edited = nativeCard().beatGrid.map((b, i) =>
+      i === 0 ? { ...b, cameraMoveZh: "约2秒内从中景推至面部近景" } : b,
+    );
+    const out = await runNative(
+      nativeOutput(edited, [{ field: "beatGrid", reasonZh: "首镜补运镜。" }]),
+      "req_native_ok2",
+    );
+    expect(out.proposal.beatGrid[0]!.cameraMoveZh).toContain("推至面部近景");
+  });
+
+  it("少一镜 —— 继续拒绝", async () => {
+    const fewer = nativeCard().beatGrid.slice(0, 94);
+    await expect(
+      runNative(
+        nativeOutput(fewer, [{ field: "beatGrid", reasonZh: "删掉冗余镜。" }]),
+        "req_native_fewer",
+      ),
+    ).rejects.toThrow("镜头数量发生变化");
+  });
+});

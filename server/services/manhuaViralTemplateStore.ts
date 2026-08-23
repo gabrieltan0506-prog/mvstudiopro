@@ -20,6 +20,10 @@ import {
   downloadGcsObject,
   listGcsObjectNamesByPrefix,
   uploadBufferToGcs,
+  deleteGcsObject,
+  downloadGcsObjectVersioned,
+  uploadBufferToGcsIfAbsent,
+  getGcsBucketName,
 } from "./gcs.js";
 
 export const MANHUA_VIRAL_PROPOSALS_PREFIX = "manhua-template-learn/proposals/";
@@ -204,6 +208,73 @@ export async function resolveViralTemplateForExpand(requestedTemplateId: string)
       nameZh: makeAnonymousTemplateNameZh(card.laneZh, code),
     },
   };
+}
+
+/**
+ * 下架正式模板（0824 新增）：从 approved/ 移入 archive/，**不做物理删除**。
+ *
+ * 为什么是归档不是删除：
+ *  - 模板是真金白银学出来的（一部 58 分钟合辑约 $1.075），误删无法重建
+ *  - 旧抽帧模板要被新精读模板淘汰，但「淘汰」不等于「销毁」，日后对照分析仍要用
+ *
+ * ⚠️ 顺序不可颠倒：**先写归档、确认成功后才删原件**。
+ * 反过来一旦删成功、写失败，数据就没了；这样最坏情况只是两处各留一份冗余。
+ */
+export async function archiveApprovedManhuaViralTemplate(
+  id: string,
+): Promise<ManhuaViralTemplateCard> {
+  const key = String(id || "").trim();
+  if (!key) throw new Error("缺少模板 id");
+
+  const bucket = getGcsBucketName();
+  const objectName = `${MANHUA_VIRAL_APPROVED_PREFIX}${key}.json`;
+
+  // 取内容的同时拿到 generation：后面删除只删这一版，
+  // 期间若有人批准了新版本，条件删除会 412 而不是把新版本毁掉
+  let versioned: { buffer: Buffer; generation: string };
+  try {
+    versioned = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    // 只有真的 404 才叫「不存在」。401/403/429/5xx/凭证/网络错误必须原样上抛——
+    // 把它们全说成「模板不存在」，用户会去重建一份本来还在的模板。
+    if (message.startsWith("gcs_stat_failed:404")) {
+      throw new Error("正式模板不存在或已下架");
+    }
+    if (message.startsWith("gcs_download_failed:404")) {
+      // metadata 拿到了 generation，取 media 却 404：说明期间被替换
+      throw new Error("模板已更新，请刷新后重试");
+    }
+    throw error;
+  }
+
+  const card = parseManhuaViralTemplateCard(JSON.parse(versioned.buffer.toString("utf8")));
+  if (!card) throw new Error("正式模板内容无法解析");
+  if (card.status !== "approved") throw new Error("该模板不是已批准状态，无需下架");
+
+  const archived: ManhuaViralTemplateCard = {
+    ...card,
+    status: "rejected",
+    updatedAt: new Date().toISOString(),
+  };
+
+  // 归档名用 generation：同一版重复下架只会写出同一个对象，天然幂等
+  await uploadBufferToGcsIfAbsent({
+    objectName: `${MANHUA_VIRAL_ARCHIVE_PREFIX}${card.id}/${versioned.generation}.json`,
+    buffer: Buffer.from(`${JSON.stringify(archived, null, 2)}\n`, "utf8"),
+    contentType: "application/json",
+  });
+
+  // 归档已落盘，此时才删原件；且只删我们读到的那一版
+  try {
+    await deleteGcsObject({ objectName, ifGenerationMatch: versioned.generation });
+  } catch (e) {
+    if (e instanceof Error && e.message === "gcs_delete_generation_conflict") {
+      throw new Error("模板已更新，请刷新后重试");
+    }
+    throw e;
+  }
+  return archived;
 }
 
 export async function approveManhuaViralTemplate(input: {

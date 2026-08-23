@@ -119,6 +119,31 @@ export async function logPlatformTopicShortlistFreeUse(params: {
   });
 }
 
+const EXPANDED_BLUEPRINT_REQUIRED_FIELDS = ["title", "copywriting", "detailedScript"] as const;
+
+/**
+ * 扩写结果必须是**能用的** blueprint，不只是「能解析的 JSON」。
+ *
+ * 只查 typeof === "string" 不够：`title: ""` 也是 string，会一路通过门禁，
+ * 到下游变成空标题的空壳，而钱已经计了。所以空串与纯空白同样判失败。
+ */
+export function assertUsableExpandedBlueprint(raw: string): void {
+  const parsed = extractJsonObject(raw) as Record<string, unknown> | null;
+  const bp =
+    parsed && typeof parsed.blueprint === "object" && parsed.blueprint
+      ? (parsed.blueprint as Record<string, unknown>)
+      : parsed;
+
+  const missing = EXPANDED_BLUEPRINT_REQUIRED_FIELDS.filter((field) => {
+    const value = bp?.[field];
+    return typeof value !== "string" || value.trim().length === 0;
+  });
+
+  if (!bp || missing.length > 0) {
+    throw new Error(`扩写结果缺少可用字段：${missing.join(",") || "blueprint"}`);
+  }
+}
+
 function extractJsonObject(raw: string): unknown {
   const t = String(raw || "").trim();
   if (!t) return null;
@@ -730,6 +755,54 @@ async function invokeExpandViaDeepSeek(params: { system: string; user: string })
   return typeof content === "string" ? content.trim() : "";
 }
 
+/**
+ * 百炼 Token Plan 套餐扩写（0824 接线）。
+ *
+ * 为什么排在 EvoLink 之前：套餐额度是**已付费且不用即归零**的，
+ * 而 EvoLink / OpenRouter 每一次都扣充值余额——
+ * 「EvoLink 比 OpenRouter 便宜 12%」在「套餐零新增支出」面前不成立。
+ *
+ * ⚠️ 仅 qwen3.8-max 可走：套餐白名单 11 个模型里有它，没有 kimi-k3。
+ */
+async function invokeExpandViaBailianPlan(params: {
+  model: PlatformTopicExpandEngine;
+  system: string;
+  user: string;
+}): Promise<string> {
+  const key = String(process.env.WAN_PLAN_API_KEY || "").trim();
+  const base = String(process.env.WAN_PLAN_BASE || "").trim().replace(/\/$/, "");
+  if (!key || !base) throw new Error("百炼套餐通道未配置");
+  const res = await fetch(`${base}/compatible-mode/v1/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: params.model,
+      messages: [
+        { role: "system", content: params.system },
+        { role: "user", content: params.user },
+      ],
+      enable_thinking: true,
+      max_tokens: EXPAND_QWEN_MAX_COMPLETION_TOKENS,
+    }),
+    // 没有时限，上游卡住会把整批扩写拖死
+    signal: AbortSignal.timeout(240_000),
+  });
+  if (!res.ok) {
+    const errText = (await res.text().catch(() => "")).slice(0, 300);
+    throw new Error(`百炼套餐扩写失败 HTTP ${res.status}：${errText}`);
+  }
+  const json = (await res.json()) as {
+    choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }>;
+  };
+  const choice = json.choices?.[0];
+  // 截断的半截 JSON 会被下游当成功收下，然后落成空壳还照样计费
+  if (choice?.finish_reason === "length") {
+    throw new Error("套餐扩写输出被截断");
+  }
+  const content = choice?.message?.content;
+  return typeof content === "string" ? content.trim() : "";
+}
+
 async function invokeExpandViaEvolink(params: {
   model: PlatformTopicExpandEngine;
   system: string;
@@ -825,6 +898,8 @@ export async function expandPlatformTopicPicks(params: {
   const results: Array<Record<string, unknown>> = [];
   /** 逐条失败清单：整批不再一起完蛋，失败的交给前端提示可重跑 */
   const failed: Array<{ id: string; title: string; reason: string }> = [];
+  /** 每条实际成功的通道：日志会被轮转冲掉，对账要看结构化 diagnostics */
+  const successfulGateways: Array<{ id: string; title: string; gateway: string }> = [];
   const startedAt = Date.now();
   for (let i = 0; i < uniquePicks.length; i++) {
     const pick = uniquePicks[i]!;
@@ -885,30 +960,42 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
     };
     const invokeExpandEvolink = (model: PlatformTopicExpandEngine) => () =>
       invokeExpandViaEvolink({ model, system, user });
+    /** 套餐首跳：额度不用即归零，优先于任何按量通道 */
+    const invokeExpandPlan = (model: PlatformTopicExpandEngine) => () =>
+      invokeExpandViaBailianPlan({ model, system, user });
+    /** 带网关名，便于诊断核对套餐是否真的替下了按量调用 */
+    const named = (gateway: string, run: () => Promise<string>) => ({ gateway, run });
+    const planReady = Boolean(
+      String(process.env.WAN_PLAN_API_KEY || "").trim() &&
+        String(process.env.WAN_PLAN_BASE || "").trim(),
+    );
 
     // 双通道编排（2026-08-12 用户拍板：哪家便宜哪家先，另一家兜底）——
     // Kimi K3 两家同价（$3/$15），主走 OpenRouter、两次抖动后切 Evolink 保稳；
     // Qwen 3.8 Max Evolink（$1.765/$5.295）比 OpenRouter（$2/$6）便宜 ~12%，
     // 主走 Evolink、兜底 OpenRouter（qwen/qwen3.8-max）。
     const engine: PlatformTopicExpandEngine = normalizePlatformTopicExpandEngine(params.engine);
-    const attempts =
+    const attempts: Array<{ gateway: string; run: () => Promise<string> }> =
       engine === "deepseek-v4"
         ? [
-            // 经济档：OpenRouter 两次抖动后兜底轻快档（Evolink Qwen），保交付不保档位
-            () => invokeExpandViaDeepSeek({ system, user }),
-            () => invokeExpandViaDeepSeek({ system, user }),
-            invokeExpandEvolink("qwen3.8-max"),
+            named("deepseek", () => invokeExpandViaDeepSeek({ system, user })),
+            named("deepseek#2", () => invokeExpandViaDeepSeek({ system, user })),
+            // 兜底档同样先走套餐，再落按量
+            ...(planReady ? [named("bailian_plan", invokeExpandPlan("qwen3.8-max"))] : []),
+            named("evolink", invokeExpandEvolink("qwen3.8-max")),
           ]
         : engine === "qwen3.8-max"
           ? [
-              invokeExpandEvolink("qwen3.8-max"),
-              invokeExpandEvolink("qwen3.8-max"),
-              invokeExpandOpenRouter("qwen/qwen3.8-max"),
+              // 套餐额度优先（零新增支出），未配则自然跳过走原有按量链
+              ...(planReady ? [named("bailian_plan", invokeExpandPlan("qwen3.8-max"))] : []),
+              named("evolink", invokeExpandEvolink("qwen3.8-max")),
+              named("evolink#2", invokeExpandEvolink("qwen3.8-max")),
+              named("openrouter", invokeExpandOpenRouter("qwen/qwen3.8-max")),
             ]
           : [
-              invokeExpandOpenRouter(getPlatformStage2OpenAiModel()),
-              invokeExpandOpenRouter(getPlatformStage2OpenAiModel()),
-              invokeExpandEvolink("kimi-k3"),
+              named("openrouter", invokeExpandOpenRouter(getPlatformStage2OpenAiModel())),
+              named("openrouter#2", invokeExpandOpenRouter(getPlatformStage2OpenAiModel())),
+              named("evolink", invokeExpandEvolink("kimi-k3")),
             ];
 
     console.info(
@@ -921,38 +1008,43 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
      */
     let llmText = "";
     let lastErr: unknown = null;
+    let successfulGateway = "";
+    /**
+     * 逐通道按顺序试，每次都验完整 blueprint 才算成功。
+     * 原来有条「非瞬时错直切最后通道」的旁路，会跳过中间通道；
+     * 套餐排在首位后，那条旁路等于让套餐一失败就直奔按量家，顺序形同虚设。
+     */
     for (let attempt = 1; attempt <= attempts.length; attempt++) {
+      const step = attempts[attempt - 1]!;
       try {
-        llmText = await attempts[attempt - 1]!();
-        if (llmText) break;
-        console.warn(
-          `[expandPlatformTopicPicks] 空回（第 ${attempt} 次）· ${i + 1}/${uniquePicks.length}`,
-        );
+        const candidate = await step.run();
+        if (!candidate) {
+          console.warn(
+            `[expandPlatformTopicPicks] 空回 ${step.gateway}（${attempt}/${attempts.length}）· ${i + 1}/${uniquePicks.length}`,
+          );
+          continue;
+        }
+        // 能解析 ≠ 能用：缺字段的会在下游退回骨架，那时钱已经计了
+        assertUsableExpandedBlueprint(candidate);
+        llmText = candidate;
+        successfulGateway = step.gateway;
+        break;
       } catch (e) {
         lastErr = e;
-        // 换通道前不因「非瞬时错」提前放弃：Evolink 兜底是最后一搏
-        if (attempt === attempts.length) break;
-        if (!isTransientLlmError(e) && attempt < attempts.length - 1) {
-          // 非瞬时错直接跳到最后的兜底通道
-          console.warn(
-            `[expandPlatformTopicPicks] 非瞬时错，直切兜底通道 · ${i + 1}/${uniquePicks.length} · ${
-              e instanceof Error ? e.message.slice(0, 160) : e
-            }`,
-          );
-          try {
-            llmText = await attempts[attempts.length - 1]!();
-          } catch (e2) {
-            lastErr = e2;
-          }
-          break;
-        }
         console.warn(
-          `[expandPlatformTopicPicks] 上游抖动重试 ${attempt}/${attempts.length} · ${i + 1}/${uniquePicks.length} · ${
+          `[expandPlatformTopicPicks] ${step.gateway} 失败（${attempt}/${attempts.length}）· ${i + 1}/${uniquePicks.length} · ${
             e instanceof Error ? e.message.slice(0, 160) : e
           }`,
         );
-        await new Promise((r) => setTimeout(r, attempt * 4000));
+        if (attempt < attempts.length && isTransientLlmError(e)) {
+          await new Promise((r) => setTimeout(r, attempt * 4000));
+        }
       }
+    }
+    if (successfulGateway) {
+      console.info(
+        `[expandPlatformTopicPicks] 成功通道=${successfulGateway} · ${i + 1}/${uniquePicks.length}`,
+      );
     }
     if (!llmText && !lastErr) {
       // 三通道全空回但没抛错：也算失败进清单（可退款/免重跑），不许落骨架空壳照收费
@@ -986,17 +1078,9 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
           ? parsed
           : null;
     if (!bp) {
-      console.warn(`[expandPlatformTopicPicks] 解析失败，用骨架兜底 · ${pick.title.slice(0, 40)}`);
-      bp = {
-        title: pick.title,
-        format: pick.formatHint,
-        hook: pick.hookSketch,
-        copywriting: `${pick.conveyGoal}\n\n在这里我先分享一些可对照的生活动作。`,
-        detailedScript: "【封面】\n【图2】痛点\n【图3】分享要点\n【图4】清单\n【末页】评论钩子",
-        suitablePlatforms: ["小红书"],
-        actionableSteps: ["按图文页发布", "评论区置顶生活钩子"],
-        publishingAdvice: "优先小红书图文测收藏",
-      };
+      // 门禁已经验过一次，走到这里还解析不出说明流程本身有问题。
+      // 绝不能落骨架继续走：那等于收了钱交空壳，且失败条不会进对账清单。
+      throw new Error("扩写结果通过门禁后仍无法解析，已停止写入");
     }
 
     bp.title = String(bp.title || pick.title);
@@ -1087,6 +1171,7 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
     }
 
     results.push(bp);
+    successfulGateways.push({ id: pick.id, title: pick.title, gateway: successfulGateway });
     if (params.onItem) {
       try {
         await params.onItem({
@@ -1116,6 +1201,12 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
       authorityPatched: results.filter((r) => r.authorityCitePatched).length,
       failedCount: failed.length,
       failedPicks: failed,
+      // 套餐到底替下了多少按量调用，只能从这里核对
+      successfulGateways,
+      successfulGatewayCounts: successfulGateways.reduce<Record<string, number>>((counts, item) => {
+        counts[item.gateway] = (counts[item.gateway] || 0) + 1;
+        return counts;
+      }, {}),
     },
   };
 }

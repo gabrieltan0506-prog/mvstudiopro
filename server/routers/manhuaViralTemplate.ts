@@ -204,6 +204,9 @@ export const manhuaViralTemplateRouter = router({
           // 审批可见性：批准前必须看得见学到了什么，不能盲批。
           // 这几项一直落盘，此前被这个白名单 map 过滤掉，前端连数据都收不到。
           beatGrid: c.beatGrid,
+          // 原生视频精读独有的两栏：审批前必须看得见，否则最有门槛的产出被白名单挡在外面
+          reusableZh: c.reusableZh,
+          genPromptHintZh: c.genPromptHintZh,
           scenePoolHints: c.scenePoolHints,
           castShape: c.castShape,
           densityHints: c.densityHints,
@@ -212,6 +215,27 @@ export const manhuaViralTemplateRouter = router({
           sourceRefCount: c.sourceRefs.length,
         })),
       };
+    }),
+
+  /**
+   * owner：下架正式模板（归档，非物理删除）。
+   * 用于「新精读模板淘汰旧抽帧模板」——淘汰不等于销毁，归档件仍可查可恢复。
+   */
+  archiveApproved: protectedProcedure
+    .input(
+      z.object({
+        id: z.string().regex(/^tpl_[a-z0-9_-]{1,60}$/i),
+        /** 须为 true，表示用户明文确认下架 */
+        confirmArchive: z.literal(true),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      assertSiteOwner(ctx.user);
+      const { archiveApprovedManhuaViralTemplate } = await import(
+        "../services/manhuaViralTemplateStore"
+      );
+      const archived = await archiveApprovedManhuaViralTemplate(input.id);
+      return { ok: true as const, id: archived.id, nameZh: archived.nameZh };
     }),
 
   /** 监管：明文批准进库 → GCS approved（不改 TypeScript 种子数组） */

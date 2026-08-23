@@ -6387,75 +6387,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       }),
 
     /**
-     * 勾选 1–6 条初选 → 正式文案扩写（含 graphicNotePages）。
-     * 扣 {@link CREDIT_COSTS.platformTopicExpand}。
-     */
-    expandPlatformTopicPicks: protectedProcedure
-      .input(
-        z.object({
-          context: z.string().max(8000).optional(),
-          enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
-          allowBloggerTitle: z.boolean().optional(),
-          picks: z
-            .array(
-              z.object({
-                id: z.string().min(4).max(64),
-                title: z.string().min(4).max(120),
-                hookSketch: z.string().min(4).max(200),
-                conveyGoal: z.string().min(4).max(240),
-                skillsUsed: z.array(z.string().min(1).max(80)).min(1).max(16),
-                primaryLane: z.enum(["fmcg", "forensic", "crossover", "contrast", "virtual", "default"]),
-                formatHint: z.enum(["图文", "短视频"]),
-                dedupeKey: z.string().min(1).max(80),
-                commentHook: z.string().max(8).optional(),
-                linkedCampaigns: z.array(z.string().min(1).max(80)).max(4).optional(),
-              }),
-            )
-            .min(1)
-            .max(PLATFORM_TOPIC_EXPAND_MAX),
-        }),
-      )
-      .mutation(async ({ ctx, input }) => {
-        const userId = ctx.user.id;
-        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-        // 按条计费（2026-08-12 用户拍板，单价见 CREDIT_COSTS），与 enqueue 版同口径
-        const cost = CREDIT_COSTS.platformTopicExpand * input.picks.length;
-        if (!isAdminUser) {
-          const creditsInfo = await getCredits(userId);
-          if (creditsInfo.totalAvailable < cost) {
-            throw new TRPCError({
-              code: "PAYMENT_REQUIRED",
-              message: `Credits 不足，初选扩写需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
-            });
-          }
-          await deductCreditsAmount(
-            userId,
-            cost,
-            "platformTopicExpand",
-            `初选扩写 ${input.picks.length} 条正式文案（按条计费）`,
-          );
-        }
-        const { expandPlatformTopicPicks } = await import("./services/platformTopicShortlist.js");
-        const result = await expandPlatformTopicPicks({
-          userId,
-          context: input.context,
-          picks: input.picks,
-          enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
-          allowBloggerTitle: Boolean(input.allowBloggerTitle),
-        });
-        const creditsInfo = await getCredits(userId);
-        return {
-          ...result,
-          chargedCredits: isAdminUser ? 0 : cost,
-          totalAvailable: creditsInfo.totalAvailable,
-        };
-      }),
-
-    /**
      * 初选扩写（异步）：入队后前端轮询，**每条写完就冒一条**。
      *
-     * 同步版 `expandPlatformTopicPicks` 要等全部跑完才返回——单条 Kimi K3 约 3 分钟，
-     * 七条就是二十多分钟的空转圈（用户 2026-08-06）。扣费在此处按条一次性发生
+     * 旧同步入口已于 0823 移除：它「先扣点再同步执行」，全失败时没有异步 worker 的
+     * 失败条对账，且正式 UI 早就不用它了。服务层 expandPlatformTopicPicks 保留给 worker 调。
+     * 扣费在此处按条一次性发生
      *（单价 × 条数，2026-08-12 拍板）；失败条由 runner 自动退款。
      */
     enqueuePlatformTopicExpand: protectedProcedure

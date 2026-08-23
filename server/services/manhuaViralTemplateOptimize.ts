@@ -8,6 +8,8 @@ import {
   type ManhuaViralTemplateChangeReason,
   type ManhuaViralTemplateOptimizeField,
   type ManhuaViralTemplateOptimizeModel,
+  isNativeVideoLearnedTemplate,
+  type ManhuaViralTemplateBeat,
 } from "../../shared/manhuaViralTemplateBank.js";
 import {
   extractFirstChoicePlainText,
@@ -67,10 +69,22 @@ export const MANHUA_VIRAL_TEMPLATE_OPTIMIZE_MODELS: readonly OptimizeModelConfig
   },
 ] as const;
 
+const optionalTrimmed = (max: number) => z.string().trim().min(1).max(max).optional();
+
+/**
+ * 逐镜六栏为可选：抽帧链路给不出（运镜/转场是帧间差分，单帧里不存在），
+ * 但 .strict() 下不声明就会被直接拒——原生精读模板过一次优化，六栏全丢。
+ */
 const beatSchema = z.object({
   atSec: z.number().int().min(0).max(3_600),
+  endSec: z.number().int().min(1).max(3_600).optional(),
   conflictZh: z.string().trim().min(1).max(40),
   visualZh: z.string().trim().min(1).max(80),
+  shotSizeZh: optionalTrimmed(16),
+  angleZh: optionalTrimmed(16),
+  cameraMoveZh: optionalTrimmed(60),
+  lightingZh: optionalTrimmed(60),
+  transitionInZh: optionalTrimmed(20),
 }).strict();
 
 const candidateSchema = z.object({
@@ -78,7 +92,10 @@ const candidateSchema = z.object({
   laneZh: z.enum(MANHUA_VIRAL_TEMPLATE_LANE_ORDER),
   summaryZh: z.string().trim().min(1).max(120),
   hook3sZh: z.string().trim().min(1).max(200),
-  beatGrid: z.array(beatSchema).min(1).max(24),
+  // 精读逐镜实测 262 秒出 95 镜；24 会把 95 镜模板优化成 24 镜
+  beatGrid: z.array(beatSchema).min(1).max(128),
+  reusableZh: optionalTrimmed(600),
+  genPromptHintZh: optionalTrimmed(600),
   scenePoolHints: z.array(z.string().trim().min(1).max(80)).max(16),
   castShape: z.object({
     leadDesireZh: z.string().trim().min(1).max(80),
@@ -121,6 +138,46 @@ export function diffManhuaViralTemplateFields(
   );
 }
 
+/** 逐镜六栏＋endSec：抽帧给不出，一旦丢失无法重建 */
+const NATIVE_BEAT_FIELDS = [
+  "endSec",
+  "shotSizeZh",
+  "angleZh",
+  "cameraMoveZh",
+  "lightingZh",
+  "transitionInZh",
+] as const satisfies readonly (keyof ManhuaViralTemplateBeat)[];
+
+/**
+ * 原生精读模板的防丢门禁。
+ *
+ * ⚠️ 只比镜头数量拦不住：实测上游会返回同样 95 镜、却把六栏整体省略，
+ * 还给出一条 beatGrid 的修改理由，于是修订「成功」而数据已经没了。
+ * 所以必须逐镜比对——原来有的字段，改完不能变成 undefined。
+ */
+function assertNativeBeatMetadataNotDropped(
+  original: ManhuaViralTemplateCard,
+  candidate: ManhuaViralTemplateCard,
+): void {
+  if (!isNativeVideoLearnedTemplate(original)) return;
+
+  if (candidate.beatGrid.length !== original.beatGrid.length) {
+    throw new Error(
+      `原生精读镜头数量发生变化（原 ${original.beatGrid.length} → 新 ${candidate.beatGrid.length}），未生成待审修订`,
+    );
+  }
+
+  for (let index = 0; index < original.beatGrid.length; index += 1) {
+    const before = original.beatGrid[index]!;
+    const after = candidate.beatGrid[index]!;
+    for (const field of NATIVE_BEAT_FIELDS) {
+      if (before[field] !== undefined && after[field] === undefined) {
+        throw new Error(`原生精读第 ${index + 1} 镜缺少 ${field}，未生成待审修订`);
+      }
+    }
+  }
+}
+
 function buildOptimizePrompt(card: ManhuaViralTemplateCard, promptZh: string): string {
   const protectedSource = {
     id: card.id,
@@ -129,6 +186,8 @@ function buildOptimizePrompt(card: ManhuaViralTemplateCard, promptZh: string): s
     summaryZh: card.summaryZh,
     hook3sZh: card.hook3sZh,
     beatGrid: card.beatGrid,
+    reusableZh: card.reusableZh,
+    genPromptHintZh: card.genPromptHintZh,
     scenePoolHints: card.scenePoolHints,
     castShape: card.castShape,
     densityHints: card.densityHints,
@@ -145,7 +204,8 @@ ${JSON.stringify(protectedSource)}
 
 输出规则：
 1. 只输出一个 JSON 对象，顶层只能有 candidate、reasons。
-2. candidate 只能有 nameZh,laneZh,summaryZh,hook3sZh,beatGrid,scenePoolHints,castShape,densityHints；字段结构与原模板一致。
+2. candidate 只能有 nameZh,laneZh,summaryZh,hook3sZh,beatGrid,reusableZh,genPromptHintZh,scenePoolHints,castShape,densityHints；字段结构与原模板一致。
+2.1 若原模板的 beatGrid 带 shotSizeZh/angleZh/cameraMoveZh/lightingZh/transitionInZh/endSec（原生精读产出），必须逐镜原样带回，**镜头条数一条都不能少**；这些字段是帧间差分信息，丢了无法重建。
 3. 禁止输出或改写 id、publicCode、status、sourceRefs、provenance、approvedAt、updatedAt。
 4. 只借鉴结构和中性手法；禁止复制来源剧名、原台词、商标或无法从原模板和用户要求得到的事实。
 5. reasons 必须覆盖每个实际变更的顶层字段；field 只能从 ${MANHUA_VIRAL_TEMPLATE_OPTIMIZE_FIELDS.join(",")} 中选，reasonZh 说明该字段为何按用户要求优化。
@@ -204,6 +264,7 @@ export async function optimizeApprovedManhuaViralTemplate(input: {
     updatedAt: new Date().toISOString(),
   });
   if (!candidateBase) throw new Error("模板优化结果未通过卡片校验");
+  assertNativeBeatMetadataNotDropped(input.card, candidateBase);
   const changedFields = diffManhuaViralTemplateFields(input.card, candidateBase);
   if (!changedFields.length) throw new Error("优化结果与原模板完全相同，未生成待审修订");
   const reasonByField = new Map(parsed.reasons.map((reason) => [reason.field, reason.reasonZh]));

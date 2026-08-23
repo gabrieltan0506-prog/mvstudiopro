@@ -6,6 +6,7 @@ import {
   formatManhuaViralTemplateWriterAddon,
   formatManhuaViralTemplateWriterSkillFromCard,
   getManhuaViralTemplate,
+  isNativeVideoLearnedTemplate,
   listApprovedManhuaViralTemplates,
   listApprovedManhuaViralTemplatesGrouped,
   mergeManhuaViralTemplateBanks,
@@ -222,5 +223,67 @@ describe("PublicManhuaViralTemplateCard 匿名化边界（2026-08-15 审查必�
     expect(ok?.publicCode).toBe("A7F2");
     const bad = parseManhuaViralTemplateCard({ ...secretCard, publicCode: "tpl_series_x" });
     expect(bad?.publicCode).toBeUndefined();
+  });
+});
+
+describe("原生视频精读产出入库（0824）", () => {
+  it("逐镜六栏与两个新字段能解析落库；抽帧旧卡不带这些字段仍然有效", () => {
+    const native = parseManhuaViralTemplateCard({
+      ...learnedCard(),
+      beatGrid: [
+        {
+          atSec: 0,
+          endSec: 3,
+          conflictZh: "开场压制",
+          visualZh: "老者指着镜头怒骂",
+          shotSizeZh: "中近景",
+          angleZh: "平视",
+          cameraMoveZh: "约2秒内从中景匀速推至面部近景",
+          lightingZh: "顶光，背景暗，人物面部受光",
+          transitionInZh: "硬切",
+        },
+      ],
+      reusableZh: "用机位稳定性区分攻守：沉稳方给固定正面特写，浮躁方给手势多动的特写。",
+      genPromptHintZh: "体积雾 · 逆光轮廓光 · 低饱和冷灰蓝加暖金点缀 · 浅景深",
+    });
+    expect(native).not.toBeNull();
+    const beat = native!.beatGrid[0]!;
+    expect(beat.shotSizeZh).toBe("中近景");
+    expect(beat.cameraMoveZh).toContain("推至面部近景");
+    expect(beat.endSec).toBe(3);
+    expect(native!.reusableZh).toContain("机位稳定性");
+    expect(native!.genPromptHintZh).toContain("体积雾");
+
+    // 向后兼容：抽帧链路产出没有六栏，解析后应为 undefined 而不是空串
+    const legacy = parseManhuaViralTemplateCard(learnedCard());
+    expect(legacy).not.toBeNull();
+    expect(legacy!.beatGrid[0]!.shotSizeZh).toBeUndefined();
+    expect(legacy!.reusableZh).toBeUndefined();
+  });
+
+  it("beatGrid 上限放到 128：精读逐镜实测 262 秒出 95 镜，卡在 24 会静默截断", () => {
+    const many = parseManhuaViralTemplateCard({
+      ...learnedCard(),
+      beatGrid: Array.from({ length: 95 }, (_, i) => ({
+        atSec: i * 2,
+        conflictZh: `镜${i + 1}`,
+        visualZh: `动作${i + 1}`,
+        shotSizeZh: "特写",
+      })),
+    });
+    expect(many!.beatGrid).toHaveLength(95);
+  });
+
+  it("isNativeVideoLearnedTemplate 认得出新旧形态", () => {
+    expect(isNativeVideoLearnedTemplate(learnedCard())).toBe(false);
+    expect(
+      isNativeVideoLearnedTemplate({ ...learnedCard(), reusableZh: "通用手法一句" }),
+    ).toBe(true);
+    expect(
+      isNativeVideoLearnedTemplate({
+        ...learnedCard(),
+        beatGrid: [{ atSec: 0, conflictZh: "c", visualZh: "v", cameraMoveZh: "固定机位" }],
+      }),
+    ).toBe(true);
   });
 });
