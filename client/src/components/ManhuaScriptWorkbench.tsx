@@ -167,8 +167,10 @@ import {
 import { toast } from "sonner";
 import { suggestManhuaClipCuts } from "@/lib/manhuaEditAutoCutApi";
 import { parseFineCutByShot } from "@shared/manhuaEditFineCut";
+import type { ManhuaWorkflowPhase } from "@shared/manhuaWriterSession";
 
-type WorkflowPhaseId = "outline" | "assets" | "storyboard" | "edit";
+/** 阶段枚举收口在 shared：此处只取别名，不再另写一份 */
+type WorkflowPhaseId = ManhuaWorkflowPhase;
 
 /** 剧本设定表能出图的三类；与 planManhuaAssetImageSpawns 的 kind 对齐 */
 type ManhuaCanonSheetKind = "charsheet" | "sceneplate" | "propsheet";
@@ -1707,6 +1709,9 @@ export default function ManhuaScriptWorkbench({
     shots.length,
     keyartsPixelLocked,
   ]);
+  /** 勾选集是 Set：直接进依赖数组不会因元素增减触发重算，取 size */
+  const dockSelectedCount = dockSelectedIds?.size ?? 0;
+
   const storyboardReadyEnough =
     assetsComplete && (shots.length > 0 || Boolean(episodeStillCount));
 
@@ -1777,6 +1782,23 @@ export default function ManhuaScriptWorkbench({
             : "本集还没有可排的镜头"
           : "需先出至少 1 段成片",
       },
+      {
+        /**
+         * 第五格：后期三件套（拼接 / BGM / 响度）都做完了，却不在流程条里 ——
+         * 用户走到「剪辑 ✅」就以为到头了，根本不知道还有成片这一步，
+         * 于是画布上永远没有长片。闭环的最后一格必须看得见。
+         */
+        id: "final",
+        label: "成片",
+        complete: Boolean(finalVideoUrl),
+        gapZh: finalVideoUrl
+          ? ""
+          : !clipHas
+            ? "需先出至少 1 段成片"
+            : dockSelectedCount
+              ? `已勾选 ${dockSelectedCount} 段 · 待合成`
+              : "成片坞未勾选镜头",
+      },
     ];
     return definitions.map((phase, index) => ({
       ...phase,
@@ -1796,6 +1818,8 @@ export default function ManhuaScriptWorkbench({
     roughClips.length,
     assetGate,
     assetScriptStaleHintZh,
+    finalVideoUrl,
+    dockSelectedCount,
   ]);
 
   useEffect(() => {
@@ -1830,6 +1854,13 @@ export default function ManhuaScriptWorkbench({
         description: "剪辑台需要分镜就绪后再进入",
       });
       setActivePhase("storyboard");
+      return;
+    }
+    if (phase === "final") {
+      // 坞渲染在 extras 视图（沉浸工作台下 display:none），
+      // 组件内部滚动对隐藏元素无效，必须由父级先切视图
+      setActivePhase("final");
+      onOpenClipDock?.();
       return;
     }
     setActivePhase(phase);
@@ -2496,7 +2527,7 @@ export default function ManhuaScriptWorkbench({
         </div>
       ) : null}
 
-      {/* 阿硕式：只留一条阶段轨（大纲→资产→分镜→剪辑），勿叠第二套进度 */}
+      {/* 阿硕式：只留一条阶段轨（大纲→资产→分镜→剪辑→成片），勿叠第二套进度 */}
       <div
         data-manhua-workflow-rail
         data-manhua-ashuo-stepper
@@ -2535,10 +2566,22 @@ export default function ManhuaScriptWorkbench({
               >
                 {phase.complete ? <CheckCircle2 className="h-3.5 w-3.5" /> : phase.index}
               </span>
-              <span className="whitespace-nowrap text-[11px] font-semibold">
-                {phase.id === "assets" ? "资产设定" : phase.label}
+              <span className="min-w-0 flex-1">
+                <span className="block whitespace-nowrap text-[11px] font-semibold">
+                  {phase.id === "assets" ? "资产设定" : phase.label}
+                </span>
+                {/* 缺口一直算了却没渲染：只显示「待开始」等于把排查成本推给用户 */}
+                {phase.gapZh ? (
+                  <span
+                    data-manhua-phase-gap
+                    title={phase.gapZh}
+                    className="block truncate text-[8px] leading-tight opacity-70"
+                  >
+                    {phase.gapZh}
+                  </span>
+                ) : null}
               </span>
-              <span className="ml-auto shrink-0 text-[8px] opacity-60">
+              <span className="ml-auto shrink-0 self-start text-[8px] opacity-60">
                 {phase.complete ? "已完成" : phase.current ? "当前" : "待开始"}
               </span>
             </button>

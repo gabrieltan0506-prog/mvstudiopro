@@ -56,8 +56,8 @@ export type ManhuaWriterSession = {
   manhuaUiMode: "workbench" | "form";
   /** 资产设定缺图时用户选择跳过；硬刷新后仍可进分镜 */
   assetsSkipped: boolean;
-  /** 工作台阶段：大纲 / 资产 / 分镜 / 剪辑 */
-  workflowPhase: "outline" | "assets" | "storyboard" | "edit";
+  /** 工作台阶段：大纲 / 资产 / 分镜 / 剪辑 / 成片 */
+  workflowPhase: ManhuaWorkflowPhase;
   /** 用户上传/基于库参考生成的参考图（HTTPS + 勾选角色） */
   customAssetRefs: ManhuaCustomAssetRef[];
   /** 从有声成片抠出的角色声线参考（按 @角色N） */
@@ -144,18 +144,39 @@ function normalizeWriterPack(raw: unknown): ManhuaWriterPack | null {
   return writerPackLooksReady(pack) ? pack : pack.seriesTitle || pack.episodes.length ? pack : null;
 }
 
+/**
+ * 工作台阶段：**全站唯一枚举**。
+ *
+ * 0824 收口——此前这个枚举在四处各写一遍（组件类型、本文件的持久化类型、
+ * 本文件的校验、OmniCanvas 的 state 与恢复校验）。加一个阶段要同时改四处，
+ * 漏掉任一处的后果是「选了新阶段、刷新后回到大纲」**且不报错**。
+ */
+export const MANHUA_WORKFLOW_PHASES = [
+  "outline",
+  "assets",
+  "storyboard",
+  "edit",
+  "final",
+] as const;
+
+export type ManhuaWorkflowPhase = (typeof MANHUA_WORKFLOW_PHASES)[number];
+
+/** 未知值一律回落：确认过编剧的回分镜，否则回大纲 */
+export function parseManhuaWorkflowPhase(
+  value: unknown,
+  writerConfirmed: boolean,
+): ManhuaWorkflowPhase {
+  return MANHUA_WORKFLOW_PHASES.includes(value as ManhuaWorkflowPhase)
+    ? (value as ManhuaWorkflowPhase)
+    : writerConfirmed
+      ? "storyboard"
+      : "outline";
+}
+
 export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): ManhuaWriterSession {
   const mode = input.manhuaUiMode === "form" ? "form" : "workbench";
   const writerConfirmed = Boolean(input.writerConfirmed);
-  const workflowPhase =
-    input.workflowPhase === "outline" ||
-    input.workflowPhase === "assets" ||
-    input.workflowPhase === "storyboard" ||
-    input.workflowPhase === "edit"
-      ? input.workflowPhase
-      : writerConfirmed
-        ? "storyboard"
-        : "outline";
+  const workflowPhase = parseManhuaWorkflowPhase(input.workflowPhase, writerConfirmed);
   return {
     format: MANHUA_WRITER_SESSION_FORMAT,
     topic: String(input.topic || "").trim(),

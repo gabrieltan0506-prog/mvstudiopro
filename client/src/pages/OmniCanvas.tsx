@@ -181,7 +181,9 @@ import {
   healManhuaWriterSessionCanonDrift,
   loadManhuaWriterSessionFromStorage,
   migrateManhuaWriterTemplateId,
+  parseManhuaWorkflowPhase,
   saveManhuaWriterSessionToStorage,
+  type ManhuaWorkflowPhase,
 } from "@shared/manhuaWriterSession";
 import {
   makeManhuaCharacterVoiceLockId,
@@ -963,12 +965,11 @@ export default function OmniCanvas() {
   const [shareAssetToLibrary, setShareAssetToLibrary] = useState(
     () => Boolean(initialWriterSession?.shareAssetToLibrary),
   );
-  const [workflowPhase, setWorkflowPhase] = useState<
-    "outline" | "assets" | "storyboard" | "edit"
-  >(
-    () =>
-      initialWriterSession?.workflowPhase ||
-      (initialWriterSession?.writerConfirmed ? "storyboard" : "outline"),
+  const [workflowPhase, setWorkflowPhase] = useState<ManhuaWorkflowPhase>(() =>
+    parseManhuaWorkflowPhase(
+      initialWriterSession?.workflowPhase,
+      Boolean(initialWriterSession?.writerConfirmed),
+    ),
   );
   /** 工厂运行范围：焦点集（默认）或成片坞已勾选集 */
   const [factoryRunScope, setFactoryRunScope] = useState<"focus" | "dock">("focus");
@@ -1637,13 +1638,7 @@ export default function OmniCanvas() {
     if (session.cineVocabLocale) setFactoryCineVocabLocale(session.cineVocabLocale);
     if (session.chainIgnoreByScene) setChainIgnoreByScene(session.chainIgnoreByScene);
     setWorkflowPhase(
-      session.workflowPhase === "assets" ||
-        session.workflowPhase === "storyboard" ||
-        session.workflowPhase === "edit"
-        ? session.workflowPhase
-        : session.writerConfirmed
-          ? "storyboard"
-          : "outline",
+      parseManhuaWorkflowPhase(session.workflowPhase, Boolean(session.writerConfirmed)),
     );
     const prefs = draft.factoryPrefs || {};
     const restoredScope = String(prefs.assetSelectionScopeKey || "").trim();
