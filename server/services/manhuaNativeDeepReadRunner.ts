@@ -386,6 +386,34 @@ export function pickSmallestVideoFormat(
   return best ? { url: best.url, sizeMB: best.size / 1048576 } : null;
 }
 
+/**
+ * 解析该集的 CDN 节点副本：**只拿地址，不下载** —— 模型自己去 CDN 拉流。
+ *
+ * 原先这段只存在于 `scripts/manhua-native-deep-read-batch.mts`。接进生产链时
+ * 若在 service 里再写一遍，「挑 format 按体积不按 height」这个口径就有了两处实现，
+ * 改一处漏一处就是不报错的暗雷（判据收口与探针纪律）。所以抽到这里，脚本改引用。
+ *
+ * `abortSignal` 必须直通：否则用户中止时会卡在 yt-dlp 解析上等它自己结束。
+ */
+export async function resolveNativeDeepReadNodeUrls(
+  sourceUrl: string,
+  abortSignal?: AbortSignal,
+): Promise<string[]> {
+  const url = String(sourceUrl || "").trim();
+  if (!url) throw new Error("缺少可解析的剧集地址");
+  const cookie = String(process.env.DOUYIN_COOKIE || "").trim();
+  const stdout = await run(
+    "yt-dlp",
+    ["-J", "--no-warnings", ...(cookie ? ["--add-header", `Cookie:${cookie}`] : []), url],
+    120_000,
+    abortSignal,
+  );
+  const info = JSON.parse(stdout) as { formats?: Array<Record<string, unknown>> };
+  const best = pickSmallestVideoFormat(info.formats || []);
+  if (!best) throw new Error("未解析到可用的 540p 档");
+  return [best.url];
+}
+
 /** 切片：-ss 在 -i 之前是 input seeking，走 Range 只拉需要的段；-c copy 不转码 */
 async function cutSegment(
   url: string,

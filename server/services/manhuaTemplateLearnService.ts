@@ -19,6 +19,8 @@ import {
   selectFramesForVisionAnalysis,
   type ManhuaTemplateLearnLlmProvider,
 } from "../../shared/manhuaTemplateLearnFrameVision.js";
+import { isManhuaNativeDeepReadEnabled } from "./manhuaNativeDeepReadRunner.js";
+import { learnEpisodeChunkViaNativeDeepRead } from "./manhuaNativeDeepReadChunk.js";
 import {
   MANHUA_LEARN_ANALYSIS_DRAFT_MIN,
   MANHUA_LEARN_ANALYSIS_MIN,
@@ -1021,6 +1023,37 @@ async function learnOneEpisodeChunk(input: {
   const rangeZh = `${Math.floor(input.startSec / 60)}–${Math.ceil(input.endSec / 60)} 分`;
 
   await assertManhuaLearnControl(input);
+
+  /**
+   * 模型层分支（0824 接线）：flag 开时这一分片改走原生视频精读。
+   *
+   * **只换模型层。** 上游的素材接入层——解析剧名、合集展开、付费边界识别、
+   * 读到付费自动停止、cookie 轮换——全部照常执行，因为那些是任何学习方式
+   * 都要用的基本功能，与用哪个模型无关。
+   *
+   * 默认关（`MANHUA_NATIVE_DEEP_READ` 不为 "1"），零行为变化。
+   * 精读产出的质量门在 `learnEpisodeChunkViaNativeDeepRead` 里（三信号检查），
+   * 不走下面那条要求「语音＋抽帧＋读帧三路同时成功」的严格门——
+   * 那三路正是本分支替换掉的东西。
+   */
+  if (isManhuaNativeDeepReadEnabled()) {
+    await input.onProgress?.(
+      MANHUA_LEARN_STAGE.vision,
+      formatManhuaLearnEpisodeDetail(
+        MANHUA_LEARN_STAGE.vision,
+        input.ep.index,
+        rangeZh,
+      ),
+    );
+    return await learnEpisodeChunkViaNativeDeepRead({
+      mediaSource: input.mediaSource,
+      startSec: input.startSec,
+      endSec: input.endSec,
+      hintZh: input.titleHint,
+      abortSignal: input.abortSignal,
+    });
+  }
+
   await input.onProgress?.(
     MANHUA_LEARN_STAGE.audio,
     formatManhuaLearnEpisodeDetail(
