@@ -78,6 +78,12 @@ import {
 } from "../services/platformAnalysisLlm.js";
 import { resolveGrowthCampJobServerTimeoutMs } from "../../shared/growthCampJobTiming.js";
 import {
+  hasNativeDeepReadJobFields,
+  NATIVE_DEEP_READ_JOB_MAX_CALLS,
+  parseNativeDeepReadJobConfirmation,
+  resolveNativeDeepReadJobTimeoutMs,
+} from "../../shared/manhuaNativeDeepReadJob.js";
+import {
   beginGrowthInteractiveWorkload,
   isAuthenticatedRunningPlatformJob,
 } from "../growth/growthWorkloadPriority";
@@ -228,13 +234,53 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+type JobTimeoutErrorWithPartial<T> = Error & { partialResult?: T };
+
+export async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+  opts: {
+    onTimeout?: () => void | Promise<void>;
+    cleanupGraceMs?: number;
+  } = {},
+): Promise<T> {
   let timeoutHandle: NodeJS.Timeout | null = null;
+  let timeoutTriggered = false;
+  let timeoutHook: Promise<void> = Promise.resolve();
+  const settled = promise.then(
+    (value) => ({ status: "fulfilled" as const, value }),
+    (reason) => ({ status: "rejected" as const, reason }),
+  );
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutHandle = setTimeout(() => reject(new Error(message)), timeoutMs);
+    timeoutHandle = setTimeout(() => {
+      timeoutTriggered = true;
+      // 先把墙钟结果锁成失败，再通知底层中止。若 onTimeout 同步令原任务
+      // resolve，而这里后 reject，Promise.race 会把已超时任务误报为成功。
+      reject(new Error(message));
+      try {
+        timeoutHook = Promise.resolve(opts.onTimeout?.()).then(() => undefined);
+      } catch (error) {
+        timeoutHook = Promise.reject(error);
+      }
+    }, timeoutMs);
   });
   try {
     return await Promise.race([promise, timeoutPromise]);
+  } catch (error) {
+    if (!timeoutTriggered) throw error;
+    await timeoutHook.catch(() => undefined);
+    const cleanupGraceMs = Math.max(0, opts.cleanupGraceMs ?? 30_000);
+    const cleanupResult = await Promise.race([
+      settled,
+      new Promise<{ status: "grace_expired" }>((resolve) => {
+        const handle = setTimeout(() => resolve({ status: "grace_expired" }), cleanupGraceMs);
+        handle.unref?.();
+      }),
+    ]);
+    const timeoutError = (error instanceof Error ? error : new Error(message)) as JobTimeoutErrorWithPartial<T>;
+    if (cleanupResult.status === "fulfilled") timeoutError.partialResult = cleanupResult.value;
+    throw timeoutError;
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle);
   }
@@ -420,6 +466,9 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
             analysisStage: `manhua_learn_${phase}`,
             analysisStageLabel: label,
             learnChannel: "cloud",
+            ...(params.nativeDeepReadConfirmed === true
+              ? { pipelineMode: "native_deep_read" }
+              : {}),
             learnProgressLog,
             ...(parsedBatch > 0
               ? { batchLearned: Math.max(Number(prevOut.batchLearned) || 0, parsedBatch) }
@@ -441,6 +490,9 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         analysisStage: `manhua_learn_${phase}`,
         analysisStageLabel: label,
         learnChannel: "cloud",
+        ...(params.nativeDeepReadConfirmed === true
+          ? { pipelineMode: "native_deep_read" }
+          : {}),
         learnProgressLog,
         ...(parsedBatch > 0 ? { batchLearned: parsedBatch } : {}),
         ...(parsedLearned > 0 ? { learnedCount: parsedLearned } : {}),
@@ -460,6 +512,35 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
     if (jobId) manhuaLearnAbortControllers.set(jobId, abortController);
     let result: Awaited<ReturnType<typeof runManhuaTemplateLearn>>;
     try {
+      const nativeConfirmed = params.nativeDeepReadConfirmed === true;
+      let nativePlanPreview: Awaited<ReturnType<
+        typeof import("../services/manhuaNativeDeepReadPlanRuntime.js")["buildNativeDeepReadPlanPreviewFromServices"]
+      >> | undefined;
+      if (nativeConfirmed) {
+        const confirmation = parseNativeDeepReadJobConfirmation(params);
+        const { buildNativeDeepReadPlanPreviewFromServices } = await import(
+          "../services/manhuaNativeDeepReadPlanRuntime.js"
+        );
+        const { assertNativeDeepReadPlanConfirmation } = await import(
+          "../services/manhuaNativeDeepReadPlan.js"
+        );
+        nativePlanPreview = await buildNativeDeepReadPlanPreviewFromServices({
+          url: confirmation.url,
+          limit: confirmation.planLimit,
+          learnLlm: confirmation.learnLlm,
+          abortSignal: abortController.signal,
+        });
+        assertNativeDeepReadPlanConfirmation(
+          confirmation,
+          nativePlanPreview,
+        );
+        await reportLearnProgress(
+          MANHUA_LEARN_STAGE.list,
+          `执行计划复核通过：${nativePlanPreview.executableEpisodeCount} 集 · ${nativePlanPreview.totalSegments} 次模型请求 · 确认码 ${nativePlanPreview.planHash}`,
+        );
+      } else if (hasNativeDeepReadJobFields(params)) {
+        throw new Error("原生精读计划未获明确确认，未发出模型请求");
+      }
       result = await runManhuaTemplateLearn({
       url: typeof params.url === "string" ? params.url : undefined,
       gcsUri: importedGcsUri || undefined,
@@ -472,7 +553,22 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       retrySkippedEpisodes: params.retrySkippedEpisodes === true,
       learnLlm:
         params.learnLlm === "claude" || params.learnLlm === "deepseek" ? params.learnLlm : undefined,
+      nativeDeepReadConfirmed: nativeConfirmed,
+      nativePlanPreview,
       onProgress: reportLearnProgress,
+      onNativeUsage: async (nativeUsage) => {
+        if (!jobId) return;
+        try {
+          await patchJobRunningProgress(jobId, {
+            pipelineMode: "native_deep_read",
+            nativeUsage,
+          });
+        } catch (error) {
+          // 卡片已经入库后，进度回执的一次写入异常不能把该集改判失败并触发重跑。
+          // 完整回执仍会随最终 result 再写一次；这里仅记录服务端异常。
+          console.warn("[manhua-learn] native usage progress persistence failed", error);
+        }
+      },
       abortSignal: abortController.signal,
       checkControl: async () => {
         if (abortController.signal.aborted) return "cancel";
@@ -1448,6 +1544,16 @@ export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
       return 18 * 60_000;
     }
     if (input.action === "manhua_template_learn") {
+      const params = input.params ?? {};
+      if (params.nativeDeepReadConfirmed === true) {
+        const calls = Number(params.nativeMaxCalls);
+        // 入队端与执行端都会拒绝非法值；这里仍给一个有界墙钟，避免历史脏任务
+        // 因解析异常退回 90 分钟后把正在进行的原生请求提前砍掉。
+        if (Number.isInteger(calls) && calls >= 1 && calls <= NATIVE_DEEP_READ_JOB_MAX_CALLS) {
+          return resolveNativeDeepReadJobTimeoutMs(calls);
+        }
+        return resolveNativeDeepReadJobTimeoutMs(1);
+      }
       const raw = Number(process.env.MANHUA_TEMPLATE_LEARN_JOB_TIMEOUT_MS);
       if (Number.isFinite(raw) && raw >= 180_000) return raw;
       // 每轮 8–10 集：下片+语音+读帧+删视频，默认 90 分钟
@@ -2817,15 +2923,23 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
     if (isAuthenticatedRunningPlatformJob(job)) {
       releaseInteractiveWorkload = await beginGrowthInteractiveWorkload(`platform-job:${job.id}`);
     }
-    const { output, provider } = await withTimeout(
-      executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id),
-      timeoutMs,
-      `${job.type} job timed out after ${timeoutMs}ms`,
-    );
     const manhuaLearnJob =
       jobType === "video"
       && isRecord(job.input)
       && job.input.action === "manhua_template_learn";
+    const { output, provider } = await withTimeout(
+      executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id),
+      timeoutMs,
+      `${job.type} job timed out after ${timeoutMs}ms`,
+      manhuaLearnJob
+        ? {
+            onTimeout: () => {
+              abortRunningManhuaLearnJob(job.id);
+            },
+            cleanupGraceMs: 30_000,
+          }
+        : undefined,
+    );
     const succeededPersisted = manhuaLearnJob
       ? await markManhuaLearnJobSucceededWithRetry(job.id, output, provider)
       : await markJobSucceeded(job.id, output, provider);
@@ -2938,7 +3052,54 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
       job.type === "platform" && error instanceof Error
         ? error.message
         : getJobFailureMessage(job.type as JobType, error);
-    if (userCancelled) {
+    const nativeManhuaLearnJob =
+      job.type === "video"
+      && isRecord(job.input)
+      && job.input.action === "manhua_template_learn"
+      && isRecord(job.input.params)
+      && job.input.params.nativeDeepReadConfirmed === true;
+    if (nativeManhuaLearnJob) {
+      const partial = (error as JobTimeoutErrorWithPartial<{
+        output?: unknown;
+        provider?: string;
+      }>)?.partialResult;
+      if (partial?.output && isRecord(partial.output)) {
+        await patchJobRunningProgress(job.id, {
+          ...partial.output,
+          analysisStage: "manhua_learn_failed",
+          analysisStageLabel: userCancelled
+            ? "用户已停止学习；已入库内容与费用回执保留"
+            : "原生精读任务未完整结束；已入库内容与费用回执保留",
+        }).catch(() => undefined);
+      } else {
+        // 计划复核前失败不会产生模型用量；一旦进入原生执行却未能在清理窗口内
+        // 返回完整结果，必须显式标成“回执待核”，不能让面板把缺字段解释为 0 元。
+        await patchJobRunningProgress(job.id, {
+          pipelineMode: "native_deep_read",
+          nativeUsage: {
+            model: "qwen3.8-max",
+            billingMode: "unknown",
+            inputTokens: 0,
+            outputTokens: 0,
+            priceEquivalentCny: 0,
+            elapsedMs: 0,
+            receiptComplete: false,
+          },
+          analysisStage: "manhua_learn_failed",
+          analysisStageLabel: userCancelled
+            ? "用户已停止学习；费用回执待核"
+            : "原生精读任务未完整结束；费用回执待核",
+        }).catch(() => undefined);
+      }
+      // 原生学习按模型请求计费；整单重排可能再次发请求。失败、中止、墙钟到期
+      // 均只落终态，保留 claim 供人工核对，不自动重跑。
+      await markJobFailed(
+        job.id,
+        userCancelled
+          ? "用户已停止学习；已入库内容与费用回执保留"
+          : `${message}；已入库内容保留，未自动重跑`,
+      );
+    } else if (userCancelled) {
       await markJobFailed(job.id, "用户已停止学习；已落盘内容保留");
     } else if (
       job.type === "image" &&

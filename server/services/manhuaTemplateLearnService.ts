@@ -22,9 +22,13 @@ import {
 import { isManhuaNativeDeepReadEnabled } from "./manhuaNativeDeepReadRunner.js";
 import {
   executeAndIngestNativeDeepReadEpisode,
-  NATIVE_DEEP_READ_MAX_SEGMENT_SEC,
   type NativeDeepReadEpisodeExecution,
 } from "./manhuaNativeDeepReadExecution.js";
+import {
+  splitNativeDeepReadSegments,
+  type NativeDeepReadPlanEpisode,
+  type NativeDeepReadPlanPreview,
+} from "./manhuaNativeDeepReadPlan.js";
 import { listIngestedNativeDeepReadEpisodeRecords } from "./manhuaNativeDeepReadIngest.js";
 import {
   MANHUA_LEARN_ANALYSIS_DRAFT_MIN,
@@ -136,7 +140,15 @@ export type ManhuaTemplateLearnInput = {
   /** 只重试此前因来源受限暂跳的集（列表已重新拉取，播放地址随之刷新）。 */
   retrySkippedEpisodes?: boolean;
   learnLlm?: ManhuaTemplateLearnLlmProvider;
+  /**
+   * 仅供 worker 内部传入：客户端只提交确认码，worker 重算成功后才把完整计划交给服务层。
+   * 全局能力开关不等于单次任务已获确认。
+   */
+  nativeDeepReadConfirmed?: boolean;
+  nativePlanPreview?: NativeDeepReadPlanPreview;
   onProgress?: (phase: string, detailZh: string) => void | Promise<void>;
+  /** 每完成或中止一段付费精读即持久化累计回执，进程退出也不把已用额度显示成 0。 */
+  onNativeUsage?: (receipt: ManhuaNativeDeepReadUsageReceipt) => void | Promise<void>;
   /** 每个分片落盘后把该集摘要同步进 Job output，供网页即时甄别。 */
   onEpisodeCheckpoint?: (preview: ManhuaLearnDigestPreview) => void | Promise<void>;
   /** 服务端持久控制：停止整部剧或跳过当前集。 */
@@ -185,7 +197,58 @@ export type ManhuaTemplateLearnResult = {
   visionFilled: boolean;
   messageZh: string;
   workId: string;
+  /** 旧任务输出可能没有该字段；所有新 native 结果必须明确写出。 */
+  pipelineMode?: "native_deep_read" | "audio_dense_frames";
+  nativeUsage?: ManhuaNativeDeepReadUsageReceipt;
 };
+
+export type ManhuaNativeDeepReadUsageReceipt = {
+  model: string;
+  billingMode: "plan_quota" | "payg" | "unknown";
+  inputTokens: number;
+  outputTokens: number;
+  /** 套餐通道是等价用量，不表述为实际扣款。 */
+  priceEquivalentCny: number;
+  elapsedMs: number;
+  receiptComplete: boolean;
+};
+
+type NativeUsageRow = {
+  inputTokens?: number;
+  outputTokens?: number;
+  costCny?: number;
+  usingPlanQuota?: boolean;
+  receiptComplete?: boolean;
+  elapsedMs?: number;
+};
+
+export function mergeManhuaNativeDeepReadUsage(
+  current: ManhuaNativeDeepReadUsageReceipt | undefined,
+  row: NativeUsageRow | undefined,
+): ManhuaNativeDeepReadUsageReceipt | undefined {
+  if (!row) return current;
+  const rowMode = row.usingPlanQuota === true
+    ? "plan_quota"
+    : row.usingPlanQuota === false
+      ? "payg"
+      : "unknown";
+  const currentMode = current?.billingMode;
+  const billingMode = !currentMode
+    ? rowMode
+    : currentMode === rowMode
+      ? currentMode
+      : "unknown";
+  return {
+    model: "qwen3.8-max",
+    billingMode,
+    inputTokens: (current?.inputTokens || 0) + (Number(row.inputTokens) || 0),
+    outputTokens: (current?.outputTokens || 0) + (Number(row.outputTokens) || 0),
+    priceEquivalentCny:
+      (current?.priceEquivalentCny || 0) + (Number(row.costCny) || 0),
+    elapsedMs: (current?.elapsedMs || 0) + (Number(row.elapsedMs) || 0),
+    receiptComplete: (current?.receiptComplete ?? true) && row.receiptComplete === true,
+  };
+}
 
 /** 读帧 provenance 跨集聚合（attempted/success 按块累计；model 取最近一集） */
 function aggregateDigestFrameVision(
@@ -243,18 +306,52 @@ function toDigestPreview(d: ManhuaLearnEpisodeDigest): ManhuaLearnDigestPreview 
   };
 }
 
+export type ManhuaLearnSnapshotMode = "native_deep_read" | "audio_dense_frames";
+
+/**
+ * 快照完成数必须按当前产物代际取值。
+ *
+ * 原生精读不产 digest；刷新后若仍只数 digest，会把已经落下的待审卡显示成 0 集。
+ * `nativeDeepReadEpisodeIndexes` 由每轮有效卡集合覆盖式校准，是刷新恢复的持久真源。
+ */
+export function resolveManhuaLearnSnapshotCompletion(input: {
+  progress: ManhuaLearnSeriesProgress | null;
+  completedDigestCount: number;
+}): { pipelineMode: ManhuaLearnSnapshotMode; completedCount: number } {
+  const nativeIndexes = Array.from(new Set(
+    (input.progress?.nativeDeepReadEpisodeIndexes || [])
+      .map((value) => Math.floor(Number(value) || 0))
+      .filter((value) => value >= 1 && value <= 999),
+  )).sort((a, b) => a - b);
+  if (nativeIndexes.length > 0) {
+    return { pipelineMode: "native_deep_read", completedCount: nativeIndexes.length };
+  }
+  return {
+    pipelineMode: "audio_dense_frames",
+    completedCount: Math.max(0, Math.floor(Number(input.completedDigestCount) || 0)),
+  };
+}
+
 /** 供网页查询合集学习进度与分集摘要 */
 export async function getManhuaSeriesLearnSnapshot(seriesKey: string): Promise<{
   progress: ManhuaLearnSeriesProgress | null;
   digestsPreview: ManhuaLearnDigestPreview[];
   /** 已整集学完的数量（digestsPreview 含未学完的检查点，勿拿其长度当完成数） */
   completedCount: number;
+  pipelineMode: ManhuaLearnSnapshotMode;
   analysisReady: boolean;
   proposal: ManhuaViralTemplateCard | null;
 }> {
   const key = String(seriesKey || "").trim();
   if (!key) {
-    return { progress: null, digestsPreview: [], completedCount: 0, analysisReady: false, proposal: null };
+    return {
+      progress: null,
+      digestsPreview: [],
+      completedCount: 0,
+      pipelineMode: "audio_dense_frames",
+      analysisReady: false,
+      proposal: null,
+    };
   }
   const progress = await loadSeriesProgress(key);
   if (progress) {
@@ -263,7 +360,14 @@ export async function getManhuaSeriesLearnSnapshot(seriesKey: string): Promise<{
   }
   const digestsAll = await loadAllDigests(key);
   const digests = digestsAll.filter(isManhuaLearnEpisodeComplete);
-  const digestsPreview = digestsAll.map(toDigestPreview);
+  const snapshotCompletion = resolveManhuaLearnSnapshotCompletion({
+    progress,
+    completedDigestCount: digests.length,
+  });
+  // native 的正式产物是一集一张卡；旧 digest 不能在刷新后冒充当前模式的分集结果。
+  const digestsPreview = snapshotCompletion.pipelineMode === "native_deep_read"
+    ? []
+    : digestsAll.map(toDigestPreview);
   const completeIndexes = digests.map((d) => d.episodeIndex);
   // 集合包含判定（审查必须修11）：只认可靠索引集合。存量 progress 无
   // listedEpisodeIndexes 时不做总数比较——历史接口抖动曾把 count 缩成 1，
@@ -271,7 +375,9 @@ export async function getManhuaSeriesLearnSnapshot(seriesKey: string): Promise<{
   const allListedComplete = progress
     ? isManhuaLearnListComplete(progress.listedEpisodeIndexes, completeIndexes)
     : false;
-  const analysisReady = canEmitManhuaLearnAnalysis(digests.length, { allListedComplete });
+  const analysisReady = snapshotCompletion.pipelineMode === "native_deep_read"
+    ? false
+    : canEmitManhuaLearnAnalysis(digests.length, { allListedComplete });
   let proposal: ManhuaViralTemplateCard | null = null;
   if (analysisReady && progress) {
     // 审查收紧：快照只回真实落盘的 proposed 提案（seriesKey 已带 provider 命名空间）。
@@ -284,7 +390,14 @@ export async function getManhuaSeriesLearnSnapshot(seriesKey: string): Promise<{
     }
     // status=approved：已入库，不再给可批准的提案（防重复批准循环）
   }
-  return { progress, digestsPreview, completedCount: digests.length, analysisReady, proposal };
+  return {
+    progress,
+    digestsPreview,
+    completedCount: snapshotCompletion.completedCount,
+    pipelineMode: snapshotCompletion.pipelineMode,
+    analysisReady,
+    proposal,
+  };
 }
 
 function gcsBucketHint(): string {
@@ -345,7 +458,7 @@ function seriesKeyFromProgressObjectName(name: string): string {
  * 大合集和分集可能是不同 URL / mixId；先按真实剧名复用已有系列。
  * 列表或 progress 读取异常时 fail-closed，避免因一次 GCS 抖动建出重复剧。
  */
-async function resolveManhuaSeriesKey(input: {
+export async function resolveManhuaSeriesKey(input: {
   sourceIdentity: string;
   mixId?: string;
   title?: string;
@@ -1369,6 +1482,7 @@ export function buildNativeDeepReadLearnResult(input: {
   tagLabelsZh?: string[];
   /** 追加在文案末尾的暂跳提示（非 native 特有，沿用主流程口径） */
   skippedHintZh?: string;
+  nativeUsage?: ManhuaNativeDeepReadUsageReceipt;
 }): ManhuaTemplateLearnResult {
   const tail = input.skippedHintZh || "";
   return {
@@ -1398,6 +1512,8 @@ export function buildNativeDeepReadLearnResult(input: {
         ? `当前已有 ${input.nativeCardCount} 张原生精读待审卡，本轮没有新增。${tail}`
         : `当前没有可处理的原生精读集，尚未生成待审卡。${tail}`,
     workId: input.workId,
+    pipelineMode: "native_deep_read",
+    nativeUsage: input.nativeUsage,
   };
 }
 
@@ -1458,6 +1574,8 @@ export async function buildNativeDeepReadEpisodeExecution(
     /** 永久溯源标识：GCS 导入传稳定 gs://，抖音来源留空即用 ep.url */
     provenanceSourceRef?: string;
     abortSignal?: AbortSignal;
+    /** worker 已复核的本集计划；在 claim 与模型调用前再次核对时长和分段。 */
+    confirmedPlanEpisode?: NativeDeepReadPlanEpisode;
   },
   deps: NativeDeepReadEpisodeSourceDeps = defaultNativeDeepReadSourceDeps,
 ): Promise<NativeDeepReadEpisodeExecution> {
@@ -1473,9 +1591,17 @@ export async function buildNativeDeepReadEpisodeExecution(
   deps.mediaSource(input.ep, probeState);
 
   const total = Math.floor(durationSec);
-  const segments: Array<{ startSec: number; endSec: number }> = [];
-  for (let start = 0; start < total; start += NATIVE_DEEP_READ_MAX_SEGMENT_SEC) {
-    segments.push({ startSec: start, endSec: Math.min(start + NATIVE_DEEP_READ_MAX_SEGMENT_SEC, total) });
+  const segments = splitNativeDeepReadSegments(total);
+  if (input.confirmedPlanEpisode) {
+    const expected = input.confirmedPlanEpisode;
+    if (
+      expected.episodeIndex !== input.ep.index
+      || expected.sourceUrl !== input.ep.url
+      || Math.floor(expected.durationSec) !== total
+      || JSON.stringify(expected.segments) !== JSON.stringify(segments)
+    ) {
+      throw new Error(`第 ${input.ep.index} 集时长或分段与确认计划不一致，未发出模型请求`);
+    }
   }
 
   return {
@@ -1798,7 +1924,16 @@ export async function runManhuaTemplateLearn(
    * 提到函数顶部：**单源集号安放**（在批次选择之前）就要按模式取不同的已占用集。
    * native 不产 digest，那一步不能读 digest。
    */
-  const nativeDeepReadMode = isManhuaNativeDeepReadEnabled();
+  const nativeCapabilityEnabled = isManhuaNativeDeepReadEnabled();
+  if (input.nativeDeepReadConfirmed && !nativeCapabilityEnabled) {
+    throw new Error("原生精读能力未开启，已停止执行");
+  }
+  if (input.nativeDeepReadConfirmed && !input.nativePlanPreview) {
+    throw new Error("原生精读任务缺少 worker 复核后的执行计划，已停止执行");
+  }
+  // 环境变量只代表“能力可用”；单次任务还必须经过 owner 确认与 worker 重算。
+  // 旧任务没有确认字段时继续走旧链，不能因开 flag 就静默切成付费原生精读。
+  const nativeDeepReadMode = nativeCapabilityEnabled && input.nativeDeepReadConfirmed === true;
   // 列表接口可能才能回填真剧名；先用临时 key 建工作目录，
   // 取到 titleHint 后再按剧名核对已有系列。
   let seriesKey = seriesKeyFrom({ url: sourceIdentity, mixId, title, learnLlm });
@@ -1843,6 +1978,13 @@ export async function runManhuaTemplateLearn(
       learnLlm,
     });
     workId = `tpl_series_${seriesKey}`;
+    const confirmedNativePlan = nativeDeepReadMode ? input.nativePlanPreview : undefined;
+    let nativeUsage: ManhuaNativeDeepReadUsageReceipt | undefined;
+    if (confirmedNativePlan && confirmedNativePlan.seriesKey !== seriesKey) {
+      throw new Error(
+        `原生精读计划所属系列已变化（确认 ${confirmedNativePlan.seriesKey}，当前 ${seriesKey}），未发出模型请求`,
+      );
+    }
 
     // 同名剧已有分集时，单条大合集作为新的学习源追加；
     // 同一条源重跑则回到原集号，从断点续学。
@@ -1988,7 +2130,9 @@ export async function runManhuaTemplateLearn(
     const listedIndexes = listed.map((e) => e.index);
     // 旗标优先级（固化语义）：refreshPreviewFrames > retrySkippedEpisodes > 常规续学；
     // 前端不会同传，两 true 时按补帧处理
-    const batchIndexes = input.refreshPreviewFrames
+    const batchIndexes = confirmedNativePlan
+      ? confirmedNativePlan.episodes.map((episode) => episode.episodeIndex)
+      : input.refreshPreviewFrames
       ? existingDigests
           .filter(isManhuaLearnEpisodeComplete)
           .map((digest) => digest.episodeIndex)
@@ -2010,6 +2154,24 @@ export async function runManhuaTemplateLearn(
             ],
             batchSize,
           });
+    if (confirmedNativePlan) {
+      if (input.refreshPreviewFrames || input.retrySkippedEpisodes) {
+        throw new Error("原生精读确认任务不能同时执行补帧或重试旧暂跳集");
+      }
+      const listedByIndex = new Map(listed.map((episode) => [episode.index, episode]));
+      for (const confirmedEpisode of confirmedNativePlan.episodes) {
+        const current = listedByIndex.get(confirmedEpisode.episodeIndex);
+        if (!current) {
+          throw new Error(`确认计划中的第${confirmedEpisode.episodeIndex}集已不在当前合集，未发出模型请求`);
+        }
+        if (current.access !== "free") {
+          throw new Error(`第${confirmedEpisode.episodeIndex}集当前没有明确免费信号，未发出模型请求`);
+        }
+        if (current.url !== confirmedEpisode.sourceUrl) {
+          throw new Error(`第${confirmedEpisode.episodeIndex}集来源已变化，未发出模型请求`);
+        }
+      }
+    }
     if (input.retrySkippedEpisodes && !batchIndexes.length) {
       /**
        * native 模式的空重试也必须走 native 口径：
@@ -2028,6 +2190,7 @@ export async function runManhuaTemplateLearn(
           paywallFields: paywallResultFields(prog),
           categoryLabelZh: prog.categoryLabelZh,
           tagLabelsZh: prog.tagLabelsZh,
+          nativeUsage,
           skippedHintZh: prog.skippedEpisodeIndexes?.length
             ? " 暂跳集这次没有出现在合集列表里（或已入库），本轮未消耗任何模型成本。"
             : " 当前没有暂跳集需要重试。",
@@ -2083,6 +2246,7 @@ export async function runManhuaTemplateLearn(
           paywallFields: paywallResultFields(prog),
           categoryLabelZh: prog.categoryLabelZh,
           tagLabelsZh: prog.tagLabelsZh,
+          nativeUsage,
         });
       }
       const digestsAll = await loadAllDigests(seriesKey);
@@ -2339,6 +2503,9 @@ export async function runManhuaTemplateLearn(
           const plan = await buildNativeDeepReadEpisodeExecution({
             seriesKey,
             ep,
+            confirmedPlanEpisode: confirmedNativePlan?.episodes.find(
+              (episode) => episode.episodeIndex === idx,
+            ),
             /**
              * 手动导入 GCS 素材时，上面把 `gs://` 换成了 7 天签名 HTTPS 供 ffmpeg 用。
              * 卡片溯源必须存回稳定的 `gs://` —— 签名短链几天后失效，
@@ -2352,9 +2519,15 @@ export async function runManhuaTemplateLearn(
             `第 ${idx} 集原生视频精读中（${plan.segments.length} 段 · 约 ${Math.round(plan.durationSec / 60)} 分钟）…`,
           );
           const outcome = await executeAndIngestNativeDeepReadEpisode(plan);
+          nativeUsage = mergeManhuaNativeDeepReadUsage(nativeUsage, {
+            ...outcome.usage,
+            elapsedMs: outcome.elapsedMs,
+          });
+          if (nativeUsage) await input.onNativeUsage?.(nativeUsage);
           const shots = outcome.card.beatGrid?.length || 0;
+          const costLabel = outcome.usage.usingPlanQuota === true ? "套餐额度折算" : "按量费用";
           episodeDoneNoteZh = outcome.created
-            ? `第 ${idx} 集原生视频精读完成，已生成待审卡（${shots} 镜 · ${plan.segments.length} 段 · 实付 ¥${outcome.costCny.toFixed(4)} · ${Math.round(outcome.elapsedMs / 1000)} 秒）`
+            ? `第 ${idx} 集原生视频精读完成，已生成待审卡（${shots} 镜 · ${plan.segments.length} 段 · ${costLabel} ¥${outcome.costCny.toFixed(4)} · ${Math.round(outcome.elapsedMs / 1000)} 秒）`
             : `第 ${idx} 集已由其它任务先行入库，本次复用已有待审卡（未重复付费）`;
           // 本轮内立刻计入：learnedCount 与后续文案都以真实 native 卡为准
           nativeIngestedEpisodes.add(idx);
@@ -2417,6 +2590,26 @@ export async function runManhuaTemplateLearn(
             : `${episodeDoneNoteZh} · 本轮新增 ${batchLearnedIndexes.length} · 累计 ${prog.learnedEpisodeIndexes.length} 集）`,
         );
       } catch (e) {
+        if (nativeDeepReadMode) {
+          const carried = e as {
+            nativeUsage?: NativeUsageRow;
+            costCny?: number;
+            elapsedMs?: number;
+          };
+          const carriedUsage = carried.nativeUsage || (
+            carried.costCny !== undefined || carried.elapsedMs !== undefined
+              ? {
+              costCny: carried.costCny,
+              elapsedMs: carried.elapsedMs,
+              receiptComplete: false,
+                }
+              : undefined
+          );
+          if (carriedUsage) {
+            nativeUsage = mergeManhuaNativeDeepReadUsage(nativeUsage, carriedUsage);
+            if (nativeUsage) await input.onNativeUsage?.(nativeUsage);
+          }
+        }
         /**
          * 中止判定必须**优先看 abortSignal**，不能只认 error.name。
          *
@@ -2524,6 +2717,7 @@ export async function runManhuaTemplateLearn(
         paywallFields: paywallResultFields(prog),
         categoryLabelZh: prog.categoryLabelZh,
         tagLabelsZh: prog.tagLabelsZh,
+        nativeUsage,
         skippedHintZh: skippedHint,
       });
     }

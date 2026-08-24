@@ -100,6 +100,7 @@ import {
   type ManhuaLearnServerJob,
 } from "@/lib/jobs";
 import { isNativeVideoLearnedTemplate } from "@shared/manhuaViralTemplateBank";
+import { NATIVE_DEEP_READ_JOB_MAX_CALLS } from "@shared/manhuaNativeDeepReadJob";
 import { formatManhuaTemplateNativeBeatZh } from "@/lib/manhuaTemplateNativeBeat";
 import { trpc } from "@/lib/trpc";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
@@ -135,6 +136,7 @@ import {
   mergeManhuaLearnLiveProgress,
   demoteStaleRunningManhuaLearnItems,
   mergeManhuaLearnServerJobsIntoBasket,
+  nativeLearnTerminalProposalRefreshSignature,
   readManhuaLearnActiveJob,
   readManhuaLearnBasket,
   readManhuaLearnFocusSeriesKey,
@@ -2984,6 +2986,8 @@ export default function PlatformPage() {
     manhuaTemplateOwnerCapabilitiesQuery.data?.allowed === true;
   const ownerTemplateOptimizeModels =
     manhuaTemplateOwnerCapabilitiesQuery.data?.models || [];
+  const previewNativeDeepReadPlanMutation =
+    trpc.manhuaViralTemplate.previewNativeDeepReadPlan.useMutation();
 
   /**
    * 生命周期三条链路（换代体检 / 归档查看 / 恢复）**仅 owner 可见**。
@@ -3045,6 +3049,7 @@ export default function PlatformPage() {
     () => (manhuaViralProposalsQuery.data?.items || []).filter((item) => item.status !== "approved"),
     [manhuaViralProposalsQuery.data?.items],
   );
+  const nativeProposalRefreshSignatureRef = useRef("");
   const [selectedManhuaProposalId, setSelectedManhuaProposalId] = useState("");
   const selectedManhuaProposal = useMemo(
     () => pendingManhuaViralProposals.find((item) => item.id === selectedManhuaProposalId)
@@ -3081,8 +3086,22 @@ export default function PlatformPage() {
       setManhuaLearnActiveJob(null);
       writeManhuaLearnActiveJob(null);
     }
+    const nativeTerminalSignature = nativeLearnTerminalProposalRefreshSignature(listed.items);
+    if (
+      nativeTerminalSignature
+      && nativeTerminalSignature !== nativeProposalRefreshSignatureRef.current
+    ) {
+      try {
+        const refreshed = await manhuaViralProposalsQuery.refetch();
+        if (refreshed.isError) throw refreshed.error;
+        nativeProposalRefreshSignatureRef.current = nativeTerminalSignature;
+      } catch (error) {
+        // job 恢复不能被待审列表的一次读取失败拖垮；不记签名，下一轮轮询继续重试。
+        console.warn("[manhua-learn] refresh native proposals failed", error);
+      }
+    }
     return listed;
-  }, [manhuaLearnActiveJob, manhuaLearnFocusSeriesKey]);
+  }, [manhuaLearnActiveJob, manhuaLearnFocusSeriesKey, manhuaViralProposalsQuery]);
 
   const stopFocusedManhuaLearnJob = useCallback(async () => {
     const jobId = focusedManhuaLearnServerJob?.jobId || focusedManhuaLearnBasketItem?.jobId;
@@ -3291,6 +3310,9 @@ export default function PlatformPage() {
           tagLabelsZh: d.tagLabelsZh,
         })),
         completedCount: (snap as { completedCount?: number }).completedCount,
+        pipelineMode: (snap as {
+          pipelineMode?: "native_deep_read" | "audio_dense_frames";
+        }).pipelineMode,
         analysisReady: snap.analysisReady,
         proposal: snap.proposal as Record<string, unknown> | null,
       });
@@ -5247,9 +5269,110 @@ export default function PlatformPage() {
         await copyManhuaLocalLearnFallback(row, "无成片链接，无法云端下片");
         return;
       }
-      if (url && (/douyin\.com\/search\//i.test(url) || /kuaishou\.com\/search\//i.test(url))) {
+      const douyinSearchHasModalId = (() => {
+        if (!/douyin\.com\/search\//i.test(url)) return false;
+        try {
+          return /^\d{5,}$/.test(new URL(url).searchParams.get("modal_id") || "");
+        } catch {
+          return false;
+        }
+      })();
+      if (
+        url
+        && (
+          (/douyin\.com\/search\//i.test(url) && !douyinSearchHasModalId)
+          || /kuaishou\.com\/search\//i.test(url)
+        )
+      ) {
         await copyManhuaLocalLearnFallback(row, "当前是搜索页链接");
         return;
+      }
+      let nativeConfirmedParams: Record<string, unknown> = {};
+      const nativePlanCandidate =
+        (row.platform === "douyin" || /(?:^|\.)douyin\.com/i.test((() => {
+          try {
+            return new URL(url).hostname;
+          } catch {
+            return "";
+          }
+        })()))
+        && Boolean(url)
+        && !gcsUri
+        && options?.refreshPreviewFrames !== true
+        && options?.retrySkippedEpisodes !== true;
+      if (
+        nativePlanCandidate
+        && (manhuaTemplateOwnerCapabilitiesQuery.isLoading
+          || manhuaTemplateOwnerCapabilitiesQuery.isError)
+      ) {
+        toast.error("正在确认原生精读权限", {
+          description: "权限状态未确认前不会回落旧学习链，请稍后再点一次。",
+        });
+        setManhuaLearnBusyKey(null);
+        return;
+      }
+      if (
+        ownerTemplateOptimizeAllowed
+        && nativePlanCandidate
+      ) {
+        setManhuaLearnBusyKey(busyKey);
+        try {
+          const plan = await previewNativeDeepReadPlanMutation.mutateAsync({
+            url,
+            limit: manhuaLearnBatchSize,
+            learnLlm: row.learnLlm,
+          });
+          if (!plan.executionEnabled) {
+            toast.error("原生精读尚未开启", {
+              description: "本次只完成零成本计划预览，未建立学习任务。",
+            });
+            setManhuaLearnBusyKey(null);
+            return;
+          }
+          if (plan.pendingClaimEpisodeIndexes.length) {
+            toast.error("存在待核对的精读占位", {
+              description: `第 ${plan.pendingClaimEpisodeIndexes.join("、")} 集可能已有任务，未重复入队。`,
+            });
+            setManhuaLearnBusyKey(null);
+            return;
+          }
+          if (!plan.episodes.length || plan.totalSegments < 1) {
+            toast.message("当前没有需要新增学习的免费集");
+            setManhuaLearnBusyKey(null);
+            return;
+          }
+          if (plan.totalSegments > NATIVE_DEEP_READ_JOB_MAX_CALLS) {
+            toast.error("本次计划超过单任务墙钟", {
+              description: `最多 ${NATIVE_DEEP_READ_JOB_MAX_CALLS} 次模型请求，请调小单次学习集数后重新预览。`,
+            });
+            setManhuaLearnBusyKey(null);
+            return;
+          }
+          const unknownHint = plan.unknownAccessEpisodeIndexes.length
+            ? `\n未知付费状态：第 ${plan.unknownAccessEpisodeIndexes.join("、")} 集起不纳入本次计划。`
+            : "";
+          const approved = window.confirm(
+            `原生精读发车确认\n\n剧名：${plan.dramaNameZh || "未命名合集"}\n本次新增：${plan.executableEpisodeCount} 集（第 ${plan.episodes.map((e) => e.episodeIndex).join("、")} 集）\n模型请求：${plan.totalSegments} 次\n素材总时长：${Math.round(plan.totalDurationSec / 60)} 分钟\n已入库：${plan.alreadyIngestedEpisodeIndexes.length} 集\n确认码：${plan.planHash}${unknownHint}\n\n确认后才会建立付费学习任务，是否继续？`,
+          );
+          if (!approved) {
+            setManhuaLearnBusyKey(null);
+            return;
+          }
+          nativeConfirmedParams = {
+            nativeDeepReadConfirmed: true,
+            nativePlanHash: plan.planHash,
+            nativeMaxCalls: plan.totalSegments,
+            nativePlanLimit: manhuaLearnBatchSize,
+            nativePlanSeriesKey: plan.seriesKey,
+          };
+        } catch (error) {
+          const message = sanitizePlatformUserMessage(
+            error instanceof Error ? error.message : String(error),
+          );
+          toast.error("原生精读计划未通过", { description: message });
+          setManhuaLearnBusyKey(null);
+          return;
+        }
       }
       const continuation: ManhuaLearnContinuation = {
         row: { ...row },
@@ -5312,6 +5435,7 @@ export default function PlatformPage() {
               refreshPreviewFrames: options?.refreshPreviewFrames === true,
               retrySkippedEpisodes: options?.retrySkippedEpisodes === true,
               learnLlm: row.learnLlm,
+              ...nativeConfirmedParams,
             },
           },
         });
@@ -5579,6 +5703,10 @@ export default function PlatformPage() {
       applyManhuaLearnJobOutput,
       refreshManhuaLearnServerJobs,
       manhuaLearnBatchSize,
+      ownerTemplateOptimizeAllowed,
+      previewNativeDeepReadPlanMutation,
+      manhuaTemplateOwnerCapabilitiesQuery.isError,
+      manhuaTemplateOwnerCapabilitiesQuery.isLoading,
     ],
   );
 
@@ -12543,7 +12671,8 @@ export default function PlatformPage() {
                             >
                               {manhuaLearnContinueControl.labelZh}
                             </button>
-                            {manhuaLearnResult.learnedCount > 0 ? (
+                            {manhuaLearnResult.pipelineMode !== "native_deep_read"
+                              && manhuaLearnResult.learnedCount > 0 ? (
                               <button
                                 type="button"
                                 disabled={Boolean(manhuaLearnBusyKey) || focusedManhuaLearnJobActive}
@@ -12566,7 +12695,8 @@ export default function PlatformPage() {
                             <span className="rounded-full border border-emerald-300/30 bg-black/25 px-2 py-0.5 text-emerald-100/85">
                               已学完 {manhuaLearnResult.learnedCount}
                             </span>
-                            {(manhuaLearnResult.skippedEpisodeIndexes?.length || 0) > 0 ? (
+                            {manhuaLearnResult.pipelineMode !== "native_deep_read"
+                              && (manhuaLearnResult.skippedEpisodeIndexes?.length || 0) > 0 ? (
                               <>
                                 <span
                                   className="rounded-full border border-orange-300/35 bg-orange-500/10 px-2 py-0.5 text-orange-100/90"
@@ -12646,15 +12776,33 @@ export default function PlatformPage() {
                             </div>
                           ) : null}
                           <p className="text-amber-100/70">
-                            进度 {manhuaLearnResult.learnedCount} 集（学 1 集即可出草版入库
-                            · 完整版约 {manhuaLearnResult.analysisMin}）
+                            进度 {manhuaLearnResult.learnedCount} 集
+                            {manhuaLearnResult.pipelineMode === "native_deep_read"
+                              ? "（一集一张原生精读待审卡）"
+                              : `（学 1 集即可出草版入库 · 完整版约 ${manhuaLearnResult.analysisMin}）`}
                             {manhuaLearnResult.batchLearned > 0
                               ? ` · 本轮新增 ${manhuaLearnResult.batchLearned}`
                               : " · 云端进度"}
-                            {manhuaLearnResult.analysisReady
+                            {manhuaLearnResult.pipelineMode === "native_deep_read"
+                              ? " · 待审卡已直接进入批准区"
+                              : manhuaLearnResult.analysisReady
                               ? " · 已出分析，可批准进库"
                               : " · 未满草版门槛可继续学"}
                           </p>
+                          {manhuaLearnResult.nativeUsage ? (
+                            <p className="text-amber-100/55">
+                              {manhuaLearnResult.nativeUsage.model} · {
+                                manhuaLearnResult.nativeUsage.billingMode === "plan_quota"
+                                  ? "套餐额度折算"
+                                  : manhuaLearnResult.nativeUsage.billingMode === "payg"
+                                    ? "按量计费"
+                                    : "计费通道待核"
+                              } ¥{manhuaLearnResult.nativeUsage.priceEquivalentCny.toFixed(4)} ·
+                              输入 {Math.round(manhuaLearnResult.nativeUsage.inputTokens).toLocaleString()} / 输出 {Math.round(manhuaLearnResult.nativeUsage.outputTokens).toLocaleString()} tokens ·
+                              {Math.round(manhuaLearnResult.nativeUsage.elapsedMs / 1000)} 秒
+                              {manhuaLearnResult.nativeUsage.receiptComplete ? "" : " · 回执不完整，勿按 0 元对账"}
+                            </p>
+                          ) : null}
                           {manhuaLearnResult.liveStatus === "succeeded"
                             && (manhuaLearnResult.pendingCount || 0) > 0
                             && manhuaLearnContinueRef.current

@@ -331,12 +331,31 @@ async function startServer() {
         if (!ctx.user) {
           return res.status(401).json({ error: "请先登录后再学节奏" });
         }
-        const { resolvePlatformSupervisorOpsAllowed } = await import("../services/access-policy");
+        const {
+          resolvePlatformSupervisorOpsAllowed,
+          resolveSiteOwnerOnlyAllowed,
+        } = await import("../services/access-policy");
         if (!resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession)) {
           return res.status(403).json({ error: "学节奏为监管专用（下片+语音+读帧成本较高）" });
         }
         resolvedUserId = String(ctx.user.id);
-        const importedGcsUri = String((input as any)?.params?.gcsUri || "").trim();
+        const learnParams = (input as any)?.params || {};
+        const importedGcsUri = String(learnParams.gcsUri || "").trim();
+        const {
+          hasNativeDeepReadJobFields,
+          parseNativeDeepReadJobConfirmation,
+        } = await import("../../shared/manhuaNativeDeepReadJob.js");
+        const hasNativeFields = hasNativeDeepReadJobFields(learnParams);
+        if (hasNativeFields) {
+          if (!resolveSiteOwnerOnlyAllowed(ctx.user)) {
+            return res.status(403).json({ error: "原生精读发车仅限站点拥有者" });
+          }
+          try {
+            parseNativeDeepReadJobConfirmation(learnParams);
+          } catch {
+            return res.status(400).json({ error: "原生精读确认参数不完整或相互冲突" });
+          }
+        }
         if (importedGcsUri) {
           const [{ getGcsBucketName }, { isOwnedManhuaLearnImportGcsUri }] = await Promise.all([
             import("../services/gcs"),
@@ -379,6 +398,7 @@ async function startServer() {
 
       if (action === "manhua_template_learn") {
         const params = (input as any)?.params || {};
+        // 同一来源不并行：原生确认码只决定本次计划，不应绕过来源级并发门禁。
         const sourceKey = String(params.dedupeKey || params.gcsUri || params.url || "").trim();
         if (sourceKey) {
           const active = await findActiveManhuaTemplateLearnJobForSource(resolvedUserId, sourceKey);

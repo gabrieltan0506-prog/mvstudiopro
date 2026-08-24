@@ -4,9 +4,11 @@ import {
   getManhuaLearnContinueControl,
   isManhuaLearnEmptyBatchFailure,
   manhuaLearnResultFromJobOutput,
+  manhuaLearnResultFromSnapshot,
   manhuaLearnResultFromStart,
   mergeManhuaLearnLiveProgress,
   mergeManhuaLearnServerJobsIntoBasket,
+  nativeLearnTerminalProposalRefreshSignature,
   readManhuaLearnActiveJob,
   readManhuaLearnBasket,
   readManhuaLearnResult,
@@ -36,6 +38,86 @@ afterEach(() => {
 });
 
 describe("manhuaLearnResultUi soft-fail", () => {
+  it("刷新后按原生待审卡恢复模式与数量，不显示旧系列分析话术", () => {
+    const ui = manhuaLearnResultFromSnapshot({
+      seriesKey: "native-series",
+      progress: { listedEpisodeCount: 12, titleHint: "示例剧" },
+      digestsPreview: [],
+      completedCount: 6,
+      pipelineMode: "native_deep_read",
+      analysisReady: false,
+      proposal: null,
+    });
+    expect(ui).toMatchObject({
+      pipelineMode: "native_deep_read",
+      learnedCount: 6,
+      analysisReady: false,
+      proposal: null,
+    });
+    expect(ui.messageZh).toContain("6 张原生精读待审卡");
+    expect(ui.messageZh).not.toContain("分析门槛");
+  });
+
+  it("同账号 Fly 原生任务进入终态时生成稳定的待审刷新签名", () => {
+    const jobs = [
+      {
+        jobId: "native-ok",
+        status: "succeeded" as const,
+        input: { params: { nativeDeepReadConfirmed: true } },
+        updatedAt: "2026-08-25T01:00:00.000Z",
+      },
+      {
+        jobId: "native-partial",
+        status: "failed" as const,
+        input: { params: { nativeDeepReadConfirmed: true } },
+        updatedAt: "2026-08-25T01:01:00.000Z",
+      },
+      {
+        jobId: "native-running",
+        status: "running" as const,
+        input: { params: { nativeDeepReadConfirmed: true } },
+        updatedAt: "2026-08-25T01:02:00.000Z",
+      },
+      {
+        jobId: "legacy-ok",
+        status: "succeeded" as const,
+        input: { params: {} },
+        updatedAt: "2026-08-25T01:03:00.000Z",
+      },
+    ];
+    const signature = nativeLearnTerminalProposalRefreshSignature(jobs);
+    expect(signature).toContain("native-ok:succeeded");
+    expect(signature).toContain("native-partial:failed");
+    expect(signature).not.toContain("native-running");
+    expect(signature).not.toContain("legacy-ok");
+    expect(nativeLearnTerminalProposalRefreshSignature([...jobs].reverse())).toBe(signature);
+  });
+
+  it("保留原生精读模式与费用回执", () => {
+    const ui = manhuaLearnResultFromJobOutput({
+      seriesKey: "s1",
+      pipelineMode: "native_deep_read",
+      learnedCount: 2,
+      batchLearned: 2,
+      messageZh: "已生成待审卡",
+      nativeUsage: {
+        model: "qwen3.8-max",
+        billingMode: "plan_quota",
+        inputTokens: 1200,
+        outputTokens: 300,
+        priceEquivalentCny: 1.25,
+        elapsedMs: 9000,
+        receiptComplete: true,
+      },
+    });
+    expect(ui.pipelineMode).toBe("native_deep_read");
+    expect(ui.nativeUsage).toMatchObject({
+      billingMode: "plan_quota",
+      priceEquivalentCny: 1.25,
+      receiptComplete: true,
+    });
+  });
+
   it("queued 且尚无 worker 输出时明确显示排队，不冒充学习进行中", () => {
     const ui = mergeManhuaLearnLiveProgress(
       manhuaLearnResultFromStart({
@@ -95,6 +177,30 @@ describe("manhuaLearnResultUi soft-fail", () => {
     expect(ui.learnedCount).toBe(7);
     expect(ui.listedEpisodeCount).toBe(90);
     expect(ui.pendingCount).toBe(83);
+  });
+
+  it("running native job keeps its mode and incomplete usage receipt visible", () => {
+    const ui = mergeManhuaLearnLiveProgress(null, {
+      status: "running",
+      output: {
+        pipelineMode: "native_deep_read",
+        nativeUsage: {
+          model: "qwen3.8-max",
+          billingMode: "plan_quota",
+          inputTokens: 88,
+          outputTokens: 21,
+          priceEquivalentCny: 0.18,
+          elapsedMs: 3000,
+          receiptComplete: false,
+        },
+      },
+    });
+    expect(ui.pipelineMode).toBe("native_deep_read");
+    expect(ui.nativeUsage).toMatchObject({
+      billingMode: "plan_quota",
+      priceEquivalentCny: 0.18,
+      receiptComplete: false,
+    });
   });
 
   it("preserves the real series key when continuing a learned series", () => {
@@ -317,6 +423,47 @@ describe("manhuaLearnResultUi soft-fail", () => {
     expect(basket).toHaveLength(3);
     expect(basket.map((item) => item.jobStatus).sort()).toEqual(["queued", "running", "running"]);
     expect(basket.find((item) => item.seriesKey === "series_b")?.result.learnedCount).toBe(2);
+  });
+
+  it("failed native job keeps server progress and usage instead of collapsing to an error string", () => {
+    const [item] = mergeManhuaLearnServerJobsIntoBasket([], [{
+      jobId: "native-failed",
+      status: "failed" as const,
+      input: {
+        params: {
+          url: "https://douyin.com/video/native",
+          title: "原生剧",
+          seriesKey: "series_native",
+        },
+      },
+      output: {
+        seriesKey: "series_native",
+        pipelineMode: "native_deep_read",
+        learnedCount: 1,
+        learnProgressLog: [{
+          atIso: "2026-08-25T00:00:00.000Z",
+          stage: "persist",
+          detailZh: "第 1 集已入库 · 累计 1 集",
+        }],
+        nativeUsage: {
+          model: "qwen3.8-max",
+          billingMode: "plan_quota",
+          inputTokens: 500,
+          outputTokens: 100,
+          priceEquivalentCny: 0.9,
+          elapsedMs: 12000,
+          receiptComplete: false,
+        },
+      },
+      error: "第二集处理中止",
+    }]);
+    expect(item.result).toMatchObject({
+      liveStatus: "failed",
+      learnedCount: 1,
+      pipelineMode: "native_deep_read",
+      nativeUsage: { priceEquivalentCny: 0.9, receiptComplete: false },
+    });
+    expect(item.result.progressLines?.at(-1)?.detailZh).toContain("第二集处理中止");
   });
 
   it("shows persisted episode frames while a job is still running", () => {

@@ -13,8 +13,10 @@ import {
   buildNativeDeepReadEpisodeExecution,
   buildNativeDeepReadLearnResult,
   isManhuaLearnEpisodeAlreadyLearned,
+  mergeManhuaNativeDeepReadUsage,
   pickLearnedIndexesForBatchSelection,
   reconcileManhuaLearnProgressWithNativeCards,
+  resolveManhuaLearnSnapshotCompletion,
   type NativeDeepReadEpisodeSourceDeps,
 } from "./manhuaTemplateLearnService";
 import {
@@ -74,8 +76,8 @@ describe("素材接入层 → 原生精读的接缝", () => {
     // 18 分钟 = 1080s，单段上限 1000s → 两段
     const plan = await buildNativeDeepReadEpisodeExecution({ seriesKey: "s1", ep: ep() }, deps(1080));
     expect(plan.segments).toEqual([
-      { startSec: 0, endSec: 1000 },
-      { startSec: 1000, endSec: 1080 },
+      { startSec: 0, endSec: 540 },
+      { startSec: 540, endSec: 1080 },
     ]);
     expect(plan.durationSec).toBe(1080);
     expect(plan.episodeIndex).toBe(1);
@@ -108,6 +110,56 @@ describe("素材接入层 → 原生精读的接缝", () => {
     await expect(
       buildNativeDeepReadEpisodeExecution({ seriesKey: "s1", ep: ep() }, d),
     ).rejects.toThrow(/媒体流/);
+  });
+
+  it("worker 确认后的时长或分段漂移在 claim 前拒绝", async () => {
+    await expect(buildNativeDeepReadEpisodeExecution({
+      seriesKey: "s1",
+      ep: ep(),
+      confirmedPlanEpisode: {
+        episodeIndex: 1,
+        sourceUrl: "https://www.douyin.com/video/7641538290936947889",
+        durationSec: 600,
+        segments: [{ startSec: 0, endSec: 599 }],
+      },
+    }, deps(600))).rejects.toThrow("与确认计划不一致");
+  });
+});
+
+describe("原生精读费用回执", () => {
+  it("成功与门禁失败的已知用量都累计，套餐只写折算价", () => {
+    const first = mergeManhuaNativeDeepReadUsage(undefined, {
+      inputTokens: 100,
+      outputTokens: 20,
+      costCny: 0.12,
+      usingPlanQuota: true,
+      elapsedMs: 1_000,
+      receiptComplete: true,
+    });
+    const total = mergeManhuaNativeDeepReadUsage(first, {
+      inputTokens: 50,
+      outputTokens: 10,
+      costCny: 0.08,
+      usingPlanQuota: true,
+      elapsedMs: 500,
+      receiptComplete: true,
+    });
+    expect(total).toMatchObject({
+      billingMode: "plan_quota",
+      inputTokens: 150,
+      outputTokens: 30,
+      priceEquivalentCny: 0.2,
+      elapsedMs: 1_500,
+      receiptComplete: true,
+    });
+  });
+
+  it("中止或未知回执不得把 0 冒充完整费用", () => {
+    const total = mergeManhuaNativeDeepReadUsage(undefined, {
+      costCny: 0,
+      receiptComplete: false,
+    });
+    expect(total).toMatchObject({ billingMode: "unknown", receiptComplete: false });
   });
 });
 
@@ -394,5 +446,29 @@ describe("native 完成状态回写 progress（终审第一条）", () => {
     expect(
       reconcileManhuaLearnProgressWithNativeCards(baseProgress, new Set([2]), "new").updatedAt,
     ).toBe("new");
+  });
+});
+
+describe("刷新后按当前产物代际恢复完成数", () => {
+  it("原生卡索引存在时只数原生卡，不让旧 digest 冒充当前结果", () => {
+    expect(resolveManhuaLearnSnapshotCompletion({
+      progress: {
+        seriesKey: "s1",
+        sourceUrl: "https://www.douyin.com/collection/1",
+        titleHint: "示例剧",
+        listedEpisodeCount: 20,
+        learnedEpisodeIndexes: [1, 2, 3, 4, 5],
+        nativeDeepReadEpisodeIndexes: [7, 2, 7, 4],
+        updatedAt: "now",
+      },
+      completedDigestCount: 5,
+    })).toEqual({ pipelineMode: "native_deep_read", completedCount: 3 });
+  });
+
+  it("没有原生卡时保持旧 digest 快照口径", () => {
+    expect(resolveManhuaLearnSnapshotCompletion({
+      progress: null,
+      completedDigestCount: 6,
+    })).toEqual({ pipelineMode: "audio_dense_frames", completedCount: 6 });
   });
 });
