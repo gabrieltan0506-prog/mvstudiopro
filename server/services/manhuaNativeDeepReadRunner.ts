@@ -16,6 +16,7 @@ import {
   mapNativeDeepReadSegments,
   type NativeDeepReadOutput,
 } from "../../shared/manhuaNativeDeepRead.js";
+import { MANHUA_NATIVE_DEEP_READ_MODEL } from "../../shared/manhuaNativeDeepReadJob.js";
 
 /** 生产开关：未开时学习链路完全走原有抽帧，零行为变化 */
 export function isManhuaNativeDeepReadEnabled(): boolean {
@@ -187,8 +188,8 @@ export type NativeDeepReadRunError = Error & {
   };
 };
 
-/** 精读模型名：**只在这里写一次**，provenance 记的必须是真跑的这个 */
-export const NATIVE_DEEP_READ_MODEL = "qwen3.8-max";
+/** 请求与前端共用共享真值；provenance 记的必须是真跑的这个。 */
+export const NATIVE_DEEP_READ_MODEL = MANHUA_NATIVE_DEEP_READ_MODEL;
 
 /** 北京百炼单价（¥/M token），套餐 key 走同一端点 */
 const PRICE_IN_PER_M = 12;
