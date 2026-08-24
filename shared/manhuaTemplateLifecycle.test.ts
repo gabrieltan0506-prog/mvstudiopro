@@ -114,3 +114,55 @@ describe("淘汰安全检查", () => {
     expect(canRetireTemplate({ card: frame(), sameLaneApprovedCount: 3 })).toEqual({ ok: true });
   });
 });
+
+describe("逐集卡规模下的换代建议（与 #1299 配套）", () => {
+  const card = (over: Record<string, unknown> = {}) =>
+    ({
+      id: "tpl_series_abc",
+      nameZh: "旧卡",
+      laneZh: "悬念紧逼",
+      status: "approved",
+      beatGrid: Array.from({ length: 10 }, (_, i) => ({
+        atSec: i,
+        conflictZh: "冲突",
+        visualZh: "画面",
+      })),
+      provenance: { frameVision: { provider: "openrouter", model: "terra", attemptedChunks: 1, successChunks: 1 } },
+      ...over,
+    }) as never;
+
+  const nativeCard = (id: string, shots: number) =>
+    card({
+      id,
+      nameZh: id,
+      beatGrid: Array.from({ length: shots }, (_, i) => ({
+        atSec: i,
+        conflictZh: "冲突",
+        visualZh: "画面",
+      })),
+      provenance: { nativeVideoDeepRead: { model: "qwen3.8-max", attemptedSegments: 1, successSegments: 1, shotCount: shots, droppedCount: 0, truncated: false } },
+    });
+
+  it("🔴 同赛道几十张 native 逐集卡时，推荐**镜头最多**的那张，不是字典序第一张", () => {
+    const candidates = [
+      nativeCard("tpl_native_s1_ep001", 12),
+      nativeCard("tpl_native_s1_ep002", 40),
+      nativeCard("tpl_native_s1_ep003", 25),
+    ];
+    const advice = adviseTemplateRetirement(card(), candidates);
+    expect(advice.action).toBe("replace_with");
+    // ep001 排在最前，但 ep002 学得最全
+    expect(advice.replacementId).toBe("tpl_native_s1_ep002");
+    expect(advice.reasonZh).toContain("40 镜");
+  });
+
+  it("镜头数少于现役的 native 卡不算够格顶上", () => {
+    const advice = adviseTemplateRetirement(card(), [nativeCard("tpl_native_s1_ep001", 3)]);
+    expect(advice.action).toBe("consider_relearn");
+  });
+
+  it("候选里一张 native 卡都没有时，建议重学而不是乱推荐", () => {
+    const advice = adviseTemplateRetirement(card(), [card({ id: "tpl_series_other" })]);
+    expect(advice.action).toBe("consider_relearn");
+  });
+});

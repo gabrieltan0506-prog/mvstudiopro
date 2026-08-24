@@ -50,14 +50,23 @@ export function adviseTemplateRetirement(
     return { generation, learnSourceZh, action: "keep", reasonZh: "已是原生精读卡，无需替换" };
   }
 
-  // 同赛道、原生精读、镜头数不少于现役的，才算够格顶上
-  const better = candidates.find(
-    (c) =>
-      c.id !== card.id
-      && c.laneZh === card.laneZh
-      && templateLearnGeneration(c) === "native_deep_read"
-      && c.beatGrid.length >= card.beatGrid.length,
-  );
+  /**
+   * 同赛道、原生精读、镜头数不少于现役的，才算够格顶上。
+   *
+   * ⚠️ 取**镜头数最多**的那张，不是「第一个符合的」。
+   * 原生精读改成一集一张卡之后，同一赛道会同时躺着几十张 native 卡
+   * （ep001、ep002…），`find` 拿到的是字典序第一张——通常就是第 1 集，
+   * 未必是学得最全的那张。推荐替换品是要给人拍板用的，挑最强的那张。
+   */
+  const better = candidates
+    .filter(
+      (c) =>
+        c.id !== card.id
+        && c.laneZh === card.laneZh
+        && templateLearnGeneration(c) === "native_deep_read"
+        && c.beatGrid.length >= card.beatGrid.length,
+    )
+    .sort((a, b) => b.beatGrid.length - a.beatGrid.length)[0];
   if (better) {
     return {
       generation,

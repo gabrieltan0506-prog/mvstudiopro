@@ -53,6 +53,17 @@ async function readCardFromObject(objectName: string): Promise<ManhuaViralTempla
   }
 }
 
+/**
+ * 待审卡的列举上限。
+ *
+ * 原来统一是 80 —— 那是「一个赛道几张系列卡」的旧规模。
+ * 原生精读改成**一集一张卡**之后，跑 20 集就是 20 张，几个系列直接撑爆：
+ *   · 花了钱入了库的卡在审批页看不见（只回前 80）
+ *   · 换代体检的候选池被截断 → 明明有 native 卡能顶上，却建议「重学一版」= 再花一次钱
+ *   · GCS 按对象名字典序，`tpl_native_*` 排在 `tpl_series_*` 前面，会把别的待审卡挤出去
+ */
+const MANHUA_VIRAL_PROPOSALS_LIST_MAX = 1000;
+
 async function listCardsUnderPrefix(
   prefix: string,
   maxResults = 80,
@@ -78,7 +89,11 @@ async function listCardsUnderPrefix(
 }
 
 export async function listGcsManhuaViralProposals(): Promise<ManhuaViralTemplateCard[]> {
-  const cards = await listCardsUnderPrefix(MANHUA_VIRAL_PROPOSALS_PREFIX);
+  // 逐集卡规模：必须列全，否则用户付费学到的卡在审批页根本不出现
+  const cards = await listCardsUnderPrefix(
+    MANHUA_VIRAL_PROPOSALS_PREFIX,
+    MANHUA_VIRAL_PROPOSALS_LIST_MAX,
+  );
   return cards.filter((c) => c.status === "proposed" || c.status === "approved");
 }
 
