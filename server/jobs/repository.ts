@@ -841,6 +841,39 @@ export async function markJobFailed(id: string, error: string): Promise<void> {
 /** platform_topic_image 等長任務：running 時把部分 output 寫入 DB，供 GET /api/jobs 輪詢看到即時步驟 */
 const PLATFORM_JOB_PROGRESS_LOG_MAX = 240;
 
+/**
+ * 严格版进度写入：**写不进去就抛**。
+ *
+ * 宽松版把 DB 异常吞成 console.warn，调用方照样往下走 ——
+ * 对配乐这种付费异步任务是致命的：upstreamTaskId 没落库却继续轮询，
+ * 一旦重启就查不到那张单，只能重新建单再付一次。
+ * 凡是「后面靠这条记录才不会重复付费」的写入，都必须走这个版本。
+ */
+export async function patchJobRunningProgressStrict(
+  jobId: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable — cannot persist job progress");
+
+  const current = await getJobByIdStrict(jobId);
+  if (!current) throw new Error(`Job ${jobId} not found`);
+  if (current.status !== "running") throw new Error(`Job ${jobId} is not running`);
+
+  const previous =
+    current.output && typeof current.output === "object" && !Array.isArray(current.output)
+      ? { ...(current.output as Record<string, unknown>) }
+      : {};
+
+  const rows = await db
+    .update(jobs)
+    .set({ output: { ...previous, ...patch } as any, updatedAt: new Date() })
+    .where(and(eq(jobs.id, jobId), eq(jobs.status, "running")))
+    .returning({ id: jobs.id });
+
+  if (rows.length !== 1) throw new Error(`Job ${jobId} progress was not persisted`);
+}
+
 export async function patchJobRunningProgress(jobId: string, patch: Record<string, unknown>): Promise<void> {
   const db = await getDb();
   if (!db) return;

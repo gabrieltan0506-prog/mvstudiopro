@@ -87,25 +87,32 @@ describe("参数组合硬校验", () => {
   });
 });
 
-describe("取音频地址", () => {
-  it("一次请求会出多个变体，全部返回交调用方选", () => {
-    const raw = {
-      result_data: {
-        clips: [
-          { audio_url: "https://a/1.mp3" },
-          { audio_url: "https://a/2.mp3" },
-        ],
-      },
-    };
-    expect(pickEvolinkSunoAudioUrls(raw)).toEqual(["https://a/1.mp3", "https://a/2.mp3"]);
+describe("取音频地址（按可信结构读，不靠 URL 长相猜）", () => {
+  it("result_data.clips 多变体全部返回 —— skill 要求先量再听", () => {
+    expect(
+      pickEvolinkSunoAudioUrls({
+        result_data: { clips: [{ audio_url: "https://a/1.mp3" }, { audio_url: "https://a/2.mp3" }] },
+      }),
+    ).toEqual(["https://a/1.mp3", "https://a/2.mp3"]);
   });
 
-  it("去重，且只收 https", () => {
-    const raw = { a: { audio_url: "https://a/1.mp3" }, b: { audioUrl: "https://a/1.mp3" }, c: { audio_url: "http://a/2.mp3" } };
-    expect(pickEvolinkSunoAudioUrls(raw)).toEqual(["https://a/1.mp3"]);
+  it("result_data 是数组时也能读", () => {
+    expect(pickEvolinkSunoAudioUrls({ result_data: [{ audio_url: "https://a/1.mp3" }] })).toEqual([
+      "https://a/1.mp3",
+    ]);
   });
 
-  it("封面图不当音频 —— 上一版 audio_image_url 的 jpg 排在真音频前面", () => {
+  it("results[] 字符串数组能读 —— 上一版把这种形状全丢了", () => {
+    expect(pickEvolinkSunoAudioUrls({ results: ["https://a/2.mp3"] })).toEqual(["https://a/2.mp3"]);
+  });
+
+  it("无扩展名的签名下载链能读 —— 上一版按扩展名过滤把它挡掉了", () => {
+    expect(pickEvolinkSunoAudioUrls({ result_data: { audio_url: "https://a/dl?id=1" } })).toEqual([
+      "https://a/dl?id=1",
+    ]);
+  });
+
+  it("封面图不当音频 —— audio_image_url 根本不在取值位置里", () => {
     expect(
       pickEvolinkSunoAudioUrls({
         audio_image_url: "https://cdn/cover.jpg",
@@ -114,11 +121,21 @@ describe("取音频地址", () => {
     ).toEqual(["https://cdn/song.mp3"]);
   });
 
-  it("字段名对但不是音频扩展名也不收", () => {
-    expect(pickEvolinkSunoAudioUrls({ audio_url: "https://cdn/thing.json" })).toEqual([]);
+  it("去重，且只收 https", () => {
+    expect(
+      pickEvolinkSunoAudioUrls({
+        result_data: {
+          audio_url: "https://a/1.mp3",
+          audioUrl: "https://a/1.mp3",
+          download_url: "http://a/2.mp3",
+        },
+      }),
+    ).toEqual(["https://a/1.mp3"]);
   });
 
   it("没有音频时返回空数组，不抛", () => {
     expect(pickEvolinkSunoAudioUrls({ status: "pending" })).toEqual([]);
+    expect(pickEvolinkSunoAudioUrls(null)).toEqual([]);
+    expect(pickEvolinkSunoAudioUrls([])).toEqual([]);
   });
 });

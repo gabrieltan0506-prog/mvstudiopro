@@ -761,6 +761,17 @@ async function startServer() {
             `[manhua-learn] startup recovery: requeued=${requeued} cancelled=${cancelled} completed=${completed} exhausted=${exhausted}`,
           );
         }
+        // 配乐同理：running 背后是已付费的上游单，恢复必须在 worker 起来之前。
+        // 有 upstreamTaskId 的重排继续轮询；没有的标待核对，绝不自动重提。
+        const { recoverInterruptedManhuaBgmJobsOnStartup } = await import(
+          "../jobs/manhuaBgmRecovery.js"
+        );
+        const bgm = await recoverInterruptedManhuaBgmJobsOnStartup();
+        if (bgm.requeued > 0 || bgm.reconciliationRequired > 0) {
+          console.warn(
+            `[manhuaBgm] startup recovery: requeued=${bgm.requeued} reconciliation=${bgm.reconciliationRequired}`,
+          );
+        }
         startJobWorker();
         startStaleJobsReaper();
       } catch (error) {

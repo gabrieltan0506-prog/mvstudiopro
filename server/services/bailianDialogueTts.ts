@@ -130,6 +130,12 @@ export function buildBailianTtsBody(req: BailianTtsRequest): Record<string, unkn
       voice: normalizeBailianTtsVoice(req.voice),
       ...(instruction ? { instruction } : {}),
     },
+    /**
+     * ⚠️ seed 放在顶层 parameters —— **该端点未验证过 seed 的位置**。
+     * 依据是仓库里已跑通的另一个百炼调用（原生精读 runner）用的就是顶层
+     * parameters；知识库对 TTS 端点只记了 `{model, input:{text, voice}}`。
+     * 审阅建议放 input.seed，但未给依据，暂不改 —— 真跑一次再定。
+     */
     ...(Number.isInteger(req.seed) ? { parameters: { seed: req.seed } } : {}),
   };
 }
@@ -202,8 +208,16 @@ export async function measureDialogueVoiced(
 }
 
 export type BailianDialogueResult = {
-  audioUrl: string;
-  gcsUri: string;
+  /**
+   * accepted 才有生产用地址。
+   *
+   * 上一版门禁判 false 之后**照样上传、照样返回正式 gcsUri** ——
+   * 闸只是个标签，调用方拿到地址就能直接喂视频模型，
+   * 「有效人声 ≥2.5s」的硬指标形同虚设。
+   */
+  status: "accepted" | "rejected";
+  audioUrl: string | null;
+  gcsUri: string | null;
   bytes: number;
   voice: string;
   region: BailianTtsRegion;
@@ -306,6 +320,21 @@ export async function synthesizeBailianDialogue(
     const measured = await measureDialogueVoiced(local, opts.abortSignal);
     const gate = checkManhuaDialogueVoice(measured);
 
+    // 不合格**不上传、不给地址**：拿不到 gcsUri 就没法误喂视频模型
+    if (!gate.ok) {
+      return {
+        status: "rejected",
+        audioUrl: null,
+        gcsUri: null,
+        bytes: audio.length,
+        voice,
+        region: ticket.region,
+        totalSec: measured.totalSec,
+        voicedSec: measured.voicedSec,
+        gate,
+      };
+    }
+
     const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
     const rand = Math.random().toString(36).slice(2, 8);
     const { gcsUri } = await uploadBufferToGcs({
@@ -315,6 +344,7 @@ export async function synthesizeBailianDialogue(
     });
 
     return {
+      status: "accepted",
       audioUrl: signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600),
       gcsUri,
       bytes: audio.length,
@@ -326,6 +356,26 @@ export async function synthesizeBailianDialogue(
     };
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * 进视频参考音频前的**二次断言**。
+ *
+ * 门禁在合成端拦一次不够：调用方可能拿的是缓存、是别处传来的记录。
+ * 视频那一步是不可逆的（对白进片就烧死了），所以再验一次。
+ */
+export function assertDialogueAudioAccepted(input: {
+  status?: string;
+  gate?: { ok?: boolean };
+  gcsUri?: string | null;
+}): asserts input is { status: "accepted"; gate: { ok: true }; gcsUri: string } {
+  if (
+    input.status !== "accepted"
+    || input.gate?.ok !== true
+    || !String(input.gcsUri || "").trim()
+  ) {
+    throw new Error("对白音频未通过有效人声检查，不能进入视频参考音频");
   }
 }
 

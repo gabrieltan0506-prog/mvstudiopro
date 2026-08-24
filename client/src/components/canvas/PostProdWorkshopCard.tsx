@@ -9,6 +9,15 @@ import { toast } from "sonner";
 import { Film, Layers, Loader2, Music4, Scissors, Volume2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { copyText } from "@/lib/copyText";
+import {
+  canSubmitManhuaBgm,
+  clearPendingManhuaBgmJob,
+  readManhuaBgmVariants,
+  readPendingManhuaBgmJob,
+  writePendingManhuaBgmJob,
+  type ManhuaBgmPendingJob,
+  type ManhuaBgmVariant,
+} from "@/lib/manhuaBgmCardState";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import {
   ACTION_LABEL,
@@ -43,6 +52,7 @@ function statusBadge(status: PostProdJobStatus): { text: string; cls: string } {
 
 export default function PostProdWorkshopCard({ blocks, userId }: PostProdWorkshopCardProps) {
   const queueMutation = trpc.mvAnalysis.queuePostProd.useMutation();
+  const generateBgmMutation = trpc.mvAnalysis.manhuaGenerateBgm.useMutation();
   const utils = trpc.useUtils();
   const storageKey = useMemo(() => jobsStorageKey(userId), [userId]);
 
@@ -82,6 +92,20 @@ export default function PostProdWorkshopCard({ blocks, userId }: PostProdWorksho
   const [concatRes, setConcatRes] = useState<"720p" | "1080p">("720p");
   const [bgmVideoUrl, setBgmVideoUrl] = useState("");
   const [bgmAudioUrl, setBgmAudioUrl] = useState("");
+  /* ── 配乐间：起草（免费）→ 用户改 → 确认建单（花钱）→ 轮询 → 选变体 ── */
+  const [scoreLane, setScoreLane] = useState("悬疑权谋");
+  const [scoreDuration, setScoreDuration] = useState(21);
+  const [scoreDraft, setScoreDraft] = useState<{
+    style: string;
+    prompt: string;
+    title: string;
+    duration: number;
+  } | null>(null);
+  const [scorePending, setScorePending] = useState<ManhuaBgmPendingJob | null>(() =>
+    typeof window === "undefined" ? null : readPendingManhuaBgmJob(window.localStorage, Date.now()),
+  );
+  const [scoreVariants, setScoreVariants] = useState<ManhuaBgmVariant[]>([]);
+  const scorePollRef = useRef(false);
   const [bgmVolume, setBgmVolume] = useState(0.48);
   const [bgmEntrySec, setBgmEntrySec] = useState(0);
   const [bgmFadeIn, setBgmFadeIn] = useState(0.5);
@@ -264,6 +288,97 @@ export default function PostProdWorkshopCard({ blocks, userId }: PostProdWorksho
     );
   };
 
+  const composeBgmDraft = async () => {
+    try {
+      const brief = await utils.mvAnalysis.manhuaComposeBgmBrief.fetch({
+        laneZh: scoreLane,
+        durationSec: scoreDuration,
+        moods: ["蓄力", "冲突", "收束"],
+      });
+      // 起草是**零成本**的：先摆出来让用户改，改完才谈发不发
+      setScoreDraft({
+        style: brief.style,
+        prompt: brief.prompt,
+        title: brief.title,
+        duration: brief.duration,
+      });
+      setScoreDuration(brief.duration);
+    } catch (e) {
+      toast.error(`起草配乐提示词失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  const submitScoring = async () => {
+    const gate = canSubmitManhuaBgm({
+      hasDraft: Boolean(scoreDraft),
+      pending: scorePending,
+      durationSec: scoreDuration,
+    });
+    if (!gate.ok) {
+      toast.error(gate.reasonZh);
+      return;
+    }
+    // 幂等号在**确认那一刻**产生：网络重发复用它，不会建第二单
+    const billingRequestId = crypto.randomUUID();
+    try {
+      const res = await generateBgmMutation.mutateAsync({
+        billingRequestId,
+        laneZh: scoreLane,
+        durationSec: scoreDuration,
+        moods: ["蓄力", "冲突", "收束"],
+        styleOverrideZh: scoreDraft?.style,
+        titleZh: scoreDraft?.title,
+      });
+      const pending: ManhuaBgmPendingJob = {
+        jobId: res.jobId,
+        billingRequestId,
+        titleZh: scoreDraft?.title || "",
+        durationSec: scoreDuration,
+        createdAtMs: Date.now(),
+      };
+      setScorePending(pending);
+      writePendingManhuaBgmJob(window.localStorage, pending);
+      toast.message("配乐任务已提交", { description: "生成约 2 分钟，可离开本页" });
+    } catch (e) {
+      toast.error(`配乐提交失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  /** 轮询未完成的配乐任务；pollingRef 防重叠，刷新后靠 localStorage 找回 */
+  useEffect(() => {
+    if (!scorePending) return;
+    let alive = true;
+    const tick = async () => {
+      if (scorePollRef.current) return;
+      scorePollRef.current = true;
+      try {
+        const res = await utils.mvAnalysis.getPostProdJob.fetch({ jobId: scorePending.jobId });
+        // 查不到就当还在跑：清了状态用户会再点一次 = 再付一次
+        if (!alive || !res) return;
+        if (res.status === "succeeded") {
+          setScoreVariants(readManhuaBgmVariants(res.output));
+          setScorePending(null);
+          clearPendingManhuaBgmJob(window.localStorage);
+          toast.success("配乐已生成，选一条贴装");
+        } else if (res.status === "failed") {
+          setScorePending(null);
+          clearPendingManhuaBgmJob(window.localStorage);
+          toast.error(`配乐失败：${String(res.error || "").slice(0, 120)}`);
+        }
+      } catch {
+        // 查不到不清状态：任务可能还在，清了用户会再点一次 = 再付一次
+      } finally {
+        scorePollRef.current = false;
+      }
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), 8000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [scorePending, utils]);
+
   const submitBgm = () => {
     if (!bgmVideoUrl || !bgmAudioUrl) {
       toast.error("BGM 贴装需要选一段成片和一条音频");
@@ -419,6 +534,107 @@ export default function PostProdWorkshopCard({ blocks, userId }: PostProdWorksho
               拼接 {concatSel.length > 0 ? `${concatSel.length} 段` : ""}
             </button>
           </div>
+        </div>
+
+        {/* 配乐间：起草免费 → 用户改 → 确认建单（花钱）→ 选变体 → 贴装 */}
+        <div className="rounded-xl border border-amber-300/25 bg-amber-500/[0.04] p-3">
+          <div className="flex items-center gap-1.5 text-[13px] font-semibold text-white">
+            <Music4 className="h-3.5 w-3.5 text-amber-300" /> 配乐间
+            <span className="ml-auto rounded bg-amber-400/15 px-1.5 text-[9px] font-medium text-amber-100">
+              会花钱
+            </span>
+          </div>
+          <p className="mt-1 text-[11px] leading-4 text-white/45">
+            按剧情自动起草配乐提示词（免费），改完确认才生成。一次出多条变体，选一条贴装。
+          </p>
+
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <select
+              value={scoreLane}
+              onChange={(e) => setScoreLane(e.target.value)}
+              className={selectCls + " w-32"}
+            >
+              {["爽文逆袭", "古言种田", "系统觉醒", "甜宠", "悬疑权谋", "搞笑沙雕", "游戏竞技"].map(
+                (l) => (
+                  <option key={l} value={l}>
+                    {l}
+                  </option>
+                ),
+              )}
+            </select>
+            <label className="flex items-center gap-1 text-[11px] text-white/55">
+              时长
+              <input
+                type="number"
+                min={10}
+                max={360}
+                value={scoreDuration}
+                onChange={(e) => setScoreDuration(Math.round(Number(e.target.value) || 0))}
+                className={selectCls + " w-20"}
+              />
+              秒
+            </label>
+            <button type="button" onClick={() => void composeBgmDraft()} className={selectCls}>
+              起草提示词（免费）
+            </button>
+          </div>
+
+          {scoreDraft ? (
+            <div className="mt-2 space-y-1.5">
+              {/* 改完原样送上游，不在用户文本上追加标签 */}
+              <textarea
+                value={scoreDraft.style}
+                onChange={(e) => setScoreDraft({ ...scoreDraft, style: e.target.value })}
+                rows={3}
+                className="w-full rounded border border-white/12 bg-black/40 px-2 py-1 text-[11px] leading-4 text-white/80"
+              />
+              <pre className="overflow-x-auto rounded border border-white/10 bg-black/30 px-2 py-1 text-[10px] leading-4 text-white/50">
+                {scoreDraft.prompt}
+              </pre>
+              <button
+                type="button"
+                disabled={Boolean(scorePending) || generateBgmMutation.isPending}
+                onClick={() => void submitScoring()}
+                className={goCls}
+              >
+                {scorePending || generateBgmMutation.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Music4 className="h-3.5 w-3.5" />
+                )}
+                {scorePending ? "配乐生成中…" : `确认生成 · ${scoreDuration}s`}
+              </button>
+            </div>
+          ) : null}
+
+          {scorePending ? (
+            <p className="mt-1.5 text-[10px] text-amber-100/70">
+              任务 {scorePending.jobId.slice(0, 16)}… 生成中，刷新页面不会丢
+            </p>
+          ) : null}
+
+          {scoreVariants.length ? (
+            <div className="mt-2 space-y-1.5">
+              <div className="text-[11px] text-white/55">
+                出了 {scoreVariants.length} 条，试听后选一条填进下面的贴装
+              </div>
+              {scoreVariants.map((v) => (
+                <div key={v.gcsUri} className="flex items-center gap-2">
+                  <audio controls src={v.previewUrl} className="h-7 flex-1" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBgmAudioUrl(v.gcsUri);
+                      toast.message(`已选变体 ${v.index + 1}`, { description: "可直接贴装" });
+                    }}
+                    className={selectCls}
+                  >
+                    用这条
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
 
         {/* BGM 贴装 */}

@@ -151,47 +151,56 @@ export async function getEvolinkSunoTask(
  * 一次请求会返回**多个变体**（文档："Each request generates multiple music
  * variations"），全部返回交由调用方选，不擅自只取第一条。
  */
-/** 明确的音频字段名 —— 不按键名模糊匹配 */
-const AUDIO_URL_KEYS = new Set(["audio_url", "audioUrl", "download_url", "stream_url"]);
-/** 扩展名兜底：字段名对了还要看真是音频 */
-const AUDIO_PATH_RE = /\.(?:mp3|wav|m4a|aac|flac|ogg)(?:$|[?#])/i;
-
 /**
  * 从任务详情里挑音频地址。
  *
- * ⚠️ 上一版按「键名或 URL 里含 audio/mp3」模糊匹配，
- * 结果 `audio_image_url` 的封面 jpg **排在真音频前面**被选中（已复现）。
- * 现在只认明确字段名 ＋ 音频扩展名。
+ * 两轮都栽在这个函数上，教训相反：
+ *   第一版按「键名或 URL 含 audio」模糊匹配 → `audio_image_url` 的封面 jpg
+ *     被当成音频，还排在真音频前面（已复现）
+ *   第二版收紧成「明确字段名 ＋ 音频扩展名」→ 又把 `results[]` 字符串数组
+ *     和**无扩展名的签名下载链**全丢了（也已复现）
  *
- * 一次请求返回**多个变体**（文档："Each request generates multiple music
- * variations"），全部返回交调用方选 —— skill 要求「先量再听」，
- * 只留第一条就没法量。
+ * 现在按**可信结构**读，不靠 URL 长相猜：只从上游文档给的位置取值，
+ * 取到什么算什么；是不是真音频交给下载阶段用 Content-Type ＋ ffprobe 验。
+ * 封面之所以不会混进来，是因为 `audio_image_url` 根本不在取值位置里。
  */
 export function pickEvolinkSunoAudioUrls(raw: unknown): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  const walk = (node: unknown, depth: number): void => {
-    if (depth > 6 || !node) return;
-    if (Array.isArray(node)) {
-      for (const item of node) walk(item, depth + 1);
-      return;
-    }
-    if (typeof node !== "object") return;
-    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-      if (typeof v === "string") {
-        if (!AUDIO_URL_KEYS.has(k)) continue;
-        if (!/^https:\/\//.test(v)) continue;
-        if (!AUDIO_PATH_RE.test(v)) continue;
-        if (seen.has(v)) continue;
-        seen.add(v);
-        out.push(v);
-      } else {
-        walk(v, depth + 1);
-      }
-    }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+  const root = raw as Record<string, unknown>;
+  const candidates: unknown[] = [];
+
+  const pushFrom = (node: unknown) => {
+    if (!node || typeof node !== "object" || Array.isArray(node)) return;
+    const o = node as Record<string, unknown>;
+    candidates.push(o.audio_url, o.audioUrl, o.download_url, o.stream_url);
   };
-  walk(raw, 0);
-  return out;
+
+  const resultData = root.result_data;
+  if (Array.isArray(resultData)) {
+    for (const item of resultData) pushFrom(item);
+  } else if (resultData && typeof resultData === "object") {
+    const data = resultData as Record<string, unknown>;
+    pushFrom(data);
+    if (Array.isArray(data.clips)) for (const clip of data.clips) pushFrom(clip);
+  }
+  if (Array.isArray(root.clips)) for (const clip of root.clips) pushFrom(clip);
+  if (Array.isArray(root.results)) candidates.push(...root.results);
+  pushFrom(root);
+
+  return Array.from(
+    new Set(
+      candidates
+        .filter((v): v is string => typeof v === "string")
+        .map((v) => v.trim())
+        .filter((v) => {
+          try {
+            return new URL(v).protocol === "https:";
+          } catch {
+            return false;
+          }
+        }),
+    ),
+  );
 }
 
 /**

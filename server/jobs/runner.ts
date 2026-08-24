@@ -67,6 +67,7 @@ import {
   markManhuaLearnJobSucceededWithRetry,
   markJobSucceeded,
   patchJobRunningProgress,
+  patchJobRunningProgressStrict,
   requeueJob,
   type JobType,
 } from "./repository";
@@ -1478,6 +1479,17 @@ export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
  * running 进度里，worker 重启时先读它——有就只恢复轮询，**绝不重新建单**。
  * 上一版建单和轮询在同一次 HTTP 请求里，实例一重启就只能整单重来，等于再付一次。
  */
+/** 配乐任务判据：收口一处，重排/reaper/终态写入都引用它 */
+export function isManhuaBgmJob(job: { type: string; input: unknown }): boolean {
+  return (
+    job.type === "audio"
+    && Boolean(job.input)
+    && typeof job.input === "object"
+    && !Array.isArray(job.input)
+    && (job.input as Record<string, unknown>).action === "manhua_bgm_v55"
+  );
+}
+
 async function processManhuaBgmJob(
   input: JobEnvelope,
   userId: string,
@@ -1502,8 +1514,14 @@ async function processManhuaBgmJob(
   if (!upstreamTaskId) {
     const created = await createManhuaBgmTask(brief);
     upstreamTaskId = created.taskId;
-    // 先落库再轮询：这一步之后崩了，重启也知道单已经建过
-    await patchJobRunningProgress(jobId, { upstreamTaskId, startedAtMs });
+    // 先落库再轮询，且**必须严格落库**：宽松版会把 DB 异常吞掉，
+    // 号没存住却继续轮询，重启后查不到这张单，只能重建再付一次。
+    // 写不进去就抛 —— 不继续轮询，也不自动重新提交上游。
+    await patchJobRunningProgressStrict(jobId, {
+      upstreamTaskId,
+      startedAtMs,
+      bgmStage: "upstream_created",
+    });
   } else {
     console.warn(`[manhuaBgm] job ${jobId} 恢复既有任务 ${upstreamTaskId}，不重新建单`);
   }
@@ -2886,9 +2904,25 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
       jobType === "video"
       && isRecord(job.input)
       && job.input.action === "manhua_template_learn";
+    const manhuaBgmJob = isManhuaBgmJob(job);
     const succeededPersisted = manhuaLearnJob
       ? await markManhuaLearnJobSucceededWithRetry(job.id, output, provider)
-      : await markJobSucceeded(job.id, output, provider);
+      : manhuaBgmJob
+        ? await markJobSucceededWithRetry(job.id, output, provider, { attempts: 3 })
+        : await markJobSucceeded(job.id, output, provider);
+    if (manhuaBgmJob && !succeededPersisted) {
+      /**
+       * 配乐与学习任务同理：**终态写不进去也绝不重跑媒体链**。
+       * 上游已经付过费、变体已经转存 GCS，重新生成/下载/转码只会再烧一次。
+       * 把成品挂在 running.output 里，列表端与下次启动能按 done 收敛。
+       */
+      await patchJobRunningProgressStrict(job.id, {
+        terminalOutput: output,
+        bgmStage: "result_persistence_pending",
+      }).catch(() => {});
+      console.error(`[manhuaBgm] result persistence pending: jobId=${job.id}`);
+      return;
+    }
     if (manhuaLearnJob && !succeededPersisted) {
       // terminalOutput 已先写入 running.output；列表端与下次启动都能按 done 收敛成功。
       // 此处绝不 throw/requeue，否则会把已经完成的媒体与模型工作整条再烧一次。
@@ -3050,6 +3084,23 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
         console.error("[Jobs] paid image refund pending:", refundError),
       );
       await markJobFailed(job.id, message);
+    } else if (isManhuaBgmJob(job)) {
+      /**
+       * 配乐不能落进通用 attempts<2 自动重排：那会**再建一单再付一次**。
+       * 判据只有一条 —— 上游任务号存住了没：
+       *   存住了 → 重排只会继续查那张单，安全
+       *   没存住 → 说不清上游到底建没建，交人工核对，绝不自动重提
+       */
+      const current = await getJobById(job.id);
+      const out =
+        current?.output && typeof current.output === "object" && !Array.isArray(current.output)
+          ? (current.output as Record<string, unknown>)
+          : {};
+      if (String(out.upstreamTaskId || "").trim()) {
+        await requeueJob(job.id, `继续查询原配乐任务：${message}`);
+      } else {
+        await markJobFailed(job.id, `配乐任务状态待核对，未自动重新提交：${message}`);
+      }
     } else if ((job.attempts ?? 0) < 2) {
       await requeueJob(job.id, message);
     } else {
