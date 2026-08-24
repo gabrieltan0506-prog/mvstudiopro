@@ -6,7 +6,7 @@
  * 用户据此以为旧版没了，实际只是 GCS 抖了一下。归档件是花钱学来的，
  * 一部 58 分钟合辑学一次约 $1.075，不能靠「看起来没有」下结论。
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * 批准/下架/恢复共用一把 GCS 生命周期锁，所以 mock 必须让锁能真的拿到与释放：
@@ -14,7 +14,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * 不 mock 它，所有写操作都会卡在「另一项操作正在处理」。
  */
 const LOCK_OBJECT = "manhua-template-learn/locks/approved-lifecycle.json";
-const lockState = vi.hoisted(() => ({ body: Buffer.from("{}"), held: false })) as { body: Buffer; held: boolean };
+const lockState = vi.hoisted(() => ({
+  body: Buffer.from("{}"),
+  held: false,
+  generation: "1",
+})) as { body: Buffer; held: boolean; generation: string };
 
 const gcs = vi.hoisted(() => ({
   list: vi.fn(),
@@ -40,17 +44,28 @@ vi.mock("./gcs.js", () => ({
   },
   downloadGcsObjectVersioned: async ({ gcsUri }: { gcsUri: string }) => {
     if (String(gcsUri).endsWith(LOCK_OBJECT)) {
-      return { buffer: lockState.body, generation: "1" };
+      return { buffer: lockState.body, generation: lockState.generation };
     }
     throw new Error("unexpected versioned download");
   },
-  deleteGcsObject: async ({ objectName }: { objectName: string }) => {
-    if (objectName === LOCK_OBJECT) lockState.held = false;
+  deleteGcsObject: async ({
+    objectName,
+    ifGenerationMatch,
+  }: { objectName: string; ifGenerationMatch?: string }) => {
+    if (objectName !== LOCK_OBJECT) return;
+    // 条件删除：generation 不匹配就拒 —— 防旧持有者删掉被接管后重建的新锁
+    if (ifGenerationMatch && ifGenerationMatch !== lockState.generation) {
+      throw new Error("gcs_delete_generation_conflict");
+    }
+    lockState.held = false;
   },
 }));
 
 import {
+  MANHUA_TEMPLATE_LOCK_TTL_MS,
   acquireManhuaTemplateLifecycleLock,
+  isLifecycleLeaseExpired,
+  manhuaTemplateLifecycleClock,
   archiveApprovedManhuaViralTemplate,
   compareGenerationDesc,
   listArchivedManhuaViralTemplateIndex,
@@ -95,6 +110,7 @@ const seedArchive = (
 
 beforeEach(() => {
   lockState.held = false;
+  lockState.generation = "1";
   gcs.upload.mockClear();
   gcs.list.mockReset();
   gcs.download.mockReset();
@@ -260,7 +276,7 @@ describe("严格全量列表：列不全就停手（fail-closed）", () => {
     gcs.list.mockResolvedValue(
       Array.from({ length: 1000 }, (_, i) => `manhua-template-learn/approved/tpl_series_x${i}.json`),
     );
-    await expect(listGcsManhuaViralApprovedStrict()).rejects.toThrow(/无法确认是否完整/);
+    await expect(listGcsManhuaViralApprovedStrict()).rejects.toThrow(/无法确认列表完整/);
   });
 
   it("单卡读不动时整次抛错，不静默跳过", async () => {
@@ -287,23 +303,63 @@ describe("归档索引：approved 为空也要能找回（终审第七条 1）",
     expect(rows[0]!.beatCount).toBeGreaterThan(0);
   });
 
-  it("同一 id 多个版本时只取最新那版（按 generation 数值）", async () => {
+  it("🔴 同一 id 多版本时按 **card.updatedAt** 选最新，不是比文件名数字", async () => {
+    // 归档文件名有两种来源：GCS generation 与修订批准的 YYYYMMDDHHmmssSSS 时间戳，
+    // 不在同一数值空间。这里故意让「文件名大的那个反而更旧」
     gcs.list.mockImplementation(async ({ prefix }: { prefix: string }) =>
       prefix.includes("/archive/")
         ? [`${MANHUA_VIRAL_ARCHIVE_PREFIX}${ID}/9.json`,
            `${MANHUA_VIRAL_ARCHIVE_PREFIX}${ID}/10.json`]
         : [],
     );
-    const seen: string[] = [];
-    gcs.download.mockImplementation(async ({ gcsUri }: { gcsUri: string }) => {
-      seen.push(String(gcsUri));
-      return { buffer: Buffer.from(JSON.stringify(cardOf()), "utf8") };
-    });
+    gcs.download.mockImplementation(async ({ gcsUri }: { gcsUri: string }) => ({
+      buffer: Buffer.from(
+        JSON.stringify(
+          cardOf({
+            nameZh: String(gcsUri).endsWith("9.json") ? "新版" : "旧版",
+            updatedAt: String(gcsUri).endsWith("9.json")
+              ? "2026-08-24T00:00:00.000Z"
+              : "2026-08-01T00:00:00.000Z",
+          }),
+        ),
+        "utf8",
+      ),
+    }));
     const rows = await listArchivedManhuaViralTemplateIndex();
     expect(rows).toHaveLength(1);
-    // 只读了最新那一版，没有把每版都下载一遍
-    expect(seen.filter((u) => u.endsWith("10.json"))).toHaveLength(1);
-    expect(seen.some((u) => u.endsWith("9.json"))).toBe(false);
+    expect(rows[0]!.nameZh).toBe("新版");
+  });
+
+  it("updatedAt 相同时才退回按 generation 数值比（10 胜 9）", async () => {
+    gcs.list.mockImplementation(async ({ prefix }: { prefix: string }) =>
+      prefix.includes("/archive/")
+        ? [`${MANHUA_VIRAL_ARCHIVE_PREFIX}${ID}/9.json`,
+           `${MANHUA_VIRAL_ARCHIVE_PREFIX}${ID}/10.json`]
+        : [],
+    );
+    gcs.download.mockImplementation(async ({ gcsUri }: { gcsUri: string }) => ({
+      buffer: Buffer.from(
+        JSON.stringify(
+          cardOf({
+            nameZh: String(gcsUri).endsWith("10.json") ? "十" : "九",
+            updatedAt: "2026-08-20T00:00:00.000Z",
+          }),
+        ),
+        "utf8",
+      ),
+    }));
+    const rows = await listArchivedManhuaViralTemplateIndex();
+    expect(rows[0]!.nameZh).toBe("十");
+  });
+
+  it("🔴 归档卡 status=proposed 时明确拒绝", async () => {
+    gcs.list.mockImplementation(async ({ prefix }: { prefix: string }) =>
+      prefix.includes("/archive/") ? [`${MANHUA_VIRAL_ARCHIVE_PREFIX}${ID}/7.json`] : [],
+    );
+    gcs.download.mockResolvedValue({
+      buffer: Buffer.from(JSON.stringify(cardOf({ status: "proposed" })), "utf8"),
+    });
+    await expect(listArchivedManhuaViralTemplateIndex()).rejects.toThrow(/状态无效/);
   });
 
   it("归档读取失败整次抛错，不返回空列表", async () => {
@@ -426,5 +482,172 @@ describe("恢复成功后同步 proposals 审计副本（终审第七条 7）", 
     await expect(
       restoreArchivedManhuaViralTemplate({ id: ID, generation: "77" }),
     ).resolves.toMatchObject({ id: ID, status: "approved" });
+  });
+});
+
+describe("生命周期租约：不会因为一次失败而永久停摆（终审第四组）", () => {
+  const realNow = manhuaTemplateLifecycleClock.now;
+  afterEach(() => {
+    manhuaTemplateLifecycleClock.now = realNow;
+  });
+
+  it("租约过期判据：读不出 expiresAt 一律当**未过期**，不误抢活锁", () => {
+    const now = 1_000_000;
+    expect(isLifecycleLeaseExpired(null, now)).toBe(false);
+    expect(isLifecycleLeaseExpired({}, now)).toBe(false);
+    expect(isLifecycleLeaseExpired({ expiresAt: "not-a-date" }, now)).toBe(false);
+    expect(isLifecycleLeaseExpired({ expiresAt: new Date(now + 1).toISOString() }, now)).toBe(false);
+    expect(isLifecycleLeaseExpired({ expiresAt: new Date(now).toISOString() }, now)).toBe(true);
+  });
+
+  it("🔴 活着的租约挡住第二个操作", async () => {
+    const release = await acquireManhuaTemplateLifecycleLock();
+    try {
+      await expect(acquireManhuaTemplateLifecycleLock()).rejects.toThrow(/正在处理/);
+    } finally {
+      await release();
+    }
+  });
+
+  it("🔴 过期的租约可以被接管（用注入时钟，不真等十分钟）", async () => {
+    // 先占住，然后故意不释放 —— 模拟持有者崩溃
+    await acquireManhuaTemplateLifecycleLock();
+    manhuaTemplateLifecycleClock.now = () => realNow() + MANHUA_TEMPLATE_LOCK_TTL_MS + 1_000;
+    const release = await acquireManhuaTemplateLifecycleLock();
+    expect(typeof release).toBe("function");
+    await release();
+  });
+
+  it("🔴 release 失败后，到期仍可重新取得 —— 这正是加 expiresAt 的目的", async () => {
+    const release = await acquireManhuaTemplateLifecycleLock();
+    // 模拟释放时网络抖动：调用方 catch 掉了错误，锁留在 GCS
+    await release().catch(() => {});
+    lockState.held = true; // 锁对象仍在
+    manhuaTemplateLifecycleClock.now = () => realNow() + MANHUA_TEMPLATE_LOCK_TTL_MS + 1_000;
+    const again = await acquireManhuaTemplateLifecycleLock();
+    expect(typeof again).toBe("function");
+    await again();
+  });
+
+  it("🔴 旧持有者不能删掉已被接管后重建的新锁（条件删除按自己那一版）", async () => {
+    const stale = await acquireManhuaTemplateLifecycleLock();
+    // 接管：锁被换成新的一版
+    manhuaTemplateLifecycleClock.now = () => realNow() + MANHUA_TEMPLATE_LOCK_TTL_MS + 1_000;
+    lockState.generation = "2";
+    const fresh = await acquireManhuaTemplateLifecycleLock();
+    // 旧持有者此刻才去释放：条件删除的 generation 已经不匹配
+    await expect(stale()).rejects.toThrow();
+    // 新锁还在，能正常释放
+    await fresh();
+  });
+});
+
+describe("批准的公开码与覆盖保护（终审第六组 13–16）", () => {
+  const proposalCard = (over: Record<string, unknown> = {}) =>
+    cardOf({ id: "tpl_series_newone", status: "proposed", publicCode: undefined, ...over });
+
+  /** 让 getGcsManhuaViralProposal 读到待批准卡，approved/ 侧按传入清单列举 */
+  const seedApprove = (approvedCards: Array<Record<string, unknown>>, proposal: Record<string, unknown>) => {
+    gcs.list.mockImplementation(async ({ prefix }: { prefix: string }) =>
+      prefix.includes("/approved/")
+        ? approvedCards.map((c) => `manhua-template-learn/approved/${c.id}.json`)
+        : [],
+    );
+    gcs.download.mockImplementation(async ({ gcsUri }: { gcsUri: string }) => {
+      const hit = approvedCards.find((c) => String(gcsUri).includes(String(c.id)));
+      return {
+        buffer: Buffer.from(JSON.stringify(hit || proposal), "utf8"),
+      };
+    });
+    gcs.createIfAbsent.mockResolvedValue({ created: true });
+  };
+
+  it("🔴 提案自带的 publicCode 与正式库冲突时重新铸码", async () => {
+    const { approveManhuaViralTemplate } = await import("./manhuaViralTemplateStore");
+    seedApprove([cardOf({ id: "tpl_series_old", publicCode: "AB12" })],
+      proposalCard({ publicCode: "AB12" }));
+    const out = await approveManhuaViralTemplate({ id: "tpl_series_newone" });
+    expect(out.publicCode).toBeTruthy();
+    expect(out.publicCode).not.toBe("AB12");
+  });
+
+  it("提案没带码时铸一个新的；不冲突的自带码则沿用", async () => {
+    const { approveManhuaViralTemplate } = await import("./manhuaViralTemplateStore");
+    seedApprove([cardOf({ id: "tpl_series_old", publicCode: "AB12" })],
+      proposalCard({ publicCode: "CD34" }));
+    const out = await approveManhuaViralTemplate({ id: "tpl_series_newone" });
+    expect(out.publicCode).toBe("CD34");
+  });
+
+  it("🔴 正式库严格列举失败时批准停止：不铸码、不写 approved", async () => {
+    const { approveManhuaViralTemplate } = await import("./manhuaViralTemplateStore");
+    gcs.download.mockResolvedValue({
+      buffer: Buffer.from(JSON.stringify(proposalCard()), "utf8"),
+    });
+    gcs.list.mockImplementation(async ({ prefix }: { prefix: string }) => {
+      if (prefix.includes("/approved/")) throw new Error("gcs_list_failed:503");
+      return [];
+    });
+    await expect(approveManhuaViralTemplate({ id: "tpl_series_newone" })).rejects.toThrow();
+    expect(gcs.createIfAbsent).not.toHaveBeenCalled();
+  });
+
+  it("🔴 非修订提案的 id 已在正式库时拒绝覆盖（要换请走修订流程）", async () => {
+    const { approveManhuaViralTemplate } = await import("./manhuaViralTemplateStore");
+    // 提案必须真是 proposed（否则会先被「不是待审状态」那道更早的门拦下，测不到这一条）
+    gcs.list.mockImplementation(async ({ prefix }: { prefix: string }) =>
+      prefix.includes("/approved/")
+        ? ["manhua-template-learn/approved/tpl_series_newone.json"]
+        : [],
+    );
+    gcs.download.mockImplementation(async ({ gcsUri }: { gcsUri: string }) => ({
+      buffer: Buffer.from(
+        JSON.stringify(
+          String(gcsUri).includes("/approved/")
+            ? cardOf({ id: "tpl_series_newone", publicCode: "AB12" })
+            : proposalCard(),
+        ),
+        "utf8",
+      ),
+    }));
+    gcs.createIfAbsent.mockResolvedValue({ created: true });
+    await expect(approveManhuaViralTemplate({ id: "tpl_series_newone" })).rejects.toThrow(
+      /已存在，请通过修订流程替换/,
+    );
+    expect(gcs.createIfAbsent).not.toHaveBeenCalled();
+  });
+});
+
+describe("归档规模：不丢第 201 个（终审第六组 4）", () => {
+  it("🔴 250 个唯一归档 id 全部列得出来，不静默截断", async () => {
+    const ids = Array.from({ length: 250 }, (_, i) => `tpl_series_a${String(i).padStart(3, "0")}`);
+    gcs.list.mockImplementation(async ({ prefix }: { prefix: string }) =>
+      prefix.includes("/archive/")
+        ? ids.map((id) => `${MANHUA_VIRAL_ARCHIVE_PREFIX}${id}/7.json`)
+        : [],
+    );
+    gcs.download.mockImplementation(async ({ gcsUri }: { gcsUri: string }) => {
+      const id = String(gcsUri).match(/archive\/(tpl_[a-z0-9_]+)\//)?.[1] || ID;
+      return { buffer: Buffer.from(JSON.stringify(cardOf({ id })), "utf8") };
+    });
+    const rows = await listArchivedManhuaViralTemplateIndex();
+    expect(rows).toHaveLength(250);
+    expect(rows.some((r) => r.id === "tpl_series_a249")).toBe(true);
+  });
+
+  it("归档对象达到列举硬上限时 fail-closed", async () => {
+    gcs.list.mockImplementation(async ({ prefix }: { prefix: string }) =>
+      prefix.includes("/archive/")
+        ? Array.from({ length: 1000 }, (_, i) => `${MANHUA_VIRAL_ARCHIVE_PREFIX}tpl_series_b${i}/7.json`)
+        : [],
+    );
+    await expect(listArchivedManhuaViralTemplateIndex()).rejects.toThrow(/无法确认列表完整/);
+  });
+
+  it("归档版本列表同样 fail-closed", async () => {
+    gcs.list.mockResolvedValue(Array.from({ length: 1000 }, (_, i) => obj(String(i + 1))));
+    await expect(listArchivedManhuaViralTemplateVersions(ID)).rejects.toThrow(
+      /无法确认列表完整/,
+    );
   });
 });

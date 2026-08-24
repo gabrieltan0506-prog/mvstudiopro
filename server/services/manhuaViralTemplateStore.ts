@@ -40,15 +40,28 @@ export const MANHUA_VIRAL_ARCHIVE_PREFIX = "manhua-template-learn/archive/";
  * 但**生命周期判断不行**：漏掉几张就可能把「同赛道最后一张」判成「还有好几张」，
  * 下架完这条赛道编剧室直接空掉。
  */
+const MANHUA_TEMPLATE_LIST_HARD_LIMIT = 1000;
+
+/**
+ * 严格列名：**列到上限就抛**，因为此时无法证明已经列全。
+ * 所有生命周期链路共用这一处口径 —— 判断「有几张」的地方不许各写各的。
+ */
+async function listObjectNamesStrict(prefix: string): Promise<string[]> {
+  const names = await listGcsObjectNamesByPrefix({
+    prefix,
+    maxResults: MANHUA_TEMPLATE_LIST_HARD_LIMIT,
+  });
+  if (names.length >= MANHUA_TEMPLATE_LIST_HARD_LIMIT) {
+    throw new Error(`模板对象达到 ${MANHUA_TEMPLATE_LIST_HARD_LIMIT} 条，无法确认列表完整`);
+  }
+  return names;
+}
+
 async function listCardsUnderPrefixStrict(
   prefix: string,
-  limit = 1000,
+  _limit = MANHUA_TEMPLATE_LIST_HARD_LIMIT,
 ): Promise<ManhuaViralTemplateCard[]> {
-  const names = await listGcsObjectNamesByPrefix({ prefix, maxResults: limit });
-  // 达到硬上限时无法证明已经列全，生命周期操作必须停止
-  if (names.length >= limit) {
-    throw new Error(`模板列表达到 ${limit} 条，无法确认是否完整，已停止生命周期操作`);
-  }
+  const names = await listObjectNamesStrict(prefix);
   const cards: ManhuaViralTemplateCard[] = [];
   for (const name of names) {
     if (!/\.json$/i.test(name)) continue;
@@ -69,38 +82,132 @@ async function listCardsUnderPrefixStrict(
  */
 const MANHUA_TEMPLATE_LIFECYCLE_LOCK = "manhua-template-learn/locks/approved-lifecycle.json";
 
+/**
+ * 生命周期租约（lease）。
+ *
+ * ⚠️ **锁不会过期，锁本身就是新的故障源**：持锁进程崩溃（实例重启／进程被杀／网络断）、
+ * 建锁后回读失败、release 暂时失败——任何一种，锁对象都会永远留在 GCS，
+ * 之后**所有批准、下架、恢复永久被拒**，只能人工去删那个对象。
+ * 原来没锁最多是并发出错；有锁而不会过期，崩一次就全锁死。
+ *
+ * 所以锁体里写 `expiresAt`，到期即可被下一次操作接管。
+ * TTL 取 10 分钟：这三种操作都是「读几百张卡 → 判 → 写一两个对象」，
+ * 正常秒级完成；超过 10 分钟只可能是持有者已经不在了。
+ */
+export type LifecycleLease = {
+  token: string;
+  createdAt: string;
+  expiresAt: string;
+};
+
+export const MANHUA_TEMPLATE_LOCK_TTL_MS = 10 * 60 * 1000;
+
+/** 供测试注入；生产用真实时钟 */
+export const manhuaTemplateLifecycleClock = { now: () => Date.now() };
+
+/** 租约是否已过期（读不出 expiresAt 一律当**未过期**——宁可让用户重试，不误抢活锁） */
+export function isLifecycleLeaseExpired(raw: unknown, nowMs: number): boolean {
+  const lease = raw as Partial<LifecycleLease> | null;
+  const at = Date.parse(String(lease?.expiresAt || ""));
+  return Number.isFinite(at) && at <= nowMs;
+}
+
 export async function acquireManhuaTemplateLifecycleLock(): Promise<() => Promise<void>> {
-  const token = randomBytes(16).toString("hex");
-  const body = Buffer.from(
-    JSON.stringify({ token, createdAt: new Date().toISOString() }, null, 2),
-  );
   const bucket = getGcsBucketName();
-
-  const created = await uploadBufferToGcsIfAbsent({
-    bucket,
-    objectName: MANHUA_TEMPLATE_LIFECYCLE_LOCK,
-    buffer: body,
-    contentType: "application/json",
-  });
-  if (!created.created) {
-    throw new Error("另一项模板批准、下架或恢复正在处理，请稍后重试");
-  }
-
   const lockUri = `gs://${bucket}/${MANHUA_TEMPLATE_LIFECYCLE_LOCK}`;
-  const versioned = await downloadGcsObjectVersioned({ gcsUri: lockUri });
-  const saved = JSON.parse(versioned.buffer.toString("utf8")) as { token?: string };
-  if (saved.token !== token) {
-    throw new Error("模板生命周期锁内容不一致，已停止操作");
+  const busy = () => new Error("另一项模板批准、下架或恢复正在处理，请稍后重试");
+
+  const makeBody = () => {
+    const now = manhuaTemplateLifecycleClock.now();
+    const lease: LifecycleLease = {
+      token: randomBytes(16).toString("hex"),
+      createdAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + MANHUA_TEMPLATE_LOCK_TTL_MS).toISOString(),
+    };
+    return { lease, buffer: Buffer.from(JSON.stringify(lease, null, 2)) };
+  };
+
+  /** 建锁 → 回读核对 token → 交出「按自己那一版条件删除」的释放函数 */
+  const tryAcquire = async (): Promise<(() => Promise<void>) | null> => {
+    const { lease, buffer } = makeBody();
+    const created = await uploadBufferToGcsIfAbsent({
+      bucket,
+      objectName: MANHUA_TEMPLATE_LIFECYCLE_LOCK,
+      buffer,
+      contentType: "application/json",
+    });
+    if (!created.created) return null;
+
+    let versioned: { buffer: Buffer; generation: string };
+    try {
+      versioned = await downloadGcsObjectVersioned({ gcsUri: lockUri });
+    } catch (e) {
+      /**
+       * 回读失败：锁已经建出去了，此刻**不知道它的 generation**，删不掉。
+       * 直接抛会把它变成一把没人能释放的死锁——但因为写了 expiresAt，
+       * 它会在 TTL 后被下一次操作接管，不再是永久停摆。
+       */
+      throw new Error(
+        `模板生命周期锁回读失败，已停止本次操作；锁将在 ${Math.round(
+          MANHUA_TEMPLATE_LOCK_TTL_MS / 60000,
+        )} 分钟后自动失效：${e instanceof Error ? e.message : e}`,
+      );
+    }
+
+    const saved = JSON.parse(versioned.buffer.toString("utf8")) as Partial<LifecycleLease>;
+    if (saved.token !== lease.token) {
+      // 建成了却不是自己的内容：不碰它，交给 TTL
+      throw new Error("模板生命周期锁内容不一致，已停止操作");
+    }
+
+    return async () => {
+      // 只删自己那一版：期间若已被 TTL 接管并替换，条件删除会失败，
+      // **绝不能删掉替换后的新锁**
+      await deleteGcsObject({
+        objectName: MANHUA_TEMPLATE_LIFECYCLE_LOCK,
+        ifGenerationMatch: versioned.generation,
+      });
+    };
+  };
+
+  const first = await tryAcquire();
+  if (first) return first;
+
+  // 抢不到：看现有租约是不是已经过期
+  let existing: { buffer: Buffer; generation: string };
+  try {
+    existing = await downloadGcsObjectVersioned({ gcsUri: lockUri });
+  } catch {
+    // 读不动就当它还活着
+    throw busy();
   }
 
-  // 只删自己那一版：条件删除，防止误删别人后来建的锁
-  return async () => {
+  let parsed: unknown = null;
+  try {
+    parsed = JSON.parse(existing.buffer.toString("utf8"));
+  } catch {
+    parsed = null;
+  }
+  if (!isLifecycleLeaseExpired(parsed, manhuaTemplateLifecycleClock.now())) {
+    throw busy();
+  }
+
+  try {
+    // 条件删除：只删我读到的那一版。若持有者自己释放并重建，这里会 412 ——
+    // 那正是要的：说明锁又活了，不该被抢
     await deleteGcsObject({
       objectName: MANHUA_TEMPLATE_LIFECYCLE_LOCK,
-      ifGenerationMatch: versioned.generation,
+      ifGenerationMatch: existing.generation,
     });
-  };
+  } catch {
+    throw busy();
+  }
+
+  const second = await tryAcquire();
+  if (!second) throw busy();
+  return second;
 }
+
 
 /**
  * 归档索引：**不依赖 approved 行存在**。
@@ -118,54 +225,75 @@ export type ArchivedManhuaViralTemplateIndexRow = {
   learnSourceZh?: string;
 };
 
-export async function listArchivedManhuaViralTemplateIndex(
-  maxTemplates = 200,
-): Promise<ArchivedManhuaViralTemplateIndexRow[]> {
-  // 列举失败一律抛：空数组会在页面上显示「没有归档」，用户以为旧版没了
-  const names = await listGcsObjectNamesByPrefix({
-    prefix: MANHUA_VIRAL_ARCHIVE_PREFIX,
-    maxResults: 1000,
-  });
+/** 归档条目的排序口径：先 updatedAt 降序，同刻再按 generation 数值降序 */
+export function compareArchivedRowsDesc(
+  a: { updatedAt?: string; generation: string },
+  b: { updatedAt?: string; generation: string },
+): number {
+  const at = Date.parse(a.updatedAt || "");
+  const bt = Date.parse(b.updatedAt || "");
+  const byTime = Number.isFinite(at) && Number.isFinite(bt) ? bt - at : 0;
+  return byTime || compareGenerationDesc(a.generation, b.generation);
+}
 
-  /** archive/<id>/<generation>.json → 每个 id 取 generation 最大的那版 */
-  const latestByIdName = new Map<string, { generation: string; objectName: string }>();
+export async function listArchivedManhuaViralTemplateIndex(): Promise<
+  ArchivedManhuaViralTemplateIndexRow[]
+> {
+  const names = await listObjectNamesStrict(MANHUA_VIRAL_ARCHIVE_PREFIX);
+
+  /**
+   * ⚠️ **不能只比文件名数字选最新版**。归档文件名有两种来源：
+   *   · GCS generation（下架时用原对象的 generation）
+   *   · 修订批准产生的 YYYYMMDDHHmmssSSS 时间戳
+   * 两者不在同一数值空间，直接比大小会挑错版本。
+   * 所以先严格读出全部有效归档卡，再按 `card.updatedAt`（相同再按 generation）选最新。
+   */
+  const byId = new Map<string, ArchivedManhuaViralTemplateIndexRow & { generation: string }>();
   for (const objectName of names) {
     const suffix = objectName.slice(MANHUA_VIRAL_ARCHIVE_PREFIX.length);
     const match = suffix.match(/^(tpl_[a-z0-9_-]{1,60})\/(\d{1,30})\.json$/i);
     if (!match) continue;
-    const [, id, generation] = match as unknown as [string, string, string];
-    const prev = latestByIdName.get(id);
-    if (!prev || compareGenerationDesc(prev.generation, generation) > 0) {
-      latestByIdName.set(id, { generation, objectName });
-    }
-  }
+    const id = match[1]!;
+    const generation = match[2]!;
 
-  const rows: ArchivedManhuaViralTemplateIndexRow[] = [];
-  for (const [id, hit] of Array.from(latestByIdName.entries())) {
-    // 严格读：读不动就抛，不能把「读取失败」显示成「没有归档」
-    const card = await readCardFromObjectStrict(hit.objectName);
+    const card = await readCardFromObjectStrict(objectName);
     if (card.id !== id) {
-      throw new Error(`归档对象与模板 id 不一致：${hit.objectName}`);
+      throw new Error(`归档对象与模板 id 不一致：${objectName}`);
     }
-    rows.push({
+    if (card.status !== "approved" && card.status !== "rejected") {
+      throw new Error(`归档对象状态无效：${objectName}`);
+    }
+
+    const row = {
       id,
       nameZh: card.nameZh,
       laneZh: card.laneZh,
       updatedAt: card.updatedAt,
       beatCount: card.beatGrid.length,
       learnSourceZh: describeManhuaTemplateLearnSourceZh(card.provenance),
-    });
-    if (rows.length >= maxTemplates) break;
+      generation,
+    };
+    const prev = byId.get(id);
+    if (!prev || compareArchivedRowsDesc(row, prev) < 0) byId.set(id, row);
   }
-  return rows.sort(
-    (a, b) => Date.parse(b.updatedAt || "") - Date.parse(a.updatedAt || "") || 0,
-  );
+
+  // 硬上限内返回**全部**唯一模板，不静默截断：
+  // 截断会让第 N 个之后的模板永远找不回来，而它们是花钱学来的
+  return Array.from(byId.values())
+    .sort(compareArchivedRowsDesc)
+    .map(({ generation: _g, ...row }) => row);
 }
 
 /** 生命周期判断专用的正式库全量；展示列表继续走宽松版 */
 export async function listGcsManhuaViralApprovedStrict(): Promise<ManhuaViralTemplateCard[]> {
   const cards = await listCardsUnderPrefixStrict(MANHUA_VIRAL_APPROVED_PREFIX, 1000);
   return cards.filter((card) => card.status === "approved");
+}
+
+/** 体检候选专用：读不到就抛，不能把「暂时读不到已付费精读卡」显示成「建议重学」 */
+export async function listGcsManhuaViralProposalsStrict(): Promise<ManhuaViralTemplateCard[]> {
+  const cards = await listCardsUnderPrefixStrict(MANHUA_VIRAL_PROPOSALS_PREFIX);
+  return cards.filter((card) => card.status === "proposed");
 }
 
 /** 归档版本号是递增数字串，**必须按数值比**：字典序会把 9 排在 10 前面 */
@@ -346,6 +474,11 @@ export function mintUniqueTemplatePublicCodeFromTaken(taken: ReadonlySet<string>
   throw new Error("公开码空间耗尽，请人工介入");
 }
 
+/**
+ * @deprecated 基于**宽松**读取（默认 80 张、列举失败返回 []）——
+ * 列举一失败 taken 就是空集，会铸出重复公开码。
+ * 生命周期链路一律改用 mintUniqueTemplatePublicCodeFromTaken(严格全量的 taken)。
+ */
 async function mintUniqueTemplatePublicCode(): Promise<string> {
   const taken = new Set(
     (await listCardsUnderPrefix(MANHUA_VIRAL_APPROVED_PREFIX, 1000))
@@ -538,7 +671,8 @@ export async function listArchivedManhuaViralTemplateVersions(
    * 空数组会在页面上显示「还没有归档版本」，
    * 让用户以为旧版没了，而实际只是 GCS 抖了一下。
    */
-  const names = await listGcsObjectNamesByPrefix({ prefix, maxResults: 1000 });
+  // 与 index / strict 列表同一口径：列到硬上限就抛，不按不完整列表给版本
+  const names = await listObjectNamesStrict(prefix);
 
   const rows: ArchivedManhuaViralTemplate[] = [];
   for (const objectName of names) {
@@ -764,10 +898,33 @@ async function approveManhuaViralTemplateLocked(input: {
     return replacement;
   }
 
+  /**
+   * 已经持有全局锁了，就该在锁内用**严格全量**定这两件事，
+   * 而不是再去调基于宽松读取的 mintUniqueTemplatePublicCode()——
+   * 那个在列举失败时会拿到空的 taken 集合，铸出**重复的公开码**，
+   * 而公开码是普通用户唯一可见的模板句柄，重了就分不清。
+   */
+  const approvedNow = await listGcsManhuaViralApprovedStrict();
+
+  // 非修订流程不许顶掉现役卡：要替换请走修订（上面那条分支）
+  if (approvedNow.some((item) => item.id === card.id)) {
+    throw new Error("同 id 正式模板已存在，请通过修订流程替换");
+  }
+
+  const takenCodes = new Set(
+    approvedNow
+      .map((item) => String(item.publicCode || "").trim().toUpperCase())
+      .filter(Boolean),
+  );
+  const requestedCode = String(card.publicCode || "").trim().toUpperCase();
+  const publicCode = requestedCode && !takenCodes.has(requestedCode)
+    ? requestedCode
+    : mintUniqueTemplatePublicCodeFromTaken(takenCodes);
+
   const approved: ManhuaViralTemplateCard = {
     ...card,
     status: "approved",
-    publicCode: card.publicCode || (await mintUniqueTemplatePublicCode()),
+    publicCode,
     approvedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };

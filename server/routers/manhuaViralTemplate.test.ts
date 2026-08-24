@@ -64,6 +64,8 @@ vi.mock("../services/manhuaViralTemplateStore", () => ({
   listGcsManhuaViralApproved: vi.fn(async () => [secretCard]),
   // 生命周期判断改用严格全量（宽松版只读 80 张、失败返回 []）
   listGcsManhuaViralApprovedStrict: vi.fn(async () => [secretCard]),
+  // 体检候选也改严格：读不到就抛，不能把「暂时读不到精读卡」显示成「建议重学」
+  listGcsManhuaViralProposalsStrict: vi.fn(async () => [revisionCard]),
   // 归档索引独立返回：恢复入口不再依赖 approved 行存在
   listArchivedManhuaViralTemplateIndex: vi.fn(async () => []),
   listArchivedManhuaViralTemplateVersions: vi.fn(async () => []),
@@ -382,5 +384,47 @@ describe("owner 模板查看与优化", () => {
       id: revisionCard.id,
       confirmApprove: true,
     })).resolves.toMatchObject({ ok: true });
+  });
+});
+
+describe("生命周期路由：判断只能有一处（终审第六组 1/2/7/8）", () => {
+  it("🔴 下架不再调用 80 张宽松列表 —— 判断全交给 store 的锁内严格门", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const store = await import("../services/manhuaViralTemplateStore");
+    const loose = store.listGcsManhuaViralApproved as unknown as { mock: { calls: unknown[] } };
+    const before = loose.mock.calls.length;
+    const caller = (await loadRouter()).createCaller(makeCtx("user", undefined, "owner-open-id"));
+    await caller.archiveApproved({ id: "tpl_series_deadbeef0001", confirmArchive: true });
+    // 路由层一次都没读宽松列表（原来读了会**提前误拒**：
+    // 目标在前 80、同赛道替代卡排第 81 张时，宽松列表看不到那张）
+    expect(loose.mock.calls.length).toBe(before);
+  });
+
+  it("🔴 已恢复回 approved 的 id，不再出现在「已下架，可恢复」", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const store = await import("../services/manhuaViralTemplateStore");
+    (store.listArchivedManhuaViralTemplateIndex as unknown as {
+      mockResolvedValueOnce: (v: unknown) => void;
+    }).mockResolvedValueOnce([
+      { id: "tpl_series_deadbeef0001", nameZh: "已恢复的", laneZh: "爽文逆袭", beatCount: 9 },
+      { id: "tpl_series_stillgone", nameZh: "还在归档的", laneZh: "爽文逆袭", beatCount: 8 },
+    ]);
+    const caller = (await loadRouter()).createCaller(makeCtx("user", undefined, "owner-open-id"));
+    const out = await caller.reviewTemplateGenerations();
+    const ids = (out.archivedItems as Array<{ id: string }>).map((r) => r.id);
+    // secretCard 的 id 就是 tpl_series_deadbeef0001，它在 approved 里
+    expect(ids).not.toContain("tpl_series_deadbeef0001");
+    expect(ids).toContain("tpl_series_stillgone");
+  });
+
+  it("🔴 proposals 严格读失败时，换代体检整体失败 —— 不输出「建议重学」", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const store = await import("../services/manhuaViralTemplateStore");
+    (store.listGcsManhuaViralProposalsStrict as unknown as {
+      mockRejectedValueOnce: (e: unknown) => void;
+    }).mockRejectedValueOnce(new Error("gcs_list_failed:503"));
+    const caller = (await loadRouter()).createCaller(makeCtx("user", undefined, "owner-open-id"));
+    // 返回空候选会把「暂时读不到已付费的精读卡」误报成「建议重新学习」= 让用户再花一次钱
+    await expect(caller.reviewTemplateGenerations()).rejects.toThrow();
   });
 });

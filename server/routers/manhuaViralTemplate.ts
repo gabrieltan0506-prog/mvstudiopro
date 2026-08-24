@@ -279,7 +279,7 @@ export const manhuaViralTemplateRouter = router({
     assertSiteOwner(ctx.user);
     const {
       listGcsManhuaViralApprovedStrict,
-      listGcsManhuaViralProposals,
+      listGcsManhuaViralProposalsStrict,
       listArchivedManhuaViralTemplateIndex,
     } = await import("../services/manhuaViralTemplateStore");
     const { adviseTemplateRetirement } = await import("../../shared/manhuaTemplateLifecycle");
@@ -291,9 +291,9 @@ export const manhuaViralTemplateRouter = router({
      * 模板下架只删 approved/，那份副本还在，直接拼进来会把**已经下架的卡**
      * 推荐成正式替代品。正式候选只能来自 approved/。
      */
-    const proposals = (await listGcsManhuaViralProposals()).filter(
-      (card) => card.status === "proposed",
-    );
+    // 严格读：列举或单卡读失败一律抛。返回空候选会把
+    // **「暂时读不到已付费的精读卡」误报成「建议重新学习」**——那是让用户再花一次钱
+    const proposals = await listGcsManhuaViralProposalsStrict();
     const candidates = [...approved, ...proposals];
     const laneCount = new Map<string, number>();
     for (const c of approved) laneCount.set(c.laneZh, (laneCount.get(c.laneZh) || 0) + 1);
@@ -301,7 +301,13 @@ export const manhuaViralTemplateRouter = router({
      * 归档索引**独立返回**：恢复入口原本嵌在 approved 行里，
      * 模板一下架就从 approved 消失，恢复入口跟着消失 —— 下架即不可逆。
      */
-    const archivedItems = await listArchivedManhuaViralTemplateIndex();
+    const archivedIndex = await listArchivedManhuaViralTemplateIndex();
+    /**
+     * 归档历史可以留，但同 id 一旦已经回到 approved/，
+     * 就不能同时显示成「已下架，可恢复」—— 用户会对着一张现役卡点恢复。
+     */
+    const approvedIds = new Set(approved.map((card) => card.id));
+    const archivedItems = archivedIndex.filter((row) => !approvedIds.has(row.id));
     return {
       archivedItems,
       items: approved.map((card) => ({
@@ -329,20 +335,17 @@ export const manhuaViralTemplateRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       assertSiteOwner(ctx.user);
-      const { archiveApprovedManhuaViralTemplate, listGcsManhuaViralApproved } = await import(
+      /**
+       * 路由只管 owner 权限与输入校验。
+       *
+       * 原来这里先用宽松列表（最多 80 张）判一次「同赛道最后一张」——
+       * 即便 store 已有严格全量门禁，这一层仍可能**提前误拒合法下架**：
+       * 目标在前 80、同赛道替代卡排在第 81 张时，宽松列表看不到那张替代卡。
+       * 生命周期判断只能有一处，就在 store 的锁内。
+       */
+      const { archiveApprovedManhuaViralTemplate } = await import(
         "../services/manhuaViralTemplateStore"
       );
-      const { canRetireTemplate } = await import("../../shared/manhuaTemplateLifecycle");
-      // 同赛道最后一张不许下架：下完这条赛道编剧室就选不出模板了
-      const approved = await listGcsManhuaViralApproved();
-      const target = approved.find((c) => c.id === input.id);
-      if (target) {
-        const gate = canRetireTemplate({
-          card: target,
-          sameLaneApprovedCount: approved.filter((c) => c.laneZh === target.laneZh).length,
-        });
-        if (!gate.ok) throw new TRPCError({ code: "BAD_REQUEST", message: gate.reasonZh });
-      }
       const archived = await archiveApprovedManhuaViralTemplate(input.id);
       return { ok: true as const, id: archived.id, nameZh: archived.nameZh };
     }),
