@@ -143,6 +143,20 @@ export function waitNativeDeepReadRetry(ms: number, signal?: AbortSignal): Promi
 /** 抖音地址约 8 分钟失效；每片重新解析，不复用 */
 const RESOLVE_TTL_MS = 6 * 60_000;
 
+/**
+ * 一个可直接喂给 ffmpeg 的媒体节点。
+ *
+ * 从 `string` 扩成对象是因为**两个来源的节点性质不同**：
+ *   · batch 脚本给的是页面 URL，要先 yt-dlp 解析出 CDN 副本；
+ *   · 生产主链给的是素材接入层**已经探测成功**的媒体直链，附带它验证过的 Referer。
+ * 后者再跑一次 yt-dlp 只会失败——直链没有 `bytevc1_540p` 这种 format_id。
+ * Referer 丢了同样会被 CDN 拒，旧抽帧链路一路带着它。
+ */
+export type NativeDeepReadMediaNode = {
+  url: string;
+  referer?: string;
+};
+
 export type NativeDeepReadSegmentSpec = {
   /** 全片绝对秒 */
   startSec: number;
@@ -398,7 +412,7 @@ export function pickSmallestVideoFormat(
 export async function resolveNativeDeepReadNodeUrls(
   sourceUrl: string,
   abortSignal?: AbortSignal,
-): Promise<string[]> {
+): Promise<NativeDeepReadMediaNode[]> {
   const url = String(sourceUrl || "").trim();
   if (!url) throw new Error("缺少可解析的剧集地址");
   const cookie = String(process.env.DOUYIN_COOKIE || "").trim();
@@ -411,23 +425,42 @@ export async function resolveNativeDeepReadNodeUrls(
   const info = JSON.parse(stdout) as { formats?: Array<Record<string, unknown>> };
   const best = pickSmallestVideoFormat(info.formats || []);
   if (!best) throw new Error("未解析到可用的 540p 档");
-  return [best.url];
+  return [{ url: best.url }];
+}
+
+/**
+ * ffmpeg 切片参数（纯函数，便于直接断言而不必真跑 ffmpeg）。
+ *
+ * **Referer 必须带**：素材接入层已经验证过这一项，旧抽帧链路一路带着它。
+ * 接线时漏掉等于把已确认的前提扔了，CDN 会拒。
+ */
+export function buildCutSegmentArgs(
+  node: NativeDeepReadMediaNode,
+  startSec: number,
+  lenSec: number,
+  localPath: string,
+): string[] {
+  const referer = String(node.referer || "").trim();
+  return [
+    "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+    "-user_agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+    ...(referer ? ["-headers", `Referer: ${referer}\r\n`] : []),
+    "-ss", String(startSec), "-i", node.url,
+    "-t", String(lenSec), "-c", "copy", localPath,
+  ];
 }
 
 /** 切片：-ss 在 -i 之前是 input seeking，走 Range 只拉需要的段；-c copy 不转码 */
 async function cutSegment(
-  url: string,
+  node: NativeDeepReadMediaNode,
   startSec: number,
   lenSec: number,
   localPath: string,
   abortSignal?: AbortSignal,
 ): Promise<number> {
-  await run("ffmpeg", [
-    "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
-    "-user_agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-    "-ss", String(startSec), "-i", url,
-    "-t", String(lenSec), "-c", "copy", localPath,
-  ], 600_000, abortSignal);
+  // Referer 必须带：素材接入层已经确认过这一项，丢了会被 CDN 拒
+  // （旧抽帧链路一路带着它，接线时漏掉等于把已验证的前提扔了）
+  await run("ffmpeg", buildCutSegmentArgs(node, startSec, lenSec, localPath), 600_000, abortSignal);
   const size = statSync(localPath).size;
   assertNativeDeepReadPieceSize(size);
   return size;
@@ -441,8 +474,8 @@ async function cutSegment(
  * 段 C 那次连挂两次，本来换个 host 就能过。
  */
 async function runOneSegment(params: {
-  nodeUrls: string[];
-  refreshNodes: () => Promise<string[]>;
+  nodes: NativeDeepReadMediaNode[];
+  refreshNodes: () => Promise<NativeDeepReadMediaNode[]>;
   spec: NativeDeepReadSegmentSpec;
   apiKey: string;
   endpoint: string;
@@ -453,7 +486,7 @@ async function runOneSegment(params: {
   const lenSec = Math.max(1, Math.round(spec.endSec - spec.startSec));
   const localPath = `${params.tmpDir}/ndr_${spec.startSec}_${lenSec}.mp4`;
   const objectKey = `deep-read/${Date.now()}_${crypto.randomUUID()}_${Math.max(0, Math.floor(spec.startSec))}.mp4`;
-  let nodes = params.nodeUrls;
+  let nodes = params.nodes;
 
   let cut = false;
   for (let attempt = 1; attempt <= 3 && !cut; attempt++) {
@@ -582,7 +615,7 @@ export function validateNativeDeepReadSegments(
  * 静默少几个镜头比整体失败更难发现。
  */
 export async function runManhuaNativeDeepRead(params: {
-  resolveNodes: () => Promise<string[]>;
+  resolveNodes: () => Promise<NativeDeepReadMediaNode[]>;
   segments: readonly NativeDeepReadSegmentSpec[];
   /** 缺省走 resolveNativeDeepReadCredentials()：套餐优先 */
   apiKey?: string;
@@ -617,7 +650,7 @@ export async function runManhuaNativeDeepRead(params: {
       if (Date.now() - resolvedAt > RESOLVE_TTL_MS) await refreshNodes();
       try {
         const { row, usage } = await runOneSegment({
-          nodeUrls: nodes,
+          nodes,
           refreshNodes,
           spec,
           apiKey,

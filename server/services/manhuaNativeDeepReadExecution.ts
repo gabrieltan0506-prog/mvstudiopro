@@ -19,6 +19,7 @@ import crypto from "node:crypto";
 import {
   isManhuaNativeDeepReadEnabled,
   runManhuaNativeDeepRead,
+  type NativeDeepReadMediaNode,
   validateNativeDeepReadSegments,
   type NativeDeepReadRunError,
   type NativeDeepReadSegmentSpec,
@@ -38,8 +39,13 @@ export type NativeDeepReadEpisodeExecution = {
   durationSec: number;
   laneHintZh?: string;
   segments: readonly NativeDeepReadSegmentSpec[];
-  /** 解析该集当前可用的 CDN 节点副本（零成本，不下载） */
-  resolveNodes: () => Promise<string[]>;
+  /**
+   * 该集当前可用的媒体节点（零成本，不下载）。
+   *
+   * 两种来源都走这里：batch 脚本传页面 URL 解析器，生产主链直接返回
+   * 素材接入层已探测成功的直链（含它验证过的 Referer）——后者不能再解析一次。
+   */
+  resolveNodes: () => Promise<NativeDeepReadMediaNode[]>;
   abortSignal?: AbortSignal;
 };
 
