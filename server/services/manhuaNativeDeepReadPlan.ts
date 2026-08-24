@@ -29,6 +29,16 @@ import { NATIVE_DEEP_READ_JOB_MAX_CALLS } from "../../shared/manhuaNativeDeepRea
 
 const execFileAsync = promisify(execFile);
 
+type NativeDeepReadProbeExecutor = (
+  command: string,
+  args: string[],
+  options: {
+    maxBuffer: number;
+    timeout: number;
+    signal?: AbortSignal;
+  },
+) => Promise<{ stdout: string | Buffer }>;
+
 /** CDN 要求带 Referer，素材接入层一路带着它；漏掉会被拒。 */
 const DOUYIN_REFERER = "https://www.douyin.com/";
 
@@ -184,27 +194,124 @@ export function selectFreeEpisodesUpToPaywall(
 export async function probeNativeDeepReadDurationSec(
   playbackUrl: string,
   abortSignal?: AbortSignal,
+  execute: NativeDeepReadProbeExecutor = execFileAsync as NativeDeepReadProbeExecutor,
 ): Promise<number> {
-  const { stdout } = await execFileAsync(
-    "ffprobe",
-    [
-      "-v", "error",
-      "-user_agent",
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-      "-headers", `Referer: ${DOUYIN_REFERER}\r\n`,
-      "-show_entries", "format=duration",
-      "-print_format", "json",
-      "-i", playbackUrl,
-    ],
-    {
-      maxBuffer: 8 * 1024 * 1024,
-      timeout: 90_000,
-      signal: abortSignal,
-    },
-  );
-  const sec = Number(JSON.parse(stdout)?.format?.duration);
+  if (abortSignal?.aborted) {
+    throw abortSignal.reason instanceof Error
+      ? abortSignal.reason
+      : new Error("计划生成已停止");
+  }
+  let stdout: string | Buffer;
+  try {
+    ({ stdout } = await execute(
+      "ffprobe",
+      [
+        "-v", "error",
+        "-user_agent",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+        "-headers", `Referer: ${DOUYIN_REFERER}\r\n`,
+        // 单个坏节点不能把十集预演拖到请求超时；单位为微秒。
+        "-rw_timeout", "15000000",
+        "-show_entries", "format=duration",
+        "-print_format", "json",
+        "-i", playbackUrl,
+      ],
+      {
+        maxBuffer: 8 * 1024 * 1024,
+        timeout: 20_000,
+        signal: abortSignal,
+      },
+    ));
+  } catch {
+    if (abortSignal?.aborted) {
+      throw abortSignal.reason instanceof Error
+        ? abortSignal.reason
+        : new Error("计划生成已停止");
+    }
+    // execFile 的原始 message 含完整签名 URL，禁止进入日志或 owner 面板。
+    throw new Error("播放节点探测失败（地址失效、节点拒绝或读取超时）");
+  }
+  let parsed: { format?: { duration?: string | number } };
+  try {
+    parsed = JSON.parse(String(stdout || "{}")) as { format?: { duration?: string | number } };
+  } catch {
+    throw new Error("播放节点返回了无效媒体信息");
+  }
+  const sec = Number(parsed.format?.duration);
   if (!Number.isFinite(sec) || sec <= 0) throw new Error("读不到成片时长");
   return sec;
+}
+
+function throwIfNativePlanAborted(abortSignal?: AbortSignal): void {
+  if (!abortSignal?.aborted) return;
+  throw abortSignal.reason instanceof Error
+    ? abortSignal.reason
+    : new Error("计划生成已停止");
+}
+
+/**
+ * 每集按「列表候选 → 详情刷新候选」切换节点。
+ *
+ * 抖音同一视频会返回主播放、下载地址与多码率镜像；某一条失败不代表整集不可读。
+ * 这里只探元数据，不猜时长，也不把失败候选继续交给付费链路。
+ */
+async function probeEpisodeDurationWithCandidateFailover(
+  episode: DouyinListedEpisode,
+  deps: Pick<NativeDeepReadPlanDeps, "probeDurationSec" | "refreshPlaybackUrls">,
+  abortSignal?: AbortSignal,
+): Promise<number> {
+  const tried = new Set<string>();
+  const probeCandidates = async (candidates: readonly string[]): Promise<number | null> => {
+    const unique: string[] = [];
+    for (const raw of candidates) {
+      const url = String(raw || "").trim();
+      if (!url || tried.has(url) || unique.includes(url)) continue;
+      unique.push(url);
+    }
+    for (let index = 0; index < unique.length; index += 1) {
+      throwIfNativePlanAborted(abortSignal);
+      const candidate = unique[index]!;
+      tried.add(candidate);
+      try {
+        return await deps.probeDurationSec(candidate, abortSignal);
+      } catch {
+        throwIfNativePlanAborted(abortSignal);
+        console.warn(
+          "[manhuaNativeDeepReadPlan] playback candidate failed:",
+          `episode=${episode.index}`,
+          `candidate=${index + 1}/${unique.length}`,
+        );
+      }
+    }
+    return null;
+  };
+
+  const initial = [
+    ...(episode.playbackUrls || []),
+    ...(episode.playbackUrl ? [episode.playbackUrl] : []),
+  ];
+  const directDuration = await probeCandidates(initial);
+  if (directDuration != null) return directDuration;
+
+  throwIfNativePlanAborted(abortSignal);
+  const awemeId = extractDouyinVideoIdFromUrl(episode.url);
+  let refreshed: string[] = [];
+  if (awemeId) {
+    try {
+      refreshed = await deps.refreshPlaybackUrls(awemeId);
+    } catch {
+      console.warn(
+        "[manhuaNativeDeepReadPlan] playback refresh failed:",
+        `episode=${episode.index}`,
+      );
+    }
+  }
+  const refreshedDuration = await probeCandidates(refreshed);
+  if (refreshedDuration != null) return refreshedDuration;
+
+  throw new Error(
+    `第${episode.index}集所有媒体节点暂不可读，已停止；未发出模型请求，请稍后重试`,
+  );
 }
 
 export type NativeDeepReadPlanDeps = {
@@ -300,14 +407,12 @@ export async function buildNativeDeepReadPlanPreview(
   const executable = wanted.filter((e) => !claimed.has(e.index));
   const episodes: NativeDeepReadPlanEpisode[] = [];
   for (const e of executable) {
-    if (input.abortSignal?.aborted) throw input.abortSignal.reason || new Error("计划生成已停止");
-    let playback = e.playbackUrl || e.playbackUrls?.[0] || "";
-    if (!playback) {
-      const awemeId = extractDouyinVideoIdFromUrl(e.url);
-      playback = awemeId ? (await deps.refreshPlaybackUrls(awemeId))[0] || "" : "";
-    }
-    if (!playback) throw new Error(`第${e.index}集拿不到可用播放地址，已停止（换 cookie 后重试）`);
-    const durationSec = await deps.probeDurationSec(playback, input.abortSignal);
+    throwIfNativePlanAborted(input.abortSignal);
+    const durationSec = await probeEpisodeDurationWithCandidateFailover(
+      e,
+      deps,
+      input.abortSignal,
+    );
     if (durationSec > MANHUA_LEARN_MAX_DURATION_SEC) {
       throw new Error(
         `第${e.index}集超过 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟，超出学习策略上限`,

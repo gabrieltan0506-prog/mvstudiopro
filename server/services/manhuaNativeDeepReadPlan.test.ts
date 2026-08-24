@@ -4,6 +4,7 @@ import {
   assertNativeDeepReadPlanConfirmation,
   buildNativeDeepReadPlanPreview,
   computeNativeDeepReadPlanHash,
+  probeNativeDeepReadDurationSec,
   selectFreeEpisodesUpToPaywall,
   splitNativeDeepReadSegments,
   type NativeDeepReadPlanDeps,
@@ -74,6 +75,122 @@ describe("原生精读计划", () => {
     expect(plan.totalSegments).toBe(2);
     expect(plan.executableEpisodeCount).toBe(1);
     expect(d.probeDurationSec).toHaveBeenCalledTimes(1);
+  });
+
+  it("首个 CDN 节点失败后切换同集备用节点，不提前判整集失败", async () => {
+    const first = "https://v.douyinvod.com/first.mp4";
+    const second = "https://v.douyinvod.com/second.mp4";
+    const d = deps({
+      listMixEpisodes: vi.fn(async () => ({
+        episodes: [{ ...episode(1), playbackUrl: first, playbackUrls: [first, second] }],
+        complete: true,
+      })),
+      probeDurationSec: vi.fn(async (url) => {
+        if (url === first) throw new Error(`Command failed: ffprobe ${url}`);
+        return 126;
+      }),
+    });
+    const plan = await buildNativeDeepReadPlanPreview(
+      { url: "https://www.douyin.com/collection/123456", limit: 1 },
+      d,
+    );
+    expect(plan.episodes[0]?.durationSec).toBe(126);
+    expect(d.probeDurationSec).toHaveBeenNthCalledWith(1, first, undefined);
+    expect(d.probeDurationSec).toHaveBeenNthCalledWith(2, second, undefined);
+    expect(d.refreshPlaybackUrls).not.toHaveBeenCalled();
+  });
+
+  it("列表节点全失败后只刷新一次，并使用未尝试的新地址", async () => {
+    const stale = "https://v.douyinvod.com/stale.mp4";
+    const fresh = "https://v.douyinvod.com/fresh.mp4";
+    const d = deps({
+      listMixEpisodes: vi.fn(async () => ({
+        episodes: [{ ...episode(1), playbackUrl: stale, playbackUrls: [stale] }],
+        complete: true,
+      })),
+      refreshPlaybackUrls: vi.fn(async () => [stale, fresh]),
+      probeDurationSec: vi.fn(async (url) => {
+        if (url === stale) throw new Error("节点失效");
+        return 88;
+      }),
+    });
+    const plan = await buildNativeDeepReadPlanPreview(
+      { url: "https://www.douyin.com/collection/123456", limit: 1 },
+      d,
+    );
+    expect(plan.episodes[0]?.durationSec).toBe(88);
+    expect(d.refreshPlaybackUrls).toHaveBeenCalledTimes(1);
+    expect(d.probeDurationSec).toHaveBeenCalledTimes(2);
+  });
+
+  it("所有节点失败时关闭式停止，面板错误不包含签名地址或原始命令", async () => {
+    const secretUrl = "https://v.douyinvod.com/private.mp4?signature=secret";
+    const d = deps({
+      listMixEpisodes: vi.fn(async () => ({
+        episodes: [{ ...episode(1), playbackUrl: secretUrl, playbackUrls: [secretUrl] }],
+        complete: true,
+      })),
+      refreshPlaybackUrls: vi.fn(async () => []),
+      probeDurationSec: vi.fn(async () => {
+        throw new Error(`Command failed: ffprobe ${secretUrl}`);
+      }),
+    });
+    const promise = buildNativeDeepReadPlanPreview(
+      { url: "https://www.douyin.com/collection/123456", limit: 1 },
+      d,
+    );
+    await expect(promise).rejects.toThrow("所有媒体节点暂不可读");
+    await expect(promise).rejects.not.toThrow("signature=secret");
+    await expect(promise).rejects.not.toThrow("Command failed");
+  });
+
+  it("客户端中止后不刷新、不继续尝试下一节点", async () => {
+    const controller = new AbortController();
+    const d = deps({
+      listMixEpisodes: vi.fn(async () => ({
+        episodes: [{
+          ...episode(1),
+          playbackUrls: [
+            "https://v.douyinvod.com/first.mp4",
+            "https://v.douyinvod.com/second.mp4",
+          ],
+        }],
+        complete: true,
+      })),
+      probeDurationSec: vi.fn(async () => {
+        controller.abort(new Error("用户已离开计划页面"));
+        throw new Error("子进程已停止");
+      }),
+    });
+    await expect(buildNativeDeepReadPlanPreview(
+      {
+        url: "https://www.douyin.com/collection/123456",
+        limit: 1,
+        abortSignal: controller.signal,
+      },
+      d,
+    )).rejects.toThrow("用户已离开计划页面");
+    expect(d.probeDurationSec).toHaveBeenCalledTimes(1);
+    expect(d.refreshPlaybackUrls).not.toHaveBeenCalled();
+  });
+
+  it("ffprobe 执行失败时收敛错误，且中止原因原样贯通", async () => {
+    const url = "https://v.douyinvod.com/private.mp4?signature=secret";
+    await expect(probeNativeDeepReadDurationSec(
+      url,
+      undefined,
+      vi.fn(async () => {
+        throw new Error(`Command failed: ffprobe ${url}`);
+      }),
+    )).rejects.toThrow("播放节点探测失败");
+
+    const controller = new AbortController();
+    controller.abort(new Error("计划生成已停止"));
+    await expect(probeNativeDeepReadDurationSec(
+      url,
+      controller.signal,
+      vi.fn(async () => ({ stdout: "{}" })),
+    )).rejects.toThrow("计划生成已停止");
   });
 
   it("占位集不进入执行清单，并作为阻断信号返回", async () => {
