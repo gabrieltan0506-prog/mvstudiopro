@@ -12,7 +12,7 @@
 - **原生精读面板真值热修**：`/platform` 的 AI 漫剧学习区按 owner 能力显示原生视频精读说明、计划预演按钮与批次范围；抖音原生候选在权限读取失败或 owner 不匹配时关闭式停止，不再静默建立旧抽帧任务。历史任务按 `pipelineMode` 明示「原生精读／旧抽帧」。
 - **批准模板 owner 查看/优化**：入口位于 `/platform` → AI 漫剧 →「模板库（已批准 · 编剧室可选）」。完整库、单卡详情、原始 GCS 列表、优化调用与修订批准都以 `OWNER_OPEN_ID` fail-closed；角色和监管会话不能替代 owner。
 - 优化结果只落 `manhua-template-learn/proposals/`；owner 批准后旧版先归档到 `archive/`，再以原内部 id 与 publicCode 替换 `approved/`。`/canvas` 未改，继续只读匿名 `listApprovedPublic`。
-- 模型档：Terra High、Kimi K3 Max、Claude Opus 5 High、DeepSeek V4 Pro 0813 High。DeepSeek 不传 temperature/top_p，固定 65536 + JSON + `require_parameters=true`。未做付费实跑或线上 GCS 写入。
+- 模型档：Sol High、Kimi K3 Max、Claude Opus 5 High、DeepSeek V4 Pro 0813 High。旧 `terra_high` 仅作历史修订读取与旧页面请求兼容，服务端归一到 Sol High，不再出现在模型目录。DeepSeek 不传 temperature/top_p，固定 65536 + JSON + `require_parameters=true`。未做付费实跑或线上 GCS 写入。
 
 ## 待执行（已批口径）
 1. CREDIT_COSTS 双源合并（shared/plans.ts + server/plans.ts → 单真源）。

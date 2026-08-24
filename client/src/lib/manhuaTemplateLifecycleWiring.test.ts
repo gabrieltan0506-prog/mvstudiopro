@@ -10,6 +10,11 @@ import { describe, expect, it } from "vitest";
 const PAGE = readFileSync(new URL("../pages/PlatformPage.tsx", import.meta.url), "utf8");
 
 describe("模板换代与归档接线契约", () => {
+  it("模板优化默认选择 Sol High，不会拿已下架目录的旧值导致按钮失效", () => {
+    expect(PAGE).toContain('useState<ManhuaViralTemplateOptimizeModel>("sol_high")');
+    expect(PAGE).not.toContain('useState<ManhuaViralTemplateOptimizeModel>("terra_high")');
+  });
+
   it("换代体检有真实调用", () => {
     expect(PAGE).toContain("trpc.manhuaViralTemplate.reviewTemplateGenerations.useQuery");
   });

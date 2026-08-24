@@ -134,6 +134,8 @@ export const manhuaViralTemplateRouter = router({
     .input(z.object({
       id: z.string().regex(/^tpl_[a-z0-9_-]{1,60}$/i),
       model: z.enum([
+        "sol_high",
+        // 兼容部署切换期间尚未刷新的旧页面；服务层会归一到 sol_high。
         "terra_high",
         "kimi_k3_max",
         "claude_opus_5_high",

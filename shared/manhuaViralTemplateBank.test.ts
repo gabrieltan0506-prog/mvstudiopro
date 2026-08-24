@@ -91,6 +91,34 @@ describe("manhuaViralTemplateBank", () => {
     })).toBeNull();
   });
 
+  it("新 Sol 修订与旧 Terra 修订都能读取，旧卡不会因模型迁移丢失", () => {
+    const baseRevision = {
+      parentTemplateId: "tpl_series_fixture01",
+      requestId: "request_model_migration_1234",
+      reasoningEffort: "high",
+      promptZh: "保留原结构。",
+      changedFields: ["hook3sZh"],
+      reasons: [{ field: "hook3sZh", reasonZh: "收紧开场信息。" }],
+      createdByUserId: 7,
+      createdAt: "2026-08-25T00:00:00.000Z",
+    } as const;
+    const sol = parseManhuaViralTemplateCard({
+      ...learnedCard(),
+      status: "proposed",
+      revision: { ...baseRevision, model: "sol_high", modelName: "gpt-5.6-sol" },
+    });
+    const legacy = parseManhuaViralTemplateCard({
+      ...learnedCard(),
+      status: "proposed",
+      revision: { ...baseRevision, model: "terra_high", modelName: "gpt-5.6-terra" },
+    });
+    expect(sol?.revision).toMatchObject({ model: "sol_high", modelName: "gpt-5.6-sol" });
+    expect(legacy?.revision).toMatchObject({
+      model: "terra_high",
+      modelName: "gpt-5.6-terra",
+    });
+  });
+
   it("groups by lane order without empty lanes", () => {
     const groups = listApprovedManhuaViralTemplatesGrouped([
       learnedCard(),

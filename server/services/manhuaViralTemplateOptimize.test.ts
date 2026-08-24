@@ -67,7 +67,7 @@ describe("optimizeApprovedManhuaViralTemplate", () => {
     effort: string;
     maxTokens: number;
   }> = [
-    { model: "terra_high", modelName: "gpt-5.6-terra", effort: "high", maxTokens: 32_768 },
+    { model: "sol_high", modelName: "gpt-5.6-sol", effort: "high", maxTokens: 32_768 },
     { model: "kimi_k3_max", modelName: "moonshotai/kimi-k3", effort: "max", maxTokens: 32_768 },
     { model: "claude_opus_5_high", modelName: "claude-opus-5", effort: "high", maxTokens: 32_768 },
     {
@@ -118,6 +118,27 @@ describe("optimizeApprovedManhuaViralTemplate", () => {
       expect(output.proposal.publicCode).toBeUndefined();
     });
   }
+
+  it("旧 terra_high 请求只作兼容别名，实际调用和修订都迁到 Sol High", async () => {
+    const invoke = vi.fn(async () => resultWith(optimizedOutput()));
+    const output = await optimizeApprovedManhuaViralTemplate({
+      card: approvedCard(),
+      model: "terra_high",
+      promptZh: "强化穿越异象，但保留原有节奏。",
+      requestId: "request_legacy_1234",
+      userId: 7,
+      invoke,
+    });
+    expect(invoke).toHaveBeenCalledWith(expect.objectContaining({
+      modelName: "gpt-5.6-sol",
+      reasoningEffort: "high",
+    }));
+    expect(output.proposal.revision).toMatchObject({
+      model: "sol_high",
+      modelName: "gpt-5.6-sol",
+      reasoningEffort: "high",
+    });
+  });
 
   it("模型未为真实变更提供原因时拒绝生成修订", async () => {
     const invalid = optimizedOutput();

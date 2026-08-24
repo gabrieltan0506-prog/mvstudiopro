@@ -3179,7 +3179,7 @@ export default function PlatformPage() {
   );
   const [ownerTemplateDetailId, setOwnerTemplateDetailId] = useState<string | null>(null);
   const [ownerTemplateOptimizeModel, setOwnerTemplateOptimizeModel] =
-    useState<ManhuaViralTemplateOptimizeModel>("terra_high");
+    useState<ManhuaViralTemplateOptimizeModel>("sol_high");
   const [ownerTemplateOptimizePrompt, setOwnerTemplateOptimizePrompt] = useState("");
   const [ownerTemplateOptimizeResult, setOwnerTemplateOptimizeResult] = useState<null | {
     original: ManhuaViralTemplateCard;

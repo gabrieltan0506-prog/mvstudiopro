@@ -96,6 +96,8 @@ export type ManhuaViralTemplateOptimizeField =
   (typeof MANHUA_VIRAL_TEMPLATE_OPTIMIZE_FIELDS)[number];
 
 export type ManhuaViralTemplateOptimizeModel =
+  | "sol_high"
+  /** 仅用于读取旧修订与兼容部署切换期间的旧页面请求；新模型目录不再展示。 */
   | "terra_high"
   | "kimi_k3_max"
   | "claude_opus_5_high"
@@ -368,6 +370,7 @@ function parseManhuaViralTemplateRevision(
   const createdAt = String(o.createdAt || "").trim();
   const model = o.model;
   const modelValues: readonly ManhuaViralTemplateOptimizeModel[] = [
+    "sol_high",
     "terra_high",
     "kimi_k3_max",
     "claude_opus_5_high",

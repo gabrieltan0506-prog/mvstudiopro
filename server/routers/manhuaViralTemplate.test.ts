@@ -103,7 +103,7 @@ vi.mock("../services/manhuaViralTemplateCopy", () => ({
 }));
 vi.mock("../services/manhuaViralTemplateOptimize", () => ({
   MANHUA_VIRAL_TEMPLATE_OPTIMIZE_MODELS: [
-    { id: "terra_high", labelZh: "GPT-5.6 Terra · High", reasoningEffort: "high" },
+    { id: "sol_high", labelZh: "GPT-5.6 Sol · High", reasoningEffort: "high" },
   ],
   optimizeApprovedManhuaViralTemplate: vi.fn(async () => ({
     original: secretCard,
@@ -328,7 +328,7 @@ describe("owner 模板查看与优化", () => {
     const ownerCaps = await owner.getOwnerOptimizeCapabilities();
     expect(ownerCaps.allowed).toBe(true);
     expect(ownerCaps.models).toEqual([
-      { id: "terra_high", labelZh: "GPT-5.6 Terra · High", reasoningEffort: "high" },
+      { id: "sol_high", labelZh: "GPT-5.6 Sol · High", reasoningEffort: "high" },
     ]);
     expect(await otherAdmin.getOwnerOptimizeCapabilities()).toEqual({ allowed: false, models: [] });
     await expect(otherAdmin.getApprovedOwnerDetail({ id: secretCard.id })).rejects.toMatchObject({
@@ -343,7 +343,7 @@ describe("owner 模板查看与优化", () => {
     const router = await loadRouter();
     const input = {
       id: secretCard.id,
-      model: "terra_high" as const,
+      model: "sol_high" as const,
       promptZh: "强化前三秒。",
       requestId: "request_owner_1234",
       confirmPaidCall: true as const,

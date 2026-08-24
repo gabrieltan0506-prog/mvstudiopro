@@ -32,10 +32,10 @@ type OptimizeModelConfig = {
 
 export const MANHUA_VIRAL_TEMPLATE_OPTIMIZE_MODELS: readonly OptimizeModelConfig[] = [
   {
-    id: "terra_high",
-    labelZh: "GPT-5.6 Terra · High",
+    id: "sol_high",
+    labelZh: "GPT-5.6 Sol · High",
     provider: "openai",
-    modelName: "gpt-5.6-terra",
+    modelName: "gpt-5.6-sol",
     reasoningEffort: "high",
     maxTokens: 32_768,
     responseFormat: { type: "json_object" },
@@ -120,7 +120,10 @@ const optimizeOutputSchema = z.object({
 type InvokeLike = (params: InvokeParams) => Promise<InvokeResult>;
 
 function modelConfig(id: ManhuaViralTemplateOptimizeModel): OptimizeModelConfig {
-  const found = MANHUA_VIRAL_TEMPLATE_OPTIMIZE_MODELS.find((item) => item.id === id);
+  // 部署切换期间，已打开的旧页面仍可能提交 terra_high。兼容入口只做别名迁移，
+  // 不再把旧模型重新暴露给能力列表，也不会继续请求旧模型。
+  const currentId = id === "terra_high" ? "sol_high" : id;
+  const found = MANHUA_VIRAL_TEMPLATE_OPTIMIZE_MODELS.find((item) => item.id === currentId);
   if (!found) throw new Error("不支持的模板优化模型");
   return found;
 }
