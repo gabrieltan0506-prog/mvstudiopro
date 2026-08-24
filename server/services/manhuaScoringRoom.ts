@@ -104,60 +104,68 @@ const sleep = (ms: number, signal?: AbortSignal) =>
  * 变体默认取第一条：一次请求会出多个，但配乐间是自动链路，
  * 需要人挑时由调用方拿 `variantCount` 再决定，不在这里做交互。
  */
-export async function generateManhuaBgm(
-  req: ScoringRoomRequest,
-  opts: { userId: string; abortSignal?: AbortSignal },
-): Promise<ScoringRoomResult> {
-  const userId = String(opts.userId || "").trim();
-  if (!userId) throw new Error("配乐缺少会话用户，无法落本人后期前缀");
-  const startedAt = Date.now();
-
-  const brief = buildManhuaBgmBrief({
-    laneZh: req.laneZh,
-    moods: req.moods,
-    durationSec: req.durationSec,
-    moodArcZh: req.moodArcZh,
-    endingZh: req.endingZh,
-    tempoPlanZh: req.tempoPlanZh,
-    bpm: req.bpm,
-    styleAnchorZh: req.styleAnchorZh,
-    titleZh: req.titleZh,
-    styleOverrideZh: req.styleOverrideZh,
-    hasSilenceBreak: req.hasSilenceBreak,
-  });
-
+/**
+ * 建单：**只发一次 POST，立刻返回 task id 供持久化**。
+ *
+ * 与轮询分开是为了让 worker 重启时能「只恢复轮询、不重新建单」——
+ * 上一版建单和轮询在同一个函数里，实例一重启就只能整单重来，等于再付一次。
+ */
+export async function createManhuaBgmTask(
+  brief: ReturnType<typeof buildManhuaBgmBrief>,
+  opts: { abortSignal?: AbortSignal } = {},
+): Promise<{ taskId: string }> {
   const task = await createEvolinkSunoTask(brief, { abortSignal: opts.abortSignal });
+  return { taskId: task.id };
+}
+
+/**
+ * 续跑：轮询既有任务 → 变体全部转存本人后期前缀。
+ *
+ * 只吃 taskId，不碰建单 —— worker 重启走这条，不会产生第二次付费。
+ */
+export async function resumeManhuaBgmTask(input: {
+  taskId: string;
+  userId: string;
+  brief: ReturnType<typeof buildManhuaBgmBrief>;
+  startedAtMs?: number;
+  abortSignal?: AbortSignal;
+  /** 仅供测试压缩等待；生产走默认 5 秒 */
+  pollIntervalMs?: number;
+}): Promise<ScoringRoomResult> {
+  const userId = String(input.userId || "").trim();
+  if (!userId) throw new Error("配乐缺少会话用户，无法落本人后期前缀");
+  const startedAt = input.startedAtMs ?? Date.now();
 
   const deadline = Date.now() + POLL_TIMEOUT_MS;
   let raw: unknown = null;
   for (;;) {
-    if (opts.abortSignal?.aborted) throw new Error("已取消");
+    if (input.abortSignal?.aborted) throw new Error("已取消");
     if (Date.now() > deadline) {
-      throw new Error(`配乐任务 ${task.id} 超过 ${POLL_TIMEOUT_MS / 60000} 分钟未完成`);
+      throw new Error(`配乐任务 ${input.taskId} 超过 ${POLL_TIMEOUT_MS / 60000} 分钟未完成`);
     }
-    await sleep(POLL_INTERVAL_MS, opts.abortSignal);
-    const polled = await getEvolinkSunoTask(task.id, { abortSignal: opts.abortSignal });
+    await sleep(input.pollIntervalMs ?? POLL_INTERVAL_MS, input.abortSignal);
+    const polled = await getEvolinkSunoTask(input.taskId, { abortSignal: input.abortSignal });
     if (polled.task.status === "completed") {
       raw = polled.raw;
       break;
     }
     if (polled.task.status === "failed" || polled.task.status === "cancelled") {
-      throw new Error(`配乐任务 ${task.id} ${polled.task.status}`);
+      throw new Error(`配乐任务 ${input.taskId} ${polled.task.status}`);
     }
   }
 
   const urls = pickEvolinkSunoAudioUrls(raw);
-  if (!urls.length) throw new Error(`配乐任务 ${task.id} 完成但没有音频地址`);
+  if (!urls.length) throw new Error(`配乐任务 ${input.taskId} 完成但没有音频地址`);
 
-  // Suno 产物 72h 过期，直链不能进库 —— 全部变体即取即转
+  // Suno 产物 72h 过期 —— 全部变体即取即转，交用户「先量再听」
   const variants: ScoringRoomVariant[] = [];
   for (let i = 0; i < urls.length; i += 1) {
-    const got = await fetch(urls[i]!, { signal: opts.abortSignal });
+    const got = await fetch(urls[i]!, { signal: input.abortSignal });
     if (!got.ok) throw new Error(`取回配乐变体 ${i} 失败 HTTP ${got.status}`);
     const audio = Buffer.from(await got.arrayBuffer());
     if (!audio.length) throw new Error(`配乐变体 ${i} 为空`);
     const { gcsUri } = await uploadBufferToGcs({
-      objectName: scoringBgmObjectName(userId, task.id, i),
+      objectName: scoringBgmObjectName(userId, input.taskId, i),
       buffer: audio,
       contentType: "audio/mpeg",
     });
@@ -169,7 +177,12 @@ export async function generateManhuaBgm(
     });
   }
 
-  return { taskId: task.id, variants, elapsedMs: Date.now() - startedAt, brief };
+  return {
+    taskId: input.taskId,
+    variants,
+    elapsedMs: Date.now() - startedAt,
+    brief: input.brief,
+  };
 }
 
 /**

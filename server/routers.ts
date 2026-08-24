@@ -9566,11 +9566,20 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         return buildManhuaBgmBrief(input);
       }),
 
+    /**
+     * 配乐建单：**只入队，不在 HTTP 里跑**。
+     *
+     * Suno 是付费异步任务，上一版在一次 tRPC 请求里同步轮询最多 6 分钟 ——
+     * 请求中断或实例重启就丢了 task id，用户重按会再建一单付两次钱。
+     * 现在走 audio 队列，worker 建单后立刻持久化 upstreamTaskId，
+     * 重启只恢复轮询、不重新建单。
+     */
     manhuaGenerateBgm: adminProcedure
       .input(
         z.object({
+          /** 提交幂等号：同一次确认的重发复用它，网络抖动不该变成第二次付费 */
+          billingRequestId: z.string().uuid(),
           laneZh: z.string().min(1).max(20),
-          /** 时长由用户指定 */
           durationSec: z.number().int().min(10).max(360),
           moods: z.array(z.enum(["蓄力", "冲突", "反转", "收束"])).min(1).max(8),
           moodArcZh: z.string().max(300).optional(),
@@ -9580,22 +9589,36 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           styleAnchorZh: z.string().max(120).optional(),
           titleZh: z.string().max(80).optional(),
           hasSilenceBreak: z.boolean().optional(),
-          /** 用户在卡面改过的 music prompt；给了就原样用 */
           styleOverrideZh: z.string().max(1000).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
-        const { generateManhuaBgm } = await import("./services/manhuaScoringRoom.js");
+        const { buildManhuaBgmBrief } = await import("../shared/manhuaBgmBrief.js");
+        const { MANHUA_BGM_ACTION, manhuaBgmJobInputSchema } = await import(
+          "./jobs/manhuaBgmJobInput.js"
+        );
+        const { createJob } = await import("./jobs/repository.js");
+        const brief = buildManhuaBgmBrief(input);
+        const jobInput = manhuaBgmJobInputSchema.parse({
+          action: MANHUA_BGM_ACTION,
+          params: { billingRequestId: input.billingRequestId, brief },
+        });
+        // 幂等号当 job id：同一次确认重发命中主键冲突，不会建第二单
+        const jobId = `bgm_${input.billingRequestId}`;
         try {
-          // userId 必传：BGM 要落本人 post-prod 前缀才过得了 bgm_mount 的登记核对
-          return await generateManhuaBgm(input, { userId: String(ctx.user.id) });
+          await createJob({
+            id: jobId,
+            userId: String(ctx.user.id),
+            type: "audio",
+            provider: "evolink_suno",
+            input: jobInput,
+          });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          throw new TRPCError({
-            code: "SERVICE_UNAVAILABLE",
-            message: `配乐生成失败：${msg.slice(0, 200)}`,
-          });
+          // 主键冲突＝这次确认已经入过队，返回同一个 jobId 让前端继续轮询
+          if (!/duplicate|unique|already exists/i.test(msg)) throw err;
         }
+        return { jobId, brief };
       }),
 
     /**

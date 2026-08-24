@@ -1471,7 +1471,67 @@ export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
   return defaultTimeout;
 }
 
-async function processAudioJob(input: JobEnvelope, timeoutMs: number, userId: string): Promise<{ output: unknown; provider?: string }> {
+/**
+ * 漫剧配乐（Suno V5.5 · EvoLink）。
+ *
+ * 关键在**建单与轮询分两步**：建单成功立刻把 upstreamTaskId 持久化到
+ * running 进度里，worker 重启时先读它——有就只恢复轮询，**绝不重新建单**。
+ * 上一版建单和轮询在同一次 HTTP 请求里，实例一重启就只能整单重来，等于再付一次。
+ */
+async function processManhuaBgmJob(
+  input: JobEnvelope,
+  userId: string,
+  jobId: string,
+): Promise<{ output: unknown; provider?: string }> {
+  const { manhuaBgmJobInputSchema } = await import("./manhuaBgmJobInput.js");
+  // 队列里的数据永远不可信：worker 拿到旧任务也要再 parse 一次
+  const parsed = manhuaBgmJobInputSchema.parse(input);
+  const { brief } = parsed.params;
+  const { createManhuaBgmTask, resumeManhuaBgmTask } = await import(
+    "../services/manhuaScoringRoom.js"
+  );
+
+  const existing = await getJobById(jobId);
+  const prevOut =
+    existing?.output && typeof existing.output === "object" && !Array.isArray(existing.output)
+      ? (existing.output as Record<string, unknown>)
+      : {};
+  let upstreamTaskId = String(prevOut.upstreamTaskId || "").trim();
+  const startedAtMs = Number(prevOut.startedAtMs) || Date.now();
+
+  if (!upstreamTaskId) {
+    const created = await createManhuaBgmTask(brief);
+    upstreamTaskId = created.taskId;
+    // 先落库再轮询：这一步之后崩了，重启也知道单已经建过
+    await patchJobRunningProgress(jobId, { upstreamTaskId, startedAtMs });
+  } else {
+    console.warn(`[manhuaBgm] job ${jobId} 恢复既有任务 ${upstreamTaskId}，不重新建单`);
+  }
+
+  const result = await resumeManhuaBgmTask({
+    taskId: upstreamTaskId,
+    userId,
+    brief,
+    startedAtMs,
+  });
+
+  return {
+    output: {
+      upstreamTaskId,
+      variants: result.variants,
+      elapsedMs: result.elapsedMs,
+      providerCost: { unit: "per_call" as const, calls: 1 },
+      brief,
+    },
+    provider: "evolink_suno",
+  };
+}
+
+async function processAudioJob(input: JobEnvelope, timeoutMs: number, userId: string, jobId?: string): Promise<{ output: unknown; provider?: string }> {
+  if (input.action === "manhua_bgm_v55") {
+    if (!jobId) throw new Error("配乐任务缺少 jobId，无法持久化上游任务号");
+    return processManhuaBgmJob(input, userId, jobId);
+  }
   if (input.action !== "suno_music") {
     throw new Error(`Unsupported audio action: ${input.action}`);
   }
@@ -2793,7 +2853,7 @@ async function executeJob(
     const { runPostProdJobWithLimit } = await import("./postProdJob.js");
     return runPostProdJobWithLimit(input, userId, timeoutMs);
   }
-  return processAudioJob(input, timeoutMs, userId);
+  return processAudioJob(input, timeoutMs, userId, jobId);
 }
 
 async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>> & object) {
