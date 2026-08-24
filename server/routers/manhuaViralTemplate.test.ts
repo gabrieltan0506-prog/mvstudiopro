@@ -217,6 +217,75 @@ describe("listApprovedPrivate：owner-only 鉴权矩阵", () => {
   });
 });
 
+describe("生命周期三路由：owner-only 鉴权矩阵", () => {
+  /**
+   * 换代体检会列出全库正式卡（含内部字段），归档恢复能改动正式库——
+   * 这三条比只读列表更敏感，权限必须逐个钉死，不能只靠 UI 不显示入口。
+   */
+  const lifecycleCalls = (caller: {
+    reviewTemplateGenerations: () => Promise<unknown>;
+    listArchivedVersions: (i: { id: string }) => Promise<unknown>;
+    restoreArchived: (i: { id: string; generation: string; confirmRestore: true }) => Promise<unknown>;
+  }) => [
+    () => caller.reviewTemplateGenerations(),
+    () => caller.listArchivedVersions({ id: "tpl_series_abc" }),
+    () =>
+      caller.restoreArchived({ id: "tpl_series_abc", generation: "77", confirmRestore: true }),
+  ];
+
+  it("普通用户（无监管会话）三条全 FORBIDDEN", async () => {
+    const caller = (await loadRouter()).createCaller(makeCtx("user")) as never;
+    for (const call of lifecycleCalls(caller)) {
+      await expect(call()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    }
+  });
+
+  it("其他 admin/supervisor 角色也不能调用", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const router = await loadRouter();
+    for (const role of ["admin", "supervisor"] as const) {
+      const caller = router.createCaller(makeCtx(role, undefined, `other-${role}`)) as never;
+      for (const call of lifecycleCalls(caller)) {
+        await expect(call()).rejects.toMatchObject({ code: "FORBIDDEN" });
+      }
+    }
+  });
+
+  it("监管会话不能替代 owner 身份", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const caller = (await loadRouter()).createCaller(
+      makeCtx("user", { userId: 7, expiresAt: Date.now() + 60_000 }, "other-user"),
+    ) as never;
+    for (const call of lifecycleCalls(caller)) {
+      await expect(call()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    }
+  });
+
+  it("owner 本人可以调用换代体检（拿到的是结论而不是权限错）", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const caller = (await loadRouter()).createCaller(
+      makeCtx("user", undefined, "owner-open-id"),
+    );
+    const out = await caller.reviewTemplateGenerations();
+    expect(out).toHaveProperty("items");
+  });
+
+  it("非数字 generation 在路由层就被拒（owner 也不例外）", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const caller = (await loadRouter()).createCaller(
+      makeCtx("user", undefined, "owner-open-id"),
+    );
+    await expect(
+      caller.restoreArchived({
+        id: "tpl_series_abc",
+        // 路径穿越型输入：长度校验放得过去，数字正则放不过去
+        generation: "../approved/tpl_x" as never,
+        confirmRestore: true,
+      }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+});
+
 describe("owner 模板查看与优化", () => {
   it("只有 OWNER_OPEN_ID 本人获得查看能力，admin/supervisor 角色不能替代", async () => {
     vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
