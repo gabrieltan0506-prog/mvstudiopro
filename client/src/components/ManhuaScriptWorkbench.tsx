@@ -167,6 +167,15 @@ import {
 import { toast } from "sonner";
 import { suggestManhuaClipCuts } from "@/lib/manhuaEditAutoCutApi";
 import { parseFineCutByShot } from "@shared/manhuaEditFineCut";
+import {
+  isManhuaAssetCardExpanded,
+  shouldShowManhuaAssetRoleChip,
+} from "@/lib/manhuaAssetCardFold";
+import {
+  shouldShowToolbarAssetWallEntry,
+  shouldShowToolbarCharacterLibraryEntry,
+} from "@/lib/manhuaCharacterEntry";
+import { manhuaToolbarActionCost } from "@/lib/manhuaToolbarGroups";
 import type { ManhuaWorkflowPhase } from "@shared/manhuaWriterSession";
 
 /** 阶段枚举收口在 shared：此处只取别名，不再另写一份 */
@@ -649,6 +658,19 @@ export default function ManhuaScriptWorkbench({
   const [selectedAssetIds, setSelectedAssetIds] = useState<ReadonlySet<string>>(new Set());
   const toggleAssetSelected = (id: string) => {
     setSelectedAssetIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  /**
+   * 逐卡展开态：简洁模式下资产卡只留 图/名字/✕/⋯，其余点「⋯」才出。
+   * 单卡 11–13 个控件 × 13 张全平铺，是用户说「太复杂跟繁琐」的直接来源。
+   */
+  const [expandedAssetIds, setExpandedAssetIds] = useState<ReadonlySet<string>>(new Set());
+  const toggleAssetExpanded = (id: string) => {
+    setExpandedAssetIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -2089,8 +2111,18 @@ export default function ManhuaScriptWorkbench({
             ) : null}
           </div>
         </div>
-        {/* 主操作簇居中(用户 0820:高频按钮别压在最右上角,挪到画面上方中间) */}
-        <div className="mx-auto flex flex-wrap items-center justify-center gap-1.5">
+        {/*
+          主操作簇居中(用户 0820:高频按钮别压在最右上角,挪到画面上方中间)。
+
+          花钱动作统一带 data-manhua-action-cost="spend"，样式上给一圈暖色描边，
+          与「对齐画布竖排」这类无害动作区分开 ——
+          本仓有过误点烧掉一整批积分（曾清掉 18 张）的事故，
+          双重确认拦的是点下去之后，颜色分组拦的是**点错本身**。
+        */}
+        <div
+          data-manhua-toolbar-cluster
+          className="mx-auto flex flex-wrap items-center justify-center gap-1.5 [&_[data-manhua-action-cost=spend]]:ring-1 [&_[data-manhua-action-cost=spend]]:ring-amber-300/35 [&_[data-manhua-action-cost=spend]]:ring-offset-1 [&_[data-manhua-action-cost=spend]]:ring-offset-[#0a121c]"
+        >
           {factoryBusy && onStopFactory ? (
             <button
               type="button"
@@ -2108,6 +2140,7 @@ export default function ManhuaScriptWorkbench({
                 <button
                   type="button"
                   data-manhua-action="generate-all-keyarts"
+                  data-manhua-action-cost={manhuaToolbarActionCost("generate-all-keyarts")}
                   disabled={Boolean(factoryBusy)}
                   onClick={runGenerateAllKeyarts}
                   className={`inline-flex items-center gap-1 rounded-lg border border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 px-3 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-45 ${
@@ -2125,6 +2158,7 @@ export default function ManhuaScriptWorkbench({
               <button
                 type="button"
                 data-manhua-action="review-clip-prompts"
+                  data-manhua-action-cost={manhuaToolbarActionCost("review-clip-prompts")}
                 disabled={Boolean(factoryBusy)}
                 onClick={openClipPromptReview}
                 className="inline-flex items-center gap-1 rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-45"
@@ -2266,6 +2300,7 @@ export default function ManhuaScriptWorkbench({
                 type="button"
                 hidden={compactUi && activePhase !== "storyboard"}
                 data-manhua-action="generate-fragment"
+                  data-manhua-action-cost={manhuaToolbarActionCost("generate-fragment")}
                 disabled={Boolean(factoryBusy)}
                 onClick={runGenerateFragment}
                 className="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[10px] font-semibold text-white/75 hover:bg-white/[0.08] disabled:opacity-45"
@@ -2280,6 +2315,7 @@ export default function ManhuaScriptWorkbench({
             <button
               type="button"
               data-manhua-action="layout-readable-chain"
+                  data-manhua-action-cost={manhuaToolbarActionCost("layout-readable-chain")}
               disabled={Boolean(factoryBusy)}
               onClick={() => {
                 if (activePhase !== "storyboard") setActivePhase("storyboard");
@@ -2295,6 +2331,7 @@ export default function ManhuaScriptWorkbench({
             <button
               type="button"
               data-manhua-action="generate-selected-fragments"
+                  data-manhua-action-cost={manhuaToolbarActionCost("generate-selected-fragments")}
               disabled={Boolean(factoryBusy)}
               onClick={() => {
                 if (refuseIfBlocked(clipGateHint)) return;
@@ -2322,6 +2359,7 @@ export default function ManhuaScriptWorkbench({
             <button
               type="button"
               data-manhua-action="generate-missing-fragments"
+                  data-manhua-action-cost={manhuaToolbarActionCost("generate-missing-fragments")}
               disabled={Boolean(factoryBusy)}
               onClick={() => {
                 if (refuseIfBlocked(clipGateHint)) return;
@@ -2356,6 +2394,7 @@ export default function ManhuaScriptWorkbench({
               type="button"
               hidden={compactUi}
               data-manhua-action="rerun-keyarts"
+                  data-manhua-action-cost={manhuaToolbarActionCost("rerun-keyarts")}
               disabled={Boolean(factoryBusy)}
               onClick={() => {
                 if (refuseIfBlocked(keyartGateHint)) return;
@@ -2431,20 +2470,28 @@ export default function ManhuaScriptWorkbench({
           ) : null}
           {!compactUi ? (
             <>
-              <button
-                type="button"
-                onClick={() => onOpenCharacterCard?.()}
-                className="rounded-lg border border-white/12 px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.06]"
-              >
-                角色库
-              </button>
-              <button
-                type="button"
-                onClick={() => onOpenAssetWall?.()}
-                className="rounded-lg border border-white/12 px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.06]"
-              >
-                资产墙
-              </button>
+              {/* 入口去重：资产阶段人物卡旁边就有「去选人物 / 更换人物」，
+                  同去处的远端按钮让位；其它阶段没有就近入口，这个必须留着 */}
+              {shouldShowToolbarCharacterLibraryEntry({ activePhase, compactUi }) ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenCharacterCard?.()}
+                  className="rounded-lg border border-white/12 px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.06]"
+                >
+                  角色库
+                </button>
+              ) : null}
+              {/* 同上：资产阶段已有 5 个就近入口（库场景·道具 / 更换 / 尚未选场景…），
+                  远端这个让位；其它阶段留着当唯一通路 */}
+              {shouldShowToolbarAssetWallEntry({ activePhase, compactUi }) ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenAssetWall?.()}
+                  className="rounded-lg border border-white/12 px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.06]"
+                >
+                  资产墙
+                </button>
+              ) : null}
             </>
           ) : null}
         </div>
@@ -4112,6 +4159,13 @@ export default function ManhuaScriptWorkbench({
                                 : ref.role === "prop"
                                   ? assetCanon?.props || []
                                   : [];
+                          const needsReview = ref.reviewStatus === "needs_review";
+                          const cardExpanded = isManhuaAssetCardExpanded({
+                            compactUi,
+                            expandedIds: expandedAssetIds,
+                            id: ref.id,
+                            needsReview,
+                          });
                           return (
                           <div
                             key={ref.id}
@@ -4235,7 +4289,7 @@ export default function ManhuaScriptWorkbench({
                                   {ref.source === "generated" ? " · 新生成" : " · 上传"}
                                 </div>
                               )}
-                              {onCustomAssetClaimsChange && claimOptions.length ? (
+                              {cardExpanded && onCustomAssetClaimsChange && claimOptions.length ? (
                                 <div className="space-y-1">
                                   <select
                                     value=""
@@ -4272,7 +4326,7 @@ export default function ManhuaScriptWorkbench({
                                   ) : null}
                                 </div>
                               ) : null}
-                              {onCropCustomAsset || onDetextCustomAsset ? (
+                              {cardExpanded && (onCropCustomAsset || onDetextCustomAsset) ? (
                                 <div className="flex flex-wrap gap-1">
                                   {onCropCustomAsset ? (
                                     <button
@@ -4300,6 +4354,15 @@ export default function ManhuaScriptWorkbench({
                                   ) : null}
                                 </div>
                               ) : null}
+                              {shouldShowManhuaAssetRoleChip(cardExpanded) ? (
+                                <div className="text-[9px] text-white/40">
+                                  {MANHUA_CUSTOM_ASSET_ROLE_LABEL_ZH[ref.role]}
+                                  {ref.refDuty
+                                    ? ` · ${MANHUA_CUSTOM_ASSET_REF_DUTY_LABEL_ZH[ref.refDuty]}`
+                                    : ""}
+                                </div>
+                              ) : null}
+                              {cardExpanded ? (
                               <div className="flex flex-wrap gap-1">
                                 {MANHUA_CUSTOM_ASSET_ROLES.map((role) => {
                                   const on = ref.role === role;
@@ -4320,7 +4383,8 @@ export default function ManhuaScriptWorkbench({
                                   );
                                 })}
                               </div>
-                              {onCustomAssetDutyChange && !compactUi ? (
+                              ) : null}
+                              {onCustomAssetDutyChange && cardExpanded ? (
                                 <label
                                   className="flex flex-col gap-0.5 text-[9px] text-white/40"
                                   title="成片时这张垫图锁什么：人物默认锁脸、场景默认锁场；可手改"
@@ -4352,6 +4416,24 @@ export default function ManhuaScriptWorkbench({
                                     ))}
                                   </select>
                                 </label>
+                              ) : null}
+                              {/* 折叠开关：90% 的时间只需要 图/名字/✕，其余点开再说。
+                                  待人工确认的卡强制展开，不给收起（收起等于把问题藏了）*/}
+                              {compactUi && !needsReview ? (
+                                <button
+                                  type="button"
+                                  data-manhua-asset-card-toggle={ref.id}
+                                  aria-expanded={cardExpanded}
+                                  onClick={() => toggleAssetExpanded(ref.id)}
+                                  title={
+                                    cardExpanded
+                                      ? "收起这张卡的分类、认领、裁字等设置"
+                                      : "展开分类、垫图用途、认领、裁字/去字"
+                                  }
+                                  className="w-full rounded border border-white/10 bg-white/[0.03] py-0.5 text-[9px] text-white/40 hover:bg-white/10 hover:text-white/70"
+                                >
+                                  {cardExpanded ? "收起 ⌃" : "⋯ 更多设置"}
+                                </button>
                               ) : null}
                             </div>
                           </div>
@@ -4402,6 +4484,56 @@ export default function ManhuaScriptWorkbench({
                   >
                     删除所选
                   </button>
+                  {/* 能批量的原本只有「删除」和「重出」——而用户最需要批量的是**设置**：
+                      4 角色 × 3 槽挂造型要点 12 次，逐张改垫图用途同理。 */}
+                  {onCustomAssetRoleChange ? (
+                    <select
+                      value=""
+                      title="把所选的图一次归到同一分类"
+                      onChange={(e) => {
+                        const role = e.target.value;
+                        if (!role) return;
+                        Array.from(selectedAssetIds).forEach((id) =>
+                          onCustomAssetRoleChange(id, role as ManhuaCustomAssetRole),
+                        );
+                        e.currentTarget.value = "";
+                      }}
+                      className="rounded-lg border border-white/15 bg-black/45 px-2 py-1 text-[11px] text-white/70"
+                    >
+                      <option value="">批量改分类…</option>
+                      {MANHUA_CUSTOM_ASSET_ROLES.map((role) => (
+                        <option key={role} value={role}>
+                          {MANHUA_CUSTOM_ASSET_ROLE_LABEL_ZH[role]}
+                        </option>
+                      ))}
+                    </select>
+                  ) : null}
+                  {onCustomAssetDutyChange ? (
+                    <select
+                      value=""
+                      title="把所选的图一次设成同一种垫图用途"
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (!v) return;
+                        const duty = v === "__clear__"
+                          ? null
+                          : (v as ManhuaCustomAssetRefDuty);
+                        Array.from(selectedAssetIds).forEach((id) =>
+                          onCustomAssetDutyChange(id, duty),
+                        );
+                        e.currentTarget.value = "";
+                      }}
+                      className="rounded-lg border border-white/15 bg-black/45 px-2 py-1 text-[11px] text-white/70"
+                    >
+                      <option value="">批量设垫图用途…</option>
+                      {MANHUA_REF_DUTIES.map((d) => (
+                        <option key={d} value={d}>
+                          {MANHUA_CUSTOM_ASSET_REF_DUTY_LABEL_ZH[d]}
+                        </option>
+                      ))}
+                      <option value="__clear__">清为未标注</option>
+                    </select>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => setSelectedAssetIds(new Set())}
