@@ -271,7 +271,20 @@ export function buildNativeDeepReadProposalCard(
  * 查出来永远是 `tpl_native_<key>_ep/`，匹配不到任何 `ep001.json`，
  * 于是续跑恒返回空集、每次重跑都重烧。
  */
-export async function listIngestedNativeDeepReadEpisodes(
+export type IngestedNativeDeepReadEpisode = {
+  episodeIndex: number;
+  /** 卡片里保存的**稳定**来源（GCS 导入是 gs://，不是短时签名链） */
+  sourceUrl: string;
+};
+
+/**
+ * 返回经过完整卡片校验的**逐集记录**，供断点续跑与单源集号安放共用。
+ *
+ * 不能只返回集号：同名剧连续手动导入两个不同视频时，还要靠稳定来源
+ * 判断这一条是「同一素材续跑」还是「新素材追加」——
+ * native 不产 digest，旧的按 digest 排集号那条路在这里是空的。
+ */
+export async function listIngestedNativeDeepReadEpisodeRecords(
   seriesKey: string,
   /**
    * 集号范围是 1–999，**默认就要列满**。
@@ -281,8 +294,8 @@ export async function listIngestedNativeDeepReadEpisodes(
    * ep201 起会被当成未入库，重新 claim、重新付费。
    */
   maxEpisodes = 999,
-): Promise<Set<number>> {
-  const done = new Set<number>();
+): Promise<IngestedNativeDeepReadEpisode[]> {
+  const done: IngestedNativeDeepReadEpisode[] = [];
   const prefix =
     `${NATIVE_DEEP_READ_PROPOSAL_PREFIX}`
     + nativeDeepReadProposalId(seriesKey, 1).replace(/\d{3}$/, "");
@@ -321,10 +334,15 @@ export async function listIngestedNativeDeepReadEpisodes(
         || card.id !== nativeDeepReadProposalId(seriesKey, target.idx)
         || !card.provenance?.nativeVideoDeepRead
         || card.beatGrid.length < NATIVE_DEEP_READ_MIN_SHOTS
+        // 没有稳定来源的卡无法参与「同源续跑还是追加」的判断，按无效处理
+        || !String(card.sourceRefs?.[0]?.url || "").trim()
       ) {
         throw new Error("卡片形状或来源记录无效");
       }
-      done.add(target.idx);
+      done.push({
+        episodeIndex: target.idx,
+        sourceUrl: String(card.sourceRefs[0]!.url).trim(),
+      });
     } catch (e) {
       throw new Error(
         `第${target.idx}集已有对象但无法确认内容，已停止续跑：${e instanceof Error ? e.message : e}`,
@@ -339,7 +357,16 @@ export async function listIngestedNativeDeepReadEpisodes(
       }
     }),
   );
-  return done;
+  return done.sort((a, b) => a.episodeIndex - b.episodeIndex);
+}
+
+/** 只要集号时的薄包装：续跑判断用它，集号安放用上面的完整记录 */
+export async function listIngestedNativeDeepReadEpisodes(
+  seriesKey: string,
+  maxEpisodes = 999,
+): Promise<Set<number>> {
+  const records = await listIngestedNativeDeepReadEpisodeRecords(seriesKey, maxEpisodes);
+  return new Set(records.map((record) => record.episodeIndex));
 }
 
 export type NativeDeepReadIngestResult = {

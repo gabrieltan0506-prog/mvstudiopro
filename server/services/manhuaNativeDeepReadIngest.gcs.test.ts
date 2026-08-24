@@ -22,6 +22,7 @@ vi.mock("./gcs.js", () => ({
 import {
   buildNativeDeepReadProposalCard,
   ingestNativeDeepReadEpisode,
+  listIngestedNativeDeepReadEpisodeRecords,
   listIngestedNativeDeepReadEpisodes,
   nativeDeepReadProposalObjectName,
   type NativeDeepReadIngestInput,
@@ -83,6 +84,33 @@ describe("断点续跑", () => {
       maxResults: 999,
       literalPrefix: true,
     });
+  });
+
+  it("逐集记录保留**稳定来源**，供同名单源判断续跑还是追加", async () => {
+    // 只有集号不够：native 不产 digest，同名剧再导入一个视频时
+    // 要靠稳定来源判断这是同一素材续跑，还是新素材该追加到下一集号
+    gcs.list.mockResolvedValue([nativeDeepReadProposalObjectName("abc123", 1)]);
+    gcs.download.mockResolvedValue({
+      buffer: Buffer.from(
+        JSON.stringify(buildNativeDeepReadProposalCard(makeInput({ episodeIndex: 1 }))),
+        "utf8",
+      ),
+    });
+    const rows = await listIngestedNativeDeepReadEpisodeRecords("abc123");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.episodeIndex).toBe(1);
+    expect(rows[0]!.sourceUrl).toBeTruthy();
+  });
+
+  it("卡片没有稳定来源时按无效处理，不静默放行", async () => {
+    gcs.list.mockResolvedValue([nativeDeepReadProposalObjectName("abc123", 1)]);
+    const card = buildNativeDeepReadProposalCard(makeInput({ episodeIndex: 1 })) as Record<string, unknown>;
+    gcs.download.mockResolvedValue({
+      buffer: Buffer.from(JSON.stringify({ ...card, sourceRefs: [] }), "utf8"),
+    });
+    await expect(listIngestedNativeDeepReadEpisodeRecords("abc123")).rejects.toThrow(
+      /已停止续跑/,
+    );
   });
 
   it("列表状态未知时停止续跑，不把未知当作全部未跑（否则 20 集重烧一遍）", async () => {
