@@ -301,7 +301,21 @@ export type ManhuaLearnSeriesProgress = {
   listedEpisodeCount: number;
   /** 列表里出现过的全部集号（判「合集全学完」用集合包含，不用数量比较） */
   listedEpisodeIndexes?: number[];
+  /**
+   * 抽帧链路的已学集号（旧 digest 口径）。
+   *
+   * ⚠️ **只存旧 digest 的完成集**，不许把原生精读的集号并进来。
+   * 两代产出结构不同：抽帧下游要读 digest 的 seriesDraftEvidence 做系列聚合，
+   * 而原生精读根本不产 digest。混在一起会双向冒充——
+   * native 卡让抽帧模式跳过该集（进不了重学），旧 digest 让 native 模式跳过该集（开关形同虚设）。
+   */
   learnedEpisodeIndexes: number[];
+  /**
+   * 原生精读已入库的集号（一集一张 `tpl_native_<key>_epNNN.json`）。
+   *
+   * 每轮从有效卡集合重新校准，不做增量累加——卡被删/被归档时这里要跟着掉。
+   */
+  nativeDeepReadEpisodeIndexes?: number[];
   /** 当前来源不可用而暂跳的集号；用于下轮从后续集继续，不计入已学。 */
   skippedEpisodeIndexes?: number[];
   /** 明确需要购买的集号；与技术失败暂跳分开，永不进入失败熔断或重试。 */

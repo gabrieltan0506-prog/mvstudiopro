@@ -338,7 +338,9 @@ export async function listGcsObjectNamesByPrefix(params: {
   const prefix = params.literalPrefix
     ? normalizeObjectName(requestedPrefix)
     : normalizeObjectName(requestedPrefix.replace(/\/?$/, "/")).replace(/\/?$/, "/");
-  const maxResults = Math.max(1, Math.min(500, Math.floor(Number(params.maxResults) || 100)));
+  // 上限 1000：原来钳到 500，而原生精读的集号范围是 1–999，
+  // 一个系列超过 500 张卡后列举会截断，后面的集被当成「没跑过」重复付费。
+  const maxResults = Math.max(1, Math.min(1000, Math.floor(Number(params.maxResults) || 100)));
   const accessToken = await getVertexAccessToken();
   const userProject = getGcsUserProject();
   const names: string[] = [];

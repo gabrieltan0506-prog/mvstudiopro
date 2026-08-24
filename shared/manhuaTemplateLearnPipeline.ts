@@ -59,8 +59,36 @@ export type ManhuaLearnPipelineMeta = {
   stepsZh: string[];
 };
 
-/** 产品说明：贴进 Platform 帮助文案 / 本机回退面板 */
-export function getManhuaLearnPipelineMeta(): ManhuaLearnPipelineMeta {
+/**
+ * 产品说明：贴进 Platform 帮助文案 / 本机回退面板。
+ *
+ * `nativeDeepRead` 必须由调用方按**真实运行模式**传入。
+ * 两代学习方式跑的步骤完全不同（一个抽帧读图、一个模型直读视频），
+ * 说明文案跟着走，否则用户会以为跑了语音分析和高密度抽帧 —— 那两步在
+ * 原生精读模式下一次都没执行。
+ */
+export function getManhuaLearnPipelineMeta(
+  opts?: { nativeDeepRead?: boolean },
+): ManhuaLearnPipelineMeta {
+  if (opts?.nativeDeepRead) {
+    return {
+      batchMin: MANHUA_LEARN_BATCH_MIN,
+      batchMax: MANHUA_LEARN_BATCH_MAX,
+      batchDefault: MANHUA_LEARN_BATCH_DEFAULT,
+      analysisMin: MANHUA_LEARN_ANALYSIS_MIN,
+      analysisTarget: MANHUA_LEARN_ANALYSIS_TARGET,
+      summaryZh:
+        `有合集 id 时优先展开多集；单条大合集最长约 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟，按同一剧名并入原剧。不落 MP4，模型直接读取视频本身（不抽帧、不做语音转写），逐镜学到景别／机位／运镜／光影／动作／转场，外加可复用手法与生成要素。**每集单独入库成一张待审卡**，跑过的集不重跑、不重复计费。连续失败 ${MANHUA_LEARN_CONSECUTIVE_FAIL_STOP} 次才停本轮。`,
+      stepsZh: [
+        "解析可学剧集列表（有合集 id 优先展开多集）",
+        `按用户设置顺序采本轮剧集（可选 ${MANHUA_LEARN_BATCH_MIN}–${MANHUA_LEARN_BATCH_MAX} 集，默认 ${MANHUA_LEARN_BATCH_DEFAULT} 集）；已入库的集跳过`,
+        "逐集：读取时长与媒体地址 → 建立占位（防两个任务重复付费）→ 模型直读视频 → 逐镜六栏产出",
+        "产出过门禁后写入待审卡；未过门禁不写半截卡，费用照实记账",
+        `媒体流/学习失败则跳下一集（权限不足会标注）；连续失败 ${MANHUA_LEARN_CONSECUTIVE_FAIL_STOP} 次停止本轮`,
+        "你确认后再批准进库；未批准不会进编剧室可选库",
+      ],
+    };
+  }
   return {
     batchMin: MANHUA_LEARN_BATCH_MIN,
     batchMax: MANHUA_LEARN_BATCH_MAX,
