@@ -11,6 +11,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildNativeDeepReadEpisodeExecution,
+  isManhuaLearnEpisodeAlreadyLearned,
   type NativeDeepReadEpisodeSourceDeps,
 } from "./manhuaTemplateLearnService";
 import {
@@ -104,6 +105,88 @@ describe("素材接入层 → 原生精读的接缝", () => {
     await expect(
       buildNativeDeepReadEpisodeExecution({ seriesKey: "s1", ep: ep() }, d),
     ).rejects.toThrow(/媒体流/);
+  });
+});
+
+describe("两代完成凭证不互相冒充（P0-4）", () => {
+  /** 一份「抽帧模式下算已学完」的旧 digest */
+  const oldDigest = {
+    index: 3,
+    url: "https://www.douyin.com/video/3",
+    durationSec: 600,
+    learnedThroughSec: 600,
+    completionPolicy: "audio_dense_frames_v1",
+    // 按真实判据造：audio_dense_frames_v1 要求每个 chunk 都有
+    // 语音＋高密度画面＋读帧三路成功凭证（isStrictManhuaLearnChunkComplete）
+    chunks: [
+      {
+        startSec: 0,
+        endSec: 600,
+        transcriptPreview: "",
+        hookNoteZh: "",
+        beatHints: [],
+        climaxNotes: [],
+        sceneHints: [],
+        learnedAt: "2026-08-24T00:00:00.000Z",
+        audioAnalysis: { model: "gemini-3.6-flash", attempted: true, success: true },
+        denseFrames: { requestedCount: 16, extractedCount: 16, validMotion: true, success: true },
+        vision: { provider: "openrouter", model: "gpt-5.6-terra", attempted: true, success: true },
+      },
+    ],
+  } as never;
+
+  it("🔴 旧抽帧 digest 不能让 native 模式判「已完成」——否则打开 flag 一集都不重学", () => {
+    expect(
+      isManhuaLearnEpisodeAlreadyLearned({
+        nativeDeepReadMode: true,
+        nativeIngestedEpisodes: new Set<number>(),
+        episodeIndex: 3,
+        existingDigest: oldDigest,
+      }),
+    ).toBe(false);
+  });
+
+  it("native 模式认已入库的 native 卡 → 跳过，不再调模型", () => {
+    expect(
+      isManhuaLearnEpisodeAlreadyLearned({
+        nativeDeepReadMode: true,
+        nativeIngestedEpisodes: new Set([3]),
+        episodeIndex: 3,
+        existingDigest: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("🔴 native 卡也不能让抽帧模式判「已完成」——两者产出结构不同", () => {
+    expect(
+      isManhuaLearnEpisodeAlreadyLearned({
+        nativeDeepReadMode: false,
+        nativeIngestedEpisodes: new Set([3]),
+        episodeIndex: 3,
+        existingDigest: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("抽帧模式仍认自己的 digest（回归）", () => {
+    expect(
+      isManhuaLearnEpisodeAlreadyLearned({
+        nativeDeepReadMode: false,
+        episodeIndex: 3,
+        existingDigest: oldDigest,
+      }),
+    ).toBe(true);
+  });
+
+  it("native 模式没拿到已入库集合时按未学处理，不靠旧 digest 兜底", () => {
+    expect(
+      isManhuaLearnEpisodeAlreadyLearned({
+        nativeDeepReadMode: true,
+        nativeIngestedEpisodes: null,
+        episodeIndex: 3,
+        existingDigest: oldDigest,
+      }),
+    ).toBe(false);
   });
 });
 

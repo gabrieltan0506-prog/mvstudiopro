@@ -1322,6 +1322,31 @@ async function refreshEpisodePreviewFrames(input: {
  * 抖音地址约 8 分钟失效，runner 跨段时正是靠这个回调刷新。
  * Referer 一并带出，切片时要用（旧抽帧链路一路带着它）。
  */
+/**
+ * 这一集算不算「已经学过、可以跳过」。
+ *
+ * **两代各认各的凭证，绝不互相冒充**：
+ *   · 抽帧模式认 digest 的 completionPolicy（"audio_dense_frames_v1"）；
+ *   · 原生精读模式只认已入库的 native 卡。
+ *
+ * 反过来两条都要成立：
+ *   · 旧 digest 不能让 native 模式判「已完成」——否则给一部学过的剧打开 flag，
+ *     一集都不会重学，等于开关没生效；
+ *   · native 卡也不能让抽帧模式判「已完成」——两者产出结构不同，
+ *     抽帧链路的下游（seriesDraftEvidence 聚合）拿不到 native 卡的内容。
+ */
+export function isManhuaLearnEpisodeAlreadyLearned(input: {
+  nativeDeepReadMode: boolean;
+  nativeIngestedEpisodes?: ReadonlySet<number> | null;
+  episodeIndex: number;
+  existingDigest?: ManhuaLearnEpisodeDigest | null;
+}): boolean {
+  if (input.nativeDeepReadMode) {
+    return Boolean(input.nativeIngestedEpisodes?.has(input.episodeIndex));
+  }
+  return Boolean(input.existingDigest && isManhuaLearnEpisodeComplete(input.existingDigest));
+}
+
 export type NativeDeepReadEpisodeSourceDeps = {
   probeDuration: (ep: ListedEpisode, state: EpisodeSourceState) => Promise<number>;
   mediaSource: (ep: ListedEpisode, state: EpisodeSourceState) => ManhuaRemoteMediaSource;
@@ -2062,9 +2087,12 @@ export async function runManhuaTemplateLearn(
        * **旧 audio_dense_frames digest 不能冒充 native 已完成**——
        * 否则给一部学过的剧打开 flag，会一集都不重学，等于开关没生效。
        */
-      const episodeAlreadyDone = nativeDeepReadMode
-        ? Boolean(nativeIngestedEpisodes?.has(idx))
-        : Boolean(existing && isManhuaLearnEpisodeComplete(existing));
+      const episodeAlreadyDone = isManhuaLearnEpisodeAlreadyLearned({
+        nativeDeepReadMode,
+        nativeIngestedEpisodes,
+        episodeIndex: idx,
+        existingDigest: existing,
+      });
       if (episodeAlreadyDone) {
         if (!prog.learnedEpisodeIndexes.includes(idx)) {
           prog.learnedEpisodeIndexes = Array.from(
