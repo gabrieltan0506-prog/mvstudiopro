@@ -35,7 +35,20 @@ import { acquireNativeDeepReadEpisodeClaim } from "./manhuaNativeDeepReadClaim.j
 export type NativeDeepReadEpisodeExecution = {
   seriesKey: string;
   episodeIndex: number;
+  /**
+   * 切片与预检实际用的地址（必须是 ffmpeg 能拉的 HTTPS）。
+   *
+   * ⚠️ 与下面的 `provenanceSourceRef` 分开，是因为**手动导入 GCS 素材**时
+   * 主链会先把 `gs://` 换成 7 天签名 HTTPS —— 那种短链带 Signature/Expires，
+   * 写进永久卡就是一条几天后必然失效、还泄露签名的溯源记录。
+   */
   sourceUrl: string;
+  /**
+   * 落进卡片 `sourceRefs` 的**永久**来源标识。
+   * 抖音来源与 `sourceUrl` 相同；GCS 导入必须是稳定的 `gs://`。
+   * 缺省时回落 `sourceUrl`（保持既有行为）。
+   */
+  provenanceSourceRef?: string;
   durationSec: number;
   laneHintZh?: string;
   segments: readonly NativeDeepReadSegmentSpec[];
@@ -124,7 +137,7 @@ export async function executeAndIngestNativeDeepReadEpisode(
     stored = await deps.ingest({
       seriesKey: input.seriesKey,
       episodeIndex: input.episodeIndex,
-      sourceUrl: input.sourceUrl,
+      sourceUrl: input.provenanceSourceRef || input.sourceUrl,
       durationSec: input.durationSec,
       laneHintZh: input.laneHintZh,
       result,
