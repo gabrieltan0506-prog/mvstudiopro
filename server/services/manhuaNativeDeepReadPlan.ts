@@ -23,6 +23,9 @@ import {
   NATIVE_DEEP_READ_BATCH_HARD_CEILING,
   validateNativeDeepReadBatchPlan,
 } from "./manhuaNativeDeepReadExecution.js";
+import { MANHUA_LEARN_MAX_DURATION_SEC } from "../../shared/manhuaTemplateLearnSeries.js";
+import type { ManhuaTemplateLearnLlmProvider } from "../../shared/manhuaTemplateLearnFrameVision.js";
+import { NATIVE_DEEP_READ_JOB_MAX_CALLS } from "../../shared/manhuaNativeDeepReadJob.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -57,7 +60,45 @@ export type NativeDeepReadPlanPreview = {
   pendingClaimEpisodeIndexes: number[];
   /** 扣掉已入库后真正会发出模型请求的集数 */
   executableEpisodeCount: number;
+  /** 原生精读能力开关是否已开启；预览可在关闭时运行，执行不可以。 */
+  executionEnabled: boolean;
 };
+
+export type NativeDeepReadPlanConfirmation = {
+  planHash: string;
+  maxCalls: number;
+  seriesKey: string;
+};
+
+/** worker 的最终确认门：必须在 claim 与任何模型调用之前执行。 */
+export function assertNativeDeepReadPlanConfirmation(
+  confirmed: NativeDeepReadPlanConfirmation,
+  current: NativeDeepReadPlanPreview,
+): void {
+  if (!current.executionEnabled) throw new Error("原生精读能力未开启，未发出模型请求");
+  if (current.pendingClaimEpisodeIndexes.length) {
+    throw new Error(
+      `第${current.pendingClaimEpisodeIndexes.join("、")}集存在待核对占位，禁止自动重跑`,
+    );
+  }
+  if (!current.episodes.length || current.totalSegments < 1) {
+    throw new Error("当前没有可执行的新集，未发出模型请求");
+  }
+  if (current.totalSegments > NATIVE_DEEP_READ_JOB_MAX_CALLS) {
+    throw new Error(
+      `本次 ${current.totalSegments} 次模型请求超过单任务上限 ${NATIVE_DEEP_READ_JOB_MAX_CALLS}，请拆批`,
+    );
+  }
+  if (
+    current.planHash !== confirmed.planHash
+    || current.totalSegments !== confirmed.maxCalls
+    || current.seriesKey !== confirmed.seriesKey
+  ) {
+    throw new Error(
+      `原生精读计划已变化（当前 ${current.planHash}/${current.totalSegments} 次），请重新预览确认`,
+    );
+  }
+}
 
 /**
  * 按模型单段上限均分。
@@ -67,7 +108,8 @@ export type NativeDeepReadPlanPreview = {
  * 是为了避免最后一段短到只有几秒、白花一次请求。
  */
 export function splitNativeDeepReadSegments(durationSec: number): NativeDeepReadPlanSegment[] {
-  const total = Math.max(1, Math.round(Number(durationSec) || 0));
+  // 与生产执行器统一取整口径；预览用 round、执行用 floor 会让确认码天然漂移。
+  const total = Math.max(1, Math.floor(Number(durationSec) || 0));
   const parts = Math.max(1, Math.ceil(total / NATIVE_DEEP_READ_MAX_SEGMENT_SEC));
   const per = Math.ceil(total / parts);
   const out: NativeDeepReadPlanSegment[] = [];
@@ -82,8 +124,8 @@ export function splitNativeDeepReadSegments(durationSec: number): NativeDeepRead
 /**
  * 计划确认码：worker 侧要用同样的输入重算并比对。
  *
- * 只覆盖**会影响花多少钱**的字段（合集、集号、时长、分段），
- * 不含标题等展示字段 —— 否则剧名改一个字就让用户重新确认。
+ * 覆盖实际要处理的来源、集号、取整时长与分段。来源换了即使请求数相同，
+ * 内容也已经不是用户确认的那一集，必须让确认码失效；标题等展示字段不参与。
  */
 export function computeNativeDeepReadPlanHash(
   seriesKey: string,
@@ -95,7 +137,9 @@ export function computeNativeDeepReadPlanHash(
       .sort((a, b) => a.episodeIndex - b.episodeIndex)
       .map((e) => ({
         i: e.episodeIndex,
-        d: Math.round(e.durationSec),
+        // 分享链的查询参数会变化；同一 aweme 用稳定视频 id，来源真的换集才让确认码失效。
+        u: extractDouyinVideoIdFromUrl(e.sourceUrl) || e.sourceUrl,
+        d: Math.floor(e.durationSec),
         s: e.segments.map((g) => [Math.round(g.startSec), Math.round(g.endSec)]),
       })),
   });
@@ -118,11 +162,16 @@ export function selectFreeEpisodesUpToPaywall(
 } {
   const sorted = [...episodes].sort((a, b) => a.index - b.index);
   const paidAt = sorted.findIndex((e) => e.access === "paid_locked");
-  const free = paidAt >= 0 ? sorted.slice(0, paidAt) : sorted;
+  // 只接受从第 1 条开始连续、明确标为 free 的前缀。unknown 不是免费，
+  // 不能一边把它列为未知，一边仍写进付费执行计划。
+  const firstUnconfirmedAt = sorted.findIndex((e) => e.access !== "free");
+  const free = firstUnconfirmedAt >= 0 ? sorted.slice(0, firstUnconfirmedAt) : sorted;
   return {
     free,
     paywallStartEpisodeIndex: paidAt >= 0 ? sorted[paidAt]!.index : undefined,
-    unknownAccessEpisodeIndexes: free.filter((e) => e.access !== "free").map((e) => e.index),
+    unknownAccessEpisodeIndexes: sorted
+      .filter((e) => e.access !== "free" && e.access !== "paid_locked")
+      .map((e) => e.index),
   };
 }
 
@@ -132,7 +181,10 @@ export function selectFreeEpisodesUpToPaywall(
  * 用直链而不是 `/video/` 页面地址 —— 页面是 HTML，ffprobe 读不了；
  * 旧链路那条 yt-dlp 元数据路同样要 cookie，服务端这边没必要再绕一次。
  */
-export async function probeNativeDeepReadDurationSec(playbackUrl: string): Promise<number> {
+export async function probeNativeDeepReadDurationSec(
+  playbackUrl: string,
+  abortSignal?: AbortSignal,
+): Promise<number> {
   const { stdout } = await execFileAsync(
     "ffprobe",
     [
@@ -144,7 +196,11 @@ export async function probeNativeDeepReadDurationSec(playbackUrl: string): Promi
       "-print_format", "json",
       "-i", playbackUrl,
     ],
-    { maxBuffer: 8 * 1024 * 1024 },
+    {
+      maxBuffer: 8 * 1024 * 1024,
+      timeout: 90_000,
+      signal: abortSignal,
+    },
   );
   const sec = Number(JSON.parse(stdout)?.format?.duration);
   if (!Number.isFinite(sec) || sec <= 0) throw new Error("读不到成片时长");
@@ -159,13 +215,26 @@ export type NativeDeepReadPlanDeps = {
     complete: boolean;
   } | null>;
   refreshPlaybackUrls: (awemeId: string) => Promise<string[]>;
-  probeDurationSec: (playbackUrl: string) => Promise<number>;
+  probeDurationSec: (playbackUrl: string, abortSignal?: AbortSignal) => Promise<number>;
   listIngestedEpisodes: (seriesKey: string) => Promise<Set<number>>;
   listClaimedEpisodes: (seriesKey: string) => Promise<Set<number>>;
+  resolveSeriesKey: (input: {
+    sourceIdentity: string;
+    mixId: string;
+    title?: string;
+    learnLlm: ManhuaTemplateLearnLlmProvider;
+  }) => Promise<string>;
+  isExecutionEnabled: () => boolean;
 };
 
 export async function buildNativeDeepReadPlanPreview(
-  input: { url: string; limit: number; allowPartial?: boolean },
+  input: {
+    url: string;
+    limit: number;
+    allowPartial?: boolean;
+    learnLlm?: ManhuaTemplateLearnLlmProvider;
+    abortSignal?: AbortSignal;
+  },
   deps: NativeDeepReadPlanDeps,
 ): Promise<NativeDeepReadPlanPreview> {
   const url = String(input.url || "").trim();
@@ -204,25 +273,46 @@ export async function buildNativeDeepReadPlanPreview(
   // ── 3. 读到付费集就停
   const { free, paywallStartEpisodeIndex, unknownAccessEpisodeIndexes } =
     selectFreeEpisodesUpToPaywall(listed.episodes);
-  if (!free.length) throw new Error("这部剧第一集就是付费集，没有可学的免费集");
+  if (!free.length) {
+    if (unknownAccessEpisodeIndexes.length) {
+      throw new Error("第1集缺少明确免费信号，已停止；unknown 不能作为免费集执行");
+    }
+    throw new Error("这部剧第一集就是付费集，没有可学的免费集");
+  }
 
-  const seriesKey = `douyin${mixId}`;
+  const seriesKey = await deps.resolveSeriesKey({
+    sourceIdentity: url,
+    mixId,
+    title: dramaNameZh || undefined,
+    learnLlm: input.learnLlm || "gpt",
+  });
   const [ingested, claimed] = await Promise.all([
     deps.listIngestedEpisodes(seriesKey),
     deps.listClaimedEpisodes(seriesKey),
   ]);
 
   // ── 4. 逐集探时长（零模型调用）
-  const wanted = free.slice(0, limit);
+  // “学 N 集”指接下来新增 N 集，不是永远只看合集前 N 集。
+  const wanted = free.filter((e) => !ingested.has(e.index)).slice(0, limit);
+  const pendingClaimEpisodeIndexes = wanted
+    .map((e) => e.index)
+    .filter((i) => claimed.has(i));
+  const executable = wanted.filter((e) => !claimed.has(e.index));
   const episodes: NativeDeepReadPlanEpisode[] = [];
-  for (const e of wanted) {
+  for (const e of executable) {
+    if (input.abortSignal?.aborted) throw input.abortSignal.reason || new Error("计划生成已停止");
     let playback = e.playbackUrl || e.playbackUrls?.[0] || "";
     if (!playback) {
       const awemeId = extractDouyinVideoIdFromUrl(e.url);
       playback = awemeId ? (await deps.refreshPlaybackUrls(awemeId))[0] || "" : "";
     }
     if (!playback) throw new Error(`第${e.index}集拿不到可用播放地址，已停止（换 cookie 后重试）`);
-    const durationSec = await deps.probeDurationSec(playback);
+    const durationSec = await deps.probeDurationSec(playback, input.abortSignal);
+    if (durationSec > MANHUA_LEARN_MAX_DURATION_SEC) {
+      throw new Error(
+        `第${e.index}集超过 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟，超出学习策略上限`,
+      );
+    }
     episodes.push({
       episodeIndex: e.index,
       sourceUrl: e.url,
@@ -232,27 +322,28 @@ export async function buildNativeDeepReadPlanPreview(
   }
 
   // ── 5. 用发车脚本同一个校验器验一遍
-  const plan = validateNativeDeepReadBatchPlan(
-    episodes.map((e) => ({ ...e, resolveNodes: async () => [] })),
-    { maxEpisodes: limit, seriesKey },
-  );
+  const plan = episodes.length
+    ? validateNativeDeepReadBatchPlan(
+        episodes.map((e) => ({ ...e, resolveNodes: async () => [] })),
+        { maxEpisodes: limit, seriesKey },
+      )
+    : null;
 
   return {
     planHash: computeNativeDeepReadPlanHash(seriesKey, episodes),
     seriesKey,
     dramaNameZh: dramaNameZh || undefined,
     episodes,
-    totalSegments: plan.totalSegments,
+    totalSegments: plan?.totalSegments || 0,
     totalDurationSec: Math.round(episodes.reduce((s, e) => s + e.durationSec, 0)),
     freeEpisodeCount: free.length,
     paywallStartEpisodeIndex,
     unknownAccessEpisodeIndexes,
-    alreadyIngestedEpisodeIndexes: episodes
-      .map((e) => e.episodeIndex)
+    alreadyIngestedEpisodeIndexes: free
+      .map((e) => e.index)
       .filter((i) => ingested.has(i)),
-    pendingClaimEpisodeIndexes: episodes
-      .map((e) => e.episodeIndex)
-      .filter((i) => claimed.has(i)),
-    executableEpisodeCount: episodes.filter((e) => !ingested.has(e.episodeIndex)).length,
+    pendingClaimEpisodeIndexes,
+    executableEpisodeCount: episodes.length,
+    executionEnabled: deps.isExecutionEnabled(),
   };
 }

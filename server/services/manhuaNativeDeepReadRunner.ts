@@ -178,6 +178,13 @@ export type NativeDeepReadRunResult = NativeDeepReadOutput & {
 export type NativeDeepReadRunError = Error & {
   /** 中止前已取得用量回执的成本；当前在途请求可能尚无回执。 */
   nativeDeepReadCostCny?: number;
+  nativeDeepReadUsage?: {
+    inputTokens: number;
+    outputTokens: number;
+    costCny: number;
+    usingPlanQuota?: boolean;
+    receiptComplete: boolean;
+  };
 };
 
 /** 精读模型名：**只在这里写一次**，provenance 记的必须是真跑的这个 */
@@ -679,6 +686,14 @@ export async function runManhuaNativeDeepRead(params: {
     const stopped = (error instanceof Error ? error : new Error(String(error))) as NativeDeepReadRunError;
     stopped.nativeDeepReadCostCny =
       (inputTokens * PRICE_IN_PER_M) / 1e6 + (outputTokens * PRICE_OUT_PER_M) / 1e6;
+    stopped.nativeDeepReadUsage = {
+      inputTokens,
+      outputTokens,
+      costCny: stopped.nativeDeepReadCostCny,
+      usingPlanQuota: creds.usingPlan,
+      // 中止时在途请求可能还没有 usage，不能把已知部分冒充完整账单。
+      receiptComplete: false,
+    };
     throw stopped;
   }
 

@@ -365,35 +365,18 @@ export const manhuaViralTemplateRouter = router({
       z.object({
         url: z.string().url().max(2048),
         limit: z.number().int().min(1).max(200).default(10),
-        /** 合集没展开全时，默认拒绝出计划；显式传 true 才允许 */
-        allowPartial: z.boolean().optional(),
+        learnLlm: z.enum(["gpt", "claude", "deepseek"]).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
       assertSiteOwner(ctx.user);
-      const [
-        { buildNativeDeepReadPlanPreview, probeNativeDeepReadDurationSec },
-        {
-          fetchDouyinAwemeDetailViaWebApi,
-          listDouyinMixEpisodesViaWebApi,
-          listDouyinAwemePlaybackUrlsViaWebApi,
-        },
-        { listIngestedNativeDeepReadEpisodes },
-        { listNativeDeepReadEpisodeClaims },
-      ] = await Promise.all([
-        import("../services/manhuaNativeDeepReadPlan"),
-        import("../services/manhuaLearnDouyinWebApi"),
-        import("../services/manhuaNativeDeepReadIngest"),
-        import("../services/manhuaNativeDeepReadClaim"),
-      ]);
+      const { buildNativeDeepReadPlanPreviewFromServices } = await import(
+        "../services/manhuaNativeDeepReadPlanRuntime"
+      );
       try {
-        return await buildNativeDeepReadPlanPreview(input, {
-          fetchAwemeDetail: fetchDouyinAwemeDetailViaWebApi,
-          listMixEpisodes: listDouyinMixEpisodesViaWebApi,
-          refreshPlaybackUrls: listDouyinAwemePlaybackUrlsViaWebApi,
-          probeDurationSec: probeNativeDeepReadDurationSec,
-          listIngestedEpisodes: listIngestedNativeDeepReadEpisodes,
-          listClaimedEpisodes: listNativeDeepReadEpisodeClaims,
+        return await buildNativeDeepReadPlanPreviewFromServices({
+          ...input,
+          abortSignal: ctx.clientDisconnected,
         });
       } catch (e) {
         // 计划阶段的失败一律照原文回给 owner：这些提示本身就是「为什么不能发车」

@@ -84,6 +84,13 @@ export type NativeDeepReadEpisodeOutcomeCost = {
   /** 这一集实际发生的模型费用（门禁拒收也已经花掉了，必须记） */
   costCny: number;
   elapsedMs: number;
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    costCny: number;
+    usingPlanQuota?: boolean;
+    receiptComplete: boolean;
+  };
 };
 
 export async function executeAndIngestNativeDeepReadEpisode(
@@ -109,10 +116,15 @@ export async function executeAndIngestNativeDeepReadEpisode(
       abortSignal: input.abortSignal,
     });
   } catch (error) {
-    const knownCost = Number((error as NativeDeepReadRunError)?.nativeDeepReadCostCny) || 0;
+    const nativeError = error as NativeDeepReadRunError;
+    const knownCost = Number(nativeError?.nativeDeepReadCostCny) || 0;
     throw Object.assign(
       new Error(error instanceof Error ? error.message : String(error), { cause: error }),
-      { costCny: knownCost, elapsedMs: Date.now() - startedAt },
+      {
+        costCny: knownCost,
+        elapsedMs: Date.now() - startedAt,
+        nativeUsage: nativeError?.nativeDeepReadUsage,
+      },
     );
   }
   const costCny = Number(result.usage?.costCny) || 0;
@@ -120,6 +132,11 @@ export async function executeAndIngestNativeDeepReadEpisode(
     throw Object.assign(new Error("用户已停止学习"), {
       costCny,
       elapsedMs: Date.now() - startedAt,
+      nativeUsage: {
+        ...result.usage,
+        usingPlanQuota: result.usingPlanQuota,
+        receiptComplete: true,
+      },
     });
   }
 
@@ -128,7 +145,15 @@ export async function executeAndIngestNativeDeepReadEpisode(
   if (!gate.ok) {
     throw Object.assign(
       new Error(`第${input.episodeIndex}集未通过入库门禁：${gate.reasonZh}`),
-      { costCny, elapsedMs: Date.now() - startedAt },
+      {
+        costCny,
+        elapsedMs: Date.now() - startedAt,
+        nativeUsage: {
+          ...result.usage,
+          usingPlanQuota: result.usingPlanQuota,
+          receiptComplete: true,
+        },
+      },
     );
   }
 
@@ -145,7 +170,15 @@ export async function executeAndIngestNativeDeepReadEpisode(
   } catch (error) {
     throw Object.assign(
       new Error(error instanceof Error ? error.message : String(error), { cause: error }),
-      { costCny, elapsedMs: Date.now() - startedAt },
+      {
+        costCny,
+        elapsedMs: Date.now() - startedAt,
+        nativeUsage: {
+          ...result.usage,
+          usingPlanQuota: result.usingPlanQuota,
+          receiptComplete: true,
+        },
+      },
     );
   }
 
@@ -159,7 +192,16 @@ export async function executeAndIngestNativeDeepReadEpisode(
       e instanceof Error ? e.message : e,
     );
   }
-  return { ...stored, costCny, elapsedMs: Date.now() - startedAt };
+  return {
+    ...stored,
+    costCny,
+    elapsedMs: Date.now() - startedAt,
+    usage: {
+      ...result.usage,
+      usingPlanQuota: result.usingPlanQuota,
+      receiptComplete: true,
+    },
+  };
 }
 
 export type NativeDeepReadBatchEpisode = Omit<

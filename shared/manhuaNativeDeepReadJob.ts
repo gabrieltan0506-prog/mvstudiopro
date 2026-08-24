@@ -1,0 +1,88 @@
+/** 原生精读单任务墙钟与调用数契约；客户端、入队端和 worker 共用。 */
+export const NATIVE_DEEP_READ_JOB_PREP_MS = 10 * 60_000;
+export const NATIVE_DEEP_READ_JOB_PER_CALL_MS = 35 * 60_000;
+export const NATIVE_DEEP_READ_JOB_MAX_WALL_MS = 24 * 60 * 60_000;
+
+/** 10 分钟准备时间 + 每次请求 35 分钟预算，在 24 小时墙钟内最多 40 次。 */
+export const NATIVE_DEEP_READ_JOB_MAX_CALLS = Math.floor(
+  (NATIVE_DEEP_READ_JOB_MAX_WALL_MS - NATIVE_DEEP_READ_JOB_PREP_MS)
+    / NATIVE_DEEP_READ_JOB_PER_CALL_MS,
+);
+
+export const NATIVE_DEEP_READ_JOB_FIELDS = [
+  "nativeDeepReadConfirmed",
+  "nativePlanHash",
+  "nativeMaxCalls",
+  "nativePlanLimit",
+  "nativePlanSeriesKey",
+] as const;
+
+export type NativeDeepReadJobConfirmation = {
+  url: string;
+  planHash: string;
+  maxCalls: number;
+  planLimit: number;
+  seriesKey: string;
+  learnLlm: "gpt" | "claude" | "deepseek";
+};
+
+export function hasNativeDeepReadJobFields(params: Record<string, unknown>): boolean {
+  return NATIVE_DEEP_READ_JOB_FIELDS.some((key) =>
+    Object.prototype.hasOwnProperty.call(params, key));
+}
+
+/** API 入口与 worker 共用的单次确认契约；任何旁路字段都关闭式拒绝。 */
+export function parseNativeDeepReadJobConfirmation(
+  params: Record<string, unknown>,
+): NativeDeepReadJobConfirmation {
+  const url = String(params.url || "").trim();
+  const planHash = String(params.nativePlanHash || "").trim();
+  const maxCalls = Number(params.nativeMaxCalls);
+  const planLimit = Number(params.nativePlanLimit);
+  const batchSize = Number(params.batchSize);
+  const seriesKey = String(params.nativePlanSeriesKey || "").trim();
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    throw new Error("原生精读来源链接无效");
+  }
+  if (
+    params.nativeDeepReadConfirmed !== true
+    || parsedUrl.protocol !== "https:"
+    || !/(?:^|\.)douyin\.com$/i.test(parsedUrl.hostname)
+    || !/^[0-9a-f]{16}$/.test(planHash)
+    || !Number.isInteger(maxCalls)
+    || maxCalls < 1
+    || maxCalls > NATIVE_DEEP_READ_JOB_MAX_CALLS
+    || !Number.isInteger(planLimit)
+    || planLimit < 1
+    || planLimit > 200
+    || batchSize !== planLimit
+    || !/^[0-9A-Za-z_-]{1,40}$/.test(seriesKey)
+    || String(params.gcsUri || "").trim()
+    || params.refreshPreviewFrames === true
+    || params.retrySkippedEpisodes === true
+  ) {
+    throw new Error("原生精读确认参数不完整或相互冲突");
+  }
+  return {
+    url,
+    planHash,
+    maxCalls,
+    planLimit,
+    seriesKey,
+    learnLlm:
+      params.learnLlm === "claude" || params.learnLlm === "deepseek"
+        ? params.learnLlm
+        : "gpt",
+  };
+}
+
+export function resolveNativeDeepReadJobTimeoutMs(modelCalls: number): number {
+  const calls = Number(modelCalls);
+  if (!Number.isInteger(calls) || calls < 1 || calls > NATIVE_DEEP_READ_JOB_MAX_CALLS) {
+    throw new Error(`单任务模型请求数必须为 1–${NATIVE_DEEP_READ_JOB_MAX_CALLS}`);
+  }
+  return NATIVE_DEEP_READ_JOB_PREP_MS + calls * NATIVE_DEEP_READ_JOB_PER_CALL_MS;
+}

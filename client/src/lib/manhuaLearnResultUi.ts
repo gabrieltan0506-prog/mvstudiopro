@@ -63,6 +63,16 @@ export type ManhuaLearnResultUi = {
   analysisTarget: number;
   batchLearned: number;
   messageZh: string;
+  pipelineMode?: "native_deep_read" | "audio_dense_frames";
+  nativeUsage?: {
+    model: string;
+    billingMode: "plan_quota" | "payg" | "unknown";
+    inputTokens: number;
+    outputTokens: number;
+    priceEquivalentCny: number;
+    elapsedMs: number;
+    receiptComplete: boolean;
+  };
   /** 云端学习失败时填写；有值则面板以错误态展示 */
   errorZh?: string;
   categoryLabelZh?: string;
@@ -104,6 +114,27 @@ export type ManhuaLearnResultUi = {
     card?: Record<string, unknown>;
   } | null;
 };
+
+function parseManhuaNativeUsage(raw: unknown): ManhuaLearnResultUi["nativeUsage"] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const row = raw as Record<string, unknown>;
+  return {
+    model: String(row.model || "qwen3.8-max"),
+    billingMode:
+      row.billingMode === "plan_quota" || row.billingMode === "payg"
+        ? row.billingMode
+        : "unknown",
+    inputTokens: Math.max(0, Number(row.inputTokens) || 0),
+    outputTokens: Math.max(0, Number(row.outputTokens) || 0),
+    priceEquivalentCny: Math.max(0, Number(row.priceEquivalentCny) || 0),
+    elapsedMs: Math.max(0, Number(row.elapsedMs) || 0),
+    receiptComplete: row.receiptComplete === true,
+  };
+}
+
+function parseManhuaPipelineMode(raw: unknown): ManhuaLearnResultUi["pipelineMode"] {
+  return raw === "native_deep_read" || raw === "audio_dense_frames" ? raw : undefined;
+}
 
 function parseProgressLines(raw: unknown): ManhuaLearnProgressLine[] {
   if (!Array.isArray(raw)) return [];
@@ -247,6 +278,8 @@ export function mergeManhuaLearnLiveProgress(
   return {
     ...base,
     seriesKey: String(out.seriesKey || base.seriesKey).trim() || base.seriesKey,
+    pipelineMode: parseManhuaPipelineMode(out.pipelineMode) || base.pipelineMode,
+    nativeUsage: parseManhuaNativeUsage(out.nativeUsage) || base.nativeUsage,
     channel: "cloud",
     liveStatus,
     livePhase: rawStage || (tick.status === "queued" ? MANHUA_LEARN_STAGE.queued : base.livePhase),
@@ -323,6 +356,8 @@ export function manhuaLearnResultFromFailure(input: {
     skippedEpisodeIndexes: input.prev?.skippedEpisodeIndexes,
     paywallEpisodeIndexes: input.prev?.paywallEpisodeIndexes,
     paywallStartEpisodeIndex: input.prev?.paywallStartEpisodeIndex,
+    pipelineMode: input.prev?.pipelineMode,
+    nativeUsage: input.prev?.nativeUsage,
     missingEpisodeCount: input.prev?.missingEpisodeCount,
   };
 }
@@ -596,6 +631,24 @@ export type ManhuaLearnServerJobSnapshot = {
   updatedAt?: string;
 };
 
+/**
+ * 原生精读任务在别的页面或 Fly owner 探针入队时，本页仍会从服务端任务表看到它。
+ * 用终态签名触发一次待审列表刷新；失败任务也可能已经落下前几集卡，不能只看 succeeded。
+ */
+export function nativeLearnTerminalProposalRefreshSignature(
+  jobs: ManhuaLearnServerJobSnapshot[],
+): string {
+  return (jobs || [])
+    .filter((job) => {
+      const params = job.input?.params || {};
+      return params.nativeDeepReadConfirmed === true
+        && (job.status === "succeeded" || job.status === "failed");
+    })
+    .map((job) => `${job.jobId}:${job.status}:${String(job.updatedAt || "")}`)
+    .sort()
+    .join("|");
+}
+
 /** 服务端 jobs 是并发/关页恢复真源；按来源把各 Job 合并回对应剧集，而不是覆盖当前选中剧。 */
 export function mergeManhuaLearnServerJobsIntoBasket(
   items: ManhuaLearnBasketItem[],
@@ -636,11 +689,17 @@ export function mergeManhuaLearnServerJobsIntoBasket(
           })
         : manhuaLearnResultFromJobOutput(out);
     } else if (job.status === "failed") {
+      // 失败任务仍可能已经完成若干次模型调用并落下逐集卡；先合并服务端
+      // output，再叠失败态，否则费用回执、原生模式与最后进度都会被静默丢弃。
+      const failedBase = mergeManhuaLearnLiveProgress(base, {
+        status: "failed",
+        output: job.output,
+      });
       result = manhuaLearnResultFromFailure({
         errorZh: String(job.error || "云端学习失败"),
         url,
         title,
-        prev: base,
+        prev: failedBase,
       });
     } else {
       result = mergeManhuaLearnLiveProgress(base, {
@@ -848,6 +907,8 @@ export function manhuaLearnResultFromJobOutput(
     ),
     batchLearned: Math.max(0, Math.floor(Number(out.batchLearned) || 0)),
     messageZh,
+    pipelineMode: parseManhuaPipelineMode(out.pipelineMode),
+    nativeUsage: parseManhuaNativeUsage(out.nativeUsage),
     errorZh: emptyFail ? messageZh || "本轮未能成功采下新集" : undefined,
     categoryLabelZh: String(out.categoryLabelZh || "").trim() || undefined,
     tagLabelsZh: seriesTags.length ? seriesTags : undefined,
@@ -901,6 +962,7 @@ export function manhuaLearnResultFromSnapshot(input: {
   digestsPreview: ManhuaLearnResultUi["digestsPreview"];
   /** 服务端已整集学完数；preview 含未学完检查点，不能拿长度冒充完成数 */
   completedCount?: number;
+  pipelineMode?: "native_deep_read" | "audio_dense_frames";
   analysisReady: boolean;
   proposal: Record<string, unknown> | null;
 }): ManhuaLearnResultUi {
@@ -928,7 +990,12 @@ export function manhuaLearnResultFromSnapshot(input: {
     ? input.progress!.tagLabelsZh!.map((t) => String(t || "").trim()).filter(Boolean)
     : [];
   const proposalRaw = input.proposal;
-  const analysisReady = Boolean(input.analysisReady) && Boolean(proposalRaw?.id);
+  const pipelineMode = input.pipelineMode === "native_deep_read"
+    ? "native_deep_read"
+    : "audio_dense_frames";
+  const analysisReady = pipelineMode !== "native_deep_read"
+    && Boolean(input.analysisReady)
+    && Boolean(proposalRaw?.id);
   return {
     seriesKey: String(input.seriesKey || "").trim(),
     analysisReady,
@@ -936,11 +1003,16 @@ export function manhuaLearnResultFromSnapshot(input: {
     analysisMin: MANHUA_LEARN_ANALYSIS_MIN,
     analysisTarget: MANHUA_LEARN_ANALYSIS_TARGET,
     batchLearned: 0,
-    messageZh: analysisReady
+    messageZh: pipelineMode === "native_deep_read"
+      ? learnedCount > 0
+        ? `已从云端恢复：累计 ${learnedCount} 张原生精读待审卡，请在待批准入库中查看。`
+        : "尚无原生精读待审卡。"
+      : analysisReady
       ? "已从云端恢复学习进度；可预览总分析后再决定是否进库。"
       : learnedCount > 0
         ? `已从云端恢复：累计 ${learnedCount} 集，未满分析门槛可继续学节奏。`
         : "尚无已学分集。",
+    pipelineMode,
     categoryLabelZh:
       String(input.progress?.categoryLabelZh || "").trim() || undefined,
     tagLabelsZh: tags.length ? tags : undefined,
