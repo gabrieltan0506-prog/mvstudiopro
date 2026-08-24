@@ -30,7 +30,7 @@ import fs from "node:fs/promises";
 import process from "node:process";
 import {
   isManhuaNativeDeepReadEnabled,
-  pickSmallestVideoFormat,
+  resolveNativeDeepReadNodeUrls,
 } from "../server/services/manhuaNativeDeepReadRunner.ts";
 import { listIngestedNativeDeepReadEpisodes } from "../server/services/manhuaNativeDeepReadIngest.ts";
 import {
@@ -42,11 +42,8 @@ import {
   type NativeDeepReadBatchEpisode,
 } from "../server/services/manhuaNativeDeepReadExecution.ts";
 import { listNativeDeepReadEpisodeClaims } from "../server/services/manhuaNativeDeepReadClaim.ts";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 
 config();
-const execFileAsync = promisify(execFile);
 
 const args = new Map(
   process.argv.slice(2).map((a) => {
@@ -96,20 +93,13 @@ const wanted = raw.slice(0, limit);
 
 /**
  * 解析该集的 CDN 节点副本：只拿地址，不下载 —— 模型自己去 CDN 拉流。
- * signal + timeout 必带：否则 SIGINT 落在解析阶段时要等 yt-dlp 自己结束，
- * 甚至可能一直停在这里。
+ *
+ * 实现已抽到 `manhuaNativeDeepReadRunner.resolveNativeDeepReadNodeUrls`，
+ * 生产链（learnOneEpisodeChunk 的 flag 分支）与本脚本共用同一份：
+ * 「挑 format 按体积不按 height」这个口径只能有一处实现。
  */
-async function resolveNodeUrls(sourceUrl: string, signal: AbortSignal): Promise<string[]> {
-  const { stdout } = await execFileAsync(
-    "yt-dlp",
-    ["-J", "--no-warnings", ...(process.env.DOUYIN_COOKIE ? ["--add-header", `Cookie:${process.env.DOUYIN_COOKIE}`] : []), sourceUrl],
-    { maxBuffer: 1 << 28, timeout: 120_000, signal },
-  );
-  const info = JSON.parse(stdout) as { formats?: Array<Record<string, unknown>> };
-  const best = pickSmallestVideoFormat(info.formats || []);
-  if (!best) throw new Error("未解析到可用的 540p 档");
-  return [best.url];
-}
+const resolveNodeUrls = (sourceUrl: string, signal: AbortSignal): Promise<string[]> =>
+  resolveNativeDeepReadNodeUrls(sourceUrl, signal);
 
 const controller = new AbortController();
 const stop = () => controller.abort(new Error("用户已停止学习"));

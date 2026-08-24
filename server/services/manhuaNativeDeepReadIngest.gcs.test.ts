@@ -78,7 +78,9 @@ describe("断点续跑", () => {
     // 必须 literalPrefix：否则查的是 `..._ep/`，永远匹配不到 ep001.json
     expect(gcs.list).toHaveBeenCalledWith({
       prefix: "manhua-template-learn/proposals/tpl_native_abc123_ep",
-      maxResults: 200,
+      // 集号范围 1–999，默认必须列满：200 是「单批发车上限」，
+      // 拿它当「系列累计上限」会让第 201 集起被当成没跑过、重新付费
+      maxResults: 999,
       literalPrefix: true,
     });
   });
@@ -139,5 +141,43 @@ describe("入库写入", () => {
       ingestNativeDeepReadEpisode(makeInput({ sourceUrl: "  " })),
     ).rejects.toThrow("来源地址");
     expect(gcs.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("大系列断点：列举上限不能截断（重复付费风险）", () => {
+  /** 造 n 张有效卡的列举结果与下载内容 */
+  const seedCards = (indexes: number[]) => {
+    const names = indexes.map((i) => nativeDeepReadProposalObjectName("abc123", i));
+    gcs.list.mockResolvedValue(names);
+    gcs.download.mockImplementation(async ({ gcsUri }: { gcsUri: string }) => {
+      const m = String(gcsUri).match(/_ep(\d{3})\.json$/);
+      const idx = Number(m?.[1]);
+      const card = buildNativeDeepReadProposalCard(makeInput({ episodeIndex: idx }));
+      return { buffer: Buffer.from(JSON.stringify(card), "utf8") };
+    });
+  };
+
+  it("🔴 201 张卡时第 201 集必须被识别为已入库（否则会重跑重付费）", async () => {
+    const all = Array.from({ length: 201 }, (_, i) => i + 1);
+    seedCards(all);
+    const done = await listIngestedNativeDeepReadEpisodes("abc123");
+    expect(done.size).toBe(201);
+    expect(done.has(201)).toBe(true);
+  });
+
+  it("🔴 501 张卡时第 501 集必须被识别（通用列举原本硬钳 500）", async () => {
+    const all = Array.from({ length: 501 }, (_, i) => i + 1);
+    seedCards(all);
+    const done = await listIngestedNativeDeepReadEpisodes("abc123");
+    expect(done.has(501)).toBe(true);
+  });
+
+  it("任一张读不动就 fail-closed —— 把未知当没跑过等于重烧一遍", async () => {
+    const all = Array.from({ length: 30 }, (_, i) => i + 1);
+    seedCards(all);
+    gcs.download.mockImplementationOnce(async () => {
+      throw new Error("gcs_download_failed:503");
+    });
+    await expect(listIngestedNativeDeepReadEpisodes("abc123")).rejects.toThrow("已停止续跑");
   });
 });

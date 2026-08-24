@@ -19,6 +19,13 @@ import {
   selectFramesForVisionAnalysis,
   type ManhuaTemplateLearnLlmProvider,
 } from "../../shared/manhuaTemplateLearnFrameVision.js";
+import { isManhuaNativeDeepReadEnabled } from "./manhuaNativeDeepReadRunner.js";
+import {
+  executeAndIngestNativeDeepReadEpisode,
+  NATIVE_DEEP_READ_MAX_SEGMENT_SEC,
+  type NativeDeepReadEpisodeExecution,
+} from "./manhuaNativeDeepReadExecution.js";
+import { listIngestedNativeDeepReadEpisodes } from "./manhuaNativeDeepReadIngest.js";
 import {
   MANHUA_LEARN_ANALYSIS_DRAFT_MIN,
   MANHUA_LEARN_ANALYSIS_MIN,
@@ -1021,6 +1028,7 @@ async function learnOneEpisodeChunk(input: {
   const rangeZh = `${Math.floor(input.startSec / 60)}–${Math.ceil(input.endSec / 60)} 分`;
 
   await assertManhuaLearnControl(input);
+
   await input.onProgress?.(
     MANHUA_LEARN_STAGE.audio,
     formatManhuaLearnEpisodeDetail(
@@ -1299,6 +1307,174 @@ async function refreshEpisodePreviewFrames(input: {
  * 整集分段学：先探测总时长，再按约 10 分钟从远程媒体流提取语音与高密度静帧；
  * 不落 MP4。每段只有语音、密集帧和视觉理解三路同时成功才推进检查点。
  */
+/**
+ * 把素材接入层的产出，组装成原生精读的**逐集执行计划**。
+ *
+ * 这里是新旧两条链路的接缝：
+ *   旧链负责 —— 剧名解析／合集展开／付费边界识别／免费集筛选／cookie 轮换／
+ *               **真实媒体流探测**／停止与跳过控制；
+ *   新链负责 —— claim → 模型直读 → 入库成一集一张待审卡。
+ *
+ * 🔴 `resolveNodes` **不走 yt-dlp format 解析**。
+ * 那条路只认 `format_id` 以 `bytevc1_540p` 开头的页面 formats，
+ * 而这里拿到的是素材接入层**已经探测成功的媒体直链**——直链没有那种 format_id，
+ * 再解析一次必然返回 null。改为每次回调都用同一套探测逻辑重新取地址：
+ * 抖音地址约 8 分钟失效，runner 跨段时正是靠这个回调刷新。
+ * Referer 一并带出，切片时要用（旧抽帧链路一路带着它）。
+ */
+/**
+ * 这一集算不算「已经学过、可以跳过」。
+ *
+ * **两代各认各的凭证，绝不互相冒充**：
+ *   · 抽帧模式认 digest 的 completionPolicy（"audio_dense_frames_v1"）；
+ *   · 原生精读模式只认已入库的 native 卡。
+ *
+ * 反过来两条都要成立：
+ *   · 旧 digest 不能让 native 模式判「已完成」——否则给一部学过的剧打开 flag，
+ *     一集都不会重学，等于开关没生效；
+ *   · native 卡也不能让抽帧模式判「已完成」——两者产出结构不同，
+ *     抽帧链路的下游（seriesDraftEvidence 聚合）拿不到 native 卡的内容。
+ */
+export function isManhuaLearnEpisodeAlreadyLearned(input: {
+  nativeDeepReadMode: boolean;
+  nativeIngestedEpisodes?: ReadonlySet<number> | null;
+  episodeIndex: number;
+  existingDigest?: ManhuaLearnEpisodeDigest | null;
+}): boolean {
+  if (input.nativeDeepReadMode) {
+    return Boolean(input.nativeIngestedEpisodes?.has(input.episodeIndex));
+  }
+  return Boolean(input.existingDigest && isManhuaLearnEpisodeComplete(input.existingDigest));
+}
+
+/**
+ * 原生精读模式的学习结果。
+ *
+ * 本模式的正式产物是**一集一张待审卡**（`tpl_native_<key>_epNNN.json`），
+ * **没有系列卡**：`proposal` 恒为 null、`analysisReady` 恒为 false。
+ *
+ * 抽成纯函数有两个原因：主流程里两处收尾都要用同一套口径；
+ * 以及主流程依赖 GCS/yt-dlp 无法直接测，这层契约必须可单独断言。
+ */
+export function buildNativeDeepReadLearnResult(input: {
+  seriesKey: string;
+  workId: string;
+  nativeCardCount: number;
+  batchLearned: number;
+  batchIndexes: number[];
+  listedEpisodeCount: number;
+  skippedEpisodeIndexes?: number[];
+  paywallFields: Partial<ManhuaTemplateLearnResult>;
+  categoryLabelZh?: string;
+  tagLabelsZh?: string[];
+  /** 追加在文案末尾的暂跳提示（非 native 特有，沿用主流程口径） */
+  skippedHintZh?: string;
+}): ManhuaTemplateLearnResult {
+  const tail = input.skippedHintZh || "";
+  return {
+    seriesKey: input.seriesKey,
+    // 系列分析在本模式下不存在，恒 false —— 不给「草版总分析已就绪」留任何入口
+    analysisReady: false,
+    learnedCount: input.nativeCardCount,
+    analysisMin: MANHUA_LEARN_ANALYSIS_MIN,
+    analysisTarget: MANHUA_LEARN_ANALYSIS_TARGET,
+    batchLearned: input.batchLearned,
+    batchIndexes: input.batchIndexes,
+    listedEpisodeCount: input.listedEpisodeCount,
+    skippedEpisodeIndexes: input.skippedEpisodeIndexes?.length
+      ? input.skippedEpisodeIndexes
+      : undefined,
+    ...input.paywallFields,
+    // native 不产 digest，不拿旧 digest 充数
+    digestsPreview: [],
+    categoryLabelZh: input.categoryLabelZh,
+    tagLabelsZh: input.tagLabelsZh,
+    proposal: null,
+    proposalGcsUri: null,
+    visionFilled: false,
+    messageZh: input.batchLearned
+      ? `本轮生成 ${input.batchLearned} 张原生精读待审卡，当前累计 ${input.nativeCardCount} 张。请在待批准入库中查看。${tail}`
+      : input.nativeCardCount
+        ? `当前已有 ${input.nativeCardCount} 张原生精读待审卡，本轮没有新增。${tail}`
+        : `当前没有可处理的原生精读集，尚未生成待审卡。${tail}`,
+    workId: input.workId,
+  };
+}
+
+/**
+ * 批次选择用哪一份「已完成集」。
+ *
+ * `prog.learnedEpisodeIndexes` 里合并了**旧 digest** 的完成集。native 模式若读它，
+ * 某集只要在旧 digest 里出现过——哪怕一张 native 卡都没有——也会在**选批次这一步**
+ * 被排除，根本进不到循环内的 native 判定。只修循环里的判据是修了一半。
+ */
+export function pickLearnedIndexesForBatchSelection(input: {
+  nativeDeepReadMode: boolean;
+  nativeIngestedEpisodes: ReadonlySet<number>;
+  progLearnedEpisodeIndexes: number[];
+}): number[] {
+  return input.nativeDeepReadMode
+    ? Array.from(input.nativeIngestedEpisodes).sort((a, b) => a - b)
+    : input.progLearnedEpisodeIndexes;
+}
+
+export type NativeDeepReadEpisodeSourceDeps = {
+  probeDuration: (ep: ListedEpisode, state: EpisodeSourceState) => Promise<number>;
+  mediaSource: (ep: ListedEpisode, state: EpisodeSourceState) => ManhuaRemoteMediaSource;
+};
+
+const defaultNativeDeepReadSourceDeps: NativeDeepReadEpisodeSourceDeps = {
+  probeDuration: probeEpisodeDurationWithSourceFailover,
+  mediaSource: currentEpisodeMediaSource,
+};
+
+export async function buildNativeDeepReadEpisodeExecution(
+  input: {
+    seriesKey: string;
+    ep: ListedEpisode;
+    laneHintZh?: string;
+    /** 永久溯源标识：GCS 导入传稳定 gs://，抖音来源留空即用 ep.url */
+    provenanceSourceRef?: string;
+    abortSignal?: AbortSignal;
+  },
+  deps: NativeDeepReadEpisodeSourceDeps = defaultNativeDeepReadSourceDeps,
+): Promise<NativeDeepReadEpisodeExecution> {
+  const probeState: EpisodeSourceState = { playbackUrl: input.ep.playbackUrl };
+  const durationSec = await deps.probeDuration(input.ep, probeState);
+  if (!(durationSec > 0)) throw new Error(`第 ${input.ep.index} 集未取得可用时长`);
+  if (durationSec > MANHUA_LEARN_MAX_DURATION_SEC) {
+    throw new Error(
+      `第 ${input.ep.index} 集超过 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟，已跳过策略外片`,
+    );
+  }
+  // 先探一次确认这一集真的可读；读不到就别建 claim、别进付费流程
+  deps.mediaSource(input.ep, probeState);
+
+  const total = Math.floor(durationSec);
+  const segments: Array<{ startSec: number; endSec: number }> = [];
+  for (let start = 0; start < total; start += NATIVE_DEEP_READ_MAX_SEGMENT_SEC) {
+    segments.push({ startSec: start, endSec: Math.min(start + NATIVE_DEEP_READ_MAX_SEGMENT_SEC, total) });
+  }
+
+  return {
+    seriesKey: input.seriesKey,
+    episodeIndex: input.ep.index,
+    sourceUrl: input.ep.url,
+    // 卡片里存永久引用；GCS 导入的 7 天签名短链不进永久卡
+    provenanceSourceRef: input.provenanceSourceRef,
+    durationSec: total,
+    laneHintZh: input.laneHintZh,
+    segments,
+    abortSignal: input.abortSignal,
+    resolveNodes: async () => {
+      const fresh: EpisodeSourceState = { playbackUrl: input.ep.playbackUrl };
+      await deps.probeDuration(input.ep, fresh);
+      const media = deps.mediaSource(input.ep, fresh);
+      return [{ url: media.url, referer: media.referer }];
+    },
+  };
+}
+
 async function learnOneEpisode(input: {
   seriesKey: string;
   ep: ListedEpisode;
@@ -1728,6 +1904,43 @@ export async function runManhuaTemplateLearn(
       prog,
     );
 
+    /**
+     * 原生精读模式：**逐集执行层**在这里分岔，而且必须在**批次选择之前**定下来。
+     *
+     * 分岔点不放在 learnOneEpisode 内部，是因为那个函数的返回契约要求交出一份
+     * 「已完成」的 digest —— 而 digest 的完成语义
+     * (`completionPolicy: "audio_dense_frames_v1"`) 描述的正是本模式替换掉的
+     * 语音＋高密度抽帧。在它内部分岔就得伪造那个凭证，两代数据会互相冒充。
+     *
+     * 更早一层的坑：`prog.learnedEpisodeIndexes` 里合并了**旧 digest** 的完成集
+     * （见上面 completeIndexes 那段）。批次选择读的就是它——所以某集只要在旧
+     * digest 里出现过，即使一张 native 卡都没有，也会在**选批次这一步**被排除，
+     * 根本进不到循环内的 native 判定。只修循环里的判据是修了一半。
+     *
+     * 所以 native 模式的完成集合只认已入库的 native 卡
+     * （一集一张 `tpl_native_<seriesKey>_epNNN.json`），旧 digest 只读不写。
+     */
+    const nativeDeepReadMode = isManhuaNativeDeepReadEnabled();
+    const nativeIngestedEpisodes: Set<number> = nativeDeepReadMode
+      ? new Set(await listIngestedNativeDeepReadEpisodes(seriesKey))
+      : new Set<number>();
+    if (nativeDeepReadMode) {
+      // 每轮从有效卡集合重新校准（不做增量累加）：卡被删/归档时这里要跟着掉
+      prog.nativeDeepReadEpisodeIndexes = Array.from(nativeIngestedEpisodes)
+        .sort((a, b) => a - b);
+      // 已入库的集不该还挂着「来源受限暂跳」——并发任务会留下这种自相矛盾的状态
+      prog.skippedEpisodeIndexes = (prog.skippedEpisodeIndexes || []).filter(
+        (idx) => !nativeIngestedEpisodes.has(idx),
+      );
+    }
+
+    /** 批次选择用的「已完成集」：两代各认各的凭证，不许互相冒充 */
+    const learnedEpisodeIndexesForSelection = pickLearnedIndexesForBatchSelection({
+      nativeDeepReadMode,
+      nativeIngestedEpisodes,
+      progLearnedEpisodeIndexes: prog.learnedEpisodeIndexes,
+    });
+
     const listedIndexes = listed.map((e) => e.index);
     // 旗标优先级（固化语义）：refreshPreviewFrames > retrySkippedEpisodes > 常规续学；
     // 前端不会同传，两 true 时按补帧处理
@@ -1741,12 +1954,12 @@ export async function runManhuaTemplateLearn(
         ? pickRetrySkippedEpisodeIndexes({
             listedIndexes,
             skippedIndexes: prog.skippedEpisodeIndexes,
-            learnedIndexes: prog.learnedEpisodeIndexes,
+            learnedIndexes: learnedEpisodeIndexesForSelection,
             batchSize,
           })
         : pickNextEpisodeIndexes({
             listedIndexes,
-            learnedIndexes: prog.learnedEpisodeIndexes,
+            learnedIndexes: learnedEpisodeIndexesForSelection,
             skippedIndexes: [
               ...(prog.skippedEpisodeIndexes || []),
               ...(prog.paywallEpisodeIndexes || []),
@@ -1754,6 +1967,28 @@ export async function runManhuaTemplateLearn(
             batchSize,
           });
     if (input.retrySkippedEpisodes && !batchIndexes.length) {
+      /**
+       * native 模式的空重试也必须走 native 口径：
+       * 原来这里在 native 专用返回之前，会吐出旧 digest 的数量与 digestsPreview，
+       * 用户看到的是「已学 N 集」而那 N 集根本不是原生精读产出的。
+       */
+      if (nativeDeepReadMode) {
+        return buildNativeDeepReadLearnResult({
+          seriesKey,
+          workId,
+          nativeCardCount: nativeIngestedEpisodes.size,
+          batchLearned: 0,
+          batchIndexes: [],
+          listedEpisodeCount: prog.listedEpisodeCount || listed.length,
+          skippedEpisodeIndexes: prog.skippedEpisodeIndexes,
+          paywallFields: paywallResultFields(prog),
+          categoryLabelZh: prog.categoryLabelZh,
+          tagLabelsZh: prog.tagLabelsZh,
+          skippedHintZh: prog.skippedEpisodeIndexes?.length
+            ? " 暂跳集这次没有出现在合集列表里（或已入库），本轮未消耗任何模型成本。"
+            : " 当前没有暂跳集需要重试。",
+        });
+      }
       // 重试暂跳专属空批次：不落通用「已学完」文案（用户刚点了重试，得说清为什么没跑）
       return {
         seriesKey,
@@ -1781,6 +2016,31 @@ export async function runManhuaTemplateLearn(
       };
     }
     if (!batchIndexes.length) {
+      /**
+       * 原生精读模式的正式产物是**一集一张待审卡**（`tpl_native_<key>_epNNN.json`），
+       * 没有系列卡这回事。这里必须在 `loadAllDigests` 与
+       * `aggregateAndPersistManhuaProposal` **之前**返回：
+       *
+       * 旧聚合读的是 digest，而 native 全程不产 digest —— 让它跑下去只会落一张
+       * `seriesAggregation.success=false` 的启发式 `tpl_series` 卡，
+       * 页面上照样可批准，审批人会把「旧 digest 的汇总」误当成原生精读结果。
+       *
+       * 既有 tpl_series 文件不删不改，只是完全绕开。
+       */
+      if (nativeDeepReadMode) {
+        return buildNativeDeepReadLearnResult({
+          seriesKey,
+          workId,
+          nativeCardCount: nativeIngestedEpisodes.size,
+          batchLearned: 0,
+          batchIndexes: [],
+          listedEpisodeCount: prog.listedEpisodeCount || listed.length,
+          skippedEpisodeIndexes: prog.skippedEpisodeIndexes,
+          paywallFields: paywallResultFields(prog),
+          categoryLabelZh: prog.categoryLabelZh,
+          tagLabelsZh: prog.tagLabelsZh,
+        });
+      }
       const digestsAll = await loadAllDigests(seriesKey);
       const digests = digestsAll.filter(isManhuaLearnEpisodeComplete);
       if (
@@ -1905,6 +2165,7 @@ export async function runManhuaTemplateLearn(
     let consecutiveEpisodeFailures = 0;
     // 本轮真实开下的集数（用于集间礼貌间隔：第一集不等，跳过/已学过不计）
     let downloadedThisRun = 0;
+
     for (const idx of batchIndexes) {
       const ep = byIndex.get(idx);
       if (!ep) continue;
@@ -1960,12 +2221,34 @@ export async function runManhuaTemplateLearn(
           continue;
         }
       }
-      // 已学完：跳过，不重下（防容量/限流）
-      if (existing && isManhuaLearnEpisodeComplete(existing)) {
-        if (!prog.learnedEpisodeIndexes.includes(idx)) {
-          prog.learnedEpisodeIndexes = Array.from(
-            new Set([...prog.learnedEpisodeIndexes, idx]),
-          ).sort((a, b) => a - b);
+      /**
+       * 已学完：跳过，不重下（防容量/限流）。
+       *
+       * 两代各认各的凭证：native 模式只认已入库的 native 卡，
+       * **旧 audio_dense_frames digest 不能冒充 native 已完成**——
+       * 否则给一部学过的剧打开 flag，会一集都不重学，等于开关没生效。
+       */
+      const episodeAlreadyDone = isManhuaLearnEpisodeAlreadyLearned({
+        nativeDeepReadMode,
+        nativeIngestedEpisodes,
+        episodeIndex: idx,
+        existingDigest: existing,
+      });
+      if (episodeAlreadyDone) {
+        // 同上：native 已入库集只落 native 字段
+        const doneIndexList = nativeDeepReadMode
+          ? (prog.nativeDeepReadEpisodeIndexes || [])
+          : prog.learnedEpisodeIndexes;
+        if (!doneIndexList.includes(idx)) {
+          if (nativeDeepReadMode) {
+            prog.nativeDeepReadEpisodeIndexes = Array.from(
+              new Set([...(prog.nativeDeepReadEpisodeIndexes || []), idx]),
+            ).sort((a, b) => a - b);
+          } else {
+            prog.learnedEpisodeIndexes = Array.from(
+              new Set([...prog.learnedEpisodeIndexes, idx]),
+            ).sort((a, b) => a - b);
+          }
           prog.updatedAt = new Date().toISOString();
           await writeJsonGcs(
             `manhua-template-learn/series/${seriesKey}/progress.json`,
@@ -1996,33 +2279,83 @@ export async function runManhuaTemplateLearn(
           }
         }
         downloadedThisRun += 1;
-        const digest = await learnOneEpisode({
-          seriesKey,
-          ep,
-          titleHint: prog.titleHint,
-          learnLlm,
-          rootTmp,
-          existing,
-          onProgress: input.onProgress,
-          checkControl: input.checkControl,
-          abortSignal: input.abortSignal,
-          onCheckpoint: async (partial) => {
-            await writeJsonGcs(episodeObjectName(seriesKey, idx), partial);
-            await input.onEpisodeCheckpoint?.(toDigestPreview(partial));
-          },
-        });
-        await writeJsonGcs(episodeObjectName(seriesKey, idx), digest);
-        if (!isManhuaLearnEpisodeComplete(digest)) {
-          throw new Error(`第 ${idx} 集未学完（检查点已保留，可续学）`);
+
+        /** 本集完成文案：两代真实执行的步骤不同，说法必须跟着分开 */
+        let episodeDoneNoteZh: string;
+
+        if (nativeDeepReadMode) {
+          /**
+           * 原生精读：素材接入层已经把这一集准备好，这里只负责交给既有的
+           * 逐集闭环 —— claim（模型调用**之前**的原子占位，防两个进程各付一次费）
+           * → 直读 → 入库门禁 → 一集一张待审卡。
+           *
+           * 不新造第二套 claim／入库／成本统计／质量门：那些 #1294/#1295 都有，
+           * 再写一份就是「同一个判断两处各写」。
+           */
+          const plan = await buildNativeDeepReadEpisodeExecution({
+            seriesKey,
+            ep,
+            /**
+             * 手动导入 GCS 素材时，上面把 `gs://` 换成了 7 天签名 HTTPS 供 ffmpeg 用。
+             * 卡片溯源必须存回稳定的 `gs://` —— 签名短链几天后失效，
+             * 而且 Signature/Expires 不该被永久写进模板库。
+             */
+            provenanceSourceRef: sourceGcsUri || undefined,
+            abortSignal: input.abortSignal,
+          });
+          await progress(
+            MANHUA_LEARN_STAGE.vision,
+            `第 ${idx} 集原生视频精读中（${plan.segments.length} 段 · 约 ${Math.round(plan.durationSec / 60)} 分钟）…`,
+          );
+          const outcome = await executeAndIngestNativeDeepReadEpisode(plan);
+          const shots = outcome.card.beatGrid?.length || 0;
+          episodeDoneNoteZh = outcome.created
+            ? `第 ${idx} 集原生视频精读完成，已生成待审卡（${shots} 镜 · ${plan.segments.length} 段 · 实付 ¥${outcome.costCny.toFixed(4)} · ${Math.round(outcome.elapsedMs / 1000)} 秒）`
+            : `第 ${idx} 集已由其它任务先行入库，本次复用已有待审卡（未重复付费）`;
+          // 本轮内立刻计入：learnedCount 与后续文案都以真实 native 卡为准
+          nativeIngestedEpisodes.add(idx);
+        } else {
+          const digest = await learnOneEpisode({
+            seriesKey,
+            ep,
+            titleHint: prog.titleHint,
+            learnLlm,
+            rootTmp,
+            existing,
+            onProgress: input.onProgress,
+            checkControl: input.checkControl,
+            abortSignal: input.abortSignal,
+            onCheckpoint: async (partial) => {
+              await writeJsonGcs(episodeObjectName(seriesKey, idx), partial);
+              await input.onEpisodeCheckpoint?.(toDigestPreview(partial));
+            },
+          });
+          await writeJsonGcs(episodeObjectName(seriesKey, idx), digest);
+          if (!isManhuaLearnEpisodeComplete(digest)) {
+            throw new Error(`第 ${idx} 集未学完（检查点已保留，可续学）`);
+          }
+          episodeDoneNoteZh = `第 ${idx} 集整集学完（约 ${Math.round((digest.durationSec || 0) / 60)} 分钟`;
         }
         batchLearnedIndexes.push(idx);
         consecutiveEpisodeFailures = nextManhuaLearnEpisodeFailureStreak(
           consecutiveEpisodeFailures,
           "success",
         ).count;
-        prog.learnedEpisodeIndexes = Array.from(
-          new Set([...prog.learnedEpisodeIndexes, idx]),
-        ).sort((a, b) => a - b);
+        /**
+         * 两代各写各的字段，**绝不混写**。
+         *
+         * 之前 native 成功也写 `learnedEpisodeIndexes`，于是关掉 flag 后旧模式
+         * 在批次选择阶段就跳过这些集——native 卡反向冒充了抽帧完成。
+         * 上一版只修了「旧 digest 不冒充 native」一个方向，这里补另一个方向。
+         */
+        if (nativeDeepReadMode) {
+          prog.nativeDeepReadEpisodeIndexes = Array.from(nativeIngestedEpisodes)
+            .sort((a, b) => a - b);
+        } else {
+          prog.learnedEpisodeIndexes = Array.from(
+            new Set([...prog.learnedEpisodeIndexes, idx]),
+          ).sort((a, b) => a - b);
+        }
         // 暂跳集重试成功 → 摘掉暂跳标记，别让它挂着「受限」误导续学口径
         prog.skippedEpisodeIndexes = (prog.skippedEpisodeIndexes || []).filter(
           (skipped) => skipped !== idx,
@@ -2034,15 +2367,30 @@ export async function runManhuaTemplateLearn(
         );
         await progress(
           MANHUA_LEARN_STAGE.persist,
-          `第 ${idx} 集整集学完（约 ${Math.round((digest.durationSec || 0) / 60)} 分钟 · 本轮新增 ${batchLearnedIndexes.length} · 累计 ${prog.learnedEpisodeIndexes.length} 集）`,
+          nativeDeepReadMode
+            ? `${episodeDoneNoteZh} · 本轮新增 ${batchLearnedIndexes.length} · 累计 ${prog.learnedEpisodeIndexes.length} 集`
+            : `${episodeDoneNoteZh} · 本轮新增 ${batchLearnedIndexes.length} · 累计 ${prog.learnedEpisodeIndexes.length} 集）`,
         );
       } catch (e) {
-        if (e instanceof Error && e.name === "ManhuaLearnCancelledError") {
-          // 停止≠报废：不再学新集，转入零额外模型调用的系列底稿聚合。
+        /**
+         * 中止判定必须**优先看 abortSignal**，不能只认 error.name。
+         *
+         * executeAndIngestNativeDeepReadEpisode 会把底层异常包一层，
+         * `ManhuaLearnCancelledError` 这个名字在包装中丢失 —— 于是用户点了停止，
+         * 却被当成「来源失败」写进 skippedEpisodeIndexes，
+         * 下轮还挂着「受限暂跳」的假状态。
+         */
+        const isCancelled =
+          Boolean(input.abortSignal?.aborted)
+          || (e instanceof Error && e.name === "ManhuaLearnCancelledError");
+        if (isCancelled) {
+          // 停止≠报废：不再学新集；已入库的逐集卡保留。
           cancelledMidRun = true;
           await progress(
             MANHUA_LEARN_STAGE.persist,
-            "已收到停止指令：不再学新集，正在对已学内容出总分析…",
+            nativeDeepReadMode
+              ? "已停止后续原生精读；已入库待审卡保留，本模式不生成系列分析。"
+              : "已收到停止指令：不再学新集，正在对已学内容出总分析…",
           );
           break;
         }
@@ -2109,6 +2457,32 @@ export async function runManhuaTemplateLearn(
     const skippedHint = skippedCount > 0
       ? ` 当前有 ${skippedCount} 集因来源受限暂跳，不计入已学；续学将从后续集继续。`
       : "";
+    /**
+     * 原生精读模式在这里收尾：**不加载 digest、不聚合、不写 tpl_series**。
+     *
+     * 本模式的正式产物已经在逐集循环里落好了——一集一张
+     * `tpl_native_<key>_epNNN.json` 待审卡。再往下走就会拿旧 digest 聚出一张
+     * `seriesAggregation.success=false` 的启发式系列卡，而它看起来和真的一样、
+     * 页面上照样能批准。既有 tpl_series 文件不删不改，只是绕开。
+     */
+    if (nativeDeepReadMode) {
+      return buildNativeDeepReadLearnResult({
+        seriesKey,
+        workId,
+        nativeCardCount: nativeIngestedEpisodes.size,
+        batchLearned: batchLearnedIndexes.length,
+        // 报**本轮真正成功**的集号，不报计划集号：
+        // 部分集失败时，传 batchIndexes 会把失败集写进成功列表
+        batchIndexes: batchLearnedIndexes,
+        listedEpisodeCount: prog.listedEpisodeCount || listed.length,
+        skippedEpisodeIndexes: prog.skippedEpisodeIndexes,
+        paywallFields: paywallResultFields(prog),
+        categoryLabelZh: prog.categoryLabelZh,
+        tagLabelsZh: prog.tagLabelsZh,
+        skippedHintZh: skippedHint,
+      });
+    }
+
     const digestsAll = await loadAllDigests(seriesKey);
     const digests = digestsAll.filter(isManhuaLearnEpisodeComplete);
     const learnedCount = digests.length;

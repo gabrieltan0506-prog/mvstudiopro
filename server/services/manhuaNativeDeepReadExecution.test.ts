@@ -48,7 +48,7 @@ const episode = {
     { startSec: 0, endSec: 540 },
     { startSec: 540, endSec: 1080 },
   ],
-  resolveNodes: async () => ["https://cdn/1.mp4"],
+  resolveNodes: async () => [{ url: "https://cdn/1.mp4" }],
 };
 
 let deps: NativeDeepReadExecutionDeps;

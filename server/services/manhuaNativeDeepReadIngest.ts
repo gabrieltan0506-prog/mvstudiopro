@@ -273,7 +273,14 @@ export function buildNativeDeepReadProposalCard(
  */
 export async function listIngestedNativeDeepReadEpisodes(
   seriesKey: string,
-  maxEpisodes = 200,
+  /**
+   * 集号范围是 1–999，**默认就要列满**。
+   *
+   * 原来默认 200 —— 那是「单批发车上限」，不是「系列累计上限」。
+   * 系列攒到 201 张卡之后，列举可能永远只回 ep001–ep200，
+   * ep201 起会被当成未入库，重新 claim、重新付费。
+   */
+  maxEpisodes = 999,
 ): Promise<Set<number>> {
   const done = new Set<number>();
   const prefix =
@@ -293,29 +300,45 @@ export async function listIngestedNativeDeepReadEpisodes(
     );
   }
 
-  for (const name of names) {
-    const idx = parseNativeDeepReadEpisodeIndex(name, seriesKey);
-    if (!idx) continue;
+  /**
+   * 逐张下载校验。**有界并发**：999 张串行太慢，无界并发会打爆连接池。
+   * 任何一张读不动都 fail-closed —— 把「未知」当成「没跑过」等于重烧一遍。
+   */
+  const targets = names
+    .map((name) => ({ name, idx: parseNativeDeepReadEpisodeIndex(name, seriesKey) }))
+    .filter((t): t is { name: string; idx: number } => Boolean(t.idx));
+
+  const CONCURRENCY = 8;
+  let cursor = 0;
+  const verifyOne = async (target: { name: string; idx: number }) => {
     try {
       const { buffer } = await downloadGcsObject({
-        gcsUri: `gs://${getGcsBucketName()}/${name}`,
+        gcsUri: `gs://${getGcsBucketName()}/${target.name}`,
       });
       const card = parseManhuaViralTemplateCard(JSON.parse(buffer.toString("utf8")));
       if (
         !card
-        || card.id !== nativeDeepReadProposalId(seriesKey, idx)
+        || card.id !== nativeDeepReadProposalId(seriesKey, target.idx)
         || !card.provenance?.nativeVideoDeepRead
         || card.beatGrid.length < NATIVE_DEEP_READ_MIN_SHOTS
       ) {
         throw new Error("卡片形状或来源记录无效");
       }
-      done.add(idx);
+      done.add(target.idx);
     } catch (e) {
       throw new Error(
-        `第${idx}集已有对象但无法确认内容，已停止续跑：${e instanceof Error ? e.message : e}`,
+        `第${target.idx}集已有对象但无法确认内容，已停止续跑：${e instanceof Error ? e.message : e}`,
       );
     }
-  }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, targets.length) }, async () => {
+      while (cursor < targets.length) {
+        const target = targets[cursor++]!;
+        await verifyOne(target);
+      }
+    }),
+  );
   return done;
 }
 

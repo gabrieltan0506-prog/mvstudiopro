@@ -105,4 +105,8 @@ export async function listNativeDeepReadEpisodeClaims(seriesKey: string): Promis
 }
 
 /** 与批次硬保险一致；这里只防失控列举，不是发车集数限制。 */
-const NATIVE_DEEP_READ_BATCH_CLAIM_SCAN_LIMIT = 500;
+/**
+ * 集号范围是 1–999，扫描上限必须覆盖满。
+ * 原来是 500：系列超过 500 集后 dry-run 漏报占位，要到 acquireClaim 才失败。
+ */
+const NATIVE_DEEP_READ_BATCH_CLAIM_SCAN_LIMIT = 999;
