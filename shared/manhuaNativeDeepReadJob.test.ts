@@ -40,6 +40,24 @@ describe("原生精读任务墙钟", () => {
     });
   });
 
+  it("面板可直接入队，worker 在同一真实任务内生成执行计划", () => {
+    const params = {
+      url: "https://www.douyin.com/video/12345",
+      batchSize: 10,
+      nativeDeepReadConfirmed: true,
+      nativeMaxCalls: NATIVE_DEEP_READ_JOB_MAX_CALLS,
+      nativePlanLimit: 10,
+    };
+    expect(parseNativeDeepReadJobConfirmation(params)).toEqual({
+      url: params.url,
+      planHash: undefined,
+      maxCalls: NATIVE_DEEP_READ_JOB_MAX_CALLS,
+      planLimit: 10,
+      seriesKey: undefined,
+      learnLlm: "gpt",
+    });
+  });
+
   it("拒绝本机/GCS 旁路、批次数漂移与只带半套字段", () => {
     const base = {
       url: "https://www.douyin.com/video/12345",

@@ -296,5 +296,8 @@ describe("原生精读计划", () => {
       maxCalls: 41,
       seriesKey: "s1",
     }, { ...base, totalSegments: 41 })).toThrow("超过单任务上限");
+    expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 1 }, base)).not.toThrow();
+    expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 0 }, base))
+      .toThrow("超过任务预算");
   });
 });

@@ -56,26 +56,6 @@ const revisionCard = {
 
 let proposalForRouter: ManhuaViralTemplateCard | null = revisionCard;
 
-const nativePlanPreviewMock = vi.hoisted(() => vi.fn(async () => ({
-  planHash: "0123456789abcdef",
-  seriesKey: "series_native_test",
-  dramaNameZh: "测试合集",
-  episodes: [{
-    episodeIndex: 1,
-    sourceUrl: "https://www.douyin.com/video/12345",
-    durationSec: 120,
-    segments: [{ startSec: 0, endSec: 120 }],
-  }],
-  totalSegments: 1,
-  totalDurationSec: 120,
-  freeEpisodeCount: 1,
-  unknownAccessEpisodeIndexes: [],
-  alreadyIngestedEpisodeIndexes: [],
-  pendingClaimEpisodeIndexes: [],
-  executableEpisodeCount: 1,
-  executionEnabled: true,
-})));
-
 vi.mock("../services/manhuaViralTemplateStore", () => ({
   listMergedApprovedManhuaViralTemplatesGrouped: vi.fn(async () => [
     { laneZh: "爽文逆袭", items: [secretCard, noCodeCard] },
@@ -112,10 +92,6 @@ vi.mock("../services/manhuaViralTemplateOptimize", () => ({
     reasons: [{ field: "hook3sZh", reasonZh: "强化前三秒。" }],
   })),
 }));
-vi.mock("../services/manhuaNativeDeepReadPlanRuntime", () => ({
-  buildNativeDeepReadPlanPreviewFromServices: nativePlanPreviewMock,
-}));
-
 /**
  * access-policy 在模块加载时固化 SUPERVISOR_SECRET，故涉 token 的用例必须
  * 先 stubEnv 再 resetModules 后动态导入路由（store/copy 的 vi.mock 会随重评估复用）。
@@ -158,7 +134,6 @@ function makeCtx(
 
 beforeEach(() => {
   vi.unstubAllEnvs();
-  nativePlanPreviewMock.mockClear();
   proposalForRouter = revisionCard;
 });
 
@@ -408,40 +383,6 @@ describe("owner 模板查看与优化", () => {
       id: revisionCard.id,
       confirmApprove: true,
     })).resolves.toMatchObject({ ok: true });
-  });
-});
-
-describe("原生精读发车计划", () => {
-  const input = {
-    url: "https://www.douyin.com/video/12345",
-    limit: 7,
-    learnLlm: "gpt" as const,
-  };
-
-  it("非 owner 不能读取计划，且不会触发任何解析", async () => {
-    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
-    const caller = (await loadRouter()).createCaller(
-      makeCtx("admin", undefined, "other-admin"),
-    );
-    await expect(caller.previewNativeDeepReadPlan(input)).rejects.toMatchObject({
-      code: "FORBIDDEN",
-    });
-    expect(nativePlanPreviewMock).not.toHaveBeenCalled();
-  });
-
-  it("owner 看到服务端真实计划，且断线信号传入同一运行时装配", async () => {
-    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
-    const ctx = makeCtx("user", undefined, "owner-open-id");
-    const caller = (await loadRouter()).createCaller(ctx);
-    await expect(caller.previewNativeDeepReadPlan(input)).resolves.toMatchObject({
-      planHash: "0123456789abcdef",
-      totalSegments: 1,
-      executableEpisodeCount: 1,
-    });
-    expect(nativePlanPreviewMock).toHaveBeenCalledWith({
-      ...input,
-      abortSignal: ctx.clientDisconnected,
-    });
   });
 });
 

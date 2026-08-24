@@ -146,6 +146,7 @@ import {
   readManhuaLearnMissingDismissedKeys,
   readManhuaLearnResult,
   removeManhuaLearnBasketItem,
+  resolveManhuaLearnBasketFocusKey,
   upsertManhuaLearnBasketItem,
   writeManhuaLearnActiveJob,
   writeManhuaLearnBasket,
@@ -2481,9 +2482,27 @@ export default function PlatformPage() {
   const [manhuaLearnMissingDismissedKeys, setManhuaLearnMissingDismissedKeys] = useState<string[]>(
     readManhuaLearnMissingDismissedKeys,
   );
-  const focusedManhuaLearnBasketItem = manhuaLearnBasket.find(
-    (item) => item.seriesKey === manhuaLearnFocusSeriesKey,
+  const manhuaLearnFocusSource = String(
+    manhuaLearnContinueRef.current?.row.gcsUri
+      || manhuaLearnContinueRef.current?.row.url
+      || "",
+  ).trim();
+  const resolvedManhuaLearnFocusSeriesKey = resolveManhuaLearnBasketFocusKey(
+    manhuaLearnBasket,
+    manhuaLearnFocusSeriesKey,
+    manhuaLearnFocusSource,
   );
+  const focusedManhuaLearnBasketItem = manhuaLearnBasket.find(
+    (item) => item.seriesKey === resolvedManhuaLearnFocusSeriesKey,
+  );
+  useEffect(() => {
+    if (
+      !resolvedManhuaLearnFocusSeriesKey
+      || resolvedManhuaLearnFocusSeriesKey === manhuaLearnFocusSeriesKey
+    ) return;
+    setManhuaLearnFocusSeriesKey(resolvedManhuaLearnFocusSeriesKey);
+    writeManhuaLearnFocusSeriesKey(resolvedManhuaLearnFocusSeriesKey);
+  }, [manhuaLearnFocusSeriesKey, resolvedManhuaLearnFocusSeriesKey]);
   /**
    * 控制按钮（停止/跳过）真源：服务端任务列表，而不是 basket 焦点项。
    * 单集升级为合集学习时服务端会换 seriesKey，焦点 key 匹配不上 basket 项，
@@ -2995,9 +3014,6 @@ export default function PlatformPage() {
   const manhuaLearnPipelineMeta = getManhuaLearnPipelineMeta({
     nativeDeepRead: ownerNativeDeepReadPanel,
   });
-  const previewNativeDeepReadPlanMutation =
-    trpc.manhuaViralTemplate.previewNativeDeepReadPlan.useMutation();
-
   /**
    * 生命周期三条链路（换代体检 / 归档查看 / 恢复）**仅 owner 可见**。
    *
@@ -5330,64 +5346,13 @@ export default function PlatformPage() {
         return;
       }
       if (nativeGate === "ready") {
-        setManhuaLearnBusyKey(busyKey);
-        try {
-          const plan = await previewNativeDeepReadPlanMutation.mutateAsync({
-            url,
-            limit: manhuaLearnBatchSize,
-            learnLlm: row.learnLlm,
-          });
-          if (!plan.executionEnabled) {
-            toast.error("原生精读尚未开启", {
-              description: "本次只完成零成本计划预览，未建立学习任务。",
-            });
-            setManhuaLearnBusyKey(null);
-            return;
-          }
-          if (plan.pendingClaimEpisodeIndexes.length) {
-            toast.error("存在待核对的精读占位", {
-              description: `第 ${plan.pendingClaimEpisodeIndexes.join("、")} 集可能已有任务，未重复入队。`,
-            });
-            setManhuaLearnBusyKey(null);
-            return;
-          }
-          if (!plan.episodes.length || plan.totalSegments < 1) {
-            toast.message("当前没有需要新增学习的免费集");
-            setManhuaLearnBusyKey(null);
-            return;
-          }
-          if (plan.totalSegments > NATIVE_DEEP_READ_JOB_MAX_CALLS) {
-            toast.error("本次计划超过单任务墙钟", {
-              description: `最多 ${NATIVE_DEEP_READ_JOB_MAX_CALLS} 次模型请求，请调小单次学习集数后重新预览。`,
-            });
-            setManhuaLearnBusyKey(null);
-            return;
-          }
-          const unknownHint = plan.unknownAccessEpisodeIndexes.length
-            ? `\n未知付费状态：第 ${plan.unknownAccessEpisodeIndexes.join("、")} 集起不纳入本次计划。`
-            : "";
-          const approved = window.confirm(
-            `原生精读发车确认\n\n剧名：${plan.dramaNameZh || "未命名合集"}\n学习模型：${MANHUA_NATIVE_DEEP_READ_MODEL_LABEL}\n本次新增：${plan.executableEpisodeCount} 集（第 ${plan.episodes.map((e) => e.episodeIndex).join("、")} 集）\n模型请求：${plan.totalSegments} 次\n素材总时长：${Math.round(plan.totalDurationSec / 60)} 分钟\n已入库：${plan.alreadyIngestedEpisodeIndexes.length} 集\n确认码：${plan.planHash}${unknownHint}\n\n确认后才会建立付费学习任务，是否继续？`,
-          );
-          if (!approved) {
-            setManhuaLearnBusyKey(null);
-            return;
-          }
-          nativeConfirmedParams = {
-            nativeDeepReadConfirmed: true,
-            nativePlanHash: plan.planHash,
-            nativeMaxCalls: plan.totalSegments,
-            nativePlanLimit: manhuaLearnBatchSize,
-            nativePlanSeriesKey: plan.seriesKey,
-          };
-        } catch (error) {
-          const message = sanitizePlatformUserMessage(
-            error instanceof Error ? error.message : String(error),
-          );
-          toast.error("原生精读计划未通过", { description: message });
-          setManhuaLearnBusyKey(null);
-          return;
-        }
+        // 点击即建立真实后台任务；worker 会在同一任务内完成素材、集数、占位与调用上限校验。
+        // 这里不再先调用前端预演接口，也不再弹出第二次确认框。
+        nativeConfirmedParams = {
+          nativeDeepReadConfirmed: true,
+          nativeMaxCalls: NATIVE_DEEP_READ_JOB_MAX_CALLS,
+          nativePlanLimit: manhuaLearnBatchSize,
+        };
       }
       const continuation: ManhuaLearnContinuation = {
         row: { ...row },
@@ -5719,7 +5684,6 @@ export default function PlatformPage() {
       refreshManhuaLearnServerJobs,
       manhuaLearnBatchSize,
       ownerTemplateOptimizeAllowed,
-      previewNativeDeepReadPlanMutation,
       manhuaTemplateOwnerCapabilitiesQuery.isError,
       manhuaTemplateOwnerCapabilitiesQuery.isLoading,
     ],
@@ -12264,7 +12228,7 @@ export default function PlatformPage() {
                               || "与总览报表数据同源：抖音/快手采集中的合集与漫剧样本单独聚合。其它种草、口播样本仍在「总览」里。"}
                             {" "}
                             {ownerNativeDeepReadPanel
-                              ? "学节奏：先按你设置的集数做零成本计划预览，确认集号、模型请求数与素材时长后才发车；模型直接读取视频，每集生成一张待审卡，你批准后才进入正式模板库。"
+                              ? "学节奏：按你设置的集数直接建立原生精读任务；模型直接读取视频，每集生成一张待审卡，你批准后才进入正式模板库。"
                               : "学节奏：有成片/合集链时可一点学习；无链仅展示剧名与归类。按集顺序学习你设置的本轮集数，结果在本页展示，你看完再决定是否批准进库。"}
                           </p>
                         </div>
@@ -12425,7 +12389,7 @@ export default function PlatformPage() {
                               {manhuaLearnBusyKey === manhuaPasteUrl.trim()
                                 ? "处理中…"
                                 : ownerNativeDeepReadPanel
-                                  ? `预演并精读 ${manhuaLearnBatchSize} 集`
+                                  ? `开始精读 ${manhuaLearnBatchSize} 集`
                                   : `开始学 ${manhuaLearnBatchSize} 集`}
                             </button>
                           </div>
@@ -12448,11 +12412,7 @@ export default function PlatformPage() {
                             <select
                               id="manhua-learn-series-select"
                               value={
-                                manhuaLearnBasket.some(
-                                  (item) => item.seriesKey === manhuaLearnFocusSeriesKey,
-                                )
-                                  ? manhuaLearnFocusSeriesKey
-                                  : ""
+                                resolvedManhuaLearnFocusSeriesKey
                               }
                               onChange={(event) => selectManhuaLearnBasketItem(event.target.value)}
                               className="min-w-0 flex-1 rounded-lg border border-amber-200/20 bg-black/45 px-2.5 py-1.5 text-[11px] text-amber-50 disabled:opacity-50"

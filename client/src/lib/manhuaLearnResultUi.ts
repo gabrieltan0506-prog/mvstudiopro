@@ -198,16 +198,15 @@ export function mergeManhuaLearnLiveProgress(
       tick.status === "queued" && !rawStage ? MANHUA_LEARN_STAGE.queued : rawStage,
     );
   const fromJob = parseProgressLines(out.learnProgressLog);
+  const previousLine = base.progressLines?.[base.progressLines.length - 1];
+  const fallbackStage = rawStage || MANHUA_LEARN_STAGE.queued;
   const progressLines =
     fromJob.length > 0
       ? fromJob
       : label
-        ? appendManhuaLearnProgressLine(
-            base.progressLines,
-            rawStage ||
-              MANHUA_LEARN_STAGE.queued,
-            label,
-          )
+        ? previousLine?.stage === fallbackStage && previousLine.detailZh === label
+          ? base.progressLines || []
+          : appendManhuaLearnProgressLine(base.progressLines, fallbackStage, label)
         : base.progressLines || [];
   const liveStatus =
     tick.status === "queued"
@@ -560,7 +559,6 @@ export function readManhuaLearnBasket(userKey: string): ManhuaLearnBasketItem[] 
         );
       })
       .map((item) => item as ManhuaLearnBasketItem)
-      .sort((a, b) => b.updatedAt - a.updatedAt)
       .slice(0, 30);
   } catch {
     return [];
@@ -578,7 +576,6 @@ export function writeManhuaLearnBasket(userKey: string, items: ManhuaLearnBasket
             || (item.result.missingEpisodeCount || 0) > 0
           ),
       )
-      .sort((a, b) => b.updatedAt - a.updatedAt)
       .slice(0, 30);
     if (pending.length) {
       localStorage.setItem(manhuaLearnBasketStorageKey(userKey), JSON.stringify(pending));
@@ -590,28 +587,75 @@ export function writeManhuaLearnBasket(userKey: string, items: ManhuaLearnBasket
   }
 }
 
-/** 同一来源从临时 learn_* key 升级到真实 seriesKey 时原位替换，不生成重复剧卡。 */
+function sameManhuaLearnBasketItem(
+  left: ManhuaLearnBasketItem,
+  right: ManhuaLearnBasketItem,
+): boolean {
+  if (left === right) return true;
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 同一来源从临时 learn_* key 升级到真实 seriesKey 时原位替换，不生成重复剧卡。
+ * 已存在项不得因为后台轮询更新时间变化而换位，否则原生 select 会反复重建并跳动。
+ */
 export function upsertManhuaLearnBasketItem(
   items: ManhuaLearnBasketItem[],
   item: ManhuaLearnBasketItem,
 ): ManhuaLearnBasketItem[] {
+  const currentItems = items || [];
   const source = String(
     item.continuation.row.gcsUri || item.continuation.row.url || "",
   ).trim();
-  const kept = (items || []).filter((current) => {
+  const matchesItem = (current: ManhuaLearnBasketItem) => {
     const currentSource = String(
       current.continuation.row.gcsUri || current.continuation.row.url || "",
     ).trim();
-    return current.seriesKey !== item.seriesKey && (!source || currentSource !== source);
-  });
+    return current.seriesKey === item.seriesKey || Boolean(source && currentSource === source);
+  };
+  const existingIndex = currentItems.findIndex(matchesItem);
+  const kept = currentItems.filter((current) => !matchesItem(current));
   if (
     typeof item.result.pendingCount === "number"
     && item.result.pendingCount <= 0
     && (item.result.missingEpisodeCount || 0) <= 0
   ) {
-    return kept;
+    return kept.length === currentItems.length ? currentItems : kept;
   }
-  return [item, ...kept].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 30);
+  if (existingIndex < 0) {
+    return [item, ...kept].slice(0, 30);
+  }
+  if (
+    kept.length === currentItems.length - 1
+    && sameManhuaLearnBasketItem(currentItems[existingIndex], item)
+  ) {
+    return currentItems;
+  }
+  const insertionIndex = Math.min(existingIndex, kept.length);
+  return [
+    ...kept.slice(0, insertionIndex),
+    item,
+    ...kept.slice(insertionIndex),
+  ].slice(0, 30);
+}
+
+/** 临时 seriesKey 升级时按同一素材来源续接焦点，避免 select 短暂回到空选项。 */
+export function resolveManhuaLearnBasketFocusKey(
+  items: ManhuaLearnBasketItem[],
+  focusSeriesKey: string,
+  focusSource: string,
+): string {
+  const key = String(focusSeriesKey || "").trim();
+  if (key && (items || []).some((item) => item.seriesKey === key)) return key;
+  const source = String(focusSource || "").trim();
+  if (!source) return "";
+  return (items || []).find((item) => String(
+    item.continuation.row.gcsUri || item.continuation.row.url || "",
+  ).trim() === source)?.seriesKey || "";
 }
 
 export function removeManhuaLearnBasketItem(
@@ -655,7 +699,7 @@ export function mergeManhuaLearnServerJobsIntoBasket(
   jobs: ManhuaLearnServerJobSnapshot[],
   now = Date.now(),
 ): ManhuaLearnBasketItem[] {
-  let next = [...(items || [])];
+  let next = items || [];
   const ordered = [...(jobs || [])].reverse();
   for (const job of ordered) {
     const params = job.input?.params || {};
@@ -720,7 +764,7 @@ export function mergeManhuaLearnServerJobsIntoBasket(
       },
       rank: Math.max(0, Math.floor(Number(params.rank) || 0)),
       seriesKey,
-      savedAt: now,
+      savedAt: existing?.continuation.savedAt ?? now,
     };
     next = upsertManhuaLearnBasketItem(next, {
       seriesKey,
@@ -728,7 +772,7 @@ export function mergeManhuaLearnServerJobsIntoBasket(
       result,
       updatedAt: Number.isFinite(Date.parse(String(job.updatedAt || "")))
         ? Date.parse(String(job.updatedAt))
-        : now,
+        : existing?.updatedAt ?? now,
       jobId: job.jobId,
       jobStatus: job.status,
       jobErrorZh: job.status === "failed" ? String(job.error || "云端学习失败") : undefined,
@@ -747,7 +791,8 @@ export function demoteStaleRunningManhuaLearnItems(
   jobs: ManhuaLearnServerJobSnapshot[],
 ): ManhuaLearnBasketItem[] {
   const knownJobIds = new Set((jobs || []).map((job) => job.jobId));
-  return (items || []).map((item) => {
+  let changed = false;
+  const next = (items || []).map((item) => {
     const looksRunning =
       item.jobStatus === "queued"
       || item.jobStatus === "running"
@@ -757,6 +802,7 @@ export function demoteStaleRunningManhuaLearnItems(
     if (item.jobId && knownJobIds.has(item.jobId)) return item;
     // 没有 jobId 的乐观占位（刚点开始、入队请求未返回）不动，避免误杀启动瞬间
     if (!item.jobId) return item;
+    changed = true;
     return {
       ...item,
       jobStatus: undefined,
@@ -770,6 +816,7 @@ export function demoteStaleRunningManhuaLearnItems(
       },
     };
   });
+  return changed ? next : items;
 }
 
 export type ManhuaLearnContinueControl = {

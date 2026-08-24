@@ -7,20 +7,16 @@ const END = PAGE.indexOf("/**\n   * 刷新/断线恢复", START);
 const LEARN_FLOW = PAGE.slice(START, END);
 
 describe("原生精读页面接线", () => {
-  it("先由 Fly 预览并经用户确认，之后才建立持久任务", () => {
-    const previewAt = LEARN_FLOW.indexOf("previewNativeDeepReadPlanMutation.mutateAsync");
-    const confirmAt = LEARN_FLOW.indexOf("window.confirm", previewAt);
-    const createAt = LEARN_FLOW.indexOf("createJob", confirmAt);
+  it("点击后直接建立持久任务，不先调用预演接口或二次确认", () => {
+    const createAt = LEARN_FLOW.indexOf("createJob");
     expect(START).toBeGreaterThan(0);
-    expect(previewAt).toBeGreaterThan(0);
-    expect(confirmAt).toBeGreaterThan(previewAt);
-    expect(createAt).toBeGreaterThan(confirmAt);
+    expect(createAt).toBeGreaterThan(0);
+    expect(LEARN_FLOW).not.toContain("previewNativeDeepReadPlanMutation");
+    expect(LEARN_FLOW).not.toContain("window.confirm");
     for (const field of [
       "nativeDeepReadConfirmed",
-      "nativePlanHash",
       "nativeMaxCalls",
       "nativePlanLimit",
-      "nativePlanSeriesKey",
     ]) {
       expect(LEARN_FLOW).toContain(field);
     }
@@ -41,18 +37,18 @@ describe("原生精读页面接线", () => {
     expect(createAt).toBeGreaterThan(previewAt);
   });
 
-  it("owner 面板使用原生精读说明与计划预演按钮", () => {
+  it("owner 面板使用原生精读说明与直接开始按钮", () => {
     expect(PAGE).toContain("nativeDeepRead: ownerNativeDeepReadPanel");
     expect(PAGE).toContain("MANHUA_NATIVE_DEEP_READ_MODEL_LABEL");
     expect(PAGE).toContain("学习模型：正在确认…");
     expect(PAGE).toContain("· 原生视频精读");
-    expect(PAGE).toContain("预演并精读 ${manhuaLearnBatchSize} 集");
+    expect(PAGE).toContain("开始精读 ${manhuaLearnBatchSize} 集");
+    expect(PAGE).not.toContain("预演并精读 ${manhuaLearnBatchSize} 集");
     expect(PAGE).toContain("旧抽帧任务");
   });
 
-  it("原生精读徽标与发车确认都显示真实 Qwen 模型，不拿旧抽帧模型冒充", () => {
+  it("原生精读徽标显示真实 Qwen 模型，不拿旧抽帧模型冒充", () => {
     expect(PAGE).toContain("学习模型：${MANHUA_NATIVE_DEEP_READ_MODEL_LABEL}");
-    expect(LEARN_FLOW).toContain("学习模型：${MANHUA_NATIVE_DEEP_READ_MODEL_LABEL}");
     expect(LEARN_FLOW).not.toContain("MANHUA_TEMPLATE_FRAME_VISION_LABEL");
   });
 

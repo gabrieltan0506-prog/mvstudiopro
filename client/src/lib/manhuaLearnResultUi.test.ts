@@ -14,6 +14,7 @@ import {
   readManhuaLearnResult,
   readManhuaLearnMissingDismissedKeys,
   removeManhuaLearnBasketItem,
+  resolveManhuaLearnBasketFocusKey,
   upsertManhuaLearnBasketItem,
   writeManhuaLearnActiveJob,
   writeManhuaLearnBasket,
@@ -370,6 +371,63 @@ describe("manhuaLearnResultUi soft-fail", () => {
     expect(readManhuaLearnBasket("user_8")).toEqual([]);
   });
 
+  it("后台轮询更新已有剧集时保持原位置，不按更新时间重排下拉选项", () => {
+    const makeItem = (seriesKey: string, updatedAt: number) => ({
+      seriesKey,
+      continuation: {
+        row: { url: `https://www.douyin.com/collection/${seriesKey}` },
+        rank: 0,
+        seriesKey,
+        savedAt: 1,
+      },
+      result: {
+        ...manhuaLearnResultFromStart({ channel: "cloud", seriesKey }),
+        pendingCount: 10,
+      },
+      updatedAt,
+    });
+    const original = [makeItem("series_a", 10), makeItem("series_b", 20)];
+    const updated = upsertManhuaLearnBasketItem(original, makeItem("series_b", 999));
+    expect(updated.map((item) => item.seriesKey)).toEqual(["series_a", "series_b"]);
+  });
+
+  it("持久化往返保持界面顺序，不按 updatedAt 再排序", () => {
+    installMemoryLocalStorage();
+    const makeItem = (seriesKey: string, updatedAt: number) => ({
+      seriesKey,
+      continuation: {
+        row: { url: `https://www.douyin.com/collection/${seriesKey}` },
+        rank: 0,
+        seriesKey,
+        savedAt: 1,
+      },
+      result: {
+        ...manhuaLearnResultFromStart({ channel: "cloud", seriesKey }),
+        pendingCount: 1,
+      },
+      updatedAt,
+    });
+    writeManhuaLearnBasket("stable_user", [
+      makeItem("series_old", 1),
+      makeItem("series_new", 999),
+    ]);
+    expect(readManhuaLearnBasket("stable_user").map((item) => item.seriesKey))
+      .toEqual(["series_old", "series_new"]);
+  });
+
+  it("临时 key 升级后按同一来源续接焦点，不闪回空选项", () => {
+    const source = "https://www.douyin.com/collection/focus";
+    const result = manhuaLearnResultFromStart({ channel: "cloud", seriesKey: "series_real" });
+    const items = [{
+      seriesKey: "series_real",
+      continuation: { row: { url: source }, rank: 0, seriesKey: "series_real", savedAt: 1 },
+      result: { ...result, pendingCount: 8 },
+      updatedAt: 2,
+    }];
+    expect(resolveManhuaLearnBasketFocusKey(items, "learn_tmp", source)).toBe("series_real");
+    expect(resolveManhuaLearnBasketFocusKey(items, "series_real", source)).toBe("series_real");
+  });
+
   it("allows an unknown pending count to resume from a saved continuation", () => {
     expect(
       getManhuaLearnContinueControl({
@@ -423,6 +481,26 @@ describe("manhuaLearnResultUi soft-fail", () => {
     expect(basket).toHaveLength(3);
     expect(basket.map((item) => item.jobStatus).sort()).toEqual(["queued", "running", "running"]);
     expect(basket.find((item) => item.seriesKey === "series_b")?.result.learnedCount).toBe(2);
+  });
+
+  it("相同服务端快照重复轮询时复用原数组，不强制重绘下拉选项", () => {
+    const jobs = [{
+      jobId: "stable",
+      status: "running" as const,
+      input: {
+        params: {
+          url: "https://douyin.com/video/stable",
+          title: "稳定剧集",
+          seriesKey: "series_stable",
+        },
+      },
+      output: { learnedCount: 1, listedEpisodeCount: 10 },
+      updatedAt: "2026-08-25T00:00:00.000Z",
+    }];
+    const first = mergeManhuaLearnServerJobsIntoBasket([], jobs, 100);
+    const second = mergeManhuaLearnServerJobsIntoBasket(first, jobs, 999);
+    expect(second).toBe(first);
+    expect(second[0]?.continuation.savedAt).toBe(100);
   });
 
   it("failed native job keeps server progress and usage instead of collapsing to an error string", () => {
