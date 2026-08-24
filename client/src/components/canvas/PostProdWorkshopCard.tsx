@@ -10,6 +10,18 @@ import { Film, Layers, Loader2, Music4, Scissors, Volume2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { copyText } from "@/lib/copyText";
 import {
+  MANHUA_DELIVERY_UPSCALE_LABEL_ZH,
+  MANHUA_DELIVERY_UPSCALE_TARGETS,
+  canUpscaleNow,
+  upscaleBilledSeconds,
+  type ManhuaDeliveryUpscaleTarget,
+} from "@/lib/manhuaDeliveryOrder";
+import {
+  fetchVideoUpscaleStatus,
+  probeVideoDurationSec,
+  startVideoUpscale,
+} from "@/lib/videoUpscaleApi";
+import {
   canSubmitManhuaBgm,
   clearPendingManhuaBgmJob,
   readManhuaBgmVariants,
@@ -114,6 +126,13 @@ export default function PostProdWorkshopCard({ blocks, userId, canGenerateBgm = 
   );
   const [scoreVariants, setScoreVariants] = useState<ManhuaBgmVariant[]>([]);
   const scorePollRef = useRef(false);
+  /* ── 超分：成片 → 超分 → 贴 BGM，顺序不可逆（BGM 混进去就剥不出来） ── */
+  const [upVideoUrl, setUpVideoUrl] = useState("");
+  const [upTarget, setUpTarget] = useState<ManhuaDeliveryUpscaleTarget>("2k");
+  const [upTaskId, setUpTaskId] = useState("");
+  const [upResultUrl, setUpResultUrl] = useState("");
+  const [upBusy, setUpBusy] = useState(false);
+  const upPollRef = useRef(false);
   const [bgmVolume, setBgmVolume] = useState(0.48);
   const [bgmEntrySec, setBgmEntrySec] = useState(0);
   const [bgmFadeIn, setBgmFadeIn] = useState(0.5);
@@ -411,6 +430,71 @@ export default function PostProdWorkshopCard({ blocks, userId, canGenerateBgm = 
     };
   }, [scorePending, utils]);
 
+  const submitUpscale = async () => {
+    // 贴过 BGM 的不许再超分：会重新编码混死的音轨，等于把废片做得更贵
+    const gate = canUpscaleNow({
+      hasAssembled: Boolean(upVideoUrl),
+      bgmMounted: Boolean(bgmAudioUrl) && upVideoUrl === bgmVideoUrl,
+    });
+    if (!gate.ok) {
+      toast.error(gate.reasonZh);
+      return;
+    }
+    setUpBusy(true);
+    try {
+      const probed = await probeVideoDurationSec(upVideoUrl);
+      const durationSec = upscaleBilledSeconds(probed || 0);
+      const created = await startVideoUpscale({
+        videoUrl: upVideoUrl,
+        target: upTarget,
+        durationSec,
+        sourceResolution: "720p",
+      });
+      setUpTaskId(created.taskId);
+      toast.message(`超分已提交 · ${created.creditsUsed} 积分`, {
+        description: `按 ${durationSec} 秒计（不足 5 秒按 5 秒）`,
+      });
+    } catch (e) {
+      toast.error(`超分提交失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setUpBusy(false);
+    }
+  };
+
+  /** 超分轮询；防重叠，出片后直接填进 BGM 贴装的源，接上下一道工序 */
+  useEffect(() => {
+    if (!upTaskId) return;
+    let alive = true;
+    const tick = async () => {
+      if (upPollRef.current) return;
+      upPollRef.current = true;
+      try {
+        const snap = await fetchVideoUpscaleStatus(upTaskId);
+        if (!alive) return;
+        if (snap.status === "succeeded" && snap.videoUrl) {
+          setUpResultUrl(snap.videoUrl);
+          // 成片 → 超分 → 贴 BGM：出片即接下一道，不让用户自己复制粘贴
+          setBgmVideoUrl(snap.videoUrl);
+          setUpTaskId("");
+          toast.success("超分完成，已填入 BGM 贴装的源");
+        } else if (snap.status === "failed") {
+          setUpTaskId("");
+          toast.error(`超分失败：${String(snap.error || "").slice(0, 120)}`);
+        }
+      } catch {
+        // 查不到不清 taskId：任务可能还在
+      } finally {
+        upPollRef.current = false;
+      }
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), 8000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [upTaskId]);
+
   const submitBgm = () => {
     if (!bgmVideoUrl || !bgmAudioUrl) {
       toast.error("BGM 贴装需要选一段成片和一条音频");
@@ -566,6 +650,66 @@ export default function PostProdWorkshopCard({ blocks, userId, canGenerateBgm = 
               拼接 {concatSel.length > 0 ? `${concatSel.length} 段` : ""}
             </button>
           </div>
+        </div>
+
+        {/* 超分：**排在贴 BGM 之前**。BGM 混进画面后音轨就剥不出来，
+            一切「混进去就分不开」的工序都排在画质链最后 */}
+        <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+          <div className="flex items-center gap-1.5 text-[13px] font-semibold text-white">
+            <Layers className="h-3.5 w-3.5 text-violet-300" /> 高清放大
+            <span className="ml-auto rounded bg-violet-400/15 px-1.5 text-[9px] font-medium text-violet-100">
+              会扣积分
+            </span>
+          </div>
+          <p className="mt-1 text-[11px] leading-4 text-white/45">
+            先超分再贴 BGM。贴过 BGM 的片子音轨已混死，再超分只是把废片做得更贵。
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <select
+              value={upVideoUrl}
+              onChange={(e) => setUpVideoUrl(e.target.value)}
+              className={selectCls}
+            >
+              <option value="">选一段成片</option>
+              {clipOptions.map((c) => (
+                <option key={c.id} value={c.url}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            <select
+              value={upTarget}
+              onChange={(e) => setUpTarget(e.target.value as ManhuaDeliveryUpscaleTarget)}
+              className={selectCls + " w-28"}
+            >
+              {MANHUA_DELIVERY_UPSCALE_TARGETS.map((t) => (
+                <option key={t} value={t} title={MANHUA_DELIVERY_UPSCALE_LABEL_ZH[t]}>
+                  {t.toUpperCase()}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={upBusy || Boolean(upTaskId) || !upVideoUrl}
+              onClick={() => void submitUpscale()}
+              className={goCls}
+            >
+              {upBusy || upTaskId ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Layers className="h-3.5 w-3.5" />
+              )}
+              {upTaskId ? "放大中…" : "高清放大"}
+            </button>
+          </div>
+          <p className="mt-1 text-[10px] text-white/40">
+            {MANHUA_DELIVERY_UPSCALE_LABEL_ZH[upTarget]} · 不足 5 秒按 5 秒计
+          </p>
+          {upResultUrl ? (
+            <p className="mt-1 text-[10px] text-emerald-200/80">
+              已完成，并自动填入下方 BGM 贴装的源
+            </p>
+          ) : null}
         </div>
 
         {/* 配乐间：起草免费 → 用户改 → 确认建单（花钱）→ 选变体 → 贴装。

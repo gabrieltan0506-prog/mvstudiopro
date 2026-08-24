@@ -72,3 +72,24 @@ describe("配乐间接线契约", () => {
     expect(CARD).toContain("setBgmAudioUrl(v.gcsUri)");
   });
 });
+
+describe("超分接线契约（成片 → 超分 → 贴 BGM）", () => {
+  it("成片坞有超分入口 —— 此前只在自由画布，卡里写着「后续迁入本卡」", () => {
+    expect(CARD).toContain("startVideoUpscale({");
+    expect(CARD).toContain("fetchVideoUpscaleStatus(upTaskId)");
+  });
+
+  it("提交前过顺序判据，不靠人守", () => {
+    expect(CARD).toContain("canUpscaleNow({");
+  });
+
+  it("超分出片自动填进 BGM 贴装的源 —— 顺序即界面顺序，不让用户自己复制粘贴", () => {
+    const at = CARD.indexOf('snap.status === "succeeded"');
+    expect(at).toBeGreaterThan(0);
+    expect(CARD.slice(at, at + 400)).toContain("setBgmVideoUrl(snap.videoUrl)");
+  });
+
+  it("轮询有防重叠标记，查不到不清 taskId", () => {
+    expect(CARD).toContain("upPollRef.current");
+  });
+});
