@@ -222,6 +222,82 @@ export const manhuaViralTemplateRouter = router({
     }),
 
   /**
+   * 列出某张模板的历史归档版本。
+   *
+   * 归档一直在写却没有读取入口 —— 下架之后就再也看不到、回不去了。
+   * 学习方式升级后这条尤其要紧：新方法重学一版替掉旧的，
+   * 万一新版不如旧版，得能翻回去比。
+   */
+  listArchivedVersions: protectedProcedure
+    .input(z.object({ id: z.string().regex(/^tpl_[a-z0-9_-]{1,60}$/i) }))
+    .query(async ({ ctx, input }) => {
+      assertSiteOwner(ctx.user);
+      const { listArchivedManhuaViralTemplateVersions } = await import(
+        "../services/manhuaViralTemplateStore"
+      );
+      const rows = await listArchivedManhuaViralTemplateVersions(input.id);
+      return {
+        items: rows.map((r) => ({
+          generation: r.generation,
+          nameZh: r.card.nameZh,
+          laneZh: r.card.laneZh,
+          summaryZh: r.card.summaryZh,
+          beatCount: r.card.beatGrid.length,
+          updatedAt: r.card.updatedAt,
+          learnSourceZh: describeManhuaTemplateLearnSourceZh(r.card.provenance),
+        })),
+      };
+    }),
+
+  /** owner：把某个归档版本恢复成正式模板（同 id 已有现役版本时拒绝，不覆盖） */
+  restoreArchived: protectedProcedure
+    .input(
+      z.object({
+        id: z.string().regex(/^tpl_[a-z0-9_-]{1,60}$/i),
+        generation: z.string().min(1).max(40),
+        confirmRestore: z.literal(true),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      assertSiteOwner(ctx.user);
+      const { restoreArchivedManhuaViralTemplate } = await import(
+        "../services/manhuaViralTemplateStore"
+      );
+      const card = await restoreArchivedManhuaViralTemplate({
+        id: input.id,
+        generation: input.generation,
+      });
+      return { ok: true as const, id: card.id, nameZh: card.nameZh };
+    }),
+
+  /**
+   * 换代体检：库里哪些还是旧一代学法学的、有没有新卡可以顶上。
+   * **只给建议不自动执行** —— 淘汰是不可逆的业务判断，不替 owner 拍板。
+   */
+  reviewTemplateGenerations: protectedProcedure.query(async ({ ctx }) => {
+    assertSiteOwner(ctx.user);
+    const { listGcsManhuaViralApproved, listGcsManhuaViralProposals } = await import(
+      "../services/manhuaViralTemplateStore"
+    );
+    const { adviseTemplateRetirement } = await import("../../shared/manhuaTemplateLifecycle");
+    const approved = await listGcsManhuaViralApproved();
+    // 候选包含待审：新学的精读卡通常还在 proposals/ 里等批
+    const candidates = [...approved, ...(await listGcsManhuaViralProposals())];
+    const laneCount = new Map<string, number>();
+    for (const c of approved) laneCount.set(c.laneZh, (laneCount.get(c.laneZh) || 0) + 1);
+    return {
+      items: approved.map((card) => ({
+        id: card.id,
+        nameZh: card.nameZh,
+        laneZh: card.laneZh,
+        beatCount: card.beatGrid.length,
+        sameLaneApprovedCount: laneCount.get(card.laneZh) || 0,
+        ...adviseTemplateRetirement(card, candidates),
+      })),
+    };
+  }),
+
+  /**
    * owner：下架正式模板（归档，非物理删除）。
    * 用于「新精读模板淘汰旧抽帧模板」——淘汰不等于销毁，归档件仍可查可恢复。
    */
@@ -235,9 +311,20 @@ export const manhuaViralTemplateRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       assertSiteOwner(ctx.user);
-      const { archiveApprovedManhuaViralTemplate } = await import(
+      const { archiveApprovedManhuaViralTemplate, listGcsManhuaViralApproved } = await import(
         "../services/manhuaViralTemplateStore"
       );
+      const { canRetireTemplate } = await import("../../shared/manhuaTemplateLifecycle");
+      // 同赛道最后一张不许下架：下完这条赛道编剧室就选不出模板了
+      const approved = await listGcsManhuaViralApproved();
+      const target = approved.find((c) => c.id === input.id);
+      if (target) {
+        const gate = canRetireTemplate({
+          card: target,
+          sameLaneApprovedCount: approved.filter((c) => c.laneZh === target.laneZh).length,
+        });
+        if (!gate.ok) throw new TRPCError({ code: "BAD_REQUEST", message: gate.reasonZh });
+      }
       const archived = await archiveApprovedManhuaViralTemplate(input.id);
       return { ok: true as const, id: archived.id, nameZh: archived.nameZh };
     }),

@@ -277,6 +277,91 @@ export async function archiveApprovedManhuaViralTemplate(
   return archived;
 }
 
+export type ArchivedManhuaViralTemplate = {
+  card: ManhuaViralTemplateCard;
+  /** 归档对象名里的 generation —— 恢复时按它定位那一版 */
+  generation: string;
+  objectName: string;
+};
+
+/**
+ * 列出某张模板的历史归档版本。
+ *
+ * 归档一直在写（`archive/<id>/<generation>.json`）**却没有任何读取入口** ——
+ * 下架之后就再也看不到、回不去了。学习方式升级后这条尤其要紧：
+ * 用新方法重学一版替掉旧的，万一新版不如旧版，得能翻回去比。
+ */
+export async function listArchivedManhuaViralTemplateVersions(
+  id: string,
+  maxResults = 20,
+): Promise<ArchivedManhuaViralTemplate[]> {
+  const key = String(id || "").trim();
+  if (!key) return [];
+  const prefix = `${MANHUA_VIRAL_ARCHIVE_PREFIX}${key}/`;
+  let names: string[] = [];
+  try {
+    names = await listGcsObjectNamesByPrefix({ prefix, maxResults });
+  } catch (e) {
+    console.warn(
+      "[manhuaViralTemplateStore] 列归档失败:",
+      prefix,
+      e instanceof Error ? e.message : e,
+    );
+    return [];
+  }
+  const out: ArchivedManhuaViralTemplate[] = [];
+  for (const objectName of names) {
+    if (!/\.json$/i.test(objectName)) continue;
+    const card = await readCardFromObject(objectName);
+    if (!card) continue;
+    out.push({
+      card,
+      generation: objectName.slice(prefix.length).replace(/\.json$/i, ""),
+      objectName,
+    });
+  }
+  // 新的排前面：generation 是递增的时间戳型数字串
+  return out.sort((a, b) => b.generation.localeCompare(a.generation));
+}
+
+/**
+ * 把某个归档版本恢复成正式模板。
+ *
+ * 用**条件创建**（ifGenerationMatch=0）：approved/ 里已经有同 id 的正式模板时
+ * 直接拒绝，不覆盖 —— 恢复是「捡回被下架的」，不是「顶掉现役的」。
+ * 真要换现役的，先下架再恢复，两步都留痕。
+ */
+export async function restoreArchivedManhuaViralTemplate(input: {
+  id: string;
+  generation: string;
+}): Promise<ManhuaViralTemplateCard> {
+  const id = String(input.id || "").trim();
+  const generation = String(input.generation || "").trim();
+  if (!id || !generation) throw new Error("缺少模板 id 或版本号");
+
+  const bucket = getGcsBucketName();
+  const archiveObject = `${MANHUA_VIRAL_ARCHIVE_PREFIX}${id}/${generation}.json`;
+  const archived = await readCardFromObject(archiveObject);
+  if (!archived) throw new Error("该归档版本不存在或无法解析");
+
+  const restored: ManhuaViralTemplateCard = {
+    ...archived,
+    status: "approved",
+    updatedAt: new Date().toISOString(),
+  };
+
+  const created = await uploadBufferToGcsIfAbsent({
+    bucket,
+    objectName: `${MANHUA_VIRAL_APPROVED_PREFIX}${id}.json`,
+    buffer: Buffer.from(`${JSON.stringify(restored, null, 2)}\n`, "utf8"),
+    contentType: "application/json",
+  });
+  if (!created.created) {
+    throw new Error("同名正式模板已在库中；要替换请先下架现役版本，再恢复");
+  }
+  return restored;
+}
+
 export async function approveManhuaViralTemplate(input: {
   id?: string;
   /** @deprecated 审查收紧（2026-08-10）：客户端完整卡不再被信任，只按 id 读落盘提案 */
