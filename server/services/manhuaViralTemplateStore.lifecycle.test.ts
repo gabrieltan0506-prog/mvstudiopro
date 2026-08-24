@@ -491,13 +491,19 @@ describe("生命周期租约：不会因为一次失败而永久停摆（终审�
     manhuaTemplateLifecycleClock.now = realNow;
   });
 
-  it("租约过期判据：读不出 expiresAt 一律当**未过期**，不误抢活锁", () => {
+  it("租约过期判据：兼容旧 createdAt；完全读不出时间才按未过期处理", () => {
     const now = 1_000_000;
     expect(isLifecycleLeaseExpired(null, now)).toBe(false);
     expect(isLifecycleLeaseExpired({}, now)).toBe(false);
     expect(isLifecycleLeaseExpired({ expiresAt: "not-a-date" }, now)).toBe(false);
     expect(isLifecycleLeaseExpired({ expiresAt: new Date(now + 1).toISOString() }, now)).toBe(false);
     expect(isLifecycleLeaseExpired({ expiresAt: new Date(now).toISOString() }, now)).toBe(true);
+    expect(isLifecycleLeaseExpired({
+      createdAt: new Date(now - MANHUA_TEMPLATE_LOCK_TTL_MS - 1).toISOString(),
+    }, now)).toBe(true);
+    expect(isLifecycleLeaseExpired({
+      createdAt: new Date(now - MANHUA_TEMPLATE_LOCK_TTL_MS + 1).toISOString(),
+    }, now)).toBe(false);
   });
 
   it("🔴 活着的租约挡住第二个操作", async () => {
@@ -513,6 +519,20 @@ describe("生命周期租约：不会因为一次失败而永久停摆（终审�
     // 先占住，然后故意不释放 —— 模拟持有者崩溃
     await acquireManhuaTemplateLifecycleLock();
     manhuaTemplateLifecycleClock.now = () => realNow() + MANHUA_TEMPLATE_LOCK_TTL_MS + 1_000;
+    const release = await acquireManhuaTemplateLifecycleLock();
+    expect(typeof release).toBe("function");
+    await release();
+  });
+
+  it("🔴 上一版只有 createdAt 的遗留锁到期后也能被接管", async () => {
+    const now = realNow();
+    lockState.held = true;
+    lockState.body = Buffer.from(JSON.stringify({
+      token: "legacy-token",
+      createdAt: new Date(now - MANHUA_TEMPLATE_LOCK_TTL_MS - 1_000).toISOString(),
+    }));
+    manhuaTemplateLifecycleClock.now = () => now;
+
     const release = await acquireManhuaTemplateLifecycleLock();
     expect(typeof release).toBe("function");
     await release();

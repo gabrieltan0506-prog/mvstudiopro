@@ -105,11 +105,21 @@ export const MANHUA_TEMPLATE_LOCK_TTL_MS = 10 * 60 * 1000;
 /** 供测试注入；生产用真实时钟 */
 export const manhuaTemplateLifecycleClock = { now: () => Date.now() };
 
-/** 租约是否已过期（读不出 expiresAt 一律当**未过期**——宁可让用户重试，不误抢活锁） */
+/**
+ * 租约是否已过期。
+ *
+ * 兼容上一版只写 `createdAt`、没有 `expiresAt` 的锁对象：否则旧版本若在
+ * release 前中断，新版本上线后会把它永久当成活锁。完全无法识别时间的对象
+ * 仍按未过期处理，避免误抢未知锁。
+ */
 export function isLifecycleLeaseExpired(raw: unknown, nowMs: number): boolean {
   const lease = raw as Partial<LifecycleLease> | null;
-  const at = Date.parse(String(lease?.expiresAt || ""));
-  return Number.isFinite(at) && at <= nowMs;
+  const expiresAt = Date.parse(String(lease?.expiresAt || ""));
+  if (Number.isFinite(expiresAt)) return expiresAt <= nowMs;
+
+  const legacyCreatedAt = Date.parse(String(lease?.createdAt || ""));
+  return Number.isFinite(legacyCreatedAt)
+    && legacyCreatedAt + MANHUA_TEMPLATE_LOCK_TTL_MS <= nowMs;
 }
 
 export async function acquireManhuaTemplateLifecycleLock(): Promise<() => Promise<void>> {
