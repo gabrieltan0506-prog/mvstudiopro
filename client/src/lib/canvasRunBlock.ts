@@ -858,12 +858,21 @@ export function newWanSubmissionKey(blockId: string): string {
   return `wan30_${blockId.replace(/[^0-9a-zA-Z_-]/g, "").slice(0, 40)}_${rand}`;
 }
 
+/**
+ * 漫剧段成片的默认时长。
+ * 与引擎默认 `WAN30_DURATION.default`（5s）**故意不同**：段表口径是 4 段 × 30s。
+ * 收口成具名常量，免得下次有人看到两个数字就去"统一"掉其中一个。
+ */
+export const MANHUA_WAN_CLIP_DEFAULT_SEC = 30;
+
 /** Wan 请求体构建器:抽出为纯函数,让测试能断言真实 POST 载荷(三审 P0-1) */
 export function buildWan30RequestBody(input: {
   prompt: string;
   images: string[];
   aspectRatio: "9:16" | "16:9";
   audioUrls?: string[];
+  /** 参考视频：Wan 3.0 收 ≤5 段（各 1–15s，总 ≤15s）。UI 一直收集，此前没进请求体 */
+  videoUrls?: string[];
   duration?: number;
   resolution?: string;
   episodeIndex?: number;
@@ -876,8 +885,14 @@ export function buildWan30RequestBody(input: {
     imageUrl: input.images[0],
     imageUrls: input.images.slice(0, 10),
     audioUrls: (input.audioUrls || []).filter(Boolean).slice(0, 5),
+    videoUrls: (input.videoUrls || []).filter(Boolean).slice(0, 5),
     aspectRatio: input.aspectRatio,
-    duration: Math.min(30, Math.max(2, Math.floor(Number(input.duration) || 30))),
+    /**
+     * 兜底 30 秒是**漫剧段口径**（段表 4 段 × 30s），不是引擎默认。
+     * 引擎默认在 `WAN30_DURATION.default`（5 秒），供通用 Wan 节点用 ——
+     * 两个语义不同，不共用一个常量，也不互相"对齐"。
+     */
+    duration: Math.min(30, Math.max(2, Math.floor(Number(input.duration) || MANHUA_WAN_CLIP_DEFAULT_SEC))),
     resolution: input.resolution || "720p",
     generateAudio: true,
     ...(Number(input.episodeIndex) > 0 ? { episodeIndex: Number(input.episodeIndex) } : {}),
@@ -894,6 +909,8 @@ async function runWan30(
   aspectRatio: "9:16" | "16:9",
   opts?: {
     audioUrls?: string[];
+    /** 参考视频 ≤5 段（Wan 3.0 契约）；UI 早就在收，之前没送到请求里 */
+    videoUrls?: string[];
     duration?: number;
     resolution?: string;
     episodeIndex?: number;
@@ -924,6 +941,7 @@ async function runWan30(
           images,
           aspectRatio,
           audioUrls: opts?.audioUrls,
+          videoUrls: opts?.videoUrls,
           duration: opts?.duration,
           resolution: opts?.resolution,
           episodeIndex: opts?.episodeIndex,
@@ -1612,9 +1630,16 @@ export async function runCanvasBlock(
           .filter(Boolean)
           .join("\n")
           .trim();
+        // Wan 也收参考视频（≤5 段）——卡面「参考视频（最多 10）」此前只进 Seedance 那条，
+        // Wan 分支整份丢掉，等于 UI 宣称四模态而请求只有三模态。
+        const wanRefVideos = (block.seedance25RefVideoUrls || [])
+          .map((u) => String(u || "").trim())
+          .filter((u) => /^https?:\/\//i.test(u))
+          .slice(0, 5);
         url = await runWan30(wanPrompt, wanImages, ar, {
           audioUrls: seedanceAudioUrls,
-          duration: clipDurationRaw ?? 30,
+          videoUrls: wanRefVideos,
+          duration: clipDurationRaw ?? MANHUA_WAN_CLIP_DEFAULT_SEC,
           resolution: block.videoResolution,
           episodeIndex: block.episodeIndex,
           clipIndex: parseClipIndexFromBlockId(block.id),
