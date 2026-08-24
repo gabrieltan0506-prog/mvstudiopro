@@ -155,6 +155,7 @@ import {
 } from "@/lib/manhuaLearnResultUi";
 import { getManhuaLearnPipelineMeta } from "@shared/manhuaTemplateLearnPipeline";
 import { clampManhuaLearnBatchSize } from "@shared/manhuaTemplateLearnSeries";
+import { resolveManhuaNativeDeepReadGate } from "@/lib/manhuaNativeDeepReadGate";
 import type {
   ManhuaViralTemplateCard,
   ManhuaViralTemplateChangeReason,
@@ -2986,6 +2987,11 @@ export default function PlatformPage() {
     manhuaTemplateOwnerCapabilitiesQuery.data?.allowed === true;
   const ownerTemplateOptimizeModels =
     manhuaTemplateOwnerCapabilitiesQuery.data?.models || [];
+  const ownerNativeDeepReadPanel =
+    aiManhuaPlatformTab === "douyin" && ownerTemplateOptimizeAllowed;
+  const manhuaLearnPipelineMeta = getManhuaLearnPipelineMeta({
+    nativeDeepRead: ownerNativeDeepReadPanel,
+  });
   const previewNativeDeepReadPlanMutation =
     trpc.manhuaViralTemplate.previewNativeDeepReadPlan.useMutation();
 
@@ -5300,21 +5306,27 @@ export default function PlatformPage() {
         && !gcsUri
         && options?.refreshPreviewFrames !== true
         && options?.retrySkippedEpisodes !== true;
-      if (
-        nativePlanCandidate
-        && (manhuaTemplateOwnerCapabilitiesQuery.isLoading
-          || manhuaTemplateOwnerCapabilitiesQuery.isError)
-      ) {
+      const nativeGate = resolveManhuaNativeDeepReadGate({
+        candidate: nativePlanCandidate,
+        capabilityLoading: manhuaTemplateOwnerCapabilitiesQuery.isLoading,
+        capabilityError: manhuaTemplateOwnerCapabilitiesQuery.isError,
+        ownerAllowed: ownerTemplateOptimizeAllowed,
+      });
+      if (nativeGate === "blocked_unconfirmed") {
         toast.error("正在确认原生精读权限", {
           description: "权限状态未确认前不会回落旧学习链，请稍后再点一次。",
         });
         setManhuaLearnBusyKey(null);
         return;
       }
-      if (
-        ownerTemplateOptimizeAllowed
-        && nativePlanCandidate
-      ) {
+      if (nativeGate === "blocked_not_owner") {
+        toast.error("原生精读仅限站点拥有者", {
+          description: "本次未建立任务，也没有回落旧学习链。",
+        });
+        setManhuaLearnBusyKey(null);
+        return;
+      }
+      if (nativeGate === "ready") {
         setManhuaLearnBusyKey(busyKey);
         try {
           const plan = await previewNativeDeepReadPlanMutation.mutateAsync({
@@ -12248,8 +12260,9 @@ export default function PlatformPage() {
                             {rising?.note
                               || "与总览报表数据同源：抖音/快手采集中的合集与漫剧样本单独聚合。其它种草、口播样本仍在「总览」里。"}
                             {" "}
-                            学节奏：有成片/合集链时可一点学习；无链仅展示剧名与归类。按集顺序学习你设置的本轮集数（不落视频文件）。学
-                            1 集即可出草版总分析并入库（约 16 集更准）；结果立刻在本页展示，你看完再决定是否「批准进库」。
+                            {ownerNativeDeepReadPanel
+                              ? "学节奏：先按你设置的集数做零成本计划预览，确认集号、模型请求数与素材时长后才发车；模型直接读取视频，每集生成一张待审卡，你批准后才进入正式模板库。"
+                              : "学节奏：有成片/合集链时可一点学习；无链仅展示剧名与归类。按集顺序学习你设置的本轮集数，结果在本页展示，你看完再决定是否批准进库。"}
                           </p>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
@@ -12338,8 +12351,8 @@ export default function PlatformPage() {
                         <input
                           id="manhua-learn-batch-size"
                           type="number"
-                          min={getManhuaLearnPipelineMeta().batchMin}
-                          max={getManhuaLearnPipelineMeta().batchMax}
+                          min={manhuaLearnPipelineMeta.batchMin}
+                          max={manhuaLearnPipelineMeta.batchMax}
                           step={1}
                           value={manhuaLearnBatchSize}
                           disabled={Boolean(manhuaLearnBusyKey)}
@@ -12351,10 +12364,12 @@ export default function PlatformPage() {
                           className="w-20 rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] tabular-nums text-white disabled:opacity-45"
                         />
                         <span className="text-[10px] text-[#c9c0e6]/50">
-                          可选 {getManhuaLearnPipelineMeta().batchMin}–{getManhuaLearnPipelineMeta().batchMax} 集，默认 {getManhuaLearnPipelineMeta().batchDefault}；连续失败 8 集自动停止
+                          可选 {manhuaLearnPipelineMeta.batchMin}–{manhuaLearnPipelineMeta.batchMax} 集，默认 {manhuaLearnPipelineMeta.batchDefault}；连续失败 8 集自动停止
                         </span>
                         <span className="rounded-md border border-[#8cefff]/20 bg-black/25 px-2 py-1 text-[10px] font-semibold text-[#8cefff]">
-                          模型：{MANHUA_TEMPLATE_FRAME_VISION_LABEL}
+                          {ownerNativeDeepReadPanel
+                            ? "模式：原生视频精读"
+                            : `模型：${MANHUA_TEMPLATE_FRAME_VISION_LABEL}`}
                         </span>
                       </div>
 
@@ -12362,7 +12377,9 @@ export default function PlatformPage() {
                         <div className="mt-3 rounded-xl border border-white/10 bg-black/25 px-3 py-2.5">
                           <div className="text-[11px] font-semibold text-[#c9c0e6]/90">贴链接学节奏</div>
                           <p className="mt-0.5 text-[10px] text-[#c9c0e6]/45">
-                            {getManhuaLearnPipelineMeta().summaryZh}
+                            {manhuaTemplateOwnerCapabilitiesQuery.isLoading
+                              ? "正在确认原生精读权限…"
+                              : manhuaLearnPipelineMeta.summaryZh}
                           </p>
                           <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                             <input
@@ -12401,8 +12418,10 @@ export default function PlatformPage() {
                               className="shrink-0 rounded-lg border border-[#8cefff]/35 bg-[rgba(140,239,255,0.12)] px-3 py-1.5 text-[11px] font-semibold text-[#8cefff] disabled:opacity-45"
                             >
                               {manhuaLearnBusyKey === manhuaPasteUrl.trim()
-                                ? "学习中…"
-                                : `开始学 ${manhuaLearnBatchSize} 集`}
+                                ? "处理中…"
+                                : ownerNativeDeepReadPanel
+                                  ? `预演并精读 ${manhuaLearnBatchSize} 集`
+                                  : `开始学 ${manhuaLearnBatchSize} 集`}
                             </button>
                           </div>
                         </div>
@@ -12452,7 +12471,9 @@ export default function PlatformPage() {
                                       : "可续学";
                                 return (
                                   <option key={item.seriesKey} value={item.seriesKey}>
-                                    {title} · {status} · 已学 {item.result.learnedCount} · 待学 {pending}
+                                    {title} · {item.result.pipelineMode === "native_deep_read"
+                                      ? "原生精读"
+                                      : "旧抽帧"} · {status} · 已学 {item.result.learnedCount} · 待学 {pending}
                                   </option>
                                 );
                               })}
@@ -12578,6 +12599,9 @@ export default function PlatformPage() {
                                 : manhuaLearnResult.channel === "local"
                                   ? " · 本机"
                                   : ""}
+                              {manhuaLearnResult.pipelineMode === "native_deep_read"
+                                ? " · 原生精读"
+                                : " · 旧抽帧任务"}
                               {!manhuaLearnResult.errorZh && manhuaLearnResult.proposal?.nameZh
                                 ? ` · ${manhuaLearnResult.proposal.nameZh}`
                                 : ""}
@@ -12669,7 +12693,9 @@ export default function PlatformPage() {
                               title={manhuaLearnContinueControl.titleZh}
                               className="rounded-full border border-white/15 bg-black/25 px-2 py-0.5 transition enabled:cursor-pointer enabled:hover:border-sky-200/50 enabled:hover:bg-sky-400/15 enabled:hover:text-sky-50 disabled:cursor-default"
                             >
-                              {manhuaLearnContinueControl.labelZh}
+                              {ownerNativeDeepReadPanel
+                                ? `原生精读 · ${manhuaLearnContinueControl.labelZh}`
+                                : manhuaLearnContinueControl.labelZh}
                             </button>
                             {manhuaLearnResult.pipelineMode !== "native_deep_read"
                               && manhuaLearnResult.learnedCount > 0 ? (

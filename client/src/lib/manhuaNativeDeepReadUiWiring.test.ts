@@ -31,6 +31,23 @@ describe("原生精读页面接线", () => {
     expect(LEARN_FLOW).toContain("权限状态未确认前不会回落旧学习链");
   });
 
+  it("权限明确拒绝时也停止，不会静默建立旧任务", () => {
+    const deniedAt = LEARN_FLOW.indexOf('nativeGate === "blocked_not_owner"');
+    const previewAt = LEARN_FLOW.indexOf('nativeGate === "ready"');
+    const createAt = LEARN_FLOW.indexOf("createJob", previewAt);
+    expect(deniedAt).toBeGreaterThan(0);
+    expect(LEARN_FLOW).toContain("本次未建立任务，也没有回落旧学习链");
+    expect(previewAt).toBeGreaterThan(deniedAt);
+    expect(createAt).toBeGreaterThan(previewAt);
+  });
+
+  it("owner 面板使用原生精读说明与计划预演按钮", () => {
+    expect(PAGE).toContain("nativeDeepRead: ownerNativeDeepReadPanel");
+    expect(PAGE).toContain("模式：原生视频精读");
+    expect(PAGE).toContain("预演并精读 ${manhuaLearnBatchSize} 集");
+    expect(PAGE).toContain("旧抽帧任务");
+  });
+
   it("任务交给服务端列表恢复，页面展示原生模式与用量回执", () => {
     expect(LEARN_FLOW).toContain("await refreshManhuaLearnServerJobs()");
     expect(PAGE).toContain('manhuaLearnResult.pipelineMode === "native_deep_read"');
