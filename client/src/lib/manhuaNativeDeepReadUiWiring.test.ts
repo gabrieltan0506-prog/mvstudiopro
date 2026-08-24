@@ -43,9 +43,17 @@ describe("原生精读页面接线", () => {
 
   it("owner 面板使用原生精读说明与计划预演按钮", () => {
     expect(PAGE).toContain("nativeDeepRead: ownerNativeDeepReadPanel");
-    expect(PAGE).toContain("模式：原生视频精读");
+    expect(PAGE).toContain("MANHUA_NATIVE_DEEP_READ_MODEL_LABEL");
+    expect(PAGE).toContain("学习模型：正在确认…");
+    expect(PAGE).toContain("· 原生视频精读");
     expect(PAGE).toContain("预演并精读 ${manhuaLearnBatchSize} 集");
     expect(PAGE).toContain("旧抽帧任务");
+  });
+
+  it("原生精读徽标与发车确认都显示真实 Qwen 模型，不拿旧抽帧模型冒充", () => {
+    expect(PAGE).toContain("学习模型：${MANHUA_NATIVE_DEEP_READ_MODEL_LABEL}");
+    expect(LEARN_FLOW).toContain("学习模型：${MANHUA_NATIVE_DEEP_READ_MODEL_LABEL}");
+    expect(LEARN_FLOW).not.toContain("MANHUA_TEMPLATE_FRAME_VISION_LABEL");
   });
 
   it("任务交给服务端列表恢复，页面展示原生模式与用量回执", () => {

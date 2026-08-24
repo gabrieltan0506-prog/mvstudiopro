@@ -1,4 +1,7 @@
 /** 原生精读单任务墙钟与调用数契约；客户端、入队端和 worker 共用。 */
+export const MANHUA_NATIVE_DEEP_READ_MODEL = "qwen3.8-max" as const;
+export const MANHUA_NATIVE_DEEP_READ_MODEL_LABEL = "Qwen 3.8 Max" as const;
+
 export const NATIVE_DEEP_READ_JOB_PREP_MS = 10 * 60_000;
 export const NATIVE_DEEP_READ_JOB_PER_CALL_MS = 35 * 60_000;
 export const NATIVE_DEEP_READ_JOB_MAX_WALL_MS = 24 * 60 * 60_000;

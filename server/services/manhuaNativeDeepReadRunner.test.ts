@@ -15,6 +15,10 @@ import {
   validateNativeDeepReadSegments,
   waitNativeDeepReadRetry,
 } from "./manhuaNativeDeepReadRunner";
+import {
+  MANHUA_NATIVE_DEEP_READ_MODEL,
+  MANHUA_NATIVE_DEEP_READ_MODEL_LABEL,
+} from "../../shared/manhuaNativeDeepReadJob";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -74,6 +78,8 @@ describe("模型名收口", () => {
     expect(src).toContain("model: NATIVE_DEEP_READ_MODEL,");
     expect(src.match(/model: "qwen[^"]*"/g)).toBeNull();
     expect(NATIVE_DEEP_READ_MODEL).toBe("qwen3.8-max");
+    expect(NATIVE_DEEP_READ_MODEL).toBe(MANHUA_NATIVE_DEEP_READ_MODEL);
+    expect(MANHUA_NATIVE_DEEP_READ_MODEL_LABEL).toBe("Qwen 3.8 Max");
   });
 });
 

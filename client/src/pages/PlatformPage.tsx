@@ -100,7 +100,10 @@ import {
   type ManhuaLearnServerJob,
 } from "@/lib/jobs";
 import { isNativeVideoLearnedTemplate } from "@shared/manhuaViralTemplateBank";
-import { NATIVE_DEEP_READ_JOB_MAX_CALLS } from "@shared/manhuaNativeDeepReadJob";
+import {
+  MANHUA_NATIVE_DEEP_READ_MODEL_LABEL,
+  NATIVE_DEEP_READ_JOB_MAX_CALLS,
+} from "@shared/manhuaNativeDeepReadJob";
 import { formatManhuaTemplateNativeBeatZh } from "@/lib/manhuaTemplateNativeBeat";
 import { trpc } from "@/lib/trpc";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
@@ -5364,7 +5367,7 @@ export default function PlatformPage() {
             ? `\n未知付费状态：第 ${plan.unknownAccessEpisodeIndexes.join("、")} 集起不纳入本次计划。`
             : "";
           const approved = window.confirm(
-            `原生精读发车确认\n\n剧名：${plan.dramaNameZh || "未命名合集"}\n本次新增：${plan.executableEpisodeCount} 集（第 ${plan.episodes.map((e) => e.episodeIndex).join("、")} 集）\n模型请求：${plan.totalSegments} 次\n素材总时长：${Math.round(plan.totalDurationSec / 60)} 分钟\n已入库：${plan.alreadyIngestedEpisodeIndexes.length} 集\n确认码：${plan.planHash}${unknownHint}\n\n确认后才会建立付费学习任务，是否继续？`,
+            `原生精读发车确认\n\n剧名：${plan.dramaNameZh || "未命名合集"}\n学习模型：${MANHUA_NATIVE_DEEP_READ_MODEL_LABEL}\n本次新增：${plan.executableEpisodeCount} 集（第 ${plan.episodes.map((e) => e.episodeIndex).join("、")} 集）\n模型请求：${plan.totalSegments} 次\n素材总时长：${Math.round(plan.totalDurationSec / 60)} 分钟\n已入库：${plan.alreadyIngestedEpisodeIndexes.length} 集\n确认码：${plan.planHash}${unknownHint}\n\n确认后才会建立付费学习任务，是否继续？`,
           );
           if (!approved) {
             setManhuaLearnBusyKey(null);
@@ -12367,9 +12370,11 @@ export default function PlatformPage() {
                           可选 {manhuaLearnPipelineMeta.batchMin}–{manhuaLearnPipelineMeta.batchMax} 集，默认 {manhuaLearnPipelineMeta.batchDefault}；连续失败 8 集自动停止
                         </span>
                         <span className="rounded-md border border-[#8cefff]/20 bg-black/25 px-2 py-1 text-[10px] font-semibold text-[#8cefff]">
-                          {ownerNativeDeepReadPanel
-                            ? "模式：原生视频精读"
-                            : `模型：${MANHUA_TEMPLATE_FRAME_VISION_LABEL}`}
+                          {manhuaTemplateOwnerCapabilitiesQuery.isLoading
+                            ? "学习模型：正在确认…"
+                            : ownerNativeDeepReadPanel
+                              ? `学习模型：${MANHUA_NATIVE_DEEP_READ_MODEL_LABEL} · 原生视频精读`
+                              : `模型：${MANHUA_TEMPLATE_FRAME_VISION_LABEL}`}
                         </span>
                       </div>
 
