@@ -126,16 +126,38 @@ describe("请求体", () => {
     expect(() => buildBailianTtsBody({ text: "  ", voice: "longcanzhuyue" })).toThrow("文本");
   });
 
-  it("seed 传得下去 —— 上一版路由收了却被静默丢弃", () => {
+  it("seed 在 input 里，不是顶层 parameters —— 那是另一种接口的位置，不能类推", () => {
     const b = buildBailianTtsBody({ text: "台词", voice: "longcanzhuyue", seed: 42 }) as {
-      parameters?: { seed?: number };
+      input: Record<string, unknown>;
+      parameters?: unknown;
     };
-    expect(b.parameters?.seed).toBe(42);
+    expect(b.input.seed).toBe(42);
+    expect("parameters" in b).toBe(false);
   });
 
-  it("没给 seed 就不带 parameters，不塞空字段", () => {
-    expect("parameters" in buildBailianTtsBody({ text: "台词", voice: "longcanzhuyue" })).toBe(
-      false,
-    );
+  it("seed 范围 0–65535，越界与非整数全拒", () => {
+    for (const seed of [-1, 65536, 20.5]) {
+      expect(() => buildBailianTtsBody({ text: "台词", voice: "longcanzhuyue", seed })).toThrow(
+        "0–65535",
+      );
+    }
+  });
+
+  it("没给 seed 就不塞空字段", () => {
+    const b = buildBailianTtsBody({ text: "台词", voice: "longcanzhuyue" }) as {
+      input: Record<string, unknown>;
+    };
+    expect("seed" in b.input).toBe(false);
+  });
+
+  it("instruction 与 seed 可以同时存在", () => {
+    const b = buildBailianTtsBody({
+      text: "台词",
+      voice: "longcanzhuyue",
+      instructionZh: "压低声音",
+      seed: 7,
+    }) as { input: Record<string, unknown> };
+    expect(b.input.instruction).toBe("压低声音");
+    expect(b.input.seed).toBe(7);
   });
 });

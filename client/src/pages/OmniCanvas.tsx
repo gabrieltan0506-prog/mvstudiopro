@@ -9368,7 +9368,13 @@ export default function OmniCanvas() {
               />
               {/* 后期工坊(蓝图二):三件套已上线,卡内只挂真实工序;按用户挂载防串单 */}
               {user?.id ? (
-                <PostProdWorkshopCard key={String(user.id)} blocks={blocks} userId={String(user.id)} />
+                <PostProdWorkshopCard
+                  key={String(user.id)}
+                  blocks={blocks}
+                  userId={String(user.id)}
+                  /* manhuaGenerateBgm 是 adminProcedure：非管理员不渲染配乐卡 */
+                  canGenerateBgm={user?.role === "admin" || user?.role === "supervisor"}
+                />
               ) : null}
             </div>
             </div>

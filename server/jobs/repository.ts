@@ -635,6 +635,37 @@ export async function listPostProdJobsForUser(
 }
 
 /** 独立通道任务类型:主队列不领取,各自专用领取函数串行消化 */
+/**
+ * 本人的配乐任务列表。
+ *
+ * **服务端才是任务的主来源**：localStorage 会因换账号、清缓存、写入失败而丢，
+ * 丢了用户就会再点一次 = 再付一次。running/queued 排前面，供页面挂载时恢复。
+ */
+export async function listManhuaBgmJobsForUser(
+  userId: string,
+  limit = 10,
+): Promise<NormalizedJob[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select()
+    .from(jobs)
+    .where(
+      and(
+        eq(jobs.userId, userId),
+        eq(jobs.type, "audio"),
+        sql`(${jobs.input}::jsonb->>'action') = 'manhua_bgm_v55'`,
+      ),
+    )
+    .orderBy(
+      // 未完成的排最前：那是唯一会造成重复付费的一档
+      sql`case when ${jobs.status} in ('running','queued') then 0 else 1 end`,
+      desc(jobs.updatedAt),
+    )
+    .limit(Math.max(1, Math.min(30, Math.floor(limit) || 10)));
+  return rows.map((r) => normalizeJob(r));
+}
+
 export const MAIN_QUEUE_EXCLUDED_TYPES = ["pdf_export", "post_prod"] as const;
 
 /** 专用 post_prod 队列:后期 ffmpeg 耗时长,单并发消化,不挤占普通媒体任务 */

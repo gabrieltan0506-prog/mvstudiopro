@@ -37,12 +37,32 @@ describe("配乐间接线契约", () => {
     expect(CARD).toContain("readPendingManhuaBgmJob(window.localStorage");
   });
 
+  it("轮询必须用 getManhuaBgmJob —— getPostProdJob 要求 type=post_prod，BGM 是 audio，查必然 404", () => {
+    expect(CARD).toContain("utils.mvAnalysis.getManhuaBgmJob.fetch");
+    expect(CARD).not.toContain("getPostProdJob.fetch({ jobId: scorePending");
+  });
+
+  it("挂载时先问服务端要任务 —— localStorage 只是缓存", () => {
+    expect(CARD).toContain("utils.mvAnalysis.listManhuaBgmJobs.fetch");
+    expect(CARD).toContain("restoreManhuaBgmFromServer(rows)");
+  });
+
+  it("localStorage 按 userId 分键，换账号不串任务", () => {
+    expect(CARD).toContain("window.localStorage, Date.now(), userId");
+    expect(CARD).toContain("window.localStorage, pending, userId");
+  });
+
+  it("无权限不渲染配乐卡，也不发起列表请求", () => {
+    expect(CARD).toContain("canGenerateBgm ? (");
+    expect(CARD).toContain("if (!canGenerateBgm) return;");
+  });
+
   it("轮询有防重叠标记", () => {
     expect(CARD).toContain("scorePollRef.current");
   });
 
   it("查不到任务时不清状态 —— 清了就会重复付费", () => {
-    const at = CARD.indexOf("getPostProdJob.fetch({ jobId: scorePending.jobId })");
+    const at = CARD.indexOf("getManhuaBgmJob.fetch({ jobId: scorePending.jobId })");
     expect(at).toBeGreaterThan(0);
     expect(CARD.slice(at, at + 200)).toContain("!res");
   });

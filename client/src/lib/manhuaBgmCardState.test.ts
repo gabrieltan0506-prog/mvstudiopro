@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  MANHUA_BGM_JOB_STORAGE_KEY,
   MANHUA_BGM_PENDING_TTL_MS,
   canSubmitManhuaBgm,
+  manhuaBgmJobStorageKey,
   readManhuaBgmVariants,
   readPendingManhuaBgmJob,
+  restoreManhuaBgmFromServer,
 } from "./manhuaBgmCardState";
 
 const job = {
@@ -15,26 +16,28 @@ const job = {
   createdAtMs: 1000,
 };
 const store = (v: string | null) => ({ getItem: () => v });
+const UID = "42";
 
 describe("刷新后恢复未完成任务", () => {
   it("读得回 jobId —— 恢复不了用户只会再点一次，那就是再付一次", () => {
-    expect(readPendingManhuaBgmJob(store(JSON.stringify(job)), 2000)?.jobId).toBe(job.jobId);
+    expect(readPendingManhuaBgmJob(store(JSON.stringify(job)), 2000, UID)?.jobId).toBe(job.jobId);
   });
 
   it("超过 TTL 当过期，让用户重新起草", () => {
     expect(
-      readPendingManhuaBgmJob(store(JSON.stringify(job)), 1000 + MANHUA_BGM_PENDING_TTL_MS + 1),
+      readPendingManhuaBgmJob(store(JSON.stringify(job)), 1000 + MANHUA_BGM_PENDING_TTL_MS + 1, UID),
     ).toBeNull();
   });
 
   it("坏数据不抛，返回 null", () => {
-    expect(readPendingManhuaBgmJob(store("not json"), 2000)).toBeNull();
-    expect(readPendingManhuaBgmJob(store(null), 2000)).toBeNull();
-    expect(readPendingManhuaBgmJob(store(JSON.stringify({ jobId: "x" })), 2000)).toBeNull();
+    expect(readPendingManhuaBgmJob(store("not json"), 2000, UID)).toBeNull();
+    expect(readPendingManhuaBgmJob(store(null), 2000, UID)).toBeNull();
+    expect(readPendingManhuaBgmJob(store(JSON.stringify({ jobId: "x" })), 2000, UID)).toBeNull();
   });
 
-  it("存储键固定，换了名字旧任务就找不回来", () => {
-    expect(MANHUA_BGM_JOB_STORAGE_KEY).toBe("mv-manhua-bgm-job-v1");
+  it("存储键按 userId 分 —— 不分键换账号会读到别人的任务，用户以为没跑成就再点一次", () => {
+    expect(manhuaBgmJobStorageKey("42")).toBe("mv-manhua-bgm-job-v1:42");
+    expect(manhuaBgmJobStorageKey("7")).not.toBe(manhuaBgmJobStorageKey("42"));
   });
 });
 
@@ -83,5 +86,34 @@ describe("变体读取", () => {
   it("形状不对当没有，不硬凑", () => {
     expect(readManhuaBgmVariants(null)).toEqual([]);
     expect(readManhuaBgmVariants({ variants: "nope" })).toEqual([]);
+  });
+});
+
+describe("以服务端为任务主来源", () => {
+  it("有未完成任务就恢复成 pending，继续轮询", () => {
+    const r = restoreManhuaBgmFromServer([
+      { jobId: "bgm_abc", status: "running", output: null },
+    ]);
+    expect(r.pending?.jobId).toBe("bgm_abc");
+  });
+
+  it("最近一条成功的变体也恢复 —— 用户还没选就刷新时不至于全丢", () => {
+    const r = restoreManhuaBgmFromServer([
+      { jobId: "bgm_x", status: "succeeded", output: { variants: [{ gcsUri: "gs://b/a.mp3" }] } },
+    ]);
+    expect(r.pending).toBeNull();
+    expect(r.variants).toHaveLength(1);
+  });
+
+  it("未完成的优先于已完成的", () => {
+    const r = restoreManhuaBgmFromServer([
+      { jobId: "bgm_run", status: "queued", output: null },
+      { jobId: "bgm_ok", status: "succeeded", output: { variants: [{ gcsUri: "gs://b/a.mp3" }] } },
+    ]);
+    expect(r.pending?.jobId).toBe("bgm_run");
+  });
+
+  it("空列表给干净状态", () => {
+    expect(restoreManhuaBgmFromServer([])).toEqual({ pending: null, variants: [] });
   });
 });

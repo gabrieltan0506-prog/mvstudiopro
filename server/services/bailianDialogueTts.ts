@@ -1,6 +1,15 @@
 /**
  * 对白配音 · 百炼直连（新加坡套餐优先 → 北京套餐 fallback）。
  *
+ * ⚠️ **本模块目前是后台准备层，没有客户端入口。**
+ * `manhuaDialogueTtsPreview` 路由存在，但 client/ 里没有调用者；
+ * `assertDialogueAudioAccepted` 同样只有定义、无生产调用点 ——
+ * 因为对白音频真正的消费端是「进 reference_audios」，
+ * 而那条链路要等配音卡做出来才存在。
+ *
+ * 硬接一个假的消费端只会造出另一个壳。配音卡另开 PR，
+ * 届时 assertDialogueAudioAccepted 必须接在组装 reference_audios 之前。
+ *
  * 与既有的 `qwenDialogueTts.ts`（走 OpenRouter）并存而非替换：
  * OpenRouter 那条只收五个标准字段，**情绪靠内联方括号标签**；
  * 百炼直连能用 `input.instruction` 中文指令，且吃套餐额度不扣充值余额。
@@ -123,20 +132,19 @@ export function buildBailianTtsBody(req: BailianTtsRequest): Record<string, unkn
   assertNoBracketEmotionTags(text);
   const instruction = String(req.instructionZh || "").trim();
   if (instruction) assertNoBracketEmotionTags(instruction);
+  if (req.seed != null && (!Number.isInteger(req.seed) || req.seed < 0 || req.seed > 65535)) {
+    throw new Error("seed 必须是 0–65535 的整数");
+  }
   return {
     model: BAILIAN_TTS_MODEL,
     input: {
       text,
       voice: normalizeBailianTtsVoice(req.voice),
       ...(instruction ? { instruction } : {}),
+      // seed 是该端点 input 的属性（0–65535），不是顶层 parameters。
+      // 上一版类推自原生精读的 parameters —— 那是另一种接口，不能套用。
+      ...(Number.isInteger(req.seed) ? { seed: req.seed } : {}),
     },
-    /**
-     * ⚠️ seed 放在顶层 parameters —— **该端点未验证过 seed 的位置**。
-     * 依据是仓库里已跑通的另一个百炼调用（原生精读 runner）用的就是顶层
-     * parameters；知识库对 TTS 端点只记了 `{model, input:{text, voice}}`。
-     * 审阅建议放 input.seed，但未给依据，暂不改 —— 真跑一次再定。
-     */
-    ...(Number.isInteger(req.seed) ? { parameters: { seed: req.seed } } : {}),
   };
 }
 

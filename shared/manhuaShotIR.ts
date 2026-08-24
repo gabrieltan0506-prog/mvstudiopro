@@ -68,7 +68,12 @@ export type CompilerEngineId =
   | "wan-3.0"
   | typeof CANVAS_VIDEO_MODEL_HAILUO_H3;
 
-export type ReadyCompilerEngineId = Exclude<CompilerEngineId, "wan-3.0">;
+/**
+ * 0824 起 wan-3.0 也 ready，故不再排除任何引擎。
+ * 保留这个别名是为了让「哪些引擎能编译」仍有一个明确的类型出口——
+ * 以后再有 reserved 引擎，只需在这里 Exclude。
+ */
+export type ReadyCompilerEngineId = CompilerEngineId;
 
 export type CompilerDialect = "seedance" | "h3" | "wan";
 export type CompilerSupportStatus = "ready" | "reserved";
@@ -173,9 +178,16 @@ export const COMPILER_ENGINE_LIMITS = {
       audio: WAN30_REFERENCE_MAX.audio,
     },
     dialect: "wan",
-    status: "reserved",
-    noteZh:
-      "Wan 3.0 独立提示词方言与参考职责适配器已预留,公开使用方式稳定前不提交编译结果",
+    /**
+     * 0824 上线转 ready。方言层已接线（编号化引用 ＋ 剥 Seedance 四标记）——
+     * 只翻 status 不接方言，提示词会掉进「方言尚未接线」的 throw。
+     *
+     * 官方口径（百炼控制台 · 华北2 北京）：
+     *   模型 Code  wan3.0-video   ← 与本仓内部 id "wan-3.0" 不同名，适配器需映射
+     *   能力      all-in-one：参考/编辑/复刻/驱动，四模态全能参考
+     *   时长      最长 30 秒 · RPM 300
+     */
+    status: "ready",
   },
 } satisfies Record<CompilerEngineId, CompilerEngineProfile>;
 
@@ -206,7 +218,8 @@ export function assertCompilerEngineReady(
 ): asserts engine is ReadyCompilerEngineId {
   const profile = COMPILER_ENGINE_LIMITS[engine];
   if (profile.status !== "ready") {
-    throw new Error(profile.noteZh || `${engine} 的提示词方言尚未接线`);
+    const noteZh = (profile as { noteZh?: string }).noteZh;
+    throw new Error(noteZh || `${engine} 的提示词方言尚未接线`);
   }
 }
 

@@ -50,6 +50,23 @@ export function normalizeH3ReferenceMarkers(text: string): string {
     .replace(/@(?:音频|声音)(\d+)/g, "Audio $1");
 }
 
+/**
+ * Wan 3.0 引用编号化。
+ *
+ * 实测口径（`2026Aug18/Wan3.0与Seedance2.5调用规范-勘误存档版.md`）：
+ * 提示词里按「图片1 / 音频1」编号引用，编号＝数组顺序；
+ * 阿里原生侧写成 `Image 1` / `Video 1`，按 `input.media` 内**同类型素材**顺序计。
+ *
+ * 与 H3 同为编号化，但**独立成函数**：两边的上游规则来源不同，
+ * 合用一个函数等于把两条规则绑死，其中一边改了另一边会被顺带改掉。
+ */
+export function normalizeWanReferenceMarkers(text: string): string {
+  return text
+    .replace(/@(?:图|图片)(\d+)/g, "Image $1")
+    .replace(/@(?:视频|影片)(\d+)/g, "Video $1")
+    .replace(/@(?:音频|声音)(\d+)/g, "Audio $1");
+}
+
 /** 避审替换(逐条查表;新词只进表不散写) */
 export function applyCensorReplacements(text: string): { text: string; replaced: string[] } {
   let out = text;
@@ -113,6 +130,17 @@ export function formatPromptForEngine(
   text = normalizeImageRefs(text);
   if (limits.dialect === "seedance") {
     text = normalizeDialogueMarkers(text);
+  } else if (limits.dialect === "wan") {
+    /**
+     * Wan 3.0：编号化引用，**不吃 Seedance 的四标记**。
+     * `{}` `<>` 是 Seedance 方言，写进别的引擎会被当正文念出来
+     * （Minimax H3 已有前车之鉴），所以这里一并剥掉：
+     * 对白转引号、音效与画外标注转正文。
+     */
+    text = normalizeWanReferenceMarkers(text);
+    text = text.replace(/\{([^{}]{1,80})\}/g, "“$1”");
+    text = text.replace(/[<＜]([^<>＜＞]{1,80})[>＞]/g, "$1");
+    text = text.replace(/【([^【】]{1,80})】/g, "$1");
   } else if (limits.dialect === "h3") {
     // H3 自然语言方向:三类参考编号化,剥四标记与括号
     text = normalizeH3ReferenceMarkers(text);

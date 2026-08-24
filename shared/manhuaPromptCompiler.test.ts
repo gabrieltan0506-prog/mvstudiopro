@@ -165,18 +165,31 @@ describe("TTS 起止秒位", () => {
   });
 });
 
-describe("Wan 3.0 预留边界(三入口完整封闭)", () => {
-  it("别名归一/非 ready/编译明确拒绝,不产伪提示词", () => {
+describe("Wan 3.0 已上线(三入口完整放行)", () => {
+  it("别名归一，且不再被判为非 ready", () => {
     expect(normalizeCompilerEngineId("wan30")).toBe("wan-3.0");
     expect(normalizeCompilerEngineId("minimax-h3")).toBe("minimax-hailuo-3");
-    expect(isReadyCompilerEngineId("wan-3.0")).toBe(false);
-    expect(() => compileEpisode(IR, "wan-3.0")).toThrow(/预留|尚未接线/);
+    // 0824 转 ready：方言层已接线，不再是 reserved
+    expect(isReadyCompilerEngineId("wan-3.0")).toBe(true);
   });
 
-  it("compileSegmentPrompt 与 formatPromptForEngine 同样拒绝 reserved 引擎", () => {
-    const seg = packShotsIntoSegments([shot(1, 5)], 15)[0];
-    expect(() => compileSegmentPrompt(seg, "wan-3.0")).toThrow(/预留|尚未接线/);
-    expect(() => formatPromptForEngine("@图1 人物特写", "wan-3.0")).toThrow(/预留|尚未接线/);
+  it("三入口都能编译，且走 wan 方言（编号化引用 + 剥 Seedance 四标记）", () => {
+    const out = compileEpisode(IR, "wan-3.0");
+    expect(out.segments.length).toBeGreaterThan(0);
+
+    const seg = packShotsIntoSegments([shot(1, 5)], 15)[0]!;
+    expect(() => compileSegmentPrompt(seg, "wan-3.0")).not.toThrow();
+
+    const fmt = formatPromptForEngine("@图1 人物特写，{我来了}", "wan-3.0");
+    expect(fmt.text).toContain("Image 1");
+    // {} 是 Seedance 方言，留着会被当正文念出来
+    expect(fmt.text).toContain("“我来了”");
+    expect(fmt.text).not.toContain("{");
+  });
+
+  it("单段上限 30s，与官方一致", () => {
+    const long = packShotsIntoSegments([shot(1, 15), shot(2, 15)], 30)[0]!;
+    expect(() => compileSegmentPrompt(long, "wan-3.0")).not.toThrow();
   });
 });
 

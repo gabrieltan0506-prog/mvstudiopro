@@ -18,8 +18,11 @@ export const WAN30_RESOLUTIONS = ["480p", "720p", "1080p"] as const;
 export type Wan30Resolution = (typeof WAN30_RESOLUTIONS)[number];
 export const WAN30_DEFAULT_RESOLUTION: Wan30Resolution = "720p";
 
-/** 公测备注：下拉与卡面都要带,不许让用户蒙在鼓里干等 */
-export const WAN30_BETA_NOTE = "公测 · 直出30s · 排队时间较长";
+/**
+ * 卡面备注：下拉与卡面都要带,不许让用户蒙在鼓里干等。
+ * 0824 万相 3.0 正式上线（百炼 · 华北2），去掉「公测/排队长」的说法。
+ */
+export const WAN30_BETA_NOTE = "四模态参考 · 直出30s";
 
 export function clampWan30Duration(raw?: unknown): number {
   const n = Math.floor(Number(raw));

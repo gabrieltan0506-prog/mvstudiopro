@@ -1517,11 +1517,25 @@ async function processManhuaBgmJob(
     // 先落库再轮询，且**必须严格落库**：宽松版会把 DB 异常吞掉，
     // 号没存住却继续轮询，重启后查不到这张单，只能重建再付一次。
     // 写不进去就抛 —— 不继续轮询，也不自动重新提交上游。
-    await patchJobRunningProgressStrict(jobId, {
-      upstreamTaskId,
-      startedAtMs,
-      bgmStage: "upstream_created",
-    });
+    try {
+      await patchJobRunningProgressStrict(jobId, {
+        upstreamTaskId,
+        startedAtMs,
+        bgmStage: "upstream_created",
+      });
+    } catch (e) {
+      // 号已经在上游存在了，写不进库就必须让人**知道核对哪一张**，
+      // 否则任务标成「待核对」而无人知道核对什么
+      throw new Error(
+        [
+          "bgm_upstream_receipt_persistence_failed",
+          `jobId=${jobId}`,
+          `upstreamTaskId=${upstreamTaskId}`,
+          `billingRequestId=${parsed.params.billingRequestId}`,
+          e instanceof Error ? e.message : String(e),
+        ].join(":"),
+      );
+    }
   } else {
     console.warn(`[manhuaBgm] job ${jobId} 恢复既有任务 ${upstreamTaskId}，不重新建单`);
   }

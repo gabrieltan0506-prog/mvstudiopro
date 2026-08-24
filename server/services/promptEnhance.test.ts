@@ -22,12 +22,14 @@ describe("enhancePromptForEngine", () => {
     expect(r.gateway).toBe("bailian");
   });
 
-  it("reserved 引擎直接调用:服务层自拒,模型 0 次", async () => {
-    const before = invoke.mock.calls.length;
-    await expect(
-      enhancePromptForEngine({ prompt: "写打斗", engine: "wan-3.0" }),
-    ).rejects.toThrow(/预留|尚未接线/);
-    expect(invoke.mock.calls.length).toBe(before);
+  it("wan-3.0 已上线：不再被服务层自拒，走 wan 方言正常增强", async () => {
+    // 0824 前 wan-3.0 是 reserved，服务层直接拒。现在方言已接线，转 ready。
+    invoke.mockResolvedValueOnce(ok("@图1 推近，{我来了}"));
+    const r = await enhancePromptForEngine({ prompt: "写打斗", engine: "wan-3.0" });
+    // wan 方言：引用编号化 + 剥 Seedance 四标记（留着会被当正文念出来）
+    expect(r.enhancedPrompt).toContain("Image 1");
+    expect(r.enhancedPrompt).toContain("“我来了”");
+    expect(r.enhancedPrompt).not.toContain("{");
   });
 
   it("增强结果含阻止级问题(prompt_length):抛错不返回成功", async () => {

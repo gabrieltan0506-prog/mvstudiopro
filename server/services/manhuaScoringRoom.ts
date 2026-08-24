@@ -17,7 +17,67 @@ import {
   getEvolinkSunoTask,
   pickEvolinkSunoAudioUrls,
 } from "./evolinkSunoMusic.js";
+import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import nodePath from "node:path";
+import { promisify } from "node:util";
 import { signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs.js";
+
+const execFileAsync = promisify(execFile);
+
+/** 单条变体上限；超了说明上游给错了东西 */
+export const MAX_BGM_VARIANT_BYTES = 64 * 1024 * 1024;
+
+/** 流式累计字节：不先整体 arrayBuffer 再检查——那时内存已经吃进去了 */
+export async function readBgmAudioWithLimit(
+  response: Response,
+  maxBytes = MAX_BGM_VARIANT_BYTES,
+): Promise<Buffer> {
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    throw new Error("配乐文件超过处理上限");
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("配乐下载缺少响应流");
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      throw new Error("配乐文件超过处理上限");
+    }
+    chunks.push(Buffer.from(value));
+  }
+  if (!total) throw new Error("配乐文件为空");
+  return Buffer.concat(chunks);
+}
+
+/**
+ * 用 ffprobe 确认真有音轨。
+ *
+ * **不能只信 URL 或 Content-Type**：上游给错东西、CDN 返回错误页
+ * 都会带着看起来正常的头。落进曲库的必须是真音频。
+ */
+export async function assertBgmAudioPlayable(buf: Buffer, abortSignal?: AbortSignal): Promise<void> {
+  const dir = await mkdtemp(nodePath.join(tmpdir(), "mvbgm-"));
+  const file = nodePath.join(dir, "v.mp3");
+  try {
+    await writeFile(file, buf);
+    const { stdout } = await execFileAsync(
+      "ffprobe",
+      ["-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "csv=p=0", file],
+      { timeout: 60_000, signal: abortSignal },
+    );
+    if (!String(stdout).includes("audio")) throw new Error("配乐文件里没有音轨");
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
 import { postProdOutputPrefix } from "./postProdMediaSource.js";
 
 export type ScoringRoomRequest = {
@@ -162,8 +222,9 @@ export async function resumeManhuaBgmTask(input: {
   for (let i = 0; i < urls.length; i += 1) {
     const got = await fetch(urls[i]!, { signal: input.abortSignal });
     if (!got.ok) throw new Error(`取回配乐变体 ${i} 失败 HTTP ${got.status}`);
-    const audio = Buffer.from(await got.arrayBuffer());
-    if (!audio.length) throw new Error(`配乐变体 ${i} 为空`);
+    const audio = await readBgmAudioWithLimit(got);
+    // 落进曲库的必须是真音频，不能只信 URL 或 Content-Type
+    await assertBgmAudioPlayable(audio, input.abortSignal);
     const { gcsUri } = await uploadBufferToGcs({
       objectName: scoringBgmObjectName(userId, input.taskId, i),
       buffer: audio,

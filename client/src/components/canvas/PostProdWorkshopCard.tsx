@@ -14,6 +14,7 @@ import {
   clearPendingManhuaBgmJob,
   readManhuaBgmVariants,
   readPendingManhuaBgmJob,
+  restoreManhuaBgmFromServer,
   writePendingManhuaBgmJob,
   type ManhuaBgmPendingJob,
   type ManhuaBgmVariant,
@@ -37,6 +38,11 @@ const AUDIO_EXT_RE = /\.(mp3|wav|m4a|aac|flac|ogg)(\?|$)/i;
 type PostProdWorkshopCardProps = {
   blocks: CanvasBlock[];
   userId: string;
+  /**
+   * 能不能用配乐（manhuaGenerateBgm 是 adminProcedure）。
+   * 给不能用的人看一个必然 FORBIDDEN 的「会花钱」按钮，是最糟的一种界面。
+   */
+  canGenerateBgm?: boolean;
 };
 
 function statusBadge(status: PostProdJobStatus): { text: string; cls: string } {
@@ -50,7 +56,7 @@ function statusBadge(status: PostProdJobStatus): { text: string; cls: string } {
   }
 }
 
-export default function PostProdWorkshopCard({ blocks, userId }: PostProdWorkshopCardProps) {
+export default function PostProdWorkshopCard({ blocks, userId, canGenerateBgm = false }: PostProdWorkshopCardProps) {
   const queueMutation = trpc.mvAnalysis.queuePostProd.useMutation();
   const generateBgmMutation = trpc.mvAnalysis.manhuaGenerateBgm.useMutation();
   const utils = trpc.useUtils();
@@ -102,7 +108,9 @@ export default function PostProdWorkshopCard({ blocks, userId }: PostProdWorksho
     duration: number;
   } | null>(null);
   const [scorePending, setScorePending] = useState<ManhuaBgmPendingJob | null>(() =>
-    typeof window === "undefined" ? null : readPendingManhuaBgmJob(window.localStorage, Date.now()),
+    typeof window === "undefined"
+      ? null
+      : readPendingManhuaBgmJob(window.localStorage, Date.now(), userId),
   );
   const [scoreVariants, setScoreVariants] = useState<ManhuaBgmVariant[]>([]);
   const scorePollRef = useRef(false);
@@ -337,14 +345,38 @@ export default function PostProdWorkshopCard({ blocks, userId }: PostProdWorksho
         createdAtMs: Date.now(),
       };
       setScorePending(pending);
-      writePendingManhuaBgmJob(window.localStorage, pending);
+      writePendingManhuaBgmJob(window.localStorage, pending, userId);
       toast.message("配乐任务已提交", { description: "生成约 2 分钟，可离开本页" });
     } catch (e) {
       toast.error(`配乐提交失败：${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
-  /** 轮询未完成的配乐任务；pollingRef 防重叠，刷新后靠 localStorage 找回 */
+  /**
+   * 挂载时先问**服务端**要任务：localStorage 会因换账号、清缓存、写入失败而丢，
+   * 丢了用户就会再点一次 = 再付一次。成功任务的变体也一并恢复，
+   * 用户还没选变体就刷新时不至于全丢。
+   */
+  useEffect(() => {
+    if (!canGenerateBgm) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const rows = await utils.mvAnalysis.listManhuaBgmJobs.fetch({ limit: 10 });
+        if (!alive || !rows) return;
+        const restored = restoreManhuaBgmFromServer(rows);
+        if (restored.pending) setScorePending(restored.pending);
+        if (restored.variants.length) setScoreVariants(restored.variants);
+      } catch {
+        // 拿不到列表不清状态：清了就等于让用户重来一遍
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [utils, canGenerateBgm]);
+
+  /** 轮询未完成的配乐任务；pollingRef 防重叠 */
   useEffect(() => {
     if (!scorePending) return;
     let alive = true;
@@ -352,17 +384,17 @@ export default function PostProdWorkshopCard({ blocks, userId }: PostProdWorksho
       if (scorePollRef.current) return;
       scorePollRef.current = true;
       try {
-        const res = await utils.mvAnalysis.getPostProdJob.fetch({ jobId: scorePending.jobId });
+        const res = await utils.mvAnalysis.getManhuaBgmJob.fetch({ jobId: scorePending.jobId });
         // 查不到就当还在跑：清了状态用户会再点一次 = 再付一次
         if (!alive || !res) return;
         if (res.status === "succeeded") {
           setScoreVariants(readManhuaBgmVariants(res.output));
           setScorePending(null);
-          clearPendingManhuaBgmJob(window.localStorage);
+          clearPendingManhuaBgmJob(window.localStorage, userId);
           toast.success("配乐已生成，选一条贴装");
         } else if (res.status === "failed") {
           setScorePending(null);
-          clearPendingManhuaBgmJob(window.localStorage);
+          clearPendingManhuaBgmJob(window.localStorage, userId);
           toast.error(`配乐失败：${String(res.error || "").slice(0, 120)}`);
         }
       } catch {
@@ -536,7 +568,9 @@ export default function PostProdWorkshopCard({ blocks, userId }: PostProdWorksho
           </div>
         </div>
 
-        {/* 配乐间：起草免费 → 用户改 → 确认建单（花钱）→ 选变体 → 贴装 */}
+        {/* 配乐间：起草免费 → 用户改 → 确认建单（花钱）→ 选变体 → 贴装。
+            无权限者整卡不渲染，不给看必然 FORBIDDEN 的按钮 */}
+        {canGenerateBgm ? (
         <div className="rounded-xl border border-amber-300/25 bg-amber-500/[0.04] p-3">
           <div className="flex items-center gap-1.5 text-[13px] font-semibold text-white">
             <Music4 className="h-3.5 w-3.5 text-amber-300" /> 配乐间
@@ -636,6 +670,7 @@ export default function PostProdWorkshopCard({ blocks, userId }: PostProdWorksho
             </div>
           ) : null}
         </div>
+        ) : null}
 
         {/* BGM 贴装 */}
         <div className="rounded-xl border border-white/10 bg-black/25 p-3">

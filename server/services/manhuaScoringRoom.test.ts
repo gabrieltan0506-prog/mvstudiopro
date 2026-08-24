@@ -19,6 +19,19 @@ vi.mock("./gcs.js", () => ({
 vi.mock("./postProdMediaSource.js", () => ({
   postProdOutputPrefix: (uid: string) => `post-prod/${uid}/`,
 }));
+// ffprobe 验真在这里打桩；真 ffmpeg 的回归在 measure 那组专测里
+vi.mock("node:child_process", async (orig) => {
+  const actual = await orig<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    execFile: (
+      _cmd: string,
+      _args: string[],
+      _opts: unknown,
+      cb: (e: unknown, out: { stdout: string; stderr: string }) => void,
+    ) => cb(null, { stdout: "audio\n", stderr: "" }),
+  };
+});
 
 import {
   createManhuaBgmTask,
@@ -49,11 +62,25 @@ beforeEach(() => {
     gcsUri: `gs://b/${a.objectName}`,
   }));
   store.sign.mockImplementation((u: string) => `${u}?sig`);
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => ({ ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer })),
-  );
+  // ffprobe 验真在单测里打桩：这里验的是链路，真 ffmpeg 回归另有专测
+  vi.stubGlobal("fetch", vi.fn(async () => fakeAudioResponse(new Uint8Array([1, 2, 3]))));
 });
+
+/** 造一个带 headers 与流式 body 的 Response —— 下载走的是流式限额，不是 arrayBuffer */
+function fakeAudioResponse(bytes: Uint8Array, contentLength?: string) {
+  let sent = false;
+  return {
+    ok: true,
+    headers: { get: (k: string) => (k === "content-length" ? contentLength ?? null : null) },
+    body: {
+      getReader: () => ({
+        read: async () =>
+          sent ? { done: true, value: undefined } : ((sent = true), { done: false, value: bytes }),
+        cancel: async () => {},
+      }),
+    },
+  } as unknown as Response;
+}
 
 describe("落库位置", () => {
   it("BGM 必须落**本人 post-prod 前缀** —— 别的前缀过不了 bgm_mount 的登记核对", () => {
@@ -95,6 +122,27 @@ describe("建单与续跑分开", () => {
     await expect(resumeManhuaBgmTask({ taskId: "t1", userId: "42", brief, pollIntervalMs: 1 })).rejects.toThrow(
       "failed",
     );
+  });
+
+  it("超过字节上限拒收 —— 流式累计，不先整体 arrayBuffer 再检查", async () => {
+    up.get.mockResolvedValue({ task: { status: "completed" }, raw: {} });
+    up.pick.mockReturnValue(["https://cdn/1.mp3"]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => fakeAudioResponse(new Uint8Array(1), String(999 * 1024 * 1024))),
+    );
+    await expect(
+      resumeManhuaBgmTask({ taskId: "t1", userId: "42", brief, pollIntervalMs: 1 }),
+    ).rejects.toThrow("超过处理上限");
+  });
+
+  it("空文件拒收", async () => {
+    up.get.mockResolvedValue({ task: { status: "completed" }, raw: {} });
+    up.pick.mockReturnValue(["https://cdn/1.mp3"]);
+    vi.stubGlobal("fetch", vi.fn(async () => fakeAudioResponse(new Uint8Array(0))));
+    await expect(
+      resumeManhuaBgmTask({ taskId: "t1", userId: "42", brief, pollIntervalMs: 1 }),
+    ).rejects.toThrow("为空");
   });
 
   it("缺 userId 直接拒 —— 落不到本人前缀就等于生成了也用不了", async () => {

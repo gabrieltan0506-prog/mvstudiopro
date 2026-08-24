@@ -2379,7 +2379,7 @@ export default function FreeformCanvas({
                                     : block.videoModel === "happyhorse-1.1"
                                       ? "Happy Horse 1.1：首帧图生，最长 15s"
                                       : block.videoModel === "wan-3.0"
-                                        ? "Wan 3.0（公测）：多图参考 + 参考音频，可直出 30s；排队时间较长，适合不赶时间的镜头"
+                                        ? "Wan 3.0 万相：四模态参考（文/图/视频/音频），支持参考·编辑·复刻·驱动，可直出 30s"
                                         : "Seedance 2.0 fast：多图参考 + 运镜/动作/对白，更快更省，最长约 15s"}
                           </div>
                           {/* 画质只对标准档开放：快速档定位是便宜快，H3 固定 2K，2.5 固定 720p */}

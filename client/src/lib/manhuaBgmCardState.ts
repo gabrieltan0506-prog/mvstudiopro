@@ -10,7 +10,13 @@
  * 加个字段就会漏改一处（本仓已有前科）。
  */
 
-export const MANHUA_BGM_JOB_STORAGE_KEY = "mv-manhua-bgm-job-v1";
+/**
+ * 按 userId 分键：不分键的话换账号会读到上一个账号的 jobId，
+ * 页面显示别人的任务，用户以为没跑成就再点一次 = 再付一次。
+ */
+export function manhuaBgmJobStorageKey(userId: string | number): string {
+  return `mv-manhua-bgm-job-v1:${String(userId || "anon")}`;
+}
 
 export type ManhuaBgmPendingJob = {
   jobId: string;
@@ -27,9 +33,10 @@ export const MANHUA_BGM_PENDING_TTL_MS = 24 * 3600_000;
 export function readPendingManhuaBgmJob(
   storage: Pick<Storage, "getItem">,
   nowMs: number,
+  userId: string | number,
 ): ManhuaBgmPendingJob | null {
   try {
-    const raw = storage.getItem(MANHUA_BGM_JOB_STORAGE_KEY);
+    const raw = storage.getItem(manhuaBgmJobStorageKey(userId));
     if (!raw) return null;
     const j = JSON.parse(raw) as Partial<ManhuaBgmPendingJob>;
     const jobId = String(j.jobId || "").trim();
@@ -52,17 +59,21 @@ export function readPendingManhuaBgmJob(
 export function writePendingManhuaBgmJob(
   storage: Pick<Storage, "setItem">,
   job: ManhuaBgmPendingJob,
+  userId: string | number,
 ): void {
   try {
-    storage.setItem(MANHUA_BGM_JOB_STORAGE_KEY, JSON.stringify(job));
+    storage.setItem(manhuaBgmJobStorageKey(userId), JSON.stringify(job));
   } catch {
-    // 存不下不阻断：服务端 job 仍在，只是刷新后要靠列表找回
+    // 存不下不阻断：**服务端 job 才是主来源**，刷新后靠 listManhuaBgmJobs 找回
   }
 }
 
-export function clearPendingManhuaBgmJob(storage: Pick<Storage, "removeItem">): void {
+export function clearPendingManhuaBgmJob(
+  storage: Pick<Storage, "removeItem">,
+  userId: string | number,
+): void {
   try {
-    storage.removeItem(MANHUA_BGM_JOB_STORAGE_KEY);
+    storage.removeItem(manhuaBgmJobStorageKey(userId));
   } catch {
     /* 无所谓 */
   }
@@ -107,4 +118,40 @@ export function readManhuaBgmVariants(output: unknown): ManhuaBgmVariant[] {
       };
     })
     .filter((v): v is ManhuaBgmVariant => Boolean(v));
+}
+
+export type ManhuaBgmServerJob = {
+  jobId: string;
+  status: string;
+  output: unknown;
+  error?: string | null;
+};
+
+/**
+ * 从服务端任务列表恢复页面状态。
+ *
+ * 服务端是主来源，localStorage 只是缓存。三种情况都要覆盖：
+ *   · 有未完成任务 → 恢复成 pending，继续轮询（不让用户再点一次）
+ *   · 最近一条成功且带变体 → 恢复变体，**用户还没选就刷新时不至于全丢**
+ *   · 都没有 → 干净状态
+ */
+export function restoreManhuaBgmFromServer(jobs: readonly ManhuaBgmServerJob[]): {
+  pending: ManhuaBgmPendingJob | null;
+  variants: ManhuaBgmVariant[];
+} {
+  const running = jobs.find((j) => j.status === "running" || j.status === "queued");
+  if (running) {
+    return {
+      pending: {
+        jobId: running.jobId,
+        billingRequestId: running.jobId.replace(/^bgm_/, ""),
+        titleZh: "",
+        durationSec: 0,
+        createdAtMs: Date.now(),
+      },
+      variants: [],
+    };
+  }
+  const succeeded = jobs.find((j) => j.status === "succeeded");
+  return { pending: null, variants: succeeded ? readManhuaBgmVariants(succeeded.output) : [] };
 }

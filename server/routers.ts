@@ -9562,8 +9562,59 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }),
       )
       .query(async ({ input }) => {
-        const { buildManhuaBgmBrief } = await import("../shared/manhuaBgmBrief.js");
+        const { assertBgmStyleSubmittable, buildManhuaBgmBrief } = await import(
+          "../shared/manhuaBgmBrief.js"
+        );
         return buildManhuaBgmBrief(input);
+      }),
+
+    /**
+     * 查一张配乐任务。
+     *
+     * **不能复用 getPostProdJob**：那个路由要求 `type === "post_prod"`，
+     * 而配乐是 `audio` —— 查必然 NOT_FOUND，页面会永远停在「生成中」。
+     */
+    getManhuaBgmJob: adminProcedure
+      .input(z.object({ jobId: z.string().min(1).max(120) }))
+      .query(async ({ ctx, input }) => {
+        const { getJobByIdStrict } = await import("./jobs/repository.js");
+        const job = await getJobByIdStrict(input.jobId);
+        const inputObj =
+          job?.input && typeof job.input === "object" && !Array.isArray(job.input)
+            ? (job.input as Record<string, unknown>)
+            : null;
+        if (!job || job.type !== "audio" || inputObj?.action !== "manhua_bgm_v55") {
+          throw new TRPCError({ code: "NOT_FOUND", message: "配乐任务不存在" });
+        }
+        if (String(job.userId) !== String(ctx.user.id)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "无权查看此配乐任务" });
+        }
+        return {
+          jobId: job.id,
+          status: job.status,
+          output: job.output,
+          error: job.error,
+          createdAt: job.createdAt,
+          updatedAt: job.updatedAt,
+        };
+      }),
+
+    /**
+     * 本人配乐任务列表。**服务端是任务主来源**——
+     * localStorage 会因换账号、清缓存、写入失败而丢，丢了用户就会再点一次＝再付一次。
+     */
+    listManhuaBgmJobs: adminProcedure
+      .input(z.object({ limit: z.number().int().min(1).max(30).default(10) }))
+      .query(async ({ ctx, input }) => {
+        const { listManhuaBgmJobsForUser } = await import("./jobs/repository.js");
+        const rows = await listManhuaBgmJobsForUser(String(ctx.user.id), input.limit);
+        return rows.map((j) => ({
+          jobId: j.id,
+          status: j.status,
+          output: j.output,
+          error: j.error,
+          updatedAt: j.updatedAt,
+        }));
       }),
 
     /**
@@ -9593,12 +9644,16 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }),
       )
       .mutation(async ({ input, ctx }) => {
-        const { buildManhuaBgmBrief } = await import("../shared/manhuaBgmBrief.js");
+        const { assertBgmStyleSubmittable, buildManhuaBgmBrief } = await import(
+          "../shared/manhuaBgmBrief.js"
+        );
         const { MANHUA_BGM_ACTION, manhuaBgmJobInputSchema } = await import(
           "./jobs/manhuaBgmJobInput.js"
         );
         const { createJob } = await import("./jobs/repository.js");
         const brief = buildManhuaBgmBrief(input);
+        // 最终校验在 createJob 之前：override 也走这一道，绕不过去
+        assertBgmStyleSubmittable(brief);
         const jobInput = manhuaBgmJobInputSchema.parse({
           action: MANHUA_BGM_ACTION,
           params: { billingRequestId: input.billingRequestId, brief },
@@ -9614,9 +9669,27 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             input: jobInput,
           });
         } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          // 主键冲突＝这次确认已经入过队，返回同一个 jobId 让前端继续轮询
-          if (!/duplicate|unique|already exists/i.test(msg)) throw err;
+          /**
+           * 不靠错误文本判重 —— 任意含 "unique" 的库错误都会被误当成「已存在」。
+           * 改为按 jobId 查回来逐项核对：所有权、类型、action、幂等号全一致才复用。
+           */
+          const { getJobByIdStrict } = await import("./jobs/repository.js");
+          const existing = await getJobByIdStrict(jobId).catch(() => null);
+          const exInput =
+            existing?.input && typeof existing.input === "object" && !Array.isArray(existing.input)
+              ? (existing.input as Record<string, unknown>)
+              : null;
+          const exParams =
+            exInput?.params && typeof exInput.params === "object"
+              ? (exInput.params as Record<string, unknown>)
+              : null;
+          const sameTask =
+            existing
+            && String(existing.userId) === String(ctx.user.id)
+            && existing.type === "audio"
+            && exInput?.action === MANHUA_BGM_ACTION
+            && String(exParams?.billingRequestId || "") === input.billingRequestId;
+          if (!sameTask) throw err;
         }
         return { jobId, brief };
       }),

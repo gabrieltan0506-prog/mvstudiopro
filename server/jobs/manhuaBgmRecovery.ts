@@ -19,6 +19,8 @@ export type ManhuaBgmRecoveryResult = {
   requeued: number;
   /** 号没存住，交人工核对 */
   reconciliationRequired: number;
+  /** 成品已在手，只是终态没写进去 —— 直接收敛，不重跑媒体链 */
+  completedFromTerminal: number;
 };
 
 export async function recoverInterruptedManhuaBgmJobsOnStartup(): Promise<ManhuaBgmRecoveryResult> {
@@ -38,12 +40,40 @@ export async function recoverInterruptedManhuaBgmJobsOnStartup(): Promise<Manhua
 
   let requeued = 0;
   let reconciliationRequired = 0;
+  let completedFromTerminal = 0;
 
   for (const row of rows) {
     const output =
       row.output && typeof row.output === "object" && !Array.isArray(row.output)
         ? (row.output as Record<string, unknown>)
         : {};
+    /**
+     * **先看成品在不在**，再谈要不要续跑。
+     *
+     * 终态写入失败时 worker 会把成品挂进 running.output 的 terminalOutput。
+     * 这时上游已付费、变体已转存 GCS —— 只按 upstreamTaskId 重排，
+     * 会重新轮询、重新下载、重新上传，把已经做完的活再做一遍。
+     */
+    const terminalOutput =
+      output.terminalOutput
+      && typeof output.terminalOutput === "object"
+      && !Array.isArray(output.terminalOutput)
+        ? output.terminalOutput
+        : null;
+    if (output.bgmStage === "result_persistence_pending" && terminalOutput) {
+      await db
+        .update(jobs)
+        .set({
+          status: "succeeded",
+          output: terminalOutput as never,
+          error: null,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(jobs.id, row.id), eq(jobs.status, "running")));
+      completedFromTerminal += 1;
+      continue;
+    }
+
     const upstreamTaskId = String(output.upstreamTaskId || "").trim();
 
     if (upstreamTaskId) {
@@ -70,5 +100,5 @@ export async function recoverInterruptedManhuaBgmJobsOnStartup(): Promise<Manhua
     reconciliationRequired += 1;
   }
 
-  return { requeued, reconciliationRequired };
+  return { requeued, reconciliationRequired, completedFromTerminal };
 }
