@@ -13016,6 +13016,87 @@ export default function PlatformPage() {
                                 ) : null}
                               </div>
                             ))}
+
+                            {/* 独立归档区：**不依赖 approved 行存在**。
+                                恢复入口原来嵌在现役卡里，模板一下架就从 approved 消失、
+                                恢复入口跟着消失 —— 等于下架即不可逆。 */}
+                            {(templateReviewQuery.data?.archivedItems || []).length ? (
+                              <div className="mt-3 border-t border-white/10 pt-2">
+                                <p className="mb-1.5 text-[10px] font-semibold text-white/50">
+                                  已归档模板（已下架，可恢复）
+                                </p>
+                                {(templateReviewQuery.data?.archivedItems || []).map((arch) => (
+                                  <div
+                                    key={arch.id}
+                                    className="mb-1 rounded-lg border border-white/12 bg-black/20 px-2.5 py-2 text-[10px] leading-4 text-white/70"
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <span className="min-w-0 flex-1 truncate">
+                                        {arch.nameZh} · {arch.laneZh} · {arch.beatCount} 镜
+                                        {arch.learnSourceZh ? ` · ${arch.learnSourceZh}` : ""}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setArchivedForId(archivedForId === arch.id ? null : arch.id)
+                                        }
+                                        className="shrink-0 text-cyan-100/80 hover:text-cyan-50"
+                                      >
+                                        {archivedForId === arch.id ? "收起历史版本" : "看历史版本"}
+                                      </button>
+                                    </div>
+                                    {archivedForId === arch.id ? (
+                                      <div className="mt-1.5 space-y-1 border-t border-white/10 pt-1.5">
+                                        {archivedVersionsQuery.isLoading ? (
+                                          <p className="opacity-50">读取归档…</p>
+                                        ) : null}
+                                        {archivedVersionsQuery.isError ? (
+                                          <p className="text-rose-200/80">
+                                            归档读取失败，请稍后重试；当前结果不能视为没有历史版本。
+                                          </p>
+                                        ) : null}
+                                        {(archivedVersionsQuery.data?.items || []).map((v) => (
+                                          <div key={v.generation} className="flex items-center gap-2">
+                                            <span className="min-w-0 flex-1 truncate opacity-75">
+                                              {v.beatCount} 镜 · {v.learnSourceZh || "来源不明"} ·{" "}
+                                              {String(v.updatedAt || "").slice(0, 10)}
+                                            </span>
+                                            <button
+                                              type="button"
+                                              disabled={restoreArchivedMutation.isPending}
+                                              onClick={async () => {
+                                                if (
+                                                  !window.confirm(
+                                                    "恢复这一版为正式模板？库里已有同 id 的现役版本时会被拒绝——那时请先下架现役版本。",
+                                                  )
+                                                )
+                                                  return;
+                                                try {
+                                                  await restoreArchivedMutation.mutateAsync({
+                                                    id: arch.id,
+                                                    generation: v.generation,
+                                                    confirmRestore: true,
+                                                  });
+                                                  await invalidateTemplateLifecycle(arch.id);
+                                                  window.alert("已恢复为正式模板");
+                                                } catch (e) {
+                                                  window.alert(
+                                                    `恢复失败：${e instanceof Error ? e.message : "未知错误"}`,
+                                                  );
+                                                }
+                                              }}
+                                              className="shrink-0 rounded border border-emerald-300/35 px-1.5 py-0.5 text-emerald-100/85 hover:bg-emerald-500/10 disabled:opacity-50"
+                                            >
+                                              恢复这一版
+                                            </button>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
                       </div>

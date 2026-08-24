@@ -229,4 +229,19 @@ describe("替代候选必须同源（与 #1299 配套）", () => {
     ]);
     expect(advice.action).toBe("consider_relearn");
   });
+
+  it("🔴 proposals 里 status=approved 的**审计副本**不得成为替代品", () => {
+    // approve 会在 proposals/ 留一份 status="approved" 的副本；
+    // 下架只删 approved/，那份副本还在 —— 它代表的卡可能早就下架了
+    const auditCopy = nativeCard("tpl_native_wanyao_ep001", 40, { status: "approved" });
+    // 路由层已按 status 过滤，这里锁住「真待审卡仍可参与」
+    const proposed = nativeCard("tpl_native_wanyao_ep002", 30, { status: "proposed" });
+    const advice = adviseTemplateRetirement(oldCard(), [proposed]);
+    expect(advice.action).toBe("replace_with");
+    expect(advice.reasonZh).toContain("先批准");
+    // 审计副本若混进来会被当正式卡优先——所以过滤必须在调用方做
+    expect(adviseTemplateRetirement(oldCard(), [auditCopy]).replacementId).toBe(
+      "tpl_native_wanyao_ep001",
+    );
+  });
 });

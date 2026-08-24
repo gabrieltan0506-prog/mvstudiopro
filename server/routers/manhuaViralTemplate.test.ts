@@ -62,6 +62,13 @@ vi.mock("../services/manhuaViralTemplateStore", () => ({
   ]),
   listGcsManhuaViralProposals: vi.fn(async () => [revisionCard]),
   listGcsManhuaViralApproved: vi.fn(async () => [secretCard]),
+  // 生命周期判断改用严格全量（宽松版只读 80 张、失败返回 []）
+  listGcsManhuaViralApprovedStrict: vi.fn(async () => [secretCard]),
+  // 归档索引独立返回：恢复入口不再依赖 approved 行存在
+  listArchivedManhuaViralTemplateIndex: vi.fn(async () => []),
+  listArchivedManhuaViralTemplateVersions: vi.fn(async () => []),
+  restoreArchivedManhuaViralTemplate: vi.fn(async () => secretCard),
+  archiveApprovedManhuaViralTemplate: vi.fn(async () => secretCard),
   getGcsManhuaViralApproved: vi.fn(async () => secretCard),
   getGcsManhuaViralProposal: vi.fn(async () => proposalForRouter),
   saveManhuaViralTemplateRevisionProposal: vi.fn(async (card: ManhuaViralTemplateCard) => card),

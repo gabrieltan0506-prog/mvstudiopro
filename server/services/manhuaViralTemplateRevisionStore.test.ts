@@ -48,7 +48,41 @@ function revisionCard(): ManhuaViralTemplateCard {
   };
 }
 
+/**
+ * 批准现在要占**生命周期锁**（与下架/恢复互斥），锁走 GCS 条件创建，
+ * 所以 mock 必须让它拿得到也放得掉，否则批准会卡在「另一项操作正在处理」。
+ */
+const LOCK_OBJECT = "manhua-template-learn/locks/approved-lifecycle.json";
+const lockState = vi.hoisted(() => ({ body: Buffer.from("{}"), held: false })) as {
+  body: Buffer;
+  held: boolean;
+};
+
 vi.mock("./gcs.js", () => ({
+  getGcsBucketName: () => "b",
+  uploadBufferToGcsIfAbsent: vi.fn(async (p: { objectName: string; buffer: Buffer }) => {
+    if (p.objectName === LOCK_OBJECT) {
+      if (lockState.held) return { created: false };
+      lockState.held = true;
+      lockState.body = p.buffer;
+      return { created: true };
+    }
+    return { created: true };
+  }),
+  downloadGcsObjectVersioned: vi.fn(async ({ gcsUri }: { gcsUri: string }) => {
+    if (String(gcsUri).endsWith(LOCK_OBJECT)) {
+      return { buffer: lockState.body, generation: "1" };
+    }
+    return {
+      buffer: Buffer.from(JSON.stringify(originalCard()), "utf8"),
+      bucket: "b",
+      objectName: "o",
+      generation: "7",
+    };
+  }),
+  deleteGcsObject: vi.fn(async (p: { objectName?: string }) => {
+    if (p.objectName === LOCK_OBJECT) lockState.held = false;
+  }),
   downloadGcsObject: vi.fn(async ({ gcsUri }: { gcsUri: string }) => ({
     buffer: Buffer.from(
       JSON.stringify(gcsUri.includes("/proposals/") ? revisionCard() : originalCard()),

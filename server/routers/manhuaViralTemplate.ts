@@ -277,16 +277,33 @@ export const manhuaViralTemplateRouter = router({
    */
   reviewTemplateGenerations: protectedProcedure.query(async ({ ctx }) => {
     assertSiteOwner(ctx.user);
-    const { listGcsManhuaViralApproved, listGcsManhuaViralProposals } = await import(
-      "../services/manhuaViralTemplateStore"
-    );
+    const {
+      listGcsManhuaViralApprovedStrict,
+      listGcsManhuaViralProposals,
+      listArchivedManhuaViralTemplateIndex,
+    } = await import("../services/manhuaViralTemplateStore");
     const { adviseTemplateRetirement } = await import("../../shared/manhuaTemplateLifecycle");
-    const approved = await listGcsManhuaViralApproved();
-    // 候选包含待审：新学的精读卡通常还在 proposals/ 里等批
-    const candidates = [...approved, ...(await listGcsManhuaViralProposals())];
+    // 生命周期判断用严格全量：宽松版只读 80 张且失败返回 []，会把「最后一张」看成「还有好几张」
+    const approved = await listGcsManhuaViralApprovedStrict();
+    /**
+     * 候选包含待审：新学的精读卡通常还在 proposals/ 里等批。
+     * 但 **proposals/ 里还躺着 approve 时留下的 status="approved" 审计副本** ——
+     * 模板下架只删 approved/，那份副本还在，直接拼进来会把**已经下架的卡**
+     * 推荐成正式替代品。正式候选只能来自 approved/。
+     */
+    const proposals = (await listGcsManhuaViralProposals()).filter(
+      (card) => card.status === "proposed",
+    );
+    const candidates = [...approved, ...proposals];
     const laneCount = new Map<string, number>();
     for (const c of approved) laneCount.set(c.laneZh, (laneCount.get(c.laneZh) || 0) + 1);
+    /**
+     * 归档索引**独立返回**：恢复入口原本嵌在 approved 行里，
+     * 模板一下架就从 approved 消失，恢复入口跟着消失 —— 下架即不可逆。
+     */
+    const archivedItems = await listArchivedManhuaViralTemplateIndex();
     return {
+      archivedItems,
       items: approved.map((card) => ({
         id: card.id,
         nameZh: card.nameZh,

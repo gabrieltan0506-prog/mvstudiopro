@@ -106,3 +106,25 @@ describe("模板换代与归档接线契约", () => {
     expect(PAGE).toContain("本赛道仅此一张");
   });
 });
+
+describe("归档恢复入口不依赖现役行（下架即不可逆的修复）", () => {
+  it("🔴 有独立的「已归档模板」区，读的是 archivedItems 而不是 approved 行", () => {
+    expect(PAGE).toContain("archivedItems");
+    expect(PAGE).toContain("已归档模板（已下架，可恢复）");
+  });
+
+  it("🔴 恢复用归档区自己的 id，不引用现役循环变量", () => {
+    const at = PAGE.indexOf("已归档模板（已下架，可恢复）");
+    expect(at).toBeGreaterThan(0);
+    const block = PAGE.slice(at, at + 4000);
+    expect(block).toContain("id: arch.id");
+    expect(block).toContain("invalidateTemplateLifecycle(arch.id)");
+  });
+
+  it("归档区里也有 isError 分支，读取失败不说成没有历史", () => {
+    const at = PAGE.indexOf("已归档模板（已下架，可恢复）");
+    const block = PAGE.slice(at, at + 4000);
+    expect(block).toContain("archivedVersionsQuery.isError");
+    expect(block).toContain("不能视为没有历史版本");
+  });
+});

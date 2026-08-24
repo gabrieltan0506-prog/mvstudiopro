@@ -5,6 +5,7 @@
  */
 import { randomBytes } from "node:crypto";
 import {
+  describeManhuaTemplateLearnSourceZh,
   getManhuaViralTemplate,
   listApprovedManhuaViralTemplates,
   listApprovedManhuaViralTemplatesGrouped,
@@ -12,6 +13,7 @@ import {
   parseManhuaViralTemplateCard,
   type ManhuaViralTemplateCard,
 } from "../../shared/manhuaViralTemplateBank.js";
+import { canRetireTemplate } from "../../shared/manhuaTemplateLifecycle.js";
 import {
   makeStableManhuaTemplatePublicId,
   resolveStableManhuaTemplatePublicCode,
@@ -31,6 +33,148 @@ export const MANHUA_VIRAL_APPROVED_PREFIX = "manhua-template-learn/approved/";
 export const MANHUA_VIRAL_ARCHIVE_PREFIX = "manhua-template-learn/archive/";
 
 /** 归档版本号收口为纯数字串；路由与存储层都要校验，不能只信路由 */
+/**
+ * 严格列举：**读不动就抛，列不全也抛**。
+ *
+ * 宽松版默认只读 80 张、列举失败返回 []、单卡读失败跳过 —— 展示列表可以这样，
+ * 但**生命周期判断不行**：漏掉几张就可能把「同赛道最后一张」判成「还有好几张」，
+ * 下架完这条赛道编剧室直接空掉。
+ */
+async function listCardsUnderPrefixStrict(
+  prefix: string,
+  limit = 1000,
+): Promise<ManhuaViralTemplateCard[]> {
+  const names = await listGcsObjectNamesByPrefix({ prefix, maxResults: limit });
+  // 达到硬上限时无法证明已经列全，生命周期操作必须停止
+  if (names.length >= limit) {
+    throw new Error(`模板列表达到 ${limit} 条，无法确认是否完整，已停止生命周期操作`);
+  }
+  const cards: ManhuaViralTemplateCard[] = [];
+  for (const name of names) {
+    if (!/\.json$/i.test(name)) continue;
+    cards.push(await readCardFromObjectStrict(name));
+  }
+  return cards;
+}
+
+/**
+ * 生命周期锁：**批准 / 下架 / 恢复共用一把**。
+ *
+ * 「同赛道最后一张不许下架」这道门只在单进程内成立 ——
+ * 两个并发请求都读到「同赛道有 2 张」，各自放行，最终剩 0 张，
+ * 编剧室那条赛道直接空掉。读-判-写必须整体互斥。
+ *
+ * 用 GCS 条件创建当锁（`ifGenerationMatch=0` 只有第一个建得成）；
+ * 建成后回读比对 token —— 防「别人先建、我误以为是自己建的」。
+ */
+const MANHUA_TEMPLATE_LIFECYCLE_LOCK = "manhua-template-learn/locks/approved-lifecycle.json";
+
+export async function acquireManhuaTemplateLifecycleLock(): Promise<() => Promise<void>> {
+  const token = randomBytes(16).toString("hex");
+  const body = Buffer.from(
+    JSON.stringify({ token, createdAt: new Date().toISOString() }, null, 2),
+  );
+  const bucket = getGcsBucketName();
+
+  const created = await uploadBufferToGcsIfAbsent({
+    bucket,
+    objectName: MANHUA_TEMPLATE_LIFECYCLE_LOCK,
+    buffer: body,
+    contentType: "application/json",
+  });
+  if (!created.created) {
+    throw new Error("另一项模板批准、下架或恢复正在处理，请稍后重试");
+  }
+
+  const lockUri = `gs://${bucket}/${MANHUA_TEMPLATE_LIFECYCLE_LOCK}`;
+  const versioned = await downloadGcsObjectVersioned({ gcsUri: lockUri });
+  const saved = JSON.parse(versioned.buffer.toString("utf8")) as { token?: string };
+  if (saved.token !== token) {
+    throw new Error("模板生命周期锁内容不一致，已停止操作");
+  }
+
+  // 只删自己那一版：条件删除，防止误删别人后来建的锁
+  return async () => {
+    await deleteGcsObject({
+      objectName: MANHUA_TEMPLATE_LIFECYCLE_LOCK,
+      ifGenerationMatch: versioned.generation,
+    });
+  };
+}
+
+/**
+ * 归档索引：**不依赖 approved 行存在**。
+ *
+ * 立此函数的由头：换代体检只返回 approved 卡，而恢复入口嵌在 approved 行里 ——
+ * 模板一下架就从 approved 消失，**恢复入口跟着消失**，等于下架即不可逆。
+ * 归档件是花钱学来的（一部 58 分钟合辑约 $1.075），必须能独立找回。
+ */
+export type ArchivedManhuaViralTemplateIndexRow = {
+  id: string;
+  nameZh: string;
+  laneZh: string;
+  updatedAt?: string;
+  beatCount: number;
+  learnSourceZh?: string;
+};
+
+export async function listArchivedManhuaViralTemplateIndex(
+  maxTemplates = 200,
+): Promise<ArchivedManhuaViralTemplateIndexRow[]> {
+  // 列举失败一律抛：空数组会在页面上显示「没有归档」，用户以为旧版没了
+  const names = await listGcsObjectNamesByPrefix({
+    prefix: MANHUA_VIRAL_ARCHIVE_PREFIX,
+    maxResults: 1000,
+  });
+
+  /** archive/<id>/<generation>.json → 每个 id 取 generation 最大的那版 */
+  const latestByIdName = new Map<string, { generation: string; objectName: string }>();
+  for (const objectName of names) {
+    const suffix = objectName.slice(MANHUA_VIRAL_ARCHIVE_PREFIX.length);
+    const match = suffix.match(/^(tpl_[a-z0-9_-]{1,60})\/(\d{1,30})\.json$/i);
+    if (!match) continue;
+    const [, id, generation] = match as unknown as [string, string, string];
+    const prev = latestByIdName.get(id);
+    if (!prev || compareGenerationDesc(prev.generation, generation) > 0) {
+      latestByIdName.set(id, { generation, objectName });
+    }
+  }
+
+  const rows: ArchivedManhuaViralTemplateIndexRow[] = [];
+  for (const [id, hit] of Array.from(latestByIdName.entries())) {
+    // 严格读：读不动就抛，不能把「读取失败」显示成「没有归档」
+    const card = await readCardFromObjectStrict(hit.objectName);
+    if (card.id !== id) {
+      throw new Error(`归档对象与模板 id 不一致：${hit.objectName}`);
+    }
+    rows.push({
+      id,
+      nameZh: card.nameZh,
+      laneZh: card.laneZh,
+      updatedAt: card.updatedAt,
+      beatCount: card.beatGrid.length,
+      learnSourceZh: describeManhuaTemplateLearnSourceZh(card.provenance),
+    });
+    if (rows.length >= maxTemplates) break;
+  }
+  return rows.sort(
+    (a, b) => Date.parse(b.updatedAt || "") - Date.parse(a.updatedAt || "") || 0,
+  );
+}
+
+/** 生命周期判断专用的正式库全量；展示列表继续走宽松版 */
+export async function listGcsManhuaViralApprovedStrict(): Promise<ManhuaViralTemplateCard[]> {
+  const cards = await listCardsUnderPrefixStrict(MANHUA_VIRAL_APPROVED_PREFIX, 1000);
+  return cards.filter((card) => card.status === "approved");
+}
+
+/** 归档版本号是递增数字串，**必须按数值比**：字典序会把 9 排在 10 前面 */
+export function compareGenerationDesc(left: string, right: string): number {
+  const a = BigInt(left);
+  const b = BigInt(right);
+  return b > a ? 1 : b < a ? -1 : 0;
+}
+
 export const MANHUA_ARCHIVE_GENERATION_RE = /^\d{1,30}$/;
 
 /**
@@ -189,6 +333,19 @@ export async function saveManhuaViralTemplateRevisionProposal(
  * 唯一性口径（审查返工 2026-08-15）：全量读 approved（上限 1000 远超库容）、4 位与 8 位兜底
  * 均循环查重、耗尽即抛错。并发批准场景为单监管人操作，条件创建占位留给 B 档强化。
  */
+/** 从**已给定**的占用集里铸一个新码；生命周期锁内调用它，避免锁内再去列一次库 */
+export function mintUniqueTemplatePublicCodeFromTaken(taken: ReadonlySet<string>): string {
+  for (let i = 0; i < 24; i += 1) {
+    const code = randomBytes(3).toString("hex").toUpperCase().slice(0, 4);
+    if (!taken.has(code)) return code;
+  }
+  for (let i = 0; i < 24; i += 1) {
+    const code = randomBytes(4).toString("hex").toUpperCase().slice(0, 8);
+    if (!taken.has(code)) return code;
+  }
+  throw new Error("公开码空间耗尽，请人工介入");
+}
+
 async function mintUniqueTemplatePublicCode(): Promise<string> {
   const taken = new Set(
     (await listCardsUnderPrefix(MANHUA_VIRAL_APPROVED_PREFIX, 1000))
@@ -264,6 +421,37 @@ export async function archiveApprovedManhuaViralTemplate(
 ): Promise<ManhuaViralTemplateCard> {
   const key = String(id || "").trim();
   if (!key) throw new Error("缺少模板 id");
+
+  /**
+   * 「同赛道最后一张不许下架」这道门**必须在锁内、用严格全量判**：
+   *   · 路由不能是唯一保护层 —— 换个入口调进来就绕过去了；
+   *   · 宽松列表默认只读 80 张、失败返回 []，可能把「最后一张」看成「还有好几张」；
+   *   · 两个并发请求各自读到「有 2 张」再各自放行，最终剩 0 张。
+   */
+  const release = await acquireManhuaTemplateLifecycleLock();
+  try {
+    return await archiveApprovedManhuaViralTemplateLocked(key);
+  } finally {
+    await release().catch((error) => {
+      console.error("[manhuaTemplateLifecycle] release lock failed", error);
+    });
+  }
+}
+
+async function archiveApprovedManhuaViralTemplateLocked(
+  key: string,
+): Promise<ManhuaViralTemplateCard> {
+  const approved = await listGcsManhuaViralApprovedStrict();
+  const target = approved.find((card) => card.id === key);
+  // 找不到就停手 —— 原来是「找不到则跳过门禁继续下架」，等于门形同虚设
+  if (!target) {
+    throw new Error("无法在完整正式库中确认该模板，已停止下架，请刷新后重试");
+  }
+  const gate = canRetireTemplate({
+    card: target,
+    sameLaneApprovedCount: approved.filter((card) => card.laneZh === target.laneZh).length,
+  });
+  if (!gate.ok) throw new Error(gate.reasonZh);
 
   const bucket = getGcsBucketName();
   const objectName = `${MANHUA_VIRAL_APPROVED_PREFIX}${key}.json`;
@@ -371,10 +559,11 @@ export async function listArchivedManhuaViralTemplateVersions(
 
   return rows
     .sort((a, b) => {
-      const byTime = Date.parse(b.card.updatedAt || "") - Date.parse(a.card.updatedAt || "");
-      return Number.isFinite(byTime) && byTime !== 0
-        ? byTime
-        : b.generation.localeCompare(a.generation);
+      const aTime = Date.parse(a.card.updatedAt || "");
+      const bTime = Date.parse(b.card.updatedAt || "");
+      const byTime = Number.isFinite(aTime) && Number.isFinite(bTime) ? bTime - aTime : 0;
+      // 时间相同时按 generation **数值**降序：字典序会把 "9" 排在 "10" 前面
+      return byTime || compareGenerationDesc(a.generation, b.generation);
     })
     .slice(0, Math.max(1, Math.min(100, maxResults)));
 }
@@ -387,6 +576,21 @@ export async function listArchivedManhuaViralTemplateVersions(
  * 真要换现役的，先下架再恢复，两步都留痕。
  */
 export async function restoreArchivedManhuaViralTemplate(input: {
+  id: string;
+  generation: string;
+}): Promise<ManhuaViralTemplateCard> {
+  // 恢复要在锁内读完整正式库做 publicCode 查重，与批准/下架共用同一把锁
+  const release = await acquireManhuaTemplateLifecycleLock();
+  try {
+    return await restoreArchivedManhuaViralTemplateLocked(input);
+  } finally {
+    await release().catch((error) => {
+      console.error("[manhuaTemplateLifecycle] release lock failed", error);
+    });
+  }
+}
+
+async function restoreArchivedManhuaViralTemplateLocked(input: {
   id: string;
   generation: string;
 }): Promise<ManhuaViralTemplateCard> {
@@ -410,10 +614,27 @@ export async function restoreArchivedManhuaViralTemplate(input: {
     throw new Error("归档对象状态无效，已停止恢复");
   }
 
+  /**
+   * publicCode 可能在归档期间被别的模板占走 —— 直接沿用旧码会产生两张同码卡，
+   * 而公开句柄就是靠它区分的。锁内读完整正式库，撞了就现铸一个。
+   */
+  const approvedNow = await listGcsManhuaViralApprovedStrict();
+  const takenCodes = new Set(
+    approvedNow
+      .filter((card) => card.id !== id)
+      .map((card) => String(card.publicCode || "").toUpperCase())
+      .filter(Boolean),
+  );
+  const archivedCode = String(archived.publicCode || "").toUpperCase();
+  const publicCode = archivedCode && !takenCodes.has(archivedCode)
+    ? archivedCode
+    : mintUniqueTemplatePublicCodeFromTaken(takenCodes);
+
   // 恢复出来的卡重新过一遍解析器：归档件可能是旧结构，直接写回等于把脏数据放进正式库
   const restored = parseManhuaViralTemplateCard({
     ...archived,
     status: "approved",
+    publicCode,
     updatedAt: new Date().toISOString(),
   });
   if (!restored || restored.id !== id || restored.status !== "approved") {
@@ -429,12 +650,50 @@ export async function restoreArchivedManhuaViralTemplate(input: {
   if (!created.created) {
     throw new Error("同名正式模板已在库中；要替换请先下架现役版本，再恢复");
   }
+
+  /**
+   * best-effort 同步 proposals/ 里的审计副本，让它与正式库同码同状态。
+   * **同步失败只记日志**：正式恢复已经成功，把它谎报成完全失败会让用户重试，
+   * 而重试会撞上「同名正式模板已在库中」——反倒卡死。
+   */
+  try {
+    await uploadBufferToGcs({
+      bucket,
+      objectName: `${MANHUA_VIRAL_PROPOSALS_PREFIX}${id}.json`,
+      buffer: Buffer.from(`${JSON.stringify(restored, null, 2)}\n`, "utf8"),
+      contentType: "application/json",
+    });
+  } catch (e) {
+    console.error(
+      "[manhuaViralTemplateStore] 恢复成功但审计副本同步失败:",
+      id,
+      e instanceof Error ? e.message : e,
+    );
+  }
   return restored;
 }
 
 export async function approveManhuaViralTemplate(input: {
   id?: string;
   /** @deprecated 审查收紧（2026-08-10）：客户端完整卡不再被信任，只按 id 读落盘提案 */
+  card?: unknown;
+}): Promise<ManhuaViralTemplateCard> {
+  /**
+   * 批准也要占同一把锁：它会铸 publicCode、会改变「同赛道有几张」，
+   * 与下架/恢复读的是同一份状态。三者互斥才谈得上「最后一张」这道门。
+   */
+  const release = await acquireManhuaTemplateLifecycleLock();
+  try {
+    return await approveManhuaViralTemplateLocked(input);
+  } finally {
+    await release().catch((error) => {
+      console.error("[manhuaTemplateLifecycle] release lock failed", error);
+    });
+  }
+}
+
+async function approveManhuaViralTemplateLocked(input: {
+  id?: string;
   card?: unknown;
 }): Promise<ManhuaViralTemplateCard> {
   const id = String(
