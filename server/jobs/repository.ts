@@ -646,7 +646,9 @@ export async function listManhuaBgmJobsForUser(
   limit = 10,
 ): Promise<NormalizedJob[]> {
   const db = await getDb();
-  if (!db) return [];
+  // DB 不可用 ≠ 没有任务。返回空列表会让页面判定「没有在跑的单」，
+  // 用户随手再点一次 = 再建一张付费上游单。故障必须显式抛出。
+  if (!db) throw new Error("配乐任务记录暂时不可读取，请稍后重试");
   const rows = await db
     .select()
     .from(jobs)

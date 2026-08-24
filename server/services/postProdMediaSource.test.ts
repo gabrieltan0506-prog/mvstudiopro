@@ -222,7 +222,7 @@ describe("resolvePostProdInputSources:三种 action 同一把尺", () => {
               videoUri: `gs://${BUCKET}/v.mp4`,
               bgmUri: `gs://${BUCKET}/unregistered.mp3`,
               bgmVolume: 0.48,
-              entrySec: 0,
+              entrySec: 0, bgmSeekSec: 0,
               fadeInSec: 0.5,
               fadeOutSec: 1,
             },

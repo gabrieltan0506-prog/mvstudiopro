@@ -101,6 +101,49 @@ export const BGM_VOLUME = { base: 0.42, dialogue: 0.18, peak: 0.52, silent: 0 } 
 export const BGM_FADE_OUT_SEC = 1.2;
 
 /**
+ * 最强击点对齐计划。
+ *
+ * 卡点表只描述「片内第几秒该做什么」，但**曲子里最强的那一击落在哪**是固定的。
+ * 要让它砸在画面的断裂点上，只有两种搬法：
+ *   · 击点比画面晚 → BGM 整轨往后挪（entrySec）
+ *   · 击点比画面早 → 从曲子内部往后切（seekSec，atrim=start）
+ * 两者互斥，同时只会有一个非零。没有断裂点时不搬，从头播。
+ */
+export type BgmAlignment = {
+  /** BGM 在片内的入点（秒），对应 adelay */
+  entrySec: number;
+  /** 从 BGM 内部第几秒开始取（秒），对应 atrim=start */
+  seekSec: number;
+  /** 对齐锚：画面上的秒位 */
+  anchorFilmSec: number;
+  /** 对齐锚：BGM 内的秒位 */
+  anchorBgmSec: number;
+};
+
+export function buildBgmAlignment(
+  structure: BgmStructure,
+  events: readonly FilmEvent[],
+): BgmAlignment {
+  const anchor = events.find((e) => e.kind === "断裂点");
+  if (!anchor) {
+    return {
+      entrySec: 0,
+      seekSec: 0,
+      anchorFilmSec: 0,
+      anchorBgmSec: structure.strongestAtSec,
+    };
+  }
+
+  const offset = anchor.atSec - structure.strongestAtSec;
+  return {
+    entrySec: Math.max(0, offset),
+    seekSec: Math.max(0, -offset),
+    anchorFilmSec: anchor.atSec,
+    anchorBgmSec: structure.strongestAtSec,
+  };
+}
+
+/**
  * 生成卡点表。
  *
  * 对齐规则来自 skill 的对照表，是确定性的：

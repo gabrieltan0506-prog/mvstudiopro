@@ -261,6 +261,13 @@ export async function resumeManhuaBgmTask(input: {
     try {
       structure = await probeVariantStructure(audio, input.brief.duration, input.abortSignal);
     } catch (e) {
+      // 中止不能被「量不到不阻断」这条兜底吞掉——墙钟到了就必须停，
+      // 否则外层已判失败，这里还在继续起 ffmpeg 进程。
+      if (input.abortSignal?.aborted) {
+        throw input.abortSignal.reason instanceof Error
+          ? input.abortSignal.reason
+          : new Error("配乐任务时限结束");
+      }
       // 量不到不阻断落库：曲子还是能用，只是挑变体时少一份客观依据
       console.warn("[scoringRoom] 变体结构量测失败：", e instanceof Error ? e.message : e);
     }

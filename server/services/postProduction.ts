@@ -335,9 +335,19 @@ export async function mountBgm(
      * 成片长度以视频轨为准。
      */
     const musicNeedSec = Math.max(0.1, D - entry);
+    /**
+     * 先从曲内 seek，再挪到片内位置，**最后**才按片内时间执行分窗增益。
+     *
+     * 顺序不能反：`volume` 的表达式用的是**片内秒位**（卡点表就是按片内时间写的），
+     * 若在 `adelay` 之前求值，t=0 是 BGM 自己的起点，entrySec 非零时
+     * 每一个卡点窗都会整体后移 entrySec 秒 —— 对白窗压不到对白、静音窗挖错地方。
+     */
+    const seek = Math.max(0, Number(input.bgmSeekSec) || 0);
     const bgmChain =
-      `[1:a]atrim=0:${musicNeedSec.toFixed(3)},asetpts=PTS-STARTPTS,${volumeFilter},` +
+      `[1:a]atrim=start=${seek.toFixed(3)}:end=${(seek + musicNeedSec).toFixed(3)},` +
+      `asetpts=PTS-STARTPTS,` +
       `adelay=${delayMs}|${delayMs},` +
+      `${volumeFilter},` +
       `afade=t=in:st=${entry.toFixed(3)}:d=${fadeIn.toFixed(3)},` +
       `afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${fadeOutSec.toFixed(3)},` +
       `apad,atrim=0:${D.toFixed(3)}[bg]`;

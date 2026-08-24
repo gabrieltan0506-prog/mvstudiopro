@@ -2905,6 +2905,54 @@ function assertHomePhotoResultBrowserReadable(imageUrl: string): string {
   return url;
 }
 
+/**
+ * 试听地址现签。
+ *
+ * 落库时签的是 7 天有效期，任务列表却会被反复查询 —— 过了那 7 天，
+ * 卡面上的试听按钮全部 403，而任务本身是成功的。签名链不该被当成持久数据
+ * 存起来复用：**gs:// 才是真源，读的时候现签。**
+ */
+/**
+ * 稳定摘要：递归排序键后再序列化。
+ *
+ * 幂等键（billingRequestId）只保证「同一次点击不重复建单」，
+ * 不保证「内容没被换过」。前端复用编号时若 brief 已改（换赛道/改时长/改 style），
+ * 直接复用旧任务＝用户拿到的是**上一版的曲子**，且不报错。故内容也要比。
+ * 逐字节比 JSON 会被键序打败，所以先排序再比。
+ */
+export function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${JSON.stringify(k)}:${stableJson(v)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+export function bgmBriefDigest(brief: unknown): string {
+  return createHash("sha256").update(stableJson(brief)).digest("hex");
+}
+
+export function refreshBgmPreviewUrls(
+  output: unknown,
+  sign: (gsUri: string, expiresSeconds?: number) => string,
+): unknown {
+  if (!output || typeof output !== "object" || Array.isArray(output)) return output;
+  const o = output as Record<string, unknown>;
+  if (!Array.isArray(o.variants)) return output;
+  return {
+    ...o,
+    variants: o.variants.map((variant) => {
+      if (!variant || typeof variant !== "object" || Array.isArray(variant)) return variant;
+      const v = variant as Record<string, unknown>;
+      const gcsUri = String(v.gcsUri || "");
+      return gcsUri.startsWith("gs://") ? { ...v, previewUrl: sign(gcsUri, 3600) } : v;
+    }),
+  };
+}
+
 export const appRouter = router({
   // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
   system: systemRouter,
@@ -9589,10 +9637,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         if (String(job.userId) !== String(ctx.user.id)) {
           throw new TRPCError({ code: "FORBIDDEN", message: "无权查看此配乐任务" });
         }
+        const { signGsUriV4ReadUrl } = await import("./services/gcs.js");
         return {
           jobId: job.id,
           status: job.status,
-          output: job.output,
+          output: refreshBgmPreviewUrls(job.output, signGsUriV4ReadUrl),
           error: job.error,
           createdAt: job.createdAt,
           updatedAt: job.updatedAt,
@@ -9608,10 +9657,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       .query(async ({ ctx, input }) => {
         const { listManhuaBgmJobsForUser } = await import("./jobs/repository.js");
         const rows = await listManhuaBgmJobsForUser(String(ctx.user.id), input.limit);
+        const { signGsUriV4ReadUrl } = await import("./services/gcs.js");
         return rows.map((j) => ({
           jobId: j.id,
           status: j.status,
-          output: j.output,
+          output: refreshBgmPreviewUrls(j.output, signGsUriV4ReadUrl),
           error: j.error,
           updatedAt: j.updatedAt,
         }));
@@ -9688,8 +9738,23 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             && String(existing.userId) === String(ctx.user.id)
             && existing.type === "audio"
             && exInput?.action === MANHUA_BGM_ACTION
-            && String(exParams?.billingRequestId || "") === input.billingRequestId;
-          if (!sameTask) throw err;
+            && String(exParams?.billingRequestId || "") === input.billingRequestId
+            && bgmBriefDigest(exParams?.brief) === bgmBriefDigest(brief);
+          if (!sameTask) {
+            // 编号相同但内容不同：复用旧单会把上一版曲子当成本次结果交出去
+            const idReused =
+              existing
+              && String(existing.userId) === String(ctx.user.id)
+              && existing.type === "audio"
+              && String(exParams?.billingRequestId || "") === input.billingRequestId;
+            if (idReused) {
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: "同一请求编号已绑定不同配乐内容，请重新确认后提交",
+              });
+            }
+            throw err;
+          }
         }
         return { jobId, brief };
       }),

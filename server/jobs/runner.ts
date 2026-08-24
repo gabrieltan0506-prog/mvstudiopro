@@ -1356,8 +1356,39 @@ function normalizeAudioStatus(status: string): "PENDING" | "SUCCESS" | "FAILED" 
   return "PENDING";
 }
 
+/** 判据收口：配乐任务的识别只此一处，调用方一律引用 */
+function isManhuaBgmJobInput(inputRaw: unknown): boolean {
+  try {
+    return asEnvelope(inputRaw).action === "manhua_bgm_v55";
+  } catch {
+    return false;
+  }
+}
+
 export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
   const defaultTimeout = JOB_TIMEOUT_MS[type];
+  if (type === "audio") {
+    try {
+      const input = asEnvelope(inputRaw);
+      if (input.action === "manhua_bgm_v55") {
+        /**
+         * 配乐不是普通 audio：上游 Suno 出双变体，每条还要逐 0.5 秒量电平。
+         * 360 秒的曲子＝两条 × 720 格量测，8 分钟默认墙钟必然半路截断，
+         * 而截断点在「已建单已付费」之后 —— 钱花了，产物拿不到。
+         * 故按曲长线性给：8 分钟底 + 每秒 4 秒余量，上限 45 分钟。
+         */
+        const duration = Number(
+          (input.params as Record<string, unknown> | undefined)?.brief &&
+            ((input.params as Record<string, unknown>).brief as Record<string, unknown>)?.duration,
+        ) || 0;
+        const raw = Number(process.env.MANHUA_BGM_JOB_TIMEOUT_MS);
+        if (Number.isFinite(raw) && raw >= 12 * 60_000) return raw;
+        return Math.min(45 * 60_000, Math.max(12 * 60_000, 8 * 60_000 + duration * 4_000));
+      }
+    } catch {
+      // 解析不出来就走默认；时限计算不该成为建单的拦路虎
+    }
+  }
   if (type === "image" && isCreativeNanoImageJob(inputRaw)) {
     return CREATIVE_NANO_IMAGE_TIMEOUT_MS;
   }
@@ -1494,6 +1525,7 @@ async function processManhuaBgmJob(
   input: JobEnvelope,
   userId: string,
   jobId: string,
+  abortSignal?: AbortSignal,
 ): Promise<{ output: unknown; provider?: string }> {
   const { manhuaBgmJobInputSchema } = await import("./manhuaBgmJobInput.js");
   // 队列里的数据永远不可信：worker 拿到旧任务也要再 parse 一次
@@ -1512,7 +1544,7 @@ async function processManhuaBgmJob(
   const startedAtMs = Number(prevOut.startedAtMs) || Date.now();
 
   if (!upstreamTaskId) {
-    const created = await createManhuaBgmTask(brief);
+    const created = await createManhuaBgmTask(brief, { abortSignal });
     upstreamTaskId = created.taskId;
     // 先落库再轮询，且**必须严格落库**：宽松版会把 DB 异常吞掉，
     // 号没存住却继续轮询，重启后查不到这张单，只能重建再付一次。
@@ -1545,6 +1577,7 @@ async function processManhuaBgmJob(
     userId,
     brief,
     startedAtMs,
+    abortSignal,
   });
 
   return {
@@ -1559,10 +1592,10 @@ async function processManhuaBgmJob(
   };
 }
 
-async function processAudioJob(input: JobEnvelope, timeoutMs: number, userId: string, jobId?: string): Promise<{ output: unknown; provider?: string }> {
+async function processAudioJob(input: JobEnvelope, timeoutMs: number, userId: string, jobId?: string, operationSignal?: AbortSignal): Promise<{ output: unknown; provider?: string }> {
   if (input.action === "manhua_bgm_v55") {
     if (!jobId) throw new Error("配乐任务缺少 jobId，无法持久化上游任务号");
-    return processManhuaBgmJob(input, userId, jobId);
+    return processManhuaBgmJob(input, userId, jobId, operationSignal);
   }
   if (input.action !== "suno_music") {
     throw new Error(`Unsupported audio action: ${input.action}`);
@@ -2874,6 +2907,7 @@ async function executeJob(
   timeoutMs: number,
   userId: string,
   jobId?: string,
+  operationSignal?: AbortSignal,
 ): Promise<{ output: unknown; provider?: string }> {
   const input = asEnvelope(inputRaw);
   if (type === "video") return processVideoJob(input, timeoutMs, userId, jobId);
@@ -2885,7 +2919,7 @@ async function executeJob(
     const { runPostProdJobWithLimit } = await import("./postProdJob.js");
     return runPostProdJobWithLimit(input, userId, timeoutMs);
   }
-  return processAudioJob(input, timeoutMs, userId, jobId);
+  return processAudioJob(input, timeoutMs, userId, jobId, operationSignal);
 }
 
 async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>> & object) {
@@ -2910,7 +2944,15 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
       releaseInteractiveWorkload = await beginGrowthInteractiveWorkload(`platform-job:${job.id}`);
     }
     const { output, provider } = await withTimeout(
-      executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id),
+      executeJob(
+        jobType,
+        job.input,
+        timeoutMs,
+        String(job.userId),
+        job.id,
+        // 外层墙钟只负责放弃等待；不把 signal 送进去，内部轮询与 ffmpeg 会继续跑到天荒地老
+        isManhuaBgmJobInput(job.input) ? AbortSignal.timeout(timeoutMs) : undefined,
+      ),
       timeoutMs,
       `${job.type} job timed out after ${timeoutMs}ms`,
     );
@@ -3185,7 +3227,15 @@ async function processOnePdfExportJob(): Promise<boolean> {
     const jobType = job.type as JobType;
     const timeoutMs = JOB_TIMEOUT_MS[jobType];
     const { output, provider } = await withTimeout(
-      executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id),
+      executeJob(
+        jobType,
+        job.input,
+        timeoutMs,
+        String(job.userId),
+        job.id,
+        // 外层墙钟只负责放弃等待；不把 signal 送进去，内部轮询与 ffmpeg 会继续跑到天荒地老
+        isManhuaBgmJobInput(job.input) ? AbortSignal.timeout(timeoutMs) : undefined,
+      ),
       timeoutMs,
       `${job.type} job timed out after ${timeoutMs}ms`,
     );

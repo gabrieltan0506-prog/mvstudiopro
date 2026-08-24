@@ -33,6 +33,13 @@ import {
 } from "@/lib/manhuaBgmCardState";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import {
+  buildBeatTable,
+  buildBgmAlignment,
+  beatTableToVolumeExpr,
+  type FilmEvent,
+  type FilmEventKind,
+} from "@shared/manhuaBeatTable";
+import {
   ACTION_LABEL,
   buildPostProdClipOptions,
   jobsStorageKey,
@@ -137,6 +144,19 @@ export default function PostProdWorkshopCard({ blocks, userId, canGenerateBgm = 
   const [bgmEntrySec, setBgmEntrySec] = useState(0);
   const [bgmFadeIn, setBgmFadeIn] = useState(0.5);
   const [bgmFadeOut, setBgmFadeOut] = useState(1);
+  /**
+   * 画面事件表：**必须是真实秒位**，不许从 moods 之类的东西推。
+   * 卡点表的全部价值就在「这一刀落在第几秒」——推出来的秒位等于假装对齐，
+   * 混出来的成品反而比不做更糟（用户以为对过了）。所以这里只收用户填的，
+   * 空表时退回「基础贴装」，卡面不显示「已完成卡点」。
+   */
+  const [filmEvents, setFilmEvents] = useState<FilmEvent[]>([]);
+  const [evKind, setEvKind] = useState<FilmEventKind>("断裂点");
+  const [evAtSec, setEvAtSec] = useState(0);
+  const [evDurSec, setEvDurSec] = useState(0);
+  const [evDesc, setEvDesc] = useState("");
+  /** 选中的配乐变体索引：卡点表要用它的 structure（逐0.5秒量出来的曲子结构） */
+  const [scoreVariantIdx, setScoreVariantIdx] = useState(0);
   const [loudVideoUrl, setLoudVideoUrl] = useState("");
 
   const [jobs, setJobs] = useState<TrackedJob[]>(() =>
@@ -271,8 +291,12 @@ export default function PostProdWorkshopCard({ blocks, userId, canGenerateBgm = 
               bgmUri: string;
               bgmVolume: number;
               entrySec: number;
+              /** 从 BGM 内部起播的秒位（atrim=start），最强击点早于画面断裂点时用 */
+              bgmSeekSec: number;
               fadeInSec: number;
               fadeOutSec: number;
+              /** 卡点表编出的分窗增益；缺省则服务端退回单一 bgmVolume */
+              volumeExpr?: string;
             };
           }
         | { action: "loudness_check"; params: { videoUri: string; windows: [] } },
@@ -495,11 +519,42 @@ export default function PostProdWorkshopCard({ blocks, userId, canGenerateBgm = 
     };
   }, [upTaskId]);
 
+  /** 选中变体的曲子结构；没量到就是 null，卡点表一律不做 */
+  const scoreStructure = scoreVariants[scoreVariantIdx]?.structure ?? null;
+  /** 能不能做卡点：要同时有「量出来的曲子结构」和「用户填的真实画面事件」 */
+  const canBeatAlign = Boolean(scoreStructure) && filmEvents.length > 0;
+
   const submitBgm = () => {
     if (!bgmVideoUrl || !bgmAudioUrl) {
       toast.error("BGM 贴装需要选一段成片和一条音频");
       return;
     }
+
+    /**
+     * 有结构且有真实事件 → 走卡点：把曲子最强击点搬到画面断裂点上，
+     * 再把分窗增益编成 volumeExpr 交给 ffmpeg。
+     * 否则退回基础贴装（单一音量），行为与从前一致，且不谎称对过点。
+     */
+    let entrySec = bgmEntrySec;
+    let bgmSeekSec = 0;
+    let volumeExpr: string | undefined;
+    if (scoreStructure && filmEvents.length > 0) {
+      const alignment = buildBgmAlignment(scoreStructure, filmEvents);
+      entrySec = alignment.entrySec;
+      bgmSeekSec = alignment.seekSec;
+      const filmDurationSec = Math.max(
+        ...filmEvents.map((e) => e.atSec + (e.durationSec || 0)),
+        scoreStructure.totalSec,
+      );
+      const table = buildBeatTable({
+        structure: scoreStructure,
+        events: filmEvents,
+        entrySec: alignment.entrySec,
+        filmDurationSec,
+      });
+      volumeExpr = beatTableToVolumeExpr(table);
+    }
+
     void submit(
       {
         action: "bgm_mount",
@@ -507,12 +562,14 @@ export default function PostProdWorkshopCard({ blocks, userId, canGenerateBgm = 
           videoUri: bgmVideoUrl,
           bgmUri: bgmAudioUrl,
           bgmVolume,
-          entrySec: bgmEntrySec,
+          entrySec,
+          bgmSeekSec,
           fadeInSec: bgmFadeIn,
           fadeOutSec: bgmFadeOut,
+          ...(volumeExpr ? { volumeExpr } : {}),
         },
       },
-      "BGM 贴装",
+      volumeExpr ? "BGM 贴装（已对卡点）" : "BGM 贴装（基础）",
     );
   };
 
@@ -877,9 +934,95 @@ export default function PostProdWorkshopCard({ blocks, userId, canGenerateBgm = 
                 />
               </label>
             </div>
+            <div className="mt-2 rounded-lg border border-white/10 bg-black/20 p-2">
+              <div className="flex items-center justify-between text-[11px] font-medium text-white/70">
+                <span>卡点表 · 画面事件</span>
+                <span className={canBeatAlign ? "text-cyan-300" : "text-white/35"}>
+                  {canBeatAlign
+                    ? `已对卡点（${filmEvents.length} 条）`
+                    : scoreStructure
+                      ? "填入画面事件后才对卡点"
+                      : "先选一版量过结构的配乐"}
+                </span>
+              </div>
+              <p className="mt-1 text-[10px] leading-4 text-white/35">
+                秒位必须来自分镜表实际时间，留空则按基础贴装（单一音量），不会谎称对过点。
+              </p>
+              {filmEvents.length > 0 && (
+                <ul className="mt-1.5 space-y-1">
+                  {filmEvents.map((ev, i) => (
+                    <li key={`${ev.kind}-${ev.atSec}-${i}`} className="flex items-center gap-2 text-[10px] text-white/60">
+                      <span className="rounded bg-white/10 px-1 py-0.5">{ev.kind}</span>
+                      <span>{ev.atSec.toFixed(1)}s</span>
+                      {ev.durationSec ? <span>· {ev.durationSec.toFixed(1)}s</span> : null}
+                      <span className="flex-1 truncate">{ev.descZh}</span>
+                      <button
+                        type="button"
+                        className="text-white/40 hover:text-rose-300"
+                        onClick={() => setFilmEvents((prev) => prev.filter((_, k) => k !== i))}
+                      >
+                        ✕
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-white/55">
+                <select
+                  value={evKind}
+                  onChange={(e) => setEvKind(e.target.value as FilmEventKind)}
+                  className={selectCls + " w-auto"}
+                >
+                  {(["断裂点", "静音停顿", "转场", "对白窗", "终画面"] as FilmEventKind[]).map((k) => (
+                    <option key={k} value={k}>
+                      {k}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="number" step={0.1} min={0} placeholder="秒" value={evAtSec}
+                  onChange={(e) => setEvAtSec(Math.max(0, Number(e.target.value) || 0))}
+                  className={numCls}
+                />
+                <input
+                  type="number" step={0.1} min={0} placeholder="时长" value={evDurSec}
+                  onChange={(e) => setEvDurSec(Math.max(0, Number(e.target.value) || 0))}
+                  className={numCls}
+                />
+                <input
+                  type="text" placeholder="分镜表原话" value={evDesc}
+                  onChange={(e) => setEvDesc(e.target.value)}
+                  className={selectCls + " flex-1 min-w-[8rem]"}
+                />
+                <button
+                  type="button"
+                  className="rounded bg-white/10 px-2 py-1 text-white/70 hover:bg-white/20"
+                  onClick={() => {
+                    if (!evDesc.trim()) {
+                      toast.error("画面事件要写分镜表原话，不要转述");
+                      return;
+                    }
+                    setFilmEvents((prev) =>
+                      [
+                        ...prev,
+                        {
+                          atSec: evAtSec,
+                          kind: evKind,
+                          descZh: evDesc.trim(),
+                          ...(evDurSec > 0 ? { durationSec: evDurSec } : {}),
+                        },
+                      ].sort((a, b) => a.atSec - b.atSec),
+                    );
+                    setEvDesc("");
+                  }}
+                >
+                  加一条
+                </button>
+              </div>
+            </div>
             <button type="button" disabled={busy} onClick={submitBgm} className={goCls}>
               {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Music4 className="h-3.5 w-3.5" />}
-              贴装 BGM
+              {canBeatAlign ? "按卡点贴装 BGM" : "贴装 BGM（基础）"}
             </button>
           </div>
         </div>

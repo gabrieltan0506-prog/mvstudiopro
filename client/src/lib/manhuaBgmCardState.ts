@@ -10,6 +10,8 @@
  * 加个字段就会漏改一处（本仓已有前科）。
  */
 
+import type { BgmStructure } from "@shared/manhuaBeatTable";
+
 /**
  * 按 userId 分键：不分键的话换账号会读到上一个账号的 jobId，
  * 页面显示别人的任务，用户以为没跑成就再点一次 = 再付一次。
@@ -98,7 +100,33 @@ export function canSubmitManhuaBgm(input: {
   return { ok: true };
 }
 
-export type ManhuaBgmVariant = { index: number; gcsUri: string; previewUrl: string; bytes: number };
+/**
+ * 变体带 `structure`：这是**逐 0.5 秒量出来的曲子结构**（最强击点/天然空隙/衰减起点）。
+ * 丢了它卡点表就无从算起——上一版在这里把它读掉了，导致
+ * `buildBeatTable` / `beatTableToVolumeExpr` 全仓零调用，贴装退回单一音量。
+ */
+export type ManhuaBgmVariant = {
+  index: number;
+  gcsUri: string;
+  previewUrl: string;
+  bytes: number;
+  structure: BgmStructure | null;
+};
+
+/** 六个字段必须全是有限数才算数；缺一个就当没量到，不硬凑（凑出来的卡点表会全盘错位） */
+function readBgmStructureValue(value: unknown): BgmStructure | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const o = value as Record<string, unknown>;
+  const result: BgmStructure = {
+    strongestAtSec: Number(o.strongestAtSec),
+    strongestPeakDb: Number(o.strongestPeakDb),
+    valleyAtSec: Number(o.valleyAtSec),
+    valleyMeanDb: Number(o.valleyMeanDb),
+    decayStartSec: Number(o.decayStartSec),
+    totalSec: Number(o.totalSec),
+  };
+  return Object.values(result).every(Number.isFinite) ? result : null;
+}
 
 /** 从 job.output 里取变体；形状不对就当没有，不硬凑 */
 export function readManhuaBgmVariants(output: unknown): ManhuaBgmVariant[] {
@@ -115,6 +143,7 @@ export function readManhuaBgmVariants(output: unknown): ManhuaBgmVariant[] {
         gcsUri,
         previewUrl: String(o.previewUrl || ""),
         bytes: Number(o.bytes) || 0,
+        structure: readBgmStructureValue(o.structure),
       };
     })
     .filter((v): v is ManhuaBgmVariant => Boolean(v));

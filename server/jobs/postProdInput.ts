@@ -34,6 +34,12 @@ export const bgmMountParamsSchema = z
     bgmVolume: z.number().min(0).max(1).default(0.48),
     /** 音乐在片内的进场秒 */
     entrySec: z.number().min(0).max(3600).default(0),
+    /**
+     * 从 BGM **内部**第几秒开始取（对应 `atrim=start`）。
+     * 与 entrySec 互斥语义：击点比画面晚 → 用 entrySec 往后挪整轨；
+     * 击点比画面早 → 用 bgmSeekSec 从曲内往后切。见 `buildBgmAlignment`。
+     */
+    bgmSeekSec: z.number().min(0).max(3600).default(0),
     fadeInSec: z.number().min(0).max(30).default(0.5),
     fadeOutSec: z.number().min(0).max(30).default(1),
     /**
