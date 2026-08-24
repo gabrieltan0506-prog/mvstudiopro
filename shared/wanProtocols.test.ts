@@ -10,6 +10,9 @@ import {
   WAN_BAILIAN_ASYNC_HEADER,
   WAN_BAILIAN_MODEL,
   WAN_BAILIAN_PATH,
+  WAN_BAILIAN_MEDIA_TYPES,
+  WAN_BAILIAN_PROMPT_MAX_CHARS,
+  assertWanBailianMedia,
   buildWanBailianRequest,
   clampWanBailianDuration,
 } from "./wanBailianNative";
@@ -43,11 +46,88 @@ describe("百炼原生", () => {
     expect(b.parameters.duration).toBe(5);
   });
 
-  it("media 只收 https，且没有素材时不塞空数组", () => {
-    expect(
-      buildWanBailianRequest({ prompt: "p", media: [{ type: "image", url: "http://x/a.jpg" }] })
-        .input.media,
-    ).toBeUndefined();
+  it("media.type 是官方七个枚举 —— 上一版照 curl 示例猜成 image/video/audio，全错", () => {
+    expect([...WAN_BAILIAN_MEDIA_TYPES]).toEqual([
+      "first_frame",
+      "last_frame",
+      "reference_image",
+      "reference_video",
+      "reference_audio",
+      "file",
+      "link",
+    ]);
+  });
+
+  it("参考类与首尾帧类互斥，不能同一请求混用", () => {
+    expect(() =>
+      assertWanBailianMedia([
+        { type: "reference_image", url: "https://x/1.jpg" },
+        { type: "first_frame", url: "https://x/2.jpg" },
+      ]),
+    ).toThrow("不能同一请求混用");
+  });
+
+  it("file 与 link 不可同时输入，各自最多 1 个", () => {
+    expect(() =>
+      assertWanBailianMedia([
+        { type: "file", url: "https://x/a.pdf" },
+        { type: "link", url: "https://x/p" },
+      ]),
+    ).toThrow("不可同时输入");
+    expect(() =>
+      assertWanBailianMedia([
+        { type: "file", url: "https://x/a.pdf" },
+        { type: "file", url: "https://x/b.pdf" },
+      ]),
+    ).toThrow("最多 1 个");
+  });
+
+  it("reference_video / reference_audio 各最多 5 段", () => {
+    const six = Array.from({ length: 6 }, (_, i) => ({
+      type: "reference_video" as const,
+      url: `https://x/${i}.mp4`,
+    }));
+    expect(() => assertWanBailianMedia(six)).toThrow("最多 5 段");
+  });
+
+  it("素材引用用**中文**「图1」「视频1」—— 与 WaveSpeed 的英文 Image 1 相反", () => {
+    const b = buildWanBailianRequest({
+      prompt: "@图1 推近，@视频2 接上，Image 3 收尾",
+      media: [{ type: "reference_image", url: "https://x/1.jpg" }],
+    });
+    expect(b.input.prompt).toContain("图1");
+    expect(b.input.prompt).toContain("视频2");
+    expect(b.input.prompt).toContain("图3");
+    expect(b.input.prompt).not.toContain("Image");
+  });
+
+  it("prompt 与 media 二选一必填", () => {
+    expect(() => buildWanBailianRequest({})).toThrow("至少要有一项");
+    expect(buildWanBailianRequest({ media: [{ type: "reference_image", url: "https://x/1.jpg" }] })
+      .input.media).toHaveLength(1);
+  });
+
+  it("**一律走 URL**：base64 直接拒 —— 上游支持不等于我们要用", () => {
+    expect(() =>
+      buildWanBailianRequest({
+        prompt: "p",
+        media: [{ type: "reference_image", url: "data:image/png;base64,AAAA" }],
+      }),
+    ).toThrow("不接受 base64");
+  });
+
+  it("http 明文也拒，只收 https", () => {
+    expect(() =>
+      buildWanBailianRequest({
+        prompt: "p",
+        media: [{ type: "reference_image", url: "http://x/a.jpg" }],
+      }),
+    ).toThrow("必须是 https URL");
+  });
+
+  it("prompt 超 20000 字符自动截断（官方是截断不是报错）", () => {
+    const b = buildWanBailianRequest({ prompt: "字".repeat(30000) });
+    expect(b.input.prompt!.length).toBe(WAN_BAILIAN_PROMPT_MAX_CHARS);
   });
 
   it("时长夹到 2–30", () => {
