@@ -11,7 +11,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildNativeDeepReadEpisodeExecution,
+  buildNativeDeepReadLearnResult,
   isManhuaLearnEpisodeAlreadyLearned,
+  pickLearnedIndexesForBatchSelection,
   type NativeDeepReadEpisodeSourceDeps,
 } from "./manhuaTemplateLearnService";
 import {
@@ -244,5 +246,117 @@ describe("说明文案按真实运行模式分开（P1）", () => {
     const meta = getManhuaLearnPipelineMeta();
     expect(meta.summaryZh).toContain("语音");
     expect(getManhuaLearnPipelineMeta({ nativeDeepRead: false }).summaryZh).toBe(meta.summaryZh);
+  });
+});
+
+describe("native 模式的学习结果：没有系列卡这回事（终审方案 A）", () => {
+  const base = {
+    seriesKey: "s1",
+    workId: "w1",
+    batchIndexes: [] as number[],
+    listedEpisodeCount: 72,
+    paywallFields: {},
+  };
+
+  it("🔴 proposal / proposalGcsUri 恒为 null，analysisReady 恒为 false", () => {
+    const r = buildNativeDeepReadLearnResult({ ...base, nativeCardCount: 5, batchLearned: 2 });
+    expect(r.proposal).toBeNull();
+    expect(r.proposalGcsUri).toBeNull();
+    expect(r.analysisReady).toBe(false);
+    expect(r.visionFilled).toBe(false);
+  });
+
+  it("🔴 不拿旧 digest 充数：digestsPreview 为空", () => {
+    const r = buildNativeDeepReadLearnResult({ ...base, nativeCardCount: 5, batchLearned: 2 });
+    expect(r.digestsPreview).toEqual([]);
+  });
+
+  it("learnedCount 用真实 native 卡数，不用 learnedEpisodeIndexes", () => {
+    expect(
+      buildNativeDeepReadLearnResult({ ...base, nativeCardCount: 7, batchLearned: 3 }).learnedCount,
+    ).toBe(7);
+  });
+
+  it("🔴 文案不得出现旧链路说法（草版总分析／系列分析／启发式底稿）", () => {
+    for (const [cards, learned] of [[0, 0], [5, 0], [5, 2]] as Array<[number, number]>) {
+      const r = buildNativeDeepReadLearnResult({
+        ...base,
+        nativeCardCount: cards,
+        batchLearned: learned,
+      });
+      for (const stale of ["草版总分析", "系列分析", "启发式底稿", "系列底稿"]) {
+        expect(r.messageZh).not.toContain(stale);
+      }
+    }
+  });
+
+  it("三种情形各自说人话：本轮有新增 / 无新增 / 一张都没有", () => {
+    expect(
+      buildNativeDeepReadLearnResult({ ...base, nativeCardCount: 5, batchLearned: 2 }).messageZh,
+    ).toContain("本轮生成 2 张原生精读待审卡");
+    expect(
+      buildNativeDeepReadLearnResult({ ...base, nativeCardCount: 5, batchLearned: 0 }).messageZh,
+    ).toContain("本轮没有新增");
+    expect(
+      buildNativeDeepReadLearnResult({ ...base, nativeCardCount: 0, batchLearned: 0 }).messageZh,
+    ).toContain("尚未生成待审卡");
+  });
+
+  it("暂跳提示沿用主流程口径，追加在文案末尾", () => {
+    const r = buildNativeDeepReadLearnResult({
+      ...base,
+      nativeCardCount: 1,
+      batchLearned: 1,
+      skippedHintZh: " 当前有 2 集因来源受限暂跳，不计入已学；续学将从后续集继续。",
+    });
+    expect(r.messageZh).toContain("因来源受限暂跳");
+  });
+});
+
+describe("批次选择用的完成集合（终审第三节 P0：入口就要分模式）", () => {
+  /**
+   * 这里锁的是「选哪个集合」这一步。
+   * prog.learnedEpisodeIndexes 里混入了**旧 digest** 的完成集，
+   * native 模式如果读它，某集只要在旧 digest 里出现过就会在选批次时被排除，
+   * 根本进不到循环内的 native 判定 —— 只修循环里的判据是修了一半。
+   */
+  it("🔴 native 模式：只认 native 卡，旧 digest 完成集不参与批次排除", () => {
+    expect(
+      pickLearnedIndexesForBatchSelection({
+        nativeDeepReadMode: true,
+        nativeIngestedEpisodes: new Set([2]),
+        progLearnedEpisodeIndexes: [1, 2, 3],
+      }),
+    ).toEqual([2]);
+  });
+
+  it("native 模式一张卡都没有时，完成集为空 —— 所有集都该进批次", () => {
+    expect(
+      pickLearnedIndexesForBatchSelection({
+        nativeDeepReadMode: true,
+        nativeIngestedEpisodes: new Set(),
+        progLearnedEpisodeIndexes: [1, 2, 3],
+      }),
+    ).toEqual([]);
+  });
+
+  it("抽帧模式：仍用 prog.learnedEpisodeIndexes（回归）", () => {
+    expect(
+      pickLearnedIndexesForBatchSelection({
+        nativeDeepReadMode: false,
+        nativeIngestedEpisodes: new Set([9]),
+        progLearnedEpisodeIndexes: [1, 2, 3],
+      }),
+    ).toEqual([1, 2, 3]);
+  });
+
+  it("native 卡集合乱序时输出仍升序，批次选择依赖有序输入", () => {
+    expect(
+      pickLearnedIndexesForBatchSelection({
+        nativeDeepReadMode: true,
+        nativeIngestedEpisodes: new Set([7, 2, 5]),
+        progLearnedEpisodeIndexes: [],
+      }),
+    ).toEqual([2, 5, 7]);
   });
 });
