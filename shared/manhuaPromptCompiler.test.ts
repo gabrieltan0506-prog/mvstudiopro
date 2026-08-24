@@ -165,31 +165,37 @@ describe("TTS 起止秒位", () => {
   });
 });
 
-describe("Wan 3.0 已上线(三入口完整放行)", () => {
-  it("别名归一，且不再被判为非 ready", () => {
+describe("Wan 3.0 当前 reserved（三入口一致拒绝，不产伪实现）", () => {
+  /**
+   * 0824 复审把 wan 从 ready 退回 reserved：协议层与方言层都在，
+   * 但 `server/services/bailianWanVideo.ts` 不存在、`buildWanBailianRequest`
+   * 全仓零生产调用者，生产链实际走 WaveSpeed。标 ready 等于对用户宣称
+   * 「Wan 已按百炼正式协议接通」，与事实不符。
+   *
+   * 这里锁的是「三个入口的口径一致」——最怕的不是拒绝，是**一个口子拒、
+   * 另一个口子放行**：那样用户从 A 页面点不动、从 B 页面点得动还真发了车。
+   */
+  it("别名仍要归一（reserved 不代表识别不了这个 id）", () => {
     expect(normalizeCompilerEngineId("wan30")).toBe("wan-3.0");
     expect(normalizeCompilerEngineId("minimax-h3")).toBe("minimax-hailuo-3");
-    // 0824 转 ready：方言层已接线，不再是 reserved
-    expect(isReadyCompilerEngineId("wan-3.0")).toBe(true);
+    expect(isReadyCompilerEngineId("wan-3.0")).toBe(false);
   });
 
-  it("三入口都能编译，且走 wan 方言（编号化引用 + 剥 Seedance 四标记）", () => {
-    const out = compileEpisode(IR, "wan-3.0");
-    expect(out.segments.length).toBeGreaterThan(0);
+  it("三入口都拒绝：整集编译 / 单段编译 / 格式层", () => {
+    expect(() => compileEpisode(IR, "wan-3.0")).toThrow(/bailianWanVideo|生产适配器/);
 
     const seg = packShotsIntoSegments([shot(1, 5)], 15)[0]!;
-    expect(() => compileSegmentPrompt(seg, "wan-3.0")).not.toThrow();
+    expect(() => compileSegmentPrompt(seg, "wan-3.0")).toThrow(/生产适配器/);
 
-    const fmt = formatPromptForEngine("@图1 人物特写，{我来了}", "wan-3.0");
-    expect(fmt.text).toContain("Image 1");
-    // {} 是 Seedance 方言，留着会被当正文念出来
-    expect(fmt.text).toContain("“我来了”");
-    expect(fmt.text).not.toContain("{");
+    expect(() => formatPromptForEngine("@图1 人物特写，{我来了}", "wan-3.0")).toThrow(
+      /生产适配器/,
+    );
   });
 
-  it("单段上限 30s，与官方一致", () => {
+  it("合法时长也拒绝 —— 拦的是引擎不可用，不是参数不合规", () => {
+    // 30s 在 Wan 官方口径内。若这条变成「不抛」，说明门禁被参数校验旁路了。
     const long = packShotsIntoSegments([shot(1, 15), shot(2, 15)], 30)[0]!;
-    expect(() => compileSegmentPrompt(long, "wan-3.0")).not.toThrow();
+    expect(() => compileSegmentPrompt(long, "wan-3.0")).toThrow(/生产适配器/);
   });
 });
 

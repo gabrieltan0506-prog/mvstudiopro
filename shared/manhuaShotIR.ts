@@ -69,11 +69,15 @@ export type CompilerEngineId =
   | typeof CANVAS_VIDEO_MODEL_HAILUO_H3;
 
 /**
- * 0824 起 wan-3.0 也 ready，故不再排除任何引擎。
- * 保留这个别名是为了让「哪些引擎能编译」仍有一个明确的类型出口——
- * 以后再有 reserved 引擎，只需在这里 Exclude。
+ * wan-3.0 是 **reserved**：协议层已按官方参数表落好（shared/wanBailianNative.ts），
+ * 但**没有百炼生产适配器**——建单、轮询、24 小时结果转存、失败分类、
+ * 计费退款、重启恢复一个都没有，生产链实际走的是 WaveSpeed 那条。
+ *
+ * 在接上 `server/services/bailianWanVideo.ts` 之前，不许标 ready：
+ * 标了就等于对用户宣称"Wan 已按百炼正式协议接通"，而事实不是。
+ * 接线待办见 ~/Downloads/2026Aug24/jobs-codes-undo.md（P0·百炼 Wan 生产适配器）。
  */
-export type ReadyCompilerEngineId = CompilerEngineId;
+export type ReadyCompilerEngineId = Exclude<CompilerEngineId, "wan-3.0">;
 
 export type CompilerDialect = "seedance" | "h3" | "wan";
 export type CompilerSupportStatus = "ready" | "reserved";
@@ -179,15 +183,30 @@ export const COMPILER_ENGINE_LIMITS = {
     },
     dialect: "wan",
     /**
-     * 0824 上线转 ready。方言层已接线（编号化引用 ＋ 剥 Seedance 四标记）——
-     * 只翻 status 不接方言，提示词会掉进「方言尚未接线」的 throw。
+     * **reserved · protocol_preparation**（0824 复审后从 ready 退回）。
+     *
+     * 协议层与方言层都已按官方参数表落好，但**百炼生产适配器不存在**：
+     * `buildWanBailianRequest` 全仓零生产调用者，没有建单、轮询、
+     * 24 小时结果转存、失败分类（UNKNOWN 需人工核对不得重建单）、
+     * 计费退款与重启恢复。生产链实际走的是 WaveSpeed 通道。
+     *
+     * 标 ready 等于对用户宣称「Wan 已按百炼正式协议接通」——与事实不符，
+     * 所以在 `server/services/bailianWanVideo.ts` 落地之前保持 reserved。
      *
      * 官方口径（百炼控制台 · 华北2 北京）：
-     *   模型 Code  wan3.0-video   ← 与本仓内部 id "wan-3.0" 不同名，适配器需映射
-     *   能力      all-in-one：参考/编辑/复刻/驱动，四模态全能参考
-     *   时长      最长 30 秒 · RPM 300
+     *   模型 Code  wan3.0-video / wan3.0-video-prime  ← 与本仓内部 id "wan-3.0" 不同名
+     *   能力      all-in-one：参考/编辑/复刻/驱动
+     *   时长      -1（智能）或 2–30 秒 · RPM 300
      */
-    status: "ready",
+    status: "reserved",
+    /**
+     * 拒绝文案要说真正的原因。默认那句「提示词方言尚未接线」在这里是**假的**——
+     * 方言层早就接好了，缺的是生产适配器。照默认文案报，下一个人会去改方言层，
+     * 白花半天才发现修错了地方。
+     */
+    noteZh:
+      "wan-3.0 暂不可选用：百炼生产适配器（server/services/bailianWanVideo.ts）尚未落地，" +
+      "协议层与方言层已就绪但无生产调用者；接上适配器后再把 status 翻回 ready。",
   },
 } satisfies Record<CompilerEngineId, CompilerEngineProfile>;
 

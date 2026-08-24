@@ -22,14 +22,15 @@ describe("enhancePromptForEngine", () => {
     expect(r.gateway).toBe("bailian");
   });
 
-  it("wan-3.0 已上线：不再被服务层自拒，走 wan 方言正常增强", async () => {
-    // 0824 前 wan-3.0 是 reserved，服务层直接拒。现在方言已接线，转 ready。
-    invoke.mockResolvedValueOnce(ok("@图1 推近，{我来了}"));
-    const r = await enhancePromptForEngine({ prompt: "写打斗", engine: "wan-3.0" });
-    // wan 方言：引用编号化 + 剥 Seedance 四标记（留着会被当正文念出来）
-    expect(r.enhancedPrompt).toContain("Image 1");
-    expect(r.enhancedPrompt).toContain("“我来了”");
-    expect(r.enhancedPrompt).not.toContain("{");
+  it("wan-3.0 reserved：服务层自拒，且**一个字都不打给上游**", async () => {
+    // 0824 复审退回 reserved（无百炼生产适配器）。这里不只验「拒」，
+    // 更要验「拒在调上游之前」——拒在之后等于人家已经算过一轮，
+    // 白花时间白占额度，还给用户一个「系统好像动了一下」的错觉。
+    const before = invoke.mock.calls.length;
+    await expect(
+      enhancePromptForEngine({ prompt: "写打斗", engine: "wan-3.0" }),
+    ).rejects.toThrow(/bailianWanVideo|生产适配器/);
+    expect(invoke.mock.calls.length).toBe(before);
   });
 
   it("增强结果含阻止级问题(prompt_length):抛错不返回成功", async () => {
@@ -47,7 +48,10 @@ describe("enhancePromptForEngine", () => {
       return ok("镜头推近,人物说:“我认罪”");
     });
     const r = await enhancePromptForEngine({ prompt: "认罪戏", engine: "minimax-hailuo-3" });
-    expect(String((invoke.mock.calls[1][0] as { user: string }).user)).toContain("Image N");
+    // 取**本次**调用，不按固定下标：上面任何一条测试改了调用次数，
+    // 固定下标就会悄悄指向别的引擎的那一发，断言照样绿但验的不是这件事。
+    const lastCall = invoke.mock.calls.at(-1)!;
+    expect(String((lastCall[0] as { user: string }).user)).toContain("Image N");
     expect(r.enhancedPrompt).not.toMatch(/[{}<>【】]/);
   });
 });

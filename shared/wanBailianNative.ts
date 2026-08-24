@@ -1,4 +1,15 @@
 /**
+ * ⚠️ **protocol_preparation —— 协议准备层，尚未接生产链。**
+ *
+ * 本文件只把百炼官方参数表落成常量与校验函数。**没有任何生产调用者**：
+ * 不建单、不轮询、不转存、不分类失败、不计费退款、不做重启恢复。
+ * 真实生产链是 canvasRunBlock → /api/jobs?op=wan30Video → WaveSpeed 通道。
+ *
+ * 接生产适配器之前：编译器里 wan-3.0 必须保持 `reserved`，
+ * 前端与文案不得宣称「Wan 已按百炼正式协议接通」。
+ * 施工清单见 ~/Downloads/2026Aug24/jobs-codes-undo.md（P0·百炼 Wan 生产适配器）。
+ */
+/**
  * Wan 3.0 · **百炼原生**协议常量（0824 用户给的 curl 实样）。
  *
  * ⚠️ 与 WaveSpeed 封装**不是一套，字段不得混用**：
