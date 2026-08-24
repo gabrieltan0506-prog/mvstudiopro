@@ -14,9 +14,40 @@ const state = {
   card: {} as Record<string, unknown>,
 };
 
+/**
+ * 下架现在要先占**生命周期锁**、再用严格全量列表过「最后一张」这道门。
+ * mock 必须让锁能拿到与释放（锁走 uploadBufferToGcsIfAbsent 建、
+ * downloadGcsObjectVersioned 回读比对 token），并给 approved/ 前缀一份完整列表——
+ * 否则每条用例都会卡在「另一项操作正在处理」或「无法确认完整正式库」。
+ */
+const LOCK_OBJECT = "manhua-template-learn/locks/approved-lifecycle.json";
+const lockState = vi.hoisted(() => ({ body: Buffer.from("{}"), held: false })) as { body: Buffer; held: boolean };
+
 vi.mock("./gcs.js", () => ({
   getGcsBucketName: () => "test-bucket",
-  downloadGcsObjectVersioned: async () => {
+  listGcsObjectNamesByPrefix: async ({ prefix }: { prefix: string }) =>
+    prefix.includes("/approved/")
+      // 同赛道给两张，让「最后一张」那道门放行；目标卡与 state.card 同 id
+      ? ["manhua-template-learn/approved/tpl_series_arch01.json",
+         "manhua-template-learn/approved/tpl_series_other01.json"]
+      : [],
+  // 严格全量列表**与 state.card 解耦**：它只用来过「最后一张」这道门，
+  // 而各条用例要测的是门之后的流程（顺序 / 404 / 503 / 非 approved）。
+  // 若跟着 state 变，门会先把用例拦掉，测不到真正想测的分支。
+  downloadGcsObject: async ({ gcsUri }: { gcsUri: string }) => ({
+    buffer: Buffer.from(
+      JSON.stringify(
+        String(gcsUri).includes("other01")
+          ? { ...approvedCard(), id: "tpl_series_other01", publicCode: "ZZ99" }
+          : approvedCard(),
+      ),
+      "utf8",
+    ),
+  }),
+  downloadGcsObjectVersioned: async ({ gcsUri }: { gcsUri?: string } = {}) => {
+    if (String(gcsUri || "").endsWith(LOCK_OBJECT)) {
+      return { buffer: lockState.body, generation: "1" };
+    }
     seq.push("download");
     if (state.statStatus !== 200) throw new Error(`gcs_stat_failed:${state.statStatus}`);
     return {
@@ -26,17 +57,28 @@ vi.mock("./gcs.js", () => ({
       generation: state.statGeneration!,
     };
   },
-  uploadBufferToGcsIfAbsent: async (p: { objectName: string }) => {
+  uploadBufferToGcs: async () => ({ gcsUri: "gs://x/y" }),
+  uploadBufferToGcsIfAbsent: async (p: { objectName: string; buffer: Buffer }) => {
+    if (p.objectName === LOCK_OBJECT) {
+      if (lockState.held) return { created: false };
+      lockState.held = true;
+      lockState.body = p.buffer;
+      return { created: true };
+    }
     seq.push(`upload:${p.objectName}`);
     return { created: true };
   },
-  deleteGcsObject: async (p: { ifGenerationMatch?: string }) => {
+  deleteGcsObject: async (p: { objectName?: string; ifGenerationMatch?: string }) => {
+    if (p.objectName === LOCK_OBJECT) {
+      lockState.held = false;
+      return;
+    }
     seq.push(`delete:${p.ifGenerationMatch}`);
     if (state.deleteStatus === 412) throw new Error("gcs_delete_generation_conflict");
   },
-  uploadBufferToGcs: async () => ({ gcsUri: "gs://x/y" }),
-  listGcsObjectNamesByPrefix: async () => [],
-  downloadGcsObject: async () => ({ buffer: Buffer.from("{}"), bucket: "b", objectName: "o" }),
+  // ⚠️ listGcsObjectNamesByPrefix / downloadGcsObject 已在上面定义。
+  // 这里原本又写了一遍空实现——同一个对象字面量里重复的键**后者胜**，
+  // 于是严格全量列表恒空、下架永远被门拦住。同一个东西不要定义两遍。
   signGsUriV4ReadUrl: () => "https://signed",
 }));
 
@@ -58,6 +100,7 @@ function approvedCard() {
 }
 
 beforeEach(() => {
+  lockState.held = false;
   seq.length = 0;
   state.statGeneration = "77";
   state.statStatus = 200;

@@ -52,4 +52,25 @@ describe("manhua series identity", () => {
     ], existing);
     expect(placed[0]?.index).toBe(10);
   });
+
+  it("GCS 签名短链用**稳定 gs://** 判同源，重跑仍回到原集号", () => {
+    // 手动导入时运行时 URL 是短时签名 HTTPS（每次都不同），
+    // 拿它比对永远不相等 → 同一素材重跑会被误判成新素材追加
+    const placed = placeSingleSourceInExistingSeries(
+      [{ index: 1, url: "https://storage.example/signed?Expires=1", title: "手动导入" }],
+      [{ episodeIndex: 7, url: "gs://bucket/user/source.mp4" }],
+      { sourceIdentity: "gs://bucket/user/source.mp4" },
+    );
+    expect(placed[0]?.index).toBe(7);
+  });
+
+  it("🔴 native 只有逐集卡没有 digest 时，不同单源仍追加到下一集号", () => {
+    // 这就是终审第三条：只按 digest 排集号时，native 场景下 existingSources 为空，
+    // 第二个素材会再落回 ep001，然后被已入库的 ep001 判成「已完成」
+    const placed = placeSingleSourceInExistingSeries(
+      [{ index: 1, url: "https://example.com/new-source", title: "大合集" }],
+      [{ episodeIndex: 9, url: "https://example.com/old-source" }],
+    );
+    expect(placed[0]?.index).toBe(10);
+  });
 });

@@ -25,7 +25,7 @@ import {
   NATIVE_DEEP_READ_MAX_SEGMENT_SEC,
   type NativeDeepReadEpisodeExecution,
 } from "./manhuaNativeDeepReadExecution.js";
-import { listIngestedNativeDeepReadEpisodes } from "./manhuaNativeDeepReadIngest.js";
+import { listIngestedNativeDeepReadEpisodeRecords } from "./manhuaNativeDeepReadIngest.js";
 import {
   MANHUA_LEARN_ANALYSIS_DRAFT_MIN,
   MANHUA_LEARN_ANALYSIS_MIN,
@@ -1418,6 +1418,28 @@ export function pickLearnedIndexesForBatchSelection(input: {
     : input.progLearnedEpisodeIndexes;
 }
 
+/**
+ * 用 GCS 上的**有效卡**校准进度副本。
+ *
+ * 有效卡是 native 完成状态的唯一真源：卡被删/被归档时，进度里的集号要跟着掉，
+ * 所以每轮覆盖而不是增量累加。顺带清掉已完成集的暂跳标记——
+ * 并发任务会留下「已入库却还挂着受限暂跳」的自相矛盾状态。
+ */
+export function reconcileManhuaLearnProgressWithNativeCards(
+  progress: ManhuaLearnSeriesProgress,
+  nativeIngestedEpisodes: ReadonlySet<number>,
+  updatedAt = new Date().toISOString(),
+): ManhuaLearnSeriesProgress {
+  return {
+    ...progress,
+    nativeDeepReadEpisodeIndexes: Array.from(nativeIngestedEpisodes).sort((a, b) => a - b),
+    skippedEpisodeIndexes: (progress.skippedEpisodeIndexes || []).filter(
+      (episodeIndex) => !nativeIngestedEpisodes.has(episodeIndex),
+    ),
+    updatedAt,
+  };
+}
+
 export type NativeDeepReadEpisodeSourceDeps = {
   probeDuration: (ep: ListedEpisode, state: EpisodeSourceState) => Promise<number>;
   mediaSource: (ep: ListedEpisode, state: EpisodeSourceState) => ManhuaRemoteMediaSource;
@@ -1772,6 +1794,11 @@ export async function runManhuaTemplateLearn(
   const learnLlm = resolveManhuaTemplateLearnLlmProvider(
     input.learnLlm || process.env.MANHUA_TEMPLATE_LEARN_LLM_PROVIDER,
   );
+  /**
+   * 提到函数顶部：**单源集号安放**（在批次选择之前）就要按模式取不同的已占用集。
+   * native 不产 digest，那一步不能读 digest。
+   */
+  const nativeDeepReadMode = isManhuaNativeDeepReadEnabled();
   // 列表接口可能才能回填真剧名；先用临时 key 建工作目录，
   // 取到 titleHint 后再按剧名核对已有系列。
   let seriesKey = seriesKeyFrom({ url: sourceIdentity, mixId, title, learnLlm });
@@ -1820,10 +1847,31 @@ export async function runManhuaTemplateLearn(
     // 同名剧已有分集时，单条大合集作为新的学习源追加；
     // 同一条源重跑则回到原集号，从断点续学。
     const existingDigests = await loadAllDigests(seriesKey);
-    listed = placeSingleSourceInExistingSeries(listed, existingDigests);
+    /**
+     * native **不产 digest** —— 只按 digest 排集号时，同名剧第二次手动导入另一个视频
+     * 会再落回 ep001，然后被已入库的 ep001 判成「已完成」，新素材一集都学不到。
+     * 所以 native 模式改用逐集卡的记录（带稳定来源）。
+     */
+    const nativeIngestedRecords = nativeDeepReadMode
+      ? await listIngestedNativeDeepReadEpisodeRecords(seriesKey)
+      : [];
+    const nativeIngestedEpisodes = new Set(
+      nativeIngestedRecords.map((record) => record.episodeIndex),
+    );
+    const placementSources = nativeDeepReadMode
+      ? nativeIngestedRecords.map((record) => ({
+          episodeIndex: record.episodeIndex,
+          url: record.sourceUrl,
+        }))
+      : existingDigests;
+    /**
+     * `sourceIdentity` 是稳定标识（GCS 导入是 gs://，不是每次都变的签名链）——
+     * 拿签名链比对永远不相等，同一素材重跑会被当成新素材追加。
+     */
+    listed = placeSingleSourceInExistingSeries(listed, placementSources, { sourceIdentity });
     await progress(
       MANHUA_LEARN_STAGE.list,
-      `已解析 ${listed.length} 个学习源${mixId && listed.length > 1 ? "（合集展开）" : ""}${dramaNameZh ? ` · 《${dramaNameZh}》` : ""}${existingDigests.length ? " · 已并入同名剧" : ""}`,
+      `已解析 ${listed.length} 个学习源${mixId && listed.length > 1 ? "（合集展开）" : ""}${dramaNameZh ? ` · 《${dramaNameZh}》` : ""}${placementSources.length ? " · 已并入同名剧" : ""}`,
     );
 
     const seriesClassify = classifyManhuaLearnTitle(titleHint || "未命名合集");
@@ -1899,6 +1947,13 @@ export async function runManhuaTemplateLearn(
         `已识别付费边界：免费可学至第 ${paywallState.paywallStartEpisodeIndex - 1} 集；第 ${paywallState.paywallStartEpisodeIndex} 集起共 ${paywallState.paywallEpisodeIndexes.length} 集标记为付费缺集，不再尝试`,
       );
     }
+    if (nativeDeepReadMode) {
+      /**
+       * 校准必须在写盘**之前**：本轮没有新批次时会直接从 native 返回，
+       * 校准结果留在内存里，progress.json 上还是旧集号 —— 下次进来又从头算。
+       */
+      prog = reconcileManhuaLearnProgressWithNativeCards(prog, nativeIngestedEpisodes);
+    }
     await writeJsonGcs(
       `manhua-template-learn/series/${seriesKey}/progress.json`,
       prog,
@@ -1920,19 +1975,8 @@ export async function runManhuaTemplateLearn(
      * 所以 native 模式的完成集合只认已入库的 native 卡
      * （一集一张 `tpl_native_<seriesKey>_epNNN.json`），旧 digest 只读不写。
      */
-    const nativeDeepReadMode = isManhuaNativeDeepReadEnabled();
-    const nativeIngestedEpisodes: Set<number> = nativeDeepReadMode
-      ? new Set(await listIngestedNativeDeepReadEpisodes(seriesKey))
-      : new Set<number>();
-    if (nativeDeepReadMode) {
-      // 每轮从有效卡集合重新校准（不做增量累加）：卡被删/归档时这里要跟着掉
-      prog.nativeDeepReadEpisodeIndexes = Array.from(nativeIngestedEpisodes)
-        .sort((a, b) => a - b);
-      // 已入库的集不该还挂着「来源受限暂跳」——并发任务会留下这种自相矛盾的状态
-      prog.skippedEpisodeIndexes = (prog.skippedEpisodeIndexes || []).filter(
-        (idx) => !nativeIngestedEpisodes.has(idx),
-      );
-    }
+    // nativeDeepReadMode / nativeIngestedEpisodes 已在上面（集号安放那步）算好，
+    // 校准也已在写盘之前完成 —— 这里直接用，不再重复列举一次 GCS
 
     /** 批次选择用的「已完成集」：两代各认各的凭证，不许互相冒充 */
     const learnedEpisodeIndexesForSelection = pickLearnedIndexesForBatchSelection({
@@ -2368,7 +2412,8 @@ export async function runManhuaTemplateLearn(
         await progress(
           MANHUA_LEARN_STAGE.persist,
           nativeDeepReadMode
-            ? `${episodeDoneNoteZh} · 本轮新增 ${batchLearnedIndexes.length} · 累计 ${prog.learnedEpisodeIndexes.length} 集`
+            // 累计数必须用 native 卡数：prog.learnedEpisodeIndexes 是**旧 digest** 的集数
+            ? `${episodeDoneNoteZh} · 本轮新增 ${batchLearnedIndexes.length} · 累计 ${nativeIngestedEpisodes.size} 集`
             : `${episodeDoneNoteZh} · 本轮新增 ${batchLearnedIndexes.length} · 累计 ${prog.learnedEpisodeIndexes.length} 集）`,
         );
       } catch (e) {

@@ -14,6 +14,7 @@ import {
   buildNativeDeepReadLearnResult,
   isManhuaLearnEpisodeAlreadyLearned,
   pickLearnedIndexesForBatchSelection,
+  reconcileManhuaLearnProgressWithNativeCards,
   type NativeDeepReadEpisodeSourceDeps,
 } from "./manhuaTemplateLearnService";
 import {
@@ -358,5 +359,40 @@ describe("批次选择用的完成集合（终审第三节 P0：入口就要分�
         progLearnedEpisodeIndexes: [],
       }),
     ).toEqual([2, 5, 7]);
+  });
+});
+
+describe("native 完成状态回写 progress（终审第一条）", () => {
+  const baseProgress = {
+    seriesKey: "s1",
+    sourceUrl: "https://example.com/series",
+    titleHint: "示例剧",
+    listedEpisodeCount: 4,
+    learnedEpisodeIndexes: [1],
+    nativeDeepReadEpisodeIndexes: [2, 99],
+    skippedEpisodeIndexes: [2, 3],
+    updatedAt: "old",
+  } as never;
+
+  it("🔴 用有效卡集合**覆盖**旧快照（卡被删/归档时集号要跟着掉）", () => {
+    const out = reconcileManhuaLearnProgressWithNativeCards(baseProgress, new Set([4, 2]), "new");
+    // 99 不在有效卡里，必须消失；顺序升序
+    expect(out.nativeDeepReadEpisodeIndexes).toEqual([2, 4]);
+  });
+
+  it("🔴 不碰 learnedEpisodeIndexes —— 那是旧 digest 的账", () => {
+    const out = reconcileManhuaLearnProgressWithNativeCards(baseProgress, new Set([4, 2]), "new");
+    expect(out.learnedEpisodeIndexes).toEqual([1]);
+  });
+
+  it("已入库集的暂跳标记被清掉（并发任务会留下这种自相矛盾状态）", () => {
+    const out = reconcileManhuaLearnProgressWithNativeCards(baseProgress, new Set([4, 2]), "new");
+    expect(out.skippedEpisodeIndexes).toEqual([3]);
+  });
+
+  it("updatedAt 跟着刷新，便于对账", () => {
+    expect(
+      reconcileManhuaLearnProgressWithNativeCards(baseProgress, new Set([2]), "new").updatedAt,
+    ).toBe("new");
   });
 });

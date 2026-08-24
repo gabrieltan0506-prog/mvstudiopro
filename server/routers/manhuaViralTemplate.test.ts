@@ -62,6 +62,15 @@ vi.mock("../services/manhuaViralTemplateStore", () => ({
   ]),
   listGcsManhuaViralProposals: vi.fn(async () => [revisionCard]),
   listGcsManhuaViralApproved: vi.fn(async () => [secretCard]),
+  // 生命周期判断改用严格全量（宽松版只读 80 张、失败返回 []）
+  listGcsManhuaViralApprovedStrict: vi.fn(async () => [secretCard]),
+  // 体检候选也改严格：读不到就抛，不能把「暂时读不到精读卡」显示成「建议重学」
+  listGcsManhuaViralProposalsStrict: vi.fn(async () => [revisionCard]),
+  // 归档索引独立返回：恢复入口不再依赖 approved 行存在
+  listArchivedManhuaViralTemplateIndex: vi.fn(async () => []),
+  listArchivedManhuaViralTemplateVersions: vi.fn(async () => []),
+  restoreArchivedManhuaViralTemplate: vi.fn(async () => secretCard),
+  archiveApprovedManhuaViralTemplate: vi.fn(async () => secretCard),
   getGcsManhuaViralApproved: vi.fn(async () => secretCard),
   getGcsManhuaViralProposal: vi.fn(async () => proposalForRouter),
   saveManhuaViralTemplateRevisionProposal: vi.fn(async (card: ManhuaViralTemplateCard) => card),
@@ -217,6 +226,75 @@ describe("listApprovedPrivate：owner-only 鉴权矩阵", () => {
   });
 });
 
+describe("生命周期三路由：owner-only 鉴权矩阵", () => {
+  /**
+   * 换代体检会列出全库正式卡（含内部字段），归档恢复能改动正式库——
+   * 这三条比只读列表更敏感，权限必须逐个钉死，不能只靠 UI 不显示入口。
+   */
+  const lifecycleCalls = (caller: {
+    reviewTemplateGenerations: () => Promise<unknown>;
+    listArchivedVersions: (i: { id: string }) => Promise<unknown>;
+    restoreArchived: (i: { id: string; generation: string; confirmRestore: true }) => Promise<unknown>;
+  }) => [
+    () => caller.reviewTemplateGenerations(),
+    () => caller.listArchivedVersions({ id: "tpl_series_abc" }),
+    () =>
+      caller.restoreArchived({ id: "tpl_series_abc", generation: "77", confirmRestore: true }),
+  ];
+
+  it("普通用户（无监管会话）三条全 FORBIDDEN", async () => {
+    const caller = (await loadRouter()).createCaller(makeCtx("user")) as never;
+    for (const call of lifecycleCalls(caller)) {
+      await expect(call()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    }
+  });
+
+  it("其他 admin/supervisor 角色也不能调用", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const router = await loadRouter();
+    for (const role of ["admin", "supervisor"] as const) {
+      const caller = router.createCaller(makeCtx(role, undefined, `other-${role}`)) as never;
+      for (const call of lifecycleCalls(caller)) {
+        await expect(call()).rejects.toMatchObject({ code: "FORBIDDEN" });
+      }
+    }
+  });
+
+  it("监管会话不能替代 owner 身份", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const caller = (await loadRouter()).createCaller(
+      makeCtx("user", { userId: 7, expiresAt: Date.now() + 60_000 }, "other-user"),
+    ) as never;
+    for (const call of lifecycleCalls(caller)) {
+      await expect(call()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    }
+  });
+
+  it("owner 本人可以调用换代体检（拿到的是结论而不是权限错）", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const caller = (await loadRouter()).createCaller(
+      makeCtx("user", undefined, "owner-open-id"),
+    );
+    const out = await caller.reviewTemplateGenerations();
+    expect(out).toHaveProperty("items");
+  });
+
+  it("非数字 generation 在路由层就被拒（owner 也不例外）", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const caller = (await loadRouter()).createCaller(
+      makeCtx("user", undefined, "owner-open-id"),
+    );
+    await expect(
+      caller.restoreArchived({
+        id: "tpl_series_abc",
+        // 路径穿越型输入：长度校验放得过去，数字正则放不过去
+        generation: "../approved/tpl_x" as never,
+        confirmRestore: true,
+      }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+});
+
 describe("owner 模板查看与优化", () => {
   it("只有 OWNER_OPEN_ID 本人获得查看能力，admin/supervisor 角色不能替代", async () => {
     vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
@@ -306,5 +384,47 @@ describe("owner 模板查看与优化", () => {
       id: revisionCard.id,
       confirmApprove: true,
     })).resolves.toMatchObject({ ok: true });
+  });
+});
+
+describe("生命周期路由：判断只能有一处（终审第六组 1/2/7/8）", () => {
+  it("🔴 下架不再调用 80 张宽松列表 —— 判断全交给 store 的锁内严格门", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const store = await import("../services/manhuaViralTemplateStore");
+    const loose = store.listGcsManhuaViralApproved as unknown as { mock: { calls: unknown[] } };
+    const before = loose.mock.calls.length;
+    const caller = (await loadRouter()).createCaller(makeCtx("user", undefined, "owner-open-id"));
+    await caller.archiveApproved({ id: "tpl_series_deadbeef0001", confirmArchive: true });
+    // 路由层一次都没读宽松列表（原来读了会**提前误拒**：
+    // 目标在前 80、同赛道替代卡排第 81 张时，宽松列表看不到那张）
+    expect(loose.mock.calls.length).toBe(before);
+  });
+
+  it("🔴 已恢复回 approved 的 id，不再出现在「已下架，可恢复」", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const store = await import("../services/manhuaViralTemplateStore");
+    (store.listArchivedManhuaViralTemplateIndex as unknown as {
+      mockResolvedValueOnce: (v: unknown) => void;
+    }).mockResolvedValueOnce([
+      { id: "tpl_series_deadbeef0001", nameZh: "已恢复的", laneZh: "爽文逆袭", beatCount: 9 },
+      { id: "tpl_series_stillgone", nameZh: "还在归档的", laneZh: "爽文逆袭", beatCount: 8 },
+    ]);
+    const caller = (await loadRouter()).createCaller(makeCtx("user", undefined, "owner-open-id"));
+    const out = await caller.reviewTemplateGenerations();
+    const ids = (out.archivedItems as Array<{ id: string }>).map((r) => r.id);
+    // secretCard 的 id 就是 tpl_series_deadbeef0001，它在 approved 里
+    expect(ids).not.toContain("tpl_series_deadbeef0001");
+    expect(ids).toContain("tpl_series_stillgone");
+  });
+
+  it("🔴 proposals 严格读失败时，换代体检整体失败 —— 不输出「建议重学」", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const store = await import("../services/manhuaViralTemplateStore");
+    (store.listGcsManhuaViralProposalsStrict as unknown as {
+      mockRejectedValueOnce: (e: unknown) => void;
+    }).mockRejectedValueOnce(new Error("gcs_list_failed:503"));
+    const caller = (await loadRouter()).createCaller(makeCtx("user", undefined, "owner-open-id"));
+    // 返回空候选会把「暂时读不到已付费的精读卡」误报成「建议重新学习」= 让用户再花一次钱
+    await expect(caller.reviewTemplateGenerations()).rejects.toThrow();
   });
 });

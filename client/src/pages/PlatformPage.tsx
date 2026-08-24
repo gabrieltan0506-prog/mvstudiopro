@@ -2971,7 +2971,9 @@ export default function PlatformPage() {
   /** 下架待确认的模板 id：点第一次进入确认态，再点一次才真下架 */
   const [archiveConfirmId, setArchiveConfirmId] = useState("");
   const archiveManhuaTemplateMutation = trpc.manhuaViralTemplate.archiveApproved.useMutation();
-
+  /* ── 换代体检与归档回看：学习方式升级后，得先看得出哪些是旧一代学的 ── */
+  const [templateReviewOpen, setTemplateReviewOpen] = useState(false);
+  const [archivedForId, setArchivedForId] = useState<string | null>(null);
   const manhuaTemplateOwnerCapabilitiesQuery =
     trpc.manhuaViralTemplate.getOwnerOptimizeCapabilities.useQuery(undefined, {
       enabled: trendInsightTab === "ai_manhua" && Boolean(user?.id),
@@ -2982,6 +2984,52 @@ export default function PlatformPage() {
     manhuaTemplateOwnerCapabilitiesQuery.data?.allowed === true;
   const ownerTemplateOptimizeModels =
     manhuaTemplateOwnerCapabilitiesQuery.data?.models || [];
+
+  /**
+   * 生命周期三条链路（换代体检 / 归档查看 / 恢复）**仅 owner 可见**。
+   *
+   * 声明必须排在 `ownerTemplateOptimizeAllowed` 之后：原来放在它前面，
+   * `enabled` 里根本拿不到这个值 —— 于是非 owner 也会看到入口、也会发出请求，
+   * 要等服务端拒绝才知道不能用。门禁得在按钮出现之前就生效。
+   */
+  const templateReviewQuery = trpc.manhuaViralTemplate.reviewTemplateGenerations.useQuery(
+    undefined,
+    {
+      enabled: ownerTemplateOptimizeAllowed && templateReviewOpen,
+      staleTime: 60_000,
+      retry: false,
+    },
+  );
+  const archivedVersionsQuery = trpc.manhuaViralTemplate.listArchivedVersions.useQuery(
+    { id: archivedForId || "" },
+    {
+      enabled: ownerTemplateOptimizeAllowed && Boolean(archivedForId),
+      retry: false,
+    },
+  );
+  const restoreArchivedMutation = trpc.manhuaViralTemplate.restoreArchived.useMutation();
+
+  /**
+   * 生命周期相关缓存的**唯一**失效入口。
+   *
+   * 批准 / 下架 / 恢复三个动作都会改变「哪些卡是现役的」，
+   * 而换代体检、归档列表、canvas 可选模板读的是三份不同缓存 ——
+   * 少刷一处，用户就会看到自相矛盾的页面（体检说该换，库里已经换过了）。
+   */
+  const invalidateTemplateLifecycle = useCallback(
+    async (id?: string) => {
+      const tasks: Promise<unknown>[] = [
+        trpcUtils.manhuaViralTemplate.listApprovedPrivate.invalidate(),
+        trpcUtils.manhuaViralTemplate.listApprovedPublic.invalidate(),
+        trpcUtils.manhuaViralTemplate.reviewTemplateGenerations.invalidate(),
+      ];
+      if (id) {
+        tasks.push(trpcUtils.manhuaViralTemplate.listArchivedVersions.invalidate({ id }));
+      }
+      await Promise.all(tasks);
+    },
+    [trpcUtils],
+  );
 
   const manhuaViralProposalsQuery = trpc.manhuaViralTemplate.listProposals.useQuery(
     undefined,
@@ -3128,6 +3176,9 @@ export default function PlatformPage() {
     if (manhuaTemplateOwnerCapabilitiesQuery.isSuccess && !ownerTemplateOptimizeAllowed) {
       setOwnerTemplateDetailId(null);
       setOwnerTemplateOptimizeResult(null);
+      // owner 能力掉了，生命周期面板也要一起收掉，别留着一个点不动的空壳
+      setTemplateReviewOpen(false);
+      setArchivedForId(null);
     }
   }, [manhuaTemplateOwnerCapabilitiesQuery.isSuccess, ownerTemplateOptimizeAllowed]);
   const openOwnerTemplateDetail = useCallback((id: string) => {
@@ -5727,6 +5778,9 @@ export default function PlatformPage() {
         await manhuaViralProposalsQuery.refetch();
         setSelectedManhuaProposalId("");
         void manhuaViralApprovedQuery.refetch();
+        // 批准改变了「哪些卡是现役的」，换代体检的结论必须跟着重算，
+        // 否则体检还在建议「换成这张待审卡」，而它已经批准进库了
+        await invalidateTemplateLifecycle(res.card.id);
       } catch (e) {
         toast.error(sanitizePlatformUserMessage(e instanceof Error ? e.message : String(e)));
       }
@@ -5735,6 +5789,7 @@ export default function PlatformPage() {
       approveManhuaViralTemplateMutation,
       manhuaViralProposalsQuery,
       manhuaViralApprovedQuery,
+      invalidateTemplateLifecycle,
     ],
   );
 
@@ -12814,8 +12869,9 @@ export default function PlatformPage() {
                                                 void manhuaViralApprovedQuery.refetch();
                                                 // 编剧室（/canvas）读的是 listApprovedPublic，跨页面拿不到实例，
                                                 // 失效缓存让它下次挂载时重新拉，否则下架的模板还能被选中
-                                                void trpcUtils.manhuaViralTemplate.listApprovedPublic.invalidate();
                                                 void trpcUtils.manhuaViralTemplate.listProposals.invalidate();
+                                                // 下架同时产生新归档版本，体检结论与归档列表都要重算
+                                                await invalidateTemplateLifecycle(tpl.id);
                                               } catch (e) {
                                                 window.alert(
                                                   `下架失败：${e instanceof Error ? e.message : "未知错误"}`,
@@ -12839,6 +12895,211 @@ export default function PlatformPage() {
                             ))}
                           </div>
                         </div>
+                      ) : null}
+
+                      {/* 换代体检：学习方式升级后，库里同时躺着抽帧卡与精读卡。
+                          淘汰谁的前提是先看得出谁是旧的 —— 只给建议，不自动执行。
+                          整块仅 owner 可见：入口不该先露出来、点了才被服务端拒。 */}
+                      {ownerTemplateOptimizeAllowed ? (
+                      <div className="mt-3 rounded-xl border border-white/12 bg-black/25 p-3">
+                        <button
+                          type="button"
+                          onClick={() => setTemplateReviewOpen((v) => !v)}
+                          className="text-[11px] font-semibold text-cyan-100/80 hover:text-cyan-50"
+                        >
+                          {templateReviewOpen ? "收起换代体检" : "换代体检：哪些还是旧学法学的"}
+                        </button>
+                        {templateReviewOpen ? (
+                          <div className="mt-2 space-y-1.5">
+                            {templateReviewQuery.isLoading ? (
+                              <p className="text-[10px] text-white/40">体检中…</p>
+                            ) : null}
+                            {/* 读取失败不能渲染成「没问题」——空结论会被当成体检通过 */}
+                            {templateReviewQuery.isError ? (
+                              <p className="text-[10px] text-rose-200/80">
+                                体检读取失败，请稍后重试；当前结果不能视为库里没有旧卡。
+                              </p>
+                            ) : null}
+                            {(templateReviewQuery.data?.items || []).map((it) => (
+                              <div
+                                key={it.id}
+                                className={`rounded-lg border px-2.5 py-2 text-[10px] leading-4 ${
+                                  it.action === "replace_with"
+                                    ? "border-amber-300/35 bg-amber-500/[0.06] text-amber-50/85"
+                                    : it.action === "consider_relearn"
+                                      ? "border-white/12 bg-white/[0.03] text-white/60"
+                                      : "border-emerald-300/25 bg-emerald-500/[0.05] text-emerald-50/75"
+                                }`}
+                              >
+                                <div className="font-semibold">
+                                  {it.nameZh}
+                                  <span className="ml-1.5 font-normal opacity-60">
+                                    {it.laneZh} · {it.beatCount} 镜
+                                  </span>
+                                </div>
+                                {it.learnSourceZh ? (
+                                  <div className="opacity-70">学习来源｜{it.learnSourceZh}</div>
+                                ) : null}
+                                <div className="mt-0.5">{it.reasonZh}</div>
+                                <div className="mt-1 flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setArchivedForId(archivedForId === it.id ? null : it.id)
+                                    }
+                                    className="underline underline-offset-2 opacity-70 hover:opacity-100"
+                                  >
+                                    {archivedForId === it.id ? "收起历史版本" : "看历史版本"}
+                                  </button>
+                                  {it.sameLaneApprovedCount <= 1 ? (
+                                    <span className="opacity-55">
+                                      本赛道仅此一张，下架会让编剧室选不出模板
+                                    </span>
+                                  ) : null}
+                                </div>
+                                {archivedForId === it.id ? (
+                                  <div className="mt-1.5 space-y-1 border-t border-white/10 pt-1.5">
+                                    {archivedVersionsQuery.isLoading ? (
+                                      <p className="opacity-50">读取归档…</p>
+                                    ) : null}
+                                    {/* 读取失败 ≠ 没有历史版本：说成「没有」会让用户以为旧版丢了 */}
+                                    {archivedVersionsQuery.isError ? (
+                                      <p className="text-rose-200/80">
+                                        归档读取失败，请稍后重试；当前结果不能视为没有历史版本。
+                                      </p>
+                                    ) : null}
+                                    {(archivedVersionsQuery.data?.items || []).length === 0
+                                    && !archivedVersionsQuery.isLoading
+                                    && !archivedVersionsQuery.isError ? (
+                                      <p className="opacity-50">还没有归档版本</p>
+                                    ) : null}
+                                    {(archivedVersionsQuery.data?.items || []).map((v) => (
+                                      <div
+                                        key={v.generation}
+                                        className="flex items-center gap-2"
+                                      >
+                                        <span className="min-w-0 flex-1 truncate opacity-75">
+                                          {v.beatCount} 镜 · {v.learnSourceZh || "来源不明"} ·{" "}
+                                          {String(v.updatedAt || "").slice(0, 10)}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          disabled={restoreArchivedMutation.isPending}
+                                          onClick={async () => {
+                                            if (
+                                              !window.confirm(
+                                                `恢复这一版为正式模板？\n库里已有同 id 的现役版本时会被拒绝——那时请先下架现役版本。`,
+                                              )
+                                            )
+                                              return;
+                                            try {
+                                              await restoreArchivedMutation.mutateAsync({
+                                                id: it.id,
+                                                generation: v.generation,
+                                                confirmRestore: true,
+                                              });
+                                              await invalidateTemplateLifecycle(it.id);
+                                              window.alert("已恢复为正式模板");
+                                            } catch (e) {
+                                              window.alert(
+                                                `恢复失败：${e instanceof Error ? e.message : "未知错误"}`,
+                                              );
+                                            }
+                                          }}
+                                          className="shrink-0 rounded border border-white/15 px-1.5 py-0.5 hover:border-cyan-300/40 hover:text-cyan-100 disabled:opacity-40"
+                                        >
+                                          恢复这一版
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ))}
+
+                            {/* 独立归档区：**不依赖 approved 行存在**。
+                                恢复入口原来嵌在现役卡里，模板一下架就从 approved 消失、
+                                恢复入口跟着消失 —— 等于下架即不可逆。 */}
+                            {(templateReviewQuery.data?.archivedItems || []).length ? (
+                              <div className="mt-3 border-t border-white/10 pt-2">
+                                <p className="mb-1.5 text-[10px] font-semibold text-white/50">
+                                  已归档模板（已下架，可恢复）
+                                </p>
+                                {(templateReviewQuery.data?.archivedItems || []).map((arch) => (
+                                  <div
+                                    key={arch.id}
+                                    className="mb-1 rounded-lg border border-white/12 bg-black/20 px-2.5 py-2 text-[10px] leading-4 text-white/70"
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <span className="min-w-0 flex-1 truncate">
+                                        {arch.nameZh} · {arch.laneZh} · {arch.beatCount} 镜
+                                        {arch.learnSourceZh ? ` · ${arch.learnSourceZh}` : ""}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setArchivedForId(archivedForId === arch.id ? null : arch.id)
+                                        }
+                                        className="shrink-0 text-cyan-100/80 hover:text-cyan-50"
+                                      >
+                                        {archivedForId === arch.id ? "收起历史版本" : "看历史版本"}
+                                      </button>
+                                    </div>
+                                    {archivedForId === arch.id ? (
+                                      <div className="mt-1.5 space-y-1 border-t border-white/10 pt-1.5">
+                                        {archivedVersionsQuery.isLoading ? (
+                                          <p className="opacity-50">读取归档…</p>
+                                        ) : null}
+                                        {archivedVersionsQuery.isError ? (
+                                          <p className="text-rose-200/80">
+                                            归档读取失败，请稍后重试；当前结果不能视为没有历史版本。
+                                          </p>
+                                        ) : null}
+                                        {(archivedVersionsQuery.data?.items || []).map((v) => (
+                                          <div key={v.generation} className="flex items-center gap-2">
+                                            <span className="min-w-0 flex-1 truncate opacity-75">
+                                              {v.beatCount} 镜 · {v.learnSourceZh || "来源不明"} ·{" "}
+                                              {String(v.updatedAt || "").slice(0, 10)}
+                                            </span>
+                                            <button
+                                              type="button"
+                                              disabled={restoreArchivedMutation.isPending}
+                                              onClick={async () => {
+                                                if (
+                                                  !window.confirm(
+                                                    "恢复这一版为正式模板？库里已有同 id 的现役版本时会被拒绝——那时请先下架现役版本。",
+                                                  )
+                                                )
+                                                  return;
+                                                try {
+                                                  await restoreArchivedMutation.mutateAsync({
+                                                    id: arch.id,
+                                                    generation: v.generation,
+                                                    confirmRestore: true,
+                                                  });
+                                                  await invalidateTemplateLifecycle(arch.id);
+                                                  window.alert("已恢复为正式模板");
+                                                } catch (e) {
+                                                  window.alert(
+                                                    `恢复失败：${e instanceof Error ? e.message : "未知错误"}`,
+                                                  );
+                                                }
+                                              }}
+                                              className="shrink-0 rounded border border-emerald-300/35 px-1.5 py-0.5 text-emerald-100/85 hover:bg-emerald-500/10 disabled:opacity-50"
+                                            >
+                                              恢复这一版
+                                            </button>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
                       ) : null}
 
                       {ownerTemplateOptimizeAllowed ? (

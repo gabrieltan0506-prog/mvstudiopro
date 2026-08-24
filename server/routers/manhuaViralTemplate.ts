@@ -222,6 +222,106 @@ export const manhuaViralTemplateRouter = router({
     }),
 
   /**
+   * 列出某张模板的历史归档版本。
+   *
+   * 归档一直在写却没有读取入口 —— 下架之后就再也看不到、回不去了。
+   * 学习方式升级后这条尤其要紧：新方法重学一版替掉旧的，
+   * 万一新版不如旧版，得能翻回去比。
+   */
+  listArchivedVersions: protectedProcedure
+    .input(z.object({ id: z.string().regex(/^tpl_[a-z0-9_-]{1,60}$/i) }))
+    .query(async ({ ctx, input }) => {
+      assertSiteOwner(ctx.user);
+      const { listArchivedManhuaViralTemplateVersions } = await import(
+        "../services/manhuaViralTemplateStore"
+      );
+      const rows = await listArchivedManhuaViralTemplateVersions(input.id);
+      return {
+        items: rows.map((r) => ({
+          generation: r.generation,
+          nameZh: r.card.nameZh,
+          laneZh: r.card.laneZh,
+          summaryZh: r.card.summaryZh,
+          beatCount: r.card.beatGrid.length,
+          updatedAt: r.card.updatedAt,
+          learnSourceZh: describeManhuaTemplateLearnSourceZh(r.card.provenance),
+        })),
+      };
+    }),
+
+  /** owner：把某个归档版本恢复成正式模板（同 id 已有现役版本时拒绝，不覆盖） */
+  restoreArchived: protectedProcedure
+    .input(
+      z.object({
+        id: z.string().regex(/^tpl_[a-z0-9_-]{1,60}$/i),
+        // 归档版本号是递增数字串；收口成纯数字，别让任意字符串拼进对象路径
+        generation: z.string().regex(/^\d{1,30}$/),
+        confirmRestore: z.literal(true),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      assertSiteOwner(ctx.user);
+      const { restoreArchivedManhuaViralTemplate } = await import(
+        "../services/manhuaViralTemplateStore"
+      );
+      const card = await restoreArchivedManhuaViralTemplate({
+        id: input.id,
+        generation: input.generation,
+      });
+      return { ok: true as const, id: card.id, nameZh: card.nameZh };
+    }),
+
+  /**
+   * 换代体检：库里哪些还是旧一代学法学的、有没有新卡可以顶上。
+   * **只给建议不自动执行** —— 淘汰是不可逆的业务判断，不替 owner 拍板。
+   */
+  reviewTemplateGenerations: protectedProcedure.query(async ({ ctx }) => {
+    assertSiteOwner(ctx.user);
+    const {
+      listGcsManhuaViralApprovedStrict,
+      listGcsManhuaViralProposalsStrict,
+      listArchivedManhuaViralTemplateIndex,
+    } = await import("../services/manhuaViralTemplateStore");
+    const { adviseTemplateRetirement } = await import("../../shared/manhuaTemplateLifecycle");
+    // 生命周期判断用严格全量：宽松版只读 80 张且失败返回 []，会把「最后一张」看成「还有好几张」
+    const approved = await listGcsManhuaViralApprovedStrict();
+    /**
+     * 候选包含待审：新学的精读卡通常还在 proposals/ 里等批。
+     * 但 **proposals/ 里还躺着 approve 时留下的 status="approved" 审计副本** ——
+     * 模板下架只删 approved/，那份副本还在，直接拼进来会把**已经下架的卡**
+     * 推荐成正式替代品。正式候选只能来自 approved/。
+     */
+    // 严格读：列举或单卡读失败一律抛。返回空候选会把
+    // **「暂时读不到已付费的精读卡」误报成「建议重新学习」**——那是让用户再花一次钱
+    const proposals = await listGcsManhuaViralProposalsStrict();
+    const candidates = [...approved, ...proposals];
+    const laneCount = new Map<string, number>();
+    for (const c of approved) laneCount.set(c.laneZh, (laneCount.get(c.laneZh) || 0) + 1);
+    /**
+     * 归档索引**独立返回**：恢复入口原本嵌在 approved 行里，
+     * 模板一下架就从 approved 消失，恢复入口跟着消失 —— 下架即不可逆。
+     */
+    const archivedIndex = await listArchivedManhuaViralTemplateIndex();
+    /**
+     * 归档历史可以留，但同 id 一旦已经回到 approved/，
+     * 就不能同时显示成「已下架，可恢复」—— 用户会对着一张现役卡点恢复。
+     */
+    const approvedIds = new Set(approved.map((card) => card.id));
+    const archivedItems = archivedIndex.filter((row) => !approvedIds.has(row.id));
+    return {
+      archivedItems,
+      items: approved.map((card) => ({
+        id: card.id,
+        nameZh: card.nameZh,
+        laneZh: card.laneZh,
+        beatCount: card.beatGrid.length,
+        sameLaneApprovedCount: laneCount.get(card.laneZh) || 0,
+        ...adviseTemplateRetirement(card, candidates),
+      })),
+    };
+  }),
+
+  /**
    * owner：下架正式模板（归档，非物理删除）。
    * 用于「新精读模板淘汰旧抽帧模板」——淘汰不等于销毁，归档件仍可查可恢复。
    */
@@ -235,6 +335,14 @@ export const manhuaViralTemplateRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       assertSiteOwner(ctx.user);
+      /**
+       * 路由只管 owner 权限与输入校验。
+       *
+       * 原来这里先用宽松列表（最多 80 张）判一次「同赛道最后一张」——
+       * 即便 store 已有严格全量门禁，这一层仍可能**提前误拒合法下架**：
+       * 目标在前 80、同赛道替代卡排在第 81 张时，宽松列表看不到那张替代卡。
+       * 生命周期判断只能有一处，就在 store 的锁内。
+       */
       const { archiveApprovedManhuaViralTemplate } = await import(
         "../services/manhuaViralTemplateStore"
       );

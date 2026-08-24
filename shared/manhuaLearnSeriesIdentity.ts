@@ -2,7 +2,6 @@ import {
   extractDouyinVideoIdFromUrl,
   type DouyinEpisodeAccess,
 } from "./manhuaLearnDouyinWebApi.js";
-import type { ManhuaLearnEpisodeDigest } from "./manhuaTemplateLearnSeries.js";
 
 export type ManhuaLearnListedSource = {
   index: number;
@@ -49,13 +48,27 @@ function sameEpisodeSource(left: string, right: string): boolean {
 /** 同一大合集续用旧集号；同名新大合集追加到已有剧集后。 */
 export function placeSingleSourceInExistingSeries<T extends ManhuaLearnListedSource>(
   listed: T[],
-  existingDigests: ManhuaLearnEpisodeDigest[],
+  /**
+   * 已占用的集号与它们的**稳定来源**。
+   *
+   * 从 digest 数组改成这个形状，是因为原生精读**不产 digest** ——
+   * 只按 digest 排集号时，同名剧第二次手动导入另一个视频会再落回 ep001，
+   * 然后被已入库的 ep001 判成「已完成」，新素材一集都学不到。
+   */
+  existingSources: Array<{ episodeIndex: number; url: string }>,
+  opts?: { sourceIdentity?: string },
 ): T[] {
-  if (listed.length !== 1 || !existingDigests.length) return listed;
+  if (listed.length !== 1 || !existingSources.length) return listed;
   const only = listed[0]!;
-  const same = existingDigests.find((digest) => sameEpisodeSource(digest.url, only.url));
+  /**
+   * GCS 手动导入时，运行时 URL 是短时签名 HTTPS（每次都不同），
+   * 而卡片里存的是稳定 `gs://`。拿签名链去比对永远不相等 →
+   * 同一素材重跑会被当成新素材追加。所以比对用调用方给的稳定标识。
+   */
+  const sourceIdentity = String(opts?.sourceIdentity || only.url).trim();
+  const same = existingSources.find((source) => sameEpisodeSource(source.url, sourceIdentity));
   if (same) return [{ ...only, index: same.episodeIndex }];
-  const occupied = existingDigests.map((digest) => digest.episodeIndex);
+  const occupied = existingSources.map((source) => source.episodeIndex);
   const maxOccupiedIndex = Math.max.apply(null, occupied);
   if (occupied.indexOf(only.index) === -1 && only.index > maxOccupiedIndex) return listed;
   return [{ ...only, index: maxOccupiedIndex + 1 }];
