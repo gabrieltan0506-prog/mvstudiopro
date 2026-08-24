@@ -23,6 +23,40 @@ export function templateLearnGeneration(card: ManhuaViralTemplateCard): Template
   return "unknown";
 }
 
+/**
+ * 这张卡学的是**哪一部素材**。
+ *
+ * 只按赛道找替代品是错的：同一个赛道下会有一堆不同作品的卡，
+ * 拿 A 剧的精读卡去顶 B 剧的旧卡，等于建议用错的模板替换。
+ * 按现有 ID 契约识别，不引入新字段：
+ *   旧系列卡    tpl_series_<seriesKey>
+ *   原生逐集卡  tpl_native_<seriesKey>_epNNN
+ *   优化提案    先取 revision.parentTemplateId（它才指向真正的来源卡）
+ */
+export function templateMaterialKey(
+  card: Pick<ManhuaViralTemplateCard, "id" | "revision">,
+): string | undefined {
+  const id = String(card.revision?.parentTemplateId || card.id || "").trim();
+
+  const nativeMatch = id.match(/^tpl_native_(.+)_ep\d{3}$/i);
+  if (nativeMatch?.[1]) return nativeMatch[1].toLowerCase();
+
+  const seriesMatch = id.match(/^tpl_series_(.+)$/i);
+  if (seriesMatch?.[1]) return seriesMatch[1].toLowerCase();
+
+  return undefined;
+}
+
+/** 两张卡是否学自同一部素材；任一方认不出 key 就不算同源（宁可不推荐，不乱推荐） */
+function isSameTemplateMaterial(
+  left: Pick<ManhuaViralTemplateCard, "id" | "revision">,
+  right: Pick<ManhuaViralTemplateCard, "id" | "revision">,
+): boolean {
+  const leftKey = templateMaterialKey(left);
+  const rightKey = templateMaterialKey(right);
+  return Boolean(leftKey && rightKey && leftKey === rightKey);
+}
+
 export type TemplateRetirementAdvice = {
   generation: TemplateLearnGeneration;
   learnSourceZh?: string;
@@ -58,24 +92,42 @@ export function adviseTemplateRetirement(
    * （ep001、ep002…），`find` 拿到的是字典序第一张——通常就是第 1 集，
    * 未必是学得最全的那张。推荐替换品是要给人拍板用的，挑最强的那张。
    */
+  /**
+   * 够格顶上的条件：**同一部素材** ＋ 同赛道 ＋ 原生精读 ＋ 镜头数不少于现役。
+   *
+   * 「同素材」这条是硬的：只按赛道找，会把同赛道**别的作品**的精读卡
+   * 推荐成本卡的替代品 —— 那是让用户拿错的模板去顶。
+   *
+   * 排序：正式卡（approved）优先于待审卡（proposed），其次镜头数多者优先。
+   * 同一素材下会有几十张 native 逐集卡，字典序第一张通常是第 1 集，未必学得最全。
+   */
   const better = candidates
     .filter(
       (c) =>
         c.id !== card.id
         && c.laneZh === card.laneZh
+        && isSameTemplateMaterial(card, c)
         && templateLearnGeneration(c) === "native_deep_read"
         && c.beatGrid.length >= card.beatGrid.length,
     )
-    .sort((a, b) => b.beatGrid.length - a.beatGrid.length)[0];
+    .sort(
+      (a, b) =>
+        Number(b.status === "approved") - Number(a.status === "approved")
+        || b.beatGrid.length - a.beatGrid.length,
+    )[0];
   if (better) {
+    const isApproved = better.status === "approved";
     return {
       generation,
       learnSourceZh,
       action: "replace_with",
       replacementId: better.id,
-      reasonZh:
-        `同赛道已有原生精读卡（${better.beatGrid.length} 镜，带可复用手法与生成要素），`
-        + "可下架本卡改用它；旧版归档仍可查、可恢复",
+      // 待审卡还进不了编剧室，不能写成「可以直接改用」
+      reasonZh: isApproved
+        ? `同源已有正式的原生精读卡（${better.beatGrid.length} 镜，带可复用手法与生成要素），`
+          + "可下架本卡改用它；旧版归档仍可查、可恢复"
+        : `同源的原生精读卡（${better.beatGrid.length} 镜）仍在待审，`
+          + "请先批准它再下架本卡；在那之前编剧室仍只能用本卡",
     };
   }
 

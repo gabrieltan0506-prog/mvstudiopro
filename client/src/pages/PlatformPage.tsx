@@ -2974,16 +2974,6 @@ export default function PlatformPage() {
   /* ── 换代体检与归档回看：学习方式升级后，得先看得出哪些是旧一代学的 ── */
   const [templateReviewOpen, setTemplateReviewOpen] = useState(false);
   const [archivedForId, setArchivedForId] = useState<string | null>(null);
-  const templateReviewQuery = trpc.manhuaViralTemplate.reviewTemplateGenerations.useQuery(
-    undefined,
-    { enabled: templateReviewOpen, staleTime: 60_000 },
-  );
-  const archivedVersionsQuery = trpc.manhuaViralTemplate.listArchivedVersions.useQuery(
-    { id: archivedForId || "" },
-    { enabled: Boolean(archivedForId) },
-  );
-  const restoreArchivedMutation = trpc.manhuaViralTemplate.restoreArchived.useMutation();
-
   const manhuaTemplateOwnerCapabilitiesQuery =
     trpc.manhuaViralTemplate.getOwnerOptimizeCapabilities.useQuery(undefined, {
       enabled: trendInsightTab === "ai_manhua" && Boolean(user?.id),
@@ -2994,6 +2984,52 @@ export default function PlatformPage() {
     manhuaTemplateOwnerCapabilitiesQuery.data?.allowed === true;
   const ownerTemplateOptimizeModels =
     manhuaTemplateOwnerCapabilitiesQuery.data?.models || [];
+
+  /**
+   * 生命周期三条链路（换代体检 / 归档查看 / 恢复）**仅 owner 可见**。
+   *
+   * 声明必须排在 `ownerTemplateOptimizeAllowed` 之后：原来放在它前面，
+   * `enabled` 里根本拿不到这个值 —— 于是非 owner 也会看到入口、也会发出请求，
+   * 要等服务端拒绝才知道不能用。门禁得在按钮出现之前就生效。
+   */
+  const templateReviewQuery = trpc.manhuaViralTemplate.reviewTemplateGenerations.useQuery(
+    undefined,
+    {
+      enabled: ownerTemplateOptimizeAllowed && templateReviewOpen,
+      staleTime: 60_000,
+      retry: false,
+    },
+  );
+  const archivedVersionsQuery = trpc.manhuaViralTemplate.listArchivedVersions.useQuery(
+    { id: archivedForId || "" },
+    {
+      enabled: ownerTemplateOptimizeAllowed && Boolean(archivedForId),
+      retry: false,
+    },
+  );
+  const restoreArchivedMutation = trpc.manhuaViralTemplate.restoreArchived.useMutation();
+
+  /**
+   * 生命周期相关缓存的**唯一**失效入口。
+   *
+   * 批准 / 下架 / 恢复三个动作都会改变「哪些卡是现役的」，
+   * 而换代体检、归档列表、canvas 可选模板读的是三份不同缓存 ——
+   * 少刷一处，用户就会看到自相矛盾的页面（体检说该换，库里已经换过了）。
+   */
+  const invalidateTemplateLifecycle = useCallback(
+    async (id?: string) => {
+      const tasks: Promise<unknown>[] = [
+        trpcUtils.manhuaViralTemplate.listApprovedPrivate.invalidate(),
+        trpcUtils.manhuaViralTemplate.listApprovedPublic.invalidate(),
+        trpcUtils.manhuaViralTemplate.reviewTemplateGenerations.invalidate(),
+      ];
+      if (id) {
+        tasks.push(trpcUtils.manhuaViralTemplate.listArchivedVersions.invalidate({ id }));
+      }
+      await Promise.all(tasks);
+    },
+    [trpcUtils],
+  );
 
   const manhuaViralProposalsQuery = trpc.manhuaViralTemplate.listProposals.useQuery(
     undefined,
@@ -3140,6 +3176,9 @@ export default function PlatformPage() {
     if (manhuaTemplateOwnerCapabilitiesQuery.isSuccess && !ownerTemplateOptimizeAllowed) {
       setOwnerTemplateDetailId(null);
       setOwnerTemplateOptimizeResult(null);
+      // owner 能力掉了，生命周期面板也要一起收掉，别留着一个点不动的空壳
+      setTemplateReviewOpen(false);
+      setArchivedForId(null);
     }
   }, [manhuaTemplateOwnerCapabilitiesQuery.isSuccess, ownerTemplateOptimizeAllowed]);
   const openOwnerTemplateDetail = useCallback((id: string) => {
@@ -5739,6 +5778,9 @@ export default function PlatformPage() {
         await manhuaViralProposalsQuery.refetch();
         setSelectedManhuaProposalId("");
         void manhuaViralApprovedQuery.refetch();
+        // 批准改变了「哪些卡是现役的」，换代体检的结论必须跟着重算，
+        // 否则体检还在建议「换成这张待审卡」，而它已经批准进库了
+        await invalidateTemplateLifecycle(res.card.id);
       } catch (e) {
         toast.error(sanitizePlatformUserMessage(e instanceof Error ? e.message : String(e)));
       }
@@ -5747,6 +5789,7 @@ export default function PlatformPage() {
       approveManhuaViralTemplateMutation,
       manhuaViralProposalsQuery,
       manhuaViralApprovedQuery,
+      invalidateTemplateLifecycle,
     ],
   );
 
@@ -12826,8 +12869,9 @@ export default function PlatformPage() {
                                                 void manhuaViralApprovedQuery.refetch();
                                                 // 编剧室（/canvas）读的是 listApprovedPublic，跨页面拿不到实例，
                                                 // 失效缓存让它下次挂载时重新拉，否则下架的模板还能被选中
-                                                void trpcUtils.manhuaViralTemplate.listApprovedPublic.invalidate();
                                                 void trpcUtils.manhuaViralTemplate.listProposals.invalidate();
+                                                // 下架同时产生新归档版本，体检结论与归档列表都要重算
+                                                await invalidateTemplateLifecycle(tpl.id);
                                               } catch (e) {
                                                 window.alert(
                                                   `下架失败：${e instanceof Error ? e.message : "未知错误"}`,
@@ -12854,7 +12898,9 @@ export default function PlatformPage() {
                       ) : null}
 
                       {/* 换代体检：学习方式升级后，库里同时躺着抽帧卡与精读卡。
-                          淘汰谁的前提是先看得出谁是旧的 —— 只给建议，不自动执行 */}
+                          淘汰谁的前提是先看得出谁是旧的 —— 只给建议，不自动执行。
+                          整块仅 owner 可见：入口不该先露出来、点了才被服务端拒。 */}
+                      {ownerTemplateOptimizeAllowed ? (
                       <div className="mt-3 rounded-xl border border-white/12 bg-black/25 p-3">
                         <button
                           type="button"
@@ -12867,6 +12913,12 @@ export default function PlatformPage() {
                           <div className="mt-2 space-y-1.5">
                             {templateReviewQuery.isLoading ? (
                               <p className="text-[10px] text-white/40">体检中…</p>
+                            ) : null}
+                            {/* 读取失败不能渲染成「没问题」——空结论会被当成体检通过 */}
+                            {templateReviewQuery.isError ? (
+                              <p className="text-[10px] text-rose-200/80">
+                                体检读取失败，请稍后重试；当前结果不能视为库里没有旧卡。
+                              </p>
                             ) : null}
                             {(templateReviewQuery.data?.items || []).map((it) => (
                               <div
@@ -12910,8 +12962,15 @@ export default function PlatformPage() {
                                     {archivedVersionsQuery.isLoading ? (
                                       <p className="opacity-50">读取归档…</p>
                                     ) : null}
+                                    {/* 读取失败 ≠ 没有历史版本：说成「没有」会让用户以为旧版丢了 */}
+                                    {archivedVersionsQuery.isError ? (
+                                      <p className="text-rose-200/80">
+                                        归档读取失败，请稍后重试；当前结果不能视为没有历史版本。
+                                      </p>
+                                    ) : null}
                                     {(archivedVersionsQuery.data?.items || []).length === 0
-                                    && !archivedVersionsQuery.isLoading ? (
+                                    && !archivedVersionsQuery.isLoading
+                                    && !archivedVersionsQuery.isError ? (
                                       <p className="opacity-50">还没有归档版本</p>
                                     ) : null}
                                     {(archivedVersionsQuery.data?.items || []).map((v) => (
@@ -12939,8 +12998,7 @@ export default function PlatformPage() {
                                                 generation: v.generation,
                                                 confirmRestore: true,
                                               });
-                                              await trpcUtils.manhuaViralTemplate.listApprovedPrivate.invalidate();
-                                              await templateReviewQuery.refetch();
+                                              await invalidateTemplateLifecycle(it.id);
                                               window.alert("已恢复为正式模板");
                                             } catch (e) {
                                               window.alert(
@@ -12961,6 +13019,7 @@ export default function PlatformPage() {
                           </div>
                         ) : null}
                       </div>
+                      ) : null}
 
                       {ownerTemplateOptimizeAllowed ? (
                         <ManhuaApprovedTemplateOwnerDrawer

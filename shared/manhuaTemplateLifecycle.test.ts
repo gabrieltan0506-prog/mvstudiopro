@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   adviseTemplateRetirement,
+  templateMaterialKey,
   canRetireTemplate,
   templateLearnGeneration,
 } from "./manhuaTemplateLifecycle";
@@ -63,11 +64,18 @@ describe("处置建议", () => {
     expect(adviseTemplateRetirement(native()).action).toBe("keep");
   });
 
-  it("抽帧卡＋同赛道有精读卡 → 建议替换，并指名顶上的那张", () => {
-    const better = native({ id: "tpl_new", beatGrid: card().beatGrid });
-    const a = adviseTemplateRetirement(frame(), [better]);
+  it("抽帧卡＋**同素材**有正式精读卡 → 建议替换，并指名顶上的那张", () => {
+    // id 必须符合契约（tpl_series_<key> / tpl_native_<key>_epNNN）才认得出同源；
+    // 原先用的 tpl_a / tpl_new 认不出素材，等于只按赛道推荐——那会拿别的作品顶上来
+    const older = frame({ id: "tpl_series_wanyao" });
+    const better = native({
+      id: "tpl_native_wanyao_ep001",
+      status: "approved",
+      beatGrid: card().beatGrid,
+    });
+    const a = adviseTemplateRetirement(older, [better]);
     expect(a.action).toBe("replace_with");
-    expect(a.replacementId).toBe("tpl_new");
+    expect(a.replacementId).toBe("tpl_native_wanyao_ep001");
     expect(a.reasonZh).toContain("归档仍可查、可恢复");
   });
 
@@ -115,54 +123,110 @@ describe("淘汰安全检查", () => {
   });
 });
 
-describe("逐集卡规模下的换代建议（与 #1299 配套）", () => {
-  const card = (over: Record<string, unknown> = {}) =>
+describe("替代候选必须同源（与 #1299 配套）", () => {
+  /**
+   * ⚠️ 我上一版这组测试用 `tpl_series_abc` 配 `tpl_native_s1_ep*` —— seriesKey 根本不同，
+   * 却断言「应当 replace_with」，等于把「只看同赛道」这个错口径锁成了正确行为。
+   * 同赛道下有一堆不同作品，拿 A 剧的精读卡顶 B 剧的旧卡就是推荐错模板。
+   */
+  const beats = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ atSec: i, conflictZh: "冲突", visualZh: "画面" }));
+
+  const oldCard = (over: Record<string, unknown> = {}) =>
     ({
-      id: "tpl_series_abc",
+      id: "tpl_series_wanyao",
       nameZh: "旧卡",
       laneZh: "悬念紧逼",
       status: "approved",
-      beatGrid: Array.from({ length: 10 }, (_, i) => ({
-        atSec: i,
-        conflictZh: "冲突",
-        visualZh: "画面",
-      })),
-      provenance: { frameVision: { provider: "openrouter", model: "terra", attemptedChunks: 1, successChunks: 1 } },
+      beatGrid: beats(10),
+      provenance: {
+        frameVision: { provider: "openrouter", model: "terra", attemptedChunks: 1, successChunks: 1 },
+      },
       ...over,
     }) as never;
 
-  const nativeCard = (id: string, shots: number) =>
-    card({
+  const nativeCard = (id: string, shots: number, over: Record<string, unknown> = {}) =>
+    ({
       id,
       nameZh: id,
-      beatGrid: Array.from({ length: shots }, (_, i) => ({
-        atSec: i,
-        conflictZh: "冲突",
-        visualZh: "画面",
-      })),
-      provenance: { nativeVideoDeepRead: { model: "qwen3.8-max", attemptedSegments: 1, successSegments: 1, shotCount: shots, droppedCount: 0, truncated: false } },
-    });
+      laneZh: "悬念紧逼",
+      status: "proposed",
+      beatGrid: beats(shots),
+      provenance: {
+        nativeVideoDeepRead: {
+          model: "qwen3.8-max",
+          attemptedSegments: 1,
+          successSegments: 1,
+          shotCount: shots,
+          droppedCount: 0,
+          truncated: false,
+        },
+      },
+      ...over,
+    }) as never;
 
-  it("🔴 同赛道几十张 native 逐集卡时，推荐**镜头最多**的那张，不是字典序第一张", () => {
-    const candidates = [
-      nativeCard("tpl_native_s1_ep001", 12),
-      nativeCard("tpl_native_s1_ep002", 40),
-      nativeCard("tpl_native_s1_ep003", 25),
-    ];
-    const advice = adviseTemplateRetirement(card(), candidates);
+  it("🔴 同赛道但**不同素材**，不得推荐替换", () => {
+    const advice = adviseTemplateRetirement(oldCard(), [
+      nativeCard("tpl_native_bieder_ep001", 40),
+    ]);
+    expect(advice.action).toBe("consider_relearn");
+    expect(advice.replacementId).toBeUndefined();
+  });
+
+  it("同 seriesKey 的 tpl_series_* 与 tpl_native_*_epNNN 识别为同源", () => {
+    const advice = adviseTemplateRetirement(oldCard(), [
+      nativeCard("tpl_native_wanyao_ep001", 20),
+    ]);
     expect(advice.action).toBe("replace_with");
-    // ep001 排在最前，但 ep002 学得最全
-    expect(advice.replacementId).toBe("tpl_native_s1_ep002");
+    expect(advice.replacementId).toBe("tpl_native_wanyao_ep001");
+  });
+
+  it("🔴 候选还在待审时，文案必须说「先批准」，不得写成已可使用", () => {
+    const advice = adviseTemplateRetirement(oldCard(), [
+      nativeCard("tpl_native_wanyao_ep001", 20, { status: "proposed" }),
+    ]);
+    expect(advice.reasonZh).toContain("先批准");
+    expect(advice.reasonZh).not.toContain("可下架本卡改用它");
+  });
+
+  it("同时存在待审与正式候选时，优先正式卡", () => {
+    const advice = adviseTemplateRetirement(oldCard(), [
+      nativeCard("tpl_native_wanyao_ep002", 40, { status: "proposed" }),
+      nativeCard("tpl_native_wanyao_ep003", 20, { status: "approved" }),
+    ]);
+    // 正式卡镜头更少，仍优先——待审卡进不了编剧室
+    expect(advice.replacementId).toBe("tpl_native_wanyao_ep003");
+    expect(advice.reasonZh).toContain("可下架本卡改用它");
+  });
+
+  it("同源同状态时取镜头数最多的（几十张逐集卡里 ep001 未必最全）", () => {
+    const advice = adviseTemplateRetirement(oldCard(), [
+      nativeCard("tpl_native_wanyao_ep001", 12, { status: "approved" }),
+      nativeCard("tpl_native_wanyao_ep002", 40, { status: "approved" }),
+      nativeCard("tpl_native_wanyao_ep003", 25, { status: "approved" }),
+    ]);
+    expect(advice.replacementId).toBe("tpl_native_wanyao_ep002");
     expect(advice.reasonZh).toContain("40 镜");
   });
 
-  it("镜头数少于现役的 native 卡不算够格顶上", () => {
-    const advice = adviseTemplateRetirement(card(), [nativeCard("tpl_native_s1_ep001", 3)]);
+  it("优化提案按 revision.parentTemplateId 判来源，不看自己的 id", () => {
+    const polished = nativeCard("tpl_polish_xxxx", 30, {
+      status: "approved",
+      revision: { parentTemplateId: "tpl_native_wanyao_ep001", generation: 2 },
+    });
+    expect(templateMaterialKey(polished)).toBe("wanyao");
+    expect(adviseTemplateRetirement(oldCard(), [polished]).action).toBe("replace_with");
+  });
+
+  it("认不出素材 key 的卡不参与推荐（宁可不推荐，不乱推荐）", () => {
+    const advice = adviseTemplateRetirement(oldCard(), [nativeCard("tpl_freeform_001", 40)]);
     expect(advice.action).toBe("consider_relearn");
   });
 
-  it("候选里一张 native 卡都没有时，建议重学而不是乱推荐", () => {
-    const advice = adviseTemplateRetirement(card(), [card({ id: "tpl_series_other" })]);
+  it("镜头数少于现役的同源卡不算够格顶上", () => {
+    const advice = adviseTemplateRetirement(oldCard(), [
+      nativeCard("tpl_native_wanyao_ep001", 3),
+    ]);
     expect(advice.action).toBe("consider_relearn");
   });
 });

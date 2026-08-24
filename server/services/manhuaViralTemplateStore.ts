@@ -30,6 +30,30 @@ export const MANHUA_VIRAL_PROPOSALS_PREFIX = "manhua-template-learn/proposals/";
 export const MANHUA_VIRAL_APPROVED_PREFIX = "manhua-template-learn/approved/";
 export const MANHUA_VIRAL_ARCHIVE_PREFIX = "manhua-template-learn/archive/";
 
+/** 归档版本号收口为纯数字串；路由与存储层都要校验，不能只信路由 */
+export const MANHUA_ARCHIVE_GENERATION_RE = /^\d{1,30}$/;
+
+/**
+ * 严格读取：**读不动就抛**，不返回 null。
+ *
+ * 宽松版把「读取失败」和「没有这个对象」压成同一个 null，
+ * 生命周期链上这两者的后果完全不同：前者要让用户重试，
+ * 后者会被显示成「还没有归档版本」——用户据此以为旧版没了，实际只是 GCS 抖了一下。
+ */
+async function readCardFromObjectStrict(objectName: string): Promise<ManhuaViralTemplateCard> {
+  const bucket = getGcsBucketName();
+  const { buffer } = await downloadGcsObject({ gcsUri: `gs://${bucket}/${objectName}` });
+  let raw: unknown;
+  try {
+    raw = JSON.parse(buffer.toString("utf8"));
+  } catch {
+    throw new Error(`模板对象不是有效 JSON：${objectName}`);
+  }
+  const card = parseManhuaViralTemplateCard(raw);
+  if (!card) throw new Error(`模板对象结构无法解析：${objectName}`);
+  return card;
+}
+
 async function readCardFromObject(objectName: string): Promise<ManhuaViralTemplateCard | null> {
   const bucket = String(
     process.env.GCS_BUCKET_NAME
@@ -311,32 +335,48 @@ export async function listArchivedManhuaViralTemplateVersions(
   maxResults = 20,
 ): Promise<ArchivedManhuaViralTemplate[]> {
   const key = String(id || "").trim();
-  if (!key) return [];
+  if (!/^tpl_[a-z0-9_-]{1,60}$/i.test(key)) {
+    throw new Error("模板 id 格式无效");
+  }
+
   const prefix = `${MANHUA_VIRAL_ARCHIVE_PREFIX}${key}/`;
-  let names: string[] = [];
-  try {
-    names = await listGcsObjectNamesByPrefix({ prefix, maxResults });
-  } catch (e) {
-    console.warn(
-      "[manhuaViralTemplateStore] 列归档失败:",
-      prefix,
-      e instanceof Error ? e.message : e,
-    );
-    return [];
-  }
-  const out: ArchivedManhuaViralTemplate[] = [];
+  /**
+   * **先扫全再排序再截断**，不能先 slice 后排。
+   * 原来把 maxResults 直接传给列举：GCS 按对象名返回前 N 个，
+   * 版本超过 20 时拿到的是「字典序前 20 个」而不是「最新 20 个」——
+   * 用户想翻回上一版，看到的却是最老的那批。
+   *
+   * 列举失败**一律抛**，不 catch 成 []：
+   * 空数组会在页面上显示「还没有归档版本」，
+   * 让用户以为旧版没了，而实际只是 GCS 抖了一下。
+   */
+  const names = await listGcsObjectNamesByPrefix({ prefix, maxResults: 1000 });
+
+  const rows: ArchivedManhuaViralTemplate[] = [];
   for (const objectName of names) {
-    if (!/\.json$/i.test(objectName)) continue;
-    const card = await readCardFromObject(objectName);
-    if (!card) continue;
-    out.push({
-      card,
-      generation: objectName.slice(prefix.length).replace(/\.json$/i, ""),
-      objectName,
-    });
+    const suffix = objectName.slice(prefix.length);
+    const match = suffix.match(/^(\d{1,30})\.json$/);
+    if (!match) continue;
+
+    const card = await readCardFromObjectStrict(objectName);
+    // 对象放在 <id>/ 目录下不代表里面就是这张卡；错位会让恢复顶错模板
+    if (card.id !== key) {
+      throw new Error(`归档对象与模板 id 不一致：${objectName}`);
+    }
+    if (card.status !== "approved" && card.status !== "rejected") {
+      throw new Error(`归档对象状态无效：${objectName}`);
+    }
+    rows.push({ card, generation: match[1]!, objectName });
   }
-  // 新的排前面：generation 是递增的时间戳型数字串
-  return out.sort((a, b) => b.generation.localeCompare(a.generation));
+
+  return rows
+    .sort((a, b) => {
+      const byTime = Date.parse(b.card.updatedAt || "") - Date.parse(a.card.updatedAt || "");
+      return Number.isFinite(byTime) && byTime !== 0
+        ? byTime
+        : b.generation.localeCompare(a.generation);
+    })
+    .slice(0, Math.max(1, Math.min(100, maxResults)));
 }
 
 /**
@@ -353,17 +393,32 @@ export async function restoreArchivedManhuaViralTemplate(input: {
   const id = String(input.id || "").trim();
   const generation = String(input.generation || "").trim();
   if (!id || !generation) throw new Error("缺少模板 id 或版本号");
+  if (!/^tpl_[a-z0-9_-]{1,60}$/i.test(id)) throw new Error("模板 id 格式无效");
+  // 存储层重复校验一次：路由的 zod 不是唯一防线，别人换个入口调进来也要拦
+  if (!MANHUA_ARCHIVE_GENERATION_RE.test(generation)) {
+    throw new Error("归档版本号格式无效");
+  }
 
   const bucket = getGcsBucketName();
   const archiveObject = `${MANHUA_VIRAL_ARCHIVE_PREFIX}${id}/${generation}.json`;
-  const archived = await readCardFromObject(archiveObject);
-  if (!archived) throw new Error("该归档版本不存在或无法解析");
+  // 严格读：读不动就抛，不能把「读取失败」当成「版本不存在」
+  const archived = await readCardFromObjectStrict(archiveObject);
+  if (archived.id !== id) {
+    throw new Error("归档对象与目标模板不一致，已停止恢复");
+  }
+  if (archived.status !== "approved" && archived.status !== "rejected") {
+    throw new Error("归档对象状态无效，已停止恢复");
+  }
 
-  const restored: ManhuaViralTemplateCard = {
+  // 恢复出来的卡重新过一遍解析器：归档件可能是旧结构，直接写回等于把脏数据放进正式库
+  const restored = parseManhuaViralTemplateCard({
     ...archived,
     status: "approved",
     updatedAt: new Date().toISOString(),
-  };
+  });
+  if (!restored || restored.id !== id || restored.status !== "approved") {
+    throw new Error("恢复后的模板校验失败");
+  }
 
   const created = await uploadBufferToGcsIfAbsent({
     bucket,

@@ -254,7 +254,8 @@ export const manhuaViralTemplateRouter = router({
     .input(
       z.object({
         id: z.string().regex(/^tpl_[a-z0-9_-]{1,60}$/i),
-        generation: z.string().min(1).max(40),
+        // 归档版本号是递增数字串；收口成纯数字，别让任意字符串拼进对象路径
+        generation: z.string().regex(/^\d{1,30}$/),
         confirmRestore: z.literal(true),
       }),
     )
