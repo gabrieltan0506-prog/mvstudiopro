@@ -75,9 +75,9 @@ export type NativeDeepReadPlanPreview = {
 };
 
 export type NativeDeepReadPlanConfirmation = {
-  planHash: string;
+  planHash?: string;
   maxCalls: number;
-  seriesKey: string;
+  seriesKey?: string;
 };
 
 /** worker 的最终确认门：必须在 claim 与任何模型调用之前执行。 */
@@ -99,13 +99,21 @@ export function assertNativeDeepReadPlanConfirmation(
       `本次 ${current.totalSegments} 次模型请求超过单任务上限 ${NATIVE_DEEP_READ_JOB_MAX_CALLS}，请拆批`,
     );
   }
-  if (
-    current.planHash !== confirmed.planHash
-    || current.totalSegments !== confirmed.maxCalls
-    || current.seriesKey !== confirmed.seriesKey
-  ) {
+  if (confirmed.planHash || confirmed.seriesKey) {
+    if (
+      current.planHash !== confirmed.planHash
+      || current.totalSegments !== confirmed.maxCalls
+      || current.seriesKey !== confirmed.seriesKey
+    ) {
+      throw new Error(
+        `原生精读计划已变化（当前 ${current.planHash}/${current.totalSegments} 次），请重新建立任务`,
+      );
+    }
+    return;
+  }
+  if (current.totalSegments > confirmed.maxCalls) {
     throw new Error(
-      `原生精读计划已变化（当前 ${current.planHash}/${current.totalSegments} 次），请重新预览确认`,
+      `本次 ${current.totalSegments} 次模型请求超过任务预算 ${confirmed.maxCalls}，请调小单次学习集数`,
     );
   }
 }

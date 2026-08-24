@@ -350,43 +350,6 @@ export const manhuaViralTemplateRouter = router({
       return { ok: true as const, id: archived.id, nameZh: archived.nameZh };
     }),
 
-  /**
-   * 发车前的计划预览：贴一条抖音链接，看清这次要跑几集、几次模型请求、多少分钟。
-   *
-   * 🔴 **零模型调用**，也因此不需要任何确认码就能调。
-   * 🔴 **跑在服务端**：解析要 DOUYIN_COOKIE，凭证只在 Fly env 读取，
-   *    一步都不下放到开发机。
-   *
-   * 真跑的门禁不在这里 —— worker 侧必须用同样的输入重算 planHash 并比对，
-   * 「客户端确认过」不能当作授权（见 undo-opus5 第四节 P0-1）。
-   */
-  previewNativeDeepReadPlan: protectedProcedure
-    .input(
-      z.object({
-        url: z.string().url().max(2048),
-        limit: z.number().int().min(1).max(200).default(10),
-        learnLlm: z.enum(["gpt", "claude", "deepseek"]).optional(),
-      }),
-    )
-    .mutation(async ({ ctx, input }) => {
-      assertSiteOwner(ctx.user);
-      const { buildNativeDeepReadPlanPreviewFromServices } = await import(
-        "../services/manhuaNativeDeepReadPlanRuntime"
-      );
-      try {
-        return await buildNativeDeepReadPlanPreviewFromServices({
-          ...input,
-          abortSignal: ctx.clientDisconnected,
-        });
-      } catch (e) {
-        // 计划阶段的失败一律照原文回给 owner：这些提示本身就是「为什么不能发车」
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: e instanceof Error ? e.message : "计划生成失败",
-        });
-      }
-    }),
-
   /** 监管：明文批准进库 → GCS approved（不改 TypeScript 种子数组） */
   approve: protectedProcedure
     .input(

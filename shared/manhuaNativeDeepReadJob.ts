@@ -22,10 +22,12 @@ export const NATIVE_DEEP_READ_JOB_FIELDS = [
 
 export type NativeDeepReadJobConfirmation = {
   url: string;
-  planHash: string;
+  /** 旧任务的精确计划指纹；新面板直接入队时为空，由 worker 在任务内生成执行计划。 */
+  planHash?: string;
   maxCalls: number;
   planLimit: number;
-  seriesKey: string;
+  /** 与 planHash 成对出现，仅用于兼容已经入队的旧任务。 */
+  seriesKey?: string;
   learnLlm: "gpt" | "claude" | "deepseek";
 };
 
@@ -44,6 +46,7 @@ export function parseNativeDeepReadJobConfirmation(
   const planLimit = Number(params.nativePlanLimit);
   const batchSize = Number(params.batchSize);
   const seriesKey = String(params.nativePlanSeriesKey || "").trim();
+  const hasLegacyPlanConfirmation = Boolean(planHash || seriesKey);
   let parsedUrl: URL;
   try {
     parsedUrl = new URL(url);
@@ -54,7 +57,6 @@ export function parseNativeDeepReadJobConfirmation(
     params.nativeDeepReadConfirmed !== true
     || parsedUrl.protocol !== "https:"
     || !/(?:^|\.)douyin\.com$/i.test(parsedUrl.hostname)
-    || !/^[0-9a-f]{16}$/.test(planHash)
     || !Number.isInteger(maxCalls)
     || maxCalls < 1
     || maxCalls > NATIVE_DEEP_READ_JOB_MAX_CALLS
@@ -62,7 +64,10 @@ export function parseNativeDeepReadJobConfirmation(
     || planLimit < 1
     || planLimit > 200
     || batchSize !== planLimit
-    || !/^[0-9A-Za-z_-]{1,40}$/.test(seriesKey)
+    || (
+      hasLegacyPlanConfirmation
+      && (!/^[0-9a-f]{16}$/.test(planHash) || !/^[0-9A-Za-z_-]{1,40}$/.test(seriesKey))
+    )
     || String(params.gcsUri || "").trim()
     || params.refreshPreviewFrames === true
     || params.retrySkippedEpisodes === true
@@ -71,10 +76,10 @@ export function parseNativeDeepReadJobConfirmation(
   }
   return {
     url,
-    planHash,
+    planHash: planHash || undefined,
     maxCalls,
     planLimit,
-    seriesKey,
+    seriesKey: seriesKey || undefined,
     learnLlm:
       params.learnLlm === "claude" || params.learnLlm === "deepseek"
         ? params.learnLlm
