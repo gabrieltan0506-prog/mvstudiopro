@@ -23,6 +23,8 @@ import { tmpdir } from "node:os";
 import nodePath from "node:path";
 import { promisify } from "node:util";
 import { signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs.js";
+import { readBgmStructure, type BgmStructure } from "../../shared/manhuaBeatTable.js";
+import { probeBgmLevels } from "./manhuaBgmLevelProbe.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -63,6 +65,23 @@ export async function readBgmAudioWithLimit(
  * **不能只信 URL 或 Content-Type**：上游给错东西、CDN 返回错误页
  * 都会带着看起来正常的头。落进曲库的必须是真音频。
  */
+/** 落临时文件 → 逐 0.5 秒量电平 → 读结构；量完即删 */
+async function probeVariantStructure(
+  buf: Buffer,
+  totalSec: number,
+  abortSignal?: AbortSignal,
+): Promise<BgmStructure | null> {
+  const dir = await mkdtemp(nodePath.join(tmpdir(), "mvbgmlv-"));
+  const file = nodePath.join(dir, "v.mp3");
+  try {
+    await writeFile(file, buf);
+    const samples = await probeBgmLevels(file, { totalSec, abortSignal });
+    return readBgmStructure(samples);
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 export async function assertBgmAudioPlayable(buf: Buffer, abortSignal?: AbortSignal): Promise<void> {
   const dir = await mkdtemp(nodePath.join(tmpdir(), "mvbgm-"));
   const file = nodePath.join(dir, "v.mp3");
@@ -109,6 +128,13 @@ export type ScoringRoomVariant = {
   /** 供试听；进 bgm_mount 用 gcsUri */
   previewUrl: string;
   bytes: number;
+  /**
+   * 逐 0.5 秒量出的曲子结构（最强击点 / 天然空隙 / 衰减起点）。
+   *
+   * skill 要求「挑变体先量再听」—— 两条变体不能凭感觉挑，
+   * 要看结构对不对得上画面。这也是卡点表的输入。
+   */
+  structure?: BgmStructure | null;
 };
 
 export type ScoringRoomResult = {
@@ -230,11 +256,20 @@ export async function resumeManhuaBgmTask(input: {
       buffer: audio,
       contentType: "audio/mpeg",
     });
+    // 顺手量结构：纯 ffmpeg 零成本，挑变体与做卡点表都要它
+    let structure: BgmStructure | null = null;
+    try {
+      structure = await probeVariantStructure(audio, input.brief.duration, input.abortSignal);
+    } catch (e) {
+      // 量不到不阻断落库：曲子还是能用，只是挑变体时少一份客观依据
+      console.warn("[scoringRoom] 变体结构量测失败：", e instanceof Error ? e.message : e);
+    }
     variants.push({
       index: i,
       gcsUri,
       previewUrl: signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600),
       bytes: audio.length,
+      structure,
     });
   }
 

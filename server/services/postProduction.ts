@@ -309,7 +309,15 @@ export async function mountBgm(
     const meta = await probe(vPath, signal);
     const D = meta.durationSec;
 
-    const gain = input.bgmVolume;
+    /**
+     * 卡点表给了分窗表达式就用它，否则退回单一增益（行为与从前一致）。
+     *
+     * 表达式带 `eval=frame` 才会逐帧求值 —— 不带的话只在初始化时算一次，
+     * 整条片子会是一个固定音量，等于卡点表白做。
+     */
+    const volumeFilter = String(input.volumeExpr || "").trim()
+      ? `volume='${String(input.volumeExpr).replace(/'/g, "")}':eval=frame`
+      : `volume=${input.bgmVolume}`;
     const entry = Math.min(input.entrySec, Math.max(0, D - 0.1));
     const fadeIn = input.fadeInSec;
     const fadeOutSec = Math.min(input.fadeOutSec, D);
@@ -328,7 +336,7 @@ export async function mountBgm(
      */
     const musicNeedSec = Math.max(0.1, D - entry);
     const bgmChain =
-      `[1:a]atrim=0:${musicNeedSec.toFixed(3)},asetpts=PTS-STARTPTS,volume=${gain},` +
+      `[1:a]atrim=0:${musicNeedSec.toFixed(3)},asetpts=PTS-STARTPTS,${volumeFilter},` +
       `adelay=${delayMs}|${delayMs},` +
       `afade=t=in:st=${entry.toFixed(3)}:d=${fadeIn.toFixed(3)},` +
       `afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${fadeOutSec.toFixed(3)},` +

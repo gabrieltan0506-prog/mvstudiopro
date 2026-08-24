@@ -36,6 +36,14 @@ export const bgmMountParamsSchema = z
     entrySec: z.number().min(0).max(3600).default(0),
     fadeInSec: z.number().min(0).max(30).default(0.5),
     fadeOutSec: z.number().min(0).max(30).default(1),
+    /**
+     * 卡点表产出的**分窗增益表达式**（ffmpeg `volume` 的 if/between 串）。
+     *
+     * 这是贴装一直缺的那块：只有 entry/fade 时，「对白窗压住、高潮窗抬起、
+     * 静音窗真空」都做不到，而铁律一（画面静音点 BGM 必须硬切停）正靠它。
+     * 缺省时退回单一 bgmVolume，行为与从前一致。
+     */
+    volumeExpr: z.string().max(2000).optional(),
   })
   .strict();
 
