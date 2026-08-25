@@ -4145,7 +4145,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         );
         const duration = clampWan30Duration(b.duration ?? b.durationSec ?? q.duration);
         const resolution = normalizeWan30Resolution(b.resolution || q.resolution);
-        const label = `画布成片·Wan 3.0 公测（${resolution}·${duration}s·排队较长）`;
+        const label = `画布成片·Wan 3.0（${resolution}·${duration}s·排队较长）`;
         const requestKey =
           s(b.idempotencyKey || q.idempotencyKey || "").trim() ||
           `srvwan_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;

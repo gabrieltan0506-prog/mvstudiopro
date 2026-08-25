@@ -12,10 +12,11 @@
  * 注意它是 reasoning 模型,过小的 max_tokens 会被思考 token 吃光导致空 content——
  * 本链已有 empty_content 判定兜底,调用方仍应给足 max_tokens。
  *
- * 兜底两档保持不变(它们是 Qwen 不是 GLM,不在"GLM 不走百炼"口径内):
- * 百炼 Qwen 用 Wan official 同一把钥匙,EvoLink Qwen 保交付不保同型。
- *
- * 配置:兜底聊天端点优先 BAILIAN_COMPAT_BASE_URL,兼容回退 WAN_OFFICIAL_BASE(与 Wan 视频同 key)。
+ * 兜底两档(0825 二次拍板):新加坡 Token Plan Qwen3.8-Max(套餐额度,已付费不用即归零,
+ * 先耗套餐) → EvoLink Qwen3.8-Max(保交付不保同型)。
+ * ⚠️ SG 套餐端点必须用 token-plan.ap-southeast-1 专用地址配 DASHSCOPE_SG_PLAN_KEY;
+ *    不能用 DASHSCOPE_SG_BASE(业务空间地址配套餐钥匙会 401,#1307 工作树实录)。
+ * 至此整条链不再有任何百炼按量档。
  */
 export type GlmGatewayName =
   /** @deprecated 0825 起 GLM 不再走百炼;成员仅保留给历史账本/轨迹反序列化,链上不再出现 */
@@ -23,7 +24,9 @@ export type GlmGatewayName =
   /** @deprecated 同上 */
   | "bailian_sg"
   | "openrouter"
+  /** @deprecated 0825 二次拍板:Qwen 兜底改走新加坡 Token Plan,百炼按量档退役;成员留给历史轨迹 */
   | "bailian_qwen"
+  | "plan_sg_qwen"
   | "evolink_qwen";
 
 /** @deprecated 0825 起 GLM 不走百炼;常量仅保留给历史账本比对,链上不再使用 */
@@ -100,15 +103,16 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
       key: String(process.env.OPENROUTER_API_KEY || "").trim(),
     },
     {
-      // 末档一:GLM 三网关全灭才换模型;Wan official 百炼直连(同一把 WAN_OFFICIAL 钥匙)
-      name: "bailian_qwen",
+      // 兜底一:GLM 不可用才换模型;新加坡 Token Plan 套餐额度(已付费,不用即归零)
+      // 端点写死 token-plan 专用域——配 DASHSCOPE_SG_BASE 会 401,不给配错的机会
+      name: "plan_sg_qwen",
       model: GLM_CHAIN_FALLBACK_MODEL,
-      ready: isBailianChatConfigured(),
-      url: `${bailianBase()}/compatible-mode/v1/chat/completions`,
-      key: String(process.env.WAN_OFFICIAL_API_KEY || "").trim(),
+      ready: Boolean(String(process.env.DASHSCOPE_SG_PLAN_KEY || "").trim()),
+      url: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions",
+      key: String(process.env.DASHSCOPE_SG_PLAN_KEY || "").trim(),
     },
     {
-      // 末档二:百炼 Qwen 也不通才走 EvoLink,保交付不保同型
+      // 兜底二:SG 套餐也不通才走 EvoLink,保交付不保同型
       name: "evolink_qwen",
       model: GLM_CHAIN_FALLBACK_MODEL,
       ready: Boolean(String(process.env.EVOLINK_API_KEY || "").trim()),

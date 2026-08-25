@@ -70,15 +70,26 @@ function cleanUrls(list: unknown, max: number): string[] {
 }
 
 /**
- * OpenRouter 通道资格：文档没有参考音频字段。
- * 带音频还硬送等于把锁音轨静默丢掉——正是 0824 P0 系列烧钱事故的形状，宁可跳过。
+ * OpenRouter 通道资格：参考音频/视频默认不走它。
+ *
+ * 依据（0825 Fly 内零成本实测）：OpenRouter 校验器对未知字段**静默容忍**——
+ * `bogus_field_zzz` 与 `audio_urls`/`reference_audios` 得到一模一样的响应，
+ * 即无法零成本证明音频字段真被消费；错了就是锁音轨静默丢（0824 事故形状）。
+ * 用户口径「文档没写不代表没有」成立，但只能用一张真单证明。
+ * 真单验证通过后设 `WAN30_OPENROUTER_ALLOW_AUDIO=1` 放行，音频以 `reference_audios`
+ * 字段随单送出（Wan 系原生命名）；在那之前带音频的单子走 EvoLink → WaveSpeed。
  */
+export function openRouterWanAudioAllowed(): boolean {
+  return String(process.env.WAN30_OPENROUTER_ALLOW_AUDIO || "").trim() === "1";
+}
+
 export function openRouterWanEligible(input: Wan30SubmitInput): { ok: boolean; reasonZh?: string } {
-  if (cleanUrls(input.audioUrls, WAN30_REFERENCE_MAX.audio).length) {
-    return { ok: false, reasonZh: "OpenRouter 的 Wan 3.0 文档无参考音频字段，带参考音频的请求跳过该通道（锁音轨不许静默丢）" };
+  const allowMedia = openRouterWanAudioAllowed();
+  if (!allowMedia && cleanUrls(input.audioUrls, WAN30_REFERENCE_MAX.audio).length) {
+    return { ok: false, reasonZh: "OpenRouter 音频字段未经真单验证，带参考音频的请求跳过该通道（锁音轨不许静默丢；真单验证后设 WAN30_OPENROUTER_ALLOW_AUDIO=1 放行）" };
   }
-  if (cleanUrls(input.videoUrls, WAN30_REFERENCE_MAX.video).length) {
-    return { ok: false, reasonZh: "OpenRouter 的 Wan 3.0 文档无参考视频字段，带参考视频的请求跳过该通道" };
+  if (!allowMedia && cleanUrls(input.videoUrls, WAN30_REFERENCE_MAX.video).length) {
+    return { ok: false, reasonZh: "OpenRouter 参考视频字段未经真单验证，带参考视频的请求跳过该通道" };
   }
   return { ok: true };
 }
@@ -100,6 +111,13 @@ export function buildOpenRouterWanSubmitBody(input: Wan30SubmitInput): Record<st
      */
     input_references: images.map((url) => ({ type: "image_url", image_url: { url } })),
   };
+  if (openRouterWanAudioAllowed()) {
+    // 仅在真单验证放行后送出；字段名按 Wan 系原生命名（与 WaveSpeed 同名）
+    const audios = cleanUrls(input.audioUrls, WAN30_REFERENCE_MAX.audio);
+    if (audios.length) body.reference_audios = audios;
+    const videos = cleanUrls(input.videoUrls, WAN30_REFERENCE_MAX.video);
+    if (videos.length) body.reference_videos = videos;
+  }
   const seed = Math.floor(Number(input.seed));
   if (Number.isFinite(seed) && seed >= 0 && seed <= 2147483647) body.seed = seed;
   return body;

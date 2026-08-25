@@ -31,6 +31,7 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     vi.stubEnv("WAN_OFFICIAL_API_KEY", "bl-key");
     vi.stubEnv("DASHSCOPE_SG_BASE", "https://sg.example.com");
     vi.stubEnv("DASHSCOPE_SG_API_KEY", "sg-key");
+    vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "sg-plan-key");
     vi.stubEnv("EVOLINK_API_KEY", "evo-key");
     vi.stubEnv("OPENROUTER_API_KEY", "or-key");
   });
@@ -48,15 +49,15 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     expect(r.gatewayTrace).toEqual([{ gateway: "openrouter", model: "z-ai/glm-5.3", outcome: "ok" }]);
   });
 
-  it("OpenRouter HTTP 500 后降级百炼 Qwen 兜底成功（顺位：OpenRouter→bailian_qwen→evolink_qwen）", async () => {
+  it("OpenRouter HTTP 500 后降级新加坡 Token Plan Qwen 兜底成功（顺位：OpenRouter→plan_sg_qwen→evolink_qwen）", async () => {
     const calls = stubFetchSeq([
       () => ({ ok: false, status: 500, body: "boom" }),
       () => ({ ok: true, status: 200, body: okBody(GOOD, "qwen3.8-max") }),
     ]);
     const r = await invokeGlmJsonChatWithGatewayFallback({ system: "s", user: "u" });
     expect(calls).toHaveLength(2);
-    expect(calls[1].url).toContain("ws.example.cn/compatible-mode");
-    expect(r.gateway).toBe("bailian_qwen");
+    expect(calls[1].url).toContain("token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode");
+    expect(r.gateway).toBe("plan_sg_qwen");
     expect(r.gatewayTrace[0]).toMatchObject({ gateway: "openrouter", outcome: "http_error" });
   });
 
@@ -73,7 +74,7 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
       },
     });
     expect(calls).toHaveLength(2);
-    expect(r.gateway).toBe("bailian_qwen");
+    expect(r.gateway).toBe("plan_sg_qwen");
     expect(r.gatewayTrace[0]).toMatchObject({ gateway: "openrouter", outcome: "content_invalid" });
   });
 
@@ -101,25 +102,24 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     expect(vi.mocked(fetch as any).mock.calls).toHaveLength(1);
   });
 
-  it("全链失败:轨迹=[openrouter,bailian_qwen,evolink_qwen];🔴 百炼两档 GLM 已删,任何请求体不得出现 GLM 模型名打向百炼", async () => {
+  it("全链失败:轨迹=[openrouter,plan_sg_qwen,evolink_qwen];🔴 整条链零百炼按量调用", async () => {
     const calls = stubFetchSeq([() => ({ ok: false, status: 502, body: "bad" })]);
     const err = await invokeGlmJsonChatWithGatewayFallback({ system: "s", user: "u", maxTokens: 12_345 }).catch((e) => e);
     expect(err).toBeInstanceOf(GlmGatewayError);
     expect(err.gatewayTrace.map((t: any) => t.gateway)).toEqual([
       "openrouter",
-      "bailian_qwen",
+      "plan_sg_qwen",
       "evolink_qwen",
     ]);
     expect(err.gatewayTrace.every((t: any) => t.outcome === "http_error")).toBe(true);
     const body0 = JSON.parse(String(calls[0].init?.body));
     expect(body0.max_tokens).toBe(12_345);
     expect(body0.model).toBe("z-ai/glm-5.3");
-    // 兜底两档是 Qwen(允许走百炼/EvoLink),但 GLM 模型名绝不允许再打向百炼域名
+    // 0825 二次拍板:百炼按量域名(WAN_OFFICIAL_BASE)一次都不许被打到
     for (const c of calls) {
+      expect(c.url).not.toContain("ws.example.cn");
       const model = JSON.parse(String(c.init?.body || "{}")).model;
-      if (/example\.cn|example\.com|evolink/.test(c.url)) {
-        expect(model).toBe("qwen3.8-max");
-      }
+      if (/token-plan|evolink/.test(c.url)) expect(model).toBe("qwen3.8-max");
     }
     expect(calls[0].init?.signal).toBeInstanceOf(AbortSignal);
   });

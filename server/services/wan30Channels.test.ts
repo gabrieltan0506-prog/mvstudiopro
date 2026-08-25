@@ -76,9 +76,26 @@ describe("载荷字段（官方契约，不是猜的）", () => {
 });
 
 describe("OpenRouter 资格检查（0824 锁音轨事故的防线）", () => {
-  it("带参考音频 → 无资格；纯图 → 有资格", () => {
+  it("默认：带参考音频 → 无资格；纯图 → 有资格", () => {
     expect(openRouterWanEligible({ ...baseInput, audioUrls: AUD }).ok).toBe(false);
     expect(openRouterWanEligible(baseInput).ok).toBe(true);
+  });
+
+  it("WAN30_OPENROUTER_ALLOW_AUDIO=1（真单验证后）：音频放行且以 reference_audios 随单", () => {
+    vi.stubEnv("WAN30_OPENROUTER_ALLOW_AUDIO", "1");
+    try {
+      expect(openRouterWanEligible({ ...baseInput, audioUrls: AUD }).ok).toBe(true);
+      const body = buildOpenRouterWanSubmitBody({ ...baseInput, audioUrls: AUD });
+      expect(body.reference_audios).toEqual(AUD);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("旗未开时 body 绝无音频字段（防静默丢锁音轨）", () => {
+    const body = buildOpenRouterWanSubmitBody(baseInput);
+    expect(body).not.toHaveProperty("reference_audios");
+    expect(body).not.toHaveProperty("audio_urls");
   });
 });
 
