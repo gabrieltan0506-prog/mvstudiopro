@@ -129,11 +129,57 @@ export const manhuaNativeAudioChunkAnalysisSchema = z.object({
 const cut = (value: unknown, max: number): string | undefined =>
   String(value || "").trim().slice(0, max) || undefined;
 const CLOCK_RE = /(?<!\d)(?:(\d{1,2}):)?([0-5]?\d):([0-5]\d)(?!\d)/;
+/**
+ * 剥离用的 /g 克隆：在 CLOCK_RE 之外多吞可选的前导连接词（在/于/至/到）、
+ * 紧跟的区间连字符（01:23-01:40 的“-”）和后缀残渣（处/左右/时/附近/秒）。
+ */
+const CLOCK_STRIP_RE = new RegExp(
+  `(?:在|于|至|到)?${CLOCK_RE.source}(?:\\s*[-–—~～]\\s*)?(?:处|左右|时|附近|秒)?`,
+  "g",
+);
 
 function assertNoClockText(value: unknown): void {
   if (CLOCK_RE.test(String(value || ""))) {
     throw new Error("音频描述含第二套文本秒位，拒绝入库");
   }
+}
+
+/**
+ * 剥离文本里的钟表式秒位（0826 用户拍板）：数字字段是唯一时间真源，
+ * 散文里的 MM:SS 定义上就是冗余或幻觉——直接删除，不再整轮拒收重买。
+ * 顺带吞掉「在…处/左右/时」这类挂在钟表文本上的连接残渣。
+ */
+export function stripClockTextZh(value: string): string {
+  const raw = String(value ?? "");
+  let out = raw;
+  // 审查#3：单轮剥离可能把相邻数字拼出新的钟表文本（如 "2在1:05处:15"→"2:15"），
+  // 多轮剥到干净为止；四轮仍残留视为门禁失败（喂给带拒因重试），
+  // 绝不让残留秒位写进卡片后在读门永久卡死一张已付费卡。
+  for (let pass = 0; pass < 4; pass += 1) {
+    const next = out.replace(CLOCK_STRIP_RE, "");
+    if (next === out) break;
+    out = next;
+  }
+  if (CLOCK_RE.test(out)) {
+    throw new Error("音频描述含第二套文本秒位，剥离后仍残留，拒绝入库");
+  }
+  if (out === raw) return raw;
+  return out
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/、{2,}/g, "、")
+    .replace(/，{2,}/g, "，")
+    .replace(/^[、，,；;\s]+/, "")
+    .trim();
+}
+
+/**
+ * 门禁类失败＝模型输出没过 normalize/校验（结构、时间轴、剥离后空文）。
+ * 网络、超时、上游 HTTP、用户中止都不算——只有门禁类才值得带原因重试一次。
+ */
+export function isManhuaNativeAudioGateFailureZh(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name === "ZodError") return true;
+  return /音频分析|音频事件|音频描述/.test(error.message);
 }
 
 function assertTrackCoverage(
@@ -163,40 +209,57 @@ export function normalizeManhuaNativeAudioChunkAnalysis(input: {
   const localTracks = [...parsed.audioTrack]
     .sort((a, b) => a.fromSec - b.fromSec || a.toSec - b.toSec);
   assertTrackCoverage(localTracks, 0, lenSec);
+  /**
+   * 写入路（0826 用户拍板）：文本秒位不再 assert 拒收，改为先剥离再入库。
+   * 数字时间轴校验（覆盖、cue 边界）保持硬门禁不动。
+   */
+  let strippedCount = 0;
+  const sanitize = (value: string): string => {
+    const next = stripClockTextZh(value);
+    if (next !== value) strippedCount += 1;
+    return next;
+  };
+  const sanitizeRequired = (value: string): string => {
+    const next = sanitize(value);
+    if (!next.trim()) throw new Error("音频描述剥离文本秒位后正文为空，拒绝入库");
+    return next;
+  };
   const audioTrack = localTracks.map((track): ManhuaNativeAudioTrack => {
-    for (const value of [
-      track.emotionArcZh, track.toneZh, track.sfxZh, track.bgmZh,
-      track.atmosphereZh, track.silenceZh,
-    ]) assertNoClockText(value);
     if (track.cues.some((cue) => cue.atSec < track.fromSec || cue.atSec > track.toSec)) {
       throw new Error("音频事件秒位不属于声明区间");
     }
     return {
       fromSec: input.chunk.startSec + track.fromSec,
       toSec: input.chunk.startSec + track.toSec,
-      emotionArcZh: cut(track.emotionArcZh, 160)!,
-      toneZh: cut(track.toneZh, 120) || "",
-      sfxZh: cut(track.sfxZh, 160) || "",
-      bgmZh: cut(track.bgmZh, 160) || "",
-      atmosphereZh: cut(track.atmosphereZh, 100) || "",
-      silenceZh: cut(track.silenceZh, 120) || "",
+      emotionArcZh: cut(sanitizeRequired(track.emotionArcZh), 160)!,
+      toneZh: cut(sanitize(track.toneZh), 120) || "",
+      sfxZh: cut(sanitize(track.sfxZh), 160) || "",
+      bgmZh: cut(sanitize(track.bgmZh), 160) || "",
+      atmosphereZh: cut(sanitize(track.atmosphereZh), 100) || "",
+      silenceZh: cut(sanitize(track.silenceZh), 120) || "",
       cues: track.cues.map((cue) => ({
         atSec: input.chunk.startSec + cue.atSec,
         kind: cue.kind,
-        detailZh: cut(cue.detailZh, 100)!,
+        // cues[].detailZh 此前从未被扫描（已知缺口），一并纳入剥离。
+        detailZh: cut(sanitizeRequired(cue.detailZh), 100)!,
       })),
     };
   });
-  for (const value of [
-    parsed.audioBeatStructureZh, parsed.mixNotesZh,
-    parsed.reusableAudioZh, parsed.genAudioHintZh,
-  ]) assertNoClockText(value);
+  const audioBeatStructureZh = sanitizeRequired(parsed.audioBeatStructureZh);
+  const mixNotesZh = sanitize(parsed.mixNotesZh);
+  const reusableAudioZh = sanitizeRequired(parsed.reusableAudioZh);
+  const genAudioHintZh = sanitizeRequired(parsed.genAudioHintZh);
+  if (strippedCount > 0) {
+    console.warn(
+      `[nativeAudioAnalysis] 已剥离文本秒位 ${strippedCount} 处（数字时间轴为唯一真源）`,
+    );
+  }
   return {
     audioTrack,
-    audioBeatStructureZh: cut(parsed.audioBeatStructureZh, 500)!,
-    mixNotesZh: cut(parsed.mixNotesZh, 500) || "",
-    reusableAudioZh: cut(parsed.reusableAudioZh, 500)!,
-    genAudioHintZh: cut(parsed.genAudioHintZh, 500)!,
+    audioBeatStructureZh: cut(audioBeatStructureZh, 500)!,
+    mixNotesZh: cut(mixNotesZh, 500) || "",
+    reusableAudioZh: cut(reusableAudioZh, 500)!,
+    genAudioHintZh: cut(genAudioHintZh, 500)!,
   };
 }
 
@@ -327,8 +390,10 @@ export function parseManhuaNativeAudioAnalysis(raw: unknown): ManhuaNativeAudioA
     } catch {
       return undefined;
     }
+    // 双路完整性下限：每段至少 2 次成功调用。0826 起门禁重试会诚实多计 1–2 次
+    // 已付费调用，等号会把重试过的卡整张拒读，故只卡下限。
     if (
-      chunkCount < 1 || usage.geminiCalls !== chunkCount * 2
+      chunkCount < 1 || usage.geminiCalls < chunkCount * 2
       || usage.audioInputTokens <= 0 || !usage.receiptComplete
       || !cut(o.audioBeatStructureZh, 1_000) || !cut(o.reusableAudioZh, 1_000)
       || !cut(o.genAudioHintZh, 1_000)

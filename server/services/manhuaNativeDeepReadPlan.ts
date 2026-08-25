@@ -14,6 +14,7 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { normalizeDouyinVideoUrl } from "../../shared/manhuaLearnYtdlp.js";
 import {
   extractDouyinVideoIdFromUrl,
   extractDouyinMixIdFromUrl,
@@ -400,7 +401,12 @@ export async function buildNativeDeepReadPlanPreview(
   },
   deps: NativeDeepReadPlanDeps,
 ): Promise<NativeDeepReadPlanPreview> {
-  const url = String(input.url || "").trim();
+  /**
+   * 0826 回归修复：面板会放行带 modal_id 的搜索页，但原始长 URL 一路透传给下游
+   * （sourceIdentity/各消费方），形态不认就死。入口先规范化成 /video/<id> 标准形态
+   * （modal_id 弹层链 → 单集页；其余原样返回），下游只见规范 URL。
+   */
+  const url = normalizeDouyinVideoUrl(String(input.url || "").trim());
   const limit = Math.max(1, Math.min(NATIVE_DEEP_READ_BATCH_HARD_CEILING, Math.floor(input.limit)));
 
   // ── 1. 链接 → 合集 id（搜索页的 modal_id 由 extractDouyinVideoIdFromUrl 处理）

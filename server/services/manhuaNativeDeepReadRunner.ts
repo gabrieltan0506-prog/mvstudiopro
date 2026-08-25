@@ -298,7 +298,17 @@ function postLong(
 /** 官方单视频 2000 帧上限内留 10% 余量，避免取整后越界。 */
 export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
 /** 计划确认码的一部分；采样/装箱规则变化必须让旧确认码失效。 */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "adaptive-1800f-360s-v1" as const;
+/**
+ * v2（0826 用户拍板）：fps 升为请求级两档制——请求内视频总时长 ≤180s 走 fps10，
+ * 超过一律 fps5、永不更低（低于 5 质量不够六栏；360s 以上已分片，
+ * 每片 360s×fps5=1800 帧恰好贴满单视频帧预算）。fps 语义变更须使旧确认码失效。
+ */
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "adaptive-1800f-360s-v2-2step-fps" as const;
+
+/** 请求级两档 fps（0826 拍板）：总时长 ≤180s → 10；否则 5（下限，不再降） */
+export function resolveNativeDeepReadRequestFps(totalDurationSec: number): number {
+  return totalDurationSec <= 180 ? 10 : 5;
+}
 /** OpenAI 兼容视频输入的官方 fps 上限。 */
 export const NATIVE_DEEP_READ_MAX_FPS = 10;
 /** 百炼官方多视频输入上限；超过时由执行层拆成多个请求包。 */
@@ -503,10 +513,15 @@ export function buildSingaporeNativeDeepReadBatchRequest(input: ReadonlyArray<{
     segments: episode.videos,
   })));
   const content: Array<Record<string, unknown>> = [];
+  // 0826 两档制：fps 按本请求视频总时长统一取档（≤180s→10，否则5），不再逐段各算
+  const requestTotalSec = input.reduce(
+    (sum, ep) => sum + ep.videos.reduce((s2, v) => s2 + (v.endSec - v.startSec), 0),
+    0,
+  );
+  const requestFps = resolveNativeDeepReadRequestFps(requestTotalSec);
   for (const episode of input) {
     for (let segmentIndex = 0; segmentIndex < episode.videos.length; segmentIndex += 1) {
       const video = episode.videos[segmentIndex]!;
-      const segmentDurationSec = video.endSec - video.startSec;
       content.push({
         type: "text",
         text: `下一个视频唯一对应 episodeIndex=${episode.episodeIndex}，segmentIndex=${segmentIndex}，全片秒段=${video.startSec}-${video.endSec}。`,
@@ -514,7 +529,7 @@ export function buildSingaporeNativeDeepReadBatchRequest(input: ReadonlyArray<{
       content.push({
         type: "video_url",
         video_url: { url: video.url },
-        fps: resolveNativeDeepReadInputFps(segmentDurationSec),
+        fps: requestFps,
         min_pixels: NATIVE_DEEP_READ_VIDEO_MIN_PIXELS,
         max_pixels: maxPixels,
       });
@@ -642,6 +657,21 @@ export async function resolveNativeDeepReadNodeUrls(
 const NATIVE_VIDEO_TEMP_PREFIX = "manhua-template-learn/tmp/native-deep-read";
 const NATIVE_VIDEO_SEGMENT_MAX_BYTES = 90 * 1024 * 1024;
 export const NATIVE_DEEP_READ_BATCH_REQUEST_TOTAL_TIMEOUT_MS = 60 * 60_000;
+/**
+ * 模型侧拉取媒体的下载预算（0825 实弹：4 视频一请求 122s 超时,request_id bbb482da；
+ * 0823 实测单文件 87MB 成功、整片直读 122.5s 超时——下载窗约 120 秒）。
+ * 一个视觉请求携带的媒体总字节数不得超过它；直读集按时长估算（无法预知精确体积）。
+ */
+/*
+ * 0826 用户拍板收紧到 64MB：85MB 贴着 0823 实测 87MB 的边，但那次是 OSS 北京→北京
+ * 同区内网；现在是 GCS→新加坡，吞吐未实测——对 120 秒下载窗留约 50% 余量。
+ * 官方逐条上限（单文件体积/时长、超时按文件还是按请求）在 vision 与 qwen3-8-max
+ * 两页文档均未载明；双实弹（0823 122.5s / 0825 122.0s）证明窗按请求聚合计。
+ * 首次真跑拿到 GCS→SG 实测吞吐后可再放宽。
+ */
+export const NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES = 64 * 1024 * 1024;
+/** 直读集（CDN 直链）体积估算系数：0823 实测 540p bytevc1 约 70KB/s，留余量取 100KB/s */
+export const NATIVE_DEEP_READ_DIRECT_BYTES_PER_SEC = 100 * 1024;
 
 function mediaHeaders(node: NativeDeepReadMediaNode): string[] {
   const referer = String(node.referer || "").trim();
@@ -683,11 +713,72 @@ export function buildCutSegmentArgs(
   });
 }
 
+/**
+ * 转码压体积的目标视频码率（kbps）。
+ *
+ * 让整集所有分片压进单请求下载预算：预算字节 ×8 换成比特，×0.92 给容器与
+ * 码率波动留余量，摊到整集时长后再扣掉 48kbps 音轨（音轨必须保留，Qwen 听声）。
+ * 模型按 fps≤2 采样，540p 下 400–800kbps 足够镜头分析。
+ */
+export function resolveNativeDeepReadTranscodeVideoKbps(
+  budgetBytes: number,
+  episodeTotalDurationSec: number,
+): number {
+  const duration = Math.max(1, Number(episodeTotalDurationSec) || 1);
+  return Math.floor((Math.max(0, Number(budgetBytes) || 0) * 8 * 0.92 / duration) / 1000) - 48;
+}
+
+/** 超预算分片的转码参数：540p + libx264 限码率，音轨保留 48k AAC。 */
+export function buildNativeDeepReadTranscodeToFitArgs(input: {
+  inputPath: string;
+  outputPath: string;
+  videoKbps: number;
+}): string[] {
+  const kbps = Math.max(1, Math.floor(input.videoKbps));
+  return [
+    "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+    "-i", input.inputPath,
+    "-vf", "scale=-2:540",
+    "-c:v", "libx264", "-preset", "veryfast",
+    "-b:v", `${kbps}k`, "-maxrate", `${kbps}k`, "-bufsize", `${2 * kbps}k`,
+    "-c:a", "aac", "-b:a", "48k",
+    input.outputPath,
+  ];
+}
+
+/**
+ * 按下载预算把一包剧集拆成若干子请求（贪心、保持顺序、**集为原子**——
+ * 分析 prompt 需要同一集的分片在同一次请求里，绝不把一集拆到两个请求）。
+ * 单集自身超预算时独占一个子请求（切片集已被转码压进预算；直读集只是估算值）。
+ */
+export function groupNativeDeepReadRequestByMediaBudget(
+  items: ReadonlyArray<{ episodeIndex: number; bytes: number }>,
+  budgetBytes: number,
+): number[][] {
+  const groups: number[][] = [];
+  let current: number[] = [];
+  let currentBytes = 0;
+  for (const item of items) {
+    const bytes = Math.max(0, Number(item.bytes) || 0);
+    if (current.length > 0 && currentBytes + bytes > budgetBytes) {
+      groups.push(current);
+      current = [];
+      currentBytes = 0;
+    }
+    current.push(item.episodeIndex);
+    currentBytes += bytes;
+  }
+  if (current.length) groups.push(current);
+  return groups;
+}
+
 export type PreparedNativeVideo = {
   url: string;
   startSec: number;
   endSec: number;
   temporaryGcs?: { bucket: string; objectName: string };
+  /** 上传分片的实际字节数；直读集无此值，按时长 × 估算系数计入下载预算。 */
+  bytes?: number;
   /** 直读 CDN 只在模型请求发出前最后一刻解析，避免准备长片时把短效地址放过期。 */
   refreshDirectUrl?: () => Promise<string>;
 };
@@ -741,7 +832,16 @@ export async function prepareEpisodeVideos(
   }
 
   const prepared: PreparedNativeVideo[] = [];
+  const cutRows: Array<{
+    runId: string;
+    localPath: string;
+    startSec: number;
+    endSec: number;
+    bytes: number;
+  }> = [];
   try {
+    // 第一阶段：全部分片先切到本地并记下体积——整集总字节数已知后才能判断
+    // 是否超单请求下载预算；超了必须在上传 GCS 之前转码压体积。
     for (let index = 0; index < segments.length; index += 1) {
       abortSignal?.throwIfAborted();
       const segment = segments[index]!;
@@ -770,30 +870,96 @@ export async function prepareEpisodeVideos(
           if (fileStat.size < 100_000 || fileStat.size > NATIVE_VIDEO_SEGMENT_MAX_BYTES) {
             throw new Error(`第${episode.episodeIndex}集第${index + 1}段大小不在处理范围`);
           }
-          const uploaded = await deps.upload({
-            objectName: `${NATIVE_VIDEO_TEMP_PREFIX}/${runId}.mp4`,
-            buffer: await deps.readLocal(localPath),
-            contentType: "video/mp4",
-            signal: abortSignal,
-          });
-          prepared.push({
-            url: deps.signReadUrl(uploaded.gcsUri, 2 * 60 * 60),
+          cutRows.push({
+            runId,
+            localPath,
             startSec: segment.startSec,
             endSec: segment.endSec,
-            temporaryGcs: { bucket: uploaded.bucket, objectName: uploaded.objectName },
+            bytes: fileStat.size,
           });
           completed = true;
         } catch (error) {
+          await deps.unlinkLocal(localPath).catch(() => undefined);
           lastError = error;
           if (abortSignal?.aborted) throw error;
           if (attempt < 2) {
             console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集第${index + 1}段媒体准备失败，刷新节点后重试`);
           }
-        } finally {
-          await deps.unlinkLocal(localPath).catch(() => undefined);
         }
       }
       if (!completed) throw lastError instanceof Error ? lastError : new Error("视频分片准备失败");
+    }
+
+    // 第二阶段：整集总字节超下载预算时逐片转码压体积（0825 实弹 122s 超时的根因）。
+    const totalBytesBefore = cutRows.reduce((sum, row) => sum + row.bytes, 0);
+    if (totalBytesBefore > NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES) {
+      const episodeDurationSec = cutRows.reduce(
+        (sum, row) => sum + Math.max(1, row.endSec - row.startSec),
+        0,
+      );
+      const videoKbps = resolveNativeDeepReadTranscodeVideoKbps(
+        NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES,
+        episodeDurationSec,
+      );
+      if (videoKbps <= 0) {
+        throw new Error(`第${episode.episodeIndex}集转码后仍超下载预算，请缩短分段`);
+      }
+      console.warn(
+        `[nativeDeepRead] 第${episode.episodeIndex}集切片共 ${(totalBytesBefore / 1048576).toFixed(1)}MB `
+        + `超过单请求下载预算，按 ${videoKbps}kbps 逐片转码压体积（音轨保留）`,
+      );
+      for (const row of cutRows) {
+        abortSignal?.throwIfAborted();
+        const outputPath = `/tmp/manhua-native-video-${row.runId}-fit.mp4`;
+        try {
+          await deps.runMedia(
+            "ffmpeg",
+            buildNativeDeepReadTranscodeToFitArgs({
+              inputPath: row.localPath,
+              outputPath,
+              videoKbps,
+            }),
+            20 * 60_000,
+            abortSignal,
+          );
+          const transStat = await deps.statLocal(outputPath);
+          if (transStat.size < 100_000) {
+            throw new Error(`第${episode.episodeIndex}集转码产物大小不在处理范围`);
+          }
+          await deps.unlinkLocal(row.localPath).catch(() => undefined);
+          row.localPath = outputPath;
+          row.bytes = transStat.size;
+        } catch (error) {
+          await deps.unlinkLocal(outputPath).catch(() => undefined);
+          throw error;
+        }
+      }
+      const totalBytesAfter = cutRows.reduce((sum, row) => sum + row.bytes, 0);
+      if (totalBytesAfter > NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES) {
+        throw new Error(`第${episode.episodeIndex}集转码后仍超下载预算，请缩短分段`);
+      }
+      console.warn(
+        `[nativeDeepRead] 第${episode.episodeIndex}集转码完成：`
+        + `${(totalBytesBefore / 1048576).toFixed(1)}MB → ${(totalBytesAfter / 1048576).toFixed(1)}MB`,
+      );
+    }
+
+    // 第三阶段：确认在预算内后再上传 GCS 并签 2 小时读链。
+    for (const row of cutRows) {
+      abortSignal?.throwIfAborted();
+      const uploaded = await deps.upload({
+        objectName: `${NATIVE_VIDEO_TEMP_PREFIX}/${row.runId}.mp4`,
+        buffer: await deps.readLocal(row.localPath),
+        contentType: "video/mp4",
+        signal: abortSignal,
+      });
+      prepared.push({
+        url: deps.signReadUrl(uploaded.gcsUri, 2 * 60 * 60),
+        startSec: row.startSec,
+        endSec: row.endSec,
+        temporaryGcs: { bucket: uploaded.bucket, objectName: uploaded.objectName },
+        bytes: row.bytes,
+      });
     }
     return prepared;
   } catch (error) {
@@ -801,6 +967,8 @@ export async function prepareEpisodeVideos(
       ? [deps.remove(row.temporaryGcs)]
       : []));
     throw error;
+  } finally {
+    await Promise.allSettled(cutRows.map((row) => deps.unlinkLocal(row.localPath)));
   }
 }
 
@@ -960,6 +1128,13 @@ export async function runManhuaNativeDeepReadBatch(params: {
   let visualModelCompleted = false;
   let providerRequestId: string | undefined;
   let visualFinishReason: string | undefined;
+  /** 出错时定位在途子请求；全部子请求完成进入解析阶段后为 undefined。 */
+  let activeSubRequest: {
+    subRequestId: string;
+    episodeIndexes: number[];
+    videoCount: number;
+    startedAt: number;
+  } | undefined;
   const visualParseCallId = `${batchRequestId}:parse`;
   try {
     for (const episode of validated) {
@@ -968,77 +1143,120 @@ export async function runManhuaNativeDeepReadBatch(params: {
         videos: await deps.prepareVideos(episode, params.abortSignal),
       });
     }
-    // 必须在所有慢速 ffmpeg/GCS 准备完成后才解析直读 CDN；模型请求紧接着发出。
-    await Promise.all(prepared.flatMap(({ videos }) => videos.flatMap((video) =>
-      video.refreshDirectUrl
-        ? [video.refreshDirectUrl().then((url) => { video.url = url; })]
-        : [],
-    )));
-    params.abortSignal?.throwIfAborted();
-    visualRequestStarted = true;
-    visualRequestStartedAt = Date.now();
-    await emitVisualModelReceipt({
-      callId: batchRequestId,
-      model: NATIVE_DEEP_READ_MODEL,
-      route: "singapore_token_plan",
-      stage: "visual_model",
-      status: "started",
-      batchRequestId,
-      episodeIndexes: validated.map((episode) => episode.episodeIndex),
-      videoCount,
-    }, params.onModelReceipt);
-    const response = await deps.post(
-      buildSingaporeNativeDeepReadBatchRequest(prepared.map(({ episode, videos }) => ({
+    // 下载预算拆分是 runner 内部的**传输层**关注点：计划口径 totalVisualCalls
+    // 仍按 token 装箱的包数统计，实际子请求数可能超过它；成本按 token 计费，
+    // 拆不拆请求不改变账单，因此不回写计划或确认码。
+    // 集为原子：同一集的分片必须留在同一子请求里，分析 prompt 依赖整集分片同场。
+    const groups = groupNativeDeepReadRequestByMediaBudget(
+      prepared.map(({ episode, videos }) => ({
         episodeIndex: episode.episodeIndex,
-        videos,
-        durationSec: episode.sourceDurationSec,
-        hintZh: episode.hintZh,
-        audioEvidence: episode.audioEvidence,
-      }))),
-      creds.apiKey,
-      creds.endpoint,
-      NATIVE_DEEP_READ_BATCH_REQUEST_TOTAL_TIMEOUT_MS,
-      params.abortSignal,
+        bytes: videos.reduce((sum, video) => sum + (
+          typeof video.bytes === "number"
+            ? video.bytes
+            : Math.ceil(Math.max(1, video.endSec - video.startSec) * NATIVE_DEEP_READ_DIRECT_BYTES_PER_SEC)
+        ), 0),
+      })),
+      NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES,
     );
-    if (response.status >= 300) {
-      const providerError = parseNativeProviderErrorReceipt({
-        httpStatus: response.status,
-        responseText: response.text,
-        requestId: response.requestId,
-      });
-      throw errorWithNativeProviderReceipt(
-        formatNativeProviderErrorZh("新加坡 Qwen 3.8 Max Token Plan", providerError),
-        providerError,
+    const preparedByEpisode = new Map(prepared.map((row) => [row.episode.episodeIndex, row]));
+    const subRequestByEpisode = new Map<number, { subRequestId: string; episodeCount: number }>();
+    const responseTexts: string[] = [];
+    for (const group of groups) {
+      const groupRows = group.map((episodeIndex) => preparedByEpisode.get(episodeIndex)!);
+      const groupVideoCount = groupRows.reduce((sum, row) => sum + row.videos.length, 0);
+      // 单组时沿用整包 batchRequestId，与拆分前的回执/溯源标识完全一致。
+      const subRequestId = groups.length === 1 ? batchRequestId : crypto.randomUUID();
+      for (const episodeIndex of group) {
+        subRequestByEpisode.set(episodeIndex, { subRequestId, episodeCount: group.length });
+      }
+      // 必须在所有慢速 ffmpeg/GCS 准备完成后、且紧贴**本子请求**发出前，
+      // 才解析直读 CDN 的短效地址；前一个子请求可能跑了很久。
+      await Promise.all(groupRows.flatMap(({ videos }) => videos.flatMap((video) =>
+        video.refreshDirectUrl
+          ? [video.refreshDirectUrl().then((url) => { video.url = url; })]
+          : [],
+      )));
+      params.abortSignal?.throwIfAborted();
+      activeSubRequest = {
+        subRequestId,
+        episodeIndexes: [...group],
+        videoCount: groupVideoCount,
+        startedAt: Date.now(),
+      };
+      if (!visualRequestStarted) {
+        visualRequestStarted = true;
+        visualRequestStartedAt = activeSubRequest.startedAt;
+      }
+      await emitVisualModelReceipt({
+        callId: subRequestId,
+        model: NATIVE_DEEP_READ_MODEL,
+        route: "singapore_token_plan",
+        stage: "visual_model",
+        status: "started",
+        batchRequestId: subRequestId,
+        episodeIndexes: [...group],
+        videoCount: groupVideoCount,
+      }, params.onModelReceipt);
+      const response = await deps.post(
+        buildSingaporeNativeDeepReadBatchRequest(groupRows.map(({ episode, videos }) => ({
+          episodeIndex: episode.episodeIndex,
+          videos,
+          durationSec: episode.sourceDurationSec,
+          hintZh: episode.hintZh,
+          audioEvidence: episode.audioEvidence,
+        }))),
+        creds.apiKey,
+        creds.endpoint,
+        NATIVE_DEEP_READ_BATCH_REQUEST_TOTAL_TIMEOUT_MS,
+        params.abortSignal,
       );
+      if (response.status >= 300) {
+        const providerError = parseNativeProviderErrorReceipt({
+          httpStatus: response.status,
+          responseText: response.text,
+          requestId: response.requestId,
+        });
+        throw errorWithNativeProviderReceipt(
+          formatNativeProviderErrorZh("新加坡 Qwen 3.8 Max Token Plan", providerError),
+          providerError,
+        );
+      }
+      providerRequestId = response.requestId;
+      const envelope = JSON.parse(response.text) as {
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
+        choices?: Array<{ finish_reason?: string; message?: { content?: unknown } }>;
+      };
+      const subInputTokens = Math.max(0, Number(envelope.usage?.prompt_tokens) || 0);
+      const subOutputTokens = Math.max(0, Number(envelope.usage?.completion_tokens) || 0);
+      inputTokens += subInputTokens;
+      outputTokens += subOutputTokens;
+      const choice = envelope.choices?.[0];
+      if (choice?.finish_reason === "length") throw new Error("多视频精读输出被截断");
+      if (choice?.finish_reason !== "stop") {
+        throw new Error(`多视频精读未正常结束（${choice?.finish_reason || "unknown"}）`);
+      }
+      visualFinishReason = choice.finish_reason;
+      await emitVisualModelReceipt({
+        callId: subRequestId,
+        model: NATIVE_DEEP_READ_MODEL,
+        route: "singapore_token_plan",
+        stage: "visual_model",
+        status: "completed",
+        batchRequestId: subRequestId,
+        episodeIndexes: [...group],
+        videoCount: groupVideoCount,
+        elapsedMs: Date.now() - activeSubRequest.startedAt,
+        inputTokens: subInputTokens,
+        outputTokens: subOutputTokens,
+        finishReason: choice.finish_reason,
+        providerRequestId,
+      }, params.onModelReceipt);
+      const content = choice.message?.content;
+      responseTexts.push(Array.isArray(content)
+        ? content.map((part) => String((part as { text?: unknown }).text || "")).join("")
+        : String(content || ""));
+      activeSubRequest = undefined;
     }
-    providerRequestId = response.requestId;
-    const envelope = JSON.parse(response.text) as {
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
-      choices?: Array<{ finish_reason?: string; message?: { content?: unknown } }>;
-    };
-    inputTokens = Math.max(0, Number(envelope.usage?.prompt_tokens) || 0);
-    outputTokens = Math.max(0, Number(envelope.usage?.completion_tokens) || 0);
-    const choice = envelope.choices?.[0];
-    if (choice?.finish_reason === "length") throw new Error("多视频精读输出被截断");
-    if (choice?.finish_reason !== "stop") {
-      throw new Error(`多视频精读未正常结束（${choice?.finish_reason || "unknown"}）`);
-    }
-    visualFinishReason = choice.finish_reason;
-    await emitVisualModelReceipt({
-      callId: batchRequestId,
-      model: NATIVE_DEEP_READ_MODEL,
-      route: "singapore_token_plan",
-      stage: "visual_model",
-      status: "completed",
-      batchRequestId,
-      episodeIndexes: validated.map((episode) => episode.episodeIndex),
-      videoCount,
-      elapsedMs: Date.now() - visualRequestStartedAt,
-      inputTokens,
-      outputTokens,
-      finishReason: choice.finish_reason,
-      providerRequestId,
-    }, params.onModelReceipt);
     visualModelCompleted = true;
     await emitVisualModelReceipt({
       callId: visualParseCallId,
@@ -1054,14 +1272,13 @@ export async function runManhuaNativeDeepReadBatch(params: {
       finishReason: visualFinishReason,
       providerRequestId,
     }, params.onModelReceipt);
-    const content = choice.message?.content;
-    const responseText = Array.isArray(content)
-      ? content.map((part) => String((part as { text?: unknown }).text || "")).join("")
-      : String(content || "");
-    const parsed = parseJsonObject(responseText);
-    const rows = Array.isArray(parsed.episodes)
-      ? parsed.episodes as Array<Record<string, unknown>>
-      : [];
+    // 各子请求只回自己清单里的集；拼接后按整包做严格集号一致性校验，语义不变。
+    const rows = responseTexts.flatMap((responseText) => {
+      const parsed = parseJsonObject(responseText);
+      return Array.isArray(parsed.episodes)
+        ? parsed.episodes as Array<Record<string, unknown>>
+        : [];
+    });
     const receivedIndexes = rows.map((row) => Number(row.episodeIndex));
     if (
       rows.length !== validated.length
@@ -1112,8 +1329,9 @@ export async function runManhuaNativeDeepReadBatch(params: {
           attemptedSegments: episode.segments.length,
           model: NATIVE_DEEP_READ_MODEL,
           usingPlanQuota: creds.usingPlan,
-          batchRequestId,
-          batchEpisodeCount: validated.length,
+          // 逐集卡记它真实所在的那次 Qwen 子请求；「同批 N 集」必须与实弹一致。
+          batchRequestId: subRequestByEpisode.get(episode.episodeIndex)?.subRequestId ?? batchRequestId,
+          batchEpisodeCount: subRequestByEpisode.get(episode.episodeIndex)?.episodeCount ?? validated.length,
           usage: {
             inputTokens: allocatedInput,
             outputTokens: allocatedOutput,
@@ -1154,18 +1372,25 @@ export async function runManhuaNativeDeepReadBatch(params: {
     if (visualRequestStarted) {
       const providerError: ManhuaNativeProviderErrorReceipt | undefined =
         nativeProviderReceiptFromError(error);
+      // 子请求阶段失败时，回执必须落在**在途那个子请求**上（它的集号与视频数），
+      // 而不是整包——排障要能对上供应商侧的单次 request_id。
+      const failedSubRequest = visualModelCompleted ? undefined : activeSubRequest;
       await emitVisualModelReceipt({
-        callId: visualModelCompleted ? visualParseCallId : batchRequestId,
+        callId: visualModelCompleted ? visualParseCallId : (failedSubRequest?.subRequestId ?? batchRequestId),
         model: NATIVE_DEEP_READ_MODEL,
         route: visualModelCompleted ? "local_schema_gate" : "singapore_token_plan",
         stage: visualModelCompleted ? "visual_parse" : "visual_model",
         status: "failed",
-        batchRequestId,
-        episodeIndexes: validated.map((episode) => episode.episodeIndex),
-        videoCount,
-        elapsedMs: Date.now() - visualRequestStartedAt,
-        inputTokens,
-        outputTokens,
+        batchRequestId: failedSubRequest?.subRequestId ?? batchRequestId,
+        episodeIndexes: failedSubRequest?.episodeIndexes
+          ?? validated.map((episode) => episode.episodeIndex),
+        videoCount: failedSubRequest?.videoCount ?? videoCount,
+        elapsedMs: Date.now() - (failedSubRequest?.startedAt ?? visualRequestStartedAt),
+        // 审查#2：子请求失败回执只报**本子请求自身**的 token（失败时通常为 0）；
+        // 前面成功子请求已各自报过，这里再报累计值会被下游求和成双份。
+        // 整批累计口径在抛出错误附带的 nativeDeepReadUsage 里，不丢账。
+        inputTokens: visualModelCompleted ? inputTokens : 0,
+        outputTokens: visualModelCompleted ? outputTokens : 0,
         finishReason: visualFinishReason,
         providerRequestId,
         errorZh: (error instanceof Error ? error.message : String(error)).slice(0, 2_000),

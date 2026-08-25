@@ -1,6 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 import {
+  buildManhuaNativeAudioPrompt,
   collectManhuaNativeAudioEvidence,
   finalizeManhuaNativeAudioAnalysis,
   type ManhuaNativeAudioEvidenceDeps,
@@ -120,6 +121,66 @@ describe("原生精读双音轨模型回执", () => {
       "stereo_32k:completed",
       "stereo_32k:started",
     ]);
+    // 网络类失败不触发门禁重试：双路各只调一次
+    expect(testDeps.analyzeChunk).toHaveBeenCalledTimes(2);
+  });
+
+  it("门禁类失败整对重试一次并携带被拒原因，第二轮成功后照常入证据", async () => {
+    const receipts: ManhuaNativeAudioModelReceipt[] = [];
+    const calls: Array<{ variant: string; rejectedReasonZh?: string }> = [];
+    const testDeps = deps();
+    testDeps.analyzeChunk = vi.fn(async ({ gcsUri, rejectedReasonZh }: {
+      gcsUri: string;
+      rejectedReasonZh?: string;
+    }) => {
+      calls.push({ variant: gcsUri.includes("mono_16k") ? "mono" : "stereo", rejectedReasonZh });
+      if (!rejectedReasonZh && gcsUri.includes("mono_16k")) {
+        throw new Error("音频分析时间轴存在未解释空洞");
+      }
+      return { analysis, inputTokens: 20, audioInputTokens: 12, outputTokens: 5 };
+    }) as never;
+
+    const result = await collectManhuaNativeAudioEvidence({
+      durationSec: 10,
+      resolveNodes: async () => [{ url: "https://cdn.example/video.mp4" }],
+      onModelReceipt: (receipt) => { receipts.push(receipt); },
+    }, testDeps);
+
+    expect(testDeps.analyzeChunk).toHaveBeenCalledTimes(4);
+    expect(calls.slice(0, 2).every((row) => row.rejectedReasonZh === undefined)).toBe(true);
+    expect(calls.slice(2).map((row) => row.rejectedReasonZh)).toEqual([
+      "音频分析时间轴存在未解释空洞",
+      "音频分析时间轴存在未解释空洞",
+    ]);
+    // 重试轮回执与正常轮同构：4 started、1 failed、3 completed
+    expect(receipts.filter((row) => row.status === "started")).toHaveLength(4);
+    expect(receipts.filter((row) => row.status === "failed")).toHaveLength(1);
+    expect(receipts.filter((row) => row.status === "completed")).toHaveLength(3);
+    // 已付费成功调用诚实累计：第一轮立体声 + 第二轮双路
+    expect(result.usage.geminiCalls).toBe(3);
+    expect(result.usage.inputTokens).toBe(60);
+    expect(result.chunks).toHaveLength(1);
+  });
+
+  it("门禁类失败第二轮仍未过则照常失败，不做第三次", async () => {
+    const testDeps = deps();
+    testDeps.analyzeChunk = vi.fn(async () => {
+      throw new Error("音频分析未覆盖片段结尾");
+    }) as never;
+
+    await expect(collectManhuaNativeAudioEvidence({
+      durationSec: 10,
+      resolveNodes: async () => [{ url: "https://cdn.example/video.mp4" }],
+    }, testDeps)).rejects.toThrow("音频分析未覆盖片段结尾");
+    expect(testDeps.analyzeChunk).toHaveBeenCalledTimes(4);
+  });
+
+  it("重试提示词追加【上一轮被拒原因】，正常提示词不带", () => {
+    const chunk = { index: 0, startSec: 0, endSec: 10 };
+    const prompt = buildManhuaNativeAudioPrompt(chunk, "音频分析未覆盖片段结尾");
+    expect(prompt).toContain("【上一轮被拒原因】音频分析未覆盖片段结尾。请修正后重新输出完整 JSON。");
+    expect(prompt).toContain("01:23-01:40");
+    expect(buildManhuaNativeAudioPrompt(chunk)).not.toContain("上一轮被拒原因");
   });
 
   it("按 chunkIndex 配对而非数组位置，置换顺序仍落到正确绝对秒", async () => {
