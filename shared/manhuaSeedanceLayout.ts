@@ -85,8 +85,8 @@ export const MANHUA_SEEDANCE_LAYOUT_CHOICES: readonly ManhuaSeedanceLayoutProfil
   },
   {
     videoModel: "wan-3.0",
-    labelZh: "Wan 3.0（公测）",
-    layoutHintZh: "4 段 × 约 30 秒（约 120 秒/集 · 公测排队较长，适合过夜出片）",
+    labelZh: "Wan 3.0",
+    layoutHintZh: "4 段 × 约 30 秒（约 120 秒/集 · 排队较长，适合过夜出片）",
     segmentCount: 4,
     segmentMin: 4,
     segmentMax: 4,

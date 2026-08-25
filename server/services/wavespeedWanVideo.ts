@@ -12,6 +12,7 @@ import {
   normalizeWan30AspectRatio,
   normalizeWan30Resolution,
 } from "../../shared/wanWavespeedModels.js";
+import { SubmitRejectedError, SubmitUnknownError } from "./submitOutcomeErrors.js";
 import { getWavespeedApiKey } from "./wavespeedVideoUpscale.js";
 
 function apiBase(): string {
@@ -79,16 +80,32 @@ export async function submitWavespeedWanVideo(input: {
   if (Number.isFinite(seed) && seed >= 0 && seed <= 2147483647) body.seed = seed;
   if (audios.length) body.reference_audios = audios;
 
-  const res = await fetch(`${apiBase()}${WAN30_WAVESPEED_PATH}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000),
-  });
+  /**
+   * 七审补分型：POST 已发出后网络断/超时 = 任务可能已被受理（排队极长的上游尤甚），
+   * 归 unknown——上层禁回落禁退款转对账；只有明确 4xx 才算确定没建单。
+   */
+  let res: Response;
+  try {
+    res = await fetch(`${apiBase()}${WAN30_WAVESPEED_PATH}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch (e) {
+    throw new SubmitUnknownError(
+      `Wan 3.0 提交结果未知：${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
   const json = (await res.json().catch(() => ({}))) as WavespeedPrediction;
   const created = pickPrediction(json);
   if (!res.ok || !created.id) {
-    throw new Error(created.error || `Wan 3.0 任务创建失败 (${res.status})`);
+    const detail = created.error || `Wan 3.0 任务创建失败 (${res.status})`;
+    if ([400, 401, 403, 404, 413, 415, 422].includes(res.status)) {
+      throw new SubmitRejectedError(detail);
+    }
+    // 5xx / 2xx 缺 id：单可能已建，禁回落
+    throw new SubmitUnknownError(detail);
   }
   return { predictionId: created.id };
 }

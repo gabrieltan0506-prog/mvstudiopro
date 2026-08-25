@@ -18,8 +18,6 @@ export const WAN30_RESOLUTIONS = ["480p", "720p", "1080p"] as const;
 export type Wan30Resolution = (typeof WAN30_RESOLUTIONS)[number];
 export const WAN30_DEFAULT_RESOLUTION: Wan30Resolution = "720p";
 
-/** 档位备注：0825 转正式版，去掉公测字样；排队提示保留（实测仍偏长） */
-export const WAN30_BETA_NOTE = "直出30s · 排队时间较长";
 
 export function clampWan30Duration(raw?: unknown): number {
   const n = Math.floor(Number(raw));

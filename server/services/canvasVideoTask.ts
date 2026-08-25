@@ -760,21 +760,46 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
     if (!images.length && task.imageUrl) images.push(await resolveProtectedMediaUrl(task.imageUrl));
     /**
      * 三通道路由（0825 拍板：OpenRouter → EvoLink → WaveSpeed，不走百炼官方）。
-     * 已路由过的引擎（崩溃恢复重提交）不再换通道，仍走原家——句柄语义不同不能混。
+     * 七审第5条：已路由过的引擎（崩溃恢复重提交）用 pinChannel 真正钉死原通道——
+     * 上一版只有注释承诺；跨通道重路由会让一个订单在两家各建一单。
      */
-    const submittedVia = await submitWan30ViaChannels({
-      prompt: task.prompt,
-      imageUrls: images,
-      audioUrls: await Promise.all((task.audioUrls || []).map((u) => resolveProtectedMediaUrl(u))),
-      videoUrls: await Promise.all((task.videoUrls || []).map((u) => resolveProtectedMediaUrl(u))),
-      duration: task.duration,
-      resolution: task.resolution || "720p",
-      aspectRatio: task.aspectRatio,
-      seed: task.seed,
-      thinkingMode: true,
-      generateAudio: task.generateAudio !== false,
-    });
-    const { submitted, skippedZh } = submittedVia;
+    const pinChannel =
+      task.engine === "wan30-wavespeed" ? ("wavespeed" as const)
+        : task.engine === "wan30-evolink" ? ("evolink" as const)
+          : task.engine === "wan30-openrouter" ? ("openrouter" as const)
+            : undefined;
+    let routed: Awaited<ReturnType<typeof submitWan30ViaChannels>>;
+    try {
+      routed = await submitWan30ViaChannels({
+        prompt: task.prompt,
+        imageUrls: images,
+        audioUrls: await Promise.all((task.audioUrls || []).map((u) => resolveProtectedMediaUrl(u))),
+        videoUrls: await Promise.all((task.videoUrls || []).map((u) => resolveProtectedMediaUrl(u))),
+        duration: task.duration,
+        resolution: task.resolution || "720p",
+        aspectRatio: task.aspectRatio,
+        seed: task.seed,
+        thinkingMode: true,
+        generateAudio: task.generateAudio !== false,
+      }, undefined, pinChannel);
+    } catch (error) {
+      /**
+       * 七审第1条（四个角度同点命中）：unknown = 上游可能已建单开跑。
+       * 照 HappyHorse 样板转 reconcile_manual：停自动化、不退款、人工对账——
+       * 走 failTask 退款就是「上游照烧、用户白拿退款、重试再烧一单」。
+       */
+      if ((error as { kind?: string } | null)?.kind === "unknown") {
+        task.status = "reconcile_manual";
+        task.error = "成片提交结果无法确认，为避免重复生成已停止自动重试，转人工对账";
+        task.lastTransientError = (error instanceof Error ? error.message : String(error)).slice(0, 280);
+        task.finishedAt = new Date().toISOString();
+        await writeTask(task);
+        await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+        return;
+      }
+      throw error;
+    }
+    const { submitted, skippedZh } = routed;
     if (skippedZh.length) {
       console.warn(`[canvasVideoTask] wan30 路由跳过: ${skippedZh.join("；")}`);
     }
@@ -794,8 +819,18 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
       task.evolinkTaskId = submitted.evolinkTaskId;
       await writeTask(task);
       if (submitted.immediateSourceUrl) {
-        const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(submitted.immediateSourceUrl);
-        await succeedTask(task, videoUrl, "wan-3.0", "evolink");
+        /**
+         * 七审第3条：句柄已落盘、上游已完成并计费——镜像抖动是瞬态，
+         * 留 running 让轮询下一轮重取，绝不 failTask 退掉一条已交付的视频。
+         */
+        try {
+          const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(submitted.immediateSourceUrl);
+          await succeedTask(task, videoUrl, "wan-3.0", "evolink");
+        } catch (mirrorError) {
+          task.lastTransientError =
+            (mirrorError instanceof Error ? mirrorError.message : String(mirrorError)).slice(0, 280);
+          await writeTask(task);
+        }
       }
       return;
     }
@@ -805,12 +840,18 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
     task.pollingUrl = submitted.pollingUrl;
     await writeTask(task);
     if (submitted.immediateSourceUrl) {
-      const videoUrl = await mirrorOpenRouterVideoSourceUrl(
-        submitted.immediateSourceUrl,
-        submitted.apiKey,
-        { keyPrefix: "canvas-video/wan30", required: true },
-      );
-      await succeedTask(task, videoUrl, "wan-3.0", "openrouter");
+      try {
+        const videoUrl = await mirrorOpenRouterVideoSourceUrl(
+          submitted.immediateSourceUrl,
+          submitted.apiKey,
+          { keyPrefix: "canvas-video/wan30", required: true },
+        );
+        await succeedTask(task, videoUrl, "wan-3.0", "openrouter");
+      } catch (mirrorError) {
+        task.lastTransientError =
+          (mirrorError instanceof Error ? mirrorError.message : String(mirrorError)).slice(0, 280);
+        await writeTask(task);
+      }
     }
     return;
   }
@@ -1008,6 +1049,17 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           current.model || (isMini ? "seedance-2.0-mini" : "seedance-2.5"),
           "evolink",
         );
+      }
+
+      /**
+       * 七审第2条：wan30-auto+句柄（引擎改写落盘失败的容错态）此前无轮询分支，
+       * 会掉进 !pollingUrl 的 failTask 假失败真退款。先按句柄归位成具体引擎再走分支。
+       */
+      if (current.engine === "wan30-auto") {
+        if (current.evolinkTaskId) current.engine = "wan30-evolink";
+        else if (current.wavespeedPredictionId) current.engine = "wan30-wavespeed";
+        else if (current.pollingUrl) current.engine = "wan30-openrouter";
+        if (current.engine !== "wan30-auto") await writeTask(current);
       }
 
       if (current.engine === "wan30-evolink") {

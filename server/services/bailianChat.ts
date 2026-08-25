@@ -194,8 +194,9 @@ async function invokeOneGlmGateway(
     body.enable_thinking = true;
     body.reasoning_effort = "xhigh";
     body.max_completion_tokens = budget;
-  } else if (gateway === "bailian_qwen") {
-    // 百炼兼容模式 Qwen:只认 enable_thinking(不认 reasoning_effort),预算走 max_tokens
+  } else if (gateway === "bailian_qwen" || gateway === "plan_sg_qwen") {
+    // DashScope compatible-mode Qwen(含新加坡 Token Plan):只认 enable_thinking
+    // (不认 reasoning_effort),预算走 max_tokens——七审第4条:换档时这条分支键漏改过
     body.enable_thinking = true;
     body.max_tokens = budget;
   } else {

@@ -150,13 +150,48 @@ describe("submitWan30ViaChannels 回落纪律", () => {
     expect(unknown.submitWavespeed).not.toHaveBeenCalled();
   });
 
-  it("未配置的通道跳过并留痕；全部不可用时报出每家原因", async () => {
+  it("全部不可用：用户可见错误是业务友好句，绝不含供应商名/环境变量名（规范§一）", async () => {
     const d = deps({
       openrouterConfigured: () => false,
       evolinkConfigured: () => false,
       wavespeedConfigured: () => false,
     });
-    await expect(submitWan30ViaChannels(baseInput, d)).rejects.toThrow("三通道均不可用");
+    const err = await submitWan30ViaChannels(baseInput, d).catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe("成片通道暂时不可用，请稍后重试");
+    expect(err.message).not.toMatch(/openrouter|evolink|wavespeed|WAN30_/i);
+  });
+
+  it("pinChannel 钉死原通道：崩溃恢复重提交不再跨家重路由", async () => {
+    const d = deps({});
+    const r = await submitWan30ViaChannels(baseInput, d, "wavespeed");
+    expect(r.submitted.channel).toBe("wavespeed");
+    expect(d.submitOpenrouter).not.toHaveBeenCalled();
+    expect(d.submitEvolink).not.toHaveBeenCalled();
+  });
+
+  it("WaveSpeed 明确 4xx 拒绝：归入 skipped 走友好全败，不裸抛上游错误体", async () => {
+    const d = deps({
+      openrouterConfigured: () => false,
+      evolinkConfigured: () => false,
+      submitWavespeed: vi.fn(async () => { throw new Wan30SubmitRejectedError("HTTP 422 bad refs"); }),
+    });
+    const err = await submitWan30ViaChannels(baseInput, d).catch((e) => e);
+    expect(err.message).toBe("成片通道暂时不可用，请稍后重试");
+  });
+
+  it("WaveSpeed 结果未知（POST 后断网）：照旧上抛禁止吞掉——单可能已建", async () => {
+    const d = deps({
+      openrouterConfigured: () => false,
+      evolinkConfigured: () => false,
+      submitWavespeed: vi.fn(async () => { throw new Wan30SubmitUnknownError("提交结果未知：fetch failed"); }),
+    });
+    await expect(submitWan30ViaChannels(baseInput, d)).rejects.toThrow("结果未知");
+  });
+
+  it("建造器硬闸：旗未开 + 带参考轨 → 直接抛拒绝，任何直接调用者都无法静默丢音轨", () => {
+    expect(() => buildOpenRouterWanSubmitBody({ ...baseInput, audioUrls: AUD }))
+      .toThrow("参考轨静默丢失");
   });
 
   it("WaveSpeed 收到的载荷保持老口径（enableAudio/thinkingMode 透传）", async () => {

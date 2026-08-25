@@ -4135,9 +4135,11 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         .filter((u) => /^https?:\/\//i.test(u));
       const aspectRatio = s(b.aspectRatio || q.aspectRatio || "9:16").trim() || "9:16";
       try {
-        // 0825 拍板：Wan 3.0 三通道（OpenRouter → EvoLink → WaveSpeed），任一配置即可开单
-        const { isWan30AnyChannelConfigured } = await import("../server/services/wan30Channels.js");
-        if (!isWan30AnyChannelConfigured()) {
+        // 0825 拍板：Wan 3.0 三通道（OpenRouter → EvoLink → WaveSpeed）。
+        // 七审第9条：闸口按**本单资格**判——带参考音频的单子必须有一条吃得下音频的通道，
+        // 否则会先扣费后必然全链拒单（扣费/退款摩擦）。
+        const { hasEligibleWan30Channel } = await import("../server/services/wan30Channels.js");
+        if (!hasEligibleWan30Channel({ hasAudioRefs: audioUrls.length > 0 })) {
           return res.status(503).json({ ok: false, error: "Wan 3.0 通道暂不可用，请稍后重试" });
         }
         const { clampWan30Duration, normalizeWan30Resolution, WAN30_REFERENCE_MAX } = await import(

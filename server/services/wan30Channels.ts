@@ -48,6 +48,16 @@ export function isWan30AnyChannelConfigured(): boolean {
   return isOpenRouterVideoConfigured() || isEvolinkWanConfigured() || isWavespeedWanConfigured();
 }
 
+/**
+ * 本单资格（七审第9条）：下单闸不能只问「有没有通道」，要问「这一单有没有吃得下的通道」。
+ * 带参考音频/视频时 OpenRouter 默认不具资格（未开放行旗）。
+ */
+export function hasEligibleWan30Channel(input: { hasAudioRefs?: boolean; hasVideoRefs?: boolean }): boolean {
+  const needsMedia = Boolean(input.hasAudioRefs || input.hasVideoRefs);
+  const openrouterOk = isOpenRouterVideoConfigured() && (!needsMedia || openRouterWanAudioAllowed());
+  return openrouterOk || isEvolinkWanConfigured() || isWavespeedWanConfigured();
+}
+
 export type Wan30SubmitInput = {
   prompt: string;
   imageUrls: string[];
@@ -95,6 +105,15 @@ export function openRouterWanEligible(input: Wan30SubmitInput): { ok: boolean; r
 }
 
 export function buildOpenRouterWanSubmitBody(input: Wan30SubmitInput): Record<string, unknown> {
+  /**
+   * 七审深度修正：静默丢参考轨的防线放进建造器本体，而不是只靠调用方先查资格——
+   * 任何未来的直接调用者都过不去这道闸（0824 锁音轨事故的形状）。
+   */
+  if (!openRouterWanAudioAllowed()
+    && (cleanUrls(input.audioUrls, WAN30_REFERENCE_MAX.audio).length
+      || cleanUrls(input.videoUrls, WAN30_REFERENCE_MAX.video).length)) {
+    throw new SubmitRejectedError("该通道未放行参考音频/视频，拒绝构建请求以防参考轨静默丢失");
+  }
   const images = cleanUrls(input.imageUrls, WAN30_REFERENCE_MAX.image);
   if (!images.length) throw new Error("Wan 3.0 成片需要至少一张参考图");
   const body: Record<string, unknown> = {
@@ -145,16 +164,19 @@ export function buildEvolinkWanRequestBody(input: Wan30SubmitInput): Record<stri
   return body;
 }
 
-/** 与 openrouterVideoCore 同口径：4xx 确定没建单可回落；其余一律当任务可能已建，禁止回落 */
-export class Wan30SubmitRejectedError extends Error { readonly kind = "rejected"; }
-export class Wan30SubmitUnknownError extends Error { readonly kind = "unknown"; }
+/** 与 openrouterVideoCore 同口径；类体已抽共享（七审第7条），此处保留旧名再导出 */
+export {
+  SubmitRejectedError as Wan30SubmitRejectedError,
+  SubmitUnknownError as Wan30SubmitUnknownError,
+} from "./submitOutcomeErrors.js";
+import { SubmitRejectedError, SubmitUnknownError } from "./submitOutcomeErrors.js";
 const EVOLINK_DEFINITE_REJECT = new Set([400, 401, 403, 404, 413, 415, 422]);
 
 export async function submitEvolinkWanVideo(
   input: Wan30SubmitInput,
 ): Promise<{ evolinkTaskId: string; immediateSourceUrl?: string }> {
   const apiKey = String(process.env.EVOLINK_API_KEY || "").trim();
-  if (!apiKey) throw new Wan30SubmitRejectedError("Wan 3.0 通道未配置");
+  if (!apiKey) throw new SubmitRejectedError("Wan 3.0 通道未配置");
   const body = buildEvolinkWanRequestBody(input);
   let res: Response;
   try {
@@ -165,7 +187,7 @@ export async function submitEvolinkWanVideo(
       signal: AbortSignal.timeout(60_000),
     });
   } catch (e) {
-    throw new Wan30SubmitUnknownError(
+    throw new SubmitUnknownError(
       `EvoLink 提交结果未知：${e instanceof Error ? e.message : String(e)}`,
     );
   }
@@ -175,11 +197,11 @@ export async function submitEvolinkWanVideo(
   };
   if (!res.ok) {
     const detail = `HTTP ${res.status} ${json.error?.message || json.message || ""}`.trim();
-    if (EVOLINK_DEFINITE_REJECT.has(res.status)) throw new Wan30SubmitRejectedError(detail);
-    throw new Wan30SubmitUnknownError(detail);
+    if (EVOLINK_DEFINITE_REJECT.has(res.status)) throw new SubmitRejectedError(detail);
+    throw new SubmitUnknownError(detail);
   }
   const taskId = String(json.id || "").trim();
-  if (!taskId) throw new Wan30SubmitUnknownError("EvoLink 2xx 但未返回任务 ID");
+  if (!taskId) throw new SubmitUnknownError("EvoLink 2xx 但未返回任务 ID");
   const immediate = String(json.video_url || json.output?.video_url || "").trim();
   return {
     evolinkTaskId: taskId,
@@ -220,9 +242,12 @@ const defaultDeps: Wan30ChannelDeps = {
 export async function submitWan30ViaChannels(
   input: Wan30SubmitInput,
   deps: Wan30ChannelDeps = defaultDeps,
+  /** 崩溃恢复重提交时钉死原通道（七审第5条：句柄语义不同不能混，注释承诺过的事这次真做了） */
+  pinChannel?: Wan30Channel,
 ): Promise<{ submitted: Wan30ChannelSubmission; skippedZh: string[] }> {
   const skippedZh: string[] = [];
-  for (const channel of WAN30_CHANNEL_ORDER) {
+  const order: readonly Wan30Channel[] = pinChannel ? [pinChannel] : WAN30_CHANNEL_ORDER;
+  for (const channel of order) {
     if (channel === "openrouter") {
       if (!deps.openrouterConfigured()) { skippedZh.push("openrouter: 未配置"); continue; }
       const eligible = openRouterWanEligible(input);
@@ -241,25 +266,38 @@ export async function submitWan30ViaChannels(
         const r = await deps.submitEvolink(input);
         return { submitted: { channel, ...r }, skippedZh };
       } catch (e) {
-        if (e instanceof Wan30SubmitRejectedError) { skippedZh.push(`evolink: 明确拒绝 ${e.message}`); continue; }
+        if (e instanceof SubmitRejectedError) { skippedZh.push(`evolink: 明确拒绝 ${e.message}`); continue; }
         throw e;
       }
     }
     if (channel === "wavespeed") {
       if (!deps.wavespeedConfigured()) { skippedZh.push("wavespeed: 未配置"); continue; }
-      const r = await deps.submitWavespeed({
-        prompt: input.prompt,
-        imageUrls: input.imageUrls,
-        audioUrls: input.audioUrls,
-        duration: input.duration,
-        resolution: input.resolution,
-        aspectRatio: input.aspectRatio,
-        seed: input.seed,
-        thinkingMode: input.thinkingMode,
-        enableAudio: input.generateAudio,
-      });
-      return { submitted: { channel, predictionId: r.predictionId }, skippedZh };
+      try {
+        const r = await deps.submitWavespeed({
+          prompt: input.prompt,
+          imageUrls: input.imageUrls,
+          audioUrls: input.audioUrls,
+          duration: input.duration,
+          resolution: input.resolution,
+          aspectRatio: input.aspectRatio,
+          seed: input.seed,
+          thinkingMode: input.thinkingMode,
+          enableAudio: input.generateAudio,
+        });
+        return { submitted: { channel, predictionId: r.predictionId }, skippedZh };
+      } catch (e) {
+        if ((e as { kind?: string } | null)?.kind === "rejected") {
+          skippedZh.push(`wavespeed: 明确拒绝 ${e instanceof Error ? e.message : String(e)}`);
+          continue;
+        }
+        throw e; // unknown：单可能已建，禁止吞掉
+      }
     }
   }
-  throw new Error(`Wan 3.0 三通道均不可用：${skippedZh.join("；") || "无可用配置"}`);
+  /**
+   * 七审规范修正：这条会经 failTask → task.error → 客户端 toast 直达普通用户，
+   * 供应商名/环境变量名/原始上游错误体一律不进——细节只进服务端日志。
+   */
+  console.warn(`[wan30Channels] 全部通道不可用: ${skippedZh.join("；") || "无可用配置"}`);
+  throw new Error("成片通道暂时不可用，请稍后重试");
 }

@@ -58,6 +58,10 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     expect(calls).toHaveLength(2);
     expect(calls[1].url).toContain("token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode");
     expect(r.gateway).toBe("plan_sg_qwen");
+    // 七审第4条回归:SG 套餐档必须继承 DashScope Qwen 的 enable_thinking(换档时分支键漏改过)
+    const sgBody = JSON.parse(String(calls[1].init?.body));
+    expect(sgBody.enable_thinking).toBe(true);
+    expect(sgBody.model).toBe("qwen3.8-max");
     expect(r.gatewayTrace[0]).toMatchObject({ gateway: "openrouter", outcome: "http_error" });
   });
 
