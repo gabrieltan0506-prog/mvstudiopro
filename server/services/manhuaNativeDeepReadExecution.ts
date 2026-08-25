@@ -113,6 +113,7 @@ export async function executeAndIngestNativeDeepReadEpisode(
     result = await deps.run({
       resolveNodes: input.resolveNodes,
       segments: input.segments,
+      sourceDurationSec: input.durationSec,
       abortSignal: input.abortSignal,
     });
   } catch (error) {

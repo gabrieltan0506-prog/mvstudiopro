@@ -17,33 +17,31 @@ import {
   type NativeDeepReadOutput,
 } from "../../shared/manhuaNativeDeepRead.js";
 import { MANHUA_NATIVE_DEEP_READ_MODEL } from "../../shared/manhuaNativeDeepReadJob.js";
+import {
+  deleteGcsObject,
+  signGsUriV4ReadUrl,
+  uploadBufferToGcs,
+} from "./gcs.js";
 
 /** 生产开关：未开时学习链路完全走原有抽帧，零行为变化 */
 export function isManhuaNativeDeepReadEnabled(): boolean {
   return String(process.env.MANHUA_NATIVE_DEEP_READ || "").trim() === "1";
 }
 
-const NATIVE_GENERATION_PATH = "/api/v1/services/aigc/multimodal-generation/generation";
+export const SINGAPORE_TOKEN_PLAN_CHAT_ENDPOINT =
+  "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions";
 
 /**
- * 端点与 key 必须配对，且**套餐优先**。
+ * 原生精读只允许走新加坡 Token Plan。
  *
- * 套餐额度已付费且不用即归零，而 WAN_OFFICIAL（`sk-ws-`）扣的是充值余额。
- * 0823 全天的精读走的都是后者，套餐买了五天一次没用上 —— 这里默认选套餐，
- * 只有套餐没配时才回落按量，避免接线时又悄悄落回扣钱那条。
+ * 不能读取 `DASHSCOPE_SG_BASE`：它是普通业务空间地址，与套餐 key 配对会返回 401。
+ * 更不能回落 WAN 官方按量通道；套餐缺配时关闭式停止。
  */
 export function resolveNativeDeepReadCredentials(): { apiKey: string; endpoint: string; usingPlan: boolean } {
-  const planKey = String(process.env.WAN_PLAN_API_KEY || "").trim();
-  const planBase = String(process.env.WAN_PLAN_BASE || "https://token-plan.cn-beijing.maas.aliyuncs.com")
-    .trim()
-    .replace(/\/$/, "");
-  if (planKey) {
-    return { apiKey: planKey, endpoint: `${planBase}${NATIVE_GENERATION_PATH}`, usingPlan: true };
-  }
   return {
-    apiKey: String(process.env.WAN_OFFICIAL_API_KEY || "").trim(),
-    endpoint: `https://dashscope.aliyuncs.com${NATIVE_GENERATION_PATH}`,
-    usingPlan: false,
+    apiKey: String(process.env.DASHSCOPE_SG_PLAN_KEY || "").trim(),
+    endpoint: SINGAPORE_TOKEN_PLAN_CHAT_ENDPOINT,
+    usingPlan: true,
   };
 }
 
@@ -54,7 +52,7 @@ export type NativeDeepReadExecutionCredentials = {
 };
 
 /**
- * 凭证最终裁决：**成对给或都不给**，且按量通道不许自动接管。
+ * 凭证最终裁决：**成对给或都不给**，生产默认只认新加坡套餐。
  *
  * 原来允许只传 apiKey 或只传 endpoint —— 那会把套餐 key 拼到公共 dashscope 端点
  * （401），或把按量 key 拼到套餐端点。更糟的是套餐临时缺配时**自动回落按量**，
@@ -82,15 +80,7 @@ export function resolveNativeDeepReadExecutionCredentials(params: {
 
   const resolved = resolveNativeDeepReadCredentials();
   if (!resolved.apiKey) {
-    throw new Error("原生精读缺少 API key");
-  }
-  if (
-    !resolved.usingPlan
-    && String(process.env.MANHUA_NATIVE_DEEP_READ_ALLOW_PAYG || "").trim() !== "1"
-  ) {
-    throw new Error(
-      "套餐通道未配置，已停止原生精读；如确认使用按量通道，请显式配置 MANHUA_NATIVE_DEEP_READ_ALLOW_PAYG=1",
-    );
+    throw new Error("原生精读缺少 DASHSCOPE_SG_PLAN_KEY，已停止；禁止回落按量通道");
   }
   return resolved;
 }
@@ -198,9 +188,9 @@ export type NativeDeepReadRunError = Error & {
 /** 请求与前端共用共享真值；provenance 记的必须是真跑的这个。 */
 export const NATIVE_DEEP_READ_MODEL = MANHUA_NATIVE_DEEP_READ_MODEL;
 
-/** 北京百炼单价（¥/M token），套餐 key 走同一端点 */
-const PRICE_IN_PER_M = 12;
-const PRICE_OUT_PER_M = 36;
+/** 新加坡套餐等值单价（¥/M token），只用于用量回执与预算估算 */
+const PRICE_IN_PER_M = 14.988;
+const PRICE_OUT_PER_M = 44.965;
 
 function run(
   cmd: string,
@@ -285,96 +275,69 @@ function postLong(
   });
 }
 
-/** OSS V1 签名：Fly 上没装 ali-oss，用内置 crypto 手写（PUT/预签名GET/DELETE 三个动作已验） */
-function ossSign(verb: string, key: string, contentType: string, date: string): string {
-  const bucket = String(process.env.OSS_BUCKET || "").trim();
-  const sk = String(process.env.OSS_ACCESS_KEY_SECRET || "").trim();
-  return crypto
-    .createHmac("sha1", sk)
-    .update([verb, "", contentType, date, `/${bucket}/${key}`].join("\n"), "utf8")
-    .digest("base64");
-}
-
-function ossHost(): string {
-  return `${String(process.env.OSS_BUCKET || "").trim()}.${String(process.env.OSS_ENDPOINT || "").trim()}`;
-}
-
-function ossPut(key: string, buf: Buffer, contentType = "video/mp4", abortSignal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const date = new Date().toUTCString();
-    const req = https.request(
-      {
-        hostname: ossHost(),
-        path: `/${encodeURI(key)}`,
-        method: "PUT",
-        signal: abortSignal,
-        headers: {
-          Date: date,
-          "Content-Type": contentType,
-          "Content-Length": buf.length,
-          Authorization: `OSS ${String(process.env.OSS_ACCESS_KEY_ID || "").trim()}:${ossSign("PUT", key, contentType, date)}`,
-        },
-      },
-      (res) => {
-        let d = "";
-        res.on("data", (c) => (d += c));
-        res.on("end", () =>
-          (res.statusCode || 0) < 300
-            ? resolve()
-            : reject(new Error(`oss_put_failed:${res.statusCode}:${d.slice(0, 200)}`)),
-        );
-      },
-    );
-    req.setTimeout(1_800_000, () => req.destroy(new Error("oss upload timeout")));
-    req.on("error", reject);
-    req.write(buf);
-    req.end();
+/** GCS 临时片删除最多等 30 秒；删除异常不覆盖已经取得的模型回执。 */
+async function deleteTemporaryGcsObject(params: {
+  bucket: string;
+  objectName: string;
+}): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, 30_000);
   });
+  try {
+    await Promise.race([
+      deleteGcsObject(params).catch((error) => {
+        console.warn(
+          "[nativeDeepRead] GCS 临时片清理待核对：",
+          params.objectName,
+          error instanceof Error ? error.message : error,
+        );
+      }),
+      timeout,
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+export function buildSingaporeNativeDeepReadRequest(
+  videoUrl: string,
+  lenSec: number,
+  hintZh?: string,
+): Record<string, unknown> {
+  return {
+    model: NATIVE_DEEP_READ_MODEL,
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "video_url",
+            video_url: { url: videoUrl, fps: 2 },
+          },
+          { type: "text", text: buildNativeDeepReadPrompt(lenSec, hintZh) },
+        ],
+      },
+    ],
+    enable_thinking: true,
+    max_tokens: 60_000,
+  };
 }
 
 /**
- * 阅后即焚：删失败不阻断（桶侧另有 1 天生命周期兜底）。
- * 加 30 秒总时限——清理步骤挂住会把整轮精读拖死在 finally 里。
+ * 完整素材是否可直接交给模型，不经过 ffmpeg/GCS。
+ *
+ * 主分片尺是时间：fps=2 × 1000 秒 = 2000 帧。文件体积受 H.264/H.265 编码影响，
+ * 不能代表模型是否看得完整；体积只在真的切片后作为传输异常门禁。
  */
-function ossDelete(key: string): Promise<void> {
-  return new Promise((resolve) => {
-    const date = new Date().toUTCString();
-    const guard = setTimeout(() => {
-      try { req.destroy(); } catch { /* 已结束 */ }
-      resolve();
-    }, 30_000);
-    const done = () => { clearTimeout(guard); resolve(); };
-    const req = https.request(
-      {
-        hostname: ossHost(),
-        path: `/${encodeURI(key)}`,
-        method: "DELETE",
-        headers: {
-          Date: date,
-          Authorization: `OSS ${String(process.env.OSS_ACCESS_KEY_ID || "").trim()}:${ossSign("DELETE", key, "", date)}`,
-        },
-      },
-      (res) => {
-        res.resume();
-        res.on("end", done);
-      },
-    );
-    req.on("error", done);
-    req.end();
-  });
-}
-
-export function ossSignedUrl(key: string, expireSec = 7200): string {
-  const bucket = String(process.env.OSS_BUCKET || "").trim();
-  const ak = String(process.env.OSS_ACCESS_KEY_ID || "").trim();
-  const sk = String(process.env.OSS_ACCESS_KEY_SECRET || "").trim();
-  const expires = Math.floor(Date.now() / 1000) + expireSec;
-  const sig = crypto
-    .createHmac("sha1", sk)
-    .update(["GET", "", "", String(expires), `/${bucket}/${key}`].join("\n"), "utf8")
-    .digest("base64");
-  const q = new URLSearchParams({ OSSAccessKeyId: ak, Expires: String(expires), Signature: sig });
-  return `https://${ossHost()}/${encodeURI(key)}?${q}`;
+export function shouldReadNativeVideoDirectly(input: {
+  sourceDurationSec?: number;
+  segments: readonly NativeDeepReadSegmentSpec[];
+}): boolean {
+  const duration = Number(input.sourceDurationSec);
+  if (!Number.isFinite(duration) || duration <= 0 || input.segments.length !== 1) return false;
+  const only = input.segments[0]!;
+  return only.startSec <= 0.5 && Math.abs(only.endSec - duration) <= 0.5;
 }
 
 export function buildNativeDeepReadPrompt(lenSec: number, hintZh?: string): string {
@@ -495,6 +458,8 @@ async function runOneSegment(params: {
   nodes: NativeDeepReadMediaNode[];
   refreshNodes: () => Promise<NativeDeepReadMediaNode[]>;
   spec: NativeDeepReadSegmentSpec;
+  /** 完整单段短片直接读 CDN；多段长片才切片并暂存 GCS */
+  directSource: boolean;
   apiKey: string;
   endpoint: string;
   tmpDir: string;
@@ -502,64 +467,53 @@ async function runOneSegment(params: {
 }): Promise<{ row: Record<string, unknown> | null; usage: { inputTokens: number; outputTokens: number } }> {
   const { spec } = params;
   const lenSec = Math.max(1, Math.round(spec.endSec - spec.startSec));
-  const localPath = `${params.tmpDir}/ndr_${spec.startSec}_${lenSec}.mp4`;
-  const objectKey = `deep-read/${Date.now()}_${crypto.randomUUID()}_${Math.max(0, Math.floor(spec.startSec))}.mp4`;
   let nodes = params.nodes;
+  if (!nodes.length) throw new Error("未解析到可用媒体节点");
 
-  let cut = false;
-  for (let attempt = 1; attempt <= 3 && !cut; attempt++) {
-    if (params.abortSignal?.aborted) throw new Error("已取消");
-    try {
-      if (attempt === 3) nodes = await params.refreshNodes();
-      if (!nodes.length) throw new Error("未解析到可用媒体节点");
-      await cutSegment(
-        nodes[(attempt - 1) % nodes.length]!,
-        spec.startSec,
-        lenSec,
-        localPath,
-        // 原实现漏了这一项：cutSegment 接了参数，调用处没传，等于没接
-        params.abortSignal,
-      );
-      cut = true;
-    } catch (e) {
-      // 中止必须原样抛出。原来它被当成普通切片错误：等 5/15 秒再重试，
-      // 三次之后还返回 { row: null } —— 用户点了停止，看到的是「这段没学到」
-      if (params.abortSignal?.aborted) {
-        try { unlinkSync(localPath); } catch { /* 本就不存在 */ }
-        throw abortReason(params.abortSignal);
-      }
-      if (attempt >= 3) {
-        console.warn(`[nativeDeepRead] 段 ${spec.startSec}-${spec.endSec}s 三次切片全败：${String((e as Error).message).slice(0, 120)}`);
-        // 失败也可能留下 0 字节或半截文件，不清会在 /tmp 里越堆越多
-        try { unlinkSync(localPath); } catch { /* 本就不存在 */ }
-        return { row: null, usage: { inputTokens: 0, outputTokens: 0 } };
-      }
-      await waitNativeDeepReadRetry([0, 5_000, 15_000][attempt]!, params.abortSignal);
-    }
-  }
-
-  let uploaded = false;
+  const localPath = `${params.tmpDir}/ndr_${spec.startSec}_${lenSec}_${crypto.randomUUID()}.mp4`;
+  const objectName = `manhua-template-learn/tmp/native-deep-read/${Date.now()}_${crypto.randomUUID()}_${Math.max(0, Math.floor(spec.startSec))}.mp4`;
+  let temporaryGcs: { bucket: string; objectName: string } | null = null;
   try {
-    // ossPut 原先在 try 之外：它一失败，本地切片就永远留在 /tmp
-    await ossPut(objectKey, readFileSync(localPath), "video/mp4", params.abortSignal);
-    uploaded = true;
+    let videoUrl = nodes[0]!.url;
+    if (!params.directSource) {
+      let cut = false;
+      for (let attempt = 1; attempt <= 3 && !cut; attempt++) {
+        if (params.abortSignal?.aborted) throw abortReason(params.abortSignal);
+        try {
+          if (attempt === 3) nodes = await params.refreshNodes();
+          if (!nodes.length) throw new Error("未解析到可用媒体节点");
+          await cutSegment(
+            nodes[(attempt - 1) % nodes.length]!,
+            spec.startSec,
+            lenSec,
+            localPath,
+            params.abortSignal,
+          );
+          cut = true;
+        } catch (error) {
+          if (params.abortSignal?.aborted) throw abortReason(params.abortSignal);
+          if (attempt >= 3) {
+            console.warn(
+              `[nativeDeepRead] 段 ${spec.startSec}-${spec.endSec}s 三次切片全败：${String((error as Error).message).slice(0, 120)}`,
+            );
+            return { row: null, usage: { inputTokens: 0, outputTokens: 0 } };
+          }
+          await waitNativeDeepReadRetry([0, 5_000, 15_000][attempt]!, params.abortSignal);
+        }
+      }
+
+      const uploaded = await uploadBufferToGcs({
+        objectName,
+        buffer: readFileSync(localPath),
+        contentType: "video/mp4",
+        signal: params.abortSignal,
+      });
+      temporaryGcs = { bucket: uploaded.bucket, objectName: uploaded.objectName };
+      videoUrl = signGsUriV4ReadUrl(uploaded.gcsUri, 2 * 60 * 60);
+    }
 
     const res = await postLong(
-      {
-        model: NATIVE_DEEP_READ_MODEL,
-        input: {
-          messages: [
-            {
-              role: "user",
-              content: [
-                { video: ossSignedUrl(objectKey), fps: 2.0 },
-                { text: buildNativeDeepReadPrompt(lenSec, spec.hintZh) },
-              ],
-            },
-          ],
-        },
-        parameters: { modalities: ["text"], enable_thinking: true, max_frames: 2000, max_tokens: 60_000 },
-      },
+      buildSingaporeNativeDeepReadRequest(videoUrl, lenSec, spec.hintZh),
       params.apiKey,
       params.endpoint,
       1_800_000,
@@ -567,10 +521,10 @@ async function runOneSegment(params: {
     );
     if (res.status >= 300) throw new Error(`native_deep_read_http_${res.status}:${res.text.slice(0, 200)}`);
     const json = JSON.parse(res.text) as {
-      usage?: { input_tokens?: number; output_tokens?: number };
-      output?: { choices?: Array<{ finish_reason?: string; message?: { content?: unknown } }> };
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+      choices?: Array<{ finish_reason?: string; message?: { content?: unknown } }>;
     };
-    const choice = json.output?.choices?.[0];
+    const choice = json.choices?.[0];
     const content = choice?.message?.content;
     const text = Array.isArray(content)
       ? content.map((x) => String((x as { text?: unknown }).text || "")).join("")
@@ -583,15 +537,15 @@ async function runOneSegment(params: {
         text,
       },
       usage: {
-        inputTokens: Number(json.usage?.input_tokens) || 0,
-        outputTokens: Number(json.usage?.output_tokens) || 0,
+        inputTokens: Number(json.usage?.prompt_tokens) || 0,
+        outputTokens: Number(json.usage?.completion_tokens) || 0,
       },
     };
   } finally {
-    // 本地临时文件无论走哪条路都要删
+    // 直读路径不会创建本地片；切片路径无论成功失败都删除。
     try { unlinkSync(localPath); } catch { /* 本就不存在 */ }
-    // 阅后即焚：产出已在返回值里，OSS 上不留素材。没传上去就不用删
-    if (uploaded) await ossDelete(objectKey);
+    // 阅后即焚：GCS 只做多段长片的临时桥，结构化结果另行入库。
+    if (temporaryGcs) await deleteTemporaryGcsObject(temporaryGcs);
   }
 }
 
@@ -635,7 +589,9 @@ export function validateNativeDeepReadSegments(
 export async function runManhuaNativeDeepRead(params: {
   resolveNodes: () => Promise<NativeDeepReadMediaNode[]>;
   segments: readonly NativeDeepReadSegmentSpec[];
-  /** 缺省走 resolveNativeDeepReadCredentials()：套餐优先 */
+  /** 完整素材时长；用于证明唯一片段覆盖全片后安全直读 CDN */
+  sourceDurationSec?: number;
+  /** 缺省只走新加坡 Token Plan；不自动回落按量 */
   apiKey?: string;
   endpoint?: string;
   tmpDir?: string;
@@ -660,6 +616,10 @@ export async function runManhuaNativeDeepRead(params: {
   const rows: Array<Record<string, unknown>> = [];
   let inputTokens = 0;
   let outputTokens = 0;
+  const directSource = shouldReadNativeVideoDirectly({
+    sourceDurationSec: params.sourceDurationSec,
+    segments: validatedSegments,
+  });
 
   try {
     for (const spec of validatedSegments) {
@@ -671,6 +631,7 @@ export async function runManhuaNativeDeepRead(params: {
           nodes,
           refreshNodes,
           spec,
+          directSource,
           apiKey,
           endpoint,
           tmpDir,

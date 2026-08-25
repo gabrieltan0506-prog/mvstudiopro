@@ -1,6 +1,6 @@
 /**
  * 原生精读执行器：开关、format 挑选、prompt 硬约束。
- * 网络与文件系统部分不在此测（那需要真实 CDN/OSS），此处只锁纯逻辑。
+ * 网络与文件系统部分不在此测（真实 CDN/GCS 已由 Fly 探针验证），此处锁路由与契约。
  */
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -10,10 +10,13 @@ import {
   NATIVE_DEEP_READ_REQUEST_TOTAL_TIMEOUT_MS,
   assertNativeDeepReadPieceSize,
   buildNativeDeepReadPrompt,
+  buildSingaporeNativeDeepReadRequest,
   isManhuaNativeDeepReadEnabled,
   pickSmallestVideoFormat,
   resolveNativeDeepReadCredentials,
   resolveNativeDeepReadExecutionCredentials,
+  shouldReadNativeVideoDirectly,
+  SINGAPORE_TOKEN_PLAN_CHAT_ENDPOINT,
   validateNativeDeepReadSegments,
   waitNativeDeepReadRetry,
 } from "./manhuaNativeDeepReadRunner";
@@ -164,7 +167,7 @@ describe("切片重试的中止契约（源码级）", () => {
   });
 });
 
-describe("凭证裁决：组合必须成对，按量通道不许自动接管", () => {
+describe("凭证裁决：组合必须成对，生产只走新加坡套餐", () => {
   it("只传 apiKey 拒绝 —— 会把一类凭证配到另一类端点", () => {
     expect(() =>
       resolveNativeDeepReadExecutionCredentials({ apiKey: "sk-sp-x" }),
@@ -191,29 +194,24 @@ describe("凭证裁决：组合必须成对，按量通道不许自动接管", (
     expect(c).toEqual({ apiKey: "k", endpoint: "https://a/b", usingPlan: undefined });
   });
 
-  it("套餐没配且没开 ALLOW_PAYG 一律停手 —— 计划报的是套餐，实扣充值余额，检查单拦不住", () => {
-    vi.stubEnv("WAN_PLAN_API_KEY", "");
-    vi.stubEnv("WAN_OFFICIAL_API_KEY", "sk-ws-pay");
-    vi.stubEnv("MANHUA_NATIVE_DEEP_READ_ALLOW_PAYG", "");
-    expect(() => resolveNativeDeepReadExecutionCredentials({})).toThrow("ALLOW_PAYG");
-  });
-
-  it("显式 ALLOW_PAYG=1 才允许按量", () => {
-    vi.stubEnv("WAN_PLAN_API_KEY", "");
+  it("新加坡套餐没配即停手，即使旧北京与按量 key 都存在也不接管", () => {
+    vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "");
+    vi.stubEnv("WAN_PLAN_API_KEY", "sk-sp-old-plan");
     vi.stubEnv("WAN_OFFICIAL_API_KEY", "sk-ws-pay");
     vi.stubEnv("MANHUA_NATIVE_DEEP_READ_ALLOW_PAYG", "1");
-    expect(resolveNativeDeepReadExecutionCredentials({}).usingPlan).toBe(false);
+    expect(() => resolveNativeDeepReadExecutionCredentials({})).toThrow(
+      "DASHSCOPE_SG_PLAN_KEY",
+    );
   });
 
-  it("套餐配了就走套餐，不需要任何额外开关", () => {
-    vi.stubEnv("WAN_PLAN_API_KEY", "sk-sp-plan");
+  it("新加坡套餐配了就走套餐，不需要任何额外开关", () => {
+    vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "sk-sp-plan");
     expect(resolveNativeDeepReadExecutionCredentials({}).usingPlan).toBe(true);
   });
 
-  it("两把 key 都没有时报缺 key", () => {
-    vi.stubEnv("WAN_PLAN_API_KEY", "");
-    vi.stubEnv("WAN_OFFICIAL_API_KEY", "");
-    expect(() => resolveNativeDeepReadExecutionCredentials({})).toThrow("缺少 API key");
+  it("新加坡 key 没有时报缺配置", () => {
+    vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "");
+    expect(() => resolveNativeDeepReadExecutionCredentials({})).toThrow("禁止回落按量通道");
   });
 });
 
@@ -301,37 +299,84 @@ describe("精读 prompt 的四条硬约束", () => {
 });
 
 
-describe("凭证解析：套餐优先（0824 线路实测已验通）", () => {
-  it("配了套餐 key 就走 token-plan 端点，不碰按量通道", () => {
-    vi.stubEnv("WAN_PLAN_API_KEY", "sk-sp-plan");
+describe("凭证解析：固定新加坡 Token Plan（0825 真实视频探针已通）", () => {
+  it("配了新加坡套餐 key 就走固定 OpenAI 兼容端点", () => {
+    vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "sk-sp-plan");
     vi.stubEnv("WAN_OFFICIAL_API_KEY", "sk-ws-payg");
     const c = resolveNativeDeepReadCredentials();
     expect(c.usingPlan).toBe(true);
     expect(c.apiKey).toBe("sk-sp-plan");
-    expect(c.endpoint).toContain("token-plan.cn-beijing.maas.aliyuncs.com");
-    expect(c.endpoint).toContain("/api/v1/services/aigc/multimodal-generation/generation");
+    expect(c.endpoint).toBe(SINGAPORE_TOKEN_PLAN_CHAT_ENDPOINT);
+    expect(c.endpoint).toContain("token-plan.ap-southeast-1.maas.aliyuncs.com");
+    expect(c.endpoint).toContain("/compatible-mode/v1/chat/completions");
   });
 
-  it("套餐没配才回落按量 —— 套餐额度不用即归零，默认不能选扣钱那条", () => {
-    vi.stubEnv("WAN_PLAN_API_KEY", "");
+  it("新加坡套餐没配不会读取旧 key", () => {
+    vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "");
+    vi.stubEnv("WAN_PLAN_API_KEY", "sk-sp-old-plan");
     vi.stubEnv("WAN_OFFICIAL_API_KEY", "sk-ws-payg");
     const c = resolveNativeDeepReadCredentials();
-    expect(c.usingPlan).toBe(false);
-    expect(c.apiKey).toBe("sk-ws-payg");
-    expect(c.endpoint).toContain("dashscope.aliyuncs.com");
+    expect(c.usingPlan).toBe(true);
+    expect(c.apiKey).toBe("");
+    expect(c.endpoint).toBe(SINGAPORE_TOKEN_PLAN_CHAT_ENDPOINT);
   });
 
-  it("WAN_PLAN_BASE 可覆盖，且末尾斜杠不会拼出双斜杠", () => {
-    vi.stubEnv("WAN_PLAN_API_KEY", "sk-sp-plan");
-    vi.stubEnv("WAN_PLAN_BASE", "https://custom.example.com/");
-    expect(resolveNativeDeepReadCredentials().endpoint).toBe(
-      "https://custom.example.com/api/v1/services/aigc/multimodal-generation/generation",
-    );
-  });
-
-  it("端点与 key 必须配对：套餐 key 绝不能拼到公共 dashscope 端点上（会 401）", () => {
-    vi.stubEnv("WAN_PLAN_API_KEY", "sk-sp-plan");
+  it("普通新加坡业务空间地址不能覆盖套餐端点（实测会 401）", () => {
+    vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "sk-sp-plan");
+    vi.stubEnv("DASHSCOPE_SG_BASE", "https://workspace.ap-southeast-1.maas.aliyuncs.com");
     const c = resolveNativeDeepReadCredentials();
-    expect(c.apiKey.startsWith("sk-sp-") && c.endpoint.includes("token-plan")).toBe(true);
+    expect(c.endpoint).toBe(SINGAPORE_TOKEN_PLAN_CHAT_ENDPOINT);
+  });
+});
+
+describe("直读与分片路由", () => {
+  it("151 秒完整单段直接读 CDN，不创建临时片", () => {
+    expect(
+      shouldReadNativeVideoDirectly({
+        sourceDurationSec: 151,
+        segments: [{ startSec: 0, endSec: 151 }],
+      }),
+    ).toBe(true);
+  });
+
+  it("18 分钟精读是两段，不得因 H.265 文件较小就整片直读", () => {
+    expect(
+      shouldReadNativeVideoDirectly({
+        sourceDurationSec: 1080,
+        segments: [
+          { startSec: 0, endSec: 540 },
+          { startSec: 540, endSec: 1080 },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("单段没有覆盖完整素材时不得直读，否则秒位会错", () => {
+    expect(
+      shouldReadNativeVideoDirectly({
+        sourceDurationSec: 151,
+        segments: [{ startSec: 10, endSec: 100 }],
+      }),
+    ).toBe(false);
+  });
+
+  it("请求体使用 OpenAI video_url 契约与 fps=2，不残留原生 DashScope input", () => {
+    const request = buildSingaporeNativeDeepReadRequest("https://cdn/video", 151);
+    expect(request).toMatchObject({
+      model: "qwen3.8-max",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "video_url", video_url: { url: "https://cdn/video", fps: 2 } },
+            { type: "text" },
+          ],
+        },
+      ],
+      enable_thinking: true,
+      max_tokens: 60_000,
+    });
+    expect(request).not.toHaveProperty("input");
+    expect(request).not.toHaveProperty("parameters");
   });
 });

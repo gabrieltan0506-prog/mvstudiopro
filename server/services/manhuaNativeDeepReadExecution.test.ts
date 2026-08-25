@@ -232,6 +232,12 @@ describe("单集执行", () => {
   it("跑成功后必经门禁并入库一次", async () => {
     const out = await executeAndIngestNativeDeepReadEpisode({ ...episode, seriesKey: "s" }, deps);
     expect(deps.run).toHaveBeenCalledTimes(1);
+    expect(deps.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceDurationSec: 1080,
+        segments: episode.segments,
+      }),
+    );
     expect(deps.ingest).toHaveBeenCalledTimes(1);
     expect(out.gcsUri).toBe("gs://b/ep1.json");
   });
