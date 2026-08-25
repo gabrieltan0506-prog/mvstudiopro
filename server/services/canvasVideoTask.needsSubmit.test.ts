@@ -56,4 +56,59 @@ describe("canvasVideoTaskNeedsSubmit(六审第7条:HH 官方单不得重复提�
       } as CanvasVideoTaskRecord),
     ).toBe(false);
   });
+
+  it("Wan 3.0 三通道引擎按各自句柄判定;auto 只要任一句柄在手就不再提交(防重复建单)", () => {
+    expect(
+      canvasVideoTaskNeedsSubmit({ engine: "wan30-evolink", evolinkTaskId: "ev" } as CanvasVideoTaskRecord),
+    ).toBe(false);
+    expect(
+      canvasVideoTaskNeedsSubmit({ engine: "wan30-evolink" } as CanvasVideoTaskRecord),
+    ).toBe(true);
+    expect(
+      canvasVideoTaskNeedsSubmit({
+        engine: "wan30-openrouter",
+        pollingUrl: "https://or.example/poll",
+      } as CanvasVideoTaskRecord),
+    ).toBe(false);
+    expect(
+      canvasVideoTaskNeedsSubmit({ engine: "wan30-openrouter" } as CanvasVideoTaskRecord),
+    ).toBe(true);
+    expect(
+      canvasVideoTaskNeedsSubmit({ engine: "wan30-auto" } as CanvasVideoTaskRecord),
+    ).toBe(true);
+    for (const handle of [
+      { wavespeedPredictionId: "wsp" },
+      { evolinkTaskId: "ev" },
+      { pollingUrl: "https://or.example/poll" },
+    ]) {
+      expect(
+        canvasVideoTaskNeedsSubmit({ engine: "wan30-auto", ...handle } as CanvasVideoTaskRecord),
+      ).toBe(false);
+    }
+  });
+
+  it("HappyHorse 三通道引擎按各自句柄判定;auto 含百炼老句柄在内任一在手即不重提", () => {
+    expect(
+      canvasVideoTaskNeedsSubmit({ engine: "happyhorse-evolink" } as CanvasVideoTaskRecord),
+    ).toBe(true);
+    expect(
+      canvasVideoTaskNeedsSubmit({ engine: "happyhorse-evolink", evolinkTaskId: "ev" } as CanvasVideoTaskRecord),
+    ).toBe(false);
+    expect(
+      canvasVideoTaskNeedsSubmit({ engine: "happyhorse-wavespeed", wavespeedPredictionId: "wsp" } as CanvasVideoTaskRecord),
+    ).toBe(false);
+    expect(
+      canvasVideoTaskNeedsSubmit({ engine: "happyhorse-auto" } as CanvasVideoTaskRecord),
+    ).toBe(true);
+    for (const handle of [
+      { bailianTaskId: "bl" },
+      { pollingUrl: "https://or.example/poll" },
+      { evolinkTaskId: "ev" },
+      { wavespeedPredictionId: "wsp" },
+    ]) {
+      expect(
+        canvasVideoTaskNeedsSubmit({ engine: "happyhorse-auto", ...handle } as CanvasVideoTaskRecord),
+      ).toBe(false);
+    }
+  });
 });

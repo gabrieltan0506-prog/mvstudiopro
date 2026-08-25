@@ -4135,8 +4135,11 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         .filter((u) => /^https?:\/\//i.test(u));
       const aspectRatio = s(b.aspectRatio || q.aspectRatio || "9:16").trim() || "9:16";
       try {
-        const { isWavespeedWanConfigured } = await import("../server/services/wavespeedWanVideo.js");
-        if (!isWavespeedWanConfigured()) {
+        // 0825 拍板：Wan 3.0 三通道（OpenRouter → EvoLink → WaveSpeed）。
+        // 七审第9条：闸口按**本单资格**判——带参考音频的单子必须有一条吃得下音频的通道，
+        // 否则会先扣费后必然全链拒单（扣费/退款摩擦）。
+        const { hasEligibleWan30Channel } = await import("../server/services/wan30Channels.js");
+        if (!hasEligibleWan30Channel({ hasAudioRefs: audioUrls.length > 0 })) {
           return res.status(503).json({ ok: false, error: "Wan 3.0 通道暂不可用，请稍后重试" });
         }
         const { clampWan30Duration, normalizeWan30Resolution, WAN30_REFERENCE_MAX } = await import(
@@ -4144,7 +4147,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         );
         const duration = clampWan30Duration(b.duration ?? b.durationSec ?? q.duration);
         const resolution = normalizeWan30Resolution(b.resolution || q.resolution);
-        const label = `画布成片·Wan 3.0 公测（${resolution}·${duration}s·排队较长）`;
+        const label = `画布成片·Wan 3.0（${resolution}·${duration}s·排队较长）`;
         const requestKey =
           s(b.idempotencyKey || q.idempotencyKey || "").trim() ||
           `srvwan_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
@@ -4165,7 +4168,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             creditsCharged: charged.credits,
             deduct: charged.deduct,
             idempotencyKey: requestKey,
-            engine: "wan30-wavespeed",
+            engine: "wan30-auto",
             label,
             prompt,
             imageUrl: imageUrls[0],
@@ -4185,7 +4188,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             taskId: task.taskId,
             status: task.status,
             videoUrl: task.videoUrl || undefined,
-            provider: "wavespeed",
+            provider: "wan30",
             version: "wan-3.0",
             resolution,
             creditsUsed: charged.credits,
@@ -4216,20 +4219,23 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       }
       const prompt =
         s(b.prompt || q.prompt || "").trim() || "Cinematic motion shot with stable camera and rich detail.";
-      const imageUrl = s(b.imageUrl || q.imageUrl || "").trim();
+      // 0825 自由画布 r2v：可带多图参考（≤9）；首图=首帧，≥2 张时服务端自动切多图参考模式
+      const hhRawImages: unknown[] = Array.isArray(b.imageUrls) ? b.imageUrls : [];
+      const hhImageUrls = hhRawImages
+        .map((u) => s(u).trim())
+        .filter((u) => /^https?:\/\//i.test(u))
+        .slice(0, 9);
+      const imageUrl = s(b.imageUrl || q.imageUrl || "").trim() || hhImageUrls[0] || "";
       if (!imageUrl) {
         return res.status(400).json({ ok: false, error: "Happy Horse 成片需要至少一张首帧参考图" });
       }
       const aspectRatio = s(b.aspectRatio || q.aspectRatio || "9:16").trim() || "9:16";
       try {
-        const { isOpenRouterHappyHorseConfigured } = await import(
-          "../server/services/openrouterHappyHorseVideo.js"
+        // 0825 拆百炼三通道:EvoLink → OpenRouter → WaveSpeed,任一在配即可开闸
+        const { isAnyHappyHorseChannelConfigured } = await import(
+          "../server/services/happyHorseChannels.js"
         );
-        const { isBailianHappyHorseConfigured } = await import(
-          "../server/services/bailianHappyHorseVideo.js"
-        );
-        // 0820 拍板:百炼官方为主通道,OpenRouter 兜底——任一在配即可开闸
-        if (!isBailianHappyHorseConfigured() && !isOpenRouterHappyHorseConfigured()) {
+        if (!isAnyHappyHorseChannelConfigured()) {
           return res.status(503).json({
             ok: false,
             error: "视频服务暂不可用，请稍后重试",
@@ -4262,10 +4268,11 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             creditsCharged: charged.credits,
             deduct: charged.deduct,
             idempotencyKey: requestKey,
-            engine: "happyhorse-openrouter",
+            engine: "happyhorse-auto",
             label,
             prompt,
             imageUrl,
+            imageUrls: hhImageUrls,
             aspectRatio,
             duration,
             resolution,
@@ -4327,14 +4334,11 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       const aspectRatio = s(b.aspectRatio || "16:9").trim() || "16:9";
 
       try {
-        const { isOpenRouterHappyHorseConfigured } = await import(
-          "../server/services/openrouterHappyHorseVideo.js"
+        // 0825 拆百炼三通道:EvoLink → OpenRouter → WaveSpeed,任一在配即可开闸
+        const { isAnyHappyHorseChannelConfigured } = await import(
+          "../server/services/happyHorseChannels.js"
         );
-        const { isBailianHappyHorseConfigured } = await import(
-          "../server/services/bailianHappyHorseVideo.js"
-        );
-        // 0820 拍板:百炼官方为主通道,OpenRouter 兜底——任一在配即可开闸
-        if (!isBailianHappyHorseConfigured() && !isOpenRouterHappyHorseConfigured()) {
+        if (!isAnyHappyHorseChannelConfigured()) {
           return res.status(503).json({ ok: false, error: "视频服务暂不可用，请稍后重试" });
         }
 

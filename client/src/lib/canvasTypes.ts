@@ -57,7 +57,7 @@ export type CanvasVideoModel =
   | "minimax-hailuo-3"
   /** Happy Horse 1.1 · OpenRouter alibaba/happyhorse-1.1（≤15s） */
   | "happyhorse-1.1"
-  /** Wan 3.0 · WaveSpeed reference-to-video（公测；可直出 30s；排队时间较长） */
+  /** Wan 3.0 · 三通道路由（0825 转正式版；可直出 30s；排队时间较长） */
   | "wan-3.0";
 /** 文生图 vs 改图（EvoLink image_urls edit） */
 export type CanvasImageMode = "generate" | "edit";
@@ -319,7 +319,7 @@ export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }>
   { id: "seedance-2.5", label: "Seedance 2.5" },
   { id: "minimax-hailuo-3", label: "Minimax H3" },
   { id: "happyhorse-1.1", label: "Happy Horse 1.1" },
-  { id: "wan-3.0", label: "Wan 3.0（公测 · 直出30s · 排队时间较长）" },
+  { id: "wan-3.0", label: "Wan 3.0（直出30s · 排队时间较长）" },
 ];
 
 /**
