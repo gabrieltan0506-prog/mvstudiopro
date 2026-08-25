@@ -104,6 +104,13 @@ export function resolveNativeDeepReadExecutionCredentials(params: {
 const PIECE_SIZE_CAP_BYTES = 90 * 1024 * 1024;
 /** 响应体上限：模型异常时可能吐超大 body，不设限会把内存吃干 */
 const NATIVE_RESPONSE_CAP_BYTES = 4 * 1024 * 1024;
+/**
+ * Qwen 原生视频精读是非流式长请求：线上 9 分钟切片曾在 159–473 秒后才返回首字节。
+ * 120 秒 socket idle 会把正常推理误判成断线；保留 30 分钟总时限，再用 10 分钟
+ * 空闲时限识别真正失联。两道时限必须分别命名，避免后续又把短 HTTP 探活口径搬回来。
+ */
+export const NATIVE_DEEP_READ_REQUEST_IDLE_TIMEOUT_MS = 10 * 60_000;
+export const NATIVE_DEEP_READ_REQUEST_TOTAL_TIMEOUT_MS = 30 * 60_000;
 
 export function assertNativeDeepReadPieceSize(size: number): void {
   // CDN 抖动时会切出 0 字节或异常小的文件，模型收到会报 Invalid video file
@@ -221,7 +228,7 @@ function postLong(
   body: unknown,
   apiKey: string,
   endpoint: string,
-  timeoutMs = 1_800_000,
+  timeoutMs = NATIVE_DEEP_READ_REQUEST_TOTAL_TIMEOUT_MS,
   abortSignal?: AbortSignal,
 ): Promise<{ status: number; text: string }> {
   return new Promise((resolve, reject) => {
@@ -268,7 +275,10 @@ function postLong(
         res.on("end", () => finish(() => resolve({ status: res.statusCode || 0, text: d })));
       },
     );
-    req.setTimeout(120_000, () => req.destroy(new Error("原生精读连接长时间无数据")));
+    req.setTimeout(
+      NATIVE_DEEP_READ_REQUEST_IDLE_TIMEOUT_MS,
+      () => req.destroy(new Error("原生精读连接长时间无数据")),
+    );
     req.on("error", (e) => finish(() => reject(e)));
     req.write(payload);
     req.end();

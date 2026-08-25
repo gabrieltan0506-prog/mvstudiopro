@@ -15,6 +15,7 @@ import {
   readManhuaLearnMissingDismissedKeys,
   removeManhuaLearnBasketItem,
   resolveManhuaLearnBasketFocusKey,
+  reuseManhuaLearnServerJobsIfUnchanged,
   upsertManhuaLearnBasketItem,
   writeManhuaLearnActiveJob,
   writeManhuaLearnBasket,
@@ -39,6 +40,39 @@ afterEach(() => {
 });
 
 describe("manhuaLearnResultUi soft-fail", () => {
+  it("轮询快照完全相同时复用原数组，避免无变化 GET 重绘下拉选单", () => {
+    const current = [
+      {
+        jobId: "job-1",
+        status: "running" as const,
+        output: { analysisStage: "vision", currentEpisodeIndex: 2 },
+        updatedAt: "2026-08-25T00:19:04.032Z",
+      },
+    ];
+    const cloned = JSON.parse(JSON.stringify(current));
+    expect(reuseManhuaLearnServerJobsIfUnchanged(current, cloned)).toBe(current);
+  });
+
+  it("任务进度变化时采用新快照，不把真实状态更新吃掉", () => {
+    const current = [
+      {
+        jobId: "job-1",
+        status: "running" as const,
+        output: { analysisStage: "vision", currentEpisodeIndex: 1 },
+        updatedAt: "2026-08-25T00:18:00.000Z",
+      },
+    ];
+    const incoming = [
+      {
+        jobId: "job-1",
+        status: "running" as const,
+        output: { analysisStage: "vision", currentEpisodeIndex: 2 },
+        updatedAt: "2026-08-25T00:19:04.032Z",
+      },
+    ];
+    expect(reuseManhuaLearnServerJobsIfUnchanged(current, incoming)).toBe(incoming);
+  });
+
   it("刷新后按原生待审卡恢复模式与数量，不显示旧系列分析话术", () => {
     const ui = manhuaLearnResultFromSnapshot({
       seriesKey: "native-series",

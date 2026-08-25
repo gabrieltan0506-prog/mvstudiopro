@@ -147,6 +147,7 @@ import {
   readManhuaLearnResult,
   removeManhuaLearnBasketItem,
   resolveManhuaLearnBasketFocusKey,
+  reuseManhuaLearnServerJobsIfUnchanged,
   upsertManhuaLearnBasketItem,
   writeManhuaLearnActiveJob,
   writeManhuaLearnBasket,
@@ -3074,6 +3075,15 @@ export default function PlatformPage() {
     () => (manhuaViralProposalsQuery.data?.items || []).filter((item) => item.status !== "approved"),
     [manhuaViralProposalsQuery.data?.items],
   );
+  /**
+   * tRPC query result 对象会随 render 换引用；轮询 callback 若依赖整个对象，
+   * setState → render → effect 重启 → 立刻再 GET，最终把 3 秒轮询打成无间隔请求。
+   * ref 只更新可调用函数，不改变轮询 effect 的身份。
+   */
+  const manhuaViralProposalsRefetchRef = useRef(manhuaViralProposalsQuery.refetch);
+  useEffect(() => {
+    manhuaViralProposalsRefetchRef.current = manhuaViralProposalsQuery.refetch;
+  }, [manhuaViralProposalsQuery.refetch]);
   const nativeProposalRefreshSignatureRef = useRef("");
   const [selectedManhuaProposalId, setSelectedManhuaProposalId] = useState("");
   const selectedManhuaProposal = useMemo(
@@ -3094,7 +3104,8 @@ export default function PlatformPage() {
 
   const refreshManhuaLearnServerJobs = useCallback(async () => {
     const listed = await listManhuaLearnServerJobs();
-    setManhuaLearnServerJobs(listed.items);
+    setManhuaLearnServerJobs((prev) =>
+      reuseManhuaLearnServerJobsIfUnchanged(prev, listed.items));
     setManhuaLearnServerJobsHydrated(true);
     setManhuaLearnBasket((prev) => {
       const merged = demoteStaleRunningManhuaLearnItems(
@@ -3117,7 +3128,7 @@ export default function PlatformPage() {
       && nativeTerminalSignature !== nativeProposalRefreshSignatureRef.current
     ) {
       try {
-        const refreshed = await manhuaViralProposalsQuery.refetch();
+        const refreshed = await manhuaViralProposalsRefetchRef.current();
         if (refreshed.isError) throw refreshed.error;
         nativeProposalRefreshSignatureRef.current = nativeTerminalSignature;
       } catch (error) {
@@ -3126,7 +3137,7 @@ export default function PlatformPage() {
       }
     }
     return listed;
-  }, [manhuaLearnActiveJob, manhuaLearnFocusSeriesKey, manhuaViralProposalsQuery]);
+  }, [manhuaLearnActiveJob, manhuaLearnFocusSeriesKey, user?.id]);
 
   const stopFocusedManhuaLearnJob = useCallback(async () => {
     const jobId = focusedManhuaLearnServerJob?.jobId || focusedManhuaLearnBasketItem?.jobId;
