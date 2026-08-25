@@ -64,10 +64,12 @@ import {
   isManhuaTemplateLearnJobCancelRequested,
   markJobFailed,
   markJobSucceededWithRetry,
+  markManhuaLearnJobFailedWithOutputRetry,
   markManhuaLearnJobSucceededWithRetry,
   markJobSucceeded,
   patchJobRunningProgress,
   requeueJob,
+  upsertManhuaNativeModelReceiptForJob,
   type JobType,
 } from "./repository";
 import { processPdfExportJob } from "./pdfExportJob";
@@ -637,10 +639,12 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       onNativeModelReceipt: async (receipt) => {
         nativeModelReceipts = appendManhuaNativeModelReceipt(nativeModelReceipts, receipt);
         if (!jobId) return;
-        await enqueueManhuaProgressWrite(() => patchJobRunningProgress(jobId, {
-          pipelineMode: "native_deep_read",
-          nativeModelReceipts,
-        }));
+        await enqueueManhuaProgressWrite(async () => {
+          const persisted = await upsertManhuaNativeModelReceiptForJob(jobId, receipt);
+          if (!persisted) {
+            console.warn(`[manhua-learn] native receipt persistence exhausted: jobId=${jobId}`);
+          }
+        });
       },
       abortSignal: abortController.signal,
       checkControl: async () => {
@@ -3160,22 +3164,22 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
       const receiptPatch = failureReceipts.length > 0
         ? { nativeModelReceipts: failureReceipts }
         : {};
-      if (partialOutput) {
-        await patchJobRunningProgress(job.id, {
+      const failureOutputPatch = partialOutput
+        ? {
           ...partialOutput,
           ...receiptPatch,
           analysisStage: "manhua_learn_failed",
           analysisStageLabel: userCancelled
             ? "用户已停止学习；已入库内容与费用回执保留"
             : "原生精读任务未完整结束；已入库内容与费用回执保留",
-        }).catch(() => undefined);
-      } else {
+        }
+        : (() => {
         const carriedNativeUsage = isRecord((error as { nativeUsage?: unknown })?.nativeUsage)
           ? (error as { nativeUsage: Record<string, unknown> }).nativeUsage
           : undefined;
         // 计划复核前失败不会产生模型用量；一旦进入原生执行却未能在清理窗口内
         // 返回完整结果，必须显式标成“回执待核”，不能让面板把缺字段解释为 0 元。
-        await patchJobRunningProgress(job.id, {
+        return {
           pipelineMode: "native_deep_read",
           ...receiptPatch,
           nativeUsage: carriedNativeUsage || {
@@ -3191,16 +3195,20 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
           analysisStageLabel: userCancelled
             ? "用户已停止学习；费用回执待核"
             : "原生精读任务未完整结束；费用回执待核",
-        }).catch(() => undefined);
-      }
+        };
+      })();
       // 原生学习按模型请求计费；整单重排可能再次发请求。失败、中止、墙钟到期
       // 均只落终态，保留 claim 供人工核对，不自动重跑。
-      await markJobFailed(
+      const failedPersisted = await markManhuaLearnJobFailedWithOutputRetry(
         job.id,
         userCancelled
           ? "用户已停止学习；已入库内容与费用回执保留"
           : `${message}；已入库内容保留，未自动重跑`,
+        failureOutputPatch,
       );
+      if (!failedPersisted) {
+        console.error(`[Jobs] native manhua learn failed terminal persistence exhausted: jobId=${job.id}`);
+      }
     } else if (userCancelled) {
       await markJobFailed(job.id, "用户已停止学习；已落盘内容保留");
     } else if (
