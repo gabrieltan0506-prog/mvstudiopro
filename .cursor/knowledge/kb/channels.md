@@ -38,6 +38,14 @@
 - 编排：attempts 数组（主×2 + 备胎×1），全空回 → failedPicks 退款。
 - 「开到最大」类指令 = 枚举**每一个**可调参数逐一拉满（漏掉 reasoning 档位吃过 P0）。
 
+### Qwen 3.8 Max 原生视频精读：新加坡套餐直读 GCS（2026-08-25 实测）
+- **套餐密钥与端点必须成对**：新加坡 Token Plan 使用 Fly secret `DASHSCOPE_SG_PLAN_KEY`，OpenAI 兼容地址固定为 `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1`。不得把这把套餐密钥配到普通新加坡业务空间地址 `{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com`；实测会返回 `401 InvalidApiKey`，输入/输出 token 均为 0。
+- 普通新加坡业务空间地址只搭配该业务空间所属的普通 API Key，属于另一计费通道；它与 Token Plan 套餐地址、密钥不可混用。
+- **GCS 视频实链已通**：Fly 生成 4 秒红→蓝测试视频，上传 GCS 后以 V4 签名 URL 送入新加坡套餐 `qwen3.8-max`；GCS Range GET `206`，模型 HTTP `200`、`finish_reason=stop`、输入 372 / 输出 90 tokens，结果准确返回 `red → blue / changed=true`。测试对象与本地探针文件均已删除。
+- 新加坡套餐多模态请求走 OpenAI Chat Completions，视频项使用 `type=video_url`、`video_url.url=<GCS V4 signed URL>`；不要沿用北京 DashScope 原生请求体的 `{video, fps}` 形状。
+- **本项目存储决策**：原生精读输入改为 `Fly 切片 → GCS 临时对象 → 新加坡套餐读取 → finally 删除 GCS/Fly 临时文件`，取消 OSS 中转及其外网读取计费。结构化待审卡、批准模板与最终结果继续落 GCS。此处是本项目账单口径，不外推为所有 GCS 账户的通用价格结论。
+- 截至本次记录，线上执行器仍是「北京套餐 + OSS」旧实现；上述探针只证明替代链路可行，尚未证明生产代码已经切换。
+
 ## 铁律
 - 媒体进系统标准通道 = **GCS/Fly 签名 URL**，不走 base64 传媒体；base64 只允许作脚本/剪贴板兜底传输，用即说明（P0-7）。
 - 前台零技术泄漏：模型名/供应商名/部署平台一律不出现在用户可见文案。
