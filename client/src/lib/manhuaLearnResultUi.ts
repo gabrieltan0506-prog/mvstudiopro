@@ -361,6 +361,47 @@ export function manhuaLearnResultFromFailure(input: {
   };
 }
 
+export type ManhuaLearnReloadDecision = {
+  tab: "overview" | "ai_manhua";
+  focusSeriesKey: string;
+  result: ManhuaLearnResultUi | null;
+  restoreContinuation: boolean;
+  clearFailedAutoResume: boolean;
+};
+
+/**
+ * 刷新只自动接回仍在执行或可继续的学习状态。
+ * 失败详情保留在当前会话与服务端任务记录中，但终态失败不能反复劫持刷新后的页面。
+ */
+export function resolveManhuaLearnReloadDecision(input: {
+  focusSeriesKey: string;
+  activeJob: ManhuaLearnActiveJobRecord | null;
+  result: ManhuaLearnResultUi | null;
+}): ManhuaLearnReloadDecision {
+  const focusSeriesKey = String(input.focusSeriesKey || "").trim();
+  const terminalFailure = Boolean(
+    !input.activeJob
+    && input.result
+    && (input.result.liveStatus === "failed" || String(input.result.errorZh || "").trim()),
+  );
+  if (terminalFailure) {
+    return {
+      tab: "overview",
+      focusSeriesKey: "",
+      result: null,
+      restoreContinuation: false,
+      clearFailedAutoResume: true,
+    };
+  }
+  return {
+    tab: focusSeriesKey || input.activeJob || input.result ? "ai_manhua" : "overview",
+    focusSeriesKey,
+    result: input.result,
+    restoreContinuation: true,
+    clearFailedAutoResume: false,
+  };
+}
+
 /** 本机回退：把「开始→复制命令→请终端执行」写进同一面板 */
 export function manhuaLearnResultFromLocalFallback(input: {
   reasonZh: string;

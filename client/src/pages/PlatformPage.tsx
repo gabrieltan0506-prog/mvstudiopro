@@ -147,6 +147,7 @@ import {
   readManhuaLearnResult,
   removeManhuaLearnBasketItem,
   resolveManhuaLearnBasketFocusKey,
+  resolveManhuaLearnReloadDecision,
   reuseManhuaLearnServerJobsIfUnchanged,
   upsertManhuaLearnBasketItem,
   writeManhuaLearnActiveJob,
@@ -2445,11 +2446,23 @@ export default function PlatformPage() {
     refetchOnWindowFocus: false,
   });
 
+  const [manhuaLearnReloadBootstrap] = useState(() => {
+    const activeJob = readManhuaLearnActiveJob();
+    const result = readManhuaLearnResult();
+    const decision = resolveManhuaLearnReloadDecision({
+      focusSeriesKey: readManhuaLearnFocusSeriesKey(),
+      activeJob,
+      result,
+    });
+    return {
+      activeJob,
+      continuation: decision.restoreContinuation ? readManhuaLearnContinuation() : null,
+      decision,
+    };
+  });
   /** 平台趋势区子 Tab：指定平台分析 / AI 漫剧专区 */
-  const [trendInsightTab, setTrendInsightTab] = useState<"overview" | "ai_manhua">(() =>
-    readManhuaLearnFocusSeriesKey() || readManhuaLearnActiveJob() || readManhuaLearnResult()
-      ? "ai_manhua"
-      : "overview",
+  const [trendInsightTab, setTrendInsightTab] = useState<"overview" | "ai_manhua">(
+    manhuaLearnReloadBootstrap.decision.tab,
   );
   /** AI 漫剧旧榜仍可只读，新的趋势采集平台选择不再包含快手。 */
   const [aiManhuaPlatformTab, setAiManhuaPlatformTab] = useState<"douyin" | "kuaishou">("douyin");
@@ -2458,21 +2471,21 @@ export default function PlatformPage() {
   const [manhuaPasteUrl, setManhuaPasteUrl] = useState("");
   const [manhuaPasteTitle, setManhuaPasteTitle] = useState("");
   const [manhuaLearnBatchSize, setManhuaLearnBatchSize] = useState(readManhuaLearnBatchSize);
-  const [manhuaLearnFocusSeriesKey, setManhuaLearnFocusSeriesKey] = useState(() =>
-    readManhuaLearnFocusSeriesKey(),
+  const [manhuaLearnFocusSeriesKey, setManhuaLearnFocusSeriesKey] = useState(
+    manhuaLearnReloadBootstrap.decision.focusSeriesKey,
   );
   const [manhuaLearnPanelCollapsed, setManhuaLearnPanelCollapsed] = useState(false);
-  const [manhuaLearnResult, setManhuaLearnResult] = useState<ManhuaLearnResultUi | null>(() =>
-    readManhuaLearnResult(),
+  const [manhuaLearnResult, setManhuaLearnResult] = useState<ManhuaLearnResultUi | null>(
+    manhuaLearnReloadBootstrap.decision.result,
   );
   /** 单批完成后由用户决定是否续学；同一 row/rank 复用，服务端按 GCS 检查点跳过已学集。 */
   const manhuaLearnContinueRef = useRef<ManhuaLearnContinuation | null>(
-    readManhuaLearnContinuation(),
+    manhuaLearnReloadBootstrap.continuation,
   );
   const [manhuaLearnBasket, setManhuaLearnBasket] = useState<ManhuaLearnBasketItem[]>([]);
   const manhuaLearnBasketHydratedUserRef = useRef("");
   const [manhuaLearnActiveJob, setManhuaLearnActiveJob] = useState<ManhuaLearnActiveJob | null>(
-    readManhuaLearnActiveJob(),
+    manhuaLearnReloadBootstrap.activeJob,
   );
   const [manhuaLearnServerJobs, setManhuaLearnServerJobs] = useState<ManhuaLearnServerJob[]>([]);
   const [manhuaLearnServerJobsHydrated, setManhuaLearnServerJobsHydrated] = useState(false);
@@ -2483,6 +2496,12 @@ export default function PlatformPage() {
   const [manhuaLearnMissingDismissedKeys, setManhuaLearnMissingDismissedKeys] = useState<string[]>(
     readManhuaLearnMissingDismissedKeys,
   );
+  useEffect(() => {
+    if (!manhuaLearnReloadBootstrap.decision.clearFailedAutoResume) return;
+    writeManhuaLearnFocusSeriesKey("");
+    writeManhuaLearnResult(null);
+    writeManhuaLearnContinuation(null);
+  }, [manhuaLearnReloadBootstrap]);
   const manhuaLearnFocusSource = String(
     manhuaLearnContinueRef.current?.row.gcsUri
       || manhuaLearnContinueRef.current?.row.url

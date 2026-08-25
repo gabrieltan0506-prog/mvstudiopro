@@ -66,7 +66,7 @@ export type NativeDeepReadPlanPreview = {
   unknownAccessEpisodeIndexes: number[];
   /** 已入库的集（不该重复付费） */
   alreadyIngestedEpisodeIndexes: number[];
-  /** 有人正在跑的集 */
+  /** 已隔离的占位集；不会自动重跑，也不会挤占本轮新增集数 */
   pendingClaimEpisodeIndexes: number[];
   /** 扣掉已入库后真正会发出模型请求的集数 */
   executableEpisodeCount: number;
@@ -86,9 +86,13 @@ export function assertNativeDeepReadPlanConfirmation(
   current: NativeDeepReadPlanPreview,
 ): void {
   if (!current.executionEnabled) throw new Error("原生精读能力未开启，未发出模型请求");
-  if (current.pendingClaimEpisodeIndexes.length) {
+  const pendingClaims = new Set(current.pendingClaimEpisodeIndexes);
+  const overlappingClaims = current.episodes
+    .map((episode) => episode.episodeIndex)
+    .filter((episodeIndex) => pendingClaims.has(episodeIndex));
+  if (overlappingClaims.length) {
     throw new Error(
-      `第${current.pendingClaimEpisodeIndexes.join("、")}集存在待核对占位，禁止自动重跑`,
+      `执行清单与第${overlappingClaims.join("、")}集待核对占位重叠，禁止自动重跑`,
     );
   }
   if (!current.episodes.length || current.totalSegments < 1) {
@@ -408,11 +412,15 @@ export async function buildNativeDeepReadPlanPreview(
 
   // ── 4. 逐集探时长（零模型调用）
   // “学 N 集”指接下来新增 N 集，不是永远只看合集前 N 集。
-  const wanted = free.filter((e) => !ingested.has(e.index)).slice(0, limit);
-  const pendingClaimEpisodeIndexes = wanted
+  // 残留 claim 必须继续隔离，但不能占掉用户要求的名额：先排除已入库与 claim，再取 N 集。
+  // 每个真正执行的集仍会在模型调用前原子抢 claim；这里没有放松并发保护。
+  const notIngested = free.filter((e) => !ingested.has(e.index));
+  const pendingClaimEpisodeIndexes = notIngested
     .map((e) => e.index)
     .filter((i) => claimed.has(i));
-  const executable = wanted.filter((e) => !claimed.has(e.index));
+  const executable = notIngested
+    .filter((e) => !claimed.has(e.index))
+    .slice(0, limit);
   const episodes: NativeDeepReadPlanEpisode[] = [];
   for (const e of executable) {
     throwIfNativePlanAborted(input.abortSignal);

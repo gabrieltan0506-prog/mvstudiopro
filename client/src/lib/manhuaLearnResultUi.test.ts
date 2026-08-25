@@ -15,6 +15,7 @@ import {
   readManhuaLearnMissingDismissedKeys,
   removeManhuaLearnBasketItem,
   resolveManhuaLearnBasketFocusKey,
+  resolveManhuaLearnReloadDecision,
   reuseManhuaLearnServerJobsIfUnchanged,
   upsertManhuaLearnBasketItem,
   writeManhuaLearnActiveJob,
@@ -40,6 +41,73 @@ afterEach(() => {
 });
 
 describe("manhuaLearnResultUi soft-fail", () => {
+  it("刷新后不再自动打开上一轮失败页", () => {
+    const failed = {
+      ...manhuaLearnResultFromStart({ channel: "cloud", seriesKey: "failed-series" }),
+      liveStatus: "failed" as const,
+      errorZh: "媒体读取未完成",
+    };
+    expect(resolveManhuaLearnReloadDecision({
+      focusSeriesKey: "failed-series",
+      activeJob: null,
+      result: failed,
+    })).toEqual({
+      tab: "overview",
+      focusSeriesKey: "",
+      result: null,
+      restoreContinuation: false,
+      clearFailedAutoResume: true,
+    });
+  });
+
+  it("刷新后仍接回执行中的同一任务，不重新入队", () => {
+    const running = manhuaLearnResultFromStart({
+      channel: "cloud",
+      seriesKey: "running-series",
+    });
+    const activeJob = {
+      jobId: "job-running",
+      busyKey: "running-series",
+      continuation: {
+        row: { url: "https://www.douyin.com/collection/running" },
+        rank: 0,
+        seriesKey: "running-series",
+        savedAt: 1,
+      },
+      savedAt: 1,
+    };
+    expect(resolveManhuaLearnReloadDecision({
+      focusSeriesKey: "running-series",
+      activeJob,
+      result: running,
+    })).toMatchObject({
+      tab: "ai_manhua",
+      focusSeriesKey: "running-series",
+      result: running,
+      restoreContinuation: true,
+      clearFailedAutoResume: false,
+    });
+  });
+
+  it("成功后仍保留待续学习页", () => {
+    const succeeded = {
+      ...manhuaLearnResultFromStart({ channel: "cloud", seriesKey: "next-series" }),
+      liveStatus: "succeeded" as const,
+      pendingCount: 62,
+    };
+    expect(resolveManhuaLearnReloadDecision({
+      focusSeriesKey: "next-series",
+      activeJob: null,
+      result: succeeded,
+    })).toMatchObject({
+      tab: "ai_manhua",
+      focusSeriesKey: "next-series",
+      result: succeeded,
+      restoreContinuation: true,
+      clearFailedAutoResume: false,
+    });
+  });
+
   it("轮询快照完全相同时复用原数组，避免无变化 GET 重绘下拉选单", () => {
     const current = [
       {

@@ -69,6 +69,18 @@ describe("原生精读页面接线", () => {
     expect(refreshBlock).not.toContain("[manhuaLearnActiveJob, manhuaLearnFocusSeriesKey, manhuaViralProposalsQuery]");
   });
 
+  it("刷新后由失败恢复判据重置页面指针，运行中任务仍由 active job 接管", () => {
+    expect(PAGE).toContain("resolveManhuaLearnReloadDecision({");
+    expect(PAGE).toContain("manhuaLearnReloadBootstrap.decision.tab");
+    expect(PAGE).toContain("manhuaLearnReloadBootstrap.activeJob");
+    const resetAt = PAGE.indexOf("if (!manhuaLearnReloadBootstrap.decision.clearFailedAutoResume) return;");
+    expect(resetAt).toBeGreaterThan(0);
+    const resetBlock = PAGE.slice(resetAt, resetAt + 400);
+    expect(resetBlock).toContain('writeManhuaLearnFocusSeriesKey("")');
+    expect(resetBlock).toContain("writeManhuaLearnResult(null)");
+    expect(resetBlock).toContain("writeManhuaLearnContinuation(null)");
+  });
+
   it("页面没有任何供应商生产密钥入口", () => {
     expect(PAGE).not.toMatch(/VITE_[A-Z0-9_]*(?:API_?KEY|SECRET|TOKEN)/);
   });

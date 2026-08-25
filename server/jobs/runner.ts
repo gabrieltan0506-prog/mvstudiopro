@@ -534,9 +534,12 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
           confirmation,
           nativePlanPreview,
         );
+        const quarantinedClaims = nativePlanPreview.pendingClaimEpisodeIndexes.length
+          ? ` · 已隔离占位第${nativePlanPreview.pendingClaimEpisodeIndexes.join("、")}集`
+          : "";
         await reportLearnProgress(
           MANHUA_LEARN_STAGE.list,
-          `执行计划复核通过：${nativePlanPreview.executableEpisodeCount} 集 · ${nativePlanPreview.totalSegments} 次模型请求 · 确认码 ${nativePlanPreview.planHash}`,
+          `执行计划复核通过：${nativePlanPreview.executableEpisodeCount} 集 · ${nativePlanPreview.totalSegments} 次模型请求 · 确认码 ${nativePlanPreview.planHash}${quarantinedClaims}`,
         );
       } else if (hasNativeDeepReadJobFields(params)) {
         throw new Error("原生精读计划未获明确确认，未发出模型请求");
