@@ -9,6 +9,7 @@ import {
   type NativeDeepReadIngestSource,
 } from "./manhuaNativeDeepReadIngest";
 import { describeManhuaTemplateLearnSourceZh } from "../../shared/manhuaViralTemplateBank";
+import { noAudioManhuaNativeAnalysis } from "../../shared/manhuaNativeAudioAnalysis";
 
 function makeResult(over: Partial<NativeDeepReadIngestSource> = {}): NativeDeepReadIngestSource {
   const beatGrid = Array.from({ length: 12 }, (_, i) => ({
@@ -23,6 +24,16 @@ function makeResult(over: Partial<NativeDeepReadIngestSource> = {}): NativeDeepR
   }));
   return {
     beatGrid,
+    subtitleTrack: [],
+    resolvedAudioChunks: [],
+    classification: {
+      emotionTagsZh: ["压迫渐强"],
+      narrativeFeatureTagsZh: ["信息递进"],
+      performanceTagsZh: ["克制爆发"],
+      audiovisualTagsZh: ["冷暖对撞"],
+      audienceExperienceTagsZh: ["持续紧张"],
+    },
+    audioAnalysis: noAudioManhuaNativeAnalysis(1080),
     reusableZh: "力量不拍光效拍环境反应",
     genPromptHintZh: "写明光位、氛围粒子、景别序列",
     moodArcZh: "起点紧张→17秒炽热→31秒回落",
@@ -118,6 +129,15 @@ describe("入库门禁", () => {
     expect(checkNativeDeepReadIngestable(makeResult({ model: "" })).ok).toBe(false);
     expect(checkNativeDeepReadIngestable(makeResult({ attemptedSegments: 0 })).ok).toBe(false);
   });
+
+  it("五维分类缺任一维都拒收，不让单维标签冒充完整收费模板", () => {
+    const incomplete = makeResult().classification!;
+    const result = checkNativeDeepReadIngestable(makeResult({
+      classification: { ...incomplete, audiovisualTagsZh: [] },
+    }));
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reasonZh).toContain("五维特征标签不完整");
+  });
 });
 
 describe("装卡", () => {
@@ -145,7 +165,7 @@ describe("装卡", () => {
       laneHintZh: "某某外部剧名 逆袭",
       result: makeResult(),
     })!;
-    expect(card.nameZh).toBe("爽文逆袭·原生第3集节奏");
+    expect(card.nameZh).toBe("多维标签·原生第3集节奏");
     expect(card.nameZh).not.toContain("某某外部剧名");
   });
 

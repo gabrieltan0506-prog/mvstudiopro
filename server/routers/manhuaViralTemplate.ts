@@ -205,9 +205,14 @@ export const manhuaViralTemplateRouter = router({
           // 审批可见性：批准前必须看得见学到了什么，不能盲批。
           // 这几项一直落盘，此前被这个白名单 map 过滤掉，前端连数据都收不到。
           beatGrid: c.beatGrid,
+          classification: c.classification,
+          storyStructure: c.storyStructure,
+          subtitleTrack: c.subtitleTrack,
           // 原生视频精读独有的两栏：审批前必须看得见，否则最有门槛的产出被白名单挡在外面
           reusableZh: c.reusableZh,
           genPromptHintZh: c.genPromptHintZh,
+          // 只给 owner/监管审批区：普通用户公开 DTO 不含这份逐秒声音结构。
+          audioStory: c.audioStory,
           scenePoolHints: c.scenePoolHints,
           castShape: c.castShape,
           densityHints: c.densityHints,

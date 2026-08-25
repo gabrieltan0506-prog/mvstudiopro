@@ -48,15 +48,28 @@ export function isBailianChatConfigured(): boolean {
 
 export type BailianChatResponse = {
   choices?: Array<{ message?: { content?: unknown }; finish_reason?: string | null }>;
-  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    cost?: number;
+    completion_tokens_details?: { reasoning_tokens?: number };
+  };
   model?: string;
+  /** 上游实际供应商，例如 OpenRouter 返回的 Z.AI。 */
   provider?: string;
+};
+
+export type GlmGatewayUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  costUsd: number;
 };
 
 export type GlmGatewayTraceEntry = {
   gateway: GlmGatewayName;
   model: string;
-  outcome: "ok" | "http_error" | "invalid_json" | "truncated" | "empty_content" | "content_invalid" | "network_error" | "skipped_not_configured";
+  outcome: "ok" | "http_error" | "invalid_json" | "truncated" | "incomplete" | "empty_content" | "content_invalid" | "network_error" | "skipped_not_configured";
   detail?: string;
 };
 
@@ -70,24 +83,72 @@ export type GlmChatSuccess = BailianChatResponse & {
 /** 三网关全灭:携带完整外呼轨迹供遥测记真账 */
 export class GlmGatewayError extends Error {
   readonly code = "glm_gateway_all_failed";
-  constructor(message: string, readonly gatewayTrace: GlmGatewayTraceEntry[]) {
+  constructor(
+    message: string,
+    readonly gatewayTrace: GlmGatewayTraceEntry[],
+    /** 已发生的全部上游用量；业务 JSON 不合格或 finish_reason 异常也不能归零。 */
+    readonly usage: GlmGatewayUsage = emptyGlmGatewayUsage(),
+  ) {
     super(message);
     this.name = "GlmGatewayError";
   }
 }
 
-type GlmParams = {
+export type GlmParams = {
   system: string;
   user: string;
   maxTokens?: number;
   abortSignal?: AbortSignal;
+  /** 默认保留三档交付链；模型锁定业务必须显式只走 OpenRouter。 */
+  gatewayPolicy?: "fallback" | "openrouter_only";
+  /** 调用方墙钟；默认 240 秒，长结构任务可显式放宽。 */
+  timeoutMs?: number;
+  /** OpenRouter reasoning 参数；仅在 OpenRouter 档发送。 */
+  reasoningEffort?: "low" | "medium" | "high" | "max";
+  /** 要求 OpenRouter 只路由给完整支持所传参数的供应商。 */
+  requireParameters?: boolean;
+  /** 为 true 时只接受 finish_reason=stop，缺失或其他值一律拒绝。 */
+  requireFinishReasonStop?: boolean;
+  /** 防止异常响应整体进入内存；省略时使用 4 MiB。 */
+  maxResponseBytes?: number;
   /** 业务验真钩子:抛错=该网关响应不可用,继续降级(复审 P1-1) */
   validateContent?: (content: string) => void;
 };
 
+function emptyGlmGatewayUsage(): GlmGatewayUsage {
+  return { inputTokens: 0, outputTokens: 0, reasoningTokens: 0, costUsd: 0 };
+}
+
+function responseGlmGatewayUsage(response: BailianChatResponse): GlmGatewayUsage {
+  return {
+    inputTokens: Math.max(0, Number(response.usage?.prompt_tokens) || 0),
+    outputTokens: Math.max(0, Number(response.usage?.completion_tokens) || 0),
+    reasoningTokens: Math.max(
+      0,
+      Number(response.usage?.completion_tokens_details?.reasoning_tokens) || 0,
+    ),
+    costUsd: Math.max(0, Number(response.usage?.cost) || 0),
+  };
+}
+
+function addGlmGatewayUsage(
+  left: GlmGatewayUsage,
+  right: GlmGatewayUsage,
+): GlmGatewayUsage {
+  return {
+    inputTokens: left.inputTokens + right.inputTokens,
+    outputTokens: left.outputTokens + right.outputTokens,
+    reasoningTokens: left.reasoningTokens + right.reasoningTokens,
+    costUsd: left.costUsd + right.costUsd,
+  };
+}
+
+type GlmGatewayAttemptError = Error & { glmGatewayUsage?: GlmGatewayUsage };
+
 export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): Promise<GlmChatSuccess> {
   const trace: GlmGatewayTraceEntry[] = [];
-  const gateways: Array<{
+  let accumulatedUsage = emptyGlmGatewayUsage();
+  const configuredGateways: Array<{
     name: GlmGatewayName;
     model: string;
     ready: boolean;
@@ -120,16 +181,20 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
       key: String(process.env.EVOLINK_API_KEY || "").trim(),
     },
   ];
+  const gateways = params.gatewayPolicy === "openrouter_only"
+    ? configuredGateways.slice(0, 1)
+    : configuredGateways;
   for (const g of gateways) {
     if (!g.ready) {
       trace.push({ gateway: g.name, model: g.model, outcome: "skipped_not_configured" });
       continue;
     }
     if (params.abortSignal?.aborted) {
-      throw new GlmGatewayError("GLM 兜底已被硬截止取消", trace);
+      throw new GlmGatewayError("GLM 调用已被硬截止取消", trace, accumulatedUsage);
     }
     try {
       const res = await invokeOneGlmGateway(params, g.url, g.key, g.model, g.name);
+      accumulatedUsage = addGlmGatewayUsage(accumulatedUsage, responseGlmGatewayUsage(res));
       const content = res.choices?.[0]?.message?.content;
       const text = typeof content === "string" ? content.trim() : "";
       if (!text) {
@@ -150,13 +215,20 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
         }
       }
       trace.push({ gateway: g.name, model: g.model, outcome: "ok" });
-      return { ...res, provider: g.name, gateway: g.name, gatewayTrace: trace };
+      // provider 保留上游真实值（例如 Z.AI）；内部通道身份单独放 gateway。
+      return { ...res, gateway: g.name, gatewayTrace: trace };
     } catch (e) {
+      const attemptUsage = (e as GlmGatewayAttemptError).glmGatewayUsage;
+      if (attemptUsage) {
+        accumulatedUsage = addGlmGatewayUsage(accumulatedUsage, attemptUsage);
+      }
       const msg = e instanceof Error ? e.message : String(e);
       const outcome: GlmGatewayTraceEntry["outcome"] = /HTTP \d+/.test(msg)
         ? "http_error"
         : /截断/.test(msg)
           ? "truncated"
+          : /未正常结束/.test(msg)
+            ? "incomplete"
           : /非 JSON/.test(msg)
             ? "invalid_json"
             : "network_error";
@@ -165,19 +237,26 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
     }
   }
   throw new GlmGatewayError(
-    `GLM 兜底全链失败(含 Qwen 末档)：${trace.map((t) => `${t.gateway}=${t.outcome}`).join(",") || "无可用网关"}`,
+    params.gatewayPolicy === "openrouter_only"
+      ? `OpenRouter GLM-5.3 调用失败：${trace.map((t) => `${t.gateway}=${t.outcome}`).join(",") || "通道未配置"}`
+      : `GLM 兜底全链失败(含 Qwen 末档)：${trace.map((t) => `${t.gateway}=${t.outcome}`).join(",") || "无可用网关"}`,
     trace,
+    accumulatedUsage,
   );
 }
 
 async function invokeOneGlmGateway(
-  params: { system: string; user: string; maxTokens?: number; abortSignal?: AbortSignal },
+  params: GlmParams,
   url: string,
   key: string,
   model: string,
   gateway: GlmGatewayTraceEntry["gateway"] = "bailian",
 ): Promise<BailianChatResponse> {
-  const timeoutSignal = AbortSignal.timeout(240_000);
+  const timeoutMs = Math.max(
+    1_000,
+    Math.min(15 * 60_000, Math.floor(Number(params.timeoutMs) || 240_000)),
+  );
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const signal = params.abortSignal ? AbortSignal.any([params.abortSignal, timeoutSignal]) : timeoutSignal;
   const budget = Math.max(8_192, Math.min(131_072, Math.floor(Number(params.maxTokens) || 65_536)));
   const body: Record<string, unknown> = {
@@ -201,6 +280,12 @@ async function invokeOneGlmGateway(
     body.max_tokens = budget;
   } else {
     body.max_tokens = budget;
+    if (params.reasoningEffort) {
+      body.reasoning = { effort: params.reasoningEffort };
+    }
+    if (params.requireParameters) {
+      body.provider = { require_parameters: true };
+    }
   }
   const res = await fetch(url, {
     method: "POST",
@@ -209,6 +294,13 @@ async function invokeOneGlmGateway(
     body: JSON.stringify(body),
   });
   const raw = await res.text();
+  const maxResponseBytes = Math.max(
+    1_024,
+    Math.min(16 * 1024 * 1024, Math.floor(Number(params.maxResponseBytes) || 4 * 1024 * 1024)),
+  );
+  if (Buffer.byteLength(raw) > maxResponseBytes) {
+    throw new Error("GLM 链响应超过处理上限");
+  }
   if (!res.ok) throw new Error(`GLM 链 HTTP ${res.status}: ${raw.slice(0, 160)}`);
   let json: BailianChatResponse;
   try {
@@ -216,7 +308,15 @@ async function invokeOneGlmGateway(
   } catch {
     throw new Error(`GLM 链非 JSON 响应：${raw.slice(0, 120)}`);
   }
-  if (String(json.choices?.[0]?.finish_reason || "") === "length") throw new Error("GLM 链输出被截断（预算耗尽）");
+  const finishReason = String(json.choices?.[0]?.finish_reason || "");
+  const usage = responseGlmGatewayUsage(json);
+  const failWithUsage = (message: string): never => {
+    throw Object.assign(new Error(message), { glmGatewayUsage: usage }) as GlmGatewayAttemptError;
+  };
+  if (finishReason === "length") failWithUsage("GLM 链输出被截断（预算耗尽）");
+  if (params.requireFinishReasonStop && finishReason !== "stop") {
+    failWithUsage(`GLM 链未正常结束（${finishReason || "missing"}）`);
+  }
   return json;
 }
 

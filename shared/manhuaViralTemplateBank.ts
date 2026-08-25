@@ -12,6 +12,10 @@ import {
   manhuaEpisodeDensityFloors,
   manhuaEpisodeSegmentsForTier,
 } from "./manhuaEpisodeSegmentPlan.js";
+import {
+  parseManhuaNativeAudioAnalysis,
+  type ManhuaNativeAudioAnalysis,
+} from "./manhuaNativeAudioAnalysis.js";
 
 export type ManhuaViralTemplateStatus = "proposed" | "approved" | "rejected";
 
@@ -23,7 +27,8 @@ export type ManhuaViralTemplateLane =
   | "甜宠"
   | "悬疑权谋"
   | "搞笑沙雕"
-  | "游戏竞技";
+  | "游戏竞技"
+  | "多维标签";
 
 export const MANHUA_VIRAL_TEMPLATE_LANE_ORDER: readonly ManhuaViralTemplateLane[] = [
   "爽文逆袭",
@@ -33,7 +38,57 @@ export const MANHUA_VIRAL_TEMPLATE_LANE_ORDER: readonly ManhuaViralTemplateLane[
   "悬疑权谋",
   "搞笑沙雕",
   "游戏竞技",
+  "多维标签",
 ] as const;
+
+export type ManhuaViralTemplateClassification = {
+  emotionTagsZh: string[];
+  narrativeFeatureTagsZh: string[];
+  performanceTagsZh: string[];
+  audiovisualTagsZh: string[];
+  audienceExperienceTagsZh: string[];
+};
+
+/** 新收费模板的五维分类必须逐维都有真实证据；旧卡兼容由调用方显式处理。 */
+export function hasCompleteManhuaTemplateClassification(
+  classification: ManhuaViralTemplateClassification | undefined,
+): classification is ManhuaViralTemplateClassification {
+  return Boolean(
+    classification
+    && classification.emotionTagsZh.length
+    && classification.narrativeFeatureTagsZh.length
+    && classification.performanceTagsZh.length
+    && classification.audiovisualTagsZh.length
+    && classification.audienceExperienceTagsZh.length,
+  );
+}
+
+/**
+ * 同系列分集卡滚动聚合后的故事骨架。
+ *
+ * 这部分回答「故事为什么能继续长」，不再只保存钩子、压制、反转等局部手法。
+ * 原生逐集卡可以没有；由系列结构模型聚合出的系列卡必须完整具备。
+ */
+export type ManhuaViralTemplateStoryStructure = {
+  corePromiseZh: string;
+  conflictEngineZh: string;
+  relationshipEngineZh: string;
+  episodeProgressionZh: string[];
+  variationRulesZh: string[];
+};
+
+export function flattenManhuaTemplateClassification(
+  classification: ManhuaViralTemplateClassification | undefined,
+): string[] {
+  if (!classification) return [];
+  return Array.from(new Set([
+    ...classification.emotionTagsZh,
+    ...classification.narrativeFeatureTagsZh,
+    ...classification.performanceTagsZh,
+    ...classification.audiovisualTagsZh,
+    ...classification.audienceExperienceTagsZh,
+  ].map((tag) => String(tag || "").trim()).filter(Boolean)));
+}
 
 export type ManhuaViralTemplateBeat = {
   /** 约第几秒起（0-based 区间起点） */
@@ -82,6 +137,8 @@ export type ManhuaViralTemplateSourceRef = {
 export const MANHUA_VIRAL_TEMPLATE_OPTIMIZE_FIELDS = [
   "nameZh",
   "laneZh",
+  "classification",
+  "storyStructure",
   "summaryZh",
   "hook3sZh",
   "beatGrid",
@@ -128,8 +185,9 @@ export type ManhuaViralTemplateRevision = {
  * 用于 UI 上区分新旧形态模板，也用于后续淘汰旧库时筛选。
  */
 export function isNativeVideoLearnedTemplate(
-  card: Pick<ManhuaViralTemplateCard, "beatGrid" | "reusableZh" | "genPromptHintZh">,
+  card: Pick<ManhuaViralTemplateCard, "beatGrid" | "reusableZh" | "genPromptHintZh" | "audioStory">,
 ): boolean {
+  if (card.audioStory?.hasAudio) return true;
   if (String(card.reusableZh || "").trim()) return true;
   if (String(card.genPromptHintZh || "").trim()) return true;
   return (card.beatGrid || []).some(
@@ -142,10 +200,16 @@ export type ManhuaViralTemplateCard = {
   /** UI 短名（中性，不写竞品剧名） */
   nameZh: string;
   laneZh: ManhuaViralTemplateLane;
+  /** 新收费模板的真实分类；一张卡可同时属于多个标签组。 */
+  classification?: ManhuaViralTemplateClassification;
+  /** 跨集剧情结构；只在系列聚合卡上作为收费模板的核心内容。 */
+  storyStructure?: ManhuaViralTemplateStoryStructure;
   /** 一句话用途 */
   summaryZh: string;
   hook3sZh: string;
   beatGrid: ManhuaViralTemplateBeat[];
+  /** 画面 OCR 原文，仅 owner 审批与音画证据裁决可见；公开 DTO/编剧注入不下发原句。 */
+  subtitleTrack?: Array<{ atSec: number; textZh: string }>;
 
   /**
    * 可复用手法：**脱离本剧剧情**写成的通用做法（0824 新增，原生视频精读独有）。
@@ -160,6 +224,8 @@ export type ManhuaViralTemplateCard = {
    * 这是**学习产出通向生产输入的那座桥**——学到的东西能不能直接投产，看这一栏。
    */
   genPromptHintZh?: string;
+  /** 声音层的剧情因果、对白表演与音乐/音效节奏；不保存来源台词原文。 */
+  audioStory?: ManhuaNativeAudioAnalysis;
   scenePoolHints: string[];
   castShape: {
     leadDesireZh: string;
@@ -213,9 +279,36 @@ export type ManhuaViralTemplateProvenance = {
     droppedCount: number;
     /** 是否触顶 128 被等距抽稀 */
     truncated: boolean;
+    /** 同一次多视频视觉请求的内部批次号；只用于对账，不暴露媒体地址。 */
+    batchRequestId?: string;
+    /** 该次视觉请求实际包含的剧集数。 */
+    batchEpisodeCount?: number;
     /** 走的是套餐额度还是按量付费 —— 对账要看这个 */
     usingPlanQuota?: boolean;
     costCny: number;
+  };
+  nativeAudioDeepRead?: {
+    model: string;
+    hasAudio: boolean;
+    alignmentMethod: string;
+    chunkCount: number;
+    beatCount: number;
+    costCny: number;
+  };
+  /** 原生逐集卡经 Fly 快照后，滚动聚合成系列卡；保留旧北京卡兼容读取。 */
+  nativeSeriesAggregation?: {
+    model: string;
+    route: "beijing_token_plan_text" | "openrouter_text";
+    sourceEpisodeCount: number;
+    firstEpisodeIndex: number;
+    lastEpisodeIndex: number;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd?: number;
+    priceEquivalentCny: number;
+    usingPlanQuota: boolean;
+    snapshotSha256: string;
+    aggregatedAt: string;
   };
   /** 关键帧 API 已同时产出底稿字段；这里证明系列卡由程序聚合且没有第二次模型调用。 */
   seriesAggregation?: {
@@ -256,7 +349,11 @@ export function describeManhuaTemplateLearnSourceZh(
     ].filter(Boolean);
     if (n.droppedCount > 0) parts.push(`丢弃${n.droppedCount}镜`);
     if (n.truncated) parts.push("触顶抽稀");
+    if ((n.batchEpisodeCount || 0) > 1) parts.push(`同批${n.batchEpisodeCount}集`);
     if (n.usingPlanQuota === false) parts.push("按量付费");
+    const a = provenance?.nativeAudioDeepRead;
+    if (a?.hasAudio) parts.push(`声音${a.beatCount}拍/${a.chunkCount}段`);
+    else if (a) parts.push("无音轨");
     return parts.join(" · ");
   }
   const f = provenance?.frameVision;
@@ -304,6 +401,7 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
         .slice(0, 128)
     : [];
   const cast = o.castShape || { leadDesireZh: "", pressureZh: "" };
+  const classification = parseManhuaTemplateClassification(o.classification);
   const revision = parseManhuaViralTemplateRevision(o.revision);
   // 只要声明了 revision 或使用修订 id，就必须完整通过修订契约，禁止降级成普通提案。
   if ((o.revision != null || /^tpl_revision_/i.test(id)) && !revision) return null;
@@ -311,11 +409,21 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
     id: id.slice(0, 64),
     nameZh: nameZh.slice(0, 32),
     laneZh,
+    classification,
+    storyStructure: parseManhuaTemplateStoryStructure(o.storyStructure),
     summaryZh: String(o.summaryZh || "").trim().slice(0, 120),
     hook3sZh: String(o.hook3sZh || "").trim().slice(0, 200),
     beatGrid,
+    subtitleTrack: (Array.isArray(o.subtitleTrack) ? o.subtitleTrack : [])
+      .map((row) => ({
+        atSec: Math.max(0, Number((row as { atSec?: unknown }).atSec) || 0),
+        textZh: String((row as { textZh?: unknown }).textZh || "").trim().slice(0, 160),
+      }))
+      .filter((row) => row.textZh)
+      .slice(0, 512),
     reusableZh: String(o.reusableZh || "").trim().slice(0, 600) || undefined,
     genPromptHintZh: String(o.genPromptHintZh || "").trim().slice(0, 600) || undefined,
+    audioStory: parseManhuaNativeAudioAnalysis(o.audioStory),
     scenePoolHints: (Array.isArray(o.scenePoolHints) ? o.scenePoolHints : [])
       .map((s) => String(s || "").trim())
       .filter(Boolean)
@@ -354,6 +462,53 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
     provenance: parseManhuaViralTemplateProvenance(o.provenance),
     revision,
   };
+}
+
+function parseManhuaTemplateClassification(
+  raw: unknown,
+): ManhuaViralTemplateClassification | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as Partial<ManhuaViralTemplateClassification>;
+  const tags = (value: unknown, max: number) => Array.from(new Set(
+    (Array.isArray(value) ? value : [])
+      .map((tag) => String(tag || "").trim().slice(0, 24))
+      .filter(Boolean),
+  )).slice(0, max);
+  const classification: ManhuaViralTemplateClassification = {
+    emotionTagsZh: tags(o.emotionTagsZh, 8),
+    narrativeFeatureTagsZh: tags(o.narrativeFeatureTagsZh, 8),
+    performanceTagsZh: tags(o.performanceTagsZh, 8),
+    audiovisualTagsZh: tags(o.audiovisualTagsZh, 8),
+    audienceExperienceTagsZh: tags(o.audienceExperienceTagsZh, 8),
+  };
+  return flattenManhuaTemplateClassification(classification).length ? classification : undefined;
+}
+
+function parseManhuaTemplateStoryStructure(
+  raw: unknown,
+): ManhuaViralTemplateStoryStructure | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as Partial<ManhuaViralTemplateStoryStructure>;
+  const text = (value: unknown, max: number) => String(value || "").trim().slice(0, max);
+  const list = (value: unknown, maxItems: number, maxChars: number) => Array.from(new Set(
+    (Array.isArray(value) ? value : [])
+      .map((row) => text(row, maxChars))
+      .filter(Boolean),
+  )).slice(0, maxItems);
+  const story: ManhuaViralTemplateStoryStructure = {
+    corePromiseZh: text(o.corePromiseZh, 240),
+    conflictEngineZh: text(o.conflictEngineZh, 320),
+    relationshipEngineZh: text(o.relationshipEngineZh, 320),
+    episodeProgressionZh: list(o.episodeProgressionZh, 16, 180),
+    variationRulesZh: list(o.variationRulesZh, 16, 180),
+  };
+  return story.corePromiseZh
+    && story.conflictEngineZh
+    && story.relationshipEngineZh
+    && story.episodeProgressionZh.length
+    && story.variationRulesZh.length
+    ? story
+    : undefined;
 }
 
 function parseManhuaViralTemplateRevision(
@@ -429,6 +584,7 @@ export type PublicManhuaViralTemplateCard = {
   /** 匿名展示名：`${laneZh}·爆款节奏 ${publicCode}` */
   nameZh: string;
   laneZh: ManhuaViralTemplateLane;
+  classificationTagsZh: string[];
   beatCount: number;
   densityLevel: "standard" | "dense";
   /** 前台文案（人工润色的零具名稿，服务端文案表供给） */
@@ -454,16 +610,23 @@ export function toPublicManhuaViralTemplateCard(
 ): PublicManhuaViralTemplateCard | null {
   const code = String(card.publicCode || "").trim();
   if (!/^[A-Z0-9]{4,16}$/.test(code)) return null;
+  const learnedClassificationTagsZh = flattenManhuaTemplateClassification(card.classification);
+  // 存量 approved 卡没有新 classification 字段时，公开面必须与私有分组采用同一
+  // 兼容口径；否则卡虽然能显示，却永远无法被编剧室推荐器命中。
+  const classificationTagsZh = learnedClassificationTagsZh.length
+    ? learnedClassificationTagsZh
+    : [String(card.laneZh || "未分类").trim() || "未分类"];
+  const primary = classificationTagsZh[0]!;
   return {
     publicId: makePublicTemplateId(code),
-    nameZh: makeAnonymousTemplateNameZh(card.laneZh, code),
+    nameZh: `${primary}·创作模板 ${code}`,
     laneZh: card.laneZh,
+    classificationTagsZh,
     beatCount: Array.isArray(card.beatGrid) ? card.beatGrid.length : 0,
     densityLevel: (card.densityHints?.minDialogueLines ?? 0) >= 10 ? "dense" : "standard",
     featureZh: String(copy?.featureZh || `${card.beatGrid.length} 拍连载节奏骨架`).slice(0, 120),
     introZh: String(
-      copy?.introZh ||
-        `按 ${card.beatGrid.length} 个节拍位组织开场与连载钩子，适合${card.laneZh}题材的快节奏叙事。`,
+      copy?.introZh || `按 ${card.beatGrid.length} 个证据节拍组织剧情，核心特征：${classificationTagsZh.slice(0, 5).join("、") || "待重新学习"}。`,
     ).slice(0, 200),
   };
 }
@@ -491,9 +654,52 @@ function parseManhuaViralTemplateProvenance(
       shotCount: Math.max(0, Math.floor(Number(n.shotCount) || 0)),
       droppedCount: Math.max(0, Math.floor(Number(n.droppedCount) || 0)),
       truncated: Boolean(n.truncated),
+      batchRequestId: /^[0-9a-f-]{16,64}$/i.test(String(n.batchRequestId || ""))
+        ? String(n.batchRequestId)
+        : undefined,
+      batchEpisodeCount: Number.isInteger(Number(n.batchEpisodeCount))
+        ? Math.max(1, Math.min(200, Number(n.batchEpisodeCount)))
+        : undefined,
       usingPlanQuota: typeof n.usingPlanQuota === "boolean" ? n.usingPlanQuota : undefined,
       costCny: Math.max(0, Number(n.costCny) || 0),
     };
+  }
+  if (o.nativeAudioDeepRead && typeof o.nativeAudioDeepRead === "object") {
+    const a = o.nativeAudioDeepRead;
+    out.nativeAudioDeepRead = {
+      model: String(a.model || "").slice(0, 60),
+      hasAudio: a.hasAudio === true,
+      alignmentMethod: String(a.alignmentMethod || "").slice(0, 60),
+      chunkCount: Math.max(0, Math.floor(Number(a.chunkCount) || 0)),
+      beatCount: Math.max(0, Math.floor(Number(a.beatCount) || 0)),
+      costCny: Math.max(0, Number(a.costCny) || 0),
+    };
+  }
+  if (o.nativeSeriesAggregation && typeof o.nativeSeriesAggregation === "object") {
+    const s = o.nativeSeriesAggregation;
+    const snapshotSha256 = String(s.snapshotSha256 || "").trim().toLowerCase();
+    const aggregatedAt = String(s.aggregatedAt || "").trim();
+    if (
+      (s.route === "beijing_token_plan_text" || s.route === "openrouter_text")
+      && typeof s.usingPlanQuota === "boolean"
+      && /^[a-f0-9]{64}$/.test(snapshotSha256)
+      && Number.isFinite(Date.parse(aggregatedAt))
+    ) {
+      out.nativeSeriesAggregation = {
+        model: String(s.model || "").slice(0, 60),
+        route: s.route,
+        sourceEpisodeCount: Math.max(0, Math.floor(Number(s.sourceEpisodeCount) || 0)),
+        firstEpisodeIndex: Math.max(0, Math.floor(Number(s.firstEpisodeIndex) || 0)),
+        lastEpisodeIndex: Math.max(0, Math.floor(Number(s.lastEpisodeIndex) || 0)),
+        inputTokens: Math.max(0, Math.floor(Number(s.inputTokens) || 0)),
+        outputTokens: Math.max(0, Math.floor(Number(s.outputTokens) || 0)),
+        costUsd: Number.isFinite(Number(s.costUsd)) ? Math.max(0, Number(s.costUsd)) : undefined,
+        priceEquivalentCny: Math.max(0, Number(s.priceEquivalentCny) || 0),
+        usingPlanQuota: s.usingPlanQuota,
+        snapshotSha256,
+        aggregatedAt,
+      };
+    }
   }
   if (o.proposalPolish && typeof o.proposalPolish === "object") {
     out.proposalPolish = {
@@ -558,25 +764,27 @@ export function listApprovedManhuaViralTemplates(
 export function listApprovedManhuaViralTemplatesGrouped(
   extras?: readonly ManhuaViralTemplateCard[] | null,
 ): Array<{
-  laneZh: ManhuaViralTemplateLane;
+  /** 保留字段名兼容现有 tRPC/UI；值已是模型多标签，不再是旧题材赛道。 */
+  laneZh: string;
   items: ManhuaViralTemplateCard[];
 }> {
   const approved = listApprovedManhuaViralTemplates(extras);
-  return MANHUA_VIRAL_TEMPLATE_LANE_ORDER.map((laneZh) => ({
-    laneZh,
-    items: approved.filter((t) => t.laneZh === laneZh),
-  })).filter((g) => g.items.length > 0);
+  const groups = new Map<string, ManhuaViralTemplateCard[]>();
+  for (const card of approved) {
+    const classificationTags = flattenManhuaTemplateClassification(card.classification);
+    const groupingTags = classificationTags.length
+      ? classificationTags
+      : [String(card.laneZh || "未分类").trim() || "未分类"];
+    for (const tag of groupingTags) {
+      const rows = groups.get(tag) || [];
+      rows.push(card);
+      groups.set(tag, rows);
+    }
+  }
+  return Array.from(groups.entries())
+    .sort(([a], [b]) => a.localeCompare(b, "zh-CN"))
+    .map(([laneZh, items]) => ({ laneZh, items }));
 }
-
-const MANHUA_VIRAL_TEMPLATE_LANE_TOPIC_RE: Record<ManhuaViralTemplateLane, RegExp> = {
-  爽文逆袭: /逆袭|复仇|重生|打脸|赘婿|归来|翻盘|爽文/,
-  古言种田: /古言|古代|种田|农家|宅斗|边关|王妃|侯府|将军/,
-  系统觉醒: /系统|觉醒|异能|金手指|穿越|修仙|玄幻/,
-  甜宠: /甜宠|恋爱|爱情|总裁|先婚|闪婚|夫人|追妻/,
-  悬疑权谋: /悬疑|权谋|宫斗|探案|谜案|朝堂|阴谋|推理/,
-  搞笑沙雕: /搞笑|沙雕|喜剧|无厘头|轻松|欢乐/,
-  游戏竞技: /游戏|电竞|竞技|玩家|副本|战队|赛事/,
-};
 
 /** 编剧室“推荐 Skill”：只在题材明确命中时推荐，不为凑数强塞模板。 */
 export function recommendApprovedManhuaViralTemplate(
@@ -585,13 +793,17 @@ export function recommendApprovedManhuaViralTemplate(
 ): ManhuaViralTemplateCard | null {
   const text = String(topic || "").trim();
   if (!text) return null;
-  const approved = cards.filter((card) => card.status === "approved");
-  for (const lane of MANHUA_VIRAL_TEMPLATE_LANE_ORDER) {
-    if (!MANHUA_VIRAL_TEMPLATE_LANE_TOPIC_RE[lane].test(text)) continue;
-    const hit = approved.find((card) => card.laneZh === lane);
-    if (hit) return hit;
-  }
-  return null;
+  return cards
+    .filter((card) => card.status === "approved")
+    .map((card) => ({
+      card,
+      score: (flattenManhuaTemplateClassification(card.classification).length
+        ? flattenManhuaTemplateClassification(card.classification)
+        : [String(card.laneZh || "").trim()].filter(Boolean))
+        .reduce((sum, tag) => sum + (text.includes(tag) ? 1 : 0), 0),
+    }))
+    .sort((a, b) => b.score - a.score)
+    .find((row) => row.score > 0)?.card || null;
 }
 
 /** 公开卡版推荐器：服务端只下发 approved，故无需 status 过滤；按赛道正则匹配题材 */
@@ -601,12 +813,13 @@ export function recommendPublicManhuaViralTemplate(
 ): PublicManhuaViralTemplateCard | null {
   const text = String(topic || "").trim();
   if (!text) return null;
-  for (const lane of MANHUA_VIRAL_TEMPLATE_LANE_ORDER) {
-    if (!MANHUA_VIRAL_TEMPLATE_LANE_TOPIC_RE[lane].test(text)) continue;
-    const hit = cards.find((card) => card.laneZh === lane);
-    if (hit) return hit;
-  }
-  return null;
+  return cards
+    .map((card) => ({
+      card,
+      score: card.classificationTagsZh.reduce((sum, tag) => sum + (text.includes(tag) ? 1 : 0), 0),
+    }))
+    .sort((a, b) => b.score - a.score)
+    .find((row) => row.score > 0)?.card || null;
 }
 
 /** 卡片里的骨架与密度都按长档 12 段填写，折算短档时以它为分母 */
@@ -674,10 +887,43 @@ export function formatManhuaViralTemplateWriterAddonFromCard(
     .map((b) => `- ${b.atSec}s｜${b.conflictZh}｜${b.visualZh}`)
     .join("\n");
   const d = fitManhuaViralDensityHintsToSegments(tpl.densityHints, segments);
+  const audioBeats = tpl.audioStory?.hasAudio
+    ? fitManhuaViralBeatGridToSegments(
+        tpl.audioStory.audioTrack.map((track) => ({
+          atSec: track.fromSec,
+          endSec: track.toSec,
+          conflictZh: track.emotionArcZh,
+          visualZh: [
+            track.toneZh,
+            track.sfxZh,
+            track.bgmZh,
+            track.atmosphereZh,
+            track.silenceZh,
+          ].filter(Boolean).join("；"),
+        })),
+        segments,
+      ).map((beat) => `- ${beat.atSec}s｜${beat.conflictZh}｜${beat.visualZh}`).join("\n")
+    : "";
   return [
     "【节奏模板·骨架建议】",
-    `模板：${tpl.nameZh}（${tpl.laneZh}）`,
+    `模板：${tpl.nameZh}`,
+    tpl.classification ? `多维特征：${flattenManhuaTemplateClassification(tpl.classification).join("、")}` : "",
     tpl.summaryZh ? `用途：${tpl.summaryZh}` : "",
+    tpl.storyStructure?.corePromiseZh
+      ? `核心故事承诺：${tpl.storyStructure.corePromiseZh}`
+      : "",
+    tpl.storyStructure?.conflictEngineZh
+      ? `持续冲突引擎：${tpl.storyStructure.conflictEngineZh}`
+      : "",
+    tpl.storyStructure?.relationshipEngineZh
+      ? `关系变化引擎：${tpl.storyStructure.relationshipEngineZh}`
+      : "",
+    tpl.storyStructure?.episodeProgressionZh.length
+      ? `跨集推进规律：${tpl.storyStructure.episodeProgressionZh.join("；")}`
+      : "",
+    tpl.storyStructure?.variationRulesZh.length
+      ? `避免重复规则：${tpl.storyStructure.variationRulesZh.join("；")}`
+      : "",
     `前3秒钩子：${tpl.hook3sZh}`,
     `人设槽：欲望=${tpl.castShape.leadDesireZh}；压迫=${tpl.castShape.pressureZh}${
       tpl.castShape.foilZh ? `；对照=${tpl.castShape.foilZh}` : ""
@@ -685,8 +931,12 @@ export function formatManhuaViralTemplateWriterAddonFromCard(
     tpl.scenePoolHints.length
       ? `场景池关键词（写入场景表，勿写外部剧名）：${tpl.scenePoolHints.join("、")}`
       : "",
+    tpl.audioStory?.audioBeatStructureZh ? `声音节奏规律：${tpl.audioStory.audioBeatStructureZh}` : "",
+    tpl.audioStory?.mixNotesZh ? `混音规律：${tpl.audioStory.mixNotesZh}` : "",
+    tpl.audioStory?.reusableAudioZh ? `可复用声音手法：${tpl.audioStory.reusableAudioZh}` : "",
     `密度建议（约${tier.targetSec}秒/集·${segments}段）：正文≥${d.minBodyChars}字；「」对白≥${d.minDialogueLines}句；场景表命中≥${d.minLocationHits}`,
     beats ? `节拍格：\n${beats}` : "",
+    audioBeats ? `声音节拍格（只借功能，不复刻原句）：\n${audioBeats}` : "",
     "硬规则：只借结构与节奏；禁止抄外部剧名/台词/商标；成稿只写可拍动作与关系。",
   ]
     .filter(Boolean)
@@ -699,12 +949,30 @@ export function formatManhuaViralTemplateWriterSkillFromCard(
 ): string {
   if (!tpl || tpl.status !== "approved") return "";
   return [
-    `分类：${tpl.laneZh}`,
+    tpl.classification ? `多维特征：${flattenManhuaTemplateClassification(tpl.classification).join("、")}` : "",
     `能力简介：${tpl.summaryZh}`,
+    tpl.storyStructure?.corePromiseZh
+      ? `核心故事承诺：${tpl.storyStructure.corePromiseZh}`
+      : "",
+    tpl.storyStructure?.conflictEngineZh
+      ? `持续冲突引擎：${tpl.storyStructure.conflictEngineZh}`
+      : "",
+    tpl.storyStructure?.relationshipEngineZh
+      ? `关系变化引擎：${tpl.storyStructure.relationshipEngineZh}`
+      : "",
+    tpl.storyStructure?.episodeProgressionZh.length
+      ? `跨集推进规律：${tpl.storyStructure.episodeProgressionZh.join("；")}`
+      : "",
+    tpl.storyStructure?.variationRulesZh.length
+      ? `避免重复规则：${tpl.storyStructure.variationRulesZh.join("；")}`
+      : "",
     // 原生精读独有的两栏：不带进来，学到的导演手法就永远进不了扩写模型，
     // 等于花钱学了一份只能看不能用的报告
     tpl.reusableZh ? `可复用导演手法：${tpl.reusableZh}` : "",
     tpl.genPromptHintZh ? `生成画面要素：${tpl.genPromptHintZh}` : "",
+    tpl.audioStory?.audioBeatStructureZh ? `声音节奏结构：${tpl.audioStory.audioBeatStructureZh}` : "",
+    tpl.audioStory?.mixNotesZh ? `混音结构：${tpl.audioStory.mixNotesZh}` : "",
+    tpl.audioStory?.reusableAudioZh ? `可复用声音手法：${tpl.audioStory.reusableAudioZh}` : "",
     "请结合当前题材自由发挥，不照搬来源剧情，不强制复刻固定节拍。",
   ]
     .filter(Boolean)

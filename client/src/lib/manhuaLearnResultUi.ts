@@ -23,6 +23,27 @@ export const LS_MANHUA_LEARN_RESULT = "mvs-manhua-learn-result-v1";
 const LS_MANHUA_LEARN_BASKET_PREFIX = "mvs-manhua-learn-basket-v1";
 const LS_MANHUA_LEARN_MISSING_DISMISSED = "mvs-manhua-learn-missing-dismissed-v1";
 
+function manhuaLearnUserStorageKey(baseKey: string, userKey: string): string {
+  const scope = String(userKey || "").trim();
+  return scope ? `${baseKey}:${encodeURIComponent(scope)}` : "";
+}
+
+/** 旧版无用户作用域缓存不得再被任一登录账号接管；服务端任务表负责真实恢复。 */
+export function clearLegacyManhuaLearnStorage(): void {
+  try {
+    for (const key of [
+      LS_MANHUA_LEARN_SERIES_KEY,
+      LS_MANHUA_LEARN_ACTIVE_JOB,
+      LS_MANHUA_LEARN_RESULT,
+      LS_MANHUA_LEARN_MISSING_DISMISSED,
+    ]) {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 export type ManhuaLearnActiveJobRecord = {
   jobId: string;
   busyKey: string;
@@ -72,6 +93,16 @@ export type ManhuaLearnResultUi = {
     priceEquivalentCny: number;
     elapsedMs: number;
     receiptComplete: boolean;
+    visualInputTokens?: number;
+    visualOutputTokens?: number;
+    visualPriceEquivalentCny?: number;
+    audioInputTokens?: number;
+    audioOutputTokens?: number;
+    audioCostCny?: number;
+    seriesAggregationInputTokens?: number;
+    seriesAggregationOutputTokens?: number;
+    seriesAggregationReasoningTokens?: number;
+    seriesAggregationPriceEquivalentCny?: number;
   };
   /** 云端学习失败时填写；有值则面板以错误态展示 */
   errorZh?: string;
@@ -129,6 +160,22 @@ function parseManhuaNativeUsage(raw: unknown): ManhuaLearnResultUi["nativeUsage"
     priceEquivalentCny: Math.max(0, Number(row.priceEquivalentCny) || 0),
     elapsedMs: Math.max(0, Number(row.elapsedMs) || 0),
     receiptComplete: row.receiptComplete === true,
+    visualInputTokens: Math.max(0, Number(row.visualInputTokens) || 0),
+    visualOutputTokens: Math.max(0, Number(row.visualOutputTokens) || 0),
+    visualPriceEquivalentCny: Math.max(0, Number(row.visualPriceEquivalentCny) || 0),
+    audioInputTokens: Math.max(0, Number(row.audioInputTokens) || 0),
+    audioOutputTokens: Math.max(0, Number(row.audioOutputTokens) || 0),
+    audioCostCny: Math.max(0, Number(row.audioCostCny) || 0),
+    seriesAggregationInputTokens: Math.max(0, Number(row.seriesAggregationInputTokens) || 0),
+    seriesAggregationOutputTokens: Math.max(0, Number(row.seriesAggregationOutputTokens) || 0),
+    seriesAggregationReasoningTokens: Math.max(
+      0,
+      Number(row.seriesAggregationReasoningTokens) || 0,
+    ),
+    seriesAggregationPriceEquivalentCny: Math.max(
+      0,
+      Number(row.seriesAggregationPriceEquivalentCny) || 0,
+    ),
   };
 }
 
@@ -361,6 +408,72 @@ export function manhuaLearnResultFromFailure(input: {
   };
 }
 
+export type ManhuaLearnReloadDecision = {
+  tab: "overview" | "ai_manhua";
+  focusSeriesKey: string;
+  result: ManhuaLearnResultUi | null;
+  restoreContinuation: boolean;
+  clearFailedAutoResume: boolean;
+};
+
+/**
+ * 刷新只自动接回仍在执行或可继续的学习状态。
+ * 失败详情保留在当前会话与服务端任务记录中，但终态失败不能反复劫持刷新后的页面。
+ */
+export function resolveManhuaLearnReloadDecision(input: {
+  focusSeriesKey: string;
+  activeJob: ManhuaLearnActiveJobRecord | null;
+  result: ManhuaLearnResultUi | null;
+}): ManhuaLearnReloadDecision {
+  const focusSeriesKey = String(input.focusSeriesKey || "").trim();
+  const terminalFailure = Boolean(
+    !input.activeJob
+    && input.result
+    && (input.result.liveStatus === "failed" || String(input.result.errorZh || "").trim()),
+  );
+  if (terminalFailure) {
+    return {
+      tab: "overview",
+      focusSeriesKey: "",
+      result: null,
+      restoreContinuation: false,
+      clearFailedAutoResume: true,
+    };
+  }
+  return {
+    tab: focusSeriesKey || input.activeJob || input.result ? "ai_manhua" : "overview",
+    focusSeriesKey,
+    result: input.result,
+    restoreContinuation: true,
+    clearFailedAutoResume: false,
+  };
+}
+
+/**
+ * 普通业务账号只显示产品阶段，不透出供应商、模型、token、价格或内部回执文案。
+ * 技术详情由页面权限门单独展示。
+ */
+export function getManhuaLearnSafeProgressLabelZh(
+  result: ManhuaLearnResultUi,
+): string {
+  if (result.liveStatus === "failed" || result.errorZh) {
+    return "本轮学习未完成，已保留成功进度，可稍后重试";
+  }
+  if (result.liveStatus === "queued") return "等待云端任务开始";
+  if (result.liveStatus === "succeeded") return "本批学习已完成";
+  if (result.liveStatus === "local") return "本机接力准备中";
+  if (result.liveStatus !== "running") return "学习进度已保存";
+
+  const phase = String(result.livePhase || "").toLowerCase();
+  if (/queue|list|source|download|media/.test(phase)) return "正在读取待学习剧集";
+  if (/audio|sound|voice/.test(phase)) return "正在分析声音节奏";
+  if (/vision|visual|frame|video/.test(phase)) return "正在分析画面节奏";
+  if (/aggregate|series|synth|proposal|persist|save/.test(phase)) {
+    return "正在汇总并保存学习结果";
+  }
+  return "正在处理本批剧集";
+}
+
 /** 本机回退：把「开始→复制命令→请终端执行」写进同一面板 */
 export function manhuaLearnResultFromLocalFallback(input: {
   reasonZh: string;
@@ -397,19 +510,23 @@ export function manhuaLearnResultFromLocalFallback(input: {
   };
 }
 
-export function readManhuaLearnFocusSeriesKey(): string {
+export function readManhuaLearnFocusSeriesKey(userKey: string): string {
+  const storageKey = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_SERIES_KEY, userKey);
+  if (!storageKey) return "";
   try {
-    return String(localStorage.getItem(LS_MANHUA_LEARN_SERIES_KEY) || "").trim();
+    return String(localStorage.getItem(storageKey) || "").trim();
   } catch {
     return "";
   }
 }
 
-export function writeManhuaLearnFocusSeriesKey(seriesKey: string): void {
+export function writeManhuaLearnFocusSeriesKey(userKey: string, seriesKey: string): void {
+  const storageKey = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_SERIES_KEY, userKey);
+  if (!storageKey) return;
   const key = String(seriesKey || "").trim();
   try {
-    if (key) localStorage.setItem(LS_MANHUA_LEARN_SERIES_KEY, key);
-    else localStorage.removeItem(LS_MANHUA_LEARN_SERIES_KEY);
+    if (key) localStorage.setItem(storageKey, key);
+    else localStorage.removeItem(storageKey);
   } catch {
     /* ignore */
   }
@@ -419,9 +536,11 @@ export function writeManhuaLearnFocusSeriesKey(seriesKey: string): void {
  * 后台学习任务接力记录。刷新只接管同一个 job，绝不重新入队；
  * 同时兼容链接学习与素材分析上传的 gs:// 输入。
  */
-export function readManhuaLearnActiveJob(): ManhuaLearnActiveJobRecord | null {
+export function readManhuaLearnActiveJob(userKey: string): ManhuaLearnActiveJobRecord | null {
+  const storageKey = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_ACTIVE_JOB, userKey);
+  if (!storageKey) return null;
   try {
-    const raw = localStorage.getItem(LS_MANHUA_LEARN_ACTIVE_JOB);
+    const raw = localStorage.getItem(storageKey);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<ManhuaLearnActiveJobRecord>;
     const continuation = parsed.continuation;
@@ -432,7 +551,7 @@ export function readManhuaLearnActiveJob(): ManhuaLearnActiveJobRecord | null {
     const savedAt = Number(parsed.savedAt);
     const validSource = /^https?:\/\//i.test(url) || /^gs:\/\//i.test(gcsUri);
     if (!jobId || !validSource || !Number.isFinite(savedAt)) {
-      localStorage.removeItem(LS_MANHUA_LEARN_ACTIVE_JOB);
+      localStorage.removeItem(storageKey);
       return null;
     }
     const learnLlm =
@@ -464,23 +583,30 @@ export function readManhuaLearnActiveJob(): ManhuaLearnActiveJobRecord | null {
   }
 }
 
-export function writeManhuaLearnActiveJob(value: ManhuaLearnActiveJobRecord | null): void {
+export function writeManhuaLearnActiveJob(
+  userKey: string,
+  value: ManhuaLearnActiveJobRecord | null,
+): void {
+  const storageKey = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_ACTIVE_JOB, userKey);
+  if (!storageKey) return;
   try {
-    if (value) localStorage.setItem(LS_MANHUA_LEARN_ACTIVE_JOB, JSON.stringify(value));
-    else localStorage.removeItem(LS_MANHUA_LEARN_ACTIVE_JOB);
+    if (value) localStorage.setItem(storageKey, JSON.stringify(value));
+    else localStorage.removeItem(storageKey);
   } catch {
     // localStorage 禁用时仍保留当前会话状态；不阻断服务端任务。
   }
 }
 
 /** 页面刷新后保留已解析总数、累计已学与待学习数；用户明确清空时才删除。 */
-export function readManhuaLearnResult(): ManhuaLearnResultUi | null {
+export function readManhuaLearnResult(userKey: string): ManhuaLearnResultUi | null {
+  const storageKey = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_RESULT, userKey);
+  if (!storageKey) return null;
   try {
-    const raw = localStorage.getItem(LS_MANHUA_LEARN_RESULT);
+    const raw = localStorage.getItem(storageKey);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<ManhuaLearnResultUi>;
     if (!String(parsed.seriesKey || "").trim()) {
-      localStorage.removeItem(LS_MANHUA_LEARN_RESULT);
+      localStorage.removeItem(storageKey);
       return null;
     }
     return {
@@ -501,18 +627,22 @@ export function readManhuaLearnResult(): ManhuaLearnResultUi | null {
   }
 }
 
-export function writeManhuaLearnResult(value: ManhuaLearnResultUi | null): void {
+export function writeManhuaLearnResult(userKey: string, value: ManhuaLearnResultUi | null): void {
+  const storageKey = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_RESULT, userKey);
+  if (!storageKey) return;
   try {
-    if (value) localStorage.setItem(LS_MANHUA_LEARN_RESULT, JSON.stringify(value));
-    else localStorage.removeItem(LS_MANHUA_LEARN_RESULT);
+    if (value) localStorage.setItem(storageKey, JSON.stringify(value));
+    else localStorage.removeItem(storageKey);
   } catch {
     // 存储空间不足时不影响当前学习任务与 GCS 检查点。
   }
 }
 
-export function readManhuaLearnMissingDismissedKeys(): string[] {
+export function readManhuaLearnMissingDismissedKeys(userKey: string): string[] {
+  const storageKey = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_MISSING_DISMISSED, userKey);
+  if (!storageKey) return [];
   try {
-    const parsed = JSON.parse(localStorage.getItem(LS_MANHUA_LEARN_MISSING_DISMISSED) || "[]");
+    const parsed = JSON.parse(localStorage.getItem(storageKey) || "[]");
     return Array.isArray(parsed)
       ? parsed.map((key) => String(key || "").trim()).filter(Boolean).slice(-100)
       : [];
@@ -521,25 +651,31 @@ export function readManhuaLearnMissingDismissedKeys(): string[] {
   }
 }
 
-export function writeManhuaLearnMissingDismissedKeys(keys: readonly string[]): void {
+export function writeManhuaLearnMissingDismissedKeys(
+  userKey: string,
+  keys: readonly string[],
+): void {
+  const storageKey = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_MISSING_DISMISSED, userKey);
+  if (!storageKey) return;
   try {
     const normalized = Array.from(new Set(keys.map((key) => String(key || "").trim()).filter(Boolean))).slice(-100);
-    if (normalized.length) localStorage.setItem(LS_MANHUA_LEARN_MISSING_DISMISSED, JSON.stringify(normalized));
-    else localStorage.removeItem(LS_MANHUA_LEARN_MISSING_DISMISSED);
+    if (normalized.length) localStorage.setItem(storageKey, JSON.stringify(normalized));
+    else localStorage.removeItem(storageKey);
   } catch {
     /* ignore */
   }
 }
 
 function manhuaLearnBasketStorageKey(userKey: string): string {
-  const safe = String(userKey || "").trim().replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
-  return `${LS_MANHUA_LEARN_BASKET_PREFIX}:${safe || "anonymous"}`;
+  return manhuaLearnUserStorageKey(LS_MANHUA_LEARN_BASKET_PREFIX, userKey);
 }
 
 /** 当前登录用户自己的剧集篮子；只保存待学习项，完成后自动消失。 */
 export function readManhuaLearnBasket(userKey: string): ManhuaLearnBasketItem[] {
+  const storageKey = manhuaLearnBasketStorageKey(userKey);
+  if (!storageKey) return [];
   try {
-    const raw = localStorage.getItem(manhuaLearnBasketStorageKey(userKey));
+    const raw = localStorage.getItem(storageKey);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -566,6 +702,8 @@ export function readManhuaLearnBasket(userKey: string): ManhuaLearnBasketItem[] 
 }
 
 export function writeManhuaLearnBasket(userKey: string, items: ManhuaLearnBasketItem[]): void {
+  const storageKey = manhuaLearnBasketStorageKey(userKey);
+  if (!storageKey) return;
   try {
     const pending = (items || [])
       .filter(
@@ -578,9 +716,9 @@ export function writeManhuaLearnBasket(userKey: string, items: ManhuaLearnBasket
       )
       .slice(0, 30);
     if (pending.length) {
-      localStorage.setItem(manhuaLearnBasketStorageKey(userKey), JSON.stringify(pending));
+      localStorage.setItem(storageKey, JSON.stringify(pending));
     } else {
-      localStorage.removeItem(manhuaLearnBasketStorageKey(userKey));
+      localStorage.removeItem(storageKey);
     }
   } catch {
     // 篮子写入失败不阻断真实后台任务与 GCS 检查点。
@@ -596,6 +734,20 @@ function sameManhuaLearnBasketItem(
     return JSON.stringify(left) === JSON.stringify(right);
   } catch {
     return false;
+  }
+}
+
+/** 内容没有变化时复用旧结果对象，避免轮询/快照仅因对象换引用重绘面板。 */
+export function reuseManhuaLearnResultIfUnchanged(
+  current: ManhuaLearnResultUi | null,
+  incoming: ManhuaLearnResultUi | null,
+): ManhuaLearnResultUi | null {
+  if (current === incoming) return current;
+  if (!current || !incoming) return incoming;
+  try {
+    return JSON.stringify(current) === JSON.stringify(incoming) ? current : incoming;
+  } catch {
+    return incoming;
   }
 }
 

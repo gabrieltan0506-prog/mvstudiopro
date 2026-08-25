@@ -48,6 +48,15 @@ describe("manhuaLearnYtdlp", () => {
     );
   });
 
+  it("真实搜索页 modal_id 在前置解析层转成单集页，不把搜索页直接交给 yt-dlp", () => {
+    const source =
+      "https://www.douyin.com/search/%E4%B8%87%E5%A6%96%E5%9B%BE%E5%BD%95%E7%AC%AC%E4%BA%8C%E5%AD%A3%E5%85%A8%E9%9B%86?modal_id=7633315305602780435&type=general";
+    expect(isDouyinSingleVideoUrl(source)).toBe(true);
+    expect(normalizeDouyinVideoUrl(source)).toBe(
+      "https://www.douyin.com/video/7633315305602780435",
+    );
+  });
+
   it("builds netscape cookies from header", () => {
     const body = buildNetscapeCookiesFromHeader("sessionid=abc; ttwid=xyz");
     expect(body).toContain("sessionid\tabc");

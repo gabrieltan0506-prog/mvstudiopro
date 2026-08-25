@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  clearLegacyManhuaLearnStorage,
   demoteStaleRunningManhuaLearnItems,
+  getManhuaLearnSafeProgressLabelZh,
   getManhuaLearnContinueControl,
   isManhuaLearnEmptyBatchFailure,
   manhuaLearnResultFromJobOutput,
@@ -11,14 +13,18 @@ import {
   nativeLearnTerminalProposalRefreshSignature,
   readManhuaLearnActiveJob,
   readManhuaLearnBasket,
+  readManhuaLearnFocusSeriesKey,
   readManhuaLearnResult,
   readManhuaLearnMissingDismissedKeys,
   removeManhuaLearnBasketItem,
   resolveManhuaLearnBasketFocusKey,
+  resolveManhuaLearnReloadDecision,
+  reuseManhuaLearnResultIfUnchanged,
   reuseManhuaLearnServerJobsIfUnchanged,
   upsertManhuaLearnBasketItem,
   writeManhuaLearnActiveJob,
   writeManhuaLearnBasket,
+  writeManhuaLearnFocusSeriesKey,
   writeManhuaLearnResult,
   writeManhuaLearnMissingDismissedKeys,
 } from "./manhuaLearnResultUi";
@@ -40,6 +46,73 @@ afterEach(() => {
 });
 
 describe("manhuaLearnResultUi soft-fail", () => {
+  it("刷新后不再自动打开上一轮失败页", () => {
+    const failed = {
+      ...manhuaLearnResultFromStart({ channel: "cloud", seriesKey: "failed-series" }),
+      liveStatus: "failed" as const,
+      errorZh: "媒体读取未完成",
+    };
+    expect(resolveManhuaLearnReloadDecision({
+      focusSeriesKey: "failed-series",
+      activeJob: null,
+      result: failed,
+    })).toEqual({
+      tab: "overview",
+      focusSeriesKey: "",
+      result: null,
+      restoreContinuation: false,
+      clearFailedAutoResume: true,
+    });
+  });
+
+  it("刷新后仍接回执行中的同一任务，不重新入队", () => {
+    const running = manhuaLearnResultFromStart({
+      channel: "cloud",
+      seriesKey: "running-series",
+    });
+    const activeJob = {
+      jobId: "job-running",
+      busyKey: "running-series",
+      continuation: {
+        row: { url: "https://www.douyin.com/collection/running" },
+        rank: 0,
+        seriesKey: "running-series",
+        savedAt: 1,
+      },
+      savedAt: 1,
+    };
+    expect(resolveManhuaLearnReloadDecision({
+      focusSeriesKey: "running-series",
+      activeJob,
+      result: running,
+    })).toMatchObject({
+      tab: "ai_manhua",
+      focusSeriesKey: "running-series",
+      result: running,
+      restoreContinuation: true,
+      clearFailedAutoResume: false,
+    });
+  });
+
+  it("成功后仍保留待续学习页", () => {
+    const succeeded = {
+      ...manhuaLearnResultFromStart({ channel: "cloud", seriesKey: "next-series" }),
+      liveStatus: "succeeded" as const,
+      pendingCount: 62,
+    };
+    expect(resolveManhuaLearnReloadDecision({
+      focusSeriesKey: "next-series",
+      activeJob: null,
+      result: succeeded,
+    })).toMatchObject({
+      tab: "ai_manhua",
+      focusSeriesKey: "next-series",
+      result: succeeded,
+      restoreContinuation: true,
+      clearFailedAutoResume: false,
+    });
+  });
+
   it("轮询快照完全相同时复用原数组，避免无变化 GET 重绘下拉选单", () => {
     const current = [
       {
@@ -71,6 +144,32 @@ describe("manhuaLearnResultUi soft-fail", () => {
       },
     ];
     expect(reuseManhuaLearnServerJobsIfUnchanged(current, incoming)).toBe(incoming);
+  });
+
+  it("快照内容相同但对象换引用时复用当前结果，避免面板轮询闪烁", () => {
+    const current = {
+      ...manhuaLearnResultFromStart({ channel: "cloud", seriesKey: "stable-series" }),
+      liveStatus: "running" as const,
+      livePhase: "vision",
+    };
+    const cloned = JSON.parse(JSON.stringify(current));
+    expect(reuseManhuaLearnResultIfUnchanged(current, cloned)).toBe(current);
+    expect(reuseManhuaLearnResultIfUnchanged(current, {
+      ...cloned,
+      learnedCount: 1,
+    })).not.toBe(current);
+  });
+
+  it("普通业务进度不会复述模型、token、价格或内部回执", () => {
+    const running = {
+      ...manhuaLearnResultFromStart({ channel: "cloud", seriesKey: "safe-series" }),
+      liveStatus: "running" as const,
+      livePhase: "audio_analysis",
+      liveLabelZh: "调用 qwen3.8-max · 1200 tokens · ¥1.25 · 回执不完整",
+    };
+    const label = getManhuaLearnSafeProgressLabelZh(running);
+    expect(label).toBe("正在分析声音节奏");
+    expect(label).not.toMatch(/qwen|token|¥|回执/i);
   });
 
   it("刷新后按原生待审卡恢复模式与数量，不显示旧系列分析话术", () => {
@@ -143,6 +242,12 @@ describe("manhuaLearnResultUi soft-fail", () => {
         priceEquivalentCny: 1.25,
         elapsedMs: 9000,
         receiptComplete: true,
+        visualInputTokens: 800,
+        visualOutputTokens: 200,
+        visualPriceEquivalentCny: 0.75,
+        audioInputTokens: 400,
+        audioOutputTokens: 100,
+        audioCostCny: 0.5,
       },
     });
     expect(ui.pipelineMode).toBe("native_deep_read");
@@ -150,6 +255,10 @@ describe("manhuaLearnResultUi soft-fail", () => {
       billingMode: "plan_quota",
       priceEquivalentCny: 1.25,
       receiptComplete: true,
+      visualInputTokens: 800,
+      visualPriceEquivalentCny: 0.75,
+      audioInputTokens: 400,
+      audioCostCny: 0.5,
     });
   });
 
@@ -259,7 +368,7 @@ describe("manhuaLearnResultUi soft-fail", () => {
 
   it("persists a cloud job so refresh can reattach without re-enqueueing", () => {
     installMemoryLocalStorage();
-    writeManhuaLearnActiveJob({
+    writeManhuaLearnActiveJob("user_7", {
       jobId: "job_episode_10",
       busyKey: "mix_90",
       continuation: {
@@ -275,7 +384,7 @@ describe("manhuaLearnResultUi soft-fail", () => {
       },
       savedAt: 456,
     });
-    expect(readManhuaLearnActiveJob()).toMatchObject({
+    expect(readManhuaLearnActiveJob("user_7")).toMatchObject({
       jobId: "job_episode_10",
       continuation: {
         seriesKey: "douyin_kimi_abc123",
@@ -286,7 +395,7 @@ describe("manhuaLearnResultUi soft-fail", () => {
 
   it("also restores an uploaded GCS learning job", () => {
     installMemoryLocalStorage();
-    writeManhuaLearnActiveJob({
+    writeManhuaLearnActiveJob("user_7", {
       jobId: "job_upload",
       busyKey: "gs://bucket/uploads/u7/long.mp4",
       continuation: {
@@ -301,7 +410,7 @@ describe("manhuaLearnResultUi soft-fail", () => {
       },
       savedAt: 101,
     });
-    expect(readManhuaLearnActiveJob()).toMatchObject({
+    expect(readManhuaLearnActiveJob("user_7")).toMatchObject({
       jobId: "job_upload",
       continuation: {
         row: {
@@ -323,13 +432,59 @@ describe("manhuaLearnResultUi soft-fail", () => {
       digestsPreview: [],
       learnChannel: "cloud",
     });
-    writeManhuaLearnResult(result);
-    expect(readManhuaLearnResult()).toMatchObject({
+    writeManhuaLearnResult("user_7", result);
+    expect(readManhuaLearnResult("user_7")).toMatchObject({
       seriesKey: "douyin_kimi_abc123",
       learnedCount: 9,
       listedEpisodeCount: 99,
       pendingCount: 90,
     });
+  });
+
+  it("学习任务缓存按当前用户隔离，另一账号不能恢复结果、焦点或活动任务", () => {
+    installMemoryLocalStorage();
+    const result = manhuaLearnResultFromStart({
+      channel: "cloud",
+      seriesKey: "private-series-a",
+    });
+    writeManhuaLearnResult("user/a", result);
+    writeManhuaLearnFocusSeriesKey("user/a", result.seriesKey);
+    writeManhuaLearnActiveJob("user/a", {
+      jobId: "job-private-a",
+      busyKey: "private-series-a",
+      continuation: {
+        row: { url: "https://www.douyin.com/collection/private-a" },
+        rank: 0,
+        seriesKey: result.seriesKey,
+        savedAt: 1,
+      },
+      savedAt: 1,
+    });
+
+    expect(readManhuaLearnResult("user/b")).toBeNull();
+    expect(readManhuaLearnFocusSeriesKey("user/b")).toBe("");
+    expect(readManhuaLearnActiveJob("user/b")).toBeNull();
+    expect(readManhuaLearnResult("user/a")?.seriesKey).toBe("private-series-a");
+    expect(readManhuaLearnFocusSeriesKey("user/a")).toBe("private-series-a");
+    expect(readManhuaLearnActiveJob("user/a")?.jobId).toBe("job-private-a");
+  });
+
+  it("清除无法证明归属的旧全局缓存时保留用户作用域结果", () => {
+    installMemoryLocalStorage();
+    const result = manhuaLearnResultFromStart({
+      channel: "cloud",
+      seriesKey: "scoped-series",
+    });
+    writeManhuaLearnResult("current-user", result);
+    localStorage.setItem("mvs-manhua-learn-result-v1", JSON.stringify({
+      ...result,
+      seriesKey: "legacy-other-user",
+    }));
+
+    clearLegacyManhuaLearnStorage();
+
+    expect(localStorage.getItem("mvs-manhua-learn-result-v1")).toBeNull();
+    expect(readManhuaLearnResult("current-user")?.seriesKey).toBe("scoped-series");
   });
 
   it("付费缺集不算普通待学，并可持久删除缺集提示", () => {
@@ -347,8 +502,8 @@ describe("manhuaLearnResultUi soft-fail", () => {
     expect(result.pendingCount).toBe(0);
     expect(result.missingEpisodeCount).toBe(59);
     expect(result.paywallStartEpisodeIndex).toBe(14);
-    writeManhuaLearnMissingDismissedKeys(["paid_series"]);
-    expect(readManhuaLearnMissingDismissedKeys()).toEqual(["paid_series"]);
+    writeManhuaLearnMissingDismissedKeys("user_7", ["paid_series"]);
+    expect(readManhuaLearnMissingDismissedKeys("user_7")).toEqual(["paid_series"]);
   });
 
   it("keeps multiple dramas separate and removes a completed drama", () => {

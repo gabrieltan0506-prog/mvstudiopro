@@ -41,11 +41,12 @@ function deps(overrides: Partial<NativeDeepReadPlanDeps> = {}): NativeDeepReadPl
 }
 
 describe("原生精读计划", () => {
-  it("分段与生产同用 floor，且均分避免极短尾段", () => {
-    expect(splitNativeDeepReadSegments(1000.9)).toEqual([{ startSec: 0, endSec: 1000 }]);
+  it("分段按六分钟连续覆盖，短集保持整集", () => {
+    expect(splitNativeDeepReadSegments(90.9)).toEqual([{ startSec: 0, endSec: 91 }]);
     expect(splitNativeDeepReadSegments(1001.9)).toEqual([
-      { startSec: 0, endSec: 501 },
-      { startSec: 501, endSec: 1001 },
+      { startSec: 0, endSec: 360 },
+      { startSec: 360, endSec: 720 },
+      { startSec: 720, endSec: 1002 },
     ]);
   });
 
@@ -72,7 +73,9 @@ describe("原生精读计划", () => {
     expect(plan.seriesKey).toBe("series_real");
     expect(plan.episodes.map((row) => row.episodeIndex)).toEqual([3]);
     expect(plan.alreadyIngestedEpisodeIndexes).toEqual([1, 2]);
-    expect(plan.totalSegments).toBe(2);
+    expect(plan.totalSegments).toBe(3);
+    expect(plan.totalVisualCalls).toBe(1);
+    expect(plan.totalModelCalls).toBe(4);
     expect(plan.executableEpisodeCount).toBe(1);
     expect(d.probeDurationSec).toHaveBeenCalledTimes(1);
   });
@@ -193,21 +196,81 @@ describe("原生精读计划", () => {
     )).rejects.toThrow("计划生成已停止");
   });
 
-  it("占位集不进入执行清单，并作为阻断信号返回", async () => {
+  it("占位集保持隔离且不挤占本轮新增集数", async () => {
     const d = deps({
       listClaimedEpisodes: vi.fn(async () => new Set([1])),
+      listMixEpisodes: vi.fn(async () => ({
+        episodes: [episode(1), episode(2), episode(3), episode(4)],
+        complete: true,
+      })),
     });
     const plan = await buildNativeDeepReadPlanPreview(
       { url: "https://www.douyin.com/collection/123456", limit: 2 },
       d,
     );
     expect(plan.pendingClaimEpisodeIndexes).toEqual([1]);
-    expect(plan.episodes.map((row) => row.episodeIndex)).toEqual([2]);
+    expect(plan.episodes.map((row) => row.episodeIndex)).toEqual([2, 3]);
     expect(() => assertNativeDeepReadPlanConfirmation({
       planHash: plan.planHash,
-      maxCalls: plan.totalSegments,
+      maxCalls: plan.totalModelCalls,
       seriesKey: plan.seriesKey,
-    }, plan)).toThrow("待核对占位");
+    }, plan)).not.toThrow();
+    expect(d.probeDurationSec).toHaveBeenCalledTimes(2);
+  });
+
+  it("前两集为残留占位时，面板要求十集会选取第3至12集", async () => {
+    const d = deps({
+      listClaimedEpisodes: vi.fn(async () => new Set([1, 2])),
+      listMixEpisodes: vi.fn(async () => ({
+        episodes: Array.from({ length: 12 }, (_, index) => episode(index + 1)),
+        complete: true,
+      })),
+    });
+    const plan = await buildNativeDeepReadPlanPreview(
+      { url: "https://www.douyin.com/collection/123456", limit: 10 },
+      d,
+    );
+    expect(plan.pendingClaimEpisodeIndexes).toEqual([1, 2]);
+    expect(plan.episodes.map((row) => row.episodeIndex)).toEqual([
+      3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+    ]);
+    expect(plan.executableEpisodeCount).toBe(10);
+    expect(plan.totalSegments).toBe(10);
+    expect(d.probeDurationSec).toHaveBeenCalledTimes(10);
+  });
+
+  it("确认门只拒绝执行清单与占位重叠，不因清单外隔离项拒绝整批", () => {
+    const base: NativeDeepReadPlanPreview = {
+      planHash: "1234567890abcdef",
+      seriesKey: "s1",
+      episodes: [{
+        episodeIndex: 3,
+        sourceUrl: "https://www.douyin.com/video/10003",
+        durationSec: 100,
+        segments: [{ startSec: 0, endSec: 100 }],
+      }],
+      totalSegments: 1,
+      totalVisualCalls: 1,
+      totalAudioChunks: 1,
+      totalModelCalls: 4,
+      totalDurationSec: 100,
+      freeEpisodeCount: 3,
+      unknownAccessEpisodeIndexes: [],
+      alreadyIngestedEpisodeIndexes: [],
+      pendingClaimEpisodeIndexes: [1, 2],
+      executableEpisodeCount: 1,
+      executionEnabled: true,
+    };
+    const confirmation = {
+      planHash: base.planHash,
+      maxCalls: base.totalModelCalls,
+      seriesKey: base.seriesKey,
+    };
+    expect(() => assertNativeDeepReadPlanConfirmation(confirmation, base)).not.toThrow();
+    expect(() => assertNativeDeepReadPlanConfirmation(confirmation, {
+      ...base,
+      episodes: [{ ...base.episodes[0]!, episodeIndex: 2 }],
+    })).toThrow("执行清单与第2集待核对占位重叠");
   });
 
   it("合集未拉全时关闭式拒绝", async () => {
@@ -268,6 +331,9 @@ describe("原生精读计划", () => {
         segments: [{ startSec: 0, endSec: 100 }],
       }],
       totalSegments: 1,
+      totalVisualCalls: 1,
+      totalAudioChunks: 1,
+      totalModelCalls: 4,
       totalDurationSec: 100,
       freeEpisodeCount: 1,
       unknownAccessEpisodeIndexes: [],
@@ -278,25 +344,30 @@ describe("原生精读计划", () => {
     };
     expect(() => assertNativeDeepReadPlanConfirmation({
       planHash: base.planHash,
-      maxCalls: 1,
+      maxCalls: 4,
       seriesKey: "s1",
     }, base)).not.toThrow();
     expect(() => assertNativeDeepReadPlanConfirmation({
       planHash: "ffffffffffffffff",
-      maxCalls: 1,
+      maxCalls: 4,
       seriesKey: "s1",
     }, base)).toThrow("计划已变化");
     expect(() => assertNativeDeepReadPlanConfirmation({
       planHash: base.planHash,
-      maxCalls: 1,
+      maxCalls: 4,
       seriesKey: "s1",
     }, { ...base, executionEnabled: false })).toThrow("能力未开启");
     expect(() => assertNativeDeepReadPlanConfirmation({
       planHash: base.planHash,
-      maxCalls: 41,
+      maxCalls: 201,
       seriesKey: "s1",
-    }, { ...base, totalSegments: 41 })).toThrow("超过单任务上限");
-    expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 1 }, base)).not.toThrow();
+    }, { ...base, totalModelCalls: 201 })).toThrow("超过单任务上限");
+    expect(() => assertNativeDeepReadPlanConfirmation({
+      planHash: base.planHash,
+      maxCalls: 200,
+      seriesKey: "s1",
+    }, { ...base, totalModelCalls: 200 })).not.toThrow();
+    expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 4 }, base)).not.toThrow();
     expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 0 }, base))
       .toThrow("超过任务预算");
   });

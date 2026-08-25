@@ -27,6 +27,8 @@ type OptimizeResult = {
 const FIELD_LABELS: Record<ManhuaViralTemplateOptimizeField, string> = {
   nameZh: "模板名称",
   laneZh: "赛道分类",
+  classification: "多维特征",
+  storyStructure: "故事骨架",
   summaryZh: "用途摘要",
   hook3sZh: "前三秒钩子",
   beatGrid: "节拍格",
@@ -74,6 +76,30 @@ function TemplateColumn({
       <div>
         <div className="mb-1 text-[10px] text-white/40">赛道分类</div>
         <TextValue value={card.laneZh} changed={changed("laneZh")} />
+      </div>
+      <div>
+        <div className="mb-1 text-[10px] text-white/40">多维特征</div>
+        <TextValue
+          value={card.classification
+            ? Object.values(card.classification).flat().join("、")
+            : ""}
+          changed={changed("classification")}
+        />
+      </div>
+      <div>
+        <div className="mb-1 text-[10px] text-white/40">故事骨架</div>
+        <TextValue
+          value={card.storyStructure
+            ? [
+                `核心承诺：${card.storyStructure.corePromiseZh}`,
+                `冲突引擎：${card.storyStructure.conflictEngineZh}`,
+                `关系引擎：${card.storyStructure.relationshipEngineZh}`,
+                `推进规律：${card.storyStructure.episodeProgressionZh.join("；")}`,
+                `变化规则：${card.storyStructure.variationRulesZh.join("；")}`,
+              ].join("\n")
+            : ""}
+          changed={changed("storyStructure")}
+        />
       </div>
       <div>
         <div className="mb-1 text-[10px] text-white/40">用途摘要</div>

@@ -6,7 +6,8 @@
  * 要求把凭证下放到开发机，那是不可接受的外泄面。
  *
  * 全程**零模型调用**：合集展开走抖音 web api，时长走 ffprobe 读远端头部
- * （不下片、不转码），成本为零。真正的计价单位是返回里的 `totalSegments`。
+ * （不下片、不转码），成本为零。确认预算使用 `totalModelCalls`；视频分片数、
+ * 动态装箱后的视觉请求数和双路声音请求数分别展示，禁止再把「段数」冒充请求数。
  *
  * 本文件不新写任何解析逻辑，只把素材接入层现成的能力串起来。
  */
@@ -19,6 +20,7 @@ import {
   type DouyinListedEpisode,
 } from "../../shared/manhuaLearnDouyinWebApi.js";
 import {
+  NATIVE_DEEP_READ_MAX_EPISODE_SEC,
   NATIVE_DEEP_READ_MAX_SEGMENT_SEC,
   NATIVE_DEEP_READ_BATCH_HARD_CEILING,
   validateNativeDeepReadBatchPlan,
@@ -26,6 +28,23 @@ import {
 import { MANHUA_LEARN_MAX_DURATION_SEC } from "../../shared/manhuaTemplateLearnSeries.js";
 import type { ManhuaTemplateLearnLlmProvider } from "../../shared/manhuaTemplateLearnFrameVision.js";
 import { NATIVE_DEEP_READ_JOB_MAX_CALLS } from "../../shared/manhuaNativeDeepReadJob.js";
+import {
+  MANHUA_NATIVE_AUDIO_ALIGNMENT,
+  MANHUA_NATIVE_AUDIO_MODEL,
+} from "../../shared/manhuaNativeAudioAnalysis.js";
+import {
+  NATIVE_DEEP_READ_BATCH_VISION_TOKEN_BUDGET,
+  NATIVE_DEEP_READ_MAX_FPS,
+  NATIVE_DEEP_READ_MAX_VIDEOS_PER_REQUEST,
+  NATIVE_DEEP_READ_TARGET_FRAMES,
+  NATIVE_DEEP_READ_VIDEO_MIN_PIXELS,
+  NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
+} from "./manhuaNativeDeepReadRunner.js";
+import {
+  MANHUA_NATIVE_SERIES_AGGREGATION_MODEL,
+  MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE,
+  MANHUA_NATIVE_SERIES_AGGREGATION_SCHEMA_VERSION,
+} from "./manhuaNativeSeriesAggregation.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -57,6 +76,11 @@ export type NativeDeepReadPlanPreview = {
   dramaNameZh?: string;
   episodes: NativeDeepReadPlanEpisode[];
   totalSegments: number;
+  /** 新加坡 Qwen 多视频请求数；与视频分片数分开显示。 */
+  totalVisualCalls: number;
+  /** 音频分片数；每片固定两次 Gemini（单声道＋立体声）。 */
+  totalAudioChunks: number;
+  totalModelCalls: number;
   totalDurationSec: number;
   /** 合集免费段总集数（不受 limit 影响，用来告诉用户「还能学多少」） */
   freeEpisodeCount: number;
@@ -66,7 +90,7 @@ export type NativeDeepReadPlanPreview = {
   unknownAccessEpisodeIndexes: number[];
   /** 已入库的集（不该重复付费） */
   alreadyIngestedEpisodeIndexes: number[];
-  /** 有人正在跑的集 */
+  /** 已隔离的占位集；不会自动重跑，也不会挤占本轮新增集数 */
   pendingClaimEpisodeIndexes: number[];
   /** 扣掉已入库后真正会发出模型请求的集数 */
   executableEpisodeCount: number;
@@ -86,57 +110,66 @@ export function assertNativeDeepReadPlanConfirmation(
   current: NativeDeepReadPlanPreview,
 ): void {
   if (!current.executionEnabled) throw new Error("原生精读能力未开启，未发出模型请求");
-  if (current.pendingClaimEpisodeIndexes.length) {
+  const pendingClaims = new Set(current.pendingClaimEpisodeIndexes);
+  const overlappingClaims = current.episodes
+    .map((episode) => episode.episodeIndex)
+    .filter((episodeIndex) => pendingClaims.has(episodeIndex));
+  if (overlappingClaims.length) {
     throw new Error(
-      `第${current.pendingClaimEpisodeIndexes.join("、")}集存在待核对占位，禁止自动重跑`,
+      `执行清单与第${overlappingClaims.join("、")}集待核对占位重叠，禁止自动重跑`,
     );
   }
-  if (!current.episodes.length || current.totalSegments < 1) {
+  if (!current.episodes.length || current.totalModelCalls < 1) {
     throw new Error("当前没有可执行的新集，未发出模型请求");
   }
-  if (current.totalSegments > NATIVE_DEEP_READ_JOB_MAX_CALLS) {
+  if (current.totalModelCalls > NATIVE_DEEP_READ_JOB_MAX_CALLS) {
     throw new Error(
-      `本次 ${current.totalSegments} 次模型请求超过单任务上限 ${NATIVE_DEEP_READ_JOB_MAX_CALLS}，请拆批`,
+      `本次 ${current.totalModelCalls} 次模型请求超过单任务上限 ${NATIVE_DEEP_READ_JOB_MAX_CALLS}，请拆批`,
     );
   }
   if (confirmed.planHash || confirmed.seriesKey) {
     if (
       current.planHash !== confirmed.planHash
-      || current.totalSegments !== confirmed.maxCalls
+      || current.totalModelCalls !== confirmed.maxCalls
       || current.seriesKey !== confirmed.seriesKey
     ) {
       throw new Error(
-        `原生精读计划已变化（当前 ${current.planHash}/${current.totalSegments} 次），请重新建立任务`,
+        `原生精读计划已变化（当前 ${current.planHash}/${current.totalModelCalls} 次），请重新建立任务`,
       );
     }
     return;
   }
-  if (current.totalSegments > confirmed.maxCalls) {
+  if (current.totalModelCalls > confirmed.maxCalls) {
     throw new Error(
-      `本次 ${current.totalSegments} 次模型请求超过任务预算 ${confirmed.maxCalls}，请调小单次学习集数`,
+      `本次 ${current.totalModelCalls} 次模型请求超过任务预算 ${confirmed.maxCalls}，请调小单次学习集数`,
     );
   }
 }
 
 /**
- * 按模型单段上限均分。
- *
- * 单段超过 `NATIVE_DEEP_READ_MAX_SEGMENT_SEC`（fps=2 × 2000 帧 = 1000s）
- * 模型就看不完整，校验器会直接拒。均分而不是「切满再留一小截」，
- * 是为了避免最后一段短到只有几秒、白花一次请求。
+ * 每个视觉输入片目标不超过 6 分钟：90 秒短集保持整集，18 分钟长集拆 3 片。
+ * runner 再按 `min(10, 1800 / 片长)` 取样：90 秒=10fps/900帧，
+ * 360 秒=5fps/1800帧。多个分片仍可装进同一次 Qwen 多视频请求。
  */
+export const NATIVE_DEEP_READ_VISUAL_SEGMENT_SEC = 6 * 60;
+export function normalizeNativeDeepReadDurationSec(durationSec: number): number {
+  return Math.max(1, Math.round(Number(durationSec) || 0));
+}
+
 export function splitNativeDeepReadSegments(durationSec: number): NativeDeepReadPlanSegment[] {
-  // 与生产执行器统一取整口径；预览用 round、执行用 floor 会让确认码天然漂移。
-  const total = Math.max(1, Math.floor(Number(durationSec) || 0));
-  const parts = Math.max(1, Math.ceil(total / NATIVE_DEEP_READ_MAX_SEGMENT_SEC));
-  const per = Math.ceil(total / parts);
-  const out: NativeDeepReadPlanSegment[] = [];
-  for (let i = 0; i < parts; i += 1) {
-    const startSec = i * per;
-    const endSec = Math.min(total, startSec + per);
-    if (endSec > startSec) out.push({ startSec, endSec });
+  // ffprobe 常返回小数秒；统一四舍五入后再切段，避免计划片长与末段终点相差近 1 秒。
+  const total = normalizeNativeDeepReadDurationSec(durationSec);
+  if (total > NATIVE_DEEP_READ_MAX_EPISODE_SEC) {
+    throw new Error(`素材超过 ${Math.round(NATIVE_DEEP_READ_MAX_EPISODE_SEC / 60)} 分钟学习上限`);
   }
-  return out;
+  const segments: NativeDeepReadPlanSegment[] = [];
+  for (let startSec = 0; startSec < total; startSec += NATIVE_DEEP_READ_VISUAL_SEGMENT_SEC) {
+    segments.push({
+      startSec,
+      endSec: Math.min(total, startSec + NATIVE_DEEP_READ_VISUAL_SEGMENT_SEC),
+    });
+  }
+  return segments;
 }
 
 /**
@@ -151,6 +184,21 @@ export function computeNativeDeepReadPlanHash(
 ): string {
   const canonical = JSON.stringify({
     seriesKey,
+    visual: {
+      version: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
+      targetFrames: NATIVE_DEEP_READ_TARGET_FRAMES,
+      maxFps: NATIVE_DEEP_READ_MAX_FPS,
+      minPixels: NATIVE_DEEP_READ_VIDEO_MIN_PIXELS,
+      tokenBudget: NATIVE_DEEP_READ_BATCH_VISION_TOKEN_BUDGET,
+      maxVideos: NATIVE_DEEP_READ_MAX_VIDEOS_PER_REQUEST,
+      maxSegmentSec: NATIVE_DEEP_READ_MAX_SEGMENT_SEC,
+    },
+    audio: { model: MANHUA_NATIVE_AUDIO_MODEL, alignment: MANHUA_NATIVE_AUDIO_ALIGNMENT },
+    seriesAggregation: {
+      model: MANHUA_NATIVE_SERIES_AGGREGATION_MODEL,
+      route: MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE,
+      schemaVersion: MANHUA_NATIVE_SERIES_AGGREGATION_SCHEMA_VERSION,
+    },
     episodes: [...episodes]
       .sort((a, b) => a.episodeIndex - b.episodeIndex)
       .map((e) => ({
@@ -408,19 +456,24 @@ export async function buildNativeDeepReadPlanPreview(
 
   // ── 4. 逐集探时长（零模型调用）
   // “学 N 集”指接下来新增 N 集，不是永远只看合集前 N 集。
-  const wanted = free.filter((e) => !ingested.has(e.index)).slice(0, limit);
-  const pendingClaimEpisodeIndexes = wanted
+  // 残留 claim 必须继续隔离，但不能占掉用户要求的名额：先排除已入库与 claim，再取 N 集。
+  // 每个真正执行的集仍会在模型调用前原子抢 claim；这里没有放松并发保护。
+  const notIngested = free.filter((e) => !ingested.has(e.index));
+  const pendingClaimEpisodeIndexes = notIngested
     .map((e) => e.index)
     .filter((i) => claimed.has(i));
-  const executable = wanted.filter((e) => !claimed.has(e.index));
+  const executable = notIngested
+    .filter((e) => !claimed.has(e.index))
+    .slice(0, limit);
   const episodes: NativeDeepReadPlanEpisode[] = [];
   for (const e of executable) {
     throwIfNativePlanAborted(input.abortSignal);
-    const durationSec = await probeEpisodeDurationWithCandidateFailover(
+    const probedDurationSec = await probeEpisodeDurationWithCandidateFailover(
       e,
       deps,
       input.abortSignal,
     );
+    const durationSec = normalizeNativeDeepReadDurationSec(probedDurationSec);
     if (durationSec > MANHUA_LEARN_MAX_DURATION_SEC) {
       throw new Error(
         `第${e.index}集超过 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟，超出学习策略上限`,
@@ -443,11 +496,14 @@ export async function buildNativeDeepReadPlanPreview(
     : null;
 
   return {
-    planHash: computeNativeDeepReadPlanHash(seriesKey, episodes),
+    planHash: plan?.planHash || computeNativeDeepReadPlanHash(seriesKey, episodes),
     seriesKey,
     dramaNameZh: dramaNameZh || undefined,
     episodes,
     totalSegments: plan?.totalSegments || 0,
+    totalVisualCalls: plan?.totalVisualCalls || 0,
+    totalAudioChunks: plan?.totalAudioChunks || 0,
+    totalModelCalls: plan?.totalModelCalls || 0,
     totalDurationSec: Math.round(episodes.reduce((s, e) => s + e.durationSec, 0)),
     freeEpisodeCount: free.length,
     paywallStartEpisodeIndex,

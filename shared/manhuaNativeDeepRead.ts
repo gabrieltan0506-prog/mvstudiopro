@@ -16,7 +16,15 @@
  * 生产链路目前仍走抽帧（frame_vision_deterministic），原生精读还没接进去。
  */
 import { z } from "zod";
-import type { ManhuaViralTemplateBeat } from "./manhuaViralTemplateBank.js";
+import type {
+  ManhuaViralTemplateBeat,
+  ManhuaViralTemplateClassification,
+} from "./manhuaViralTemplateBank.js";
+import {
+  manhuaNativeAudioChunkAnalysisSchema,
+  type ManhuaNativeAudioAnalysis,
+  type ManhuaNativeAudioChunkAnalysis,
+} from "./manhuaNativeAudioAnalysis.js";
 
 const shotSchema = z
   .object({
@@ -34,10 +42,25 @@ const shotSchema = z
 export const nativeDeepReadSegmentSchema = z
   .object({
     shots: z.array(shotSchema).default([]),
+    subtitles: z.array(z.object({
+      atSec: z.number().finite().min(0),
+      textZh: z.string().trim().min(1),
+    }).strict()).max(512).default([]),
+    audioResolution: z.array(z.object({
+      chunkIndex: z.number().int().min(0),
+      analysis: manhuaNativeAudioChunkAnalysisSchema,
+    }).strict()).max(8).default([]),
     beatStructureZh: z.string().trim().default(""),
     moodArcZh: z.string().trim().optional(),
     reusableZh: z.string().trim().optional(),
     genPromptHintZh: z.string().trim().optional(),
+    classification: z.object({
+      emotionTagsZh: z.array(z.string().trim().min(1)).max(8).default([]),
+      narrativeFeatureTagsZh: z.array(z.string().trim().min(1)).max(8).default([]),
+      performanceTagsZh: z.array(z.string().trim().min(1)).max(8).default([]),
+      audiovisualTagsZh: z.array(z.string().trim().min(1)).max(8).default([]),
+      audienceExperienceTagsZh: z.array(z.string().trim().min(1)).max(8).default([]),
+    }).strict().optional(),
   })
   .passthrough();
 
@@ -45,8 +68,13 @@ export type NativeDeepReadSegment = z.infer<typeof nativeDeepReadSegmentSchema>;
 
 export type NativeDeepReadOutput = {
   beatGrid: ManhuaViralTemplateBeat[];
+  /** 画面 OCR 得到的原文字幕；只作内部证据与审批展示，不直接复制进新剧本。 */
+  subtitleTrack: Array<{ atSec: number; textZh: string }>;
+  /** 新加坡视频 Qwen 对照真画面后裁决的段内音轨；保留 chunkIndex，禁止按数组位置猜身份。 */
+  resolvedAudioChunks: Array<{ chunkIndex: number; analysis: ManhuaNativeAudioChunkAnalysis }>;
   reusableZh?: string;
   genPromptHintZh?: string;
+  classification?: ManhuaViralTemplateClassification;
   /**
    * 情绪推进与节奏结构（0824 接出）。
    *
@@ -64,6 +92,8 @@ export type NativeDeepReadOutput = {
   droppedCount: number;
   /** 是否触顶 128 被抽稀 —— 触顶说明学习产出超出模板承载，需人工确认 */
   truncated: boolean;
+  /** 同一集音轨的故事/对白/声音节奏；由执行协调器在视觉精读后装配。 */
+  audioAnalysis?: ManhuaNativeAudioAnalysis;
 };
 
 /** beatGrid 硬上限，与 manhuaViralTemplateBank 的解析上限一致 */
@@ -135,6 +165,24 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
       )
     : allBeats;
 
+  const subtitleTrack = ok
+    .flatMap(({ seg, offsetSec }) => seg.subtitles.map((subtitle) => ({
+      atSec: Math.round((offsetSec + Math.max(0, subtitle.atSec)) * 100) / 100,
+      textZh: String(subtitle.textZh || "").trim().slice(0, 160),
+    })))
+    .filter((subtitle) => subtitle.textZh)
+    .sort((a, b) => a.atSec - b.atSec)
+    .slice(0, 512);
+  const resolvedByChunk = new Map<number, ManhuaNativeAudioChunkAnalysis>();
+  for (const { seg } of ok) {
+    for (const row of seg.audioResolution) {
+      if (!resolvedByChunk.has(row.chunkIndex)) resolvedByChunk.set(row.chunkIndex, row.analysis);
+    }
+  }
+  const resolvedAudioChunks = Array.from(resolvedByChunk.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([chunkIndex, analysis]) => ({ chunkIndex, analysis }));
+
   const joinField = (pick: (s: NativeDeepReadSegment) => string | undefined) =>
     cut(
       ok
@@ -143,11 +191,29 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
         .join("；"),
       600,
     );
+  const mergeTags = (
+    pick: (classification: NonNullable<NativeDeepReadSegment["classification"]>) => string[],
+  ) => Array.from(new Set(ok.flatMap(({ seg }) => seg.classification ? pick(seg.classification) : [])))
+    .map((tag) => String(tag || "").trim().slice(0, 24))
+    .filter(Boolean)
+    .slice(0, 8);
+  const classification: ManhuaViralTemplateClassification = {
+    emotionTagsZh: mergeTags((row) => row.emotionTagsZh),
+    narrativeFeatureTagsZh: mergeTags((row) => row.narrativeFeatureTagsZh),
+    performanceTagsZh: mergeTags((row) => row.performanceTagsZh),
+    audiovisualTagsZh: mergeTags((row) => row.audiovisualTagsZh),
+    audienceExperienceTagsZh: mergeTags((row) => row.audienceExperienceTagsZh),
+  };
 
   return {
     beatGrid,
+    subtitleTrack,
+    resolvedAudioChunks,
     reusableZh: joinField((s) => s.reusableZh),
     genPromptHintZh: joinField((s) => s.genPromptHintZh),
+    classification: Object.values(classification).some((tags) => tags.length)
+      ? classification
+      : undefined,
     moodArcZh: joinField((s) => s.moodArcZh),
     beatStructureZh: joinField((s) => s.beatStructureZh),
     segmentCount: ok.length,

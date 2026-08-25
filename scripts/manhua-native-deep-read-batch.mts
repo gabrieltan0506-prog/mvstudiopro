@@ -142,8 +142,11 @@ console.log(`清单        ${listPath} · 共 ${raw.length} 集，本次取前 $
 console.log(`已入库      ${alreadyIngested.size} 集 [${[...alreadyIngested].sort((a, b) => a - b).join(",") || "—"}]`);
 console.log(`本次要跑    ${todo.length} 集 [${todo.map((e) => e.episodeIndex).join(",") || "—"}]`);
 console.log(`总时长      ${Math.round((plan?.totalDurationSec || 0) / 60)} 分钟`);
-console.log(`模型API次数  ${plan?.totalSegments || 0}   ← 计费单位是 segment，不是集`);
-console.log(`单段上限    ${NATIVE_DEEP_READ_MAX_SEGMENT_SEC}s（fps=2 · max_frames=2000）`);
+console.log(`视觉视频分片  ${plan?.totalSegments || 0}`);
+console.log(`视觉模型请求  ${plan?.totalVisualCalls || 0}   ← 多集/多分片按输入预算装入同一次请求`);
+console.log(`音频模型请求  ${(plan?.totalAudioChunks || 0) * 2}   ← 每个音频分片分别分析单声道与立体声`);
+console.log(`模型API总数   ${plan?.totalModelCalls || 0}   ← 视觉 + 双路音频 + 系列聚合`);
+console.log(`单段上限    ${NATIVE_DEEP_READ_MAX_SEGMENT_SEC}s（自适应 ≤10fps · 目标约1800帧）`);
 console.log(`计划确认码   ${plan?.planHash || "—"}`);
 console.log(`待核对占位   ${pendingClaims.length} 集 [${pendingClaims.map((e) => e.episodeIndex).join(",") || "—"}]`);
 console.log(`模式        ${isGo ? "🔴 真跑（会花钱）" : "🟢 干跑（不发任何模型请求）"}`);
@@ -152,7 +155,7 @@ console.log("──────────────────────�
 if (!isGo) {
   console.log(
     plan
-      ? `干跑结束。确认无误后：--go --confirm=${plan.planHash} --max-calls=${plan.totalSegments}`
+      ? `干跑结束。确认无误后：--go --confirm=${plan.planHash} --max-calls=${plan.totalModelCalls}`
       : "干跑结束，没有待执行集。",
   );
   process.exit(0);
@@ -169,8 +172,8 @@ if (pendingClaims.length) {
 // 真跑必须带上扣除已入库集后的实际计划，保证最大调用数与干跑所见一致。
 const confirmed = String(args.get("confirm") || "");
 const maxCalls = Number(args.get("max-calls"));
-if (!plan || confirmed !== plan.planHash || maxCalls !== plan.totalSegments) {
-  fail(`真跑必须携带 --confirm=${plan?.planHash || "<确认码>"} --max-calls=${plan?.totalSegments || 0}`);
+if (!plan || confirmed !== plan.planHash || maxCalls !== plan.totalModelCalls) {
+  fail(`真跑必须携带 --confirm=${plan?.planHash || "<确认码>"} --max-calls=${plan?.totalModelCalls || 0}`);
 }
 
 const episodes: NativeDeepReadBatchEpisode[] = todo.map(toBatchEpisode);

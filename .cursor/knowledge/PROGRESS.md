@@ -290,6 +290,20 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 
 **原生精读真跑暴露的长请求与轮询抖动修复（本地验证，待旁路真跑）**：08:15 的正确合集任务展开 72 集后，第 1 集 0–539 秒段在约 143 秒被本地 `socket idle=120s` 提前切断，两个段均无结构并被入库门禁拒收；现把非流式请求空闲时限收口为 10 分钟，总时限仍为 30 分钟。面板跳动的相邻根因是任务轮询 callback 依赖整颗 tRPC query 对象，render 后 effect 会立即重启；同时每次无变化 GET 都写入新 Job 数组。现改为 ref 持有待审刷新函数、轮询 callback 只依赖稳定值，完全相同的 Job 快照复用旧引用。81 项目标测试、全量 2734 项、TypeScript、服务端构建、Vite 生产构建与 diff check 通过；尚未做 Fly 旁路真实模型调用，不能据此宣称线上链路已通。
 
+**原生精读旧占位隔离与失败刷新复位（本地验证，待线上真跑）**：面板“学习 N 集”现先排除已入库卡与残留 claim，再选足 N 集；以现网 claim 1、2 为例，选择 10 集会形成 ep003–ep012，确认门只拒绝执行清单与 claim 真正重叠，逐集模型调用前的原子 claim 不变。失败详情仍在当前会话与服务端任务记录可查，但刷新不再自动恢复失败焦点、结果与续学来源；执行中同一 jobId 与成功待续状态仍恢复。目标 80 项、全量 2740 项、TypeScript、服务端构建、Vite 生产构建与 diff check 通过；未调用模型、未部署，仍须在 Fly/GCS 健康时由真实面板动作验收。
+
+**新加坡套餐视频输入探针与生产切换（本地与真实探针已验，线上面板待验）**：Fly 内使用 `DASHSCOPE_SG_PLAN_KEY` 配新加坡 Token Plan 固定 OpenAI 端点，GCS 4 秒红→蓝视频实测返回 200 / stop（372/90 tokens）；用户给的抖音搜索页经 `modal_id` 归一与前置解析后，151 秒 CDN 直读再测返回 200 / stop（10,122/2,340 tokens），模型准确覆盖开头、中段、结尾。普通新加坡业务空间地址配套餐 key 实测 401 / 0 token。生产已转为 `adaptive-1800f-360s-v1`：每片最长 360 秒、采样 `min(10,1800/片长)`；90 秒约 10fps/900帧，360 秒为 5fps/1800帧。短片 CDN 在付费请求前即时刷新，多段长片才 ffmpeg 切片暂存 GCS 并在 finally 删除；取消 OSS 与北京/按量回退。分片只按时长，不按编码体积；90MB 仅作传输门禁。历史 fps=0.5 与过渡期 fps=2/1000s 口径均不得冒充当前生产规则。仍须部署后从真实面板动作验证任务、回执、待审卡与临时对象清理。
+
+**Gemini 3.6 Flash 音轨 A/B（真实调用已验，生产三轨已实现、线上链待验）**：同一 151 秒素材用 16kHz/mono/32kbps 与 32kHz/stereo/64kbps 两份音轨各调用一次 Vertex Gemini 3.6 Flash；两边均实际计入 3,775 AUDIO tokens，顶层 5 字段、音轨子项 8 字段与 6 段数量完全一致，但具体切段和声音判断不同。两者都存在文本内 MM:SS 与所属段不一致，后者还写出超过素材终点的 `02:44/02:45`；因此生产门禁必须扫描文本秒位，不能只验 schema 与 `fromSec/toSec`。当前采用 16kHz 单声道；两次合计估算约 ¥0.177，GCS/Fly 临时音频与线上探针脚本已核对归零。三轨 schema、字幕轨、分集入库、系列快照聚合与 owner 展示已在 PR #1307 工作树接通；未做真实面板整批学习，不能把探针通过写成整条学习链已完成。
+
+**Gemini 音轨 A/B 第二轮（时间真源纠偏已实测）**：prompt 改为只允许 `fromSec/toSec/cues[].atSec` 承载时间，描述文本不再重复秒位，代码侧核对 cue 所属区间；相同 151 秒素材再跑 A/B 两次。16k 单声道返回 5 段/13 cues，32k 立体声返回 6 段/14 cues，均覆盖全片、无 cue 越界，AUDIO tokens 仍同为 3,775；立体声文件翻倍且推理 token 更多，未观察到单声道结构信息缺失。第二轮估算约 ¥0.249，四次探针合计约 ¥0.426；两轮 GCS/Fly 临时文件均核对归零。生产默认采用 16kHz/mono/32kbps。
+
+**OpenRouter GLM-5.3 系列结构聚合（真实单枪已通，完整链待验）**：最终跨集结构整理从北京 Qwen 3.8 Max 改为 OpenRouter `z-ai/glm-5.3`，只读取 Fly 上经过校验的全量分集卡 JSON，不读取视频/GCS URL；固定 `reasoning=max`、JSON response format、`max_tokens=131072`、`require_parameters=true`，不传 temperature/top_p。Fly 真实单枪返回 HTTP 200 / provider Z.AI / stop，JSON 解析成功，input 105 / reasoning 203 / output 218 tokens，7.299 秒，成本 `$0.0011062`；没有绕回北京。该回执只证明 OpenRouter 路由与参数可用，尚未证明分集卡→快照→GLM→系列待审卡→批准→编剧注入的完整线上闭环。
+
+**PR #1307 三轨学习链与防重复计费收口（已实现，合入 #1308 后最终回归中）**：原生精读现按“新加坡套餐 Qwen 视觉/字幕 → Gemini 双规格声音证据与画面对照裁决 → OpenRouter GLM 全系列结构聚合”运行；多集视觉按 20 个视频输入与 80 万视觉 token 预算装箱，系列卡只读取全量分集卡快照，快照哈希相同直接复用。整批 claim 在首个付费调用前一次拿齐；只有模型 `started` 回执才标记该集已付费，零成本失败释放未付费 claim，已付费失败保留 claim 待人工核对，避免自动重烧。UI 缓存按 `user.id` 隔离，身份变化清空页面态，失败终态刷新回默认总览，不自动恢复失败焦点，并移除不可达的旧 95 分钟轮询。合入 `main/#1308` 前，`pnpm check`、16 个目标文件 322 项、全量 371 文件 2779 项（另 4 跳过）、服务端构建、Vite 构建与 diff check 通过；UI 49 项目标测试通过。合入 #1308 后共享 GLM 契约已对齐，最终全量回归与浏览器 E2E 尚未完成，未部署、未做线上面板真跑。
+
+**PR #1308 通道换线（已合并，首单仍待验）**：GLM 共享网关收口为 OpenRouter `z-ai/glm-5.3` 主档、新加坡套餐 Qwen 兜底、EvoLink Qwen 末档；Wan 3.0 为 OpenRouter→EvoLink→WaveSpeed，HappyHorse 1.1 为 EvoLink→OpenRouter→WaveSpeed，百炼在途旧单只轮询收尾。提交结果未知时统一转人工对账且不退款，已选通道用 pin 固定，`auto+句柄` 可恢复轮询，镜像失败按瞬态处理；带参考音频/视频的 Wan 请求在真单证明前跳过 OpenRouter，防止锁轨静默丢失。PR 合并前记录为 `pnpm check` 0 错、372 文件 2766 项通过（7 跳过）、两类构建通过；Wan 新 OpenRouter/EvoLink 首单、HappyHorse EvoLink/WaveSpeed 首单及自由画布多图 r2v 首单均未实弹，不能视为线上验收。
+
 ## 如何更新本文件
 
 合完 PR 或用户改口径后，在**当日**下追加表格行；下一自然日新开 `## YYYY-MM-DD`。  

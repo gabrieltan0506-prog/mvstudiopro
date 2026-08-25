@@ -851,6 +851,13 @@ async function approveManhuaViralTemplateLocked(input: {
     throw new Error("该提案不是待审状态（可能已批准入库），无需重复批准");
   }
 
+  const isNativeSeriesProposal = /^tpl_native_series_[0-9a-z_-]{1,40}$/i.test(card.id)
+    && Boolean(card.provenance?.nativeSeriesAggregation)
+    && Boolean(card.storyStructure);
+  if (isNativeSeriesProposal && card.revision) {
+    throw new Error("原生系列卡不使用保留旧 provenance 的人工修订语义");
+  }
+
   if (card.revision) {
     const original = await getGcsManhuaViralApproved(card.revision.parentTemplateId);
     if (!original || original.status !== "approved") {
@@ -916,8 +923,68 @@ async function approveManhuaViralTemplateLocked(input: {
    */
   const approvedNow = await listGcsManhuaViralApprovedStrict();
 
+  const existingApproved = approvedNow.find((item) => item.id === card.id);
+  if (
+    existingApproved
+    && isNativeSeriesProposal
+    && existingApproved.provenance?.nativeSeriesAggregation
+    && existingApproved.storyStructure
+  ) {
+    const previousSnapshot = existingApproved.provenance.nativeSeriesAggregation.snapshotSha256;
+    const nextSnapshot = card.provenance!.nativeSeriesAggregation!.snapshotSha256;
+    if (nextSnapshot === previousSnapshot) {
+      throw new Error("原生系列卡快照未变，无需重复批准");
+    }
+
+    const now = new Date().toISOString();
+    // 这是「全量分集重算」的滚动版本，不是人工 revision：
+    // 只继承稳定公开码/首次批准时间，故事骨架、来源和 provenance 必须全部来自新卡。
+    const replacement = parseManhuaViralTemplateCard({
+      ...card,
+      status: "approved",
+      publicCode: existingApproved.publicCode,
+      approvedAt: existingApproved.approvedAt || now,
+      updatedAt: now,
+    });
+    if (
+      !replacement
+      || replacement.status !== "approved"
+      || !replacement.storyStructure
+      || replacement.provenance?.nativeSeriesAggregation?.snapshotSha256 !== nextSnapshot
+    ) {
+      throw new Error("原生系列卡滚动替换校验失败");
+    }
+
+    // 整段位于全局生命周期锁内；先完整归档旧正式卡，再覆盖现役卡。
+    const archiveStamp = now.replace(/[^0-9]/g, "").slice(0, 17);
+    await uploadBufferToGcs({
+      objectName: `${MANHUA_VIRAL_ARCHIVE_PREFIX}${existingApproved.id}/${archiveStamp}.json`,
+      buffer: Buffer.from(`${JSON.stringify(existingApproved, null, 2)}\n`, "utf8"),
+      contentType: "application/json",
+    });
+    const replacementBody = Buffer.from(`${JSON.stringify(replacement, null, 2)}\n`, "utf8");
+    await uploadBufferToGcs({
+      objectName: `${MANHUA_VIRAL_APPROVED_PREFIX}${replacement.id}.json`,
+      buffer: replacementBody,
+      contentType: "application/json",
+    });
+    try {
+      await uploadBufferToGcs({
+        objectName: `${MANHUA_VIRAL_PROPOSALS_PREFIX}${replacement.id}.json`,
+        buffer: replacementBody,
+        contentType: "application/json",
+      });
+    } catch (e) {
+      console.warn(
+        "[manhuaViralTemplateStore] sync rolling native series audit failed:",
+        e instanceof Error ? e.message : e,
+      );
+    }
+    return replacement;
+  }
+
   // 非修订流程不许顶掉现役卡：要替换请走修订（上面那条分支）
-  if (approvedNow.some((item) => item.id === card.id)) {
+  if (existingApproved) {
     throw new Error("同 id 正式模板已存在，请通过修订流程替换");
   }
 

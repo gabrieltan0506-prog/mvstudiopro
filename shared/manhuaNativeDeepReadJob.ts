@@ -6,11 +6,11 @@ export const NATIVE_DEEP_READ_JOB_PREP_MS = 10 * 60_000;
 export const NATIVE_DEEP_READ_JOB_PER_CALL_MS = 35 * 60_000;
 export const NATIVE_DEEP_READ_JOB_MAX_WALL_MS = 24 * 60 * 60_000;
 
-/** 10 分钟准备时间 + 每次请求 35 分钟预算，在 24 小时墙钟内最多 40 次。 */
-export const NATIVE_DEEP_READ_JOB_MAX_CALLS = Math.floor(
-  (NATIVE_DEEP_READ_JOB_MAX_WALL_MS - NATIVE_DEEP_READ_JOB_PREP_MS)
-    / NATIVE_DEEP_READ_JOB_PER_CALL_MS,
-);
+/**
+ * 用户可选集数不能再被旧的“每次调用均串行 35 分钟”假设卡死。
+ * 双音轨两路并行、视觉又按多视频装箱；这里仅保留防失控硬顶，墙钟另行封顶 24 小时。
+ */
+export const NATIVE_DEEP_READ_JOB_MAX_CALLS = 200;
 
 export const NATIVE_DEEP_READ_JOB_FIELDS = [
   "nativeDeepReadConfirmed",
@@ -92,5 +92,8 @@ export function resolveNativeDeepReadJobTimeoutMs(modelCalls: number): number {
   if (!Number.isInteger(calls) || calls < 1 || calls > NATIVE_DEEP_READ_JOB_MAX_CALLS) {
     throw new Error(`单任务模型请求数必须为 1–${NATIVE_DEEP_READ_JOB_MAX_CALLS}`);
   }
-  return NATIVE_DEEP_READ_JOB_PREP_MS + calls * NATIVE_DEEP_READ_JOB_PER_CALL_MS;
+  return Math.min(
+    NATIVE_DEEP_READ_JOB_MAX_WALL_MS,
+    NATIVE_DEEP_READ_JOB_PREP_MS + calls * NATIVE_DEEP_READ_JOB_PER_CALL_MS,
+  );
 }
