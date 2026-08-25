@@ -6,7 +6,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildEvolinkHappyHorseRequestBody,
   buildWavespeedHappyHorseRequestBody,
+  resolveHappyHorseMode,
   submitHappyHorseViaChannels,
+  WAVESPEED_HAPPYHORSE_R2V_PATH,
   type HappyHorseChannelDeps,
 } from "./happyHorseChannels";
 import { SubmitRejectedError, SubmitUnknownError } from "./submitOutcomeErrors";
@@ -99,5 +101,51 @@ describe("submitHappyHorseViaChannels 路由纪律", () => {
     const err = await submitHappyHorseViaChannels(baseInput, d).catch((e) => e);
     expect(err.message).toBe("照片动画通道暂时不可用，请稍后重试");
     expect(err.message).not.toMatch(/openrouter|evolink|wavespeed|bailian|百炼/i);
+  });
+});
+
+describe("r2v 多图参考模式（0825 自由画布新能力）", () => {
+  const REFS = ["https://cdn.example.com/c1.png", "https://cdn.example.com/c2.png", "https://cdn.example.com/c3.png"];
+  const refInput = { ...baseInput, imageUrl: REFS[0], imageUrls: REFS };
+
+  it("模式判定：≥2 张有效图切 reference；单图/重复图保持 first_frame（零漂移）", () => {
+    expect(resolveHappyHorseMode(refInput)).toBe("reference");
+    expect(resolveHappyHorseMode(baseInput)).toBe("first_frame");
+    expect(resolveHappyHorseMode({ ...baseInput, imageUrls: [baseInput.imageUrl] })).toBe("first_frame");
+  });
+
+  it("EvoLink r2v：model 切 reference-to-video、全量 image_urls、收 aspect_ratio", () => {
+    const body = buildEvolinkHappyHorseRequestBody({ ...refInput, aspectRatio: "9:16" });
+    expect(body).toMatchObject({
+      model: "happyhorse-1.1-reference-to-video",
+      image_urls: REFS,
+      aspect_ratio: "9:16",
+    });
+  });
+
+  it("WaveSpeed r2v：images 数组 + aspect_ratio，i2v 的 image 单值字段不出现", () => {
+    const body = buildWavespeedHappyHorseRequestBody({ ...refInput, aspectRatio: "1:1" });
+    expect(body).toMatchObject({ images: REFS, aspect_ratio: "1:1" });
+    expect(body).not.toHaveProperty("image");
+  });
+
+  it("🔴 r2v 跳过 OpenRouter（契约无多图参考，硬送=静默降级单图），直落 EvoLink", async () => {
+    const d = deps({});
+    const r = await submitHappyHorseViaChannels(refInput, d);
+    expect(r.submitted.channel).toBe("evolink");
+    expect(d.submitOpenrouter).not.toHaveBeenCalled();
+  });
+
+  it("r2v 走 WaveSpeed 时用 reference-to-video 路径", async () => {
+    const d = deps({
+      evolinkConfigured: () => false,
+      openrouterConfigured: () => false,
+    });
+    await submitHappyHorseViaChannels(refInput, d);
+    expect(d.submitWavespeed).toHaveBeenCalledWith(
+      WAVESPEED_HAPPYHORSE_R2V_PATH,
+      expect.objectContaining({ images: REFS }),
+      "照片动画",
+    );
   });
 });

@@ -4219,7 +4219,13 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       }
       const prompt =
         s(b.prompt || q.prompt || "").trim() || "Cinematic motion shot with stable camera and rich detail.";
-      const imageUrl = s(b.imageUrl || q.imageUrl || "").trim();
+      // 0825 自由画布 r2v：可带多图参考（≤9）；首图=首帧，≥2 张时服务端自动切多图参考模式
+      const hhRawImages: unknown[] = Array.isArray(b.imageUrls) ? b.imageUrls : [];
+      const hhImageUrls = hhRawImages
+        .map((u) => s(u).trim())
+        .filter((u) => /^https?:\/\//i.test(u))
+        .slice(0, 9);
+      const imageUrl = s(b.imageUrl || q.imageUrl || "").trim() || hhImageUrls[0] || "";
       if (!imageUrl) {
         return res.status(400).json({ ok: false, error: "Happy Horse 成片需要至少一张首帧参考图" });
       }
@@ -4266,6 +4272,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             label,
             prompt,
             imageUrl,
+            imageUrls: hhImageUrls,
             aspectRatio,
             duration,
             resolution,

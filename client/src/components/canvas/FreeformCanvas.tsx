@@ -2377,7 +2377,7 @@ export default function FreeformCanvas({
                                   : block.videoModel === "minimax-hailuo-3"
                                     ? "Minimax H3：2K 成片，多图参考，固定 15s"
                                     : block.videoModel === "happyhorse-1.1"
-                                      ? "Happy Horse 1.1：首帧图生，最长 15s"
+                                      ? "Happy Horse 1.1：首帧图生，最长 15s；挂 2–9 张参考图自动切多图参考模式（提示词用 character1/character2 指代各图角色）"
                                       : block.videoModel === "wan-3.0"
                                         ? "Wan 3.0：多图参考 + 参考音频，可直出 30s；排队时间较长，适合不赶时间的镜头"
                                         : "Seedance 2.0 fast：多图参考 + 运镜/动作/对白，更快更省，最长约 15s"}

@@ -674,9 +674,15 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
             : undefined;
     let routed: Awaited<ReturnType<typeof submitHappyHorseViaChannels>>;
     try {
+      const extraRefs: string[] = [];
+      for (const u of (task.imageUrls || []).filter(Boolean)) {
+        extraRefs.push(await resolveProtectedTaskMediaUrl(task, u));
+      }
       routed = await submitHappyHorseViaChannels({
         prompt: task.prompt,
         imageUrl: await resolveProtectedTaskMediaUrl(task, imageUrl),
+        // ≥2 张有效图时路由自动切 r2v 多图参考（0825 自由画布新能力）；单图保持首帧
+        imageUrls: extraRefs,
         duration: task.duration,
         resolution: task.resolution || "720p",
         aspectRatio: task.aspectRatio,

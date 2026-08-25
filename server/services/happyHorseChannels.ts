@@ -32,8 +32,12 @@ import {
 } from "../../shared/homePhotoTools.js";
 
 export const EVOLINK_HAPPYHORSE_I2V_MODEL = "happyhorse-1.1-image-to-video" as const;
+export const EVOLINK_HAPPYHORSE_R2V_MODEL = "happyhorse-1.1-reference-to-video" as const;
 export const WAVESPEED_HAPPYHORSE_I2V_PATH =
   "/api/v3/alibaba/happyhorse-1.1/image-to-video" as const;
+export const WAVESPEED_HAPPYHORSE_R2V_PATH =
+  "/api/v3/alibaba/happyhorse-1.1/reference-to-video" as const;
+export const HAPPYHORSE_REFERENCE_MAX_IMAGES = 9;
 
 /** 用户拍板的优先顺序；改优先级只动这一行 */
 export const HAPPYHORSE_CHANNEL_ORDER = ["evolink", "openrouter", "wavespeed"] as const;
@@ -53,14 +57,38 @@ export function isAnyHappyHorseChannelConfigured(): boolean {
 
 export type HappyHorseSubmitInput = {
   prompt: string;
-  /** 首帧图（单张；产品契约=照片即第一帧） */
+  /** 首帧图（单张；照片动起来的产品契约=照片即第一帧） */
   imageUrl: string;
+  /**
+   * 自由画布多图参考（0825 用户拍板加的 r2v 能力）：
+   * 有效图 ≥2 张时自动切 reference-to-video 变体（1–9 张，
+   * 提示词用 character1/character2/character3 指代各图角色）；
+   * 单图保持 i2v 首帧，行为零漂移。
+   */
+  imageUrls?: string[];
   duration?: number;
   resolution?: string;
-  /** 仅 OpenRouter 通道使用；EvoLink/WaveSpeed i2v 画幅随首帧图 */
+  /** i2v 时仅 OpenRouter 用（EvoLink/WaveSpeed i2v 画幅随首帧）；r2v 三家契约均收 */
   aspectRatio?: string;
   seed?: number;
 };
+
+export type HappyHorseMode = "first_frame" | "reference";
+
+function collectHappyHorseRefs(input: HappyHorseSubmitInput): string[] {
+  const list = [String(input.imageUrl || "").trim(), ...(input.imageUrls || []).map((u) => String(u || "").trim())];
+  return Array.from(new Set(list.filter((u) => /^https?:\/\//i.test(u)))).slice(0, HAPPYHORSE_REFERENCE_MAX_IMAGES);
+}
+
+export function resolveHappyHorseMode(input: HappyHorseSubmitInput): HappyHorseMode {
+  return collectHappyHorseRefs(input).length > 1 ? "reference" : "first_frame";
+}
+
+const HAPPYHORSE_R2V_ASPECT_RATIOS = new Set(["16:9", "9:16", "1:1", "4:3", "3:4", "4:5", "5:4", "9:21", "21:9"]);
+function normalizeR2vAspectRatio(raw: unknown): string {
+  const key = String(raw || "").trim();
+  return HAPPYHORSE_R2V_ASPECT_RATIOS.has(key) ? key : "16:9";
+}
 
 function clampHappyHorseDuration(raw: unknown): number {
   const n = Math.floor(Number(raw));
@@ -74,30 +102,38 @@ function normalizeHappyHorseResolution(raw: unknown): string {
 }
 
 export function buildEvolinkHappyHorseRequestBody(input: HappyHorseSubmitInput): Record<string, unknown> {
-  const imageUrl = String(input.imageUrl || "").trim();
-  if (!/^https?:\/\//i.test(imageUrl)) throw new Error("照片动画需要一张首帧参考图");
+  const refs = collectHappyHorseRefs(input);
+  if (!refs.length) throw new Error("照片动画需要至少一张参考图");
+  const mode = resolveHappyHorseMode(input);
   const body: Record<string, unknown> = {
-    model: EVOLINK_HAPPYHORSE_I2V_MODEL,
+    // i2v：数组首项即首帧、画幅随首帧不收 aspect_ratio；r2v：1–9 张参考、收 aspect_ratio
+    model: mode === "reference" ? EVOLINK_HAPPYHORSE_R2V_MODEL : EVOLINK_HAPPYHORSE_I2V_MODEL,
     prompt: String(input.prompt || "").trim(),
-    // 官方契约：数组首项即首帧；画幅随首帧图，不收 aspect_ratio
-    image_urls: [imageUrl],
+    image_urls: mode === "reference" ? refs : [refs[0]],
     duration: clampHappyHorseDuration(input.duration),
     quality: normalizeHappyHorseResolution(input.resolution),
   };
+  if (mode === "reference") body.aspect_ratio = normalizeR2vAspectRatio(input.aspectRatio);
   const seed = Math.floor(Number(input.seed));
   if (Number.isFinite(seed) && seed >= 1 && seed <= 2147483647) body.seed = seed;
   return body;
 }
 
 export function buildWavespeedHappyHorseRequestBody(input: HappyHorseSubmitInput): Record<string, unknown> {
-  const imageUrl = String(input.imageUrl || "").trim();
-  if (!/^https?:\/\//i.test(imageUrl)) throw new Error("照片动画需要一张首帧参考图");
+  const refs = collectHappyHorseRefs(input);
+  if (!refs.length) throw new Error("照片动画需要至少一张参考图");
+  const mode = resolveHappyHorseMode(input);
   const body: Record<string, unknown> = {
     prompt: String(input.prompt || "").trim(),
-    image: imageUrl,
     duration: clampHappyHorseDuration(input.duration),
     resolution: normalizeHappyHorseResolution(input.resolution),
   };
+  if (mode === "reference") {
+    body.images = refs;
+    body.aspect_ratio = normalizeR2vAspectRatio(input.aspectRatio);
+  } else {
+    body.image = refs[0];
+  }
   const seed = Math.floor(Number(input.seed));
   if (Number.isFinite(seed) && seed >= 0 && seed <= 2147483647) body.seed = seed;
   return body;
@@ -193,6 +229,11 @@ export async function submitHappyHorseViaChannels(
     }
     if (channel === "openrouter") {
       if (!deps.openrouterConfigured()) { skippedZh.push("openrouter: 未配置"); continue; }
+      if (resolveHappyHorseMode(input) === "reference") {
+        // 多图参考不在该通道契约里；硬送=静默降级成单图，跳过（防参考图静默丢）
+        skippedZh.push("openrouter: 多图参考未在通道契约中，跳过");
+        continue;
+      }
       try {
         const r = await deps.submitOpenrouter(buildOpenRouterHappyHorseSubmitBody({
           prompt: input.prompt,
@@ -214,7 +255,9 @@ export async function submitHappyHorseViaChannels(
       if (!deps.wavespeedConfigured()) { skippedZh.push("wavespeed: 未配置"); continue; }
       try {
         const r = await deps.submitWavespeed(
-          WAVESPEED_HAPPYHORSE_I2V_PATH,
+          resolveHappyHorseMode(input) === "reference"
+            ? WAVESPEED_HAPPYHORSE_R2V_PATH
+            : WAVESPEED_HAPPYHORSE_I2V_PATH,
           buildWavespeedHappyHorseRequestBody(input),
           "照片动画",
         );
