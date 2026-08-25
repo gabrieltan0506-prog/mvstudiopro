@@ -11,6 +11,7 @@ import {
   mergeManhuaLearnLiveProgress,
   mergeManhuaLearnServerJobsIntoBasket,
   nativeLearnTerminalProposalRefreshSignature,
+  parseManhuaNativeModelReceipts,
   readManhuaLearnActiveJob,
   readManhuaLearnBasket,
   readManhuaLearnFocusSeriesKey,
@@ -46,6 +47,66 @@ afterEach(() => {
 });
 
 describe("manhuaLearnResultUi soft-fail", () => {
+  it("逐次模型回执按 callId+stage 去重、保留失败正文并限制总量", () => {
+    const duplicated = [
+      {
+        callId: "audio-call-1",
+        model: "gemini-3.6-flash",
+        route: "vertex_gcs_audio",
+        stage: "audio_model",
+        status: "started",
+        atIso: "2026-08-25T00:00:00.000Z",
+        startedAtIso: "2026-08-25T00:00:00.000Z",
+        episodeIndexes: [2, 2],
+        chunkIndex: 0,
+        variant: "mono_16k",
+      },
+      {
+        callId: "audio-call-1",
+        model: "gemini-3.6-flash",
+        route: "vertex_gcs_audio",
+        stage: "audio_model",
+        status: "failed",
+        atIso: "2026-08-25T00:00:03.000Z",
+        finishedAtIso: "2026-08-25T00:00:03.000Z",
+        episodeIndexes: [2],
+        errorZh: "配额不足",
+        providerError: {
+          httpStatus: 429,
+          code: "RESOURCE_EXHAUSTED",
+          message: "quota exhausted",
+          responseBody: "{\"error\":\"quota exhausted\"}",
+        },
+      },
+      { callId: "bad", stage: "unknown", status: "failed", episodeIndexes: [] },
+    ];
+    const parsed = parseManhuaNativeModelReceipts(duplicated);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]).toMatchObject({
+      callId: "audio-call-1",
+      status: "failed",
+      startedAtIso: "2026-08-25T00:00:00.000Z",
+      finishedAtIso: "2026-08-25T00:00:03.000Z",
+      episodeIndexes: [2],
+      errorZh: "配额不足",
+      providerError: { httpStatus: 429, code: "RESOURCE_EXHAUSTED" },
+    });
+  });
+
+  it("逐次回执异常大数组只保留共享上限内的最新调用", () => {
+    const parsed = parseManhuaNativeModelReceipts(Array.from({ length: 1_030 }, (_, index) => ({
+      callId: `call-${index}`,
+      model: "qwen3.8-max",
+      route: "singapore_token_plan",
+      stage: "visual_model",
+      status: "completed",
+      episodeIndexes: [index + 1],
+    })));
+    expect(parsed).toHaveLength(1_024);
+    expect(parsed[0]?.callId).toBe("call-6");
+    expect(parsed.at(-1)?.callId).toBe("call-1029");
+  });
+
   it("刷新后不再自动打开上一轮失败页", () => {
     const failed = {
       ...manhuaLearnResultFromStart({ channel: "cloud", seriesKey: "failed-series" }),

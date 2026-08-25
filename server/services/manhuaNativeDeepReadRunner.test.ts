@@ -443,6 +443,52 @@ describe("模型请求前的媒体准备边界", () => {
     expect(order.slice(0, 3)).toEqual(["refresh-url", "started-receipt", "post-model"]);
   });
 
+  it("新加坡套餐 400 会把供应商正文与 request-id 写入失败回执", async () => {
+    const receipts: Array<Record<string, unknown>> = [];
+    const run = runManhuaNativeDeepReadBatch({
+      episodes: [{
+        episodeIndex: 3,
+        resolveNodes: async () => [{ url: "https://cdn.example/fresh.mp4" }],
+        segments: [{ startSec: 0, endSec: 10 }],
+        sourceDurationSec: 10,
+      }],
+      apiKey: "fake-key",
+      endpoint: "https://model.example/v1/chat/completions",
+      onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
+    }, {
+      prepareVideos: prepareEpisodeVideos,
+      post: vi.fn(async () => ({
+        status: 400,
+        requestId: "req-qwen-400",
+        text: JSON.stringify({ error: {
+          code: "invalid_parameter",
+          message: "video budget exceeded",
+          param: "messages[0].content",
+          type: "invalid_request_error",
+        } }),
+      })) as never,
+      remove: vi.fn(async () => undefined),
+    });
+    await expect(run).rejects.toThrow(
+      "新加坡 Qwen 3.8 Max Token Plan HTTP 400 · code=invalid_parameter",
+    );
+    const failed = receipts.find((receipt) => receipt.status === "failed");
+    expect(failed).toMatchObject({
+      callId: expect.any(String),
+      model: "qwen3.8-max",
+      route: "singapore_token_plan",
+      stage: "visual_model",
+      status: "failed",
+      providerError: {
+        httpStatus: 400,
+        code: "invalid_parameter",
+        message: "video budget exceeded",
+        requestId: "req-qwen-400",
+        param: "messages[0].content",
+      },
+    });
+  });
+
   it("切片失败会刷新媒体节点后安全重试，并清理每次本地临时路径", async () => {
     const resolveNodes = vi.fn()
       .mockResolvedValueOnce([{ url: "https://cdn.example/expired.mp4" }])

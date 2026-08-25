@@ -18,11 +18,21 @@ import {
 } from "../../shared/manhuaNativeDeepRead.js";
 import { MANHUA_NATIVE_DEEP_READ_MODEL } from "../../shared/manhuaNativeDeepReadJob.js";
 import type { ManhuaNativeAudioEvidence } from "../../shared/manhuaNativeAudioAnalysis.js";
+import type {
+  ManhuaNativeModelReceipt,
+  ManhuaNativeProviderErrorReceipt,
+} from "../../shared/manhuaNativeModelReceipt.js";
 import {
   deleteGcsObject,
   signGsUriV4ReadUrl,
   uploadBufferToGcs,
 } from "./gcs.js";
+import {
+  errorWithNativeProviderReceipt,
+  formatNativeProviderErrorZh,
+  nativeProviderReceiptFromError,
+  parseNativeProviderErrorReceipt,
+} from "./manhuaNativeProviderReceipt.js";
 
 /** 生产开关：未开时学习链路完全走原有抽帧，零行为变化 */
 export function isManhuaNativeDeepReadEnabled(): boolean {
@@ -153,17 +163,10 @@ export type NativeDeepReadBatchRunResult = {
   batchRequestId: string;
 };
 
-export type NativeDeepReadVisualModelReceipt = {
+export type NativeDeepReadVisualModelReceipt = ManhuaNativeModelReceipt & {
   stage: "visual_model" | "visual_parse";
-  status: "started" | "completed" | "failed";
   batchRequestId: string;
-  episodeIndexes: number[];
   videoCount: number;
-  elapsedMs?: number;
-  inputTokens?: number;
-  outputTokens?: number;
-  finishReason?: string;
-  errorZh?: string;
 };
 
 async function emitVisualModelReceipt(
@@ -228,7 +231,7 @@ function postLong(
   endpoint: string,
   timeoutMs = NATIVE_DEEP_READ_REQUEST_TOTAL_TIMEOUT_MS,
   abortSignal?: AbortSignal,
-): Promise<{ status: number; text: string }> {
+): Promise<{ status: number; text: string; requestId?: string }> {
   return new Promise((resolve, reject) => {
     const u = new URL(endpoint);
     const payload = Buffer.from(JSON.stringify(body));
@@ -270,7 +273,16 @@ function postLong(
           }
           d += c;
         });
-        res.on("end", () => finish(() => resolve({ status: res.statusCode || 0, text: d })));
+        res.on("end", () => finish(() => resolve({
+          status: res.statusCode || 0,
+          text: d,
+          requestId: String(
+            res.headers["x-request-id"]
+            || res.headers["request-id"]
+            || res.headers["x-dashscope-request-id"]
+            || "",
+          ).trim() || undefined,
+        })));
       },
     );
     req.setTimeout(
@@ -946,6 +958,9 @@ export async function runManhuaNativeDeepReadBatch(params: {
   let visualRequestStartedAt = 0;
   let visualRequestStarted = false;
   let visualModelCompleted = false;
+  let providerRequestId: string | undefined;
+  let visualFinishReason: string | undefined;
+  const visualParseCallId = `${batchRequestId}:parse`;
   try {
     for (const episode of validated) {
       prepared.push({
@@ -963,6 +978,9 @@ export async function runManhuaNativeDeepReadBatch(params: {
     visualRequestStarted = true;
     visualRequestStartedAt = Date.now();
     await emitVisualModelReceipt({
+      callId: batchRequestId,
+      model: NATIVE_DEEP_READ_MODEL,
+      route: "singapore_token_plan",
       stage: "visual_model",
       status: "started",
       batchRequestId,
@@ -982,7 +1000,18 @@ export async function runManhuaNativeDeepReadBatch(params: {
       NATIVE_DEEP_READ_BATCH_REQUEST_TOTAL_TIMEOUT_MS,
       params.abortSignal,
     );
-    if (response.status >= 300) throw new Error(`native_deep_read_batch_http_${response.status}`);
+    if (response.status >= 300) {
+      const providerError = parseNativeProviderErrorReceipt({
+        httpStatus: response.status,
+        responseText: response.text,
+        requestId: response.requestId,
+      });
+      throw errorWithNativeProviderReceipt(
+        formatNativeProviderErrorZh("新加坡 Qwen 3.8 Max Token Plan", providerError),
+        providerError,
+      );
+    }
+    providerRequestId = response.requestId;
     const envelope = JSON.parse(response.text) as {
       usage?: { prompt_tokens?: number; completion_tokens?: number };
       choices?: Array<{ finish_reason?: string; message?: { content?: unknown } }>;
@@ -994,7 +1023,11 @@ export async function runManhuaNativeDeepReadBatch(params: {
     if (choice?.finish_reason !== "stop") {
       throw new Error(`多视频精读未正常结束（${choice?.finish_reason || "unknown"}）`);
     }
+    visualFinishReason = choice.finish_reason;
     await emitVisualModelReceipt({
+      callId: batchRequestId,
+      model: NATIVE_DEEP_READ_MODEL,
+      route: "singapore_token_plan",
       stage: "visual_model",
       status: "completed",
       batchRequestId,
@@ -1004,8 +1037,23 @@ export async function runManhuaNativeDeepReadBatch(params: {
       inputTokens,
       outputTokens,
       finishReason: choice.finish_reason,
+      providerRequestId,
     }, params.onModelReceipt);
     visualModelCompleted = true;
+    await emitVisualModelReceipt({
+      callId: visualParseCallId,
+      model: NATIVE_DEEP_READ_MODEL,
+      route: "local_schema_gate",
+      stage: "visual_parse",
+      status: "started",
+      batchRequestId,
+      episodeIndexes: validated.map((episode) => episode.episodeIndex),
+      videoCount,
+      inputTokens,
+      outputTokens,
+      finishReason: visualFinishReason,
+      providerRequestId,
+    }, params.onModelReceipt);
     const content = choice.message?.content;
     const responseText = Array.isArray(content)
       ? content.map((part) => String((part as { text?: unknown }).text || "")).join("")
@@ -1076,6 +1124,21 @@ export async function runManhuaNativeDeepReadBatch(params: {
         },
       };
     });
+    await emitVisualModelReceipt({
+      callId: visualParseCallId,
+      model: NATIVE_DEEP_READ_MODEL,
+      route: "local_schema_gate",
+      stage: "visual_parse",
+      status: "completed",
+      batchRequestId,
+      episodeIndexes: validated.map((episode) => episode.episodeIndex),
+      videoCount,
+      elapsedMs: Date.now() - visualRequestStartedAt,
+      inputTokens,
+      outputTokens,
+      finishReason: visualFinishReason,
+      providerRequestId,
+    }, params.onModelReceipt);
     return {
       episodes,
       usage: {
@@ -1089,7 +1152,12 @@ export async function runManhuaNativeDeepReadBatch(params: {
     };
   } catch (error) {
     if (visualRequestStarted) {
+      const providerError: ManhuaNativeProviderErrorReceipt | undefined =
+        nativeProviderReceiptFromError(error);
       await emitVisualModelReceipt({
+        callId: visualModelCompleted ? visualParseCallId : batchRequestId,
+        model: NATIVE_DEEP_READ_MODEL,
+        route: visualModelCompleted ? "local_schema_gate" : "singapore_token_plan",
         stage: visualModelCompleted ? "visual_parse" : "visual_model",
         status: "failed",
         batchRequestId,
@@ -1098,7 +1166,10 @@ export async function runManhuaNativeDeepReadBatch(params: {
         elapsedMs: Date.now() - visualRequestStartedAt,
         inputTokens,
         outputTokens,
-        errorZh: (error instanceof Error ? error.message : String(error)).slice(0, 160),
+        finishReason: visualFinishReason,
+        providerRequestId,
+        errorZh: (error instanceof Error ? error.message : String(error)).slice(0, 2_000),
+        providerError,
       }, params.onModelReceipt);
     }
     const wrapped = (error instanceof Error ? error : new Error(String(error))) as NativeDeepReadRunError;

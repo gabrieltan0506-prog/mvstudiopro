@@ -35,4 +35,34 @@ describe("原生学习墙钟中止", () => {
       .resolves.toBe("ok");
     expect(onTimeout).not.toHaveBeenCalled();
   });
+
+  it("超时清理阶段的失败仍把逐次模型回执带到外层终态", async () => {
+    vi.useFakeTimers();
+    try {
+      let rejectWork!: (reason: unknown) => void;
+      const work = new Promise<never>((_, reject) => { rejectWork = reject; });
+      const receipt = {
+        callId: "visual-1",
+        model: "qwen3.8-max",
+        route: "singapore_token_plan",
+        stage: "visual_model",
+        status: "failed",
+        episodeIndexes: [1, 2],
+        errorZh: "upstream failed",
+      };
+      const pending = withTimeout(work, 20, "学习任务时限结束", {
+        onTimeout: () => rejectWork(Object.assign(new Error("底层已中止"), {
+          nativeModelReceipts: [receipt],
+        })),
+        cleanupGraceMs: 100,
+      });
+      const assertion = expect(pending).rejects.toMatchObject({
+        nativeModelReceipts: [receipt],
+      });
+      await vi.advanceTimersByTimeAsync(20);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

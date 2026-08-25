@@ -84,7 +84,12 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     expect(err).toBeInstanceOf(GlmGatewayError);
     expect(err.message).toContain("OpenRouter GLM-5.3 调用失败");
     expect(err.gatewayTrace).toEqual([
-      { gateway: "openrouter", model: "z-ai/glm-5.3", outcome: "http_error", detail: "GLM 链 HTTP 503: openrouter down" },
+      expect.objectContaining({
+        gateway: "openrouter",
+        model: "z-ai/glm-5.3",
+        outcome: "http_error",
+        providerError: expect.objectContaining({ httpStatus: 503, message: "openrouter down" }),
+      }),
     ]);
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toContain("openrouter.ai");

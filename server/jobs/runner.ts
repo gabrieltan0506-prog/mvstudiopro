@@ -84,6 +84,10 @@ import {
   resolveNativeDeepReadJobTimeoutMs,
 } from "../../shared/manhuaNativeDeepReadJob.js";
 import {
+  appendManhuaNativeModelReceipt,
+  type ManhuaNativeModelReceipt,
+} from "../../shared/manhuaNativeModelReceipt.js";
+import {
   beginGrowthInteractiveWorkload,
   isAuthenticatedRunningPlatformJob,
 } from "../growth/growthWorkloadPriority";
@@ -210,6 +214,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function parsePersistedNativeModelReceipts(raw: unknown): ManhuaNativeModelReceipt[] {
+  if (!Array.isArray(raw)) return [];
+  let parsed: ManhuaNativeModelReceipt[] = [];
+  for (const value of raw) {
+    if (!isRecord(value) || Array.isArray(value)) continue;
+    if (
+      typeof value.callId !== "string"
+      || typeof value.model !== "string"
+      || typeof value.route !== "string"
+      || ![
+        "audio_model",
+        "visual_model",
+        "visual_parse",
+        "series_aggregation_model",
+      ].includes(String(value.stage || ""))
+      || !["started", "completed", "failed"].includes(String(value.status || ""))
+      || !Array.isArray(value.episodeIndexes)
+    ) continue;
+    parsed = appendManhuaNativeModelReceipt(
+      parsed,
+      value as unknown as ManhuaNativeModelReceipt,
+      typeof value.atIso === "string" && value.atIso ? value.atIso : new Date(0).toISOString(),
+    );
+  }
+  return parsed;
+}
+
 function asEnvelope(value: unknown): JobEnvelope {
   if (!isRecord(value) || typeof value.action !== "string") {
     throw new Error("Invalid job input payload");
@@ -280,6 +311,13 @@ export async function withTimeout<T>(
     ]);
     const timeoutError = (error instanceof Error ? error : new Error(message)) as JobTimeoutErrorWithPartial<T>;
     if (cleanupResult.status === "fulfilled") timeoutError.partialResult = cleanupResult.value;
+    if (cleanupResult.status === "rejected" && isRecord(cleanupResult.reason)) {
+      const receipts = parsePersistedNativeModelReceipts(cleanupResult.reason.nativeModelReceipts);
+      if (receipts.length > 0) Object.assign(timeoutError, { nativeModelReceipts: receipts });
+      if (isRecord(cleanupResult.reason.nativeUsage)) {
+        Object.assign(timeoutError, { nativeUsage: cleanupResult.reason.nativeUsage });
+      }
+    }
     throw timeoutError;
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle);
@@ -452,6 +490,18 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       manhuaProgressWriteQueue = current.then(() => undefined, () => undefined);
       return current;
     };
+    let nativeModelReceipts: ManhuaNativeModelReceipt[] = [];
+    if (jobId) {
+      try {
+        const current = await getJobById(jobId);
+        const output = current?.output && typeof current.output === "object" && !Array.isArray(current.output)
+          ? current.output as Record<string, unknown>
+          : {};
+        nativeModelReceipts = parsePersistedNativeModelReceipts(output.nativeModelReceipts);
+      } catch {
+        // 首次读取失败不阻断模型任务；本轮回调仍会先在内存累计并随终态再落一次。
+      }
+    }
     const reportLearnProgressNow = async (phase: string, detailZh: string) => {
       const label = manhuaLearnStageLabelZh(phase, detailZh);
       const parsedBatch = Number(/本轮新增\s*(\d+)/.exec(label)?.[1] || 0);
@@ -523,8 +573,8 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
     const abortController = new AbortController();
     if (jobId) manhuaLearnAbortControllers.set(jobId, abortController);
     let result: Awaited<ReturnType<typeof runManhuaTemplateLearn>>;
+    const nativeConfirmed = params.nativeDeepReadConfirmed === true;
     try {
-      const nativeConfirmed = params.nativeDeepReadConfirmed === true;
       let nativePlanPreview: Awaited<ReturnType<
         typeof import("../services/manhuaNativeDeepReadPlanRuntime.js")["buildNativeDeepReadPlanPreviewFromServices"]
       >> | undefined;
@@ -584,6 +634,14 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
           console.warn("[manhua-learn] native usage progress persistence failed", error);
         }
       },
+      onNativeModelReceipt: async (receipt) => {
+        nativeModelReceipts = appendManhuaNativeModelReceipt(nativeModelReceipts, receipt);
+        if (!jobId) return;
+        await enqueueManhuaProgressWrite(() => patchJobRunningProgress(jobId, {
+          pipelineMode: "native_deep_read",
+          nativeModelReceipts,
+        }));
+      },
       abortSignal: abortController.signal,
       checkControl: async () => {
         if (abortController.signal.aborted) return "cancel";
@@ -613,6 +671,12 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         });
       },
       });
+    } catch (error) {
+      const wrapped = error instanceof Error ? error : new Error(String(error));
+      if (nativeConfirmed || nativeModelReceipts.length > 0) {
+        Object.assign(wrapped, { nativeModelReceipts });
+      }
+      throw wrapped;
     } finally {
       if (jobId) manhuaLearnAbortControllers.delete(jobId);
     }
@@ -651,6 +715,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       analysisStage: `manhua_learn_${MANHUA_LEARN_STAGE.done}`,
       analysisStageLabel: manhuaLearnStageLabelZh(MANHUA_LEARN_STAGE.done),
       learnProgressLog,
+      ...(nativeModelReceipts.length > 0 ? { nativeModelReceipts } : {}),
     };
     // 先保存完整终态 payload，再由 runClaimedJob 把 status 原子推进到 succeeded。
     // 部署若刚好切在两次写入之间，启动恢复会认出 done，而不是重跑整条学习链。
@@ -3080,9 +3145,25 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
         output?: unknown;
         provider?: string;
       }>)?.partialResult;
-      if (partial?.output && isRecord(partial.output)) {
+      const carriedReceipts = parsePersistedNativeModelReceipts(
+        (error as { nativeModelReceipts?: unknown })?.nativeModelReceipts,
+      );
+      const partialOutput = partial?.output && isRecord(partial.output) && !Array.isArray(partial.output)
+        ? partial.output
+        : undefined;
+      const failureReceipts = parsePersistedNativeModelReceipts([
+        ...carriedReceipts,
+        ...(Array.isArray(partialOutput?.nativeModelReceipts)
+          ? partialOutput.nativeModelReceipts
+          : []),
+      ]);
+      const receiptPatch = failureReceipts.length > 0
+        ? { nativeModelReceipts: failureReceipts }
+        : {};
+      if (partialOutput) {
         await patchJobRunningProgress(job.id, {
-          ...partial.output,
+          ...partialOutput,
+          ...receiptPatch,
           analysisStage: "manhua_learn_failed",
           analysisStageLabel: userCancelled
             ? "用户已停止学习；已入库内容与费用回执保留"
@@ -3096,6 +3177,7 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
         // 返回完整结果，必须显式标成“回执待核”，不能让面板把缺字段解释为 0 元。
         await patchJobRunningProgress(job.id, {
           pipelineMode: "native_deep_read",
+          ...receiptPatch,
           nativeUsage: carriedNativeUsage || {
               model: "qwen3.8-max",
               billingMode: "unknown",

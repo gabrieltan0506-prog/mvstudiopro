@@ -208,6 +208,9 @@ describe("原生精读系列结构化 · OpenRouter GLM-5.3", () => {
         outputTokens: 45,
         reasoningTokens: 17,
         costUsd: 0.0123,
+        provider: undefined,
+        providerRequestId: undefined,
+        finishReason: "stop",
       });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe(OPENROUTER_ENDPOINT);

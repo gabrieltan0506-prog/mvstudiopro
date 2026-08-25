@@ -502,10 +502,14 @@ async function startServer() {
       res.setHeader("Cache-Control", "private, no-store, max-age=0");
       const ctx = await createContext({ req: req as any, res: res as any } as any);
       if (!ctx.user) return res.status(401).json({ error: "请先登录" });
-      const { resolvePlatformSupervisorOpsAllowed } = await import("../services/access-policy");
+      const {
+        resolvePlatformSupervisorOpsAllowed,
+        resolveSiteOwnerOnlyAllowed,
+      } = await import("../services/access-policy");
       if (!resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession)) {
         return res.status(403).json({ error: "学节奏为监管专用" });
       }
+      const ownerAllowed = resolveSiteOwnerOnlyAllowed(ctx.user);
       const rows = await listManhuaTemplateLearnJobsForUser(String(ctx.user.id), 30);
       return res.status(200).json({
         // 与 worker 闸门同一真源（默认 1 串行；单机双核，双开会打满 CPU）
@@ -518,11 +522,17 @@ async function startServer() {
             ? rawInput.params as Record<string, unknown>
             : {};
           const { supervisorToken: _secret, ...safeParams } = rawParams;
+          const safeOutput = job.output && typeof job.output === "object" && !Array.isArray(job.output)
+            ? { ...(job.output as Record<string, unknown>) }
+            : job.output;
+          if (!ownerAllowed && safeOutput && typeof safeOutput === "object" && !Array.isArray(safeOutput)) {
+            delete (safeOutput as Record<string, unknown>).nativeModelReceipts;
+          }
           return {
           jobId: job.id,
           status: job.status,
           input: { action: "manhua_template_learn", params: safeParams },
-          output: job.output,
+          output: safeOutput,
           error: job.error ?? undefined,
           createdAt: job.createdAt,
           updatedAt: job.updatedAt,

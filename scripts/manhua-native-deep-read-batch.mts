@@ -40,8 +40,13 @@ import {
   runNativeDeepReadBatch,
   validateNativeDeepReadBatchPlan,
   type NativeDeepReadBatchEpisode,
+  type NativeDeepReadModelCheckpoint,
 } from "../server/services/manhuaNativeDeepReadExecution.ts";
 import { listNativeDeepReadEpisodeClaims } from "../server/services/manhuaNativeDeepReadClaim.ts";
+import {
+  appendManhuaNativeModelReceipt,
+  type ManhuaNativeModelReceipt,
+} from "../shared/manhuaNativeModelReceipt.ts";
 
 config();
 
@@ -108,6 +113,66 @@ process.once("SIGINT", () => {
   stop();
 });
 process.once("SIGTERM", stop);
+
+const MODEL_STAGE_ZH: Record<NativeDeepReadModelCheckpoint["stage"], string> = {
+  audio_model: "音轨分析",
+  visual_model: "视频精读",
+  visual_parse: "视频结构校验",
+  series_aggregation_model: "系列结构整理",
+};
+
+const MODEL_STATUS_ZH: Record<NativeDeepReadModelCheckpoint["status"], string> = {
+  started: "已开始",
+  completed: "已完成",
+  failed: "失败",
+};
+
+let modelReceipts: ManhuaNativeModelReceipt[] = [];
+
+/**
+ * 每次真实模型外呼都即时输出一条中性回执。这里只打印供应商回传的诊断字段，
+ * 不打印请求载荷、密钥、Cookie 或媒体签名地址。
+ */
+function printModelCheckpoint(checkpoint: NativeDeepReadModelCheckpoint): void {
+  modelReceipts = appendManhuaNativeModelReceipt(modelReceipts, checkpoint);
+  const upstream = checkpoint.providerError;
+  const fields = [
+    `[模型回执] ${MODEL_STAGE_ZH[checkpoint.stage]} · ${MODEL_STATUS_ZH[checkpoint.status]}`,
+    `调用=${checkpoint.callId}`,
+    checkpoint.episodeIndexes.length
+      ? `集数=${checkpoint.episodeIndexes.map((value) => `ep${String(value).padStart(3, "0")}`).join(",")}`
+      : undefined,
+    checkpoint.chunkIndex !== undefined ? `分片=${checkpoint.chunkIndex}` : undefined,
+    checkpoint.variant ? `声道=${checkpoint.variant}` : undefined,
+    checkpoint.videoCount !== undefined ? `视频=${checkpoint.videoCount}` : undefined,
+    checkpoint.batchRequestId ? `批次=${checkpoint.batchRequestId}` : undefined,
+    checkpoint.providerRequestId ? `上游单号=${checkpoint.providerRequestId}` : undefined,
+    checkpoint.finishReason ? `结束原因=${checkpoint.finishReason}` : undefined,
+    checkpoint.inputTokens !== undefined ? `输入=${checkpoint.inputTokens} tokens` : undefined,
+    checkpoint.audioInputTokens !== undefined ? `音频=${checkpoint.audioInputTokens} tokens` : undefined,
+    checkpoint.outputTokens !== undefined ? `输出=${checkpoint.outputTokens} tokens` : undefined,
+    checkpoint.reasoningTokens !== undefined ? `推理=${checkpoint.reasoningTokens} tokens` : undefined,
+    checkpoint.costUsd !== undefined ? `费用=$${checkpoint.costUsd.toFixed(6)}` : undefined,
+    checkpoint.priceEquivalentCny !== undefined
+      ? `套餐等值=¥${checkpoint.priceEquivalentCny.toFixed(6)}`
+      : undefined,
+    checkpoint.elapsedMs !== undefined ? `耗时=${Math.round(checkpoint.elapsedMs / 1000)}s` : undefined,
+    upstream?.httpStatus !== undefined ? `HTTP=${upstream.httpStatus}` : undefined,
+    upstream?.code ? `错误码=${upstream.code}` : undefined,
+    upstream?.requestId ? `错误单号=${upstream.requestId}` : undefined,
+    upstream?.param ? `参数=${upstream.param}` : undefined,
+    upstream?.type ? `类型=${upstream.type}` : undefined,
+    upstream?.message ? `上游说明=${upstream.message}` : undefined,
+    checkpoint.errorZh ? `本地说明=${checkpoint.errorZh}` : undefined,
+  ].filter((value): value is string => Boolean(value));
+  console.log(fields.join(" · "));
+  if (upstream?.responseBody) console.log(`[模型回执] 上游响应=${upstream.responseBody}`);
+
+  // 回执已明确失败时立即中止后续模型调用；不由脚本自动重试，也不清理占位。
+  if (checkpoint.status === "failed" && !controller.signal.aborted) {
+    controller.abort(new Error(`${MODEL_STAGE_ZH[checkpoint.stage]}失败，已停止后续模型调用`));
+  }
+}
 
 const toBatchEpisode = (e: EpisodeInput): NativeDeepReadBatchEpisode => ({
   episodeIndex: e.episodeIndex,
@@ -194,15 +259,69 @@ const result = await runNativeDeepReadBatch({
     const took = o.elapsedMs ? ` · ${Math.round(o.elapsedMs / 1000)}s` : "";
     console.log(`${mark} 第${o.episodeIndex}集 · ${o.status}${cost}${took}${o.gcsUri ? ` · ${o.gcsUri}` : ""}${o.errorZh ? ` · ${o.errorZh}` : ""}`);
   },
+  onModelCheckpoint: printModelCheckpoint,
 });
+
+const unfinishedReceipts = modelReceipts.filter((receipt) => receipt.status === "started");
+const failedReceipts = modelReceipts.filter((receipt) => receipt.status === "failed");
+const completedStages = new Set(modelReceipts
+  .filter((receipt) => receipt.status === "completed")
+  .map((receipt) => receipt.stage));
+const receiptAuditErrors: string[] = [];
+if (!modelReceipts.length) receiptAuditErrors.push("没有收到任何模型调用回执");
+if (!completedStages.has("visual_model")) receiptAuditErrors.push("缺少视频精读完成回执");
+if (!completedStages.has("visual_parse")) receiptAuditErrors.push("缺少视频结构校验完成回执");
+if (
+  result.outcomes.some((outcome) => Number(outcome.usage?.audioInputTokens) > 0)
+  && !completedStages.has("audio_model")
+) {
+  receiptAuditErrors.push("已有音频 token，但缺少音轨分析完成回执");
+}
+if (
+  result.seriesAggregation
+  && !result.seriesAggregation.reused
+  && !completedStages.has("series_aggregation_model")
+) {
+  receiptAuditErrors.push("系列结构已重新生成，但缺少模型完成回执");
+}
+let postRunIngested: Set<number> | undefined;
+let storageAuditErrorZh: string | undefined;
+try {
+  postRunIngested = await listIngestedNativeDeepReadEpisodes(seriesKey);
+} catch (error) {
+  storageAuditErrorZh = (error instanceof Error ? error.message : String(error)).slice(0, 500);
+}
+const missingStoredEpisodes = result.outcomes
+  .filter((outcome) => outcome.status === "ingested")
+  .filter((outcome) => !outcome.gcsUri || !postRunIngested?.has(outcome.episodeIndex));
 
 console.log("──────── 结果 ────────");
 console.log(`入库 ${result.ingestedCount} · 跳过 ${result.skippedCount} · 失败 ${result.failedCount}${result.aborted ? " · 被中止" : ""}`);
 // 只报成功卡会把「花了钱没入库」那部分算漏
 console.log(`实际成本    ¥${result.totalCostCny.toFixed(4)}`);
 console.log(`总耗时      ${Math.round(result.totalElapsedMs / 1000)} 秒`);
+console.log(`模型回执    ${modelReceipts.length} 条 · 失败 ${failedReceipts.length} · 未终结 ${unfinishedReceipts.length}`);
+if (receiptAuditErrors.length) console.error(`✗ 模型回执复核未通过：${receiptAuditErrors.join("；")}`);
+if (result.seriesAggregationErrorZh) {
+  console.error(`✗ 系列结构整理未完成：${result.seriesAggregationErrorZh}`);
+}
+if (missingStoredEpisodes.length) {
+  console.error(`✗ GCS 入库复核未通过：第${missingStoredEpisodes.map((row) => row.episodeIndex).join("、")}集`);
+}
+if (storageAuditErrorZh) console.error(`✗ GCS 入库复核未完成：${storageAuditErrorZh}`);
 console.log(
   `⚠️ 失败或中止的集会留下占位对象（native-claims/），不会自动清理也不会自动重跑，请人工核对`,
 );
 // 中止不是失败集，但批次没有完整结束，不能向自动化返回成功码。
-process.exit(result.failedCount > 0 || result.aborted ? 1 : 0);
+process.exit(
+  result.failedCount > 0
+  || result.aborted
+  || failedReceipts.length > 0
+  || unfinishedReceipts.length > 0
+  || receiptAuditErrors.length > 0
+  || missingStoredEpisodes.length > 0
+  || Boolean(storageAuditErrorZh)
+  || Boolean(result.seriesAggregationErrorZh)
+    ? 1
+    : 0,
+);

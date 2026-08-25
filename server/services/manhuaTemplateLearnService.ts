@@ -31,6 +31,7 @@ import {
   type NativeDeepReadPlanPreview,
 } from "./manhuaNativeDeepReadPlan.js";
 import { splitManhuaNativeAudioChunks } from "../../shared/manhuaNativeAudioAnalysis.js";
+import type { ManhuaNativeModelReceipt } from "../../shared/manhuaNativeModelReceipt.js";
 import { listIngestedNativeDeepReadEpisodeRecords } from "./manhuaNativeDeepReadIngest.js";
 import {
   aggregateNativeDeepReadSeries,
@@ -155,6 +156,8 @@ export type ManhuaTemplateLearnInput = {
   onProgress?: (phase: string, detailZh: string) => void | Promise<void>;
   /** 每完成或中止一段付费精读即持久化累计回执，进程退出也不把已用额度显示成 0。 */
   onNativeUsage?: (receipt: ManhuaNativeDeepReadUsageReceipt) => void | Promise<void>;
+  /** 每次模型外呼从 started 到 terminal 都写入 Job；失败正文不得再降成一行进度文案。 */
+  onNativeModelReceipt?: (receipt: ManhuaNativeModelReceipt) => void | Promise<void>;
   /** 每个分片落盘后把该集摘要同步进 Job output，供网页即时甄别。 */
   onEpisodeCheckpoint?: (preview: ManhuaLearnDigestPreview) => void | Promise<void>;
   /** 服务端持久控制：停止整部剧或跳过当前集。 */
@@ -2468,6 +2471,15 @@ export async function runManhuaTemplateLearn(
         episodes: executionPlans.map(({ seriesKey: _seriesKey, abortSignal: _abortSignal, ...plan }) => plan),
         abortSignal: input.abortSignal,
         onModelCheckpoint: async (checkpoint) => {
+          try {
+            await input.onNativeModelReceipt?.(checkpoint);
+          } catch (error) {
+            // 回执旁路写入异常不能令模型链重跑；worker 终态还会再带一次本地累计数组。
+            console.warn(
+              "[manhua-learn] 单次模型回执写入未完成：",
+              error instanceof Error ? error.message : error,
+            );
+          }
           const episodeLabel = checkpoint.episodeIndexes.length === 1
             ? `第 ${checkpoint.episodeIndexes[0]} 集`
             : `第 ${checkpoint.episodeIndexes[0]}–${checkpoint.episodeIndexes.at(-1)} 集`;
