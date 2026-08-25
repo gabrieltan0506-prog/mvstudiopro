@@ -651,7 +651,12 @@ export async function resolveNativeDeepReadNodeUrls(
   const info = JSON.parse(stdout) as { formats?: Array<Record<string, unknown>> };
   const best = pickSmallestVideoFormat(info.formats || []);
   if (!best) throw new Error("未解析到可用的 540p 档");
-  return [{ url: best.url }];
+  /**
+   * 0826 实弹修复：节点必须自带 Referer——抖音 CDN 无 Referer 会拒（仓库教条），
+   * 昨晚面板路径由素材接入层补上、CLI 直用本解析器就 403。在解析器层一次收口，
+   * 音频提取/视频切片/直读三处调用方全部受益，防"同一课学两遍"。
+   */
+  return [{ url: best.url, referer: "https://www.douyin.com/" }];
 }
 
 const NATIVE_VIDEO_TEMP_PREFIX = "manhua-template-learn/tmp/native-deep-read";
