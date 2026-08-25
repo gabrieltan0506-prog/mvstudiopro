@@ -1,0 +1,37 @@
+# ffmpeg / 媒体拼接临时文件（硬）
+
+## 一、持久卷禁止存放中间媒体
+
+- **禁止把切片、转码中间件、拼接输入和临时成片写进 `/data/tmp` 或其它 Fly 持久卷目录。** 临时媒体只能写入 `os.tmpdir()` / `/tmp` 下的**本任务唯一目录**；任务之间不得共用固定文件名。
+- 生产代码必须使用 `mkdtemp(path.join(os.tmpdir(), "mvstudiopro-media-"))`（可按功能细分前缀），并以 `try/finally` 覆盖成功、失败、中止三条路径。唯一成品必须先完成上传或复制并验非空，随后在 `finally` 执行：
+
+  ```ts
+  await fs.rm(taskTmpDir, { recursive: true, force: true });
+  ```
+
+## 二、Fly SSH / Agent 手工作业
+
+- 手工执行 ffmpeg、ffprobe、拼接或抽帧时同样不得直接往 `/data/tmp` 落盘。必须使用下面的安全骨架；`trap` 就是“拼接完也删除”的强制步骤，不得省略：
+
+  ```bash
+  media_tmp="$(mktemp -d /tmp/mvstudiopro-media-XXXXXX)"
+  cleanup_media_tmp() {
+    case "$media_tmp" in
+      /tmp/mvstudiopro-media-*)
+        find "$media_tmp" -mindepth 1 -delete
+        rmdir "$media_tmp" 2>/dev/null || true
+        ;;
+      *)
+        echo "拒绝清理非任务临时目录：$media_tmp" >&2
+        ;;
+    esac
+  }
+  trap cleanup_media_tmp EXIT HUP INT TERM
+  ```
+
+- 大批量任务必须“单项创建 → 产出入库 → 单项清理 → 下一项”，禁止先把全批切片或全批拼接素材囤在磁盘再统一清理。`SIGKILL` 无法触发 `trap`，因此临时目录仍只能位于随实例重启回收的 `/tmp`，不能用持久卷兜底。
+
+## 三、历史残留与验收
+
+- 禁止设置会盲删整个 `/tmp`、`/data/tmp` 或持久卷的定时任务。处理历史残留前必须先确认无进程和文件描述符占用，再按任务前缀或已核对清单删除；目标不明确时停止。
+- 回报“已完成拼接/转码”前必须同时给出：成品已落正式存储、任务临时目录剩余条目为 0、持久卷使用量没有因本任务增长。只证明 ffmpeg 退出码为 0 不算完成。
