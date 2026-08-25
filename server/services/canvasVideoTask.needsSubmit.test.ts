@@ -86,4 +86,29 @@ describe("canvasVideoTaskNeedsSubmit(六审第7条:HH 官方单不得重复提�
       ).toBe(false);
     }
   });
+
+  it("HappyHorse 三通道引擎按各自句柄判定;auto 含百炼老句柄在内任一在手即不重提", () => {
+    expect(
+      canvasVideoTaskNeedsSubmit({ engine: "happyhorse-evolink" } as CanvasVideoTaskRecord),
+    ).toBe(true);
+    expect(
+      canvasVideoTaskNeedsSubmit({ engine: "happyhorse-evolink", evolinkTaskId: "ev" } as CanvasVideoTaskRecord),
+    ).toBe(false);
+    expect(
+      canvasVideoTaskNeedsSubmit({ engine: "happyhorse-wavespeed", wavespeedPredictionId: "wsp" } as CanvasVideoTaskRecord),
+    ).toBe(false);
+    expect(
+      canvasVideoTaskNeedsSubmit({ engine: "happyhorse-auto" } as CanvasVideoTaskRecord),
+    ).toBe(true);
+    for (const handle of [
+      { bailianTaskId: "bl" },
+      { pollingUrl: "https://or.example/poll" },
+      { evolinkTaskId: "ev" },
+      { wavespeedPredictionId: "wsp" },
+    ]) {
+      expect(
+        canvasVideoTaskNeedsSubmit({ engine: "happyhorse-auto", ...handle } as CanvasVideoTaskRecord),
+      ).toBe(false);
+    }
+  });
 });

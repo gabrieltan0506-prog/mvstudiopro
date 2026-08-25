@@ -21,7 +21,6 @@ import {
 } from "./paidJobLedger.js";
 import { buildOpenRouterSeedanceSubmitBody } from "./openrouterSeedanceVideo.js";
 import { buildOpenRouterHailuoSubmitBody } from "./openrouterHailuoVideo.js";
-import { buildOpenRouterHappyHorseSubmitBody } from "./openrouterHappyHorseVideo.js";
 import { getOpenRouterApiKey } from "./openrouterGptImage2.js";
 import {
   isOpenRouterVideoConfigured,
@@ -55,11 +54,10 @@ import {
 import type { WavespeedUpscaleTarget } from "../../shared/wavespeedVideoUpscaleModels.js";
 import { pollWavespeedWanOnce } from "./wavespeedWanVideo.js";
 import { submitWan30ViaChannels } from "./wan30Channels.js";
+import { submitHappyHorseViaChannels } from "./happyHorseChannels.js";
 import {
   BAILIAN_HAPPYHORSE_I2V_MODEL,
-  isBailianHappyHorseConfigured,
   pollBailianHappyHorseOnce,
-  submitBailianHappyHorseVideo,
 } from "./bailianHappyHorseVideo.js";
 import { getGcsBucketName, signGcsObjectPathV4ReadUrl } from "./gcs.js";
 import { verifyCanvasMediaOwnership } from "./canvasMediaOwnership.js";
@@ -90,7 +88,14 @@ const WAN30_MAX_POLL_MS = Math.min(
 export type CanvasVideoEngine =
   | "seedance-openrouter"
   | "hailuo-openrouter"
+  /** HappyHorse 旧引擎名：在途老单（含百炼 bailianTaskId）轮询收尾用；新提交也可被钉回 OpenRouter */
   | "happyhorse-openrouter"
+  /** HappyHorse · EvoLink i2v（0825 拆百炼三通道） */
+  | "happyhorse-evolink"
+  /** HappyHorse · WaveSpeed i2v */
+  | "happyhorse-wavespeed"
+  /** HappyHorse · 待路由（提交时选通道后改写成具体引擎） */
+  | "happyhorse-auto"
   | "seedance25-byteplus"
   | "seedance25-evolink"
   /** Seedance 2.0 Mini 草稿档：EvoLink 单路径（OpenRouter 没有 mini） */
@@ -306,6 +311,12 @@ function isWan30Engine(engine: CanvasVideoEngine): boolean {
     || engine === "wan30-evolink" || engine === "wan30-auto";
 }
 
+/** HappyHorse 系引擎（含旧名与未路由 auto） */
+function isHappyHorseEngine(engine: CanvasVideoEngine): boolean {
+  return engine === "happyhorse-openrouter" || engine === "happyhorse-evolink"
+    || engine === "happyhorse-wavespeed" || engine === "happyhorse-auto";
+}
+
 /** 走 EvoLink 任务号轮询的引擎（2.5 / Mini / 2.0 仿真人共用同一套 submit/poll） */
 function usesEvolinkTaskId(engine: CanvasVideoEngine): boolean {
   return (
@@ -333,6 +344,12 @@ export function canvasVideoTaskNeedsSubmit(task: CanvasVideoTaskRecord): boolean
   }
   if (task.engine === "happyhorse-openrouter") {
     return !task.bailianTaskId && !task.pollingUrl;
+  }
+  if (task.engine === "happyhorse-evolink") return !task.evolinkTaskId;
+  if (task.engine === "happyhorse-wavespeed") return !task.wavespeedPredictionId;
+  if (task.engine === "happyhorse-auto") {
+    return !task.bailianTaskId && !task.pollingUrl
+      && !task.evolinkTaskId && !task.wavespeedPredictionId;
   }
   return !task.pollingUrl;
 }
@@ -642,76 +659,34 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
     return;
   }
 
-  if (task.engine === "happyhorse-openrouter") {
+  if (isHappyHorseEngine(task.engine)) {
     const imageUrl = String(task.imageUrl || task.imageUrls?.[0] || "").trim();
     if (!imageUrl) throw new Error("Happy Horse 成片需要至少一张首帧参考图");
     /**
-     * 0820 拍板:HappyHorse 主通道=百炼官方直连(同能力便宜约 1/4,i2v 官方契约),
-     * OpenRouter 网关降级为兜底——官方提交抛错(含配置缺失以外的任何原因)才回落。
-     * 官方 i2v 无 aspect_ratio 参数,画幅随首帧图,与网关行为差异已知且可接受。
+     * 0825 拆百炼三通道：EvoLink → OpenRouter → WaveSpeed（用户拍板顺序）。
+     * 百炼在途老单（bailianTaskId）needsSubmit=false 只走轮询收尾，此处不会再建。
+     * 已路由过的具体引擎 pin 回原通道（句柄语义不同不能混）。
      */
-    if (isBailianHappyHorseConfigured()) {
-      try {
-        const submitted = await submitBailianHappyHorseVideo({
-          prompt: task.prompt,
-          imageUrl: await resolveProtectedTaskMediaUrl(task, imageUrl),
-          duration: task.duration,
-          resolution: task.resolution || "720p",
-        });
-        task.bailianTaskId = submitted.bailianTaskId;
-        task.model = submitted.model;
-        task.provider = "bailian";
-        task.status = "running";
-        task.startedAt = task.startedAt || new Date().toISOString();
-        await writeTask(task);
-        return;
-      } catch (error) {
-        const { isBailianHappyHorseSubmitRejected, isBailianHappyHorseSubmitUnknown } =
-          await import("./bailianHappyHorseVideo.js");
-        const reason = error instanceof Error ? error.message : String(error);
-        // 归属校验失败是用户侧终态错误,回落网关同样必败,直接抛给任务框架退分
-        if (/归属校验未通过/.test(reason)) throw error;
-        /**
-         * 六审第9条:只有上游**明确拒绝**(4xx 回执,确定没建单)才允许回落 OpenRouter。
-         * 结果未知(网络断/5xx/超时)时任务可能已建成——回落=同一段片双引擎各烧一次,
-         * 转 reconcile_manual 停自动化,不退款、由人工对账定夺。
-         */
-        if (isBailianHappyHorseSubmitUnknown(error)) {
-          task.status = "reconcile_manual";
-          task.error = "百炼提交结果无法确认，为避免重复生成，已停止自动回落并转人工对账";
-          task.lastTransientError = reason.slice(0, 280);
-          task.finishedAt = new Date().toISOString();
-          await writeTask(task);
-          await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
-          return;
-        }
-        if (!isBailianHappyHorseSubmitRejected(error)) {
-          throw error;
-        }
-        console.warn(
-          `[canvasVideoTask] 百炼 HappyHorse 明确拒绝,回落 OpenRouter · task=${task.taskId} · ${reason}`,
-        );
-        task.fallbackReason = reason.slice(0, 200);
-        task.bailianTaskId = undefined;
-      }
-    }
-    const body = buildOpenRouterHappyHorseSubmitBody({
-      prompt: task.prompt,
-      imageUrl: await resolveProtectedTaskMediaUrl(task, imageUrl),
-      aspectRatio: task.aspectRatio,
-      duration: task.duration,
-      resolution: task.resolution || "720p",
-    });
-    let submitted: Awaited<ReturnType<typeof submitOpenRouterVideoJob>>;
+    const pinChannel =
+      task.engine === "happyhorse-evolink" ? ("evolink" as const)
+        : task.engine === "happyhorse-wavespeed" ? ("wavespeed" as const)
+          : task.engine === "happyhorse-openrouter" ? ("openrouter" as const)
+            : undefined;
+    let routed: Awaited<ReturnType<typeof submitHappyHorseViaChannels>>;
     try {
-      submitted = await submitOpenRouterVideoJob(body);
+      routed = await submitHappyHorseViaChannels({
+        prompt: task.prompt,
+        imageUrl: await resolveProtectedTaskMediaUrl(task, imageUrl),
+        duration: task.duration,
+        resolution: task.resolution || "720p",
+        aspectRatio: task.aspectRatio,
+        seed: task.seed,
+      }, undefined, pinChannel);
     } catch (error) {
-      // 八审 P1-5:用 typed error(提交层产出),不再靠文案正则猜——
-      // unknown(网络断/5xx/408/409/429/2xx缺id)任务可能已建,禁回落,转对账
-      const { isOpenRouterSubmitUnknown } = await import("./openrouterVideoCore.js");
-      if (isOpenRouterSubmitUnknown(error)) {
+      // unknown = 上游可能已建单：转对账、不退款（与 wan30/旧百炼分支同一铁律）
+      if ((error as { kind?: string } | null)?.kind === "unknown") {
         task.status = "reconcile_manual";
-        task.error = "网关提交结果无法确认，已停止自动重试并转人工对账";
+        task.error = "成片提交结果无法确认，为避免重复生成已停止自动重试，转人工对账";
         task.lastTransientError = (error instanceof Error ? error.message : String(error)).slice(0, 280);
         task.finishedAt = new Date().toISOString();
         await writeTask(task);
@@ -720,20 +695,58 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
       }
       throw error;
     }
+    const { submitted, skippedZh } = routed;
+    if (skippedZh.length) {
+      console.warn(`[canvasVideoTask] happyhorse 路由跳过: ${skippedZh.join("；")}`);
+    }
+    task.status = "running";
+    task.startedAt = task.startedAt || new Date().toISOString();
+    if (submitted.channel === "evolink") {
+      task.engine = "happyhorse-evolink";
+      task.provider = "evolink";
+      task.model = task.model || "happyhorse-1.1";
+      task.evolinkTaskId = submitted.evolinkTaskId;
+      await writeTask(task);
+      if (submitted.immediateSourceUrl) {
+        // 句柄已落盘、上游已计费——镜像抖动是瞬态，交给轮询重取
+        try {
+          const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(submitted.immediateSourceUrl);
+          await succeedTask(task, videoUrl, task.model || "happyhorse-1.1", "evolink");
+        } catch (mirrorError) {
+          task.lastTransientError =
+            (mirrorError instanceof Error ? mirrorError.message : String(mirrorError)).slice(0, 280);
+          await writeTask(task);
+        }
+      }
+      return;
+    }
+    if (submitted.channel === "wavespeed") {
+      task.engine = "happyhorse-wavespeed";
+      task.provider = "wavespeed";
+      task.model = task.model || "happyhorse-1.1";
+      task.wavespeedPredictionId = submitted.predictionId;
+      await writeTask(task);
+      return;
+    }
+    task.engine = "happyhorse-openrouter";
+    task.provider = "openrouter";
     task.openRouterJobId = submitted.openRouterJobId;
     task.pollingUrl = submitted.pollingUrl;
     task.model = submitted.model;
-    task.provider = "openrouter";
-    task.status = "running";
-    task.startedAt = task.startedAt || new Date().toISOString();
     await writeTask(task);
     if (submitted.immediateSourceUrl) {
-      const videoUrl = await mirrorOpenRouterVideoSourceUrl(
-        submitted.immediateSourceUrl,
-        submitted.apiKey,
-        { keyPrefix: "canvas-video/happyhorse", required: true },
-      );
-      await succeedTask(task, videoUrl, submitted.model, "openrouter");
+      try {
+        const videoUrl = await mirrorOpenRouterVideoSourceUrl(
+          submitted.immediateSourceUrl,
+          submitted.apiKey,
+          { keyPrefix: "canvas-video/happyhorse", required: true },
+        );
+        await succeedTask(task, videoUrl, submitted.model, "openrouter");
+      } catch (mirrorError) {
+        task.lastTransientError =
+          (mirrorError instanceof Error ? mirrorError.message : String(mirrorError)).slice(0, 280);
+        await writeTask(task);
+      }
     }
     return;
   }
@@ -1049,6 +1062,46 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           current.model || (isMini ? "seedance-2.0-mini" : "seedance-2.5"),
           "evolink",
         );
+      }
+
+      /** happyhorse-auto+句柄：按句柄归位成具体引擎（与 wan30-auto 同一容错口径） */
+      if (current.engine === "happyhorse-auto") {
+        if (current.evolinkTaskId) current.engine = "happyhorse-evolink";
+        else if (current.wavespeedPredictionId) current.engine = "happyhorse-wavespeed";
+        else if (current.pollingUrl || current.bailianTaskId) current.engine = "happyhorse-openrouter";
+        if (current.engine !== "happyhorse-auto") await writeTask(current);
+      }
+
+      if (current.engine === "happyhorse-evolink") {
+        if (!current.evolinkTaskId) {
+          return failTask(current, "照片动画服务未返回任务编号");
+        }
+        const snap = await pollEvolinkVideoTaskOnce(current.evolinkTaskId, "HappyHorse");
+        if (snap.state === "running") {
+          current.status = activePollStatus(current);
+          current.lastTransientError = snap.status.startsWith("transient_") ? snap.status : undefined;
+          await writeTask(current);
+          return current;
+        }
+        if (snap.state === "failed") return failTask(current, snap.error);
+        const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(snap.sourceUrl);
+        return succeedTask(current, videoUrl, current.model || "happyhorse-1.1", "evolink");
+      }
+
+      if (current.engine === "happyhorse-wavespeed") {
+        if (!current.wavespeedPredictionId) {
+          return failTask(current, "照片动画服务未返回任务编号");
+        }
+        const snap = await pollWavespeedWanOnce(current.wavespeedPredictionId);
+        if (snap.state === "running") {
+          current.status = activePollStatus(current);
+          current.lastTransientError = snap.status.startsWith("transient_") ? snap.status : undefined;
+          await writeTask(current);
+          return current;
+        }
+        if (snap.state === "failed") return failTask(current, snap.error);
+        const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(snap.sourceUrl);
+        return succeedTask(current, videoUrl, current.model || "happyhorse-1.1", "wavespeed");
       }
 
       /**

@@ -4225,14 +4225,11 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       }
       const aspectRatio = s(b.aspectRatio || q.aspectRatio || "9:16").trim() || "9:16";
       try {
-        const { isOpenRouterHappyHorseConfigured } = await import(
-          "../server/services/openrouterHappyHorseVideo.js"
+        // 0825 拆百炼三通道:EvoLink → OpenRouter → WaveSpeed,任一在配即可开闸
+        const { isAnyHappyHorseChannelConfigured } = await import(
+          "../server/services/happyHorseChannels.js"
         );
-        const { isBailianHappyHorseConfigured } = await import(
-          "../server/services/bailianHappyHorseVideo.js"
-        );
-        // 0820 拍板:百炼官方为主通道,OpenRouter 兜底——任一在配即可开闸
-        if (!isBailianHappyHorseConfigured() && !isOpenRouterHappyHorseConfigured()) {
+        if (!isAnyHappyHorseChannelConfigured()) {
           return res.status(503).json({
             ok: false,
             error: "视频服务暂不可用，请稍后重试",
@@ -4265,7 +4262,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             creditsCharged: charged.credits,
             deduct: charged.deduct,
             idempotencyKey: requestKey,
-            engine: "happyhorse-openrouter",
+            engine: "happyhorse-auto",
             label,
             prompt,
             imageUrl,
@@ -4330,14 +4327,11 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       const aspectRatio = s(b.aspectRatio || "16:9").trim() || "16:9";
 
       try {
-        const { isOpenRouterHappyHorseConfigured } = await import(
-          "../server/services/openrouterHappyHorseVideo.js"
+        // 0825 拆百炼三通道:EvoLink → OpenRouter → WaveSpeed,任一在配即可开闸
+        const { isAnyHappyHorseChannelConfigured } = await import(
+          "../server/services/happyHorseChannels.js"
         );
-        const { isBailianHappyHorseConfigured } = await import(
-          "../server/services/bailianHappyHorseVideo.js"
-        );
-        // 0820 拍板:百炼官方为主通道,OpenRouter 兜底——任一在配即可开闸
-        if (!isBailianHappyHorseConfigured() && !isOpenRouterHappyHorseConfigured()) {
+        if (!isAnyHappyHorseChannelConfigured()) {
           return res.status(503).json({ ok: false, error: "视频服务暂不可用，请稍后重试" });
         }
 
