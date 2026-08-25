@@ -883,7 +883,13 @@ function mergeManhuaNativeModelReceiptsSql(incoming: readonly ManhuaNativeModelR
             else existing.item || incoming_match.item
           end as item,
           existing.ord
-        from jsonb_array_elements(${existingJson}) with ordinality as existing(item, ord)
+        from (
+          select distinct on (candidate.item->>'callId', candidate.item->>'stage')
+            candidate.item,
+            candidate.ord
+          from jsonb_array_elements(${existingJson}) with ordinality as candidate(item, ord)
+          order by candidate.item->>'callId', candidate.item->>'stage', candidate.ord desc
+        ) as existing
         left join lateral (
           select candidate.item
           from jsonb_array_elements(${incomingJson}::jsonb) as candidate(item)

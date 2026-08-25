@@ -302,6 +302,30 @@ describe("漫剧学习终态落库", () => {
     }, { attempts: 1, delayMs: 0 })).resolves.toBe(true);
     expect(Object.keys(written || {})).toEqual(["output"]);
     expect(sqlStringValues(written?.output).join("\n")).toContain("上游超时后返回失败");
+    expect(sqlStringValues(written?.output).join("\n")).toContain("distinct on");
+  });
+
+  it("任务已 failed 后仍允许补记迟到的 started 回执", async () => {
+    const failedRow = { ...QUEUED_ROW, id: "learn-late-started", status: "failed", output: {} };
+    let written: Record<string, unknown> | undefined;
+    getDb.mockResolvedValue({
+      update: () => ({
+        set: (values: Record<string, unknown>) => {
+          written = values;
+          return { where: () => ({ returning: async () => [{ id: failedRow.id }] }) };
+        },
+      }),
+    });
+    await expect(upsertManhuaNativeModelReceiptForJob(failedRow.id, {
+      callId: "audio-late-started",
+      model: "qwen3.8-max",
+      route: "singapore_token_plan",
+      stage: "audio_model",
+      status: "started",
+      episodeIndexes: [3],
+    }, { attempts: 1, delayMs: 0 })).resolves.toBe(true);
+    expect(Object.keys(written || {})).toEqual(["output"]);
+    expect(sqlStringValues(written?.output).join("\n")).toContain("audio-late-started");
   });
 });
 
