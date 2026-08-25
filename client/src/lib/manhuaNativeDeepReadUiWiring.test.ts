@@ -57,7 +57,16 @@ describe("原生精读页面接线", () => {
     expect(PAGE).toContain('manhuaLearnResult.pipelineMode === "native_deep_read"');
     expect(PAGE).toContain("manhuaLearnResult.nativeUsage");
     expect(PAGE).toContain("nativeLearnTerminalProposalRefreshSignature");
-    expect(PAGE).toContain("await manhuaViralProposalsQuery.refetch()");
+    expect(PAGE).toContain("await manhuaViralProposalsRefetchRef.current()");
+  });
+
+  it("轮询 effect 不依赖整颗 query 对象，且无变化快照复用旧引用", () => {
+    expect(PAGE).toContain("reuseManhuaLearnServerJobsIfUnchanged(prev, listed.items)");
+    expect(PAGE).toContain("manhuaViralProposalsRefetchRef.current = manhuaViralProposalsQuery.refetch");
+    const refreshAt = PAGE.indexOf("const refreshManhuaLearnServerJobs = useCallback");
+    const stopAt = PAGE.indexOf("const stopFocusedManhuaLearnJob", refreshAt);
+    const refreshBlock = PAGE.slice(refreshAt, stopAt);
+    expect(refreshBlock).not.toContain("[manhuaLearnActiveJob, manhuaLearnFocusSeriesKey, manhuaViralProposalsQuery]");
   });
 
   it("页面没有任何供应商生产密钥入口", () => {

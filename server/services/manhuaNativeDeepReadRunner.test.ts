@@ -6,6 +6,8 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   NATIVE_DEEP_READ_MODEL,
+  NATIVE_DEEP_READ_REQUEST_IDLE_TIMEOUT_MS,
+  NATIVE_DEEP_READ_REQUEST_TOTAL_TIMEOUT_MS,
   assertNativeDeepReadPieceSize,
   buildNativeDeepReadPrompt,
   isManhuaNativeDeepReadEnabled,
@@ -80,6 +82,27 @@ describe("模型名收口", () => {
     expect(NATIVE_DEEP_READ_MODEL).toBe("qwen3.8-max");
     expect(NATIVE_DEEP_READ_MODEL).toBe(MANHUA_NATIVE_DEEP_READ_MODEL);
     expect(MANHUA_NATIVE_DEEP_READ_MODEL_LABEL).toBe("Qwen 3.8 Max");
+  });
+});
+
+describe("原生精读长请求时限", () => {
+  it("空闲时限覆盖已实测的 473 秒首字节延迟，且仍短于总时限", () => {
+    expect(NATIVE_DEEP_READ_REQUEST_IDLE_TIMEOUT_MS).toBe(600_000);
+    expect(NATIVE_DEEP_READ_REQUEST_IDLE_TIMEOUT_MS).toBeGreaterThan(473_000);
+    expect(NATIVE_DEEP_READ_REQUEST_TOTAL_TIMEOUT_MS).toBe(1_800_000);
+    expect(NATIVE_DEEP_READ_REQUEST_IDLE_TIMEOUT_MS).toBeLessThan(
+      NATIVE_DEEP_READ_REQUEST_TOTAL_TIMEOUT_MS,
+    );
+  });
+
+  it("请求实现使用共享长请求常量，不得退回 120 秒短探活口径", () => {
+    const src = readFileSync(
+      new URL("./manhuaNativeDeepReadRunner.ts", import.meta.url),
+      "utf8",
+    );
+    expect(src).toContain("timeoutMs = NATIVE_DEEP_READ_REQUEST_TOTAL_TIMEOUT_MS");
+    expect(src).toContain("req.setTimeout(\n      NATIVE_DEEP_READ_REQUEST_IDLE_TIMEOUT_MS,");
+    expect(src).not.toContain("req.setTimeout(120_000");
   });
 });
 

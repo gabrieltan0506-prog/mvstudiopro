@@ -676,6 +676,27 @@ export type ManhuaLearnServerJobSnapshot = {
 };
 
 /**
+ * 任务轮询每 3 秒会拿到一份新数组；内容没变时复用旧引用，避免让整张万行页面
+ * 因一次无变化的 GET 重绘原生 select。服务端每次任务写入都会同步 updatedAt，
+ * 这里仍比较完整快照，防止旧任务或补写路径漏更新时间时吞掉真实进度。
+ */
+export function reuseManhuaLearnServerJobsIfUnchanged<
+  T extends ManhuaLearnServerJobSnapshot,
+>(
+  current: T[],
+  incoming: T[],
+): T[] {
+  if (current === incoming) return current;
+  try {
+    return JSON.stringify(current || []) === JSON.stringify(incoming || [])
+      ? current
+      : incoming;
+  } catch {
+    return incoming;
+  }
+}
+
+/**
  * 原生精读任务在别的页面或 Fly owner 探针入队时，本页仍会从服务端任务表看到它。
  * 用终态签名触发一次待审列表刷新；失败任务也可能已经落下前几集卡，不能只看 succeeded。
  */

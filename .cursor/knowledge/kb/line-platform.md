@@ -9,7 +9,8 @@
 - 单页知识卡多页循环 + lastResult 找回（「N 分钟前」toast）。
 
 ## 本地已实现（未部署）
-- **原生精读面板真值热修**：`/platform` 的 AI 漫剧学习区按 owner 能力显示原生视频精读说明、计划预演按钮与批次范围；抖音原生候选在权限读取失败或 owner 不匹配时关闭式停止，不再静默建立旧抽帧任务。历史任务按 `pipelineMode` 明示「原生精读／旧抽帧」。
+- **原生精读长请求与学习面板稳定性**：非流式 Qwen 请求的 socket idle 由 120 秒改为 10 分钟，总时限保留 30 分钟；任务轮询不再依赖整颗 tRPC query 对象，无变化的服务端 Job 快照复用旧数组引用，避免 3 秒轮询退化成无间隔 GET 并重绘原生下拉。静态与全量测试已过，Fly 旁路真跑待执行。
+- **原生精读面板真值热修**：`/platform` 的 AI 漫剧学习区按 owner 能力显示原生视频精读说明、直接开始按钮与自由批次范围；点击后直接建立持久任务，不再先走前台预演。抖音原生候选在权限读取失败或 owner 不匹配时关闭式停止，不再静默建立旧抽帧任务。历史任务按 `pipelineMode` 明示「原生精读／旧抽帧」。
 - **批准模板 owner 查看/优化**：入口位于 `/platform` → AI 漫剧 →「模板库（已批准 · 编剧室可选）」。完整库、单卡详情、原始 GCS 列表、优化调用与修订批准都以 `OWNER_OPEN_ID` fail-closed；角色和监管会话不能替代 owner。
 - 优化结果只落 `manhua-template-learn/proposals/`；owner 批准后旧版先归档到 `archive/`，再以原内部 id 与 publicCode 替换 `approved/`。`/canvas` 未改，继续只读匿名 `listApprovedPublic`。
 - 模型档：Terra High、Kimi K3 Max、Claude Opus 5 High、DeepSeek V4 Pro 0813 High。DeepSeek 不传 temperature/top_p，固定 65536 + JSON + `require_parameters=true`。未做付费实跑或线上 GCS 写入。
