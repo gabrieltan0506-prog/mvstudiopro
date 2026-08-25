@@ -298,7 +298,17 @@ function postLong(
 /** 官方单视频 2000 帧上限内留 10% 余量，避免取整后越界。 */
 export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
 /** 计划确认码的一部分；采样/装箱规则变化必须让旧确认码失效。 */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "adaptive-1800f-360s-v1" as const;
+/**
+ * v2（0826 用户拍板）：fps 升为请求级两档制——请求内视频总时长 ≤180s 走 fps10，
+ * 超过一律 fps5、永不更低（低于 5 质量不够六栏；360s 以上已分片，
+ * 每片 360s×fps5=1800 帧恰好贴满单视频帧预算）。fps 语义变更须使旧确认码失效。
+ */
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "adaptive-1800f-360s-v2-2step-fps" as const;
+
+/** 请求级两档 fps（0826 拍板）：总时长 ≤180s → 10；否则 5（下限，不再降） */
+export function resolveNativeDeepReadRequestFps(totalDurationSec: number): number {
+  return totalDurationSec <= 180 ? 10 : 5;
+}
 /** OpenAI 兼容视频输入的官方 fps 上限。 */
 export const NATIVE_DEEP_READ_MAX_FPS = 10;
 /** 百炼官方多视频输入上限；超过时由执行层拆成多个请求包。 */
@@ -503,10 +513,15 @@ export function buildSingaporeNativeDeepReadBatchRequest(input: ReadonlyArray<{
     segments: episode.videos,
   })));
   const content: Array<Record<string, unknown>> = [];
+  // 0826 两档制：fps 按本请求视频总时长统一取档（≤180s→10，否则5），不再逐段各算
+  const requestTotalSec = input.reduce(
+    (sum, ep) => sum + ep.videos.reduce((s2, v) => s2 + (v.endSec - v.startSec), 0),
+    0,
+  );
+  const requestFps = resolveNativeDeepReadRequestFps(requestTotalSec);
   for (const episode of input) {
     for (let segmentIndex = 0; segmentIndex < episode.videos.length; segmentIndex += 1) {
       const video = episode.videos[segmentIndex]!;
-      const segmentDurationSec = video.endSec - video.startSec;
       content.push({
         type: "text",
         text: `下一个视频唯一对应 episodeIndex=${episode.episodeIndex}，segmentIndex=${segmentIndex}，全片秒段=${video.startSec}-${video.endSec}。`,
@@ -514,7 +529,7 @@ export function buildSingaporeNativeDeepReadBatchRequest(input: ReadonlyArray<{
       content.push({
         type: "video_url",
         video_url: { url: video.url },
-        fps: resolveNativeDeepReadInputFps(segmentDurationSec),
+        fps: requestFps,
         min_pixels: NATIVE_DEEP_READ_VIDEO_MIN_PIXELS,
         max_pixels: maxPixels,
       });
@@ -647,7 +662,14 @@ export const NATIVE_DEEP_READ_BATCH_REQUEST_TOTAL_TIMEOUT_MS = 60 * 60_000;
  * 0823 实测单文件 87MB 成功、整片直读 122.5s 超时——下载窗约 120 秒）。
  * 一个视觉请求携带的媒体总字节数不得超过它；直读集按时长估算（无法预知精确体积）。
  */
-export const NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES = 85 * 1024 * 1024;
+/*
+ * 0826 用户拍板收紧到 64MB：85MB 贴着 0823 实测 87MB 的边，但那次是 OSS 北京→北京
+ * 同区内网；现在是 GCS→新加坡，吞吐未实测——对 120 秒下载窗留约 50% 余量。
+ * 官方逐条上限（单文件体积/时长、超时按文件还是按请求）在 vision 与 qwen3-8-max
+ * 两页文档均未载明；双实弹（0823 122.5s / 0825 122.0s）证明窗按请求聚合计。
+ * 首次真跑拿到 GCS→SG 实测吞吐后可再放宽。
+ */
+export const NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES = 64 * 1024 * 1024;
 /** 直读集（CDN 直链）体积估算系数：0823 实测 540p bytevc1 约 70KB/s，留余量取 100KB/s */
 export const NATIVE_DEEP_READ_DIRECT_BYTES_PER_SEC = 100 * 1024;
 

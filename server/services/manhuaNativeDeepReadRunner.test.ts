@@ -6,6 +6,8 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   NATIVE_DEEP_READ_DIRECT_BYTES_PER_SEC,
+  resolveNativeDeepReadRequestFps,
+  buildSingaporeNativeDeepReadBatchRequest,
   NATIVE_DEEP_READ_MODEL,
   NATIVE_DEEP_READ_REQUEST_IDLE_TIMEOUT_MS,
   NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES,
@@ -542,25 +544,25 @@ describe("模型请求前的媒体准备边界", () => {
 describe("单请求下载预算（0825 实弹 4 视频 122s 超时,request_id bbb482da）", () => {
   const MB = 1024 * 1024;
 
-  it("预算与估算系数锚定实测：85MB 预算 < 87MB 单文件成功上限，直读按 100KB/s 估算", () => {
-    expect(NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES).toBe(85 * MB);
+  it("预算与估算系数锚定实测：64MB 预算对 120s 下载窗留约 50% 余量（0826 用户拍板），直读按 100KB/s 估算", () => {
+    expect(NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES).toBe(64 * MB);
     expect(NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES).toBeLessThan(87 * MB);
     expect(NATIVE_DEEP_READ_DIRECT_BYTES_PER_SEC).toBe(100 * 1024);
   });
 
-  it("40MB+40MB+60MB 按预算拆成 [[1,2],[3]]", () => {
+  it("30MB+30MB+40MB 按预算拆成 [[1,2],[3]]", () => {
     expect(groupNativeDeepReadRequestByMediaBudget([
-      { episodeIndex: 1, bytes: 40 * MB },
-      { episodeIndex: 2, bytes: 40 * MB },
-      { episodeIndex: 3, bytes: 60 * MB },
+      { episodeIndex: 1, bytes: 30 * MB },
+      { episodeIndex: 2, bytes: 30 * MB },
+      { episodeIndex: 3, bytes: 40 * MB },
     ], NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES)).toEqual([[1, 2], [3]]);
   });
 
-  it("保持清单顺序，不做重排优化：60,40,40 → [[1],[2,3]]", () => {
+  it("保持清单顺序，不做重排优化：40,30,30 → [[1],[2,3]]", () => {
     expect(groupNativeDeepReadRequestByMediaBudget([
-      { episodeIndex: 1, bytes: 60 * MB },
-      { episodeIndex: 2, bytes: 40 * MB },
-      { episodeIndex: 3, bytes: 40 * MB },
+      { episodeIndex: 1, bytes: 40 * MB },
+      { episodeIndex: 2, bytes: 30 * MB },
+      { episodeIndex: 3, bytes: 30 * MB },
     ], NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES)).toEqual([[1], [2, 3]]);
   });
 
@@ -569,21 +571,21 @@ describe("单请求下载预算（0825 实弹 4 视频 122s 超时,request_id bb
       { episodeIndex: 7, bytes: 200 * MB },
     ], NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES)).toEqual([[7]]);
     expect(groupNativeDeepReadRequestByMediaBudget([
-      { episodeIndex: 1, bytes: 40 * MB },
+      { episodeIndex: 1, bytes: 30 * MB },
       { episodeIndex: 2, bytes: 200 * MB },
       { episodeIndex: 3, bytes: 10 * MB },
     ], NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES)).toEqual([[1], [2], [3]]);
   });
 
-  it("直读集按时长估算：两集 420 秒可同请求，两集 500 秒必须拆开", () => {
+  it("直读集按时长估算：两集 300 秒可同请求，两集 360 秒必须拆开（64MB 预算）", () => {
     const estimate = (durationSec: number) => durationSec * NATIVE_DEEP_READ_DIRECT_BYTES_PER_SEC;
     expect(groupNativeDeepReadRequestByMediaBudget([
-      { episodeIndex: 1, bytes: estimate(420) },
-      { episodeIndex: 2, bytes: estimate(420) },
+      { episodeIndex: 1, bytes: estimate(300) },
+      { episodeIndex: 2, bytes: estimate(300) },
     ], NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES)).toEqual([[1, 2]]);
     expect(groupNativeDeepReadRequestByMediaBudget([
-      { episodeIndex: 1, bytes: estimate(500) },
-      { episodeIndex: 2, bytes: estimate(500) },
+      { episodeIndex: 1, bytes: estimate(360) },
+      { episodeIndex: 2, bytes: estimate(360) },
     ], NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES)).toEqual([[1], [2]]);
   });
 });
@@ -646,7 +648,8 @@ describe("超预算整集的转码压体积", () => {
       expect(runMedia).toHaveBeenCalledTimes(4);
       expect(runMedia.mock.calls[0]?.[1]).toContain("copy");
       expect(runMedia.mock.calls[2]?.[1]).toContain("libx264");
-      expect(runMedia.mock.calls[2]?.[1]).toContain("1045k");
+      // 64MB/600s：floor(64×1048576×8×0.92/600/1000) − 48 = 775
+      expect(runMedia.mock.calls[2]?.[1]).toContain("775k");
       expect(runMedia.mock.calls[3]?.[1]).toContain("libx264");
       expect(upload).toHaveBeenCalledTimes(2);
       expect(prepared.map((row) => row.bytes)).toEqual([30 * MB, 30 * MB]);
@@ -844,5 +847,29 @@ describe("多视频请求按下载预算拆子请求（集为原子）", () => {
     expect(started[0]!.batchRequestId).toBe(result.batchRequestId);
     expect(result.episodes[0]!.result.batchEpisodeCount).toBe(2);
     expect(result.episodes[0]!.result.batchRequestId).toBe(result.batchRequestId);
+  });
+});
+
+describe("请求级两档 fps（0826 拍板：≤180s→10，否则5，永不更低）", () => {
+  it("档位边界", () => {
+    expect(resolveNativeDeepReadRequestFps(90)).toBe(10);
+    expect(resolveNativeDeepReadRequestFps(180)).toBe(10);
+    expect(resolveNativeDeepReadRequestFps(181)).toBe(5);
+    expect(resolveNativeDeepReadRequestFps(360)).toBe(5);
+    expect(resolveNativeDeepReadRequestFps(1080)).toBe(5);
+  });
+
+  it("请求体内所有视频统一用请求档 fps：两集合并 360s → 全部 fps5；单集 180s → fps10", () => {
+    const build = (eps: Array<{ episodeIndex: number; len: number }>) =>
+      buildSingaporeNativeDeepReadBatchRequest(eps.map((e) => ({
+        episodeIndex: e.episodeIndex,
+        videos: [{ url: `https://gcs.example/${e.episodeIndex}.mp4`, startSec: 0, endSec: e.len }],
+      })) as never);
+    const two = build([{ episodeIndex: 1, len: 180 }, { episodeIndex: 2, len: 180 }]);
+    const fpsValues = (req: { messages: Array<{ content: Array<Record<string, unknown>> }> }) =>
+      req.messages[0]!.content.filter((c) => c.type === "video_url").map((c) => c.fps);
+    expect(fpsValues(two as never)).toEqual([5, 5]);
+    const one = build([{ episodeIndex: 1, len: 180 }]);
+    expect(fpsValues(one as never)).toEqual([10]);
   });
 });

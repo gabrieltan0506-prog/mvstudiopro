@@ -371,4 +371,18 @@ describe("原生精读计划", () => {
     expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 0 }, base))
       .toThrow("超过任务预算");
   });
+
+  it("0826 回归：带 modal_id 的搜索页 URL 入口即规范化成 /video/ 单集形态再解析", async () => {
+    const d = deps();
+    const plan = await buildNativeDeepReadPlanPreview(
+      {
+        url: "https://www.douyin.com/search/%E4%B8%87%E5%A6%96?modal_id=7641538290936947889&type=general",
+        limit: 2,
+      },
+      d,
+    );
+    // 规范化后走单集 → 详情 → mixId 的解析链，而不是被当成不可解析的搜索页
+    expect(d.fetchAwemeDetail).toHaveBeenCalledWith("7641538290936947889");
+    expect(plan.episodes.length).toBeGreaterThan(0);
+  });
 });

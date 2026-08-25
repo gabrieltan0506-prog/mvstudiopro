@@ -105,6 +105,7 @@ import {
   NATIVE_DEEP_READ_JOB_MAX_CALLS,
 } from "@shared/manhuaNativeDeepReadJob";
 import { formatManhuaTemplateNativeBeatZh } from "@/lib/manhuaTemplateNativeBeat";
+import { normalizeDouyinVideoUrl } from "@shared/manhuaLearnYtdlp";
 import { trpc } from "@/lib/trpc";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
 import { shouldSkipLocalLearnFallback } from "@shared/manhuaLearnYtdlp";
@@ -5407,7 +5408,8 @@ export default function PlatformPage() {
       }
       const requestUserKey = manhuaLearnUserKey;
       if (!requestUserKey) return;
-      const url = String(row.url || "").trim();
+      // 0826 回归修复：modal_id 搜索页先规范化成 /video/ 单集形态再进任何闸与提交
+      const url = normalizeDouyinVideoUrl(String(row.url || "").trim());
       const gcsUri = String(row.gcsUri || "").trim();
       const title = String(row.mixName || "").trim();
       const source = gcsUri || url;
