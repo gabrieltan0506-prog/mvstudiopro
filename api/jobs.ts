@@ -4135,8 +4135,9 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         .filter((u) => /^https?:\/\//i.test(u));
       const aspectRatio = s(b.aspectRatio || q.aspectRatio || "9:16").trim() || "9:16";
       try {
-        const { isWavespeedWanConfigured } = await import("../server/services/wavespeedWanVideo.js");
-        if (!isWavespeedWanConfigured()) {
+        // 0825 拍板：Wan 3.0 三通道（OpenRouter → EvoLink → WaveSpeed），任一配置即可开单
+        const { isWan30AnyChannelConfigured } = await import("../server/services/wan30Channels.js");
+        if (!isWan30AnyChannelConfigured()) {
           return res.status(503).json({ ok: false, error: "Wan 3.0 通道暂不可用，请稍后重试" });
         }
         const { clampWan30Duration, normalizeWan30Resolution, WAN30_REFERENCE_MAX } = await import(
@@ -4165,7 +4166,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             creditsCharged: charged.credits,
             deduct: charged.deduct,
             idempotencyKey: requestKey,
-            engine: "wan30-wavespeed",
+            engine: "wan30-auto",
             label,
             prompt,
             imageUrl: imageUrls[0],
@@ -4185,7 +4186,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             taskId: task.taskId,
             status: task.status,
             videoUrl: task.videoUrl || undefined,
-            provider: "wavespeed",
+            provider: "wan30",
             version: "wan-3.0",
             resolution,
             creditsUsed: charged.credits,

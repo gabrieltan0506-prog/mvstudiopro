@@ -47,6 +47,10 @@ vi.mock("./openrouterVideoCore.js", () => ({
   mirrorOpenRouterVideoSourceUrl: vi.fn(async (u: string) => `mirrored:${u}`),
   pollOpenRouterVideoJobOnce: vi.fn(),
   submitOpenRouterVideoJob: vi.fn(),
+  // wan30Channels（0825 三通道路由）在模块加载期引用的导出，缺了会整文件炸
+  isOpenRouterVideoConfigured: vi.fn(() => false),
+  isOpenRouterSubmitRejected: vi.fn(() => false),
+  isOpenRouterSubmitUnknown: vi.fn(() => false),
 }));
 
 vi.mock("./wavespeedVideoUpscale.js", () => ({

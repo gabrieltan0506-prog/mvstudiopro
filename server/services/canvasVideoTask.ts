@@ -53,7 +53,8 @@ import {
   WAVESPEED_UPSCALE_MAX_POLL_MS,
 } from "./wavespeedVideoUpscale.js";
 import type { WavespeedUpscaleTarget } from "../../shared/wavespeedVideoUpscaleModels.js";
-import { pollWavespeedWanOnce, submitWavespeedWanVideo } from "./wavespeedWanVideo.js";
+import { pollWavespeedWanOnce } from "./wavespeedWanVideo.js";
+import { submitWan30ViaChannels } from "./wan30Channels.js";
 import {
   BAILIAN_HAPPYHORSE_I2V_MODEL,
   isBailianHappyHorseConfigured,
@@ -98,8 +99,14 @@ export type CanvasVideoEngine =
   | "seedance20-evolink"
   /** WaveSpeed 字节视频超分（2K/4K）：复用同一套异步任务框架，入参走 upscale* 字段 */
   | "wavespeed-upscale"
-  /** Wan 3.0（公测）· WaveSpeed reference-to-video：可直出 30s，公测排队极长 */
-  | "wan30-wavespeed";
+  /** Wan 3.0 · WaveSpeed reference-to-video（0820 实弹验证的老通道） */
+  | "wan30-wavespeed"
+  /** Wan 3.0 · OpenRouter alibaba/wan-3.0（0825 拍板加档；文档无参考音频字段，带音频不走它） */
+  | "wan30-openrouter"
+  /** Wan 3.0 · EvoLink wan3.0-reference-video（0825 拍板加档；image/audio/video_urls 全模态） */
+  | "wan30-evolink"
+  /** Wan 3.0 · 待路由：提交时由 wan30Channels 依序选通道，成功后改写成上面三个之一 */
+  | "wan30-auto";
 
 export type CanvasVideoTaskStatus =
   | "queued"
@@ -273,7 +280,7 @@ function maxPollMs(engine: CanvasVideoEngine): number {
     return EVOLINK_SEEDANCE_MAX_POLL_MS;
   }
   if (engine === "wavespeed-upscale") return WAVESPEED_UPSCALE_MAX_POLL_MS;
-  if (engine === "wan30-wavespeed") return WAN30_MAX_POLL_MS;
+  if (isWan30Engine(engine)) return WAN30_MAX_POLL_MS;
   return OPENROUTER_VIDEO_MAX_POLL_MS;
 }
 
@@ -291,6 +298,12 @@ function hasProviderTask(task: CanvasVideoTaskRecord): boolean {
       task.wavespeedPredictionId ||
       task.bailianTaskId,
   );
+}
+
+/** Wan 3.0 系引擎（含未路由的 auto）；三通道 + auto 共用同一套提交路由 */
+function isWan30Engine(engine: CanvasVideoEngine): boolean {
+  return engine === "wan30-wavespeed" || engine === "wan30-openrouter"
+    || engine === "wan30-evolink" || engine === "wan30-auto";
 }
 
 /** 走 EvoLink 任务号轮询的引擎（2.5 / Mini / 2.0 仿真人共用同一套 submit/poll） */
@@ -311,6 +324,12 @@ export function canvasVideoTaskNeedsSubmit(task: CanvasVideoTaskRecord): boolean
   if (task.engine === "seedance25-byteplus") return !task.byteplusTaskId;
   if (task.engine === "wavespeed-upscale" || task.engine === "wan30-wavespeed") {
     return !task.wavespeedPredictionId;
+  }
+  if (task.engine === "wan30-evolink") return !task.evolinkTaskId;
+  if (task.engine === "wan30-openrouter") return !task.pollingUrl;
+  if (task.engine === "wan30-auto") {
+    // 路由未定：任一上游句柄在手都算已提交（引擎名改写落盘失败的容错，防重复建单）
+    return !task.wavespeedPredictionId && !task.evolinkTaskId && !task.pollingUrl;
   }
   if (task.engine === "happyhorse-openrouter") {
     return !task.bailianTaskId && !task.pollingUrl;
@@ -734,28 +753,65 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
     return;
   }
 
-  if (task.engine === "wan30-wavespeed") {
+  if (isWan30Engine(task.engine)) {
     const resolveProtectedMediaUrl = (u: string) => resolveProtectedTaskMediaUrl(task, u);
     const images: string[] = [];
     for (const u of (task.imageUrls || []).filter(Boolean)) images.push(await resolveProtectedMediaUrl(u));
     if (!images.length && task.imageUrl) images.push(await resolveProtectedMediaUrl(task.imageUrl));
-    const submitted = await submitWavespeedWanVideo({
+    /**
+     * 三通道路由（0825 拍板：OpenRouter → EvoLink → WaveSpeed，不走百炼官方）。
+     * 已路由过的引擎（崩溃恢复重提交）不再换通道，仍走原家——句柄语义不同不能混。
+     */
+    const submittedVia = await submitWan30ViaChannels({
       prompt: task.prompt,
       imageUrls: images,
       audioUrls: await Promise.all((task.audioUrls || []).map((u) => resolveProtectedMediaUrl(u))),
+      videoUrls: await Promise.all((task.videoUrls || []).map((u) => resolveProtectedMediaUrl(u))),
       duration: task.duration,
       resolution: task.resolution || "720p",
       aspectRatio: task.aspectRatio,
       seed: task.seed,
       thinkingMode: true,
-      enableAudio: task.generateAudio !== false,
+      generateAudio: task.generateAudio !== false,
     });
-    task.wavespeedPredictionId = submitted.predictionId;
+    const { submitted, skippedZh } = submittedVia;
+    if (skippedZh.length) {
+      console.warn(`[canvasVideoTask] wan30 路由跳过: ${skippedZh.join("；")}`);
+    }
     task.model = task.model || "wan-3.0";
-    task.provider = "wavespeed";
     task.status = "running";
     task.startedAt = task.startedAt || new Date().toISOString();
+    if (submitted.channel === "wavespeed") {
+      task.engine = "wan30-wavespeed";
+      task.provider = "wavespeed";
+      task.wavespeedPredictionId = submitted.predictionId;
+      await writeTask(task);
+      return;
+    }
+    if (submitted.channel === "evolink") {
+      task.engine = "wan30-evolink";
+      task.provider = "evolink";
+      task.evolinkTaskId = submitted.evolinkTaskId;
+      await writeTask(task);
+      if (submitted.immediateSourceUrl) {
+        const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(submitted.immediateSourceUrl);
+        await succeedTask(task, videoUrl, "wan-3.0", "evolink");
+      }
+      return;
+    }
+    task.engine = "wan30-openrouter";
+    task.provider = "openrouter";
+    task.openRouterJobId = submitted.openRouterJobId;
+    task.pollingUrl = submitted.pollingUrl;
     await writeTask(task);
+    if (submitted.immediateSourceUrl) {
+      const videoUrl = await mirrorOpenRouterVideoSourceUrl(
+        submitted.immediateSourceUrl,
+        submitted.apiKey,
+        { keyPrefix: "canvas-video/wan30", required: true },
+      );
+      await succeedTask(task, videoUrl, "wan-3.0", "openrouter");
+    }
     return;
   }
 
@@ -954,6 +1010,23 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
         );
       }
 
+      if (current.engine === "wan30-evolink") {
+        if (!current.evolinkTaskId) {
+          return failTask(current, "Wan 3.0 服务未返回任务编号");
+        }
+        const snap = await pollEvolinkVideoTaskOnce(current.evolinkTaskId, "Wan 3.0");
+        if (snap.state === "running") {
+          current.status = activePollStatus(current);
+          current.lastTransientError = snap.status.startsWith("transient_") ? snap.status : undefined;
+          await writeTask(current);
+          return current;
+        }
+        if (snap.state === "failed") return failTask(current, snap.error);
+        // 上游直链短期有效，镜像 GCS 再交付（存储签名铁律）
+        const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(snap.sourceUrl);
+        return succeedTask(current, videoUrl, current.model || "wan-3.0", "evolink");
+      }
+
       if (current.engine === "wan30-wavespeed") {
         if (!current.wavespeedPredictionId) {
           return failTask(current, "Wan 3.0 服务未返回任务编号");
@@ -1047,7 +1120,9 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           ? "canvas-video/hailuo"
           : current.engine === "happyhorse-openrouter"
             ? "canvas-video/happyhorse"
-            : "canvas-video/seedance";
+            : current.engine === "wan30-openrouter"
+              ? "canvas-video/wan30"
+              : "canvas-video/seedance";
       const videoUrl = await mirrorOpenRouterVideoSourceUrl(
         snap.sourceUrl,
         apiKey,
