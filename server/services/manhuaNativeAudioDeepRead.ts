@@ -323,9 +323,28 @@ export async function collectManhuaNativeAudioEvidence(input: {
   abortSignal?: AbortSignal;
   onModelReceipt?: (receipt: ManhuaNativeAudioModelReceipt) => void | Promise<void>;
 }, deps: ManhuaNativeAudioEvidenceDeps = defaultEvidenceDeps): Promise<ManhuaNativeAudioEvidence> {
-  const initialNode = (await input.resolveNodes())[0];
-  if (!initialNode) throw new Error("未解析到可用音频媒体节点");
-  if (!(await deps.hasAudio(initialNode, input.abortSignal))) {
+  /**
+   * 0826 实弹两连败教训（8s ffprobe / 29s ffmpeg，各 ¥0）：抖音 CDN 会抖动，
+   * 同参数第三次就能过（0823 段C 原案）。视频准备路径有 3 次重试＋换节点，
+   * 音频准备此前没有——prep 步骤零模型成本，重试免费，照抄同款纪律。
+   */
+  const probeWithRetry = async (): Promise<boolean> => {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      if (input.abortSignal?.aborted) throw new Error("用户已停止学习");
+      const node = (await input.resolveNodes())[0];
+      if (!node) { lastError = new Error("未解析到可用音频媒体节点"); continue; }
+      try {
+        return await deps.hasAudio(node, input.abortSignal);
+      } catch (error) {
+        lastError = error;
+        console.warn(`[nativeAudio] ffprobe 第${attempt}次未过，换节点重试`);
+        if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 2_000));
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error("ffprobe 音频探测未完成");
+  };
+  if (!(await probeWithRetry())) {
     return { hasAudio: false, durationSec: input.durationSec, chunks: [], usage: noAudioManhuaNativeAnalysis(input.durationSec).usage };
   }
   const chunks: ManhuaNativeAudioEvidenceChunk[] = [];
@@ -339,12 +358,28 @@ export async function collectManhuaNativeAudioEvidence(input: {
       const localPaths: string[] = [];
       try {
         for (const variant of MANHUA_NATIVE_AUDIO_SOURCE_VARIANTS) {
-          const node = (await input.resolveNodes())[0];
-          if (!node) throw new Error(`第${chunk.index + 1}段未解析到可用音频媒体节点`);
           const runId = crypto.randomUUID();
           const localPath = `/tmp/manhua-native-audio-${variant}-${runId}.mp3`;
           localPaths.push(localPath);
-          await deps.extract({ node, chunk, variant, outputPath: localPath, abortSignal: input.abortSignal });
+          // CDN 抖动重试（同 ffprobe 口径）：每次重新解析节点，零模型成本
+          let extracted = false;
+          let lastExtractError: unknown;
+          for (let attempt = 1; attempt <= 3 && !extracted; attempt += 1) {
+            if (input.abortSignal?.aborted) throw new Error("用户已停止学习");
+            const node = (await input.resolveNodes())[0];
+            if (!node) { lastExtractError = new Error(`第${chunk.index + 1}段未解析到可用音频媒体节点`); continue; }
+            try {
+              await deps.extract({ node, chunk, variant, outputPath: localPath, abortSignal: input.abortSignal });
+              extracted = true;
+            } catch (error) {
+              lastExtractError = error;
+              console.warn(`[nativeAudio] ffmpeg 提取第${attempt}次未过（chunk ${chunk.index} ${variant}），换节点重试`);
+              if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 2_000));
+            }
+          }
+          if (!extracted) {
+            throw lastExtractError instanceof Error ? lastExtractError : new Error("ffmpeg 音频处理未完成");
+          }
           const [file, fileStat, actualDuration] = await Promise.all([
             readFile(localPath), stat(localPath), deps.probeLocalDuration(localPath, input.abortSignal),
           ]);
