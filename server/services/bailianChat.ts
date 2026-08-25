@@ -18,6 +18,14 @@
  *    不能用 DASHSCOPE_SG_BASE(业务空间地址配套餐钥匙会 401,#1307 工作树实录)。
  * 至此整条链不再有任何百炼按量档。
  */
+import type { ManhuaNativeProviderErrorReceipt } from "../../shared/manhuaNativeModelReceipt.js";
+import {
+  errorWithNativeProviderReceipt,
+  formatNativeProviderErrorZh,
+  nativeProviderReceiptFromError,
+  parseNativeProviderErrorReceipt,
+} from "./manhuaNativeProviderReceipt.js";
+
 export type GlmGatewayName =
   /** @deprecated 0825 起 GLM 不再走百炼;成员仅保留给历史账本/轨迹反序列化,链上不再出现 */
   | "bailian"
@@ -57,6 +65,7 @@ export type BailianChatResponse = {
   model?: string;
   /** 上游实际供应商，例如 OpenRouter 返回的 Z.AI。 */
   provider?: string;
+  requestId?: string;
 };
 
 export type GlmGatewayUsage = {
@@ -71,6 +80,7 @@ export type GlmGatewayTraceEntry = {
   model: string;
   outcome: "ok" | "http_error" | "invalid_json" | "truncated" | "incomplete" | "empty_content" | "content_invalid" | "network_error" | "skipped_not_configured";
   detail?: string;
+  providerError?: ManhuaNativeProviderErrorReceipt;
 };
 
 export type GlmChatSuccess = BailianChatResponse & {
@@ -233,6 +243,8 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
             ? "invalid_json"
             : "network_error";
       trace.push({ gateway: g.name, model: g.model, outcome, detail: msg.slice(0, 120) });
+      const providerError = nativeProviderReceiptFromError(e);
+      if (providerError) trace[trace.length - 1]!.providerError = providerError;
       console.warn(`[glmGatewayFallback] ${g.name}: ${msg.slice(0, 200)}`);
     }
   }
@@ -294,6 +306,14 @@ async function invokeOneGlmGateway(
     body: JSON.stringify(body),
   });
   const raw = await res.text();
+  const responseHeader = (name: string): string =>
+    typeof res.headers?.get === "function" ? String(res.headers.get(name) || "") : "";
+  const providerRequestId = String(
+    responseHeader("x-request-id")
+    || responseHeader("request-id")
+    || responseHeader("x-openrouter-request-id")
+    || "",
+  ).trim() || undefined;
   const maxResponseBytes = Math.max(
     1_024,
     Math.min(16 * 1024 * 1024, Math.floor(Number(params.maxResponseBytes) || 4 * 1024 * 1024)),
@@ -301,7 +321,17 @@ async function invokeOneGlmGateway(
   if (Buffer.byteLength(raw) > maxResponseBytes) {
     throw new Error("GLM 链响应超过处理上限");
   }
-  if (!res.ok) throw new Error(`GLM 链 HTTP ${res.status}: ${raw.slice(0, 160)}`);
+  if (!res.ok) {
+    const providerError = parseNativeProviderErrorReceipt({
+      httpStatus: res.status,
+      responseText: raw,
+      requestId: providerRequestId,
+    });
+    throw errorWithNativeProviderReceipt(
+      formatNativeProviderErrorZh(`GLM 网关 ${gateway}`, providerError),
+      providerError,
+    );
+  }
   let json: BailianChatResponse;
   try {
     json = JSON.parse(raw) as BailianChatResponse;
@@ -317,7 +347,10 @@ async function invokeOneGlmGateway(
   if (params.requireFinishReasonStop && finishReason !== "stop") {
     failWithUsage(`GLM 链未正常结束（${finishReason || "missing"}）`);
   }
-  return json;
+  return {
+    ...json,
+    requestId: providerRequestId,
+  };
 }
 
 /** 兼容保留:单打百炼(供探针/其他调用方直连百炼时使用) */

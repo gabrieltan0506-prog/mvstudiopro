@@ -8,6 +8,7 @@ import {
   type ManhuaViralTemplateBeat,
   type ManhuaViralTemplateCard,
 } from "../../shared/manhuaViralTemplateBank.js";
+import type { ManhuaNativeModelReceipt } from "../../shared/manhuaNativeModelReceipt.js";
 import {
   deleteGcsObject,
   downloadGcsObject,
@@ -28,6 +29,7 @@ import {
   invokeGlmJsonChatWithGatewayFallback,
   type GlmGatewayUsage,
 } from "./bailianChat.js";
+import { nativeProviderReceiptFromError } from "./manhuaNativeProviderReceipt.js";
 
 export const MANHUA_NATIVE_SERIES_AGGREGATION_MODEL = OPENROUTER_GLM_MODEL;
 export const MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE = "openrouter_text" as const;
@@ -81,16 +83,11 @@ export type NativeSeriesAggregationResult = {
   usage: NativeSeriesAggregationUsage;
 };
 
-export type NativeSeriesAggregationModelReceipt = {
+export type NativeSeriesAggregationModelReceipt = Omit<
+  ManhuaNativeModelReceipt,
+  "stage" | "episodeIndexes"
+> & {
   stage: "series_aggregation_model";
-  status: "started" | "completed" | "failed";
-  elapsedMs?: number;
-  inputTokens?: number;
-  outputTokens?: number;
-  reasoningTokens?: number;
-  costUsd?: number;
-  priceEquivalentCny?: number;
-  errorZh?: string;
 };
 
 async function emitSeriesAggregationModelReceipt(
@@ -114,6 +111,9 @@ type AggregateGatewayResult = {
   outputTokens: number;
   reasoningTokens: number;
   costUsd: number;
+  provider?: string;
+  providerRequestId?: string;
+  finishReason?: string;
 };
 
 export type NativeSeriesAggregationError = Error & {
@@ -312,6 +312,9 @@ export async function invokeNativeSeriesAggregationModel(
         Number(response.usage?.completion_tokens_details?.reasoning_tokens) || 0,
       ),
       costUsd: Math.max(0, Number(response.usage?.cost) || 0),
+      provider: String(response.provider || "").trim() || undefined,
+      providerRequestId: String(response.requestId || "").trim() || undefined,
+      finishReason: String(response.choices?.[0]?.finish_reason || "").trim() || undefined,
     };
   } catch (error) {
     const gatewayUsage = error instanceof GlmGatewayError
@@ -670,7 +673,11 @@ export async function aggregateNativeDeepReadSeries(input: {
     }));
     const payloadJson = buildNativeSeriesAggregationPayload(cards);
     const modelStartedAt = Date.now();
+    const modelCallId = crypto.randomUUID();
     await emitSeriesAggregationModelReceipt({
+      callId: modelCallId,
+      model: MANHUA_NATIVE_SERIES_AGGREGATION_MODEL,
+      route: MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE,
       stage: "series_aggregation_model",
       status: "started",
     }, input.onModelReceipt);
@@ -678,6 +685,11 @@ export async function aggregateNativeDeepReadSeries(input: {
     try {
       gateway = await deps.invoke(payloadJson, input.abortSignal);
       await emitSeriesAggregationModelReceipt({
+        callId: modelCallId,
+        model: MANHUA_NATIVE_SERIES_AGGREGATION_MODEL,
+        route: MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE,
+        provider: gateway.provider,
+        providerRequestId: gateway.providerRequestId,
         stage: "series_aggregation_model",
         status: "completed",
         elapsedMs: Date.now() - modelStartedAt,
@@ -686,10 +698,18 @@ export async function aggregateNativeDeepReadSeries(input: {
         reasoningTokens: gateway.reasoningTokens,
         costUsd: gateway.costUsd,
         priceEquivalentCny: gateway.costUsd * OPENROUTER_USD_TO_CNY_EQUIVALENT,
+        finishReason: gateway.finishReason,
       }, input.onModelReceipt);
     } catch (error) {
       const gatewayUsage = (error as AggregateGatewayError).aggregateGatewayUsage;
+      const providerError = nativeProviderReceiptFromError(error)
+        || (error instanceof GlmGatewayError
+          ? [...error.gatewayTrace].reverse().find((row) => row.providerError)?.providerError
+          : undefined);
       await emitSeriesAggregationModelReceipt({
+        callId: modelCallId,
+        model: MANHUA_NATIVE_SERIES_AGGREGATION_MODEL,
+        route: MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE,
         stage: "series_aggregation_model",
         status: "failed",
         elapsedMs: Date.now() - modelStartedAt,
@@ -700,7 +720,8 @@ export async function aggregateNativeDeepReadSeries(input: {
         priceEquivalentCny: gatewayUsage
           ? gatewayUsage.costUsd * OPENROUTER_USD_TO_CNY_EQUIVALENT
           : undefined,
-        errorZh: (error instanceof Error ? error.message : String(error)).slice(0, 160),
+        errorZh: (error instanceof Error ? error.message : String(error)).slice(0, 2_000),
+        providerError,
       }, input.onModelReceipt);
       throw error;
     }

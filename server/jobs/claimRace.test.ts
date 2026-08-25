@@ -13,8 +13,10 @@ import {
   claimNextPostProdJob,
   claimNextQueuedJobExcluding,
   MAIN_QUEUE_EXCLUDED_TYPES,
+  markManhuaLearnJobFailedWithOutputRetry,
   markManhuaLearnJobSucceededWithRetry,
   recoverInterruptedManhuaTemplateLearnJobsOnStartup,
+  upsertManhuaNativeModelReceiptForJob,
 } from "./repository";
 
 const QUEUED_ROW = {
@@ -54,6 +56,28 @@ function fakeDb(rowsAffected: number[]) {
       }),
     }),
   };
+}
+
+function sqlStringValues(value: unknown): string[] {
+  const values: string[] = [];
+  const seen = new WeakSet<object>();
+  const visit = (candidate: unknown) => {
+    if (typeof candidate === "string") {
+      values.push(candidate);
+      return;
+    }
+    if (Array.isArray(candidate)) {
+      candidate.forEach(visit);
+      return;
+    }
+    if (!candidate || typeof candidate !== "object" || seen.has(candidate)) return;
+    seen.add(candidate);
+    const row = candidate as { queryChunks?: unknown; value?: unknown };
+    if (row.queryChunks !== undefined) visit(row.queryChunks);
+    if (row.value !== undefined) visit(row.value);
+  };
+  visit(value);
+  return values;
 }
 
 describe("queued 任务抢占", () => {
@@ -190,6 +214,118 @@ describe("漫剧学习终态落库", () => {
       ),
     ).resolves.toBe(false);
     expect(writes).toBe(2);
+  });
+
+  it("失败终态把回执补丁与 failed 状态放在同一次可重试 UPDATE", async () => {
+    let writes = 0;
+    const setValues: Array<Record<string, unknown>> = [];
+    getDb.mockResolvedValue({
+      update: () => ({
+        set: (values: Record<string, unknown>) => {
+          setValues.push(values);
+          return {
+            where: () => ({
+              returning: async () => {
+                writes += 1;
+                if (writes === 1) throw new Error("neon transient");
+                return [{ id: "learn-failed" }];
+              },
+            }),
+          };
+        },
+      }),
+    });
+
+    await expect(markManhuaLearnJobFailedWithOutputRetry(
+      "learn-failed",
+      "上游失败；未自动重跑",
+      {
+        analysisStage: "manhua_learn_failed",
+        nativeModelReceipts: [{
+          callId: "visual-late",
+          model: "qwen3.8-max",
+          route: "singapore_token_plan",
+          stage: "visual_model",
+          status: "failed",
+          episodeIndexes: [1, 2],
+        }],
+      },
+      { attempts: 3, delayMs: 0 },
+    )).resolves.toBe(true);
+    expect(writes).toBe(2);
+    expect(setValues[1]).toMatchObject({ status: "failed", error: "上游失败；未自动重跑" });
+    expect(sqlStringValues(setValues[1]?.output).join("\n")).toContain("visual-late");
+  });
+
+  it("终态迟到回执只更新 nativeModelReceipts，不改状态、错误或其他 output", async () => {
+    const failedRow = {
+      ...QUEUED_ROW,
+      id: "learn-late-receipt",
+      status: "failed",
+      error: "timeout",
+      output: {
+        learnedCount: 2,
+        nativeModelReceipts: [{
+          callId: "visual-late",
+          model: "qwen3.8-max",
+          route: "singapore_token_plan",
+          stage: "visual_model",
+          status: "started",
+          episodeIndexes: [1, 2],
+        }],
+      },
+    };
+    const selectChain = {
+      from: () => selectChain,
+      where: () => selectChain,
+      limit: async () => [failedRow],
+    };
+    let written: Record<string, unknown> | undefined;
+    getDb.mockResolvedValue({
+      select: () => selectChain,
+      update: () => ({
+        set: (values: Record<string, unknown>) => {
+          written = values;
+          return { where: () => ({ returning: async () => [{ id: failedRow.id }] }) };
+        },
+      }),
+    });
+
+    await expect(upsertManhuaNativeModelReceiptForJob(failedRow.id, {
+      callId: "visual-late",
+      model: "qwen3.8-max",
+      route: "singapore_token_plan",
+      stage: "visual_model",
+      status: "failed",
+      episodeIndexes: [1, 2],
+      errorZh: "上游超时后返回失败",
+    }, { attempts: 1, delayMs: 0 })).resolves.toBe(true);
+    expect(Object.keys(written || {})).toEqual(["output"]);
+    expect(sqlStringValues(written?.output).join("\n")).toContain("上游超时后返回失败");
+    expect(sqlStringValues(written?.output).join("\n")).toContain("distinct on");
+  });
+
+  it("任务已 failed 后仍允许补记迟到的 started 回执", async () => {
+    const failedRow = { ...QUEUED_ROW, id: "learn-late-started", status: "failed", output: {} };
+    let written: Record<string, unknown> | undefined;
+    getDb.mockResolvedValue({
+      update: () => ({
+        set: (values: Record<string, unknown>) => {
+          written = values;
+          return { where: () => ({ returning: async () => [{ id: failedRow.id }] }) };
+        },
+      }),
+    });
+    await expect(upsertManhuaNativeModelReceiptForJob(failedRow.id, {
+      callId: "audio-late-started",
+      model: "qwen3.8-max",
+      route: "singapore_token_plan",
+      stage: "audio_model",
+      status: "started",
+      episodeIndexes: [3],
+    }, { attempts: 1, delayMs: 0 })).resolves.toBe(true);
+    expect(Object.keys(written || {})).toEqual(["output"]);
+    expect(sqlStringValues(written?.output).join("\n")).toContain("audio-late-started");
   });
 });
 

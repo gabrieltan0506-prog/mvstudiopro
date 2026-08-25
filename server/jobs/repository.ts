@@ -3,6 +3,10 @@ import { jobs, type Job, type InsertJob } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { omitChineseStagingFromJobOutput } from "../services/platformImageChineseStaging.js";
 import { deleteDrProSecondaryStagingByJobId } from "../services/drProSecondaryStaging.js";
+import {
+  appendManhuaNativeModelReceipt,
+  type ManhuaNativeModelReceipt,
+} from "../../shared/manhuaNativeModelReceipt.js";
 
 export type JobType = "video" | "image" | "audio" | "platform" | "pdf_export" | "post_prod";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";
@@ -791,6 +795,160 @@ export async function markManhuaLearnJobSucceededWithRetry(
   options?: { attempts?: number; delayMs?: number },
 ): Promise<boolean> {
   return markJobSucceededWithRetry(id, output, provider, options);
+}
+
+/** 原生学习失败终态：在一次 UPDATE 内合并 output 并写入 failed，数据库短抖动只重试落库。 */
+export async function markManhuaLearnJobFailedWithOutputRetry(
+  id: string,
+  error: string,
+  outputPatch: Record<string, unknown>,
+  options?: { attempts?: number; delayMs?: number },
+): Promise<boolean> {
+  const attempts = Math.max(1, Math.min(6, Math.floor(options?.attempts ?? 4)));
+  const delayMs = Math.max(0, Math.min(5_000, Math.floor(options?.delayMs ?? 250)));
+  const cleanedPatch = omitChineseStagingFromJobOutput(outputPatch);
+  const incomingReceipts = normalizeStoredManhuaNativeModelReceipts(cleanedPatch.nativeModelReceipts);
+  const { nativeModelReceipts: _receipts, ...otherPatch } = cleanedPatch;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const db = await getDb();
+    if (db) {
+      try {
+        const updated = await db.update(jobs).set({
+          status: "failed",
+          error,
+          output: incomingReceipts.length > 0
+            ? sql`jsonb_set(
+                coalesce(${jobs.output}::jsonb, '{}'::jsonb) || ${JSON.stringify(otherPatch)}::jsonb,
+                '{nativeModelReceipts}',
+                ${mergeManhuaNativeModelReceiptsSql(incomingReceipts)},
+                true
+              )::json`
+            : sql`(coalesce(${jobs.output}::jsonb, '{}'::jsonb) || ${JSON.stringify(otherPatch)}::jsonb)::json`,
+          updatedAt: new Date(),
+        }).where(and(
+          eq(jobs.id, id),
+          inArray(jobs.status, ["running", "failed"]),
+        )).returning({ id: jobs.id });
+        if (updated.length > 0) return true;
+      } catch (writeError) {
+        console.error("[JobsRepo] markManhuaLearnJobFailedWithOutput failed:", writeError);
+      }
+    }
+    if (attempt < attempts && delayMs > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs * attempt));
+    }
+  }
+  console.error(`[JobsRepo] failed terminal persistence exhausted: jobId=${id}`);
+  return false;
+}
+
+function parseStoredManhuaNativeModelReceipts(raw: unknown): ManhuaNativeModelReceipt[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((row): row is ManhuaNativeModelReceipt => Boolean(
+    row && typeof row === "object" && !Array.isArray(row)
+    && String((row as { callId?: unknown }).callId || "").trim()
+    && String((row as { stage?: unknown }).stage || "").trim()
+    && String((row as { model?: unknown }).model || "").trim()
+    && String((row as { route?: unknown }).route || "").trim()
+    && Array.isArray((row as { episodeIndexes?: unknown }).episodeIndexes),
+  ));
+}
+
+function normalizeStoredManhuaNativeModelReceipts(raw: unknown): ManhuaNativeModelReceipt[] {
+  return parseStoredManhuaNativeModelReceipts(raw).reduce(
+    (rows, receipt) => appendManhuaNativeModelReceipt(rows, receipt),
+    [] as ManhuaNativeModelReceipt[],
+  );
+}
+
+/** DB 内合并，避免 failed 终态补丁或并发迟到回执用旧数组覆盖新状态。 */
+function mergeManhuaNativeModelReceiptsSql(incoming: readonly ManhuaNativeModelReceipt[]) {
+  const incomingJson = JSON.stringify(incoming);
+  const existingJson = sql`case
+    when jsonb_typeof(${jobs.output}::jsonb->'nativeModelReceipts') = 'array'
+      then ${jobs.output}::jsonb->'nativeModelReceipts'
+    else '[]'::jsonb
+  end`;
+  return sql`(
+    select coalesce(jsonb_agg(capped.item order by capped.ord), '[]'::jsonb)
+    from (
+      select merged.item, merged.ord
+      from (
+        select
+          case
+            when incoming_match.item is null then existing.item
+            when (case when existing.item->>'status' in ('completed', 'failed') then 1 else 0 end)
+              >= (case when incoming_match.item->>'status' in ('completed', 'failed') then 1 else 0 end)
+              then incoming_match.item || existing.item
+            else existing.item || incoming_match.item
+          end as item,
+          existing.ord
+        from (
+          select distinct on (candidate.item->>'callId', candidate.item->>'stage')
+            candidate.item,
+            candidate.ord
+          from jsonb_array_elements(${existingJson}) with ordinality as candidate(item, ord)
+          order by candidate.item->>'callId', candidate.item->>'stage', candidate.ord desc
+        ) as existing
+        left join lateral (
+          select candidate.item
+          from jsonb_array_elements(${incomingJson}::jsonb) as candidate(item)
+          where candidate.item->>'callId' = existing.item->>'callId'
+            and candidate.item->>'stage' = existing.item->>'stage'
+          limit 1
+        ) as incoming_match on true
+        union all
+        select incoming.item, jsonb_array_length(${existingJson}) + incoming.ord
+        from jsonb_array_elements(${incomingJson}::jsonb) with ordinality as incoming(item, ord)
+        where not exists (
+          select 1
+          from jsonb_array_elements(${existingJson}) as existing_match(item)
+          where existing_match.item->>'callId' = incoming.item->>'callId'
+            and existing_match.item->>'stage' = incoming.item->>'stage'
+        )
+      ) as merged
+      order by merged.ord desc
+      limit 1024
+    ) as capped
+  )`;
+}
+
+/**
+ * 回执专用写入：terminal receipt 可在任务终态后迟到；只改 output 的回执字段，
+ * 不改 status/error/updatedAt，也不覆盖 output 的其他键。
+ */
+export async function upsertManhuaNativeModelReceiptForJob(
+  id: string,
+  receipt: ManhuaNativeModelReceipt,
+  options?: { attempts?: number; delayMs?: number },
+): Promise<boolean> {
+  const attempts = Math.max(1, Math.min(6, Math.floor(options?.attempts ?? 4)));
+  const delayMs = Math.max(0, Math.min(5_000, Math.floor(options?.delayMs ?? 50)));
+  const normalizedReceipt = appendManhuaNativeModelReceipt([], receipt)[0]!;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const db = await getDb();
+      if (!db) throw new Error("Database unavailable — cannot persist native model receipt");
+      const updated = await db.update(jobs).set({
+        output: sql`jsonb_set(
+          coalesce(${jobs.output}::jsonb, '{}'::jsonb),
+          '{nativeModelReceipts}',
+          ${mergeManhuaNativeModelReceiptsSql([normalizedReceipt])},
+          true
+        )::json`,
+      }).where(and(
+        eq(jobs.id, id),
+        inArray(jobs.status, ["running", "failed", "succeeded"]),
+      )).returning({ id: jobs.id });
+      if (updated.length > 0) return true;
+    } catch (writeError) {
+      console.warn("[JobsRepo] upsertManhuaNativeModelReceiptForJob failed:", writeError);
+    }
+    if (attempt < attempts && delayMs > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs * attempt));
+    }
+  }
+  return false;
 }
 
 /** 最近一份平台动作任务（含运行中/成功/失败）；供持久任务在刷新后恢复。 */

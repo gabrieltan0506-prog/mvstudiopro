@@ -142,6 +142,7 @@ import {
   demoteStaleRunningManhuaLearnItems,
   mergeManhuaLearnServerJobsIntoBasket,
   nativeLearnTerminalProposalRefreshSignature,
+  parseManhuaNativeModelReceipts,
   readManhuaLearnActiveJob,
   readManhuaLearnBasket,
   readManhuaLearnFocusSeriesKey,
@@ -2170,6 +2171,21 @@ function manhuaLearnContinuationStorageKey(userKey: string): string {
   return scope ? `${MANHUA_LEARN_CONTINUATION_LS_KEY}:${encodeURIComponent(scope)}` : "";
 }
 
+function nativeModelReceiptStageLabelZh(stage: string): string {
+  if (stage === "audio_model") return "声音分析";
+  if (stage === "visual_model") return "画面精读";
+  if (stage === "visual_parse") return "结构校验";
+  if (stage === "series_aggregation_model") return "系列整理";
+  return stage;
+}
+
+function nativeModelReceiptStatusLabelZh(status: string): string {
+  if (status === "started") return "进行中";
+  if (status === "completed") return "完成";
+  if (status === "failed") return "失败";
+  return status;
+}
+
 function readManhuaLearnContinuation(userKey: string): ManhuaLearnContinuation | null {
   const storageKey = manhuaLearnContinuationStorageKey(userKey);
   if (!storageKey) return null;
@@ -2635,6 +2651,12 @@ export default function PlatformPage() {
     }
     return byJobId;
   }, [manhuaLearnServerJobs, focusedManhuaLearnBasketItem, manhuaLearnFocusSeriesKey]);
+  const focusedManhuaNativeModelReceipts = useMemo(
+    () => parseManhuaNativeModelReceipts(
+      focusedManhuaLearnServerJob?.output?.nativeModelReceipts,
+    ),
+    [focusedManhuaLearnServerJob?.output?.nativeModelReceipts],
+  );
   const focusedManhuaLearnJobActive =
     focusedManhuaLearnBasketItem?.jobStatus === "queued"
     || focusedManhuaLearnBasketItem?.jobStatus === "running"
@@ -12710,6 +12732,85 @@ export default function PlatformPage() {
                                 </span>
                               ) : null}
                             </p>
+                          ) : null}
+                          {ownerTemplateOptimizeAllowed
+                            && focusedManhuaNativeModelReceipts.length > 0 ? (
+                            <details className="rounded-lg border border-cyan-300/20 bg-black/25 px-2.5 py-2 text-[10px] text-cyan-50/80">
+                              <summary className="cursor-pointer font-semibold text-cyan-100/90">
+                                逐次模型回执（{focusedManhuaNativeModelReceipts.length}）
+                                {focusedManhuaNativeModelReceipts.some((receipt) => receipt.status === "failed")
+                                  ? " · 含失败正文"
+                                  : ""}
+                              </summary>
+                              <div className="mt-2 max-h-72 space-y-2 overflow-y-auto pr-1">
+                                {[...focusedManhuaNativeModelReceipts].reverse().map((receipt) => {
+                                  const providerError = receipt.providerError;
+                                  const episodeLabel = receipt.episodeIndexes.length > 0
+                                    ? `第 ${receipt.episodeIndexes.join("、")} 集`
+                                    : "系列级";
+                                  const tokenLabel = typeof receipt.inputTokens === "number"
+                                    || typeof receipt.outputTokens === "number"
+                                    ? `输入 ${Math.round(receipt.inputTokens || 0).toLocaleString()} / 输出 ${Math.round(receipt.outputTokens || 0).toLocaleString()}`
+                                    : "尚无 token 回执";
+                                  return (
+                                    <div
+                                      key={`${receipt.callId}-${receipt.stage}`}
+                                      className={`rounded-md border px-2 py-1.5 ${receipt.status === "failed"
+                                        ? "border-rose-300/30 bg-rose-500/10"
+                                        : receipt.status === "completed"
+                                          ? "border-emerald-300/20 bg-emerald-500/5"
+                                          : "border-sky-300/20 bg-sky-500/5"}`}
+                                    >
+                                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 font-medium">
+                                        <span>{nativeModelReceiptStageLabelZh(receipt.stage)}</span>
+                                        <span>{nativeModelReceiptStatusLabelZh(receipt.status)}</span>
+                                        <span>{episodeLabel}</span>
+                                        {receipt.chunkIndex !== undefined ? (
+                                          <span>音轨片 {receipt.chunkIndex + 1}</span>
+                                        ) : null}
+                                        {receipt.variant ? <span>{receipt.variant}</span> : null}
+                                      </div>
+                                      <div className="mt-1 break-all text-cyan-50/55">
+                                        {receipt.model} · {receipt.route}
+                                        {receipt.provider ? ` · ${receipt.provider}` : ""}
+                                        {` · ${tokenLabel}`}
+                                        {typeof receipt.priceEquivalentCny === "number"
+                                          ? ` · ¥${receipt.priceEquivalentCny.toFixed(4)}`
+                                          : ""}
+                                        {typeof receipt.elapsedMs === "number"
+                                          ? ` · ${(receipt.elapsedMs / 1000).toFixed(1)} 秒`
+                                          : ""}
+                                        {receipt.finishReason ? ` · finish=${receipt.finishReason}` : ""}
+                                      </div>
+                                      {receipt.providerRequestId || providerError?.requestId ? (
+                                        <div className="mt-1 break-all font-mono text-[9px] text-cyan-50/45">
+                                          request_id={receipt.providerRequestId || providerError?.requestId}
+                                        </div>
+                                      ) : null}
+                                      {receipt.errorZh || providerError ? (
+                                        <div className="mt-1.5 rounded border border-rose-200/15 bg-black/25 px-1.5 py-1 text-rose-50/80">
+                                          {receipt.errorZh ? <p className="whitespace-pre-wrap break-words">{receipt.errorZh}</p> : null}
+                                          {providerError ? (
+                                            <p className="mt-0.5 break-words text-rose-100/65">
+                                              {providerError.httpStatus ? `HTTP ${providerError.httpStatus}` : "上游错误"}
+                                              {providerError.code ? ` · code=${providerError.code}` : ""}
+                                              {providerError.type ? ` · type=${providerError.type}` : ""}
+                                              {providerError.param ? ` · param=${providerError.param}` : ""}
+                                              {providerError.message ? ` · ${providerError.message}` : ""}
+                                            </p>
+                                          ) : null}
+                                          {providerError?.responseBody ? (
+                                            <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded bg-black/35 p-1 font-mono text-[9px] text-rose-100/55">
+                                              {providerError.responseBody}
+                                            </pre>
+                                          ) : null}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </details>
                           ) : null}
                           {manhuaLearnResult.liveStatus === "succeeded"
                             && (manhuaLearnResult.pendingCount || 0) > 0

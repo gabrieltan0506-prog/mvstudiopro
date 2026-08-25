@@ -17,7 +17,14 @@ import {
   type ManhuaNativeAudioUsage,
 } from "../../shared/manhuaNativeAudioAnalysis.js";
 import type { NativeDeepReadMediaNode } from "./manhuaNativeDeepReadRunner.js";
+import type { ManhuaNativeModelReceipt } from "../../shared/manhuaNativeModelReceipt.js";
 import { deleteGcsObject, uploadBufferToGcs } from "./gcs.js";
+import {
+  errorWithNativeProviderReceipt,
+  formatNativeProviderErrorZh,
+  nativeProviderReceiptFromError,
+  parseNativeProviderErrorReceipt,
+} from "./manhuaNativeProviderReceipt.js";
 import { baseUrlForVertex, getVertexAuthHeaders, getVertexProjectId } from "./vertexMedia.js";
 
 const AUDIO_GCS_MAX_BYTES = 30 * 1024 * 1024;
@@ -171,7 +178,14 @@ async function analyzeAudioChunkWithGemini(input: {
   gcsUri: string;
   chunk: ManhuaNativeAudioChunk;
   abortSignal?: AbortSignal;
-}): Promise<{ analysis: ManhuaNativeAudioChunkAnalysis; inputTokens: number; audioInputTokens: number; outputTokens: number }> {
+}): Promise<{
+  analysis: ManhuaNativeAudioChunkAnalysis;
+  inputTokens: number;
+  audioInputTokens: number;
+  outputTokens: number;
+  finishReason?: string;
+  providerRequestId?: string;
+}> {
   const managed = makeAbortSignal(input.abortSignal, 12 * 60_000, "声音理解请求超过12分钟");
   try {
     const location = resolveAudioVertexLocation();
@@ -197,7 +211,22 @@ async function analyzeAudioChunkWithGemini(input: {
     });
     const text = await response.text();
     if (text.length > AUDIO_RESPONSE_MAX_CHARS) throw new Error("声音理解响应超过处理上限");
-    if (!response.ok) throw new Error(`声音理解服务请求失败（${response.status}）`);
+    if (!response.ok) {
+      const providerError = parseNativeProviderErrorReceipt({
+        httpStatus: response.status,
+        responseText: text,
+        requestId: String(
+          response.headers.get("x-request-id")
+          || response.headers.get("request-id")
+          || response.headers.get("x-goog-request-id")
+          || "",
+        ).trim() || undefined,
+      });
+      throw errorWithNativeProviderReceipt(
+        formatNativeProviderErrorZh("Gemini 3.6 Flash 音轨分析", providerError),
+        providerError,
+      );
+    }
     const payload = JSON.parse(text) as {
       candidates?: Array<{ finishReason?: string; content?: { parts?: Array<{ text?: string }> } }>;
       usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number; promptTokensDetails?: unknown };
@@ -218,6 +247,13 @@ async function analyzeAudioChunkWithGemini(input: {
       audioInputTokens,
       outputTokens: Math.max(0, Number(payload.usageMetadata?.candidatesTokenCount) || 0)
         + Math.max(0, Number(payload.usageMetadata?.thoughtsTokenCount) || 0),
+      finishReason: candidate?.finishReason,
+      providerRequestId: String(
+        response.headers.get("x-request-id")
+        || response.headers.get("request-id")
+        || response.headers.get("x-goog-request-id")
+        || "",
+      ).trim() || undefined,
     };
   } finally {
     managed.dispose();
@@ -244,16 +280,13 @@ const defaultEvidenceDeps: ManhuaNativeAudioEvidenceDeps = {
 
 export type ManhuaNativeAudioDeepReadError = Error & { nativeAudioUsage?: Partial<ManhuaNativeAudioUsage> };
 
-export type ManhuaNativeAudioModelReceipt = {
+export type ManhuaNativeAudioModelReceipt = Omit<
+  ManhuaNativeModelReceipt,
+  "stage" | "episodeIndexes" | "variant"
+> & {
   stage: "audio_model";
-  status: "started" | "completed" | "failed";
   chunkIndex: number;
   variant: ManhuaNativeAudioSourceVariant;
-  elapsedMs?: number;
-  inputTokens?: number;
-  audioInputTokens?: number;
-  outputTokens?: number;
-  errorZh?: string;
 };
 
 async function emitAudioModelReceipt(
@@ -317,7 +350,11 @@ export async function collectManhuaNativeAudioEvidence(input: {
         }
         const analyzed = await Promise.allSettled(uploaded.map(async (item) => {
           const startedAt = Date.now();
+          const callId = crypto.randomUUID();
           await emitAudioModelReceipt({
+            callId,
+            model: MANHUA_NATIVE_AUDIO_MODEL,
+            route: "vertex_gcs_audio",
             stage: "audio_model",
             status: "started",
             chunkIndex: chunk.index,
@@ -330,6 +367,9 @@ export async function collectManhuaNativeAudioEvidence(input: {
               abortSignal: input.abortSignal,
             });
             await emitAudioModelReceipt({
+              callId,
+              model: MANHUA_NATIVE_AUDIO_MODEL,
+              route: "vertex_gcs_audio",
               stage: "audio_model",
               status: "completed",
               chunkIndex: chunk.index,
@@ -338,16 +378,26 @@ export async function collectManhuaNativeAudioEvidence(input: {
               inputTokens: result.inputTokens,
               audioInputTokens: result.audioInputTokens,
               outputTokens: result.outputTokens,
+              finishReason: result.finishReason,
+              providerRequestId: result.providerRequestId,
+              priceEquivalentCny:
+                ((result.inputTokens * GEMINI_AUDIO_INPUT_USD_PER_M)
+                  + (result.outputTokens * GEMINI_AUDIO_OUTPUT_USD_PER_M))
+                * USD_TO_CNY / 1_000_000,
             }, input.onModelReceipt);
             return result;
           } catch (error) {
             await emitAudioModelReceipt({
+              callId,
+              model: MANHUA_NATIVE_AUDIO_MODEL,
+              route: "vertex_gcs_audio",
               stage: "audio_model",
               status: "failed",
               chunkIndex: chunk.index,
               variant: item.variant,
               elapsedMs: Date.now() - startedAt,
-              errorZh: (error instanceof Error ? error.message : String(error)).slice(0, 160),
+              errorZh: (error instanceof Error ? error.message : String(error)).slice(0, 2_000),
+              providerError: nativeProviderReceiptFromError(error),
             }, input.onModelReceipt);
             throw error;
           }

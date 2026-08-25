@@ -50,6 +50,7 @@ import {
   MANHUA_NATIVE_AUDIO_MODEL,
   splitManhuaNativeAudioChunks,
 } from "../../shared/manhuaNativeAudioAnalysis.js";
+import type { ManhuaNativeModelReceipt } from "../../shared/manhuaNativeModelReceipt.js";
 import {
   aggregateNativeDeepReadSeries,
   MANHUA_NATIVE_SERIES_AGGREGATION_MODEL,
@@ -492,24 +493,7 @@ export type NativeDeepReadBatchOutcome = {
   usage?: NativeDeepReadEpisodeOutcomeCost["usage"];
 };
 
-export type NativeDeepReadModelCheckpoint = {
-  stage: "audio_model" | "visual_model" | "visual_parse" | "series_aggregation_model";
-  status: "started" | "completed" | "failed";
-  episodeIndexes: number[];
-  chunkIndex?: number;
-  variant?: "mono_16k" | "stereo_32k";
-  batchRequestId?: string;
-  videoCount?: number;
-  elapsedMs?: number;
-  inputTokens?: number;
-  audioInputTokens?: number;
-  outputTokens?: number;
-  reasoningTokens?: number;
-  costUsd?: number;
-  priceEquivalentCny?: number;
-  finishReason?: string;
-  errorZh?: string;
-};
+export type NativeDeepReadModelCheckpoint = ManhuaNativeModelReceipt;
 
 export type NativeDeepReadBatchResult = {
   outcomes: NativeDeepReadBatchOutcome[];

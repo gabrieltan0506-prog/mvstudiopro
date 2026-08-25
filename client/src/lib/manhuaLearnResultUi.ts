@@ -16,6 +16,11 @@ import {
   type ManhuaLearnChannel,
   type ManhuaLearnProgressLine,
 } from "@shared/manhuaTemplateLearnPipeline";
+import {
+  MANHUA_NATIVE_MODEL_RECEIPT_MAX,
+  type ManhuaNativeModelReceipt,
+  type ManhuaNativeProviderErrorReceipt,
+} from "@shared/manhuaNativeModelReceipt";
 
 export const LS_MANHUA_LEARN_SERIES_KEY = "mv-manhua-learn-focus-series-v1";
 export const LS_MANHUA_LEARN_ACTIVE_JOB = "mvs-manhua-learn-active-job-v1";
@@ -177,6 +182,106 @@ function parseManhuaNativeUsage(raw: unknown): ManhuaLearnResultUi["nativeUsage"
       Number(row.seriesAggregationPriceEquivalentCny) || 0,
     ),
   };
+}
+
+function optionalReceiptText(value: unknown, maxChars: number): string | undefined {
+  const text = typeof value === "string" || typeof value === "number"
+    ? String(value).trim()
+    : "";
+  return text ? text.slice(0, maxChars) : undefined;
+}
+
+function optionalReceiptNumber(value: unknown): number | undefined {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : undefined;
+}
+
+function parseNativeProviderError(raw: unknown): ManhuaNativeProviderErrorReceipt | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const row = raw as Record<string, unknown>;
+  const parsed: ManhuaNativeProviderErrorReceipt = {
+    httpStatus: optionalReceiptNumber(row.httpStatus),
+    code: optionalReceiptText(row.code, 256),
+    message: optionalReceiptText(row.message, 2_000),
+    requestId: optionalReceiptText(row.requestId, 256),
+    param: optionalReceiptText(row.param, 512),
+    type: optionalReceiptText(row.type, 256),
+    responseBody: optionalReceiptText(row.responseBody, 4_000),
+  };
+  return Object.values(parsed).some((value) => value !== undefined) ? parsed : undefined;
+}
+
+/**
+ * owner 技术区只读服务端 Job 快照；不把逐次回执并入结果/basket/localStorage。
+ * 兼容旧行中的重复事件，按 callId+stage 取最后状态并限制总量。
+ */
+export function parseManhuaNativeModelReceipts(raw: unknown): ManhuaNativeModelReceipt[] {
+  if (!Array.isArray(raw)) return [];
+  const byKey = new Map<string, ManhuaNativeModelReceipt>();
+  const order: string[] = [];
+  for (const value of raw.slice(-MANHUA_NATIVE_MODEL_RECEIPT_MAX * 2)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const row = value as Record<string, unknown>;
+    const callId = optionalReceiptText(row.callId, 128);
+    const model = optionalReceiptText(row.model, 128);
+    const route = optionalReceiptText(row.route, 128);
+    const stage = String(row.stage || "");
+    const status = String(row.status || "");
+    if (
+      !callId
+      || !model
+      || !route
+      || !["audio_model", "visual_model", "visual_parse", "series_aggregation_model"].includes(stage)
+      || !["started", "completed", "failed"].includes(status)
+    ) continue;
+    const key = `${callId}\u0000${stage}`;
+    const previous = byKey.get(key);
+    const providerError = parseNativeProviderError(row.providerError);
+    const receipt: ManhuaNativeModelReceipt = {
+      callId,
+      model,
+      route,
+      provider: optionalReceiptText(row.provider, 128),
+      providerRequestId: optionalReceiptText(row.providerRequestId, 256),
+      stage: stage as ManhuaNativeModelReceipt["stage"],
+      status: status as ManhuaNativeModelReceipt["status"],
+      atIso: optionalReceiptText(row.atIso, 64),
+      startedAtIso: optionalReceiptText(row.startedAtIso, 64) || previous?.startedAtIso,
+      finishedAtIso: optionalReceiptText(row.finishedAtIso, 64),
+      episodeIndexes: Array.isArray(row.episodeIndexes)
+        ? Array.from(new Set(row.episodeIndexes
+            .map((episodeIndex) => Math.floor(Number(episodeIndex)))
+            .filter((episodeIndex) => episodeIndex >= 1)))
+            .sort((a, b) => a - b)
+            .slice(0, 200)
+        : [],
+      chunkIndex: optionalReceiptNumber(row.chunkIndex),
+      variant: row.variant === "mono_16k" || row.variant === "stereo_32k"
+        ? row.variant
+        : undefined,
+      batchRequestId: optionalReceiptText(row.batchRequestId, 128),
+      videoCount: optionalReceiptNumber(row.videoCount),
+      elapsedMs: optionalReceiptNumber(row.elapsedMs),
+      inputTokens: optionalReceiptNumber(row.inputTokens),
+      audioInputTokens: optionalReceiptNumber(row.audioInputTokens),
+      outputTokens: optionalReceiptNumber(row.outputTokens),
+      reasoningTokens: optionalReceiptNumber(row.reasoningTokens),
+      costUsd: optionalReceiptNumber(row.costUsd),
+      priceEquivalentCny: optionalReceiptNumber(row.priceEquivalentCny),
+      finishReason: optionalReceiptText(row.finishReason, 128),
+      errorZh: optionalReceiptText(row.errorZh, 2_000),
+      providerError: providerError || previous?.providerError,
+    };
+    if (!previous) order.push(key);
+    const defined = Object.fromEntries(
+      Object.entries(receipt).filter(([, field]) => field !== undefined),
+    ) as unknown as ManhuaNativeModelReceipt;
+    byKey.set(key, { ...previous, ...defined });
+  }
+  return order
+    .map((key) => byKey.get(key))
+    .filter((receipt): receipt is ManhuaNativeModelReceipt => Boolean(receipt))
+    .slice(-MANHUA_NATIVE_MODEL_RECEIPT_MAX);
 }
 
 function parseManhuaPipelineMode(raw: unknown): ManhuaLearnResultUi["pipelineMode"] {

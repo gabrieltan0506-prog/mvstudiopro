@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const PAGE = readFileSync(new URL("../pages/PlatformPage.tsx", import.meta.url), "utf8");
+const RESULT_UI = readFileSync(new URL("./manhuaLearnResultUi.ts", import.meta.url), "utf8");
 const START = PAGE.indexOf("const runManhuaTemplateLearnCloud = useCallback");
 const END = PAGE.indexOf("/**\n   * 刷新/断线恢复", START);
 const LEARN_FLOW = PAGE.slice(START, END);
@@ -75,6 +76,20 @@ describe("原生精读页面接线", () => {
     );
     expect(PAGE).toContain("getManhuaLearnSafeProgressLabelZh(manhuaLearnResult)");
     expect(PAGE).toContain('"学习方式：云端按集处理"');
+  });
+
+  it("逐次模型回执只从当前服务端 Job 读取并仅向 owner 展示", () => {
+    expect(PAGE).toContain(
+      "focusedManhuaLearnServerJob?.output?.nativeModelReceipts",
+    );
+    expect(PAGE).toContain("parseManhuaNativeModelReceipts(");
+    expect(PAGE).toContain(
+      "ownerTemplateOptimizeAllowed\n                            && focusedManhuaNativeModelReceipts.length > 0",
+    );
+    expect(PAGE).toContain("逐次模型回执（{focusedManhuaNativeModelReceipts.length}）");
+    const resultTypeStart = RESULT_UI.indexOf("export type ManhuaLearnResultUi = {");
+    const resultTypeEnd = RESULT_UI.indexOf("\n};", resultTypeStart);
+    expect(RESULT_UI.slice(resultTypeStart, resultTypeEnd)).not.toContain("nativeModelReceipts");
   });
 
   it("轮询 effect 不依赖整颗 query 对象，且无变化快照复用旧引用", () => {
