@@ -1386,8 +1386,11 @@ export async function runManhuaNativeDeepReadBatch(params: {
           ?? validated.map((episode) => episode.episodeIndex),
         videoCount: failedSubRequest?.videoCount ?? videoCount,
         elapsedMs: Date.now() - (failedSubRequest?.startedAt ?? visualRequestStartedAt),
-        inputTokens,
-        outputTokens,
+        // 审查#2：子请求失败回执只报**本子请求自身**的 token（失败时通常为 0）；
+        // 前面成功子请求已各自报过，这里再报累计值会被下游求和成双份。
+        // 整批累计口径在抛出错误附带的 nativeDeepReadUsage 里，不丢账。
+        inputTokens: visualModelCompleted ? inputTokens : 0,
+        outputTokens: visualModelCompleted ? outputTokens : 0,
         finishReason: visualFinishReason,
         providerRequestId,
         errorZh: (error instanceof Error ? error.message : String(error)).slice(0, 2_000),

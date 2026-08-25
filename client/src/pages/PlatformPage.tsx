@@ -105,10 +105,9 @@ import {
   NATIVE_DEEP_READ_JOB_MAX_CALLS,
 } from "@shared/manhuaNativeDeepReadJob";
 import { formatManhuaTemplateNativeBeatZh } from "@/lib/manhuaTemplateNativeBeat";
-import { normalizeDouyinVideoUrl } from "@shared/manhuaLearnYtdlp";
 import { trpc } from "@/lib/trpc";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
-import { shouldSkipLocalLearnFallback } from "@shared/manhuaLearnYtdlp";
+import { normalizeDouyinVideoUrl, shouldSkipLocalLearnFallback } from "@shared/manhuaLearnYtdlp";
 import type { AssetAnalysisHandoffPayload } from "@/lib/platformAssetAnalysisHandoff";
 import { buildBlueOceanLexicon, type BlueOceanLexicon } from "@shared/blueOceanLexicon";
 import {
@@ -5431,18 +5430,11 @@ export default function PlatformPage() {
         await copyManhuaLocalLearnFallback(row, "无成片链接，无法云端下片");
         return;
       }
-      const douyinSearchHasModalId = (() => {
-        if (!/douyin\.com\/search\//i.test(url)) return false;
-        try {
-          return /^\d{5,}$/.test(new URL(url).searchParams.get("modal_id") || "");
-        } catch {
-          return false;
-        }
-      })();
+      // 0826：url 已在入口规范化，带 modal_id 的形态不复存在——仍是 /search/ 的就是真搜索页
       if (
         url
         && (
-          (/douyin\.com\/search\//i.test(url) && !douyinSearchHasModalId)
+          /douyin\.com\/search\//i.test(url)
           || /kuaishou\.com\/search\//i.test(url)
         )
       ) {

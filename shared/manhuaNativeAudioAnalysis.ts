@@ -151,11 +151,23 @@ function assertNoClockText(value: unknown): void {
  */
 export function stripClockTextZh(value: string): string {
   const raw = String(value ?? "");
-  const stripped = raw.replace(CLOCK_STRIP_RE, "");
-  if (stripped === raw) return raw;
-  return stripped
+  let out = raw;
+  // 审查#3：单轮剥离可能把相邻数字拼出新的钟表文本（如 "2在1:05处:15"→"2:15"），
+  // 多轮剥到干净为止；四轮仍残留视为门禁失败（喂给带拒因重试），
+  // 绝不让残留秒位写进卡片后在读门永久卡死一张已付费卡。
+  for (let pass = 0; pass < 4; pass += 1) {
+    const next = out.replace(CLOCK_STRIP_RE, "");
+    if (next === out) break;
+    out = next;
+  }
+  if (CLOCK_RE.test(out)) {
+    throw new Error("音频描述含第二套文本秒位，剥离后仍残留，拒绝入库");
+  }
+  if (out === raw) return raw;
+  return out
     .replace(/[ \t]{2,}/g, " ")
     .replace(/、{2,}/g, "、")
+    .replace(/，{2,}/g, "，")
     .replace(/^[、，,；;\s]+/, "")
     .trim();
 }

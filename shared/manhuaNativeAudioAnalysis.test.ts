@@ -192,4 +192,9 @@ describe("门禁类失败判定", () => {
     expect(isManhuaNativeAudioGateFailureZh(new Error("用户已停止学习"))).toBe(false);
     expect(isManhuaNativeAudioGateFailureZh(new Error("mono failed"))).toBe(false);
   });
+
+  it("审查#3：相邻数字拼出的新钟表文本被多轮剥净；标点残渣收敛", () => {
+    expect(stripClockTextZh("2在1:05处:15")).toBe("");
+    expect(stripClockTextZh("在01:23处鼓点，，在02:10处收")).toBe("鼓点，收");
+  });
 });
