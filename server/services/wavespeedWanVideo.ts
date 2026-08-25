@@ -12,6 +12,7 @@ import {
   normalizeWan30AspectRatio,
   normalizeWan30Resolution,
 } from "../../shared/wanWavespeedModels.js";
+import { SubmitRejectedError, SubmitUnknownError } from "./submitOutcomeErrors.js";
 import { getWavespeedApiKey } from "./wavespeedVideoUpscale.js";
 
 function apiBase(): string {
@@ -20,6 +21,44 @@ function apiBase(): string {
 
 export function isWavespeedWanConfigured(): boolean {
   return Boolean(getWavespeedApiKey());
+}
+
+/**
+ * 通用 predictions 提交（wan / happyhorse 等共用）。
+ * 七审分型口径：POST 已发出后网络断/超时 = 任务可能已被受理（排队极长的上游尤甚），
+ * 归 unknown——上层禁回落禁退款转对账；只有明确 4xx 才算确定没建单。
+ */
+export async function submitWavespeedPredictionRequest(
+  predictionPath: string,
+  body: Record<string, unknown>,
+  labelZh: string,
+): Promise<{ predictionId: string }> {
+  const apiKey = getWavespeedApiKey();
+  if (!apiKey) throw new SubmitRejectedError(`${labelZh} 通道未配置`);
+  let res: Response;
+  try {
+    res = await fetch(`${apiBase()}${predictionPath}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch (e) {
+    throw new SubmitUnknownError(
+      `${labelZh} 提交结果未知：${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+  const json = (await res.json().catch(() => ({}))) as WavespeedPrediction;
+  const created = pickPrediction(json);
+  if (!res.ok || !created.id) {
+    const detail = created.error || `${labelZh} 任务创建失败 (${res.status})`;
+    if ([400, 401, 403, 404, 413, 415, 422].includes(res.status)) {
+      throw new SubmitRejectedError(detail);
+    }
+    // 5xx / 2xx 缺 id：单可能已建，禁回落
+    throw new SubmitUnknownError(detail);
+  }
+  return { predictionId: created.id };
 }
 
 type WavespeedPrediction = {
@@ -79,18 +118,7 @@ export async function submitWavespeedWanVideo(input: {
   if (Number.isFinite(seed) && seed >= 0 && seed <= 2147483647) body.seed = seed;
   if (audios.length) body.reference_audios = audios;
 
-  const res = await fetch(`${apiBase()}${WAN30_WAVESPEED_PATH}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000),
-  });
-  const json = (await res.json().catch(() => ({}))) as WavespeedPrediction;
-  const created = pickPrediction(json);
-  if (!res.ok || !created.id) {
-    throw new Error(created.error || `Wan 3.0 任务创建失败 (${res.status})`);
-  }
-  return { predictionId: created.id };
+  return submitWavespeedPredictionRequest(WAN30_WAVESPEED_PATH, body, "Wan 3.0");
 }
 
 export type WavespeedWanPollSnapshot =

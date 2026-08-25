@@ -1,29 +1,35 @@
 /**
- * GLM-5.3 主力 + Qwen3.8-Max 兜底的五档聊天通道(2026-08-21 用户拍板)。
- * 顺序:北京百炼 GLM-5.3 → 新加坡百炼 GLM-5.3 → OpenRouter GLM-5.3
- *      → Wan official(百炼直连) Qwen3.8-Max → EvoLink Qwen3.8-Max。
- * GLM-5.3 与 5.2 同价(¥8/¥28)但 1M 上下文、缓存命中 ¥2,同价换代直接升级;
- * 末档换 Qwen3.8-Max:先 Wan official 百炼直连(与 GLM 同一把 WAN_OFFICIAL 钥匙、人民币计价),
- * 再 EvoLink 兜底;避免 GLM 全家桶同时抽风时无路可走。
- * 复审三轮 P1-1/P1-3:
- * - 每个网关的响应必须过 validateContent 业务验真才算成功,否则继续降级;
- * - 全程记录 gatewayTrace(真实 HTTP 外呼),失败以 GlmGatewayError 携带轨迹上抛。
- * 配置:聊天端点优先 BAILIAN_COMPAT_BASE_URL,兼容回退 WAN_OFFICIAL_BASE(与 Wan 视频同 key)。
+ * GLM-5.3 主力 + Qwen3.8-Max 兜底的三档聊天通道(2026-08-25 用户拍板改线)。
+ * 顺序:OpenRouter GLM-5.3 → 百炼 Qwen3.8-Max 兜底 → EvoLink Qwen3.8-Max 兜底。
+ *
+ * 🔴 GLM-5.3 不再走百炼(北京/新加坡两档已删,2026-08-25 用户明确拍板):
+ *    百炼那两跳按量计费且 0824 曾因模型名不符静默失败回落,用户指定 GLM 一律走 OpenRouter。
+ * ⚠️ EvoLink 的 GLM-5.3 尚未上线——0825 Fly 内实测 /v1/models 只有 glm-5.2,
+ *    请求 glm-5.3 返回 404 model_not_found("This error is permanent")。
+ *    EvoLink 上线 5.3 后在 OpenRouter 之后加档即可,勿用 glm-5.2 冒充。
+ *
+ * OpenRouter 实测(0825 Fly 内): z-ai/glm-5.3 HTTP 200,provider=Z.AI;
+ * 注意它是 reasoning 模型,过小的 max_tokens 会被思考 token 吃光导致空 content——
+ * 本链已有 empty_content 判定兜底,调用方仍应给足 max_tokens。
+ *
+ * 兜底两档(0825 二次拍板):新加坡 Token Plan Qwen3.8-Max(套餐额度,已付费不用即归零,
+ * 先耗套餐) → EvoLink Qwen3.8-Max(保交付不保同型)。
+ * ⚠️ SG 套餐端点必须用 token-plan.ap-southeast-1 专用地址配 DASHSCOPE_SG_PLAN_KEY;
+ *    不能用 DASHSCOPE_SG_BASE(业务空间地址配套餐钥匙会 401,#1307 工作树实录)。
+ * 至此整条链不再有任何百炼按量档。
  */
-
-/**
- * GLM-5.3 在三个通道上的模型名互不相同，混用即静默失败后回落。
- * 0824 实况：百炼这一跳一直发 "glm-5.3"（百炼上不存在），
- * 于是首选形同虚设，实跑一直落到第三跳。
- */
-/** GLM 兜底链的通道名（顺位即数组顺序，改动请同步 bailianChat.test.ts 的断言） */
 export type GlmGatewayName =
+  /** @deprecated 0825 起 GLM 不再走百炼;成员仅保留给历史账本/轨迹反序列化,链上不再出现 */
   | "bailian"
+  /** @deprecated 同上 */
   | "bailian_sg"
   | "openrouter"
+  /** @deprecated 0825 二次拍板:Qwen 兜底改走新加坡 Token Plan,百炼按量档退役;成员留给历史轨迹 */
   | "bailian_qwen"
+  | "plan_sg_qwen"
   | "evolink_qwen";
 
+/** @deprecated 0825 起 GLM 不走百炼;常量仅保留给历史账本比对,链上不再使用 */
 export const BAILIAN_GLM_MODEL = "ZHIPU/GLM-5.3";
 /** OpenRouter 档（与百炼不同名，不能由 BAILIAN_GLM_MODEL 拼接得到） */
 export const OPENROUTER_GLM_MODEL = "z-ai/glm-5.3";
@@ -89,26 +95,7 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
     key: string;
   }> = [
     {
-      name: "bailian",
-      model: BAILIAN_GLM_MODEL,
-      ready: isBailianChatConfigured(),
-      url: `${bailianBase()}/compatible-mode/v1/chat/completions`,
-      key: String(process.env.WAN_OFFICIAL_API_KEY || "").trim(),
-    },
-    {
-      // 顺位第二：新加坡百炼同样在架 ZHIPU/GLM-5.3（0824 实测 162 个模型里有）
-      // ⚠️ 5.3 不在新加坡套餐白名单（套餐只有 glm-5.2），这一跳仍是按量付费
-      name: "bailian_sg",
-      model: BAILIAN_GLM_MODEL,
-      ready: Boolean(
-        String(process.env.DASHSCOPE_SG_BASE || "").trim() &&
-          String(process.env.DASHSCOPE_SG_API_KEY || "").trim(),
-      ),
-      url: `${String(process.env.DASHSCOPE_SG_BASE || "").trim().replace(/\/$/, "")}/compatible-mode/v1/chat/completions`,
-      key: String(process.env.DASHSCOPE_SG_API_KEY || "").trim(),
-    },
-    {
-      // 顺位第三：OpenRouter 是 5.3 在架的第三家（EvoLink 未上线，见下）
+      // 主档:GLM-5.3 唯一在用通道(0825 拍板;EvoLink 5.3 上线前不加第二档 GLM)
       name: "openrouter",
       model: OPENROUTER_GLM_MODEL,
       ready: Boolean(String(process.env.OPENROUTER_API_KEY || "").trim()),
@@ -116,15 +103,16 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
       key: String(process.env.OPENROUTER_API_KEY || "").trim(),
     },
     {
-      // 末档一:GLM 三网关全灭才换模型;Wan official 百炼直连(同一把 WAN_OFFICIAL 钥匙)
-      name: "bailian_qwen",
+      // 兜底一:GLM 不可用才换模型;新加坡 Token Plan 套餐额度(已付费,不用即归零)
+      // 端点写死 token-plan 专用域——配 DASHSCOPE_SG_BASE 会 401,不给配错的机会
+      name: "plan_sg_qwen",
       model: GLM_CHAIN_FALLBACK_MODEL,
-      ready: isBailianChatConfigured(),
-      url: `${bailianBase()}/compatible-mode/v1/chat/completions`,
-      key: String(process.env.WAN_OFFICIAL_API_KEY || "").trim(),
+      ready: Boolean(String(process.env.DASHSCOPE_SG_PLAN_KEY || "").trim()),
+      url: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions",
+      key: String(process.env.DASHSCOPE_SG_PLAN_KEY || "").trim(),
     },
     {
-      // 末档二:百炼 Qwen 也不通才走 EvoLink,保交付不保同型
+      // 兜底二:SG 套餐也不通才走 EvoLink,保交付不保同型
       name: "evolink_qwen",
       model: GLM_CHAIN_FALLBACK_MODEL,
       ready: Boolean(String(process.env.EVOLINK_API_KEY || "").trim()),
@@ -206,8 +194,9 @@ async function invokeOneGlmGateway(
     body.enable_thinking = true;
     body.reasoning_effort = "xhigh";
     body.max_completion_tokens = budget;
-  } else if (gateway === "bailian_qwen") {
-    // 百炼兼容模式 Qwen:只认 enable_thinking(不认 reasoning_effort),预算走 max_tokens
+  } else if (gateway === "bailian_qwen" || gateway === "plan_sg_qwen") {
+    // DashScope compatible-mode Qwen(含新加坡 Token Plan):只认 enable_thinking
+    // (不认 reasoning_effort),预算走 max_tokens——七审第4条:换档时这条分支键漏改过
     body.enable_thinking = true;
     body.max_tokens = budget;
   } else {

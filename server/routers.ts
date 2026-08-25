@@ -5393,7 +5393,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const { runVisualReportLlmAttempts, buildVisualReportFailureTelemetry, parseVisualReportJson } = await import(
           "./services/visualReportLlm"
         );
-        const { invokeGlmJsonChatWithGatewayFallback, BAILIAN_GLM_MODEL } = await import("./services/bailianChat");
+        const { invokeGlmJsonChatWithGatewayFallback, OPENROUTER_GLM_MODEL } = await import("./services/bailianChat");
         let llmResult: Awaited<ReturnType<typeof runVisualReportLlmAttempts>> | null = null;
         let visualReportStage: "before_llm" | "llm" | "post_llm" = "before_llm";
         const llmStartedAtMs = Date.now();
@@ -5454,7 +5454,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             systemPrompt,
             userPrompt: visualReportUser,
             maxTokens: visualReportMaxTokens,
-            primaryModelName: BAILIAN_GLM_MODEL,
+            primaryModelName: OPENROUTER_GLM_MODEL,
             abortSignal: ctx.clientDisconnected,
             primaryInvoke: () =>
               invokeGlmJsonChatWithGatewayFallback({

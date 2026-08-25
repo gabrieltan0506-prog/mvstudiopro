@@ -45,7 +45,7 @@ describe("canvas spawn + defaults", () => {
       "Seedance 2.5",
       "Minimax H3",
       "Happy Horse 1.1",
-      "Wan 3.0（公测 · 直出30s · 排队时间较长）",
+      "Wan 3.0（直出30s · 排队时间较长）",
     ]);
     expect(normalizeCanvasVideoModel("alibaba/happyhorse-1.1")).toBe("happyhorse-1.1");
     expect(normalizeCanvasVideoModel("happy-horse")).toBe("happyhorse-1.1");

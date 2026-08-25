@@ -47,6 +47,10 @@ vi.mock("./openrouterVideoCore.js", () => ({
   mirrorOpenRouterVideoSourceUrl: vi.fn(async (u: string) => `mirrored:${u}`),
   pollOpenRouterVideoJobOnce: vi.fn(),
   submitOpenRouterVideoJob: vi.fn(),
+  // wan30Channels（0825 三通道路由）在模块加载期引用的导出，缺了会整文件炸
+  isOpenRouterVideoConfigured: vi.fn(() => false),
+  isOpenRouterSubmitRejected: vi.fn(() => false),
+  isOpenRouterSubmitUnknown: vi.fn(() => false),
 }));
 
 vi.mock("./wavespeedVideoUpscale.js", () => ({
@@ -57,7 +61,15 @@ vi.mock("./wavespeedVideoUpscale.js", () => ({
 
 vi.mock("./openrouterSeedanceVideo.js", () => ({ buildOpenRouterSeedanceSubmitBody: vi.fn() }));
 vi.mock("./openrouterHailuoVideo.js", () => ({ buildOpenRouterHailuoSubmitBody: vi.fn() }));
-vi.mock("./openrouterHappyHorseVideo.js", () => ({ buildOpenRouterHappyHorseSubmitBody: vi.fn() }));
+vi.mock("./openrouterHappyHorseVideo.js", () => ({
+  buildOpenRouterHappyHorseSubmitBody: vi.fn(() => ({ model: "alibaba/happyhorse-1.1" })),
+  isOpenRouterHappyHorseConfigured: () => true,
+}));
+
+const hhSubmit = vi.fn();
+vi.mock("./happyHorseChannels.js", () => ({
+  submitHappyHorseViaChannels: (...args: unknown[]) => hhSubmit(...args),
+}));
 vi.mock("./openrouterGptImage2.js", () => ({ getOpenRouterApiKey: () => "test-key" }));
 vi.mock("./seedanceVideo.js", () => ({
   mirrorSeedanceMp4ToGcsSignedUrl: vi.fn(async (u: string) => `mirrored:${u}`),
@@ -77,6 +89,11 @@ vi.mock("./paidJobLedger.js", () => ({
 
 vi.mock("../credits.js", () => ({ refundCredits: vi.fn(async () => {}) }));
 
+const wan30Submit = vi.fn();
+vi.mock("./wan30Channels.js", () => ({
+  submitWan30ViaChannels: (...args: unknown[]) => wan30Submit(...args),
+}));
+
 describe("canvasVideoTask 超时对账 + 幂等", () => {
   let tempDir = "";
   const ORIGINAL_TASK_DIR = process.env.CANVAS_VIDEO_TASK_DIR;
@@ -87,6 +104,8 @@ describe("canvasVideoTask 超时对账 + 幂等", () => {
     evolinkSubmit.mockReset();
     evolinkPoll.mockReset();
     registerActiveJob.mockClear();
+    wan30Submit.mockReset();
+    hhSubmit.mockReset();
     refundCreditsOnFailure.mockClear();
     pauseActiveJob.mockClear();
     unregisterActiveJob.mockClear();
@@ -351,6 +370,64 @@ describe("canvasVideoTask 超时对账 + 幂等", () => {
     const task = await m.getCanvasVideoTask(created.taskId, 7);
     expect(task?.videoUrl).toBe("mirrored:https://ws/4k.mp4");
     expect(task?.upscaleSourceUrl).toBe("https://cdn/origin.mp4");
+    expect(refundCreditsOnFailure).toHaveBeenCalledTimes(0);
+  });
+
+  it("wan30 提交 unknown（上游可能已建单）→ reconcile_manual 不退款，照 HappyHorse 样板（七审第1条）", async () => {
+    const m = await mod();
+    const taskId = await seedRunningTask({
+      engine: "wan30-auto",
+      status: "queued",
+      evolinkTaskId: undefined,
+      imageUrl: "https://cdn.example.com/ref.png",
+    });
+    wan30Submit.mockRejectedValue(Object.assign(new Error("EvoLink 提交结果未知：fetch failed"), { kind: "unknown" }));
+    const task = await m.getCanvasVideoTask(taskId, 7);
+    expect(task?.status).toBe("reconcile_manual");
+    expect(task?.error).toContain("人工对账");
+    expect(task?.error).not.toMatch(/evolink|openrouter|wavespeed/i);
+    expect(refundCreditsOnFailure).toHaveBeenCalledTimes(0);
+    expect(pauseActiveJob).toHaveBeenCalledTimes(1);
+  });
+
+  it("wan30-auto+句柄（引擎改写落盘失败的容错态）→ 归位后正常轮询，不再假失败真退款（七审第2条）", async () => {
+    const m = await mod();
+    const taskId = await seedRunningTask({
+      engine: "wan30-auto",
+      evolinkTaskId: "ev-wan-1",
+    });
+    evolinkPoll.mockResolvedValue({ state: "completed", sourceUrl: "https://cdn/wan.mp4" });
+    const task = await m.getCanvasVideoTask(taskId, 7);
+    expect(task?.status).toBe("succeeded");
+    expect(task?.engine).toBe("wan30-evolink");
+    expect(task?.videoUrl).toBe("mirrored:https://cdn/wan.mp4");
+    expect(refundCreditsOnFailure).toHaveBeenCalledTimes(0);
+  });
+
+  it("happyhorse 提交 unknown → reconcile_manual 不退款（拆百炼三通道沿用同一铁律）", async () => {
+    const m = await mod();
+    const taskId = await seedRunningTask({
+      engine: "happyhorse-auto",
+      status: "queued",
+      evolinkTaskId: undefined,
+      imageUrl: "https://cdn.example.com/face.png",
+    });
+    hhSubmit.mockRejectedValue(Object.assign(new Error("提交结果未知"), { kind: "unknown" }));
+    const task = await m.getCanvasVideoTask(taskId, 7);
+    expect(task?.status).toBe("reconcile_manual");
+    expect(refundCreditsOnFailure).toHaveBeenCalledTimes(0);
+  });
+
+  it("happyhorse-auto+evolink 句柄 → 归位后正常轮询成功", async () => {
+    const m = await mod();
+    const taskId = await seedRunningTask({
+      engine: "happyhorse-auto",
+      evolinkTaskId: "ev-hh-1",
+    });
+    evolinkPoll.mockResolvedValue({ state: "completed", sourceUrl: "https://cdn/hh.mp4" });
+    const task = await m.getCanvasVideoTask(taskId, 7);
+    expect(task?.status).toBe("succeeded");
+    expect(task?.engine).toBe("happyhorse-evolink");
     expect(refundCreditsOnFailure).toHaveBeenCalledTimes(0);
   });
 });

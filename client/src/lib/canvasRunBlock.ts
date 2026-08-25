@@ -985,6 +985,8 @@ async function runHappyHorse(
     resolution?: string;
     episodeIndex?: number;
     clipIndex?: number;
+    /** 0825 自由画布 r2v：多图参考（≤9）；≥2 张时服务端自动切多图参考模式 */
+    imageUrls?: string[];
   },
 ): Promise<string> {
   const hhUrl = withLongJobsFlyDirect("/api/jobs?op=happyHorseVideo");
@@ -999,6 +1001,7 @@ async function runHappyHorse(
       body: JSON.stringify({
         prompt: renderManhuaClipPromptForSeedance(prompt),
         imageUrl,
+        ...(opts?.imageUrls?.length ? { imageUrls: opts.imageUrls.slice(0, 9) } : {}),
         aspectRatio,
         duration,
         resolution,
@@ -1627,11 +1630,14 @@ export async function runCanvasBlock(
         if (!/^https?:\/\//i.test(firstFrame)) {
           throw new Error("Happy Horse 成片需要至少一张首帧参考图（请先出静帧或上传参考）");
         }
+        // 0825 r2v：取图口径与 Wan 相同（块上收集的参考图集）；≥2 张服务端自动切多图参考
+        const hhImages = httpsImages.length ? httpsImages : ([firstFrame].filter(Boolean) as string[]);
         url = await runHappyHorse(seedancePrompt, firstFrame, ar, {
           duration: clipDuration,
           resolution: block.videoResolution,
           episodeIndex: block.episodeIndex,
           clipIndex: parseClipIndexFromBlockId(block.id),
+          imageUrls: hhImages,
         });
       } else if (useHailuoH3) {
         // H3：OpenRouter 仅图参考（首帧 + input_references）；不传 Seedance 专属音/视频参考

@@ -1,10 +1,10 @@
 /**
- * Wan 3.0（公测）· WaveSpeed reference-to-video。
+ * Wan 3.0 · WaveSpeed reference-to-video。（0825 起为正式版，公测措辞已退役）
  *
  * 实弹口径（2026-08-20 双单并发验证）：
  * - 单任务可直出 30s（这是它相对 15s 档引擎的核心卖点）；
  * - reference_images ≤ 10 张；reference_audios 合计 ≤ 15s（超限上游拒单）；
- * - 公测期排队时长不可预估（几十分钟到数小时都出现过），UI 必须明示。
+ * - 排队时长仍可能较长（公测期实测几十分钟到数小时），轮询与对账窗口按此配置。
  */
 export const WAN30_WAVESPEED_PATH = "/api/v3/alibaba/wan-3.0/reference-to-video";
 
@@ -18,8 +18,6 @@ export const WAN30_RESOLUTIONS = ["480p", "720p", "1080p"] as const;
 export type Wan30Resolution = (typeof WAN30_RESOLUTIONS)[number];
 export const WAN30_DEFAULT_RESOLUTION: Wan30Resolution = "720p";
 
-/** 公测备注：下拉与卡面都要带,不许让用户蒙在鼓里干等 */
-export const WAN30_BETA_NOTE = "公测 · 直出30s · 排队时间较长";
 
 export function clampWan30Duration(raw?: unknown): number {
   const n = Math.floor(Number(raw));
