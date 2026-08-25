@@ -4,6 +4,7 @@ import { readFile, stat, unlink } from "node:fs/promises";
 import {
   MANHUA_NATIVE_AUDIO_MODEL,
   MANHUA_NATIVE_AUDIO_SOURCE_VARIANTS,
+  isManhuaNativeAudioGateFailureZh,
   mergeManhuaNativeAudioChunks,
   noAudioManhuaNativeAnalysis,
   normalizeManhuaNativeAudioChunkAnalysis,
@@ -116,17 +117,25 @@ async function probeLocalAudioDuration(audioPath: string, abortSignal?: AbortSig
   return Number(parsed.format?.duration) || 0;
 }
 
-export function buildManhuaNativeAudioPrompt(chunk: ManhuaNativeAudioChunk): string {
+export function buildManhuaNativeAudioPrompt(
+  chunk: ManhuaNativeAudioChunk,
+  rejectedReasonZh?: string,
+): string {
   const lenSec = chunk.endSec - chunk.startSec;
-  return `你是漫剧成片的声音设计分析师。这是 ${lenSec} 秒音频，局部0秒对应全片${chunk.startSec}秒。
+  const base = `你是漫剧成片的声音设计分析师。这是 ${lenSec} 秒音频，局部0秒对应全片${chunk.startSec}秒。
 只分析声音，不转写对白，不猜画面剧情。只返回 JSON。
 硬约束：
 1. audioTrack 连续、无重叠地覆盖局部0..${lenSec}秒。
-2. fromSec/toSec/cues[].atSec 是唯一时间真源；其他文本禁止写 MM:SS。
+2. fromSec/toSec/cues[].atSec 是唯一时间真源。所有中文文本字段【禁止】出现任何
+   钟表式时间（如 01:23、1:05:30、01:23-01:40）。
+   ❌ 错："配乐在01:23处切入"　✅ 对："配乐切入"（时间由所在轨道的 fromSec 表达）
 3. toneZh 只写角色功能、语气、语速、音量、停顿、气息和重音，不写台词内容。
 4. 只写真听到的音效、配乐、环境与静默；没有就写空串。
 5. 精确变化写 cues，且 cue 必须在所属区间内。
 6. reusableAudioZh 脱离来源剧情；不写平台、剧名、商标或原台词。`;
+  return rejectedReasonZh
+    ? `${base}\n【上一轮被拒原因】${rejectedReasonZh}。请修正后重新输出完整 JSON。`
+    : base;
 }
 
 const AUDIO_RESPONSE_SCHEMA = {
@@ -178,6 +187,8 @@ async function analyzeAudioChunkWithGemini(input: {
   gcsUri: string;
   chunk: ManhuaNativeAudioChunk;
   abortSignal?: AbortSignal;
+  /** 门禁重试时携带的上一轮被拒原因；随提示词一起送回模型。 */
+  rejectedReasonZh?: string;
 }): Promise<{
   analysis: ManhuaNativeAudioChunkAnalysis;
   inputTokens: number;
@@ -199,7 +210,7 @@ async function analyzeAudioChunkWithGemini(input: {
       body: JSON.stringify({
         contents: [{ role: "user", parts: [
           { fileData: { fileUri: input.gcsUri, mimeType: "audio/mpeg" } },
-          { text: buildManhuaNativeAudioPrompt(input.chunk) },
+          { text: buildManhuaNativeAudioPrompt(input.chunk, input.rejectedReasonZh) },
         ] }],
         generationConfig: {
           audioTimestamp: true,
@@ -348,7 +359,8 @@ export async function collectManhuaNativeAudioEvidence(input: {
           });
           uploaded.push({ variant, localPath, ...remote });
         }
-        const analyzed = await Promise.allSettled(uploaded.map(async (item) => {
+        /** 一轮双路分析；重试轮走完全相同的回执路径，只是提示词多带被拒原因。 */
+        const runDualVariantAnalysis = async (rejectedReasonZh?: string) => Promise.allSettled(uploaded.map(async (item) => {
           const startedAt = Date.now();
           const callId = crypto.randomUUID();
           await emitAudioModelReceipt({
@@ -365,6 +377,7 @@ export async function collectManhuaNativeAudioEvidence(input: {
               gcsUri: item.gcsUri,
               chunk,
               abortSignal: input.abortSignal,
+              rejectedReasonZh,
             });
             await emitAudioModelReceipt({
               callId,
@@ -402,14 +415,41 @@ export async function collectManhuaNativeAudioEvidence(input: {
             throw error;
           }
         }));
-        for (const row of analyzed) {
-          if (row.status !== "fulfilled") continue;
-          inputTokens += row.value.inputTokens;
-          audioInputTokens += row.value.audioInputTokens;
-          outputTokens += row.value.outputTokens;
-          geminiCalls += 1;
+        /** 成功调用的用量必须逐轮累计：门禁重试后第一轮的钱也真实花掉了。 */
+        const accumulateFulfilled = (rows: Awaited<ReturnType<typeof runDualVariantAnalysis>>) => {
+          for (const row of rows) {
+            if (row.status !== "fulfilled") continue;
+            inputTokens += row.value.inputTokens;
+            audioInputTokens += row.value.audioInputTokens;
+            outputTokens += row.value.outputTokens;
+            geminiCalls += 1;
+          }
+        };
+        const findFirstFailure = (rows: Awaited<ReturnType<typeof runDualVariantAnalysis>>) =>
+          rows.find((row): row is PromiseRejectedResult => row.status === "rejected");
+        let analyzed = await runDualVariantAnalysis();
+        accumulateFulfilled(analyzed);
+        let firstFailure = findFirstFailure(analyzed);
+        /**
+         * 0826 用户拍板 ④：门禁类失败（normalize/校验拒收）原地整对重试一次，
+         * 提示词携带被拒原因；网络/超时/上游 HTTP/中止不重试。明确不做分路重试。
+         */
+        if (
+          firstFailure
+          && !input.abortSignal?.aborted
+          && isManhuaNativeAudioGateFailureZh(firstFailure.reason)
+        ) {
+          const rejectedReasonZh = (firstFailure.reason instanceof Error
+            ? firstFailure.reason.message
+            : String(firstFailure.reason)
+          ).slice(0, 300);
+          console.warn(
+            `[nativeDeepRead] 第${chunk.index + 1}段声音分析未过门禁，带被拒原因整对重试一次：${rejectedReasonZh}`,
+          );
+          analyzed = await runDualVariantAnalysis(rejectedReasonZh);
+          accumulateFulfilled(analyzed);
+          firstFailure = findFirstFailure(analyzed);
         }
-        const firstFailure = analyzed.find((row): row is PromiseRejectedResult => row.status === "rejected");
         if (firstFailure) throw firstFailure.reason;
         const [mono, stereo] = analyzed.map((row) => (row as PromiseFulfilledResult<
           Awaited<ReturnType<typeof deps.analyzeChunk>>
