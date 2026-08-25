@@ -13,6 +13,9 @@ describe("原生精读页面接线", () => {
     expect(createAt).toBeGreaterThan(0);
     expect(LEARN_FLOW).not.toContain("previewNativeDeepReadPlanMutation");
     expect(LEARN_FLOW).not.toContain("window.confirm");
+    expect(LEARN_FLOW.match(/createJob\(/g)).toHaveLength(1);
+    expect(LEARN_FLOW).not.toContain("pollJobUntilTerminal");
+    expect(LEARN_FLOW).not.toContain("95 * 60_000");
     for (const field of [
       "nativeDeepReadConfirmed",
       "nativeMaxCalls",
@@ -60,25 +63,88 @@ describe("原生精读页面接线", () => {
     expect(PAGE).toContain("await manhuaViralProposalsRefetchRef.current()");
   });
 
+  it("模型、token、成本和原始进度只通过 owner/监管技术详情门展示", () => {
+    expect(PAGE).toContain(
+      "const canSeeManhuaLearnTechnicalDetails =\n    hasSupervisorOpsAccess || ownerTemplateOptimizeAllowed;",
+    );
+    expect(PAGE).toContain(
+      "canSeeManhuaLearnTechnicalDetails && manhuaLearnResult.nativeUsage",
+    );
+    expect(PAGE).toContain(
+      "canSeeManhuaLearnTechnicalDetails\n                            && (manhuaLearnResult.progressLines?.length || 0) > 0",
+    );
+    expect(PAGE).toContain("getManhuaLearnSafeProgressLabelZh(manhuaLearnResult)");
+    expect(PAGE).toContain('"学习方式：云端按集处理"');
+  });
+
   it("轮询 effect 不依赖整颗 query 对象，且无变化快照复用旧引用", () => {
     expect(PAGE).toContain("reuseManhuaLearnServerJobsIfUnchanged(prev, listed.items)");
     expect(PAGE).toContain("manhuaViralProposalsRefetchRef.current = manhuaViralProposalsQuery.refetch");
     const refreshAt = PAGE.indexOf("const refreshManhuaLearnServerJobs = useCallback");
     const stopAt = PAGE.indexOf("const stopFocusedManhuaLearnJob", refreshAt);
     const refreshBlock = PAGE.slice(refreshAt, stopAt);
-    expect(refreshBlock).not.toContain("[manhuaLearnActiveJob, manhuaLearnFocusSeriesKey, manhuaViralProposalsQuery]");
+    expect(refreshBlock).toContain("manhuaLearnFocusSeriesKeyRef.current");
+    expect(refreshBlock).toContain("manhuaLearnActiveJobRef.current");
+    expect(refreshBlock).toContain("reuseManhuaLearnResultIfUnchanged(prev, focused.result)");
+    expect(refreshBlock).not.toContain("[manhuaLearnActiveJob, manhuaLearnFocusSeriesKey");
+    const recoveryAt = PAGE.indexOf("刷新/断线恢复：接管同一个后台 job");
+    const approveAt = PAGE.indexOf("const approveManhuaLearnProposal", recoveryAt);
+    const recoveryBlock = PAGE.slice(recoveryAt, approveAt);
+    expect(recoveryBlock).toContain("manhuaViralProposalsRefetchRef.current()");
+    expect(recoveryBlock).not.toContain("manhuaViralProposalsQuery.refetch");
   });
 
-  it("刷新后由失败恢复判据重置页面指针，运行中任务仍由 active job 接管", () => {
+  it("认证用户到位后才按用户恢复，失败记录不会霸占默认页", () => {
     expect(PAGE).toContain("resolveManhuaLearnReloadDecision({");
-    expect(PAGE).toContain("manhuaLearnReloadBootstrap.decision.tab");
-    expect(PAGE).toContain("manhuaLearnReloadBootstrap.activeJob");
-    const resetAt = PAGE.indexOf("if (!manhuaLearnReloadBootstrap.decision.clearFailedAutoResume) return;");
+    expect(PAGE).not.toContain("manhuaLearnReloadBootstrap");
+    expect(PAGE).toContain("readManhuaLearnActiveJob(manhuaLearnUserKey)");
+    expect(PAGE).toContain("readManhuaLearnResult(manhuaLearnUserKey)");
+    expect(PAGE).toContain("readManhuaLearnFocusSeriesKey(manhuaLearnUserKey)");
+    expect(PAGE).toContain("readManhuaLearnContinuation(manhuaLearnUserKey)");
+    expect(PAGE).toContain(
+      '`${MANHUA_LEARN_CONTINUATION_LS_KEY}:${encodeURIComponent(scope)}`',
+    );
+    const resetAt = PAGE.indexOf("if (decision.clearFailedAutoResume) {");
     expect(resetAt).toBeGreaterThan(0);
-    const resetBlock = PAGE.slice(resetAt, resetAt + 400);
-    expect(resetBlock).toContain('writeManhuaLearnFocusSeriesKey("")');
-    expect(resetBlock).toContain("writeManhuaLearnResult(null)");
-    expect(resetBlock).toContain("writeManhuaLearnContinuation(null)");
+    const resetBlock = PAGE.slice(resetAt, resetAt + 500);
+    expect(resetBlock).toContain('writeManhuaLearnFocusSeriesKey(manhuaLearnUserKey, "")');
+    expect(resetBlock).toContain("writeManhuaLearnResult(manhuaLearnUserKey, null)");
+    expect(resetBlock).toContain("writeManhuaLearnContinuation(manhuaLearnUserKey, null)");
+  });
+
+  it("身份切换丢弃上一账号在途轮询回包，快照换引用不强制展开面板", () => {
+    expect(PAGE).toContain("manhuaLearnUserKeyRef.current !== requestUserKey");
+    expect(PAGE).toContain("setManhuaLearnHydratedUserKey(manhuaLearnUserKey)");
+    const snapshotAt = PAGE.indexOf("const snap = manhuaLearnSnapshotQuery.data;");
+    const selectAt = PAGE.indexOf("const selectManhuaLearnBasketItem", snapshotAt);
+    const snapshotBlock = PAGE.slice(snapshotAt, selectAt);
+    expect(snapshotBlock).toContain("reuseManhuaLearnResultIfUnchanged(prev, next)");
+    expect(snapshotBlock).not.toContain("setManhuaLearnPanelCollapsed(false)");
+  });
+
+  it("待审批学到的结构完整消费 storyStructure 五个字段", () => {
+    expect(PAGE).toContain("selectedManhuaProposal.storyStructure ||");
+    for (const field of [
+      "corePromiseZh",
+      "conflictEngineZh",
+      "relationshipEngineZh",
+      "episodeProgressionZh",
+      "variationRulesZh",
+    ]) {
+      expect(PAGE).toContain(`selectedManhuaProposal.storyStructure.${field}`);
+    }
+    for (const label of [
+      "核心故事承诺｜",
+      "持续冲突引擎｜",
+      "关系变化引擎｜",
+      "跨集推进规律｜",
+      "避免重复规则｜",
+    ]) {
+      expect(PAGE).toContain(label);
+    }
+    expect(PAGE).toContain("故事骨架｜旧卡未记录五项系列骨架");
+    expect(PAGE).toContain("selectedManhuaProposal.beatGrid?.length ||");
+    expect(PAGE).toContain("selectedManhuaProposal.reusableZh ||");
   });
 
   it("页面没有任何供应商生产密钥入口", () => {

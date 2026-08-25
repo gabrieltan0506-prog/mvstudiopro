@@ -28,6 +28,7 @@ import {
   type NativeDeepReadIngestInput,
   type NativeDeepReadIngestSource,
 } from "./manhuaNativeDeepReadIngest";
+import { noAudioManhuaNativeAnalysis } from "../../shared/manhuaNativeAudioAnalysis";
 
 function makeInput(over: Partial<NativeDeepReadIngestInput> = {}): NativeDeepReadIngestInput {
   const beatGrid = Array.from({ length: 6 }, (_, i) => ({
@@ -38,6 +39,16 @@ function makeInput(over: Partial<NativeDeepReadIngestInput> = {}): NativeDeepRea
   }));
   const result: NativeDeepReadIngestSource = {
     beatGrid,
+    subtitleTrack: [],
+    resolvedAudioChunks: [],
+    classification: {
+      emotionTagsZh: ["压迫渐强"],
+      narrativeFeatureTagsZh: ["信息递进"],
+      performanceTagsZh: ["克制爆发"],
+      audiovisualTagsZh: ["冷暖对撞"],
+      audienceExperienceTagsZh: ["持续紧张"],
+    },
+    audioAnalysis: noAudioManhuaNativeAnalysis(120),
     reusableZh: "通用手法",
     genPromptHintZh: "生成要素",
     segmentCount: 2,
@@ -129,6 +140,15 @@ describe("断点续跑", () => {
     gcs.list.mockResolvedValue([nativeDeepReadProposalObjectName("abc123", 1)]);
     gcs.download.mockResolvedValue({ buffer: Buffer.from("{}") });
     await expect(listIngestedNativeDeepReadEpisodes("abc123")).rejects.toThrow("无法确认内容");
+  });
+
+  it("旧版原生卡缺五维分类或声音结构时在付费续跑前关闭式停止", async () => {
+    const current = JSON.parse(storedCardBuffer().toString("utf8")) as Record<string, unknown>;
+    delete current.audioStory;
+    gcs.list.mockResolvedValue([nativeDeepReadProposalObjectName("abc123", 1)]);
+    gcs.download.mockResolvedValue({ buffer: Buffer.from(JSON.stringify(current)) });
+    await expect(listIngestedNativeDeepReadEpisodes("abc123"))
+      .rejects.toThrow("旧版卡需先处理后重学");
   });
 
   it("别的合集的卡不会被算进本合集已完成", async () => {

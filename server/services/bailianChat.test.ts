@@ -8,6 +8,29 @@ import { GlmGatewayError, invokeGlmJsonChatWithGatewayFallback } from "./bailian
 const GOOD = JSON.stringify({ reportTitle: "报表", insightSummary: [{ role: "判断", title: "t", description: "d" }], trackGrowth: [{ name: "n", growth: "+1%" }] });
 const okBody = (content: string, model = "glm-5.3") =>
   JSON.stringify({ choices: [{ message: { content }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 2 }, model });
+const meteredBody = (options: {
+  content?: string;
+  finishReason?: string;
+  omitFinishReason?: boolean;
+  provider?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  reasoningTokens?: number;
+  costUsd?: number;
+} = {}) => JSON.stringify({
+  choices: [{
+    message: { content: options.content ?? GOOD },
+    ...(options.omitFinishReason ? {} : { finish_reason: options.finishReason ?? "stop" }),
+  }],
+  usage: {
+    prompt_tokens: options.inputTokens ?? 101,
+    completion_tokens: options.outputTokens ?? 202,
+    completion_tokens_details: { reasoning_tokens: options.reasoningTokens ?? 33 },
+    cost: options.costUsd ?? 0.0123,
+  },
+  model: "z-ai/glm-5.3",
+  provider: options.provider ?? "Z.AI",
+});
 
 function stubFetchSeq(handlers: Array<(url: string, init: any) => { ok: boolean; status: number; body: string }>) {
   let i = 0;
@@ -38,6 +61,7 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("OpenRouter 成功即短路:只发一次外呼,gateway=openrouter,轨迹一条 ok", async () => {
@@ -49,7 +73,79 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     expect(r.gatewayTrace).toEqual([{ gateway: "openrouter", model: "z-ai/glm-5.3", outcome: "ok" }]);
   });
 
-  it("OpenRouter HTTP 500 后降级新加坡 Token Plan Qwen 兜底成功（顺位：OpenRouter→plan_sg_qwen→evolink_qwen）", async () => {
+  it("openrouter_only 失败时关闭式停止，不回退任何 Qwen 通道", async () => {
+    const calls = stubFetchSeq([() => ({ ok: false, status: 503, body: "openrouter down" })]);
+    const err = await invokeGlmJsonChatWithGatewayFallback({
+      system: "s",
+      user: "u",
+      gatewayPolicy: "openrouter_only",
+    }).catch((error) => error);
+
+    expect(err).toBeInstanceOf(GlmGatewayError);
+    expect(err.message).toContain("OpenRouter GLM-5.3 调用失败");
+    expect(err.gatewayTrace).toEqual([
+      { gateway: "openrouter", model: "z-ai/glm-5.3", outcome: "http_error", detail: "GLM 链 HTTP 503: openrouter down" },
+    ]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toContain("openrouter.ai");
+    expect(calls.some((call) => /token-plan|evolink/.test(call.url))).toBe(false);
+  });
+
+  it("OpenRouter 可显式传 max 推理、参数支持硬门与 12 分钟墙钟", async () => {
+    const timeoutSignal = new AbortController().signal;
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeoutSignal);
+    const calls = stubFetchSeq([() => ({ ok: true, status: 200, body: meteredBody() })]);
+
+    await invokeGlmJsonChatWithGatewayFallback({
+      system: "s",
+      user: "u",
+      gatewayPolicy: "openrouter_only",
+      reasoningEffort: "max",
+      requireParameters: true,
+      timeoutMs: 12 * 60_000,
+    });
+
+    expect(timeoutSpy).toHaveBeenCalledOnce();
+    expect(timeoutSpy).toHaveBeenCalledWith(720_000);
+    expect(calls[0].init.signal).toBe(timeoutSignal);
+    expect(JSON.parse(String(calls[0].init.body))).toMatchObject({
+      model: "z-ai/glm-5.3",
+      reasoning: { effort: "max" },
+      provider: { require_parameters: true },
+    });
+  });
+
+  it("成功保留上游 provider、cost 与 reasoning token，内部通道只写 gateway", async () => {
+    stubFetchSeq([() => ({
+      ok: true,
+      status: 200,
+      body: meteredBody({
+        provider: "Z.AI",
+        inputTokens: 105,
+        outputTokens: 218,
+        reasoningTokens: 203,
+        costUsd: 0.0011062,
+      }),
+    })]);
+
+    const result = await invokeGlmJsonChatWithGatewayFallback({
+      system: "s",
+      user: "u",
+      gatewayPolicy: "openrouter_only",
+      requireFinishReasonStop: true,
+    });
+
+    expect(result.provider).toBe("Z.AI");
+    expect(result.gateway).toBe("openrouter");
+    expect(result.usage).toEqual({
+      prompt_tokens: 105,
+      completion_tokens: 218,
+      completion_tokens_details: { reasoning_tokens: 203 },
+      cost: 0.0011062,
+    });
+  });
+
+  it("默认策略不回归：OpenRouter HTTP 500 后降级新加坡 Token Plan Qwen 成功", async () => {
     const calls = stubFetchSeq([
       () => ({ ok: false, status: 500, body: "boom" }),
       () => ({ ok: true, status: 200, body: okBody(GOOD, "qwen3.8-max") }),
@@ -80,6 +176,60 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     expect(calls).toHaveLength(2);
     expect(r.gateway).toBe("plan_sg_qwen");
     expect(r.gatewayTrace[0]).toMatchObject({ gateway: "openrouter", outcome: "content_invalid" });
+  });
+
+  it("openrouter_only 的业务 JSON 验真失败仍在 GlmGatewayError 保留真实 usage", async () => {
+    stubFetchSeq([() => ({
+      ok: true,
+      status: 200,
+      body: meteredBody({ inputTokens: 410, outputTokens: 72, reasoningTokens: 61, costUsd: 0.08 }),
+    })]);
+
+    const err = await invokeGlmJsonChatWithGatewayFallback({
+      system: "s",
+      user: "u",
+      gatewayPolicy: "openrouter_only",
+      validateContent: () => {
+        throw new Error("业务 JSON 非法");
+      },
+    }).catch((error) => error);
+
+    expect(err).toBeInstanceOf(GlmGatewayError);
+    expect(err.gatewayTrace).toEqual([
+      expect.objectContaining({ gateway: "openrouter", outcome: "content_invalid", detail: "业务 JSON 非法" }),
+    ]);
+    expect(err.usage).toEqual({
+      inputTokens: 410,
+      outputTokens: 72,
+      reasoningTokens: 61,
+      costUsd: 0.08,
+    });
+  });
+
+  it.each([
+    ["非 stop", meteredBody({ finishReason: "content_filter", inputTokens: 510, outputTokens: 82, reasoningTokens: 71, costUsd: 0.09 })],
+    ["缺失 finish_reason", meteredBody({ omitFinishReason: true, inputTokens: 610, outputTokens: 92, reasoningTokens: 81, costUsd: 0.1 })],
+  ])("strict 只接受 stop：%s 被拒且 GlmGatewayError 保留 usage", async (_label, body) => {
+    stubFetchSeq([() => ({ ok: true, status: 200, body })]);
+
+    const err = await invokeGlmJsonChatWithGatewayFallback({
+      system: "s",
+      user: "u",
+      gatewayPolicy: "openrouter_only",
+      requireFinishReasonStop: true,
+    }).catch((error) => error);
+
+    const envelope = JSON.parse(body);
+    expect(err).toBeInstanceOf(GlmGatewayError);
+    expect(err.gatewayTrace).toEqual([
+      expect.objectContaining({ gateway: "openrouter", outcome: "incomplete" }),
+    ]);
+    expect(err.usage).toEqual({
+      inputTokens: envelope.usage.prompt_tokens,
+      outputTokens: envelope.usage.completion_tokens,
+      reasoningTokens: envelope.usage.completion_tokens_details.reasoning_tokens,
+      costUsd: envelope.usage.cost,
+    });
   });
 
   it("空 content 视为失败继续降级,不得当成功（GLM-5.3 reasoning 吃光 max_tokens 的实测形态）", async () => {

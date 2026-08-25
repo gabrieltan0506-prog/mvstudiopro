@@ -15,8 +15,10 @@ describe("原生精读任务墙钟", () => {
   });
 
   it("非法或过大的调用数关闭式拒绝", () => {
-    expect(() => resolveNativeDeepReadJobTimeoutMs(0)).toThrow("1–40");
-    expect(() => resolveNativeDeepReadJobTimeoutMs(41)).toThrow("1–40");
+    const validRange = `1–${NATIVE_DEEP_READ_JOB_MAX_CALLS}`;
+    expect(() => resolveNativeDeepReadJobTimeoutMs(0)).toThrow(validRange);
+    expect(() => resolveNativeDeepReadJobTimeoutMs(NATIVE_DEEP_READ_JOB_MAX_CALLS + 1))
+      .toThrow(validRange);
   });
 
   it("API 与 worker 共用同一份确认契约", () => {

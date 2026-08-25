@@ -25,7 +25,7 @@ const gcs = vi.hoisted(() => ({
   download: vi.fn(),
   createIfAbsent: vi.fn(),
   /** 恢复成功后同步 proposals/ 审计副本走这条，要能断言内容 */
-  upload: vi.fn(async () => ({})),
+  upload: vi.fn(async (_params: { objectName: string; buffer: Buffer; contentType: string }) => ({})),
 }));
 
 vi.mock("./gcs.js", () => ({
@@ -71,6 +71,7 @@ import {
   listArchivedManhuaViralTemplateIndex,
   listArchivedManhuaViralTemplateVersions,
   restoreArchivedManhuaViralTemplate,
+  MANHUA_VIRAL_APPROVED_PREFIX,
   MANHUA_VIRAL_ARCHIVE_PREFIX,
 } from "./manhuaViralTemplateStore";
 
@@ -635,6 +636,170 @@ describe("批准的公开码与覆盖保护（终审第六组 13–16）", () =>
       /已存在，请通过修订流程替换/,
     );
     expect(gcs.createIfAbsent).not.toHaveBeenCalled();
+  });
+});
+
+describe("原生系列卡的滚动批准", () => {
+  const nativeSeriesId = "tpl_native_series_serial_a";
+  type NativeSeriesFixture = ReturnType<typeof cardOf> & {
+    storyStructure: {
+      corePromiseZh: string;
+      conflictEngineZh: string;
+      relationshipEngineZh: string;
+      episodeProgressionZh: string[];
+      variationRulesZh: string[];
+    };
+    sourceRefs: Array<{ url: string; fetchedAt: string }>;
+    provenance: {
+      nativeSeriesAggregation: {
+        model: string;
+        route: "openrouter_text";
+        sourceEpisodeCount: number;
+        firstEpisodeIndex: number;
+        lastEpisodeIndex: number;
+        inputTokens: number;
+        outputTokens: number;
+        costUsd: number;
+        priceEquivalentCny: number;
+        usingPlanQuota: false;
+        snapshotSha256: string;
+        aggregatedAt: string;
+      };
+    };
+  };
+  const nativeSeriesCard = (input: {
+    status: "proposed" | "approved";
+    snapshot: string;
+    sourceEpisodeCount: number;
+    publicCode?: string;
+    corePromiseZh: string;
+    sourceUrl: string;
+  }): NativeSeriesFixture => cardOf({
+    id: nativeSeriesId,
+    nameZh: input.status === "approved" ? "旧系列结构" : "新系列结构",
+    laneZh: "多维标签",
+    status: input.status,
+    publicCode: input.publicCode,
+    classification: {
+      emotionTagsZh: ["压迫渐强"],
+      narrativeFeatureTagsZh: ["信息递进"],
+      performanceTagsZh: ["克制爆发"],
+      audiovisualTagsZh: ["冷暖对撞"],
+      audienceExperienceTagsZh: ["持续紧张"],
+    },
+    storyStructure: {
+      corePromiseZh: input.corePromiseZh,
+      conflictEngineZh: `${input.corePromiseZh}的冲突引擎`,
+      relationshipEngineZh: `${input.corePromiseZh}的关系引擎`,
+      episodeProgressionZh: [`${input.corePromiseZh}逐集升级`],
+      variationRulesZh: [`${input.corePromiseZh}每集改变压力来源`],
+    },
+    sourceRefs: [{ url: input.sourceUrl, fetchedAt: "2026-08-25T12:00:00.000Z" }],
+    provenance: {
+      nativeSeriesAggregation: {
+        model: "z-ai/glm-5.3",
+        route: "openrouter_text",
+        sourceEpisodeCount: input.sourceEpisodeCount,
+        firstEpisodeIndex: 1,
+        lastEpisodeIndex: input.sourceEpisodeCount,
+        inputTokens: 800,
+        outputTokens: 120,
+        costUsd: 0.03,
+        priceEquivalentCny: 0.216,
+        usingPlanQuota: false,
+        snapshotSha256: input.snapshot,
+        aggregatedAt: "2026-08-25T12:00:00.000Z",
+      },
+    },
+    approvedAt: input.status === "approved" ? "2026-08-24T12:00:00.000Z" : undefined,
+  }) as NativeSeriesFixture;
+
+  const seedRollingApprove = (
+    oldApproved: Record<string, unknown>,
+    newProposal: Record<string, unknown>,
+  ) => {
+    gcs.list.mockImplementation(async ({ prefix }: { prefix: string }) =>
+      prefix.includes("/approved/")
+        ? [`${MANHUA_VIRAL_APPROVED_PREFIX}${nativeSeriesId}.json`]
+        : [],
+    );
+    gcs.download.mockImplementation(async ({ gcsUri }: { gcsUri: string }) => ({
+      buffer: Buffer.from(JSON.stringify(
+        String(gcsUri).includes("/approved/") ? oldApproved : newProposal,
+      ), "utf8"),
+    }));
+  };
+
+  it("新增分集后同 id 再批准：先归档旧卡，保留公开码，其余核心字段全换新", async () => {
+    const { approveManhuaViralTemplate } = await import("./manhuaViralTemplateStore");
+    const oldApproved = nativeSeriesCard({
+      status: "approved",
+      snapshot: "a".repeat(64),
+      sourceEpisodeCount: 2,
+      publicCode: "KEEP42",
+      corePromiseZh: "旧故事承诺",
+      sourceUrl: "gs://test-bucket/old-ep1.json",
+    });
+    const newProposal = nativeSeriesCard({
+      status: "proposed",
+      snapshot: "b".repeat(64),
+      sourceEpisodeCount: 3,
+      corePromiseZh: "新故事承诺",
+      sourceUrl: "gs://test-bucket/new-ep3.json",
+    });
+    seedRollingApprove(oldApproved, newProposal);
+
+    const out = await approveManhuaViralTemplate({ id: nativeSeriesId });
+    expect(out.publicCode).toBe("KEEP42");
+    expect(out.storyStructure?.corePromiseZh).toBe("新故事承诺");
+    expect(out.sourceRefs).toEqual(newProposal.sourceRefs);
+    expect(out.provenance).toEqual(newProposal.provenance);
+
+    const writes = gcs.upload.mock.calls.map(([params]) => params as {
+      objectName: string;
+      buffer: Buffer;
+    });
+    const archiveIndex = writes.findIndex((write) =>
+      write.objectName.startsWith(`${MANHUA_VIRAL_ARCHIVE_PREFIX}${nativeSeriesId}/`));
+    const approvedIndex = writes.findIndex((write) =>
+      write.objectName === `${MANHUA_VIRAL_APPROVED_PREFIX}${nativeSeriesId}.json`);
+    expect(archiveIndex).toBeGreaterThanOrEqual(0);
+    expect(approvedIndex).toBeGreaterThan(archiveIndex);
+
+    const archived = JSON.parse(writes[archiveIndex]!.buffer.toString("utf8"));
+    const approved = JSON.parse(writes[approvedIndex]!.buffer.toString("utf8"));
+    expect(archived.storyStructure.corePromiseZh).toBe("旧故事承诺");
+    expect(archived.provenance.nativeSeriesAggregation.snapshotSha256).toBe("a".repeat(64));
+    expect(approved).toMatchObject({
+      publicCode: "KEEP42",
+      sourceRefs: newProposal.sourceRefs,
+      storyStructure: newProposal.storyStructure,
+      provenance: newProposal.provenance,
+    });
+  });
+
+  it("同一快照不重复归档与覆盖", async () => {
+    const { approveManhuaViralTemplate } = await import("./manhuaViralTemplateStore");
+    const oldApproved = nativeSeriesCard({
+      status: "approved",
+      snapshot: "c".repeat(64),
+      sourceEpisodeCount: 3,
+      publicCode: "KEEP42",
+      corePromiseZh: "同一故事承诺",
+      sourceUrl: "gs://test-bucket/ep3.json",
+    });
+    const duplicateProposal = nativeSeriesCard({
+      status: "proposed",
+      snapshot: "c".repeat(64),
+      sourceEpisodeCount: 3,
+      corePromiseZh: "同一故事承诺",
+      sourceUrl: "gs://test-bucket/ep3.json",
+    });
+    seedRollingApprove(oldApproved, duplicateProposal);
+
+    await expect(approveManhuaViralTemplate({ id: nativeSeriesId }))
+      .rejects.toThrow(/快照未变/);
+    expect(gcs.upload).not.toHaveBeenCalled();
   });
 });
 

@@ -8,17 +8,22 @@ import {
   NATIVE_DEEP_READ_MODEL,
   NATIVE_DEEP_READ_REQUEST_IDLE_TIMEOUT_MS,
   NATIVE_DEEP_READ_REQUEST_TOTAL_TIMEOUT_MS,
-  assertNativeDeepReadPieceSize,
+  assertNativeDeepReadEpisodeEvidence,
   buildNativeDeepReadPrompt,
   buildSingaporeNativeDeepReadRequest,
   isManhuaNativeDeepReadEnabled,
   pickSmallestVideoFormat,
+  packNativeDeepReadEpisodes,
+  prepareEpisodeVideos,
+  resolveNativeDeepReadBatchMaxPixels,
   resolveNativeDeepReadCredentials,
   resolveNativeDeepReadExecutionCredentials,
+  resolveNativeDeepReadInputFps,
+  runManhuaNativeDeepReadBatch,
   shouldReadNativeVideoDirectly,
   SINGAPORE_TOKEN_PLAN_CHAT_ENDPOINT,
   validateNativeDeepReadSegments,
-  waitNativeDeepReadRetry,
+  type NativeDeepReadMediaPreparationDeps,
 } from "./manhuaNativeDeepReadRunner";
 import {
   MANHUA_NATIVE_DEEP_READ_MODEL,
@@ -109,63 +114,6 @@ describe("原生精读长请求时限", () => {
   });
 });
 
-describe("中止必须真的能打断", () => {
-  it("等待期间 abort 立即 reject —— 原来是裸 setTimeout，点了停止还要空等 15 秒", async () => {
-    const c = new AbortController();
-    const p = waitNativeDeepReadRetry(15_000, c.signal);
-    const started = Date.now();
-    c.abort();
-    // 不断言文案：未给 reason 时抛的是标准 AbortError（DOMException），
-    // 关键是**立刻**拒绝，而不是等满 15 秒
-    await expect(p).rejects.toThrow();
-    expect(Date.now() - started).toBeLessThan(1_000);
-  });
-
-  it("已中止时直接 reject，不排这次等待", async () => {
-    const c = new AbortController();
-    c.abort();
-    await expect(waitNativeDeepReadRetry(15_000, c.signal)).rejects.toThrow();
-  });
-
-  it("没有 signal 时正常等待并 resolve", async () => {
-    await expect(waitNativeDeepReadRetry(1)).resolves.toBeUndefined();
-  });
-
-  it("abort 携带的 reason 原样抛出，不被替换成通用文案", async () => {
-    const c = new AbortController();
-    const why = new Error("用户已停止学习");
-    const p = waitNativeDeepReadRetry(15_000, c.signal);
-    c.abort(why);
-    await expect(p).rejects.toBe(why);
-  });
-});
-
-describe("切片重试的中止契约（源码级）", () => {
-  const SRC = readFileSync(
-    new URL("./manhuaNativeDeepReadRunner.ts", import.meta.url),
-    "utf8",
-  );
-
-  it("cutSegment 调用处必须传 abortSignal —— 接了参数不传等于没接", () => {
-    const at = SRC.indexOf("await cutSegment(");
-    expect(at).toBeGreaterThan(0);
-    expect(SRC.slice(at, at + 260)).toContain("params.abortSignal");
-  });
-
-  it("重试 catch 必须先认中止再谈重试，否则中止会被当成普通切片失败", () => {
-    const at = SRC.indexOf("await cutSegment(");
-    const after = SRC.slice(at, at + 900);
-    const abortAt = after.indexOf("params.abortSignal?.aborted");
-    const retryAt = after.indexOf("attempt >= 3");
-    expect(abortAt).toBeGreaterThan(0);
-    expect(abortAt).toBeLessThan(retryAt);
-  });
-
-  it("重试等待必须走可中断版本，不许裸 setTimeout", () => {
-    expect(SRC).toContain("waitNativeDeepReadRetry([0, 5_000, 15_000][attempt]!");
-    expect(SRC).not.toMatch(/new Promise\(\(r\) => setTimeout\(r,/);
-  });
-});
 
 describe("凭证裁决：组合必须成对，生产只走新加坡套餐", () => {
   it("只传 apiKey 拒绝 —— 会把一类凭证配到另一类端点", () => {
@@ -215,23 +163,6 @@ describe("凭证裁决：组合必须成对，生产只走新加坡套餐", () =
   });
 });
 
-describe("切片体积闸（原先只是个没人读的常量）", () => {
-  it("99,999 字节拒绝 —— CDN 抖动切出的残片喂给模型会报 Invalid video file", () => {
-    expect(() => assertNativeDeepReadPieceSize(99_999)).toThrow("字节");
-  });
-
-  it("90MB 整放行", () => {
-    expect(() => assertNativeDeepReadPieceSize(90 * 1024 * 1024)).not.toThrow();
-  });
-
-  it("超过 90MB 拒绝 —— 服务端下载 120 秒超时，超了必挂", () => {
-    expect(() => assertNativeDeepReadPieceSize(90 * 1024 * 1024 + 1)).toThrow("上限");
-  });
-
-  it("NaN 拒绝", () => {
-    expect(() => assertNativeDeepReadPieceSize(Number.NaN)).toThrow();
-  });
-});
 
 describe("段规格前置校验（任何网络动作之前）", () => {
   it("空数组拒绝", () => {
@@ -289,11 +220,12 @@ describe("精读 prompt 的四条硬约束", () => {
   });
 
   it("不写外部平台剧名/商标/原台词", () => {
-    expect(p).toContain("不写外部平台剧名、商标、原台词原文");
+    expect(p).toContain("分析描述不写外部平台剧名、商标或原台词");
+    expect(p).toContain("subtitles 是唯一例外");
   });
 
   it("段落提示为空时不留空括号", () => {
-    expect(buildNativeDeepReadPrompt(32)).toContain("32 秒的高潮片段，");
+    expect(buildNativeDeepReadPrompt(32)).toContain("32 秒的完整剧集");
     expect(buildNativeDeepReadPrompt(32)).not.toContain("（）");
   });
 });
@@ -329,7 +261,24 @@ describe("凭证解析：固定新加坡 Token Plan（0825 真实视频探针已
   });
 });
 
-describe("直读与分片路由", () => {
+describe("整集直读与自适应采样", () => {
+  it("十集90秒装一包，十集18分钟按视觉预算装成三包", () => {
+    const short = Array.from({ length: 10 }, () => ({
+      durationSec: 90,
+      segments: [{ startSec: 0, endSec: 90 }],
+    }));
+    const long = Array.from({ length: 10 }, () => ({
+      durationSec: 1080,
+      segments: [
+        { startSec: 0, endSec: 360 },
+        { startSec: 360, endSec: 720 },
+        { startSec: 720, endSec: 1080 },
+      ],
+    }));
+    expect(packNativeDeepReadEpisodes(short)).toHaveLength(1);
+    expect(packNativeDeepReadEpisodes(long).map((pack) => pack.length)).toEqual([4, 4, 2]);
+    expect(resolveNativeDeepReadBatchMaxPixels(short)).toBeGreaterThanOrEqual(65_536);
+  });
   it("151 秒完整单段直接读 CDN，不创建临时片", () => {
     expect(
       shouldReadNativeVideoDirectly({
@@ -339,16 +288,13 @@ describe("直读与分片路由", () => {
     ).toBe(true);
   });
 
-  it("18 分钟精读是两段，不得因 H.265 文件较小就整片直读", () => {
+  it("18 分钟仍是一个完整单段，文件编码和体积不参与路由", () => {
     expect(
       shouldReadNativeVideoDirectly({
         sourceDurationSec: 1080,
-        segments: [
-          { startSec: 0, endSec: 540 },
-          { startSec: 540, endSec: 1080 },
-        ],
+        segments: [{ startSec: 0, endSec: 1080 }],
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("单段没有覆盖完整素材时不得直读，否则秒位会错", () => {
@@ -360,7 +306,7 @@ describe("直读与分片路由", () => {
     ).toBe(false);
   });
 
-  it("请求体使用 OpenAI video_url 契约与 fps=2，不残留原生 DashScope input", () => {
+  it("请求体使用 OpenAI video_url 契约与自适应 fps，不残留原生 DashScope input", () => {
     const request = buildSingaporeNativeDeepReadRequest("https://cdn/video", 151);
     expect(request).toMatchObject({
       model: "qwen3.8-max",
@@ -368,7 +314,13 @@ describe("直读与分片路由", () => {
         {
           role: "user",
           content: [
-            { type: "video_url", video_url: { url: "https://cdn/video", fps: 2 } },
+            {
+              type: "video_url",
+              video_url: { url: "https://cdn/video" },
+              fps: 10,
+              min_pixels: 65_536,
+              max_pixels: 655_360,
+            },
             { type: "text" },
           ],
         },
@@ -378,5 +330,160 @@ describe("直读与分片路由", () => {
     });
     expect(request).not.toHaveProperty("input");
     expect(request).not.toHaveProperty("parameters");
+  });
+
+  it("长片按约 1800 帧反算 fps，仍覆盖全片", () => {
+    expect(resolveNativeDeepReadInputFps(1080)).toBe(1.66);
+    expect(resolveNativeDeepReadInputFps(3600)).toBe(0.5);
+    const request = buildSingaporeNativeDeepReadRequest("https://cdn/long", 3600) as {
+      messages: Array<{ content: Array<{ fps?: number; video_url?: { fps?: number } }> }>;
+    };
+    expect(request.messages[0]?.content[0]?.fps).toBe(0.5);
+    expect(request.messages[0]?.content[0]?.video_url).not.toHaveProperty("fps");
+  });
+});
+
+describe("多分片证据关闭式门禁", () => {
+  const segments = [
+    { startSec: 0, endSec: 10 },
+    { startSec: 10, endSec: 20 },
+  ];
+  const validRaw = {
+    segmentCoverage: [
+      { segmentIndex: 0, startSec: 0, endSec: 10, evidenceZh: "室内近景里人物抬手" },
+      { segmentIndex: 1, startSec: 10, endSec: 20, evidenceZh: "室外全景里车辆驶过" },
+    ],
+    shots: [
+      { startSec: 0, endSec: 10 },
+      { startSec: 10, endSec: 20 },
+    ],
+  };
+
+  it("每个分片身份、秒位、独有证据齐全且镜头连续时放行", () => {
+    expect(() => assertNativeDeepReadEpisodeEvidence({
+      episodeIndex: 7,
+      durationSec: 20,
+      segments,
+      raw: validRaw,
+    })).not.toThrow();
+  });
+
+  it.each([
+    ["缺片", { ...validRaw, segmentCoverage: validRaw.segmentCoverage.slice(0, 1) }],
+    ["重复身份", { ...validRaw, segmentCoverage: [validRaw.segmentCoverage[0], validRaw.segmentCoverage[0]] }],
+    ["错秒位", { ...validRaw, segmentCoverage: [validRaw.segmentCoverage[0], { ...validRaw.segmentCoverage[1], startSec: 11 }] }],
+    ["非数字秒位", { ...validRaw, segmentCoverage: [validRaw.segmentCoverage[0], { ...validRaw.segmentCoverage[1], startSec: "10" }] }],
+    ["空证据", { ...validRaw, segmentCoverage: [validRaw.segmentCoverage[0], { ...validRaw.segmentCoverage[1], evidenceZh: " " }] }],
+    ["重复证据", { ...validRaw, segmentCoverage: [validRaw.segmentCoverage[0], { ...validRaw.segmentCoverage[1], evidenceZh: validRaw.segmentCoverage[0].evidenceZh }] }],
+    ["镜头缺口", { ...validRaw, shots: [{ startSec: 0, endSec: 8 }, { startSec: 10, endSec: 20 }] }],
+  ])("%s 时整集拒绝入库", (_label, raw) => {
+    expect(() => assertNativeDeepReadEpisodeEvidence({
+      episodeIndex: 7,
+      durationSec: 20,
+      segments,
+      raw,
+    })).toThrow("整包拒绝入库");
+  });
+});
+
+describe("模型请求前的媒体准备边界", () => {
+  it("整集直读在发出付费请求前才刷新短效 URL", async () => {
+    const order: string[] = [];
+    const resolveNodes = vi.fn(async () => {
+      order.push("refresh-url");
+      return [{ url: "https://cdn.example/fresh.mp4" }];
+    });
+    const post = vi.fn(async (body: unknown) => {
+      order.push("post-model");
+      const content = (body as {
+        messages: Array<{ content: Array<Record<string, unknown>> }>;
+      }).messages[0]?.content || [];
+      expect(content[1]).toMatchObject({
+        type: "video_url",
+        video_url: { url: "https://cdn.example/fresh.mp4" },
+      });
+      return {
+        status: 200,
+        text: JSON.stringify({
+          usage: { prompt_tokens: 10, completion_tokens: 5 },
+          choices: [{
+            finish_reason: "stop",
+            message: { content: JSON.stringify({ episodes: [{
+              episodeIndex: 1,
+              segmentCoverage: [{ segmentIndex: 0, startSec: 0, endSec: 10, evidenceZh: "人物从门口走到桌前" }],
+              shots: [{ startSec: 0, endSec: 10, actionZh: "人物走到桌前", cameraMoveZh: "固定机位" }],
+              subtitles: [],
+              audioResolution: [],
+              beatStructureZh: "进入场景后停步",
+            }] }) },
+          }],
+        }),
+      };
+    });
+
+    await runManhuaNativeDeepReadBatch({
+      episodes: [{
+        episodeIndex: 1,
+        resolveNodes,
+        segments: [{ startSec: 0, endSec: 10 }],
+        sourceDurationSec: 10,
+      }],
+      apiKey: "fake-key",
+      endpoint: "https://model.example/v1/chat/completions",
+      onModelReceipt: (receipt) => {
+        if (receipt.status === "started") order.push("started-receipt");
+      },
+    }, {
+      prepareVideos: prepareEpisodeVideos,
+      post: post as never,
+      remove: vi.fn(async () => undefined),
+    });
+
+    expect(resolveNodes).toHaveBeenCalledTimes(1);
+    expect(order.slice(0, 3)).toEqual(["refresh-url", "started-receipt", "post-model"]);
+  });
+
+  it("切片失败会刷新媒体节点后安全重试，并清理每次本地临时路径", async () => {
+    const resolveNodes = vi.fn()
+      .mockResolvedValueOnce([{ url: "https://cdn.example/expired.mp4" }])
+      .mockResolvedValueOnce([{ url: "https://cdn.example/fresh.mp4" }]);
+    const runMedia = vi.fn()
+      .mockRejectedValueOnce(new Error("cdn expired"))
+      .mockResolvedValueOnce("");
+    const unlinkLocal = vi.fn(async () => undefined);
+    const upload = vi.fn(async ({ objectName }: { objectName: string }) => ({
+      bucket: "test-bucket",
+      objectName,
+      gcsUri: `gs://test-bucket/${objectName}`,
+    }));
+    const deps: NativeDeepReadMediaPreparationDeps = {
+      runMedia,
+      statLocal: vi.fn(async () => ({ size: 200_000 })),
+      readLocal: vi.fn(async () => Buffer.from("fixture")),
+      unlinkLocal,
+      upload: upload as never,
+      remove: vi.fn(async () => undefined),
+      signReadUrl: vi.fn(() => "https://gcs.example/signed.mp4"),
+    };
+
+    const prepared = await prepareEpisodeVideos({
+      episodeIndex: 2,
+      resolveNodes,
+      segments: [{ startSec: 0, endSec: 10 }],
+      sourceDurationSec: 20,
+    }, undefined, deps);
+
+    expect(resolveNodes).toHaveBeenCalledTimes(2);
+    expect(runMedia).toHaveBeenCalledTimes(2);
+    expect(runMedia.mock.calls[0]?.[1]).toContain("https://cdn.example/expired.mp4");
+    expect(runMedia.mock.calls[1]?.[1]).toContain("https://cdn.example/fresh.mp4");
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(unlinkLocal).toHaveBeenCalledTimes(2);
+    expect(prepared).toMatchObject([{
+      url: "https://gcs.example/signed.mp4",
+      startSec: 0,
+      endSec: 10,
+      temporaryGcs: { bucket: "test-bucket" },
+    }]);
   });
 });

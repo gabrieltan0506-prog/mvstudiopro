@@ -44,9 +44,31 @@
 - **GCS 视频实链已通**：Fly 生成 4 秒红→蓝测试视频，上传 GCS 后以 V4 签名 URL 送入新加坡套餐 `qwen3.8-max`；GCS Range GET `206`，模型 HTTP `200`、`finish_reason=stop`、输入 372 / 输出 90 tokens，结果准确返回 `red → blue / changed=true`。测试对象与本地探针文件均已删除。
 - 新加坡套餐多模态请求走 OpenAI Chat Completions，视频项使用 `type=video_url`、`video_url.url=<GCS V4 signed URL>`；不要沿用北京 DashScope 原生请求体的 `{video, fps}` 形状。
 - **抖音 CDN 直读实链已通**：用户提供的搜索页 `modal_id=7633315305602780435` 先归一为标准 `/video/` 单集页，前置解析取得 151 秒、4 个可用 CDN 候选；新加坡 Token Plan 的 `qwen3.8-max` 直接读取最小 `bytevc1_540p` CDN，HTTP `200`、`finish_reason=stop`、输入 10,122 / 输出 2,340 tokens，并准确复述开头、中段、结尾。没有经过 OSS 或 GCS。
-- **分片决策只按时间，不按文件大小**：正式精读固定 `fps=2`、单次最多完整覆盖 2000 帧，因此完整片长 `≤1000s` 且规划只有一段时直读 CDN；`>1000s` 按时间均分，多段才走 `Fly ffmpeg 切片 → GCS 临时对象 → 新加坡套餐读取 → finally 删除 GCS/Fly 临时文件`。H.264/H.265 会让同内容体积相差数倍，体积不能决定模型是否看完整；90MB 仅是切片传输异常门禁。
-- **历史口径勿混用**：0823 的 46 分钟实测是 `fps=0.5` 粗读，切为 10/15/21 分钟三片后真跑成功；同档案中「18 分钟 61.3MB 可整片直读」只完成零成本解析与带宽判断，没有整片模型成功回执。当前 `fps=2` 正式精读下，约 1080 秒的一集必须拆成两段。
-- **生产改动状态**：执行器已改为新加坡 Token Plan OpenAI `video_url` 契约；短片 CDN 直读，长片 GCS 临时中转，取消 OSS 与北京/按量回退。目标 84 项、全量 2743 项、TypeScript、服务端构建和 Vite 生产构建通过；部署后的真实面板学习仍需另行验收，不能用静态全绿代替。
+- **分片决策只按时间，不按文件大小**：正式精读每片最长 360 秒，采样率为 `min(10, 1800/片长)`；90 秒短片为 10fps/约900帧，360 秒分片为 5fps/约1800帧。完整单段短片可在模型调用前即时刷新 CDN 后直读；多段长片走 `Fly ffmpeg 切片 → GCS 临时对象 → 新加坡套餐读取 → finally 删除 GCS/Fly 临时文件`。H.264/H.265 会让同内容体积相差数倍，体积不能决定采样密度；90MB 仅是切片传输异常门禁。
+- **历史口径勿混用**：0823 的 46 分钟实测是 `fps=0.5` 粗读；后来的 `fps=2 × 2000帧 = 1000s` 是过渡方案，已经被 2026-08-25 的 `adaptive-1800f-360s-v1` 取代。当前约 1080 秒一集按 360 秒拆 3 片，每片 5fps，多个分片仍可动态装进同一次 Qwen 多视频请求。
+- **生产改动状态**：执行器已改为新加坡 Token Plan OpenAI `video_url` 契约；短片 CDN 在付费请求前刷新，长片 GCS 临时中转，取消 OSS 与北京/按量回退。请求体的 `fps/min_pixels/max_pixels` 必须与 `video_url` 同为 content item 的字段，不能塞进 `video_url` 对象内部。部署后的真实面板学习仍需另行验收，不能用静态全绿代替。
+
+### Gemini 3.6 Flash 原生音轨 A/B（2026-08-25 实测）
+- **三轨边界**：Qwen 3.8 Max 的同一次视频调用负责逐镜拍法与画面字幕原文；Gemini 3.6 Flash 另读音轨，只回答语气、情绪强度、音效、配乐、气氛、混音与静默。声音轨不得转录原台词，也不得替画面轨推断剧情。三轨统一用全片绝对秒，声音分段允许粗于镜头。
+- **真实 A/B 条件**：同一支 151 秒抖音素材、同一 Gemini `gemini-3.6-flash`、同一 Vertex `global` 请求、同一 GCS 临时读取、同一 prompt 与结构 schema；仅改变 ffmpeg 音轨：A=`16kHz/mono/32kbps MP3`，B=`32kHz/stereo/64kbps MP3`。共发生 2 次真实模型调用。
+- **回执**：A 文件 604,748 bytes，26.454s 返回，prompt 4,339 / 其中 AUDIO 3,775 / answer 1,585 / thoughts 1,154 tokens；B 文件 1,208,936 bytes，23.642s 返回，prompt 4,339 / 其中 AUDIO 3,775 / answer 1,355 / thoughts 899 tokens。两边 `finishReason=STOP`，均返回 6 段 `audioTrack`。按 2026 年优惠价输入 $0.75/M、输出与推理 $3.75/M、USD/CNY=7 粗估，本次两请求合计约 ¥0.177；最终以 Google 账单为准。
+- **结构与质量差异**：两边顶层 5 字段、`audioTrack` 子项 8 字段及 6 段数量完全一致；具体切段和听觉判断明显不同。两边都出现「顶层时间段合法、文字内 MM:SS 与所属段不一致」，B 还写出超过 02:31 素材终点的 `02:44/02:45`。因此不能把 schema 合法当作内容可信，也不能依据单轮结果宣称 16k 必然优于 32k。
+- **第二轮纠偏实测**：把时间收口为 `fromSec/toSec/cues[].atSec`，描述文本禁止再写第二份时间，并加 cue 所属区间门禁；相同素材与 A/B 规格再次各调用一次。A=5 段/13 cues、22.252s、prompt 4,536 / AUDIO 3,775 / answer 1,925 / thoughts 1,337；B=6 段/14 cues、36.184s、prompt 4,536 / AUDIO 3,775 / answer 2,018 / thoughts 2,408。两边全部 cue 均在所属段内并覆盖 0..151 秒，第二轮估算约 ¥0.249。
+- **当前取舍**：生产默认选 A（16kHz 单声道），因为文件体积减半、两轮 AUDIO token 都与 B 完全相同，且第二轮没有观察到 A 的结构信息缺失。B 的分段略细、推理更多，但单素材单轮不能证明这是立体声带来的因果提升；`toneZh`、`silenceZh` 均保留为待更多真片验证字段。四次探针合计估算约 ¥0.426。
+- **硬门禁**：有音轨时，Vertex `usageMetadata.promptTokensDetails` 中 AUDIO token 必须大于 0；否则无论报告写得多完整都判废。`audioTrack` 顶层秒位必须覆盖 0..lenSec、单调且不越界；所有文本字段里的 `MM:SS` 也要扫描，越过素材终点或落在所属段外即拒收。
+- **清理验收**：两轮探针结束后均核对 GCS `manhua-template-learn/tmp/native-audio-probe/` 对象数为 0、Fly `/tmp/native-audio-ab-*.mp3` 文件数为 0，临时探针脚本已从线上容器移除。
+
+### GLM-5.3 系列结构聚合（2026-08-25 实测）
+- **职责边界**：分集视觉仍由新加坡套餐 `qwen3.8-max` 读取视频，双音轨仍由 Gemini 3.6 Flash 分析；同剧全部分集卡落为本地 JSON 快照后，最后的跨集故事骨架、五维多标签、变化规则与通用视听结构改走 OpenRouter `z-ai/glm-5.3`。不得回落北京 Qwen 3.8 Max，也不得把 GCS 媒体 URL 交给 GLM。
+- **共享网关归属**：GLM 调用契约统一由 `server/services/bailianChat.ts` 管理；默认链为 OpenRouter GLM → 新加坡 Token Plan Qwen → EvoLink Qwen。原生系列聚合必须显式使用 `openrouter_only`，因此仍锁定 GLM，不接受 Qwen 兜底冒充系列聚合成功；历史百炼枚举只为旧账本反序列化保留。
+- **固定参数**：`reasoning={effort:"max"}`、`response_format={type:"json_object"}`、`max_tokens=131072`、`provider={require_parameters:true}`；不发送 `temperature/top_p`。OpenRouter 公共模型目录确认上下文 1,048,576、最大输出 131,072。
+- **真实单枪回执**：Fly 只读取 OpenRouter secret 并发出 1 次请求；HTTP 200，provider=`Z.AI`，`finish_reason=stop`，JSON 解析成功；input 105、reasoning 203、output 218 tokens，耗时 7.299 秒，OpenRouter 回执成本 `$0.0011062`。没有调用北京 Qwen；本次只证明路由与参数可用，不等于完整系列聚合链已线上验收。
+
+### Wan 3.0 / HappyHorse 1.1 三通道（PR #1308，2026-08-25）
+- **Wan 3.0**：顺序固定为 OpenRouter → EvoLink → WaveSpeed。带参考音频/视频时，OpenRouter 在真单证明字段确实被消费前默认无资格，实际从 EvoLink 开始；明确 4xx 才允许换下一家，网络断、5xx 或 2xx 缺任务号一律转人工对账，不退款、不自动重提。
+- **HappyHorse 1.1**：照片动画顺序为 EvoLink → OpenRouter → WaveSpeed；单图保持 image-to-video 首帧契约。自由画布有效参考图不少于 2 张时切 reference-to-video，OpenRouter 因无多图参考契约而跳过，只走 EvoLink → WaveSpeed。百炼在途旧单只轮询收尾，不再新建。
+- **恢复与防双烧**：实际通道写回引擎，崩溃恢复用 `pinChannel` 锁定；`auto+句柄` 先归位后轮询；立即成功后的镜像失败保持 running 等待重取；结果未知进入 `reconcile_manual`。下单闸按本单参考轨资格判断，避免先扣费再发现全链不可用。
+- **验证边界**：#1308 合并前 TypeScript、2766 项全量测试与两类构建通过；Wan 的 OpenRouter/EvoLink 首单、HappyHorse 的 EvoLink/WaveSpeed 首单及多图 r2v 首单均未实弹，未做线上真跑。
 
 ## 铁律
 - 媒体进系统标准通道 = **GCS/Fly 签名 URL**，不走 base64 传媒体；base64 只允许作脚本/剪贴板兜底传输，用即说明（P0-7）。

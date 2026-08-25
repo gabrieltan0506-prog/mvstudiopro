@@ -18,7 +18,15 @@
 import crypto from "node:crypto";
 import {
   isManhuaNativeDeepReadEnabled,
+  NATIVE_DEEP_READ_BATCH_VISION_TOKEN_BUDGET,
+  NATIVE_DEEP_READ_MAX_FPS,
+  NATIVE_DEEP_READ_MAX_VIDEOS_PER_REQUEST,
+  NATIVE_DEEP_READ_TARGET_FRAMES,
+  NATIVE_DEEP_READ_VIDEO_MIN_PIXELS,
+  NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
+  packNativeDeepReadEpisodes,
   runManhuaNativeDeepRead,
+  runManhuaNativeDeepReadBatch,
   type NativeDeepReadMediaNode,
   validateNativeDeepReadSegments,
   type NativeDeepReadRunError,
@@ -31,6 +39,26 @@ import {
   type NativeDeepReadIngestResult,
 } from "./manhuaNativeDeepReadIngest.js";
 import { acquireNativeDeepReadEpisodeClaim } from "./manhuaNativeDeepReadClaim.js";
+import {
+  collectManhuaNativeAudioEvidence,
+  finalizeManhuaNativeAudioAnalysis,
+  type ManhuaNativeAudioDeepReadError,
+  type ManhuaNativeAudioModelReceipt,
+} from "./manhuaNativeAudioDeepRead.js";
+import {
+  MANHUA_NATIVE_AUDIO_ALIGNMENT,
+  MANHUA_NATIVE_AUDIO_MODEL,
+  splitManhuaNativeAudioChunks,
+} from "../../shared/manhuaNativeAudioAnalysis.js";
+import {
+  aggregateNativeDeepReadSeries,
+  MANHUA_NATIVE_SERIES_AGGREGATION_MODEL,
+  MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE,
+  MANHUA_NATIVE_SERIES_AGGREGATION_SCHEMA_VERSION,
+  type NativeSeriesAggregationError,
+  type NativeSeriesAggregationResult,
+  type NativeSeriesAggregationUsage,
+} from "./manhuaNativeSeriesAggregation.js";
 
 export type NativeDeepReadEpisodeExecution = {
   seriesKey: string;
@@ -65,18 +93,26 @@ export type NativeDeepReadEpisodeExecution = {
 /** 供测试注入假实现；生产走默认值，不额外开旁路 */
 export type NativeDeepReadExecutionDeps = {
   run: typeof runManhuaNativeDeepRead;
+  runBatch: typeof runManhuaNativeDeepReadBatch;
   ingest: typeof ingestNativeDeepReadEpisode;
   listIngested: typeof listIngestedNativeDeepReadEpisodes;
   isEnabled: typeof isManhuaNativeDeepReadEnabled;
   acquireClaim: typeof acquireNativeDeepReadEpisodeClaim;
+  collectAudioEvidence: typeof collectManhuaNativeAudioEvidence;
+  finalizeAudio: typeof finalizeManhuaNativeAudioAnalysis;
+  aggregateSeries: typeof aggregateNativeDeepReadSeries;
 };
 
 const defaultDeps: NativeDeepReadExecutionDeps = {
   run: runManhuaNativeDeepRead,
+  runBatch: runManhuaNativeDeepReadBatch,
   ingest: ingestNativeDeepReadEpisode,
   listIngested: listIngestedNativeDeepReadEpisodes,
   isEnabled: isManhuaNativeDeepReadEnabled,
   acquireClaim: acquireNativeDeepReadEpisodeClaim,
+  collectAudioEvidence: collectManhuaNativeAudioEvidence,
+  finalizeAudio: finalizeManhuaNativeAudioAnalysis,
+  aggregateSeries: aggregateNativeDeepReadSeries,
 };
 
 /** 跑一集并入库。门禁不过直接抛，不写半截卡 */
@@ -85,11 +121,18 @@ export type NativeDeepReadEpisodeOutcomeCost = {
   costCny: number;
   elapsedMs: number;
   usage: {
+    model: string;
     inputTokens: number;
     outputTokens: number;
     costCny: number;
     usingPlanQuota?: boolean;
     receiptComplete: boolean;
+    visualInputTokens: number;
+    visualOutputTokens: number;
+    visualPriceEquivalentCny: number;
+    audioInputTokens: number;
+    audioOutputTokens: number;
+    audioCostCny: number;
   };
 };
 
@@ -108,35 +151,135 @@ export async function executeAndIngestNativeDeepReadEpisode(
   const claim = await deps.acquireClaim(input.seriesKey, input.episodeIndex);
   const startedAt = Date.now();
 
-  let result: Awaited<ReturnType<typeof runManhuaNativeDeepRead>>;
+  let audioEvidence: Awaited<ReturnType<typeof collectManhuaNativeAudioEvidence>>;
   try {
-    result = await deps.run({
+    // 先取双路声音证据；随后交给同一次新加坡视频精读对照画面自动裁决。
+    audioEvidence = await deps.collectAudioEvidence({
+      durationSec: input.durationSec,
+      resolveNodes: input.resolveNodes,
+      abortSignal: input.abortSignal,
+    });
+  } catch (error) {
+    const audioError = error as ManhuaNativeAudioDeepReadError;
+    const audioUsage = audioError.nativeAudioUsage;
+    throw Object.assign(
+      new Error(error instanceof Error ? error.message : String(error), { cause: error }),
+      {
+        costCny: Number(audioUsage?.costCny) || 0,
+        elapsedMs: Date.now() - startedAt,
+        nativeUsage: {
+          model: "gemini-3.6-flash",
+          inputTokens: Number(audioUsage?.inputTokens) || 0,
+          outputTokens: Number(audioUsage?.outputTokens) || 0,
+          costCny: Number(audioUsage?.costCny) || 0,
+          usingPlanQuota: false,
+          receiptComplete: audioUsage?.receiptComplete === true,
+          visualInputTokens: 0,
+          visualOutputTokens: 0,
+          visualPriceEquivalentCny: 0,
+          audioInputTokens: Number(audioUsage?.inputTokens) || 0,
+          audioOutputTokens: Number(audioUsage?.outputTokens) || 0,
+          audioCostCny: Number(audioUsage?.costCny) || 0,
+        },
+      },
+    );
+  }
+
+  let visualResult: Awaited<ReturnType<typeof runManhuaNativeDeepRead>>;
+  try {
+    // 音频分析期间 CDN 地址可能过期；视觉 runner 会通过 resolveNodes 再取一次新地址。
+    visualResult = await deps.run({
       resolveNodes: input.resolveNodes,
       segments: input.segments,
       sourceDurationSec: input.durationSec,
+      audioEvidence,
       abortSignal: input.abortSignal,
     });
   } catch (error) {
     const nativeError = error as NativeDeepReadRunError;
-    const knownCost = Number(nativeError?.nativeDeepReadCostCny) || 0;
+    const visualCost = Number(nativeError?.nativeDeepReadCostCny) || 0;
+    const audioCost = Number(audioEvidence.usage.costCny) || 0;
     throw Object.assign(
       new Error(error instanceof Error ? error.message : String(error), { cause: error }),
       {
-        costCny: knownCost,
+        costCny: visualCost + audioCost,
         elapsedMs: Date.now() - startedAt,
-        nativeUsage: nativeError?.nativeDeepReadUsage,
+        nativeUsage: {
+          model: "qwen3.8-max+gemini-3.6-flash",
+          inputTokens:
+            (Number(nativeError?.nativeDeepReadUsage?.inputTokens) || 0)
+            + audioEvidence.usage.inputTokens,
+          outputTokens:
+            (Number(nativeError?.nativeDeepReadUsage?.outputTokens) || 0)
+            + audioEvidence.usage.outputTokens,
+          costCny: visualCost + audioCost,
+          usingPlanQuota: undefined,
+          receiptComplete: false,
+          visualInputTokens: Number(nativeError?.nativeDeepReadUsage?.inputTokens) || 0,
+          visualOutputTokens: Number(nativeError?.nativeDeepReadUsage?.outputTokens) || 0,
+          visualPriceEquivalentCny: visualCost,
+          audioInputTokens: audioEvidence.usage.inputTokens,
+          audioOutputTokens: audioEvidence.usage.outputTokens,
+          audioCostCny: audioCost,
+        },
       },
     );
   }
-  const costCny = Number(result.usage?.costCny) || 0;
+  let audioAnalysis: Awaited<ReturnType<typeof finalizeManhuaNativeAudioAnalysis>>;
+  try {
+    audioAnalysis = await deps.finalizeAudio({
+      evidence: audioEvidence,
+      singaporeResolvedChunks: visualResult.resolvedAudioChunks,
+    });
+  } catch (error) {
+    const visualCost = Number(visualResult.usage?.costCny) || 0;
+    const audioCost = Number(audioEvidence.usage.costCny) || 0;
+    throw Object.assign(new Error(error instanceof Error ? error.message : String(error), { cause: error }), {
+      costCny: visualCost + audioCost,
+      elapsedMs: Date.now() - startedAt,
+      nativeUsage: {
+        model: "qwen3.8-max+gemini-3.6-flash×2",
+        inputTokens: visualResult.usage.inputTokens + audioEvidence.usage.inputTokens,
+        outputTokens: visualResult.usage.outputTokens + audioEvidence.usage.outputTokens,
+        costCny: visualCost + audioCost,
+        usingPlanQuota: undefined,
+        receiptComplete: true,
+        visualInputTokens: visualResult.usage.inputTokens,
+        visualOutputTokens: visualResult.usage.outputTokens,
+        visualPriceEquivalentCny: visualCost,
+        audioInputTokens: audioEvidence.usage.inputTokens,
+        audioOutputTokens: audioEvidence.usage.outputTokens,
+        audioCostCny: audioCost,
+      },
+    });
+  }
+  const result = { ...visualResult, audioAnalysis };
+  const visualCostCny = Number(visualResult.usage?.costCny) || 0;
+  const audioCostCny = Number(audioAnalysis.usage.costCny) || 0;
+  const costCny = visualCostCny + audioCostCny;
+  const combinedUsage = {
+    model: audioAnalysis.hasAudio
+      ? "qwen3.8-max+gemini-3.6-flash×2"
+      : "qwen3.8-max",
+    inputTokens: visualResult.usage.inputTokens + audioAnalysis.usage.inputTokens,
+    outputTokens: visualResult.usage.outputTokens + audioAnalysis.usage.outputTokens,
+    costCny,
+    // 有音轨时是「Qwen 套餐额度 + Gemini 按量」混合，不能标成纯套餐或纯按量。
+    usingPlanQuota: audioAnalysis.hasAudio ? undefined : visualResult.usingPlanQuota,
+    receiptComplete: audioAnalysis.usage.receiptComplete,
+    visualInputTokens: visualResult.usage.inputTokens,
+    visualOutputTokens: visualResult.usage.outputTokens,
+    visualPriceEquivalentCny: visualCostCny,
+    audioInputTokens: audioAnalysis.usage.inputTokens,
+    audioOutputTokens: audioAnalysis.usage.outputTokens,
+    audioCostCny,
+  };
   if (input.abortSignal?.aborted) {
     throw Object.assign(new Error("用户已停止学习"), {
       costCny,
       elapsedMs: Date.now() - startedAt,
       nativeUsage: {
-        ...result.usage,
-        usingPlanQuota: result.usingPlanQuota,
-        receiptComplete: true,
+        ...combinedUsage,
       },
     });
   }
@@ -150,9 +293,7 @@ export async function executeAndIngestNativeDeepReadEpisode(
         costCny,
         elapsedMs: Date.now() - startedAt,
         nativeUsage: {
-          ...result.usage,
-          usingPlanQuota: result.usingPlanQuota,
-          receiptComplete: true,
+          ...combinedUsage,
         },
       },
     );
@@ -175,9 +316,7 @@ export async function executeAndIngestNativeDeepReadEpisode(
         costCny,
         elapsedMs: Date.now() - startedAt,
         nativeUsage: {
-          ...result.usage,
-          usingPlanQuota: result.usingPlanQuota,
-          receiptComplete: true,
+          ...combinedUsage,
         },
       },
     );
@@ -198,9 +337,7 @@ export async function executeAndIngestNativeDeepReadEpisode(
     costCny,
     elapsedMs: Date.now() - startedAt,
     usage: {
-      ...result.usage,
-      usingPlanQuota: result.usingPlanQuota,
-      receiptComplete: true,
+      ...combinedUsage,
     },
   };
 }
@@ -213,24 +350,28 @@ export type NativeDeepReadBatchEpisode = Omit<
 /**
  * `--limit` 省略时的默认集数。**不是硬上限** —— 一趟跑多少由发车人指定。
  *
- * 真正拦住误发的是确认码 ＋ `--max-calls`：不原样回填 segment 次数就发不出去。
+ * 真正拦住误发的是确认码 ＋ `--max-calls`：不原样回填总模型请求数就发不出去。
  * 集数只是「没指定时别把整份清单一口气跑了」的默认值。
  */
 export const NATIVE_DEEP_READ_DEFAULT_BATCH_EPISODES = 20;
 
 /** 失控保险：清单误写成几千集时兜底，正常发车碰不到 */
 export const NATIVE_DEEP_READ_BATCH_HARD_CEILING = 200;
-/** 请求固定 fps=2 / max_frames=2000 → 单段理论完整覆盖上限 1000 秒 */
-export const NATIVE_DEEP_READ_INPUT_FPS = 2;
-export const NATIVE_DEEP_READ_MAX_FRAMES = 2_000;
-export const NATIVE_DEEP_READ_MAX_SEGMENT_SEC = Math.floor(
-  NATIVE_DEEP_READ_MAX_FRAMES / NATIVE_DEEP_READ_INPUT_FPS,
-);
+/** 单集仍遵守学习策略的两小时上限。 */
+export const NATIVE_DEEP_READ_MAX_EPISODE_SEC = 120 * 60;
+/** 视觉分片最多 6 分钟，确保自适应采样至少达到 5fps。 */
+export const NATIVE_DEEP_READ_MAX_SEGMENT_SEC = 6 * 60;
 
 export type NativeDeepReadBatchPlan = {
   totalEpisodes: number;
-  /** **计费单位是 segment 不是集** —— 20 集各 6 段就是 120 次模型调用 */
+  /** 送进 Qwen 的视频分片数，不等于 API 请求数。 */
   totalSegments: number;
+  /** 装箱后的新加坡 Qwen 多视频请求数；10×90秒应为 1。 */
+  totalVisualCalls: number;
+  /** 音频分片数；每片固定两次 Gemini（单声道＋立体声）。 */
+  totalAudioChunks: number;
+  /** 发车确认与墙钟使用的总模型请求数。 */
+  totalModelCalls: number;
   totalDurationSec: number;
   /** 计划指纹：真跑必须带上它，保证发的就是干跑时确认过的那份 */
   planHash: string;
@@ -259,6 +400,7 @@ export function validateNativeDeepReadBatchPlan(
   }
   const seen = new Set<number>();
   let totalSegments = 0;
+  let totalAudioChunks = 0;
   let totalDurationSec = 0;
   for (let index = 0; index < episodes.length; index += 1) {
     const episode = episodes[index]!;
@@ -277,8 +419,12 @@ export function validateNativeDeepReadBatchPlan(
     if (source.protocol !== "https:") throw new Error(`第${ep}集来源必须是 HTTPS`);
     const duration = Number(episode.durationSec);
     if (!Number.isFinite(duration) || duration <= 0) throw new Error(`第${ep}集时长无效`);
+    if (duration > NATIVE_DEEP_READ_MAX_EPISODE_SEC) {
+      throw new Error(`第${ep}集超过 ${Math.round(NATIVE_DEEP_READ_MAX_EPISODE_SEC / 60)} 分钟学习上限`);
+    }
     const segments = validateNativeDeepReadSegments(episode.segments);
-    for (const segment of segments) {
+    for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
+      const segment = segments[segmentIndex]!;
       if (segment.endSec > duration + 0.5) throw new Error(`第${ep}集切片超出片长`);
       const len = segment.endSec - segment.startSec;
       if (len > NATIVE_DEEP_READ_MAX_SEGMENT_SEC) {
@@ -286,17 +432,50 @@ export function validateNativeDeepReadBatchPlan(
           `第${ep}集单片 ${Math.round(len)}s 超过 ${NATIVE_DEEP_READ_MAX_SEGMENT_SEC}s，模型看不完整，请拆段`,
         );
       }
+      if (
+        segmentIndex > 0
+        && Math.abs(segment.startSec - segments[segmentIndex - 1]!.endSec) > 0.01
+      ) {
+        throw new Error(`第${ep}集分片存在空档或重叠，未发出模型请求`);
+      }
+    }
+    if (segments[0]!.startSec > 0.5 || Math.abs(segments[segments.length - 1]!.endSec - duration) > 0.5) {
+      throw new Error(`第${ep}集分片未完整覆盖全片，未发出模型请求`);
     }
     totalSegments += segments.length;
+    totalAudioChunks += splitManhuaNativeAudioChunks(duration).length;
     totalDurationSec += duration;
   }
   const canonical = JSON.stringify({
     seriesKey: String(opts.seriesKey || ""),
+    visual: {
+      version: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
+      targetFrames: NATIVE_DEEP_READ_TARGET_FRAMES,
+      maxFps: NATIVE_DEEP_READ_MAX_FPS,
+      minPixels: NATIVE_DEEP_READ_VIDEO_MIN_PIXELS,
+      tokenBudget: NATIVE_DEEP_READ_BATCH_VISION_TOKEN_BUDGET,
+      maxVideos: NATIVE_DEEP_READ_MAX_VIDEOS_PER_REQUEST,
+      maxSegmentSec: NATIVE_DEEP_READ_MAX_SEGMENT_SEC,
+    },
+    audio: {
+      model: MANHUA_NATIVE_AUDIO_MODEL,
+      alignment: MANHUA_NATIVE_AUDIO_ALIGNMENT,
+    },
+    seriesAggregation: {
+      model: MANHUA_NATIVE_SERIES_AGGREGATION_MODEL,
+      route: MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE,
+      schemaVersion: MANHUA_NATIVE_SERIES_AGGREGATION_SCHEMA_VERSION,
+    },
     episodes: episodes.map(({ resolveNodes: _drop, ...rest }) => rest),
   });
+  const totalVisualCalls = packNativeDeepReadEpisodes(episodes).length;
   return {
     totalEpisodes: episodes.length,
     totalSegments,
+    totalVisualCalls,
+    totalAudioChunks,
+    // 只要本批有分集卡，落盘后再做一次 OpenRouter GLM 系列全量聚合；快照相同会直接复用。
+    totalModelCalls: totalVisualCalls + totalAudioChunks * 2 + 1,
     totalDurationSec,
     planHash: crypto.createHash("sha256").update(canonical).digest("hex").slice(0, 16),
   };
@@ -310,6 +489,26 @@ export type NativeDeepReadBatchOutcome = {
   /** 实际发生的模型费用；**门禁拒收也要记**，钱已经花了 */
   costCny: number;
   elapsedMs: number;
+  usage?: NativeDeepReadEpisodeOutcomeCost["usage"];
+};
+
+export type NativeDeepReadModelCheckpoint = {
+  stage: "audio_model" | "visual_model" | "visual_parse" | "series_aggregation_model";
+  status: "started" | "completed" | "failed";
+  episodeIndexes: number[];
+  chunkIndex?: number;
+  variant?: "mono_16k" | "stereo_32k";
+  batchRequestId?: string;
+  videoCount?: number;
+  elapsedMs?: number;
+  inputTokens?: number;
+  audioInputTokens?: number;
+  outputTokens?: number;
+  reasoningTokens?: number;
+  costUsd?: number;
+  priceEquivalentCny?: number;
+  finishReason?: string;
+  errorZh?: string;
 };
 
 export type NativeDeepReadBatchResult = {
@@ -323,6 +522,11 @@ export type NativeDeepReadBatchResult = {
   plan: NativeDeepReadBatchPlan;
   /** true = 中途被用户停掉，后面的集没跑 */
   aborted: boolean;
+  /** 仅本轮至少新增一集时执行一次；使用当前系列全部分集卡重算。 */
+  seriesAggregation?: NativeSeriesAggregationResult;
+  seriesAggregationUsage?: NativeSeriesAggregationUsage;
+  /** 分集卡已成功时，系列整理失败只降级记录；重跑会再次聚合，不重烧分集。 */
+  seriesAggregationErrorZh?: string;
 };
 
 /**
@@ -339,6 +543,7 @@ export async function runNativeDeepReadBatch(input: {
   episodes: readonly NativeDeepReadBatchEpisode[];
   abortSignal?: AbortSignal;
   onProgress?: (outcome: NativeDeepReadBatchOutcome) => void | Promise<void>;
+  onModelCheckpoint?: (checkpoint: NativeDeepReadModelCheckpoint) => void | Promise<void>;
 }, deps: NativeDeepReadExecutionDeps = defaultDeps): Promise<NativeDeepReadBatchResult> {
   if (!deps.isEnabled()) throw new Error("原生精读开关未开启");
 
@@ -348,12 +553,19 @@ export async function runNativeDeepReadBatch(input: {
   const outcomes: NativeDeepReadBatchOutcome[] = [];
   const batchStartedAt = Date.now();
   let aborted = false;
-
-  for (const episode of input.episodes) {
-    if (input.abortSignal?.aborted) {
-      aborted = true;
-      break;
+  const emitProgress = async (outcome: NativeDeepReadBatchOutcome): Promise<void> => {
+    try {
+      await input.onProgress?.(outcome);
+    } catch (error) {
+      // UI/任务进度写入属于旁路；失败不得把已入库结果重新归类成失败或重复追加 outcome。
+      console.warn(
+        `[nativeDeepRead] 第${outcome.episodeIndex}集进度写入未完成：`,
+        error instanceof Error ? error.message : error,
+      );
     }
+  };
+  const pending: NativeDeepReadBatchEpisode[] = [];
+  for (const episode of input.episodes) {
     if (alreadyIngested.has(episode.episodeIndex)) {
       const skipped: NativeDeepReadBatchOutcome = {
         episodeIndex: episode.episodeIndex,
@@ -362,62 +574,286 @@ export async function runNativeDeepReadBatch(input: {
         elapsedMs: 0,
       };
       outcomes.push(skipped);
-      await input.onProgress?.(skipped);
-      continue;
-    }
-    try {
-      const done = await executeAndIngestNativeDeepReadEpisode(
-        { ...episode, seriesKey: input.seriesKey, abortSignal: input.abortSignal },
-        deps,
-      );
-      // 第二层防重：本轮内成功过的集立刻进集合，同批次重复也不会再跑
-      alreadyIngested.add(episode.episodeIndex);
-      const ok: NativeDeepReadBatchOutcome = {
-        episodeIndex: episode.episodeIndex,
-        status: "ingested",
-        gcsUri: done.gcsUri,
-        costCny: done.costCny,
-        elapsedMs: done.elapsedMs,
-      };
-      outcomes.push(ok);
-      await input.onProgress?.(ok);
-    } catch (e) {
-      // 中止不记成「这集失败」——那会让人以为素材有问题
-      if (input.abortSignal?.aborted) {
-        const carried = e as { costCny?: number; elapsedMs?: number };
-        const stopped: NativeDeepReadBatchOutcome = {
-          episodeIndex: episode.episodeIndex,
-          status: "aborted",
-          errorZh: "用户已停止学习",
-          costCny: Number(carried?.costCny) || 0,
-          elapsedMs: Number(carried?.elapsedMs) || 0,
-        };
-        outcomes.push(stopped);
-        await input.onProgress?.(stopped);
-        aborted = true;
-        break;
-      }
-      const carried = e as { costCny?: number; elapsedMs?: number };
-      const failed: NativeDeepReadBatchOutcome = {
-        episodeIndex: episode.episodeIndex,
-        status: "failed",
-        errorZh: (e instanceof Error ? e.message : String(e)).slice(0, 200),
-        costCny: Number(carried?.costCny) || 0,
-        elapsedMs: Number(carried?.elapsedMs) || 0,
-      };
-      outcomes.push(failed);
-      await input.onProgress?.(failed);
+      await emitProgress(skipped);
+    } else {
+      pending.push(episode);
     }
   }
 
+  /**
+   * 整批 claim 必须在第一个 Gemini/Qwen 调用前拿齐。
+   * 中途抢不到时撤回本轮尚未付费的自有占位，整批不发车。
+   */
+  const claims = new Map<number, Awaited<ReturnType<typeof acquireNativeDeepReadEpisodeClaim>>>();
+  try {
+    for (const episode of pending) {
+      claims.set(episode.episodeIndex, await deps.acquireClaim(input.seriesKey, episode.episodeIndex));
+    }
+  } catch (error) {
+    await Promise.allSettled(Array.from(claims.values()).map((claim) => claim.releaseBeforePaidCall()));
+    throw error;
+  }
+
+  const packs = packNativeDeepReadEpisodes(pending);
+  const releaseUnpaidPacks = async (startIndex: number) => {
+    const episodeIndexes = packs.slice(startIndex).flat().map((episode) => episode.episodeIndex);
+    await Promise.allSettled(episodeIndexes.flatMap((episodeIndex) => {
+      const claim = claims.get(episodeIndex);
+      return claim ? [claim.releaseBeforePaidCall()] : [];
+    }));
+  };
+  const allocateFloat = (total: number, weights: readonly number[]): number[] => {
+    const safeTotal = Math.max(0, Number(total) || 0);
+    const denominator = weights.reduce((sum, value) => sum + Math.max(0, value), 0) || weights.length || 1;
+    return weights.map((value) => safeTotal * (Math.max(0, value) || 1) / denominator);
+  };
+
+  for (let packIndex = 0; packIndex < packs.length; packIndex += 1) {
+    const pack = packs[packIndex]!;
+    if (input.abortSignal?.aborted) {
+      aborted = true;
+      await releaseUnpaidPacks(packIndex);
+      break;
+    }
+    const packStartedAt = Date.now();
+    const audioEvidenceByEpisode = new Map<number, Awaited<ReturnType<typeof collectManhuaNativeAudioEvidence>>>();
+    let activeAudioEpisodeIndex: number | undefined;
+    const paidEpisodeIndexes = new Set<number>();
+    try {
+      // 声音证据仍逐集计量；全部准备好后，这一包只发出一次新加坡 Qwen 多视频请求。
+      for (const episode of pack) {
+        activeAudioEpisodeIndex = episode.episodeIndex;
+        audioEvidenceByEpisode.set(episode.episodeIndex, await deps.collectAudioEvidence({
+          durationSec: episode.durationSec,
+          resolveNodes: episode.resolveNodes,
+          abortSignal: input.abortSignal,
+          onModelReceipt: async (receipt: ManhuaNativeAudioModelReceipt) => {
+            if (receipt.status === "started") paidEpisodeIndexes.add(episode.episodeIndex);
+            await input.onModelCheckpoint?.({
+              ...receipt,
+              episodeIndexes: [episode.episodeIndex],
+            });
+          },
+        }));
+      }
+      activeAudioEpisodeIndex = undefined;
+      const visualBatch = await deps.runBatch({
+        episodes: pack.map((episode) => ({
+          episodeIndex: episode.episodeIndex,
+          resolveNodes: episode.resolveNodes,
+          segments: episode.segments,
+          sourceDurationSec: episode.durationSec,
+          hintZh: episode.laneHintZh,
+          audioEvidence: audioEvidenceByEpisode.get(episode.episodeIndex),
+        })),
+        abortSignal: input.abortSignal,
+        onModelReceipt: async (receipt) => {
+          if (receipt.status === "started") {
+            for (const episodeIndex of receipt.episodeIndexes) paidEpisodeIndexes.add(episodeIndex);
+          }
+          await input.onModelCheckpoint?.(receipt);
+        },
+      });
+      const visualByEpisode = new Map(
+        visualBatch.episodes.map((episode) => [episode.episodeIndex, episode.result]),
+      );
+      let packHasFailure = false;
+      for (const episode of pack) {
+        const visualResult = visualByEpisode.get(episode.episodeIndex);
+        const audioEvidence = audioEvidenceByEpisode.get(episode.episodeIndex);
+        if (!visualResult || !audioEvidence) {
+          throw new Error(`第${episode.episodeIndex}集批次结果缺失，停止入库`);
+        }
+        const episodeStartedAt = Date.now();
+        try {
+          const audioAnalysis = await deps.finalizeAudio({
+            evidence: audioEvidence,
+            singaporeResolvedChunks: visualResult.resolvedAudioChunks,
+          });
+          const result = { ...visualResult, audioAnalysis };
+          const visualCostCny = Number(visualResult.usage.costCny) || 0;
+          const audioCostCny = Number(audioAnalysis.usage.costCny) || 0;
+          const costCny = visualCostCny + audioCostCny;
+          const combinedUsage: NativeDeepReadEpisodeOutcomeCost["usage"] = {
+            model: audioAnalysis.hasAudio
+              ? "qwen3.8-max(batch)+gemini-3.6-flash×2"
+              : "qwen3.8-max(batch)",
+            inputTokens: visualResult.usage.inputTokens + audioAnalysis.usage.inputTokens,
+            outputTokens: visualResult.usage.outputTokens + audioAnalysis.usage.outputTokens,
+            costCny,
+            usingPlanQuota: audioAnalysis.hasAudio ? undefined : visualResult.usingPlanQuota,
+            receiptComplete: audioAnalysis.usage.receiptComplete,
+            visualInputTokens: visualResult.usage.inputTokens,
+            visualOutputTokens: visualResult.usage.outputTokens,
+            visualPriceEquivalentCny: visualCostCny,
+            audioInputTokens: audioAnalysis.usage.inputTokens,
+            audioOutputTokens: audioAnalysis.usage.outputTokens,
+            audioCostCny,
+          };
+          const gate = checkNativeDeepReadIngestable(result);
+          if (!gate.ok) throw new Error(`第${episode.episodeIndex}集未通过入库门禁：${gate.reasonZh}`);
+          const stored = await deps.ingest({
+            seriesKey: input.seriesKey,
+            episodeIndex: episode.episodeIndex,
+            sourceUrl: episode.provenanceSourceRef || episode.sourceUrl,
+            durationSec: episode.durationSec,
+            laneHintZh: episode.laneHintZh,
+            result,
+          });
+          try {
+            await claims.get(episode.episodeIndex)?.releaseAfterSuccess();
+          } catch (error) {
+            console.warn(
+              `[nativeDeepRead] 第${episode.episodeIndex}集已入库，占位清理待核对：`,
+              error instanceof Error ? error.message : error,
+            );
+          }
+          alreadyIngested.add(episode.episodeIndex);
+          const ok: NativeDeepReadBatchOutcome = {
+            episodeIndex: episode.episodeIndex,
+            status: "ingested",
+            gcsUri: stored.gcsUri,
+            costCny,
+            elapsedMs: Date.now() - episodeStartedAt,
+            usage: combinedUsage,
+          };
+          outcomes.push(ok);
+          await emitProgress(ok);
+        } catch (error) {
+          packHasFailure = true;
+          const visualCostCny = Number(visualResult.usage.costCny) || 0;
+          const audioCostCny = Number(audioEvidence.usage.costCny) || 0;
+          const failed: NativeDeepReadBatchOutcome = {
+            episodeIndex: episode.episodeIndex,
+            status: input.abortSignal?.aborted ? "aborted" : "failed",
+            errorZh: input.abortSignal?.aborted
+              ? "用户已停止学习"
+              : (error instanceof Error ? error.message : String(error)).slice(0, 200),
+            costCny: visualCostCny + audioCostCny,
+            elapsedMs: Date.now() - episodeStartedAt,
+            usage: {
+              model: "qwen3.8-max(batch)+gemini-3.6-flash×2",
+              inputTokens: visualResult.usage.inputTokens + audioEvidence.usage.inputTokens,
+              outputTokens: visualResult.usage.outputTokens + audioEvidence.usage.outputTokens,
+              costCny: visualCostCny + audioCostCny,
+              usingPlanQuota: undefined,
+              receiptComplete: true,
+              visualInputTokens: visualResult.usage.inputTokens,
+              visualOutputTokens: visualResult.usage.outputTokens,
+              visualPriceEquivalentCny: visualCostCny,
+              audioInputTokens: audioEvidence.usage.inputTokens,
+              audioOutputTokens: audioEvidence.usage.outputTokens,
+              audioCostCny,
+            },
+          };
+          outcomes.push(failed);
+          await emitProgress(failed);
+          if (input.abortSignal?.aborted) aborted = true;
+        }
+      }
+      // 请求已经返回的整包结果仍全部入库，避免把已付费结构丢掉；但中止后不再发下一包或做系列聚合。
+      if (input.abortSignal?.aborted) aborted = true;
+      if (packHasFailure || aborted) {
+        await releaseUnpaidPacks(packIndex + 1);
+        break;
+      }
+    } catch (error) {
+      const nativeError = error as NativeDeepReadRunError & ManhuaNativeAudioDeepReadError;
+      const visualUsage = nativeError.nativeDeepReadUsage;
+      const visualCost = Number(visualUsage?.costCny) || 0;
+      const visualCosts = allocateFloat(visualCost, pack.map((episode) => episode.durationSec));
+      const visualInputs = allocateFloat(
+        Number(visualUsage?.inputTokens) || 0,
+        pack.map((episode) => episode.durationSec),
+      ).map(Math.round);
+      const visualOutputs = allocateFloat(
+        Number(visualUsage?.outputTokens) || 0,
+        pack.map((episode) => episode.durationSec),
+      ).map(Math.round);
+      const elapsedAllocations = allocateFloat(
+        Date.now() - packStartedAt,
+        pack.map((episode) => episode.durationSec),
+      );
+      for (let index = 0; index < pack.length; index += 1) {
+        const episode = pack[index]!;
+        const evidence = audioEvidenceByEpisode.get(episode.episodeIndex);
+        const carriedAudio = episode.episodeIndex === activeAudioEpisodeIndex
+          ? nativeError.nativeAudioUsage
+          : undefined;
+        const audioUsage = evidence?.usage || carriedAudio;
+        const audioCost = Number(audioUsage?.costCny) || 0;
+        const costCny = (visualCosts[index] || 0) + audioCost;
+        const failed: NativeDeepReadBatchOutcome = {
+          episodeIndex: episode.episodeIndex,
+          status: input.abortSignal?.aborted ? "aborted" : "failed",
+          errorZh: input.abortSignal?.aborted
+            ? "用户已停止学习"
+            : (error instanceof Error ? error.message : String(error)).slice(0, 200),
+          costCny,
+          elapsedMs: Math.round(elapsedAllocations[index] || 0),
+          usage: {
+            model: "qwen3.8-max(batch)+gemini-3.6-flash×2",
+            inputTokens: (visualInputs[index] || 0) + (Number(audioUsage?.inputTokens) || 0),
+            outputTokens: (visualOutputs[index] || 0) + (Number(audioUsage?.outputTokens) || 0),
+            costCny,
+            usingPlanQuota: undefined,
+            receiptComplete: visualUsage?.receiptComplete === true && audioUsage?.receiptComplete === true,
+            visualInputTokens: visualInputs[index] || 0,
+            visualOutputTokens: visualOutputs[index] || 0,
+            visualPriceEquivalentCny: visualCosts[index] || 0,
+            audioInputTokens: Number(audioUsage?.inputTokens) || 0,
+            audioOutputTokens: Number(audioUsage?.outputTokens) || 0,
+            audioCostCny: audioCost,
+          },
+        };
+        outcomes.push(failed);
+        await emitProgress(failed);
+      }
+      aborted = Boolean(input.abortSignal?.aborted);
+      await Promise.allSettled(pack.flatMap((episode) => {
+        if (paidEpisodeIndexes.has(episode.episodeIndex)) return [];
+        const claim = claims.get(episode.episodeIndex);
+        return claim ? [claim.releaseBeforePaidCall()] : [];
+      }));
+      await releaseUnpaidPacks(packIndex + 1);
+      break;
+    }
+  }
+
+  const ingestedCount = outcomes.filter((o) => o.status === "ingested").length;
+  const failedCount = outcomes.filter((o) => o.status === "failed").length;
+  let seriesAggregation: NativeSeriesAggregationResult | undefined;
+  let seriesAggregationUsage: NativeSeriesAggregationUsage | undefined;
+  let seriesAggregationErrorZh: string | undefined;
+  if (outcomes.length > 0 && !aborted && failedCount === 0) {
+    try {
+      seriesAggregation = await deps.aggregateSeries({
+        seriesKey: input.seriesKey,
+        abortSignal: input.abortSignal,
+        onModelReceipt: async (receipt) => input.onModelCheckpoint?.({
+          ...receipt,
+          episodeIndexes: outcomes
+            .filter((outcome) => outcome.status === "ingested")
+            .map((outcome) => outcome.episodeIndex),
+        }),
+      });
+    } catch (error) {
+      seriesAggregationUsage = (error as NativeSeriesAggregationError).nativeSeriesAggregationUsage;
+      seriesAggregationErrorZh = (error instanceof Error ? error.message : String(error)).slice(0, 200);
+      console.warn(`[nativeDeepRead] 分集卡已保留，系列结构整理待重试：${seriesAggregationErrorZh}`);
+    }
+  }
   return {
     outcomes,
-    ingestedCount: outcomes.filter((o) => o.status === "ingested").length,
+    ingestedCount,
     skippedCount: outcomes.filter((o) => o.status === "skipped").length,
-    failedCount: outcomes.filter((o) => o.status === "failed").length,
+    failedCount,
     totalCostCny: outcomes.reduce((sum, o) => sum + (o.costCny || 0), 0),
     totalElapsedMs: Date.now() - batchStartedAt,
     plan,
     aborted,
+    seriesAggregation,
+    seriesAggregationUsage,
+    seriesAggregationErrorZh,
   };
 }

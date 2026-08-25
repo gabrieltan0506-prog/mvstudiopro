@@ -12,6 +12,7 @@ import {
   mergeManhuaViralTemplateBanks,
   parseManhuaViralTemplateCard,
   recommendApprovedManhuaViralTemplate,
+  recommendPublicManhuaViralTemplate,
   toPublicManhuaViralTemplateCard,
   type ManhuaViralTemplateCard,
 } from "./manhuaViralTemplateBank";
@@ -23,6 +24,20 @@ function learnedCard(overrides?: Partial<ManhuaViralTemplateCard>): ManhuaViralT
     id: "tpl_series_fixture01",
     nameZh: "学成模板样例",
     laneZh: "古言种田",
+    classification: {
+      emotionTagsZh: ["压迫渐强"],
+      narrativeFeatureTagsZh: ["边关经营"],
+      performanceTagsZh: ["克制反击"],
+      audiovisualTagsZh: ["冷暖对撞"],
+      audienceExperienceTagsZh: ["持续紧张"],
+    },
+    storyStructure: {
+      corePromiseZh: "主角每集解决一层生存难题，同时逼近真正目标。",
+      conflictEngineZh: "眼前资源短缺与长期权力封锁持续互相放大。",
+      relationshipEngineZh: "互不信任的同盟在共同代价中逐步形成。",
+      episodeProgressionZh: ["先获得局部行动空间", "再暴露更深层约束"],
+      variationRulesZh: ["连续两集不得使用相同胜法", "关系推进必须伴随新代价"],
+    },
     summaryZh: "绝境开局→可见升级→片尾钩子。",
     hook3sZh: "开场即绝境，主角先落一个不服输的可见动作。",
     beatGrid: Array.from({ length: 12 }, (_, i) => ({
@@ -91,16 +106,41 @@ describe("manhuaViralTemplateBank", () => {
     })).toBeNull();
   });
 
-  it("groups by lane order without empty lanes", () => {
+  it("按模型多维标签重复归组，不再使用旧题材赛道", () => {
     const groups = listApprovedManhuaViralTemplatesGrouped([
       learnedCard(),
-      learnedCard({ id: "tpl_series_fixture04", laneZh: "系统觉醒" }),
+      learnedCard({
+        id: "tpl_series_fixture04",
+        classification: {
+          emotionTagsZh: ["压迫渐强"],
+          narrativeFeatureTagsZh: ["身份揭穿"],
+          performanceTagsZh: ["克制反击"],
+          audiovisualTagsZh: ["强弱声场切换"],
+          audienceExperienceTagsZh: ["持续紧张"],
+        },
+      }),
     ]);
-    expect(groups.map((g) => g.laneZh)).toEqual(["古言种田", "系统觉醒"]);
+    expect(groups.map((g) => g.laneZh)).toContain("压迫渐强");
+    expect(groups.find((g) => g.laneZh === "压迫渐强")?.items).toHaveLength(2);
     for (const g of groups) {
       expect(g.items.length).toBeGreaterThan(0);
-      expect(g.items.every((t) => t.laneZh === g.laneZh)).toBe(true);
+      expect(g.items.every((t) => JSON.stringify(t.classification).includes(g.laneZh))).toBe(true);
     }
+  });
+
+  it("无新分类字段的旧 approved 卡仍按 laneZh 可见并可推荐", () => {
+    const legacy = learnedCard({ classification: undefined, laneZh: "悬疑权谋" });
+    const groups = listApprovedManhuaViralTemplatesGrouped([legacy]);
+    expect(groups).toEqual([{ laneZh: "悬疑权谋", items: [legacy] }]);
+    expect(recommendApprovedManhuaViralTemplate([legacy], "需要悬疑权谋能力")).toMatchObject({
+      id: legacy.id,
+    });
+    const publicCard = toPublicManhuaViralTemplateCard({ ...legacy, publicCode: "A7F2" });
+    expect(publicCard?.classificationTagsZh).toEqual(["悬疑权谋"]);
+    expect(recommendPublicManhuaViralTemplate(
+      publicCard ? [publicCard] : [],
+      "需要悬疑权谋能力",
+    )).toMatchObject({ publicId: "mt_a7f2" });
   });
 
   it("formats writer addon for approved id only", () => {
@@ -109,6 +149,9 @@ describe("manhuaViralTemplateBank", () => {
     expect(addon).toMatch(/节奏模板/);
     expect(addon).toMatch(/学成模板样例/);
     expect(addon).toMatch(/节拍格/);
+    expect(addon).toMatch(/核心故事承诺：主角每集解决一层生存难题/);
+    expect(addon).toMatch(/关系变化引擎：互不信任的同盟/);
+    expect(addon).toMatch(/避免重复规则：连续两集不得使用相同胜法/);
     expect(formatManhuaViralTemplateWriterAddon("tpl_series_fixture05", extras)).toBe("");
     expect(formatManhuaViralTemplateWriterAddon("tpl_does_not_exist", extras)).toBe("");
   });
@@ -134,12 +177,21 @@ describe("manhuaViralTemplateBank", () => {
     expect(addon).toMatch(/边塞/);
   });
 
-  it("recommends an approved Skill only when the topic lane clearly matches", () => {
-    const cards = [learnedCard(), learnedCard({ id: "tpl_series_fixture06", laneZh: "甜宠" })];
-    expect(recommendApprovedManhuaViralTemplate(cards, "边关古言种田翻盘")).toMatchObject({
+  it("只在话题明确命中多维特征时推荐 approved Skill", () => {
+    const cards = [learnedCard(), learnedCard({
+      id: "tpl_series_fixture06",
+      classification: {
+        emotionTagsZh: ["轻松暧昧"],
+        narrativeFeatureTagsZh: ["关系试探"],
+        performanceTagsZh: ["欲言又止"],
+        audiovisualTagsZh: ["暖色近景"],
+        audienceExperienceTagsZh: ["甜感期待"],
+      },
+    })];
+    expect(recommendApprovedManhuaViralTemplate(cards, "边关经营与克制反击")).toMatchObject({
       id: "tpl_series_fixture01",
     });
-    expect(recommendApprovedManhuaViralTemplate(cards, "先婚后爱甜宠短剧")).toMatchObject({
+    expect(recommendApprovedManhuaViralTemplate(cards, "关系试探带来甜感期待")).toMatchObject({
       id: "tpl_series_fixture06",
     });
     expect(recommendApprovedManhuaViralTemplate(cards, "没有明确类型的故事")).toBeNull();
@@ -147,8 +199,13 @@ describe("manhuaViralTemplateBank", () => {
 
   it("writer Skill exposes only category and intro, not rigid beat/density details", () => {
     const skill = formatManhuaViralTemplateWriterSkillFromCard(learnedCard());
-    expect(skill).toMatch(/分类：古言种田/);
+    expect(skill).toMatch(/多维特征：压迫渐强/);
+    expect(skill).not.toMatch(/分类：古言种田/);
     expect(skill).toMatch(/能力简介：绝境开局/);
+    expect(skill).toMatch(/核心故事承诺：主角每集解决一层生存难题/);
+    expect(skill).toMatch(/持续冲突引擎：眼前资源短缺/);
+    expect(skill).toMatch(/跨集推进规律：先获得局部行动空间/);
+    expect(skill).toMatch(/避免重复规则：连续两集不得使用相同胜法/);
     expect(skill).not.toMatch(/节拍格|密度建议|正文≥|人设槽|场景池/);
   });
 
@@ -200,7 +257,7 @@ describe("PublicManhuaViralTemplateCard 匿名化边界（2026-08-15 审查必�
       expect(wire).not.toContain(leak);
     }
     expect(Object.keys(pub!).sort()).toEqual(
-      ["beatCount", "densityLevel", "featureZh", "introZh", "laneZh", "nameZh", "publicId"].sort(),
+      ["beatCount", "classificationTagsZh", "densityLevel", "featureZh", "introZh", "laneZh", "nameZh", "publicId"].sort(),
     );
   });
 
@@ -208,7 +265,7 @@ describe("PublicManhuaViralTemplateCard 匿名化边界（2026-08-15 审查必�
     const pub = toPublicManhuaViralTemplateCard(secretCard, null)!;
     expect(pub.publicId).toBe("mt_a7f2");
     expect(pub.publicId).toMatch(/^mt_[a-z0-9]{4,8}$/);
-    expect(pub.nameZh).toBe("爽文逆袭·爆款节奏 A7F2");
+    expect(pub.nameZh).toBe("爽文逆袭·创作模板 A7F2");
     expect(pub.beatCount).toBe(2);
     expect(pub.densityLevel).toBe("dense");
   });

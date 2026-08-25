@@ -73,20 +73,24 @@ describe("素材接入层 → 原生精读的接缝", () => {
   });
 
   it("整集按单段上限切分，段间首尾相接不留缝", async () => {
-    // 18 分钟 = 1080s，单段上限 1000s → 两段
+    // 18 分钟 = 1080s，按六分钟切为三段，保证每段至少可取约 5fps。
     const plan = await buildNativeDeepReadEpisodeExecution({ seriesKey: "s1", ep: ep() }, deps(1080));
     expect(plan.segments).toEqual([
-      { startSec: 0, endSec: 540 },
-      { startSec: 540, endSec: 1080 },
+      { startSec: 0, endSec: 360 },
+      { startSec: 360, endSec: 720 },
+      { startSec: 720, endSec: 1080 },
     ]);
     expect(plan.durationSec).toBe(1080);
     expect(plan.episodeIndex).toBe(1);
     expect(plan.seriesKey).toBe("s1");
   });
 
-  it("短集只切一段，不产生零长尾段", async () => {
+  it("十分钟素材按六分钟边界切段，不产生零长尾段", async () => {
     const plan = await buildNativeDeepReadEpisodeExecution({ seriesKey: "s1", ep: ep() }, deps(600));
-    expect(plan.segments).toEqual([{ startSec: 0, endSec: 600 }]);
+    expect(plan.segments).toEqual([
+      { startSec: 0, endSec: 360 },
+      { startSec: 360, endSec: 600 },
+    ]);
   });
 
   it("超长片按策略拒绝，且**在建 claim 之前**就拒——不进付费流程", async () => {
@@ -123,6 +127,21 @@ describe("素材接入层 → 原生精读的接缝", () => {
         segments: [{ startSec: 0, endSec: 599 }],
       },
     }, deps(600))).rejects.toThrow("与确认计划不一致");
+  });
+
+  it("计划与执行统一四舍五入 ffprobe 小数秒，不在 claim 前误拒", async () => {
+    const plan = await buildNativeDeepReadEpisodeExecution({
+      seriesKey: "s1",
+      ep: ep(),
+      confirmedPlanEpisode: {
+        episodeIndex: 1,
+        sourceUrl: "https://www.douyin.com/video/7641538290936947889",
+        durationSec: 121,
+        segments: [{ startSec: 0, endSec: 121 }],
+      },
+    }, deps(120.7));
+    expect(plan.durationSec).toBe(121);
+    expect(plan.segments).toEqual([{ startSec: 0, endSec: 121 }]);
   });
 });
 
@@ -346,7 +365,7 @@ describe("native 模式的学习结果：没有系列卡这回事（终审方案
   it("三种情形各自说人话：本轮有新增 / 无新增 / 一张都没有", () => {
     expect(
       buildNativeDeepReadLearnResult({ ...base, nativeCardCount: 5, batchLearned: 2 }).messageZh,
-    ).toContain("本轮生成 2 张原生精读待审卡");
+    ).toContain("本轮生成 2 张原生精读证据卡");
     expect(
       buildNativeDeepReadLearnResult({ ...base, nativeCardCount: 5, batchLearned: 0 }).messageZh,
     ).toContain("本轮没有新增");

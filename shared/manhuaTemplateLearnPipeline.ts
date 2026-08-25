@@ -198,6 +198,23 @@ export function appendManhuaLearnProgressLine(
   return next.slice(-Math.max(8, max));
 }
 
+/**
+ * 并行模型回执必须逐条落库，不能同时读同一份旧日志后互相覆盖。
+ * 这里只排队写入动作，不改变模型请求本身的并行度。
+ */
+export function serializeManhuaLearnProgressWriter(
+  writer: (phase: string, detailZh: string) => void | Promise<void>,
+): (phase: string, detailZh: string) => Promise<void> {
+  let queue: Promise<void> = Promise.resolve();
+  return (phase, detailZh) => {
+    const current = queue
+      .catch(() => undefined)
+      .then(() => writer(phase, detailZh));
+    queue = current.catch(() => undefined);
+    return current;
+  };
+}
+
 /** 本机回退：面板应立刻展示的步骤（命令已复制后） */
 export function buildManhuaLocalLearnPanelSteps(input: {
   reasonZh: string;

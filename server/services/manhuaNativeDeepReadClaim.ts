@@ -35,6 +35,8 @@ export type NativeDeepReadClaim = {
   runId: string;
   /** 仅在卡片成功入库后调用；条件删除，不误删别人后写的占位 */
   releaseAfterSuccess: () => Promise<void>;
+  /** 批次尚未发生任何付费调用时，预检失败可安全撤回本轮自己的占位。 */
+  releaseBeforePaidCall: () => Promise<void>;
 };
 
 export async function acquireNativeDeepReadEpisodeClaim(
@@ -69,17 +71,19 @@ export async function acquireNativeDeepReadEpisodeClaim(
     throw new Error(`第${episodeIndex}集精读占位内容不一致，已停止`);
   }
 
+  const releaseOwnGeneration = async () => {
+    await deleteGcsObject({
+      bucket,
+      objectName,
+      ifGenerationMatch: versioned.generation,
+    });
+  };
   return {
     claimUri,
     objectName,
     runId,
-    releaseAfterSuccess: async () => {
-      await deleteGcsObject({
-        bucket,
-        objectName,
-        ifGenerationMatch: versioned.generation,
-      });
-    },
+    releaseAfterSuccess: releaseOwnGeneration,
+    releaseBeforePaidCall: releaseOwnGeneration,
   };
 }
 

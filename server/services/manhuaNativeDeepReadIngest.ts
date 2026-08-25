@@ -22,13 +22,14 @@ import {
   listGcsObjectNamesByPrefix,
   uploadBufferToGcsIfAbsent,
 } from "./gcs.js";
-import { guessLane } from "../../shared/manhuaTemplateLearnSeries.js";
 import {
+  hasCompleteManhuaTemplateClassification,
   parseManhuaViralTemplateCard,
   type ManhuaViralTemplateCard,
   type ManhuaViralTemplateLane,
 } from "../../shared/manhuaViralTemplateBank.js";
 import type { NativeDeepReadOutput } from "../../shared/manhuaNativeDeepRead.js";
+import { parseManhuaNativeAudioAnalysis } from "../../shared/manhuaNativeAudioAnalysis.js";
 
 /** 与 manhuaViralTemplateStore 的 proposals 前缀一致；改这里等于改入库位置 */
 export const NATIVE_DEEP_READ_PROPOSAL_PREFIX = "manhua-template-learn/proposals/";
@@ -40,6 +41,8 @@ export const NATIVE_DEEP_READ_MIN_SHOTS = 6;
 export type NativeDeepReadIngestSource = NativeDeepReadOutput & {
   model: string;
   attemptedSegments: number;
+  batchRequestId?: string;
+  batchEpisodeCount?: number;
   usingPlanQuota?: boolean;
   usage?: { costCny?: number };
 };
@@ -120,6 +123,16 @@ export function checkNativeDeepReadIngestable(
   if (!result || !Array.isArray(result.beatGrid)) {
     return { ok: false, reasonZh: "精读产出为空" };
   }
+  const audio = parseManhuaNativeAudioAnalysis(result.audioAnalysis);
+  if (!audio) {
+    return { ok: false, reasonZh: "声音结构缺失或秒位未通过标尺校验" };
+  }
+  if (audio.hasAudio && audio.audioTrack.length < 1) {
+    return { ok: false, reasonZh: "存在音轨但没有学到有效声音时间轴" };
+  }
+  if (!hasCompleteManhuaTemplateClassification(result.classification)) {
+    return { ok: false, reasonZh: "五维特征标签不完整，未按收费模板契约入库" };
+  }
 
   const attemptedSegments = Number(result.attemptedSegments);
   const segmentCount = Number(result.segmentCount);
@@ -188,8 +201,8 @@ export function buildNativeDeepReadProposalCard(
 
   const r = input.result;
   const today = new Date().toISOString().slice(0, 10);
-  const laneZh = input.laneZh
-    || guessLane(`${input.laneHintZh || ""}\n${r.reusableZh || ""}\n${r.beatStructureZh || ""}`);
+  // 新收费模板不再按旧题材套路分桶；lane 只留兼容字段，真实分类看 classification。
+  const laneZh = input.laneZh || "多维标签";
 
   // 开场钩子取真实首 3 秒的镜头，不用套话
   const opening = r.beatGrid
@@ -202,6 +215,7 @@ export function buildNativeDeepReadProposalCard(
     || "开场即进冲突（原生精读未取到首镜描述）";
 
   const durSec = Math.max(0, Math.floor(Number(input.durationSec) || 0));
+  const audio = parseManhuaNativeAudioAnalysis(r.audioAnalysis)!;
   const factsZh = [
     `原生精读${r.beatGrid.length}镜`,
     `${r.segmentCount}/${r.attemptedSegments}段`,
@@ -210,22 +224,30 @@ export function buildNativeDeepReadProposalCard(
   ]
     .filter(Boolean)
     .join(" · ");
-  const summaryZh = cut(r.moodArcZh ? `${factsZh}；${r.moodArcZh}` : factsZh, 120);
+  const summaryZh = cut(
+    [factsZh, r.moodArcZh, ...Object.values(r.classification || {}).flat().slice(0, 6)]
+      .filter(Boolean)
+      .join("；"),
+    120,
+  );
 
   const card: ManhuaViralTemplateCard = {
     id: nativeDeepReadProposalId(input.seriesKey, input.episodeIndex),
     // 中性命名：不写外部剧名，只写赛道与集号
     nameZh: cut(`${laneZh}·原生第${input.episodeIndex}集节奏`, 32),
     laneZh,
+    classification: r.classification,
     summaryZh,
     hook3sZh,
     beatGrid: r.beatGrid,
+    subtitleTrack: r.subtitleTrack,
     reusableZh: r.reusableZh,
     genPromptHintZh: r.genPromptHintZh,
+    audioStory: audio,
     scenePoolHints: [],
     castShape: {
-      leadDesireZh: "待补：原生精读只学镜头拍法，人物欲望需另行补全",
-      pressureZh: "待补：压力来源未从镜头层学到",
+      leadDesireZh: "待补：当前三轨不从声音猜主角欲望",
+      pressureZh: "待补：当前三轨不从声音猜压力来源",
     },
     densityHints: { minBodyChars: 280, minDialogueLines: 8, minLocationHits: 2 },
     sourceRefs: [
@@ -249,8 +271,18 @@ export function buildNativeDeepReadProposalCard(
         shotCount: r.beatGrid.length,
         droppedCount: r.droppedCount,
         truncated: r.truncated,
+        batchRequestId: r.batchRequestId,
+        batchEpisodeCount: r.batchEpisodeCount,
         usingPlanQuota: r.usingPlanQuota,
         costCny: Number(r.usage?.costCny) || 0,
+      },
+      nativeAudioDeepRead: {
+        model: audio.model,
+        hasAudio: audio.hasAudio,
+        alignmentMethod: audio.alignmentMethod,
+        chunkCount: audio.chunkCount,
+        beatCount: audio.audioTrack.length,
+        costCny: Number(audio.usage.costCny) || 0,
       },
     },
   };
@@ -334,10 +366,12 @@ export async function listIngestedNativeDeepReadEpisodeRecords(
         || card.id !== nativeDeepReadProposalId(seriesKey, target.idx)
         || !card.provenance?.nativeVideoDeepRead
         || card.beatGrid.length < NATIVE_DEEP_READ_MIN_SHOTS
+        || !hasCompleteManhuaTemplateClassification(card.classification)
+        || !card.audioStory
         // 没有稳定来源的卡无法参与「同源续跑还是追加」的判断，按无效处理
         || !String(card.sourceRefs?.[0]?.url || "").trim()
       ) {
-        throw new Error("卡片形状或来源记录无效");
+        throw new Error("卡片形状、五维标签、声音结构或来源记录无效；旧版卡需先处理后重学");
       }
       done.push({
         episodeIndex: target.idx,

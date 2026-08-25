@@ -41,11 +41,12 @@ function deps(overrides: Partial<NativeDeepReadPlanDeps> = {}): NativeDeepReadPl
 }
 
 describe("原生精读计划", () => {
-  it("分段与生产同用 floor，且均分避免极短尾段", () => {
-    expect(splitNativeDeepReadSegments(1000.9)).toEqual([{ startSec: 0, endSec: 1000 }]);
+  it("分段按六分钟连续覆盖，短集保持整集", () => {
+    expect(splitNativeDeepReadSegments(90.9)).toEqual([{ startSec: 0, endSec: 91 }]);
     expect(splitNativeDeepReadSegments(1001.9)).toEqual([
-      { startSec: 0, endSec: 501 },
-      { startSec: 501, endSec: 1001 },
+      { startSec: 0, endSec: 360 },
+      { startSec: 360, endSec: 720 },
+      { startSec: 720, endSec: 1002 },
     ]);
   });
 
@@ -72,7 +73,9 @@ describe("原生精读计划", () => {
     expect(plan.seriesKey).toBe("series_real");
     expect(plan.episodes.map((row) => row.episodeIndex)).toEqual([3]);
     expect(plan.alreadyIngestedEpisodeIndexes).toEqual([1, 2]);
-    expect(plan.totalSegments).toBe(2);
+    expect(plan.totalSegments).toBe(3);
+    expect(plan.totalVisualCalls).toBe(1);
+    expect(plan.totalModelCalls).toBe(4);
     expect(plan.executableEpisodeCount).toBe(1);
     expect(d.probeDurationSec).toHaveBeenCalledTimes(1);
   });
@@ -209,7 +212,7 @@ describe("原生精读计划", () => {
     expect(plan.episodes.map((row) => row.episodeIndex)).toEqual([2, 3]);
     expect(() => assertNativeDeepReadPlanConfirmation({
       planHash: plan.planHash,
-      maxCalls: plan.totalSegments,
+      maxCalls: plan.totalModelCalls,
       seriesKey: plan.seriesKey,
     }, plan)).not.toThrow();
     expect(d.probeDurationSec).toHaveBeenCalledTimes(2);
@@ -247,6 +250,9 @@ describe("原生精读计划", () => {
         segments: [{ startSec: 0, endSec: 100 }],
       }],
       totalSegments: 1,
+      totalVisualCalls: 1,
+      totalAudioChunks: 1,
+      totalModelCalls: 4,
       totalDurationSec: 100,
       freeEpisodeCount: 3,
       unknownAccessEpisodeIndexes: [],
@@ -257,7 +263,7 @@ describe("原生精读计划", () => {
     };
     const confirmation = {
       planHash: base.planHash,
-      maxCalls: base.totalSegments,
+      maxCalls: base.totalModelCalls,
       seriesKey: base.seriesKey,
     };
     expect(() => assertNativeDeepReadPlanConfirmation(confirmation, base)).not.toThrow();
@@ -325,6 +331,9 @@ describe("原生精读计划", () => {
         segments: [{ startSec: 0, endSec: 100 }],
       }],
       totalSegments: 1,
+      totalVisualCalls: 1,
+      totalAudioChunks: 1,
+      totalModelCalls: 4,
       totalDurationSec: 100,
       freeEpisodeCount: 1,
       unknownAccessEpisodeIndexes: [],
@@ -335,25 +344,30 @@ describe("原生精读计划", () => {
     };
     expect(() => assertNativeDeepReadPlanConfirmation({
       planHash: base.planHash,
-      maxCalls: 1,
+      maxCalls: 4,
       seriesKey: "s1",
     }, base)).not.toThrow();
     expect(() => assertNativeDeepReadPlanConfirmation({
       planHash: "ffffffffffffffff",
-      maxCalls: 1,
+      maxCalls: 4,
       seriesKey: "s1",
     }, base)).toThrow("计划已变化");
     expect(() => assertNativeDeepReadPlanConfirmation({
       planHash: base.planHash,
-      maxCalls: 1,
+      maxCalls: 4,
       seriesKey: "s1",
     }, { ...base, executionEnabled: false })).toThrow("能力未开启");
     expect(() => assertNativeDeepReadPlanConfirmation({
       planHash: base.planHash,
-      maxCalls: 41,
+      maxCalls: 201,
       seriesKey: "s1",
-    }, { ...base, totalSegments: 41 })).toThrow("超过单任务上限");
-    expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 1 }, base)).not.toThrow();
+    }, { ...base, totalModelCalls: 201 })).toThrow("超过单任务上限");
+    expect(() => assertNativeDeepReadPlanConfirmation({
+      planHash: base.planHash,
+      maxCalls: 200,
+      seriesKey: "s1",
+    }, { ...base, totalModelCalls: 200 })).not.toThrow();
+    expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 4 }, base)).not.toThrow();
     expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 0 }, base))
       .toThrow("超过任务预算");
   });

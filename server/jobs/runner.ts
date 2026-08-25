@@ -444,7 +444,15 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       appendManhuaLearnProgressLine,
       manhuaLearnStageLabelZh,
     } = await import("../../shared/manhuaTemplateLearnPipeline.js");
-    const reportLearnProgress = async (phase: string, detailZh: string) => {
+    let manhuaProgressWriteQueue: Promise<void> = Promise.resolve();
+    const enqueueManhuaProgressWrite = <T>(writer: () => T | Promise<T>): Promise<T> => {
+      const current = manhuaProgressWriteQueue
+        .catch(() => undefined)
+        .then(writer);
+      manhuaProgressWriteQueue = current.then(() => undefined, () => undefined);
+      return current;
+    };
+    const reportLearnProgressNow = async (phase: string, detailZh: string) => {
       const label = manhuaLearnStageLabelZh(phase, detailZh);
       const parsedBatch = Number(/本轮新增\s*(\d+)/.exec(label)?.[1] || 0);
       const parsedLearned = Number(/累计\s*(\d+)\s*集/.exec(label)?.[1] || 0);
@@ -499,6 +507,10 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         ...(parsedListed > 0 ? { listedEpisodeCount: parsedListed } : {}),
       } as any);
     };
+    // 双音轨 A/B 会并行返回。若两条回执同时读同一份旧 job.output 再 patch，
+    // 后写会覆盖先写，面板就少一条秒级记录。这里只串行化“进度落库”，模型请求仍并行。
+    const reportLearnProgress = (phase: string, detailZh: string) =>
+      enqueueManhuaProgressWrite(() => reportLearnProgressNow(phase, detailZh));
     await reportLearnProgress(MANHUA_LEARN_STAGE.queued, "云端学节奏已入队，正在启动…");
     const importedGcsUri = typeof params.gcsUri === "string" ? params.gcsUri.trim() : "";
     if (importedGcsUri && !isOwnedManhuaLearnImportGcsUri({
@@ -539,7 +551,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
           : "";
         await reportLearnProgress(
           MANHUA_LEARN_STAGE.list,
-          `执行计划复核通过：${nativePlanPreview.executableEpisodeCount} 集 · ${nativePlanPreview.totalSegments} 次模型请求 · 确认码 ${nativePlanPreview.planHash}${quarantinedClaims}`,
+          `执行计划复核通过：${nativePlanPreview.executableEpisodeCount} 集 · ${nativePlanPreview.totalModelCalls} 次模型请求（画面 ${nativePlanPreview.totalSegments} 个视频分片自动装成 ${nativePlanPreview.totalVisualCalls} 次 + 声音 ${nativePlanPreview.totalAudioChunks} 片×2路 + 系列整理 1 次） · 确认码 ${nativePlanPreview.planHash}${quarantinedClaims}`,
         );
       } else if (hasNativeDeepReadJobFields(params)) {
         throw new Error("原生精读计划未获明确确认，未发出模型请求");
@@ -562,10 +574,10 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       onNativeUsage: async (nativeUsage) => {
         if (!jobId) return;
         try {
-          await patchJobRunningProgress(jobId, {
-            pipelineMode: "native_deep_read",
-            nativeUsage,
-          });
+          await enqueueManhuaProgressWrite(() => patchJobRunningProgress(jobId, {
+              pipelineMode: "native_deep_read",
+              nativeUsage,
+            }));
         } catch (error) {
           // 卡片已经入库后，进度回执的一次写入异常不能把该集改判失败并触发重跑。
           // 完整回执仍会随最终 result 再写一次；这里仅记录服务端异常。
@@ -581,21 +593,23 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       },
       onEpisodeCheckpoint: async (preview) => {
         if (!jobId) return;
-        const current = await getJobById(jobId);
-        const prevOut = current?.output && typeof current.output === "object" && !Array.isArray(current.output)
-          ? current.output as Record<string, unknown>
-          : {};
-        const previews = Array.isArray(prevOut.digestsPreview)
-          ? [...prevOut.digestsPreview as Array<Record<string, unknown>>]
-          : [];
-        const withoutCurrent = previews.filter((row) => Number(row.episodeIndex) !== preview.episodeIndex);
-        const nextPreviews = [...withoutCurrent, preview].sort(
-          (a, b) => Number(a.episodeIndex) - Number(b.episodeIndex),
-        );
-        await patchJobRunningProgress(jobId, {
-          digestsPreview: nextPreviews,
-          currentEpisodeIndex: preview.episodeIndex,
-          learnedCount: nextPreviews.filter((row) => row.complete === true).length,
+        await enqueueManhuaProgressWrite(async () => {
+          const current = await getJobById(jobId);
+          const prevOut = current?.output && typeof current.output === "object" && !Array.isArray(current.output)
+            ? current.output as Record<string, unknown>
+            : {};
+          const previews = Array.isArray(prevOut.digestsPreview)
+            ? [...prevOut.digestsPreview as Array<Record<string, unknown>>]
+            : [];
+          const withoutCurrent = previews.filter((row) => Number(row.episodeIndex) !== preview.episodeIndex);
+          const nextPreviews = [...withoutCurrent, preview].sort(
+            (a, b) => Number(a.episodeIndex) - Number(b.episodeIndex),
+          );
+          await patchJobRunningProgress(jobId, {
+            digestsPreview: nextPreviews,
+            currentEpisodeIndex: preview.episodeIndex,
+            learnedCount: nextPreviews.filter((row) => row.complete === true).length,
+          });
         });
       },
       });
@@ -3075,19 +3089,22 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
             : "原生精读任务未完整结束；已入库内容与费用回执保留",
         }).catch(() => undefined);
       } else {
+        const carriedNativeUsage = isRecord((error as { nativeUsage?: unknown })?.nativeUsage)
+          ? (error as { nativeUsage: Record<string, unknown> }).nativeUsage
+          : undefined;
         // 计划复核前失败不会产生模型用量；一旦进入原生执行却未能在清理窗口内
         // 返回完整结果，必须显式标成“回执待核”，不能让面板把缺字段解释为 0 元。
         await patchJobRunningProgress(job.id, {
           pipelineMode: "native_deep_read",
-          nativeUsage: {
-            model: "qwen3.8-max",
-            billingMode: "unknown",
-            inputTokens: 0,
-            outputTokens: 0,
-            priceEquivalentCny: 0,
-            elapsedMs: 0,
-            receiptComplete: false,
-          },
+          nativeUsage: carriedNativeUsage || {
+              model: "qwen3.8-max",
+              billingMode: "unknown",
+              inputTokens: 0,
+              outputTokens: 0,
+              priceEquivalentCny: 0,
+              elapsedMs: 0,
+              receiptComplete: false,
+            },
           analysisStage: "manhua_learn_failed",
           analysisStageLabel: userCancelled
             ? "用户已停止学习；费用回执待核"

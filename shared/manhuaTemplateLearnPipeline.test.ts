@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   MANHUA_LEARN_STAGE,
   appendManhuaLearnProgressLine,
+  serializeManhuaLearnProgressWriter,
   buildManhuaLearnStartLines,
   buildManhuaLocalLearnPanelSteps,
   formatManhuaLearnEpisodeDetail,
@@ -35,6 +36,24 @@ describe("manhuaTemplateLearnPipeline", () => {
     }
     expect(lines.length).toBeLessThanOrEqual(12);
     expect(lines[0]?.detailZh).toBeTruthy();
+  });
+
+  it("并行模型回执按到达顺序逐条写入，不互相覆盖", async () => {
+    const events: string[] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const write = serializeManhuaLearnProgressWriter(async (_phase, detailZh) => {
+      events.push(`start:${detailZh}`);
+      if (detailZh === "A") await firstGate;
+      events.push(`end:${detailZh}`);
+    });
+
+    const first = write(MANHUA_LEARN_STAGE.audio, "A");
+    const second = write(MANHUA_LEARN_STAGE.audio, "B");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(events).toEqual(["start:A", "end:A", "start:B", "end:B"]);
   });
 
   it("builds local fallback panel steps", () => {

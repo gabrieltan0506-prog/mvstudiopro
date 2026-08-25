@@ -12,6 +12,13 @@ const secretCard = {
   laneZh: "爽文逆袭",
   summaryZh: "内部摘要SECRET_SUMMARY",
   hook3sZh: "内部钩子SECRET_HOOK",
+  storyStructure: {
+    corePromiseZh: "故事承诺SECRET_STORY",
+    conflictEngineZh: "冲突引擎SECRET_CONFLICT",
+    relationshipEngineZh: "关系引擎SECRET_RELATION",
+    episodeProgressionZh: ["推进规律SECRET_PROGRESS"],
+    variationRulesZh: ["变化规则SECRET_VARIATION"],
+  },
   beatGrid: [
     { atSec: 0, conflictZh: "冲突SECRET_BEAT", visualZh: "画面SECRET_VISUAL" },
     { atSec: 3, conflictZh: "冲突2", visualZh: "画面2" },
@@ -138,7 +145,7 @@ beforeEach(() => {
 });
 
 describe("listApprovedPublic：普通用户只拿匿名功能卡", () => {
-  it("七字段白名单 + 序列化零泄漏（含未来私密字段）", async () => {
+  it("八字段白名单 + 序列化零泄漏（含未来私密字段）", async () => {
     const caller = (await loadRouter()).createCaller(makeCtx("user"));
     const out = await caller.listApprovedPublic();
     expect(out.groups).toHaveLength(1);
@@ -147,7 +154,7 @@ describe("listApprovedPublic：普通用户只拿匿名功能卡", () => {
     expect(items).toHaveLength(1);
     const card = items[0]!;
     expect(Object.keys(card).sort()).toEqual(
-      ["beatCount", "densityLevel", "featureZh", "introZh", "laneZh", "nameZh", "publicId"].sort(),
+      ["beatCount", "classificationTagsZh", "densityLevel", "featureZh", "introZh", "laneZh", "nameZh", "publicId"].sort(),
     );
     const wire = JSON.stringify(out);
     for (const leak of [
@@ -158,6 +165,11 @@ describe("listApprovedPublic：普通用户只拿匿名功能卡", () => {
       "SECRET_BEAT",
       "SECRET_VISUAL",
       "SECRET_SCENE",
+      "SECRET_STORY",
+      "SECRET_CONFLICT",
+      "SECRET_RELATION",
+      "SECRET_PROGRESS",
+      "SECRET_VARIATION",
       "SECRET_URL",
       "SECRET_PROVIDER",
       "SECRET_FUTURE",
@@ -168,7 +180,7 @@ describe("listApprovedPublic：普通用户只拿匿名功能卡", () => {
       expect(wire).not.toContain(leak);
     }
     expect(card.publicId).toBe("mt_a7f2");
-    expect(card.nameZh).toBe("爽文逆袭·爆款节奏 A7F2");
+    expect(card.nameZh).toBe("爽文逆袭·创作模板 A7F2");
     expect(card.featureZh).toBe("特色文案A");
   });
 
@@ -371,6 +383,7 @@ describe("owner 模板查看与优化", () => {
     // 审批可见性：结构字段必须下发，来源 URL 必须不下发。
     expect(proposals[0]).toMatchObject({
       beatGrid: secretCard.beatGrid,
+      storyStructure: secretCard.storyStructure,
       scenePoolHints: secretCard.scenePoolHints,
       castShape: secretCard.castShape,
       densityHints: secretCard.densityHints,
