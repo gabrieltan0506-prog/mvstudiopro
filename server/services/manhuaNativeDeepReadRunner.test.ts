@@ -927,3 +927,12 @@ describe("EvoLink 兜底（路由铁律 + 1fps 降级 + GLM 必过）", () => {
     }
   });
 });
+
+describe("坏 JSON 收敛为门禁类可重试错误（0826 实弹第8集）", () => {
+  it("语法错误 JSON 抛标准门禁文案,不漏原始 SyntaxError（否则重试分类器不认,整集停机）", async () => {
+    const { parseJsonObject } = await import("./manhuaNativeDeepReadRunner");
+    const bad = '前导杂讯 {"episodes": [{"episodeIndex" 8}]} 尾部';
+    expect(() => parseJsonObject(bad)).toThrow("没有返回可解析的 JSON 对象");
+    expect(() => parseJsonObject("完全不是 JSON")).toThrow("没有返回可解析的 JSON 对象");
+  });
+});
