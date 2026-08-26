@@ -205,6 +205,11 @@ export async function uploadBufferToGcs(params: {
   bucket?: string;
   /** 任务时限结束时同步中止上传 */
   signal?: AbortSignal;
+  /**
+   * 条件覆写：只有对象仍是指定 generation 才写入。
+   * 用于“读旧版 → 补字段 → 写回”流程，避免把并发产生的新版本覆盖掉。
+   */
+  ifGenerationMatch?: string;
 }): Promise<{ bucket: string; objectName: string; gcsUri: string }> {
   params.signal?.throwIfAborted();
   const bucket = params.bucket || getGcsBucketName();
@@ -217,6 +222,9 @@ export async function uploadBufferToGcs(params: {
   const uploadUrl = new URL(`https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o`);
   uploadUrl.searchParams.set("uploadType", "media");
   uploadUrl.searchParams.set("name", objectName);
+  if (params.ifGenerationMatch) {
+    uploadUrl.searchParams.set("ifGenerationMatch", params.ifGenerationMatch);
+  }
   const userProject = getGcsUserProject();
   if (userProject) {
     uploadUrl.searchParams.set("userProject", userProject);
@@ -523,4 +531,3 @@ export function resolvePdfExportBucketName(): string {
     process.env.GCS_PDF_EXPORT_BUCKET || process.env.GCS_BUCKET_NAME || getGcsBucketName(),
   ).trim() || getGcsBucketName();
 }
-

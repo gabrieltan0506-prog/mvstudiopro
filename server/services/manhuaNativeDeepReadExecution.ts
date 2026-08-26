@@ -676,6 +676,7 @@ export async function runNativeDeepReadBatch(input: {
           await recordNativeDeepReadClaimFailure(
             input.seriesKey,
             episode.episodeIndex,
+            claims.get(episode.episodeIndex)?.runId || "",
             failed.errorZh || "未回传具体拒因",
           );
         } catch (recordError) {

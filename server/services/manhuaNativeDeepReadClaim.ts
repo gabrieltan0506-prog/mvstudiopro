@@ -96,13 +96,16 @@ export async function acquireNativeDeepReadEpisodeClaim(
 export async function recordNativeDeepReadClaimFailure(
   seriesKey: string,
   episodeIndex: number,
+  expectedRunId: string,
   errorZh: string,
 ): Promise<void> {
   const objectName = nativeDeepReadClaimObjectName(seriesKey, episodeIndex);
   const bucket = getGcsBucketName();
   let previous: Record<string, unknown> = {};
+  let generation = "";
   try {
     const versioned = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` });
+    generation = versioned.generation;
     const parsed = JSON.parse(versioned.buffer.toString("utf8")) as unknown;
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       previous = parsed as Record<string, unknown>;
@@ -111,10 +114,13 @@ export async function recordNativeDeepReadClaimFailure(
     // 占位读不到（已被并发释放/清理）就不补写；失败信息仍在任务回执里
     return;
   }
+  // 只允许本轮执行给自己的占位补病历。旧任务失败回执晚到时，不能污染新任务占位。
+  if (!expectedRunId || String(previous.runId || "") !== expectedRunId) return;
   await uploadBufferToGcs({
     bucket,
     objectName,
     contentType: "application/json",
+    ifGenerationMatch: generation,
     buffer: Buffer.from(
       `${JSON.stringify({
         ...previous,

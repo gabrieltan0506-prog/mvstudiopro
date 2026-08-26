@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const gcs = vi.hoisted(() => ({
   create: vi.fn(),
+  upload: vi.fn(),
   downloadVersioned: vi.fn(),
   remove: vi.fn(),
   list: vi.fn(),
@@ -10,6 +11,7 @@ const gcs = vi.hoisted(() => ({
 vi.mock("./gcs.js", () => ({
   getGcsBucketName: () => "bucket-a",
   uploadBufferToGcsIfAbsent: gcs.create,
+  uploadBufferToGcs: gcs.upload,
   downloadGcsObjectVersioned: gcs.downloadVersioned,
   deleteGcsObject: gcs.remove,
   listGcsObjectNamesByPrefix: gcs.list,
@@ -19,6 +21,7 @@ import {
   acquireNativeDeepReadEpisodeClaim,
   listNativeDeepReadEpisodeClaims,
   nativeDeepReadClaimObjectName,
+  recordNativeDeepReadClaimFailure,
 } from "./manhuaNativeDeepReadClaim";
 
 beforeEach(() => {
@@ -34,6 +37,7 @@ beforeEach(() => {
     };
   });
   gcs.remove.mockResolvedValue(undefined);
+  gcs.upload.mockResolvedValue({ gcsUri: "gs://bucket-a/claim.json" });
   gcs.list.mockResolvedValue([]);
 });
 
@@ -67,5 +71,37 @@ describe("原生精读单集占位", () => {
     ]);
     await expect(listNativeDeepReadEpisodeClaims("series_a")).resolves.toEqual(new Set([1, 20]));
     expect(gcs.list).toHaveBeenCalledWith(expect.objectContaining({ literalPrefix: true }));
+  });
+
+  it("失败病历只按本轮 runId 与读到的 generation 条件写回", async () => {
+    gcs.downloadVersioned.mockResolvedValue({
+      buffer: Buffer.from(JSON.stringify({ runId: "run-current", createdAt: "2026-08-26T00:00:00Z" })),
+      bucket: "bucket-a",
+      objectName: "claim.json",
+      generation: "88",
+    });
+    await recordNativeDeepReadClaimFailure("series_a", 3, "run-current", "音轨字段不完整");
+    expect(gcs.upload).toHaveBeenCalledWith(expect.objectContaining({
+      bucket: "bucket-a",
+      objectName: "manhua-template-learn/native-claims/tpl_native_series_a_ep003.json",
+      ifGenerationMatch: "88",
+    }));
+    const saved = JSON.parse(gcs.upload.mock.calls[0]![0].buffer.toString("utf8"));
+    expect(saved).toMatchObject({
+      runId: "run-current",
+      createdAt: "2026-08-26T00:00:00Z",
+      lastErrorZh: "音轨字段不完整",
+    });
+  });
+
+  it("旧任务失败回执晚到时不得覆盖新 runId 的占位", async () => {
+    gcs.downloadVersioned.mockResolvedValue({
+      buffer: Buffer.from(JSON.stringify({ runId: "run-new" })),
+      bucket: "bucket-a",
+      objectName: "claim.json",
+      generation: "89",
+    });
+    await recordNativeDeepReadClaimFailure("series_a", 3, "run-old", "旧任务晚到");
+    expect(gcs.upload).not.toHaveBeenCalled();
   });
 });

@@ -2172,38 +2172,6 @@ function manhuaLearnContinuationStorageKey(userKey: string): string {
 }
 
 /**
- * 直载新面板的乐观值只能来自「本人上次确认过的结果」。
- * #1315 曾把加载中一律当 owner——普通用户会闪现 owner 面板与内部模型名（技术泄漏）。
- */
-const MANHUA_OWNER_PANEL_FLAG_LS_KEY = "mvsp_manhua_owner_panel_v1";
-
-function manhuaOwnerPanelFlagStorageKey(userKey: string): string {
-  const scope = String(userKey || "").trim();
-  return scope ? `${MANHUA_OWNER_PANEL_FLAG_LS_KEY}:${encodeURIComponent(scope)}` : "";
-}
-
-function readCachedManhuaOwnerPanelFlag(userKey: string): boolean {
-  const key = manhuaOwnerPanelFlagStorageKey(userKey);
-  if (!key || typeof window === "undefined") return false;
-  try {
-    return window.localStorage.getItem(key) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function writeCachedManhuaOwnerPanelFlag(userKey: string, allowed: boolean): void {
-  const key = manhuaOwnerPanelFlagStorageKey(userKey);
-  if (!key || typeof window === "undefined") return;
-  try {
-    if (allowed) window.localStorage.setItem(key, "1");
-    else window.localStorage.removeItem(key);
-  } catch {
-    // 浏览器禁用本地存储时只损失「秒载」，不影响权限正确性。
-  }
-}
-
-/**
  * 学习进度日志：新行到达自动滚到最新（0826 用户点名，不用手动拉）。
  * 用户主动往上翻时暂停跟随（离底部 >24px 视为在回看），翻回底部恢复跟随。
  */
@@ -3174,19 +3142,22 @@ export default function PlatformPage() {
   const [templateReviewOpen, setTemplateReviewOpen] = useState(false);
   const [archivedForId, setArchivedForId] = useState<string | null>(null);
   const manhuaTemplateOwnerCapabilitiesQuery =
-    trpc.manhuaViralTemplate.getOwnerOptimizeCapabilities.useQuery(undefined, {
-      enabled: trendInsightTab === "ai_manhua" && Boolean(user?.id),
-      staleTime: 5 * 60_000,
-      retry: false,
-    });
-  // 直载新面板（0826 用户拍板）：能力确认返回前按**本人上次确认过的结果**乐观渲染——
-  // owner 从第二次访问起免等查询直载；普通用户永不闪现 owner 面板与内部模型名。
-  // （#1315 曾把「加载中」一律当 owner，属于前台技术泄漏，已回收。）
+    trpc.manhuaViralTemplate.getOwnerOptimizeCapabilities.useQuery(
+      { cacheScope: manhuaLearnUserKey || "anonymous" },
+      {
+        enabled: trendInsightTab === "ai_manhua" && Boolean(user?.id),
+        staleTime: 5 * 60_000,
+        retry: false,
+      },
+    );
+  // owner 能力只能信服务端本次回包。localStorage 可由浏览器任意改写，不能当授权依据。
   const ownerTemplateOptimizeAllowed =
-    manhuaTemplateOwnerCapabilitiesQuery.data
-      ? manhuaTemplateOwnerCapabilitiesQuery.data.allowed === true
-      : manhuaTemplateOwnerCapabilitiesQuery.isLoading
-        && readCachedManhuaOwnerPanelFlag(manhuaLearnUserKey);
+    manhuaTemplateOwnerCapabilitiesQuery.data?.allowed === true;
+  const ownerTemplateCapabilityPending =
+    aiManhuaPlatformTab === "douyin"
+    && trendInsightTab === "ai_manhua"
+    && Boolean(user?.id)
+    && manhuaTemplateOwnerCapabilitiesQuery.isLoading;
   const ownerTemplateOptimizeModels =
     manhuaTemplateOwnerCapabilitiesQuery.data?.models || [];
   const ownerNativeDeepReadPanel =
@@ -3199,7 +3170,7 @@ export default function PlatformPage() {
   /**
    * 占位管理（0826 用户点名）：历史占位此前没有任何 UI 入口，全靠助手代办。
    * 列表列出该剧仍在占位的集（集数/占位时间/已花金额/卡点），弃置由用户亲手点。
-   * 「弃置后重跑」只做弃置＋把集数设为 1＋定位该剧——发射键仍在用户手上，不自动烧钱。
+   * 「弃置并设 1 集」只做弃置＋把批量设为 1；计划仍按最早待学集选择，不冒充定向重跑。
    */
   const [manhuaClaimsPanelOpen, setManhuaClaimsPanelOpen] = useState(false);
   const [manhuaClaimBusyEpisode, setManhuaClaimBusyEpisode] = useState<number | null>(null);
@@ -3215,9 +3186,13 @@ export default function PlatformPage() {
     },
   );
   const discardManhuaClaimMutation = trpc.manhuaViralTemplate.discardNativeDeepReadClaim.useMutation();
-  const discardManhuaClaim = useCallback(async (episodeIndex: number, rerunAfter: boolean) => {
+  const discardManhuaClaim = useCallback(async (
+    episodeIndex: number,
+    claimGeneration: string | null,
+    setSingleEpisodeAfter: boolean,
+  ) => {
     const seriesKey = resolvedManhuaLearnFocusSeriesKey;
-    if (!seriesKey) return;
+    if (!seriesKey || !claimGeneration) return;
     if (!window.confirm(
       `弃置第 ${episodeIndex} 集的占位？已花费用不退；弃置后这一集会重新纳入学习计划。`,
     )) return;
@@ -3226,13 +3201,14 @@ export default function PlatformPage() {
       await discardManhuaClaimMutation.mutateAsync({
         seriesKey,
         episodeIndex,
+        claimGeneration,
         confirmDiscard: true,
       });
       await manhuaClaimsQuery.refetch();
-      if (rerunAfter) {
+      if (setSingleEpisodeAfter) {
         setManhuaLearnBatchSize(1);
         writeManhuaLearnBatchSize(1);
-        toast.success(`第 ${episodeIndex} 集占位已弃置；集数已设为 1，点「开始精读 1 集」即可重跑`);
+        toast.success(`第 ${episodeIndex} 集占位已弃置；批量已设为 1，下次会处理计划中的最早待学集`);
       } else {
         toast.success(`第 ${episodeIndex} 集占位已弃置`);
       }
@@ -3484,14 +3460,6 @@ export default function PlatformPage() {
       setArchivedForId(null);
     }
   }, [manhuaTemplateOwnerCapabilitiesQuery.isSuccess, ownerTemplateOptimizeAllowed]);
-  useEffect(() => {
-    // 把服务端确认结果写回本机缓存：它是下次「直载」的唯一乐观依据
-    if (!manhuaTemplateOwnerCapabilitiesQuery.data || !manhuaLearnUserKey) return;
-    writeCachedManhuaOwnerPanelFlag(
-      manhuaLearnUserKey,
-      manhuaTemplateOwnerCapabilitiesQuery.data.allowed === true,
-    );
-  }, [manhuaTemplateOwnerCapabilitiesQuery.data, manhuaLearnUserKey]);
   const openOwnerTemplateDetail = useCallback((id: string) => {
     setOwnerTemplateDetailId(id);
     setOwnerTemplateOptimizePrompt("");
@@ -12395,7 +12363,9 @@ export default function PlatformPage() {
                           可选 {manhuaLearnPipelineMeta.batchMin}–{manhuaLearnPipelineMeta.batchMax} 集，默认 {manhuaLearnPipelineMeta.batchDefault}；连续失败 8 集自动停止
                         </span>
                         <span className="rounded-md border border-[#8cefff]/20 bg-black/25 px-2 py-1 text-[10px] font-semibold text-[#8cefff]">
-                          {canSeeManhuaLearnTechnicalDetails
+                          {ownerTemplateCapabilityPending
+                            ? "学习模型：正在确认…"
+                            : canSeeManhuaLearnTechnicalDetails
                             ? ownerNativeDeepReadPanel
                               ? `学习模型：${MANHUA_NATIVE_DEEP_READ_MODEL_LABEL} · 原生视频精读`
                               : `模型：${MANHUA_TEMPLATE_FRAME_VISION_LABEL}`
@@ -12407,7 +12377,9 @@ export default function PlatformPage() {
                         <div className="mt-3 rounded-xl border border-white/10 bg-black/25 px-3 py-2.5">
                           <div className="text-[11px] font-semibold text-[#c9c0e6]/90">贴链接学节奏</div>
                           <p className="mt-0.5 text-[10px] text-[#c9c0e6]/45">
-                            {manhuaLearnPipelineMeta.summaryZh}
+                            {ownerTemplateCapabilityPending
+                              ? "正在确认可用的学习方式；确认完成前不会建立任务。"
+                              : manhuaLearnPipelineMeta.summaryZh}
                           </p>
                           <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                             <input
@@ -12428,6 +12400,7 @@ export default function PlatformPage() {
                               type="button"
                               disabled={
                                 Boolean(manhuaLearnBusyKey)
+                                || ownerTemplateCapabilityPending
                                 || activeManhuaLearnSources.has(manhuaPasteUrl.trim())
                                 || !manhuaPasteUrl.trim()
                               }
@@ -12447,6 +12420,8 @@ export default function PlatformPage() {
                             >
                               {manhuaLearnBusyKey === manhuaPasteUrl.trim()
                                 ? "处理中…"
+                                : ownerTemplateCapabilityPending
+                                  ? "正在确认…"
                                 : ownerNativeDeepReadPanel
                                   ? `开始精读 ${manhuaLearnBatchSize} 集`
                                   : `开始学 ${manhuaLearnBatchSize} 集`}
@@ -12546,7 +12521,7 @@ export default function PlatformPage() {
                               <div className="mt-2 space-y-1.5">
                                 <p className="text-[10px] text-[#c9c0e6]/45">
                                   下列集有未结清的历史学习记录，学习计划会自动跳过它们；
-                                  处理后才会重新纳入。「弃置后重跑」不会自动扣费——发射键仍在你手上。
+                                  处理后才会重新纳入。「弃置并设 1 集」不会自动扣费，也不承诺定向重跑该集。
                                 </p>
                                 {(manhuaClaimsQuery.data?.items || []).map((item) => (
                                   <div
@@ -12578,19 +12553,37 @@ export default function PlatformPage() {
                                     <span className="ml-auto flex shrink-0 gap-1.5">
                                       <button
                                         type="button"
-                                        disabled={manhuaClaimBusyEpisode != null || Boolean(manhuaLearnBusyKey)}
-                                        onClick={() => void discardManhuaClaim(item.episodeIndex, false)}
+                                        disabled={
+                                          !item.claimGeneration
+                                          || manhuaClaimBusyEpisode != null
+                                          || Boolean(manhuaLearnBusyKey)
+                                        }
+                                        title={item.claimGeneration ? undefined : "占位版本读取失败，请刷新后重试"}
+                                        onClick={() => void discardManhuaClaim(
+                                          item.episodeIndex,
+                                          item.claimGeneration,
+                                          false,
+                                        )}
                                         className="rounded-md border border-rose-300/30 px-2 py-0.5 text-rose-100 hover:bg-rose-500/15 disabled:opacity-40"
                                       >
                                         {manhuaClaimBusyEpisode === item.episodeIndex ? "处理中…" : "弃置"}
                                       </button>
                                       <button
                                         type="button"
-                                        disabled={manhuaClaimBusyEpisode != null || Boolean(manhuaLearnBusyKey)}
-                                        onClick={() => void discardManhuaClaim(item.episodeIndex, true)}
+                                        disabled={
+                                          !item.claimGeneration
+                                          || manhuaClaimBusyEpisode != null
+                                          || Boolean(manhuaLearnBusyKey)
+                                        }
+                                        title={item.claimGeneration ? undefined : "占位版本读取失败，请刷新后重试"}
+                                        onClick={() => void discardManhuaClaim(
+                                          item.episodeIndex,
+                                          item.claimGeneration,
+                                          true,
+                                        )}
                                         className="rounded-md border border-sky-300/30 px-2 py-0.5 text-sky-100 hover:bg-sky-500/15 disabled:opacity-40"
                                       >
-                                        弃置后重跑
+                                        弃置并设 1 集
                                       </button>
                                     </span>
                                   </div>

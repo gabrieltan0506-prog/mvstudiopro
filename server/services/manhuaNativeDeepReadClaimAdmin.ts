@@ -20,6 +20,8 @@ import { nativeDeepReadProposalId } from "./manhuaNativeDeepReadIngest.js";
 
 export type NativeDeepReadClaimAdminRow = {
   episodeIndex: number;
+  /** 列表读取时的对象版本；弃置必须原样回传，防止误删列表之后新建的任务。 */
+  claimGeneration: string | null;
   /** 占位文件里的 createdAt；旧格式读不出时为 null，不编造时间 */
   createdAtIso: string | null;
   /** 集失败时补写的最终拒因（0826 起有）；旧占位没有则为 null */
@@ -51,8 +53,10 @@ export async function listNativeDeepReadClaimAdminRows(
     let createdAtIso: string | null = null;
     let lastErrorZh: string | null = null;
     let lastFailedAtIso: string | null = null;
+    let claimGeneration: string | null = null;
     try {
       const versioned = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${name}` });
+      claimGeneration = versioned.generation;
       const parsed = JSON.parse(versioned.buffer.toString("utf8")) as {
         createdAt?: unknown;
         lastErrorZh?: unknown;
@@ -66,7 +70,7 @@ export async function listNativeDeepReadClaimAdminRows(
     } catch {
       // 读不动只影响展示信息，不影响「这一集确实有占位」这个事实
     }
-    rows.push({ episodeIndex, createdAtIso, lastErrorZh, lastFailedAtIso });
+    rows.push({ episodeIndex, claimGeneration, createdAtIso, lastErrorZh, lastFailedAtIso });
   }
   return rows.sort((a, b) => a.episodeIndex - b.episodeIndex);
 }
@@ -78,15 +82,20 @@ export async function listNativeDeepReadClaimAdminRows(
 export async function discardNativeDeepReadClaimForEpisode(
   seriesKey: string,
   episodeIndex: number,
+  expectedGeneration: string,
 ): Promise<void> {
   const objectName = nativeDeepReadClaimObjectName(seriesKey, episodeIndex);
   const bucket = getGcsBucketName();
-  let generation: string;
-  try {
-    const versioned = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` });
-    generation = versioned.generation;
-  } catch {
-    throw new Error(`第${episodeIndex}集当前没有占位，无需弃置`);
+  const generation = String(expectedGeneration || "").trim();
+  if (!/^\d+$/.test(generation)) {
+    throw new Error(`第${episodeIndex}集占位版本未知，请刷新后重试`);
   }
-  await deleteGcsObject({ bucket, objectName, ifGenerationMatch: generation });
+  try {
+    await deleteGcsObject({ bucket, objectName, ifGenerationMatch: generation });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("gcs_delete_generation_conflict")) {
+      throw new Error(`第${episodeIndex}集占位已变化，请刷新后重试`);
+    }
+    throw error;
+  }
 }
