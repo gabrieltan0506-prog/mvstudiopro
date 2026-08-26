@@ -41,14 +41,22 @@ describe("原生精读页面接线", () => {
     expect(createAt).toBeGreaterThan(previewAt);
   });
 
+  it("非原生候选素材也关闭式停止，学习入口不会建立抽帧任务", () => {
+    const unsupportedAt = LEARN_FLOW.indexOf('nativeGate === "unsupported_source"');
+    const createAt = LEARN_FLOW.indexOf("createJob");
+    expect(unsupportedAt).toBeGreaterThan(0);
+    expect(createAt).toBeGreaterThan(unsupportedAt);
+    expect(LEARN_FLOW).toContain("本次未建立任务；请使用可解析的抖音单集或合集链接。");
+    expect(LEARN_FLOW).toContain('pipelineMode: "native_deep_read"');
+    expect(LEARN_FLOW).not.toContain('pipelineMode: nativeGate === "ready" ? "native_deep_read" : "audio_dense_frames"');
+  });
+
   it("owner 面板使用原生精读说明与直接开始按钮", () => {
     expect(PAGE).toContain("nativeDeepRead: ownerNativeDeepReadPanel");
-    expect(PAGE).toContain("MANHUA_NATIVE_DEEP_READ_MODEL_LABEL");
-    expect(PAGE).toContain("学习模型：正在确认…");
-    expect(PAGE).toContain("· 原生视频精读");
+    expect(PAGE).toContain("学习模型：Gemini 3.1 Pro · 原生视频精读");
     expect(PAGE).toContain("开始精读 ${manhuaLearnBatchSize} 集");
     expect(PAGE).not.toContain("预演并精读 ${manhuaLearnBatchSize} 集");
-    expect(PAGE).toContain("旧抽帧任务");
+    expect(PAGE).not.toContain("旧抽帧任务");
   });
 
   it("owner 能力只信服务端本次回包；加载中显示中性状态且禁止发车", () => {
@@ -59,18 +67,18 @@ describe("原生精读页面接线", () => {
     expect(PAGE).not.toContain("readCachedManhuaOwnerPanelFlag");
     expect(PAGE).not.toContain("writeCachedManhuaOwnerPanelFlag");
     expect(PAGE).toContain('const ownerTemplateCapabilityPending =');
-    expect(PAGE).toContain('"学习模型：正在确认…"');
     expect(PAGE).toContain('|| ownerTemplateCapabilityPending');
   });
 
-  it("原生精读徽标显示真实 Qwen 模型，不拿旧抽帧模型冒充", () => {
-    expect(PAGE).toContain("学习模型：${MANHUA_NATIVE_DEEP_READ_MODEL_LABEL}");
-    expect(LEARN_FLOW).not.toContain("MANHUA_TEMPLATE_FRAME_VISION_LABEL");
+  it("原生精读徽标固定为当前生产模型，不读取任务回执或旧模型状态", () => {
+    expect(PAGE).toContain("学习模型：Gemini 3.1 Pro · 原生视频精读");
+    expect(PAGE).not.toContain("MANHUA_NATIVE_DEEP_READ_MODEL_LABEL");
+    expect(PAGE).not.toContain("MANHUA_TEMPLATE_FRAME_VISION_LABEL");
   });
 
   it("任务交给服务端列表恢复，页面展示原生模式与用量回执", () => {
     expect(LEARN_FLOW).toContain("await refreshManhuaLearnServerJobs()");
-    expect(PAGE).toContain('manhuaLearnResult.pipelineMode === "native_deep_read"');
+    expect(LEARN_FLOW).toContain('pipelineMode: "native_deep_read"');
     expect(PAGE).toContain("manhuaLearnResult.nativeUsage");
     expect(PAGE).toContain("nativeLearnTerminalProposalRefreshSignature");
     expect(PAGE).toContain("await manhuaViralProposalsRefetchRef.current()");
@@ -89,7 +97,7 @@ describe("原生精读页面接线", () => {
       "canSeeManhuaLearnTechnicalDetails\n                            && (manhuaLearnResult.progressLines?.length || 0) > 0",
     );
     expect(PAGE).toContain("getManhuaLearnSafeProgressLabelZh(manhuaLearnResult)");
-    expect(PAGE).toContain('"学习方式：云端按集处理"');
+    expect(PAGE).toContain("学习模型：Gemini 3.1 Pro · 原生视频精读");
   });
 
   it("逐次模型回执只从当前服务端 Job 读取并仅向 owner 展示", () => {
@@ -101,6 +109,9 @@ describe("原生精读页面接线", () => {
       "ownerTemplateOptimizeAllowed\n                            && focusedManhuaNativeModelReceipts.length > 0",
     );
     expect(PAGE).toContain("逐次模型回执（{focusedManhuaNativeModelReceipts.length}）");
+    expect(PAGE).toContain('stage === "visual_model" && status === "completed"');
+    expect(PAGE).toContain('return "已返回，待校验"');
+    expect(PAGE).toContain("nativeModelReceiptStatusLabelZh(receipt.stage, receipt.status)");
     const resultTypeStart = RESULT_UI.indexOf("export type ManhuaLearnResultUi = {");
     const resultTypeEnd = RESULT_UI.indexOf("\n};", resultTypeStart);
     expect(RESULT_UI.slice(resultTypeStart, resultTypeEnd)).not.toContain("nativeModelReceipts");

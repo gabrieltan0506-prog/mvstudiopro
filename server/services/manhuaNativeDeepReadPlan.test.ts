@@ -45,12 +45,13 @@ function deps(overrides: Partial<NativeDeepReadPlanDeps> = {}): NativeDeepReadPl
 }
 
 describe("原生精读计划", () => {
-  it("分段按六分钟连续覆盖，短集保持整集", () => {
+  it("分段按五分钟连续覆盖，短集保持整集", () => {
     expect(splitNativeDeepReadSegments(90.9)).toEqual([{ startSec: 0, endSec: 91 }]);
     expect(splitNativeDeepReadSegments(1001.9)).toEqual([
-      { startSec: 0, endSec: 360 },
-      { startSec: 360, endSec: 720 },
-      { startSec: 720, endSec: 1002 },
+      { startSec: 0, endSec: 300 },
+      { startSec: 300, endSec: 600 },
+      { startSec: 600, endSec: 900 },
+      { startSec: 900, endSec: 1002 },
     ]);
   });
 
@@ -77,11 +78,11 @@ describe("原生精读计划", () => {
     expect(plan.seriesKey).toBe("series_real");
     expect(plan.episodes.map((row) => row.episodeIndex)).toEqual([3]);
     expect(plan.alreadyIngestedEpisodeIndexes).toEqual([1, 2]);
-    expect(plan.totalSegments).toBe(3);
-    // 0826 换代：每段一次 Gemini 调用（3 段=3 次）；音轨随调直出为 0；聚合 +1
-    expect(plan.totalVisualCalls).toBe(3);
+    expect(plan.totalSegments).toBe(4);
+    // 每段一次 Gemini 调用（4 段=4 次）；音轨随调直出为 0；聚合 +1
+    expect(plan.totalVisualCalls).toBe(4);
     expect(plan.totalAudioChunks).toBe(0);
-    expect(plan.totalModelCalls).toBe(4);
+    expect(plan.totalModelCalls).toBe(5);
     expect(plan.executableEpisodeCount).toBe(1);
     expect(d.probeDurationSec).toHaveBeenCalledTimes(1);
   });

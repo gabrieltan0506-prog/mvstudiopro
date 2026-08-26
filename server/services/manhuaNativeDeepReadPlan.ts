@@ -32,7 +32,6 @@ import type { ManhuaTemplateLearnLlmProvider } from "../../shared/manhuaTemplate
 import { NATIVE_DEEP_READ_JOB_MAX_CALLS } from "../../shared/manhuaNativeDeepReadJob.js";
 import {
   NATIVE_DEEP_READ_MODEL,
-  NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES,
   NATIVE_DEEP_READ_ROUTE_EVOLINK,
   NATIVE_DEEP_READ_ROUTE_VERTEX,
   NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
@@ -150,11 +149,11 @@ export function assertNativeDeepReadPlanConfirmation(
 }
 
 /**
- * 每个视觉输入片目标不超过 6 分钟：90 秒短集保持整集，18 分钟长集拆 3 片。
- * runner 按两档 fps 取样：段长 ≤180s→10fps，否则 5fps（360s×5=1800 帧贴满预算）。
+ * 每个视觉输入片目标不超过 5 分钟：90 秒短集保持整集，18 分钟长集拆 4 片。
+ * 分片只按时长决定；文件体积不改变分片数，也不触发预转码。
  * 换代后**每段一次 Gemini 调用**，不再多段合包（分段调用停在低价档）。
  */
-export const NATIVE_DEEP_READ_VISUAL_SEGMENT_SEC = 6 * 60;
+export const NATIVE_DEEP_READ_VISUAL_SEGMENT_SEC = 5 * 60;
 export function normalizeNativeDeepReadDurationSec(durationSec: number): number {
   return Math.max(1, Math.round(Number(durationSec) || 0));
 }
@@ -193,7 +192,6 @@ export function computeNativeDeepReadPlanHash(
       routes: [NATIVE_DEEP_READ_ROUTE_VERTEX, NATIVE_DEEP_READ_ROUTE_EVOLINK],
       fpsTiers: { shortMaxSec: 180, shortFps: 10, longFps: 5 },
       maxSegmentSec: NATIVE_DEEP_READ_MAX_SEGMENT_SEC,
-      mediaBudgetBytes: NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES,
     },
     audio: { mode: "gemini_native_video_direct_v1" },
     seriesAggregation: {

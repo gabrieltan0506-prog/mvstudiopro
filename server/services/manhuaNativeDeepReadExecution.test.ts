@@ -56,15 +56,16 @@ function makeResult(over: Record<string, unknown> = {}) {
   };
 }
 
-/** 18 分钟一集按 360 秒切为三段；换代后每段一次 Gemini 调用。 */
+/** 18 分钟一集按 300 秒切为四段；每段一次 Gemini 调用。 */
 const episode = {
   episodeIndex: 1,
   sourceUrl: "https://example.com/e1",
   durationSec: 1080,
   segments: [
-    { startSec: 0, endSec: 360 },
-    { startSec: 360, endSec: 720 },
-    { startSec: 720, endSec: 1080 },
+    { startSec: 0, endSec: 300 },
+    { startSec: 300, endSec: 600 },
+    { startSec: 600, endSec: 900 },
+    { startSec: 900, endSec: 1080 },
   ],
   resolveNodes: async () => [{ url: "https://cdn/1.mp4" }],
 };
@@ -331,13 +332,13 @@ describe("批次预检：在任何模型动作之前", () => {
     expect(deps.runBatch).not.toHaveBeenCalled();
   });
 
-  it("单段超过六分钟要求拆段（保持至少5fps的时间密度）", () => {
+  it("单段超过五分钟要求拆段", () => {
     expect(() =>
       validateNativeDeepReadBatchPlan([
         ep(1, { durationSec: 1200, segments: [{ startSec: 0, endSec: 1080 }] }),
       ]),
     ).toThrow("请拆段");
-    expect(NATIVE_DEEP_READ_MAX_SEGMENT_SEC).toBe(360);
+    expect(NATIVE_DEEP_READ_MAX_SEGMENT_SEC).toBe(300);
   });
 
   it("切片超出片长拒绝", () => {
@@ -390,10 +391,10 @@ describe("批次预检：在任何模型动作之前", () => {
     expect(
       validateNativeDeepReadBatchPlan(
         [ep(1, { segments: [
-          { startSec: 0, endSec: 359 },
-          { startSec: 359, endSec: 719 },
-          { startSec: 719, endSec: 1079 },
-          { startSec: 1079, endSec: 1080 },
+          { startSec: 0, endSec: 299 },
+          { startSec: 299, endSec: 599 },
+          { startSec: 599, endSec: 899 },
+          { startSec: 899, endSec: 1080 },
         ] })],
         { seriesKey: "series_a" },
       ).planHash,
@@ -610,7 +611,7 @@ describe("并发与计费", () => {
     expect(r.ingestedCount).toBe(2);
     expect(r.totalCostCny).toBeCloseTo(1.0);
     expect(r.totalElapsedMs).toBeGreaterThanOrEqual(0);
-    expect(r.plan.totalSegments).toBe(6);
+    expect(r.plan.totalSegments).toBe(8);
     expect(deps.runBatch).toHaveBeenCalledTimes(2);
   });
 });
@@ -724,7 +725,7 @@ describe("批量发车", () => {
     ]);
   });
 
-  it("后续分片失败时保留已写入的 1/3 部分卡，缓存不清并把失败留给下次续学", async () => {
+  it("后续分片失败时保留已写入的 1/4 部分卡，缓存不清并把失败留给下次续学", async () => {
     const progress: Array<{ status: string; completedSegments?: number; totalSegments?: number }> = [];
     deps.runBatch = vi.fn(async (input: {
       onSegmentSnapshotCommitted?: (snapshot: unknown) => Promise<void> | void;
@@ -742,11 +743,11 @@ describe("批量发车", () => {
       await input.onSegmentSnapshotCommitted?.({
         episodeIndex: 1,
         completedSegmentIndexes: [0],
-        learnedThroughSec: 360,
+        learnedThroughSec: 300,
         result: makeResult({
           segmentCount: 1,
-          failedSegmentCount: 2,
-          attemptedSegments: 3,
+          failedSegmentCount: 3,
+          attemptedSegments: 4,
           completedSegmentIndexes: [0],
           sourceDigest: "a".repeat(64),
           segmentSnapshotSha256: "b".repeat(64),
@@ -769,7 +770,7 @@ describe("批量发车", () => {
       episodeIndex: 1,
       result: expect.objectContaining({
         segmentCount: 1,
-        attemptedSegments: 3,
+        attemptedSegments: 4,
         completedSegmentIndexes: [0],
         assemblyComplete: false,
       }),
@@ -777,7 +778,7 @@ describe("批量发车", () => {
     expect(progress).toContainEqual(expect.objectContaining({
       status: "partial",
       completedSegments: 1,
-      totalSegments: 3,
+      totalSegments: 4,
     }));
     expect(progress).toContainEqual(expect.objectContaining({ status: "failed" }));
     expect(deps.clearSegmentCache).not.toHaveBeenCalled();

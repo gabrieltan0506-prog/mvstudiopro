@@ -105,10 +105,7 @@ import {
   buildPendingNativeTemplateProgressCopy,
   readApprovedNativeTemplateProgress,
 } from "@/lib/manhuaNativeTemplateProgress";
-import {
-  MANHUA_NATIVE_DEEP_READ_MODEL_LABEL,
-  NATIVE_DEEP_READ_JOB_MAX_CALLS,
-} from "@shared/manhuaNativeDeepReadJob";
+import { NATIVE_DEEP_READ_JOB_MAX_CALLS } from "@shared/manhuaNativeDeepReadJob";
 import { formatManhuaTemplateNativeBeatZh } from "@/lib/manhuaTemplateNativeBeat";
 import { trpc } from "@/lib/trpc";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
@@ -177,9 +174,6 @@ import type {
   ManhuaViralTemplateOptimizeField,
   ManhuaViralTemplateOptimizeModel,
 } from "@shared/manhuaViralTemplateBank";
-import {
-  MANHUA_TEMPLATE_FRAME_VISION_LABEL,
-} from "@shared/manhuaTemplateLearnFrameVision";
 import type {
   GrowthAnalysisScores,
   GrowthMonetizationStrategy,
@@ -2230,8 +2224,9 @@ function nativeModelReceiptStageLabelZh(stage: string): string {
   return stage;
 }
 
-function nativeModelReceiptStatusLabelZh(status: string): string {
+function nativeModelReceiptStatusLabelZh(stage: string, status: string): string {
   if (status === "started") return "进行中";
+  if (stage === "visual_model" && status === "completed") return "已返回，待校验";
   if (status === "completed") return "完成";
   if (status === "failed") return "失败";
   return status;
@@ -5637,6 +5632,13 @@ export default function PlatformPage() {
         setManhuaLearnBusyKey(null);
         return;
       }
+      if (nativeGate === "unsupported_source") {
+        toast.error("当前素材不能进入原生精读", {
+          description: "本次未建立任务；请使用可解析的抖音单集或合集链接。",
+        });
+        setManhuaLearnBusyKey(null);
+        return;
+      }
       if (nativeGate === "ready") {
         // 点击即建立真实后台任务；worker 会在同一任务内完成素材、集数、占位与调用上限校验。
         // 这里不再先调用前端预演接口，也不再弹出第二次确认框。
@@ -5661,6 +5663,7 @@ export default function PlatformPage() {
         url: source,
         title,
         seriesKey: continuation.seriesKey,
+        pipelineMode: "native_deep_read",
       });
       setManhuaLearnResult(startUi);
       setManhuaLearnPanelCollapsed(false);
@@ -12414,13 +12417,7 @@ export default function PlatformPage() {
                           可选 {manhuaLearnPipelineMeta.batchMin}–{manhuaLearnPipelineMeta.batchMax} 集，默认 {manhuaLearnPipelineMeta.batchDefault}；连续失败 8 集自动停止
                         </span>
                         <span className="rounded-md border border-[#8cefff]/20 bg-black/25 px-2 py-1 text-[10px] font-semibold text-[#8cefff]">
-                          {ownerTemplateCapabilityPending
-                            ? "学习模型：正在确认…"
-                            : canSeeManhuaLearnTechnicalDetails
-                            ? ownerNativeDeepReadPanel
-                              ? `学习模型：${MANHUA_NATIVE_DEEP_READ_MODEL_LABEL} · 原生视频精读`
-                              : `模型：${MANHUA_TEMPLATE_FRAME_VISION_LABEL}`
-                            : "学习方式：云端按集处理"}
+                          学习模型：Gemini 3.1 Pro · 原生视频精读
                         </span>
                       </div>
 
@@ -12521,9 +12518,7 @@ export default function PlatformPage() {
                                       : "可续学";
                                 return (
                                   <option key={item.seriesKey} value={item.seriesKey}>
-                                    {title} · {item.result.pipelineMode === "native_deep_read"
-                                      ? "原生精读"
-                                      : "旧抽帧"} · {status} · 已学 {item.result.learnedCount} · 待学 {pending}
+                                    {title} · 原生精读 · {status} · 已学 {item.result.learnedCount} · 待学 {pending}
                                   </option>
                                 );
                               })}
@@ -12756,9 +12751,7 @@ export default function PlatformPage() {
                                 : manhuaLearnResult.channel === "local"
                                   ? " · 本机"
                                   : ""}
-                              {manhuaLearnResult.pipelineMode === "native_deep_read"
-                                ? " · 原生精读"
-                                : " · 旧抽帧任务"}
+                              {" · 原生精读"}
                               {!manhuaLearnResult.errorZh && manhuaLearnResult.proposal?.nameZh
                                 ? ` · ${manhuaLearnResult.proposal.nameZh}`
                                 : ""}
@@ -12842,63 +12835,11 @@ export default function PlatformPage() {
                               title={manhuaLearnContinueControl.titleZh}
                               className="rounded-full border border-white/15 bg-black/25 px-2 py-0.5 transition enabled:cursor-pointer enabled:hover:border-sky-200/50 enabled:hover:bg-sky-400/15 enabled:hover:text-sky-50 disabled:cursor-default"
                             >
-                              {ownerNativeDeepReadPanel
-                                ? `原生精读 · ${manhuaLearnContinueControl.labelZh}`
-                                : manhuaLearnContinueControl.labelZh}
+                              {`原生精读 · ${manhuaLearnContinueControl.labelZh}`}
                             </button>
-                            {manhuaLearnResult.pipelineMode !== "native_deep_read"
-                              && manhuaLearnResult.learnedCount > 0 ? (
-                              <button
-                                type="button"
-                                disabled={Boolean(manhuaLearnBusyKey) || focusedManhuaLearnJobActive}
-                                onClick={() => {
-                                  const next = manhuaLearnContinueRef.current;
-                                  if (!next) return;
-                                  if (!window.confirm("补抽当前剧此前已学分集的静帧？不会重跑语音、读帧或总分析；本次最多补 8 集。")) return;
-                                  void runManhuaTemplateLearnCloud(
-                                    next.row,
-                                    next.rank,
-                                    next.seriesKey,
-                                    { refreshPreviewFrames: true },
-                                  );
-                                }}
-                                className="rounded-full border border-amber-300/30 bg-amber-400/10 px-2 py-0.5 transition enabled:cursor-pointer enabled:hover:bg-amber-400/20 disabled:opacity-45"
-                              >
-                                补抽前 8 集静帧
-                              </button>
-                            ) : null}
                             <span className="rounded-full border border-emerald-300/30 bg-black/25 px-2 py-0.5 text-emerald-100/85">
                               已学完 {manhuaLearnResult.learnedCount}
                             </span>
-                            {manhuaLearnResult.pipelineMode !== "native_deep_read"
-                              && (manhuaLearnResult.skippedEpisodeIndexes?.length || 0) > 0 ? (
-                              <>
-                                <span
-                                  className="rounded-full border border-orange-300/35 bg-orange-500/10 px-2 py-0.5 text-orange-100/90"
-                                  title={`因来源受限暂跳：第 ${(manhuaLearnResult.skippedEpisodeIndexes || []).join("、")} 集；不计入已学`}
-                                >
-                                  暂跳 {manhuaLearnResult.skippedEpisodeIndexes?.length} 集（来源受限）
-                                </span>
-                                <button
-                                  type="button"
-                                  disabled={Boolean(manhuaLearnBusyKey) || focusedManhuaLearnJobActive}
-                                  onClick={() => {
-                                    const next = manhuaLearnContinueRef.current;
-                                    if (!next) return;
-                                    void runManhuaTemplateLearnCloud(
-                                      next.row,
-                                      next.rank,
-                                      next.seriesKey,
-                                      { retrySkippedEpisodes: true },
-                                    );
-                                  }}
-                                  title="重新读取合集获取新的播放地址后，只重试这些暂跳集；不重学已完成分集"
-                                  className="rounded-full border border-orange-300/35 bg-orange-400/10 px-2 py-0.5 transition enabled:cursor-pointer enabled:hover:bg-orange-400/20 disabled:opacity-45"
-                                >
-                                  重试暂跳集
-                                </button>
-                              </>
-                            ) : null}
                           </div>
                           {(manhuaLearnResult.missingEpisodeCount || 0) > 0
                             && !manhuaLearnMissingDismissedKeys.includes(manhuaLearnResult.seriesKey) ? (
@@ -12952,17 +12893,11 @@ export default function PlatformPage() {
                           ) : null}
                           <p className="text-amber-100/70">
                             进度 {manhuaLearnResult.learnedCount} 集
-                            {manhuaLearnResult.pipelineMode === "native_deep_read"
-                              ? "（一集一张原生精读待审卡）"
-                              : `（学 1 集即可出草版入库 · 完整版约 ${manhuaLearnResult.analysisMin}）`}
+                            {"（一集一张原生精读待审卡）"}
                             {manhuaLearnResult.batchLearned > 0
                               ? ` · 本轮新增 ${manhuaLearnResult.batchLearned}`
                               : " · 云端进度"}
-                            {manhuaLearnResult.pipelineMode === "native_deep_read"
-                              ? " · 待审卡已直接进入批准区"
-                              : manhuaLearnResult.analysisReady
-                              ? " · 已出分析，可批准进库"
-                              : " · 未满草版门槛可继续学"}
+                            {" · 待审卡已直接进入批准区"}
                           </p>
                           {canSeeManhuaLearnTechnicalDetails && manhuaLearnResult.nativeUsage ? (
                             <p className="text-amber-100/55">
@@ -13016,7 +12951,7 @@ export default function PlatformPage() {
                                     >
                                       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 font-medium">
                                         <span>{nativeModelReceiptStageLabelZh(receipt.stage)}</span>
-                                        <span>{nativeModelReceiptStatusLabelZh(receipt.status)}</span>
+                                        <span>{nativeModelReceiptStatusLabelZh(receipt.stage, receipt.status)}</span>
                                         <span>{episodeLabel}</span>
                                         {receipt.chunkIndex !== undefined ? (
                                           <span>音轨片 {receipt.chunkIndex + 1}</span>

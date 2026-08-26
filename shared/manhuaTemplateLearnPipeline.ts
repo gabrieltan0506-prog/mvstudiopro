@@ -250,18 +250,20 @@ export function buildManhuaLearnStartLines(input: {
   channel: ManhuaLearnChannel;
   title?: string;
   url?: string;
+  pipelineMode?: "native_deep_read" | "audio_dense_frames";
 }): ManhuaLearnProgressLine[] {
   const title = String(input.title || "").trim().slice(0, 40);
   const url = String(input.url || "").trim().slice(0, 80);
   const who = [title, url].filter(Boolean).join(" · ");
   const channelZh = input.channel === "local" ? "本机" : "云端";
+  const actionZh = input.pipelineMode === "native_deep_read" ? "原生精读已入队" : "学节奏已开始";
   return [
     {
       atIso: new Date().toISOString(),
       stage: MANHUA_LEARN_STAGE.queued,
       detailZh: who
-        ? `${channelZh}学节奏已开始 · ${who}`
-        : `${channelZh}学节奏已开始`,
+        ? `${channelZh}${actionZh} · ${who}`
+        : `${channelZh}${actionZh}`,
     },
   ];
 }

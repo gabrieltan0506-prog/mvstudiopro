@@ -308,6 +308,7 @@ export function manhuaLearnResultFromStart(input: {
   url?: string;
   title?: string;
   seriesKey?: string;
+  pipelineMode?: "native_deep_read" | "audio_dense_frames";
 }): ManhuaLearnResultUi {
   const lines = buildManhuaLearnStartLines(input);
   return {
@@ -320,6 +321,7 @@ export function manhuaLearnResultFromStart(input: {
     analysisTarget: MANHUA_LEARN_ANALYSIS_TARGET,
     batchLearned: 0,
     messageZh: lines[0]?.detailZh || "学节奏已开始",
+    pipelineMode: input.pipelineMode,
     channel: input.channel,
     liveStatus: input.channel === "local" ? "local" : "queued",
     livePhase: MANHUA_LEARN_STAGE.queued,
@@ -792,6 +794,7 @@ export function readManhuaLearnBasket(userKey: string): ManhuaLearnBasketItem[] 
           String(item.seriesKey || "").trim()
           && /^https?:\/\//i.test(sourceUrl)
           && item.result
+          && item.result.pipelineMode === "native_deep_read"
           && (
             typeof item.result.pendingCount !== "number"
             || item.result.pendingCount > 0
@@ -813,6 +816,7 @@ export function writeManhuaLearnBasket(userKey: string, items: ManhuaLearnBasket
     const pending = (items || [])
       .filter(
         (item) => /^https?:\/\//i.test(String(item.continuation.row.url || "").trim())
+          && item.result.pipelineMode === "native_deep_read"
           && (
             typeof item.result.pendingCount !== "number"
             || item.result.pendingCount > 0
@@ -991,6 +995,8 @@ export function mergeManhuaLearnServerJobsIntoBasket(
   const ordered = [...(jobs || [])].reverse();
   for (const job of ordered) {
     const params = job.input?.params || {};
+    // 当前学习区只承载原生精读；旧抽帧任务不再恢复进页面或本地 basket。
+    if (params.nativeDeepReadConfirmed !== true) continue;
     const url = String(params.url || "").trim();
     const gcsUri = String(params.gcsUri || "").trim();
     const source = gcsUri || url;
@@ -1008,6 +1014,9 @@ export function mergeManhuaLearnServerJobsIntoBasket(
       url: source,
       title,
       seriesKey: requestedSeriesKey || undefined,
+      pipelineMode: params.nativeDeepReadConfirmed === true
+        ? "native_deep_read"
+        : "audio_dense_frames",
     });
     let result: ManhuaLearnResultUi;
     if (job.status === "succeeded") {

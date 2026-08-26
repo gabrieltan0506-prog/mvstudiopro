@@ -55,6 +55,11 @@ describe("manhuaLearnYtdlp", () => {
     expect(normalizeDouyinVideoUrl(source)).toBe(
       "https://www.douyin.com/video/7633315305602780435",
     );
+    const escapedSource =
+      "https://www.douyin.com/search/万妖图录第二季完整版?modal\\_id=7641538290936947889\\&type=general";
+    expect(normalizeDouyinVideoUrl(escapedSource)).toBe(
+      "https://www.douyin.com/video/7641538290936947889",
+    );
   });
 
   it("builds netscape cookies from header", () => {

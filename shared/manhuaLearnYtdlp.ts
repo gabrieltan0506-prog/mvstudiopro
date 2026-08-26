@@ -10,7 +10,9 @@
  * 但路径不含 /video/，旧判定认不出 → 掉进合集解析（已被抖音改版打死）→ 学节奏必空。
  */
 export function extractDouyinModalVideoId(url: string): string | null {
-  const u = String(url || "").trim();
+  // 从 Markdown、聊天或富文本复制时，查询键/分隔符可能带展示转义：
+  // `modal\_id=...\&type=general`。先还原再交给 URL 解析，避免用户手改成 /video/。
+  const u = String(url || "").trim().replace(/\\([_&?])/g, "$1");
   if (!u) return null;
   try {
     const parsed = new URL(u);
@@ -27,8 +29,9 @@ export function extractDouyinModalVideoId(url: string): string | null {
 
 /** modal_id 弹层链接 → 标准单集页（yt-dlp 只稳定认 /video/ 形态）；其余原样返回 */
 export function normalizeDouyinVideoUrl(url: string): string {
-  const modalId = extractDouyinModalVideoId(url);
-  return modalId ? `https://www.douyin.com/video/${modalId}` : String(url || "").trim();
+  const normalized = String(url || "").trim().replace(/\\([_&?])/g, "$1");
+  const modalId = extractDouyinModalVideoId(normalized);
+  return modalId ? `https://www.douyin.com/video/${modalId}` : normalized;
 }
 
 /** 抖音单集成片页（非合集列表）；含 modal_id 弹层形态 */

@@ -84,23 +84,24 @@ describe("素材接入层 → 原生精读的接缝", () => {
   });
 
   it("整集按单段上限切分，段间首尾相接不留缝", async () => {
-    // 18 分钟 = 1080s，按六分钟切为三段，保证每段至少可取约 5fps。
+    // 18 分钟 = 1080s，按五分钟切为四段；分片只看时长，不看文件大小。
     const plan = await buildNativeDeepReadEpisodeExecution({ seriesKey: "s1", ep: ep() }, deps(1080));
     expect(plan.segments).toEqual([
-      { startSec: 0, endSec: 360 },
-      { startSec: 360, endSec: 720 },
-      { startSec: 720, endSec: 1080 },
+      { startSec: 0, endSec: 300 },
+      { startSec: 300, endSec: 600 },
+      { startSec: 600, endSec: 900 },
+      { startSec: 900, endSec: 1080 },
     ]);
     expect(plan.durationSec).toBe(1080);
     expect(plan.episodeIndex).toBe(1);
     expect(plan.seriesKey).toBe("s1");
   });
 
-  it("十分钟素材按六分钟边界切段，不产生零长尾段", async () => {
+  it("十分钟素材按五分钟边界切成两段，不产生零长尾段", async () => {
     const plan = await buildNativeDeepReadEpisodeExecution({ seriesKey: "s1", ep: ep() }, deps(600));
     expect(plan.segments).toEqual([
-      { startSec: 0, endSec: 360 },
-      { startSec: 360, endSec: 600 },
+      { startSec: 0, endSec: 300 },
+      { startSec: 300, endSec: 600 },
     ]);
   });
 
