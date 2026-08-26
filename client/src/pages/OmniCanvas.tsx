@@ -570,8 +570,11 @@ export default function OmniCanvas() {
     if (initialWriterSession?.writerConfirmed) return "workbench";
     return initialWriterSession?.manhuaUiMode || "workbench";
   });
-  /** 沉浸工作台下临时展开编剧室/成片坞 */
-  const [immersiveExtrasOpen, setImmersiveExtrasOpen] = useState(false);
+  /** 沉浸工作台的顶层视图。编剧室与成片坞互斥，避免两个长页同时挂载后互相抢滚动。 */
+  const [immersiveWorkspaceView, setImmersiveWorkspaceView] = useState<
+    "workbench" | "topic" | "clip_dock"
+  >("workbench");
+  const immersiveExtrasOpen = immersiveWorkspaceView !== "workbench";
   /** 角色库 / 资产墙改抽屉，避免长期占主流程 */
   const [manhuaAssetDrawer, setManhuaAssetDrawer] = useState<null | "characters" | "assets">(null);
   /** 资产暂存区条数（清图/重出前存的，可救回）；boot 时从本地读 */
@@ -977,22 +980,24 @@ export default function OmniCanvas() {
     ),
   );
   /**
-   * 第五格「成片」的面板就是成片坞，而坞在 extras 视图里、其可见性不持久化。
-   * 只存 workflowPhase 不存 extras，刷新后 phase 还是 final、坞却关着，
+   * 第五格「成片」的面板就是成片坞，而坞在独立顶层视图里、其可见性不持久化。
+   * 只存 workflowPhase 不存当前视图，刷新后 phase 还是 final、坞却关着，
    * 而工作台内部只渲染 outline/assets/storyboard/edit 四个面板 —— 结果是**空白工作台**。
    * 这里把两者绑定：进 final 就开坞。
    */
   useEffect(() => {
-    if (shouldOpenClipDockForPhase(workflowPhase)) setImmersiveExtrasOpen(true);
+    if (shouldOpenClipDockForPhase(workflowPhase)) {
+      setImmersiveWorkspaceView("clip_dock");
+    }
   }, [workflowPhase]);
 
   /**
-   * 离开成片坞的唯一收口：关坞的同时把 final 收回 edit。
-   * 各入口原本只关坞不改 phase，一样会留在没有面板的 final 态。
+   * 回到工作台的唯一收口：只有从成片态返回时才把 final 收回 edit；
+   * 从题材页返回应保留用户原来的资产/分镜阶段。
    */
   const closeClipDockToWorkbench = useCallback(() => {
-    setWorkflowPhase(phaseAfterLeavingClipDock);
-    setImmersiveExtrasOpen(false);
+    setWorkflowPhase((current) => phaseAfterLeavingClipDock(current));
+    setImmersiveWorkspaceView("workbench");
   }, []);
 
   /** 工厂运行范围：焦点集（默认）或成片坞已勾选集 */
@@ -2671,8 +2676,8 @@ export default function OmniCanvas() {
           response: finalVideoUrl.slice(0, 180),
         });
         toast.success(`长片已合成（${out.sceneCount || ready.length} 集 + 配乐）`);
-        // 沉浸态下坞是 display:none，先切开 extras 再滚
-        setImmersiveExtrasOpen(true);
+        // 沉浸态下坞是独立视图，先切换再滚动
+        setImmersiveWorkspaceView("clip_dock");
         window.setTimeout(() => {
           document.querySelector("#manhua-clip-dock-zone")?.scrollIntoView({
             behavior: "smooth",
@@ -4135,9 +4140,9 @@ export default function OmniCanvas() {
     });
     if (!densityGate.ok) {
       setWriterConfirmBlockers(densityGate.errors.slice(0, 6));
-      // 红字横幅渲染在 extras 视图里；沉浸工作台下若不切开，用户只能看到截断的
+      // 红字横幅渲染在题材/编剧视图；沉浸工作台下若不切开，用户只能看到截断的
       // toast，门禁就成了「看不见原因的死路」。切开并滚到横幅。
-      setImmersiveExtrasOpen(true);
+      setImmersiveWorkspaceView("topic");
       window.setTimeout(() => {
         document
           .querySelector("[data-manhua-writer-confirm-blockers]")
@@ -4282,7 +4287,7 @@ export default function OmniCanvas() {
       detail: `ep=${continuity.episodeIndex} · ${summarizeManhuaProjectBible(bible)} · canonChars=${canon.characters.length} · mainScene=${mainSceneId || "—"} · clearedFactory=${cleaned.removedCount}`,
     });
     setManhuaUiMode("workbench");
-    setImmersiveExtrasOpen(false);
+    setImmersiveWorkspaceView("workbench");
     // 确认剧本只进资产设定阶段，不再自动出图（2026-08-10 用户明令拿掉：
     // 出图是付费动作，且用户常有现成资产 ZIP 可导入——自动触发等于未经同意扣费/烧上游。
     // 生成设定图一律由用户在资产设定页显式点击触发）
@@ -4363,8 +4368,8 @@ export default function OmniCanvas() {
     });
     if (!densityGate.ok) {
       setWriterConfirmBlockers(densityGate.errors.slice(0, 6));
-      // 同 confirmWriterToDirector：沉浸态下切开 extras，让门禁原因可见
-      setImmersiveExtrasOpen(true);
+      // 同 confirmWriterToDirector：沉浸态下切到编剧视图，让门禁原因可见
+      setImmersiveWorkspaceView("topic");
       window.setTimeout(() => {
         document
           .querySelector("[data-manhua-writer-confirm-blockers]")
@@ -6908,14 +6913,35 @@ export default function OmniCanvas() {
           >
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
               {immersiveWorkbench ? (
-                <div className="flex min-w-0 flex-wrap items-center gap-2 text-[11px] text-white/45">
-                  <span className="font-medium text-white/70">剧本工作室</span>
-                  <span className="text-white/20">·</span>
+                <div
+                  role="tablist"
+                  aria-label="漫剧工厂工作区"
+                  className="flex min-w-0 flex-wrap items-center gap-1 rounded-xl border border-white/10 bg-black/25 p-1 text-[11px]"
+                >
                   <button
                     type="button"
-                    className="underline underline-offset-2 hover:text-white/75"
+                    role="tab"
+                    aria-selected={immersiveWorkspaceView === "workbench"}
+                    className={`rounded-lg px-2.5 py-1.5 transition ${
+                      immersiveWorkspaceView === "workbench"
+                        ? "bg-cyan-400/15 font-medium text-cyan-50"
+                        : "text-white/50 hover:bg-white/10 hover:text-white/75"
+                    }`}
+                    onClick={closeClipDockToWorkbench}
+                  >
+                    剧本工作室
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={immersiveWorkspaceView === "topic"}
+                    className={`rounded-lg px-2.5 py-1.5 transition ${
+                      immersiveWorkspaceView === "topic"
+                        ? "bg-cyan-400/15 font-medium text-cyan-50"
+                        : "text-white/50 hover:bg-white/10 hover:text-white/75"
+                    }`}
                     onClick={() => {
-                      setImmersiveExtrasOpen(true);
+                      setImmersiveWorkspaceView("topic");
                       window.setTimeout(() => {
                         document
                           .getElementById("manhua-factory-zone")
@@ -6927,9 +6953,15 @@ export default function OmniCanvas() {
                   </button>
                   <button
                     type="button"
-                    className="underline underline-offset-2 hover:text-white/75"
+                    role="tab"
+                    aria-selected={immersiveWorkspaceView === "clip_dock"}
+                    className={`rounded-lg px-2.5 py-1.5 transition ${
+                      immersiveWorkspaceView === "clip_dock"
+                        ? "bg-cyan-400/15 font-medium text-cyan-50"
+                        : "text-white/50 hover:bg-white/10 hover:text-white/75"
+                    }`}
                     onClick={() => {
-                      setImmersiveExtrasOpen(true);
+                      setImmersiveWorkspaceView("clip_dock");
                       window.setTimeout(() => {
                         document
                           .getElementById("manhua-clip-dock-zone")
@@ -6941,7 +6973,7 @@ export default function OmniCanvas() {
                   </button>
                   <button
                     type="button"
-                    className="underline underline-offset-2 hover:text-white/75"
+                    className="rounded-lg px-2.5 py-1.5 text-white/40 transition hover:bg-white/10 hover:text-white/70"
                     onClick={() => {
                       closeClipDockToWorkbench();
                       setManhuaUiMode("form");
@@ -7441,8 +7473,8 @@ export default function OmniCanvas() {
                   onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
                   onOpenAssetWall={() => setManhuaAssetDrawer("assets")}
                   onOpenClipDock={() => {
-                    // 坞在 extras 视图里；沉浸态必须先切开再滚，对 display:none 滚动无效
-                    setImmersiveExtrasOpen(true);
+                    // 坞是独立视图；沉浸态必须先切换再滚，对 display:none 滚动无效
+                    setImmersiveWorkspaceView("clip_dock");
                     window.setTimeout(() => {
                       document
                         .getElementById("manhua-clip-dock-zone")
@@ -7994,13 +8026,15 @@ export default function OmniCanvas() {
                 immersiveWorkbench && !immersiveExtrasOpen
                   ? "hidden"
                   : immersiveWorkbench
-                    ? "border-t border-white/10 bg-[#070a10] px-4 py-4 md:px-6"
+                    ? "min-h-0 flex-1 overflow-y-auto border-t border-white/10 bg-[#070a10] px-4 py-4 md:px-6"
                     : undefined
               }
             >
             {immersiveWorkbench && immersiveExtrasOpen ? (
               <div className="mb-3 flex items-center justify-between gap-2">
-                <span className="text-[12px] text-white/55">编剧室 · 成片坞</span>
+                <span className="text-[12px] text-white/55">
+                  {immersiveWorkspaceView === "topic" ? "题材 · 编剧室" : "成片坞 · 后期"}
+                </span>
                 <button
                   type="button"
                   className="rounded-lg border border-white/15 px-2.5 py-1 text-[11px] text-white/70 hover:bg-white/5"
@@ -8011,6 +8045,11 @@ export default function OmniCanvas() {
               </div>
             ) : null}
 
+            <div
+              className={
+                immersiveWorkbench && immersiveWorkspaceView !== "topic" ? "hidden" : undefined
+              }
+            >
             {/* ① 题材 + 编剧室（确认后默认收起；沉浸工作台时压到主屏下方） */}
             <div
               id="manhua-factory-zone"
@@ -9292,8 +9331,14 @@ export default function OmniCanvas() {
               </div>
             </div>
             ) : null}
+            </div>
 
-            <div id="manhua-clip-dock-zone" className="mt-4 max-w-4xl scroll-mt-44">
+            <div
+              id="manhua-clip-dock-zone"
+              className={`mt-4 max-w-4xl scroll-mt-44 ${
+                immersiveWorkbench && immersiveWorkspaceView !== "clip_dock" ? "hidden" : ""
+              }`}
+            >
               <ManhuaClipDock
                 blocks={blocks}
                 topic={factoryTopic}
@@ -9356,13 +9401,13 @@ export default function OmniCanvas() {
                   // 换集必须离开 final：新集大概率还没合成，留在 final 就是空面板
                   setWorkflowPhase("storyboard");
                   setManhuaUiMode("workbench");
-                  setImmersiveExtrasOpen(false);
+                  setImmersiveWorkspaceView("workbench");
                 }}
                 onFocusBlock={(id) => {
                   const hit = blocks.find((b) => b.id === id);
                   const ep = hit ? getBlockEpisodeIndex(hit) : null;
                   if (ep != null) setWriterFocusEpisode(ep);
-                  setImmersiveExtrasOpen(true);
+                  setImmersiveWorkspaceView("clip_dock");
                   openManhuaFactoryCanvas(id);
                 }}
               />

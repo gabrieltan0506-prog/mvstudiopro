@@ -16,6 +16,10 @@ const SRC = readFileSync(
   new URL("../pages/OmniCanvas.tsx", import.meta.url),
   "utf8",
 );
+const WORKBENCH_SRC = readFileSync(
+  new URL("../components/ManhuaScriptWorkbench.tsx", import.meta.url),
+  "utf8",
+);
 
 describe("成片阶段接线契约", () => {
   it("成片地址必须从画布节点派生，不能退回 React state", () => {
@@ -28,15 +32,15 @@ describe("成片阶段接线契约", () => {
     expect(SRC).toContain("shouldOpenClipDockForPhase(workflowPhase)");
   });
 
-  it("离开坞的收口函数必须同时改 phase 与关坞", () => {
+  it("返回工作台时只把 final 收回 edit，并切回工作台", () => {
     const at = SRC.indexOf("const closeClipDockToWorkbench");
     expect(at).toBeGreaterThan(0);
-    const fn = SRC.slice(at, at + 260);
-    expect(fn).toContain("setWorkflowPhase(phaseAfterLeavingClipDock)");
-    expect(fn).toContain("setImmersiveExtrasOpen(false)");
+    const fn = SRC.slice(at, at + 380);
+    expect(fn).toContain("phaseAfterLeavingClipDock(current)");
+    expect(fn).toContain('setImmersiveWorkspaceView("workbench")');
   });
 
-  it("每一处裸关坞都必须自己把 phase 带走 —— 否则就是一个空白工作台入口", () => {
+  it("每一处直接切回工作台都必须自己把 phase 带走 —— 否则就是一个空白工作台入口", () => {
     /**
      * 这是本条的核心不变式，不依赖「我记得有几处、分别在哪」：
      * 只要关了坞而 phase 还停在 final，用户看到的就是空白工作台。
@@ -44,7 +48,7 @@ describe("成片阶段接线契约", () => {
      * 正是它存在的理由。
      */
     const sites: number[] = [];
-    const re = /setImmersiveExtrasOpen\(false\)/g;
+    const re = /setImmersiveWorkspaceView\("workbench"\)/g;
     for (let m = re.exec(SRC); m; m = re.exec(SRC)) sites.push(m.index);
     expect(sites.length).toBeGreaterThan(0);
 
@@ -56,11 +60,12 @@ describe("成片阶段接线契约", () => {
   });
 
   it("换集必须显式带走 phase —— 新集大概率还没合成", () => {
-    const at = SRC.indexOf("onSelectEpisode={(ep) =>");
+    const match = /onSelectEpisode=\{(?:\(ep\)|ep) =>/.exec(SRC);
+    const at = match?.index ?? -1;
     expect(at).toBeGreaterThan(0);
     const block = SRC.slice(at, at + 360);
     expect(block).toContain('setWorkflowPhase("storyboard")');
-    expect(block).toContain("setImmersiveExtrasOpen(false)");
+    expect(block).toContain('setImmersiveWorkspaceView("workbench")');
   });
 
   it("四个用户可见出口全部走收口函数", () => {
@@ -69,5 +74,21 @@ describe("成片阶段接线契约", () => {
     // 1 处定义 + 5 处调用
     expect(calls.length).toBeGreaterThanOrEqual(6);
     expect(SRC).toContain("onClick={closeClipDockToWorkbench}");
+  });
+
+  it("沉浸工作区必须把工作台、编剧室、成片坞做成互斥页签", () => {
+    expect(SRC).toContain('role="tablist"');
+    expect(SRC).toContain('immersiveWorkspaceView === "topic"');
+    expect(SRC).toContain('immersiveWorkspaceView === "clip_dock"');
+    expect(SRC).toMatch(/immersiveWorkspaceView !== "topic"[\s\S]{0,80}\? "hidden"/);
+    expect(SRC).toMatch(/immersiveWorkspaceView !== "clip_dock"[\s\S]{0,80}\? "hidden"/);
+    expect(SRC).toContain("min-h-0 flex-1 overflow-y-auto border-t");
+  });
+
+  it("三栏工作台不能恢复 1180/1360 像素硬宽度", () => {
+    expect(WORKBENCH_SRC).not.toContain("min-w-[1180px]");
+    expect(WORKBENCH_SRC).not.toContain("min-w-[1360px]");
+    expect(WORKBENCH_SRC).toContain("min-w-[840px]");
+    expect(WORKBENCH_SRC).toContain("xl:min-w-0");
   });
 });

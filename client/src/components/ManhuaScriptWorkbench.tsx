@@ -2051,7 +2051,7 @@ export default function ManhuaScriptWorkbench({
       className={`${compactUi ? "mh-compact " : ""}${
         immersive
           ? "flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#0a0d14]"
-          : "mt-1 flex h-[calc(100dvh-5.75rem)] min-h-[620px] w-full min-w-[1180px] flex-col overflow-hidden rounded-xl border border-white/12 bg-[#0a0d14] shadow-[0_12px_48px_rgba(0,0,0,0.45)]"
+          : "mt-1 flex h-[calc(100dvh-5.75rem)] min-h-[620px] min-w-0 w-full flex-col overflow-hidden rounded-xl border border-white/12 bg-[#0a0d14] shadow-[0_12px_48px_rgba(0,0,0,0.45)]"
       }`}
     >
       {/* 顶栏 */}
@@ -5161,11 +5161,9 @@ export default function ManhuaScriptWorkbench({
             className={
               immersive
                 ? showCanvasDock
-                  ? // 阿硕 C2：左窄资产 · 中图卡 · 右画布占主视觉（h-full 吃满外层定高）
-                    // 中栏原来是 0.36fr，1440 屏上只剩 200px，分镜标题被挤成一行两三个字、
-                    // 资产 chips 也铺不开；中栏才是读分镜改台词的地方，给够宽度。
-                    "grid h-full min-h-0 min-w-[1360px] grid-cols-[152px_minmax(400px,0.5fr)_minmax(640px,1fr)]"
-                  : "grid h-full min-h-0 min-w-[1120px] grid-cols-[168px_minmax(280px,0.7fr)_minmax(420px,1.1fr)]"
+                  ? // 常规桌面先让三栏在当前视口内弹性收缩；极窄窗口才由外层横向滚动兜底。
+                    "grid h-full min-h-0 min-w-[840px] grid-cols-[minmax(128px,0.34fr)_minmax(300px,0.78fr)_minmax(400px,1.28fr)] xl:min-w-0 xl:grid-cols-[152px_minmax(400px,0.58fr)_minmax(560px,1.08fr)]"
+                  : "grid h-full min-h-0 min-w-[760px] grid-cols-[minmax(128px,0.38fr)_minmax(280px,0.8fr)_minmax(350px,1.15fr)] xl:min-w-0 xl:grid-cols-[168px_minmax(300px,0.72fr)_minmax(420px,1.08fr)]"
                 : "flex h-full min-h-0 w-full overflow-hidden"
             }
           >
