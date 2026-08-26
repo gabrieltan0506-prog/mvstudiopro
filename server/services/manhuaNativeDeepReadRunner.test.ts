@@ -124,6 +124,26 @@ describe("模型与通道收口", () => {
       "shots", "subtitles", "audioResolution", "beatStructureZh",
       "moodArcZh", "reusableZh", "genPromptHintZh", "classification",
     ]);
+    const audioAnalysis = NATIVE_DEEP_READ_RESPONSE_SCHEMA.properties.audioResolution
+      .items.properties.analysis;
+    expect(audioAnalysis.required).toEqual([
+      "audioTrack",
+      "audioBeatStructureZh",
+      "mixNotesZh",
+      "reusableAudioZh",
+      "genAudioHintZh",
+    ]);
+    expect(audioAnalysis.properties.audioTrack.items.required).toEqual([
+      "fromSec",
+      "toSec",
+      "emotionArcZh",
+      "toneZh",
+      "sfxZh",
+      "bgmZh",
+      "atmosphereZh",
+      "silenceZh",
+      "cues",
+    ]);
   });
 });
 
@@ -230,6 +250,8 @@ describe("每段提示词硬约束", () => {
     expect(prompt).toContain("禁止凭画面编造声音");
     expect(prompt).toContain("至少 6 段"); // 与门禁 floors.minAudioTracks 同一套数字
     expect(prompt).toContain("每一次可听见的独立声音事件");
+    expect(prompt).toContain("每条 audioTrack 必须完整输出");
+    expect(prompt).toContain("mixNotesZh");
     expect(prompt).toContain("优先压缩 subtitles，尽量保全镜头表与音轨栏的密度");
     expect(prompt).toContain("不要为省输出合并镜头");
     expect(prompt).toContain("钟表式时间");
@@ -404,6 +426,22 @@ describe("段级双密度门禁", () => {
         audioTrackOverride: 3,
       }),
     })).toThrow("音轨仅");
+  });
+
+  it("音轨原始结构省略 cues 时拒收，不让 zod 默认空数组掩盖缺栏", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    const analysis = (raw.audioResolution as Array<{ analysis: { audioTrack: Array<Record<string, unknown>> } }>)[0]!.analysis;
+    delete analysis.audioTrack[0]!.cues;
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
+      .toThrow("音轨字段不完整：缺 cues");
+  });
+
+  it("音轨汇总省略 mixNotesZh 时拒收，不让默认空串静默入库", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    const analysis = (raw.audioResolution as Array<{ analysis: Record<string, unknown> }>)[0]!.analysis;
+    delete analysis.mixNotesZh;
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
+      .toThrow("音轨汇总字段不完整：缺 mixNotesZh");
   });
 
   it("素材无音轨却返回 audioResolution 拒收", () => {

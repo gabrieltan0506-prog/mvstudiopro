@@ -51,6 +51,18 @@ describe("原生精读页面接线", () => {
     expect(PAGE).toContain("旧抽帧任务");
   });
 
+  it("owner 能力只信服务端本次回包；加载中显示中性状态且禁止发车", () => {
+    expect(PAGE).toContain(
+      "manhuaTemplateOwnerCapabilitiesQuery.data?.allowed === true",
+    );
+    expect(PAGE).toContain('{ cacheScope: manhuaLearnUserKey || "anonymous" }');
+    expect(PAGE).not.toContain("readCachedManhuaOwnerPanelFlag");
+    expect(PAGE).not.toContain("writeCachedManhuaOwnerPanelFlag");
+    expect(PAGE).toContain('const ownerTemplateCapabilityPending =');
+    expect(PAGE).toContain('"学习模型：正在确认…"');
+    expect(PAGE).toContain('|| ownerTemplateCapabilityPending');
+  });
+
   it("原生精读徽标显示真实 Qwen 模型，不拿旧抽帧模型冒充", () => {
     expect(PAGE).toContain("学习模型：${MANHUA_NATIVE_DEEP_READ_MODEL_LABEL}");
     expect(LEARN_FLOW).not.toContain("MANHUA_TEMPLATE_FRAME_VISION_LABEL");

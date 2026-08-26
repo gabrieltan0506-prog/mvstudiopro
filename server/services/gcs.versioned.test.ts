@@ -37,6 +37,19 @@ afterEach(() => {
 });
 
 describe("downloadGcsObjectVersioned / deleteGcsObject 条件删除", () => {
+  it("uploadBufferToGcs 条件覆写必须把 ifGenerationMatch 发出去", async () => {
+    stubFetch(() => ({ status: 200, body: { name: "x" } }));
+    const { uploadBufferToGcs } = await import("./gcs");
+    await uploadBufferToGcs({
+      objectName: "claims/ep001.json",
+      buffer: Buffer.from("{}"),
+      contentType: "application/json",
+      ifGenerationMatch: "88",
+    });
+    expect(calls[0]!.method).toBe("POST");
+    expect(calls[0]!.url).toContain("ifGenerationMatch=88");
+  });
+
   it("metadata 拿到 generation=77 后，媒体请求必须带 alt=media 与 generation=77", async () => {
     stubFetch((url) =>
       url.includes("alt=media")

@@ -30,21 +30,24 @@ function assertSiteOwner(user: { openId?: string | null }) {
 
 export const manhuaViralTemplateRouter = router({
   /** 仅返回能力布尔值；不向非 owner 暴露模型清单或任何模板正文。 */
-  getOwnerOptimizeCapabilities: protectedProcedure.query(async ({ ctx }) => {
-    const allowed = resolveSiteOwnerOnlyAllowed(ctx.user);
-    if (!allowed) return { allowed: false as const, models: [] };
-    const { MANHUA_VIRAL_TEMPLATE_OPTIMIZE_MODELS } = await import(
-      "../services/manhuaViralTemplateOptimize"
-    );
-    return {
-      allowed: true as const,
-      models: MANHUA_VIRAL_TEMPLATE_OPTIMIZE_MODELS.map((model) => ({
-        id: model.id,
-        labelZh: model.labelZh,
-        reasoningEffort: model.reasoningEffort,
-      })),
-    };
-  }),
+  getOwnerOptimizeCapabilities: protectedProcedure
+    // cacheScope 只用于让客户端查询键随登录身份变化；授权仍且只信 ctx.user。
+    .input(z.object({ cacheScope: z.string().min(1).max(128) }).optional())
+    .query(async ({ ctx }) => {
+      const allowed = resolveSiteOwnerOnlyAllowed(ctx.user);
+      if (!allowed) return { allowed: false as const, models: [] };
+      const { MANHUA_VIRAL_TEMPLATE_OPTIMIZE_MODELS } = await import(
+        "../services/manhuaViralTemplateOptimize"
+      );
+      return {
+        allowed: true as const,
+        models: MANHUA_VIRAL_TEMPLATE_OPTIMIZE_MODELS.map((model) => ({
+          id: model.id,
+          labelZh: model.labelZh,
+          reasoningEffort: model.reasoningEffort,
+        })),
+      };
+    }),
 
   /**
    * 编剧室 / 已登录（公开面）：只下发匿名功能卡（fail-closed 白名单 DTO，见
@@ -513,6 +516,7 @@ export const manhuaViralTemplateRouter = router({
           const spent = spentByEpisode.get(row.episodeIndex);
           return {
             episodeIndex: row.episodeIndex,
+            claimGeneration: row.claimGeneration,
             createdAtIso: row.createdAtIso,
             /** null = 回执里找不到这一集的钱，如实展示「金额未知」 */
             spentCny: typeof spent === "number" ? Math.round(spent * 100) / 100 : null,
@@ -529,6 +533,7 @@ export const manhuaViralTemplateRouter = router({
       z.object({
         seriesKey: z.string().regex(/^[0-9A-Za-z_-]{4,64}$/),
         episodeIndex: z.number().int().min(1).max(999),
+        claimGeneration: z.string().regex(/^\d+$/),
         confirmDiscard: z.literal(true),
       }),
     )
@@ -538,7 +543,11 @@ export const manhuaViralTemplateRouter = router({
         "../services/manhuaNativeDeepReadClaimAdmin"
       );
       try {
-        await discardNativeDeepReadClaimForEpisode(input.seriesKey, input.episodeIndex);
+        await discardNativeDeepReadClaimForEpisode(
+          input.seriesKey,
+          input.episodeIndex,
+          input.claimGeneration,
+        );
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         throw new TRPCError({ code: "BAD_REQUEST", message: message.slice(0, 200) || "弃置失败" });

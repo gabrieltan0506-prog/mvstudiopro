@@ -195,7 +195,17 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
                       },
                     },
                   },
-                  required: ["fromSec", "toSec", "emotionArcZh"],
+                  required: [
+                    "fromSec",
+                    "toSec",
+                    "emotionArcZh",
+                    "toneZh",
+                    "sfxZh",
+                    "bgmZh",
+                    "atmosphereZh",
+                    "silenceZh",
+                    "cues",
+                  ],
                 },
               },
               audioBeatStructureZh: { type: "STRING" },
@@ -206,6 +216,7 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
             required: [
               "audioTrack",
               "audioBeatStructureZh",
+              "mixNotesZh",
               "reusableAudioZh",
               "genAudioHintZh",
             ],
@@ -472,7 +483,7 @@ export function buildGeminiNativeDeepReadSegmentPrompt(input: {
     ? `5. audioResolution 固定为 [{"chunkIndex":${input.segmentIndex},"analysis":{…}}]，由你**亲耳所听**产出，禁止凭画面编造声音；audioTrack 与 cues 内时间用**本段局部秒**（0..${lenSec}），这是全 JSON 唯一的局部秒例外。`
     : `5. 本段素材没有音轨：audioResolution 必须返回空数组 []，禁止凭画面编造声音。`;
   const audioSoftRules = input.hasAudio
-    ? `b. 音轨按声音性质切段、连续覆盖本段；验收标准：至少 ${floors.minAudioTracks} 段、声音事件（cues 总数）至少 ${floors.minAudioCues} 条。emotionArcZh/toneZh/sfxZh/bgmZh/atmosphereZh/silenceZh 六字段如实描述；cues 尽量记录每一次可听见的独立声音事件（音效、配乐进出与变化、留白转换、语气突变）。
+    ? `b. 音轨按声音性质切段、连续覆盖本段；验收标准：至少 ${floors.minAudioTracks} 段、声音事件（cues 总数）至少 ${floors.minAudioCues} 条。每条 audioTrack 必须完整输出 emotionArcZh/toneZh/sfxZh/bgmZh/atmosphereZh/silenceZh 与 cues 七栏，禁止省略字段；确实没有某类声音时对应文本写「无」，cues 仍必须是数组。cues 记录每一次可听见的独立声音事件（音效、配乐进出与变化、留白转换、语气突变）。analysis 的 audioBeatStructureZh/mixNotesZh/reusableAudioZh/genAudioHintZh 四栏也必须完整输出。
 c. 输出预算紧张时优先压缩 subtitles，尽量保全镜头表与音轨栏的密度。`
     : "";
   const base = `你是漫剧成片的「导演手法」分析师。当前视频是全片（共 ${Math.round(input.episodeDurationSec)} 秒）的第 ${Math.round(input.startSec)}–${Math.round(input.endSec)} 秒（第 ${input.segmentIndex + 1}/${input.segmentCount} 段）${hint ? `（${hint}）` : ""}。
@@ -1092,9 +1103,9 @@ function assertVisualTextNoClock(raw: Record<string, unknown>, labelZh: string):
 
 /**
  * 段级双密度门禁（0826 双密度教训）：
- *   镜头表：绝对秒位、连续覆盖本段、镜头数 ≥ ceil(段时长/15)；
+ *   镜头表：绝对秒位、连续覆盖本段、镜头数 ≥ ceil(段时长/6)；
  *   音轨栏：audioResolution 恰好 [{chunkIndex:段号}]、audioTrack 段数
- *     ≥ max(3, ceil(段时长/45))、cues 总数 ≥ ceil(段时长/24)、
+ *     ≥ max(3, ceil(段时长/60))、cues 总数 ≥ ceil(段时长/24)、
  *     局部时间轴连续覆盖 ±0.5s（复用共享 normalize 的硬校验）。
  * 不达标＝该段拒收（带拒因重试一次由调用方负责）。
  */
@@ -1169,6 +1180,62 @@ export function assertNativeDeepReadSegmentDensity(input: {
       `第${input.segmentIndex + 1}段 audioResolution 必须恰好为 [{chunkIndex:${input.segmentIndex}}]，禁留空`,
     );
   }
+  // responseSchema 只约束 Vertex 主调用；GLM 修复与兼容通道路由仍可能省字段。
+  // 在 zod 默认值生效前检查原始对象，避免把缺栏静默补成空字符串/空 cues 后入库。
+  const rawAudioRows = Array.isArray((input.raw as Record<string, unknown>).audioResolution)
+    ? ((input.raw as Record<string, unknown>).audioResolution as unknown[])
+    : [];
+  const rawAudioEntry = rawAudioRows[0];
+  const rawAnalysis = rawAudioEntry && typeof rawAudioEntry === "object" && !Array.isArray(rawAudioEntry)
+    ? (rawAudioEntry as Record<string, unknown>).analysis
+    : undefined;
+  if (!rawAnalysis || typeof rawAnalysis !== "object" || Array.isArray(rawAnalysis)) {
+    throw gateError(`第${input.segmentIndex + 1}段音轨 analysis 缺失或格式无效`);
+  }
+  const rawAnalysisRecord = rawAnalysis as Record<string, unknown>;
+  const requiredAnalysisFields = [
+    "audioTrack",
+    "audioBeatStructureZh",
+    "mixNotesZh",
+    "reusableAudioZh",
+    "genAudioHintZh",
+  ];
+  const missingAnalysisFields = requiredAnalysisFields.filter(
+    (field) => !Object.prototype.hasOwnProperty.call(rawAnalysisRecord, field),
+  );
+  if (missingAnalysisFields.length > 0) {
+    throw gateError(
+      `第${input.segmentIndex + 1}段音轨汇总字段不完整：缺 ${missingAnalysisFields.join("、")}`,
+    );
+  }
+  const requiredTrackFields = [
+    "fromSec",
+    "toSec",
+    "emotionArcZh",
+    "toneZh",
+    "sfxZh",
+    "bgmZh",
+    "atmosphereZh",
+    "silenceZh",
+    "cues",
+  ];
+  const rawTracks = Array.isArray(rawAnalysisRecord.audioTrack)
+    ? rawAnalysisRecord.audioTrack
+    : [];
+  for (let trackIndex = 0; trackIndex < rawTracks.length; trackIndex += 1) {
+    const rawTrack = rawTracks[trackIndex];
+    if (!rawTrack || typeof rawTrack !== "object" || Array.isArray(rawTrack)) {
+      throw gateError(`第${input.segmentIndex + 1}段第${trackIndex + 1}条音轨格式无效`);
+    }
+    const missingTrackFields = requiredTrackFields.filter(
+      (field) => !Object.prototype.hasOwnProperty.call(rawTrack, field),
+    );
+    if (missingTrackFields.length > 0) {
+      throw gateError(
+        `第${input.segmentIndex + 1}段第${trackIndex + 1}条音轨字段不完整：缺 ${missingTrackFields.join("、")}`,
+      );
+    }
+  }
   const analysis = manhuaNativeAudioChunkAnalysisSchema.parse(audioResolution[0]!.analysis);
   if (analysis.audioTrack.length < floors.minAudioTracks) {
     throw gateError(
@@ -1190,7 +1257,7 @@ export function assertNativeDeepReadSegmentDensity(input: {
 
 /**
  * 整集证据门禁（段卡合并后再跑一遍）：
- * 全部段齐、镜头轴 0..durationSec 连续全覆盖、整集镜头数 ≥ ceil(时长/15)、
+ * 全部段齐、镜头轴 0..durationSec 连续全覆盖、整集镜头数 ≥ ceil(时长/6)、
  * 有音轨时 audioResolution 段号恰好 0..n-1。
  */
 export function assertNativeDeepReadEpisodeEvidence(input: {
