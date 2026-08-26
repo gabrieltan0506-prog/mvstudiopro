@@ -551,7 +551,7 @@ describe("超预算整集的转码压体积（64MB 预算保持不变）", () =>
   });
 
   it("整集切片超预算时逐片转码后再上传", async () => {
-    const runMedia = vi.fn(async (cmd: string) =>
+    const runMedia = vi.fn(async (cmd: string, _args: string[]) =>
       cmd === "ffprobe" ? JSON.stringify({ streams: [{ index: 1 }] }) : "");
     const statLocal = vi.fn()
       .mockResolvedValueOnce({ size: 60 * MB })
