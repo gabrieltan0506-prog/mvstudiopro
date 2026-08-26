@@ -40,6 +40,7 @@ import {
   acquireNativeDeepReadEpisodeClaim,
   recordNativeDeepReadClaimFailure,
 } from "./manhuaNativeDeepReadClaim.js";
+import { clearNativeDeepReadSegmentCacheForEpisode } from "./manhuaNativeDeepReadSegmentCache.js";
 import {
   finalizeManhuaNativeDirectAudioAnalysis,
   noAudioManhuaNativeDirectAnalysis,
@@ -590,6 +591,8 @@ export async function runNativeDeepReadBatch(input: {
           sourceDurationSec: episode.durationSec,
           hintZh: episode.laneHintZh,
         }],
+        // 段级产物缓存（0826 拍板）：失败集重跑只买没成的段
+        segmentCacheSeriesKey: input.seriesKey,
         abortSignal: input.abortSignal,
         onModelReceipt: async (receipt) => {
           if (receipt.status === "started") paidEpisodeIndexes.add(episode.episodeIndex);
@@ -625,6 +628,19 @@ export async function runNativeDeepReadBatch(input: {
         console.warn(
           `[nativeDeepRead] 第${episode.episodeIndex}集已入库，占位清理待核对：`,
           error instanceof Error ? error.message : error,
+        );
+      }
+      // 集卡已是真源：清掉段缓存，防过期缓存日后误导（旁路，失败不影响结果）
+      try {
+        await clearNativeDeepReadSegmentCacheForEpisode({
+          seriesKey: input.seriesKey,
+          episodeIndex: episode.episodeIndex,
+          segmentCount: episode.segments.length,
+        });
+      } catch (cacheError) {
+        console.warn(
+          `[nativeDeepRead] 第${episode.episodeIndex}集段缓存清理待核对：`,
+          cacheError instanceof Error ? cacheError.message : cacheError,
         );
       }
       alreadyIngested.add(episode.episodeIndex);

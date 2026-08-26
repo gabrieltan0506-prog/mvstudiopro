@@ -28,6 +28,7 @@ import {
   resolveNativeDeepReadRequestFps,
   resolveNativeDeepReadSegmentFloors,
   resolveNativeDeepReadTranscodeVideoKbps,
+  nativeDeepReadSegmentCacheFingerprint,
   runManhuaNativeDeepReadBatch,
   validateNativeDeepReadSegments,
   type NativeDeepReadBatchRunnerDeps,
@@ -710,6 +711,8 @@ function makeRunnerDeps(over: Partial<NativeDeepReadBatchRunnerDeps> = {}): Nati
         hasAudio: true,
       }))) as never,
     remove: vi.fn(async () => undefined),
+    readSegmentCache: vi.fn(async () => null) as never,
+    writeSegmentCache: vi.fn(async () => undefined) as never,
     postVertex: vi.fn() as never,
     postEvolink: vi.fn() as never,
     signReadUrl: vi.fn(() => "https://storage.googleapis.com/signed.mp4"),
@@ -961,5 +964,114 @@ describe("坏 JSON 收敛为门禁类可重试错误（0826 实弹第8集）", (
     const bad = '前导杂讯 {"episodes": [{"episodeIndex" 8}]} 尾部';
     expect(() => parseJsonObject(bad)).toThrow("没有返回可解析的 JSON 对象");
     expect(() => parseJsonObject("完全不是 JSON")).toThrow("没有返回可解析的 JSON 对象");
+  });
+});
+
+describe("段级产物缓存（0826 拍板：成功段的钱永不重买）", () => {
+  const segment = { startSec: 0, endSec: 60 };
+  const episode = {
+    episodeIndex: 3,
+    resolveNodes: async () => [],
+    segments: [segment],
+    sourceDurationSec: 60,
+  };
+
+  it("指纹是 64 位 hex 且两次调用一致（memo 稳定）", () => {
+    const a = nativeDeepReadSegmentCacheFingerprint();
+    expect(a).toMatch(/^[0-9a-f]{64}$/);
+    expect(nativeDeepReadSegmentCacheFingerprint()).toBe(a);
+  });
+
+  it("缓存命中：不备料、不调模型、零计费，产出照常装配且发 cache_hit 回执", async () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    const receipts: Array<{ route: string; status: string; priceEquivalentCny?: number }> = [];
+    const deps = makeRunnerDeps({
+      readSegmentCache: vi.fn(async () => ({
+        fingerprint: nativeDeepReadSegmentCacheFingerprint(),
+        seriesKey: "cacheSeries01",
+        episodeIndex: 3,
+        segmentIndex: 0,
+        startSec: 0,
+        endSec: 60,
+        hasAudio: true,
+        raw,
+        paidUsage: {
+          inputTokens: 100_000, outputTokens: 2_500,
+          audioInputTokens: 8_000, reasoningTokens: 500, costCny: 1.08,
+        },
+        savedAtIso: "2026-08-26T12:00:00.000Z",
+      })) as never,
+    });
+    const result = await runManhuaNativeDeepReadBatch({
+      episodes: [episode],
+      segmentCacheSeriesKey: "cacheSeries01",
+      onModelReceipt: (receipt) => {
+        receipts.push({
+          route: receipt.route,
+          status: receipt.status,
+          priceEquivalentCny: receipt.priceEquivalentCny,
+        });
+      },
+    }, deps);
+    expect(deps.prepareVideos).not.toHaveBeenCalled();
+    expect(deps.postVertex).not.toHaveBeenCalled();
+    expect(deps.writeSegmentCache).not.toHaveBeenCalled();
+    const only = result.episodes[0]!.result;
+    expect(only.usage.inputTokens).toBe(0);
+    expect(only.usage.costCny).toBe(0);
+    // 音轨 token 快照随行作「真听过」证据
+    expect(only.audioInputTokens).toBe(8_000);
+    expect(only.shotCount).toBeGreaterThan(0);
+    // 集级装配门禁（local_schema_gate）回执照发；缓存命中回执单独校验
+    expect(receipts.filter((row) => row.route === "segment_cache_hit")).toEqual([
+      { route: "segment_cache_hit", status: "completed", priceEquivalentCny: 0 },
+    ]);
+    expect(receipts.some((row) => row.route === "vertex_gcs_video")).toBe(false);
+  });
+
+  it("指纹不符按 miss：照常付费调用，成功后写通缓存（带当前指纹）", async () => {
+    const good = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    const deps = makeRunnerDeps({
+      readSegmentCache: vi.fn(async () => ({
+        fingerprint: "deadbeef",
+        seriesKey: "cacheSeries01",
+        episodeIndex: 3,
+        segmentIndex: 0,
+        startSec: 0,
+        endSec: 60,
+        hasAudio: true,
+        raw: good,
+        paidUsage: { inputTokens: 1, outputTokens: 1, audioInputTokens: 1, reasoningTokens: 0, costCny: 0.01 },
+        savedAtIso: "2026-08-26T12:00:00.000Z",
+      })) as never,
+      postVertex: vi.fn(async () => geminiResponse(good)) as never,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const result = await runManhuaNativeDeepReadBatch({
+        episodes: [episode],
+        segmentCacheSeriesKey: "cacheSeries01",
+      }, deps);
+      expect(deps.postVertex).toHaveBeenCalledTimes(1);
+      expect(deps.writeSegmentCache).toHaveBeenCalledTimes(1);
+      const written = (deps.writeSegmentCache as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+        fingerprint: string; segmentIndex: number; raw: Record<string, unknown>;
+      };
+      expect(written.fingerprint).toBe(nativeDeepReadSegmentCacheFingerprint());
+      expect(written.segmentIndex).toBe(0);
+      expect(result.episodes[0]!.result.usage.inputTokens).toBeGreaterThan(0);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("不传 segmentCacheSeriesKey：读写缓存一次都不碰（旁路/CLI 语义不变）", async () => {
+    const good = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    const deps = makeRunnerDeps({
+      postVertex: vi.fn(async () => geminiResponse(good)) as never,
+    });
+    await runManhuaNativeDeepReadBatch({ episodes: [episode] }, deps);
+    expect(deps.readSegmentCache).not.toHaveBeenCalled();
+    expect(deps.writeSegmentCache).not.toHaveBeenCalled();
   });
 });

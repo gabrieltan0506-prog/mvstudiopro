@@ -56,6 +56,11 @@ import {
   getVertexAuthHeaders,
   getVertexProjectId,
 } from "./vertexMedia.js";
+import {
+  readNativeDeepReadSegmentCacheEntry,
+  writeNativeDeepReadSegmentCacheEntry,
+  type NativeDeepReadSegmentCacheEntry,
+} from "./manhuaNativeDeepReadSegmentCache.js";
 
 /** 生产开关：未开时学习链路完全走原有抽帧，零行为变化 */
 export function isManhuaNativeDeepReadEnabled(): boolean {
@@ -534,6 +539,29 @@ export function buildGeminiNativeDeepReadSegmentRequest(input: {
     }],
     generationConfig: input.generationConfig || NATIVE_DEEP_READ_GENERATION_CONFIG,
   };
+}
+
+/**
+ * 段缓存参数指纹：PLAN_VERSION + generationConfig + 提示词模板（含/不含音轨两个典型实例）。
+ * 任何会改变模型产出口径的改动都会翻新指纹，旧缓存自动作废——缓存永远不冒充新标准的产出。
+ */
+let segmentCacheFingerprintMemo: string | null = null;
+export function nativeDeepReadSegmentCacheFingerprint(): string {
+  if (segmentCacheFingerprintMemo) return segmentCacheFingerprintMemo;
+  const canonical = [
+    NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
+    JSON.stringify(NATIVE_DEEP_READ_GENERATION_CONFIG),
+    buildGeminiNativeDeepReadSegmentPrompt({
+      episodeDurationSec: 3600, startSec: 0, endSec: 360,
+      segmentIndex: 0, segmentCount: 10, hasAudio: true,
+    }),
+    buildGeminiNativeDeepReadSegmentPrompt({
+      episodeDurationSec: 3600, startSec: 0, endSec: 360,
+      segmentIndex: 0, segmentCount: 10, hasAudio: false,
+    }),
+  ].join("\n⊞\n");
+  segmentCacheFingerprintMemo = crypto.createHash("sha256").update(canonical, "utf8").digest("hex");
+  return segmentCacheFingerprintMemo;
 }
 
 /* ────────────────── HTTP 通道（Vertex 主线 / EvoLink 兜底） ────────────────── */
@@ -1429,6 +1457,8 @@ export type NativeDeepReadBatchRunnerDeps = {
   postEvolink: typeof postEvolinkNativeDeepRead;
   signReadUrl: typeof signGsUriV4ReadUrl;
   invokeGlmStructuring: typeof invokeNativeDeepReadGlmStructuring;
+  readSegmentCache: typeof readNativeDeepReadSegmentCacheEntry;
+  writeSegmentCache: typeof writeNativeDeepReadSegmentCacheEntry;
 };
 
 const defaultBatchRunnerDeps: NativeDeepReadBatchRunnerDeps = {
@@ -1438,6 +1468,8 @@ const defaultBatchRunnerDeps: NativeDeepReadBatchRunnerDeps = {
   postEvolink: postEvolinkNativeDeepRead,
   signReadUrl: signGsUriV4ReadUrl,
   invokeGlmStructuring: invokeNativeDeepReadGlmStructuring,
+  readSegmentCache: readNativeDeepReadSegmentCacheEntry,
+  writeSegmentCache: writeNativeDeepReadSegmentCacheEntry,
 };
 
 type GeminiEnvelope = {
@@ -1466,6 +1498,8 @@ type SegmentAttemptResult = {
   outputTokens: number;
   audioInputTokens: number;
   reasoningTokens: number;
+  /** 本次尝试的实付（缓存写入快照用；总账已在循环内入账） */
+  costCny: number;
   finishReason?: string;
   providerRequestId?: string;
 };
@@ -1493,6 +1527,8 @@ export async function runManhuaNativeDeepReadBatch(params: {
   episodes: readonly NativeDeepReadBatchRunEpisode[];
   abortSignal?: AbortSignal;
   onModelReceipt?: (receipt: NativeDeepReadVisualModelReceipt) => void | Promise<void>;
+  /** 传入即启用段级产物缓存（0826 拍板）：命中段免调用零计费；旁路/CLI 不传=不碰缓存 */
+  segmentCacheSeriesKey?: string;
 }, deps: NativeDeepReadBatchRunnerDeps = defaultBatchRunnerDeps): Promise<NativeDeepReadBatchRunResult> {
   if (!params.episodes.length) throw new Error("多视频精读批次为空");
   const seen = new Set<number>();
@@ -1523,20 +1559,91 @@ export async function runManhuaNativeDeepReadBatch(params: {
   const preparedByEpisode: Array<{
     episode: (typeof validated)[number];
     videos: PreparedNativeVideo[];
+    /** 段级缓存命中（0826 拍板）：命中段免调用零计费；key=segmentIndex */
+    cachedSegments: Map<number, NativeDeepReadSegmentCacheEntry>;
   }> = [];
   const episodes: NativeDeepReadBatchRunResult["episodes"] = [];
+  const segmentCacheFingerprint = params.segmentCacheSeriesKey
+    ? nativeDeepReadSegmentCacheFingerprint()
+    : "";
   try {
     for (const episode of validated) {
-      preparedByEpisode.push({
-        episode,
-        videos: await deps.prepareVideos(episode, params.abortSignal),
-      });
+      // 备料前先查段缓存：命中的段连切段/上传都省掉
+      const cachedSegments = new Map<number, NativeDeepReadSegmentCacheEntry>();
+      if (params.segmentCacheSeriesKey) {
+        for (let segmentIndex = 0; segmentIndex < episode.segments.length; segmentIndex += 1) {
+          const segment = episode.segments[segmentIndex]!;
+          const entry = await deps.readSegmentCache({
+            seriesKey: params.segmentCacheSeriesKey,
+            episodeIndex: episode.episodeIndex,
+            segmentIndex,
+          });
+          if (!entry) continue;
+          if (
+            entry.fingerprint !== segmentCacheFingerprint
+            || Math.abs(entry.startSec - segment.startSec) > 0.01
+            || Math.abs(entry.endSec - segment.endSec) > 0.01
+          ) {
+            console.warn(
+              `[nativeDeepRead] 第${episode.episodeIndex}集第${segmentIndex + 1}段缓存指纹/秒位不符（参数或切段已换代），按 miss 处理`,
+            );
+            continue;
+          }
+          try {
+            // 缓存必须过**当前**门禁才算数：门禁收紧后旧缓存自动失效
+            assertNativeDeepReadSegmentDensity({
+              episodeIndex: episode.episodeIndex,
+              segmentIndex,
+              startSec: segment.startSec,
+              endSec: segment.endSec,
+              hasAudio: entry.hasAudio,
+              raw: entry.raw,
+            });
+          } catch (gateErr) {
+            console.warn(
+              `[nativeDeepRead] 第${episode.episodeIndex}集第${segmentIndex + 1}段缓存复验未过当前门禁，按 miss 处理：${
+                gateErr instanceof Error ? gateErr.message : gateErr
+              }`,
+            );
+            continue;
+          }
+          cachedSegments.set(segmentIndex, entry);
+        }
+      }
+      const pendingSegments = episode.segments.filter((_, index) => !cachedSegments.has(index));
+      let videos = pendingSegments.length
+        ? await deps.prepareVideos({ ...episode, segments: pendingSegments }, params.abortSignal)
+        : [];
+      // hasAudio 一致性：新备段实测与缓存记录不符→保守弃缓存并二次补备（缓存只能省钱不能改口径）
+      if (videos.length && cachedSegments.size) {
+        const preparedHasAudio = videos[0]!.hasAudio === true;
+        const mismatched = Array.from(cachedSegments.entries())
+          .filter(([, entry]) => entry.hasAudio !== preparedHasAudio);
+        if (mismatched.length) {
+          console.warn(
+            `[nativeDeepRead] 第${episode.episodeIndex}集 ${mismatched.length} 段缓存 hasAudio 与实测不符，弃用并补备`,
+          );
+          for (const [segmentIndex] of mismatched) cachedSegments.delete(segmentIndex);
+          const refill = episode.segments.filter((segment, index) =>
+            !cachedSegments.has(index)
+            && !videos.some((video) => Math.abs(video.startSec - segment.startSec) < 0.01));
+          if (refill.length) {
+            videos = videos.concat(
+              await deps.prepareVideos({ ...episode, segments: refill }, params.abortSignal),
+            );
+          }
+        }
+      }
+      preparedByEpisode.push({ episode, videos, cachedSegments });
     }
 
-    for (const { episode, videos } of preparedByEpisode) {
+    for (const { episode, videos, cachedSegments } of preparedByEpisode) {
       params.abortSignal?.throwIfAborted();
       const episodeRequestId = validated.length === 1 ? batchRequestId : crypto.randomUUID();
-      const hasAudio = videos[0]?.hasAudio === true;
+      // 全段缓存命中时没有新备视频，hasAudio 取自缓存记录（写入时来自当轮实测）
+      const hasAudio = videos.length
+        ? videos[0]!.hasAudio === true
+        : Array.from(cachedSegments.values())[0]?.hasAudio === true;
       const segmentCount = episode.segments.length;
       const rawSegments: Array<Record<string, unknown>> = [];
       let episodeInput = 0;
@@ -1693,6 +1800,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
             outputTokens: attemptOutput,
             audioInputTokens: attemptAudioInput,
             reasoningTokens: Math.max(0, Number(usage?.thoughtsTokenCount) || 0),
+            costCny: attemptCost,
             finishReason: candidate?.finishReason,
             providerRequestId: response.requestId,
           };
@@ -1800,6 +1908,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
             outputTokens: structured.outputTokens,
             audioInputTokens: 0,
             reasoningTokens: structured.reasoningTokens,
+            costCny: structuringCostCny,
             finishReason: structured.finishReason,
             providerRequestId: structured.providerRequestId,
           };
@@ -1922,7 +2031,35 @@ export async function runManhuaNativeDeepReadBatch(params: {
 
       for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
         params.abortSignal?.throwIfAborted();
-        const video = videos[segmentIndex]!;
+        const segment = episode.segments[segmentIndex]!;
+        const cachedEntry = cachedSegments.get(segmentIndex);
+        if (cachedEntry) {
+          // 缓存命中：免调用零计费；音轨 token 快照随行作「真听过」证据
+          episodeAudioInput += Math.max(0, Number(cachedEntry.paidUsage?.audioInputTokens) || 0);
+          await emitVisualModelReceipt({
+            callId: crypto.randomUUID(),
+            model: NATIVE_DEEP_READ_MODEL,
+            route: "segment_cache_hit",
+            stage: "visual_model",
+            status: "completed",
+            batchRequestId: episodeRequestId,
+            episodeIndexes: [episode.episodeIndex],
+            chunkIndex: segmentIndex,
+            segmentCount: episode.segments.length,
+            videoCount: 1,
+            inputTokens: 0,
+            outputTokens: 0,
+            priceEquivalentCny: 0,
+            finishReason: "CACHED",
+          }, params.onModelReceipt);
+          rawSegments.push(cachedEntry.raw);
+          continue;
+        }
+        // 备料按秒位对号：命中段没备视频，videos 与 segmentIndex 不再一一对应
+        const video = videos.find((row) => Math.abs(row.startSec - segment.startSec) < 0.01);
+        if (!video) {
+          throw new Error(`第${episode.episodeIndex}集第${segmentIndex + 1}段缺备料视频（缓存/备料装配不一致），停止`);
+        }
         const fps = resolveNativeDeepReadRequestFps(video.endSec - video.startSec);
         let result: SegmentAttemptResult;
         try {
@@ -1962,6 +2099,34 @@ export async function runManhuaNativeDeepReadBatch(params: {
             segmentIndex,
             fps,
           });
+        }
+        if (params.segmentCacheSeriesKey) {
+          // 写通段缓存（旁路，失败只 warn）：这段的钱已花，产出从此不再重买
+          try {
+            await deps.writeSegmentCache({
+              fingerprint: segmentCacheFingerprint,
+              seriesKey: params.segmentCacheSeriesKey,
+              episodeIndex: episode.episodeIndex,
+              segmentIndex,
+              startSec: segment.startSec,
+              endSec: segment.endSec,
+              hasAudio,
+              raw: result.raw,
+              paidUsage: {
+                inputTokens: result.inputTokens,
+                outputTokens: result.outputTokens,
+                audioInputTokens: result.audioInputTokens,
+                reasoningTokens: result.reasoningTokens,
+                costCny: result.costCny,
+              },
+              savedAtIso: new Date().toISOString(),
+            });
+          } catch (cacheError) {
+            console.warn(
+              `[nativeDeepRead] 第${episode.episodeIndex}集第${segmentIndex + 1}段缓存写入失败（不影响本轮）：`,
+              cacheError instanceof Error ? cacheError.message : cacheError,
+            );
+          }
         }
         rawSegments.push(result.raw);
       }
