@@ -835,19 +835,26 @@ export async function prepareEpisodeVideos(
 
 /* ────────────────── 段级密度门禁与整集证据门禁 ────────────────── */
 
-function parseJsonObject(text: string): Record<string, unknown> {
+export function parseJsonObject(text: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(text) as unknown;
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       return parsed as Record<string, unknown>;
     }
   } catch {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (match) {
-      const parsed = JSON.parse(match[0]) as unknown;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
+    // 兜底解析也必须包 try：0826 实弹第8集,模型坏 JSON 在这里抛原始 SyntaxError
+    // （"Expected ':' after property name…"）,绕过下方标准文案 → 重试分类器不认,
+    // 该重试一次的没重试,整集停机保占位。任何解析失败都必须收敛到标准门禁文案。
+    try {
+      const match = text.match(/\{[\s\S]*\}/);
+      if (match) {
+        const parsed = JSON.parse(match[0]) as unknown;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
       }
+    } catch {
+      // 落到统一 throw
     }
   }
   throw new Error("原生精读没有返回可解析的 JSON 对象");
@@ -1352,6 +1359,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
           batchRequestId: episodeRequestId,
           episodeIndexes: [episode.episodeIndex],
           chunkIndex: input.segmentIndex,
+          segmentCount: episode.segments.length,
           videoCount: 1,
           degraded: degraded || undefined,
         }, params.onModelReceipt);
@@ -1414,6 +1422,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
             batchRequestId: episodeRequestId,
             episodeIndexes: [episode.episodeIndex],
             chunkIndex: input.segmentIndex,
+          segmentCount: episode.segments.length,
             videoCount: 1,
             elapsedMs: Date.now() - startedAt,
             inputTokens: attemptInput,
@@ -1469,6 +1478,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
               batchRequestId: episodeRequestId,
               episodeIndexes: [episode.episodeIndex],
               chunkIndex: input.segmentIndex,
+          segmentCount: episode.segments.length,
               videoCount: 1,
               elapsedMs: Date.now() - startedAt,
               errorZh: (error instanceof Error ? error.message : String(error)).slice(0, 2_000),

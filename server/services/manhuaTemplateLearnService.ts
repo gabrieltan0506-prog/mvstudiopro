@@ -2494,9 +2494,12 @@ export async function runManhuaTemplateLearn(
               : checkpoint.degraded
                 ? "画面与声音联合精读（EvoLink 兜底 1fps 降级）"
                 : "画面与声音联合精读";
+            const segmentZh = typeof checkpoint.chunkIndex === "number" && checkpoint.segmentCount
+              ? ` · 分片 ${checkpoint.chunkIndex + 1}/${checkpoint.segmentCount}`
+              : "";
             await progress(
               checkpoint.status === "failed" ? MANHUA_LEARN_STAGE.failed : MANHUA_LEARN_STAGE.vision,
-              `${episodeLabel} · ${stageZh}${checkpoint.status === "started"
+              `${episodeLabel}${segmentZh} · ${stageZh}${checkpoint.status === "started"
                 ? "开始"
                 : checkpoint.status === "completed"
                   ? "完成"

@@ -25,6 +25,8 @@ export type ManhuaNativeModelReceipt = {
   finishedAtIso?: string;
   episodeIndexes: number[];
   chunkIndex?: number;
+  /** 本集分片总数：供进度文案显示「分片 X/N」，防「完成」误读为整集完成 */
+  segmentCount?: number;
   variant?: "mono_16k" | "stereo_32k";
   batchRequestId?: string;
   videoCount?: number;

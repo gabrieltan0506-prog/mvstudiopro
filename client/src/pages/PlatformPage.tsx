@@ -3101,8 +3101,12 @@ export default function PlatformPage() {
       staleTime: 5 * 60_000,
       retry: false,
     });
+  // 直载新面板（0826 用户拍板）：能力确认返回前按已授权**乐观渲染**——
+  // 所有人不再先看旧抽帧面板等查询;确认结果只把真无权限者回落旧面板。
   const ownerTemplateOptimizeAllowed =
-    manhuaTemplateOwnerCapabilitiesQuery.data?.allowed === true;
+    manhuaTemplateOwnerCapabilitiesQuery.data
+      ? manhuaTemplateOwnerCapabilitiesQuery.data.allowed === true
+      : manhuaTemplateOwnerCapabilitiesQuery.isLoading;
   const ownerTemplateOptimizeModels =
     manhuaTemplateOwnerCapabilitiesQuery.data?.models || [];
   const ownerNativeDeepReadPanel =
@@ -12252,11 +12256,9 @@ export default function PlatformPage() {
                         </span>
                         <span className="rounded-md border border-[#8cefff]/20 bg-black/25 px-2 py-1 text-[10px] font-semibold text-[#8cefff]">
                           {canSeeManhuaLearnTechnicalDetails
-                            ? manhuaTemplateOwnerCapabilitiesQuery.isLoading
-                              ? "学习模型：正在确认…"
-                              : ownerNativeDeepReadPanel
-                                ? `学习模型：${MANHUA_NATIVE_DEEP_READ_MODEL_LABEL} · 原生视频精读`
-                                : `模型：${MANHUA_TEMPLATE_FRAME_VISION_LABEL}`
+                            ? ownerNativeDeepReadPanel
+                              ? `学习模型：${MANHUA_NATIVE_DEEP_READ_MODEL_LABEL} · 原生视频精读`
+                              : `模型：${MANHUA_TEMPLATE_FRAME_VISION_LABEL}`
                             : "学习方式：云端按集处理"}
                         </span>
                       </div>
@@ -12265,9 +12267,7 @@ export default function PlatformPage() {
                         <div className="mt-3 rounded-xl border border-white/10 bg-black/25 px-3 py-2.5">
                           <div className="text-[11px] font-semibold text-[#c9c0e6]/90">贴链接学节奏</div>
                           <p className="mt-0.5 text-[10px] text-[#c9c0e6]/45">
-                            {manhuaTemplateOwnerCapabilitiesQuery.isLoading
-                              ? "正在确认原生精读权限…"
-                              : manhuaLearnPipelineMeta.summaryZh}
+                            {manhuaLearnPipelineMeta.summaryZh}
                           </p>
                           <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                             <input
