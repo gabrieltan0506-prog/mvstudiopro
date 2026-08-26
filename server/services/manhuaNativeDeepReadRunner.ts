@@ -501,7 +501,7 @@ c. 输出预算紧张时优先压缩 subtitles，尽量保全镜头表与音轨�
 4. 分析描述不写外部平台剧名、商标或原台词；subtitles 是唯一例外——逐字照抄画面上真实出现的字幕，看不清写「[不可辨]」，禁止按剧情补全或从声音猜字。
 ${audioHardRule}
 建议（软边界，按素材实际情况尽量做到）：
-a. 这类漫剧的真实节奏通常 2–5 秒一镜，按真实发生的切换逐镜记录，不要为省输出合并镜头。验收标准（与入库门禁同一套数字）：本段至少 ${floors.minShots} 镜、平均每镜不超过 ${NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC} 秒；超过 ${NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC} 秒的长镜头（如标题卡/长定场）至多 1 个且不超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。
+a. 这类漫剧的真实节奏通常 2–5 秒一镜，按真实发生的切换逐镜记录，不要为省输出合并镜头。一个剧情段落通常由多个镜头切换组成——**不要把「剧情段」当成一个镜头**，每次画面切换（机位/景别/场景变化）都是新的一镜。验收标准（与入库门禁同一套数字）：本段至少 ${floors.minShots} 镜、平均每镜不超过 ${NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC} 秒；超过 ${NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC} 秒的长镜头（如标题卡/长定场）至多 1 个且不超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。
 ${audioSoftRules}
 d. reusableZh 尽量写成脱离本剧剧情的通用做法；classification 建议只写从本段真实证据提炼的特征标签（避免古言/逆袭/系统/甜宠等题材词），每类可多项。`;
   return input.rejectedReasonZh
