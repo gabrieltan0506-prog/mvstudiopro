@@ -113,14 +113,6 @@ function routePrices(route: NativeDeepReadVisualRoute): { inPerM: number; outPer
 }
 
 /**
- * 生产 generationConfig 定稿（0826 实弹验证，三种 thinking 写法均 200）：
- * 显式高思考档；不开 includeThoughts（思考不得混进输出 JSON）；
- * temperature 显式 0.8（EvoLink 文档自述 Gemini 3.x 采样参数不影响输出——
- * 兜底路照写不报错即可）；maxOutputTokens 取模型上限 65535。
- * 六栏 schema 复杂，先用 responseMimeType + 提示词硬约束 + 入库门禁，
- * 不强上 responseSchema。
- */
-/**
  * Vertex responseSchema（0826 参数定稿）：与 nativeDeepReadSegmentSchema /
  * manhuaNativeAudioChunkAnalysisSchema 同构的结构骨架。只靠 responseMimeType
  * 不足以保证字段与数组结构正确——schema 约束「可解析、字段齐」，
@@ -251,13 +243,10 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
 } as const;
 
 /**
- * 0826 参数定稿（探针实证坏 JSON 非截断：ep10 段1 finish=STOP、正文 12,401 tok
- * 远低于上限）：temperature 0.8→0.65（结构化证据抽取不需要高随机性）、
- * maxOutputTokens 用官方值 65_536、candidateCount 1、补 responseSchema、
- * thinkingLevel HIGH（官方枚举大写；3.1 Pro 不能关思考，禁止传 thinkingBudget）。
+ * 0826 参数定稿：temperature 0.75、maxOutputTokens 65_536、单候选、
+ * responseSchema、thinkingLevel HIGH；思考过程不进入输出 JSON。
  */
 export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
-  // 0826 用户二次拍板：0.65 探针实证密度被压（83→28 镜），回调到 0.75
   temperature: 0.75,
   maxOutputTokens: 65_536,
   candidateCount: 1,
