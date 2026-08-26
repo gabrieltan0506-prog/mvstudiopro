@@ -365,6 +365,25 @@ describe("段级双密度门禁", () => {
     (raw.shots as Array<{ startSec: number }>).splice(1, 1);
     expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw })).toThrow("空档或重叠");
   });
+
+  it("视觉描述文本含钟表式秒位拒收（assertNoClockText 口径）", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    (raw.shots as Array<{ cameraMoveZh?: string }>)[0]!.cameraMoveZh = "在01:23处推近";
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw })).toThrow("钟表式秒位");
+  });
+
+  it("描述文本秒位门禁不误伤动作时长与文本栏字段", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    (raw.shots as Array<{ cameraMoveZh?: string }>)[0]!.cameraMoveZh = "1.2秒内从中景推到特写";
+    raw.moodArcZh = "压抑→第8秒转折→爆发";
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw })).not.toThrow();
+  });
+
+  it("subtitles 是钟表文本唯一例外（画面证据逐字照抄）", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    (raw.subtitles as Array<{ atSec: number; textZh: string }>)[0]!.textZh = "倒计时 01:23";
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw })).not.toThrow();
+  });
 });
 
 describe("整集证据门禁（段卡合并后再跑一遍，GLM 之后同样要过）", () => {

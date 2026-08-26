@@ -165,6 +165,11 @@ function assertNoClockText(value: unknown): void {
   }
 }
 
+/** assertNoClockText 同口径的布尔探测：供视觉描述文本门禁复用（MM:SS 钟表式）。 */
+export function hasClockTextZh(value: unknown): boolean {
+  return CLOCK_RE.test(String(value || ""));
+}
+
 /**
  * 剥离文本里的钟表式秒位（0826 用户拍板）：数字字段是唯一时间真源，
  * 散文里的 MM:SS 定义上就是冗余或幻觉——直接删除，不再整轮拒收重买。
