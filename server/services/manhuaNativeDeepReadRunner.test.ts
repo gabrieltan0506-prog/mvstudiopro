@@ -95,9 +95,9 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("adaptive-1800f-360s-v4-gemini");
   });
 
-  it("generationConfig 按 0826 参数定稿：温度 0.65、官方上限 65_536、单候选、responseSchema、HIGH 思考不外发", () => {
+  it("generationConfig 按 0826 参数定稿（二次拍板 0.75）：官方上限 65_536、单候选、responseSchema、HIGH 思考不外发", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG).toEqual({
-      temperature: 0.65,
+      temperature: 0.75,
       maxOutputTokens: 65_536,
       candidateCount: 1,
       audioTimestamp: true,
@@ -138,24 +138,24 @@ describe("两档 fps（0826 拍板：≤180s→10，否则5，永不更低）", 
 });
 
 describe("双密度地板线（0826 双密度教训）", () => {
-  it("360s 段：镜头 ≥24、音轨段 ≥6（0826 病历单问题三：45→60，7 段真实产出不再误拒）、声音事件 ≥15", () => {
+  it("360s 段：镜头 ≥60（0826 用户拍板时长制 len/6）、音轨段 ≥6、声音事件 ≥15", () => {
     expect(resolveNativeDeepReadSegmentFloors(360)).toEqual({
-      minShots: 24,
+      minShots: 60,
       minAudioTracks: 6,
       minAudioCues: 15,
     });
   });
   it("60s 短段音轨地板降为 1（间隔 60 后与 FLOOR_MIN=1 兼容）", () => {
     expect(resolveNativeDeepReadSegmentFloors(60)).toEqual({
-      minShots: 4,
+      minShots: 10,
       minAudioTracks: 1,
       minAudioCues: 3,
     });
   });
 
-  it("29s 微尾段地板宽松到可真实达标（1 段音轨/2 镜/2 事件），不再必拒收", () => {
+  it("29s 微尾段：时长制下 5 镜起（真实节奏 2-5s/镜可达标）、1 段音轨、2 事件", () => {
     expect(resolveNativeDeepReadSegmentFloors(29)).toEqual({
-      minShots: 2,
+      minShots: 5,
       minAudioTracks: 1,
       minAudioCues: 2,
     });
@@ -163,7 +163,7 @@ describe("双密度地板线（0826 双密度教训）", () => {
 
   it("360s 大段地板不受 P0-1 订正影响（间隔 60 下为 6 段音轨）", () => {
     expect(resolveNativeDeepReadSegmentFloors(360)).toEqual({
-      minShots: 24,
+      minShots: 60,
       minAudioTracks: 6,
       minAudioCues: 15,
     });
@@ -178,8 +178,8 @@ describe("双密度地板线（0826 双密度教训）", () => {
       segmentCount: 2,
       hasAudio: true,
     });
-    expect(prompt).toContain("段数 ≥ 1");
-    expect(prompt).not.toContain("段数 ≥ 0");
+    expect(prompt).toContain("至少 1 段");
+    expect(prompt).not.toContain("至少 0 段");
   });
 });
 
@@ -224,19 +224,22 @@ describe("每段提示词硬约束", () => {
     expect(prompt).toContain("360..720 秒");
   });
 
-  it("音轨直读五条硬指标齐全（0826 拍板照抄）", () => {
+  it("音轨硬红线（亲耳所听/局部秒例外）与软边界建议齐全（0826 二次拍板）", () => {
     expect(prompt).toContain(`"chunkIndex":1`);
     expect(prompt).toContain("亲耳所听");
-    expect(prompt).toContain("禁止留空");
-    expect(prompt).toContain("段数 ≥ 12"); // ceil(360/30)
+    expect(prompt).toContain("禁止凭画面编造声音");
+    expect(prompt).toContain("至少 6 段"); // 与门禁 floors.minAudioTracks 同一套数字
     expect(prompt).toContain("每一次可听见的独立声音事件");
-    expect(prompt).toContain("只许压缩 subtitles，禁止压缩镜头表或音轨栏");
-    expect(prompt).toContain("禁止为省输出合并真实发生切换的镜头");
+    expect(prompt).toContain("优先压缩 subtitles，尽量保全镜头表与音轨栏的密度");
+    expect(prompt).toContain("不要为省输出合并镜头");
     expect(prompt).toContain("钟表式时间");
+    expect(prompt).toContain("硬约束（只有这五条，必须遵守）");
   });
 
-  it("镜头地板写进提示词：360s 段 ≥24 镜", () => {
-    expect(prompt).toContain("镜头数 ≥ 24");
+  it("镜头验收与门禁同一套数字：360s 段至少 60 镜、平均 ≤6 秒、长镜头限额 1 个 ≤25 秒", () => {
+    expect(prompt).toContain("本段至少 60 镜、平均每镜不超过 6 秒");
+    expect(prompt).toContain("超过 15 秒的长镜头（如标题卡/长定场）至多 1 个且不超过 25 秒");
+    expect(prompt).not.toContain("镜头数 ≥ 24");
   });
 
   it("无音轨素材要求 audioResolution 返回空数组", () => {
@@ -252,7 +255,7 @@ describe("每段提示词硬约束", () => {
     expect(silent).not.toContain("亲耳所听");
   });
 
-  it("带拒因重试时附上一轮被拒原因且禁止降密度", () => {
+  it("带拒因重试时附上一轮被拒原因并要求尽量保密度", () => {
     const retry = buildGeminiNativeDeepReadSegmentPrompt({
       episodeDurationSec: 60,
       startSec: 0,
@@ -263,7 +266,7 @@ describe("每段提示词硬约束", () => {
       rejectedReasonZh: "音轨仅 1 段",
     });
     expect(retry).toContain("【上一轮被拒原因】音轨仅 1 段");
-    expect(retry).toContain("禁止降低镜头表或音轨密度");
+    expect(retry).toContain("尽量不要降低镜头表或音轨密度");
   });
 });
 
@@ -380,7 +383,7 @@ describe("段级双密度门禁", () => {
       startSec: 0,
       endSec: 360,
       raw: makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 360, shotCountOverride: 16 }),
-    })).toThrow("低于地板线");
+    })).toThrow("镜头密度不足");
   });
 
   it("audioResolution 留空拒收", () => {
@@ -776,8 +779,9 @@ describe("Vertex 主线：每段一次调用（不再多段合包）", () => {
 
   it("密度不达标带拒因原地重试一次；重试成功后两次调用的钱都入账", async () => {
     const segment = { startSec: 0, endSec: 60 };
+    // 时长制下的「薄卡」：60s 只给 8 镜——密度不足（<10）且平均 7.5s/镜过粗，两道必拒
     const thin = makeSegmentPayload({
-      segmentIndex: 0, startSec: 0, endSec: 60, audioTrackOverride: 1,
+      segmentIndex: 0, startSec: 0, endSec: 60, shotCountOverride: 8,
     });
     const good = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
     const postVertex = vi.fn()
@@ -920,8 +924,9 @@ describe("EvoLink 兜底（路由铁律 + 1fps 降级 + GLM 必过）", () => {
 
   it("EvoLink 兜底产物过 GLM 后门禁照跑：GLM 合成卡厚度不达标照拒（宁缺勿滥）", async () => {
     const good = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    // 时长制薄卡：8 镜/60s，GLM 合成卡照样过不了镜头门禁
     const thin = makeSegmentPayload({
-      segmentIndex: 0, startSec: 0, endSec: 60, audioTrackOverride: 1,
+      segmentIndex: 0, startSec: 0, endSec: 60, shotCountOverride: 8,
     });
     const deps = makeRunnerDeps({
       prepareVideos: singlePrep as never,

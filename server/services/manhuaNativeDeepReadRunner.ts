@@ -239,7 +239,8 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
  * thinkingLevel HIGH（官方枚举大写；3.1 Pro 不能关思考，禁止传 thinkingBudget）。
  */
 export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
-  temperature: 0.65,
+  // 0826 用户二次拍板：0.65 探针实证密度被压（83→28 镜），回调到 0.75
+  temperature: 0.75,
   maxOutputTokens: 65_536,
   candidateCount: 1,
   audioTimestamp: true,
@@ -397,8 +398,24 @@ export function resolveNativeDeepReadInputFps(durationSec: number): number {
 
 /* ────────────────── 双密度地板线（0826 双密度教训的代码化） ────────────────── */
 
-/** 镜头表地板：镜头数 ≥ ceil(段时长/15)，防 16 镜式偷懒 */
-export const NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC = 15;
+/**
+ * 镜头表地板（0826 用户拍板改时长制）：15 秒地板等于允许「场面段」冒充逐镜——
+ * 探针实证 360s 段 28 镜（均 12.9s/镜、最长 26s）也能过旧地板，品质过粗。
+ * 温度只管发挥不管密度，密度必须靠代码门禁：
+ *   镜头数 ≥ ceil(段时长/6) · 平均每镜 ≤6s · 单镜 ≤15s（超了=合并了多次切镜）。
+ */
+export const NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC = 6;
+export const NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC = 6;
+/**
+ * 单镜上限的判断修订（实测依据 0823：95 镜均 2.76s，对白戏最慢 3.47s；
+ * 但标题卡/长定场 16–20s 真实存在）：>15s 至多允许 1 个且 ≤25s——
+ * 一律硬拒会逼模型编造假切点过门禁（违反零编造红线）或整段白烧。
+ */
+export const NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC = 15;
+export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC = 25;
+export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_ALLOWANCE = 1;
+/** 微尾段豁免：计划切段真实存在 9s 尾段（如 1080–1089），诚实的单镜结尾不该必拒 */
+export const NATIVE_DEEP_READ_SHOT_MICRO_SEGMENT_SEC = 12;
 /** 音轨段数地板：≥ max(1, ceil(段时长/60)) */
 /**
  * 音轨段数硬下限＝1（审查 P0-1 订正）：曾设 3 想防偷懒，但间隔公式在长段本就 ≥3，
@@ -409,15 +426,12 @@ export const NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN = 1;
 /**
  * 45 → 60（0826 病历单问题三）：ep8 第3段模型真实听出 7 段 < 地板 8 被误拒——
  * 实际内容声音相位密度低于 45 秒公式，模型没偷懒。360s 段地板 8→6。
- * 提示词目标 30 秒不动：目标密、门禁松，给模型留达标空间的结构是对的。
  */
 export const NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_INTERVAL_SEC = 60;
 /** cues 总数地板：≥ ceil(段时长/24) */
 export const NATIVE_DEEP_READ_AUDIO_CUE_FLOOR_INTERVAL_SEC = 24;
 /** 时间轴连续覆盖容差（秒） */
 export const NATIVE_DEEP_READ_TIMELINE_TOLERANCE_SEC = 0.5;
-/** 提示词里的音轨切段目标密度（比门禁地板更严，给模型留达标余量） */
-export const NATIVE_DEEP_READ_AUDIO_TRACK_PROMPT_INTERVAL_SEC = 30;
 
 export function resolveNativeDeepReadSegmentFloors(lenSec: number): {
   minShots: number;
@@ -449,19 +463,18 @@ export function buildGeminiNativeDeepReadSegmentPrompt(input: {
 }): string {
   const lenSec = Math.max(1, Math.round(input.endSec - input.startSec));
   const floors = resolveNativeDeepReadSegmentFloors(lenSec);
-  // 提示词目标必须钳到门禁地板之上（审查 P0-1）：目标 < 地板时模型照实输出必拒收。
-  const promptTracks = Math.max(
-    floors.minAudioTracks,
-    Math.ceil(lenSec / NATIVE_DEEP_READ_AUDIO_TRACK_PROMPT_INTERVAL_SEC),
-  );
   const hint = String(input.hintZh || "").trim();
-  const audioRules = input.hasAudio
-    ? `9. audioResolution 固定为 [{"chunkIndex":${input.segmentIndex},"analysis":{…}}]，由你**亲耳所听**产出，禁止留空、禁止凭画面猜音轨。
-10. analysis.audioTrack 按声音性质切段、连续无重叠覆盖本段局部 0..${lenSec} 秒，段数 ≥ ${promptTracks}；emotionArcZh/toneZh/sfxZh/bgmZh/atmosphereZh/silenceZh 六字段逐段写实，禁止敷衍复制。
-11. cues 记录每一次可听见的独立声音事件（音效、配乐进入/变化/退出、留白转换、语气突变），秒位写在 atSec。
-12. 音轨栏详尽度必须与 shots 相当；输出预算紧张时只许压缩 subtitles，禁止压缩镜头表或音轨栏；镜头表禁止为省输出合并真实发生切换的镜头。
-13. audioTrack 与 cues 内时间用**本段局部秒**（0..${lenSec}）；这是 audioResolution 内唯一的局部秒例外。`
-    : `9. 本段素材没有音轨：audioResolution 必须返回空数组 []，禁止凭画面编造声音。`;
+  /**
+   * 0826 用户拍板：硬约束只留「错了会污染入库数据」的红线；密度要求只有一套标准
+   * ——就是代码门禁本身，提示词如实告知同一组验收数字，禁止「目标一套、门禁一套」。
+   */
+  const audioHardRule = input.hasAudio
+    ? `5. audioResolution 固定为 [{"chunkIndex":${input.segmentIndex},"analysis":{…}}]，由你**亲耳所听**产出，禁止凭画面编造声音；audioTrack 与 cues 内时间用**本段局部秒**（0..${lenSec}），这是全 JSON 唯一的局部秒例外。`
+    : `5. 本段素材没有音轨：audioResolution 必须返回空数组 []，禁止凭画面编造声音。`;
+  const audioSoftRules = input.hasAudio
+    ? `b. 音轨按声音性质切段、连续覆盖本段；验收标准：至少 ${floors.minAudioTracks} 段、声音事件（cues 总数）至少 ${floors.minAudioCues} 条。emotionArcZh/toneZh/sfxZh/bgmZh/atmosphereZh/silenceZh 六字段如实描述；cues 尽量记录每一次可听见的独立声音事件（音效、配乐进出与变化、留白转换、语气突变）。
+c. 输出预算紧张时优先压缩 subtitles，尽量保全镜头表与音轨栏的密度。`
+    : "";
   const base = `你是漫剧成片的「导演手法」分析师。当前视频是全片（共 ${Math.round(input.episodeDurationSec)} 秒）的第 ${Math.round(input.startSec)}–${Math.round(input.endSec)} 秒（第 ${input.segmentIndex + 1}/${input.segmentCount} 段）${hint ? `（${hint}）` : ""}。
 
 **重点是拍法，不是剧情。** 只返回一个 JSON，不要 Markdown 围栏：
@@ -481,18 +494,18 @@ export function buildGeminiNativeDeepReadSegmentPrompt(input: {
  "reusableZh":"可复用手法（脱离本剧剧情，写成通用做法）",
  "genPromptHintZh":"若用 AI 生成类似片段，画面提示词该写哪几个要素"
 }
-硬约束：
-1. shots 与 subtitles 的 startSec/endSec/atSec **一律写全片绝对秒位**：本段即 ${Math.round(input.startSec)}..${Math.round(input.endSec)} 秒；shots 连续无空档覆盖整段，镜头数 ≥ ${floors.minShots}。
-2. cameraMoveZh 只写真看到的运动，禁止套「镜头拉远」这类无依据说法。
-3. reusableZh 必须脱离具体剧情。
-4. 分析描述不写外部平台剧名、商标或原台词；subtitles 是唯一例外，只用于逐字记录画面证据。
-5. subtitles 独立成条，不并入 shots；没有字幕就返回空数组。
-6. 字幕看不清写「[不可辨]」，禁止按剧情补全、润色或从声音猜字。
-7. classification 是多标签，不使用古言/逆袭/系统/甜宠等题材分类；只写从本段真实证据提炼出的特征，每类可多项。
-8. 所有中文描述字段【禁止】出现钟表式时间（如 01:23、1:05:30）或「在第X秒」式秒位定位——秒位只进数字字段；描述动作时长（如「1.2秒内推近」）不在此限。
-${audioRules}`;
+硬约束（只有这五条，必须遵守）：
+1. shots 与 subtitles 的 startSec/endSec/atSec **一律写全片绝对秒位**：本段即 ${Math.round(input.startSec)}..${Math.round(input.endSec)} 秒；shots 连续无空档覆盖整段。
+2. cameraMoveZh 只写真看到的运动，看不出运动就写「固定机位」，禁止套「镜头拉远」这类无依据说法。
+3. 所有中文描述字段【禁止】出现钟表式时间（如 01:23、1:05:30）或「在第X秒」式秒位定位——秒位只进数字字段；描述动作时长（如「1.2秒内推近」）不在此限。
+4. 分析描述不写外部平台剧名、商标或原台词；subtitles 是唯一例外——逐字照抄画面上真实出现的字幕，看不清写「[不可辨]」，禁止按剧情补全或从声音猜字。
+${audioHardRule}
+建议（软边界，按素材实际情况尽量做到）：
+a. 这类漫剧的真实节奏通常 2–5 秒一镜，按真实发生的切换逐镜记录，不要为省输出合并镜头。验收标准（与入库门禁同一套数字）：本段至少 ${floors.minShots} 镜、平均每镜不超过 ${NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC} 秒；超过 ${NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC} 秒的长镜头（如标题卡/长定场）至多 1 个且不超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。
+${audioSoftRules}
+d. reusableZh 尽量写成脱离本剧剧情的通用做法；classification 建议只写从本段真实证据提炼的特征标签（避免古言/逆袭/系统/甜宠等题材词），每类可多项。`;
   return input.rejectedReasonZh
-    ? `${base}\n【上一轮被拒原因】${String(input.rejectedReasonZh).slice(0, 300)}。请修正后重新输出完整 JSON；修正时禁止降低镜头表或音轨密度。`
+    ? `${base}\n【上一轮被拒原因】${String(input.rejectedReasonZh).slice(0, 300)}。请修正后重新输出完整 JSON；修正时尽量不要降低镜头表或音轨密度。`
     : base;
 }
 
@@ -1102,10 +1115,35 @@ export function assertNativeDeepReadSegmentDensity(input: {
   assertVisualTextNoClock(input.raw, `第${input.segmentIndex + 1}段`);
   const shots = sortedShots(input.raw);
   assertShotCoverage(shots, Math.round(input.startSec), Math.round(input.endSec), `第${input.segmentIndex + 1}段`);
-  if (shots.length < floors.minShots) {
-    throw gateError(
-      `第${input.segmentIndex + 1}段镜头 ${shots.length} 个低于地板线 ${floors.minShots}（禁止为省输出合并镜头）`,
+  // 时长制镜头门禁（0826 用户参考稿 + 两处判断修订：微尾段豁免、长定场限额）
+  if (lenSec > NATIVE_DEEP_READ_SHOT_MICRO_SEGMENT_SEC) {
+    if (shots.length < floors.minShots) {
+      throw gateError(
+        `第${input.segmentIndex + 1}段镜头密度不足：${lenSec}秒至少需要${floors.minShots}镜，实际${shots.length}（禁止为省输出合并镜头）`,
+      );
+    }
+    const averageShotSec = lenSec / shots.length;
+    if (averageShotSec > NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC) {
+      throw gateError(
+        `第${input.segmentIndex + 1}段镜头粒度过粗：平均每镜${averageShotSec.toFixed(1)}秒（上限 ${NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC} 秒）`,
+      );
+    }
+    const overlongShots = shots
+      .map((shot) => shot.endSec - shot.startSec)
+      .filter((shotLen) => shotLen > NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC);
+    const hardOverlong = overlongShots.filter(
+      (shotLen) => shotLen > NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC,
     );
+    if (hardOverlong.length > 0) {
+      throw gateError(
+        `第${input.segmentIndex + 1}段存在超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒的镜头段（最长 ${Math.round(Math.max(...hardOverlong))} 秒），需重新检查是否合并了多次切镜`,
+      );
+    }
+    if (overlongShots.length > NATIVE_DEEP_READ_SHOT_LONG_TAKE_ALLOWANCE) {
+      throw gateError(
+        `第${input.segmentIndex + 1}段有 ${overlongShots.length} 个超过 ${NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC} 秒的镜头段（长定场限额 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_ALLOWANCE} 个），需重新检查是否合并了多次切镜`,
+      );
+    }
   }
   // 审查 P1-4：空文本会在 mapNativeDeepReadSegments 被静默丢弃（actionZh 空丢单镜、
   // beatStructureZh 空丢整段镜头），密度承诺被掏空——门禁前置拒收。
