@@ -98,6 +98,13 @@ beforeEach(() => {
       releaseBeforePaidCall: async () => {},
       releaseAfterSuccess: async () => {},
     })),
+    takeoverClaim: vi.fn(async () => ({
+      claimUri: "gs://bucket/takeover.json",
+      objectName: "takeover.json",
+      runId: "takeover-run",
+      releaseAfterSuccess: vi.fn(async () => undefined),
+      releaseBeforePaidCall: vi.fn(async () => undefined),
+    })),
     aggregateSeries: vi.fn(async () => ({
       card: { id: "tpl_series_s" },
       gcsUri: "gs://b/tpl_series_s.json",
@@ -265,7 +272,7 @@ describe("并发与计费", () => {
     expect(deps.runBatch).not.toHaveBeenCalled();
   });
 
-  it("已开始付费的失败保留 claim；监管核销前重跑零外呼，核销后才恢复 runner", async () => {
+  it("已开始付费的失败当场释放 claim；下一轮立即可重跑（钱账由段缓存守，0826 七条第5条）", async () => {
     let held = false;
     let paidAttempt = 0;
     deps.acquireClaim = vi.fn(async () => {
@@ -291,15 +298,11 @@ describe("并发与计费", () => {
 
     const first = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1)] }, deps);
     expect(first.failedCount).toBe(1);
-    expect(held).toBe(true);
-    await expect(runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1)] }, deps))
-      .rejects.toThrow("已有精读任务占位");
-    expect(deps.runBatch).toHaveBeenCalledTimes(1);
-
-    // 模拟监管入口按本轮 generation/runId 核销；生产实现由 claim admin CAS 保护。
-    held = false;
-    const third = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1)] }, deps);
-    expect(third.ingestedCount).toBe(1);
+    // 失败即释放：不再留僵尸占位挡路
+    expect(held).toBe(false);
+    // 下一轮无需人工核销即可重跑；已成段由缓存兜底不重买
+    const second = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1)] }, deps);
+    expect(second.ingestedCount).toBe(1);
     expect(deps.runBatch).toHaveBeenCalledTimes(2);
   });
 
@@ -347,7 +350,7 @@ describe("并发与计费", () => {
     expect(r.totalCostCny).toBeCloseTo(2.5);
   });
 
-  it("模型已返回后入库写入异常也要保留成本与占位", async () => {
+  it("模型已返回后入库写入异常：成本照记，占位当场释放（段缓存已保住产出）", async () => {
     const release = vi.fn(async () => undefined);
     deps.acquireClaim = vi.fn(async () => ({
       claimUri: "gs://b/c",
@@ -360,20 +363,24 @@ describe("并发与计费", () => {
     const r = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1)] }, deps);
     expect(r.failedCount).toBe(1);
     expect(r.totalCostCny).toBeCloseTo(0.5);
-    expect(release).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledTimes(1);
   });
 
-  it("模型开始前的零成本故障释放全部未付费占位并停止后续集", async () => {
-    const releases = new Map<number, ReturnType<typeof vi.fn>>();
+  it("模型开始前的零成本故障释放全部占位并停止后续集", async () => {
+    const releasedTotal = new Map<number, () => number>();
     deps.acquireClaim = vi.fn(async (_seriesKey: string, episodeIndex: number) => {
       const releaseBeforePaidCall = vi.fn(async () => undefined);
-      releases.set(episodeIndex, releaseBeforePaidCall);
+      const releaseAfterSuccess = vi.fn(async () => undefined);
+      releasedTotal.set(
+        episodeIndex,
+        () => releaseBeforePaidCall.mock.calls.length + releaseAfterSuccess.mock.calls.length,
+      );
       return {
         claimUri: `gs://b/c${episodeIndex}`,
         objectName: `c${episodeIndex}`,
         runId: "r",
         releaseBeforePaidCall,
-        releaseAfterSuccess: vi.fn(async () => undefined),
+        releaseAfterSuccess,
       };
     }) as never;
     deps.runBatch = vi.fn(async () => {
@@ -382,24 +389,27 @@ describe("并发与计费", () => {
 
     const result = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1), ep(2)] }, deps);
 
-    // 第 1 集失败即停止后续请求；两集未付费占位都释放
+    // 第 1 集失败即停止后续请求；两集占位全部释放（失败也不留僵尸）
     expect(result.failedCount).toBe(1);
     expect(result.totalCostCny).toBe(0);
-    expect(releases.get(1)).toHaveBeenCalledTimes(1);
-    expect(releases.get(2)).toHaveBeenCalledTimes(1);
+    expect(releasedTotal.get(1)!()).toBe(1);
+    expect(releasedTotal.get(2)!()).toBe(1);
   });
 
-  it("一集收到付费 started 后失败，只保留该集占位并释放未触碰集", async () => {
+  it("一集收到付费 started 后失败：成本照记，本集与未触碰集占位全部释放", async () => {
     const releases = new Map<number, ReturnType<typeof vi.fn>>();
+    const afterReleases = new Map<number, ReturnType<typeof vi.fn>>();
     deps.acquireClaim = vi.fn(async (_seriesKey: string, episodeIndex: number) => {
       const releaseBeforePaidCall = vi.fn(async () => undefined);
+      const releaseAfterSuccess = vi.fn(async () => undefined);
       releases.set(episodeIndex, releaseBeforePaidCall);
+      afterReleases.set(episodeIndex, releaseAfterSuccess);
       return {
         claimUri: `gs://b/c${episodeIndex}`,
         objectName: `c${episodeIndex}`,
         runId: "r",
         releaseBeforePaidCall,
-        releaseAfterSuccess: vi.fn(async () => undefined),
+        releaseAfterSuccess,
       };
     }) as never;
     deps.runBatch = vi.fn(async (input: {
@@ -433,7 +443,8 @@ describe("并发与计费", () => {
       visualPriceEquivalentCny: 0.2,
     });
     expect(result.outcomes.find((row) => row.episodeIndex === 1)?.costCny).toBeCloseTo(0.2);
-    expect(releases.get(1)).not.toHaveBeenCalled();
+    // 失败集经 releaseAfterSuccess 路当场释放（不再保留僵尸占位）
+    expect(afterReleases.get(1)).toHaveBeenCalledTimes(1);
     expect(releases.get(2)).toHaveBeenCalledTimes(1);
   });
 
@@ -692,3 +703,22 @@ describe("批量发车", () => {
     expect(deps.listIngested).not.toHaveBeenCalled();
   });
 });
+
+describe("失败占位自动让位（0826 用户拍板）", () => {
+  it("计划标记 reclaimFailedClaim 的集走原子接管，不走普通抢占", async () => {
+    await runNativeDeepReadBatch({
+      seriesKey: "s1",
+      episodes: [{
+        episodeIndex: 1,
+        sourceUrl: "https://www.douyin.com/video/1",
+        durationSec: 60,
+        segments: [{ startSec: 0, endSec: 60 }],
+        resolveNodes: async () => [],
+        reclaimFailedClaim: true,
+      }],
+    }, deps);
+    expect(deps.takeoverClaim).toHaveBeenCalledTimes(1);
+    expect(deps.acquireClaim).not.toHaveBeenCalled();
+  });
+});
+

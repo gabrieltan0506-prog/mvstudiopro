@@ -39,6 +39,7 @@ import {
 import {
   acquireNativeDeepReadEpisodeClaim,
   recordNativeDeepReadClaimFailure,
+  takeoverNativeDeepReadEpisodeClaim,
 } from "./manhuaNativeDeepReadClaim.js";
 import { clearNativeDeepReadSegmentCacheForEpisode } from "./manhuaNativeDeepReadSegmentCache.js";
 import { statGcsObjectVersion } from "./gcs.js";
@@ -87,6 +88,8 @@ export type NativeDeepReadEpisodeExecution = {
    * 素材接入层已探测成功的直链（含它验证过的 Referer）——后者不能再解析一次。
    */
   resolveNodes: () => Promise<NativeDeepReadMediaNode[]>;
+  /** 计划标记的失败占位自动让位重跑：抢占改走原子接管 */
+  reclaimFailedClaim?: boolean;
   abortSignal?: AbortSignal;
 };
 
@@ -98,6 +101,7 @@ export type NativeDeepReadExecutionDeps = {
   listIngested: typeof listIngestedNativeDeepReadEpisodes;
   isEnabled: typeof isManhuaNativeDeepReadEnabled;
   acquireClaim: typeof acquireNativeDeepReadEpisodeClaim;
+  takeoverClaim: typeof takeoverNativeDeepReadEpisodeClaim;
   aggregateSeries: typeof aggregateNativeDeepReadSeries;
   clearSegmentCache: typeof clearNativeDeepReadSegmentCacheForEpisode;
   statSourceVersion: typeof statGcsObjectVersion;
@@ -110,6 +114,7 @@ const defaultDeps: NativeDeepReadExecutionDeps = {
   listIngested: listIngestedNativeDeepReadEpisodes,
   isEnabled: isManhuaNativeDeepReadEnabled,
   acquireClaim: acquireNativeDeepReadEpisodeClaim,
+  takeoverClaim: takeoverNativeDeepReadEpisodeClaim,
   aggregateSeries: aggregateNativeDeepReadSeries,
   clearSegmentCache: clearNativeDeepReadSegmentCacheForEpisode,
   statSourceVersion: statGcsObjectVersion,
@@ -601,7 +606,12 @@ export async function runNativeDeepReadBatch(input: {
   const claims = new Map<number, Awaited<ReturnType<typeof acquireNativeDeepReadEpisodeClaim>>>();
   try {
     for (const episode of pending) {
-      claims.set(episode.episodeIndex, await deps.acquireClaim(input.seriesKey, episode.episodeIndex));
+      claims.set(
+        episode.episodeIndex,
+        episode.reclaimFailedClaim
+          ? await deps.takeoverClaim(input.seriesKey, episode.episodeIndex)
+          : await deps.acquireClaim(input.seriesKey, episode.episodeIndex),
+      );
     }
   } catch (error) {
     await Promise.allSettled(Array.from(claims.values()).map((claim) => claim.releaseBeforePaidCall()));
@@ -720,25 +730,34 @@ export async function runNativeDeepReadBatch(input: {
       await emitProgress(failed);
       aborted = Boolean(input.abortSignal?.aborted);
       // 已付费失败会保留占位：把最终拒因补写进占位文件，占位管理 UI 才答得出「卡在哪」。
-      // 旁路写入，失败只 warn——不能因为补写失败把集结果改判。
-      if (failed.status === "failed" && paidEpisodeIndexes.has(episode.episodeIndex)) {
+      /**
+       * 0826 用户拍板（七条验收第5条）：失败/中止/零成本前置错误一律当场释放集级 claim。
+       * 钱账守卫已由段级缓存接管（已成段永不重买），失败后留占位只剩「僵尸展示+挡路」。
+       * 释放走本轮 generation 条件删除，不破坏并发互斥；释放失败先补写病历再留人工核对。
+       */
+      const failedClaim = claims.get(episode.episodeIndex);
+      if (failedClaim) {
         try {
-          await recordNativeDeepReadClaimFailure(
-            input.seriesKey,
-            episode.episodeIndex,
-            claims.get(episode.episodeIndex)?.runId || "",
-            failed.errorZh || "未回传具体拒因",
-          );
-        } catch (recordError) {
+          await failedClaim.releaseAfterSuccess();
+        } catch (releaseError) {
           console.warn(
-            `[nativeDeepRead] 第${episode.episodeIndex}集占位拒因补写未完成：`,
-            recordError instanceof Error ? recordError.message : recordError,
+            `[nativeDeepRead] 第${episode.episodeIndex}集失败后占位释放未成，补写病历留人工核对：`,
+            releaseError instanceof Error ? releaseError.message : releaseError,
           );
+          try {
+            await recordNativeDeepReadClaimFailure(
+              input.seriesKey,
+              episode.episodeIndex,
+              failedClaim.runId,
+              failed.errorZh || "未回传具体拒因",
+            );
+          } catch (recordError) {
+            console.warn(
+              `[nativeDeepRead] 第${episode.episodeIndex}集占位拒因补写未完成：`,
+              recordError instanceof Error ? recordError.message : recordError,
+            );
+          }
         }
-      }
-      if (!paidEpisodeIndexes.has(episode.episodeIndex)) {
-        const claim = claims.get(episode.episodeIndex);
-        if (claim) await Promise.allSettled([claim.releaseBeforePaidCall()]);
       }
       await releaseUnpaidFrom(episodeCursor + 1, paidEpisodeIndexes);
       break;

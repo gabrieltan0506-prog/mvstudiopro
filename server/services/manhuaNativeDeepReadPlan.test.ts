@@ -33,7 +33,7 @@ function deps(overrides: Partial<NativeDeepReadPlanDeps> = {}): NativeDeepReadPl
     refreshPlaybackUrls: vi.fn(async () => []),
     probeDurationSec: vi.fn(async () => 100.9),
     listIngestedEpisodes: vi.fn(async () => new Set<number>()),
-    listClaimedEpisodes: vi.fn(async () => new Set<number>()),
+    listClaimStates: vi.fn(async () => new Map()),
     resolveSeriesKey: vi.fn(async () => "series_real"),
     isExecutionEnabled: vi.fn(() => true),
     ...overrides,
@@ -200,7 +200,7 @@ describe("原生精读计划", () => {
 
   it("占位集保持隔离且不挤占本轮新增集数", async () => {
     const d = deps({
-      listClaimedEpisodes: vi.fn(async () => new Set([1])),
+      listClaimStates: vi.fn(async () => new Map([[1, { createdAtIso: new Date().toISOString(), lastFailedAtIso: null }]])),
       listMixEpisodes: vi.fn(async () => ({
         episodes: [episode(1), episode(2), episode(3), episode(4)],
         complete: true,
@@ -220,9 +220,30 @@ describe("原生精读计划", () => {
     expect(d.probeDurationSec).toHaveBeenCalledTimes(2);
   });
 
+  it("带失败病历的占位自动让位：纳入执行并打 reclaim 标记，不再永远挡路（0826 用户拍板）", async () => {
+    const d = deps({
+      listClaimStates: vi.fn(async () => new Map([
+        [1, { createdAtIso: new Date().toISOString(), lastFailedAtIso: new Date().toISOString() }],
+      ])),
+      listMixEpisodes: vi.fn(async () => ({
+        episodes: [episode(1), episode(2), episode(3)],
+        complete: true,
+      })),
+    });
+    const plan = await buildNativeDeepReadPlanPreview(
+      { url: "https://www.douyin.com/collection/123456", limit: 2 },
+      d,
+    );
+    expect(plan.pendingClaimEpisodeIndexes).toEqual([]);
+    expect(plan.reclaimEpisodeIndexes).toEqual([1]);
+    expect(plan.episodes.map((row) => row.episodeIndex)).toEqual([1, 2]);
+    expect(plan.episodes[0]!.reclaimFailedClaim).toBe(true);
+    expect(plan.episodes[1]!.reclaimFailedClaim).toBeUndefined();
+  });
+
   it("前两集为残留占位时，面板要求十集会选取第3至12集", async () => {
     const d = deps({
-      listClaimedEpisodes: vi.fn(async () => new Set([1, 2])),
+      listClaimStates: vi.fn(async () => new Map([[1, { createdAtIso: new Date().toISOString(), lastFailedAtIso: null }], [2, { createdAtIso: new Date().toISOString(), lastFailedAtIso: null }]])),
       listMixEpisodes: vi.fn(async () => ({
         episodes: Array.from({ length: 12 }, (_, index) => episode(index + 1)),
         complete: true,
@@ -260,6 +281,7 @@ describe("原生精读计划", () => {
       unknownAccessEpisodeIndexes: [],
       alreadyIngestedEpisodeIndexes: [],
       pendingClaimEpisodeIndexes: [1, 2],
+      reclaimEpisodeIndexes: [],
       executableEpisodeCount: 1,
       executionEnabled: true,
     };
@@ -341,6 +363,7 @@ describe("原生精读计划", () => {
       unknownAccessEpisodeIndexes: [],
       alreadyIngestedEpisodeIndexes: [],
       pendingClaimEpisodeIndexes: [],
+      reclaimEpisodeIndexes: [],
       executableEpisodeCount: 1,
       executionEnabled: true,
     };

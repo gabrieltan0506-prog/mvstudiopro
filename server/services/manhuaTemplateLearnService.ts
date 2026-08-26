@@ -1671,6 +1671,8 @@ export async function buildNativeDeepReadEpisodeExecution(
     durationSec: total,
     laneHintZh: input.laneHintZh,
     segments,
+    // 计划标记的失败占位自动让位：执行层据此走原子接管而非普通抢占
+    reclaimFailedClaim: input.confirmedPlanEpisode?.reclaimFailedClaim === true,
     abortSignal: input.abortSignal,
     resolveNodes: async () => {
       const fresh: EpisodeSourceState = { playbackUrl: input.ep.playbackUrl };
@@ -2534,7 +2536,7 @@ export async function runManhuaTemplateLearn(
             episodeFailNotes.push(`第 ${outcome.episodeIndex} 集未入库：${failReasonZh}`);
             await progress(
               MANHUA_LEARN_STAGE.failed,
-              `第 ${outcome.episodeIndex} 集未入库：${failReasonZh}；已停止后续请求并保留占位待核对`,
+              `第 ${outcome.episodeIndex} 集未入库：${failReasonZh}；已停止后续请求。已成分段进入缓存，重跑只补未完成段`,
             );
           } else if (outcome.status === "aborted") {
             cancelledMidRun = true;

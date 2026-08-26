@@ -600,7 +600,10 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         );
         // 「已隔离占位」是内部术语；对用户说清楚：这几集有没结清的历史账单，本次不动它们
         const quarantinedClaims = nativePlanPreview.pendingClaimEpisodeIndexes.length
-          ? ` · 第 ${nativePlanPreview.pendingClaimEpisodeIndexes.join("、")} 集有历史未结账单，本次跳过待处理（可在面板「占位管理」里弃置或重跑）`
+          ? ` · 第 ${nativePlanPreview.pendingClaimEpisodeIndexes.join("、")} 集疑似仍在处理，本次隔离（可在面板「占位管理」查看）`
+          : "";
+        const reclaimZh = nativePlanPreview.reclaimEpisodeIndexes.length
+          ? ` · 第 ${nativePlanPreview.reclaimEpisodeIndexes.join("、")} 集为失败重跑（占位自动让位，已成段走缓存零费）`
           : "";
         // 给任务落系列键：失败任务的回执才对得上「这笔钱花在哪部剧哪一集」
         const planSeriesKey = nativePlanPreview.seriesKey;
@@ -615,7 +618,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
           : "";
         await reportLearnProgress(
           MANHUA_LEARN_STAGE.list,
-          `执行计划复核通过：${plannedEpisodesZh}共 ${nativePlanPreview.executableEpisodeCount} 集 · ${nativePlanPreview.totalModelCalls} 次模型请求（画面 ${nativePlanPreview.totalSegments} 个视频分片每段一次调用共 ${nativePlanPreview.totalVisualCalls} 次、音轨随调直出 + 系列整理 1 次） · 确认码 ${nativePlanPreview.planHash}${quarantinedClaims}`,
+          `执行计划复核通过：${plannedEpisodesZh}共 ${nativePlanPreview.executableEpisodeCount} 集 · ${nativePlanPreview.totalModelCalls} 次模型请求（画面 ${nativePlanPreview.totalSegments} 个视频分片每段一次调用共 ${nativePlanPreview.totalVisualCalls} 次、音轨随调直出 + 系列整理 1 次） · 确认码 ${nativePlanPreview.planHash}${reclaimZh}${quarantinedClaims}`,
         );
       } else if (hasNativeDeepReadJobFields(params)) {
         throw new Error("原生精读计划未获明确确认，未发出模型请求");

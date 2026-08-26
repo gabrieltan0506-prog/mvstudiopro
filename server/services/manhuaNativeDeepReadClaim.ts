@@ -132,6 +132,115 @@ export async function recordNativeDeepReadClaimFailure(
   });
 }
 
+
+/** 与任务墙钟上限一致：超过它还立着的占位视为死锁残留，可被自动接管。 */
+export const NATIVE_DEEP_READ_CLAIM_STALE_MS = 24 * 60 * 60_000;
+
+export type NativeDeepReadClaimState = {
+  episodeIndex: number;
+  generation: string;
+  createdAtIso: string | null;
+  lastFailedAtIso: string | null;
+};
+
+/**
+ * 判定占位是否可自动让位（0826 用户拍板「不要让失败占位永远挡路」）：
+ * 有失败病历（lastFailedAtIso）＝任务已终态失败，钱账在段缓存/回执里，占位只剩挡路；
+ * 超 24h 无病历＝部署重启等吞掉终态的死锁残留。新鲜无病历＝可能正在跑，仍隔离。
+ */
+export function isNativeDeepReadClaimReclaimable(
+  state: Pick<NativeDeepReadClaimState, "createdAtIso" | "lastFailedAtIso">,
+  nowMs = Date.now(),
+): boolean {
+  if (state.lastFailedAtIso) return true;
+  const createdMs = state.createdAtIso ? Date.parse(state.createdAtIso) : Number.NaN;
+  return Number.isFinite(createdMs) && nowMs - createdMs > NATIVE_DEEP_READ_CLAIM_STALE_MS;
+}
+
+/** 列出占位的完整状态（含失败病历与版本），供计划分类「仍隔离 vs 自动让位」。 */
+export async function listNativeDeepReadEpisodeClaimStates(
+  seriesKey: string,
+): Promise<Map<number, NativeDeepReadClaimState>> {
+  const bucket = getGcsBucketName();
+  const episodes = await listNativeDeepReadEpisodeClaims(seriesKey);
+  const states = new Map<number, NativeDeepReadClaimState>();
+  for (const episodeIndex of Array.from(episodes)) {
+    const objectName = nativeDeepReadClaimObjectName(seriesKey, episodeIndex);
+    try {
+      const versioned = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` });
+      const parsed = JSON.parse(versioned.buffer.toString("utf8")) as {
+        createdAt?: unknown;
+        lastFailedAtIso?: unknown;
+      };
+      const createdAt = String(parsed.createdAt || "").trim();
+      const failedAt = String(parsed.lastFailedAtIso || "").trim();
+      states.set(episodeIndex, {
+        episodeIndex,
+        generation: versioned.generation,
+        createdAtIso: createdAt && !Number.isNaN(Date.parse(createdAt)) ? createdAt : null,
+        lastFailedAtIso: failedAt && !Number.isNaN(Date.parse(failedAt)) ? failedAt : null,
+      });
+    } catch (error) {
+      // 读不动的占位按「身份不明」保守隔离：宁可继续挡路，不可误接管在跑任务
+      states.set(episodeIndex, {
+        episodeIndex,
+        generation: "",
+        createdAtIso: null,
+        lastFailedAtIso: null,
+      });
+      console.warn(
+        `[nativeDeepRead] 第${episodeIndex}集占位状态读取失败，按仍在跑保守隔离：`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+  return states;
+}
+
+/**
+ * 自动接管一条可让位的占位：按 generation 条件删旧→原子新建。
+ * 任何一步竞态失败都停手（说明有人真的在动这一集），绝不盲删。
+ */
+export async function takeoverNativeDeepReadEpisodeClaim(
+  seriesKey: string,
+  episodeIndex: number,
+): Promise<NativeDeepReadClaim> {
+  const objectName = nativeDeepReadClaimObjectName(seriesKey, episodeIndex);
+  const bucket = getGcsBucketName();
+  let versioned: Awaited<ReturnType<typeof downloadGcsObjectVersioned>>;
+  try {
+    versioned = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` });
+  } catch {
+    // 占位刚被别处释放：直接走正常抢占
+    return acquireNativeDeepReadEpisodeClaim(seriesKey, episodeIndex);
+  }
+  let state: { createdAtIso: string | null; lastFailedAtIso: string | null } = {
+    createdAtIso: null,
+    lastFailedAtIso: null,
+  };
+  try {
+    const parsed = JSON.parse(versioned.buffer.toString("utf8")) as {
+      createdAt?: unknown;
+      lastFailedAtIso?: unknown;
+    };
+    const createdAt = String(parsed.createdAt || "").trim();
+    const failedAt = String(parsed.lastFailedAtIso || "").trim();
+    state = {
+      createdAtIso: createdAt && !Number.isNaN(Date.parse(createdAt)) ? createdAt : null,
+      lastFailedAtIso: failedAt && !Number.isNaN(Date.parse(failedAt)) ? failedAt : null,
+    };
+  } catch {
+    /* 身份不明按不可接管处理 */
+  }
+  if (!isNativeDeepReadClaimReclaimable(state)) {
+    throw new Error(
+      `第${episodeIndex}集占位无失败病历且未超时，疑似仍在跑，禁止自动接管`,
+    );
+  }
+  await deleteGcsObject({ bucket, objectName, ifGenerationMatch: versioned.generation });
+  return acquireNativeDeepReadEpisodeClaim(seriesKey, episodeIndex);
+}
+
 /** 干跑时列出仍在占位、必须人工核对后才能重跑的集号。 */
 export async function listNativeDeepReadEpisodeClaims(seriesKey: string): Promise<Set<number>> {
   const idPrefix = nativeDeepReadProposalId(seriesKey, 1).replace(/ep001$/, "ep");
