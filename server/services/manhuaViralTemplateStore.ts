@@ -38,6 +38,217 @@ function isGcsGenerationConflict(error: unknown): boolean {
   );
 }
 
+const normalizeLearnedTextKey = (value: unknown): string =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s，。；、,.!?！？:：—_-]+/g, "");
+
+function distinctLearnedTextParts(value: unknown): string[] {
+  const parts = String(value || "")
+    .split(/[；\n]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const seen = new Set<string>();
+  return parts.filter((part) => {
+    const key = normalizeLearnedTextKey(part);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
+ * 卡片字段有硬上限，不能按「旧值在前」直接截断，否则旧卡一旦写满，后续分片
+ * 的新增知识会永远进不来。超长时为新旧两侧各保留字符预算；任一侧较短时，
+ * 剩余预算自动让给另一侧。
+ */
+function mergeLearnedText(previous: unknown, next: unknown, max: number): string | undefined {
+  const previousParts = distinctLearnedTextParts(previous);
+  const previousKeys = new Set(previousParts.map(normalizeLearnedTextKey));
+  const nextParts = distinctLearnedTextParts(next)
+    .filter((part) => !previousKeys.has(normalizeLearnedTextKey(part)));
+  const previousText = previousParts.join("；");
+  const nextText = nextParts.join("；");
+  if (!previousText) return nextText.slice(0, max).trim() || undefined;
+  if (!nextText) return previousText.slice(0, max).trim() || undefined;
+  const fullText = `${previousText}；${nextText}`;
+  if (fullText.length <= max) return fullText;
+
+  const contentBudget = Math.max(0, max - 1);
+  let previousBudget = Math.min(previousText.length, Math.floor(contentBudget / 2));
+  let nextBudget = Math.min(nextText.length, contentBudget - previousBudget);
+  let remaining = contentBudget - previousBudget - nextBudget;
+  if (remaining > 0) {
+    const previousExtra = Math.min(remaining, previousText.length - previousBudget);
+    previousBudget += previousExtra;
+    remaining -= previousExtra;
+  }
+  if (remaining > 0) nextBudget += Math.min(remaining, nextText.length - nextBudget);
+  const text = `${previousText.slice(0, previousBudget)}；${nextText.slice(0, nextBudget)}`.trim();
+  return text || undefined;
+}
+
+function evenlyLimit<T>(rows: readonly T[], max: number): T[] {
+  if (rows.length <= max) return [...rows];
+  if (max <= 1) return rows.slice(0, Math.max(0, max));
+  return Array.from({ length: max }, (_, index) =>
+    rows[Math.round((index * (rows.length - 1)) / (max - 1))]!,
+  );
+}
+
+/**
+ * 同源同集的补全批准不是整卡覆盖：正式卡里已经验收过的导演手法、字幕、
+ * 声音总结与五维标签必须保留；新提案只更新同一拍的更完整描述并补入差异项。
+ * provenance、进度、费用与时间轴仍以新提案为准，避免把旧进度冒充本轮真值。
+ */
+export function mergeNativeEpisodeTemplateLearning(
+  previous: ManhuaViralTemplateCard,
+  next: ManhuaViralTemplateCard,
+): ManhuaViralTemplateCard {
+  if (previous.audioStory?.hasAudio && !next.audioStory?.hasAudio) {
+    throw new Error("原生分集补全缺少本轮有效音轨，拒绝用旧时间轴冒充新进度");
+  }
+  if (
+    previous.audioStory?.hasAudio
+    && next.audioStory?.hasAudio
+    && next.audioStory.durationSec < previous.audioStory.durationSec
+  ) {
+    throw new Error("原生分集补全的本轮音轨短于已批准进度，拒绝替换正式卡");
+  }
+  const beatByIdentity = new Map<string, ManhuaViralTemplateCard["beatGrid"][number]>();
+  for (const beat of previous.beatGrid) {
+    const key = String(Math.round(Number(beat.atSec) * 10));
+    beatByIdentity.set(key, beat);
+  }
+  // 同一秒位由新提案覆盖，即使模型换了措辞也不能重复算成两镜。
+  for (const beat of next.beatGrid) {
+    const key = String(Math.round(Number(beat.atSec) * 10));
+    beatByIdentity.set(key, beat);
+  }
+  const mergedBeatGrid = Array.from(beatByIdentity.values()).sort(
+      (left, right) => Number(left.atSec) - Number(right.atSec)
+        || Number(left.endSec || left.atSec) - Number(right.endSec || right.atSec),
+    );
+  const beatGrid = evenlyLimit(mergedBeatGrid, 128);
+
+  const subtitleByIdentity = new Map<string, NonNullable<ManhuaViralTemplateCard["subtitleTrack"]>[number]>();
+  for (const subtitle of [...(previous.subtitleTrack || []), ...(next.subtitleTrack || [])]) {
+    const key = `${Math.round(Number(subtitle.atSec) * 100)}|${normalizeLearnedTextKey(subtitle.textZh)}`;
+    if (key.endsWith("|")) continue;
+    subtitleByIdentity.set(key, subtitle);
+  }
+  const subtitleTrack = evenlyLimit(
+    Array.from(subtitleByIdentity.values()).sort((a, b) => a.atSec - b.atSec),
+    512,
+  );
+
+  const mergeTags = (
+    before: readonly string[] = [],
+    after: readonly string[] = [],
+    max = 8,
+  ) => {
+    const seen = new Set<string>();
+    const prior = before
+      .map((tag) => String(tag || "").trim())
+      .filter((tag) => {
+        const key = normalizeLearnedTextKey(tag);
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    const added = after
+      .map((tag) => String(tag || "").trim())
+      .filter((tag) => {
+        const key = normalizeLearnedTextKey(tag);
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    if (prior.length + added.length <= max) return [...prior, ...added];
+    // 达到 schema 上限时，新旧各占一部分，禁止旧满 8 项后吃掉所有新标签。
+    const addedBudget = Math.min(added.length, Math.max(1, Math.ceil(max / 2)));
+    const priorBudget = Math.min(prior.length, max - addedBudget);
+    return [...prior.slice(0, priorBudget), ...added.slice(0, max - priorBudget)];
+  };
+  const previousClassification = previous.classification;
+  const nextClassification = next.classification;
+  const classification = previousClassification || nextClassification
+    ? {
+        emotionTagsZh: mergeTags(previousClassification?.emotionTagsZh, nextClassification?.emotionTagsZh),
+        narrativeFeatureTagsZh: mergeTags(previousClassification?.narrativeFeatureTagsZh, nextClassification?.narrativeFeatureTagsZh),
+        performanceTagsZh: mergeTags(previousClassification?.performanceTagsZh, nextClassification?.performanceTagsZh),
+        audiovisualTagsZh: mergeTags(previousClassification?.audiovisualTagsZh, nextClassification?.audiovisualTagsZh),
+        audienceExperienceTagsZh: mergeTags(previousClassification?.audienceExperienceTagsZh, nextClassification?.audienceExperienceTagsZh),
+      }
+    : undefined;
+
+  const audioStory = next.audioStory
+    ? {
+        ...next.audioStory,
+        // 数字时间轴以新提案为真；只合并不带第二套秒位的结构精华文本。
+        audioBeatStructureZh: mergeLearnedText(
+          previous.audioStory?.audioBeatStructureZh,
+          next.audioStory.audioBeatStructureZh,
+          1_000,
+        ),
+        mixNotesZh: mergeLearnedText(
+          previous.audioStory?.mixNotesZh,
+          next.audioStory.mixNotesZh,
+          1_000,
+        ),
+        reusableAudioZh: mergeLearnedText(
+          previous.audioStory?.reusableAudioZh,
+          next.audioStory.reusableAudioZh,
+          1_000,
+        ),
+        genAudioHintZh: mergeLearnedText(
+          previous.audioStory?.genAudioHintZh,
+          next.audioStory.genAudioHintZh,
+          1_000,
+        ),
+      }
+    : undefined;
+
+  const sourceByUrl = new Map(previous.sourceRefs.map((ref) => [ref.url, ref]));
+  for (const ref of next.sourceRefs) sourceByUrl.set(ref.url, ref);
+
+  return {
+    ...next,
+    classification,
+    summaryZh: mergeLearnedText(previous.summaryZh, next.summaryZh, 120) || next.summaryZh,
+    hook3sZh: mergeLearnedText(previous.hook3sZh, next.hook3sZh, 200) || next.hook3sZh,
+    beatGrid,
+    subtitleTrack,
+    reusableZh: mergeLearnedText(previous.reusableZh, next.reusableZh, 600),
+    genPromptHintZh: mergeLearnedText(previous.genPromptHintZh, next.genPromptHintZh, 600),
+    audioStory,
+    scenePoolHints: mergeTags(previous.scenePoolHints, next.scenePoolHints, 16),
+    castShape: {
+      leadDesireZh: next.castShape.leadDesireZh || previous.castShape.leadDesireZh,
+      pressureZh: next.castShape.pressureZh || previous.castShape.pressureZh,
+      foilZh: next.castShape.foilZh || previous.castShape.foilZh,
+    },
+    densityHints: {
+      minBodyChars: Math.max(previous.densityHints.minBodyChars, next.densityHints.minBodyChars),
+      minDialogueLines: Math.max(previous.densityHints.minDialogueLines, next.densityHints.minDialogueLines),
+      minLocationHits: Math.max(previous.densityHints.minLocationHits, next.densityHints.minLocationHits),
+    },
+    sourceRefs: Array.from(sourceByUrl.values()).slice(0, 8),
+    // 进度、用量与模型仍取本轮；落库镜数/截断标记必须描述合并后的正式卡。
+    provenance: next.provenance?.nativeVideoDeepRead
+      ? {
+          ...next.provenance,
+          nativeVideoDeepRead: {
+            ...next.provenance.nativeVideoDeepRead,
+            shotCount: beatGrid.length,
+            truncated: next.provenance.nativeVideoDeepRead.truncated || mergedBeatGrid.length > 128,
+          },
+        }
+      : next.provenance,
+  };
+}
+
 /** 归档版本号收口为纯数字串；路由与存储层都要校验，不能只信路由 */
 /**
  * 严格列举：**读不动就抛，列不全也抛**。
@@ -965,7 +1176,7 @@ async function approveManhuaViralTemplateLocked(input: {
     }
     const now = new Date().toISOString();
     const replacement = parseManhuaViralTemplateCard({
-      ...card,
+      ...mergeNativeEpisodeTemplateLearning(existingApproved, card),
       status: "approved",
       publicCode: existingApproved.publicCode,
       approvedAt: existingApproved.approvedAt || now,

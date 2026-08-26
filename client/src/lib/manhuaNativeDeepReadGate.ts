@@ -1,5 +1,5 @@
 export type ManhuaNativeDeepReadGate =
-  | "legacy"
+  | "unsupported_source"
   | "blocked_unconfirmed"
   | "blocked_not_owner"
   | "ready";
@@ -7,8 +7,8 @@ export type ManhuaNativeDeepReadGate =
 /**
  * 抖音原生精读的客户端门禁。
  *
- * 只有“不是原生精读候选”的素材才允许走旧链；候选素材一旦权限状态未确认
- * 或当前账号不是 owner，就必须关闭式停止，不能静默回落到抽帧链。
+ * 当前学习入口只建立原生视频精读任务。任何不满足原生精读契约的素材、
+ * 权限未确认或账号不匹配都关闭式停止，不得建立已退出的抽帧学习任务。
  */
 export function resolveManhuaNativeDeepReadGate(input: {
   candidate: boolean;
@@ -16,7 +16,7 @@ export function resolveManhuaNativeDeepReadGate(input: {
   capabilityError: boolean;
   ownerAllowed: boolean;
 }): ManhuaNativeDeepReadGate {
-  if (!input.candidate) return "legacy";
+  if (!input.candidate) return "unsupported_source";
   if (input.capabilityLoading || input.capabilityError) return "blocked_unconfirmed";
   return input.ownerAllowed ? "ready" : "blocked_not_owner";
 }

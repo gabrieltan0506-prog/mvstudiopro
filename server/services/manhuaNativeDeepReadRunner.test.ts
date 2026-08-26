@@ -12,9 +12,9 @@ import {
   NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
   NATIVE_DEEP_READ_RESPONSE_SCHEMA,
   NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG,
+  NATIVE_DEEP_READ_TEMPERATURE_MIN,
   NATIVE_DEEP_READ_MIN_TMP_FREE_BYTES,
   NATIVE_DEEP_READ_MODEL,
-  NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES,
   NATIVE_DEEP_READ_ROUTE_EVOLINK,
   NATIVE_DEEP_READ_ROUTE_VERTEX,
   NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
@@ -23,7 +23,6 @@ import {
   buildGeminiNativeDeepReadSegmentPrompt,
   buildGeminiNativeDeepReadSegmentRequest,
   buildNativeDeepReadGlmStructuringPrompt,
-  buildNativeDeepReadTranscodeToFitArgs,
   isManhuaNativeDeepReadEnabled,
   pickSmallestVideoFormat,
   postNativeDeepReadGenerateContent,
@@ -31,7 +30,6 @@ import {
   nativeDeepReadSegmentCacheFingerprint,
   resolveNativeDeepReadRequestFps,
   resolveNativeDeepReadSegmentFloors,
-  resolveNativeDeepReadTranscodeVideoKbps,
   runManhuaNativeDeepReadBatch,
   validateNativeDeepReadSegments,
   type NativeDeepReadBatchRunnerDeps,
@@ -100,7 +98,7 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_ROUTE_EVOLINK).toBe("evolink_gemini_video");
     expect(NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE).toBe("openrouter_glm_structuring");
     // 换代必须让旧确认码全废
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("adaptive-1800f-360s-v4-gemini");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v5-gemini-direct-gcs");
   });
 
   it("长视频请求显式使用 30 分钟 HTTP 响应头与响应体时限，不落回 Undici 默认 300 秒", async () => {
@@ -142,11 +140,25 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
   });
 
-  it("原地重试参数：仅温度归零，其余与首发一致（0826 定稿）", () => {
+  it("原地重试参数：温度不得低于 0.65，其余与首发一致", () => {
+    expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.65);
     expect(NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG).toEqual({
       ...NATIVE_DEEP_READ_GENERATION_CONFIG,
-      temperature: 0,
+      temperature: 0.65,
     });
+  });
+
+  it("请求组装层会把任何低温旁路收口到 0.65", () => {
+    const request = buildGeminiNativeDeepReadSegmentRequest({
+      fileUri: "gs://bucket/segment.mp4",
+      fps: 5,
+      prompt: "test",
+      generationConfig: {
+        ...NATIVE_DEEP_READ_GENERATION_CONFIG,
+        temperature: 0,
+      },
+    });
+    expect(request.generationConfig).toMatchObject({ temperature: 0.65 });
   });
 
   it("responseSchema 覆盖六栏骨架：shots/subtitles/audioResolution/beatStructureZh 必填", () => {
@@ -695,69 +707,27 @@ describe("模型请求前的媒体准备边界", () => {
   });
 });
 
-describe("超预算整集的转码压体积（64MB 预算保持不变）", () => {
+describe("分片原样上传 GCS", () => {
   const MB = 1024 * 1024;
 
-  it("64MB 预算与目标码率公式不变", () => {
-    expect(NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES).toBe(64 * MB);
-    expect(resolveNativeDeepReadTranscodeVideoKbps(85 * MB, 1080)).toBe(559);
-  });
-
-  it("转码参数保留音轨（模型听声）且限死码率峰值", () => {
-    const args = buildNativeDeepReadTranscodeToFitArgs({
-      inputPath: "/tmp/in.mp4",
-      outputPath: "/tmp/out.mp4",
-      videoKbps: 559,
-    });
-    expect(args.join(" ")).toContain("-c:v libx264 -preset veryfast");
-    expect(args.join(" ")).toContain("-b:v 559k -maxrate 559k -bufsize 1118k");
-    expect(args.join(" ")).toContain("-c:a aac -b:a 48k");
-    expect(args).not.toContain("-an");
-  });
-
-  it("整集切片超预算时逐片转码后再上传", async () => {
+  it("多片总体积超过旧预算仍逐片原样上传，不触发预转码", async () => {
     const runMedia = vi.fn(async (cmd: string, _args: string[]) =>
       cmd === "ffprobe" ? JSON.stringify({ streams: [{ index: 1 }] }) : "");
     const statLocal = vi.fn()
       .mockResolvedValueOnce({ size: 60 * MB })
-      .mockResolvedValueOnce({ size: 60 * MB })
-      .mockResolvedValueOnce({ size: 30 * MB })
-      .mockResolvedValueOnce({ size: 30 * MB });
+      .mockResolvedValueOnce({ size: 60 * MB });
     const deps = makePreparationDeps({ runMedia, statLocal });
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    try {
-      const prepared = await prepareEpisodeVideos({
-        episodeIndex: 2,
-        resolveNodes: async () => [{ url: "https://cdn.example/full.mp4" }],
-        segments: [{ startSec: 0, endSec: 300 }, { startSec: 300, endSec: 600 }],
-        sourceDurationSec: 601,
-      }, undefined, deps);
-      const ffmpegCalls = runMedia.mock.calls.filter((call) => call[0] === "ffmpeg");
-      // 2 次切片 + 2 次转码；转码在上传之前
-      expect(ffmpegCalls).toHaveLength(4);
-      expect(ffmpegCalls[2]?.[1]).toContain("libx264");
-      expect(deps.upload).toHaveBeenCalledTimes(2);
-      expect(prepared.map((row) => row.bytes)).toEqual([30 * MB, 30 * MB]);
-    } finally {
-      warn.mockRestore();
-    }
-  });
-
-  it("转码后仍超预算时关闭式失败，不上传也不发模型请求", async () => {
-    const statLocal = vi.fn(async () => ({ size: 60 * MB }));
-    const deps = makePreparationDeps({ statLocal });
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    try {
-      await expect(prepareEpisodeVideos({
-        episodeIndex: 5,
-        resolveNodes: async () => [{ url: "https://cdn.example/full.mp4" }],
-        segments: [{ startSec: 0, endSec: 300 }, { startSec: 300, endSec: 600 }],
-        sourceDurationSec: 601,
-      }, undefined, deps)).rejects.toThrow("第5集转码后仍超下载预算，请缩短分段");
-      expect(deps.upload).not.toHaveBeenCalled();
-    } finally {
-      warn.mockRestore();
-    }
+    const prepared = await prepareEpisodeVideos({
+      episodeIndex: 2,
+      resolveNodes: async () => [{ url: "https://cdn.example/full.mp4" }],
+      segments: [{ startSec: 0, endSec: 300 }, { startSec: 300, endSec: 600 }],
+      sourceDurationSec: 601,
+    }, undefined, deps);
+    const ffmpegCalls = runMedia.mock.calls.filter((call) => call[0] === "ffmpeg");
+    expect(ffmpegCalls).toHaveLength(2);
+    expect(ffmpegCalls.flatMap((call) => call[1])).not.toContain("libx264");
+    expect(deps.upload).toHaveBeenCalledTimes(2);
+    expect(prepared.map((row) => row.bytes)).toEqual([60 * MB, 60 * MB]);
   });
 });
 

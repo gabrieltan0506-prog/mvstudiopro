@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import { resolveManhuaNativeDeepReadGate } from "./manhuaNativeDeepReadGate";
 
 describe("resolveManhuaNativeDeepReadGate", () => {
-  it("只有非候选素材允许进入旧链", () => {
+  it("非原生候选素材关闭式停止，不再进入抽帧学习链", () => {
     expect(resolveManhuaNativeDeepReadGate({
       candidate: false,
       capabilityLoading: false,
       capabilityError: false,
       ownerAllowed: false,
-    })).toBe("legacy");
+    })).toBe("unsupported_source");
   });
 
   it("权限仍在读取或读取失败时关闭式停止", () => {

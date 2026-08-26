@@ -596,7 +596,11 @@ describe("manhuaLearnResultUi soft-fail", () => {
   it("migrates a temporary key to the real series key and persists per user", () => {
     installMemoryLocalStorage();
     const source = "https://www.douyin.com/collection/abc";
-    const base = manhuaLearnResultFromStart({ channel: "cloud", seriesKey: "learn_tmp" });
+    const base = manhuaLearnResultFromStart({
+      channel: "cloud",
+      seriesKey: "learn_tmp",
+      pipelineMode: "native_deep_read",
+    });
     let basket = upsertManhuaLearnBasketItem([], {
       seriesKey: "learn_tmp",
       continuation: { row: { url: source, mixName: "测试剧" }, rank: 0, savedAt: 1 },
@@ -631,7 +635,11 @@ describe("manhuaLearnResultUi soft-fail", () => {
         savedAt: 1,
       },
       result: {
-        ...manhuaLearnResultFromStart({ channel: "cloud", seriesKey }),
+        ...manhuaLearnResultFromStart({
+          channel: "cloud",
+          seriesKey,
+          pipelineMode: "native_deep_read",
+        }),
         pendingCount: 10,
       },
       updatedAt,
@@ -652,7 +660,11 @@ describe("manhuaLearnResultUi soft-fail", () => {
         savedAt: 1,
       },
       result: {
-        ...manhuaLearnResultFromStart({ channel: "cloud", seriesKey }),
+        ...manhuaLearnResultFromStart({
+          channel: "cloud",
+          seriesKey,
+          pipelineMode: "native_deep_read",
+        }),
         pendingCount: 1,
       },
       updatedAt,
@@ -723,14 +735,30 @@ describe("manhuaLearnResultUi soft-fail", () => {
 
   it("restores two running dramas and one queued drama without overwriting each other", () => {
     const jobs = [
-      { jobId: "a", status: "running" as const, input: { params: { url: "https://douyin.com/video/a", title: "A剧", seriesKey: "series_a" } }, output: { learnedCount: 1, listedEpisodeCount: 20 } },
-      { jobId: "b", status: "running" as const, input: { params: { url: "https://douyin.com/video/b", title: "B剧", seriesKey: "series_b" } }, output: { learnedCount: 2, listedEpisodeCount: 30 } },
-      { jobId: "c", status: "queued" as const, input: { params: { url: "https://douyin.com/video/c", title: "C剧", seriesKey: "series_c" } } },
+      { jobId: "a", status: "running" as const, input: { params: { url: "https://douyin.com/video/a", title: "A剧", seriesKey: "series_a", nativeDeepReadConfirmed: true } }, output: { learnedCount: 1, listedEpisodeCount: 20 } },
+      { jobId: "b", status: "running" as const, input: { params: { url: "https://douyin.com/video/b", title: "B剧", seriesKey: "series_b", nativeDeepReadConfirmed: true } }, output: { learnedCount: 2, listedEpisodeCount: 30 } },
+      { jobId: "c", status: "queued" as const, input: { params: { url: "https://douyin.com/video/c", title: "C剧", seriesKey: "series_c", nativeDeepReadConfirmed: true } } },
     ];
     const basket = mergeManhuaLearnServerJobsIntoBasket([], jobs, 100);
     expect(basket).toHaveLength(3);
     expect(basket.map((item) => item.jobStatus).sort()).toEqual(["queued", "running", "running"]);
     expect(basket.find((item) => item.seriesKey === "series_b")?.result.learnedCount).toBe(2);
+  });
+
+  it("旧抽帧任务不再恢复进当前原生精读页面", () => {
+    const basket = mergeManhuaLearnServerJobsIntoBasket([], [{
+      jobId: "legacy-frame-task",
+      status: "running" as const,
+      input: {
+        params: {
+          url: "https://douyin.com/video/legacy",
+          title: "旧任务",
+          seriesKey: "legacy_series",
+        },
+      },
+      output: { pipelineMode: "audio_dense_frames", learnedCount: 1 },
+    }], 100);
+    expect(basket).toEqual([]);
   });
 
   it("相同服务端快照重复轮询时复用原数组，不强制重绘下拉选项", () => {
@@ -742,6 +770,7 @@ describe("manhuaLearnResultUi soft-fail", () => {
           url: "https://douyin.com/video/stable",
           title: "稳定剧集",
           seriesKey: "series_stable",
+          nativeDeepReadConfirmed: true,
         },
       },
       output: { learnedCount: 1, listedEpisodeCount: 10 },
@@ -762,6 +791,7 @@ describe("manhuaLearnResultUi soft-fail", () => {
           url: "https://douyin.com/video/native",
           title: "原生剧",
           seriesKey: "series_native",
+          nativeDeepReadConfirmed: true,
         },
       },
       output: {

@@ -7,6 +7,7 @@
  * 一部 58 分钟合辑学一次约 $1.075，不能靠「看起来没有」下结论。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ManhuaViralTemplateCard } from "../../shared/manhuaViralTemplateBank";
 
 /**
  * 批准/下架/恢复共用一把 GCS 生命周期锁，所以 mock 必须让锁能真的拿到与释放：
@@ -899,6 +900,153 @@ describe("原生分集部分卡的滚动批准", () => {
     expect(writes.find((row) =>
       row.objectName === `manhua-template-learn/proposals/${nativeEpisodeId}.json`))
       .toMatchObject({ ifGenerationMatch: "7" });
+  });
+
+  it("同剧同集补全只更新同拍描述，并保留先前精华与新增亮点", async () => {
+    const { approveManhuaViralTemplate } = await import("./manhuaViralTemplateStore");
+    const oldApproved = partialEpisodeCard({
+      status: "approved", successSegments: 1, publicCode: "EPKEEP", snapshot: "b".repeat(64),
+    });
+    Object.assign(oldApproved, {
+      summaryZh: "先前已验收的情绪精华",
+      hook3sZh: "旧钩子亮点",
+      reusableZh: "用静默制造压迫",
+      genPromptHintZh: "保留冷色逆光",
+      beatGrid: [
+        { atSec: 0, endSec: 3, conflictZh: "先声夺人", visualZh: "旧成果独有动作", cameraMoveZh: "快速推近" },
+        { atSec: 10, endSec: 12, conflictZh: "信息加码", visualZh: "同一动作", cameraMoveZh: "固定机位" },
+      ],
+      subtitleTrack: [{ atSec: 1, textZh: "旧字幕证据" }],
+      classification: {
+        emotionTagsZh: ["压迫渐强", "隐忍"],
+        narrativeFeatureTagsZh: ["信息递进"],
+        performanceTagsZh: ["克制爆发"],
+        audiovisualTagsZh: ["冷暖对撞"],
+        audienceExperienceTagsZh: ["持续紧张"],
+      },
+    });
+    const nextProposal = partialEpisodeCard({
+      status: "proposed", successSegments: 2, snapshot: "c".repeat(64),
+    });
+    Object.assign(nextProposal, {
+      summaryZh: "新分片发现关系变化",
+      hook3sZh: "新钩子亮点",
+      reusableZh: "反应镜承接冲突",
+      genPromptHintZh: "增加遮挡转场",
+      beatGrid: [
+        { atSec: 10, endSec: 13, conflictZh: "信息加码", visualZh: "同一动作", cameraMoveZh: "缓慢横移" },
+        { atSec: 20, endSec: 24, conflictZh: "关系变化", visualZh: "新分片独有动作", cameraMoveZh: "环绕半圈" },
+      ],
+      subtitleTrack: [{ atSec: 21, textZh: "新字幕证据" }],
+      classification: {
+        emotionTagsZh: ["压迫渐强", "释然"],
+        narrativeFeatureTagsZh: ["信息递进", "关系转折"],
+        performanceTagsZh: ["克制爆发", "眼神停顿"],
+        audiovisualTagsZh: ["冷暖对撞", "遮挡转场"],
+        audienceExperienceTagsZh: ["持续紧张", "情绪释放"],
+      },
+    });
+    seedRollingEpisodeApprove(oldApproved, nextProposal);
+
+    const out = await approveManhuaViralTemplate({ id: nativeEpisodeId });
+    expect(out.summaryZh).toContain("先前已验收的情绪精华");
+    expect(out.summaryZh).toContain("新分片发现关系变化");
+    expect(out.reusableZh).toContain("用静默制造压迫");
+    expect(out.reusableZh).toContain("反应镜承接冲突");
+    expect(out.beatGrid).toEqual(expect.arrayContaining([
+      expect.objectContaining({ visualZh: "旧成果独有动作" }),
+      expect.objectContaining({ visualZh: "新分片独有动作" }),
+      expect.objectContaining({ visualZh: "同一动作", cameraMoveZh: "缓慢横移" }),
+    ]));
+    expect(out.beatGrid).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ visualZh: "同一动作", cameraMoveZh: "固定机位" }),
+    ]));
+    expect(out.subtitleTrack).toEqual([
+      { atSec: 1, textZh: "旧字幕证据" },
+      { atSec: 21, textZh: "新字幕证据" },
+    ]);
+    expect(out.classification?.emotionTagsZh).toEqual(["压迫渐强", "隐忍", "释然"]);
+    expect(out.provenance?.nativeVideoDeepRead?.completedSegmentIndexes).toEqual([0, 1]);
+    expect(out.provenance?.nativeVideoDeepRead?.shotCount).toBe(out.beatGrid.length);
+    expect(out.provenance?.nativeVideoDeepRead?.shotCount).toBe(3);
+  });
+
+  it("旧字段与标签已到上限时仍为新分片保留空间，同秒改写不重复计镜", async () => {
+    const { mergeNativeEpisodeTemplateLearning } = await import("./manhuaViralTemplateStore");
+    const oldApproved = partialEpisodeCard({
+      status: "approved", successSegments: 1, publicCode: "EPKEEP", snapshot: "d".repeat(64),
+    });
+    const nextProposal = partialEpisodeCard({
+      status: "proposed", successSegments: 2, snapshot: "e".repeat(64),
+    });
+    Object.assign(oldApproved, {
+      summaryZh: "旧精华".repeat(30),
+      beatGrid: [
+        { atSec: 10, endSec: 12, conflictZh: "旧措辞", visualZh: "旧动作描述", cameraMoveZh: "固定机位" },
+      ],
+      classification: {
+        emotionTagsZh: Array.from({ length: 8 }, (_, index) => `旧标签${index + 1}`),
+        narrativeFeatureTagsZh: ["旧叙事"],
+        performanceTagsZh: ["旧表演"],
+        audiovisualTagsZh: ["旧视听"],
+        audienceExperienceTagsZh: ["旧体验"],
+      },
+    });
+    Object.assign(nextProposal, {
+      summaryZh: "新进度亮点",
+      beatGrid: [
+        { atSec: 10, endSec: 13, conflictZh: "新措辞", visualZh: "新动作描述", cameraMoveZh: "缓慢横移" },
+      ],
+      classification: {
+        emotionTagsZh: ["新标签A", "新标签B"],
+        narrativeFeatureTagsZh: ["新叙事"],
+        performanceTagsZh: ["新表演"],
+        audiovisualTagsZh: ["新视听"],
+        audienceExperienceTagsZh: ["新体验"],
+      },
+    });
+
+    const out = mergeNativeEpisodeTemplateLearning(
+      oldApproved as unknown as ManhuaViralTemplateCard,
+      nextProposal as unknown as ManhuaViralTemplateCard,
+    );
+    expect(out.summaryZh).toContain("旧精华");
+    expect(out.summaryZh).toContain("新进度亮点");
+    expect(out.summaryZh.length).toBeLessThanOrEqual(120);
+    expect(out.classification?.emotionTagsZh).toContain("新标签A");
+    expect(out.classification?.emotionTagsZh).toContain("旧标签1");
+    expect(out.classification?.emotionTagsZh).toHaveLength(8);
+    expect(out.beatGrid).toEqual([
+      expect.objectContaining({ atSec: 10, visualZh: "新动作描述", cameraMoveZh: "缓慢横移" }),
+    ]);
+    expect(out.provenance?.nativeVideoDeepRead?.shotCount).toBe(1);
+  });
+
+  it("已批准卡含有效音轨时，本轮缺音轨或音轨倒退均拒绝补全", async () => {
+    const { mergeNativeEpisodeTemplateLearning } = await import("./manhuaViralTemplateStore");
+    const oldApproved = partialEpisodeCard({
+      status: "approved", successSegments: 1, publicCode: "EPKEEP", snapshot: "f".repeat(64),
+    });
+    const nextProposal = partialEpisodeCard({
+      status: "proposed", successSegments: 2, snapshot: "1".repeat(64),
+    });
+    Object.assign(oldApproved, {
+      audioStory: { hasAudio: true, durationSec: 360 },
+    });
+    expect(() => mergeNativeEpisodeTemplateLearning(
+      oldApproved as unknown as ManhuaViralTemplateCard,
+      nextProposal as unknown as ManhuaViralTemplateCard,
+    ))
+      .toThrow(/缺少本轮有效音轨/);
+
+    Object.assign(nextProposal, {
+      audioStory: { hasAudio: true, durationSec: 300 },
+    });
+    expect(() => mergeNativeEpisodeTemplateLearning(
+      oldApproved as unknown as ManhuaViralTemplateCard,
+      nextProposal as unknown as ManhuaViralTemplateCard,
+    ))
+      .toThrow(/本轮音轨短于已批准进度/);
   });
 
   it("正式卡已有 2/4 时拒绝批准 1/4 倒退提案", async () => {

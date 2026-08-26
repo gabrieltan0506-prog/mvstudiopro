@@ -17,7 +17,6 @@ import {
   NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_INTERVAL_SEC,
   NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN,
   NATIVE_DEEP_READ_MODEL,
-  NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES,
   NATIVE_DEEP_READ_ROUTE_EVOLINK,
   NATIVE_DEEP_READ_ROUTE_VERTEX,
   NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC,
@@ -552,8 +551,8 @@ export const NATIVE_DEEP_READ_DEFAULT_BATCH_EPISODES = 20;
 export const NATIVE_DEEP_READ_BATCH_HARD_CEILING = 200;
 /** 单集仍遵守学习策略的两小时上限。 */
 export const NATIVE_DEEP_READ_MAX_EPISODE_SEC = 120 * 60;
-/** 视觉分片最多 6 分钟：360s×fps5=1800 帧恰好贴满单视频帧预算。 */
-export const NATIVE_DEEP_READ_MAX_SEGMENT_SEC = 6 * 60;
+/** 视觉分片最多 5 分钟；分片契约只按时长，不按编码体积变化。 */
+export const NATIVE_DEEP_READ_MAX_SEGMENT_SEC = 5 * 60;
 
 export type NativeDeepReadBatchPlan = {
   totalEpisodes: number;
@@ -639,7 +638,7 @@ export function validateNativeDeepReadBatchPlan(
   }
   /**
    * 计划确认码 canonical：`NATIVE_DEEP_READ_VISUAL_PLAN_VERSION` 改值即旧确认码
-   * 全废（0826 换代必须如此）。采样、通道、门禁地板、媒体预算全部入 canonical。
+   * 全废（0826 换代必须如此）。采样、通道、分片上限与门禁地板全部入 canonical。
    */
   const canonical = JSON.stringify({
     seriesKey: String(opts.seriesKey || ""),
@@ -649,7 +648,6 @@ export function validateNativeDeepReadBatchPlan(
       routes: [NATIVE_DEEP_READ_ROUTE_VERTEX, NATIVE_DEEP_READ_ROUTE_EVOLINK],
       fpsTiers: { shortMaxSec: 180, shortFps: 10, longFps: 5 },
       maxSegmentSec: NATIVE_DEEP_READ_MAX_SEGMENT_SEC,
-      mediaBudgetBytes: NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES,
       densityFloors: {
         shotIntervalSec: NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC,
         audioTrackMin: NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN,

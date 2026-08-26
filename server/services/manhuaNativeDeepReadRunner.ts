@@ -7,7 +7,8 @@
  *   · 新加坡 Qwen←GCS 吞吐 <0.15MB/s 不可用；北京 Qwen 可用但无音轨、474s、贵一倍；
  *   · `gemini-3.1-pro-preview` @ Vertex global，fileData gs:// + videoMetadata{fps:5}
  *     + generationConfig{responseMimeType:"application/json",audioTimestamp:true}，
- *     360s 段 144s 返回，输入 ≈129k tok（视频 118,866 + 音频 9,001）。
+ *     既有 360s 探针证明模型可读，但生产分片固定为最长 300s，确保 18 分钟素材
+ *     恢复为 4 片，并缩小单片失败后的重跑范围。
  *   · 双密度教训：v1 出 64 镜但音轨薄；v2 音轨达标但镜头被压到 16 —— 生产提示词
  *     必须同时锁两侧密度，入库门禁按地板线关闭式拒收。
  *
@@ -258,19 +259,25 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
   thinkingConfig: { thinkingLevel: "HIGH", includeThoughts: false },
 } as const;
 
-/** 原地重试参数（0826 定稿）：第二次不再保留随机性；其余与首发完全一致。 */
+/**
+ * 视觉精读温度硬下限。低于 0.65 会显著压缩镜头拆解与声音描述密度，
+ * 首发、门禁重试和未来调用点都不得绕过。
+ */
+export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.65;
+
+/** 原地重试只补充门禁拒因；温度保持在获批下限，其余与首发完全一致。 */
 export const NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG = {
   ...NATIVE_DEEP_READ_GENERATION_CONFIG,
-  temperature: 0,
+  temperature: NATIVE_DEEP_READ_TEMPERATURE_MIN,
 } as const;
 
 /** 响应体上限：模型异常时可能吐超大 body，不设限会把内存吃干 */
 const NATIVE_RESPONSE_CAP_CHARS = 8 * 1024 * 1024;
-/** 单段视觉请求总时限：实测 360s 段 144s 返回，30 分钟为失联硬顶。 */
+/** 单段视觉请求总时限：生产分片最长 300 秒，30 分钟为失联硬顶。 */
 export const NATIVE_DEEP_READ_REQUEST_TOTAL_TIMEOUT_MS = 30 * 60_000;
 /**
- * Undici 默认只等 300 秒响应头；360 秒高密度视频在上游排队或 Fly 资源繁忙时
- * 会先被这个隐含门槛切成 `TypeError: fetch failed`。这里与业务总时限收口，
+ * Undici 默认只等 300 秒响应头；生产分片本身已到 300 秒，上游排队或 Fly
+ * 资源繁忙时会先被这个隐含门槛切成 `TypeError: fetch failed`。这里与业务总时限收口，
  * 仍由 AbortSignal 负责 30 分钟硬中止，不把超时无限放开。
  */
 export const NATIVE_DEEP_READ_HTTP_HEADERS_TIMEOUT_MS =
@@ -421,7 +428,7 @@ export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
  * v4（0826 拍板）：视觉调用换 Vertex Gemini 3.1 Pro 从 GCS 直读、每段一次调用、
  * 音轨同调直出、双密度门禁。计划口径与采样语义全变——旧确认码必须全废。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "adaptive-1800f-360s-v4-gemini" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v5-gemini-direct-gcs" as const;
 
 /** 两档 fps（0826 拍板）：段时长 ≤180s → 10；否则 5（下限，不再降） */
 export function resolveNativeDeepReadRequestFps(totalDurationSec: number): number {
@@ -558,9 +565,18 @@ export function buildGeminiNativeDeepReadSegmentRequest(input: {
   fileUri: string;
   fps: number;
   prompt: string;
-  /** 原地重试传 NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG（temperature 0）；缺省=首发参数 */
+  /** 原地重试传 NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG；缺省=首发参数 */
   generationConfig?: Record<string, unknown>;
 }): Record<string, unknown> {
+  const requestedConfig = input.generationConfig || NATIVE_DEEP_READ_GENERATION_CONFIG;
+  const requestedTemperature = Number(requestedConfig.temperature);
+  const generationConfig = {
+    ...requestedConfig,
+    // 纵深门禁：未来即使有新旁路误传 0，也在真正组装请求体时收口到 0.65。
+    temperature: Number.isFinite(requestedTemperature)
+      ? Math.max(NATIVE_DEEP_READ_TEMPERATURE_MIN, requestedTemperature)
+      : NATIVE_DEEP_READ_GENERATION_CONFIG.temperature,
+  };
   return {
     contents: [{
       role: "user",
@@ -573,7 +589,7 @@ export function buildGeminiNativeDeepReadSegmentRequest(input: {
         { text: input.prompt },
       ],
     }],
-    generationConfig: input.generationConfig || NATIVE_DEEP_READ_GENERATION_CONFIG,
+    generationConfig,
   };
 }
 
@@ -726,12 +742,6 @@ export async function resolveNativeDeepReadNodeUrls(
 /* ────────────────── 切段 → GCS 上传 → 用后删（媒体准备） ────────────────── */
 
 const NATIVE_VIDEO_TEMP_PREFIX = "manhua-template-learn/tmp/native-deep-read";
-const NATIVE_VIDEO_SEGMENT_MAX_BYTES = 90 * 1024 * 1024;
-/**
- * 0826 拍板保留的 64MB 单集媒体预算（源自 Qwen 时代 120 秒下载窗实弹，
- * 对 Gemini 同样是控制单段/单集体积与转码触发线的守恒量，暂不放宽）。
- */
-export const NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES = 64 * 1024 * 1024;
 /** 切段前 /tmp 必须至少剩 500MB，否则关闭式停止（不切半截片）。 */
 export const NATIVE_DEEP_READ_MIN_TMP_FREE_BYTES = 500 * 1024 * 1024;
 
@@ -773,38 +783,6 @@ export function buildCutSegmentArgs(
     durationSec: lenSec,
     outputPath: localPath,
   });
-}
-
-/**
- * 转码压体积的目标视频码率（kbps）。
- *
- * 让整集所有分片压进单集媒体预算：预算字节 ×8 换成比特，×0.92 给容器与
- * 码率波动留余量，摊到整集时长后再扣掉 48kbps 音轨（音轨必须保留，模型听声）。
- */
-export function resolveNativeDeepReadTranscodeVideoKbps(
-  budgetBytes: number,
-  episodeTotalDurationSec: number,
-): number {
-  const duration = Math.max(1, Number(episodeTotalDurationSec) || 1);
-  return Math.floor((Math.max(0, Number(budgetBytes) || 0) * 8 * 0.92 / duration) / 1000) - 48;
-}
-
-/** 超预算分片的转码参数：540p + libx264 限码率，音轨保留 48k AAC。 */
-export function buildNativeDeepReadTranscodeToFitArgs(input: {
-  inputPath: string;
-  outputPath: string;
-  videoKbps: number;
-}): string[] {
-  const kbps = Math.max(1, Math.floor(input.videoKbps));
-  return [
-    "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
-    "-i", input.inputPath,
-    "-vf", "scale=-2:540",
-    "-c:v", "libx264", "-preset", "veryfast",
-    "-b:v", `${kbps}k`, "-maxrate", `${kbps}k`, "-bufsize", `${2 * kbps}k`,
-    "-c:a", "aac", "-b:a", "48k",
-    input.outputPath,
-  ];
 }
 
 export type PreparedNativeVideo = {
@@ -902,8 +880,8 @@ export async function prepareEpisodeVideos(
   }> = [];
   let episodeHasAudio = false;
   try {
-    // 第一阶段：全部分片先切到本地并记下体积——整集总字节数已知后才能判断
-    // 是否超单集媒体预算；超了必须在上传 GCS 之前转码压体积。
+    // 分片只按时间切；每片独立上传 GCS、独立调用 Gemini。
+    // 禁止把整集各片体积相加后预转码：那是旧的多片合包请求逻辑。
     for (let index = 0; index < segments.length; index += 1) {
       abortSignal?.throwIfAborted();
       const segment = segments[index]!;
@@ -929,7 +907,7 @@ export async function prepareEpisodeVideos(
             abortSignal,
           );
           const fileStat = await deps.statLocal(localPath);
-          if (fileStat.size < 100_000 || fileStat.size > NATIVE_VIDEO_SEGMENT_MAX_BYTES) {
+          if (fileStat.size < 100_000) {
             throw new Error(`第${episode.episodeIndex}集第${index + 1}段大小不在处理范围`);
           }
           cutRows.push({
@@ -955,61 +933,7 @@ export async function prepareEpisodeVideos(
       if (!completed) throw lastError instanceof Error ? lastError : new Error("视频分片准备失败");
     }
 
-    // 第二阶段：整集总字节超预算时逐片转码压体积。
-    const totalBytesBefore = cutRows.reduce((sum, row) => sum + row.bytes, 0);
-    if (totalBytesBefore > NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES) {
-      const episodeDurationSec = cutRows.reduce(
-        (sum, row) => sum + Math.max(1, row.endSec - row.startSec),
-        0,
-      );
-      const videoKbps = resolveNativeDeepReadTranscodeVideoKbps(
-        NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES,
-        episodeDurationSec,
-      );
-      if (videoKbps <= 0) {
-        throw new Error(`第${episode.episodeIndex}集转码后仍超下载预算，请缩短分段`);
-      }
-      console.warn(
-        `[nativeDeepRead] 第${episode.episodeIndex}集切片共 ${(totalBytesBefore / 1048576).toFixed(1)}MB `
-        + `超过单请求下载预算，按 ${videoKbps}kbps 逐片转码压体积（音轨保留）`,
-      );
-      for (const row of cutRows) {
-        abortSignal?.throwIfAborted();
-        const outputPath = `/tmp/manhua-native-video-${row.runId}-fit.mp4`;
-        try {
-          await deps.runMedia(
-            "ffmpeg",
-            buildNativeDeepReadTranscodeToFitArgs({
-              inputPath: row.localPath,
-              outputPath,
-              videoKbps,
-            }),
-            20 * 60_000,
-            abortSignal,
-          );
-          const transStat = await deps.statLocal(outputPath);
-          if (transStat.size < 100_000) {
-            throw new Error(`第${episode.episodeIndex}集转码产物大小不在处理范围`);
-          }
-          await deps.unlinkLocal(row.localPath).catch(() => undefined);
-          row.localPath = outputPath;
-          row.bytes = transStat.size;
-        } catch (error) {
-          await deps.unlinkLocal(outputPath).catch(() => undefined);
-          throw error;
-        }
-      }
-      const totalBytesAfter = cutRows.reduce((sum, row) => sum + row.bytes, 0);
-      if (totalBytesAfter > NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES) {
-        throw new Error(`第${episode.episodeIndex}集转码后仍超下载预算，请缩短分段`);
-      }
-      console.warn(
-        `[nativeDeepRead] 第${episode.episodeIndex}集转码完成：`
-        + `${(totalBytesBefore / 1048576).toFixed(1)}MB → ${(totalBytesAfter / 1048576).toFixed(1)}MB`,
-      );
-    }
-
-    // 第三阶段：确认在预算内后再上传 GCS。Vertex 直读 gs://，这里不签任何 URL；
+    // 每片原样上传 GCS。Vertex 直读 gs://，这里不签任何 URL；
     // 上传成功即删本地段文件（finally 统一兜底）。
     for (const row of cutRows) {
       abortSignal?.throwIfAborted();
@@ -1950,7 +1874,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
         const body = buildGeminiNativeDeepReadSegmentRequest({
           fileUri: input.fileUri,
           fps: input.fps,
-          // 0826 定稿：原地重试（带被拒原因那一发）temperature 归零，不再保留随机性
+          // 门禁重试只补充拒因；temperature 仍保持 0.65 下限，不用零温度压缩输出密度。
           generationConfig: input.rejectedReasonZh
             ? NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG
             : undefined,
@@ -2264,12 +2188,27 @@ export async function runManhuaNativeDeepReadBatch(params: {
         } catch (error) {
           if (params.abortSignal?.aborted || !isNativeDeepReadGateFailure(error)) throw error;
           const rejectedReasonZh = (error instanceof Error ? error.message : String(error)).slice(0, 300);
+          // 模型“返回”不等于分片通过。把首次门禁拒因持久化为重试中的结构校验回执，
+          // 面板不得先显示“分片完成”，再无解释地出现第二次“开始”。
+          await emitVisualModelReceipt({
+            callId: crypto.randomUUID(),
+            model: NATIVE_DEEP_READ_MODEL,
+            route: "gate_retry_pending",
+            stage: "visual_parse",
+            status: "started",
+            batchRequestId: episodeRequestId,
+            episodeIndexes: [episode.episodeIndex],
+            chunkIndex: input.segmentIndex,
+            segmentCount: episode.segments.length,
+            videoCount: 1,
+            errorZh: rejectedReasonZh,
+          }, params.onModelReceipt);
           console.warn(
             `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段未过密度门禁，`
-            + `带被拒原因原地重试一次（temperature 0）：${rejectedReasonZh}`,
+            + `带被拒原因原地重试一次（temperature ${NATIVE_DEEP_READ_TEMPERATURE_MIN}）：${rejectedReasonZh}`,
           );
           try {
-            // 0826 定稿：只允许原地重试一次（RETRY config 温度归零），不换模型不降 fps
+            // 只允许原地重试一次；不换模型、不降 fps、不低于 0.65 温度。
             return await attemptSegment({ ...input, rejectedReasonZh });
           } catch (retryError) {
             if (params.abortSignal?.aborted) throw retryError;

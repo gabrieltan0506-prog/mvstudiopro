@@ -2512,6 +2512,19 @@ export async function runManhuaTemplateLearn(
                   : `全系列结构整理未完成：${checkpoint.errorZh || "上游未返回完整回执"}`,
             );
           } else {
+            if (
+              checkpoint.route === "gate_retry_pending"
+              && checkpoint.status === "started"
+            ) {
+              const retrySegmentZh = typeof checkpoint.chunkIndex === "number" && checkpoint.segmentCount
+                ? ` · 分片 ${checkpoint.chunkIndex + 1}/${checkpoint.segmentCount}`
+                : "";
+              await progress(
+                MANHUA_LEARN_STAGE.vision,
+                `${episodeLabel}${retrySegmentZh} · 门禁未通过，正在按拒因重试：${checkpoint.errorZh || "结构密度未达标"}`,
+              );
+              return;
+            }
             const stageZh = checkpoint.stage === "visual_parse"
               ? checkpoint.route === "openrouter_glm_structuring"
                 ? "GLM 结构化整形"
@@ -2527,7 +2540,9 @@ export async function runManhuaTemplateLearn(
               `${episodeLabel}${segmentZh} · ${stageZh}${checkpoint.status === "started"
                 ? "开始"
                 : checkpoint.status === "completed"
-                  ? "完成"
+                  ? checkpoint.stage === "visual_model"
+                    ? "已返回，正在校验分片"
+                    : "完成"
                   : `未完成：${checkpoint.errorZh || "上游未返回完整回执"}`}`,
             );
           }
