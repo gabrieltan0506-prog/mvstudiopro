@@ -25,10 +25,10 @@ import {
   isManhuaNativeDeepReadEnabled,
   pickSmallestVideoFormat,
   prepareEpisodeVideos,
+  nativeDeepReadSegmentCacheFingerprint,
   resolveNativeDeepReadRequestFps,
   resolveNativeDeepReadSegmentFloors,
   resolveNativeDeepReadTranscodeVideoKbps,
-  nativeDeepReadSegmentCacheFingerprint,
   runManhuaNativeDeepReadBatch,
   validateNativeDeepReadSegments,
   type NativeDeepReadBatchRunnerDeps,
@@ -38,6 +38,10 @@ import {
   MANHUA_NATIVE_DEEP_READ_MODEL,
   MANHUA_NATIVE_DEEP_READ_MODEL_LABEL,
 } from "../../shared/manhuaNativeDeepReadJob";
+import {
+  NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
+  type NativeDeepReadSegmentCacheEntry,
+} from "./manhuaNativeDeepReadSegmentCache";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -437,7 +441,7 @@ describe("段级双密度门禁", () => {
       .toThrow("音轨字段不完整：缺 cues");
   });
 
-  it("min(1) 必填字段（genAudioHintZh）缺失也吐具体拒因，不再被泛化 schema 文案吞掉（审阅员 P2-1）", () => {
+  it("min(1) 必填字段 genAudioHintZh 缺失也返回具体拒因", () => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
     const analysis = (raw.audioResolution as Array<{ analysis: Record<string, unknown> }>)[0]!.analysis;
     delete analysis.genAudioHintZh;
@@ -445,7 +449,7 @@ describe("段级双密度门禁", () => {
       .toThrow("音轨汇总字段不完整：缺 genAudioHintZh");
   });
 
-  it("整集 GLM 合并路同样做存在性门禁：缺 cues 带具体拒因整集拒收（审阅员 P2-2）", () => {
+  it("整集 GLM 合并路同样检查原始音轨字段存在性", () => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
     const analysis = (raw.audioResolution as Array<{ analysis: { audioTrack: Array<Record<string, unknown>> } }>)[0]!.analysis;
     delete analysis.audioTrack[0]!.cues;
@@ -770,12 +774,12 @@ function makeRunnerDeps(over: Partial<NativeDeepReadBatchRunnerDeps> = {}): Nati
         hasAudio: true,
       }))) as never,
     remove: vi.fn(async () => undefined),
-    readSegmentCache: vi.fn(async () => null) as never,
-    writeSegmentCache: vi.fn(async () => undefined) as never,
     postVertex: vi.fn() as never,
     postEvolink: vi.fn() as never,
     signReadUrl: vi.fn(() => "https://storage.googleapis.com/signed.mp4"),
     invokeGlmStructuring: vi.fn() as never,
+    readSegmentCache: vi.fn(async () => null) as never,
+    writeSegmentCache: vi.fn(async () => undefined) as never,
     ...over,
   };
 }
@@ -1026,111 +1030,259 @@ describe("坏 JSON 收敛为门禁类可重试错误（0826 实弹第8集）", (
   });
 });
 
-describe("段级产物缓存（0826 拍板：成功段的钱永不重买）", () => {
-  const segment = { startSec: 0, endSec: 60 };
-  const episode = {
+describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
+  const sourceDigest = "a".repeat(64);
+  const cacheSeriesKey = "cache_series_01";
+  const makeEpisode = (segments: Array<{ startSec: number; endSec: number; hintZh?: string }>) => ({
     episodeIndex: 3,
     resolveNodes: async () => [],
-    segments: [segment],
-    sourceDurationSec: 60,
-  };
-
-  it("指纹是 64 位 hex 且两次调用一致（memo 稳定）", () => {
-    const a = nativeDeepReadSegmentCacheFingerprint();
-    expect(a).toMatch(/^[0-9a-f]{64}$/);
-    expect(nativeDeepReadSegmentCacheFingerprint()).toBe(a);
+    segments,
+    sourceDurationSec: segments.at(-1)!.endSec,
+    hintZh: "本集提示",
+    cacheSourceDigest: sourceDigest,
   });
 
-  it("缓存命中：不备料、不调模型、零计费，产出照常装配且发 cache_hit 回执", async () => {
-    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
-    const receipts: Array<{ route: string; status: string; priceEquivalentCny?: number }> = [];
-    const deps = makeRunnerDeps({
-      readSegmentCache: vi.fn(async () => ({
-        fingerprint: nativeDeepReadSegmentCacheFingerprint(),
-        seriesKey: "cacheSeries01",
-        episodeIndex: 3,
-        segmentIndex: 0,
-        startSec: 0,
-        endSec: 60,
+  function makeCacheEntry(input: {
+    episode: ReturnType<typeof makeEpisode>;
+    segmentIndex: number;
+    hasAudio?: boolean;
+    route?: "vertex_gcs_video" | "evolink_gemini_video";
+  }): NativeDeepReadSegmentCacheEntry {
+    const hasAudio = input.hasAudio ?? true;
+    const segment = input.episode.segments[input.segmentIndex]!;
+    const route = input.route ?? "vertex_gcs_video";
+    return {
+      schemaVersion: NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
+      fingerprint: nativeDeepReadSegmentCacheFingerprint({
+        sourceDigest,
+        episodeIndex: input.episode.episodeIndex,
+        episodeDurationSec: input.episode.sourceDurationSec,
+        segment,
+        segmentIndex: input.segmentIndex,
+        segmentCount: input.episode.segments.length,
+        hasAudio,
+        hintZh: input.episode.hintZh,
+      }),
+      sourceDigest,
+      seriesKey: cacheSeriesKey,
+      episodeIndex: input.episode.episodeIndex,
+      segmentIndex: input.segmentIndex,
+      startSec: segment.startSec,
+      endSec: segment.endSec,
+      hasAudio,
+      requestedFps: resolveNativeDeepReadRequestFps(segment.endSec - segment.startSec),
+      visualRoute: route,
+      degraded: route === "evolink_gemini_video",
+      raw: makeSegmentPayload({
+        segmentIndex: input.segmentIndex,
+        startSec: segment.startSec,
+        endSec: segment.endSec,
+        hasAudio,
+      }),
+      paidUsage: {
+        inputTokens: 100_000,
+        outputTokens: 2_500,
+        audioInputTokens: hasAudio ? 8_000 : 0,
+        reasoningTokens: 500,
+        costCny: 1.08,
+      },
+      savedAtIso: "2026-08-26T12:00:00.000Z",
+    };
+  }
+
+  it("指纹包含真实来源、hint、段参数和 fps，任一变化均失效", () => {
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
+    const base = nativeDeepReadSegmentCacheFingerprint({
+      sourceDigest,
+      episodeIndex: 3,
+      episodeDurationSec: 60,
+      segment: episode.segments[0]!,
+      segmentIndex: 0,
+      segmentCount: 1,
+      hasAudio: true,
+      hintZh: "A",
+    });
+    expect(base).toMatch(/^[0-9a-f]{64}$/);
+    expect(nativeDeepReadSegmentCacheFingerprint({
+      sourceDigest: "b".repeat(64), episodeIndex: 3, episodeDurationSec: 60,
+      segment: episode.segments[0]!, segmentIndex: 0, segmentCount: 1,
+      hasAudio: true, hintZh: "A",
+    })).not.toBe(base);
+    expect(nativeDeepReadSegmentCacheFingerprint({
+      sourceDigest, episodeIndex: 3, episodeDurationSec: 60,
+      segment: episode.segments[0]!, segmentIndex: 0, segmentCount: 1,
+      hasAudio: true, hintZh: "B",
+    })).not.toBe(base);
+    expect(nativeDeepReadSegmentCacheFingerprint({
+      sourceDigest, episodeIndex: 3, episodeDurationSec: 181,
+      segment: { startSec: 0, endSec: 181 }, segmentIndex: 0, segmentCount: 1,
+      hasAudio: true, hintZh: "A",
+    })).not.toBe(base);
+  });
+
+  it("非连续待备段按原 segmentIndex 装配，不靠 startSec find 猜位置", async () => {
+    const episode = makeEpisode([
+      { startSec: 0, endSec: 60 },
+      { startSec: 60, endSec: 120 },
+      { startSec: 120, endSec: 180 },
+      { startSec: 180, endSec: 240 },
+    ]);
+    const cached = new Map([
+      [0, makeCacheEntry({ episode, segmentIndex: 0 })],
+      [2, makeCacheEntry({ episode, segmentIndex: 2 })],
+    ]);
+    const prepareVideos = vi.fn(async (row: { segments: typeof episode.segments }) =>
+      row.segments.map((segment) => ({
+        gsUri: `gs://bucket/seg-${segment.startSec}.mp4`,
+        startSec: segment.startSec,
+        endSec: segment.endSec,
+        temporaryGcs: { bucket: "bucket", objectName: `seg-${segment.startSec}.mp4` },
+        bytes: 1_000_000,
         hasAudio: true,
-        raw,
-        paidUsage: {
-          inputTokens: 100_000, outputTokens: 2_500,
-          audioInputTokens: 8_000, reasoningTokens: 500, costCny: 1.08,
-        },
-        savedAtIso: "2026-08-26T12:00:00.000Z",
+      })));
+    const postVertex = vi.fn(async (body: unknown) => {
+      const prompt = String((body as { contents: Array<{ parts: Array<{ text?: string }> }> })
+        .contents[0]!.parts[1]!.text);
+      const segmentIndex = Number(/第 (\d+)\/4 段/.exec(prompt)?.[1]) - 1;
+      const segment = episode.segments[segmentIndex]!;
+      return geminiResponse(makeSegmentPayload({
+        segmentIndex, startSec: segment.startSec, endSec: segment.endSec,
+      }));
+    });
+    const deps = makeRunnerDeps({
+      prepareVideos: prepareVideos as never,
+      readSegmentCache: vi.fn(async ({ segmentIndex }: { segmentIndex: number }) => {
+        const entry = cached.get(segmentIndex);
+        return entry ? { entry, generation: String(segmentIndex + 1) } : null;
+      }) as never,
+      writeSegmentCache: vi.fn(async () => undefined) as never,
+      postVertex: postVertex as never,
+    });
+    await runManhuaNativeDeepReadBatch({
+      episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey,
+    }, deps);
+    expect(prepareVideos).toHaveBeenCalledTimes(1);
+    expect(prepareVideos.mock.calls[0]![0].segments.map((row) => row.startSec)).toEqual([60, 180]);
+    expect(postVertex).toHaveBeenCalledTimes(2);
+  });
+
+  it("全缓存命中不伪造模型回执；历史路由恢复后 GLM 整形仍按本轮真实计费", async () => {
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
+    const entry = makeCacheEntry({ episode, segmentIndex: 0, route: "evolink_gemini_video" });
+    const receipts: Array<Record<string, unknown>> = [];
+    const deps = makeRunnerDeps({
+      readSegmentCache: vi.fn(async () => ({ entry, generation: "7" })) as never,
+      invokeGlmStructuring: vi.fn(async () => ({
+        raw: entry.raw, inputTokens: 11, outputTokens: 2, reasoningTokens: 1,
+        costUsd: 0.01, finishReason: "stop",
       })) as never,
     });
     const result = await runManhuaNativeDeepReadBatch({
-      episodes: [episode],
-      segmentCacheSeriesKey: "cacheSeries01",
-      onModelReceipt: (receipt) => {
-        receipts.push({
-          route: receipt.route,
-          status: receipt.status,
-          priceEquivalentCny: receipt.priceEquivalentCny,
-        });
-      },
+      episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey,
+      onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
     }, deps);
     expect(deps.prepareVideos).not.toHaveBeenCalled();
     expect(deps.postVertex).not.toHaveBeenCalled();
-    expect(deps.writeSegmentCache).not.toHaveBeenCalled();
-    const only = result.episodes[0]!.result;
-    expect(only.usage.inputTokens).toBe(0);
-    expect(only.usage.costCny).toBe(0);
-    // 音轨 token 快照随行作「真听过」证据
-    expect(only.audioInputTokens).toBe(8_000);
-    expect(only.shotCount).toBeGreaterThan(0);
-    // 集级装配门禁（local_schema_gate）回执照发；缓存命中回执单独校验
-    expect(receipts.filter((row) => row.route === "segment_cache_hit")).toEqual([
-      { route: "segment_cache_hit", status: "completed", priceEquivalentCny: 0 },
-    ]);
-    expect(receipts.some((row) => row.route === "vertex_gcs_video")).toBe(false);
+    expect(result.usage.inputTokens).toBe(11);
+    expect(result.usage.outputTokens).toBe(2);
+    expect(result.usage.costCny).toBeGreaterThan(0);
+    expect(result.episodes[0]!.result.audioInputTokens).toBe(8_000);
+    expect(result.episodes[0]!.result.visualRoutes).toEqual(["evolink_gemini_video"]);
+    expect(result.episodes[0]!.result.degradedFpsSegmentIndexes).toEqual([0]);
+    expect(receipts.find((row) => row.route === "segment_cache_hit")).toBeUndefined();
+    expect(receipts.some((row) => row.model === "z-ai/glm-5.3" && row.status === "completed")).toBe(true);
   });
 
-  it("指纹不符按 miss：照常付费调用，成功后写通缓存（带当前指纹）", async () => {
-    const good = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+  it("全命中缓存 hasAudio 互相冲突时停止，不备料也不调模型", async () => {
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }]);
+    const entries = [
+      makeCacheEntry({ episode, segmentIndex: 0, hasAudio: true }),
+      makeCacheEntry({ episode, segmentIndex: 1, hasAudio: false }),
+    ];
     const deps = makeRunnerDeps({
-      readSegmentCache: vi.fn(async () => ({
-        fingerprint: "deadbeef",
-        seriesKey: "cacheSeries01",
-        episodeIndex: 3,
-        segmentIndex: 0,
-        startSec: 0,
-        endSec: 60,
-        hasAudio: true,
-        raw: good,
-        paidUsage: { inputTokens: 1, outputTokens: 1, audioInputTokens: 1, reasoningTokens: 0, costCny: 0.01 },
-        savedAtIso: "2026-08-26T12:00:00.000Z",
+      readSegmentCache: vi.fn(async ({ segmentIndex }: { segmentIndex: number }) => ({
+        entry: entries[segmentIndex]!, generation: String(segmentIndex + 1),
       })) as never,
-      postVertex: vi.fn(async () => geminiResponse(good)) as never,
+    });
+    await expect(runManhuaNativeDeepReadBatch({
+      episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey,
+    }, deps)).rejects.toThrow("hasAudio 证据互相冲突");
+    expect(deps.prepareVideos).not.toHaveBeenCalled();
+    expect(deps.postVertex).not.toHaveBeenCalled();
+  });
+
+  it("缓存读取异常关闭式停止；缓存写失败时不继续烧下一段", async () => {
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }]);
+    const readFailureDeps = makeRunnerDeps({
+      readSegmentCache: vi.fn(async () => { throw new Error("gcs_stat_failed:503"); }) as never,
+    });
+    await expect(runManhuaNativeDeepReadBatch({
+      episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey,
+    }, readFailureDeps)).rejects.toThrow("gcs_stat_failed:503");
+    expect(readFailureDeps.postVertex).not.toHaveBeenCalled();
+
+    const postVertex = vi.fn(async () => geminiResponse(makeSegmentPayload({
+      segmentIndex: 0, startSec: 0, endSec: 60,
+    })));
+    const writeFailureDeps = makeRunnerDeps({
+      postVertex: postVertex as never,
+      writeSegmentCache: vi.fn(async () => { throw new Error("cache write failed"); }) as never,
+    });
+    await expect(runManhuaNativeDeepReadBatch({
+      episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey,
+    }, writeFailureDeps)).rejects.toThrow("cache write failed");
+    expect(postVertex).toHaveBeenCalledTimes(1);
+  });
+
+  it("首轮一段成功一段失败，第二轮只调用失败段且本次只记该段费用", async () => {
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }]);
+    const store = new Map<number, NativeDeepReadSegmentCacheEntry>();
+    const thin = makeSegmentPayload({
+      segmentIndex: 1, startSec: 60, endSec: 120, shotCountOverride: 8,
+    });
+    const good0 = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    const good1 = makeSegmentPayload({ segmentIndex: 1, startSec: 60, endSec: 120 });
+    const postVertex = vi.fn()
+      .mockResolvedValueOnce(geminiResponse(good0))
+      .mockResolvedValueOnce(geminiResponse(thin))
+      .mockResolvedValueOnce(geminiResponse(thin))
+      .mockResolvedValueOnce(geminiResponse(good1));
+    const prepareVideos = vi.fn(async (row: { segments: typeof episode.segments }) =>
+      row.segments.map((segment) => ({
+        gsUri: `gs://bucket/seg-${segment.startSec}.mp4`,
+        startSec: segment.startSec,
+        endSec: segment.endSec,
+        temporaryGcs: { bucket: "bucket", objectName: `seg-${segment.startSec}.mp4` },
+        bytes: 1_000_000,
+        hasAudio: true,
+      })));
+    const deps = makeRunnerDeps({
+      prepareVideos: prepareVideos as never,
+      postVertex: postVertex as never,
+      readSegmentCache: vi.fn(async ({ segmentIndex }: { segmentIndex: number }) => {
+        const entry = store.get(segmentIndex);
+        return entry ? { entry, generation: String(segmentIndex + 1) } : null;
+      }) as never,
+      writeSegmentCache: vi.fn(async (entry: NativeDeepReadSegmentCacheEntry) => {
+        store.set(entry.segmentIndex, entry);
+      }) as never,
     });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
-      const result = await runManhuaNativeDeepReadBatch({
-        episodes: [episode],
-        segmentCacheSeriesKey: "cacheSeries01",
+      await expect(runManhuaNativeDeepReadBatch({
+        episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey,
+      }, deps)).rejects.toThrow("镜头密度不足");
+      expect(store.has(0)).toBe(true);
+      expect(store.has(1)).toBe(false);
+      const second = await runManhuaNativeDeepReadBatch({
+        episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey,
       }, deps);
-      expect(deps.postVertex).toHaveBeenCalledTimes(1);
-      expect(deps.writeSegmentCache).toHaveBeenCalledTimes(1);
-      const written = (deps.writeSegmentCache as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
-        fingerprint: string; segmentIndex: number; raw: Record<string, unknown>;
-      };
-      expect(written.fingerprint).toBe(nativeDeepReadSegmentCacheFingerprint());
-      expect(written.segmentIndex).toBe(0);
-      expect(result.episodes[0]!.result.usage.inputTokens).toBeGreaterThan(0);
+      expect(postVertex).toHaveBeenCalledTimes(4);
+      expect(prepareVideos.mock.calls[1]![0].segments.map((row) => row.startSec)).toEqual([60]);
+      expect(second.usage.inputTokens).toBe(100_000);
+      expect(second.episodes[0]!.result.audioInputTokens).toBe(16_000);
     } finally {
       warn.mockRestore();
     }
-  });
-
-  it("不传 segmentCacheSeriesKey：读写缓存一次都不碰（旁路/CLI 语义不变）", async () => {
-    const good = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
-    const deps = makeRunnerDeps({
-      postVertex: vi.fn(async () => geminiResponse(good)) as never,
-    });
-    await runManhuaNativeDeepReadBatch({ episodes: [episode] }, deps);
-    expect(deps.readSegmentCache).not.toHaveBeenCalled();
-    expect(deps.writeSegmentCache).not.toHaveBeenCalled();
   });
 });

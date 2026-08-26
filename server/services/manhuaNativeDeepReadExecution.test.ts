@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   NATIVE_DEEP_READ_MAX_SEGMENT_SEC,
   executeAndIngestNativeDeepReadEpisode,
+  resolveNativeDeepReadCacheSourceDigest,
   runNativeDeepReadBatch,
   validateNativeDeepReadBatchPlan,
   type NativeDeepReadBatchEpisode,
@@ -103,7 +104,45 @@ beforeEach(() => {
       sourceEpisodeCount: 1,
       usage: { inputTokens: 10, outputTokens: 5, priceEquivalentCny: 0.1, receiptComplete: true },
     })) as never,
+    clearSegmentCache: vi.fn(async () => undefined),
+    statSourceVersion: vi.fn(async ({ gcsUri }: { gcsUri: string }) => ({
+      bucket: "b",
+      objectName: gcsUri.slice("gs://b/".length),
+      generation: "1",
+      etag: "etag-1",
+    })) as never,
   } as never;
+});
+
+describe("段缓存来源身份", () => {
+  it("GCS 同一路径 generation 变化时摘要变化", async () => {
+    const first = await resolveNativeDeepReadCacheSourceDigest({
+      sourceRef: "gs://b/video.mp4",
+      statSourceVersion: vi.fn(async () => ({
+        bucket: "b", objectName: "video.mp4", generation: "10", etag: "e10",
+      })) as never,
+    });
+    const second = await resolveNativeDeepReadCacheSourceDigest({
+      sourceRef: "gs://b/video.mp4",
+      statSourceVersion: vi.fn(async () => ({
+        bucket: "b", objectName: "video.mp4", generation: "11", etag: "e11",
+      })) as never,
+    });
+    expect(first).not.toBe(second);
+  });
+
+  it("同一抖音 aweme 的搜索与视频链接共用摘要", async () => {
+    const stat = vi.fn() as never;
+    const fromSearch = await resolveNativeDeepReadCacheSourceDigest({
+      sourceRef: "https://www.douyin.com/search/demo?modal_id=7641538290936947889&type=general",
+      statSourceVersion: stat,
+    });
+    const fromVideo = await resolveNativeDeepReadCacheSourceDigest({
+      sourceRef: "https://www.douyin.com/video/7641538290936947889?foo=bar",
+      statSourceVersion: stat,
+    });
+    expect(fromSearch).toBe(fromVideo);
+  });
 });
 
 const ep = (i: number, over: Partial<NativeDeepReadBatchEpisode> = {}) => ({
@@ -202,6 +241,21 @@ describe("批次预检：在任何模型动作之前", () => {
 });
 
 describe("并发与计费", () => {
+  it("分集入库后先清段缓存，再释放成功 claim", async () => {
+    const order: string[] = [];
+    deps.clearSegmentCache = vi.fn(async () => { order.push("clear-cache"); });
+    deps.acquireClaim = vi.fn(async () => ({
+      claimUri: "gs://b/c",
+      objectName: "c",
+      runId: "r",
+      releaseBeforePaidCall: vi.fn(async () => undefined),
+      releaseAfterSuccess: vi.fn(async () => { order.push("release-claim"); }),
+    }));
+    const result = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1)] }, deps);
+    expect(result.ingestedCount).toBe(1);
+    expect(order).toEqual(["clear-cache", "release-claim"]);
+  });
+
   it("占位在 runner 之前 —— 抢不到就停手，不是跑完才发现重复", async () => {
     deps.acquireClaim = vi.fn(async () => {
       throw new Error("第1集已有精读任务占位；禁止自动重跑");
@@ -209,6 +263,44 @@ describe("并发与计费", () => {
     await expect(runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1)] }, deps))
       .rejects.toThrow("占位");
     expect(deps.runBatch).not.toHaveBeenCalled();
+  });
+
+  it("已开始付费的失败保留 claim；监管核销前重跑零外呼，核销后才恢复 runner", async () => {
+    let held = false;
+    let paidAttempt = 0;
+    deps.acquireClaim = vi.fn(async () => {
+      if (held) throw new Error("第1集已有精读任务占位；禁止自动重跑");
+      held = true;
+      return {
+        claimUri: "gs://b/c",
+        objectName: "c",
+        runId: "r",
+        releaseBeforePaidCall: vi.fn(async () => { held = false; }),
+        releaseAfterSuccess: vi.fn(async () => { held = false; }),
+      };
+    });
+    const success = deps.runBatch;
+    deps.runBatch = vi.fn(async (input: Parameters<NativeDeepReadExecutionDeps["runBatch"]>[0]) => {
+      paidAttempt += 1;
+      if (paidAttempt === 1) {
+        await input.onModelReceipt?.({ status: "started" } as never);
+        throw new Error("模型返回待核对");
+      }
+      return success(input as never) as never;
+    }) as never;
+
+    const first = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1)] }, deps);
+    expect(first.failedCount).toBe(1);
+    expect(held).toBe(true);
+    await expect(runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1)] }, deps))
+      .rejects.toThrow("已有精读任务占位");
+    expect(deps.runBatch).toHaveBeenCalledTimes(1);
+
+    // 模拟监管入口按本轮 generation/runId 核销；生产实现由 claim admin CAS 保护。
+    held = false;
+    const third = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1)] }, deps);
+    expect(third.ingestedCount).toBe(1);
+    expect(deps.runBatch).toHaveBeenCalledTimes(2);
   });
 
   it("两个批次跑同一集，只有一个抢到占位，模型总共只调一次", async () => {

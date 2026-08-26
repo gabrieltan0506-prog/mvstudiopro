@@ -433,13 +433,12 @@ export async function deleteGcsObject(params: {
  * 分两次请求（先 metadata 拿 generation，再按该 generation 取 media），
  * 保证拿到的内容与 generation 是同一版。
  */
-export async function downloadGcsObjectVersioned(params: {
+export async function statGcsObjectVersion(params: {
   gcsUri: string;
-}): Promise<{ buffer: Buffer; bucket: string; objectName: string; generation: string }> {
+}): Promise<{ bucket: string; objectName: string; generation: string; etag?: string }> {
   const { bucket, objectName } = parseGsUri(params.gcsUri);
   const accessToken = await getVertexAccessToken();
   const userProject = getGcsUserProject();
-
   const metaUrl = new URL(
     `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}`,
   );
@@ -448,13 +447,29 @@ export async function downloadGcsObjectVersioned(params: {
     method: "GET",
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!metaRes.ok) {
-    throw new Error(`gcs_stat_failed:${metaRes.status}`);
-  }
-  const meta = (await metaRes.json()) as { generation?: string };
+  if (!metaRes.ok) throw new Error(`gcs_stat_failed:${metaRes.status}`);
+  const meta = (await metaRes.json()) as { generation?: string; etag?: string };
   const generation = String(meta.generation || "").trim();
   if (!generation) throw new Error("gcs_stat_no_generation");
+  return {
+    bucket,
+    objectName,
+    generation,
+    etag: String(meta.etag || "").trim() || undefined,
+  };
+}
 
+export async function downloadGcsObjectVersioned(params: {
+  gcsUri: string;
+}): Promise<{ buffer: Buffer; bucket: string; objectName: string; generation: string }> {
+  const version = await statGcsObjectVersion(params);
+  const { bucket, objectName, generation } = version;
+  const accessToken = await getVertexAccessToken();
+  const userProject = getGcsUserProject();
+  const metaUrl = new URL(
+    `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}`,
+  );
+  if (userProject) metaUrl.searchParams.set("userProject", userProject);
   const mediaUrl = new URL(metaUrl.toString());
   mediaUrl.searchParams.set("alt", "media");
   mediaUrl.searchParams.set("generation", generation);
