@@ -23,6 +23,7 @@ const lockState = vi.hoisted(() => ({
 const gcs = vi.hoisted(() => ({
   list: vi.fn(),
   download: vi.fn(),
+  downloadVersioned: vi.fn(),
   createIfAbsent: vi.fn(),
   /** 恢复成功后同步 proposals/ 审计副本走这条，要能断言内容 */
   upload: vi.fn(async (_params: { objectName: string; buffer: Buffer; contentType: string }) => ({})),
@@ -42,12 +43,7 @@ vi.mock("./gcs.js", () => ({
     }
     return gcs.createIfAbsent(p);
   },
-  downloadGcsObjectVersioned: async ({ gcsUri }: { gcsUri: string }) => {
-    if (String(gcsUri).endsWith(LOCK_OBJECT)) {
-      return { buffer: lockState.body, generation: lockState.generation };
-    }
-    throw new Error("unexpected versioned download");
-  },
+  downloadGcsObjectVersioned: gcs.downloadVersioned,
   deleteGcsObject: async ({
     objectName,
     ifGenerationMatch,
@@ -115,7 +111,17 @@ beforeEach(() => {
   gcs.upload.mockClear();
   gcs.list.mockReset();
   gcs.download.mockReset();
+  gcs.downloadVersioned.mockReset();
   gcs.createIfAbsent.mockReset();
+  gcs.downloadVersioned.mockImplementation(async ({ gcsUri }: { gcsUri: string }) => {
+    if (String(gcsUri).endsWith(LOCK_OBJECT)) {
+      return { buffer: lockState.body, generation: lockState.generation };
+    }
+    return {
+      ...(await gcs.download({ gcsUri })),
+      generation: "7",
+    };
+  });
 });
 
 describe("归档列表：读不动必须 fail-closed", () => {
@@ -800,6 +806,146 @@ describe("原生系列卡的滚动批准", () => {
     await expect(approveManhuaViralTemplate({ id: nativeSeriesId }))
       .rejects.toThrow(/快照未变/);
     expect(gcs.upload).not.toHaveBeenCalled();
+  });
+});
+
+describe("原生分集部分卡的滚动批准", () => {
+  const nativeEpisodeId = "tpl_native_wanyao_ep001";
+  const sourceDigest = "a".repeat(64);
+  const partialEpisodeCard = (input: {
+    status: "proposed" | "approved";
+    successSegments: number;
+    publicCode?: string;
+    snapshot: string;
+  }) => cardOf({
+    id: nativeEpisodeId,
+    nameZh: "多维标签·原生第1集节奏",
+    laneZh: "多维标签",
+    status: input.status,
+    publicCode: input.publicCode,
+    classification: {
+      emotionTagsZh: ["压迫渐强"],
+      narrativeFeatureTagsZh: ["信息递进"],
+      performanceTagsZh: ["克制爆发"],
+      audiovisualTagsZh: ["冷暖对撞"],
+      audienceExperienceTagsZh: ["持续紧张"],
+    },
+    sourceRefs: [{ url: "https://www.douyin.com/video/7641538290936947889", fetchedAt: "2026-08-27" }],
+    provenance: {
+      nativeVideoDeepRead: {
+        model: "gemini-3.1-pro-preview",
+        attemptedSegments: 4,
+        successSegments: input.successSegments,
+        shotCount: 8,
+        droppedCount: 0,
+        truncated: false,
+        usingPlanQuota: false,
+        costCny: 1.2,
+        completedSegmentIndexes: Array.from({ length: input.successSegments }, (_, index) => index),
+        assemblyComplete: input.successSegments === 4,
+        sourceDigest,
+        snapshotSha256: input.snapshot,
+      },
+    },
+    approvedAt: input.status === "approved" ? "2026-08-27T00:00:00.000Z" : undefined,
+  });
+
+  const seedRollingEpisodeApprove = (
+    oldApproved: Record<string, unknown>,
+    nextProposal: Record<string, unknown>,
+  ) => {
+    gcs.list.mockImplementation(async ({ prefix }: { prefix: string }) =>
+      prefix.includes("/approved/")
+        ? [`${MANHUA_VIRAL_APPROVED_PREFIX}${nativeEpisodeId}.json`]
+        : [],
+    );
+    gcs.download.mockImplementation(async ({ gcsUri }: { gcsUri: string }) => ({
+      buffer: Buffer.from(JSON.stringify(
+        String(gcsUri).includes("/approved/") ? oldApproved : nextProposal,
+      ), "utf8"),
+    }));
+  };
+
+  it("已批准 1/4 后批准 2/4：保留公开码、归档旧卡并单调替换正式卡", async () => {
+    const { approveManhuaViralTemplate } = await import("./manhuaViralTemplateStore");
+    const oldApproved = partialEpisodeCard({
+      status: "approved", successSegments: 1, publicCode: "EPKEEP", snapshot: "b".repeat(64),
+    });
+    const nextProposal = partialEpisodeCard({
+      status: "proposed", successSegments: 2, snapshot: "c".repeat(64),
+    });
+    seedRollingEpisodeApprove(oldApproved, nextProposal);
+
+    const out = await approveManhuaViralTemplate({ id: nativeEpisodeId });
+    expect(out.publicCode).toBe("EPKEEP");
+    expect(out.provenance?.nativeVideoDeepRead).toMatchObject({
+      successSegments: 2,
+      attemptedSegments: 4,
+      completedSegmentIndexes: [0, 1],
+      assemblyComplete: false,
+      sourceDigest,
+    });
+    const writes = gcs.upload.mock.calls.map(([params]) => params as {
+      objectName: string;
+      buffer: Buffer;
+      ifGenerationMatch?: string;
+    });
+    const archiveIndex = writes.findIndex((row) =>
+      row.objectName.startsWith(`${MANHUA_VIRAL_ARCHIVE_PREFIX}${nativeEpisodeId}/`));
+    const approvedIndex = writes.findIndex((row) =>
+      row.objectName === `${MANHUA_VIRAL_APPROVED_PREFIX}${nativeEpisodeId}.json`);
+    expect(archiveIndex).toBeGreaterThanOrEqual(0);
+    expect(approvedIndex).toBeGreaterThan(archiveIndex);
+    expect(writes.find((row) =>
+      row.objectName === `manhua-template-learn/proposals/${nativeEpisodeId}.json`))
+      .toMatchObject({ ifGenerationMatch: "7" });
+  });
+
+  it("正式卡已有 2/4 时拒绝批准 1/4 倒退提案", async () => {
+    const { approveManhuaViralTemplate } = await import("./manhuaViralTemplateStore");
+    seedRollingEpisodeApprove(
+      partialEpisodeCard({
+        status: "approved", successSegments: 2, publicCode: "EPKEEP", snapshot: "c".repeat(64),
+      }),
+      partialEpisodeCard({ status: "proposed", successSegments: 1, snapshot: "b".repeat(64) }),
+    );
+    await expect(approveManhuaViralTemplate({ id: nativeEpisodeId }))
+      .rejects.toThrow(/严格进度升级/);
+    expect(gcs.upload).not.toHaveBeenCalled();
+  });
+
+  it("批准期间 proposal 已推进时只吞 generation 412，保留新版待审", async () => {
+    const { approveManhuaViralTemplate } = await import("./manhuaViralTemplateStore");
+    seedRollingEpisodeApprove(
+      partialEpisodeCard({
+        status: "approved", successSegments: 1, publicCode: "EPKEEP", snapshot: "b".repeat(64),
+      }),
+      partialEpisodeCard({ status: "proposed", successSegments: 2, snapshot: "c".repeat(64) }),
+    );
+    gcs.upload
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(new Error("gcs_upload_failed:412:conditionNotMet"));
+
+    await expect(approveManhuaViralTemplate({ id: nativeEpisodeId }))
+      .resolves.toMatchObject({ status: "approved", publicCode: "EPKEEP" });
+  });
+
+  it("proposal 状态同步遇到非 412 错误必须上抛，不冒充新版并发", async () => {
+    const { approveManhuaViralTemplate } = await import("./manhuaViralTemplateStore");
+    seedRollingEpisodeApprove(
+      partialEpisodeCard({
+        status: "approved", successSegments: 1, publicCode: "EPKEEP", snapshot: "b".repeat(64),
+      }),
+      partialEpisodeCard({ status: "proposed", successSegments: 2, snapshot: "c".repeat(64) }),
+    );
+    gcs.upload
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(new Error("gcs_upload_failed:503"));
+
+    await expect(approveManhuaViralTemplate({ id: nativeEpisodeId }))
+      .rejects.toThrow("gcs_upload_failed:503");
   });
 });
 

@@ -7,6 +7,8 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   NATIVE_DEEP_READ_GENERATION_CONFIG,
+  NATIVE_DEEP_READ_HTTP_BODY_TIMEOUT_MS,
+  NATIVE_DEEP_READ_HTTP_HEADERS_TIMEOUT_MS,
   NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
   NATIVE_DEEP_READ_RESPONSE_SCHEMA,
   NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG,
@@ -24,6 +26,7 @@ import {
   buildNativeDeepReadTranscodeToFitArgs,
   isManhuaNativeDeepReadEnabled,
   pickSmallestVideoFormat,
+  postNativeDeepReadGenerateContent,
   prepareEpisodeVideos,
   nativeDeepReadSegmentCacheFingerprint,
   resolveNativeDeepReadRequestFps,
@@ -98,6 +101,31 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE).toBe("openrouter_glm_structuring");
     // 换代必须让旧确认码全废
     expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("adaptive-1800f-360s-v4-gemini");
+  });
+
+  it("长视频请求显式使用 30 分钟 HTTP 响应头与响应体时限，不落回 Undici 默认 300 秒", async () => {
+    expect(NATIVE_DEEP_READ_HTTP_HEADERS_TIMEOUT_MS).toBe(30 * 60_000);
+    expect(NATIVE_DEEP_READ_HTTP_BODY_TIMEOUT_MS).toBe(30 * 60_000);
+    const dispatcher = { marker: "native-long-request" };
+    const calls: Array<{ url: unknown; init: Record<string, unknown> }> = [];
+    const fetchImpl = vi.fn(async (url: unknown, init: unknown) => {
+      calls.push({ url, init: init as Record<string, unknown> });
+      return new Response("{}", {
+        status: 200,
+        headers: { "x-goog-request-id": "req-long-1" },
+      });
+    });
+    await expect(postNativeDeepReadGenerateContent({
+      url: "https://example.invalid/generateContent",
+      headers: { Authorization: "Bearer test-only" },
+      body: { contents: [] },
+    }, {
+      fetch: fetchImpl as never,
+      dispatcher: dispatcher as never,
+    })).resolves.toMatchObject({ status: 200, requestId: "req-long-1" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.init.dispatcher).toBe(dispatcher);
+    expect(calls[0]!.init.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("generationConfig 按 0826 参数定稿（二次拍板 0.75）：官方上限 65_536、单候选、responseSchema、HIGH 思考不外发", () => {
@@ -1234,6 +1262,40 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     expect(postVertex).toHaveBeenCalledTimes(1);
   });
 
+  it("段缓存落盘后的部分提案回调失败时停止，不继续购买下一段", async () => {
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }]);
+    const postVertex = vi.fn(async () => geminiResponse(makeSegmentPayload({
+      segmentIndex: 0, startSec: 0, endSec: 60,
+    })));
+    const writeSegmentCache = vi.fn(async () => undefined);
+    const onSegmentSnapshotCommitted = vi.fn(async () => {
+      throw new Error("部分提案暂存失败");
+    });
+    const deps = makeRunnerDeps({
+      postVertex: postVertex as never,
+      writeSegmentCache: writeSegmentCache as never,
+    });
+
+    await expect(runManhuaNativeDeepReadBatch({
+      episodes: [episode],
+      segmentCacheSeriesKey: cacheSeriesKey,
+      onSegmentSnapshotCommitted,
+    }, deps)).rejects.toThrow("部分提案暂存失败");
+    expect(writeSegmentCache).toHaveBeenCalledTimes(1);
+    expect(onSegmentSnapshotCommitted).toHaveBeenCalledWith(expect.objectContaining({
+      episodeIndex: 3,
+      completedSegmentIndexes: [0],
+      learnedThroughSec: 60,
+      result: expect.objectContaining({
+        segmentCount: 1,
+        attemptedSegments: 2,
+        failedSegmentCount: 1,
+        assemblyComplete: false,
+      }),
+    }));
+    expect(postVertex).toHaveBeenCalledTimes(1);
+  });
+
   it("首轮一段成功一段失败，第二轮只调用失败段且本次只记该段费用", async () => {
     const episode = makeEpisode([{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }]);
     const store = new Map<number, NativeDeepReadSegmentCacheEntry>();
@@ -1268,12 +1330,17 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
       }) as never,
     });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const partialSnapshots: number[][] = [];
     try {
       await expect(runManhuaNativeDeepReadBatch({
         episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey,
+        onSegmentSnapshotCommitted: (snapshot) => {
+          partialSnapshots.push(snapshot.completedSegmentIndexes);
+        },
       }, deps)).rejects.toThrow("镜头密度不足");
       expect(store.has(0)).toBe(true);
       expect(store.has(1)).toBe(false);
+      expect(partialSnapshots).toEqual([[0]]);
       const second = await runManhuaNativeDeepReadBatch({
         episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey,
       }, deps);

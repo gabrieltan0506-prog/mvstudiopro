@@ -61,6 +61,31 @@ const revisionCard = {
   },
 } as unknown as ManhuaViralTemplateCard;
 
+const partialNativeCard = {
+  ...secretCard,
+  id: "tpl_native_seriesabc_ep001",
+  nameZh: "第一集分段精读",
+  status: "proposed",
+  publicCode: undefined,
+  revision: undefined,
+  provenance: {
+    nativeVideoDeepRead: {
+      model: "qwen3.8-max",
+      attemptedSegments: 4,
+      successSegments: 1,
+      completedSegmentIndexes: [0],
+      assemblyComplete: false,
+      shotCount: 31,
+      droppedCount: 0,
+      truncated: false,
+      usingPlanQuota: true,
+      costCny: 12.34,
+      sourceDigest: "PRIVATE_SOURCE_DIGEST",
+      snapshotSha256: "PRIVATE_SNAPSHOT_SHA256",
+    },
+  },
+} as unknown as ManhuaViralTemplateCard;
+
 let proposalForRouter: ManhuaViralTemplateCard | null = revisionCard;
 
 vi.mock("../services/manhuaViralTemplateStore", () => ({
@@ -396,6 +421,34 @@ describe("owner 模板查看与优化", () => {
       id: revisionCard.id,
       confirmApprove: true,
     })).resolves.toMatchObject({ ok: true });
+  });
+
+  it("分段待审卡只下发安全进度，不泄露成本、来源指纹或地址", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const store = await import("../services/manhuaViralTemplateStore");
+    (store.listGcsManhuaViralProposals as unknown as {
+      mockResolvedValueOnce: (value: unknown) => void;
+    }).mockResolvedValueOnce([partialNativeCard]);
+    const owner = (await loadRouter()).createCaller(
+      makeCtx("user", undefined, "owner-open-id"),
+    );
+    const proposals = (await owner.listProposals()).items;
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]).toMatchObject({
+      id: "tpl_native_seriesabc_ep001",
+      nativeProgress: {
+        successSegments: 1,
+        attemptedSegments: 4,
+        assemblyComplete: false,
+        nextSegmentIndex: 2,
+      },
+    });
+    const serialized = JSON.stringify(proposals);
+    expect(serialized).not.toContain("PRIVATE_SOURCE_DIGEST");
+    expect(serialized).not.toContain("PRIVATE_SNAPSHOT_SHA256");
+    expect(serialized).not.toContain("SECRET_URL");
+    expect(serialized).not.toContain("12.34");
+    expect(proposals[0]).not.toHaveProperty("provenance");
   });
 });
 

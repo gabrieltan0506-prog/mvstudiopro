@@ -32,6 +32,12 @@ export const MANHUA_VIRAL_PROPOSALS_PREFIX = "manhua-template-learn/proposals/";
 export const MANHUA_VIRAL_APPROVED_PREFIX = "manhua-template-learn/approved/";
 export const MANHUA_VIRAL_ARCHIVE_PREFIX = "manhua-template-learn/archive/";
 
+function isGcsGenerationConflict(error: unknown): boolean {
+  return /gcs_upload_failed:412(?:\b|:)/.test(
+    error instanceof Error ? error.message : String(error),
+  );
+}
+
 /** 归档版本号收口为纯数字串；路由与存储层都要校验，不能只信路由 */
 /**
  * 严格列举：**读不动就抛，列不全也抛**。
@@ -435,6 +441,20 @@ export async function getGcsManhuaViralProposal(
   if (!key) return null;
   const objectName = `${MANHUA_VIRAL_PROPOSALS_PREFIX}${key}.json`;
   return readCardFromObject(objectName);
+}
+
+async function getGcsManhuaViralProposalVersioned(id: string): Promise<{
+  card: ManhuaViralTemplateCard;
+  generation: string;
+}> {
+  const key = String(id || "").trim();
+  const objectName = `${MANHUA_VIRAL_PROPOSALS_PREFIX}${key}.json`;
+  const versioned = await downloadGcsObjectVersioned({
+    gcsUri: `gs://${getGcsBucketName()}/${objectName}`,
+  });
+  const card = parseManhuaViralTemplateCard(JSON.parse(versioned.buffer.toString("utf8")));
+  if (!card || card.id !== key) throw new Error("提案文件不存在或内容无效，请重新学习后再批准");
+  return { card, generation: versioned.generation };
 }
 
 export async function getGcsManhuaViralApproved(
@@ -845,8 +865,8 @@ async function approveManhuaViralTemplateLocked(input: {
   ).trim();
   if (!id) throw new Error("找不到可批准的提案（请提供提案 id）");
   // 只信落盘：防止凭内存/客户端构造一份从未真实学成的卡片直接入库
-  const card = await getGcsManhuaViralProposal(id);
-  if (!card) throw new Error("提案文件不存在或已失效，请重新学习后再批准");
+  const proposalVersioned = await getGcsManhuaViralProposalVersioned(id);
+  const card = proposalVersioned.card;
   if (card.status !== "proposed") {
     throw new Error("该提案不是待审状态（可能已批准入库），无需重复批准");
   }
@@ -857,6 +877,9 @@ async function approveManhuaViralTemplateLocked(input: {
   if (isNativeSeriesProposal && card.revision) {
     throw new Error("原生系列卡不使用保留旧 provenance 的人工修订语义");
   }
+  const isNativeEpisodeProposal = /^tpl_native_[0-9a-z_-]{1,40}_ep\d{3}$/i.test(card.id)
+    && Boolean(card.provenance?.nativeVideoDeepRead)
+    && !card.revision;
 
   if (card.revision) {
     const original = await getGcsManhuaViralApproved(card.revision.parentTemplateId);
@@ -924,6 +947,62 @@ async function approveManhuaViralTemplateLocked(input: {
   const approvedNow = await listGcsManhuaViralApprovedStrict();
 
   const existingApproved = approvedNow.find((item) => item.id === card.id);
+  if (existingApproved && isNativeEpisodeProposal) {
+    const previous = existingApproved.provenance?.nativeVideoDeepRead;
+    const next = card.provenance?.nativeVideoDeepRead;
+    const previousIndexes = [...(previous?.completedSegmentIndexes || [])].sort((a, b) => a - b);
+    const nextIndexes = [...(next?.completedSegmentIndexes || [])].sort((a, b) => a - b);
+    const nextSet = new Set(nextIndexes);
+    if (
+      !previous
+      || !next
+      || !previous.sourceDigest
+      || previous.sourceDigest !== next.sourceDigest
+      || nextIndexes.length <= previousIndexes.length
+      || !previousIndexes.every((index) => nextSet.has(index))
+    ) {
+      throw new Error("原生分集补全不是同一来源的严格进度升级，拒绝替换正式卡");
+    }
+    const now = new Date().toISOString();
+    const replacement = parseManhuaViralTemplateCard({
+      ...card,
+      status: "approved",
+      publicCode: existingApproved.publicCode,
+      approvedAt: existingApproved.approvedAt || now,
+      updatedAt: now,
+    });
+    if (!replacement || replacement.status !== "approved") {
+      throw new Error("原生分集补全替换校验失败");
+    }
+    const archiveStamp = now.replace(/[^0-9]/g, "").slice(0, 17);
+    await uploadBufferToGcs({
+      objectName: `${MANHUA_VIRAL_ARCHIVE_PREFIX}${existingApproved.id}/${archiveStamp}.json`,
+      buffer: Buffer.from(`${JSON.stringify(existingApproved, null, 2)}\n`, "utf8"),
+      contentType: "application/json",
+    });
+    const replacementBody = Buffer.from(`${JSON.stringify(replacement, null, 2)}\n`, "utf8");
+    await uploadBufferToGcs({
+      objectName: `${MANHUA_VIRAL_APPROVED_PREFIX}${replacement.id}.json`,
+      buffer: replacementBody,
+      contentType: "application/json",
+    });
+    try {
+      await uploadBufferToGcs({
+        objectName: `${MANHUA_VIRAL_PROPOSALS_PREFIX}${replacement.id}.json`,
+        buffer: replacementBody,
+        contentType: "application/json",
+        ifGenerationMatch: proposalVersioned.generation,
+      });
+    } catch (error) {
+      // 学习链可能已把 2/4 推进成 3/4；批准 2/4 成功，但绝不能把新版 proposal 压回旧版。
+      if (!isGcsGenerationConflict(error)) throw error;
+      console.warn(
+        "[manhuaViralTemplateStore] 分集补全已批准，proposal 已有更新，保留新版待审:",
+        error instanceof Error ? error.message : error,
+      );
+    }
+    return replacement;
+  }
   if (
     existingApproved
     && isNativeSeriesProposal
@@ -1021,8 +1100,10 @@ async function approveManhuaViralTemplateLocked(input: {
       objectName: `${MANHUA_VIRAL_PROPOSALS_PREFIX}${validated.id}.json`,
       buffer: Buffer.from(body, "utf8"),
       contentType: "application/json",
+      ifGenerationMatch: proposalVersioned.generation,
     });
   } catch (e) {
+    if (!isGcsGenerationConflict(e)) throw e;
     console.warn(
       "[manhuaViralTemplateStore] sync proposal status failed:",
       e instanceof Error ? e.message : e,

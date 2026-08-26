@@ -24,7 +24,11 @@ const episode = (
 
 function deps(overrides: Partial<NativeDeepReadPlanDeps> = {}): NativeDeepReadPlanDeps {
   return {
-    fetchAwemeDetail: vi.fn(async () => ({ mixId: "123456", mixNameZh: "测试剧" })),
+    fetchAwemeDetail: vi.fn(async () => ({
+      mixId: "123456",
+      mixNameZh: "测试剧",
+      episodeIndex: 1,
+    })),
     listMixEpisodes: vi.fn(async () => ({
       episodes: [episode(1), episode(2), episode(3)],
       mixNameZh: "测试剧",
@@ -425,16 +429,129 @@ describe("原生精读计划", () => {
   });
 
   it("0826 回归：带 modal_id 的搜索页 URL 入口即规范化成 /video/ 单集形态再解析", async () => {
-    const d = deps();
+    const modalId = "7641538290936947889";
+    const d = deps({
+      listMixEpisodes: vi.fn(async () => ({
+        episodes: [{ ...episode(1), url: `https://www.douyin.com/video/${modalId}` }],
+        mixNameZh: "测试剧",
+        complete: true,
+      })),
+    });
     const plan = await buildNativeDeepReadPlanPreview(
       {
-        url: "https://www.douyin.com/search/%E4%B8%87%E5%A6%96?modal_id=7641538290936947889&type=general",
+        url: `https://www.douyin.com/search/%E4%B8%87%E5%A6%96?modal_id=${modalId}&type=general`,
         limit: 2,
       },
       d,
     );
     // 规范化后走单集 → 详情 → mixId 的解析链，而不是被当成不可解析的搜索页
-    expect(d.fetchAwemeDetail).toHaveBeenCalledWith("7641538290936947889");
-    expect(plan.episodes.length).toBeGreaterThan(0);
+    expect(d.fetchAwemeDetail).toHaveBeenCalledWith(modalId);
+    expect(plan.episodes.map((row) => row.episodeIndex)).toEqual([1]);
+    expect(plan.episodes[0]?.sourceUrl).toBe(`https://www.douyin.com/video/${modalId}`);
+    expect(plan.episodes[0]?.recoverMisplacedSourceCache).toBe(true);
+  });
+
+  it("不带 modal_id 的搜索页关闭式拒绝，不进入详情、合集或媒体探测", async () => {
+    const d = deps();
+    await expect(buildNativeDeepReadPlanPreview(
+      {
+        url: "https://www.douyin.com/search/%E4%B8%87%E5%A6%96%E5%9B%BE%E5%BD%95",
+        limit: 1,
+      },
+      d,
+    )).rejects.toThrow("没有 modal_id / 视频 id / 合集 id");
+    expect(d.fetchAwemeDetail).not.toHaveBeenCalled();
+    expect(d.listMixEpisodes).not.toHaveBeenCalled();
+    expect(d.probeDurationSec).not.toHaveBeenCalled();
+  });
+
+  it("单集详情的 current_episode 决定真实集号，不按历史尝试数或前置集数重编号", async () => {
+    const selectedId = "7641538290936947889";
+    const d = deps({
+      fetchAwemeDetail: vi.fn(async () => ({
+        mixId: "123456",
+        mixNameZh: "测试剧",
+        episodeIndex: 1,
+      })),
+      listMixEpisodes: vi.fn(async () => ({
+        episodes: [
+          { ...episode(1), url: `https://www.douyin.com/video/${selectedId}` },
+          ...Array.from({ length: 11 }, (_, index) => episode(index + 2)),
+        ],
+        mixNameZh: "测试剧",
+        complete: true,
+      })),
+    });
+    const plan = await buildNativeDeepReadPlanPreview(
+      { url: `https://www.douyin.com/video/${selectedId}`, limit: 1 },
+      d,
+    );
+    expect(plan.episodes.map((row) => row.episodeIndex)).toEqual([1]);
+    expect(plan.episodes[0]?.recoverMisplacedSourceCache).toBe(true);
+  });
+
+  it("单集第一集的失败占位原集接管，不能把重跑改写成后续集号", async () => {
+    const selectedId = "7641538290936947889";
+    const d = deps({
+      fetchAwemeDetail: vi.fn(async () => ({
+        mixId: "123456",
+        mixNameZh: "测试剧",
+        episodeIndex: 1,
+      })),
+      listMixEpisodes: vi.fn(async () => ({
+        episodes: [
+          { ...episode(1), url: `https://www.douyin.com/video/${selectedId}` },
+          episode(2),
+          episode(3),
+        ],
+        mixNameZh: "测试剧",
+        complete: true,
+      })),
+      listClaimStates: vi.fn(async () => new Map([[
+        1,
+        {
+          createdAtIso: "2026-08-26T00:00:00Z",
+          lastErrorZh: "上轮失败",
+          lastFailedAtIso: "2026-08-26T00:10:00Z",
+        },
+      ]])),
+    });
+    const plan = await buildNativeDeepReadPlanPreview(
+      { url: `https://www.douyin.com/video/${selectedId}`, limit: 1 },
+      d,
+    );
+    expect(plan.episodes.map((row) => row.episodeIndex)).toEqual([1]);
+    expect(plan.reclaimEpisodeIndexes).toEqual([1]);
+    expect(plan.episodes[0]?.reclaimFailedClaim).toBe(true);
+  });
+
+  it("单集第一集的运行中占位明确阻塞，不越过它跳到第十集", async () => {
+    const selectedId = "7641538290936947889";
+    const d = deps({
+      fetchAwemeDetail: vi.fn(async () => ({
+        mixId: "123456",
+        mixNameZh: "测试剧",
+        episodeIndex: 1,
+      })),
+      listMixEpisodes: vi.fn(async () => ({
+        episodes: [
+          { ...episode(1), url: `https://www.douyin.com/video/${selectedId}` },
+          ...Array.from({ length: 11 }, (_, index) => episode(index + 2)),
+        ],
+        mixNameZh: "测试剧",
+        complete: true,
+      })),
+      listClaimStates: vi.fn(async () => new Map(
+        Array.from({ length: 9 }, (_, index) => [
+          index + 1,
+          { createdAtIso: "2026-08-27T00:00:00Z", lastFailedAtIso: null },
+        ]),
+      )),
+    });
+    await expect(buildNativeDeepReadPlanPreview(
+      { url: `https://www.douyin.com/video/${selectedId}`, limit: 1 },
+      d,
+    )).rejects.toThrow("第1集已有精读任务占位且无失败病历");
+    expect(d.probeDurationSec).not.toHaveBeenCalled();
   });
 });

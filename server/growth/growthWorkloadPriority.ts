@@ -24,6 +24,29 @@ export function isAuthenticatedRunningPlatformJob(job: {
   return /^[1-9]\d*$/.test(String(job.userId ?? "").trim());
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+/**
+ * 会与 Growth 冷备争用同一台 Fly 的前台任务统一登记租约。
+ * 模板学习虽然挂在 video 队列，却会长时间占用 ffmpeg、磁盘、网络与模型连接；
+ * 漏掉它会让冷备在 360 秒精读请求期间同时拉取/打包大文件。
+ */
+export function isAuthenticatedRunningInteractiveJob(job: {
+  type?: unknown;
+  status?: unknown;
+  userId?: unknown;
+  input?: unknown;
+}) {
+  if (!/^[1-9]\d*$/.test(String(job.userId ?? "").trim())) return false;
+  if (job.status !== "running") return false;
+  if (job.type === "platform") return true;
+  return job.type === "video"
+    && isRecord(job.input)
+    && job.input.action === "manhua_template_learn";
+}
+
 function workloadDir() {
   const storeDir = path.resolve(
     process.env.GROWTH_STORE_DIR || path.join(process.cwd(), ".cache", "growth"),

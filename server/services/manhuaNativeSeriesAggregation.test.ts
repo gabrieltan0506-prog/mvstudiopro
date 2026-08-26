@@ -346,6 +346,32 @@ describe("系列聚合快照与提交 fencing", () => {
     expect(Number(receipts.at(-1)?.priceEquivalentCny)).toBeCloseTo(0.072, 10);
   });
 
+  it("1/4 部分分集卡只供单集审批，不进入付费系列聚合", async () => {
+    vi.stubEnv("GCS_BUCKET_NAME", "test-bucket");
+    const { deps, upload } = aggregationDeps();
+    const partial = episodeCard();
+    partial.provenance.nativeVideoDeepRead = {
+      ...partial.provenance.nativeVideoDeepRead,
+      attemptedSegments: 4,
+      successSegments: 1,
+      completedSegmentIndexes: [0],
+      assemblyComplete: false,
+      sourceDigest: "a".repeat(64),
+      snapshotSha256: "b".repeat(64),
+    } as never;
+    deps.downloadVersioned.mockImplementation(async ({ gcsUri }: { gcsUri: string }) => {
+      if (gcsUri.endsWith(LOCK_OBJECT)) {
+        return { buffer: Buffer.from("{}"), generation: "lock-generation-1" };
+      }
+      return { buffer: Buffer.from(JSON.stringify(partial)), generation: "episode-generation-1" };
+    });
+
+    await expect(aggregateNativeDeepReadSeries({ seriesKey: SERIES_KEY }, deps as never))
+      .rejects.toThrow(/分集卡结构、身份或多维标签无效/);
+    expect(deps.invoke).not.toHaveBeenCalled();
+    expect(upload).not.toHaveBeenCalled();
+  });
+
   it("模型返回后若锁已被接管，旧任务不得覆盖系列提案", async () => {
     vi.stubEnv("GCS_BUCKET_NAME", "test-bucket");
     const { deps, upload } = aggregationDeps({ loseLockAfterInvoke: true });

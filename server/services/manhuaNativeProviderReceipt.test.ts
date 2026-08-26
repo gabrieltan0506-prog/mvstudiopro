@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { appendManhuaNativeModelReceipt } from "../../shared/manhuaNativeModelReceipt";
-import { parseNativeProviderErrorReceipt } from "./manhuaNativeProviderReceipt";
+import {
+  nativeProviderReceiptFromError,
+  parseNativeProviderErrorReceipt,
+} from "./manhuaNativeProviderReceipt";
 
 describe("原生精读供应商错误回执", () => {
   it("保留 HTTP、code、message、request_id 与参数路径", () => {
@@ -87,6 +90,20 @@ describe("原生精读供应商错误回执", () => {
       }),
     });
     expect(receipt.message).toContain("?code=invalid_video&field=duration");
+  });
+
+  it("展开 Node fetch 的 cause，保留可操作的网络错误分类", () => {
+    const error = Object.assign(new TypeError("fetch failed"), {
+      cause: Object.assign(new Error("Headers Timeout Error"), {
+        name: "HeadersTimeoutError",
+        code: "UND_ERR_HEADERS_TIMEOUT",
+      }),
+    });
+    expect(nativeProviderReceiptFromError(error)).toEqual({
+      code: "UND_ERR_HEADERS_TIMEOUT",
+      message: "Headers Timeout Error",
+      type: "HeadersTimeoutError",
+    });
   });
 
   it("同一次外呼用 callId 原位更新，不丢 started 时间", () => {

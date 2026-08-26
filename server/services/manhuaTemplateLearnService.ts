@@ -1675,6 +1675,9 @@ export async function buildNativeDeepReadEpisodeExecution(
     ...(input.confirmedPlanEpisode?.reclaimFailedClaim === true
       ? { reclaimFailedClaim: true }
       : {}),
+    ...(input.confirmedPlanEpisode?.recoverMisplacedSourceCache === true
+      ? { recoverMisplacedSourceCache: true }
+      : {}),
     abortSignal: input.abortSignal,
     resolveNodes: async () => {
       const fresh: EpisodeSourceState = { playbackUrl: input.ep.playbackUrl };
@@ -1906,12 +1909,30 @@ async function aggregateAndPersistManhuaProposal(input: {
   };
 }
 
+/**
+ * 生产学习入口的来源规范化。必须由 `runManhuaTemplateLearn` 本身调用，不能只修预演：
+ * 带 modal_id 的搜索弹层在进入详情/合集解析前转为稳定单集页；GCS 导入保持原样。
+ */
+export function normalizeManhuaTemplateLearnSourceInput(input: {
+  url?: string;
+  gcsUri?: string;
+}): { rawSourceUrl: string; sourceGcsUri: string; sourceUrl: string } {
+  const rawSourceUrl = String(input.url || "").trim();
+  const sourceGcsUri = String(input.gcsUri || "").trim();
+  return {
+    rawSourceUrl,
+    sourceGcsUri,
+    sourceUrl: sourceGcsUri ? rawSourceUrl : normalizeDouyinVideoUrl(rawSourceUrl),
+  };
+}
+
 export async function runManhuaTemplateLearn(
   input: ManhuaTemplateLearnInput,
 ): Promise<ManhuaTemplateLearnResult> {
   const title = stripBookTitleMarks(cleanManhuaLearnTitle(input.title));
-  const sourceGcsUri = String(input.gcsUri || "").trim();
-  const sourceUrl = String(input.url || "").trim();
+  const { sourceGcsUri, sourceUrl } = normalizeManhuaTemplateLearnSourceInput(input);
+  // 与预演层同口径：搜索弹层只要带有效 modal_id，就先归一成稳定 /video/<id>。
+  // sourceIdentity 也用规范地址，避免同一视频因搜索参数变化被当成新素材追加集号。
   if (!sourceUrl && !sourceGcsUri) {
     throw new Error("缺少合集、成片链接或手动导入视频");
   }
@@ -2060,7 +2081,7 @@ export async function runManhuaTemplateLearn(
       ? await listIngestedNativeDeepReadEpisodeRecords(seriesKey)
       : [];
     const nativeIngestedEpisodes = new Set(
-      nativeIngestedRecords.map((record) => record.episodeIndex),
+      nativeIngestedRecords.filter((record) => record.complete).map((record) => record.episodeIndex),
     );
     const placementSources = nativeDeepReadMode
       ? nativeIngestedRecords.map((record) => ({
@@ -2530,6 +2551,11 @@ export async function runManhuaTemplateLearn(
             await progress(
               MANHUA_LEARN_STAGE.persist,
               `第 ${outcome.episodeIndex} 集已生成独立待审卡 · 本轮新增 ${batchLearnedIndexes.length}/${executionPlans.length}`,
+            );
+          } else if (outcome.status === "partial") {
+            await progress(
+              MANHUA_LEARN_STAGE.persist,
+              `第 ${outcome.episodeIndex} 集已生成 ${outcome.completedSegments || 0}/${outcome.totalSegments || 0} 段待审卡 · 已成段已入库，剩余分片将从断点继续`,
             );
           } else if (outcome.status === "failed") {
             // 拒因必须随进度行持久化：0826 实弹第9集重试后仍未过门禁，

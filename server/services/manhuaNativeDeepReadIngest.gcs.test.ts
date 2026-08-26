@@ -9,14 +9,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const gcs = vi.hoisted(() => ({
   list: vi.fn(),
   download: vi.fn(),
+  downloadVersioned: vi.fn(),
   create: vi.fn(),
+  upload: vi.fn(),
 }));
 
 vi.mock("./gcs.js", () => ({
   getGcsBucketName: () => "bucket-a",
   listGcsObjectNamesByPrefix: gcs.list,
   downloadGcsObject: gcs.download,
+  downloadGcsObjectVersioned: gcs.downloadVersioned,
   uploadBufferToGcsIfAbsent: gcs.create,
+  uploadBufferToGcs: gcs.upload,
 }));
 
 import {
@@ -60,6 +64,10 @@ function makeInput(over: Partial<NativeDeepReadIngestInput> = {}): NativeDeepRea
     attemptedSegments: 2,
     usingPlanQuota: true,
     usage: { costCny: 0.5 },
+    completedSegmentIndexes: [0, 1],
+    sourceDigest: "a".repeat(64),
+    segmentSnapshotSha256: "b".repeat(64),
+    assemblyComplete: true,
   };
   return {
     seriesKey: "abc123",
@@ -79,7 +87,13 @@ function storedCardBuffer(): Buffer {
 beforeEach(() => {
   gcs.list.mockReset();
   gcs.download.mockReset();
+  gcs.downloadVersioned.mockReset();
   gcs.create.mockReset();
+  gcs.upload.mockReset();
+  gcs.downloadVersioned.mockImplementation(async (params) => ({
+    ...(await gcs.download(params)),
+    generation: "1",
+  }));
 });
 
 describe("断点续跑", () => {
@@ -189,6 +203,70 @@ describe("入库写入", () => {
       ingestNativeDeepReadEpisode(makeInput({ sourceUrl: "  " })),
     ).rejects.toThrow("来源地址");
     expect(gcs.create).not.toHaveBeenCalled();
+  });
+
+  it("部分提案按 1/2→2/2 单调 CAS 补全，不覆盖成倒退或分叉", async () => {
+    const partial = makeInput({
+      result: {
+        ...makeInput().result,
+        segmentCount: 1,
+        failedSegmentCount: 1,
+        completedSegmentIndexes: [0],
+        assemblyComplete: false,
+        segmentSnapshotSha256: "c".repeat(64),
+      },
+    });
+    const previous = buildNativeDeepReadProposalCard(partial)!;
+    gcs.create.mockResolvedValue({ created: false });
+    gcs.downloadVersioned.mockResolvedValue({
+      buffer: Buffer.from(JSON.stringify(previous), "utf8"),
+      generation: "9",
+    });
+    gcs.upload.mockResolvedValue({});
+
+    const completed = await ingestNativeDeepReadEpisode(makeInput());
+    expect(completed.created).toBe(false);
+    expect(completed.card.provenance?.nativeVideoDeepRead).toMatchObject({
+      successSegments: 2,
+      attemptedSegments: 2,
+      completedSegmentIndexes: [0, 1],
+      assemblyComplete: true,
+    });
+    expect(gcs.upload).toHaveBeenCalledWith(expect.objectContaining({
+      ifGenerationMatch: "9",
+      objectName: nativeDeepReadProposalObjectName("abc123", 1),
+    }));
+
+    gcs.upload.mockClear();
+    gcs.downloadVersioned.mockResolvedValue({
+      buffer: storedCardBuffer(),
+      generation: "10",
+    });
+    await expect(ingestNativeDeepReadEpisode(partial)).rejects.toThrow(/倒退或分叉/);
+    expect(gcs.upload).not.toHaveBeenCalled();
+  });
+});
+
+describe("部分卡不冒充整集完成", () => {
+  it("记录可列出供 UI 展示，但续学跳过集合只包含真正 2/2 完成的卡", async () => {
+    const partialInput = makeInput({
+      result: {
+        ...makeInput().result,
+        segmentCount: 1,
+        failedSegmentCount: 1,
+        completedSegmentIndexes: [0],
+        assemblyComplete: false,
+        segmentSnapshotSha256: "c".repeat(64),
+      },
+    });
+    const partialCard = buildNativeDeepReadProposalCard(partialInput)!;
+    gcs.list.mockResolvedValue([nativeDeepReadProposalObjectName("abc123", 1)]);
+    gcs.download.mockResolvedValue({ buffer: Buffer.from(JSON.stringify(partialCard), "utf8") });
+
+    await expect(listIngestedNativeDeepReadEpisodeRecords("abc123")).resolves.toEqual([
+      expect.objectContaining({ episodeIndex: 1, complete: false, successSegments: 1, attemptedSegments: 2 }),
+    ]);
+    await expect(listIngestedNativeDeepReadEpisodes("abc123")).resolves.toEqual(new Set());
   });
 });
 

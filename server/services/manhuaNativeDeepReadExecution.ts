@@ -22,6 +22,8 @@ import {
   NATIVE_DEEP_READ_ROUTE_VERTEX,
   NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC,
   NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
+  assertNativeDeepReadSegmentDensity,
+  nativeDeepReadSegmentCacheFingerprint,
   runManhuaNativeDeepRead,
   runManhuaNativeDeepReadBatch,
   type NativeDeepReadMediaNode,
@@ -38,10 +40,18 @@ import {
 } from "./manhuaNativeDeepReadIngest.js";
 import {
   acquireNativeDeepReadEpisodeClaim,
+  isNativeDeepReadClaimReclaimable,
+  listNativeDeepReadEpisodeClaimStates,
   recordNativeDeepReadClaimFailure,
   takeoverNativeDeepReadEpisodeClaim,
 } from "./manhuaNativeDeepReadClaim.js";
-import { clearNativeDeepReadSegmentCacheForEpisode } from "./manhuaNativeDeepReadSegmentCache.js";
+import {
+  clearNativeDeepReadSegmentCacheForEpisode,
+  createNativeDeepReadSegmentCacheEntryIfAbsent,
+  listNativeDeepReadSegmentCacheEntriesBySourceDigest,
+  readNativeDeepReadSegmentCacheEntry,
+  type NativeDeepReadSegmentCacheEntry,
+} from "./manhuaNativeDeepReadSegmentCache.js";
 import { statGcsObjectVersion } from "./gcs.js";
 import {
   finalizeManhuaNativeDirectAudioAnalysis,
@@ -90,6 +100,8 @@ export type NativeDeepReadEpisodeExecution = {
   resolveNodes: () => Promise<NativeDeepReadMediaNode[]>;
   /** 计划标记的失败占位自动让位重跑：抢占改走原子接管 */
   reclaimFailedClaim?: boolean;
+  /** 真实单集入口：允许把同源、旧版错集号段缓存复制回当前解析集号。 */
+  recoverMisplacedSourceCache?: boolean;
   abortSignal?: AbortSignal;
 };
 
@@ -104,6 +116,7 @@ export type NativeDeepReadExecutionDeps = {
   takeoverClaim: typeof takeoverNativeDeepReadEpisodeClaim;
   aggregateSeries: typeof aggregateNativeDeepReadSeries;
   clearSegmentCache: typeof clearNativeDeepReadSegmentCacheForEpisode;
+  migrateSegmentCaches: typeof migrateMisplacedNativeDeepReadSegmentCaches;
   statSourceVersion: typeof statGcsObjectVersion;
 };
 
@@ -117,6 +130,7 @@ const defaultDeps: NativeDeepReadExecutionDeps = {
   takeoverClaim: takeoverNativeDeepReadEpisodeClaim,
   aggregateSeries: aggregateNativeDeepReadSeries,
   clearSegmentCache: clearNativeDeepReadSegmentCacheForEpisode,
+  migrateSegmentCaches: migrateMisplacedNativeDeepReadSegmentCaches,
   statSourceVersion: statGcsObjectVersion,
 };
 
@@ -158,6 +172,127 @@ export async function resolveNativeDeepReadCacheSourceDigest(input: {
       : { kind: "source_ref", sourceRef };
   }
   return crypto.createHash("sha256").update(JSON.stringify(identity), "utf8").digest("hex");
+}
+
+type NativeDeepReadCacheMigrationDeps = {
+  listAliases: typeof listNativeDeepReadSegmentCacheEntriesBySourceDigest;
+  listClaimStates: typeof listNativeDeepReadEpisodeClaimStates;
+  readTarget: typeof readNativeDeepReadSegmentCacheEntry;
+  createTarget: typeof createNativeDeepReadSegmentCacheEntryIfAbsent;
+};
+
+const defaultCacheMigrationDeps: NativeDeepReadCacheMigrationDeps = {
+  listAliases: listNativeDeepReadSegmentCacheEntriesBySourceDigest,
+  listClaimStates: listNativeDeepReadEpisodeClaimStates,
+  readTarget: readNativeDeepReadSegmentCacheEntry,
+  createTarget: createNativeDeepReadSegmentCacheEntryIfAbsent,
+};
+
+/**
+ * 把旧计划按错误集号保存的已付费段复制到解析出的真实集号。
+ *
+ * 只在真实单集入口明确锚定集号时调用；原对象保留，不做删除。迁移前同时验证来源摘要、秒位、
+ * 当前段门禁，以及“按旧集号重算出的指纹”确实等于旧对象指纹。目标写入只走
+ * ifGenerationMatch=0，已有不同对象时关闭式停止，避免纠偏变成覆盖。
+ */
+export async function migrateMisplacedNativeDeepReadSegmentCaches(input: {
+  seriesKey: string;
+  episodeIndex: number;
+  durationSec: number;
+  segments: readonly NativeDeepReadSegmentSpec[];
+  sourceDigest: string;
+  hintZh?: string;
+}, deps: NativeDeepReadCacheMigrationDeps = defaultCacheMigrationDeps): Promise<{
+  migratedSegmentIndexes: number[];
+  sourceEpisodeIndexes: number[];
+}> {
+  const aliases = await deps.listAliases({
+    seriesKey: input.seriesKey,
+    sourceDigest: input.sourceDigest,
+    excludeEpisodeIndex: input.episodeIndex,
+  });
+  const aliasEpisodeIndexes = Array.from(new Set(
+    aliases.map(({ entry }) => entry.episodeIndex),
+  )).sort((a, b) => a - b);
+  if (aliasEpisodeIndexes.length) {
+    const claimStates = await deps.listClaimStates(input.seriesKey);
+    const activeAliasEpisodeIndexes = aliasEpisodeIndexes.filter((episodeIndex) => {
+      const state = claimStates.get(episodeIndex);
+      return Boolean(state && !isNativeDeepReadClaimReclaimable(state));
+    });
+    if (activeAliasEpisodeIndexes.length) {
+      throw new Error(
+        `同源错位缓存所在第${activeAliasEpisodeIndexes.join("、")}集仍有健康任务占位，`
+        + `已停止迁移与后续模型请求以避免重复付费`,
+      );
+    }
+  }
+  const migratedSegmentIndexes: number[] = [];
+  const sourceEpisodeIndexes = new Set<number>();
+  for (let segmentIndex = 0; segmentIndex < input.segments.length; segmentIndex += 1) {
+    const target = await deps.readTarget({
+      seriesKey: input.seriesKey,
+      episodeIndex: input.episodeIndex,
+      segmentIndex,
+    });
+    if (target) continue;
+    const segment = input.segments[segmentIndex]!;
+    const validAliases = aliases.filter(({ entry }) => {
+      if (
+        entry.segmentIndex !== segmentIndex
+        || Math.abs(entry.startSec - segment.startSec) > 0.01
+        || Math.abs(entry.endSec - segment.endSec) > 0.01
+      ) return false;
+      const oldFingerprint = nativeDeepReadSegmentCacheFingerprint({
+        sourceDigest: input.sourceDigest,
+        episodeIndex: entry.episodeIndex,
+        episodeDurationSec: input.durationSec,
+        segment,
+        segmentIndex,
+        segmentCount: input.segments.length,
+        hasAudio: entry.hasAudio,
+        hintZh: input.hintZh,
+      });
+      return oldFingerprint === entry.fingerprint;
+    });
+    if (validAliases.length > 1) {
+      throw new Error(
+        `第${input.episodeIndex}集第${segmentIndex + 1}段发现多份同源旧缓存，无法确认唯一身份`,
+      );
+    }
+    const alias = validAliases[0]?.entry;
+    if (!alias) continue;
+    assertNativeDeepReadSegmentDensity({
+      episodeIndex: input.episodeIndex,
+      segmentIndex,
+      startSec: segment.startSec,
+      endSec: segment.endSec,
+      hasAudio: alias.hasAudio,
+      raw: alias.raw,
+    });
+    const migrated: NativeDeepReadSegmentCacheEntry = {
+      ...alias,
+      seriesKey: input.seriesKey,
+      episodeIndex: input.episodeIndex,
+      fingerprint: nativeDeepReadSegmentCacheFingerprint({
+        sourceDigest: input.sourceDigest,
+        episodeIndex: input.episodeIndex,
+        episodeDurationSec: input.durationSec,
+        segment,
+        segmentIndex,
+        segmentCount: input.segments.length,
+        hasAudio: alias.hasAudio,
+        hintZh: input.hintZh,
+      }),
+    };
+    await deps.createTarget(migrated);
+    migratedSegmentIndexes.push(segmentIndex);
+    sourceEpisodeIndexes.add(alias.episodeIndex);
+  }
+  return {
+    migratedSegmentIndexes,
+    sourceEpisodeIndexes: Array.from(sourceEpisodeIndexes).sort((a, b) => a - b),
+  };
 }
 
 /** 跑一集并入库。门禁不过直接抛，不写半截卡 */
@@ -545,9 +680,11 @@ export function validateNativeDeepReadBatchPlan(
 
 export type NativeDeepReadBatchOutcome = {
   episodeIndex: number;
-  status: "ingested" | "skipped" | "failed" | "aborted";
+  status: "partial" | "ingested" | "skipped" | "failed" | "aborted";
   gcsUri?: string;
   errorZh?: string;
+  completedSegments?: number;
+  totalSegments?: number;
   /** 实际发生的模型费用；**门禁拒收也要记**，钱已经花了 */
   costCny: number;
   elapsedMs: number;
@@ -709,6 +846,23 @@ export async function runNativeDeepReadBatch(input: {
         sourceRef: String(episode.provenanceSourceRef || episode.sourceUrl),
         statSourceVersion: deps.statSourceVersion,
       });
+      if (episode.recoverMisplacedSourceCache) {
+        const migration = await deps.migrateSegmentCaches({
+          seriesKey: input.seriesKey,
+          episodeIndex: episode.episodeIndex,
+          durationSec: episode.durationSec,
+          segments: episode.segments,
+          sourceDigest: cacheSourceDigest,
+          hintZh: episode.laneHintZh,
+        });
+        if (migration.migratedSegmentIndexes.length) {
+          console.info(
+            `[nativeDeepRead] 第${episode.episodeIndex}集已复用旧错位集号的分段：`
+            + `${migration.migratedSegmentIndexes.map((index) => index + 1).join("、")}；`
+            + `旧对象保留待核对`,
+          );
+        }
+      }
       const visualBatch = await deps.runBatch({
         episodes: [{
           episodeIndex: episode.episodeIndex,
@@ -720,6 +874,40 @@ export async function runNativeDeepReadBatch(input: {
         }],
         segmentCacheSeriesKey: input.seriesKey,
         abortSignal: input.abortSignal,
+        onSegmentSnapshotCommitted: async (snapshot) => {
+          const completedSegments = snapshot.completedSegmentIndexes.map(
+            (index) => episode.segments[index]!,
+          );
+          const audioAnalysis = buildNativeDeepReadDirectAudioAnalysis({
+            durationSec: snapshot.learnedThroughSec,
+            segments: completedSegments,
+            visualResult: snapshot.result,
+          });
+          const partialResult = { ...snapshot.result, audioAnalysis };
+          const gate = checkNativeDeepReadIngestable(partialResult);
+          if (!gate.ok) {
+            throw new Error(
+              `第${episode.episodeIndex}集${snapshot.completedSegmentIndexes.length}/${episode.segments.length}段快照未通过入库门禁：${gate.reasonZh}`,
+            );
+          }
+          const stored = await deps.ingest({
+            seriesKey: input.seriesKey,
+            episodeIndex: episode.episodeIndex,
+            sourceUrl: episode.provenanceSourceRef || episode.sourceUrl,
+            durationSec: episode.durationSec,
+            laneHintZh: episode.laneHintZh,
+            result: partialResult,
+          });
+          await emitProgress({
+            episodeIndex: episode.episodeIndex,
+            status: "partial",
+            gcsUri: stored.gcsUri,
+            completedSegments: snapshot.completedSegmentIndexes.length,
+            totalSegments: episode.segments.length,
+            costCny: 0,
+            elapsedMs: Date.now() - episodeStartedAt,
+          });
+        },
         onModelReceipt: async (receipt) => {
           if (receipt.status === "started") paidEpisodeIndexes.add(episode.episodeIndex);
           await input.onModelCheckpoint?.(receipt);

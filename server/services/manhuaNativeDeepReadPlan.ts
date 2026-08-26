@@ -67,6 +67,8 @@ export type NativeDeepReadPlanEpisode = {
   segments: NativeDeepReadPlanSegment[];
   /** 该集是自动让位的失败重跑（执行时原子接管旧占位；段缓存让已成段零费） */
   reclaimFailedClaim?: boolean;
+  /** 单集入口锚定的真实集；允许核对并复制旧版误写到其他集号的同源段缓存。 */
+  recoverMisplacedSourceCache?: boolean;
 };
 
 export type NativeDeepReadPlanPreview = {
@@ -371,7 +373,12 @@ async function probeEpisodeDurationWithCandidateFailover(
 }
 
 export type NativeDeepReadPlanDeps = {
-  fetchAwemeDetail: (awemeId: string) => Promise<{ mixId?: string; mixNameZh?: string } | null>;
+  fetchAwemeDetail: (awemeId: string) => Promise<{
+    mixId?: string;
+    mixNameZh?: string;
+    /** 官方详情里的 current_episode；单集入口必须用它锚定真实集号。 */
+    episodeIndex?: number;
+  } | null>;
   listMixEpisodes: (mixId: string) => Promise<{
     episodes: DouyinListedEpisode[];
     mixNameZh?: string;
@@ -415,15 +422,20 @@ export async function buildNativeDeepReadPlanPreview(
   const limit = Math.max(1, Math.min(NATIVE_DEEP_READ_BATCH_HARD_CEILING, Math.floor(input.limit)));
 
   // ── 1. 链接 → 合集 id（搜索页的 modal_id 由 extractDouyinVideoIdFromUrl 处理）
+  const sourceAwemeId = extractDouyinVideoIdFromUrl(url);
   let mixId = extractDouyinMixIdFromUrl(url) || "";
   let dramaNameZh = "";
+  let detailEpisodeIndex: number | undefined;
   if (!mixId) {
-    const awemeId = extractDouyinVideoIdFromUrl(url);
-    if (!awemeId) throw new Error("这个链接里没有 modal_id / 视频 id / 合集 id，认不出是哪一部");
-    const detail = await deps.fetchAwemeDetail(awemeId);
+    if (!sourceAwemeId) throw new Error("这个链接里没有 modal_id / 视频 id / 合集 id，认不出是哪一部");
+    const detail = await deps.fetchAwemeDetail(sourceAwemeId);
     if (!detail?.mixId) throw new Error("这条视频不属于任何合集，无法按集发车");
     mixId = detail.mixId;
     dramaNameZh = detail.mixNameZh || "";
+    const parsedEpisodeIndex = Number(detail.episodeIndex);
+    if (Number.isInteger(parsedEpisodeIndex) && parsedEpisodeIndex > 0) {
+      detailEpisodeIndex = parsedEpisodeIndex;
+    }
   }
 
   // ── 2. 合集展开
@@ -442,6 +454,33 @@ export async function buildNativeDeepReadPlanPreview(
     throw new Error(
       `合集只展开了 ${listed.episodes.length} 集且未拉到底，集号可能整体错位，已停止。请稍后重试`,
     );
+  }
+
+  /**
+   * 单集详情页不是“从合集里随便挑下一集”的入口。它已经明确指向一条 aweme，
+   * 必须由详情 current_episode / 合集里同 aweme 的位置锚定真实集号。历史失败次数、
+   * claim 数量或前面有几条占位，都不得把第一集改写成第十集。
+   */
+  const listedSourceEpisode = sourceAwemeId
+    ? listed.episodes.find(
+        (episode) => extractDouyinVideoIdFromUrl(episode.url) === sourceAwemeId,
+      )
+    : undefined;
+  if (sourceAwemeId && !listedSourceEpisode) {
+    throw new Error("单集视频不在解析出的合集列表中，已停止；不会只按详情序号执行另一条视频");
+  }
+  if (
+    detailEpisodeIndex
+    && listedSourceEpisode
+    && detailEpisodeIndex !== listedSourceEpisode.index
+  ) {
+    throw new Error(
+      `单集详情标为第${detailEpisodeIndex}集，但合集列表标为第${listedSourceEpisode.index}集，已停止以免写错集号`,
+    );
+  }
+  const sourceEpisodeIndex = listedSourceEpisode?.index ?? detailEpisodeIndex;
+  if (sourceAwemeId && !sourceEpisodeIndex) {
+    throw new Error("单集详情与合集列表都没有可靠集号，已停止；不会按历史次数猜集号");
   }
 
   // ── 3. 读到付费集就停
@@ -469,7 +508,13 @@ export async function buildNativeDeepReadPlanPreview(
   // “学 N 集”指接下来新增 N 集，不是永远只看合集前 N 集。
   // 残留 claim 必须继续隔离，但不能占掉用户要求的名额：先排除已入库与 claim，再取 N 集。
   // 每个真正执行的集仍会在模型调用前原子抢 claim；这里没有放松并发保护。
-  const notIngested = free.filter((e) => !ingested.has(e.index));
+  const sourceScopedFree = sourceEpisodeIndex
+    ? free.filter((episode) => episode.index >= sourceEpisodeIndex)
+    : free;
+  if (sourceEpisodeIndex && !sourceScopedFree.some((episode) => episode.index === sourceEpisodeIndex)) {
+    throw new Error(`解析到第${sourceEpisodeIndex}集，但该集不在可学习免费段内，已停止`);
+  }
+  const notIngested = sourceScopedFree.filter((e) => !ingested.has(e.index));
   /**
    * 0826 用户拍板「失败占位不许永远挡路」：带失败病历的占位自动让位、
    * 本轮直接纳入重跑（执行时原子接管，段缓存让已成段零费）；
@@ -486,9 +531,24 @@ export async function buildNativeDeepReadPlanPreview(
   const pendingClaimEpisodeIndexes = notIngested
     .map((row) => row.index)
     .filter((i) => blockedSet.has(i));
-  const executable = notIngested
-    .filter((e) => !blockedSet.has(e.index))
-    .slice(0, limit);
+  let executable: DouyinListedEpisode[];
+  if (sourceEpisodeIndex) {
+    // 单集入口按解析集号向后连续取 N 集；区间内若有健康占位就明确阻塞，
+    // 不能静默跳过它再把后集冒充成本次目标。
+    const intended = notIngested.slice(0, limit);
+    const blockedIntended = intended.filter((episode) => blockedSet.has(episode.index));
+    if (blockedIntended.length) {
+      throw new Error(
+        `第${blockedIntended.map((episode) => episode.index).join("、")}集已有精读任务占位且无失败病历，疑似仍在处理；已停止，不会跳号`,
+      );
+    }
+    executable = intended;
+  } else {
+    // 合集入口仍保留“学习接下来 N 个未占用集”的既有语义。
+    executable = notIngested
+      .filter((e) => !blockedSet.has(e.index))
+      .slice(0, limit);
+  }
   const episodes: NativeDeepReadPlanEpisode[] = [];
   for (const e of executable) {
     throwIfNativePlanAborted(input.abortSignal);
@@ -509,6 +569,7 @@ export async function buildNativeDeepReadPlanPreview(
       durationSec,
       segments: splitNativeDeepReadSegments(durationSec),
       ...(reclaimSet.has(e.index) ? { reclaimFailedClaim: true } : {}),
+      ...(sourceEpisodeIndex === e.index ? { recoverMisplacedSourceCache: true } : {}),
     });
   }
 

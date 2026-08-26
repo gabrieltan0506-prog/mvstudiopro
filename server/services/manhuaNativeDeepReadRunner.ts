@@ -19,12 +19,14 @@
 import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { readFile, stat, statfs, unlink } from "node:fs/promises";
+import { Agent, fetch as undiciFetch, type Dispatcher } from "undici";
 import {
   mapNativeDeepReadSegments,
   nativeDeepReadSegmentSchema,
   type NativeDeepReadOutput,
 } from "../../shared/manhuaNativeDeepRead.js";
 import { MANHUA_NATIVE_DEEP_READ_MODEL } from "../../shared/manhuaNativeDeepReadJob.js";
+import { hasCompleteManhuaTemplateClassification } from "../../shared/manhuaViralTemplateBank.js";
 import {
   hasClockTextZh,
   manhuaNativeAudioChunkAnalysisSchema,
@@ -266,6 +268,21 @@ export const NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG = {
 const NATIVE_RESPONSE_CAP_CHARS = 8 * 1024 * 1024;
 /** 单段视觉请求总时限：实测 360s 段 144s 返回，30 分钟为失联硬顶。 */
 export const NATIVE_DEEP_READ_REQUEST_TOTAL_TIMEOUT_MS = 30 * 60_000;
+/**
+ * Undici 默认只等 300 秒响应头；360 秒高密度视频在上游排队或 Fly 资源繁忙时
+ * 会先被这个隐含门槛切成 `TypeError: fetch failed`。这里与业务总时限收口，
+ * 仍由 AbortSignal 负责 30 分钟硬中止，不把超时无限放开。
+ */
+export const NATIVE_DEEP_READ_HTTP_HEADERS_TIMEOUT_MS =
+  NATIVE_DEEP_READ_REQUEST_TOTAL_TIMEOUT_MS;
+export const NATIVE_DEEP_READ_HTTP_BODY_TIMEOUT_MS =
+  NATIVE_DEEP_READ_REQUEST_TOTAL_TIMEOUT_MS;
+
+const nativeDeepReadHttpDispatcher = new Agent({
+  headersTimeout: NATIVE_DEEP_READ_HTTP_HEADERS_TIMEOUT_MS,
+  bodyTimeout: NATIVE_DEEP_READ_HTTP_BODY_TIMEOUT_MS,
+  connect: { timeout: 30_000 },
+});
 
 function abortReason(signal?: AbortSignal): Error {
   return signal?.reason instanceof Error ? signal.reason : new Error("已取消");
@@ -312,6 +329,21 @@ export type NativeDeepReadRunResult = NativeDeepReadOutput & {
   visualRoutes: NativeDeepReadVisualRoute[];
   /** 走 EvoLink 1fps 降级读取的段号（降采样降级模式，回执与日志已明示） */
   degradedFpsSegmentIndexes: number[];
+  /** 已可靠写入段缓存的 0-based 段号；部分提案与断点恢复以此为准。 */
+  completedSegmentIndexes?: number[];
+  /** 稳定媒体身份摘要；只进私有 provenance，不下发公开模板 DTO。 */
+  sourceDigest?: string;
+  /** 当前已成段集合的确定性快照；不含时间戳，供 CAS 单调更新。 */
+  segmentSnapshotSha256?: string;
+  /** true 只表示全部计划段已成；完整集卡仍需通过整集门禁。 */
+  assemblyComplete?: boolean;
+};
+
+export type NativeDeepReadSegmentSnapshot = {
+  episodeIndex: number;
+  completedSegmentIndexes: number[];
+  learnedThroughSec: number;
+  result: NativeDeepReadRunResult;
 };
 
 export type NativeDeepReadBatchRunEpisode = {
@@ -565,23 +597,34 @@ export type NativeDeepReadModelResponse = {
   requestId?: string;
 };
 
-async function postGenerateContent(input: {
+type NativeDeepReadHttpDeps = {
+  fetch: typeof undiciFetch;
+  dispatcher: Dispatcher;
+};
+
+const defaultNativeDeepReadHttpDeps: NativeDeepReadHttpDeps = {
+  fetch: undiciFetch,
+  dispatcher: nativeDeepReadHttpDispatcher,
+};
+
+export async function postNativeDeepReadGenerateContent(input: {
   url: string;
   headers: Record<string, string>;
   body: unknown;
   abortSignal?: AbortSignal;
-}): Promise<NativeDeepReadModelResponse> {
+}, deps: NativeDeepReadHttpDeps = defaultNativeDeepReadHttpDeps): Promise<NativeDeepReadModelResponse> {
   const managed = makeTimedSignal(
     input.abortSignal,
     NATIVE_DEEP_READ_REQUEST_TOTAL_TIMEOUT_MS,
     "原生精读请求超过总时限",
   );
   try {
-    const response = await fetch(input.url, {
+    const response = await deps.fetch(input.url, {
       method: "POST",
       headers: { ...input.headers, "Content-Type": "application/json" },
       signal: managed.signal,
       body: JSON.stringify(input.body),
+      dispatcher: deps.dispatcher,
     });
     const text = await response.text();
     if (text.length > NATIVE_RESPONSE_CAP_CHARS) {
@@ -609,7 +652,7 @@ async function postVertexNativeDeepRead(
   const url = `${baseUrlForVertex(NATIVE_DEEP_READ_VERTEX_LOCATION)}/v1/projects/`
     + `${encodeURIComponent(getVertexProjectId())}/locations/${NATIVE_DEEP_READ_VERTEX_LOCATION}`
     + `/publishers/google/models/${encodeURIComponent(NATIVE_DEEP_READ_MODEL)}:generateContent`;
-  return postGenerateContent({
+  return postNativeDeepReadGenerateContent({
     url,
     headers: await getVertexAuthHeaders(),
     body,
@@ -625,7 +668,7 @@ async function postEvolinkNativeDeepRead(
   if (!apiKey) throw new Error("EVOLINK_API_KEY 未配置，EvoLink 兜底不可用");
   const url = `${resolveNativeDeepReadEvolinkBaseUrl()}/v1beta/models/`
     + `${encodeURIComponent(NATIVE_DEEP_READ_MODEL)}:generateContent`;
-  return postGenerateContent({
+  return postNativeDeepReadGenerateContent({
     url,
     headers: { Authorization: `Bearer ${apiKey}` },
     body,
@@ -1215,6 +1258,9 @@ export function assertNativeDeepReadSegmentDensity(input: {
   if (!String((input.raw as Record<string, unknown>).beatStructureZh || "").trim()) {
     throw gateError(`第${input.segmentIndex + 1}段 beatStructureZh 为空（落库整段镜头会被丢弃）`);
   }
+  if (!hasCompleteManhuaTemplateClassification(parsed.data.classification)) {
+    throw gateError(`第${input.segmentIndex + 1}段五维特征标签不完整（无法生成可审批分片卡）`);
+  }
   const audioResolution = parsed.data.audioResolution;
   if (!input.hasAudio) {
     if (audioResolution.length > 0) {
@@ -1614,6 +1660,13 @@ export async function runManhuaNativeDeepReadBatch(params: {
   onModelReceipt?: (receipt: NativeDeepReadVisualModelReceipt) => void | Promise<void>;
   /** 传入即启用段级恢复；生产 execution 传 seriesKey，单集旁路/CLI 默认不碰缓存。 */
   segmentCacheSeriesKey?: string;
+  /**
+   * 段缓存可靠落盘后的强回调。失败必须阻止下一次模型调用，避免出现“钱已花、卡不可见”。
+   * 最后一段由整集门禁/正式 ingest 接管，避免在整集结构尚未验收前冒充 4/4 完成卡。
+   */
+  onSegmentSnapshotCommitted?: (
+    snapshot: NativeDeepReadSegmentSnapshot,
+  ) => void | Promise<void>;
 }, deps: NativeDeepReadBatchRunnerDeps = defaultBatchRunnerDeps): Promise<NativeDeepReadBatchRunResult> {
   if (!params.episodes.length) throw new Error("多视频精读批次为空");
   const seen = new Set<number>();
@@ -1782,6 +1835,8 @@ export async function runManhuaNativeDeepReadBatch(params: {
         : firstCached?.hasAudio === true;
       const segmentCount = episode.segments.length;
       const rawSegments: Array<Record<string, unknown>> = [];
+      const committedEntries = new Map<number, NativeDeepReadSegmentCacheEntry>();
+      const committedIndexes: number[] = [];
       let episodeInput = 0;
       let episodeOutput = 0;
       let episodeCost = 0;
@@ -1789,6 +1844,83 @@ export async function runManhuaNativeDeepReadBatch(params: {
       let episodeReasoning = 0;
       const routesUsed = new Set<NativeDeepReadVisualRoute>();
       const degradedFpsSegmentIndexes: number[] = [];
+
+      const buildCommittedSnapshot = (): NativeDeepReadSegmentSnapshot => {
+        const sortedIndexes = [...committedIndexes].sort((a, b) => a - b);
+        // 当前执行严格按段号推进；出现空洞说明缓存或调用顺序已损坏，不能拿它装部分卡。
+        if (sortedIndexes.some((value, index) => value !== index)) {
+          throw new Error(`第${episode.episodeIndex}集已成段不是连续前缀，拒绝生成部分提案`);
+        }
+        const mapped = mapNativeDeepReadSegments(rawSegments.map((raw) => ({
+          startSec: 0,
+          endSec: episode.sourceDurationSec,
+          finish: "stop",
+          text: JSON.stringify(raw),
+        })));
+        if (mapped.segmentCount !== sortedIndexes.length) {
+          throw new Error(`第${episode.episodeIndex}集已成段无法确定性装配，拒绝生成部分提案`);
+        }
+        const entries = sortedIndexes.map((index) => committedEntries.get(index)!);
+        const snapshotSha256 = crypto.createHash("sha256").update(JSON.stringify({
+          sourceDigest: episode.cacheSourceDigest,
+          segments: entries.map((entry) => ({
+            index: entry.segmentIndex,
+            fingerprint: entry.fingerprint,
+          })),
+        })).digest("hex");
+        const accumulated = entries.reduce((sum, entry) => ({
+          inputTokens: sum.inputTokens + entry.paidUsage.inputTokens,
+          outputTokens: sum.outputTokens + entry.paidUsage.outputTokens,
+          audioInputTokens: sum.audioInputTokens + entry.paidUsage.audioInputTokens,
+          costCny: sum.costCny + entry.paidUsage.costCny,
+        }), { inputTokens: 0, outputTokens: 0, audioInputTokens: 0, costCny: 0 });
+        const learnedThroughSec = entries.at(-1)?.endSec || 0;
+        return {
+          episodeIndex: episode.episodeIndex,
+          completedSegmentIndexes: sortedIndexes,
+          learnedThroughSec,
+          result: {
+            ...mapped,
+            segmentCount: sortedIndexes.length,
+            failedSegmentCount: segmentCount - sortedIndexes.length,
+            attemptedSegments: segmentCount,
+            model: NATIVE_DEEP_READ_MODEL,
+            usingPlanQuota: false,
+            batchRequestId: episodeRequestId,
+            batchEpisodeCount: 1,
+            audioInputTokens: accumulated.audioInputTokens,
+            hasAudio,
+            visualRoutes: Array.from(new Set(entries.map((entry) => entry.visualRoute))),
+            degradedFpsSegmentIndexes: entries
+              .filter((entry) => entry.degraded)
+              .map((entry) => entry.segmentIndex),
+            completedSegmentIndexes: sortedIndexes,
+            sourceDigest: episode.cacheSourceDigest,
+            segmentSnapshotSha256: snapshotSha256,
+            assemblyComplete: sortedIndexes.length === segmentCount,
+            usage: {
+              inputTokens: accumulated.inputTokens,
+              outputTokens: accumulated.outputTokens,
+              costCny: accumulated.costCny,
+            },
+          },
+        };
+      };
+
+      const commitSegmentToProposal = async (
+        segmentIndex: number,
+        entry: NativeDeepReadSegmentCacheEntry,
+      ): Promise<void> => {
+        committedEntries.set(segmentIndex, entry);
+        committedIndexes.push(segmentIndex);
+        // 4/4 由后面的整集门禁写入；这里只有 1/4、2/4、3/4 的可审批快照。
+        if (
+          params.onSegmentSnapshotCommitted
+          && committedIndexes.length < segmentCount
+        ) {
+          await params.onSegmentSnapshotCommitted(buildCommittedSnapshot());
+        }
+      };
 
       /** 单次通道尝试：发请求→解 envelope→段门禁；用量在门禁之前入账（钱已花）。 */
       const attemptSegment = async (input: {
@@ -2185,6 +2317,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
             `[nativeDeepRead] 第${episode.episodeIndex}集第${segmentIndex + 1}段命中已验缓存，本次模型调用 0`,
           );
           rawSegments.push(cachedEntry.raw);
+          await commitSegmentToProposal(segmentIndex, cachedEntry);
           continue;
         }
         const video = videosBySegment.get(segmentIndex);
@@ -2240,8 +2373,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
         }
         if (params.segmentCacheSeriesKey) {
           const sourceDigest = episode.cacheSourceDigest!;
-          // “段过门禁即入账”：缓存写入是继续烧下一段之前的强步骤，不得 warn-only。
-          await deps.writeSegmentCache({
+          const entry: NativeDeepReadSegmentCacheEntry = {
             schemaVersion: NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
             fingerprint: nativeDeepReadSegmentCacheFingerprint({
               sourceDigest,
@@ -2272,7 +2404,12 @@ export async function runManhuaNativeDeepReadBatch(params: {
               costCny: Math.max(0, episodeCost - paidBefore.costCny),
             },
             savedAtIso: new Date().toISOString(),
-          });
+          };
+          // “段过门禁即入账”：缓存写入是继续烧下一段之前的强步骤，不得 warn-only。
+          await deps.writeSegmentCache(entry);
+          rawSegments.push(result.raw);
+          await commitSegmentToProposal(segmentIndex, entry);
+          continue;
         }
         rawSegments.push(result.raw);
       }
@@ -2435,6 +2572,9 @@ export async function runManhuaNativeDeepReadBatch(params: {
         if (mapped.segmentCount !== episodeRows.length) {
           throw new Error(`第${episode.episodeIndex}集结构解析失败，整集拒绝入库`);
         }
+        const committedSnapshot = committedIndexes.length === segmentCount
+          ? buildCommittedSnapshot()
+          : undefined;
         episodes.push({
           episodeIndex: episode.episodeIndex,
           result: {
@@ -2450,6 +2590,10 @@ export async function runManhuaNativeDeepReadBatch(params: {
             hasAudio,
             visualRoutes: Array.from(routesUsed),
             degradedFpsSegmentIndexes,
+            completedSegmentIndexes: committedSnapshot?.completedSegmentIndexes,
+            sourceDigest: committedSnapshot?.result.sourceDigest,
+            segmentSnapshotSha256: committedSnapshot?.result.segmentSnapshotSha256,
+            assemblyComplete: true,
             usage: {
               inputTokens: episodeInput,
               outputTokens: episodeOutput,

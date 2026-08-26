@@ -18,8 +18,10 @@
  */
 import {
   downloadGcsObject,
+  downloadGcsObjectVersioned,
   getGcsBucketName,
   listGcsObjectNamesByPrefix,
+  uploadBufferToGcs,
   uploadBufferToGcsIfAbsent,
 } from "./gcs.js";
 import {
@@ -45,6 +47,10 @@ export type NativeDeepReadIngestSource = NativeDeepReadOutput & {
   batchEpisodeCount?: number;
   usingPlanQuota?: boolean;
   usage?: { costCny?: number };
+  completedSegmentIndexes?: number[];
+  sourceDigest?: string;
+  segmentSnapshotSha256?: string;
+  assemblyComplete?: boolean;
 };
 
 export type NativeDeepReadIngestInput = {
@@ -67,6 +73,32 @@ export type NativeDeepReadIngestInput = {
   laneZh?: ManhuaViralTemplateLane;
   result: NativeDeepReadIngestSource;
 };
+
+function nativeProgress(result: NativeDeepReadIngestSource): {
+  completed: number[];
+  complete: boolean;
+  sourceDigest?: string;
+  snapshotSha256?: string;
+} {
+  const attempted = Math.max(0, Math.floor(Number(result.attemptedSegments) || 0));
+  const success = Math.max(0, Math.floor(Number(result.segmentCount) || 0));
+  const completed = Array.from(new Set((result.completedSegmentIndexes || [])
+    .map((value) => Math.floor(Number(value)))
+    .filter((value) => value >= 0 && value < attempted))).sort((a, b) => a - b);
+  const normalized = completed.length === success
+    ? completed
+    : success === attempted
+      ? Array.from({ length: attempted }, (_, index) => index)
+      : [];
+  const sourceDigest = String(result.sourceDigest || "").trim().toLowerCase();
+  const snapshotSha256 = String(result.segmentSnapshotSha256 || "").trim().toLowerCase();
+  return {
+    completed: normalized,
+    complete: result.assemblyComplete === true || (attempted > 0 && success === attempted),
+    sourceDigest: /^[a-f0-9]{64}$/.test(sourceDigest) ? sourceDigest : undefined,
+    snapshotSha256: /^[a-f0-9]{64}$/.test(snapshotSha256) ? snapshotSha256 : undefined,
+  };
+}
 
 /**
  * 对象名与卡 id 的**唯一真源**。
@@ -150,6 +182,23 @@ export function checkNativeDeepReadIngestable(
   if (segmentCount === 0) {
     return { ok: false, reasonZh: `全部 ${result.attemptedSegments} 段精读失败，没有可入库的结构` };
   }
+  const progress = nativeProgress(result);
+  if (
+    segmentCount < attemptedSegments
+    && (
+      progress.completed.length !== segmentCount
+      || !progress.sourceDigest
+      || !progress.snapshotSha256
+      || progress.complete
+    )
+  ) {
+    return { ok: false, reasonZh: "部分段提案缺少可验证的段号、来源摘要或快照" };
+  }
+  if (
+    progress.completed.some((value, index) => value !== index)
+  ) {
+    return { ok: false, reasonZh: "已完成分片不是从第1片开始的连续断点，拒绝入库" };
+  }
   // 计数自相矛盾说明上游装配出错，此时写出来的 provenance 是假账，宁可拒收
   if (
     !Number.isInteger(failedSegmentCount)
@@ -216,9 +265,10 @@ export function buildNativeDeepReadProposalCard(
 
   const durSec = Math.max(0, Math.floor(Number(input.durationSec) || 0));
   const audio = parseManhuaNativeAudioAnalysis(r.audioAnalysis)!;
+  const progress = nativeProgress(r);
   const factsZh = [
     `原生精读${r.beatGrid.length}镜`,
-    `${r.segmentCount}/${r.attemptedSegments}段`,
+    `${r.segmentCount}/${r.attemptedSegments}段${progress.complete ? "已完成" : "已入库，余段待续"}`,
     durSec > 0 ? `${Math.round(durSec / 60)}分钟` : "",
     r.truncated ? "已抽稀" : "",
   ]
@@ -256,7 +306,8 @@ export function buildNativeDeepReadProposalCard(
         fetchedAt: today,
         noteZh: cut(
           `第${input.episodeIndex}集 · ${r.model} · 丢弃${r.droppedCount}镜 · `
-            + `失败${r.failedSegmentCount}段${r.usingPlanQuota === false ? " · 按量付费" : ""}`,
+            + `${progress.complete ? "整集完成" : `剩${Math.max(0, r.attemptedSegments - r.segmentCount)}段待续`}`
+            + `${r.usingPlanQuota === false ? " · 按量付费" : ""}`,
           120,
         ),
       },
@@ -275,6 +326,10 @@ export function buildNativeDeepReadProposalCard(
         batchEpisodeCount: r.batchEpisodeCount,
         usingPlanQuota: r.usingPlanQuota,
         costCny: Number(r.usage?.costCny) || 0,
+        completedSegmentIndexes: progress.completed,
+        assemblyComplete: progress.complete,
+        sourceDigest: progress.sourceDigest,
+        snapshotSha256: progress.snapshotSha256,
       },
       nativeAudioDeepRead: {
         model: audio.model,
@@ -307,6 +362,10 @@ export type IngestedNativeDeepReadEpisode = {
   episodeIndex: number;
   /** 卡片里保存的**稳定**来源（GCS 导入是 gs://，不是短时签名链） */
   sourceUrl: string;
+  /** 部分卡用于同源集号安放，但只有 complete=true 才能让执行层整集跳过。 */
+  complete: boolean;
+  successSegments: number;
+  attemptedSegments: number;
 };
 
 /**
@@ -376,6 +435,11 @@ export async function listIngestedNativeDeepReadEpisodeRecords(
       done.push({
         episodeIndex: target.idx,
         sourceUrl: String(card.sourceRefs[0]!.url).trim(),
+        complete: card.provenance.nativeVideoDeepRead.assemblyComplete === true
+          && card.provenance.nativeVideoDeepRead.successSegments
+            === card.provenance.nativeVideoDeepRead.attemptedSegments,
+        successSegments: card.provenance.nativeVideoDeepRead.successSegments,
+        attemptedSegments: card.provenance.nativeVideoDeepRead.attemptedSegments,
       });
     } catch (e) {
       throw new Error(
@@ -400,7 +464,7 @@ export async function listIngestedNativeDeepReadEpisodes(
   maxEpisodes = 999,
 ): Promise<Set<number>> {
   const records = await listIngestedNativeDeepReadEpisodeRecords(seriesKey, maxEpisodes);
-  return new Set(records.map((record) => record.episodeIndex));
+  return new Set(records.filter((record) => record.complete).map((record) => record.episodeIndex));
 }
 
 export type NativeDeepReadIngestResult = {
@@ -410,6 +474,43 @@ export type NativeDeepReadIngestResult = {
   /** false 表示同一集已经由另一任务先写入，本次复用已有卡 */
   created: boolean;
 };
+
+function cardProgress(card: ManhuaViralTemplateCard): {
+  completed: number[];
+  complete: boolean;
+  sourceDigest?: string;
+  snapshotSha256?: string;
+} {
+  const native = card.provenance?.nativeVideoDeepRead;
+  return {
+    completed: [...(native?.completedSegmentIndexes || [])].sort((a, b) => a - b),
+    complete: native?.assemblyComplete === true,
+    sourceDigest: native?.sourceDigest,
+    snapshotSha256: native?.snapshotSha256,
+  };
+}
+
+function sameNumbers(left: readonly number[], right: readonly number[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function isStrictProgressSuperset(next: readonly number[], previous: readonly number[]): boolean {
+  if (next.length <= previous.length) return false;
+  const values = new Set(next);
+  return previous.every((value) => values.has(value));
+}
+
+function isGcsNotFound(error: unknown): boolean {
+  return /(?:gcs_download_failed|gcs_stat_failed):404(?:\b|:)/.test(
+    error instanceof Error ? error.message : String(error),
+  );
+}
+
+function isGcsGenerationConflict(error: unknown): boolean {
+  return /gcs_upload_failed:412(?:\b|:)/.test(
+    error instanceof Error ? error.message : String(error),
+  );
+}
 
 /**
  * 写一集进 `proposals/`。
@@ -433,17 +534,25 @@ export async function ingestNativeDeepReadEpisode(
   const objectName = nativeDeepReadProposalObjectName(input.seriesKey, input.episodeIndex);
   const bucket = getGcsBucketName();
   const gcsUri = `gs://${bucket}/${objectName}`;
-  // 条件创建（ifGenerationMatch=0）：两个任务同时跑同一集时，后到者不覆盖先写入的
+  const body = Buffer.from(`${JSON.stringify(card, null, 2)}\n`, "utf8");
+  // 首次写入走 ifGenerationMatch=0；竞争失败后进入下面的单调 CAS 更新。
   const uploaded = await uploadBufferToGcsIfAbsent({
     bucket,
     objectName,
-    buffer: Buffer.from(`${JSON.stringify(card, null, 2)}\n`, "utf8"),
+    buffer: body,
     contentType: "application/json",
   });
+  if (uploaded.created) return { card, gcsUri, objectName, created: true };
 
-  if (!uploaded.created) {
-    const { buffer } = await downloadGcsObject({ gcsUri });
-    const existing = parseManhuaViralTemplateCard(JSON.parse(buffer.toString("utf8")));
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let versioned: Awaited<ReturnType<typeof downloadGcsObjectVersioned>>;
+    try {
+      versioned = await downloadGcsObjectVersioned({ gcsUri });
+    } catch (error) {
+      if (isGcsNotFound(error)) continue;
+      throw error;
+    }
+    const existing = parseManhuaViralTemplateCard(JSON.parse(versioned.buffer.toString("utf8")));
     if (
       !existing
       || existing.id !== card.id
@@ -452,8 +561,46 @@ export async function ingestNativeDeepReadEpisode(
     ) {
       throw new Error(`第${input.episodeIndex}集同名对象已存在但内容无效，未覆盖，请人工核对`);
     }
-    return { card: existing, gcsUri, objectName, created: false };
+    const previous = cardProgress(existing);
+    const next = cardProgress(card);
+    if (
+      previous.snapshotSha256
+      && next.snapshotSha256
+      && previous.snapshotSha256 === next.snapshotSha256
+    ) {
+      return { card: existing, gcsUri, objectName, created: false };
+    }
+    if (
+      previous.sourceDigest
+      && next.sourceDigest
+      && previous.sourceDigest !== next.sourceDigest
+    ) {
+      throw new Error(`第${input.episodeIndex}集来源摘要变化，拒绝覆盖既有学习卡`);
+    }
+    if (!isStrictProgressSuperset(next.completed, previous.completed)) {
+      const relation = sameNumbers(next.completed, previous.completed) ? "未增加" : "发生倒退或分叉";
+      throw new Error(`第${input.episodeIndex}集分片进度${relation}，拒绝覆盖既有学习卡`);
+    }
+    const replacement = parseManhuaViralTemplateCard({
+      ...card,
+      // 正式版只能由显式批准写 approved/；新分片只在 proposals/ 生成补全候选。
+      status: "proposed",
+      updatedAt: new Date().toISOString(),
+    });
+    if (!replacement) throw new Error(`第${input.episodeIndex}集补全提案校验失败`);
+    try {
+      await uploadBufferToGcs({
+        bucket,
+        objectName,
+        contentType: "application/json",
+        ifGenerationMatch: versioned.generation,
+        buffer: Buffer.from(`${JSON.stringify(replacement, null, 2)}\n`, "utf8"),
+      });
+      return { card: replacement, gcsUri, objectName, created: false };
+    } catch (error) {
+      if (isGcsGenerationConflict(error)) continue;
+      throw error;
+    }
   }
-
-  return { card, gcsUri, objectName, created: true };
+  throw new Error(`第${input.episodeIndex}集补全提案并发更新未收敛，请刷新后重试`);
 }

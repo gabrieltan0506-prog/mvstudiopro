@@ -166,8 +166,24 @@ export function errorWithNativeProviderReceipt(
 export function nativeProviderReceiptFromError(
   error: unknown,
 ): ManhuaNativeProviderErrorReceipt | undefined {
-  const row = error as ErrorWithNativeProviderReceipt | null;
-  return row?.nativeProviderError;
+  const row = error as (ErrorWithNativeProviderReceipt & {
+    code?: unknown;
+    cause?: unknown;
+  }) | null;
+  if (row?.nativeProviderError) return row.nativeProviderError;
+
+  // Node fetch/Undici 把真正网络原因放在 `error.cause`；只记顶层 message 会把
+  // UND_ERR_HEADERS_TIMEOUT、ECONNRESET 等全部压成一句无用的 `fetch failed`。
+  // 这里只摘取可操作的分类字段，并继续经过统一脱敏，不保存请求 URL 或请求体。
+  const cause = row?.cause && typeof row.cause === "object"
+    ? row.cause as { name?: unknown; code?: unknown; message?: unknown }
+    : undefined;
+  if (!cause && !row?.code) return undefined;
+  const code = firstText(256, cause?.code, row?.code);
+  const message = firstText(2_000, cause?.message, row?.message);
+  const type = firstText(256, cause?.name, row?.name);
+  if (!code && !message && !type) return undefined;
+  return { code, message, type };
 }
 
 export function formatNativeProviderErrorZh(

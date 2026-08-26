@@ -1,7 +1,31 @@
 import { describe, expect, it, vi } from "vitest";
-import { withTimeout } from "./runner.js";
+import { resolveJobGrowthInteractiveLeaseLabel, withTimeout } from "./runner.js";
 
 describe("原生学习墙钟中止", () => {
+  it("模板学习 Job 会持有 Growth 互动租约，其他视频 Job 不会", () => {
+    expect(resolveJobGrowthInteractiveLeaseLabel({
+      id: "learn-1",
+      type: "video",
+      status: "running",
+      userId: "42",
+      input: { action: "manhua_template_learn" },
+    })).toBe("manhua-learn-job:learn-1");
+    expect(resolveJobGrowthInteractiveLeaseLabel({
+      id: "video-1",
+      type: "video",
+      status: "running",
+      userId: "42",
+      input: { action: "other_video" },
+    })).toBeUndefined();
+    expect(resolveJobGrowthInteractiveLeaseLabel({
+      id: "learn-public",
+      type: "video",
+      status: "running",
+      userId: "public",
+      input: { action: "manhua_template_learn" },
+    })).toBeUndefined();
+  });
+
   it("到时先触发 abort，并等底层收敛后才返回终态", async () => {
     vi.useFakeTimers();
     try {

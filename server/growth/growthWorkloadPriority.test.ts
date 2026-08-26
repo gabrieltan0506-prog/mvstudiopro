@@ -72,6 +72,34 @@ describe("growth interactive workload priority", () => {
     })).toBe(false);
   });
 
+  it("把真实登录用户的运行中模板学习判为互动工作，其他视频任务不占租约", async () => {
+    const { isAuthenticatedRunningInteractiveJob } = await import("./growthWorkloadPriority");
+    expect(isAuthenticatedRunningInteractiveJob({
+      type: "video",
+      status: "running",
+      userId: "42",
+      input: { action: "manhua_template_learn" },
+    })).toBe(true);
+    expect(isAuthenticatedRunningInteractiveJob({
+      type: "video",
+      status: "running",
+      userId: "42",
+      input: { action: "other_video" },
+    })).toBe(false);
+    expect(isAuthenticatedRunningInteractiveJob({
+      type: "video",
+      status: "queued",
+      userId: "42",
+      input: { action: "manhua_template_learn" },
+    })).toBe(false);
+    expect(isAuthenticatedRunningInteractiveJob({
+      type: "video",
+      status: "running",
+      userId: "public",
+      input: { action: "manhua_template_learn" },
+    })).toBe(false);
+  });
+
   it("租约目录不可读时不把异常误判成空闲", async () => {
     const workloadPath = path.join(tempRoot, "runtime-interactive-workloads");
     await fs.writeFile(workloadPath, "not-a-directory", "utf8");

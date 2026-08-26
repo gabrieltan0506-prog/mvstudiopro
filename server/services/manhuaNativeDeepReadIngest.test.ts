@@ -138,6 +138,42 @@ describe("入库门禁", () => {
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.reasonZh).toContain("五维特征标签不完整");
   });
+
+  it("一片成功即可形成可追溯的部分提案，剩余分片继续断点学习", () => {
+    const partial = makeResult({
+      segmentCount: 1,
+      failedSegmentCount: 5,
+      completedSegmentIndexes: [0],
+      sourceDigest: "a".repeat(64),
+      segmentSnapshotSha256: "b".repeat(64),
+      assemblyComplete: false,
+    });
+    expect(checkNativeDeepReadIngestable(partial)).toEqual({ ok: true });
+    const card = buildNativeDeepReadProposalCard({ ...baseInput, result: partial })!;
+    expect(card.status).toBe("proposed");
+    expect(card.summaryZh).toContain("1/6段已入库，余段待续");
+    expect(card.provenance?.nativeVideoDeepRead).toMatchObject({
+      successSegments: 1,
+      attemptedSegments: 6,
+      completedSegmentIndexes: [0],
+      assemblyComplete: false,
+      sourceDigest: "a".repeat(64),
+      snapshotSha256: "b".repeat(64),
+    });
+  });
+
+  it("部分提案只接受从第一片开始的连续断点，禁止用错位段冒充进度", () => {
+    const result = checkNativeDeepReadIngestable(makeResult({
+      segmentCount: 1,
+      failedSegmentCount: 5,
+      completedSegmentIndexes: [1],
+      sourceDigest: "a".repeat(64),
+      segmentSnapshotSha256: "b".repeat(64),
+      assemblyComplete: false,
+    }));
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reasonZh).toContain("不是从第1片开始");
+  });
 });
 
 describe("装卡", () => {
