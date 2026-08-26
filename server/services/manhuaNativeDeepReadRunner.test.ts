@@ -7,6 +7,8 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   NATIVE_DEEP_READ_GENERATION_CONFIG,
+  NATIVE_DEEP_READ_HTTP_BODY_TIMEOUT_MS,
+  NATIVE_DEEP_READ_HTTP_HEADERS_TIMEOUT_MS,
   NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
   NATIVE_DEEP_READ_RESPONSE_SCHEMA,
   NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG,
@@ -24,6 +26,7 @@ import {
   buildNativeDeepReadTranscodeToFitArgs,
   isManhuaNativeDeepReadEnabled,
   pickSmallestVideoFormat,
+  postNativeDeepReadGenerateContent,
   prepareEpisodeVideos,
   nativeDeepReadSegmentCacheFingerprint,
   resolveNativeDeepReadRequestFps,
@@ -98,6 +101,31 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE).toBe("openrouter_glm_structuring");
     // 换代必须让旧确认码全废
     expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("adaptive-1800f-360s-v4-gemini");
+  });
+
+  it("长视频请求显式使用 30 分钟 HTTP 响应头与响应体时限，不落回 Undici 默认 300 秒", async () => {
+    expect(NATIVE_DEEP_READ_HTTP_HEADERS_TIMEOUT_MS).toBe(30 * 60_000);
+    expect(NATIVE_DEEP_READ_HTTP_BODY_TIMEOUT_MS).toBe(30 * 60_000);
+    const dispatcher = { marker: "native-long-request" };
+    const calls: Array<{ url: unknown; init: Record<string, unknown> }> = [];
+    const fetchImpl = vi.fn(async (url: unknown, init: unknown) => {
+      calls.push({ url, init: init as Record<string, unknown> });
+      return new Response("{}", {
+        status: 200,
+        headers: { "x-goog-request-id": "req-long-1" },
+      });
+    });
+    await expect(postNativeDeepReadGenerateContent({
+      url: "https://example.invalid/generateContent",
+      headers: { Authorization: "Bearer test-only" },
+      body: { contents: [] },
+    }, {
+      fetch: fetchImpl as never,
+      dispatcher: dispatcher as never,
+    })).resolves.toMatchObject({ status: 200, requestId: "req-long-1" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.init.dispatcher).toBe(dispatcher);
+    expect(calls[0]!.init.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("generationConfig 按 0826 参数定稿（二次拍板 0.75）：官方上限 65_536、单候选、responseSchema、HIGH 思考不外发", () => {

@@ -310,6 +310,10 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 
 **漫剧配乐间与交付后期闭环（PR #1317，合并前验证）**：成片坞已接“剧情起草 brief → EvoLink Suno V5.5 异步建单 → 同一 taskId 轮询/重启恢复 → 全变体验音并转存本人 GCS → 选变体写入 `bgm_mount`”；生成参数固定 `custom_mode=true`、纯音乐与 10–360 秒整数时长，`style_weight/weirdness_constraint` 只收 0.01 步进。真实画面事件与逐 0.5 秒客观电平会编译 `bgmSeekSec`、对白避让、精确静音、高能击点和 `volumeExpr`，ffmpeg 顺序为曲内裁切→重置时间轴→片内延迟→逐帧音量→淡入淡出。漫剧工厂与自由画布均有 2K/4K 超分入口，原片不覆盖，任务号可刷新续查；交付顺序统一为成片→超分→BGM→响度。对白入口只对 admin/supervisor 开放，走新加坡 Token Plan 优先、明确 4xx 才切北京，同一请求只发 `model/input/voice/response_format/seed`，验声通过后才写本人 GCS，并可作为 Seedance 参考音频。配乐与 TTS 的用户计费未拍板，继续关闭普通用户入口。合并前 `pnpm check` 0 错、全量 390 文件 3017 项通过（另 4 项跳过）、服务端 build、Vite build 与真实 ffmpeg 后期用例通过；未触发 Suno/TTS/超分或视频生成付费调用，线上登录态 UI 与正式任务仍须部署后验收。
 
+## 2026-08-27
+
+**原生精读五分钟失联与 Growth 冷备争用修复（本地全量验证，待部署真跑）**：第 10 集两次真实失败分别在 326 秒与 342 秒只留下 `fetch failed`；代码的 30 分钟 AbortSignal 没有覆盖 Undici 默认 300 秒响应头时限，且错误回执丢掉 `error.cause`，因此隐形超时既提前切断又无法分类。现改用原生精读专属 Undici dispatcher，把 headers/body timeout 与 30 分钟业务总时限收口，并把 `UND_ERR_*`/网络 cause 写入 owner 回执。同期 GitHub Growth Backup 与两次模型失败重叠；冷备脚本已有互动租约门禁，但 runner 只登记 `platform` Job，漏掉 `video/manhua_template_learn`，现学习 Job 从 running 到 finally 全程持有同一租约，让备份/归档主动让行。未改变计费、路由、分片缓存或结果不明时禁止自动回落的纪律。目标 85 项、全量 3025 项（4 跳过）、TypeScript、服务端 build、Vite 生产 build 与 diff check 通过；尚未部署，也未再次发起真实付费学习，不能宣称线上链已通。
+
 ## 如何更新本文件
 
 合完 PR 或用户改口径后，在**当日**下追加表格行；下一自然日新开 `## YYYY-MM-DD`。  

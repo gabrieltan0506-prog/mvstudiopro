@@ -106,7 +106,7 @@ import {
 } from "../../shared/manhuaNativeModelReceipt.js";
 import {
   beginGrowthInteractiveWorkload,
-  isAuthenticatedRunningPlatformJob,
+  isAuthenticatedRunningInteractiveJob,
 } from "../growth/growthWorkloadPriority";
 import {
   CREATIVE_NANO_IMAGE_CREDITS,
@@ -3165,6 +3165,20 @@ async function executeJob(
   return processAudioJob(input, timeoutMs, userId, jobId);
 }
 
+export function resolveJobGrowthInteractiveLeaseLabel(job: {
+  id: unknown;
+  type?: unknown;
+  status?: unknown;
+  userId?: unknown;
+  input?: unknown;
+}): string | undefined {
+  if (!isAuthenticatedRunningInteractiveJob(job)) return undefined;
+  const isManhuaLearn = job.type === "video"
+    && isRecord(job.input)
+    && job.input.action === "manhua_template_learn";
+  return `${isManhuaLearn ? "manhua-learn-job" : "platform-job"}:${String(job.id)}`;
+}
+
 async function runClaimedJob(
   job: Awaited<ReturnType<typeof claimNextQueuedJob>> & object
 ) {
@@ -3176,6 +3190,10 @@ async function runClaimedJob(
     const timeoutMs = resolveJobTimeoutMs(jobType, job.input);
     const paidImageTaskType =
       jobType === "image" ? paidImageLedgerTaskType(job.input) : null;
+    const manhuaLearnJob =
+      jobType === "video" &&
+      isRecord(job.input) &&
+      job.input.action === "manhua_template_learn";
     if (paidImageTaskType) {
       const { heartbeatActiveJob } = await import(
         "../services/paidJobLedger.js"
@@ -3186,17 +3204,15 @@ async function runClaimedJob(
       paidImageHeartbeat.unref?.();
     }
     // claimNextQueuedJob 已经用数据库 CAS 把 queued 改为 running；再同时核对正整数
-    // users.id，确保 public/匿名/伪造字符串不会持有前台租约。租约由本函数 finally
-    // 释放，因此墙钟超时/requeue 后不会被仍未 settle 的孤儿 Promise 永久续心跳。
-    if (isAuthenticatedRunningPlatformJob(job)) {
+    // users.id，确保 public/匿名/伪造字符串不会持有前台租约。Platform 与原生模板
+    // 学习都会占用同一台 Fly，统一让 Growth 冷备暂停。租约由本函数 finally 释放，
+    // 因此墙钟超时/requeue 后不会被仍未 settle 的孤儿 Promise 永久续心跳。
+    const interactiveWorkloadLabel = resolveJobGrowthInteractiveLeaseLabel(job);
+    if (interactiveWorkloadLabel) {
       releaseInteractiveWorkload = await beginGrowthInteractiveWorkload(
-        `platform-job:${job.id}`
+        interactiveWorkloadLabel
       );
     }
-    const manhuaLearnJob =
-      jobType === "video" &&
-      isRecord(job.input) &&
-      job.input.action === "manhua_template_learn";
     const manhuaBgmJob =
       jobType === "audio" &&
       isRecord(job.input) &&

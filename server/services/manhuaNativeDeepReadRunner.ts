@@ -19,6 +19,7 @@
 import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { readFile, stat, statfs, unlink } from "node:fs/promises";
+import { Agent, fetch as undiciFetch, type Dispatcher } from "undici";
 import {
   mapNativeDeepReadSegments,
   nativeDeepReadSegmentSchema,
@@ -266,6 +267,21 @@ export const NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG = {
 const NATIVE_RESPONSE_CAP_CHARS = 8 * 1024 * 1024;
 /** 单段视觉请求总时限：实测 360s 段 144s 返回，30 分钟为失联硬顶。 */
 export const NATIVE_DEEP_READ_REQUEST_TOTAL_TIMEOUT_MS = 30 * 60_000;
+/**
+ * Undici 默认只等 300 秒响应头；360 秒高密度视频在上游排队或 Fly 资源繁忙时
+ * 会先被这个隐含门槛切成 `TypeError: fetch failed`。这里与业务总时限收口，
+ * 仍由 AbortSignal 负责 30 分钟硬中止，不把超时无限放开。
+ */
+export const NATIVE_DEEP_READ_HTTP_HEADERS_TIMEOUT_MS =
+  NATIVE_DEEP_READ_REQUEST_TOTAL_TIMEOUT_MS;
+export const NATIVE_DEEP_READ_HTTP_BODY_TIMEOUT_MS =
+  NATIVE_DEEP_READ_REQUEST_TOTAL_TIMEOUT_MS;
+
+const nativeDeepReadHttpDispatcher = new Agent({
+  headersTimeout: NATIVE_DEEP_READ_HTTP_HEADERS_TIMEOUT_MS,
+  bodyTimeout: NATIVE_DEEP_READ_HTTP_BODY_TIMEOUT_MS,
+  connect: { timeout: 30_000 },
+});
 
 function abortReason(signal?: AbortSignal): Error {
   return signal?.reason instanceof Error ? signal.reason : new Error("已取消");
@@ -565,23 +581,34 @@ export type NativeDeepReadModelResponse = {
   requestId?: string;
 };
 
-async function postGenerateContent(input: {
+type NativeDeepReadHttpDeps = {
+  fetch: typeof undiciFetch;
+  dispatcher: Dispatcher;
+};
+
+const defaultNativeDeepReadHttpDeps: NativeDeepReadHttpDeps = {
+  fetch: undiciFetch,
+  dispatcher: nativeDeepReadHttpDispatcher,
+};
+
+export async function postNativeDeepReadGenerateContent(input: {
   url: string;
   headers: Record<string, string>;
   body: unknown;
   abortSignal?: AbortSignal;
-}): Promise<NativeDeepReadModelResponse> {
+}, deps: NativeDeepReadHttpDeps = defaultNativeDeepReadHttpDeps): Promise<NativeDeepReadModelResponse> {
   const managed = makeTimedSignal(
     input.abortSignal,
     NATIVE_DEEP_READ_REQUEST_TOTAL_TIMEOUT_MS,
     "原生精读请求超过总时限",
   );
   try {
-    const response = await fetch(input.url, {
+    const response = await deps.fetch(input.url, {
       method: "POST",
       headers: { ...input.headers, "Content-Type": "application/json" },
       signal: managed.signal,
       body: JSON.stringify(input.body),
+      dispatcher: deps.dispatcher,
     });
     const text = await response.text();
     if (text.length > NATIVE_RESPONSE_CAP_CHARS) {
@@ -609,7 +636,7 @@ async function postVertexNativeDeepRead(
   const url = `${baseUrlForVertex(NATIVE_DEEP_READ_VERTEX_LOCATION)}/v1/projects/`
     + `${encodeURIComponent(getVertexProjectId())}/locations/${NATIVE_DEEP_READ_VERTEX_LOCATION}`
     + `/publishers/google/models/${encodeURIComponent(NATIVE_DEEP_READ_MODEL)}:generateContent`;
-  return postGenerateContent({
+  return postNativeDeepReadGenerateContent({
     url,
     headers: await getVertexAuthHeaders(),
     body,
@@ -625,7 +652,7 @@ async function postEvolinkNativeDeepRead(
   if (!apiKey) throw new Error("EVOLINK_API_KEY 未配置，EvoLink 兜底不可用");
   const url = `${resolveNativeDeepReadEvolinkBaseUrl()}/v1beta/models/`
     + `${encodeURIComponent(NATIVE_DEEP_READ_MODEL)}:generateContent`;
-  return postGenerateContent({
+  return postNativeDeepReadGenerateContent({
     url,
     headers: { Authorization: `Bearer ${apiKey}` },
     body,
