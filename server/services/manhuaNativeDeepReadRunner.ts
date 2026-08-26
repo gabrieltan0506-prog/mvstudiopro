@@ -26,6 +26,7 @@ import {
 } from "../../shared/manhuaNativeDeepRead.js";
 import { MANHUA_NATIVE_DEEP_READ_MODEL } from "../../shared/manhuaNativeDeepReadJob.js";
 import {
+  hasClockTextZh,
   manhuaNativeAudioChunkAnalysisSchema,
   normalizeManhuaNativeAudioChunkAnalysis,
   type ManhuaNativeAudioDirectRoute,
@@ -886,6 +887,39 @@ function assertShotCoverage(
 }
 
 /**
+ * 视觉描述文本零秒位门禁（assertNoClockText 口径，MM:SS 钟表式）：
+ * 秒位只进数字字段；subtitles 是唯一例外（画面证据逐字照抄，可能含内嵌时码）。
+ * 「1.2秒内推近」这类动作时长不含冒号，天然不触发。
+ */
+function assertVisualTextNoClock(raw: Record<string, unknown>, labelZh: string): void {
+  const offenders: string[] = [];
+  const check = (field: string, value: unknown) => {
+    if (typeof value === "string" && hasClockTextZh(value)) offenders.push(field);
+  };
+  for (const shot of Array.isArray(raw.shots) ? raw.shots : []) {
+    const row = shot as Record<string, unknown>;
+    for (const field of [
+      "shotSizeZh", "angleZh", "cameraMoveZh", "lightingZh", "actionZh", "transitionInZh",
+    ]) check(`shots.${field}`, row[field]);
+  }
+  for (const field of ["beatStructureZh", "moodArcZh", "reusableZh", "genPromptHintZh"]) {
+    check(field, raw[field]);
+  }
+  const classification = raw.classification as Record<string, unknown> | undefined;
+  if (classification && typeof classification === "object") {
+    for (const [key, tags] of Object.entries(classification)) {
+      if (!Array.isArray(tags)) continue;
+      for (const tag of tags) check(`classification.${key}`, tag);
+    }
+  }
+  if (offenders.length) {
+    throw gateError(
+      `${labelZh}描述文本含钟表式秒位（${Array.from(new Set(offenders)).slice(0, 5).join("、")}）——秒位只进数字字段`,
+    );
+  }
+}
+
+/**
  * 段级双密度门禁（0826 双密度教训）：
  *   镜头表：绝对秒位、连续覆盖本段、镜头数 ≥ ceil(段时长/15)；
  *   音轨栏：audioResolution 恰好 [{chunkIndex:段号}]、audioTrack 段数
@@ -907,6 +941,7 @@ export function assertNativeDeepReadSegmentDensity(input: {
   if (!parsed.success) {
     throw gateError(`第${input.segmentIndex + 1}段结构不合六栏 schema`);
   }
+  assertVisualTextNoClock(input.raw, `第${input.segmentIndex + 1}段`);
   const shots = sortedShots(input.raw);
   assertShotCoverage(shots, Math.round(input.startSec), Math.round(input.endSec), `第${input.segmentIndex + 1}段`);
   if (shots.length < floors.minShots) {
@@ -960,6 +995,16 @@ export function assertNativeDeepReadEpisodeEvidence(input: {
 }): void {
   if (!input.rawSegments.length) {
     throw new Error(`第${input.episodeIndex}集没有分段产出，整集拒绝入库`);
+  }
+  // 门禁在 GLM 之后重跑：整形/修复产物同样零秒位（assertNoClockText 口径）。
+  for (const raw of input.rawSegments) {
+    try {
+      assertVisualTextNoClock(raw, `第${input.episodeIndex}集`);
+    } catch (error) {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}，整集拒绝入库`,
+      );
+    }
   }
   const allShots = input.rawSegments
     .flatMap((raw) => sortedShots(raw))
