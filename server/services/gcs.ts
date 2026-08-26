@@ -264,7 +264,7 @@ export async function uploadBufferToGcsIfAbsent(params: {
   buffer: Buffer;
   contentType: string;
   bucket?: string;
-}): Promise<{ created: boolean }> {
+}): Promise<{ created: boolean; generation?: string }> {
   const bucket = params.bucket || getGcsBucketName();
   if (!bucket) throw new Error("GCS bucket is not configured");
   const objectName = normalizeObjectName(params.objectName);
@@ -294,8 +294,9 @@ export async function uploadBufferToGcsIfAbsent(params: {
     const text = await response.text().catch(() => "");
     throw new Error(`gcs_conditional_upload_failed:${response.status}:${text.slice(0, 300)}`);
   }
-  await response.json().catch(() => null);
-  return { created: true };
+  const metadata = await response.json().catch(() => null) as { generation?: unknown } | null;
+  const generation = String(metadata?.generation || "").trim();
+  return { created: true, ...(generation ? { generation } : {}) };
 }
 
 export async function downloadGcsObject(params: {

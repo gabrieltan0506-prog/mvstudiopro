@@ -522,6 +522,7 @@ export const manhuaViralTemplateRouter = router({
             spentCny: typeof spent === "number" ? Math.round(spent * 100) / 100 : null,
             // 占位文件自带的最终拒因最权威（0826 起失败即补写）；旧占位回落任务回执推断
             stuckZh: row.lastErrorZh || stuckByEpisode.get(row.episodeIndex)?.textZh || null,
+            reclaimable: row.reclaimable,
           };
         }),
       };

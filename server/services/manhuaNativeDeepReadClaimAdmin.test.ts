@@ -43,6 +43,7 @@ describe("原生精读占位管理", () => {
       createdAtIso: "2026-08-26T01:02:03.000Z",
       lastErrorZh: "结构未通过",
       lastFailedAtIso: null,
+      reclaimable: true,
     }]);
   });
 

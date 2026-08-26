@@ -280,8 +280,30 @@ export async function executeAndIngestNativeDeepReadEpisode(
 
   // 原子占位必须在 runner 之前：#1295 的 ifGenerationMatch 在模型跑完之后，
   // 只能防卡片覆盖，防不了两个进程各付一次费
-  const claim = await deps.acquireClaim(input.seriesKey, input.episodeIndex);
+  const claim = input.reclaimFailedClaim
+    ? await deps.takeoverClaim(input.seriesKey, input.episodeIndex)
+    : await deps.acquireClaim(input.seriesKey, input.episodeIndex);
   const startedAt = Date.now();
+  const releaseSingleClaimAfterFailure = async (errorZh: string): Promise<void> => {
+    try {
+      await claim.releaseAfterSuccess();
+    } catch (releaseError) {
+      try {
+        await recordNativeDeepReadClaimFailure(
+          input.seriesKey,
+          input.episodeIndex,
+          claim.runId,
+          errorZh,
+        );
+      } catch (recordError) {
+        console.warn(
+          `[nativeDeepRead] 第${input.episodeIndex}集终态占位释放与病历补写均未完成：`,
+          releaseError instanceof Error ? releaseError.message : releaseError,
+          recordError instanceof Error ? recordError.message : recordError,
+        );
+      }
+    }
+  };
 
   let visualResult: Awaited<ReturnType<typeof runManhuaNativeDeepRead>>;
   try {
@@ -294,6 +316,7 @@ export async function executeAndIngestNativeDeepReadEpisode(
     });
   } catch (error) {
     const usage = failedUsageFromError(error);
+    await releaseSingleClaimAfterFailure(error instanceof Error ? error.message : String(error));
     throw Object.assign(
       new Error(error instanceof Error ? error.message : String(error), { cause: error }),
       {
@@ -315,6 +338,7 @@ export async function executeAndIngestNativeDeepReadEpisode(
       visualResult,
     });
   } catch (error) {
+    await releaseSingleClaimAfterFailure(error instanceof Error ? error.message : String(error));
     throw Object.assign(
       new Error(error instanceof Error ? error.message : String(error), { cause: error }),
       { costCny, elapsedMs: Date.now() - startedAt, nativeUsage: combinedUsage },
@@ -322,6 +346,7 @@ export async function executeAndIngestNativeDeepReadEpisode(
   }
   const result = { ...visualResult, audioAnalysis };
   if (input.abortSignal?.aborted) {
+    await releaseSingleClaimAfterFailure("用户已停止学习");
     throw Object.assign(new Error("用户已停止学习"), {
       costCny,
       elapsedMs: Date.now() - startedAt,
@@ -332,6 +357,7 @@ export async function executeAndIngestNativeDeepReadEpisode(
   // 门禁在写之前：空卡、全段失败不进库。**钱已经花了，错误里要带上**
   const gate = checkNativeDeepReadIngestable(result);
   if (!gate.ok) {
+    await releaseSingleClaimAfterFailure(gate.reasonZh);
     throw Object.assign(
       new Error(`第${input.episodeIndex}集未通过入库门禁：${gate.reasonZh}`),
       { costCny, elapsedMs: Date.now() - startedAt, nativeUsage: { ...combinedUsage } },
@@ -349,6 +375,7 @@ export async function executeAndIngestNativeDeepReadEpisode(
       result,
     });
   } catch (error) {
+    await releaseSingleClaimAfterFailure(error instanceof Error ? error.message : String(error));
     throw Object.assign(
       new Error(error instanceof Error ? error.message : String(error), { cause: error }),
       { costCny, elapsedMs: Date.now() - startedAt, nativeUsage: { ...combinedUsage } },
@@ -604,6 +631,35 @@ export async function runNativeDeepReadBatch(input: {
    * 中途抢不到时撤回本轮尚未付费的自有占位，整批不发车。
    */
   const claims = new Map<number, Awaited<ReturnType<typeof acquireNativeDeepReadEpisodeClaim>>>();
+  const releaseOrMarkFailed = async (params: {
+    episodeIndex: number;
+    claim: Awaited<ReturnType<typeof acquireNativeDeepReadEpisodeClaim>>;
+    errorZh: string;
+    beforePaidCall: boolean;
+  }): Promise<void> => {
+    try {
+      if (params.beforePaidCall) await params.claim.releaseBeforePaidCall();
+      else await params.claim.releaseAfterSuccess();
+    } catch (releaseError) {
+      console.warn(
+        `[nativeDeepRead] 第${params.episodeIndex}集终态占位释放未成，补写病历留待安全接管：`,
+        releaseError instanceof Error ? releaseError.message : releaseError,
+      );
+      try {
+        await recordNativeDeepReadClaimFailure(
+          input.seriesKey,
+          params.episodeIndex,
+          params.claim.runId,
+          params.errorZh,
+        );
+      } catch (recordError) {
+        console.warn(
+          `[nativeDeepRead] 第${params.episodeIndex}集占位拒因补写未完成：`,
+          recordError instanceof Error ? recordError.message : recordError,
+        );
+      }
+    }
+  };
   try {
     for (const episode of pending) {
       claims.set(
@@ -614,15 +670,26 @@ export async function runNativeDeepReadBatch(input: {
       );
     }
   } catch (error) {
-    await Promise.allSettled(Array.from(claims.values()).map((claim) => claim.releaseBeforePaidCall()));
+    await Promise.all(Array.from(claims.entries()).map(([episodeIndex, claim]) =>
+      releaseOrMarkFailed({
+        episodeIndex,
+        claim,
+        errorZh: "批次占位未全部取得，已撤回本轮占位",
+        beforePaidCall: true,
+      })));
     throw error;
   }
 
   const releaseUnpaidFrom = async (startIndex: number, paid: ReadonlySet<number>) => {
-    await Promise.allSettled(pending.slice(startIndex).flatMap((episode) => {
+    await Promise.all(pending.slice(startIndex).flatMap((episode) => {
       if (paid.has(episode.episodeIndex)) return [];
       const claim = claims.get(episode.episodeIndex);
-      return claim ? [claim.releaseBeforePaidCall()] : [];
+      return claim ? [releaseOrMarkFailed({
+        episodeIndex: episode.episodeIndex,
+        claim,
+        errorZh: "批次已停止，未执行集占位撤回未成",
+        beforePaidCall: true,
+      })] : [];
     }));
   };
   const paidEpisodeIndexes = new Set<number>();
@@ -736,29 +803,13 @@ export async function runNativeDeepReadBatch(input: {
        * 释放走本轮 generation 条件删除，不破坏并发互斥；释放失败先补写病历再留人工核对。
        */
       const failedClaim = claims.get(episode.episodeIndex);
-      if (failedClaim) {
-        try {
-          await failedClaim.releaseAfterSuccess();
-        } catch (releaseError) {
-          console.warn(
-            `[nativeDeepRead] 第${episode.episodeIndex}集失败后占位释放未成，补写病历留人工核对：`,
-            releaseError instanceof Error ? releaseError.message : releaseError,
-          );
-          try {
-            await recordNativeDeepReadClaimFailure(
-              input.seriesKey,
-              episode.episodeIndex,
-              failedClaim.runId,
-              failed.errorZh || "未回传具体拒因",
-            );
-          } catch (recordError) {
-            console.warn(
-              `[nativeDeepRead] 第${episode.episodeIndex}集占位拒因补写未完成：`,
-              recordError instanceof Error ? recordError.message : recordError,
-            );
-          }
-        }
-      }
+      if (failedClaim) await releaseOrMarkFailed({
+        episodeIndex: episode.episodeIndex,
+        claim: failedClaim,
+        errorZh: failed.errorZh || "未回传具体拒因",
+        // 当前集已经进入执行体；即使旁路 started 回执丢失，也用终态释放语义。
+        beforePaidCall: false,
+      });
       await releaseUnpaidFrom(episodeCursor + 1, paidEpisodeIndexes);
       break;
     }

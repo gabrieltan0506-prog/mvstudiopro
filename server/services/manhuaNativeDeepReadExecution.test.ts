@@ -720,5 +720,18 @@ describe("失败占位自动让位（0826 用户拍板）", () => {
     expect(deps.takeoverClaim).toHaveBeenCalledTimes(1);
     expect(deps.acquireClaim).not.toHaveBeenCalled();
   });
-});
 
+  it("单集入口同样按 reclaim 标记接管，不旁路回普通抢占", async () => {
+    await executeAndIngestNativeDeepReadEpisode({
+      seriesKey: "s1",
+      episodeIndex: 1,
+      sourceUrl: "https://www.douyin.com/video/1",
+      durationSec: 60,
+      segments: [{ startSec: 0, endSec: 60 }],
+      resolveNodes: async () => [],
+      reclaimFailedClaim: true,
+    }, deps);
+    expect(deps.takeoverClaim).toHaveBeenCalledTimes(1);
+    expect(deps.acquireClaim).not.toHaveBeenCalled();
+  });
+});

@@ -95,7 +95,7 @@ describe("downloadGcsObjectVersioned / deleteGcsObject 条件删除", () => {
     stubFetch(() => {
       if (first) {
         first = false;
-        return { status: 200, body: { name: "x" } };
+        return { status: 200, body: { name: "x", generation: "91" } };
       }
       return { status: 412 };
     });
@@ -111,6 +111,7 @@ describe("downloadGcsObjectVersioned / deleteGcsObject 条件删除", () => {
       contentType: "application/json",
     });
     expect(a.created).toBe(true);
+    expect(a.generation).toBe("91");
     expect(b.created).toBe(false);
     expect(calls[0]!.url).toContain("ifGenerationMatch=0");
   });

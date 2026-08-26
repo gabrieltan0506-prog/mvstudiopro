@@ -241,6 +241,33 @@ describe("原生精读计划", () => {
     expect(plan.episodes[1]!.reclaimFailedClaim).toBeUndefined();
   });
 
+  it("旧病历只有 lastErrorZh 也从最早集重跑，且 reclaim 状态进入确认码", async () => {
+    const baseDeps = deps({
+      listMixEpisodes: vi.fn(async () => ({
+        episodes: [episode(1), episode(2)],
+        complete: true,
+      })),
+    });
+    const normal = await buildNativeDeepReadPlanPreview(
+      { url: "https://www.douyin.com/collection/123456", limit: 1 },
+      baseDeps,
+    );
+    const reclaim = await buildNativeDeepReadPlanPreview(
+      { url: "https://www.douyin.com/collection/123456", limit: 1 },
+      deps({
+        listMixEpisodes: baseDeps.listMixEpisodes,
+        listClaimStates: vi.fn(async () => new Map([[
+          1,
+          { createdAtIso: "2026-08-26T00:00:00Z", lastErrorZh: "旧拒因", lastFailedAtIso: null },
+        ]])),
+      }),
+    );
+    expect(reclaim.episodes.map((row) => row.episodeIndex)).toEqual([1]);
+    expect(reclaim.reclaimEpisodeIndexes).toEqual([1]);
+    expect(reclaim.episodes[0]!.reclaimFailedClaim).toBe(true);
+    expect(reclaim.planHash).not.toBe(normal.planHash);
+  });
+
   it("前两集为残留占位时，面板要求十集会选取第3至12集", async () => {
     const d = deps({
       listClaimStates: vi.fn(async () => new Map([[1, { createdAtIso: new Date().toISOString(), lastFailedAtIso: null }], [2, { createdAtIso: new Date().toISOString(), lastFailedAtIso: null }]])),

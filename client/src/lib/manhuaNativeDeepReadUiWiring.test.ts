@@ -74,6 +74,8 @@ describe("原生精读页面接线", () => {
     expect(PAGE).toContain("manhuaLearnResult.nativeUsage");
     expect(PAGE).toContain("nativeLearnTerminalProposalRefreshSignature");
     expect(PAGE).toContain("await manhuaViralProposalsRefetchRef.current()");
+    expect(PAGE).toContain("await manhuaClaimsRefetchRef.current()");
+    expect(PAGE).toContain("if (!terminalRefreshFailed)");
   });
 
   it("模型、token、成本和原始进度只通过 owner/监管技术详情门展示", () => {
@@ -107,6 +109,7 @@ describe("原生精读页面接线", () => {
   it("轮询 effect 不依赖整颗 query 对象，且无变化快照复用旧引用", () => {
     expect(PAGE).toContain("reuseManhuaLearnServerJobsIfUnchanged(prev, listed.items)");
     expect(PAGE).toContain("manhuaViralProposalsRefetchRef.current = manhuaViralProposalsQuery.refetch");
+    expect(PAGE).toContain("manhuaClaimsRefetchRef.current = manhuaClaimsQuery.refetch");
     const refreshAt = PAGE.indexOf("const refreshManhuaLearnServerJobs = useCallback");
     const stopAt = PAGE.indexOf("const stopFocusedManhuaLearnJob", refreshAt);
     const refreshBlock = PAGE.slice(refreshAt, stopAt);

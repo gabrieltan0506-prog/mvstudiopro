@@ -3185,6 +3185,21 @@ export default function PlatformPage() {
       retry: false,
     },
   );
+  const manhuaClaimsRefetchRef = useRef(manhuaClaimsQuery.refetch);
+  const manhuaClaimsCanRefetchRef = useRef(false);
+  useEffect(() => {
+    manhuaClaimsRefetchRef.current = manhuaClaimsQuery.refetch;
+    manhuaClaimsCanRefetchRef.current = Boolean(
+      ownerNativeDeepReadPanel
+      && manhuaClaimsPanelOpen
+      && resolvedManhuaLearnFocusSeriesKey,
+    );
+  }, [
+    manhuaClaimsQuery.refetch,
+    manhuaClaimsPanelOpen,
+    ownerNativeDeepReadPanel,
+    resolvedManhuaLearnFocusSeriesKey,
+  ]);
   const discardManhuaClaimMutation = trpc.manhuaViralTemplate.discardNativeDeepReadClaim.useMutation();
   const discardManhuaClaim = useCallback(async (
     episodeIndex: number,
@@ -3350,14 +3365,28 @@ export default function PlatformPage() {
       nativeTerminalSignature
       && nativeTerminalSignature !== nativeProposalRefreshSignatureRef.current
     ) {
+      let terminalRefreshFailed = false;
       try {
         const refreshed = await manhuaViralProposalsRefetchRef.current();
         if (refreshed.isError) throw refreshed.error;
         if (manhuaLearnUserKeyRef.current !== requestUserKey) return listed;
-        nativeProposalRefreshSignatureRef.current = nativeTerminalSignature;
       } catch (error) {
         // job 恢复不能被待审列表的一次读取失败拖垮；不记签名，下一轮轮询继续重试。
+        terminalRefreshFailed = true;
         console.warn("[manhua-learn] refresh native proposals failed", error);
+      }
+      if (manhuaClaimsCanRefetchRef.current) {
+        try {
+          const refreshed = await manhuaClaimsRefetchRef.current();
+          if (refreshed.isError) throw refreshed.error;
+          if (manhuaLearnUserKeyRef.current !== requestUserKey) return listed;
+        } catch (error) {
+          terminalRefreshFailed = true;
+          console.warn("[manhua-learn] refresh native claims failed", error);
+        }
+      }
+      if (!terminalRefreshFailed) {
+        nativeProposalRefreshSignatureRef.current = nativeTerminalSignature;
       }
     }
     return listed;
@@ -12496,7 +12525,7 @@ export default function PlatformPage() {
                         <div className="mt-3 rounded-xl border border-white/10 bg-black/25 px-3 py-2.5">
                           <div className="flex items-center justify-between gap-2">
                             <div className="text-[11px] font-semibold text-[#c9c0e6]/90">
-                              占位管理 · 历史未结账单
+                              占位管理 · 运行中与失败记录
                             </div>
                             <button
                               type="button"
@@ -12520,8 +12549,8 @@ export default function PlatformPage() {
                             ) : (
                               <div className="mt-2 space-y-1.5">
                                 <p className="text-[10px] text-[#c9c0e6]/45">
-                                  下列集有未结清的历史学习记录，学习计划会自动跳过它们；
-                                  处理后才会重新纳入。「弃置并设 1 集」不会自动扣费，也不承诺定向重跑该集。
+                                  “失败待重跑”不会再挤掉集号，下轮会自动接管并复用已成段；
+                                  只有仍在处理的集会暂时隔离。「弃置并设 1 集」不会自动扣费。
                                 </p>
                                 {(manhuaClaimsQuery.data?.items || []).map((item) => (
                                   <div
@@ -12529,6 +12558,9 @@ export default function PlatformPage() {
                                     className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-black/30 px-2.5 py-1.5 text-[10px] text-[#d7d0ef]"
                                   >
                                     <span className="font-semibold">第 {item.episodeIndex} 集</span>
+                                    <span className={item.reclaimable ? "text-sky-200/85" : "text-amber-200/85"}>
+                                      {item.reclaimable ? "失败待重跑·自动让位" : "疑似仍在处理"}
+                                    </span>
                                     <span className="text-[#c9c0e6]/55">
                                       {item.createdAtIso
                                         ? `占位于 ${new Date(item.createdAtIso).toLocaleString("zh-CN", {

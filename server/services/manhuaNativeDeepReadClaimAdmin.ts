@@ -27,6 +27,8 @@ export type NativeDeepReadClaimAdminRow = {
   /** 集失败时补写的最终拒因（0826 起有）；旧占位没有则为 null */
   lastErrorZh: string | null;
   lastFailedAtIso: string | null;
+  /** true 表示它不会再挤掉集号；下一轮会按失败占位安全接管。 */
+  reclaimable: boolean;
 };
 
 const CLAIM_ADMIN_SCAN_LIMIT = 999;
@@ -70,7 +72,14 @@ export async function listNativeDeepReadClaimAdminRows(
     } catch {
       // 读不动只影响展示信息，不影响「这一集确实有占位」这个事实
     }
-    rows.push({ episodeIndex, claimGeneration, createdAtIso, lastErrorZh, lastFailedAtIso });
+    rows.push({
+      episodeIndex,
+      claimGeneration,
+      createdAtIso,
+      lastErrorZh,
+      lastFailedAtIso,
+      reclaimable: Boolean(lastErrorZh || lastFailedAtIso),
+    });
   }
   return rows.sort((a, b) => a.episodeIndex - b.episodeIndex);
 }

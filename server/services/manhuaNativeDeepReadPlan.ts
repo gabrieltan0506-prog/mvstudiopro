@@ -91,7 +91,7 @@ export type NativeDeepReadPlanPreview = {
   alreadyIngestedEpisodeIndexes: number[];
   /** 仍隔离的占位集（无失败病历、疑似在跑）；不会自动重跑 */
   pendingClaimEpisodeIndexes: number[];
-  /** 失败/超时占位自动让位、纳入本轮重跑的集号 */
+  /** 有失败病历的占位自动让位、纳入本轮重跑的集号 */
   reclaimEpisodeIndexes: number[];
   /** 扣掉已入库后真正会发出模型请求的集数 */
   executableEpisodeCount: number;
@@ -381,7 +381,11 @@ export type NativeDeepReadPlanDeps = {
   probeDurationSec: (playbackUrl: string, abortSignal?: AbortSignal) => Promise<number>;
   listIngestedEpisodes: (seriesKey: string) => Promise<Set<number>>;
   listClaimStates: (seriesKey: string) => Promise<
-    Map<number, { createdAtIso: string | null; lastFailedAtIso: string | null }>
+    Map<number, {
+      createdAtIso: string | null;
+      lastErrorZh?: string | null;
+      lastFailedAtIso: string | null;
+    }>
   >;
   resolveSeriesKey: (input: {
     sourceIdentity: string;
@@ -467,7 +471,7 @@ export async function buildNativeDeepReadPlanPreview(
   // 每个真正执行的集仍会在模型调用前原子抢 claim；这里没有放松并发保护。
   const notIngested = free.filter((e) => !ingested.has(e.index));
   /**
-   * 0826 用户拍板「失败占位不许永远挡路」：带失败病历或超时的占位自动让位、
+   * 0826 用户拍板「失败占位不许永远挡路」：带失败病历的占位自动让位、
    * 本轮直接纳入重跑（执行时原子接管，段缓存让已成段零费）；
    * 新鲜无病历的占位可能仍在跑，继续隔离防并发双跑。
    */

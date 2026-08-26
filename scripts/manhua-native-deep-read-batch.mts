@@ -42,7 +42,10 @@ import {
   type NativeDeepReadBatchEpisode,
   type NativeDeepReadModelCheckpoint,
 } from "../server/services/manhuaNativeDeepReadExecution.ts";
-import { listNativeDeepReadEpisodeClaims } from "../server/services/manhuaNativeDeepReadClaim.ts";
+import {
+  isNativeDeepReadClaimReclaimable,
+  listNativeDeepReadEpisodeClaimStates,
+} from "../server/services/manhuaNativeDeepReadClaim.ts";
 import {
   appendManhuaNativeModelReceipt,
   type ManhuaNativeModelReceipt,
@@ -174,6 +177,7 @@ function printModelCheckpoint(checkpoint: NativeDeepReadModelCheckpoint): void {
   }
 }
 
+let reclaimEpisodeIndexes = new Set<number>();
 const toBatchEpisode = (e: EpisodeInput): NativeDeepReadBatchEpisode => ({
   episodeIndex: e.episodeIndex,
   sourceUrl: e.sourceUrl,
@@ -181,6 +185,7 @@ const toBatchEpisode = (e: EpisodeInput): NativeDeepReadBatchEpisode => ({
   laneHintZh: e.laneHintZh,
   segments: e.segments,
   resolveNodes: () => resolveNodeUrls(e.sourceUrl, controller.signal),
+  ...(reclaimEpisodeIndexes.has(e.episodeIndex) ? { reclaimFailedClaim: true } : {}),
 });
 
 // 预检在列 GCS 之前：清单里写两次同一集、集号非法、单段超 1000s 都在这里拒
@@ -194,18 +199,29 @@ try {
 }
 
 const alreadyIngested = await listIngestedNativeDeepReadEpisodes(seriesKey);
-const existingClaims = await listNativeDeepReadEpisodeClaims(seriesKey);
+const claimStates = await listNativeDeepReadEpisodeClaimStates(seriesKey);
 const todo = wanted.filter((e) => !alreadyIngested.has(e.episodeIndex));
-const pendingClaims = todo.filter((episode) => existingClaims.has(episode.episodeIndex));
-const plan = todo.length
-  ? validateNativeDeepReadBatchPlan(todo.map(toBatchEpisode), { maxEpisodes: limit, seriesKey })
+const pendingClaims = todo.filter((episode) => {
+  const state = claimStates.get(episode.episodeIndex);
+  return state && !isNativeDeepReadClaimReclaimable(state);
+});
+reclaimEpisodeIndexes = new Set(todo
+  .filter((episode) => {
+    const state = claimStates.get(episode.episodeIndex);
+    return state && isNativeDeepReadClaimReclaimable(state);
+  })
+  .map((episode) => episode.episodeIndex));
+const pendingClaimEpisodeIndexes = new Set(pendingClaims.map((episode) => episode.episodeIndex));
+const executable = todo.filter((episode) => !pendingClaimEpisodeIndexes.has(episode.episodeIndex));
+const plan = executable.length
+  ? validateNativeDeepReadBatchPlan(executable.map(toBatchEpisode), { maxEpisodes: limit, seriesKey })
   : null;
 
 console.log("──────── 原生精读发车计划 ────────");
 console.log(`合集        ${seriesKey}`);
 console.log(`清单        ${listPath} · 共 ${raw.length} 集，本次取前 ${wanted.length} 集（--limit=${limit}）`);
 console.log(`已入库      ${alreadyIngested.size} 集 [${[...alreadyIngested].sort((a, b) => a - b).join(",") || "—"}]`);
-console.log(`本次要跑    ${todo.length} 集 [${todo.map((e) => e.episodeIndex).join(",") || "—"}]`);
+console.log(`本次可跑    ${executable.length} 集 [${executable.map((e) => e.episodeIndex).join(",") || "—"}]`);
 console.log(`总时长      ${Math.round((plan?.totalDurationSec || 0) / 60)} 分钟`);
 console.log(`视觉视频分片  ${plan?.totalSegments || 0}`);
 console.log(`视觉模型请求  ${plan?.totalVisualCalls || 0}   ← Gemini 3.1 Pro 每段一次调用（不再多段合包）`);
@@ -214,6 +230,7 @@ console.log(`模型API总数   ${plan?.totalModelCalls || 0}   ← 视觉（每�
 console.log(`单段上限    ${NATIVE_DEEP_READ_MAX_SEGMENT_SEC}s（两档 fps：≤180s→10，否则5 · 360s×5=1800帧）`);
 console.log(`计划确认码   ${plan?.planHash || "—"}`);
 console.log(`待核对占位   ${pendingClaims.length} 集 [${pendingClaims.map((e) => e.episodeIndex).join(",") || "—"}]`);
+console.log(`失败重跑集   ${reclaimEpisodeIndexes.size} 集 [${[...reclaimEpisodeIndexes].join(",") || "—"}]（自动让位，已成段走缓存）`);
 console.log(`模式        ${isGo ? "🔴 真跑（会花钱）" : "🟢 干跑（不发任何模型请求）"}`);
 console.log("──────────────────────────────");
 
@@ -226,12 +243,9 @@ if (!isGo) {
   process.exit(0);
 }
 
-if (!todo.length) {
+if (!executable.length) {
   console.log("没有要跑的集，退出。");
   process.exit(0);
-}
-if (pendingClaims.length) {
-  fail(`第${pendingClaims.map((e) => e.episodeIndex).join("、")}集存在待核对占位，禁止自动重跑`);
 }
 
 // 真跑必须带上扣除已入库集后的实际计划，保证最大调用数与干跑所见一致。
@@ -241,7 +255,7 @@ if (!plan || confirmed !== plan.planHash || maxCalls !== plan.totalModelCalls) {
   fail(`真跑必须携带 --confirm=${plan?.planHash || "<确认码>"} --max-calls=${plan?.totalModelCalls || 0}`);
 }
 
-const episodes: NativeDeepReadBatchEpisode[] = todo.map(toBatchEpisode);
+const episodes: NativeDeepReadBatchEpisode[] = executable.map(toBatchEpisode);
 
 const result = await runNativeDeepReadBatch({
   seriesKey,
@@ -309,9 +323,7 @@ if (missingStoredEpisodes.length) {
   console.error(`✗ GCS 入库复核未通过：第${missingStoredEpisodes.map((row) => row.episodeIndex).join("、")}集`);
 }
 if (storageAuditErrorZh) console.error(`✗ GCS 入库复核未完成：${storageAuditErrorZh}`);
-console.log(
-  `⚠️ 失败或中止的集会留下占位对象（native-claims/），不会自动清理也不会自动重跑，请人工核对`,
-);
+console.log("失败或中止会释放集级占位；释放未成时补写失败病历，下轮安全接管并复用已成段。");
 // 中止不是失败集，但批次没有完整结束，不能向自动化返回成功码。
 process.exit(
   result.failedCount > 0

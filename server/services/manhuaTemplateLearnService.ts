@@ -1672,7 +1672,9 @@ export async function buildNativeDeepReadEpisodeExecution(
     laneHintZh: input.laneHintZh,
     segments,
     // 计划标记的失败占位自动让位：执行层据此走原子接管而非普通抢占
-    reclaimFailedClaim: input.confirmedPlanEpisode?.reclaimFailedClaim === true,
+    ...(input.confirmedPlanEpisode?.reclaimFailedClaim === true
+      ? { reclaimFailedClaim: true }
+      : {}),
     abortSignal: input.abortSignal,
     resolveNodes: async () => {
       const fresh: EpisodeSourceState = { playbackUrl: input.ep.playbackUrl };
