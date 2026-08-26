@@ -13,6 +13,7 @@ import {
   Loader2,
   Play,
   RefreshCw,
+  SlidersHorizontal,
   ShieldCheck,
   Sparkles,
   Square,
@@ -165,6 +166,11 @@ import {
   saveManhuaWorkbenchBPersist,
 } from "@shared/manhuaShotAnglePersist";
 import { toast } from "sonner";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { suggestManhuaClipCuts } from "@/lib/manhuaEditAutoCutApi";
 import { parseFineCutByShot } from "@shared/manhuaEditFineCut";
 import {
@@ -2170,7 +2176,42 @@ export default function ManhuaScriptWorkbench({
               >
                 审阅成片提示词
               </button>
-              {!compactUi && onIngestDirectorBoardFile
+            </>
+          )}
+          {factoryBusy && onStopFactory ? null : (
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  data-manhua-action="open-more-tools"
+                  className="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[10px] font-semibold text-white/70 hover:border-white/25 hover:bg-white/[0.08]"
+                  title="展开导演板、分段生成、接力与工作区设置"
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  更多操作
+                </button>
+              </PopoverTrigger>
+              <PopoverContent
+                align="end"
+                sideOffset={8}
+                data-manhua-toolbar-more
+                className="z-[80] w-[min(92vw,38rem)] border-white/15 bg-[#0c121d]/98 p-3 text-white shadow-2xl [&_[data-manhua-action-cost=spend]]:ring-1 [&_[data-manhua-action-cost=spend]]:ring-amber-300/35 [&_[data-manhua-action-cost=spend]]:ring-offset-1 [&_[data-manhua-action-cost=spend]]:ring-offset-[#0c121d]"
+              >
+                <div className="mb-3 border-b border-white/10 pb-2">
+                  <div className="text-[12px] font-semibold text-white/90">更多操作</div>
+                  <p className="mt-0.5 text-[10px] text-white/45">
+                    主流程留在步骤条；这里收纳导演板、局部重跑与工作区设置。
+                  </p>
+                </div>
+                <div
+                  data-manhua-toolbar-group="director-assets"
+                  className="rounded-lg border border-white/10 bg-white/[0.025] p-2"
+                >
+                  <div className="mb-2 text-[10px] font-semibold tracking-wide text-cyan-100/75">
+                    导演板与资产
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+              {onIngestDirectorBoardFile
                 ? (() => {
                     // 切集后旧段号可能越界 → 自动回落「本集共用」
                     const segChoice =
@@ -2236,7 +2277,7 @@ export default function ManhuaScriptWorkbench({
                     );
                   })()
                 : null}
-              {!compactUi && onCopyDirectorBoardPrompt ? (
+              {onCopyDirectorBoardPrompt ? (
                 <button
                   type="button"
                   disabled={Boolean(factoryBusy || directorBoardBusy)}
@@ -2277,7 +2318,7 @@ export default function ManhuaScriptWorkbench({
                   {assetZipBusy ? "资产包导入中…" : "导入资产 ZIP"}
                 </label>
               ) : null}
-              {!compactUi && directorBoardMainUrl && onClearDirectorBoard ? (
+              {directorBoardMainUrl && onClearDirectorBoard ? (
                 <button
                   type="button"
                   disabled={Boolean(factoryBusy || directorBoardBusy)}
@@ -2288,6 +2329,16 @@ export default function ManhuaScriptWorkbench({
                   清除导演板
                 </button>
               ) : null}
+                  </div>
+                </div>
+                <div
+                  data-manhua-toolbar-group="generation-workspace"
+                  className="mt-2 rounded-lg border border-white/10 bg-white/[0.025] p-2"
+                >
+                  <div className="mb-2 text-[10px] font-semibold tracking-wide text-violet-100/75">
+                    生成范围与画布
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
               <button
                 type="button"
                 onClick={toggleCompactUi}
@@ -2298,7 +2349,6 @@ export default function ManhuaScriptWorkbench({
               </button>
               <button
                 type="button"
-                hidden={compactUi && activePhase !== "storyboard"}
                 data-manhua-action="generate-fragment"
                   data-manhua-action-cost={manhuaToolbarActionCost("generate-fragment")}
                 disabled={Boolean(factoryBusy)}
@@ -2309,9 +2359,7 @@ export default function ManhuaScriptWorkbench({
               >
                 {`生成第 ${String(activeSegNo).padStart(2, "0")} 段成片`}
               </button>
-            </>
-          )}
-          {!compactUi && onLayoutReadableChain ? (
+          {onLayoutReadableChain ? (
             <button
               type="button"
               data-manhua-action="layout-readable-chain"
@@ -2327,7 +2375,7 @@ export default function ManhuaScriptWorkbench({
               对齐画布竖排
             </button>
           ) : null}
-          {onGenerateMissingFragments && selectedSorted.length > 0 && !(compactUi && activePhase !== "storyboard") ? (
+          {onGenerateMissingFragments && selectedSorted.length > 0 ? (
             <button
               type="button"
               data-manhua-action="generate-selected-fragments"
@@ -2392,7 +2440,6 @@ export default function ManhuaScriptWorkbench({
           {onRerunKeyartsFromReverse ? (
             <button
               type="button"
-              hidden={compactUi}
               data-manhua-action="rerun-keyarts"
                   data-manhua-action-cost={manhuaToolbarActionCost("rerun-keyarts")}
               disabled={Boolean(factoryBusy)}
@@ -2407,7 +2454,17 @@ export default function ManhuaScriptWorkbench({
               重出全部分镜
             </button>
           ) : null}
-          {!compactUi && onShotContinuityChange ? (
+                  </div>
+                </div>
+                <div
+                  data-manhua-toolbar-group="continuity-entries"
+                  className="mt-2 rounded-lg border border-white/10 bg-white/[0.025] p-2"
+                >
+                  <div className="mb-2 text-[10px] font-semibold tracking-wide text-emerald-100/75">
+                    连续性与入口
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+          {onShotContinuityChange ? (
             <div
               data-manhua-shot-continuity
               className="flex flex-wrap items-center gap-1 rounded-lg border border-white/10 bg-white/[0.03] px-1.5 py-1"
@@ -2468,11 +2525,11 @@ export default function ManhuaScriptWorkbench({
               续跑
             </button>
           ) : null}
-          {!compactUi ? (
+          {(
             <>
               {/* 入口去重：资产阶段人物卡旁边就有「去选人物 / 更换人物」，
                   同去处的远端按钮让位；其它阶段没有就近入口，这个必须留着 */}
-              {shouldShowToolbarCharacterLibraryEntry({ activePhase, compactUi }) ? (
+              {shouldShowToolbarCharacterLibraryEntry({ activePhase, compactUi: false }) ? (
                 <button
                   type="button"
                   onClick={() => onOpenCharacterCard?.()}
@@ -2483,7 +2540,7 @@ export default function ManhuaScriptWorkbench({
               ) : null}
               {/* 同上：资产阶段已有 5 个就近入口（库场景·道具 / 更换 / 尚未选场景…），
                   远端这个让位；其它阶段留着当唯一通路 */}
-              {shouldShowToolbarAssetWallEntry({ activePhase, compactUi }) ? (
+              {shouldShowToolbarAssetWallEntry({ activePhase, compactUi: false }) ? (
                 <button
                   type="button"
                   onClick={() => onOpenAssetWall?.()}
@@ -2493,7 +2550,12 @@ export default function ManhuaScriptWorkbench({
                 </button>
               ) : null}
             </>
-          ) : null}
+          )}
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
         </div>
       </div>
 

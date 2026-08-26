@@ -91,4 +91,28 @@ describe("成片阶段接线契约", () => {
     expect(WORKBENCH_SRC).toContain("min-w-[840px]");
     expect(WORKBENCH_SRC).toContain("xl:min-w-0");
   });
+
+  it("顶部只常驻主流程动作，低频控件按三组收进更多操作", () => {
+    expect(WORKBENCH_SRC).toContain('data-manhua-action="open-more-tools"');
+    expect(WORKBENCH_SRC).toContain("data-manhua-toolbar-more");
+    expect(WORKBENCH_SRC).toContain('data-manhua-toolbar-group="director-assets"');
+    expect(WORKBENCH_SRC).toContain('data-manhua-toolbar-group="generation-workspace"');
+    expect(WORKBENCH_SRC).toContain('data-manhua-toolbar-group="continuity-entries"');
+
+    const reviewAt = WORKBENCH_SRC.indexOf('data-manhua-action="review-clip-prompts"');
+    const moreAt = WORKBENCH_SRC.indexOf("data-manhua-toolbar-more");
+    const localClipAt = WORKBENCH_SRC.indexOf('data-manhua-action="generate-fragment"');
+    expect(reviewAt).toBeGreaterThan(0);
+    expect(moreAt).toBeGreaterThan(reviewAt);
+    expect(localClipAt).toBeGreaterThan(moreAt);
+    expect(WORKBENCH_SRC.match(/data-manhua-action="generate-fragment"/g)).toHaveLength(1);
+  });
+
+  it("生成中仍只把中断按钮放在顶栏，不把它藏进更多操作", () => {
+    const stopAt = WORKBENCH_SRC.indexOf('data-manhua-action="stop-factory"');
+    const moreAt = WORKBENCH_SRC.indexOf("data-manhua-toolbar-more");
+    expect(stopAt).toBeGreaterThan(0);
+    expect(stopAt).toBeLessThan(moreAt);
+    expect(WORKBENCH_SRC).toContain("factoryBusy && onStopFactory ? null : (");
+  });
 });
