@@ -525,6 +525,15 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       const parsedLearned = Number(/累计\s*(\d+)\s*集/.exec(label)?.[1] || 0);
       const parsedListed = Number(/已解析\s*(\d+)\s*集/.exec(label)?.[1] || 0);
       const parsedEpisode = Number(/第\s*(\d+)\s*集/.exec(label)?.[1] || 0);
+      const partialMatch = /第\s*(\d+)\s*集已生成\s*(\d+)\/(\d+)\s*段待审卡/.exec(label);
+      const nativePartialProposalCheckpoint = partialMatch
+        ? {
+            episodeIndex: Number(partialMatch[1]),
+            completedSegments: Number(partialMatch[2]),
+            totalSegments: Number(partialMatch[3]),
+            updatedAt: new Date().toISOString(),
+          }
+        : undefined;
       let learnProgressLog = appendManhuaLearnProgressLine(undefined, phase, label);
       if (jobId) {
         try {
@@ -555,6 +564,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
               ? { listedEpisodeCount: Math.max(Number(prevOut.listedEpisodeCount) || 0, parsedListed) }
               : {}),
             ...(parsedEpisode > 0 ? { currentEpisodeIndex: parsedEpisode } : {}),
+            ...(nativePartialProposalCheckpoint ? { nativePartialProposalCheckpoint } : {}),
           });
           return;
         } catch {
@@ -572,6 +582,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         ...(parsedBatch > 0 ? { batchLearned: parsedBatch } : {}),
         ...(parsedLearned > 0 ? { learnedCount: parsedLearned } : {}),
         ...(parsedListed > 0 ? { listedEpisodeCount: parsedListed } : {}),
+        ...(nativePartialProposalCheckpoint ? { nativePartialProposalCheckpoint } : {}),
       } as any);
     };
     // 多条模型回执可能并发到达。若两条回执同时读同一份旧 job.output 再 patch，

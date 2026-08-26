@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const gcs = vi.hoisted(() => ({
   deleteObject: vi.fn(),
   downloadVersioned: vi.fn(),
+  list: vi.fn(),
   upload: vi.fn(),
   createIfAbsent: vi.fn(),
 }));
@@ -11,6 +12,7 @@ vi.mock("./gcs.js", () => ({
   getGcsBucketName: () => "test-bucket",
   deleteGcsObject: gcs.deleteObject,
   downloadGcsObjectVersioned: gcs.downloadVersioned,
+  listGcsObjectNamesByPrefix: gcs.list,
   uploadBufferToGcs: gcs.upload,
   uploadBufferToGcsIfAbsent: gcs.createIfAbsent,
 }));
@@ -18,6 +20,8 @@ vi.mock("./gcs.js", () => ({
 import {
   NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
   clearNativeDeepReadSegmentCacheForEpisode,
+  createNativeDeepReadSegmentCacheEntryIfAbsent,
+  listNativeDeepReadSegmentCacheEntriesBySourceDigest,
   readNativeDeepReadSegmentCacheEntry,
   writeNativeDeepReadSegmentCacheEntry,
   type NativeDeepReadSegmentCacheEntry,
@@ -53,8 +57,49 @@ const entryOf = (
 beforeEach(() => {
   gcs.deleteObject.mockReset();
   gcs.downloadVersioned.mockReset();
+  gcs.list.mockReset();
   gcs.upload.mockReset();
   gcs.createIfAbsent.mockReset();
+});
+
+describe("错位段缓存核对", () => {
+  it("按对象身份读出同来源旧集号，不把别的来源混进迁移候选", async () => {
+    const sourceDigest = "b".repeat(64);
+    const matching = entryOf({ episodeIndex: 10, segmentIndex: 0, sourceDigest });
+    const other = entryOf({ episodeIndex: 11, segmentIndex: 0, sourceDigest: "c".repeat(64) });
+    gcs.list.mockResolvedValue([
+      "manhua-template-learn/segment-cache/tpl_native_series_a_ep010_seg0.json",
+      "manhua-template-learn/segment-cache/tpl_native_series_a_ep011_seg0.json",
+    ]);
+    gcs.downloadVersioned.mockImplementation(async ({ gcsUri }: { gcsUri: string }) => ({
+      buffer: Buffer.from(JSON.stringify(gcsUri.includes("ep010") ? matching : other), "utf8"),
+      generation: gcsUri.includes("ep010") ? "10" : "11",
+    }));
+
+    const rows = await listNativeDeepReadSegmentCacheEntriesBySourceDigest({
+      seriesKey: "series_a",
+      sourceDigest,
+      excludeEpisodeIndex: 1,
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.entry.episodeIndex).toBe(10);
+    expect(rows[0]!.entry.segmentIndex).toBe(0);
+  });
+
+  it("迁移目标存在不同契约时不覆盖", async () => {
+    const target = entryOf({ episodeIndex: 1, segmentIndex: 0 });
+    gcs.createIfAbsent.mockResolvedValue({ created: false });
+    gcs.downloadVersioned.mockResolvedValue({
+      buffer: Buffer.from(JSON.stringify({ ...target, fingerprint: "f".repeat(64) }), "utf8"),
+      generation: "9",
+    });
+
+    await expect(createNativeDeepReadSegmentCacheEntryIfAbsent(target)).rejects.toThrow(
+      "已有不同缓存，拒绝迁移覆盖",
+    );
+    expect(gcs.upload).not.toHaveBeenCalled();
+  });
 });
 
 describe("段缓存读取：只有 404 是 miss", () => {

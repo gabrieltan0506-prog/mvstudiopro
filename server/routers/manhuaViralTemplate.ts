@@ -10,6 +10,55 @@ import {
 } from "../services/access-policy";
 import { describeManhuaTemplateLearnSourceZh } from "../../shared/manhuaViralTemplateBank";
 
+type NativeTemplateProgressSource = {
+  attemptedSegments?: unknown;
+  successSegments?: unknown;
+  completedSegmentIndexes?: unknown;
+  assemblyComplete?: unknown;
+};
+
+/**
+ * 待审列表只需要显示“学到第几段”。原始 provenance 还含成本、来源指纹与
+ * 快照摘要；这些都不该因为加一条进度文案而扩大到审批列表 DTO。
+ */
+function toSafeNativeTemplateProgress(
+  source: NativeTemplateProgressSource | null | undefined,
+) {
+  if (!source) return undefined;
+  const attemptedSegments = Math.max(0, Math.floor(Number(source.attemptedSegments) || 0));
+  const reportedSuccess = Math.max(0, Math.floor(Number(source.successSegments) || 0));
+  const completedSegmentIndexes = Array.isArray(source.completedSegmentIndexes)
+    ? Array.from(new Set(source.completedSegmentIndexes
+        .map((value) => Math.floor(Number(value)))
+        .filter((value) => Number.isInteger(value) && value >= 0 && value < attemptedSegments)))
+        .sort((a, b) => a - b)
+    : [];
+  const successSegments = Math.min(
+    attemptedSegments,
+    completedSegmentIndexes.length || reportedSuccess,
+  );
+  if (attemptedSegments <= 0 || successSegments <= 0) return undefined;
+  const completed = new Set(
+    completedSegmentIndexes.length
+      ? completedSegmentIndexes
+      : Array.from({ length: successSegments }, (_, index) => index),
+  );
+  const nextMissingZeroBased = Array.from(
+    { length: attemptedSegments },
+    (_, index) => index,
+  ).find((index) => !completed.has(index));
+  const assemblyComplete = source.assemblyComplete === true
+    || successSegments >= attemptedSegments;
+  return {
+    successSegments,
+    attemptedSegments,
+    assemblyComplete,
+    nextSegmentIndex: assemblyComplete || nextMissingZeroBased === undefined
+      ? undefined
+      : nextMissingZeroBased + 1,
+  };
+}
+
 function assertSupervisorOps(
   user: { id?: number | null; role?: string | null },
   supervisorSession?: { userId: number; expiresAt: number } | null,
@@ -225,6 +274,9 @@ export const manhuaViralTemplateRouter = router({
           // 学习来源摘要：卡落库了却不下发，审批人分辨不出精读卡与抽帧卡，
           // 也看不见静默丢镜/触顶抽稀 —— 等于没落库。只给摘要，不给成本与地址。
           learnSourceZh: describeManhuaTemplateLearnSourceZh(c.provenance),
+          nativeProgress: toSafeNativeTemplateProgress(
+            c.provenance?.nativeVideoDeepRead as NativeTemplateProgressSource | undefined,
+          ),
         })),
       };
     }),

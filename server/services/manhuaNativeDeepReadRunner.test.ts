@@ -1262,6 +1262,40 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     expect(postVertex).toHaveBeenCalledTimes(1);
   });
 
+  it("段缓存落盘后的部分提案回调失败时停止，不继续购买下一段", async () => {
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }]);
+    const postVertex = vi.fn(async () => geminiResponse(makeSegmentPayload({
+      segmentIndex: 0, startSec: 0, endSec: 60,
+    })));
+    const writeSegmentCache = vi.fn(async () => undefined);
+    const onSegmentSnapshotCommitted = vi.fn(async () => {
+      throw new Error("部分提案暂存失败");
+    });
+    const deps = makeRunnerDeps({
+      postVertex: postVertex as never,
+      writeSegmentCache: writeSegmentCache as never,
+    });
+
+    await expect(runManhuaNativeDeepReadBatch({
+      episodes: [episode],
+      segmentCacheSeriesKey: cacheSeriesKey,
+      onSegmentSnapshotCommitted,
+    }, deps)).rejects.toThrow("部分提案暂存失败");
+    expect(writeSegmentCache).toHaveBeenCalledTimes(1);
+    expect(onSegmentSnapshotCommitted).toHaveBeenCalledWith(expect.objectContaining({
+      episodeIndex: 3,
+      completedSegmentIndexes: [0],
+      learnedThroughSec: 60,
+      result: expect.objectContaining({
+        segmentCount: 1,
+        attemptedSegments: 2,
+        failedSegmentCount: 1,
+        assemblyComplete: false,
+      }),
+    }));
+    expect(postVertex).toHaveBeenCalledTimes(1);
+  });
+
   it("首轮一段成功一段失败，第二轮只调用失败段且本次只记该段费用", async () => {
     const episode = makeEpisode([{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }]);
     const store = new Map<number, NativeDeepReadSegmentCacheEntry>();
@@ -1296,12 +1330,17 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
       }) as never,
     });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const partialSnapshots: number[][] = [];
     try {
       await expect(runManhuaNativeDeepReadBatch({
         episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey,
+        onSegmentSnapshotCommitted: (snapshot) => {
+          partialSnapshots.push(snapshot.completedSegmentIndexes);
+        },
       }, deps)).rejects.toThrow("镜头密度不足");
       expect(store.has(0)).toBe(true);
       expect(store.has(1)).toBe(false);
+      expect(partialSnapshots).toEqual([[0]]);
       const second = await runManhuaNativeDeepReadBatch({
         episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey,
       }, deps);

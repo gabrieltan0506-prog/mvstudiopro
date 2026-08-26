@@ -961,12 +961,22 @@ export function nativeLearnTerminalProposalRefreshSignature(
   jobs: ManhuaLearnServerJobSnapshot[],
 ): string {
   return (jobs || [])
-    .filter((job) => {
+    .flatMap((job) => {
       const params = job.input?.params || {};
-      return params.nativeDeepReadConfirmed === true
-        && (job.status === "succeeded" || job.status === "failed");
+      if (params.nativeDeepReadConfirmed !== true) return [];
+      const output = job.output || {};
+      const partial = output.nativePartialProposalCheckpoint;
+      const partialRecord = partial && typeof partial === "object" && !Array.isArray(partial)
+        ? partial as Record<string, unknown>
+        : undefined;
+      const partialSignature = partialRecord
+        ? `${job.jobId}:partial:${Number(partialRecord.episodeIndex) || 0}:${Number(partialRecord.completedSegments) || 0}/${Number(partialRecord.totalSegments) || 0}:${String(partialRecord.updatedAt || "")}`
+        : "";
+      const terminalSignature = job.status === "succeeded" || job.status === "failed"
+        ? `${job.jobId}:${job.status}:${String(job.updatedAt || "")}`
+        : "";
+      return [partialSignature, terminalSignature].filter(Boolean);
     })
-    .map((job) => `${job.jobId}:${job.status}:${String(job.updatedAt || "")}`)
     .sort()
     .join("|");
 }

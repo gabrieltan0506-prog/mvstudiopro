@@ -177,6 +177,15 @@ describe("原生精读页面接线", () => {
     expect(PAGE).toContain("selectedManhuaProposal.reusableZh ||");
   });
 
+  it("分段提案进度同时接到待审下拉、批准动作与正式库徽标", () => {
+    expect(PAGE).toContain("progress: proposal.nativeProgress");
+    expect(PAGE).toContain("progressCopy.optionSuffixZh");
+    expect(PAGE).toContain("selectedManhuaProposalProgressCopy?.approveButtonZh");
+    expect(PAGE).toContain("selectedManhuaProposalProgressCopy.detailZh");
+    expect(PAGE).toContain("buildApprovedNativeTemplateBadge(");
+    expect(PAGE).toContain("readApprovedNativeTemplateProgress(tpl)");
+  });
+
   it("页面没有任何供应商生产密钥入口", () => {
     expect(PAGE).not.toMatch(/VITE_[A-Z0-9_]*(?:API_?KEY|SECRET|TOKEN)/);
   });

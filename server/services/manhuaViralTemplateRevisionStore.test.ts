@@ -74,7 +74,9 @@ vi.mock("./gcs.js", () => ({
       return { buffer: lockState.body, generation: "1" };
     }
     return {
-      buffer: Buffer.from(JSON.stringify(originalCard()), "utf8"),
+      buffer: Buffer.from(JSON.stringify(
+        String(gcsUri).includes("/proposals/") ? revisionCard() : originalCard(),
+      ), "utf8"),
       bucket: "b",
       objectName: "o",
       generation: "7",

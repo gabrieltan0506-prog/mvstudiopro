@@ -478,6 +478,9 @@ async function downloadEpisodeWithRetry(input: {
         !card
         || card.id !== nativeDeepReadProposalId(input.seriesKey, episodeIndex)
         || !card.provenance?.nativeVideoDeepRead
+        || card.provenance.nativeVideoDeepRead.assemblyComplete !== true
+        || card.provenance.nativeVideoDeepRead.successSegments
+          !== card.provenance.nativeVideoDeepRead.attemptedSegments
         || !hasCompleteManhuaTemplateClassification(card.classification)
       ) {
         throw new Error("分集卡结构、身份或多维标签无效");

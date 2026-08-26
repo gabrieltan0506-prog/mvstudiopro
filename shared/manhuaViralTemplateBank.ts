@@ -286,6 +286,13 @@ export type ManhuaViralTemplateProvenance = {
     /** 走的是套餐额度还是按量付费 —— 对账要看这个 */
     usingPlanQuota?: boolean;
     costCny: number;
+    /** 已通过段门禁并可靠落盘的 0-based 段号；部分审批与断点续学的唯一进度口径。 */
+    completedSegmentIndexes?: number[];
+    /** false 表示当前正式卡只是部分段快照，仍可继续补全。 */
+    assemblyComplete?: boolean;
+    /** 私有稳定来源摘要与段集合快照；公开 DTO 不得透出。 */
+    sourceDigest?: string;
+    snapshotSha256?: string;
   };
   nativeAudioDeepRead?: {
     model: string;
@@ -647,10 +654,26 @@ function parseManhuaViralTemplateProvenance(
   }
   if (o.nativeVideoDeepRead && typeof o.nativeVideoDeepRead === "object") {
     const n = o.nativeVideoDeepRead;
+    const attemptedSegments = Math.max(0, Math.floor(Number(n.attemptedSegments) || 0));
+    const successSegments = Math.max(0, Math.floor(Number(n.successSegments) || 0));
+    const rawCompleted = Array.isArray(n.completedSegmentIndexes)
+      ? n.completedSegmentIndexes
+          .map((value) => Math.floor(Number(value)))
+          .filter((value) => Number.isInteger(value) && value >= 0 && value < attemptedSegments)
+      : [];
+    const completedSegmentIndexes = Array.from(new Set(rawCompleted)).sort((a, b) => a - b);
+    const legacyComplete = attemptedSegments > 0 && successSegments === attemptedSegments;
+    const normalizedCompleted = completedSegmentIndexes.length === successSegments
+      ? completedSegmentIndexes
+      : legacyComplete
+        ? Array.from({ length: attemptedSegments }, (_, index) => index)
+        : [];
+    const sourceDigest = String(n.sourceDigest || "").trim().toLowerCase();
+    const snapshotSha256 = String(n.snapshotSha256 || "").trim().toLowerCase();
     out.nativeVideoDeepRead = {
       model: String(n.model || "").slice(0, 60),
-      attemptedSegments: Math.max(0, Math.floor(Number(n.attemptedSegments) || 0)),
-      successSegments: Math.max(0, Math.floor(Number(n.successSegments) || 0)),
+      attemptedSegments,
+      successSegments,
       shotCount: Math.max(0, Math.floor(Number(n.shotCount) || 0)),
       droppedCount: Math.max(0, Math.floor(Number(n.droppedCount) || 0)),
       truncated: Boolean(n.truncated),
@@ -662,7 +685,24 @@ function parseManhuaViralTemplateProvenance(
         : undefined,
       usingPlanQuota: typeof n.usingPlanQuota === "boolean" ? n.usingPlanQuota : undefined,
       costCny: Math.max(0, Number(n.costCny) || 0),
+      completedSegmentIndexes: normalizedCompleted.length ? normalizedCompleted : undefined,
+      assemblyComplete: typeof n.assemblyComplete === "boolean"
+        ? n.assemblyComplete
+        : legacyComplete,
+      sourceDigest: /^[a-f0-9]{64}$/.test(sourceDigest) ? sourceDigest : undefined,
+      snapshotSha256: /^[a-f0-9]{64}$/.test(snapshotSha256) ? snapshotSha256 : undefined,
     };
+    // 新部分卡必须携带可验证的完整进度身份；旧完整卡继续兼容读取。
+    if (
+      successSegments < attemptedSegments
+      && (
+        normalizedCompleted.length !== successSegments
+        || !/^[a-f0-9]{64}$/.test(sourceDigest)
+        || !/^[a-f0-9]{64}$/.test(snapshotSha256)
+      )
+    ) {
+      delete out.nativeVideoDeepRead;
+    }
   }
   if (o.nativeAudioDeepRead && typeof o.nativeAudioDeepRead === "object") {
     const a = o.nativeAudioDeepRead;

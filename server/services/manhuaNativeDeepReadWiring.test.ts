@@ -14,6 +14,7 @@ import {
   buildNativeDeepReadLearnResult,
   isManhuaLearnEpisodeAlreadyLearned,
   mergeManhuaNativeDeepReadUsage,
+  normalizeManhuaTemplateLearnSourceInput,
   pickLearnedIndexesForBatchSelection,
   reconcileManhuaLearnProgressWithNativeCards,
   resolveManhuaLearnSnapshotCompletion,
@@ -46,6 +47,16 @@ const deps = (durationSec: number, over: Partial<NativeDeepReadEpisodeSourceDeps
   }) as NativeDeepReadEpisodeSourceDeps;
 
 describe("素材接入层 → 原生精读的接缝", () => {
+  it("生产学习入口把带 modal_id 的搜索链接规范化为真实单集页，不只在预演层能解析", () => {
+    expect(normalizeManhuaTemplateLearnSourceInput({
+      url: "https://www.douyin.com/search/%E4%B8%87%E5%A6%96%E5%9B%BE%E5%BD%95%E7%AC%AC%E4%BA%8C%E5%AD%A3%E5%AE%8C%E6%95%B4%E7%89%88?modal_id=7641538290936947889&type=general",
+    })).toEqual({
+      rawSourceUrl: expect.stringContaining("/search/"),
+      sourceGcsUri: "",
+      sourceUrl: "https://www.douyin.com/video/7641538290936947889",
+    });
+  });
+
   it("🔴 拿到的是已探测直链，就直接用，绝不再跑一次页面 formats 解析", async () => {
     const d = deps(600);
     const plan = await buildNativeDeepReadEpisodeExecution({ seriesKey: "s1", ep: ep() }, d);

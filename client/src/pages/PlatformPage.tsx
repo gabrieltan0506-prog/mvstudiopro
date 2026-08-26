@@ -101,6 +101,11 @@ import {
 } from "@/lib/jobs";
 import { isNativeVideoLearnedTemplate } from "@shared/manhuaViralTemplateBank";
 import {
+  buildApprovedNativeTemplateBadge,
+  buildPendingNativeTemplateProgressCopy,
+  readApprovedNativeTemplateProgress,
+} from "@/lib/manhuaNativeTemplateProgress";
+import {
   MANHUA_NATIVE_DEEP_READ_MODEL_LABEL,
   NATIVE_DEEP_READ_JOB_MAX_CALLS,
 } from "@shared/manhuaNativeDeepReadJob";
@@ -3460,6 +3465,23 @@ export default function PlatformPage() {
       retry: false,
     },
   );
+  const approvedManhuaTemplateById = useMemo(() => {
+    const entries = (manhuaViralApprovedQuery.data?.groups || [])
+      .flatMap((group) => group.items)
+      .map((card) => [card.id, card] as const);
+    return new Map(entries);
+  }, [manhuaViralApprovedQuery.data?.groups]);
+  const selectedManhuaProposalProgressCopy = useMemo(() => {
+    if (!selectedManhuaProposal?.nativeProgress) return undefined;
+    const approvedProgress = readApprovedNativeTemplateProgress(
+      approvedManhuaTemplateById.get(selectedManhuaProposal.id),
+    );
+    return buildPendingNativeTemplateProgressCopy({
+      id: selectedManhuaProposal.id,
+      progress: selectedManhuaProposal.nativeProgress,
+      approvedSuccessSegments: approvedProgress?.successSegments,
+    });
+  }, [approvedManhuaTemplateById, selectedManhuaProposal]);
   const [ownerTemplateDetailId, setOwnerTemplateDetailId] = useState<string | null>(null);
   const [ownerTemplateOptimizeModel, setOwnerTemplateOptimizeModel] =
     useState<ManhuaViralTemplateOptimizeModel>("terra_high");
@@ -13189,7 +13211,11 @@ export default function PlatformPage() {
                                   {group.laneZh}
                                 </div>
                                 <div className="flex flex-wrap gap-1.5">
-                                  {group.items.map((tpl) => (
+                                  {group.items.map((tpl) => {
+                                    const nativeProgressBadge = buildApprovedNativeTemplateBadge(
+                                      readApprovedNativeTemplateProgress(tpl),
+                                    );
+                                    return (
                                     <div
                                       key={tpl.id}
                                       title={tpl.summaryZh}
@@ -13211,6 +13237,11 @@ export default function PlatformPage() {
                                           抽帧
                                         </span>
                                       )}
+                                      {nativeProgressBadge ? (
+                                        <span className="shrink-0 rounded border border-emerald-300/30 bg-emerald-400/10 px-1 text-[9px] font-semibold text-emerald-100">
+                                          {nativeProgressBadge}
+                                        </span>
+                                      ) : null}
                                       {ownerTemplateOptimizeAllowed ? (
                                         <>
                                           <select
@@ -13277,7 +13308,8 @@ export default function PlatformPage() {
                                         </>
                                       ) : null}
                                     </div>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               </div>
                             ))}
@@ -13531,11 +13563,23 @@ export default function PlatformPage() {
                               onChange={(event) => setSelectedManhuaProposalId(event.target.value)}
                               className="min-w-0 flex-1 rounded-lg border border-white/15 bg-black/45 px-2.5 py-1.5 text-[11px] text-white"
                             >
-                              {pendingManhuaViralProposals.map((proposal) => (
-                                <option key={proposal.id} value={proposal.id}>
-                                  {proposal.nameZh} · {proposal.laneZh}{proposal.revisionOf ? " · 优化修订" : ""}
-                                </option>
-                              ))}
+                              {pendingManhuaViralProposals.map((proposal) => {
+                                const approvedProgress = readApprovedNativeTemplateProgress(
+                                  approvedManhuaTemplateById.get(proposal.id),
+                                );
+                                const progressCopy = buildPendingNativeTemplateProgressCopy({
+                                  id: proposal.id,
+                                  progress: proposal.nativeProgress,
+                                  approvedSuccessSegments: approvedProgress?.successSegments,
+                                });
+                                return (
+                                  <option key={proposal.id} value={proposal.id}>
+                                    {proposal.nameZh} · {proposal.laneZh}
+                                    {proposal.revisionOf ? " · 优化修订" : ""}
+                                    {progressCopy ? ` · ${progressCopy.optionSuffixZh}` : ""}
+                                  </option>
+                                );
+                              })}
                             </select>
                             <button
                               type="button"
@@ -13553,9 +13597,14 @@ export default function PlatformPage() {
                                 ? "处理中…"
                                 : selectedManhuaProposal.revisionOf
                                   ? "批准替换原版"
-                                  : "批准入库"}
+                                  : selectedManhuaProposalProgressCopy?.approveButtonZh || "批准入库"}
                             </button>
                           </div>
+                          {selectedManhuaProposalProgressCopy ? (
+                            <p className="mt-2 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.06] px-2.5 py-2 text-[10px] font-semibold leading-relaxed text-cyan-100/80">
+                              {selectedManhuaProposalProgressCopy.detailZh}
+                            </p>
+                          ) : null}
                           {selectedManhuaProposal.hook3sZh ? (
                             <p className="mt-2 text-[#c9c0e6]/65">
                               钩子：{selectedManhuaProposal.hook3sZh}

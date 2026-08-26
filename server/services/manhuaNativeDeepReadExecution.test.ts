@@ -8,12 +8,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   NATIVE_DEEP_READ_MAX_SEGMENT_SEC,
   executeAndIngestNativeDeepReadEpisode,
+  migrateMisplacedNativeDeepReadSegmentCaches,
   resolveNativeDeepReadCacheSourceDigest,
   runNativeDeepReadBatch,
   validateNativeDeepReadBatchPlan,
   type NativeDeepReadBatchEpisode,
   type NativeDeepReadExecutionDeps,
 } from "./manhuaNativeDeepReadExecution";
+import { nativeDeepReadSegmentCacheFingerprint } from "./manhuaNativeDeepReadRunner";
+import {
+  NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
+  type NativeDeepReadSegmentCacheEntry,
+} from "./manhuaNativeDeepReadSegmentCache";
 
 function makeResult(over: Record<string, unknown> = {}) {
   const beatGrid = Array.from({ length: 8 }, (_, i) => ({
@@ -112,6 +118,10 @@ beforeEach(() => {
       usage: { inputTokens: 10, outputTokens: 5, priceEquivalentCny: 0.1, receiptComplete: true },
     })) as never,
     clearSegmentCache: vi.fn(async () => undefined),
+    migrateSegmentCaches: vi.fn(async () => ({
+      migratedSegmentIndexes: [],
+      sourceEpisodeIndexes: [],
+    })) as never,
     statSourceVersion: vi.fn(async ({ gcsUri }: { gcsUri: string }) => ({
       bucket: "b",
       objectName: gcsUri.slice("gs://b/".length),
@@ -149,6 +159,153 @@ describe("段缓存来源身份", () => {
       statSourceVersion: stat,
     });
     expect(fromSearch).toBe(fromVideo);
+  });
+
+  it("把同一视频误写在 ep010 的已付费段安全复制为 ep001，不覆盖目标也不重调模型", async () => {
+    const sourceDigest = "d".repeat(64);
+    const segments = [{ startSec: 0, endSec: 10 }];
+    const raw = {
+      shots: [{
+        startSec: 0, endSec: 10, shotSizeZh: "近景", angleZh: "平视",
+        cameraMoveZh: "固定机位", lightingZh: "冷调顶光",
+        actionZh: "人物抬眼回应", transitionInZh: "硬切",
+      }],
+      subtitles: [],
+      audioResolution: [],
+      beatStructureZh: "压迫后回应",
+      moodArcZh: "克制转坚定",
+      classification: {
+        emotionTagsZh: ["压迫渐强"],
+        narrativeFeatureTagsZh: ["信息递进"],
+        performanceTagsZh: ["克制爆发"],
+        audiovisualTagsZh: ["冷暖对撞"],
+        audienceExperienceTagsZh: ["持续紧张"],
+      },
+      reusableZh: "先压后抬",
+      genPromptHintZh: "近景反应",
+    };
+    const alias: NativeDeepReadSegmentCacheEntry = {
+      schemaVersion: NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
+      fingerprint: nativeDeepReadSegmentCacheFingerprint({
+        sourceDigest,
+        episodeIndex: 10,
+        episodeDurationSec: 10,
+        segment: segments[0]!,
+        segmentIndex: 0,
+        segmentCount: 1,
+        hasAudio: false,
+      }),
+      sourceDigest,
+      seriesKey: "s1",
+      episodeIndex: 10,
+      segmentIndex: 0,
+      startSec: 0,
+      endSec: 10,
+      hasAudio: false,
+      requestedFps: 10,
+      visualRoute: "vertex_gcs_video",
+      degraded: false,
+      raw,
+      paidUsage: {
+        inputTokens: 100,
+        outputTokens: 20,
+        audioInputTokens: 0,
+        reasoningTokens: 5,
+        costCny: 0.5,
+      },
+      savedAtIso: "2026-08-27T00:00:00.000Z",
+    };
+    const createTarget = vi.fn(async (_entry: NativeDeepReadSegmentCacheEntry) => "created" as const);
+
+    const result = await migrateMisplacedNativeDeepReadSegmentCaches({
+      seriesKey: "s1",
+      episodeIndex: 1,
+      durationSec: 10,
+      segments,
+      sourceDigest,
+    }, {
+      listAliases: vi.fn(async () => [{ entry: alias, generation: "10", objectName: "ep010" }]),
+      listClaimStates: vi.fn(async () => new Map()),
+      readTarget: vi.fn(async () => null),
+      createTarget,
+    });
+
+    expect(result).toEqual({ migratedSegmentIndexes: [0], sourceEpisodeIndexes: [10] });
+    const migrated = createTarget.mock.calls[0]![0];
+    expect(migrated.episodeIndex).toBe(1);
+    expect(migrated.raw).toEqual(raw);
+    expect(migrated.paidUsage).toEqual(alias.paidUsage);
+    expect(migrated.fingerprint).not.toBe(alias.fingerprint);
+  });
+
+  it("ep010 同源错位缓存仍有健康 claim 时，ep001 关闭式阻塞且零模型调用", async () => {
+    const sourceDigest = "d".repeat(64);
+    const segment = { startSec: 0, endSec: 10 };
+    const alias: NativeDeepReadSegmentCacheEntry = {
+      schemaVersion: NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
+      fingerprint: nativeDeepReadSegmentCacheFingerprint({
+        sourceDigest,
+        episodeIndex: 10,
+        episodeDurationSec: 10,
+        segment,
+        segmentIndex: 0,
+        segmentCount: 1,
+        hasAudio: false,
+      }),
+      sourceDigest,
+      seriesKey: "s1",
+      episodeIndex: 10,
+      segmentIndex: 0,
+      startSec: 0,
+      endSec: 10,
+      hasAudio: false,
+      requestedFps: 10,
+      visualRoute: "vertex_gcs_video",
+      degraded: false,
+      raw: {},
+      paidUsage: {
+        inputTokens: 100,
+        outputTokens: 20,
+        audioInputTokens: 0,
+        reasoningTokens: 5,
+        costCny: 0.5,
+      },
+      savedAtIso: "2026-08-27T00:00:00.000Z",
+    };
+    const createTarget = vi.fn();
+    deps.migrateSegmentCaches = vi.fn((input) =>
+      migrateMisplacedNativeDeepReadSegmentCaches(input, {
+        listAliases: vi.fn(async () => [{ entry: alias, generation: "10", objectName: "ep010" }]),
+        listClaimStates: vi.fn(async () => new Map([[10, {
+          episodeIndex: 10,
+          generation: "7",
+          createdAtIso: "2026-08-27T00:00:00.000Z",
+          lastErrorZh: null,
+          lastFailedAtIso: null,
+        }]])),
+        readTarget: vi.fn(async () => null),
+        createTarget,
+      })) as never;
+
+    const result = await runNativeDeepReadBatch({
+      seriesKey: "s1",
+      episodes: [{
+        episodeIndex: 1,
+        sourceUrl: "https://www.douyin.com/video/7641538290936947889",
+        durationSec: 10,
+        segments: [segment],
+        resolveNodes: async () => [],
+        recoverMisplacedSourceCache: true,
+      }],
+    }, deps);
+
+    expect(result.outcomes).toContainEqual(expect.objectContaining({
+      episodeIndex: 1,
+      status: "failed",
+      errorZh: expect.stringMatching(/第10集仍有健康任务占位/),
+    }));
+    expect(createTarget).not.toHaveBeenCalled();
+    expect(deps.runBatch).not.toHaveBeenCalled();
   });
 });
 
@@ -567,6 +724,66 @@ describe("批量发车", () => {
     ]);
   });
 
+  it("后续分片失败时保留已写入的 1/3 部分卡，缓存不清并把失败留给下次续学", async () => {
+    const progress: Array<{ status: string; completedSegments?: number; totalSegments?: number }> = [];
+    deps.runBatch = vi.fn(async (input: {
+      onSegmentSnapshotCommitted?: (snapshot: unknown) => Promise<void> | void;
+      onModelReceipt?: (receipt: unknown) => Promise<void> | void;
+    }) => {
+      await input.onModelReceipt?.({
+        stage: "visual_model",
+        status: "started",
+        route: "vertex_gcs_video",
+        batchRequestId: "11111111-1111-4111-8111-111111111111",
+        episodeIndexes: [1],
+        chunkIndex: 0,
+        videoCount: 1,
+      });
+      await input.onSegmentSnapshotCommitted?.({
+        episodeIndex: 1,
+        completedSegmentIndexes: [0],
+        learnedThroughSec: 360,
+        result: makeResult({
+          segmentCount: 1,
+          failedSegmentCount: 2,
+          attemptedSegments: 3,
+          completedSegmentIndexes: [0],
+          sourceDigest: "a".repeat(64),
+          segmentSnapshotSha256: "b".repeat(64),
+          assemblyComplete: false,
+        }),
+      });
+      throw new Error("第2段读取失败");
+    }) as never;
+
+    const result = await runNativeDeepReadBatch({
+      seriesKey: "s",
+      episodes: [three[0]!],
+      onProgress: (row) => { progress.push(row); },
+    }, deps);
+
+    expect(result).toMatchObject({ ingestedCount: 0, failedCount: 1 });
+    expect(deps.ingest).toHaveBeenCalledTimes(1);
+    expect(deps.ingest).toHaveBeenCalledWith(expect.objectContaining({
+      seriesKey: "s",
+      episodeIndex: 1,
+      result: expect.objectContaining({
+        segmentCount: 1,
+        attemptedSegments: 3,
+        completedSegmentIndexes: [0],
+        assemblyComplete: false,
+      }),
+    }));
+    expect(progress).toContainEqual(expect.objectContaining({
+      status: "partial",
+      completedSegments: 1,
+      totalSegments: 3,
+    }));
+    expect(progress).toContainEqual(expect.objectContaining({ status: "failed" }));
+    expect(deps.clearSegmentCache).not.toHaveBeenCalled();
+    expect(deps.aggregateSeries).not.toHaveBeenCalled();
+  });
+
   it("已入库的集直接跳过，不调 runner —— 重跑不重烧", async () => {
     deps.listIngested = vi.fn(async () => new Set([1, 2]));
     const r = await runNativeDeepReadBatch({ seriesKey: "s", episodes: three }, deps);
@@ -715,10 +932,15 @@ describe("失败占位自动让位（0826 用户拍板）", () => {
         segments: [{ startSec: 0, endSec: 60 }],
         resolveNodes: async () => [],
         reclaimFailedClaim: true,
+        recoverMisplacedSourceCache: true,
       }],
     }, deps);
     expect(deps.takeoverClaim).toHaveBeenCalledTimes(1);
     expect(deps.acquireClaim).not.toHaveBeenCalled();
+    expect(deps.migrateSegmentCaches).toHaveBeenCalledWith(expect.objectContaining({
+      seriesKey: "s1",
+      episodeIndex: 1,
+    }));
   });
 
   it("单集入口同样按 reclaim 标记接管，不旁路回普通抢占", async () => {

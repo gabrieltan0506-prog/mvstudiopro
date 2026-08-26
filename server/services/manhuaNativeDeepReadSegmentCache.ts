@@ -11,6 +11,7 @@ import {
   deleteGcsObject,
   downloadGcsObjectVersioned,
   getGcsBucketName,
+  listGcsObjectNamesByPrefix,
   uploadBufferToGcs,
   uploadBufferToGcsIfAbsent,
 } from "./gcs.js";
@@ -55,6 +56,10 @@ export type NativeDeepReadSegmentCacheEntry = {
 export type NativeDeepReadSegmentCacheRead = {
   entry: NativeDeepReadSegmentCacheEntry;
   generation: string;
+};
+
+export type NativeDeepReadSegmentCacheLocatedRead = NativeDeepReadSegmentCacheRead & {
+  objectName: string;
 };
 
 export function nativeDeepReadSegmentCacheObjectName(
@@ -158,8 +163,105 @@ export async function readNativeDeepReadSegmentCacheEntry(input: {
   };
 }
 
+/**
+ * 找同一系列、同一媒体来源下被旧计划写错集号的已付费段。
+ *
+ * 这不是普通缓存命中路径，只供失败占位接管时做一次身份纠偏。对象名只负责提供
+ * 旧 episode/segment 身份，真正是否可迁移还要由 execution 用当前计划重算旧、
+ * 新两份 fingerprint 并复跑段门禁。这里遇到列举截断或任一对象损坏都关闭式停止，
+ * 因为把“没看全”当成“没有旧段”会直接导致重复付费。
+ */
+export async function listNativeDeepReadSegmentCacheEntriesBySourceDigest(input: {
+  seriesKey: string;
+  sourceDigest: string;
+  excludeEpisodeIndex?: number;
+}): Promise<NativeDeepReadSegmentCacheLocatedRead[]> {
+  if (!/^[0-9a-f]{64}$/.test(String(input.sourceDigest || ""))) {
+    throw new Error("段缓存迁移缺少稳定来源摘要");
+  }
+  const idPrefix = nativeDeepReadProposalId(input.seriesKey, 1).replace(/\d{3}$/, "");
+  const prefix = `${NATIVE_DEEP_READ_SEGMENT_CACHE_PREFIX}${idPrefix}`;
+  let names: string[];
+  try {
+    names = await listGcsObjectNamesByPrefix({
+      prefix,
+      literalPrefix: true,
+      maxResults: 1000,
+    });
+  } catch (error) {
+    throw new Error("无法核对同源已付费分段，已停止以避免重复付费", { cause: error });
+  }
+  if (names.length >= 1000) {
+    throw new Error("同系列段缓存达到列举上限，无法确认是否存在同源已付费段");
+  }
+  const bucket = getGcsBucketName();
+  const rows: NativeDeepReadSegmentCacheLocatedRead[] = [];
+  for (const objectName of names) {
+    const suffix = objectName.slice(prefix.length);
+    const match = /^([0-9]{3})_seg([0-9]{1,2})\.json$/.exec(suffix);
+    if (!match) continue;
+    const episodeIndex = Number(match[1]);
+    const segmentIndex = Number(match[2]);
+    if (episodeIndex === input.excludeEpisodeIndex) continue;
+    let versioned: Awaited<ReturnType<typeof downloadGcsObjectVersioned>>;
+    try {
+      versioned = await downloadGcsObjectVersioned({
+        gcsUri: `gs://${bucket}/${objectName}`,
+      });
+      const entry = parseCacheEntry(
+        JSON.parse(versioned.buffer.toString("utf8")),
+        { seriesKey: input.seriesKey, episodeIndex, segmentIndex },
+      );
+      if (entry.sourceDigest === input.sourceDigest) {
+        rows.push({ entry, generation: versioned.generation, objectName });
+      }
+    } catch (error) {
+      throw new Error("同系列段缓存无法完整核对，已停止以避免重复付费", { cause: error });
+    }
+  }
+  return rows;
+}
+
 function cacheBuffer(entry: NativeDeepReadSegmentCacheEntry): Buffer {
   return Buffer.from(`${JSON.stringify(entry, null, 2)}\n`, "utf8");
+}
+
+/**
+ * 身份迁移只准“目标不存在才创建”，绝不能像普通缓存换代那样覆盖目标对象。
+ * 并发先写者若已落同一契约则幂等成功；不同来源或不同契约明确冲突。
+ */
+export async function createNativeDeepReadSegmentCacheEntryIfAbsent(
+  entry: NativeDeepReadSegmentCacheEntry,
+): Promise<"created" | "reused"> {
+  parseCacheEntry(entry, entry);
+  const bucket = getGcsBucketName();
+  const objectName = nativeDeepReadSegmentCacheObjectName(
+    entry.seriesKey,
+    entry.episodeIndex,
+    entry.segmentIndex,
+  );
+  const created = await uploadBufferToGcsIfAbsent({
+    bucket,
+    objectName,
+    contentType: "application/json",
+    buffer: cacheBuffer(entry),
+  });
+  if (created.created) return "created";
+  const existing = await readNativeDeepReadSegmentCacheEntry({
+    seriesKey: entry.seriesKey,
+    episodeIndex: entry.episodeIndex,
+    segmentIndex: entry.segmentIndex,
+  });
+  if (
+    existing
+    && existing.entry.sourceDigest === entry.sourceDigest
+    && existing.entry.fingerprint === entry.fingerprint
+  ) {
+    return "reused";
+  }
+  throw new Error(
+    `第${entry.episodeIndex}集第${entry.segmentIndex + 1}段已有不同缓存，拒绝迁移覆盖`,
+  );
 }
 
 /**
