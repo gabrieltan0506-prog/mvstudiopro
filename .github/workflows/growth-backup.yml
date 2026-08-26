@@ -610,6 +610,7 @@ jobs:
             # 让行不是失败：备份主体（platform-current 冷备）此时已发布验证完毕，
             # archive 卸载交给下一班次即可，不再把整次 Action 标红。
             echo "采集持续繁忙，备份主体已完成，archive offload 让行至下一班次"
+            echo "::warning::磁盘达到卸载阈值但采集持续繁忙，本轮 archive offload 让行；若连续多轮出现请关注 /data 空间"
             touch /tmp/growth-backup/OFFLOAD_SKIP
             exit 0
           fi

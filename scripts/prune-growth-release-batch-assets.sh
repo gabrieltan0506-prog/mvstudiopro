@@ -22,8 +22,11 @@ if ! release_id=$(gh api "repos/$REPO/releases/tags/$TAG" --jq .id); then
   exit 0
 fi
 
-gh api --paginate "repos/$REPO/releases/$release_id/assets" \
-  --jq '.[] | [.id, .name] | @tsv' > "$WORK/assets.tsv"
+if ! gh api --paginate "repos/$REPO/releases/$release_id/assets" \
+  --jq '.[] | [.id, .name] | @tsv' > "$WORK/assets.tsv"; then
+  echo "资产清单读取失败，为安全起见本轮不清理"
+  exit 0
+fi
 total=$(wc -l < "$WORK/assets.tsv")
 echo "Release 资产总数：$total / 1000"
 
@@ -39,8 +42,11 @@ if ! gh release download "$TAG" -p platform-current-batch-manifest.json -D "$WOR
   echo "当前批次清单下载失败，为安全起见本轮不清理"
   exit 0
 fi
-jq -r '[(.files[]?.parts[]?.assetName), (.bundle.parts[]?.assetName)] | .[]' \
-  "$WORK/platform-current-batch-manifest.json" | sort -u > "$WORK/referenced.txt"
+if ! jq -r '[(.files[]?.parts[]?.assetName), (.bundle.parts[]?.assetName)] | .[]' \
+  "$WORK/platform-current-batch-manifest.json" | sort -u > "$WORK/referenced.txt"; then
+  echo "清单解析失败，为安全起见本轮不清理"
+  exit 0
+fi
 if [ ! -s "$WORK/referenced.txt" ]; then
   echo "清单未列出任何分片资产，格式异常，为安全起见本轮不清理"
   exit 0
@@ -52,18 +58,29 @@ sed -E 's/^.*\t.*\.batch-([0-9]+-[0-9]+)\..*$/\1/' "$WORK/batch-assets.tsv" \
 sort -u "$WORK/keep-batches.txt" -o "$WORK/keep-batches.txt"
 echo "保留批次：$(paste -sd ' ' "$WORK/keep-batches.txt")"
 
+# 单轮删除上限：GITHUB_TOKEN 限额 1000 req/h/仓库，须给同一轮的发布/回读留足预算；
+# 首轮清不完的余量由后续班次收敛。
+MAX_DELETE=400
 deleted=0
+skipped_by_cap=0
 while IFS=$'\t' read -r asset_id asset_name; do
   batch=$(sed -E 's/^.*\.batch-([0-9]+-[0-9]+)\..*$/\1/' <<< "$asset_name")
   if grep -qxF "$batch" "$WORK/keep-batches.txt"; then
     continue
   fi
-  if gh api -X DELETE "repos/$REPO/releases/assets/$asset_id" >/dev/null; then
+  if [ "$deleted" -ge "$MAX_DELETE" ]; then
+    skipped_by_cap=$((skipped_by_cap + 1))
+    continue
+  fi
+  if gh api -X DELETE "repos/$REPO/releases/assets/$asset_id" >/dev/null </dev/null; then
     deleted=$((deleted + 1))
   else
     echo "删除失败（跳过继续）：$asset_name"
   fi
 done < "$WORK/batch-assets.tsv"
+if [ "$skipped_by_cap" -gt 0 ]; then
+  echo "本轮删除达上限 $MAX_DELETE，剩余 $skipped_by_cap 个留给后续班次"
+fi
 
 remaining=$((total - deleted))
 echo "已清理旧批次分片：$deleted 个，Release 剩余约 $remaining / 1000"

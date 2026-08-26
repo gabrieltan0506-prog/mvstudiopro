@@ -50,6 +50,7 @@ jobs:
           if [ "$SNAPSHOT_READY" != "true" ]; then
             # 让行不是失败：本工作流只做 archive 卸载，采集繁忙时交给下一班次即可。
             echo "采集持续繁忙，archive offload 让行至下一班次"
+            echo "::warning::采集持续繁忙，本轮 archive offload 让行；若连续多轮出现请关注 /data 空间"
             touch /tmp/growth-archive-offload/EMPTY
             exit 0
           fi
