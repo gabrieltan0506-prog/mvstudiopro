@@ -479,6 +479,12 @@ jobs:
           path: /tmp/growth-backup
           if-no-files-found: error
           retention-days: 30
+      - name: Prune superseded batch snapshot assets from cold-store release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # 0826 事故：旧批次分片从不回收，Release 撞 1000 资产上限后所有上传 422。
+        # 上传前先清不再被当前清单引用的批次快照；archive-* 冷存档与稳定名资产不在清理范围。
+        run: bash scripts/prune-growth-release-batch-assets.sh
       - name: Publish cold-store restore assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -600,7 +606,13 @@ jobs:
             echo "采集 lease 或前台任务繁忙，archive 快照让行 30 秒（${attempt}/20）"
             sleep 30
           done
-          test "$SNAPSHOT_READY" = "true"
+          if [ "$SNAPSHOT_READY" != "true" ]; then
+            # 让行不是失败：备份主体（platform-current 冷备）此时已发布验证完毕，
+            # archive 卸载交给下一班次即可，不再把整次 Action 标红。
+            echo "采集持续繁忙，备份主体已完成，archive offload 让行至下一班次"
+            touch /tmp/growth-backup/OFFLOAD_SKIP
+            exit 0
+          fi
           cut -f1 /tmp/growth-archive-offload/snapshot.tsv > /tmp/growth-archive-offload/dirs.txt
           if [ ! -s /tmp/growth-archive-offload/dirs.txt ]; then
             touch /tmp/growth-archive-offload/EMPTY

@@ -47,7 +47,12 @@ jobs:
             echo "采集 lease 或前台任务繁忙，archive 快照让行 30 秒（${attempt}/20）"
             sleep 30
           done
-          test "$SNAPSHOT_READY" = "true"
+          if [ "$SNAPSHOT_READY" != "true" ]; then
+            # 让行不是失败：本工作流只做 archive 卸载，采集繁忙时交给下一班次即可。
+            echo "采集持续繁忙，archive offload 让行至下一班次"
+            touch /tmp/growth-archive-offload/EMPTY
+            exit 0
+          fi
           cut -f1 /tmp/growth-archive-offload/snapshot.tsv > /tmp/growth-archive-offload/dirs.txt
           date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/growth-archive-offload/fetched-at.txt
           if [ ! -s /tmp/growth-archive-offload/dirs.txt ]; then
@@ -115,6 +120,12 @@ jobs:
           mv /tmp/growth-archive-offload/assets.tsv.next /tmp/growth-archive-offload/assets.tsv
           mv /tmp/growth-archive-offload/archives.tsv.next /tmp/growth-archive-offload/archives.tsv
           test "$(wc -l < /tmp/growth-archive-offload/archives.tsv)" -eq "$(wc -l < /tmp/growth-archive-offload/snapshot.tsv)"
+      - name: Prune superseded batch snapshot assets from cold-store release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # 0826 事故：Release 撞 1000 资产上限后所有上传 422。上传前先清旧批次快照分片；
+        # archive-* 冷存档（Fly 已删数据唯一副本）与稳定名资产不在清理范围。
+        run: bash scripts/prune-growth-release-batch-assets.sh
       - name: Publish and read back archive bundles
         env:
           GH_TOKEN: ${{ github.token }}
