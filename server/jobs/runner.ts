@@ -61,6 +61,7 @@ import {
   claimNextPostProdJob,
   consumeManhuaTemplateLearnEpisodeSkip,
   getJobById,
+  getJobByIdStrict,
   isManhuaTemplateLearnJobCancelRequested,
   markJobFailed,
   markJobSucceededWithRetry,
@@ -68,10 +69,24 @@ import {
   markManhuaLearnJobSucceededWithRetry,
   markJobSucceeded,
   patchJobRunningProgress,
+  patchJobRunningProgressStrict,
   requeueJob,
   upsertManhuaNativeModelReceiptForJob,
   type JobType,
 } from "./repository";
+import {
+  MANHUA_BGM_ACTION,
+  manhuaBgmJobInputSchema,
+  type ManhuaBgmJobOutput,
+} from "./manhuaBgmJobInput.js";
+import {
+  persistManhuaBgmCheckpointWithRetry,
+  planInterruptedManhuaBgmRecovery,
+} from "./manhuaBgmRecovery.js";
+import {
+  createManhuaBgmTask,
+  resumeManhuaBgmTask,
+} from "../services/manhuaScoringRoom.js";
 import { processPdfExportJob } from "./pdfExportJob";
 import {
   invokePlatformAnalysisChat,
@@ -1539,16 +1554,23 @@ function mapAudioModel(model: unknown): ProducerModel {
   return "suno";
 }
 
-function getAudioPolicy(plan: string, mode: "bgm" | "theme_song", duration: number): AudioBillingPolicy {
+function getAudioPolicy(
+  plan: string,
+  mode: "bgm" | "theme_song",
+  duration: number
+): AudioBillingPolicy {
   if (plan === "pro" || plan === "enterprise") return "package";
   if (mode === "bgm" && duration <= 120) return "free";
   return "single_purchase";
 }
 
-function normalizeAudioStatus(status: string): "PENDING" | "SUCCESS" | "FAILED" {
+function normalizeAudioStatus(
+  status: string
+): "PENDING" | "SUCCESS" | "FAILED" {
   const s = status.toUpperCase();
   if (s.includes("FAIL")) return "FAILED";
-  if (s.includes("SUCCESS") || s.includes("DONE") || s.includes("COMPLETED")) return "SUCCESS";
+  if (s.includes("SUCCESS") || s.includes("DONE") || s.includes("COMPLETED"))
+    return "SUCCESS";
   return "PENDING";
 }
 
@@ -1591,12 +1613,16 @@ export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
         return 10 * 60_000;
       }
       if (input.action === "platform_topic_cover_composite_bundle") {
-        const raw = Number(process.env.PLATFORM_TOPIC_COVER_COMPOSITE_BUNDLE_JOB_TIMEOUT_MS);
+        const raw = Number(
+          process.env.PLATFORM_TOPIC_COVER_COMPOSITE_BUNDLE_JOB_TIMEOUT_MS
+        );
         if (Number.isFinite(raw) && raw >= 120_000) return raw;
         return 28 * 60_000;
       }
       if (input.action === "platform_html_ppt_outline") {
-        const raw = Number(process.env.PLATFORM_HTML_PPT_OUTLINE_JOB_TIMEOUT_MS);
+        const raw = Number(
+          process.env.PLATFORM_HTML_PPT_OUTLINE_JOB_TIMEOUT_MS
+        );
         if (Number.isFinite(raw) && raw >= 120_000) return raw;
         // 13 页双段 Sol（含 reasoning 重试）默认 22min，避免墙钟砍半稿
         return 22 * 60_000;
@@ -1611,8 +1637,11 @@ export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
         const raw = Number(process.env.PLATFORM_TOPIC_EXPAND_JOB_TIMEOUT_MS);
         if (Number.isFinite(raw) && raw >= 300_000) return raw;
         // 串行单条实测约 3–4 分钟（Kimi K3 medium），按条数给墙钟，封顶 75min
-        const count = Array.isArray((input.params as Record<string, unknown>)?.picks)
-          ? ((input.params as Record<string, unknown>).picks as unknown[]).length
+        const count = Array.isArray(
+          (input.params as Record<string, unknown>)?.picks
+        )
+          ? ((input.params as Record<string, unknown>).picks as unknown[])
+              .length
           : 7;
         return Math.min(75, Math.max(15, count * 6)) * 60_000;
       }
@@ -1635,6 +1664,18 @@ export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
     }
     return defaultTimeout;
   }
+  if (type === "audio") {
+    try {
+      const input = asEnvelope(inputRaw);
+      if (input.action === MANHUA_BGM_ACTION) {
+        // 覆盖上游生成、全变体即时转存和逐条电平量测；付费建单仍只发一次。
+        return 24 * 60_000;
+      }
+    } catch {
+      /* fall through */
+    }
+    return defaultTimeout;
+  }
   if (type !== "video") return defaultTimeout;
   try {
     const input = asEnvelope(inputRaw);
@@ -1650,7 +1691,11 @@ export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
         const calls = Number(params.nativeMaxCalls);
         // 入队端与执行端都会拒绝非法值；这里仍给一个有界墙钟，避免历史脏任务
         // 因解析异常退回 90 分钟后把正在进行的原生请求提前砍掉。
-        if (Number.isInteger(calls) && calls >= 1 && calls <= NATIVE_DEEP_READ_JOB_MAX_CALLS) {
+        if (
+          Number.isInteger(calls) &&
+          calls >= 1 &&
+          calls <= NATIVE_DEEP_READ_JOB_MAX_CALLS
+        ) {
           return resolveNativeDeepReadJobTimeoutMs(calls);
         }
         return resolveNativeDeepReadJobTimeoutMs(1);
@@ -1660,10 +1705,14 @@ export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
       // 每轮 8–10 集：下片+语音+读帧+删视频，默认 90 分钟
       return 90 * 60_000;
     }
-    if (input.action === "growth_analyze_video" || input.action === "growth_analyze_images") {
+    if (
+      input.action === "growth_analyze_video" ||
+      input.action === "growth_analyze_images"
+    ) {
       const params = input.params ?? {};
       const durationSeconds =
-        typeof params.durationSeconds === "number" && Number.isFinite(params.durationSeconds)
+        typeof params.durationSeconds === "number" &&
+        Number.isFinite(params.durationSeconds)
           ? params.durationSeconds
           : 0;
       return resolveGrowthCampJobServerTimeoutMs({
@@ -1678,7 +1727,119 @@ export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
   return defaultTimeout;
 }
 
-async function processAudioJob(input: JobEnvelope, timeoutMs: number, userId: string): Promise<{ output: unknown; provider?: string }> {
+async function processManhuaBgmJob(params: {
+  input: JobEnvelope;
+  timeoutMs: number;
+  userId: string;
+  jobId: string;
+}): Promise<{ output: ManhuaBgmJobOutput; provider: string }> {
+  const parsed = manhuaBgmJobInputSchema.parse(params.input);
+  const job = await getJobByIdStrict(params.jobId);
+  if (
+    !job ||
+    job.type !== "audio" ||
+    String(job.userId) !== String(params.userId)
+  ) {
+    throw new Error("配乐任务记录不存在或归属不一致");
+  }
+
+  const persistedOutput =
+    job.output && typeof job.output === "object" && !Array.isArray(job.output)
+      ? (job.output as Record<string, unknown>)
+      : null;
+  const controller = new AbortController();
+  const hardTimer = setTimeout(
+    () =>
+      controller.abort(new Error("配乐任务处理时间已到，保留原任务号等待恢复")),
+    Math.max(1_000, params.timeoutMs - 1_000)
+  );
+  hardTimer.unref?.();
+
+  const persistTerminal = async (
+    output: ManhuaBgmJobOutput
+  ): Promise<{ output: ManhuaBgmJobOutput; provider: string }> => {
+    await persistManhuaBgmCheckpointWithRetry(() =>
+      patchJobRunningProgressStrict(params.jobId, {
+        bgmStage: "result_persistence_pending",
+        terminalOutput: output,
+      })
+    );
+    return { output, provider: "evolink:suno-v5.5" };
+  };
+
+  try {
+    if (persistedOutput) {
+      const recovery = planInterruptedManhuaBgmRecovery(persistedOutput);
+      if (recovery.kind === "complete") {
+        return {
+          output: recovery.terminalOutput as ManhuaBgmJobOutput,
+          provider: "evolink:suno-v5.5",
+        };
+      }
+      if (recovery.kind === "reconcile_manual") {
+        throw new Error(recovery.reason);
+      }
+      const resumed = await resumeManhuaBgmTask({
+        taskId: recovery.upstreamTaskId,
+        userId: params.userId,
+        brief: parsed.params.brief,
+        startedAtMs: recovery.startedAtMs,
+        abortSignal: controller.signal,
+      });
+      return persistTerminal({
+        upstreamTaskId: resumed.taskId,
+        briefDigest: resumed.briefDigest,
+        variants: resumed.variants,
+        elapsedMs: resumed.elapsedMs,
+        providerCost: { unit: "per_call", calls: 1 },
+      });
+    }
+
+    const startedAtMs = Date.now();
+    const created = await createManhuaBgmTask(parsed.params.brief, {
+      abortSignal: controller.signal,
+    });
+    if (created.briefDigest !== parsed.params.briefDigest) {
+      throw new Error("配乐建单摘要与确认内容不一致");
+    }
+    // taskId 写不进 DB 就停止；不能在结果未知时继续制造第二张付费单。
+    await persistManhuaBgmCheckpointWithRetry(() =>
+      patchJobRunningProgressStrict(params.jobId, {
+        bgmStage: "polling",
+        upstreamTaskId: created.taskId,
+        briefDigest: created.briefDigest,
+        startedAtMs,
+      })
+    );
+    const resumed = await resumeManhuaBgmTask({
+      taskId: created.taskId,
+      userId: params.userId,
+      brief: parsed.params.brief,
+      startedAtMs,
+      abortSignal: controller.signal,
+    });
+    return persistTerminal({
+      upstreamTaskId: resumed.taskId,
+      briefDigest: resumed.briefDigest,
+      variants: resumed.variants,
+      elapsedMs: resumed.elapsedMs,
+      providerCost: { unit: "per_call", calls: 1 },
+    });
+  } finally {
+    clearTimeout(hardTimer);
+  }
+}
+
+async function processAudioJob(
+  input: JobEnvelope,
+  timeoutMs: number,
+  userId: string,
+  jobId?: string
+): Promise<{ output: unknown; provider?: string }> {
+  if (input.action === MANHUA_BGM_ACTION) {
+    if (!jobId) throw new Error("配乐任务缺少 jobId");
+    return processManhuaBgmJob({ input, timeoutMs, userId, jobId });
+  }
   if (input.action !== "suno_music") {
     throw new Error(`Unsupported audio action: ${input.action}`);
   }
@@ -2988,31 +3149,37 @@ async function executeJob(
   inputRaw: unknown,
   timeoutMs: number,
   userId: string,
-  jobId?: string,
+  jobId?: string
 ): Promise<{ output: unknown; provider?: string }> {
   const input = asEnvelope(inputRaw);
   if (type === "video") return processVideoJob(input, timeoutMs, userId, jobId);
   if (type === "image") return processImageJob(input, timeoutMs, userId, jobId);
   if (type === "platform") return processPlatformJob(input, jobId, userId);
-  if (type === "pdf_export") return processPdfExportJob(inputRaw, userId, jobId);
+  if (type === "pdf_export")
+    return processPdfExportJob(inputRaw, userId, jobId);
   if (type === "post_prod") {
     // 防御分支:post_prod 已排除出主队列,正常只走 processOnePostProdJob(带 Abort 贯通)
     const { runPostProdJobWithLimit } = await import("./postProdJob.js");
     return runPostProdJobWithLimit(input, userId, timeoutMs);
   }
-  return processAudioJob(input, timeoutMs, userId);
+  return processAudioJob(input, timeoutMs, userId, jobId);
 }
 
-async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>> & object) {
+async function runClaimedJob(
+  job: Awaited<ReturnType<typeof claimNextQueuedJob>> & object
+) {
   if (!job) return;
   let releaseInteractiveWorkload: (() => Promise<void>) | undefined;
   let paidImageHeartbeat: ReturnType<typeof setInterval> | undefined;
   try {
     const jobType = job.type as JobType;
     const timeoutMs = resolveJobTimeoutMs(jobType, job.input);
-    const paidImageTaskType = jobType === "image" ? paidImageLedgerTaskType(job.input) : null;
+    const paidImageTaskType =
+      jobType === "image" ? paidImageLedgerTaskType(job.input) : null;
     if (paidImageTaskType) {
-      const { heartbeatActiveJob } = await import("../services/paidJobLedger.js");
+      const { heartbeatActiveJob } = await import(
+        "../services/paidJobLedger.js"
+      );
       paidImageHeartbeat = setInterval(() => {
         void heartbeatActiveJob(job.id, paidImageTaskType).catch(() => {});
       }, 30_000);
@@ -3022,12 +3189,18 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
     // users.id，确保 public/匿名/伪造字符串不会持有前台租约。租约由本函数 finally
     // 释放，因此墙钟超时/requeue 后不会被仍未 settle 的孤儿 Promise 永久续心跳。
     if (isAuthenticatedRunningPlatformJob(job)) {
-      releaseInteractiveWorkload = await beginGrowthInteractiveWorkload(`platform-job:${job.id}`);
+      releaseInteractiveWorkload = await beginGrowthInteractiveWorkload(
+        `platform-job:${job.id}`
+      );
     }
     const manhuaLearnJob =
-      jobType === "video"
-      && isRecord(job.input)
-      && job.input.action === "manhua_template_learn";
+      jobType === "video" &&
+      isRecord(job.input) &&
+      job.input.action === "manhua_template_learn";
+    const manhuaBgmJob =
+      jobType === "audio" &&
+      isRecord(job.input) &&
+      job.input.action === MANHUA_BGM_ACTION;
     const { output, provider } = await withTimeout(
       executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id),
       timeoutMs,
@@ -3039,56 +3212,91 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
             },
             cleanupGraceMs: 30_000,
           }
-        : undefined,
+        : undefined
     );
     const succeededPersisted = manhuaLearnJob
       ? await markManhuaLearnJobSucceededWithRetry(job.id, output, provider)
-      : await markJobSucceeded(job.id, output, provider);
+      : manhuaBgmJob
+        ? await markJobSucceededWithRetry(job.id, output, provider)
+        : await markJobSucceeded(job.id, output, provider);
     if (manhuaLearnJob && !succeededPersisted) {
       // terminalOutput 已先写入 running.output；列表端与下次启动都能按 done 收敛成功。
       // 此处绝不 throw/requeue，否则会把已经完成的媒体与模型工作整条再烧一次。
-      console.error(`[Jobs] manhua learn finished but status persistence is pending: jobId=${job.id}`);
+      console.error(
+        `[Jobs] manhua learn finished but status persistence is pending: jobId=${job.id}`
+      );
+      return;
+    }
+    if (manhuaBgmJob && !succeededPersisted) {
+      // 完整终态已先写入 running.output；启动恢复只补状态，不重跑建单。
+      console.error(
+        `[Jobs] manhua bgm finished but status persistence is pending: jobId=${job.id}`
+      );
       return;
     }
     const paidAssetStandardize =
       jobType === "image" &&
       isRecord(job.input) &&
       isRecord(job.input.params) &&
-      (job.input.params.assetStandardizeQuality === "medium" || job.input.params.assetStandardizeQuality === "high");
+      (job.input.params.assetStandardizeQuality === "medium" ||
+        job.input.params.assetStandardizeQuality === "high");
     // 八审 P0-4:普通 canvas 出图(非资产标准化)成功后同样要结算账本 hold
     const paidCanvasImage =
-      jobType === "image" && isCanvasGptImage2Job(job.input) && !paidAssetStandardize;
-    const paidCreativeNanoImage = jobType === "image" && isCreativeNanoImageJob(job.input);
+      jobType === "image" &&
+      isCanvasGptImage2Job(job.input) &&
+      !paidAssetStandardize;
+    const paidCreativeNanoImage =
+      jobType === "image" && isCreativeNanoImageJob(job.input);
     if (paidCreativeNanoImage) {
-      const { markSettlementPending, unregisterActiveJob, refundCreditsOnFailure } =
-        await import("../services/paidJobLedger.js");
+      const {
+        markSettlementPending,
+        unregisterActiveJob,
+        refundCreditsOnFailure,
+      } = await import("../services/paidJobLedger.js");
       if (!succeededPersisted) {
         await refundCreditsOnFailure(
           job.id,
           CREATIVE_NANO_IMAGE_TASK_TYPE,
           "task_failed",
-          "Creative Nano 结果保存失败·退回积分",
-        ).catch((error) => console.error("[Jobs] Creative Nano persistence refund failed:", error));
-        await markJobFailed(job.id, "Creative Nano 结果保存失败，已进入退分流程");
+          "Creative Nano 结果保存失败·退回积分"
+        ).catch(error =>
+          console.error(
+            "[Jobs] Creative Nano persistence refund failed:",
+            error
+          )
+        );
+        await markJobFailed(
+          job.id,
+          "Creative Nano 结果保存失败，已进入退分流程"
+        );
         return;
       }
       try {
-        await unregisterActiveJob(job.id, CREATIVE_NANO_IMAGE_TASK_TYPE, "settled");
+        await unregisterActiveJob(
+          job.id,
+          CREATIVE_NANO_IMAGE_TASK_TYPE,
+          "settled"
+        );
       } catch {
         await markSettlementPending(job.id, CREATIVE_NANO_IMAGE_TASK_TYPE);
       }
     }
     if (paidCanvasImage) {
-      const { markSettlementPending, unregisterActiveJob, refundCreditsOnFailure } =
-        await import("../services/paidJobLedger.js");
+      const {
+        markSettlementPending,
+        unregisterActiveJob,
+        refundCreditsOnFailure,
+      } = await import("../services/paidJobLedger.js");
       if (!succeededPersisted) {
         // 上游有图但 output 没落库:用户拿不到产物,不能先结算后留永久扣费
         await refundCreditsOnFailure(
           job.id,
           "canvasGptImage2",
           "task_failed",
-          "画布出图结果保存失败·退回积分",
-        ).catch((e) => console.error("[Jobs] canvas image persistence refund failed:", e));
+          "画布出图结果保存失败·退回积分"
+        ).catch(e =>
+          console.error("[Jobs] canvas image persistence refund failed:", e)
+        );
         await markJobFailed(job.id, "画布出图结果保存失败，已进入退分流程");
         return;
       }
@@ -3106,17 +3314,21 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
     if (paidAssetStandardize) {
       if (!succeededPersisted) {
         // 上游有图但 job.output 没落库，用户拿不到产物；不能先结算后留下永久扣费。
-        const { refundCreditsOnFailure } = await import("../services/paidJobLedger.js");
+        const { refundCreditsOnFailure } = await import(
+          "../services/paidJobLedger.js"
+        );
         await refundCreditsOnFailure(
           job.id,
           "manhuaAssetStandardize",
           "task_failed",
-          "资产标准化结果保存失败·退回积分",
+          "资产标准化结果保存失败·退回积分"
         );
         await markJobFailed(job.id, "资产标准化结果保存失败，已进入退分流程");
         return;
       }
-      const { markSettlementPending, unregisterActiveJob } = await import("../services/paidJobLedger.js");
+      const { markSettlementPending, unregisterActiveJob } = await import(
+        "../services/paidJobLedger.js"
+      );
       try {
         await unregisterActiveJob(job.id, "manhuaAssetStandardize", "settled");
       } catch {
@@ -3126,19 +3338,26 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
     }
     if (paidPlatformVisualReport) {
       if (!succeededPersisted) {
-        const { refundCreditsOnFailure } = await import("../services/paidJobLedger.js");
+        const { refundCreditsOnFailure } = await import(
+          "../services/paidJobLedger.js"
+        );
         await refundCreditsOnFailure(
           job.id,
           "platformAnalysis",
           "task_failed",
-          "趋势报告结果保存失败·退回积分",
-        ).catch((refundError) =>
-          console.error("[Jobs] trend report persistence refund failed:", refundError),
+          "趋势报告结果保存失败·退回积分"
+        ).catch(refundError =>
+          console.error(
+            "[Jobs] trend report persistence refund failed:",
+            refundError
+          )
         );
         await markJobFailed(job.id, "趋势报告结果保存失败，已进入退分流程");
         return;
       }
-      const { markSettlementPending, unregisterActiveJob } = await import("../services/paidJobLedger.js");
+      const { markSettlementPending, unregisterActiveJob } = await import(
+        "../services/paidJobLedger.js"
+      );
       try {
         await unregisterActiveJob(job.id, "platformAnalysis", "settled");
       } catch {
@@ -3147,71 +3366,114 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
       }
     }
   } catch (error) {
-    const userCancelled = error instanceof Error
-      && (error.name === "ManhuaLearnCancelledError" || /用户已停止学习/.test(error.message));
+    const userCancelled =
+      error instanceof Error &&
+      (error.name === "ManhuaLearnCancelledError" ||
+        /用户已停止学习/.test(error.message));
     const message =
       job.type === "platform" && error instanceof Error
         ? error.message
         : getJobFailureMessage(job.type as JobType, error);
     const nativeManhuaLearnJob =
-      job.type === "video"
-      && isRecord(job.input)
-      && job.input.action === "manhua_template_learn"
-      && isRecord(job.input.params)
-      && job.input.params.nativeDeepReadConfirmed === true;
-    if (nativeManhuaLearnJob) {
-      const partial = (error as JobTimeoutErrorWithPartial<{
-        output?: unknown;
-        provider?: string;
-      }>)?.partialResult;
-      const carriedReceipts = parsePersistedNativeModelReceipts(
-        (error as { nativeModelReceipts?: unknown })?.nativeModelReceipts,
+      job.type === "video" &&
+      isRecord(job.input) &&
+      job.input.action === "manhua_template_learn" &&
+      isRecord(job.input.params) &&
+      job.input.params.nativeDeepReadConfirmed === true;
+    const manhuaBgmJob =
+      job.type === "audio" &&
+      isRecord(job.input) &&
+      job.input.action === MANHUA_BGM_ACTION;
+    if (manhuaBgmJob) {
+      const current = await getJobByIdStrict(job.id).catch(() => null);
+      const output =
+        current?.output &&
+        typeof current.output === "object" &&
+        !Array.isArray(current.output)
+          ? (current.output as Record<string, unknown>)
+          : null;
+      const hasUpstreamTaskId = Boolean(
+        String(output?.upstreamTaskId || "").trim()
       );
-      const partialOutput = partial?.output && isRecord(partial.output) && !Array.isArray(partial.output)
-        ? partial.output
-        : undefined;
+      const explicitTerminalFailure = /\b(failed|cancelled)\b/.test(
+        error instanceof Error ? error.message : String(error)
+      );
+      if (
+        hasUpstreamTaskId &&
+        !explicitTerminalFailure &&
+        (job.attempts ?? 0) < 4
+      ) {
+        // 同一 taskId 续查不再 POST；下载/转存/DB 短抖动可安全恢复。
+        await requeueJob(job.id, `${message}；将继续查询原配乐任务`);
+      } else {
+        await markJobFailed(
+          job.id,
+          hasUpstreamTaskId
+            ? `${message}；原配乐任务号已保留，可人工核对`
+            : `${message}；建单结果待核对，未自动重新提交`
+        );
+      }
+    } else if (nativeManhuaLearnJob) {
+      const partial = (
+        error as JobTimeoutErrorWithPartial<{
+          output?: unknown;
+          provider?: string;
+        }>
+      )?.partialResult;
+      const carriedReceipts = parsePersistedNativeModelReceipts(
+        (error as { nativeModelReceipts?: unknown })?.nativeModelReceipts
+      );
+      const partialOutput =
+        partial?.output &&
+        isRecord(partial.output) &&
+        !Array.isArray(partial.output)
+          ? partial.output
+          : undefined;
       const failureReceipts = parsePersistedNativeModelReceipts([
         ...carriedReceipts,
         ...(Array.isArray(partialOutput?.nativeModelReceipts)
           ? partialOutput.nativeModelReceipts
           : []),
       ]);
-      const receiptPatch = failureReceipts.length > 0
-        ? { nativeModelReceipts: failureReceipts }
-        : {};
+      const receiptPatch =
+        failureReceipts.length > 0
+          ? { nativeModelReceipts: failureReceipts }
+          : {};
       const failureOutputPatch = partialOutput
         ? {
-          ...partialOutput,
-          ...receiptPatch,
-          analysisStage: "manhua_learn_failed",
-          analysisStageLabel: userCancelled
-            ? "用户已停止学习；已入库内容与费用回执保留"
-            : "原生精读任务未完整结束；已入库内容与费用回执保留",
-        }
+            ...partialOutput,
+            ...receiptPatch,
+            analysisStage: "manhua_learn_failed",
+            analysisStageLabel: userCancelled
+              ? "用户已停止学习；已入库内容与费用回执保留"
+              : "原生精读任务未完整结束；已入库内容与费用回执保留",
+          }
         : (() => {
-        const carriedNativeUsage = isRecord((error as { nativeUsage?: unknown })?.nativeUsage)
-          ? (error as { nativeUsage: Record<string, unknown> }).nativeUsage
-          : undefined;
-        // 计划复核前失败不会产生模型用量；一旦进入原生执行却未能在清理窗口内
-        // 返回完整结果，必须显式标成“回执待核”，不能让面板把缺字段解释为 0 元。
-        return {
-          pipelineMode: "native_deep_read",
-          ...receiptPatch,
-          nativeUsage: carriedNativeUsage || {
-              model: "qwen3.8-max",
-              billingMode: "unknown",
-              inputTokens: 0,
-              outputTokens: 0,
-              priceEquivalentCny: 0,
-              elapsedMs: 0,
-              receiptComplete: false,
-            },
-          analysisStage: "manhua_learn_failed",
-          analysisStageLabel: userCancelled
-            ? "用户已停止学习；费用回执待核"
-            : "原生精读任务未完整结束；费用回执待核",
-        };
-      })();
+            const carriedNativeUsage = isRecord(
+              (error as { nativeUsage?: unknown })?.nativeUsage
+            )
+              ? (error as { nativeUsage: Record<string, unknown> }).nativeUsage
+              : undefined;
+            // 计划复核前失败不会产生模型用量；一旦进入原生执行却未能在清理窗口内
+            // 返回完整结果，必须显式标成“回执待核”，不能让面板把缺字段解释为 0 元。
+            return {
+              pipelineMode: "native_deep_read",
+              ...receiptPatch,
+              nativeUsage: carriedNativeUsage || {
+                model: "qwen3.8-max",
+                billingMode: "unknown",
+                inputTokens: 0,
+                outputTokens: 0,
+                priceEquivalentCny: 0,
+                elapsedMs: 0,
+                receiptComplete: false,
+              },
+              analysisStage: "manhua_learn_failed",
+              analysisStageLabel: userCancelled
+                ? "用户已停止学习；费用回执待核"
+                : "原生精读任务未完整结束；费用回执待核",
+            };
+          })();
       // 原生学习按模型请求计费；整单重排可能再次发请求。失败、中止、墙钟到期
       // 均只落终态，保留 claim 供人工核对，不自动重跑。
       const failedPersisted = await markManhuaLearnJobFailedWithOutputRetry(

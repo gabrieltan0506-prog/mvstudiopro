@@ -1329,7 +1329,7 @@ async function chargeCanvasVideoAndRun<T>(
 /** Seedance 2.5：正式上线后仍只向正式会员（pro/enterprise）开放。 */
 async function assertSeedance25PaidAccess(
   req: VercelRequest,
-): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+): Promise<{ ok: true; userId: number } | { ok: false; status: number; error: string }> {
   const { resolveSeedance25Access } = await import("../shared/seedance25Access.js");
   try {
     const { sdk } = await import("../server/_core/sdk.js");
@@ -1349,7 +1349,7 @@ async function assertSeedance25PaidAccess(
         error: access.message || "Seedance 2.5 暂不可用",
       };
     }
-    return { ok: true };
+    return { ok: true, userId };
   } catch (e: any) {
     const msg = String(e?.message || e || "");
     if (/Invalid session|Forbidden|Unauthorized|未登录|登录/i.test(msg)) {
@@ -1396,9 +1396,23 @@ async function runSeedance25EvolinkJob(
   const videoUrls = Array.isArray(body.videoUrls)
     ? body.videoUrls.map((url: unknown) => s(url).trim()).filter(Boolean)
     : [];
-  const audioUrls = Array.isArray(body.audioUrls)
+  const rawAudioUrls = Array.isArray(body.audioUrls)
     ? body.audioUrls.map((url: unknown) => s(url).trim()).filter(Boolean)
     : [];
+  let audioUrls: string[];
+  try {
+    const { resolveTokenPlanDialogueAudioReference } = await import(
+      "../server/services/tokenPlanDialogueTts.js"
+    );
+    audioUrls = rawAudioUrls.map((reference: string) =>
+      resolveTokenPlanDialogueAudioReference({
+        reference,
+        ownerUserId: access.userId,
+      }),
+    );
+  } catch {
+    return { ok: false, status: 403, error: "参考音频不可用，请重新选择本人素材" };
+  }
   const {
     clampSeedanceDuration,
     normalizeSeedance25EvolinkMode,

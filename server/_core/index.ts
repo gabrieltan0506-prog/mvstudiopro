@@ -17,6 +17,7 @@ import {
   hideManhuaTemplateLearnSeriesForUser,
   isGrowthCampAnalyzeJobRecord,
   isManhuaTemplateLearnJobRecord,
+  recoverInterruptedManhuaBgmJobsOnStartup,
   recoverInterruptedManhuaTemplateLearnJobsOnStartup,
   listManhuaTemplateLearnJobsForUser,
   requestManhuaTemplateLearnEpisodeSkip,
@@ -788,6 +789,12 @@ async function startServer() {
         if (requeued > 0 || cancelled > 0 || completed > 0 || exhausted > 0) {
           console.warn(
             `[manhua-learn] startup recovery: requeued=${requeued} cancelled=${cancelled} completed=${completed} exhausted=${exhausted}`,
+          );
+        }
+        const bgmRecovery = await recoverInterruptedManhuaBgmJobsOnStartup();
+        if (bgmRecovery.resumed > 0 || bgmRecovery.completed > 0 || bgmRecovery.manual > 0) {
+          console.warn(
+            `[manhua-bgm] startup recovery: resumed=${bgmRecovery.resumed} completed=${bgmRecovery.completed} manual=${bgmRecovery.manual}`,
           );
         }
         startJobWorker();

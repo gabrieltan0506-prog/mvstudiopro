@@ -21,7 +21,13 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import { signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs.js";
-import type { BgmMountParams, ConcatParams, LoudnessParams } from "../jobs/postProdInput";
+import {
+  bgmMountParamsSchema,
+  isSafePostProdVolumeExpr,
+  type RawBgmMountParams,
+  type ConcatParams,
+  type LoudnessParams,
+} from "../jobs/postProdInput";
 
 const execFileAsync = promisify(execFile);
 
@@ -294,53 +300,97 @@ export async function concatClips(
 
 // ---------------------------------------------------------------- BGM 贴装
 
+export type BgmFilterPlan = {
+  filterGraph: string;
+  entrySec: number;
+  seekSec: number;
+  fadeOutStartSec: number;
+};
+
+/**
+ * 生成 BGM 音轨施工链。独立导出是为了用纯测试钉住“不报错但全体错位”的顺序：
+ * atrim/seek → asetpts → adelay → volume → fade。
+ */
+export function buildBgmFilterPlan(input: RawBgmMountParams, video: {
+  durationSec: number;
+  hasAudio: boolean;
+}): BgmFilterPlan {
+  // 服务函数也可能被旧任务/内部调用直接进入；边界再次归一，不能只依赖路由默认值。
+  const normalized = bgmMountParamsSchema.parse(input);
+  const durationSec = Math.max(0.1, Number(video.durationSec) || 0.1);
+  const entrySec = Math.min(
+    Math.max(0, Number(normalized.entrySec) || 0),
+    Math.max(0, durationSec - 0.1),
+  );
+  const seekSec = Math.max(0, Number(normalized.bgmSeekSec) || 0);
+  const audibleSec = Math.max(0.1, durationSec - entrySec);
+  const fadeInSec = Math.min(Math.max(0, Number(normalized.fadeInSec) || 0), audibleSec);
+  const fadeOutSec = Math.min(Math.max(0, Number(normalized.fadeOutSec) || 0), audibleSec);
+  const fadeOutStartSec = Math.max(entrySec, durationSec - fadeOutSec);
+  const delayMs = Math.round(entrySec * 1000);
+
+  const rawExpression = String(normalized.volumeExpr || "").trim();
+  if (rawExpression && !isSafePostProdVolumeExpr(rawExpression)) {
+    throw new Error("卡点音量表达式格式不正确");
+  }
+  const volumeFilter = rawExpression
+    ? `volume='${rawExpression}':eval=frame`
+    : `volume=${normalized.bgmVolume}`;
+
+  const bgmFilters = [
+    // seek 和 end 都落在 BGM 自己的时间轴；循环输入保证短音乐可覆盖整片。
+    `atrim=start=${seekSec.toFixed(3)}:end=${(seekSec + audibleSec).toFixed(3)}`,
+    "asetpts=PTS-STARTPTS",
+    `adelay=${delayMs}|${delayMs}`,
+    // 卡点表是片内时间，必须在 adelay 之后逐帧求值。
+    volumeFilter,
+  ];
+  if (fadeInSec > 0) {
+    bgmFilters.push(`afade=t=in:st=${entrySec.toFixed(3)}:d=${fadeInSec.toFixed(3)}`);
+  }
+  if (fadeOutSec > 0) {
+    bgmFilters.push(`afade=t=out:st=${fadeOutStartSec.toFixed(3)}:d=${fadeOutSec.toFixed(3)}`);
+  }
+  bgmFilters.push(`apad`, `atrim=0:${durationSec.toFixed(3)}`);
+
+  const voiceSource = video.hasAudio ? "[0:a]" : "[2:a]";
+  const voiceChain =
+    `${voiceSource}apad,atrim=0:${durationSec.toFixed(3)},asetpts=PTS-STARTPTS,`
+    + "asplit=2[voxmix][voxkey]";
+  // 旧入口没有独立对白轨，继续保留原音侧链；真实对白窗同时由 volumeExpr 手动压低。
+  const duck = { threshold: 0.035, ratio: 7, attack: 6, release: 280 };
+  const mixChain =
+    `[bg][voxkey]sidechaincompress=threshold=${duck.threshold}:ratio=${duck.ratio}:`
+    + `attack=${duck.attack}:release=${duck.release}[bgd];`
+    + "[voxmix][bgd]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.95[mix]";
+
+  return {
+    filterGraph: `[1:a]${bgmFilters.join(",")}[bg];${voiceChain};${mixChain}`,
+    entrySec,
+    seekSec,
+    fadeOutStartSec,
+  };
+}
+
 export async function mountBgm(
-  input: BgmMountParams,
+  input: RawBgmMountParams,
   userId: string,
   options?: PostProdRunOptions,
 ): Promise<{ gcsUri: string; url: string; bytes: number; durationSec: number }> {
   const signal = options?.signal ?? NEVER_ABORT;
+  const normalized = bgmMountParamsSchema.parse(input);
   const tmpDir = await mkdtemp(path.join(tmpdir(), "pp-bgm-"));
   try {
     const vPath = path.join(tmpDir, "video.mp4");
     const bPath = path.join(tmpDir, "bgm.audio");
-    await fetchPostProdSourceToFile(input.videoUri, vPath, { signal });
-    await fetchPostProdSourceToFile(input.bgmUri, bPath, { signal });
+    await fetchPostProdSourceToFile(normalized.videoUri, vPath, { signal });
+    await fetchPostProdSourceToFile(normalized.bgmUri, bPath, { signal });
     const meta = await probe(vPath, signal);
     const D = meta.durationSec;
-
-    const gain = input.bgmVolume;
-    const entry = Math.min(input.entrySec, Math.max(0, D - 0.1));
-    const fadeIn = input.fadeInSec;
-    const fadeOutSec = Math.min(input.fadeOutSec, D);
-    /** 淡出按完整视频时间线定位:晚入场也对齐片尾 */
-    const fadeOutStart = Math.max(entry, D - fadeOutSec);
-    const delayMs = Math.round(entry * 1000);
-    /** 0.48 规侧链配方常量(钥匙=原对白轨) */
-    const DUCK = { threshold: 0.035, ratio: 7, attack: 6, release: 280 };
-
-    /**
-     * 时间线整理(审阅清单七):
-     * 音乐: stream_loop 循环 → atrim 到所需长度 → adelay 进场 → 按完整时间线
-     *       afade 淡入/淡出 → apad → atrim 到视频总时长;
-     * 原音: (无音轨用静音源) apad → atrim 到视频总时长;
-     * 成片长度以视频轨为准。
-     */
-    const musicNeedSec = Math.max(0.1, D - entry);
-    const bgmChain =
-      `[1:a]atrim=0:${musicNeedSec.toFixed(3)},asetpts=PTS-STARTPTS,volume=${gain},` +
-      `adelay=${delayMs}|${delayMs},` +
-      `afade=t=in:st=${entry.toFixed(3)}:d=${fadeIn.toFixed(3)},` +
-      `afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${fadeOutSec.toFixed(3)},` +
-      `apad,atrim=0:${D.toFixed(3)}[bg]`;
-    const voiceSrc = meta.hasAudio ? "[0:a]" : "[2:a]";
-    // 对白轨分两路:一路做侧链钥匙,一路进混音(滤镜输出标签只能消费一次)
-    const voiceChain =
-      `${voiceSrc}apad,atrim=0:${D.toFixed(3)},asetpts=PTS-STARTPTS,asplit=2[voxmix][voxkey]`;
-    const mixChain =
-      `[bg][voxkey]sidechaincompress=threshold=${DUCK.threshold}:ratio=${DUCK.ratio}:` +
-      `attack=${DUCK.attack}:release=${DUCK.release}[bgd];` +
-      `[voxmix][bgd]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.95[mix]`;
+    const filterPlan = buildBgmFilterPlan(normalized, {
+      durationSec: D,
+      hasAudio: meta.hasAudio,
+    });
 
     const args: string[] = [
       "-y",
@@ -353,7 +403,7 @@ export async function mountBgm(
     }
     const outPath = path.join(tmpDir, "out.mp4");
     args.push(
-      "-filter_complex", `${bgmChain};${voiceChain};${mixChain}`,
+      "-filter_complex", filterPlan.filterGraph,
       "-map", "0:v", "-map", "[mix]",
       "-c:v", "copy",
       "-c:a", "aac", "-b:a", "256k",

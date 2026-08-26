@@ -16,8 +16,18 @@ import {
 } from "./_core/trpc";
 import { TRPCError } from "@trpc/server";
 import { postProdJobInputSchema } from "./jobs/postProdInput";
-import { getJobByIdStrict, listPostProdJobsForUser } from "./jobs/repository";
+import {
+  getJobByIdStrict,
+  listManhuaBgmJobsForUser,
+  listPostProdJobsForUser,
+} from "./jobs/repository";
 import { buildPostProdJobResponse } from "./services/postProdJobResponse";
+import {
+  buildManhuaBgmJobInput,
+  isSameManhuaBgmSubmission,
+  manhuaBgmBriefSchema,
+} from "./jobs/manhuaBgmJobInput.js";
+import { buildScoringRoomBrief } from "./services/manhuaScoringRoom.js";
 import { enhancePromptForEngine, PROMPT_ENHANCE_CREDITS, type PromptEnhanceResult } from "./services/promptEnhance";
 import {
   claimPromptEnhanceFailed,
@@ -198,7 +208,12 @@ import { generateVideo, isVeoAvailable } from "./veo";
 import { isGeminiAudioAvailable, analyzeAudioWithGemini } from "./gemini-audio";
 import { executeProviderFallback } from "./services/provider-manager";
 import { autoCropOldPhoto } from "./services/oldPhotoAutoCrop.js";
-import { createGcsSignedUploadUrl, uploadBufferToGcs, resolvePdfExportBucketName } from "./services/gcs";
+import {
+  createGcsSignedUploadUrl,
+  uploadBufferToGcs,
+  resolvePdfExportBucketName,
+  signGsUriV4ReadUrl,
+} from "./services/gcs";
 import { fetchPdfBufferFromWorker, getPdfWorkerFetchTimeoutMs } from "./services/pdfWorkerClient";
 import { buildStage1StrategicHandoffForStage2 } from "./services/stage1StrategicHandoff.js";
 import { invokePlatformFollowUpGpt55 } from "./services/platformFollowUpLlm.js";
@@ -2905,6 +2920,60 @@ function assertHomePhotoResultBrowserReadable(imageUrl: string): string {
   return url;
 }
 
+function buildManhuaBgmJobResponse(
+  job: Awaited<ReturnType<typeof listManhuaBgmJobsForUser>>[number],
+) {
+  const rawInput =
+    job.input && typeof job.input === "object" && !Array.isArray(job.input)
+      ? (job.input as Record<string, unknown>)
+      : {};
+  const params =
+    rawInput.params && typeof rawInput.params === "object" && !Array.isArray(rawInput.params)
+      ? (rawInput.params as Record<string, unknown>)
+      : {};
+  const brief = manhuaBgmBriefSchema.safeParse(params.brief);
+  const rawOutput =
+    job.output && typeof job.output === "object" && !Array.isArray(job.output)
+      ? (job.output as Record<string, unknown>)
+      : {};
+  const terminal =
+    rawOutput.terminalOutput &&
+    typeof rawOutput.terminalOutput === "object" &&
+    !Array.isArray(rawOutput.terminalOutput)
+      ? (rawOutput.terminalOutput as Record<string, unknown>)
+      : rawOutput;
+  const variants = Array.isArray(terminal.variants)
+    ? terminal.variants.flatMap((rawVariant) => {
+        if (!rawVariant || typeof rawVariant !== "object" || Array.isArray(rawVariant)) return [];
+        const variant = rawVariant as Record<string, unknown>;
+        const gcsUri = String(variant.gcsUri || "").trim();
+        const index = Number(variant.index);
+        if (!gcsUri.startsWith("gs://") || !Number.isInteger(index) || index < 0) return [];
+        return [{
+          index,
+          gcsUri,
+          previewUrl: signGsUriV4ReadUrl(gcsUri, 24 * 3600),
+          bytes: Math.max(0, Number(variant.bytes) || 0),
+          structure:
+            variant.structure && typeof variant.structure === "object" && !Array.isArray(variant.structure)
+              ? variant.structure
+              : null,
+        }];
+      })
+    : [];
+  return {
+    jobId: job.id,
+    status: job.status,
+    error: job.error,
+    titleZh: brief.success ? brief.data.title : "漫剧配乐",
+    durationSec: brief.success ? brief.data.duration : 0,
+    briefDigest: String(params.briefDigest || terminal.briefDigest || ""),
+    variants,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+  };
+}
+
 export const appRouter = router({
   // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
   system: systemRouter,
@@ -4339,6 +4408,97 @@ export const appRouter = router({
       .query(async ({ ctx, input }) => {
         const rows = await listPostProdJobsForUser(String(ctx.user.id), input.limit);
         return rows.map((row) => buildPostProdJobResponse(row)).filter(Boolean);
+      }),
+
+    /** 配乐 brief 为纯确定性编译，零上游调用；计费口径拍板前仅内部账号可见。 */
+    draftManhuaBgmBrief: adminProcedure
+      .input(
+        z.object({
+          laneZh: z.string().trim().min(1).max(120).default("自定义剧情"),
+          durationSec: z.number().min(1).max(3600),
+          moods: z.array(z.enum(["蓄力", "冲突", "反转", "收束"])).min(1).max(12),
+          moodArcZh: z.string().trim().max(1000).optional(),
+          endingZh: z.string().trim().max(500).optional(),
+          tempoPlanZh: z.string().trim().max(500).optional(),
+          bpm: z.number().int().min(30).max(240).optional(),
+          styleAnchorZh: z.string().trim().max(300).optional(),
+          titleZh: z.string().trim().max(80).optional(),
+          hasSilenceBreak: z.boolean().optional(),
+        }),
+      )
+      .mutation(({ input }) => ({ brief: buildScoringRoomBrief(input) })),
+
+    /** 同一次确认只建一条任务；相同编号只有内容摘要一致时才能恢复。 */
+    queueManhuaBgm: adminProcedure
+      .input(
+        z.object({
+          billingRequestId: z.string().uuid(),
+          brief: manhuaBgmBriefSchema,
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const jobInput = buildManhuaBgmJobInput(input);
+        const jobId = `bgm_${input.billingRequestId.replace(/-/g, "")}`;
+        try {
+          await createJobRecord({
+            id: jobId,
+            userId: String(ctx.user.id),
+            type: "audio",
+            provider: "evolink-suno-v55",
+            input: jobInput,
+          });
+        } catch (error) {
+          const existing = await getJobByIdStrict(jobId).catch(() => null);
+          if (
+            !existing ||
+            existing.type !== "audio" ||
+            String(existing.userId) !== String(ctx.user.id) ||
+            !isSameManhuaBgmSubmission(existing.input, jobInput)
+          ) {
+            console.error("[manhua-bgm] create job failed:", error);
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "本次配乐确认未能建立，请刷新后重新确认",
+            });
+          }
+          return buildManhuaBgmJobResponse(existing);
+        }
+        const created = await getJobByIdStrict(jobId);
+        if (!created) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "配乐任务写入后无法读取",
+          });
+        }
+        return buildManhuaBgmJobResponse(created);
+      }),
+
+    getManhuaBgmJob: adminProcedure
+      .input(z.object({ jobId: z.string().min(1).max(100) }))
+      .query(async ({ ctx, input }) => {
+        const job = await getJobByIdStrict(input.jobId);
+        if (!job || job.type !== "audio") {
+          throw new TRPCError({ code: "NOT_FOUND", message: "配乐任务不存在" });
+        }
+        if (String(job.userId) !== String(ctx.user.id)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "无权查看此任务" });
+        }
+        if (
+          !job.input ||
+          typeof job.input !== "object" ||
+          Array.isArray(job.input) ||
+          (job.input as { action?: unknown }).action !== "manhua_bgm_v55"
+        ) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "配乐任务格式不可用" });
+        }
+        return buildManhuaBgmJobResponse(job);
+      }),
+
+    listManhuaBgmJobs: adminProcedure
+      .input(z.object({ limit: z.number().int().min(1).max(30).default(10) }))
+      .query(async ({ ctx, input }) => {
+        const rows = await listManhuaBgmJobsForUser(String(ctx.user.id), input.limit);
+        return rows.map(buildManhuaBgmJobResponse);
       }),
 
     /**
@@ -9484,8 +9644,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       }),
 
     /**
-     * 对白配音试听（管理员限定）。计费未拍板前不对用户开放，防免费成本洞；
-     * 情绪/音效靠 input 内联标签，字段纪律见 qwenDialogueTts.ts 顶注。
+     * 对白配音试听（管理员限定）。只走套餐：新加坡优先、明确 4xx 才换北京；
+     * 网络/5xx/下载中断不换区，避免结果未知时重复合成。情绪写在 input 标签内。
      */
     manhuaDialogueTtsPreview: adminProcedure
       .input(
@@ -9495,21 +9655,30 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           seed: z.number().int().optional(),
         }),
       )
-      .mutation(async ({ input }) => {
-        const { synthesizeQwenDialogue, QWEN_TTS_SYSTEM_VOICES } = await import(
-          "./services/qwenDialogueTts.js"
+      .mutation(async ({ input, ctx }) => {
+        const { synthesizeTokenPlanDialogue } = await import(
+          "./services/tokenPlanDialogueTts.js"
         );
         try {
-          return await synthesizeQwenDialogue({
+          const result = await synthesizeTokenPlanDialogue({
             input: input.input,
-            voice: input.voice || QWEN_TTS_SYSTEM_VOICES[0].id,
+            voice: input.voice || "qwen-audio-3.0-tts-plus-longcanzhuyue",
+            ownerUserId: Number(ctx.user.id),
             seed: input.seed,
+            signal: ctx.clientDisconnected,
           });
+          return {
+            audioUrl: result.audioUrl,
+            gcsUri: result.gcsUri,
+            bytes: result.bytes,
+            voice: result.voice,
+            voiceGate: result.voiceGate,
+          };
         } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
+          console.error("[manhua-dialogue-tts] preview failed:", err);
           throw new TRPCError({
             code: "SERVICE_UNAVAILABLE",
-            message: `对白配音暂时不可用：${msg.slice(0, 200)}`,
+            message: "对白配音暂时不可用；未通过验声的音频不会进入素材库",
           });
         }
       }),

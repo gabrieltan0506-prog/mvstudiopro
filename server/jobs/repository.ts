@@ -216,6 +216,68 @@ export async function recoverInterruptedManhuaTemplateLearnJobsOnStartup(): Prom
   );
 }
 
+/**
+ * 服务启动时恢复配乐异步任务。已拿到上游 taskId 的只续查原单；没有 taskId 时
+ * 无法判断付费 POST 是否已经成功，必须进入待核对，绝不自动再建一单。
+ */
+export async function recoverInterruptedManhuaBgmJobsOnStartup(): Promise<{
+  resumed: number;
+  completed: number;
+  manual: number;
+}> {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable — cannot recover manhua bgm jobs");
+  const rows = await db
+    .select()
+    .from(jobs)
+    .where(
+      and(
+        eq(jobs.type, "audio"),
+        eq(jobs.status, "running"),
+        sql`(${jobs.input}::jsonb->>'action') = 'manhua_bgm_v55'`,
+      ),
+    );
+  const { planInterruptedManhuaBgmRecovery } = await import("./manhuaBgmRecovery.js");
+  const result = { resumed: 0, completed: 0, manual: 0 };
+  for (const row of rows) {
+    const decision = planInterruptedManhuaBgmRecovery(parseMaybeJson(row.output));
+    if (decision.kind === "complete") {
+      const updated = await db
+        .update(jobs)
+        .set({
+          status: "succeeded",
+          error: null,
+          output: decision.terminalOutput as Job["output"],
+          updatedAt: new Date(),
+        })
+        .where(and(eq(jobs.id, row.id), eq(jobs.status, "running")))
+        .returning({ id: jobs.id });
+      result.completed += updated.length;
+      continue;
+    }
+    if (decision.kind === "resume") {
+      const updated = await db
+        .update(jobs)
+        .set({
+          status: "queued",
+          error: "服务重启，继续查询原配乐任务",
+          updatedAt: new Date(),
+        })
+        .where(and(eq(jobs.id, row.id), eq(jobs.status, "running")))
+        .returning({ id: jobs.id });
+      result.resumed += updated.length;
+      continue;
+    }
+    const updated = await db
+      .update(jobs)
+      .set({ status: "failed", error: decision.reason, updatedAt: new Date() })
+      .where(and(eq(jobs.id, row.id), eq(jobs.status, "running")))
+      .returning({ id: jobs.id });
+    result.manual += updated.length;
+  }
+  return result;
+}
+
 /** 当前用户最近的学习任务：页面刷新/关闭后可从服务端恢复全部运行、排队及刚结束任务。 */
 export async function listManhuaTemplateLearnJobsForUser(
   userId: string,
@@ -638,6 +700,31 @@ export async function listPostProdJobsForUser(
   }
 }
 
+/** 本人的漫剧配乐任务；服务端是真源，刷新后据此恢复，不能只信 localStorage。 */
+export async function listManhuaBgmJobsForUser(
+  userId: string,
+  limit = 10,
+): Promise<NormalizedJob[]> {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable — cannot list manhua bgm jobs");
+  const rows = await db
+    .select()
+    .from(jobs)
+    .where(
+      and(
+        eq(jobs.userId, userId),
+        eq(jobs.type, "audio"),
+        sql`(${jobs.input}::jsonb->>'action') = 'manhua_bgm_v55'`,
+      ),
+    )
+    .orderBy(
+      sql`case when ${jobs.status} in ('queued', 'running') then 0 else 1 end`,
+      desc(jobs.updatedAt),
+    )
+    .limit(Math.max(1, Math.min(30, Math.floor(limit) || 10)));
+  return rows.map(normalizeJob);
+}
+
 /** 独立通道任务类型:主队列不领取,各自专用领取函数串行消化 */
 export const MAIN_QUEUE_EXCLUDED_TYPES = ["pdf_export", "post_prod"] as const;
 
@@ -1017,6 +1104,31 @@ export async function patchJobRunningProgress(jobId: string, patch: Record<strin
   } catch (error) {
     console.warn("[JobsRepo] patchJobRunningProgress failed:", error);
   }
+}
+
+/**
+ * 付费异步任务的关键进度写入：taskId 写不进 DB 就必须停，不能继续跑到重启后再付一次。
+ */
+export async function patchJobRunningProgressStrict(
+  jobId: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable — cannot persist job progress");
+  const current = await getJobByIdStrict(jobId);
+  if (!current || current.status !== "running") {
+    throw new Error(`Job ${jobId} is not running`);
+  }
+  const previous =
+    current.output && typeof current.output === "object" && !Array.isArray(current.output)
+      ? { ...(current.output as Record<string, unknown>) }
+      : {};
+  const updated = await db
+    .update(jobs)
+    .set({ output: { ...previous, ...patch } as Job["output"], updatedAt: new Date() })
+    .where(and(eq(jobs.id, jobId), eq(jobs.status, "running")))
+    .returning({ id: jobs.id });
+  if (updated.length !== 1) throw new Error(`Job ${jobId} progress was not persisted`);
 }
 
 export async function requeueJob(id: string, error: string): Promise<void> {
