@@ -208,10 +208,10 @@ console.log(`已入库      ${alreadyIngested.size} 集 [${[...alreadyIngested].
 console.log(`本次要跑    ${todo.length} 集 [${todo.map((e) => e.episodeIndex).join(",") || "—"}]`);
 console.log(`总时长      ${Math.round((plan?.totalDurationSec || 0) / 60)} 分钟`);
 console.log(`视觉视频分片  ${plan?.totalSegments || 0}`);
-console.log(`视觉模型请求  ${plan?.totalVisualCalls || 0}   ← 多集/多分片按输入预算装入同一次请求`);
-console.log(`音频模型请求  ${(plan?.totalAudioChunks || 0) * 2}   ← 每个音频分片分别分析单声道与立体声`);
-console.log(`模型API总数   ${plan?.totalModelCalls || 0}   ← 视觉 + 双路音频 + 系列聚合`);
-console.log(`单段上限    ${NATIVE_DEEP_READ_MAX_SEGMENT_SEC}s（自适应 ≤10fps · 目标约1800帧）`);
+console.log(`视觉模型请求  ${plan?.totalVisualCalls || 0}   ← Gemini 3.1 Pro 每段一次调用（不再多段合包）`);
+console.log(`音频模型请求  0   ← 音轨由视觉调用亲耳直出，无独立音频调用`);
+console.log(`模型API总数   ${plan?.totalModelCalls || 0}   ← 视觉（每段一次） + 系列聚合`);
+console.log(`单段上限    ${NATIVE_DEEP_READ_MAX_SEGMENT_SEC}s（两档 fps：≤180s→10，否则5 · 360s×5=1800帧）`);
 console.log(`计划确认码   ${plan?.planHash || "—"}`);
 console.log(`待核对占位   ${pendingClaims.length} 集 [${pendingClaims.map((e) => e.episodeIndex).join(",") || "—"}]`);
 console.log(`模式        ${isGo ? "🔴 真跑（会花钱）" : "🟢 干跑（不发任何模型请求）"}`);
