@@ -36,6 +36,8 @@ export type ManhuaNativeModelReceipt = {
   costUsd?: number;
   priceEquivalentCny?: number;
   finishReason?: string;
+  /** EvoLink 兜底为 1fps 降级读取（忽略 videoMetadata.fps）；降级调用必须带标 */
+  degraded?: boolean;
   errorZh?: string;
   providerError?: ManhuaNativeProviderErrorReceipt;
 };

@@ -9,6 +9,21 @@ export const MANHUA_NATIVE_AUDIO_SOURCE_VARIANTS = ["mono_16k", "stereo_32k"] as
 export type ManhuaNativeAudioSourceVariant =
   (typeof MANHUA_NATIVE_AUDIO_SOURCE_VARIANTS)[number];
 
+/**
+ * 0826 换代：视觉精读改 Gemini 3.1 Pro 直读视频后，音轨由同一次视觉调用
+ * **亲耳所听**产出（不再有 Gemini 3.6 Flash 双声道取证 + Qwen 仲裁两步）。
+ * 旧双路常量必须保留 —— 已入库卡的读取门还要按旧口径校验旧一代卡。
+ */
+export const MANHUA_NATIVE_AUDIO_DIRECT_MODEL = "gemini-3.1-pro-preview" as const;
+export const MANHUA_NATIVE_AUDIO_DIRECT_ROUTES = [
+  "vertex_gcs_video",
+  "evolink_gemini_video",
+] as const;
+export type ManhuaNativeAudioDirectRoute =
+  (typeof MANHUA_NATIVE_AUDIO_DIRECT_ROUTES)[number];
+export const MANHUA_NATIVE_AUDIO_DIRECT_ALIGNMENT = "gemini_native_video_direct_v1" as const;
+export const MANHUA_NATIVE_AUDIO_DIRECT_SOURCE_VARIANTS = ["native_video"] as const;
+
 /** 以时间分段；32kHz 立体声 64kbps 的 45 分钟约 21.6MB，低于 30MB 上限。 */
 export const MANHUA_NATIVE_AUDIO_CHUNK_MAX_SEC = 45 * 60;
 export const MANHUA_NATIVE_AUDIO_MAX_TRACKS = 128;
@@ -57,12 +72,18 @@ export type ManhuaNativeAudioUsage = {
 };
 
 export type ManhuaNativeAudioAnalysis = {
-  model: typeof MANHUA_NATIVE_AUDIO_MODEL;
-  resolverModel: typeof MANHUA_NATIVE_AUDIO_RESOLVER_MODEL;
-  resolverRoute: typeof MANHUA_NATIVE_AUDIO_RESOLVER_ROUTE;
-  sourceVariants: typeof MANHUA_NATIVE_AUDIO_SOURCE_VARIANTS;
+  model: typeof MANHUA_NATIVE_AUDIO_MODEL | typeof MANHUA_NATIVE_AUDIO_DIRECT_MODEL;
+  resolverModel:
+    | typeof MANHUA_NATIVE_AUDIO_RESOLVER_MODEL
+    | typeof MANHUA_NATIVE_AUDIO_DIRECT_MODEL;
+  resolverRoute: typeof MANHUA_NATIVE_AUDIO_RESOLVER_ROUTE | ManhuaNativeAudioDirectRoute;
+  sourceVariants:
+    | typeof MANHUA_NATIVE_AUDIO_SOURCE_VARIANTS
+    | typeof MANHUA_NATIVE_AUDIO_DIRECT_SOURCE_VARIANTS;
   hasAudio: boolean;
-  alignmentMethod: typeof MANHUA_NATIVE_AUDIO_ALIGNMENT;
+  alignmentMethod:
+    | typeof MANHUA_NATIVE_AUDIO_ALIGNMENT
+    | typeof MANHUA_NATIVE_AUDIO_DIRECT_ALIGNMENT;
   durationSec: number;
   chunkCount: number;
   audioTrack: ManhuaNativeAudioTrack[];
@@ -291,11 +312,14 @@ function mergeContinuousAudioTracks(
   }));
 }
 
-export function mergeManhuaNativeAudioChunks(input: {
+function mergeManhuaNativeAudioChunksCore(input: {
   durationSec: number;
   chunks: readonly ManhuaNativeAudioChunkAnalysis[];
   usage: ManhuaNativeAudioUsage;
-}): ManhuaNativeAudioAnalysis {
+}): Omit<
+  ManhuaNativeAudioAnalysis,
+  "model" | "resolverModel" | "resolverRoute" | "sourceVariants" | "alignmentMethod"
+> {
   if (!input.chunks.length) throw new Error("音频分析分段为空");
   const durationSec = Math.max(1, Math.floor(Number(input.durationSec) || 0));
   const allTracks = input.chunks.flatMap((row) => row.audioTrack)
@@ -307,12 +331,7 @@ export function mergeManhuaNativeAudioChunks(input: {
   const join = (pick: (row: ManhuaNativeAudioChunkAnalysis) => string, max: number) =>
     cut(input.chunks.map(pick).filter(Boolean).join("；"), max);
   return {
-    model: MANHUA_NATIVE_AUDIO_MODEL,
-    resolverModel: MANHUA_NATIVE_AUDIO_RESOLVER_MODEL,
-    resolverRoute: MANHUA_NATIVE_AUDIO_RESOLVER_ROUTE,
-    sourceVariants: MANHUA_NATIVE_AUDIO_SOURCE_VARIANTS,
     hasAudio: true,
-    alignmentMethod: MANHUA_NATIVE_AUDIO_ALIGNMENT,
     durationSec,
     chunkCount: input.chunks.length,
     audioTrack: mergeContinuousAudioTracks(allTracks, MANHUA_NATIVE_AUDIO_MAX_TRACKS),
@@ -321,6 +340,44 @@ export function mergeManhuaNativeAudioChunks(input: {
     reusableAudioZh: join((row) => row.reusableAudioZh, 1_000),
     genAudioHintZh: join((row) => row.genAudioHintZh, 1_000),
     usage: input.usage,
+  };
+}
+
+export function mergeManhuaNativeAudioChunks(input: {
+  durationSec: number;
+  chunks: readonly ManhuaNativeAudioChunkAnalysis[];
+  usage: ManhuaNativeAudioUsage;
+}): ManhuaNativeAudioAnalysis {
+  return {
+    ...mergeManhuaNativeAudioChunksCore(input),
+    model: MANHUA_NATIVE_AUDIO_MODEL,
+    resolverModel: MANHUA_NATIVE_AUDIO_RESOLVER_MODEL,
+    resolverRoute: MANHUA_NATIVE_AUDIO_RESOLVER_ROUTE,
+    sourceVariants: MANHUA_NATIVE_AUDIO_SOURCE_VARIANTS,
+    alignmentMethod: MANHUA_NATIVE_AUDIO_ALIGNMENT,
+  };
+}
+
+/**
+ * 新一代（Gemini 直读）集卡音轨：视觉调用亲耳所听、按段产出、代码侧换算绝对秒。
+ * usage 里的计费为 0 —— 音轨 token 已计入视觉调用回执，此处再计一遍就是双计。
+ */
+export function mergeManhuaNativeDirectAudioChunks(input: {
+  durationSec: number;
+  chunks: readonly ManhuaNativeAudioChunkAnalysis[];
+  usage: ManhuaNativeAudioUsage;
+  route: ManhuaNativeAudioDirectRoute;
+}): ManhuaNativeAudioAnalysis {
+  if (!MANHUA_NATIVE_AUDIO_DIRECT_ROUTES.includes(input.route)) {
+    throw new Error("原生直读音轨 route 无效");
+  }
+  return {
+    ...mergeManhuaNativeAudioChunksCore(input),
+    model: MANHUA_NATIVE_AUDIO_DIRECT_MODEL,
+    resolverModel: MANHUA_NATIVE_AUDIO_DIRECT_MODEL,
+    resolverRoute: input.route,
+    sourceVariants: MANHUA_NATIVE_AUDIO_DIRECT_SOURCE_VARIANTS,
+    alignmentMethod: MANHUA_NATIVE_AUDIO_DIRECT_ALIGNMENT,
   };
 }
 
@@ -343,19 +400,79 @@ export function noAudioManhuaNativeAnalysis(durationSec: number): ManhuaNativeAu
   };
 }
 
-/** GCS 卡片读取门：双路、合并器、时间轴和用量证据缺一不可。 */
+/**
+ * 新一代直读音轨装配：每个视觉分段返回一份局部秒位的音轨裁决
+ * （chunkIndex=段号），这里做代码侧校验、绝对秒换算与整集合并。
+ * 任一段缺失、重复或秒位不齐都关闭式拒绝——不写半截音轨。
+ */
+export function finalizeManhuaNativeDirectAudioAnalysis(input: {
+  durationSec: number;
+  /** 视觉分段边界（绝对秒），与 chunkIndex 一一对应。 */
+  chunks: readonly ManhuaNativeAudioChunk[];
+  resolvedChunks: ReadonlyArray<{ chunkIndex: number; analysis: unknown }>;
+  usage: ManhuaNativeAudioUsage;
+  route: ManhuaNativeAudioDirectRoute;
+}): ManhuaNativeAudioAnalysis {
+  const expectedIndexes = input.chunks.map((row) => row.index).sort((a, b) => a - b);
+  const resolvedByIndex = new Map<number, unknown>();
+  for (const row of input.resolvedChunks) {
+    if (resolvedByIndex.has(row.chunkIndex)) {
+      throw new Error(`原生直读重复返回第${row.chunkIndex + 1}段音轨，拒绝入库`);
+    }
+    resolvedByIndex.set(row.chunkIndex, row.analysis);
+  }
+  const actualIndexes = Array.from(resolvedByIndex.keys()).sort((a, b) => a - b);
+  if (JSON.stringify(actualIndexes) !== JSON.stringify(expectedIndexes)) {
+    throw new Error("原生直读未返回完整的分段音轨，拒绝入库");
+  }
+  const chunks = input.chunks.map((chunk) =>
+    normalizeManhuaNativeAudioChunkAnalysis({
+      raw: resolvedByIndex.get(chunk.index),
+      chunk,
+    }),
+  );
+  return mergeManhuaNativeDirectAudioChunks({
+    durationSec: input.durationSec,
+    chunks,
+    usage: input.usage,
+    route: input.route,
+  });
+}
+
+/** 素材确无音轨时的新一代空音轨结构；与直读卡同一套 provenance 常量。 */
+export function noAudioManhuaNativeDirectAnalysis(
+  durationSec: number,
+  route: ManhuaNativeAudioDirectRoute,
+): ManhuaNativeAudioAnalysis {
+  return {
+    ...noAudioManhuaNativeAnalysis(durationSec),
+    model: MANHUA_NATIVE_AUDIO_DIRECT_MODEL,
+    resolverModel: MANHUA_NATIVE_AUDIO_DIRECT_MODEL,
+    resolverRoute: route,
+    sourceVariants: MANHUA_NATIVE_AUDIO_DIRECT_SOURCE_VARIANTS,
+    alignmentMethod: MANHUA_NATIVE_AUDIO_DIRECT_ALIGNMENT,
+  };
+}
+
+/** GCS 卡片读取门：来源代际、合并器、时间轴和用量证据缺一不可。两代卡都要能读。 */
 export function parseManhuaNativeAudioAnalysis(raw: unknown): ManhuaNativeAudioAnalysis | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const o = raw as Partial<ManhuaNativeAudioAnalysis>;
   const durationSec = Math.max(1, Math.floor(Number(o.durationSec) || 0));
-  if (
-    o.model !== MANHUA_NATIVE_AUDIO_MODEL
-    || o.resolverModel !== MANHUA_NATIVE_AUDIO_RESOLVER_MODEL
-    || o.resolverRoute !== MANHUA_NATIVE_AUDIO_RESOLVER_ROUTE
-    || o.alignmentMethod !== MANHUA_NATIVE_AUDIO_ALIGNMENT
-    || typeof o.hasAudio !== "boolean"
-    || JSON.stringify(o.sourceVariants) !== JSON.stringify(MANHUA_NATIVE_AUDIO_SOURCE_VARIANTS)
-  ) return undefined;
+  const isLegacyDual =
+    o.model === MANHUA_NATIVE_AUDIO_MODEL
+    && o.resolverModel === MANHUA_NATIVE_AUDIO_RESOLVER_MODEL
+    && o.resolverRoute === MANHUA_NATIVE_AUDIO_RESOLVER_ROUTE
+    && o.alignmentMethod === MANHUA_NATIVE_AUDIO_ALIGNMENT
+    && JSON.stringify(o.sourceVariants) === JSON.stringify(MANHUA_NATIVE_AUDIO_SOURCE_VARIANTS);
+  const isDirect =
+    o.model === MANHUA_NATIVE_AUDIO_DIRECT_MODEL
+    && o.resolverModel === MANHUA_NATIVE_AUDIO_DIRECT_MODEL
+    && MANHUA_NATIVE_AUDIO_DIRECT_ROUTES.includes(o.resolverRoute as ManhuaNativeAudioDirectRoute)
+    && o.alignmentMethod === MANHUA_NATIVE_AUDIO_DIRECT_ALIGNMENT
+    && JSON.stringify(o.sourceVariants)
+      === JSON.stringify(MANHUA_NATIVE_AUDIO_DIRECT_SOURCE_VARIANTS);
+  if ((!isLegacyDual && !isDirect) || typeof o.hasAudio !== "boolean") return undefined;
   const audioTrack = (Array.isArray(o.audioTrack) ? o.audioTrack : [])
     .flatMap((row): ManhuaNativeAudioTrack[] => {
       const parsed = audioTrackSchema.safeParse(row);
@@ -390,11 +507,15 @@ export function parseManhuaNativeAudioAnalysis(raw: unknown): ManhuaNativeAudioA
     } catch {
       return undefined;
     }
-    // 双路完整性下限：每段至少 2 次成功调用。0826 起门禁重试会诚实多计 1–2 次
-    // 已付费调用，等号会把重试过的卡整张拒读，故只卡下限。
+    // 旧双路完整性下限：每段至少 2 次成功调用（0826 起门禁重试会诚实多计，只卡下限）。
+    // 新直读：每段至少 1 次视觉调用；audioInputTokens 取自视觉回执的 AUDIO modality，
+    // Vertex 主线必须 >0（实测 360s 段音频 ≈9,001 tok）；EvoLink 兜底是否回报
+    // modality 明细未实测，不据此拒卡。
+    const callsFloor = isLegacyDual ? chunkCount * 2 : chunkCount;
+    const requireAudioTokens = isLegacyDual || o.resolverRoute === "vertex_gcs_video";
     if (
-      chunkCount < 1 || usage.geminiCalls < chunkCount * 2
-      || usage.audioInputTokens <= 0 || !usage.receiptComplete
+      chunkCount < 1 || usage.geminiCalls < callsFloor
+      || (requireAudioTokens && usage.audioInputTokens <= 0) || !usage.receiptComplete
       || !cut(o.audioBeatStructureZh, 1_000) || !cut(o.reusableAudioZh, 1_000)
       || !cut(o.genAudioHintZh, 1_000)
     ) return undefined;
@@ -402,12 +523,14 @@ export function parseManhuaNativeAudioAnalysis(raw: unknown): ManhuaNativeAudioA
     return undefined;
   }
   return {
-    model: MANHUA_NATIVE_AUDIO_MODEL,
-    resolverModel: MANHUA_NATIVE_AUDIO_RESOLVER_MODEL,
-    resolverRoute: MANHUA_NATIVE_AUDIO_RESOLVER_ROUTE,
-    sourceVariants: MANHUA_NATIVE_AUDIO_SOURCE_VARIANTS,
+    model: o.model!,
+    resolverModel: o.resolverModel!,
+    resolverRoute: o.resolverRoute!,
+    sourceVariants: (isLegacyDual
+      ? MANHUA_NATIVE_AUDIO_SOURCE_VARIANTS
+      : MANHUA_NATIVE_AUDIO_DIRECT_SOURCE_VARIANTS),
     hasAudio: o.hasAudio,
-    alignmentMethod: MANHUA_NATIVE_AUDIO_ALIGNMENT,
+    alignmentMethod: o.alignmentMethod!,
     durationSec,
     chunkCount,
     audioTrack,
