@@ -304,6 +304,10 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 
 **PR #1308 通道换线（已合并，首单仍待验）**：GLM 共享网关收口为 OpenRouter `z-ai/glm-5.3` 主档、新加坡套餐 Qwen 兜底、EvoLink Qwen 末档；Wan 3.0 为 OpenRouter→EvoLink→WaveSpeed，HappyHorse 1.1 为 EvoLink→OpenRouter→WaveSpeed，百炼在途旧单只轮询收尾。提交结果未知时统一转人工对账且不退款，已选通道用 pin 固定，`auto+句柄` 可恢复轮询，镜像失败按瞬态处理；带参考音频/视频的 Wan 请求在真单证明前跳过 OpenRouter，防止锁轨静默丢失。PR 合并前记录为 `pnpm check` 0 错、372 文件 2766 项通过（7 跳过）、两类构建通过；Wan 新 OpenRouter/EvoLink 首单、HappyHorse EvoLink/WaveSpeed 首单及自由画布多图 r2v 首单均未实弹，不能视为线上验收。
 
+## 2026-08-26
+
+**原生精读失败占位自动让位（PR #1316 分支静态验证，待线上真跑）**：正式已学集继续只认 GCS 分集卡，段缓存只用于零费续跑；失败、中止与未执行集在终态按本轮 generation 条件释放 claim，释放未成则补写失败病历，下一轮从最早未入库集原子接管。修复条件创建已落 GCS、响应或读回中断时调用方拿不到释放句柄的孤儿窗口；只有确认 404 才按对象已释放处理，5xx、网络与损坏 JSON 均关闭式报告。任务终态会同步刷新待审卡与已打开的占位面板；CLI 干跑、确认码与真跑统一使用排除健康占位后的可执行清单。`pnpm check`、140 项目标测试、全量 377 文件 2894 项（另 4 跳过）、服务端 build、Vite 生产 build 与 diff check 通过；未调用模型、未做真实 GCS/Fly/浏览器链路验收。
+
 ## 如何更新本文件
 
 合完 PR 或用户改口径后，在**当日**下追加表格行；下一自然日新开 `## YYYY-MM-DD`。  

@@ -15,7 +15,7 @@ import {
   listDouyinMixEpisodesViaWebApi,
 } from "./manhuaLearnDouyinWebApi.js";
 import { listIngestedNativeDeepReadEpisodes } from "./manhuaNativeDeepReadIngest.js";
-import { listNativeDeepReadEpisodeClaims } from "./manhuaNativeDeepReadClaim.js";
+import { listNativeDeepReadEpisodeClaimStates } from "./manhuaNativeDeepReadClaim.js";
 import { isManhuaNativeDeepReadEnabled } from "./manhuaNativeDeepReadRunner.js";
 import { resolveManhuaSeriesKey } from "./manhuaTemplateLearnService.js";
 import type { ManhuaTemplateLearnLlmProvider } from "../../shared/manhuaTemplateLearnFrameVision.js";
@@ -37,7 +37,7 @@ export async function buildNativeDeepReadPlanPreviewFromServices(
     refreshPlaybackUrls: listDouyinAwemePlaybackUrlsViaWebApi,
     probeDurationSec: probeNativeDeepReadDurationSec,
     listIngestedEpisodes: listIngestedNativeDeepReadEpisodes,
-    listClaimedEpisodes: listNativeDeepReadEpisodeClaims,
+    listClaimStates: listNativeDeepReadEpisodeClaimStates,
     resolveSeriesKey: resolveManhuaSeriesKey,
     isExecutionEnabled: isManhuaNativeDeepReadEnabled,
   });

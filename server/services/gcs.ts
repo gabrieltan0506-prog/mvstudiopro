@@ -205,6 +205,11 @@ export async function uploadBufferToGcs(params: {
   bucket?: string;
   /** 任务时限结束时同步中止上传 */
   signal?: AbortSignal;
+  /**
+   * 条件覆写：只有对象仍是指定 generation 才写入。
+   * 用于“读旧版 → 补字段 → 写回”流程，避免把并发产生的新版本覆盖掉。
+   */
+  ifGenerationMatch?: string;
 }): Promise<{ bucket: string; objectName: string; gcsUri: string }> {
   params.signal?.throwIfAborted();
   const bucket = params.bucket || getGcsBucketName();
@@ -217,6 +222,9 @@ export async function uploadBufferToGcs(params: {
   const uploadUrl = new URL(`https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o`);
   uploadUrl.searchParams.set("uploadType", "media");
   uploadUrl.searchParams.set("name", objectName);
+  if (params.ifGenerationMatch) {
+    uploadUrl.searchParams.set("ifGenerationMatch", params.ifGenerationMatch);
+  }
   const userProject = getGcsUserProject();
   if (userProject) {
     uploadUrl.searchParams.set("userProject", userProject);
@@ -256,7 +264,7 @@ export async function uploadBufferToGcsIfAbsent(params: {
   buffer: Buffer;
   contentType: string;
   bucket?: string;
-}): Promise<{ created: boolean }> {
+}): Promise<{ created: boolean; generation?: string }> {
   const bucket = params.bucket || getGcsBucketName();
   if (!bucket) throw new Error("GCS bucket is not configured");
   const objectName = normalizeObjectName(params.objectName);
@@ -286,8 +294,9 @@ export async function uploadBufferToGcsIfAbsent(params: {
     const text = await response.text().catch(() => "");
     throw new Error(`gcs_conditional_upload_failed:${response.status}:${text.slice(0, 300)}`);
   }
-  await response.json().catch(() => null);
-  return { created: true };
+  const metadata = await response.json().catch(() => null) as { generation?: unknown } | null;
+  const generation = String(metadata?.generation || "").trim();
+  return { created: true, ...(generation ? { generation } : {}) };
 }
 
 export async function downloadGcsObject(params: {
@@ -425,13 +434,12 @@ export async function deleteGcsObject(params: {
  * 分两次请求（先 metadata 拿 generation，再按该 generation 取 media），
  * 保证拿到的内容与 generation 是同一版。
  */
-export async function downloadGcsObjectVersioned(params: {
+export async function statGcsObjectVersion(params: {
   gcsUri: string;
-}): Promise<{ buffer: Buffer; bucket: string; objectName: string; generation: string }> {
+}): Promise<{ bucket: string; objectName: string; generation: string; etag?: string }> {
   const { bucket, objectName } = parseGsUri(params.gcsUri);
   const accessToken = await getVertexAccessToken();
   const userProject = getGcsUserProject();
-
   const metaUrl = new URL(
     `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}`,
   );
@@ -440,13 +448,29 @@ export async function downloadGcsObjectVersioned(params: {
     method: "GET",
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!metaRes.ok) {
-    throw new Error(`gcs_stat_failed:${metaRes.status}`);
-  }
-  const meta = (await metaRes.json()) as { generation?: string };
+  if (!metaRes.ok) throw new Error(`gcs_stat_failed:${metaRes.status}`);
+  const meta = (await metaRes.json()) as { generation?: string; etag?: string };
   const generation = String(meta.generation || "").trim();
   if (!generation) throw new Error("gcs_stat_no_generation");
+  return {
+    bucket,
+    objectName,
+    generation,
+    etag: String(meta.etag || "").trim() || undefined,
+  };
+}
 
+export async function downloadGcsObjectVersioned(params: {
+  gcsUri: string;
+}): Promise<{ buffer: Buffer; bucket: string; objectName: string; generation: string }> {
+  const version = await statGcsObjectVersion(params);
+  const { bucket, objectName, generation } = version;
+  const accessToken = await getVertexAccessToken();
+  const userProject = getGcsUserProject();
+  const metaUrl = new URL(
+    `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}`,
+  );
+  if (userProject) metaUrl.searchParams.set("userProject", userProject);
   const mediaUrl = new URL(metaUrl.toString());
   mediaUrl.searchParams.set("alt", "media");
   mediaUrl.searchParams.set("generation", generation);
@@ -523,4 +547,3 @@ export function resolvePdfExportBucketName(): string {
     process.env.GCS_PDF_EXPORT_BUCKET || process.env.GCS_BUCKET_NAME || getGcsBucketName(),
   ).trim() || getGcsBucketName();
 }
-

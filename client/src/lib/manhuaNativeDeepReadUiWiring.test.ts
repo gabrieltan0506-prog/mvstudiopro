@@ -51,6 +51,18 @@ describe("原生精读页面接线", () => {
     expect(PAGE).toContain("旧抽帧任务");
   });
 
+  it("owner 能力只信服务端本次回包；加载中显示中性状态且禁止发车", () => {
+    expect(PAGE).toContain(
+      "manhuaTemplateOwnerCapabilitiesQuery.data?.allowed === true",
+    );
+    expect(PAGE).toContain('{ cacheScope: manhuaLearnUserKey || "anonymous" }');
+    expect(PAGE).not.toContain("readCachedManhuaOwnerPanelFlag");
+    expect(PAGE).not.toContain("writeCachedManhuaOwnerPanelFlag");
+    expect(PAGE).toContain('const ownerTemplateCapabilityPending =');
+    expect(PAGE).toContain('"学习模型：正在确认…"');
+    expect(PAGE).toContain('|| ownerTemplateCapabilityPending');
+  });
+
   it("原生精读徽标显示真实 Qwen 模型，不拿旧抽帧模型冒充", () => {
     expect(PAGE).toContain("学习模型：${MANHUA_NATIVE_DEEP_READ_MODEL_LABEL}");
     expect(LEARN_FLOW).not.toContain("MANHUA_TEMPLATE_FRAME_VISION_LABEL");
@@ -62,6 +74,8 @@ describe("原生精读页面接线", () => {
     expect(PAGE).toContain("manhuaLearnResult.nativeUsage");
     expect(PAGE).toContain("nativeLearnTerminalProposalRefreshSignature");
     expect(PAGE).toContain("await manhuaViralProposalsRefetchRef.current()");
+    expect(PAGE).toContain("await manhuaClaimsRefetchRef.current()");
+    expect(PAGE).toContain("if (!terminalRefreshFailed)");
   });
 
   it("模型、token、成本和原始进度只通过 owner/监管技术详情门展示", () => {
@@ -95,6 +109,7 @@ describe("原生精读页面接线", () => {
   it("轮询 effect 不依赖整颗 query 对象，且无变化快照复用旧引用", () => {
     expect(PAGE).toContain("reuseManhuaLearnServerJobsIfUnchanged(prev, listed.items)");
     expect(PAGE).toContain("manhuaViralProposalsRefetchRef.current = manhuaViralProposalsQuery.refetch");
+    expect(PAGE).toContain("manhuaClaimsRefetchRef.current = manhuaClaimsQuery.refetch");
     const refreshAt = PAGE.indexOf("const refreshManhuaLearnServerJobs = useCallback");
     const stopAt = PAGE.indexOf("const stopFocusedManhuaLearnJob", refreshAt);
     const refreshBlock = PAGE.slice(refreshAt, stopAt);

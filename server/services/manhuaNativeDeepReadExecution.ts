@@ -36,7 +36,13 @@ import {
   listIngestedNativeDeepReadEpisodes,
   type NativeDeepReadIngestResult,
 } from "./manhuaNativeDeepReadIngest.js";
-import { acquireNativeDeepReadEpisodeClaim } from "./manhuaNativeDeepReadClaim.js";
+import {
+  acquireNativeDeepReadEpisodeClaim,
+  recordNativeDeepReadClaimFailure,
+  takeoverNativeDeepReadEpisodeClaim,
+} from "./manhuaNativeDeepReadClaim.js";
+import { clearNativeDeepReadSegmentCacheForEpisode } from "./manhuaNativeDeepReadSegmentCache.js";
+import { statGcsObjectVersion } from "./gcs.js";
 import {
   finalizeManhuaNativeDirectAudioAnalysis,
   noAudioManhuaNativeDirectAnalysis,
@@ -82,6 +88,8 @@ export type NativeDeepReadEpisodeExecution = {
    * 素材接入层已探测成功的直链（含它验证过的 Referer）——后者不能再解析一次。
    */
   resolveNodes: () => Promise<NativeDeepReadMediaNode[]>;
+  /** 计划标记的失败占位自动让位重跑：抢占改走原子接管 */
+  reclaimFailedClaim?: boolean;
   abortSignal?: AbortSignal;
 };
 
@@ -93,7 +101,10 @@ export type NativeDeepReadExecutionDeps = {
   listIngested: typeof listIngestedNativeDeepReadEpisodes;
   isEnabled: typeof isManhuaNativeDeepReadEnabled;
   acquireClaim: typeof acquireNativeDeepReadEpisodeClaim;
+  takeoverClaim: typeof takeoverNativeDeepReadEpisodeClaim;
   aggregateSeries: typeof aggregateNativeDeepReadSeries;
+  clearSegmentCache: typeof clearNativeDeepReadSegmentCacheForEpisode;
+  statSourceVersion: typeof statGcsObjectVersion;
 };
 
 const defaultDeps: NativeDeepReadExecutionDeps = {
@@ -103,8 +114,51 @@ const defaultDeps: NativeDeepReadExecutionDeps = {
   listIngested: listIngestedNativeDeepReadEpisodes,
   isEnabled: isManhuaNativeDeepReadEnabled,
   acquireClaim: acquireNativeDeepReadEpisodeClaim,
+  takeoverClaim: takeoverNativeDeepReadEpisodeClaim,
   aggregateSeries: aggregateNativeDeepReadSeries,
+  clearSegmentCache: clearNativeDeepReadSegmentCacheForEpisode,
+  statSourceVersion: statGcsObjectVersion,
 };
+
+function extractDouyinAwemeId(sourceRef: string): string | undefined {
+  try {
+    const parsed = new URL(sourceRef);
+    if (!/(^|\.)douyin\.com$/i.test(parsed.hostname)) return undefined;
+    const pathMatch = /\/video\/(\d{12,})/.exec(parsed.pathname);
+    return pathMatch?.[1] || parsed.searchParams.get("modal_id") || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 段缓存必须跟媒体内容版本绑定，而不是只跟“看起来稳定”的路径绑定。
+ * GCS 同一路径可覆写，因此纳入 generation/etag；抖音用稳定 awemeId，避免
+ * 搜索参数、分享参数变化造成同一条视频无意义地重买。
+ */
+export async function resolveNativeDeepReadCacheSourceDigest(input: {
+  sourceRef: string;
+  statSourceVersion: typeof statGcsObjectVersion;
+}): Promise<string> {
+  const sourceRef = String(input.sourceRef || "").trim();
+  if (!sourceRef) throw new Error("原生精读缺少稳定媒体来源，未读取段缓存");
+  let identity: Record<string, string>;
+  if (sourceRef.startsWith("gs://")) {
+    const version = await input.statSourceVersion({ gcsUri: sourceRef });
+    identity = {
+      kind: "gcs",
+      uri: sourceRef,
+      generation: version.generation,
+      etag: version.etag || "",
+    };
+  } else {
+    const awemeId = extractDouyinAwemeId(sourceRef);
+    identity = awemeId
+      ? { kind: "douyin_aweme", awemeId }
+      : { kind: "source_ref", sourceRef };
+  }
+  return crypto.createHash("sha256").update(JSON.stringify(identity), "utf8").digest("hex");
+}
 
 /** 跑一集并入库。门禁不过直接抛，不写半截卡 */
 export type NativeDeepReadEpisodeOutcomeCost = {
@@ -226,8 +280,30 @@ export async function executeAndIngestNativeDeepReadEpisode(
 
   // 原子占位必须在 runner 之前：#1295 的 ifGenerationMatch 在模型跑完之后，
   // 只能防卡片覆盖，防不了两个进程各付一次费
-  const claim = await deps.acquireClaim(input.seriesKey, input.episodeIndex);
+  const claim = input.reclaimFailedClaim
+    ? await deps.takeoverClaim(input.seriesKey, input.episodeIndex)
+    : await deps.acquireClaim(input.seriesKey, input.episodeIndex);
   const startedAt = Date.now();
+  const releaseSingleClaimAfterFailure = async (errorZh: string): Promise<void> => {
+    try {
+      await claim.releaseAfterSuccess();
+    } catch (releaseError) {
+      try {
+        await recordNativeDeepReadClaimFailure(
+          input.seriesKey,
+          input.episodeIndex,
+          claim.runId,
+          errorZh,
+        );
+      } catch (recordError) {
+        console.warn(
+          `[nativeDeepRead] 第${input.episodeIndex}集终态占位释放与病历补写均未完成：`,
+          releaseError instanceof Error ? releaseError.message : releaseError,
+          recordError instanceof Error ? recordError.message : recordError,
+        );
+      }
+    }
+  };
 
   let visualResult: Awaited<ReturnType<typeof runManhuaNativeDeepRead>>;
   try {
@@ -240,6 +316,7 @@ export async function executeAndIngestNativeDeepReadEpisode(
     });
   } catch (error) {
     const usage = failedUsageFromError(error);
+    await releaseSingleClaimAfterFailure(error instanceof Error ? error.message : String(error));
     throw Object.assign(
       new Error(error instanceof Error ? error.message : String(error), { cause: error }),
       {
@@ -261,6 +338,7 @@ export async function executeAndIngestNativeDeepReadEpisode(
       visualResult,
     });
   } catch (error) {
+    await releaseSingleClaimAfterFailure(error instanceof Error ? error.message : String(error));
     throw Object.assign(
       new Error(error instanceof Error ? error.message : String(error), { cause: error }),
       { costCny, elapsedMs: Date.now() - startedAt, nativeUsage: combinedUsage },
@@ -268,6 +346,7 @@ export async function executeAndIngestNativeDeepReadEpisode(
   }
   const result = { ...visualResult, audioAnalysis };
   if (input.abortSignal?.aborted) {
+    await releaseSingleClaimAfterFailure("用户已停止学习");
     throw Object.assign(new Error("用户已停止学习"), {
       costCny,
       elapsedMs: Date.now() - startedAt,
@@ -278,6 +357,7 @@ export async function executeAndIngestNativeDeepReadEpisode(
   // 门禁在写之前：空卡、全段失败不进库。**钱已经花了，错误里要带上**
   const gate = checkNativeDeepReadIngestable(result);
   if (!gate.ok) {
+    await releaseSingleClaimAfterFailure(gate.reasonZh);
     throw Object.assign(
       new Error(`第${input.episodeIndex}集未通过入库门禁：${gate.reasonZh}`),
       { costCny, elapsedMs: Date.now() - startedAt, nativeUsage: { ...combinedUsage } },
@@ -295,6 +375,7 @@ export async function executeAndIngestNativeDeepReadEpisode(
       result,
     });
   } catch (error) {
+    await releaseSingleClaimAfterFailure(error instanceof Error ? error.message : String(error));
     throw Object.assign(
       new Error(error instanceof Error ? error.message : String(error), { cause: error }),
       { costCny, elapsedMs: Date.now() - startedAt, nativeUsage: { ...combinedUsage } },
@@ -550,20 +631,65 @@ export async function runNativeDeepReadBatch(input: {
    * 中途抢不到时撤回本轮尚未付费的自有占位，整批不发车。
    */
   const claims = new Map<number, Awaited<ReturnType<typeof acquireNativeDeepReadEpisodeClaim>>>();
+  const releaseOrMarkFailed = async (params: {
+    episodeIndex: number;
+    claim: Awaited<ReturnType<typeof acquireNativeDeepReadEpisodeClaim>>;
+    errorZh: string;
+    beforePaidCall: boolean;
+  }): Promise<void> => {
+    try {
+      if (params.beforePaidCall) await params.claim.releaseBeforePaidCall();
+      else await params.claim.releaseAfterSuccess();
+    } catch (releaseError) {
+      console.warn(
+        `[nativeDeepRead] 第${params.episodeIndex}集终态占位释放未成，补写病历留待安全接管：`,
+        releaseError instanceof Error ? releaseError.message : releaseError,
+      );
+      try {
+        await recordNativeDeepReadClaimFailure(
+          input.seriesKey,
+          params.episodeIndex,
+          params.claim.runId,
+          params.errorZh,
+        );
+      } catch (recordError) {
+        console.warn(
+          `[nativeDeepRead] 第${params.episodeIndex}集占位拒因补写未完成：`,
+          recordError instanceof Error ? recordError.message : recordError,
+        );
+      }
+    }
+  };
   try {
     for (const episode of pending) {
-      claims.set(episode.episodeIndex, await deps.acquireClaim(input.seriesKey, episode.episodeIndex));
+      claims.set(
+        episode.episodeIndex,
+        episode.reclaimFailedClaim
+          ? await deps.takeoverClaim(input.seriesKey, episode.episodeIndex)
+          : await deps.acquireClaim(input.seriesKey, episode.episodeIndex),
+      );
     }
   } catch (error) {
-    await Promise.allSettled(Array.from(claims.values()).map((claim) => claim.releaseBeforePaidCall()));
+    await Promise.all(Array.from(claims.entries()).map(([episodeIndex, claim]) =>
+      releaseOrMarkFailed({
+        episodeIndex,
+        claim,
+        errorZh: "批次占位未全部取得，已撤回本轮占位",
+        beforePaidCall: true,
+      })));
     throw error;
   }
 
   const releaseUnpaidFrom = async (startIndex: number, paid: ReadonlySet<number>) => {
-    await Promise.allSettled(pending.slice(startIndex).flatMap((episode) => {
+    await Promise.all(pending.slice(startIndex).flatMap((episode) => {
       if (paid.has(episode.episodeIndex)) return [];
       const claim = claims.get(episode.episodeIndex);
-      return claim ? [claim.releaseBeforePaidCall()] : [];
+      return claim ? [releaseOrMarkFailed({
+        episodeIndex: episode.episodeIndex,
+        claim,
+        errorZh: "批次已停止，未执行集占位撤回未成",
+        beforePaidCall: true,
+      })] : [];
     }));
   };
   const paidEpisodeIndexes = new Set<number>();
@@ -579,6 +705,10 @@ export async function runNativeDeepReadBatch(input: {
     /** 视觉调用成功后即锁定的已付费用量；门禁/装配/入库失败都必须原样带出。 */
     let paidUsage: NativeDeepReadEpisodeOutcomeCost["usage"] | undefined;
     try {
+      const cacheSourceDigest = await resolveNativeDeepReadCacheSourceDigest({
+        sourceRef: String(episode.provenanceSourceRef || episode.sourceUrl),
+        statSourceVersion: deps.statSourceVersion,
+      });
       const visualBatch = await deps.runBatch({
         episodes: [{
           episodeIndex: episode.episodeIndex,
@@ -586,7 +716,9 @@ export async function runNativeDeepReadBatch(input: {
           segments: episode.segments,
           sourceDurationSec: episode.durationSec,
           hintZh: episode.laneHintZh,
+          cacheSourceDigest,
         }],
+        segmentCacheSeriesKey: input.seriesKey,
         abortSignal: input.abortSignal,
         onModelReceipt: async (receipt) => {
           if (receipt.status === "started") paidEpisodeIndexes.add(episode.episodeIndex);
@@ -616,6 +748,20 @@ export async function runNativeDeepReadBatch(input: {
         laneHintZh: episode.laneHintZh,
         result,
       });
+      // 先在 claim 锁内清缓存，再释放 claim；否则等待中的旧计划可抢到 claim 并写新缓存，
+      // 随后被本轮无条件清理误删。清理失败仅告警，不能推翻已成功入库的真源卡。
+      try {
+        await deps.clearSegmentCache({
+          seriesKey: input.seriesKey,
+          episodeIndex: episode.episodeIndex,
+          segmentCount: episode.segments.length,
+        });
+      } catch (cacheError) {
+        console.warn(
+          `[nativeDeepRead] 第${episode.episodeIndex}集已入库，段缓存清理待核对：`,
+          cacheError instanceof Error ? cacheError.message : cacheError,
+        );
+      }
       try {
         await claims.get(episode.episodeIndex)?.releaseAfterSuccess();
       } catch (error) {
@@ -650,10 +796,20 @@ export async function runNativeDeepReadBatch(input: {
       outcomes.push(failed);
       await emitProgress(failed);
       aborted = Boolean(input.abortSignal?.aborted);
-      if (!paidEpisodeIndexes.has(episode.episodeIndex)) {
-        const claim = claims.get(episode.episodeIndex);
-        if (claim) await Promise.allSettled([claim.releaseBeforePaidCall()]);
-      }
+      // 已付费失败会保留占位：把最终拒因补写进占位文件，占位管理 UI 才答得出「卡在哪」。
+      /**
+       * 0826 用户拍板（七条验收第5条）：失败/中止/零成本前置错误一律当场释放集级 claim。
+       * 钱账守卫已由段级缓存接管（已成段永不重买），失败后留占位只剩「僵尸展示+挡路」。
+       * 释放走本轮 generation 条件删除，不破坏并发互斥；释放失败先补写病历再留人工核对。
+       */
+      const failedClaim = claims.get(episode.episodeIndex);
+      if (failedClaim) await releaseOrMarkFailed({
+        episodeIndex: episode.episodeIndex,
+        claim: failedClaim,
+        errorZh: failed.errorZh || "未回传具体拒因",
+        // 当前集已经进入执行体；即使旁路 started 回执丢失，也用终态释放语义。
+        beforePaidCall: false,
+      });
       await releaseUnpaidFrom(episodeCursor + 1, paidEpisodeIndexes);
       break;
     }

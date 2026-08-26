@@ -30,21 +30,24 @@ function assertSiteOwner(user: { openId?: string | null }) {
 
 export const manhuaViralTemplateRouter = router({
   /** 仅返回能力布尔值；不向非 owner 暴露模型清单或任何模板正文。 */
-  getOwnerOptimizeCapabilities: protectedProcedure.query(async ({ ctx }) => {
-    const allowed = resolveSiteOwnerOnlyAllowed(ctx.user);
-    if (!allowed) return { allowed: false as const, models: [] };
-    const { MANHUA_VIRAL_TEMPLATE_OPTIMIZE_MODELS } = await import(
-      "../services/manhuaViralTemplateOptimize"
-    );
-    return {
-      allowed: true as const,
-      models: MANHUA_VIRAL_TEMPLATE_OPTIMIZE_MODELS.map((model) => ({
-        id: model.id,
-        labelZh: model.labelZh,
-        reasoningEffort: model.reasoningEffort,
-      })),
-    };
-  }),
+  getOwnerOptimizeCapabilities: protectedProcedure
+    // cacheScope 只用于让客户端查询键随登录身份变化；授权仍且只信 ctx.user。
+    .input(z.object({ cacheScope: z.string().min(1).max(128) }).optional())
+    .query(async ({ ctx }) => {
+      const allowed = resolveSiteOwnerOnlyAllowed(ctx.user);
+      if (!allowed) return { allowed: false as const, models: [] };
+      const { MANHUA_VIRAL_TEMPLATE_OPTIMIZE_MODELS } = await import(
+        "../services/manhuaViralTemplateOptimize"
+      );
+      return {
+        allowed: true as const,
+        models: MANHUA_VIRAL_TEMPLATE_OPTIMIZE_MODELS.map((model) => ({
+          id: model.id,
+          labelZh: model.labelZh,
+          reasoningEffort: model.reasoningEffort,
+        })),
+      };
+    }),
 
   /**
    * 编剧室 / 已登录（公开面）：只下发匿名功能卡（fail-closed 白名单 DTO，见
@@ -403,6 +406,155 @@ export const manhuaViralTemplateRouter = router({
     const { listGcsManhuaViralApproved } = await import("../services/manhuaViralTemplateStore");
     return { items: await listGcsManhuaViralApproved() };
   }),
+
+  /**
+   * owner：列出一部剧仍存在的精读占位（native-claims），供面板人工裁决。
+   * 金额与卡点从本人学习任务的模型回执聚合；对不上号时如实返回「未知」，不编数。
+   */
+  listNativeDeepReadClaims: protectedProcedure
+    .input(z.object({ seriesKey: z.string().regex(/^[0-9A-Za-z_-]{4,64}$/) }))
+    .query(async ({ ctx, input }) => {
+      assertSiteOwner(ctx.user);
+      const [{ listNativeDeepReadClaimAdminRows }, { listManhuaTemplateLearnJobsForUser }] =
+        await Promise.all([
+          import("../services/manhuaNativeDeepReadClaimAdmin"),
+          import("../jobs/repository"),
+        ]);
+      const rows = await listNativeDeepReadClaimAdminRows(input.seriesKey);
+      const spentByEpisode = new Map<number, number>();
+      const stuckByEpisode = new Map<number, { atIso: string; textZh: string }>();
+      try {
+        const jobs = await listManhuaTemplateLearnJobsForUser(String(ctx.user.id), 50);
+        for (const job of jobs) {
+          const output =
+            job.output && typeof job.output === "object" && !Array.isArray(job.output)
+              ? (job.output as Record<string, unknown>)
+              : {};
+          // 历史行的 input 可能是 JSON 字符串；解析失败按「没有 params」处理
+          let inputObject: Record<string, unknown> | undefined;
+          if (job.input && typeof job.input === "object" && !Array.isArray(job.input)) {
+            inputObject = job.input as Record<string, unknown>;
+          } else if (typeof job.input === "string") {
+            try {
+              const parsed = JSON.parse(job.input) as unknown;
+              if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                inputObject = parsed as Record<string, unknown>;
+              }
+            } catch {
+              /* 保持 undefined */
+            }
+          }
+          const params =
+            inputObject?.params && typeof inputObject.params === "object"
+              ? (inputObject.params as Record<string, unknown>)
+              : undefined;
+          const jobSeriesKey = String(
+            output.seriesKey || output.nativeSeriesKey || params?.nativePlanSeriesKey || "",
+          ).trim();
+          // 系列对不上号的任务一律跳过：错配的金额比「未知」更糟
+          if (jobSeriesKey !== input.seriesKey) continue;
+          const receipts = Array.isArray(output.nativeModelReceipts)
+            ? (output.nativeModelReceipts as Array<Record<string, unknown>>)
+            : [];
+          for (const receipt of receipts) {
+            const episodes = Array.isArray(receipt.episodeIndexes)
+              ? (receipt.episodeIndexes as unknown[])
+                  .map((value) => Math.floor(Number(value)))
+                  .filter((value) => Number.isInteger(value) && value >= 1)
+              : [];
+            if (!episodes.length) continue;
+            const cny = Number(receipt.priceEquivalentCny);
+            const usd = Number(receipt.costUsd);
+            const spent = Number.isFinite(cny) && cny > 0
+              ? cny
+              : Number.isFinite(usd) && usd > 0
+                ? usd * 7
+                : 0;
+            if (spent > 0) {
+              // 跨集回执均摊，防止同一笔钱被记到每一集头上
+              const share = spent / episodes.length;
+              for (const episodeIndex of episodes) {
+                spentByEpisode.set(episodeIndex, (spentByEpisode.get(episodeIndex) || 0) + share);
+              }
+            }
+            const errorZh = String(receipt.errorZh || "").trim();
+            if (receipt.status === "failed" && errorZh) {
+              const atIso = String(receipt.atIso || receipt.finishedAtIso || "");
+              for (const episodeIndex of episodes) {
+                const prev = stuckByEpisode.get(episodeIndex);
+                if (!prev || prev.atIso <= atIso) {
+                  stuckByEpisode.set(episodeIndex, { atIso, textZh: errorZh.slice(0, 200) });
+                }
+              }
+            }
+          }
+          const progressLog = Array.isArray(output.learnProgressLog)
+            ? (output.learnProgressLog as Array<Record<string, unknown>>)
+            : [];
+          for (const line of progressLog) {
+            const detailZh = String(line.detailZh || "");
+            const atIso = String(line.atIso || "");
+            const match = detailZh.match(/第 ?(\d{1,3}) 集/);
+            const episodeIndex = Number(match?.[1]);
+            if (!Number.isInteger(episodeIndex)) continue;
+            if (!/未入库|未通过|未完成|失败/.test(detailZh)) continue;
+            const prev = stuckByEpisode.get(episodeIndex);
+            if (!prev || prev.atIso <= atIso) {
+              stuckByEpisode.set(episodeIndex, { atIso, textZh: detailZh.slice(0, 200) });
+            }
+          }
+        }
+      } catch (e) {
+        // 金额/卡点是增强信息；聚合失败不拦「有哪些占位」这个主答案
+        console.warn(
+          "[manhuaViralTemplate.listNativeDeepReadClaims] enrich failed:",
+          e instanceof Error ? e.message : e,
+        );
+      }
+      return {
+        items: rows.map((row) => {
+          const spent = spentByEpisode.get(row.episodeIndex);
+          return {
+            episodeIndex: row.episodeIndex,
+            claimGeneration: row.claimGeneration,
+            createdAtIso: row.createdAtIso,
+            /** null = 回执里找不到这一集的钱，如实展示「金额未知」 */
+            spentCny: typeof spent === "number" ? Math.round(spent * 100) / 100 : null,
+            // 占位文件自带的最终拒因最权威（0826 起失败即补写）；旧占位回落任务回执推断
+            stuckZh: row.lastErrorZh || stuckByEpisode.get(row.episodeIndex)?.textZh || null,
+            reclaimable: row.reclaimable,
+          };
+        }),
+      };
+    }),
+
+  /** owner：人工弃置一条精读占位；条件删除，执行链刚重建的占位删不掉（宁停勿删）。 */
+  discardNativeDeepReadClaim: protectedProcedure
+    .input(
+      z.object({
+        seriesKey: z.string().regex(/^[0-9A-Za-z_-]{4,64}$/),
+        episodeIndex: z.number().int().min(1).max(999),
+        claimGeneration: z.string().regex(/^\d+$/),
+        confirmDiscard: z.literal(true),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      assertSiteOwner(ctx.user);
+      const { discardNativeDeepReadClaimForEpisode } = await import(
+        "../services/manhuaNativeDeepReadClaimAdmin"
+      );
+      try {
+        await discardNativeDeepReadClaimForEpisode(
+          input.seriesKey,
+          input.episodeIndex,
+          input.claimGeneration,
+        );
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        throw new TRPCError({ code: "BAD_REQUEST", message: message.slice(0, 200) || "弃置失败" });
+      }
+      return { ok: true as const, episodeIndex: input.episodeIndex };
+    }),
 
   /** 监管：查看合集学习进度与分集摘要（网页即时展示） */
   getSeriesLearnSnapshot: protectedProcedure

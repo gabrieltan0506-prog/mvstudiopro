@@ -1671,6 +1671,10 @@ export async function buildNativeDeepReadEpisodeExecution(
     durationSec: total,
     laneHintZh: input.laneHintZh,
     segments,
+    // 计划标记的失败占位自动让位：执行层据此走原子接管而非普通抢占
+    ...(input.confirmedPlanEpisode?.reclaimFailedClaim === true
+      ? { reclaimFailedClaim: true }
+      : {}),
     abortSignal: input.abortSignal,
     resolveNodes: async () => {
       const fresh: EpisodeSourceState = { playbackUrl: input.ep.playbackUrl };
@@ -2528,10 +2532,13 @@ export async function runManhuaTemplateLearn(
               `第 ${outcome.episodeIndex} 集已生成独立待审卡 · 本轮新增 ${batchLearnedIndexes.length}/${executionPlans.length}`,
             );
           } else if (outcome.status === "failed") {
-            episodeFailNotes.push(`第 ${outcome.episodeIndex} 集未入库：${outcome.errorZh || "结构门禁未通过"}`);
+            // 拒因必须随进度行持久化：0826 实弹第9集重试后仍未过门禁，
+            // 数据库只留「未入库」一句，面板查不到到底是哪条门禁拦的。
+            const failReasonZh = outcome.errorZh || "结构门禁未通过（上游未回传具体拒因）";
+            episodeFailNotes.push(`第 ${outcome.episodeIndex} 集未入库：${failReasonZh}`);
             await progress(
               MANHUA_LEARN_STAGE.failed,
-              `第 ${outcome.episodeIndex} 集未入库；已停止后续请求并保留占位待核对`,
+              `第 ${outcome.episodeIndex} 集未入库：${failReasonZh}；已停止后续请求。已成分段进入缓存，重跑只补未完成段`,
             );
           } else if (outcome.status === "aborted") {
             cancelledMidRun = true;
@@ -2564,7 +2571,10 @@ export async function runManhuaTemplateLearn(
           new Error(
             batchResult.aborted
               ? "原生精读已停止；成功卡保留，未完成集不自动重跑"
-              : `原生精读有 ${batchResult.failedCount} 集未通过，成功卡保留，后续请求已停止`,
+              // 终态错误同样要带具体拒因：这是刷新后面板唯一还能读到的失败信息
+              : `原生精读有 ${batchResult.failedCount} 集未通过，成功卡保留，后续请求已停止${
+                  episodeFailNotes.length ? `（${episodeFailNotes.join("；").slice(0, 400)}）` : ""
+                }`,
           ),
           { nativeUsage },
         );

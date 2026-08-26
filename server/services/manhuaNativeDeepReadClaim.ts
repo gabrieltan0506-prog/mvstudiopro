@@ -8,9 +8,9 @@
  * 占位放在 runner **之前**，用同一把 `ifGenerationMatch=0` 原子锁：
  * 抢不到就停手，不猜「对方是不是已经在跑了」。
  *
- * ⚠️ 失败或中止时**保留占位、不自动清理**。
- * 因为这时说不清模型到底调没调——自动清掉就等于允许下一轮重烧。
- * 残留占位由干跑报告列成「待核对」，交人工决定。
+ * 执行终态会按本轮 generation 条件释放占位；已付费且验收通过的分段由
+ * segment-cache 负责续跑复用，claim 不再兼任付费账本。
+ * 只有条件删除失败时才保留占位并补写失败病历，供下一轮安全接管。
  */
 import crypto from "node:crypto";
 import {
@@ -18,6 +18,7 @@ import {
   downloadGcsObjectVersioned,
   getGcsBucketName,
   listGcsObjectNamesByPrefix,
+  uploadBufferToGcs,
   uploadBufferToGcsIfAbsent,
 } from "./gcs.js";
 import { nativeDeepReadProposalId } from "./manhuaNativeDeepReadIngest.js";
@@ -33,7 +34,7 @@ export type NativeDeepReadClaim = {
   claimUri: string;
   objectName: string;
   runId: string;
-  /** 仅在卡片成功入库后调用；条件删除，不误删别人后写的占位 */
+  /** 执行终态调用；按本轮 generation 条件删除，不误删别人后写的占位。 */
   releaseAfterSuccess: () => Promise<void>;
   /** 批次尚未发生任何付费调用时，预检失败可安全撤回本轮自己的占位。 */
   releaseBeforePaidCall: () => Promise<void>;
@@ -49,33 +50,55 @@ export async function acquireNativeDeepReadEpisodeClaim(
   const bucket = getGcsBucketName();
   const claimUri = `gs://${bucket}/${objectName}`;
 
-  const created = await uploadBufferToGcsIfAbsent({
-    bucket,
-    objectName,
-    contentType: "application/json",
-    buffer: Buffer.from(
-      `${JSON.stringify({ runId, createdAt: new Date().toISOString() }, null, 2)}\n`,
-      "utf8",
-    ),
-  });
-  if (!created.created) {
+  const claimBuffer = Buffer.from(
+    `${JSON.stringify({ runId, createdAt: new Date().toISOString() }, null, 2)}\n`,
+    "utf8",
+  );
+  let created: Awaited<ReturnType<typeof uploadBufferToGcsIfAbsent>> | undefined;
+  let createError: unknown;
+  try {
+    created = await uploadBufferToGcsIfAbsent({
+      bucket,
+      objectName,
+      contentType: "application/json",
+      buffer: claimBuffer,
+    });
+  } catch (error) {
+    // POST 响应可能在 GCS 已创建对象后才断线；下面按 runId 回读收敛，
+    // 不能直接抛错留下一个调用方永远拿不到 handle 的孤儿占位。
+    createError = error;
+  }
+  if (created && !created.created) {
     throw new Error(
       `第${episodeIndex}集已有精读任务占位；请先核对现有任务/卡片，禁止自动重跑`,
     );
   }
 
-  // 读回确认是自己写的：并发下 412 不是唯一失败形态，读回是第二道
-  const versioned = await downloadGcsObjectVersioned({ gcsUri: claimUri });
-  const saved = JSON.parse(versioned.buffer.toString("utf8")) as { runId?: string };
-  if (saved.runId !== runId) {
-    throw new Error(`第${episodeIndex}集精读占位内容不一致，已停止`);
+  let generation = String(created?.generation || "").trim();
+  if (!/^\d+$/.test(generation)) {
+    let versioned: Awaited<ReturnType<typeof downloadGcsObjectVersioned>>;
+    try {
+      versioned = await downloadGcsObjectVersioned({ gcsUri: claimUri });
+    } catch (readError) {
+      throw createError || readError;
+    }
+    let saved: { runId?: string };
+    try {
+      saved = JSON.parse(versioned.buffer.toString("utf8")) as { runId?: string };
+    } catch (parseError) {
+      throw createError || parseError;
+    }
+    if (saved.runId !== runId) {
+      throw createError || new Error(`第${episodeIndex}集精读占位内容不一致，已停止`);
+    }
+    generation = versioned.generation;
   }
 
   const releaseOwnGeneration = async () => {
     await deleteGcsObject({
       bucket,
       objectName,
-      ifGenerationMatch: versioned.generation,
+      ifGenerationMatch: generation,
     });
   };
   return {
@@ -85,6 +108,175 @@ export async function acquireNativeDeepReadEpisodeClaim(
     releaseAfterSuccess: releaseOwnGeneration,
     releaseBeforePaidCall: releaseOwnGeneration,
   };
+}
+
+/**
+ * 集失败后把最终拒因写回占位文件（0826 病历单问题一第 3 步）：
+ * 占位管理 UI 靠它显示「这一集卡在哪」。旁路写入，失败只 warn 不改判集结果。
+ * 保留原 runId/createdAt——占位的身份与时间不因补写拒因而变。
+ */
+export async function recordNativeDeepReadClaimFailure(
+  seriesKey: string,
+  episodeIndex: number,
+  expectedRunId: string,
+  errorZh: string,
+): Promise<void> {
+  const objectName = nativeDeepReadClaimObjectName(seriesKey, episodeIndex);
+  const bucket = getGcsBucketName();
+  let previous: Record<string, unknown> = {};
+  let generation = "";
+  try {
+    const versioned = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` });
+    generation = versioned.generation;
+    const parsed = JSON.parse(versioned.buffer.toString("utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error(`第${episodeIndex}集占位内容不是对象，病历未补写`);
+    }
+    previous = parsed as Record<string, unknown>;
+  } catch (error) {
+    // 只有确认不存在才是安全 no-op。鉴权、5xx、网络抖动或 JSON 损坏都必须上抛，
+    // 否则调用方会误以为病历已补写，残留 claim 随后永久被当成「仍在运行」。
+    if (isNativeDeepReadClaimNotFound(error)) return;
+    throw error;
+  }
+  // 只允许本轮执行给自己的占位补病历。旧任务失败回执晚到时，不能污染新任务占位。
+  if (!expectedRunId || String(previous.runId || "") !== expectedRunId) return;
+  await uploadBufferToGcs({
+    bucket,
+    objectName,
+    contentType: "application/json",
+    ifGenerationMatch: generation,
+    buffer: Buffer.from(
+      `${JSON.stringify({
+        ...previous,
+        lastErrorZh: String(errorZh || "").slice(0, 500),
+        lastFailedAtIso: new Date().toISOString(),
+      }, null, 2)}\n`,
+      "utf8",
+    ),
+  });
+}
+
+
+export type NativeDeepReadClaimState = {
+  episodeIndex: number;
+  generation: string;
+  createdAtIso: string | null;
+  /** 兼容仅写入拒因、尚未带 lastFailedAtIso 的旧占位。 */
+  lastErrorZh: string | null;
+  lastFailedAtIso: string | null;
+};
+
+/**
+ * 判定占位是否可自动让位（0826 用户拍板「不要让失败占位永远挡路」）：
+ * 只有失败病历（lastFailedAtIso）能证明任务已终态失败；钱账在段缓存/回执里，
+ * 此时占位只剩挡路。单靠 createdAt 年龄无法证明旧 worker 已停止，禁止据此接管，
+ * 否则超长任务跨过墙钟边界时可能出现两个进程同时付费。
+ */
+export function isNativeDeepReadClaimReclaimable(
+  state: { lastErrorZh?: string | null; lastFailedAtIso?: string | null },
+): boolean {
+  return Boolean(state.lastFailedAtIso || state.lastErrorZh);
+}
+
+function isNativeDeepReadClaimNotFound(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /(?:gcs_download_failed|gcs_stat_failed):404(?:\b|:)/.test(message);
+}
+
+/** 列出占位的完整状态（含失败病历与版本），供计划分类「仍隔离 vs 自动让位」。 */
+export async function listNativeDeepReadEpisodeClaimStates(
+  seriesKey: string,
+): Promise<Map<number, NativeDeepReadClaimState>> {
+  const bucket = getGcsBucketName();
+  const episodes = await listNativeDeepReadEpisodeClaims(seriesKey);
+  const states = new Map<number, NativeDeepReadClaimState>();
+  for (const episodeIndex of Array.from(episodes)) {
+    const objectName = nativeDeepReadClaimObjectName(seriesKey, episodeIndex);
+    try {
+      const versioned = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` });
+      const parsed = JSON.parse(versioned.buffer.toString("utf8")) as {
+        createdAt?: unknown;
+        lastErrorZh?: unknown;
+        lastFailedAtIso?: unknown;
+      };
+      const createdAt = String(parsed.createdAt || "").trim();
+      const lastErrorZh = String(parsed.lastErrorZh || "").trim().slice(0, 500);
+      const failedAt = String(parsed.lastFailedAtIso || "").trim();
+      states.set(episodeIndex, {
+        episodeIndex,
+        generation: versioned.generation,
+        createdAtIso: createdAt && !Number.isNaN(Date.parse(createdAt)) ? createdAt : null,
+        lastErrorZh: lastErrorZh || null,
+        lastFailedAtIso: failedAt && !Number.isNaN(Date.parse(failedAt)) ? failedAt : null,
+      });
+    } catch (error) {
+      // 列表与回读之间被终态任务释放：占位已经不存在，本轮应立即重新纳入，
+      // 不能制造一条“身份不明”的假占位再跳到下一集。
+      if (isNativeDeepReadClaimNotFound(error)) continue;
+      // 读不动的占位按「身份不明」保守隔离：宁可继续挡路，不可误接管在跑任务
+      states.set(episodeIndex, {
+        episodeIndex,
+        generation: "",
+        createdAtIso: null,
+        lastErrorZh: null,
+        lastFailedAtIso: null,
+      });
+      console.warn(
+        `[nativeDeepRead] 第${episodeIndex}集占位状态读取失败，按仍在跑保守隔离：`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+  return states;
+}
+
+/**
+ * 自动接管一条可让位的占位：按 generation 条件删旧→原子新建。
+ * 任何一步竞态失败都停手（说明有人真的在动这一集），绝不盲删。
+ */
+export async function takeoverNativeDeepReadEpisodeClaim(
+  seriesKey: string,
+  episodeIndex: number,
+): Promise<NativeDeepReadClaim> {
+  const objectName = nativeDeepReadClaimObjectName(seriesKey, episodeIndex);
+  const bucket = getGcsBucketName();
+  let versioned: Awaited<ReturnType<typeof downloadGcsObjectVersioned>>;
+  try {
+    versioned = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` });
+  } catch (error) {
+    if (isNativeDeepReadClaimNotFound(error)) {
+      // 占位刚被别处释放：直接走正常抢占
+      return acquireNativeDeepReadEpisodeClaim(seriesKey, episodeIndex);
+    }
+    // 鉴权、限流、网络或 5xx 都不等于“不存在”；关闭式停止，禁止猜测后抢占。
+    throw error;
+  }
+  let state: Pick<NativeDeepReadClaimState, "lastErrorZh" | "lastFailedAtIso"> = {
+    lastErrorZh: null,
+    lastFailedAtIso: null,
+  };
+  try {
+    const parsed = JSON.parse(versioned.buffer.toString("utf8")) as {
+      lastErrorZh?: unknown;
+      lastFailedAtIso?: unknown;
+    };
+    const lastErrorZh = String(parsed.lastErrorZh || "").trim().slice(0, 500);
+    const failedAt = String(parsed.lastFailedAtIso || "").trim();
+    state = {
+      lastErrorZh: lastErrorZh || null,
+      lastFailedAtIso: failedAt && !Number.isNaN(Date.parse(failedAt)) ? failedAt : null,
+    };
+  } catch {
+    /* 身份不明按不可接管处理 */
+  }
+  if (!isNativeDeepReadClaimReclaimable(state)) {
+    throw new Error(
+      `第${episodeIndex}集占位无失败病历，疑似仍在跑，禁止自动接管`,
+    );
+  }
+  await deleteGcsObject({ bucket, objectName, ifGenerationMatch: versioned.generation });
+  return acquireNativeDeepReadEpisodeClaim(seriesKey, episodeIndex);
 }
 
 /** 干跑时列出仍在占位、必须人工核对后才能重跑的集号。 */

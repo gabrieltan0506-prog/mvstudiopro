@@ -11,6 +11,7 @@
  *
  * 本文件不新写任何解析逻辑，只把素材接入层现成的能力串起来。
  */
+import { isNativeDeepReadClaimReclaimable } from "./manhuaNativeDeepReadClaim.js";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -64,6 +65,8 @@ export type NativeDeepReadPlanEpisode = {
   sourceUrl: string;
   durationSec: number;
   segments: NativeDeepReadPlanSegment[];
+  /** 该集是自动让位的失败重跑（执行时原子接管旧占位；段缓存让已成段零费） */
+  reclaimFailedClaim?: boolean;
 };
 
 export type NativeDeepReadPlanPreview = {
@@ -86,8 +89,10 @@ export type NativeDeepReadPlanPreview = {
   unknownAccessEpisodeIndexes: number[];
   /** 已入库的集（不该重复付费） */
   alreadyIngestedEpisodeIndexes: number[];
-  /** 已隔离的占位集；不会自动重跑，也不会挤占本轮新增集数 */
+  /** 仍隔离的占位集（无失败病历、疑似在跑）；不会自动重跑 */
   pendingClaimEpisodeIndexes: number[];
+  /** 有失败病历的占位自动让位、纳入本轮重跑的集号 */
+  reclaimEpisodeIndexes: number[];
   /** 扣掉已入库后真正会发出模型请求的集数 */
   executableEpisodeCount: number;
   /** 原生精读能力开关是否已开启；预览可在关闭时运行，执行不可以。 */
@@ -375,7 +380,13 @@ export type NativeDeepReadPlanDeps = {
   refreshPlaybackUrls: (awemeId: string) => Promise<string[]>;
   probeDurationSec: (playbackUrl: string, abortSignal?: AbortSignal) => Promise<number>;
   listIngestedEpisodes: (seriesKey: string) => Promise<Set<number>>;
-  listClaimedEpisodes: (seriesKey: string) => Promise<Set<number>>;
+  listClaimStates: (seriesKey: string) => Promise<
+    Map<number, {
+      createdAtIso: string | null;
+      lastErrorZh?: string | null;
+      lastFailedAtIso: string | null;
+    }>
+  >;
   resolveSeriesKey: (input: {
     sourceIdentity: string;
     mixId: string;
@@ -449,9 +460,9 @@ export async function buildNativeDeepReadPlanPreview(
     title: dramaNameZh || undefined,
     learnLlm: input.learnLlm || "gpt",
   });
-  const [ingested, claimed] = await Promise.all([
+  const [ingested, claimStates] = await Promise.all([
     deps.listIngestedEpisodes(seriesKey),
-    deps.listClaimedEpisodes(seriesKey),
+    deps.listClaimStates(seriesKey),
   ]);
 
   // ── 4. 逐集探时长（零模型调用）
@@ -459,11 +470,24 @@ export async function buildNativeDeepReadPlanPreview(
   // 残留 claim 必须继续隔离，但不能占掉用户要求的名额：先排除已入库与 claim，再取 N 集。
   // 每个真正执行的集仍会在模型调用前原子抢 claim；这里没有放松并发保护。
   const notIngested = free.filter((e) => !ingested.has(e.index));
+  /**
+   * 0826 用户拍板「失败占位不许永远挡路」：带失败病历的占位自动让位、
+   * 本轮直接纳入重跑（执行时原子接管，段缓存让已成段零费）；
+   * 新鲜无病历的占位可能仍在跑，继续隔离防并发双跑。
+   */
+  const reclaimSet = new Set<number>();
+  const blockedSet = new Set<number>();
+  for (const e of notIngested) {
+    const state = claimStates.get(e.index);
+    if (!state) continue;
+    if (isNativeDeepReadClaimReclaimable(state)) reclaimSet.add(e.index);
+    else blockedSet.add(e.index);
+  }
   const pendingClaimEpisodeIndexes = notIngested
-    .map((e) => e.index)
-    .filter((i) => claimed.has(i));
+    .map((row) => row.index)
+    .filter((i) => blockedSet.has(i));
   const executable = notIngested
-    .filter((e) => !claimed.has(e.index))
+    .filter((e) => !blockedSet.has(e.index))
     .slice(0, limit);
   const episodes: NativeDeepReadPlanEpisode[] = [];
   for (const e of executable) {
@@ -484,6 +508,7 @@ export async function buildNativeDeepReadPlanPreview(
       sourceUrl: e.url,
       durationSec,
       segments: splitNativeDeepReadSegments(durationSec),
+      ...(reclaimSet.has(e.index) ? { reclaimFailedClaim: true } : {}),
     });
   }
 
@@ -512,6 +537,9 @@ export async function buildNativeDeepReadPlanPreview(
       .map((e) => e.index)
       .filter((i) => ingested.has(i)),
     pendingClaimEpisodeIndexes,
+    reclaimEpisodeIndexes: episodes
+      .filter((row) => row.reclaimFailedClaim)
+      .map((row) => row.episodeIndex),
     executableEpisodeCount: episodes.length,
     executionEnabled: deps.isExecutionEnabled(),
   };
