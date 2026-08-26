@@ -47,6 +47,7 @@ import {
   parseNativeProviderErrorReceipt,
 } from "./manhuaNativeProviderReceipt.js";
 import {
+  GlmGatewayError,
   OPENROUTER_GLM_MODEL,
   invokeGlmJsonChatWithGatewayFallback,
 } from "./bailianChat.js";
@@ -266,7 +267,13 @@ export function resolveNativeDeepReadInputFps(durationSec: number): number {
 /** 镜头表地板：镜头数 ≥ ceil(段时长/15)，防 16 镜式偷懒 */
 export const NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC = 15;
 /** 音轨段数地板：≥ max(3, ceil(段时长/45)) */
-export const NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN = 3;
+/**
+ * 音轨段数硬下限＝1（审查 P0-1 订正）：曾设 3 想防偷懒，但 ceil(段长/45) 在 ≥91s
+ * 时本就 ≥3，「3」只会咬 ≤90s 的短段/微尾段——提示词目标(1-2)低于门禁(3)，
+ * 模型照实输出必被拒收、白买重试；<45s 尾段甚至只能造段才过。反偷懒完全由
+ * ceil(段长/45) 承担，硬下限只兜「至少 1 段」。
+ */
+export const NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN = 1;
 export const NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_INTERVAL_SEC = 45;
 /** cues 总数地板：≥ ceil(段时长/24) */
 export const NATIVE_DEEP_READ_AUDIO_CUE_FLOOR_INTERVAL_SEC = 24;
@@ -305,7 +312,11 @@ export function buildGeminiNativeDeepReadSegmentPrompt(input: {
 }): string {
   const lenSec = Math.max(1, Math.round(input.endSec - input.startSec));
   const floors = resolveNativeDeepReadSegmentFloors(lenSec);
-  const promptTracks = Math.ceil(lenSec / NATIVE_DEEP_READ_AUDIO_TRACK_PROMPT_INTERVAL_SEC);
+  // 提示词目标必须钳到门禁地板之上（审查 P0-1）：目标 < 地板时模型照实输出必拒收。
+  const promptTracks = Math.max(
+    floors.minAudioTracks,
+    Math.ceil(lenSec / NATIVE_DEEP_READ_AUDIO_TRACK_PROMPT_INTERVAL_SEC),
+  );
   const hint = String(input.hintZh || "").trim();
   const audioRules = input.hasAudio
     ? `9. audioResolution 固定为 [{"chunkIndex":${input.segmentIndex},"analysis":{…}}]，由你**亲耳所听**产出，禁止留空、禁止凭画面猜音轨。
@@ -949,6 +960,18 @@ export function assertNativeDeepReadSegmentDensity(input: {
       `第${input.segmentIndex + 1}段镜头 ${shots.length} 个低于地板线 ${floors.minShots}（禁止为省输出合并镜头）`,
     );
   }
+  // 审查 P1-4：空文本会在 mapNativeDeepReadSegments 被静默丢弃（actionZh 空丢单镜、
+  // beatStructureZh 空丢整段镜头），密度承诺被掏空——门禁前置拒收。
+  // 注意从 raw.shots 原始对象取 actionZh（sortedShots 只保留秒位字段）。
+  const emptyActionCount = (Array.isArray(input.raw.shots) ? input.raw.shots : [])
+    .filter((shot) =>
+      !String((shot as Record<string, unknown>).actionZh || "").trim()).length;
+  if (emptyActionCount > 0) {
+    throw gateError(`第${input.segmentIndex + 1}段有 ${emptyActionCount} 个镜头 actionZh 为空（落库会被丢弃）`);
+  }
+  if (!String((input.raw as Record<string, unknown>).beatStructureZh || "").trim()) {
+    throw gateError(`第${input.segmentIndex + 1}段 beatStructureZh 为空（落库整段镜头会被丢弃）`);
+  }
   const audioResolution = parsed.data.audioResolution;
   if (!input.hasAudio) {
     if (audioResolution.length > 0) {
@@ -1414,8 +1437,10 @@ export async function runManhuaNativeDeepReadBatch(params: {
             .filter((part) => !part.thought)
             .map((part) => String(part.text || ""))
             .join("");
-          const raw = parseJsonObject(text);
+          // 先记 completed 回执再解析（审查 P1-1）：解析失败属门禁类不再发 failed 回执，
+          // 若先解析，这笔已扣费调用会只剩 started 回执，秒级账单对不上总账。
           await emitCompleted();
+          const raw = parseJsonObject(text);
           assertNativeDeepReadSegmentDensity({
             episodeIndex: episode.episodeIndex,
             segmentIndex: input.segmentIndex,
@@ -1580,6 +1605,20 @@ export async function runManhuaNativeDeepReadBatch(params: {
           }, params.onModelReceipt);
           return structured.raw;
         } catch (error) {
+          // 审查 P1-2：整形失败时 OpenRouter 已实扣的费用随 GlmGatewayError 带出，
+          // 必须落回执与总账，不能只记 errorZh。
+          const failedUsage = error instanceof GlmGatewayError ? error.usage : undefined;
+          const failedCostCny = failedUsage
+            ? failedUsage.costUsd * OPENROUTER_USD_TO_CNY_EQUIVALENT
+            : 0;
+          if (failedUsage) {
+            inputTokens += failedUsage.inputTokens;
+            outputTokens += failedUsage.outputTokens;
+            costCny += failedCostCny;
+            episodeInput += failedUsage.inputTokens;
+            episodeOutput += failedUsage.outputTokens;
+            episodeCost += failedCostCny;
+          }
           await emitVisualModelReceipt({
             callId,
             model: NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL,
@@ -1590,6 +1629,10 @@ export async function runManhuaNativeDeepReadBatch(params: {
             episodeIndexes: [episode.episodeIndex],
             videoCount: segmentCount,
             elapsedMs: Date.now() - startedAt,
+            inputTokens: failedUsage?.inputTokens || undefined,
+            outputTokens: failedUsage?.outputTokens || undefined,
+            costUsd: failedUsage?.costUsd || undefined,
+            priceEquivalentCny: failedCostCny || undefined,
             errorZh: (error instanceof Error ? error.message : String(error)).slice(0, 2_000),
             providerError: nativeProviderReceiptFromError(error),
           }, params.onModelReceipt);
@@ -1637,10 +1680,10 @@ export async function runManhuaNativeDeepReadBatch(params: {
           try {
             gateEpisode(rawSegments);
             episodeRows = annotateSegmentRows();
-          } catch (gateError) {
-            if (params.abortSignal?.aborted) throw gateError;
+          } catch (mergeGateFailure) {
+            if (params.abortSignal?.aborted) throw mergeGateFailure;
             const rejectedReasonZh =
-              (gateError instanceof Error ? gateError.message : String(gateError)).slice(0, 300);
+              (mergeGateFailure instanceof Error ? mergeGateFailure.message : String(mergeGateFailure)).slice(0, 300);
             console.warn(
               `[nativeDeepRead] 第${episode.episodeIndex}集确定性拼接未过门禁，`
               + `降级请 GLM 结构化整形修复一次：${rejectedReasonZh}`,

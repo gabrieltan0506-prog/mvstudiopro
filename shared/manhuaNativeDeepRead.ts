@@ -49,7 +49,7 @@ export const nativeDeepReadSegmentSchema = z
     audioResolution: z.array(z.object({
       chunkIndex: z.number().int().min(0),
       analysis: manhuaNativeAudioChunkAnalysisSchema,
-    }).strict()).max(8).default([]),
+    }).strict()).max(20).default([]),
     beatStructureZh: z.string().trim().default(""),
     moodArcZh: z.string().trim().optional(),
     reusableZh: z.string().trim().optional(),

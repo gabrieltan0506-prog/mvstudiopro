@@ -123,12 +123,41 @@ describe("双密度地板线（0826 双密度教训）", () => {
       minAudioCues: 15,
     });
   });
-  it("60s 短段仍有 3 段音轨地板", () => {
+  it("60s 短段音轨地板降为 2（审查 P0-1：硬下限 3 只会咬短段，反偷懒由 ceil(len/45) 承担）", () => {
     expect(resolveNativeDeepReadSegmentFloors(60)).toEqual({
       minShots: 4,
-      minAudioTracks: 3,
+      minAudioTracks: 2,
       minAudioCues: 3,
     });
+  });
+
+  it("29s 微尾段地板宽松到可真实达标（1 段音轨/2 镜/2 事件），不再必拒收", () => {
+    expect(resolveNativeDeepReadSegmentFloors(29)).toEqual({
+      minShots: 2,
+      minAudioTracks: 1,
+      minAudioCues: 2,
+    });
+  });
+
+  it("360s 大段地板不受 P0-1 订正影响（8 段音轨照旧）", () => {
+    expect(resolveNativeDeepReadSegmentFloors(360)).toEqual({
+      minShots: 24,
+      minAudioTracks: 8,
+      minAudioCues: 15,
+    });
+  });
+
+  it("提示词音轨目标钳到地板线之上：29s 微尾段提示词与门禁一致（审查 P0-1）", () => {
+    const prompt = buildGeminiNativeDeepReadSegmentPrompt({
+      episodeDurationSec: 389,
+      startSec: 360,
+      endSec: 389,
+      segmentIndex: 1,
+      segmentCount: 2,
+      hasAudio: true,
+    });
+    expect(prompt).toContain("段数 ≥ 1");
+    expect(prompt).not.toContain("段数 ≥ 0");
   });
 });
 
