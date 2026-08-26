@@ -18,6 +18,7 @@ import {
   downloadGcsObjectVersioned,
   getGcsBucketName,
   listGcsObjectNamesByPrefix,
+  uploadBufferToGcs,
   uploadBufferToGcsIfAbsent,
 } from "./gcs.js";
 import { nativeDeepReadProposalId } from "./manhuaNativeDeepReadIngest.js";
@@ -85,6 +86,44 @@ export async function acquireNativeDeepReadEpisodeClaim(
     releaseAfterSuccess: releaseOwnGeneration,
     releaseBeforePaidCall: releaseOwnGeneration,
   };
+}
+
+/**
+ * 集失败后把最终拒因写回占位文件（0826 病历单问题一第 3 步）：
+ * 占位管理 UI 靠它显示「这一集卡在哪」。旁路写入，失败只 warn 不改判集结果。
+ * 保留原 runId/createdAt——占位的身份与时间不因补写拒因而变。
+ */
+export async function recordNativeDeepReadClaimFailure(
+  seriesKey: string,
+  episodeIndex: number,
+  errorZh: string,
+): Promise<void> {
+  const objectName = nativeDeepReadClaimObjectName(seriesKey, episodeIndex);
+  const bucket = getGcsBucketName();
+  let previous: Record<string, unknown> = {};
+  try {
+    const versioned = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` });
+    const parsed = JSON.parse(versioned.buffer.toString("utf8")) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      previous = parsed as Record<string, unknown>;
+    }
+  } catch {
+    // 占位读不到（已被并发释放/清理）就不补写；失败信息仍在任务回执里
+    return;
+  }
+  await uploadBufferToGcs({
+    bucket,
+    objectName,
+    contentType: "application/json",
+    buffer: Buffer.from(
+      `${JSON.stringify({
+        ...previous,
+        lastErrorZh: String(errorZh || "").slice(0, 500),
+        lastFailedAtIso: new Date().toISOString(),
+      }, null, 2)}\n`,
+      "utf8",
+    ),
+  });
 }
 
 /** 干跑时列出仍在占位、必须人工核对后才能重跑的集号。 */

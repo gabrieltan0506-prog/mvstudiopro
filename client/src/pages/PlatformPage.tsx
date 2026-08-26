@@ -2171,6 +2171,84 @@ function manhuaLearnContinuationStorageKey(userKey: string): string {
   return scope ? `${MANHUA_LEARN_CONTINUATION_LS_KEY}:${encodeURIComponent(scope)}` : "";
 }
 
+/**
+ * 直载新面板的乐观值只能来自「本人上次确认过的结果」。
+ * #1315 曾把加载中一律当 owner——普通用户会闪现 owner 面板与内部模型名（技术泄漏）。
+ */
+const MANHUA_OWNER_PANEL_FLAG_LS_KEY = "mvsp_manhua_owner_panel_v1";
+
+function manhuaOwnerPanelFlagStorageKey(userKey: string): string {
+  const scope = String(userKey || "").trim();
+  return scope ? `${MANHUA_OWNER_PANEL_FLAG_LS_KEY}:${encodeURIComponent(scope)}` : "";
+}
+
+function readCachedManhuaOwnerPanelFlag(userKey: string): boolean {
+  const key = manhuaOwnerPanelFlagStorageKey(userKey);
+  if (!key || typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeCachedManhuaOwnerPanelFlag(userKey: string, allowed: boolean): void {
+  const key = manhuaOwnerPanelFlagStorageKey(userKey);
+  if (!key || typeof window === "undefined") return;
+  try {
+    if (allowed) window.localStorage.setItem(key, "1");
+    else window.localStorage.removeItem(key);
+  } catch {
+    // 浏览器禁用本地存储时只损失「秒载」，不影响权限正确性。
+  }
+}
+
+/**
+ * 学习进度日志：新行到达自动滚到最新（0826 用户点名，不用手动拉）。
+ * 用户主动往上翻时暂停跟随（离底部 >24px 视为在回看），翻回底部恢复跟随。
+ */
+function ManhuaLearnProgressLogView({
+  lines,
+}: {
+  lines: ReadonlyArray<{ atIso?: string; stage: string; detailZh: string }>;
+}) {
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const followRef = useRef(true);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (el && followRef.current) el.scrollTop = el.scrollHeight;
+  }, [lines.length, lines[lines.length - 1]?.detailZh]);
+  return (
+    <div
+      ref={boxRef}
+      onScroll={(event) => {
+        const el = event.currentTarget;
+        followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+      }}
+      className="max-h-36 space-y-1 overflow-y-auto rounded-lg border border-white/10 bg-black/25 px-2 py-1.5 text-[10px] opacity-90"
+    >
+      <div className="font-semibold opacity-95">学习进度</div>
+      {lines.map((line, i) => (
+        <div
+          key={`${line.atIso}-${line.stage}-${i}`}
+          className="border-t border-white/5 pt-1 first:border-0 first:pt-0"
+        >
+          <span className="opacity-50">
+            {line.atIso
+              ? new Date(line.atIso).toLocaleTimeString("zh-CN", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit",
+                })
+              : ""}
+          </span>{" "}
+          {line.detailZh}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function nativeModelReceiptStageLabelZh(stage: string): string {
   if (stage === "audio_model") return "声音分析";
   if (stage === "visual_model") return "画面精读";
@@ -3101,12 +3179,14 @@ export default function PlatformPage() {
       staleTime: 5 * 60_000,
       retry: false,
     });
-  // 直载新面板（0826 用户拍板）：能力确认返回前按已授权**乐观渲染**——
-  // 所有人不再先看旧抽帧面板等查询;确认结果只把真无权限者回落旧面板。
+  // 直载新面板（0826 用户拍板）：能力确认返回前按**本人上次确认过的结果**乐观渲染——
+  // owner 从第二次访问起免等查询直载；普通用户永不闪现 owner 面板与内部模型名。
+  // （#1315 曾把「加载中」一律当 owner，属于前台技术泄漏，已回收。）
   const ownerTemplateOptimizeAllowed =
     manhuaTemplateOwnerCapabilitiesQuery.data
       ? manhuaTemplateOwnerCapabilitiesQuery.data.allowed === true
-      : manhuaTemplateOwnerCapabilitiesQuery.isLoading;
+      : manhuaTemplateOwnerCapabilitiesQuery.isLoading
+        && readCachedManhuaOwnerPanelFlag(manhuaLearnUserKey);
   const ownerTemplateOptimizeModels =
     manhuaTemplateOwnerCapabilitiesQuery.data?.models || [];
   const ownerNativeDeepReadPanel =
@@ -3116,6 +3196,58 @@ export default function PlatformPage() {
   const manhuaLearnPipelineMeta = getManhuaLearnPipelineMeta({
     nativeDeepRead: ownerNativeDeepReadPanel,
   });
+  /**
+   * 占位管理（0826 用户点名）：历史占位此前没有任何 UI 入口，全靠助手代办。
+   * 列表列出该剧仍在占位的集（集数/占位时间/已花金额/卡点），弃置由用户亲手点。
+   * 「弃置后重跑」只做弃置＋把集数设为 1＋定位该剧——发射键仍在用户手上，不自动烧钱。
+   */
+  const [manhuaClaimsPanelOpen, setManhuaClaimsPanelOpen] = useState(false);
+  const [manhuaClaimBusyEpisode, setManhuaClaimBusyEpisode] = useState<number | null>(null);
+  const manhuaClaimsQuery = trpc.manhuaViralTemplate.listNativeDeepReadClaims.useQuery(
+    { seriesKey: resolvedManhuaLearnFocusSeriesKey },
+    {
+      enabled:
+        ownerNativeDeepReadPanel
+        && manhuaClaimsPanelOpen
+        && Boolean(resolvedManhuaLearnFocusSeriesKey),
+      staleTime: 30_000,
+      retry: false,
+    },
+  );
+  const discardManhuaClaimMutation = trpc.manhuaViralTemplate.discardNativeDeepReadClaim.useMutation();
+  const discardManhuaClaim = useCallback(async (episodeIndex: number, rerunAfter: boolean) => {
+    const seriesKey = resolvedManhuaLearnFocusSeriesKey;
+    if (!seriesKey) return;
+    if (!window.confirm(
+      `弃置第 ${episodeIndex} 集的占位？已花费用不退；弃置后这一集会重新纳入学习计划。`,
+    )) return;
+    setManhuaClaimBusyEpisode(episodeIndex);
+    try {
+      await discardManhuaClaimMutation.mutateAsync({
+        seriesKey,
+        episodeIndex,
+        confirmDiscard: true,
+      });
+      await manhuaClaimsQuery.refetch();
+      if (rerunAfter) {
+        setManhuaLearnBatchSize(1);
+        writeManhuaLearnBatchSize(1);
+        toast.success(`第 ${episodeIndex} 集占位已弃置；集数已设为 1，点「开始精读 1 集」即可重跑`);
+      } else {
+        toast.success(`第 ${episodeIndex} 集占位已弃置`);
+      }
+    } catch (error) {
+      toast.error(
+        `弃置失败：${error instanceof Error ? error.message.slice(0, 120) : "请稍后重试"}`,
+      );
+    } finally {
+      setManhuaClaimBusyEpisode(null);
+    }
+  }, [
+    resolvedManhuaLearnFocusSeriesKey,
+    discardManhuaClaimMutation,
+    manhuaClaimsQuery,
+  ]);
   /**
    * 生命周期三条链路（换代体检 / 归档查看 / 恢复）**仅 owner 可见**。
    *
@@ -3352,6 +3484,14 @@ export default function PlatformPage() {
       setArchivedForId(null);
     }
   }, [manhuaTemplateOwnerCapabilitiesQuery.isSuccess, ownerTemplateOptimizeAllowed]);
+  useEffect(() => {
+    // 把服务端确认结果写回本机缓存：它是下次「直载」的唯一乐观依据
+    if (!manhuaTemplateOwnerCapabilitiesQuery.data || !manhuaLearnUserKey) return;
+    writeCachedManhuaOwnerPanelFlag(
+      manhuaLearnUserKey,
+      manhuaTemplateOwnerCapabilitiesQuery.data.allowed === true,
+    );
+  }, [manhuaTemplateOwnerCapabilitiesQuery.data, manhuaLearnUserKey]);
   const openOwnerTemplateDetail = useCallback((id: string) => {
     setOwnerTemplateDetailId(id);
     setOwnerTemplateOptimizePrompt("");
@@ -12377,6 +12517,90 @@ export default function PlatformPage() {
                         </div>
                       ) : null}
 
+                      {ownerNativeDeepReadPanel && resolvedManhuaLearnFocusSeriesKey ? (
+                        <div className="mt-3 rounded-xl border border-white/10 bg-black/25 px-3 py-2.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-[11px] font-semibold text-[#c9c0e6]/90">
+                              占位管理 · 历史未结账单
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setManhuaClaimsPanelOpen((open) => !open)}
+                              className="rounded-md border border-white/15 px-2.5 py-1 text-[10px] text-[#c9c0e6] hover:bg-white/10"
+                            >
+                              {manhuaClaimsPanelOpen ? "收起" : "查看占位"}
+                            </button>
+                          </div>
+                          {manhuaClaimsPanelOpen ? (
+                            manhuaClaimsQuery.isLoading ? (
+                              <p className="mt-2 text-[10px] text-[#c9c0e6]/50">正在读取占位…</p>
+                            ) : manhuaClaimsQuery.isError ? (
+                              <p className="mt-2 text-[10px] text-rose-200/80">
+                                占位读取失败：{String(manhuaClaimsQuery.error?.message || "").slice(0, 120) || "请稍后重试"}
+                              </p>
+                            ) : (manhuaClaimsQuery.data?.items.length || 0) === 0 ? (
+                              <p className="mt-2 text-[10px] text-[#c9c0e6]/50">
+                                这部剧当前没有历史占位，可正常开始学习。
+                              </p>
+                            ) : (
+                              <div className="mt-2 space-y-1.5">
+                                <p className="text-[10px] text-[#c9c0e6]/45">
+                                  下列集有未结清的历史学习记录，学习计划会自动跳过它们；
+                                  处理后才会重新纳入。「弃置后重跑」不会自动扣费——发射键仍在你手上。
+                                </p>
+                                {(manhuaClaimsQuery.data?.items || []).map((item) => (
+                                  <div
+                                    key={item.episodeIndex}
+                                    className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-black/30 px-2.5 py-1.5 text-[10px] text-[#d7d0ef]"
+                                  >
+                                    <span className="font-semibold">第 {item.episodeIndex} 集</span>
+                                    <span className="text-[#c9c0e6]/55">
+                                      {item.createdAtIso
+                                        ? `占位于 ${new Date(item.createdAtIso).toLocaleString("zh-CN", {
+                                            month: "2-digit",
+                                            day: "2-digit",
+                                            hour: "2-digit",
+                                            minute: "2-digit",
+                                          })}`
+                                        : "占位时间未知"}
+                                    </span>
+                                    <span className={item.spentCny != null ? "text-amber-200/90" : "text-[#c9c0e6]/45"}>
+                                      {item.spentCny != null ? `已花 ¥${item.spentCny.toFixed(2)}` : "金额未知"}
+                                    </span>
+                                    {item.stuckZh ? (
+                                      <span
+                                        className="min-w-0 flex-1 truncate text-rose-200/75"
+                                        title={item.stuckZh}
+                                      >
+                                        卡点：{item.stuckZh}
+                                      </span>
+                                    ) : null}
+                                    <span className="ml-auto flex shrink-0 gap-1.5">
+                                      <button
+                                        type="button"
+                                        disabled={manhuaClaimBusyEpisode != null || Boolean(manhuaLearnBusyKey)}
+                                        onClick={() => void discardManhuaClaim(item.episodeIndex, false)}
+                                        className="rounded-md border border-rose-300/30 px-2 py-0.5 text-rose-100 hover:bg-rose-500/15 disabled:opacity-40"
+                                      >
+                                        {manhuaClaimBusyEpisode === item.episodeIndex ? "处理中…" : "弃置"}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={manhuaClaimBusyEpisode != null || Boolean(manhuaLearnBusyKey)}
+                                        onClick={() => void discardManhuaClaim(item.episodeIndex, true)}
+                                        className="rounded-md border border-sky-300/30 px-2 py-0.5 text-sky-100 hover:bg-sky-500/15 disabled:opacity-40"
+                                      >
+                                        弃置后重跑
+                                      </button>
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )
+                          ) : null}
+                        </div>
+                      ) : null}
+
                       {Object.keys(kindCounts).length > 0 ? (
                         <div className="mt-3 flex flex-wrap gap-2">
                           {Object.entries(kindCounts).map(([label, count]) => (
@@ -12457,11 +12681,13 @@ export default function PlatformPage() {
                       {manhuaLearnResult && !manhuaLearnPanelCollapsed ? (
                         <div
                           className={`mt-3 space-y-2 rounded-xl border px-3 py-2.5 text-[11px] ${
-                            manhuaLearnResult.errorZh || manhuaLearnResult.liveStatus === "failed"
-                              ? "border-rose-300/35 bg-rose-500/10 text-rose-50/90"
-                              : manhuaLearnResult.liveStatus === "running" ||
-                                  manhuaLearnResult.liveStatus === "queued"
-                                ? "border-sky-300/30 bg-sky-500/10 text-sky-50/90"
+                            // 状态色语义（0826 用户点名）：进行中/排队一律蓝色；
+                            // 只有真终态失败才红。残留 errorZh 不许把跑着的任务染红。
+                            manhuaLearnResult.liveStatus === "running" ||
+                            manhuaLearnResult.liveStatus === "queued"
+                              ? "border-sky-300/30 bg-sky-500/10 text-sky-50/90"
+                              : manhuaLearnResult.errorZh || manhuaLearnResult.liveStatus === "failed"
+                                ? "border-rose-300/35 bg-rose-500/10 text-rose-50/90"
                                 : manhuaLearnResult.liveStatus === "local"
                                   ? "border-violet-300/30 bg-violet-500/10 text-violet-50/90"
                                   : "border-amber-300/25 bg-amber-500/10 text-amber-50/90"
@@ -12537,28 +12763,14 @@ export default function PlatformPage() {
                           ) : null}
                           {canSeeManhuaLearnTechnicalDetails
                             && (manhuaLearnResult.progressLines?.length || 0) > 0 ? (
-                            <div className="max-h-36 space-y-1 overflow-y-auto rounded-lg border border-white/10 bg-black/25 px-2 py-1.5 text-[10px] opacity-90">
-                              <div className="font-semibold opacity-95">学习进度</div>
-                              {(manhuaLearnResult.progressLines || []).map((line, i) => (
-                                <div
-                                  key={`${line.atIso}-${line.stage}-${i}`}
-                                  className="border-t border-white/5 pt-1 first:border-0 first:pt-0"
-                                >
-                                  <span className="opacity-50">
-                                    {line.atIso
-                                      ? new Date(line.atIso).toLocaleTimeString("zh-CN", {
-                                          hour: "2-digit",
-                                          minute: "2-digit",
-                                          second: "2-digit",
-                                        })
-                                      : ""}
-                                  </span>{" "}
-                                  {line.detailZh}
-                                </div>
-                              ))}
-                            </div>
+                            <ManhuaLearnProgressLogView
+                              lines={manhuaLearnResult.progressLines || []}
+                            />
                           ) : null}
-                          {manhuaLearnResult.errorZh ? (
+                          {manhuaLearnResult.errorZh
+                            && manhuaLearnResult.liveStatus !== "running"
+                            && manhuaLearnResult.liveStatus !== "queued" ? (
+                            // 跑着的任务不展示上一轮残留错误，防「进行中却一片红」误读
                             <p className="text-rose-100/80">
                               {canSeeManhuaLearnTechnicalDetails
                                 ? manhuaLearnResult.errorZh

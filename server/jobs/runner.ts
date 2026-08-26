@@ -598,12 +598,24 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
           confirmation,
           nativePlanPreview,
         );
+        // 「已隔离占位」是内部术语；对用户说清楚：这几集有没结清的历史账单，本次不动它们
         const quarantinedClaims = nativePlanPreview.pendingClaimEpisodeIndexes.length
-          ? ` · 已隔离占位第${nativePlanPreview.pendingClaimEpisodeIndexes.join("、")}集`
+          ? ` · 第 ${nativePlanPreview.pendingClaimEpisodeIndexes.join("、")} 集有历史未结账单，本次跳过待处理（可在面板「占位管理」里弃置或重跑）`
+          : "";
+        // 给任务落系列键：失败任务的回执才对得上「这笔钱花在哪部剧哪一集」
+        const planSeriesKey = nativePlanPreview.seriesKey;
+        if (jobId) {
+          await enqueueManhuaProgressWrite(() =>
+            patchJobRunningProgress(jobId, { nativeSeriesKey: planSeriesKey }));
+        }
+        // 发车前亮明本次要买的集号（0826 病历单问题四）：失败集留占位后，
+        // 下次点学习会自动跳去买下一集——集号必须在第一行就让用户看见。
+        const plannedEpisodesZh = nativePlanPreview.episodes.length
+          ? `本次执行第 ${nativePlanPreview.episodes.map((e) => e.episodeIndex).join("、")} 集 · `
           : "";
         await reportLearnProgress(
           MANHUA_LEARN_STAGE.list,
-          `执行计划复核通过：${nativePlanPreview.executableEpisodeCount} 集 · ${nativePlanPreview.totalModelCalls} 次模型请求（画面 ${nativePlanPreview.totalSegments} 个视频分片每段一次调用共 ${nativePlanPreview.totalVisualCalls} 次、音轨随调直出 + 系列整理 1 次） · 确认码 ${nativePlanPreview.planHash}${quarantinedClaims}`,
+          `执行计划复核通过：${plannedEpisodesZh}共 ${nativePlanPreview.executableEpisodeCount} 集 · ${nativePlanPreview.totalModelCalls} 次模型请求（画面 ${nativePlanPreview.totalSegments} 个视频分片每段一次调用共 ${nativePlanPreview.totalVisualCalls} 次、音轨随调直出 + 系列整理 1 次） · 确认码 ${nativePlanPreview.planHash}${quarantinedClaims}`,
         );
       } else if (hasNativeDeepReadJobFields(params)) {
         throw new Error("原生精读计划未获明确确认，未发出模型请求");

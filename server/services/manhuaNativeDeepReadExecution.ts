@@ -36,7 +36,10 @@ import {
   listIngestedNativeDeepReadEpisodes,
   type NativeDeepReadIngestResult,
 } from "./manhuaNativeDeepReadIngest.js";
-import { acquireNativeDeepReadEpisodeClaim } from "./manhuaNativeDeepReadClaim.js";
+import {
+  acquireNativeDeepReadEpisodeClaim,
+  recordNativeDeepReadClaimFailure,
+} from "./manhuaNativeDeepReadClaim.js";
 import {
   finalizeManhuaNativeDirectAudioAnalysis,
   noAudioManhuaNativeDirectAnalysis,
@@ -650,6 +653,22 @@ export async function runNativeDeepReadBatch(input: {
       outcomes.push(failed);
       await emitProgress(failed);
       aborted = Boolean(input.abortSignal?.aborted);
+      // 已付费失败会保留占位：把最终拒因补写进占位文件，占位管理 UI 才答得出「卡在哪」。
+      // 旁路写入，失败只 warn——不能因为补写失败把集结果改判。
+      if (failed.status === "failed" && paidEpisodeIndexes.has(episode.episodeIndex)) {
+        try {
+          await recordNativeDeepReadClaimFailure(
+            input.seriesKey,
+            episode.episodeIndex,
+            failed.errorZh || "未回传具体拒因",
+          );
+        } catch (recordError) {
+          console.warn(
+            `[nativeDeepRead] 第${episode.episodeIndex}集占位拒因补写未完成：`,
+            recordError instanceof Error ? recordError.message : recordError,
+          );
+        }
+      }
       if (!paidEpisodeIndexes.has(episode.episodeIndex)) {
         const claim = claims.get(episode.episodeIndex);
         if (claim) await Promise.allSettled([claim.releaseBeforePaidCall()]);

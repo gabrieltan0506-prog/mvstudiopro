@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   NATIVE_DEEP_READ_GENERATION_CONFIG,
   NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
+  NATIVE_DEEP_READ_RESPONSE_SCHEMA,
+  NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG,
   NATIVE_DEEP_READ_MIN_TMP_FREE_BYTES,
   NATIVE_DEEP_READ_MODEL,
   NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES,
@@ -93,15 +95,35 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("adaptive-1800f-360s-v4-gemini");
   });
 
-  it("generationConfig 按 0826 实弹定稿：显式高思考、温度 0.8、65535 上限、不混思考", () => {
+  it("generationConfig 按 0826 参数定稿：温度 0.65、官方上限 65_536、单候选、responseSchema、HIGH 思考不外发", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG).toEqual({
-      temperature: 0.8,
-      maxOutputTokens: 65_535,
+      temperature: 0.65,
+      maxOutputTokens: 65_536,
+      candidateCount: 1,
       audioTimestamp: true,
       responseMimeType: "application/json",
-      thinkingConfig: { thinkingLevel: "high" },
+      responseSchema: NATIVE_DEEP_READ_RESPONSE_SCHEMA,
+      thinkingConfig: { thinkingLevel: "HIGH", includeThoughts: false },
     });
-    expect(NATIVE_DEEP_READ_GENERATION_CONFIG).not.toHaveProperty("includeThoughts");
+    // 定稿禁令：不得同时传 thinkingBudget
+    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
+  });
+
+  it("原地重试参数：仅温度归零，其余与首发一致（0826 定稿）", () => {
+    expect(NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG).toEqual({
+      ...NATIVE_DEEP_READ_GENERATION_CONFIG,
+      temperature: 0,
+    });
+  });
+
+  it("responseSchema 覆盖六栏骨架：shots/subtitles/audioResolution/beatStructureZh 必填", () => {
+    expect(NATIVE_DEEP_READ_RESPONSE_SCHEMA.required).toEqual([
+      "shots", "subtitles", "audioResolution", "beatStructureZh",
+    ]);
+    expect(Object.keys(NATIVE_DEEP_READ_RESPONSE_SCHEMA.properties)).toEqual([
+      "shots", "subtitles", "audioResolution", "beatStructureZh",
+      "moodArcZh", "reusableZh", "genPromptHintZh", "classification",
+    ]);
   });
 });
 
@@ -116,17 +138,17 @@ describe("两档 fps（0826 拍板：≤180s→10，否则5，永不更低）", 
 });
 
 describe("双密度地板线（0826 双密度教训）", () => {
-  it("360s 段：镜头 ≥24、音轨段 ≥8、声音事件 ≥15", () => {
+  it("360s 段：镜头 ≥24、音轨段 ≥6（0826 病历单问题三：45→60，7 段真实产出不再误拒）、声音事件 ≥15", () => {
     expect(resolveNativeDeepReadSegmentFloors(360)).toEqual({
       minShots: 24,
-      minAudioTracks: 8,
+      minAudioTracks: 6,
       minAudioCues: 15,
     });
   });
-  it("60s 短段音轨地板降为 2（审查 P0-1：硬下限 3 只会咬短段，反偷懒由 ceil(len/45) 承担）", () => {
+  it("60s 短段音轨地板降为 1（间隔 60 后与 FLOOR_MIN=1 兼容）", () => {
     expect(resolveNativeDeepReadSegmentFloors(60)).toEqual({
       minShots: 4,
-      minAudioTracks: 2,
+      minAudioTracks: 1,
       minAudioCues: 3,
     });
   });
@@ -139,10 +161,10 @@ describe("双密度地板线（0826 双密度教训）", () => {
     });
   });
 
-  it("360s 大段地板不受 P0-1 订正影响（8 段音轨照旧）", () => {
+  it("360s 大段地板不受 P0-1 订正影响（间隔 60 下为 6 段音轨）", () => {
     expect(resolveNativeDeepReadSegmentFloors(360)).toEqual({
       minShots: 24,
-      minAudioTracks: 8,
+      minAudioTracks: 6,
       minAudioCues: 15,
     });
   });
