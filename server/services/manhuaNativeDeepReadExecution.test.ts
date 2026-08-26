@@ -1,8 +1,8 @@
 /**
  * 协调器行为。全部注入假实现，**不调用任何付费接口**。
  *
- * 这一层此前根本不存在：runner 与入库两端都写完了，中间没有生产调用点，
- * `MANHUA_NATIVE_DEEP_READ=1` 打开也不改变任何业务路径。
+ * 0826 换代：音轨由 Gemini 视觉调用直出，协调器不再有独立音频取证阶段；
+ * 逐集执行（每段一次调用），单集失败停止后续集。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -13,7 +13,6 @@ import {
   type NativeDeepReadBatchEpisode,
   type NativeDeepReadExecutionDeps,
 } from "./manhuaNativeDeepReadExecution";
-import { noAudioManhuaNativeAnalysis } from "../../shared/manhuaNativeAudioAnalysis";
 
 function makeResult(over: Record<string, unknown> = {}) {
   const beatGrid = Array.from({ length: 8 }, (_, i) => ({
@@ -33,23 +32,24 @@ function makeResult(over: Record<string, unknown> = {}) {
       audiovisualTagsZh: ["冷暖对撞"],
       audienceExperienceTagsZh: ["持续紧张"],
     },
-    audioAnalysis: noAudioManhuaNativeAnalysis(1080),
     segmentCount: 3,
     shotCount: beatGrid.length,
     failedSegmentCount: 0,
     droppedCount: 0,
     truncated: false,
-    model: "qwen3.8-max",
+    model: "gemini-3.1-pro-preview",
     attemptedSegments: 3,
-    usingPlanQuota: true,
-    usage: { costCny: 0.5 },
+    usingPlanQuota: false,
+    usage: { inputTokens: 100, outputTokens: 20, costCny: 0.5 },
+    audioInputTokens: 0,
+    hasAudio: false,
+    visualRoutes: ["vertex_gcs_video"],
+    degradedFpsSegmentIndexes: [],
     ...over,
   };
 }
 
-/**
- * 18 分钟一集按 360 秒切为三段；同一集的多个片段仍可进入同一多视频请求。
- */
+/** 18 分钟一集按 360 秒切为三段；换代后每段一次 Gemini 调用。 */
 const episode = {
   episodeIndex: 1,
   sourceUrl: "https://example.com/e1",
@@ -65,7 +65,6 @@ const episode = {
 let deps: NativeDeepReadExecutionDeps;
 
 beforeEach(() => {
-  const emptyAudio = noAudioManhuaNativeAnalysis(1080);
   deps = {
     isEnabled: vi.fn(() => true),
     run: vi.fn(async () => makeResult() as never),
@@ -76,12 +75,12 @@ beforeEach(() => {
           attemptedSegments: episodeRow.segments.length,
           segmentCount: episodeRow.segments.length,
           batchRequestId: "11111111-1111-4111-8111-111111111111",
-          batchEpisodeCount: input.episodes.length,
+          batchEpisodeCount: 1,
         }),
       })),
       usage: { inputTokens: input.episodes.length * 100, outputTokens: input.episodes.length * 20, costCny: input.episodes.length * 0.5 },
-      usingPlanQuota: true,
-      model: "qwen3.8-max",
+      usingPlanQuota: false,
+      model: "gemini-3.1-pro-preview",
       batchRequestId: "11111111-1111-4111-8111-111111111111",
     })) as never,
     ingest: vi.fn(async (i: { episodeIndex: number }) => ({
@@ -98,13 +97,6 @@ beforeEach(() => {
       releaseBeforePaidCall: async () => {},
       releaseAfterSuccess: async () => {},
     })),
-    collectAudioEvidence: vi.fn(async () => ({
-      hasAudio: false,
-      durationSec: 1080,
-      chunks: [],
-      usage: emptyAudio.usage,
-    })) as never,
-    finalizeAudio: vi.fn(async () => emptyAudio) as never,
     aggregateSeries: vi.fn(async () => ({
       card: { id: "tpl_series_s" },
       gcsUri: "gs://b/tpl_series_s.json",
@@ -159,7 +151,7 @@ describe("批次预检：在任何模型动作之前", () => {
     ).toThrow("HTTPS");
   });
 
-  it("片段数不冒充请求数：20 集各 6 段按预算动态装箱", () => {
+  it("每段一次调用：视觉调用数=分片数，音频调用恒为 0", () => {
     const many = Array.from({ length: 20 }, (_, i) =>
       ep(i + 1, {
         durationSec: 1200,
@@ -172,25 +164,9 @@ describe("批次预检：在任何模型动作之前", () => {
     const plan = validateNativeDeepReadBatchPlan(many);
     expect(plan.totalEpisodes).toBe(20);
     expect(plan.totalSegments).toBe(120);
-    expect(plan.totalVisualCalls).toBeGreaterThan(1);
-    expect(plan.totalModelCalls).toBe(plan.totalVisualCalls + plan.totalAudioChunks * 2 + 1);
-  });
-
-  it("十集短片可合一包，十集长片会按预算自动拆包", () => {
-    const short = Array.from({ length: 10 }, (_, index) => ep(index + 1, {
-      durationSec: 90,
-      segments: [{ startSec: 0, endSec: 90 }],
-    }));
-    const long = Array.from({ length: 10 }, (_, index) => ep(index + 1, {
-      durationSec: 1080,
-      segments: [
-        { startSec: 0, endSec: 360 },
-        { startSec: 360, endSec: 720 },
-        { startSec: 720, endSec: 1080 },
-      ],
-    }));
-    expect(validateNativeDeepReadBatchPlan(short).totalVisualCalls).toBe(1);
-    expect(validateNativeDeepReadBatchPlan(long).totalVisualCalls).toBeGreaterThan(1);
+    expect(plan.totalVisualCalls).toBe(120);
+    expect(plan.totalAudioChunks).toBe(0);
+    expect(plan.totalModelCalls).toBe(plan.totalVisualCalls + 1);
   });
 
   it("上限由调用方指定，不写死 20", () => {
@@ -202,7 +178,6 @@ describe("批次预检：在任何模型动作之前", () => {
   it("同一份清单确认码稳定，改一个字段就变 —— 真跑靠它绑定干跑那份计划", () => {
     const a = validateNativeDeepReadBatchPlan([ep(1)], { seriesKey: "series_a" }).planHash;
     expect(validateNativeDeepReadBatchPlan([ep(1)], { seriesKey: "series_a" }).planHash).toBe(a);
-    // 改任一入参确认码就变：干跑确认过的计划改了字段，真跑必须重新确认
     expect(
       validateNativeDeepReadBatchPlan(
         [ep(1, { sourceUrl: "https://example.com/e9" })],
@@ -268,11 +243,11 @@ describe("并发与计费", () => {
           failedSegmentCount: 3,
           beatGrid: [],
           shotCount: 0,
-          usage: { costCny: 2.5 },
+          usage: { inputTokens: 0, outputTokens: 0, costCny: 2.5 },
         }),
       }],
       usage: { inputTokens: 0, outputTokens: 0, costCny: 2.5 },
-      model: "qwen3.8-max",
+      model: "gemini-3.1-pro-preview",
       batchRequestId: "11111111-1111-4111-8111-111111111111",
     })) as never;
     const r = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1)] }, deps);
@@ -296,7 +271,7 @@ describe("并发与计费", () => {
     expect(release).not.toHaveBeenCalled();
   });
 
-  it("模型开始前的零成本故障只释放未付费占位", async () => {
+  it("模型开始前的零成本故障释放全部未付费占位并停止后续集", async () => {
     const releases = new Map<number, ReturnType<typeof vi.fn>>();
     deps.acquireClaim = vi.fn(async (_seriesKey: string, episodeIndex: number) => {
       const releaseBeforePaidCall = vi.fn(async () => undefined);
@@ -309,13 +284,14 @@ describe("并发与计费", () => {
         releaseAfterSuccess: vi.fn(async () => undefined),
       };
     }) as never;
-    deps.collectAudioEvidence = vi.fn(async () => {
+    deps.runBatch = vi.fn(async () => {
       throw new Error("媒体准备未完成");
     }) as never;
 
     const result = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1), ep(2)] }, deps);
 
-    expect(result.failedCount).toBe(2);
+    // 第 1 集失败即停止后续请求；两集未付费占位都释放
+    expect(result.failedCount).toBe(1);
     expect(result.totalCostCny).toBe(0);
     expect(releases.get(1)).toHaveBeenCalledTimes(1);
     expect(releases.get(2)).toHaveBeenCalledTimes(1);
@@ -334,22 +310,25 @@ describe("并发与计费", () => {
         releaseAfterSuccess: vi.fn(async () => undefined),
       };
     }) as never;
-    deps.collectAudioEvidence = vi.fn(async (input) => {
+    deps.runBatch = vi.fn(async (input: {
+      onModelReceipt?: (receipt: Record<string, unknown>) => Promise<void> | void;
+    }) => {
       await input.onModelReceipt?.({
-        stage: "audio_model",
+        stage: "visual_model",
         status: "started",
+        route: "vertex_gcs_video",
+        episodeIndexes: [1],
         chunkIndex: 0,
-        variant: "mono_16k",
+        videoCount: 1,
       });
-      throw Object.assign(new Error("声音结构未返回"), {
-        nativeAudioUsage: {
-          model: "gemini-3.6-flash×2",
+      throw Object.assign(new Error("视觉精读未完成"), {
+        nativeDeepReadCostCny: 0.2,
+        nativeDeepReadUsage: {
           inputTokens: 30,
-          audioInputTokens: 20,
           outputTokens: 4,
           costCny: 0.2,
-          geminiCalls: 1,
-          receiptComplete: false,
+          usingPlanQuota: false,
+          receiptComplete: true,
         },
       });
     }) as never;
@@ -357,22 +336,22 @@ describe("并发与计费", () => {
     const result = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1), ep(2)] }, deps);
 
     expect(result.outcomes.find((row) => row.episodeIndex === 1)?.usage).toMatchObject({
-      audioInputTokens: 30,
-      audioOutputTokens: 4,
-      audioCostCny: 0.2,
-      receiptComplete: false,
+      visualInputTokens: 30,
+      visualOutputTokens: 4,
+      visualPriceEquivalentCny: 0.2,
     });
+    expect(result.outcomes.find((row) => row.episodeIndex === 1)?.costCny).toBeCloseTo(0.2);
     expect(releases.get(1)).not.toHaveBeenCalled();
     expect(releases.get(2)).toHaveBeenCalledTimes(1);
   });
 
-  it("成功集汇总实际成本与耗时", async () => {
+  it("成功集汇总实际成本与耗时（逐集各发一次 runner 调用）", async () => {
     const r = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1), ep(2)] }, deps);
     expect(r.ingestedCount).toBe(2);
     expect(r.totalCostCny).toBeCloseTo(1.0);
     expect(r.totalElapsedMs).toBeGreaterThanOrEqual(0);
     expect(r.plan.totalSegments).toBe(6);
-    expect(deps.runBatch).toHaveBeenCalledTimes(1);
+    expect(deps.runBatch).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -396,6 +375,11 @@ describe("单集执行", () => {
     );
     expect(deps.ingest).toHaveBeenCalledTimes(1);
     expect(out.gcsUri).toBe("gs://b/ep1.json");
+    expect(out.usage.model).toBe("gemini-3.1-pro-preview");
+    expect(out.usage.usingPlanQuota).toBe(false);
+    // 双计防线：音轨已含在视觉调用里，独立音频通道恒为 0
+    expect(out.usage.audioCostCny).toBe(0);
+    expect(out.usage.audioInputTokens).toBe(0);
   });
 
   it("门禁不过不写 GCS —— 空卡比没有卡更浪费审批人时间", async () => {
@@ -422,49 +406,28 @@ describe("单集执行", () => {
 describe("批量发车", () => {
   const three = [1, 2, 3].map((i) => ({ ...episode, episodeIndex: i }));
 
-  it("每次模型调用都逐笔回传 started/completed，包含双音轨、视觉与系列整理", async () => {
-    const checkpoints: Array<{ stage: string; status: string; variant?: string }> = [];
+  it("每次模型调用都逐笔回传 started/completed（视觉 + 系列整理；无独立音频阶段）", async () => {
+    const checkpoints: Array<{ stage: string; status: string }> = [];
     const baseRunBatch = deps.runBatch;
-    deps.collectAudioEvidence = vi.fn(async (input) => {
-      for (const variant of ["mono_16k", "stereo_32k"] as const) {
-        await input.onModelReceipt?.({
-          stage: "audio_model",
-          status: "started",
-          chunkIndex: 0,
-          variant,
-        });
-        await input.onModelReceipt?.({
-          stage: "audio_model",
-          status: "completed",
-          chunkIndex: 0,
-          variant,
-          inputTokens: 10,
-          audioInputTokens: 8,
-          outputTokens: 2,
-        });
-      }
-      return {
-        hasAudio: false,
-        durationSec: 1080,
-        chunks: [],
-        usage: noAudioManhuaNativeAnalysis(1080).usage,
-      };
-    }) as never;
     deps.runBatch = vi.fn(async (input) => {
       await input.onModelReceipt?.({
         stage: "visual_model",
         status: "started",
+        route: "vertex_gcs_video",
         batchRequestId: "11111111-1111-4111-8111-111111111111",
         episodeIndexes: [1],
-        videoCount: 3,
+        chunkIndex: 0,
+        videoCount: 1,
       });
       const result = await baseRunBatch(input as never);
       await input.onModelReceipt?.({
         stage: "visual_model",
         status: "completed",
+        route: "vertex_gcs_video",
         batchRequestId: "11111111-1111-4111-8111-111111111111",
         episodeIndexes: [1],
-        videoCount: 3,
+        chunkIndex: 0,
+        videoCount: 1,
         inputTokens: 100,
         outputTokens: 20,
       });
@@ -493,15 +456,11 @@ describe("批量发车", () => {
     }, deps);
 
     expect(result.ingestedCount).toBe(1);
-    expect(checkpoints.map(({ stage, status, variant }) => `${stage}:${variant || "-"}:${status}`)).toEqual([
-      "audio_model:mono_16k:started",
-      "audio_model:mono_16k:completed",
-      "audio_model:stereo_32k:started",
-      "audio_model:stereo_32k:completed",
-      "visual_model:-:started",
-      "visual_model:-:completed",
-      "series_aggregation_model:-:started",
-      "series_aggregation_model:-:completed",
+    expect(checkpoints.map(({ stage, status }) => `${stage}:${status}`)).toEqual([
+      "visual_model:started",
+      "visual_model:completed",
+      "series_aggregation_model:started",
+      "series_aggregation_model:completed",
     ]);
   });
 
@@ -583,7 +542,7 @@ describe("批量发车", () => {
     expect(deps.ingest).toHaveBeenCalledTimes(1);
   });
 
-  it("同包一集门禁失败不覆盖其他已经取得的结构", async () => {
+  it("一集门禁失败停止后续集，已入库的集不受影响", async () => {
     deps.runBatch = vi.fn(async (input: { episodes: Array<{ episodeIndex: number; segments: unknown[] }> }) => ({
       episodes: input.episodes.map((episodeRow) => ({
         episodeIndex: episodeRow.episodeIndex,
@@ -591,17 +550,20 @@ describe("批量发车", () => {
           ? makeResult({ segmentCount: 0, failedSegmentCount: 3, beatGrid: [], shotCount: 0 })
           : makeResult(),
       })),
-      usage: { inputTokens: 300, outputTokens: 60, costCny: 1.5 },
-      model: "qwen3.8-max",
+      usage: { inputTokens: 100, outputTokens: 20, costCny: 0.5 },
+      model: "gemini-3.1-pro-preview",
       batchRequestId: "11111111-1111-4111-8111-111111111111",
     })) as never;
     const r = await runNativeDeepReadBatch({ seriesKey: "s", episodes: three }, deps);
-    expect(r.ingestedCount).toBe(2);
+    // 第 1 集入库；第 2 集门禁失败即停止，第 3 集不再发请求（占位已释放）
+    expect(r.ingestedCount).toBe(1);
     expect(r.failedCount).toBe(1);
     expect(r.outcomes.find((o) => o.episodeIndex === 2)?.status).toBe("failed");
+    expect(r.outcomes.find((o) => o.episodeIndex === 3)).toBeUndefined();
+    expect(deps.runBatch).toHaveBeenCalledTimes(2);
   });
 
-  it("整包已返回后即使收到中止也保存已付费结构，但不再做系列聚合", async () => {
+  it("首集模型返回后收到中止：已付费结构照常入库，后续集停跑且不做系列聚合", async () => {
     const c = new AbortController();
     const original = deps.runBatch;
     deps.runBatch = vi.fn(async (input) => {
@@ -614,8 +576,8 @@ describe("批量发车", () => {
     );
     expect(r.aborted).toBe(true);
     expect(r.failedCount).toBe(0);
-    expect(r.ingestedCount).toBe(3);
-    expect(r.totalCostCny).toBeCloseTo(1.5);
+    expect(r.ingestedCount).toBe(1);
+    expect(r.totalCostCny).toBeCloseTo(0.5);
     expect(deps.runBatch).toHaveBeenCalledTimes(1);
     expect(deps.aggregateSeries).not.toHaveBeenCalled();
   });

@@ -74,7 +74,9 @@ describe("原生精读计划", () => {
     expect(plan.episodes.map((row) => row.episodeIndex)).toEqual([3]);
     expect(plan.alreadyIngestedEpisodeIndexes).toEqual([1, 2]);
     expect(plan.totalSegments).toBe(3);
-    expect(plan.totalVisualCalls).toBe(1);
+    // 0826 换代：每段一次 Gemini 调用（3 段=3 次）；音轨随调直出为 0；聚合 +1
+    expect(plan.totalVisualCalls).toBe(3);
+    expect(plan.totalAudioChunks).toBe(0);
     expect(plan.totalModelCalls).toBe(4);
     expect(plan.executableEpisodeCount).toBe(1);
     expect(d.probeDurationSec).toHaveBeenCalledTimes(1);

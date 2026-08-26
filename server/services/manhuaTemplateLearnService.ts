@@ -30,7 +30,7 @@ import {
   type NativeDeepReadPlanEpisode,
   type NativeDeepReadPlanPreview,
 } from "./manhuaNativeDeepReadPlan.js";
-import { splitManhuaNativeAudioChunks } from "../../shared/manhuaNativeAudioAnalysis.js";
+import { MANHUA_NATIVE_DEEP_READ_MODEL } from "../../shared/manhuaNativeDeepReadJob.js";
 import type { ManhuaNativeModelReceipt } from "../../shared/manhuaNativeModelReceipt.js";
 import { listIngestedNativeDeepReadEpisodeRecords } from "./manhuaNativeDeepReadIngest.js";
 import {
@@ -269,7 +269,7 @@ export function mergeManhuaNativeDeepReadUsage(
       ? currentMode
       : "unknown";
   return {
-    model: String(row.model || current?.model || "qwen3.8-max"),
+    model: String(row.model || current?.model || MANHUA_NATIVE_DEEP_READ_MODEL),
     billingMode,
     inputTokens: (current?.inputTokens || 0) + (Number(row.inputTokens) || 0),
     outputTokens: (current?.outputTokens || 0) + (Number(row.outputTokens) || 0),
@@ -2457,15 +2457,8 @@ export async function runManhuaTemplateLearn(
       }
       await progress(
         MANHUA_LEARN_STAGE.vision,
-        `正在按时长与输入预算装箱精读 ${executionPlans.length} 集（共 ${executionPlans.reduce((sum, plan) => sum + plan.segments.length, 0)} 个视频分片）…`,
+        `正在逐段精读 ${executionPlans.length} 集（共 ${executionPlans.reduce((sum, plan) => sum + plan.segments.length, 0)} 个视频分片，每段一次调用，音轨同调直出）…`,
       );
-      const totalAudioChunks = executionPlans.reduce(
-        (sum, plan) => sum + splitManhuaNativeAudioChunks(plan.durationSec).length,
-        0,
-      );
-      const completedAudioVariants = new Set<string>();
-      const completedAudioChunks = new Set<string>();
-      let audioProgressStarted = false;
       const batchResult = await runNativeDeepReadBatch({
         seriesKey,
         episodes: executionPlans.map(({ seriesKey: _seriesKey, abortSignal: _abortSignal, ...plan }) => plan),
@@ -2483,40 +2476,8 @@ export async function runManhuaTemplateLearn(
           const episodeLabel = checkpoint.episodeIndexes.length === 1
             ? `第 ${checkpoint.episodeIndexes[0]} 集`
             : `第 ${checkpoint.episodeIndexes[0]}–${checkpoint.episodeIndexes.at(-1)} 集`;
-          if (checkpoint.stage === "audio_model") {
-            if (!audioProgressStarted) {
-              audioProgressStarted = true;
-              await progress(MANHUA_LEARN_STAGE.audio, `开始音轨分析（共 ${totalAudioChunks} 段）…`);
-            }
-            if (checkpoint.status === "failed") {
-              await progress(
-                MANHUA_LEARN_STAGE.failed,
-                `音轨分析未完成：${checkpoint.errorZh || "上游未返回完整回执"}`,
-              );
-              return;
-            }
-            if (checkpoint.status !== "completed" || checkpoint.chunkIndex === undefined || !checkpoint.variant) {
-              return;
-            }
-            const episodeIndex = checkpoint.episodeIndexes[0] || 0;
-            const chunkKey = `${episodeIndex}:${checkpoint.chunkIndex}`;
-            completedAudioVariants.add(`${chunkKey}:${checkpoint.variant}`);
-            if (
-              completedAudioVariants.has(`${chunkKey}:mono_16k`)
-              && completedAudioVariants.has(`${chunkKey}:stereo_32k`)
-              && !completedAudioChunks.has(chunkKey)
-            ) {
-              completedAudioChunks.add(chunkKey);
-              const done = completedAudioChunks.size;
-              const percent = Math.min(100, Math.round((done / Math.max(1, totalAudioChunks)) * 100));
-              await progress(
-                MANHUA_LEARN_STAGE.audio,
-                done >= totalAudioChunks
-                  ? `音轨分析完成（${done}/${totalAudioChunks}，100%）`
-                  : `音轨分析进行中 ${done}/${totalAudioChunks}（${percent}%）`,
-              );
-            }
-          } else if (checkpoint.stage === "series_aggregation_model") {
+          // 0826 换代：音轨由视觉调用直出，主链不再产生 audio_model 阶段回执。
+          if (checkpoint.stage === "series_aggregation_model") {
             await progress(
               checkpoint.status === "failed" ? MANHUA_LEARN_STAGE.failed : MANHUA_LEARN_STAGE.analysis,
               checkpoint.status === "started"
@@ -2526,7 +2487,13 @@ export async function runManhuaTemplateLearn(
                   : `全系列结构整理未完成：${checkpoint.errorZh || "上游未返回完整回执"}`,
             );
           } else {
-            const stageZh = checkpoint.stage === "visual_parse" ? "结构校验" : "画面与声音联合精读";
+            const stageZh = checkpoint.stage === "visual_parse"
+              ? checkpoint.route === "openrouter_glm_structuring"
+                ? "GLM 结构化整形"
+                : "结构校验"
+              : checkpoint.degraded
+                ? "画面与声音联合精读（EvoLink 兜底 1fps 降级）"
+                : "画面与声音联合精读";
             await progress(
               checkpoint.status === "failed" ? MANHUA_LEARN_STAGE.failed : MANHUA_LEARN_STAGE.vision,
               `${episodeLabel} · ${stageZh}${checkpoint.status === "started"
@@ -2573,7 +2540,7 @@ export async function runManhuaTemplateLearn(
       const seriesAggregationUsage = seriesAggregation?.usage || batchResult.seriesAggregationUsage;
       if (seriesAggregationUsage) {
         nativeUsage = mergeManhuaNativeDeepReadUsage(nativeUsage, {
-          model: "qwen3.8-max(batch)+gemini-3.6-flash×2+z-ai/glm-5.3(series)",
+          model: `${MANHUA_NATIVE_DEEP_READ_MODEL}+z-ai/glm-5.3(series)`,
           usingPlanQuota: false,
           inputTokens: seriesAggregationUsage.inputTokens,
           outputTokens: seriesAggregationUsage.outputTokens,

@@ -6,8 +6,8 @@
  * 要求把凭证下放到开发机，那是不可接受的外泄面。
  *
  * 全程**零模型调用**：合集展开走抖音 web api，时长走 ffprobe 读远端头部
- * （不下片、不转码），成本为零。确认预算使用 `totalModelCalls`；视频分片数、
- * 动态装箱后的视觉请求数和双路声音请求数分别展示，禁止再把「段数」冒充请求数。
+ * （不下片、不转码），成本为零。确认预算使用 `totalModelCalls`；换代后
+ * 每集视觉调用数=分片数、独立音频调用恒为 0，聚合照旧一次。
  *
  * 本文件不新写任何解析逻辑，只把素材接入层现成的能力串起来。
  */
@@ -30,15 +30,10 @@ import { MANHUA_LEARN_MAX_DURATION_SEC } from "../../shared/manhuaTemplateLearnS
 import type { ManhuaTemplateLearnLlmProvider } from "../../shared/manhuaTemplateLearnFrameVision.js";
 import { NATIVE_DEEP_READ_JOB_MAX_CALLS } from "../../shared/manhuaNativeDeepReadJob.js";
 import {
-  MANHUA_NATIVE_AUDIO_ALIGNMENT,
-  MANHUA_NATIVE_AUDIO_MODEL,
-} from "../../shared/manhuaNativeAudioAnalysis.js";
-import {
-  NATIVE_DEEP_READ_BATCH_VISION_TOKEN_BUDGET,
-  NATIVE_DEEP_READ_MAX_FPS,
-  NATIVE_DEEP_READ_MAX_VIDEOS_PER_REQUEST,
-  NATIVE_DEEP_READ_TARGET_FRAMES,
-  NATIVE_DEEP_READ_VIDEO_MIN_PIXELS,
+  NATIVE_DEEP_READ_MODEL,
+  NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES,
+  NATIVE_DEEP_READ_ROUTE_EVOLINK,
+  NATIVE_DEEP_READ_ROUTE_VERTEX,
   NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
 } from "./manhuaNativeDeepReadRunner.js";
 import {
@@ -77,9 +72,9 @@ export type NativeDeepReadPlanPreview = {
   dramaNameZh?: string;
   episodes: NativeDeepReadPlanEpisode[];
   totalSegments: number;
-  /** 新加坡 Qwen 多视频请求数；与视频分片数分开显示。 */
+  /** Gemini 视觉调用数 = 分片数（每段一次调用，不再多段合包）。 */
   totalVisualCalls: number;
-  /** 音频分片数；每片固定两次 Gemini（单声道＋立体声）。 */
+  /** 0826 换代后音轨由视觉调用直出：独立音频调用恒为 0。 */
   totalAudioChunks: number;
   totalModelCalls: number;
   totalDurationSec: number;
@@ -149,8 +144,8 @@ export function assertNativeDeepReadPlanConfirmation(
 
 /**
  * 每个视觉输入片目标不超过 6 分钟：90 秒短集保持整集，18 分钟长集拆 3 片。
- * runner 再按 `min(10, 1800 / 片长)` 取样：90 秒=10fps/900帧，
- * 360 秒=5fps/1800帧。多个分片仍可装进同一次 Qwen 多视频请求。
+ * runner 按两档 fps 取样：段长 ≤180s→10fps，否则 5fps（360s×5=1800 帧贴满预算）。
+ * 换代后**每段一次 Gemini 调用**，不再多段合包（分段调用停在低价档）。
  */
 export const NATIVE_DEEP_READ_VISUAL_SEGMENT_SEC = 6 * 60;
 export function normalizeNativeDeepReadDurationSec(durationSec: number): number {
@@ -187,14 +182,13 @@ export function computeNativeDeepReadPlanHash(
     seriesKey,
     visual: {
       version: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
-      targetFrames: NATIVE_DEEP_READ_TARGET_FRAMES,
-      maxFps: NATIVE_DEEP_READ_MAX_FPS,
-      minPixels: NATIVE_DEEP_READ_VIDEO_MIN_PIXELS,
-      tokenBudget: NATIVE_DEEP_READ_BATCH_VISION_TOKEN_BUDGET,
-      maxVideos: NATIVE_DEEP_READ_MAX_VIDEOS_PER_REQUEST,
+      model: NATIVE_DEEP_READ_MODEL,
+      routes: [NATIVE_DEEP_READ_ROUTE_VERTEX, NATIVE_DEEP_READ_ROUTE_EVOLINK],
+      fpsTiers: { shortMaxSec: 180, shortFps: 10, longFps: 5 },
       maxSegmentSec: NATIVE_DEEP_READ_MAX_SEGMENT_SEC,
+      mediaBudgetBytes: NATIVE_DEEP_READ_REQUEST_MEDIA_BUDGET_BYTES,
     },
-    audio: { model: MANHUA_NATIVE_AUDIO_MODEL, alignment: MANHUA_NATIVE_AUDIO_ALIGNMENT },
+    audio: { mode: "gemini_native_video_direct_v1" },
     seriesAggregation: {
       model: MANHUA_NATIVE_SERIES_AGGREGATION_MODEL,
       route: MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE,

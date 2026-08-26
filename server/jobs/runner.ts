@@ -559,7 +559,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         ...(parsedListed > 0 ? { listedEpisodeCount: parsedListed } : {}),
       } as any);
     };
-    // 双音轨 A/B 会并行返回。若两条回执同时读同一份旧 job.output 再 patch，
+    // 多条模型回执可能并发到达。若两条回执同时读同一份旧 job.output 再 patch，
     // 后写会覆盖先写，面板就少一条秒级记录。这里只串行化“进度落库”，模型请求仍并行。
     const reportLearnProgress = (phase: string, detailZh: string) =>
       enqueueManhuaProgressWrite(() => reportLearnProgressNow(phase, detailZh));
@@ -603,7 +603,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
           : "";
         await reportLearnProgress(
           MANHUA_LEARN_STAGE.list,
-          `执行计划复核通过：${nativePlanPreview.executableEpisodeCount} 集 · ${nativePlanPreview.totalModelCalls} 次模型请求（画面 ${nativePlanPreview.totalSegments} 个视频分片自动装成 ${nativePlanPreview.totalVisualCalls} 次 + 声音 ${nativePlanPreview.totalAudioChunks} 片×2路 + 系列整理 1 次） · 确认码 ${nativePlanPreview.planHash}${quarantinedClaims}`,
+          `执行计划复核通过：${nativePlanPreview.executableEpisodeCount} 集 · ${nativePlanPreview.totalModelCalls} 次模型请求（画面 ${nativePlanPreview.totalSegments} 个视频分片每段一次调用共 ${nativePlanPreview.totalVisualCalls} 次、音轨随调直出 + 系列整理 1 次） · 确认码 ${nativePlanPreview.planHash}${quarantinedClaims}`,
         );
       } else if (hasNativeDeepReadJobFields(params)) {
         throw new Error("原生精读计划未获明确确认，未发出模型请求");
