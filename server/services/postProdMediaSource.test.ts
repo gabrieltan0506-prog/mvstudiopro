@@ -233,6 +233,31 @@ describe("resolvePostProdInputSources:三种 action 同一把尺", () => {
     ).rejects.toThrow(/尚未登记/);
   });
 
+  it("旧 bgm_mount 记录解析素材后补齐新增默认字段", async () => {
+    const d = depsWithObjects(["v.mp4", "music.mp3"]);
+    const out = await resolvePostProdInputSources(
+      {
+        userId: "7",
+        input: {
+          action: "bgm_mount",
+          params: {
+            videoUri: `gs://${BUCKET}/v.mp4`,
+            bgmUri: `gs://${BUCKET}/music.mp3`,
+          },
+        },
+      },
+      d,
+    );
+    if (out.action !== "bgm_mount") throw new Error("action 不应改变");
+    expect(out.params).toMatchObject({
+      bgmSeekSec: 0,
+      bgmVolume: 0.48,
+      fadeInSec: 0.5,
+      fadeOutSec: 1,
+    });
+    expect(out.params.volumeExpr).toBeUndefined();
+  });
+
   it("loudness_check 的 videoUri 解析", async () => {
     const d = depsWithObjects(["v.mp4"]);
     const out = await resolvePostProdInputSources(

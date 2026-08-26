@@ -98,6 +98,23 @@ async function probeBuffer(buf: Buffer): Promise<{
   };
 }
 
+async function probeRmsDb(buf: Buffer, startSec: number, durationSec: number): Promise<number> {
+  const p = path.join(dir, `rms-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.mp4`);
+  await writeFile(p, buf);
+  const endSec = startSec + durationSec;
+  const { stderr } = await execFileAsync("ffmpeg", [
+    "-hide_banner", "-i", p,
+    "-af",
+    `atrim=start=${startSec}:end=${endSec},astats=metadata=1:reset=0:`
+      + "measure_overall=RMS_level:measure_perchannel=none",
+    "-f", "null", "-",
+  ]);
+  const matches = String(stderr).match(/RMS level dB:\s*(-?inf|-?\d+(?:\.\d+)?)/gi);
+  const raw = matches?.at(-1)?.match(/(-?inf|-?\d+(?:\.\d+)?)/i)?.[1];
+  if (!raw) throw new Error("测试素材未量到 RMS");
+  return raw.toLowerCase() === "-inf" ? Number.NEGATIVE_INFINITY : Number(raw);
+}
+
 beforeAll(async () => {
   if (!ffmpegOk) return;
   dir = await mkdtemp(path.join(tmpdir(), "pp-itest-"));
@@ -191,8 +208,10 @@ describe.runIf(ffmpegOk)("后期三件套本地媒体验证", () => {
         bgmUri: "gs://itest/music.mp3",
         bgmVolume: 0.48,
         entrySec: 0.5,
+        bgmSeekSec: 0.1,
         fadeInSec: 0.2,
         fadeOutSec: 0.4,
+        volumeExpr: "if(between(t,0.7,0.9),0,if(between(t,0.9,1.1),0.18,0.42))",
       },
       "7",
     );
@@ -203,7 +222,7 @@ describe.runIf(ffmpegOk)("后期三件套本地媒体验证", () => {
     expect(meta.durationSec).toBeLessThan(1.8);
   }, 60_000);
 
-  it("无声视频也能贴 BGM(对白轨用静音源顶位);上传步骤收到任务 signal", async () => {
+  it("无声视频也能贴 BGM；实测硬静音、对白避让、高潮增益；上传收到 signal", async () => {
     installFetchStub();
     h.uploadSignals.length = 0;
     const controller = new AbortController();
@@ -213,14 +232,25 @@ describe.runIf(ffmpegOk)("后期三件套本地媒体验证", () => {
         bgmUri: "gs://itest/music.mp3",
         bgmVolume: 0.48,
         entrySec: 0,
-        fadeInSec: 0.2,
-        fadeOutSec: 0.3,
+        bgmSeekSec: 0,
+        fadeInSec: 0,
+        fadeOutSec: 0,
+        volumeExpr:
+          "if(between(t,0.3,0.5),0,if(between(t,0.55,0.7),0.18,"
+          + "if(between(t,0.72,0.85),0.52,0.42)))",
       },
       "7",
       { signal: controller.signal },
     );
     const buf = h.uploads.get(out.gcsUri.replace("gs://itest/", ""));
     expect((await probeBuffer(buf!)).hasAudio).toBe(true);
+    const baseDb = await probeRmsDb(buf!, 0.12, 0.1);
+    const silentDb = await probeRmsDb(buf!, 0.35, 0.1);
+    const dialogueDb = await probeRmsDb(buf!, 0.58, 0.08);
+    const peakDb = await probeRmsDb(buf!, 0.75, 0.08);
+    expect(silentDb).toBeLessThan(baseDb - 45);
+    expect(dialogueDb).toBeLessThan(baseDb - 5);
+    expect(peakDb).toBeGreaterThan(baseDb + 1);
     expect(h.uploadSignals[0]).toBe(controller.signal);
   }, 60_000);
 

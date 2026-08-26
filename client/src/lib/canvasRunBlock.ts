@@ -1653,7 +1653,7 @@ export async function runCanvasBlock(
           .filter((u) => /^https?:\/\//i.test(u));
         const userRefAudios = (block.seedance25RefAudioUrls || [])
           .map((u) => String(u || "").trim())
-          .filter((u) => /^https?:\/\//i.test(u));
+          .filter((u) => /^(?:https:\/\/|gs:\/\/)/i.test(u));
         const candidateVideoUrls = Array.from(
           new Set([
             ...userRefVideos,

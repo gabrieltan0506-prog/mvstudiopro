@@ -9368,7 +9368,12 @@ export default function OmniCanvas() {
               />
               {/* 后期工坊(蓝图二):三件套已上线,卡内只挂真实工序;按用户挂载防串单 */}
               {user?.id ? (
-                <PostProdWorkshopCard key={String(user.id)} blocks={blocks} userId={String(user.id)} />
+                <PostProdWorkshopCard
+                  key={String(user.id)}
+                  blocks={blocks}
+                  userId={String(user.id)}
+                  userRole={userRole}
+                />
               ) : null}
             </div>
             </div>

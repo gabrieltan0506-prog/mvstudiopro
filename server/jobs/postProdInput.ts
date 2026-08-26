@@ -7,6 +7,20 @@ import { z } from "zod";
 
 const mediaSourceSchema = z.string().trim().min(1).max(2048);
 
+/**
+ * `volumeExpr` 最终进入 ffmpeg filter_complex，必须只允许卡点表会生成的
+ * 数字表达式。ffmpeg 由 execFile 启动，不经过 shell；这里再禁止滤镜分隔符、
+ * 标签与未知函数，避免借表达式追加第二条滤镜链。
+ */
+export function isSafePostProdVolumeExpr(value: string): boolean {
+  const expression = String(value || "").trim();
+  if (!expression || expression.length > 4000) return false;
+  if (!/^[0-9A-Za-z_.,()+\-*/\s]+$/.test(expression)) return false;
+  const identifiers = expression.match(/[A-Za-z_]+/g) || [];
+  return identifiers.every((identifier) =>
+    identifier === "if" || identifier === "between" || identifier === "t");
+}
+
 /** 编码器要求画面尺寸为偶数;奇数在 Schema 层就打回,不进 ffmpeg */
 function evenDimension(min: number, max: number) {
   return z
@@ -34,8 +48,17 @@ export const bgmMountParamsSchema = z
     bgmVolume: z.number().min(0).max(1).default(0.48),
     /** 音乐在片内的进场秒 */
     entrySec: z.number().min(0).max(3600).default(0),
+    /** 从 BGM 曲内第几秒开始取；对应 ffmpeg atrim=start。 */
+    bgmSeekSec: z.number().min(0).max(3600).default(0),
     fadeInSec: z.number().min(0).max(30).default(0.5),
     fadeOutSec: z.number().min(0).max(30).default(1),
+    /** 卡点表产出的片内分窗增益；缺省时保持旧版固定 bgmVolume。 */
+    volumeExpr: z
+      .string()
+      .trim()
+      .max(4000)
+      .refine(isSafePostProdVolumeExpr, "卡点音量表达式格式不正确")
+      .optional(),
   })
   .strict();
 
@@ -63,6 +86,9 @@ export const postProdJobInputSchema = z.discriminatedUnion("action", [
 ]);
 
 export type PostProdJobInput = z.infer<typeof postProdJobInputSchema>;
+/** 队列旧记录/直接服务调用的解析前形状；带 default 的字段允许缺省。 */
+export type RawPostProdJobInput = z.input<typeof postProdJobInputSchema>;
 export type ConcatParams = z.infer<typeof concatParamsSchema>;
 export type BgmMountParams = z.infer<typeof bgmMountParamsSchema>;
+export type RawBgmMountParams = z.input<typeof bgmMountParamsSchema>;
 export type LoudnessParams = z.infer<typeof loudnessParamsSchema>;

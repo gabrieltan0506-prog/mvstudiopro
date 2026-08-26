@@ -95,6 +95,7 @@ import {
   videoUpscaleStatusLabel,
 } from "@/lib/videoUpscaleApi";
 import { canvasVideoUpscaleCredits } from "@shared/canvasGenerationPricing";
+import { canUpscaleNow } from "@/lib/manhuaDeliveryOrder";
 import { trpc } from "@/lib/trpc";
 import {
   Clapperboard,
@@ -121,16 +122,28 @@ import {
   readPromptEnhancePendingRequest,
   writePromptEnhancePendingRequest,
 } from "@/lib/promptEnhanceRequestState";
+import {
+  buildQwenTtsVoiceId,
+  QWEN_TTS_VOICE_CATALOG,
+} from "@shared/qwenTtsVoiceCatalog";
+  const MANHUA_DIALOGUE_TTS_UI_VOICES = QWEN_TTS_VOICE_CATALOG.filter(voice =>
+  voice.lang.includes("中文"))
+  .slice(0, 24)
+  .map(voice => ({
+    id: buildQwenTtsVoiceId("plus", voice.suffix),
+    label: `${voice.nameZh} · ${voice.gender} · ${voice.traitZh}`,
+  }));
 
 /** 左栏节点列表标题（学参考画布：可读名 + 类型，不泄供应商） */
 function freeformNodeListLabel(block: CanvasBlock): string {
   const id = String(block.id || "");
   const promptHead = String(block.prompt || "")
     .split("\n")
-    .map((l) => l.trim())
-    .find((l) => l && !l.startsWith("【"))
+    .map(l => l.trim())
+    .find(l => l && !l.startsWith("【"))
     ?.slice(0, 18);
-  if (id.startsWith("charsheet-face-")) return `脸·${promptHead || id.replace(/^charsheet-face-/, "").slice(0, 12)}`;
+  if (id.startsWith("charsheet-face-"))
+    return `脸·${promptHead || id.replace(/^charsheet-face-/, "").slice(0, 12)}`;
   if (id.startsWith("charsheet-")) return `角色·${promptHead || id.replace(/^charsheet-/, "").slice(0, 12)}`;
   if (id.startsWith("sceneplate-")) return `场景·${promptHead || id.replace(/^sceneplate-/, "").slice(0, 12)}`;
   if (id.startsWith("propsheet-")) return `道具·${promptHead || id.replace(/^propsheet-/, "").slice(0, 12)}`;
@@ -475,7 +488,10 @@ function CanvasBlockPreviewPanel({
           ) : null}
           {block.outputUrl && block.kind === "video" ? (
             <div className="space-y-1">
-              <div className="truncate text-[10px] text-white/55" title={block.outputUrl}>
+              <div
+                className="truncate text-[10px] text-white/55"
+                title={block.outputUrl}
+              >
                 {fileNameFromUrl(block.outputUrl) || "成片已生成"}
               </div>
               <video
@@ -488,7 +504,10 @@ function CanvasBlockPreviewPanel({
         </div>
       ) : null}
 
-      {!uploading && assets.length === 0 && !hasGeneratedOutput && block.status !== "error" ? (
+      {!uploading &&
+      assets.length === 0 &&
+      !hasGeneratedOutput &&
+      block.status !== "error" ? (
         <p className="text-[10px] leading-4 text-white/30">上传后显示文件名</p>
       ) : null}
     </div>
@@ -498,7 +517,9 @@ function CanvasBlockPreviewPanel({
 type CanvasImagePreview = { url: string; labelZh?: string };
 
 /** 画布节点里点「放大」用；节点拖动逻辑在 pointerdown，所以放大只挂按钮与双击 */
-const CanvasImagePreviewCtx = React.createContext<((p: CanvasImagePreview) => void) | null>(null);
+const CanvasImagePreviewCtx = React.createContext<
+  ((p: CanvasImagePreview) => void) | null
+>(null);
 
 function CanvasImageZoomButton({ url, labelZh }: CanvasImagePreview) {
   const openPreview = React.useContext(CanvasImagePreviewCtx);
@@ -507,8 +528,8 @@ function CanvasImageZoomButton({ url, labelZh }: CanvasImagePreview) {
     <button
       type="button"
       title="放大看"
-      onPointerDown={(e) => e.stopPropagation()}
-      onClick={(e) => {
+      onPointerDown={e => e.stopPropagation()}
+      onClick={e => {
         e.stopPropagation();
         openPreview({ url, labelZh });
       }}
@@ -531,10 +552,16 @@ function CanvasAssetVisualBody({
   const assetAt = parseManhuaCanvasAssetAtTag(block.prompt);
   const idChip =
     assetAt ||
-    (String(block.id || "").match(/^(keyart|charsheet|sceneplate|propplate|propsheet|prop)-(.+)$/i)?.[0]
+    (String(block.id || "").match(
+      /^(keyart|charsheet|sceneplate|propplate|propsheet|prop)-(.+)$/i
+    )?.[0]
       ? String(block.id)
       : block.id);
-  const shortId = assetAt || String(block.id || "").replace(/^[a-z]+-/i, "").slice(0, 22);
+  const shortId =
+    assetAt ||
+    String(block.id || "")
+      .replace(/^[a-z]+-/i, "")
+      .slice(0, 22);
   const roleWall = String(block.id || "").startsWith("charsheet-")
     ? "角色"
     : String(block.id || "").startsWith("sceneplate-")
@@ -546,7 +573,7 @@ function CanvasAssetVisualBody({
     displayOutputs[0] ||
     block.outputUrl ||
     block.refImageUrl ||
-    block.uploadedAssets.find((a) => (a.kind ?? "image") === "image")?.url ||
+    block.uploadedAssets.find(a => (a.kind ?? "image") === "image")?.url ||
     "";
 
   return (
@@ -571,15 +598,18 @@ function CanvasAssetVisualBody({
               src={imgUrl}
               alt={shortId}
               title="双击放大"
-              onDoubleClick={(e) => {
+              onDoubleClick={e => {
                 e.stopPropagation();
                 openPreview?.({ url: imgUrl, labelZh: shortId });
               }}
-              onError={(e) => {
+              onError={e => {
                 const el = e.currentTarget;
                 if (el.dataset.localRetry === "1") return;
                 el.dataset.localRetry = "1";
-                void tryLocalMediaDisplayForBlock(String(block.id || ""), "output").then((local) => {
+                void tryLocalMediaDisplayForBlock(
+                  String(block.id || ""),
+                  "output"
+                ).then(local => {
                   if (local) el.src = local;
                 });
               }}
@@ -629,33 +659,65 @@ export default function FreeformCanvas({
   const [pulseHighlightId, setPulseHighlightId] = useState<string | null>(null);
   const [spawnMenu, setSpawnMenu] = useState<SpawnMenuState>(null);
   const [toolbarMenu, setToolbarMenu] = useState<ToolbarMenuState>(null);
-  const [dragState, setDragState] = useState<{ id: string; offsetX: number; offsetY: number } | null>(null);
-  const [imagePreview, setImagePreview] = useState<CanvasImagePreview | null>(null);
-  const openImagePreview = useCallback((p: CanvasImagePreview) => setImagePreview(p), []);
+  const [dragState, setDragState] = useState<{
+    id: string;
+    offsetX: number;
+    offsetY: number;
+  } | null>(null);
+  const [imagePreview, setImagePreview] = useState<CanvasImagePreview | null>(
+    null
+  );
+  const openImagePreview = useCallback(
+    (p: CanvasImagePreview) => setImagePreview(p),
+    []
+  );
   const [resizeState, setResizeState] = useState<ResizeState>(null);
   const [uploadBusyId, setUploadBusyId] = useState<string | null>(null);
-  const [eraseCornerBusyId, setEraseCornerBusyId] = useState<string | null>(null);
+  const [eraseCornerBusyId, setEraseCornerBusyId] = useState<string | null>(
+    null
+  );
   // 高清放大：报价面板展开的 block、探测到的真实时长（计费按秒，展示与提交同源）、提交中锁
-  const [upscalePanelBlockId, setUpscalePanelBlockId] = useState<string | null>(null);
-  const [upscaleProbedSec, setUpscaleProbedSec] = useState<Record<string, number>>({});
+  const [upscalePanelBlockId, setUpscalePanelBlockId] = useState<string | null>(
+    null
+  );
+  const [upscaleProbedSec, setUpscaleProbedSec] = useState<
+    Record<string, number>
+  >({});
   const [upscaleBusyId, setUpscaleBusyId] = useState<string | null>(null);
   const [maskBusyId, setMaskBusyId] = useState<string | null>(null);
-  const [uploadProgress, setUploadProgress] = useState<{ blockId: string; done: number; total: number } | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{
+    blockId: string;
+    done: number;
+    total: number;
+  } | null>(null);
   /** 左栏：画布节点列表 / 资产设定卡（对照参考图 IA，不抄皮肤） */
   const [leftRailTab, setLeftRailTab] = useState<"canvas" | "assets">("canvas");
   const [leftRailQuery, setLeftRailQuery] = useState("");
   /** 嵌入右栏时默认收起左轨，给竖排缩略更多横向空间 */
-  const [leftRailCollapsed, setLeftRailCollapsed] = useState(Boolean(fillContainer));
+  const [leftRailCollapsed, setLeftRailCollapsed] = useState(
+    Boolean(fillContainer)
+  );
   const [viewportPct, setViewportPct] = useState(100);
   /** 世界缩放：让本集全部节点缩进可视区（≠节点自身 width/height） */
   const [viewScale, setViewScale] = useState(1);
-  const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
-  const enhancePromptMutation = trpc.mvAnalysis.enhanceCanvasPrompt.useMutation();
+  const getSignedUrlMutation =
+    trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
+  const enhancePromptMutation =
+    trpc.mvAnalysis.enhanceCanvasPrompt.useMutation();
+  const dialogueTtsMutation =
+    trpc.mvAnalysis.manhuaDialogueTtsPreview.useMutation();
+  const [dialogueTtsDrafts, setDialogueTtsDrafts] = useState<
+    Record<string, { input: string; voice: string }>
+  >({});
   // 每个 block 暂存尚未取得明确终态的增强请求编号:结果未知时复用同一编号,
   // 服务端按 jobs 记录恢复结果,不重复调用模型不重复扣分。
   // ref 是热缓存;sessionStorage 是刷新后的恢复源,两处同写同清。
-  const promptEnhanceRequestIdsRef = useRef(new Map<string, { requestId: string; localKey: string }>());
-  const subQuery = trpc.stripe.getSubscription.useQuery(undefined, { retry: false });
+  const promptEnhanceRequestIdsRef = useRef(
+    new Map<string, { requestId: string; localKey: string }>()
+  );
+  const subQuery = trpc.stripe.getSubscription.useQuery(undefined, {
+    retry: false,
+  });
   const userPlan = (subQuery.data?.plan || "free") as string;
   const { user: authUser, loading: authLoading } = useAuth();
   const userRole = (authUser as { role?: string } | null)?.role ?? null;
@@ -1030,7 +1092,10 @@ export default function FreeformCanvas({
       }
       if (parent?.outputUrl && (kind === "image" || kind === "video")) {
         block.refImageUrl = parent.outputUrl;
-      } else if (parent?.outputUrls?.[0] && (kind === "image" || kind === "video")) {
+      } else if (
+        parent?.outputUrls?.[0] &&
+        (kind === "image" || kind === "video")
+      ) {
         block.refImageUrl = parent.outputUrls[0];
       }
 
@@ -1041,12 +1106,16 @@ export default function FreeformCanvas({
         block.x = parent.x + parent.width + 40;
         block.y = parent.y + 32;
       } else {
-        const pos = getViewportSpawnPosition(block.width, block.height, blocks.length);
+        const pos = getViewportSpawnPosition(
+          block.width,
+          block.height,
+          blocks.length
+        );
         block.x = pos.x;
         block.y = pos.y;
       }
 
-      onBlocksChange((prev) => {
+      onBlocksChange(prev => {
         const next = [...prev, block];
         return next;
       });
@@ -1056,7 +1125,14 @@ export default function FreeformCanvas({
       setSelectedId(id);
       return id;
     },
-    [blockMap, blocks, edges, getViewportSpawnPosition, onBlocksChange, onEdgesChange],
+    [
+      blockMap,
+      blocks,
+      edges,
+      getViewportSpawnPosition,
+      onBlocksChange,
+      onEdgesChange,
+    ]
   );
 
   const spawnFromToolbar = useCallback(
@@ -1068,13 +1144,13 @@ export default function FreeformCanvas({
               anchorY,
               CANVAS_BLOCK_DEFAULT_WIDTH,
               CANVAS_BLOCK_DEFAULT_HEIGHT,
-              blocks.length,
+              blocks.length
             )
           : undefined;
       setToolbarMenu(null);
       return addBlock(kind, pos ? { x: pos.x, y: pos.y } : undefined);
     },
-    [addBlock, blocks.length, getToolbarAdjacentSpawnPosition, toolbarMenu],
+    [addBlock, blocks.length, getToolbarAdjacentSpawnPosition, toolbarMenu]
   );
 
   const openToolbarUpload = useCallback(() => {
@@ -1091,33 +1167,86 @@ export default function FreeformCanvas({
     image.prompt = "可拍画面：场景、人物动作、运镜清晰";
     const video = defaultCanvasBlock("video", 520, 120, image.id);
     video.id = makeCanvasBlockId("video");
-    onBlocksChange((prev) => [...prev, image, video]);
+    onBlocksChange(prev => [...prev, image, video]);
     onEdgesChange([...edges, { fromId: image.id, toId: video.id }]);
     setSelectedId(image.id);
   }, [edges, onBlocksChange, onEdgesChange]);
 
   const patchOne = useCallback(
     (id: string, patch: Partial<CanvasBlock>) => {
-      onBlocksChange((prev) => patchBlock(prev, id, patch));
+      onBlocksChange(prev => patchBlock(prev, id, patch));
     },
-    [onBlocksChange],
+    [onBlocksChange]
   );
   patchOneRef.current = patchOne;
 
+  const generateDialogueReferenceAudio = useCallback(
+    async (blockId: string) => {
+      if (userRole !== "admin" && userRole !== "supervisor") {
+        toast.error("对白配音仍在内部验收阶段");
+        return;
+      }
+      const block = blocks.find(item => item.id === blockId);
+      if (!block) return;
+      const draft = dialogueTtsDrafts[blockId] || {
+        input: "",
+        voice: MANHUA_DIALOGUE_TTS_UI_VOICES[0]?.id || "",
+      };
+      if (!draft.input.trim() || !draft.voice) {
+        toast.error("先填写带情绪标签的对白并选择音色");
+        return;
+      }
+      try {
+        const result = await dialogueTtsMutation.mutateAsync({
+          input: draft.input.trim(),
+          voice: draft.voice,
+        });
+        const assetId = `dialogue-${Date.now()}`;
+        const asset: CanvasUploadedAsset = {
+          id: assetId,
+          url: result.audioUrl,
+          previewUrl: result.audioUrl,
+          gcsUri: result.gcsUri,
+          fileName: `对白参考-${assetId}.mp3`,
+          kind: "audio",
+          mimeType: "audio/mpeg",
+        };
+        const selected = Array.from(
+          new Set([...(block.seedance25RefAudioUrls || []), result.gcsUri])
+        ).slice(0, 10);
+        patchOne(blockId, {
+          uploadedAssets: [...(block.uploadedAssets || []), asset],
+          seedance25RefAudioUrls: selected,
+          seedance25WorkMode: "reference_to_video",
+        });
+        toast.success("对白已通过人声门禁并写入参考音频", {
+          description: `${result.voiceGate.durationSeconds.toFixed(1)} 秒 · 有效人声 ${result.voiceGate.voicedSeconds.toFixed(1)} 秒`,
+        });
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "对白配音未完成");
+      }
+    },
+    [blocks, dialogueTtsDrafts, dialogueTtsMutation, patchOne, userRole]
+  );
+
   const removeBlock = useCallback(
     (id: string) => {
-      onBlocksChange(blocks.filter((b) => b.id !== id));
-      onEdgesChange(edges.filter((e) => e.fromId !== id && e.toId !== id));
+      onBlocksChange(blocks.filter(b => b.id !== id));
+      onEdgesChange(edges.filter(e => e.fromId !== id && e.toId !== id));
       if (selectedId === id) setSelectedId(null);
     },
-    [blocks, edges, onBlocksChange, onEdgesChange, selectedId],
+    [blocks, edges, onBlocksChange, onEdgesChange, selectedId]
   );
 
   const eraseCornerMarkForBlock = useCallback(
     async (blockId: string) => {
-      const block = blocks.find((b) => b.id === blockId);
+      const block = blocks.find(b => b.id === blockId);
       const src = String(block?.outputUrl || "").trim();
-      if (!block || !/^https:\/\//i.test(src) || !/\.(mp4|mov|webm|m4v)(\?|$)/i.test(src)) {
+      if (
+        !block ||
+        !/^https:\/\//i.test(src) ||
+        !/\.(mp4|mov|webm|m4v)(\?|$)/i.test(src)
+      ) {
         toast.error("请先生成成片后再清除角标");
         return;
       }
@@ -1125,10 +1254,14 @@ export default function FreeformCanvas({
       setEraseCornerBusyId(blockId);
       try {
         const out = await eraseAiCornerMark({ videoUrl: src });
-        const prevUrls = Array.isArray(block.outputUrls) ? block.outputUrls : [];
+        const prevUrls = Array.isArray(block.outputUrls)
+          ? block.outputUrls
+          : [];
         patchOne(blockId, {
           outputUrl: out.videoUrl,
-          outputUrls: Array.from(new Set([out.videoUrl, ...prevUrls, src])).slice(0, 8),
+          outputUrls: Array.from(
+            new Set([out.videoUrl, ...prevUrls, src])
+          ).slice(0, 8),
           status: "done",
           error: undefined,
         });
@@ -1139,12 +1272,12 @@ export default function FreeformCanvas({
         setEraseCornerBusyId(null);
       }
     },
-    [blocks, eraseCornerBusyId, patchOne],
+    [blocks, eraseCornerBusyId, patchOne]
   );
 
   const openUpscalePanel = useCallback(
     async (blockId: string) => {
-      const block = blocks.find((b) => b.id === blockId);
+      const block = blocks.find(b => b.id === blockId);
       // 只认真实成片 outputUrl；refImageUrl 垫图不进这个操作区（外层渲染条件已挡）
       const src = String(block?.outputUrl || "").trim();
       if (!block || !/^https:\/\//i.test(src)) {
@@ -1155,30 +1288,43 @@ export default function FreeformCanvas({
       if (!upscaleProbedSec[blockId]) {
         const sec = await probeVideoDurationSec(src);
         if (sec) {
-          setUpscaleProbedSec((prev) => ({ ...prev, [blockId]: sec }));
+          setUpscaleProbedSec(prev => ({ ...prev, [blockId]: sec }));
         } else {
           toast.error("读取视频时长失败，请稍后重试");
-          setUpscalePanelBlockId((cur) => (cur === blockId ? null : cur));
+          setUpscalePanelBlockId(cur => (cur === blockId ? null : cur));
         }
       }
     },
-    [blocks, upscaleProbedSec],
+    [blocks, upscaleProbedSec]
   );
 
   const startUpscaleForBlock = useCallback(
     async (blockId: string, target: "2k" | "4k") => {
-      const block = blocks.find((b) => b.id === blockId);
+      const block = blocks.find(b => b.id === blockId);
       const src = String(block?.outputUrl || "").trim();
       const sec = upscaleProbedSec[blockId];
       if (!block || !/^https:\/\//i.test(src) || !sec) return;
       if (upscaleBusyId) return;
+      const deliveryDecision = canUpscaleNow({
+        surface: "free_canvas",
+        hasDeliveryVideo: true,
+        bgmMounted: false,
+        target,
+      });
+      if (!deliveryDecision.ok) {
+        toast.error(deliveryDecision.reasonZh);
+        return;
+      }
       setUpscaleBusyId(blockId);
       try {
         const started = await startVideoUpscale({
           videoUrl: src,
           target,
           durationSec: sec,
-          episodeIndex: Number(block.episodeIndex) > 0 ? Number(block.episodeIndex) : undefined,
+          episodeIndex:
+            Number(block.episodeIndex) > 0
+              ? Number(block.episodeIndex)
+              : undefined,
           sourceResolution: block.videoResolution || "720p",
         });
         // 任务字段随画布持久化 → 刷新后由下面的轮询 effect 自动恢复
@@ -1190,7 +1336,8 @@ export default function FreeformCanvas({
           upscaleCreditsUsed: started.creditsUsed,
         });
         setUpscalePanelBlockId(null);
-        toast.success(`高清放大已提交（${target.toUpperCase()} · ${started.creditsUsed} 积分）`);
+        toast.success(
+          `高清放大已提交（${target.toUpperCase()} · ${started.creditsUsed} 积分）`);
       } catch (e: unknown) {
         toast.error(e instanceof Error ? e.message : "高清放大提交失败");
       } finally {
@@ -2690,38 +2837,143 @@ export default function FreeformCanvas({
                                                   ? "border-sky-300/80 bg-sky-500/15 text-sky-50"
                                                   : "border-white/15 text-white/70"
                                               }`}
-                                            >
-                                              {a.fileName || "视频"}
-                                            </button>
-                                          );
-                                        })}
-                                      </div>
-                                    ) : (
-                                      <div className="text-[10px] text-white/35">
-                                        尚无上传视频；可用上方上传区添加 MP4
-                                      </div>
-                                    )}
-                                    <div className="text-[10px] text-white/45">
-                                      参考音频（最多 10）· 上传 MP3/WAV 后勾选
-                                    </div>
-                                    {auds.length ? (
-                                      <div className="flex flex-wrap gap-1.5">
-                                        {auds.slice(0, 10).map((a) => {
-                                          const on = selectedA.has(a.url);
-                                          return (
-                                            <button
-                                              key={a.id}
-                                              type="button"
-                                              title={a.fileName}
-                                              onClick={() =>
-                                                toggle(
-                                                  selectedA,
-                                                  a.url,
-                                                  10,
-                                                  "seedance25RefAudioUrls",
-                                                )
-                                              }
-                                              className={`max-w-[9rem] truncate rounded-md border px-2 py-1 text-[10px] ${
+                                                            >
+                                                              {a.fileName ||
+                                                                "视频"}
+                                                            </button>
+                                                          );
+                                                        })}
+                                                    </div>
+                                                  ) : (
+                                                    <div className="text-[10px] text-white/35">
+                                                      尚无上传视频；可用上方上传区添加
+                                                      MP4
+                                                    </div>
+                                                  )}
+                                                  {userRole === "admin" ||
+                                                  userRole === "supervisor" ? (
+                                                    <div className="space-y-1.5 rounded-lg border border-emerald-300/20 bg-emerald-500/[0.06] p-2">
+                                                      <div className="text-[10px] font-semibold text-emerald-100/85">
+                                                        对白配音 ·
+                                                        通过有效人声门禁后自动写入参考音频
+                                                      </div>
+                                                      <textarea
+                                                        rows={2}
+                                                        value={
+                                                          dialogueTtsDrafts[
+                                                            block.id
+                                                          ]?.input || ""
+                                                        }
+                                                        onChange={event =>
+                                                          setDialogueTtsDrafts(
+                                                            current => ({
+                                                              ...current,
+                                                              [block.id]: {
+                                                                input:
+                                                                  event.target
+                                                                    .value,
+                                                                voice:
+                                                                  current[
+                                                                    block.id
+                                                                  ]?.voice ||
+                                                                  MANHUA_DIALOGUE_TTS_UI_VOICES[0]
+                                                                    ?.id ||
+                                                                  "",
+                                                              },
+                                                            })
+                                                          )
+                                                        }
+                                                        placeholder="[whispers][trembling]门后……醒了。"
+                                                        className="w-full resize-y rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-[11px] leading-5 text-white placeholder:text-white/30"
+                                                      />
+                                                      <div className="flex gap-1.5">
+                                                        <select
+                                                          value={
+                                                            dialogueTtsDrafts[
+                                                              block.id
+                                                            ]?.voice ||
+                                                            MANHUA_DIALOGUE_TTS_UI_VOICES[0]
+                                                              ?.id ||
+                                                            ""
+                                                          }
+                                                          onChange={event =>
+                                                            setDialogueTtsDrafts(
+                                                              current => ({
+                                                                ...current,
+                                                                [block.id]: {
+                                                                  input:
+                                                                    current[
+                                                                      block.id
+                                                                    ]?.input ||
+                                                                    "",
+                                                                  voice:
+                                                                    event.target
+                                                                      .value,
+                                                                },
+                                                              })
+                                                            )
+                                                          }
+                                                          className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[10px] text-white"
+                                                        >
+                                                          {MANHUA_DIALOGUE_TTS_UI_VOICES.map(
+                                                            voice => (
+                                                              <option
+                                                                key={voice.id}
+                                                                value={voice.id}
+                                                              >
+                                                                {voice.label}
+                                                              </option>
+                                                            )
+                                                          )}
+                                                        </select>
+                                                        <button
+                                                          type="button"
+                                                          disabled={
+                                                            dialogueTtsMutation.isPending
+                                                          }
+                                                          onClick={() =>
+                                                            void generateDialogueReferenceAudio(
+                                                              block.id
+                                                            )
+                                                          }
+                                                          className="rounded-lg border border-emerald-300/35 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-50 hover:bg-emerald-500/15 disabled:opacity-45"
+                                                        >
+                                                          {dialogueTtsMutation.isPending
+                                                            ? "生成中…"
+                                                            : "生成并选用"}
+                                                        </button>
+                                                      </div>
+                                                    </div>
+                                                  ) : null}
+                                                  <div className="text-[10px] text-white/45">
+                                                    参考音频（最多 10）· 上传
+                                                    MP3/WAV 后勾选
+                                                  </div>
+                                                  {auds.length ? (
+                                                    <div className="flex flex-wrap gap-1.5">
+                                                      {auds
+                                                        .slice(0, 10)
+                                                        .map(a => {
+                                                          const durableAudioRef =
+                                                            a.gcsUri || a.url;
+                                                          const on =
+                                                            selectedA.has(
+                                                              durableAudioRef
+                                                            );
+                                                          return (
+                                                            <button
+                                                              key={a.id}
+                                                              type="button"
+                                                              title={a.fileName}
+                                                              onClick={() =>
+                                                                toggle(
+                                                                  selectedA,
+                                                                  durableAudioRef,
+                                                                  10,
+                                                                  "seedance25RefAudioUrls"
+                                                                )
+                                                              }
+                                                              className={`max-w-[9rem] truncate rounded-md border px-2 py-1 text-[10px] ${
                                                 on
                                                   ? "border-emerald-300/80 bg-emerald-500/15 text-emerald-50"
                                                   : "border-white/15 text-white/70"

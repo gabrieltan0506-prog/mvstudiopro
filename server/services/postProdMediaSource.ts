@@ -21,7 +21,11 @@ import {
   verifyCanvasMediaOwnership,
 } from "./canvasMediaOwnership.js";
 import { getGcsBucketName } from "./gcs.js";
-import type { PostProdJobInput } from "../jobs/postProdInput";
+import {
+  postProdJobInputSchema,
+  type PostProdJobInput,
+  type RawPostProdJobInput,
+} from "../jobs/postProdInput";
 
 export function sanitizePostProdUserId(userId: string): string {
   return String(userId).replace(/[^0-9a-zA-Z_-]/g, "");
@@ -255,7 +259,7 @@ export async function resolveRegisteredPostProdMediaSource(
 
 /** 三种 action 的素材字段走同一个解析函数;每次请求只读取一次 jobs 记录 */
 export async function resolvePostProdInputSources(
-  input: { userId: string; input: PostProdJobInput },
+  input: { userId: string; input: RawPostProdJobInput },
   deps: PostProdMediaDeps = realDeps,
 ): Promise<PostProdJobInput> {
   const userId = String(input.userId);
@@ -268,23 +272,23 @@ export async function resolvePostProdInputSources(
 
   const job = input.input;
   if (job.action === "concat") {
-    return {
+    return postProdJobInputSchema.parse({
       ...job,
       params: { ...job.params, clips: await Promise.all(job.params.clips.map(resolve)) },
-    };
+    });
   }
   if (job.action === "bgm_mount") {
-    return {
+    return postProdJobInputSchema.parse({
       ...job,
       params: {
         ...job.params,
         videoUri: await resolve(job.params.videoUri),
         bgmUri: await resolve(job.params.bgmUri),
       },
-    };
+    });
   }
-  return {
+  return postProdJobInputSchema.parse({
     ...job,
     params: { ...job.params, videoUri: await resolve(job.params.videoUri) },
-  };
+  });
 }

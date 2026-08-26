@@ -86,15 +86,17 @@ export async function reapStaleJobsOnce(
         ),
       );
 
-    // 漫剧学习有逐集 GCS 检查点与启动恢复机制。不能在部署后的恢复 SQL 前把
-    // running 行删除，否则页面只剩“操作不可用”而无法续跑。
-    const nonManhuaLearn = sql`coalesce(${jobs.input}::jsonb->>'action', '') <> 'manhua_template_learn'`;
+    // 漫剧学习与配乐都有持久检查点/上游 taskId 恢复。不能先删 running/queued 行，
+    // 否则学习会丢断点，配乐会丢已付费原单并诱发用户重新提交。
+    const nonRecoverableLongJob = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
+      'manhua_template_learn', 'manhua_bgm_v55'
+    )`;
     const runningRows = await db
       .delete(jobs)
       .where(
         and(
           eq(jobs.status, "running"),
-          nonManhuaLearn,
+          nonRecoverableLongJob,
           ne(jobs.type, "post_prod"),
           lt(jobs.updatedAt, runCutoff),
         ),
@@ -106,7 +108,7 @@ export async function reapStaleJobsOnce(
       .where(
         and(
           eq(jobs.status, "queued"),
-          nonManhuaLearn,
+          nonRecoverableLongJob,
           ne(jobs.type, "post_prod"),
           lt(jobs.createdAt, qCutoff),
         ),

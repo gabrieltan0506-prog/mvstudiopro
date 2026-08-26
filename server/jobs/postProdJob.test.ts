@@ -71,7 +71,13 @@ describe("processPostProdJob 强 Schema 分派", () => {
       "u2",
     );
     const [params] = mountBgm.mock.calls[0] as [Record<string, unknown>];
-    expect(params).toMatchObject({ bgmVolume: 0.48, entrySec: 0, fadeInSec: 0.5, fadeOutSec: 1 });
+    expect(params).toMatchObject({
+      bgmVolume: 0.48,
+      entrySec: 0,
+      bgmSeekSec: 0,
+      fadeInSec: 0.5,
+      fadeOutSec: 1,
+    });
   });
 
   it("loudness_check → loudnessCheck,不带 userId", async () => {

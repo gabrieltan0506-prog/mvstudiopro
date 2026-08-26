@@ -308,6 +308,8 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 
 **原生精读失败占位自动让位（PR #1316 分支静态验证，待线上真跑）**：正式已学集继续只认 GCS 分集卡，段缓存只用于零费续跑；失败、中止与未执行集在终态按本轮 generation 条件释放 claim，释放未成则补写失败病历，下一轮从最早未入库集原子接管。修复条件创建已落 GCS、响应或读回中断时调用方拿不到释放句柄的孤儿窗口；只有确认 404 才按对象已释放处理，5xx、网络与损坏 JSON 均关闭式报告。任务终态会同步刷新待审卡与已打开的占位面板；CLI 干跑、确认码与真跑统一使用排除健康占位后的可执行清单。`pnpm check`、140 项目标测试、全量 377 文件 2894 项（另 4 跳过）、服务端 build、Vite 生产 build 与 diff check 通过；未调用模型、未做真实 GCS/Fly/浏览器链路验收。
 
+**漫剧配乐间与交付后期闭环（PR #1317，合并前验证）**：成片坞已接“剧情起草 brief → EvoLink Suno V5.5 异步建单 → 同一 taskId 轮询/重启恢复 → 全变体验音并转存本人 GCS → 选变体写入 `bgm_mount`”；生成参数固定 `custom_mode=true`、纯音乐与 10–360 秒整数时长，`style_weight/weirdness_constraint` 只收 0.01 步进。真实画面事件与逐 0.5 秒客观电平会编译 `bgmSeekSec`、对白避让、精确静音、高能击点和 `volumeExpr`，ffmpeg 顺序为曲内裁切→重置时间轴→片内延迟→逐帧音量→淡入淡出。漫剧工厂与自由画布均有 2K/4K 超分入口，原片不覆盖，任务号可刷新续查；交付顺序统一为成片→超分→BGM→响度。对白入口只对 admin/supervisor 开放，走新加坡 Token Plan 优先、明确 4xx 才切北京，同一请求只发 `model/input/voice/response_format/seed`，验声通过后才写本人 GCS，并可作为 Seedance 参考音频。配乐与 TTS 的用户计费未拍板，继续关闭普通用户入口。合并前 `pnpm check` 0 错、全量 390 文件 3017 项通过（另 4 项跳过）、服务端 build、Vite build 与真实 ffmpeg 后期用例通过；未触发 Suno/TTS/超分或视频生成付费调用，线上登录态 UI 与正式任务仍须部署后验收。
+
 ## 如何更新本文件
 
 合完 PR 或用户改口径后，在**当日**下追加表格行；下一自然日新开 `## YYYY-MM-DD`。  
