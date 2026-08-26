@@ -437,6 +437,27 @@ describe("段级双密度门禁", () => {
       .toThrow("音轨字段不完整：缺 cues");
   });
 
+  it("min(1) 必填字段（genAudioHintZh）缺失也吐具体拒因，不再被泛化 schema 文案吞掉（审阅员 P2-1）", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    const analysis = (raw.audioResolution as Array<{ analysis: Record<string, unknown> }>)[0]!.analysis;
+    delete analysis.genAudioHintZh;
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
+      .toThrow("音轨汇总字段不完整：缺 genAudioHintZh");
+  });
+
+  it("整集 GLM 合并路同样做存在性门禁：缺 cues 带具体拒因整集拒收（审阅员 P2-2）", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    const analysis = (raw.audioResolution as Array<{ analysis: { audioTrack: Array<Record<string, unknown>> } }>)[0]!.analysis;
+    delete analysis.audioTrack[0]!.cues;
+    expect(() => assertNativeDeepReadEpisodeEvidence({
+      episodeIndex: 1,
+      durationSec: 60,
+      segments: [{ startSec: 0, endSec: 60 }],
+      hasAudio: true,
+      rawSegments: [raw],
+    })).toThrow("第1条音轨字段不完整：缺 cues");
+  });
+
   it("音轨汇总省略 mixNotesZh 时拒收，不让默认空串静默入库", () => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
     const analysis = (raw.audioResolution as Array<{ analysis: Record<string, unknown> }>)[0]!.analysis;

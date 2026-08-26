@@ -1137,6 +1137,43 @@ function assertVisualTextNoClock(raw: Record<string, unknown>, labelZh: string):
  *     局部时间轴连续覆盖 ±0.5s（复用共享 normalize 的硬校验）。
  * 不达标＝该段拒收（带拒因重试一次由调用方负责）。
  */
+
+/**
+ * 音轨原始字段存在性门禁（审阅员四修 + P2 补位）：在任何 zod 默认值生效前检查，
+ * 缺栏必须吐具体「缺 X」拒因（用户铁律：每个卡点必吐原因）。段级与整集 GLM 合并路共用。
+ */
+function assertRawAudioAnalysisFieldPresence(rawAnalysis: unknown, labelZh: string): void {
+  if (!rawAnalysis || typeof rawAnalysis !== "object" || Array.isArray(rawAnalysis)) {
+    throw gateError(`${labelZh}音轨 analysis 缺失或格式无效`);
+  }
+  const record = rawAnalysis as Record<string, unknown>;
+  const requiredAnalysisFields = [
+    "audioTrack", "audioBeatStructureZh", "mixNotesZh", "reusableAudioZh", "genAudioHintZh",
+  ];
+  const missingAnalysisFields = requiredAnalysisFields.filter(
+    (field) => !Object.prototype.hasOwnProperty.call(record, field),
+  );
+  if (missingAnalysisFields.length > 0) {
+    throw gateError(`${labelZh}音轨汇总字段不完整：缺 ${missingAnalysisFields.join("、")}`);
+  }
+  const requiredTrackFields = [
+    "fromSec", "toSec", "emotionArcZh", "toneZh", "sfxZh", "bgmZh", "atmosphereZh", "silenceZh", "cues",
+  ];
+  const rawTracks = Array.isArray(record.audioTrack) ? record.audioTrack : [];
+  for (let trackIndex = 0; trackIndex < rawTracks.length; trackIndex += 1) {
+    const rawTrack = rawTracks[trackIndex];
+    if (!rawTrack || typeof rawTrack !== "object" || Array.isArray(rawTrack)) {
+      throw gateError(`${labelZh}第${trackIndex + 1}条音轨格式无效`);
+    }
+    const missingTrackFields = requiredTrackFields.filter(
+      (field) => !Object.prototype.hasOwnProperty.call(rawTrack, field),
+    );
+    if (missingTrackFields.length > 0) {
+      throw gateError(`${labelZh}第${trackIndex + 1}条音轨字段不完整：缺 ${missingTrackFields.join("、")}`);
+    }
+  }
+}
+
 export function assertNativeDeepReadSegmentDensity(input: {
   episodeIndex: number;
   segmentIndex: number;
@@ -1147,9 +1184,27 @@ export function assertNativeDeepReadSegmentDensity(input: {
 }): void {
   const lenSec = Math.max(1, Math.round(input.endSec - input.startSec));
   const floors = resolveNativeDeepReadSegmentFloors(lenSec);
+  // 存在性门禁必须先于 zod：min(1) 必填字段缺失时 safeParse 会先炸成泛化文案，
+  // 「缺 genAudioHintZh」这类具体拒因就永远吐不出来（审阅员 P2-1）。
+  if (input.hasAudio) {
+    const rawAudioRows = Array.isArray((input.raw as Record<string, unknown>).audioResolution)
+      ? ((input.raw as Record<string, unknown>).audioResolution as unknown[])
+      : [];
+    const rawAudioEntry = rawAudioRows[0];
+    if (rawAudioRows.length > 0 && rawAudioEntry && typeof rawAudioEntry === "object" && !Array.isArray(rawAudioEntry)) {
+      assertRawAudioAnalysisFieldPresence(
+        (rawAudioEntry as Record<string, unknown>).analysis,
+        `第${input.segmentIndex + 1}段`,
+      );
+    }
+  }
   const parsed = nativeDeepReadSegmentSchema.safeParse(input.raw);
   if (!parsed.success) {
-    throw gateError(`第${input.segmentIndex + 1}段结构不合六栏 schema`);
+    const firstIssue = parsed.error.issues[0];
+    const issueZh = firstIssue
+      ? `（${firstIssue.path.join(".") || "根"}: ${firstIssue.message}）`
+      : "";
+    throw gateError(`第${input.segmentIndex + 1}段结构不合六栏 schema${issueZh}`);
   }
   assertVisualTextNoClock(input.raw, `第${input.segmentIndex + 1}段`);
   const shots = sortedShots(input.raw);
@@ -1207,62 +1262,6 @@ export function assertNativeDeepReadSegmentDensity(input: {
     throw gateError(
       `第${input.segmentIndex + 1}段 audioResolution 必须恰好为 [{chunkIndex:${input.segmentIndex}}]，禁留空`,
     );
-  }
-  // responseSchema 只约束 Vertex 主调用；GLM 修复与兼容通道路由仍可能省字段。
-  // 在 zod 默认值生效前检查原始对象，避免把缺栏静默补成空字符串/空 cues 后入库。
-  const rawAudioRows = Array.isArray((input.raw as Record<string, unknown>).audioResolution)
-    ? ((input.raw as Record<string, unknown>).audioResolution as unknown[])
-    : [];
-  const rawAudioEntry = rawAudioRows[0];
-  const rawAnalysis = rawAudioEntry && typeof rawAudioEntry === "object" && !Array.isArray(rawAudioEntry)
-    ? (rawAudioEntry as Record<string, unknown>).analysis
-    : undefined;
-  if (!rawAnalysis || typeof rawAnalysis !== "object" || Array.isArray(rawAnalysis)) {
-    throw gateError(`第${input.segmentIndex + 1}段音轨 analysis 缺失或格式无效`);
-  }
-  const rawAnalysisRecord = rawAnalysis as Record<string, unknown>;
-  const requiredAnalysisFields = [
-    "audioTrack",
-    "audioBeatStructureZh",
-    "mixNotesZh",
-    "reusableAudioZh",
-    "genAudioHintZh",
-  ];
-  const missingAnalysisFields = requiredAnalysisFields.filter(
-    (field) => !Object.prototype.hasOwnProperty.call(rawAnalysisRecord, field),
-  );
-  if (missingAnalysisFields.length > 0) {
-    throw gateError(
-      `第${input.segmentIndex + 1}段音轨汇总字段不完整：缺 ${missingAnalysisFields.join("、")}`,
-    );
-  }
-  const requiredTrackFields = [
-    "fromSec",
-    "toSec",
-    "emotionArcZh",
-    "toneZh",
-    "sfxZh",
-    "bgmZh",
-    "atmosphereZh",
-    "silenceZh",
-    "cues",
-  ];
-  const rawTracks = Array.isArray(rawAnalysisRecord.audioTrack)
-    ? rawAnalysisRecord.audioTrack
-    : [];
-  for (let trackIndex = 0; trackIndex < rawTracks.length; trackIndex += 1) {
-    const rawTrack = rawTracks[trackIndex];
-    if (!rawTrack || typeof rawTrack !== "object" || Array.isArray(rawTrack)) {
-      throw gateError(`第${input.segmentIndex + 1}段第${trackIndex + 1}条音轨格式无效`);
-    }
-    const missingTrackFields = requiredTrackFields.filter(
-      (field) => !Object.prototype.hasOwnProperty.call(rawTrack, field),
-    );
-    if (missingTrackFields.length > 0) {
-      throw gateError(
-        `第${input.segmentIndex + 1}段第${trackIndex + 1}条音轨字段不完整：缺 ${missingTrackFields.join("、")}`,
-      );
-    }
   }
   const analysis = manhuaNativeAudioChunkAnalysisSchema.parse(audioResolution[0]!.analysis);
   if (analysis.audioTrack.length < floors.minAudioTracks) {
@@ -1342,6 +1341,17 @@ export function assertNativeDeepReadEpisodeEvidence(input: {
       const segment = input.segments[Number(entry.chunkIndex)]!;
       const lenSec = Math.max(1, Math.round(segment.endSec - segment.startSec));
       const floors = resolveNativeDeepReadSegmentFloors(lenSec);
+      // GLM 整形/兼容路也可能省字段：同一道存在性门先跑，缺栏吐具体拒因（审阅员 P2-2）
+      try {
+        assertRawAudioAnalysisFieldPresence(
+          entry.analysis,
+          `第${input.episodeIndex}集第${Number(entry.chunkIndex) + 1}段`,
+        );
+      } catch (presenceError) {
+        throw new Error(
+          `${presenceError instanceof Error ? presenceError.message : presenceError}，整集拒绝入库`,
+        );
+      }
       const parsed = manhuaNativeAudioChunkAnalysisSchema.safeParse(entry.analysis);
       if (!parsed.success) {
         throw new Error(`第${input.episodeIndex}集第${Number(entry.chunkIndex) + 1}段音轨结构无效，整集拒绝入库`);
