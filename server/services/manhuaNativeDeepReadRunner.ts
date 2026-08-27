@@ -27,7 +27,11 @@ import {
   type NativeDeepReadOutput,
 } from "../../shared/manhuaNativeDeepRead.js";
 import { MANHUA_NATIVE_DEEP_READ_MODEL } from "../../shared/manhuaNativeDeepReadJob.js";
-import { hasCompleteManhuaTemplateClassification } from "../../shared/manhuaViralTemplateBank.js";
+import {
+  MANHUA_TEMPLATE_CLASSIFICATION_KEYS,
+  hasManhuaTemplateClassificationFields,
+  hasUsableManhuaTemplateClassification,
+} from "../../shared/manhuaViralTemplateBank.js";
 import {
   hasClockTextZh,
   manhuaNativeAudioChunkAnalysisSchema,
@@ -240,17 +244,24 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
         audiovisualTagsZh: { type: "ARRAY", items: { type: "STRING" } },
         audienceExperienceTagsZh: { type: "ARRAY", items: { type: "STRING" } },
       },
+      required: [
+        "emotionTagsZh",
+        "narrativeFeatureTagsZh",
+        "performanceTagsZh",
+        "audiovisualTagsZh",
+        "audienceExperienceTagsZh",
+      ],
     },
   },
-  required: ["shots", "subtitles", "audioResolution", "beatStructureZh"],
+  required: ["shots", "subtitles", "audioResolution", "beatStructureZh", "classification"],
 } as const;
 
 /**
- * 0826 参数定稿：temperature 0.75、maxOutputTokens 65_536、单候选、
+ * 0827 实弹定稿：temperature 0.70、maxOutputTokens 65_536、单候选、
  * responseSchema、thinkingLevel HIGH；思考过程不进入输出 JSON。
  */
 export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
-  temperature: 0.75,
+  temperature: 0.7,
   maxOutputTokens: 65_536,
   candidateCount: 1,
   audioTimestamp: true,
@@ -260,15 +271,23 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
 } as const;
 
 /**
- * 视觉精读温度硬下限。低于 0.65 会显著压缩镜头拆解与声音描述密度，
- * 首发、门禁重试和未来调用点都不得绕过。
+ * 同一 Vertex 分片的固定三档尝试：所有失败统一降温重试两次；不得静默换供应商。
+ * 用户主动中止不是失败，不进入重试。
  */
-export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.65;
+export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.7, 0.65, 0.6] as const;
+export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 60_000;
+export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.6;
 
-/** 原地重试只补充门禁拒因；温度保持在获批下限，其余与首发完全一致。 */
+/** 第二次尝试参数；保留导出供既有调用方与缓存指纹使用。 */
 export const NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG = {
   ...NATIVE_DEEP_READ_GENERATION_CONFIG,
-  temperature: NATIVE_DEEP_READ_TEMPERATURE_MIN,
+  temperature: NATIVE_DEEP_READ_RETRY_TEMPERATURES[1],
+} as const;
+
+/** 第三次尝试参数。 */
+export const NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG = {
+  ...NATIVE_DEEP_READ_GENERATION_CONFIG,
+  temperature: NATIVE_DEEP_READ_RETRY_TEMPERATURES[2],
 } as const;
 
 /** 响应体上限：模型异常时可能吐超大 body，不设限会把内存吃干 */
@@ -428,11 +447,11 @@ export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
  * v4（0826 拍板）：视觉调用换 Vertex Gemini 3.1 Pro 从 GCS 直读、每段一次调用、
  * 音轨同调直出、双密度门禁。计划口径与采样语义全变——旧确认码必须全废。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v5-gemini-direct-gcs" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v6-gemini-10fps-direct-gcs" as const;
 
-/** 两档 fps（0826 拍板）：段时长 ≤180s → 10；否则 5（下限，不再降） */
+/** 0827 实弹口径：生产 300 秒分片保持 10fps；仅旧数据超 300 秒时降为 5fps。 */
 export function resolveNativeDeepReadRequestFps(totalDurationSec: number): number {
-  return totalDurationSec <= 180 ? 10 : 5;
+  return totalDurationSec <= 300 ? 10 : 5;
 }
 /** 官方视频输入 fps 上限。 */
 export const NATIVE_DEEP_READ_MAX_FPS = 10;
@@ -551,7 +570,7 @@ ${audioHardRule}
 建议（软边界，按素材实际情况尽量做到）：
 a. 这类漫剧的真实节奏通常 2–5 秒一镜，按真实发生的切换逐镜记录，不要为省输出合并镜头。一个剧情段落通常由多个镜头切换组成——**不要把「剧情段」当成一个镜头**，每次画面切换（机位/景别/场景变化）都是新的一镜。验收标准（与入库门禁同一套数字）：本段至少 ${floors.minShots} 镜、平均每镜不超过 ${NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC} 秒；超过 ${NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC} 秒的长镜头（如标题卡/长定场）至多 1 个且不超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。
 ${audioSoftRules}
-d. reusableZh 尽量写成脱离本剧剧情的通用做法；classification 建议只写从本段真实证据提炼的特征标签（避免古言/逆袭/系统/甜宠等题材词），每类可多项。`;
+d. reusableZh 尽量写成脱离本剧剧情的通用做法；classification 五个数组字段都必须输出，只写从本段真实证据提炼的特征标签（避免古言/逆袭/系统/甜宠等题材词）；没有真实证据的维度写 []，至少两个维度各保留一个真实标签，不得在单一维度堆标签冒充，也不得为凑满维度编造。`;
   return input.rejectedReasonZh
     ? `${base}\n【上一轮被拒原因】${String(input.rejectedReasonZh).slice(0, 300)}。请修正后重新输出完整 JSON；修正时尽量不要降低镜头表或音轨密度。`
     : base;
@@ -572,7 +591,7 @@ export function buildGeminiNativeDeepReadSegmentRequest(input: {
   const requestedTemperature = Number(requestedConfig.temperature);
   const generationConfig = {
     ...requestedConfig,
-    // 纵深门禁：未来即使有新旁路误传 0，也在真正组装请求体时收口到 0.65。
+    // 纵深门禁：未来即使有新旁路误传 0，也在真正组装请求体时收口到 0.60。
     temperature: Number.isFinite(requestedTemperature)
       ? Math.max(NATIVE_DEEP_READ_TEMPERATURE_MIN, requestedTemperature)
       : NATIVE_DEEP_READ_GENERATION_CONFIG.temperature,
@@ -605,6 +624,22 @@ function makeTimedSignal(parent: AbortSignal | undefined, timeoutMs: number, mes
     signal: controller.signal,
     dispose: () => { clearTimeout(timer); parent?.removeEventListener("abort", onAbort); },
   };
+}
+
+function waitForNativeDeepReadRetry(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(abortReason(signal));
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(abortReason(signal));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 export type NativeDeepReadModelResponse = {
@@ -744,6 +779,8 @@ export async function resolveNativeDeepReadNodeUrls(
 const NATIVE_VIDEO_TEMP_PREFIX = "manhua-template-learn/tmp/native-deep-read";
 /** 切段前 /tmp 必须至少剩 500MB，否则关闭式停止（不切半截片）。 */
 export const NATIVE_DEEP_READ_MIN_TMP_FREE_BYTES = 500 * 1024 * 1024;
+/** 单集媒体备料最多并行四段；跨集仍由 execution 串行，避免批量任务打满机器。 */
+export const NATIVE_DEEP_READ_MEDIA_PREP_MAX_CONCURRENCY = 4;
 
 function mediaHeaders(node: NativeDeepReadMediaNode): string[] {
   const referer = String(node.referer || "").trim();
@@ -870,31 +907,43 @@ export async function prepareEpisodeVideos(
     );
   }
 
-  const prepared: PreparedNativeVideo[] = [];
+  const prepared: Array<PreparedNativeVideo | undefined> = new Array(segments.length);
   const cutRows: Array<{
     runId: string;
     localPath: string;
     startSec: number;
     endSec: number;
     bytes: number;
-  }> = [];
-  let episodeHasAudio = false;
+  } | undefined> = new Array(segments.length);
   try {
     // 分片只按时间切；每片独立上传 GCS、独立调用 Gemini。
     // 禁止把整集各片体积相加后预转码：那是旧的多片合包请求逻辑。
-    for (let index = 0; index < segments.length; index += 1) {
+    // 单集最多四段并行；每个 worker 内仍保留三次 CDN 节点刷新，跨集不并行。
+    const concurrency = Math.max(1, Math.min(
+      NATIVE_DEEP_READ_MEDIA_PREP_MAX_CONCURRENCY,
+      segments.length,
+      Math.floor(Math.max(0, freeBytes - NATIVE_DEEP_READ_MIN_TMP_FREE_BYTES)
+        / NATIVE_DEEP_READ_MIN_TMP_FREE_BYTES) || 1,
+    ));
+    let nextIndex = 0;
+    let stopSchedulingCuts = false;
+    let cutFailed = false;
+    let firstCutFailure: unknown;
+    const prepareOne = async (index: number): Promise<void> => {
       abortSignal?.throwIfAborted();
       const segment = segments[index]!;
       let lastError: unknown;
       let completed = false;
       for (let attempt = 0; attempt < 3 && !completed; attempt += 1) {
         abortSignal?.throwIfAborted();
-        const nodes = await episode.resolveNodes();
-        const node = nodes[attempt % Math.max(1, nodes.length)];
-        if (!node?.url) throw new Error(`第${episode.episodeIndex}集第${index + 1}段未解析到媒体节点`);
         const runId = crypto.randomUUID();
         const localPath = `/tmp/manhua-native-video-${runId}.mp4`;
         try {
+          const nodes = await episode.resolveNodes();
+          const node = nodes[attempt % Math.max(1, nodes.length)];
+          if (!node?.url) {
+            throw new Error(`第${episode.episodeIndex}集第${index + 1}段未解析到媒体节点`);
+          }
           await deps.runMedia(
             "ffmpeg",
             buildNativeDeepReadVideoSegmentArgs({
@@ -910,16 +959,13 @@ export async function prepareEpisodeVideos(
           if (fileStat.size < 100_000) {
             throw new Error(`第${episode.episodeIndex}集第${index + 1}段大小不在处理范围`);
           }
-          cutRows.push({
+          cutRows[index] = {
             runId,
             localPath,
             startSec: segment.startSec,
             endSec: segment.endSec,
             bytes: fileStat.size,
-          });
-          if (index === 0) {
-            episodeHasAudio = await probeLocalSegmentHasAudio(localPath, deps, abortSignal);
-          }
+          };
           completed = true;
         } catch (error) {
           await deps.unlinkLocal(localPath).catch(() => undefined);
@@ -931,12 +977,39 @@ export async function prepareEpisodeVideos(
         }
       }
       if (!completed) throw lastError instanceof Error ? lastError : new Error("视频分片准备失败");
+    };
+    const workers = Array.from({ length: concurrency }, async () => {
+      while (!stopSchedulingCuts) {
+        const index = nextIndex;
+        nextIndex += 1;
+        if (index >= segments.length) return;
+        try {
+          await prepareOne(index);
+        } catch (error) {
+          if (!cutFailed) firstCutFailure = error;
+          cutFailed = true;
+          stopSchedulingCuts = true;
+          return;
+        }
+      }
+    });
+    await Promise.allSettled(workers);
+    if (cutFailed) throw firstCutFailure;
+    if (cutRows.filter(Boolean).length !== segments.length) {
+      throw new Error(`第${episode.episodeIndex}集媒体切片结果不完整，已停止`);
     }
 
-    // 每片原样上传 GCS。Vertex 直读 gs://，这里不签任何 URL；
-    // 上传成功即删本地段文件（finally 统一兜底）。
-    for (const row of cutRows) {
+    const completeCutRows = cutRows as Array<NonNullable<(typeof cutRows)[number]>>;
+    // 保持既有整集音轨口径：只探测首片一次，避免各片探测抖动制造互相冲突的假事实。
+    const episodeHasAudio = await probeLocalSegmentHasAudio(
+      completeCutRows[0]!.localPath,
+      deps,
+      abortSignal,
+    );
+    // 上传保持单路：uploadBufferToGcs 会复制 Buffer，四路并行可能放大到数 GB 内存。
+    for (let index = 0; index < completeCutRows.length; index += 1) {
       abortSignal?.throwIfAborted();
+      const row = completeCutRows[index]!;
       const uploaded = await deps.upload({
         objectName: `${NATIVE_VIDEO_TEMP_PREFIX}/${row.runId}.mp4`,
         buffer: await deps.readLocal(row.localPath),
@@ -944,21 +1017,26 @@ export async function prepareEpisodeVideos(
         signal: abortSignal,
       });
       await deps.unlinkLocal(row.localPath).catch(() => undefined);
-      prepared.push({
+      prepared[index] = {
         gsUri: uploaded.gcsUri,
         startSec: row.startSec,
         endSec: row.endSec,
         temporaryGcs: { bucket: uploaded.bucket, objectName: uploaded.objectName },
         bytes: row.bytes,
         hasAudio: episodeHasAudio,
-      });
+      };
     }
-    return prepared;
+    return prepared as PreparedNativeVideo[];
   } catch (error) {
-    await Promise.allSettled(prepared.map((row) => deps.remove(row.temporaryGcs)));
+    const cleanupResults = await Promise.allSettled(
+      prepared.flatMap((row) => row ? [deps.remove(row.temporaryGcs)] : []),
+    );
+    if (cleanupResults.some((row) => row.status === "rejected")) {
+      console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集备料失败后的临时对象清理待核对`);
+    }
     throw error;
   } finally {
-    await Promise.allSettled(cutRows.map((row) => deps.unlinkLocal(row.localPath)));
+    await Promise.allSettled(cutRows.flatMap((row) => row ? [deps.unlinkLocal(row.localPath)] : []));
   }
 }
 
@@ -1117,6 +1195,16 @@ export function assertNativeDeepReadSegmentDensity(input: {
   const lenSec = Math.max(1, Math.round(input.endSec - input.startSec));
   const floors = resolveNativeDeepReadSegmentFloors(lenSec);
   // 存在性门禁必须先于 zod：必填字段缺失时必须返回具体字段名。
+  const rawClassification = input.raw.classification;
+  if (!rawClassification || typeof rawClassification !== "object" || Array.isArray(rawClassification)) {
+    throw gateError(`第${input.segmentIndex + 1}段 classification 缺失`);
+  }
+  if (!hasManhuaTemplateClassificationFields(rawClassification)) {
+    const row = rawClassification as Record<string, unknown>;
+    const key = MANHUA_TEMPLATE_CLASSIFICATION_KEYS.find((candidate) =>
+      !Object.prototype.hasOwnProperty.call(row, candidate) || !Array.isArray(row[candidate]));
+    throw gateError(`第${input.segmentIndex + 1}段 classification.${key || "字段"} 缺失或不是数组`);
+  }
   if (input.hasAudio) {
     const rawAudioRows = Array.isArray(input.raw.audioResolution)
       ? (input.raw.audioResolution as unknown[])
@@ -1182,8 +1270,8 @@ export function assertNativeDeepReadSegmentDensity(input: {
   if (!String((input.raw as Record<string, unknown>).beatStructureZh || "").trim()) {
     throw gateError(`第${input.segmentIndex + 1}段 beatStructureZh 为空（落库整段镜头会被丢弃）`);
   }
-  if (!hasCompleteManhuaTemplateClassification(parsed.data.classification)) {
-    throw gateError(`第${input.segmentIndex + 1}段五维特征标签不完整（无法生成可审批分片卡）`);
+  if (!hasUsableManhuaTemplateClassification(parsed.data.classification)) {
+    throw gateError(`第${input.segmentIndex + 1}段五维特征标签不足两个有效维度（无法生成可审批分片卡）`);
   }
   const audioResolution = parsed.data.audioResolution;
   if (!input.hasAudio) {
@@ -1346,8 +1434,9 @@ export function validateNativeDeepReadSegments(
  */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE = "openrouter_glm_structuring" as const;
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = OPENROUTER_GLM_MODEL;
-const GLM_STRUCTURING_MAX_TOKENS = 60_000;
-const GLM_STRUCTURING_TIMEOUT_MS = 12 * 60_000;
+const GLM_STRUCTURING_MAX_TOKENS = 131_072;
+/** 四个 300 秒分片的真实组装曾在 12 分钟边界被本地中止；只放宽等待，不自动重提。 */
+const GLM_STRUCTURING_TIMEOUT_MS = 30 * 60_000;
 const OPENROUTER_USD_TO_CNY_EQUIVALENT = 7.2;
 
 export function buildNativeDeepReadGlmStructuringPrompt(input: {
@@ -1364,12 +1453,13 @@ export function buildNativeDeepReadGlmStructuringPrompt(input: {
 2. shots 与 audioTrack 密度只增不减——同一时间区间有多份描述时以更密、更具体的一方为基底。
 3. subtitles 取并集去重，保持全片绝对秒位排序。
 4. 所有中文描述文本【禁止】出现钟表式秒位（如 01:23）或「在第X秒」定位——秒位只进数字字段。
-5. 只返回一个 JSON 对象，不要 Markdown 围栏、不要解释。`,
+5. classification 必须显式输出 emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh 五个数组；没有证据的维度写 []，至少两个维度各有一个来自输入卡的真实标签。
+6. 只返回一个 JSON 对象，不要 Markdown 围栏、不要解释。`,
     user: `把以下同一集的 ${input.rawSegments.length} 份分段卡整形合并成**一张整集六栏卡**（单个 JSON 对象，字段 schema 与分段卡完全相同：shots/subtitles/audioResolution/beatStructureZh/moodArcZh/classification/reusableZh/genPromptHintZh）。
 要求：
 1. shots 连续无空档覆盖全片 0..${Math.round(input.durationSec)} 秒（绝对秒位），禁止为省输出合并真实切换的镜头。
 2. audioResolution 保留全部 [{chunkIndex,analysis}] 条目（chunkIndex 即段号，analysis 内为该段局部秒），逐段齐全${input.hasAudio ? "" : "；本集素材无音轨，audioResolution 保持空数组"}。
-3. beatStructureZh/moodArcZh/reusableZh/genPromptHintZh 按段整合，可加「第X段」标注；classification 五维标签取并集。
+3. beatStructureZh/moodArcZh/reusableZh/genPromptHintZh 按段整合，可加「第X段」标注；classification 五维标签只取输入并集，不得补猜。
 整集元数据：${JSON.stringify({
       episodeIndex: input.episodeIndex,
       durationSec: Math.round(input.durationSec),
@@ -1403,7 +1493,8 @@ export function buildNativeDeepReadGlmSegmentRepairPrompt(input: {
 2. 禁止虚构原文里没有的镜头、字幕、声音或描述；禁止删减原文已有的内容。
 3. 原文若被截断，保留能恢复的完整条目，丢弃最后一条残缺条目，不要补写。
 4. 所有中文描述文本【禁止】出现钟表式秒位（如 01:23）或「在第X秒」定位——秒位只进数字字段。
-5. 只返回一个 JSON 对象，不要 Markdown 围栏、不要解释。`,
+5. classification 必须显式输出 emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh 五个数组；原文没有的维度写 []，至少两个维度必须能从原文恢复出真实标签，否则修复失败。
+6. 只返回一个 JSON 对象，不要 Markdown 围栏、不要解释。`,
     user: `修复以下第 ${input.episodeIndex} 集第 ${input.segmentIndex + 1} 段分段卡（覆盖绝对秒位 ${Math.round(input.startSec)}..${Math.round(input.endSec)} 秒，字段 schema：shots/subtitles/audioResolution/beatStructureZh/moodArcZh/classification/reusableZh/genPromptHintZh${input.hasAudio ? "" : "；本段素材无音轨，audioResolution 保持空数组"}）。
 ${input.rejectedReasonZh ? `【解析失败原因】${String(input.rejectedReasonZh).slice(0, 300)}\n` : ""}坏 JSON 原文：
 ${input.badJsonText}`,
@@ -1449,6 +1540,8 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
     glmRepairModel: NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL,
     generationConfig: NATIVE_DEEP_READ_GENERATION_CONFIG,
     retryGenerationConfig: NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG,
+    finalRetryGenerationConfig: NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG,
+    retryIntervalMs: NATIVE_DEEP_READ_RETRY_INTERVAL_MS,
     sourceDigest: input.sourceDigest,
     requestedFps: fps,
     prompt,
@@ -1515,6 +1608,7 @@ export type NativeDeepReadBatchRunnerDeps = {
   invokeGlmStructuring: typeof invokeNativeDeepReadGlmStructuring;
   readSegmentCache: typeof readNativeDeepReadSegmentCacheEntry;
   writeSegmentCache: typeof writeNativeDeepReadSegmentCacheEntry;
+  waitForRetry: typeof waitForNativeDeepReadRetry;
 };
 
 const defaultBatchRunnerDeps: NativeDeepReadBatchRunnerDeps = {
@@ -1526,6 +1620,7 @@ const defaultBatchRunnerDeps: NativeDeepReadBatchRunnerDeps = {
   invokeGlmStructuring: invokeNativeDeepReadGlmStructuring,
   readSegmentCache: readNativeDeepReadSegmentCacheEntry,
   writeSegmentCache: writeNativeDeepReadSegmentCacheEntry,
+  waitForRetry: waitForNativeDeepReadRetry,
 };
 
 type GeminiEnvelope = {
@@ -1562,13 +1657,6 @@ type SegmentAttemptResult = {
 /** 收到明确 HTTP 失败响应的错误（结果确定），可按路由铁律换通道重试。 */
 type HttpFailure = Error & { nativeDeepReadHttpStatus?: number };
 
-/** 坏 JSON 解析失败：随错误外带原文，重试层交 GLM 整形修复而不重读视频。 */
-type NativeDeepReadBadJsonFailure = Error & { nativeDeepReadBadJsonText?: string };
-
-function isHttpFailure(error: unknown): boolean {
-  return Number.isFinite(Number((error as HttpFailure)?.nativeDeepReadHttpStatus));
-}
-
 const ROUTE_LABEL_ZH: Record<NativeDeepReadVisualRoute, string> = {
   [NATIVE_DEEP_READ_ROUTE_VERTEX]: "Vertex Gemini 3.1 Pro 视频精读",
   [NATIVE_DEEP_READ_ROUTE_EVOLINK]: "EvoLink Gemini 3.1 Pro 视频精读（兜底）",
@@ -1576,7 +1664,8 @@ const ROUTE_LABEL_ZH: Record<NativeDeepReadVisualRoute, string> = {
 
 /**
  * 一次请求读取一集（逐段调用），回传后按段合并成集卡。
- * 任一段不达标带拒因重试一次，仍不达标整集失败（宁缺勿滥）。
+ * 任一段失败均按 0.70→0.65→0.60 原通道重试两次，每次间隔 60 秒；
+ * 三次仍失败才终止本集（用户主动中止不重试）。
  */
 export async function runManhuaNativeDeepReadBatch(params: {
   episodes: readonly NativeDeepReadBatchRunEpisode[];
@@ -1758,7 +1847,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
         ? firstPrepared.hasAudio === true
         : firstCached?.hasAudio === true;
       const segmentCount = episode.segments.length;
-      const rawSegments: Array<Record<string, unknown>> = [];
+      const rawSegments: Array<Record<string, unknown> | undefined> = new Array(segmentCount);
       const committedEntries = new Map<number, NativeDeepReadSegmentCacheEntry>();
       const committedIndexes: number[] = [];
       let episodeInput = 0;
@@ -1768,6 +1857,27 @@ export async function runManhuaNativeDeepReadBatch(params: {
       let episodeReasoning = 0;
       const routesUsed = new Set<NativeDeepReadVisualRoute>();
       const degradedFpsSegmentIndexes: number[] = [];
+      const paidUsageBySegment = Array.from({ length: segmentCount }, () => ({
+        inputTokens: 0,
+        outputTokens: 0,
+        audioInputTokens: 0,
+        reasoningTokens: 0,
+        costCny: 0,
+      }));
+      const addPaidUsage = (segmentIndex: number, usage: {
+        inputTokens: number;
+        outputTokens: number;
+        audioInputTokens: number;
+        reasoningTokens: number;
+        costCny: number;
+      }) => {
+        const target = paidUsageBySegment[segmentIndex]!;
+        target.inputTokens += usage.inputTokens;
+        target.outputTokens += usage.outputTokens;
+        target.audioInputTokens += usage.audioInputTokens;
+        target.reasoningTokens += usage.reasoningTokens;
+        target.costCny += usage.costCny;
+      };
 
       const buildCommittedSnapshot = (): NativeDeepReadSegmentSnapshot => {
         const sortedIndexes = [...committedIndexes].sort((a, b) => a - b);
@@ -1775,7 +1885,8 @@ export async function runManhuaNativeDeepReadBatch(params: {
         if (sortedIndexes.some((value, index) => value !== index)) {
           throw new Error(`第${episode.episodeIndex}集已成段不是连续前缀，拒绝生成部分提案`);
         }
-        const mapped = mapNativeDeepReadSegments(rawSegments.map((raw) => ({
+        const snapshotRows = sortedIndexes.map((index) => rawSegments[index]!);
+        const mapped = mapNativeDeepReadSegments(snapshotRows.map((raw) => ({
           startSec: 0,
           endSec: episode.sourceDurationSec,
           finish: "stop",
@@ -1831,19 +1942,38 @@ export async function runManhuaNativeDeepReadBatch(params: {
         };
       };
 
+      let proposalCommitChain = Promise.resolve();
+      let proposalCommitFailure: unknown;
+      let stopSchedulingSegments = false;
       const commitSegmentToProposal = async (
         segmentIndex: number,
         entry: NativeDeepReadSegmentCacheEntry,
       ): Promise<void> => {
         committedEntries.set(segmentIndex, entry);
-        committedIndexes.push(segmentIndex);
-        // 4/4 由后面的整集门禁写入；这里只有 1/4、2/4、3/4 的可审批快照。
-        if (
-          params.onSegmentSnapshotCommitted
-          && committedIndexes.length < segmentCount
-        ) {
-          await params.onSegmentSnapshotCommitted(buildCommittedSnapshot());
-        }
+        proposalCommitChain = proposalCommitChain.then(async () => {
+          while (committedIndexes.length < segmentCount) {
+            const nextIndex = committedIndexes.length;
+            const nextEntry = committedEntries.get(nextIndex);
+            if (!nextEntry) break;
+            rawSegments[nextIndex] = nextEntry.raw;
+            committedIndexes.push(nextIndex);
+            // 4/4 由后面的整集门禁写入；这里只有 1/4、2/4、3/4 的可审批快照。
+            if (
+              params.onSegmentSnapshotCommitted
+              && committedIndexes.length < segmentCount
+              && !proposalCommitFailure
+            ) {
+              try {
+                await params.onSegmentSnapshotCommitted(buildCommittedSnapshot());
+              } catch (error) {
+                // 已发出的兄弟请求仍要收回执；尚未开始的后续分片立即停止，避免继续扣费。
+                proposalCommitFailure = error;
+                stopSchedulingSegments = true;
+              }
+            }
+          }
+        });
+        await proposalCommitChain;
       };
 
       /** 单次通道尝试：发请求→解 envelope→段门禁；用量在门禁之前入账（钱已花）。 */
@@ -1852,6 +1982,8 @@ export async function runManhuaNativeDeepReadBatch(params: {
         fileUri: string;
         segmentIndex: number;
         fps: number;
+        attemptNumber: number;
+        temperature: number;
         rejectedReasonZh?: string;
       }): Promise<SegmentAttemptResult> => {
         const segment = episode.segments[input.segmentIndex]!;
@@ -1869,15 +2001,17 @@ export async function runManhuaNativeDeepReadBatch(params: {
           chunkIndex: input.segmentIndex,
           segmentCount: episode.segments.length,
           videoCount: 1,
+          attemptNumber: input.attemptNumber,
+          temperature: input.temperature,
           degraded: degraded || undefined,
         }, params.onModelReceipt);
         const body = buildGeminiNativeDeepReadSegmentRequest({
           fileUri: input.fileUri,
           fps: input.fps,
-          // 门禁重试只补充拒因；temperature 仍保持 0.65 下限，不用零温度压缩输出密度。
-          generationConfig: input.rejectedReasonZh
-            ? NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG
-            : undefined,
+          generationConfig: {
+            ...NATIVE_DEEP_READ_GENERATION_CONFIG,
+            temperature: input.temperature,
+          },
           prompt: buildGeminiNativeDeepReadSegmentPrompt({
             episodeDurationSec: episode.sourceDurationSec,
             startSec: segment.startSec,
@@ -1926,6 +2060,13 @@ export async function runManhuaNativeDeepReadBatch(params: {
           episodeAudioInput += attemptAudioInput;
           episodeReasoning += attemptReasoning;
           routesUsed.add(input.route);
+          addPaidUsage(input.segmentIndex, {
+            inputTokens: attemptInput,
+            outputTokens: attemptOutput,
+            audioInputTokens: attemptAudioInput,
+            reasoningTokens: attemptReasoning,
+            costCny: attemptCost,
+          });
           const candidate = envelope.candidates?.[0];
           const emitCompleted = async () => emitVisualModelReceipt({
             callId,
@@ -1936,8 +2077,10 @@ export async function runManhuaNativeDeepReadBatch(params: {
             batchRequestId: episodeRequestId,
             episodeIndexes: [episode.episodeIndex],
             chunkIndex: input.segmentIndex,
-          segmentCount: episode.segments.length,
+            segmentCount: episode.segments.length,
             videoCount: 1,
+            attemptNumber: input.attemptNumber,
+            temperature: input.temperature,
             elapsedMs: Date.now() - startedAt,
             inputTokens: attemptInput,
             audioInputTokens: attemptAudioInput || undefined,
@@ -1974,11 +2117,9 @@ export async function runManhuaNativeDeepReadBatch(params: {
               + ` · 思考 ${Number(usage?.thoughtsTokenCount) || 0} tok`
               + ` · 正文 ${Number(usage?.candidatesTokenCount) || 0} tok`
               + ` · 尾部「${text.slice(-200)}」`;
-            const enriched = new Error(
+            const enriched = gateError(
               `${parseError instanceof Error ? parseError.message : String(parseError)}（${evidenceZh}）`,
             );
-            // 坏文本随错误外带：重试层用它走 GLM 整形修复，省一次视频重读的钱
-            (enriched as NativeDeepReadBadJsonFailure).nativeDeepReadBadJsonText = text;
             throw enriched;
           }
           assertNativeDeepReadSegmentDensity({
@@ -2001,6 +2142,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
           };
         } catch (error) {
           if (!isNativeDeepReadGateFailure(error)) {
+            const providerError = nativeProviderReceiptFromError(error);
             await emitVisualModelReceipt({
               callId,
               model: NATIVE_DEEP_READ_MODEL,
@@ -2010,11 +2152,14 @@ export async function runManhuaNativeDeepReadBatch(params: {
               batchRequestId: episodeRequestId,
               episodeIndexes: [episode.episodeIndex],
               chunkIndex: input.segmentIndex,
-          segmentCount: episode.segments.length,
+              segmentCount: episode.segments.length,
               videoCount: 1,
+              attemptNumber: input.attemptNumber,
+              temperature: input.temperature,
               elapsedMs: Date.now() - startedAt,
               errorZh: (error instanceof Error ? error.message : String(error)).slice(0, 2_000),
-              providerError: nativeProviderReceiptFromError(error),
+              providerRequestId: providerError?.requestId,
+              providerError,
               degraded: degraded || undefined,
             }, params.onModelReceipt);
           }
@@ -2027,223 +2172,58 @@ export async function runManhuaNativeDeepReadBatch(params: {
        * 不重读视频，把第一次的坏 JSON 原文交 GLM 修语法；修完密度门禁照跑，不过照拒。
        * 回执与费用记账口径与整集 glmStructure 一致（visual_parse 阶段）。
        */
-      const repairSegmentBadJson = async (input: {
-        segmentIndex: number;
-        visualRoute: NativeDeepReadVisualRoute;
-        badJsonText: string;
-        rejectedReasonZh: string;
-      }): Promise<SegmentAttemptResult> => {
-        const segment = episode.segments[input.segmentIndex]!;
-        const callId = crypto.randomUUID();
-        const startedAt = Date.now();
-        await emitVisualModelReceipt({
-          callId,
-          model: NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL,
-          route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
-          stage: "visual_parse",
-          status: "started",
-          batchRequestId: episodeRequestId,
-          episodeIndexes: [episode.episodeIndex],
-          chunkIndex: input.segmentIndex,
-          segmentCount: episode.segments.length,
-          videoCount: 1,
-        }, params.onModelReceipt);
-        try {
-          const structured = await deps.invokeGlmStructuring(
-            buildNativeDeepReadGlmSegmentRepairPrompt({
-              episodeIndex: episode.episodeIndex,
-              segmentIndex: input.segmentIndex,
-              startSec: segment.startSec,
-              endSec: segment.endSec,
-              hasAudio,
-              badJsonText: input.badJsonText,
-              rejectedReasonZh: input.rejectedReasonZh,
-            }),
-            params.abortSignal,
-          );
-          const structuringCostCny = structured.costUsd * OPENROUTER_USD_TO_CNY_EQUIVALENT;
-          inputTokens += structured.inputTokens;
-          outputTokens += structured.outputTokens;
-          costCny += structuringCostCny;
-          episodeInput += structured.inputTokens;
-          episodeOutput += structured.outputTokens;
-          episodeCost += structuringCostCny;
-          episodeReasoning += structured.reasoningTokens;
-          // 与 attemptSegment 同序：钱已花，先记 completed，再跑门禁
-          await emitVisualModelReceipt({
-            callId,
-            model: NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL,
-            route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
-            stage: "visual_parse",
-            status: "completed",
-            batchRequestId: episodeRequestId,
-            episodeIndexes: [episode.episodeIndex],
-            chunkIndex: input.segmentIndex,
-            segmentCount: episode.segments.length,
-            videoCount: 1,
-            elapsedMs: Date.now() - startedAt,
-            inputTokens: structured.inputTokens,
-            outputTokens: structured.outputTokens,
-            reasoningTokens: structured.reasoningTokens || undefined,
-            costUsd: structured.costUsd,
-            priceEquivalentCny: structuringCostCny,
-            provider: structured.provider,
-            providerRequestId: structured.providerRequestId,
-            finishReason: structured.finishReason,
-          }, params.onModelReceipt);
-          assertNativeDeepReadSegmentDensity({
-            episodeIndex: episode.episodeIndex,
-            segmentIndex: input.segmentIndex,
-            startSec: segment.startSec,
-            endSec: segment.endSec,
-            hasAudio,
-            raw: structured.raw,
-          });
-          return {
-            raw: structured.raw,
-            inputTokens: structured.inputTokens,
-            outputTokens: structured.outputTokens,
-            audioInputTokens: 0,
-            reasoningTokens: structured.reasoningTokens,
-            visualRoute: input.visualRoute,
-            finishReason: structured.finishReason,
-            providerRequestId: structured.providerRequestId,
-          };
-        } catch (error) {
-          // 门禁类失败 completed 已记账，不再发 failed（防双计）；调用类失败要落已扣费用
-          if (!isNativeDeepReadGateFailure(error)) {
-            const failedUsage = error instanceof GlmGatewayError ? error.usage : undefined;
-            const failedCostCny = failedUsage
-              ? failedUsage.costUsd * OPENROUTER_USD_TO_CNY_EQUIVALENT
-              : 0;
-            if (failedUsage) {
-              inputTokens += failedUsage.inputTokens;
-              outputTokens += failedUsage.outputTokens;
-              costCny += failedCostCny;
-              episodeInput += failedUsage.inputTokens;
-              episodeOutput += failedUsage.outputTokens;
-              episodeCost += failedCostCny;
-              episodeReasoning += failedUsage.reasoningTokens;
-            }
-            await emitVisualModelReceipt({
-              callId,
-              model: NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL,
-              route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
-              stage: "visual_parse",
-              status: "failed",
-              batchRequestId: episodeRequestId,
-              episodeIndexes: [episode.episodeIndex],
-              chunkIndex: input.segmentIndex,
-              segmentCount: episode.segments.length,
-              videoCount: 1,
-              elapsedMs: Date.now() - startedAt,
-              inputTokens: failedUsage?.inputTokens || undefined,
-              outputTokens: failedUsage?.outputTokens || undefined,
-              costUsd: failedUsage?.costUsd || undefined,
-              priceEquivalentCny: failedCostCny || undefined,
-              errorZh: (error instanceof Error ? error.message : String(error)).slice(0, 2_000),
-              providerError: nativeProviderReceiptFromError(error),
-            }, params.onModelReceipt);
-          }
-          throw error;
-        }
-      };
-
-      /**
-       * 段级重试耗尽的最终失败（0826 病历单问题一）：
-       * 门禁类失败按设计跳过 attemptSegment 的 failed 回执（防双计账），
-       * 结果重试后再失败时日志/回执两处都没落。这里补一条**只带拒因不带 token**
-       * 的 failed 回执（token 已在 completed 回执记过），并打最终 console.warn。
-       */
-      const recordFinalGateFailure = async (segmentIndex: number, error: unknown): Promise<void> => {
+      const logFinalGateFailure = (segmentIndex: number, error: unknown): void => {
         if (!isNativeDeepReadGateFailure(error)) return;
         const errorZh = (error instanceof Error ? error.message : String(error)).slice(0, 2_000);
         console.warn(
           `[nativeDeepRead] 第${episode.episodeIndex}集第${segmentIndex + 1}段重试后仍未过：${errorZh}`,
         );
-        await emitVisualModelReceipt({
-          callId: crypto.randomUUID(),
-          model: NATIVE_DEEP_READ_MODEL,
-          route: "gate_retry_exhausted",
-          stage: "visual_parse",
-          status: "failed",
-          batchRequestId: episodeRequestId,
-          episodeIndexes: [episode.episodeIndex],
-          chunkIndex: segmentIndex,
-          segmentCount: episode.segments.length,
-          videoCount: 1,
-          errorZh,
-        }, params.onModelReceipt);
       };
 
-      /** 同通道门禁重试一次（带被拒原因）；坏 JSON 走 GLM 修复省钱路；非门禁失败原样上抛。 */
-      const attemptWithGateRetry = async (input: {
+      /**
+       * 同一 Vertex 通道统一三次尝试：所有错误都按 0.70→0.65→0.60 重试，
+       * 两次间隔固定 60 秒。三次后若仍是坏 JSON，才允许 GLM 只修语法，避免第四次读视频。
+       */
+      const attemptWithSegmentRetry = async (input: {
         route: NativeDeepReadVisualRoute;
         fileUri: string;
         segmentIndex: number;
         fps: number;
       }): Promise<SegmentAttemptResult> => {
-        try {
-          return await attemptSegment(input);
-        } catch (error) {
-          if (params.abortSignal?.aborted || !isNativeDeepReadGateFailure(error)) throw error;
-          const rejectedReasonZh = (error instanceof Error ? error.message : String(error)).slice(0, 300);
-          // 模型“返回”不等于分片通过。把首次门禁拒因持久化为重试中的结构校验回执，
-          // 面板不得先显示“分片完成”，再无解释地出现第二次“开始”。
-          await emitVisualModelReceipt({
-            callId: crypto.randomUUID(),
-            model: NATIVE_DEEP_READ_MODEL,
-            route: "gate_retry_pending",
-            stage: "visual_parse",
-            status: "started",
-            batchRequestId: episodeRequestId,
-            episodeIndexes: [episode.episodeIndex],
-            chunkIndex: input.segmentIndex,
-            segmentCount: episode.segments.length,
-            videoCount: 1,
-            errorZh: rejectedReasonZh,
-          }, params.onModelReceipt);
-          console.warn(
-            `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段未过密度门禁，`
-            + `带被拒原因原地重试一次（temperature ${NATIVE_DEEP_READ_TEMPERATURE_MIN}）：${rejectedReasonZh}`,
-          );
-          try {
-            // 只允许原地重试一次；不换模型、不降 fps、不低于 0.65 温度。
-            return await attemptSegment({ ...input, rejectedReasonZh });
-          } catch (retryError) {
-            if (params.abortSignal?.aborted) throw retryError;
-            // 重试后仍是坏 JSON：不再重读视频（第三发视频钱不花），交已获批的
-            // GLM 结构化整形层只修语法（与整集 glmStructure 同一层）；门禁照跑不过照拒。
-            const retryBadJsonText = String(
-              (retryError as NativeDeepReadBadJsonFailure).nativeDeepReadBadJsonText || "",
+        let lastError: unknown;
+        let rejectedReasonZh: string | undefined;
+        for (let attemptIndex = 0; attemptIndex < NATIVE_DEEP_READ_RETRY_TEMPERATURES.length; attemptIndex += 1) {
+          const temperature = NATIVE_DEEP_READ_RETRY_TEMPERATURES[attemptIndex]!;
+          if (attemptIndex > 0) {
+            const retryReasonZh = rejectedReasonZh || "上一次调用未完成";
+            console.warn(
+              `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段`
+              + `第${attemptIndex}次未完成，60 秒后按 temperature ${temperature} 重试：${retryReasonZh}`,
             );
-            if (isNativeDeepReadGateFailure(retryError) && retryBadJsonText.trim()) {
-              console.warn(
-                `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段重试后仍坏 JSON，`
-                + `交 GLM 整形修复（不重读视频）`,
-              );
-              try {
-                return await repairSegmentBadJson({
-                  segmentIndex: input.segmentIndex,
-                  visualRoute: input.route,
-                  badJsonText: retryBadJsonText,
-                  rejectedReasonZh:
-                    (retryError instanceof Error ? retryError.message : String(retryError)).slice(0, 300),
-                });
-              } catch (repairError) {
-                if (!params.abortSignal?.aborted) {
-                  await recordFinalGateFailure(input.segmentIndex, repairError);
-                }
-                throw repairError;
-              }
-            }
-            await recordFinalGateFailure(input.segmentIndex, retryError);
-            throw retryError;
+            await deps.waitForRetry(NATIVE_DEEP_READ_RETRY_INTERVAL_MS, params.abortSignal);
+            params.abortSignal?.throwIfAborted();
+          }
+          try {
+            return await attemptSegment({
+              ...input,
+              attemptNumber: attemptIndex + 1,
+              temperature,
+              rejectedReasonZh,
+            });
+          } catch (error) {
+            if (params.abortSignal?.aborted) throw error;
+            lastError = error;
+            rejectedReasonZh = (error instanceof Error ? error.message : String(error)).slice(0, 300);
           }
         }
+
+        const retryError = lastError || new Error("分片三次尝试均未完成");
+        // 三次 Vertex 尝试就是付费上限；坏 JSON 也不得自动切到 GLM 形成第四次调用。
+        logFinalGateFailure(input.segmentIndex, retryError);
+        throw retryError;
       };
 
-      for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
+      const processSegment = async (segmentIndex: number): Promise<void> => {
         params.abortSignal?.throwIfAborted();
         const segment = episode.segments[segmentIndex]!;
         const cachedEntry = cachedSegments.get(segmentIndex);
@@ -2255,61 +2235,21 @@ export async function runManhuaNativeDeepReadBatch(params: {
           console.info(
             `[nativeDeepRead] 第${episode.episodeIndex}集第${segmentIndex + 1}段命中已验缓存，本次模型调用 0`,
           );
-          rawSegments.push(cachedEntry.raw);
+          rawSegments[segmentIndex] = cachedEntry.raw;
           await commitSegmentToProposal(segmentIndex, cachedEntry);
-          continue;
+          return;
         }
         const video = videosBySegment.get(segmentIndex);
         if (!video) {
           throw new Error(`第${episode.episodeIndex}集第${segmentIndex + 1}段缺少对应备料，已停止`);
         }
         const fps = resolveNativeDeepReadRequestFps(video.endSec - video.startSec);
-        const paidBefore = {
-          inputTokens: episodeInput,
-          outputTokens: episodeOutput,
-          audioInputTokens: episodeAudioInput,
-          reasoningTokens: episodeReasoning,
-          costCny: episodeCost,
-        };
-        let result: SegmentAttemptResult;
-        try {
-          result = await attemptWithGateRetry({
-            route: NATIVE_DEEP_READ_ROUTE_VERTEX,
-            fileUri: video.gsUri,
-            segmentIndex,
-            fps,
-          });
-        } catch (error) {
-          if (params.abortSignal?.aborted) throw error;
-          /**
-           * 路由铁律：拿到**明确失败响应**（4xx 参数/内容拒绝、5xx/429 通道故障）
-           * 才允许换通道重试——结果确定没产出，不会双付。
-           * 网络断/超时属「结果不明」：不回落，抛出交 reconcile 人工核对。
-           * 门禁类失败也不回落（EvoLink 是 1fps 降级，密度只会更差）。
-           */
-          if (!isHttpFailure(error)) {
-            if (isNativeDeepReadGateFailure(error)) throw error;
-            throw new Error(
-              `第${episode.episodeIndex}集第${segmentIndex + 1}段主线结果不明（${
-                error instanceof Error ? error.message : String(error)
-              }），按路由铁律不回落 EvoLink，待 reconcile 后重试`,
-              { cause: error },
-            );
-          }
-          console.warn(
-            `[nativeDeepRead] 第${episode.episodeIndex}集第${segmentIndex + 1}段 Vertex 主线被拒，`
-            + `回落 EvoLink——注意：EvoLink 忽略 videoMetadata.fps，兜底为 1fps 降级读取`,
-          );
-          // ⚠️ EvoLink 拉不了 gs://（实弹超时），必须签 GCS V4 https 读链。
-          const signedUrl = deps.signReadUrl(video.gsUri, 2 * 60 * 60);
-          degradedFpsSegmentIndexes.push(segmentIndex);
-          result = await attemptWithGateRetry({
-            route: NATIVE_DEEP_READ_ROUTE_EVOLINK,
-            fileUri: signedUrl,
-            segmentIndex,
-            fps,
-          });
-        }
+        const result = await attemptWithSegmentRetry({
+          route: NATIVE_DEEP_READ_ROUTE_VERTEX,
+          fileUri: video.gsUri,
+          segmentIndex,
+          fps,
+        });
         if (params.segmentCacheSeriesKey) {
           const sourceDigest = episode.cacheSourceDigest!;
           const entry: NativeDeepReadSegmentCacheEntry = {
@@ -2335,23 +2275,46 @@ export async function runManhuaNativeDeepReadBatch(params: {
             visualRoute: result.visualRoute,
             degraded: result.visualRoute === NATIVE_DEEP_READ_ROUTE_EVOLINK,
             raw: result.raw,
-            paidUsage: {
-              inputTokens: Math.max(0, episodeInput - paidBefore.inputTokens),
-              outputTokens: Math.max(0, episodeOutput - paidBefore.outputTokens),
-              audioInputTokens: Math.max(0, episodeAudioInput - paidBefore.audioInputTokens),
-              reasoningTokens: Math.max(0, episodeReasoning - paidBefore.reasoningTokens),
-              costCny: Math.max(0, episodeCost - paidBefore.costCny),
-            },
+            paidUsage: { ...paidUsageBySegment[segmentIndex]! },
             savedAtIso: new Date().toISOString(),
           };
-          // “段过门禁即入账”：缓存写入是继续烧下一段之前的强步骤，不得 warn-only。
+          // “段过门禁即入账”：并发请求已在途，缓存写入仍是该段成功的强步骤。
           await deps.writeSegmentCache(entry);
-          rawSegments.push(result.raw);
+          rawSegments[segmentIndex] = result.raw;
           await commitSegmentToProposal(segmentIndex, entry);
-          continue;
+          return;
         }
-        rawSegments.push(result.raw);
+        rawSegments[segmentIndex] = result.raw;
+      };
+
+      const segmentFailures: Array<{ segmentIndex: number; error: unknown }> = [];
+      let nextSegmentIndex = 0;
+      const segmentConcurrency = Math.min(4, segmentCount);
+      const segmentWorkers = Array.from({ length: segmentConcurrency }, async () => {
+        while (!stopSchedulingSegments) {
+          const segmentIndex = nextSegmentIndex;
+          nextSegmentIndex += 1;
+          if (segmentIndex >= segmentCount) return;
+          try {
+            await processSegment(segmentIndex);
+          } catch (error) {
+            segmentFailures.push({ segmentIndex, error });
+            // 已发出的兄弟请求必须等回执；尚未发出的长集后续段停止，避免继续烧钱。
+            stopSchedulingSegments = true;
+          }
+        }
+      });
+      await Promise.allSettled(segmentWorkers);
+      await proposalCommitChain;
+      if (proposalCommitFailure) throw proposalCommitFailure;
+      if (segmentFailures.length > 0) {
+        const first = segmentFailures.sort((a, b) => a.segmentIndex - b.segmentIndex)[0]!;
+        throw first.error;
       }
+      if (rawSegments.some((raw) => !raw)) {
+        throw new Error(`第${episode.episodeIndex}集并发精读结果不完整，已停止`);
+      }
+      const completeRawSegments = rawSegments as Array<Record<string, unknown>>;
 
       // 段卡合并成集卡：默认**确定性代码拼接**（免费可审计）——各段 shots/subtitles
       // 已是绝对秒位直接拼接、文本类栏按段加「第X段」标注、audioResolution 保
@@ -2379,7 +2342,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
               durationSec: episode.sourceDurationSec,
               segments: episode.segments,
               hasAudio,
-              rawSegments,
+              rawSegments: completeRawSegments,
               rejectedReasonZh,
             }),
             params.abortSignal,
@@ -2454,7 +2417,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
           hasAudio,
           rawSegments: payloads,
         });
-      const annotateSegmentRows = () => rawSegments.map((raw, index) => {
+      const annotateSegmentRows = () => completeRawSegments.map((raw, index) => {
         if (segmentCount === 1) return raw;
         const copy: Record<string, unknown> = { ...raw };
         for (const key of ["beatStructureZh", "moodArcZh", "reusableZh", "genPromptHintZh"]) {
@@ -2485,7 +2448,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
           episodeRows = [structuredRaw];
         } else {
           try {
-            gateEpisode(rawSegments);
+            gateEpisode(completeRawSegments);
             episodeRows = annotateSegmentRows();
           } catch (mergeGateFailure) {
             if (params.abortSignal?.aborted) throw mergeGateFailure;
@@ -2590,11 +2553,20 @@ export async function runManhuaNativeDeepReadBatch(params: {
     };
     throw wrapped;
   } finally {
-    const cleanup = preparedByEpisode.flatMap((row) =>
-      row.videos.map((video) => deps.remove(video.temporaryGcs)));
-    const cleanupResults = await Promise.allSettled(cleanup);
-    if (cleanupResults.some((row) => row.status === "rejected")) {
-      console.warn(`[nativeDeepRead] 批次 ${batchRequestId} 的视频临时对象清理待核对`);
+    const cleanupTargets = preparedByEpisode.flatMap((row) => row.videos);
+    const cleanupResults = await Promise.allSettled(
+      cleanupTargets.map((video) => deps.remove(video.temporaryGcs)),
+    );
+    const cleanupFailures = cleanupResults.flatMap((row, index) => row.status === "rejected"
+      ? [{
+        objectName: cleanupTargets[index]?.temporaryGcs.objectName || "unknown",
+        errorZh: (row.reason instanceof Error ? row.reason.message : String(row.reason)).slice(0, 500),
+      }]
+      : []);
+    if (cleanupFailures.length > 0) {
+      console.warn(
+        `[nativeDeepRead] 批次 ${batchRequestId} 的视频临时对象清理待核对：${JSON.stringify(cleanupFailures)}`,
+      );
     }
   }
 }

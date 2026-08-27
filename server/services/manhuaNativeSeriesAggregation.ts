@@ -3,7 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { mkdir, mkdtemp, open, readFile, rename, rm } from "node:fs/promises";
 import {
-  hasCompleteManhuaTemplateClassification,
+  hasManhuaTemplateClassificationFields,
+  hasUsableManhuaTemplateClassification,
   parseManhuaViralTemplateCard,
   type ManhuaViralTemplateBeat,
   type ManhuaViralTemplateCard,
@@ -237,7 +238,7 @@ function buildAggregationPrompt(payloadJson: string): { system: string; user: st
     system: `你是收费漫剧模板的系列结构编辑。只根据输入 JSON 中可验证的分集证据，整理跨集可复用的故事与视听结构。只输出 JSON 对象。
 硬规则：
 1. 不复述外部剧名、平台名、角色专名或原台词；subtitles 只作证据，不得复制到输出。
-2. 不使用“古言、种田、逆袭、系统、重生、甜宠”等旧题材桶。classification 必须从情绪、叙事、表演、视听、观众体验五个维度多标签归类，允许重复归组。
+2. 不使用“古言、种田、逆袭、系统、重生、甜宠”等旧题材桶。classification 的情绪、叙事、表演、视听、观众体验五个数组字段必须全部输出；没有真实证据的维度写 []，至少两个维度各保留一个真实标签，不得在单一维度堆标签冒充，也不得为凑满维度编造。
 3. storyStructure 必须回答核心故事承诺、冲突如何持续、关系如何变化、跨集推进规律与避免重复的变化规则；不能只写钩子、压制、反转、爽点。
 4. beatGrid 是跨集通用的结构节拍，不得拼接某一集原剧情；6–24 拍，按抽象秒位 0–120 排列。
 5. 证据不足就删掉，不得猜；每个文本字段用客观陈述句。`,
@@ -476,12 +477,17 @@ async function downloadEpisodeWithRetry(input: {
       const card = parseManhuaViralTemplateCard(raw);
       if (
         !card
+        || !hasManhuaTemplateClassificationFields(
+          raw && typeof raw === "object" && !Array.isArray(raw)
+            ? (raw as Record<string, unknown>).classification
+            : undefined,
+        )
         || card.id !== nativeDeepReadProposalId(input.seriesKey, episodeIndex)
         || !card.provenance?.nativeVideoDeepRead
         || card.provenance.nativeVideoDeepRead.assemblyComplete !== true
         || card.provenance.nativeVideoDeepRead.successSegments
           !== card.provenance.nativeVideoDeepRead.attemptedSegments
-        || !hasCompleteManhuaTemplateClassification(card.classification)
+        || !hasUsableManhuaTemplateClassification(card.classification)
       ) {
         throw new Error("分集卡结构、身份或多维标签无效");
       }
@@ -582,6 +588,9 @@ function buildSeriesCard(input: {
     .filter((value) => Number.isInteger(value) && value > 0)
     .sort((a, b) => a - b);
   const raw = input.raw as Record<string, unknown>;
+  if (!hasManhuaTemplateClassificationFields(raw.classification)) {
+    throw new Error("系列聚合结果的 classification 必须显式包含五个数组字段");
+  }
   const aggregatedAt = new Date().toISOString();
   const card = parseManhuaViralTemplateCard({
     ...raw,
@@ -612,8 +621,8 @@ function buildSeriesCard(input: {
     },
   });
   if (!card) throw new Error("系列聚合结果未通过模板 schema");
-  if (!hasCompleteManhuaTemplateClassification(card.classification)) {
-    throw new Error("系列聚合结果必须完整填写五个分类维度");
+  if (!hasUsableManhuaTemplateClassification(card.classification)) {
+    throw new Error("系列聚合结果至少需要两个有效分类维度");
   }
   if (!card.storyStructure) throw new Error("系列聚合结果缺少完整故事骨架");
   if (card.beatGrid.length < 6) throw new Error("系列聚合结果的通用节拍不足 6 拍");

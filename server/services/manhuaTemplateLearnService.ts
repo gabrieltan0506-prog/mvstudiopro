@@ -2504,7 +2504,7 @@ export async function runManhuaTemplateLearn(
           // 0826 换代：音轨由视觉调用直出，主链不再产生 audio_model 阶段回执。
           if (checkpoint.stage === "series_aggregation_model") {
             await progress(
-              checkpoint.status === "failed" ? MANHUA_LEARN_STAGE.failed : MANHUA_LEARN_STAGE.analysis,
+              MANHUA_LEARN_STAGE.analysis,
               checkpoint.status === "started"
                 ? "开始整理全系列结构…"
                 : checkpoint.status === "completed"
@@ -2514,14 +2514,15 @@ export async function runManhuaTemplateLearn(
           } else {
             if (
               checkpoint.route === "gate_retry_pending"
-              && checkpoint.status === "started"
             ) {
               const retrySegmentZh = typeof checkpoint.chunkIndex === "number" && checkpoint.segmentCount
                 ? ` · 分片 ${checkpoint.chunkIndex + 1}/${checkpoint.segmentCount}`
                 : "";
               await progress(
                 MANHUA_LEARN_STAGE.vision,
-                `${episodeLabel}${retrySegmentZh} · 门禁未通过，正在按拒因重试：${checkpoint.errorZh || "结构密度未达标"}`,
+                `${episodeLabel}${retrySegmentZh} · 第 ${checkpoint.attemptNumber || "?"} 次尝试将在 60 秒后开始`
+                + `${typeof checkpoint.temperature === "number" ? `（temperature ${checkpoint.temperature}）` : ""}`
+                + `：${checkpoint.errorZh || "上一次调用未完成"}`,
               );
               return;
             }
@@ -2536,7 +2537,7 @@ export async function runManhuaTemplateLearn(
               ? ` · 分片 ${checkpoint.chunkIndex + 1}/${checkpoint.segmentCount}`
               : "";
             await progress(
-              checkpoint.status === "failed" ? MANHUA_LEARN_STAGE.failed : MANHUA_LEARN_STAGE.vision,
+              MANHUA_LEARN_STAGE.vision,
               `${episodeLabel}${segmentZh} · ${stageZh}${checkpoint.status === "started"
                 ? "开始"
                 : checkpoint.status === "completed"

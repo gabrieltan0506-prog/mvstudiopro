@@ -96,6 +96,7 @@ import {
 import { resolveGrowthCampJobServerTimeoutMs } from "../../shared/growthCampJobTiming.js";
 import {
   hasNativeDeepReadJobFields,
+  MANHUA_NATIVE_DEEP_READ_MODEL,
   NATIVE_DEEP_READ_JOB_MAX_CALLS,
   parseNativeDeepReadJobConfirmation,
   resolveNativeDeepReadJobTimeoutMs,
@@ -3487,7 +3488,7 @@ async function runClaimedJob(
               pipelineMode: "native_deep_read",
               ...receiptPatch,
               nativeUsage: carriedNativeUsage || {
-                model: "qwen3.8-max",
+                model: MANHUA_NATIVE_DEEP_READ_MODEL,
                 billingMode: "unknown",
                 inputTokens: 0,
                 outputTokens: 0,
