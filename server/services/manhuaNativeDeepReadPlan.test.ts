@@ -452,6 +452,115 @@ describe("原生精读计划", () => {
     expect(plan.episodes[0]?.recoverMisplacedSourceCache).toBe(true);
   });
 
+  it("无 mix_info 的搜索页长视频按单一学习源发车，不要求用户手改 /video/", async () => {
+    const modalId = "7662693395755765035";
+    const playbackUrls = [
+      "https://v.douyinvod.com/standalone-a.mp4",
+      "https://v.douyinvod.com/standalone-b.mp4",
+    ];
+    const d = deps({
+      fetchAwemeDetail: vi.fn(async () => ({
+        titleZh: "《咱家剑宗团宠小师妹》1-300集完整版",
+        playbackUrl: playbackUrls[0],
+        playbackUrls,
+        access: "free" as const,
+      })),
+      listMixEpisodes: vi.fn(async () => {
+        throw new Error("独立视频不应调用合集接口");
+      }),
+      probeDurationSec: vi.fn(async () => 2_211.682),
+    });
+
+    const plan = await buildNativeDeepReadPlanPreview(
+      {
+        url: `https://www.douyin.com/search/%E5%89%91%E5%AE%97?modal_id=${modalId}&type=general`,
+        limit: 10,
+      },
+      d,
+    );
+
+    expect(d.fetchAwemeDetail).toHaveBeenCalledWith(modalId);
+    expect(d.listMixEpisodes).not.toHaveBeenCalled();
+    expect(d.resolveSeriesKey).toHaveBeenCalledWith({
+      sourceIdentity: `https://www.douyin.com/video/${modalId}`,
+      mixId: "",
+      title: undefined,
+      learnLlm: "gpt",
+    });
+    expect(plan.dramaNameZh).toContain("咱家剑宗团宠小师妹");
+    expect(plan.episodes).toEqual([{
+      episodeIndex: 1,
+      sourceUrl: `https://www.douyin.com/video/${modalId}`,
+      durationSec: 2_212,
+      segments: [
+        { startSec: 0, endSec: 300 },
+        { startSec: 300, endSec: 600 },
+        { startSec: 600, endSec: 900 },
+        { startSec: 900, endSec: 1_200 },
+        { startSec: 1_200, endSec: 1_500 },
+        { startSec: 1_500, endSec: 1_800 },
+        { startSec: 1_800, endSec: 2_100 },
+        { startSec: 2_100, endSec: 2_212 },
+      ],
+      recoverMisplacedSourceCache: true,
+    }]);
+    expect(plan.freeEpisodeCount).toBe(1);
+    expect(plan.executableEpisodeCount).toBe(1);
+    expect(plan.totalVisualCalls).toBe(8);
+    expect(plan.totalModelCalls).toBe(9);
+  });
+
+  it("无 mix_info 的可读视频与合集一样尊重已入库状态，不重复付费", async () => {
+    const modalId = "7660141869153651987";
+    const d = deps({
+      fetchAwemeDetail: vi.fn(async () => ({
+        titleZh: "百世轮回，凡人百世书",
+        playbackUrl: "https://v.douyinvod.com/standalone.mp4",
+        access: "free" as const,
+      })),
+      listMixEpisodes: vi.fn(async () => null),
+      listIngestedEpisodes: vi.fn(async () => new Set([1])),
+    });
+
+    const plan = await buildNativeDeepReadPlanPreview(
+      { url: `https://www.douyin.com/video/${modalId}`, limit: 10 },
+      d,
+    );
+
+    expect(plan.episodes).toEqual([]);
+    expect(plan.alreadyIngestedEpisodeIndexes).toEqual([1]);
+    expect(plan.totalModelCalls).toBe(0);
+    expect(d.probeDurationSec).not.toHaveBeenCalled();
+  });
+
+  it("无 mix_info 且没有可读媒体时关闭式停止，不建立空计划", async () => {
+    const d = deps({
+      fetchAwemeDetail: vi.fn(async () => ({ titleZh: "只有标题没有媒体" })),
+    });
+    await expect(buildNativeDeepReadPlanPreview(
+      { url: "https://www.douyin.com/search/demo?modal_id=7660141869153651987", limit: 1 },
+      d,
+    )).rejects.toThrow("没有官方合集，也没有可读取的媒体流");
+    expect(d.listMixEpisodes).not.toHaveBeenCalled();
+    expect(d.probeDurationSec).not.toHaveBeenCalled();
+  });
+
+  it("无 mix_info 且付费状态未知时不把媒体可读冒充免费", async () => {
+    const d = deps({
+      fetchAwemeDetail: vi.fn(async () => ({
+        titleZh: "媒体可读但免费状态未知",
+        playbackUrl: "https://v.douyinvod.com/standalone-unknown.mp4",
+        access: "unknown" as const,
+      })),
+    });
+    await expect(buildNativeDeepReadPlanPreview(
+      { url: "https://www.douyin.com/search/demo?modal_id=7660141869153651987", limit: 1 },
+      d,
+    )).rejects.toThrow("第1集缺少明确免费信号");
+    expect(d.listMixEpisodes).not.toHaveBeenCalled();
+    expect(d.probeDurationSec).not.toHaveBeenCalled();
+  });
+
   it("不带 modal_id 的搜索页关闭式拒绝，不进入详情、合集或媒体探测", async () => {
     const d = deps();
     await expect(buildNativeDeepReadPlanPreview(

@@ -101,6 +101,7 @@ import {
   parseNativeDeepReadJobConfirmation,
   resolveNativeDeepReadJobTimeoutMs,
 } from "../../shared/manhuaNativeDeepReadJob.js";
+import { readManhuaLearnExtraSourceHosts } from "../services/manhuaLearn0996Source.js";
 import {
   appendManhuaNativeModelReceipt,
   type ManhuaNativeModelReceipt,
@@ -608,7 +609,9 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         typeof import("../services/manhuaNativeDeepReadPlanRuntime.js")["buildNativeDeepReadPlanPreviewFromServices"]
       >> | undefined;
       if (nativeConfirmed) {
-        const confirmation = parseNativeDeepReadJobConfirmation(params);
+        const confirmation = parseNativeDeepReadJobConfirmation(params, {
+          extraSourceHosts: readManhuaLearnExtraSourceHosts(),
+        });
         const { buildNativeDeepReadPlanPreviewFromServices } = await import(
           "../services/manhuaNativeDeepReadPlanRuntime.js"
         );

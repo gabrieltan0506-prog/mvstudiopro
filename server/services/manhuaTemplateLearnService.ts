@@ -124,6 +124,15 @@ import {
   listDouyinMixEpisodesViaWebApi,
 } from "./manhuaLearnDouyinWebApi.js";
 import {
+  fetchManhua0996EpisodePlayback,
+  fetchManhua0996SeriesPage,
+  readManhuaLearnExtraSourceHosts,
+} from "./manhuaLearn0996Source.js";
+import {
+  isManhua0996SourceUrl,
+  parseManhua0996SourceUrl,
+} from "../../shared/manhuaLearn0996Source.js";
+import {
   assertYtdlpCookieReadyForUrl,
   execYtdlpJson,
   openYtdlpCookieSession,
@@ -620,6 +629,8 @@ type EpisodeSourceState = {
   ytdlpRefreshUrls?: string[];
   resolvedStreamUrl?: string;
   triedStreamUrls?: string[];
+  referer?: string;
+  sourceMarkers?: ListedEpisode["sourceMarkers"];
 };
 
 export function readMuxedPlaybackUrlsFromYtdlpInfo(data: unknown): string[] {
@@ -741,7 +752,7 @@ async function ffprobeRemoteDuration(url: string): Promise<number> {
 }
 
 /** 时长可读不代表含音轨；学习前必须同时确认音频与视频流存在。 */
-async function ffprobeRemoteMedia(url: string): Promise<number> {
+async function ffprobeRemoteMedia(url: string, referer = DOUYIN_PLAYBACK_REFERER): Promise<number> {
   let stdout: string;
   try {
     ({ stdout } = await execFileAsync(
@@ -752,7 +763,7 @@ async function ffprobeRemoteMedia(url: string): Promise<number> {
         "-user_agent",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "-headers",
-        `Referer: ${DOUYIN_PLAYBACK_REFERER}\r\n`,
+        `Referer: ${referer}\r\n`,
         "-show_entries",
         "format=duration:stream=codec_type",
         "-of",
@@ -777,7 +788,7 @@ async function ffprobeRemoteMedia(url: string): Promise<number> {
   if (!streamTypes.has("video")) throw new Error("播放地址不含画面");
   await probeRemoteManhuaMediaDecodability({
     url,
-    referer: DOUYIN_PLAYBACK_REFERER,
+    referer,
   });
   return durationSec;
 }
@@ -788,6 +799,14 @@ async function refreshEpisodePlaybackUrls(
 ): Promise<string[]> {
   if (state.playbackRefreshAttempted) return state.playbackRefreshUrls || [];
   state.playbackRefreshAttempted = true;
+  if (isManhua0996SourceUrl(ep.url, readManhuaLearnExtraSourceHosts())) {
+    const resolved = await fetchManhua0996EpisodePlayback(ep.url).catch(() => null);
+    if (!resolved) return [];
+    state.referer = resolved.referer;
+    state.sourceMarkers = resolved.markers;
+    state.playbackRefreshUrls = resolved.playbackUrls;
+    return resolved.playbackUrls;
+  }
   const awemeId = extractDouyinVideoIdFromUrl(ep.url);
   if (!awemeId) return [];
   // 合集列表通常从主 Cookie 开始；故障刷新从备用候选开始，再回到主候选。
@@ -805,8 +824,11 @@ async function probeEpisodeDurationWithSourceFailover(
 ): Promise<number> {
   const source = episodeDownloadSource(ep, state);
   if (!source.viaPlayback) {
-    if (!isDouyinHostUrl(ep.url)) {
-      const durationSec = await ffprobeRemoteMedia(ep.url);
+    if (
+      !isDouyinHostUrl(ep.url)
+      && !isManhua0996SourceUrl(ep.url, readManhuaLearnExtraSourceHosts())
+    ) {
+      const durationSec = await ffprobeRemoteMedia(ep.url, ep.referer);
       state.resolvedStreamUrl = ep.url;
       state.triedStreamUrls = [ep.url];
       return durationSec;
@@ -814,7 +836,7 @@ async function probeEpisodeDurationWithSourceFailover(
     // Douyin 页面 URL 不是媒体流；不用 ffprobe 白等超时，直接刷新官方播放地址。
   } else {
     try {
-      const durationSec = await ffprobeRemoteMedia(source.url);
+      const durationSec = await ffprobeRemoteMedia(source.url, state.referer || ep.referer);
       state.resolvedStreamUrl = source.url;
       state.triedStreamUrls = [source.url];
       return durationSec;
@@ -832,7 +854,10 @@ async function probeEpisodeDurationWithSourceFailover(
   for (let index = 0; index < fallbackUrls.length; index++) {
     try {
       state.playbackUrl = fallbackUrls[index];
-      const durationSec = await ffprobeRemoteMedia(fallbackUrls[index]!);
+      const durationSec = await ffprobeRemoteMedia(
+        fallbackUrls[index]!,
+        state.referer || ep.referer,
+      );
       state.resolvedStreamUrl = fallbackUrls[index];
       state.triedStreamUrls = Array.from(new Set([
         ...(state.triedStreamUrls || []),
@@ -859,7 +884,8 @@ function currentEpisodeMediaSource(
   if (!url) throw new Error("尚未取得可读取的媒体流，不能开始学习");
   return {
     url,
-    referer: isDouyinHostUrl(ep.url) ? DOUYIN_PLAYBACK_REFERER : undefined,
+    referer: state.referer || ep.referer
+      || (isDouyinHostUrl(ep.url) ? DOUYIN_PLAYBACK_REFERER : undefined),
   };
 }
 
@@ -867,7 +893,9 @@ async function advanceEpisodeMediaSource(
   ep: ListedEpisode,
   state: EpisodeSourceState,
 ): Promise<boolean> {
-  if (!isDouyinHostUrl(ep.url)) return false;
+  if (!isDouyinHostUrl(ep.url) && !isManhua0996SourceUrl(ep.url, readManhuaLearnExtraSourceHosts())) {
+    return false;
+  }
   const webApiUrls = await refreshEpisodePlaybackUrls(ep, state);
   const ytdlpUrls = await refreshEpisodePlaybackUrlsViaYtdlp(ep, state);
   const urls = orderEpisodeMediaFallbackUrls(webApiUrls, ytdlpUrls);
@@ -880,7 +908,7 @@ async function advanceEpisodeMediaSource(
     tried.add(next);
     state.triedStreamUrls = Array.from(tried);
     try {
-      await ffprobeRemoteMedia(next);
+      await ffprobeRemoteMedia(next, state.referer || ep.referer);
       state.playbackUrl = next;
       state.resolvedStreamUrl = next;
       return true;
@@ -995,6 +1023,20 @@ async function listOrderedEpisodes(
     access?: DouyinEpisodeAccess;
   },
 ): Promise<ListedEpisodesResult> {
+  if (isManhua0996SourceUrl(sourceUrl, readManhuaLearnExtraSourceHosts())) {
+    const page = await fetchManhua0996SeriesPage(sourceUrl);
+    return {
+      listed: page.episodes.map((episode) => ({
+        index: episode.index,
+        url: episode.url,
+        title: episode.title,
+        access: "free" as const,
+        sourceKind: "0996_mirror" as const,
+      })),
+      mixNameZh: page.titleZh,
+      reliable: true,
+    };
+  }
   const id = String(mixId || "").trim();
   if (/^\d{6,}$/.test(id)) {
     try {
@@ -1670,6 +1712,7 @@ export async function buildNativeDeepReadEpisodeExecution(
     provenanceSourceRef: input.provenanceSourceRef,
     durationSec: total,
     laneHintZh: input.laneHintZh,
+    sourceMarkers: probeState.sourceMarkers,
     segments,
     // 计划标记的失败占位自动让位：执行层据此走原子接管而非普通抢占
     ...(input.confirmedPlanEpisode?.reclaimFailedClaim === true
@@ -1919,11 +1962,35 @@ export function normalizeManhuaTemplateLearnSourceInput(input: {
 }): { rawSourceUrl: string; sourceGcsUri: string; sourceUrl: string } {
   const rawSourceUrl = String(input.url || "").trim();
   const sourceGcsUri = String(input.gcsUri || "").trim();
+  const mirror = parseManhua0996SourceUrl(rawSourceUrl, readManhuaLearnExtraSourceHosts());
   return {
     rawSourceUrl,
     sourceGcsUri,
-    sourceUrl: sourceGcsUri ? rawSourceUrl : normalizeDouyinVideoUrl(rawSourceUrl),
+    sourceUrl: sourceGcsUri
+      ? rawSourceUrl
+      : mirror?.canonicalUrl || normalizeDouyinVideoUrl(rawSourceUrl),
   };
+}
+
+/**
+ * 原生精读的无合集抖音视频按 awemeId 隔离系列身份。
+ * 标题仍可展示，但不能让两条同名“全集/完整版”共享 claim、段缓存或批准卡。
+ * 旧学习链与有官方 mix_info 的合集保持既有同名归并语义。
+ */
+export function resolveManhuaLearnSeriesIdentityTitle(input: {
+  titleHint?: string;
+  nativeDeepReadMode: boolean;
+  sourceAwemeId?: string;
+  mixId?: string;
+}): string | undefined {
+  if (
+    input.nativeDeepReadMode
+    && String(input.sourceAwemeId || "").trim()
+    && !String(input.mixId || "").trim()
+  ) {
+    return undefined;
+  }
+  return String(input.titleHint || "").trim() || undefined;
 }
 
 export async function runManhuaTemplateLearn(
@@ -1953,6 +2020,7 @@ export async function runManhuaTemplateLearn(
   //    （榜单单集链接一次学一批的入口）——
   let mixId = String(input.mixId || "").trim();
   let dramaNameZh = "";
+  let sourceAwemeId = "";
   let single: {
     titleZh?: string;
     episodeIndex?: number;
@@ -1965,9 +2033,9 @@ export async function runManhuaTemplateLearn(
       const fromUrl = extractDouyinMixIdFromUrl(url);
       if (fromUrl) mixId = fromUrl;
     }
-    const videoId = extractDouyinVideoIdFromUrl(url);
-    if (videoId) {
-      const detail = await fetchDouyinAwemeDetailViaWebApi(videoId).catch(() => null);
+    sourceAwemeId = extractDouyinVideoIdFromUrl(url) || "";
+    if (sourceAwemeId) {
+      const detail = await fetchDouyinAwemeDetailViaWebApi(sourceAwemeId).catch(() => null);
       if (detail) {
         single = {
           titleZh: detail.titleZh,
@@ -1979,7 +2047,9 @@ export async function runManhuaTemplateLearn(
         if (!/^\d{6,}$/.test(mixId) && detail.mixId && /^\d{6,}$/.test(detail.mixId)) {
           mixId = detail.mixId;
         }
-        dramaNameZh = stripBookTitleMarks(detail.mixNameZh);
+        dramaNameZh = stripBookTitleMarks(
+          detail.mixNameZh || (!detail.mixId ? detail.titleZh : ""),
+        );
       }
     }
   }
@@ -2057,7 +2127,12 @@ export async function runManhuaTemplateLearn(
     seriesKey = await resolveManhuaSeriesKey({
       sourceIdentity,
       mixId,
-      title: titleHint,
+      title: resolveManhuaLearnSeriesIdentityTitle({
+        titleHint,
+        nativeDeepReadMode,
+        sourceAwemeId,
+        mixId,
+      }),
       learnLlm,
     });
     workId = `tpl_series_${seriesKey}`;

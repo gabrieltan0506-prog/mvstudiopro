@@ -87,6 +87,12 @@ export type NativeDeepReadEpisodeExecution = {
    * 缺省时回落 `sourceUrl`（保持既有行为）。
    */
   provenanceSourceRef?: string;
+  sourceMarkers?: Array<{
+    kind: "opening" | "ending";
+    startSec: number;
+    endSec?: number;
+    origin: "source_api";
+  }>;
   durationSec: number;
   laneHintZh?: string;
   segments: readonly NativeDeepReadSegmentSpec[];
@@ -506,6 +512,7 @@ export async function executeAndIngestNativeDeepReadEpisode(
       sourceUrl: input.provenanceSourceRef || input.sourceUrl,
       durationSec: input.durationSec,
       laneHintZh: input.laneHintZh,
+      sourceMarkers: input.sourceMarkers,
       result,
     });
   } catch (error) {
@@ -894,6 +901,7 @@ export async function runNativeDeepReadBatch(input: {
             sourceUrl: episode.provenanceSourceRef || episode.sourceUrl,
             durationSec: episode.durationSec,
             laneHintZh: episode.laneHintZh,
+            sourceMarkers: episode.sourceMarkers,
             result: partialResult,
           });
           await emitProgress({
@@ -932,6 +940,7 @@ export async function runNativeDeepReadBatch(input: {
         sourceUrl: episode.provenanceSourceRef || episode.sourceUrl,
         durationSec: episode.durationSec,
         laneHintZh: episode.laneHintZh,
+        sourceMarkers: episode.sourceMarkers,
         result,
       });
       // 先在 claim 锁内清缓存，再释放 claim；否则等待中的旧计划可抢到 claim 并写新缓存，

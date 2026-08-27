@@ -19,6 +19,7 @@ import { normalizeDouyinVideoUrl } from "../../shared/manhuaLearnYtdlp.js";
 import {
   extractDouyinVideoIdFromUrl,
   extractDouyinMixIdFromUrl,
+  type DouyinAwemeDetailParse,
   type DouyinListedEpisode,
 } from "../../shared/manhuaLearnDouyinWebApi.js";
 import {
@@ -30,6 +31,7 @@ import {
 import { MANHUA_LEARN_MAX_DURATION_SEC } from "../../shared/manhuaTemplateLearnSeries.js";
 import type { ManhuaTemplateLearnLlmProvider } from "../../shared/manhuaTemplateLearnFrameVision.js";
 import { NATIVE_DEEP_READ_JOB_MAX_CALLS } from "../../shared/manhuaNativeDeepReadJob.js";
+import { isManhua0996SourceUrl } from "../../shared/manhuaLearn0996Source.js";
 import {
   NATIVE_DEEP_READ_MODEL,
   NATIVE_DEEP_READ_ROUTE_EVOLINK,
@@ -251,6 +253,7 @@ export async function probeNativeDeepReadDurationSec(
   playbackUrl: string,
   abortSignal?: AbortSignal,
   execute: NativeDeepReadProbeExecutor = execFileAsync as NativeDeepReadProbeExecutor,
+  referer = DOUYIN_REFERER,
 ): Promise<number> {
   if (abortSignal?.aborted) {
     throw abortSignal.reason instanceof Error
@@ -265,7 +268,7 @@ export async function probeNativeDeepReadDurationSec(
         "-v", "error",
         "-user_agent",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-        "-headers", `Referer: ${DOUYIN_REFERER}\r\n`,
+        "-headers", `Referer: ${referer}\r\n`,
         // 单个坏节点不能把十集预演拖到请求超时；单位为微秒。
         "-rw_timeout", "15000000",
         "-show_entries", "format=duration",
@@ -313,11 +316,17 @@ function throwIfNativePlanAborted(abortSignal?: AbortSignal): void {
  */
 async function probeEpisodeDurationWithCandidateFailover(
   episode: DouyinListedEpisode,
-  deps: Pick<NativeDeepReadPlanDeps, "probeDurationSec" | "refreshPlaybackUrls">,
+  deps: Pick<
+    NativeDeepReadPlanDeps,
+    "probeDurationSec" | "refreshPlaybackUrls" | "refreshSourcePlayback"
+  >,
   abortSignal?: AbortSignal,
 ): Promise<number> {
   const tried = new Set<string>();
-  const probeCandidates = async (candidates: readonly string[]): Promise<number | null> => {
+  const probeCandidates = async (
+    candidates: readonly string[],
+    referer?: string,
+  ): Promise<number | null> => {
     const unique: string[] = [];
     for (const raw of candidates) {
       const url = String(raw || "").trim();
@@ -329,7 +338,9 @@ async function probeEpisodeDurationWithCandidateFailover(
       const candidate = unique[index]!;
       tried.add(candidate);
       try {
-        return await deps.probeDurationSec(candidate, abortSignal);
+        return await (referer
+          ? deps.probeDurationSec(candidate, abortSignal, referer)
+          : deps.probeDurationSec(candidate, abortSignal));
       } catch {
         throwIfNativePlanAborted(abortSignal);
         console.warn(
@@ -352,6 +363,7 @@ async function probeEpisodeDurationWithCandidateFailover(
   throwIfNativePlanAborted(abortSignal);
   const awemeId = extractDouyinVideoIdFromUrl(episode.url);
   let refreshed: string[] = [];
+  let refreshedReferer: string | undefined;
   if (awemeId) {
     try {
       refreshed = await deps.refreshPlaybackUrls(awemeId);
@@ -361,8 +373,19 @@ async function probeEpisodeDurationWithCandidateFailover(
         `episode=${episode.index}`,
       );
     }
+  } else if (deps.refreshSourcePlayback) {
+    try {
+      const source = await deps.refreshSourcePlayback(episode.url, abortSignal);
+      refreshed = source.playbackUrls;
+      refreshedReferer = source.referer;
+    } catch {
+      console.warn(
+        "[manhuaNativeDeepReadPlan] external playback refresh failed:",
+        `episode=${episode.index}`,
+      );
+    }
   }
-  const refreshedDuration = await probeCandidates(refreshed);
+  const refreshedDuration = await probeCandidates(refreshed, refreshedReferer);
   if (refreshedDuration != null) return refreshedDuration;
 
   throw new Error(
@@ -371,19 +394,33 @@ async function probeEpisodeDurationWithCandidateFailover(
 }
 
 export type NativeDeepReadPlanDeps = {
-  fetchAwemeDetail: (awemeId: string) => Promise<{
-    mixId?: string;
-    mixNameZh?: string;
-    /** 官方详情里的 current_episode；单集入口必须用它锚定真实集号。 */
-    episodeIndex?: number;
-  } | null>;
+  fetchAwemeDetail: (awemeId: string) => Promise<DouyinAwemeDetailParse | null>;
   listMixEpisodes: (mixId: string) => Promise<{
     episodes: DouyinListedEpisode[];
     mixNameZh?: string;
     complete: boolean;
   } | null>;
   refreshPlaybackUrls: (awemeId: string) => Promise<string[]>;
-  probeDurationSec: (playbackUrl: string, abortSignal?: AbortSignal) => Promise<number>;
+  refreshSourcePlayback?: (
+    sourceUrl: string,
+    abortSignal?: AbortSignal,
+  ) => Promise<{ playbackUrls: string[]; referer?: string }>;
+  resolveExternalSeries?: (
+    sourceUrl: string,
+    abortSignal?: AbortSignal,
+  ) => Promise<{
+    sourceIdentity: string;
+    seriesId: string;
+    titleZh: string;
+    currentEpisodeIndex: number;
+    episodes: DouyinListedEpisode[];
+  }>;
+  isExternalSource?: (sourceUrl: string) => boolean;
+  probeDurationSec: (
+    playbackUrl: string,
+    abortSignal?: AbortSignal,
+    referer?: string,
+  ) => Promise<number>;
   listIngestedEpisodes: (seriesKey: string) => Promise<Set<number>>;
   listClaimStates: (seriesKey: string) => Promise<
     Map<number, {
@@ -416,28 +453,72 @@ export async function buildNativeDeepReadPlanPreview(
    * （sourceIdentity/各消费方），形态不认就死。入口先规范化成 /video/<id> 标准形态
    * （modal_id 弹层链 → 单集页；其余原样返回），下游只见规范 URL。
    */
-  const url = normalizeDouyinVideoUrl(String(input.url || "").trim());
+  const rawUrl = String(input.url || "").trim();
+  const isExternal = deps.isExternalSource?.(rawUrl) === true
+    || isManhua0996SourceUrl(rawUrl);
+  const external = isExternal && deps.resolveExternalSeries
+    ? await deps.resolveExternalSeries(rawUrl, input.abortSignal)
+    : null;
+  const url = external?.sourceIdentity || normalizeDouyinVideoUrl(rawUrl);
   const limit = Math.max(1, Math.min(NATIVE_DEEP_READ_BATCH_HARD_CEILING, Math.floor(input.limit)));
 
   // ── 1. 链接 → 合集 id（搜索页的 modal_id 由 extractDouyinVideoIdFromUrl 处理）
-  const sourceAwemeId = extractDouyinVideoIdFromUrl(url);
-  let mixId = extractDouyinMixIdFromUrl(url) || "";
-  let dramaNameZh = "";
-  let detailEpisodeIndex: number | undefined;
-  if (!mixId) {
+  const sourceAwemeId = external ? null : extractDouyinVideoIdFromUrl(url);
+  let mixId = external?.seriesId || extractDouyinMixIdFromUrl(url) || "";
+  let dramaNameZh = external?.titleZh || "";
+  let detailEpisodeIndex: number | undefined = external?.currentEpisodeIndex;
+  let standaloneSource = false;
+  let listed: {
+    episodes: DouyinListedEpisode[];
+    mixNameZh?: string;
+    complete: boolean;
+  } | null = external
+    ? { episodes: external.episodes, mixNameZh: external.titleZh, complete: true }
+    : null;
+  if (!external && !mixId) {
     if (!sourceAwemeId) throw new Error("这个链接里没有 modal_id / 视频 id / 合集 id，认不出是哪一部");
     const detail = await deps.fetchAwemeDetail(sourceAwemeId);
-    if (!detail?.mixId) throw new Error("这条视频不属于任何合集，无法按集发车");
-    mixId = detail.mixId;
-    dramaNameZh = detail.mixNameZh || "";
-    const parsedEpisodeIndex = Number(detail.episodeIndex);
-    if (Number.isInteger(parsedEpisodeIndex) && parsedEpisodeIndex > 0) {
-      detailEpisodeIndex = parsedEpisodeIndex;
+    if (!detail) throw new Error("这条视频的详情暂时无法读取，请稍后重试");
+    if (detail.mixId) {
+      mixId = detail.mixId;
+      dramaNameZh = detail.mixNameZh || "";
+      const parsedEpisodeIndex = Number(detail.episodeIndex);
+      if (Number.isInteger(parsedEpisodeIndex) && parsedEpisodeIndex > 0) {
+        detailEpisodeIndex = parsedEpisodeIndex;
+      }
+    } else {
+      // 抖音近期大量“全集/完整版”长视频不再挂官方 mix_info，但详情仍返回
+      // 免费媒体流。它不是坏搜索页，应作为一个独立长学习源进入同一条 300 秒
+      // 分片链；身份只绑定 awemeId，绝不凭标题猜合集或与同名剧串库。
+      const playbackUrls = Array.from(new Set([
+        ...(detail.playbackUrls || []),
+        ...(detail.playbackUrl ? [detail.playbackUrl] : []),
+      ].map((item) => String(item || "").trim()).filter(Boolean)));
+      if (!playbackUrls.length) {
+        throw new Error("这条视频没有官方合集，也没有可读取的媒体流，请稍后重试");
+      }
+      standaloneSource = true;
+      detailEpisodeIndex = 1;
+      dramaNameZh = detail.titleZh || "";
+      listed = {
+        episodes: [{
+          index: 1,
+          url,
+          title: detail.titleZh || "第1集",
+          playbackUrl: playbackUrls[0],
+          playbackUrls,
+          // 媒体可读不等于已经取得免费授权；付费状态必须原样进入统一门禁。
+          // 只有明确 free 才会执行，unknown / 缺失 / paid_locked 都关闭式停止。
+          access: detail.access,
+        }],
+        mixNameZh: detail.titleZh || undefined,
+        complete: true,
+      };
     }
   }
 
   // ── 2. 合集展开
-  const listed = await deps.listMixEpisodes(mixId);
+  if (!listed) listed = await deps.listMixEpisodes(mixId);
   if (!listed?.episodes?.length) throw new Error("合集展开失败或没有分集，请稍后重试");
   dramaNameZh = listed.mixNameZh || dramaNameZh;
 
@@ -459,12 +540,15 @@ export async function buildNativeDeepReadPlanPreview(
    * 必须由详情 current_episode / 合集里同 aweme 的位置锚定真实集号。历史失败次数、
    * claim 数量或前面有几条占位，都不得把第一集改写成第十集。
    */
-  const listedSourceEpisode = sourceAwemeId
+  const listedSourceEpisode = external
+    ? listed.episodes.find((episode) => episode.index === external.currentEpisodeIndex)
+    : sourceAwemeId
     ? listed.episodes.find(
         (episode) => extractDouyinVideoIdFromUrl(episode.url) === sourceAwemeId,
       )
     : undefined;
-  if (sourceAwemeId && !listedSourceEpisode) {
+  const isSingleEpisodeEntry = Boolean(sourceAwemeId || external);
+  if (isSingleEpisodeEntry && !listedSourceEpisode) {
     throw new Error("单集视频不在解析出的合集列表中，已停止；不会只按详情序号执行另一条视频");
   }
   if (
@@ -477,7 +561,7 @@ export async function buildNativeDeepReadPlanPreview(
     );
   }
   const sourceEpisodeIndex = listedSourceEpisode?.index ?? detailEpisodeIndex;
-  if (sourceAwemeId && !sourceEpisodeIndex) {
+  if (isSingleEpisodeEntry && !sourceEpisodeIndex) {
     throw new Error("单集详情与合集列表都没有可靠集号，已停止；不会按历史次数猜集号");
   }
 
@@ -494,7 +578,9 @@ export async function buildNativeDeepReadPlanPreview(
   const seriesKey = await deps.resolveSeriesKey({
     sourceIdentity: url,
     mixId,
-    title: dramaNameZh || undefined,
+    // 无 mix_info 的独立视频必须按 awemeId 隔离；标题只是展示信息，不能参与
+    // 同名剧归并，否则两条同名“完整版”会共享 claim/缓存并静默覆盖。
+    title: standaloneSource ? undefined : dramaNameZh || undefined,
     learnLlm: input.learnLlm || "gpt",
   });
   const [ingested, claimStates] = await Promise.all([

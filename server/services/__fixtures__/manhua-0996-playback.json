@@ -1,0 +1,33 @@
+{
+  "code": 200,
+  "msg": "操作成功",
+  "data": {
+    "list": [
+      {
+        "flag": false,
+        "needLogin": true,
+        "resolution": 1080,
+        "resolutionName": "蓝光",
+        "url": "https://ppvod01.kqgfbs.com/login-only/index.m3u8"
+      },
+      {
+        "flag": false,
+        "needLogin": true,
+        "resolution": 720,
+        "resolutionName": "高清",
+        "url": "https://ppvod01.kqgfbs.com/login-only-720/index.m3u8"
+      },
+      {
+        "flag": true,
+        "needLogin": false,
+        "resolution": 480,
+        "resolutionName": "标清",
+        "url": "https://ppvod01.kqgfbs.com/free/index.m3u8"
+      }
+    ],
+    "headStart": 0,
+    "headEnd": 103,
+    "tailStart": 2477,
+    "tailEnd": 0
+  }
+}

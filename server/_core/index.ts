@@ -353,7 +353,12 @@ async function startServer() {
             return res.status(403).json({ error: "原生精读发车仅限站点拥有者" });
           }
           try {
-            parseNativeDeepReadJobConfirmation(learnParams);
+            const { readManhuaLearnExtraSourceHosts } = await import(
+              "../services/manhuaLearn0996Source.js"
+            );
+            parseNativeDeepReadJobConfirmation(learnParams, {
+              extraSourceHosts: readManhuaLearnExtraSourceHosts(),
+            });
           } catch {
             return res.status(400).json({ error: "原生精读确认参数不完整或相互冲突" });
           }

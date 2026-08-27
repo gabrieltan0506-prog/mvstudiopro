@@ -19,6 +19,12 @@ import { listNativeDeepReadEpisodeClaimStates } from "./manhuaNativeDeepReadClai
 import { isManhuaNativeDeepReadEnabled } from "./manhuaNativeDeepReadRunner.js";
 import { resolveManhuaSeriesKey } from "./manhuaTemplateLearnService.js";
 import type { ManhuaTemplateLearnLlmProvider } from "../../shared/manhuaTemplateLearnFrameVision.js";
+import {
+  fetchManhua0996EpisodePlayback,
+  readManhuaLearnExtraSourceHosts,
+  resolveManhua0996Series,
+} from "./manhuaLearn0996Source.js";
+import { isManhua0996SourceUrl } from "../../shared/manhuaLearn0996Source.js";
 
 export type NativeDeepReadPlanRuntimeInput = {
   url: string;
@@ -35,7 +41,31 @@ export async function buildNativeDeepReadPlanPreviewFromServices(
     fetchAwemeDetail: fetchDouyinAwemeDetailViaWebApi,
     listMixEpisodes: listDouyinMixEpisodesViaWebApi,
     refreshPlaybackUrls: listDouyinAwemePlaybackUrlsViaWebApi,
-    probeDurationSec: probeNativeDeepReadDurationSec,
+    refreshSourcePlayback: async (sourceUrl, abortSignal) => {
+      const playback = await fetchManhua0996EpisodePlayback(sourceUrl, abortSignal);
+      return { playbackUrls: playback.playbackUrls, referer: playback.referer };
+    },
+    resolveExternalSeries: async (sourceUrl, abortSignal) => {
+      const resolved = await resolveManhua0996Series(sourceUrl, abortSignal);
+      return {
+        sourceIdentity: resolved.source.canonicalUrl,
+        seriesId: `0996:${resolved.source.host}:${resolved.source.vodId}`,
+        titleZh: resolved.page.titleZh,
+        currentEpisodeIndex: resolved.page.currentEpisodeIndex,
+        episodes: resolved.page.episodes.map((episode) => ({
+          index: episode.index,
+          url: episode.url,
+          title: episode.title,
+          access: "free" as const,
+        })),
+      };
+    },
+    isExternalSource: (sourceUrl) => isManhua0996SourceUrl(
+      sourceUrl,
+      readManhuaLearnExtraSourceHosts(),
+    ),
+    probeDurationSec: (playbackUrl, abortSignal, referer) =>
+      probeNativeDeepReadDurationSec(playbackUrl, abortSignal, undefined, referer),
     listIngestedEpisodes: listIngestedNativeDeepReadEpisodes,
     listClaimStates: listNativeDeepReadEpisodeClaimStates,
     resolveSeriesKey: resolveManhuaSeriesKey,

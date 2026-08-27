@@ -72,6 +72,8 @@ export type NativeDeepReadIngestInput = {
   laneHintZh?: string;
   /** 显式指定赛道时跳过推断 */
   laneZh?: ManhuaViralTemplateLane;
+  /** 来源端标识的片头/片尾，保留供审批查看；本链绝不自动剪除。 */
+  sourceMarkers?: NonNullable<ManhuaViralTemplateCard["provenance"]>["sourceMarkers"];
   result: NativeDeepReadIngestSource;
 };
 
@@ -316,6 +318,7 @@ export function buildNativeDeepReadProposalCard(
     status: "proposed",
     updatedAt: new Date().toISOString(),
     provenance: {
+      sourceMarkers: input.sourceMarkers,
       nativeVideoDeepRead: {
         model: r.model,
         attemptedSegments: r.attemptedSegments,

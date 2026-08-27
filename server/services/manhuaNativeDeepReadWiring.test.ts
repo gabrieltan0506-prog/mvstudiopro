@@ -17,6 +17,7 @@ import {
   normalizeManhuaTemplateLearnSourceInput,
   pickLearnedIndexesForBatchSelection,
   reconcileManhuaLearnProgressWithNativeCards,
+  resolveManhuaLearnSeriesIdentityTitle,
   resolveManhuaLearnSnapshotCompletion,
   type NativeDeepReadEpisodeSourceDeps,
 } from "./manhuaTemplateLearnService";
@@ -55,6 +56,27 @@ describe("素材接入层 → 原生精读的接缝", () => {
       sourceGcsUri: "",
       sourceUrl: "https://www.douyin.com/video/7641538290936947889",
     });
+  });
+
+  it("原生精读无合集视频只按 awemeId 建系列，用户填的标题不触发同名串库", () => {
+    expect(resolveManhuaLearnSeriesIdentityTitle({
+      titleHint: "剑宗团宠小师妹",
+      nativeDeepReadMode: true,
+      sourceAwemeId: "7662693395755765035",
+      mixId: "",
+    })).toBeUndefined();
+    expect(resolveManhuaLearnSeriesIdentityTitle({
+      titleHint: "剑宗团宠小师妹",
+      nativeDeepReadMode: true,
+      sourceAwemeId: "7662693395755765035",
+      mixId: "7658601443858844954",
+    })).toBe("剑宗团宠小师妹");
+    expect(resolveManhuaLearnSeriesIdentityTitle({
+      titleHint: "剑宗团宠小师妹",
+      nativeDeepReadMode: false,
+      sourceAwemeId: "7662693395755765035",
+      mixId: "",
+    })).toBe("剑宗团宠小师妹");
   });
 
   it("🔴 拿到的是已探测直链，就直接用，绝不再跑一次页面 formats 解析", async () => {
