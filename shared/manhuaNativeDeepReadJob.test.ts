@@ -60,6 +60,29 @@ describe("原生精读任务墙钟", () => {
     });
   });
 
+  it("显式可信第三方播放页可进同一确认契约，仿冒域仍拒绝", () => {
+    const params = {
+      url: "https://0996zp.com/vod/play/146259/sid/1311527",
+      batchSize: 2,
+      nativeDeepReadConfirmed: true,
+      nativeMaxCalls: NATIVE_DEEP_READ_JOB_MAX_CALLS,
+      nativePlanLimit: 2,
+    };
+    expect(parseNativeDeepReadJobConfirmation(params).url).toBe(params.url);
+    expect(() => parseNativeDeepReadJobConfirmation({
+      ...params,
+      url: "https://0996zp.com.evil.test/vod/play/146259/sid/1311527",
+    })).toThrow("相互冲突");
+    const extraHostParams = {
+      ...params,
+      url: "https://mirror.example.com/vod/play/146259/1/1311527",
+    };
+    expect(() => parseNativeDeepReadJobConfirmation(extraHostParams)).toThrow("相互冲突");
+    expect(parseNativeDeepReadJobConfirmation(extraHostParams, {
+      extraSourceHosts: ["mirror.example.com"],
+    }).url).toBe(extraHostParams.url);
+  });
+
   it("拒绝本机/GCS 旁路、批次数漂移与只带半套字段", () => {
     const base = {
       url: "https://www.douyin.com/video/12345",

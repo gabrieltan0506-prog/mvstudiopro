@@ -1,4 +1,5 @@
 /** 原生精读单任务墙钟与调用数契约；客户端、入队端和 worker 共用。 */
+import { isManhua0996SourceUrl } from "./manhuaLearn0996Source.js";
 /**
  * 0826 拍板：视觉学习整体从新加坡 Qwen 换到 Vertex Gemini 3.1 Pro 从 GCS 直读，
  * 连音轨一次调用出全六栏（实测 360s 段 144s 返回，输入 ≈129k tok）。
@@ -43,6 +44,7 @@ export function hasNativeDeepReadJobFields(params: Record<string, unknown>): boo
 /** API 入口与 worker 共用的单次确认契约；任何旁路字段都关闭式拒绝。 */
 export function parseNativeDeepReadJobConfirmation(
   params: Record<string, unknown>,
+  options: { extraSourceHosts?: readonly string[] } = {},
 ): NativeDeepReadJobConfirmation {
   const url = String(params.url || "").trim();
   const planHash = String(params.nativePlanHash || "").trim();
@@ -60,7 +62,10 @@ export function parseNativeDeepReadJobConfirmation(
   if (
     params.nativeDeepReadConfirmed !== true
     || parsedUrl.protocol !== "https:"
-    || !/(?:^|\.)douyin\.com$/i.test(parsedUrl.hostname)
+    || (
+      !/(?:^|\.)douyin\.com$/i.test(parsedUrl.hostname)
+      && !isManhua0996SourceUrl(url, options.extraSourceHosts)
+    )
     || !Number.isInteger(maxCalls)
     || maxCalls < 1
     || maxCalls > NATIVE_DEEP_READ_JOB_MAX_CALLS

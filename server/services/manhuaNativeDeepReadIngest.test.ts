@@ -93,6 +93,21 @@ describe("入库门禁", () => {
     expect(checkNativeDeepReadIngestable(makeResult())).toEqual({ ok: true });
   });
 
+  it("来源片头片尾秒位可往返，但不改变镜头或分片", () => {
+    const result = makeResult();
+    const card = buildNativeDeepReadProposalCard({
+      ...baseInput,
+      sourceMarkers: [
+        { kind: "opening", startSec: 0, endSec: 103, origin: "source_api" },
+        { kind: "ending", startSec: 2477, origin: "source_api" },
+      ],
+      result,
+    })!;
+    expect(card.provenance?.sourceMarkers).toHaveLength(2);
+    expect(card.beatGrid).toHaveLength(result.beatGrid.length);
+    expect(card.provenance?.nativeVideoDeepRead?.attemptedSegments).toBe(result.attemptedSegments);
+  });
+
   it("全段失败拒收——空卡比没有卡更浪费审批人时间", () => {
     const r = checkNativeDeepReadIngestable(
       makeResult({ segmentCount: 0, failedSegmentCount: 6, beatGrid: [] }),

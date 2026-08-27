@@ -260,6 +260,13 @@ export type ManhuaViralTemplateCard = {
 
 /** 读帧与聚合分开记；proposalPolish 只为读取迁移前旧卡保留。 */
 export type ManhuaViralTemplateProvenance = {
+  /** 来源站点明确给出的片头/片尾秒位；只用于标识，绝不等同自动剪除指令。 */
+  sourceMarkers?: Array<{
+    kind: "opening" | "ending";
+    startSec: number;
+    endSec?: number;
+    origin: "source_api";
+  }>;
   frameVision?: {
     provider: string;
     model: string;
@@ -657,6 +664,26 @@ function parseManhuaViralTemplateProvenance(
   if (!raw || typeof raw !== "object") return undefined;
   const o = raw as ManhuaViralTemplateProvenance;
   const out: ManhuaViralTemplateProvenance = {};
+  if (Array.isArray(o.sourceMarkers)) {
+    const sourceMarkers = o.sourceMarkers.flatMap((row) => {
+      const kind = row?.kind;
+      const startSec = Number(row?.startSec);
+      const endSec = Number(row?.endSec);
+      if (
+        (kind !== "opening" && kind !== "ending")
+        || !Number.isFinite(startSec)
+        || startSec < 0
+        || row?.origin !== "source_api"
+      ) return [];
+      return [{
+        kind,
+        startSec,
+        ...(Number.isFinite(endSec) && endSec > startSec ? { endSec } : {}),
+        origin: "source_api" as const,
+      }];
+    }).slice(0, 8);
+    if (sourceMarkers.length) out.sourceMarkers = sourceMarkers;
+  }
   if (o.frameVision && typeof o.frameVision === "object") {
     out.frameVision = {
       provider: String(o.frameVision.provider || "").slice(0, 20),

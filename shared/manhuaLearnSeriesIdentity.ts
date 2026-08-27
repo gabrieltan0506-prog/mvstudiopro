@@ -2,6 +2,7 @@ import {
   extractDouyinVideoIdFromUrl,
   type DouyinEpisodeAccess,
 } from "./manhuaLearnDouyinWebApi.js";
+import type { Manhua0996SourceMarker } from "./manhuaLearn0996Source.js";
 
 export type ManhuaLearnListedSource = {
   index: number;
@@ -10,6 +11,11 @@ export type ManhuaLearnListedSource = {
   playbackUrl?: string;
   playbackUrls?: string[];
   access?: DouyinEpisodeAccess;
+  /** 媒体节点所需来源页；第三方 HLS 不能沿用抖音 Referer。 */
+  referer?: string;
+  sourceKind?: "douyin" | "0996_mirror" | "direct";
+  /** 仅记录来源接口标注的片头/片尾；学习链不得据此自动剪除。 */
+  sourceMarkers?: Manhua0996SourceMarker[];
 };
 
 /** 直接视频达 60 分钟时按大合集源学习。 */
