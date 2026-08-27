@@ -6,6 +6,8 @@ import {
   formatManhuaViralTemplateWriterAddon,
   formatManhuaViralTemplateWriterSkillFromCard,
   getManhuaViralTemplate,
+  hasManhuaTemplateClassificationFields,
+  hasUsableManhuaTemplateClassification,
   isNativeVideoLearnedTemplate,
   listApprovedManhuaViralTemplates,
   listApprovedManhuaViralTemplatesGrouped,
@@ -56,6 +58,28 @@ function learnedCard(overrides?: Partial<ManhuaViralTemplateCard>): ManhuaViralT
 }
 
 describe("manhuaViralTemplateBank", () => {
+  it("classification 五键必须原始存在，且至少两个维度各有真实标签", () => {
+    const sparse = {
+      emotionTagsZh: ["压迫渐强"],
+      narrativeFeatureTagsZh: [],
+      performanceTagsZh: ["克制停顿"],
+      audiovisualTagsZh: [],
+      audienceExperienceTagsZh: [],
+    };
+    expect(hasManhuaTemplateClassificationFields(sparse)).toBe(true);
+    expect(hasUsableManhuaTemplateClassification(sparse)).toBe(true);
+    expect(hasUsableManhuaTemplateClassification({
+      ...sparse,
+      performanceTagsZh: [],
+    })).toBe(false);
+
+    const missingField = { ...sparse } as Record<string, unknown>;
+    delete missingField.audiovisualTagsZh;
+    expect(hasManhuaTemplateClassificationFields(missingField)).toBe(false);
+    expect(() => hasUsableManhuaTemplateClassification(missingField as never)).not.toThrow();
+    expect(hasUsableManhuaTemplateClassification(missingField as never)).toBe(false);
+  });
+
   it("出厂种子已清空：不带 extras 时产品列表为空", () => {
     expect(MANHUA_VIRAL_TEMPLATE_BANK).toHaveLength(0);
     expect(listApprovedManhuaViralTemplates()).toHaveLength(0);

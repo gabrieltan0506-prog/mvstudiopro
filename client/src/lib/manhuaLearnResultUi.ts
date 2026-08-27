@@ -155,7 +155,7 @@ function parseManhuaNativeUsage(raw: unknown): ManhuaLearnResultUi["nativeUsage"
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const row = raw as Record<string, unknown>;
   return {
-    model: String(row.model || "qwen3.8-max"),
+    model: String(row.model || "unknown"),
     billingMode:
       row.billingMode === "plan_quota" || row.billingMode === "payg"
         ? row.billingMode
@@ -256,6 +256,8 @@ export function parseManhuaNativeModelReceipts(raw: unknown): ManhuaNativeModelR
             .slice(0, 200)
         : [],
       chunkIndex: optionalReceiptNumber(row.chunkIndex),
+      attemptNumber: optionalReceiptNumber(row.attemptNumber),
+      temperature: optionalReceiptNumber(row.temperature),
       variant: row.variant === "mono_16k" || row.variant === "stereo_32k"
         ? row.variant
         : undefined,

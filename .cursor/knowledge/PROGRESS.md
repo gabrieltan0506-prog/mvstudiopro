@@ -314,6 +314,8 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 
 **原生精读五分钟失联与 Growth 冷备争用修复（本地全量验证，待部署真跑）**：第 10 集两次真实失败分别在 326 秒与 342 秒只留下 `fetch failed`；代码的 30 分钟 AbortSignal 没有覆盖 Undici 默认 300 秒响应头时限，且错误回执丢掉 `error.cause`，因此隐形超时既提前切断又无法分类。现改用原生精读专属 Undici dispatcher，把 headers/body timeout 与 30 分钟业务总时限收口，并把 `UND_ERR_*`/网络 cause 写入 owner 回执。同期 GitHub Growth Backup 与两次模型失败重叠；冷备脚本已有互动租约门禁，但 runner 只登记 `platform` Job，漏掉 `video/manhua_template_learn`，现学习 Job 从 running 到 finally 全程持有同一租约，让备份/归档主动让行。未改变计费、路由、分片缓存或结果不明时禁止自动回落的纪律。目标 85 项、全量 3025 项（4 跳过）、TypeScript、服务端 build、Vite 生产 build 与 diff check 通过；尚未部署，也未再次发起真实付费学习，不能宣称线上链已通。
 
+**原生精读四并发、三档重试与五维标签契约（本地验证，待 PR/部署）**：300 秒以内固定 10fps；单集媒体备料与模型调用各最多四并发，跨集仍串行，首个 worker 失败后停止领取新段并等待在途任务清理。每个 Vertex 分片最多三次，温度固定 `0.7 → 0.65 → 0.6`、间隔 60 秒；用户中止不重试，不切 EvoLink，坏 JSON 三次后也不再自动调用 GLM 形成第四笔费用。每次真实模型请求的 started/terminal 回执携带 attempt、temperature、request id、finish reason、token、费用、耗时及底层网络 cause。`classification` 原始输出必须显式带五数组键，并至少两个维度有真实标签；分片、GCS 续跑、集卡、系列聚合和批准入口统一关闭式验证。GLM 5.3 整集结构化保持 131072 输出上限、单次 30 分钟等待且不自动重提。验证：目标 190/190、全仓 3069 通过（4 跳过）、TypeScript、服务端 build、Vite build、diff check 全过；未部署，线上真实批次尚未按本提交验收。
+
 ## 如何更新本文件
 
 合完 PR 或用户改口径后，在**当日**下追加表格行；下一自然日新开 `## YYYY-MM-DD`。  

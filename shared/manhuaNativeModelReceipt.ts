@@ -27,6 +27,10 @@ export type ManhuaNativeModelReceipt = {
   chunkIndex?: number;
   /** 本集分片总数：供进度文案显示「分片 X/N」，防「完成」误读为整集完成 */
   segmentCount?: number;
+  /** 同一分片当前是第几次真实模型尝试（1–3）。 */
+  attemptNumber?: number;
+  /** 本次尝试实际发送的温度；用于对账 0.70→0.65→0.60 降温序列。 */
+  temperature?: number;
   variant?: "mono_16k" | "stereo_32k";
   batchRequestId?: string;
   videoCount?: number;

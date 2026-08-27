@@ -49,18 +49,31 @@ export type ManhuaViralTemplateClassification = {
   audienceExperienceTagsZh: string[];
 };
 
-/** 新收费模板的五维分类必须逐维都有真实证据；旧卡兼容由调用方显式处理。 */
-export function hasCompleteManhuaTemplateClassification(
+export const MANHUA_TEMPLATE_CLASSIFICATION_KEYS = [
+  "emotionTagsZh",
+  "narrativeFeatureTagsZh",
+  "performanceTagsZh",
+  "audiovisualTagsZh",
+  "audienceExperienceTagsZh",
+] as const;
+
+/** 模型原始输出必须显式携带五个数组键；不能让解析器的默认 [] 掩盖漏字段。 */
+export function hasManhuaTemplateClassificationFields(
+  value: unknown,
+): value is ManhuaViralTemplateClassification {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return MANHUA_TEMPLATE_CLASSIFICATION_KEYS.every((key) =>
+    Object.prototype.hasOwnProperty.call(row, key) && Array.isArray(row[key]));
+}
+
+/** 新收费模板至少两个维度各有一个真实标签；五维允许按素材实际信息稀疏输出。 */
+export function hasUsableManhuaTemplateClassification(
   classification: ManhuaViralTemplateClassification | undefined,
 ): classification is ManhuaViralTemplateClassification {
-  return Boolean(
-    classification
-    && classification.emotionTagsZh.length
-    && classification.narrativeFeatureTagsZh.length
-    && classification.performanceTagsZh.length
-    && classification.audiovisualTagsZh.length
-    && classification.audienceExperienceTagsZh.length,
-  );
+  if (!hasManhuaTemplateClassificationFields(classification)) return false;
+  return MANHUA_TEMPLATE_CLASSIFICATION_KEYS.map((key) => classification[key]).filter((tags) =>
+    (tags as unknown[]).some((tag) => String(tag || "").trim())).length >= 2;
 }
 
 /**

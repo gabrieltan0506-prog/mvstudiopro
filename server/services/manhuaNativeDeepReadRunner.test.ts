@@ -1,6 +1,6 @@
 /**
  * 原生精读执行器（0826 Gemini 换代）：开关、format 挑选、请求契约、双密度门禁、
- * EvoLink 兜底路由铁律与 GLM 结构化整形接线。
+ * Vertex 同通道重试纪律、历史路由缓存兼容与 GLM 整集结构化接线。
  * 网络与文件系统部分不在此测（真实 GCS/Vertex 已由实弹探针验证），此处锁路由与契约。
  */
 import { readFileSync } from "node:fs";
@@ -11,7 +11,10 @@ import {
   NATIVE_DEEP_READ_HTTP_HEADERS_TIMEOUT_MS,
   NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
   NATIVE_DEEP_READ_RESPONSE_SCHEMA,
+  NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG,
   NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG,
+  NATIVE_DEEP_READ_RETRY_INTERVAL_MS,
+  NATIVE_DEEP_READ_RETRY_TEMPERATURES,
   NATIVE_DEEP_READ_TEMPERATURE_MIN,
   NATIVE_DEEP_READ_MIN_TMP_FREE_BYTES,
   NATIVE_DEEP_READ_MODEL,
@@ -22,6 +25,7 @@ import {
   assertNativeDeepReadSegmentDensity,
   buildGeminiNativeDeepReadSegmentPrompt,
   buildGeminiNativeDeepReadSegmentRequest,
+  buildNativeDeepReadGlmSegmentRepairPrompt,
   buildNativeDeepReadGlmStructuringPrompt,
   isManhuaNativeDeepReadEnabled,
   pickSmallestVideoFormat,
@@ -98,7 +102,7 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_ROUTE_EVOLINK).toBe("evolink_gemini_video");
     expect(NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE).toBe("openrouter_glm_structuring");
     // 换代必须让旧确认码全废
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v5-gemini-direct-gcs");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v6-gemini-10fps-direct-gcs");
   });
 
   it("长视频请求显式使用 30 分钟 HTTP 响应头与响应体时限，不落回 Undici 默认 300 秒", async () => {
@@ -126,9 +130,9 @@ describe("模型与通道收口", () => {
     expect(calls[0]!.init.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it("generationConfig 按 0826 参数定稿（二次拍板 0.75）：官方上限 65_536、单候选、responseSchema、HIGH 思考不外发", () => {
+  it("generationConfig 按 0827 实弹定稿 0.70：官方上限 65_536、单候选、responseSchema、HIGH 思考不外发", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG).toEqual({
-      temperature: 0.75,
+      temperature: 0.7,
       maxOutputTokens: 65_536,
       candidateCount: 1,
       audioTimestamp: true,
@@ -140,15 +144,21 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
   });
 
-  it("原地重试参数：温度不得低于 0.65，其余与首发一致", () => {
-    expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.65);
+  it("同一 Vertex 分片固定三档重试：0.70→0.65→0.60，间隔 60 秒", () => {
+    expect(NATIVE_DEEP_READ_RETRY_TEMPERATURES).toEqual([0.7, 0.65, 0.6]);
+    expect(NATIVE_DEEP_READ_RETRY_INTERVAL_MS).toBe(60_000);
+    expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.6);
     expect(NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG).toEqual({
       ...NATIVE_DEEP_READ_GENERATION_CONFIG,
       temperature: 0.65,
     });
+    expect(NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG).toEqual({
+      ...NATIVE_DEEP_READ_GENERATION_CONFIG,
+      temperature: 0.6,
+    });
   });
 
-  it("请求组装层会把任何低温旁路收口到 0.65", () => {
+  it("请求组装层会把任何低温旁路收口到 0.60", () => {
     const request = buildGeminiNativeDeepReadSegmentRequest({
       fileUri: "gs://bucket/segment.mp4",
       fps: 5,
@@ -158,12 +168,12 @@ describe("模型与通道收口", () => {
         temperature: 0,
       },
     });
-    expect(request.generationConfig).toMatchObject({ temperature: 0.65 });
+    expect(request.generationConfig).toMatchObject({ temperature: 0.6 });
   });
 
-  it("responseSchema 覆盖六栏骨架：shots/subtitles/audioResolution/beatStructureZh 必填", () => {
+  it("responseSchema 覆盖六栏骨架，并强制 classification 原始五键", () => {
     expect(NATIVE_DEEP_READ_RESPONSE_SCHEMA.required).toEqual([
-      "shots", "subtitles", "audioResolution", "beatStructureZh",
+      "shots", "subtitles", "audioResolution", "beatStructureZh", "classification",
     ]);
     expect(Object.keys(NATIVE_DEEP_READ_RESPONSE_SCHEMA.properties)).toEqual([
       "shots", "subtitles", "audioResolution", "beatStructureZh",
@@ -189,14 +199,23 @@ describe("模型与通道收口", () => {
       "silenceZh",
       "cues",
     ]);
+    expect(NATIVE_DEEP_READ_RESPONSE_SCHEMA.properties.classification.required).toEqual([
+      "emotionTagsZh",
+      "narrativeFeatureTagsZh",
+      "performanceTagsZh",
+      "audiovisualTagsZh",
+      "audienceExperienceTagsZh",
+    ]);
   });
 });
 
-describe("两档 fps（0826 拍板：≤180s→10，否则5，永不更低）", () => {
+describe("两档 fps（0827 拍板：≤300s→10，否则5，永不更低）", () => {
   it("档位边界", () => {
     expect(resolveNativeDeepReadRequestFps(90)).toBe(10);
     expect(resolveNativeDeepReadRequestFps(180)).toBe(10);
-    expect(resolveNativeDeepReadRequestFps(181)).toBe(5);
+    expect(resolveNativeDeepReadRequestFps(299.99)).toBe(10);
+    expect(resolveNativeDeepReadRequestFps(300)).toBe(10);
+    expect(resolveNativeDeepReadRequestFps(300.01)).toBe(5);
     expect(resolveNativeDeepReadRequestFps(360)).toBe(5);
     expect(resolveNativeDeepReadRequestFps(1080)).toBe(5);
   });
@@ -444,6 +463,38 @@ describe("段级双密度门禁", () => {
     })).not.toThrow();
   });
 
+  it("classification 五键齐全且仅两个维度非空时放行", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    raw.classification = {
+      emotionTagsZh: ["压迫渐强"],
+      narrativeFeatureTagsZh: [],
+      performanceTagsZh: ["克制爆发"],
+      audiovisualTagsZh: [],
+      audienceExperienceTagsZh: [],
+    };
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw })).not.toThrow();
+  });
+
+  it("classification 原始缺键拒收，不能由 parser 默认空数组掩盖", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    delete (raw.classification as Record<string, unknown>).audiovisualTagsZh;
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
+      .toThrow("classification.audiovisualTagsZh 缺失或不是数组");
+  });
+
+  it("classification 只有一个有效维度时拒收", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    raw.classification = {
+      emotionTagsZh: ["压迫渐强"],
+      narrativeFeatureTagsZh: [],
+      performanceTagsZh: [],
+      audiovisualTagsZh: [],
+      audienceExperienceTagsZh: [],
+    };
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
+      .toThrow("不足两个有效维度");
+  });
+
   it("镜头低于地板线拒收（防 16 镜式偷懒）", () => {
     expect(() => assertNativeDeepReadSegmentDensity({
       ...base,
@@ -618,6 +669,21 @@ describe("GLM 结构化整形提示词纪律", () => {
     expect(prompt.system).toContain("只返回一个 JSON 对象");
     expect(prompt.user).toContain("【上一轮门禁被拒原因】镜头轴存在空档");
     expect(prompt.user).toContain("禁止为省输出合并真实切换的镜头");
+    expect(prompt.system).toContain("emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh");
+    expect(prompt.system).toContain("至少两个维度");
+  });
+
+  it("坏 JSON 修复同样明确五键与两维契约", () => {
+    const prompt = buildNativeDeepReadGlmSegmentRepairPrompt({
+      episodeIndex: 3,
+      segmentIndex: 0,
+      startSec: 0,
+      endSec: 60,
+      hasAudio: true,
+      badJsonText: "{bad-json",
+    });
+    expect(prompt.system).toContain("emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh");
+    expect(prompt.system).toContain("至少两个维度");
   });
 });
 
@@ -641,6 +707,14 @@ function makePreparationDeps(
     statfsTmp: vi.fn(async () => ({ freeBytes: 4 * 1024 * 1024 * 1024 })),
     ...over,
   };
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 describe("模型请求前的媒体准备边界", () => {
@@ -692,6 +766,138 @@ describe("模型请求前的媒体准备边界", () => {
     }]);
   });
 
+  it("节点解析失败和空节点都计入同一段的三次刷新重试", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const resolveNodes = vi.fn()
+      .mockRejectedValueOnce(new Error("resolver timeout"))
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ url: "https://cdn.example/fresh.mp4" }]);
+    const deps = makePreparationDeps();
+
+    const prepared = await prepareEpisodeVideos({
+      episodeIndex: 3,
+      resolveNodes,
+      segments: [{ startSec: 0, endSec: 10 }],
+      sourceDurationSec: 10,
+    }, undefined, deps);
+
+    expect(resolveNodes).toHaveBeenCalledTimes(3);
+    const ffmpegCalls = vi.mocked(deps.runMedia).mock.calls.filter((call) => call[0] === "ffmpeg");
+    expect(ffmpegCalls).toHaveLength(1);
+    expect(ffmpegCalls[0]?.[1]).toContain("https://cdn.example/fresh.mp4");
+    expect(deps.upload).toHaveBeenCalledTimes(1);
+    expect(prepared).toHaveLength(1);
+    warn.mockRestore();
+  });
+
+  it("最多并行切四段，完成乱序也按原分段顺序上传并只探测首片音轨", async () => {
+    const cutGates = new Map<number, ReturnType<typeof deferred>>();
+    let activeCuts = 0;
+    let maxActiveCuts = 0;
+    let ffprobeCalls = 0;
+    const runMedia = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "ffprobe") {
+        ffprobeCalls += 1;
+        return JSON.stringify({ streams: [{ index: 1 }] });
+      }
+      const startSec = Number(args[args.indexOf("-ss") + 1]);
+      const gate = deferred();
+      cutGates.set(startSec, gate);
+      activeCuts += 1;
+      maxActiveCuts = Math.max(maxActiveCuts, activeCuts);
+      try {
+        await gate.promise;
+        return "";
+      } finally {
+        activeCuts -= 1;
+      }
+    });
+    const deps = makePreparationDeps({ runMedia });
+    const task = prepareEpisodeVideos({
+      episodeIndex: 4,
+      resolveNodes: async () => [{ url: "https://cdn.example/full.mp4" }],
+      segments: Array.from({ length: 5 }, (_, index) => ({
+        startSec: index * 10,
+        endSec: (index + 1) * 10,
+      })),
+      sourceDurationSec: 50,
+    }, undefined, deps);
+
+    await vi.waitFor(() => expect(cutGates.size).toBe(4));
+    expect(Array.from(cutGates.keys()).sort((a, b) => a - b)).toEqual([0, 10, 20, 30]);
+    expect(maxActiveCuts).toBe(4);
+    for (const startSec of [30, 20, 10, 0]) cutGates.get(startSec)!.resolve();
+    await vi.waitFor(() => expect(cutGates.has(40)).toBe(true));
+    cutGates.get(40)!.resolve();
+
+    const prepared = await task;
+    expect(prepared.map((row) => row.startSec)).toEqual([0, 10, 20, 30, 40]);
+    expect(ffprobeCalls).toBe(1);
+    expect(deps.upload).toHaveBeenCalledTimes(5);
+    expect(vi.mocked(deps.upload).mock.calls.map((call) => call[0].objectName)).toEqual(
+      prepared.map((row) => row.temporaryGcs.objectName),
+    );
+  });
+
+  it("首个 worker 失败后停止领取新段，并等待已经在途的切片结束再失败清理", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const inFlightGates = new Map<number, ReturnType<typeof deferred>>();
+    const started: number[] = [];
+    const runMedia = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "ffprobe") return JSON.stringify({ streams: [{ index: 1 }] });
+      const startSec = Number(args[args.indexOf("-ss") + 1]);
+      started.push(startSec);
+      if (startSec === 0) throw new Error("first segment failed");
+      const gate = deferred();
+      inFlightGates.set(startSec, gate);
+      await gate.promise;
+      return "";
+    });
+    const deps = makePreparationDeps({ runMedia });
+    const task = prepareEpisodeVideos({
+      episodeIndex: 5,
+      resolveNodes: async () => [{ url: "https://cdn.example/full.mp4" }],
+      segments: Array.from({ length: 6 }, (_, index) => ({
+        startSec: index * 10,
+        endSec: (index + 1) * 10,
+      })),
+      sourceDurationSec: 60,
+    }, undefined, deps);
+    const outcome = task.then(
+      () => ({ status: "resolved" as const }),
+      (error: unknown) => ({ status: "rejected" as const, error }),
+    );
+
+    await vi.waitFor(() => {
+      expect(started.filter((startSec) => startSec === 0)).toHaveLength(3);
+      expect(inFlightGates.size).toBe(3);
+    });
+    expect(started).not.toContain(40);
+    expect(started).not.toContain(50);
+    expect(deps.upload).not.toHaveBeenCalled();
+
+    for (const gate of Array.from(inFlightGates.values())) gate.resolve();
+    const result = await outcome;
+    expect(result.status).toBe("rejected");
+    if (result.status === "rejected") {
+      expect(result.error).toEqual(expect.objectContaining({ message: "first segment failed" }));
+    }
+    expect(started).not.toContain(40);
+    expect(started).not.toContain(50);
+    expect(deps.upload).not.toHaveBeenCalled();
+    expect(deps.unlinkLocal).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("完整性门禁按实有槽位计数，不能用会跳过数组空洞的 some", () => {
+    const src = readFileSync(
+      new URL("./manhuaNativeDeepReadRunner.ts", import.meta.url),
+      "utf8",
+    );
+    expect(src).toContain("cutRows.filter(Boolean).length !== segments.length");
+    expect(src).not.toContain("cutRows.some((row) => !row)");
+  });
+
   it("首片本地探测无音轨时整集 hasAudio=false", async () => {
     const deps = makePreparationDeps({
       runMedia: vi.fn(async (cmd: string) =>
@@ -731,7 +937,7 @@ describe("分片原样上传 GCS", () => {
   });
 });
 
-/* ── 主链：逐段调用 + EvoLink 兜底 + GLM 整形 ── */
+/* ── 主链：逐段调用 + Vertex 同通道重试 + GLM 整集整形 ── */
 
 function geminiResponse(payload: unknown, over: {
   finishReason?: string;
@@ -778,8 +984,26 @@ function makeRunnerDeps(over: Partial<NativeDeepReadBatchRunnerDeps> = {}): Nati
     invokeGlmStructuring: vi.fn() as never,
     readSegmentCache: vi.fn(async () => null) as never,
     writeSegmentCache: vi.fn(async () => undefined) as never,
+    waitForRetry: vi.fn(async () => undefined),
     ...over,
   };
+}
+
+function makeSuccessfulEpisodePostVertex(
+  segments: readonly { startSec: number; endSec: number }[],
+) {
+  return vi.fn(async (body: unknown) => {
+    const fileUri = (body as {
+      contents: Array<{ parts: Array<{ fileData?: { fileUri: string } }> }>;
+    }).contents[0]!.parts[0]!.fileData!.fileUri;
+    const segmentIndex = Number(/seg-(\d+)/.exec(fileUri)?.[1]);
+    const segment = segments[segmentIndex]!;
+    return geminiResponse(makeSegmentPayload({
+      segmentIndex,
+      startSec: segment.startSec,
+      endSec: segment.endSec,
+    }));
+  });
 }
 
 const twoSegmentEpisode = {
@@ -888,7 +1112,7 @@ describe("Vertex 主线：每段一次调用（不再多段合包）", () => {
   });
 });
 
-describe("EvoLink 兜底（路由铁律 + 1fps 降级 + GLM 必过）", () => {
+describe("Vertex 同通道三次重试（禁止 EvoLink fallback）", () => {
   const segment = { startSec: 0, endSec: 60 };
   const episode = {
     episodeIndex: 1,
@@ -905,114 +1129,97 @@ describe("EvoLink 兜底（路由铁律 + 1fps 降级 + GLM 必过）", () => {
     hasAudio: true,
   }]);
 
-  it("Vertex 4xx 被拒 → 换 EvoLink（签名 https）；降级产物必过 GLM 整形，回执带 degraded", async () => {
+  it("Vertex 4xx 按 0.70/0.65/0.60 原通道重试三次，耗尽后原错失败", async () => {
     const receipts: Array<Record<string, unknown>> = [];
-    const payload = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
     const postVertex = vi.fn(async () => ({
       status: 400,
       text: JSON.stringify({ error: { code: "INVALID_ARGUMENT", message: "bad video" } }),
       requestId: "req-vertex-400",
     }));
-    const postEvolink = vi.fn(async (body: unknown) => {
-      const fileUri = (body as {
-        contents: Array<{ parts: Array<{ fileData?: { fileUri: string } }> }>;
-      }).contents[0]!.parts[0]!.fileData!.fileUri;
-      // EvoLink 拉不了 gs://，必须是 GCS V4 签名 https
-      expect(fileUri).toBe("https://storage.googleapis.com/signed.mp4");
-      return geminiResponse(payload);
-    });
-    const invokeGlmStructuring = vi.fn(async () => ({
-      raw: payload,
-      inputTokens: 5_000,
-      outputTokens: 3_000,
-      reasoningTokens: 100,
-      costUsd: 0.134,
-      provider: "Z.AI",
-      providerRequestId: "req-glm-1",
-      finishReason: "stop",
-    }));
     const deps = makeRunnerDeps({
       prepareVideos: singlePrep as never,
       postVertex: postVertex as never,
-      postEvolink: postEvolink as never,
-      invokeGlmStructuring: invokeGlmStructuring as never,
     });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
-      const result = await runManhuaNativeDeepReadBatch({
+      await expect(runManhuaNativeDeepReadBatch({
         episodes: [episode],
         onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
-      }, deps);
-      expect(postEvolink).toHaveBeenCalledTimes(1);
-      expect(deps.signReadUrl).toHaveBeenCalledWith("gs://test-bucket/seg-0.mp4", 2 * 60 * 60);
-      // 降级路必过 GLM 结构化整形
-      expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
-      const only = result.episodes[0]!.result;
-      expect(only.visualRoutes).toContain("evolink_gemini_video");
-      expect(only.degradedFpsSegmentIndexes).toEqual([0]);
-      // GLM 计价按 usage.cost 直记（×7.2 折 CNY）并入集成本
-      expect(only.usage.costCny).toBeCloseTo(
-        100_000 * 9 / 1e6 + 2_500 * 72 / 1e6 + 0.134 * 7.2,
-        6,
+      }, deps)).rejects.toThrow("bad video");
+      expect(postVertex).toHaveBeenCalledTimes(3);
+      expect(deps.waitForRetry).toHaveBeenCalledTimes(2);
+      expect(deps.waitForRetry).toHaveBeenNthCalledWith(1, 60_000, undefined);
+      expect(deps.waitForRetry).toHaveBeenNthCalledWith(2, 60_000, undefined);
+      expect(deps.postEvolink).not.toHaveBeenCalled();
+      expect(deps.signReadUrl).not.toHaveBeenCalled();
+      expect(deps.invokeGlmStructuring).not.toHaveBeenCalled();
+      const started = receipts.filter(
+        (row) => row.route === "vertex_gcs_video" && row.status === "started",
       );
-      const evolinkReceipts = receipts.filter((r) => r.route === "evolink_gemini_video");
-      expect(evolinkReceipts.length).toBeGreaterThanOrEqual(2);
-      expect(evolinkReceipts.every((r) => r.degraded === true)).toBe(true);
-      const glmReceipts = receipts.filter((r) => r.route === "openrouter_glm_structuring");
-      expect(glmReceipts.map((r) => r.status)).toEqual(["started", "completed"]);
-      expect(glmReceipts[1]).toMatchObject({ costUsd: 0.134, model: "z-ai/glm-5.3" });
-      // 失败的 Vertex 尝试也要有失败回执（含供应商正文）
-      const failedVertex = receipts.find(
-        (r) => r.route === "vertex_gcs_video" && r.status === "failed",
+      expect(started.map((row) => [row.attemptNumber, row.temperature])).toEqual([
+        [1, 0.7], [2, 0.65], [3, 0.6],
+      ]);
+      const failed = receipts.filter(
+        (row) => row.route === "vertex_gcs_video" && row.status === "failed",
       );
-      expect(failedVertex).toMatchObject({
-        providerError: { httpStatus: 400, code: "INVALID_ARGUMENT" },
-      });
-      expect(warn.mock.calls.some((call) => String(call[0]).includes("1fps 降级读取"))).toBe(true);
+      expect(failed).toHaveLength(3);
+      expect(failed.every((row) =>
+        (row.providerError as { httpStatus?: number })?.httpStatus === 400)).toBe(true);
     } finally {
       warn.mockRestore();
     }
   });
 
-  it("主线网络失联（结果不明）→ 按路由铁律不回落 EvoLink，抛出待 reconcile", async () => {
+  it("Vertex 网络失联同样重试三次，最终原错失败且不调用 EvoLink", async () => {
     const postVertex = vi.fn(async () => { throw new Error("socket hang up"); });
     const deps = makeRunnerDeps({
       prepareVideos: singlePrep as never,
       postVertex: postVertex as never,
     });
-    await expect(runManhuaNativeDeepReadBatch({ episodes: [episode] }, deps))
-      .rejects.toThrow("不回落 EvoLink");
-    expect(deps.postEvolink).not.toHaveBeenCalled();
-    expect(deps.invokeGlmStructuring).not.toHaveBeenCalled();
-  });
-
-  it("EvoLink 兜底产物过 GLM 后门禁照跑：GLM 合成卡厚度不达标照拒（宁缺勿滥）", async () => {
-    const good = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
-    // 时长制薄卡：8 镜/60s，GLM 合成卡照样过不了镜头门禁
-    const thin = makeSegmentPayload({
-      segmentIndex: 0, startSec: 0, endSec: 60, shotCountOverride: 8,
-    });
-    const deps = makeRunnerDeps({
-      prepareVideos: singlePrep as never,
-      postVertex: vi.fn(async () => ({
-        status: 429,
-        text: JSON.stringify({ error: { message: "rate limited" } }),
-      })) as never,
-      postEvolink: vi.fn(async () => geminiResponse(good)) as never,
-      // GLM 只回了薄音轨的合成卡——门禁在 GLM 之后再跑一遍，照拒
-      invokeGlmStructuring: vi.fn(async () => ({
-        raw: thin,
-        inputTokens: 1_000,
-        outputTokens: 500,
-        reasoningTokens: 0,
-        costUsd: 0.01,
-        finishReason: "stop",
-      })) as never,
-    });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       await expect(runManhuaNativeDeepReadBatch({ episodes: [episode] }, deps))
-        .rejects.toThrow("整集拒绝入库");
+        .rejects.toThrow("socket hang up");
+      expect(postVertex).toHaveBeenCalledTimes(3);
+      expect(deps.waitForRetry).toHaveBeenCalledTimes(2);
+      expect(deps.postEvolink).not.toHaveBeenCalled();
+      expect(deps.signReadUrl).not.toHaveBeenCalled();
+      expect(deps.invokeGlmStructuring).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("三次坏 JSON 耗尽后原错失败，不再发起 GLM 第四次调用", async () => {
+    const badJsonResponse = {
+      status: 200,
+      text: JSON.stringify({
+        candidates: [{ finishReason: "STOP", content: { parts: [{ text: "{bad-json" }] } }],
+        usageMetadata: {
+          promptTokenCount: 100_000,
+          candidatesTokenCount: 100,
+          thoughtsTokenCount: 50,
+          promptTokensDetails: [{ modality: "AUDIO", tokenCount: 8_000 }],
+        },
+      }),
+      requestId: "req-bad-json",
+    };
+    const deps = makeRunnerDeps({
+      prepareVideos: singlePrep as never,
+      postVertex: vi.fn(async () => badJsonResponse) as never,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const failure = await runManhuaNativeDeepReadBatch({ episodes: [episode] }, deps)
+        .then(() => undefined, (error: unknown) => error);
+      expect(deps.postVertex).toHaveBeenCalledTimes(3);
+      expect(deps.waitForRetry).toHaveBeenCalledTimes(2);
+      expect(deps.invokeGlmStructuring).not.toHaveBeenCalled();
+      expect(failure).toEqual(expect.objectContaining({
+        message: expect.stringContaining("没有返回可解析的 JSON"),
+      }));
+      expect(deps.postEvolink).not.toHaveBeenCalled();
+      expect(deps.signReadUrl).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
     }
@@ -1209,7 +1416,7 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     expect(deps.postVertex).not.toHaveBeenCalled();
   });
 
-  it("缓存读取异常关闭式停止；缓存写失败时不继续烧下一段", async () => {
+  it("缓存读取异常关闭式停止；缓存写失败时等待已在途兄弟段，不额外重试模型", async () => {
     const episode = makeEpisode([{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }]);
     const readFailureDeps = makeRunnerDeps({
       readSegmentCache: vi.fn(async () => { throw new Error("gcs_stat_failed:503"); }) as never,
@@ -1219,9 +1426,7 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     }, readFailureDeps)).rejects.toThrow("gcs_stat_failed:503");
     expect(readFailureDeps.postVertex).not.toHaveBeenCalled();
 
-    const postVertex = vi.fn(async () => geminiResponse(makeSegmentPayload({
-      segmentIndex: 0, startSec: 0, endSec: 60,
-    })));
+    const postVertex = makeSuccessfulEpisodePostVertex(episode.segments);
     const writeFailureDeps = makeRunnerDeps({
       postVertex: postVertex as never,
       writeSegmentCache: vi.fn(async () => { throw new Error("cache write failed"); }) as never,
@@ -1229,14 +1434,14 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     await expect(runManhuaNativeDeepReadBatch({
       episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey,
     }, writeFailureDeps)).rejects.toThrow("cache write failed");
-    expect(postVertex).toHaveBeenCalledTimes(1);
+    expect(postVertex).toHaveBeenCalledTimes(2);
+    expect(writeFailureDeps.waitForRetry).not.toHaveBeenCalled();
+    expect(writeFailureDeps.postEvolink).not.toHaveBeenCalled();
   });
 
-  it("段缓存落盘后的部分提案回调失败时停止，不继续购买下一段", async () => {
+  it("部分提案回调失败时等待已在途兄弟段，后续不再触发部分快照", async () => {
     const episode = makeEpisode([{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }]);
-    const postVertex = vi.fn(async () => geminiResponse(makeSegmentPayload({
-      segmentIndex: 0, startSec: 0, endSec: 60,
-    })));
+    const postVertex = makeSuccessfulEpisodePostVertex(episode.segments);
     const writeSegmentCache = vi.fn(async () => undefined);
     const onSegmentSnapshotCommitted = vi.fn(async () => {
       throw new Error("部分提案暂存失败");
@@ -1251,7 +1456,7 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
       segmentCacheSeriesKey: cacheSeriesKey,
       onSegmentSnapshotCommitted,
     }, deps)).rejects.toThrow("部分提案暂存失败");
-    expect(writeSegmentCache).toHaveBeenCalledTimes(1);
+    expect(writeSegmentCache).toHaveBeenCalledTimes(2);
     expect(onSegmentSnapshotCommitted).toHaveBeenCalledWith(expect.objectContaining({
       episodeIndex: 3,
       completedSegmentIndexes: [0],
@@ -1263,7 +1468,10 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
         assemblyComplete: false,
       }),
     }));
-    expect(postVertex).toHaveBeenCalledTimes(1);
+    expect(onSegmentSnapshotCommitted).toHaveBeenCalledTimes(1);
+    expect(postVertex).toHaveBeenCalledTimes(2);
+    expect(deps.waitForRetry).not.toHaveBeenCalled();
+    expect(deps.postEvolink).not.toHaveBeenCalled();
   });
 
   it("首轮一段成功一段失败，第二轮只调用失败段且本次只记该段费用", async () => {
@@ -1276,6 +1484,7 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     const good1 = makeSegmentPayload({ segmentIndex: 1, startSec: 60, endSec: 120 });
     const postVertex = vi.fn()
       .mockResolvedValueOnce(geminiResponse(good0))
+      .mockResolvedValueOnce(geminiResponse(thin))
       .mockResolvedValueOnce(geminiResponse(thin))
       .mockResolvedValueOnce(geminiResponse(thin))
       .mockResolvedValueOnce(geminiResponse(good1));
@@ -1314,7 +1523,7 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
       const second = await runManhuaNativeDeepReadBatch({
         episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey,
       }, deps);
-      expect(postVertex).toHaveBeenCalledTimes(4);
+      expect(postVertex).toHaveBeenCalledTimes(5);
       expect(prepareVideos.mock.calls[1]![0].segments.map((row) => row.startSec)).toEqual([60]);
       expect(second.usage.inputTokens).toBe(100_000);
       expect(second.episodes[0]!.result.audioInputTokens).toBe(16_000);

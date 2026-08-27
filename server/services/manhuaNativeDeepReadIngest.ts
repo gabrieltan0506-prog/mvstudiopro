@@ -25,7 +25,8 @@ import {
   uploadBufferToGcsIfAbsent,
 } from "./gcs.js";
 import {
-  hasCompleteManhuaTemplateClassification,
+  hasManhuaTemplateClassificationFields,
+  hasUsableManhuaTemplateClassification,
   parseManhuaViralTemplateCard,
   type ManhuaViralTemplateCard,
   type ManhuaViralTemplateLane,
@@ -162,8 +163,8 @@ export function checkNativeDeepReadIngestable(
   if (audio.hasAudio && audio.audioTrack.length < 1) {
     return { ok: false, reasonZh: "存在音轨但没有学到有效声音时间轴" };
   }
-  if (!hasCompleteManhuaTemplateClassification(result.classification)) {
-    return { ok: false, reasonZh: "五维特征标签不完整，未按收费模板契约入库" };
+  if (!hasUsableManhuaTemplateClassification(result.classification)) {
+    return { ok: false, reasonZh: "五维特征标签不足两个有效维度，未按收费模板契约入库" };
   }
 
   const attemptedSegments = Number(result.attemptedSegments);
@@ -419,13 +420,19 @@ export async function listIngestedNativeDeepReadEpisodeRecords(
       const { buffer } = await downloadGcsObject({
         gcsUri: `gs://${getGcsBucketName()}/${target.name}`,
       });
-      const card = parseManhuaViralTemplateCard(JSON.parse(buffer.toString("utf8")));
+      const raw = JSON.parse(buffer.toString("utf8"));
+      const card = parseManhuaViralTemplateCard(raw);
       if (
         !card
+        || !hasManhuaTemplateClassificationFields(
+          raw && typeof raw === "object" && !Array.isArray(raw)
+            ? (raw as Record<string, unknown>).classification
+            : undefined,
+        )
         || card.id !== nativeDeepReadProposalId(seriesKey, target.idx)
         || !card.provenance?.nativeVideoDeepRead
         || card.beatGrid.length < NATIVE_DEEP_READ_MIN_SHOTS
-        || !hasCompleteManhuaTemplateClassification(card.classification)
+        || !hasUsableManhuaTemplateClassification(card.classification)
         || !card.audioStory
         // 没有稳定来源的卡无法参与「同源续跑还是追加」的判断，按无效处理
         || !String(card.sourceRefs?.[0]?.url || "").trim()
@@ -552,9 +559,15 @@ export async function ingestNativeDeepReadEpisode(
       if (isGcsNotFound(error)) continue;
       throw error;
     }
-    const existing = parseManhuaViralTemplateCard(JSON.parse(versioned.buffer.toString("utf8")));
+    const rawExisting = JSON.parse(versioned.buffer.toString("utf8"));
+    const existing = parseManhuaViralTemplateCard(rawExisting);
     if (
       !existing
+      || !hasManhuaTemplateClassificationFields(
+        rawExisting && typeof rawExisting === "object" && !Array.isArray(rawExisting)
+          ? (rawExisting as Record<string, unknown>).classification
+          : undefined,
+      )
       || existing.id !== card.id
       || !existing.provenance?.nativeVideoDeepRead
       || existing.beatGrid.length < NATIVE_DEEP_READ_MIN_SHOTS

@@ -95,6 +95,8 @@ function aggregationDeps(options: {
     reasoningTokens: number;
     costUsd: number;
   };
+  aggregationResult?: ReturnType<typeof aggregationRaw>;
+  episodeResult?: ReturnType<typeof episodeCard>;
 } = {}) {
   const order: string[] = [];
   let lockBody: Buffer = Buffer.from("{}");
@@ -127,7 +129,7 @@ function aggregationDeps(options: {
       }
       order.push("download-episode");
       return {
-        buffer: Buffer.from(JSON.stringify(episodeCard())),
+        buffer: Buffer.from(JSON.stringify(options.episodeResult || episodeCard())),
         generation: modelInvoked && options.replaceEpisodeAfterInvoke
           ? "episode-generation-2"
           : "episode-generation-1",
@@ -164,7 +166,7 @@ function aggregationDeps(options: {
       }
       if (options.loseLockAfterInvoke) lockLost = true;
       return {
-        raw: aggregationRaw(),
+        raw: options.aggregationResult || aggregationRaw(),
         inputTokens: 100,
         outputTokens: 50,
         reasoningTokens: 25,
@@ -308,6 +310,58 @@ describe("原生精读系列结构化 · OpenRouter GLM-5.3", () => {
 describe("系列聚合快照与提交 fencing", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  it("系列模型结果必须原始带齐 classification 五键", async () => {
+    vi.stubEnv("GCS_BUCKET_NAME", "test-bucket");
+    const raw = aggregationRaw();
+    delete (raw.classification as Record<string, unknown>).audiovisualTagsZh;
+    const { deps } = aggregationDeps({ aggregationResult: raw });
+    await expect(aggregateNativeDeepReadSeries({
+      seriesKey: SERIES_KEY,
+    }, deps as never)).rejects.toThrow("classification 必须显式包含五个数组字段");
+  });
+
+  it("系列聚合输入分集卡原始缺 classification 键时停止，不让 parser 补键", async () => {
+    vi.stubEnv("GCS_BUCKET_NAME", "test-bucket");
+    const episode = episodeCard();
+    delete (episode.classification as Record<string, unknown>).audiovisualTagsZh;
+    const { deps } = aggregationDeps({ episodeResult: episode });
+    await expect(aggregateNativeDeepReadSeries({
+      seriesKey: SERIES_KEY,
+    }, deps as never)).rejects.toThrow("分集卡结构、身份或多维标签无效");
+  });
+
+  it("系列模型五键齐全且仅两个维度非空时放行", async () => {
+    vi.stubEnv("GCS_BUCKET_NAME", "test-bucket");
+    const raw = aggregationRaw();
+    raw.classification = {
+      emotionTagsZh: ["压迫渐强"],
+      narrativeFeatureTagsZh: [],
+      performanceTagsZh: ["克制爆发"],
+      audiovisualTagsZh: [],
+      audienceExperienceTagsZh: [],
+    };
+    const { deps } = aggregationDeps({ aggregationResult: raw });
+    await expect(aggregateNativeDeepReadSeries({
+      seriesKey: SERIES_KEY,
+    }, deps as never)).resolves.toMatchObject({ reused: false, sourceEpisodeCount: 1 });
+  });
+
+  it("系列模型五键齐全但仅一个维度非空时拒收", async () => {
+    vi.stubEnv("GCS_BUCKET_NAME", "test-bucket");
+    const raw = aggregationRaw();
+    raw.classification = {
+      emotionTagsZh: ["压迫渐强"],
+      narrativeFeatureTagsZh: [],
+      performanceTagsZh: [],
+      audiovisualTagsZh: [],
+      audienceExperienceTagsZh: [],
+    };
+    const { deps } = aggregationDeps({ aggregationResult: raw });
+    await expect(aggregateNativeDeepReadSeries({
+      seriesKey: SERIES_KEY,
+    }, deps as never)).rejects.toThrow("至少需要两个有效分类维度");
   });
 
   it("先完成 GCS→Fly 快照，再取得系列锁，慢快照不占用完整租期", async () => {

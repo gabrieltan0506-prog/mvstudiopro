@@ -12954,7 +12954,14 @@ export default function PlatformPage() {
                                         <span>{nativeModelReceiptStatusLabelZh(receipt.stage, receipt.status)}</span>
                                         <span>{episodeLabel}</span>
                                         {receipt.chunkIndex !== undefined ? (
-                                          <span>音轨片 {receipt.chunkIndex + 1}</span>
+                                          <span>
+                                            {receipt.stage.startsWith("audio_") ? "音轨片" : "分片"}
+                                            {` ${receipt.chunkIndex + 1}${receipt.segmentCount ? `/${receipt.segmentCount}` : ""}`}
+                                          </span>
+                                        ) : null}
+                                        {receipt.attemptNumber ? <span>第 {receipt.attemptNumber}/3 次</span> : null}
+                                        {typeof receipt.temperature === "number" ? (
+                                          <span>temperature {receipt.temperature}</span>
                                         ) : null}
                                         {receipt.variant ? <span>{receipt.variant}</span> : null}
                                       </div>

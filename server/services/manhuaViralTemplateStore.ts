@@ -7,6 +7,8 @@ import { randomBytes } from "node:crypto";
 import {
   describeManhuaTemplateLearnSourceZh,
   getManhuaViralTemplate,
+  hasManhuaTemplateClassificationFields,
+  hasUsableManhuaTemplateClassification,
   listApprovedManhuaViralTemplates,
   listApprovedManhuaViralTemplatesGrouped,
   makePublicTemplateId,
@@ -1080,6 +1082,16 @@ async function approveManhuaViralTemplateLocked(input: {
   const card = proposalVersioned.card;
   if (card.status !== "proposed") {
     throw new Error("该提案不是待审状态（可能已批准入库），无需重复批准");
+  }
+
+  const isNativeProposal = /^tpl_native_/i.test(card.id)
+    || Boolean(card.provenance?.nativeVideoDeepRead)
+    || Boolean(card.provenance?.nativeSeriesAggregation);
+  if (isNativeProposal && !hasManhuaTemplateClassificationFields(card.classification)) {
+    throw new Error("原生精读提案的 classification 必须显式包含五个数组字段");
+  }
+  if (isNativeProposal && !hasUsableManhuaTemplateClassification(card.classification)) {
+    throw new Error("原生精读提案至少需要两个有效分类维度，已停止批准");
   }
 
   const isNativeSeriesProposal = /^tpl_native_series_[0-9a-z_-]{1,40}$/i.test(card.id)

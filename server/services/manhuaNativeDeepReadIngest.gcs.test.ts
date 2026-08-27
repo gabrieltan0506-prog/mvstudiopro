@@ -165,6 +165,18 @@ describe("断点续跑", () => {
       .rejects.toThrow("旧版卡需先处理后重学");
   });
 
+  it("已存卡 classification 原始缺键时不能由 parser 补空数组后冒充已学", async () => {
+    const current = JSON.parse(storedCardBuffer().toString("utf8")) as Record<string, unknown>;
+    const classification = current.classification as Record<string, unknown>;
+    classification.audiovisualTagsZh = [];
+    classification.audienceExperienceTagsZh = [];
+    delete classification.performanceTagsZh;
+    gcs.list.mockResolvedValue([nativeDeepReadProposalObjectName("abc123", 1)]);
+    gcs.download.mockResolvedValue({ buffer: Buffer.from(JSON.stringify(current)) });
+    await expect(listIngestedNativeDeepReadEpisodes("abc123"))
+      .rejects.toThrow("旧版卡需先处理后重学");
+  });
+
   it("别的合集的卡不会被算进本合集已完成", async () => {
     gcs.list.mockResolvedValue([nativeDeepReadProposalObjectName("zzz999", 4)]);
     await expect(listIngestedNativeDeepReadEpisodes("abc123")).resolves.toEqual(new Set());

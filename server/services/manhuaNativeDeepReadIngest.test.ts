@@ -130,13 +130,22 @@ describe("入库门禁", () => {
     expect(checkNativeDeepReadIngestable(makeResult({ attemptedSegments: 0 })).ok).toBe(false);
   });
 
-  it("五维分类缺任一维都拒收，不让单维标签冒充完整收费模板", () => {
-    const incomplete = makeResult().classification!;
+  it("五维分类允许无证据维度为空，但至少两个维度必须有真实标签", () => {
+    const sparse = {
+      emotionTagsZh: ["压迫渐强"],
+      narrativeFeatureTagsZh: [],
+      performanceTagsZh: ["克制爆发"],
+      audiovisualTagsZh: [],
+      audienceExperienceTagsZh: [],
+    };
+    expect(checkNativeDeepReadIngestable(makeResult({ classification: sparse })))
+      .toEqual({ ok: true });
+
     const result = checkNativeDeepReadIngestable(makeResult({
-      classification: { ...incomplete, audiovisualTagsZh: [] },
+      classification: { ...sparse, performanceTagsZh: [] },
     }));
     expect(result.ok).toBe(false);
-    expect(result.ok === false && result.reasonZh).toContain("五维特征标签不完整");
+    expect(result.ok === false && result.reasonZh).toContain("不足两个有效维度");
   });
 
   it("一片成功即可形成可追溯的部分提案，剩余分片继续断点学习", () => {
