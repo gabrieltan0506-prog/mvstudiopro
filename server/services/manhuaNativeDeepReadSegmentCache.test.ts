@@ -285,6 +285,13 @@ describe("段缓存写入：证据门禁与条件写", () => {
 });
 
 describe("回归：证据身份绑定付费响应", () => {
+  it("同一响应仅 savedAtIso 不同：对象名一致（落盘时间不属身份）", () => {
+    const first = entryOf({ savedAtIso: "2026-08-28T10:00:00.000Z" });
+    const second = entryOf({ savedAtIso: "2026-08-29T03:00:00.000Z" });
+    expect(nativeDeepReadSegmentEvidenceObjectName(first))
+      .toBe(nativeDeepReadSegmentEvidenceObjectName(second));
+  });
+
   it("相同 raw/usage 但不同调用身份仍生成不同不可变对象", () => {
     const first = entryOf({
       rawAttemptEvidenceObjectName:

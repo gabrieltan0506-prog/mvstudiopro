@@ -117,8 +117,22 @@ export function nativeDeepReadSegmentCacheObjectName(
 export function nativeDeepReadSegmentEvidenceResponseFingerprint(
   entry: NativeDeepReadSegmentCacheEntry,
 ): string {
+  const canonicalize = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(canonicalize);
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([key, child]) => [key, canonicalize(child)]),
+      );
+    }
+    return value;
+  };
+  // savedAtIso 是缓存落盘时间，不属于付费响应身份；纳入指纹会让同一响应
+  // 仅因重写时间不同就生成另一份“不可变证据”。其余字段按键名稳定排序后散列。
+  const { savedAtIso: _savedAtIso, ...responseIdentity } = entry;
   return createHash("sha256")
-    .update(cacheBuffer(entry))
+    .update(JSON.stringify(canonicalize(responseIdentity)))
     .digest("hex");
 }
 
@@ -395,7 +409,17 @@ async function ensureNativeDeepReadSegmentEvidence(
   const existing = await downloadGcsObjectVersioned({
     gcsUri: `gs://${bucket}/${objectName}`,
   });
-  if (!existing.buffer.equals(payload)) {
+  // 对象名由响应身份派生；同名对象只要响应身份一致即幂等（savedAtIso 落盘时间
+  // 不参与身份，允许不同），身份不一致才是真冲突。
+  let existingIdentity: string | null = null;
+  try {
+    existingIdentity = nativeDeepReadSegmentEvidenceResponseFingerprint(
+      JSON.parse(existing.buffer.toString("utf8")) as NativeDeepReadSegmentCacheEntry,
+    );
+  } catch {
+    existingIdentity = null;
+  }
+  if (existingIdentity !== nativeDeepReadSegmentEvidenceResponseFingerprint(entry)) {
     throw new Error(
       `第${entry.episodeIndex}集第${entry.segmentIndex + 1}段不可变证据发生内容冲突，已停止`,
     );
