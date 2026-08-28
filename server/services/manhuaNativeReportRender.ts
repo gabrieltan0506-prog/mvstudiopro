@@ -227,7 +227,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const subtitles = (Array.isArray(card.subtitles) ? card.subtitles : []) as Array<Record<string, unknown>>;
   const subRows = subtitles.map((s) => `<tr><td style="color:#e8c66a">${mmss(Number(s.atSec))}</td><td>${esc(s.textZh)}</td></tr>`).join("");
 
-  const html = `<title>${esc(input.labelZh)} 模型产出报告</title><div style="font-family:'Songti SC',serif;background:#0d1117;color:#dce3ec;padding:28px;max-width:1200px;margin:auto">
+  const html = `<title>${esc(input.labelZh)} 模型产出报告</title><div style="font-family:'Songti SC',serif;background:linear-gradient(165deg,#7a1f3d 0%,#8e4a8b 55%,#cbb3e6 100%);background-attachment:fixed;color:#dce3ec;padding:28px;max-width:1200px;margin:auto">
 <p style="color:#e8c66a;letter-spacing:.3em;font-size:.8em">${esc(input.labelZh)} · ${esc(input.sourceLabelZh)} · 模型字段原样渲染，无编辑层、无删节</p>
 <h1 style="font-size:1.8em;margin:.2em 0">模型产出报告（${shots.length} 镜 · ${frameSource} ${tiles.length} 帧）</h1>
 <h2 style="color:#e8c66a;margin-top:26px">五维分类（模型原文）</h2>${tags}${summaryCards}
