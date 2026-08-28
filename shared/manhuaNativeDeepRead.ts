@@ -1,7 +1,8 @@
 /**
  * 原生视频精读产出 → 模板卡的适配器。
  *
- * 上游形状来自 0823 实跑（qwen3.8-max 直读抖音 CDN，逐镜六栏），
+ * 上游形状最初来自 0823 实跑，0827 起由 Gemini 3.1 Pro 直读 GCS 视频，
+ * 产出完整逐镜、角色调度、表演与音轨证据；本文件是段级证据进入模板卡的契约门。
  * 每段一条记录，`text` 里是模型返回的 JSON 字符串：
  *
  * ```
@@ -30,9 +31,18 @@ const shotSchema = z
   .object({
     startSec: z.number().min(0),
     endSec: z.number().min(0),
+    /** 新产出由 runner 门禁强制必填；optional 仅用于读取历史原始证据。 */
+    unitTypeZh: z.enum(["剪辑镜头", "拆分镜证据段"]).optional(),
     shotSizeZh: z.string().trim().optional(),
     angleZh: z.string().trim().optional(),
+    compositionZh: z.string().trim().optional(),
     cameraMoveZh: z.string().trim().optional(),
+    blockingZh: z.string().trim().optional(),
+    bodyActionZh: z.string().trim().optional(),
+    limbPropActionZh: z.string().trim().optional(),
+    microExpressionZh: z.string().trim().optional(),
+    gazeBreathZh: z.string().trim().optional(),
+    relationshipReactionZh: z.string().trim().optional(),
     lightingZh: z.string().trim().optional(),
     actionZh: z.string().trim().default(""),
     transitionInZh: z.string().trim().optional(),
@@ -133,7 +143,7 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
     const conflictZh = String(seg.beatStructureZh || "").trim().slice(0, 40);
     return seg.shots.flatMap((shot) => {
       if (shot.evidenceRole === "non_story_ad") return [];
-      const visualZh = String(shot.actionZh || "").trim().slice(0, 80);
+      const visualZh = String(shot.actionZh || "").trim().slice(0, 280);
       // 空值不写「未标注」占位：占位会让下游以为学到了东西，实际是空的
       if (!conflictZh || !visualZh) {
         droppedCount += 1;
@@ -147,11 +157,19 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
           endSec: end > start ? end : undefined,
           conflictZh,
           visualZh,
-          shotSizeZh: cut(shot.shotSizeZh, 16),
-          angleZh: cut(shot.angleZh, 16),
-          cameraMoveZh: cut(shot.cameraMoveZh, 60),
-          lightingZh: cut(shot.lightingZh, 60),
-          transitionInZh: cut(shot.transitionInZh, 20),
+          unitTypeZh: shot.unitTypeZh,
+          shotSizeZh: cut(shot.shotSizeZh, 32),
+          angleZh: cut(shot.angleZh, 32),
+          compositionZh: cut(shot.compositionZh, 160),
+          cameraMoveZh: cut(shot.cameraMoveZh, 220),
+          blockingZh: cut(shot.blockingZh, 220),
+          bodyActionZh: cut(shot.bodyActionZh, 220),
+          limbPropActionZh: cut(shot.limbPropActionZh, 220),
+          microExpressionZh: cut(shot.microExpressionZh, 220),
+          gazeBreathZh: cut(shot.gazeBreathZh, 180),
+          relationshipReactionZh: cut(shot.relationshipReactionZh, 200),
+          lightingZh: cut(shot.lightingZh, 220),
+          transitionInZh: cut(shot.transitionInZh, 140),
         } satisfies ManhuaViralTemplateBeat,
       ];
     });

@@ -71,20 +71,25 @@ export const MANHUA_VIRAL_TEMPLATE_OPTIMIZE_MODELS: readonly OptimizeModelConfig
 
 const optionalTrimmed = (max: number) => z.string().trim().min(1).max(max).optional();
 
-/**
- * 逐镜六栏为可选：抽帧链路给不出（运镜/转场是帧间差分，单帧里不存在），
- * 但 .strict() 下不声明就会被直接拒——原生精读模板过一次优化，六栏全丢。
- */
+/** 原生逐镜证据对旧抽帧卡可选；一旦原卡存在，优化门禁逐镜禁止丢失。 */
 const beatSchema = z.object({
   atSec: z.number().int().min(0).max(3_600),
   endSec: z.number().int().min(1).max(3_600).optional(),
   conflictZh: z.string().trim().min(1).max(40),
-  visualZh: z.string().trim().min(1).max(80),
-  shotSizeZh: optionalTrimmed(16),
-  angleZh: optionalTrimmed(16),
-  cameraMoveZh: optionalTrimmed(60),
-  lightingZh: optionalTrimmed(60),
-  transitionInZh: optionalTrimmed(20),
+  visualZh: z.string().trim().min(1).max(280),
+  unitTypeZh: z.enum(["剪辑镜头", "拆分镜证据段"]).optional(),
+  shotSizeZh: optionalTrimmed(32),
+  angleZh: optionalTrimmed(32),
+  compositionZh: optionalTrimmed(160),
+  cameraMoveZh: optionalTrimmed(220),
+  blockingZh: optionalTrimmed(220),
+  bodyActionZh: optionalTrimmed(220),
+  limbPropActionZh: optionalTrimmed(220),
+  microExpressionZh: optionalTrimmed(220),
+  gazeBreathZh: optionalTrimmed(180),
+  relationshipReactionZh: optionalTrimmed(200),
+  lightingZh: optionalTrimmed(220),
+  transitionInZh: optionalTrimmed(140),
 }).strict();
 
 const candidateSchema = z.object({
@@ -138,12 +143,20 @@ export function diffManhuaViralTemplateFields(
   );
 }
 
-/** 逐镜六栏＋endSec：抽帧给不出，一旦丢失无法重建 */
+/** 原生逐镜证据：抽帧给不出，一旦丢失无法重建。 */
 const NATIVE_BEAT_FIELDS = [
   "endSec",
+  "unitTypeZh",
   "shotSizeZh",
   "angleZh",
+  "compositionZh",
   "cameraMoveZh",
+  "blockingZh",
+  "bodyActionZh",
+  "limbPropActionZh",
+  "microExpressionZh",
+  "gazeBreathZh",
+  "relationshipReactionZh",
   "lightingZh",
   "transitionInZh",
 ] as const satisfies readonly (keyof ManhuaViralTemplateBeat)[];
@@ -151,7 +164,7 @@ const NATIVE_BEAT_FIELDS = [
 /**
  * 原生精读模板的防丢门禁。
  *
- * ⚠️ 只比镜头数量拦不住：实测上游会返回同样 95 镜、却把六栏整体省略，
+ * ⚠️ 只比镜头数量拦不住：实测上游会返回相同镜头数、却把角色调度与表演证据整体省略，
  * 还给出一条 beatGrid 的修改理由，于是修订「成功」而数据已经没了。
  * 所以必须逐镜比对——原来有的字段，改完不能变成 undefined。
  */
@@ -205,7 +218,7 @@ ${JSON.stringify(protectedSource)}
 输出规则：
 1. 只输出一个 JSON 对象，顶层只能有 candidate、reasons。
 2. candidate 只能有 nameZh,laneZh,summaryZh,hook3sZh,beatGrid,reusableZh,genPromptHintZh,scenePoolHints,castShape,densityHints；字段结构与原模板一致。
-2.1 若原模板的 beatGrid 带 shotSizeZh/angleZh/cameraMoveZh/lightingZh/transitionInZh/endSec（原生精读产出），必须逐镜原样带回，**镜头条数一条都不能少**；这些字段是帧间差分信息，丢了无法重建。
+2.1 若原模板的 beatGrid 带 endSec/unitTypeZh/shotSizeZh/angleZh/compositionZh/cameraMoveZh/blockingZh/bodyActionZh/limbPropActionZh/microExpressionZh/gazeBreathZh/relationshipReactionZh/lightingZh/transitionInZh（原生精读产出），必须逐镜原样带回，**镜头条数一条都不能少**；这些字段是原始视听差分证据，丢了无法重建。
 3. 禁止输出或改写 id、publicCode、status、sourceRefs、provenance、approvedAt、updatedAt。
 4. 只借鉴结构和中性手法；禁止复制来源剧名、原台词、商标或无法从原模板和用户要求得到的事实。
 5. reasons 必须覆盖每个实际变更的顶层字段；field 只能从 ${MANHUA_VIRAL_TEMPLATE_OPTIMIZE_FIELDS.join(",")} 中选，reasonZh 说明该字段为何按用户要求优化。

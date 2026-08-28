@@ -13166,7 +13166,7 @@ export default function PlatformPage() {
                                       <span className="font-semibold">{tpl.nameZh}</span>
                                       {isNativeVideoLearnedTemplate(tpl) ? (
                                         <span
-                                          title="原生视频精读：含逐镜六栏（景别/机位/运镜/光影/动作/转场）与可复用手法"
+                                          title="原生视频精读：含逐镜构图、运镜、角色站位、肢体/道具、微表情、视线呼吸、关系反应、光影与转场证据"
                                           className="shrink-0 rounded border border-cyan-300/45 bg-cyan-400/15 px-1 text-[9px] font-bold text-cyan-100"
                                         >
                                           🎬 精读

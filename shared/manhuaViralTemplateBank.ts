@@ -122,8 +122,24 @@ export type ManhuaViralTemplateBeat = {
   shotSizeZh?: string;
   /** 机位：平视/仰拍/俯拍/过肩/主观 */
   angleZh?: string;
+  /** 真实剪辑切换，或同一长镜内部由可观察变化触发的证据拆分 */
+  unitTypeZh?: "剪辑镜头" | "拆分镜证据段";
+  /** 构图、主体位置、前中后景、视线方向与空间层次 */
+  compositionZh?: string;
   /** 运镜：方向与速度，看不出运动写「固定机位」——严禁无依据的「镜头拉远」 */
   cameraMoveZh?: string;
+  /** 角色站位、朝向、距离、进退路径、遮挡关系与群像调度 */
+  blockingZh?: string;
+  /** 角色整体姿态、躯体重心、移动方式与动作阶段 */
+  bodyActionZh?: string;
+  /** 四肢或等效附肢动作、持物方式、道具状态与交互 */
+  limbPropActionZh?: string;
+  /** 面部或等效表情器官的可见细微变化 */
+  microExpressionZh?: string;
+  /** 视线或感知指向、眨眼、呼吸、能量节奏 */
+  gazeBreathZh?: string;
+  /** 角色间动作因果、反应顺序、感知回应与距离变化 */
+  relationshipReactionZh?: string;
   /** 光影：光位、色调、明暗对比 */
   lightingZh?: string;
   /** 进入这一镜的转场：硬切/闪白/黑场/遮挡转场/叠化 */
@@ -193,7 +209,7 @@ export type ManhuaViralTemplateRevision = {
 /**
  * 这张卡是不是**原生视频精读**学出来的（0824 新增）。
  *
- * 判据取「抽帧链路物理上给不出的东西」：逐镜六栏与可复用手法。
+ * 判据取「抽帧链路物理上给不出的东西」：逐镜角色调度、表演、摄影证据与可复用手法。
  * 运镜/转场是帧间差分，抽帧在采样那一刻就丢了——有这些字段，就必然来自原生视频链路。
  * 用于 UI 上区分新旧形态模板，也用于后续淘汰旧库时筛选。
  */
@@ -204,7 +220,18 @@ export function isNativeVideoLearnedTemplate(
   if (String(card.reusableZh || "").trim()) return true;
   if (String(card.genPromptHintZh || "").trim()) return true;
   return (card.beatGrid || []).some(
-    (b) => b.shotSizeZh || b.angleZh || b.cameraMoveZh || b.lightingZh || b.transitionInZh,
+    (b) => b.shotSizeZh
+      || b.angleZh
+      || b.compositionZh
+      || b.cameraMoveZh
+      || b.blockingZh
+      || b.bodyActionZh
+      || b.limbPropActionZh
+      || b.microExpressionZh
+      || b.gazeBreathZh
+      || b.relationshipReactionZh
+      || b.lightingZh
+      || b.transitionInZh,
   );
 }
 
@@ -412,15 +439,26 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
           const opt = (v: unknown, max: number): string | undefined =>
             String(v || "").trim().slice(0, max) || undefined;
           const endSec = Math.floor(Number(b.endSec) || 0);
+          const unitTypeZh = b.unitTypeZh === "剪辑镜头" || b.unitTypeZh === "拆分镜证据段"
+            ? b.unitTypeZh
+            : undefined;
           return {
             atSec: Math.max(0, Math.floor(Number(b.atSec) || 0)),
             conflictZh: String(b.conflictZh || "").trim().slice(0, 40),
-            visualZh: String(b.visualZh || "").trim().slice(0, 80),
-            shotSizeZh: opt(b.shotSizeZh, 16),
-            angleZh: opt(b.angleZh, 16),
-            cameraMoveZh: opt(b.cameraMoveZh, 60),
-            lightingZh: opt(b.lightingZh, 60),
-            transitionInZh: opt(b.transitionInZh, 20),
+            visualZh: String(b.visualZh || "").trim().slice(0, 280),
+            unitTypeZh,
+            shotSizeZh: opt(b.shotSizeZh, 32),
+            angleZh: opt(b.angleZh, 32),
+            compositionZh: opt(b.compositionZh, 160),
+            cameraMoveZh: opt(b.cameraMoveZh, 220),
+            blockingZh: opt(b.blockingZh, 220),
+            bodyActionZh: opt(b.bodyActionZh, 220),
+            limbPropActionZh: opt(b.limbPropActionZh, 220),
+            microExpressionZh: opt(b.microExpressionZh, 220),
+            gazeBreathZh: opt(b.gazeBreathZh, 180),
+            relationshipReactionZh: opt(b.relationshipReactionZh, 200),
+            lightingZh: opt(b.lightingZh, 220),
+            transitionInZh: opt(b.transitionInZh, 140),
             endSec: endSec > 0 ? endSec : undefined,
           };
         })
@@ -962,6 +1000,28 @@ export function fitManhuaViralDensityHintsToSegments(
   };
 }
 
+/**
+ * 原生逐镜证据的编剧消费文本。字段一镜不少地进入扩写上下文；若未来上下文不足，
+ * 调用层必须显式失败或换大上下文模型，不能在这里抽样或把字段压回 visualZh。
+ */
+function formatNativeBeatEvidenceZh(beat: ManhuaViralTemplateBeat): string {
+  return [
+    beat.unitTypeZh ? `单元=${beat.unitTypeZh}` : "",
+    beat.shotSizeZh ? `景别=${beat.shotSizeZh}` : "",
+    beat.angleZh ? `机位=${beat.angleZh}` : "",
+    beat.compositionZh ? `构图=${beat.compositionZh}` : "",
+    beat.cameraMoveZh ? `运镜=${beat.cameraMoveZh}` : "",
+    beat.blockingZh ? `站位调度=${beat.blockingZh}` : "",
+    beat.bodyActionZh ? `整体动作=${beat.bodyActionZh}` : "",
+    beat.limbPropActionZh ? `四肢/道具=${beat.limbPropActionZh}` : "",
+    beat.microExpressionZh ? `微表情=${beat.microExpressionZh}` : "",
+    beat.gazeBreathZh ? `视线/呼吸=${beat.gazeBreathZh}` : "",
+    beat.relationshipReactionZh ? `关系反应=${beat.relationshipReactionZh}` : "",
+    beat.lightingZh ? `光影=${beat.lightingZh}` : "",
+    beat.transitionInZh ? `转场=${beat.transitionInZh}` : "",
+  ].filter(Boolean).join("；");
+}
+
 /** 由完整卡片生成编剧扩写注入块 */
 export function formatManhuaViralTemplateWriterAddonFromCard(
   tpl: ManhuaViralTemplateCard | null | undefined,
@@ -971,7 +1031,10 @@ export function formatManhuaViralTemplateWriterAddonFromCard(
   const tier = getManhuaEpisodeLengthTier(lengthTierId);
   const segments = manhuaEpisodeSegmentsForTier(tier.id);
   const beats = fitManhuaViralBeatGridToSegments(tpl.beatGrid, segments)
-    .map((b) => `- ${b.atSec}s｜${b.conflictZh}｜${b.visualZh}`)
+    .map((b) => {
+      const evidenceZh = formatNativeBeatEvidenceZh(b);
+      return `- ${b.atSec}s｜${b.conflictZh}｜${b.visualZh}${evidenceZh ? `｜${evidenceZh}` : ""}`;
+    })
     .join("\n");
   const d = fitManhuaViralDensityHintsToSegments(tpl.densityHints, segments);
   const audioBeats = tpl.audioStory?.hasAudio

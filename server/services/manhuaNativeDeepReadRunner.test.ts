@@ -103,7 +103,7 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_ROUTE_EVOLINK).toBe("evolink_gemini_video");
     expect(NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE).toBe("openrouter_glm_structuring");
     // 换代必须让旧确认码全废
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v7-gemini-story-evidence");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v8-gemini-performance-evidence");
   });
 
   it("长视频请求显式使用 30 分钟 HTTP 响应头与响应体时限，不落回 Undici 默认 300 秒", async () => {
@@ -172,7 +172,7 @@ describe("模型与通道收口", () => {
     expect(request.generationConfig).toMatchObject({ temperature: 0.6 });
   });
 
-  it("responseSchema 覆盖六栏骨架，并强制 classification 原始五键", () => {
+  it("responseSchema 覆盖独立的站位与表演证据，并用 enum 锁住单元类型", () => {
     expect(NATIVE_DEEP_READ_RESPONSE_SCHEMA.required).toEqual([
       "shots", "subtitles", "audioResolution", "beatStructureZh", "classification",
     ]);
@@ -207,9 +207,43 @@ describe("模型与通道收口", () => {
       "audiovisualTagsZh",
       "audienceExperienceTagsZh",
     ]);
-    expect(NATIVE_DEEP_READ_RESPONSE_SCHEMA.properties.shots.items.required).toContain("evidenceRole");
+    expect(NATIVE_DEEP_READ_RESPONSE_SCHEMA.properties.shots.items.required).toEqual([
+      "startSec",
+      "endSec",
+      "unitTypeZh",
+      "shotSizeZh",
+      "angleZh",
+      "compositionZh",
+      "cameraMoveZh",
+      "blockingZh",
+      "bodyActionZh",
+      "limbPropActionZh",
+      "microExpressionZh",
+      "gazeBreathZh",
+      "relationshipReactionZh",
+      "lightingZh",
+      "actionZh",
+      "transitionInZh",
+      "evidenceRole",
+    ]);
+    expect(NATIVE_DEEP_READ_RESPONSE_SCHEMA.properties.shots.items.properties.unitTypeZh.enum)
+      .toEqual(["剪辑镜头", "拆分镜证据段"]);
     expect(NATIVE_DEEP_READ_RESPONSE_SCHEMA.properties.shots.items.properties.evidenceRole.enum)
       .toEqual(["story", "non_story_ad"]);
+    expect(audioAnalysis.properties.audioTrack.items.properties.cues.items.properties.kind.enum)
+      .toEqual([
+        "source_change",
+        "voice_change",
+        "sfx",
+        "bgm_in",
+        "bgm_change",
+        "bgm_out",
+        "atmosphere_change",
+        "dynamics_change",
+        "mix_change",
+        "silence_in",
+        "silence_out",
+      ]);
   });
 });
 
@@ -404,9 +438,17 @@ function makeSegmentPayload(input: {
     endSec: i === shotCount - 1
       ? input.endSec
       : Math.round((input.startSec + (i + 1) * shotLen) * 100) / 100,
+    unitTypeZh: "剪辑镜头",
     shotSizeZh: "近景",
     angleZh: "平视",
+    compositionZh: "角色居中，前景留出运动空间",
     cameraMoveZh: "固定机位",
+    blockingZh: "角色正面站位，保持对峙距离",
+    bodyActionZh: "重心前移后停住",
+    limbPropActionZh: "右手握住道具并抬起",
+    microExpressionZh: "眉心收紧，嘴角克制",
+    gazeBreathZh: "视线锁住对手，呼吸渐重",
+    relationshipReactionZh: "对方后退后本角色向前压近",
     lightingZh: "顶光冷调",
     actionZh: `人物动作${i}`,
     transitionInZh: "硬切",
@@ -476,9 +518,19 @@ describe("段级双密度门禁", () => {
     const shot = (startSec: number, endSec: number, transitionInZh = "硬切") => ({
       startSec,
       endSec,
+      unitTypeZh: transitionInZh === NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH
+        ? "拆分镜证据段"
+        : "剪辑镜头",
       shotSizeZh: "中景",
       angleZh: "平视",
+      compositionZh: "角色从画面左侧移向右侧",
       cameraMoveZh: "缓慢横移",
+      blockingZh: "两名角色前后错位移动",
+      bodyActionZh: "重心随横向移动转换",
+      limbPropActionZh: "双手随步伐摆动",
+      microExpressionZh: "眉眼持续紧绷",
+      gazeBreathZh: "视线跟随对手，呼吸加快",
+      relationshipReactionZh: "前方角色移动引发后方角色追随",
       lightingZh: "侧光随角色移动发生变化",
       actionZh: `角色从画面左侧移动到右侧（${startSec}-${endSec}）`,
       transitionInZh,
@@ -497,9 +549,19 @@ describe("段级双密度门禁", () => {
     const shot = (startSec: number, endSec: number, transitionInZh = "硬切") => ({
       startSec,
       endSec,
+      unitTypeZh: transitionInZh === NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH
+        ? "拆分镜证据段"
+        : "剪辑镜头",
       shotSizeZh: "中景",
       angleZh: "平视",
+      compositionZh: "角色居中保持稳定构图",
       cameraMoveZh: "固定机位",
+      blockingZh: "角色原地站立",
+      bodyActionZh: "躯干维持前倾",
+      limbPropActionZh: "双臂维持防御姿态",
+      microExpressionZh: "下颌绷紧",
+      gazeBreathZh: "视线固定，呼吸短促",
+      relationshipReactionZh: "持续回应画外对手",
       lightingZh: "侧光",
       actionZh: `角色持续表演（${startSec}-${endSec}）`,
       transitionInZh,
@@ -534,7 +596,21 @@ describe("段级双密度门禁", () => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
     delete (raw.shots as Array<Record<string, unknown>>)[0]!.evidenceRole;
     expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
-      .toThrow("evidenceRole 缺失或无效");
+      .toThrow("缺 evidenceRole");
+  });
+
+  it("新模型产出缺独立角色站位字段时关闭式拒收，不再用 actionZh 掩盖", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    delete (raw.shots as Array<Record<string, unknown>>)[0]!.blockingZh;
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
+      .toThrow("缺 blockingZh");
+  });
+
+  it("unitTypeZh 只能使用批准的 enum 值", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    (raw.shots as Array<Record<string, unknown>>)[0]!.unitTypeZh = "长镜头";
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
+      .toThrow("unitTypeZh 缺失或无效");
   });
 
   it("招商镜头保留完整时间轴但不计剧情密度；音轨门禁仍按完整 60 秒计算", () => {

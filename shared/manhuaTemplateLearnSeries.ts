@@ -541,9 +541,10 @@ export function mergeEpisodeDigestsIntoProposal(input: {
       const key = Math.max(0, Math.floor(b.atSec));
       if (!beatMap.has(key) && b.conflictZh && b.visualZh) {
         beatMap.set(key, {
+          ...b,
           atSec: key,
           conflictZh: b.conflictZh.slice(0, 40),
-          visualZh: b.visualZh.slice(0, 80),
+          visualZh: b.visualZh.slice(0, 280),
         });
       }
     }

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  MANHUA_NATIVE_AUDIO_CUE_KINDS,
   isManhuaNativeAudioGateFailureZh,
   mergeManhuaNativeAudioChunks,
   normalizeManhuaNativeAudioChunkAnalysis,
@@ -21,6 +22,29 @@ const track = (fromSec: number): ManhuaNativeAudioTrack => ({
 });
 
 describe("原生精读音轨合并", () => {
+  it("0827 定稿的 11 种声音事件全部能通过共享解析门", () => {
+    const normalized = normalizeManhuaNativeAudioChunkAnalysis({
+      raw: {
+        audioTrack: [{
+          ...track(0),
+          toSec: 11,
+          cues: MANHUA_NATIVE_AUDIO_CUE_KINDS.map((kind, atSec) => ({
+            atSec,
+            kind,
+            detailZh: `${kind} 证据`,
+          })),
+        }],
+        audioBeatStructureZh: "声音连续推进",
+        mixNotesZh: "空间层次清楚",
+        reusableAudioZh: "按变化证据组织声音",
+        genAudioHintZh: "保留声画关系",
+      },
+      chunk: { index: 0, startSec: 0, endSec: 11 },
+    });
+    expect(normalized.audioTrack[0]?.cues.map((cue) => cue.kind))
+      .toEqual(MANHUA_NATIVE_AUDIO_CUE_KINDS);
+  });
+
   it("超过旧128段预算时仍逐条保留音轨与事件，不做合并或截断", () => {
     const durationSec = 135;
     const merged = mergeManhuaNativeAudioChunks({

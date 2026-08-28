@@ -27,8 +27,22 @@ export const MANHUA_NATIVE_AUDIO_DIRECT_SOURCE_VARIANTS = ["native_video"] as co
 /** 以时间分段；32kHz 立体声 64kbps 的 45 分钟约 21.6MB，低于 30MB 上限。 */
 export const MANHUA_NATIVE_AUDIO_CHUNK_MAX_SEC = 45 * 60;
 
+/** 0827 实弹定稿：生产 Schema、解析门与探针必须共用同一份封闭词表。 */
+export const MANHUA_NATIVE_AUDIO_CUE_KINDS = [
+  "source_change",
+  "voice_change",
+  "sfx",
+  "bgm_in",
+  "bgm_change",
+  "bgm_out",
+  "atmosphere_change",
+  "dynamics_change",
+  "mix_change",
+  "silence_in",
+  "silence_out",
+] as const;
 export type ManhuaNativeAudioCueKind =
-  | "sfx" | "bgm_in" | "bgm_change" | "bgm_out" | "silence_in" | "silence_out";
+  (typeof MANHUA_NATIVE_AUDIO_CUE_KINDS)[number];
 
 export type ManhuaNativeAudioCue = {
   atSec: number;
@@ -121,7 +135,7 @@ export function splitManhuaNativeAudioChunks(durationSec: number): ManhuaNativeA
 
 const audioCueSchema = z.object({
   atSec: z.number().finite().int().min(0),
-  kind: z.enum(["sfx", "bgm_in", "bgm_change", "bgm_out", "silence_in", "silence_out"]),
+  kind: z.enum(MANHUA_NATIVE_AUDIO_CUE_KINDS),
   detailZh: z.string().trim().min(1),
 }).strict();
 

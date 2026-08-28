@@ -308,7 +308,7 @@ describe("PublicManhuaViralTemplateCard 匿名化边界（2026-08-15 审查必�
 });
 
 describe("原生视频精读产出入库（0824）", () => {
-  it("逐镜六栏与两个新字段能解析落库；抽帧旧卡不带这些字段仍然有效", () => {
+  it("独立站位与表演字段能解析落库；抽帧旧卡不带这些字段仍然有效", () => {
     const native = parseManhuaViralTemplateCard({
       ...learnedCard(),
       beatGrid: [
@@ -317,9 +317,17 @@ describe("原生视频精读产出入库（0824）", () => {
           endSec: 3,
           conflictZh: "开场压制",
           visualZh: "老者指着镜头怒骂",
+          unitTypeZh: "剪辑镜头",
           shotSizeZh: "中近景",
           angleZh: "平视",
+          compositionZh: "老者居中压前景，年轻角色退在后景",
           cameraMoveZh: "约2秒内从中景匀速推至面部近景",
+          blockingZh: "老者前压，年轻角色后退半步",
+          bodyActionZh: "老者躯干前倾，年轻角色重心后移",
+          limbPropActionZh: "老者抬手直指，年轻角色握紧衣角",
+          microExpressionZh: "老者眉心压低，年轻角色嘴角发紧",
+          gazeBreathZh: "两人视线对锁，年轻角色呼吸短促",
+          relationshipReactionZh: "老者逼近使年轻角色退后，后者站稳后回望",
           lightingZh: "顶光，背景暗，人物面部受光",
           transitionInZh: "硬切",
         },
@@ -331,6 +339,9 @@ describe("原生视频精读产出入库（0824）", () => {
     const beat = native!.beatGrid[0]!;
     expect(beat.shotSizeZh).toBe("中近景");
     expect(beat.cameraMoveZh).toContain("推至面部近景");
+    expect(beat.blockingZh).toContain("年轻角色后退半步");
+    expect(beat.microExpressionZh).toContain("嘴角发紧");
+    expect(beat.relationshipReactionZh).toContain("站稳后回望");
     expect(beat.endSec).toBe(3);
     expect(native!.reusableZh).toContain("机位稳定性");
     expect(native!.genPromptHintZh).toContain("体积雾");

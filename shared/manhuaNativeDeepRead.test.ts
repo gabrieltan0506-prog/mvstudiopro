@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { mapNativeDeepReadSegments } from "./manhuaNativeDeepRead";
 import {
+  formatManhuaViralTemplateWriterAddonFromCard,
   formatManhuaViralTemplateWriterSkillFromCard,
   parseManhuaViralTemplateCard,
   isNativeVideoLearnedTemplate,
@@ -125,6 +126,48 @@ describe("适配器失败与超限语义（复审第六项）", () => {
     shotSizeZh: "特写",
     actionZh: `动作${i}`,
     ...patch,
+  });
+
+  it("独立站位与表演字段从段 JSON 经卡片往返后进入编剧消费端", () => {
+    const detailed = shot(0, {
+      unitTypeZh: "剪辑镜头",
+      angleZh: "平视",
+      compositionZh: "双人分居画面两侧，中间保留压迫负空间",
+      cameraMoveZh: "固定机位，以构图变化承接关系变化",
+      blockingZh: "主角靠左后退，对手从右侧逼近",
+      bodyActionZh: "主角重心后移后重新站稳",
+      limbPropActionZh: "主角左手护住卷轴，右手撑地起身",
+      microExpressionZh: "瞳孔收紧后下颌绷住",
+      gazeBreathZh: "视线先避让再锁定对手，呼吸由乱转稳",
+      relationshipReactionZh: "对手逼近触发主角后退，主角站稳迫使对手停步",
+      lightingZh: "右侧冷光压迫，左侧暖光逐渐抬起",
+      transitionInZh: "硬切",
+    });
+    const out = mapNativeDeepReadSegments([seg([detailed])]);
+    const parsed = parseManhuaViralTemplateCard({
+      id: "tpl_series_detailed01",
+      nameZh: "独立表演证据",
+      laneZh: "古言种田",
+      summaryZh: "保留站位与表演证据。",
+      hook3sZh: "关系变化立即可见。",
+      status: "approved",
+      beatGrid: out.beatGrid,
+      scenePoolHints: [],
+      castShape: { leadDesireZh: "站稳", pressureZh: "逼近" },
+      densityHints: { minBodyChars: 800, minDialogueLines: 6, minLocationHits: 2 },
+      sourceRefs: [],
+    })!;
+    expect(parsed.beatGrid[0]).toMatchObject({
+      unitTypeZh: "剪辑镜头",
+      blockingZh: "主角靠左后退，对手从右侧逼近",
+      microExpressionZh: "瞳孔收紧后下颌绷住",
+      gazeBreathZh: "视线先避让再锁定对手，呼吸由乱转稳",
+      relationshipReactionZh: "对手逼近触发主角后退，主角站稳迫使对手停步",
+    });
+    const writerAddon = formatManhuaViralTemplateWriterAddonFromCard(parsed);
+    expect(writerAddon).toContain("站位调度=主角靠左后退，对手从右侧逼近");
+    expect(writerAddon).toContain("微表情=瞳孔收紧后下颌绷住");
+    expect(writerAddon).toContain("关系反应=对手逼近触发主角后退，主角站稳迫使对手停步");
   });
 
   it("finish=length 的段整段丢弃，并计入 failedSegmentCount", () => {

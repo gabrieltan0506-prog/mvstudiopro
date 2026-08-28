@@ -79,6 +79,17 @@ describe("manhuaWriterRoom", () => {
     expect(p).not.toMatch(/严格按 10 秒/);
   });
 
+  it("不在编剧入口把完整模板证据静默截成 8000 字", () => {
+    const marker = "【末镜关系反应证据】";
+    const p = buildManhuaWriterExpandPrompt({
+      topic: "关系推进",
+      brief: "",
+      episodeCount: 2,
+      viralTemplateAddon: `${"镜头证据；".repeat(1_400)}${marker}`,
+    });
+    expect(p).toContain(marker);
+  });
+
   it("默认无 videoModel 时按 mini 段表写五至六段可拍表", () => {
     // 默认档已从 2.5 换到 mini（6×15），扩写段数口径跟着走
     const p = buildManhuaWriterExpandPrompt({

@@ -1,8 +1,9 @@
 /**
  * 真人剧 0–300 / 300–600 秒真实精读探针。
  *
- * 只允许在 Fly 内执行：凭证从服务端环境读取。视频 MP4、上游完整响应、
- * 解析后段证据与本次核对摘要均永久保存在 GCS，不提供删除路径。
+ * 只允许在 Fly 内执行：凭证从服务端环境读取。视频 MP4 仅供本轮模型调用，
+ * 任务结束立即删除并复查无残留（保留时间小于 24 小时）；上游完整响应、
+ * 解析后段证据与本次核对摘要永久保存在 GCS。
  */
 import { createHash } from "node:crypto";
 import {
@@ -117,7 +118,6 @@ async function main() {
       ],
       sourceDurationSec: 600,
       hintZh: "真人剧完整视听证据探针；按真实镜头、表演、光影、声音和叙事变化记录",
-      preservePreparedVideos: true,
     });
   } catch (error) {
     runError = error;
@@ -128,34 +128,9 @@ async function main() {
     listGcsObjectNamesByPrefix({ prefix: parsedPrefix, literalPrefix: true, maxResults: 100 }),
     listGcsObjectNamesByPrefix({ prefix: videoPrefix, literalPrefix: true, maxResults: 1_000 }),
   ]);
-  const preservedVideos = videosAfter.filter((name) => !videosBefore.has(name));
+  const temporaryVideoLeaks = videosAfter.filter((name) => !videosBefore.has(name));
   const rawFacts = await Promise.all(rawNames.map(objectFact));
   const parsedFacts = await Promise.all(parsedNames.map(objectFact));
-  const permanentVideos = [] as Array<{
-    sourceObjectName: string;
-    objectName: string;
-    bytes: number;
-    sha256: string;
-  }>;
-  for (const sourceObjectName of preservedVideos.sort()) {
-    const source = await downloadGcsObjectVersioned({
-      gcsUri: `gs://${bucket}/${sourceObjectName}`,
-    });
-    const objectName = `manhua-template-learn/probes/${seriesKey}/media/${sourceObjectName.split("/").at(-1)}`;
-    const savedVideo = await uploadBufferToGcsIfAbsent({
-      bucket,
-      objectName,
-      contentType: "video/mp4",
-      buffer: source.buffer,
-    });
-    if (!savedVideo.created) throw new Error(`永久视频证据对象已存在，拒绝覆盖：${objectName}`);
-    permanentVideos.push({
-      sourceObjectName,
-      objectName,
-      bytes: source.buffer.byteLength,
-      sha256: createHash("sha256").update(source.buffer).digest("hex"),
-    });
-  }
   const rawBySegment = new Map<number, ReturnType<typeof countsOf>>();
   const parsedBySegment = new Map<number, ReturnType<typeof countsOf>>();
 
@@ -199,8 +174,11 @@ async function main() {
     } : undefined,
     rawEvidence: rawFacts.map(({ objectName, bytes, sha256 }) => ({ objectName, bytes, sha256 })),
     parsedEvidence: parsedFacts.map(({ objectName, bytes, sha256 }) => ({ objectName, bytes, sha256 })),
-    preservedVideos,
-    permanentVideos,
+    videoRetention: {
+      policy: "delete_on_settle",
+      maximumHours: 24,
+      leakedObjectNames: temporaryVideoLeaks,
+    },
     reconciliations,
   };
   const summaryObjectName = `manhua-template-learn/probes/${seriesKey}/summary.json`;
@@ -223,8 +201,8 @@ async function main() {
   }, null, 2));
 
   if (runError) throw runError;
-  if (preservedVideos.length !== 2) {
-    throw new Error(`视频证据不完整：preserved=${preservedVideos.length}`);
+  if (temporaryVideoLeaks.length > 0) {
+    throw new Error(`测试视频清理不完整：leaked=${temporaryVideoLeaks.length}`);
   }
   if (rawFacts.length < 2 || parsedFacts.length !== 2) {
     throw new Error(`证据不完整：raw=${rawFacts.length} parsed=${parsedFacts.length}`);

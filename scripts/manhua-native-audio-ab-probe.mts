@@ -15,6 +15,7 @@ import {
   getVertexAuthHeaders,
   getVertexProjectId,
 } from "../server/services/vertexMedia.js";
+import { MANHUA_NATIVE_AUDIO_CUE_KINDS } from "../shared/manhuaNativeAudioAnalysis.js";
 
 const run = promisify(execFile);
 const MODEL = "gemini-3.6-flash";
@@ -52,7 +53,7 @@ const schema = {
                 atSec: { type: "INTEGER" },
                 kind: {
                   type: "STRING",
-                  enum: ["sfx", "bgm_in", "bgm_change", "bgm_out", "silence_in", "silence_out"],
+                  enum: MANHUA_NATIVE_AUDIO_CUE_KINDS,
                 },
                 detailZh: { type: "STRING" },
               },
