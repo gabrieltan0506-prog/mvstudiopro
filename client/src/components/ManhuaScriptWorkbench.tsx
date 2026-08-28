@@ -30,6 +30,11 @@ import {
   stageKeyFromBlockId,
 } from "@/lib/canvasDramaStudio";
 import { manhuaClipQualityAllowsAssemble } from "@shared/manhuaClipQuality";
+import {
+  buildManhuaAssetsGapItems,
+  buildManhuaAssetsGapZh,
+  type ManhuaAssetsGapAnchor,
+} from "@/lib/manhuaPhaseGapText";
 import { tryLocalMediaDisplayForBlock } from "@/lib/manhuaLocalMediaStore";
 import {
   getManhuaCharacterById,
@@ -1762,21 +1767,29 @@ export default function ManhuaScriptWorkbench({
      * 只显示「已完成 / 待开始」而不显示缺口，等于把调试成本转嫁给用户 ——
      * 0823 实况：资产标「已完成」而底部准入检查同时显示「尚未选角色」。
      */
-    const assetsGapZh = assetsComplete
-      ? ""
-      : [
-          assetGate.missingCastIds?.length ? `缺角色 ${assetGate.missingCastIds.length}` : "",
-          assetGate.missingScene ? "未选场景" : "",
-          assetScriptStaleHintZh ? "剧本已改，资产待重出" : "",
-        ]
-          .filter(Boolean)
-          .join(" · ") || assetGate.hintZh || "资产未齐";
+    /**
+     * 缺口明细升级（0829）：「缺角色 N」→「定妆 x/y」计数、场景分「未选/图未出」
+     * 两态、风格包（选填）未填提示。组装逻辑抽在 manhuaPhaseGapText 纯函数里
+     * 好测；判据仍全部来自 assetGate，complete 判定表达式原样不动。
+     */
+    const assetsGapInput = {
+      assetsComplete,
+      gate: assetGate,
+      // 与闸门同一本人数账（characterIds 就是喂给 evaluateManhuaAssetImageGate 的那份）
+      castTotal: characterIds.length,
+      stylePackMissing: !stylePack,
+      scriptStale: Boolean(assetScriptStaleHintZh),
+    };
+    const assetsGapItems = buildManhuaAssetsGapItems(assetsGapInput);
+    const assetsGapZh = buildManhuaAssetsGapZh(assetsGapInput);
 
     const definitions: Array<{
       id: WorkflowPhaseId;
       label: string;
       complete: boolean;
       gapZh?: string;
+      /** 缺口小字里的 [去补→] 微操：只有资产格用得上 */
+      gapActions?: Array<{ labelZh: string; anchor: ManhuaAssetsGapAnchor }>;
     }> = [
       {
         id: "outline",
@@ -1784,7 +1797,15 @@ export default function ManhuaScriptWorkbench({
         complete: outlineComplete,
         gapZh: outlineComplete ? "" : "请先确认剧本大纲",
       },
-      { id: "assets", label: "资产设定", complete: assetsComplete, gapZh: assetsGapZh },
+      {
+        id: "assets",
+        label: "资产设定",
+        complete: assetsComplete,
+        gapZh: assetsGapZh,
+        gapActions: assetsGapItems
+          .filter((i) => i.anchor && i.jumpLabelZh)
+          .map((i) => ({ labelZh: i.jumpLabelZh as string, anchor: i.anchor as ManhuaAssetsGapAnchor })),
+      },
       {
         /**
          * 原来是「或」：只要有静帧就算分镜完成，哪怕一段成片都没出。
@@ -1846,6 +1867,8 @@ export default function ManhuaScriptWorkbench({
     roughClips.length,
     assetGate,
     assetScriptStaleHintZh,
+    characterIds,
+    stylePack,
     finalVideoUrl,
     dockSelectedCount,
   ]);
@@ -1892,6 +1915,29 @@ export default function ManhuaScriptWorkbench({
       return;
     }
     setActivePhase(phase);
+  };
+
+  /**
+   * [去补→] 微操：资产格缺口小字里的关键缺项一键跳到资产页对应区块。
+   * 资产面板是条件渲染（activePhase === "assets" 才挂载），切页当帧查不到
+   * 锚点，得等一拍再滚；风格包面板在简洁模式空包时带 hidden，滚不到就退
+   * 而滚到画风选择区，保证点了总有落点、不静默。
+   */
+  const jumpToAssetsGapAnchor = (anchor: ManhuaAssetsGapAnchor) => {
+    selectPhase("assets");
+    window.setTimeout(() => {
+      const bySelector = (sel: string) => document.querySelector<HTMLElement>(sel);
+      let el =
+        anchor === "style"
+          ? bySelector("[data-manhua-style-pack-panel]")
+          : anchor === "scene"
+            ? bySelector('[data-manhua-episode-sheets-kind="sceneplate"]')
+            : bySelector('[data-manhua-episode-sheets-kind="charsheet"]');
+      if (anchor === "style" && (!el || el.offsetParent === null)) {
+        el = bySelector("[data-manhua-art-style-picker]");
+      }
+      el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 120);
   };
 
   /**
@@ -2687,6 +2733,31 @@ export default function ManhuaScriptWorkbench({
                     className="block truncate text-[8px] leading-tight opacity-70"
                   >
                     {phase.gapZh}
+                    {/* 外层整格已是 <button>，内层不许再嵌 button——span 拦掉冒泡自己跳。
+                        truncate 单行容器塞多个链接会被省略号吃掉（审查 P2），只渲染首个；
+                        完整缺口清单在 title 悬浮里。 */}
+                    {phase.gapActions?.slice(0, 1).map((a) => (
+                      <span
+                        key={`${a.anchor}-${a.labelZh}`}
+                        role="button"
+                        tabIndex={0}
+                        data-manhua-phase-gap-jump={a.anchor}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          jumpToAssetsGapAnchor(a.anchor);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            jumpToAssetsGapAnchor(a.anchor);
+                          }
+                        }}
+                        className="ml-1 cursor-pointer text-cyan-200/90 underline decoration-dotted underline-offset-2 hover:text-cyan-100"
+                      >
+                        {a.labelZh}→
+                      </span>
+                    ))}
                   </span>
                 ) : null}
               </span>

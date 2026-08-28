@@ -3,7 +3,11 @@ import { flushSync } from "react-dom";
 import Navbar from "@/components/Navbar";
 import FreeformCanvas from "@/components/canvas/FreeformCanvas";
 import ManhuaClipDock from "@/components/canvas/ManhuaClipDock";
+import ManhuaTemplateTrialCompare, {
+  type ManhuaWriterTrialResult,
+} from "@/components/canvas/ManhuaTemplateTrialCompare";
 import PostProdWorkshopCard from "@/components/canvas/PostProdWorkshopCard";
+import ManhuaCreativeAdvisorPanel from "@/components/canvas/ManhuaCreativeAdvisorPanel";
 import type { CanvasBlock, CanvasEdge } from "@/lib/canvasTypes";
 import { defaultCanvasBlock, makeCanvasBlockId, normalizeCanvasBlock } from "@/lib/canvasTypes";
 import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
@@ -979,6 +983,8 @@ export default function OmniCanvas() {
       Boolean(initialWriterSession?.writerConfirmed),
     ),
   );
+  /** 创作顾问面板开合：会话内不持久化——顾问是随手问，不是常驻工序 */
+  const [advisorOpen, setAdvisorOpen] = useState(false);
   /**
    * 第五格「成片」的面板就是成片坞，而坞在独立顶层视图里、其可见性不持久化。
    * 只存 workflowPhase 不存当前视图，刷新后 phase 还是 final、坞却关着，
@@ -2520,6 +2526,13 @@ export default function OmniCanvas() {
   const canvasTerraVisionMutation = trpc.mvAnalysis.canvasTerraVisionMarkdown.useMutation();
   const canvasTerraVideoReverseMutation = trpc.mvAnalysis.canvasTerraVideoReverse.useMutation();
   const expandWriterMutation = trpc.mvAnalysis.expandManhuaWriterPack.useMutation();
+  /** 模板免费试写：零扣费，限流在服务端；这里只负责展示与触发 */
+  const trialWriterMutation = trpc.mvAnalysis.trialManhuaWriterTemplate.useMutation();
+  const trialWriterQuotaQuery = trpc.mvAnalysis.manhuaWriterTrialQuota.useQuery(undefined, {
+    staleTime: 30_000,
+    retry: 1,
+  });
+  const [trialWriterResult, setTrialWriterResult] = useState<ManhuaWriterTrialResult | null>(null);
   /** 编剧室全员走公开面：服务端只回匿名功能卡（内部 id/真名永不进本页） */
   const manhuaViralTemplatesQuery = trpc.manhuaViralTemplate.listApprovedPublic.useQuery(undefined, {
     staleTime: 60_000,
@@ -8292,6 +8305,65 @@ export default function OmniCanvas() {
                     只增强开场、冲突和追更钩子；题材、人物和已锁剧情始终优先。
                   </p>
                 )}
+                {/* 免费试写：选了模板才出现；先看单集差异，满意再走付费全集扩写 */}
+                {selectedViralTemplate ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={writerBusy || factoryBusy || trialWriterMutation.isPending}
+                      onClick={() => {
+                        if (trialWriterMutation.isPending) return; // 防连点：pending 期间不重复发
+                        const topic = factoryTopic.trim();
+                        const brief = writerBrief.trim();
+                        if (!topic && !brief) {
+                          toast.error("请先填写题材，或至少写几句补充条件");
+                          return;
+                        }
+                        trialWriterMutation.mutate(
+                          {
+                            requestId: crypto.randomUUID(),
+                            publicTemplateId,
+                            topic: topic || undefined,
+                            brief: brief || undefined,
+                          },
+                          {
+                            onSuccess: (res) => {
+                              setTrialWriterResult(res);
+                              void trialWriterQuotaQuery.refetch();
+                            },
+                            onError: (err) => {
+                              toast.error(err.message || "试写失败，请稍后重试");
+                              void trialWriterQuotaQuery.refetch();
+                            },
+                          },
+                        );
+                      }}
+                      className="rounded-lg border border-emerald-300/30 bg-emerald-500/10 px-2.5 py-1.5 text-[10px] font-semibold text-emerald-100 hover:bg-emerald-500/20 disabled:opacity-50"
+                    >
+                      {trialWriterMutation.isPending
+                        ? "试写生成中…（约半分钟）"
+                        : "用这个模板试写一集（免费）"}
+                    </button>
+                    {trialWriterQuotaQuery.data ? (
+                      <span className="text-[10px] text-white/40">
+                        今日剩余 {trialWriterQuotaQuery.data.trialsLeftToday} 次
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+                {trialWriterResult ? (
+                  <ManhuaTemplateTrialCompare
+                    result={trialWriterResult}
+                    applying={writerBusy}
+                    onApply={() => {
+                      // 「套用到全集」原路走现有付费扩写：模板 id 已在 publicTemplateId state，
+                      // 不新造计费，确认与扣费口径都在 expandWriterRoom 内部
+                      setTrialWriterResult(null);
+                      void expandWriterRoom();
+                    }}
+                    onClose={() => setTrialWriterResult(null)}
+                  />
+                ) : null}
               </div>
               <div className="mt-3 flex flex-wrap items-end gap-2.5">
                 <div>
@@ -9566,6 +9638,50 @@ export default function OmniCanvas() {
           ) : null}
         </div>
       </main>
+
+      {/* 创作顾问 v1：浮动入口 + 右侧收合面板。只读顾问，不改任何正式产物。
+          只在漫剧工厂模式出现——pick 选择页与自由画布上它无事可做（审查 P2）。 */}
+      {canvasMode === "manhua" && !advisorOpen ? (
+        <button
+          type="button"
+          onClick={() => setAdvisorOpen(true)}
+          className="fixed bottom-24 right-4 z-[59] rounded-full border border-cyan-300/40 bg-[#0d0c18]/90 px-4 py-2.5 text-[12px] font-bold text-cyan-100 shadow-xl backdrop-blur transition hover:bg-cyan-500/20"
+        >
+          创作顾问
+        </button>
+      ) : null}
+      <ManhuaCreativeAdvisorPanel
+        open={canvasMode === "manhua" && advisorOpen}
+        onClose={() => setAdvisorOpen(false)}
+        stageZh={
+          workflowPhase === "outline"
+            ? "剧本大纲"
+            : workflowPhase === "assets"
+              ? "资产设定"
+              : workflowPhase === "storyboard"
+                ? "分镜视频"
+                : workflowPhase === "edit"
+                  ? "剪辑"
+                  : "成片"
+        }
+        selectedTemplate={selectedViralTemplate}
+        templates={approvedViralTemplateCards}
+        onRequestTrial={(tpl) => {
+          // 落点：替用户选中该模板并领到剧情增强区——那里有「试写一集（免费）」按钮。
+          // 不在这里直接发试写：题材/补充条件要用户过目，且免费额度该由用户亲手花。
+          setPublicTemplateId(tpl.publicId);
+          setWriterConfirmed(false);
+          setAdvisorOpen(false);
+          setManhuaUiMode("workbench");
+          // 审查 P1：装着试写按钮的 factory 区在沉浸态下只在 topic 视图可见，
+          // 不切视图则 toast 指的按钮是隐藏的——交棒必须落在看得见的地方
+          setImmersiveWorkspaceView("topic");
+          setWorkflowPhase("outline");
+          toast.success(`已选中「${tpl.nameZh}」`, {
+            description: "到「剧情增强」区点「用这个模板试写一集（免费）」，两版对比看效果。",
+          });
+        }}
+      />
     </div>
   );
 }
