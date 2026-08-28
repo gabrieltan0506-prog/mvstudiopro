@@ -118,8 +118,9 @@ export async function renderNativeEvidenceReport(input: NativeReportRenderInput)
     const url = await sign(bucket, String(frame.objectName));
     const reasons = (Array.isArray(frame.reasons) ? frame.reasons : []) as string[];
     const badge = reasons.map((r) => `<span style="background:#1d2733;border-radius:8px;padding:0 6px;margin-right:3px">${esc(r)}</span>`).join("");
-    const shot = shots[Number(frame.shot)] || {};
-    tiles.push(`<div style="width:158px"><a href="${url}" target="_blank"><img loading="lazy" src="${url}" style="width:158px;border-radius:4px"></a><div style="font-size:.7em;color:#8fa3bd">${mmss(Number(frame.atSec))} ${badge}${esc(String(shot.actionZh ?? "").slice(0, 24))}</div></div>`);
+    const frameAtSec = Number(frame.atSec);
+    const shot = shots.find((s) => frameAtSec >= Number(s.startSec) && frameAtSec < Number(s.endSec)) || {};
+    tiles.push(`<div style="width:158px"><a href="${url}" target="_blank"><img loading="lazy" src="${url}" style="width:158px;border-radius:4px"></a><div style="font-size:.7em;color:#8fa3bd">${mmss(frameAtSec)} ${badge}${esc(String(shot.actionZh ?? "").slice(0, 24))}</div></div>`);
   }
 
   const cl = (card.classification ?? {}) as Record<string, unknown>;
