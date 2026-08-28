@@ -232,6 +232,26 @@ describe("适配器失败与超限语义（复审第六项）", () => {
     expect(out.droppedCount).toBe(0);
   });
 
+  it("整集卡 excludedAdRanges 过 schema 后原样透传；无广告缺省；非法区间整段拒收", () => {
+    const row = JSON.parse(seg([
+      shot(0, { evidenceRole: "story" }),
+      shot(1, { evidenceRole: "story" }),
+    ]).text) as Record<string, unknown>;
+    row.excludedAdRanges = [{ startSec: 2, endSec: 8 }];
+    const out = mapNativeDeepReadSegments([{ startSec: 0, text: JSON.stringify(row) }]);
+    expect(out.excludedAdRanges).toEqual([{ startSec: 2, endSec: 8 }]);
+
+    // 无广告：字段缺省不出现
+    const plain = mapNativeDeepReadSegments([seg([shot(0)])]);
+    expect(plain.excludedAdRanges).toBeUndefined();
+
+    // end<=start 或负秒位属非法区间，整段过不了 schema
+    row.excludedAdRanges = [{ startSec: 8, endSec: 8 }];
+    const invalid = mapNativeDeepReadSegments([{ startSec: 0, text: JSON.stringify(row) }]);
+    expect(invalid.segmentCount).toBe(0);
+    expect(invalid.failedSegmentCount).toBe(1);
+  });
+
   it("未超限时 truncated=false 且一镜不少", () => {
     const out = mapNativeDeepReadSegments([
       seg(Array.from({ length: 95 }, (_, i) => shot(i))),

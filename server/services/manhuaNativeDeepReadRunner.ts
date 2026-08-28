@@ -1307,6 +1307,93 @@ function assertShotCoverage(
   }
 }
 
+/* ────────────────── 整集卡广告剔除（段卡→整集卡合并层） ────────────────── */
+
+export type NativeDeepReadExcludedAdRange = { startSec: number; endSec: number };
+
+/** 相邻/重叠区间合并（±0.5s 容差与时间轴门禁同口径）。 */
+function mergeAdjacentAdRanges(
+  ranges: ReadonlyArray<NativeDeepReadExcludedAdRange>,
+): NativeDeepReadExcludedAdRange[] {
+  const sorted = [...ranges].sort((a, b) => a.startSec - b.startSec || a.endSec - b.endSec);
+  const merged: NativeDeepReadExcludedAdRange[] = [];
+  for (const range of sorted) {
+    const last = merged.at(-1);
+    if (last && range.startSec <= last.endSec + NATIVE_DEEP_READ_TIMELINE_TOLERANCE_SEC) {
+      last.endSec = Math.max(last.endSec, range.endSec);
+    } else {
+      merged.push({ ...range });
+    }
+  }
+  return merged;
+}
+
+/**
+ * 段卡合并成整集卡时整行剔除 evidenceRole=non_story_ad 的镜头，只留区间账目。
+ *
+ * - 原始分段卡（Gemini 产物 / raw 证据 / 段门禁）一律不动：完整时间轴是模型
+ *   完整性验证与审计需要，本函数只产整集卡视图的新副本。
+ * - 被剔除区间合并相邻后写入该行的顶层可选字段 excludedAdRanges；无广告时
+ *   行原样返回，字段缺省不出现。
+ * - 被剔除镜头行内的画面字幕同属广告内容，一并不入整集卡。
+ */
+export function stripNonStoryAdShotsForEpisodeCard(
+  rows: ReadonlyArray<Record<string, unknown>>,
+): { rows: Array<Record<string, unknown>>; excludedAdRanges: NativeDeepReadExcludedAdRange[] } {
+  const collected: NativeDeepReadExcludedAdRange[] = [];
+  const strippedRows = rows.map((raw) => {
+    const shots = Array.isArray(raw.shots) ? raw.shots : [];
+    const adRanges: NativeDeepReadExcludedAdRange[] = [];
+    const storyShots = shots.filter((shot) => {
+      const row = (shot || {}) as Record<string, unknown>;
+      if (row.evidenceRole !== "non_story_ad") return true;
+      const startSec = Number(row.startSec);
+      const endSec = Number(row.endSec);
+      if (Number.isFinite(startSec) && Number.isFinite(endSec) && startSec >= 0 && endSec > startSec) {
+        adRanges.push({ startSec, endSec });
+      }
+      return false;
+    });
+    if (adRanges.length === 0) return raw;
+    const rowRanges = mergeAdjacentAdRanges(adRanges);
+    collected.push(...rowRanges);
+    const copy: Record<string, unknown> = { ...raw, shots: storyShots, excludedAdRanges: rowRanges };
+    if (Array.isArray(copy.subtitles)) {
+      copy.subtitles = copy.subtitles.filter((subtitle) => {
+        const atSec = Number((subtitle as Record<string, unknown> | null)?.atSec);
+        return !rowRanges.some((range) => atSec >= range.startSec && atSec < range.endSec);
+      });
+    }
+    return copy;
+  });
+  return { rows: strippedRows, excludedAdRanges: mergeAdjacentAdRanges(collected) };
+}
+
+/** 整集卡上的区间账目校验与汇总：startSec/endSec 非负有限且 end>start，否则整集拒收。 */
+function collectEpisodeExcludedAdRanges(
+  rawSegments: ReadonlyArray<Record<string, unknown>>,
+  episodeIndex: number,
+): NativeDeepReadExcludedAdRange[] {
+  const ranges: NativeDeepReadExcludedAdRange[] = [];
+  for (const raw of rawSegments) {
+    const value = raw.excludedAdRanges;
+    if (value === undefined || value === null) continue;
+    if (!Array.isArray(value)) {
+      throw new Error(`第${episodeIndex}集 excludedAdRanges 不是数组，整集拒绝入库`);
+    }
+    for (const item of value) {
+      const row = (item || {}) as Record<string, unknown>;
+      const startSec = Number(row.startSec);
+      const endSec = Number(row.endSec);
+      if (!Number.isFinite(startSec) || !Number.isFinite(endSec) || startSec < 0 || endSec <= startSec) {
+        throw new Error(`第${episodeIndex}集 excludedAdRanges 区间无效，整集拒绝入库`);
+      }
+      ranges.push({ startSec, endSec });
+    }
+  }
+  return mergeAdjacentAdRanges(ranges);
+}
+
 /**
  * 视觉描述文本零秒位门禁（assertNoClockText 口径，MM:SS 钟表式）：
  * 秒位只进数字字段；subtitles 是唯一例外（画面证据逐字照抄，可能含内嵌时码）。
@@ -1541,8 +1628,24 @@ export function assertNativeDeepReadEpisodeEvidence(input: {
   const allShots = input.rawSegments
     .flatMap((raw) => sortedShots(raw))
     .sort((a, b) => a.startSec - b.startSec || a.endSec - b.endSec);
+  // 整集卡不得再出现任何 non_story_ad 镜头行：广告只能以 excludedAdRanges 区间账目存在。
+  // （分段卡门禁行为不变——本门禁只吃合并层产物。）
+  const residualAdShots = allShots.filter((shot) => shot.evidenceRole === "non_story_ad");
+  if (residualAdShots.length > 0) {
+    throw new Error(
+      `第${input.episodeIndex}集整集卡仍含 ${residualAdShots.length} 个 non_story_ad 镜头行（应整行剔除并写入 excludedAdRanges），整集拒绝入库`,
+    );
+  }
+  // 含 excludedAdRanges 的整集卡：覆盖校验把这些区间视为合法缺口（±0.5s 容差与现行一致）。
+  const excludedAdRanges = collectEpisodeExcludedAdRanges(input.rawSegments, input.episodeIndex);
+  const coverageIntervals = excludedAdRanges.length
+    ? [
+      ...allShots.map((shot) => ({ startSec: shot.startSec, endSec: shot.endSec })),
+      ...excludedAdRanges,
+    ].sort((a, b) => a.startSec - b.startSec || a.endSec - b.endSec)
+    : allShots;
   try {
-    assertShotCoverage(allShots, 0, Math.round(input.durationSec), "整集");
+    assertShotCoverage(coverageIntervals, 0, Math.round(input.durationSec), "整集");
   } catch (error) {
     throw new Error(
       `第${input.episodeIndex}集${error instanceof Error ? error.message : String(error)}，整集拒绝入库`,
@@ -1667,15 +1770,15 @@ export function buildNativeDeepReadGlmStructuringPrompt(input: {
     system: `你是漫剧模板卡的「结构化整形师」。只整形不创作：
 1. 禁止虚构输入卡里没有的镜头、字幕、声音或描述；每一条产出都必须能在输入卡里找到出处。
 2. shots 已逐段通过付费前门禁。每镜的 unitTypeZh/shotSizeZh/angleZh/compositionZh/cameraMoveZh/blockingZh/bodyActionZh/limbPropActionZh/microExpressionZh/gazeBreathZh/relationshipReactionZh/lightingZh/actionZh/transitionInZh 都是不可丢失的原始证据。连续表演或连续剧情允许合理合并相邻证据，但合并后的单条证据不得超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，拆分边界必须至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒；不得丢失时间轴覆盖。仍需拆分的同一物理长镜，其 unitTypeZh 必须保持「拆分镜证据段」，transitionInZh 必须保留「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」。
-3. 每个 shot 必须原样保留 evidenceRole。non_story_ad 只用于保存完整原始时间轴，不得与 story 合并，也不得进入剧情字幕、节奏、情绪、分类、可复用手法或生成提示；其余镜头一律保持 story。
+3. 整集卡必须**整行剔除**全部 evidenceRole=non_story_ad 的镜头，其 {startSec,endSec} 区间合并相邻后写入顶层可选字段 excludedAdRanges:[{startSec,endSec}]；不得把广告内容并入任何 story 镜头，广告的画面与声音也不得进入剧情字幕、节奏、情绪、分类、可复用手法或生成提示。输入没有 non_story_ad 镜头时不要输出 excludedAdRanges 字段。保留下来的每个 shot 必须原样保留 evidenceRole，剔除后其余镜头一律保持 story。完整原始时间轴由分段卡审计层保存，无需在整集卡复述广告镜头。
 4. subtitles 只取 story 区间的并集去重，保持全片绝对秒位排序。
 5. audioResolution 保留完整原始听觉证据；广告区间内声音只作审计证据，不得写入 audioBeatStructureZh/mixNotesZh/reusableAudioZh/genAudioHintZh 的可复用结论。
 6. 所有中文描述文本【禁止】出现钟表式秒位（如 01:23）或「在第X秒」定位——秒位只进数字字段。
 7. classification 必须显式输出 emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh 五个数组；没有证据的维度写 []，至少两个维度各有一个来自 story 镜头的真实标签。
 8. 只返回一个 JSON 对象，不要 Markdown 围栏、不要解释。`,
-    user: `把以下同一集的 ${input.rawSegments.length} 份分段卡整形合并成**一张整集原生证据卡**（单个 JSON 对象，字段 schema 与分段卡完全相同：shots/subtitles/audioResolution/beatStructureZh/moodArcZh/classification/reusableZh/genPromptHintZh）。
+    user: `把以下同一集的 ${input.rawSegments.length} 份分段卡整形合并成**一张整集原生证据卡**（单个 JSON 对象，字段 schema 与分段卡完全相同：shots/subtitles/audioResolution/beatStructureZh/moodArcZh/classification/reusableZh/genPromptHintZh，另加顶层可选 excludedAdRanges）。
 要求：
-1. shots 连续无空档覆盖全片 0..${Math.round(input.durationSec)} 秒（绝对秒位），每镜保留 evidenceRole；只有相邻 story 证据可以合理合并，non_story_ad 不得混入 story。合并后的单条证据不得超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，拆分边界至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒，且不得删除仍需保留的「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」续接标记或丢失覆盖。
+1. story 镜头连续无空档覆盖除 excludedAdRanges 外的全时间轴 0..${Math.round(input.durationSec)} 秒（绝对秒位），每镜保留 evidenceRole；只有相邻 story 证据可以合理合并，non_story_ad 必须整行剔除并把 {startSec,endSec} 区间记入顶层 excludedAdRanges，不得混入 story。合并后的单条证据不得超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，拆分边界至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒，且不得删除仍需保留的「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」续接标记或丢失覆盖。
 2. audioResolution 保留全部 [{chunkIndex,analysis}] 条目（chunkIndex 即段号，analysis 内为该段局部秒），逐段齐全${input.hasAudio ? "" : "；本集素材无音轨，audioResolution 保持空数组"}。
 3. beatStructureZh/moodArcZh/reusableZh/genPromptHintZh 只整合 story 证据，可加「第X段」标注；classification 五维标签只取 story 输入并集，不得补猜。
 整集元数据：${JSON.stringify({
@@ -2732,8 +2835,12 @@ export async function runManhuaNativeDeepReadBatch(params: {
           episodeRows = [structuredRaw];
         } else {
           try {
-            gateEpisode(completeRawSegments);
-            episodeRows = annotateSegmentRows();
+            // 整集卡＝确定性拼接后整行剔除 non_story_ad 镜头，只留 excludedAdRanges 区间账目；
+            // 原始分段卡（raw 证据/段门禁/缓存）不动，完整时间轴保留在段级审计层。
+            // 门禁吃剔除后的整集卡，广告区间按合法缺口放行。
+            const stripped = stripNonStoryAdShotsForEpisodeCard(annotateSegmentRows());
+            gateEpisode(stripped.rows);
+            episodeRows = stripped.rows;
           } catch (mergeGateFailure) {
             if (params.abortSignal?.aborted) throw mergeGateFailure;
             const rejectedReasonZh =

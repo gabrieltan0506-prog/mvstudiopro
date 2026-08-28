@@ -36,6 +36,7 @@ import {
   resolveNativeDeepReadRequestFps,
   resolveNativeDeepReadSegmentFloors,
   runManhuaNativeDeepReadBatch,
+  stripNonStoryAdShotsForEpisodeCard,
   validateNativeDeepReadSegments,
   type NativeDeepReadBatchRunnerDeps,
   type NativeDeepReadMediaPreparationDeps,
@@ -810,6 +811,66 @@ describe("整集证据门禁（段卡合并后再跑一遍，GLM 之后同样要
 
 });
 
+describe("整集卡广告剔除（段卡→整集卡合并层，原始分段卡不动）", () => {
+  it("确定性拼接整行剔除 non_story_ad、相邻区间合并记账，原始分段卡完整时间轴不动", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60, shotCountOverride: 12 });
+    const shots = raw.shots as Array<Record<string, unknown>>;
+    shots[2]!.evidenceRole = "non_story_ad"; // 10..15
+    shots[3]!.evidenceRole = "non_story_ad"; // 15..20，相邻区间应合并成一条
+    (raw.subtitles as Array<Record<string, unknown>>).push({ atSec: 12, textZh: "招商字幕" });
+    const { rows, excludedAdRanges } = stripNonStoryAdShotsForEpisodeCard([raw]);
+    expect(excludedAdRanges).toEqual([{ startSec: 10, endSec: 20 }]);
+    const outShots = rows[0]!.shots as Array<Record<string, unknown>>;
+    expect(outShots).toHaveLength(10);
+    expect(outShots.some((shot) => shot.evidenceRole === "non_story_ad")).toBe(false);
+    expect(rows[0]!.excludedAdRanges).toEqual([{ startSec: 10, endSec: 20 }]);
+    expect((rows[0]!.subtitles as Array<{ textZh: string }>).map((s) => s.textZh))
+      .not.toContain("招商字幕");
+    // 原始分段卡（Gemini 产物 / raw 审计证据）一律不动
+    expect(shots).toHaveLength(12);
+    expect(shots[2]!.evidenceRole).toBe("non_story_ad");
+    expect(raw.excludedAdRanges).toBeUndefined();
+    expect((raw.subtitles as unknown[])).toHaveLength(2);
+  });
+
+  it("整集门禁把 excludedAdRanges 视为合法缺口；无账目同缺口照拒；残留广告行照拒；非法区间照拒", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60, shotCountOverride: 12 });
+    (raw.shots as Array<Record<string, unknown>>)[2]!.evidenceRole = "non_story_ad";
+    (raw.shots as Array<Record<string, unknown>>)[3]!.evidenceRole = "non_story_ad";
+    const gate = (rawSegments: Array<Record<string, unknown>>) => () =>
+      assertNativeDeepReadEpisodeEvidence({
+        episodeIndex: 1,
+        durationSec: 60,
+        segments: [{ startSec: 0, endSec: 60 }],
+        hasAudio: true,
+        rawSegments,
+      });
+    // 整集卡里残留 non_story_ad 镜头行：直接拒（广告只许以区间账目存在）
+    expect(gate([raw])).toThrow("non_story_ad 镜头行");
+    // 剔除后的整集卡：广告区间视为合法缺口，门禁放行
+    const { rows } = stripNonStoryAdShotsForEpisodeCard([raw]);
+    expect(gate(rows)).not.toThrow();
+    // 同样的缺口没有区间账目：照旧按空档拒收（分段卡门禁行为不变的对照）
+    const noLedger: Record<string, unknown> = { ...rows[0]! };
+    delete noLedger.excludedAdRanges;
+    expect(gate([noLedger])).toThrow("空档或重叠");
+    // end<=start 属非法区间账目，整集拒收
+    const badLedger: Record<string, unknown> = {
+      ...rows[0]!,
+      excludedAdRanges: [{ startSec: 20, endSec: 10 }],
+    };
+    expect(gate([badLedger])).toThrow("excludedAdRanges 区间无效");
+  });
+
+  it("无广告时行原样返回，excludedAdRanges 字段缺省不出现", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    const { rows, excludedAdRanges } = stripNonStoryAdShotsForEpisodeCard([raw]);
+    expect(rows[0]).toBe(raw);
+    expect(excludedAdRanges).toEqual([]);
+    expect(Object.prototype.hasOwnProperty.call(rows[0]!, "excludedAdRanges")).toBe(false);
+  });
+});
+
 describe("GLM 结构化整形提示词纪律", () => {
   it("只整形不创作、密度只增不减、字幕并集、禁秒位、单 JSON", () => {
     const prompt = buildNativeDeepReadGlmStructuringPrompt({
@@ -838,8 +899,13 @@ describe("GLM 结构化整形提示词纪律", () => {
     expect(prompt.system).toContain("至少两个维度");
     expect(prompt.system).toContain("原样保留 evidenceRole");
     expect(prompt.system).toContain("non_story_ad");
+    expect(prompt.system).toContain("整行剔除");
+    expect(prompt.system).toContain("excludedAdRanges:[{startSec,endSec}]");
+    expect(prompt.system).toContain("输入没有 non_story_ad 镜头时不要输出 excludedAdRanges 字段");
     expect(prompt.system).toContain("广告区间内声音只作审计证据");
     expect(prompt.system).toContain("其余镜头一律保持 story");
+    expect(prompt.user).toContain("除 excludedAdRanges 外的全时间轴");
+    expect(prompt.user).toContain("整行剔除并把 {startSec,endSec} 区间记入顶层 excludedAdRanges");
     expect(prompt.user).toContain("只有相邻 story 证据可以合理合并");
   });
 

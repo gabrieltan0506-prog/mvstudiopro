@@ -51,9 +51,27 @@ const shotSchema = z
   })
   .passthrough();
 
+/**
+ * 整集卡剔除 non_story_ad 镜头行后的区间账目（绝对秒位）。
+ * 完整时间轴仍保留在原始分段卡（Gemini 产物 / raw 证据），供模型完整性验证与审计。
+ */
+export const nativeDeepReadExcludedAdRangeSchema = z
+  .object({
+    startSec: z.number().finite().min(0),
+    endSec: z.number().finite().min(0),
+  })
+  .strict()
+  .refine((range) => range.endSec > range.startSec, {
+    message: "excludedAdRanges 要求 endSec > startSec",
+  });
+
+export type NativeDeepReadExcludedAdRange = z.infer<typeof nativeDeepReadExcludedAdRangeSchema>;
+
 export const nativeDeepReadSegmentSchema = z
   .object({
     shots: z.array(shotSchema).default([]),
+    /** 可选：整集卡合并层整行剔除广告镜头后留下的区间账目；无广告时缺省不出现。 */
+    excludedAdRanges: z.array(nativeDeepReadExcludedAdRangeSchema).optional(),
     subtitles: z.array(z.object({
       atSec: z.number().finite().min(0),
       textZh: z.string().trim().min(1),
@@ -106,6 +124,8 @@ export type NativeDeepReadOutput = {
   truncated: boolean;
   /** 同一集音轨的故事/对白/声音节奏；由执行协调器在视觉精读后装配。 */
   audioAnalysis?: ManhuaNativeAudioAnalysis;
+  /** 整集卡剔除广告镜头行后的区间账目原样透传（全片绝对秒）；无广告时缺省。 */
+  excludedAdRanges?: NativeDeepReadExcludedAdRange[];
 };
 
 const cut = (v: string | undefined, max: number): string | undefined => {
@@ -250,6 +270,14 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
     audienceExperienceTagsZh: mergeTags((row) => row.audienceExperienceTagsZh),
   };
 
+  // 整集卡上的广告区间账目只作透传，不参与本层过滤（消费层剔除逻辑不变）。
+  const excludedAdRanges = ok
+    .flatMap(({ seg, offsetSec }) => (seg.excludedAdRanges ?? []).map((range) => ({
+      startSec: offsetSec + range.startSec,
+      endSec: offsetSec + range.endSec,
+    })))
+    .sort((a, b) => a.startSec - b.startSec || a.endSec - b.endSec);
+
   return {
     beatGrid,
     subtitleTrack,
@@ -266,6 +294,7 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
     failedSegmentCount: rows.length - ok.length,
     droppedCount,
     truncated: false,
+    excludedAdRanges: excludedAdRanges.length ? excludedAdRanges : undefined,
   };
 }
 
