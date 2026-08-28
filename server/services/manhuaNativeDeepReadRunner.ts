@@ -815,14 +815,22 @@ async function postEvolinkNativeDeepRead(
 export function pickSmallestVideoFormat(
   formats: ReadonlyArray<Record<string, unknown>>,
 ): { url: string; sizeMB: number } | null {
+  // 清晰度以可用为准（0829 用户拍板）：540p 优先，取不到降 480p，再取不到用任意可用带音画档。
+  const rank = (f: Record<string, unknown>): number => {
+    const id = String(f.format_id || "");
+    if (id.startsWith("bytevc1_540p")) return 0;
+    if (id.startsWith("bytevc1_480p") || id.includes("480p")) return 1;
+    const hasAv = String(f.vcodec || "none") !== "none" && String(f.acodec || "none") !== "none";
+    return hasAv ? 2 : 9;
+  };
   const candidates = formats
-    .filter((f) => String(f.format_id || "").startsWith("bytevc1_540p"))
     .map((f) => ({
       url: String(f.url || ""),
       size: Number(f.filesize || f.filesize_approx || 0),
+      tier: rank(f),
     }))
-    .filter((f) => f.url)
-    .sort((a, b) => (a.size || 9e15) - (b.size || 9e15));
+    .filter((f) => f.url && f.tier < 9)
+    .sort((a, b) => a.tier - b.tier || (a.size || 9e15) - (b.size || 9e15));
   const best = candidates[0];
   return best ? { url: best.url, sizeMB: best.size / 1048576 } : null;
 }
@@ -841,15 +849,26 @@ export async function resolveNativeDeepReadNodeUrls(
   if (!url) throw new Error("缺少可解析的剧集地址");
   // 凭证不得进入子进程 argv（AGENTS.md 硬红线）：yt-dlp 一律匿名解析；
   // 需要登录态的来源由进程内 fetch 解析层（manhuaDouyinMediaResolve）承接。
-  const stdout = await run(
-    "yt-dlp",
-    ["-J", "--no-warnings", url],
-    120_000,
-    abortSignal,
-  );
-  const info = JSON.parse(stdout) as { formats?: Array<Record<string, unknown>> };
-  const best = pickSmallestVideoFormat(info.formats || []);
-  if (!best) throw new Error("未解析到可用的 540p 档");
+  let best: { url: string; sizeMB: number } | null = null;
+  try {
+    const stdout = await run(
+      "yt-dlp",
+      ["-J", "--no-warnings", url],
+      120_000,
+      abortSignal,
+    );
+    const info = JSON.parse(stdout) as { formats?: Array<Record<string, unknown>> };
+    best = pickSmallestVideoFormat(info.formats || []);
+  } catch {
+    best = null;
+  }
+  if (!best) {
+    // 兜底：进程内解析（登录态只进本进程 fetch 请求头，绝不进子进程 argv）。
+    const { resolveDouyinMediaUrl } = await import("./manhuaDouyinMediaResolve.js");
+    const resolved = await resolveDouyinMediaUrl(url);
+    best = { url: resolved.mediaUrl, sizeMB: 0 };
+  }
+  if (!best.url) throw new Error("未解析到可用的带音画媒体流");
   /**
    * 0826 实弹修复：节点必须自带 Referer——抖音 CDN 无 Referer 会拒（仓库教条）。
    * 在解析器层一次收口，切片/探测两处调用方全部受益，防"同一课学两遍"。

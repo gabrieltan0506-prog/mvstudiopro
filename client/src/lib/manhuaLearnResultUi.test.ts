@@ -5,6 +5,8 @@ import {
   getManhuaLearnSafeProgressLabelZh,
   getManhuaLearnContinueControl,
   isManhuaLearnEmptyBatchFailure,
+  listExportableEpisodes,
+  parseNativeProposalEpisodeRef,
   manhuaLearnResultFromJobOutput,
   manhuaLearnResultFromSnapshot,
   manhuaLearnResultFromStart,
@@ -887,5 +889,77 @@ describe("demoteStaleRunningManhuaLearnItems（僵尸进行中降级）", () => 
     const optimistic = { ...runningItem, jobId: undefined };
     const [out] = demoteStaleRunningManhuaLearnItems([optimistic], []);
     expect(out.result.liveStatus).toBe("running");
+  });
+});
+
+describe("listExportableEpisodes — 按集导出清单", () => {
+  it("三个 complete 集返回三项，可分别导出第 1/2/3 集而不是只有最大集", () => {
+    const out = listExportableEpisodes([
+      { episodeIndex: 1, complete: true },
+      { episodeIndex: 2, complete: true },
+      { episodeIndex: 3, complete: true },
+    ]);
+    expect(out).toEqual([
+      { episodeIndex: 1, complete: true },
+      { episodeIndex: 2, complete: true },
+      { episodeIndex: 3, complete: true },
+    ]);
+  });
+
+  it("乱序输入输出升序", () => {
+    const out = listExportableEpisodes([
+      { episodeIndex: 3, complete: true },
+      { episodeIndex: 1, complete: true },
+      { episodeIndex: 2, complete: true },
+    ]);
+    expect(out.map((e) => e.episodeIndex)).toEqual([1, 2, 3]);
+  });
+
+  it("非 complete 的集被排除（学习中/未落盘不能导出）", () => {
+    const out = listExportableEpisodes([
+      { episodeIndex: 1, complete: true },
+      { episodeIndex: 2, complete: false },
+      { episodeIndex: 3 },
+      { episodeIndex: 4, complete: true },
+    ]);
+    expect(out.map((e) => e.episodeIndex)).toEqual([1, 4]);
+  });
+
+  it("空数组 / null / undefined / 脏集号 安全返回空或过滤", () => {
+    expect(listExportableEpisodes([])).toEqual([]);
+    expect(listExportableEpisodes(null)).toEqual([]);
+    expect(listExportableEpisodes(undefined)).toEqual([]);
+    expect(
+      listExportableEpisodes([
+        null,
+        { episodeIndex: 0, complete: true },
+        { episodeIndex: Number.NaN, complete: true },
+        { episodeIndex: 2.5, complete: true },
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe("parseNativeProposalEpisodeRef — 待审卡集号解析", () => {
+  it("原生逐集卡 id 解析出 seriesKey 与 episodeIndex", () => {
+    expect(parseNativeProposalEpisodeRef({ id: "tpl_native_abc-01_ep002" })).toEqual({
+      seriesKey: "abc-01",
+      episodeIndex: 2,
+    });
+  });
+
+  it("优化提案优先取 revision.parentTemplateId", () => {
+    expect(
+      parseNativeProposalEpisodeRef({
+        id: "tpl_rev_whatever",
+        revision: { parentTemplateId: "tpl_native_xyz_ep013" },
+      }),
+    ).toEqual({ seriesKey: "xyz", episodeIndex: 13 });
+  });
+
+  it("旧系列卡 / 空值 / 格式不符返回 null（不硬猜）", () => {
+    expect(parseNativeProposalEpisodeRef({ id: "tpl_series_abc" })).toBeNull();
+    expect(parseNativeProposalEpisodeRef(null)).toBeNull();
+    expect(parseNativeProposalEpisodeRef({ id: "tpl_native_abc_ep12" })).toBeNull();
   });
 });

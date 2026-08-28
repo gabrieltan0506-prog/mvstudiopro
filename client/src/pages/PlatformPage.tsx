@@ -142,6 +142,8 @@ import {
   manhuaLearnResultFromStart,
   mergeManhuaLearnLiveProgress,
   demoteStaleRunningManhuaLearnItems,
+  listExportableEpisodes,
+  parseNativeProposalEpisodeRef,
   mergeManhuaLearnServerJobsIntoBasket,
   nativeLearnTerminalProposalRefreshSignature,
   parseManhuaNativeModelReceipts,
@@ -3136,6 +3138,43 @@ export default function PlatformPage() {
   const confirmPlatformSkillQaImageMutation = trpc.mvAnalysis.confirmPlatformSkillQaImage.useMutation();
   const approveManhuaViralTemplateMutation = trpc.manhuaViralTemplate.approve.useMutation();
   const renderEpisodeReportMutation = trpc.manhuaViralTemplate.renderEpisodeReport.useMutation();
+  /** 按集导出报告：只锁正在请求的那一集，其他集的导出按钮保持可用 */
+  const [manhuaEpisodeExportPending, setManhuaEpisodeExportPending] = useState<number | null>(null);
+  const exportManhuaEpisodeReport = useCallback(
+    async (seriesKey: string, episodeIndex: number) => {
+      setManhuaEpisodeExportPending(episodeIndex);
+      // 同步预开空白页，异步拿到 URL 再跳转，避免浏览器拦截弹窗
+      const reportTab = window.open("", "_blank");
+      try {
+        const report = await renderEpisodeReportMutation.mutateAsync({ seriesKey, episodeIndex });
+        if (reportTab) reportTab.location.href = report.reportUrl;
+        toast.success(`第 ${episodeIndex} 集学习报告已生成（${report.shots} 镜 · ${report.frames} 帧）`, {
+          action: reportTab
+            ? undefined
+            : { label: "打开报告", onClick: () => window.open(report.reportUrl, "_blank", "noopener") },
+        });
+      } catch (e) {
+        reportTab?.close();
+        toast.error(`第 ${episodeIndex} 集报告生成失败：${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        // 并发点了另一集时，先完成的这集不能把后点那集的 pending 清掉
+        setManhuaEpisodeExportPending((cur) => (cur === episodeIndex ? null : cur));
+      }
+    },
+    [renderEpisodeReportMutation],
+  );
+  /** 可按集导出的集号（complete 升序）；导出入口只对原生精读结果开放 */
+  const manhuaExportableEpisodes = useMemo(
+    () =>
+      manhuaLearnResult?.seriesKey && manhuaLearnResult.pipelineMode === "native_deep_read"
+        ? listExportableEpisodes(manhuaLearnResult.digestsPreview)
+        : [],
+    [manhuaLearnResult?.seriesKey, manhuaLearnResult?.pipelineMode, manhuaLearnResult?.digestsPreview],
+  );
+  const manhuaExportableEpisodeSet = useMemo(
+    () => new Set(manhuaExportableEpisodes.map((e) => e.episodeIndex)),
+    [manhuaExportableEpisodes],
+  );
   /** 下架待确认的模板 id：点第一次进入确认态，再点一次才真下架 */
   const [archiveConfirmId, setArchiveConfirmId] = useState("");
   const archiveManhuaTemplateMutation = trpc.manhuaViralTemplate.archiveApproved.useMutation();
@@ -12302,39 +12341,6 @@ export default function PlatformPage() {
                           </p>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
-                          {manhuaLearnResult?.seriesKey
-                            && manhuaLearnResult.pipelineMode === "native_deep_read"
-                            && (manhuaLearnResult.digestsPreview || []).some((d) => d.complete) ? (
-                            <button
-                              type="button"
-                              disabled={renderEpisodeReportMutation.isPending}
-                              onClick={async () => {
-                                const episodeIndex = Math.max(
-                                  ...(manhuaLearnResult.digestsPreview || [])
-                                    .filter((d) => d.complete)
-                                    .map((d) => d.episodeIndex),
-                                );
-                                const reportTab = window.open("", "_blank");
-                                try {
-                                  const report = await renderEpisodeReportMutation.mutateAsync({
-                                    seriesKey: manhuaLearnResult.seriesKey,
-                                    episodeIndex,
-                                  });
-                                  if (reportTab) reportTab.location.href = report.reportUrl;
-                                  toast.success(`第 ${episodeIndex} 集学习报告已生成（${report.shots} 镜 · ${report.frames} 帧）`, {
-                                    action: reportTab ? undefined : { label: "打开报告", onClick: () => window.open(report.reportUrl, "_blank", "noopener") },
-                                  });
-                                } catch (e) {
-                                  reportTab?.close();
-                                  toast.error(e instanceof Error ? e.message : "报告生成失败");
-                                }
-                              }}
-                              className="inline-flex items-center gap-1.5 rounded-full border border-[#8cefff]/30 bg-[rgba(140,239,255,0.1)] px-3 py-1.5 text-[11px] font-semibold text-[#8cefff] transition hover:bg-[rgba(140,239,255,0.18)] disabled:opacity-40"
-                            >
-                              <Download className="h-3.5 w-3.5" />
-                              {renderEpisodeReportMutation.isPending ? "生成中…" : "导出当前学习 HTML"}
-                            </button>
-                          ) : null}
                           <a
                             href="/canvas"
                             className="inline-flex items-center gap-1.5 rounded-full border border-[#ff4fb8]/30 bg-[rgba(255,79,184,0.1)] px-3 py-1.5 text-[11px] font-semibold text-[#ff9fe0] transition hover:bg-[rgba(255,79,184,0.18)]"
@@ -13012,6 +13018,24 @@ export default function PlatformPage() {
                                     · {d.complete ? "已落盘" : `学习中 ${Math.round((Number(d.learnedThroughSec) || 0) / 60)} 分`}
                                   </span>
                                   {d.title ? ` · ${d.title}` : ""}
+                                  {manhuaExportableEpisodeSet.has(d.episodeIndex) ? (
+                                    <button
+                                      type="button"
+                                      disabled={manhuaEpisodeExportPending === d.episodeIndex}
+                                      onClick={() =>
+                                        void exportManhuaEpisodeReport(
+                                          manhuaLearnResult.seriesKey,
+                                          d.episodeIndex,
+                                        )
+                                      }
+                                      className="ml-2 inline-flex items-center gap-1 rounded-full border border-[#8cefff]/30 bg-[rgba(140,239,255,0.1)] px-2 py-0.5 text-[10px] font-semibold text-[#8cefff] transition hover:bg-[rgba(140,239,255,0.18)] disabled:opacity-40"
+                                    >
+                                      <Download className="h-3 w-3" />
+                                      {manhuaEpisodeExportPending === d.episodeIndex
+                                        ? "生成中…"
+                                        : `导出第 ${d.episodeIndex} 集 HTML`}
+                                    </button>
+                                  ) : null}
                                   {d.categoryLabelZh ? (
                                     <span className="ml-1 text-amber-100/45">
                                       · {d.categoryLabelZh}
@@ -13494,6 +13518,30 @@ export default function PlatformPage() {
                                   ? "批准替换原版"
                                   : selectedManhuaProposalProgressCopy?.approveButtonZh || "批准入库"}
                             </button>
+                            {(() => {
+                              /* 待审卡的导出入口：只有能从卡 id 干净解析出
+                                 seriesKey+episodeIndex 的原生逐集卡才显示；
+                                 对象名一律由服务端拼，客户端只传这两个字段 */
+                              const episodeRef = parseNativeProposalEpisodeRef(selectedManhuaProposal);
+                              if (!episodeRef) return null;
+                              return (
+                                <button
+                                  type="button"
+                                  disabled={manhuaEpisodeExportPending === episodeRef.episodeIndex}
+                                  onClick={() =>
+                                    void exportManhuaEpisodeReport(
+                                      episodeRef.seriesKey,
+                                      episodeRef.episodeIndex,
+                                    )
+                                  }
+                                  className="shrink-0 rounded-lg border border-[#8cefff]/30 bg-[rgba(140,239,255,0.1)] px-2.5 py-1.5 font-semibold text-[#8cefff] disabled:opacity-50"
+                                >
+                                  {manhuaEpisodeExportPending === episodeRef.episodeIndex
+                                    ? "生成中…"
+                                    : `导出第 ${episodeRef.episodeIndex} 集 HTML`}
+                                </button>
+                              );
+                            })()}
                           </div>
                           {selectedManhuaProposalProgressCopy ? (
                             <p className="mt-2 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.06] px-2.5 py-2 text-[10px] font-semibold leading-relaxed text-cyan-100/80">

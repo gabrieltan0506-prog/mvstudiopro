@@ -1389,3 +1389,54 @@ export function manhuaLearnResultFromSnapshot(input: {
         : null,
   };
 }
+
+/* ── 按集导出：分集报告的可导出清单与待审卡集号解析（纯函数，便于测试） ── */
+
+export type ManhuaExportableEpisode = {
+  episodeIndex: number;
+  complete: true;
+};
+
+/**
+ * 从 digestsPreview 里筛出**可单独导出报告**的集号（complete === true），升序返回。
+ *
+ * 为什么抽成纯函数：导出按钮必须一集一颗，而不是「自动挑最大 complete 集」——
+ * 用户学了 1/2/3 集时要能分别导出第 1、第 2、第 3 集，这里的排序与过滤
+ * 就是那份契约，测试直接打在这个函数上。
+ */
+export function listExportableEpisodes(
+  digestsPreview:
+    | ReadonlyArray<{ episodeIndex?: unknown; complete?: unknown } | null | undefined>
+    | null
+    | undefined,
+): ManhuaExportableEpisode[] {
+  return (digestsPreview || [])
+    .filter(
+      (d): d is { episodeIndex: number; complete: true } =>
+        Boolean(d)
+        && d?.complete === true
+        && Number.isInteger(Number(d?.episodeIndex))
+        && Number(d?.episodeIndex) >= 1,
+    )
+    .map((d) => ({ episodeIndex: Number(d.episodeIndex), complete: true as const }))
+    .sort((a, b) => a.episodeIndex - b.episodeIndex);
+}
+
+/**
+ * 从原生逐集待审卡 id（`tpl_native_<seriesKey>_epNNN`，优化提案先看
+ * revision.parentTemplateId）解析出 seriesKey + episodeIndex。
+ *
+ * 客户端**不拼任何 GCS 对象名**：解析出来的两个字段只用于调用
+ * renderEpisodeReport 接口，对象名由服务端唯一拼装。
+ * 解析不出（旧系列卡、格式不符）就返回 null，调用方隐藏导出入口，不硬猜。
+ */
+export function parseNativeProposalEpisodeRef(
+  card: { id?: unknown; revision?: { parentTemplateId?: unknown } | null } | null | undefined,
+): { seriesKey: string; episodeIndex: number } | null {
+  const id = String(card?.revision?.parentTemplateId || card?.id || "").trim();
+  const match = id.match(/^tpl_native_([0-9A-Za-z_-]{1,40})_ep(\d{3})$/);
+  if (!match) return null;
+  const episodeIndex = Number(match[2]);
+  if (!Number.isInteger(episodeIndex) || episodeIndex < 1) return null;
+  return { seriesKey: match[1], episodeIndex };
+}
