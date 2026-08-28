@@ -3135,6 +3135,7 @@ export default function PlatformPage() {
   const askPlatformSkillQaMutation = trpc.mvAnalysis.askPlatformSkillQa.useMutation();
   const confirmPlatformSkillQaImageMutation = trpc.mvAnalysis.confirmPlatformSkillQaImage.useMutation();
   const approveManhuaViralTemplateMutation = trpc.manhuaViralTemplate.approve.useMutation();
+  const renderEpisodeReportMutation = trpc.manhuaViralTemplate.renderEpisodeReport.useMutation();
   /** 下架待确认的模板 id：点第一次进入确认态，再点一次才真下架 */
   const [archiveConfirmId, setArchiveConfirmId] = useState("");
   const archiveManhuaTemplateMutation = trpc.manhuaViralTemplate.archiveApproved.useMutation();
@@ -12316,34 +12317,28 @@ export default function PlatformPage() {
                           </p>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
-                          {rising?.entries?.length ? (
+                          {manhuaLearnResult?.seriesKey
+                            && manhuaLearnResult.learnedCount > 0 ? (
                             <button
                               type="button"
-                              onClick={() => {
-                                const payload = {
-                                  exportedAt: new Date().toISOString(),
-                                  platform: aiManhuaPlatformTab,
-                                  windowDays: rising.windowDays,
-                                  note: rising.note,
-                                  entries: rising.entries,
-                                };
-                                const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
-                                  type: "application/json",
-                                });
-                                const a = document.createElement("a");
-                                a.href = URL.createObjectURL(blob);
-                                a.download = `ai-manhua-rising-${aiManhuaPlatformTab}-${new Date().toISOString().slice(0, 10)}.json`;
-                                a.click();
-                                URL.revokeObjectURL(a.href);
-                                toast.success("已导出飙升榜 JSON", {
-                                  description:
-                                    "备用本机：pnpm run manhua:template-learn -- --rising-json <文件> --rank 1",
-                                });
+                              disabled={renderEpisodeReportMutation.isPending}
+                              onClick={async () => {
+                                const episodeIndex = manhuaLearnResult.learnedCount;
+                                try {
+                                  const report = await renderEpisodeReportMutation.mutateAsync({
+                                    seriesKey: manhuaLearnResult.seriesKey,
+                                    episodeIndex,
+                                  });
+                                  window.open(report.reportUrl, "_blank", "noopener");
+                                  toast.success(`第 ${episodeIndex} 集学习报告已生成（${report.shots} 镜 · ${report.frames} 帧）`);
+                                } catch (e) {
+                                  toast.error(e instanceof Error ? e.message : "报告生成失败");
+                                }
                               }}
-                              className="inline-flex items-center gap-1.5 rounded-full border border-[#8cefff]/30 bg-[rgba(140,239,255,0.1)] px-3 py-1.5 text-[11px] font-semibold text-[#8cefff] transition hover:bg-[rgba(140,239,255,0.18)]"
+                              className="inline-flex items-center gap-1.5 rounded-full border border-[#8cefff]/30 bg-[rgba(140,239,255,0.1)] px-3 py-1.5 text-[11px] font-semibold text-[#8cefff] transition hover:bg-[rgba(140,239,255,0.18)] disabled:opacity-40"
                             >
                               <Download className="h-3.5 w-3.5" />
-                              导出学习 JSON
+                              {renderEpisodeReportMutation.isPending ? "生成中…" : "导出当前学习 HTML"}
                             </button>
                           ) : null}
                           <a
@@ -13724,109 +13719,6 @@ export default function PlatformPage() {
                         </div>
                       ) : null}
 
-                      {rising?.entries?.length ? (
-                        <div className="mt-3 space-y-2">
-                          <div className="grid grid-cols-[28px_1fr_72px_72px_40px_64px] gap-2 px-1 text-[10px] text-[#c9c0e6]/45">
-                            <span />
-                            <span>剧名 / 归类</span>
-                            <span className="text-right">播放</span>
-                            <span className="text-right">环比</span>
-                            <span className="text-right">状态</span>
-                            <span className="text-right">学习</span>
-                          </div>
-                          {rising.entries.map((row, idx) => {
-                            const tags = row.tagLabelsZh || [];
-                            const learnable = canLearnRow(row);
-                            const titleNode = (
-                              <div className="min-w-0">
-                                <div className="truncate font-semibold text-white">{row.mixName}</div>
-                                <div className="truncate text-[10px] text-[#c9c0e6]/50">
-                                  {categoryOf(row)}
-                                  {tags.length ? ` · ${tags.join(" / ")}` : ""}
-                                  {row.author ? ` · ${row.author}` : ""}
-                                </div>
-                                {!row.url ? (
-                                  <div className="text-[10px] text-[#c9c0e6]/35">暂无合集链</div>
-                                ) : null}
-                              </div>
-                            );
-                            // 与 runManhuaTemplateLearnCloud 的 busyKey 同口径（那边 trim 过）
-                            const busyKey = String(
-                              String(row.mixId || "").trim()
-                                || String(row.url || "").trim()
-                                || String(row.mixName || "").trim()
-                                || idx + 1,
-                            );
-                            const busy = manhuaLearnBusyKey === busyKey;
-                            return (
-                              <div
-                                key={row.mixId || idx}
-                                className="grid grid-cols-[28px_1fr_72px_72px_40px_64px] items-center gap-2 rounded-xl border border-white/8 bg-black/25 px-3 py-2 text-[12px]"
-                              >
-                                <span className="font-bold text-[#c9c0e6]/45">#{idx + 1}</span>
-                                {row.url ? (
-                                  <a
-                                    href={row.url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="min-w-0 hover:opacity-90"
-                                    title={
-                                      aiManhuaPlatformTab === "kuaishou"
-                                        ? "在快手打开"
-                                        : "在抖音打开"
-                                    }
-                                  >
-                                    {titleNode}
-                                  </a>
-                                ) : (
-                                  titleNode
-                                )}
-                                <span className="text-right font-semibold tabular-nums text-[#3eedff]">
-                                  {fmtPlay(row.mixPlayCount)}
-                                </span>
-                                <span className="text-right font-semibold tabular-nums text-[#ff4fb8]">
-                                  {row.delta7d == null ? "—" : `+${fmtPlay(row.delta7d)}`}
-                                </span>
-                                <span className="text-right text-[10px] font-semibold text-[#ff9fe0]">
-                                  {statusLabel(row.status)}
-                                </span>
-                                <button
-                                  type="button"
-                                  disabled={
-                                    Boolean(manhuaLearnBusyKey)
-                                    || activeManhuaLearnSources.has(String(row.gcsUri || row.url || "").trim())
-                                    || !learnable
-                                  }
-                                  title={
-                                    learnable
-                                      ? "云端学节奏；失败回退本机命令"
-                                      : "暂无可用成片链接，无法下片学习"
-                                  }
-                                  onClick={() =>
-                                    void runManhuaTemplateLearnCloud(
-                                      { ...row, platform: aiManhuaPlatformTab },
-                                      idx + 1,
-                                    )
-                                  }
-                                  className="justify-self-end rounded-md border border-[#8cefff]/25 bg-[rgba(140,239,255,0.08)] px-1.5 py-0.5 text-[10px] font-semibold text-[#8cefff] hover:bg-[rgba(140,239,255,0.16)] disabled:opacity-40"
-                                >
-                                  {busy ? "学习中…" : `学 ${manhuaLearnBatchSize} 集`}
-                                </button>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <div className="mt-4 rounded-xl border border-dashed border-white/15 bg-black/20 px-4 py-6 text-center text-[12px] leading-relaxed text-[#c9c0e6]/55">
-                          {rising?.storeReadFailed
-                            ? "趋势库读取超时，暂未拿到合集样本。请稍后重试分析；总览其它数据不受影响。"
-                            : aiManhuaPlatformTab === "kuaishou"
-                              ? "本窗快手侧暂无已确认的漫剧/短剧合集样本（不会把普通短视频当成短剧）。可继续看总览；采集命中后将展示剧名、类别与标签。"
-                              : "本窗抖音侧暂无已确认的漫剧/短剧合集样本。请完成趋势分析，且采集侧已跑出带合集字段的条目。"}
-                          <br />
-                          总览里的多平台口播/种草数据不受影响。
-                        </div>
-                      )}
                     </div>
                   )}
                 </>
