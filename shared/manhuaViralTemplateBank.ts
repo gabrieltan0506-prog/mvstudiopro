@@ -297,7 +297,7 @@ export type ManhuaViralTemplateProvenance = {
     shotCount: number;
     /** 因动作或节奏结构为空而丢弃的镜头数 */
     droppedCount: number;
-    /** 是否触顶 128 被等距抽稀 */
+    /** 兼容旧卡：true 表示历史写入曾发生证据截断；新链路不得再截断。 */
     truncated: boolean;
     /** 同一次多视频视觉请求的内部批次号；只用于对账，不暴露媒体地址。 */
     batchRequestId?: string;
@@ -313,6 +313,8 @@ export type ManhuaViralTemplateProvenance = {
     /** 私有稳定来源摘要与段集合快照；公开 DTO 不得透出。 */
     sourceDigest?: string;
     snapshotSha256?: string;
+    /** 私有 GCS 对象名；每项都是一个已付费分片的完整原始 JSON。 */
+    segmentEvidenceObjectNames?: string[];
   };
   nativeAudioDeepRead?: {
     model: string;
@@ -358,7 +360,7 @@ export const MANHUA_VIRAL_TEMPLATE_BANK: readonly ManhuaViralTemplateCard[] = []
  * 一句话说清「这张卡是怎么学来的」。
  *
  * 审批人必须能分辨精读卡与抽帧卡：两者门槛差很多，精读卡带可复用手法与生成要素，
- * 抽帧卡没有。丢镜数与触顶抽稀也必须露出来——**静默少几个镜头比整体失败更难发现**。
+ * 抽帧卡没有。丢镜数与历史截断也必须露出来——**静默少几个镜头比整体失败更难发现**。
  *
  * 判据只此一处，路由与前端都引用，不各自拼串。
  * 不含成本：审批看的是内容质量，成本走对账口径。
@@ -375,7 +377,7 @@ export function describeManhuaTemplateLearnSourceZh(
       `${n.successSegments}/${n.attemptedSegments}段`,
     ].filter(Boolean);
     if (n.droppedCount > 0) parts.push(`丢弃${n.droppedCount}镜`);
-    if (n.truncated) parts.push("触顶抽稀");
+    if (n.truncated) parts.push("历史产物曾截断");
     if ((n.batchEpisodeCount || 0) > 1) parts.push(`同批${n.batchEpisodeCount}集`);
     if (n.usingPlanQuota === false) parts.push("按量付费");
     const a = provenance?.nativeAudioDeepRead;
@@ -423,9 +425,6 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
           };
         })
         .filter((b) => b.conflictZh && b.visualZh)
-        // 抽帧链路一集 ~24 拍够用；原生视频精读是逐镜，实测 262 秒出 95 镜，
-        // 卡在 24 会把大部分镜头静默截断
-        .slice(0, 128)
     : [];
   const cast = o.castShape || { leadDesireZh: "", pressureZh: "" };
   const classification = parseManhuaTemplateClassification(o.classification);
@@ -446,15 +445,13 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
         atSec: Math.max(0, Number((row as { atSec?: unknown }).atSec) || 0),
         textZh: String((row as { textZh?: unknown }).textZh || "").trim().slice(0, 160),
       }))
-      .filter((row) => row.textZh)
-      .slice(0, 512),
+      .filter((row) => row.textZh),
     reusableZh: String(o.reusableZh || "").trim().slice(0, 600) || undefined,
     genPromptHintZh: String(o.genPromptHintZh || "").trim().slice(0, 600) || undefined,
     audioStory: parseManhuaNativeAudioAnalysis(o.audioStory),
     scenePoolHints: (Array.isArray(o.scenePoolHints) ? o.scenePoolHints : [])
       .map((s) => String(s || "").trim())
-      .filter(Boolean)
-      .slice(0, 16),
+      .filter(Boolean),
     castShape: {
       leadDesireZh: String(cast.leadDesireZh || "").trim().slice(0, 80),
       pressureZh: String(cast.pressureZh || "").trim().slice(0, 80),
@@ -480,8 +477,7 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
         fetchedAt: String((r as ManhuaViralTemplateSourceRef).fetchedAt || "").trim().slice(0, 32),
         noteZh: String((r as ManhuaViralTemplateSourceRef).noteZh || "").trim().slice(0, 120) || undefined,
       }))
-      .filter((r) => r.url)
-      .slice(0, 8),
+      .filter((r) => r.url),
     status,
     publicCode: /^[A-Z0-9]{4,16}$/.test(String(o.publicCode || "")) ? String(o.publicCode) : undefined,
     approvedAt: o.approvedAt ? String(o.approvedAt) : undefined,
@@ -496,17 +492,17 @@ function parseManhuaTemplateClassification(
 ): ManhuaViralTemplateClassification | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const o = raw as Partial<ManhuaViralTemplateClassification>;
-  const tags = (value: unknown, max: number) => Array.from(new Set(
+  const tags = (value: unknown) => Array.from(new Set(
     (Array.isArray(value) ? value : [])
       .map((tag) => String(tag || "").trim().slice(0, 24))
       .filter(Boolean),
-  )).slice(0, max);
+  ));
   const classification: ManhuaViralTemplateClassification = {
-    emotionTagsZh: tags(o.emotionTagsZh, 8),
-    narrativeFeatureTagsZh: tags(o.narrativeFeatureTagsZh, 8),
-    performanceTagsZh: tags(o.performanceTagsZh, 8),
-    audiovisualTagsZh: tags(o.audiovisualTagsZh, 8),
-    audienceExperienceTagsZh: tags(o.audienceExperienceTagsZh, 8),
+    emotionTagsZh: tags(o.emotionTagsZh),
+    narrativeFeatureTagsZh: tags(o.narrativeFeatureTagsZh),
+    performanceTagsZh: tags(o.performanceTagsZh),
+    audiovisualTagsZh: tags(o.audiovisualTagsZh),
+    audienceExperienceTagsZh: tags(o.audienceExperienceTagsZh),
   };
   return flattenManhuaTemplateClassification(classification).length ? classification : undefined;
 }
@@ -517,17 +513,17 @@ function parseManhuaTemplateStoryStructure(
   if (!raw || typeof raw !== "object") return undefined;
   const o = raw as Partial<ManhuaViralTemplateStoryStructure>;
   const text = (value: unknown, max: number) => String(value || "").trim().slice(0, max);
-  const list = (value: unknown, maxItems: number, maxChars: number) => Array.from(new Set(
+  const list = (value: unknown, maxChars: number) => Array.from(new Set(
     (Array.isArray(value) ? value : [])
       .map((row) => text(row, maxChars))
       .filter(Boolean),
-  )).slice(0, maxItems);
+  ));
   const story: ManhuaViralTemplateStoryStructure = {
     corePromiseZh: text(o.corePromiseZh, 240),
     conflictEngineZh: text(o.conflictEngineZh, 320),
     relationshipEngineZh: text(o.relationshipEngineZh, 320),
-    episodeProgressionZh: list(o.episodeProgressionZh, 16, 180),
-    variationRulesZh: list(o.variationRulesZh, 16, 180),
+    episodeProgressionZh: list(o.episodeProgressionZh, 180),
+    variationRulesZh: list(o.variationRulesZh, 180),
   };
   return story.corePromiseZh
     && story.conflictEngineZh
@@ -681,7 +677,7 @@ function parseManhuaViralTemplateProvenance(
         ...(Number.isFinite(endSec) && endSec > startSec ? { endSec } : {}),
         origin: "source_api" as const,
       }];
-    }).slice(0, 8);
+    });
     if (sourceMarkers.length) out.sourceMarkers = sourceMarkers;
   }
   if (o.frameVision && typeof o.frameVision === "object") {
@@ -710,6 +706,11 @@ function parseManhuaViralTemplateProvenance(
         : [];
     const sourceDigest = String(n.sourceDigest || "").trim().toLowerCase();
     const snapshotSha256 = String(n.snapshotSha256 || "").trim().toLowerCase();
+    const segmentEvidenceObjectNames = Array.isArray(n.segmentEvidenceObjectNames)
+      ? Array.from(new Set(n.segmentEvidenceObjectNames
+          .map((value) => String(value || "").trim())
+          .filter((value) => /^manhua-template-learn\/segment-evidence\/[0-9A-Za-z_\/-]{1,220}\/seg\d{1,6}-[a-f0-9]{64}\.json$/.test(value))))
+      : [];
     out.nativeVideoDeepRead = {
       model: String(n.model || "").slice(0, 60),
       attemptedSegments,
@@ -731,6 +732,9 @@ function parseManhuaViralTemplateProvenance(
         : legacyComplete,
       sourceDigest: /^[a-f0-9]{64}$/.test(sourceDigest) ? sourceDigest : undefined,
       snapshotSha256: /^[a-f0-9]{64}$/.test(snapshotSha256) ? snapshotSha256 : undefined,
+      segmentEvidenceObjectNames: segmentEvidenceObjectNames.length
+        ? segmentEvidenceObjectNames
+        : undefined,
     };
     // 新部分卡必须携带可验证的完整进度身份；旧完整卡继续兼容读取。
     if (
@@ -906,32 +910,35 @@ export function recommendPublicManhuaViralTemplate(
 const LONG_TIER_SEGMENTS = manhuaEpisodeSegmentsForTier("long");
 
 /**
- * 把模板节拍格套到目标段数上。
+ * 把完整模板节拍格映射到目标时长。
  *
- * 卡片里存的是长档骨架（12 拍 × 15s = 180s）。短档一集只有 6 段，若原样注入，
- * 编剧会照着 165s 的弧线写，后半永远拍不出来。段长恒定 15s，所以这里只做两件事：
- * 按目标段数等距抽稀（必留开场与片尾钩子），再按 15s 重打时间戳。
+ * 只缩放秒位，不删任何一镜。目标剧本较短也必须让编剧看到全部证据；如果下游模型
+ * 上下文不足，应明确失败或换更大模型，不能通过抽稀后回写来伪装成功。
  */
 export function fitManhuaViralBeatGridToSegments(
   beatGrid: readonly ManhuaViralTemplateBeat[],
   segments: number,
 ): ManhuaViralTemplateBeat[] {
-  // 原来先 slice(0,16) 再等距抽：抽帧 24 拍时无碍，但精读 95 镜会只用到前 16 个
-  // （相当于只看全片前 1/6），后段的爆点与收束全部拿不到。改为在完整镜头集上等距采样。
   const src = beatGrid.filter(Boolean);
   const want = Math.max(1, Math.floor(segments));
   if (!src.length) return [];
-  const picked =
-    src.length <= want
-      ? src.slice()
-      : Array.from({ length: want }, (_, i) =>
-          src[
-            want === 1 ? 0 : Math.round((i * (src.length - 1)) / (want - 1))
-          ],
-        );
-  return picked.map((b, i) => ({
-    ...b,
-    atSec: i * MANHUA_EPISODE_SEGMENT_DURATION_SEC,
+  const sourceStart = Math.min(...src.map((beat) => Math.max(0, Number(beat.atSec) || 0)));
+  const sourceEnd = Math.max(...src.map((beat) => Math.max(0, Number(beat.endSec ?? beat.atSec) || 0)));
+  const targetEnd = Math.max(0, (want - 1) * MANHUA_EPISODE_SEGMENT_DURATION_SEC);
+  const sourceSpan = sourceEnd - sourceStart;
+  const scaleSec = (value: number, index: number): number => {
+    if (sourceSpan > 0) {
+      return Math.round(((Math.max(sourceStart, value) - sourceStart) / sourceSpan) * targetEnd * 1000) / 1000;
+    }
+    if (src.length <= 1) return 0;
+    return Math.round((index / (src.length - 1)) * targetEnd * 1000) / 1000;
+  };
+  return src.map((beat, index) => ({
+    ...beat,
+    atSec: scaleSec(Number(beat.atSec) || 0, index),
+    ...(beat.endSec != null
+      ? { endSec: scaleSec(Number(beat.endSec) || Number(beat.atSec) || 0, index) }
+      : {}),
   }));
 }
 

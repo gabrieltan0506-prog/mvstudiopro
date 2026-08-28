@@ -17,8 +17,6 @@ export const MANHUA_TEMPLATE_FRAME_VISION_MODEL = "gpt-5.6-terra" as const;
 export const MANHUA_TEMPLATE_FRAME_VISION_REASONING = "high" as const;
 export const MANHUA_TEMPLATE_FRAME_VISION_LABEL = "GPT-5.6 Terra · High" as const;
 export const MANHUA_TEMPLATE_FRAME_VISION_MAX_OUTPUT_TOKENS = 32_768;
-/** 单次读帧上限（控制请求体与上下文） */
-export const MANHUA_TEMPLATE_FRAME_VISION_MAX_FRAMES = 24;
 
 /**
  * `claude` / `deepseek` 只为读取旧任务与旧进度保留；新旧入口实际都固定归一到 GPT。
@@ -112,34 +110,25 @@ export function buildManhuaTemplateFrameVisionUserText(input: {
   ];
   const transcript = String(input.transcriptPreview || "").replace(/\s+/g, " ").trim().slice(0, 500);
   if (transcript) lines.push(`语音摘要（勿抄原句进成稿）：${transcript}`);
-  const climax = (input.climaxNotes || []).map((s) => String(s || "").trim()).filter(Boolean).slice(0, 6);
+  const climax = (input.climaxNotes || []).map((s) => String(s || "").trim()).filter(Boolean);
   if (climax.length) lines.push(`高潮窗备注：${climax.join("；")}`);
   lines.push("请按系统要求输出 JSON。");
   return lines.join("\n");
 }
 
-/** 抽帧过多时：保留前 5s 钩子 + 均匀抽样，总量 ≤ max */
+/**
+ * 旧抽帧链的帧序归一化。
+ *
+ * 这里只排序、去重，绝不能再把已经抽出的证据裁成 16/24 张。若模型输入需要分批，
+ * 应在调用层分批并保留每批结果，不得通过删帧来适配上下文。
+ */
 export function selectFramesForVisionAnalysis<T extends { atSec: number }>(
   frames: T[],
-  max = MANHUA_TEMPLATE_FRAME_VISION_MAX_FRAMES,
 ): T[] {
-  if (frames.length <= max) return frames.slice();
   const sorted = [...frames].sort((a, b) => a.atSec - b.atSec);
-  const hook = sorted.filter((f) => f.atSec <= 5.05);
-  const rest = sorted.filter((f) => f.atSec > 5.05);
-  const out: T[] = [...hook];
-  const budget = Math.max(0, max - out.length);
-  if (budget <= 0) return out.slice(0, max);
-  if (rest.length <= budget) return [...out, ...rest].slice(0, max);
-  for (let i = 0; i < budget; i++) {
-    const idx = Math.round((i * (rest.length - 1)) / Math.max(1, budget - 1));
-    out.push(rest[idx]!);
-  }
   const dedup = new Map<number, T>();
-  for (const f of out) dedup.set(Math.round(f.atSec * 100), f);
-  return Array.from(dedup.values())
-    .sort((a, b) => a.atSec - b.atSec)
-    .slice(0, max);
+  for (const frame of sorted) dedup.set(Math.round(frame.atSec * 100), frame);
+  return Array.from(dedup.values()).sort((a, b) => a.atSec - b.atSec);
 }
 
 function asLane(raw: unknown, fallback: ManhuaViralTemplateLane): ManhuaViralTemplateLane {
@@ -185,7 +174,6 @@ export function parseManhuaTemplateFrameVisionJson(
           };
         })
         .filter((b) => b.conflictZh && b.visualZh)
-        .slice(0, 24)
     : [];
   if (!beatGrid.length) return null;
 
@@ -203,7 +191,6 @@ export function parseManhuaTemplateFrameVisionJson(
           };
         })
         .filter((n) => n.whatShows)
-        .slice(0, 32)
     : undefined;
 
   return {
@@ -216,8 +203,7 @@ export function parseManhuaTemplateFrameVisionJson(
     beatGrid,
     scenePoolHints: (Array.isArray(obj.scenePoolHints) ? obj.scenePoolHints : [])
       .map((s) => String(s || "").trim())
-      .filter(Boolean)
-      .slice(0, 16),
+      .filter(Boolean),
     castShape: {
       leadDesireZh: String(cast.leadDesireZh || "").trim().slice(0, 80) || "待人审补欲望",
       pressureZh: String(cast.pressureZh || "").trim().slice(0, 80) || "待人审补压迫",

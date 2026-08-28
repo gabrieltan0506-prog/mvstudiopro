@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildNativeDeepReadPlanPreview } from "./manhuaNativeDeepReadPlan.js";
+import { buildNativeDeepReadVideoSegmentArgs } from "./manhuaNativeDeepReadRunner.js";
 import {
   buildNativeDeepReadEpisodeExecution,
   normalizeManhuaTemplateLearnSourceInput,
@@ -106,5 +107,14 @@ describe("第三方播放页 → 原生精读双向接线", () => {
       url: "https://ppvod01.kqgfbs.com/free/index.m3u8",
       referer: "https://www.0996zp.com/",
     }]);
+    const [mediaNode] = await execution.resolveNodes();
+    const ffmpegArgs = buildNativeDeepReadVideoSegmentArgs({
+      node: mediaNode!,
+      startSec: 0,
+      durationSec: 300,
+      outputPath: "/tmp/test-segment.mp4",
+    });
+    expect(ffmpegArgs).toContain("Referer: https://www.0996zp.com/\r\n");
+    expect(ffmpegArgs.join(" ")).not.toMatch(/cookie|authorization|bearer|test-token/i);
   });
 });

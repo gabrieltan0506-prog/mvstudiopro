@@ -1334,7 +1334,7 @@ async function learnOneEpisodeChunk(input: {
     .slice(0, 400);
 
   let hookNoteZh = "待补钩子";
-  let beatHints = timestamps.slice(0, 8).map((t) => ({
+  let beatHints = timestamps.map((t) => ({
     atSec: Math.round(t),
     conflictZh: "待视觉读帧补全",
     visualZh: `关键帧 @${t.toFixed(1)}s`,
@@ -1366,7 +1366,7 @@ async function learnOneEpisodeChunk(input: {
       path: p,
       atSec: Number(timestamps[i]) || 0,
     }));
-    const selected = selectFramesForVisionAnalysis(paired, 16);
+    const selected = selectFramesForVisionAnalysis(paired);
     const frames = [];
     for (const item of selected) {
       const buf = await fs.readFile(item.path);
@@ -1456,8 +1456,8 @@ async function learnOneEpisodeChunk(input: {
     transcriptPreview,
     hookNoteZh,
     beatHints,
-    climaxNotes: plan.climaxWindows.map((w) => w.reasonZh).slice(0, 6),
-    sceneHints: sceneHints.slice(0, 8),
+    climaxNotes: plan.climaxWindows.map((w) => w.reasonZh),
+    sceneHints,
     seriesDraftEvidence,
     learnedAt: new Date().toISOString(),
     previewFrameGcsUris: previewFrameGcsUris.length ? previewFrameGcsUris : undefined,

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { Agent, fetch as undiciFetch } from "undici";
 import {
   isTrustedManhua0996SiteUrl,
   parseManhua0996PlaybackResponse,
@@ -17,8 +18,33 @@ const MAX_REDIRECTS = 4;
 const ANONYMOUS_SIGN_KEY = "cb808529bae6b6be45ecfab29a4889bc";
 
 type FetchLike = typeof fetch;
+const manhua0996SourceDispatcher = new Agent({
+  connect: { family: 4, timeout: REQUEST_TIMEOUT_MS },
+});
+const defaultSourceFetch: FetchLike = ((input: Parameters<FetchLike>[0], init?: RequestInit) =>
+  undiciFetch(input as string | URL, {
+    ...(init as Parameters<typeof undiciFetch>[1]),
+    dispatcher: manhua0996SourceDispatcher,
+  }) as unknown as Promise<Response>) as FetchLike;
 
 export const MANHUA_LEARN_EXTRA_SOURCE_HOSTS_ENV = "MANHUA_LEARN_EXTRA_SOURCE_HOSTS" as const;
+export const MANHUA_MIRROR_SOURCE_COOKIE_ENV = "MANHUA_MIRROR_SOURCE_COOKIE" as const;
+export const MANHUA_MIRROR_SOURCE_AUTHORIZATION_ENV = "MANHUA_MIRROR_SOURCE_AUTHORIZATION" as const;
+
+export function readManhuaMirrorSourceAuthHeaders(input: {
+  cookie?: string;
+  authorization?: string;
+} = {}): Record<string, string> {
+  const cookie = String(input.cookie ?? process.env[MANHUA_MIRROR_SOURCE_COOKIE_ENV] ?? "").trim();
+  const authorization = String(
+    input.authorization ?? process.env[MANHUA_MIRROR_SOURCE_AUTHORIZATION_ENV] ?? "",
+  ).trim();
+  const clean = (value: string, max: number) => value && value.length <= max && !/[\r\n]/.test(value);
+  return {
+    ...(clean(cookie, 16_384) ? { cookie } : {}),
+    ...(clean(authorization, 4_096) ? { authorization } : {}),
+  };
+}
 
 export function readManhuaLearnExtraSourceHosts(
   raw = process.env[MANHUA_LEARN_EXTRA_SOURCE_HOSTS_ENV],
@@ -71,7 +97,7 @@ async function fetchWithTimeout(
   url: string,
   init: RequestInit,
   signal?: AbortSignal,
-  fetchImpl: FetchLike = fetch,
+  fetchImpl: FetchLike = defaultSourceFetch,
 ): Promise<Response> {
   if (signal?.aborted) throw abortError(signal);
   const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
@@ -84,11 +110,31 @@ async function fetchWithTimeout(
   }
 }
 
+async function fetchTrustedSourceWithAuthFallback(
+  url: string,
+  init: RequestInit,
+  signal?: AbortSignal,
+  fetchImpl: FetchLike = defaultSourceFetch,
+): Promise<Response> {
+  const authHeaders = readManhuaMirrorSourceAuthHeaders();
+  const hasFallback = Object.keys(authHeaders).length > 0;
+  try {
+    const anonymous = await fetchWithTimeout(url, init, signal, fetchImpl);
+    if (anonymous.ok || !hasFallback) return anonymous;
+  } catch (error) {
+    if (!hasFallback || signal?.aborted) throw error;
+  }
+  return fetchWithTimeout(url, {
+    ...init,
+    headers: { ...Object.fromEntries(new Headers(init.headers).entries()), ...authHeaders },
+  }, signal, fetchImpl);
+}
+
 /** 每一跳重定向都重新校验固定站点，防止可信页面把服务端导向内网或任意外域。 */
 async function fetchTrustedPageHtml(
   startUrl: string,
   signal?: AbortSignal,
-  fetchImpl: FetchLike = fetch,
+  fetchImpl: FetchLike = defaultSourceFetch,
 ): Promise<string> {
   const additionalHosts = readManhuaLearnExtraSourceHosts();
   let current = startUrl;
@@ -97,7 +143,7 @@ async function fetchTrustedPageHtml(
       throw new Error("第三方播放页重定向到非可信域，已停止");
     }
     await assertPublicManhuaSourceHost(new URL(current).hostname);
-    const response = await fetchWithTimeout(current, {
+    const response = await fetchTrustedSourceWithAuthFallback(current, {
       method: "GET",
       redirect: "manual",
       headers: {
@@ -150,7 +196,7 @@ export function buildManhua0996EpisodeApiRequest(
 export async function fetchManhua0996SeriesPage(
   rawUrl: string,
   signal?: AbortSignal,
-  fetchImpl: FetchLike = fetch,
+  fetchImpl: FetchLike = defaultSourceFetch,
 ): Promise<Manhua0996SeriesPage> {
   const source = parseManhua0996SourceUrl(rawUrl, readManhuaLearnExtraSourceHosts());
   if (!source) throw new Error("第三方播放页链接无效或不在可信站点内");
@@ -161,13 +207,13 @@ export async function fetchManhua0996SeriesPage(
 export async function fetchManhua0996EpisodePlayback(
   rawUrl: string,
   signal?: AbortSignal,
-  fetchImpl: FetchLike = fetch,
+  fetchImpl: FetchLike = defaultSourceFetch,
 ): Promise<Manhua0996Playback> {
   const source = parseManhua0996SourceUrl(rawUrl, readManhuaLearnExtraSourceHosts());
   if (!source) throw new Error("第三方播放页链接无效或不在可信站点内");
   const request = buildManhua0996EpisodeApiRequest(source, Date.now());
   await assertPublicManhuaSourceHost(source.host);
-  const response = await fetchWithTimeout(request.url, {
+  const response = await fetchTrustedSourceWithAuthFallback(request.url, {
     method: "GET",
     redirect: "error",
     headers: request.headers,

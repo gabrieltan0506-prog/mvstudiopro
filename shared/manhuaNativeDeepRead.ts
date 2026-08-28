@@ -45,21 +45,21 @@ export const nativeDeepReadSegmentSchema = z
     subtitles: z.array(z.object({
       atSec: z.number().finite().min(0),
       textZh: z.string().trim().min(1),
-    }).strict()).max(512).default([]),
+    }).strict()).default([]),
     audioResolution: z.array(z.object({
       chunkIndex: z.number().int().min(0),
       analysis: manhuaNativeAudioChunkAnalysisSchema,
-    }).strict()).max(20).default([]),
+    }).strict()).default([]),
     beatStructureZh: z.string().trim().default(""),
     moodArcZh: z.string().trim().optional(),
     reusableZh: z.string().trim().optional(),
     genPromptHintZh: z.string().trim().optional(),
     classification: z.object({
-      emotionTagsZh: z.array(z.string().trim().min(1)).max(8).default([]),
-      narrativeFeatureTagsZh: z.array(z.string().trim().min(1)).max(8).default([]),
-      performanceTagsZh: z.array(z.string().trim().min(1)).max(8).default([]),
-      audiovisualTagsZh: z.array(z.string().trim().min(1)).max(8).default([]),
-      audienceExperienceTagsZh: z.array(z.string().trim().min(1)).max(8).default([]),
+      emotionTagsZh: z.array(z.string().trim().min(1)).default([]),
+      narrativeFeatureTagsZh: z.array(z.string().trim().min(1)).default([]),
+      performanceTagsZh: z.array(z.string().trim().min(1)).default([]),
+      audiovisualTagsZh: z.array(z.string().trim().min(1)).default([]),
+      audienceExperienceTagsZh: z.array(z.string().trim().min(1)).default([]),
     }).strict().optional(),
   })
   .passthrough();
@@ -90,14 +90,11 @@ export type NativeDeepReadOutput = {
   failedSegmentCount: number;
   /** 被丢弃的镜头数：动作或节奏结构为空。**不写「未标注」占位**，空就是没学到 */
   droppedCount: number;
-  /** 是否触顶 128 被抽稀 —— 触顶说明学习产出超出模板承载，需人工确认 */
+  /** 兼容旧产物：新链路不再截断完整镜头证据，因此恒为 false。 */
   truncated: boolean;
   /** 同一集音轨的故事/对白/声音节奏；由执行协调器在视觉精读后装配。 */
   audioAnalysis?: ManhuaNativeAudioAnalysis;
 };
-
-/** beatGrid 硬上限，与 manhuaViralTemplateBank 的解析上限一致 */
-export const NATIVE_DEEP_READ_MAX_BEATS = 128;
 
 const cut = (v: string | undefined, max: number): string | undefined => {
   const t = String(v || "").trim().slice(0, max);
@@ -157,13 +154,8 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
     });
   });
 
-  // 触顶不静默取前 128（那等于只保留全片前段）：等距抽稀并标记，让 producer 决定
-  const truncated = allBeats.length > NATIVE_DEEP_READ_MAX_BEATS;
-  const beatGrid = truncated
-    ? Array.from({ length: NATIVE_DEEP_READ_MAX_BEATS }, (_, i) =>
-        allBeats[Math.round((i * (allBeats.length - 1)) / (NATIVE_DEEP_READ_MAX_BEATS - 1))]!,
-      )
-    : allBeats;
+  // 完整证据在生产、解析、存储与消费层一镜不少；任何层都不得固定抽稀。
+  const beatGrid = allBeats;
 
   const subtitleTrack = ok
     .flatMap(({ seg, offsetSec }) => seg.subtitles.map((subtitle) => ({
@@ -171,8 +163,7 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
       textZh: String(subtitle.textZh || "").trim().slice(0, 160),
     })))
     .filter((subtitle) => subtitle.textZh)
-    .sort((a, b) => a.atSec - b.atSec)
-    .slice(0, 512);
+    .sort((a, b) => a.atSec - b.atSec);
   const resolvedByChunk = new Map<number, ManhuaNativeAudioChunkAnalysis>();
   for (const { seg } of ok) {
     for (const row of seg.audioResolution) {
@@ -195,8 +186,7 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
     pick: (classification: NonNullable<NativeDeepReadSegment["classification"]>) => string[],
   ) => Array.from(new Set(ok.flatMap(({ seg }) => seg.classification ? pick(seg.classification) : [])))
     .map((tag) => String(tag || "").trim().slice(0, 24))
-    .filter(Boolean)
-    .slice(0, 8);
+    .filter(Boolean);
   const classification: ManhuaViralTemplateClassification = {
     emotionTagsZh: mergeTags((row) => row.emotionTagsZh),
     narrativeFeatureTagsZh: mergeTags((row) => row.narrativeFeatureTagsZh),
@@ -220,7 +210,7 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
     shotCount: beatGrid.length,
     failedSegmentCount: rows.length - ok.length,
     droppedCount,
-    truncated,
+    truncated: false,
   };
 }
 

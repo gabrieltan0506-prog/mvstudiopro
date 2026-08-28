@@ -65,7 +65,9 @@ import {
 } from "./vertexMedia.js";
 import {
   NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
+  nativeDeepReadSegmentEvidenceObjectName,
   readNativeDeepReadSegmentCacheEntry,
+  writeNativeDeepReadRawAttemptEvidence,
   writeNativeDeepReadSegmentCacheEntry,
   type NativeDeepReadSegmentCacheEntry,
   type NativeDeepReadSegmentCacheRead,
@@ -361,6 +363,10 @@ export type NativeDeepReadRunResult = NativeDeepReadOutput & {
   sourceDigest?: string;
   /** 当前已成段集合的确定性快照；不含时间戳，供 CAS 单调更新。 */
   segmentSnapshotSha256?: string;
+  /** 每个已付费分片的不可变原始 JSON 对象名；只进私有 provenance。 */
+  segmentEvidenceObjectNames?: string[];
+  /** 每次付费尝试在 parse/门禁前保存的完整上游响应对象名。 */
+  rawAttemptEvidenceObjectNames?: string[];
   /** true 只表示全部计划段已成；完整集卡仍需通过整集门禁。 */
   assemblyComplete?: boolean;
 };
@@ -475,12 +481,17 @@ export const NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC = 6;
 export const NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC = 6;
 /**
  * 单镜上限的判断修订（实测依据 0823：95 镜均 2.76s，对白戏最慢 3.47s；
- * 但标题卡/长定场 16–20s 真实存在）：>15s 至多允许 1 个且 ≤25s——
- * 一律硬拒会逼模型编造假切点过门禁（违反零编造红线）或整段白烧。
+ * 但标题卡/长定场 16–20s 真实存在）：>15s 至多允许 1 个真实长镜。
+ * 同一物理长镜超过 30s 时不得截断或伪造切镜，而要按镜内真实变化拆成连续证据段。
  */
 export const NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC = 15;
-export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC = 25;
+// 25 秒是质量提示线，不应因真实长镜只多 1 秒就重烧整段；30 秒才关闭式拒收。
+export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC = 30;
 export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_ALLOWANCE = 1;
+/** 同一物理长镜超过 30 秒时，后续证据段必须用此固定标记，避免把证据拆分谎报成真实切镜。 */
+export const NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH = "同一长镜证据拆分（非切镜）";
+/** 长镜证据拆分点之间至少相隔 1 秒，禁止用同秒空切凑过 30 秒门禁。 */
+export const NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC = 1;
 /** 微尾段豁免：计划切段真实存在 9s 尾段（如 1080–1089），诚实的单镜结尾不该必拒 */
 export const NATIVE_DEEP_READ_SHOT_MICRO_SEGMENT_SEC = 12;
 /** 音轨段数地板：≥ max(1, ceil(段时长/60)) */
@@ -552,7 +563,7 @@ c. 输出预算紧张时优先压缩 subtitles，尽量保全镜头表与音轨�
    "cameraMoveZh":"运镜：方向与速度，例「1.2秒内从中景推到面部特写」「快速右摇」；看不出运动写「固定机位」",
    "lightingZh":"光影：光位、色调、明暗对比",
    "actionZh":"这一镜的可拍动作",
-   "transitionInZh":"进入这一镜的转场：硬切/闪白/黑场/遮挡转场/叠化"}],
+   "transitionInZh":"进入这一镜的转场：硬切/闪白/黑场/遮挡转场/叠化；同一物理长镜的后续证据段写固定标记「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」"}],
  "subtitles":[{"atSec":整数,"textZh":"画面上真实出现的字幕原文，逐字照抄"}],
  "audioResolution":[{"chunkIndex":${input.segmentIndex},"analysis":{"audioTrack":[{"fromSec":局部整数秒,"toSec":局部整数秒,"emotionArcZh":"情绪强度变化","toneZh":"怎么说，不写台词","sfxZh":"音效","bgmZh":"配乐","atmosphereZh":"气氛","silenceZh":"留白","cues":[{"atSec":局部整数秒,"kind":"sfx/bgm_in/bgm_change/bgm_out/silence_in/silence_out","detailZh":"事件"}]}],"audioBeatStructureZh":"声音节奏","mixNotesZh":"混音","reusableAudioZh":"可复用声音手法","genAudioHintZh":"生成声音要素"}}],
  "beatStructureZh":"节奏结构：憋了几秒、第几秒爆、爆后怎么收",
@@ -562,13 +573,13 @@ c. 输出预算紧张时优先压缩 subtitles，尽量保全镜头表与音轨�
  "genPromptHintZh":"若用 AI 生成类似片段，画面提示词该写哪几个要素"
 }
 硬约束（只有这五条，必须遵守）：
-1. shots 与 subtitles 的 startSec/endSec/atSec **一律写全片绝对秒位**：本段即 ${Math.round(input.startSec)}..${Math.round(input.endSec)} 秒；shots 连续无空档覆盖整段。
+1. shots 与 subtitles 的 startSec/endSec/atSec **一律写全片绝对秒位**：本段即 ${Math.round(input.startSec)}..${Math.round(input.endSec)} 秒；shots 连续无空档覆盖整段。若同一物理长镜持续超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，不得截断、丢弃尾部或伪造切镜；必须按镜内真实发生的构图、运镜、角色调度、动作、表演或光影变化拆成至少 2 个连续证据段，每个证据段至少 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒，第二段及后续段的 transitionInZh 固定写「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」。
 2. cameraMoveZh 只写真看到的运动，看不出运动就写「固定机位」，禁止套「镜头拉远」这类无依据说法。
 3. 所有中文描述字段【禁止】出现钟表式时间（如 01:23、1:05:30）或「在第X秒」式秒位定位——秒位只进数字字段；描述动作时长（如「1.2秒内推近」）不在此限。
 4. 分析描述不写外部平台剧名、商标或原台词；subtitles 是唯一例外——逐字照抄画面上真实出现的字幕，看不清写「[不可辨]」，禁止按剧情补全或从声音猜字。
 ${audioHardRule}
 建议（软边界，按素材实际情况尽量做到）：
-a. 这类漫剧的真实节奏通常 2–5 秒一镜，按真实发生的切换逐镜记录，不要为省输出合并镜头。一个剧情段落通常由多个镜头切换组成——**不要把「剧情段」当成一个镜头**，每次画面切换（机位/景别/场景变化）都是新的一镜。验收标准（与入库门禁同一套数字）：本段至少 ${floors.minShots} 镜、平均每镜不超过 ${NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC} 秒；超过 ${NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC} 秒的长镜头（如标题卡/长定场）至多 1 个且不超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。
+a. 这类漫剧的真实节奏通常 2–5 秒一镜，按真实发生的切换逐镜记录，不要为省输出合并镜头。一个剧情段落通常由多个镜头切换组成——**不要把「剧情段」当成一个镜头**，每次画面切换（机位/景别/场景变化）都是新的一镜。验收标准（与入库门禁同一套数字）：本段至少 ${floors.minShots} 镜、平均每镜不超过 ${NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC} 秒；超过 ${NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC} 秒的真实长镜头（如标题卡/长定场）至多 1 个；单个证据段不超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，真实长镜超过该长度时按硬约束 1 拆分证据，不得裁掉内容。
 ${audioSoftRules}
 d. reusableZh 尽量写成脱离本剧剧情的通用做法；classification 五个数组字段都必须输出，只写从本段真实证据提炼的特征标签（避免古言/逆袭/系统/甜宠等题材词）；没有真实证据的维度写 []，至少两个维度各保留一个真实标签，不得在单一维度堆标签冒充，也不得为凑满维度编造。`;
   return input.rejectedReasonZh
@@ -1081,12 +1092,81 @@ function gateError(detailZh: string): Error {
   return new Error(`${NATIVE_DEEP_READ_GATE_PREFIX}：${detailZh}`);
 }
 
-function sortedShots(raw: Record<string, unknown>): Array<{ startSec: number; endSec: number }> {
+type NativeDeepReadShotTiming = {
+  startSec: number;
+  endSec: number;
+  transitionInZh: string;
+};
+
+function sortedShots(raw: Record<string, unknown>): NativeDeepReadShotTiming[] {
   return (Array.isArray(raw.shots) ? raw.shots : [])
     .map((row) => row as Record<string, unknown>)
-    .map((row) => ({ startSec: Number(row.startSec), endSec: Number(row.endSec) }))
+    .map((row) => ({
+      startSec: Number(row.startSec),
+      endSec: Number(row.endSec),
+      transitionInZh: String(row.transitionInZh || "").trim(),
+    }))
     .filter((row) => Number.isFinite(row.startSec) && Number.isFinite(row.endSec) && row.endSec > row.startSec)
     .sort((a, b) => a.startSec - b.startSec || a.endSec - b.endSec);
+}
+
+/**
+ * 将「真实切镜」与「同一长镜的证据拆分」分开计数。
+ * 后者只是在同一物理镜头内增加观察颗粒，不得被误算成多个真实长镜，
+ * 也不得用不足 1 秒的空切凑过 30 秒硬上限。
+ */
+function groupPhysicalShotDurations(shots: ReadonlyArray<NativeDeepReadShotTiming>): number[] {
+  const tolerance = NATIVE_DEEP_READ_TIMELINE_TOLERANCE_SEC;
+  const groups: Array<{ startSec: number; endSec: number }> = [];
+  for (let index = 0; index < shots.length; index += 1) {
+    const shot = shots[index]!;
+    const isEvidenceSplit = shot.transitionInZh === NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH;
+    if (!isEvidenceSplit) {
+      groups.push({ startSec: shot.startSec, endSec: shot.endSec });
+      continue;
+    }
+    const previousShot = shots[index - 1];
+    const currentGroup = groups.at(-1);
+    if (!previousShot || !currentGroup || Math.abs(previousShot.endSec - shot.startSec) > tolerance) {
+      throw gateError("长镜证据拆分没有连续承接上一段");
+    }
+    const previousPartSec = previousShot.endSec - previousShot.startSec;
+    const currentPartSec = shot.endSec - shot.startSec;
+    if (
+      previousPartSec < NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC
+      || currentPartSec < NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC
+    ) {
+      throw gateError(
+        `长镜证据拆分点之间必须至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒`,
+      );
+    }
+    currentGroup.endSec = shot.endSec;
+  }
+  return groups.map((group) => group.endSec - group.startSec);
+}
+
+/** 长镜证据的段级不变量；只在付费分片首次验收时关闭式执行。 */
+function assertLongTakeEvidenceInvariant(input: {
+  shots: ReadonlyArray<NativeDeepReadShotTiming>;
+  labelZh: string;
+  maxPhysicalLongTakes: number;
+}): void {
+  const evidenceDurations = input.shots.map((shot) => shot.endSec - shot.startSec);
+  const hardOverlong = evidenceDurations.filter(
+    (shotLen) => shotLen > NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC,
+  );
+  if (hardOverlong.length > 0) {
+    throw gateError(
+      `${input.labelZh}存在超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒的镜头证据段（最长 ${Math.round(Math.max(...hardOverlong))} 秒）；真实长镜必须按镜内变化拆成连续证据段，禁止截断尾部`,
+    );
+  }
+  const physicalLongTakes = groupPhysicalShotDurations(input.shots)
+    .filter((shotLen) => shotLen > NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC);
+  if (physicalLongTakes.length > input.maxPhysicalLongTakes) {
+    throw gateError(
+      `${input.labelZh}有 ${physicalLongTakes.length} 个超过 ${NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC} 秒的真实长镜（长定场限额 ${input.maxPhysicalLongTakes} 个），需重新检查是否合并了多次切镜`,
+    );
+  }
 }
 
 function assertShotCoverage(
@@ -1241,22 +1321,11 @@ export function assertNativeDeepReadSegmentDensity(input: {
         `第${input.segmentIndex + 1}段镜头粒度过粗：平均每镜${averageShotSec.toFixed(1)}秒（上限 ${NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC} 秒）`,
       );
     }
-    const overlongShots = shots
-      .map((shot) => shot.endSec - shot.startSec)
-      .filter((shotLen) => shotLen > NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC);
-    const hardOverlong = overlongShots.filter(
-      (shotLen) => shotLen > NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC,
-    );
-    if (hardOverlong.length > 0) {
-      throw gateError(
-        `第${input.segmentIndex + 1}段存在超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒的镜头段（最长 ${Math.round(Math.max(...hardOverlong))} 秒），需重新检查是否合并了多次切镜`,
-      );
-    }
-    if (overlongShots.length > NATIVE_DEEP_READ_SHOT_LONG_TAKE_ALLOWANCE) {
-      throw gateError(
-        `第${input.segmentIndex + 1}段有 ${overlongShots.length} 个超过 ${NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC} 秒的镜头段（长定场限额 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_ALLOWANCE} 个），需重新检查是否合并了多次切镜`,
-      );
-    }
+    assertLongTakeEvidenceInvariant({
+      shots,
+      labelZh: `第${input.segmentIndex + 1}段`,
+      maxPhysicalLongTakes: NATIVE_DEEP_READ_SHOT_LONG_TAKE_ALLOWANCE,
+    });
   }
   // 审查 P1-4：空文本会在 mapNativeDeepReadSegments 被静默丢弃（actionZh 空丢单镜、
   // beatStructureZh 空丢整段镜头），密度承诺被掏空——门禁前置拒收。
@@ -1450,14 +1519,14 @@ export function buildNativeDeepReadGlmStructuringPrompt(input: {
   return {
     system: `你是漫剧模板卡的「结构化整形师」。只整形不创作：
 1. 禁止虚构输入卡里没有的镜头、字幕、声音或描述；每一条产出都必须能在输入卡里找到出处。
-2. shots 与 audioTrack 密度只增不减——同一时间区间有多份描述时以更密、更具体的一方为基底。
+2. shots 已逐段通过付费前门禁。连续表演或连续剧情允许合理合并相邻证据，但合并后的单条证据不得超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，拆分边界必须至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒；不得丢失时间轴覆盖。仍需拆分的同一物理长镜，其 transitionInZh 必须保留「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」。
 3. subtitles 取并集去重，保持全片绝对秒位排序。
 4. 所有中文描述文本【禁止】出现钟表式秒位（如 01:23）或「在第X秒」定位——秒位只进数字字段。
 5. classification 必须显式输出 emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh 五个数组；没有证据的维度写 []，至少两个维度各有一个来自输入卡的真实标签。
 6. 只返回一个 JSON 对象，不要 Markdown 围栏、不要解释。`,
     user: `把以下同一集的 ${input.rawSegments.length} 份分段卡整形合并成**一张整集六栏卡**（单个 JSON 对象，字段 schema 与分段卡完全相同：shots/subtitles/audioResolution/beatStructureZh/moodArcZh/classification/reusableZh/genPromptHintZh）。
 要求：
-1. shots 连续无空档覆盖全片 0..${Math.round(input.durationSec)} 秒（绝对秒位），禁止为省输出合并真实切换的镜头。
+1. shots 连续无空档覆盖全片 0..${Math.round(input.durationSec)} 秒（绝对秒位）；连续表演或连续剧情可合并相邻证据，但合并后的单条证据不得超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，拆分边界至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒，且不得删除仍需保留的「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」续接标记或丢失覆盖。
 2. audioResolution 保留全部 [{chunkIndex,analysis}] 条目（chunkIndex 即段号，analysis 内为该段局部秒），逐段齐全${input.hasAudio ? "" : "；本集素材无音轨，audioResolution 保持空数组"}。
 3. beatStructureZh/moodArcZh/reusableZh/genPromptHintZh 按段整合，可加「第X段」标注；classification 五维标签只取输入并集，不得补猜。
 整集元数据：${JSON.stringify({
@@ -1608,6 +1677,7 @@ export type NativeDeepReadBatchRunnerDeps = {
   invokeGlmStructuring: typeof invokeNativeDeepReadGlmStructuring;
   readSegmentCache: typeof readNativeDeepReadSegmentCacheEntry;
   writeSegmentCache: typeof writeNativeDeepReadSegmentCacheEntry;
+  writeRawAttemptEvidence: typeof writeNativeDeepReadRawAttemptEvidence;
   waitForRetry: typeof waitForNativeDeepReadRetry;
 };
 
@@ -1620,6 +1690,7 @@ const defaultBatchRunnerDeps: NativeDeepReadBatchRunnerDeps = {
   invokeGlmStructuring: invokeNativeDeepReadGlmStructuring,
   readSegmentCache: readNativeDeepReadSegmentCacheEntry,
   writeSegmentCache: writeNativeDeepReadSegmentCacheEntry,
+  writeRawAttemptEvidence: writeNativeDeepReadRawAttemptEvidence,
   waitForRetry: waitForNativeDeepReadRetry,
 };
 
@@ -1652,6 +1723,7 @@ type SegmentAttemptResult = {
   visualRoute: NativeDeepReadVisualRoute;
   finishReason?: string;
   providerRequestId?: string;
+  rawAttemptEvidenceObjectName?: string;
 };
 
 /** 收到明确 HTTP 失败响应的错误（结果确定），可按路由铁律换通道重试。 */
@@ -1671,8 +1743,10 @@ export async function runManhuaNativeDeepReadBatch(params: {
   episodes: readonly NativeDeepReadBatchRunEpisode[];
   abortSignal?: AbortSignal;
   onModelReceipt?: (receipt: NativeDeepReadVisualModelReceipt) => void | Promise<void>;
-  /** 传入即启用段级恢复；生产 execution 传 seriesKey，单集旁路/CLI 默认不碰缓存。 */
+  /** 传入即启用段级恢复与永久证据；生产 execution 和单集入口都必须传稳定 seriesKey。 */
   segmentCacheSeriesKey?: string;
+  /** 仅获授权证据探针使用：保留 GCS 视频分片，不执行 finally 清理。 */
+  preservePreparedVideos?: boolean;
   /**
    * 段缓存可靠落盘后的强回调。失败必须阻止下一次模型调用，避免出现“钱已花、卡不可见”。
    * 最后一段由整集门禁/正式 ingest 接管，避免在整集结构尚未验收前冒充 4/4 完成卡。
@@ -1856,6 +1930,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
       let episodeAudioInput = 0;
       let episodeReasoning = 0;
       const routesUsed = new Set<NativeDeepReadVisualRoute>();
+      const rawAttemptEvidenceObjectNames = new Set<string>();
       const degradedFpsSegmentIndexes: number[] = [];
       const paidUsageBySegment = Array.from({ length: segmentCount }, () => ({
         inputTokens: 0,
@@ -1932,6 +2007,10 @@ export async function runManhuaNativeDeepReadBatch(params: {
             completedSegmentIndexes: sortedIndexes,
             sourceDigest: episode.cacheSourceDigest,
             segmentSnapshotSha256: snapshotSha256,
+            segmentEvidenceObjectNames: entries.map(nativeDeepReadSegmentEvidenceObjectName),
+            rawAttemptEvidenceObjectNames: Array.from(new Set(entries
+              .map((entry) => entry.rawAttemptEvidenceObjectName)
+              .filter((value): value is string => Boolean(value)))),
             assemblyComplete: sortedIndexes.length === segmentCount,
             usage: {
               inputTokens: accumulated.inputTokens,
@@ -2040,6 +2119,51 @@ export async function runManhuaNativeDeepReadBatch(params: {
             failure.nativeDeepReadHttpStatus = response.status;
             throw failure;
           }
+          let rawAttemptEvidenceObjectName: string | undefined;
+          if (params.segmentCacheSeriesKey && episode.cacheSourceDigest) {
+            const requestFingerprint = nativeDeepReadSegmentCacheFingerprint({
+              sourceDigest: episode.cacheSourceDigest,
+              episodeIndex: episode.episodeIndex,
+              episodeDurationSec: episode.sourceDurationSec,
+              segment,
+              segmentIndex: input.segmentIndex,
+              segmentCount,
+              hasAudio,
+              hintZh: episode.hintZh,
+            });
+            try {
+              const evidence = await deps.writeRawAttemptEvidence({
+                seriesKey: params.segmentCacheSeriesKey,
+                episodeIndex: episode.episodeIndex,
+                segmentIndex: input.segmentIndex,
+                segmentCount,
+                sourceDigest: episode.cacheSourceDigest,
+                requestFingerprint,
+                batchRequestId: episodeRequestId,
+                callId,
+                attemptNumber: input.attemptNumber,
+                temperature: input.temperature,
+                visualRoute: input.route,
+                httpStatus: response.status,
+                providerRequestId: response.requestId,
+                responseText: response.text,
+              });
+              rawAttemptEvidenceObjectName = evidence.objectName;
+              rawAttemptEvidenceObjectNames.add(evidence.objectName);
+              console.info(
+                `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段`
+                + `原始响应已永久取证：${evidence.objectName} · ${evidence.bytes} bytes`
+                + ` · sha256=${evidence.sha256}`,
+              );
+            } catch (error) {
+              const failure = new Error(
+                `原生精读原始证据落盘失败，已停止且不得自动重试：${error instanceof Error ? error.message : String(error)}`,
+                { cause: error },
+              );
+              failure.name = "NativeDeepReadEvidencePersistenceError";
+              throw failure;
+            }
+          }
           const envelope = JSON.parse(response.text) as GeminiEnvelope;
           const usage = envelope.usageMetadata;
           const attemptInput = Math.max(0, Number(usage?.promptTokenCount) || 0);
@@ -2139,6 +2263,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
             visualRoute: input.route,
             finishReason: candidate?.finishReason,
             providerRequestId: response.requestId,
+            rawAttemptEvidenceObjectName,
           };
         } catch (error) {
           if (!isNativeDeepReadGateFailure(error)) {
@@ -2212,6 +2337,9 @@ export async function runManhuaNativeDeepReadBatch(params: {
             });
           } catch (error) {
             if (params.abortSignal?.aborted) throw error;
+            if (error instanceof Error && error.name === "NativeDeepReadEvidencePersistenceError") {
+              throw error;
+            }
             lastError = error;
             rejectedReasonZh = (error instanceof Error ? error.message : String(error)).slice(0, 300);
           }
@@ -2228,7 +2356,12 @@ export async function runManhuaNativeDeepReadBatch(params: {
         const segment = episode.segments[segmentIndex]!;
         const cachedEntry = cachedSegments.get(segmentIndex);
         if (cachedEntry) {
+          if (cachedEntry.rawAttemptEvidenceObjectName) {
+            rawAttemptEvidenceObjectNames.add(cachedEntry.rawAttemptEvidenceObjectName);
+          }
           // 缓存命中不是模型外呼，禁止伪造 ManhuaNativeModelReceipt；历史 token 只作听觉证据。
+          // 旧缓存可能早于永久 evidence 机制；先幂等补写不可变原始证据，再允许装卡。
+          await deps.writeSegmentCache(cachedEntry);
           episodeAudioInput += Math.max(0, Number(cachedEntry.paidUsage.audioInputTokens) || 0);
           routesUsed.add(cachedEntry.visualRoute);
           if (cachedEntry.degraded) degradedFpsSegmentIndexes.push(segmentIndex);
@@ -2275,6 +2408,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
             visualRoute: result.visualRoute,
             degraded: result.visualRoute === NATIVE_DEEP_READ_ROUTE_EVOLINK,
             raw: result.raw,
+            rawAttemptEvidenceObjectName: result.rawAttemptEvidenceObjectName,
             paidUsage: { ...paidUsageBySegment[segmentIndex]! },
             savedAtIso: new Date().toISOString(),
           };
@@ -2495,6 +2629,8 @@ export async function runManhuaNativeDeepReadBatch(params: {
             completedSegmentIndexes: committedSnapshot?.completedSegmentIndexes,
             sourceDigest: committedSnapshot?.result.sourceDigest,
             segmentSnapshotSha256: committedSnapshot?.result.segmentSnapshotSha256,
+            segmentEvidenceObjectNames: committedSnapshot?.result.segmentEvidenceObjectNames,
+            rawAttemptEvidenceObjectNames: Array.from(rawAttemptEvidenceObjectNames),
             assemblyComplete: true,
             usage: {
               inputTokens: episodeInput,
@@ -2553,7 +2689,9 @@ export async function runManhuaNativeDeepReadBatch(params: {
     };
     throw wrapped;
   } finally {
-    const cleanupTargets = preparedByEpisode.flatMap((row) => row.videos);
+    const cleanupTargets = params.preservePreparedVideos
+      ? []
+      : preparedByEpisode.flatMap((row) => row.videos);
     const cleanupResults = await Promise.allSettled(
       cleanupTargets.map((video) => deps.remove(video.temporaryGcs)),
     );
@@ -2574,15 +2712,20 @@ export async function runManhuaNativeDeepReadBatch(params: {
 /**
  * 单集入口：与批处理共用同一条 Vertex 分段链路（切段→GCS→逐段调用→合并）。
  *
- * ⚠️ 调用方必须检查 failedSegmentCount / droppedCount / truncated ——
- * 静默少几个镜头比整体失败更难发现。
+ * ⚠️ 调用方必须检查 failedSegmentCount / droppedCount；新链路不得截断镜头证据。
  */
 export async function runManhuaNativeDeepRead(params: {
+  /** 单集/旁路同样必须给稳定身份；否则付费返回无法永久落盘，入口直接拒绝。 */
+  seriesKey: string;
+  episodeIndex?: number;
+  sourceDigest: string;
   resolveNodes: () => Promise<NativeDeepReadMediaNode[]>;
   segments: readonly NativeDeepReadSegmentSpec[];
   sourceDurationSec?: number;
   hintZh?: string;
   abortSignal?: AbortSignal;
+  /** 仅获授权证据探针使用：保留 GCS 视频分片。 */
+  preservePreparedVideos?: boolean;
 }, deps: NativeDeepReadBatchRunnerDeps = defaultBatchRunnerDeps): Promise<NativeDeepReadRunResult> {
   const duration = Number(params.sourceDurationSec);
   if (!Number.isFinite(duration) || duration <= 0) {
@@ -2590,13 +2733,16 @@ export async function runManhuaNativeDeepRead(params: {
   }
   const batch = await runManhuaNativeDeepReadBatch({
     episodes: [{
-      episodeIndex: 1,
+      episodeIndex: params.episodeIndex || 1,
       resolveNodes: params.resolveNodes,
       segments: params.segments,
       sourceDurationSec: duration,
       hintZh: params.hintZh,
+      cacheSourceDigest: params.sourceDigest,
     }],
     abortSignal: params.abortSignal,
+    segmentCacheSeriesKey: params.seriesKey,
+    preservePreparedVideos: params.preservePreparedVideos,
   }, deps);
   const only = batch.episodes[0];
   if (!only) throw new Error("原生精读没有返回集卡");

@@ -9,6 +9,7 @@ import {
   NATIVE_DEEP_READ_GENERATION_CONFIG,
   NATIVE_DEEP_READ_HTTP_BODY_TIMEOUT_MS,
   NATIVE_DEEP_READ_HTTP_HEADERS_TIMEOUT_MS,
+  NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH,
   NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
   NATIVE_DEEP_READ_RESPONSE_SCHEMA,
   NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG,
@@ -322,9 +323,12 @@ describe("每段提示词硬约束", () => {
     expect(prompt).toContain("硬约束（只有这五条，必须遵守）");
   });
 
-  it("镜头验收与门禁同一套数字：360s 段至少 60 镜、平均 ≤6 秒、长镜头限额 1 个 ≤25 秒", () => {
+  it("镜头验收与门禁同一套数字：真实长镜超过 30 秒时拆连续证据段，不裁尾也不伪造切镜", () => {
     expect(prompt).toContain("本段至少 60 镜、平均每镜不超过 6 秒");
-    expect(prompt).toContain("超过 15 秒的长镜头（如标题卡/长定场）至多 1 个且不超过 25 秒");
+    expect(prompt).toContain("同一物理长镜持续超过 30 秒");
+    expect(prompt).toContain("每个证据段至少 1 秒");
+    expect(prompt).toContain(`transitionInZh 固定写「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」`);
+    expect(prompt).toContain("不得裁掉内容");
     expect(prompt).not.toContain("镜头数 ≥ 24");
   });
 
@@ -461,6 +465,51 @@ describe("段级双密度门禁", () => {
       ...base,
       raw: makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 }),
     })).not.toThrow();
+  });
+
+  it("同一物理长镜超过 30 秒可按真实变化拆成多个连续证据段，仍只计一个长镜", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    const shot = (startSec: number, endSec: number, transitionInZh = "硬切") => ({
+      startSec,
+      endSec,
+      shotSizeZh: "中景",
+      angleZh: "平视",
+      cameraMoveZh: "缓慢横移",
+      lightingZh: "侧光随角色移动发生变化",
+      actionZh: `角色从画面左侧移动到右侧（${startSec}-${endSec}）`,
+      transitionInZh,
+    });
+    raw.shots = [
+      shot(0, 20),
+      shot(20, 40, NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH),
+      ...Array.from({ length: 8 }, (_, index) => shot(40 + index * 2.5, 42.5 + index * 2.5)),
+    ];
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw })).not.toThrow();
+  });
+
+  it("长镜证据拆分点不足 1 秒时拒收，禁止同秒空切凑过门禁", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    const shot = (startSec: number, endSec: number, transitionInZh = "硬切") => ({
+      startSec,
+      endSec,
+      shotSizeZh: "中景",
+      angleZh: "平视",
+      cameraMoveZh: "固定机位",
+      lightingZh: "侧光",
+      actionZh: `角色持续表演（${startSec}-${endSec}）`,
+      transitionInZh,
+    });
+    raw.shots = [
+      shot(0, 20),
+      shot(20, 20.5, NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH),
+      ...Array.from({ length: 8 }, (_, index) => {
+        const startSec = 20.5 + index * (39.5 / 8);
+        const endSec = index === 7 ? 60 : 20.5 + (index + 1) * (39.5 / 8);
+        return shot(startSec, endSec);
+      }),
+    ];
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
+      .toThrow("长镜证据拆分点之间必须至少相隔 1 秒");
   });
 
   it("classification 五键齐全且仅两个维度非空时放行", () => {
@@ -648,6 +697,7 @@ describe("整集证据门禁（段卡合并后再跑一遍，GLM 之后同样要
       rawSegments: [rawSegments[0]!],
     })).toThrow("整集拒绝入库");
   });
+
 });
 
 describe("GLM 结构化整形提示词纪律", () => {
@@ -663,12 +713,17 @@ describe("GLM 结构化整形提示词纪律", () => {
     expect(prompt.system).toContain("结构化整形师");
     expect(prompt.system).toContain("只整形不创作");
     expect(prompt.system).toContain("禁止虚构");
-    expect(prompt.system).toContain("密度只增不减");
+    expect(prompt.system).toContain(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH);
+    expect(prompt.system).toContain("连续表演或连续剧情允许合理合并相邻证据");
+    expect(prompt.system).toContain("单条证据不得超过 30 秒");
+    expect(prompt.system).toContain("不得丢失时间轴覆盖");
     expect(prompt.system).toContain("取并集去重");
     expect(prompt.system).toContain("钟表式秒位");
     expect(prompt.system).toContain("只返回一个 JSON 对象");
     expect(prompt.user).toContain("【上一轮门禁被拒原因】镜头轴存在空档");
-    expect(prompt.user).toContain("禁止为省输出合并真实切换的镜头");
+    expect(prompt.user).toContain("连续表演或连续剧情可合并相邻证据");
+    expect(prompt.user).toContain("拆分边界至少相隔 1 秒");
+    expect(prompt.user).toContain("不得删除仍需保留的");
     expect(prompt.system).toContain("emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh");
     expect(prompt.system).toContain("至少两个维度");
   });
@@ -984,6 +1039,11 @@ function makeRunnerDeps(over: Partial<NativeDeepReadBatchRunnerDeps> = {}): Nati
     invokeGlmStructuring: vi.fn() as never,
     readSegmentCache: vi.fn(async () => null) as never,
     writeSegmentCache: vi.fn(async () => undefined) as never,
+    writeRawAttemptEvidence: vi.fn(async (input: { callId: string; responseText: string }) => ({
+      objectName: `manhua-template-learn/segment-evidence-raw/test/${input.callId}.json`,
+      bytes: Buffer.byteLength(input.responseText),
+      sha256: "a".repeat(64),
+    })) as never,
     waitForRetry: vi.fn(async () => undefined),
     ...over,
   };
@@ -1527,6 +1587,10 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
       expect(prepareVideos.mock.calls[1]![0].segments.map((row) => row.startSec)).toEqual([60]);
       expect(second.usage.inputTokens).toBe(100_000);
       expect(second.episodes[0]!.result.audioInputTokens).toBe(16_000);
+      expect(second.episodes[0]!.result.segmentEvidenceObjectNames).toHaveLength(2);
+      expect(second.episodes[0]!.result.segmentEvidenceObjectNames?.[0]).toMatch(
+        /^manhua-template-learn\/segment-evidence\/tpl_native_cache_series_01_ep003\/[a-f0-9]{64}\/seg0-[a-f0-9]{64}\.json$/,
+      );
     } finally {
       warn.mockRestore();
     }

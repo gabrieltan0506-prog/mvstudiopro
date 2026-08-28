@@ -642,7 +642,7 @@ function draftCard(input: {
 }): ManhuaViralTemplateCard {
   const today = new Date().toISOString().slice(0, 10);
   const laneZh = guessLane(input.titleHint + input.transcriptPreview);
-  const beats = input.timestamps.slice(0, 16).map((t) => ({
+  const beats = input.timestamps.map((t) => ({
     atSec: Math.round(t),
     conflictZh: "待视觉读帧补全",
     visualZh: `关键帧 @${t.toFixed(1)}s`,
@@ -698,15 +698,6 @@ type LocalSegmentAnalysis = {
   visionCard: ManhuaViralTemplateCard | null;
   visionModel: string | null;
 };
-
-function sampleEvenly<T>(items: readonly T[], max: number): T[] {
-  const src = items.slice();
-  const count = Math.max(1, Math.floor(max));
-  if (src.length <= count) return src;
-  return Array.from({ length: count }, (_, i) =>
-    src[Math.round((i * (src.length - 1)) / Math.max(1, count - 1))]!,
-  );
-}
 
 function combineTranscriptPreviews(parts: readonly string[], maxChars = 400): string {
   const clean = parts.map((s) => String(s || "").replace(/\s+/g, " ").trim()).filter(Boolean);
@@ -877,7 +868,7 @@ function mergeLocalSegmentCards(input: {
     titleHint: input.title || "未命名学习片",
     url: input.url,
     durationSec: input.durationSec,
-    timestamps: sampleEvenly(timestamps, 16),
+    timestamps,
     climaxNotes,
     transcriptPreview,
   });
@@ -890,11 +881,8 @@ function mergeLocalSegmentCards(input: {
     laneZh: first.laneZh,
     summaryZh: "长片按时间分段学习后合成的节奏草案；只借结构与节拍，须人审后入库。",
     hook3sZh: first.hook3sZh,
-    beatGrid: sampleEvenly(
-      filled.flatMap((item) => item.beatGrid).sort((a, b) => a.atSec - b.atSec),
-      24,
-    ),
-    scenePoolHints: Array.from(new Set(filled.flatMap((item) => item.scenePoolHints))).slice(0, 16),
+    beatGrid: filled.flatMap((item) => item.beatGrid).sort((a, b) => a.atSec - b.atSec),
+    scenePoolHints: Array.from(new Set(filled.flatMap((item) => item.scenePoolHints))),
     castShape: first.castShape,
     densityHints: first.densityHints,
   };

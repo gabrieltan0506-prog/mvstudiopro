@@ -86,8 +86,8 @@ describe("原生精读产出 → 模板卡（真实形状往返）", () => {
     expect(skill).toContain("生成画面要素");
   });
 
-  it("等距抽稀在完整镜头集上做，不再先砍前 16 个", () => {
-    // 造 95 镜（与实测规模一致），抽 6 段
+  it("消费端保留完整镜头集，只按目标时长重映射秒位", () => {
+    // 造 95 镜（与实测规模一致），映射到 6 段时一镜也不能少
     const many = Array.from({ length: 95 }, (_, i) => ({
       atSec: i * 3,
       conflictZh: `c${i}`,
@@ -95,8 +95,9 @@ describe("原生精读产出 → 模板卡（真实形状往返）", () => {
       shotSizeZh: "特写",
     }));
     const fitted = fitManhuaViralBeatGridToSegments(many, 6);
-    expect(fitted).toHaveLength(6);
-    // 末尾必须来自全片尾部；若仍先 slice(0,16)，最后一个会落在 v15 附近
+    expect(fitted).toHaveLength(95);
+    expect(fitted[0]!.atSec).toBe(0);
+    expect(fitted[fitted.length - 1]!.atSec).toBe(75);
     expect(fitted[fitted.length - 1]!.visualZh).toBe("v94");
   });
 
@@ -145,14 +146,31 @@ describe("适配器失败与超限语义（复审第六项）", () => {
     expect(JSON.stringify(out.beatGrid)).not.toContain("未标注");
   });
 
-  it("超过 128 镜等距抽稀并标 truncated，不静默取前 128", () => {
+  it("超过 128 镜仍一镜不少，正式证据层不再抽稀", () => {
     const out = mapNativeDeepReadSegments([
       seg(Array.from({ length: 130 }, (_, i) => shot(i))),
     ]);
-    expect(out.truncated).toBe(true);
-    expect(out.shotCount).toBe(128);
-    // 末镜必须来自尾部；若是静默 slice(0,128) 会停在 动作127
+    expect(out.truncated).toBe(false);
+    expect(out.shotCount).toBe(130);
+    expect(out.beatGrid[128]!.visualZh).toBe("动作128");
     expect(out.beatGrid[out.beatGrid.length - 1]!.visualZh).toBe("动作129");
+  });
+
+  it("分片映射不裁 512 条字幕、20 个声音块或每类 8 个标签", () => {
+    const row = JSON.parse(seg([shot(0)]).text) as Record<string, unknown>;
+    row.subtitles = Array.from({ length: 520 }, (_, index) => ({ atSec: index / 10, textZh: `字幕${index}` }));
+    row.audioResolution = [];
+    row.classification = {
+      emotionTagsZh: Array.from({ length: 12 }, (_, index) => `情绪${index}`),
+      narrativeFeatureTagsZh: Array.from({ length: 11 }, (_, index) => `叙事${index}`),
+      performanceTagsZh: Array.from({ length: 10 }, (_, index) => `表演${index}`),
+      audiovisualTagsZh: Array.from({ length: 9 }, (_, index) => `视听${index}`),
+      audienceExperienceTagsZh: Array.from({ length: 13 }, (_, index) => `体验${index}`),
+    };
+    const out = mapNativeDeepReadSegments([{ startSec: 0, text: JSON.stringify(row) }]);
+    expect(out.subtitleTrack).toHaveLength(520);
+    expect(out.classification?.emotionTagsZh).toHaveLength(12);
+    expect(out.classification?.audienceExperienceTagsZh).toHaveLength(13);
   });
 
   it("未超限时 truncated=false 且一镜不少", () => {

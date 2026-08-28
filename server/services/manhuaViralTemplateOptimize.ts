@@ -92,11 +92,11 @@ const candidateSchema = z.object({
   laneZh: z.enum(MANHUA_VIRAL_TEMPLATE_LANE_ORDER),
   summaryZh: z.string().trim().min(1).max(120),
   hook3sZh: z.string().trim().min(1).max(200),
-  // 精读逐镜实测 262 秒出 95 镜；24 会把 95 镜模板优化成 24 镜
-  beatGrid: z.array(beatSchema).min(1).max(128),
+  // 正式证据层不设固定镜头上限；输出截断会整次失败，绝不能先裁成 128 再冒充成功。
+  beatGrid: z.array(beatSchema).min(1),
   reusableZh: optionalTrimmed(600),
   genPromptHintZh: optionalTrimmed(600),
-  scenePoolHints: z.array(z.string().trim().min(1).max(80)).max(16),
+  scenePoolHints: z.array(z.string().trim().min(1).max(80)),
   castShape: z.object({
     leadDesireZh: z.string().trim().min(1).max(80),
     pressureZh: z.string().trim().min(1).max(80),

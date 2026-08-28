@@ -1,9 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ManhuaViralTemplateCard } from "../../shared/manhuaViralTemplateBank.js";
 import {
   MANHUA_NATIVE_SERIES_AGGREGATION_MODEL,
   MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE,
   aggregateNativeDeepReadSeries,
+  buildNativeSeriesAggregationPayload,
   invokeNativeSeriesAggregationModel,
+  __testBuildNativeSeriesCard,
+  type NativeSeriesAggregationUsage,
 } from "./manhuaNativeSeriesAggregation.js";
 
 const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
@@ -13,10 +17,11 @@ const EPISODE_OBJECT = `manhua-template-learn/proposals/tpl_native_${SERIES_KEY}
 const EPISODE_2_OBJECT = `manhua-template-learn/proposals/tpl_native_${SERIES_KEY}_ep002.json`;
 const LOCK_OBJECT = `manhua-template-learn/locks/native-series-${SERIES_KEY}.json`;
 
-function episodeCard() {
+function episodeCard(episodeIndex = 1) {
+  const suffix = String(episodeIndex).padStart(3, "0");
   return {
-    id: `tpl_native_${SERIES_KEY}_ep001`,
-    nameZh: "原生第1集",
+    id: `tpl_native_${SERIES_KEY}_ep${suffix}`,
+    nameZh: `原生第${episodeIndex}集`,
     laneZh: "多维标签",
     classification: {
       emotionTagsZh: ["压迫渐强"],
@@ -37,7 +42,7 @@ function episodeCard() {
     scenePoolHints: [],
     castShape: { leadDesireZh: "欲望", pressureZh: "压力" },
     densityHints: { minBodyChars: 280, minDialogueLines: 8, minLocationHits: 2 },
-    sourceRefs: [{ url: "https://example.com/ep1", fetchedAt: "2026-08-25" }],
+    sourceRefs: [{ url: `https://example.com/ep${episodeIndex}`, fetchedAt: "2026-08-25" }],
     status: "proposed",
     provenance: {
       nativeVideoDeepRead: {
@@ -84,6 +89,64 @@ function aggregationRaw() {
     densityHints: { minBodyChars: 280, minDialogueLines: 8, minLocationHits: 2 },
   };
 }
+
+describe("系列聚合输入保留完整证据", () => {
+  it("不再按集数抽稀 beatGrid、字幕或音轨", () => {
+    const card = episodeCard();
+    card.beatGrid = Array.from({ length: 160 }, (_, index) => ({
+      atSec: index,
+      conflictZh: `冲突${index}`,
+      visualZh: `动作${index}`,
+    }));
+    const withEvidence = {
+      ...card,
+      subtitleTrack: Array.from({ length: 80 }, (_, index) => ({ atSec: index, textZh: `字幕${index}` })),
+      audioStory: {
+        hasAudio: true,
+        audioTrack: Array.from({ length: 60 }, (_, index) => ({
+          fromSec: index,
+          toSec: index + 1,
+          emotionArcZh: `声音${index}`,
+        })),
+        audioBeatStructureZh: "声音结构",
+        reusableAudioZh: "声音手法",
+      },
+    };
+    const payload = JSON.parse(buildNativeSeriesAggregationPayload([
+      withEvidence as unknown as ManhuaViralTemplateCard,
+    ]));
+    expect(payload.episodes[0].beatGrid).toHaveLength(160);
+    expect(payload.episodes[0].subtitles).toHaveLength(80);
+    expect(payload.episodes[0].audioTrack).toHaveLength(60);
+    expect(payload.episodes[0].beatGrid.at(-1).visualZh).toBe("动作159");
+  });
+
+  it("系列卡来源覆盖全部分集，不只引用前 8 集", async () => {
+    const cards = Array.from({ length: 12 }, (_, index) =>
+      episodeCard(index + 1) as unknown as ManhuaViralTemplateCard);
+    const raw = aggregationRaw();
+    const usage: NativeSeriesAggregationUsage = {
+      model: MANHUA_NATIVE_SERIES_AGGREGATION_MODEL,
+      route: MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE,
+      inputTokens: 1,
+      outputTokens: 1,
+      reasoningTokens: 0,
+      costUsd: 0,
+      priceEquivalentCny: 0,
+      usingPlanQuota: false as const,
+      receiptComplete: true,
+    };
+    const built = __testBuildNativeSeriesCard({
+      seriesKey: "series_all_refs",
+      raw,
+      cards,
+      snapshotSha256: "a".repeat(64),
+      usage,
+    });
+    expect(built.sourceRefs).toHaveLength(12);
+    expect(built.sourceRefs.at(-1)?.url).toContain("ep012");
+  });
+});
 
 function aggregationDeps(options: {
   loseLockAfterInvoke?: boolean;

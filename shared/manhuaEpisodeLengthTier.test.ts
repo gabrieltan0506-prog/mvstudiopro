@@ -59,17 +59,20 @@ describe("节拍格按档位缩放", () => {
     expect(beats.map((b) => b.atSec)).toEqual([0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165]);
   });
 
-  /** 段长恒定 15s，短档只是段数少；重打时间戳后不能还停在 165s */
-  it("短档抽成 6 拍并重打时间戳到 0–75s", () => {
+  /** 段长恒定 15s，短档只缩放秒位，不删模板证据 */
+  it("短档保留 12 拍并把完整时间轴缩放到 0–75s", () => {
     const beats = fitManhuaViralBeatGridToSegments(grid, 6);
-    expect(beats).toHaveLength(6);
-    expect(beats.map((b) => b.atSec)).toEqual([0, 15, 30, 45, 60, 75]);
+    expect(beats).toHaveLength(12);
+    expect(beats[0]?.atSec).toBe(0);
+    expect(beats.at(-1)?.atSec).toBe(75);
+    expect(beats.every((beat, index) => index === 0 || beat.atSec >= beats[index - 1]!.atSec)).toBe(true);
   });
 
-  /** 开场定调、钩子留悬念，抽稀时这两拍丢了模板就废了 */
-  it("抽稀必留开场与片尾钩子", () => {
+  it("缩放时开场、过程与片尾全部保留", () => {
     const beats = fitManhuaViralBeatGridToSegments(grid, 6);
+    expect(beats).toHaveLength(grid.length);
     expect(beats[0].conflictZh).toBe(grid[0].conflictZh);
+    expect(beats[5].conflictZh).toBe(grid[5].conflictZh);
     expect(beats[beats.length - 1].conflictZh).toBe(grid[grid.length - 1].conflictZh);
   });
 

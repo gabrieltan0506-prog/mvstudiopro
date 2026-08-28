@@ -19,10 +19,12 @@ vi.mock("./gcs.js", () => ({
 
 import {
   NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
+  NATIVE_DEEP_READ_SEGMENT_EVIDENCE_PREFIX,
   clearNativeDeepReadSegmentCacheForEpisode,
   createNativeDeepReadSegmentCacheEntryIfAbsent,
   listNativeDeepReadSegmentCacheEntriesBySourceDigest,
   readNativeDeepReadSegmentCacheEntry,
+  nativeDeepReadSegmentEvidenceObjectName,
   writeNativeDeepReadSegmentCacheEntry,
   type NativeDeepReadSegmentCacheEntry,
 } from "./manhuaNativeDeepReadSegmentCache";
@@ -60,6 +62,7 @@ beforeEach(() => {
   gcs.list.mockReset();
   gcs.upload.mockReset();
   gcs.createIfAbsent.mockReset();
+  gcs.createIfAbsent.mockResolvedValue({ created: true });
 });
 
 describe("错位段缓存核对", () => {
@@ -178,14 +181,23 @@ describe("段缓存写入：证据门禁与条件写", () => {
       writeNativeDeepReadSegmentCacheEntry(entry)
     ).resolves.toBeUndefined();
 
-    expect(gcs.createIfAbsent).toHaveBeenCalledOnce();
-    expect(gcs.createIfAbsent).toHaveBeenCalledWith(
+    expect(gcs.createIfAbsent).toHaveBeenCalledTimes(2);
+    expect(gcs.createIfAbsent).toHaveBeenNthCalledWith(
+      1,
       expect.objectContaining({
         bucket: "test-bucket",
         objectName:
           "manhua-template-learn/segment-cache/tpl_native_series_a_ep003_seg1.json",
         contentType: "application/json",
       })
+    );
+    expect(gcs.createIfAbsent).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        bucket: "test-bucket",
+        objectName: nativeDeepReadSegmentEvidenceObjectName(entry),
+        contentType: "application/json",
+      }),
     );
     expect(gcs.upload).not.toHaveBeenCalled();
   });
@@ -206,7 +218,10 @@ describe("段缓存写入：证据门禁与条件写", () => {
     expect(gcs.upload).toHaveBeenCalledWith(
       expect.objectContaining({ ifGenerationMatch: "41" })
     );
-    expect(gcs.createIfAbsent).not.toHaveBeenCalled();
+    expect(gcs.createIfAbsent).toHaveBeenCalledOnce();
+    expect(gcs.createIfAbsent).toHaveBeenCalledWith(expect.objectContaining({
+      objectName: nativeDeepReadSegmentEvidenceObjectName(entry),
+    }));
   });
 
   it("条件覆写遇到 412 时复读；竞争方已写入同契约即确认成功", async () => {
@@ -233,6 +248,26 @@ describe("段缓存写入：证据门禁与条件写", () => {
     expect(gcs.upload).toHaveBeenCalledWith(
       expect.objectContaining({ ifGenerationMatch: "41" })
     );
+  });
+
+  it("同一付费分片永远写入独立不可变证据，路径含来源与契约指纹", async () => {
+    const entry = entryOf();
+    gcs.downloadVersioned.mockRejectedValue(new Error("gcs_stat_failed:404:not found"));
+
+    await writeNativeDeepReadSegmentCacheEntry(entry);
+
+    const evidenceName = nativeDeepReadSegmentEvidenceObjectName(entry);
+    expect(evidenceName).toBe(
+      `${NATIVE_DEEP_READ_SEGMENT_EVIDENCE_PREFIX}tpl_native_series_a_ep003/${"b".repeat(64)}/seg1-${"a".repeat(64)}.json`,
+    );
+    const evidenceCall = gcs.createIfAbsent.mock.calls.find(
+      ([call]) => call.objectName === evidenceName,
+    );
+    expect(evidenceCall).toBeTruthy();
+    expect(JSON.parse(evidenceCall![0].buffer.toString("utf8"))).toMatchObject({
+      raw: entry.raw,
+      paidUsage: entry.paidUsage,
+    });
   });
 });
 
@@ -262,5 +297,8 @@ describe("段缓存清理", () => {
       "manhua-template-learn/segment-cache/tpl_native_series_a_ep003_seg1.json",
       "manhua-template-learn/segment-cache/tpl_native_series_a_ep003_seg2.json",
     ]);
+    expect(gcs.deleteObject.mock.calls.some(
+      ([call]) => String(call.objectName).startsWith(NATIVE_DEEP_READ_SEGMENT_EVIDENCE_PREFIX),
+    )).toBe(false);
   });
 });

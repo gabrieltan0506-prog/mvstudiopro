@@ -207,11 +207,11 @@ export function mergeManhuaLearnChunkIntoDigest(input: {
   const durationSec = Math.max(1, Number(input.durationSec) || Number(prev?.durationSec) || 1);
   const complete = learnedThroughSec >= durationSec - 1;
 
-  const beatHints = chunks.flatMap((c) => c.beatHints || []).slice(0, 24);
-  const climaxNotes = chunks.flatMap((c) => c.climaxNotes || []).slice(0, 12);
+  const beatHints = chunks.flatMap((c) => c.beatHints || []);
+  const climaxNotes = chunks.flatMap((c) => c.climaxNotes || []);
   const sceneHints = Array.from(
     new Set(chunks.flatMap((c) => c.sceneHints || [])),
-  ).slice(0, 12);
+  );
   const transcriptPreview = chunks
     .map((c) => c.transcriptPreview)
     .filter(Boolean)
@@ -549,11 +549,10 @@ export function mergeEpisodeDigestsIntoProposal(input: {
     }
   }
   let beatGrid = Array.from(beatMap.values())
-    .sort((a, b) => a.atSec - b.atSec)
-    .slice(0, 24);
+    .sort((a, b) => a.atSec - b.atSec);
   if (beatGrid.length < 6) {
     // 按集序铺节拍骨架（约 180s 模板密度）
-    beatGrid = digests.slice(0, 12).map((d, i) => ({
+    beatGrid = digests.map((d, i) => ({
       atSec: i * 15,
       conflictZh: (d.hookNoteZh || d.climaxNotes[0] || `第${d.episodeIndex}集冲突`).slice(0, 40),
       visualZh: (d.beatHints[0]?.visualZh || `第${d.episodeIndex}集可拍动作`).slice(0, 80),
@@ -562,7 +561,7 @@ export function mergeEpisodeDigestsIntoProposal(input: {
 
   const scenePoolHints = Array.from(
     new Set(digests.flatMap((d) => d.sceneHints || []).map((s) => String(s || "").trim()).filter(Boolean)),
-  ).slice(0, 16);
+  );
 
   const nameBase = String(input.titleHint || "合集节奏").replace(/\s+/g, "").slice(0, 12);
   const card: ManhuaViralTemplateCard = {

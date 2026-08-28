@@ -189,23 +189,12 @@ function isGcsNotFound(error: unknown): boolean {
   return /(?:gcs_download_failed|gcs_stat_failed):404/.test(error instanceof Error ? error.message : String(error));
 }
 
-function sampleEvenly<T>(rows: readonly T[], max: number): T[] {
-  if (rows.length <= max) return [...rows];
-  if (max <= 1) return rows.length ? [rows[0]!] : [];
-  return Array.from({ length: max }, (_, index) =>
-    rows[Math.round((index * (rows.length - 1)) / (max - 1))]!,
-  );
-}
-
 /**
- * OpenRouter GLM 只收到经过限量的 JSON 文本，不收到 gs://、签名 URL 或 Fly 文件路径。
- * 每一集都保留代表证据；集数增长时缩小单集采样，而不是只截取前若干集。
+ * OpenRouter GLM 收到全部分集证据 JSON，不收到 gs://、签名 URL 或 Fly 文件路径。
+ * 禁止按集数缩小单集证据；上下文不足必须明确失败，不能静默抽稀。
  */
 export function buildNativeSeriesAggregationPayload(cards: readonly ManhuaViralTemplateCard[]): string {
   if (!cards.length) throw new Error("没有可聚合的原生精读分集卡");
-  const perEpisodeBeats = cards.length <= 40 ? 24 : cards.length <= 100 ? 12 : 6;
-  const perEpisodeSubtitles = cards.length <= 40 ? 24 : cards.length <= 100 ? 12 : 6;
-  const perEpisodeAudio = cards.length <= 40 ? 12 : cards.length <= 100 ? 8 : 4;
   const episodes = cards.map((card) => {
     const episodeIndex = Number(card.provenance?.nativeVideoDeepRead ? card.id.match(/_ep(\d{3})$/)?.[1] : 0);
     return {
@@ -215,9 +204,9 @@ export function buildNativeSeriesAggregationPayload(cards: readonly ManhuaViralT
       classification: card.classification,
       reusableZh: card.reusableZh,
       genPromptHintZh: card.genPromptHintZh,
-      beatGrid: sampleEvenly(card.beatGrid, perEpisodeBeats),
-      subtitles: sampleEvenly(card.subtitleTrack || [], perEpisodeSubtitles),
-      audioTrack: sampleEvenly(card.audioStory?.audioTrack || [], perEpisodeAudio),
+      beatGrid: [...card.beatGrid],
+      subtitles: [...(card.subtitleTrack || [])],
+      audioTrack: [...(card.audioStory?.audioTrack || [])],
       audioBeatStructureZh: card.audioStory?.audioBeatStructureZh || "",
       reusableAudioZh: card.audioStory?.reusableAudioZh || "",
     };
@@ -240,7 +229,7 @@ function buildAggregationPrompt(payloadJson: string): { system: string; user: st
 1. 不复述外部剧名、平台名、角色专名或原台词；subtitles 只作证据，不得复制到输出。
 2. 不使用“古言、种田、逆袭、系统、重生、甜宠”等旧题材桶。classification 的情绪、叙事、表演、视听、观众体验五个数组字段必须全部输出；没有真实证据的维度写 []，至少两个维度各保留一个真实标签，不得在单一维度堆标签冒充，也不得为凑满维度编造。
 3. storyStructure 必须回答核心故事承诺、冲突如何持续、关系如何变化、跨集推进规律与避免重复的变化规则；不能只写钩子、压制、反转、爽点。
-4. beatGrid 是跨集通用的结构节拍，不得拼接某一集原剧情；6–24 拍，按抽象秒位 0–120 排列。
+4. beatGrid 是跨集通用的结构节拍，不得拼接某一集原剧情；按证据需要完整输出，不设固定拍数上限。
 5. 证据不足就删掉，不得猜；每个文本字段用客观陈述句。`,
     user: `请把以下同一剧目的全部分集快照重新聚合成一张系列模板。后续新增分集时会传入全部旧卡与新卡，必须基于全量重新计算，不得只追加最后一批。
 输出字段：
@@ -597,7 +586,7 @@ function buildSeriesCard(input: {
     id: nativeSeriesProposalId(input.seriesKey),
     laneZh: "多维标签",
     status: "proposed",
-    sourceRefs: input.cards.slice(0, 8).map((sourceCard) => ({
+    sourceRefs: input.cards.map((sourceCard) => ({
       url: `gs://${getGcsBucketName()}/${NATIVE_DEEP_READ_PROPOSAL_PREFIX}${sourceCard.id}.json`,
       fetchedAt: aggregatedAt,
       noteZh: "原生精读分集证据卡",
@@ -628,6 +617,9 @@ function buildSeriesCard(input: {
   if (card.beatGrid.length < 6) throw new Error("系列聚合结果的通用节拍不足 6 拍");
   return card;
 }
+
+/** 仅供契约测试验证系列卡不会在最后组装时静默丢分集来源。 */
+export const __testBuildNativeSeriesCard = buildSeriesCard;
 
 /**
  * GCS 分集卡 → Fly 原子快照 → OpenRouter GLM-5.3 JSON 文本聚合 → 系列待审卡。

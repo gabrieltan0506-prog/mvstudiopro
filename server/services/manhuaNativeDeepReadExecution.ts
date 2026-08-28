@@ -447,7 +447,14 @@ export async function executeAndIngestNativeDeepReadEpisode(
 
   let visualResult: Awaited<ReturnType<typeof runManhuaNativeDeepRead>>;
   try {
+    const sourceDigest = await resolveNativeDeepReadCacheSourceDigest({
+      sourceRef: String(input.provenanceSourceRef || input.sourceUrl),
+      statSourceVersion: deps.statSourceVersion,
+    });
     visualResult = await deps.run({
+      seriesKey: input.seriesKey,
+      episodeIndex: input.episodeIndex,
+      sourceDigest,
       resolveNodes: input.resolveNodes,
       segments: input.segments,
       sourceDurationSec: input.durationSec,

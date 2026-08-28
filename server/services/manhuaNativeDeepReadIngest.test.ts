@@ -123,7 +123,7 @@ describe("入库门禁", () => {
     expect(r.ok === false && r.reasonZh).toContain("没学到");
   });
 
-  it("触顶抽稀不拦：学得多不该整集丢掉，卡面标出来即可", () => {
+  it("兼容历史 truncated 标记，但新链路不再主动抽稀", () => {
     expect(checkNativeDeepReadIngestable(makeResult({ truncated: true }))).toEqual({ ok: true });
   });
 
@@ -252,7 +252,20 @@ describe("装卡", () => {
     expect(p!.costCny).toBeCloseTo(1.5);
   });
 
-  it("来源摘要把丢镜与抽稀露出来，审批人不会盲批", () => {
+  it("每个已付费分片的不可变原始 JSON 对象名随卡落进私有 provenance", () => {
+    const fingerprint = "a".repeat(64);
+    const sourceDigest = "b".repeat(64);
+    const evidenceNames = [0, 1].map((segmentIndex) =>
+      `manhua-template-learn/segment-evidence/tpl_native_abc123_ep003/${sourceDigest}/seg${segmentIndex}-${fingerprint}.json`);
+    const card = buildNativeDeepReadProposalCard({
+      ...baseInput,
+      result: makeResult({ segmentEvidenceObjectNames: evidenceNames }),
+    })!;
+
+    expect(card.provenance?.nativeVideoDeepRead?.segmentEvidenceObjectNames).toEqual(evidenceNames);
+  });
+
+  it("来源摘要把丢镜与历史截断露出来，审批人不会盲批", () => {
     const card = buildNativeDeepReadProposalCard({
       ...baseInput,
       result: makeResult({ droppedCount: 3, truncated: true, usingPlanQuota: false }),
@@ -261,7 +274,7 @@ describe("装卡", () => {
     expect(zh).toContain("原生精读");
     expect(zh).toContain("qwen3.8-max");
     expect(zh).toContain("丢弃3镜");
-    expect(zh).toContain("触顶抽稀");
+    expect(zh).toContain("历史产物曾截断");
     expect(zh).toContain("按量付费");
   });
 

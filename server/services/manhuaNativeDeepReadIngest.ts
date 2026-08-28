@@ -9,8 +9,8 @@
  *
  * 三条与抽帧链路不同的设计：
  *
- * 1. **一集一张卡**，不做跨集聚合。18 分钟单集自带完整节奏结构，
- *    20 集揉成一张 128 拍的卡等于把每集都稀释掉 1/20。
+ * 1. **一集一张卡**，不把多集镜头证据揉成一张卡。18 分钟单集自带完整节奏结构，
+ *    原生精读保存全部逐镜证据；系列层只整理跨集规律，不抽稀分集卡。
  * 2. **每集跑完立刻入库**，不攒到最后。中途挂了，已烧的钱已经变成卡；
  *    重跑时 `listIngestedNativeDeepReadEpisodes()` 列一次就知道跳哪几集。
  * 3. **门禁在写之前**。空卡、全段失败的卡不许进库——审批人点开一张没有镜头的卡，
@@ -51,6 +51,7 @@ export type NativeDeepReadIngestSource = NativeDeepReadOutput & {
   completedSegmentIndexes?: number[];
   sourceDigest?: string;
   segmentSnapshotSha256?: string;
+  segmentEvidenceObjectNames?: string[];
   assemblyComplete?: boolean;
 };
 
@@ -149,8 +150,8 @@ export type NativeDeepReadIngestRejection = {
 /**
  * 入库门禁：什么样的产出才配写进模板库。
  *
- * 判据只在这一处，写入与预检共用。`truncated` 不拦——触顶说明学得多，
- * 卡面会标出来让审批人知道被抽稀过，但不该因此丢掉整集。
+ * 判据只在这一处，写入与预检共用。`truncated` 只兼容历史卡；新链路保存全部镜头，
+ * 不允许用固定上限把已付费证据抽稀。
  */
 export function checkNativeDeepReadIngestable(
   result: NativeDeepReadIngestSource,
@@ -273,7 +274,7 @@ export function buildNativeDeepReadProposalCard(
     `原生精读${r.beatGrid.length}镜`,
     `${r.segmentCount}/${r.attemptedSegments}段${progress.complete ? "已完成" : "已入库，余段待续"}`,
     durSec > 0 ? `${Math.round(durSec / 60)}分钟` : "",
-    r.truncated ? "已抽稀" : "",
+    r.truncated ? "历史产物曾截断" : "",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -334,6 +335,7 @@ export function buildNativeDeepReadProposalCard(
         assemblyComplete: progress.complete,
         sourceDigest: progress.sourceDigest,
         snapshotSha256: progress.snapshotSha256,
+        segmentEvidenceObjectNames: r.segmentEvidenceObjectNames,
       },
       nativeAudioDeepRead: {
         model: audio.model,
