@@ -1,10 +1,8 @@
 /**
- * 探针结果报告渲染器（¥0，零模型调用）：把一轮两段探针的模型产出 JSON
- * 确定性渲染成自包含 HTML——**只渲染模型字段原文，不加任何编辑/蒸馏层**。
- * 数据源优先级：GLM 整集卡 > parsed 段卡拼接；帧包优先 frames-v2（按戏抽帧，带 reasons
- * 徽章），回退 frames。产物上传 probes/<run>/report.html 并打印其 V4 签名链接。
- * 字幕作为原始证据放折叠区不铺开（重点时刻由模型侧 keyMoments schema 承担，见规划）。
- * 用法：--run=<probe seriesKey>
+ * 原生精读证据 → 报告 HTML 渲染服务（¥0，零模型调用）。
+ * **只渲染模型字段原文，不加任何编辑/蒸馏层**；字幕折叠存证不铺开；
+ * 帧包优先 frames-v2（按戏抽帧，带 reasons 徽章），回退 frames，均无则出无帧提示。
+ * 探针薄壳脚本与面板 renderEpisodeReport 路由共用本核心。
  */
 import { Storage } from "@google-cloud/storage";
 import {
@@ -12,28 +10,8 @@ import {
   getGcsBucketName,
   listGcsObjectNamesByPrefix,
   uploadBufferToGcs,
-} from "../server/services/gcs.js";
+} from "./gcs.js";
 
-// 自带 V4 签名器：不依赖服务层导出，任何镜像版本都能跑。
-const gcsCreds = JSON.parse(String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "{}")) as {
-  client_email?: string; private_key?: string; project_id?: string;
-};
-const signerStorage = new Storage({
-  credentials: { client_email: gcsCreds.client_email, private_key: gcsCreds.private_key },
-  projectId: gcsCreds.project_id,
-});
-async function signReadUrl(bucketName: string, objectName: string): Promise<string> {
-  const [url] = await signerStorage.bucket(bucketName).file(objectName).getSignedUrl({
-    version: "v4", action: "read", expires: Date.now() + 6 * 24 * 3600 * 1000,
-  });
-  return url;
-}
-
-const RUN = String(process.argv.find((a) => a.startsWith("--run="))?.slice(6) || "").trim();
-if (!RUN) throw new Error("缺少 --run=");
-if (process.env.FLY_APP_NAME !== "mvstudiopro") throw new Error("只允许在 Fly 容器内运行");
-
-const bucket = getGcsBucketName();
 const FIELD_LABELS: Record<string, string> = {
   emotionTagsZh: "情绪", narrativeFeatureTagsZh: "叙事特色", performanceTagsZh: "表演",
   audiovisualTagsZh: "视听", audienceExperienceTagsZh: "观众体验",
@@ -49,7 +27,23 @@ const esc = (v: unknown): string => String(v ?? "")
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const mmss = (s: number): string => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
-async function tryJson(objectName: string): Promise<Record<string, unknown> | null> {
+function makeSigner() {
+  const creds = JSON.parse(String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "{}")) as {
+    client_email?: string; private_key?: string; project_id?: string;
+  };
+  const storage = new Storage({
+    credentials: { client_email: creds.client_email, private_key: creds.private_key },
+    projectId: creds.project_id,
+  });
+  return async (bucketName: string, objectName: string): Promise<string> => {
+    const [url] = await storage.bucket(bucketName).file(objectName).getSignedUrl({
+      version: "v4", action: "read", expires: Date.now() + 6 * 24 * 3600 * 1000,
+    });
+    return url;
+  };
+}
+
+async function tryJson(bucket: string, objectName: string): Promise<Record<string, unknown> | null> {
   try {
     const { buffer } = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` });
     return JSON.parse(buffer.toString("utf8")) as Record<string, unknown>;
@@ -58,20 +52,35 @@ async function tryJson(objectName: string): Promise<Record<string, unknown> | nu
   }
 }
 
-type Shot = Record<string, unknown>;
+export type NativeReportRenderInput = {
+  /** 报告标题里的身份标识（run id 或 剧集标识） */
+  labelZh: string;
+  /** parsed 段卡前缀（segment-evidence/tpl_native_..._epNNN/） */
+  evidencePrefix: string;
+  /** GLM 整集卡对象名（可无） */
+  glmCardObjectName?: string;
+  /** 帧包前缀（无 v2 时回退；可都不存在） */
+  framesV2SummaryObjectName?: string;
+  framesPrefix?: string;
+  /** 报告落点对象名 */
+  reportObjectName: string;
+};
 
-async function main() {
-  const glm = await tryJson(`manhua-template-learn/probes/${RUN}/glm-episode-card.json`);
+export async function renderNativeEvidenceReport(input: NativeReportRenderInput): Promise<{
+  reportUrl: string; bytes: number; frames: number; frameSource: string; shots: number;
+}> {
+  const bucket = getGcsBucketName();
+  const sign = makeSigner();
+
+  const glm = input.glmCardObjectName ? await tryJson(bucket, input.glmCardObjectName) : null;
   let card = glm;
   if (!card) {
     const names = await listGcsObjectNamesByPrefix({
-      prefix: `manhua-template-learn/segment-evidence/tpl_native_${RUN}_ep001/`,
-      literalPrefix: true,
-      maxResults: 20,
+      prefix: input.evidencePrefix, literalPrefix: true, maxResults: 40,
     });
     const merged: Record<string, unknown> = { shots: [], subtitles: [], audioResolution: [] };
     for (const name of names.sort()) {
-      const entry = await tryJson(name);
+      const entry = await tryJson(bucket, name);
       const raw = (entry?.raw ?? {}) as Record<string, unknown>;
       for (const key of ["shots", "subtitles", "audioResolution"] as const) {
         (merged[key] as unknown[]).push(...(Array.isArray(raw[key]) ? raw[key] as unknown[] : []));
@@ -82,28 +91,30 @@ async function main() {
     }
     card = merged;
   }
-  if (!card) throw new Error("既无 GLM 整集卡也无 parsed 段卡");
-  const shots = (Array.isArray(card.shots) ? card.shots : []) as Shot[];
+  const shots = (Array.isArray(card.shots) ? card.shots : []) as Array<Record<string, unknown>>;
+  if (shots.length === 0) {
+    throw new Error("该集没有逐镜证据层（v8 之前学习的旧集需重学后才能出报告）");
+  }
 
-  const framesSummary = await tryJson(`manhua-template-learn/probes/${RUN}/frames-v2-summary.json`);
-  const frameRows = (Array.isArray(framesSummary?.frames) ? framesSummary!.frames : []) as Array<Record<string, unknown>>;
+  const framesSummary = input.framesV2SummaryObjectName
+    ? await tryJson(bucket, input.framesV2SummaryObjectName)
+    : null;
   let frameSource = "frames-v2（按戏抽帧）";
-  let frameList = frameRows;
-  if (frameList.length === 0) {
+  let frameList = (Array.isArray(framesSummary?.frames) ? framesSummary!.frames : []) as Array<Record<string, unknown>>;
+  if (frameList.length === 0 && input.framesPrefix) {
     frameSource = "frames（逐镜中点）";
     const names = await listGcsObjectNamesByPrefix({
-      prefix: `manhua-template-learn/probes/${RUN}/frames/`,
-      literalPrefix: true,
-      maxResults: 400,
+      prefix: input.framesPrefix, literalPrefix: true, maxResults: 400,
     });
     frameList = names.map((objectName) => {
       const m = /seg(\d+)\/shot(\d+)-(\d+)ds/.exec(objectName);
       return { seg: Number(m?.[1] ?? 0), shot: Number(m?.[2] ?? 0), atSec: Number(m?.[3] ?? 0) / 10, reasons: [], objectName };
     });
   }
+  if (frameList.length === 0) frameSource = "无帧包（该集尚未抽帧）";
   const tiles: string[] = [];
   for (const frame of frameList) {
-    const url = await signReadUrl(bucket, String(frame.objectName));
+    const url = await sign(bucket, String(frame.objectName));
     const reasons = (Array.isArray(frame.reasons) ? frame.reasons : []) as string[];
     const badge = reasons.map((r) => `<span style="background:#1d2733;border-radius:8px;padding:0 6px;margin-right:3px">${esc(r)}</span>`).join("");
     const shot = shots[Number(frame.shot)] || {};
@@ -136,23 +147,22 @@ async function main() {
   const subRows = subtitles.map((s) => `<tr><td style="color:#e8c66a">${mmss(Number(s.atSec))}</td><td>${esc(s.textZh)}</td></tr>`).join("");
 
   const adCount = shots.filter((s) => s.evidenceRole === "non_story_ad").length;
-  const html = `<title>${esc(RUN)} 模型产出报告</title><div style="font-family:'Songti SC',serif;background:#0d1117;color:#dce3ec;padding:28px;max-width:1200px;margin:auto">
-<p style="color:#e8c66a;letter-spacing:.3em;font-size:.8em">PROBE ${esc(RUN)} · ${glm ? "GLM 整集卡" : "parsed 段卡拼接"} · 模型字段原样渲染，无编辑层</p>
-<h1 style="font-size:1.8em;margin:.2em 0">模型产出报告（${shots.length} 镜 · 广告镜 ${adCount} · 帧包 ${frameSource} ${tiles.length} 帧）</h1>
+  const html = `<title>${esc(input.labelZh)} 模型产出报告</title><div style="font-family:'Songti SC',serif;background:#0d1117;color:#dce3ec;padding:28px;max-width:1200px;margin:auto">
+<p style="color:#e8c66a;letter-spacing:.3em;font-size:.8em">${esc(input.labelZh)} · ${glm ? "GLM 整集卡" : "parsed 段卡拼接"} · 模型字段原样渲染，无编辑层</p>
+<h1 style="font-size:1.8em;margin:.2em 0">模型产出报告（${shots.length} 镜 · 广告镜 ${adCount} · ${frameSource} ${tiles.length} 帧）</h1>
 <h2 style="color:#e8c66a;margin-top:26px">五维分类（模型原文）</h2>${tags}${summaryCards}
 <h2 style="color:#e8c66a;margin-top:30px">画面时间轴</h2><div style="display:flex;flex-wrap:wrap;gap:8px">${tiles.join("")}</div>
 <details style="margin-top:30px" open><summary style="color:#e8c66a;font-size:1.2em;cursor:pointer">全镜头表 · ${shots.length} 镜 × 17 字段（广告镜红底）</summary><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#141b24">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#8fa3bd">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
 <h2 style="color:#e8c66a;margin-top:30px">音轨解析（模型原文）</h2><div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.85em">${audioRows}</table></div>
-<details style="margin-top:30px"><summary style="color:#e8c66a;font-size:1.1em;cursor:pointer">字幕原始证据 · ${subtitles.length} 条（折叠存证，不铺开；重点时刻由模型侧 keyMoments 承担）</summary><div style="overflow-x:auto;max-height:50vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.85em">${subRows}</table></div></details>
-<p style="color:#5d6b80;font-size:.8em;margin-top:36px">帧图与本页为 GCS V4 签名链接（6 天）· raw/parsed/GLM 卡永久存 GCS · 本页由代码从模型 JSON 确定性渲染</p></div>`;
+<details style="margin-top:30px"><summary style="color:#e8c66a;font-size:1.1em;cursor:pointer">字幕原始证据 · ${subtitles.length} 条（折叠存证，不铺开）</summary><div style="overflow-x:auto;max-height:50vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.85em">${subRows}</table></div></details>
+<p style="color:#5d6b80;font-size:.8em;margin-top:36px">帧图与本页为 GCS V4 签名链接（6 天）· 证据永久存 GCS · 本页由代码从模型 JSON 确定性渲染</p></div>`;
 
-  const objectName = `manhua-template-learn/probes/${RUN}/report.html`;
-  await uploadBufferToGcs({ bucket, objectName, contentType: "text/html; charset=utf-8", buffer: Buffer.from(html, "utf8") });
-  const reportUrl = await signReadUrl(bucket, objectName);
-  console.info(JSON.stringify({ runId: RUN, objectName, bytes: html.length, frames: tiles.length, frameSource, reportUrl }));
+  await uploadBufferToGcs({
+    bucket,
+    objectName: input.reportObjectName,
+    contentType: "text/html; charset=utf-8",
+    buffer: Buffer.from(html, "utf8"),
+  });
+  const reportUrl = await sign(bucket, input.reportObjectName);
+  return { reportUrl, bytes: html.length, frames: tiles.length, frameSource, shots: shots.length };
 }
-
-main().catch((error) => {
-  console.error(`[render] 失败：${error instanceof Error ? error.message : String(error)}`);
-  process.exitCode = 1;
-});

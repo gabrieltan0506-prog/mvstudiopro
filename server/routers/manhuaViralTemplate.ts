@@ -168,6 +168,33 @@ export const manhuaViralTemplateRouter = router({
       }
     }),
 
+  /** owner 一键出模型产出报告 HTML（¥0 零模型调用）：证据 JSON 确定性渲染，回签名 URL。 */
+  renderEpisodeReport: protectedProcedure
+    .input(z.object({
+      seriesKey: z.string().regex(/^[a-z0-9_-]{4,60}$/i),
+      episodeIndex: z.number().int().min(1).max(999),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      assertSiteOwner(ctx.user);
+      const { renderNativeEvidenceReport } = await import("../services/manhuaNativeReportRender");
+      const ep = String(input.episodeIndex).padStart(3, "0");
+      const cardKey = `tpl_native_${input.seriesKey}_ep${ep}`;
+      try {
+        return await renderNativeEvidenceReport({
+          labelZh: `${input.seriesKey} 第 ${input.episodeIndex} 集`,
+          evidencePrefix: `manhua-template-learn/segment-evidence/${cardKey}/`,
+          framesV2SummaryObjectName: `manhua-template-learn/probes/${cardKey}/frames-v2-summary.json`,
+          framesPrefix: `manhua-template-learn/probes/${cardKey}/frames/`,
+          reportObjectName: `manhua-template-learn/reports/${cardKey}.html`,
+        });
+      } catch (e) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: e instanceof Error ? e.message : "报告渲染失败",
+        });
+      }
+    }),
+
   /** owner 查看单张正式模板；从 GCS approved/ 即时读取，不信任客户端列表缓存。 */
   getApprovedOwnerDetail: protectedProcedure
     .input(z.object({ id: z.string().regex(/^tpl_[a-z0-9_-]{1,60}$/i) }))
