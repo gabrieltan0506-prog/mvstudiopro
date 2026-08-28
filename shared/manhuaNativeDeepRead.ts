@@ -196,10 +196,33 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
     })
     .filter((subtitle) => subtitle.textZh)
     .sort((a, b) => a.atSec - b.atSec);
+  // 广告区间的声音同样不得进入消费层：音轨行整段落在广告区间内的删除，
+  // 跨界行保留但剔除落在广告区间内的 cues（chunk 内秒位 + 本段起点 = 全片绝对秒位）。
   const resolvedByChunk = new Map<number, ManhuaNativeAudioChunkAnalysis>();
   for (const { seg } of ok) {
+    const adIntervals = seg.shots
+      .filter((shot) => shot.evidenceRole === "non_story_ad")
+      .map((shot) => ({ startSec: shot.startSec, endSec: shot.endSec }));
+    const segStart = seg.shots.length
+      ? Math.max(0, Math.floor(Math.min(...seg.shots.map((shot) => Number(shot.startSec) || 0))))
+      : 0;
+    const inAd = (absSec: number) =>
+      adIntervals.some((interval) => absSec >= interval.startSec && absSec < interval.endSec);
     for (const row of seg.audioResolution) {
-      if (!resolvedByChunk.has(row.chunkIndex)) resolvedByChunk.set(row.chunkIndex, row.analysis);
+      if (resolvedByChunk.has(row.chunkIndex)) continue;
+      const analysis = adIntervals.length
+        ? {
+          ...row.analysis,
+          audioTrack: row.analysis.audioTrack
+            .filter((track) => !adIntervals.some((interval) =>
+              segStart + track.fromSec >= interval.startSec && segStart + track.toSec <= interval.endSec))
+            .map((track) => ({
+              ...track,
+              cues: track.cues.filter((cue) => !inAd(segStart + cue.atSec)),
+            })),
+        }
+        : row.analysis;
+      resolvedByChunk.set(row.chunkIndex, analysis);
     }
   }
   const resolvedAudioChunks = Array.from(resolvedByChunk.entries())
