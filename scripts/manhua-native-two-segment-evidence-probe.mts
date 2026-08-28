@@ -8,6 +8,7 @@
 import { createHash } from "node:crypto";
 import {
   fetchManhua0996EpisodePlayback,
+  sanitizeManhuaSourceErrorText,
 } from "../server/services/manhuaLearn0996Source.js";
 import {
   runManhuaNativeDeepRead,
@@ -78,6 +79,26 @@ function extractModelJsonFromRawEvidence(payload: unknown): Record<string, unkno
   return parsed as Record<string, unknown>;
 }
 
+/** 失败必带根因：沿 cause 链逐层保留清洗后的 name/code/message，绝不只抛一句统一文案。 */
+function describeErrorChain(error: unknown): Array<Record<string, string>> {
+  const chain: Array<Record<string, string>> = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < 6 && current; depth += 1) {
+    if (typeof current !== "object" && typeof current !== "string") break;
+    const row: Record<string, string> = {};
+    const source = typeof current === "string" ? { message: current } : current as {
+      name?: unknown; code?: unknown; message?: unknown; cause?: unknown;
+    };
+    for (const key of ["name", "code", "message"] as const) {
+      const text = sanitizeManhuaSourceErrorText((source as Record<string, unknown>)[key]);
+      if (text) row[key] = text;
+    }
+    if (Object.keys(row).length > 0) chain.push(row);
+    current = (source as { cause?: unknown }).cause;
+  }
+  return chain;
+}
+
 function segmentIndexFromName(name: string): number {
   const match = /\/seg(\d+)(?:\/|-)/.exec(name);
   return Number(match?.[1] ?? -1);
@@ -100,7 +121,9 @@ async function main() {
     prefix: videoPrefix, literalPrefix: true, maxResults: 1_000,
   }));
   const resolveNodes = async () => {
+    console.info("[probe] 阶段：解析第三方片源媒体地址");
     const playback = await fetchManhua0996EpisodePlayback(SOURCE_URL);
+    console.info(`[probe] 阶段：片源解析成功，候选媒体 ${playback.playbackUrls.length} 条`);
     return playback.playbackUrls.map((url) => ({ url, referer: playback.referer }));
   };
 
@@ -163,6 +186,7 @@ async function main() {
     ranges: [[0, 300], [300, 600]],
     status: runError ? "failed" : "completed",
     error: runError instanceof Error ? runError.message : runError ? String(runError) : undefined,
+    errorCauseChain: runError ? describeErrorChain(runError) : undefined,
     resultCounts: result ? {
       beatGrid: result.beatGrid.length,
       subtitles: result.subtitleTrack.length,
@@ -217,5 +241,6 @@ async function main() {
 
 main().catch((error) => {
   console.error(`[probe] 失败：${error instanceof Error ? error.message : String(error)}`);
+  console.error(`[probe] 根因链：${JSON.stringify(describeErrorChain(error))}`);
   process.exitCode = 1;
 });
