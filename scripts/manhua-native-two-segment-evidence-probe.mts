@@ -160,7 +160,12 @@ async function main() {
   for (const fact of rawFacts) {
     const segmentIndex = segmentIndexFromName(fact.objectName);
     // 同段重试可能有多份原始响应；最后一份是最终接受/拒绝判断的输入。
-    rawBySegment.set(segmentIndex, countsOf(extractModelJsonFromRawEvidence(fact.payload)));
+    // 坏 JSON 的失败尝试同样是合法证据（重试梯度的存在理由），不得让它阻断摘要落盘。
+    try {
+      rawBySegment.set(segmentIndex, countsOf(extractModelJsonFromRawEvidence(fact.payload)));
+    } catch {
+      console.error(`[probe] 原始证据不可解析（不阻断摘要）：${fact.objectName}`);
+    }
   }
   for (const fact of parsedFacts) {
     const entry = fact.payload && typeof fact.payload === "object"
