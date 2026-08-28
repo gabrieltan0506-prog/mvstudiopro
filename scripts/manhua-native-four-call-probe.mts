@@ -19,6 +19,7 @@ import {
 } from "/app/server/services/vertexMedia.ts";
 import { resolveNativeDeepReadInputFps } from "/app/server/services/manhuaNativeDeepReadRunner.ts";
 import { invokeNativeSeriesAggregationModel } from "/app/server/services/manhuaNativeSeriesAggregation.ts";
+import { MANHUA_NATIVE_AUDIO_CUE_KINDS } from "/app/shared/manhuaNativeAudioAnalysis.ts";
 
 const run = promisify(execFile);
 const SOURCE = String(process.argv[2] || "").trim();
@@ -89,7 +90,7 @@ const AUDIO_SCHEMA = {
       toneZh: { type: "STRING" }, sfxZh: { type: "STRING" }, bgmZh: { type: "STRING" },
       atmosphereZh: { type: "STRING" }, silenceZh: { type: "STRING" },
       cues: { type: "ARRAY", items: { type: "OBJECT", properties: {
-        atSec: { type: "INTEGER" }, kind: { type: "STRING", enum: ["sfx", "bgm_in", "bgm_change", "bgm_out", "silence_in", "silence_out"] }, detailZh: { type: "STRING" },
+        atSec: { type: "INTEGER" }, kind: { type: "STRING", enum: MANHUA_NATIVE_AUDIO_CUE_KINDS }, detailZh: { type: "STRING" },
       }, required: ["atSec", "kind", "detailZh"] } },
     }, required: ["fromSec", "toSec", "emotionArcZh", "toneZh", "sfxZh", "bgmZh", "atmosphereZh", "silenceZh", "cues"] } },
     audioBeatStructureZh: { type: "STRING" }, mixNotesZh: { type: "STRING" },

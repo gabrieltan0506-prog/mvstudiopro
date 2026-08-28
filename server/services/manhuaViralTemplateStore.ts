@@ -91,14 +91,6 @@ function mergeLearnedText(previous: unknown, next: unknown, max: number): string
   return text || undefined;
 }
 
-function evenlyLimit<T>(rows: readonly T[], max: number): T[] {
-  if (rows.length <= max) return [...rows];
-  if (max <= 1) return rows.slice(0, Math.max(0, max));
-  return Array.from({ length: max }, (_, index) =>
-    rows[Math.round((index * (rows.length - 1)) / (max - 1))]!,
-  );
-}
-
 /**
  * 同源同集的补全批准不是整卡覆盖：正式卡里已经验收过的导演手法、字幕、
  * 声音总结与五维标签必须保留；新提案只更新同一拍的更完整描述并补入差异项。
@@ -132,7 +124,8 @@ export function mergeNativeEpisodeTemplateLearning(
       (left, right) => Number(left.atSec) - Number(right.atSec)
         || Number(left.endSec || left.atSec) - Number(right.endSec || right.atSec),
     );
-  const beatGrid = evenlyLimit(mergedBeatGrid, 128);
+  // 同剧补学只做身份去重；后续任何消费者也必须完整读取，承受不了就显式失败并走回退。
+  const beatGrid = mergedBeatGrid;
 
   const subtitleByIdentity = new Map<string, NonNullable<ManhuaViralTemplateCard["subtitleTrack"]>[number]>();
   for (const subtitle of [...(previous.subtitleTrack || []), ...(next.subtitleTrack || [])]) {
@@ -140,15 +133,11 @@ export function mergeNativeEpisodeTemplateLearning(
     if (key.endsWith("|")) continue;
     subtitleByIdentity.set(key, subtitle);
   }
-  const subtitleTrack = evenlyLimit(
-    Array.from(subtitleByIdentity.values()).sort((a, b) => a.atSec - b.atSec),
-    512,
-  );
+  const subtitleTrack = Array.from(subtitleByIdentity.values()).sort((a, b) => a.atSec - b.atSec);
 
   const mergeTags = (
     before: readonly string[] = [],
     after: readonly string[] = [],
-    max = 8,
   ) => {
     const seen = new Set<string>();
     const prior = before
@@ -167,11 +156,7 @@ export function mergeNativeEpisodeTemplateLearning(
         seen.add(key);
         return true;
       });
-    if (prior.length + added.length <= max) return [...prior, ...added];
-    // 达到 schema 上限时，新旧各占一部分，禁止旧满 8 项后吃掉所有新标签。
-    const addedBudget = Math.min(added.length, Math.max(1, Math.ceil(max / 2)));
-    const priorBudget = Math.min(prior.length, max - addedBudget);
-    return [...prior.slice(0, priorBudget), ...added.slice(0, max - priorBudget)];
+    return [...prior, ...added];
   };
   const previousClassification = previous.classification;
   const nextClassification = next.classification;
@@ -225,7 +210,7 @@ export function mergeNativeEpisodeTemplateLearning(
     reusableZh: mergeLearnedText(previous.reusableZh, next.reusableZh, 600),
     genPromptHintZh: mergeLearnedText(previous.genPromptHintZh, next.genPromptHintZh, 600),
     audioStory,
-    scenePoolHints: mergeTags(previous.scenePoolHints, next.scenePoolHints, 16),
+    scenePoolHints: mergeTags(previous.scenePoolHints, next.scenePoolHints),
     castShape: {
       leadDesireZh: next.castShape.leadDesireZh || previous.castShape.leadDesireZh,
       pressureZh: next.castShape.pressureZh || previous.castShape.pressureZh,
@@ -236,7 +221,7 @@ export function mergeNativeEpisodeTemplateLearning(
       minDialogueLines: Math.max(previous.densityHints.minDialogueLines, next.densityHints.minDialogueLines),
       minLocationHits: Math.max(previous.densityHints.minLocationHits, next.densityHints.minLocationHits),
     },
-    sourceRefs: Array.from(sourceByUrl.values()).slice(0, 8),
+    sourceRefs: Array.from(sourceByUrl.values()),
     // 进度、用量与模型仍取本轮；落库镜数/截断标记必须描述合并后的正式卡。
     provenance: next.provenance?.nativeVideoDeepRead
       ? {
@@ -244,7 +229,7 @@ export function mergeNativeEpisodeTemplateLearning(
           nativeVideoDeepRead: {
             ...next.provenance.nativeVideoDeepRead,
             shotCount: beatGrid.length,
-            truncated: next.provenance.nativeVideoDeepRead.truncated || mergedBeatGrid.length > 128,
+            truncated: next.provenance.nativeVideoDeepRead.truncated,
           },
         }
       : next.provenance,

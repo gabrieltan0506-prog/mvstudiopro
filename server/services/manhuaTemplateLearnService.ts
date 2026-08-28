@@ -631,6 +631,7 @@ type EpisodeSourceState = {
   triedStreamUrls?: string[];
   referer?: string;
   sourceMarkers?: ListedEpisode["sourceMarkers"];
+  playbackRefreshError?: string;
 };
 
 export function readMuxedPlaybackUrlsFromYtdlpInfo(data: unknown): string[] {
@@ -800,8 +801,14 @@ async function refreshEpisodePlaybackUrls(
   if (state.playbackRefreshAttempted) return state.playbackRefreshUrls || [];
   state.playbackRefreshAttempted = true;
   if (isManhua0996SourceUrl(ep.url, readManhuaLearnExtraSourceHosts())) {
-    const resolved = await fetchManhua0996EpisodePlayback(ep.url).catch(() => null);
-    if (!resolved) return [];
+    let resolved: Awaited<ReturnType<typeof fetchManhua0996EpisodePlayback>>;
+    try {
+      resolved = await fetchManhua0996EpisodePlayback(ep.url);
+    } catch (error) {
+      state.playbackRefreshError = error instanceof Error ? error.message : "第三方媒体接口解析失败";
+      state.playbackRefreshUrls = [];
+      return [];
+    }
     state.referer = resolved.referer;
     state.sourceMarkers = resolved.markers;
     state.playbackRefreshUrls = resolved.playbackUrls;
@@ -873,6 +880,9 @@ async function probeEpisodeDurationWithSourceFailover(
     }
   }
   state.playbackDead = true;
+  if (state.playbackRefreshError) {
+    throw new Error(`第三方媒体流不可用：${state.playbackRefreshError}`);
+  }
   throw new Error("官方媒体流不可用，未启动语音与高密度抽帧；已暂跳该集");
 }
 
@@ -1334,7 +1344,7 @@ async function learnOneEpisodeChunk(input: {
     .slice(0, 400);
 
   let hookNoteZh = "待补钩子";
-  let beatHints = timestamps.slice(0, 8).map((t) => ({
+  let beatHints = timestamps.map((t) => ({
     atSec: Math.round(t),
     conflictZh: "待视觉读帧补全",
     visualZh: `关键帧 @${t.toFixed(1)}s`,
@@ -1366,7 +1376,7 @@ async function learnOneEpisodeChunk(input: {
       path: p,
       atSec: Number(timestamps[i]) || 0,
     }));
-    const selected = selectFramesForVisionAnalysis(paired, 16);
+    const selected = selectFramesForVisionAnalysis(paired);
     const frames = [];
     for (const item of selected) {
       const buf = await fs.readFile(item.path);
@@ -1456,8 +1466,8 @@ async function learnOneEpisodeChunk(input: {
     transcriptPreview,
     hookNoteZh,
     beatHints,
-    climaxNotes: plan.climaxWindows.map((w) => w.reasonZh).slice(0, 6),
-    sceneHints: sceneHints.slice(0, 8),
+    climaxNotes: plan.climaxWindows.map((w) => w.reasonZh),
+    sceneHints,
     seriesDraftEvidence,
     learnedAt: new Date().toISOString(),
     previewFrameGcsUris: previewFrameGcsUris.length ? previewFrameGcsUris : undefined,

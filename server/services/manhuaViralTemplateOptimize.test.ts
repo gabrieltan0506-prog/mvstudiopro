@@ -147,7 +147,7 @@ describe("optimizeApprovedManhuaViralTemplate", () => {
 });
 
 
-/** 原生精读卡：95 镜、逐镜带六栏（与实测规模一致） */
+/** 原生精读卡：95 镜、逐镜带完整站位与表演证据（与新生产契约一致） */
 function nativeCard(): ManhuaViralTemplateCard {
   const base = approvedCard();
   return {
@@ -158,9 +158,17 @@ function nativeCard(): ManhuaViralTemplateCard {
       endSec: i * 3 + 2,
       conflictZh: `c${i}`,
       visualZh: `v${i}`,
+      unitTypeZh: "剪辑镜头",
       shotSizeZh: "特写",
       angleZh: "平视",
+      compositionZh: "角色居中，前后景分层",
       cameraMoveZh: "固定机位",
+      blockingZh: "角色前后错位站立",
+      bodyActionZh: "重心稳定，躯干微微前倾",
+      limbPropActionZh: "右手握住道具",
+      microExpressionZh: "下颌绷紧",
+      gazeBreathZh: "视线锁定对手，呼吸克制",
+      relationshipReactionZh: "对手逼近后角色站稳回应",
       lightingZh: "冷光",
       transitionInZh: "硬切",
     })),
@@ -204,7 +212,48 @@ const runNative = (out: unknown, requestId: string) =>
   });
 
 describe("原生精读模板防丢门禁（复审 P0-1）", () => {
-  it("镜头数相同但省略六栏 —— 必须拒绝（只比数量拦不住这种）", async () => {
+  it("超过 128 镜的完整证据可通过优化契约，不会在 schema 层截断", async () => {
+    const card = nativeCard();
+    card.beatGrid = Array.from({ length: 160 }, (_, i) => ({
+      ...card.beatGrid[i % card.beatGrid.length]!,
+      atSec: i * 2,
+      endSec: i * 2 + 1,
+      conflictZh: `c${i}`,
+      visualZh: `v${i}`,
+    }));
+    const candidate = {
+      nameZh: card.nameZh,
+      laneZh: card.laneZh,
+      summaryZh: "保留完整逐镜证据并强化摘要。",
+      hook3sZh: card.hook3sZh,
+      beatGrid: card.beatGrid,
+      reusableZh: card.reusableZh,
+      genPromptHintZh: card.genPromptHintZh,
+      scenePoolHints: card.scenePoolHints,
+      castShape: card.castShape,
+      densityHints: card.densityHints,
+    };
+
+    const out = await optimizeApprovedManhuaViralTemplate({
+      card,
+      model: "deepseek_v4_0813_high",
+      promptZh: "只优化摘要。",
+      requestId: "req_native_160",
+      userId: 7,
+      invoke: async () => resultWith({
+        candidate,
+        reasons: [
+          { field: "summaryZh", reasonZh: "摘要写得更具体。" },
+          { field: "beatGrid", reasonZh: "逐镜证据完整原样带回。" },
+        ],
+      }),
+    });
+
+    expect(out.proposal.beatGrid).toHaveLength(160);
+    expect(out.proposal.beatGrid.at(-1)?.visualZh).toBe("v159");
+  });
+
+  it("镜头数相同但省略原生证据 —— 必须拒绝（只比数量拦不住这种）", async () => {
     const stripped = nativeCard().beatGrid.map((b) => ({
       atSec: b.atSec,
       conflictZh: b.conflictZh,
@@ -221,7 +270,7 @@ describe("原生精读模板防丢门禁（复审 P0-1）", () => {
     ).rejects.toThrow(/缺少 endSec|缺少 shotSizeZh|缺少 cameraMoveZh/);
   });
 
-  it("六栏完整、只改 conflictZh/visualZh —— 允许", async () => {
+  it("原生证据完整、只改 conflictZh/visualZh —— 允许", async () => {
     const edited = nativeCard().beatGrid.map((b, i) =>
       i === 0 ? { ...b, conflictZh: "开场压制", visualZh: "两人对峙" } : b,
     );
@@ -231,9 +280,11 @@ describe("原生精读模板防丢门禁（复审 P0-1）", () => {
     );
     expect(out.proposal.beatGrid).toHaveLength(95);
     expect(out.proposal.beatGrid[0]!.cameraMoveZh).toBe("固定机位");
+    expect(out.proposal.beatGrid[0]!.blockingZh).toBe("角色前后错位站立");
+    expect(out.proposal.beatGrid[0]!.microExpressionZh).toBe("下颌绷紧");
   });
 
-  it("六栏完整且明确优化 cameraMoveZh —— 允许", async () => {
+  it("原生证据完整且明确优化 cameraMoveZh —— 允许", async () => {
     const edited = nativeCard().beatGrid.map((b, i) =>
       i === 0 ? { ...b, cameraMoveZh: "约2秒内从中景推至面部近景" } : b,
     );

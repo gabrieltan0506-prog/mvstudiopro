@@ -5,7 +5,6 @@
  */
 import { invokeLLM, extractJsonString } from "./_core/llm.js";
 import {
-  MANHUA_TEMPLATE_FRAME_VISION_MAX_FRAMES,
   MANHUA_TEMPLATE_FRAME_VISION_MAX_OUTPUT_TOKENS,
   MANHUA_TEMPLATE_FRAME_VISION_MODEL,
   MANHUA_TEMPLATE_FRAME_VISION_REASONING,
@@ -73,7 +72,6 @@ export async function analyzeManhuaTemplateFrames(
 ): Promise<ManhuaTemplateFrameVisionResult> {
   const selected = selectFramesForVisionAnalysis(
     input.frames.filter((f) => f && (f.dataUrl || f.gcsUri || f.url)),
-    MANHUA_TEMPLATE_FRAME_VISION_MAX_FRAMES,
   );
   if (!selected.length) throw new Error("missing_frames");
 

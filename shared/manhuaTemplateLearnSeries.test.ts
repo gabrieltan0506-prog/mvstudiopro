@@ -180,6 +180,25 @@ describe("manhuaTemplateLearnSeries", () => {
     expect(card?.castShape.leadDesireZh).toBe("完成进化");
     expect(card?.sourceRefs[0]?.noteZh).toContain("累计学习25集");
   });
+
+  it("旧抽帧系列聚合保留超过 24 条节拍证据", () => {
+    const complete = {
+      ...digest(1),
+      beatHints: Array.from({ length: 40 }, (_, index) => ({
+        atSec: index,
+        conflictZh: `冲突${index}`,
+        visualZh: `画面${index}`,
+      })),
+    };
+    const card = mergeEpisodeDigestsIntoProposal({
+      seriesKey: "legacy-full-evidence",
+      titleHint: "完整旧链证据",
+      sourceUrl: "https://example.com/mix",
+      digests: [complete],
+    });
+    expect(card?.beatGrid).toHaveLength(40);
+    expect(card?.beatGrid.at(-1)?.visualZh).toBe("画面39");
+  });
 });
 
 describe("pickRetrySkippedEpisodeIndexes（重试暂跳集批次）", () => {

@@ -1,7 +1,8 @@
 /**
  * 原生视频精读产出 → 模板卡的适配器。
  *
- * 上游形状来自 0823 实跑（qwen3.8-max 直读抖音 CDN，逐镜六栏），
+ * 上游形状最初来自 0823 实跑，0827 起由 Gemini 3.1 Pro 直读 GCS 视频，
+ * 产出完整逐镜、角色调度、表演与音轨证据；本文件是段级证据进入模板卡的契约门。
  * 每段一条记录，`text` 里是模型返回的 JSON 字符串：
  *
  * ```
@@ -30,12 +31,23 @@ const shotSchema = z
   .object({
     startSec: z.number().min(0),
     endSec: z.number().min(0),
+    /** 新产出由 runner 门禁强制必填；optional 仅用于读取历史原始证据。 */
+    unitTypeZh: z.enum(["剪辑镜头", "拆分镜证据段"]).optional(),
     shotSizeZh: z.string().trim().optional(),
     angleZh: z.string().trim().optional(),
+    compositionZh: z.string().trim().optional(),
     cameraMoveZh: z.string().trim().optional(),
+    blockingZh: z.string().trim().optional(),
+    bodyActionZh: z.string().trim().optional(),
+    limbPropActionZh: z.string().trim().optional(),
+    microExpressionZh: z.string().trim().optional(),
+    gazeBreathZh: z.string().trim().optional(),
+    relationshipReactionZh: z.string().trim().optional(),
     lightingZh: z.string().trim().optional(),
     actionZh: z.string().trim().default(""),
     transitionInZh: z.string().trim().optional(),
+    /** 与剧情无关的招商/贴片广告保留在原始时间轴，但不得进入模板证据。 */
+    evidenceRole: z.enum(["story", "non_story_ad"]).default("story"),
   })
   .passthrough();
 
@@ -45,21 +57,21 @@ export const nativeDeepReadSegmentSchema = z
     subtitles: z.array(z.object({
       atSec: z.number().finite().min(0),
       textZh: z.string().trim().min(1),
-    }).strict()).max(512).default([]),
+    }).strict()).default([]),
     audioResolution: z.array(z.object({
       chunkIndex: z.number().int().min(0),
       analysis: manhuaNativeAudioChunkAnalysisSchema,
-    }).strict()).max(20).default([]),
+    }).strict()).default([]),
     beatStructureZh: z.string().trim().default(""),
     moodArcZh: z.string().trim().optional(),
     reusableZh: z.string().trim().optional(),
     genPromptHintZh: z.string().trim().optional(),
     classification: z.object({
-      emotionTagsZh: z.array(z.string().trim().min(1)).max(8).default([]),
-      narrativeFeatureTagsZh: z.array(z.string().trim().min(1)).max(8).default([]),
-      performanceTagsZh: z.array(z.string().trim().min(1)).max(8).default([]),
-      audiovisualTagsZh: z.array(z.string().trim().min(1)).max(8).default([]),
-      audienceExperienceTagsZh: z.array(z.string().trim().min(1)).max(8).default([]),
+      emotionTagsZh: z.array(z.string().trim().min(1)).default([]),
+      narrativeFeatureTagsZh: z.array(z.string().trim().min(1)).default([]),
+      performanceTagsZh: z.array(z.string().trim().min(1)).default([]),
+      audiovisualTagsZh: z.array(z.string().trim().min(1)).default([]),
+      audienceExperienceTagsZh: z.array(z.string().trim().min(1)).default([]),
     }).strict().optional(),
   })
   .passthrough();
@@ -90,14 +102,11 @@ export type NativeDeepReadOutput = {
   failedSegmentCount: number;
   /** 被丢弃的镜头数：动作或节奏结构为空。**不写「未标注」占位**，空就是没学到 */
   droppedCount: number;
-  /** 是否触顶 128 被抽稀 —— 触顶说明学习产出超出模板承载，需人工确认 */
+  /** 兼容旧产物：新链路不再截断完整镜头证据，因此恒为 false。 */
   truncated: boolean;
   /** 同一集音轨的故事/对白/声音节奏；由执行协调器在视觉精读后装配。 */
   audioAnalysis?: ManhuaNativeAudioAnalysis;
 };
-
-/** beatGrid 硬上限，与 manhuaViralTemplateBank 的解析上限一致 */
-export const NATIVE_DEEP_READ_MAX_BEATS = 128;
 
 const cut = (v: string | undefined, max: number): string | undefined => {
   const t = String(v || "").trim().slice(0, max);
@@ -133,7 +142,8 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
   const allBeats: ManhuaViralTemplateBeat[] = ok.flatMap(({ seg, offsetSec }) => {
     const conflictZh = String(seg.beatStructureZh || "").trim().slice(0, 40);
     return seg.shots.flatMap((shot) => {
-      const visualZh = String(shot.actionZh || "").trim().slice(0, 80);
+      if (shot.evidenceRole === "non_story_ad") return [];
+      const visualZh = String(shot.actionZh || "").trim().slice(0, 280);
       // 空值不写「未标注」占位：占位会让下游以为学到了东西，实际是空的
       if (!conflictZh || !visualZh) {
         droppedCount += 1;
@@ -147,36 +157,72 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
           endSec: end > start ? end : undefined,
           conflictZh,
           visualZh,
-          shotSizeZh: cut(shot.shotSizeZh, 16),
-          angleZh: cut(shot.angleZh, 16),
-          cameraMoveZh: cut(shot.cameraMoveZh, 60),
-          lightingZh: cut(shot.lightingZh, 60),
-          transitionInZh: cut(shot.transitionInZh, 20),
+          unitTypeZh: shot.unitTypeZh,
+          shotSizeZh: cut(shot.shotSizeZh, 32),
+          angleZh: cut(shot.angleZh, 32),
+          compositionZh: cut(shot.compositionZh, 160),
+          cameraMoveZh: cut(shot.cameraMoveZh, 220),
+          blockingZh: cut(shot.blockingZh, 220),
+          bodyActionZh: cut(shot.bodyActionZh, 220),
+          limbPropActionZh: cut(shot.limbPropActionZh, 220),
+          microExpressionZh: cut(shot.microExpressionZh, 220),
+          gazeBreathZh: cut(shot.gazeBreathZh, 180),
+          relationshipReactionZh: cut(shot.relationshipReactionZh, 200),
+          lightingZh: cut(shot.lightingZh, 220),
+          transitionInZh: cut(shot.transitionInZh, 140),
         } satisfies ManhuaViralTemplateBeat,
       ];
     });
   });
 
-  // 触顶不静默取前 128（那等于只保留全片前段）：等距抽稀并标记，让 producer 决定
-  const truncated = allBeats.length > NATIVE_DEEP_READ_MAX_BEATS;
-  const beatGrid = truncated
-    ? Array.from({ length: NATIVE_DEEP_READ_MAX_BEATS }, (_, i) =>
-        allBeats[Math.round((i * (allBeats.length - 1)) / (NATIVE_DEEP_READ_MAX_BEATS - 1))]!,
-      )
-    : allBeats;
+  // 完整证据在生产、解析、存储与消费层一镜不少；任何层都不得固定抽稀。
+  const beatGrid = allBeats;
 
   const subtitleTrack = ok
-    .flatMap(({ seg, offsetSec }) => seg.subtitles.map((subtitle) => ({
-      atSec: Math.round((offsetSec + Math.max(0, subtitle.atSec)) * 100) / 100,
-      textZh: String(subtitle.textZh || "").trim().slice(0, 160),
-    })))
+    .flatMap(({ seg, offsetSec }) => {
+      const adIntervals = seg.shots
+        .filter((shot) => shot.evidenceRole === "non_story_ad")
+        .map((shot) => ({ startSec: shot.startSec, endSec: shot.endSec }));
+      return seg.subtitles.flatMap((subtitle) => {
+        const atSec = Math.max(0, subtitle.atSec);
+        if (adIntervals.some((interval) => atSec >= interval.startSec && atSec < interval.endSec)) {
+          return [];
+        }
+        return [{
+          atSec: Math.round((offsetSec + atSec) * 100) / 100,
+          textZh: String(subtitle.textZh || "").trim().slice(0, 160),
+        }];
+      });
+    })
     .filter((subtitle) => subtitle.textZh)
-    .sort((a, b) => a.atSec - b.atSec)
-    .slice(0, 512);
+    .sort((a, b) => a.atSec - b.atSec);
+  // 广告区间的声音同样不得进入消费层：音轨行整段落在广告区间内的删除，
+  // 跨界行保留但剔除落在广告区间内的 cues（chunk 内秒位 + 本段起点 = 全片绝对秒位）。
   const resolvedByChunk = new Map<number, ManhuaNativeAudioChunkAnalysis>();
   for (const { seg } of ok) {
+    const adIntervals = seg.shots
+      .filter((shot) => shot.evidenceRole === "non_story_ad")
+      .map((shot) => ({ startSec: shot.startSec, endSec: shot.endSec }));
+    const segStart = seg.shots.length
+      ? Math.max(0, Math.floor(Math.min(...seg.shots.map((shot) => Number(shot.startSec) || 0))))
+      : 0;
+    const inAd = (absSec: number) =>
+      adIntervals.some((interval) => absSec >= interval.startSec && absSec < interval.endSec);
     for (const row of seg.audioResolution) {
-      if (!resolvedByChunk.has(row.chunkIndex)) resolvedByChunk.set(row.chunkIndex, row.analysis);
+      if (resolvedByChunk.has(row.chunkIndex)) continue;
+      const analysis = adIntervals.length
+        ? {
+          ...row.analysis,
+          audioTrack: row.analysis.audioTrack
+            .filter((track) => !adIntervals.some((interval) =>
+              segStart + track.fromSec >= interval.startSec && segStart + track.toSec <= interval.endSec))
+            .map((track) => ({
+              ...track,
+              cues: track.cues.filter((cue) => !inAd(segStart + cue.atSec)),
+            })),
+        }
+        : row.analysis;
+      resolvedByChunk.set(row.chunkIndex, analysis);
     }
   }
   const resolvedAudioChunks = Array.from(resolvedByChunk.entries())
@@ -195,8 +241,7 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
     pick: (classification: NonNullable<NativeDeepReadSegment["classification"]>) => string[],
   ) => Array.from(new Set(ok.flatMap(({ seg }) => seg.classification ? pick(seg.classification) : [])))
     .map((tag) => String(tag || "").trim().slice(0, 24))
-    .filter(Boolean)
-    .slice(0, 8);
+    .filter(Boolean);
   const classification: ManhuaViralTemplateClassification = {
     emotionTagsZh: mergeTags((row) => row.emotionTagsZh),
     narrativeFeatureTagsZh: mergeTags((row) => row.narrativeFeatureTagsZh),
@@ -220,7 +265,7 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
     shotCount: beatGrid.length,
     failedSegmentCount: rows.length - ok.length,
     droppedCount,
-    truncated,
+    truncated: false,
   };
 }
 

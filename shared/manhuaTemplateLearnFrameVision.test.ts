@@ -21,12 +21,13 @@ describe("manhuaTemplateLearnFrameVision", () => {
     expect(resolveManhuaTemplateLearnLlmProvider("deepseek")).toBe("gpt");
   });
 
-  it("selectFramesForVisionAnalysis keeps hook frames and caps size", () => {
-    const frames = Array.from({ length: 40 }, (_, i) => ({ atSec: i * 5 }));
-    const picked = selectFramesForVisionAnalysis(frames, 12);
-    expect(picked.length).toBeLessThanOrEqual(12);
-    expect(picked.some((f) => f.atSec <= 5)).toBe(true);
-    expect(picked[0]!.atSec).toBeLessThanOrEqual(picked[picked.length - 1]!.atSec);
+  it("selectFramesForVisionAnalysis 保留全部已抽帧证据，只排序去重", () => {
+    const frames = Array.from({ length: 40 }, (_, i) => ({ atSec: i * 5, id: i }));
+    const picked = selectFramesForVisionAnalysis([...frames, { atSec: 5, id: 99 }]);
+    expect(picked).toHaveLength(40);
+    expect(picked[0]?.atSec).toBe(0);
+    expect(picked[1]?.id).toBe(99);
+    expect(picked[picked.length - 1]?.atSec).toBe(195);
   });
 
   it("parseManhuaTemplateFrameVisionJson accepts fenced JSON", () => {
@@ -50,6 +51,29 @@ describe("manhuaTemplateLearnFrameVision", () => {
     expect(parsed!.reasoningEffort).toBe(MANHUA_TEMPLATE_FRAME_VISION_REASONING);
     expect(parsed!.laneZh).toBe("古言种田");
     expect(parsed!.beatGrid).toHaveLength(2);
+  });
+
+  it("旧抽帧解析器不再把逐帧结果裁成 24 拍或 32 条笔记", () => {
+    const parsed = parseManhuaTemplateFrameVisionJson({
+      nameZh: "完整抽帧证据",
+      laneZh: "古言种田",
+      summaryZh: "保留全部证据",
+      hook3sZh: "开场冲突",
+      beatGrid: Array.from({ length: 40 }, (_, index) => ({
+        atSec: index,
+        conflictZh: `冲突${index}`,
+        visualZh: `画面${index}`,
+      })),
+      frameNotes: Array.from({ length: 40 }, (_, index) => ({
+        atSec: index,
+        whatShows: `证据${index}`,
+      })),
+      castShape: { leadDesireZh: "目标", pressureZh: "压力" },
+    });
+    expect(parsed?.beatGrid).toHaveLength(40);
+    expect(parsed?.frameNotes).toHaveLength(40);
+    expect(parsed?.beatGrid.at(-1)?.visualZh).toBe("画面39");
+    expect(parsed?.frameNotes?.at(-1)?.whatShows).toBe("证据39");
   });
 
   it("applyFrameVisionToProposal keeps proposed and fills fields", () => {

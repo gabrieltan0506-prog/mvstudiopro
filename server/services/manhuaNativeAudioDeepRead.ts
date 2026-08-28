@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { readFile, stat, unlink } from "node:fs/promises";
 import {
+  MANHUA_NATIVE_AUDIO_CUE_KINDS,
   MANHUA_NATIVE_AUDIO_MODEL,
   MANHUA_NATIVE_AUDIO_SOURCE_VARIANTS,
   isManhuaNativeAudioGateFailureZh,
@@ -148,7 +149,10 @@ const AUDIO_RESPONSE_SCHEMA = {
       atmosphereZh: { type: "STRING" }, silenceZh: { type: "STRING" },
       cues: { type: "ARRAY", items: { type: "OBJECT", properties: {
         atSec: { type: "INTEGER" },
-        kind: { type: "STRING", enum: ["sfx", "bgm_in", "bgm_change", "bgm_out", "silence_in", "silence_out"] },
+        kind: {
+          type: "STRING",
+          enum: MANHUA_NATIVE_AUDIO_CUE_KINDS,
+        },
         detailZh: { type: "STRING" },
       }, required: ["atSec", "kind", "detailZh"] } },
     }, required: ["fromSec", "toSec", "emotionArcZh", "toneZh", "sfxZh", "bgmZh", "atmosphereZh", "silenceZh", "cues"] } },

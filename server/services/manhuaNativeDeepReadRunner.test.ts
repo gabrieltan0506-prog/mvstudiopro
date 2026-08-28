@@ -9,6 +9,7 @@ import {
   NATIVE_DEEP_READ_GENERATION_CONFIG,
   NATIVE_DEEP_READ_HTTP_BODY_TIMEOUT_MS,
   NATIVE_DEEP_READ_HTTP_HEADERS_TIMEOUT_MS,
+  NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH,
   NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
   NATIVE_DEEP_READ_RESPONSE_SCHEMA,
   NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG,
@@ -102,7 +103,7 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_ROUTE_EVOLINK).toBe("evolink_gemini_video");
     expect(NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE).toBe("openrouter_glm_structuring");
     // 换代必须让旧确认码全废
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v6-gemini-10fps-direct-gcs");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v9-ad-exclusion");
   });
 
   it("长视频请求显式使用 30 分钟 HTTP 响应头与响应体时限，不落回 Undici 默认 300 秒", async () => {
@@ -171,7 +172,7 @@ describe("模型与通道收口", () => {
     expect(request.generationConfig).toMatchObject({ temperature: 0.6 });
   });
 
-  it("responseSchema 覆盖六栏骨架，并强制 classification 原始五键", () => {
+  it("responseSchema 覆盖独立的站位与表演证据，并用 enum 锁住单元类型", () => {
     expect(NATIVE_DEEP_READ_RESPONSE_SCHEMA.required).toEqual([
       "shots", "subtitles", "audioResolution", "beatStructureZh", "classification",
     ]);
@@ -206,6 +207,43 @@ describe("模型与通道收口", () => {
       "audiovisualTagsZh",
       "audienceExperienceTagsZh",
     ]);
+    expect(NATIVE_DEEP_READ_RESPONSE_SCHEMA.properties.shots.items.required).toEqual([
+      "startSec",
+      "endSec",
+      "unitTypeZh",
+      "shotSizeZh",
+      "angleZh",
+      "compositionZh",
+      "cameraMoveZh",
+      "blockingZh",
+      "bodyActionZh",
+      "limbPropActionZh",
+      "microExpressionZh",
+      "gazeBreathZh",
+      "relationshipReactionZh",
+      "lightingZh",
+      "actionZh",
+      "transitionInZh",
+      "evidenceRole",
+    ]);
+    expect(NATIVE_DEEP_READ_RESPONSE_SCHEMA.properties.shots.items.properties.unitTypeZh.enum)
+      .toEqual(["剪辑镜头", "拆分镜证据段"]);
+    expect(NATIVE_DEEP_READ_RESPONSE_SCHEMA.properties.shots.items.properties.evidenceRole.enum)
+      .toEqual(["story", "non_story_ad"]);
+    expect(audioAnalysis.properties.audioTrack.items.properties.cues.items.properties.kind.enum)
+      .toEqual([
+        "source_change",
+        "voice_change",
+        "sfx",
+        "bgm_in",
+        "bgm_change",
+        "bgm_out",
+        "atmosphere_change",
+        "dynamics_change",
+        "mix_change",
+        "silence_in",
+        "silence_out",
+      ]);
   });
 });
 
@@ -319,12 +357,15 @@ describe("每段提示词硬约束", () => {
     expect(prompt).toContain("优先压缩 subtitles，尽量保全镜头表与音轨栏的密度");
     expect(prompt).toContain("不要为省输出合并镜头");
     expect(prompt).toContain("钟表式时间");
-    expect(prompt).toContain("硬约束（只有这五条，必须遵守）");
+    expect(prompt).toContain("硬约束（只有这六条，必须遵守）");
   });
 
-  it("镜头验收与门禁同一套数字：360s 段至少 60 镜、平均 ≤6 秒、长镜头限额 1 个 ≤25 秒", () => {
+  it("镜头验收与门禁同一套数字：真实长镜超过 30 秒时拆连续证据段，不裁尾也不伪造切镜", () => {
     expect(prompt).toContain("本段至少 60 镜、平均每镜不超过 6 秒");
-    expect(prompt).toContain("超过 15 秒的长镜头（如标题卡/长定场）至多 1 个且不超过 25 秒");
+    expect(prompt).toContain("同一物理长镜持续超过 30 秒");
+    expect(prompt).toContain("每个证据段至少 1 秒");
+    expect(prompt).toContain(`transitionInZh 固定写「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」`);
+    expect(prompt).toContain("不得裁掉内容");
     expect(prompt).not.toContain("镜头数 ≥ 24");
   });
 
@@ -397,12 +438,21 @@ function makeSegmentPayload(input: {
     endSec: i === shotCount - 1
       ? input.endSec
       : Math.round((input.startSec + (i + 1) * shotLen) * 100) / 100,
+    unitTypeZh: "剪辑镜头",
     shotSizeZh: "近景",
     angleZh: "平视",
+    compositionZh: "角色居中，前景留出运动空间",
     cameraMoveZh: "固定机位",
+    blockingZh: "角色正面站位，保持对峙距离",
+    bodyActionZh: "重心前移后停住",
+    limbPropActionZh: "右手握住道具并抬起",
+    microExpressionZh: "眉心收紧，嘴角克制",
+    gazeBreathZh: "视线锁住对手，呼吸渐重",
+    relationshipReactionZh: "对方后退后本角色向前压近",
     lightingZh: "顶光冷调",
     actionZh: `人物动作${i}`,
     transitionInZh: "硬切",
+    evidenceRole: "story",
   }));
   const trackCount = input.audioTrackOverride ?? Math.max(floors.minAudioTracks, 4);
   const trackLen = Math.floor(lenSec / trackCount);
@@ -463,6 +513,73 @@ describe("段级双密度门禁", () => {
     })).not.toThrow();
   });
 
+  it("同一物理长镜超过 30 秒可按真实变化拆成多个连续证据段，仍只计一个长镜", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    const shot = (startSec: number, endSec: number, transitionInZh = "硬切") => ({
+      startSec,
+      endSec,
+      unitTypeZh: transitionInZh === NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH
+        ? "拆分镜证据段"
+        : "剪辑镜头",
+      shotSizeZh: "中景",
+      angleZh: "平视",
+      compositionZh: "角色从画面左侧移向右侧",
+      cameraMoveZh: "缓慢横移",
+      blockingZh: "两名角色前后错位移动",
+      bodyActionZh: "重心随横向移动转换",
+      limbPropActionZh: "双手随步伐摆动",
+      microExpressionZh: "眉眼持续紧绷",
+      gazeBreathZh: "视线跟随对手，呼吸加快",
+      relationshipReactionZh: "前方角色移动引发后方角色追随",
+      lightingZh: "侧光随角色移动发生变化",
+      actionZh: `角色从画面左侧移动到右侧（${startSec}-${endSec}）`,
+      transitionInZh,
+      evidenceRole: "story",
+    });
+    raw.shots = [
+      shot(0, 20),
+      shot(20, 40, NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH),
+      ...Array.from({ length: 8 }, (_, index) => shot(40 + index * 2.5, 42.5 + index * 2.5)),
+    ];
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw })).not.toThrow();
+  });
+
+  it("长镜证据拆分点不足 1 秒时拒收，禁止同秒空切凑过门禁", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    const shot = (startSec: number, endSec: number, transitionInZh = "硬切") => ({
+      startSec,
+      endSec,
+      unitTypeZh: transitionInZh === NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH
+        ? "拆分镜证据段"
+        : "剪辑镜头",
+      shotSizeZh: "中景",
+      angleZh: "平视",
+      compositionZh: "角色居中保持稳定构图",
+      cameraMoveZh: "固定机位",
+      blockingZh: "角色原地站立",
+      bodyActionZh: "躯干维持前倾",
+      limbPropActionZh: "双臂维持防御姿态",
+      microExpressionZh: "下颌绷紧",
+      gazeBreathZh: "视线固定，呼吸短促",
+      relationshipReactionZh: "持续回应画外对手",
+      lightingZh: "侧光",
+      actionZh: `角色持续表演（${startSec}-${endSec}）`,
+      transitionInZh,
+      evidenceRole: "story",
+    });
+    raw.shots = [
+      shot(0, 20),
+      shot(20, 20.5, NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH),
+      ...Array.from({ length: 8 }, (_, index) => {
+        const startSec = 20.5 + index * (39.5 / 8);
+        const endSec = index === 7 ? 60 : 20.5 + (index + 1) * (39.5 / 8);
+        return shot(startSec, endSec);
+      }),
+    ];
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
+      .toThrow("长镜证据拆分点之间必须至少相隔 1 秒");
+  });
+
   it("classification 五键齐全且仅两个维度非空时放行", () => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
     raw.classification = {
@@ -473,6 +590,48 @@ describe("段级双密度门禁", () => {
       audienceExperienceTagsZh: [],
     };
     expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw })).not.toThrow();
+  });
+
+  it("新模型产出缺 evidenceRole 时关闭式拒收，禁止把招商广告静默当剧情", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    delete (raw.shots as Array<Record<string, unknown>>)[0]!.evidenceRole;
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
+      .toThrow("缺 evidenceRole");
+  });
+
+  it("新模型产出缺独立角色站位字段时关闭式拒收，不再用 actionZh 掩盖", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    delete (raw.shots as Array<Record<string, unknown>>)[0]!.blockingZh;
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
+      .toThrow("缺 blockingZh");
+  });
+
+  it("unitTypeZh 只能使用批准的 enum 值", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    (raw.shots as Array<Record<string, unknown>>)[0]!.unitTypeZh = "长镜头";
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
+      .toThrow("unitTypeZh 缺失或无效");
+  });
+
+  it("招商镜头保留完整时间轴但不计剧情密度；音轨门禁仍按完整 60 秒计算", () => {
+    const raw = makeSegmentPayload({
+      segmentIndex: 0,
+      startSec: 0,
+      endSec: 60,
+      shotCountOverride: 10,
+      audioTrackOverride: 4,
+    });
+    const shots = raw.shots as Array<Record<string, unknown>>;
+    shots.slice(0, 8).forEach((shot) => { shot.evidenceRole = "non_story_ad"; });
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw })).not.toThrow();
+  });
+
+  it("整段都是招商广告时拒绝生成收费模板证据", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    (raw.shots as Array<Record<string, unknown>>)
+      .forEach((shot) => { shot.evidenceRole = "non_story_ad"; });
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
+      .toThrow("没有可学习的剧情镜头");
   });
 
   it("classification 原始缺键拒收，不能由 parser 默认空数组掩盖", () => {
@@ -648,6 +807,7 @@ describe("整集证据门禁（段卡合并后再跑一遍，GLM 之后同样要
       rawSegments: [rawSegments[0]!],
     })).toThrow("整集拒绝入库");
   });
+
 });
 
 describe("GLM 结构化整形提示词纪律", () => {
@@ -663,14 +823,24 @@ describe("GLM 结构化整形提示词纪律", () => {
     expect(prompt.system).toContain("结构化整形师");
     expect(prompt.system).toContain("只整形不创作");
     expect(prompt.system).toContain("禁止虚构");
-    expect(prompt.system).toContain("密度只增不减");
-    expect(prompt.system).toContain("取并集去重");
+    expect(prompt.system).toContain(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH);
+    expect(prompt.system).toContain("连续表演或连续剧情允许合理合并相邻证据");
+    expect(prompt.system).toContain("单条证据不得超过 30 秒");
+    expect(prompt.system).toContain("不得丢失时间轴覆盖");
+    expect(prompt.system).toContain("并集去重");
     expect(prompt.system).toContain("钟表式秒位");
     expect(prompt.system).toContain("只返回一个 JSON 对象");
     expect(prompt.user).toContain("【上一轮门禁被拒原因】镜头轴存在空档");
-    expect(prompt.user).toContain("禁止为省输出合并真实切换的镜头");
+    expect(prompt.user).toContain("只有相邻 story 证据可以合理合并");
+    expect(prompt.user).toContain("拆分边界至少相隔 1 秒");
+    expect(prompt.user).toContain("不得删除仍需保留的");
     expect(prompt.system).toContain("emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh");
     expect(prompt.system).toContain("至少两个维度");
+    expect(prompt.system).toContain("原样保留 evidenceRole");
+    expect(prompt.system).toContain("non_story_ad");
+    expect(prompt.system).toContain("广告区间内声音只作审计证据");
+    expect(prompt.system).toContain("其余镜头一律保持 story");
+    expect(prompt.user).toContain("只有相邻 story 证据可以合理合并");
   });
 
   it("坏 JSON 修复同样明确五键与两维契约", () => {
@@ -684,6 +854,8 @@ describe("GLM 结构化整形提示词纪律", () => {
     });
     expect(prompt.system).toContain("emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh");
     expect(prompt.system).toContain("至少两个维度");
+    expect(prompt.system).toContain("evidenceRole 只能原样恢复");
+    expect(prompt.system).toContain("原文缺失该字段则修复失败");
   });
 });
 
@@ -984,6 +1156,11 @@ function makeRunnerDeps(over: Partial<NativeDeepReadBatchRunnerDeps> = {}): Nati
     invokeGlmStructuring: vi.fn() as never,
     readSegmentCache: vi.fn(async () => null) as never,
     writeSegmentCache: vi.fn(async () => undefined) as never,
+    writeRawAttemptEvidence: vi.fn(async (input: { callId: string; responseText: string }) => ({
+      objectName: `manhua-template-learn/segment-evidence-raw/test/${input.callId}.json`,
+      bytes: Buffer.byteLength(input.responseText),
+      sha256: "a".repeat(64),
+    })) as never,
     waitForRetry: vi.fn(async () => undefined),
     ...over,
   };
@@ -1527,6 +1704,10 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
       expect(prepareVideos.mock.calls[1]![0].segments.map((row) => row.startSec)).toEqual([60]);
       expect(second.usage.inputTokens).toBe(100_000);
       expect(second.episodes[0]!.result.audioInputTokens).toBe(16_000);
+      expect(second.episodes[0]!.result.segmentEvidenceObjectNames).toHaveLength(2);
+      expect(second.episodes[0]!.result.segmentEvidenceObjectNames?.[0]).toMatch(
+        /^manhua-template-learn\/segment-evidence\/tpl_native_cache_series_01_ep003\/[a-f0-9]{64}\/seg0-[a-f0-9]{64}\.json$/,
+      );
     } finally {
       warn.mockRestore();
     }

@@ -167,9 +167,14 @@ describe("段缓存来源身份", () => {
     const segments = [{ startSec: 0, endSec: 10 }];
     const raw = {
       shots: [{
-        startSec: 0, endSec: 10, shotSizeZh: "近景", angleZh: "平视",
-        cameraMoveZh: "固定机位", lightingZh: "冷调顶光",
+        startSec: 0, endSec: 10, unitTypeZh: "剪辑镜头",
+        shotSizeZh: "近景", angleZh: "平视", compositionZh: "角色居中",
+        cameraMoveZh: "固定机位", blockingZh: "角色原地站立",
+        bodyActionZh: "躯干微微前倾", limbPropActionZh: "双手自然垂落",
+        microExpressionZh: "眉心收紧", gazeBreathZh: "视线抬起，呼吸转稳",
+        relationshipReactionZh: "回应画外角色后重新站稳", lightingZh: "冷调顶光",
         actionZh: "人物抬眼回应", transitionInZh: "硬切",
+        evidenceRole: "story",
       }],
       subtitles: [],
       audioResolution: [],

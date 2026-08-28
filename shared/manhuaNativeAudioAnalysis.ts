@@ -26,11 +26,23 @@ export const MANHUA_NATIVE_AUDIO_DIRECT_SOURCE_VARIANTS = ["native_video"] as co
 
 /** 以时间分段；32kHz 立体声 64kbps 的 45 分钟约 21.6MB，低于 30MB 上限。 */
 export const MANHUA_NATIVE_AUDIO_CHUNK_MAX_SEC = 45 * 60;
-export const MANHUA_NATIVE_AUDIO_MAX_TRACKS = 128;
-export const MANHUA_NATIVE_AUDIO_MAX_CUES = 128;
 
+/** 0827 实弹定稿：生产 Schema、解析门与探针必须共用同一份封闭词表。 */
+export const MANHUA_NATIVE_AUDIO_CUE_KINDS = [
+  "source_change",
+  "voice_change",
+  "sfx",
+  "bgm_in",
+  "bgm_change",
+  "bgm_out",
+  "atmosphere_change",
+  "dynamics_change",
+  "mix_change",
+  "silence_in",
+  "silence_out",
+] as const;
 export type ManhuaNativeAudioCueKind =
-  | "sfx" | "bgm_in" | "bgm_change" | "bgm_out" | "silence_in" | "silence_out";
+  (typeof MANHUA_NATIVE_AUDIO_CUE_KINDS)[number];
 
 export type ManhuaNativeAudioCue = {
   atSec: number;
@@ -123,7 +135,7 @@ export function splitManhuaNativeAudioChunks(durationSec: number): ManhuaNativeA
 
 const audioCueSchema = z.object({
   atSec: z.number().finite().int().min(0),
-  kind: z.enum(["sfx", "bgm_in", "bgm_change", "bgm_out", "silence_in", "silence_out"]),
+  kind: z.enum(MANHUA_NATIVE_AUDIO_CUE_KINDS),
   detailZh: z.string().trim().min(1),
 }).strict();
 
@@ -136,11 +148,11 @@ const audioTrackSchema = z.object({
   bgmZh: z.string().trim().default(""),
   atmosphereZh: z.string().trim().default(""),
   silenceZh: z.string().trim().default(""),
-  cues: z.array(audioCueSchema).max(MANHUA_NATIVE_AUDIO_MAX_CUES).default([]),
+  cues: z.array(audioCueSchema).default([]),
 }).strict();
 
 export const manhuaNativeAudioChunkAnalysisSchema = z.object({
-  audioTrack: z.array(audioTrackSchema).min(1).max(MANHUA_NATIVE_AUDIO_MAX_TRACKS),
+  audioTrack: z.array(audioTrackSchema).min(1),
   audioBeatStructureZh: z.string().trim().min(1),
   mixNotesZh: z.string().trim().default(""),
   reusableAudioZh: z.string().trim().min(1),
@@ -289,34 +301,6 @@ export function normalizeManhuaNativeAudioChunkAnalysis(input: {
   };
 }
 
-function mergeContinuousAudioTracks(
-  rows: readonly ManhuaNativeAudioTrack[],
-  max: number,
-): ManhuaNativeAudioTrack[] {
-  if (rows.length <= max) return [...rows];
-  const groups: ManhuaNativeAudioTrack[][] = Array.from({ length: max }, () => []);
-  rows.forEach((row, index) => {
-    groups[Math.min(max - 1, Math.floor((index * max) / rows.length))]!.push(row);
-  });
-  const join = (group: readonly ManhuaNativeAudioTrack[], key: keyof Pick<
-    ManhuaNativeAudioTrack,
-    "emotionArcZh" | "toneZh" | "sfxZh" | "bgmZh" | "atmosphereZh" | "silenceZh"
-  >, maxChars: number) => Array.from(new Set(group.map((row) => row[key]).filter(Boolean)))
-    .join("；")
-    .slice(0, maxChars);
-  return groups.filter((group) => group.length).map((group) => ({
-    fromSec: group[0]!.fromSec,
-    toSec: group[group.length - 1]!.toSec,
-    emotionArcZh: join(group, "emotionArcZh", 160),
-    toneZh: join(group, "toneZh", 120),
-    sfxZh: join(group, "sfxZh", 160),
-    bgmZh: join(group, "bgmZh", 160),
-    atmosphereZh: join(group, "atmosphereZh", 100),
-    silenceZh: join(group, "silenceZh", 120),
-    cues: group.flatMap((row) => row.cues),
-  }));
-}
-
 function mergeManhuaNativeAudioChunksCore(input: {
   durationSec: number;
   chunks: readonly ManhuaNativeAudioChunkAnalysis[];
@@ -330,16 +314,15 @@ function mergeManhuaNativeAudioChunksCore(input: {
   const allTracks = input.chunks.flatMap((row) => row.audioTrack)
     .sort((a, b) => a.fromSec - b.fromSec || a.toSec - b.toSec);
   assertTrackCoverage(allTracks, 0, durationSec);
-  if (allTracks.reduce((sum, track) => sum + track.cues.length, 0) > MANHUA_NATIVE_AUDIO_MAX_CUES) {
-    throw new Error(`音频事件超过 ${MANHUA_NATIVE_AUDIO_MAX_CUES} 条承载上限`);
-  }
   const join = (pick: (row: ManhuaNativeAudioChunkAnalysis) => string, max: number) =>
     cut(input.chunks.map(pick).filter(Boolean).join("；"), max);
   return {
     hasAudio: true,
     durationSec,
     chunkCount: input.chunks.length,
-    audioTrack: mergeContinuousAudioTracks(allTracks, MANHUA_NATIVE_AUDIO_MAX_TRACKS),
+    // 原始音轨证据必须逐条保留；容量不足由调用方显式失败或切换 fallback，
+    // 不允许在已付费结果上合并、抽样或截断。
+    audioTrack: allTracks,
     audioBeatStructureZh: join((row) => row.audioBeatStructureZh, 1_000),
     mixNotesZh: join((row) => row.mixNotesZh, 1_000),
     reusableAudioZh: join((row) => row.reusableAudioZh, 1_000),

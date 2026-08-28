@@ -971,7 +971,7 @@ describe("原生分集部分卡的滚动批准", () => {
     expect(out.provenance?.nativeVideoDeepRead?.shotCount).toBe(3);
   });
 
-  it("旧字段与标签已到上限时仍为新分片保留空间，同秒改写不重复计镜", async () => {
+  it("旧字段已满时仍保留全部新标签，同秒改写不重复计镜", async () => {
     const { mergeNativeEpisodeTemplateLearning } = await import("./manhuaViralTemplateStore");
     const oldApproved = partialEpisodeCard({
       status: "approved", successSegments: 1, publicCode: "EPKEEP", snapshot: "d".repeat(64),
@@ -1015,11 +1015,83 @@ describe("原生分集部分卡的滚动批准", () => {
     expect(out.summaryZh.length).toBeLessThanOrEqual(120);
     expect(out.classification?.emotionTagsZh).toContain("新标签A");
     expect(out.classification?.emotionTagsZh).toContain("旧标签1");
-    expect(out.classification?.emotionTagsZh).toHaveLength(8);
+    expect(out.classification?.emotionTagsZh).toHaveLength(10);
+    expect(out.classification?.emotionTagsZh).toEqual([
+      ...Array.from({ length: 8 }, (_, index) => `旧标签${index + 1}`),
+      "新标签A",
+      "新标签B",
+    ]);
     expect(out.beatGrid).toEqual([
       expect.objectContaining({ atSec: 10, visualZh: "新动作描述", cameraMoveZh: "缓慢横移" }),
     ]);
     expect(out.provenance?.nativeVideoDeepRead?.shotCount).toBe(1);
+  });
+
+  it("同剧补学合并超过 128 镜时保留全部正式证据", async () => {
+    const { mergeNativeEpisodeTemplateLearning } = await import("./manhuaViralTemplateStore");
+    const oldApproved = partialEpisodeCard({
+      status: "approved", successSegments: 1, publicCode: "EPKEEP", snapshot: "7".repeat(64),
+    });
+    const nextProposal = partialEpisodeCard({
+      status: "proposed", successSegments: 2, snapshot: "8".repeat(64),
+    });
+    oldApproved.beatGrid = Array.from({ length: 130 }, (_, index) => ({
+      atSec: index,
+      conflictZh: `旧证据${index}`,
+      visualZh: `旧镜头${index}`,
+    }));
+    nextProposal.beatGrid = Array.from({ length: 130 }, (_, index) => ({
+      atSec: 130 + index,
+      conflictZh: `新证据${index}`,
+      visualZh: `新镜头${index}`,
+    }));
+
+    const out = mergeNativeEpisodeTemplateLearning(
+      oldApproved as ManhuaViralTemplateCard,
+      nextProposal as ManhuaViralTemplateCard,
+    );
+
+    expect(out.beatGrid).toHaveLength(260);
+    expect(out.beatGrid.at(-1)?.visualZh).toBe("新镜头129");
+    expect(out.provenance?.nativeVideoDeepRead?.shotCount).toBe(260);
+    expect(out.provenance?.nativeVideoDeepRead?.truncated).toBe(false);
+  });
+
+  it("同剧补学不裁字幕、场景提示、标签或来源引用", async () => {
+    const { mergeNativeEpisodeTemplateLearning } = await import("./manhuaViralTemplateStore");
+    const oldApproved = partialEpisodeCard({
+      status: "approved", successSegments: 1, publicCode: "EPKEEP", snapshot: "5".repeat(64),
+    }) as ManhuaViralTemplateCard;
+    const nextProposal = partialEpisodeCard({
+      status: "proposed", successSegments: 2, snapshot: "6".repeat(64),
+    }) as ManhuaViralTemplateCard;
+    oldApproved.subtitleTrack = Array.from({ length: 520 }, (_, index) => ({
+      atSec: index,
+      textZh: `旧字幕${index}`,
+    }));
+    nextProposal.subtitleTrack = Array.from({ length: 30 }, (_, index) => ({
+      atSec: 520 + index,
+      textZh: `新字幕${index}`,
+    }));
+    oldApproved.scenePoolHints = Array.from({ length: 18 }, (_, index) => `旧场景${index}`);
+    nextProposal.scenePoolHints = Array.from({ length: 7 }, (_, index) => `新场景${index}`);
+    oldApproved.sourceRefs = Array.from({ length: 9 }, (_, index) => ({
+      url: `https://example.com/old-${index}`,
+      fetchedAt: "2026-08-27",
+    }));
+    nextProposal.sourceRefs = Array.from({ length: 4 }, (_, index) => ({
+      url: `https://example.com/new-${index}`,
+      fetchedAt: "2026-08-28",
+    }));
+
+    const out = mergeNativeEpisodeTemplateLearning(oldApproved, nextProposal);
+
+    expect(out.subtitleTrack).toHaveLength(550);
+    expect(out.scenePoolHints).toHaveLength(25);
+    expect(out.sourceRefs).toHaveLength(13);
+    expect(out.subtitleTrack?.at(-1)?.textZh).toBe("新字幕29");
+    expect(out.scenePoolHints.at(-1)).toBe("新场景6");
+    expect(out.sourceRefs.at(-1)?.url).toBe("https://example.com/new-3");
   });
 
   it("已批准卡含有效音轨时，本轮缺音轨或音轨倒退均拒绝补全", async () => {

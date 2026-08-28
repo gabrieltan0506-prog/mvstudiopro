@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  MANHUA_NATIVE_AUDIO_MAX_TRACKS,
+  MANHUA_NATIVE_AUDIO_CUE_KINDS,
   isManhuaNativeAudioGateFailureZh,
   mergeManhuaNativeAudioChunks,
   normalizeManhuaNativeAudioChunkAnalysis,
@@ -22,12 +22,38 @@ const track = (fromSec: number): ManhuaNativeAudioTrack => ({
 });
 
 describe("原生精读音轨合并", () => {
-  it("超过128段时合并相邻轨道，压缩后仍连续覆盖全片", () => {
-    const durationSec = MANHUA_NATIVE_AUDIO_MAX_TRACKS + 7;
+  it("0827 定稿的 11 种声音事件全部能通过共享解析门", () => {
+    const normalized = normalizeManhuaNativeAudioChunkAnalysis({
+      raw: {
+        audioTrack: [{
+          ...track(0),
+          toSec: 11,
+          cues: MANHUA_NATIVE_AUDIO_CUE_KINDS.map((kind, atSec) => ({
+            atSec,
+            kind,
+            detailZh: `${kind} 证据`,
+          })),
+        }],
+        audioBeatStructureZh: "声音连续推进",
+        mixNotesZh: "空间层次清楚",
+        reusableAudioZh: "按变化证据组织声音",
+        genAudioHintZh: "保留声画关系",
+      },
+      chunk: { index: 0, startSec: 0, endSec: 11 },
+    });
+    expect(normalized.audioTrack[0]?.cues.map((cue) => cue.kind))
+      .toEqual(MANHUA_NATIVE_AUDIO_CUE_KINDS);
+  });
+
+  it("超过旧128段预算时仍逐条保留音轨与事件，不做合并或截断", () => {
+    const durationSec = 135;
     const merged = mergeManhuaNativeAudioChunks({
       durationSec,
       chunks: [{
-        audioTrack: Array.from({ length: durationSec }, (_, index) => track(index)),
+        audioTrack: Array.from({ length: durationSec }, (_, index) => ({
+          ...track(index),
+          cues: [{ atSec: index, kind: "sfx" as const, detailZh: `事件${index}` }],
+        })),
         audioBeatStructureZh: "持续推进",
         mixNotesZh: "人声居中",
         reusableAudioZh: "连续增强",
@@ -46,7 +72,10 @@ describe("原生精读音轨合并", () => {
         geminiCalls: 2,
       },
     });
-    expect(merged.audioTrack).toHaveLength(MANHUA_NATIVE_AUDIO_MAX_TRACKS);
+    expect(merged.audioTrack).toHaveLength(durationSec);
+    expect(merged.audioTrack.flatMap((row) => row.cues)).toHaveLength(durationSec);
+    expect(merged.audioTrack[129]?.emotionArcZh).toBe("情绪129");
+    expect(merged.audioTrack[129]?.cues[0]?.detailZh).toBe("事件129");
     expect(merged.audioTrack[0]?.fromSec).toBe(0);
     expect(merged.audioTrack.at(-1)?.toSec).toBe(durationSec);
     expect(merged.audioTrack.every((row, index, rows) =>

@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { mapNativeDeepReadSegments } from "./manhuaNativeDeepRead";
 import {
+  formatManhuaViralTemplateWriterAddonFromCard,
   formatManhuaViralTemplateWriterSkillFromCard,
   parseManhuaViralTemplateCard,
   isNativeVideoLearnedTemplate,
@@ -86,8 +87,8 @@ describe("原生精读产出 → 模板卡（真实形状往返）", () => {
     expect(skill).toContain("生成画面要素");
   });
 
-  it("等距抽稀在完整镜头集上做，不再先砍前 16 个", () => {
-    // 造 95 镜（与实测规模一致），抽 6 段
+  it("消费端保留完整镜头集，只按目标时长重映射秒位", () => {
+    // 造 95 镜（与实测规模一致），映射到 6 段时一镜也不能少
     const many = Array.from({ length: 95 }, (_, i) => ({
       atSec: i * 3,
       conflictZh: `c${i}`,
@@ -95,8 +96,9 @@ describe("原生精读产出 → 模板卡（真实形状往返）", () => {
       shotSizeZh: "特写",
     }));
     const fitted = fitManhuaViralBeatGridToSegments(many, 6);
-    expect(fitted).toHaveLength(6);
-    // 末尾必须来自全片尾部；若仍先 slice(0,16)，最后一个会落在 v15 附近
+    expect(fitted).toHaveLength(95);
+    expect(fitted[0]!.atSec).toBe(0);
+    expect(fitted[fitted.length - 1]!.atSec).toBe(75);
     expect(fitted[fitted.length - 1]!.visualZh).toBe("v94");
   });
 
@@ -126,6 +128,48 @@ describe("适配器失败与超限语义（复审第六项）", () => {
     ...patch,
   });
 
+  it("独立站位与表演字段从段 JSON 经卡片往返后进入编剧消费端", () => {
+    const detailed = shot(0, {
+      unitTypeZh: "剪辑镜头",
+      angleZh: "平视",
+      compositionZh: "双人分居画面两侧，中间保留压迫负空间",
+      cameraMoveZh: "固定机位，以构图变化承接关系变化",
+      blockingZh: "主角靠左后退，对手从右侧逼近",
+      bodyActionZh: "主角重心后移后重新站稳",
+      limbPropActionZh: "主角左手护住卷轴，右手撑地起身",
+      microExpressionZh: "瞳孔收紧后下颌绷住",
+      gazeBreathZh: "视线先避让再锁定对手，呼吸由乱转稳",
+      relationshipReactionZh: "对手逼近触发主角后退，主角站稳迫使对手停步",
+      lightingZh: "右侧冷光压迫，左侧暖光逐渐抬起",
+      transitionInZh: "硬切",
+    });
+    const out = mapNativeDeepReadSegments([seg([detailed])]);
+    const parsed = parseManhuaViralTemplateCard({
+      id: "tpl_series_detailed01",
+      nameZh: "独立表演证据",
+      laneZh: "古言种田",
+      summaryZh: "保留站位与表演证据。",
+      hook3sZh: "关系变化立即可见。",
+      status: "approved",
+      beatGrid: out.beatGrid,
+      scenePoolHints: [],
+      castShape: { leadDesireZh: "站稳", pressureZh: "逼近" },
+      densityHints: { minBodyChars: 800, minDialogueLines: 6, minLocationHits: 2 },
+      sourceRefs: [],
+    })!;
+    expect(parsed.beatGrid[0]).toMatchObject({
+      unitTypeZh: "剪辑镜头",
+      blockingZh: "主角靠左后退，对手从右侧逼近",
+      microExpressionZh: "瞳孔收紧后下颌绷住",
+      gazeBreathZh: "视线先避让再锁定对手，呼吸由乱转稳",
+      relationshipReactionZh: "对手逼近触发主角后退，主角站稳迫使对手停步",
+    });
+    const writerAddon = formatManhuaViralTemplateWriterAddonFromCard(parsed);
+    expect(writerAddon).toContain("站位调度=主角靠左后退，对手从右侧逼近");
+    expect(writerAddon).toContain("微表情=瞳孔收紧后下颌绷住");
+    expect(writerAddon).toContain("关系反应=对手逼近触发主角后退，主角站稳迫使对手停步");
+  });
+
   it("finish=length 的段整段丢弃，并计入 failedSegmentCount", () => {
     const out = mapNativeDeepReadSegments([
       seg([shot(0), shot(1)]),
@@ -145,14 +189,47 @@ describe("适配器失败与超限语义（复审第六项）", () => {
     expect(JSON.stringify(out.beatGrid)).not.toContain("未标注");
   });
 
-  it("超过 128 镜等距抽稀并标 truncated，不静默取前 128", () => {
+  it("超过 128 镜仍一镜不少，正式证据层不再抽稀", () => {
     const out = mapNativeDeepReadSegments([
       seg(Array.from({ length: 130 }, (_, i) => shot(i))),
     ]);
-    expect(out.truncated).toBe(true);
-    expect(out.shotCount).toBe(128);
-    // 末镜必须来自尾部；若是静默 slice(0,128) 会停在 动作127
+    expect(out.truncated).toBe(false);
+    expect(out.shotCount).toBe(130);
+    expect(out.beatGrid[128]!.visualZh).toBe("动作128");
     expect(out.beatGrid[out.beatGrid.length - 1]!.visualZh).toBe("动作129");
+  });
+
+  it("分片映射不裁 512 条字幕、20 个声音块或每类 8 个标签", () => {
+    const row = JSON.parse(seg([shot(0)]).text) as Record<string, unknown>;
+    row.subtitles = Array.from({ length: 520 }, (_, index) => ({ atSec: index / 10, textZh: `字幕${index}` }));
+    row.audioResolution = [];
+    row.classification = {
+      emotionTagsZh: Array.from({ length: 12 }, (_, index) => `情绪${index}`),
+      narrativeFeatureTagsZh: Array.from({ length: 11 }, (_, index) => `叙事${index}`),
+      performanceTagsZh: Array.from({ length: 10 }, (_, index) => `表演${index}`),
+      audiovisualTagsZh: Array.from({ length: 9 }, (_, index) => `视听${index}`),
+      audienceExperienceTagsZh: Array.from({ length: 13 }, (_, index) => `体验${index}`),
+    };
+    const out = mapNativeDeepReadSegments([{ startSec: 0, text: JSON.stringify(row) }]);
+    expect(out.subtitleTrack).toHaveLength(520);
+    expect(out.classification?.emotionTagsZh).toHaveLength(12);
+    expect(out.classification?.audienceExperienceTagsZh).toHaveLength(13);
+  });
+
+  it("招商镜头保留在原始 JSON，但不进入 beatGrid；广告区间字幕同步排除", () => {
+    const row = JSON.parse(seg([
+      shot(0, { evidenceRole: "non_story_ad", actionZh: "片头招商落版" }),
+      shot(1, { evidenceRole: "story", actionZh: "角色进入正片场景" }),
+    ]).text) as Record<string, unknown>;
+    row.subtitles = [
+      { atSec: 0.5, textZh: "招商字幕" },
+      { atSec: 1.5, textZh: "剧情字幕" },
+    ];
+    const out = mapNativeDeepReadSegments([{ startSec: 0, text: JSON.stringify(row) }]);
+    expect(out.beatGrid).toHaveLength(1);
+    expect(out.beatGrid[0]!.visualZh).toBe("角色进入正片场景");
+    expect(out.subtitleTrack).toEqual([{ atSec: 1.5, textZh: "剧情字幕" }]);
+    expect(out.droppedCount).toBe(0);
   });
 
   it("未超限时 truncated=false 且一镜不少", () => {

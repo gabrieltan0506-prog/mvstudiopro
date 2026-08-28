@@ -4,3 +4,4 @@
 2. 碰积分/扣费先读 `kb/billing.md`；碰生图/视频/LLM 通道或任何烧钱批次先读 `kb/channels.md`；推送/合并/验收先读 `kb/deploy-verify.md`。
 3. 规则真源 = 持久记忆 work-rules 与 `.cursor/rules/*.mdc`（alwaysApply）；本文件与 kb 只放事实，不放规则。收班五分钟更新 `kb/line-*.md`。
 4. 开工前必须读取 `.cursor/rules/product-guardrails-always.mdc`：生产 API 密钥、Cookie、云凭证与服务账号只留 Fly secrets / 服务端环境；本机和旁路探针只能调用已鉴权的 Fly 服务端入口，任何 agent 都不得要求本机配置、导出或读取生产凭证。
+5. 任何视频生成、视频分析、模板学习或模型探针得到的原始 JSON 与解析后 JSON 都必须分别永久保存；临时媒体清理、失败、拒收、重试、中止与重启不得删除。未经用户明确批准具体对象，任何 agent 不得清理；原始与消费条数不一致或固定条数截断均为阻断项。

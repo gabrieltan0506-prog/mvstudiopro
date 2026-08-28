@@ -135,7 +135,8 @@ export function buildManhuaWriterExpandPrompt(opts: {
   const purpose = getManhuaPlotPurposeById(opts.plotPurposeId);
   const pacing = getManhuaScenePacingById(opts.scenePacingId);
   const layout = resolveManhuaSeedanceLayoutProfile(opts.videoModel);
-  const viralTemplateAddon = String(opts.viralTemplateAddon || "").trim().slice(0, 8_000);
+  // 模板证据是付费学习产物；不得在编剧入口静默截断。上下文不足应由模型调用层显式失败或回退。
+  const viralTemplateAddon = String(opts.viralTemplateAddon || "").trim();
   const viralTemplateBlock = viralTemplateAddon
     ? [
         "【可调用的创作 Skill】",

@@ -308,7 +308,7 @@ describe("PublicManhuaViralTemplateCard 匿名化边界（2026-08-15 审查必�
 });
 
 describe("原生视频精读产出入库（0824）", () => {
-  it("逐镜六栏与两个新字段能解析落库；抽帧旧卡不带这些字段仍然有效", () => {
+  it("独立站位与表演字段能解析落库；抽帧旧卡不带这些字段仍然有效", () => {
     const native = parseManhuaViralTemplateCard({
       ...learnedCard(),
       beatGrid: [
@@ -317,9 +317,17 @@ describe("原生视频精读产出入库（0824）", () => {
           endSec: 3,
           conflictZh: "开场压制",
           visualZh: "老者指着镜头怒骂",
+          unitTypeZh: "剪辑镜头",
           shotSizeZh: "中近景",
           angleZh: "平视",
+          compositionZh: "老者居中压前景，年轻角色退在后景",
           cameraMoveZh: "约2秒内从中景匀速推至面部近景",
+          blockingZh: "老者前压，年轻角色后退半步",
+          bodyActionZh: "老者躯干前倾，年轻角色重心后移",
+          limbPropActionZh: "老者抬手直指，年轻角色握紧衣角",
+          microExpressionZh: "老者眉心压低，年轻角色嘴角发紧",
+          gazeBreathZh: "两人视线对锁，年轻角色呼吸短促",
+          relationshipReactionZh: "老者逼近使年轻角色退后，后者站稳后回望",
           lightingZh: "顶光，背景暗，人物面部受光",
           transitionInZh: "硬切",
         },
@@ -331,6 +339,9 @@ describe("原生视频精读产出入库（0824）", () => {
     const beat = native!.beatGrid[0]!;
     expect(beat.shotSizeZh).toBe("中近景");
     expect(beat.cameraMoveZh).toContain("推至面部近景");
+    expect(beat.blockingZh).toContain("年轻角色后退半步");
+    expect(beat.microExpressionZh).toContain("嘴角发紧");
+    expect(beat.relationshipReactionZh).toContain("站稳后回望");
     expect(beat.endSec).toBe(3);
     expect(native!.reusableZh).toContain("机位稳定性");
     expect(native!.genPromptHintZh).toContain("体积雾");
@@ -342,17 +353,74 @@ describe("原生视频精读产出入库（0824）", () => {
     expect(legacy!.reusableZh).toBeUndefined();
   });
 
-  it("beatGrid 上限放到 128：精读逐镜实测 262 秒出 95 镜，卡在 24 会静默截断", () => {
+  it("完整解析超过 128 镜的精读证据，不在读卡时静默截断", () => {
     const many = parseManhuaViralTemplateCard({
       ...learnedCard(),
-      beatGrid: Array.from({ length: 95 }, (_, i) => ({
+      beatGrid: Array.from({ length: 160 }, (_, i) => ({
         atSec: i * 2,
         conflictZh: `镜${i + 1}`,
         visualZh: `动作${i + 1}`,
         shotSizeZh: "特写",
       })),
     });
-    expect(many!.beatGrid).toHaveLength(95);
+    expect(many!.beatGrid).toHaveLength(160);
+    expect(many!.beatGrid.at(-1)?.visualZh).toBe("动作160");
+  });
+
+  it("读卡时完整保留字幕、声音外证据、场景、标签、故事规则、来源和分片证据索引", () => {
+    const parsed = parseManhuaViralTemplateCard({
+      ...learnedCard(),
+      subtitleTrack: Array.from({ length: 520 }, (_, index) => ({ atSec: index, textZh: `字幕${index}` })),
+      scenePoolHints: Array.from({ length: 24 }, (_, index) => `场景${index}`),
+      classification: {
+        emotionTagsZh: Array.from({ length: 12 }, (_, index) => `情绪${index}`),
+        narrativeFeatureTagsZh: Array.from({ length: 11 }, (_, index) => `叙事${index}`),
+        performanceTagsZh: Array.from({ length: 10 }, (_, index) => `表演${index}`),
+        audiovisualTagsZh: Array.from({ length: 9 }, (_, index) => `视听${index}`),
+        audienceExperienceTagsZh: Array.from({ length: 13 }, (_, index) => `体验${index}`),
+      },
+      storyStructure: {
+        corePromiseZh: "核心承诺",
+        conflictEngineZh: "冲突引擎",
+        relationshipEngineZh: "关系引擎",
+        episodeProgressionZh: Array.from({ length: 20 }, (_, index) => `推进${index}`),
+        variationRulesZh: Array.from({ length: 21 }, (_, index) => `变化${index}`),
+      },
+      sourceRefs: Array.from({ length: 12 }, (_, index) => ({
+        url: `https://example.com/source-${index}`,
+        fetchedAt: "2026-08-28",
+      })),
+      provenance: {
+        sourceMarkers: Array.from({ length: 10 }, (_, index) => ({
+          kind: index % 2 ? "ending" : "opening",
+          startSec: index * 10,
+          endSec: index * 10 + 2,
+          origin: "source_api",
+        })),
+        nativeVideoDeepRead: {
+          model: "gemini-3.1-pro",
+          attemptedSegments: 40,
+          successSegments: 40,
+          shotCount: 160,
+          droppedCount: 0,
+          truncated: false,
+          costCny: 1,
+          sourceDigest: "a".repeat(64),
+          snapshotSha256: "b".repeat(64),
+          segmentEvidenceObjectNames: Array.from({ length: 40 }, (_, index) =>
+            `manhua-template-learn/segment-evidence/series/episode/seg${index}-${"c".repeat(64)}.json`),
+        },
+      },
+    });
+
+    expect(parsed?.subtitleTrack).toHaveLength(520);
+    expect(parsed?.scenePoolHints).toHaveLength(24);
+    expect(parsed?.classification?.emotionTagsZh).toHaveLength(12);
+    expect(parsed?.storyStructure?.episodeProgressionZh).toHaveLength(20);
+    expect(parsed?.storyStructure?.variationRulesZh).toHaveLength(21);
+    expect(parsed?.sourceRefs).toHaveLength(12);
+    expect(parsed?.provenance?.sourceMarkers).toHaveLength(10);
+    expect(parsed?.provenance?.nativeVideoDeepRead?.segmentEvidenceObjectNames).toHaveLength(40);
   });
 
   it("isNativeVideoLearnedTemplate 认得出新旧形态", () => {
