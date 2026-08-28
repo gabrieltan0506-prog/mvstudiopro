@@ -259,7 +259,12 @@ async function main() {
   const shots: ShotRow[] = [];
   const audioCueSecs: number[] = [];
   const plotSubtitleSecs: number[] = [];
+  const dedupedBySegment = new Map<number, string>();
   for (const name of names.sort()) {
+    const m = /\/seg(\d+)-/.exec(name);
+    dedupedBySegment.set(Number(m?.[1] ?? -1), name);
+  }
+  for (const name of Array.from(dedupedBySegment.values()).sort()) {
     const { buffer } = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${name}` });
     const entry = JSON.parse(buffer.toString("utf8")) as {
       segmentIndex: number;

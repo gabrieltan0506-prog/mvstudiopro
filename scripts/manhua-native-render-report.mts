@@ -67,10 +67,16 @@ async function main() {
     const names = await listGcsObjectNamesByPrefix({
       prefix: `manhua-template-learn/segment-evidence/tpl_native_${RUN}_ep001/`,
       literalPrefix: true,
-      maxResults: 20,
+      maxResults: 200,
     });
     const merged: Record<string, unknown> = { shots: [], subtitles: [], audioResolution: [] };
+    // 同契约重跑会产生同段多份不可变证据：按 segmentIndex 去重，取排序最后一份。
+    const dedupedBySegment = new Map<number, string>();
     for (const name of names.sort()) {
+      const m = /\/seg(\d+)-/.exec(name);
+      dedupedBySegment.set(Number(m?.[1] ?? -1), name);
+    }
+    for (const name of Array.from(dedupedBySegment.values()).sort()) {
       const entry = await tryJson(name);
       const raw = (entry?.raw ?? {}) as Record<string, unknown>;
       for (const key of ["shots", "subtitles", "audioResolution"] as const) {

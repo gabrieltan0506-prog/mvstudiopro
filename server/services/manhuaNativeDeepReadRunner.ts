@@ -1370,6 +1370,33 @@ export function stripNonStoryAdShotsForEpisodeCard(
 }
 
 /** 整集卡上的区间账目校验与汇总：startSec/endSec 非负有限且 end>start，否则整集拒收。 */
+
+/**
+ * GLM 路的广告区间不可自证：必须与确定性剥离（真实 non_story_ad 行推出的区间）
+ * 在 ±0.5s 容差内逐一对上，否则 GLM 丢 story 镜头再谎报为广告区间即可骗过覆盖门禁。
+ */
+function assertGlmAdRangesMatchDeterministic(
+  structuredRaw: Record<string, unknown>,
+  expected: NativeDeepReadExcludedAdRange[],
+  episodeIndex: number,
+): void {
+  const reported = Array.isArray((structuredRaw as { excludedAdRanges?: unknown }).excludedAdRanges)
+    ? (structuredRaw as { excludedAdRanges: Array<{ startSec: number; endSec: number }> }).excludedAdRanges
+    : [];
+  const near = (a: number, b: number) => Math.abs(a - b) <= 0.5;
+  const matches = reported.length === expected.length
+    && expected.every((range) => reported.some((row) =>
+      near(Number(row.startSec), range.startSec) && near(Number(row.endSec), range.endSec)))
+    && reported.every((row) => expected.some((range) =>
+      near(Number(row.startSec), range.startSec) && near(Number(row.endSec), range.endSec)));
+  if (!matches) {
+    throw new Error(
+      `第${episodeIndex}集 GLM 整形卡的 excludedAdRanges 与确定性剥离区间不一致`
+      + `（自报 ${reported.length} 段 / 应为 ${expected.length} 段），整集拒绝入库`,
+    );
+  }
+}
+
 function collectEpisodeExcludedAdRanges(
   rawSegments: ReadonlyArray<Record<string, unknown>>,
   episodeIndex: number,
@@ -2831,6 +2858,11 @@ export async function runManhuaNativeDeepReadBatch(params: {
         if (degradedFpsSegmentIndexes.length > 0) {
           // EvoLink 兜底路必过 GLM 整形；整形后门禁照跑，不达标照拒。
           const structuredRaw = await glmStructure();
+          assertGlmAdRangesMatchDeterministic(
+            structuredRaw,
+            stripNonStoryAdShotsForEpisodeCard(annotateSegmentRows()).excludedAdRanges,
+            episode.episodeIndex,
+          );
           gateEpisode([structuredRaw]);
           episodeRows = [structuredRaw];
         } else {
@@ -2850,6 +2882,11 @@ export async function runManhuaNativeDeepReadBatch(params: {
               + `降级请 GLM 结构化整形修复一次：${rejectedReasonZh}`,
             );
             const structuredRaw = await glmStructure(rejectedReasonZh);
+            assertGlmAdRangesMatchDeterministic(
+              structuredRaw,
+              stripNonStoryAdShotsForEpisodeCard(annotateSegmentRows()).excludedAdRanges,
+              episode.episodeIndex,
+            );
             // 修复后门禁重跑，再不过才拒收。
             gateEpisode([structuredRaw]);
             episodeRows = [structuredRaw];

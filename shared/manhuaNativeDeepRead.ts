@@ -200,9 +200,13 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
 
   const subtitleTrack = ok
     .flatMap(({ seg, offsetSec }) => {
-      const adIntervals = seg.shots
-        .filter((shot) => shot.evidenceRole === "non_story_ad")
-        .map((shot) => ({ startSec: shot.startSec, endSec: shot.endSec }));
+      const adIntervals = [
+        ...seg.shots
+          .filter((shot) => shot.evidenceRole === "non_story_ad")
+          .map((shot) => ({ startSec: shot.startSec, endSec: shot.endSec })),
+        // 整集卡已整行剔除广告镜头时，广告区间只存在于 excludedAdRanges 账目里。
+        ...(seg.excludedAdRanges ?? []),
+      ];
       return seg.subtitles.flatMap((subtitle) => {
         const atSec = Math.max(0, subtitle.atSec);
         if (adIntervals.some((interval) => atSec >= interval.startSec && atSec < interval.endSec)) {
@@ -220,9 +224,12 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
   // 跨界行保留但剔除落在广告区间内的 cues（chunk 内秒位 + 本段起点 = 全片绝对秒位）。
   const resolvedByChunk = new Map<number, ManhuaNativeAudioChunkAnalysis>();
   for (const { seg } of ok) {
-    const adIntervals = seg.shots
-      .filter((shot) => shot.evidenceRole === "non_story_ad")
-      .map((shot) => ({ startSec: shot.startSec, endSec: shot.endSec }));
+    const adIntervals = [
+      ...seg.shots
+        .filter((shot) => shot.evidenceRole === "non_story_ad")
+        .map((shot) => ({ startSec: shot.startSec, endSec: shot.endSec })),
+      ...(seg.excludedAdRanges ?? []),
+    ];
     const segStart = seg.shots.length
       ? Math.max(0, Math.floor(Math.min(...seg.shots.map((shot) => Number(shot.startSec) || 0))))
       : 0;
