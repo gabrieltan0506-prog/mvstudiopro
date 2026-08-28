@@ -12200,8 +12200,6 @@ export default function PlatformPage() {
                 (douyinBoard?.entries?.length || 0) + (kuaishouBoard?.entries?.length || 0);
               const fmtPlay = (n: number) =>
                 n >= 10000 ? `${(n / 10000).toFixed(1)}万` : String(n || 0);
-              const statusLabel = (s: string) =>
-                s === "surging" ? "飙升" : s === "hot" ? "高热" : s === "new" ? "新爆" : "稳态";
               const categoryOf = (row: AiManhuaRisingEntryView) =>
                 row.categoryLabelZh
                 || (row.dramaKind === "ai_manhua"
@@ -12214,19 +12212,6 @@ export default function PlatformPage() {
                 acc[k] = (acc[k] || 0) + 1;
                 return acc;
               }, {});
-              const chartEntries = rising?.entries || [];
-              const chartMax = Math.max(
-                1,
-                ...chartEntries.map((e) => Number(e.risingScore || e.mixPlayCount || 0)),
-              );
-              const canLearnRow = (row: AiManhuaRisingEntryView) => {
-                const u = String(row.url || "").trim();
-                if (!u) return false;
-                if (/douyin\.com\/search\//i.test(u) || /kuaishou\.com\/search\//i.test(u)) {
-                  return false;
-                }
-                return true;
-              };
 
               return (
                 <>
@@ -12318,20 +12303,29 @@ export default function PlatformPage() {
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
                           {manhuaLearnResult?.seriesKey
-                            && manhuaLearnResult.learnedCount > 0 ? (
+                            && manhuaLearnResult.pipelineMode === "native_deep_read"
+                            && (manhuaLearnResult.digestsPreview || []).some((d) => d.complete) ? (
                             <button
                               type="button"
                               disabled={renderEpisodeReportMutation.isPending}
                               onClick={async () => {
-                                const episodeIndex = manhuaLearnResult.learnedCount;
+                                const episodeIndex = Math.max(
+                                  ...(manhuaLearnResult.digestsPreview || [])
+                                    .filter((d) => d.complete)
+                                    .map((d) => d.episodeIndex),
+                                );
+                                const reportTab = window.open("", "_blank");
                                 try {
                                   const report = await renderEpisodeReportMutation.mutateAsync({
                                     seriesKey: manhuaLearnResult.seriesKey,
                                     episodeIndex,
                                   });
-                                  window.open(report.reportUrl, "_blank", "noopener");
-                                  toast.success(`第 ${episodeIndex} 集学习报告已生成（${report.shots} 镜 · ${report.frames} 帧）`);
+                                  if (reportTab) reportTab.location.href = report.reportUrl;
+                                  toast.success(`第 ${episodeIndex} 集学习报告已生成（${report.shots} 镜 · ${report.frames} 帧）`, {
+                                    action: reportTab ? undefined : { label: "打开报告", onClick: () => window.open(report.reportUrl, "_blank", "noopener") },
+                                  });
                                 } catch (e) {
+                                  reportTab?.close();
                                   toast.error(e instanceof Error ? e.message : "报告生成失败");
                                 }
                               }}
