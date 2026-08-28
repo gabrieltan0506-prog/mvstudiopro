@@ -13,6 +13,11 @@ import { promisify } from "node:util";
 import {
   runManhuaNativeDeepRead,
 } from "../server/services/manhuaNativeDeepReadRunner.js";
+import { resolveDouyinMediaUrl } from "../server/services/manhuaDouyinMediaResolve.js";
+import {
+  describeErrorChain,
+  sanitizeSensitiveText,
+} from "../server/services/manhuaMediaSanitize.js";
 import {
   downloadGcsObjectVersioned,
   getGcsBucketName,
@@ -37,28 +42,6 @@ const sourceDigest = createHash("sha256")
 const bucket = getGcsBucketName();
 const rawPrefix = `manhua-template-learn/segment-evidence-raw/tpl_native_${seriesKey}_ep001/`;
 const parsedPrefix = `manhua-template-learn/segment-evidence/tpl_native_${seriesKey}_ep001/`;
-
-/** 失败必带根因：沿 cause 链逐层保留 name/code/message，URL 一律遮蔽。 */
-function describeErrorChain(error: unknown): Array<Record<string, string>> {
-  const chain: Array<Record<string, string>> = [];
-  let current: unknown = error;
-  for (let depth = 0; depth < 6 && current; depth += 1) {
-    if (typeof current !== "object" && typeof current !== "string") break;
-    const row: Record<string, string> = {};
-    const source = typeof current === "string" ? { message: current } : current as {
-      name?: unknown; code?: unknown; message?: unknown; cause?: unknown;
-    };
-    for (const key of ["name", "code", "message"] as const) {
-      const value = (source as Record<string, unknown>)[key];
-      if (typeof value !== "string" && typeof value !== "number") continue;
-      const text = String(value).replace(/[\r\n\t]+/g, " ").replace(/https?:\/\/\S+/g, "<URL>").trim().slice(0, 200);
-      if (text) row[key] = text;
-    }
-    if (Object.keys(row).length > 0) chain.push(row);
-    current = (source as { cause?: unknown }).cause;
-  }
-  return chain;
-}
 
 function pickMedia(info: Record<string, unknown>): string {
   const formats = Array.isArray(info.formats) ? info.formats as Array<Record<string, unknown>> : [];
@@ -130,14 +113,36 @@ async function objectFact(objectName: string) {
   };
 }
 
-async function main() {
-  console.info(`[probe] 阶段：抖音片源解析（yt-dlp）视频 ${VIDEO_ID}`);
+/** 匿名 yt-dlp（零 Cookie/凭证 argv）：页面法失败时的兜底与时长补齐。 */
+async function fetchInfoAnonymously(): Promise<Record<string, unknown>> {
   const { stdout } = await run("yt-dlp", [
-    "-J", "--no-warnings", "--add-header", `Cookie:${String(process.env.DOUYIN_COOKIE || "")}`, PAGE_URL,
+    "-J", "--no-warnings", PAGE_URL,
   ], { timeout: 150_000, maxBuffer: 64 * 1024 * 1024 });
-  const info = JSON.parse(stdout) as Record<string, unknown>;
-  const durationSec = Math.max(1, Math.floor(Number(info.duration) || 0));
-  const mediaUrl = pickMedia(info);
+  return JSON.parse(stdout) as Record<string, unknown>;
+}
+
+/**
+ * 片源解析：优先进程内页面解析（cookie 只进服务端 fetch 请求头，绝不进 argv）；
+ * 页面法失败回退匿名 yt-dlp。子进程只拿无凭证媒体地址。
+ */
+async function resolveSourceMedia(): Promise<{ mediaUrl: string; durationSec: number }> {
+  try {
+    const resolved = await resolveDouyinMediaUrl(PAGE_URL);
+    if (resolved.durationSec && resolved.durationSec > 0) {
+      return { mediaUrl: resolved.mediaUrl, durationSec: Math.max(1, Math.floor(resolved.durationSec)) };
+    }
+    const info = await fetchInfoAnonymously();
+    return { mediaUrl: resolved.mediaUrl, durationSec: Math.max(1, Math.floor(Number(info.duration) || 0)) };
+  } catch (pageError) {
+    console.error(`[probe] 页面解析失败，回退匿名 yt-dlp：${sanitizeSensitiveText(pageError)}`);
+    const info = await fetchInfoAnonymously();
+    return { mediaUrl: pickMedia(info), durationSec: Math.max(1, Math.floor(Number(info.duration) || 0)) };
+  }
+}
+
+async function main() {
+  console.info(`[probe] 阶段：抖音片源解析（进程内页面解析）视频 ${VIDEO_ID}`);
+  const { mediaUrl, durationSec } = await resolveSourceMedia();
   console.info(`[probe] 阶段：抖音片源解析成功，真实时长 ${durationSec} 秒`);
 
   const segments = [{ startSec: 0, endSec: Math.min(300, durationSec) }];
@@ -235,7 +240,7 @@ async function main() {
         await rm(local, { force: true });
         if (frameEvidence.length % 20 === 0) console.info(`[probe] 阶段：关键帧已抽 ${frameEvidence.length} 帧`);
       } catch (error) {
-        frameErrors.push(`seg${segmentIndex}#${shotIndex}@${atSec}s ${error instanceof Error ? error.message : String(error)}`.slice(0, 120));
+        frameErrors.push(`seg${segmentIndex}#${shotIndex}@${atSec}s ${sanitizeSensitiveText(error)}`.slice(0, 120));
         await rm(local, { force: true }).catch(() => {});
       }
     }
@@ -250,7 +255,7 @@ async function main() {
     sourceDurationSec: durationSec,
     ranges: segments.map((s) => [s.startSec, s.endSec]),
     status: runError ? "failed" : "completed",
-    error: runError instanceof Error ? runError.message : runError ? String(runError) : undefined,
+    error: runError ? sanitizeSensitiveText(runError) : undefined,
     errorCauseChain: runError ? describeErrorChain(runError) : undefined,
     resultCounts: result ? {
       beatGrid: result.beatGrid.length,
@@ -307,7 +312,7 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`[probe] 失败：${error instanceof Error ? error.message : String(error)}`);
+  console.error(`[probe] 失败：${sanitizeSensitiveText(error)}`);
   console.error(`[probe] 根因链：${JSON.stringify(describeErrorChain(error))}`);
   process.exitCode = 1;
 });

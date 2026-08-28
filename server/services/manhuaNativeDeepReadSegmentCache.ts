@@ -447,13 +447,27 @@ export async function createNativeDeepReadSegmentCacheEntryIfAbsent(
   );
 }
 
+export type NativeDeepReadSegmentCacheWriteResult = {
+  /** 写入后的 canonical 真值段卡；下游 rawSegments/音频统计/proposal/provenance 一律用它。 */
+  entry: NativeDeepReadSegmentCacheEntry;
+  cacheObjectName: string;
+  evidenceObjectName: string;
+  /**
+   * created：本次新建 active 缓存；
+   * reused：在位缓存与本次字节等价（含并发竞争方已写入同一内容），幂等确认；
+   * replaced：同对象名下存在不同响应的旧缓存，本次按 generation 覆写为本 entry。
+   */
+  outcome: "created" | "reused" | "replaced";
+};
+
 /**
  * 条件写入：不存在时 ifGenerationMatch=0；存在旧契约时按 generation 覆写。
  * 竞争失败后复读一次；若对方已经写入同一契约即视为成功，否则明确失败。
+ * 返回值携带最终 canonical entry 与两侧对象名，调用方不得再用闭包里的旧变量装提案。
  */
 export async function writeNativeDeepReadSegmentCacheEntry(
   entry: NativeDeepReadSegmentCacheEntry,
-): Promise<void> {
+): Promise<NativeDeepReadSegmentCacheWriteResult> {
   // 写前也走同一把身份/证据尺；有声段 AUDIO token=0 不能冒充“模型真听过”。
   parseCacheEntry(entry, entry);
   // 证据先落盘；后续缓存写失败只会留下安全的孤立证据，
@@ -466,6 +480,15 @@ export async function writeNativeDeepReadSegmentCacheEntry(
   );
   const bucket = getGcsBucketName();
   const payload = cacheBuffer(entry);
+  const evidenceObjectName = nativeDeepReadSegmentEvidenceObjectName(entry);
+  const done = (
+    outcome: NativeDeepReadSegmentCacheWriteResult["outcome"],
+  ): NativeDeepReadSegmentCacheWriteResult => ({
+    entry,
+    cacheObjectName: objectName,
+    evidenceObjectName,
+    outcome,
+  });
   for (let attempt = 0; attempt < 2; attempt += 1) {
     let versioned: Awaited<ReturnType<typeof downloadGcsObjectVersioned>> | null = null;
     try {
@@ -480,7 +503,7 @@ export async function writeNativeDeepReadSegmentCacheEntry(
         contentType: "application/json",
         buffer: payload,
       });
-      if (created.created) return;
+      if (created.created) return done("created");
       continue;
     }
     let existing: NativeDeepReadSegmentCacheEntry | null = null;
@@ -494,7 +517,8 @@ export async function writeNativeDeepReadSegmentCacheEntry(
       // generation 条件替换。证据写入的失败绝不能在这里被吞掉。
     }
     if (existing && cacheBuffer(existing).equals(payload)) {
-      return;
+      // 字节等价的幂等确认：canonical 真值就是本 entry（与在位内容逐字节一致）。
+      return done("reused");
     }
 
     // 同契约但不同付费响应也必须更新 active cache：
@@ -507,7 +531,8 @@ export async function writeNativeDeepReadSegmentCacheEntry(
         ifGenerationMatch: versioned.generation,
         buffer: payload,
       });
-      return;
+      // 覆写成功后 active 缓存字节 == 本 entry，本 entry 即 canonical 真值。
+      return done("replaced");
     } catch (error) {
       if (isGenerationConflict(error)) continue;
       throw error;

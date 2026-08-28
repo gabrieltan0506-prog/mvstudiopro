@@ -747,7 +747,8 @@ function parseManhuaViralTemplateProvenance(
     const segmentEvidenceObjectNames = Array.isArray(n.segmentEvidenceObjectNames)
       ? Array.from(new Set(n.segmentEvidenceObjectNames
           .map((value) => String(value || "").trim())
-          .filter((value) => /^manhua-template-learn\/segment-evidence\/[0-9A-Za-z_\/-]{1,220}\/seg\d{1,6}-[a-f0-9]{64}(?:-[a-f0-9]{64})?\.json$/.test(value))))
+          // 响应指纹后缀：新证据为完整 64 位 sha256；历史证据存过截断 16 位，只读兼容两者。
+          .filter((value) => /^manhua-template-learn\/segment-evidence\/[0-9A-Za-z_\/-]{1,220}\/seg\d{1,6}-[a-f0-9]{64}(?:-(?:[a-f0-9]{16}|[a-f0-9]{64}))?\.json$/.test(value))))
       : [];
     out.nativeVideoDeepRead = {
       model: String(n.model || "").slice(0, 60),

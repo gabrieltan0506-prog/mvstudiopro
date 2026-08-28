@@ -181,9 +181,13 @@ describe("段缓存写入：证据门禁与条件写", () => {
     );
     gcs.createIfAbsent.mockResolvedValue({ created: true });
 
-    await expect(
-      writeNativeDeepReadSegmentCacheEntry(entry)
-    ).resolves.toBeUndefined();
+    const result = await writeNativeDeepReadSegmentCacheEntry(entry);
+    expect(result.outcome).toBe("created");
+    expect(result.entry).toEqual(entry);
+    expect(result.cacheObjectName).toBe(
+      "manhua-template-learn/segment-cache/tpl_native_series_a_ep003_seg1.json",
+    );
+    expect(result.evidenceObjectName).toBe(nativeDeepReadSegmentEvidenceObjectName(entry));
 
     expect(gcs.createIfAbsent).toHaveBeenCalledTimes(2);
     expect(gcs.createIfAbsent).toHaveBeenNthCalledWith(
@@ -214,9 +218,12 @@ describe("段缓存写入：证据门禁与条件写", () => {
     });
     gcs.upload.mockResolvedValue({});
 
-    await expect(
-      writeNativeDeepReadSegmentCacheEntry(entry)
-    ).resolves.toBeUndefined();
+    const result = await writeNativeDeepReadSegmentCacheEntry(entry);
+    expect(result.outcome).toBe("replaced");
+    expect(result.entry).toEqual(entry);
+    expect(result.cacheObjectName).toBe(
+      "manhua-template-learn/segment-cache/tpl_native_series_a_ep003_seg1.json",
+    );
 
     expect(gcs.upload).toHaveBeenCalledOnce();
     expect(gcs.upload).toHaveBeenCalledWith(
@@ -243,9 +250,10 @@ describe("段缓存写入：证据门禁与条件写", () => {
       new Error("gcs_upload_failed:412:conflict")
     );
 
-    await expect(
-      writeNativeDeepReadSegmentCacheEntry(entry)
-    ).resolves.toBeUndefined();
+    const result = await writeNativeDeepReadSegmentCacheEntry(entry);
+    expect(result.outcome).toBe("reused");
+    expect(result.entry).toEqual(entry);
+    expect(result.evidenceObjectName).toBe(nativeDeepReadSegmentEvidenceObjectName(entry));
 
     expect(gcs.downloadVersioned).toHaveBeenCalledTimes(2);
     expect(gcs.upload).toHaveBeenCalledTimes(1);
@@ -309,15 +317,23 @@ describe("回归：证据身份绑定付费响应", () => {
 
     // 第一次付费：缓存不存在，证据 A 先落盘，缓存原子创建。
     gcs.downloadVersioned.mockRejectedValueOnce(new Error("gcs_stat_failed:404:not found"));
-    await expect(writeNativeDeepReadSegmentCacheEntry(entryA)).resolves.toBeUndefined();
+    const first = await writeNativeDeepReadSegmentCacheEntry(entryA);
+    expect(first.outcome).toBe("created");
+    expect(first.entry).toEqual(entryA);
+    expect(first.evidenceObjectName).toBe(nameA);
     expect(gcs.upload).not.toHaveBeenCalled();
 
     // 同契约重跑得到不同响应：证据 B 独立落盘，active 缓存按 generation 更新为 B。
     gcs.downloadVersioned.mockResolvedValueOnce({ buffer: buf(entryA), generation: "41" });
     gcs.upload.mockResolvedValue({});
-    await expect(writeNativeDeepReadSegmentCacheEntry(entryB)).resolves.toBeUndefined();
+    const second = await writeNativeDeepReadSegmentCacheEntry(entryB);
+    // 缓存在位 A、本次响应 B：outcome=replaced，canonical entry 必须是 B，缓存字节即 B。
+    expect(second.outcome).toBe("replaced");
+    expect(second.entry).toEqual(entryB);
+    expect(second.evidenceObjectName).toBe(nameB);
     expect(gcs.upload).toHaveBeenCalledOnce();
     expect(gcs.upload).toHaveBeenCalledWith(expect.objectContaining({ ifGenerationMatch: "41" }));
+    expect((gcs.upload.mock.calls[0]![0] as { buffer: Buffer }).buffer.equals(buf(entryB))).toBe(true);
 
     const evidenceNames = gcs.createIfAbsent.mock.calls
       .map(([call]) => String(call.objectName))
@@ -332,7 +348,9 @@ describe("回归：证据身份绑定付费响应", () => {
     gcs.createIfAbsent.mockImplementation(async ({ objectName }: { objectName: string }) => (
       { created: objectName !== nameB }
     ));
-    await expect(writeNativeDeepReadSegmentCacheEntry(entryB)).resolves.toBeUndefined();
+    const third = await writeNativeDeepReadSegmentCacheEntry(entryB);
+    expect(third.outcome).toBe("reused");
+    expect(third.entry).toEqual(entryB);
     expect(gcs.upload).toHaveBeenCalledOnce();
   });
 
@@ -349,6 +367,9 @@ describe("回归：证据身份绑定付费响应", () => {
       "gcs_upload_failed:503:evidence down",
     );
     expect(gcs.upload).not.toHaveBeenCalled();
+    // 缓存对象名零写入：连原子创建通道也不得碰 active cache。
+    const cacheName = "manhua-template-learn/segment-cache/tpl_native_series_a_ep003_seg1.json";
+    expect(gcs.createIfAbsent.mock.calls.some(([call]) => call.objectName === cacheName)).toBe(false);
   });
 
   it("C：迁移 reused 分支同时落两份独立证据，在位缓存的证据以其自身响应为准", async () => {

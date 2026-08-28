@@ -839,10 +839,11 @@ export async function resolveNativeDeepReadNodeUrls(
 ): Promise<NativeDeepReadMediaNode[]> {
   const url = String(sourceUrl || "").trim();
   if (!url) throw new Error("缺少可解析的剧集地址");
-  const cookie = String(process.env.DOUYIN_COOKIE || "").trim();
+  // 凭证不得进入子进程 argv（AGENTS.md 硬红线）：yt-dlp 一律匿名解析；
+  // 需要登录态的来源由进程内 fetch 解析层（manhuaDouyinMediaResolve）承接。
   const stdout = await run(
     "yt-dlp",
-    ["-J", "--no-warnings", ...(cookie ? ["--add-header", `Cookie:${cookie}`] : []), url],
+    ["-J", "--no-warnings", url],
     120_000,
     abortSignal,
   );
@@ -2251,6 +2252,25 @@ export async function runManhuaNativeDeepReadBatch(params: {
           throw new Error(`第${episode.episodeIndex}集已成段无法确定性装配，拒绝生成部分提案`);
         }
         const entries = sortedIndexes.map((index) => committedEntries.get(index)!);
+        // provenance 唯一生产点：证据名严格按 segmentIndex 排序、不得重复、
+        // 数量必须与本快照段数一致；整集快照还必须补齐到 attemptedSegments。
+        // 任何一条不满足都说明证据身份或装配已损坏，关闭式失败，不写假账。
+        const segmentEvidenceObjectNames = entries
+          .slice()
+          .sort((a, b) => a.segmentIndex - b.segmentIndex)
+          .map((entry) => nativeDeepReadSegmentEvidenceObjectName(entry));
+        if (new Set(segmentEvidenceObjectNames).size !== segmentEvidenceObjectNames.length) {
+          throw new Error(`第${episode.episodeIndex}集段证据对象名出现重复，拒绝写入 provenance`);
+        }
+        if (segmentEvidenceObjectNames.length !== sortedIndexes.length) {
+          throw new Error(`第${episode.episodeIndex}集段证据对象名数量与已成段不一致，拒绝写入 provenance`);
+        }
+        if (
+          sortedIndexes.length === segmentCount
+          && segmentEvidenceObjectNames.length !== segmentCount
+        ) {
+          throw new Error(`第${episode.episodeIndex}集段证据对象名未覆盖全部尝试段，拒绝写入 provenance`);
+        }
         const snapshotSha256 = crypto.createHash("sha256").update(JSON.stringify({
           sourceDigest: episode.cacheSourceDigest,
           segments: entries.map((entry) => ({
@@ -2287,7 +2307,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
             completedSegmentIndexes: sortedIndexes,
             sourceDigest: episode.cacheSourceDigest,
             segmentSnapshotSha256: snapshotSha256,
-            segmentEvidenceObjectNames: entries.map(nativeDeepReadSegmentEvidenceObjectName),
+            segmentEvidenceObjectNames,
             rawAttemptEvidenceObjectNames: Array.from(new Set(entries
               .map((entry) => entry.rawAttemptEvidenceObjectName)
               .filter((value): value is string => Boolean(value)))),
@@ -2636,20 +2656,22 @@ export async function runManhuaNativeDeepReadBatch(params: {
         const segment = episode.segments[segmentIndex]!;
         const cachedEntry = cachedSegments.get(segmentIndex);
         if (cachedEntry) {
-          if (cachedEntry.rawAttemptEvidenceObjectName) {
-            rawAttemptEvidenceObjectNames.add(cachedEntry.rawAttemptEvidenceObjectName);
-          }
           // 缓存命中不是模型外呼，禁止伪造 ManhuaNativeModelReceipt；历史 token 只作听觉证据。
           // 旧缓存可能早于永久 evidence 机制；先幂等补写不可变原始证据，再允许装卡。
-          await deps.writeSegmentCache(cachedEntry);
-          episodeAudioInput += Math.max(0, Number(cachedEntry.paidUsage.audioInputTokens) || 0);
-          routesUsed.add(cachedEntry.visualRoute);
-          if (cachedEntry.degraded) degradedFpsSegmentIndexes.push(segmentIndex);
+          // 写入返回的 canonical entry 是唯一真值；此后不再引用闭包里的预读变量。
+          const written = await deps.writeSegmentCache(cachedEntry);
+          const canonicalEntry = written.entry;
+          if (canonicalEntry.rawAttemptEvidenceObjectName) {
+            rawAttemptEvidenceObjectNames.add(canonicalEntry.rawAttemptEvidenceObjectName);
+          }
+          episodeAudioInput += Math.max(0, Number(canonicalEntry.paidUsage.audioInputTokens) || 0);
+          routesUsed.add(canonicalEntry.visualRoute);
+          if (canonicalEntry.degraded) degradedFpsSegmentIndexes.push(segmentIndex);
           console.info(
             `[nativeDeepRead] 第${episode.episodeIndex}集第${segmentIndex + 1}段命中已验缓存，本次模型调用 0`,
           );
-          rawSegments[segmentIndex] = cachedEntry.raw;
-          await commitSegmentToProposal(segmentIndex, cachedEntry);
+          rawSegments[segmentIndex] = canonicalEntry.raw;
+          await commitSegmentToProposal(segmentIndex, canonicalEntry);
           return;
         }
         const video = videosBySegment.get(segmentIndex);
@@ -2693,9 +2715,10 @@ export async function runManhuaNativeDeepReadBatch(params: {
             savedAtIso: new Date().toISOString(),
           };
           // “段过门禁即入账”：并发请求已在途，缓存写入仍是该段成功的强步骤。
-          await deps.writeSegmentCache(entry);
-          rawSegments[segmentIndex] = result.raw;
-          await commitSegmentToProposal(segmentIndex, entry);
+          // 装提案/rawSegments 一律用返回的 canonical entry，杜绝缓存 A / 提案 B。
+          const written = await deps.writeSegmentCache(entry);
+          rawSegments[segmentIndex] = written.entry.raw;
+          await commitSegmentToProposal(segmentIndex, written.entry);
           return;
         }
         rawSegments[segmentIndex] = result.raw;

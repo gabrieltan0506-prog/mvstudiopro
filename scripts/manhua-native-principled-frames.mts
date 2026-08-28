@@ -15,6 +15,11 @@ import { execFile } from "node:child_process";
 import { readFile, rm } from "node:fs/promises";
 import { promisify } from "node:util";
 import { fetchManhua0996EpisodePlayback } from "../server/services/manhuaLearn0996Source.js";
+import { resolveDouyinMediaUrl } from "../server/services/manhuaDouyinMediaResolve.js";
+import {
+  describeErrorChain,
+  sanitizeSensitiveText,
+} from "../server/services/manhuaMediaSanitize.js";
 import {
   downloadGcsObjectVersioned,
   getGcsBucketName,
@@ -34,28 +39,6 @@ const bucket = getGcsBucketName();
 const MAX_FRAMES = 180;
 const MERGE_GAP_SEC = 0.8;
 const EDGE_PAD_SEC = 0.3;
-
-/** 失败必带根因：沿 cause 链逐层保留 name/code/message，URL 一律遮蔽。 */
-function describeErrorChain(error: unknown): Array<Record<string, string>> {
-  const chain: Array<Record<string, string>> = [];
-  let current: unknown = error;
-  for (let depth = 0; depth < 6 && current; depth += 1) {
-    if (typeof current !== "object" && typeof current !== "string") break;
-    const row: Record<string, string> = {};
-    const source = typeof current === "string" ? { message: current } : current as {
-      name?: unknown; code?: unknown; message?: unknown; cause?: unknown;
-    };
-    for (const key of ["name", "code", "message"] as const) {
-      const value = (source as Record<string, unknown>)[key];
-      if (typeof value !== "string" && typeof value !== "number") continue;
-      const text = String(value).replace(/[\r\n\t]+/g, " ").replace(/https?:\/\/\S+/g, "<URL>").trim().slice(0, 200);
-      if (text) row[key] = text;
-    }
-    if (Object.keys(row).length > 0) chain.push(row);
-    current = (source as { cause?: unknown }).cause;
-  }
-  return chain;
-}
 
 function pickMedia(info: Record<string, unknown>): string {
   const formats = Array.isArray(info.formats) ? info.formats as Array<Record<string, unknown>> : [];
@@ -230,13 +213,20 @@ function computeFramePlan(
 
 async function resolveMedia(): Promise<{ mediaUrl: string; referer: string }> {
   if (SOURCE === "douyin") {
-    const videoId = URL_ARG.match(/(?:modal_id=|\/video\/)(\d{10,24})/)?.[1] || "";
-    if (!videoId) throw new Error("抖音 --url= 需要 /video/<id> 或带 modal_id 的链接");
-    const { stdout } = await run("yt-dlp", [
-      "-J", "--no-warnings", "--add-header", `Cookie:${String(process.env.DOUYIN_COOKIE || "")}`,
-      `https://www.douyin.com/video/${videoId}`,
-    ], { timeout: 150_000, maxBuffer: 64 * 1024 * 1024 });
-    return { mediaUrl: pickMedia(JSON.parse(stdout) as Record<string, unknown>), referer: "https://www.douyin.com/" };
+    // 进程内页面解析：cookie 只进服务端 fetch 请求头，绝不进 argv/子进程。
+    // 页面法失败回退匿名 yt-dlp（零 Cookie/凭证 argv）。
+    try {
+      const resolved = await resolveDouyinMediaUrl(URL_ARG);
+      return { mediaUrl: resolved.mediaUrl, referer: "https://www.douyin.com/" };
+    } catch (pageError) {
+      console.error(`[frames-v2] 页面解析失败，回退匿名 yt-dlp：${sanitizeSensitiveText(pageError)}`);
+      const videoId = URL_ARG.match(/(?:modal_id=|\/video\/)(\d{10,24})/)?.[1] || "";
+      if (!videoId) throw new Error("抖音 --url= 需要 /video/<id> 或带 modal_id 的链接");
+      const { stdout } = await run("yt-dlp", [
+        "-J", "--no-warnings", `https://www.douyin.com/video/${videoId}`,
+      ], { timeout: 150_000, maxBuffer: 64 * 1024 * 1024 });
+      return { mediaUrl: pickMedia(JSON.parse(stdout) as Record<string, unknown>), referer: "https://www.douyin.com/" };
+    }
   }
   const playback = await fetchManhua0996EpisodePlayback(URL_ARG);
   const mediaUrl = playback.playbackUrls[0];
@@ -333,7 +323,7 @@ async function main() {
       await rm(local, { force: true });
       if (frames.length % 20 === 0) console.info(`[frames-v2] 已抽 ${frames.length}/${plan.frames.length} 帧`);
     } catch (error) {
-      errors.push(`seg${planned.seg}#${planned.shot}@${planned.atSec}s ${error instanceof Error ? error.message : String(error)}`.slice(0, 120));
+      errors.push(`seg${planned.seg}#${planned.shot}@${planned.atSec}s ${sanitizeSensitiveText(error)}`.slice(0, 120));
       await rm(local, { force: true }).catch(() => {});
     }
   }
@@ -365,7 +355,7 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`[frames-v2] 失败：${error instanceof Error ? error.message : String(error)}`);
+  console.error(`[frames-v2] 失败：${sanitizeSensitiveText(error)}`);
   console.error(`[frames-v2] 根因链：${JSON.stringify(describeErrorChain(error))}`);
   process.exitCode = 1;
 });

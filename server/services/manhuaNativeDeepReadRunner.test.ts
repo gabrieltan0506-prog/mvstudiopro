@@ -1204,6 +1204,16 @@ function geminiResponse(payload: unknown, over: {
   };
 }
 
+// 写入结果的最小真值形状：runner 此后只认返回的 canonical entry。
+function writeResultOf(entry: NativeDeepReadSegmentCacheEntry) {
+  return {
+    entry,
+    cacheObjectName: `manhua-template-learn/segment-cache/test_seg${entry.segmentIndex}.json`,
+    evidenceObjectName: `manhua-template-learn/segment-evidence/test/seg${entry.segmentIndex}.json`,
+    outcome: "created" as const,
+  };
+}
+
 function makeRunnerDeps(over: Partial<NativeDeepReadBatchRunnerDeps> = {}): NativeDeepReadBatchRunnerDeps {
   return {
     prepareVideos: vi.fn(async (episode: { segments: readonly { startSec: number; endSec: number }[] }) =>
@@ -1221,7 +1231,7 @@ function makeRunnerDeps(over: Partial<NativeDeepReadBatchRunnerDeps> = {}): Nati
     signReadUrl: vi.fn(() => "https://storage.googleapis.com/signed.mp4"),
     invokeGlmStructuring: vi.fn() as never,
     readSegmentCache: vi.fn(async () => null) as never,
-    writeSegmentCache: vi.fn(async () => undefined) as never,
+    writeSegmentCache: vi.fn(async (entry: NativeDeepReadSegmentCacheEntry) => writeResultOf(entry)) as never,
     writeRawAttemptEvidence: vi.fn(async (input: { callId: string; responseText: string }) => ({
       objectName: `manhua-template-learn/segment-evidence-raw/test/${input.callId}.json`,
       bytes: Buffer.byteLength(input.responseText),
@@ -1603,7 +1613,7 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
         const entry = cached.get(segmentIndex);
         return entry ? { entry, generation: String(segmentIndex + 1) } : null;
       }) as never,
-      writeSegmentCache: vi.fn(async () => undefined) as never,
+      writeSegmentCache: vi.fn(async (entry: NativeDeepReadSegmentCacheEntry) => writeResultOf(entry)) as never,
       postVertex: postVertex as never,
     });
     await runManhuaNativeDeepReadBatch({
@@ -1685,7 +1695,7 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
   it("部分提案回调失败时等待已在途兄弟段，后续不再触发部分快照", async () => {
     const episode = makeEpisode([{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }]);
     const postVertex = makeSuccessfulEpisodePostVertex(episode.segments);
-    const writeSegmentCache = vi.fn(async () => undefined);
+    const writeSegmentCache = vi.fn(async (entry: NativeDeepReadSegmentCacheEntry) => writeResultOf(entry));
     const onSegmentSnapshotCommitted = vi.fn(async () => {
       throw new Error("部分提案暂存失败");
     });
@@ -1749,6 +1759,7 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
       }) as never,
       writeSegmentCache: vi.fn(async (entry: NativeDeepReadSegmentCacheEntry) => {
         store.set(entry.segmentIndex, entry);
+        return writeResultOf(entry);
       }) as never,
     });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
