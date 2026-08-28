@@ -143,8 +143,12 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
           lightingZh: { type: "STRING" },
           actionZh: { type: "STRING" },
           transitionInZh: { type: "STRING" },
+          evidenceRole: {
+            type: "STRING",
+            enum: ["story", "non_story_ad"],
+          },
         },
-        required: ["startSec", "endSec", "actionZh"],
+        required: ["startSec", "endSec", "actionZh", "evidenceRole"],
       },
     },
     subtitles: {
@@ -453,7 +457,7 @@ export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
  * v4（0826 拍板）：视觉调用换 Vertex Gemini 3.1 Pro 从 GCS 直读、每段一次调用、
  * 音轨同调直出、双密度门禁。计划口径与采样语义全变——旧确认码必须全废。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v6-gemini-10fps-direct-gcs" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v7-gemini-story-evidence" as const;
 
 /** 0827 实弹口径：生产 300 秒分片保持 10fps；仅旧数据超 300 秒时降为 5fps。 */
 export function resolveNativeDeepReadRequestFps(totalDurationSec: number): number {
@@ -547,8 +551,8 @@ export function buildGeminiNativeDeepReadSegmentPrompt(input: {
    * ——就是代码门禁本身，提示词如实告知同一组验收数字，禁止「目标一套、门禁一套」。
    */
   const audioHardRule = input.hasAudio
-    ? `5. audioResolution 固定为 [{"chunkIndex":${input.segmentIndex},"analysis":{…}}]，由你**亲耳所听**产出，禁止凭画面编造声音；audioTrack 与 cues 内时间用**本段局部秒**（0..${lenSec}），这是全 JSON 唯一的局部秒例外。`
-    : `5. 本段素材没有音轨：audioResolution 必须返回空数组 []，禁止凭画面编造声音。`;
+    ? `6. audioResolution 固定为 [{"chunkIndex":${input.segmentIndex},"analysis":{…}}]，由你**亲耳所听**产出，禁止凭画面编造声音；audioTrack 与 cues 内时间用**本段局部秒**（0..${lenSec}），这是全 JSON 唯一的局部秒例外。`
+    : `6. 本段素材没有音轨：audioResolution 必须返回空数组 []，禁止凭画面编造声音。`;
   const audioSoftRules = input.hasAudio
     ? `b. 音轨按声音性质切段、连续覆盖本段；验收标准：至少 ${floors.minAudioTracks} 段、声音事件（cues 总数）至少 ${floors.minAudioCues} 条。每条 audioTrack 必须完整输出 emotionArcZh/toneZh/sfxZh/bgmZh/atmosphereZh/silenceZh 与 cues 七栏，禁止省略字段；确实没有某类声音时对应文本写「无」，cues 仍必须是数组。cues 记录每一次可听见的独立声音事件（音效、配乐进出与变化、留白转换、语气突变）。analysis 的 audioBeatStructureZh/mixNotesZh/reusableAudioZh/genAudioHintZh 四栏也必须完整输出。
 c. 输出预算紧张时优先压缩 subtitles，尽量保全镜头表与音轨栏的密度。`
@@ -563,7 +567,8 @@ c. 输出预算紧张时优先压缩 subtitles，尽量保全镜头表与音轨�
    "cameraMoveZh":"运镜：方向与速度，例「1.2秒内从中景推到面部特写」「快速右摇」；看不出运动写「固定机位」",
    "lightingZh":"光影：光位、色调、明暗对比",
    "actionZh":"这一镜的可拍动作",
-   "transitionInZh":"进入这一镜的转场：硬切/闪白/黑场/遮挡转场/叠化；同一物理长镜的后续证据段写固定标记「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」"}],
+   "transitionInZh":"进入这一镜的转场：硬切/闪白/黑场/遮挡转场/叠化；同一物理长镜的后续证据段写固定标记「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」",
+   "evidenceRole":"story 或 non_story_ad；只有与剧情无关的招商广告才写 non_story_ad"}],
  "subtitles":[{"atSec":整数,"textZh":"画面上真实出现的字幕原文，逐字照抄"}],
  "audioResolution":[{"chunkIndex":${input.segmentIndex},"analysis":{"audioTrack":[{"fromSec":局部整数秒,"toSec":局部整数秒,"emotionArcZh":"情绪强度变化","toneZh":"怎么说，不写台词","sfxZh":"音效","bgmZh":"配乐","atmosphereZh":"气氛","silenceZh":"留白","cues":[{"atSec":局部整数秒,"kind":"sfx/bgm_in/bgm_change/bgm_out/silence_in/silence_out","detailZh":"事件"}]}],"audioBeatStructureZh":"声音节奏","mixNotesZh":"混音","reusableAudioZh":"可复用声音手法","genAudioHintZh":"生成声音要素"}}],
  "beatStructureZh":"节奏结构：憋了几秒、第几秒爆、爆后怎么收",
@@ -572,11 +577,12 @@ c. 输出预算紧张时优先压缩 subtitles，尽量保全镜头表与音轨�
  "reusableZh":"可复用手法（脱离本剧剧情，写成通用做法）",
  "genPromptHintZh":"若用 AI 生成类似片段，画面提示词该写哪几个要素"
 }
-硬约束（只有这五条，必须遵守）：
+硬约束（只有这六条，必须遵守）：
 1. shots 与 subtitles 的 startSec/endSec/atSec **一律写全片绝对秒位**：本段即 ${Math.round(input.startSec)}..${Math.round(input.endSec)} 秒；shots 连续无空档覆盖整段。若同一物理长镜持续超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，不得截断、丢弃尾部或伪造切镜；必须按镜内真实发生的构图、运镜、角色调度、动作、表演或光影变化拆成至少 2 个连续证据段，每个证据段至少 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒，第二段及后续段的 transitionInZh 固定写「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」。
 2. cameraMoveZh 只写真看到的运动，看不出运动就写「固定机位」，禁止套「镜头拉远」这类无依据说法。
 3. 所有中文描述字段【禁止】出现钟表式时间（如 01:23、1:05:30）或「在第X秒」式秒位定位——秒位只进数字字段；描述动作时长（如「1.2秒内推近」）不在此限。
-4. 分析描述不写外部平台剧名、商标或原台词；subtitles 是唯一例外——逐字照抄画面上真实出现的字幕，看不清写「[不可辨]」，禁止按剧情补全或从声音猜字。
+4. 先判断画面是否为真人剧。真人剧若出现明确与剧情无关的招商广告、贴片、品牌口播或品牌落版，仍用 shots 保持完整时间轴，但对应镜头 evidenceRole 必须写 non_story_ad；这类镜头不计学习密度，不得进入 subtitles、beatStructureZh、moodArcZh、classification、reusableZh 或 genPromptHintZh。其余镜头一律写 story。
+5. 分析描述不写外部平台剧名、商标或原台词；subtitles 是唯一例外——逐字照抄画面上真实出现的剧情字幕，看不清写「[不可辨]」，禁止按剧情补全或从声音猜字；广告字幕不要进入 subtitles。
 ${audioHardRule}
 建议（软边界，按素材实际情况尽量做到）：
 a. 这类漫剧的真实节奏通常 2–5 秒一镜，按真实发生的切换逐镜记录，不要为省输出合并镜头。一个剧情段落通常由多个镜头切换组成——**不要把「剧情段」当成一个镜头**，每次画面切换（机位/景别/场景变化）都是新的一镜。验收标准（与入库门禁同一套数字）：本段至少 ${floors.minShots} 镜、平均每镜不超过 ${NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC} 秒；超过 ${NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC} 秒的真实长镜头（如标题卡/长定场）至多 1 个；单个证据段不超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，真实长镜超过该长度时按硬约束 1 拆分证据，不得裁掉内容。
@@ -1096,18 +1102,32 @@ type NativeDeepReadShotTiming = {
   startSec: number;
   endSec: number;
   transitionInZh: string;
+  evidenceRole: "story" | "non_story_ad";
 };
 
 function sortedShots(raw: Record<string, unknown>): NativeDeepReadShotTiming[] {
   return (Array.isArray(raw.shots) ? raw.shots : [])
     .map((row) => row as Record<string, unknown>)
-    .map((row) => ({
+    .map((row): NativeDeepReadShotTiming => ({
       startSec: Number(row.startSec),
       endSec: Number(row.endSec),
       transitionInZh: String(row.transitionInZh || "").trim(),
+      evidenceRole: row.evidenceRole === "non_story_ad" ? "non_story_ad" : "story",
     }))
     .filter((row) => Number.isFinite(row.startSec) && Number.isFinite(row.endSec) && row.endSec > row.startSec)
     .sort((a, b) => a.startSec - b.startSec || a.endSec - b.endSec);
+}
+
+function assertRawShotEvidenceRolePresence(raw: Record<string, unknown>, labelZh: string): void {
+  const rawShots = Array.isArray(raw.shots) ? raw.shots : [];
+  for (let index = 0; index < rawShots.length; index += 1) {
+    const shot = rawShots[index];
+    if (!shot || typeof shot !== "object" || Array.isArray(shot)) continue;
+    const role = (shot as Record<string, unknown>).evidenceRole;
+    if (role !== "story" && role !== "non_story_ad") {
+      throw gateError(`${labelZh}第${index + 1}镜 evidenceRole 缺失或无效`);
+    }
+  }
 }
 
 /**
@@ -1273,7 +1293,6 @@ export function assertNativeDeepReadSegmentDensity(input: {
   raw: Record<string, unknown>;
 }): void {
   const lenSec = Math.max(1, Math.round(input.endSec - input.startSec));
-  const floors = resolveNativeDeepReadSegmentFloors(lenSec);
   // 存在性门禁必须先于 zod：必填字段缺失时必须返回具体字段名。
   const rawClassification = input.raw.classification;
   if (!rawClassification || typeof rawClassification !== "object" || Array.isArray(rawClassification)) {
@@ -1297,6 +1316,7 @@ export function assertNativeDeepReadSegmentDensity(input: {
       );
     }
   }
+  assertRawShotEvidenceRolePresence(input.raw, `第${input.segmentIndex + 1}段`);
   const parsed = nativeDeepReadSegmentSchema.safeParse(input.raw);
   if (!parsed.success) {
     const firstIssue = parsed.error.issues[0];
@@ -1308,21 +1328,31 @@ export function assertNativeDeepReadSegmentDensity(input: {
   assertVisualTextNoClock(input.raw, `第${input.segmentIndex + 1}段`);
   const shots = sortedShots(input.raw);
   assertShotCoverage(shots, Math.round(input.startSec), Math.round(input.endSec), `第${input.segmentIndex + 1}段`);
+  const storyShots = shots.filter((shot) => shot.evidenceRole === "story");
+  const storyDurationSec = storyShots.reduce(
+    (total, shot) => total + Math.max(0, shot.endSec - shot.startSec),
+    0,
+  );
+  if (storyShots.length === 0 || storyDurationSec < 1) {
+    throw gateError(`第${input.segmentIndex + 1}段没有可学习的剧情镜头（招商广告已排除）`);
+  }
+  const storyFloors = resolveNativeDeepReadSegmentFloors(storyDurationSec);
+  const audioFloors = resolveNativeDeepReadSegmentFloors(lenSec);
   // 时长制镜头门禁（0826 用户参考稿 + 两处判断修订：微尾段豁免、长定场限额）
-  if (lenSec > NATIVE_DEEP_READ_SHOT_MICRO_SEGMENT_SEC) {
-    if (shots.length < floors.minShots) {
+  if (storyDurationSec > NATIVE_DEEP_READ_SHOT_MICRO_SEGMENT_SEC) {
+    if (storyShots.length < storyFloors.minShots) {
       throw gateError(
-        `第${input.segmentIndex + 1}段镜头密度不足：${lenSec}秒至少需要${floors.minShots}镜，实际${shots.length}（禁止为省输出合并镜头）`,
+        `第${input.segmentIndex + 1}段剧情镜头密度不足：${Math.round(storyDurationSec)}秒至少需要${storyFloors.minShots}镜，实际${storyShots.length}（招商广告不计入）`,
       );
     }
-    const averageShotSec = lenSec / shots.length;
+    const averageShotSec = storyDurationSec / storyShots.length;
     if (averageShotSec > NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC) {
       throw gateError(
         `第${input.segmentIndex + 1}段镜头粒度过粗：平均每镜${averageShotSec.toFixed(1)}秒（上限 ${NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC} 秒）`,
       );
     }
     assertLongTakeEvidenceInvariant({
-      shots,
+      shots: storyShots,
       labelZh: `第${input.segmentIndex + 1}段`,
       maxPhysicalLongTakes: NATIVE_DEEP_READ_SHOT_LONG_TAKE_ALLOWANCE,
     });
@@ -1355,15 +1385,15 @@ export function assertNativeDeepReadSegmentDensity(input: {
     );
   }
   const analysis = manhuaNativeAudioChunkAnalysisSchema.parse(audioResolution[0]!.analysis);
-  if (analysis.audioTrack.length < floors.minAudioTracks) {
+  if (analysis.audioTrack.length < audioFloors.minAudioTracks) {
     throw gateError(
-      `第${input.segmentIndex + 1}段音轨仅 ${analysis.audioTrack.length} 段，低于地板线 ${floors.minAudioTracks}`,
+      `第${input.segmentIndex + 1}段音轨仅 ${analysis.audioTrack.length} 段，低于地板线 ${audioFloors.minAudioTracks}`,
     );
   }
   const cueCount = analysis.audioTrack.reduce((sum, track) => sum + track.cues.length, 0);
-  if (cueCount < floors.minAudioCues) {
+  if (cueCount < audioFloors.minAudioCues) {
     throw gateError(
-      `第${input.segmentIndex + 1}段声音事件仅 ${cueCount} 条，低于地板线 ${floors.minAudioCues}`,
+      `第${input.segmentIndex + 1}段声音事件仅 ${cueCount} 条，低于地板线 ${audioFloors.minAudioCues}`,
     );
   }
   // 局部时间轴连续覆盖 ±0.5s、cue 落区间、文本秒位剥离——共享 normalize 全套硬校验。
@@ -1392,6 +1422,7 @@ export function assertNativeDeepReadEpisodeEvidence(input: {
   // 门禁在 GLM 之后重跑：整形/修复产物同样零秒位（assertNoClockText 口径）。
   for (const raw of input.rawSegments) {
     try {
+      assertRawShotEvidenceRolePresence(raw, `第${input.episodeIndex}集`);
       assertVisualTextNoClock(raw, `第${input.episodeIndex}集`);
     } catch (error) {
       throw new Error(
@@ -1409,12 +1440,20 @@ export function assertNativeDeepReadEpisodeEvidence(input: {
       `第${input.episodeIndex}集${error instanceof Error ? error.message : String(error)}，整集拒绝入库`,
     );
   }
-  const minShots = Math.ceil(
-    Math.max(1, input.durationSec) / NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC,
+  const storyShots = allShots.filter((shot) => shot.evidenceRole === "story");
+  const storyDurationSec = storyShots.reduce(
+    (total, shot) => total + Math.max(0, shot.endSec - shot.startSec),
+    0,
   );
-  if (allShots.length < minShots) {
+  if (storyShots.length === 0 || storyDurationSec < 1) {
+    throw new Error(`第${input.episodeIndex}集没有可学习的剧情镜头（招商广告已排除），整集拒绝入库`);
+  }
+  const minShots = Math.ceil(
+    Math.max(1, storyDurationSec) / NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC,
+  );
+  if (storyShots.length < minShots) {
     throw new Error(
-      `第${input.episodeIndex}集整集镜头 ${allShots.length} 个低于地板线 ${minShots}，整集拒绝入库`,
+      `第${input.episodeIndex}集剧情镜头 ${storyShots.length} 个低于地板线 ${minShots}（招商广告不计入），整集拒绝入库`,
     );
   }
   if (input.hasAudio) {
@@ -1520,15 +1559,17 @@ export function buildNativeDeepReadGlmStructuringPrompt(input: {
     system: `你是漫剧模板卡的「结构化整形师」。只整形不创作：
 1. 禁止虚构输入卡里没有的镜头、字幕、声音或描述；每一条产出都必须能在输入卡里找到出处。
 2. shots 已逐段通过付费前门禁。连续表演或连续剧情允许合理合并相邻证据，但合并后的单条证据不得超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，拆分边界必须至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒；不得丢失时间轴覆盖。仍需拆分的同一物理长镜，其 transitionInZh 必须保留「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」。
-3. subtitles 取并集去重，保持全片绝对秒位排序。
-4. 所有中文描述文本【禁止】出现钟表式秒位（如 01:23）或「在第X秒」定位——秒位只进数字字段。
-5. classification 必须显式输出 emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh 五个数组；没有证据的维度写 []，至少两个维度各有一个来自输入卡的真实标签。
-6. 只返回一个 JSON 对象，不要 Markdown 围栏、不要解释。`,
+3. 每个 shot 必须原样保留 evidenceRole。non_story_ad 只用于保存完整原始时间轴，不得与 story 合并，也不得进入剧情字幕、节奏、情绪、分类、可复用手法或生成提示；其余镜头一律保持 story。
+4. subtitles 只取 story 区间的并集去重，保持全片绝对秒位排序。
+5. audioResolution 保留完整原始听觉证据；广告区间内声音只作审计证据，不得写入 audioBeatStructureZh/mixNotesZh/reusableAudioZh/genAudioHintZh 的可复用结论。
+6. 所有中文描述文本【禁止】出现钟表式秒位（如 01:23）或「在第X秒」定位——秒位只进数字字段。
+7. classification 必须显式输出 emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh 五个数组；没有证据的维度写 []，至少两个维度各有一个来自 story 镜头的真实标签。
+8. 只返回一个 JSON 对象，不要 Markdown 围栏、不要解释。`,
     user: `把以下同一集的 ${input.rawSegments.length} 份分段卡整形合并成**一张整集六栏卡**（单个 JSON 对象，字段 schema 与分段卡完全相同：shots/subtitles/audioResolution/beatStructureZh/moodArcZh/classification/reusableZh/genPromptHintZh）。
 要求：
-1. shots 连续无空档覆盖全片 0..${Math.round(input.durationSec)} 秒（绝对秒位）；连续表演或连续剧情可合并相邻证据，但合并后的单条证据不得超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，拆分边界至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒，且不得删除仍需保留的「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」续接标记或丢失覆盖。
+1. shots 连续无空档覆盖全片 0..${Math.round(input.durationSec)} 秒（绝对秒位），每镜保留 evidenceRole；只有相邻 story 证据可以合理合并，non_story_ad 不得混入 story。合并后的单条证据不得超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，拆分边界至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒，且不得删除仍需保留的「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」续接标记或丢失覆盖。
 2. audioResolution 保留全部 [{chunkIndex,analysis}] 条目（chunkIndex 即段号，analysis 内为该段局部秒），逐段齐全${input.hasAudio ? "" : "；本集素材无音轨，audioResolution 保持空数组"}。
-3. beatStructureZh/moodArcZh/reusableZh/genPromptHintZh 按段整合，可加「第X段」标注；classification 五维标签只取输入并集，不得补猜。
+3. beatStructureZh/moodArcZh/reusableZh/genPromptHintZh 只整合 story 证据，可加「第X段」标注；classification 五维标签只取 story 输入并集，不得补猜。
 整集元数据：${JSON.stringify({
       episodeIndex: input.episodeIndex,
       durationSec: Math.round(input.durationSec),
@@ -1561,9 +1602,10 @@ export function buildNativeDeepReadGlmSegmentRepairPrompt(input: {
 1. 输入是一份 JSON 语法损坏的分段卡原文；你的唯一任务是恢复成合法 JSON。
 2. 禁止虚构原文里没有的镜头、字幕、声音或描述；禁止删减原文已有的内容。
 3. 原文若被截断，保留能恢复的完整条目，丢弃最后一条残缺条目，不要补写。
-4. 所有中文描述文本【禁止】出现钟表式秒位（如 01:23）或「在第X秒」定位——秒位只进数字字段。
-5. classification 必须显式输出 emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh 五个数组；原文没有的维度写 []，至少两个维度必须能从原文恢复出真实标签，否则修复失败。
-6. 只返回一个 JSON 对象，不要 Markdown 围栏、不要解释。`,
+4. shots 中的 evidenceRole 只能原样恢复为 story 或 non_story_ad，禁止猜测、改写或把 non_story_ad 混入 story；原文缺失该字段则修复失败。
+5. 所有中文描述文本【禁止】出现钟表式秒位（如 01:23）或「在第X秒」定位——秒位只进数字字段。
+6. classification 必须显式输出 emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh 五个数组；原文没有的维度写 []，至少两个维度必须能从原文 story 证据恢复出真实标签，否则修复失败。
+7. 只返回一个 JSON 对象，不要 Markdown 围栏、不要解释。`,
     user: `修复以下第 ${input.episodeIndex} 集第 ${input.segmentIndex + 1} 段分段卡（覆盖绝对秒位 ${Math.round(input.startSec)}..${Math.round(input.endSec)} 秒，字段 schema：shots/subtitles/audioResolution/beatStructureZh/moodArcZh/classification/reusableZh/genPromptHintZh${input.hasAudio ? "" : "；本段素材无音轨，audioResolution 保持空数组"}）。
 ${input.rejectedReasonZh ? `【解析失败原因】${String(input.rejectedReasonZh).slice(0, 300)}\n` : ""}坏 JSON 原文：
 ${input.badJsonText}`,

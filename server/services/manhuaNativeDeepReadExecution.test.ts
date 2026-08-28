@@ -170,6 +170,7 @@ describe("段缓存来源身份", () => {
         startSec: 0, endSec: 10, shotSizeZh: "近景", angleZh: "平视",
         cameraMoveZh: "固定机位", lightingZh: "冷调顶光",
         actionZh: "人物抬眼回应", transitionInZh: "硬切",
+        evidenceRole: "story",
       }],
       subtitles: [],
       audioResolution: [],

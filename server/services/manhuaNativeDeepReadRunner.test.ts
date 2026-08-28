@@ -103,7 +103,7 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_ROUTE_EVOLINK).toBe("evolink_gemini_video");
     expect(NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE).toBe("openrouter_glm_structuring");
     // 换代必须让旧确认码全废
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v6-gemini-10fps-direct-gcs");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v7-gemini-story-evidence");
   });
 
   it("长视频请求显式使用 30 分钟 HTTP 响应头与响应体时限，不落回 Undici 默认 300 秒", async () => {
@@ -207,6 +207,9 @@ describe("模型与通道收口", () => {
       "audiovisualTagsZh",
       "audienceExperienceTagsZh",
     ]);
+    expect(NATIVE_DEEP_READ_RESPONSE_SCHEMA.properties.shots.items.required).toContain("evidenceRole");
+    expect(NATIVE_DEEP_READ_RESPONSE_SCHEMA.properties.shots.items.properties.evidenceRole.enum)
+      .toEqual(["story", "non_story_ad"]);
   });
 });
 
@@ -320,7 +323,7 @@ describe("每段提示词硬约束", () => {
     expect(prompt).toContain("优先压缩 subtitles，尽量保全镜头表与音轨栏的密度");
     expect(prompt).toContain("不要为省输出合并镜头");
     expect(prompt).toContain("钟表式时间");
-    expect(prompt).toContain("硬约束（只有这五条，必须遵守）");
+    expect(prompt).toContain("硬约束（只有这六条，必须遵守）");
   });
 
   it("镜头验收与门禁同一套数字：真实长镜超过 30 秒时拆连续证据段，不裁尾也不伪造切镜", () => {
@@ -407,6 +410,7 @@ function makeSegmentPayload(input: {
     lightingZh: "顶光冷调",
     actionZh: `人物动作${i}`,
     transitionInZh: "硬切",
+    evidenceRole: "story",
   }));
   const trackCount = input.audioTrackOverride ?? Math.max(floors.minAudioTracks, 4);
   const trackLen = Math.floor(lenSec / trackCount);
@@ -478,6 +482,7 @@ describe("段级双密度门禁", () => {
       lightingZh: "侧光随角色移动发生变化",
       actionZh: `角色从画面左侧移动到右侧（${startSec}-${endSec}）`,
       transitionInZh,
+      evidenceRole: "story",
     });
     raw.shots = [
       shot(0, 20),
@@ -498,6 +503,7 @@ describe("段级双密度门禁", () => {
       lightingZh: "侧光",
       actionZh: `角色持续表演（${startSec}-${endSec}）`,
       transitionInZh,
+      evidenceRole: "story",
     });
     raw.shots = [
       shot(0, 20),
@@ -522,6 +528,34 @@ describe("段级双密度门禁", () => {
       audienceExperienceTagsZh: [],
     };
     expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw })).not.toThrow();
+  });
+
+  it("新模型产出缺 evidenceRole 时关闭式拒收，禁止把招商广告静默当剧情", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    delete (raw.shots as Array<Record<string, unknown>>)[0]!.evidenceRole;
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
+      .toThrow("evidenceRole 缺失或无效");
+  });
+
+  it("招商镜头保留完整时间轴但不计剧情密度；音轨门禁仍按完整 60 秒计算", () => {
+    const raw = makeSegmentPayload({
+      segmentIndex: 0,
+      startSec: 0,
+      endSec: 60,
+      shotCountOverride: 10,
+      audioTrackOverride: 4,
+    });
+    const shots = raw.shots as Array<Record<string, unknown>>;
+    shots.slice(0, 8).forEach((shot) => { shot.evidenceRole = "non_story_ad"; });
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw })).not.toThrow();
+  });
+
+  it("整段都是招商广告时拒绝生成收费模板证据", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    (raw.shots as Array<Record<string, unknown>>)
+      .forEach((shot) => { shot.evidenceRole = "non_story_ad"; });
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
+      .toThrow("没有可学习的剧情镜头");
   });
 
   it("classification 原始缺键拒收，不能由 parser 默认空数组掩盖", () => {
@@ -717,15 +751,20 @@ describe("GLM 结构化整形提示词纪律", () => {
     expect(prompt.system).toContain("连续表演或连续剧情允许合理合并相邻证据");
     expect(prompt.system).toContain("单条证据不得超过 30 秒");
     expect(prompt.system).toContain("不得丢失时间轴覆盖");
-    expect(prompt.system).toContain("取并集去重");
+    expect(prompt.system).toContain("并集去重");
     expect(prompt.system).toContain("钟表式秒位");
     expect(prompt.system).toContain("只返回一个 JSON 对象");
     expect(prompt.user).toContain("【上一轮门禁被拒原因】镜头轴存在空档");
-    expect(prompt.user).toContain("连续表演或连续剧情可合并相邻证据");
+    expect(prompt.user).toContain("只有相邻 story 证据可以合理合并");
     expect(prompt.user).toContain("拆分边界至少相隔 1 秒");
     expect(prompt.user).toContain("不得删除仍需保留的");
     expect(prompt.system).toContain("emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh");
     expect(prompt.system).toContain("至少两个维度");
+    expect(prompt.system).toContain("原样保留 evidenceRole");
+    expect(prompt.system).toContain("non_story_ad");
+    expect(prompt.system).toContain("广告区间内声音只作审计证据");
+    expect(prompt.system).toContain("其余镜头一律保持 story");
+    expect(prompt.user).toContain("只有相邻 story 证据可以合理合并");
   });
 
   it("坏 JSON 修复同样明确五键与两维契约", () => {
@@ -739,6 +778,8 @@ describe("GLM 结构化整形提示词纪律", () => {
     });
     expect(prompt.system).toContain("emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh");
     expect(prompt.system).toContain("至少两个维度");
+    expect(prompt.system).toContain("evidenceRole 只能原样恢复");
+    expect(prompt.system).toContain("原文缺失该字段则修复失败");
   });
 });
 

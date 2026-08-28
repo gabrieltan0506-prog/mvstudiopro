@@ -173,6 +173,22 @@ describe("适配器失败与超限语义（复审第六项）", () => {
     expect(out.classification?.audienceExperienceTagsZh).toHaveLength(13);
   });
 
+  it("招商镜头保留在原始 JSON，但不进入 beatGrid；广告区间字幕同步排除", () => {
+    const row = JSON.parse(seg([
+      shot(0, { evidenceRole: "non_story_ad", actionZh: "片头招商落版" }),
+      shot(1, { evidenceRole: "story", actionZh: "角色进入正片场景" }),
+    ]).text) as Record<string, unknown>;
+    row.subtitles = [
+      { atSec: 0.5, textZh: "招商字幕" },
+      { atSec: 1.5, textZh: "剧情字幕" },
+    ];
+    const out = mapNativeDeepReadSegments([{ startSec: 0, text: JSON.stringify(row) }]);
+    expect(out.beatGrid).toHaveLength(1);
+    expect(out.beatGrid[0]!.visualZh).toBe("角色进入正片场景");
+    expect(out.subtitleTrack).toEqual([{ atSec: 1.5, textZh: "剧情字幕" }]);
+    expect(out.droppedCount).toBe(0);
+  });
+
   it("未超限时 truncated=false 且一镜不少", () => {
     const out = mapNativeDeepReadSegments([
       seg(Array.from({ length: 95 }, (_, i) => shot(i))),

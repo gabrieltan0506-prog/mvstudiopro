@@ -36,6 +36,8 @@ const shotSchema = z
     lightingZh: z.string().trim().optional(),
     actionZh: z.string().trim().default(""),
     transitionInZh: z.string().trim().optional(),
+    /** 与剧情无关的招商/贴片广告保留在原始时间轴，但不得进入模板证据。 */
+    evidenceRole: z.enum(["story", "non_story_ad"]).default("story"),
   })
   .passthrough();
 
@@ -130,6 +132,7 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
   const allBeats: ManhuaViralTemplateBeat[] = ok.flatMap(({ seg, offsetSec }) => {
     const conflictZh = String(seg.beatStructureZh || "").trim().slice(0, 40);
     return seg.shots.flatMap((shot) => {
+      if (shot.evidenceRole === "non_story_ad") return [];
       const visualZh = String(shot.actionZh || "").trim().slice(0, 80);
       // 空值不写「未标注」占位：占位会让下游以为学到了东西，实际是空的
       if (!conflictZh || !visualZh) {
@@ -158,10 +161,21 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
   const beatGrid = allBeats;
 
   const subtitleTrack = ok
-    .flatMap(({ seg, offsetSec }) => seg.subtitles.map((subtitle) => ({
-      atSec: Math.round((offsetSec + Math.max(0, subtitle.atSec)) * 100) / 100,
-      textZh: String(subtitle.textZh || "").trim().slice(0, 160),
-    })))
+    .flatMap(({ seg, offsetSec }) => {
+      const adIntervals = seg.shots
+        .filter((shot) => shot.evidenceRole === "non_story_ad")
+        .map((shot) => ({ startSec: shot.startSec, endSec: shot.endSec }));
+      return seg.subtitles.flatMap((subtitle) => {
+        const atSec = Math.max(0, subtitle.atSec);
+        if (adIntervals.some((interval) => atSec >= interval.startSec && atSec < interval.endSec)) {
+          return [];
+        }
+        return [{
+          atSec: Math.round((offsetSec + atSec) * 100) / 100,
+          textZh: String(subtitle.textZh || "").trim().slice(0, 160),
+        }];
+      });
+    })
     .filter((subtitle) => subtitle.textZh)
     .sort((a, b) => a.atSec - b.atSec);
   const resolvedByChunk = new Map<number, ManhuaNativeAudioChunkAnalysis>();
