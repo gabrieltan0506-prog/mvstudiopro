@@ -91,7 +91,8 @@ export async function renderNativeEvidenceReport(input: NativeReportRenderInput)
     }
     card = merged;
   }
-  const shots = (Array.isArray(card.shots) ? card.shots : []) as Array<Record<string, unknown>>;
+  const shots = ((Array.isArray(card.shots) ? card.shots : []) as Array<Record<string, unknown>>)
+    .filter((shot) => shot.evidenceRole !== "non_story_ad");
   if (shots.length === 0) {
     throw new Error("该集没有逐镜证据层（v8 之前学习的旧集需重学后才能出报告）");
   }
@@ -130,8 +131,8 @@ export async function renderNativeEvidenceReport(input: NativeReportRenderInput)
     .map((key) => `<div style="background:#141b24;border-left:3px solid #e8c66a;padding:10px 14px;margin:8px 0"><b>${fieldLabel(key)}</b><br><span style="color:#9db4d0">${esc(card![key])}</span></div>`)
     .join("");
 
-  const FIELDS = ["unitTypeZh", "shotSizeZh", "angleZh", "compositionZh", "cameraMoveZh", "blockingZh", "bodyActionZh", "limbPropActionZh", "microExpressionZh", "gazeBreathZh", "relationshipReactionZh", "lightingZh", "actionZh", "transitionInZh", "evidenceRole"];
-  const shotRows = shots.map((shot) => `<tr style="background:${shot.evidenceRole === "non_story_ad" ? "#2a1416" : "transparent"}"><td style="position:sticky;left:0;background:#141b24;color:#e8c66a;white-space:nowrap">${mmss(Number(shot.startSec) || 0)}–${mmss(Number(shot.endSec) || 0)}</td>${FIELDS.map((field) => `<td style="padding:3px 8px;min-width:90px">${esc(String(shot[field] ?? "").slice(0, 90))}</td>`).join("")}</tr>`).join("");
+  const FIELDS = ["unitTypeZh", "shotSizeZh", "angleZh", "compositionZh", "cameraMoveZh", "blockingZh", "bodyActionZh", "limbPropActionZh", "microExpressionZh", "gazeBreathZh", "relationshipReactionZh", "lightingZh", "actionZh" , "transitionInZh"];
+  const shotRows = shots.map((shot) => `<tr><td style="position:sticky;left:0;background:#141b24;color:#e8c66a;white-space:nowrap">${mmss(Number(shot.startSec) || 0)}–${mmss(Number(shot.endSec) || 0)}</td>${FIELDS.map((field) => `<td style="padding:3px 8px;min-width:90px">${esc(String(shot[field] ?? "").slice(0, 90))}</td>`).join("")}</tr>`).join("");
 
   const audioRows = (Array.isArray(card.audioResolution) ? card.audioResolution : [])
     .flatMap((chunk) => {
@@ -146,13 +147,12 @@ export async function renderNativeEvidenceReport(input: NativeReportRenderInput)
   const subtitles = (Array.isArray(card.subtitles) ? card.subtitles : []) as Array<Record<string, unknown>>;
   const subRows = subtitles.map((s) => `<tr><td style="color:#e8c66a">${mmss(Number(s.atSec))}</td><td>${esc(s.textZh)}</td></tr>`).join("");
 
-  const adCount = shots.filter((s) => s.evidenceRole === "non_story_ad").length;
-  const html = `<title>${esc(input.labelZh)} 模型产出报告</title><div style="font-family:'Songti SC',serif;background:#0d1117;color:#dce3ec;padding:28px;max-width:1200px;margin:auto">
+    const html = `<title>${esc(input.labelZh)} 模型产出报告</title><div style="font-family:'Songti SC',serif;background:#0d1117;color:#dce3ec;padding:28px;max-width:1200px;margin:auto">
 <p style="color:#e8c66a;letter-spacing:.3em;font-size:.8em">${esc(input.labelZh)} · ${glm ? "GLM 整集卡" : "parsed 段卡拼接"} · 模型字段原样渲染，无编辑层</p>
-<h1 style="font-size:1.8em;margin:.2em 0">模型产出报告（${shots.length} 镜 · 广告镜 ${adCount} · ${frameSource} ${tiles.length} 帧）</h1>
+<h1 style="font-size:1.8em;margin:.2em 0">模型产出报告（${shots.length} 镜 · ${frameSource} ${tiles.length} 帧）</h1>
 <h2 style="color:#e8c66a;margin-top:26px">五维分类（模型原文）</h2>${tags}${summaryCards}
 <h2 style="color:#e8c66a;margin-top:30px">画面时间轴</h2><div style="display:flex;flex-wrap:wrap;gap:8px">${tiles.join("")}</div>
-<details style="margin-top:30px" open><summary style="color:#e8c66a;font-size:1.2em;cursor:pointer">全镜头表 · ${shots.length} 镜 × 17 字段（广告镜红底）</summary><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#141b24">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#8fa3bd">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
+<details style="margin-top:30px" open><summary style="color:#e8c66a;font-size:1.2em;cursor:pointer">全镜头表 · ${shots.length} 镜 × 17 字段</summary><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#141b24">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#8fa3bd">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
 <h2 style="color:#e8c66a;margin-top:30px">音轨解析（模型原文）</h2><div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.85em">${audioRows}</table></div>
 <details style="margin-top:30px"><summary style="color:#e8c66a;font-size:1.1em;cursor:pointer">字幕原始证据 · ${subtitles.length} 条（折叠存证，不铺开）</summary><div style="overflow-x:auto;max-height:50vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.85em">${subRows}</table></div></details>
 <p style="color:#5d6b80;font-size:.8em;margin-top:36px">帧图与本页为 GCS V4 签名链接（6 天）· 证据永久存 GCS · 本页由代码从模型 JSON 确定性渲染</p></div>`;

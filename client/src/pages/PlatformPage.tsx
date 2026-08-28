@@ -12656,42 +12656,6 @@ export default function PlatformPage() {
                         </div>
                       ) : null}
 
-                      {chartEntries.length > 0 ? (
-                        <div className="mt-3 rounded-xl border border-white/10 bg-black/25 px-3 py-3">
-                          <div className="mb-2 text-[11px] font-semibold text-[#ff9fe0]">
-                            飙升榜 · {chartEntries.length} 部
-                            {chartEntries.length < 15 ? "（最多 15 部，不足亦展示）" : ""}
-                            {" · "}
-                            {aiManhuaPlatformTab === "kuaishou" ? "播放/互动代理" : "飙升分"}
-                          </div>
-                          <div className="space-y-2">
-                            {chartEntries.map((row, idx) => {
-                              const score = Number(row.risingScore || row.mixPlayCount || 0);
-                              const pct = Math.max(8, Math.round((score / chartMax) * 100));
-                              return (
-                                <div key={`chart-${row.mixId || idx}`} className="flex flex-col gap-1">
-                                  <div className="flex items-center justify-between gap-2 text-[11px]">
-                                    <span className="min-w-0 truncate text-[#eeeaf8]">
-                                      <span className="mr-1.5 text-[#c9c0e6]/40">#{idx + 1}</span>
-                                      {row.mixName}
-                                    </span>
-                                    <span className="shrink-0 tabular-nums text-[#3eedff]">
-                                      {fmtPlay(row.mixPlayCount)}
-                                    </span>
-                                  </div>
-                                  <div className="h-2 overflow-hidden rounded-full bg-white/10">
-                                    <div
-                                      className="h-full rounded-full bg-[linear-gradient(90deg,#ff4fb8,#c026d3,#8cefff)]"
-                                      style={{ width: `${pct}%` }}
-                                    />
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ) : null}
-
                       {manhuaLearnFocusSeriesKey && manhuaLearnPanelCollapsed ? (
                         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-300/20 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-50/80">
                           <span>
