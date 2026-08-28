@@ -9590,6 +9590,168 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       }),
 
     /**
+     * 模板免费试写额度（只读）：前端在按钮旁展示「今日剩余 N 次」。
+     * 展示归展示，真正的限流闸门在 trialManhuaWriterTemplate 里服务端再判一次。
+     */
+    manhuaWriterTrialQuota: protectedProcedure.query(async ({ ctx }) => {
+      const {
+        countManhuaWriterTrialToday,
+        resolveManhuaWriterTrialGate,
+      } = await import("./services/manhuaWriterTrial.js");
+      const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+      const usedToday = await countManhuaWriterTrialToday(ctx.user.id);
+      const gate = resolveManhuaWriterTrialGate({ usedToday, isAdmin: isAdminUser });
+      return {
+        usedToday: gate.usedToday,
+        dailyLimit: gate.dailyLimit,
+        trialsLeftToday: gate.trialsLeft,
+      };
+    }),
+
+    /**
+     * 模板免费试写（单集大纲级，两版对比）：选模板 → 免费看「套模板 vs 常规」差异 →
+     * 满意再走现有 expandManhuaWriterPack 付费链路。
+     * 红线：零扣费但限流在服务端生效（每日 3 次）；完整商业卡一个字段不下发；
+     * 不新建表——计数与幂等都复用 stripeUsageLogs（照 countPlatformSkillQaToday 先例）。
+     */
+    trialManhuaWriterTemplate: protectedProcedure
+      .input(
+        z.object({
+          /** 一次用户动作一个 UUID；同 requestId 重放直接拒绝（零扣费无需回放结果） */
+          requestId: z.string().uuid(),
+          /** 试写必须选模板（对照版由服务端自动跑，无需第二个入参） */
+          publicTemplateId: z.string().regex(/^mt_[a-z0-9]{4,16}$/i),
+          /** 创作前提：与 expand 的 topic/brief 同构裁剪；集数/档位试写不收 */
+          topic: z.string().max(500).optional(),
+          brief: z.string().max(2000).optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const {
+          MANHUA_WRITER_TRIAL_LIMIT_MESSAGE,
+          buildManhuaWriterTrialPrompt,
+          countManhuaWriterTrialToday,
+          findManhuaWriterTrialByChargeKey,
+          logManhuaWriterTrialUse,
+          parseManhuaWriterTrialDraft,
+          resolveManhuaWriterTrialGate,
+          sanitizeManhuaWriterTrialInput,
+        } = await import("./services/manhuaWriterTrial.js");
+
+        const trialInput = sanitizeManhuaWriterTrialInput(input);
+        if (!trialInput.ok) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: trialInput.message });
+        }
+
+        // 幂等占位键：与扣费 chargeKey 同一条部分唯一索引兜底并发重放
+        const { createHash } = await import("node:crypto");
+        const chargeKey = `mwt_${createHash("sha256")
+          .update(`${userId}:${input.requestId}`)
+          .digest("hex")}`;
+        if (await findManhuaWriterTrialByChargeKey(chargeKey)) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "这次试写已经生成过了，请换个题材或补充条件再试",
+          });
+        }
+
+        // 限流闸门必须在服务端：前端剩余次数只是展示
+        const usedToday = await countManhuaWriterTrialToday(userId);
+        const gate = resolveManhuaWriterTrialGate({ usedToday, isAdmin: isAdminUser });
+        if (!gate.allowed) {
+          throw new TRPCError({
+            code: "TOO_MANY_REQUESTS",
+            message: MANHUA_WRITER_TRIAL_LIMIT_MESSAGE,
+          });
+        }
+
+        // 模板解析与正式扩写同函数（fail-closed）：无 publicCode / 未 approved 一律拒
+        const [{ resolveViralTemplateForExpand }, bank] = await Promise.all([
+          import("./services/manhuaViralTemplateStore.js"),
+          import("../shared/manhuaViralTemplateBank.js"),
+        ]);
+        const resolved = await resolveViralTemplateForExpand(input.publicTemplateId);
+        if ("error" in resolved) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              resolved.error === "no_public_code"
+                ? "所选剧情增强方案暂不可用，请刷新后重新选择"
+                : "所选剧情增强方案已下架或不存在，请刷新后重试",
+          });
+        }
+        const templateAddon = bank.formatManhuaViralTemplateWriterSkillFromCard(resolved.card);
+        if (!templateAddon) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "所选剧情增强方案内容不完整，未调用试写模型",
+          });
+        }
+
+        // 两版并行：套模板版 vs 无模板对照版；模型通道与正式扩写同一条，
+        // 但强制最低档（excellent）+ 恒 1 集——试写是「看差异」，不是免费扩写
+        const { runManhuaWriterExpand } = await import("./services/manhuaWriterExpandRun.js");
+        const promptWith = buildManhuaWriterTrialPrompt({
+          topic: trialInput.topic,
+          brief: trialInput.brief,
+          templateAddon,
+        });
+        const promptControl = buildManhuaWriterTrialPrompt({
+          topic: trialInput.topic,
+          brief: trialInput.brief,
+          templateAddon: "",
+        });
+        let withRaw = "";
+        let controlRaw = "";
+        try {
+          [withRaw, controlRaw] = await Promise.all([
+            runManhuaWriterExpand({ prompt: promptWith, tier: "excellent", episodeCount: 1 }),
+            runManhuaWriterExpand({ prompt: promptControl, tier: "excellent", episodeCount: 1 }),
+          ]);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new TRPCError({
+            code: "SERVICE_UNAVAILABLE",
+            message: `模板试写暂时不可用：${msg.slice(0, 200)}`,
+          });
+        }
+        const withDraft = parseManhuaWriterTrialDraft(withRaw);
+        const controlDraft = parseManhuaWriterTrialDraft(controlRaw);
+        if (!withDraft || !controlDraft) {
+          // 解析失败不落流水：模型没交出可对比的两版，就不该消耗用户额度
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "试写结果不完整，请再试一次（本次不计入额度）",
+          });
+        }
+
+        // 成功才落流水（计数 + 幂等占位）；并发同 requestId 撞唯一索引 → 拒绝
+        try {
+          await logManhuaWriterTrialUse({
+            userId,
+            chargeKey,
+            publicTemplateId: resolved.appliedTemplate.publicId,
+            topic: trialInput.topic || trialInput.brief,
+          });
+        } catch {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "这次试写已经生成过了，请换个题材或补充条件再试",
+          });
+        }
+
+        // 完整商业卡零下发：浏览器只拿匿名回执 + 两版精简稿
+        return {
+          withTemplate: withDraft,
+          control: controlDraft,
+          appliedTemplate: resolved.appliedTemplate,
+          trialsLeftToday: Math.max(0, gate.trialsLeft - (isAdminUser ? 0 : 1)),
+        };
+      }),
+
+    /**
      * 道具拼板切图：12 件道具挤在 1-2 张拼板图上没法被段级 wardrobePropZh 单件锁定。
      * sharp 纯数学裁切（零出图成本）+ 一次视觉读格内小标题（按 SHA256 存 GCS 缓存，
      * 同一张拼板永不重复读）+ 单件图各自落 GCS，返回可直接写进道具栏的 name/note/url。
