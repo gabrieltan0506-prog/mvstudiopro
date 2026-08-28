@@ -93,7 +93,10 @@ describe("错位段缓存核对", () => {
 
   it("迁移目标存在不同契约时不覆盖", async () => {
     const target = entryOf({ episodeIndex: 1, segmentIndex: 0 });
-    gcs.createIfAbsent.mockResolvedValue({ created: false });
+    // 证据先落盘：证据名放行，缓存名返回已存在。
+    gcs.createIfAbsent.mockImplementation(async ({ objectName }: { objectName: string }) => ({
+      created: String(objectName).startsWith(NATIVE_DEEP_READ_SEGMENT_EVIDENCE_PREFIX),
+    }));
     gcs.downloadVersioned.mockResolvedValue({
       buffer: Buffer.from(JSON.stringify({ ...target, fingerprint: "f".repeat(64) }), "utf8"),
       generation: "9",
@@ -187,18 +190,18 @@ describe("段缓存写入：证据门禁与条件写", () => {
       1,
       expect.objectContaining({
         bucket: "test-bucket",
-        objectName:
-          "manhua-template-learn/segment-cache/tpl_native_series_a_ep003_seg1.json",
+        objectName: nativeDeepReadSegmentEvidenceObjectName(entry),
         contentType: "application/json",
-      })
+      }),
     );
     expect(gcs.createIfAbsent).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
         bucket: "test-bucket",
-        objectName: nativeDeepReadSegmentEvidenceObjectName(entry),
+        objectName:
+          "manhua-template-learn/segment-cache/tpl_native_series_a_ep003_seg1.json",
         contentType: "application/json",
-      }),
+      })
     );
     expect(gcs.upload).not.toHaveBeenCalled();
   });
@@ -261,7 +264,7 @@ describe("段缓存写入：证据门禁与条件写", () => {
     expect(evidenceName).toBe(
       `${NATIVE_DEEP_READ_SEGMENT_EVIDENCE_PREFIX}tpl_native_series_a_ep003/${"b".repeat(64)}/seg1-${"a".repeat(64)}-${nativeDeepReadSegmentEvidenceResponseFingerprint(entry)}.json`,
     );
-    expect(evidenceName).toMatch(/\/seg1-[0-9a-f]{64}-[0-9a-f]{16}\.json$/);
+    expect(evidenceName).toMatch(/\/seg1-[0-9a-f]{64}-[0-9a-f]{64}\.json$/);
     const evidenceCall = gcs.createIfAbsent.mock.calls.find(
       ([call]) => call.objectName === evidenceName,
     );
@@ -274,7 +277,27 @@ describe("段缓存写入：证据门禁与条件写", () => {
 });
 
 describe("回归：证据身份绑定付费响应", () => {
-  it("A：同契约不同付费响应写入两个独立证据对象，各自幂等不冲突", async () => {
+  it("相同 raw/usage 但不同调用身份仍生成不同不可变对象", () => {
+    const first = entryOf({
+      rawAttemptEvidenceObjectName:
+        "manhua-template-learn/segment-evidence-raw/a/attempt1-11111111-1111-1111-1111-111111111111.json",
+      savedAtIso: "2026-08-28T10:00:00.000Z",
+    });
+    const second = entryOf({
+      rawAttemptEvidenceObjectName:
+        "manhua-template-learn/segment-evidence-raw/a/attempt1-22222222-2222-2222-2222-222222222222.json",
+      savedAtIso: "2026-08-28T10:01:00.000Z",
+    });
+
+    expect(first.raw).toEqual(second.raw);
+    expect(first.paidUsage).toEqual(second.paidUsage);
+    expect(nativeDeepReadSegmentEvidenceObjectName(first))
+      .not.toBe(nativeDeepReadSegmentEvidenceObjectName(second));
+  });
+
+  it("A：同契约不同付费响应各落独立证据，且更新 active 缓存", async () => {
+    const buf = (e: NativeDeepReadSegmentCacheEntry) =>
+      Buffer.from(`${JSON.stringify(e, null, 2)}\n`, "utf8");
     const entryA = entryOf();
     const entryB = entryOf({
       raw: { shots: [{ atSec: 120, visualZh: "另一次付费响应的段卡" }] },
@@ -284,34 +307,33 @@ describe("回归：证据身份绑定付费响应", () => {
     const nameB = nativeDeepReadSegmentEvidenceObjectName(entryB);
     expect(nameA).not.toBe(nameB);
 
-    // 第一次付费：缓存不存在，原子创建缓存 + 证据 A。
+    // 第一次付费：缓存不存在，证据 A 先落盘，缓存原子创建。
     gcs.downloadVersioned.mockRejectedValueOnce(new Error("gcs_stat_failed:404:not found"));
     await expect(writeNativeDeepReadSegmentCacheEntry(entryA)).resolves.toBeUndefined();
+    expect(gcs.upload).not.toHaveBeenCalled();
 
-    // 同契约重跑得到不同响应：缓存已在位，证据 B 作为新对象创建，不与 A 冲突。
-    gcs.downloadVersioned.mockResolvedValueOnce({
-      buffer: Buffer.from(JSON.stringify(entryA), "utf8"),
-      generation: "41",
-    });
+    // 同契约重跑得到不同响应：证据 B 独立落盘，active 缓存按 generation 更新为 B。
+    gcs.downloadVersioned.mockResolvedValueOnce({ buffer: buf(entryA), generation: "41" });
+    gcs.upload.mockResolvedValue({});
     await expect(writeNativeDeepReadSegmentCacheEntry(entryB)).resolves.toBeUndefined();
+    expect(gcs.upload).toHaveBeenCalledOnce();
+    expect(gcs.upload).toHaveBeenCalledWith(expect.objectContaining({ ifGenerationMatch: "41" }));
 
     const evidenceNames = gcs.createIfAbsent.mock.calls
       .map(([call]) => String(call.objectName))
       .filter((name) => name.startsWith(NATIVE_DEEP_READ_SEGMENT_EVIDENCE_PREFIX));
     expect(evidenceNames).toEqual([nameA, nameB]);
 
-    // 证据 B 再写一遍（并发先写者已落同一内容）：同名同内容幂等放行。
-    gcs.downloadVersioned.mockImplementation(async ({ gcsUri }: { gcsUri: string }) => {
-      if (gcsUri.endsWith(nameB)) {
-        return { buffer: Buffer.from(`${JSON.stringify(entryB, null, 2)}\n`, "utf8"), generation: "1" };
-      }
-      return { buffer: Buffer.from(JSON.stringify(entryA), "utf8"), generation: "41" };
-    });
+    // 证据 B 再写一遍（并发先写者已落同一内容）：同名同内容幂等放行，不再覆写。
+    gcs.downloadVersioned.mockImplementation(async ({ gcsUri }: { gcsUri: string }) => ({
+      buffer: buf(entryB),
+      generation: gcsUri.endsWith(nameB) ? "1" : "42",
+    }));
     gcs.createIfAbsent.mockImplementation(async ({ objectName }: { objectName: string }) => (
       { created: objectName !== nameB }
     ));
     await expect(writeNativeDeepReadSegmentCacheEntry(entryB)).resolves.toBeUndefined();
-    expect(gcs.upload).not.toHaveBeenCalled();
+    expect(gcs.upload).toHaveBeenCalledOnce();
   });
 
   it("B：证据写入失败必须在覆写缓存之前中止并向上抛", async () => {
@@ -329,7 +351,7 @@ describe("回归：证据身份绑定付费响应", () => {
     expect(gcs.upload).not.toHaveBeenCalled();
   });
 
-  it("C：迁移 reused 分支写入的是目标已在位缓存的证据，而非迁移来源响应", async () => {
+  it("C：迁移 reused 分支同时落两份独立证据，在位缓存的证据以其自身响应为准", async () => {
     const migrated = entryOf({
       raw: { shots: [{ atSec: 100, visualZh: "迁移来源集的响应" }] },
     });
@@ -337,9 +359,10 @@ describe("回归：证据身份绑定付费响应", () => {
       raw: { shots: [{ atSec: 100, visualZh: "目标集已在位的响应" }] },
       savedAtIso: "2026-08-25T10:00:00.000Z",
     });
-    gcs.createIfAbsent
-      .mockResolvedValueOnce({ created: false })
-      .mockResolvedValue({ created: true });
+    // 证据名一律放行；缓存名返回已存在，走 reused 分支。
+    gcs.createIfAbsent.mockImplementation(async ({ objectName }: { objectName: string }) => ({
+      created: String(objectName).startsWith(NATIVE_DEEP_READ_SEGMENT_EVIDENCE_PREFIX),
+    }));
     gcs.downloadVersioned.mockResolvedValue({
       buffer: Buffer.from(JSON.stringify(inPlace), "utf8"),
       generation: "12",
@@ -349,11 +372,10 @@ describe("回归：证据身份绑定付费响应", () => {
 
     const evidenceCalls = gcs.createIfAbsent.mock.calls
       .filter(([call]) => String(call.objectName).startsWith(NATIVE_DEEP_READ_SEGMENT_EVIDENCE_PREFIX));
-    expect(evidenceCalls).toHaveLength(1);
-    expect(evidenceCalls[0]![0].objectName).toBe(
-      nativeDeepReadSegmentEvidenceObjectName(inPlace),
-    );
-    const written = JSON.parse(evidenceCalls[0]![0].buffer.toString("utf8"));
+    expect(evidenceCalls).toHaveLength(2);
+    expect(evidenceCalls[0]![0].objectName).toBe(nativeDeepReadSegmentEvidenceObjectName(migrated));
+    expect(evidenceCalls[1]![0].objectName).toBe(nativeDeepReadSegmentEvidenceObjectName(inPlace));
+    const written = JSON.parse(evidenceCalls[1]![0].buffer.toString("utf8"));
     expect(written.raw).toEqual(inPlace.raw);
     expect(written.raw).not.toEqual(migrated.raw);
   });

@@ -1772,7 +1772,7 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
       expect(second.episodes[0]!.result.audioInputTokens).toBe(16_000);
       expect(second.episodes[0]!.result.segmentEvidenceObjectNames).toHaveLength(2);
       expect(second.episodes[0]!.result.segmentEvidenceObjectNames?.[0]).toMatch(
-        /^manhua-template-learn\/segment-evidence\/tpl_native_cache_series_01_ep003\/[a-f0-9]{64}\/seg0-[a-f0-9]{64}-[a-f0-9]{16}\.json$/,
+        /^manhua-template-learn\/segment-evidence\/tpl_native_cache_series_01_ep003\/[a-f0-9]{64}\/seg0-[a-f0-9]{64}-[a-f0-9]{64}\.json$/,
       );
     } finally {
       warn.mockRestore();

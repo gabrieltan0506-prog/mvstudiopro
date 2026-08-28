@@ -747,7 +747,7 @@ function parseManhuaViralTemplateProvenance(
     const segmentEvidenceObjectNames = Array.isArray(n.segmentEvidenceObjectNames)
       ? Array.from(new Set(n.segmentEvidenceObjectNames
           .map((value) => String(value || "").trim())
-          .filter((value) => /^manhua-template-learn\/segment-evidence\/[0-9A-Za-z_\/-]{1,220}\/seg\d{1,6}-[a-f0-9]{64}(?:-[a-f0-9]{16})?\.json$/.test(value))))
+          .filter((value) => /^manhua-template-learn\/segment-evidence\/[0-9A-Za-z_\/-]{1,220}\/seg\d{1,6}-[a-f0-9]{64}(?:-[a-f0-9]{64})?\.json$/.test(value))))
       : [];
     out.nativeVideoDeepRead = {
       model: String(n.model || "").slice(0, 60),

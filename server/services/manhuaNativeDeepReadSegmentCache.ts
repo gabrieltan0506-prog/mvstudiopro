@@ -115,25 +115,15 @@ export function nativeDeepReadSegmentCacheObjectName(
  * 不可变对象内容冲突并永久卡死该段。
  */
 export function nativeDeepReadSegmentEvidenceResponseFingerprint(
-  entry: Pick<NativeDeepReadSegmentCacheEntry, "raw" | "paidUsage">,
+  entry: NativeDeepReadSegmentCacheEntry,
 ): string {
   return createHash("sha256")
-    .update(JSON.stringify({ raw: entry.raw, paidUsage: entry.paidUsage }))
-    .digest("hex")
-    .slice(0, 16);
+    .update(cacheBuffer(entry))
+    .digest("hex");
 }
 
 export function nativeDeepReadSegmentEvidenceObjectName(
-  entry: Pick<
-    NativeDeepReadSegmentCacheEntry,
-    | "seriesKey"
-    | "episodeIndex"
-    | "segmentIndex"
-    | "sourceDigest"
-    | "fingerprint"
-    | "raw"
-    | "paidUsage"
-  >,
+  entry: NativeDeepReadSegmentCacheEntry,
 ): string {
   if (!/^[0-9a-f]{64}$/.test(entry.sourceDigest)) {
     throw new Error("段证据 sourceDigest 非法");
@@ -405,16 +395,7 @@ async function ensureNativeDeepReadSegmentEvidence(
   const existing = await downloadGcsObjectVersioned({
     gcsUri: `gs://${bucket}/${objectName}`,
   });
-  const parsed = parseCacheEntry(
-    JSON.parse(existing.buffer.toString("utf8")),
-    entry,
-  );
-  if (
-    parsed.sourceDigest !== entry.sourceDigest
-    || parsed.fingerprint !== entry.fingerprint
-    || JSON.stringify(parsed.raw) !== JSON.stringify(entry.raw)
-    || JSON.stringify(parsed.paidUsage) !== JSON.stringify(entry.paidUsage)
-  ) {
+  if (!existing.buffer.equals(payload)) {
     throw new Error(
       `第${entry.episodeIndex}集第${entry.segmentIndex + 1}段不可变证据发生内容冲突，已停止`,
     );
@@ -429,6 +410,9 @@ export async function createNativeDeepReadSegmentCacheEntryIfAbsent(
   entry: NativeDeepReadSegmentCacheEntry,
 ): Promise<"created" | "reused"> {
   parseCacheEntry(entry, entry);
+  // 不允许先发布缓存、再发现证据写失败。
+  await ensureNativeDeepReadSegmentEvidence(entry);
+
   const bucket = getGcsBucketName();
   const objectName = nativeDeepReadSegmentCacheObjectName(
     entry.seriesKey,
@@ -442,7 +426,6 @@ export async function createNativeDeepReadSegmentCacheEntryIfAbsent(
     buffer: cacheBuffer(entry),
   });
   if (created.created) {
-    await ensureNativeDeepReadSegmentEvidence(entry);
     return "created";
   }
   const existing = await readNativeDeepReadSegmentCacheEntry({
@@ -473,6 +456,9 @@ export async function writeNativeDeepReadSegmentCacheEntry(
 ): Promise<void> {
   // 写前也走同一把身份/证据尺；有声段 AUDIO token=0 不能冒充“模型真听过”。
   parseCacheEntry(entry, entry);
+  // 证据先落盘；后续缓存写失败只会留下安全的孤立证据，
+  // 不会留下指向不存在证据的已发布缓存。
+  await ensureNativeDeepReadSegmentEvidence(entry);
   const objectName = nativeDeepReadSegmentCacheObjectName(
     entry.seriesKey,
     entry.episodeIndex,
@@ -494,10 +480,7 @@ export async function writeNativeDeepReadSegmentCacheEntry(
         contentType: "application/json",
         buffer: payload,
       });
-      if (created.created) {
-        await ensureNativeDeepReadSegmentEvidence(entry);
-        return;
-      }
+      if (created.created) return;
       continue;
     }
     let existing: NativeDeepReadSegmentCacheEntry | null = null;
@@ -510,15 +493,12 @@ export async function writeNativeDeepReadSegmentCacheEntry(
       // 只吞旧版、损坏或不同契约的解析形状错误：这类对象允许按刚读到的
       // generation 条件替换。证据写入的失败绝不能在这里被吞掉。
     }
-    if (
-      existing
-      && existing.fingerprint === entry.fingerprint
-      && existing.sourceDigest === entry.sourceDigest
-    ) {
-      // 同契约已在位：证据必须先落住才算确认；失败向上抛，不得覆写缓存。
-      await ensureNativeDeepReadSegmentEvidence(entry);
+    if (existing && cacheBuffer(existing).equals(payload)) {
       return;
     }
+
+    // 同契约但不同付费响应也必须更新 active cache：
+    // 否则 runner 用新 entry 装提案，而恢复缓存仍是旧 entry（缓存 A / 提案 B）。
     try {
       await uploadBufferToGcs({
         bucket,
@@ -527,7 +507,6 @@ export async function writeNativeDeepReadSegmentCacheEntry(
         ifGenerationMatch: versioned.generation,
         buffer: payload,
       });
-      await ensureNativeDeepReadSegmentEvidence(entry);
       return;
     } catch (error) {
       if (isGenerationConflict(error)) continue;
