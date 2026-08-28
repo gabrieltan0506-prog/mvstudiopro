@@ -51,9 +51,44 @@ const shotSchema = z
   })
   .passthrough();
 
+/**
+ * 整集卡剔除 non_story_ad 镜头行后的区间账目（绝对秒位）。
+ * 完整时间轴仍保留在原始分段卡（Gemini 产物 / raw 证据），供模型完整性验证与审计。
+ */
+export const nativeDeepReadExcludedAdRangeSchema = z
+  .object({
+    startSec: z.number().finite().min(0),
+    endSec: z.number().finite().min(0),
+  })
+  .strict()
+  .refine((range) => range.endSec > range.startSec, {
+    message: "excludedAdRanges 要求 endSec > startSec",
+  });
+
+export type NativeDeepReadExcludedAdRange = z.infer<typeof nativeDeepReadExcludedAdRangeSchema>;
+
+/**
+ * audioResolution 每个 chunk 的**真实**全片绝对段界（来自 runner 的 segments spec，
+ * 不是从镜头 startSec 猜出来的）。音轨局部秒 → 全片绝对秒的唯一合法换算依据。
+ */
+export const nativeDeepReadAudioChunkSpanSchema = z
+  .object({
+    chunkIndex: z.number().int().min(0),
+    startSec: z.number().finite().min(0),
+    endSec: z.number().finite().min(0),
+  })
+  .strict()
+  .refine((span) => span.endSec > span.startSec, {
+    message: "chunkSpans 要求 endSec > startSec",
+  });
+
+export type NativeDeepReadAudioChunkSpan = z.infer<typeof nativeDeepReadAudioChunkSpanSchema>;
+
 export const nativeDeepReadSegmentSchema = z
   .object({
     shots: z.array(shotSchema).default([]),
+    /** 可选：整集卡合并层整行剔除广告镜头后留下的区间账目；无广告时缺省不出现。 */
+    excludedAdRanges: z.array(nativeDeepReadExcludedAdRangeSchema).optional(),
     subtitles: z.array(z.object({
       atSec: z.number().finite().min(0),
       textZh: z.string().trim().min(1),
@@ -62,6 +97,12 @@ export const nativeDeepReadSegmentSchema = z
       chunkIndex: z.number().int().min(0),
       analysis: manhuaNativeAudioChunkAnalysisSchema,
     }).strict()).default([]),
+    /**
+     * 可选：runner 注入的 audioResolution 各 chunk 真实段界（与 shots 同坐标系的
+     * 全片绝对秒）。旧卡没有这个字段——那时音频广告过滤必须跳过并打标记，
+     * 绝不允许退回「min(shot.startSec) 猜起点」或「chunkIndex*300」。
+     */
+    chunkSpans: z.array(nativeDeepReadAudioChunkSpanSchema).optional(),
     beatStructureZh: z.string().trim().default(""),
     moodArcZh: z.string().trim().optional(),
     reusableZh: z.string().trim().optional(),
@@ -106,6 +147,14 @@ export type NativeDeepReadOutput = {
   truncated: boolean;
   /** 同一集音轨的故事/对白/声音节奏；由执行协调器在视觉精读后装配。 */
   audioAnalysis?: ManhuaNativeAudioAnalysis;
+  /** 整集卡剔除广告镜头行后的区间账目原样透传（全片绝对秒）；无广告时缺省。 */
+  excludedAdRanges?: NativeDeepReadExcludedAdRange[];
+  /**
+   * 仅当「存在广告区间但某个 audioResolution chunk 没有真实段界（旧卡无 chunkSpans）」
+   * 时为 true：该 chunk 的音轨广告过滤被跳过、原样保留，供消费层显式知晓。
+   * 有真实段界或根本没有广告区间时缺省不出现。绝不用猜的偏移错删。
+   */
+  audioAdFilterSkipped?: boolean;
 };
 
 const cut = (v: string | undefined, max: number): string | undefined => {
@@ -180,9 +229,13 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
 
   const subtitleTrack = ok
     .flatMap(({ seg, offsetSec }) => {
-      const adIntervals = seg.shots
-        .filter((shot) => shot.evidenceRole === "non_story_ad")
-        .map((shot) => ({ startSec: shot.startSec, endSec: shot.endSec }));
+      const adIntervals = [
+        ...seg.shots
+          .filter((shot) => shot.evidenceRole === "non_story_ad")
+          .map((shot) => ({ startSec: shot.startSec, endSec: shot.endSec })),
+        // 整集卡已整行剔除广告镜头时，广告区间只存在于 excludedAdRanges 账目里。
+        ...(seg.excludedAdRanges ?? []),
+      ];
       return seg.subtitles.flatMap((subtitle) => {
         const atSec = Math.max(0, subtitle.atSec);
         if (adIntervals.some((interval) => atSec >= interval.startSec && atSec < interval.endSec)) {
@@ -197,32 +250,48 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
     .filter((subtitle) => subtitle.textZh)
     .sort((a, b) => a.atSec - b.atSec);
   // 广告区间的声音同样不得进入消费层：音轨行整段落在广告区间内的删除，
-  // 跨界行保留但剔除落在广告区间内的 cues（chunk 内秒位 + 本段起点 = 全片绝对秒位）。
+  // 跨界行保留但剔除落在广告区间内的 cues。
+  // 换算铁律：chunk 内局部秒 + **该 chunk 的真实段界起点（chunkSpans）** = 全片绝对秒。
+  // 禁止用 min(shot.startSec) 猜起点、禁止 chunkIndex*300；旧卡缺 chunkSpans 时
+  // 跳过过滤并置 audioAdFilterSkipped，绝不用猜的偏移错删。
   const resolvedByChunk = new Map<number, ManhuaNativeAudioChunkAnalysis>();
+  let audioAdFilterSkipped = false;
   for (const { seg } of ok) {
-    const adIntervals = seg.shots
-      .filter((shot) => shot.evidenceRole === "non_story_ad")
-      .map((shot) => ({ startSec: shot.startSec, endSec: shot.endSec }));
-    const segStart = seg.shots.length
-      ? Math.max(0, Math.floor(Math.min(...seg.shots.map((shot) => Number(shot.startSec) || 0))))
-      : 0;
+    const adIntervals = [
+      ...seg.shots
+        .filter((shot) => shot.evidenceRole === "non_story_ad")
+        .map((shot) => ({ startSec: shot.startSec, endSec: shot.endSec })),
+      ...(seg.excludedAdRanges ?? []),
+    ];
+    const spanByChunk = new Map<number, NativeDeepReadAudioChunkSpan>(
+      (seg.chunkSpans ?? []).map((span) => [span.chunkIndex, span]),
+    );
     const inAd = (absSec: number) =>
       adIntervals.some((interval) => absSec >= interval.startSec && absSec < interval.endSec);
     for (const row of seg.audioResolution) {
       if (resolvedByChunk.has(row.chunkIndex)) continue;
-      const analysis = adIntervals.length
-        ? {
-          ...row.analysis,
-          audioTrack: row.analysis.audioTrack
-            .filter((track) => !adIntervals.some((interval) =>
-              segStart + track.fromSec >= interval.startSec && segStart + track.toSec <= interval.endSec))
-            .map((track) => ({
-              ...track,
-              cues: track.cues.filter((cue) => !inAd(segStart + cue.atSec)),
-            })),
-        }
-        : row.analysis;
-      resolvedByChunk.set(row.chunkIndex, analysis);
+      if (!adIntervals.length) {
+        resolvedByChunk.set(row.chunkIndex, row.analysis);
+        continue;
+      }
+      const span = spanByChunk.get(row.chunkIndex);
+      if (!span) {
+        audioAdFilterSkipped = true;
+        resolvedByChunk.set(row.chunkIndex, row.analysis);
+        continue;
+      }
+      const chunkStart = span.startSec;
+      resolvedByChunk.set(row.chunkIndex, {
+        ...row.analysis,
+        audioTrack: row.analysis.audioTrack
+          .filter((track) => !adIntervals.some((interval) =>
+            chunkStart + track.fromSec >= interval.startSec
+            && chunkStart + track.toSec <= interval.endSec))
+          .map((track) => ({
+            ...track,
+            cues: track.cues.filter((cue) => !inAd(chunkStart + cue.atSec)),
+          })),
+      });
     }
   }
   const resolvedAudioChunks = Array.from(resolvedByChunk.entries())
@@ -250,6 +319,14 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
     audienceExperienceTagsZh: mergeTags((row) => row.audienceExperienceTagsZh),
   };
 
+  // 整集卡上的广告区间账目只作透传，不参与本层过滤（消费层剔除逻辑不变）。
+  const excludedAdRanges = ok
+    .flatMap(({ seg, offsetSec }) => (seg.excludedAdRanges ?? []).map((range) => ({
+      startSec: offsetSec + range.startSec,
+      endSec: offsetSec + range.endSec,
+    })))
+    .sort((a, b) => a.startSec - b.startSec || a.endSec - b.endSec);
+
   return {
     beatGrid,
     subtitleTrack,
@@ -266,6 +343,8 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
     failedSegmentCount: rows.length - ok.length,
     droppedCount,
     truncated: false,
+    excludedAdRanges: excludedAdRanges.length ? excludedAdRanges : undefined,
+    ...(audioAdFilterSkipped ? { audioAdFilterSkipped: true } : {}),
   };
 }
 

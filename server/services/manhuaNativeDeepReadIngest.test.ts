@@ -255,14 +255,54 @@ describe("装卡", () => {
   it("每个已付费分片的不可变原始 JSON 对象名随卡落进私有 provenance", () => {
     const fingerprint = "a".repeat(64);
     const sourceDigest = "b".repeat(64);
-    const evidenceNames = [0, 1].map((segmentIndex) =>
-      `manhua-template-learn/segment-evidence/tpl_native_abc123_ep003/${sourceDigest}/seg${segmentIndex}-${fingerprint}.json`);
+    const responseHash = "d".repeat(64);
+    const evidenceNames = [0, 1, 2, 3, 4, 5].map((segmentIndex) =>
+      `manhua-template-learn/segment-evidence/tpl_native_abc123_ep003/${sourceDigest}/seg${segmentIndex}-${fingerprint}-${responseHash}.json`);
     const card = buildNativeDeepReadProposalCard({
       ...baseInput,
       result: makeResult({ segmentEvidenceObjectNames: evidenceNames }),
     })!;
 
     expect(card.provenance?.nativeVideoDeepRead?.segmentEvidenceObjectNames).toEqual(evidenceNames);
+  });
+
+  it("provenance 证据名必须按段排序、无重复、数量==attemptedSegments，否则抛错拒写", () => {
+    const fingerprint = "a".repeat(64);
+    const sourceDigest = "b".repeat(64);
+    const nameOf = (segmentIndex: number) =>
+      `manhua-template-learn/segment-evidence/tpl_native_abc123_ep003/${sourceDigest}/seg${segmentIndex}-${fingerprint}-${"d".repeat(64)}.json`;
+    const full = [0, 1, 2, 3, 4, 5].map(nameOf);
+
+    // 数量与进度不一致（整集 6 段只给 2 条）→ 抛错，不写假账。
+    expect(() => buildNativeDeepReadProposalCard({
+      ...baseInput,
+      result: makeResult({ segmentEvidenceObjectNames: full.slice(0, 2) }),
+    })).toThrow("数量(2)与进度(6)不一致");
+
+    // 重复 → 抛错。
+    expect(() => buildNativeDeepReadProposalCard({
+      ...baseInput,
+      result: makeResult({
+        segmentEvidenceObjectNames: [...full.slice(0, 5), nameOf(4)],
+      }),
+    })).toThrow("拒绝写入 provenance");
+
+    // 未按段号递增 → 抛错。
+    expect(() => buildNativeDeepReadProposalCard({
+      ...baseInput,
+      result: makeResult({
+        segmentEvidenceObjectNames: [full[1]!, full[0]!, ...full.slice(2)],
+      }),
+    })).toThrow("未按段号严格递增");
+
+    // 旧 16 位截断响应指纹的历史证据名仍可整卡读入（只读兼容）。
+    const legacy = [0, 1, 2, 3, 4, 5].map((segmentIndex) =>
+      `manhua-template-learn/segment-evidence/tpl_native_abc123_ep003/${sourceDigest}/seg${segmentIndex}-${fingerprint}-${"e".repeat(16)}.json`);
+    const card = buildNativeDeepReadProposalCard({
+      ...baseInput,
+      result: makeResult({ segmentEvidenceObjectNames: legacy }),
+    })!;
+    expect(card.provenance?.nativeVideoDeepRead?.segmentEvidenceObjectNames).toEqual(legacy);
   });
 
   it("来源摘要把丢镜与历史截断露出来，审批人不会盲批", () => {

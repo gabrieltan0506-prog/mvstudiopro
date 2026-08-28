@@ -230,7 +230,7 @@ const checkpoint = (stage: string, payload: Record<string, unknown>) => {
 try {
   currentStage = "douyin_resolve";
   const { stdout } = await run("yt-dlp", [
-    "-J", "--no-warnings", "--add-header", `Cookie:${String(process.env.DOUYIN_COOKIE || "")}`, PAGE_URL,
+    "-J", "--no-warnings", PAGE_URL,
   ], { timeout: 150_000, maxBuffer: 64 * 1024 * 1024 });
   const info = JSON.parse(stdout) as Record<string, unknown>;
   const durationSec = Math.max(1, Math.floor(Number(info.duration) || 0));

@@ -815,14 +815,22 @@ async function postEvolinkNativeDeepRead(
 export function pickSmallestVideoFormat(
   formats: ReadonlyArray<Record<string, unknown>>,
 ): { url: string; sizeMB: number } | null {
+  // 清晰度以可用为准（0829 用户拍板）：540p 优先，取不到降 480p，再取不到用任意可用带音画档。
+  const rank = (f: Record<string, unknown>): number => {
+    const id = String(f.format_id || "");
+    if (id.startsWith("bytevc1_540p")) return 0;
+    if (id.startsWith("bytevc1_480p") || id.includes("480p")) return 1;
+    const hasAv = String(f.vcodec || "none") !== "none" && String(f.acodec || "none") !== "none";
+    return hasAv ? 2 : 9;
+  };
   const candidates = formats
-    .filter((f) => String(f.format_id || "").startsWith("bytevc1_540p"))
     .map((f) => ({
       url: String(f.url || ""),
       size: Number(f.filesize || f.filesize_approx || 0),
+      tier: rank(f),
     }))
-    .filter((f) => f.url)
-    .sort((a, b) => (a.size || 9e15) - (b.size || 9e15));
+    .filter((f) => f.url && f.tier < 9)
+    .sort((a, b) => a.tier - b.tier || (a.size || 9e15) - (b.size || 9e15));
   const best = candidates[0];
   return best ? { url: best.url, sizeMB: best.size / 1048576 } : null;
 }
@@ -839,16 +847,28 @@ export async function resolveNativeDeepReadNodeUrls(
 ): Promise<NativeDeepReadMediaNode[]> {
   const url = String(sourceUrl || "").trim();
   if (!url) throw new Error("缺少可解析的剧集地址");
-  const cookie = String(process.env.DOUYIN_COOKIE || "").trim();
-  const stdout = await run(
-    "yt-dlp",
-    ["-J", "--no-warnings", ...(cookie ? ["--add-header", `Cookie:${cookie}`] : []), url],
-    120_000,
-    abortSignal,
-  );
-  const info = JSON.parse(stdout) as { formats?: Array<Record<string, unknown>> };
-  const best = pickSmallestVideoFormat(info.formats || []);
-  if (!best) throw new Error("未解析到可用的 540p 档");
+  // 凭证不得进入子进程 argv（AGENTS.md 硬红线）：yt-dlp 一律匿名解析；
+  // 需要登录态的来源由进程内 fetch 解析层（manhuaDouyinMediaResolve）承接。
+  let best: { url: string; sizeMB: number } | null = null;
+  try {
+    const stdout = await run(
+      "yt-dlp",
+      ["-J", "--no-warnings", url],
+      120_000,
+      abortSignal,
+    );
+    const info = JSON.parse(stdout) as { formats?: Array<Record<string, unknown>> };
+    best = pickSmallestVideoFormat(info.formats || []);
+  } catch {
+    best = null;
+  }
+  if (!best) {
+    // 兜底：进程内解析（登录态只进本进程 fetch 请求头，绝不进子进程 argv）。
+    const { resolveDouyinMediaUrl } = await import("./manhuaDouyinMediaResolve.js");
+    const resolved = await resolveDouyinMediaUrl(url);
+    best = { url: resolved.mediaUrl, sizeMB: 0 };
+  }
+  if (!best.url) throw new Error("未解析到可用的带音画媒体流");
   /**
    * 0826 实弹修复：节点必须自带 Referer——抖音 CDN 无 Referer 会拒（仓库教条）。
    * 在解析器层一次收口，切片/探测两处调用方全部受益，防"同一课学两遍"。
@@ -1307,6 +1327,150 @@ function assertShotCoverage(
   }
 }
 
+/* ────────────────── 整集卡广告剔除（段卡→整集卡合并层） ────────────────── */
+
+export type NativeDeepReadExcludedAdRange = { startSec: number; endSec: number };
+
+/** 相邻/重叠区间合并（±0.5s 容差与时间轴门禁同口径）。 */
+function mergeAdjacentAdRanges(
+  ranges: ReadonlyArray<NativeDeepReadExcludedAdRange>,
+): NativeDeepReadExcludedAdRange[] {
+  const sorted = [...ranges].sort((a, b) => a.startSec - b.startSec || a.endSec - b.endSec);
+  const merged: NativeDeepReadExcludedAdRange[] = [];
+  for (const range of sorted) {
+    const last = merged.at(-1);
+    if (last && range.startSec <= last.endSec + NATIVE_DEEP_READ_TIMELINE_TOLERANCE_SEC) {
+      last.endSec = Math.max(last.endSec, range.endSec);
+    } else {
+      merged.push({ ...range });
+    }
+  }
+  return merged;
+}
+
+/**
+ * 段卡合并成整集卡时整行剔除 evidenceRole=non_story_ad 的镜头，只留区间账目。
+ *
+ * - 原始分段卡（Gemini 产物 / raw 证据 / 段门禁）一律不动：完整时间轴是模型
+ *   完整性验证与审计需要，本函数只产整集卡视图的新副本。
+ * - 被剔除区间合并相邻后写入该行的顶层可选字段 excludedAdRanges；无广告时
+ *   行原样返回，字段缺省不出现。
+ * - 被剔除镜头行内的画面字幕同属广告内容，一并不入整集卡。
+ */
+export function stripNonStoryAdShotsForEpisodeCard(
+  rows: ReadonlyArray<Record<string, unknown>>,
+): { rows: Array<Record<string, unknown>>; excludedAdRanges: NativeDeepReadExcludedAdRange[] } {
+  const collected: NativeDeepReadExcludedAdRange[] = [];
+  const strippedRows = rows.map((raw) => {
+    const shots = Array.isArray(raw.shots) ? raw.shots : [];
+    const adRanges: NativeDeepReadExcludedAdRange[] = [];
+    const storyShots = shots.filter((shot) => {
+      const row = (shot || {}) as Record<string, unknown>;
+      if (row.evidenceRole !== "non_story_ad") return true;
+      const startSec = Number(row.startSec);
+      const endSec = Number(row.endSec);
+      if (Number.isFinite(startSec) && Number.isFinite(endSec) && startSec >= 0 && endSec > startSec) {
+        adRanges.push({ startSec, endSec });
+      }
+      return false;
+    });
+    if (adRanges.length === 0) return raw;
+    const rowRanges = mergeAdjacentAdRanges(adRanges);
+    collected.push(...rowRanges);
+    const copy: Record<string, unknown> = { ...raw, shots: storyShots, excludedAdRanges: rowRanges };
+    if (Array.isArray(copy.subtitles)) {
+      copy.subtitles = copy.subtitles.filter((subtitle) => {
+        const atSec = Number((subtitle as Record<string, unknown> | null)?.atSec);
+        return !rowRanges.some((range) => atSec >= range.startSec && atSec < range.endSec);
+      });
+    }
+    return copy;
+  });
+  return { rows: strippedRows, excludedAdRanges: mergeAdjacentAdRanges(collected) };
+}
+
+/**
+ * 给整集卡/快照行注入 audioResolution 各 chunk 的**真实**段界（chunkSpans）。
+ *
+ * 音轨局部秒 → 全片绝对秒的唯一合法换算依据来自 segments spec（粗读拆段的
+ * startSec/endSec，全片绝对秒），不是从镜头 startSec 猜、更不是 chunkIndex*300。
+ * chunkIndex 找不到对应段规格视为身份损坏，关闭式失败。
+ * 无音轨行（audioResolution 空）原样返回，不注入空字段。
+ */
+export function attachAudioChunkSpans(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  segments: readonly NativeDeepReadSegmentSpec[],
+  episodeIndex: number,
+): Array<Record<string, unknown>> {
+  return rows.map((raw) => {
+    const audioRows = Array.isArray(raw.audioResolution) ? raw.audioResolution : [];
+    if (audioRows.length === 0) return raw;
+    const chunkSpans = audioRows.map((entry) => {
+      const chunkIndex = Number((entry as { chunkIndex?: unknown } | null)?.chunkIndex);
+      const spec = Number.isInteger(chunkIndex) && chunkIndex >= 0 ? segments[chunkIndex] : undefined;
+      if (!spec) {
+        throw new Error(
+          `第${episodeIndex}集 audioResolution chunkIndex=${String(chunkIndex)} 没有对应段规格，无法换算真实段界，整集拒绝入库`,
+        );
+      }
+      return { chunkIndex, startSec: spec.startSec, endSec: spec.endSec };
+    });
+    return { ...raw, chunkSpans };
+  });
+}
+
+/** 整集卡上的区间账目校验与汇总：startSec/endSec 非负有限且 end>start，否则整集拒收。 */
+
+/**
+ * GLM 路的广告区间不可自证：必须与确定性剥离（真实 non_story_ad 行推出的区间）
+ * 在 ±0.5s 容差内逐一对上，否则 GLM 丢 story 镜头再谎报为广告区间即可骗过覆盖门禁。
+ */
+function assertGlmAdRangesMatchDeterministic(
+  structuredRaw: Record<string, unknown>,
+  expected: NativeDeepReadExcludedAdRange[],
+  episodeIndex: number,
+): void {
+  const reported = Array.isArray((structuredRaw as { excludedAdRanges?: unknown }).excludedAdRanges)
+    ? (structuredRaw as { excludedAdRanges: Array<{ startSec: number; endSec: number }> }).excludedAdRanges
+    : [];
+  const near = (a: number, b: number) => Math.abs(a - b) <= 0.5;
+  const matches = reported.length === expected.length
+    && expected.every((range) => reported.some((row) =>
+      near(Number(row.startSec), range.startSec) && near(Number(row.endSec), range.endSec)))
+    && reported.every((row) => expected.some((range) =>
+      near(Number(row.startSec), range.startSec) && near(Number(row.endSec), range.endSec)));
+  if (!matches) {
+    throw new Error(
+      `第${episodeIndex}集 GLM 整形卡的 excludedAdRanges 与确定性剥离区间不一致`
+      + `（自报 ${reported.length} 段 / 应为 ${expected.length} 段），整集拒绝入库`,
+    );
+  }
+}
+
+function collectEpisodeExcludedAdRanges(
+  rawSegments: ReadonlyArray<Record<string, unknown>>,
+  episodeIndex: number,
+): NativeDeepReadExcludedAdRange[] {
+  const ranges: NativeDeepReadExcludedAdRange[] = [];
+  for (const raw of rawSegments) {
+    const value = raw.excludedAdRanges;
+    if (value === undefined || value === null) continue;
+    if (!Array.isArray(value)) {
+      throw new Error(`第${episodeIndex}集 excludedAdRanges 不是数组，整集拒绝入库`);
+    }
+    for (const item of value) {
+      const row = (item || {}) as Record<string, unknown>;
+      const startSec = Number(row.startSec);
+      const endSec = Number(row.endSec);
+      if (!Number.isFinite(startSec) || !Number.isFinite(endSec) || startSec < 0 || endSec <= startSec) {
+        throw new Error(`第${episodeIndex}集 excludedAdRanges 区间无效，整集拒绝入库`);
+      }
+      ranges.push({ startSec, endSec });
+    }
+  }
+  return mergeAdjacentAdRanges(ranges);
+}
+
 /**
  * 视觉描述文本零秒位门禁（assertNoClockText 口径，MM:SS 钟表式）：
  * 秒位只进数字字段；subtitles 是唯一例外（画面证据逐字照抄，可能含内嵌时码）。
@@ -1541,8 +1705,24 @@ export function assertNativeDeepReadEpisodeEvidence(input: {
   const allShots = input.rawSegments
     .flatMap((raw) => sortedShots(raw))
     .sort((a, b) => a.startSec - b.startSec || a.endSec - b.endSec);
+  // 整集卡不得再出现任何 non_story_ad 镜头行：广告只能以 excludedAdRanges 区间账目存在。
+  // （分段卡门禁行为不变——本门禁只吃合并层产物。）
+  const residualAdShots = allShots.filter((shot) => shot.evidenceRole === "non_story_ad");
+  if (residualAdShots.length > 0) {
+    throw new Error(
+      `第${input.episodeIndex}集整集卡仍含 ${residualAdShots.length} 个 non_story_ad 镜头行（应整行剔除并写入 excludedAdRanges），整集拒绝入库`,
+    );
+  }
+  // 含 excludedAdRanges 的整集卡：覆盖校验把这些区间视为合法缺口（±0.5s 容差与现行一致）。
+  const excludedAdRanges = collectEpisodeExcludedAdRanges(input.rawSegments, input.episodeIndex);
+  const coverageIntervals = excludedAdRanges.length
+    ? [
+      ...allShots.map((shot) => ({ startSec: shot.startSec, endSec: shot.endSec })),
+      ...excludedAdRanges,
+    ].sort((a, b) => a.startSec - b.startSec || a.endSec - b.endSec)
+    : allShots;
   try {
-    assertShotCoverage(allShots, 0, Math.round(input.durationSec), "整集");
+    assertShotCoverage(coverageIntervals, 0, Math.round(input.durationSec), "整集");
   } catch (error) {
     throw new Error(
       `第${input.episodeIndex}集${error instanceof Error ? error.message : String(error)}，整集拒绝入库`,
@@ -1667,15 +1847,15 @@ export function buildNativeDeepReadGlmStructuringPrompt(input: {
     system: `你是漫剧模板卡的「结构化整形师」。只整形不创作：
 1. 禁止虚构输入卡里没有的镜头、字幕、声音或描述；每一条产出都必须能在输入卡里找到出处。
 2. shots 已逐段通过付费前门禁。每镜的 unitTypeZh/shotSizeZh/angleZh/compositionZh/cameraMoveZh/blockingZh/bodyActionZh/limbPropActionZh/microExpressionZh/gazeBreathZh/relationshipReactionZh/lightingZh/actionZh/transitionInZh 都是不可丢失的原始证据。连续表演或连续剧情允许合理合并相邻证据，但合并后的单条证据不得超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，拆分边界必须至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒；不得丢失时间轴覆盖。仍需拆分的同一物理长镜，其 unitTypeZh 必须保持「拆分镜证据段」，transitionInZh 必须保留「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」。
-3. 每个 shot 必须原样保留 evidenceRole。non_story_ad 只用于保存完整原始时间轴，不得与 story 合并，也不得进入剧情字幕、节奏、情绪、分类、可复用手法或生成提示；其余镜头一律保持 story。
+3. 整集卡必须**整行剔除**全部 evidenceRole=non_story_ad 的镜头，其 {startSec,endSec} 区间合并相邻后写入顶层可选字段 excludedAdRanges:[{startSec,endSec}]；不得把广告内容并入任何 story 镜头，广告的画面与声音也不得进入剧情字幕、节奏、情绪、分类、可复用手法或生成提示。输入没有 non_story_ad 镜头时不要输出 excludedAdRanges 字段。保留下来的每个 shot 必须原样保留 evidenceRole，剔除后其余镜头一律保持 story。完整原始时间轴由分段卡审计层保存，无需在整集卡复述广告镜头。
 4. subtitles 只取 story 区间的并集去重，保持全片绝对秒位排序。
 5. audioResolution 保留完整原始听觉证据；广告区间内声音只作审计证据，不得写入 audioBeatStructureZh/mixNotesZh/reusableAudioZh/genAudioHintZh 的可复用结论。
 6. 所有中文描述文本【禁止】出现钟表式秒位（如 01:23）或「在第X秒」定位——秒位只进数字字段。
 7. classification 必须显式输出 emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh 五个数组；没有证据的维度写 []，至少两个维度各有一个来自 story 镜头的真实标签。
 8. 只返回一个 JSON 对象，不要 Markdown 围栏、不要解释。`,
-    user: `把以下同一集的 ${input.rawSegments.length} 份分段卡整形合并成**一张整集原生证据卡**（单个 JSON 对象，字段 schema 与分段卡完全相同：shots/subtitles/audioResolution/beatStructureZh/moodArcZh/classification/reusableZh/genPromptHintZh）。
+    user: `把以下同一集的 ${input.rawSegments.length} 份分段卡整形合并成**一张整集原生证据卡**（单个 JSON 对象，字段 schema 与分段卡完全相同：shots/subtitles/audioResolution/beatStructureZh/moodArcZh/classification/reusableZh/genPromptHintZh，另加顶层可选 excludedAdRanges）。
 要求：
-1. shots 连续无空档覆盖全片 0..${Math.round(input.durationSec)} 秒（绝对秒位），每镜保留 evidenceRole；只有相邻 story 证据可以合理合并，non_story_ad 不得混入 story。合并后的单条证据不得超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，拆分边界至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒，且不得删除仍需保留的「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」续接标记或丢失覆盖。
+1. story 镜头连续无空档覆盖除 excludedAdRanges 外的全时间轴 0..${Math.round(input.durationSec)} 秒（绝对秒位），每镜保留 evidenceRole；只有相邻 story 证据可以合理合并，non_story_ad 必须整行剔除并把 {startSec,endSec} 区间记入顶层 excludedAdRanges，不得混入 story。合并后的单条证据不得超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，拆分边界至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒，且不得删除仍需保留的「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」续接标记或丢失覆盖。
 2. audioResolution 保留全部 [{chunkIndex,analysis}] 条目（chunkIndex 即段号，analysis 内为该段局部秒），逐段齐全${input.hasAudio ? "" : "；本集素材无音轨，audioResolution 保持空数组"}。
 3. beatStructureZh/moodArcZh/reusableZh/genPromptHintZh 只整合 story 证据，可加「第X段」标注；classification 五维标签只取 story 输入并集，不得补猜。
 整集元数据：${JSON.stringify({
@@ -2110,7 +2290,12 @@ export async function runManhuaNativeDeepReadBatch(params: {
         if (sortedIndexes.some((value, index) => value !== index)) {
           throw new Error(`第${episode.episodeIndex}集已成段不是连续前缀，拒绝生成部分提案`);
         }
-        const snapshotRows = sortedIndexes.map((index) => rawSegments[index]!);
+        // 快照行注入各 chunk 真实段界，音频广告过滤只认真实段界换算。
+        const snapshotRows = attachAudioChunkSpans(
+          sortedIndexes.map((index) => rawSegments[index]!),
+          episode.segments,
+          episode.episodeIndex,
+        );
         const mapped = mapNativeDeepReadSegments(snapshotRows.map((raw) => ({
           startSec: 0,
           endSec: episode.sourceDurationSec,
@@ -2121,6 +2306,25 @@ export async function runManhuaNativeDeepReadBatch(params: {
           throw new Error(`第${episode.episodeIndex}集已成段无法确定性装配，拒绝生成部分提案`);
         }
         const entries = sortedIndexes.map((index) => committedEntries.get(index)!);
+        // provenance 唯一生产点：证据名严格按 segmentIndex 排序、不得重复、
+        // 数量必须与本快照段数一致；整集快照还必须补齐到 attemptedSegments。
+        // 任何一条不满足都说明证据身份或装配已损坏，关闭式失败，不写假账。
+        const segmentEvidenceObjectNames = entries
+          .slice()
+          .sort((a, b) => a.segmentIndex - b.segmentIndex)
+          .map((entry) => nativeDeepReadSegmentEvidenceObjectName(entry));
+        if (new Set(segmentEvidenceObjectNames).size !== segmentEvidenceObjectNames.length) {
+          throw new Error(`第${episode.episodeIndex}集段证据对象名出现重复，拒绝写入 provenance`);
+        }
+        if (segmentEvidenceObjectNames.length !== sortedIndexes.length) {
+          throw new Error(`第${episode.episodeIndex}集段证据对象名数量与已成段不一致，拒绝写入 provenance`);
+        }
+        if (
+          sortedIndexes.length === segmentCount
+          && segmentEvidenceObjectNames.length !== segmentCount
+        ) {
+          throw new Error(`第${episode.episodeIndex}集段证据对象名未覆盖全部尝试段，拒绝写入 provenance`);
+        }
         const snapshotSha256 = crypto.createHash("sha256").update(JSON.stringify({
           sourceDigest: episode.cacheSourceDigest,
           segments: entries.map((entry) => ({
@@ -2157,7 +2361,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
             completedSegmentIndexes: sortedIndexes,
             sourceDigest: episode.cacheSourceDigest,
             segmentSnapshotSha256: snapshotSha256,
-            segmentEvidenceObjectNames: entries.map(nativeDeepReadSegmentEvidenceObjectName),
+            segmentEvidenceObjectNames,
             rawAttemptEvidenceObjectNames: Array.from(new Set(entries
               .map((entry) => entry.rawAttemptEvidenceObjectName)
               .filter((value): value is string => Boolean(value)))),
@@ -2506,20 +2710,22 @@ export async function runManhuaNativeDeepReadBatch(params: {
         const segment = episode.segments[segmentIndex]!;
         const cachedEntry = cachedSegments.get(segmentIndex);
         if (cachedEntry) {
-          if (cachedEntry.rawAttemptEvidenceObjectName) {
-            rawAttemptEvidenceObjectNames.add(cachedEntry.rawAttemptEvidenceObjectName);
-          }
           // 缓存命中不是模型外呼，禁止伪造 ManhuaNativeModelReceipt；历史 token 只作听觉证据。
           // 旧缓存可能早于永久 evidence 机制；先幂等补写不可变原始证据，再允许装卡。
-          await deps.writeSegmentCache(cachedEntry);
-          episodeAudioInput += Math.max(0, Number(cachedEntry.paidUsage.audioInputTokens) || 0);
-          routesUsed.add(cachedEntry.visualRoute);
-          if (cachedEntry.degraded) degradedFpsSegmentIndexes.push(segmentIndex);
+          // 写入返回的 canonical entry 是唯一真值；此后不再引用闭包里的预读变量。
+          const written = await deps.writeSegmentCache(cachedEntry);
+          const canonicalEntry = written.entry;
+          if (canonicalEntry.rawAttemptEvidenceObjectName) {
+            rawAttemptEvidenceObjectNames.add(canonicalEntry.rawAttemptEvidenceObjectName);
+          }
+          episodeAudioInput += Math.max(0, Number(canonicalEntry.paidUsage.audioInputTokens) || 0);
+          routesUsed.add(canonicalEntry.visualRoute);
+          if (canonicalEntry.degraded) degradedFpsSegmentIndexes.push(segmentIndex);
           console.info(
             `[nativeDeepRead] 第${episode.episodeIndex}集第${segmentIndex + 1}段命中已验缓存，本次模型调用 0`,
           );
-          rawSegments[segmentIndex] = cachedEntry.raw;
-          await commitSegmentToProposal(segmentIndex, cachedEntry);
+          rawSegments[segmentIndex] = canonicalEntry.raw;
+          await commitSegmentToProposal(segmentIndex, canonicalEntry);
           return;
         }
         const video = videosBySegment.get(segmentIndex);
@@ -2563,9 +2769,10 @@ export async function runManhuaNativeDeepReadBatch(params: {
             savedAtIso: new Date().toISOString(),
           };
           // “段过门禁即入账”：并发请求已在途，缓存写入仍是该段成功的强步骤。
-          await deps.writeSegmentCache(entry);
-          rawSegments[segmentIndex] = result.raw;
-          await commitSegmentToProposal(segmentIndex, entry);
+          // 装提案/rawSegments 一律用返回的 canonical entry，杜绝缓存 A / 提案 B。
+          const written = await deps.writeSegmentCache(entry);
+          rawSegments[segmentIndex] = written.entry.raw;
+          await commitSegmentToProposal(segmentIndex, written.entry);
           return;
         }
         rawSegments[segmentIndex] = result.raw;
@@ -2728,12 +2935,21 @@ export async function runManhuaNativeDeepReadBatch(params: {
         if (degradedFpsSegmentIndexes.length > 0) {
           // EvoLink 兜底路必过 GLM 整形；整形后门禁照跑，不达标照拒。
           const structuredRaw = await glmStructure();
+          assertGlmAdRangesMatchDeterministic(
+            structuredRaw,
+            stripNonStoryAdShotsForEpisodeCard(annotateSegmentRows()).excludedAdRanges,
+            episode.episodeIndex,
+          );
           gateEpisode([structuredRaw]);
           episodeRows = [structuredRaw];
         } else {
           try {
-            gateEpisode(completeRawSegments);
-            episodeRows = annotateSegmentRows();
+            // 整集卡＝确定性拼接后整行剔除 non_story_ad 镜头，只留 excludedAdRanges 区间账目；
+            // 原始分段卡（raw 证据/段门禁/缓存）不动，完整时间轴保留在段级审计层。
+            // 门禁吃剔除后的整集卡，广告区间按合法缺口放行。
+            const stripped = stripNonStoryAdShotsForEpisodeCard(annotateSegmentRows());
+            gateEpisode(stripped.rows);
+            episodeRows = stripped.rows;
           } catch (mergeGateFailure) {
             if (params.abortSignal?.aborted) throw mergeGateFailure;
             const rejectedReasonZh =
@@ -2743,12 +2959,24 @@ export async function runManhuaNativeDeepReadBatch(params: {
               + `降级请 GLM 结构化整形修复一次：${rejectedReasonZh}`,
             );
             const structuredRaw = await glmStructure(rejectedReasonZh);
+            assertGlmAdRangesMatchDeterministic(
+              structuredRaw,
+              stripNonStoryAdShotsForEpisodeCard(annotateSegmentRows()).excludedAdRanges,
+              episode.episodeIndex,
+            );
             // 修复后门禁重跑，再不过才拒收。
             gateEpisode([structuredRaw]);
             episodeRows = [structuredRaw];
           }
         }
-        const mapped = mapNativeDeepReadSegments(episodeRows.map((raw) => ({
+        // 确定性拼接路与 GLM 整形路统一在此注入 chunkSpans：整集卡携带
+        // audioResolution 各 chunk 的真实段界（来自 episode.segments spec），
+        // mapper 的音频广告过滤只认它换算，绝不从镜头秒位猜 chunk 起点。
+        const mapped = mapNativeDeepReadSegments(attachAudioChunkSpans(
+          episodeRows,
+          episode.segments,
+          episode.episodeIndex,
+        ).map((raw) => ({
           // shots/subtitles 已是全片绝对秒位，偏移一律为 0。
           startSec: 0,
           endSec: episode.sourceDurationSec,

@@ -108,11 +108,36 @@ export function nativeDeepReadSegmentCacheObjectName(
   )}_seg${segmentIndex}.json`;
 }
 
+/**
+ * 付费响应本体的内容指纹。同一请求契约（fingerprint/sourceDigest）下，模型每次
+ * 真实响应的 raw/paidUsage 都可能不同；证据对象名必须把响应身份编进去，与
+ * segment-evidence-raw 层 attemptN-callId 的做法同理，否则同契约重跑必然撞上
+ * 不可变对象内容冲突并永久卡死该段。
+ */
+export function nativeDeepReadSegmentEvidenceResponseFingerprint(
+  entry: NativeDeepReadSegmentCacheEntry,
+): string {
+  const canonicalize = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(canonicalize);
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([key, child]) => [key, canonicalize(child)]),
+      );
+    }
+    return value;
+  };
+  // savedAtIso 是缓存落盘时间，不属于付费响应身份；纳入指纹会让同一响应
+  // 仅因重写时间不同就生成另一份“不可变证据”。其余字段按键名稳定排序后散列。
+  const { savedAtIso: _savedAtIso, ...responseIdentity } = entry;
+  return createHash("sha256")
+    .update(JSON.stringify(canonicalize(responseIdentity)))
+    .digest("hex");
+}
+
 export function nativeDeepReadSegmentEvidenceObjectName(
-  entry: Pick<
-    NativeDeepReadSegmentCacheEntry,
-    "seriesKey" | "episodeIndex" | "segmentIndex" | "sourceDigest" | "fingerprint"
-  >,
+  entry: NativeDeepReadSegmentCacheEntry,
 ): string {
   if (!/^[0-9a-f]{64}$/.test(entry.sourceDigest)) {
     throw new Error("段证据 sourceDigest 非法");
@@ -126,7 +151,9 @@ export function nativeDeepReadSegmentEvidenceObjectName(
   return `${NATIVE_DEEP_READ_SEGMENT_EVIDENCE_PREFIX}${nativeDeepReadProposalId(
     entry.seriesKey,
     entry.episodeIndex,
-  )}/${entry.sourceDigest}/seg${entry.segmentIndex}-${entry.fingerprint}.json`;
+  )}/${entry.sourceDigest}/seg${entry.segmentIndex}-${entry.fingerprint}-${
+    nativeDeepReadSegmentEvidenceResponseFingerprint(entry)
+  }.json`;
 }
 
 export function nativeDeepReadRawAttemptEvidenceObjectName(
@@ -382,16 +409,17 @@ async function ensureNativeDeepReadSegmentEvidence(
   const existing = await downloadGcsObjectVersioned({
     gcsUri: `gs://${bucket}/${objectName}`,
   });
-  const parsed = parseCacheEntry(
-    JSON.parse(existing.buffer.toString("utf8")),
-    entry,
-  );
-  if (
-    parsed.sourceDigest !== entry.sourceDigest
-    || parsed.fingerprint !== entry.fingerprint
-    || JSON.stringify(parsed.raw) !== JSON.stringify(entry.raw)
-    || JSON.stringify(parsed.paidUsage) !== JSON.stringify(entry.paidUsage)
-  ) {
+  // 对象名由响应身份派生；同名对象只要响应身份一致即幂等（savedAtIso 落盘时间
+  // 不参与身份，允许不同），身份不一致才是真冲突。
+  let existingIdentity: string | null = null;
+  try {
+    existingIdentity = nativeDeepReadSegmentEvidenceResponseFingerprint(
+      JSON.parse(existing.buffer.toString("utf8")) as NativeDeepReadSegmentCacheEntry,
+    );
+  } catch {
+    existingIdentity = null;
+  }
+  if (existingIdentity !== nativeDeepReadSegmentEvidenceResponseFingerprint(entry)) {
     throw new Error(
       `第${entry.episodeIndex}集第${entry.segmentIndex + 1}段不可变证据发生内容冲突，已停止`,
     );
@@ -406,6 +434,9 @@ export async function createNativeDeepReadSegmentCacheEntryIfAbsent(
   entry: NativeDeepReadSegmentCacheEntry,
 ): Promise<"created" | "reused"> {
   parseCacheEntry(entry, entry);
+  // 不允许先发布缓存、再发现证据写失败。
+  await ensureNativeDeepReadSegmentEvidence(entry);
+
   const bucket = getGcsBucketName();
   const objectName = nativeDeepReadSegmentCacheObjectName(
     entry.seriesKey,
@@ -419,7 +450,6 @@ export async function createNativeDeepReadSegmentCacheEntryIfAbsent(
     buffer: cacheBuffer(entry),
   });
   if (created.created) {
-    await ensureNativeDeepReadSegmentEvidence(entry);
     return "created";
   }
   const existing = await readNativeDeepReadSegmentCacheEntry({
@@ -432,7 +462,8 @@ export async function createNativeDeepReadSegmentCacheEntryIfAbsent(
     && existing.entry.sourceDigest === entry.sourceDigest
     && existing.entry.fingerprint === entry.fingerprint
   ) {
-    await ensureNativeDeepReadSegmentEvidence(entry);
+    // 复用的是目标集已在位的缓存内容，证据也必须落它，而不是迁移来源集的响应。
+    await ensureNativeDeepReadSegmentEvidence(existing.entry);
     return "reused";
   }
   throw new Error(
@@ -440,15 +471,32 @@ export async function createNativeDeepReadSegmentCacheEntryIfAbsent(
   );
 }
 
+export type NativeDeepReadSegmentCacheWriteResult = {
+  /** 写入后的 canonical 真值段卡；下游 rawSegments/音频统计/proposal/provenance 一律用它。 */
+  entry: NativeDeepReadSegmentCacheEntry;
+  cacheObjectName: string;
+  evidenceObjectName: string;
+  /**
+   * created：本次新建 active 缓存；
+   * reused：在位缓存与本次字节等价（含并发竞争方已写入同一内容），幂等确认；
+   * replaced：同对象名下存在不同响应的旧缓存，本次按 generation 覆写为本 entry。
+   */
+  outcome: "created" | "reused" | "replaced";
+};
+
 /**
  * 条件写入：不存在时 ifGenerationMatch=0；存在旧契约时按 generation 覆写。
  * 竞争失败后复读一次；若对方已经写入同一契约即视为成功，否则明确失败。
+ * 返回值携带最终 canonical entry 与两侧对象名，调用方不得再用闭包里的旧变量装提案。
  */
 export async function writeNativeDeepReadSegmentCacheEntry(
   entry: NativeDeepReadSegmentCacheEntry,
-): Promise<void> {
+): Promise<NativeDeepReadSegmentCacheWriteResult> {
   // 写前也走同一把身份/证据尺；有声段 AUDIO token=0 不能冒充“模型真听过”。
   parseCacheEntry(entry, entry);
+  // 证据先落盘；后续缓存写失败只会留下安全的孤立证据，
+  // 不会留下指向不存在证据的已发布缓存。
+  await ensureNativeDeepReadSegmentEvidence(entry);
   const objectName = nativeDeepReadSegmentCacheObjectName(
     entry.seriesKey,
     entry.episodeIndex,
@@ -456,6 +504,15 @@ export async function writeNativeDeepReadSegmentCacheEntry(
   );
   const bucket = getGcsBucketName();
   const payload = cacheBuffer(entry);
+  const evidenceObjectName = nativeDeepReadSegmentEvidenceObjectName(entry);
+  const done = (
+    outcome: NativeDeepReadSegmentCacheWriteResult["outcome"],
+  ): NativeDeepReadSegmentCacheWriteResult => ({
+    entry,
+    cacheObjectName: objectName,
+    evidenceObjectName,
+    outcome,
+  });
   for (let attempt = 0; attempt < 2; attempt += 1) {
     let versioned: Awaited<ReturnType<typeof downloadGcsObjectVersioned>> | null = null;
     try {
@@ -470,27 +527,26 @@ export async function writeNativeDeepReadSegmentCacheEntry(
         contentType: "application/json",
         buffer: payload,
       });
-      if (created.created) {
-        await ensureNativeDeepReadSegmentEvidence(entry);
-        return;
-      }
+      if (created.created) return done("created");
       continue;
     }
+    let existing: NativeDeepReadSegmentCacheEntry | null = null;
     try {
-      const existing = parseCacheEntry(
+      existing = parseCacheEntry(
         JSON.parse(versioned.buffer.toString("utf8")),
         entry,
       );
-      if (
-        existing.fingerprint === entry.fingerprint
-        && existing.sourceDigest === entry.sourceDigest
-      ) {
-        await ensureNativeDeepReadSegmentEvidence(entry);
-        return;
-      }
     } catch {
-      // 旧版、损坏或不同契约：只允许按刚读到的 generation 条件替换。
+      // 只吞旧版、损坏或不同契约的解析形状错误：这类对象允许按刚读到的
+      // generation 条件替换。证据写入的失败绝不能在这里被吞掉。
     }
+    if (existing && cacheBuffer(existing).equals(payload)) {
+      // 字节等价的幂等确认：canonical 真值就是本 entry（与在位内容逐字节一致）。
+      return done("reused");
+    }
+
+    // 同契约但不同付费响应也必须更新 active cache：
+    // 否则 runner 用新 entry 装提案，而恢复缓存仍是旧 entry（缓存 A / 提案 B）。
     try {
       await uploadBufferToGcs({
         bucket,
@@ -499,8 +555,8 @@ export async function writeNativeDeepReadSegmentCacheEntry(
         ifGenerationMatch: versioned.generation,
         buffer: payload,
       });
-      await ensureNativeDeepReadSegmentEvidence(entry);
-      return;
+      // 覆写成功后 active 缓存字节 == 本 entry，本 entry 即 canonical 真值。
+      return done("replaced");
     } catch (error) {
       if (isGenerationConflict(error)) continue;
       throw error;

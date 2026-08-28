@@ -423,6 +423,40 @@ describe("原生视频精读产出入库（0824）", () => {
     expect(parsed?.provenance?.nativeVideoDeepRead?.segmentEvidenceObjectNames).toHaveLength(40);
   });
 
+  it("segmentEvidenceObjectNames 只读兼容旧 16 位响应指纹后缀，新 64 位照收，其余长度拒收", () => {
+    const base = learnedCard();
+    const prefix = `manhua-template-learn/segment-evidence/tpl_native_s1_ep001/${"a".repeat(64)}`;
+    const names = [
+      `${prefix}/seg0-${"b".repeat(64)}.json`,
+      `${prefix}/seg1-${"b".repeat(64)}-${"c".repeat(16)}.json`,
+      `${prefix}/seg2-${"b".repeat(64)}-${"c".repeat(64)}.json`,
+      `${prefix}/seg3-${"b".repeat(64)}-${"c".repeat(32)}.json`,
+      `${prefix}/seg4-${"b".repeat(64)}-${"C".repeat(64)}.json`,
+    ];
+    const parsed = parseManhuaViralTemplateCard({
+      ...base,
+      provenance: {
+        nativeVideoDeepRead: {
+          model: "gemini-3.1-pro",
+          attemptedSegments: 5,
+          successSegments: 5,
+          shotCount: 20,
+          droppedCount: 0,
+          truncated: false,
+          costCny: 1,
+          sourceDigest: "a".repeat(64),
+          snapshotSha256: "b".repeat(64),
+          segmentEvidenceObjectNames: names,
+        },
+      },
+    });
+    expect(parsed?.provenance?.nativeVideoDeepRead?.segmentEvidenceObjectNames).toEqual([
+      names[0],
+      names[1],
+      names[2],
+    ]);
+  });
+
   it("isNativeVideoLearnedTemplate 认得出新旧形态", () => {
     expect(isNativeVideoLearnedTemplate(learnedCard())).toBe(false);
     expect(

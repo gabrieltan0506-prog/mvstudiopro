@@ -211,7 +211,6 @@ async function analyze(gcsUri: string, durationSec: number): Promise<Record<stri
 
 const { stdout } = await run("yt-dlp", [
   "-J", "--no-warnings",
-  ...(process.env.DOUYIN_COOKIE ? ["--add-header", `Cookie:${process.env.DOUYIN_COOKIE}`] : []),
   SOURCE,
 ], { timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
 const info = JSON.parse(stdout) as Record<string, unknown>;

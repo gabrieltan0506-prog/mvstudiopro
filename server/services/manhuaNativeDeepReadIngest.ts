@@ -105,6 +105,41 @@ function nativeProgress(result: NativeDeepReadIngestSource): {
 }
 
 /**
+ * provenance 写卡前的证据名硬校验：按 segmentIndex 严格递增、无重复，
+ * 且数量与本卡进度一致（整集 == attemptedSegments，部分卡 == 已完成段数）。
+ * 不满足直接抛错——写进 provenance 的假账比不写更危险。
+ */
+function assertSegmentEvidenceObjectNamesForProvenance(input: {
+  episodeIndex: number;
+  names: string[];
+  attemptedSegments: number;
+  completedCount: number;
+  complete: boolean;
+}): string[] {
+  const names = input.names.map((value) => String(value || "").trim());
+  const segIndexes = names.map((name) => {
+    const match = /\/seg(\d{1,6})-[a-f0-9]{64}(?:-(?:[a-f0-9]{16}|[a-f0-9]{64}))?\.json$/.exec(name);
+    if (!match) {
+      throw new Error(`第${input.episodeIndex}集段证据对象名格式非法，拒绝写入 provenance：${name.slice(0, 200)}`);
+    }
+    return Number(match[1]);
+  });
+  if (new Set(names).size !== names.length) {
+    throw new Error(`第${input.episodeIndex}集段证据对象名出现重复，拒绝写入 provenance`);
+  }
+  if (segIndexes.some((value, index) => index > 0 && value <= segIndexes[index - 1]!)) {
+    throw new Error(`第${input.episodeIndex}集段证据对象名未按段号严格递增，拒绝写入 provenance`);
+  }
+  const expectedCount = input.complete ? input.attemptedSegments : input.completedCount;
+  if (names.length !== expectedCount) {
+    throw new Error(
+      `第${input.episodeIndex}集段证据对象名数量(${names.length})与进度(${expectedCount})不一致，拒绝写入 provenance`,
+    );
+  }
+  return names;
+}
+
+/**
  * 对象名与卡 id 的**唯一真源**。
  *
  * 断点续跑、写入、去重三处都必须走这两个函数——三处各自拼字符串，
@@ -335,7 +370,15 @@ export function buildNativeDeepReadProposalCard(
         assemblyComplete: progress.complete,
         sourceDigest: progress.sourceDigest,
         snapshotSha256: progress.snapshotSha256,
-        segmentEvidenceObjectNames: r.segmentEvidenceObjectNames,
+        segmentEvidenceObjectNames: r.segmentEvidenceObjectNames
+          ? assertSegmentEvidenceObjectNamesForProvenance({
+              episodeIndex: input.episodeIndex,
+              names: r.segmentEvidenceObjectNames,
+              attemptedSegments: r.attemptedSegments,
+              completedCount: progress.completed.length,
+              complete: progress.complete,
+            })
+          : undefined,
       },
       nativeAudioDeepRead: {
         model: audio.model,
