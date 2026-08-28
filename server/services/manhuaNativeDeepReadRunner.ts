@@ -1370,6 +1370,36 @@ export function stripNonStoryAdShotsForEpisodeCard(
   return { rows: strippedRows, excludedAdRanges: mergeAdjacentAdRanges(collected) };
 }
 
+/**
+ * 给整集卡/快照行注入 audioResolution 各 chunk 的**真实**段界（chunkSpans）。
+ *
+ * 音轨局部秒 → 全片绝对秒的唯一合法换算依据来自 segments spec（粗读拆段的
+ * startSec/endSec，全片绝对秒），不是从镜头 startSec 猜、更不是 chunkIndex*300。
+ * chunkIndex 找不到对应段规格视为身份损坏，关闭式失败。
+ * 无音轨行（audioResolution 空）原样返回，不注入空字段。
+ */
+export function attachAudioChunkSpans(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  segments: readonly NativeDeepReadSegmentSpec[],
+  episodeIndex: number,
+): Array<Record<string, unknown>> {
+  return rows.map((raw) => {
+    const audioRows = Array.isArray(raw.audioResolution) ? raw.audioResolution : [];
+    if (audioRows.length === 0) return raw;
+    const chunkSpans = audioRows.map((entry) => {
+      const chunkIndex = Number((entry as { chunkIndex?: unknown } | null)?.chunkIndex);
+      const spec = Number.isInteger(chunkIndex) && chunkIndex >= 0 ? segments[chunkIndex] : undefined;
+      if (!spec) {
+        throw new Error(
+          `第${episodeIndex}集 audioResolution chunkIndex=${String(chunkIndex)} 没有对应段规格，无法换算真实段界，整集拒绝入库`,
+        );
+      }
+      return { chunkIndex, startSec: spec.startSec, endSec: spec.endSec };
+    });
+    return { ...raw, chunkSpans };
+  });
+}
+
 /** 整集卡上的区间账目校验与汇总：startSec/endSec 非负有限且 end>start，否则整集拒收。 */
 
 /**
@@ -2241,7 +2271,12 @@ export async function runManhuaNativeDeepReadBatch(params: {
         if (sortedIndexes.some((value, index) => value !== index)) {
           throw new Error(`第${episode.episodeIndex}集已成段不是连续前缀，拒绝生成部分提案`);
         }
-        const snapshotRows = sortedIndexes.map((index) => rawSegments[index]!);
+        // 快照行注入各 chunk 真实段界，音频广告过滤只认真实段界换算。
+        const snapshotRows = attachAudioChunkSpans(
+          sortedIndexes.map((index) => rawSegments[index]!),
+          episode.segments,
+          episode.episodeIndex,
+        );
         const mapped = mapNativeDeepReadSegments(snapshotRows.map((raw) => ({
           startSec: 0,
           endSec: episode.sourceDurationSec,
@@ -2915,7 +2950,14 @@ export async function runManhuaNativeDeepReadBatch(params: {
             episodeRows = [structuredRaw];
           }
         }
-        const mapped = mapNativeDeepReadSegments(episodeRows.map((raw) => ({
+        // 确定性拼接路与 GLM 整形路统一在此注入 chunkSpans：整集卡携带
+        // audioResolution 各 chunk 的真实段界（来自 episode.segments spec），
+        // mapper 的音频广告过滤只认它换算，绝不从镜头秒位猜 chunk 起点。
+        const mapped = mapNativeDeepReadSegments(attachAudioChunkSpans(
+          episodeRows,
+          episode.segments,
+          episode.episodeIndex,
+        ).map((raw) => ({
           // shots/subtitles 已是全片绝对秒位，偏移一律为 0。
           startSec: 0,
           endSec: episode.sourceDurationSec,

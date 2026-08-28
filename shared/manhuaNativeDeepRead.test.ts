@@ -260,3 +260,165 @@ describe("适配器失败与超限语义（复审第六项）", () => {
     expect(out.shotCount).toBe(95);
   });
 });
+
+describe("音频广告过滤只认真实段界（chunkSpans），禁猜起点", () => {
+  const track = (fromSec: number, toSec: number, cueAtSecs: number[] = []) => ({
+    fromSec,
+    toSec,
+    emotionArcZh: `情绪${fromSec}到${toSec}`,
+    cues: cueAtSecs.map((atSec) => ({ atSec, kind: "sfx", detailZh: `事件${atSec}` })),
+  });
+  const analysis = (tracks: unknown[]) => ({
+    audioTrack: tracks,
+    audioBeatStructureZh: "先压后爆",
+    mixNotesZh: "混音备注",
+    reusableAudioZh: "可复用声音",
+    genAudioHintZh: "生成提示",
+  });
+  const storyShot = (startSec: number, endSec: number) => ({
+    startSec,
+    endSec,
+    shotSizeZh: "特写",
+    actionZh: `动作${startSec}`,
+    evidenceRole: "story",
+  });
+  const adShot = (startSec: number, endSec: number) => ({
+    startSec,
+    endSec,
+    shotSizeZh: "全景",
+    actionZh: "招商落版",
+    evidenceRole: "non_story_ad",
+  });
+  const row = (inner: Record<string, unknown>) => ({
+    startSec: 0,
+    finish: "stop",
+    text: JSON.stringify({ beatStructureZh: "憋4秒后爆", ...inner }),
+  });
+
+  it("确定性多行路径：段首广告删整轨、跨界轨保留但剔广告 cue（360s 非 300s 段）", () => {
+    // 段 0 真实段界 0..360（360 秒旧段，非 300s），段首 0..10 是广告。
+    const out = mapNativeDeepReadSegments([
+      row({
+        shots: [adShot(0, 10), storyShot(10, 360)],
+        audioResolution: [{
+          chunkIndex: 0,
+          analysis: analysis([
+            track(0, 10), // 局部 0..10 = 绝对 0..10，整段落广告 → 删
+            track(8, 30, [9, 12]), // 跨界轨保留；cue 绝对 9 在广告内删，12 保留
+          ]),
+        }],
+        chunkSpans: [{ chunkIndex: 0, startSec: 0, endSec: 360 }],
+      }),
+      // 段 1 真实段界 360..600：段中广告 400..410。
+      row({
+        shots: [storyShot(360, 400), adShot(400, 410), storyShot(410, 600)],
+        audioResolution: [{
+          chunkIndex: 1,
+          analysis: analysis([
+            track(40, 50), // 绝对 400..410 整段落广告 → 删
+            track(0, 40, [30]), // 绝对 360..400，cue 绝对 390 保留
+            track(45, 80, [46, 55]), // 绝对 405..440 跨界保留；cue 绝对 406 删、415 留
+          ]),
+        }],
+        chunkSpans: [{ chunkIndex: 1, startSec: 360, endSec: 600 }],
+      }),
+    ]);
+    expect(out.audioAdFilterSkipped).toBeUndefined();
+    expect(out.resolvedAudioChunks).toHaveLength(2);
+
+    const chunk0 = out.resolvedAudioChunks[0]!;
+    expect(chunk0.chunkIndex).toBe(0);
+    expect(chunk0.analysis.audioTrack).toHaveLength(1);
+    expect(chunk0.analysis.audioTrack[0]!.fromSec).toBe(8);
+    expect(chunk0.analysis.audioTrack[0]!.cues.map((cue) => cue.atSec)).toEqual([12]);
+
+    const chunk1 = out.resolvedAudioChunks[1]!;
+    expect(chunk1.chunkIndex).toBe(1);
+    expect(chunk1.analysis.audioTrack.map((t) => t.fromSec)).toEqual([0, 45]);
+    expect(chunk1.analysis.audioTrack[0]!.cues.map((cue) => cue.atSec)).toEqual([30]);
+    expect(chunk1.analysis.audioTrack[1]!.cues.map((cue) => cue.atSec)).toEqual([55]);
+  });
+
+  it("GLM 合并单行卡：多 chunk 各按自己的真实起点换算，min(shot.startSec) 猜法必然错删/漏删", () => {
+    // 整集单行卡：shots 从 0 起，excludedAdRanges 在 400..410；
+    // chunk1 真实起点 360 —— 若按旧猜法 min(shot.startSec)=0，局部 40..50 会被当成绝对 40..50 漏删。
+    const out = mapNativeDeepReadSegments([
+      row({
+        shots: [storyShot(0, 360), storyShot(360, 400), storyShot(410, 600)],
+        excludedAdRanges: [{ startSec: 400, endSec: 410 }],
+        audioResolution: [
+          {
+            chunkIndex: 0,
+            analysis: analysis([track(350, 360)]), // 绝对 350..360，不在广告 → 保留
+          },
+          {
+            chunkIndex: 1,
+            analysis: analysis([
+              track(40, 50), // 绝对 400..410 整段落广告 → 删
+              track(0, 60, [39, 45, 50]), // 跨界保留；cue 绝对 399 留、405 删、410（=区间右开端）留
+            ]),
+          },
+        ],
+        chunkSpans: [
+          { chunkIndex: 0, startSec: 0, endSec: 360 },
+          { chunkIndex: 1, startSec: 360, endSec: 600 },
+        ],
+      }),
+    ]);
+    expect(out.audioAdFilterSkipped).toBeUndefined();
+    expect(out.resolvedAudioChunks).toHaveLength(2);
+    expect(out.resolvedAudioChunks[0]!.analysis.audioTrack).toHaveLength(1);
+    expect(out.resolvedAudioChunks[0]!.analysis.audioTrack[0]!.fromSec).toBe(350);
+
+    const chunk1 = out.resolvedAudioChunks[1]!;
+    expect(chunk1.analysis.audioTrack).toHaveLength(1);
+    expect(chunk1.analysis.audioTrack[0]!.fromSec).toBe(0);
+    expect(chunk1.analysis.audioTrack[0]!.cues.map((cue) => cue.atSec)).toEqual([39, 50]);
+  });
+
+  it("全广告 chunk：真实段界完全落入广告区间时音轨全删但 chunk 身份保留", () => {
+    const out = mapNativeDeepReadSegments([
+      row({
+        shots: [adShot(0, 30), storyShot(30, 60)],
+        audioResolution: [{
+          chunkIndex: 0,
+          analysis: analysis([track(0, 10), track(10, 30, [15])]),
+        }],
+        chunkSpans: [{ chunkIndex: 0, startSec: 0, endSec: 30 }],
+      }),
+    ]);
+    expect(out.resolvedAudioChunks).toHaveLength(1);
+    expect(out.resolvedAudioChunks[0]!.chunkIndex).toBe(0);
+    expect(out.resolvedAudioChunks[0]!.analysis.audioTrack).toEqual([]);
+  });
+
+  it("旧卡无 chunkSpans 且有广告：跳过音频过滤、原样保留并打 audioAdFilterSkipped 标记", () => {
+    const out = mapNativeDeepReadSegments([
+      row({
+        shots: [adShot(0, 10), storyShot(10, 60)],
+        audioResolution: [{
+          chunkIndex: 0,
+          analysis: analysis([track(0, 10, [5]), track(10, 60)]),
+        }],
+        // 故意不带 chunkSpans：旧卡形状
+      }),
+    ]);
+    expect(out.audioAdFilterSkipped).toBe(true);
+    // 宁可保留原始音轨（含广告区间内 0..10 轨与 cue 5），也不用猜的偏移错删
+    expect(out.resolvedAudioChunks[0]!.analysis.audioTrack).toHaveLength(2);
+    expect(out.resolvedAudioChunks[0]!.analysis.audioTrack[0]!.cues.map((cue) => cue.atSec)).toEqual([5]);
+  });
+
+  it("无广告区间：无论有没有 chunkSpans 都不打标记、音轨原样", () => {
+    const out = mapNativeDeepReadSegments([
+      row({
+        shots: [storyShot(0, 60)],
+        audioResolution: [{ chunkIndex: 0, analysis: analysis([track(0, 60, [30])]) }],
+      }),
+    ]);
+    expect(out.audioAdFilterSkipped).toBeUndefined();
+    expect(out.resolvedAudioChunks[0]!.analysis.audioTrack).toHaveLength(1);
+    expect(out.resolvedAudioChunks[0]!.analysis.audioTrack[0]!.cues.map((cue) => cue.atSec)).toEqual([30]);
+  });
+});
+

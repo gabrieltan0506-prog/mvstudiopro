@@ -493,3 +493,112 @@ describe("生命周期路由：判断只能有一处（终审第六组 1/2/7/8�
     await expect(caller.reviewTemplateGenerations()).rejects.toThrow();
   });
 });
+
+/* ────────────────────────────────────────────────────────────────────────── */
+
+vi.mock("../services/manhuaNativeReportRender", () => ({
+  renderNativeEvidenceReportFromObjectNames: vi.fn(async () => ({
+    reportUrl: "https://signed.example/report",
+    bytes: 1024,
+    frames: 0,
+    frameSource: "未抽帧（该集尚无帧包）",
+    shots: 3,
+  })),
+  renderNativeEvidenceReport: vi.fn(async () => {
+    throw new Error("路由禁止走列目录旧入口");
+  }),
+}));
+
+const EVIDENCE_NAMES = [
+  "manhua-template-learn/segment-evidence/tpl_native_seriesabc_ep001/dig/seg0-fp-r0.json",
+  "manhua-template-learn/segment-evidence/tpl_native_seriesabc_ep001/dig/seg1-fp-r1.json",
+];
+
+const nativeCardWithEvidence = {
+  ...partialNativeCard,
+  provenance: {
+    nativeVideoDeepRead: {
+      ...(partialNativeCard.provenance!.nativeVideoDeepRead as object),
+      segmentEvidenceObjectNames: EVIDENCE_NAMES,
+    },
+  },
+} as unknown as ManhuaViralTemplateCard;
+
+describe("renderEpisodeReport：canonical 寻址（禁列目录猜证据）", () => {
+  async function ownerCaller() {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    return (await loadRouter()).createCaller(makeCtx("user", undefined, "owner-open-id"));
+  }
+
+  it("proposals/ 卡命中：用 canonical id 取卡，把 provenance 精确证据名直传渲染服务", async () => {
+    proposalForRouter = nativeCardWithEvidence;
+    const caller = await ownerCaller();
+    const out = await caller.renderEpisodeReport({ seriesKey: "seriesabc", episodeIndex: 1 });
+    expect(out.reportUrl).toBe("https://signed.example/report");
+
+    const store = await import("../services/manhuaViralTemplateStore");
+    const proposalCalls = (store.getGcsManhuaViralProposal as unknown as {
+      mock: { calls: unknown[][] };
+    }).mock.calls;
+    expect(proposalCalls[proposalCalls.length - 1]![0]).toBe("tpl_native_seriesabc_ep001");
+
+    const render = await import("../services/manhuaNativeReportRender");
+    const renderCalls = (render.renderNativeEvidenceReportFromObjectNames as unknown as {
+      mock: { calls: Array<[Record<string, unknown>]> };
+    }).mock.calls;
+    const input = renderCalls[renderCalls.length - 1]![0];
+    expect(input.evidenceObjectNames).toEqual(EVIDENCE_NAMES);
+    expect(input.expectEpisodeIndex).toBe(1);
+    expect(input.reportObjectName).toBe(
+      "manhua-template-learn/reports/tpl_native_seriesabc_ep001.html",
+    );
+    // 旧列目录入口在路由上一次都不被调用
+    expect((render.renderNativeEvidenceReport as unknown as {
+      mock: { calls: unknown[] };
+    }).mock.calls.length).toBe(0);
+  });
+
+  it("proposals/ 无卡时回退 approved/；两处都无 → NOT_FOUND fail closed", async () => {
+    proposalForRouter = null;
+    const store = await import("../services/manhuaViralTemplateStore");
+    (store.getGcsManhuaViralApproved as unknown as {
+      mockResolvedValueOnce: (v: unknown) => void;
+    }).mockResolvedValueOnce(null);
+    const caller = await ownerCaller();
+    await expect(caller.renderEpisodeReport({ seriesKey: "seriesabc", episodeIndex: 1 }))
+      .rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("卡存在但 provenance 无 segmentEvidenceObjectNames → NOT_FOUND，不列目录兜底", async () => {
+    proposalForRouter = partialNativeCard;
+    const render = await import("../services/manhuaNativeReportRender");
+    const renderMock = render.renderNativeEvidenceReportFromObjectNames as unknown as {
+      mock: { calls: unknown[] };
+    };
+    const before = renderMock.mock.calls.length;
+    const caller = await ownerCaller();
+    await expect(caller.renderEpisodeReport({ seriesKey: "seriesabc", episodeIndex: 1 }))
+      .rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(renderMock.mock.calls.length).toBe(before);
+  });
+
+  it("seriesKey 契约与 nativeDeepReadProposalId 对齐：1–40 位可过、非法字符被拒", async () => {
+    proposalForRouter = nativeCardWithEvidence;
+    const caller = await ownerCaller();
+    // 旧契约 min(4) 会拒掉的 3 位 key，现在与 canonical 规则一致地放行（卡照常寻址）
+    await expect(caller.renderEpisodeReport({ seriesKey: "abc", episodeIndex: 1 }))
+      .resolves.toMatchObject({ reportUrl: "https://signed.example/report" });
+    await expect(caller.renderEpisodeReport({ seriesKey: "bad/key", episodeIndex: 1 }))
+      .rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(caller.renderEpisodeReport({ seriesKey: "x".repeat(41), episodeIndex: 1 }))
+      .rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("非 owner 一律 FORBIDDEN", async () => {
+    proposalForRouter = nativeCardWithEvidence;
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const caller = (await loadRouter()).createCaller(makeCtx("admin", undefined, "other-admin"));
+    await expect(caller.renderEpisodeReport({ seriesKey: "seriesabc", episodeIndex: 1 }))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+});

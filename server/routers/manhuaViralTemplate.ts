@@ -168,21 +168,50 @@ export const manhuaViralTemplateRouter = router({
       }
     }),
 
-  /** owner 一键出模型产出报告 HTML（¥0 零模型调用）：证据 JSON 确定性渲染，回签名 URL。 */
+  /**
+   * owner 一键出模型产出报告 HTML（¥0 零模型调用）：证据 JSON 确定性渲染，回签名 URL。
+   * 数据来源是 canonical 寻址：nativeDeepReadProposalId → proposals/（无则 approved/）卡
+   * → provenance.nativeVideoDeepRead.segmentEvidenceObjectNames 精确对象名；
+   * 卡不存在或没证据名一律 fail closed，绝不列目录猜证据。
+   * seriesKey 契约与 nativeDeepReadProposalId 完全一致（1–40 位 [0-9A-Za-z_-]）。
+   */
   renderEpisodeReport: protectedProcedure
     .input(z.object({
-      seriesKey: z.string().regex(/^[a-z0-9_-]{4,60}$/i),
+      seriesKey: z.string().regex(/^[0-9A-Za-z_-]{1,40}$/),
       episodeIndex: z.number().int().min(1).max(999),
     }))
     .mutation(async ({ ctx, input }) => {
       assertSiteOwner(ctx.user);
-      const { renderNativeEvidenceReport } = await import("../services/manhuaNativeReportRender");
-      const ep = String(input.episodeIndex).padStart(3, "0");
-      const cardKey = `tpl_native_${input.seriesKey}_ep${ep}`;
+      const [{ renderNativeEvidenceReportFromObjectNames }, { nativeDeepReadProposalId }, store] =
+        await Promise.all([
+          import("../services/manhuaNativeReportRender"),
+          import("../services/manhuaNativeDeepReadIngest"),
+          import("../services/manhuaViralTemplateStore"),
+        ]);
+      const cardKey = nativeDeepReadProposalId(input.seriesKey, input.episodeIndex);
+      const card = (await store.getGcsManhuaViralProposal(cardKey))
+        ?? (await store.getGcsManhuaViralApproved(cardKey));
+      if (!card) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: `该集精读卡不存在（${cardKey}），无法出报告`,
+        });
+      }
+      const native = card.provenance?.nativeVideoDeepRead;
+      const evidenceObjectNames = Array.isArray(native?.segmentEvidenceObjectNames)
+        ? native.segmentEvidenceObjectNames
+        : [];
+      if (evidenceObjectNames.length === 0) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "该集精读卡 provenance 没有段证据对象名（旧链路学习产物），需重学后再出报告",
+        });
+      }
       try {
-        return await renderNativeEvidenceReport({
+        return await renderNativeEvidenceReportFromObjectNames({
           labelZh: `${input.seriesKey} 第 ${input.episodeIndex} 集`,
-          evidencePrefix: `manhua-template-learn/segment-evidence/${cardKey}/`,
+          evidenceObjectNames,
+          expectEpisodeIndex: input.episodeIndex,
           framesV2SummaryObjectName: `manhua-template-learn/probes/${cardKey}/frames-v2-summary.json`,
           framesPrefix: `manhua-template-learn/probes/${cardKey}/frames/`,
           reportObjectName: `manhua-template-learn/reports/${cardKey}.html`,

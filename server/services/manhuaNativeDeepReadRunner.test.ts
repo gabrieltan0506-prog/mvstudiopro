@@ -36,6 +36,7 @@ import {
   resolveNativeDeepReadRequestFps,
   resolveNativeDeepReadSegmentFloors,
   runManhuaNativeDeepReadBatch,
+  attachAudioChunkSpans,
   stripNonStoryAdShotsForEpisodeCard,
   validateNativeDeepReadSegments,
   type NativeDeepReadBatchRunnerDeps,
@@ -868,6 +869,52 @@ describe("整集卡广告剔除（段卡→整集卡合并层，原始分段卡�
     expect(rows[0]).toBe(raw);
     expect(excludedAdRanges).toEqual([]);
     expect(Object.prototype.hasOwnProperty.call(rows[0]!, "excludedAdRanges")).toBe(false);
+  });
+});
+
+describe("attachAudioChunkSpans：整集卡携带 audioResolution 各 chunk 的真实段界", () => {
+  const segments = [
+    { startSec: 0, endSec: 360 }, // 360s 旧段，非 300s，防 chunkIndex*300 猜法
+    { startSec: 360, endSec: 600 },
+  ];
+
+  it("确定性多行路径：每行按自己的 chunkIndex 拿 segments spec 的真实段界", () => {
+    const rows = attachAudioChunkSpans([
+      { audioResolution: [{ chunkIndex: 0, analysis: {} }], shots: [] },
+      { audioResolution: [{ chunkIndex: 1, analysis: {} }], shots: [] },
+    ], segments, 2);
+    expect(rows[0]!.chunkSpans).toEqual([{ chunkIndex: 0, startSec: 0, endSec: 360 }]);
+    expect(rows[1]!.chunkSpans).toEqual([{ chunkIndex: 1, startSec: 360, endSec: 600 }]);
+  });
+
+  it("GLM 合并单行卡路径：一行多 chunk 全部注入真实段界", () => {
+    const rows = attachAudioChunkSpans([
+      {
+        audioResolution: [
+          { chunkIndex: 0, analysis: {} },
+          { chunkIndex: 1, analysis: {} },
+        ],
+        shots: [],
+      },
+    ], segments, 5);
+    expect(rows[0]!.chunkSpans).toEqual([
+      { chunkIndex: 0, startSec: 0, endSec: 360 },
+      { chunkIndex: 1, startSec: 360, endSec: 600 },
+    ]);
+  });
+
+  it("无音轨行原样返回不注入字段；chunkIndex 无对应段规格关闭式失败", () => {
+    const silent = { audioResolution: [], shots: [] };
+    const rows = attachAudioChunkSpans([silent], segments, 1);
+    expect(rows[0]).toBe(silent);
+    expect(Object.prototype.hasOwnProperty.call(rows[0]!, "chunkSpans")).toBe(false);
+
+    expect(() => attachAudioChunkSpans([
+      { audioResolution: [{ chunkIndex: 2, analysis: {} }], shots: [] },
+    ], segments, 3)).toThrow("第3集 audioResolution chunkIndex=2 没有对应段规格");
+    expect(() => attachAudioChunkSpans([
+      { audioResolution: [{ analysis: {} }], shots: [] },
+    ], segments, 3)).toThrow("没有对应段规格");
   });
 });
 
