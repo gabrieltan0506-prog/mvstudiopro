@@ -8,6 +8,7 @@
  */
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
+import { readFile, rm } from "node:fs/promises";
 import { promisify } from "node:util";
 import {
   runManhuaNativeDeepRead,
@@ -203,6 +204,44 @@ async function main() {
       && JSON.stringify(rawCounts) === JSON.stringify(parsedCounts));
     return { segmentIndex, rawCounts, parsedCounts, countsEqual };
   });
+  // 关键帧抽取（¥0，模型无关）：每个 story 镜头中点一帧，画面证据永久保留，
+  // 供面板与审片报告展示引用；广告镜头不抽。单帧失败只记错，不阻断摘要。
+  const frameEvidence: Array<{
+    segmentIndex: number; shotIndex: number; atSec: number; objectName: string; bytes: number;
+  }> = [];
+  const frameErrors: string[] = [];
+  for (const fact of parsedFacts) {
+    const segmentIndex = segmentIndexFromName(fact.objectName);
+    const entry = fact.payload as { raw?: { shots?: Array<Record<string, unknown>> } };
+    const shots = Array.isArray(entry.raw?.shots) ? entry.raw.shots : [];
+    for (let shotIndex = 0; shotIndex < shots.length && frameEvidence.length < 240; shotIndex += 1) {
+      const shot = shots[shotIndex]!;
+      if (shot.evidenceRole === "non_story_ad") continue;
+      const startSec = Number(shot.startSec) || 0;
+      const endSec = Math.max(startSec, Number(shot.endSec) || startSec);
+      const atSec = Math.round(((startSec + endSec) / 2) * 10) / 10;
+      const local = `/tmp/probe-frame-${segmentIndex}-${shotIndex}.jpg`;
+      try {
+        await run("ffmpeg", [
+          "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+          "-user_agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+          "-headers", "Referer: https://www.douyin.com/\r\n",
+          "-ss", String(atSec), "-i", mediaUrl, "-frames:v", "1", "-q:v", "4", local,
+        ], { timeout: 60_000, maxBuffer: 8 * 1024 * 1024 });
+        const buffer = await readFile(local);
+        const objectName = `manhua-template-learn/probes/${seriesKey}/frames/seg${segmentIndex}/shot${String(shotIndex).padStart(3, "0")}-${Math.round(atSec * 10)}ds.jpg`;
+        await uploadBufferToGcsIfAbsent({ bucket, objectName, contentType: "image/jpeg", buffer });
+        frameEvidence.push({ segmentIndex, shotIndex, atSec, objectName, bytes: buffer.byteLength });
+        await rm(local, { force: true });
+        if (frameEvidence.length % 20 === 0) console.info(`[probe] 阶段：关键帧已抽 ${frameEvidence.length} 帧`);
+      } catch (error) {
+        frameErrors.push(`seg${segmentIndex}#${shotIndex}@${atSec}s ${error instanceof Error ? error.message : String(error)}`.slice(0, 120));
+        await rm(local, { force: true }).catch(() => {});
+      }
+    }
+  }
+  console.info(`[probe] 阶段：关键帧抽取完成 ${frameEvidence.length} 帧，失败 ${frameErrors.length}`);
+
   const summary = {
     schemaVersion: 1,
     runId: seriesKey,
@@ -224,6 +263,8 @@ async function main() {
     } : undefined,
     rawEvidence: rawFacts.map(({ objectName, bytes, sha256 }) => ({ objectName, bytes, sha256 })),
     parsedEvidence: parsedFacts.map(({ objectName, bytes, sha256 }) => ({ objectName, bytes, sha256 })),
+    frameEvidence,
+    frameErrors: frameErrors.length ? frameErrors : undefined,
     videoRetention: {
       policy: "delete_on_settle",
       maximumHours: 24,
