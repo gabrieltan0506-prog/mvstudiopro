@@ -516,6 +516,11 @@ async function invokeOneGlmGateway(
       allow_fallbacks: false,
       ...(params.requireParameters ? { require_parameters: true } : {}),
     };
+    // 🔒 OpenRouter 私有的成本核算开关（0830 文档核实）：它的流式末帧文档只承诺
+    // token usage，**没承诺 usage.cost**。而 cost 是 OpenRouter 独有字段，
+    // 不回就等于 costUsd 静默变 0——不报错、不降级，账本从此少记一档 GLM 的钱。
+    // 这个键是 OpenRouter 专属，绝不下发给 EvoLink / DashScope（会 400）。
+    body.usage = { include: true };
   }
   /**
    * 🔒 全链流式（0830 实弹后立）。两个非流式死法，根因是同一个「太久没有字节流出」：
@@ -527,6 +532,9 @@ async function invokeOneGlmGateway(
    * 开 stream 后响应头立刻返回、字节持续流出，两边计时器都不触发。
    * 实证：同一份输入非流式 300 秒被掐，改流式后跑满 1821 秒正常交卷。
    */
+  // 全链流式（0830 用户拍板「全改成流式」）。
+  // stream_options 是 OpenAI 标准键；OpenRouter 文档说明它的 usage 本就自动在末帧发，
+  // 这个键对它是冗余但无害，对 DashScope / EvoLink 则是标准写法。
   body.stream = true;
   body.stream_options = { include_usage: true };
   const res = await fetch(url, {
