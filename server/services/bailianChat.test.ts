@@ -343,6 +343,38 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
       .toEqual(["http_error", "skipped_budget_exhausted"]);
   });
 
+  it("🔒 SSE 流式：分帧正文拼接、usage 与 finish_reason 从末帧取（0830 EvoLink 524 / undici 300s 修复）", async () => {
+    const sse = [
+      'data: {"model":"glm-5.3","choices":[{"delta":{"content":"{\\"ok\\":"}}]}',
+      'data: {"choices":[{"delta":{"content":"true}"}}]}',
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":11,"completion_tokens":22,"completion_tokens_details":{"reasoning_tokens":3},"cost":0.5}}',
+      "data: [DONE]",
+      "",
+    ].join("\n");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(sse, {
+      status: 200, headers: { "content-type": "text/event-stream" },
+    })));
+
+    const r = await invokeGlmJsonChatWithGatewayFallback({
+      system: "s", user: "u", gatewayPolicy: "glm_only", requireFinishReasonStop: true,
+    });
+    expect(r.choices?.[0]?.message?.content).toBe('{"ok":true}');
+    expect(r.choices?.[0]?.finish_reason).toBe("stop");
+    expect(r.usage?.completion_tokens).toBe(22);
+    expect(r.usage?.cost).toBe(0.5);
+  });
+
+  it("🔒 上游忽略 stream:true 回普通 JSON 时不许静默交白卷", async () => {
+    // 用 SSE 读取器去读普通 JSON 会读出空正文——静默拿不到结果是最危险的失败形态。
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(meteredBody(), {
+      status: 200, headers: { "content-type": "application/json" },
+    })));
+    const r = await invokeGlmJsonChatWithGatewayFallback({
+      system: "s", user: "u", gatewayPolicy: "glm_only",
+    });
+    expect(r.choices?.[0]?.message?.content).toBe(GOOD);
+  });
+
   it("首网关失败后若已 abort,不再调用下一网关", async () => {
     const ac = new AbortController();
     stubFetchSeq([

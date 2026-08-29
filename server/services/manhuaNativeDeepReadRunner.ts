@@ -3579,13 +3579,17 @@ export async function runManhuaNativeDeepReadBatch(params: {
       };
       /**
        * 整形**之前**的镜头总数，作为留存率闸的分母。
-       * 只数通过版（completeRawSegments），不数被标记版——标记版是同一时间区间的
-       * 另一个版本，把它算进分母会把分母虚高，反而放过真正的压碎。
+       *
+       * 🔴 必须先剔除 non_story_ad 再数（0830 审查 P0）：分子是整集卡，而整集卡按
+       * 提示词规则 3 **整行剔除广告镜**。分母若含广告就是拿「含广告」比「不含广告」，
+       * 广告占比一高就会把**一镜没压的诚实产出**判死。实测公式：健康去重留存 0.78 时，
+       * 广告占比 >36% 即误杀——真人剧有片头版权卡与贴片，正中这个区间。
+       *
+       * 只数通过版（completeRawSegments），不数被标记版：标记版是同一时间区间的另一个
+       * 版本，计进分母会把分母抬高、闸变得更严，可能误杀；漏杀比误杀可接受。
        */
-      const preStructuringShotCount = completeRawSegments.reduce(
-        (sum, raw) => sum + (Array.isArray(raw.shots) ? raw.shots.length : 0),
-        0,
-      );
+      const preStructuringShotCount = stripNonStoryAdShotsForEpisodeCard(completeRawSegments)
+        .rows.reduce((sum, raw) => sum + (Array.isArray(raw.shots) ? raw.shots.length : 0), 0);
       const gateEpisode = (payloads: ReadonlyArray<Record<string, unknown>>) =>
         assertNativeDeepReadEpisodeEvidence({
           episodeIndex: episode.episodeIndex,

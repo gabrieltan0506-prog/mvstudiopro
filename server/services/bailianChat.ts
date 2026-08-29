@@ -352,6 +352,65 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
   );
 }
 
+/**
+ * 读 SSE 流并还原成非流式同形的 JSON 字符串，**返回体形状与改流式前逐字一致**——
+ * 上游解析、usage 折算、finish_reason 判定全都不用改，只换了传输方式。
+ */
+async function readGlmSseStream(
+  body: ReadableStream<Uint8Array>,
+  maxResponseBytes?: number,
+): Promise<string> {
+  const cap = Math.max(
+    1_024,
+    Math.min(16 * 1024 * 1024, Math.floor(Number(maxResponseBytes) || 4 * 1024 * 1024)),
+  );
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let content = "";
+  let finishReason: string | null = null;
+  let usage: Record<string, unknown> | undefined;
+  let model = "";
+  let bytes = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    // 上限按**累计正文**算，不是按单帧；超限即刻停止读取，避免异常响应吃满内存。
+    if (bytes > cap) throw new Error("GLM 链响应超过处理上限");
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) continue;
+      const payload = trimmed.slice(5).trim();
+      if (!payload || payload === "[DONE]") continue;
+      let chunk: {
+        model?: string;
+        choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
+        usage?: Record<string, unknown>;
+      };
+      try {
+        chunk = JSON.parse(payload);
+      } catch {
+        continue;   // 半包留给下一轮拼；SSE 心跳/注释行同样跳过
+      }
+      const delta = chunk.choices?.[0]?.delta?.content;
+      if (typeof delta === "string") content += delta;
+      const fr = chunk.choices?.[0]?.finish_reason;
+      if (fr) finishReason = String(fr);
+      if (chunk.usage) usage = chunk.usage;
+      if (chunk.model) model = String(chunk.model);
+    }
+  }
+  return JSON.stringify({
+    model: model || undefined,
+    choices: [{ message: { content }, finish_reason: finishReason }],
+    usage,
+  });
+}
+
 async function invokeOneGlmGateway(
   params: GlmParams,
   url: string,
@@ -427,13 +486,32 @@ async function invokeOneGlmGateway(
       ...(params.requireParameters ? { require_parameters: true } : {}),
     };
   }
+  /**
+   * 🔒 全链流式（0830 实弹后立）。两个非流式死法，根因是同一个「太久没有字节流出」：
+   *   · EvoLink → Cloudflare 边缘等源站首字节约 100 秒上限 → **HTTP 524**（回 HTML 错误页）
+   *   · DashScope → Node 内置 fetch(undici) 的 headersTimeout **写死 300 秒**，
+   *     且与 AbortSignal 是两套计时器（AbortSignal 设 6 小时也管不住它）
+   *     → UND_ERR_HEADERS_TIMEOUT
+   * 本链的调用是 30 万字节输入 + 强制思考，首字节远超这两个阈值，非流式必死。
+   * 开 stream 后响应头立刻返回、字节持续流出，两边计时器都不触发。
+   * 实证：同一份输入非流式 300 秒被掐，改流式后跑满 1821 秒正常交卷。
+   */
+  body.stream = true;
+  body.stream_options = { include_usage: true };
   const res = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
     signal,
     body: JSON.stringify(body),
   });
-  const raw = await res.text();
+  // 🔒 按**响应类型**决定走哪条路径，不能只看「我发了 stream:true」——
+  // 上游若忽略该参数直接回普通 JSON，用 SSE 读取器会读出**空正文**并静默交白卷。
+  const isSse = /text\/event-stream/i.test(
+    typeof res.headers?.get === "function" ? String(res.headers.get("content-type") || "") : "",
+  );
+  const raw = res.ok && res.body && isSse
+    ? await readGlmSseStream(res.body, params.maxResponseBytes)
+    : await res.text();
   const responseHeader = (name: string): string =>
     typeof res.headers?.get === "function" ? String(res.headers.get(name) || "") : "";
   const providerRequestId = String(
