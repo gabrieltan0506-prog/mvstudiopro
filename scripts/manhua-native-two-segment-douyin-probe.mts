@@ -442,10 +442,19 @@ async function main() {
   // 拿旧口径跑这一轮，会把正常行为判成 FAIL——花一轮钱换一个错结论。
   // 新口径：重试本身只报不判；只有「三档温度用尽仍然没有落地的段」才是真失败。
   const landedSegments = new Set(parsedCards.map((row) => row.segmentIndex));
-  const exhausted = Array.from(attemptsBySegment.entries())
-    .filter(([index, attempts]) =>
-      attempts >= NATIVE_DEEP_READ_RETRY_TEMPERATURES.length && !landedSegments.has(index))
-    .map(([index, attempts]) => `第${index + 1}段用尽${attempts}发仍未落地`);
+  // 0830 审查修正：旧判据只看「发满三档还没落地」的段，会漏掉两类真失败——
+  // ① 关闭式失败（schema 错误直接抛，不进重试，发数 <3）
+  // ② 压根没发出 started 回执的段（切段/上传阶段就挂了，attemptsBySegment 里没有它）
+  // 判据改成对**全量段**遍历「有没有落地」，attempts 只进说明文字。
+  const exhausted = segments
+    .map((_, index) => index)
+    .filter((index) => !landedSegments.has(index))
+    .map((index) => {
+      const attempts = attemptsBySegment.get(index) || 0;
+      return attempts === 0
+        ? `第${index + 1}段未发出任何模型请求即失败（切段/上传阶段）`
+        : `第${index + 1}段发了${attempts}发仍未落地`;
+    });
   record("P8", "重试收敛（门禁标记后重试属设计行为，只看最终有没有落地）",
     modelReceipts.length === 0 ? "not_observed" : exhausted.length === 0 ? "pass" : "fail",
     modelReceipts.length === 0 ? "没有收到任何模型回执（回执通路可疑）"
@@ -471,16 +480,20 @@ async function main() {
     inFlight += event.delta;
     peakInFlight = Math.max(peakInFlight, inFlight);
   }
+  // 0830 审查修正：期望值必须扣掉缓存命中的段。旧版拿 min(cap, 总片数) 当期望，
+  // 缓存命中多时必判 FAIL，而它自己的说明文字却写着「属正常」——文案与判定打架，
+  // 还会把整体 acceptanceStatus 拉成 failed。改成按**实际发出请求的段数**算期望。
+  const dispatchedSegments = attemptsBySegment.size;
   const expectedFanOut = Math.min(
     modelConcurrency || NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY,
-    segments.length,
+    dispatchedSegments,
   );
   record("P10", "模型扇出真并发（不是 4 路批次串行）",
-    inFlightEvents.length === 0 ? "not_observed"
-      : peakInFlight >= Math.min(expectedFanOut, segments.length) ? "pass" : "fail",
-    inFlightEvents.length === 0 ? "没有带时间戳的模型回执"
-      : `峰值同时在飞 ${peakInFlight} 发 · 期望 ${expectedFanOut} 发 · 本集 ${segments.length} 片`
-        + `（缓存命中的段不发请求，命中多时峰值低于期望属正常）`);
+    dispatchedSegments === 0 ? "not_observed"
+      : peakInFlight >= expectedFanOut ? "pass" : "fail",
+    dispatchedSegments === 0 ? "本轮全部命中缓存，未发出任何模型请求"
+      : `峰值同时在飞 ${peakInFlight} 发 · 期望 ${expectedFanOut} 发`
+        + ` · 实际发出请求 ${dispatchedSegments} 段 / 本集 ${segments.length} 片`);
   record("P9", "临时视频零残留", temporaryVideoLeaks.length === 0 ? "pass" : "fail",
     `残留 ${temporaryVideoLeaks.length} 个`);
 

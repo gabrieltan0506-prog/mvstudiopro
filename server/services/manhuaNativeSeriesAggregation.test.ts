@@ -271,6 +271,9 @@ describe("原生精读系列结构化 · GLM-5.3 两档（0829 改线：EvoLink 
     await expect(invokeNativeSeriesAggregationModel(JSON.stringify({ episodes: [] })))
       .resolves.toEqual({
         raw: { ok: true },
+        // 0830 审查 P1-2：返回体带出实际交卷的网关与模型，回执才记得了真值
+        gateway: "evolink_glm",
+        model: "glm-5.3",
         inputTokens: 321,
         outputTokens: 45,
         reasoningTokens: 17,
@@ -349,10 +352,12 @@ describe("原生精读系列结构化 · GLM-5.3 两档（0829 改线：EvoLink 
     vi.stubGlobal("fetch", vi.fn(async () =>
       new Response(JSON.stringify(responses.shift()), { status: 200 })));
 
+    // 失败路径下取不到实际交卷身份，如实退回链路标签，不假装知道（P1-2 同批）
+    const fallbackIdentity = { gateway: "openrouter", model: "glm-5.3→z-ai/glm-5.3" };
     for (const expected of [
-      { inputTokens: 800, outputTokens: 131_072, reasoningTokens: 120_000, costUsd: 0.42 },
-      { inputTokens: 600, outputTokens: 90, reasoningTokens: 30, costUsd: 0.04 },
-      { inputTokens: 500, outputTokens: 80, reasoningTokens: 20, costUsd: 0.03 },
+      { ...fallbackIdentity, inputTokens: 800, outputTokens: 131_072, reasoningTokens: 120_000, costUsd: 0.42 },
+      { ...fallbackIdentity, inputTokens: 600, outputTokens: 90, reasoningTokens: 30, costUsd: 0.04 },
+      { ...fallbackIdentity, inputTokens: 500, outputTokens: 80, reasoningTokens: 20, costUsd: 0.03 },
     ]) {
       try {
         await invokeNativeSeriesAggregationModel("{}");

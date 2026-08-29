@@ -163,8 +163,9 @@ export type GlmParams = {
   reasoningEffort?: "low" | "medium" | "high" | "max";
   /**
    * 采样温度（0829 晚用户拍板，整形链用 0.8）。
-   * 省略＝不发这个键，保持各网关自身默认（EvoLink 默认 1.0）——
-   * 只有显式要求的调用方才改口径，不影响其他调用方。
+   * ⚠️ 省略**不等于**不发：省略时链路会补上链级默认 GLM_CHAIN_DEFAULT_TEMPERATURE，
+   * 因为「不发这个键」就是落到供应商默认 1.0，而本链全是结构化输出任务。
+   * **四档（含两个 Qwen 兜底档）一律显式发温度**，调用方可显式覆盖。
    * 用户原话：「temp=0.2 会太死板，改成 0.8 差不多」——整形要合并同指镜头、
    * 取信息更全的描述，是有判断力的活，压太低只会照抄不敢取舍。
    */
@@ -370,8 +371,8 @@ async function invokeOneGlmGateway(
       : params.reasoningEffort === "low" ? "low"
       : params.reasoningEffort === "medium" ? "medium"
       : EVOLINK_GLM_DEFAULT_REASONING_EFFORT;
-    // ⚠️ 不发 provider.require_parameters（OpenRouter 专属键）；
-    // ⚠️ 不发 temperature：与 OpenRouter 档保持同参，避免两档产出口径悄悄分叉。
+    // ⚠️ 不发 provider.require_parameters（OpenRouter 专属键）。
+    // temperature 由公共体统一发（链级默认 0.8），两档同参，不在这里另发。
   } else if (gateway === "evolink_qwen") {
     // EvoLink Qwen 档位 low|medium|xhigh(无 max);与扩写链同口径开顶档,
     // 且用 max_completion_tokens(传 max_tokens 会被静默忽略)
