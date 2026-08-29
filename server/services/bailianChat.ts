@@ -371,41 +371,72 @@ async function readGlmSseStream(
   let finishReason: string | null = null;
   let usage: Record<string, unknown> | undefined;
   let model = "";
-  let bytes = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    bytes += value.byteLength;
-    // 上限按**累计正文**算，不是按单帧；超限即刻停止读取，避免异常响应吃满内存。
-    if (bytes > cap) throw new Error("GLM 链响应超过处理上限");
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("data:")) continue;
-      const payload = trimmed.slice(5).trim();
-      if (!payload || payload === "[DONE]") continue;
-      let chunk: {
-        model?: string;
-        choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
-        usage?: Record<string, unknown>;
-      };
-      try {
-        chunk = JSON.parse(payload);
-      } catch {
-        continue;   // 半包留给下一轮拼；SSE 心跳/注释行同样跳过
-      }
-      const delta = chunk.choices?.[0]?.delta?.content;
-      if (typeof delta === "string") content += delta;
-      const fr = chunk.choices?.[0]?.finish_reason;
-      if (fr) finishReason = String(fr);
-      if (chunk.usage) usage = chunk.usage;
-      if (chunk.model) model = String(chunk.model);
+  let provider = "";
+  let rawBytes = 0;
+  /**
+   * 🔴 上限必须按**还原后的正文**算，不能按原始 SSE 字节（0830 审查 P0）：
+   * SSE 每个 token 一帧、每帧带 `data: ` 前缀与完整 chunk 信封，实测放大约 275 倍。
+   * 按原始字节算 → 默认 4 MiB 只够约 15,000 token，而整形链要 131,072 ——
+   * 会在跑了二三十分钟、两档全烧之后，被自己的上限掐断。
+   * 原始字节另设一条宽得多的护栏，只防真·失控流。
+   */
+  const rawCap = Math.max(cap * 64, 64 * 1024 * 1024);
+  const handleLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) return;
+    const payload = trimmed.slice(5).trim();
+    if (!payload || payload === "[DONE]") return;
+    let chunk: {
+      model?: string;
+      provider?: string;
+      choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
+      usage?: Record<string, unknown>;
+    };
+    try {
+      chunk = JSON.parse(payload);
+    } catch {
+      // 注：**不是**半包重试——半包由下面 lines.pop() 留到下一轮处理。
+      // 这里丢弃的是心跳、注释行等不可解析内容。
+      parseFailures += 1;
+      return;
     }
+    const delta = chunk.choices?.[0]?.delta?.content;
+    if (typeof delta === "string") content += delta;
+    if (Buffer.byteLength(content) > cap) throw new Error("GLM 链响应超过处理上限");
+    const fr = chunk.choices?.[0]?.finish_reason;
+    if (fr) finishReason = String(fr);
+    if (chunk.usage) usage = chunk.usage;
+    if (chunk.model) model = String(chunk.model);
+    // provider 在流式路曾整个丢失（审查 P1）：回执里「上游是谁」会静默变空白。
+    if (chunk.provider) provider = String(chunk.provider);
+  };
+  let parseFailures = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      rawBytes += value.byteLength;
+      if (rawBytes > rawCap) throw new Error("GLM 链响应超过处理上限");
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) handleLine(line);
+    }
+    // 🔴 收尾（审查 P1）：末帧后若不带换行，它会留在 buffer 里永不解析——
+    // 正文能拿到，但 finish_reason 变 null、usage 变 undefined：
+    // requireFinishReasonStop 会把成功的产出判死，账本同时静默归零。
+    buffer += decoder.decode();
+    if (buffer.trim()) handleLine(buffer);
+  } finally {
+    // 超限抛错时若不释放，这条响应体永远读不完、连接不归池（审查 P1）。
+    await reader.cancel().catch(() => undefined);
+  }
+  if (!content && parseFailures > 0) {
+    throw new Error(`GLM 链流式响应无法解析（${parseFailures} 帧解析失败）`);
   }
   return JSON.stringify({
     model: model || undefined,
+    provider: provider || undefined,
     choices: [{ message: { content }, finish_reason: finishReason }],
     usage,
   });

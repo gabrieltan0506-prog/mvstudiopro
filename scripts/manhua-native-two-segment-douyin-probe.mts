@@ -25,6 +25,7 @@ import {
   splitNativeDeepReadSegments,
 } from "../server/services/manhuaNativeDeepReadPlan.js";
 import { fetchDouyinAwemeDetailViaWebApi } from "../server/services/manhuaLearnDouyinWebApi.js";
+import { fetchManhua0996EpisodePlayback } from "../server/services/manhuaLearn0996Source.js";
 import {
   describeErrorChain,
   sanitizeSensitiveText,
@@ -40,9 +41,19 @@ const run = promisify(execFile);
 const SOURCE = String(
   process.argv.find((arg) => arg.startsWith("--url="))?.slice("--url=".length) || "",
 ).trim();
+/**
+ * 片源两类，**只有解析这一层不同**，下游切片/上传/模型/门禁/验收完全共用——
+ * 所以不另起一支探针，按域名选解析器（0830 用户点破「真人剧还分呀」）。
+ *   · 抖音（漫剧）→ web api
+ *   · 第三方站（真人剧/电影）→ 0996 解析链（站点白名单与出网校验在其内部）
+ */
+const SOURCE_HOST = (() => { try { return new URL(SOURCE).hostname; } catch { return ""; } })();
+const IS_DOUYIN = /(?:^|\.)douyin\.com$/i.test(SOURCE_HOST) || /modal_id=/.test(SOURCE);
 const VIDEO_ID = SOURCE.match(/(?:modal_id=|\/video\/)(\d{10,24})/)?.[1] || "";
-const PAGE_URL = VIDEO_ID ? `https://www.douyin.com/video/${VIDEO_ID}` : "";
-if (!PAGE_URL) throw new Error("缺少 --url=（抖音 /video/<id> 或带 modal_id 的链接）");
+const PAGE_URL = IS_DOUYIN
+  ? (VIDEO_ID ? `https://www.douyin.com/video/${VIDEO_ID}` : "")
+  : SOURCE;
+if (!PAGE_URL) throw new Error("缺少 --url=（抖音 /video/<id>，或第三方站单集播放页）");
 if (process.env.FLY_APP_NAME !== "mvstudiopro") throw new Error("本探针只允许在 Fly 容器内运行");
 
 /** 🔓 并发上限由命令行给，不写死（用户令「上限应该是我来定的」）。省略＝走生产默认。 */
@@ -65,7 +76,7 @@ const seriesKey = `probe_douyin_${runStamp}`;
  */
 const makeSourceDigest = (durationSec: number): string => createHash("sha256")
   .update(JSON.stringify({
-    sourceVideoId: VIDEO_ID,
+    sourceVideoId: VIDEO_ID || PAGE_URL,
     range: [0, Math.round(durationSec)],
     version: 2,
   }))
@@ -161,6 +172,17 @@ async function fetchInfoAnonymously(): Promise<Record<string, unknown>> {
  * 匿名 yt-dlp 只作最后兜底（它自身要求 fresh cookies，通常也过不去）。
  */
 async function resolveSourceMedia(): Promise<{ mediaUrl: string; durationSec: number; kindZh: string }> {
+  if (!IS_DOUYIN) {
+    const playback = await fetchManhua0996EpisodePlayback(PAGE_URL);
+    if (!playback.playbackUrl) throw new Error("第三方站未解析到播放地址");
+    return {
+      mediaUrl: playback.playbackUrl,
+      durationSec: await probeNativeDeepReadDurationSec(
+        playback.playbackUrl, undefined, undefined, playback.referer,
+      ),
+      kindZh: `第三方站 0996 解析（候选 ${playback.playbackUrls.length} 个）`,
+    };
+  }
   const referer = "https://www.douyin.com/";
   try {
     const detail = await fetchDouyinAwemeDetailViaWebApi(VIDEO_ID);
@@ -240,7 +262,10 @@ async function main() {
       seriesKey,
       episodeIndex: 1,
       sourceDigest,
-      resolveNodes: async () => [{ url: mediaUrl, referer: "https://www.douyin.com/" }],
+      resolveNodes: async () => [{
+        url: mediaUrl,
+        referer: IS_DOUYIN ? "https://www.douyin.com/" : `${new URL(PAGE_URL).origin}/`,
+      }],
       segments,
       sourceDurationSec: coveredEnd,
       hintZh: "抖音漫剧完整视听证据探针；按真实镜头、表演、光影、声音和叙事变化记录",
@@ -530,7 +555,7 @@ async function main() {
     planVersion: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
     runId: seriesKey,
     sourceDigest,
-    sourceVideoId: VIDEO_ID,
+    sourceVideoId: VIDEO_ID || PAGE_URL,
     sourceDurationSec: durationSec,
     ranges: segments.map((s) => [s.startSec, s.endSec]),
     status: runError ? "failed" : "completed",

@@ -375,6 +375,37 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     expect(r.choices?.[0]?.message?.content).toBe(GOOD);
   });
 
+  it("🔒 末帧不带换行也必须收到 finish_reason / usage / provider（审查 P1 三缺口）", async () => {
+    const sse = 'data: {"provider":"Z.AI","choices":[{"delta":{"content":"{\\"ok\\":true}"}}]}\n'
+      + 'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":9,"completion_tokens":18,"cost":0.25}}';
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(sse, {
+      status: 200, headers: { "content-type": "text/event-stream" },
+    })));
+    const r = await invokeGlmJsonChatWithGatewayFallback({
+      system: "s", user: "u", gatewayPolicy: "glm_only", requireFinishReasonStop: true,
+    });
+    expect(r.choices?.[0]?.message?.content).toBe('{"ok":true}');
+    expect(r.choices?.[0]?.finish_reason).toBe("stop");   // 旧实现：null → 成功产出被判死
+    expect(r.usage?.cost).toBe(0.25);                      // 旧实现：undefined → 账本归零
+    expect(r.provider).toBe("Z.AI");                       // 旧实现：整个丢失
+  });
+
+  it("🔒 上限按还原正文算，不按原始 SSE 字节（275 倍放大会把自己掐死）", async () => {
+    // 每 token 一帧、每帧一个完整信封：原始字节远大于正文。
+    const frames = Array.from({ length: 400 }, () =>
+      'data: {"choices":[{"delta":{"content":"甲"}}],"id":"chatcmpl-xxxxxxxxxxxxxxxxxxxx","object":"chat.completion.chunk","provider":"Z.AI","usage":null}');
+    frames.push('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}', "data: [DONE]", "");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(frames.join("\n"), {
+      status: 200, headers: { "content-type": "text/event-stream" },
+    })));
+    // 正文仅 400 字（约 1.2KB），原始 SSE 约 60KB。上限设 8KB：
+    // 按正文算 → 过；按原始字节算 → 被自己掐死。
+    const r = await invokeGlmJsonChatWithGatewayFallback({
+      system: "s", user: "u", gatewayPolicy: "glm_only", maxResponseBytes: 8 * 1024,
+    });
+    expect(r.choices?.[0]?.message?.content).toHaveLength(400);
+  });
+
   it("首网关失败后若已 abort,不再调用下一网关", async () => {
     const ac = new AbortController();
     stubFetchSeq([
