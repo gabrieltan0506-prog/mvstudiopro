@@ -109,6 +109,13 @@ export const nativeDeepReadSegmentSchema = z
       detailZh: z.string().trim().min(1),
       segmentIndex: z.number().int().min(0).optional(),
     }).strict()).optional(),
+    /**
+     * 上游 finishReason=MAX_TOKENS 时由 runner 写入并随段卡持久化。
+     *
+     * 必须落进段卡本体：只靠外层信封的 finish 字段，缓存命中与断点恢复后
+     * 截断标记就凭空消失了（advisory 文案还在，结构化字段却恒为 false）。
+     */
+    truncated: z.boolean().optional(),
     beatStructureZh: z.string().trim().default(""),
     moodArcZh: z.string().trim().optional(),
     reusableZh: z.string().trim().optional(),
@@ -138,6 +145,33 @@ export type NativeDeepReadAdvisory = {
   detailZh: string;
   segmentIndex?: number;
 };
+
+/**
+ * advisory 去重：同一条建议会从段卡、段级门禁、集级门禁三处汇进来，
+ * 不去重面板上就是同一句话刷三遍。按 code + segmentIndex + detailZh 判同。
+ * 顺序按段号稳定排序，段号缺失的排在最后（不改写它们的相对顺序）。
+ */
+export function dedupeNativeDeepReadAdvisories(
+  rows: readonly NativeDeepReadAdvisory[],
+): NativeDeepReadAdvisory[] {
+  const seen = new Set<string>();
+  const out: NativeDeepReadAdvisory[] = [];
+  for (const row of rows) {
+    const code = String(row?.code || "").trim();
+    const detailZh = String(row?.detailZh || "").trim();
+    if (!code || !detailZh) continue;
+    const segmentIndex = Number.isInteger(row?.segmentIndex) ? row.segmentIndex : undefined;
+    const key = `${code}\u0000${segmentIndex ?? ""}\u0000${detailZh}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(segmentIndex === undefined ? { code, detailZh } : { code, detailZh, segmentIndex });
+  }
+  return out.sort((a, b) => {
+    const left = a.segmentIndex ?? Number.MAX_SAFE_INTEGER;
+    const right = b.segmentIndex ?? Number.MAX_SAFE_INTEGER;
+    return left - right;
+  });
+}
 
 export type NativeDeepReadOutput = {
   beatGrid: ManhuaViralTemplateBeat[];
@@ -197,7 +231,7 @@ const cut = (v: string | undefined, max: number): string | undefined => {
  * 编剧注入时按 atSec 排序就乱了。
  */
 export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepReadOutput {
-  const parsed = rows.map((row) => {
+  const parsedRows = rows.map((row, sourceIndex) => {
     const outer = (row || {}) as {
       text?: unknown;
       startSec?: unknown;
@@ -207,34 +241,47 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
     if (outer.failed) return null;
     // 0829 起 finish=length（上游截断）不再整段丢弃：前半内容是已付费的有效证据，
     // 能解析就保留并打 truncated 标记，由 advisory 告诉人「这段缺尾」。
-    const truncated = String(outer.finish || "") === "length"
+    const outerTruncated = String(outer.finish || "") === "length"
       || String(outer.finish || "").toUpperCase() === "MAX_TOKENS";
     const rawInner = typeof outer.text === "string" ? safeJson(outer.text) : outer.text;
     if (!rawInner) return null;
     const seg = nativeDeepReadSegmentSchema.safeParse(rawInner);
     if (!seg.success) return null;
     return {
+      // 真实段号取**入参下标**，不是过滤后数组的下标：seg0 失败时，
+      // 用过滤后下标会把 seg1 的提示挂到「第1段」，advisory 全体错位。
+      sourceIndex,
       seg: seg.data,
       offsetSec: Math.max(0, Math.floor(Number(outer.startSec) || 0)),
-      truncated,
+      truncated: outerTruncated || seg.data.truncated === true,
     };
   });
-  const ok = parsed.filter(Boolean) as Array<{
+  const ok = parsedRows.filter(Boolean) as Array<{
+    sourceIndex: number;
     seg: NativeDeepReadSegment;
     offsetSec: number;
     truncated: boolean;
   }>;
-  // 段卡自带的 advisory 原样汇总；截断段额外补一条 truncated，缺尾在面板上可见。
-  const advisories: NativeDeepReadAdvisory[] = ok.flatMap(({ seg, truncated }, index) => [
-    ...(seg.advisories ?? []),
-    ...(truncated
-      ? [{
-        code: "truncated",
-        detailZh: `第${index + 1}段上游输出被截断，已保留可解析前缀（镜头表可能缺尾）`,
-        segmentIndex: index,
-      }]
-      : []),
-  ]);
+  // 段卡自带的 advisory 原样汇总；截断段补一条 truncated（段卡里已有就不重复补）。
+  const advisories: NativeDeepReadAdvisory[] = dedupeNativeDeepReadAdvisories(
+    ok.flatMap(({ seg, truncated, sourceIndex }) => {
+      const own = (seg.advisories ?? []).map((row) => ({
+        ...row,
+        segmentIndex: Number.isInteger(row.segmentIndex) ? row.segmentIndex : sourceIndex,
+      }));
+      const alreadyMarked = own.some((row) => row.code === "truncated");
+      return [
+        ...own,
+        ...(truncated && !alreadyMarked
+          ? [{
+            code: "truncated",
+            detailZh: `第${sourceIndex + 1}段上游输出被截断，已保留可解析前缀（镜头表可能缺尾）`,
+            segmentIndex: sourceIndex,
+          }]
+          : []),
+      ];
+    }),
+  );
 
   let droppedCount = 0;
   const allBeats: ManhuaViralTemplateBeat[] = ok.flatMap(({ seg, offsetSec }) => {

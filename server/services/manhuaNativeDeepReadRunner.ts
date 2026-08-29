@@ -22,6 +22,7 @@ import { execFile } from "node:child_process";
 import { readFile, stat, statfs, unlink } from "node:fs/promises";
 import { Agent, fetch as undiciFetch, type Dispatcher } from "undici";
 import {
+  dedupeNativeDeepReadAdvisories,
   mapNativeDeepReadSegments,
   nativeDeepReadSegmentSchema,
   type NativeDeepReadAdvisory,
@@ -343,7 +344,9 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
  * 冻结由 manhuaNativeDeepReadRunner.test.ts「参数冻结锁」逐字段断言看守。
  */
 export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
-  temperature: 0.65,
+  // 0829 晚用户拍板：首发温度回到 0.7。v10 定 0.65 时提示词刚软化，没有为软化后的
+  // 提示词重新标定过温度；0826 实测 0.65+硬约束=28 镜躺平、0.75+软边界=100/102 镜。
+  temperature: 0.7,
   maxOutputTokens: 65_536,
   candidateCount: 1,
   audioTimestamp: true,
@@ -355,12 +358,16 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
 } as const;
 
 /**
- * 同一 Vertex 分片的固定两档尝试：0.65 首发、0.60 复议；不得静默换供应商。
- * 0829 起**只有真失败**（HTTP 错误 / JSON 彻底解析不了）才走这条梯度——
- * 密度与覆盖类判定已转 advisory，不再重买（0829 实证：一集 6 段拒收重买 3 段，白烧 ¥20.5）。
+ * 同一 Vertex 分片的固定三档尝试：0.70 首发、0.65 复议、0.60 收口；不得静默换供应商。
+ *
+ * 0829 晚用户拍板恢复三档（v10 一度收成两档）。语义仍是 0829 上午定的那套：
+ * **只有真失败与硬门禁**才走这条梯度——密度、覆盖、音轨厚度类判定已转 advisory，
+ * 不再重买（0829 实证：一集 6 段拒收重买 3 段，白烧 ¥20.5）。
+ * 硬门禁（17 字段 / 五维五键 / 30 秒上限 / 离谱地板）保留重试：带拒因重试正是让模型
+ * 把超长镜拆开的修复机制（0828《花开锦绣》seg1 吃一次门禁、重试即过）。
  * 用户主动中止不是失败，不进入重试。
  */
-export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.65, 0.6] as const;
+export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.7, 0.65, 0.6] as const;
 export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 60_000;
 export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.6;
 
@@ -370,10 +377,10 @@ export const NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG = {
   temperature: NATIVE_DEEP_READ_RETRY_TEMPERATURES[1],
 } as const;
 
-/** 兼容导出：两档梯度后不再有第三次尝试，值收口到温度下限。 */
+/** 第三次（末次）尝试参数：收口到温度下限。 */
 export const NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG = {
   ...NATIVE_DEEP_READ_GENERATION_CONFIG,
-  temperature: NATIVE_DEEP_READ_TEMPERATURE_MIN,
+  temperature: NATIVE_DEEP_READ_RETRY_TEMPERATURES[2],
 } as const;
 
 /** 响应体上限：模型异常时可能吐超大 body，不设限会把内存吃干 */
@@ -541,7 +548,7 @@ export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
  * v4（0826 拍板）：视觉调用换 Vertex Gemini 3.1 Pro 从 GCS 直读、每段一次调用、
  * 音轨同调直出、双密度门禁。计划口径与采样语义全变——旧确认码必须全废。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v10-advisory-gates" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v11-episode-advisory" as const;
 
 /** 0827 实弹口径：生产 300 秒分片保持 10fps；仅旧数据超 300 秒时降为 5fps。 */
 export function resolveNativeDeepReadRequestFps(totalDurationSec: number): number {
@@ -1785,24 +1792,49 @@ export function assertNativeDeepReadSegmentDensity(input: {
   endSec: number;
   hasAudio: boolean;
   raw: Record<string, unknown>;
+  /**
+   * 上游 finishReason=MAX_TOKENS：本段响应被截断，只保留了可解析前缀。
+   * 截断段走豁免通道（见下方 classification 分支），其余硬门一视同仁。
+   */
+  truncated?: boolean;
 }): { raw: Record<string, unknown>; advisories: NativeDeepReadAdvisory[] } {
   const lenSec = Math.max(1, Math.round(input.endSec - input.startSec));
   const labelZh = `第${input.segmentIndex + 1}段`;
   const segmentIndex = input.segmentIndex;
+  const truncated = input.truncated === true;
   const advisories: NativeDeepReadAdvisory[] = [];
   const note = (code: string, detailZh: string) =>
     advisories.push({ code, detailZh, segmentIndex });
 
-  // 硬门禁（0829 用户裁决，不转 advisory）：五维分类五键齐全。
+  /**
+   * 硬门禁（0829 用户裁决，不转 advisory）：五维分类五键齐全。
+   *
+   * 🔓 截断段豁免（0829 晚）：`classification` 在 responseSchema 里排在**最末**，
+   * MAX_TOKENS 一截必然先截掉它——拿这道门去卡截断段，等于「保留截断前缀」这条
+   * 从来没生效过（0829 实证 6 片截 2 片，一集 4–8 片，截断是常态不是意外）。
+   * 豁免只对 classification / beatStructureZh 这两个「段尾才产出」的栏位生效；
+   * 逐镜 17 字段、30 秒上限、zod 结构对截断段照样硬拒——镜头证据本身必须完整。
+   * 兜底在集级：GLM 收口按 story 输入并集重算五维，集级仍严格校验五键齐全。
+   */
   const rawClassification = input.raw.classification;
-  if (!rawClassification || typeof rawClassification !== "object" || Array.isArray(rawClassification)) {
-    throw gateError(`${labelZh} classification 缺失`);
-  }
-  if (!hasManhuaTemplateClassificationFields(rawClassification)) {
+  const classificationMissing = !rawClassification
+    || typeof rawClassification !== "object"
+    || Array.isArray(rawClassification);
+  if (classificationMissing) {
+    if (!truncated) throw gateError(`${labelZh} classification 缺失`);
+    note(
+      "truncated_classification_missing",
+      `${labelZh}因输出截断缺 classification，已保留镜头证据（五维由整集卡按并集重算）`,
+    );
+  } else if (!hasManhuaTemplateClassificationFields(rawClassification)) {
     const row = rawClassification as Record<string, unknown>;
     const key = MANHUA_TEMPLATE_CLASSIFICATION_KEYS.find((candidate) =>
       !Object.prototype.hasOwnProperty.call(row, candidate) || !Array.isArray(row[candidate]));
-    throw gateError(`${labelZh} classification.${key || "字段"} 缺失或不是数组`);
+    if (!truncated) throw gateError(`${labelZh} classification.${key || "字段"} 缺失或不是数组`);
+    note(
+      "truncated_classification_partial",
+      `${labelZh}因输出截断，classification.${key || "字段"} 不完整，已保留镜头证据`,
+    );
   }
   if (input.hasAudio) {
     const rawAudioRows = Array.isArray(input.raw.audioResolution)
@@ -1951,7 +1983,10 @@ export function assertNativeDeepReadEpisodeEvidence(input: {
   hasAudio: boolean;
   /** 确定性拼接时为逐段卡数组；GLM 整形后为单张合成卡。 */
   rawSegments: ReadonlyArray<Record<string, unknown>>;
-}): void {
+}): NativeDeepReadAdvisory[] {
+  const episodeAdvisories: NativeDeepReadAdvisory[] = [];
+  const noteEpisode = (code: string, detailZh: string) =>
+    episodeAdvisories.push({ code, detailZh });
   if (!input.rawSegments.length) {
     throw new Error(`第${input.episodeIndex}集没有分段产出，整集拒绝入库`);
   }
@@ -2000,14 +2035,28 @@ export function assertNativeDeepReadEpisodeEvidence(input: {
   if (storyShots.length === 0 || storyDurationSec < 1) {
     throw new Error(`第${input.episodeIndex}集没有可学习的剧情镜头（招商广告已排除），整集拒绝入库`);
   }
-  // 0829 用户裁决：集级与段级同口径——只有低于离谱地板才拒收，
-  // 介于离谱地板与建议线之间的只是密度偏低，照收（段级 advisory 已记明细）。
+  /**
+   * 🔓 集级密度门禁全部降 advisory（0829 晚用户拍板）。
+   *
+   * 一集切 4–8 片、每片 300 秒。集级这些密度闸**逐片**查一遍，等于给一集
+   * 4–8 次机会把已付费的整集（¥50 上下）判死；而每一片在段级早已各自卡过一遍。
+   *
+   * 更硬的证据是算术：段级「尾片 <300 秒免镜数门禁」是用户明令，集级却把尾片
+   * 算进分母——8 片实算，7 个满片各 30 镜 + 尾片 12 镜 = 222，集级地板
+   * ceil(2278/10) = 228，**每片都合规，整集照死**。集级算的还是 GLM 去重之后的卡，
+   * 3–7 个分片边界每个都会减镜，地板却按没去重的标准卡。这是重复计算，不是把关。
+   *
+   * 集级保留的硬闸只剩**跟切几片无关的结构完整性**：逐镜 17 字段、钟表秒位、
+   * 残留 non_story_ad 行、覆盖空档、音轨分片连续、音轨字段缺失、音轨 zod 无效。
+   * 密度类（镜数地板、音轨段数、cue 数）一律记 advisory 交人判断。
+   */
   const sanityFloor = Math.ceil(
     Math.max(1, storyDurationSec) / NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC,
   );
   if (storyShots.length < sanityFloor) {
-    throw new Error(
-      `第${input.episodeIndex}集剧情镜头仅 ${storyShots.length} 个，低于离谱地板 ${sanityFloor}（招商广告不计入），整集拒绝入库`,
+    noteEpisode(
+      "episode_shot_density_low",
+      `第${input.episodeIndex}集剧情镜头 ${storyShots.length} 个，低于整集参考地板 ${sanityFloor}（招商广告不计入）；段级已逐片记明细，仅提示不拒收`,
     );
   }
   if (input.hasAudio) {
@@ -2017,18 +2066,20 @@ export function assertNativeDeepReadEpisodeEvidence(input: {
       .sort((a, b) => Number(a.chunkIndex) - Number(b.chunkIndex));
     const chunkIndexes = entries.map((row) => Number(row.chunkIndex));
     const expected = input.segments.map((_, index) => index);
+    // 结构闸（保持硬拒）：少一片音轨就是丢了证据，不是「密度低」。
     if (JSON.stringify(chunkIndexes) !== JSON.stringify(expected)) {
       throw new Error(`第${input.episodeIndex}集音轨分段不完整，整集拒绝入库`);
     }
-    // 门禁永远在 GLM 之后再跑：整形只管结构干净，音轨厚度不达标照拒（宁缺勿滥）。
     for (const entry of entries) {
-      const segment = input.segments[Number(entry.chunkIndex)]!;
+      const chunkIndex = Number(entry.chunkIndex);
+      const segment = input.segments[chunkIndex]!;
       const lenSec = Math.max(1, Math.round(segment.endSec - segment.startSec));
       const floors = resolveNativeDeepReadSegmentFloors(lenSec);
+      // 结构闸（保持硬拒）：字段缺失与 zod 无效＝数据不可用。
       try {
         assertRawAudioAnalysisFieldPresence(
           entry.analysis,
-          `第${input.episodeIndex}集第${Number(entry.chunkIndex) + 1}段`,
+          `第${input.episodeIndex}集第${chunkIndex + 1}段`,
         );
       } catch (presenceError) {
         throw new Error(
@@ -2037,19 +2088,26 @@ export function assertNativeDeepReadEpisodeEvidence(input: {
       }
       const parsed = manhuaNativeAudioChunkAnalysisSchema.safeParse(entry.analysis);
       if (!parsed.success) {
-        throw new Error(`第${input.episodeIndex}集第${Number(entry.chunkIndex) + 1}段音轨结构无效，整集拒绝入库`);
+        throw new Error(`第${input.episodeIndex}集第${chunkIndex + 1}段音轨结构无效，整集拒绝入库`);
       }
+      // 密度闸 → advisory：环境音也算一段，安静段落只有 1 段是**真实状态**。
+      // 用户 0829 明令「音轨侧不设任何拒收线」；这里曾是那条令唯一没落实到的地方。
       const cueCount = parsed.data.audioTrack.reduce((sum, track) => sum + track.cues.length, 0);
-      if (
-        parsed.data.audioTrack.length < floors.minAudioTracks
-        || cueCount < floors.minAudioCues
-      ) {
-        throw new Error(
-          `第${input.episodeIndex}集第${Number(entry.chunkIndex) + 1}段音轨密度低于地板线，整集拒绝入库`,
+      if (parsed.data.audioTrack.length < floors.minAudioTracks) {
+        noteEpisode(
+          "episode_audio_track_thin",
+          `第${chunkIndex + 1}段音轨仅 ${parsed.data.audioTrack.length} 段，低于建议地板 ${floors.minAudioTracks}（安静段落属正常，仅提示）`,
+        );
+      }
+      if (cueCount < floors.minAudioCues) {
+        noteEpisode(
+          "episode_audio_cue_thin",
+          `第${chunkIndex + 1}段声音事件仅 ${cueCount} 条，低于建议地板 ${floors.minAudioCues}（仅提示）`,
         );
       }
     }
   }
+  return dedupeNativeDeepReadAdvisories(episodeAdvisories);
 }
 
 /* ────────────────── 段规格前置校验 ────────────────── */
@@ -2915,8 +2973,11 @@ export async function runManhuaNativeDeepReadBatch(params: {
             endSec: segment.endSec,
             hasAudio,
             raw,
+            truncated,
           });
-          const segmentAdvisories: NativeDeepReadAdvisory[] = [
+          // 截断标记必须落进段卡本体：只留在外层信封里，缓存命中/断点恢复后就没了。
+          if (truncated) raw.truncated = true;
+          const segmentAdvisories = dedupeNativeDeepReadAdvisories([
             ...(truncated
               ? [{
                 code: "truncated",
@@ -2926,7 +2987,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
               }]
               : []),
             ...gated.advisories,
-          ];
+          ]);
           // advisory 的真实生产点：写进段卡 raw（随缓存/证据持久化）、发段级回执、
           // 再由 buildCommittedSnapshot / 整集装配汇总进 provenance。
           if (segmentAdvisories.length) {
@@ -3286,8 +3347,11 @@ export async function runManhuaNativeDeepReadBatch(params: {
           stripNonStoryAdShotsForEpisodeCard(annotateSegmentRows()).excludedAdRanges;
         let structuredRaw = await glmStructure();
         assertGlmAdRangesMatchDeterministic(structuredRaw, deterministicAdRanges, episode.episodeIndex);
+        // 集级门禁现在也产 advisory（密度类全降级），必须接住汇进 provenance，
+        // 否则「本集音轨第3段仅1段」这种提示在面板上根本看不到。
+        let episodeGateAdvisories: NativeDeepReadAdvisory[] = [];
         try {
-          gateEpisode([structuredRaw]);
+          episodeGateAdvisories = gateEpisode([structuredRaw]);
         } catch (structuringGateFailure) {
           if (params.abortSignal?.aborted) throw structuringGateFailure;
           const rejectedReasonZh = (structuringGateFailure instanceof Error
@@ -3300,7 +3364,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
           structuredRaw = await glmStructure(rejectedReasonZh);
           assertGlmAdRangesMatchDeterministic(structuredRaw, deterministicAdRanges, episode.episodeIndex);
           // 重整后门禁再跑一遍，再不过才拒收。
-          gateEpisode([structuredRaw]);
+          episodeGateAdvisories = gateEpisode([structuredRaw]);
         }
         const episodeRows: Array<Record<string, unknown>> = [structuredRaw];
         // 确定性拼接路与 GLM 整形路统一在此注入 chunkSpans：整集卡携带
@@ -3323,7 +3387,10 @@ export async function runManhuaNativeDeepReadBatch(params: {
         const committedSnapshot = committedIndexes.length === segmentCount
           ? buildCommittedSnapshot()
           : undefined;
-        const episodeAdvisories = collectAdvisories();
+        const episodeAdvisories = dedupeNativeDeepReadAdvisories([
+          ...collectAdvisories(),
+          ...episodeGateAdvisories,
+        ]);
         if (episodeAdvisories.length) {
           console.info(
             `[nativeDeepRead] 第${episode.episodeIndex}集改进建议 ${episodeAdvisories.length} 条：`
@@ -3337,6 +3404,10 @@ export async function runManhuaNativeDeepReadBatch(params: {
             // provenance 里的 advisory 真值：整集卡合并（含 GLM 整形）可能不带段卡
             // 的 advisories 字段，这里用段级汇总覆盖，保证面板一定看得到。
             advisories: episodeAdvisories.length ? episodeAdvisories : undefined,
+            // 同理：整集卡是 GLM 产物，本身没有 truncated 标记。本集只要有任何一片
+            // 被截断过，整集就必须如实标 truncated，否则「完整」与「缺了尾」长得一样。
+            truncated: mapped.truncated
+              || episodeAdvisories.some((row) => row.code.startsWith("truncated")),
             segmentCount,
             failedSegmentCount: 0,
             attemptedSegments: segmentCount,
@@ -3454,6 +3525,11 @@ export async function runManhuaNativeDeepRead(params: {
   abortSignal?: AbortSignal;
   /** 仅获授权证据探针使用：保留 GCS 视频分片。 */
   preservePreparedVideos?: boolean;
+  /**
+   * 逐段/整集模型回执。**必须转发给 batch**——此前单集入口没声明也没转发，
+   * 走这条路的调用方（含验收探针）一条回执都拿不到，只能去翻 result 里的私有字段。
+   */
+  onModelReceipt?: (receipt: NativeDeepReadVisualModelReceipt) => void | Promise<void>;
 }, deps: NativeDeepReadBatchRunnerDeps = defaultBatchRunnerDeps): Promise<NativeDeepReadRunResult> {
   const duration = Number(params.sourceDurationSec);
   if (!Number.isFinite(duration) || duration <= 0) {
@@ -3471,6 +3547,7 @@ export async function runManhuaNativeDeepRead(params: {
     abortSignal: params.abortSignal,
     segmentCacheSeriesKey: params.seriesKey,
     preservePreparedVideos: params.preservePreparedVideos,
+    onModelReceipt: params.onModelReceipt,
   }, deps);
   const only = batch.episodes[0];
   if (!only) throw new Error("原生精读没有返回集卡");

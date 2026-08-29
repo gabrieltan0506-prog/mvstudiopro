@@ -423,3 +423,73 @@ describe("音频广告过滤只认真实段界（chunkSpans），禁猜起点", 
   });
 });
 
+
+describe("v11 · advisory 段号与 truncated 落盘", () => {
+  const shot = (startSec: number, endSec: number) => ({
+    startSec,
+    endSec,
+    shotSizeZh: "特写",
+    actionZh: `动作${startSec}`,
+    evidenceRole: "story",
+  });
+  const segRow = (input: {
+    startSec: number;
+    finish?: string;
+    failed?: boolean;
+    inner?: Record<string, unknown>;
+  }) => ({
+    startSec: input.startSec,
+    finish: input.finish ?? "stop",
+    ...(input.failed ? { failed: true } : {}),
+    text: JSON.stringify({
+      beatStructureZh: "憋4秒后爆",
+      shots: [shot(0, 30)],
+      ...(input.inner ?? {}),
+    }),
+  });
+
+  it("seg0 失败时，seg1 的截断提示必须挂在第2段（不能用过滤后下标）", () => {
+    const out = mapNativeDeepReadSegments([
+      segRow({ startSec: 0, failed: true }),
+      segRow({ startSec: 300, finish: "length" }),
+    ]);
+    const truncatedRows = (out.advisories ?? []).filter((row) => row.code === "truncated");
+    expect(truncatedRows).toHaveLength(1);
+    expect(truncatedRows[0]!.segmentIndex).toBe(1);
+    expect(truncatedRows[0]!.detailZh).toContain("第2段");
+  });
+
+  it("段卡自带 truncated:true（缓存命中路径）同样算截断，不依赖外层 finish", () => {
+    const out = mapNativeDeepReadSegments([
+      segRow({ startSec: 0, inner: { truncated: true } }),
+    ]);
+    expect(out.truncated).toBe(true);
+    expect((out.advisories ?? []).some((row) => row.code === "truncated")).toBe(true);
+  });
+
+  it("段卡已带 truncated advisory 时不重复补第二条", () => {
+    const out = mapNativeDeepReadSegments([
+      segRow({
+        startSec: 0,
+        finish: "length",
+        inner: {
+          truncated: true,
+          advisories: [{ code: "truncated", detailZh: "第1段被截断", segmentIndex: 0 }],
+        },
+      }),
+    ]);
+    expect((out.advisories ?? []).filter((row) => row.code === "truncated")).toHaveLength(1);
+  });
+
+  it("段卡自带 advisory 缺 segmentIndex 时按入参下标补全", () => {
+    const out = mapNativeDeepReadSegments([
+      segRow({ startSec: 0 }),
+      segRow({
+        startSec: 300,
+        inner: { advisories: [{ code: "audio_track_thin", detailZh: "音轨仅 1 段" }] },
+      }),
+    ]);
+    const thin = (out.advisories ?? []).find((row) => row.code === "audio_track_thin");
+    expect(thin?.segmentIndex).toBe(1);
+  });
+});
