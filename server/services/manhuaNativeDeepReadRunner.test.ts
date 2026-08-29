@@ -1111,7 +1111,8 @@ describe("整集卡广告剔除（段卡→整集卡合并层，原始分段卡�
     // 同样的缺口没有区间账目：照旧按空档拒收（分段卡门禁行为不变的对照）
     const noLedger: Record<string, unknown> = { ...rows[0]! };
     delete noLedger.excludedAdRanges;
-    expect(gate([noLedger])).toThrow("空档或重叠");
+    // 0829 晚：空档与重叠已拆成两条明确报错（修法相反，报同一句会让修复轮乱猜）
+    expect(gate([noLedger])).toThrow("存在空档");
     // end<=start 属非法区间账目，整集拒收
     const badLedger: Record<string, unknown> = {
       ...rows[0]!,
@@ -1190,7 +1191,7 @@ describe("GLM 结构化整形提示词纪律", () => {
     expect(prompt.system).toContain("禁止虚构");
     expect(prompt.system).toContain(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH);
     expect(prompt.system).toContain("连续表演或连续剧情允许合理合并相邻证据");
-    expect(prompt.system).toContain("单条证据不得超过 30 秒");
+    expect(prompt.system).toContain("超过 30 秒");
     expect(prompt.system).toContain("不得丢失时间轴覆盖");
     expect(prompt.system).toContain("并集去重");
     expect(prompt.system).toContain("钟表式秒位");
@@ -1200,7 +1201,10 @@ describe("GLM 结构化整形提示词纪律", () => {
     expect(prompt.user).toContain("拆分边界至少相隔 1 秒");
     expect(prompt.user).toContain("不得删除仍需保留的");
     expect(prompt.system).toContain("emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh");
-    expect(prompt.system).toContain("至少两个维度");
+    // 0829 晚：删掉「至少两个维度」这个数量下限——数字目标只会逼模型编造凑数
+    // （0826 实弹：安静段落被逼出不存在的声音事件）。改成有证据就写、没有写 []。
+    expect(prompt.system).not.toContain("至少两个维度");
+    expect(prompt.system).toContain("有证据就写");
     expect(prompt.system).toContain("原样保留 evidenceRole");
     expect(prompt.system).toContain("non_story_ad");
     expect(prompt.system).toContain("整行剔除");
@@ -1213,7 +1217,7 @@ describe("GLM 结构化整形提示词纪律", () => {
     expect(prompt.user).toContain("只有相邻 story 证据可以合理合并");
   });
 
-  it("0829 收口：明确 truncated 段照常采纳、advisories 不当拒收、去重是首要职责", () => {
+  it("0829 晚收口：标记不是废弃理由、同段多版本按秒位合并、去重是首要职责", () => {
     const prompt = buildNativeDeepReadGlmStructuringPrompt({
       episodeIndex: 3,
       durationSec: 120,
@@ -1225,15 +1229,55 @@ describe("GLM 结构化整形提示词纪律", () => {
       ],
     });
     expect(prompt.system).toContain("truncated: true");
-    expect(prompt.system).toContain("截断段的已有内容照常采纳");
-    expect(prompt.system).toContain("advisories（门禁提示，不是拒收）");
-    expect(prompt.system).toContain("不得因为这两个标记丢弃或降权任何已有证据");
-    expect(prompt.system).toContain("去重是本次整形的首要职责");
+    // 用户 0829 晚拍板：门禁是贴标签的，标记一律不是废弃理由
+    expect(prompt.system).toContain("这些标记一律不是废弃理由");
+    expect(prompt.system).toContain("gateMarked: true");
+    expect(prompt.system).toContain("不得因为带标记就丢弃或降权任何证据");
+    // 同段多版本：通过版与被标记版一起喂，合格不等于更好
+    expect(prompt.system).toContain("同一段可能出现多个版本");
+    expect(prompt.system).toContain("通过不等于更好");
+    // 0829 晚二次收口：矛盾消解成「记录去重，信息取并集」——去重删的是重复的记录，
+    // 不丢弃保的是每一版独有的观察；同一物理镜头一条记录，但吸收所有版本的观察。
+    expect(prompt.system).toContain("记录去重，信息取并集");
+    expect(prompt.system).toContain("同一个物理镜头只保留一条记录，但那条记录必须吸收所有版本对它的观察");
+    // 裁决顺序四条：骨架 / 更细优先 / 逐条比对 / 忠于原文
+    expect(prompt.system).toContain("未被标记、未截断");
+    expect(prompt.system).toContain("一律以切分更细的那一版为准");
+    expect(prompt.system).toContain("秒位不重叠的记录全部保留");
+    expect(prompt.system).toContain("不改写、不扩写");
+    expect(prompt.system).toContain("必须忠于原文内容");
+    // 唯一裁判尺子：互不重叠首尾相接，重叠即错误产出
+    expect(prompt.system).toContain("一组互不重叠、首尾相接");
+    expect(prompt.system).toContain("出现两条区间重叠即为错误产出");
     expect(prompt.system).toContain("同秒同 kind 的 cue 只留一条");
-    expect(prompt.system).toContain("去重只删重复，不删唯一证据");
-    expect(prompt.user).toContain("合规段、带 advisories 的段、truncated: true 的截断段都在其中，一份都不许丢");
+    expect(prompt.system).toContain("绝不许用丢弃证据的方式满足这条");
+    // 五维分类不再设数量下限（数字目标只会逼出假标签）
+    expect(prompt.system).toContain("不得为了凑数量而编造标签");
+    expect(prompt.user).toContain("被门禁标记（gateMarked）的版本都在其中，一份都不许丢");
     // truncated 标记本身随分段卡原样进入输入，不在装配前被剥掉
     expect(prompt.user).toContain(`"truncated":true`);
+  });
+
+  it("被门禁标记的版本与通过版一起进 GLM 输入，标记字段原样带上", () => {
+    const passed = makeSegmentPayload({ segmentIndex: 1, startSec: 60, endSec: 120 });
+    const marked = {
+      ...makeSegmentPayload({ segmentIndex: 1, startSec: 60, endSec: 120, shotCountOverride: 3 }),
+      gateMarked: true,
+      gateMarkedZh: "第2段剧情镜头仅 22 个，低于离谱地板 30 镜",
+      attemptNumber: 1,
+    };
+    const prompt = buildNativeDeepReadGlmStructuringPrompt({
+      episodeIndex: 3,
+      durationSec: 120,
+      segments: [{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }],
+      hasAudio: true,
+      rawSegments: [makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 }), passed, marked],
+    });
+    // 三份卡（含同段两版本）全部进 user 正文，标记字段一个不落
+    expect(prompt.user).toContain("3 份分段卡");
+    expect(prompt.user).toContain(`"gateMarked":true`);
+    expect(prompt.user).toContain("低于离谱地板 30 镜");
+    expect(prompt.user).toContain(`"attemptNumber":1`);
   });
 
   it("坏 JSON 修复同样明确五键与两维契约", () => {
@@ -1246,7 +1290,10 @@ describe("GLM 结构化整形提示词纪律", () => {
       badJsonText: "{bad-json",
     });
     expect(prompt.system).toContain("emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh");
-    expect(prompt.system).toContain("至少两个维度");
+    // 0829 晚：删掉「至少两个维度」这个数量下限——数字目标只会逼模型编造凑数
+    // （0826 实弹：安静段落被逼出不存在的声音事件）。改成有证据就写、没有写 []。
+    expect(prompt.system).not.toContain("至少两个维度");
+    expect(prompt.system).toContain("有证据就写");
     expect(prompt.system).toContain("evidenceRole 只能原样恢复");
     expect(prompt.system).toContain("原文缺失该字段则修复失败");
   });
@@ -1355,7 +1402,7 @@ describe("模型请求前的媒体准备边界", () => {
     warn.mockRestore();
   });
 
-  it("最多并行切四段，完成乱序也按原分段顺序上传并只探测首片音轨", async () => {
+  it("默认并发上限 10：5 段一次全发，完成乱序也按原分段顺序落位并只探测首片音轨", async () => {
     const cutGates = new Map<number, ReturnType<typeof deferred>>();
     let activeCuts = 0;
     let maxActiveCuts = 0;
@@ -1388,20 +1435,63 @@ describe("模型请求前的媒体准备边界", () => {
       sourceDurationSec: 50,
     }, undefined, deps);
 
-    await vi.waitFor(() => expect(cutGates.size).toBe(4));
-    expect(Array.from(cutGates.keys()).sort((a, b) => a - b)).toEqual([0, 10, 20, 30]);
-    expect(maxActiveCuts).toBe(4);
-    for (const startSec of [30, 20, 10, 0]) cutGates.get(startSec)!.resolve();
-    await vi.waitFor(() => expect(cutGates.has(40)).toBe(true));
-    cutGates.get(40)!.resolve();
+    // 0829 晚用户令「改成并发，不是串行」：默认上限 10，5 段不再切成 4+1 两波。
+    await vi.waitFor(() => expect(cutGates.size).toBe(5));
+    expect(Array.from(cutGates.keys()).sort((a, b) => a - b)).toEqual([0, 10, 20, 30, 40]);
+    expect(maxActiveCuts).toBe(5);
+    // 乱序完成：真正的不变量是「按分段下标落位」，不是「按完成顺序落位」。
+    for (const startSec of [40, 10, 30, 0, 20]) cutGates.get(startSec)!.resolve();
 
     const prepared = await task;
     expect(prepared.map((row) => row.startSec)).toEqual([0, 10, 20, 30, 40]);
     expect(ffprobeCalls).toBe(1);
     expect(deps.upload).toHaveBeenCalledTimes(5);
-    expect(vi.mocked(deps.upload).mock.calls.map((call) => call[0].objectName)).toEqual(
-      prepared.map((row) => row.temporaryGcs.objectName),
+    // 上传已改并发，调用先后不再等于分段顺序；可断言的是「一段一次、对象名一一对应」。
+    expect(vi.mocked(deps.upload).mock.calls.map((call) => call[0].objectName).sort()).toEqual(
+      prepared.map((row) => row.temporaryGcs.objectName).sort(),
     );
+  });
+
+  it("🔓 切段并发上限可由入参覆盖（上限归用户定，不写死）", async () => {
+    const cutGates = new Map<number, ReturnType<typeof deferred>>();
+    let activeCuts = 0;
+    let maxActiveCuts = 0;
+    const runMedia = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "ffprobe") return JSON.stringify({ streams: [{ index: 1 }] });
+      const startSec = Number(args[args.indexOf("-ss") + 1]);
+      const gate = deferred();
+      cutGates.set(startSec, gate);
+      activeCuts += 1;
+      maxActiveCuts = Math.max(maxActiveCuts, activeCuts);
+      try {
+        await gate.promise;
+        return "";
+      } finally {
+        activeCuts -= 1;
+      }
+    });
+    const deps = makePreparationDeps({ runMedia });
+    const task = prepareEpisodeVideos({
+      episodeIndex: 9,
+      resolveNodes: async () => [{ url: "https://cdn.example/full.mp4" }],
+      segments: Array.from({ length: 5 }, (_, index) => ({
+        startSec: index * 10,
+        endSec: (index + 1) * 10,
+      })),
+      sourceDurationSec: 50,
+    }, undefined, deps, { cutConcurrency: 2 });
+
+    await vi.waitFor(() => expect(cutGates.size).toBe(2));
+    expect(maxActiveCuts).toBe(2);
+    for (const startSec of [0, 10]) cutGates.get(startSec)!.resolve();
+    await vi.waitFor(() => expect(cutGates.size).toBe(4));
+    for (const startSec of [20, 30]) cutGates.get(startSec)!.resolve();
+    await vi.waitFor(() => expect(cutGates.has(40)).toBe(true));
+    cutGates.get(40)!.resolve();
+
+    const prepared = await task;
+    expect(prepared.map((row) => row.startSec)).toEqual([0, 10, 20, 30, 40]);
+    expect(maxActiveCuts).toBe(2);
   });
 
   it("首个 worker 失败后停止领取新段，并等待已经在途的切片结束再失败清理", async () => {
@@ -1427,7 +1517,9 @@ describe("模型请求前的媒体准备边界", () => {
         endSec: (index + 1) * 10,
       })),
       sourceDurationSec: 60,
-    }, undefined, deps);
+      // 显式给上限，场景才立得住：默认 10 会让 6 段一次全发，观察不到「停止领取新段」。
+      // 取 4＝原场景（1 路撞失败 + 3 路在途），与下方 inFlightGates 断言对齐。
+    }, undefined, deps, { cutConcurrency: 4 });
     const outcome = task.then(
       () => ({ status: "resolved" as const }),
       (error: unknown) => ({ status: "rejected" as const, error }),
@@ -1555,7 +1647,11 @@ function readRawSegmentsFromGlmPrompt(user: string): Array<Record<string, unknow
 
 function makeGlmStructuringStub() {
   return vi.fn(async (prompt: { system: string; user: string }) => {
-    const rows = readRawSegmentsFromGlmPrompt(prompt.user);
+    // 真 GLM 的首要职责是去重（同段可能被喂进通过版 + 被标记版）。
+    // 桩件按同样口径先剔掉被标记版，否则同秒位区间会重叠——
+    // 这正是「两版一起喂」必须依赖 GLM 去重的地方。
+    const rows = readRawSegmentsFromGlmPrompt(prompt.user)
+      .filter((row) => row.gateMarked !== true);
     const pick = <T>(key: string) => rows.flatMap((row) => (row[key] as T[]) || []);
     const joinText = (key: string) =>
       rows.map((row) => String(row[key] || "").trim()).filter(Boolean).join("；");
@@ -1578,6 +1674,9 @@ function makeGlmStructuringStub() {
     }
     return {
       raw: merged,
+      // 0829 改线后回执记的是**实际交卷**的网关与模型，不再由调用方拿常量硬写。
+      gateway: "openrouter" as const,
+      model: "z-ai/glm-5.3",
       inputTokens: 0,
       outputTokens: 0,
       reasoningTokens: 0,
@@ -1766,7 +1865,43 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     const sent = readRawSegmentsFromGlmPrompt(prompt.user);
     expect(sent).toHaveLength(2);
     expect(sent.map((row) => (row.shots as Array<{ startSec: number }>)[0]!.startSec)).toEqual([0, 60]);
-    expect(prompt.system).toContain("去重是本次整形的首要职责");
+    expect(prompt.system).toContain("记录去重，信息取并集");
+  });
+
+  it("🔒 段被门禁标记后重试，两版都进 GLM 输入（用户 0829 晚：所有产出都进 GLM）", async () => {
+    const segments = twoSegmentEpisode.segments;
+    // 第2段首发把整 60 秒当成一个镜头——撞 30 秒硬上限（探针实弹里段5 就是 45 秒长镜）。
+    // 覆盖仍然完整，只是颗粒度被标记。重试那发合规。
+    // 旧口径只把重试版交给 GLM，首发那 ¥6-8 直接丢掉。
+    const markedFirst = makeSegmentPayload({
+      segmentIndex: 1, startSec: 60, endSec: 120, shotCountOverride: 1,
+    });
+    const postVertex = vi.fn()
+      .mockResolvedValueOnce(geminiResponse(makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 })))
+      .mockResolvedValueOnce(geminiResponse(markedFirst))
+      .mockResolvedValueOnce(geminiResponse(makeSegmentPayload({ segmentIndex: 1, startSec: 60, endSec: 120 })));
+    const invokeGlmStructuring = makeGlmStructuringStub();
+    const deps = makeRunnerDeps({
+      postVertex: postVertex as never,
+      invokeGlmStructuring: invokeGlmStructuring as never,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    try {
+      await runManhuaNativeDeepReadBatch({ episodes: [{ ...twoSegmentEpisode, segments }] }, deps);
+      expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+      const prompt = invokeGlmStructuring.mock.calls[0]![0] as { system: string; user: string };
+      const sent = readRawSegmentsFromGlmPrompt(prompt.user);
+      // 2 段通过版 + 1 份被标记版 = 3 份，被标记那份一分钱都不许白花
+      expect(sent).toHaveLength(3);
+      const marked = sent.filter((row) => row.gateMarked === true);
+      expect(marked).toHaveLength(1);
+      expect(String(marked[0]!.gateMarkedZh || "")).not.toBe("");
+      expect(marked[0]!.attemptNumber).toBe(1);
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+    }
   });
 
   it("带 truncated 标记的分段卡照样进 GLM 输入，不在装配前被丢弃", async () => {
@@ -2087,6 +2222,7 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
       invokeGlmStructuring: vi.fn(async () => ({
         raw: entry.raw, inputTokens: 11, outputTokens: 2, reasoningTokens: 1,
         costUsd: 0.01, finishReason: "stop",
+        gateway: "openrouter" as const, model: "z-ai/glm-5.3",
       })) as never,
     });
     const result = await runManhuaNativeDeepReadBatch({

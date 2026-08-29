@@ -57,10 +57,13 @@ import {
   parseNativeProviderErrorReceipt,
 } from "./manhuaNativeProviderReceipt.js";
 import {
+  EVOLINK_GLM_MODEL,
+  GLM_MODEL_GATEWAYS,
   GlmGatewayError,
   OPENROUTER_GLM_MODEL,
   invokeGlmJsonChatWithGatewayFallback,
 } from "./bailianChat.js";
+import type { GlmGatewayName } from "./bailianChat.js";
 import {
   baseUrlForVertex,
   getVertexAuthHeaders,
@@ -575,9 +578,9 @@ export function resolveNativeDeepReadInputFps(durationSec: number): number {
 export const NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC = 6;
 /**
  * 离谱地板（0829 用户拍板）：镜数门禁不全取消，按段长分级——
- * 段长 ≤120 秒全收（只记 advisory）；>120 秒仍保留 ceil(段长/10) 的底线拒收。
+ * 段长 ≤120 秒全收（只记 advisory）；>120 秒仍保留 ceil(段长/10) 的底线标记＋重试。
  * 依据：现行 ceil(/6)=50 对 300 秒段的诚实产出太严；0826 实测模型躺平是 28 镜/300 秒，
- * 30 这条线卡在躺平之上、诚实之下。音轨侧不设任何拒收线（安静段落只有 1 段是真实的）。
+ * 30 这条线卡在躺平之上、诚实之下。音轨侧不设任何门禁线（安静段落只有 1 段是真实的）。
  */
 export const NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC = 10;
 /** 整片长度：达到该长度才算完整分片；不足的尾片按实际取值入库，不设镜数门禁。 */
@@ -590,7 +593,7 @@ export const NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC = 6;
  * 同一物理长镜超过 30s 时不得截断或伪造切镜，而要按镜内真实变化拆成连续证据段。
  */
 export const NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC = 15;
-// 25 秒是质量提示线，不应因真实长镜只多 1 秒就重烧整段；30 秒才关闭式拒收。
+// 25 秒是质量提示线，不应因真实长镜只多 1 秒就重烧整段；30 秒才标记并重试。
 /**
  * 🔒 单条证据段硬上限（用户多次实测拍板，不得放宽为 advisory）：
  * 不加这条硬约束，模型会把 140–300 秒整段当成「一个长镜」交差——那不是长镜，
@@ -606,7 +609,7 @@ export const NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH = "同一长镜
 export const NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC = 1;
 /** 微尾段豁免：计划切段真实存在 9s 尾段（如 1080–1089），诚实的单镜结尾不该必拒 */
 export const NATIVE_DEEP_READ_SHOT_MICRO_SEGMENT_SEC = 12;
-/** 音轨段数地板：≥ max(1, ceil(段时长/60))；0829 起只用于生成 advisory，不再拒收。 */
+/** 音轨段数地板：≥ max(1, ceil(段时长/60))；0829 起只用于生成 advisory，不影响入库。 */
 /**
  * 音轨段数硬下限＝1（审查 P0-1 订正）：曾设 3 想防偷懒，但间隔公式在长段本就 ≥3，
  * 「3」只会咬短段/微尾段——提示词目标低于门禁，模型照实输出必被拒收、白买重试。
@@ -614,7 +617,7 @@ export const NATIVE_DEEP_READ_SHOT_MICRO_SEGMENT_SEC = 12;
  *
  * 0829 拍板补充：**环境音也算一段**。一个安静段落只返回 1 段音轨、0 条 cue 是
  * 合法产出，不是偷懒——所以基于时长的地板 ceil(len/60) 与 cue 地板 ceil(len/24)
- * 一律降级为 advisory（记「音轨仅 N 段」给人看），绝不作为拒收条件重买。
+ * 一律降级为 advisory（记「音轨仅 N 段」给人看），绝不作为重买条件。
  */
 export const NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN = 1;
 /**
@@ -661,7 +664,7 @@ export function buildGeminiNativeDeepReadSegmentPrompt(input: {
    * 0826 用户拍板：硬约束只留「错了会污染入库数据」的红线。
    * 0829 提示词软化：密度不再以「至少 N 镜 / 至少 N 段 / 至少 N 条 cue」的数字下达——
    * 数字目标只会逼模型编造凑数（0826 实弹：安静段落被逼出不存在的声音事件）。
-   * 密度改为软引导 + 诚实优先声明；结构化层负责整理，门禁只出 advisory 不再当拒收线。
+   * 密度改为软引导 + 诚实优先声明；结构化层负责整理，门禁只贴标记不再当拒收线。
    */
   const audioHardRule = input.hasAudio
     ? `6. audioResolution 固定为 [{"chunkIndex":${input.segmentIndex},"analysis":{…}}]，由你**亲耳所听**产出，禁止凭画面编造声音；audioTrack 与 cues 内时间用**本段局部秒**（0..${lenSec}），这是全 JSON 唯一的局部秒例外。`
@@ -938,8 +941,27 @@ export async function resolveNativeDeepReadNodeUrls(
 const NATIVE_VIDEO_TEMP_PREFIX = "manhua-template-learn/tmp/native-deep-read";
 /** 切段前 /tmp 必须至少剩 500MB，否则关闭式停止（不切半截片）。 */
 export const NATIVE_DEEP_READ_MIN_TMP_FREE_BYTES = 500 * 1024 * 1024;
-/** 单集媒体备料最多并行四段；跨集仍由 execution 串行，避免批量任务打满机器。 */
-export const NATIVE_DEEP_READ_MEDIA_PREP_MAX_CONCURRENCY = 4;
+/**
+ * 单集媒体备料并发上限（0829 晚用户拍板 4→10：「单集有多少就发多少，十发之内都一次发走」）。
+ * 跨集仍由 execution 串行，避免批量任务打满机器。
+ * ⚠️ 这只是**上限**，实际并发仍被 /tmp 可用空间公式二次夹紧（切片会落地本地文件）。
+ * 🔓 上限由调用方入参覆盖（用户令「上限应该是我来定的，不是写死的」）。
+ */
+export const NATIVE_DEEP_READ_MEDIA_PREP_MAX_CONCURRENCY = 10;
+/**
+ * 分片上传 GCS 的并发上限。曾经是**严格串行**（一个 for 循环），是全链最明显的串行点。
+ * 改并发但保留上限：uploadBufferToGcs 会复制 Buffer，10 路并行在极端片源下可放大到 GB 级内存。
+ * 实测依据：300 秒 540p 分片约 15–20MB（知识库 3.6MB/分钟），4 路 ≈ 160MB，安全。
+ * 🔓 同样可由入参覆盖。
+ */
+export const NATIVE_DEEP_READ_MEDIA_UPLOAD_MAX_CONCURRENCY = 4;
+/**
+ * 单集模型调用并发上限（0829 晚用户拍板 4→10）。
+ * 原先写死 `Math.min(4, segmentCount)`：一集 6 片会被切成 4+2 两波，
+ * 第 5、6 段要等前四段全部回来才发得出去——那是「批次串行」，不是并发。
+ * 🔓 可由入参覆盖。
+ */
+export const NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY = 10;
 
 function mediaHeaders(node: NativeDeepReadMediaNode): string[] {
   const referer = String(node.referer || "").trim();
@@ -1055,6 +1077,7 @@ export async function prepareEpisodeVideos(
   episode: NativeDeepReadBatchRunEpisode,
   abortSignal?: AbortSignal,
   deps: NativeDeepReadMediaPreparationDeps = defaultMediaPreparationDeps,
+  limits?: { cutConcurrency?: number; uploadConcurrency?: number },
 ): Promise<PreparedNativeVideo[]> {
   const segments = validateNativeDeepReadSegments(episode.segments);
 
@@ -1078,8 +1101,11 @@ export async function prepareEpisodeVideos(
     // 分片只按时间切；每片独立上传 GCS、独立调用 Gemini。
     // 禁止把整集各片体积相加后预转码：那是旧的多片合包请求逻辑。
     // 单集最多四段并行；每个 worker 内仍保留三次 CDN 节点刷新，跨集不并行。
+    const cutCap = Math.max(1, Math.floor(
+      Number(limits?.cutConcurrency) || NATIVE_DEEP_READ_MEDIA_PREP_MAX_CONCURRENCY,
+    ));
     const concurrency = Math.max(1, Math.min(
-      NATIVE_DEEP_READ_MEDIA_PREP_MAX_CONCURRENCY,
+      cutCap,
       segments.length,
       Math.floor(Math.max(0, freeBytes - NATIVE_DEEP_READ_MIN_TMP_FREE_BYTES)
         / NATIVE_DEEP_READ_MIN_TMP_FREE_BYTES) || 1,
@@ -1165,8 +1191,17 @@ export async function prepareEpisodeVideos(
       deps,
       abortSignal,
     );
-    // 上传保持单路：uploadBufferToGcs 会复制 Buffer，四路并行可能放大到数 GB 内存。
-    for (let index = 0; index < completeCutRows.length; index += 1) {
+    // 上传改并发（0829 晚用户令「改成并发，不是串行」）。
+    // 旧实现是一个严格串行 for 循环——六片就是六次往返排队，是全链最明显的串行点。
+    // 仍保留并发上限：uploadBufferToGcs 会复制 Buffer，无上限并发在极端片源下吃内存。
+    const uploadCap = Math.max(1, Math.floor(
+      Number(limits?.uploadConcurrency) || NATIVE_DEEP_READ_MEDIA_UPLOAD_MAX_CONCURRENCY,
+    ));
+    const uploadConcurrency = Math.max(1, Math.min(uploadCap, completeCutRows.length));
+    let nextUploadIndex = 0;
+    let uploadFailure: unknown;
+    let stopUploading = false;
+    const uploadOne = async (index: number): Promise<void> => {
       abortSignal?.throwIfAborted();
       const row = completeCutRows[index]!;
       const uploaded = await deps.upload({
@@ -1184,6 +1219,27 @@ export async function prepareEpisodeVideos(
         bytes: row.bytes,
         hasAudio: episodeHasAudio,
       };
+    };
+    const uploadWorkers = Array.from({ length: uploadConcurrency }, async () => {
+      while (!stopUploading) {
+        const index = nextUploadIndex;
+        nextUploadIndex += 1;
+        if (index >= completeCutRows.length) return;
+        try {
+          await uploadOne(index);
+        } catch (error) {
+          // 已在途的兄弟上传照样等回执（外层 catch 负责清理已传对象），
+          // 但不再排新的，避免失败后继续往 GCS 堆垃圾。
+          if (uploadFailure === undefined) uploadFailure = error;
+          stopUploading = true;
+          return;
+        }
+      }
+    });
+    await Promise.allSettled(uploadWorkers);
+    if (uploadFailure !== undefined) throw uploadFailure;
+    if (prepared.filter(Boolean).length !== completeCutRows.length) {
+      throw new Error(`第${episode.episodeIndex}集分片上传结果不完整，已停止`);
     }
     return prepared as PreparedNativeVideo[];
   } catch (error) {
@@ -1292,7 +1348,7 @@ function gateError(detailZh: string): Error {
 
 /**
  * schema 解析失败（数据不可用）的关闭式失败标记。0829 起段门禁其余判定都转 advisory，
- * 只有这一类与「JSON 彻底解析不了」仍然拒收；且它不进温度梯度重试（重买解决不了）。
+ * 只有这一类与「JSON 彻底解析不了」是真的没法用；且它不进温度梯度重试（重买解决不了）。
  */
 export const NATIVE_DEEP_READ_SCHEMA_ERROR_NAME = "NativeDeepReadSchemaError";
 
@@ -1401,7 +1457,7 @@ function groupPhysicalShotDurations(shots: ReadonlyArray<NativeDeepReadShotTimin
 }
 
 /**
- * 长镜证据的段级观察（0829 起只出 advisory，不拒收）。
+ * 长镜证据的段级观察（0829 起只出 advisory，不影响入库）。
  *
  * **>15 秒长镜的数量限额已彻底删除**：真实长定场不该被数量门禁重买；长度信息
  * 只作提示。>30 秒证据段与拆分不连续同样降级成 advisory。
@@ -1459,8 +1515,19 @@ function assertShotCoverage(
   }
   let cursor = startSec;
   for (const shot of shots) {
-    if (shot.startSec > cursor + tolerance || shot.startSec < cursor - tolerance) {
-      throw gateError(`${labelZh}镜头时间轴存在空档或重叠`);
+    // 空档与重叠必须分开报（0829 晚拆分）：两者的修法相反——空档要补，重叠要合。
+    // 报同一句话，修复轮拿到的原因就是含混的，模型只能猜该补还是该合。
+    // v11「通过版 + 标记版一起喂」之后，重叠是可预期的高频失败形态，更不能含混。
+    if (shot.startSec > cursor + tolerance) {
+      throw gateError(
+        `${labelZh}镜头时间轴存在空档：${cursor.toFixed(1)}–${shot.startSec.toFixed(1)} 秒无覆盖`,
+      );
+    }
+    if (shot.startSec < cursor - tolerance) {
+      throw gateError(
+        `${labelZh}镜头时间轴存在重叠：${shot.startSec.toFixed(1)} 秒处与上一条`
+        + `（结束于 ${cursor.toFixed(1)} 秒）相交，同一秒只能由一条 story 记录覆盖`,
+      );
     }
     cursor = shot.endSec;
   }
@@ -1664,7 +1731,7 @@ function assertVisualTextNoClock(raw: Record<string, unknown>, labelZh: string):
  *   音轨栏：audioResolution 恰好 [{chunkIndex:段号}]、audioTrack 段数
  *     ≥ max(3, ceil(段时长/60))、cues 总数 ≥ ceil(段时长/24)、
  *     局部时间轴连续覆盖 ±0.5s（复用共享 normalize 的硬校验）。
- * 不达标＝该段拒收（带拒因重试一次由调用方负责）。
+ * 不达标＝该段被标记（带原因重试由调用方负责；被标记的产出不丢，一并交 GLM）。
  */
 function assertRawAudioAnalysisFieldPresence(rawAnalysis: unknown, labelZh: string): void {
   if (!rawAnalysis || typeof rawAnalysis !== "object" || Array.isArray(rawAnalysis)) {
@@ -1777,7 +1844,7 @@ function advisoryFromThrow(
 }
 
 /**
- * 段级改进建议（0829 用户拍板取代拒收重买）。
+ * 段级改进建议（0829 用户拍板：门禁贴标记，不拒收重买）。
  *
  * 硬失败只剩两条：JSON 解析不了（在调用方 parseJsonObject）、zod schema 解析失败——
  * 这两种情况数据本身不可用。其余密度、覆盖、字段、分类、音轨地板判定一律收集成
@@ -1849,7 +1916,7 @@ export function assertNativeDeepReadSegmentDensity(input: {
         )));
     }
   }
-  // 硬门禁（0829 用户裁决）：逐镜 17 字段/unitTypeZh/evidenceRole 必填，缺则拒收重试。
+  // 硬门禁（0829 用户裁决）：逐镜 17 字段/unitTypeZh/evidenceRole 必填，缺则标记并重试（内容仍留给 GLM）。
   assertRawShotFieldPresence(input.raw, labelZh);
 
   // 唯一保留的硬失败之一：zod schema 解析失败＝数据不可用，留不得。
@@ -1886,7 +1953,7 @@ export function assertNativeDeepReadSegmentDensity(input: {
   // 尾片长度天然不定，用同一把尺子卡它只会把真实产出判死。
   const isFullLengthSegment = lenSec >= NATIVE_DEEP_READ_SEGMENT_FULL_LENGTH_SEC;
   if (isFullLengthSegment && storyDurationSec > NATIVE_DEEP_READ_SANITY_FLOOR_MIN_SEGMENT_SEC) {
-    // 硬门禁（0829 用户裁决）：整片低于离谱地板＝模型躺平，仍拒收重试。
+    // 硬门禁（0829 用户裁决）：整片低于离谱地板＝模型躺平，标记并重试（内容仍留给 GLM）。
     const sanityFloor = Math.ceil(
       storyDurationSec / NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC,
     );
@@ -2158,10 +2225,29 @@ export function validateNativeDeepReadSegments(
  * 确定性拼接不再作为快速路，只保留一份用于交叉校验 GLM 的 excludedAdRanges，不入库。
  */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE = "openrouter_glm_structuring" as const;
-export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = OPENROUTER_GLM_MODEL;
+/**
+ * 整形档**链路标签**（仅用于尚不知道会由哪一档交卷的 "started" 回执）。
+ * 0829 改线后主档是 EvoLink `glm-5.3`，兜底才是 OpenRouter `z-ai/glm-5.3`——
+ * completed/failed 回执一律记 `structured.model` 真值，不用本常量。
+ */
+export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`;
 const GLM_STRUCTURING_MAX_TOKENS = 131_072;
+/**
+ * 🔒 整形链采样温度（0829 晚用户拍板 0.8）。
+ * 不传＝EvoLink 默认 1.0（太飘）；0.2 又太死板，会变成照抄不敢取舍——
+ * 而整形的核心动作恰恰是「同秒位多版本里取信息更全的那条」，需要判断力。
+ */
+export const NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE = 0.8;
+/**
+ * 🔒 整形链思考档位（0829 晚用户拍板 high）。
+ * 不传＝EvoLink 默认 `max` 顶格思考。账单实证：同一件整形活顶格烧到
+ * 110,030/131,072 输出（84% 天花板）未完成，而原生限档 27,630 即 stop。
+ */
+export const NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT = "high" as const;
 /** 四个 300 秒分片的真实组装曾在 12 分钟边界被本地中止；只放宽等待，不自动重提。 */
-const GLM_STRUCTURING_TIMEOUT_MS = 30 * 60_000;
+// 0829 用户令：不设硬超时，跑出结果为止。全收进 GLM 后输入更大（六段卡 ~21.7 万 tok
+// 再叠标记版），旧的 15 分钟硬顶在 900,005ms 处把调用掐断成 network_error。
+const GLM_STRUCTURING_TIMEOUT_MS = 6 * 60 * 60_000;
 const OPENROUTER_USD_TO_CNY_EQUIVALENT = 7.2;
 
 export function buildNativeDeepReadGlmStructuringPrompt(input: {
@@ -2180,16 +2266,25 @@ export function buildNativeDeepReadGlmStructuringPrompt(input: {
 4. subtitles 只取 story 区间的并集去重，保持全片绝对秒位排序。
 5. audioResolution 保留完整原始听觉证据；广告区间内声音只作审计证据，不得写入 audioBeatStructureZh/mixNotesZh/reusableAudioZh/genAudioHintZh 的可复用结论。
 6. 所有中文描述文本【禁止】出现钟表式秒位（如 01:23）或「在第X秒」定位——秒位只进数字字段。
-7. classification 必须显式输出 emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh 五个数组；没有证据的维度写 []，至少两个维度各有一个来自 story 镜头的真实标签。
-8. 输入分段卡可能带 truncated: true（该段响应被截断，尾部可能缺失）与 advisories（门禁提示，不是拒收）。**截断段的已有内容照常采纳**，不得因为这两个标记丢弃或降权任何已有证据，也不得替截断段补写缺失的尾部；truncated 与 advisories 只是审计标记，不要写进整集卡。
-9. **去重是本次整形的首要职责**：分段卡在段边界会重复同一镜头、字幕或声音事件。按秒位合并去重——秒位区间重叠且描述同指的镜头合并成一条（保留信息更全的描述），同秒同文的字幕只留一条，同秒同 kind 的 cue 只留一条；去重只删重复，不删唯一证据。
-10. 只返回一个 JSON 对象，不要 Markdown 围栏、不要解释。`,
+7. classification 必须显式输出 emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh 五个数组；**有证据就写，没有证据的维度写 []**；🔴 不得为了凑数量而编造标签（数量下限只会逼出假标签）。
+8. 输入分段卡可能带这些**审计标记**：truncated: true（该段响应被截断，尾部可能缺失）、advisories（门禁提示）、gateMarked: true 与 gateMarkedZh（该版本被门禁标记）、attemptNumber（第几发）。**这些标记一律不是废弃理由**：标记版与通过版都是同一段的真实产出，已有内容照常采纳，不得因为带标记就丢弃或降权任何证据，也不得替截断段补写缺失的尾部；所有标记字段本身不要写进整集卡。
+9. **同一段可能出现多个版本**（通过版与被门禁标记版都会喂给你）。模型每次产出不同，**通过不等于更好**。合并时请分清两件不同的事——**记录去重，信息取并集**：
+   ·「去重」删的是**重复的记录**（同一个物理镜头被记了两遍），不是删信息；
+   ·「不丢弃」保的是**每一版独有的观察**，这些观察要并进保留下来的那条记录里。
+   两者不冲突：**同一个物理镜头只保留一条记录，但那条记录必须吸收所有版本对它的观察。**
+   裁决顺序（保证同一份输入两次跑结果一致）：
+   a. 以**未被标记、未截断**的那一版作骨架；没有这样的版本时，取 attemptNumber 最大的一版作骨架。
+   b. 两版对同一时间范围的切分粗细不同时，**一律以切分更细的那一版为准**，粗的那版的信息分配进对应的细区间。
+   c. 逐条比对：秒位区间重叠的记录合并成一条，字段逐个取**信息更具体的那一版的原文**；秒位不重叠的记录全部保留。
+   d. **不改写、不扩写**；可以润色文句，也不必强求统一文风，但**必须忠于原文内容**——你的职责是在原文内容范围内取舍与归并，不是重写，更不许新增原文没有的信息。
+10. **判定合并对不对只有一条尺子**：输出的 shots 在时间轴上必须是**一组互不重叠、首尾相接**的区间，连续覆盖除 excludedAdRanges 外的全时间轴。任何一秒只能被一条 story 记录覆盖——**出现两条区间重叠即为错误产出**。段边界处重复的同一镜头/字幕/声音事件按此合并（同秒同文的字幕只留一条，同秒同 kind 的 cue 只留一条）；单条合并后超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒时，必须按镜内真实变化拆成连续证据段（边界至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒），🔴 **绝不许用丢弃证据的方式满足这条**。
+11. 只返回一个 JSON 对象，不要 Markdown 围栏、不要解释。`,
     user: `把以下同一集的 ${input.rawSegments.length} 份分段卡整形合并成**一张整集原生证据卡**（单个 JSON 对象，字段 schema 与分段卡完全相同：shots/subtitles/audioResolution/beatStructureZh/moodArcZh/classification/reusableZh/genPromptHintZh，另加顶层可选 excludedAdRanges）。
 要求：
 1. story 镜头连续无空档覆盖除 excludedAdRanges 外的全时间轴 0..${Math.round(input.durationSec)} 秒（绝对秒位），每镜保留 evidenceRole；只有相邻 story 证据可以合理合并，non_story_ad 必须整行剔除并把 {startSec,endSec} 区间记入顶层 excludedAdRanges，不得混入 story。合并后的单条证据不得超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，拆分边界至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒，且不得删除仍需保留的「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」续接标记或丢失覆盖。
 2. audioResolution 保留全部 [{chunkIndex,analysis}] 条目（chunkIndex 即段号，analysis 内为该段局部秒），逐段齐全${input.hasAudio ? "" : "；本集素材无音轨，audioResolution 保持空数组"}。
 3. beatStructureZh/moodArcZh/reusableZh/genPromptHintZh 只整合 story 证据，可加「第X段」标注；classification 五维标签只取 story 输入并集，不得补猜。
-4. 输入是本集**全部**分段卡：合规段、带 advisories 的段、truncated: true 的截断段都在其中，一份都不许丢。截断段照常采纳已有内容、不补写尾部；段边界的重复镜头/字幕/声音事件按秒位合并去重。
+4. 输入是本集**全部**产出：合规段、带 advisories 的段、truncated 截断段、被门禁标记（gateMarked）的版本都在其中，一份都不许丢。**同一段可能有多个版本**，按秒位合并去重后取信息更全的；截断段照常采纳已有内容、不补写尾部；段边界的重复镜头/字幕/声音事件同样按秒位合并。
 整集元数据：${JSON.stringify({
       episodeIndex: input.episodeIndex,
       durationSec: Math.round(input.durationSec),
@@ -2224,7 +2319,7 @@ export function buildNativeDeepReadGlmSegmentRepairPrompt(input: {
 3. 原文若被截断，保留能恢复的完整条目，丢弃最后一条残缺条目，不要补写。
 4. shots 中的 evidenceRole 只能原样恢复为 story 或 non_story_ad，禁止猜测、改写或把 non_story_ad 混入 story；原文缺失该字段则修复失败。
 5. 所有中文描述文本【禁止】出现钟表式秒位（如 01:23）或「在第X秒」定位——秒位只进数字字段。
-6. classification 必须显式输出 emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh 五个数组；原文没有的维度写 []，至少两个维度必须能从原文 story 证据恢复出真实标签，否则修复失败。
+6. classification 必须显式输出 emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh 五个数组；**有证据就写，原文没有的维度写 []**；🔴 不得为了凑数量而编造标签。
 7. 只返回一个 JSON 对象，不要 Markdown 围栏、不要解释。`,
     user: `修复以下第 ${input.episodeIndex} 集第 ${input.segmentIndex + 1} 段分段卡（覆盖绝对秒位 ${Math.round(input.startSec)}..${Math.round(input.endSec)} 秒，字段 schema：shots/subtitles/audioResolution/beatStructureZh/moodArcZh/classification/reusableZh/genPromptHintZh${input.hasAudio ? "" : "；本段素材无音轨，audioResolution 保持空数组"}）。
 ${input.rejectedReasonZh ? `【解析失败原因】${String(input.rejectedReasonZh).slice(0, 300)}\n` : ""}坏 JSON 原文：
@@ -2282,6 +2377,9 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
 
 export type NativeDeepReadGlmStructuringResult = {
   raw: Record<string, unknown>;
+  /** 实际交卷网关与模型 id（回执记真值，不用常量硬写）。 */
+  gateway: GlmGatewayName;
+  model: string;
   inputTokens: number;
   outputTokens: number;
   reasoningTokens: number;
@@ -2302,19 +2400,26 @@ async function invokeNativeDeepReadGlmStructuring(
     user: prompt.user,
     maxTokens: GLM_STRUCTURING_MAX_TOKENS,
     abortSignal,
-    gatewayPolicy: "openrouter_only",
+    gatewayPolicy: "glm_only",
     timeoutMs: GLM_STRUCTURING_TIMEOUT_MS,
+    // 🔒 整形链参数（0829 晚用户拍板，改任一项＝改成本与产出口径，改前先报）
+    temperature: NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE,
+    reasoningEffort: NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT,
     requireParameters: true,
     requireFinishReasonStop: true,
     validateContent: (content) => {
       raw = parseJsonObject(content);
     },
   });
-  if (response.gateway !== "openrouter" || !raw) {
+  // 通道锁：只接受仍然是 GLM-5.3 的两档（EvoLink / OpenRouter）。
+  // 判据复用 bailianChat 的单一真源集合，不在这里再写一遍网关名。
+  if (!GLM_MODEL_GATEWAYS.has(response.gateway) || !raw) {
     throw new Error("GLM 结构化整形通道锁失效或未返回 JSON");
   }
   return {
     raw,
+    gateway: response.gateway,
+    model: response.model,
     inputTokens: Math.max(0, Number(response.usage?.prompt_tokens) || 0),
     outputTokens: Math.max(0, Number(response.usage?.completion_tokens) || 0),
     reasoningTokens: Math.max(
@@ -2399,7 +2504,7 @@ function readSegmentAdvisories(
 
 type SegmentAttemptResult = {
   raw: Record<string, unknown>;
-  /** 段门禁收集到的改进建议（0829 起不再拒收）。 */
+  /** 段门禁收集到的改进建议（0829 起只贴标记，不丢内容）。 */
   advisories: NativeDeepReadAdvisory[];
   /** 上游 MAX_TOKENS 截断但已保留可解析前缀。 */
   truncated?: boolean;
@@ -2434,6 +2539,14 @@ export async function runManhuaNativeDeepReadBatch(params: {
   segmentCacheSeriesKey?: string;
   /** 仅获授权证据探针使用：保留 GCS 视频分片，不执行 finally 清理。 */
   preservePreparedVideos?: boolean;
+  /**
+   * 🔓 并发上限三件（用户令「上限应该是我来定的，不是写死的」）。
+   * 省略即用模块默认：切段 10 / 上传 4 / 模型扇出 10。
+   */
+  mediaCutConcurrency?: number;
+  mediaUploadConcurrency?: number;
+  segmentModelConcurrency?: number;
+
   /**
    * 段缓存可靠落盘后的强回调。失败必须阻止下一次模型调用，避免出现“钱已花、卡不可见”。
    * 最后一段由整集门禁/正式 ingest 接管，避免在整集结构尚未验收前冒充 4/4 完成卡。
@@ -2551,6 +2664,11 @@ export async function runManhuaNativeDeepReadBatch(params: {
         const prepared = await deps.prepareVideos(
           { ...episode, segments: selectedSegments },
           params.abortSignal,
+          undefined,
+          {
+            cutConcurrency: params.mediaCutConcurrency,
+            uploadConcurrency: params.mediaUploadConcurrency,
+          },
         );
         if (prepared.length !== indexes.length) {
           throw new Error(`第${episode.episodeIndex}集备料数量与请求段数不一致，已停止`);
@@ -2620,6 +2738,15 @@ export async function runManhuaNativeDeepReadBatch(params: {
       const rawAttemptEvidenceObjectNames = new Set<string>();
       /** 段级 advisory 的集级汇总（按段号聚合）；provenance 与面板都读这份。 */
       const advisoriesBySegment = new Map<number, NativeDeepReadAdvisory[]>();
+      /**
+       * 被门禁**标记**的版本（0829 晚用户拍板：门禁是贴标签的，不是把门的）。
+       *
+       * 用户原话：「我就是要让所有的产出都进 GLM」「要不然我干嘛说标记」
+       * 「模型每一次跑都会出来不一样的结果，不是说合格就一定是好的」。
+       * 硬门仍触发重试（给模型改的机会），但**第一发不丢**——它同样是已付费产出，
+       * 某几个镜头可能比通过那发写得更准。连同通过版一起交 GLM 按秒位去重合并。
+       */
+      const markedVersionsBySegment = new Map<number, Array<Record<string, unknown>>>();
       const collectAdvisories = (): NativeDeepReadAdvisory[] =>
         Array.from(advisoriesBySegment.keys())
           .sort((a, b) => a - b)
@@ -2966,15 +3093,41 @@ export async function runManhuaNativeDeepReadBatch(params: {
             );
             throw enriched;
           }
-          const gated = assertNativeDeepReadSegmentDensity({
-            episodeIndex: episode.episodeIndex,
-            segmentIndex: input.segmentIndex,
-            startSec: segment.startSec,
-            endSec: segment.endSec,
-            hasAudio,
-            raw,
-            truncated,
-          });
+          let gated: ReturnType<typeof assertNativeDeepReadSegmentDensity>;
+          try {
+            gated = assertNativeDeepReadSegmentDensity({
+              episodeIndex: episode.episodeIndex,
+              segmentIndex: input.segmentIndex,
+              startSec: segment.startSec,
+              endSec: segment.endSec,
+              hasAudio,
+              raw,
+              truncated,
+            });
+          } catch (gateFailure) {
+            // 门禁是贴标签的：命中硬门仍然重试（给模型改的机会），但这一发**不丢**。
+            // 打上标记留进版本池，稍后连同通过版一起交 GLM 去重合并。
+            if (isNativeDeepReadGateFailure(gateFailure)) {
+              const markedZh = (gateFailure instanceof Error ? gateFailure.message : String(gateFailure))
+                .replace(`${NATIVE_DEEP_READ_GATE_PREFIX}：`, "")
+                .slice(0, 500);
+              raw.gateMarked = true;
+              raw.gateMarkedZh = markedZh;
+              raw.attemptNumber = input.attemptNumber;
+              if (truncated) raw.truncated = true;
+              const pool = markedVersionsBySegment.get(input.segmentIndex) || [];
+              // 每段最多留 3 个标记版本（＝温度梯度上限），防异常路径撑爆 GLM 输入。
+              if (pool.length < NATIVE_DEEP_READ_RETRY_TEMPERATURES.length) {
+                pool.push(raw);
+                markedVersionsBySegment.set(input.segmentIndex, pool);
+              }
+              console.info(
+                `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段`
+                + `第${input.attemptNumber}发被门禁标记，已留版本交 GLM：${markedZh}`,
+              );
+            }
+            throw gateFailure;
+          }
           // 截断标记必须落进段卡本体：只留在外层信封里，缓存命中/断点恢复后就没了。
           if (truncated) raw.truncated = true;
           const segmentAdvisories = dedupeNativeDeepReadAdvisories([
@@ -3192,7 +3345,15 @@ export async function runManhuaNativeDeepReadBatch(params: {
 
       const segmentFailures: Array<{ segmentIndex: number; error: unknown }> = [];
       let nextSegmentIndex = 0;
-      const segmentConcurrency = Math.min(4, segmentCount);
+      // 0829 晚用户拍板：单集有多少片就发多少，十发之内一次发走。
+      // 旧写法 Math.min(4, segmentCount) 会把一集 6 片切成 4+2 两波——那是批次串行。
+      const segmentModelCap = Math.max(1, Math.floor(
+        Number(params.segmentModelConcurrency) || NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY,
+      ));
+      const segmentConcurrency = Math.min(segmentModelCap, segmentCount);
+      console.info(
+        `[nativeDeepRead] 第${episode.episodeIndex}集模型扇出并发 ${segmentConcurrency}/${segmentCount} 片`,
+      );
       const segmentWorkers = Array.from({ length: segmentConcurrency }, async () => {
         while (!stopSchedulingSegments) {
           const segmentIndex = nextSegmentIndex;
@@ -3243,7 +3404,14 @@ export async function runManhuaNativeDeepReadBatch(params: {
               durationSec: episode.sourceDurationSec,
               segments: episode.segments,
               hasAudio,
-              rawSegments: completeRawSegments,
+              // 全收进 GLM：通过版 + 被门禁标记版一起喂，GLM 按秒位去重合并。
+              // 合格 ≠ 更好——同一段两发内容不同，让 GLM 取信息更全的那些镜头。
+              rawSegments: [
+                ...completeRawSegments,
+                ...Array.from(markedVersionsBySegment.keys())
+                  .sort((a, b) => a - b)
+                  .flatMap((index) => markedVersionsBySegment.get(index) || []),
+              ],
               rejectedReasonZh,
             }),
             params.abortSignal,
@@ -3257,7 +3425,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
           episodeCost += structuringCostCny;
           await emitVisualModelReceipt({
             callId,
-            model: NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL,
+            model: structured.model,
             route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
             stage: "visual_parse",
             status: "completed",
@@ -3363,7 +3531,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
           );
           structuredRaw = await glmStructure(rejectedReasonZh);
           assertGlmAdRangesMatchDeterministic(structuredRaw, deterministicAdRanges, episode.episodeIndex);
-          // 重整后门禁再跑一遍，再不过才拒收。
+          // 重整后门禁再跑一遍，再不过才判整集失败。
           episodeGateAdvisories = gateEpisode([structuredRaw]);
         }
         const episodeRows: Array<Record<string, unknown>> = [structuredRaw];
@@ -3526,6 +3694,14 @@ export async function runManhuaNativeDeepRead(params: {
   /** 仅获授权证据探针使用：保留 GCS 视频分片。 */
   preservePreparedVideos?: boolean;
   /**
+   * 🔓 并发上限三件（用户令「上限应该是我来定的，不是写死的」）。
+   * 省略即用模块默认：切段 10 / 上传 4 / 模型扇出 10。
+   */
+  mediaCutConcurrency?: number;
+  mediaUploadConcurrency?: number;
+  segmentModelConcurrency?: number;
+
+  /**
    * 逐段/整集模型回执。**必须转发给 batch**——此前单集入口没声明也没转发，
    * 走这条路的调用方（含验收探针）一条回执都拿不到，只能去翻 result 里的私有字段。
    */
@@ -3548,6 +3724,10 @@ export async function runManhuaNativeDeepRead(params: {
     segmentCacheSeriesKey: params.seriesKey,
     preservePreparedVideos: params.preservePreparedVideos,
     onModelReceipt: params.onModelReceipt,
+    // 并发上限必须一路转发——单集入口不转发＝探针设了也不生效（空壳参数）。
+    mediaCutConcurrency: params.mediaCutConcurrency,
+    mediaUploadConcurrency: params.mediaUploadConcurrency,
+    segmentModelConcurrency: params.segmentModelConcurrency,
   }, deps);
   const only = batch.episodes[0];
   if (!only) throw new Error("原生精读没有返回集卡");

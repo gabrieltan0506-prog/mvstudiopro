@@ -26,13 +26,20 @@ import {
 } from "./manhuaNativeDeepReadIngest.js";
 import {
   GlmGatewayError,
+  EVOLINK_GLM_MODEL,
+  GLM_MODEL_GATEWAYS,
   OPENROUTER_GLM_MODEL,
   invokeGlmJsonChatWithGatewayFallback,
   type GlmGatewayUsage,
 } from "./bailianChat.js";
 import { nativeProviderReceiptFromError } from "./manhuaNativeProviderReceipt.js";
 
-export const MANHUA_NATIVE_SERIES_AGGREGATION_MODEL = OPENROUTER_GLM_MODEL;
+/**
+ * 系列聚合的**链路标签**（0829 改线后主档是 EvoLink glm-5.3，兜底才是 OpenRouter）。
+ * 与整形链同口径：两档都是 GLM-5.3，不换模型。
+ */
+export const MANHUA_NATIVE_SERIES_AGGREGATION_MODEL =
+  `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`;
 export const MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE = "openrouter_text" as const;
 export const MANHUA_NATIVE_SERIES_AGGREGATION_SCHEMA_VERSION = "native-series-v2" as const;
 
@@ -277,7 +284,7 @@ export async function invokeNativeSeriesAggregationModel(
       user: prompt.user,
       maxTokens: 131_072,
       abortSignal,
-      gatewayPolicy: "openrouter_only",
+      gatewayPolicy: "glm_only",
       timeoutMs: AGGREGATION_TIMEOUT_MS,
       reasoningEffort: "max",
       requireParameters: true,
@@ -291,7 +298,8 @@ export async function invokeNativeSeriesAggregationModel(
         }
       },
     });
-    if (response.gateway !== "openrouter") {
+    // 通道锁复用单一真源集合：只接受仍是 GLM-5.3 的两档，绝不接受 Qwen 兜底。
+    if (!GLM_MODEL_GATEWAYS.has(response.gateway)) {
       throw new Error(`系列聚合模型锁失效（${response.gateway}）`);
     }
     return {

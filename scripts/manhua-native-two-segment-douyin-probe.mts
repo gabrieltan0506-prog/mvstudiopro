@@ -11,9 +11,20 @@ import { execFile } from "node:child_process";
 import { readFile, rm } from "node:fs/promises";
 import { promisify } from "node:util";
 import {
+  NATIVE_DEEP_READ_GENERATION_CONFIG,
+  NATIVE_DEEP_READ_RETRY_TEMPERATURES,
+  NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC,
+  NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_INTERVAL_SEC,
+  NATIVE_DEEP_READ_SEGMENT_FULL_LENGTH_SEC,
+  NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY,
+  NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
   runManhuaNativeDeepRead,
 } from "../server/services/manhuaNativeDeepReadRunner.js";
-import { resolveDouyinMediaUrl } from "../server/services/manhuaDouyinMediaResolve.js";
+import {
+  probeNativeDeepReadDurationSec,
+  splitNativeDeepReadSegments,
+} from "../server/services/manhuaNativeDeepReadPlan.js";
+import { fetchDouyinAwemeDetailViaWebApi } from "../server/services/manhuaLearnDouyinWebApi.js";
 import {
   describeErrorChain,
   sanitizeSensitiveText,
@@ -34,10 +45,30 @@ const PAGE_URL = VIDEO_ID ? `https://www.douyin.com/video/${VIDEO_ID}` : "";
 if (!PAGE_URL) throw new Error("缺少 --url=（抖音 /video/<id> 或带 modal_id 的链接）");
 if (process.env.FLY_APP_NAME !== "mvstudiopro") throw new Error("本探针只允许在 Fly 容器内运行");
 
+/** 🔓 并发上限由命令行给，不写死（用户令「上限应该是我来定的」）。省略＝走生产默认。 */
+const numArg = (name: string): number | undefined => {
+  const hit = process.argv.find((arg) => arg.startsWith(`--${name}=`));
+  if (!hit) return undefined;
+  const value = Math.floor(Number(hit.slice(name.length + 3)));
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+};
+const cutConcurrency = numArg("cut-concurrency");
+const uploadConcurrency = numArg("upload-concurrency");
+const modelConcurrency = numArg("model-concurrency");
+
 const runStamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
 const seriesKey = `probe_douyin_${runStamp}`;
-const sourceDigest = createHash("sha256")
-  .update(JSON.stringify({ sourceVideoId: VIDEO_ID, range: [0, 600], version: 1 }))
+/**
+ * 身份串按**真实整集范围**算。旧版写死 `range:[0,600]`——那是两段探针时代的遗留，
+ * 现在跑整集 4–8 片，写死 600 会让证据溯源上的「范围」与实际覆盖对不上。
+ * 真实时长要 ffprobe 之后才知道，所以这里只给一个工厂，main 里拿到时长再算。
+ */
+const makeSourceDigest = (durationSec: number): string => createHash("sha256")
+  .update(JSON.stringify({
+    sourceVideoId: VIDEO_ID,
+    range: [0, Math.round(durationSec)],
+    version: 2,
+  }))
   .digest("hex");
 const bucket = getGcsBucketName();
 const rawPrefix = `manhua-template-learn/segment-evidence-raw/tpl_native_${seriesKey}_ep001/`;
@@ -122,32 +153,78 @@ async function fetchInfoAnonymously(): Promise<Record<string, unknown>> {
 }
 
 /**
- * 片源解析：优先进程内页面解析（cookie 只进服务端 fetch 请求头，绝不进 argv）；
- * 页面法失败回退匿名 yt-dlp。子进程只拿无凭证媒体地址。
+ * 片源解析：**走抖音 web api**（与生产同一条路）。
+ *
+ * 视频页是客户端渲染的壳，HTML 里没有 play_addr——0829 实测 814KB 页面零个播放地址，
+ * 且验证页特征全为 0（不是 Cookie 失效）。web api 一次拿到全部可信播放地址。
+ * 时长该接口不回，走生产 ffprobe 读远端头部（不下片）。
+ * 匿名 yt-dlp 只作最后兜底（它自身要求 fresh cookies，通常也过不去）。
  */
-async function resolveSourceMedia(): Promise<{ mediaUrl: string; durationSec: number }> {
+async function resolveSourceMedia(): Promise<{ mediaUrl: string; durationSec: number; kindZh: string }> {
+  const referer = "https://www.douyin.com/";
   try {
-    const resolved = await resolveDouyinMediaUrl(PAGE_URL);
-    if (resolved.durationSec && resolved.durationSec > 0) {
-      return { mediaUrl: resolved.mediaUrl, durationSec: Math.max(1, Math.floor(resolved.durationSec)) };
-    }
+    const detail = await fetchDouyinAwemeDetailViaWebApi(VIDEO_ID);
+    const mediaUrl = detail?.playbackUrl || "";
+    if (!mediaUrl) throw new Error("web api 未返回可信播放地址");
+    if (detail?.access === "paid_locked") throw new Error("该集为付费锁定内容，探针不越过付费边界");
+    return {
+      mediaUrl,
+      durationSec: await probeNativeDeepReadDurationSec(mediaUrl, undefined, undefined, referer),
+      kindZh: `抖音 web api（access=${detail?.access ?? "unknown"}）`,
+    };
+  } catch (apiError) {
+    console.error(`[probe] web api 解析失败，回退匿名 yt-dlp：${sanitizeSensitiveText(apiError)}`);
     const info = await fetchInfoAnonymously();
-    return { mediaUrl: resolved.mediaUrl, durationSec: Math.max(1, Math.floor(Number(info.duration) || 0)) };
-  } catch (pageError) {
-    console.error(`[probe] 页面解析失败，回退匿名 yt-dlp：${sanitizeSensitiveText(pageError)}`);
-    const info = await fetchInfoAnonymously();
-    return { mediaUrl: pickMedia(info), durationSec: Math.max(1, Math.floor(Number(info.duration) || 0)) };
+    const mediaUrl = pickMedia(info);
+    const hinted = Math.floor(Number(info.duration) || 0);
+    return {
+      mediaUrl,
+      durationSec: hinted > 0
+        ? hinted
+        : await probeNativeDeepReadDurationSec(mediaUrl, undefined, undefined, referer),
+      kindZh: "抖音（yt-dlp 兜底）",
+    };
   }
 }
 
-async function main() {
-  console.info(`[probe] 阶段：抖音片源解析（进程内页面解析）视频 ${VIDEO_ID}`);
-  const { mediaUrl, durationSec } = await resolveSourceMedia();
-  console.info(`[probe] 阶段：抖音片源解析成功，真实时长 ${durationSec} 秒`);
+/* ─────────── v11 验收：三态判定，「未观察到」不许冒充「通过」 ─────────── */
 
-  const segments = [{ startSec: 0, endSec: Math.min(300, durationSec) }];
-  if (durationSec > 300) segments.push({ startSec: 300, endSec: Math.min(600, durationSec) });
+type CheckStatus = "pass" | "fail" | "not_observed";
+type CheckId = "P1" | "P2" | "P3" | "P4" | "P5" | "P6" | "P7" | "P8" | "P9" | "P10";
+type Check = { id: CheckId; nameZh: string; status: CheckStatus; actualZh: string };
+const checks: Check[] = [];
+const record = (id: CheckId, nameZh: string, status: CheckStatus, actualZh: string) => {
+  checks.push({ id, nameZh, status, actualZh });
+  const tag = status === "pass" ? "PASS" : status === "fail" ? "FAIL" : "未观察";
+  console.info(`[probe] ${tag} ${id} ${nameZh} —— ${actualZh}`);
+};
+
+async function main() {
+  // P1 冻结参数：在任何付费动作之前先核对，参数不对就别烧钱。
+  {
+    const cfg = NATIVE_DEEP_READ_GENERATION_CONFIG as Record<string, unknown>;
+    const thinking = (cfg.thinkingConfig ?? {}) as Record<string, unknown>;
+    const ok = cfg.temperature === 0.7
+      && cfg.maxOutputTokens === 65_536
+      && thinking.thinkingBudget === 18_000
+      && thinking.includeThoughts === false
+      && !("thinkingLevel" in thinking)
+      && NATIVE_DEEP_READ_RETRY_TEMPERATURES.join(",") === "0.7,0.65,0.6";
+    record("P1", "冻结参数与代码常量一致", ok ? "pass" : "fail",
+      `temperature=${String(cfg.temperature)} · thinkingBudget=${String(thinking.thinkingBudget)}`
+      + ` · includeThoughts=${String(thinking.includeThoughts)}`
+      + ` · thinkingLevel=${"thinkingLevel" in thinking ? "存在（不合规）" : "无"}`
+      + ` · 梯度=[${NATIVE_DEEP_READ_RETRY_TEMPERATURES.join(", ")}] · plan=${NATIVE_DEEP_READ_VISUAL_PLAN_VERSION}`);
+  }
+
+  console.info(`[probe] 阶段：抖音片源解析（web api）视频 ${VIDEO_ID}`);
+  const { mediaUrl, durationSec, kindZh } = await resolveSourceMedia();
+  console.info(`[probe] 阶段：${kindZh} 解析成功，真实时长 ${durationSec} 秒`);
+
+  // 整集分片：复用生产切段函数。集级门禁与尾片豁免只有整集才验得到。
+  const segments = splitNativeDeepReadSegments(durationSec);
   const coveredEnd = segments[segments.length - 1]!.endSec;
+  const sourceDigest = makeSourceDigest(coveredEnd);
   console.info(`[probe] 建单：series=${seriesKey} · 分段 ${segments.map((s) => `${s.startSec}–${s.endSec}`).join(" / ")} · 原始 JSON 永久保留`);
 
   const videoPrefix = "manhua-template-learn/tmp/native-deep-read/";
@@ -157,6 +234,7 @@ async function main() {
 
   let runError: unknown;
   let result: Awaited<ReturnType<typeof runManhuaNativeDeepRead>> | undefined;
+  const modelReceipts: Array<Record<string, unknown>> = [];
   try {
     result = await runManhuaNativeDeepRead({
       seriesKey,
@@ -166,6 +244,17 @@ async function main() {
       segments,
       sourceDurationSec: coveredEnd,
       hintZh: "抖音漫剧完整视听证据探针；按真实镜头、表演、光影、声音和叙事变化记录",
+      // 🔓 并发上限：命令行给了就用命令行的，没给就走生产默认（切段 10 / 上传 4 / 扇出 10）。
+      mediaCutConcurrency: cutConcurrency,
+      mediaUploadConcurrency: uploadConcurrency,
+      segmentModelConcurrency: modelConcurrency,
+      onModelReceipt: (receipt) => {
+        // 回执带时间戳才算得出「峰值同时在飞几发」——P10 的唯一依据。
+        modelReceipts.push({
+          ...(receipt as unknown as Record<string, unknown>),
+          observedAtMs: Date.now(),
+        });
+      },
     });
   } catch (error) {
     runError = error;
@@ -247,8 +336,180 @@ async function main() {
   }
   console.info(`[probe] 阶段：关键帧抽取完成 ${frameEvidence.length} 帧，失败 ${frameErrors.length}`);
 
+  /* ─────────── 失败台账：每条失败给全文原因，不许只留「截断」「error」 ─────────── */
+  const failures = modelReceipts
+    .filter((row) => String(row.status || "") === "failed")
+    .map((row) => {
+      const providerError = (row.providerError ?? {}) as Record<string, unknown>;
+      const chunkIndex = Number(row.chunkIndex);
+      return {
+        段: Number.isInteger(chunkIndex) ? `第${chunkIndex + 1}段` : "整集/装配层",
+        stage: String(row.stage || ""),
+        route: String(row.route || ""),
+        第几次尝试: row.attemptNumber ?? null,
+        温度: row.temperature ?? null,
+        finishReason: row.finishReason ?? null,
+        httpStatus: providerError.httpStatus ?? null,
+        上游错误正文: providerError.bodyZh ?? providerError.messageZh ?? providerError.message ?? null,
+        providerRequestId: row.providerRequestId ?? null,
+        失败原因全文: sanitizeSensitiveText(String(row.errorZh || "")) || "（回执未带 errorZh，见上游错误正文）",
+        用量: {
+          inputTokens: row.inputTokens ?? null,
+          outputTokens: row.outputTokens ?? null,
+          reasoningTokens: row.reasoningTokens ?? null,
+          audioInputTokens: row.audioInputTokens ?? null,
+        },
+        本次计费人民币: row.priceEquivalentCny ?? null,
+      };
+    });
+  if (failures.length) {
+    console.error(`[probe] 失败台账 ${failures.length} 条（逐条全文）：`);
+    for (const row of failures) console.error(JSON.stringify(row, null, 2));
+  }
+
+  /* ─────────── P2–P9 验收：全部读已落盘的证据，不读 result 上的私有字段 ─────────── */
+  const parsedCards = parsedFacts.map((fact) => ({
+    segmentIndex: segmentIndexFromName(fact.objectName),
+    card: (fact.payload as { raw: Record<string, unknown> }).raw,
+  })).sort((a, b) => a.segmentIndex - b.segmentIndex);
+
+  const thoughtLeaks = rawFacts.filter((fact) => {
+    const text = JSON.stringify(fact.payload);
+    return /"thought"\s*:\s*true/.test(text) || /<think>/i.test(text);
+  }).length;
+  record("P2", "思考未混进输出 JSON",
+    rawFacts.length === 0 ? "not_observed" : thoughtLeaks === 0 ? "pass" : "fail",
+    rawFacts.length === 0 ? "没有可读的原始响应" : `${rawFacts.length} 份原始响应中残留 ${thoughtLeaks} 处`);
+
+  const advisoriesDetail: Array<{ 段: string; code: string; detailZh: string }> = [];
+  const truncatedSegments: string[] = [];
+  const overlong: string[] = [];
+  const audioThin: string[] = [];
+  const tailSegments: string[] = [];
+  for (const { segmentIndex, card } of parsedCards) {
+    for (const row of (Array.isArray(card.advisories) ? card.advisories as Array<Record<string, unknown>> : [])) {
+      advisoriesDetail.push({
+        段: `第${segmentIndex + 1}段`,
+        code: String(row.code ?? ""),
+        detailZh: String(row.detailZh ?? ""),
+      });
+    }
+    if (card.truncated === true) truncatedSegments.push(`第${segmentIndex + 1}段`);
+    const shots = Array.isArray(card.shots) ? card.shots as Array<Record<string, unknown>> : [];
+    for (const shot of shots) {
+      const len = Number(shot.endSec) - Number(shot.startSec);
+      if (Number.isFinite(len) && len > NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC) {
+        overlong.push(`第${segmentIndex + 1}段 ${len.toFixed(1)}秒`);
+      }
+    }
+    const span = segments[segmentIndex];
+    const lenSec = span ? span.endSec - span.startSec : 0;
+    const tracks = (Array.isArray(card.audioResolution) ? card.audioResolution : []).flatMap((chunk) => {
+      const analysis = (chunk as { analysis?: { audioTrack?: unknown[] } }).analysis;
+      return Array.isArray(analysis?.audioTrack) ? analysis!.audioTrack! : [];
+    });
+    const audioFloor = Math.max(1, Math.ceil(lenSec / NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_INTERVAL_SEC));
+    if (lenSec > 0 && tracks.length < audioFloor) audioThin.push(`第${segmentIndex + 1}段 ${tracks.length}/${audioFloor} 段`);
+    if (lenSec > 0 && lenSec < NATIVE_DEEP_READ_SEGMENT_FULL_LENGTH_SEC) {
+      tailSegments.push(`第${segmentIndex + 1}段 ${Math.round(lenSec)}秒 ${shots.length}镜`);
+    }
+  }
+
+  record("P3", "advisory 通路可读", advisoriesDetail.length ? "pass" : "not_observed",
+    advisoriesDetail.length ? `${advisoriesDetail.length} 条：${advisoriesDetail.map((r) => `${r.段}${r.code}`).join("、")}` : "本轮无任何段产生 advisory");
+  record("P4", "截断段保留并标记", truncatedSegments.length ? "pass" : "not_observed",
+    truncatedSegments.length ? `已入库并标记：${truncatedSegments.join("、")}` : "本轮未发生 MAX_TOKENS 截断");
+  record("P5", "音轨低于地板不再拒收", audioThin.length ? "pass" : "not_observed",
+    audioThin.length ? `低于地板但已入库：${audioThin.join("、")}` : "本轮无低于地板的段");
+  record("P6", "🔒 30 秒硬上限生效",
+    parsedCards.length === 0 ? "not_observed" : overlong.length === 0 ? "pass" : "fail",
+    parsedCards.length === 0 ? "没有可检段卡" : overlong.length === 0
+      ? `${parsedCards.length} 段全部无超长证据段` : `超长 ${overlong.length} 条：${overlong.join("、")}`);
+  record("P7", "尾片豁免", tailSegments.length ? "pass" : "not_observed",
+    tailSegments.length ? `尾片已入库：${tailSegments.join("、")}` : "本轮分片被整除，无尾片");
+
+  const attemptsBySegment = new Map<number, number>();
+  for (const receipt of modelReceipts) {
+    if (String(receipt.stage || "") !== "visual_model") continue;
+    if (String(receipt.status || "") !== "started") continue;
+    const chunkIndex = Number(receipt.chunkIndex);
+    if (Number.isInteger(chunkIndex)) attemptsBySegment.set(chunkIndex, (attemptsBySegment.get(chunkIndex) || 0) + 1);
+  }
+  const retried = Array.from(attemptsBySegment.entries()).filter(([, n]) => n > 1);
+  // 🔧 P8 口径已订正（v11）。旧版写的是「门禁类不再触发重试，>1 发即 FAIL」——
+  // 那是 v10「门禁转 advisory」时代的口径。v11 用户拍板改成**门禁贴标记＋照常重试**
+  // （「我就是要让所有的产出都进 GLM」），重试是**设计行为**，不是缺陷。
+  // 拿旧口径跑这一轮，会把正常行为判成 FAIL——花一轮钱换一个错结论。
+  // 新口径：重试本身只报不判；只有「三档温度用尽仍然没有落地的段」才是真失败。
+  const landedSegments = new Set(parsedCards.map((row) => row.segmentIndex));
+  const exhausted = Array.from(attemptsBySegment.entries())
+    .filter(([index, attempts]) =>
+      attempts >= NATIVE_DEEP_READ_RETRY_TEMPERATURES.length && !landedSegments.has(index))
+    .map(([index, attempts]) => `第${index + 1}段用尽${attempts}发仍未落地`);
+  record("P8", "重试收敛（门禁标记后重试属设计行为，只看最终有没有落地）",
+    modelReceipts.length === 0 ? "not_observed" : exhausted.length === 0 ? "pass" : "fail",
+    modelReceipts.length === 0 ? "没有收到任何模型回执（回执通路可疑）"
+      : exhausted.length > 0 ? exhausted.join("、")
+        : retried.length === 0
+          ? `${attemptsBySegment.size} 段全部一发过，零重试`
+          : `${attemptsBySegment.size} 段全部落地；其中发生重试：`
+            + `${retried.map(([i, n]) => `第${i + 1}段×${n}发`).join("、")}`
+            + `（温度梯度 [${NATIVE_DEEP_READ_RETRY_TEMPERATURES.join(", ")}]）`);
+
+  // 🆕 P10：实测并发峰值。0829 晚把扇出上限从 4 改成 10，不实测＝改了等于没验证。
+  // 依据是回执时间戳：visual_model 的 started +1 / completed|failed −1，走一遍取峰值。
+  const inFlightEvents = modelReceipts
+    .filter((row) => String(row.stage || "") === "visual_model")
+    .map((row) => ({
+      at: Number(row.observedAtMs) || 0,
+      delta: String(row.status || "") === "started" ? 1 : -1,
+    }))
+    .sort((a, b) => (a.at - b.at) || (b.delta - a.delta));
+  let inFlight = 0;
+  let peakInFlight = 0;
+  for (const event of inFlightEvents) {
+    inFlight += event.delta;
+    peakInFlight = Math.max(peakInFlight, inFlight);
+  }
+  const expectedFanOut = Math.min(
+    modelConcurrency || NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY,
+    segments.length,
+  );
+  record("P10", "模型扇出真并发（不是 4 路批次串行）",
+    inFlightEvents.length === 0 ? "not_observed"
+      : peakInFlight >= Math.min(expectedFanOut, segments.length) ? "pass" : "fail",
+    inFlightEvents.length === 0 ? "没有带时间戳的模型回执"
+      : `峰值同时在飞 ${peakInFlight} 发 · 期望 ${expectedFanOut} 发 · 本集 ${segments.length} 片`
+        + `（缓存命中的段不发请求，命中多时峰值低于期望属正常）`);
+  record("P9", "临时视频零残留", temporaryVideoLeaks.length === 0 ? "pass" : "fail",
+    `残留 ${temporaryVideoLeaks.length} 个`);
+
+  const checkIds = checks.map((row) => row.id).sort();
+  const idsComplete = JSON.stringify(checkIds)
+    === JSON.stringify(["P1", "P10", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9"]);
+  const failCount = checks.filter((row) => row.status === "fail").length;
+  const notObserved = checks.filter((row) => row.status === "not_observed").length;
+  const acceptanceStatus = runError || failCount > 0 || !idsComplete
+    ? "failed" : notObserved > 0 ? "incomplete" : "passed";
+  console.info(`[probe] 验收结论 ${acceptanceStatus}：pass ${checks.length - failCount - notObserved} · fail ${failCount} · 未观察 ${notObserved}`);
+
   const summary = {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    acceptanceStatus,
+    checks,
+    idsComplete,
+    failCount,
+    notObservedCount: notObserved,
+    failures,
+    failureCount: failures.length,
+    advisoriesDetail,
+    episodeAdvisoriesDetail: ((result as { advisories?: Array<Record<string, unknown>> } | undefined)?.advisories ?? [])
+      .map((row) => ({
+        段: Number.isInteger(row.segmentIndex) ? `第${Number(row.segmentIndex) + 1}段` : "整集",
+        code: String(row.code ?? ""),
+        detailZh: String(row.detailZh ?? ""),
+      })),
+    planVersion: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
     runId: seriesKey,
     sourceDigest,
     sourceVideoId: VIDEO_ID,
