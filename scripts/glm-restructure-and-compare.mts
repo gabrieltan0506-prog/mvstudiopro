@@ -106,7 +106,14 @@ const DURATION_SEC = Math.round(Number(
   process.argv.find((a) => a.startsWith("--duration="))?.slice("--duration=".length) || 0,
 ));
 if (!DURATION_SEC) throw new Error("缺少 --duration=<整集秒数>");
-const RAW_PREFIX = `manhua-template-learn/segment-evidence-raw/${RUN}/`;
+/**
+ * 只取**过关版**（0830 用户拍板，覆盖 v11「全收进 GLM」）：
+ *   segment-evidence/     = 过了门禁的最终版，一段一份
+ *   segment-evidence-raw/ = 全部尝试，含被标记的废版
+ * 用户看过本轮实际质量后判定：被标记那些（40–201 秒巨镜）太差，喂进去只会污染整形。
+ * 要回到全收口径，把这里换回 -raw 即可。
+ */
+const RAW_PREFIX = `manhua-template-learn/segment-evidence/${RUN}/`;
 const OUT_PREFIX = `manhua-template-learn/probes/${MODEL}-restructure-${Date.now()}/`;
 /** 分段按生产切法从时长推出，与探针一致，不写死某一集 */
 const SEGMENTS = Array.from(
@@ -180,7 +187,11 @@ async function main() {
   for (const name of names) {
     const dl = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${name}` });
     try {
-      const row = extractModelJson(JSON.parse(dl.buffer.toString("utf8")));
+      // parsed 证据是 { raw: {...} } 信封；raw 证据是上游原始响应，两种都吃。
+      const parsedEnvelope = JSON.parse(dl.buffer.toString("utf8")) as { raw?: Row };
+      const row = parsedEnvelope?.raw && typeof parsedEnvelope.raw === "object"
+        ? parsedEnvelope.raw
+        : extractModelJson(parsedEnvelope);
       const segIndex = Number(/\/seg(\d+)(?:\/|-)/.exec(name)?.[1] ?? -1);
       inputs.push({ name, segmentIndex: segIndex, row, marked: row.gateMarked === true });
     } catch (error) {
