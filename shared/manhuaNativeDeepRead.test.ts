@@ -170,14 +170,15 @@ describe("适配器失败与超限语义（复审第六项）", () => {
     expect(writerAddon).toContain("关系反应=对手逼近触发主角后退，主角站稳迫使对手停步");
   });
 
-  it("finish=length 的段整段丢弃，并计入 failedSegmentCount", () => {
+  it("0829 新口径：finish=length 的段保留可解析内容，不再整段丢弃", () => {
     const out = mapNativeDeepReadSegments([
       seg([shot(0), shot(1)]),
       seg([shot(2)], { seg: 1, startSec: 30, finish: "length" }),
     ]);
-    expect(out.segmentCount).toBe(1);
-    expect(out.shotCount).toBe(2);
-    expect(out.failedSegmentCount).toBe(1);
+    // 截断段的已有镜头照常入卡（0829 实证：两段 65k token 内容曾被整段丢弃白烧 ¥13）
+    expect(out.segmentCount).toBe(2);
+    expect(out.shotCount).toBe(3);
+    expect(out.failedSegmentCount).toBe(0);
   });
 
   it("动作为空的镜头丢弃而不是写「未标注」占位", () => {

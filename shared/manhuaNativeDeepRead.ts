@@ -103,6 +103,12 @@ export const nativeDeepReadSegmentSchema = z
      * 绝不允许退回「min(shot.startSec) 猜起点」或「chunkIndex*300」。
      */
     chunkSpans: z.array(nativeDeepReadAudioChunkSpanSchema).optional(),
+    /** runner 段门禁写入的改进建议；随段卡持久化，整集卡合并时汇总。 */
+    advisories: z.array(z.object({
+      code: z.string().trim().min(1),
+      detailZh: z.string().trim().min(1),
+      segmentIndex: z.number().int().min(0).optional(),
+    }).strict()).optional(),
     beatStructureZh: z.string().trim().default(""),
     moodArcZh: z.string().trim().optional(),
     reusableZh: z.string().trim().optional(),
@@ -118,6 +124,20 @@ export const nativeDeepReadSegmentSchema = z
   .passthrough();
 
 export type NativeDeepReadSegment = z.infer<typeof nativeDeepReadSegmentSchema>;
+
+/**
+ * 段级改进建议（0829 用户拍板「全收＋标注＋GLM 收口」取代「拒收重买」）。
+ *
+ * 旧口径把密度/覆盖不足当拒收条件，实证一集 6 段拒收重买 3 段、白烧 ¥20.5，
+ * 而被拒响应本身内容完整。现在这类判定一律降级成 advisory 随卡返回：
+ * `segmentIndex` 让面板按段聚合，`detailZh` 必须写出具体数字或秒位缺口，
+ * 由人一眼看到「本段仅 28 镜 / 音轨 1 段 / 覆盖缺 50 秒」自行决定是否重跑。
+ */
+export type NativeDeepReadAdvisory = {
+  code: string;
+  detailZh: string;
+  segmentIndex?: number;
+};
 
 export type NativeDeepReadOutput = {
   beatGrid: ManhuaViralTemplateBeat[];
@@ -143,8 +163,16 @@ export type NativeDeepReadOutput = {
   failedSegmentCount: number;
   /** 被丢弃的镜头数：动作或节奏结构为空。**不写「未标注」占位**，空就是没学到 */
   droppedCount: number;
-  /** 兼容旧产物：新链路不再截断完整镜头证据，因此恒为 false。 */
+  /**
+   * 上游 finishReason=MAX_TOKENS 时保留可用前缀即置 true（0829 起不再整段丢弃）。
+   * 没有截断段时为 false。
+   */
   truncated: boolean;
+  /**
+   * 段级改进建议汇总（按 segmentIndex 聚合）；无建议时缺省不出现。
+   * 消费层（面板/审片报告/provenance）据此显示「本段仅 N 镜」等提示，不阻断入库。
+   */
+  advisories?: NativeDeepReadAdvisory[];
   /** 同一集音轨的故事/对白/声音节奏；由执行协调器在视觉精读后装配。 */
   audioAnalysis?: ManhuaNativeAudioAnalysis;
   /** 整集卡剔除广告镜头行后的区间账目原样透传（全片绝对秒）；无广告时缺省。 */
@@ -177,15 +205,36 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
       finish?: unknown;
     };
     if (outer.failed) return null;
-    // finish=length 表示上游被截断，这一段的镜头必然不全，整段丢弃比留半截安全
-    if (String(outer.finish || "") === "length") return null;
+    // 0829 起 finish=length（上游截断）不再整段丢弃：前半内容是已付费的有效证据，
+    // 能解析就保留并打 truncated 标记，由 advisory 告诉人「这段缺尾」。
+    const truncated = String(outer.finish || "") === "length"
+      || String(outer.finish || "").toUpperCase() === "MAX_TOKENS";
     const rawInner = typeof outer.text === "string" ? safeJson(outer.text) : outer.text;
     if (!rawInner) return null;
     const seg = nativeDeepReadSegmentSchema.safeParse(rawInner);
     if (!seg.success) return null;
-    return { seg: seg.data, offsetSec: Math.max(0, Math.floor(Number(outer.startSec) || 0)) };
+    return {
+      seg: seg.data,
+      offsetSec: Math.max(0, Math.floor(Number(outer.startSec) || 0)),
+      truncated,
+    };
   });
-  const ok = parsed.filter(Boolean) as Array<{ seg: NativeDeepReadSegment; offsetSec: number }>;
+  const ok = parsed.filter(Boolean) as Array<{
+    seg: NativeDeepReadSegment;
+    offsetSec: number;
+    truncated: boolean;
+  }>;
+  // 段卡自带的 advisory 原样汇总；截断段额外补一条 truncated，缺尾在面板上可见。
+  const advisories: NativeDeepReadAdvisory[] = ok.flatMap(({ seg, truncated }, index) => [
+    ...(seg.advisories ?? []),
+    ...(truncated
+      ? [{
+        code: "truncated",
+        detailZh: `第${index + 1}段上游输出被截断，已保留可解析前缀（镜头表可能缺尾）`,
+        segmentIndex: index,
+      }]
+      : []),
+  ]);
 
   let droppedCount = 0;
   const allBeats: ManhuaViralTemplateBeat[] = ok.flatMap(({ seg, offsetSec }) => {
@@ -342,7 +391,8 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
     shotCount: beatGrid.length,
     failedSegmentCount: rows.length - ok.length,
     droppedCount,
-    truncated: false,
+    truncated: ok.some((row) => row.truncated),
+    advisories: advisories.length ? advisories : undefined,
     excludedAdRanges: excludedAdRanges.length ? excludedAdRanges : undefined,
     ...(audioAdFilterSkipped ? { audioAdFilterSkipped: true } : {}),
   };

@@ -24,6 +24,7 @@ import { Agent, fetch as undiciFetch, type Dispatcher } from "undici";
 import {
   mapNativeDeepReadSegments,
   nativeDeepReadSegmentSchema,
+  type NativeDeepReadAdvisory,
   type NativeDeepReadOutput,
 } from "../../shared/manhuaNativeDeepRead.js";
 import { MANHUA_NATIVE_DEEP_READ_MODEL } from "../../shared/manhuaNativeDeepReadJob.js";
@@ -320,24 +321,46 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
 } as const;
 
 /**
- * 0827 实弹定稿：temperature 0.70、maxOutputTokens 65_536、单候选、
- * responseSchema、thinkingLevel HIGH；思考过程不进入输出 JSON。
+ * 0829 拍板：temperature 0.65 首发、maxOutputTokens 65_536、单候选、
+ * responseSchema、thinkingBudget 18K（0829 用户令：thinkingConfig 只留数值预算）。
+ *
+ * thinkingBudget 18_000 的依据（0829 订正 0826 的误推）：知识库《原生视频读取-CDN
+ * 串流定案》记载「thinkingBudget 写法也通」；0826 那句「禁止传 thinkingBudget」是
+ * 把「不能关思考（budget=0）」误推成全称禁令。18K 只作成本封顶——实测单段思考量
+ * 4.2k–39.7k tok，封顶后长尾段不再靠思考吃光 maxOutputTokens 把正文挤成坏 JSON。
+ */
+/**
+ * 🔒 参数冻结（2026-08-29 用户拍板，非用户明确允许不得变更）
+ *
+ * 冻结项：temperature 0.65 · maxOutputTokens 65_536 · candidateCount 1 ·
+ * audioTimestamp true · responseMimeType/responseSchema ·
+ * thinkingConfig { thinkingBudget: 18_000, includeThoughts: false } ·
+ * 重试梯度 [0.65, 0.6] · PLAN_VERSION。
+ *
+ * 用户原话：「改好冻结参数，非我允许不可再变，我从没有加上 thinking level 为 high 的指令。」
+ * thinkingLevel 系 0826 PR #1314 由 agent 自行加入，0829 已按用户令移除，不得以任何理由加回。
+ * 变更流程见知识库《schema动刀纪律》：改一字＝新版本＝旧缓存作废＝需重新探针实测。
+ * 冻结由 manhuaNativeDeepReadRunner.test.ts「参数冻结锁」逐字段断言看守。
  */
 export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
-  temperature: 0.7,
+  temperature: 0.65,
   maxOutputTokens: 65_536,
   candidateCount: 1,
   audioTimestamp: true,
   responseMimeType: "application/json",
   responseSchema: NATIVE_DEEP_READ_RESPONSE_SCHEMA,
-  thinkingConfig: { thinkingLevel: "HIGH", includeThoughts: false },
+  // 0829 用户令：thinkingLevel 移除（0826 由 agent 加入，用户从未设定）；
+  // 保留 includeThoughts:false——思考照跑照计费，但绝不混进输出 JSON（知识库定案）。
+  thinkingConfig: { thinkingBudget: 18_000, includeThoughts: false },
 } as const;
 
 /**
- * 同一 Vertex 分片的固定三档尝试：所有失败统一降温重试两次；不得静默换供应商。
+ * 同一 Vertex 分片的固定两档尝试：0.65 首发、0.60 复议；不得静默换供应商。
+ * 0829 起**只有真失败**（HTTP 错误 / JSON 彻底解析不了）才走这条梯度——
+ * 密度与覆盖类判定已转 advisory，不再重买（0829 实证：一集 6 段拒收重买 3 段，白烧 ¥20.5）。
  * 用户主动中止不是失败，不进入重试。
  */
-export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.7, 0.65, 0.6] as const;
+export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.65, 0.6] as const;
 export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 60_000;
 export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.6;
 
@@ -347,10 +370,10 @@ export const NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG = {
   temperature: NATIVE_DEEP_READ_RETRY_TEMPERATURES[1],
 } as const;
 
-/** 第三次尝试参数。 */
+/** 兼容导出：两档梯度后不再有第三次尝试，值收口到温度下限。 */
 export const NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG = {
   ...NATIVE_DEEP_READ_GENERATION_CONFIG,
-  temperature: NATIVE_DEEP_READ_RETRY_TEMPERATURES[2],
+  temperature: NATIVE_DEEP_READ_TEMPERATURE_MIN,
 } as const;
 
 /** 响应体上限：模型异常时可能吐超大 body，不设限会把内存吃干 */
@@ -461,6 +484,10 @@ export type NativeDeepReadVisualModelReceipt = ManhuaNativeModelReceipt & {
   stage: "visual_model" | "visual_parse";
   batchRequestId: string;
   videoCount: number;
+  /** 0829 段门禁转建议：该段命中的 advisory code 清单（不阻断入库）。 */
+  advisoryCodes?: string[];
+  /** 同上，人读文案；面板据此显示「本段仅 28 镜 / 覆盖缺 50 秒」。 */
+  advisoriesZh?: string;
 };
 
 async function emitVisualModelReceipt(
@@ -514,7 +541,7 @@ export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
  * v4（0826 拍板）：视觉调用换 Vertex Gemini 3.1 Pro 从 GCS 直读、每段一次调用、
  * 音轨同调直出、双密度门禁。计划口径与采样语义全变——旧确认码必须全废。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v9-ad-exclusion" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v10-advisory-gates" as const;
 
 /** 0827 实弹口径：生产 300 秒分片保持 10fps；仅旧数据超 300 秒时降为 5fps。 */
 export function resolveNativeDeepReadRequestFps(totalDurationSec: number): number {
@@ -539,6 +566,16 @@ export function resolveNativeDeepReadInputFps(durationSec: number): number {
  *   镜头数 ≥ ceil(段时长/6) · 平均每镜 ≤6s · 单镜 ≤15s（超了=合并了多次切镜）。
  */
 export const NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC = 6;
+/**
+ * 离谱地板（0829 用户拍板）：镜数门禁不全取消，按段长分级——
+ * 段长 ≤120 秒全收（只记 advisory）；>120 秒仍保留 ceil(段长/10) 的底线拒收。
+ * 依据：现行 ceil(/6)=50 对 300 秒段的诚实产出太严；0826 实测模型躺平是 28 镜/300 秒，
+ * 30 这条线卡在躺平之上、诚实之下。音轨侧不设任何拒收线（安静段落只有 1 段是真实的）。
+ */
+export const NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC = 10;
+/** 整片长度：达到该长度才算完整分片；不足的尾片按实际取值入库，不设镜数门禁。 */
+export const NATIVE_DEEP_READ_SEGMENT_FULL_LENGTH_SEC = 300;
+export const NATIVE_DEEP_READ_SANITY_FLOOR_MIN_SEGMENT_SEC = 120;
 export const NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC = 6;
 /**
  * 单镜上限的判断修订（实测依据 0823：95 镜均 2.76s，对白戏最慢 3.47s；
@@ -555,11 +592,15 @@ export const NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH = "同一长镜
 export const NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC = 1;
 /** 微尾段豁免：计划切段真实存在 9s 尾段（如 1080–1089），诚实的单镜结尾不该必拒 */
 export const NATIVE_DEEP_READ_SHOT_MICRO_SEGMENT_SEC = 12;
-/** 音轨段数地板：≥ max(1, ceil(段时长/60)) */
+/** 音轨段数地板：≥ max(1, ceil(段时长/60))；0829 起只用于生成 advisory，不再拒收。 */
 /**
  * 音轨段数硬下限＝1（审查 P0-1 订正）：曾设 3 想防偷懒，但间隔公式在长段本就 ≥3，
  * 「3」只会咬短段/微尾段——提示词目标低于门禁，模型照实输出必被拒收、白买重试。
  * 反偷懒完全由 ceil(段长/间隔) 承担，硬下限只兜「至少 1 段」。
+ *
+ * 0829 拍板补充：**环境音也算一段**。一个安静段落只返回 1 段音轨、0 条 cue 是
+ * 合法产出，不是偷懒——所以基于时长的地板 ceil(len/60) 与 cue 地板 ceil(len/24)
+ * 一律降级为 advisory（记「音轨仅 N 段」给人看），绝不作为拒收条件重买。
  */
 export const NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN = 1;
 /**
@@ -601,17 +642,18 @@ export function buildGeminiNativeDeepReadSegmentPrompt(input: {
   rejectedReasonZh?: string;
 }): string {
   const lenSec = Math.max(1, Math.round(input.endSec - input.startSec));
-  const floors = resolveNativeDeepReadSegmentFloors(lenSec);
   const hint = String(input.hintZh || "").trim();
   /**
-   * 0826 用户拍板：硬约束只留「错了会污染入库数据」的红线；密度要求只有一套标准
-   * ——就是代码门禁本身，提示词如实告知同一组验收数字，禁止「目标一套、门禁一套」。
+   * 0826 用户拍板：硬约束只留「错了会污染入库数据」的红线。
+   * 0829 提示词软化：密度不再以「至少 N 镜 / 至少 N 段 / 至少 N 条 cue」的数字下达——
+   * 数字目标只会逼模型编造凑数（0826 实弹：安静段落被逼出不存在的声音事件）。
+   * 密度改为软引导 + 诚实优先声明；结构化层负责整理，门禁只出 advisory 不再当拒收线。
    */
   const audioHardRule = input.hasAudio
     ? `6. audioResolution 固定为 [{"chunkIndex":${input.segmentIndex},"analysis":{…}}]，由你**亲耳所听**产出，禁止凭画面编造声音；audioTrack 与 cues 内时间用**本段局部秒**（0..${lenSec}），这是全 JSON 唯一的局部秒例外。`
     : `6. 本段素材没有音轨：audioResolution 必须返回空数组 []，禁止凭画面编造声音。`;
   const audioSoftRules = input.hasAudio
-    ? `b. 音轨按声音性质切段、连续覆盖本段；验收标准：至少 ${floors.minAudioTracks} 段、声音事件（cues 总数）至少 ${floors.minAudioCues} 条。每条 audioTrack 必须完整输出 emotionArcZh/toneZh/sfxZh/bgmZh/atmosphereZh/silenceZh 与 cues 七栏，禁止省略字段；确实没有某类声音时对应文本写「无」，cues 仍必须是数组。cues 记录每一次可听见的独立声音事件（音效、配乐进出与变化、留白转换、语气突变）。analysis 的 audioBeatStructureZh/mixNotesZh/reusableAudioZh/genAudioHintZh 四栏也必须完整输出。
+    ? `b. 音轨按声音性质切段、连续覆盖本段：**有几段写几段——环境音、静场氛围同样算一段；安静段落只有 1 段是正常的，禁止为凑数编造不存在的声音事件。** 每条 audioTrack 必须完整输出 emotionArcZh/toneZh/sfxZh/bgmZh/atmosphereZh/silenceZh 与 cues 七栏，禁止省略字段；确实没有某类声音时对应文本写「无」，cues 仍必须是数组。cues 记录每一次可听见的独立声音事件（音效、配乐进出与变化、留白转换、语气突变），听见几次记几次，没听见就不记。analysis 的 audioBeatStructureZh/mixNotesZh/reusableAudioZh/genAudioHintZh 四栏也必须完整输出。
 c. 输出预算紧张时优先压缩 subtitles，尽量保全镜头表与音轨栏的密度。`
     : "";
   const base = `你是漫剧成片的「导演手法」分析师。当前视频是全片（共 ${Math.round(input.episodeDurationSec)} 秒）的第 ${Math.round(input.startSec)}–${Math.round(input.endSec)} 秒（第 ${input.segmentIndex + 1}/${input.segmentCount} 段）${hint ? `（${hint}）` : ""}。
@@ -649,8 +691,9 @@ c. 输出预算紧张时优先压缩 subtitles，尽量保全镜头表与音轨�
 4. 无论画面是真人剧还是动画：出现明确与剧情无关的招商广告、贴片、带货、商品展示、购物引导、品牌口播、品牌落版，或任何商业推广/营销性内容（关注引导、点赞催更、解锁下集提示、平台导流、二维码推广等），仍用 shots 保持完整时间轴，但对应镜头 evidenceRole 必须写 non_story_ad；这类镜头不计学习密度，其画面与声音内容不得进入 subtitles、beatStructureZh、moodArcZh、classification、reusableZh、genPromptHintZh，也不得写入 audioResolution 各段的描述与 cues 结论。其余镜头一律写 story。
 5. 分析描述不写外部平台剧名、商标或原台词；subtitles 是唯一例外——逐字照抄画面上真实出现的剧情字幕，看不清写「[不可辨]」，禁止按剧情补全或从声音猜字；广告字幕不要进入 subtitles。
 ${audioHardRule}
+诚实优先（高于以下所有建议）：**你的产出会被完整保留并交由结构化层整理，不达密度不会被拒收——请如实记录，不要为达标编造。**
 建议（软边界，按素材实际情况尽量做到）：
-a. 这类漫剧的真实节奏通常 2–5 秒一镜，按真实发生的切换逐镜记录，不要为省输出合并镜头。一个剧情段落通常由多个镜头切换组成——**不要把「剧情段」当成一个镜头**，每次画面切换（机位/景别/场景变化）都是新的一镜。验收标准（与入库门禁同一套数字）：本段至少 ${floors.minShots} 镜、平均每镜不超过 ${NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC} 秒；超过 ${NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC} 秒的真实长镜头（如标题卡/长定场）至多 1 个；单个证据段不超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，真实长镜超过该长度时按硬约束 1 拆分证据，不得裁掉内容。
+a. 这类短剧（漫剧与真人剧同理）真实节奏通常 2–5 秒一镜，按真实切换逐镜记录，**宁可少记也不要合并或编造**。一个剧情段落通常由多个镜头切换组成——**不要把「剧情段」当成一个镜头**，每次画面切换（机位/景别/场景变化）都是新的一镜。单个证据段不超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，真实长镜超过该长度时按硬约束 1 拆分证据，不得裁掉内容。
 ${audioSoftRules}
 d. reusableZh 尽量写成脱离本剧剧情的通用做法；classification 五个数组字段都必须输出，只写从本段真实证据提炼的特征标签（避免古言/逆袭/系统/甜宠等题材词）；没有真实证据的维度写 []，至少两个维度各保留一个真实标签，不得在单一维度堆标签冒充，也不得为凑满维度编造。`;
   return input.rejectedReasonZh
@@ -1169,6 +1212,56 @@ export function parseJsonObject(text: string): Record<string, unknown> {
   throw new Error("原生精读没有返回可解析的 JSON 对象");
 }
 
+/**
+ * 截断 JSON 的可用前缀修复（0829：MAX_TOKENS 不再整段丢弃）。
+ *
+ * 实证：一集 6 段里两段是 MAX_TOKENS 截断但前半完全有效，旧口径直接判失败重买。
+ * 做法：逐字符扫描（跳过字符串字面量内的括号），找到**最后一个在深度 ≥1 处闭合的
+ * 数组/对象元素**，截到那里再按剩余括号栈补闭合符。截断处不会留尾逗号，因此补完即合法。
+ * 修不出对象时抛与 parseJsonObject 同一句门禁文案，落回原重试。
+ */
+export function parseTruncatedJsonObject(text: string): Record<string, unknown> {
+  try {
+    return parseJsonObject(text);
+  } catch {
+    // 落到下面的前缀修复
+  }
+  const stack: string[] = [];
+  let remainingAtLastSafe: string[] | undefined;
+  let lastSafeIndex = -1;
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const ch = text[index]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === "\"") inString = false;
+      continue;
+    }
+    if (ch === "\"") { inString = true; continue; }
+    if (ch === "{") { stack.push("}"); continue; }
+    if (ch === "[") { stack.push("]"); continue; }
+    if (ch === "}" || ch === "]") {
+      stack.pop();
+      if (stack.length >= 1) {
+        lastSafeIndex = index;
+        remainingAtLastSafe = [...stack];
+      }
+      continue;
+    }
+  }
+  if (lastSafeIndex >= 0 && remainingAtLastSafe) {
+    const repaired = text.slice(0, lastSafeIndex + 1) + [...remainingAtLastSafe].reverse().join("");
+    try {
+      return parseJsonObject(repaired);
+    } catch {
+      // 落到统一 throw
+    }
+  }
+  throw new Error("原生精读没有返回可解析的 JSON 对象");
+}
+
 /** 门禁类失败（结构/密度/时间轴）：值得带被拒原因原地重试一次；网络/HTTP 失败不算。 */
 const NATIVE_DEEP_READ_GATE_PREFIX = "原生精读密度门禁";
 
@@ -1181,6 +1274,18 @@ export function isNativeDeepReadGateFailure(error: unknown): boolean {
 
 function gateError(detailZh: string): Error {
   return new Error(`${NATIVE_DEEP_READ_GATE_PREFIX}：${detailZh}`);
+}
+
+/**
+ * schema 解析失败（数据不可用）的关闭式失败标记。0829 起段门禁其余判定都转 advisory，
+ * 只有这一类与「JSON 彻底解析不了」仍然拒收；且它不进温度梯度重试（重买解决不了）。
+ */
+export const NATIVE_DEEP_READ_SCHEMA_ERROR_NAME = "NativeDeepReadSchemaError";
+
+function schemaGateError(detailZh: string): Error {
+  const error = gateError(detailZh);
+  error.name = NATIVE_DEEP_READ_SCHEMA_ERROR_NAME;
+  return error;
 }
 
 type NativeDeepReadShotTiming = {
@@ -1281,28 +1386,52 @@ function groupPhysicalShotDurations(shots: ReadonlyArray<NativeDeepReadShotTimin
   return groups.map((group) => group.endSec - group.startSec);
 }
 
-/** 长镜证据的段级不变量；只在付费分片首次验收时关闭式执行。 */
-function assertLongTakeEvidenceInvariant(input: {
+/**
+ * 长镜证据的段级观察（0829 起只出 advisory，不拒收）。
+ *
+ * **>15 秒长镜的数量限额已彻底删除**：真实长定场不该被数量门禁重买；长度信息
+ * 只作提示。>30 秒证据段与拆分不连续同样降级成 advisory。
+ */
+function collectLongTakeAdvisories(input: {
   shots: ReadonlyArray<NativeDeepReadShotTiming>;
   labelZh: string;
-  maxPhysicalLongTakes: number;
-}): void {
+  segmentIndex: number;
+}): NativeDeepReadAdvisory[] {
+  const out: NativeDeepReadAdvisory[] = [];
   const evidenceDurations = input.shots.map((shot) => shot.endSec - shot.startSec);
   const hardOverlong = evidenceDurations.filter(
     (shotLen) => shotLen > NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC,
   );
   if (hardOverlong.length > 0) {
-    throw gateError(
-      `${input.labelZh}存在超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒的镜头证据段（最长 ${Math.round(Math.max(...hardOverlong))} 秒）；真实长镜必须按镜内变化拆成连续证据段，禁止截断尾部`,
-    );
+    out.push({
+      code: "long_take_over_hard_max",
+      detailZh: `${input.labelZh}有 ${hardOverlong.length} 个超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒的镜头证据段（最长 ${Math.round(Math.max(...hardOverlong))} 秒）`,
+      segmentIndex: input.segmentIndex,
+    });
   }
-  const physicalLongTakes = groupPhysicalShotDurations(input.shots)
+  let physicalDurations: number[] = [];
+  try {
+    physicalDurations = groupPhysicalShotDurations(input.shots);
+  } catch (error) {
+    out.push({
+      code: "long_take_split_discontinuous",
+      detailZh: (error instanceof Error ? error.message : String(error))
+        .replace(`${NATIVE_DEEP_READ_GATE_PREFIX}：`, "")
+        .slice(0, 500),
+      segmentIndex: input.segmentIndex,
+    });
+    physicalDurations = evidenceDurations;
+  }
+  const physicalLongTakes = physicalDurations
     .filter((shotLen) => shotLen > NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC);
-  if (physicalLongTakes.length > input.maxPhysicalLongTakes) {
-    throw gateError(
-      `${input.labelZh}有 ${physicalLongTakes.length} 个超过 ${NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC} 秒的真实长镜（长定场限额 ${input.maxPhysicalLongTakes} 个），需重新检查是否合并了多次切镜`,
-    );
+  if (physicalLongTakes.length > NATIVE_DEEP_READ_SHOT_LONG_TAKE_ALLOWANCE) {
+    out.push({
+      code: "long_take_count",
+      detailZh: `${input.labelZh}有 ${physicalLongTakes.length} 个超过 ${NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC} 秒的真实长镜（最长 ${Math.round(Math.max(...physicalLongTakes))} 秒），仅提示不拒收`,
+      segmentIndex: input.segmentIndex,
+    });
   }
+  return out;
 }
 
 function assertShotCoverage(
@@ -1556,6 +1685,93 @@ function assertRawAudioAnalysisFieldPresence(rawAnalysis: unknown, labelZh: stri
   }
 }
 
+/**
+ * 覆盖与空档转 advisory：**必须写出具体秒位**（用户 0829 明文）。
+ * 截断段天生覆盖不到段尾，不写清缺口就等于没保留证据。
+ */
+function collectShotCoverageAdvisories(
+  shots: ReadonlyArray<{ startSec: number; endSec: number }>,
+  startSec: number,
+  endSec: number,
+  segmentIndex: number,
+  labelZh: string,
+): NativeDeepReadAdvisory[] {
+  const tolerance = NATIVE_DEEP_READ_TIMELINE_TOLERANCE_SEC;
+  const out: NativeDeepReadAdvisory[] = [];
+  const round = (v: number) => Math.round(v * 10) / 10;
+  if (!shots.length) {
+    out.push({
+      code: "coverage_missing",
+      detailZh: `${labelZh}没有任何可用镜头行，缺 ${round(startSec)}–${round(endSec)} 秒`,
+      segmentIndex,
+    });
+    return out;
+  }
+  if (Math.abs(shots[0]!.startSec - startSec) > tolerance) {
+    out.push({
+      code: "coverage_head_gap",
+      detailZh: `${labelZh}镜头未从 ${round(startSec)} 秒开始，缺 ${round(startSec)}–${round(shots[0]!.startSec)} 秒`,
+      segmentIndex,
+    });
+  }
+  const gaps: string[] = [];
+  const overlaps: string[] = [];
+  let cursor = shots[0]!.startSec;
+  for (const shot of shots) {
+    if (shot.startSec > cursor + tolerance) gaps.push(`${round(cursor)}–${round(shot.startSec)}`);
+    if (shot.startSec < cursor - tolerance) overlaps.push(`${round(shot.startSec)}–${round(cursor)}`);
+    cursor = Math.max(cursor, shot.endSec);
+  }
+  if (gaps.length) {
+    out.push({
+      code: "timeline_gap",
+      detailZh: `${labelZh}镜头时间轴存在 ${gaps.length} 处空档：${gaps.join("、")} 秒`,
+      segmentIndex,
+    });
+  }
+  if (overlaps.length) {
+    out.push({
+      code: "timeline_overlap",
+      detailZh: `${labelZh}镜头时间轴存在 ${overlaps.length} 处重叠：${overlaps.join("、")} 秒`,
+      segmentIndex,
+    });
+  }
+  if (cursor < endSec - tolerance) {
+    out.push({
+      code: "coverage_tail_gap",
+      detailZh: `${labelZh}镜头未覆盖到 ${round(endSec)} 秒，缺 ${round(cursor)}–${round(endSec)} 秒`,
+      segmentIndex,
+    });
+  }
+  return out;
+}
+
+/** 把原本抛错的段级校验降级成 advisory：抛出的中文原因原样进 detailZh。 */
+function advisoryFromThrow(
+  code: string,
+  segmentIndex: number,
+  run: () => void,
+): NativeDeepReadAdvisory[] {
+  try {
+    run();
+    return [];
+  } catch (error) {
+    const detailZh = (error instanceof Error ? error.message : String(error))
+      .replace(`${NATIVE_DEEP_READ_GATE_PREFIX}：`, "")
+      .slice(0, 500);
+    return [{ code, detailZh, segmentIndex }];
+  }
+}
+
+/**
+ * 段级改进建议（0829 用户拍板取代拒收重买）。
+ *
+ * 硬失败只剩两条：JSON 解析不了（在调用方 parseJsonObject）、zod schema 解析失败——
+ * 这两种情况数据本身不可用。其余密度、覆盖、字段、分类、音轨地板判定一律收集成
+ * advisory 随卡返回，由 GLM 收口层与人工面板消费，绝不再触发重买。
+ *
+ * 注意：**>15 秒长镜数量限额已彻底删除**（0829），长度信息只转 advisory。
+ */
 export function assertNativeDeepReadSegmentDensity(input: {
   episodeIndex: number;
   segmentIndex: number;
@@ -1563,18 +1779,24 @@ export function assertNativeDeepReadSegmentDensity(input: {
   endSec: number;
   hasAudio: boolean;
   raw: Record<string, unknown>;
-}): void {
+}): { raw: Record<string, unknown>; advisories: NativeDeepReadAdvisory[] } {
   const lenSec = Math.max(1, Math.round(input.endSec - input.startSec));
-  // 存在性门禁必须先于 zod：必填字段缺失时必须返回具体字段名。
+  const labelZh = `第${input.segmentIndex + 1}段`;
+  const segmentIndex = input.segmentIndex;
+  const advisories: NativeDeepReadAdvisory[] = [];
+  const note = (code: string, detailZh: string) =>
+    advisories.push({ code, detailZh, segmentIndex });
+
+  // 硬门禁（0829 用户裁决，不转 advisory）：五维分类五键齐全。
   const rawClassification = input.raw.classification;
   if (!rawClassification || typeof rawClassification !== "object" || Array.isArray(rawClassification)) {
-    throw gateError(`第${input.segmentIndex + 1}段 classification 缺失`);
+    throw gateError(`${labelZh} classification 缺失`);
   }
   if (!hasManhuaTemplateClassificationFields(rawClassification)) {
     const row = rawClassification as Record<string, unknown>;
     const key = MANHUA_TEMPLATE_CLASSIFICATION_KEYS.find((candidate) =>
       !Object.prototype.hasOwnProperty.call(row, candidate) || !Array.isArray(row[candidate]));
-    throw gateError(`第${input.segmentIndex + 1}段 classification.${key || "字段"} 缺失或不是数组`);
+    throw gateError(`${labelZh} classification.${key || "字段"} 缺失或不是数组`);
   }
   if (input.hasAudio) {
     const rawAudioRows = Array.isArray(input.raw.audioResolution)
@@ -1582,97 +1804,133 @@ export function assertNativeDeepReadSegmentDensity(input: {
       : [];
     const rawAudioEntry = rawAudioRows[0];
     if (rawAudioRows.length > 0 && rawAudioEntry && typeof rawAudioEntry === "object" && !Array.isArray(rawAudioEntry)) {
-      assertRawAudioAnalysisFieldPresence(
-        (rawAudioEntry as Record<string, unknown>).analysis,
-        `第${input.segmentIndex + 1}段`,
-      );
+      advisories.push(...advisoryFromThrow("audio_field_missing", segmentIndex, () =>
+        assertRawAudioAnalysisFieldPresence(
+          (rawAudioEntry as Record<string, unknown>).analysis,
+          labelZh,
+        )));
     }
   }
-  assertRawShotFieldPresence(input.raw, `第${input.segmentIndex + 1}段`);
+  // 硬门禁（0829 用户裁决）：逐镜 17 字段/unitTypeZh/evidenceRole 必填，缺则拒收重试。
+  assertRawShotFieldPresence(input.raw, labelZh);
+
+  // 唯一保留的硬失败之一：zod schema 解析失败＝数据不可用，留不得。
   const parsed = nativeDeepReadSegmentSchema.safeParse(input.raw);
   if (!parsed.success) {
     const firstIssue = parsed.error.issues[0];
     const issueZh = firstIssue
       ? `（${firstIssue.path.join(".") || "根"}: ${firstIssue.message}）`
       : "";
-    throw gateError(`第${input.segmentIndex + 1}段结构不合原生逐镜 schema${issueZh}`);
+    throw schemaGateError(`${labelZh}结构不合原生逐镜 schema${issueZh}`);
   }
-  assertVisualTextNoClock(input.raw, `第${input.segmentIndex + 1}段`);
+
+  advisories.push(...advisoryFromThrow("clock_text", segmentIndex, () =>
+    assertVisualTextNoClock(input.raw, labelZh)));
   const shots = sortedShots(input.raw);
-  assertShotCoverage(shots, Math.round(input.startSec), Math.round(input.endSec), `第${input.segmentIndex + 1}段`);
+  advisories.push(...collectShotCoverageAdvisories(
+    shots,
+    Math.round(input.startSec),
+    Math.round(input.endSec),
+    segmentIndex,
+    labelZh,
+  ));
   const storyShots = shots.filter((shot) => shot.evidenceRole === "story");
   const storyDurationSec = storyShots.reduce(
     (total, shot) => total + Math.max(0, shot.endSec - shot.startSec),
     0,
   );
   if (storyShots.length === 0 || storyDurationSec < 1) {
-    throw gateError(`第${input.segmentIndex + 1}段没有可学习的剧情镜头（招商广告已排除）`);
+    note("no_story_shots", `${labelZh}没有可学习的剧情镜头（招商广告已排除）`);
   }
   const storyFloors = resolveNativeDeepReadSegmentFloors(storyDurationSec);
   const audioFloors = resolveNativeDeepReadSegmentFloors(lenSec);
-  // 时长制镜头门禁（0826 用户参考稿 + 两处判断修订：微尾段豁免、长定场限额）
+  // 0829 用户裁决：不足整片（<300 秒）的尾片按实际取值直接入库，不设镜数门禁——
+  // 尾片长度天然不定，用同一把尺子卡它只会把真实产出判死。
+  const isFullLengthSegment = lenSec >= NATIVE_DEEP_READ_SEGMENT_FULL_LENGTH_SEC;
+  if (isFullLengthSegment && storyDurationSec > NATIVE_DEEP_READ_SANITY_FLOOR_MIN_SEGMENT_SEC) {
+    // 硬门禁（0829 用户裁决）：整片低于离谱地板＝模型躺平，仍拒收重试。
+    const sanityFloor = Math.ceil(
+      storyDurationSec / NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC,
+    );
+    if (storyShots.length < sanityFloor) {
+      throw gateError(
+        `${labelZh}剧情镜头仅 ${storyShots.length} 个，低于 ${Math.round(storyDurationSec)} 秒段的离谱地板 ${sanityFloor} 镜（疑似合并或漏记，招商广告不计入）`,
+      );
+    }
+  }
   if (storyDurationSec > NATIVE_DEEP_READ_SHOT_MICRO_SEGMENT_SEC) {
     if (storyShots.length < storyFloors.minShots) {
-      throw gateError(
-        `第${input.segmentIndex + 1}段剧情镜头密度不足：${Math.round(storyDurationSec)}秒至少需要${storyFloors.minShots}镜，实际${storyShots.length}（招商广告不计入）`,
+      note(
+        "shot_density_low",
+        `${labelZh}剧情镜头密度不足：${Math.round(storyDurationSec)}秒建议至少${storyFloors.minShots}镜，实际${storyShots.length}（招商广告不计入）`,
       );
     }
     const averageShotSec = storyDurationSec / storyShots.length;
     if (averageShotSec > NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC) {
-      throw gateError(
-        `第${input.segmentIndex + 1}段镜头粒度过粗：平均每镜${averageShotSec.toFixed(1)}秒（上限 ${NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC} 秒）`,
+      note(
+        "shot_avg_too_long",
+        `${labelZh}镜头粒度偏粗：平均每镜${averageShotSec.toFixed(1)}秒（建议上限 ${NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC} 秒）`,
       );
     }
-    assertLongTakeEvidenceInvariant({
+    advisories.push(...collectLongTakeAdvisories({
       shots: storyShots,
-      labelZh: `第${input.segmentIndex + 1}段`,
-      maxPhysicalLongTakes: NATIVE_DEEP_READ_SHOT_LONG_TAKE_ALLOWANCE,
-    });
+      labelZh,
+      segmentIndex,
+    }));
   }
-  // 审查 P1-4：空文本会在 mapNativeDeepReadSegments 被静默丢弃（actionZh 空丢单镜、
-  // beatStructureZh 空丢整段镜头），密度承诺被掏空——门禁前置拒收。
-  // 注意从 raw.shots 原始对象取 actionZh（sortedShots 只保留秒位字段）。
   const emptyActionCount = (Array.isArray(input.raw.shots) ? input.raw.shots : [])
     .filter((shot) =>
       !String((shot as Record<string, unknown>).actionZh || "").trim()).length;
   if (emptyActionCount > 0) {
-    throw gateError(`第${input.segmentIndex + 1}段有 ${emptyActionCount} 个镜头 actionZh 为空（落库会被丢弃）`);
+    note("empty_action", `${labelZh}有 ${emptyActionCount} 个镜头 actionZh 为空（落库会被丢弃）`);
   }
   if (!String((input.raw as Record<string, unknown>).beatStructureZh || "").trim()) {
-    throw gateError(`第${input.segmentIndex + 1}段 beatStructureZh 为空（落库整段镜头会被丢弃）`);
+    note("empty_beat_structure", `${labelZh} beatStructureZh 为空（落库整段镜头会被丢弃）`);
   }
   if (!hasUsableManhuaTemplateClassification(parsed.data.classification)) {
-    throw gateError(`第${input.segmentIndex + 1}段五维特征标签不足两个有效维度（无法生成可审批分片卡）`);
+    note("classification_thin", `${labelZh}五维特征标签不足两个有效维度`);
   }
   const audioResolution = parsed.data.audioResolution;
   if (!input.hasAudio) {
     if (audioResolution.length > 0) {
-      throw gateError(`第${input.segmentIndex + 1}段素材无音轨却返回了 audioResolution`);
+      note("audio_unexpected", `${labelZh}素材无音轨却返回了 audioResolution`);
     }
-    return;
+    return { raw: input.raw, advisories };
   }
   if (audioResolution.length !== 1 || audioResolution[0]!.chunkIndex !== input.segmentIndex) {
-    throw gateError(
-      `第${input.segmentIndex + 1}段 audioResolution 必须恰好为 [{chunkIndex:${input.segmentIndex}}]，禁留空`,
+    note(
+      "audio_chunk_shape",
+      `${labelZh} audioResolution 应恰好为 [{chunkIndex:${input.segmentIndex}}]，实际 ${audioResolution.length} 条`,
     );
+    return { raw: input.raw, advisories };
   }
-  const analysis = manhuaNativeAudioChunkAnalysisSchema.parse(audioResolution[0]!.analysis);
+  const analysisParsed = manhuaNativeAudioChunkAnalysisSchema.safeParse(audioResolution[0]!.analysis);
+  if (!analysisParsed.success) {
+    note("audio_schema_invalid", `${labelZh}音轨 analysis 不合 schema，已原样保留`);
+    return { raw: input.raw, advisories };
+  }
+  const analysis = analysisParsed.data;
+  // 环境音也算一段：安静段落只有 1 段音轨、0 条 cue 是合法产出，只记 advisory。
   if (analysis.audioTrack.length < audioFloors.minAudioTracks) {
-    throw gateError(
-      `第${input.segmentIndex + 1}段音轨仅 ${analysis.audioTrack.length} 段，低于地板线 ${audioFloors.minAudioTracks}`,
+    note(
+      "audio_track_thin",
+      `${labelZh}音轨仅 ${analysis.audioTrack.length} 段，低于建议地板 ${audioFloors.minAudioTracks}`,
     );
   }
   const cueCount = analysis.audioTrack.reduce((sum, track) => sum + track.cues.length, 0);
   if (cueCount < audioFloors.minAudioCues) {
-    throw gateError(
-      `第${input.segmentIndex + 1}段声音事件仅 ${cueCount} 条，低于地板线 ${audioFloors.minAudioCues}`,
+    note(
+      "audio_cue_thin",
+      `${labelZh}声音事件仅 ${cueCount} 条，低于建议地板 ${audioFloors.minAudioCues}`,
     );
   }
-  // 局部时间轴连续覆盖 ±0.5s、cue 落区间、文本秒位剥离——共享 normalize 全套硬校验。
-  normalizeManhuaNativeAudioChunkAnalysis({
-    raw: audioResolution[0]!.analysis,
-    chunk: { index: input.segmentIndex, startSec: 0, endSec: lenSec },
-  });
+  advisories.push(...advisoryFromThrow("audio_timeline_invalid", segmentIndex, () => {
+    normalizeManhuaNativeAudioChunkAnalysis({
+      raw: audioResolution[0]!.analysis,
+      chunk: { index: input.segmentIndex, startSec: 0, endSec: lenSec },
+    });
+  }));
+  return { raw: input.raw, advisories };
 }
 
 /**
@@ -1736,12 +1994,14 @@ export function assertNativeDeepReadEpisodeEvidence(input: {
   if (storyShots.length === 0 || storyDurationSec < 1) {
     throw new Error(`第${input.episodeIndex}集没有可学习的剧情镜头（招商广告已排除），整集拒绝入库`);
   }
-  const minShots = Math.ceil(
-    Math.max(1, storyDurationSec) / NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC,
+  // 0829 用户裁决：集级与段级同口径——只有低于离谱地板才拒收，
+  // 介于离谱地板与建议线之间的只是密度偏低，照收（段级 advisory 已记明细）。
+  const sanityFloor = Math.ceil(
+    Math.max(1, storyDurationSec) / NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC,
   );
-  if (storyShots.length < minShots) {
+  if (storyShots.length < sanityFloor) {
     throw new Error(
-      `第${input.episodeIndex}集剧情镜头 ${storyShots.length} 个低于地板线 ${minShots}（招商广告不计入），整集拒绝入库`,
+      `第${input.episodeIndex}集剧情镜头仅 ${storyShots.length} 个，低于离谱地板 ${sanityFloor}（招商广告不计入），整集拒绝入库`,
     );
   }
   if (input.hasAudio) {
@@ -1823,10 +2083,15 @@ export function validateNativeDeepReadSegments(
 
 /**
  * 通道：OpenRouter `z-ai/glm-5.3`（实弹 222s/$0.134，合成卡全门禁通过、
- * 64 镜动作与原卡逐字一致零虚构）。适用：
- *   ① EvoLink 兜底路必过——降级产物入库前先过 GLM 整形；
- *   ② 主线仅作修复——分段卡拼集卡默认走确定性代码拼接（免费可审计），
- *     只在拼接结果过不了门禁时降级请 GLM 修复一次，修复后门禁重跑，再不过才拒收。
+ * 64 镜动作与原卡逐字一致零虚构）。
+ *
+ * 0829 统一收口：**每集装配都走 GLM 5.3 结构化整形**，不再分主线/降级两条路。
+ * 理由：段边界的重复镜头与截断段的残尾是确定性代码拼不掉的——代码只会把重复原样
+ * 拼进整集卡，或因为一段截断整集拒收。GLM 的职责因此明确为「去重 + 结构化」，
+ * 输入是本集全部分段卡（合规段 + 带 advisory 段 + truncated 段），一份不丢。
+ * 成本：≈$0.3/集（实弹 $0.134 起，长集多段翻倍），相对每段视觉调用 ¥1.2 上下可接受；
+ * 0829 实证反面账：一集 6 段因密度拒收重买 3 段白烧 ¥20.5，远贵于每集一次整形。
+ * 确定性拼接不再作为快速路，只保留一份用于交叉校验 GLM 的 excludedAdRanges，不入库。
  */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE = "openrouter_glm_structuring" as const;
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = OPENROUTER_GLM_MODEL;
@@ -1852,12 +2117,15 @@ export function buildNativeDeepReadGlmStructuringPrompt(input: {
 5. audioResolution 保留完整原始听觉证据；广告区间内声音只作审计证据，不得写入 audioBeatStructureZh/mixNotesZh/reusableAudioZh/genAudioHintZh 的可复用结论。
 6. 所有中文描述文本【禁止】出现钟表式秒位（如 01:23）或「在第X秒」定位——秒位只进数字字段。
 7. classification 必须显式输出 emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh 五个数组；没有证据的维度写 []，至少两个维度各有一个来自 story 镜头的真实标签。
-8. 只返回一个 JSON 对象，不要 Markdown 围栏、不要解释。`,
+8. 输入分段卡可能带 truncated: true（该段响应被截断，尾部可能缺失）与 advisories（门禁提示，不是拒收）。**截断段的已有内容照常采纳**，不得因为这两个标记丢弃或降权任何已有证据，也不得替截断段补写缺失的尾部；truncated 与 advisories 只是审计标记，不要写进整集卡。
+9. **去重是本次整形的首要职责**：分段卡在段边界会重复同一镜头、字幕或声音事件。按秒位合并去重——秒位区间重叠且描述同指的镜头合并成一条（保留信息更全的描述），同秒同文的字幕只留一条，同秒同 kind 的 cue 只留一条；去重只删重复，不删唯一证据。
+10. 只返回一个 JSON 对象，不要 Markdown 围栏、不要解释。`,
     user: `把以下同一集的 ${input.rawSegments.length} 份分段卡整形合并成**一张整集原生证据卡**（单个 JSON 对象，字段 schema 与分段卡完全相同：shots/subtitles/audioResolution/beatStructureZh/moodArcZh/classification/reusableZh/genPromptHintZh，另加顶层可选 excludedAdRanges）。
 要求：
 1. story 镜头连续无空档覆盖除 excludedAdRanges 外的全时间轴 0..${Math.round(input.durationSec)} 秒（绝对秒位），每镜保留 evidenceRole；只有相邻 story 证据可以合理合并，non_story_ad 必须整行剔除并把 {startSec,endSec} 区间记入顶层 excludedAdRanges，不得混入 story。合并后的单条证据不得超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，拆分边界至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒，且不得删除仍需保留的「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」续接标记或丢失覆盖。
 2. audioResolution 保留全部 [{chunkIndex,analysis}] 条目（chunkIndex 即段号，analysis 内为该段局部秒），逐段齐全${input.hasAudio ? "" : "；本集素材无音轨，audioResolution 保持空数组"}。
 3. beatStructureZh/moodArcZh/reusableZh/genPromptHintZh 只整合 story 证据，可加「第X段」标注；classification 五维标签只取 story 输入并集，不得补猜。
+4. 输入是本集**全部**分段卡：合规段、带 advisories 的段、truncated: true 的截断段都在其中，一份都不许丢。截断段照常采纳已有内容、不补写尾部；段边界的重复镜头/字幕/声音事件按秒位合并去重。
 整集元数据：${JSON.stringify({
       episodeIndex: input.episodeIndex,
       durationSec: Math.round(input.durationSec),
@@ -2044,8 +2312,33 @@ function audioTokensFromUsage(details: unknown): number {
     .reduce((sum, row) => sum + (Number((row as { tokenCount?: unknown }).tokenCount) || 0), 0);
 }
 
+/** 从段卡 raw 里读回持久化的 advisory（缓存命中/断点恢复路径用）。 */
+function readSegmentAdvisories(
+  raw: Record<string, unknown>,
+  segmentIndex: number,
+): NativeDeepReadAdvisory[] {
+  const rows = Array.isArray(raw.advisories) ? raw.advisories : [];
+  return rows.flatMap((row) => {
+    const record = (row || {}) as Record<string, unknown>;
+    const code = String(record.code || "").trim();
+    const detailZh = String(record.detailZh || "").trim();
+    if (!code || !detailZh) return [];
+    return [{
+      code,
+      detailZh,
+      segmentIndex: Number.isInteger(record.segmentIndex)
+        ? Number(record.segmentIndex)
+        : segmentIndex,
+    }];
+  });
+}
+
 type SegmentAttemptResult = {
   raw: Record<string, unknown>;
+  /** 段门禁收集到的改进建议（0829 起不再拒收）。 */
+  advisories: NativeDeepReadAdvisory[];
+  /** 上游 MAX_TOKENS 截断但已保留可解析前缀。 */
+  truncated?: boolean;
   inputTokens: number;
   outputTokens: number;
   audioInputTokens: number;
@@ -2261,6 +2554,12 @@ export async function runManhuaNativeDeepReadBatch(params: {
       let episodeReasoning = 0;
       const routesUsed = new Set<NativeDeepReadVisualRoute>();
       const rawAttemptEvidenceObjectNames = new Set<string>();
+      /** 段级 advisory 的集级汇总（按段号聚合）；provenance 与面板都读这份。 */
+      const advisoriesBySegment = new Map<number, NativeDeepReadAdvisory[]>();
+      const collectAdvisories = (): NativeDeepReadAdvisory[] =>
+        Array.from(advisoriesBySegment.keys())
+          .sort((a, b) => a - b)
+          .flatMap((index) => advisoriesBySegment.get(index) || []);
       const degradedFpsSegmentIndexes: number[] = [];
       const paidUsageBySegment = Array.from({ length: segmentCount }, () => ({
         inputTokens: 0,
@@ -2345,6 +2644,10 @@ export async function runManhuaNativeDeepReadBatch(params: {
           learnedThroughSec,
           result: {
             ...mapped,
+            advisories: (() => {
+              const rows = sortedIndexes.flatMap((index) => advisoriesBySegment.get(index) || []);
+              return rows.length ? rows : undefined;
+            })(),
             segmentCount: sortedIndexes.length,
             failedSegmentCount: segmentCount - sortedIndexes.length,
             attemptedSegments: segmentCount,
@@ -2569,11 +2872,10 @@ export async function runManhuaNativeDeepReadBatch(params: {
             priceEquivalentCny: attemptCost,
             degraded: degraded || undefined,
           }, params.onModelReceipt);
-          if (candidate?.finishReason === "MAX_TOKENS") {
-            await emitCompleted();
-            throw gateError(`第${input.segmentIndex + 1}段输出被截断（只许压字幕，禁止压镜头表或音轨栏）`);
-          }
-          if (candidate?.finishReason && candidate.finishReason !== "STOP") {
+          // 0829：MAX_TOKENS 不再直接判失败——先试着保留可解析前缀（钱已花，
+          // 前半是完整有效证据），解析成功即打 truncated 标记留段，不再重试重买。
+          const truncated = candidate?.finishReason === "MAX_TOKENS";
+          if (candidate?.finishReason && candidate.finishReason !== "STOP" && !truncated) {
             await emitCompleted();
             throw gateError(`第${input.segmentIndex + 1}段未正常结束（${candidate.finishReason}）`);
           }
@@ -2586,7 +2888,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
           await emitCompleted();
           let raw: Record<string, unknown>;
           try {
-            raw = parseJsonObject(text);
+            raw = truncated ? parseTruncatedJsonObject(text) : parseJsonObject(text);
           } catch (parseError) {
             // 取证（0826 病历单问题二）：坏 JSON 疑与思考挤占 maxOutputTokens 相关，
             // finishReason 可能仍是 STOP——把关键用量与响应尾部一起落进失败上下文。
@@ -2600,7 +2902,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
             );
             throw enriched;
           }
-          assertNativeDeepReadSegmentDensity({
+          const gated = assertNativeDeepReadSegmentDensity({
             episodeIndex: episode.episodeIndex,
             segmentIndex: input.segmentIndex,
             startSec: segment.startSec,
@@ -2608,8 +2910,41 @@ export async function runManhuaNativeDeepReadBatch(params: {
             hasAudio,
             raw,
           });
+          const segmentAdvisories: NativeDeepReadAdvisory[] = [
+            ...(truncated
+              ? [{
+                code: "truncated",
+                detailZh:
+                  `第${input.segmentIndex + 1}段上游 finishReason=MAX_TOKENS，已保留可解析前缀并跳过重试`,
+                segmentIndex: input.segmentIndex,
+              }]
+              : []),
+            ...gated.advisories,
+          ];
+          // advisory 的真实生产点：写进段卡 raw（随缓存/证据持久化）、发段级回执、
+          // 再由 buildCommittedSnapshot / 整集装配汇总进 provenance。
+          if (segmentAdvisories.length) {
+            raw.advisories = segmentAdvisories;
+            await emitVisualModelReceipt({
+              callId: crypto.randomUUID(),
+              model: NATIVE_DEEP_READ_MODEL,
+              route: "local_schema_gate",
+              stage: "visual_parse",
+              status: "completed",
+              batchRequestId: episodeRequestId,
+              episodeIndexes: [episode.episodeIndex],
+              chunkIndex: input.segmentIndex,
+              segmentCount: episode.segments.length,
+              videoCount: 1,
+              attemptNumber: input.attemptNumber,
+              advisoryCodes: segmentAdvisories.map((row) => row.code),
+              advisoriesZh: segmentAdvisories.map((row) => row.detailZh).join("；").slice(0, 2_000),
+            }, params.onModelReceipt);
+          }
           return {
             raw,
+            advisories: segmentAdvisories,
+            truncated,
             inputTokens: attemptInput,
             outputTokens: attemptOutput,
             audioInputTokens: attemptAudioInput,
@@ -2694,6 +3029,12 @@ export async function runManhuaNativeDeepReadBatch(params: {
             if (error instanceof Error && error.name === "NativeDeepReadEvidencePersistenceError") {
               throw error;
             }
+            // 0829 重试语义收窄：只有真失败（HTTP 错误 / JSON 彻底解析不了）才降温重买。
+            // schema 解析失败是「数据不可用」的关闭式失败，重买同样解决不了，直接抛。
+            if (error instanceof Error && error.name === NATIVE_DEEP_READ_SCHEMA_ERROR_NAME) {
+              logFinalGateFailure(input.segmentIndex, error);
+              throw error;
+            }
             lastError = error;
             rejectedReasonZh = (error instanceof Error ? error.message : String(error)).slice(0, 300);
           }
@@ -2724,6 +3065,9 @@ export async function runManhuaNativeDeepReadBatch(params: {
           console.info(
             `[nativeDeepRead] 第${episode.episodeIndex}集第${segmentIndex + 1}段命中已验缓存，本次模型调用 0`,
           );
+          // 旧缓存段卡里已持久化的 advisory 同样进集级汇总，别让重启后提示凭空消失。
+          const cachedAdvisories = readSegmentAdvisories(canonicalEntry.raw, segmentIndex);
+          if (cachedAdvisories.length) advisoriesBySegment.set(segmentIndex, cachedAdvisories);
           rawSegments[segmentIndex] = canonicalEntry.raw;
           await commitSegmentToProposal(segmentIndex, canonicalEntry);
           return;
@@ -2739,6 +3083,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
           segmentIndex,
           fps,
         });
+        if (result.advisories.length) advisoriesBySegment.set(segmentIndex, result.advisories);
         if (params.segmentCacheSeriesKey) {
           const sourceDigest = episode.cacheSourceDigest!;
           const entry: NativeDeepReadSegmentCacheEntry = {
@@ -2807,12 +3152,10 @@ export async function runManhuaNativeDeepReadBatch(params: {
       }
       const completeRawSegments = rawSegments as Array<Record<string, unknown>>;
 
-      // 段卡合并成集卡：默认**确定性代码拼接**（免费可审计）——各段 shots/subtitles
-      // 已是绝对秒位直接拼接、文本类栏按段加「第X段」标注、audioResolution 保
-      // chunkIndex=段号。GLM 5.3 结构化整形层只在两种情况介入：
-      //   ① EvoLink 兜底路必过（降级产物入库前先整形）；
-      //   ② 主线拼接结果过不了门禁时降级请 GLM 修复一次。
-      // 门禁永远在 GLM 之后再跑一遍——GLM 只管结构干净，厚度不达标照拒。
+      // 段卡合并成集卡：0829 起**每集一律走 GLM 5.3 结构化整形**（去重 + 结构化），
+      // 输入是本集全部分段卡（合规段 + 带 advisory 段 + truncated 段），装配前不丢任何
+      // 已付费证据。确定性拼接降为交叉校验用（只取 excludedAdRanges 对账，不入库）。
+      // 门禁仍在 GLM 之后跑一遍——GLM 只管结构干净与去重，结论仍由门禁/advisory 层给。
       const glmStructure = async (rejectedReasonZh?: string): Promise<Record<string, unknown>> => {
         const callId = crypto.randomUUID();
         const startedAt = Date.now();
@@ -2931,44 +3274,29 @@ export async function runManhuaNativeDeepReadBatch(params: {
         outputTokens: episodeOutput,
       }, params.onModelReceipt);
       try {
-        let episodeRows: Array<Record<string, unknown>>;
-        if (degradedFpsSegmentIndexes.length > 0) {
-          // EvoLink 兜底路必过 GLM 整形；整形后门禁照跑，不达标照拒。
-          const structuredRaw = await glmStructure();
-          assertGlmAdRangesMatchDeterministic(
-            structuredRaw,
-            stripNonStoryAdShotsForEpisodeCard(annotateSegmentRows()).excludedAdRanges,
-            episode.episodeIndex,
-          );
+        // 每集必走 GLM：EvoLink 降级路与 Vertex 主线走同一条装配线，不再按路由分叉。
+        // 确定性拼接只算一次，取 excludedAdRanges 给 GLM 产物对账（防 GLM 私吞/改写广告区间）。
+        const deterministicAdRanges =
+          stripNonStoryAdShotsForEpisodeCard(annotateSegmentRows()).excludedAdRanges;
+        let structuredRaw = await glmStructure();
+        assertGlmAdRangesMatchDeterministic(structuredRaw, deterministicAdRanges, episode.episodeIndex);
+        try {
           gateEpisode([structuredRaw]);
-          episodeRows = [structuredRaw];
-        } else {
-          try {
-            // 整集卡＝确定性拼接后整行剔除 non_story_ad 镜头，只留 excludedAdRanges 区间账目；
-            // 原始分段卡（raw 证据/段门禁/缓存）不动，完整时间轴保留在段级审计层。
-            // 门禁吃剔除后的整集卡，广告区间按合法缺口放行。
-            const stripped = stripNonStoryAdShotsForEpisodeCard(annotateSegmentRows());
-            gateEpisode(stripped.rows);
-            episodeRows = stripped.rows;
-          } catch (mergeGateFailure) {
-            if (params.abortSignal?.aborted) throw mergeGateFailure;
-            const rejectedReasonZh =
-              (mergeGateFailure instanceof Error ? mergeGateFailure.message : String(mergeGateFailure)).slice(0, 300);
-            console.warn(
-              `[nativeDeepRead] 第${episode.episodeIndex}集确定性拼接未过门禁，`
-              + `降级请 GLM 结构化整形修复一次：${rejectedReasonZh}`,
-            );
-            const structuredRaw = await glmStructure(rejectedReasonZh);
-            assertGlmAdRangesMatchDeterministic(
-              structuredRaw,
-              stripNonStoryAdShotsForEpisodeCard(annotateSegmentRows()).excludedAdRanges,
-              episode.episodeIndex,
-            );
-            // 修复后门禁重跑，再不过才拒收。
-            gateEpisode([structuredRaw]);
-            episodeRows = [structuredRaw];
-          }
+        } catch (structuringGateFailure) {
+          if (params.abortSignal?.aborted) throw structuringGateFailure;
+          const rejectedReasonZh = (structuringGateFailure instanceof Error
+            ? structuringGateFailure.message
+            : String(structuringGateFailure)).slice(0, 300);
+          console.warn(
+            `[nativeDeepRead] 第${episode.episodeIndex}集 GLM 整形结果未过门禁，`
+            + `带拒因重整一次：${rejectedReasonZh}`,
+          );
+          structuredRaw = await glmStructure(rejectedReasonZh);
+          assertGlmAdRangesMatchDeterministic(structuredRaw, deterministicAdRanges, episode.episodeIndex);
+          // 重整后门禁再跑一遍，再不过才拒收。
+          gateEpisode([structuredRaw]);
         }
+        const episodeRows: Array<Record<string, unknown>> = [structuredRaw];
         // 确定性拼接路与 GLM 整形路统一在此注入 chunkSpans：整集卡携带
         // audioResolution 各 chunk 的真实段界（来自 episode.segments spec），
         // mapper 的音频广告过滤只认它换算，绝不从镜头秒位猜 chunk 起点。
@@ -2989,10 +3317,20 @@ export async function runManhuaNativeDeepReadBatch(params: {
         const committedSnapshot = committedIndexes.length === segmentCount
           ? buildCommittedSnapshot()
           : undefined;
+        const episodeAdvisories = collectAdvisories();
+        if (episodeAdvisories.length) {
+          console.info(
+            `[nativeDeepRead] 第${episode.episodeIndex}集改进建议 ${episodeAdvisories.length} 条：`
+            + episodeAdvisories.map((row) => row.code).join("、"),
+          );
+        }
         episodes.push({
           episodeIndex: episode.episodeIndex,
           result: {
             ...mapped,
+            // provenance 里的 advisory 真值：整集卡合并（含 GLM 整形）可能不带段卡
+            // 的 advisories 字段，这里用段级汇总覆盖，保证面板一定看得到。
+            advisories: episodeAdvisories.length ? episodeAdvisories : undefined,
             segmentCount,
             failedSegmentCount: 0,
             attemptedSegments: segmentCount,
@@ -3028,6 +3366,12 @@ export async function runManhuaNativeDeepReadBatch(params: {
           videoCount: segmentCount,
           inputTokens: episodeInput,
           outputTokens: episodeOutput,
+          advisoryCodes: episodeAdvisories.length
+            ? episodeAdvisories.map((row) => row.code)
+            : undefined,
+          advisoriesZh: episodeAdvisories.length
+            ? episodeAdvisories.map((row) => row.detailZh).join("；").slice(0, 2_000)
+            : undefined,
         }, params.onModelReceipt);
       } catch (error) {
         await emitVisualModelReceipt({
