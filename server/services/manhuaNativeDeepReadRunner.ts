@@ -220,6 +220,29 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
         ],
       },
     },
+    /**
+     * v12 新增：模型自报的抓帧秒位。位置刻意排在 shots 之后、其余字段之前——
+     * responseSchema 越靠后的字段越先被 MAX_TOKENS 截断（classification 排末位就是
+     * 因此长期被截，0829 才不得不给它开豁免）。这个字段是抽帧链的唯一输入，不能被截掉。
+     */
+    keyMoments: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          atSec: {
+            type: "NUMBER",
+            description: "该重点时刻的**精确抓帧秒位**（全片绝对秒），不是镜头区间中点。",
+          },
+          kindZh: {
+            type: "STRING",
+            enum: ["切镜", "情绪", "灯光", "剧情", "音轨"],
+          },
+          noteZh: { type: "STRING", maxLength: 120 },
+        },
+        required: ["atSec", "kindZh", "noteZh"],
+      },
+    },
     subtitles: {
       type: "ARRAY",
       items: {
@@ -551,7 +574,7 @@ export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
  * v4（0826 拍板）：视觉调用换 Vertex Gemini 3.1 Pro 从 GCS 直读、每段一次调用、
  * 音轨同调直出、双密度门禁。计划口径与采样语义全变——旧确认码必须全废。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v11-episode-advisory" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v12-key-moments" as const;
 
 /** 0827 实弹口径：生产 300 秒分片保持 10fps；仅旧数据超 300 秒时降为 5fps。 */
 export function resolveNativeDeepReadRequestFps(totalDurationSec: number): number {
@@ -607,6 +630,12 @@ export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_ALLOWANCE = 1;
 export const NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH = "同一长镜证据拆分（非切镜）";
 /** 长镜证据拆分点之间至少相隔 1 秒，禁止用同秒空切凑过 30 秒门禁。 */
 export const NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC = 1;
+/**
+ * 🔒 单次合并的总跨度硬上限（0830 用户拍板 59 秒）。
+ * 59 = 两段各 30 秒、中间相隔 1 秒的上限形态：跨度超过 30 秒就必须表达成两段。
+ * ⚠️ 这条管的是「一次合并能跨多远」，与单条证据 30 秒硬上限是两把不同的尺子，别合并。
+ */
+export const NATIVE_DEEP_READ_MERGE_SPAN_HARD_MAX_SEC = 59;
 /** 微尾段豁免：计划切段真实存在 9s 尾段（如 1080–1089），诚实的单镜结尾不该必拒 */
 export const NATIVE_DEEP_READ_SHOT_MICRO_SEGMENT_SEC = 12;
 /** 音轨段数地板：≥ max(1, ceil(段时长/60))；0829 起只用于生成 advisory，不影响入库。 */
@@ -693,6 +722,7 @@ c. 输出预算紧张时优先压缩 subtitles，尽量保全镜头表与音轨�
    "actionZh":"本镜可见的故事动作过程、信息变化、表演结果与辨识特征",
    "transitionInZh":"进入这一镜的转场：硬切/闪白/黑场/遮挡转场/叠化；同一物理长镜的后续证据段写固定标记「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」",
    "evidenceRole":"story 或 non_story_ad；只有与剧情无关的招商广告才写 non_story_ad"}],
+ "keyMoments":[{"atSec":整数,"kindZh":"切镜 或 情绪 或 灯光 或 剧情 或 音轨","noteZh":"这一秒发生了什么，一句话"}],
  "subtitles":[{"atSec":整数,"textZh":"画面上真实出现的字幕原文，逐字照抄"}],
  "audioResolution":[{"chunkIndex":${input.segmentIndex},"analysis":{"audioTrack":[{"fromSec":局部整数秒,"toSec":局部整数秒,"emotionArcZh":"情绪强度变化","toneZh":"怎么说，不写台词","sfxZh":"音效","bgmZh":"配乐","atmosphereZh":"气氛","silenceZh":"留白","cues":[{"atSec":局部整数秒,"kind":"source_change/voice_change/sfx/bgm_in/bgm_change/bgm_out/atmosphere_change/dynamics_change/mix_change/silence_in/silence_out","detailZh":"事件"}]}],"audioBeatStructureZh":"声音节奏","mixNotesZh":"混音","reusableAudioZh":"可复用声音手法","genAudioHintZh":"生成声音要素"}}],
  "beatStructureZh":"节奏结构：憋了几秒、第几秒爆、爆后怎么收",
@@ -701,10 +731,18 @@ c. 输出预算紧张时优先压缩 subtitles，尽量保全镜头表与音轨�
  "reusableZh":"可复用手法（脱离本剧剧情，写成通用做法）",
  "genPromptHintZh":"若用 AI 生成类似片段，画面提示词该写哪几个要素"
 }
-硬约束（只有这六条，必须遵守）：
+硬约束（必须遵守）：
 1. shots 与 subtitles 的 startSec/endSec/atSec **一律写全片绝对秒位**：本段即 ${Math.round(input.startSec)}..${Math.round(input.endSec)} 秒；shots 连续无空档覆盖整段。真实剪辑切换的 unitTypeZh 写「剪辑镜头」；若同一物理长镜持续超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，不得截断、丢弃尾部或伪造切镜，必须按镜内真实发生的构图、运镜、角色调度、动作、表演或光影变化拆成至少 2 个连续证据段，每个证据段至少 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒，unitTypeZh 写「拆分镜证据段」，第二段及后续段的 transitionInZh 固定写「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」。
 2. cameraMoveZh 只写真看到的运动，看不出运动就写「固定机位」，禁止套「镜头拉远」这类无依据说法。
 3. 所有中文描述字段【禁止】出现钟表式时间（如 01:23、1:05:30）或「在第X秒」式秒位定位——秒位只进数字字段；描述动作时长（如「1.2秒内推近」）不在此限。
+3.5 **keyMoments 是抓帧秒位表，由你来点**（v12 新增）。下游会**按你给的 atSec 去原片抓那一帧**，所以 atSec 必须是**那一瞬间最有代表性的那一秒**，不是镜头区间的中点，也不要落在转场、运动模糊或空镜上。五类各自的判据：
+   · **切镜**——景别或机位发生突变的那一帧（如中景→特写落定的瞬间）
+   · **情绪**——微表情的**峰值时刻**（眉头锁紧、眼神变化最明显的那一秒），不是这一镜的中点
+   · **灯光**——氛围切换的**前后各一条**（如暖光转面部阴影加深，切换前一秒与切换后一秒）
+   · **剧情**——推动因果的关键节点（台词点破冲突、关键道具亮相）
+   · **音轨**——声音事件发生秒（BGM 转折、关键音效、分段切换）
+   密度**跟着戏走**：重镜可多条，平淡镜（固定机位＋无表演＋无光变）可以一条都不给；
+   evidenceRole=non_story_ad 的区间**一条都不许给**。宁可少给也不要为凑数硬点。
 4. 无论画面是真人剧还是动画：出现明确与剧情无关的招商广告、贴片、带货、商品展示、购物引导、品牌口播、品牌落版，或任何商业推广/营销性内容（关注引导、点赞催更、解锁下集提示、平台导流、二维码推广等），仍用 shots 保持完整时间轴，但对应镜头 evidenceRole 必须写 non_story_ad；这类镜头不计学习密度，其画面与声音内容不得进入 subtitles、beatStructureZh、moodArcZh、classification、reusableZh、genPromptHintZh，也不得写入 audioResolution 各段的描述与 cues 结论。其余镜头一律写 story。
 5. 分析描述不写外部平台剧名、商标或原台词；subtitles 是唯一例外——逐字照抄画面上真实出现的剧情字幕，看不清写「[不可辨]」，禁止按剧情补全或从声音猜字；广告字幕不要进入 subtitles。
 ${audioHardRule}
@@ -2261,7 +2299,7 @@ export function buildNativeDeepReadGlmStructuringPrompt(input: {
   return {
     system: `你是漫剧模板卡的「结构化整形师」。只整形不创作：
 1. 禁止虚构输入卡里没有的镜头、字幕、声音或描述；每一条产出都必须能在输入卡里找到出处。
-2. shots 已逐段通过付费前门禁。每镜的 unitTypeZh/shotSizeZh/angleZh/compositionZh/cameraMoveZh/blockingZh/bodyActionZh/limbPropActionZh/microExpressionZh/gazeBreathZh/relationshipReactionZh/lightingZh/actionZh/transitionInZh 都是不可丢失的原始证据。连续表演或连续剧情允许合理合并相邻证据，但合并后的单条证据不得超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，拆分边界必须至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒；不得丢失时间轴覆盖。仍需拆分的同一物理长镜，其 unitTypeZh 必须保持「拆分镜证据段」，transitionInZh 必须保留「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」。
+2. shots 已逐段通过付费前门禁。每镜的 unitTypeZh/shotSizeZh/angleZh/compositionZh/cameraMoveZh/blockingZh/bodyActionZh/limbPropActionZh/microExpressionZh/gazeBreathZh/relationshipReactionZh/lightingZh/actionZh/transitionInZh 都是不可丢失的原始证据。🔴 **镜头切分是模型逐秒看片得出的真实结果，不是可压缩的冗余**：相邻但秒位**不重叠**的两条镜头，哪怕表演连续、剧情连续、同一场景同一机位，**也一律各自保留，绝不许合并成一条**。唯一允许合并的是**同一物理镜头的重复记录**（秒位区间重叠，通常来自段边界重复或同段多版本）。🔒 **长度规则（0830 用户拍板）**：任何一次合并的总跨度**不得超过 ${NATIVE_DEEP_READ_MERGE_SPAN_HARD_MAX_SEC} 秒**；跨度超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒的，**必须切成两段、每段都不超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，两段边界至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒**。不得丢失时间轴覆盖。仍需拆分的同一物理长镜，其 unitTypeZh 必须保持「拆分镜证据段」，transitionInZh 必须保留「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」。
 3. 整集卡必须**整行剔除**全部 evidenceRole=non_story_ad 的镜头，其 {startSec,endSec} 区间合并相邻后写入顶层可选字段 excludedAdRanges:[{startSec,endSec}]；不得把广告内容并入任何 story 镜头，广告的画面与声音也不得进入剧情字幕、节奏、情绪、分类、可复用手法或生成提示。输入没有 non_story_ad 镜头时不要输出 excludedAdRanges 字段。保留下来的每个 shot 必须原样保留 evidenceRole，剔除后其余镜头一律保持 story。完整原始时间轴由分段卡审计层保存，无需在整集卡复述广告镜头。
 4. subtitles 只取 story 区间的并集去重，保持全片绝对秒位排序。
 5. audioResolution 保留完整原始听觉证据；广告区间内声音只作审计证据，不得写入 audioBeatStructureZh/mixNotesZh/reusableAudioZh/genAudioHintZh 的可复用结论。
@@ -2278,10 +2316,11 @@ export function buildNativeDeepReadGlmStructuringPrompt(input: {
    c. 逐条比对：秒位区间重叠的记录合并成一条，字段逐个取**信息更具体的那一版的原文**；秒位不重叠的记录全部保留。
    d. **不改写、不扩写**；可以润色文句，也不必强求统一文风，但**必须忠于原文内容**——你的职责是在原文内容范围内取舍与归并，不是重写，更不许新增原文没有的信息。
 10. **判定合并对不对只有一条尺子**：输出的 shots 在时间轴上必须是**一组互不重叠、首尾相接**的区间，连续覆盖除 excludedAdRanges 外的全时间轴。任何一秒只能被一条 story 记录覆盖——**出现两条区间重叠即为错误产出**。段边界处重复的同一镜头/字幕/声音事件按此合并（同秒同文的字幕只留一条，同秒同 kind 的 cue 只留一条）；单条合并后超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒时，必须按镜内真实变化拆成连续证据段（边界至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒），🔴 **绝不许用丢弃证据的方式满足这条**。
-11. 只返回一个 JSON 对象，不要 Markdown 围栏、不要解释。`,
+11. **keyMoments 原样保留并按 atSec 合并去重**（v12）：这是模型看片时自报的抓帧秒位表，下游据此去原片抓帧。同秒同类只留一条，取说明更具体的；不同秒、不同类一律全保留；🔴 **不许自己新增 atSec，也不许因为"太多"而删减**——你没看过画面，点不出新的秒位。落在 excludedAdRanges 区间内的条目整条剔除。
+12. 只返回一个 JSON 对象，不要 Markdown 围栏、不要解释。`,
     user: `把以下同一集的 ${input.rawSegments.length} 份分段卡整形合并成**一张整集原生证据卡**（单个 JSON 对象，字段 schema 与分段卡完全相同：shots/subtitles/audioResolution/beatStructureZh/moodArcZh/classification/reusableZh/genPromptHintZh，另加顶层可选 excludedAdRanges）。
 要求：
-1. story 镜头连续无空档覆盖除 excludedAdRanges 外的全时间轴 0..${Math.round(input.durationSec)} 秒（绝对秒位），每镜保留 evidenceRole；只有相邻 story 证据可以合理合并，non_story_ad 必须整行剔除并把 {startSec,endSec} 区间记入顶层 excludedAdRanges，不得混入 story。合并后的单条证据不得超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，拆分边界至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒，且不得删除仍需保留的「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」续接标记或丢失覆盖。
+1. story 镜头连续无空档覆盖除 excludedAdRanges 外的全时间轴 0..${Math.round(input.durationSec)} 秒（绝对秒位），每镜保留 evidenceRole；🔴 **只有秒位重叠的重复记录可以合并；相邻不重叠的镜头一律各自保留**——整集输出的镜头条数应与输入去重后的真实切分相当，**镜头数大幅变少、平均镜长明显拉长即为错误产出**。non_story_ad 必须整行剔除并把 {startSec,endSec} 区间记入顶层 excludedAdRanges，不得混入 story。🔒 一次合并的总跨度不得超过 ${NATIVE_DEEP_READ_MERGE_SPAN_HARD_MAX_SEC} 秒；超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒必须切成两段、每段不超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒、边界至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒，且不得删除仍需保留的「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」续接标记或丢失覆盖。
 2. audioResolution 保留全部 [{chunkIndex,analysis}] 条目（chunkIndex 即段号，analysis 内为该段局部秒），逐段齐全${input.hasAudio ? "" : "；本集素材无音轨，audioResolution 保持空数组"}。
 3. beatStructureZh/moodArcZh/reusableZh/genPromptHintZh 只整合 story 证据，可加「第X段」标注；classification 五维标签只取 story 输入并集，不得补猜。
 4. 输入是本集**全部**产出：合规段、带 advisories 的段、truncated 截断段、被门禁标记（gateMarked）的版本都在其中，一份都不许丢。**同一段可能有多个版本**，按秒位合并去重后取信息更全的；截断段照常采纳已有内容、不补写尾部；段边界的重复镜头/字幕/声音事件同样按秒位合并。

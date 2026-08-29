@@ -115,7 +115,7 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_ROUTE_EVOLINK).toBe("evolink_gemini_video");
     expect(NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE).toBe("openrouter_glm_structuring");
     // 换代必须让旧确认码全废
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v11-episode-advisory");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v12-key-moments");
   });
 
   it("长视频请求显式使用 30 分钟 HTTP 响应头与响应体时限，不落回 Undici 默认 300 秒", async () => {
@@ -187,10 +187,17 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_RESPONSE_SCHEMA.required).toEqual([
       "shots", "subtitles", "audioResolution", "beatStructureZh", "classification",
     ]);
+    // v12：keyMoments 刻意排在 shots 之后、其余字段之前——responseSchema 越靠后
+    // 越先被 MAX_TOKENS 截断（classification 排末位就是因此长期被截）。
+    // 它是抽帧链的唯一输入，不能被截掉。不进 required：旧卡没有，下游一律兜底。
     expect(Object.keys(NATIVE_DEEP_READ_RESPONSE_SCHEMA.properties)).toEqual([
-      "shots", "subtitles", "audioResolution", "beatStructureZh",
+      "shots", "keyMoments", "subtitles", "audioResolution", "beatStructureZh",
       "moodArcZh", "reusableZh", "genPromptHintZh", "classification",
     ]);
+    const keyMoments = (NATIVE_DEEP_READ_RESPONSE_SCHEMA.properties as Record<string, any>).keyMoments;
+    expect(keyMoments.items.required).toEqual(["atSec", "kindZh", "noteZh"]);
+    expect(keyMoments.items.properties.kindZh.enum)
+      .toEqual(["切镜", "情绪", "灯光", "剧情", "音轨"]);
     const audioAnalysis = NATIVE_DEEP_READ_RESPONSE_SCHEMA.properties.audioResolution
       .items.properties.analysis;
     expect(audioAnalysis.required).toEqual([
@@ -375,7 +382,7 @@ describe("每段提示词硬约束", () => {
     expect(prompt).toContain("优先压缩 subtitles，尽量保全镜头表与音轨栏的密度");
     expect(prompt).toContain("宁可少记也不要合并或编造");
     expect(prompt).toContain("钟表式时间");
-    expect(prompt).toContain("硬约束（只有这六条，必须遵守）");
+    expect(prompt).toContain("硬约束（必须遵守）");
   });
 
   it("镜数改软引导（不再是验收数字，也不再限额长镜），长镜拆分硬约束保留", () => {
@@ -1190,15 +1197,26 @@ describe("GLM 结构化整形提示词纪律", () => {
     expect(prompt.system).toContain("只整形不创作");
     expect(prompt.system).toContain("禁止虚构");
     expect(prompt.system).toContain(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH);
-    expect(prompt.system).toContain("连续表演或连续剧情允许合理合并相邻证据");
+    // 🔒 0830 实弹后撤销「合并相邻」许可：GLM 把 426 镜压成 99 镜（平均镜长
+    // 3.6s→15.4s，贴着 30 秒上限往上合），而知识库实测漫剧真实节奏是 2.8–4.3s/镜。
+    // 覆盖秒数一秒不差、无重叠无编造——三项对账全绿也拦不住，因为合并相邻镜头
+    // 本来就保覆盖。根因就是这句许可证，必须反过来写成禁令。
+    expect(prompt.system).not.toContain("允许合理合并相邻证据");
+    expect(prompt.system).toContain("相邻但秒位**不重叠**的两条镜头");
+    expect(prompt.system).toContain("绝不许合并成一条");
+    expect(prompt.system).toContain("唯一允许合并的是**同一物理镜头的重复记录**");
     expect(prompt.system).toContain("超过 30 秒");
     expect(prompt.system).toContain("不得丢失时间轴覆盖");
     expect(prompt.system).toContain("并集去重");
     expect(prompt.system).toContain("钟表式秒位");
     expect(prompt.system).toContain("只返回一个 JSON 对象");
     expect(prompt.user).toContain("【上一轮门禁被拒原因】镜头轴存在空档");
-    expect(prompt.user).toContain("只有相邻 story 证据可以合理合并");
-    expect(prompt.user).toContain("拆分边界至少相隔 1 秒");
+    expect(prompt.user).not.toContain("只有相邻 story 证据可以合理合并");
+    expect(prompt.user).toContain("只有秒位重叠的重复记录可以合并");
+    expect(prompt.user).toContain("镜头数大幅变少、平均镜长明显拉长即为错误产出");
+    // 0830 用户拍板：一次合并的总跨度上限 59 秒；超 30 秒必须切两段、各不超 30 秒、间隔 1 秒
+    expect(prompt.user).toContain("一次合并的总跨度不得超过 59 秒");
+    expect(prompt.user).toContain("边界至少相隔 1 秒");
     expect(prompt.user).toContain("不得删除仍需保留的");
     expect(prompt.system).toContain("emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh");
     // 0829 晚：删掉「至少两个维度」这个数量下限——数字目标只会逼模型编造凑数
@@ -1214,7 +1232,9 @@ describe("GLM 结构化整形提示词纪律", () => {
     expect(prompt.system).toContain("其余镜头一律保持 story");
     expect(prompt.user).toContain("除 excludedAdRanges 外的全时间轴");
     expect(prompt.user).toContain("整行剔除并把 {startSec,endSec} 区间记入顶层 excludedAdRanges");
-    expect(prompt.user).toContain("只有相邻 story 证据可以合理合并");
+    expect(prompt.user).not.toContain("只有相邻 story 证据可以合理合并");
+    expect(prompt.user).toContain("只有秒位重叠的重复记录可以合并");
+    expect(prompt.user).toContain("镜头数大幅变少、平均镜长明显拉长即为错误产出");
   });
 
   it("0829 晚收口：标记不是废弃理由、同段多版本按秒位合并、去重是首要职责", () => {
@@ -2434,6 +2454,6 @@ describe("参数冻结锁（0829 用户拍板 · 非用户允许不得变更）"
   it("长镜与分片规格冻结：单条证据段 30 秒、拆分间隔 1 秒、PLAN_VERSION v10", () => {
     expect(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC).toBe(30);
     expect(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC).toBe(1);
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v11-episode-advisory");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v12-key-moments");
   });
 });

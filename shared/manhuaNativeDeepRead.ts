@@ -89,6 +89,24 @@ export const nativeDeepReadSegmentSchema = z
     shots: z.array(shotSchema).default([]),
     /** 可选：整集卡合并层整行剔除广告镜头后留下的区间账目；无广告时缺省不出现。 */
     excludedAdRanges: z.array(nativeDeepReadExcludedAdRangeSchema).optional(),
+    /**
+     * 重点时刻（v12 新增，**可选**）：由**正在逐秒看片的模型**自报的抓帧秒位。
+     *
+     * 为什么必须模型自报：抽帧长期「牛头不对马嘴」的根因是 ffmpeg 只能按镜头区间取
+     * 机械中点，而中点常落在转场、运动模糊或空镜上；「微表情峰值在第几秒」这种判断
+     * 只有看得见画面的模型知道。ffmpeg 判得了黑帧，判不了戏。
+     *
+     * 五类与审片报告的抽帧六原则一一对应：
+     *   切镜=景别/机位突变必抽 · 情绪=强微表情定点 · 灯光=氛围切换成对抽
+     *   剧情=关键节点 · 音轨=声音事件 cue
+     *
+     * 可选（不进硬门禁）：旧卡没有这个字段，下游一律兜底，缺省即退回原有抽帧策略。
+     */
+    keyMoments: z.array(z.object({
+      atSec: z.number().finite().min(0),
+      kindZh: z.enum(["切镜", "情绪", "灯光", "剧情", "音轨"]),
+      noteZh: z.string().trim().min(1),
+    }).strict()).optional(),
     subtitles: z.array(z.object({
       atSec: z.number().finite().min(0),
       textZh: z.string().trim().min(1),
