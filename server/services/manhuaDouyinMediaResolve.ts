@@ -6,6 +6,7 @@
  * （错误里绝不含 cookie 与 URL 查询串）。子进程（ffmpeg/yt-dlp 兜底）
  * 只拿这里解析出的无凭证媒体地址。
  */
+import { isTrustedDouyinPlaybackUrl } from "../../shared/manhuaLearnDouyinWebApi";
 import { sanitizeSensitiveText } from "./manhuaMediaSanitize";
 
 const DESKTOP_UA =
@@ -37,16 +38,28 @@ function toHttps(url: string): string {
   return url.replace(/^http:\/\//, "https://");
 }
 
-type MediaHit = { mediaUrl: string; durationSec?: number };
+type MediaHit = { mediaUrl: string; durationSec?: number; matchedTarget: boolean };
 
 function readUrlList(node: Record<string, unknown>): string | null {
   const list = node.url_list ?? node.urlList;
   if (!Array.isArray(list)) return null;
   for (const item of list) {
     const url = toHttps(String(item || "").trim());
-    if (/^https:\/\//.test(url)) return url;
+    // 白名单外的 https 一律不采纳：这个地址会直接交给下载器出网。
+    if (isTrustedDouyinPlaybackUrl(url)) return url;
   }
   return null;
+}
+
+/** 页面节点自身声明的 aweme/video id（只认纯数字 10–24 位）。 */
+const NODE_ID_KEYS = ["aweme_id", "awemeId", "item_id", "itemId", "video_id", "videoId"] as const;
+
+function readNodeVideoId(record: Record<string, unknown>): string {
+  for (const key of NODE_ID_KEYS) {
+    const value = String(record[key] ?? "").trim();
+    if (/^\d{10,24}$/.test(value)) return value;
+  }
+  return "";
 }
 
 function readDurationSec(container: Record<string, unknown>): number | undefined {
@@ -56,32 +69,59 @@ function readDurationSec(container: Record<string, unknown>): number | undefined
   return raw > 1000 ? raw / 1000 : raw;
 }
 
-/** 深搜 JSON：找 video 对象的 play_addr/playAddr.url_list 首个 https，或 playApi 串。 */
-function findMediaInJson(node: unknown, depth = 0): MediaHit | null {
+/**
+ * 深搜 JSON：找 video 对象的 play_addr/playAddr.url_list 首个可信 https，或 playApi 串。
+ *
+ * 绑定 videoId：抖音页面常内嵌推荐位/合集里的**其他**视频，深搜「第一个 play_addr」
+ * 会把别人的媒体地址当成本集。因此：
+ * - 节点自身声明的 id（aweme_id/item_id/video_id…）沿子树继承；
+ * - 明确属于其他 videoId 的子树整棵丢弃；
+ * - 命中目标 videoId 的候选优先返回，未绑定候选只作兜底（页面完全没有身份字段时才用得上）。
+ */
+function findMediaInJson(
+  node: unknown,
+  targetVideoId: string,
+  inheritedVideoId = "",
+  depth = 0,
+): MediaHit | null {
   if (!node || typeof node !== "object" || depth > 24) return null;
   if (Array.isArray(node)) {
+    let fallback: MediaHit | null = null;
     for (const item of node) {
-      const hit = findMediaInJson(item, depth + 1);
-      if (hit) return hit;
+      const hit = findMediaInJson(item, targetVideoId, inheritedVideoId, depth + 1);
+      if (!hit) continue;
+      if (hit.matchedTarget) return hit;
+      fallback ??= hit;
     }
-    return null;
+    return fallback;
   }
   const record = node as Record<string, unknown>;
+  const ownVideoId = readNodeVideoId(record);
+  const currentVideoId = ownVideoId || inheritedVideoId;
+  // 明确属于别的视频：整棵子树不采纳。
+  if (currentVideoId && targetVideoId && currentVideoId !== targetVideoId) return null;
+  const matchedTarget = Boolean(currentVideoId) && currentVideoId === targetVideoId;
+
   const playAddr = record.play_addr ?? record.playAddr;
   if (playAddr && typeof playAddr === "object" && !Array.isArray(playAddr)) {
     const mediaUrl = readUrlList(playAddr as Record<string, unknown>);
-    if (mediaUrl) return { mediaUrl, durationSec: readDurationSec(record) };
+    if (mediaUrl) return { mediaUrl, durationSec: readDurationSec(record), matchedTarget };
   }
   const playApi = record.playApi ?? record.play_api;
   if (typeof playApi === "string" && playApi.trim()) {
     const mediaUrl = toHttps(playApi.trim());
-    if (/^https:\/\//.test(mediaUrl)) return { mediaUrl, durationSec: readDurationSec(record) };
+    if (isTrustedDouyinPlaybackUrl(mediaUrl)) {
+      return { mediaUrl, durationSec: readDurationSec(record), matchedTarget };
+    }
   }
+  let fallback: MediaHit | null = null;
   for (const value of Object.values(record)) {
-    const hit = findMediaInJson(value, depth + 1);
-    if (hit) return hit;
+    const hit = findMediaInJson(value, targetVideoId, currentVideoId, depth + 1);
+    if (!hit) continue;
+    if (hit.matchedTarget) return hit;
+    fallback ??= hit;
   }
-  return null;
+  return fallback;
 }
 
 function parseEmbeddedJsonBlocks(html: string): unknown[] {
@@ -148,9 +188,15 @@ export async function resolveDouyinMediaUrl(
   }
 
   const blocks = parseEmbeddedJsonBlocks(html);
+  let fallbackHit: MediaHit | null = null;
   for (const block of blocks) {
-    const hit = findMediaInJson(block);
-    if (hit) return { videoId, mediaUrl: hit.mediaUrl, durationSec: hit.durationSec };
+    const hit = findMediaInJson(block, videoId);
+    if (!hit) continue;
+    if (hit.matchedTarget) return { videoId, mediaUrl: hit.mediaUrl, durationSec: hit.durationSec };
+    fallbackHit ??= hit;
+  }
+  if (fallbackHit) {
+    return { videoId, mediaUrl: fallbackHit.mediaUrl, durationSec: fallbackHit.durationSec };
   }
   throw new Error(
     sanitizeSensitiveText(`抖音视频页未解析到媒体地址（video=${videoId}，内嵌 JSON 块 ${blocks.length} 个）`),

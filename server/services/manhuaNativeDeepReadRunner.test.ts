@@ -6,6 +6,16 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC,
+  NATIVE_DEEP_READ_SANITY_FLOOR_MIN_SEGMENT_SEC,
+  NATIVE_DEEP_READ_SEGMENT_FULL_LENGTH_SEC,
+  NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC,
+  NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC,
+  NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_INTERVAL_SEC,
+  NATIVE_DEEP_READ_AUDIO_CUE_FLOOR_INTERVAL_SEC,
+  NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN,
+  NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC,
+  NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC,
   NATIVE_DEEP_READ_GENERATION_CONFIG,
   NATIVE_DEEP_READ_HTTP_BODY_TIMEOUT_MS,
   NATIVE_DEEP_READ_HTTP_HEADERS_TIMEOUT_MS,
@@ -379,7 +389,13 @@ describe("每段提示词硬约束", () => {
     expect(prompt).toContain("不要把「剧情段」当成一个镜头");
     // 诚实优先声明（软化后防模型仍按旧习惯凑数）
     expect(prompt).toContain("产出会被完整保留并交由结构化层整理，不达密度不会被拒收");
-    expect(prompt).toContain("请如实记录，不要为达标编造");
+    expect(prompt).toContain("请如实记录");
+    // 双向诚实：既禁编造，也禁漏记（0829 用户追问：只防往上编等于给偷懒开门）
+    expect(prompt).toContain("漏记真实发生的切镜同样是错误");
+    // 节奏是平均值不是单镜上限；长镜无变化可照实记一条，不为拆而拆
+    expect(prompt).toContain("这是整段平均节奏，不是单镜上限");
+    // 用户实测拍板：超 30 秒必须拆，否则模型把 140-300 秒当一个镜头交差
+    expect(prompt).toContain("必须按镜内真实发生的构图、运镜、角色调度、动作、表演或光影变化拆成至少 2 个连续证据段");
     expect(prompt).toContain("同一物理长镜持续超过 30 秒");
     expect(prompt).toContain("每个证据段至少 1 秒");
     expect(prompt).toContain(`transitionInZh 固定写「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」`);
@@ -2111,5 +2127,26 @@ describe("参数冻结锁（0829 用户拍板 · 非用户允许不得变更）"
 
   it("重试梯度冻结为 [0.65, 0.6] 两档", () => {
     expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.65, 0.6]);
+    expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.6);
+  });
+
+  it("门禁阈值冻结：离谱地板 10 秒/镜、分级线 120 秒、整片 300 秒", () => {
+    expect(NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC).toBe(10);
+    expect(NATIVE_DEEP_READ_SANITY_FLOOR_MIN_SEGMENT_SEC).toBe(120);
+    expect(NATIVE_DEEP_READ_SEGMENT_FULL_LENGTH_SEC).toBe(300);
+  });
+
+  it("建议线阈值冻结：镜数 6 秒/镜、平均镜长 6 秒、音轨 60 秒/段、cue 24 秒/条", () => {
+    expect(NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC).toBe(6);
+    expect(NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC).toBe(6);
+    expect(NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_INTERVAL_SEC).toBe(60);
+    expect(NATIVE_DEEP_READ_AUDIO_CUE_FLOOR_INTERVAL_SEC).toBe(24);
+    expect(NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN).toBe(1);
+  });
+
+  it("长镜与分片规格冻结：单条证据段 30 秒、拆分间隔 1 秒、PLAN_VERSION v10", () => {
+    expect(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC).toBe(30);
+    expect(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC).toBe(1);
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v10-advisory-gates");
   });
 });

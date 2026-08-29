@@ -514,11 +514,31 @@ const EVIDENCE_NAMES = [
   "manhua-template-learn/segment-evidence/tpl_native_seriesabc_ep001/dig/seg1-fp-r1.json",
 ];
 
+const FULL_SOURCE_DIGEST = "c".repeat(64);
+
+/** 完整卡：两段全成功、装配完成、证据名与分片数一致、digest 合法 → 允许导出。 */
 const nativeCardWithEvidence = {
   ...partialNativeCard,
   provenance: {
     nativeVideoDeepRead: {
       ...(partialNativeCard.provenance!.nativeVideoDeepRead as object),
+      attemptedSegments: 2,
+      successSegments: 2,
+      completedSegmentIndexes: [0, 1],
+      assemblyComplete: true,
+      sourceDigest: FULL_SOURCE_DIGEST,
+      segmentEvidenceObjectNames: EVIDENCE_NAMES,
+    },
+  },
+} as unknown as ManhuaViralTemplateCard;
+
+/** 部分卡：4 段只跑完 1 段，但 provenance 已有证据名——正是最容易被误导出的形态。 */
+const partialCardWithEvidence = {
+  ...partialNativeCard,
+  provenance: {
+    nativeVideoDeepRead: {
+      ...(partialNativeCard.provenance!.nativeVideoDeepRead as object),
+      sourceDigest: FULL_SOURCE_DIGEST,
       segmentEvidenceObjectNames: EVIDENCE_NAMES,
     },
   },
@@ -549,6 +569,10 @@ describe("renderEpisodeReport：canonical 寻址（禁列目录猜证据）", ()
     const input = renderCalls[renderCalls.length - 1]![0];
     expect(input.evidenceObjectNames).toEqual(EVIDENCE_NAMES);
     expect(input.expectEpisodeIndex).toBe(1);
+    // 身份三件套必须一路传到渲染层，渲染层才有条件二次校验证据归属
+    expect(input.expectSeriesKey).toBe("seriesabc");
+    expect(input.expectSourceDigest).toBe(FULL_SOURCE_DIGEST);
+    expect(input.expectSegmentCount).toBe(2);
     expect(input.reportObjectName).toBe(
       "manhua-template-learn/reports/tpl_native_seriesabc_ep001.html",
     );
@@ -580,6 +604,72 @@ describe("renderEpisodeReport：canonical 寻址（禁列目录猜证据）", ()
     await expect(caller.renderEpisodeReport({ seriesKey: "seriesabc", episodeIndex: 1 }))
       .rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(renderMock.mock.calls.length).toBe(before);
+  });
+
+  it("部分卡即使已有证据名也拒绝导出：PRECONDITION_FAILED，渲染服务一次不被调用", async () => {
+    proposalForRouter = partialCardWithEvidence;
+    const render = await import("../services/manhuaNativeReportRender");
+    const renderMock = render.renderNativeEvidenceReportFromObjectNames as unknown as {
+      mock: { calls: unknown[] };
+    };
+    const before = renderMock.mock.calls.length;
+    const caller = await ownerCaller();
+    await expect(caller.renderEpisodeReport({ seriesKey: "seriesabc", episodeIndex: 1 }))
+      .rejects.toMatchObject({
+        code: "PRECONDITION_FAILED",
+        message: "该集精读尚未完成全部分片，拒绝导出不完整报告",
+      });
+    expect(renderMock.mock.calls.length).toBe(before);
+  });
+
+  it("assemblyComplete=true 但段号集合有洞（缺 seg1）同样拒绝导出", async () => {
+    proposalForRouter = {
+      ...partialNativeCard,
+      provenance: {
+        nativeVideoDeepRead: {
+          ...(partialNativeCard.provenance!.nativeVideoDeepRead as object),
+          attemptedSegments: 2,
+          successSegments: 2,
+          completedSegmentIndexes: [0, 2],
+          assemblyComplete: true,
+          sourceDigest: FULL_SOURCE_DIGEST,
+          segmentEvidenceObjectNames: EVIDENCE_NAMES,
+        },
+      },
+    } as unknown as ManhuaViralTemplateCard;
+    const caller = await ownerCaller();
+    await expect(caller.renderEpisodeReport({ seriesKey: "seriesabc", episodeIndex: 1 }))
+      .rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+  });
+
+  it("sourceDigest 非 64 位 hex 拒绝导出（来源快照不可信）", async () => {
+    proposalForRouter = {
+      ...nativeCardWithEvidence,
+      provenance: {
+        nativeVideoDeepRead: {
+          ...(nativeCardWithEvidence.provenance!.nativeVideoDeepRead as object),
+          sourceDigest: "PRIVATE_SOURCE_DIGEST",
+        },
+      },
+    } as unknown as ManhuaViralTemplateCard;
+    const caller = await ownerCaller();
+    await expect(caller.renderEpisodeReport({ seriesKey: "seriesabc", episodeIndex: 1 }))
+      .rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+  });
+
+  it("证据名个数少于 attemptedSegments 拒绝导出", async () => {
+    proposalForRouter = {
+      ...nativeCardWithEvidence,
+      provenance: {
+        nativeVideoDeepRead: {
+          ...(nativeCardWithEvidence.provenance!.nativeVideoDeepRead as object),
+          segmentEvidenceObjectNames: [EVIDENCE_NAMES[0]!],
+        },
+      },
+    } as unknown as ManhuaViralTemplateCard;
+    const caller = await ownerCaller();
+    await expect(caller.renderEpisodeReport({ seriesKey: "seriesabc", episodeIndex: 1 }))
+      .rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
   });
 
   it("seriesKey 契约与 nativeDeepReadProposalId 对齐：1–40 位可过、非法字符被拒", async () => {

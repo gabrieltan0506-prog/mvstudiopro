@@ -584,6 +584,13 @@ export const NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC = 6;
  */
 export const NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC = 15;
 // 25 秒是质量提示线，不应因真实长镜只多 1 秒就重烧整段；30 秒才关闭式拒收。
+/**
+ * 🔒 单条证据段硬上限（用户多次实测拍板，不得放宽为 advisory）：
+ * 不加这条硬约束，模型会把 140–300 秒整段当成「一个长镜」交差——那不是长镜，
+ * 是躺平的另一种形态。0829 曾试图改成「无变化可照实记一条」，用户当场否决：
+ * 「不行，超过三十秒必须要拆」「这个不加模型会一次跑 140-300 秒这样的长镜」「我都试过了」。
+ * 提示词硬约束 1 与本门禁必须同时保持硬性，任何 agent 不得单方面放宽。
+ */
 export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC = 30;
 export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_ALLOWANCE = 1;
 /** 同一物理长镜超过 30 秒时，后续证据段必须用此固定标记，避免把证据拆分谎报成真实切镜。 */
@@ -691,9 +698,9 @@ c. 输出预算紧张时优先压缩 subtitles，尽量保全镜头表与音轨�
 4. 无论画面是真人剧还是动画：出现明确与剧情无关的招商广告、贴片、带货、商品展示、购物引导、品牌口播、品牌落版，或任何商业推广/营销性内容（关注引导、点赞催更、解锁下集提示、平台导流、二维码推广等），仍用 shots 保持完整时间轴，但对应镜头 evidenceRole 必须写 non_story_ad；这类镜头不计学习密度，其画面与声音内容不得进入 subtitles、beatStructureZh、moodArcZh、classification、reusableZh、genPromptHintZh，也不得写入 audioResolution 各段的描述与 cues 结论。其余镜头一律写 story。
 5. 分析描述不写外部平台剧名、商标或原台词；subtitles 是唯一例外——逐字照抄画面上真实出现的剧情字幕，看不清写「[不可辨]」，禁止按剧情补全或从声音猜字；广告字幕不要进入 subtitles。
 ${audioHardRule}
-诚实优先（高于以下所有建议）：**你的产出会被完整保留并交由结构化层整理，不达密度不会被拒收——请如实记录，不要为达标编造。**
+诚实优先（高于以下所有建议）：**你的产出会被完整保留并交由结构化层整理，不达密度不会被拒收——请如实记录：**编造不存在的镜头或声音是错误，漏记真实发生的切镜同样是错误**；宁可多记真实发生的，不可少记——每次机位/景别/场景变化都必须是新的一镜。**
 建议（软边界，按素材实际情况尽量做到）：
-a. 这类短剧（漫剧与真人剧同理）真实节奏通常 2–5 秒一镜，按真实切换逐镜记录，**宁可少记也不要合并或编造**。一个剧情段落通常由多个镜头切换组成——**不要把「剧情段」当成一个镜头**，每次画面切换（机位/景别/场景变化）都是新的一镜。单个证据段不超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，真实长镜超过该长度时按硬约束 1 拆分证据，不得裁掉内容。
+a. 这类短剧（漫剧与真人剧同理）真实节奏通常 2–5 秒一镜——**这是整段平均节奏，不是单镜上限**；真实长镜头照实记录其完整时长，不要为凑平均把它切碎。按真实切换逐镜记录，**宁可少记也不要合并或编造**。一个剧情段落通常由多个镜头切换组成——**不要把「剧情段」当成一个镜头**，每次画面切换（机位/景别/场景变化）都是新的一镜。单个证据段不超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，真实长镜超过该长度时按硬约束 1 拆分证据，不得裁掉内容。
 ${audioSoftRules}
 d. reusableZh 尽量写成脱离本剧剧情的通用做法；classification 五个数组字段都必须输出，只写从本段真实证据提炼的特征标签（避免古言/逆袭/系统/甜宠等题材词）；没有真实证据的维度写 []，至少两个维度各保留一个真实标签，不得在单一维度堆标签冒充，也不得为凑满维度编造。`;
   return input.rejectedReasonZh
@@ -1403,11 +1410,10 @@ function collectLongTakeAdvisories(input: {
     (shotLen) => shotLen > NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC,
   );
   if (hardOverlong.length > 0) {
-    out.push({
-      code: "long_take_over_hard_max",
-      detailZh: `${input.labelZh}有 ${hardOverlong.length} 个超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒的镜头证据段（最长 ${Math.round(Math.max(...hardOverlong))} 秒）`,
-      segmentIndex: input.segmentIndex,
-    });
+    // 硬门禁（0829 用户令：超过 30 秒必须拆）：单条证据段不得超过硬上限。
+    throw gateError(
+      `${input.labelZh}有 ${hardOverlong.length} 个超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒的镜头证据段（最长 ${Math.round(Math.max(...hardOverlong))} 秒）；真实长镜必须按镜内变化拆成连续证据段，禁止截断尾部`,
+    );
   }
   let physicalDurations: number[] = [];
   try {

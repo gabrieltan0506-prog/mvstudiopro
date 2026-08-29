@@ -130,6 +130,9 @@ function baseInput() {
     labelZh: "seriesabc 第 1 集",
     evidenceObjectNames: [...NAMES],
     expectEpisodeIndex: 1,
+    expectSeriesKey: "seriesabc",
+    expectSourceDigest: DIGEST_A,
+    expectSegmentCount: 3,
     framesV2SummaryObjectName: "manhua-template-learn/probes/tpl_native_seriesabc_ep001/frames-v2-summary.json",
     framesPrefix: "manhua-template-learn/probes/tpl_native_seriesabc_ep001/frames/",
     reportObjectName: "manhua-template-learn/reports/tpl_native_seriesabc_ep001.html",
@@ -197,11 +200,87 @@ describe("fail closed：缺段/段号重复/digest 混杂/集号不符各抛错�
     expect(state.uploads).toHaveLength(0);
   });
 
-  it("段号断裂抛错", async () => {
+  it("段号必须严格等于下标：seg2 位置放 seg3 抛「不完整」", async () => {
     seedThreeSegments();
     state.objects.set(NAMES[2]!, segmentEntry(3));
     await expect(renderNativeEvidenceReportFromObjectNames(baseInput()))
-      .rejects.toThrow(/segmentIndex 断裂/);
+      .rejects.toThrow("证据 segmentIndex 不完整：应有 seg2，实际为 seg3");
+    expect(state.uploads).toHaveLength(0);
+  });
+
+  it("段数够但整体缺首段（seg1/2/3）抛「不完整」——只查相邻连续会放过", async () => {
+    state.objects.set(NAMES[0]!, segmentEntry(1));
+    state.objects.set(NAMES[1]!, segmentEntry(2));
+    state.objects.set(NAMES[2]!, segmentEntry(3));
+    await expect(renderNativeEvidenceReportFromObjectNames(baseInput()))
+      .rejects.toThrow("证据 segmentIndex 不完整：应有 seg0，实际为 seg1");
+    expect(state.uploads).toHaveLength(0);
+  });
+
+  it("少末段：证据名只有 2 个而卡片 attemptedSegments=3 → 段数不完整", async () => {
+    seedThreeSegments();
+    await expect(renderNativeEvidenceReportFromObjectNames({
+      ...baseInput(),
+      evidenceObjectNames: NAMES.slice(0, 2),
+    })).rejects.toThrow("证据段数不完整：卡片应有 3 段，provenance 只有 2 段");
+    expect(state.uploads).toHaveLength(0);
+  });
+
+  it("少首段：证据名只有 seg1/seg2 → 段数不完整", async () => {
+    seedThreeSegments();
+    await expect(renderNativeEvidenceReportFromObjectNames({
+      ...baseInput(),
+      evidenceObjectNames: NAMES.slice(1),
+    })).rejects.toThrow("证据段数不完整：卡片应有 3 段，provenance 只有 2 段");
+    expect(state.uploads).toHaveLength(0);
+  });
+
+  it("证据 seriesKey 与请求系列不符抛错", async () => {
+    seedThreeSegments();
+    const alien = segmentEntry(2);
+    (alien as { seriesKey: string }).seriesKey = "otherseries";
+    state.objects.set(NAMES[2]!, alien);
+    await expect(renderNativeEvidenceReportFromObjectNames(baseInput()))
+      .rejects.toThrow(/seriesKey/);
+    expect(state.uploads).toHaveLength(0);
+
+    // 三段整体都是别的系列：一致性检查过得去，但与请求系列不符必须拦下
+    NAMES.forEach((name, i) => {
+      const entry = segmentEntry(i);
+      (entry as { seriesKey: string }).seriesKey = "otherseries";
+      state.objects.set(name, entry);
+    });
+    await expect(renderNativeEvidenceReportFromObjectNames(baseInput()))
+      .rejects.toThrow("证据 seriesKey=otherseries 与请求系列 seriesabc 不符");
+    expect(state.uploads).toHaveLength(0);
+  });
+
+  it("证据对象缺少 seriesKey 抛错", async () => {
+    seedThreeSegments();
+    const noKey = segmentEntry(1) as Record<string, unknown>;
+    delete noKey.seriesKey;
+    state.objects.set(NAMES[1]!, noKey);
+    await expect(renderNativeEvidenceReportFromObjectNames(baseInput()))
+      .rejects.toThrow(/证据对象缺少 seriesKey/);
+    expect(state.uploads).toHaveLength(0);
+  });
+
+  it("证据 sourceDigest 与卡片 provenance 不符抛错", async () => {
+    seedThreeSegments();
+    await expect(renderNativeEvidenceReportFromObjectNames({
+      ...baseInput(),
+      expectSourceDigest: DIGEST_B,
+    })).rejects.toThrow("证据 sourceDigest 与卡片 provenance 不符");
+    expect(state.uploads).toHaveLength(0);
+  });
+
+  it("证据 sourceDigest 非 64 位 hex 抛错", async () => {
+    seedThreeSegments();
+    const badDigest = segmentEntry(0);
+    (badDigest as { sourceDigest: string }).sourceDigest = "PRIVATE_SOURCE_DIGEST";
+    state.objects.set(NAMES[0]!, badDigest);
+    await expect(renderNativeEvidenceReportFromObjectNames(baseInput()))
+      .rejects.toThrow(/证据对象 sourceDigest 非法/);
     expect(state.uploads).toHaveLength(0);
   });
 

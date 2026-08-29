@@ -253,6 +253,12 @@ export type NativeReportFromObjectNamesInput = {
   evidenceObjectNames: string[];
   /** 路由已知集号时传入，与每份证据的 episodeIndex 强校验。 */
   expectEpisodeIndex?: number;
+  /** 路由已知系列时传入，与每份证据的 seriesKey 强校验（防跨系列证据拼进同一报告）。 */
+  expectSeriesKey?: string;
+  /** 卡片 provenance 的 sourceDigest；与证据 digest 强校验（防换来源快照）。 */
+  expectSourceDigest?: string;
+  /** 卡片 provenance 的 attemptedSegments；证据名个数必须严格等于它（防少段导出）。 */
+  expectSegmentCount?: number;
   /** GLM 整集卡对象名（provenance 明示时传入；传了就必须能读到，fail closed）。 */
   glmCardObjectName?: string;
   framesV2SummaryObjectName?: string;
@@ -262,8 +268,11 @@ export type NativeReportFromObjectNamesInput = {
 
 /**
  * 生产路由唯一入口：按精确证据对象名渲染。
- * 校验：每个对象必须存在且合法；episodeIndex 全一致（且与 expectEpisodeIndex 一致）；
- * segmentIndex 无重复且连续；sourceDigest 全一致。任一不满足即抛错，不上传半成品。
+ * 校验：每个对象必须存在且合法；证据名个数与卡片 attemptedSegments 一致；
+ * episodeIndex/seriesKey 全一致（且与 expectEpisodeIndex/expectSeriesKey 一致）；
+ * segmentIndex 无重复且严格等于下标（0..n-1，缺首段/末段一样拦下）；
+ * sourceDigest 合法（64 位 hex）、全一致且与卡片 provenance 一致。
+ * 任一不满足即抛错，不上传半成品。
  */
 export async function renderNativeEvidenceReportFromObjectNames(
   input: NativeReportFromObjectNamesInput,
@@ -286,7 +295,17 @@ export async function renderNativeEvidenceReportFromObjectNames(
   if (names.length === 0) {
     throw new Error("provenance 没有 segmentEvidenceObjectNames，拒绝列目录猜证据；该集需重学后再出报告");
   }
-  const segments: Array<SegmentRaw & { objectName: string; episodeIndex: number; sourceDigest: string }> = [];
+  // 段数门禁：卡片 provenance 说有 N 段，证据名就必须正好 N 个。
+  // 少首段、少末段都在这里拦下——排序连续性检查看不出「整体少一段」。
+  if (input.expectSegmentCount !== undefined) {
+    const expected = Number(input.expectSegmentCount);
+    if (!Number.isInteger(expected) || expected < 1 || names.length !== expected) {
+      throw new Error(`证据段数不完整：卡片应有 ${input.expectSegmentCount} 段，provenance 只有 ${names.length} 段`);
+    }
+  }
+  const segments: Array<SegmentRaw & {
+    objectName: string; episodeIndex: number; seriesKey: string; sourceDigest: string;
+  }> = [];
   for (const objectName of names) {
     const entry = await mustJson(bucket, objectName);
     const raw = entry.raw;
@@ -295,11 +314,18 @@ export async function renderNativeEvidenceReportFromObjectNames(
     }
     const episodeIndex = Number(entry.episodeIndex);
     const segmentIndex = Number(entry.segmentIndex);
-    const sourceDigest = String(entry.sourceDigest ?? "");
+    const seriesKey = String(entry.seriesKey ?? "").trim();
+    const sourceDigest = String(entry.sourceDigest ?? "").trim();
     if (!Number.isInteger(episodeIndex) || !Number.isInteger(segmentIndex) || segmentIndex < 0) {
       throw new Error(`证据对象 episodeIndex/segmentIndex 非法：${objectName}`);
     }
-    segments.push({ objectName, episodeIndex, segmentIndex, sourceDigest, raw: raw as Record<string, unknown> });
+    if (!seriesKey) {
+      throw new Error(`证据对象缺少 seriesKey：${objectName}`);
+    }
+    if (!/^[a-f0-9]{64}$/i.test(sourceDigest)) {
+      throw new Error(`证据对象 sourceDigest 非法：${objectName}`);
+    }
+    segments.push({ objectName, episodeIndex, seriesKey, segmentIndex, sourceDigest, raw: raw as Record<string, unknown> });
   }
 
   const episodes = new Set(segments.map((s) => s.episodeIndex));
@@ -309,17 +335,29 @@ export async function renderNativeEvidenceReportFromObjectNames(
   if (input.expectEpisodeIndex !== undefined && segments[0]!.episodeIndex !== input.expectEpisodeIndex) {
     throw new Error(`证据 episodeIndex=${segments[0]!.episodeIndex} 与请求集号 ${input.expectEpisodeIndex} 不符`);
   }
+  const seriesKeys = new Set(segments.map((s) => s.seriesKey));
+  if (seriesKeys.size !== 1) {
+    throw new Error(`证据 seriesKey 不一致：${Array.from(seriesKeys).join(",")}`);
+  }
+  if (input.expectSeriesKey !== undefined && segments[0]!.seriesKey !== input.expectSeriesKey) {
+    throw new Error(`证据 seriesKey=${segments[0]!.seriesKey} 与请求系列 ${input.expectSeriesKey} 不符`);
+  }
   const digests = new Set(segments.map((s) => s.sourceDigest));
   if (digests.size !== 1) {
     throw new Error("证据 sourceDigest 混杂：不同来源快照的段卡不能拼进同一份报告");
+  }
+  if (input.expectSourceDigest !== undefined
+    && segments[0]!.sourceDigest.toLowerCase() !== String(input.expectSourceDigest).trim().toLowerCase()) {
+    throw new Error("证据 sourceDigest 与卡片 provenance 不符");
   }
   segments.sort((a, b) => a.segmentIndex - b.segmentIndex);
   for (let i = 0; i < segments.length; i++) {
     if (i > 0 && segments[i]!.segmentIndex === segments[i - 1]!.segmentIndex) {
       throw new Error(`证据 segmentIndex 重复：seg${segments[i]!.segmentIndex}`);
     }
-    if (i > 0 && segments[i]!.segmentIndex !== segments[i - 1]!.segmentIndex + 1) {
-      throw new Error(`证据 segmentIndex 断裂：seg${segments[i - 1]!.segmentIndex} 后缺 seg${segments[i - 1]!.segmentIndex + 1}`);
+    // 严格等于下标：0..n-1 一个不缺。只查「相邻连续」会放过整体缺首段/缺末段。
+    if (segments[i]!.segmentIndex !== i) {
+      throw new Error(`证据 segmentIndex 不完整：应有 seg${i}，实际为 seg${segments[i]!.segmentIndex}`);
     }
   }
 

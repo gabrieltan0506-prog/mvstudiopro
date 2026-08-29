@@ -207,11 +207,35 @@ export const manhuaViralTemplateRouter = router({
           message: "该集精读卡 provenance 没有段证据对象名（旧链路学习产物），需重学后再出报告",
         });
       }
+      // 完整性门禁：部分卡（分片没跑完、装配未完成、证据名少于分片数）一律不许导出。
+      // 否则「少了两段的报告」和「完整报告」长得一模一样，审批人无从分辨。
+      const attemptedSegments = Number(native?.attemptedSegments);
+      const successSegments = Number(native?.successSegments);
+      const completedSegmentIndexes = Array.isArray(native?.completedSegmentIndexes)
+        ? native.completedSegmentIndexes.map((n) => Number(n)).sort((a, b) => a - b)
+        : [];
+      const sourceDigest = String(native?.sourceDigest ?? "").trim();
+      const complete = native?.assemblyComplete === true
+        && Number.isInteger(attemptedSegments) && attemptedSegments > 0
+        && completedSegmentIndexes.length === attemptedSegments
+        && completedSegmentIndexes.every((value, index) => value === index)
+        && successSegments === attemptedSegments
+        && evidenceObjectNames.length === attemptedSegments
+        && /^[a-f0-9]{64}$/i.test(sourceDigest);
+      if (!complete) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "该集精读尚未完成全部分片，拒绝导出不完整报告",
+        });
+      }
       try {
         return await renderNativeEvidenceReportFromObjectNames({
           labelZh: `${input.seriesKey} 第 ${input.episodeIndex} 集`,
           evidenceObjectNames,
           expectEpisodeIndex: input.episodeIndex,
+          expectSeriesKey: input.seriesKey,
+          expectSourceDigest: sourceDigest,
+          expectSegmentCount: attemptedSegments,
           framesV2SummaryObjectName: `manhua-template-learn/probes/${cardKey}/frames-v2-summary.json`,
           framesPrefix: `manhua-template-learn/probes/${cardKey}/frames/`,
           reportObjectName: `manhua-template-learn/reports/${cardKey}.html`,
