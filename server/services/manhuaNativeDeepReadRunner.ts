@@ -654,6 +654,15 @@ export const NATIVE_DEEP_READ_MERGE_SPAN_HARD_MAX_SEC = 59;
  * ⚠️ 这是**下限不是目标**：不要为了抬高这个数去阻止合法去重。
  */
 export const NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_FLOOR = 0.5;
+/**
+ * 🔒 段级覆盖率地板（0830 用户拍板，建议值 0.5 可调）。
+ *
+ * 与 v10「覆盖缺口转 advisory」的分工：那条管**已读范围内的零星小缺口**（该转 advisory，
+ * 免得诚实产出被误杀）；本条管**整片压根没读**。两者是不同的病。
+ * 0830 实弹把两类分得很开——坏片覆盖率 1%–17%，好片 100%，线画在中间不会误伤。
+ * 广告镜同样计入覆盖（用户明示：广告不是空洞，它留给之后的定义处理）。
+ */
+export const NATIVE_DEEP_READ_SEGMENT_COVERAGE_FLOOR_RATIO = 0.5;
 /** 微尾段豁免：计划切段真实存在 9s 尾段（如 1080–1089），诚实的单镜结尾不该必拒 */
 export const NATIVE_DEEP_READ_SHOT_MICRO_SEGMENT_SEC = 12;
 /** 音轨段数地板：≥ max(1, ceil(段时长/60))；0829 起只用于生成 advisory，不影响入库。 */
@@ -2011,14 +2020,63 @@ export function assertNativeDeepReadSegmentDensity(input: {
   // 0829 用户裁决：不足整片（<300 秒）的尾片按实际取值直接入库，不设镜数门禁——
   // 尾片长度天然不定，用同一把尺子卡它只会把真实产出判死。
   const isFullLengthSegment = lenSec >= NATIVE_DEEP_READ_SEGMENT_FULL_LENGTH_SEC;
-  if (isFullLengthSegment && storyDurationSec > NATIVE_DEEP_READ_SANITY_FLOOR_MIN_SEGMENT_SEC) {
-    // 硬门禁（0829 用户裁决）：整片低于离谱地板＝模型躺平，标记并重试（内容仍留给 GLM）。
+  /* ── 🔒 段级覆盖闸（0830 用户拍板，纯算术）──
+   * 「这一片真实长度 300 秒，模型回的镜头必须覆盖到 300 秒；回 3 秒 = 拒收重试。」
+   *
+   * 🔴 **广告区间照算进覆盖**（用户明示「不要加上广告区间」＝不要把广告从要求里扣掉）：
+   * 广告不是空洞，它也是记录在时间轴上的镜头（evidenceRole=non_story_ad）。
+   * 所以这里数的是**全部镜头**的覆盖，不是只数 story。
+   *
+   * 与密度闸的分工：密度管「切得够不够细」，覆盖管「有没有读完」。
+   * 0830 实弹死的是后者——6 片只回 3–52 秒，而段级从来没有覆盖闸，
+   * 一路带到整集才被拦，钱已花完。
+   */
+  {
+    // 段级这里全部镜头的变量名是 shots（广告镜留在时间轴上，之后由整形层定义处理）
+    const allSpans = shots
+      .map((shot) => ({ startSec: Number(shot.startSec), endSec: Number(shot.endSec) }))
+      .filter((x) => Number.isFinite(x.startSec) && Number.isFinite(x.endSec) && x.endSec > x.startSec)
+      .sort((a, b) => a.startSec - b.startSec);
+    let coveredSec = 0;
+    let cursor = Number.NEGATIVE_INFINITY;
+    for (const span of allSpans) {
+      const from = Math.max(span.startSec, cursor);
+      if (span.endSec > from) { coveredSec += span.endSec - from; cursor = span.endSec; }
+    }
+    const requiredSec = lenSec * NATIVE_DEEP_READ_SEGMENT_COVERAGE_FLOOR_RATIO;
+    if (coveredSec < requiredSec) {
+      throw gateError(
+        `${labelZh}镜头只覆盖了 ${coveredSec.toFixed(1)} 秒 / 本片真实长度 ${Math.round(lenSec)} 秒`
+        + `（覆盖率 ${((coveredSec / Math.max(1, lenSec)) * 100).toFixed(1)}%，`
+        + `低于地板 ${(NATIVE_DEEP_READ_SEGMENT_COVERAGE_FLOOR_RATIO * 100).toFixed(0)}%）：`
+        + "整片没读完，广告镜同样计入覆盖",
+      );
+    }
+  }
+
+  if (isFullLengthSegment) {
+    /**
+     * 🔴 判据用**这一片本来多长**（lenSec），不是模型回了多少（storyDurationSec）。
+     *
+     * 0830 实弹买到的洞（v10 `3ebd43b` 引入）：旧判据是
+     *   `isFullLengthSegment && storyDurationSec > 120`，且地板 = ceil(storyDurationSec/10)。
+     * 两处分母都是「模型回了多长」，于是**回得越少越安全**——
+     * 300 秒的片只回 3 秒覆盖时：前置条件 3>120 为假 → 整条地板跳过；
+     * 就算不跳过，地板也只有 ceil(3/10)=1 镜，回 2 镜照样过。
+     * 实况：10 片里 6 片交白卷（覆盖 3–52 秒）全部溜过段级门禁，
+     * 一路带到整集才被覆盖闸拦下——钱已经花完。
+     * v10 之前这里是无条件硬检查，所以从没出过这个问题。
+     *
+     * 尾片豁免（isFullLengthSegment）保留：那是用户拍板的「尾片按实际取值直接入库」，
+     * 去掉会误伤真实不足 300 秒的尾片。
+     */
     const sanityFloor = Math.ceil(
-      storyDurationSec / NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC,
+      lenSec / NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC,
     );
     if (storyShots.length < sanityFloor) {
       throw gateError(
-        `${labelZh}剧情镜头仅 ${storyShots.length} 个，低于 ${Math.round(storyDurationSec)} 秒段的离谱地板 ${sanityFloor} 镜（疑似合并或漏记，招商广告不计入）`,
+        `${labelZh}剧情镜头仅 ${storyShots.length} 个，低于 ${Math.round(lenSec)} 秒整片的离谱地板 ${sanityFloor} 镜`
+        + `（本片模型只覆盖了 ${Math.round(storyDurationSec)} 秒；疑似合并、漏记或整段未读，招商广告不计入）`,
       );
     }
   }
@@ -3379,7 +3437,39 @@ export async function runManhuaNativeDeepReadBatch(params: {
       const processSegment = async (segmentIndex: number): Promise<void> => {
         params.abortSignal?.throwIfAborted();
         const segment = episode.segments[segmentIndex]!;
-        const cachedEntry = cachedSegments.get(segmentIndex);
+        let cachedEntry = cachedSegments.get(segmentIndex);
+        /**
+         * 🔒 缓存命中也要过一遍**当前**门禁（0830 用户令「重跑没成功的」）。
+         *
+         * 「已验缓存」这四个字的前提是「被验过」——但历史条目是被**当时那版**门禁验的。
+         * 0830 实锤：v10 的离谱地板有洞（判据用「模型回了多长」而非「本片多长」），
+         * 10 片里 6 片只回 3–52 秒却全部过关入缓存；门禁补好后若仍无条件复用缓存，
+         * 那 6 片会被当「已验」原样带走，新闸永远看不到它们，洞等于没补。
+         * 不过就当没命中、重新读——好片照旧命中不花钱，只有真坏的那几片才重买。
+         */
+        if (cachedEntry) {
+          try {
+            assertNativeDeepReadSegmentDensity({
+              episodeIndex: episode.episodeIndex,
+              segmentIndex,
+              startSec: segment.startSec,
+              endSec: segment.endSec,
+              hasAudio,
+              raw: cachedEntry.raw,
+              truncated: cachedEntry.raw?.truncated === true,
+            });
+          } catch (staleGateFailure) {
+            if (isNativeDeepReadGateFailure(staleGateFailure)) {
+              console.warn(
+                `[nativeDeepRead] 第${episode.episodeIndex}集第${segmentIndex + 1}段缓存未过当前门禁，`
+                + `按未命中重读：${staleGateFailure instanceof Error ? staleGateFailure.message : ""}`,
+              );
+              cachedEntry = undefined;
+            } else {
+              throw staleGateFailure;
+            }
+          }
+        }
         if (cachedEntry) {
           // 缓存命中不是模型外呼，禁止伪造 ManhuaNativeModelReceipt；历史 token 只作听觉证据。
           // 旧缓存可能早于永久 evidence 机制；先幂等补写不可变原始证据，再允许装卡。

@@ -866,7 +866,7 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
       startSec: 0,
       endSec: 360,
       raw: makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 360, shotCountOverride: 16 }),
-    })).toThrow("低于 360 秒段的离谱地板 36 镜");
+    })).toThrow("低于 360 秒整片的离谱地板 36 镜");
   });
 
   it("audioResolution 留空转 advisory：只记 audio_chunk_shape，不再拒收", () => {
@@ -995,7 +995,7 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
       startSec: 0,
       endSec: 300,
       raw: makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 300, shotCountOverride: 28 }),
-    })).toThrow("低于 300 秒段的离谱地板 30 镜");
+    })).toThrow("低于 300 秒整片的离谱地板 30 镜");
   });
 
   it("0829 新裁决③：300 秒段 35 镜通过——高于离谱地板 30、低于 ceil(300/6)=50 只记 shot_density_low", () => {

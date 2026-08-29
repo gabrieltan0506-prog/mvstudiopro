@@ -294,6 +294,12 @@ export async function fetchManhua0996EpisodePlayback(
   if (!source) throw new Error("第三方播放页链接无效或不在可信站点内");
   const request = buildManhua0996EpisodeApiRequest(source, Date.now());
   await assertPublicManhuaSourceHost(source.host);
+  /**
+   * 🔒 凭证**不在这里主动发**：fetchTrustedApiResponse 内部是「先匿名、失败才带凭证」，
+   * 那是刻意的安全边界（凭证只在必要时出网），不许为了拿高清就把它拆掉。
+   * 这里只读「有没有配凭证」，用来决定**解析层要不要接受 needLogin:true 的高清档**。
+   */
+  const hasAuth = Object.keys(readManhuaMirrorSourceAuthHeaders({}) || {}).length > 0;
   const response = await fetchTrustedApiResponse(request.url, {
     method: "GET",
     headers: request.headers,
@@ -305,7 +311,7 @@ export async function fetchManhua0996EpisodePlayback(
   } catch {
     throw new Error("第三方媒体接口返回了无效 JSON，已停止");
   }
-  const parsed = parseManhua0996PlaybackResponse(payload, `https://${source.host}/`);
+  const parsed = parseManhua0996PlaybackResponse(payload, `https://${source.host}/`, hasAuth);
   for (const mediaUrl of parsed.playbackUrls) {
     if (!isTrustedManhua0996MediaUrl(mediaUrl)) {
       throw new Error("第三方媒体接口返回非可信媒体域，已停止");
