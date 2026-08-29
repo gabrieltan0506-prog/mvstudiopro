@@ -113,6 +113,50 @@ describe("原生精读产出 → 模板卡（真实形状往返）", () => {
   });
 });
 
+describe("重点时刻 keyMoments（v12）", () => {
+  const rowWith = (moments: unknown) => [{
+    seg: 0, startSec: 100, endSec: 132,
+    text: JSON.stringify({
+      shots: [
+        { startSec: 0, endSec: 10, actionZh: "甲", transitionInZh: "硬切" },
+        { startSec: 10, endSec: 32, actionZh: "乙", transitionInZh: "硬切" },
+      ],
+      keyMoments: moments,
+      beatStructureZh: "节奏", reusableZh: "可复用", genPromptHintZh: "要素",
+    }),
+  }];
+
+  it("🔒 秒位与镜头同一套换算（段内秒 + offset），不是原样当绝对秒", () => {
+    const out = mapNativeDeepReadSegments(rowWith([
+      { atSec: 5, kindZh: "情绪", noteZh: "眉头锁紧" },
+    ]));
+    // 段 offset=100，段内第 5 秒 → 全片第 105 秒。若误当绝对秒会得到 5。
+    expect(out.keyMoments).toEqual([{ atSec: 105, kindZh: "情绪", noteZh: "眉头锁紧" }]);
+  });
+
+  it("🔒 秒位越界或类型非法只丢弃并记 advisory，绝不弄死整段付费产出", () => {
+    const out = mapNativeDeepReadSegments(rowWith([
+      { atSec: 5, kindZh: "灯光", noteZh: "暖转冷" },
+      { atSec: 999, kindZh: "切镜", noteZh: "越界：极可能把局部秒当绝对秒串号了" },
+      { atSec: 8, kindZh: "彩蛋", noteZh: "五类之外" },
+    ]));
+    // 合法的一条留下，两条非法的丢掉——但 shots 与其余证据完好无损
+    expect(out.keyMoments).toEqual([{ atSec: 105, kindZh: "灯光", noteZh: "暖转冷" }]);
+    expect(out.beatGrid).toHaveLength(2);
+    expect(out.advisories?.map((row) => row.code)).toContain("key_moments_invalid_dropped");
+  });
+
+  it("同秒同类去重；没有 keyMoments 时字段缺省不出现", () => {
+    const dup = mapNativeDeepReadSegments(rowWith([
+      { atSec: 5, kindZh: "剧情", noteZh: "台词点破" },
+      { atSec: 5, kindZh: "剧情", noteZh: "重复记录" },
+      { atSec: 5, kindZh: "音轨", noteZh: "同秒不同类，保留" },
+    ]));
+    expect(dup.keyMoments).toHaveLength(2);
+    expect(mapNativeDeepReadSegments(rowWith(undefined)).keyMoments).toBeUndefined();
+  });
+});
+
 describe("适配器失败与超限语义（复审第六项）", () => {
   const seg = (shots: unknown[], extra?: Record<string, unknown>) => ({
     seg: 0,

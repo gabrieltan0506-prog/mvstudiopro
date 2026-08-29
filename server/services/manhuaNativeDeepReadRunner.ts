@@ -636,6 +636,16 @@ export const NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC = 1;
  * ⚠️ 这条管的是「一次合并能跨多远」，与单条证据 30 秒硬上限是两把不同的尺子，别合并。
  */
 export const NATIVE_DEEP_READ_MERGE_SPAN_HARD_MAX_SEC = 59;
+/**
+ * 🔒 整集镜头留存率地板（0830 事故后立，纯算术闸）。
+ *
+ * 定在 0.5 的依据：段边界重复是**真实存在**的去重来源（8 份段卡覆盖 6 个分片，
+ * 边界处同一镜头会被记两次），所以留存率天然不可能是 100%。
+ * 0830 实测两个参照点——Qwen 332/426 = 78%（正常），GLM 99/426 = 23%（压碎）。
+ * 0.5 卡在两者中间，既放过正常去重，也拦得住压碎。
+ * ⚠️ 这是**下限不是目标**：不要为了抬高这个数去阻止合法去重。
+ */
+export const NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_FLOOR = 0.5;
 /** 微尾段豁免：计划切段真实存在 9s 尾段（如 1080–1089），诚实的单镜结尾不该必拒 */
 export const NATIVE_DEEP_READ_SHOT_MICRO_SEGMENT_SEC = 12;
 /** 音轨段数地板：≥ max(1, ceil(段时长/60))；0829 起只用于生成 advisory，不影响入库。 */
@@ -2088,12 +2098,54 @@ export function assertNativeDeepReadEpisodeEvidence(input: {
   hasAudio: boolean;
   /** 确定性拼接时为逐段卡数组；GLM 整形后为单张合成卡。 */
   rawSegments: ReadonlyArray<Record<string, unknown>>;
+  /**
+   * 整形**之前**的输入镜头总数（去重前）。给了它就启用镜头留存率闸。
+   * 0830 事故：GLM 把 426 镜压成 99 镜（平均镜长 3.6s→15.4s），而覆盖秒数
+   * 一秒不差、无重叠、无编造——**当时所有门禁全绿**。提示词写得再红也只是概率，
+   * 机器算得出的东西必须由代码把关。
+   */
+  inputShotCount?: number;
 }): NativeDeepReadAdvisory[] {
   const episodeAdvisories: NativeDeepReadAdvisory[] = [];
   const noteEpisode = (code: string, detailZh: string) =>
     episodeAdvisories.push({ code, detailZh });
   if (!input.rawSegments.length) {
     throw new Error(`第${input.episodeIndex}集没有分段产出，整集拒绝入库`);
+  }
+
+  /* ── 🔒 确定性闸一：单镜时长上限（整集卡层，纯算术）── */
+  const episodeShots = input.rawSegments.flatMap((raw) =>
+    (Array.isArray(raw.shots) ? raw.shots as Array<Record<string, unknown>> : []));
+  const overlongShots = episodeShots
+    .map((shot) => ({
+      startSec: Number(shot.startSec),
+      endSec: Number(shot.endSec),
+      lenSec: Number(shot.endSec) - Number(shot.startSec),
+    }))
+    .filter((row) => Number.isFinite(row.lenSec)
+      && row.lenSec > NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC);
+  if (overlongShots.length > 0) {
+    throw gateError(
+      `第${input.episodeIndex}集整集卡有 ${overlongShots.length} 条证据超过`
+      + ` ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒硬上限（最长`
+      + ` ${Math.max(...overlongShots.map((r) => r.lenSec)).toFixed(1)} 秒，起于`
+      + ` ${overlongShots[0]!.startSec.toFixed(1)} 秒）：必须按镜内真实变化拆成连续证据段，`
+      + `不许靠丢弃证据满足`,
+    );
+  }
+
+  /* ── 🔒 确定性闸二：镜头留存率（防「合并到只剩壳」）── */
+  const inputShots = Math.max(0, Math.floor(Number(input.inputShotCount) || 0));
+  if (inputShots > 0 && episodeShots.length > 0) {
+    const keepRate = episodeShots.length / inputShots;
+    if (keepRate < NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_FLOOR) {
+      throw gateError(
+        `第${input.episodeIndex}集镜头留存率仅 ${(keepRate * 100).toFixed(1)}%`
+        + `（输入 ${inputShots} 镜 → 输出 ${episodeShots.length} 镜，`
+        + `低于地板 ${(NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_FLOOR * 100).toFixed(0)}%）：`
+        + `相邻但秒位不重叠的镜头不许合并，只有同一物理镜头的重复记录才能合并`,
+      );
+    }
   }
   // 门禁在 GLM 之后重跑：整形/修复产物同样零秒位（assertNoClockText 口径）。
   for (const raw of input.rawSegments) {
@@ -2277,11 +2329,19 @@ const GLM_STRUCTURING_MAX_TOKENS = 131_072;
  */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE = 0.8;
 /**
- * 🔒 整形链思考档位（0829 晚用户拍板 high）。
- * 不传＝EvoLink 默认 `max` 顶格思考。账单实证：同一件整形活顶格烧到
- * 110,030/131,072 输出（84% 天花板）未完成，而原生限档 27,630 即 stop。
+ * 🔒 整形链思考档位（0830 用户拍板 **medium**，从 high 下调）。
+ *
+ * 下调依据是 0830 的实弹算术——GLM 的思考与正文**共吃同一个 131,072 预算**：
+ *   GLM  effort=high：思考 85,513 → 正文只剩 45,559 → 输出 99 镜（99×455≈45,045，
+ *                     几乎一格不剩）→ 平均镜长 15.4 秒，镜头留存率仅 23%
+ *   Qwen 思考独立额度：正文拿满 131,072 → 输出 332 镜 → 平均 4.6 秒，留存率 78%
+ * 两边喂的是同一份提示词（sha 27c09dc9a68c8e86）。GLM 很可能不是「觉得该合并」，
+ * 而是**装不下**——一路合并压缩来适配剩余预算。降档＝把预算从思考挪回正文。
+ *
+ * ⚠️ 这是**待实测验证**的推断，不是已证结论：降到 medium 后镜数若明显回升即证实；
+ * 若不回升，说明是模型自身的合并倾向，那时该换整形模型而不是继续调档。
  */
-export const NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT = "high" as const;
+export const NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT = "medium" as const;
 /** 四个 300 秒分片的真实组装曾在 12 分钟边界被本地中止；只放宽等待，不自动重提。 */
 // 0829 用户令：不设硬超时，跑出结果为止。全收进 GLM 后输入更大（六段卡 ~21.7 万 tok
 // 再叠标记版），旧的 15 分钟硬顶在 900,005ms 处把调用掐断成 network_error。
@@ -2299,7 +2359,7 @@ export function buildNativeDeepReadGlmStructuringPrompt(input: {
   return {
     system: `你是漫剧模板卡的「结构化整形师」。只整形不创作：
 1. 禁止虚构输入卡里没有的镜头、字幕、声音或描述；每一条产出都必须能在输入卡里找到出处。
-2. shots 已逐段通过付费前门禁。每镜的 unitTypeZh/shotSizeZh/angleZh/compositionZh/cameraMoveZh/blockingZh/bodyActionZh/limbPropActionZh/microExpressionZh/gazeBreathZh/relationshipReactionZh/lightingZh/actionZh/transitionInZh 都是不可丢失的原始证据。🔴 **镜头切分是模型逐秒看片得出的真实结果，不是可压缩的冗余**：相邻但秒位**不重叠**的两条镜头，哪怕表演连续、剧情连续、同一场景同一机位，**也一律各自保留，绝不许合并成一条**。唯一允许合并的是**同一物理镜头的重复记录**（秒位区间重叠，通常来自段边界重复或同段多版本）。🔒 **长度规则（0830 用户拍板）**：任何一次合并的总跨度**不得超过 ${NATIVE_DEEP_READ_MERGE_SPAN_HARD_MAX_SEC} 秒**；跨度超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒的，**必须切成两段、每段都不超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，两段边界至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒**。不得丢失时间轴覆盖。仍需拆分的同一物理长镜，其 unitTypeZh 必须保持「拆分镜证据段」，transitionInZh 必须保留「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」。
+2. shots 已逐段通过付费前门禁。每镜的 unitTypeZh/shotSizeZh/angleZh/compositionZh/cameraMoveZh/blockingZh/bodyActionZh/limbPropActionZh/microExpressionZh/gazeBreathZh/relationshipReactionZh/lightingZh/actionZh/transitionInZh 都是不可丢失的原始证据。🔴 **镜头切分是模型逐秒看片得出的真实结果，不是可压缩的冗余**：相邻但秒位**不重叠**的两条镜头，哪怕表演连续、剧情连续、同一场景同一机位，**也一律各自保留，绝不许合并成一条**。唯一允许合并的是**同一物理镜头的重复记录**（秒位区间重叠，通常来自段边界重复或同段多版本）。🔒 **长度规则（0830 用户拍板）**：任何一次合并的总跨度**不得超过 ${NATIVE_DEEP_READ_MERGE_SPAN_HARD_MAX_SEC} 秒**；跨度超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒的，**必须切成两段、每段都不超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，两段每段各自不短于 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒**。不得丢失时间轴覆盖。仍需拆分的同一物理长镜，其 unitTypeZh 必须保持「拆分镜证据段」，transitionInZh 必须保留「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」。
 3. 整集卡必须**整行剔除**全部 evidenceRole=non_story_ad 的镜头，其 {startSec,endSec} 区间合并相邻后写入顶层可选字段 excludedAdRanges:[{startSec,endSec}]；不得把广告内容并入任何 story 镜头，广告的画面与声音也不得进入剧情字幕、节奏、情绪、分类、可复用手法或生成提示。输入没有 non_story_ad 镜头时不要输出 excludedAdRanges 字段。保留下来的每个 shot 必须原样保留 evidenceRole，剔除后其余镜头一律保持 story。完整原始时间轴由分段卡审计层保存，无需在整集卡复述广告镜头。
 4. subtitles 只取 story 区间的并集去重，保持全片绝对秒位排序。
 5. audioResolution 保留完整原始听觉证据；广告区间内声音只作审计证据，不得写入 audioBeatStructureZh/mixNotesZh/reusableAudioZh/genAudioHintZh 的可复用结论。
@@ -2315,12 +2375,12 @@ export function buildNativeDeepReadGlmStructuringPrompt(input: {
    b. 两版对同一时间范围的切分粗细不同时，**一律以切分更细的那一版为准**，粗的那版的信息分配进对应的细区间。
    c. 逐条比对：秒位区间重叠的记录合并成一条，字段逐个取**信息更具体的那一版的原文**；秒位不重叠的记录全部保留。
    d. **不改写、不扩写**；可以润色文句，也不必强求统一文风，但**必须忠于原文内容**——你的职责是在原文内容范围内取舍与归并，不是重写，更不许新增原文没有的信息。
-10. **判定合并对不对只有一条尺子**：输出的 shots 在时间轴上必须是**一组互不重叠、首尾相接**的区间，连续覆盖除 excludedAdRanges 外的全时间轴。任何一秒只能被一条 story 记录覆盖——**出现两条区间重叠即为错误产出**。段边界处重复的同一镜头/字幕/声音事件按此合并（同秒同文的字幕只留一条，同秒同 kind 的 cue 只留一条）；单条合并后超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒时，必须按镜内真实变化拆成连续证据段（边界至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒），🔴 **绝不许用丢弃证据的方式满足这条**。
+10. **判定合并对不对只有一条尺子**：输出的 shots 在时间轴上必须是**一组互不重叠、首尾相接**的区间，连续覆盖除 excludedAdRanges 外的全时间轴。任何一秒只能被一条 story 记录覆盖——**出现两条区间重叠即为错误产出**。段边界处重复的同一镜头/字幕/声音事件按此合并（同秒同文的字幕只留一条，同秒同 kind 的 cue 只留一条）；单条合并后超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒时，必须按镜内真实变化拆成连续证据段（每段各自不短于 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒），🔴 **绝不许用丢弃证据的方式满足这条**。
 11. **keyMoments 原样保留并按 atSec 合并去重**（v12）：这是模型看片时自报的抓帧秒位表，下游据此去原片抓帧。同秒同类只留一条，取说明更具体的；不同秒、不同类一律全保留；🔴 **不许自己新增 atSec，也不许因为"太多"而删减**——你没看过画面，点不出新的秒位。落在 excludedAdRanges 区间内的条目整条剔除。
 12. 只返回一个 JSON 对象，不要 Markdown 围栏、不要解释。`,
     user: `把以下同一集的 ${input.rawSegments.length} 份分段卡整形合并成**一张整集原生证据卡**（单个 JSON 对象，字段 schema 与分段卡完全相同：shots/subtitles/audioResolution/beatStructureZh/moodArcZh/classification/reusableZh/genPromptHintZh，另加顶层可选 excludedAdRanges）。
 要求：
-1. story 镜头连续无空档覆盖除 excludedAdRanges 外的全时间轴 0..${Math.round(input.durationSec)} 秒（绝对秒位），每镜保留 evidenceRole；🔴 **只有秒位重叠的重复记录可以合并；相邻不重叠的镜头一律各自保留**——整集输出的镜头条数应与输入去重后的真实切分相当，**镜头数大幅变少、平均镜长明显拉长即为错误产出**。non_story_ad 必须整行剔除并把 {startSec,endSec} 区间记入顶层 excludedAdRanges，不得混入 story。🔒 一次合并的总跨度不得超过 ${NATIVE_DEEP_READ_MERGE_SPAN_HARD_MAX_SEC} 秒；超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒必须切成两段、每段不超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒、边界至少相隔 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒，且不得删除仍需保留的「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」续接标记或丢失覆盖。
+1. story 镜头连续无空档覆盖除 excludedAdRanges 外的全时间轴 0..${Math.round(input.durationSec)} 秒（绝对秒位），每镜保留 evidenceRole；🔴 **只有秒位重叠的重复记录可以合并；相邻不重叠的镜头一律各自保留**——整集输出的镜头条数应与输入去重后的真实切分相当，**镜头数大幅变少、平均镜长明显拉长即为错误产出**。non_story_ad 必须整行剔除并把 {startSec,endSec} 区间记入顶层 excludedAdRanges，不得混入 story。🔒 一次合并的总跨度不得超过 ${NATIVE_DEEP_READ_MERGE_SPAN_HARD_MAX_SEC} 秒；超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒必须切成两段、每段不超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒、每段各自不短于 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒，且不得删除仍需保留的「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」续接标记或丢失覆盖。
 2. audioResolution 保留全部 [{chunkIndex,analysis}] 条目（chunkIndex 即段号，analysis 内为该段局部秒），逐段齐全${input.hasAudio ? "" : "；本集素材无音轨，audioResolution 保持空数组"}。
 3. beatStructureZh/moodArcZh/reusableZh/genPromptHintZh 只整合 story 证据，可加「第X段」标注；classification 五维标签只取 story 输入并集，不得补猜。
 4. 输入是本集**全部**产出：合规段、带 advisories 的段、truncated 截断段、被门禁标记（gateMarked）的版本都在其中，一份都不许丢。**同一段可能有多个版本**，按秒位合并去重后取信息更全的；截断段照常采纳已有内容、不补写尾部；段边界的重复镜头/字幕/声音事件同样按秒位合并。
@@ -3517,6 +3577,15 @@ export async function runManhuaNativeDeepReadBatch(params: {
           throw error;
         }
       };
+      /**
+       * 整形**之前**的镜头总数，作为留存率闸的分母。
+       * 只数通过版（completeRawSegments），不数被标记版——标记版是同一时间区间的
+       * 另一个版本，把它算进分母会把分母虚高，反而放过真正的压碎。
+       */
+      const preStructuringShotCount = completeRawSegments.reduce(
+        (sum, raw) => sum + (Array.isArray(raw.shots) ? raw.shots.length : 0),
+        0,
+      );
       const gateEpisode = (payloads: ReadonlyArray<Record<string, unknown>>) =>
         assertNativeDeepReadEpisodeEvidence({
           episodeIndex: episode.episodeIndex,
@@ -3524,6 +3593,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
           segments: episode.segments,
           hasAudio,
           rawSegments: payloads,
+          inputShotCount: preStructuringShotCount,
         });
       const annotateSegmentRows = () => completeRawSegments.map((raw, index) => {
         if (segmentCount === 1) return raw;

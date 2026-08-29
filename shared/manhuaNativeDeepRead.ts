@@ -102,11 +102,20 @@ export const nativeDeepReadSegmentSchema = z
      *
      * 可选（不进硬门禁）：旧卡没有这个字段，下游一律兜底，缺省即退回原有抽帧策略。
      */
+    /**
+     * ⚠️ 用 passthrough + catch，**绝不能是硬失败项**（0830 审查 P1-2）：
+     * 本 schema 的 safeParse 是 runner 仅存的硬失败门禁之一，失败即整段重试、
+     * 用尽温度梯度仍不落地。若这里用 .strict()+min(1)，模型多吐一个键、
+     * 或某条 noteZh 是空串，就会**弄死一整段已付费的 shots/音轨证据**——
+     * 为一个下游可选字段赔上整段产出，代价完全不成比例。
+     * 参照 shotSchema 用 .passthrough() 正是同一个道理。
+     * 非法条目由 runner 过滤成 advisory，不进硬门。
+     */
     keyMoments: z.array(z.object({
       atSec: z.number().finite().min(0),
-      kindZh: z.enum(["切镜", "情绪", "灯光", "剧情", "音轨"]),
-      noteZh: z.string().trim().min(1),
-    }).strict()).optional(),
+      kindZh: z.string().trim().min(1),
+      noteZh: z.string().trim(),
+    }).passthrough()).optional().catch([]),
     subtitles: z.array(z.object({
       atSec: z.number().finite().min(0),
       textZh: z.string().trim().min(1),
@@ -191,6 +200,13 @@ export function dedupeNativeDeepReadAdvisories(
   });
 }
 
+/** 模型自报的抓帧时刻（v12）。atSec 是全片绝对秒。 */
+export type NativeDeepReadKeyMoment = {
+  atSec: number;
+  kindZh: string;
+  noteZh: string;
+};
+
 export type NativeDeepReadOutput = {
   beatGrid: ManhuaViralTemplateBeat[];
   /** 画面 OCR 得到的原文字幕；只作内部证据与审批展示，不直接复制进新剧本。 */
@@ -208,6 +224,13 @@ export type NativeDeepReadOutput = {
    */
   moodArcZh?: string;
   beatStructureZh?: string;
+  /**
+   * 重点时刻（v12）：模型看片时自报的抓帧秒位表，五类＝切镜/情绪/灯光/剧情/音轨。
+   * 抽帧链据此取帧，取代「按镜头区间取机械中点」——中点常落在转场、运动模糊或空镜上。
+   * 真人剧尤其吃这一条：它的价值在导演手法、灯光氛围、运镜与表演，
+   * 而这些恰好就是切镜/灯光/情绪三类要点名的时刻。
+   */
+  keyMoments?: NativeDeepReadKeyMoment[];
   /** 解析到的段数与镜头总数，供落库时记进 provenance */
   segmentCount: number;
   shotCount: number;
@@ -441,6 +464,45 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
     })))
     .sort((a, b) => a.startSec - b.startSec || a.endSec - b.endSec);
 
+  /**
+   * 重点时刻（v12）：段内秒位换算成全片绝对秒后按 atSec 排序，同秒同类去重。
+   * 广告区间内的时刻整条剔除——广告零帧是抽帧铁律。
+   * 非法条目（秒位不在本段区间内、类型不在五类内）**静默丢弃并记 advisory**，
+   * 绝不抛错：这是可选字段，不该有弄死整段付费产出的杀伤力。
+   */
+  const KEY_MOMENT_KINDS = new Set(["切镜", "情绪", "灯光", "剧情", "音轨"]);
+  const keyMomentSeen = new Set<string>();
+  let keyMomentDropped = 0;
+  const keyMoments: NativeDeepReadKeyMoment[] = ok
+    .flatMap(({ seg, offsetSec }) => {
+      // 🔒 与镜头用**同一套换算**（offsetSec + 段内秒），否则我们自己就在制造串号。
+      // 合法区间取该段自己的镜头范围——自洽，不依赖外部 span 字段。
+      const segShots = seg.shots ?? [];
+      const lo = segShots.length ? Math.min(...segShots.map((x) => Number(x.startSec))) : 0;
+      const hi = segShots.length ? Math.max(...segShots.map((x) => Number(x.endSec))) : 0;
+      return (seg.keyMoments ?? []).flatMap((moment) => {
+      const local = Number(moment.atSec);
+      const atSec = offsetSec + local;
+      const kindZh = String(moment.kindZh || "").trim();
+      // 与音轨同响应但坐标系不同（音轨用局部秒），模型极易串号——越界即判非法。
+      const inSpan = Number.isFinite(local) && segShots.length > 0
+        && local >= lo - 0.5 && local <= hi + 0.5;
+      if (!inSpan || !KEY_MOMENT_KINDS.has(kindZh)) { keyMomentDropped += 1; return []; }
+      if (excludedAdRanges.some((r) => atSec >= r.startSec && atSec <= r.endSec)) return [];
+      const key = `${Math.round(atSec)}|${kindZh}`;
+      if (keyMomentSeen.has(key)) return [];
+      keyMomentSeen.add(key);
+      return [{ atSec, kindZh, noteZh: cut(moment.noteZh, 120) || "" }];
+      });
+    })
+    .sort((a, b) => a.atSec - b.atSec);
+  if (keyMomentDropped > 0) {
+    advisories.push({
+      code: "key_moments_invalid_dropped",
+      detailZh: `重点时刻有 ${keyMomentDropped} 条秒位越界或类型非法，已丢弃（抽帧将退回镜头区间策略）`,
+    });
+  }
+
   return {
     beatGrid,
     subtitleTrack,
@@ -452,6 +514,7 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
       : undefined,
     moodArcZh: joinField((s) => s.moodArcZh),
     beatStructureZh: joinField((s) => s.beatStructureZh),
+    keyMoments: keyMoments.length ? keyMoments : undefined,
     segmentCount: ok.length,
     shotCount: beatGrid.length,
     failedSegmentCount: rows.length - ok.length,

@@ -83,6 +83,12 @@ export const OPENROUTER_GLM_DEFAULT_REASONING_EFFORT = "high" as const;
  * 调用方仍可显式覆盖。
  */
 export const GLM_CHAIN_DEFAULT_TEMPERATURE = 0.8;
+/**
+ * 剩余预算低于这个数就**跳过该档**（不是兜底时长）。
+ * 语义必须是「跳过阈值」：整集结构化输入约 21.7 万 token，60 秒内不可能返回，
+ * 强行发出去只会必然 network_error——多一次外呼、多一段等待、trace 还被污染。
+ */
+export const GLM_CHAIN_MIN_GATEWAY_MS = 60_000;
 export const GLM_MODEL_GATEWAYS: ReadonlySet<GlmGatewayName> = new Set<GlmGatewayName>([
   "evolink_glm",
   "openrouter",
@@ -114,7 +120,9 @@ export type GlmGatewayUsage = {
 export type GlmGatewayTraceEntry = {
   gateway: GlmGatewayName;
   model: string;
-  outcome: "ok" | "http_error" | "invalid_json" | "truncated" | "incomplete" | "empty_content" | "content_invalid" | "network_error" | "skipped_not_configured";
+  outcome: "ok" | "http_error" | "invalid_json" | "truncated" | "incomplete" | "empty_content" | "content_invalid" | "network_error" | "skipped_not_configured"
+    /** 整链预算已耗尽，该档未发出（0830 新增，配合 deadlineAtMs）。 */
+    | "skipped_budget_exhausted";
   detail?: string;
   providerError?: ManhuaNativeProviderErrorReceipt;
 };
@@ -157,8 +165,19 @@ export type GlmParams = {
    * `openrouter_only` 是 0829 改线前的旧名，语义等同 `glm_only`，保留给存量调用方。
    */
   gatewayPolicy?: "fallback" | "glm_only" | "openrouter_only";
-  /** 调用方墙钟；默认 240 秒，长结构任务可显式放宽。 */
+  /** 调用方墙钟；默认 240 秒，长结构任务可显式放宽。**这是每一档的上限**。 */
   timeoutMs?: number;
+  /**
+   * 🔒 **整条链的绝对截止时刻**（epoch ms）。给了它，每一档的实际墙钟取
+   * `min(timeoutMs, deadlineAtMs - now)`，且剩余时间不足时**直接跳过该档**。
+   *
+   * 为什么必须做成参数而不是在调用方算：调用方算出来的是**一个固定数字**，
+   * 而 `invokeOneGlmGateway` 在 for 循环里对同一个 params 对象**每档重读一次**
+   * `timeoutMs`——params 不变，两档就各拿满上限，「逐档扣减」根本不会发生。
+   * 0830 实锤：聚合链曾按「调用前算一次差值」实现，chainStartedAt 与减法在同一个
+   * 同步块里、中间无 await，差值恒为 0，改动是**空改**，行为与改前逐字相同。
+   */
+  deadlineAtMs?: number;
   /** 思考档位。OpenRouter 档发 `reasoning:{effort}`，EvoLink GLM 档发顶层 `reasoning_effort`。 */
   reasoningEffort?: "low" | "medium" | "high" | "max";
   /**
@@ -267,6 +286,14 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
       trace.push({ gateway: g.name, model: g.model, outcome: "skipped_not_configured" });
       continue;
     }
+    // 预算耗尽就跳过，别发一个注定超时的调用白等（还会把 trace 污染成「两档都失败」）。
+    if (Number.isFinite(Number(params.deadlineAtMs))) {
+      const remainMs = Number(params.deadlineAtMs) - Date.now();
+      if (remainMs < GLM_CHAIN_MIN_GATEWAY_MS) {
+        trace.push({ gateway: g.name, model: g.model, outcome: "skipped_budget_exhausted" });
+        continue;
+      }
+    }
     if (params.abortSignal?.aborted) {
       throw new GlmGatewayError("GLM 调用已被硬截止取消", trace, accumulatedUsage);
     }
@@ -337,10 +364,12 @@ async function invokeOneGlmGateway(
   // 旧的 15 分钟硬顶在 900,005ms 处把调用掐断（openrouter=network_error），
   // 而 0827 定的口径本就是「单次 30 分钟等待、绝不自动重提」——15 分钟传不进去。
   // 全部产出（含被门禁标记的版本）进 GLM 后输入更大，上限必须留够。
-  const timeoutMs = Math.max(
-    1_000,
-    Math.floor(Number(params.timeoutMs) || 240_000),
-  );
+  // 每档实际墙钟 = min(本档上限, 整链剩余预算)。deadlineAtMs 缺省时退回旧行为。
+  const perGatewayMs = Math.floor(Number(params.timeoutMs) || 240_000);
+  const remainMs = Number.isFinite(Number(params.deadlineAtMs))
+    ? Number(params.deadlineAtMs) - Date.now()
+    : Number.POSITIVE_INFINITY;
+  const timeoutMs = Math.max(1_000, Math.min(perGatewayMs, remainMs));
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const signal = params.abortSignal ? AbortSignal.any([params.abortSignal, timeoutSignal]) : timeoutSignal;
   const budget = Math.max(8_192, Math.min(131_072, Math.floor(Number(params.maxTokens) || 65_536)));

@@ -352,8 +352,10 @@ describe("原生精读系列结构化 · GLM-5.3 两档（0829 改线：EvoLink 
     vi.stubGlobal("fetch", vi.fn(async () =>
       new Response(JSON.stringify(responses.shift()), { status: 200 })));
 
-    // 失败路径下取不到实际交卷身份，如实退回链路标签，不假装知道（P1-2 同批）
-    const fallbackIdentity = { gateway: "openrouter", model: "glm-5.3→z-ai/glm-5.3" };
+    // 0830 P1-1：失败路径的身份从 gatewayTrace 里取**最后一个真发出过的档**，
+    // 不再是「恒定 openrouter + 链路标签」的假默认。本例只配了 OpenRouter 一档，
+    // 所以记的是它的真实模型 id。
+    const fallbackIdentity = { gateway: "openrouter", model: "z-ai/glm-5.3" };
     for (const expected of [
       { ...fallbackIdentity, inputTokens: 800, outputTokens: 131_072, reasoningTokens: 120_000, costUsd: 0.42 },
       { ...fallbackIdentity, inputTokens: 600, outputTokens: 90, reasoningTokens: 30, costUsd: 0.04 },

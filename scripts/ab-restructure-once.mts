@@ -18,6 +18,12 @@ import {
   uploadBufferToGcsIfAbsent,
 } from "../server/services/gcs.js";
 
+if (process.env.FLY_APP_NAME !== "mvstudiopro") {
+  // 与其余付费探针同一道闸：这两个脚本直连 GLM/Qwen 真花钱，不许在本机跑。
+  throw new Error("本脚本只允许在 Fly 容器内运行");
+}
+
+
 const RUN = "probe_douyin_20260829134509";
 const RAW_PREFIX = `manhua-template-learn/segment-evidence-raw/tpl_native_${RUN}_ep001/`;
 const OUT_PREFIX = `manhua-template-learn/probes/${RUN}/`;

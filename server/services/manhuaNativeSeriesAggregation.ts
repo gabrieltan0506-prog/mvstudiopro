@@ -62,8 +62,6 @@ const AGGREGATION_RESPONSE_MAX_BYTES = 4 * 1024 * 1024;
  * 而不是每档各给 12 分钟。这样两档合计仍在租约内，且保住「不设每档硬顶」的口径。
  */
 const AGGREGATION_TIMEOUT_MS = 12 * 60_000;
-/** 单档最少要留的墙钟；低于这个数说明预算已耗尽，不必再发下一档白等。 */
-const AGGREGATION_MIN_GATEWAY_MS = 60_000;
 const SERIES_LOCK_TTL_MS = 20 * 60_000;
 /** 提交前至少还要剩这段租期；否则宁可停手，也不让临界过期的旧持有者覆盖新结果。 */
 const SERIES_COMMIT_MIN_LEASE_MS = 2 * 60_000;
@@ -285,7 +283,7 @@ function buildAggregationPrompt(payloadJson: string): { system: string; user: st
 
 function toAggregateGatewayUsage(
   usage: GlmGatewayUsage,
-  /** 失败路径下最后一档的真实身份；取不到就退回链路标签，不假装知道。 */
+  /** 失败路径下最后一个真发出过的档的身份；取不到就退回链路标签，不假装知道。 */
   identity?: { gateway?: GlmGatewayName; model?: string },
 ): Omit<AggregateGatewayResult, "raw"> {
   return {
@@ -316,12 +314,12 @@ export async function invokeNativeSeriesAggregationModel(
       maxTokens: 131_072,
       abortSignal,
       gatewayPolicy: "glm_only",
-      // 整条链一个总预算（见 AGGREGATION_TIMEOUT_MS 注释）：逐档扣减已耗时，
-      // 保证两档合计不超过租约，且预算耗尽就不再发下一档白等。
-      timeoutMs: Math.max(
-        AGGREGATION_MIN_GATEWAY_MS,
-        AGGREGATION_TIMEOUT_MS - (Date.now() - chainStartedAt),
-      ),
+      // 整条链一个总预算：deadline 送进网关层，由它**每档实时**取 min(本档上限, 剩余)。
+      // ⚠️ 0830 血账：上一版在这里自己算 `AGGREGATION_TIMEOUT_MS - (Date.now() - chainStartedAt)`，
+      // 而 chainStartedAt 与这行在同一个同步块、中间无 await，差值恒为 0 → 传出去仍是满额，
+      // 且网关层每档重读同一个 params，两档各拿满 12 分钟——**那是空改**。
+      timeoutMs: AGGREGATION_TIMEOUT_MS,
+      deadlineAtMs: chainStartedAt + AGGREGATION_TIMEOUT_MS,
       reasoningEffort: "max",
       requireParameters: true,
       requireFinishReasonStop: true,
@@ -355,8 +353,15 @@ export async function invokeNativeSeriesAggregationModel(
       finishReason: String(response.choices?.[0]?.finish_reason || "").trim() || undefined,
     };
   } catch (error) {
+    // 0830 审查 P1-1：真实身份就在 trace 里——取最后一个**真发出去过**的档。
+    // 旧版 identity 参数从来没有调用方传，恒定落到假默认「openrouter + 链路标签」，
+    // 等于在账本里编故事。
+    const lastAttempted = error instanceof GlmGatewayError
+      ? [...error.gatewayTrace].reverse().find((row) =>
+          row.outcome !== "skipped_not_configured" && row.outcome !== "skipped_budget_exhausted")
+      : undefined;
     const gatewayUsage = error instanceof GlmGatewayError
-      ? toAggregateGatewayUsage(error.usage)
+      ? toAggregateGatewayUsage(error.usage, lastAttempted)
       : undefined;
     throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
       aggregateGatewayUsage: gatewayUsage,
@@ -779,7 +784,9 @@ export async function aggregateNativeDeepReadSeries(input: {
       throw error;
     }
     const usage: NativeSeriesAggregationUsage = {
-      model: MANHUA_NATIVE_SERIES_AGGREGATION_MODEL,
+      // 0830 审查 P0-2：这份 usage 会经 buildSeriesCard 永久写进系列卡 provenance。
+      // 上一版只修了临时回执（看得见的那条），漏了这条落库的（留得下的那条）。
+      model: gateway.model,
       route: MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE,
       inputTokens: gateway.inputTokens,
       outputTokens: gateway.outputTokens,

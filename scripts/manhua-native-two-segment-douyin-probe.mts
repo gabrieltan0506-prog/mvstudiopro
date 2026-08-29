@@ -483,17 +483,22 @@ async function main() {
   // 0830 审查修正：期望值必须扣掉缓存命中的段。旧版拿 min(cap, 总片数) 当期望，
   // 缓存命中多时必判 FAIL，而它自己的说明文字却写着「属正常」——文案与判定打架，
   // 还会把整体 acceptanceStatus 拉成 failed。改成按**实际发出请求的段数**算期望。
+  // 0830 二次修正：期望仍按**总片数**算，否则「运行器只派发了 2/8 片」这种真 bug
+  // 会让期望自动降到 2 而判 PASS——扇出探针从此测不出「该发的没发」。
+  // 派发不全时降级为 not_observed 并把两个数字都打出来，不冒充通过也不误报失败。
   const dispatchedSegments = attemptsBySegment.size;
   const expectedFanOut = Math.min(
     modelConcurrency || NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY,
-    dispatchedSegments,
+    segments.length,
   );
-  record("P10", "模型扇出真并发（不是 4 路批次串行）",
-    dispatchedSegments === 0 ? "not_observed"
-      : peakInFlight >= expectedFanOut ? "pass" : "fail",
-    dispatchedSegments === 0 ? "本轮全部命中缓存，未发出任何模型请求"
-      : `峰值同时在飞 ${peakInFlight} 发 · 期望 ${expectedFanOut} 发`
-        + ` · 实际发出请求 ${dispatchedSegments} 段 / 本集 ${segments.length} 片`);
+  const fanOutStatus: CheckStatus = dispatchedSegments === 0 ? "not_observed"
+    : dispatchedSegments < segments.length ? "not_observed"
+      : peakInFlight >= expectedFanOut ? "pass" : "fail";
+  record("P10", "模型扇出真并发（不是 4 路批次串行）", fanOutStatus,
+    `峰值同时在飞 ${peakInFlight} 发 · 期望 ${expectedFanOut} 发`
+    + ` · 实际发出请求 ${dispatchedSegments} 段 / 本集 ${segments.length} 片`
+    + (dispatchedSegments === 0 ? "（未发出任何请求，无法判定）"
+      : dispatchedSegments < segments.length ? "（派发不全，本项不下结论）" : ""));
   record("P9", "临时视频零残留", temporaryVideoLeaks.length === 0 ? "pass" : "fail",
     `残留 ${temporaryVideoLeaks.length} 个`);
 

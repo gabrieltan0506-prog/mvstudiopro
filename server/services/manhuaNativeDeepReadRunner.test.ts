@@ -594,12 +594,17 @@ describe("v11 · 集级密度门禁全降 advisory（一集 4–8 片，密度�
   });
 
   it("整集镜数低于参考地板只回 advisory，不再拒收（尾片豁免不该在集级被吃掉）", () => {
-    const thin = healthy.map((raw) => ({
+    // 夹具要隔离「镜数低」这一个变量：0830 起整集卡也查 30 秒单镜硬上限，
+    // 若还像旧夹具那样压成「一条 300 秒的镜」，会同时踩中两条闸，测不出本条意图。
+    // 600 秒全覆盖下，镜数落在 20–60 之间即可——低于离谱地板 ceil(600/10)=60 触发
+    // 密度 advisory，同时每镜 25 秒不碰 30 秒硬上限。
+    const template = (healthy[0]!.shots as Array<Record<string, unknown>>)[0]!;
+    const thin = healthy.map((raw, segIndex) => ({
       ...raw,
-      shots: (raw.shots as Array<Record<string, unknown>>).slice(0, 1).map((shot, index) => ({
-        ...shot,
-        startSec: index === 0 ? (raw === healthy[0] ? 0 : 300) : shot.startSec,
-        endSec: raw === healthy[0] ? 300 : 600,
+      shots: Array.from({ length: 12 }, (_, i) => ({
+        ...template,
+        startSec: segIndex * 300 + i * 25,
+        endSec: segIndex * 300 + (i + 1) * 25,
       })),
     }));
     let codes: string[] = [];
@@ -1216,7 +1221,9 @@ describe("GLM 结构化整形提示词纪律", () => {
     expect(prompt.user).toContain("镜头数大幅变少、平均镜长明显拉长即为错误产出");
     // 0830 用户拍板：一次合并的总跨度上限 59 秒；超 30 秒必须切两段、各不超 30 秒、间隔 1 秒
     expect(prompt.user).toContain("一次合并的总跨度不得超过 59 秒");
-    expect(prompt.user).toContain("边界至少相隔 1 秒");
+    // 0830：措辞与代码真实语义对齐——SPLIT_MIN_SEC 判的是「每段各自 ≥1 秒」，
+    // 不是「两段之间留 1 秒空隙」（后者会与「互不重叠、首尾相接」直接矛盾）。
+    expect(prompt.user).toContain("每段各自不短于 1 秒");
     expect(prompt.user).toContain("不得删除仍需保留的");
     expect(prompt.system).toContain("emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh");
     // 0829 晚：删掉「至少两个维度」这个数量下限——数字目标只会逼模型编造凑数

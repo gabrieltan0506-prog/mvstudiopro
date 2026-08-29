@@ -290,6 +290,59 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     expect(r.gatewayTrace[0]).toMatchObject({ gateway: "evolink_glm", outcome: "empty_content" });
   });
 
+  it("🔒 deadlineAtMs 逐档真扣减：第二档拿到的墙钟必须小于第一档（0830 空改事故回归）", async () => {
+    // 这条测试就是为了拦住「空改」：上一版在调用方算一次差值（恒为 0），
+    // 网关层每档重读同一个 params，两档各拿满上限。那种实现下本测试必红。
+    const timeouts: number[] = [];
+    const realNow = Date.now();
+    let clock = realNow;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    vi.spyOn(AbortSignal, "timeout").mockImplementation(((ms: number) => {
+      timeouts.push(ms);
+      return new AbortController().signal;
+    }) as typeof AbortSignal.timeout);
+
+    stubFetchSeq([
+      () => { clock += 300_000; return { ok: false, status: 500, body: "evolink slow" }; },
+      () => ({ ok: true, status: 200, body: meteredBody() }),
+    ]);
+
+    const r = await invokeGlmJsonChatWithGatewayFallback({
+      system: "s", user: "u", gatewayPolicy: "glm_only",
+      timeoutMs: 600_000,
+      deadlineAtMs: realNow + 600_000,
+    });
+
+    expect(r.gateway).toBe("openrouter");
+    expect(timeouts).toHaveLength(2);
+    expect(timeouts[0]).toBe(600_000);
+    // 第一档吃掉 300 秒，第二档只应拿到剩下的 300 秒
+    expect(timeouts[1]).toBe(300_000);
+    expect(timeouts[1]!).toBeLessThan(timeouts[0]!);
+  });
+
+  it("🔒 预算耗尽时跳过该档，不发一个注定超时的调用", async () => {
+    const realNow = Date.now();
+    let clock = realNow;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const calls = stubFetchSeq([
+      () => { clock += 590_000; return { ok: false, status: 500, body: "evolink ate the budget" }; },
+      () => ({ ok: true, status: 200, body: meteredBody() }),
+    ]);
+
+    const err = await invokeGlmJsonChatWithGatewayFallback({
+      system: "s", user: "u", gatewayPolicy: "glm_only",
+      timeoutMs: 600_000,
+      deadlineAtMs: realNow + 600_000,
+    }).catch((error) => error);
+
+    // 只发出第一档；第二档剩余 10 秒 < 60 秒阈值，直接跳过而不是强发
+    expect(calls).toHaveLength(1);
+    expect(err).toBeInstanceOf(GlmGatewayError);
+    expect(err.gatewayTrace.map((t: any) => t.outcome))
+      .toEqual(["http_error", "skipped_budget_exhausted"]);
+  });
+
   it("首网关失败后若已 abort,不再调用下一网关", async () => {
     const ac = new AbortController();
     stubFetchSeq([
