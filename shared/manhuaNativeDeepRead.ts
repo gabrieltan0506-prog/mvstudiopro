@@ -486,7 +486,7 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
        * 同文件的音轨与字幕本来就是两个来源都挡，这里对齐它们。
        */
       const segAdSpans = segShots
-        .filter((x) => (x as { evidenceRole?: string }).evidenceRole === "non_story_ad")
+        .filter((x) => x.evidenceRole === "non_story_ad")
         .map((x) => ({ startSec: Number(x.startSec), endSec: Number(x.endSec) }))
         .filter((x) => Number.isFinite(x.startSec) && Number.isFinite(x.endSec));
       const lo = segShots.length ? Math.min(...segShots.map((x) => Number(x.startSec))) : 0;
@@ -499,7 +499,10 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
       const inSpan = Number.isFinite(local) && segShots.length > 0
         && local >= lo - 0.5 && local <= hi + 0.5;
       if (!inSpan || !KEY_MOMENT_KINDS.has(kindZh)) { keyMomentDropped += 1; return []; }
-      if (segAdSpans.some((r) => local >= r.startSec && local <= r.endSec)) return [];
+      // 半开区间：shots 连续无空档 ⇒ 广告 endSec **恒等于**下一条正片的 startSec，
+      // 用闭区间会把「广告结束那一秒＝正片第一帧」这个最该抓的时刻当广告剔掉。
+      // 与同文件音轨过滤 inAd 的 `>= start && < end` 对齐。
+      if (segAdSpans.some((r) => local >= r.startSec && local < r.endSec)) return [];
       if (excludedAdRanges.some((r) => atSec >= r.startSec && atSec <= r.endSec)) return [];
       const key = `${Math.round(atSec)}|${kindZh}`;
       if (keyMomentSeen.has(key)) return [];
