@@ -15,6 +15,76 @@ import {
   NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT,
 } from "../server/services/manhuaNativeDeepReadRunner.js";
 import { invokeGlmJsonChatWithGatewayFallback } from "../server/services/bailianChat.js";
+
+/** Qwen 对照：同一份提示词、同温度、同 max_tokens，只换模型与端点。走新加坡 Token Plan 套餐。 */
+const QWEN_URL = "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions";
+async function invokeQwenStreaming(params: {
+  system: string; user: string; maxTokens: number; temperature: number;
+  onBeat: (chars: number) => void;
+}) {
+  const key = String(process.env.DASHSCOPE_SG_PLAN_KEY || "").trim();
+  if (!key) throw new Error("DASHSCOPE_SG_PLAN_KEY 未配置");
+  const res = await fetch(QWEN_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "qwen3.8-max",
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: params.system },
+        { role: "user", content: params.user },
+      ],
+      max_tokens: params.maxTokens,
+      temperature: params.temperature,
+      // Qwen 思维链是独立额度（上限 262,144），不吃 max_tokens；thinking_budget
+      // 官方两页取值范围自相矛盾（1–32768 vs 262144），未核准前不填数字。
+      enable_thinking: true,
+      // 必须流式：undici headersTimeout 写死 300 秒，与 AbortSignal 是两套计时器。
+      stream: true,
+      stream_options: { include_usage: true },
+    }),
+  });
+  if (!res.ok || !res.body) {
+    throw new Error(`Qwen HTTP ${res.status} · ${(await res.text()).slice(0, 400)}`);
+  }
+  let content = "", finishReason = "", buffer = "", lastBeat = Date.now();
+  let usage: Record<string, unknown> = {};
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  const handle = (line: string) => {
+    const t = line.trim();
+    if (!t.startsWith("data:")) return;
+    const p = t.slice(5).trim();
+    if (!p || p === "[DONE]") return;
+    try {
+      const c = JSON.parse(p) as {
+        choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
+        usage?: Record<string, unknown>;
+      };
+      const d = c.choices?.[0]?.delta?.content;
+      if (typeof d === "string") content += d;
+      const fr = c.choices?.[0]?.finish_reason;
+      if (fr) finishReason = String(fr);
+      if (c.usage) usage = c.usage;
+    } catch { /* 半包留给下一轮 */ }
+  };
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) handle(line);
+      if (Date.now() - lastBeat > 30_000) { lastBeat = Date.now(); params.onBeat(content.length); }
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) handle(buffer);
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  return { choices: [{ message: { content }, finish_reason: finishReason }], usage };
+}
 import {
   downloadGcsObjectVersioned,
   getGcsBucketName,
@@ -24,15 +94,25 @@ import {
 
 if (process.env.FLY_APP_NAME !== "mvstudiopro") throw new Error("只允许在 Fly 容器内运行");
 
-const RUN = "tpl_native_probe_douyin_20260829134509_ep001";
+/** run id 由命令行给：--run=tpl_native_probe_douyin_YYYYMMDDHHMMSS_ep001 */
+const RUN = String(
+  process.argv.find((a) => a.startsWith("--run="))?.slice("--run=".length) || "",
+).trim();
+if (!RUN) throw new Error("缺少 --run=（段证据 raw 前缀里的 tpl_native_<seriesKey>_ep001）");
+/** 整形模型：--model=glm（默认）或 --model=qwen，两边喂同一份提示词做对照 */
+const MODEL = process.argv.includes("--model=qwen") ? "qwen" : "glm";
+/** 整集真实时长与分段由命令行给，避免写死某一集 */
+const DURATION_SEC = Math.round(Number(
+  process.argv.find((a) => a.startsWith("--duration="))?.slice("--duration=".length) || 0,
+));
+if (!DURATION_SEC) throw new Error("缺少 --duration=<整集秒数>");
 const RAW_PREFIX = `manhua-template-learn/segment-evidence-raw/${RUN}/`;
-const OUT_PREFIX = `manhua-template-learn/probes/glm-restructure-${Date.now()}/`;
-const DURATION_SEC = 1692;
-const SEGMENTS = [
-  { startSec: 0, endSec: 300 }, { startSec: 300, endSec: 600 },
-  { startSec: 600, endSec: 900 }, { startSec: 900, endSec: 1200 },
-  { startSec: 1200, endSec: 1500 }, { startSec: 1500, endSec: 1692 },
-];
+const OUT_PREFIX = `manhua-template-learn/probes/${MODEL}-restructure-${Date.now()}/`;
+/** 分段按生产切法从时长推出，与探针一致，不写死某一集 */
+const SEGMENTS = Array.from(
+  { length: Math.ceil(DURATION_SEC / 300) },
+  (_, i) => ({ startSec: i * 300, endSec: Math.min((i + 1) * 300, DURATION_SEC) }),
+);
 const bucket = getGcsBucketName();
 const log = (msg: string) => console.info(`[glm] ${new Date().toISOString().slice(11, 19)} ${msg}`);
 
@@ -120,17 +200,36 @@ async function main() {
   const promptBytes = Buffer.byteLength(prompt.system + prompt.user, "utf8");
   log(`提示词 ${promptBytes} 字节 · sha ${createHash("sha256")
     .update(prompt.system + prompt.user).digest("hex").slice(0, 16)}`);
-  log(`发起 GLM：temp=${NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE}`
-    + ` · effort=${NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT} · 主档 EvoLink`);
+  log(MODEL === "qwen"
+    ? `发起 Qwen3.8-Max：temp=${NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE}`
+      + " · enable_thinking=true（未设 budget）· 新加坡 Token Plan · 流式"
+    : `发起 GLM-5.3：temp=${NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE}`
+      + ` · effort=${NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT} · EvoLink 主档 · 流式`);
 
   const startedAt = Date.now();
   const beat = setInterval(
     () => log(`GLM 已等待 ${Math.round((Date.now() - startedAt) / 1000)} 秒`),
     30_000,
   );
-  let response;
+  let response: {
+    choices?: Array<{ message?: { content?: string }; finish_reason?: string | null }>;
+    usage?: Record<string, unknown>;
+    gateway?: string; model?: string;
+  };
   try {
-    response = await invokeGlmJsonChatWithGatewayFallback({
+    response = MODEL === "qwen"
+      ? {
+        ...(await invokeQwenStreaming({
+          system: prompt.system,
+          user: prompt.user,
+          maxTokens: 131_072,
+          temperature: NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE,
+          onBeat: (chars) => log(`Qwen 流式接收中：正文已 ${chars} 字符`),
+        })),
+        gateway: "plan_sg_qwen",
+        model: "qwen3.8-max",
+      }
+      : await invokeGlmJsonChatWithGatewayFallback({
       system: prompt.system,
       user: prompt.user,
       maxTokens: 131_072,
@@ -245,8 +344,8 @@ async function main() {
   console.info(JSON.stringify(report, null, 2));
 
   for (const [name, body] of [
-    ["glm-restructured.json", JSON.stringify(out)],
-    ["compare-report.json", JSON.stringify(report, null, 2)],
+    [`${MODEL}-restructured.json`, JSON.stringify(out)],
+    [`${MODEL}-compare-report.json`, JSON.stringify(report, null, 2)],
   ] as const) {
     await uploadBufferToGcsIfAbsent({
       objectName: `${OUT_PREFIX}${name}`, buffer: Buffer.from(body, "utf8"),

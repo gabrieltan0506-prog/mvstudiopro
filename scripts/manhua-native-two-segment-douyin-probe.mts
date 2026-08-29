@@ -171,7 +171,16 @@ async function fetchInfoAnonymously(): Promise<Record<string, unknown>> {
  * 时长该接口不回，走生产 ffprobe 读远端头部（不下片）。
  * 匿名 yt-dlp 只作最后兜底（它自身要求 fresh cookies，通常也过不去）。
  */
-async function resolveSourceMedia(): Promise<{ mediaUrl: string; durationSec: number; kindZh: string }> {
+async function resolveSourceMedia(): Promise<{
+  mediaUrl: string; durationSec: number; kindZh: string;
+  /**
+   * 🔴 referer 必须由解析器一路带到切片（0830 实弹）：媒体域与播放页域**不是同一个**
+   * （如页面在 gzcrkt8888.com、媒体在 ppvod01.kqgfbs.com）。此前时长探测用解析器给的
+   * referer 成功、切片却自己拼页面 origin，同一片源两处用了不同 referer →
+   * CDN 直接 TLS「End of file」断流，整轮死在备料阶段。
+   */
+  referer: string;
+}> {
   if (!IS_DOUYIN) {
     const playback = await fetchManhua0996EpisodePlayback(PAGE_URL);
     if (!playback.playbackUrl) throw new Error("第三方站未解析到播放地址");
@@ -181,6 +190,7 @@ async function resolveSourceMedia(): Promise<{ mediaUrl: string; durationSec: nu
         playback.playbackUrl, undefined, undefined, playback.referer,
       ),
       kindZh: `第三方站 0996 解析（候选 ${playback.playbackUrls.length} 个）`,
+      referer: playback.referer,
     };
   }
   const referer = "https://www.douyin.com/";
@@ -193,6 +203,7 @@ async function resolveSourceMedia(): Promise<{ mediaUrl: string; durationSec: nu
       mediaUrl,
       durationSec: await probeNativeDeepReadDurationSec(mediaUrl, undefined, undefined, referer),
       kindZh: `抖音 web api（access=${detail?.access ?? "unknown"}）`,
+      referer,
     };
   } catch (apiError) {
     console.error(`[probe] web api 解析失败，回退匿名 yt-dlp：${sanitizeSensitiveText(apiError)}`);
@@ -205,6 +216,7 @@ async function resolveSourceMedia(): Promise<{ mediaUrl: string; durationSec: nu
         ? hinted
         : await probeNativeDeepReadDurationSec(mediaUrl, undefined, undefined, referer),
       kindZh: "抖音（yt-dlp 兜底）",
+      referer,
     };
   }
 }
@@ -240,7 +252,7 @@ async function main() {
   }
 
   console.info(`[probe] 阶段：抖音片源解析（web api）视频 ${VIDEO_ID}`);
-  const { mediaUrl, durationSec, kindZh } = await resolveSourceMedia();
+  const { mediaUrl, durationSec, kindZh, referer: mediaReferer } = await resolveSourceMedia();
   console.info(`[probe] 阶段：${kindZh} 解析成功，真实时长 ${durationSec} 秒`);
 
   // 整集分片：复用生产切段函数。集级门禁与尾片豁免只有整集才验得到。
@@ -262,10 +274,8 @@ async function main() {
       seriesKey,
       episodeIndex: 1,
       sourceDigest,
-      resolveNodes: async () => [{
-        url: mediaUrl,
-        referer: IS_DOUYIN ? "https://www.douyin.com/" : `${new URL(PAGE_URL).origin}/`,
-      }],
+      // 用解析器给的 referer，不要自己拼页面 origin——媒体域与播放页域常常不是同一个。
+      resolveNodes: async () => [{ url: mediaUrl, referer: mediaReferer }],
       segments,
       sourceDurationSec: coveredEnd,
       hintZh: "抖音漫剧完整视听证据探针；按真实镜头、表演、光影、声音和叙事变化记录",
