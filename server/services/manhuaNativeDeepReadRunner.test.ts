@@ -184,8 +184,9 @@ describe("模型与通道收口", () => {
   });
 
   it("responseSchema 覆盖独立的站位与表演证据，并用 enum 锁住单元类型", () => {
+    // 0830 用户拍板：keyMoments 进 required，逼模型在输出预算紧张时也必须吐。
     expect(NATIVE_DEEP_READ_RESPONSE_SCHEMA.required).toEqual([
-      "shots", "subtitles", "audioResolution", "beatStructureZh", "classification",
+      "shots", "keyMoments", "subtitles", "audioResolution", "beatStructureZh", "classification",
     ]);
     // v12：keyMoments 刻意排在 shots 之后、其余字段之前——responseSchema 越靠后
     // 越先被 MAX_TOKENS 截断（classification 排末位就是因此长期被截）。

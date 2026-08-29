@@ -146,6 +146,30 @@ describe("重点时刻 keyMoments（v12）", () => {
     expect(out.advisories?.map((row) => row.code)).toContain("key_moments_invalid_dropped");
   });
 
+  it("🔒 广告零帧：段卡阶段的 non_story_ad 镜头区间同样不许出现重点时刻", () => {
+    // 广告在画面上恰好满足「切镜/灯光/剧情」的表面特征，最容易被误点。
+    // 段卡阶段广告只表现为 evidenceRole=non_story_ad（excludedAdRanges 是整集卡才有的）。
+    const rows = [{
+      seg: 0, startSec: 100, endSec: 132,
+      text: JSON.stringify({
+        shots: [
+          { startSec: 0, endSec: 10, actionZh: "剧情", transitionInZh: "硬切" },
+          { startSec: 10, endSec: 20, actionZh: "贴片广告", transitionInZh: "硬切",
+            evidenceRole: "non_story_ad" },
+          { startSec: 20, endSec: 32, actionZh: "剧情", transitionInZh: "硬切" },
+        ],
+        keyMoments: [
+          { atSec: 5, kindZh: "剧情", noteZh: "正片关键节点" },
+          { atSec: 15, kindZh: "灯光", noteZh: "广告里的打光切换——不许进" },
+          { atSec: 25, kindZh: "切镜", noteZh: "正片景别突变" },
+        ],
+        beatStructureZh: "节奏", reusableZh: "可复用", genPromptHintZh: "要素",
+      }),
+    }];
+    const out = mapNativeDeepReadSegments(rows);
+    expect(out.keyMoments?.map((k) => k.atSec)).toEqual([105, 125]);
+  });
+
   it("同秒同类去重；没有 keyMoments 时字段缺省不出现", () => {
     const dup = mapNativeDeepReadSegments(rowWith([
       { atSec: 5, kindZh: "剧情", noteZh: "台词点破" },

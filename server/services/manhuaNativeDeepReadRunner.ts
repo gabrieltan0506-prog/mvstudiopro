@@ -344,7 +344,15 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
       ],
     },
   },
-  required: ["shots", "subtitles", "audioResolution", "beatStructureZh", "classification"],
+  /**
+   * keyMoments 进 required（0830 用户拍板）：不进 required 时，模型在输出预算紧张
+   * 会优先跳过它——那这一轮抓帧秒位就是扑空。加进来逼它必吐。
+   * 安全前提：zod 侧已改成 optional + catch（旧卡没这字段照样解析、非法条目只丢不炸），
+   * 所以「必吐」不会反过来变成新的硬失败源。
+   */
+  required: [
+    "shots", "keyMoments", "subtitles", "audioResolution", "beatStructureZh", "classification",
+  ],
 } as const;
 
 /**

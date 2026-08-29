@@ -478,6 +478,17 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
       // 🔒 与镜头用**同一套换算**（offsetSec + 段内秒），否则我们自己就在制造串号。
       // 合法区间取该段自己的镜头范围——自洽，不依赖外部 span 字段。
       const segShots = seg.shots ?? [];
+      /**
+       * 🔴 广告零帧必须挡**两个来源**（0830 用户点破 + 审查 P2）：
+       * `excludedAdRanges` 是**整集卡**才有的区间账目；段卡阶段广告只表现为
+       * `evidenceRole === "non_story_ad"`。只挡前者 ⇒ 走段卡时广告帧照样进抽帧包。
+       * 而广告在画面上恰恰满足「切镜/灯光/剧情」的表面特征，最容易被误点成重点时刻。
+       * 同文件的音轨与字幕本来就是两个来源都挡，这里对齐它们。
+       */
+      const segAdSpans = segShots
+        .filter((x) => (x as { evidenceRole?: string }).evidenceRole === "non_story_ad")
+        .map((x) => ({ startSec: Number(x.startSec), endSec: Number(x.endSec) }))
+        .filter((x) => Number.isFinite(x.startSec) && Number.isFinite(x.endSec));
       const lo = segShots.length ? Math.min(...segShots.map((x) => Number(x.startSec))) : 0;
       const hi = segShots.length ? Math.max(...segShots.map((x) => Number(x.endSec))) : 0;
       return (seg.keyMoments ?? []).flatMap((moment) => {
@@ -488,6 +499,7 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
       const inSpan = Number.isFinite(local) && segShots.length > 0
         && local >= lo - 0.5 && local <= hi + 0.5;
       if (!inSpan || !KEY_MOMENT_KINDS.has(kindZh)) { keyMomentDropped += 1; return []; }
+      if (segAdSpans.some((r) => local >= r.startSec && local <= r.endSec)) return [];
       if (excludedAdRanges.some((r) => atSec >= r.startSec && atSec <= r.endSec)) return [];
       const key = `${Math.round(atSec)}|${kindZh}`;
       if (keyMomentSeen.has(key)) return [];
