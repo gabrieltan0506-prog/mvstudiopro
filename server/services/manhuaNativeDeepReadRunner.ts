@@ -617,6 +617,7 @@ export const NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC = 10;
 /** 整片长度：达到该长度才算完整分片；不足的尾片按实际取值入库，不设镜数门禁。 */
 export const NATIVE_DEEP_READ_SEGMENT_FULL_LENGTH_SEC = 300;
 export const NATIVE_DEEP_READ_SANITY_FLOOR_MIN_SEGMENT_SEC = 120;
+/** @deprecated 0830 用户令删除：6 秒是漫剧节奏，跨体裁误报。保留常量仅供历史卡比对。 */
 export const NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC = 6;
 /**
  * 单镜上限的判断修订（实测依据 0823：95 镜均 2.76s，对白戏最慢 3.47s；
@@ -663,6 +664,20 @@ export const NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_FLOOR = 0.5;
  * 广告镜同样计入覆盖（用户明示：广告不是空洞，它留给之后的定义处理）。
  */
 export const NATIVE_DEEP_READ_SEGMENT_COVERAGE_FLOOR_RATIO = 0.5;
+/**
+ * 🔒 门禁容差（0830 用户拍板）：**任一数值门禁参数在 10% 误差之内，一律通过、不再重试。**
+ *
+ * 立这条的账：重试不是免费的——每重试一片就要**重付一整片视频输入**。
+ * 为了「30.4 秒 vs 30 秒」这种擦边去重买一整片，换回来的产出并不更对。
+ * 只对**数值**门禁生效；字段齐全 / 五维五键 / zod 这类二值判定没有 10% 可言，不受影响。
+ */
+export const NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO = 0.10;
+/** 单条证据段实际拒收线 = 30 × 1.1 = 33 秒（0830 用户令放宽容差后的真值）。 */
+export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC =
+  NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC * (1 + NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO);
+/** 覆盖率实际拒收线 = 0.5 × 0.9 = 0.45（同上）。 */
+export const NATIVE_DEEP_READ_SEGMENT_COVERAGE_REJECT_RATIO =
+  NATIVE_DEEP_READ_SEGMENT_COVERAGE_FLOOR_RATIO * (1 - NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO);
 /** 微尾段豁免：计划切段真实存在 9s 尾段（如 1080–1089），诚实的单镜结尾不该必拒 */
 export const NATIVE_DEEP_READ_SHOT_MICRO_SEGMENT_SEC = 12;
 /** 音轨段数地板：≥ max(1, ceil(段时长/60))；0829 起只用于生成 advisory，不影响入库。 */
@@ -1538,12 +1553,14 @@ function collectLongTakeAdvisories(input: {
   const out: NativeDeepReadAdvisory[] = [];
   const evidenceDurations = input.shots.map((shot) => shot.endSec - shot.startSec);
   const hardOverlong = evidenceDurations.filter(
-    (shotLen) => shotLen > NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC,
+    // 10% 容差（0830 用户令）：提示词仍要求 30 秒，门禁按 33 秒拒——
+    // 容差只放在拦截侧，不放在要求侧；擦边不值得重买一整片视频输入。
+    (shotLen) => shotLen > NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC,
   );
   if (hardOverlong.length > 0) {
     // 硬门禁（0829 用户令：超过 30 秒必须拆）：单条证据段不得超过硬上限。
     throw gateError(
-      `${input.labelZh}有 ${hardOverlong.length} 个超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒的镜头证据段（最长 ${Math.round(Math.max(...hardOverlong))} 秒）；真实长镜必须按镜内变化拆成连续证据段，禁止截断尾部`,
+      `${input.labelZh}有 ${hardOverlong.length} 个超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC} 秒的镜头证据段（要求 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒 + 10% 容差；最长 ${Math.round(Math.max(...hardOverlong))} 秒）；真实长镜必须按镜内变化拆成连续证据段，禁止截断尾部`,
     );
   }
   let physicalDurations: number[] = [];
@@ -2043,7 +2060,8 @@ export function assertNativeDeepReadSegmentDensity(input: {
       const from = Math.max(span.startSec, cursor);
       if (span.endSec > from) { coveredSec += span.endSec - from; cursor = span.endSec; }
     }
-    const requiredSec = lenSec * NATIVE_DEEP_READ_SEGMENT_COVERAGE_FLOOR_RATIO;
+    // 10% 容差（0830 用户令）：0.5 → 实际拒收线 0.45
+    const requiredSec = lenSec * NATIVE_DEEP_READ_SEGMENT_COVERAGE_REJECT_RATIO;
     if (coveredSec < requiredSec) {
       throw gateError(
         `${labelZh}镜头只覆盖了 ${coveredSec.toFixed(1)} 秒 / 本片真实长度 ${Math.round(lenSec)} 秒`
@@ -2054,46 +2072,31 @@ export function assertNativeDeepReadSegmentDensity(input: {
     }
   }
 
-  if (isFullLengthSegment) {
-    /**
-     * 🔴 判据用**这一片本来多长**（lenSec），不是模型回了多少（storyDurationSec）。
-     *
-     * 0830 实弹买到的洞（v10 `3ebd43b` 引入）：旧判据是
-     *   `isFullLengthSegment && storyDurationSec > 120`，且地板 = ceil(storyDurationSec/10)。
-     * 两处分母都是「模型回了多长」，于是**回得越少越安全**——
-     * 300 秒的片只回 3 秒覆盖时：前置条件 3>120 为假 → 整条地板跳过；
-     * 就算不跳过，地板也只有 ceil(3/10)=1 镜，回 2 镜照样过。
-     * 实况：10 片里 6 片交白卷（覆盖 3–52 秒）全部溜过段级门禁，
-     * 一路带到整集才被覆盖闸拦下——钱已经花完。
-     * v10 之前这里是无条件硬检查，所以从没出过这个问题。
-     *
-     * 尾片豁免（isFullLengthSegment）保留：那是用户拍板的「尾片按实际取值直接入库」，
-     * 去掉会误伤真实不足 300 秒的尾片。
-     */
-    const sanityFloor = Math.ceil(
-      lenSec / NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC,
-    );
-    if (storyShots.length < sanityFloor) {
-      throw gateError(
-        `${labelZh}剧情镜头仅 ${storyShots.length} 个，低于 ${Math.round(lenSec)} 秒整片的离谱地板 ${sanityFloor} 镜`
-        + `（本片模型只覆盖了 ${Math.round(storyDurationSec)} 秒；疑似合并、漏记或整段未读，招商广告不计入）`,
-      );
-    }
-  }
+  /**
+   * ❌ 镜数「离谱地板」已整条删除（0830 用户令：「我都设好上限了，不要管下限了」）。
+   *
+   * 删除理由是实弹账：真人剧那轮 10 片有 5 片因这条被拦、每次重试都要重付一整片视频输入
+   * （¥37.50 里相当一部分花在这上面），而重试回来的产出并不比首发更「对」——
+   * 它只是把镜头切得更碎去满足一个按漫剧节奏定的数字。
+   * 下限本质上是在替模型规定「该看到多少东西」，而不同体裁、不同片源本来就不一样。
+   *
+   * 留下的是**上限与覆盖**这两条与体裁无关的硬约束：
+   *   · 单条证据段 ≤30 秒（用户三十余次实测拍板，不得放宽）
+   *   · 段级覆盖率地板（整片必须读完，回 3 秒即拒）
+   * 「切得够不够细」交给提示词软引导与整形层，不再由门禁下数字。
+   */
+
   if (storyDurationSec > NATIVE_DEEP_READ_SHOT_MICRO_SEGMENT_SEC) {
-    if (storyShots.length < storyFloors.minShots) {
-      note(
-        "shot_density_low",
-        `${labelZh}剧情镜头密度不足：${Math.round(storyDurationSec)}秒建议至少${storyFloors.minShots}镜，实际${storyShots.length}（招商广告不计入）`,
-      );
-    }
-    const averageShotSec = storyDurationSec / storyShots.length;
-    if (averageShotSec > NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC) {
-      note(
-        "shot_avg_too_long",
-        `${labelZh}镜头粒度偏粗：平均每镜${averageShotSec.toFixed(1)}秒（建议上限 ${NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC} 秒）`,
-      );
-    }
+    // ❌ 镜数密度 advisory 同批删除（0830）：它与离谱地板同源，同样是按漫剧节奏定的下限。
+    /**
+     * ❌「平均每镜 ≤6 秒」这条已删除（0830 用户令）。
+     *
+     * 6 秒是按**漫剧**节奏定的（知识库实测 2.8–4.3 秒/镜），而真人剧与电影镜头天然更长、
+     * 导演手法更多。0830 实弹：真人剧整集平均 6.55 秒、膨胀倍数 0.99（几乎零合并），
+     * 这条却照样报「粒度偏粗」——用一个体裁的尺子去量另一个体裁，只会制造噪音 advisory。
+     * 真正能跨体裁用的判据是**膨胀倍数**（输出平均镜长 ÷ 输入平均镜长），
+     * 它比的是模型有没有把输入合并掉，与体裁无关。
+     */
     advisories.push(...collectLongTakeAdvisories({
       shots: storyShots,
       labelZh,
@@ -2192,11 +2195,11 @@ export function assertNativeDeepReadEpisodeEvidence(input: {
       lenSec: Number(shot.endSec) - Number(shot.startSec),
     }))
     .filter((row) => Number.isFinite(row.lenSec)
-      && row.lenSec > NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC);
+      && row.lenSec > NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC);
   if (overlongShots.length > 0) {
     throw gateError(
       `第${input.episodeIndex}集整集卡有 ${overlongShots.length} 条证据超过`
-      + ` ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒硬上限（最长`
+      + ` ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC} 秒（${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒 + 10% 容差）（最长`
       + ` ${Math.max(...overlongShots.map((r) => r.lenSec)).toFixed(1)} 秒，起于`
       + ` ${overlongShots[0]!.startSec.toFixed(1)} 秒）：必须按镜内真实变化拆成连续证据段，`
       + `不许靠丢弃证据满足`,

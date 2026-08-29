@@ -670,18 +670,19 @@ describe("v11 · 截断段豁免（classification 在 responseSchema 最末，�
     })).toThrow("classification 缺失");
   });
 
-  it("🔒 截断段照样守 30 秒硬上限：超长证据段仍拒收", () => {
+  it("🔒 截断段照样守 30 秒上限（含 10% 容差＝33 秒）：超长证据段仍拒收", () => {
     const raw = withoutClassification();
+    // 31 秒已落进 10% 容差（30×1.1=33）内，不再拒收；用 35 秒才越过容差线。
     raw.shots = [{
       ...(raw.shots as Array<Record<string, unknown>>)[0]!,
       startSec: 0,
-      endSec: 31,
+      endSec: 35,
     }];
     expect(() => assertNativeDeepReadSegmentDensity({
       ...base,
       raw,
       truncated: true,
-    })).toThrow("30 秒");
+    })).toThrow("33 秒");
   });
 
   it("🔒 截断段照样守逐镜 17 字段：缺字段仍拒收", () => {
@@ -860,13 +861,19 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
     expect(advisoryCodesOf({ ...base, raw })).toContain("classification_thin");
   });
 
-  it("360 秒段 16 镜仍拒收：低于离谱地板 ceil(360/10)=36 镜", () => {
-    expect(() => assertNativeDeepReadSegmentDensity({
+  it("🔒 镜数下限已整条删除（0830 用户令）：360 秒段只有 16 镜也不再拒收", () => {
+    // 「我都设好上限了，不要管下限了」——下限是替模型规定「该看到多少」，
+    // 而不同体裁、不同片源本就不同；重试还要重付一整片视频输入。
+    const input = {
       ...base,
       startSec: 0,
       endSec: 360,
       raw: makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 360, shotCountOverride: 16 }),
-    })).toThrow("低于 360 秒整片的离谱地板 36 镜");
+    };
+    expect(() => assertNativeDeepReadSegmentDensity(input)).not.toThrow();
+    const codes = assertNativeDeepReadSegmentDensity(input).advisories.map((r) => r.code);
+    expect(codes).not.toContain("shot_density_low");
+    expect(codes).not.toContain("shot_avg_too_long");
   });
 
   it("audioResolution 留空转 advisory：只记 audio_chunk_shape，不再拒收", () => {
@@ -964,17 +971,7 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
     expect(advisories.find((row) => row.code === "clock_text")!.detailZh).toContain("钟表式秒位");
   });
 
-  it("0829 新裁决①：120 秒段 20 镜通过（离谱地板 >120 秒才启用），18 镜也只带 advisory 不拒收", () => {
-    const passing = {
-      ...base,
-      startSec: 0,
-      endSec: 120,
-      raw: makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 120, shotCountOverride: 20 }),
-    };
-    // ceil(120/6)=20 恰好达标：既不拒收，也不该冒出任何密度类 advisory
-    expect(() => assertNativeDeepReadSegmentDensity(passing)).not.toThrow();
-    expect(advisoryCodesOf(passing)).not.toContain("shot_density_low");
-    // 同为 120 秒段但只有 18 镜：低于建议线，仍不拒收，只记 advisory
+  it("🔒 下限删除后：120 秒段 18 镜通过，且不再产生任何密度类 advisory", () => {
     const thin = {
       ...base,
       startSec: 0,
@@ -982,34 +979,29 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
       raw: makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 120, shotCountOverride: 18 }),
     };
     expect(() => assertNativeDeepReadSegmentDensity(thin)).not.toThrow();
-    const advisories = assertNativeDeepReadSegmentDensity(thin).advisories;
-    expect(advisories.map((row) => row.code)).toEqual(
-      expect.arrayContaining(["shot_density_low", "shot_avg_too_long"]),
-    );
-    expect(advisories.every((row) => row.segmentIndex === 0)).toBe(true);
+    const codes = assertNativeDeepReadSegmentDensity(thin).advisories.map((r) => r.code);
+    expect(codes).not.toContain("shot_density_low");
+    expect(codes).not.toContain("shot_avg_too_long");
   });
 
-  it("0829 新裁决②：300 秒段 28 镜拒收——低于离谱地板 ceil(300/10)=30 镜（0826 实测的躺平线）", () => {
+  it("🔒 下限删除后：300 秒段 28 镜通过（旧离谱地板 30 镜已不再拒收）", () => {
     expect(() => assertNativeDeepReadSegmentDensity({
       ...base,
       startSec: 0,
       endSec: 300,
       raw: makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 300, shotCountOverride: 28 }),
-    })).toThrow("低于 300 秒整片的离谱地板 30 镜");
+    })).not.toThrow();
   });
 
-  it("0829 新裁决③：300 秒段 35 镜通过——高于离谱地板 30、低于 ceil(300/6)=50 只记 shot_density_low", () => {
-    const input = {
-      ...base,
-      startSec: 0,
-      endSec: 300,
-      raw: makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 300, shotCountOverride: 35 }),
-    };
-    expect(() => assertNativeDeepReadSegmentDensity(input)).not.toThrow();
-    const advisories = assertNativeDeepReadSegmentDensity(input).advisories;
-    expect(advisories.map((row) => row.code)).toContain("shot_density_low");
-    expect(advisories.find((row) => row.code === "shot_density_low")!.detailZh)
-      .toContain("建议至少50镜，实际35");
+  it("🔒 保留的两条硬约束仍在：覆盖率与 30 秒上限（含 10% 容差）", () => {
+    // 覆盖率：300 秒的片只回 3 秒 → 拒（这是 0830 实弹买到的洞）
+    const blank = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 300, shotCountOverride: 2 });
+    (blank.shots as Array<Record<string, unknown>>).forEach((shot, i) => {
+      shot.startSec = i * 1.5; shot.endSec = (i + 1) * 1.5;
+    });
+    expect(() => assertNativeDeepReadSegmentDensity({
+      ...base, startSec: 0, endSec: 300, raw: blank,
+    })).toThrow("整片没读完");
   });
 
   it("描述文本秒位门禁不误伤动作时长与文本栏字段", () => {

@@ -18,6 +18,16 @@ import { invokeGlmJsonChatWithGatewayFallback } from "../server/services/bailian
 
 /** Qwen 对照：同一份提示词、同温度、同 max_tokens，只换模型与端点。走新加坡 Token Plan 套餐。 */
 const QWEN_URL = "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions";
+/**
+ * 🔒 Qwen 侧参数（0830 用户拍板）：thinking_budget=8192 · temperature=0.7。
+ * ⚠️ 与 GLM 的 temp 0.8 不同，对照报告里要标清楚，别当同参对比。
+ * ⚠️ 官方两页对 thinking_budget 取值范围自相矛盾（1–32768 vs 262,144），
+ *    这一发同时用来实测它认不认、以及 usage 里思考量是否真被压到 8192 以内。
+ * 注：Qwen 思维链是**独立额度**，压思考省的是钱，**不腾正文空间**——
+ *    上一发是 131,072 正文写不完被截断，这两个参数救不了截断，只压成本。
+ */
+const QWEN_THINKING_BUDGET = 8192;
+const QWEN_TEMPERATURE = 0.7;
 async function invokeQwenStreaming(params: {
   system: string; user: string; maxTokens: number; temperature: number;
   onBeat: (chars: number) => void;
@@ -39,6 +49,7 @@ async function invokeQwenStreaming(params: {
       // Qwen 思维链是独立额度（上限 262,144），不吃 max_tokens；thinking_budget
       // 官方两页取值范围自相矛盾（1–32768 vs 262144），未核准前不填数字。
       enable_thinking: true,
+      thinking_budget: QWEN_THINKING_BUDGET,
       // 必须流式：undici headersTimeout 写死 300 秒，与 AbortSignal 是两套计时器。
       stream: true,
       stream_options: { include_usage: true },
@@ -212,8 +223,8 @@ async function main() {
   log(`提示词 ${promptBytes} 字节 · sha ${createHash("sha256")
     .update(prompt.system + prompt.user).digest("hex").slice(0, 16)}`);
   log(MODEL === "qwen"
-    ? `发起 Qwen3.8-Max：temp=${NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE}`
-      + " · enable_thinking=true（未设 budget）· 新加坡 Token Plan · 流式"
+    ? `发起 Qwen3.8-Max：temp=${QWEN_TEMPERATURE} · thinking_budget=${QWEN_THINKING_BUDGET}`
+      + " · 新加坡 Token Plan · 流式"
     : `发起 GLM-5.3：temp=${NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE}`
       + ` · effort=${NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT} · EvoLink 主档 · 流式`);
 
@@ -234,7 +245,7 @@ async function main() {
           system: prompt.system,
           user: prompt.user,
           maxTokens: 131_072,
-          temperature: NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE,
+          temperature: QWEN_TEMPERATURE,
           onBeat: (chars) => log(`Qwen 流式接收中：正文已 ${chars} 字符`),
         })),
         gateway: "plan_sg_qwen",
@@ -345,8 +356,11 @@ async function main() {
     },
     调用: {
       gateway: response.gateway, model: response.model, 耗时秒: elapsedSec,
-      temperature: NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE,
-      reasoning_effort: NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT,
+      // 如实记录**本次真发出去的**参数，两个模型不同参，不许混记
+      temperature: MODEL === "qwen" ? QWEN_TEMPERATURE : NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE,
+      ...(MODEL === "qwen"
+        ? { thinking_budget: QWEN_THINKING_BUDGET }
+        : { reasoning_effort: NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT }),
       提示词字节: promptBytes, usage,
     },
   };
