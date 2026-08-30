@@ -238,12 +238,25 @@ async function main() {
   {
     const cfg = NATIVE_DEEP_READ_GENERATION_CONFIG as Record<string, unknown>;
     const thinking = (cfg.thinkingConfig ?? {}) as Record<string, unknown>;
-    const ok = cfg.temperature === 0.7
+    /**
+     * 🔒 P1 只做**结构性**校验，不硬编码具体数值（0830 修正）。
+     *
+     * 这支探针的设计原则写着「零硬编码参数——全部 import 生产常量，改了生产参数
+     * 探针自动跟着改」，但 P1 自己把 0.7 与 "0.7,0.65,0.6" 写死了：
+     * 0830 用户把首发降到 0.65 后，**参数明明是对的，P1 却报 FAIL**——
+     * 一个用来纠错的检查，自己成了假警报。
+     * 现在只钉住真正不该变的三条：thinkingLevel 绝不能回来（前人自行加过）、
+     * 思考不混进正文、首发温度必须等于梯度首档（两者不一致＝配置自相矛盾）。
+     * 具体数值一律打印出来供人眼核对，不参与 pass/fail。
+     */
+    const gradient = NATIVE_DEEP_READ_RETRY_TEMPERATURES;
+    const ok = typeof cfg.temperature === "number"
       && cfg.maxOutputTokens === 65_536
-      && thinking.thinkingBudget === 18_000
+      && typeof thinking.thinkingBudget === "number"
       && thinking.includeThoughts === false
       && !("thinkingLevel" in thinking)
-      && NATIVE_DEEP_READ_RETRY_TEMPERATURES.join(",") === "0.7,0.65,0.6";
+      && gradient.length > 0
+      && cfg.temperature === gradient[0];
     record("P1", "冻结参数与代码常量一致", ok ? "pass" : "fail",
       `temperature=${String(cfg.temperature)} · thinkingBudget=${String(thinking.thinkingBudget)}`
       + ` · includeThoughts=${String(thinking.includeThoughts)}`
