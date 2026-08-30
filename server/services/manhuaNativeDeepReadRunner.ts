@@ -721,8 +721,9 @@ function run(
 export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
 /**
  * 精确切片与独立采样配置改变请求语义；旧流复制切片的缓存与确认码不得复用。
+ * 本版仅验证文件时钟到累计秒的解释，实测过关前不宣称冻结。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-custom-v23-first07-experiment" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-custom-v24-clock-seconds-experiment" as const;
 
 /** 分片时长和采样率独立配置；默认 10fps，不按长短片自动降档。 */
 export function resolveNativeDeepReadRequestFps(totalDurationSec: number, requestedFps?: number): number {
@@ -899,6 +900,12 @@ export function buildGeminiNativeDeepReadSegmentPrompt(input: {
   const lenSec = Math.max(1, Math.round(input.endSec - input.startSec));
   const videoFps = resolveNativeDeepReadRequestFps(lenSec, input.videoFps);
   const sampleIntervalSec = Number((1 / videoFps).toFixed(4));
+  const exampleLocalSec = Math.min(69, lenSec - 1);
+  const fileClock = (seconds: number): string => {
+    const minutes = Math.floor(seconds / 60);
+    const minuteSecond = `${String(minutes % 60).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+    return minutes < 60 ? minuteSecond : `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${minuteSecond}`;
+  };
   const hint = String(input.hintZh || "").trim();
   /**
    * 0826 用户拍板：硬约束只留「错了会污染入库数据」的红线。
@@ -916,6 +923,7 @@ c. 输出预算紧张时优先压缩 subtitles，尽量保全镜头表与音轨�
   const base = `【必须遵守】
 
 1. 时间坐标
+所附视频文件只有本段 ${lenSec} 秒，文件 00:00 对应全片 ${Math.round(input.startSec)} 秒。先定位原帧，再将文件内 MM:SS 或 HH:MM:SS 换算为本段累计秒 t = 小时×3600 + 分钟×60 + 秒；全片秒位 = ${Math.round(input.startSec)} + t，音轨局部秒位 = t。例如文件 ${fileClock(exampleLocalSec)} 对应本段 ${exampleLocalSec} 秒、全片 ${Math.round(input.startSec) + exampleLocalSec} 秒；文件末尾 ${fileClock(lenSec)} 对应本段 ${lenSec} 秒、全片 ${Math.round(input.endSec)} 秒。
 shots.startSec/endSec、subtitles.atSec 一律使用全片绝对整数秒；keyMoments.atSec 使用全片绝对秒，可保留一位小数。本段范围为 ${Math.round(input.startSec)} 至 ${Math.round(input.endSec)} 秒，shots 按时间排序，连续覆盖整段。
 audioResolution 内的 fromSec/toSec、cues.atSec 使用本段局部整数秒，以本段起点为 0；chunkIndex 使用传入原值。
 位置写入数字字段；中文描述里可以写动作持续时长，如「1.2 秒内推近」。

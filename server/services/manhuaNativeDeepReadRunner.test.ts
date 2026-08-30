@@ -194,7 +194,7 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_ROUTE_EVOLINK).toBe("evolink_gemini_video");
     expect(NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE).toBe("openrouter_glm_structuring");
     // 换代必须让旧确认码全废
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-v23-first07-experiment");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-v24-clock-seconds-experiment");
   });
 
   it("长视频请求显式使用 30 分钟 HTTP 响应头与响应体时限，不落回 Undici 默认 300 秒", async () => {
@@ -249,7 +249,7 @@ describe("模型与通道收口", () => {
     });
   });
 
-  it("首发候选与改前0.65基线仅/generationConfig/temperature不同，其余请求字节一致", () => {
+  it("时间桥候选删除唯一新增段并还原0.65后，旧请求14531字节及固定SHA完全一致", () => {
     const input = {
       fileUri: "gs://test-bucket/seg-0.mp4", fps: 12,
       prompt: buildGeminiNativeDeepReadSegmentPrompt({
@@ -258,18 +258,25 @@ describe("模型与通道收口", () => {
         hintZh: "抖音漫剧完整视听证据探针；按真实镜头、表演、光影、声音和叙事变化记录",
       }),
     };
-    const baselineJson = JSON.stringify(buildGeminiNativeDeepReadSegmentRequest({
-      ...input, generationConfig: { ...NATIVE_DEEP_READ_GENERATION_CONFIG, temperature: 0.65 },
-    }));
-    // 摘要在修改温度前由实际构造器取得，避免两边同时漂移却互相证明正确。
-    expect(Buffer.byteLength(baselineJson)).toBe(14_531);
-    expect(createHash("sha256").update(baselineJson).digest("hex"))
-      .toBe("ba1ec0187e20c468bde3c2f81f4c9d2bcbbb822686c1d5b93e7cbcc347b2298d");
+    const clockBridge = "所附视频文件只有本段 319 秒，文件 00:00 对应全片 0 秒。先定位原帧，再将文件内 MM:SS 或 HH:MM:SS 换算为本段累计秒 t = 小时×3600 + 分钟×60 + 秒；全片秒位 = 0 + t，音轨局部秒位 = t。例如文件 01:09 对应本段 69 秒、全片 69 秒；文件末尾 05:19 对应本段 319 秒、全片 319 秒。\n";
+    expect(input.prompt.split(clockBridge)).toHaveLength(2);
+    expect(input.prompt).toContain(`1. 时间坐标\n${clockBridge}shots.startSec/endSec`);
     const candidate = buildGeminiNativeDeepReadSegmentRequest(input);
     expect(candidate.generationConfig).toMatchObject({ temperature: 0.7 });
     const candidateJson = JSON.stringify(candidate);
     expect(candidateJson.match(/"temperature":0\.7(?=[,}])/g)).toHaveLength(1);
-    const restoredBaseline = candidateJson.replace('"temperature":0.7', '"temperature":0.65');
+    const encodedBridge = JSON.stringify(clockBridge).slice(1, -1);
+    expect(candidateJson.split(encodedBridge)).toHaveLength(2);
+    const restoredBaseline = candidateJson.replace(encodedBridge, "")
+      .replace('"temperature":0.7', '"temperature":0.65');
+    // 只删上方固定新增文本，不归一空白、不重算旧摘要，其他漂移必须失败。
+    expect(Buffer.byteLength(restoredBaseline)).toBe(14_531);
+    expect(createHash("sha256").update(restoredBaseline).digest("hex"))
+      .toBe("ba1ec0187e20c468bde3c2f81f4c9d2bcbbb822686c1d5b93e7cbcc347b2298d");
+    const baselineJson = JSON.stringify(buildGeminiNativeDeepReadSegmentRequest({
+      ...input, prompt: input.prompt.replace(clockBridge, ""),
+      generationConfig: { ...NATIVE_DEEP_READ_GENERATION_CONFIG, temperature: 0.65 },
+    }));
     expect(Buffer.from(restoredBaseline).equals(Buffer.from(baselineJson))).toBe(true);
   });
 
@@ -545,6 +552,53 @@ describe("每段提示词硬约束", () => {
     });
     expect(retry).toContain("【上一轮被拒原因】音轨仅 1 段");
     expect(retry).toContain("尽量不要降低镜头表或音轨密度");
+  });
+});
+
+describe("时间坐标桥单变量候选", () => {
+  it.each([
+    { startSec: 0, endSec: 319, segmentIndex: 0, lenSec: 319, exampleClock: "01:09", exampleSec: 69, absoluteExample: 69, endClock: "05:19" },
+    { startSec: 319, endSec: 638, segmentIndex: 1, lenSec: 319, exampleClock: "01:09", exampleSec: 69, absoluteExample: 388, endClock: "05:19" },
+    { startSec: 638, endSec: 957, segmentIndex: 2, lenSec: 319, exampleClock: "01:09", exampleSec: 69, absoluteExample: 707, endClock: "05:19" },
+    { startSec: 1276, endSec: 1594, segmentIndex: 4, lenSec: 318, exampleClock: "01:09", exampleSec: 69, absoluteExample: 1345, endClock: "05:18" },
+    { startSec: 20, endSec: 89, segmentIndex: 1, lenSec: 69, exampleClock: "01:08", exampleSec: 68, absoluteExample: 88, endClock: "01:09" },
+    { startSec: 1593, endSec: 1594, segmentIndex: 4, lenSec: 1, exampleClock: "00:00", exampleSec: 0, absoluteExample: 1593, endClock: "00:01" },
+  ])("$startSec..$endSec 文件时钟按真实段起点换算，示例始终在片内", (row) => {
+    const prompt = buildGeminiNativeDeepReadSegmentPrompt({
+      episodeDurationSec: 1594, startSec: row.startSec, endSec: row.endSec,
+      segmentIndex: row.segmentIndex, segmentCount: 5, hasAudio: true, videoFps: 12,
+    });
+    expect(prompt).toContain(`1. 时间坐标\n所附视频文件只有本段 ${row.lenSec} 秒，文件 00:00 对应全片 ${row.startSec} 秒。`);
+    expect(prompt).toContain("先定位原帧，再将文件内 MM:SS 或 HH:MM:SS 换算为本段累计秒 t = 小时×3600 + 分钟×60 + 秒");
+    expect(prompt).toContain(`全片秒位 = ${row.startSec} + t，音轨局部秒位 = t`);
+    expect(prompt).toContain(`例如文件 ${row.exampleClock} 对应本段 ${row.exampleSec} 秒、全片 ${row.absoluteExample} 秒`);
+    expect(prompt).toContain(`文件末尾 ${row.endClock} 对应本段 ${row.lenSec} 秒、全片 ${row.endSec} 秒。`);
+    expect(row.exampleSec).toBeLessThan(row.lenSec);
+    expect(prompt).toContain(`本段范围为 ${row.startSec} 至 ${row.endSec} 秒`);
+    expect(prompt).toContain(`音轨段号：${row.segmentIndex}`);
+    expect(prompt).toContain("输入按 12fps 抽帧，采样间隔约 0.0833 秒");
+  });
+
+  it("无音轨仍按同一文件时钟换算，不改变audioResolution空数组契约", () => {
+    const input = { episodeDurationSec: 638, startSec: 319, endSec: 638,
+      segmentIndex: 1, segmentCount: 2, videoFps: 12 };
+    const withAudio = buildGeminiNativeDeepReadSegmentPrompt({ ...input, hasAudio: true });
+    const silent = buildGeminiNativeDeepReadSegmentPrompt({ ...input, hasAudio: false });
+    const bridge = (prompt: string) => prompt.split("\n").find((line) => line.startsWith("所附视频文件只有本段"));
+    expect(bridge(silent)).toBeDefined();
+    expect(bridge(silent)).toBe(bridge(withAudio));
+    expect(silent).toContain("本段素材没有音轨：audioResolution 必须返回空数组 []");
+    expect(silent).not.toContain("亲耳所听");
+  });
+
+  it("重试完整复用唯一时间桥，只按原规则追加拒因", () => {
+    const input = { episodeDurationSec: 1594, startSec: 638, endSec: 957,
+      segmentIndex: 2, segmentCount: 5, videoFps: 12, hasAudio: true };
+    const first = buildGeminiNativeDeepReadSegmentPrompt(input);
+    const retry = buildGeminiNativeDeepReadSegmentPrompt({ ...input, rejectedReasonZh: "镜头证据段超过33秒" });
+    expect(first.match(/所附视频文件只有本段/g)).toHaveLength(1);
+    expect(retry.match(/所附视频文件只有本段/g)).toHaveLength(1);
+    expect(retry).toBe(`${first}\n【上一轮被拒原因】镜头证据段超过33秒。请修正后重新输出完整 JSON；修正时尽量不要降低镜头表或音轨密度。`);
   });
 });
 
@@ -3333,9 +3387,9 @@ describe("首发0.70待验实验与既有参数契约（实测过关前不宣称
     expect(NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN).toBe(2);
   });
 
-  it("候选版本v23仍保持单条证据段30秒与拆分间隔3秒", () => {
+  it("时间坐标候选版本v24仍保持单条证据段30秒与拆分间隔3秒", () => {
     expect(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC).toBe(30);
     expect(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC).toBe(3);
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-v23-first07-experiment");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-v24-clock-seconds-experiment");
   });
 });
