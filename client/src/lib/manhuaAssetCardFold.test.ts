@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isManhuaAssetCardExpanded,
+  shouldShowManhuaAssetFoldToggle,
   shouldShowManhuaAssetRoleChip,
 } from "./manhuaAssetCardFold";
 
@@ -32,5 +33,55 @@ describe("资产卡折叠判据", () => {
   it("折叠时显示分类小标，展开时交给分类按钮组，不重复", () => {
     expect(shouldShowManhuaAssetRoleChip(false)).toBe(true);
     expect(shouldShowManhuaAssetRoleChip(true)).toBe(false);
+  });
+});
+
+describe("非简洁模式的退路（0830 修正）", () => {
+  const S = (...ids: string[]) => new Set(ids);
+
+  it("非简洁模式默认展开", () => {
+    expect(
+      isManhuaAssetCardExpanded({ compactUi: false, expandedIds: S(), id: "a" }),
+    ).toBe(true);
+  });
+
+  it("非简洁模式下用户收起的卡真的收起（旧口径是强制展开，收不回去）", () => {
+    expect(
+      isManhuaAssetCardExpanded({
+        compactUi: false,
+        expandedIds: S(),
+        collapsedIds: S("a"),
+        id: "a",
+      }),
+    ).toBe(false);
+  });
+
+  it("收起只作用于被点的那张，不影响别的卡", () => {
+    expect(
+      isManhuaAssetCardExpanded({
+        compactUi: false,
+        expandedIds: S(),
+        collapsedIds: S("a"),
+        id: "b",
+      }),
+    ).toBe(true);
+  });
+
+  it("待确认的卡在任何模式下都强制展开，且不给收起按钮", () => {
+    expect(
+      isManhuaAssetCardExpanded({
+        compactUi: false,
+        expandedIds: S(),
+        collapsedIds: S("a"),
+        id: "a",
+        needsReview: true,
+      }),
+    ).toBe(true);
+    expect(shouldShowManhuaAssetFoldToggle({ needsReview: true })).toBe(false);
+  });
+
+  it("非待确认的卡任何模式都要有折叠按钮——用户永远要有退路", () => {
+    expect(shouldShowManhuaAssetFoldToggle({})).toBe(true);
+    expect(shouldShowManhuaAssetFoldToggle({ needsReview: false })).toBe(true);
   });
 });
