@@ -3462,6 +3462,52 @@ export async function runManhuaNativeDeepReadBatch(params: {
               : []),
             ...gated.advisories,
           ]);
+          /**
+           * 🔴 逐片實時打印（0830 用户令：「出一分片就打印一份資料，不要給我搞黑箱」）。
+           *
+           * 此前探针只印阶段行与最终验收结论，跑完之前用户看不到任何一片的实况——
+           * 出了问题只能事后翻日志。这里在**每片落地的当下**打印全部关键计数与用量，
+           * 不聚合、不延后、不等整集完成。
+           */
+          {
+            const arr = (key: string): Array<Record<string, unknown>> => {
+              const v = (raw as Record<string, unknown>)[key];
+              return Array.isArray(v) ? v as Array<Record<string, unknown>> : [];
+            };
+            const shots = arr("shots");
+            const adShots = shots.filter((x) => x.evidenceRole === "non_story_ad");
+            const audioChunks = arr("audioResolution");
+            let audioTracks = 0;
+            let audioCues = 0;
+            for (const chunk of audioChunks) {
+              const analysis = chunk.analysis as { audioTrack?: Array<{ cues?: unknown[] }> } | undefined;
+              const tracks = Array.isArray(analysis?.audioTrack) ? analysis!.audioTrack! : [];
+              audioTracks += tracks.length;
+              for (const t of tracks) audioCues += Array.isArray(t.cues) ? t.cues.length : 0;
+            }
+            const coveredSec = shots.reduce((sum, x) => {
+              const a = Number(x.startSec); const b = Number(x.endSec);
+              return sum + (Number.isFinite(a) && Number.isFinite(b) && b > a ? b - a : 0);
+            }, 0);
+            const lenSec = Math.max(1, Math.round(segment.endSec - segment.startSec));
+            console.info(
+              `[逐片] 第${episode.episodeIndex}集 第${input.segmentIndex + 1}/${episode.segments.length}片`
+              + ` ${segment.startSec}–${segment.endSec}s`
+              + ` │ 镜头 ${shots.length}（广告 ${adShots.length}）`
+              + ` │ 字幕 ${arr("subtitles").length}`
+              + ` │ 重点时刻 ${arr("keyMoments").length}`
+              + ` │ 音轨 ${audioTracks} 段/${audioCues} 事件`
+              + ` │ 覆盖 ${coveredSec.toFixed(1)}/${lenSec}s（${(coveredSec / lenSec * 100).toFixed(1)}%）`
+              + ` │ token 入 ${attemptInput} 出 ${attemptOutput}（思考 ${attemptReasoning}）`
+              + ` │ ¥${attemptCost.toFixed(4)}`
+              + ` │ 第 ${input.attemptNumber} 发`
+              + ` │ 不合标准 ${segmentAdvisories.length} 项`
+              + (truncated ? " │ ⚠️ 截断" : "")
+              + (segmentAdvisories.length
+                ? ` │ ${segmentAdvisories.map((a) => a.code).join(",")}`
+                : ""),
+            );
+          }
           // advisory 的真实生产点：写进段卡 raw（随缓存/证据持久化）、发段级回执、
           // 再由 buildCommittedSnapshot / 整集装配汇总进 provenance。
           if (segmentAdvisories.length) {
