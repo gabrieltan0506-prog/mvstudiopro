@@ -927,11 +927,10 @@ c. 输出预算紧张时优先压缩 subtitles，尽量保全镜头表与音轨�
    更不许拿广告里的切镜/打光/台词充数。
 4. 无论画面是真人剧还是动画：出现明确与剧情无关的招商广告、贴片、带货、商品展示、购物引导、品牌口播、品牌落版，或任何商业推广/营销性内容（关注引导、点赞催更、解锁下集提示、平台导流、二维码推广等），仍用 shots 保持完整时间轴，但对应镜头 evidenceRole 必须写 non_story_ad；这类镜头不计学习密度，其画面与声音内容不得进入 subtitles、beatStructureZh、moodArcZh、classification、reusableZh、genPromptHintZh，也不得写入 audioResolution 各段的描述与 cues 结论。其余镜头一律写 story。
 5. 分析描述不写外部平台剧名、商标或原台词；subtitles 是唯一例外——逐字照抄画面上真实出现的剧情字幕，看不清写「[不可辨]」，禁止按剧情补全或从声音猜字；广告字幕不要进入 subtitles。
-5.1 🔴 **subtitles 只输出 keyMoments 对应的那几句**（0830 晚用户令：「字幕只選 key moments 的就可以了」「那麼多串字幕我也看不完」）。
-    判据：某条字幕的 atSec 落在任一 keyMoment 的 atSec **±3 秒**内，才写进 subtitles；其余台词一律不输出。
-    所以 subtitles 的条数应当与 keyMoments 同量级（十几条），**不是全片逐句字幕流**（此前一段能吐 166 条）。
-    这条同时是输出预算措施：字幕是输出里最大的一块，让位给镜头表。
-    ⚠️ 仍然禁止编造与猜字——宁可某个 keyMoment 附近没有字幕（那就不写），也不许补一句不存在的台词。
+5.1 🔴 **subtitles 按 keyMoments 输出**（0830 晚用户令：「字幕只選 key moments 的就可以了」）。
+    判据：某条字幕的 atSec 落在任一 keyMoment 的 atSec **±3 秒**内，才写进 subtitles；其余台词不输出。
+    条数不作多寡要求——命中几条写几条。
+    ⚠️ 仍然禁止编造与猜字：某个 keyMoment 附近没有字幕就不写，不许补一句不存在的台词。
 ${audioHardRule}
 诚实优先（高于以下所有建议）：**你的产出会被完整保留并交由结构化层整理，不达密度不会被拒收——请如实记录：**编造不存在的镜头或声音是错误，漏记真实发生的切镜同样是错误**；宁可多记真实发生的，不可少记——每次机位/景别/场景变化都必须是新的一镜。**
 建议（软边界，按素材实际情况尽量做到）：
@@ -2669,7 +2668,7 @@ export function buildNativeDeepReadGlmStructuringPrompt(input: {
 1. story 镜头连续无空档覆盖除 excludedAdRanges 外的全时间轴 0..${Math.round(input.durationSec)} 秒（绝对秒位），每镜保留 evidenceRole；🔴 **只有秒位重叠的重复记录可以合并；相邻不重叠的镜头一律各自保留**——整集输出的镜头条数应与输入去重后的真实切分相当，**镜头数大幅变少、平均镜长明显拉长即为错误产出**。non_story_ad 必须整行剔除并把 {startSec,endSec} 区间记入顶层 excludedAdRanges，不得混入 story。🔒 一次合并的总跨度不得超过 ${NATIVE_DEEP_READ_MERGE_SPAN_HARD_MAX_SEC} 秒；超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒必须切成两段、每段不超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒、每段各自不短于 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒，且不得删除仍需保留的「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」续接标记或丢失覆盖。
 2. audioResolution 保留全部 [{chunkIndex,analysis}] 条目（chunkIndex 即段号，analysis 内为该段局部秒），逐段齐全${input.hasAudio ? "" : "；本集素材无音轨，audioResolution 保持空数组"}。
 3. beatStructureZh/moodArcZh/reusableZh/genPromptHintZh 只整合 story 证据，可加「第X段」标注；classification 五维标签只取 story 输入并集，不得补猜。
-3.9 🔴 **subtitles 天然只有 keyMoments 附近那几句**（0830 晚起读片侧就只输出这些），条数与 keyMoments 同量级属于**正常产出**，不是分段卡漏记，**不得据此判定证据缺失，也不得据此补写任何台词**。
+3.9 subtitles 按 keyMoments 解析：每条字幕对应其秒位附近的重点时刻，**不设条数多寡的判断**。照原文合并去重即可，不得补写输入里没有的台词。
 4. 输入是本集**全部**产出：合规段、带 advisories 的段、truncated 截断段、被门禁标记（gateMarked）的版本都在其中，一份都不许丢。**同一段可能有多个版本**，按秒位合并去重后取信息更全的；截断段照常采纳已有内容、不补写尾部；段边界的重复镜头/字幕/声音事件同样按秒位合并。
 整集元数据：${JSON.stringify({
       episodeIndex: input.episodeIndex,
