@@ -148,51 +148,51 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
             enum: ["剪辑镜头", "拆分镜证据段"],
             description: "真实剪辑切换写剪辑镜头；同一长镜内部由可观察变化触发的细分写拆分镜证据段。",
           },
-          shotSizeZh: { type: "STRING", maxLength: 32 },
-          angleZh: { type: "STRING", maxLength: 32 },
+          shotSizeZh: { type: "STRING", maxLength: 24 },
+          angleZh: { type: "STRING", maxLength: 24 },
           compositionZh: {
             type: "STRING",
-            maxLength: 160,
+            maxLength: 70,
             description: "画面构图、主体位置、前中后景关系、视线方向与空间层次。",
           },
           cameraMoveZh: {
             type: "STRING",
-            maxLength: 220,
+            maxLength: 70,
             description: "完整运镜轨迹：起点、方向、速度或节奏、幅度与落点。",
           },
           blockingZh: {
             type: "STRING",
-            maxLength: 220,
+            maxLength: 60,
             description: "角色站位、朝向、距离、进退路径、遮挡关系与群像调度变化。",
           },
           bodyActionZh: {
             type: "STRING",
-            maxLength: 220,
+            maxLength: 60,
             description: "角色整体姿态、躯体重心、移动方式、结构形变与动作阶段变化。",
           },
           limbPropActionZh: {
             type: "STRING",
-            maxLength: 220,
+            maxLength: 60,
             description: "角色四肢或等效附肢动作，以及持物方式、道具状态与交互。",
           },
           microExpressionZh: {
             type: "STRING",
-            maxLength: 220,
+            maxLength: 50,
             description: "面部或等效表情器官的可见细微变化，只写画面证据。",
           },
           gazeBreathZh: {
             type: "STRING",
-            maxLength: 180,
+            maxLength: 50,
             description: "视线或感知指向、眨眼、呼吸、能量节奏及其可见变化。",
           },
           relationshipReactionZh: {
             type: "STRING",
-            maxLength: 200,
+            maxLength: 70,
             description: "角色之间的动作因果、反应顺序、感知回应与距离变化。",
           },
-          lightingZh: { type: "STRING", maxLength: 220 },
-          actionZh: { type: "STRING", maxLength: 280 },
-          transitionInZh: { type: "STRING", maxLength: 140 },
+          lightingZh: { type: "STRING", maxLength: 50 },
+          actionZh: { type: "STRING", maxLength: 70 },
+          transitionInZh: { type: "STRING", maxLength: 40 },
           evidenceRole: {
             type: "STRING",
             enum: ["story", "non_story_ad"],
@@ -238,7 +238,7 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
             type: "STRING",
             enum: ["切镜", "情绪", "灯光", "剧情", "音轨"],
           },
-          noteZh: { type: "STRING", maxLength: 120 },
+          noteZh: { type: "STRING", maxLength: 50 },
         },
         required: ["atSec", "kindZh", "noteZh"],
       },
@@ -387,7 +387,7 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
   // 思考 8,896→71 镜 · 14,573→34 镜 · 26,836→52 镜 · 39,024→56 镜——**思考越多正文越少**，
   // 而 thinkingBudget 18,000 名义封顶实际被突破到 39,024（2.17 倍），参数没有真正约束住。
   // 降温是压制发散的第二道手（第一道是下面的「禁止内部推理」提示词约束）。
-  temperature: 0.6,
+  temperature: 0.65,
   maxOutputTokens: 65_536,
   candidateCount: 1,
   audioTimestamp: true,
@@ -415,7 +415,7 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
  * 实弹依据见 GENERATION_CONFIG.temperature 注释：0.7 首发合格率 50%，0.65 是 100%。
  * 下限是 0.55，两档——第三档在实测中从未被用到过。
  */
-export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.6, 0.55] as const;
+export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.65, 0.6] as const;
 
 /**
  * 段级重试触发线：**不合标准项达到 3 项才重试，1–2 项一律放行**（0830 用户拍板）。
@@ -507,7 +507,7 @@ export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES: ReadonlySet<string> = 
   "timeline_gap",
 ]);
 export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 60_000;
-export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.55;
+export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.6;
 
 /** 第二次尝试参数；保留导出供既有调用方与缓存指纹使用。 */
 export const NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG = {
@@ -686,7 +686,7 @@ export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
  * v4（0826 拍板）：视觉调用换 Vertex Gemini 3.1 Pro 从 GCS 直读、每段一次调用、
  * 音轨同调直出、双密度门禁。计划口径与采样语义全变——旧确认码必须全废。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v14-field-caps" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v15-schema-caps" as const;
 
 /** 0827 实弹口径：生产 300 秒分片保持 10fps；仅旧数据超 300 秒时降为 5fps。 */
 export function resolveNativeDeepReadRequestFps(totalDurationSec: number): number {
