@@ -681,6 +681,14 @@ export const NATIVE_DEEP_READ_SEGMENT_COVERAGE_FLOOR_RATIO = 0.5;
  */
 export const NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO = 0.10;
 /**
+ * 🔒 单条证据段上限 **40 秒**（0830 用户拍板，取代此前的 30）。
+ * 配合 10% 容差 ⇒ 实际拒收线 44 秒。用户原话：「上限四十秒，容错率 10%」。
+ * 提示词仍写 30 秒作为**目标**（要模型往细里切），门禁按 44 拦——
+ * 目标与拦截线分开，是为了「要求可以严，重买必须省」：
+ * 每重试一片要重付一整片视频输入，为 41 秒去重买不划算。
+ */
+export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_SOFT_MAX_SEC = 40;
+/**
  * 🔒 单条证据段**实际拒收线 45 秒**（0830 用户拍板：「41 秒可以接受，不需要重试」）。
  *
  * 提示词仍写 30 秒（目标不放宽），门禁按 45 拦——容差只放在拦截侧。
@@ -690,7 +698,8 @@ export const NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO = 0.10;
  * 45 卡在「真长镜」与「偷懒」之间：放过 40–41，仍拦住 60+。
  * 每重试一片要重付一整片视频输入，为 41 秒去重买不划算。
  */
-export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC = 45;
+export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC =
+  NATIVE_DEEP_READ_SHOT_LONG_TAKE_SOFT_MAX_SEC * (1 + NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO);
 /** 覆盖率实际拒收线 = 0.5 × 0.9 = 0.45（同上）。 */
 export const NATIVE_DEEP_READ_SEGMENT_COVERAGE_REJECT_RATIO =
   NATIVE_DEEP_READ_SEGMENT_COVERAGE_FLOOR_RATIO * (1 - NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO);

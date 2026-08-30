@@ -671,7 +671,7 @@ describe("v11 · 截断段豁免（classification 在 responseSchema 最末，�
     })).toThrow("classification 缺失");
   });
 
-  it("🔒 截断段照样守长镜拒收线（0830 定 45 秒：放过真长镜，拦住偷懒）", () => {
+  it("🔒 截断段照样守长镜拒收线（0830 定 40 秒＋10% 容差＝44 秒）", () => {
     const raw = withoutClassification();
     // 0830 实弹定线：41 秒（真长镜）不该拒，60 秒以上（没读完）必须拒。
     // 先证 41 秒放行——这正是用户判定「可以接受，不需要重试」的那一条。
@@ -693,7 +693,7 @@ describe("v11 · 截断段豁免（classification 在 responseSchema 最末，�
       ...base,
       raw,
       truncated: true,
-    })).toThrow("45 秒");
+    })).toThrow("44 秒");
   });
 
   it("🔒 截断段照样守逐镜 17 字段：缺字段仍拒收", () => {
