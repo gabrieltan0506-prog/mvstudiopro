@@ -441,7 +441,6 @@ describe("Gemini 请求体（Google 原生格式，Vertex/EvoLink 同构）", ()
           {
             fileData: { fileUri: "gs://bucket/seg.mp4", mimeType: "video/mp4" },
             videoMetadata: { fps: 5 },
-            mediaResolution: "MEDIA_RESOLUTION_MEDIUM",
           },
           { text: "PROMPT" },
         ],

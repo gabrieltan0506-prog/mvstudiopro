@@ -396,6 +396,19 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
    * 实际消耗一律以回执里的 thoughtsTokenCount 为准，不拿配置值当实际值。
    */
   thinkingConfig: { thinkingLevel: "MEDIUM", includeThoughts: false },
+  /**
+   * 🔴 mediaResolution 属于 **generationConfig**，不是 Part 字段（0830 晚实测订正）。
+   * 放在 contents[0].parts[0].media_resolution 上会被 Vertex 直接 400 拒绝：
+   * `Invalid value at 'contents[0].parts[0].media_resolution' … "MEDIA_RESOLUTION_MEDIUM"`
+   * ——好在 400 挡在计费前，零成本发现。
+   *
+   * 设 MEDIUM 的理由（用户拍板：「差四倍的 token，那怎麼看得清楚」）：
+   * 默认 LOW 约 64 token/帧，实测反推 210,134 ÷ 3,000 帧 ≈ 70，正是这一档。
+   * 64 token 一帧不足以支撑微表情观察——实测 microExpressionZh 均长仅 5.9 字、
+   * gazeBreathZh 6.0、cameraMoveZh 4.8，字段用满率 5–23%。
+   * MEDIUM 约 256 token/帧，单片输入 210K → 约 790K（上下文窗口 1M 的 75%）。
+   */
+  mediaResolution: "MEDIA_RESOLUTION_MEDIUM",
 } as const;
 
 /**
@@ -1046,21 +1059,7 @@ export function buildGeminiNativeDeepReadSegmentRequest(input: {
         // 定稿口径：影片 part 在前，提示词 part 在后
         {
           fileData: { fileUri: input.fileUri, mimeType: "video/mp4" },
-          /**
-           * 🔴 mediaResolution: MEDIUM（0830 晚用户拍板：「差四倍的 token，那怎麼看得清楚」）。
-           *
-           * 此前未显式传入，走 API 默认 LOW —— 实测反推：输入 210,134 token ÷
-           *（300 秒 × 10fps ＝ 3,000 帧）≈ 70 token/帧，正是 LOW 的 64 token/帧 + 音频。
-           * 64 token 一帧承载的像素信息不足以支撑微表情观察：实测 microExpressionZh
-           * 均长仅 5.9 字、gazeBreathZh 6.0 字、cameraMoveZh 4.8 字，字段用满率 5–23%。
-           * 那不是模型偷懒，是它看不清。
-           *
-           * 代价：MEDIUM 为 256 token/帧，单片输入 210K → 约 840K，成本约 4 倍
-           *（单片 ¥1.9 → ¥7.6，六片一集 ¥11 → ¥45）。用户明确选择这一档。
-           * ⚠️ 4 倍是按 64→256 推算，实际以回执 promptTokenCount 为准。
-           */
           videoMetadata: { fps: input.fps },
-          mediaResolution: "MEDIA_RESOLUTION_MEDIUM",
         },
         { text: input.prompt },
       ],
