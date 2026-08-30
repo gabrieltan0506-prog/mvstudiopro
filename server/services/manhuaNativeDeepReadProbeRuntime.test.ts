@@ -230,8 +230,8 @@ describe("已推提交的运行时源码清单核验", () => {
     const { manifest, readSource } = fixture();
     const result = await verifyNativeProbeSourceAttestation(manifest, commit, readSource);
     const canonical = { schemaVersion: 1, commit, files: [...manifest.files].sort((a, b) => a.path < b.path ? -1 : 1) };
-    expect(result).toEqual({ commit, filesChecked: 12, manifestSha256: createHash("sha256").update(JSON.stringify(canonical)).digest("hex") });
-    expect(readSource).toHaveBeenCalledTimes(12);
+    expect(result).toEqual({ commit, filesChecked: 14, manifestSha256: createHash("sha256").update(JSON.stringify(canonical)).digest("hex") });
+    expect(readSource).toHaveBeenCalledTimes(14);
     expect(JSON.stringify(result)).not.toContain("测试源码内容");
     manifest.files.reverse();
     expect(await verifyNativeProbeSourceAttestation(manifest, commit, readSource)).toEqual(result);
@@ -300,7 +300,7 @@ describe("已推提交的运行时源码清单核验", () => {
     const bytes = Buffer.from("测试额外文件");
     sources.set(path, bytes);
     manifest.files.push({ path, sha256: createHash("sha256").update(bytes).digest("hex") });
-    expect((await verifyNativeProbeSourceAttestation(manifest, commit, readSource)).filesChecked).toBe(13);
+    expect((await verifyNativeProbeSourceAttestation(manifest, commit, readSource)).filesChecked).toBe(15);
     sources.set(path, Buffer.from("已改变"));
     await expect(verifyNativeProbeSourceAttestation(manifest, commit, readSource)).rejects.toThrow("源码 SHA-256 不匹配");
   });

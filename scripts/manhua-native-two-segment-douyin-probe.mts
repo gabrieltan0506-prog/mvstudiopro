@@ -408,6 +408,7 @@ async function main() {
 
   let runError: unknown;
   let result: Awaited<ReturnType<typeof runManhuaNativeDeepRead>> | undefined;
+  let episodeResultEvidence: { objectName: string; bytes: number; sha256: string; generation?: string } | undefined;
   const modelReceipts: Array<Record<string, unknown>> = [];
   try {
     result = await runManhuaNativeDeepRead({
@@ -436,6 +437,21 @@ async function main() {
         });
       },
     }, deps);
+    // 用户已授权完整整集结果与来源元数据永久保存在现有GCS桶，不公开、不含凭证。
+    const objectName = `manhua-template-learn/probes/${seriesKey}/episode-result.json`;
+    const buffer = Buffer.from(JSON.stringify({
+      schemaVersion: 1, runId: seriesKey, sourceDigest, runtimeIdentity, sourceAttestation,
+      segmentPlans, result,
+    }));
+    const saved = await uploadBufferToGcsIfAbsent({
+      bucket, objectName, contentType: "application/json", buffer,
+    });
+    if (!saved.created) throw new Error("完整整集结果对象已存在，禁止覆盖");
+    episodeResultEvidence = {
+      objectName, bytes: buffer.byteLength,
+      sha256: createHash("sha256").update(buffer).digest("hex"), generation: saved.generation,
+    };
+    console.info(`[probe] 完整整集结果已保存 ${JSON.stringify(episodeResultEvidence)}`);
   } catch (error) {
     runError = error;
   }
@@ -823,6 +839,7 @@ async function main() {
     runtimeIdentity,
     sourceAttestation,
     requestAudits,
+    episodeResultEvidence,
     transportEvents,
     failures,
     modelReceipts,

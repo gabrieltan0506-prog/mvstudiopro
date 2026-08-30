@@ -60,6 +60,12 @@ import {
 } from "./bailianChat.js";
 import type { GlmGatewayName } from "./bailianChat.js";
 import {
+  createNativeDeepReadGlmEvidenceStore,
+  type NativeDeepReadGlmEvidence,
+  type NativeDeepReadGlmEvidenceContext,
+  type NativeDeepReadGlmEvidenceDeps,
+} from "./manhuaNativeDeepReadGlmEvidence.js";
+import {
   baseUrlForVertex,
   getVertexAuthHeaders,
   getVertexProjectId,
@@ -579,6 +585,8 @@ export type NativeDeepReadRunResult = NativeDeepReadOutput & {
   segmentEvidenceObjectNames?: string[];
   /** 每次付费尝试在 parse/门禁前保存的完整上游响应对象名。 */
   rawAttemptEvidenceObjectNames?: string[];
+  /** 整集GLM请求、每档原始响应与消费前解析JSON的永久取证回执。 */
+  glmEvidence?: NativeDeepReadGlmEvidence;
   /** true 只表示全部计划段已成；完整集卡仍需通过整集门禁。 */
   assemblyComplete?: boolean;
 };
@@ -2951,6 +2959,7 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
 
 export type NativeDeepReadGlmStructuringResult = {
   raw: Record<string, unknown>;
+  evidence?: NativeDeepReadGlmEvidence;
   /** 实际交卷网关与模型 id（回执记真值，不用常量硬写）。 */
   gateway: GlmGatewayName;
   model: string;
@@ -2964,24 +2973,34 @@ export type NativeDeepReadGlmStructuringResult = {
   finishReason?: string;
 };
 
-async function invokeNativeDeepReadGlmStructuring(
+export async function invokeNativeDeepReadGlmStructuring(
   prompt: { system: string; user: string },
   abortSignal?: AbortSignal,
+  context?: NativeDeepReadGlmEvidenceContext,
+  deps?: { invoke?: typeof invokeGlmJsonChatWithGatewayFallback; evidence?: NativeDeepReadGlmEvidenceDeps },
 ): Promise<NativeDeepReadGlmStructuringResult> {
+  const store = createNativeDeepReadGlmEvidenceStore(context, deps?.evidence);
   let raw: Record<string, unknown> | undefined;
-  const response = await invokeGlmJsonChatWithGatewayFallback({
+  const request = {
     system: prompt.system,
     user: prompt.user,
     maxTokens: GLM_STRUCTURING_MAX_TOKENS,
-    abortSignal,
-    gatewayPolicy: "glm_only",
+    gatewayPolicy: "glm_only" as const,
     timeoutMs: GLM_STRUCTURING_TIMEOUT_MS,
     // 🔒 整形链参数（0829 晚用户拍板，改任一项＝改成本与产出口径，改前先报）
     temperature: NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE,
     reasoningEffort: NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT,
     requireParameters: true,
     requireFinishReasonStop: true,
+  };
+  // 请求先永久留存；回调在bailian解析SSE/JSON前await，保存失败不得另烧备用。
+  await store.writeRequest(request);
+  const response = await (deps?.invoke ?? invokeGlmJsonChatWithGatewayFallback)({
+    ...request,
+    abortSignal,
+    onRawResponse: async (response) => { await store.writeRawResponse(response); },
     validateContent: (content) => {
+      store.assertRawResponseSaved();
       raw = parseJsonObject(content);
     },
   });
@@ -2990,7 +3009,7 @@ async function invokeNativeDeepReadGlmStructuring(
   if (!GLM_MODEL_GATEWAYS.has(response.gateway) || !raw) {
     throw new Error("GLM 结构化整形通道锁失效或未返回 JSON");
   }
-  return {
+  const result: NativeDeepReadGlmStructuringResult = {
     raw,
     gateway: response.gateway,
     model: response.model,
@@ -3005,6 +3024,25 @@ async function invokeNativeDeepReadGlmStructuring(
     providerRequestId: String(response.requestId || "").trim() || undefined,
     finishReason: String(response.choices?.[0]?.finish_reason || "").trim() || undefined,
   };
+  try {
+    // 解析原稿在任何广告处理、映射和门禁消费前独立保存，绝不覆盖原始响应。
+    result.evidence = await store.writeParsed(raw, {
+      gateway: response.gateway,
+      model: response.model,
+      provider: result.provider,
+      providerRequestId: result.providerRequestId,
+      finishReason: result.finishReason,
+      usage: response.usage,
+      gatewayTrace: response.gatewayTrace,
+    });
+  } catch {
+    // 该请求已付费：保存失败仍带出已知用量，但不能重发GLM或消费未留存对象。
+    throw new GlmGatewayError("整集GLM解析证据保存失败，已停止消费且不再调用模型", response.gatewayTrace, {
+      inputTokens: result.inputTokens, outputTokens: result.outputTokens,
+      reasoningTokens: result.reasoningTokens, costUsd: result.costUsd,
+    });
+  }
+  return result;
 }
 
 /* ────────────────── 主执行：每段一次调用 + EvoLink 兜底 ────────────────── */
@@ -4113,6 +4151,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
       // 输入是本集全部分段卡（合规段 + 带 advisory 段 + truncated 段），装配前不丢任何
       // 已付费证据。确定性拼接降为交叉校验用（只取 excludedAdRanges 对账，不入库）。
       // 门禁仍在 GLM 之后跑一遍——GLM 只管结构干净与去重，结论仍由门禁/advisory 层给。
+      let glmEvidence: NativeDeepReadGlmEvidence | undefined;
       const glmStructure = async (rejectedReasonZh?: string): Promise<Record<string, unknown>> => {
         const callId = crypto.randomUUID();
         const startedAt = Date.now();
@@ -4144,7 +4183,10 @@ export async function runManhuaNativeDeepReadBatch(params: {
               rejectedReasonZh,
             }),
             params.abortSignal,
+            { seriesKey: params.segmentCacheSeriesKey, sourceDigest: episode.cacheSourceDigest,
+              episodeIndex: episode.episodeIndex, batchRequestId: episodeRequestId, callId },
           );
+          glmEvidence = structured.evidence;
           const structuringCostCny = structured.costUsd * OPENROUTER_USD_TO_CNY_EQUIVALENT;
           inputTokens += structured.inputTokens;
           outputTokens += structured.outputTokens;
@@ -4380,6 +4422,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
             segmentSnapshotSha256: committedSnapshot?.result.segmentSnapshotSha256,
             segmentEvidenceObjectNames: committedSnapshot?.result.segmentEvidenceObjectNames,
             rawAttemptEvidenceObjectNames: Array.from(rawAttemptEvidenceObjectNames),
+            glmEvidence,
             assemblyComplete: true,
             usage: {
               inputTokens: episodeInput,
@@ -4440,7 +4483,8 @@ export async function runManhuaNativeDeepReadBatch(params: {
       costCny,
       usingPlanQuota: false,
       // 中止/失联时在途请求可能尚无回执，不能把已知部分冒充完整账单。
-      receiptComplete: inputTokens > 0 || outputTokens > 0,
+      receiptComplete: (inputTokens > 0 || outputTokens > 0)
+        && !("currentAttemptUsageUnavailable" in wrapped && wrapped.currentAttemptUsageUnavailable === true),
     };
     throw wrapped;
   } finally {

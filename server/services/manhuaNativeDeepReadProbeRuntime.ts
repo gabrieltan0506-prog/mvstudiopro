@@ -226,6 +226,8 @@ export const NATIVE_PROBE_ATTESTATION_REQUIRED_PATHS = [
   "shared/manhuaNativeDeepReadJob.ts",
   "server/services/manhuaNativeDeepReadPlan.ts",
   "server/services/manhuaNativeDeepReadRunner.ts",
+  "server/services/manhuaNativeDeepReadGlmEvidence.ts",
+  "server/services/bailianChat.ts",
   "server/services/manhuaNativeDeepReadProbeChecks.ts",
   "server/services/manhuaNativeDeepReadProbeManifest.ts",
   "server/services/manhuaNativeDeepReadProbeRuntime.ts",

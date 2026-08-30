@@ -44,6 +44,7 @@ import {
   buildNativeDeepReadGlmSegmentRepairPrompt,
   buildNativeDeepReadGlmStructuringPrompt,
   isManhuaNativeDeepReadEnabled,
+  invokeNativeDeepReadGlmStructuring,
   pickSmallestVideoFormat,
   postNativeDeepReadGenerateContent,
   prepareEpisodeVideos,
@@ -70,6 +71,71 @@ import {
   type NativeDeepReadSegmentCacheEntry,
   type NativeDeepReadParsedAttemptEvidenceInput,
 } from "./manhuaNativeDeepReadSegmentCache";
+import { GlmGatewayError, type GlmParams } from "./bailianChat";
+
+describe("整集GLM消费前永久取证", () => {
+  function fixture(failFile?: string, invalidJson = false) {
+    const order: string[] = [];
+    const saved: Array<Record<string, any>> = [];
+    const upload = vi.fn(async (input: { objectName: string; buffer: Buffer }) => {
+      const file = input.objectName.split("/").at(-1)!;
+      order.push(file);
+      if (file === failFile) throw new Error("虚构存储错误");
+      saved.push(JSON.parse(input.buffer.toString("utf8")));
+      return { created: true, generation: String(saved.length) };
+    });
+    const invoke = vi.fn(async (params: GlmParams) => {
+      order.push("invoke");
+      await params.onRawResponse!({ gateway: "evolink_glm", model: "glm-5.3", httpStatus: 502,
+        contentType: "application/json", bodyText: "{bad upstream", bodyComplete: true, receivedBytes: 13 });
+      const content = invalidJson ? "{bad json" : '{"shots":[{"startSec":0,"endSec":12}],"sentinel":"完整原稿"}';
+      await params.onRawResponse!({ gateway: "openrouter", model: "z-ai/glm-5.3", httpStatus: 200,
+        contentType: "application/json", bodyText: JSON.stringify({ content }), bodyComplete: true,
+        receivedBytes: Buffer.byteLength(JSON.stringify({ content })) });
+      order.push("validate");
+      params.validateContent!(content);
+      return { gateway: "openrouter", model: "z-ai/glm-5.3", gatewayTrace: [],
+        usage: { prompt_tokens: 100, completion_tokens: 50, cost: 0.01 },
+        choices: [{ finish_reason: "stop" }], requestId: "test-request" } as never;
+    });
+    return { order, saved, invoke, deps: { invoke, evidence: { upload: upload as never,
+      getBucket: () => "mv-studio-pro-vertex-video-temp" } } };
+  }
+
+  it("请求先存、两档原文各自先存、解析整集在返回前独立保存", async () => {
+    const f = fixture();
+    const result = await invokeNativeDeepReadGlmStructuring({ system: "系统", user: "全部分片" }, undefined,
+      { seriesKey: "测试", sourceDigest: "a".repeat(64), episodeIndex: 2, batchRequestId: "batch-test", callId: "call-test" }, f.deps);
+    expect(f.order).toEqual(["request.json", "invoke", "raw-1.json", "raw-2.json", "validate", "parsed.json"]);
+    expect(result.evidence?.raw).toHaveLength(2);
+    expect(result.evidence?.selectedRawObjectName).toContain("raw-2.json");
+    expect(f.saved[3]).toMatchObject({ episodeIndex: 2, batchRequestId: "batch-test", parsed: result.raw });
+    expect(f.saved[0].request).toMatchObject({ system: "系统", user: "全部分片", maxTokens: 131072, gatewayPolicy: "glm_only" });
+    expect(f.saved[0].request).not.toHaveProperty("abortSignal");
+  });
+
+  it("请求证据失败时零模型调用", async () => {
+    const f = fixture("request.json");
+    await expect(invokeNativeDeepReadGlmStructuring({ system: "系统", user: "输入" }, undefined, undefined, f.deps)).rejects.toThrow("保存失败");
+    expect(f.invoke).not.toHaveBeenCalled();
+  });
+
+  it("坏JSON至少留下原文，不保存虚假的解析对象", async () => {
+    const f = fixture(undefined, true);
+    await expect(invokeNativeDeepReadGlmStructuring({ system: "系统", user: "输入" }, undefined, undefined, f.deps)).rejects.toThrow();
+    expect(f.saved).toHaveLength(3);
+    expect(f.order).not.toContain("parsed.json");
+  });
+
+  it("解析证据失败不重发且带出已发生费用", async () => {
+    const f = fixture("parsed.json");
+    const error = await invokeNativeDeepReadGlmStructuring({ system: "系统", user: "输入" }, undefined, undefined, f.deps).catch((error) => error);
+    expect(error).toBeInstanceOf(GlmGatewayError);
+    expect(error.usage).toMatchObject({ inputTokens: 100, outputTokens: 50, costUsd: 0.01 });
+    expect(f.invoke).toHaveBeenCalledTimes(1);
+    expect(f.saved).toHaveLength(3);
+  });
+});
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -2976,6 +3042,18 @@ describe("门禁前解析稿持久化接线", () => {
     expect(saved[0]).toMatchObject({ finishReason: "MAX_TOKENS", truncated: true, parsed: raw });
     expect(saved[0]!.parsed).not.toHaveProperty("truncated");
     expect(deps.postVertex).toHaveBeenCalledTimes(1);
+  });
+
+  it("GLM原文保存失败时不把已知Gemini用量冒充完整账单", async () => {
+    const failure = Object.assign(new Error("原始响应未保存，本次GLM用量未知"), { currentAttemptUsageUnavailable: true });
+    const deps = makeRunnerDeps({
+      postVertex: vi.fn(async () => geminiResponse(makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 }))) as never,
+      invokeGlmStructuring: vi.fn(async () => { throw failure; }) as never,
+    });
+    const error = await runManhuaNativeDeepReadBatch(params, deps).catch((value) => value);
+    expect(error).toBe(failure);
+    expect(error.nativeDeepReadUsage).toMatchObject({ inputTokens: 100_000, outputTokens: 2_500, receiptComplete: false });
+    expect(deps.invokeGlmStructuring).toHaveBeenCalledTimes(1);
   });
 
   it("解析稿落盘失败保留已付费用量，停止重试、缓存和GLM", async () => {

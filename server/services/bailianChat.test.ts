@@ -3,7 +3,12 @@
  * abort 停链/全灭带完整轨迹/参数透传/🔴 百炼上绝不出现 GLM 模型名。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { GlmGatewayError, invokeGlmJsonChatWithGatewayFallback } from "./bailianChat";
+import {
+  GlmGatewayError,
+  GlmRawResponsePersistenceError,
+  invokeGlmJsonChatWithGatewayFallback,
+  type GlmRawResponseEvidence,
+} from "./bailianChat";
 
 const GOOD = JSON.stringify({ reportTitle: "报表", insightSummary: [{ role: "判断", title: "t", description: "d" }], trackGrowth: [{ name: "n", growth: "+1%" }] });
 const okBody = (content: string, model = "glm-5.3") =>
@@ -418,6 +423,210 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     expect(err).toBeInstanceOf(GlmGatewayError);
     expect(err.message).toContain("硬截止");
     expect(vi.mocked(fetch as any).mock.calls).toHaveLength(1);
+  });
+
+  it("原始 JSON 必须等待永久保存完成，才可解析或业务验真", async () => {
+    const body = meteredBody();
+    const response = new Response(body, {
+      headers: { "content-type": "application/json; charset=utf-8", "x-request-id": "provider-test-1" },
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => response));
+    const events: string[] = [];
+    const originalParse = JSON.parse;
+    vi.spyOn(JSON, "parse").mockImplementation((text, reviver) => {
+      if (text === body) events.push("parse");
+      return originalParse(text, reviver);
+    });
+    let entered!: () => void;
+    let release!: () => void;
+    const saving = new Promise<void>((resolve) => { entered = resolve; });
+    const saved = new Promise<void>((resolve) => { release = resolve; });
+    const onRawResponse = vi.fn(async (evidence: GlmRawResponseEvidence) => {
+      events.push("persist:start");
+      expect(evidence).toEqual({
+        gateway: "evolink_glm", model: "glm-5.3", httpStatus: 200,
+        providerRequestId: "provider-test-1", contentType: "application/json; charset=utf-8",
+        bodyText: body, bodyComplete: true, receivedBytes: Buffer.byteLength(body),
+      });
+      entered();
+      await saved;
+      events.push("persist:end");
+    });
+    const pending = invokeGlmJsonChatWithGatewayFallback({
+      system: "s", user: "u", gatewayPolicy: "glm_only", onRawResponse,
+      validateContent: () => { events.push("validate"); },
+    });
+    await Promise.race([
+      saving,
+      pending.then(() => { throw new Error("取证完成前已返回解析结果"); }),
+    ]);
+    expect(events).toEqual(["persist:start"]);
+    release();
+    await pending;
+    expect(events).toEqual(["persist:start", "persist:end", "parse", "validate"]);
+    expect(onRawResponse).toHaveBeenCalledOnce();
+  });
+
+  it("SSE 原文保留 BOM、CRLF、心跳及跨字节中文，取证后才调用既有解析器", async () => {
+    const frame = JSON.stringify({ choices: [{ delta: { content: '{"字":"甲"}' }, finish_reason: "stop" }] });
+    const sse = "\uFEFF: 心跳\r\n" + ": keepalive\r\n".repeat(200) + `data: ${frame}\r\n\r\ndata: [DONE]\r\n`;
+    const bytes = Buffer.from(sse);
+    let offset = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (offset === bytes.length) { controller.close(); return; }
+        const next = Math.min(bytes.length, offset + 7);
+        controller.enqueue(bytes.subarray(offset, next));
+        offset = next;
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(body, {
+      headers: { "content-type": "text/event-stream", "request-id": "sse-test-1" },
+    })));
+    const events: string[] = [];
+    const originalParse = JSON.parse;
+    vi.spyOn(JSON, "parse").mockImplementation((text, reviver) => {
+      if (text === frame) events.push("parse");
+      return originalParse(text, reviver);
+    });
+    const onRawResponse = vi.fn(async (evidence: GlmRawResponseEvidence) => {
+      expect(events).toEqual([]);
+      expect(Buffer.from(evidence.bodyText)).toEqual(bytes);
+      expect(evidence).toMatchObject({ bodyComplete: true, receivedBytes: bytes.length, providerRequestId: "sse-test-1" });
+      events.push("persist");
+    });
+    const result = await invokeGlmJsonChatWithGatewayFallback({
+      system: "s", user: "u", gatewayPolicy: "glm_only", maxResponseBytes: 1_024,
+      requireFinishReasonStop: true, onRawResponse,
+    });
+    expect(result.choices?.[0]?.message?.content).toBe('{"字":"甲"}');
+    expect(events).toEqual(["persist", "parse"]);
+    expect(onRawResponse).toHaveBeenCalledOnce();
+  });
+
+  it("两档 GLM 都先保存原始响应，包括 HTTP 错误正文和备用成功正文", async () => {
+    const first = '{"error":{"message":"upstream unavailable","code":"test_busy"}}';
+    const second = meteredBody();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(first, { status: 503, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(second, { headers: { "content-type": "application/json", "x-openrouter-request-id": "or-test-2" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const onRawResponse = vi.fn(async (_evidence: GlmRawResponseEvidence) => {});
+    const result = await invokeGlmJsonChatWithGatewayFallback({ system: "s", user: "u", gatewayPolicy: "glm_only", onRawResponse });
+    expect(result.gateway).toBe("openrouter");
+    expect(onRawResponse.mock.calls.map(([row]) => [row.gateway, row.model, row.httpStatus, row.bodyText, row.bodyComplete]))
+      .toEqual([["evolink_glm", "glm-5.3", 503, first, true], ["openrouter", "z-ai/glm-5.3", 200, second, true]]);
+    expect(onRawResponse.mock.calls[1]![0].providerRequestId).toBe("or-test-2");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("JSON 的 UTF-8 BOM 原样取证，消费时仍兼容既有 Response.text 的解码语义", async () => {
+    const body = "\uFEFF" + meteredBody();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(body, { headers: { "content-type": "application/json" } })));
+    const onRawResponse = vi.fn(async (_evidence: GlmRawResponseEvidence) => {});
+    const result = await invokeGlmJsonChatWithGatewayFallback({ system: "s", user: "u", gatewayPolicy: "glm_only", onRawResponse });
+    expect(result.choices?.[0]?.message?.content).toBe(GOOD);
+    expect(onRawResponse).toHaveBeenCalledWith(expect.objectContaining({ bodyText: body, bodyComplete: true }));
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it.each(["application/json", "text/event-stream"])("%s 原始响应保存失败立即停链，不解析、不验真、不烧备用", async (contentType) => {
+    const body = contentType === "application/json" ? meteredBody()
+      : 'data: {"choices":[{"delta":{"content":"{}"},"finish_reason":"stop"}]}\n';
+    const fetchMock = vi.fn(async () => new Response(body, { headers: { "content-type": contentType } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const validateContent = vi.fn();
+    const onRawResponse = vi.fn(async () => { throw new Error("存储 test-secret-key 失败"); });
+    const error = await invokeGlmJsonChatWithGatewayFallback({
+      system: "s", user: "u", onRawResponse, validateContent,
+    }).catch((failure) => failure);
+    expect(error).toBeInstanceOf(GlmRawResponsePersistenceError);
+    expect(error).toBeInstanceOf(GlmGatewayError);
+    expect(error.code).toBe("glm_raw_response_persistence_failed");
+    expect(error.currentAttemptUsageUnavailable).toBe(true);
+    expect(error.gatewayTrace).toEqual([expect.objectContaining({ gateway: "evolink_glm", outcome: "evidence_persistence_failed" })]);
+    expect(JSON.stringify(error.gatewayTrace) + error.message).not.toContain("test-secret-key");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(validateContent).not.toHaveBeenCalled();
+    expect(onRawResponse).toHaveBeenCalledOnce();
+  });
+
+  it("流中断先保存所有已收到原文并标为不完整，不把可解析的前缀当成功", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "");
+    const prefix = 'data: {"choices":[{"delta":{"content":"{}"},"finish_reason":"stop"}]}\n';
+    const interrupted = new Error("test socket interrupted");
+    let pulls = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pulls++ === 0) controller.enqueue(Buffer.from(prefix));
+        else controller.error(interrupted);
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(body, { headers: { "content-type": "text/event-stream" } })));
+    const validateContent = vi.fn();
+    const onRawResponse = vi.fn(async (_evidence: GlmRawResponseEvidence) => {});
+    const error = await invokeGlmJsonChatWithGatewayFallback({
+      system: "s", user: "u", gatewayPolicy: "glm_only", onRawResponse, validateContent,
+    }).catch((failure) => failure);
+    expect(error).toBeInstanceOf(GlmGatewayError);
+    expect(error.gatewayTrace[0]).toMatchObject({ outcome: "network_error", detail: interrupted.message });
+    expect(onRawResponse).toHaveBeenCalledWith(expect.objectContaining({
+      bodyText: prefix, bodyComplete: false, receivedBytes: Buffer.byteLength(prefix),
+    }));
+    expect(validateContent).not.toHaveBeenCalled();
+  });
+
+  it("原始 JSON 读取超限保留已接收字节并取消流，不能静默截断或交卷", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "");
+    const bytes = Buffer.from("x".repeat(1_500));
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(bytes); },
+      cancel,
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(body, { headers: { "content-type": "application/json" } })));
+    const onRawResponse = vi.fn(async (_evidence: GlmRawResponseEvidence) => {});
+    const error = await invokeGlmJsonChatWithGatewayFallback({
+      system: "s", user: "u", gatewayPolicy: "glm_only", maxResponseBytes: 1_024, onRawResponse,
+    }).catch((failure) => failure);
+    expect(error).toBeInstanceOf(GlmGatewayError);
+    expect(error.gatewayTrace[0].detail).toContain("超过处理上限");
+    expect(onRawResponse).toHaveBeenCalledWith(expect.objectContaining({ bodyText: bytes.toString(), receivedBytes: 1_500, bodyComplete: false }));
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("中断落在中文半字节时额外保留原始 base64，不能只存有损替换字符", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "");
+    const bytes = Buffer.from([0x64, 0x61, 0x74, 0x61, 0x3a, 0x20, 0xe4, 0xbd]);
+    let pulls = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pulls++ === 0) controller.enqueue(bytes);
+        else controller.error(new Error("test interrupted UTF-8"));
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(body, { headers: { "content-type": "text/event-stream" } })));
+    const onRawResponse = vi.fn(async (_evidence: GlmRawResponseEvidence) => {});
+    await expect(invokeGlmJsonChatWithGatewayFallback({ system: "s", user: "u", gatewayPolicy: "glm_only", onRawResponse })).rejects.toBeInstanceOf(GlmGatewayError);
+    const evidence = onRawResponse.mock.calls[0]![0];
+    expect(evidence.bodyComplete).toBe(false);
+    expect(evidence.receivedBytes).toBe(bytes.length);
+    expect(Buffer.from(evidence.bodyBase64!, "base64")).toEqual(bytes);
+  });
+
+  it("备用档保存失败仍保留此前已发生的 usage，当前未取证用量明确未知", async () => {
+    const calls = stubFetchSeq([() => ({ ok: true, status: 200, body: meteredBody() })]);
+    let attempts = 0;
+    const error = await invokeGlmJsonChatWithGatewayFallback({
+      system: "s", user: "u",
+      onRawResponse: async () => { if (++attempts === 2) throw new Error("存储失败"); },
+      validateContent: () => { throw new Error("第一档业务不合格"); },
+    }).catch((failure) => failure);
+    expect(error).toBeInstanceOf(GlmRawResponsePersistenceError);
+    expect(error.usage).toEqual({ inputTokens: 101, outputTokens: 202, reasoningTokens: 33, costUsd: 0.0123 });
+    expect(error.currentAttemptUsageUnavailable).toBe(true);
+    expect(error.gatewayTrace.map((row: { outcome: string }) => row.outcome)).toEqual(["content_invalid", "evidence_persistence_failed"]);
+    expect(calls).toHaveLength(2);
   });
 
   it("全链失败:轨迹=[evolink_glm,openrouter,plan_sg_qwen,evolink_qwen];🔴 整条链零百炼按量调用", async () => {

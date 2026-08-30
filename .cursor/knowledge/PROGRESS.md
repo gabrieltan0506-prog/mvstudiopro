@@ -340,5 +340,7 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 
 ## 更新说明
 
+2026-08-31追加：efa47b7已推送PR1328，用户确认原速319秒/12fps五片Gemini后一次整集GLM及新费用；允许本轮GLM原始响应（含可能的推理文本）、解析JSON、完整结果及来源元数据永久保存在现有GCS桶mv-studio-pro-vertex-video-temp的manhua-template-learn/下，不公开、不含凭证。发车审计发现旧GLM仅解析不留原始响应，现补可选网关取证hook、整集request/raw/parsed独立对象与探针完整结果，原始先保存再解析；保存失败不继续烧备用。模型参数、提示词和Schema不变。Docker首次构建在约2GB默认堆上限OOM，CLI自动重试后成功；追加构建期显式4GB堆，避免依赖写在RUN之后的运行期8GB设置。以上增量仍待统一类型/回归、同源推送镜像核验与真实模型验收，不得以备料代替实测。
+
 合完 PR 或用户改口径后，在**当日**下追加表格行；下一自然日新开 `## YYYY-MM-DD`。  
 大方向变更同步改 `manhua-factory-brief.md` §2–3。

@@ -121,6 +121,7 @@ export type GlmGatewayTraceEntry = {
   gateway: GlmGatewayName;
   model: string;
   outcome: "ok" | "http_error" | "invalid_json" | "truncated" | "incomplete" | "empty_content" | "content_invalid" | "network_error" | "skipped_not_configured"
+    | "evidence_persistence_failed"
     /** 整链预算已耗尽，该档未发出（0830 新增，配合 deadlineAtMs）。 */
     | "skipped_budget_exhausted";
   detail?: string;
@@ -142,7 +143,7 @@ export type GlmChatSuccess = BailianChatResponse & {
 
 /** 三网关全灭:携带完整外呼轨迹供遥测记真账 */
 export class GlmGatewayError extends Error {
-  readonly code = "glm_gateway_all_failed";
+  readonly code: "glm_gateway_all_failed" | "glm_raw_response_persistence_failed" = "glm_gateway_all_failed";
   constructor(
     message: string,
     readonly gatewayTrace: GlmGatewayTraceEntry[],
@@ -153,6 +154,31 @@ export class GlmGatewayError extends Error {
     this.name = "GlmGatewayError";
   }
 }
+
+/** 原文未可靠保存时停止付费兜底；不把存储错误中的凭证或地址带入日志。 */
+export class GlmRawResponsePersistenceError extends GlmGatewayError {
+  override readonly code = "glm_raw_response_persistence_failed" as const;
+  /** 当前响应尚未获准解析，用量未知；usage 只包含此前已解析的真实费用。 */
+  readonly currentAttemptUsageUnavailable = true;
+  constructor(gatewayTrace: GlmGatewayTraceEntry[] = [], usage: GlmGatewayUsage = emptyGlmGatewayUsage()) {
+    super("GLM 原始响应永久保存失败，已停止备用调用", gatewayTrace, usage);
+    this.name = "GlmRawResponsePersistenceError";
+  }
+}
+
+export type GlmRawResponseEvidence = {
+  gateway: GlmGatewayName;
+  model: string;
+  httpStatus: number;
+  providerRequestId?: string;
+  contentType: string;
+  bodyText: string;
+  /** 非法或中断的 UTF-8 不能从文本还原时，额外保留实际收到的原始字节。 */
+  bodyBase64?: string;
+  /** 仅表示响应流完整读到 EOF；不代表模型正常结束或业务内容合格。 */
+  bodyComplete: boolean;
+  receivedBytes: number;
+};
 
 export type GlmParams = {
   system: string;
@@ -195,6 +221,8 @@ export type GlmParams = {
   requireFinishReasonStop?: boolean;
   /** 防止异常响应整体进入内存；省略时使用 4 MiB。 */
   maxResponseBytes?: number;
+  /** 可选原文取证：任何 SSE/JSON 解析前等待保存完成；失败立即停链，不再付费兜底。 */
+  onRawResponse?: (response: GlmRawResponseEvidence) => Promise<void>;
   /** 业务验真钩子:抛错=该网关响应不可用,继续降级(复审 P1-1) */
   validateContent?: (content: string) => void;
 };
@@ -327,6 +355,10 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
       if (attemptUsage) {
         accumulatedUsage = addGlmGatewayUsage(accumulatedUsage, attemptUsage);
       }
+      if (e instanceof GlmRawResponsePersistenceError) {
+        trace.push({ gateway: g.name, model: g.model, outcome: "evidence_persistence_failed", detail: e.message });
+        throw new GlmRawResponsePersistenceError(trace, accumulatedUsage);
+      }
       const msg = e instanceof Error ? e.message : String(e);
       const outcome: GlmGatewayTraceEntry["outcome"] = /HTTP \d+/.test(msg)
         ? "http_error"
@@ -350,6 +382,59 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
     trace,
     accumulatedUsage,
   );
+}
+
+/** 只收集响应字节，不解析、不读请求头；中断或超限也先交取证钩子保留已收到的全部字节。 */
+async function readGlmRawResponseWithEvidence(
+  response: Response,
+  metadata: Pick<GlmRawResponseEvidence, "gateway" | "model" | "httpStatus" | "providerRequestId" | "contentType">,
+  rawCap: number,
+  onRawResponse: NonNullable<GlmParams["onRawResponse"]>,
+): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let receivedBytes = 0;
+  let bodyComplete = false;
+  let readFailed = false;
+  let readError: unknown;
+  const reader = response.body?.getReader();
+  try {
+    if (reader) {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) { bodyComplete = true; break; }
+        // 超限检查不裁掉已经到达的最后一块；取证会明确标注未完整读完。
+        chunks.push(Buffer.from(value));
+        receivedBytes += value.byteLength;
+        if (receivedBytes > rawCap) throw new Error("GLM 链响应超过处理上限");
+      }
+    } else {
+      const bytes = Buffer.from(await response.text(), "utf8");
+      chunks.push(bytes);
+      receivedBytes = bytes.byteLength;
+      bodyComplete = true;
+      if (receivedBytes > rawCap) throw new Error("GLM 链响应超过处理上限");
+    }
+  } catch (error) {
+    readFailed = true;
+    readError = error;
+  } finally {
+    if (reader) await reader.cancel().catch(() => undefined);
+  }
+  const bytes = Buffer.concat(chunks, receivedBytes);
+  const bodyText = bytes.toString("utf8");
+  try {
+    await onRawResponse({
+      ...metadata,
+      bodyText,
+      ...(!Buffer.from(bodyText, "utf8").equals(bytes) ? { bodyBase64: bytes.toString("base64") } : {}),
+      bodyComplete,
+      receivedBytes,
+    });
+  } catch {
+    throw new GlmRawResponsePersistenceError();
+  }
+  if (readFailed) throw readError;
+  return bytes;
 }
 
 /**
@@ -545,14 +630,10 @@ async function invokeOneGlmGateway(
   });
   // 🔒 按**响应类型**决定走哪条路径，不能只看「我发了 stream:true」——
   // 上游若忽略该参数直接回普通 JSON，用 SSE 读取器会读出**空正文**并静默交白卷。
-  const isSse = /text\/event-stream/i.test(
-    typeof res.headers?.get === "function" ? String(res.headers.get("content-type") || "") : "",
-  );
-  const raw = res.ok && res.body && isSse
-    ? await readGlmSseStream(res.body, params.maxResponseBytes)
-    : await res.text();
   const responseHeader = (name: string): string =>
     typeof res.headers?.get === "function" ? String(res.headers.get(name) || "") : "";
+  const contentType = responseHeader("content-type");
+  const isSse = /text\/event-stream/i.test(contentType);
   const providerRequestId = String(
     responseHeader("x-request-id")
     || responseHeader("request-id")
@@ -563,6 +644,25 @@ async function invokeOneGlmGateway(
     1_024,
     Math.min(16 * 1024 * 1024, Math.floor(Number(params.maxResponseBytes) || 4 * 1024 * 1024)),
   );
+  let raw: string;
+  if (params.onRawResponse) {
+    const streamSse = Boolean(res.ok && res.body && isSse);
+    // 沿用既有 SSE 原文护栏，不能把信封开销算进还原正文上限。
+    const rawCap = streamSse ? Math.max(maxResponseBytes * 64, 64 * 1024 * 1024) : maxResponseBytes;
+    const bytes = await readGlmRawResponseWithEvidence(res, {
+      gateway, model, httpStatus: res.status, providerRequestId, contentType,
+    }, rawCap, params.onRawResponse);
+    raw = streamSse
+      ? await readGlmSseStream(new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(bytes); controller.close(); },
+      }), params.maxResponseBytes)
+      : new TextDecoder().decode(bytes);
+  } else {
+    // 未启用取证的存量业务保持原来的流式读取与解析路径。
+    raw = res.ok && res.body && isSse
+      ? await readGlmSseStream(res.body, params.maxResponseBytes)
+      : await res.text();
+  }
   if (Buffer.byteLength(raw) > maxResponseBytes) {
     throw new Error("GLM 链响应超过处理上限");
   }
