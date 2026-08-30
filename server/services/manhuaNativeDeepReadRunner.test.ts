@@ -1909,7 +1909,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(prompt.system).toContain("记录去重，信息取并集");
   });
 
-  it("🔒 段被门禁标记后重试，两版都进 GLM 输入（用户 0829 晚：所有产出都进 GLM）", async () => {
+  it("🔒 硬门单独命中＝1 项不合标准，直接放行不重试（0830 三项线）", async () => {
     const segments = twoSegmentEpisode.segments;
     // 第2段首发把整 60 秒当成一个镜头——撞 30 秒硬上限（探针实弹里段5 就是 45 秒长镜）。
     // 覆盖仍然完整，只是颗粒度被标记。重试那发合规。
@@ -1920,6 +1920,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     const postVertex = vi.fn()
       .mockResolvedValueOnce(geminiResponse(makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 })))
       .mockResolvedValueOnce(geminiResponse(markedFirst))
+      // 旧规则会打第 3 发（重试）；三项线下这一发根本不该发出去。
       .mockResolvedValueOnce(geminiResponse(makeSegmentPayload({ segmentIndex: 1, startSec: 60, endSec: 120 })));
     const invokeGlmStructuring = makeGlmStructuringStub();
     const deps = makeRunnerDeps({
@@ -1931,14 +1932,16 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     try {
       await runManhuaNativeDeepReadBatch({ episodes: [{ ...twoSegmentEpisode, segments }] }, deps);
       expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+      // 🔴 不重买：60 秒单镜只是 1 项不合标准，按用户「一項到兩項一率放行」直接入库。
+      // 这里同时看守那条恒假条件的回归——写成 !String(raw.gateMarked) 时该分支是死代码，
+      // 硬门会照旧重试，postVertex 会被打 3 次。
+      expect(postVertex).toHaveBeenCalledTimes(2);
       const prompt = invokeGlmStructuring.mock.calls[0]![0] as { system: string; user: string };
       const sent = readRawSegmentsFromGlmPrompt(prompt.user);
-      // 2 段通过版 + 1 份被标记版 = 3 份，被标记那份一分钱都不许白花
-      expect(sent).toHaveLength(3);
-      const marked = sent.filter((row) => row.gateMarked === true);
-      expect(marked).toHaveLength(1);
-      expect(String(marked[0]!.gateMarkedZh || "")).not.toBe("");
-      expect(marked[0]!.attemptNumber).toBe(1);
+      expect(sent).toHaveLength(2);
+      expect(sent.filter((row) => row.gateMarked === true)).toHaveLength(0);
+      // 放行不等于抹掉判定：原因仍写在段卡上，供 GLM 与面板看见。
+      expect(String(sent[1]!.gateMarkedZh || "")).toContain("30 秒");
     } finally {
       warn.mockRestore();
       info.mockRestore();

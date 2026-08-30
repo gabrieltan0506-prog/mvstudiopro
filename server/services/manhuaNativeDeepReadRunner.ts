@@ -3367,8 +3367,10 @@ export async function runManhuaNativeDeepReadBatch(params: {
              * 硬门单独命中 = 1 项不合标准 → 按用户规则**放行**，原样入库。
              * 只有上面那条主动抛的「≥3 项」才继续往下走重试路径。
              */
+            // ⚠️ 必须用 !== true：写成 !String(raw.gateMarked) 恒为 false
+            //（String(undefined) === "undefined" 是 truthy），整条放行分支会变死代码。
             if (isNativeDeepReadGateFailure(gateFailure)
-              && !String((raw as Record<string, unknown>).gateMarked)) {
+              && (raw as Record<string, unknown>).gateMarked !== true) {
               const markedZh = (gateFailure instanceof Error ? gateFailure.message : String(gateFailure))
                 .replace(`${NATIVE_DEEP_READ_GATE_PREFIX}：`, "")
                 .slice(0, 500);
