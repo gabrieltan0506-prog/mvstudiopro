@@ -346,20 +346,21 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
 } as const;
 
 /**
- * 首发温度单变量候选（2026-08-31 用户授权），待实测，不是已验收冻结值。
+ * 首发与历史重试温度候选（2026-08-31 用户授权），待实测，不是已验收冻结值。
  *
- * 本轮仅将首发 temperature 从 0.65 调为 0.70；后两次仍为 0.60、0.55。
+ * 首发按用户指定由 0.70 调为 0.65；后两次复用 b948d7c 的 0.65、0.60，下限恢复 0.60。
+ * 首发请求只改温度；整轮同时调整重试档位与下限，不能视为只改首发的单变量实验。
  * 保持 maxOutputTokens 65_536 · candidateCount 1 ·
  * audioTimestamp true · responseMimeType/responseSchema ·
  * thinkingConfig { thinkingLevel: "MEDIUM", includeThoughts: false } 及其余请求内容不变。
  *
  * 早期的 thinkingBudget 与禁止 thinkingLevel 口径已被本次 MEDIUM 定稿替代。
  * 变更流程见知识库《schema动刀纪律》：改一字＝新版本＝旧缓存作废＝需重新探针实测。
- * 单变量边界由 manhuaNativeDeepReadRunner.test.ts 的基线请求字节对照检查。
+ * 首发请求字节边界与历史重试档位由 manhuaNativeDeepReadRunner.test.ts 分别检查。
  */
 export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
   // 待验首发候选；重试温度仍以 NATIVE_DEEP_READ_RETRY_TEMPERATURES 为准。
-  temperature: 0.7,
+  temperature: 0.65,
   maxOutputTokens: 65_536,
   candidateCount: 1,
   audioTimestamp: true,
@@ -389,10 +390,10 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
 } as const;
 
 /**
- * 待验候选仅改首发，同一 Vertex 分片至多三档：0.70 → 0.60 → 0.55。
+ * 待验候选同一 Vertex 分片至多三次：0.65 → 0.65 → 0.60；后两档复用 b948d7c。
  * 是否重试由统一段级判据决定；截断前缀保留、不因覆盖重复购买，用户中止不重试。
  */
-export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.7, 0.6, 0.55] as const;
+export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.65, 0.65, 0.6] as const;
 
 /**
  * 普通建议按三家族及偏差判定；独立覆盖与证据段上限优先于该计数线。
@@ -496,7 +497,7 @@ export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES: ReadonlySet<string> = 
   "timeline_gap",
 ]);
 export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 60_000;
-export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.55;
+export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.6;
 
 /** 第二次尝试参数；保留导出供既有调用方与缓存指纹使用。 */
 export const NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG = {
@@ -721,9 +722,9 @@ function run(
 export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
 /**
  * 精确切片与独立采样配置改变请求语义；旧流复制切片的缓存与确认码不得复用。
- * 本版仅验证文件时钟到累计秒的解释，实测过关前不宣称冻结。
+ * 本版验证首发0.65与历史两次重试温度，保留既有时间解释；实测过关前不宣称冻结。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-custom-v24-clock-seconds-experiment" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-custom-v25-first065-experiment" as const;
 
 /** 分片时长和采样率独立配置；默认 10fps，不按长短片自动降档。 */
 export function resolveNativeDeepReadRequestFps(totalDurationSec: number, requestedFps?: number): number {
