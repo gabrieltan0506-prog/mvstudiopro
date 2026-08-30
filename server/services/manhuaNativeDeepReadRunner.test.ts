@@ -1976,23 +1976,35 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(sent[1]!.advisories).toEqual([{ code: "audio_track_thin", detailZh: "音轨仅 1 段" }]);
   });
 
-  it("GLM 产物过不了门禁时带拒因重整一次，再不过才拒收", async () => {
-    const empty = { raw: { shots: [] }, inputTokens: 0, outputTokens: 0, costUsd: 0, finishReason: "stop" };
-    const invokeGlmStructuring = vi.fn(async (_prompt: { system: string; user: string }) => empty);
+  /**
+   * 0830 用户拍板：「一個差六秒就給我鋸掉」——2817 秒的整集，GLM 合并少了 6 秒
+   * （0.2%），旧代码先重整一发（多烧一次 GLM），过了覆盖又倒在音轨完整性上，
+   * 整集判死：10 片视觉证据全好、钱全花完，一片都没入库。
+   * 集级门禁与带拒因重整**双双拿掉**，GLM 出什么就入什么。本测试看守这条。
+   */
+  it("GLM 合并后尾部空 6 秒且弄丢一段音轨，照常入库且只调用一次 GLM（0830 集级门禁已拿掉）", async () => {
+    const base = makeGlmStructuringStub();
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
+      const out = await base(prompt);
+      const raw = out.raw as {
+        shots: Array<Record<string, unknown>>;
+        audioResolution: Array<Record<string, unknown>>;
+      };
+      const last = raw.shots[raw.shots.length - 1]!;
+      last.endSec = Number(last.endSec) - 6;  // ① 整集时间轴尾部空 6 秒
+      raw.audioResolution = raw.audioResolution.slice(0, -1); // ② GLM 合并弄丢末段音轨
+      return out;
+    });
     const deps = makeRunnerDeps({
       postVertex: makeSuccessfulEpisodePostVertex(twoSegmentEpisode.segments) as never,
       invokeGlmStructuring: invokeGlmStructuring as never,
     });
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    try {
-      await expect(runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps))
-        .rejects.toThrow();
-      expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
-      expect((invokeGlmStructuring.mock.calls[1]![0] as { user: string }).user)
-        .toContain("【上一轮门禁被拒原因】");
-    } finally {
-      warn.mockRestore();
-    }
+    // 旧代码在这里会：音轨分段不完整 → 带拒因重整第 2 发 → 再拒 →「整集拒绝入库」抛错
+    // ——真人剧 2817 秒实弹就是这样死的：10 片视觉证据全好，钱全花完，一片没入库。
+    await runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect((invokeGlmStructuring.mock.calls[0]![0] as { user: string }).user)
+      .not.toContain("【上一轮门禁被拒原因】");
   });
 });
 

@@ -410,6 +410,24 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
  * 下限仍是 0.6，三档变两档——第三档在实测中从未被用到过。
  */
 export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.65, 0.6] as const;
+
+/**
+ * 段级重试触发线：**不合标准项达到 3 项才重试，1–2 项一律放行**（0830 用户拍板）。
+ *
+ * 用户原话：「只有三項不合標準才重試，只有一項到兩項一率放行」
+ * 「模型跑出來是怎麼樣就怎麼樣」「進去ＧＬＭ他出來什麼就是什麼」。
+ *
+ * 为什么是「计数」而不是「命中即重试」：0829–0830 实测，单项不合标准
+ * （音轨只有 1 段、末镜 41 秒、五维少一维）几乎全是**真实产出**而非模型偷懒——
+ * 安静段落就是 1 段音轨，收尾镜本来就长。为这类单项重买一发 Gemini，
+ * 0829 一集就白烧 ¥20.5 且被拒内容全部有效。三项同时不合才有「这一发确实糊了」
+ * 的判别力，那时重试才是买到新东西而不是买重复。
+ *
+ * 不受本线约束的两种情况（它们不是「不合标准」，是**根本没有产出**）：
+ *   · JSON / zod 解析失败 —— 拿不到可用卡，重试是唯一出路
+ *   · 传输层失败（429、超时、空响应）—— 模型没说话，谈不上「出什么就是什么」
+ */
+export const NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES = 3;
 export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 60_000;
 export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.6;
 
@@ -3321,7 +3339,46 @@ export async function runManhuaNativeDeepReadBatch(params: {
               raw,
               truncated,
             });
+            /**
+             * 三项线（0830）：不合标准项 <3 就是放行，不重试、不标记。
+             * 硬门抛出的那条在下面 catch 里按 1 项计——它抛在第一项就停，
+             * 后面还有多少项无从得知，只能保守记 1，因此硬门单独命中必放行。
+             */
+            if (gated.advisories.length >= NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES) {
+              const reasonZh = gated.advisories.map((row) => row.detailZh).join("；").slice(0, 500);
+              raw.gateMarked = true;
+              raw.gateMarkedZh = reasonZh;
+              raw.attemptNumber = input.attemptNumber;
+              if (truncated) raw.truncated = true;
+              const pool = markedVersionsBySegment.get(input.segmentIndex) || [];
+              if (pool.length < NATIVE_DEEP_READ_RETRY_TEMPERATURES.length) {
+                pool.push(raw);
+                markedVersionsBySegment.set(input.segmentIndex, pool);
+              }
+              console.info(
+                `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段`
+                + `第${input.attemptNumber}发 ${gated.advisories.length} 项不合标准（≥`
+                + `${NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES}），重试一发：${reasonZh}`,
+              );
+              throw gateError(reasonZh);
+            }
           } catch (gateFailure) {
+            /**
+             * 硬门单独命中 = 1 项不合标准 → 按用户规则**放行**，原样入库。
+             * 只有上面那条主动抛的「≥3 项」才继续往下走重试路径。
+             */
+            if (isNativeDeepReadGateFailure(gateFailure)
+              && !String((raw as Record<string, unknown>).gateMarked)) {
+              const markedZh = (gateFailure instanceof Error ? gateFailure.message : String(gateFailure))
+                .replace(`${NATIVE_DEEP_READ_GATE_PREFIX}：`, "")
+                .slice(0, 500);
+              console.info(
+                `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段`
+                + `仅 1 项不合标准，按三项线放行入库：${markedZh}`,
+              );
+              raw.gateMarkedZh = markedZh;
+              gated = { raw, advisories: [] };
+            } else {
             // 门禁是贴标签的：命中硬门仍然重试（给模型改的机会），但这一发**不丢**。
             // 打上标记留进版本池，稍后连同通过版一起交 GLM 去重合并。
             if (isNativeDeepReadGateFailure(gateFailure)) {
@@ -3344,6 +3401,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
               );
             }
             throw gateFailure;
+            }
           }
           // 截断标记必须落进段卡本体：只留在外层信封里，缓存命中/断点恢复后就没了。
           if (truncated) raw.truncated = true;
@@ -3778,25 +3836,24 @@ export async function runManhuaNativeDeepReadBatch(params: {
           stripNonStoryAdShotsForEpisodeCard(annotateSegmentRows()).excludedAdRanges;
         let structuredRaw = await glmStructure();
         assertGlmAdRangesMatchDeterministic(structuredRaw, deterministicAdRanges, episode.episodeIndex);
-        // 集级门禁现在也产 advisory（密度类全降级），必须接住汇进 provenance，
-        // 否则「本集音轨第3段仅1段」这种提示在面板上根本看不到。
-        let episodeGateAdvisories: NativeDeepReadAdvisory[] = [];
-        try {
-          episodeGateAdvisories = gateEpisode([structuredRaw]);
-        } catch (structuringGateFailure) {
-          if (params.abortSignal?.aborted) throw structuringGateFailure;
-          const rejectedReasonZh = (structuringGateFailure instanceof Error
-            ? structuringGateFailure.message
-            : String(structuringGateFailure)).slice(0, 300);
-          console.warn(
-            `[nativeDeepRead] 第${episode.episodeIndex}集 GLM 整形结果未过门禁，`
-            + `带拒因重整一次：${rejectedReasonZh}`,
-          );
-          structuredRaw = await glmStructure(rejectedReasonZh);
-          assertGlmAdRangesMatchDeterministic(structuredRaw, deterministicAdRanges, episode.episodeIndex);
-          // 重整后门禁再跑一遍，再不过才判整集失败。
-          episodeGateAdvisories = gateEpisode([structuredRaw]);
-        }
+        /**
+         * 🔴 GLM 之后**不再设集级门禁、不再重整、也不再转 advisory**（0830 用户拍板）。
+         *
+         * 用户原话：「GLM 就是整形用的，还让他拒绝，有毛病吗」「3.4 都拿掉」
+         * 「不要什么 advisory 了」「一次就都让他入库」「不想搞什么重试了」。
+         *
+         * 拿掉的两样：
+         *   ③ 整形未过门禁时「带拒因重整一次」——多烧一发 GLM，还常常只是补几秒
+         *   ④ GLM 之后的整集门禁——它把**已付费的整集段证据**挡在门外
+         * 实锤代价：2817 秒的整集，GLM 合并掉 6 秒（0.2%）就重整一发；
+         * 重整后覆盖过了，又倒在音轨分段完整性上，整集判死——
+         * 10 片视觉证据全好、钱全花完，最后一片都没入库。
+         *
+         * 段级门禁保持不变（那里拦的是模型读片本身，重试是重读一片，代价小且有效：
+         * 0830 实测被拦的片重试后 100% 救回）。集级这一道拦的是**整形层**，
+         * 而整形层出了偏差不该让整集证据陪葬。
+         */
+        const episodeGateAdvisories: NativeDeepReadAdvisory[] = [];
         const episodeRows: Array<Record<string, unknown>> = [structuredRaw];
         // 确定性拼接路与 GLM 整形路统一在此注入 chunkSpans：整集卡携带
         // audioResolution 各 chunk 的真实段界（来自 episode.segments spec），
