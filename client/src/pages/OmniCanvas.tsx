@@ -5142,17 +5142,30 @@ export default function OmniCanvas() {
     setDirectorBoardMainForEpisode,
   ]);
 
-  /** 删除本集设定图画廊里的一张（画布块 + 连线一起清；可随时重出，不扣费） */
-  const removeEpisodeSheetBlock = useCallback(
-    (blockId: string) => {
-      const nextBlocks = blocks.filter((b) => b.id !== blockId);
+  /**
+   * 删除本集设定图画廊里的一张或多张（画布块 + 连线一起清；可随时重出，不扣费）。
+   *
+   * ⚠️ 批量必须一次调用传全部 id，不能 forEach 逐个调：
+   * 本函数闭包捕获的是本次渲染的 blocks，同一事件循环里连调 N 次会各自
+   * 从同一份旧数组算、后一次覆盖前一次——界面报「删除 5 项」实际只少 1 张
+   * （审查 P0 实锤）。所以对外只暴露批量口，单张是它的 1 元素特例。
+   */
+  const removeEpisodeSheetBlocks = useCallback(
+    (blockIds: readonly string[]) => {
+      const kill = new Set(blockIds.filter(Boolean));
+      if (!kill.size) return;
+      const nextBlocks = blocks.filter((b) => !kill.has(b.id));
       if (nextBlocks.length === blocks.length) return;
-      const nextEdges = edges.filter((e) => e.fromId !== blockId && e.toId !== blockId);
+      const nextEdges = edges.filter((e) => !kill.has(e.fromId) && !kill.has(e.toId));
       setBlocks(nextBlocks);
       setEdges(nextEdges);
       saveCanvasState(nextBlocks, nextEdges);
     },
     [blocks, edges],
+  );
+  const removeEpisodeSheetBlock = useCallback(
+    (blockId: string) => removeEpisodeSheetBlocks([blockId]),
+    [removeEpisodeSheetBlocks],
   );
 
   /** 基于库参考生成新人物/场景/服装道具（扣费；授权进库半价） */
@@ -7477,6 +7490,7 @@ export default function OmniCanvas() {
                   onRemoveCustomAsset={removeCustomAssetRef}
                   onClearAllCustomAssets={() => setCustomAssetRefs([])}
                   onRemoveEpisodeSheet={removeEpisodeSheetBlock}
+                  onRemoveEpisodeSheets={removeEpisodeSheetBlocks}
                   onGenerateCustomAssetFromLibrary={generateCustomAssetFromLibrary}
                   shareAssetToLibrary={shareAssetToLibrary}
                   onShareAssetToLibraryChange={setShareAssetToLibrary}
