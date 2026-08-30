@@ -21,7 +21,7 @@ import {
   NATIVE_DEEP_READ_ROUTE_VERTEX,
   NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC,
   NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
-  assertNativeDeepReadSegmentDensity,
+  nativeDeepReadSegmentMeetsThreeItemLine,
   nativeDeepReadSegmentCacheFingerprint,
   runManhuaNativeDeepRead,
   runManhuaNativeDeepReadBatch,
@@ -267,14 +267,15 @@ export async function migrateMisplacedNativeDeepReadSegmentCaches(input: {
     }
     const alias = validAliases[0]?.entry;
     if (!alias) continue;
-    assertNativeDeepReadSegmentDensity({
+    if (!nativeDeepReadSegmentMeetsThreeItemLine({
       episodeIndex: input.episodeIndex,
       segmentIndex,
       startSec: segment.startSec,
       endSec: segment.endSec,
       hasAudio: alias.hasAudio,
       raw: alias.raw,
-    });
+      truncated: alias.raw.truncated === true,
+    })) continue;
     const migrated: NativeDeepReadSegmentCacheEntry = {
       ...alias,
       seriesKey: input.seriesKey,

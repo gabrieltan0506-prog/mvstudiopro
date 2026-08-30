@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 
 const gcs = vi.hoisted(() => ({
   deleteObject: vi.fn(),
@@ -20,14 +21,18 @@ vi.mock("./gcs.js", () => ({
 import {
   NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
   NATIVE_DEEP_READ_SEGMENT_EVIDENCE_PREFIX,
+  NATIVE_DEEP_READ_PARSED_ATTEMPT_EVIDENCE_PREFIX,
   clearNativeDeepReadSegmentCacheForEpisode,
   createNativeDeepReadSegmentCacheEntryIfAbsent,
   listNativeDeepReadSegmentCacheEntriesBySourceDigest,
   readNativeDeepReadSegmentCacheEntry,
   nativeDeepReadSegmentEvidenceObjectName,
   nativeDeepReadSegmentEvidenceResponseFingerprint,
+  nativeDeepReadRawAttemptEvidenceObjectName,
+  writeNativeDeepReadParsedAttemptEvidence,
   writeNativeDeepReadSegmentCacheEntry,
   type NativeDeepReadSegmentCacheEntry,
+  type NativeDeepReadParsedAttemptEvidenceInput,
 } from "./manhuaNativeDeepReadSegmentCache";
 
 const entryOf = (
@@ -64,6 +69,77 @@ beforeEach(() => {
   gcs.upload.mockReset();
   gcs.createIfAbsent.mockReset();
   gcs.createIfAbsent.mockResolvedValue({ created: true });
+});
+
+describe("门禁前解析稿永久证据", () => {
+  const inputOf = (): NativeDeepReadParsedAttemptEvidenceInput => {
+    const identity = {
+      seriesKey: "series_a", episodeIndex: 3, segmentIndex: 1, segmentCount: 2,
+      sourceDigest: "b".repeat(64), requestFingerprint: "a".repeat(64),
+      batchRequestId: "test-batch", callId: "11111111-1111-1111-1111-111111111111",
+      attemptNumber: 1, temperature: 0.65, visualRoute: "vertex_gcs_video" as const,
+    };
+    return {
+      ...identity,
+      model: "test-model", startSec: 300, endSec: 600, fps: 10, hasAudio: true,
+      finishReason: "STOP", truncated: false,
+      rawAttemptEvidenceObjectName: nativeDeepReadRawAttemptEvidenceObjectName(identity),
+      rawResponseBytes: 100, rawResponseSha256: "c".repeat(64),
+      parsed: { shots: Array.from({ length: 150 }, (_, i) => ({ startSec: 300 + i, endSec: 301 + i })) },
+    };
+  };
+
+  it("完整保存拒收前解析稿、原始对象指针及双哈希，不写accepted或cache", async () => {
+    const input = inputOf();
+    const result = await writeNativeDeepReadParsedAttemptEvidence(input);
+    expect(result.objectName.startsWith(NATIVE_DEEP_READ_PARSED_ATTEMPT_EVIDENCE_PREFIX)).toBe(true);
+    const call = gcs.createIfAbsent.mock.calls[0]![0];
+    const stored = JSON.parse(call.buffer.toString("utf8"));
+    expect(stored.parsed.shots).toHaveLength(150);
+    expect(stored.rawAttemptEvidenceObjectName).toBe(input.rawAttemptEvidenceObjectName);
+    expect(stored.rawResponseSha256).toBe(input.rawResponseSha256);
+    expect(stored.requestFingerprint).toBe(input.requestFingerprint);
+    expect(stored.callId).toBe(input.callId);
+    const serialized = JSON.stringify(input.parsed);
+    expect(result.bytes).toBe(Buffer.byteLength(serialized));
+    expect(result.sha256).toBe(createHash("sha256").update(serialized).digest("hex"));
+    expect(stored.parsedSha256).toBe(result.sha256);
+    expect(gcs.createIfAbsent).toHaveBeenCalledTimes(1);
+    expect(gcs.upload).not.toHaveBeenCalled();
+    expect(gcs.deleteObject).not.toHaveBeenCalled();
+  });
+
+  it("raw对象串到另一attempt时写前阻止", async () => {
+    const input = inputOf();
+    input.rawAttemptEvidenceObjectName = input.rawAttemptEvidenceObjectName.replace("attempt1-", "attempt2-");
+    await expect(writeNativeDeepReadParsedAttemptEvidence(input)).rejects.toThrow("原始证据身份");
+    expect(gcs.createIfAbsent).not.toHaveBeenCalled();
+  });
+
+  it("同名同内容幂等，同名异内容关闭式失败且不覆写", async () => {
+    const input = inputOf();
+    await writeNativeDeepReadParsedAttemptEvidence(input);
+    const original = gcs.createIfAbsent.mock.calls[0]![0].buffer;
+    gcs.createIfAbsent.mockResolvedValue({ created: false });
+    gcs.downloadVersioned.mockResolvedValue({ buffer: original, generation: "1" });
+    await expect(writeNativeDeepReadParsedAttemptEvidence(input)).resolves.toMatchObject({ bytes: expect.any(Number) });
+    await expect(writeNativeDeepReadParsedAttemptEvidence({ ...input, parsed: { shots: [] } })).rejects.toThrow("内容不同");
+    expect(gcs.upload).not.toHaveBeenCalled();
+  });
+
+  it("序列化快照先于异步写入，后续gateMarked不能污染存稿", async () => {
+    const input = inputOf();
+    let complete!: () => void;
+    gcs.createIfAbsent.mockImplementation(() => new Promise((resolve) => {
+      complete = () => resolve({ created: true });
+    }));
+    const writing = writeNativeDeepReadParsedAttemptEvidence(input);
+    input.parsed.gateMarked = true;
+    complete();
+    await writing;
+    const stored = JSON.parse(gcs.createIfAbsent.mock.calls[0]![0].buffer.toString("utf8"));
+    expect(stored.parsed).not.toHaveProperty("gateMarked");
+  });
 });
 
 describe("错位段缓存核对", () => {

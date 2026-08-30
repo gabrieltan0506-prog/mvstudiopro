@@ -162,12 +162,16 @@ describe("段缓存来源身份", () => {
     expect(fromSearch).toBe(fromVideo);
   });
 
-  it("把同一视频误写在 ep010 的已付费段安全复制为 ep001，不覆盖目标也不重调模型", async () => {
+  it.each([
+    { coveredSec: 10, truncated: false, migrate: true },
+    { coveredSec: 2, truncated: false, migrate: false },
+    { coveredSec: 2, truncated: true, migrate: true },
+  ])("同源alias覆盖$coveredSec/10秒 truncated=$truncated，按生产判据决定迁移", async ({ coveredSec, truncated, migrate }) => {
     const sourceDigest = "d".repeat(64);
     const segments = [{ startSec: 0, endSec: 10 }];
     const raw = {
       shots: [{
-        startSec: 0, endSec: 10, unitTypeZh: "剪辑镜头",
+        startSec: 0, endSec: coveredSec, unitTypeZh: "剪辑镜头",
         shotSizeZh: "近景", angleZh: "平视", compositionZh: "角色居中",
         cameraMoveZh: "固定机位", blockingZh: "角色原地站立",
         bodyActionZh: "躯干微微前倾", limbPropActionZh: "双手自然垂落",
@@ -189,6 +193,7 @@ describe("段缓存来源身份", () => {
       },
       reusableZh: "先压后抬",
       genPromptHintZh: "近景反应",
+      truncated,
     };
     const alias: NativeDeepReadSegmentCacheEntry = {
       schemaVersion: NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
@@ -236,7 +241,12 @@ describe("段缓存来源身份", () => {
       createTarget,
     });
 
-    expect(result).toEqual({ migratedSegmentIndexes: [0], sourceEpisodeIndexes: [10] });
+    expect(result).toEqual({ migratedSegmentIndexes: migrate ? [0] : [], sourceEpisodeIndexes: migrate ? [10] : [] });
+    if (!migrate) {
+      expect(createTarget).not.toHaveBeenCalled();
+      expect(alias.raw).toEqual(raw);
+      return;
+    }
     const migrated = createTarget.mock.calls[0]![0];
     expect(migrated.episodeIndex).toBe(1);
     expect(migrated.raw).toEqual(raw);

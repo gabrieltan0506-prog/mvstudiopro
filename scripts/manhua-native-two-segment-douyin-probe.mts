@@ -1,25 +1,48 @@
 /**
- * 抖音单集 0–300 / 300–600 秒真实精读探针（与 manhua-native-two-segment-evidence-probe.mts
- * 同 schema、同门禁、同保存策略；唯一差异是片源解析层走抖音 yt-dlp）。
+ * 原生读片验收探针：默认仅核对本地参数；--execute 才允许在 Fly 内执行。
  *
  * 只允许在 Fly 内执行：凭证从服务端环境读取。视频 MP4 仅供本轮模型调用，
- * 任务结束立即删除并复查无残留；上游完整响应、解析后段证据与本次核对摘要永久保存在 GCS。
- * 分段按真实时长收口：不足 300 秒只跑一段，不足 600 秒第二段到真实终点为止。
+ * --gcs-manifest=<文件> 复用已有分片，不解析片源、不切片、不删除输入对象。
+ * 上游完整响应、解析后段证据、实际请求审计与核对摘要永久保存在 GCS。
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { readFile, rm } from "node:fs/promises";
+import { readFile, rm, mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import {
   NATIVE_DEEP_READ_GENERATION_CONFIG,
   NATIVE_DEEP_READ_RETRY_TEMPERATURES,
-  NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC,
-  NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_INTERVAL_SEC,
+  NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC,
   NATIVE_DEEP_READ_SEGMENT_FULL_LENGTH_SEC,
   NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY,
   NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
+  buildGeminiNativeDeepReadSegmentRequest,
+  createNativeDeepReadRunnerDeps,
+  evaluateNativeDeepReadSegmentAcceptance,
+  measureNativeDeepReadSegmentCoverage,
+  resolveNativeDeepReadRequestFps,
+  resolveNativeDeepReadSegmentFloors,
   runManhuaNativeDeepRead,
 } from "../server/services/manhuaNativeDeepReadRunner.js";
+import {
+  validateNativeProbeGenerationConfig,
+  summarizeNativeProbeChecks,
+} from "../server/services/manhuaNativeDeepReadProbeChecks.js";
+import { parseNativeProbeManifest } from "../server/services/manhuaNativeDeepReadProbeManifest.js";
+import {
+  extractNativeProbeModelJson as extractModelJsonFromRawEvidence,
+  reconcileNativeProbeSegment,
+  reconcileNativeProbeParsedAttempt,
+  nativeProbeHasThoughtLeak,
+  measureNativeProbeConcurrency,
+} from "../server/services/manhuaNativeDeepReadProbeEvidence.js";
+import {
+  createNativeProbeAuditedPost,
+  assertNativeProbeImage,
+  verifyNativeProbeSourceAttestation,
+} from "../server/services/manhuaNativeDeepReadProbeRuntime.js";
 import {
   probeNativeDeepReadDurationSec,
   splitNativeDeepReadSegments,
@@ -34,10 +57,15 @@ import {
   downloadGcsObjectVersioned,
   getGcsBucketName,
   listGcsObjectNamesByPrefix,
+  signGsUriV4ReadUrl,
+  statGcsObjectVersion,
   uploadBufferToGcsIfAbsent,
 } from "../server/services/gcs.js";
 
 const run = promisify(execFile);
+const stringArg = (name: string) => process.argv.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3) || "";
+const execute = process.argv.includes("--execute");
+const manifestPath = stringArg("gcs-manifest");
 const SOURCE = String(
   process.argv.find((arg) => arg.startsWith("--url="))?.slice("--url=".length) || "",
 ).trim();
@@ -53,8 +81,9 @@ const VIDEO_ID = SOURCE.match(/(?:modal_id=|\/video\/)(\d{10,24})/)?.[1] || "";
 const PAGE_URL = IS_DOUYIN
   ? (VIDEO_ID ? `https://www.douyin.com/video/${VIDEO_ID}` : "")
   : SOURCE;
-if (!PAGE_URL) throw new Error("缺少 --url=（抖音 /video/<id>，或第三方站单集播放页）");
-if (process.env.FLY_APP_NAME !== "mvstudiopro") throw new Error("本探针只允许在 Fly 容器内运行");
+if (execute && !PAGE_URL && !manifestPath) throw new Error("执行模式需要 --gcs-manifest= 或 --url=");
+if (PAGE_URL && manifestPath) throw new Error("已有 GCS 分片模式不得同时传入 --url=，避免意外重拉片源");
+if (execute && process.env.FLY_APP_NAME !== "mvstudiopro") throw new Error("付费探针只允许在 Fly 容器内运行");
 
 /** 🔓 并发上限由命令行给，不写死（用户令「上限应该是我来定的」）。省略＝走生产默认。 */
 const numArg = (name: string): number | undefined => {
@@ -68,7 +97,7 @@ const uploadConcurrency = numArg("upload-concurrency");
 const modelConcurrency = numArg("model-concurrency");
 
 const runStamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
-const seriesKey = `probe_douyin_${runStamp}`;
+const seriesKey = `probe_douyin_${runStamp}_${randomUUID().slice(0, 8)}`;
 /**
  * 身份串按**真实整集范围**算。旧版写死 `range:[0,600]`——那是两段探针时代的遗留，
  * 现在跑整集 4–8 片，写死 600 会让证据溯源上的「范围」与实际覆盖对不上。
@@ -84,6 +113,7 @@ const makeSourceDigest = (durationSec: number): string => createHash("sha256")
 const bucket = getGcsBucketName();
 const rawPrefix = `manhua-template-learn/segment-evidence-raw/tpl_native_${seriesKey}_ep001/`;
 const parsedPrefix = `manhua-template-learn/segment-evidence/tpl_native_${seriesKey}_ep001/`;
+const parsedAttemptPrefix = `manhua-template-learn/segment-evidence-parsed-attempt/tpl_native_${seriesKey}_ep001/`;
 
 function pickMedia(info: Record<string, unknown>): string {
   const formats = Array.isArray(info.formats) ? info.formats as Array<Record<string, unknown>> : [];
@@ -124,21 +154,8 @@ function countsOf(raw: Record<string, unknown>): EvidenceCounts {
   };
 }
 
-function extractModelJsonFromRawEvidence(payload: unknown): Record<string, unknown> {
-  const stored = payload && typeof payload === "object" ? payload as { responseText?: unknown } : null;
-  const envelope = JSON.parse(String(stored?.responseText || "")) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
-  };
-  const text = (envelope.candidates?.[0]?.content?.parts || [])
-    .filter((part) => !part.thought)
-    .map((part) => String(part.text || ""))
-    .join("");
-  const parsed = JSON.parse(text) as unknown;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("原始响应候选正文不是 JSON 对象");
-  }
-  return parsed as Record<string, unknown>;
-}
+const objectRows = (value: unknown): Array<Record<string, unknown>> => Array.isArray(value)
+  ? value.filter((row): row is Record<string, unknown> => Boolean(row && typeof row === "object" && !Array.isArray(row))) : [];
 
 function segmentIndexFromName(name: string): number {
   const match = /\/seg(\d+)(?:\/|-)/.exec(name);
@@ -234,50 +251,92 @@ const record = (id: CheckId, nameZh: string, status: CheckStatus, actualZh: stri
 };
 
 async function main() {
-  // P1 冻结参数：在任何付费动作之前先核对，参数不对就别烧钱。
-  {
-    const cfg = NATIVE_DEEP_READ_GENERATION_CONFIG as Record<string, unknown>;
-    const thinking = (cfg.thinkingConfig ?? {}) as Record<string, unknown>;
-    /**
-     * 🔒 P1 只做**结构性**校验，不硬编码具体数值（0830 修正）。
-     *
-     * 这支探针的设计原则写着「零硬编码参数——全部 import 生产常量，改了生产参数
-     * 探针自动跟着改」，但 P1 自己把 0.7 与 "0.7,0.65,0.6" 写死了：
-     * 0830 用户把首发降到 0.65 后，**参数明明是对的，P1 却报 FAIL**——
-     * 一个用来纠错的检查，自己成了假警报。
-     * 现在只钉住真正不该变的三条：thinkingLevel 绝不能回来（前人自行加过）、
-     * 思考不混进正文、首发温度必须等于梯度首档（两者不一致＝配置自相矛盾）。
-     * 具体数值一律打印出来供人眼核对，不参与 pass/fail。
-     */
-    const gradient = NATIVE_DEEP_READ_RETRY_TEMPERATURES;
-    const ok = typeof cfg.temperature === "number"
-      && cfg.maxOutputTokens === 65_536
-      && typeof thinking.thinkingBudget === "number"
-      && thinking.includeThoughts === false
-      && !("thinkingLevel" in thinking)
-      && gradient.length > 0
-      && cfg.temperature === gradient[0];
-    record("P1", "冻结参数与代码常量一致", ok ? "pass" : "fail",
-      `temperature=${String(cfg.temperature)} · thinkingBudget=${String(thinking.thinkingBudget)}`
-      + ` · includeThoughts=${String(thinking.includeThoughts)}`
-      + ` · thinkingLevel=${"thinkingLevel" in thinking ? "存在（不合规）" : "无"}`
-      + ` · 梯度=[${NATIVE_DEEP_READ_RETRY_TEMPERATURES.join(", ")}] · plan=${NATIVE_DEEP_READ_VISUAL_PLAN_VERSION}`);
+  const manifest = manifestPath
+    ? parseNativeProbeManifest(JSON.parse(await readFile(manifestPath, "utf8"))) : undefined;
+  // 检查经过生产请求构造器及 JSON 序列化后的对象，不拿常量与自身比较。
+  const preflightRequest = JSON.parse(JSON.stringify(buildGeminiNativeDeepReadSegmentRequest({
+    fileUri: manifest?.segments[0]?.gsUri || "gs://probe-preflight/never-sent.mp4",
+    fps: resolveNativeDeepReadRequestFps(manifest
+      ? manifest.segments[0]!.endSec - manifest.segments[0]!.startSec : 300),
+    prompt: "仅校验请求，不发送模型调用",
+  })));
+  const p1 = validateNativeProbeGenerationConfig(
+    preflightRequest.generationConfig, NATIVE_DEEP_READ_GENERATION_CONFIG,
+    NATIVE_DEEP_READ_RETRY_TEMPERATURES,
+  );
+  record("P1", p1.nameZh, p1.status, p1.actualZh);
+  if (p1.status !== "pass") throw new Error(`P1 未通过，禁止发车：${p1.errorsZh.join("；")}`);
+  if (!execute) {
+    console.info(JSON.stringify({
+      mode: "preflight_only", paidCalls: 0, acceptanceStatus: "not_run",
+      planVersion: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
+      schemaSha256: createHash("sha256").update(JSON.stringify(preflightRequest.generationConfig.responseSchema)).digest("hex"),
+      manifestValidated: Boolean(manifest), segmentCount: manifest?.segments.length ?? null,
+      segmentPlans: manifest?.segments.map(({ segmentIndex, startSec, endSec }) => ({
+        segmentIndex, startSec, endSec, fps: resolveNativeDeepReadRequestFps(endSec - startSec),
+      })),
+      noteZh: "仅预检通过，不代表实弹验收通过；执行前须核对远端 PR HEAD、干净工作树和运行镜像并取得费用确认",
+    }, null, 2));
+    return;
   }
-
-  console.info(`[probe] 阶段：抖音片源解析（web api）视频 ${VIDEO_ID}`);
-  const { mediaUrl, durationSec, kindZh, referer: mediaReferer } = await resolveSourceMedia();
-  console.info(`[probe] 阶段：${kindZh} 解析成功，真实时长 ${durationSec} 秒`);
-
-  // 整集分片：复用生产切段函数。集级门禁与尾片豁免只有整集才验得到。
-  const segments = splitNativeDeepReadSegments(durationSec);
+  const runtimeIdentity = assertNativeProbeImage(stringArg("expected-commit"), process.env.FLY_IMAGE_REF);
+  const attestationPath = stringArg("source-attestation");
+  if (!attestationPath) throw new Error("缺少已推 PR 的源码核对清单，禁止只凭镜像标签发车");
+  const sourceAttestation = await verifyNativeProbeSourceAttestation(
+    JSON.parse(await readFile(attestationPath, "utf8")), runtimeIdentity.commit,
+    // 必须核验正在执行的脚本所属源码树，不能从另一份干净cwd取文件冒充。
+    (relativePath) => readFile(new URL(`../${relativePath}`, import.meta.url)),
+  );
+  const source = manifest ? {
+    mediaUrl: "", durationSec: manifest.sourceDurationSec,
+    kindZh: "已有 GCS 分片（不拉源片、不切片）", referer: "",
+  } : await resolveSourceMedia();
+  const { mediaUrl, durationSec, kindZh, referer: mediaReferer } = source;
+  console.info(`[probe] 阶段：${kindZh}，时长 ${durationSec} 秒`);
+  const segments = manifest?.segments.map(({ startSec, endSec }) => ({ startSec, endSec }))
+    ?? splitNativeDeepReadSegments(durationSec);
   const coveredEnd = segments[segments.length - 1]!.endSec;
-  const sourceDigest = makeSourceDigest(coveredEnd);
+  const sourceDigest = manifest?.sourceDigest ?? makeSourceDigest(coveredEnd);
   console.info(`[probe] 建单：series=${seriesKey} · 分段 ${segments.map((s) => `${s.startSec}–${s.endSec}`).join(" / ")} · 原始 JSON 永久保留`);
 
   const videoPrefix = "manhua-template-learn/tmp/native-deep-read/";
   const videosBefore = new Set(await listGcsObjectNamesByPrefix({
     prefix: videoPrefix, literalPrefix: true, maxResults: 1_000,
   }));
+
+  const inputVideoVersions = manifest ? await Promise.all(manifest.segments.map(async (segment) => ({
+    gsUri: segment.gsUri, ...await statGcsObjectVersion({ gcsUri: segment.gsUri }),
+  }))) : [];
+  const requestAudits: Array<{ objectName: string; requestSha256: string | null; status: string }> = [];
+  let requestNumber = 0;
+  const persistRequestAudit = async (audit: Parameters<Parameters<typeof createNativeProbeAuditedPost>[1]>[0]) => {
+    const objectName = `manhua-template-learn/probes/${seriesKey}/requests/request-${++requestNumber}.json`;
+    const saved = await uploadBufferToGcsIfAbsent({
+      bucket, objectName, contentType: "application/json",
+      buffer: Buffer.from(JSON.stringify({ ...audit, runtimeIdentity, sourceAttestation, sourceDigest, planVersion: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION })),
+    });
+    if (!saved.created) throw new Error("请求审计对象已存在，拒绝覆盖及发车");
+    requestAudits.push({ objectName, requestSha256: audit.requestSha256, status: audit.validation.status });
+  };
+  const deps = createNativeDeepReadRunnerDeps();
+  const transportEvents: Array<Record<string, unknown>> = [];
+  const recordTransport = (event: Record<string, unknown>) => { transportEvents.push(event); };
+  deps.postVertex = createNativeProbeAuditedPost(deps.postVertex, persistRequestAudit, recordTransport);
+  deps.postEvolink = createNativeProbeAuditedPost(deps.postEvolink, persistRequestAudit, recordTransport);
+  if (manifest) {
+    deps.prepareVideos = async (episode) => {
+      if (episode.cacheSourceDigest !== sourceDigest
+        || JSON.stringify(episode.segments.map(({ startSec, endSec }) => [startSec, endSec]))
+          !== JSON.stringify(segments.map(({ startSec, endSec }) => [startSec, endSec]))) {
+        throw new Error("复用分片与当前请求的身份或绝对时间映射不一致，禁止发车");
+      }
+      return manifest.segments.map((segment, index) => ({
+        ...segment,
+        temporaryGcs: { bucket: inputVideoVersions[index]!.bucket, objectName: inputVideoVersions[index]!.objectName },
+      }));
+    };
+    deps.remove = async () => { throw new Error("已有 GCS 分片禁止删除"); };
+  }
 
   let runError: unknown;
   let result: Awaited<ReturnType<typeof runManhuaNativeDeepRead>> | undefined;
@@ -288,7 +347,11 @@ async function main() {
       episodeIndex: 1,
       sourceDigest,
       // 用解析器给的 referer，不要自己拼页面 origin——媒体域与播放页域常常不是同一个。
-      resolveNodes: async () => [{ url: mediaUrl, referer: mediaReferer }],
+      resolveNodes: async () => {
+        if (manifest) throw new Error("已有 GCS 分片模式禁止重新解析或拉取片源");
+        return [{ url: mediaUrl, referer: mediaReferer }];
+      },
+      preservePreparedVideos: Boolean(manifest),
       segments,
       sourceDurationSec: coveredEnd,
       hintZh: "抖音漫剧完整视听证据探针；按真实镜头、表演、光影、声音和叙事变化记录",
@@ -303,19 +366,37 @@ async function main() {
           observedAtMs: Date.now(),
         });
       },
-    });
+    }, deps);
   } catch (error) {
     runError = error;
   }
 
-  const [rawNames, parsedNames, videosAfter] = await Promise.all([
-    listGcsObjectNamesByPrefix({ prefix: rawPrefix, literalPrefix: true, maxResults: 100 }),
-    listGcsObjectNamesByPrefix({ prefix: parsedPrefix, literalPrefix: true, maxResults: 100 }),
-    listGcsObjectNamesByPrefix({ prefix: videoPrefix, literalPrefix: true, maxResults: 1_000 }),
+  // 已发生付费后，取证读取失败必须进入失败摘要，不能跳过回执与错误台账。
+  const collectionErrors: string[] = [];
+  const safeList = async (prefix: string, maxResults: number) => {
+    try { return await listGcsObjectNamesByPrefix({ prefix, literalPrefix: true, maxResults }); }
+    catch (error) { collectionErrors.push(`列取 ${prefix} 失败：${sanitizeSensitiveText(error)}`); return []; }
+  };
+  const [rawNames, parsedNames, parsedAttemptNames, videosAfter] = await Promise.all([
+    safeList(rawPrefix, 100), safeList(parsedPrefix, 100), safeList(parsedAttemptPrefix, 100), safeList(videoPrefix, 1_000),
   ]);
-  const temporaryVideoLeaks = videosAfter.filter((name) => !videosBefore.has(name));
-  const rawFacts = await Promise.all(rawNames.map(objectFact));
-  const parsedFacts = await Promise.all(parsedNames.map(objectFact));
+  const temporaryVideoLeaks = manifest ? [] : videosAfter.filter((name) => !videosBefore.has(name));
+  const inputVideoChanges: string[] = [];
+  const safeFacts = async (names: string[]) => {
+    const facts: Array<Awaited<ReturnType<typeof objectFact>>> = [];
+    await Promise.all(names.map(async (name) => {
+      try { facts.push(await objectFact(name)); }
+      catch (error) { collectionErrors.push(`读取 ${name} 失败：${sanitizeSensitiveText(error)}`); }
+    }));
+    return facts.sort((a, b) => a.objectName.localeCompare(b.objectName));
+  };
+  const rawFacts = await safeFacts(rawNames);
+  const parsedFacts = await safeFacts(parsedNames);
+  const parsedAttemptFacts = await safeFacts(parsedAttemptNames);
+  const parsedAttemptReconciliations = rawFacts.map((fact) => ({
+    rawObjectName: fact.objectName,
+    ...reconcileNativeProbeParsedAttempt(fact, parsedAttemptFacts),
+  }));
   const rawBySegment = new Map<number, Array<ReturnType<typeof countsOf>>>();
   const parsedBySegment = new Map<number, ReturnType<typeof countsOf>>();
 
@@ -347,12 +428,13 @@ async function main() {
       ? fact.payload as { raw?: unknown }
       : null;
     if (!entry?.raw || typeof entry.raw !== "object" || Array.isArray(entry.raw)) {
-      throw new Error(`解析后证据缺少 raw：${fact.objectName}`);
+      runError ??= new Error(`解析后证据缺少 raw：${fact.objectName}`);
+      continue;
     }
     parsedBySegment.set(segmentIndexFromName(fact.objectName), countsOf(entry.raw as Record<string, unknown>));
   }
 
-  const reconciliations = segments.map((_, segmentIndex) => {
+  const reconciliations = segments.map((segment, segmentIndex) => {
     const rawAttempts = rawBySegment.get(segmentIndex) || [];
     const parsedCounts = parsedBySegment.get(segmentIndex);
     const parsedKey = parsedCounts ? JSON.stringify(parsedCounts) : null;
@@ -360,6 +442,11 @@ async function main() {
     const matchedAttempt = parsedKey === null
       ? -1
       : rawAttempts.findIndex((counts) => JSON.stringify(counts) === parsedKey);
+    const matchingFacts = parsedFacts.filter((fact) => segmentIndexFromName(fact.objectName) === segmentIndex);
+    const identity = matchingFacts.length === 1 ? reconcileNativeProbeSegment({
+      entry: matchingFacts[0]!.payload, rawFacts, seriesKey, sourceDigest,
+      segmentIndex, startSec: segment.startSec, endSec: segment.endSec,
+    }) : { equal: false, reasonZh: "该分片的解析后证据缺失或不唯一" };
     return {
       segmentIndex,
       attemptCount: rawAttempts.length,
@@ -367,6 +454,8 @@ async function main() {
       parsedCounts,
       matchedAttempt: matchedAttempt >= 0 ? matchedAttempt + 1 : null,
       countsEqual: rawAttempts.length > 0 && matchedAttempt >= 0,
+      identityAndContentEqual: identity.equal,
+      identityReasonZh: identity.reasonZh,
     };
   });
   /**
@@ -383,12 +472,17 @@ async function main() {
   }> = [];
   const frameErrors: string[] = [];
   let keyMomentTotal = 0;
+  const frameDirectory = await mkdtemp(join(tmpdir(), "native-probe-frames-")).catch((error) => {
+    frameErrors.push(`创建抓帧临时目录失败：${sanitizeSensitiveText(error)}`); return null;
+  });
+  if (frameDirectory) try {
   for (const fact of parsedFacts) {
     const segmentIndex = segmentIndexFromName(fact.objectName);
+    if (!fact.payload || typeof fact.payload !== "object") continue;
     const entry = fact.payload as {
       raw?: { keyMoments?: Array<Record<string, unknown>>; shots?: Array<Record<string, unknown>> };
     };
-    const moments = (Array.isArray(entry.raw?.keyMoments) ? entry.raw.keyMoments : [])
+    const moments = objectRows(entry.raw?.keyMoments)
       .filter((row) => Number.isFinite(Number(row.atSec)))
       .sort((a, b) => Number(a.atSec) - Number(b.atSec));
     keyMomentTotal += moments.length;
@@ -396,14 +490,21 @@ async function main() {
       const moment = moments[i]!;
       const atSec = Math.round(Number(moment.atSec) * 10) / 10;
       const kindZh = String(moment.kindZh ?? "");
-      const local = `/tmp/probe-frame-${segmentIndex}-${i}.jpg`;
+      const local = join(frameDirectory, `seg${segmentIndex}-km${i}.jpg`);
       try {
+        const sourceSegment = manifest?.segments[segmentIndex];
+        if (manifest && !sourceSegment) throw new Error("抓帧缺少对应分片身份");
+        const frameUrl = sourceSegment ? await signGsUriV4ReadUrl(sourceSegment.gsUri) : mediaUrl;
+        const seekSec = sourceSegment ? atSec - sourceSegment.startSec : atSec;
+        if (seekSec < 0 || (sourceSegment && atSec >= sourceSegment.endSec)) {
+          throw new Error("抓帧秒位超出对应分片，不改用另一来源猜测");
+        }
         await run("ffmpeg", [
           "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
           "-user_agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36",
           // referer 用片源解析器给的那个，不再写死抖音（真人剧片源用抖音 referer 是错的）
-          "-headers", `Referer: ${mediaReferer}\r\n`,
-          "-ss", String(atSec), "-i", mediaUrl, "-frames:v", "1", "-q:v", "4", local,
+          ...(mediaReferer ? ["-headers", `Referer: ${mediaReferer}\r\n`] : []),
+          "-ss", String(seekSec), "-i", frameUrl, "-frames:v", "1", "-q:v", "4", local,
         ], { timeout: 60_000, maxBuffer: 8 * 1024 * 1024 });
         const buffer = await readFile(local);
         const objectName = `manhua-template-learn/probes/${seriesKey}/frames/seg${segmentIndex}/`
@@ -414,12 +515,27 @@ async function main() {
           noteZh: String(moment.noteZh ?? "").slice(0, 120),
           objectName, bytes: buffer.byteLength,
         });
-        await rm(local, { force: true });
         if (frameEvidence.length % 20 === 0) console.info(`[probe] 阶段：关键帧已抽 ${frameEvidence.length} 帧`);
       } catch (error) {
         frameErrors.push(`seg${segmentIndex}#km${i}@${atSec}s ${sanitizeSensitiveText(error)}`.slice(0, 120));
+      } finally {
+        await rm(local, { force: true }).catch((error) => {
+          frameErrors.push(`清理临时帧失败：${sanitizeSensitiveText(error)}`);
+        });
       }
     }
+  }
+  } finally {
+    await rm(frameDirectory, { recursive: true, force: true }).catch((error) => {
+      frameErrors.push(`清理抓帧临时目录失败：${sanitizeSensitiveText(error)}`);
+    });
+  }
+  // 复核窗口必须包含模型读取和抓帧读取，不能在抓帧前就宣布源对象没有改变。
+  for (const before of inputVideoVersions) {
+    try {
+      const after = await statGcsObjectVersion({ gcsUri: before.gsUri });
+      if (after.generation !== before.generation) inputVideoChanges.push(`${before.gsUri} 版本改变`);
+    } catch { inputVideoChanges.push(`${before.gsUri} 无法复核（可能丢失）`); }
   }
   console.info(`[probe] 阶段：重点时刻共 ${keyMomentTotal} 条，按此抽帧`);
   console.info(`[probe] 阶段：关键帧抽取完成 ${frameEvidence.length} 帧，失败 ${frameErrors.length}`);
@@ -438,7 +554,7 @@ async function main() {
         温度: row.temperature ?? null,
         finishReason: row.finishReason ?? null,
         httpStatus: providerError.httpStatus ?? null,
-        上游错误正文: providerError.bodyZh ?? providerError.messageZh ?? providerError.message ?? null,
+        上游错误正文: providerError.responseBody ?? providerError.message ?? null,
         providerRequestId: row.providerRequestId ?? null,
         失败原因全文: sanitizeSensitiveText(String(row.errorZh || "")) || "（回执未带 errorZh，见上游错误正文）",
         用量: {
@@ -456,18 +572,20 @@ async function main() {
   }
 
   /* ─────────── P2–P9 验收：全部读已落盘的证据，不读 result 上的私有字段 ─────────── */
-  const parsedCards = parsedFacts.map((fact) => ({
-    segmentIndex: segmentIndexFromName(fact.objectName),
-    card: (fact.payload as { raw: Record<string, unknown> }).raw,
-  })).sort((a, b) => a.segmentIndex - b.segmentIndex);
+  const parsedCards = parsedFacts.flatMap((fact) => {
+    const card = (fact.payload as { raw?: Record<string, unknown> } | null)?.raw;
+    return card && typeof card === "object" && !Array.isArray(card)
+      ? [{ segmentIndex: segmentIndexFromName(fact.objectName), card }] : [];
+  }).sort((a, b) => a.segmentIndex - b.segmentIndex);
 
+  let unreadableEnvelopes = 0;
   const thoughtLeaks = rawFacts.filter((fact) => {
-    const text = JSON.stringify(fact.payload);
-    return /"thought"\s*:\s*true/.test(text) || /<think>/i.test(text);
+    try { return nativeProbeHasThoughtLeak(fact.payload); }
+    catch { unreadableEnvelopes += 1; return false; }
   }).length;
   record("P2", "思考未混进输出 JSON",
-    rawFacts.length === 0 ? "not_observed" : thoughtLeaks === 0 ? "pass" : "fail",
-    rawFacts.length === 0 ? "没有可读的原始响应" : `${rawFacts.length} 份原始响应中残留 ${thoughtLeaks} 处`);
+    rawFacts.length === 0 ? "not_observed" : thoughtLeaks || unreadableEnvelopes ? "fail" : "pass",
+    rawFacts.length === 0 ? "没有可读的原始响应" : `${rawFacts.length} 份原始响应中残留 ${thoughtLeaks} 处，无法解析 ${unreadableEnvelopes} 份`);
 
   const advisoriesDetail: Array<{ 段: string; code: string; detailZh: string }> = [];
   const truncatedSegments: string[] = [];
@@ -475,7 +593,7 @@ async function main() {
   const audioThin: string[] = [];
   const tailSegments: string[] = [];
   for (const { segmentIndex, card } of parsedCards) {
-    for (const row of (Array.isArray(card.advisories) ? card.advisories as Array<Record<string, unknown>> : [])) {
+    for (const row of objectRows(card.advisories)) {
       advisoriesDetail.push({
         段: `第${segmentIndex + 1}段`,
         code: String(row.code ?? ""),
@@ -483,20 +601,20 @@ async function main() {
       });
     }
     if (card.truncated === true) truncatedSegments.push(`第${segmentIndex + 1}段`);
-    const shots = Array.isArray(card.shots) ? card.shots as Array<Record<string, unknown>> : [];
+    const shots = objectRows(card.shots);
     for (const shot of shots) {
       const len = Number(shot.endSec) - Number(shot.startSec);
-      if (Number.isFinite(len) && len > NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC) {
+      if (shot.evidenceRole !== "non_story_ad" && Number.isFinite(len) && len > NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC) {
         overlong.push(`第${segmentIndex + 1}段 ${len.toFixed(1)}秒`);
       }
     }
     const span = segments[segmentIndex];
     const lenSec = span ? span.endSec - span.startSec : 0;
-    const tracks = (Array.isArray(card.audioResolution) ? card.audioResolution : []).flatMap((chunk) => {
+    const tracks = objectRows(card.audioResolution).flatMap((chunk) => {
       const analysis = (chunk as { analysis?: { audioTrack?: unknown[] } }).analysis;
       return Array.isArray(analysis?.audioTrack) ? analysis!.audioTrack! : [];
     });
-    const audioFloor = Math.max(1, Math.ceil(lenSec / NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_INTERVAL_SEC));
+    const audioFloor = resolveNativeDeepReadSegmentFloors(lenSec).minAudioTracks;
     if (lenSec > 0 && tracks.length < audioFloor) audioThin.push(`第${segmentIndex + 1}段 ${tracks.length}/${audioFloor} 段`);
     if (lenSec > 0 && lenSec < NATIVE_DEEP_READ_SEGMENT_FULL_LENGTH_SEC) {
       tailSegments.push(`第${segmentIndex + 1}段 ${Math.round(lenSec)}秒 ${shots.length}镜`);
@@ -509,7 +627,7 @@ async function main() {
     truncatedSegments.length ? `已入库并标记：${truncatedSegments.join("、")}` : "本轮未发生 MAX_TOKENS 截断");
   record("P5", "音轨低于地板不再拒收", audioThin.length ? "pass" : "not_observed",
     audioThin.length ? `低于地板但已入库：${audioThin.join("、")}` : "本轮无低于地板的段");
-  record("P6", "🔒 30 秒硬上限生效",
+  record("P6", "30 秒证据上限（按生产 10% 容差验收）",
     parsedCards.length === 0 ? "not_observed" : overlong.length === 0 ? "pass" : "fail",
     parsedCards.length === 0 ? "没有可检段卡" : overlong.length === 0
       ? `${parsedCards.length} 段全部无超长证据段` : `超长 ${overlong.length} 条：${overlong.join("、")}`);
@@ -530,6 +648,26 @@ async function main() {
   // 拿旧口径跑这一轮，会把正常行为判成 FAIL——花一轮钱换一个错结论。
   // 新口径：重试本身只报不判；只有「三档温度用尽仍然没有落地的段」才是真失败。
   const landedSegments = new Set(parsedCards.map((row) => row.segmentIndex));
+  const segmentDecisions = parsedCards.map(({ segmentIndex, card }) => {
+    const span = segments[segmentIndex];
+    if (!span) return { segmentIndex, accepted: false, reasonZh: "证据段号不在本轮清单中" };
+    try {
+      const entry = parsedFacts.find((fact) => segmentIndexFromName(fact.objectName) === segmentIndex)?.payload as { hasAudio?: boolean } | undefined;
+      if (typeof entry?.hasAudio !== "boolean") throw new Error("已落盘证据缺少明确音轨标记");
+      const decision = evaluateNativeDeepReadSegmentAcceptance({
+        episodeIndex: 1, segmentIndex, ...span, hasAudio: entry.hasAudio,
+        raw: card, truncated: card.truncated === true,
+      });
+      const shots = (Array.isArray(card.shots) ? card.shots : []) as Array<{ startSec: number; endSec: number }>;
+      return {
+        segmentIndex, accepted: !decision.retry,
+        reasonZh: decision.advisories.map((row) => row.detailZh).join("；"),
+        coverage: measureNativeDeepReadSegmentCoverage({ shots, ...span }),
+      };
+    } catch (error) {
+      return { segmentIndex, accepted: false, reasonZh: sanitizeSensitiveText(error) };
+    }
+  });
   // 0830 审查修正：旧判据只看「发满三档还没落地」的段，会漏掉两类真失败——
   // ① 关闭式失败（schema 错误直接抛，不进重试，发数 <3）
   // ② 压根没发出 started 回执的段（切段/上传阶段就挂了，attemptsBySegment 里没有它）
@@ -543,9 +681,11 @@ async function main() {
         ? `第${index + 1}段未发出任何模型请求即失败（切段/上传阶段）`
         : `第${index + 1}段发了${attempts}发仍未落地`;
     });
-  record("P8", "重试收敛（门禁标记后重试属设计行为，只看最终有没有落地）",
-    modelReceipts.length === 0 ? "not_observed" : exhausted.length === 0 ? "pass" : "fail",
+  const rejectedLanded = segmentDecisions.filter((row) => !row.accepted);
+  record("P8", "重试收敛：全部落地并通过当前生产判据",
+    modelReceipts.length === 0 ? "not_observed" : exhausted.length === 0 && rejectedLanded.length === 0 ? "pass" : "fail",
     modelReceipts.length === 0 ? "没有收到任何模型回执（回执通路可疑）"
+      : rejectedLanded.length > 0 ? rejectedLanded.map((row) => `第${row.segmentIndex + 1}段：${row.reasonZh}`).join("；")
       : exhausted.length > 0 ? exhausted.join("、")
         : retried.length === 0
           ? `${attemptsBySegment.size} 段全部一发过，零重试`
@@ -553,21 +693,9 @@ async function main() {
             + `${retried.map(([i, n]) => `第${i + 1}段×${n}发`).join("、")}`
             + `（温度梯度 [${NATIVE_DEEP_READ_RETRY_TEMPERATURES.join(", ")}]）`);
 
-  // 🆕 P10：实测并发峰值。0829 晚把扇出上限从 4 改成 10，不实测＝改了等于没验证。
-  // 依据是回执时间戳：visual_model 的 started +1 / completed|failed −1，走一遍取峰值。
-  const inFlightEvents = modelReceipts
-    .filter((row) => String(row.stage || "") === "visual_model")
-    .map((row) => ({
-      at: Number(row.observedAtMs) || 0,
-      delta: String(row.status || "") === "started" ? 1 : -1,
-    }))
-    .sort((a, b) => (a.at - b.at) || (b.delta - a.delta));
-  let inFlight = 0;
-  let peakInFlight = 0;
-  for (const event of inFlightEvents) {
-    inFlight += event.delta;
-    peakInFlight = Math.max(peakInFlight, inFlight);
-  }
+  // P10仅统计真实HTTP调用区间；生产回执包括审计/取证等待，不能拿来冒充网络并发。
+  const concurrency = measureNativeProbeConcurrency(transportEvents);
+  const peakInFlight = concurrency.peak;
   // 0830 审查修正：期望值必须扣掉缓存命中的段。旧版拿 min(cap, 总片数) 当期望，
   // 缓存命中多时必判 FAIL，而它自己的说明文字却写着「属正常」——文案与判定打架，
   // 还会把整体 acceptanceStatus 拉成 failed。改成按**实际发出请求的段数**算期望。
@@ -579,34 +707,55 @@ async function main() {
     modelConcurrency || NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY,
     segments.length,
   );
-  const fanOutStatus: CheckStatus = dispatchedSegments === 0 ? "not_observed"
+  const fanOutStatus: CheckStatus = concurrency.errorsZh.length > 0 ? "fail"
+    : dispatchedSegments === 0 ? "not_observed"
     : dispatchedSegments < segments.length ? "not_observed"
-      : peakInFlight >= expectedFanOut ? "pass" : "fail";
+      : peakInFlight === expectedFanOut ? "pass" : "fail";
   record("P10", "模型扇出真并发（不是 4 路批次串行）", fanOutStatus,
     `峰值同时在飞 ${peakInFlight} 发 · 期望 ${expectedFanOut} 发`
     + ` · 实际发出请求 ${dispatchedSegments} 段 / 本集 ${segments.length} 片`
+    + ` · 回执错误 ${concurrency.errorsZh.join("；") || "无"}`
     + (dispatchedSegments === 0 ? "（未发出任何请求，无法判定）"
       : dispatchedSegments < segments.length ? "（派发不全，本项不下结论）" : ""));
-  record("P9", "临时视频零残留", temporaryVideoLeaks.length === 0 ? "pass" : "fail",
-    `残留 ${temporaryVideoLeaks.length} 个`);
+  record("P9", manifest ? "已有分片保留且版本不变" : "临时视频零残留",
+    temporaryVideoLeaks.length === 0 && inputVideoChanges.length === 0 ? "pass" : "fail",
+    manifest ? `复核 ${inputVideoVersions.length} 个，异常 ${inputVideoChanges.length} 个`
+      : `残留 ${temporaryVideoLeaks.length} 个`);
 
-  const checkIds = checks.map((row) => row.id).sort();
-  const idsComplete = JSON.stringify(checkIds)
-    === JSON.stringify(["P1", "P10", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9"]);
-  const failCount = checks.filter((row) => row.status === "fail").length;
-  const notObserved = checks.filter((row) => row.status === "not_observed").length;
-  const acceptanceStatus = runError || failCount > 0 || !idsComplete
-    ? "failed" : notObserved > 0 ? "incomplete" : "passed";
-  console.info(`[probe] 验收结论 ${acceptanceStatus}：pass ${checks.length - failCount - notObserved} · fail ${failCount} · 未观察 ${notObserved}`);
+  if (requestAudits.some((audit) => audit.status === "fail")) {
+    const parameterCheck = checks.find((check) => check.id === "P1")!;
+    parameterCheck.status = "fail";
+    parameterCheck.actualZh += "；实际发送前的请求审计发现参数漂移，已阻断对应调用";
+  }
+  const evidenceFailures: string[] = [];
+  evidenceFailures.push(...collectionErrors);
+  for (const row of parsedAttemptReconciliations) {
+    if (row.status === "failed") evidenceFailures.push(`${row.rawObjectName}：${row.reasonZh}`);
+  }
+  if (rawFacts.length < segments.length || parsedFacts.length !== segments.length) evidenceFailures.push("原始或解析后证据数量不完整");
+  if (reconciliations.some((row) => !row.identityAndContentEqual)) evidenceFailures.push("解析后证据无法按准确对象、身份及内容对应原始响应");
+  if (frameErrors.length) evidenceFailures.push(`抓帧失败 ${frameErrors.length} 项`);
+  if (result?.droppedCount) evidenceFailures.push(`消费层丢弃 ${result.droppedCount} 项证据`);
+  const verdict = summarizeNativeProbeChecks(checks, { runFailed: Boolean(runError) || evidenceFailures.length > 0 });
+  const { acceptanceStatus, idsComplete, failCount, notObservedCount } = verdict;
+  console.info(`[probe] 验收结论 ${acceptanceStatus}：pass ${verdict.passCount} · fail ${failCount} · 未观察 ${notObservedCount}`);
 
   const summary = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     acceptanceStatus,
     checks,
     idsComplete,
     failCount,
-    notObservedCount: notObserved,
+    notObservedCount,
+    exitCode: verdict.exitCode,
+    evidenceFailures,
+    runtimeIdentity,
+    sourceAttestation,
+    requestAudits,
+    transportEvents,
     failures,
+    modelReceipts,
+    collectionErrors,
     failureCount: failures.length,
     advisoriesDetail,
     episodeAdvisoriesDetail: ((result as { advisories?: Array<Record<string, unknown>> } | undefined)?.advisories ?? [])
@@ -618,7 +767,7 @@ async function main() {
     planVersion: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
     runId: seriesKey,
     sourceDigest,
-    sourceVideoId: VIDEO_ID || PAGE_URL,
+    sourceVideoId: manifest ? undefined : VIDEO_ID || PAGE_URL,
     sourceDurationSec: durationSec,
     ranges: segments.map((s) => [s.startSec, s.endSec]),
     status: runError ? "failed" : "completed",
@@ -635,14 +784,19 @@ async function main() {
     } : undefined,
     rawEvidence: rawFacts.map(({ objectName, bytes, sha256 }) => ({ objectName, bytes, sha256 })),
     parsedEvidence: parsedFacts.map(({ objectName, bytes, sha256 }) => ({ objectName, bytes, sha256 })),
+    parsedAttemptEvidence: parsedAttemptFacts.map(({ objectName, bytes, sha256 }) => ({ objectName, bytes, sha256 })),
     frameEvidence,
     frameErrors: frameErrors.length ? frameErrors : undefined,
     videoRetention: {
-      policy: "delete_on_settle",
-      maximumHours: 24,
+      policy: manifest ? "preserve_existing" : "delete_on_settle",
+      maximumHours: manifest ? undefined : 24,
       leakedObjectNames: temporaryVideoLeaks,
+      inputVideoVersions,
+      inputVideoChanges,
     },
     reconciliations,
+    parsedAttemptReconciliations,
+    segmentDecisions,
   };
   const summaryObjectName = `manhua-template-learn/probes/${seriesKey}/summary.json`;
   const summaryBuffer = Buffer.from(`${JSON.stringify(summary, null, 2)}\n`, "utf8");
@@ -670,19 +824,18 @@ async function main() {
   if (rawFacts.length < segments.length || parsedFacts.length !== segments.length) {
     throw new Error(`证据不完整：raw=${rawFacts.length} parsed=${parsedFacts.length}`);
   }
-  const unreconciled = reconciliations.filter((row) => !row.countsEqual);
+  const unreconciled = reconciliations.filter((row) => !row.identityAndContentEqual);
   if (unreconciled.length > 0) {
     // 写清是哪几段、各有几发、解析后是多少——旧版只丢一句话，现场无从判断。
     const detail = unreconciled
-      .map((row) => `第${row.segmentIndex + 1}段(${row.attemptCount}发)`)
+      .map((row) => `第${row.segmentIndex + 1}段(${row.attemptCount}发)：${row.identityReasonZh}`)
       .join("、");
     throw new Error(
       `解析后证据对不上该段任何一发原始响应，已阻断：${detail}`,
     );
   }
-  if (result?.truncated || result?.droppedCount) {
-    throw new Error(`消费层仍丢证据：truncated=${result?.truncated} dropped=${result?.droppedCount}`);
-  }
+  // 完整摘要必须先落盘；失败或未观察齐全绝不能再以成功退出。
+  process.exitCode = verdict.exitCode;
 }
 
 main().catch((error) => {

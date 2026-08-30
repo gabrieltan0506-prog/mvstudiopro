@@ -74,6 +74,7 @@ import {
   nativeDeepReadSegmentEvidenceObjectName,
   readNativeDeepReadSegmentCacheEntry,
   writeNativeDeepReadRawAttemptEvidence,
+  writeNativeDeepReadParsedAttemptEvidence,
   writeNativeDeepReadSegmentCacheEntry,
   type NativeDeepReadSegmentCacheEntry,
   type NativeDeepReadSegmentCacheRead,
@@ -344,45 +345,25 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
 } as const;
 
 /**
- * 0829 拍板：temperature 0.6 首发、maxOutputTokens 65_536、单候选、
- * responseSchema、thinkingLevel MEDIUM（0830 晚：thinkingBudget 是旧模型兼容写法，Gemini 3 系列改用等级）。
- *
- * thinkingBudget 12_000 的依据（0829 订正 0826 的误推）：知识库《原生视频读取-CDN
- * 串流定案》记载「thinkingBudget 写法也通」；0826 那句「禁止传 thinkingBudget」是
- * 把「不能关思考（budget=0）」误推成全称禁令。12K 只作成本封顶——实测单段思考量
- * 4.2k–39.7k tok，封顶后长尾段不再靠思考吃光 maxOutputTokens 把正文挤成坏 JSON。
- */
-/**
- * 🔒 参数冻结（2026-08-29 用户拍板，非用户明确允许不得变更）
+ * 参数冻结（2026-08-30 定稿，非用户明确允许不得变更）。
  *
  * 冻结项：temperature 0.65 · maxOutputTokens 65_536 · candidateCount 1 ·
  * audioTimestamp true · responseMimeType/responseSchema ·
  * thinkingConfig { thinkingLevel: "MEDIUM", includeThoughts: false } ·
- * 重试梯度 [0.6, 0.55] · PLAN_VERSION。
+ * 重试梯度 [0.65, 0.6, 0.55] · PLAN_VERSION。
  *
- * 用户原话：「改好冻结参数，非我允许不可再变，我从没有加上 thinking level 为 high 的指令。」
- * thinkingLevel 系 0826 PR #1314 由 agent 自行加入，0829 已按用户令移除，不得以任何理由加回。
+ * 早期的 thinkingBudget 与禁止 thinkingLevel 口径已被本次 MEDIUM 定稿替代。
  * 变更流程见知识库《schema动刀纪律》：改一字＝新版本＝旧缓存作废＝需重新探针实测。
  * 冻结由 manhuaNativeDeepReadRunner.test.ts「参数冻结锁」逐字段断言看守。
  */
 export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
-  // 0829 晚用户拍板：首发温度回到 0.7。v10 定 0.65 时提示词刚软化，没有为软化后的
-  // 提示词重新标定过温度；0826 实测 0.65+硬约束=28 镜躺平、0.75+软边界=100/102 镜。
-  // 0830 用户拍板：首发 0.65 → 0.6。实弹依据：576p 那轮 10 片有 5 片首发违反
-  // 30 秒硬约束（40/40/201/162/130 秒巨镜），而**全部 5 片在 0.65 那一发过关、零二次失败**。
-  // 0.7 首发合格率 50%，0.65 是 100%——每次重试都要重付一整片视频输入，这一降直接省掉一半重试。
-  // 0830 晚用户拍板：0.65 → 0.6。实弹依据（漫剧 6 片逐片打印，首次拿到思考量分布）：
-  // 思考 8,896→71 镜 · 14,573→34 镜 · 26,836→52 镜 · 39,024→56 镜——**思考越多正文越少**，
-  // 而 thinkingBudget 18,000 名义封顶实际被突破到 39,024（2.17 倍），参数没有真正约束住。
-  // 降温是压制发散的第二道手（第一道是下面的「禁止内部推理」提示词约束）。
+  // 当前冻结首发温度；重试温度以 NATIVE_DEEP_READ_RETRY_TEMPERATURES 为准。
   temperature: 0.65,
   maxOutputTokens: 65_536,
   candidateCount: 1,
   audioTimestamp: true,
   responseMimeType: "application/json",
   responseSchema: NATIVE_DEEP_READ_RESPONSE_SCHEMA,
-  // 0829 用户令：thinkingLevel 移除（0826 由 agent 加入，用户从未设定）；
-  // 保留 includeThoughts:false——思考照跑照计费，但绝不混进输出 JSON（知识库定案）。
   /**
    * 0830 晚用户拍板：**去掉 thinkingBudget，改用 thinkingLevel**。
    *
@@ -397,39 +378,23 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
    */
   thinkingConfig: { thinkingLevel: "MEDIUM", includeThoughts: false },
   /**
-   * 🔴 mediaResolution 属于 **generationConfig**，不是 Part 字段（0830 晚实测订正）。
-   * 放在 contents[0].parts[0].media_resolution 上会被 Vertex 直接 400 拒绝：
-   * `Invalid value at 'contents[0].parts[0].media_resolution' … "MEDIA_RESOLUTION_MEDIUM"`
-   * ——好在 400 挡在计费前，零成本发现。
-   *
-   * 设 MEDIUM 的理由（用户拍板：「差四倍的 token，那怎麼看得清楚」）：
-   * 默认 LOW 约 64 token/帧，实测反推 210,134 ÷ 3,000 帧 ≈ 70，正是这一档。
-   * 64 token 一帧不足以支撑微表情观察——实测 microExpressionZh 均长仅 5.9 字、
-   * gazeBreathZh 6.0、cameraMoveZh 4.8，字段用满率 5–23%。
-   * MEDIUM 约 256 token/帧，单片输入 210K → 约 790K（上下文窗口 1M 的 75%）。
+   * 使用 generationConfig 的全局枚举。Part 级字段是另一种对象结构，不能传裸字符串。
+   * Google Gemini 3 视频文档：默认、LOW、MEDIUM 均为 70 token/帧，HIGH 为 280。
+   * 因此约 210K 输入不能证明 MEDIUM 被忽略；也不能把 MEDIUM 误称为四倍画质。
+   * https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/video-understanding#video_tokenization
+   * 保持用户冻结值不变，真实请求由探针序列化审计，上游处理效果须另做实证。
    */
   mediaResolution: "MEDIA_RESOLUTION_MEDIUM",
 } as const;
 
 /**
- * 同一 Vertex 分片的固定两档尝试：0.60 首发、0.55 收口；不得静默换供应商。
- *
- * 0829 晚用户拍板恢复三档（v10 一度收成两档）。语义仍是 0829 上午定的那套：
- * **只有真失败与硬门禁**才走这条梯度——密度、覆盖、音轨厚度类判定已转 advisory，
- * 不再重买（0829 实证：一集 6 段拒收重买 3 段，白烧 ¥20.5）。
- * 硬门禁（17 字段 / 五维五键 / 30 秒上限 / 离谱地板）保留重试：带拒因重试正是让模型
- * 把超长镜拆开的修复机制（0828《花开锦绣》seg1 吃一次门禁、重试即过）。
- * 用户主动中止不是失败，不进入重试。
- */
-/**
- * 温度梯度（0830 用户拍板：首发 0.65 → 0.6）。
- * 实弹依据见 GENERATION_CONFIG.temperature 注释：0.7 首发合格率 50%，0.65 是 100%。
- * 下限是 0.55，两档——第三档在实测中从未被用到过。
+ * 同一 Vertex 分片至多三档：0.65 → 0.60 → 0.55。
+ * 是否重试由统一段级判据决定；截断前缀保留、不因覆盖重复购买，用户中止不重试。
  */
 export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.65, 0.6, 0.55] as const;
 
 /**
- * 段级重试触发线：**不合标准项达到 3 项才重试，1–2 项一律放行**（0830 用户拍板）。
+ * 普通建议按三家族及偏差判定；独立覆盖与证据段上限优先于该计数线。
  *
  * 用户原话：「只有三項不合標準才重試，只有一項到兩項一率放行」
  * 「模型跑出來是怎麼樣就怎麼樣」「進去ＧＬＭ他出來什麼就是什麼」。
@@ -457,6 +422,18 @@ export const NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES = 3;
  * 那条决定**算不算命中**，这条决定**命中 2 项时要不要重买**。
  */
 export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO = 0.20;
+
+/**
+ * 覆盖率重跑线（0830 晚用户拍板：「把覆蓋率低於 90% 也列入重跑的條件」）。
+ *
+ * 与三项线无关：正常结束的本片镜头覆盖率 < 90% 就重试。
+ * MAX_TOKENS 仍保留可解析前缀，不因覆盖不足重复购买。
+ * 实证：v32 第 4 片 300 秒只读了 20 秒（覆盖 6.7%）、思考 0、输出 3,661，
+ * 却因为撞上 45% 硬拒收线抛错、被「硬门单独命中＝1 项」的分支接住而放行入库。
+ * 覆盖越差越容易被当成 1 项放行——硬门一抛，带偏差值的 coverage_* advisory
+ * 根本没机会产生。这条把覆盖单独拎出来，在硬门之前判，不再被吞。
+ */
+export const NATIVE_DEEP_READ_SEGMENT_COVERAGE_RETRY_RATIO = 0.90;
 
 /**
  * 只有这些判定的偏差才参与「2 项且超 20% 就重跑」（0830 晚用户圈定）：
@@ -782,14 +759,7 @@ export const NATIVE_DEEP_READ_MERGE_SPAN_HARD_MAX_SEC = 60;
  * ⚠️ 这是**下限不是目标**：不要为了抬高这个数去阻止合法去重。
  */
 export const NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_FLOOR = 0.5;
-/**
- * 🔒 段级覆盖率地板（0830 用户拍板，建议值 0.5 可调）。
- *
- * 与 v10「覆盖缺口转 advisory」的分工：那条管**已读范围内的零星小缺口**（该转 advisory，
- * 免得诚实产出被误杀）；本条管**整片压根没读**。两者是不同的病。
- * 0830 实弹把两类分得很开——坏片覆盖率 1%–17%，好片 100%，线画在中间不会误伤。
- * 广告镜同样计入覆盖（用户明示：广告不是空洞，它留给之后的定义处理）。
- */
+/** 历史覆盖地板，仅保留导出兼容；当前独立重试线见 SEGMENT_COVERAGE_RETRY_RATIO。 */
 export const NATIVE_DEEP_READ_SEGMENT_COVERAGE_FLOOR_RATIO = 0.5;
 /**
  * 🔒 门禁容差（0830 用户拍板）：**任一数值门禁参数在 10% 误差之内，一律通过、不再重试。**
@@ -800,16 +770,6 @@ export const NATIVE_DEEP_READ_SEGMENT_COVERAGE_FLOOR_RATIO = 0.5;
  */
 export const NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO = 0.10;
 /**
- * 🔒 单条证据段**实际拒收线 45 秒**（0830 用户拍板：「41 秒可以接受，不需要重试」）。
- *
- * 提示词仍写 30 秒（目标不放宽），门禁按 45 拦——容差只放在拦截侧。
- * 45 这条线是用当晚两轮实弹分出来的：
- *   temp 0.65：唯一违规 41 秒 —— 真长镜，用户判定可接受
- *   temp 0.70：违规 40 / 40 / 60 / 130 / 162 / 201 秒 —— 60 秒以上明显是没读完
- * 45 卡在「真长镜」与「偷懒」之间：放过 40–41，仍拦住 60+。
- * 每重试一片要重付一整片视频输入，为 41 秒去重买不划算。
- */
-/**
  * 单镜拒收线 = 硬上限 × (1 + 10% 容差) = 33 秒（0830 晚用户拍板）。
  * 🔴 软上限整条删除：用户原话「軟上限就是有偷懒的空間」——
  * 40–60 秒的镜头此前既不触发 advisory 也不拒收，模型自然往粗里切。
@@ -817,13 +777,13 @@ export const NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO = 0.10;
  */
 export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC =
   NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC * (1 + NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO);
-/** 覆盖率实际拒收线 = 0.5 × 0.9 = 0.45（同上）。 */
 /**
  * 整集镜头留存率**实际拒收线** = 0.5 × 0.9 = 0.45（0830 用户令「容错率改为上下百分之十」：
  * 每条数值门禁按方向各让 10%——上限 +10%，下限 −10%）。此前这条漏了容差。
  */
 export const NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT =
   NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_FLOOR * (1 - NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO);
+/** 历史覆盖拒收线，仅保留导出兼容；不再参与当前段级决策。 */
 export const NATIVE_DEEP_READ_SEGMENT_COVERAGE_REJECT_RATIO =
   NATIVE_DEEP_READ_SEGMENT_COVERAGE_FLOOR_RATIO * (1 - NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO);
 /** 微尾段豁免：计划切段真实存在 9s 尾段（如 1080–1089），诚实的单镜结尾不该必拒 */
@@ -1660,6 +1620,70 @@ function gateError(detailZh: string): Error {
   return new Error(`${NATIVE_DEEP_READ_GATE_PREFIX}：${detailZh}`);
 }
 
+/** 这两类证据缺陷不得被「硬门单项放行」吞掉；不要通过中文错误文案识别。 */
+export class NativeDeepReadRequiredEvidenceError extends Error {
+  constructor(
+    readonly code: "coverage_below_90" | "shot_evidence_too_long",
+    detailZh: string,
+  ) {
+    super(`${NATIVE_DEEP_READ_GATE_PREFIX}：${detailZh}`);
+    this.name = "NativeDeepReadRequiredEvidenceError";
+  }
+}
+
+type NativeDeepReadSegmentGateInput = {
+  episodeIndex: number;
+  segmentIndex: number;
+  startSec: number;
+  endSec: number;
+  hasAudio: boolean;
+  raw: Record<string, unknown>;
+  truncated?: boolean;
+};
+
+/** 首发、缓存、同源迁移共用完整判据，不另按 advisory 条数造第二把尺子。 */
+export function evaluateNativeDeepReadSegmentAcceptance(input: NativeDeepReadSegmentGateInput) {
+  let gated: ReturnType<typeof assertNativeDeepReadSegmentDensity>;
+  try {
+    gated = assertNativeDeepReadSegmentDensity(input);
+  } catch (error) {
+    if (error instanceof NativeDeepReadRequiredEvidenceError
+      || (error instanceof Error
+        && (error.name === NATIVE_DEEP_READ_SCHEMA_ERROR_NAME || error.name === "ZodError"))) {
+      throw error;
+    }
+    if (!isNativeDeepReadGateFailure(error)) throw error;
+    gated = {
+      raw: input.raw,
+      advisories: [{
+        code: "gate_passed_under_threshold",
+        detailZh: (error instanceof Error ? error.message : String(error))
+          .replace(`${NATIVE_DEEP_READ_GATE_PREFIX}：`, "").slice(0, 500),
+        segmentIndex: input.segmentIndex,
+      }],
+    };
+  }
+  const countableFailures = input.truncated === true ? [] : gated.advisories;
+  const families = Array.from(new Set(countableFailures.map((row) =>
+    nativeDeepReadAdvisoryFamilyOf(row.code))));
+  const failureCount = families.length;
+  const twoItemOverDeviation = failureCount === 2 && countableFailures.some((row) =>
+    NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES.has(row.code)
+      && (row.deviationRatio ?? 0) > NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO);
+  const coverageSoloRetry = countableFailures.some((row) =>
+    NATIVE_DEEP_READ_COVERAGE_SOLO_RETRY_CODES.has(row.code)
+      && (row.deviationRatio ?? 0) > NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO);
+  return {
+    ...gated,
+    families,
+    failureCount,
+    twoItemOverDeviation,
+    coverageSoloRetry,
+    retry: failureCount >= NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES
+      || twoItemOverDeviation || coverageSoloRetry,
+  };
+}
+
 /**
  * 三项线的**唯一判据**：这份段卡按当前标准能不能直接入库/复用缓存。
  *
@@ -1669,32 +1693,21 @@ function gateError(detailZh: string): Error {
  *
  * 判定与入库口逐条对齐：
  *   · 截断段豁免计数（重试仍会截断，纯烧钱）
- *   · 不合标准项 ≥3 → 不可用（该重读/重试）
- *   · 硬门单独命中 = 1 项 → **可用**（放行）
+ *   · 按同一套家族、偏差、覆盖与证据段上限复验
+ *   · 其余硬门单独命中 = 1 项 → 可用；覆盖不足与超长证据段不豁免
  *   · schema / zod 失败 → 不可用（卡根本不能用，不是「不合标准」）
  *   · 非门禁错误（网络等）原样上抛，不吞
  */
-export function nativeDeepReadSegmentMeetsThreeItemLine(input: {
-  episodeIndex: number;
-  segmentIndex: number;
-  startSec: number;
-  endSec: number;
-  hasAudio: boolean;
-  raw: Record<string, unknown>;
-  truncated?: boolean;
-}): boolean {
-  const truncated = input.truncated === true;
+export function nativeDeepReadSegmentMeetsThreeItemLine(input: NativeDeepReadSegmentGateInput): boolean {
   try {
-    const gated = assertNativeDeepReadSegmentDensity(input);
-    const countable = truncated ? [] : gated.advisories;
-    return countable.length < NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES;
+    return !evaluateNativeDeepReadSegmentAcceptance(input).retry;
   } catch (error) {
     if (error instanceof Error
       && (error.name === NATIVE_DEEP_READ_SCHEMA_ERROR_NAME || error.name === "ZodError")) {
       return false;
     }
     if (!isNativeDeepReadGateFailure(error)) throw error;
-    return true;
+    return false;
   }
 }
 
@@ -1719,6 +1732,7 @@ type NativeDeepReadShotTiming = {
 
 function sortedShots(raw: Record<string, unknown>): NativeDeepReadShotTiming[] {
   return (Array.isArray(raw.shots) ? raw.shots : [])
+    .filter((row) => row && typeof row === "object" && !Array.isArray(row))
     .map((row) => row as Record<string, unknown>)
     .map((row): NativeDeepReadShotTiming => ({
       startSec: Number(row.startSec),
@@ -1728,6 +1742,31 @@ function sortedShots(raw: Record<string, unknown>): NativeDeepReadShotTiming[] {
     }))
     .filter((row) => Number.isFinite(row.startSec) && Number.isFinite(row.endSec) && row.endSec > row.startSec)
     .sort((a, b) => a.startSec - b.startSec || a.endSec - b.endSec);
+}
+
+/** 全部镜头（含广告）在本段内的区间并集；越界和重叠不能虚增覆盖率。 */
+export function measureNativeDeepReadSegmentCoverage(input: {
+  shots: ReadonlyArray<{ startSec: number; endSec: number }>;
+  startSec: number;
+  endSec: number;
+}): { coveredSec: number; durationSec: number; coverageRatio: number } {
+  const durationSec = Math.max(0, input.endSec - input.startSec);
+  const spans = input.shots
+    .map((shot) => ({
+      startSec: Math.max(input.startSec, shot.startSec),
+      endSec: Math.min(input.endSec, shot.endSec),
+    }))
+    .filter((span) => Number.isFinite(span.startSec) && Number.isFinite(span.endSec)
+      && span.endSec > span.startSec)
+    .sort((a, b) => a.startSec - b.startSec);
+  let cursor = input.startSec;
+  let coveredSec = 0;
+  for (const span of spans) {
+    const from = Math.max(cursor, span.startSec);
+    if (span.endSec > from) coveredSec += span.endSec - from;
+    cursor = Math.max(cursor, span.endSec);
+  }
+  return { coveredSec, durationSec, coverageRatio: durationSec > 0 ? coveredSec / durationSec : 0 };
 }
 
 const NATIVE_DEEP_READ_REQUIRED_SHOT_FIELDS = [
@@ -1825,10 +1864,10 @@ function groupPhysicalShotDurations(shots: ReadonlyArray<NativeDeepReadShotTimin
 }
 
 /**
- * 长镜证据的段级观察（0829 起只出 advisory，不影响入库）。
+ * 长镜数量与拆分连续性只出 advisory；单条证据超过33秒必须独立重试。
  *
  * **>15 秒长镜的数量限额已彻底删除**：真实长定场不该被数量门禁重买；长度信息
- * 只作提示。>30 秒证据段与拆分不连续同样降级成 advisory。
+ * 只作提示。30秒要求与10%拦截容差来自用户实测，不得以单项放行绕过。
  */
 function collectLongTakeAdvisories(input: {
   shots: ReadonlyArray<NativeDeepReadShotTiming>;
@@ -1844,7 +1883,7 @@ function collectLongTakeAdvisories(input: {
   );
   if (hardOverlong.length > 0) {
     // 硬门禁（0829 用户令：超过 30 秒必须拆）：单条证据段不得超过硬上限。
-    throw gateError(
+    throw new NativeDeepReadRequiredEvidenceError("shot_evidence_too_long",
       `${input.labelZh}有 ${hardOverlong.length} 个超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC} 秒的镜头证据段（要求 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒 + 10% 容差；最长 ${Math.round(Math.max(...hardOverlong))} 秒）；真实长镜必须按镜内变化拆成连续证据段，禁止截断尾部`,
     );
   }
@@ -2230,11 +2269,8 @@ function advisoryFromThrow(
 }
 
 /**
- * 段级改进建议（0829 用户拍板：门禁贴标记，不拒收重买）。
- *
- * 硬失败只剩两条：JSON 解析不了（在调用方 parseJsonObject）、zod schema 解析失败——
- * 这两种情况数据本身不可用。其余密度、覆盖、字段、分类、音轨地板判定一律收集成
- * advisory 随卡返回，由 GLM 收口层与人工面板消费，绝不再触发重买。
+ * 段级证据检查：结构不可用关闭式失败；正常输出覆盖不足与超长证据段独立重试。
+ * 其余建议交 evaluateNativeDeepReadSegmentAcceptance 按家族与偏差统一裁决。
  *
  * 注意：**>15 秒长镜数量限额已彻底删除**（0829），长度信息只转 advisory。
  */
@@ -2263,6 +2299,29 @@ export function assertNativeDeepReadSegmentDensity(input: {
   /** 偏离门槛的比例 = |实际 − 门槛| / 门槛。门槛为 0 时不产生偏差值。 */
   const deviation = (actual: number, threshold: number) =>
     threshold > 0 ? Math.abs(actual - threshold) / threshold : undefined;
+
+  // 先证实结构可用，再检查独立证据门；分类/必填字段的早抛不得掩盖覆盖或超长问题。
+  const parsed = nativeDeepReadSegmentSchema.safeParse(input.raw);
+  if (!parsed.success) {
+    const firstIssue = parsed.error.issues[0];
+    const issueZh = firstIssue
+      ? `（${firstIssue.path.join(".") || "根"}: ${firstIssue.message}）`
+      : "";
+    throw schemaGateError(`${labelZh}结构不合原生逐镜 schema${issueZh}`);
+  }
+  const shots = sortedShots(input.raw);
+  const coverage = measureNativeDeepReadSegmentCoverage({
+    shots, startSec: input.startSec, endSec: input.endSec,
+  });
+  if (!truncated && coverage.coverageRatio < NATIVE_DEEP_READ_SEGMENT_COVERAGE_RETRY_RATIO) {
+    throw new NativeDeepReadRequiredEvidenceError("coverage_below_90",
+      `${labelZh}镜头覆盖率 ${(coverage.coverageRatio * 100).toFixed(1)}%`
+      + `（覆盖 ${coverage.coveredSec.toFixed(1)} 秒 / 本片 ${coverage.durationSec.toFixed(1)} 秒），`
+      + `低于重跑线 ${(NATIVE_DEEP_READ_SEGMENT_COVERAGE_RETRY_RATIO * 100).toFixed(0)}%：整片没读完`,
+    );
+  }
+  const storyShots = shots.filter((shot) => shot.evidenceRole === "story");
+  const longTakeAdvisories = collectLongTakeAdvisories({ shots: storyShots, labelZh, segmentIndex });
 
   /**
    * 硬门禁（0829 用户裁决，不转 advisory）：五维分类五键齐全。
@@ -2310,19 +2369,8 @@ export function assertNativeDeepReadSegmentDensity(input: {
   // 硬门禁（0829 用户裁决）：逐镜 17 字段/unitTypeZh/evidenceRole 必填，缺则标记并重试（内容仍留给 GLM）。
   assertRawShotFieldPresence(input.raw, labelZh);
 
-  // 唯一保留的硬失败之一：zod schema 解析失败＝数据不可用，留不得。
-  const parsed = nativeDeepReadSegmentSchema.safeParse(input.raw);
-  if (!parsed.success) {
-    const firstIssue = parsed.error.issues[0];
-    const issueZh = firstIssue
-      ? `（${firstIssue.path.join(".") || "根"}: ${firstIssue.message}）`
-      : "";
-    throw schemaGateError(`${labelZh}结构不合原生逐镜 schema${issueZh}`);
-  }
-
   advisories.push(...advisoryFromThrow("clock_text", segmentIndex, () =>
     assertVisualTextNoClock(input.raw, labelZh)));
-  const shots = sortedShots(input.raw);
   advisories.push(...collectShotCoverageAdvisories(
     shots,
     Math.round(input.startSec),
@@ -2330,7 +2378,6 @@ export function assertNativeDeepReadSegmentDensity(input: {
     segmentIndex,
     labelZh,
   ));
-  const storyShots = shots.filter((shot) => shot.evidenceRole === "story");
   const storyDurationSec = storyShots.reduce(
     (total, shot) => total + Math.max(0, shot.endSec - shot.startSec),
     0,
@@ -2343,40 +2390,6 @@ export function assertNativeDeepReadSegmentDensity(input: {
   // 0829 用户裁决：不足整片（<300 秒）的尾片按实际取值直接入库，不设镜数门禁——
   // 尾片长度天然不定，用同一把尺子卡它只会把真实产出判死。
   const isFullLengthSegment = lenSec >= NATIVE_DEEP_READ_SEGMENT_FULL_LENGTH_SEC;
-  /* ── 🔒 段级覆盖闸（0830 用户拍板，纯算术）──
-   * 「这一片真实长度 300 秒，模型回的镜头必须覆盖到 300 秒；回 3 秒 = 拒收重试。」
-   *
-   * 🔴 **广告区间照算进覆盖**（用户明示「不要加上广告区间」＝不要把广告从要求里扣掉）：
-   * 广告不是空洞，它也是记录在时间轴上的镜头（evidenceRole=non_story_ad）。
-   * 所以这里数的是**全部镜头**的覆盖，不是只数 story。
-   *
-   * 与密度闸的分工：密度管「切得够不够细」，覆盖管「有没有读完」。
-   * 0830 实弹死的是后者——6 片只回 3–52 秒，而段级从来没有覆盖闸，
-   * 一路带到整集才被拦，钱已花完。
-   */
-  {
-    // 段级这里全部镜头的变量名是 shots（广告镜留在时间轴上，之后由整形层定义处理）
-    const allSpans = shots
-      .map((shot) => ({ startSec: Number(shot.startSec), endSec: Number(shot.endSec) }))
-      .filter((x) => Number.isFinite(x.startSec) && Number.isFinite(x.endSec) && x.endSec > x.startSec)
-      .sort((a, b) => a.startSec - b.startSec);
-    let coveredSec = 0;
-    let cursor = Number.NEGATIVE_INFINITY;
-    for (const span of allSpans) {
-      const from = Math.max(span.startSec, cursor);
-      if (span.endSec > from) { coveredSec += span.endSec - from; cursor = span.endSec; }
-    }
-    // 10% 容差（0830 用户令）：0.5 → 实际拒收线 0.45
-    const requiredSec = lenSec * NATIVE_DEEP_READ_SEGMENT_COVERAGE_REJECT_RATIO;
-    if (coveredSec < requiredSec) {
-      throw gateError(
-        `${labelZh}镜头只覆盖了 ${coveredSec.toFixed(1)} 秒 / 本片真实长度 ${Math.round(lenSec)} 秒`
-        + `（覆盖率 ${((coveredSec / Math.max(1, lenSec)) * 100).toFixed(1)}%，`
-        + `低于地板 ${(NATIVE_DEEP_READ_SEGMENT_COVERAGE_FLOOR_RATIO * 100).toFixed(0)}%）：`
-        + "整片没读完，广告镜同样计入覆盖",
-      );
-    }
-  }
 
   /**
    * ❌ 镜数「离谱地板」已整条删除（0830 用户令：「我都设好上限了，不要管下限了」）。
@@ -2403,11 +2416,7 @@ export function assertNativeDeepReadSegmentDensity(input: {
      * 真正能跨体裁用的判据是**膨胀倍数**（输出平均镜长 ÷ 输入平均镜长），
      * 它比的是模型有没有把输入合并掉，与体裁无关。
      */
-    advisories.push(...collectLongTakeAdvisories({
-      shots: storyShots,
-      labelZh,
-      segmentIndex,
-    }));
+    advisories.push(...longTakeAdvisories);
   }
   const emptyActionCount = (Array.isArray(input.raw.shots) ? input.raw.shots : [])
     .filter((shot) =>
@@ -2948,6 +2957,7 @@ export type NativeDeepReadBatchRunnerDeps = {
   readSegmentCache: typeof readNativeDeepReadSegmentCacheEntry;
   writeSegmentCache: typeof writeNativeDeepReadSegmentCacheEntry;
   writeRawAttemptEvidence: typeof writeNativeDeepReadRawAttemptEvidence;
+  writeParsedAttemptEvidence: typeof writeNativeDeepReadParsedAttemptEvidence;
   waitForRetry: typeof waitForNativeDeepReadRetry;
 };
 
@@ -2961,8 +2971,16 @@ const defaultBatchRunnerDeps: NativeDeepReadBatchRunnerDeps = {
   readSegmentCache: readNativeDeepReadSegmentCacheEntry,
   writeSegmentCache: writeNativeDeepReadSegmentCacheEntry,
   writeRawAttemptEvidence: writeNativeDeepReadRawAttemptEvidence,
+  writeParsedAttemptEvidence: writeNativeDeepReadParsedAttemptEvidence,
   waitForRetry: waitForNativeDeepReadRetry,
 };
+
+/** 探针复用生产通道；返回副本，注入审计或已有分片时不污染生产默认依赖。 */
+export function createNativeDeepReadRunnerDeps(
+  overrides: Partial<NativeDeepReadBatchRunnerDeps> = {},
+): NativeDeepReadBatchRunnerDeps {
+  return { ...defaultBatchRunnerDeps, ...overrides };
+}
 
 type GeminiEnvelope = {
   candidates?: Array<{
@@ -3470,8 +3488,10 @@ export async function runManhuaNativeDeepReadBatch(params: {
             throw failure;
           }
           let rawAttemptEvidenceObjectName: string | undefined;
+          let rawAttemptEvidence: Awaited<ReturnType<typeof writeNativeDeepReadRawAttemptEvidence>> | undefined;
+          let requestFingerprint: string | undefined;
           if (params.segmentCacheSeriesKey && episode.cacheSourceDigest) {
-            const requestFingerprint = nativeDeepReadSegmentCacheFingerprint({
+            requestFingerprint = nativeDeepReadSegmentCacheFingerprint({
               sourceDigest: episode.cacheSourceDigest,
               episodeIndex: episode.episodeIndex,
               episodeDurationSec: episode.sourceDurationSec,
@@ -3498,6 +3518,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
                 providerRequestId: response.requestId,
                 responseText: response.text,
               });
+              rawAttemptEvidence = evidence;
               rawAttemptEvidenceObjectName = evidence.objectName;
               rawAttemptEvidenceObjectNames.add(evidence.objectName);
               console.info(
@@ -3595,9 +3616,52 @@ export async function runManhuaNativeDeepReadBatch(params: {
             );
             throw enriched;
           }
+          // 解析原稿先永久落盘，再跑schema/覆盖/长镜门禁或添加标记；拒收不是删除付费证据的理由。
+          if (params.segmentCacheSeriesKey && episode.cacheSourceDigest) {
+            try {
+              if (!rawAttemptEvidence || !requestFingerprint) throw new Error("缺少已保存原始响应的身份回执");
+              const evidence = await deps.writeParsedAttemptEvidence({
+                seriesKey: params.segmentCacheSeriesKey,
+                episodeIndex: episode.episodeIndex,
+                segmentIndex: input.segmentIndex,
+                segmentCount,
+                sourceDigest: episode.cacheSourceDigest,
+                requestFingerprint,
+                batchRequestId: episodeRequestId,
+                callId,
+                attemptNumber: input.attemptNumber,
+                temperature: input.temperature,
+                visualRoute: input.route,
+                providerRequestId: response.requestId,
+                model: NATIVE_DEEP_READ_MODEL,
+                startSec: segment.startSec,
+                endSec: segment.endSec,
+                fps: input.fps,
+                hasAudio,
+                finishReason: candidate?.finishReason,
+                truncated,
+                rawAttemptEvidenceObjectName: rawAttemptEvidence.objectName,
+                rawResponseBytes: rawAttemptEvidence.bytes,
+                rawResponseSha256: rawAttemptEvidence.sha256,
+                parsed: raw,
+              });
+              console.info(
+                `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段`
+                + `解析原稿已永久取证：${evidence.objectName} · 正文 ${evidence.bytes} bytes`
+                + ` · sha256=${evidence.sha256}`,
+              );
+            } catch (error) {
+              const failure = new Error(
+                `原生精读解析证据落盘失败，已停止且不得自动重试：${error instanceof Error ? error.message : String(error)}`,
+                { cause: error },
+              );
+              failure.name = "NativeDeepReadEvidencePersistenceError";
+              throw failure;
+            }
+          }
           let gated: ReturnType<typeof assertNativeDeepReadSegmentDensity>;
           try {
-            gated = assertNativeDeepReadSegmentDensity({
+            const decision = evaluateNativeDeepReadSegmentAcceptance({
               episodeIndex: episode.episodeIndex,
               segmentIndex: input.segmentIndex,
               startSec: segment.startSec,
@@ -3606,56 +3670,13 @@ export async function runManhuaNativeDeepReadBatch(params: {
               raw,
               truncated,
             });
-            /**
-             * 三项线（0830 用户拍板）：「只有三項不合標準才重試，只有一項到兩項一率放行」。
-             *
-             * 🔒 截断段豁免（审计必修①）：responseSchema 字段顺序是
-             * shots → keyMoments → subtitles → audioResolution → beatStructureZh →
-             * classification，MAX_TOKENS 从尾部截，所以一个截断段**必然**同时命中
-             * truncated_classification_missing + classification_thin +
-             * empty_beat_structure（或 audio_chunk_shape）＝恰好 3 项。
-             * 不豁免的话，0829 明文定的「MAX_TOKENS 不再重试重买」就被静默推翻；
-             * 而截断是确定性的，重试大概率仍截断 → 温度梯度耗尽 → 整集抛错。
-             * 0829 实测「6 片截 2 片，截断是常态不是意外」。
-             */
+            gated = decision;
+            const passedWithNotice = gated.advisories.find((row) => row.code === "gate_passed_under_threshold");
+            if (passedWithNotice) raw.gateMarkedZh = passedWithNotice.detailZh;
+            // 截断豁免、家族计数和20%白名单只在共享判据定义；这里仅执行结果并记账。
             const countableFailures = truncated ? [] : gated.advisories;
-            /**
-             * 0830 晚用户补充：「不達標等於兩項的，要看是否在誤差 20% 內，超過依然重跑」
-             * 「我已經把誤差放鬆了，改重跑還是要跑」。
-             *
-             * 即：容差已经给到 20%，还超出去的就不是「差一点」而是真不合格。
-             * 2 项时任一项 `deviationRatio > 0.20` 即重跑；无量化偏差的项（如
-             * classification_thin、empty_action）按 0 计，不单独把 2 项推成重跑。
-             * 实例：音轨地板 5 实回 1 → 0.80 重跑；声音事件 13 实回 10 → 0.23 重跑；
-             * 单镜软上限 40s 实际 41s → 0.025 放行。
-             */
-            /**
-             * ② 同源合并：按**家族**计项，同家族命中多少条都只算 1 项
-             *（用户 0830 晚：「同源合併繼承一項」）。
-             */
-            const familyMax = new Map<string, number>();
-            for (const row of countableFailures) {
-              const fam = nativeDeepReadAdvisoryFamilyOf(row.code);
-              familyMax.set(fam, Math.max(familyMax.get(fam) ?? 0, row.deviationRatio ?? 0));
-            }
-            const failureCount = familyMax.size;
-            /** 20% 判据只认白名单里的 code（用户圈定：音轨段数与镜头覆盖，音轨长度不算）。 */
-            const overDeviation = countableFailures.some(
-              (row) => NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES.has(row.code)
-                && (row.deviationRatio ?? 0) > NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO,
-            );
-            const twoItemOverDeviation = failureCount === 2 && overDeviation;
-            /**
-             * ① 覆盖类**单独触发**：不必凑项，缺口偏差 > 20% 就重买
-             *（用户 0830 晚：「這個可以單獨觸發」）。少一大段画面是硬伤。
-             */
-            const coverageSoloRetry = countableFailures.some(
-              (row) => NATIVE_DEEP_READ_COVERAGE_SOLO_RETRY_CODES.has(row.code)
-                && (row.deviationRatio ?? 0) > NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO,
-            );
-            if (failureCount >= NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES
-              || twoItemOverDeviation
-              || coverageSoloRetry) {
+            const { failureCount, twoItemOverDeviation, coverageSoloRetry, families } = decision;
+            if (decision.retry) {
               const reasonZh = countableFailures.map((row) => row.detailZh).join("；").slice(0, 500);
               raw.gateMarked = true;
               raw.gateMarkedZh = reasonZh;
@@ -3670,7 +3691,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
               console.info(
                 `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段`
                 + `第${input.attemptNumber}发 ${failureCount} 项不合标准`
-                + `（${Array.from(familyMax.keys()).join("/")}）`
+                + `（${families.join("/")}）`
                 + (coverageSoloRetry
                   ? `（覆盖缺口超 ${NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO * 100}% 单独触发）`
                   : twoItemOverDeviation
@@ -3682,44 +3703,23 @@ export async function runManhuaNativeDeepReadBatch(params: {
             }
           } catch (gateFailure) {
             /**
-             * 硬门单独命中 = 1 项不合标准 → 按用户规则**放行**，原样入库。
-             *
-             * ⚠️ 三个必须排除的情况：
-             *   · `gateMarked === true` —— 那是上面 ≥3 项主动抛的，要继续走重试
-             *     （必须用 `!== true`：写成 `!String(raw.gateMarked)` 恒为 false，
-             *      因为 String(undefined) === "undefined" 是 truthy，整支会变死代码）
-             *   · schema / zod 解析失败（审计必修②）—— 那不是「不合标准」，
-             *     是**卡根本不可用**，放行会让坏数据进 GLM 与落库，
-             *     并让「schema 错误不降温重试、直接抛」的既有保护失效
-             *   · 非门禁错误（网络/HTTP）—— 原样上抛
+             * 覆盖与超长证据段使用类型化异常，永不被单项放行吞掉。
+             * 被拒的已付费解析稿也进入标记池，与原始响应一起保留。
              */
+            const requiredEvidenceFailure = gateFailure instanceof NativeDeepReadRequiredEvidenceError;
             const alreadyMarked = (raw as Record<string, unknown>).gateMarked === true;
-            const unusable = gateFailure instanceof Error
-              && (gateFailure.name === NATIVE_DEEP_READ_SCHEMA_ERROR_NAME
-                || gateFailure.name === "ZodError");
-            if (isNativeDeepReadGateFailure(gateFailure) && !alreadyMarked && !unusable) {
-              const markedZh = (gateFailure instanceof Error ? gateFailure.message : String(gateFailure))
-                .replace(`${NATIVE_DEEP_READ_GATE_PREFIX}：`, "")
-                .slice(0, 500);
-              console.info(
-                `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段`
-                + `仅 1 项不合标准，按三项线放行入库：${markedZh}`,
-              );
-              // 放行 ≠ 抹掉判定：理由既写进段卡，也做成 advisory 随 provenance 上面板，
-              // 否则拒因只活在 console 里，面板与 GLM 都看不见（审计建议⑧）。
-              raw.gateMarkedZh = markedZh;
-              gated = {
-                raw,
-                advisories: [{
-                  code: "gate_passed_under_threshold",
-                  detailZh: markedZh,
-                  segmentIndex: input.segmentIndex,
-                }],
-              };
-            } else {
-              // 到这里只剩三种：≥3 项主动抛（池已推过，不再推）、卡不可用、非门禁错误。
-              throw gateFailure;
+            if (requiredEvidenceFailure && !alreadyMarked) {
+              raw.gateMarked = true;
+              raw.gateMarkedZh = gateFailure.message.replace(`${NATIVE_DEEP_READ_GATE_PREFIX}：`, "").slice(0, 500);
+              raw.attemptNumber = input.attemptNumber;
+              const pool = markedVersionsBySegment.get(input.segmentIndex) || [];
+              if (pool.length < NATIVE_DEEP_READ_RETRY_TEMPERATURES.length) {
+                pool.push(raw);
+                markedVersionsBySegment.set(input.segmentIndex, pool);
+              }
             }
+            // 放行已由共享判据处理；不能在此另设catch规则推翻它的拒收结论。
+            throw gateFailure;
           }
           // 截断标记必须落进段卡本体：只留在外层信封里，缓存命中/断点恢复后就没了。
           if (truncated) raw.truncated = true;
@@ -3757,11 +3757,9 @@ export async function runManhuaNativeDeepReadBatch(params: {
               audioTracks += tracks.length;
               for (const t of tracks) audioCues += Array.isArray(t.cues) ? t.cues.length : 0;
             }
-            const coveredSec = shots.reduce((sum, x) => {
-              const a = Number(x.startSec); const b = Number(x.endSec);
-              return sum + (Number.isFinite(a) && Number.isFinite(b) && b > a ? b - a : 0);
-            }, 0);
-            const lenSec = Math.max(1, Math.round(segment.endSec - segment.startSec));
+            const { coveredSec, durationSec: lenSec, coverageRatio } = measureNativeDeepReadSegmentCoverage({
+              shots: sortedShots(raw), startSec: segment.startSec, endSec: segment.endSec,
+            });
             console.info(
               `[逐片] 第${episode.episodeIndex}集 第${input.segmentIndex + 1}/${episode.segments.length}片`
               + ` ${segment.startSec}–${segment.endSec}s`
@@ -3769,7 +3767,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
               + ` │ 字幕 ${arr("subtitles").length}`
               + ` │ 重点时刻 ${arr("keyMoments").length}`
               + ` │ 音轨 ${audioTracks} 段/${audioCues} 事件`
-              + ` │ 覆盖 ${coveredSec.toFixed(1)}/${lenSec}s（${(coveredSec / lenSec * 100).toFixed(1)}%）`
+              + ` │ 覆盖 ${coveredSec.toFixed(1)}/${lenSec}s（${(coverageRatio * 100).toFixed(1)}%）`
               + ` │ token 入 ${attemptInput} 出 ${attemptOutput}（思考 ${attemptReasoning}）`
               + ` │ ¥${attemptCost.toFixed(4)}`
               + ` │ 第 ${input.attemptNumber} 发`
@@ -3919,7 +3917,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
          * 不过就当没命中、重新读——好片照旧命中不花钱，只有真坏的那几片才重买。
          */
         if (cachedEntry) {
-          // 判据与入库口共用（审计必修③）：硬门单命中＝1 项，放行复用不重读。
+          // 与入库口共用判据：独立证据门不豁免，其余按家族与偏差判断。
           if (!nativeDeepReadSegmentMeetsThreeItemLine({
             episodeIndex: episode.episodeIndex,
             segmentIndex,
@@ -4250,7 +4248,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
           thinkingLevel: NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig.thinkingLevel,
           // 输入规格入档（0830 晚）：隔天复盘时能说清这份产物是用什么画质读出来的。
           maxFps: NATIVE_DEEP_READ_MAX_FPS,
-          mediaResolution: "MEDIA_RESOLUTION_MEDIUM",
+          mediaResolution: NATIVE_DEEP_READ_GENERATION_CONFIG.mediaResolution,
           retryTemperatures: [...NATIVE_DEEP_READ_RETRY_TEMPERATURES],
           segmentCount: episode.segments.length,
           sourceDurationSec: episode.sourceDurationSec,
