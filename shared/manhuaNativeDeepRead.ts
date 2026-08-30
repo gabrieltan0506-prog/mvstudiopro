@@ -274,6 +274,8 @@ export type NativeDeepReadOutput = {
   audioCuesMergedFromDuplicates?: number;
   /** 合并时落在所有音轨区间之外、无处安放的点事件数；出现即说明上游区间与事件对不齐 */
   audioCuesUnplaced?: number;
+  /** 因来源版本未过广告滤网而被整份拒绝合并的点事件数；出现即说明有广告回灌风险被拦下 */
+  audioCuesBlockedUnfiltered?: number;
 };
 
 const cut = (v: string | undefined, max: number): string | undefined => {
@@ -341,6 +343,8 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
   );
 
   let droppedCount = 0;
+  /** endSec 塌成 <= startSec、时长信息丢失的镜数；保留小数只缩小了窗口没消灭它 */
+  let shotZeroDuration = 0;
   const allBeats: ManhuaViralTemplateBeat[] = ok.flatMap(({ seg, offsetSec }) => {
     const conflictZh = String(seg.beatStructureZh || "").trim().slice(0, 40);
     return seg.shots.flatMap((shot) => {
@@ -355,11 +359,26 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
        * 0831 修复：原来两处 Math.floor 会把模型给的小数秒直接抹掉——
        * 实测第 2 片 77 镜里 75 镜带小数，边界最多提前 0.9 秒；
        * 更严重的是 319–319.4 这类镜 floor 后 end===start，endSec 被判 undefined 从 JSON 消失。
-       * 模型按 fps 抽帧本就能给出 0.1 秒粒度（与 keyMoments 的 atSec 同口径），保留一位小数。
+       * 模型按 fps 抽帧本就能给出 0.1 秒粒度，保留一位小数。
+       *
+       * ⚠️ 已知不一致，**不是遗漏，是刻意推迟**：
+       * 提示词（runner.ts「1. 时间坐标」那段）仍写着 shots.startSec/endSec
+       * 「一律使用全片绝对整数秒」。也就是说这个修复目前的成立前提是
+       * **模型持续违抗那条指令**（实测第 2 片 77 镜里 75 镜带小数，
+       * responseSchema 那边 startSec/endSec 是 NUMBER 不是 INTEGER 所以放行）。
+       * 换个模型版本、或它哪天老实听话，319–319.4 那类镜又会塌回 319–319。
+       * 不在本轮一起改，是因为改提示词＝改模型行为，会污染正要建立的基准，
+       * 违反「每轮只改一个可解释的变量」。列为基准建立后的下一个单变量实验。
+       *
+       * 另：keyMoments 的 atSec 在本文件是 offsetSec + local **完全不舍入**，
+       * 与这里的一位小数并非同一口径，别照抄这句注释去推断它。
        */
       const round1 = (value: unknown) => Math.round((Number(value) || 0) * 10) / 10;
       const start = round1(offsetSec + round1(shot.startSec));
       const end = round1(offsetSec + round1(shot.endSec));
+      // 保留小数只是把塌陷窗口从 1 秒缩到 0.05 秒（shot(319.4,319.44) 照样塌），
+      // 没有消灭它。塌一条就少一个时长，必须计数出 advisory，不许静默。
+      if (!(end > start)) shotZeroDuration += 1;
       return [
         {
           atSec: Math.max(0, start),
@@ -420,6 +439,16 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
   let audioCuesMerged = 0;
   /** 落在所有音轨区间之外、无处安放的点事件数：必须可见，不得静默吞掉 */
   let audioCuesUnplaced = 0;
+  /**
+   * 被「未过滤版不得并入已过滤版」这条防线拦下的点事件数。
+   * 广告区间是 **per-seg** 算出来的：同一个 chunkIndex 在 seg A 有广告镜头
+   * （cue 已剔除）、在 seg B 没有（adIntervals 为空 → 整份原样保留），
+   * 若照并不误，seg B 那份里的广告口播会被灌回 seg A 已经清理干净的结果里，
+   * 直接违反本文件上方「广告区间的声音同样不得进入消费层」。
+   */
+  let audioCuesBlockedUnfiltered = 0;
+  /** 每个 chunk 当前留存版本是否真正过过广告滤网 */
+  const adFilteredByChunk = new Map<number, boolean>();
   for (const { seg } of ok) {
     const adIntervals = [
       ...seg.shots
@@ -437,12 +466,15 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
       const chunkStart = span?.startSec ?? 0;
       /** 广告过滤后的本份分析；缺 chunkSpans 时不猜偏移，原样保留并标记跳过。 */
       let incoming: ManhuaNativeAudioChunkAnalysis;
+      /** 本份是否真的过了广告滤网；下面的合并防线只认这个，不认「本 seg 恰好没广告」。 */
+      let incomingAdFiltered = false;
       if (!adIntervals.length) {
         incoming = row.analysis;
       } else if (!span) {
         audioAdFilterSkipped = true;
         incoming = row.analysis;
       } else {
+        incomingAdFiltered = true;
         incoming = {
           ...row.analysis,
           audioTrack: row.analysis.audioTrack
@@ -458,6 +490,7 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
       const existing = resolvedByChunk.get(row.chunkIndex);
       if (!existing) {
         resolvedByChunk.set(row.chunkIndex, incoming);
+        adFilteredByChunk.set(row.chunkIndex, incomingAdFiltered);
         continue;
       }
       /**
@@ -468,20 +501,46 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
        * 并进来会产生重叠、撞下游覆盖校验。故只合并**点事件 cue**（去重后是增益，
        * 不产生区间冲突），区间结构与四项文本总结仍以先到版为准；合并数量落账可观测。
        */
-      const cueKey = (chunk: number, cue: { atSec: number; kind: string; detailZh: string }) =>
-        `${chunk}|${cue.atSec}|${cue.kind}|${String(cue.detailZh || "").trim()}`;
+      /**
+       * 🔴 回灌防线：未过广告滤网的版本不得并入已过滤版本。
+       * 宁可少合并几条真事件，也不能把广告口播放回消费层——
+       * 前者只是密度略低（且有计数可查），后者是把招商内容当成剧情证据入库。
+       */
+      if (adFilteredByChunk.get(row.chunkIndex) && !incomingAdFiltered) {
+        audioCuesBlockedUnfiltered += incoming.audioTrack.reduce((n, t) => n + t.cues.length, 0);
+        continue;
+      }
+      /**
+       * 去重键**只取 (chunk, atSec, kind)，不含 detailZh**。
+       * 同一秒、同一类型的声音，两份分析写成「关门声」和「门被撞上」是
+       * 同一个事件的两种措辞，不是两个事件。把措辞算进键会让它们并存，
+       * 而 audio_cue_thin 正是拿 cueCount 当尺子——那等于往尺子里加水。
+       */
+      const cueKey = (chunk: number, cue: { atSec: number; kind: string }) =>
+        `${chunk}|${cue.atSec}|${cue.kind}`;
       const seenCues = new Set(
         existing.audioTrack.flatMap((track) =>
           track.cues.map((cue) => cueKey(row.chunkIndex, cue))),
       );
-      const pendingCues = incoming.audioTrack
-        .flatMap((track) => track.cues)
-        .filter((cue) => !seenCues.has(cueKey(row.chunkIndex, cue)));
+      const pendingCues: typeof existing.audioTrack[number]["cues"] = [];
+      for (const cue of incoming.audioTrack.flatMap((track) => track.cues)) {
+        const key = cueKey(row.chunkIndex, cue);
+        if (seenCues.has(key)) continue;
+        // 同一份 incoming 内部也可能自带同秒同类重复，边收边记防止自我重复计数。
+        seenCues.add(key);
+        pendingCues.push(cue);
+      }
       if (!pendingCues.length) continue;
       const mergedTrack = existing.audioTrack.map((track) => ({ ...track, cues: [...track.cues] }));
       for (const cue of pendingCues) {
-        // 归入时间上包含该事件的区间；落在所有区间之外的事件无处安放，计入未归档
-        const host = mergedTrack.find((track) => cue.atSec >= track.fromSec && cue.atSec <= track.toSec);
+        /**
+         * 半开区间 [fromSec, toSec)，与本文件音轨过滤 inAd 的 `>= start && < end` 对齐。
+         * 音轨区间是连续覆盖的（0–30、30–60），atSec 又是整数，
+         * 「正好落在边界」是常规情况不是边角；用闭区间会让边界秒的 cue
+         * 系统性地落进前一段，挂到错误的声音语境上。最后一段用闭区间收尾。
+         */
+        const host = mergedTrack.find((track, i) => cue.atSec >= track.fromSec
+          && (i === mergedTrack.length - 1 ? cue.atSec <= track.toSec : cue.atSec < track.toSec));
         if (!host) {
           audioCuesUnplaced += 1;
           continue;
@@ -581,6 +640,31 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
       detailZh: `重点时刻有 ${keyMomentDropped} 条秒位越界或类型非法，已丢弃（抽帧将退回镜头区间策略）`,
     });
   }
+  /**
+   * 音轨点事件的丢弃必须走 advisory，不能只留裸计数字段。
+   * 裸字段没有任何读取方（不进卡、不进面板、不进 GLM 提示词），
+   * 等于「数了一下然后照样丢掉，没人会看见」——用户明令
+   * 「每一个有错误的卡点都要吐出原因，不能只有报错」。
+   */
+  if (shotZeroDuration > 0) {
+    advisories.push({
+      code: "shot_zero_duration",
+      detailZh: `镜头表有 ${shotZeroDuration} 条 endSec 不大于 startSec，时长信息已丢失`,
+    });
+  }
+  if (audioCuesUnplaced > 0) {
+    advisories.push({
+      code: "audio_cues_unplaced",
+      detailZh: `音轨点事件有 ${audioCuesUnplaced} 条落在所有音轨区间之外，无法归档已丢弃`,
+    });
+  }
+  if (audioCuesBlockedUnfiltered > 0) {
+    advisories.push({
+      code: "audio_cues_blocked_unfiltered",
+      detailZh: `同段音轨有 ${audioCuesBlockedUnfiltered} 条点事件来自未过广告滤网的版本，`
+        + `为避免广告声音回灌消费层已整份拒绝合并`,
+    });
+  }
 
   return {
     beatGrid,
@@ -604,6 +688,7 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
     ...(audioAdFilterSkipped ? { audioAdFilterSkipped: true } : {}),
     ...(audioCuesMerged > 0 ? { audioCuesMergedFromDuplicates: audioCuesMerged } : {}),
     ...(audioCuesUnplaced > 0 ? { audioCuesUnplaced } : {}),
+    ...(audioCuesBlockedUnfiltered > 0 ? { audioCuesBlockedUnfiltered } : {}),
   };
 }
 

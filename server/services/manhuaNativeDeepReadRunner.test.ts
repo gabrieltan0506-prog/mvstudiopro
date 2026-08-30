@@ -9,7 +9,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC,
   NATIVE_DEEP_READ_SANITY_FLOOR_MIN_SEGMENT_SEC,
-  NATIVE_DEEP_READ_SEGMENT_FULL_LENGTH_SEC,
   NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC,
   NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC,
   NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_INTERVAL_SEC,
@@ -616,6 +615,20 @@ describe("每段提示词硬约束", () => {
     expect(retry).toContain("各条不得雷同");
     expect(retry).toContain("不要为了\"补足\"而增加不存在的声音事件");
   });
+
+  it("无音轨片重试时不得追加第 4 条声音要求，否则与硬约束 6 自相矛盾", () => {
+    const retry = buildGeminiNativeDeepReadSegmentPrompt({
+      episodeDurationSec: 60, startSec: 0, endSec: 60, segmentIndex: 0,
+      segmentCount: 1, hasAudio: false, rejectedReasonZh: "镜头证据段超过33秒",
+    });
+    // 硬约束 6 已写死「禁止凭画面编造声音」，重做要求再提「按听到的写」就是开口子。
+    expect(retry).toContain("audioResolution 必须返回空数组");
+    expect(retry).not.toContain("不要为了\"补足\"而增加不存在的声音事件");
+    expect(retry).not.toContain("声音部分按实际听到的写");
+    // 前三条与有音轨时一致，不因无音轨而削弱。
+    expect(retry).toContain("镜头表条数只增不减");
+    expect(retry).toContain("各条不得雷同");
+  });
 });
 
 describe("时间坐标桥单变量候选", () => {
@@ -673,7 +686,8 @@ describe("时间坐标桥单变量候选", () => {
 
 本轮重做要求（0831 实测加固：上一轮模型把「修正」做成了砍条数＋通用词填充，35 条降到 15 条、12 条描述逐字相同）：
 1. 只修正上面点名的问题，其余一律照常完整观察，**镜头表条数只增不减**。
-2. 证据段过长时的唯一正确做法是**按硬约束 1 拆成多条**，不是删掉、不是合并、不是拉长单条覆盖。
+2. 证据段过长时的唯一正确做法是**按前文长镜拆分规则拆成多条**（每段 1—30 秒，
+   后续段 transitionInZh 写固定标记），不是删掉、不是合并、不是拉长单条覆盖。
 3. 禁止用「剧情推进」「人物交替出现」「交谈与动作」「表情自然」这类通用词填充字段；
    每条证据的画面描述必须来自你在该时间段真实看到的内容，各条不得雷同。
 4. 声音部分按实际听到的写，安静段落本来就少——**不要为了"补足"而增加不存在的声音事件**。`;
@@ -3456,10 +3470,9 @@ describe("首发0.65待验实验与既有参数契约（实测过关前不宣称
     expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.6);
   });
 
-  it("门禁阈值冻结：离谱地板 10 秒/镜、分级线 120 秒、整片 300 秒", () => {
+  it("门禁阈值冻结：离谱地板 10 秒/镜、分级线 120 秒", () => {
     expect(NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC).toBe(10);
     expect(NATIVE_DEEP_READ_SANITY_FLOOR_MIN_SEGMENT_SEC).toBe(120);
-    expect(NATIVE_DEEP_READ_SEGMENT_FULL_LENGTH_SEC).toBe(300);
   });
 
   it("建议线阈值冻结：镜数 6 秒/镜、平均镜长 6 秒、音轨 60 秒/段、cue 24 秒/条", () => {

@@ -539,17 +539,18 @@ export function mergeEpisodeDigestsIntoProposal(input: {
   for (const d of digests) {
     for (const b of d.beatHints || []) {
       /**
-       * 0831 修：这是抹零的**第三层**，前两层（mapNativeDeepReadSegments、
-       * 模板卡组装）已改保留一位小数，这里再 floor 一次等于前功尽弃——
-       * 319.0 与 319.4 会塌成同一个键，first-wins 直接丢掉后者。
-       * 键用「十分之一秒的整数」而不是浮点，避免任何浮点键相等性的疑虑。
+       * ⚠️ 别把这里当成「原生读片抹零的第三层」跟着改成小数（0831 有人这么试过）：
+       * 本函数唯一调用方是 manhuaTemplateLearnService.ts:1936 的**抽帧链路**，
+       * 与原生读片不相接；beatHints.atSec 的两个生产点（同文件 1351、1443）
+       * 都已 Math.round 取整，改成保留小数是 no-op。
+       * 更要紧的是这个 Map 是**跨集**按 atSec 去重的（各集 atSec 各自从 0 起），
+       * 键从 1 秒收到 0.1 秒会让跨集折叠少 10 倍，合集卡 beatGrid 变成多集混排。
        */
-      const tenths = Math.max(0, Math.round(b.atSec * 10));
-      const key = tenths;
+      const key = Math.max(0, Math.floor(b.atSec));
       if (!beatMap.has(key) && b.conflictZh && b.visualZh) {
         beatMap.set(key, {
           ...b,
-          atSec: tenths / 10,
+          atSec: key,
           conflictZh: b.conflictZh.slice(0, 40),
           visualZh: b.visualZh.slice(0, 280),
         });

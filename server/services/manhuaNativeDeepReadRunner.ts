@@ -510,10 +510,19 @@ export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES: ReadonlySet<string> = 
  *
  * 这些条目**仍照常记账、仍参与重试决策**，只是不作为「要模型改什么」的指示发出去。
  */
+/**
+ * 不外发给模型的拒因。**只收「模型照做只会更差」的密度类**，不是整个音轨家族。
+ *
+ * 0831 审查纠正：初版把 audio_* 全拉黑了，过宽。逐条看发出点就知道差别——
+ * · audio_unexpected：素材无音轨却返回了 audioResolution ＝ **模型凭画面编造声音**。
+ *   这是唯一能当场制止幻觉的那句话，滤掉它与用户「禁止凭画面编造声音」正好反向。
+ * · audio_chunk_shape / audio_schema_invalid / audio_field_missing：纯格式错，
+ *   零密度诱导，模型改了就对，必须发。
+ * 留在这里的三条才是真·不可执行：两条音轨密度地板（发了就是逼模型凑数编造），
+ * 以及自己就写着「仅提示不拒收」的 long_take_count。
+ */
 export const NATIVE_DEEP_READ_NON_ACTIONABLE_RETRY_CODES: ReadonlySet<string> = new Set([
-  "audio_track_thin", "audio_cue_thin", "audio_timeline_invalid",
-  "audio_chunk_shape", "audio_schema_invalid", "audio_field_missing", "audio_unexpected",
-  "long_take_count",
+  "audio_track_thin", "audio_cue_thin", "long_take_count",
 ]);
 
 export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 60_000;
@@ -781,8 +790,14 @@ export const NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC = 6;
  * 30 这条线卡在躺平之上、诚实之下。音轨侧不设任何门禁线（安静段落只有 1 段是真实的）。
  */
 export const NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC = 10;
-/** 整片长度：达到该长度才算完整分片；不足的尾片按实际取值入库，不设镜数门禁。 */
-export const NATIVE_DEEP_READ_SEGMENT_FULL_LENGTH_SEC = 300;
+/**
+ * 0831 删除 NATIVE_DEEP_READ_SEGMENT_FULL_LENGTH_SEC（原值 300）。
+ * 它的唯一用途是「够长才套镜数门禁」，而 0830 用户令「我都设好上限了，
+ * 不要管下限了」已把镜数门禁整条删除，此后零消费者，只剩一句
+ * expect(...).toBe(300) 的测试在守一个没人读的数字。
+ * 另注：分片长度现在由面板/CLI 传入（生产默认 319 秒，非 300），
+ * 留着这个 300 反而会误导后人以为整片长度还是硬编码的。
+ */
 export const NATIVE_DEEP_READ_SANITY_FLOOR_MIN_SEGMENT_SEC = 120;
 /** @deprecated 0830 用户令删除：6 秒是漫剧节奏，跨体裁误报。保留常量仅供历史卡比对。 */
 export const NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC = 6;
@@ -1078,10 +1093,15 @@ ${audioSoftRules}`;
 
 本轮重做要求（0831 实测加固：上一轮模型把「修正」做成了砍条数＋通用词填充，35 条降到 15 条、12 条描述逐字相同）：
 1. 只修正上面点名的问题，其余一律照常完整观察，**镜头表条数只增不减**。
-2. 证据段过长时的唯一正确做法是**按硬约束 1 拆成多条**，不是删掉、不是合并、不是拉长单条覆盖。
+2. 证据段过长时的唯一正确做法是**按前文长镜拆分规则拆成多条**（每段 1—30 秒，
+   后续段 transitionInZh 写固定标记），不是删掉、不是合并、不是拉长单条覆盖。
 3. 禁止用「剧情推进」「人物交替出现」「交谈与动作」「表情自然」这类通用词填充字段；
-   每条证据的画面描述必须来自你在该时间段真实看到的内容，各条不得雷同。
+   每条证据的画面描述必须来自你在该时间段真实看到的内容，各条不得雷同。${
+  // 无音轨片上硬约束 6 已写死「禁止凭画面编造声音」，这里再提「按听到的写」等于开口子。
+  input.hasAudio
+    ? `
 4. 声音部分按实际听到的写，安静段落本来就少——**不要为了"补足"而增加不存在的声音事件**。`
+    : ""}`
     : base;
 }
 
@@ -1765,8 +1785,18 @@ export function isNativeDeepReadGateFailure(error: unknown): boolean {
     || /音频分析|音频事件|音频描述|没有返回可解析的 JSON|输出被截断/.test(error.message);
 }
 
-function gateError(detailZh: string): Error {
-  return new Error(`${NATIVE_DEEP_READ_GATE_PREFIX}：${detailZh}`);
+/**
+ * `detailZh` 是**记账用**的完整原因（进日志、进最终失败记录）。
+ * `modelReasonZh` 是**发给下一发提示词**的那份，已剔除不可执行项；
+ * 传空串表示「本轮不附拒因，只换温度重掷」。不传＝两者相同。
+ * 分开是因为早先只有一份文本：过滤后连最终失败原因都变成了假话。
+ */
+type NativeDeepReadGateError = Error & { modelReasonZh?: string };
+
+function gateError(detailZh: string, modelReasonZh?: string): Error {
+  const error: NativeDeepReadGateError = new Error(`${NATIVE_DEEP_READ_GATE_PREFIX}：${detailZh}`);
+  if (modelReasonZh !== undefined) error.modelReasonZh = modelReasonZh;
+  return error;
 }
 
 /** 这两类证据缺陷不得被「硬门单项放行」吞掉；不要通过中文错误文案识别。 */
@@ -3906,11 +3936,18 @@ async function executeNativeDeepReadBatch(
               const actionable = countableFailures.filter(
                 (row) => !NATIVE_DEEP_READ_NON_ACTIONABLE_RETRY_CODES.has(row.code),
               );
-              const reasonZh = actionable.length
+              /**
+               * actionable 为空是**可达**的：audio_track_thin 既在偏差重跑名单里、
+               * 又被过滤出拒因文本，它和 long_take_count 凑够两项就会触发重跑而无一可发。
+               * 这时**不发拒因段**（留空串，下游据此传 undefined），本轮只换温度重掷。
+               * 早先在这里填「上一轮整体证据密度不足」是编造：真正触发的是音轨段数，
+               * 而且那句话的落点恰好是「密度」——正是实测中诱导模型降密度的那个词。
+               */
+              const modelReasonZh = actionable.length
                 ? actionable.map((row) => row.detailZh).join("；").slice(0, 500)
-                : "上一轮整体证据密度不足，未定位到可由你直接修正的具体项";
+                : "";
               raw.gateMarked = true;
-              raw.gateMarkedZh = accountedReasonZh || reasonZh;
+              raw.gateMarkedZh = accountedReasonZh || modelReasonZh;
               raw.attemptNumber = input.attemptNumber;
               // 标记版**只在这里推池一次**（审计必修④）：下面 catch 不再重复推，
               // 否则同一对象引用推两次就把上限 2 的池占满，第 2 发证据永远进不去。
@@ -3929,11 +3966,12 @@ async function executeNativeDeepReadBatch(
                     ? `（2 项且偏差超 ${NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO * 100}%）`
                     : `（≥${NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES}）`)
                 // 日志走完整版：排障时要看得见被过滤掉的那几族，否则只剩缩写。
-                + `，重试一发：${accountedReasonZh || reasonZh}`
-                + (accountedReasonZh && accountedReasonZh !== reasonZh
-                  ? `；实发模型：${reasonZh}` : ""),
+                + `，重试一发：${accountedReasonZh || "（无可记项）"}`
+                + (accountedReasonZh !== modelReasonZh
+                  ? `；实发模型：${modelReasonZh || "（不附拒因，仅换温度重掷）"}` : ""),
               );
-              throw gateError(reasonZh);
+              // 抛完整版供日志与最终失败记录；发模型的那份单独随行。
+              throw gateError(accountedReasonZh || modelReasonZh || "证据未通过当前判据", modelReasonZh);
             }
           } catch (gateFailure) {
             /**
@@ -4128,7 +4166,22 @@ async function executeNativeDeepReadBatch(
               throw error;
             }
             lastError = error;
-            rejectedReasonZh = (error instanceof Error ? error.message : String(error)).slice(0, 300);
+            /**
+             * 只有**判据失败**才配当拒因。传输层失败（HTTP 429、fetch failed、超时）
+             * 上一轮模型根本没吐出字，却会被那段「你把修正做成了砍条数＋通用词填充」
+             * 指着鼻子说偷懒——既然本轮的诊断结论就是「拒因文本本身在诱导降密度」，
+             * 这种无中生有的拒因只会放大它。传输层失败一律用干净的首发提示词重掷。
+             *
+             * modelReasonZh 为空串是判据失败里的合法情形（全部拒因都不可执行），
+             * 同样传 undefined：本轮只换温度，不附拒因。
+             */
+            if (isNativeDeepReadGateFailure(error)) {
+              const carried = (error as { modelReasonZh?: string }).modelReasonZh;
+              const raw = carried ?? (error instanceof Error ? error.message : String(error));
+              rejectedReasonZh = raw.trim() ? raw.slice(0, 300) : undefined;
+            } else {
+              rejectedReasonZh = undefined;
+            }
           }
         }
 

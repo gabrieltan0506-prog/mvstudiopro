@@ -175,7 +175,8 @@ export function createNativeProbeAuditedPost<T>(
     const validation = validateNativeProbeGenerationConfig(config, expected,
       typeof temperature === "number" ? [temperature] : []);
     if (!allowed) validation.errorsZh.push("实际温度不在生产冻结重试梯度内");
-    if (misplacedMediaResolution(request)) validation.errorsZh.push("当前探针只允许 generationConfig 中的媒体分辨率，不得移入或重复放入 Part");
+    // 0831 起 generationConfig 里也不再发 mediaResolution，这条只剩「Part 级一律不许出现」。
+    if (misplacedMediaResolution(request)) validation.errorsZh.push("媒体分辨率不得出现在 Part 级字段中");
     if (Object.keys(request).some((key) => sensitiveKey.test(key.replace(/[^a-z0-9]/gi, "")))) {
       validation.errorsZh.push("请求体不得包含鉴权头或凭证字段");
     }
