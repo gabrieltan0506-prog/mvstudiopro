@@ -26,6 +26,8 @@ import {
   resolveNativeDeepReadNodeUrls,
 } from "./manhuaNativeDeepReadRunner";
 import { getManhuaLearnPipelineMeta } from "../../shared/manhuaTemplateLearnPipeline";
+import { splitNativeDeepReadSegments } from "./manhuaNativeDeepReadPlan";
+import { parseNativeDeepReadJobConfirmation } from "../../shared/manhuaNativeDeepReadJob";
 
 /** 生产里 currentEpisodeMediaSource 返回的就是这种「已解析直链 + Referer」 */
 const RESOLVED_STREAM = "https://v3-dy-o.zjcdn.com/abc/def.mp4?expire=123";
@@ -48,6 +50,41 @@ const deps = (durationSec: number, over: Partial<NativeDeepReadEpisodeSourceDeps
   }) as NativeDeepReadEpisodeSourceDeps;
 
 describe("素材接入层 → 原生精读的接缝", () => {
+  it("Job 的 319 秒设置贯穿执行构造，丢失字段不能默默改回 300 秒", async () => {
+    const confirmation = parseNativeDeepReadJobConfirmation({
+      url: "https://www.douyin.com/video/7641538290936947889",
+      batchSize: 1,
+      nativeDeepReadConfirmed: true,
+      nativePlanLimit: 1,
+      nativeMaxCalls: 200,
+      nativeSegmentSeconds: 319,
+      nativeVideoFps: 12,
+    });
+    const confirmedPlanEpisode = {
+      episodeIndex: 1,
+      sourceUrl: confirmation.url,
+      durationSec: 1594,
+      videoFps: confirmation.videoFps,
+      segments: splitNativeDeepReadSegments(1593.586, confirmation.segmentSeconds),
+    };
+    const plan = await buildNativeDeepReadEpisodeExecution({
+      seriesKey: "s1", ep: ep(), confirmedPlanEpisode,
+      segmentSeconds: confirmation.segmentSeconds,
+      videoFps: confirmation.videoFps,
+    }, deps(1593.586));
+    expect(plan.segments).toEqual(confirmedPlanEpisode.segments);
+    expect(plan.segments).toHaveLength(5);
+    expect(plan.durationSec).toBe(1594);
+    expect(plan.videoFps).toBe(12);
+    await expect(buildNativeDeepReadEpisodeExecution({
+      seriesKey: "s1", ep: ep(), confirmedPlanEpisode, segmentSeconds: 319,
+      videoFps: 10,
+    }, deps(1593.586))).rejects.toThrow("与确认计划不一致");
+    await expect(buildNativeDeepReadEpisodeExecution({
+      seriesKey: "s1", ep: ep(), confirmedPlanEpisode,
+    }, deps(1593.586))).rejects.toThrow("与确认计划不一致");
+  });
+
   it("生产学习入口把带 modal_id 的搜索链接规范化为真实单集页，不只在预演层能解析", () => {
     expect(normalizeManhuaTemplateLearnSourceInput({
       url: "https://www.douyin.com/search/%E4%B8%87%E5%A6%96%E5%9B%BE%E5%BD%95%E7%AC%AC%E4%BA%8C%E5%AD%A3%E5%AE%8C%E6%95%B4%E7%89%88?modal_id=7641538290936947889&type=general",

@@ -1,19 +1,9 @@
 /**
  * 原生视频精读 · 生产执行器。
  *
- * 0826 拍板换代：视觉学习整体从新加坡 Qwen 3.8 Max 换到 **Vertex Gemini 3.1 Pro
- * 从 GCS 直读**，连音轨一次调用产出完整逐镜、角色调度与表演证据（不再有 Gemini 3.6 Flash 双声道取证 +
- * Qwen 仲裁两步）。实弹依据：
- *   · 新加坡 Qwen←GCS 吞吐 <0.15MB/s 不可用；北京 Qwen 可用但无音轨、474s、贵一倍；
- *   · `gemini-3.1-pro-preview` @ Vertex global，fileData gs:// + videoMetadata{fps:5}
- *     + generationConfig{responseMimeType:"application/json",audioTimestamp:true}，
- *     既有 360s 探针证明模型可读，但生产分片固定为最长 300s，确保 18 分钟素材
- *     恢复为 4 片，并缩小单片失败后的重跑范围。
- *   · 双密度教训：v1 出 64 镜但音轨薄；v2 音轨达标但镜头被压到 16 —— 生产提示词
- *     必须同时锁两侧密度，入库门禁按地板线关闭式拒收。
- *
- * **每段一次调用**（不再多段合包）：Gemini 输入超 20 万 token 跳价档，
- * 分段调用停在低价档。
+ * Vertex Gemini 3.1 Pro 从 GCS 逐片读取音画，不合包调用。
+ * 分片时长与采样率由调用方独立配置；精确切片验收通过后才上传和调用模型。
+ * 模型原始响应、解析原稿与通过门禁的段证据分别持久化，重跑按请求指纹恢复。
  *
  * ⚠️ 默认关闭（MANHUA_NATIVE_DEEP_READ=1 才启用）。
  */
@@ -28,7 +18,12 @@ import {
   type NativeDeepReadAdvisory,
   type NativeDeepReadOutput,
 } from "../../shared/manhuaNativeDeepRead.js";
-import { MANHUA_NATIVE_DEEP_READ_MODEL } from "../../shared/manhuaNativeDeepReadJob.js";
+import {
+  MANHUA_NATIVE_DEEP_READ_MODEL,
+  MANHUA_NATIVE_GLM_REASONING_EFFORT,
+  NATIVE_DEEP_READ_MAX_VIDEO_FPS,
+  parseNativeDeepReadVideoFps,
+} from "../../shared/manhuaNativeDeepReadJob.js";
 import {
   MANHUA_TEMPLATE_CLASSIFICATION_KEYS,
   hasManhuaTemplateClassificationFields,
@@ -600,6 +595,8 @@ export type NativeDeepReadBatchRunEpisode = {
   resolveNodes: () => Promise<NativeDeepReadMediaNode[]>;
   segments: readonly NativeDeepReadSegmentSpec[];
   sourceDurationSec: number;
+  /** 本集所有分片共用的采样率；不按时长或尾片自动降档。 */
+  videoFps?: number;
   hintZh?: string;
   /** 启用段缓存时必填：稳定来源标识的 sha256，不得使用短期 CDN/签名 URL。 */
   cacheSourceDigest?: string;
@@ -671,22 +668,26 @@ function run(
 /** 官方单视频 2000 帧上限内留 10% 余量，避免取整后越界。 */
 export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
 /**
- * v4（0826 拍板）：视觉调用换 Vertex Gemini 3.1 Pro 从 GCS 直读、每段一次调用、
- * 音轨同调直出、双密度门禁。计划口径与采样语义全变——旧确认码必须全废。
+ * 精确切片与独立采样配置改变请求语义；旧流复制切片的缓存与确认码不得复用。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v20-media-medium" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-custom-v22-exact-cut-configurable-fps" as const;
 
-/** 0827 实弹口径：生产 300 秒分片保持 10fps；仅旧数据超 300 秒时降为 5fps。 */
-export function resolveNativeDeepReadRequestFps(totalDurationSec: number): number {
-  return totalDurationSec <= 300 ? 10 : 5;
+/** 分片时长和采样率独立配置；默认 10fps，不按长短片自动降档。 */
+export function resolveNativeDeepReadRequestFps(totalDurationSec: number, requestedFps?: number): number {
+  if (!Number.isFinite(totalDurationSec) || totalDurationSec <= 0) {
+    throw new Error("原生精读采样时长必须为有限正数");
+  }
+  return parseNativeDeepReadVideoFps(requestedFps);
 }
 /** 官方视频输入 fps 上限。 */
-export const NATIVE_DEEP_READ_MAX_FPS = 10;
+export const NATIVE_DEEP_READ_MAX_FPS = NATIVE_DEEP_READ_MAX_VIDEO_FPS;
+/** 旧自适应探针保留原来的 10fps 上限，不让官方上限换名悄悄改变旧算法。 */
+const NATIVE_DEEP_READ_LEGACY_MAX_FPS = 10;
 
-/** 仅供旧 Fly 探针脚本引用的自适应采样函数；生产两档制不再使用。 */
+/** 仅供旧 Fly 探针脚本引用的自适应采样函数；生产不使用此旧算法。 */
 export function resolveNativeDeepReadInputFps(durationSec: number): number {
   const duration = Math.max(1, Number(durationSec) || 1);
-  const raw = Math.min(NATIVE_DEEP_READ_MAX_FPS, NATIVE_DEEP_READ_TARGET_FRAMES / duration);
+  const raw = Math.min(NATIVE_DEEP_READ_LEGACY_MAX_FPS, NATIVE_DEEP_READ_TARGET_FRAMES / duration);
   return Math.max(0.1, Math.floor(raw * 100) / 100);
 }
 
@@ -839,10 +840,13 @@ export function buildGeminiNativeDeepReadSegmentPrompt(input: {
   segmentIndex: number;
   segmentCount: number;
   hasAudio: boolean;
+  videoFps?: number;
   hintZh?: string;
   rejectedReasonZh?: string;
 }): string {
   const lenSec = Math.max(1, Math.round(input.endSec - input.startSec));
+  const videoFps = resolveNativeDeepReadRequestFps(lenSec, input.videoFps);
+  const sampleIntervalSec = Number((1 / videoFps).toFixed(4));
   const hint = String(input.hintZh || "").trim();
   /**
    * 0826 用户拍板：硬约束只留「错了会污染入库数据」的红线。
@@ -860,7 +864,7 @@ c. 输出预算紧张时优先压缩 subtitles，尽量保全镜头表与音轨�
   const base = `【必须遵守】
 
 1. 时间坐标
-shots.startSec/endSec、keyMoments.atSec、subtitles.atSec 一律使用全片绝对整数秒。本段范围为 ${Math.round(input.startSec)} 至 ${Math.round(input.endSec)} 秒，shots 按时间排序，连续覆盖整段。
+shots.startSec/endSec、subtitles.atSec 一律使用全片绝对整数秒；keyMoments.atSec 使用全片绝对秒，可保留一位小数。本段范围为 ${Math.round(input.startSec)} 至 ${Math.round(input.endSec)} 秒，shots 按时间排序，连续覆盖整段。
 audioResolution 内的 fromSec/toSec、cues.atSec 使用本段局部整数秒，以本段起点为 0；chunkIndex 使用传入原值。
 位置写入数字字段；中文描述里可以写动作持续时长，如「1.2 秒内推近」。
 
@@ -921,7 +925,7 @@ keyMoments 是由你选定的抓帧秒位表。下游会按 atSec 去原片抓�
 - 音轨：声音事件发生秒，例如配乐转折、关键音效或声音分段切换。
 密度跟着戏走：重点镜头可选多条；固定机位、表演和光影均无明显变化的平淡镜头，可以一条都不给。
 每条包含：
-- atSec：全片绝对秒，可保留一位小数（如 673.6）。输入按 10fps 抽帧，0.1 秒对应一帧；取事件真正发生的那一帧的秒位。
+- atSec：全片绝对秒，可保留一位小数（如 673.6）。输入按 ${videoFps}fps 抽帧，采样间隔约 ${sampleIntervalSec} 秒；取事件真正发生的那一帧的秒位。
 - kindZh：切镜／情绪／灯光／剧情／音轨。
 - noteZh：一句话说明该时刻发生的事件，≤60字。
 keyMoments 为必填字段；本段没有合适抓帧点时输出 []。
@@ -1246,19 +1250,27 @@ function mediaHeaders(node: NativeDeepReadMediaNode): string[] {
   ];
 }
 
-/** 长片切段仅做容器复制，不重编码；-ss 放在 -i 前，避免先下载整集。 */
+/**
+ * 输入端精确 seek 会解码并丢弃前关键帧到目标起点的内容；流复制做不到这一点。
+ * 保留原分辨率、帧率及全部音轨，不缩放、不补帧；音画均重编码以免复制音轨保留前滚。
+ */
 export function buildNativeDeepReadVideoSegmentArgs(input: {
   node: NativeDeepReadMediaNode;
   startSec: number;
   durationSec: number;
   outputPath: string;
+  /** 仅真实整集尾片读至 EOF，保留计划秒位四舍五入后的不足一秒尾部。 */
+  toSourceEnd?: boolean;
 }): string[] {
   return [
-    "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
-    ...mediaHeaders(input.node),
-    "-ss", String(input.startSec), "-i", input.node.url,
-    "-t", String(input.durationSec), "-map", "0:v:0", "-map", "0:a?",
-    "-c", "copy", "-avoid_negative_ts", "make_zero", input.outputPath,
+    "-nostdin", "-hide_banner", "-loglevel", "error", "-xerror", "-y",
+    ...(/^https?:\/\//i.test(input.node.url) ? mediaHeaders(input.node) : []),
+    "-ss", String(input.startSec), "-accurate_seek", "-i", input.node.url,
+    ...(input.toSourceEnd ? [] : ["-t", String(input.durationSec)]),
+    "-map", "0:v:0", "-map", "0:a?",
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-threads", "2",
+    "-fps_mode", "passthrough", "-c:a", "aac", "-b:a", "192k",
+    "-movflags", "+faststart", input.outputPath,
   ];
 }
 
@@ -1285,7 +1297,7 @@ export type PreparedNativeVideo = {
   temporaryGcs: { bucket: string; objectName: string };
   /** 上传分片的实际字节数。 */
   bytes: number;
-  /** 该分片本地探测是否含音轨（整集口径取首片探测结果）。 */
+  /** 该分片通过本地时长与音轨验收后的事实。 */
   hasAudio: boolean;
 };
 
@@ -1318,29 +1330,73 @@ const defaultMediaPreparationDeps: NativeDeepReadMediaPreparationDeps = {
   },
 };
 
-/** 本地切片的音轨探测（零模型成本）；探不动按「无音轨」保守处理并告警。 */
-async function probeLocalSegmentHasAudio(
+/** 切片验收只接受实际 ffprobe 数据；探测失败不允许冒充无音轨。 */
+export function assertNativeDeepReadPreparedMedia(
+  probe: unknown,
+  expected: { durationSec: number; isEpisodeTail: boolean },
+): { hasAudio: boolean; durationSec: number } {
+  const record = (value: unknown): Record<string, unknown> =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? value as Record<string, unknown> : {};
+  const number = (value: unknown): number =>
+    (typeof value === "number" || (typeof value === "string" && value.trim()))
+      ? Number(value) : NaN;
+  const data = record(probe);
+  const streams = Array.isArray(data.streams) ? data.streams.map(record) : [];
+  const videos = streams.filter((stream) => stream.codec_type === "video");
+  const audios = streams.filter((stream) => stream.codec_type === "audio");
+  const fail = (detail: string): never => { throw new Error(`视频分片验收失败：${detail}`); };
+  if (!Number.isFinite(expected.durationSec) || expected.durationSec <= 0) {
+    fail("计划时长无效");
+  }
+  if (videos.length !== 1) fail("未取得唯一视频流");
+  const video = videos[0]!;
+  if (!(number(video.width) > 0) || !(number(video.height) > 0)) fail("视频分辨率无效");
+  const [fpsNumerator, fpsDenominator] = String(video.avg_frame_rate || "").split("/").map(Number);
+  const fps = fpsNumerator! / fpsDenominator!;
+  if (!Number.isFinite(fps) || fps <= 0) fail("视频帧率无效");
+  // 起点最多容许 0.1 秒，不因长片或尾片放宽；时长尾片另容许计划四舍五入的 0.5 秒。
+  const frameTolerance = Math.min(0.1, Math.max(0.05, 1 / fps));
+  const tailRoundingTolerance = expected.isEpisodeTail ? 0.5 : 0;
+  const assertSpan = (stream: Record<string, unknown>, label: string, tolerance: number): number => {
+    const start = number(stream.start_time);
+    const duration = number(stream.duration);
+    if (!Number.isFinite(start) || Math.abs(start) > 0.1 + 1e-6) {
+      fail(`${label}起点不是本段零位`);
+    }
+    if (!Number.isFinite(duration) || duration <= 0
+      || Math.abs(duration - expected.durationSec) > tolerance + tailRoundingTolerance + 1e-6) {
+      fail(`${label}实际时长 ${Number.isFinite(duration) ? duration : "未知"} 秒与计划 ${expected.durationSec} 秒不符`);
+    }
+    return duration;
+  };
+  const durationSec = assertSpan(video, "视频流", frameTolerance);
+  // AAC 编码帧会带来毫秒级尾差，不能拿容器的较长音轨掩盖视频截短。
+  assertSpan(record(data.format), "容器", frameTolerance + 0.05);
+  for (const audio of audios) {
+    const start = number(audio.start_time);
+    const duration = number(audio.duration);
+    // 真实音轨允许晚起或早停；不把无声区当截短，也不填造静默音频。
+    if (!Number.isFinite(start) || start < 0 || !Number.isFinite(duration) || duration <= 0
+      || start + duration > durationSec + 0.1 + 1e-6) {
+      fail("音轨时间范围无效或超出实际视频");
+    }
+  }
+  return { hasAudio: audios.length > 0, durationSec };
+}
+
+async function probeLocalSegmentMedia(
   localPath: string,
+  expected: { durationSec: number; isEpisodeTail: boolean },
   deps: NativeDeepReadMediaPreparationDeps,
   abortSignal?: AbortSignal,
-): Promise<boolean> {
-  try {
-    const text = await deps.runMedia(
-      "ffprobe",
-      [
-        "-v", "error", "-select_streams", "a:0",
-        "-show_entries", "stream=index", "-of", "json", "-i", localPath,
-      ],
-      30_000,
-      abortSignal,
-    );
-    const parsed = JSON.parse(text || "{}") as { streams?: unknown[] };
-    return Array.isArray(parsed.streams) && parsed.streams.length > 0;
-  } catch (error) {
-    if (abortSignal?.aborted) throw error;
-    console.warn("[nativeDeepRead] 本地音轨探测未完成，按无音轨保守处理");
-    return false;
-  }
+): Promise<{ hasAudio: boolean; durationSec: number }> {
+  const text = await deps.runMedia("ffprobe", [
+    "-v", "error", "-show_entries",
+    "format=start_time,duration:stream=codec_type,start_time,duration,width,height,avg_frame_rate",
+    "-of", "json", "-i", localPath,
+  ], 30_000, abortSignal);
+  return assertNativeDeepReadPreparedMedia(JSON.parse(text), expected);
 }
 
 /**
@@ -1370,11 +1426,11 @@ export async function prepareEpisodeVideos(
     startSec: number;
     endSec: number;
     bytes: number;
+    hasAudio: boolean;
   } | undefined> = new Array(segments.length);
   try {
-    // 分片只按时间切；每片独立上传 GCS、独立调用 Gemini。
-    // 禁止把整集各片体积相加后预转码：那是旧的多片合包请求逻辑。
-    // 单集最多四段并行；每个 worker 内仍保留三次 CDN 节点刷新，跨集不并行。
+    // 每片按时间精确切割，独立上传、独立调用；不按各片总体积降低清晰度。
+    // 并发由调用方和磁盘空间共同限制；每个 worker 保留三次 CDN 节点刷新。
     const cutCap = Math.max(1, Math.floor(
       Number(limits?.cutConcurrency) || NATIVE_DEEP_READ_MEDIA_PREP_MAX_CONCURRENCY,
     ));
@@ -1391,6 +1447,7 @@ export async function prepareEpisodeVideos(
     const prepareOne = async (index: number): Promise<void> => {
       abortSignal?.throwIfAborted();
       const segment = segments[index]!;
+      const isEpisodeTail = Math.abs(segment.endSec - episode.sourceDurationSec) < 0.001;
       let lastError: unknown;
       let completed = false;
       for (let attempt = 0; attempt < 3 && !completed; attempt += 1) {
@@ -1410,20 +1467,26 @@ export async function prepareEpisodeVideos(
               startSec: segment.startSec,
               durationSec: segment.endSec - segment.startSec,
               outputPath: localPath,
+              toSourceEnd: isEpisodeTail,
             }),
             20 * 60_000,
             abortSignal,
           );
           const fileStat = await deps.statLocal(localPath);
-          if (fileStat.size < 100_000) {
+          if (!Number.isFinite(fileStat.size) || fileStat.size <= 0) {
             throw new Error(`第${episode.episodeIndex}集第${index + 1}段大小不在处理范围`);
           }
+          const media = await probeLocalSegmentMedia(localPath, {
+            durationSec: segment.endSec - segment.startSec,
+            isEpisodeTail,
+          }, deps, abortSignal);
           cutRows[index] = {
             runId,
             localPath,
             startSec: segment.startSec,
             endSec: segment.endSec,
             bytes: fileStat.size,
+            hasAudio: media.hasAudio,
           };
           completed = true;
         } catch (error) {
@@ -1459,12 +1522,9 @@ export async function prepareEpisodeVideos(
     }
 
     const completeCutRows = cutRows as Array<NonNullable<(typeof cutRows)[number]>>;
-    // 保持既有整集音轨口径：只探测首片一次，避免各片探测抖动制造互相冲突的假事实。
-    const episodeHasAudio = await probeLocalSegmentHasAudio(
-      completeCutRows[0]!.localPath,
-      deps,
-      abortSignal,
-    );
+    if (completeCutRows.some((row) => row.hasAudio !== completeCutRows[0]!.hasAudio)) {
+      throw new Error(`第${episode.episodeIndex}集分片音轨存在性不一致，已停止上传`);
+    }
     // 上传改并发（0829 晚用户令「改成并发，不是串行」）。
     // 旧实现是一个严格串行 for 循环——六片就是六次往返排队，是全链最明显的串行点。
     // 仍保留并发上限：uploadBufferToGcs 会复制 Buffer，无上限并发在极端片源下吃内存。
@@ -1491,7 +1551,7 @@ export async function prepareEpisodeVideos(
         endSec: row.endSec,
         temporaryGcs: { bucket: uploaded.bucket, objectName: uploaded.objectName },
         bytes: row.bytes,
-        hasAudio: episodeHasAudio,
+        hasAudio: row.hasAudio,
       };
     };
     const uploadWorkers = Array.from({ length: uploadConcurrency }, async () => {
@@ -2745,7 +2805,7 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE = 0.8;
  * ⚠️ 这是**待实测验证**的推断，不是已证结论：降到 medium 后镜数若明显回升即证实；
  * 若不回升，说明是模型自身的合并倾向，那时该换整形模型而不是继续调档。
  */
-export const NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT = "medium" as const;
+export const NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT = MANHUA_NATIVE_GLM_REASONING_EFFORT;
 /** 四个 300 秒分片的真实组装曾在 12 分钟边界被本地中止；只放宽等待，不自动重提。 */
 // 0829 用户令：不设硬超时，跑出结果为止。全收进 GLM 后输入更大（六段卡 ~21.7 万 tok
 // 再叠标记版），旧的 15 分钟硬顶在 900,005ms 处把调用掐断成 network_error。
@@ -2851,9 +2911,10 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
   segmentIndex: number;
   segmentCount: number;
   hasAudio: boolean;
+  videoFps?: number;
   hintZh?: string;
 }): string {
-  const fps = resolveNativeDeepReadRequestFps(input.segment.endSec - input.segment.startSec);
+  const fps = resolveNativeDeepReadRequestFps(input.segment.endSec - input.segment.startSec, input.videoFps);
   const prompt = buildGeminiNativeDeepReadSegmentPrompt({
     episodeDurationSec: input.episodeDurationSec,
     startSec: input.segment.startSec,
@@ -2861,6 +2922,7 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
     segmentIndex: input.segmentIndex,
     segmentCount: input.segmentCount,
     hasAudio: input.hasAudio,
+    videoFps: fps,
     hintZh: input.segment.hintZh || input.hintZh,
   });
   const repairPrompt = buildNativeDeepReadGlmSegmentRepairPrompt({
@@ -3095,7 +3157,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
         throw new Error(`第${episode.episodeIndex}集分片存在空档或重叠`);
       }
     }
-    return { ...episode, segments };
+    return { ...episode, segments, videoFps: parseNativeDeepReadVideoFps(episode.videoFps) };
   });
 
   const batchRequestId = crypto.randomUUID();
@@ -3133,6 +3195,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
             segmentIndex,
             segmentCount: episode.segments.length,
             hasAudio: entry.hasAudio,
+            videoFps: episode.videoFps,
             hintZh: episode.hintZh,
           });
           if (
@@ -3142,7 +3205,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
             || Math.abs(entry.endSec - segment.endSec) > 0.01
             || Math.abs(
               entry.requestedFps
-              - resolveNativeDeepReadRequestFps(segment.endSec - segment.startSec),
+              - resolveNativeDeepReadRequestFps(segment.endSec - segment.startSec, episode.videoFps),
             ) > 0.001
           ) {
             console.warn(
@@ -3467,6 +3530,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
             segmentCount,
             hasAudio,
             hintZh: segment.hintZh || episode.hintZh,
+            videoFps: input.fps,
             rejectedReasonZh: input.rejectedReasonZh,
           }),
         });
@@ -3500,6 +3564,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
               segmentCount,
               hasAudio,
               hintZh: episode.hintZh,
+              videoFps: episode.videoFps,
             });
             try {
               const evidence = await deps.writeRawAttemptEvidence({
@@ -3959,7 +4024,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
         if (!video) {
           throw new Error(`第${episode.episodeIndex}集第${segmentIndex + 1}段缺少对应备料，已停止`);
         }
-        const fps = resolveNativeDeepReadRequestFps(video.endSec - video.startSec);
+        const fps = resolveNativeDeepReadRequestFps(video.endSec - video.startSec, episode.videoFps);
         const result = await attemptWithSegmentRetry({
           route: NATIVE_DEEP_READ_ROUTE_VERTEX,
           fileUri: video.gsUri,
@@ -3980,6 +4045,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
               segmentCount,
               hasAudio,
               hintZh: episode.hintZh,
+              videoFps: episode.videoFps,
             }),
             sourceDigest,
             seriesKey: params.segmentCacheSeriesKey,
@@ -4248,6 +4314,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
           thinkingLevel: NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig.thinkingLevel,
           // 输入规格入档（0830 晚）：隔天复盘时能说清这份产物是用什么画质读出来的。
           maxFps: NATIVE_DEEP_READ_MAX_FPS,
+          requestedFps: episode.videoFps,
           mediaResolution: NATIVE_DEEP_READ_GENERATION_CONFIG.mediaResolution,
           retryTemperatures: [...NATIVE_DEEP_READ_RETRY_TEMPERATURES],
           segmentCount: episode.segments.length,
@@ -4410,6 +4477,7 @@ export async function runManhuaNativeDeepRead(params: {
   resolveNodes: () => Promise<NativeDeepReadMediaNode[]>;
   segments: readonly NativeDeepReadSegmentSpec[];
   sourceDurationSec?: number;
+  videoFps?: number;
   hintZh?: string;
   abortSignal?: AbortSignal;
   /** 仅获授权证据探针使用：保留 GCS 视频分片。 */
@@ -4438,6 +4506,7 @@ export async function runManhuaNativeDeepRead(params: {
       resolveNodes: params.resolveNodes,
       segments: params.segments,
       sourceDurationSec: duration,
+      videoFps: params.videoFps,
       hintZh: params.hintZh,
       cacheSourceDigest: params.sourceDigest,
     }],

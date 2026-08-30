@@ -21,9 +21,48 @@ describe("原生精读页面接线", () => {
       "nativeDeepReadConfirmed",
       "nativeMaxCalls",
       "nativePlanLimit",
+      "nativeSegmentSeconds",
     ]) {
       expect(LEARN_FLOW).toContain(field);
     }
+  });
+
+  it("分片输入不自动截断且在入队前共享校验，面板明确独立fps和尾片保留", () => {
+    expect(PAGE.includes('id="manhua-learn-segment-seconds"')).toBe(true);
+    expect(PAGE.includes("setManhuaLearnSegmentSecondsInput(event.target.value)")).toBe(true);
+    expect(PAGE.includes("固定 10fps")).toBe(false);
+    expect(PAGE.includes('id="manhua-learn-video-fps"')).toBe(true);
+    expect(PAGE.includes("setManhuaLearnVideoFpsInput(event.target.value)")).toBe(true);
+    expect(LEARN_FLOW.includes("parseManhuaLearnVideoFpsInput(manhuaLearnVideoFpsInput)")).toBe(true);
+    expect(LEARN_FLOW).toMatch(/nativeConfirmedParams = \{[^}]+nativeVideoFps,/);
+    expect(LEARN_FLOW).toMatch(/continuation: ManhuaLearnContinuation = \{[\s\S]+?nativeVideoFps,/);
+    expect(PAGE.includes("尾片完整保留")).toBe(true);
+    const parseAt = LEARN_FLOW.indexOf("parseManhuaLearnSegmentSecondsInput(manhuaLearnSegmentSecondsInput)");
+    expect(parseAt).toBeGreaterThan(0);
+    expect(parseAt).toBeLessThan(LEARN_FLOW.indexOf("createJob("));
+    expect(LEARN_FLOW).toContain("本次未建立任务；请修正分片秒数。");
+    expect(LEARN_FLOW).toContain("nativeSegmentSeconds,");
+    expect(LEARN_FLOW).toMatch(/nativeConfirmedParams = \{[^}]+nativeSegmentSeconds,/);
+    expect(LEARN_FLOW).toMatch(/continuation: ManhuaLearnContinuation = \{[\s\S]+?nativeSegmentSeconds,/);
+    const inputAt = PAGE.indexOf('id="manhua-learn-segment-seconds"');
+    const inputBlock = PAGE.slice(inputAt, PAGE.indexOf("/>\n", inputAt));
+    expect(inputBlock).not.toMatch(/clamp|Math\.(?:floor|round|min|max)/);
+  });
+
+  it("刷新、切剧与快照保存分片设置，轮询不覆盖用户正在编辑的下一任务设置", () => {
+    expect(PAGE.includes("restoreManhuaLearnSegmentSeconds(parsed.nativeSegmentSeconds)")).toBe(true);
+    expect(PAGE.includes("nativeSegmentSeconds: value.nativeSegmentSeconds")).toBe(true);
+    expect(PAGE.includes("resolveManhuaLearnSnapshotSegmentSeconds(")).toBe(true);
+    expect(PAGE.includes("restoreManhuaLearnSegmentSeconds(continuation.nativeSegmentSeconds)")).toBe(true);
+    expect(PAGE.includes("if (!manhuaLearnSegmentSecondsEditedRef.current)")).toBe(true);
+    expect(PAGE.includes("restoreManhuaLearnVideoFps(parsed.nativeVideoFps)")).toBe(true);
+    expect(PAGE.includes("nativeVideoFps: value.nativeVideoFps")).toBe(true);
+    expect(PAGE.includes("resolveManhuaLearnSnapshotVideoFps(")).toBe(true);
+    expect(PAGE.includes("if (!manhuaLearnVideoFpsEditedRef.current)")).toBe(true);
+    expect(PAGE.match(/runManhuaTemplateLearnCloud\(next.row, next.rank, next.seriesKey\)/g)).toHaveLength(2);
+    const recoveryAt = PAGE.indexOf("刷新/断线恢复：接管同一个后台 job");
+    const recoveryEnd = PAGE.indexOf("const approveManhuaLearnProposal", recoveryAt);
+    expect(PAGE.slice(recoveryAt, recoveryEnd)).not.toContain("createJob(");
   });
 
   it("权限状态未确认时关闭式停止，不回落旧链", () => {

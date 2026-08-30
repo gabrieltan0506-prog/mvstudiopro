@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import {
   buildNativeDeepReadGlmStructuringPrompt,
+  NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT,
 } from "../server/services/manhuaNativeDeepReadRunner.js";
 import { invokeGlmJsonChatWithGatewayFallback } from "../server/services/bailianChat.js";
 import {
@@ -142,6 +143,7 @@ async function main() {
       system: prompt.system,
       user: prompt.user,
       maxTokens: 131_072,
+      reasoningEffort: NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT,
       gatewayPolicy: "openrouter_only",
       timeoutMs: 6 * 60 * 60_000,
       requireParameters: true,

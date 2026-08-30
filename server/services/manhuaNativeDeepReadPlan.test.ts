@@ -45,6 +45,69 @@ function deps(overrides: Partial<NativeDeepReadPlanDeps> = {}): NativeDeepReadPl
 }
 
 describe("原生精读计划", () => {
+  it("1593.586 秒按 319 秒切成完整五片；317 秒仍保留第六片尾部", () => {
+    expect(splitNativeDeepReadSegments(1593.586, 319)).toEqual([
+      { startSec: 0, endSec: 319 },
+      { startSec: 319, endSec: 638 },
+      { startSec: 638, endSec: 957 },
+      { startSec: 957, endSec: 1276 },
+      { startSec: 1276, endSec: 1594 },
+    ]);
+    const shorter = splitNativeDeepReadSegments(1593.586, 317);
+    expect(shorter).toHaveLength(6);
+    expect(shorter.at(-1)).toEqual({ startSec: 1585, endSec: 1594 });
+    expect(splitNativeDeepReadSegments(638, 319)).toHaveLength(2);
+    expect(splitNativeDeepReadSegments(120, 319)).toEqual([{ startSec: 0, endSec: 120 }]);
+  });
+
+  it("非法长度和超过 32 片明确拒绝，不改变用户设置来凑片数", () => {
+    expect(() => splitNativeDeepReadSegments(1594, 0)).toThrow("整数秒");
+    expect(() => splitNativeDeepReadSegments(1594, 317.5)).toThrow("整数秒");
+    expect(() => splitNativeDeepReadSegments(1594, 1)).toThrow("32 片");
+  });
+
+  it("自定义长度进入服务端计划和调用数，参数丢失会在最终确认前拒绝", async () => {
+    const d = deps({ probeDurationSec: vi.fn(async () => 1593.586) });
+    const plan = await buildNativeDeepReadPlanPreview({
+      url: "https://www.douyin.com/collection/123456", limit: 1, segmentSeconds: 319,
+    }, d);
+    expect(plan.segmentSeconds).toBe(319);
+    expect(plan.episodes[0]?.segments).toEqual(splitNativeDeepReadSegments(1593.586, 319));
+    expect(plan.totalVisualCalls).toBe(5);
+    expect(plan.totalModelCalls).toBe(6);
+    expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 200, segmentSeconds: 319 }, plan))
+      .not.toThrow();
+    expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 200 }, plan))
+      .toThrow("分片时长与任务参数不一致");
+    const defaultPlan = await buildNativeDeepReadPlanPreview({
+      url: "https://www.douyin.com/collection/123456", limit: 1,
+    }, d);
+    expect(defaultPlan.totalVisualCalls).toBe(6);
+    expect(defaultPlan.planHash).not.toBe(plan.planHash);
+  });
+
+  it("非法自定义长度在访问来源之前拒绝", async () => {
+    const d = deps();
+    await expect(buildNativeDeepReadPlanPreview({
+      url: "https://www.douyin.com/collection/123456", limit: 1, segmentSeconds: -1,
+    }, d)).rejects.toThrow("整数秒");
+    expect(d.listMixEpisodes).not.toHaveBeenCalled();
+    expect(d.probeDurationSec).not.toHaveBeenCalled();
+  });
+
+  it("319秒/12fps进入计划，各片含尾片沿用12fps，改fps即改变确认码", async () => {
+    const d = deps({ probeDurationSec: vi.fn(async () => 1593.586) });
+    const input = { url: "https://www.douyin.com/collection/123456", limit: 1, segmentSeconds: 319 };
+    const plan12 = await buildNativeDeepReadPlanPreview({ ...input, videoFps: 12 }, d);
+    const plan10 = await buildNativeDeepReadPlanPreview({ ...input, videoFps: 10 }, d);
+    expect(plan12.videoFps).toBe(12);
+    expect(plan12.episodes[0]?.videoFps).toBe(12);
+    expect(plan12.totalSegments).toBe(5);
+    expect(plan12.planHash).not.toBe(plan10.planHash);
+    expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 200, segmentSeconds: 319, videoFps: 12 }, plan12)).not.toThrow();
+    expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 200, segmentSeconds: 319, videoFps: 10 }, plan12)).toThrow("fps 与任务参数不一致");
+  });
+
   it("分段按五分钟连续覆盖，短集保持整集", () => {
     expect(splitNativeDeepReadSegments(90.9)).toEqual([{ startSec: 0, endSec: 91 }]);
     expect(splitNativeDeepReadSegments(1001.9)).toEqual([
@@ -492,6 +555,7 @@ describe("原生精读计划", () => {
       episodeIndex: 1,
       sourceUrl: `https://www.douyin.com/video/${modalId}`,
       durationSec: 2_212,
+      videoFps: 10,
       segments: [
         { startSec: 0, endSec: 300 },
         { startSec: 300, endSec: 600 },

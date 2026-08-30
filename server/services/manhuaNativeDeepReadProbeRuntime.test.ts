@@ -230,8 +230,8 @@ describe("已推提交的运行时源码清单核验", () => {
     const { manifest, readSource } = fixture();
     const result = await verifyNativeProbeSourceAttestation(manifest, commit, readSource);
     const canonical = { schemaVersion: 1, commit, files: [...manifest.files].sort((a, b) => a.path < b.path ? -1 : 1) };
-    expect(result).toEqual({ commit, filesChecked: 10, manifestSha256: createHash("sha256").update(JSON.stringify(canonical)).digest("hex") });
-    expect(readSource).toHaveBeenCalledTimes(10);
+    expect(result).toEqual({ commit, filesChecked: 12, manifestSha256: createHash("sha256").update(JSON.stringify(canonical)).digest("hex") });
+    expect(readSource).toHaveBeenCalledTimes(12);
     expect(JSON.stringify(result)).not.toContain("测试源码内容");
     manifest.files.reverse();
     expect(await verifyNativeProbeSourceAttestation(manifest, commit, readSource)).toEqual(result);
@@ -244,6 +244,18 @@ describe("已推提交的运行时源码清单核验", () => {
     const { sources, manifest, readSource } = fixture();
     sources.get(path)![0] ^= 1;
     await expect(verifyNativeProbeSourceAttestation(manifest, commit, readSource)).rejects.toThrow(`源码 SHA-256 不匹配：${path}`);
+  });
+
+  it.each([
+    "shared/manhuaNativeDeepReadJob.ts",
+    "server/services/manhuaNativeDeepReadPlan.ts",
+  ])("自定义分片的生产契约 %s 必须纳入源码校验，缺失或改写都不能发车", async (path) => {
+    expect(NATIVE_PROBE_ATTESTATION_REQUIRED_PATHS).toContain(path);
+    const { sources, manifest, readSource } = fixture();
+    sources.get(path)![0] ^= 1;
+    await expect(verifyNativeProbeSourceAttestation(manifest, commit, readSource)).rejects.toThrow(`源码 SHA-256 不匹配：${path}`);
+    manifest.files = manifest.files.filter((row) => row.path !== path);
+    await expect(verifyNativeProbeSourceAttestation(manifest, commit, readSource)).rejects.toThrow("缺少关键文件");
   });
 
   it.each(NATIVE_PROBE_ATTESTATION_REQUIRED_PATHS)("缺少关键文件 %s 时在读取前拒绝", async (path) => {
@@ -282,13 +294,13 @@ describe("已推提交的运行时源码清单核验", () => {
     expect(readSource).not.toHaveBeenCalled();
   });
 
-  it("合法范围内额外文件也必须逐个验证，不能只查关键十件", async () => {
+  it("合法范围内额外文件也必须逐个验证，不能只查关键文件", async () => {
     const { sources, manifest, readSource } = fixture();
     const path = "shared/extra.json";
     const bytes = Buffer.from("测试额外文件");
     sources.set(path, bytes);
     manifest.files.push({ path, sha256: createHash("sha256").update(bytes).digest("hex") });
-    expect((await verifyNativeProbeSourceAttestation(manifest, commit, readSource)).filesChecked).toBe(11);
+    expect((await verifyNativeProbeSourceAttestation(manifest, commit, readSource)).filesChecked).toBe(13);
     sources.set(path, Buffer.from("已改变"));
     await expect(verifyNativeProbeSourceAttestation(manifest, commit, readSource)).rejects.toThrow("源码 SHA-256 不匹配");
   });

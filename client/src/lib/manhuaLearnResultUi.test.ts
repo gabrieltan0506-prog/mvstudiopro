@@ -7,6 +7,8 @@ import {
   isManhuaLearnEmptyBatchFailure,
   listExportableEpisodes,
   parseNativeProposalEpisodeRef,
+  parseManhuaLearnSegmentSecondsInput,
+  parseManhuaLearnVideoFpsInput,
   manhuaLearnResultFromJobOutput,
   manhuaLearnResultFromSnapshot,
   manhuaLearnResultFromStart,
@@ -19,9 +21,15 @@ import {
   readManhuaLearnFocusSeriesKey,
   readManhuaLearnResult,
   readManhuaLearnMissingDismissedKeys,
+  readManhuaLearnSegmentSeconds,
+  readManhuaLearnVideoFps,
   removeManhuaLearnBasketItem,
   resolveManhuaLearnBasketFocusKey,
   resolveManhuaLearnReloadDecision,
+  resolveManhuaLearnSnapshotSegmentSeconds,
+  resolveManhuaLearnSnapshotVideoFps,
+  restoreManhuaLearnSegmentSeconds,
+  restoreManhuaLearnVideoFps,
   reuseManhuaLearnResultIfUnchanged,
   reuseManhuaLearnServerJobsIfUnchanged,
   upsertManhuaLearnBasketItem,
@@ -30,6 +38,8 @@ import {
   writeManhuaLearnFocusSeriesKey,
   writeManhuaLearnResult,
   writeManhuaLearnMissingDismissedKeys,
+  writeManhuaLearnSegmentSeconds,
+  writeManhuaLearnVideoFps,
 } from "./manhuaLearnResultUi";
 
 function installMemoryLocalStorage() {
@@ -49,6 +59,133 @@ afterEach(() => {
 });
 
 describe("manhuaLearnResultUi soft-fail", () => {
+  it("采样fps独立输入12或小数，不按319秒自动选档", () => {
+    expect(parseManhuaLearnSegmentSecondsInput("319")).toBe(319);
+    expect(parseManhuaLearnVideoFpsInput("12")).toBe(12);
+    expect(parseManhuaLearnVideoFpsInput("12.5")).toBe(12.5);
+    expect(parseManhuaLearnVideoFpsInput("24")).toBe(24);
+    for (const invalid of ["", " ", "0", "-1", "24.1", "NaN", "Infinity"]) {
+      expect(() => parseManhuaLearnVideoFpsInput(invalid)).toThrow();
+    }
+    expect(restoreManhuaLearnVideoFps(undefined)).toBe(10);
+    expect(restoreManhuaLearnVideoFps(null)).toBe(10);
+  });
+
+  it("采样fps按账号保存，旧设置损坏不改写有效12fps", () => {
+    installMemoryLocalStorage();
+    writeManhuaLearnVideoFps("user_a", 12);
+    expect(readManhuaLearnVideoFps("user_a")).toBe(12);
+    expect(readManhuaLearnVideoFps("user_b")).toBe(10);
+    expect(() => writeManhuaLearnVideoFps("user_a", 25)).toThrow();
+    expect(readManhuaLearnVideoFps("user_a")).toBe(12);
+  });
+
+  it("自定义分片输入保留319秒，空值、小数和越界值明确拒绝而非截断", () => {
+    expect(parseManhuaLearnSegmentSecondsInput("319")).toBe(319);
+    expect(parseManhuaLearnSegmentSecondsInput("7200")).toBe(7200);
+    for (const invalid of ["", " ", "0", "-1", "319.5", "7201", "NaN"]) {
+      expect(() => parseManhuaLearnSegmentSecondsInput(invalid)).toThrow();
+    }
+  });
+
+  it("旧分片设置缺失或损坏时只恢复下一任务默认，不放宽新输入校验", () => {
+    expect(restoreManhuaLearnSegmentSeconds(319)).toBe(319);
+    for (const invalid of [undefined, null, false, "", 0, 319.5, 7201]) {
+      expect(restoreManhuaLearnSegmentSeconds(invalid)).toBe(300);
+    }
+  });
+
+  it("分片设置按账号持久化且非法输入不能覆盖有效设置", () => {
+    installMemoryLocalStorage();
+    writeManhuaLearnSegmentSeconds("user_a", 319);
+    expect(readManhuaLearnSegmentSeconds("user_a")).toBe(319);
+    localStorage.setItem("mvs-manhua-learn-segment-seconds-v1:user_b", "broken-json");
+    expect(readManhuaLearnSegmentSeconds("user_b")).toBe(300);
+    expect(readManhuaLearnSegmentSeconds("user_b")).toBe(300);
+    expect(() => writeManhuaLearnSegmentSeconds("user_a", 319.5)).toThrow();
+    expect(readManhuaLearnSegmentSeconds("user_a")).toBe(319);
+  });
+
+  it("GCS快照续跑保留同剧319秒，不能串用其他剧设置", () => {
+    const continuation = {
+      row: { url: "https://douyin.com/video/a" }, rank: 0,
+      seriesKey: "series_a", nativeSegmentSeconds: 319, nativeVideoFps: 12, savedAt: 100,
+    };
+    expect(resolveManhuaLearnSnapshotSegmentSeconds(continuation, "series_a", "https://douyin.com/video/a")).toBe(319);
+    expect(resolveManhuaLearnSnapshotSegmentSeconds(continuation, "upgraded_series_a", "https://douyin.com/video/a")).toBe(319);
+    expect(resolveManhuaLearnSnapshotSegmentSeconds(continuation, "series_b", "https://douyin.com/video/b")).toBe(300);
+    expect(resolveManhuaLearnSnapshotSegmentSeconds(null, "series_a", "https://douyin.com/video/a")).toBe(300);
+    expect(resolveManhuaLearnSnapshotVideoFps(continuation, "series_a", "https://douyin.com/video/a")).toBe(12);
+    expect(resolveManhuaLearnSnapshotVideoFps(continuation, "upgraded_series_a", "https://douyin.com/video/a")).toBe(12);
+    expect(resolveManhuaLearnSnapshotVideoFps(continuation, "series_b", "https://douyin.com/video/b")).toBe(10);
+  });
+
+  it.each([319, undefined, 319.5])("活动任务恢复分片设置%s但不改写原job", (nativeSegmentSeconds) => {
+    installMemoryLocalStorage();
+    writeManhuaLearnActiveJob("user_7", {
+      jobId: "job-existing", busyKey: "source-a", savedAt: 100,
+      continuation: {
+        row: { url: "https://douyin.com/video/a" }, rank: 0,
+        seriesKey: "series_a", nativeSegmentSeconds, nativeVideoFps: 12, savedAt: 100,
+      },
+    });
+    const stored = localStorage.getItem("mvs-manhua-learn-active-job-v1:user_7");
+    expect(readManhuaLearnActiveJob("user_7")).toMatchObject({
+      jobId: "job-existing",
+      continuation: { nativeSegmentSeconds: nativeSegmentSeconds === 319 ? 319 : 300, nativeVideoFps: 12 },
+    });
+    expect(localStorage.getItem("mvs-manhua-learn-active-job-v1:user_7")).toBe(stored);
+  });
+
+  it("服务端两部剧分别恢复319和默认300秒，并经篮子持久化保留", () => {
+    installMemoryLocalStorage();
+    const jobs = [319, undefined].map((nativeSegmentSeconds, index) => ({
+      jobId: `job-${index}`, status: "running" as const,
+      input: { params: {
+        url: `https://douyin.com/video/${index}`, seriesKey: `series_${index}`,
+        nativeDeepReadConfirmed: true, nativeSegmentSeconds, nativeVideoFps: index === 0 ? 12 : undefined,
+      } },
+    }));
+    const before = JSON.stringify(jobs);
+    const basket = mergeManhuaLearnServerJobsIntoBasket([], jobs, 100);
+    expect(basket.find((item) => item.seriesKey === "series_0")?.continuation.nativeSegmentSeconds).toBe(319);
+    expect(basket.find((item) => item.seriesKey === "series_1")?.continuation.nativeSegmentSeconds).toBe(300);
+    expect(basket.find((item) => item.seriesKey === "series_0")?.continuation.nativeVideoFps).toBe(12);
+    expect(basket.find((item) => item.seriesKey === "series_1")?.continuation.nativeVideoFps).toBe(10);
+    writeManhuaLearnBasket("user_7", basket);
+    expect(readManhuaLearnBasket("user_7")).toEqual(basket);
+    expect(JSON.stringify(jobs)).toBe(before);
+  });
+
+  it("旧篮子缺失或损坏分片设置时恢复300秒，不删除或改写运行任务", () => {
+    installMemoryLocalStorage();
+    for (const nativeSegmentSeconds of [undefined, null, 319.5]) {
+      const raw = JSON.stringify([{
+        seriesKey: "series_old", jobId: "job-old", jobStatus: "running", updatedAt: 100,
+        continuation: {
+          row: { url: "https://douyin.com/video/old" }, rank: 0,
+          nativeSegmentSeconds, savedAt: 100,
+        },
+        result: { pipelineMode: "native_deep_read", pendingCount: 1 },
+      }]);
+      localStorage.setItem("mvs-manhua-learn-basket-v1:user_7", raw);
+      expect(readManhuaLearnBasket("user_7")[0]).toMatchObject({
+        jobId: "job-old", jobStatus: "running", continuation: { nativeSegmentSeconds: 300, nativeVideoFps: 10 },
+      });
+      expect(localStorage.getItem("mvs-manhua-learn-basket-v1:user_7")).toBe(raw);
+    }
+  });
+
+  it("同剧服务端列表的新319秒12fps任务不会被旧300秒10fps覆盖", () => {
+    const params = { url: "https://douyin.com/video/a", seriesKey: "series_a", nativeDeepReadConfirmed: true };
+    const basket = mergeManhuaLearnServerJobsIntoBasket([], [
+      { jobId: "new", status: "running", input: { params: { ...params, nativeSegmentSeconds: 319, nativeVideoFps: 12 } } },
+      { jobId: "old", status: "failed", input: { params } },
+    ], 100);
+    expect(basket).toHaveLength(1);
+    expect(basket[0]).toMatchObject({ jobId: "new", continuation: { nativeSegmentSeconds: 319, nativeVideoFps: 12 } });
+  });
+
   it("逐次模型回执按 callId+stage 去重、保留失败正文并限制总量", () => {
     const duplicated = [
       {

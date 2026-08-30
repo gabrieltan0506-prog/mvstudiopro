@@ -21,16 +21,93 @@ import {
   type ManhuaNativeModelReceipt,
   type ManhuaNativeProviderErrorReceipt,
 } from "@shared/manhuaNativeModelReceipt";
+import {
+  NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS,
+  NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS,
+  parseNativeDeepReadSegmentSeconds,
+  parseNativeDeepReadVideoFps,
+} from "@shared/manhuaNativeDeepReadJob";
 
 export const LS_MANHUA_LEARN_SERIES_KEY = "mv-manhua-learn-focus-series-v1";
 export const LS_MANHUA_LEARN_ACTIVE_JOB = "mvs-manhua-learn-active-job-v1";
 export const LS_MANHUA_LEARN_RESULT = "mvs-manhua-learn-result-v1";
 const LS_MANHUA_LEARN_BASKET_PREFIX = "mvs-manhua-learn-basket-v1";
 const LS_MANHUA_LEARN_MISSING_DISMISSED = "mvs-manhua-learn-missing-dismissed-v1";
+const LS_MANHUA_LEARN_SEGMENT_SECONDS = "mvs-manhua-learn-segment-seconds-v1";
+const LS_MANHUA_LEARN_VIDEO_FPS = "mvs-manhua-learn-video-fps-v1";
 
 function manhuaLearnUserStorageKey(baseKey: string, userKey: string): string {
   const scope = String(userKey || "").trim();
   return scope ? `${baseKey}:${encodeURIComponent(scope)}` : "";
+}
+
+/** 新输入必须明确合法；空输入不能经 Number("") 误变成有效设置。 */
+export function parseManhuaLearnSegmentSecondsInput(value: string): number {
+  return parseNativeDeepReadSegmentSeconds(value);
+}
+
+/** 仅恢复下一任务的设置草稿；旧值损坏不修改服务端已经入队的参数。 */
+export function restoreManhuaLearnSegmentSeconds(value: unknown): number {
+  try {
+    return parseNativeDeepReadSegmentSeconds(value);
+  } catch {
+    return NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS;
+  }
+}
+
+export function readManhuaLearnSegmentSeconds(userKey: string): number {
+  const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_SEGMENT_SECONDS, userKey);
+  try {
+    const stored = key ? JSON.parse(localStorage.getItem(key) || "null") : undefined;
+    return restoreManhuaLearnSegmentSeconds(stored);
+  } catch {
+    return NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS;
+  }
+}
+
+export function writeManhuaLearnSegmentSeconds(userKey: string, value: number): void {
+  const seconds = parseNativeDeepReadSegmentSeconds(value);
+  const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_SEGMENT_SECONDS, userKey);
+  if (!key) return;
+  try {
+    localStorage.setItem(key, JSON.stringify(seconds));
+  } catch {
+    // 本地存储不可用时仍使用当前输入，真实参数随后台任务持久化。
+  }
+}
+
+/** 采样率由用户独立设置，不根据分片时长自动换档。 */
+export function parseManhuaLearnVideoFpsInput(value: string): number {
+  return parseNativeDeepReadVideoFps(value);
+}
+
+export function restoreManhuaLearnVideoFps(value: unknown): number {
+  try {
+    return parseNativeDeepReadVideoFps(value);
+  } catch {
+    return NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS;
+  }
+}
+
+export function readManhuaLearnVideoFps(userKey: string): number {
+  const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_VIDEO_FPS, userKey);
+  try {
+    const stored = key ? JSON.parse(localStorage.getItem(key) || "null") : undefined;
+    return restoreManhuaLearnVideoFps(stored);
+  } catch {
+    return NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS;
+  }
+}
+
+export function writeManhuaLearnVideoFps(userKey: string, value: number): void {
+  const fps = parseNativeDeepReadVideoFps(value);
+  const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_VIDEO_FPS, userKey);
+  if (!key) return;
+  try {
+    localStorage.setItem(key, JSON.stringify(fps));
+  } catch {
+    // 偏好写入失败不影响随后真实任务持久化的采样参数。
+  }
 }
 
 /** 旧版无用户作用域缓存不得再被任一登录账号接管；服务端任务表负责真实恢复。 */
@@ -65,10 +142,39 @@ export type ManhuaLearnActiveJobRecord = {
     };
     rank: number;
     seriesKey?: string;
+    /** 当次任务的分片上限；旧记录缺失时恢复为300秒。 */
+    nativeSegmentSeconds?: number;
+    /** 当次任务的采样fps；旧记录缺失时恢复为10。 */
+    nativeVideoFps?: number;
     savedAt: number;
   };
   savedAt: number;
 };
+
+/** GCS旧快照没有分片设置，只有同剧/同来源的续跑记录可以补回，不能串剧。 */
+export function resolveManhuaLearnSnapshotSegmentSeconds(
+  continuation: ManhuaLearnActiveJobRecord["continuation"] | null,
+  seriesKey: string,
+  sourceUrl: string,
+): number {
+  if (!continuation) return NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS;
+  const sameSource = (
+    Boolean(seriesKey && continuation.seriesKey === seriesKey)
+    || Boolean(sourceUrl && continuation.row.url === sourceUrl)
+  );
+  return restoreManhuaLearnSegmentSeconds(sameSource ? continuation.nativeSegmentSeconds : undefined);
+}
+
+export function resolveManhuaLearnSnapshotVideoFps(
+  continuation: ManhuaLearnActiveJobRecord["continuation"] | null,
+  seriesKey: string,
+  sourceUrl: string,
+): number {
+  if (!continuation) return NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS;
+  const sameSource = Boolean(seriesKey && continuation.seriesKey === seriesKey)
+    || Boolean(sourceUrl && continuation.row.url === sourceUrl);
+  return restoreManhuaLearnVideoFps(sameSource ? continuation.nativeVideoFps : undefined);
+}
 
 export type ManhuaLearnBasketItem = {
   seriesKey: string;
@@ -683,6 +789,8 @@ export function readManhuaLearnActiveJob(userKey: string): ManhuaLearnActiveJobR
         },
         rank: Math.max(0, Math.floor(Number(continuation?.rank) || 0)),
         seriesKey: String(continuation?.seriesKey || "").trim() || undefined,
+        nativeSegmentSeconds: restoreManhuaLearnSegmentSeconds(continuation?.nativeSegmentSeconds),
+        nativeVideoFps: restoreManhuaLearnVideoFps(continuation?.nativeVideoFps),
         savedAt: Number(continuation?.savedAt) || savedAt,
       },
       savedAt,
@@ -804,7 +912,14 @@ export function readManhuaLearnBasket(userKey: string): ManhuaLearnBasketItem[] 
           ),
         );
       })
-      .map((item) => item as ManhuaLearnBasketItem)
+      .map((item) => ({
+        ...item,
+        continuation: {
+          ...item.continuation!,
+          nativeSegmentSeconds: restoreManhuaLearnSegmentSeconds(item.continuation?.nativeSegmentSeconds),
+          nativeVideoFps: restoreManhuaLearnVideoFps(item.continuation?.nativeVideoFps),
+        },
+      }) as ManhuaLearnBasketItem)
       .slice(0, 30);
   } catch {
     return [];
@@ -1063,6 +1178,8 @@ export function mergeManhuaLearnServerJobsIntoBasket(
       },
       rank: Math.max(0, Math.floor(Number(params.rank) || 0)),
       seriesKey,
+      nativeSegmentSeconds: restoreManhuaLearnSegmentSeconds(params.nativeSegmentSeconds),
+      nativeVideoFps: restoreManhuaLearnVideoFps(params.nativeVideoFps),
       savedAt: existing?.continuation.savedAt ?? now,
     };
     next = upsertManhuaLearnBasketItem(next, {

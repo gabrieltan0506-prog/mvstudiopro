@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { MANHUA_NATIVE_GLM_REASONING_EFFORT } from "../../shared/manhuaNativeDeepReadJob.js";
 import os from "node:os";
 import path from "node:path";
 import { mkdir, mkdtemp, open, readFile, rename, rm } from "node:fs/promises";
@@ -320,7 +321,7 @@ export async function invokeNativeSeriesAggregationModel(
       // 且网关层每档重读同一个 params，两档各拿满 12 分钟——**那是空改**。
       timeoutMs: AGGREGATION_TIMEOUT_MS,
       deadlineAtMs: chainStartedAt + AGGREGATION_TIMEOUT_MS,
-      reasoningEffort: "max",
+      reasoningEffort: MANHUA_NATIVE_GLM_REASONING_EFFORT,
       requireParameters: true,
       requireFinishReasonStop: true,
       maxResponseBytes: AGGREGATION_RESPONSE_MAX_BYTES,
@@ -578,6 +579,8 @@ export async function stageNativeSeriesSnapshot(input: {
     rows.sort((a, b) => a.snapshot.episodeIndex - b.snapshot.episodeIndex);
     const manifestBody = Buffer.from(`${JSON.stringify({
       schemaVersion: MANHUA_NATIVE_SERIES_AGGREGATION_SCHEMA_VERSION,
+      // 参数进入复用指纹，旧max产物保留，但不能冒充medium的新实测结果。
+      reasoningEffort: MANHUA_NATIVE_GLM_REASONING_EFFORT,
       seriesKey,
       episodes: rows.map((row) => ({
         episodeIndex: row.snapshot.episodeIndex,

@@ -29,6 +29,8 @@ import { isManhua0996SourceUrl } from "../../shared/manhuaLearn0996Source.js";
 export type NativeDeepReadPlanRuntimeInput = {
   url: string;
   limit: number;
+  segmentSeconds?: number;
+  videoFps?: number;
   allowPartial?: boolean;
   learnLlm?: ManhuaTemplateLearnLlmProvider;
   abortSignal?: AbortSignal;

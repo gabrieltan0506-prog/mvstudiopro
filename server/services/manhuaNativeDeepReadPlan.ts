@@ -30,13 +30,19 @@ import {
 } from "./manhuaNativeDeepReadExecution.js";
 import { MANHUA_LEARN_MAX_DURATION_SEC } from "../../shared/manhuaTemplateLearnSeries.js";
 import type { ManhuaTemplateLearnLlmProvider } from "../../shared/manhuaTemplateLearnFrameVision.js";
-import { NATIVE_DEEP_READ_JOB_MAX_CALLS } from "../../shared/manhuaNativeDeepReadJob.js";
+import {
+  NATIVE_DEEP_READ_JOB_MAX_CALLS,
+  NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS,
+  parseNativeDeepReadSegmentSeconds,
+  parseNativeDeepReadVideoFps,
+} from "../../shared/manhuaNativeDeepReadJob.js";
 import { isManhua0996SourceUrl } from "../../shared/manhuaLearn0996Source.js";
 import {
   NATIVE_DEEP_READ_MODEL,
   NATIVE_DEEP_READ_ROUTE_EVOLINK,
   NATIVE_DEEP_READ_ROUTE_VERTEX,
   NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
+  resolveNativeDeepReadRequestFps,
 } from "./manhuaNativeDeepReadRunner.js";
 import {
   MANHUA_NATIVE_SERIES_AGGREGATION_MODEL,
@@ -65,6 +71,7 @@ export type NativeDeepReadPlanEpisode = {
   episodeIndex: number;
   sourceUrl: string;
   durationSec: number;
+  videoFps?: number;
   segments: NativeDeepReadPlanSegment[];
   /** 该集是自动让位的失败重跑（执行时原子接管旧占位；段缓存让已成段零费） */
   reclaimFailedClaim?: boolean;
@@ -74,6 +81,9 @@ export type NativeDeepReadPlanEpisode = {
 
 export type NativeDeepReadPlanPreview = {
   planHash: string;
+  /** 当前计划使用的分片长度；旧计划缺省时按 300 秒恢复。 */
+  segmentSeconds?: number;
+  videoFps?: number;
   seriesKey: string;
   dramaNameZh?: string;
   episodes: NativeDeepReadPlanEpisode[];
@@ -106,6 +116,8 @@ export type NativeDeepReadPlanConfirmation = {
   planHash?: string;
   maxCalls: number;
   seriesKey?: string;
+  segmentSeconds?: number;
+  videoFps?: number;
 };
 
 /** worker 的最终确认门：必须在 claim 与任何模型调用之前执行。 */
@@ -114,6 +126,14 @@ export function assertNativeDeepReadPlanConfirmation(
   current: NativeDeepReadPlanPreview,
 ): void {
   if (!current.executionEnabled) throw new Error("原生精读能力未开启，未发出模型请求");
+  if (parseNativeDeepReadVideoFps(confirmed.videoFps)
+    !== parseNativeDeepReadVideoFps(current.videoFps)) {
+    throw new Error("原生精读采样 fps 与任务参数不一致，未发出模型请求");
+  }
+  if (parseNativeDeepReadSegmentSeconds(confirmed.segmentSeconds)
+    !== parseNativeDeepReadSegmentSeconds(current.segmentSeconds)) {
+    throw new Error("原生精读分片时长与任务参数不一致，未发出模型请求");
+  }
   const pendingClaims = new Set(current.pendingClaimEpisodeIndexes);
   const overlappingClaims = current.episodes
     .map((episode) => episode.episodeIndex)
@@ -151,26 +171,32 @@ export function assertNativeDeepReadPlanConfirmation(
 }
 
 /**
- * 每个视觉输入片目标不超过 5 分钟：90 秒短集保持整集，18 分钟长集拆 4 片。
- * 分片只按时长决定；文件体积不改变分片数，也不触发预转码。
- * 换代后**每段一次 Gemini 调用**，不再多段合包（分段调用停在低价档）。
+ * 按用户设置的整数秒切片，默认 300 秒；尾片完整保留，短集保持整集。
+ * 每段一次 Gemini 调用，文件体积不改变分片边界。
  */
-export const NATIVE_DEEP_READ_VISUAL_SEGMENT_SEC = 5 * 60;
+export const NATIVE_DEEP_READ_VISUAL_SEGMENT_SEC = NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS;
 export function normalizeNativeDeepReadDurationSec(durationSec: number): number {
   return Math.max(1, Math.round(Number(durationSec) || 0));
 }
 
-export function splitNativeDeepReadSegments(durationSec: number): NativeDeepReadPlanSegment[] {
+export function splitNativeDeepReadSegments(
+  durationSec: number,
+  segmentSeconds?: number,
+): NativeDeepReadPlanSegment[] {
+  const length = parseNativeDeepReadSegmentSeconds(segmentSeconds);
   // ffprobe 常返回小数秒；统一四舍五入后再切段，避免计划片长与末段终点相差近 1 秒。
   const total = normalizeNativeDeepReadDurationSec(durationSec);
   if (total > NATIVE_DEEP_READ_MAX_EPISODE_SEC) {
     throw new Error(`素材超过 ${Math.round(NATIVE_DEEP_READ_MAX_EPISODE_SEC / 60)} 分钟学习上限`);
   }
+  if (Math.ceil(total / length) > 32) {
+    throw new Error(`当前分片时长将产生 ${Math.ceil(total / length)} 片，超过单集 32 片上限，请增加分片秒数`);
+  }
   const segments: NativeDeepReadPlanSegment[] = [];
-  for (let startSec = 0; startSec < total; startSec += NATIVE_DEEP_READ_VISUAL_SEGMENT_SEC) {
+  for (let startSec = 0; startSec < total; startSec += length) {
     segments.push({
       startSec,
-      endSec: Math.min(total, startSec + NATIVE_DEEP_READ_VISUAL_SEGMENT_SEC),
+      endSec: Math.min(total, startSec + length),
     });
   }
   return segments;
@@ -192,7 +218,7 @@ export function computeNativeDeepReadPlanHash(
       version: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
       model: NATIVE_DEEP_READ_MODEL,
       routes: [NATIVE_DEEP_READ_ROUTE_VERTEX, NATIVE_DEEP_READ_ROUTE_EVOLINK],
-      fpsTiers: { shortMaxSec: 180, shortFps: 10, longFps: 5 },
+      defaultFps: resolveNativeDeepReadRequestFps(1),
       maxSegmentSec: NATIVE_DEEP_READ_MAX_SEGMENT_SEC,
     },
     audio: { mode: "gemini_native_video_direct_v1" },
@@ -208,6 +234,7 @@ export function computeNativeDeepReadPlanHash(
         // 分享链的查询参数会变化；同一 aweme 用稳定视频 id，来源真的换集才让确认码失效。
         u: extractDouyinVideoIdFromUrl(e.sourceUrl) || e.sourceUrl,
         d: Math.floor(e.durationSec),
+        fps: parseNativeDeepReadVideoFps(e.videoFps),
         s: e.segments.map((g) => [Math.round(g.startSec), Math.round(g.endSec)]),
       })),
   });
@@ -442,12 +469,17 @@ export async function buildNativeDeepReadPlanPreview(
   input: {
     url: string;
     limit: number;
+    segmentSeconds?: number;
+    videoFps?: number;
     allowPartial?: boolean;
     learnLlm?: ManhuaTemplateLearnLlmProvider;
     abortSignal?: AbortSignal;
   },
   deps: NativeDeepReadPlanDeps,
 ): Promise<NativeDeepReadPlanPreview> {
+  // 在解析远程来源之前拒绝非法设置，避免建单后才发现时长输入不可用。
+  const segmentSeconds = parseNativeDeepReadSegmentSeconds(input.segmentSeconds);
+  const videoFps = parseNativeDeepReadVideoFps(input.videoFps);
   /**
    * 0826 回归修复：面板会放行带 modal_id 的搜索页，但原始长 URL 一路透传给下游
    * （sourceIdentity/各消费方），形态不认就死。入口先规范化成 /video/<id> 标准形态
@@ -651,7 +683,8 @@ export async function buildNativeDeepReadPlanPreview(
       episodeIndex: e.index,
       sourceUrl: e.url,
       durationSec,
-      segments: splitNativeDeepReadSegments(durationSec),
+      videoFps,
+      segments: splitNativeDeepReadSegments(durationSec, segmentSeconds),
       ...(reclaimSet.has(e.index) ? { reclaimFailedClaim: true } : {}),
       ...(sourceEpisodeIndex === e.index ? { recoverMisplacedSourceCache: true } : {}),
     });
@@ -667,6 +700,8 @@ export async function buildNativeDeepReadPlanPreview(
 
   return {
     planHash: plan?.planHash || computeNativeDeepReadPlanHash(seriesKey, episodes),
+    segmentSeconds,
+    videoFps,
     seriesKey,
     dramaNameZh: dramaNameZh || undefined,
     episodes,

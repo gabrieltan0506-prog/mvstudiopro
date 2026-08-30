@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
+import { readFile, rm } from "node:fs/promises";
 import type { ManhuaViralTemplateCard } from "../../shared/manhuaViralTemplateBank.js";
 import {
   MANHUA_NATIVE_SERIES_AGGREGATION_MODEL,
@@ -6,6 +8,7 @@ import {
   aggregateNativeDeepReadSeries,
   buildNativeSeriesAggregationPayload,
   invokeNativeSeriesAggregationModel,
+  stageNativeSeriesSnapshot,
   __testBuildNativeSeriesCard,
   type NativeSeriesAggregationUsage,
 } from "./manhuaNativeSeriesAggregation.js";
@@ -91,6 +94,21 @@ function aggregationRaw() {
 }
 
 describe("系列聚合输入保留完整证据", () => {
+  it("medium进入快照指纹，不复用旧max参数产物", async () => {
+    const { deps } = aggregationDeps();
+    const { snapshot } = await stageNativeSeriesSnapshot({ seriesKey: SERIES_KEY }, deps as never);
+    try {
+      const body = await readFile(snapshot.manifestPath, "utf8");
+      const manifest = JSON.parse(body);
+      expect(manifest.reasoningEffort).toBe("medium");
+      expect(snapshot.snapshotSha256).toBe(createHash("sha256").update(body).digest("hex"));
+      delete manifest.reasoningEffort;
+      const legacyHash = createHash("sha256").update(`${JSON.stringify(manifest)}\n`).digest("hex");
+      expect(snapshot.snapshotSha256).not.toBe(legacyHash);
+    } finally {
+      await rm(snapshot.dir, { recursive: true, force: true });
+    }
+  });
   it("不再按集数抽稀 beatGrid、字幕或音轨", () => {
     const card = episodeCard();
     card.beatGrid = Array.from({ length: 160 }, (_, index) => ({
@@ -289,7 +307,7 @@ describe("原生精读系列结构化 · GLM-5.3 两档（0829 改线：EvoLink 
     expect(body).toMatchObject({
       model: "glm-5.3",
       response_format: { type: "json_object" },
-      reasoning_effort: "max",      // EvoLink 用顶层字符串，不是嵌套 reasoning:{effort}
+      reasoning_effort: "medium",   // EvoLink 用顶层字符串，不是嵌套 reasoning:{effort}
       max_tokens: 131_072,
       temperature: 0.8,             // 链级默认，不发＝落到供应商默认 1.0
     });
@@ -298,6 +316,26 @@ describe("原生精读系列结构化 · GLM-5.3 两档（0829 改线：EvoLink 
     expect(body).not.toHaveProperty("reasoning");   // OpenRouter 专属形态，别抄过来
     expect(body).not.toHaveProperty("provider");    // OpenRouter 专属键
     expect(body).not.toHaveProperty("top_p");
+  });
+
+  it("主档失败后的OpenRouter仍使用medium，其他请求参数不变", async () => {
+    vi.stubEnv("EVOLINK_API_KEY", "test-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL, init: RequestInit) => {
+      calls.push({ url: String(url), body: JSON.parse(String(init.body)) });
+      if (calls.length === 1) return new Response("test upstream failure", { status: 503 });
+      return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: '{"ok":true}' } }] }), { status: 200 });
+    }));
+    await expect(invokeNativeSeriesAggregationModel("{}")).resolves.toMatchObject({ gateway: "openrouter", raw: { ok: true } });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.body.reasoning_effort).toBe("medium");
+    expect(calls[1]).toMatchObject({ url: OPENROUTER_ENDPOINT, body: {
+      model: "z-ai/glm-5.3", reasoning: { effort: "medium" }, max_tokens: 131_072,
+      temperature: 0.8, stream: true, response_format: { type: "json_object" },
+      provider: { order: ["z-ai/fp8"], allow_fallbacks: false, require_parameters: true },
+    } });
+    expect(calls[1]!.body).not.toHaveProperty("reasoning_effort");
   });
 
   it("OpenRouter 失败时不静默调用新加坡 Qwen 或 EvoLink", async () => {

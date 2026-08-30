@@ -347,13 +347,17 @@ describe("批次预检：在任何模型动作之前", () => {
     expect(deps.runBatch).not.toHaveBeenCalled();
   });
 
-  it("单段超过五分钟要求拆段", () => {
-    expect(() =>
-      validateNativeDeepReadBatchPlan([
-        ep(1, { durationSec: 1200, segments: [{ startSec: 0, endSec: 1080 }] }),
-      ]),
-    ).toThrow("请拆段");
-    expect(NATIVE_DEEP_READ_MAX_SEGMENT_SEC).toBe(300);
+  it("自定义单片可超过五分钟，仍要求完整覆盖且保留整片策略", () => {
+    expect(validateNativeDeepReadBatchPlan([
+      ep(1, { durationSec: 1080, segments: [{ startSec: 0, endSec: 1080 }] }),
+    ]).totalVisualCalls).toBe(1);
+    expect(() => validateNativeDeepReadBatchPlan([
+      ep(1, { durationSec: 1200, segments: [{ startSec: 0, endSec: 1080 }] }),
+    ])).toThrow("未完整覆盖全片");
+    expect(NATIVE_DEEP_READ_MAX_SEGMENT_SEC).toBe(7200);
+    expect(() => validateNativeDeepReadBatchPlan([
+      ep(1, { durationSec: 7201, segments: [{ startSec: 0, endSec: 7201 }] }),
+    ])).toThrow("超过 120 分钟");
   });
 
   it("切片超出片长拒绝", () => {
@@ -397,6 +401,8 @@ describe("批次预检：在任何模型动作之前", () => {
   it("同一份清单确认码稳定，改一个字段就变 —— 真跑靠它绑定干跑那份计划", () => {
     const a = validateNativeDeepReadBatchPlan([ep(1)], { seriesKey: "series_a" }).planHash;
     expect(validateNativeDeepReadBatchPlan([ep(1)], { seriesKey: "series_a" }).planHash).toBe(a);
+    expect(validateNativeDeepReadBatchPlan([ep(1, { videoFps: 12 })], { seriesKey: "series_a" }).planHash).not.toBe(a);
+    expect(() => validateNativeDeepReadBatchPlan([ep(1, { videoFps: 25 })])).toThrow("fps");
     expect(
       validateNativeDeepReadBatchPlan(
         [ep(1, { sourceUrl: "https://example.com/e9" })],

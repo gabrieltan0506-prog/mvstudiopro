@@ -31,13 +31,16 @@ import {
   NATIVE_DEEP_READ_TEMPERATURE_MIN,
   NATIVE_DEEP_READ_MIN_TMP_FREE_BYTES,
   NATIVE_DEEP_READ_MODEL,
+  NATIVE_DEEP_READ_MAX_FPS,
   NATIVE_DEEP_READ_ROUTE_EVOLINK,
   NATIVE_DEEP_READ_ROUTE_VERTEX,
   NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
   assertNativeDeepReadEpisodeEvidence,
+  assertNativeDeepReadPreparedMedia,
   assertNativeDeepReadSegmentDensity,
   buildGeminiNativeDeepReadSegmentPrompt,
   buildGeminiNativeDeepReadSegmentRequest,
+  buildNativeDeepReadVideoSegmentArgs,
   buildNativeDeepReadGlmSegmentRepairPrompt,
   buildNativeDeepReadGlmStructuringPrompt,
   isManhuaNativeDeepReadEnabled,
@@ -47,8 +50,10 @@ import {
   nativeDeepReadSegmentCacheFingerprint,
   nativeDeepReadSegmentMeetsThreeItemLine,
   resolveNativeDeepReadRequestFps,
+  resolveNativeDeepReadInputFps,
   resolveNativeDeepReadSegmentFloors,
   runManhuaNativeDeepReadBatch,
+  runManhuaNativeDeepRead,
   createNativeDeepReadRunnerDeps,
   attachAudioChunkSpans,
   stripNonStoryAdShotsForEpisodeCard,
@@ -120,7 +125,7 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_ROUTE_EVOLINK).toBe("evolink_gemini_video");
     expect(NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE).toBe("openrouter_glm_structuring");
     // 换代必须让旧确认码全废
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v20-media-medium");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-v22-exact-cut-configurable-fps");
   });
 
   it("长视频请求显式使用 30 分钟 HTTP 响应头与响应体时限，不落回 Undici 默认 300 秒", async () => {
@@ -256,15 +261,33 @@ describe("模型与通道收口", () => {
   });
 });
 
-describe("两档 fps（0827 拍板：≤300s→10，否则5，永不更低）", () => {
-  it("档位边界", () => {
-    expect(resolveNativeDeepReadRequestFps(90)).toBe(10);
-    expect(resolveNativeDeepReadRequestFps(180)).toBe(10);
-    expect(resolveNativeDeepReadRequestFps(299.99)).toBe(10);
-    expect(resolveNativeDeepReadRequestFps(300)).toBe(10);
-    expect(resolveNativeDeepReadRequestFps(300.01)).toBe(5);
-    expect(resolveNativeDeepReadRequestFps(360)).toBe(5);
-    expect(resolveNativeDeepReadRequestFps(1080)).toBe(5);
+describe("自定义分片时长和 fps 独立，不按时长降采样", () => {
+  it.each([0.01, 90, 180, 299.99, 300, 300.01, 360, 1080, 7200])("%s 秒始终为 10fps", (duration) => {
+    expect(resolveNativeDeepReadRequestFps(duration)).toBe(10);
+  });
+  it.each([0, -1, NaN, Infinity])("拒绝非法时长 %s", (duration) => {
+    expect(() => resolveNativeDeepReadRequestFps(duration)).toThrow("有限正数");
+  });
+  it.each([1, 319, 638, 7200])("%s 秒遵守用户指定 12fps，包括尾片", (duration) => {
+    expect(resolveNativeDeepReadRequestFps(duration, 12)).toBe(12);
+  });
+  it.each([0, -1, NaN, Infinity, 24.01])("拒绝非法 fps %s", (fps) => {
+    expect(() => resolveNativeDeepReadRequestFps(319, fps)).toThrow();
+  });
+  it("官方上限24不改变旧探针自适应算法的兼容上限10", () => {
+    expect(NATIVE_DEEP_READ_MAX_FPS).toBe(24);
+    expect(resolveNativeDeepReadRequestFps(319, 24)).toBe(24);
+    expect(resolveNativeDeepReadInputFps(1)).toBe(10);
+    expect(resolveNativeDeepReadInputFps(360)).toBe(5);
+  });
+  it("提示词使用本次实际12fps/约0.0833秒，而不是硬写10fps", () => {
+    const prompt = buildGeminiNativeDeepReadSegmentPrompt({
+      episodeDurationSec: 400, startSec: 0, endSec: 319, segmentIndex: 0,
+      segmentCount: 2, hasAudio: true, videoFps: 12,
+    });
+    expect(prompt).toContain("输入按 12fps 抽帧，采样间隔约 0.0833 秒");
+    expect(prompt).not.toContain("10fps");
+    expect(prompt).not.toContain("0.1 秒对应一帧");
   });
 });
 
@@ -354,6 +377,9 @@ describe("每段提示词硬约束", () => {
   it("告知全片位置并要求绝对秒位", () => {
     expect(prompt).toContain("全片时长：720 秒");
     expect(prompt).toContain("一律使用全片绝对整数秒");
+    expect(prompt).toContain("shots.startSec/endSec、subtitles.atSec 一律使用全片绝对整数秒");
+    expect(prompt).toContain("keyMoments.atSec 使用全片绝对秒，可保留一位小数");
+    expect(prompt).not.toContain("shots.startSec/endSec、keyMoments.atSec、subtitles.atSec 一律使用全片绝对整数秒");
     expect(prompt).toContain("本段范围为 360 至 720 秒");
   });
 
@@ -1420,12 +1446,23 @@ describe("GLM 结构化整形提示词纪律", () => {
 
 /* ── 媒体准备 ── */
 
+function makePreparedMediaProbe(duration = 10, hasAudio = true, start = 0) {
+  return {
+    format: { start_time: String(start), duration: String(duration) },
+    streams: [
+      { codec_type: "video", start_time: String(start), duration: String(duration),
+        width: 1920, height: 1080, avg_frame_rate: "30/1" },
+      ...(hasAudio ? [{ codec_type: "audio", start_time: String(start), duration: String(duration) }] : []),
+    ],
+  };
+}
+
 function makePreparationDeps(
   over: Partial<NativeDeepReadMediaPreparationDeps> = {},
 ): NativeDeepReadMediaPreparationDeps {
   return {
     runMedia: vi.fn(async (cmd: string) =>
-      cmd === "ffprobe" ? JSON.stringify({ streams: [{ index: 1 }] }) : ""),
+      cmd === "ffprobe" ? JSON.stringify(makePreparedMediaProbe()) : ""),
     statLocal: vi.fn(async () => ({ size: 200_000 })),
     readLocal: vi.fn(async () => Buffer.from("fixture")),
     unlinkLocal: vi.fn(async () => undefined),
@@ -1447,6 +1484,132 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   });
   return { promise, resolve };
 }
+
+describe("精确切片与实际媒体验收", () => {
+  it("精确 seek 重编码保留原分辨率、帧率与音轨，不使用会前滚的流复制", () => {
+    const args = buildNativeDeepReadVideoSegmentArgs({
+      node: { url: "https://cdn.example/video.mp4" },
+      startSec: 301, durationSec: 360, outputPath: "/tmp/test-only.mp4",
+    });
+    expect(args.indexOf("-ss")).toBeLessThan(args.indexOf("-i"));
+    expect(args).toContain("-accurate_seek");
+    expect(args).toContain("libx264");
+    expect(args).toContain("0:a?");
+    expect(args[args.indexOf("-fps_mode") + 1]).toBe("passthrough");
+    expect(args[args.indexOf("-t") + 1]).toBe("360");
+    for (const forbidden of ["copy", "-avoid_negative_ts", "-r", "-s", "-vf", "-ar", "-ac", "-shortest"]) {
+      expect(args).not.toContain(forbidden);
+    }
+  });
+
+  it("只在真实尾片容许计划四舍五入的亚秒尾差，音画都验收", () => {
+    expect(assertNativeDeepReadPreparedMedia(makePreparedMediaProbe(300), {
+      durationSec: 300, isEpisodeTail: false,
+    })).toEqual({ durationSec: 300, hasAudio: true });
+    for (const duration of [99.6, 100.4]) {
+      expect(assertNativeDeepReadPreparedMedia(makePreparedMediaProbe(duration, false), {
+        durationSec: 100, isEpisodeTail: true,
+      })).toEqual({ durationSec: duration, hasAudio: false });
+      expect(() => assertNativeDeepReadPreparedMedia(makePreparedMediaProbe(duration), {
+        durationSec: 100, isEpisodeTail: false,
+      })).toThrow("实际时长");
+    }
+  });
+
+  it("31.319 秒残片、秒级零点偏移与虚假的长容器都不能冒充 300 秒", () => {
+    const expected = { durationSec: 300, isEpisodeTail: false };
+    expect(() => assertNativeDeepReadPreparedMedia(makePreparedMediaProbe(31.319), expected))
+      .toThrow("31.319 秒与计划 300 秒不符");
+    expect(() => assertNativeDeepReadPreparedMedia(makePreparedMediaProbe(300, true, 1), expected))
+      .toThrow("起点不是本段零位");
+    const shortVideo = makePreparedMediaProbe(300);
+    shortVideo.streams[0]!.duration = "31.319";
+    expect(() => assertNativeDeepReadPreparedMedia(shortVideo, expected)).toThrow("视频流实际时长");
+    const overflowAudio = makePreparedMediaProbe(300);
+    overflowAudio.streams[1]!.start_time = "2";
+    expect(() => assertNativeDeepReadPreparedMedia(overflowAudio, expected)).toThrow("超出实际视频");
+  });
+
+  it("真实音轨晚起、早停不等于视频截短，保留实际声音区间", () => {
+    const probe = makePreparedMediaProbe(300);
+    probe.streams[1]!.start_time = "5";
+    probe.streams[1]!.duration = "200";
+    expect(assertNativeDeepReadPreparedMedia(probe, { durationSec: 300, isEpisodeTail: false }))
+      .toEqual({ durationSec: 300, hasAudio: true });
+  });
+
+  it("合法短片可低于旧 100KB 门槛，媒体完整性由实际音画验收决定", async () => {
+    const deps = makePreparationDeps({ statLocal: vi.fn(async () => ({ size: 5_000 })) });
+    const rows = await prepareEpisodeVideos({
+      episodeIndex: 1, resolveNodes: async () => [{ url: "https://cdn.example/full.mp4" }],
+      segments: [{ startSec: 0, endSec: 10 }], sourceDurationSec: 10,
+    }, undefined, deps);
+    expect(rows[0]?.bytes).toBe(5_000);
+    expect(deps.upload).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([{}, { streams: [] }, { format: {}, streams: [{ codec_type: "video" }] }])(
+    "缺少真实媒体信息关闭式失败 %#", (probe) => {
+      expect(() => assertNativeDeepReadPreparedMedia(probe, {
+        durationSec: 300, isEpisodeTail: false,
+      })).toThrow("视频分片验收失败");
+    },
+  );
+
+  it("缓存补段的数组末项不等于整集尾片，只有 endSec 命中整集时长才读 EOF", async () => {
+    for (const [startSec, endSec, expectEof] of [[10, 20, false], [20, 30, true]] as const) {
+      const deps = makePreparationDeps();
+      await prepareEpisodeVideos({
+        episodeIndex: 1, resolveNodes: async () => [{ url: "https://cdn.example/full.mp4" }],
+        segments: [{ startSec, endSec }], sourceDurationSec: 30,
+      }, undefined, deps);
+      const args = vi.mocked(deps.runMedia).mock.calls[0]![1];
+      expect(args.includes("-t")).toBe(!expectEof);
+    }
+  });
+
+  it("文件足够大但时长残缺仍三次刷新重切，未验收前零上传", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const deps = makePreparationDeps({
+      statLocal: vi.fn(async () => ({ size: 3_400_000 })),
+      runMedia: vi.fn(async (cmd) => cmd === "ffprobe" ? JSON.stringify(makePreparedMediaProbe(31.319)) : ""),
+    });
+    const resolveNodes = vi.fn(async () => [{ url: "https://cdn.example/full.mp4" }]);
+    await expect(prepareEpisodeVideos({
+      episodeIndex: 1, resolveNodes, segments: [{ startSec: 1200, endSec: 1500 }], sourceDurationSec: 1691,
+    }, undefined, deps)).rejects.toThrow("实际时长 31.319 秒与计划 300 秒不符");
+    expect(resolveNodes).toHaveBeenCalledTimes(3);
+    expect(deps.upload).not.toHaveBeenCalled();
+    expect(deps.unlinkLocal).toHaveBeenCalledTimes(3);
+    warn.mockRestore();
+  });
+
+  it("ffprobe 故障不得默认为无音轨，也不能上传后才发现问题", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const deps = makePreparationDeps({ runMedia: vi.fn(async (cmd) => {
+      if (cmd === "ffprobe") throw new Error("probe failed");
+      return "";
+    }) });
+    await expect(prepareEpisodeVideos({
+      episodeIndex: 1, resolveNodes: async () => [{ url: "https://cdn.example/full.mp4" }],
+      segments: [{ startSec: 0, endSec: 10 }], sourceDurationSec: 10,
+    }, undefined, deps)).rejects.toThrow("probe failed");
+    expect(deps.upload).not.toHaveBeenCalled();
+    expect(deps.unlinkLocal).toHaveBeenCalledTimes(3);
+    warn.mockRestore();
+  });
+
+  it("各片音轨存在性冲突时停在上传前，不用首片覆盖其他片的事实", async () => {
+    let probes = 0;
+    const deps = makePreparationDeps({ runMedia: vi.fn(async (cmd) =>
+      cmd === "ffprobe" ? JSON.stringify(makePreparedMediaProbe(10, ++probes === 1)) : "") });
+    await expect(prepareEpisodeVideos({
+      episodeIndex: 1, resolveNodes: async () => [{ url: "https://cdn.example/full.mp4" }],
+      segments: [{ startSec: 0, endSec: 10 }, { startSec: 10, endSec: 20 }], sourceDurationSec: 20,
+    }, undefined, deps)).rejects.toThrow("音轨存在性不一致");
+    expect(deps.upload).not.toHaveBeenCalled();
+  });
+});
 
 describe("模型请求前的媒体准备边界", () => {
   it("/tmp 低于 500MB 时关闭式停止，不切段也不上传", async () => {
@@ -1471,7 +1634,7 @@ describe("模型请求前的媒体准备边界", () => {
     const runMedia = vi.fn()
       .mockRejectedValueOnce(new Error("cdn expired"))
       .mockResolvedValueOnce("")
-      .mockResolvedValueOnce(JSON.stringify({ streams: [{ index: 1 }] }));
+      .mockResolvedValueOnce(JSON.stringify(makePreparedMediaProbe()));
     const unlinkLocal = vi.fn(async () => undefined);
     const deps = makePreparationDeps({ runMedia, unlinkLocal });
 
@@ -1521,7 +1684,7 @@ describe("模型请求前的媒体准备边界", () => {
     warn.mockRestore();
   });
 
-  it("默认并发上限 10：5 段一次全发，完成乱序也按原分段顺序落位并只探测首片音轨", async () => {
+  it("默认并发上限 10：5 段一次全发，完成乱序仍逐片验收并按原分段顺序落位", async () => {
     const cutGates = new Map<number, ReturnType<typeof deferred>>();
     let activeCuts = 0;
     let maxActiveCuts = 0;
@@ -1529,7 +1692,7 @@ describe("模型请求前的媒体准备边界", () => {
     const runMedia = vi.fn(async (cmd: string, args: string[]) => {
       if (cmd === "ffprobe") {
         ffprobeCalls += 1;
-        return JSON.stringify({ streams: [{ index: 1 }] });
+        return JSON.stringify(makePreparedMediaProbe());
       }
       const startSec = Number(args[args.indexOf("-ss") + 1]);
       const gate = deferred();
@@ -1563,7 +1726,7 @@ describe("模型请求前的媒体准备边界", () => {
 
     const prepared = await task;
     expect(prepared.map((row) => row.startSec)).toEqual([0, 10, 20, 30, 40]);
-    expect(ffprobeCalls).toBe(1);
+    expect(ffprobeCalls).toBe(5);
     expect(deps.upload).toHaveBeenCalledTimes(5);
     // 上传已改并发，调用先后不再等于分段顺序；可断言的是「一段一次、对象名一一对应」。
     expect(vi.mocked(deps.upload).mock.calls.map((call) => call[0].objectName).sort()).toEqual(
@@ -1576,7 +1739,7 @@ describe("模型请求前的媒体准备边界", () => {
     let activeCuts = 0;
     let maxActiveCuts = 0;
     const runMedia = vi.fn(async (cmd: string, args: string[]) => {
-      if (cmd === "ffprobe") return JSON.stringify({ streams: [{ index: 1 }] });
+      if (cmd === "ffprobe") return JSON.stringify(makePreparedMediaProbe());
       const startSec = Number(args[args.indexOf("-ss") + 1]);
       const gate = deferred();
       cutGates.set(startSec, gate);
@@ -1618,7 +1781,7 @@ describe("模型请求前的媒体准备边界", () => {
     const inFlightGates = new Map<number, ReturnType<typeof deferred>>();
     const started: number[] = [];
     const runMedia = vi.fn(async (cmd: string, args: string[]) => {
-      if (cmd === "ffprobe") return JSON.stringify({ streams: [{ index: 1 }] });
+      if (cmd === "ffprobe") return JSON.stringify(makePreparedMediaProbe());
       const startSec = Number(args[args.indexOf("-ss") + 1]);
       started.push(startSec);
       if (startSec === 0) throw new Error("first segment failed");
@@ -1674,10 +1837,10 @@ describe("模型请求前的媒体准备边界", () => {
     expect(src).not.toContain("cutRows.some((row) => !row)");
   });
 
-  it("首片本地探测无音轨时整集 hasAudio=false", async () => {
+  it("切片本地验收确实无音轨时 hasAudio=false", async () => {
     const deps = makePreparationDeps({
       runMedia: vi.fn(async (cmd: string) =>
-        cmd === "ffprobe" ? JSON.stringify({ streams: [] }) : ""),
+        cmd === "ffprobe" ? JSON.stringify(makePreparedMediaProbe(10, false)) : ""),
     });
     const prepared = await prepareEpisodeVideos({
       episodeIndex: 1,
@@ -1689,12 +1852,12 @@ describe("模型请求前的媒体准备边界", () => {
   });
 });
 
-describe("分片原样上传 GCS", () => {
+describe("精确切片后逐片上传 GCS", () => {
   const MB = 1024 * 1024;
 
-  it("多片总体积超过旧预算仍逐片原样上传，不触发预转码", async () => {
+  it("多片总体积超过旧预算仍逐片上传，精确切片不按体积降清晰度", async () => {
     const runMedia = vi.fn(async (cmd: string, _args: string[]) =>
-      cmd === "ffprobe" ? JSON.stringify({ streams: [{ index: 1 }] }) : "");
+      cmd === "ffprobe" ? JSON.stringify(makePreparedMediaProbe(300)) : "");
     const statLocal = vi.fn()
       .mockResolvedValueOnce({ size: 60 * MB })
       .mockResolvedValueOnce({ size: 60 * MB });
@@ -1707,7 +1870,9 @@ describe("分片原样上传 GCS", () => {
     }, undefined, deps);
     const ffmpegCalls = runMedia.mock.calls.filter((call) => call[0] === "ffmpeg");
     expect(ffmpegCalls).toHaveLength(2);
-    expect(ffmpegCalls.flatMap((call) => call[1])).not.toContain("libx264");
+    expect(ffmpegCalls.every((call) => call[1].includes("libx264"))).toBe(true);
+    expect(ffmpegCalls.flatMap((call) => call[1])).not.toContain("-vf");
+    expect(ffmpegCalls.flatMap((call) => call[1])).not.toContain("-r");
     expect(deps.upload).toHaveBeenCalledTimes(2);
     expect(prepared.map((row) => row.bytes)).toEqual([60 * MB, 60 * MB]);
   });
@@ -1866,6 +2031,45 @@ const twoSegmentEpisode = {
 };
 
 describe("Vertex 主线：每段一次调用（不再多段合包）", () => {
+  it("单集入口319秒/12fps穿透首发、重试、尾片、提示词与段缓存指纹", async () => {
+    const segments = [{ startSec: 0, endSec: 319 }, { startSec: 319, endSec: 400 }];
+    const postVertex = makeSuccessfulEpisodePostVertex(segments)
+      .mockImplementationOnce(async () => { throw new Error("test-only retry"); });
+    const deps = makeRunnerDeps({ postVertex });
+    const sourceDigest = "a".repeat(64);
+    const result = await runManhuaNativeDeepRead({
+      seriesKey: "test_fps_series", sourceDigest, sourceDurationSec: 400, videoFps: 12,
+      resolveNodes: async () => [{ url: "https://cdn.example/full.mp4" }], segments,
+    }, deps);
+    expect(result.assemblyComplete).toBe(true);
+    expect(postVertex).toHaveBeenCalledTimes(3);
+    for (const [body] of postVertex.mock.calls) {
+      const request = body as { contents: Array<{ parts: Array<{ videoMetadata?: { fps: number }; text?: string }> }> };
+      expect(request.contents[0]!.parts[0]!.videoMetadata?.fps).toBe(12);
+      expect(request.contents[0]!.parts[1]!.text).toContain("输入按 12fps 抽帧，采样间隔约 0.0833 秒");
+    }
+    const writes = vi.mocked(deps.writeSegmentCache).mock.calls.map(([entry]) => entry);
+    expect(writes).toHaveLength(2);
+    for (const entry of writes) {
+      expect(entry.requestedFps).toBe(12);
+      const identity = {
+        sourceDigest, episodeIndex: 1, episodeDurationSec: 400, segment: segments[entry.segmentIndex]!,
+        segmentIndex: entry.segmentIndex, segmentCount: 2, hasAudio: true,
+      };
+      expect(entry.fingerprint).toBe(nativeDeepReadSegmentCacheFingerprint({ ...identity, videoFps: 12 }));
+      expect(entry.fingerprint).not.toBe(nativeDeepReadSegmentCacheFingerprint({ ...identity, videoFps: 10 }));
+    }
+  });
+
+  it("非法fps在备料与付费调用前被拒绝", async () => {
+    const deps = makeRunnerDeps();
+    await expect(runManhuaNativeDeepReadBatch({
+      episodes: [{ ...twoSegmentEpisode, videoFps: 25 }],
+    }, deps)).rejects.toThrow();
+    expect(deps.prepareVideos).not.toHaveBeenCalled();
+    expect(deps.postVertex).not.toHaveBeenCalled();
+  });
+
   it("两段=两次 Vertex 调用；gs:// 直挂；用量按段累计；合并后出集卡", async () => {
     const receipts: Array<Record<string, unknown>> = [];
     const postVertex = vi.fn(async (body: unknown) => {
@@ -2827,6 +3031,6 @@ describe("参数冻结锁（0829 用户拍板 · 非用户允许不得变更）"
   it("长镜与分片规格冻结：单条证据段 30 秒、拆分间隔 3 秒、PLAN_VERSION v16", () => {
     expect(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC).toBe(30);
     expect(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC).toBe(3);
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v20-media-medium");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-v22-exact-cut-configurable-fps");
   });
 });

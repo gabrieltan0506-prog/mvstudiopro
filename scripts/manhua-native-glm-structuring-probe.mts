@@ -4,7 +4,10 @@
  * 用法：--run=probe_full_20260828142350
  */
 import { createHash } from "node:crypto";
-import { buildNativeDeepReadGlmStructuringPrompt } from "../server/services/manhuaNativeDeepReadRunner.js";
+import {
+  buildNativeDeepReadGlmStructuringPrompt,
+  NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT,
+} from "../server/services/manhuaNativeDeepReadRunner.js";
 import { invokeGlmJsonChatWithGatewayFallback } from "../server/services/bailianChat.js";
 import {
   downloadGcsObjectVersioned,
@@ -77,6 +80,7 @@ async function main() {
     system: prompt.system,
     user: prompt.user,
     maxTokens: 131_072,
+    reasoningEffort: NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT,
     gatewayPolicy: "openrouter_only",
     timeoutMs: 30 * 60_000,
     requireParameters: true,

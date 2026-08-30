@@ -105,7 +105,13 @@ import {
   buildPendingNativeTemplateProgressCopy,
   readApprovedNativeTemplateProgress,
 } from "@/lib/manhuaNativeTemplateProgress";
-import { NATIVE_DEEP_READ_JOB_MAX_CALLS } from "@shared/manhuaNativeDeepReadJob";
+import {
+  NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS,
+  NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS,
+  NATIVE_DEEP_READ_JOB_MAX_CALLS,
+  NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS,
+  NATIVE_DEEP_READ_MAX_VIDEO_FPS,
+} from "@shared/manhuaNativeDeepReadJob";
 import { formatManhuaTemplateNativeBeatZh } from "@/lib/manhuaTemplateNativeBeat";
 import { trpc } from "@/lib/trpc";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
@@ -147,14 +153,22 @@ import {
   mergeManhuaLearnServerJobsIntoBasket,
   nativeLearnTerminalProposalRefreshSignature,
   parseManhuaNativeModelReceipts,
+  parseManhuaLearnSegmentSecondsInput,
+  parseManhuaLearnVideoFpsInput,
   readManhuaLearnActiveJob,
   readManhuaLearnBasket,
   readManhuaLearnFocusSeriesKey,
   readManhuaLearnMissingDismissedKeys,
   readManhuaLearnResult,
+  readManhuaLearnSegmentSeconds,
+  readManhuaLearnVideoFps,
   removeManhuaLearnBasketItem,
   resolveManhuaLearnBasketFocusKey,
   resolveManhuaLearnReloadDecision,
+  resolveManhuaLearnSnapshotSegmentSeconds,
+  resolveManhuaLearnSnapshotVideoFps,
+  restoreManhuaLearnSegmentSeconds,
+  restoreManhuaLearnVideoFps,
   reuseManhuaLearnResultIfUnchanged,
   reuseManhuaLearnServerJobsIfUnchanged,
   upsertManhuaLearnBasketItem,
@@ -163,6 +177,8 @@ import {
   writeManhuaLearnFocusSeriesKey,
   writeManhuaLearnMissingDismissedKeys,
   writeManhuaLearnResult,
+  writeManhuaLearnSegmentSeconds,
+  writeManhuaLearnVideoFps,
   type ManhuaLearnActiveJobRecord,
   type ManhuaLearnBasketItem,
   type ManhuaLearnResultUi,
@@ -2135,6 +2151,8 @@ type ManhuaLearnContinuation = {
   rank: number;
   /** 服务端真实系列 key；首次入队前可能为空，终态回写后用于防止串剧续跑。 */
   seriesKey?: string;
+  nativeSegmentSeconds?: number;
+  nativeVideoFps?: number;
   savedAt: number;
 };
 
@@ -2256,6 +2274,8 @@ function readManhuaLearnContinuation(userKey: string): ManhuaLearnContinuation |
       },
       rank: Math.max(0, Math.floor(Number(parsed.rank) || 0)),
       seriesKey: String(parsed.seriesKey || "").trim() || undefined,
+      nativeSegmentSeconds: restoreManhuaLearnSegmentSeconds(parsed.nativeSegmentSeconds),
+      nativeVideoFps: restoreManhuaLearnVideoFps(parsed.nativeVideoFps),
       savedAt,
     };
   } catch {
@@ -2287,6 +2307,8 @@ function writeManhuaLearnContinuation(
         },
         rank: value.rank,
         seriesKey: value.seriesKey || undefined,
+        nativeSegmentSeconds: value.nativeSegmentSeconds,
+        nativeVideoFps: value.nativeVideoFps,
         savedAt: value.savedAt,
       }),
     );
@@ -2537,6 +2559,13 @@ export default function PlatformPage() {
   const [manhuaPasteUrl, setManhuaPasteUrl] = useState("");
   const [manhuaPasteTitle, setManhuaPasteTitle] = useState("");
   const [manhuaLearnBatchSize, setManhuaLearnBatchSize] = useState(readManhuaLearnBatchSize);
+  const [manhuaLearnSegmentSecondsInput, setManhuaLearnSegmentSecondsInput] = useState(String(NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS));
+  const [manhuaLearnSegmentSecondsError, setManhuaLearnSegmentSecondsError] = useState("");
+  /** 设置是下一任务草稿；后台轮询不能覆盖用户正在编辑的值。 */
+  const manhuaLearnSegmentSecondsEditedRef = useRef(false);
+  const [manhuaLearnVideoFpsInput, setManhuaLearnVideoFpsInput] = useState(String(NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS));
+  const [manhuaLearnVideoFpsError, setManhuaLearnVideoFpsError] = useState("");
+  const manhuaLearnVideoFpsEditedRef = useRef(false);
   const [manhuaLearnFocusSeriesKey, setManhuaLearnFocusSeriesKey] = useState("");
   const [manhuaLearnPanelCollapsed, setManhuaLearnPanelCollapsed] = useState(false);
   const [manhuaLearnResult, setManhuaLearnResult] = useState<ManhuaLearnResultUi | null>(null);
@@ -2561,6 +2590,12 @@ export default function PlatformPage() {
     setManhuaLearnBusyKey(null);
     setManhuaPasteUrl("");
     setManhuaPasteTitle("");
+    manhuaLearnSegmentSecondsEditedRef.current = false;
+    setManhuaLearnSegmentSecondsInput(String(readManhuaLearnSegmentSeconds(manhuaLearnUserKey)));
+    setManhuaLearnSegmentSecondsError("");
+    manhuaLearnVideoFpsEditedRef.current = false;
+    setManhuaLearnVideoFpsInput(String(readManhuaLearnVideoFps(manhuaLearnUserKey)));
+    setManhuaLearnVideoFpsError("");
     setManhuaLearnServerJobs([]);
     setManhuaLearnServerJobsHydrated(false);
     setManhuaLearnControlBusy(null);
@@ -2603,6 +2638,13 @@ export default function PlatformPage() {
     const continuation = decision.restoreContinuation
       ? readManhuaLearnContinuation(manhuaLearnUserKey)
       : null;
+    const restoredSettings = activeJob?.continuation
+      || continuation
+      || storedBasket.find((item) => item.seriesKey === decision.focusSeriesKey)?.continuation;
+    if (restoredSettings) {
+      setManhuaLearnSegmentSecondsInput(String(restoreManhuaLearnSegmentSeconds(restoredSettings.nativeSegmentSeconds)));
+      setManhuaLearnVideoFpsInput(String(restoreManhuaLearnVideoFps(restoredSettings.nativeVideoFps)));
+    }
     if (decision.clearFailedAutoResume) {
       writeManhuaLearnFocusSeriesKey(manhuaLearnUserKey, "");
       writeManhuaLearnResult(manhuaLearnUserKey, null);
@@ -3390,6 +3432,14 @@ export default function PlatformPage() {
         (item) => item.seriesKey === manhuaLearnFocusSeriesKeyRef.current,
       );
       if (focused) {
+        manhuaLearnContinueRef.current = focused.continuation;
+        writeManhuaLearnContinuation(requestUserKey, focused.continuation);
+        if (!manhuaLearnSegmentSecondsEditedRef.current) {
+          setManhuaLearnSegmentSecondsInput(String(restoreManhuaLearnSegmentSeconds(focused.continuation.nativeSegmentSeconds)));
+        }
+        if (!manhuaLearnVideoFpsEditedRef.current) {
+          setManhuaLearnVideoFpsInput(String(restoreManhuaLearnVideoFps(focused.continuation.nativeVideoFps)));
+        }
         setManhuaLearnResult((prev) =>
           reuseManhuaLearnResultIfUnchanged(prev, focused.result));
       }
@@ -3624,10 +3674,22 @@ export default function PlatformPage() {
         },
         rank: 0,
         seriesKey: manhuaLearnFocusSeriesKey,
+        nativeSegmentSeconds: resolveManhuaLearnSnapshotSegmentSeconds(
+          manhuaLearnContinueRef.current, manhuaLearnFocusSeriesKey, persistedSourceUrl,
+        ),
+        nativeVideoFps: resolveManhuaLearnSnapshotVideoFps(
+          manhuaLearnContinueRef.current, manhuaLearnFocusSeriesKey, persistedSourceUrl,
+        ),
         savedAt: Date.now(),
       };
       manhuaLearnContinueRef.current = continuation;
       writeManhuaLearnContinuation(manhuaLearnUserKey, continuation);
+      if (!manhuaLearnSegmentSecondsEditedRef.current) {
+        setManhuaLearnSegmentSecondsInput(String(continuation.nativeSegmentSeconds));
+      }
+      if (!manhuaLearnVideoFpsEditedRef.current) {
+        setManhuaLearnVideoFpsInput(String(continuation.nativeVideoFps));
+      }
     }
     setManhuaLearnResult((prev) => {
       // 本轮 Job / 失败态优先：勿被空 GCS 快照盖成「尚无已学分集」
@@ -3683,8 +3745,16 @@ export default function PlatformPage() {
       const continuation: ManhuaLearnContinuation = {
         ...item.continuation,
         seriesKey: item.seriesKey,
+        nativeSegmentSeconds: restoreManhuaLearnSegmentSeconds(item.continuation.nativeSegmentSeconds),
+        nativeVideoFps: restoreManhuaLearnVideoFps(item.continuation.nativeVideoFps),
         savedAt: Date.now(),
       };
+      manhuaLearnSegmentSecondsEditedRef.current = false;
+      setManhuaLearnSegmentSecondsInput(String(restoreManhuaLearnSegmentSeconds(continuation.nativeSegmentSeconds)));
+      setManhuaLearnSegmentSecondsError("");
+      manhuaLearnVideoFpsEditedRef.current = false;
+      setManhuaLearnVideoFpsInput(String(restoreManhuaLearnVideoFps(continuation.nativeVideoFps)));
+      setManhuaLearnVideoFpsError("");
       manhuaLearnContinueRef.current = continuation;
       writeManhuaLearnContinuation(manhuaLearnUserKey, continuation);
       setManhuaLearnResult(item.result);
@@ -5679,6 +5749,28 @@ export default function PlatformPage() {
         setManhuaLearnBusyKey(null);
         return;
       }
+      let nativeSegmentSeconds: number;
+      try {
+        nativeSegmentSeconds = parseManhuaLearnSegmentSecondsInput(manhuaLearnSegmentSecondsInput);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "分片秒数无效";
+        setManhuaLearnSegmentSecondsError(message);
+        toast.error(message, { description: "本次未建立任务；请修正分片秒数。" });
+        return;
+      }
+      setManhuaLearnSegmentSecondsError("");
+      let nativeVideoFps: number;
+      try {
+        nativeVideoFps = parseManhuaLearnVideoFpsInput(manhuaLearnVideoFpsInput);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "采样fps无效";
+        setManhuaLearnVideoFpsError(message);
+        toast.error(message, { description: "本次未建立任务；请修正采样fps。" });
+        return;
+      }
+      setManhuaLearnVideoFpsError("");
+      writeManhuaLearnSegmentSeconds(requestUserKey, nativeSegmentSeconds);
+      writeManhuaLearnVideoFps(requestUserKey, nativeVideoFps);
       if (nativeGate === "ready") {
         // 点击即建立真实后台任务；worker 会在同一任务内完成素材、集数、占位与调用上限校验。
         // 这里不再先调用前端预演接口，也不再弹出第二次确认框。
@@ -5686,12 +5778,16 @@ export default function PlatformPage() {
           nativeDeepReadConfirmed: true,
           nativeMaxCalls: NATIVE_DEEP_READ_JOB_MAX_CALLS,
           nativePlanLimit: manhuaLearnBatchSize,
+          nativeSegmentSeconds,
+          nativeVideoFps,
         };
       }
       const continuation: ManhuaLearnContinuation = {
         row: { ...row },
         rank,
         seriesKey: String(resumeSeriesKey || "").trim() || undefined,
+        nativeSegmentSeconds,
+        nativeVideoFps,
         savedAt: Date.now(),
       };
       manhuaLearnContinueRef.current = continuation;
@@ -5806,6 +5902,8 @@ export default function PlatformPage() {
       copyManhuaLocalLearnFallback,
       refreshManhuaLearnServerJobs,
       manhuaLearnBatchSize,
+      manhuaLearnSegmentSecondsInput,
+      manhuaLearnVideoFpsInput,
       manhuaLearnUserKey,
       ownerTemplateOptimizeAllowed,
       manhuaTemplateOwnerCapabilitiesQuery.isError,
@@ -5833,6 +5931,12 @@ export default function PlatformPage() {
     manhuaLearnPollingJobIdRef.current = jobId;
     manhuaLearnContinueRef.current = continuation;
     writeManhuaLearnContinuation(manhuaLearnUserKey, continuation);
+    if (!manhuaLearnSegmentSecondsEditedRef.current) {
+      setManhuaLearnSegmentSecondsInput(String(restoreManhuaLearnSegmentSeconds(continuation.nativeSegmentSeconds)));
+    }
+    if (!manhuaLearnVideoFpsEditedRef.current) {
+      setManhuaLearnVideoFpsInput(String(restoreManhuaLearnVideoFps(continuation.nativeVideoFps)));
+    }
     setTrendInsightTab("ai_manhua");
     setManhuaLearnBusyKey(busyKey);
     if (continuation.seriesKey) {
@@ -12411,6 +12515,72 @@ export default function PlatformPage() {
                         <span className="text-[10px] text-[#c9c0e6]/50">
                           可选 {manhuaLearnPipelineMeta.batchMin}–{manhuaLearnPipelineMeta.batchMax} 集，默认 {manhuaLearnPipelineMeta.batchDefault}；连续失败 8 集自动停止
                         </span>
+                        {ownerNativeDeepReadPanel ? (
+                          <>
+                            <label htmlFor="manhua-learn-segment-seconds" className="text-[11px] font-semibold text-[#c9c0e6]/90">
+                              每片最长秒数
+                            </label>
+                            <input
+                              id="manhua-learn-segment-seconds"
+                              type="number"
+                              min={1}
+                              max={NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS}
+                              step={1}
+                              value={manhuaLearnSegmentSecondsInput}
+                              disabled={Boolean(manhuaLearnBusyKey)}
+                              aria-invalid={Boolean(manhuaLearnSegmentSecondsError)}
+                              aria-describedby="manhua-learn-segment-seconds-help"
+                              onChange={(event) => {
+                                setManhuaLearnSegmentSecondsInput(event.target.value);
+                                manhuaLearnSegmentSecondsEditedRef.current = true;
+                                setManhuaLearnSegmentSecondsError("");
+                                try {
+                                  writeManhuaLearnSegmentSeconds(manhuaLearnUserKey, parseManhuaLearnSegmentSecondsInput(event.target.value));
+                                } catch {
+                                  // 输入中的空值、小数或越界值原样保留，发车前明确报错。
+                                }
+                              }}
+                              className="w-24 rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] tabular-nums text-white disabled:opacity-45"
+                            />
+                            <span id="manhua-learn-segment-seconds-help" className="text-[10px] text-[#c9c0e6]/50">
+                              1–{NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS} 秒，默认 {NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS}；尾片完整保留。分片时长与采样fps分别设置，不自动换档。
+                            </span>
+                            {manhuaLearnSegmentSecondsError ? (
+                              <span role="alert" className="text-[10px] text-rose-200">{manhuaLearnSegmentSecondsError}</span>
+                            ) : null}
+                            <label htmlFor="manhua-learn-video-fps" className="text-[11px] font-semibold text-[#c9c0e6]/90">
+                              采样fps
+                            </label>
+                            <input
+                              id="manhua-learn-video-fps"
+                              type="number"
+                              min={0}
+                              max={NATIVE_DEEP_READ_MAX_VIDEO_FPS}
+                              step={0.1}
+                              value={manhuaLearnVideoFpsInput}
+                              disabled={Boolean(manhuaLearnBusyKey)}
+                              aria-invalid={Boolean(manhuaLearnVideoFpsError)}
+                              aria-describedby="manhua-learn-video-fps-help"
+                              onChange={(event) => {
+                                setManhuaLearnVideoFpsInput(event.target.value);
+                                manhuaLearnVideoFpsEditedRef.current = true;
+                                setManhuaLearnVideoFpsError("");
+                                try {
+                                  writeManhuaLearnVideoFps(manhuaLearnUserKey, parseManhuaLearnVideoFpsInput(event.target.value));
+                                } catch {
+                                  // 非法输入原样保留，发车前明确报错，不回落默认值。
+                                }
+                              }}
+                              className="w-20 rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] tabular-nums text-white disabled:opacity-45"
+                            />
+                            <span id="manhua-learn-video-fps-help" className="text-[10px] text-[#c9c0e6]/50">
+                              大于0且不超过{NATIVE_DEEP_READ_MAX_VIDEO_FPS}，默认{NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS}。设置只影响下次启动，运行中任务保留原参数；旧设置缺失或损坏时恢复默认。
+                            </span>
+                            {manhuaLearnVideoFpsError ? (
+                              <span role="alert" className="text-[10px] text-rose-200">{manhuaLearnVideoFpsError}</span>
+                            ) : null}
+                          </>
+                        ) : null}
                         <span className="rounded-md border border-[#8cefff]/20 bg-black/25 px-2 py-1 text-[10px] font-semibold text-[#8cefff]">
                           学习模型：Gemini 3.1 Pro · 原生视频精读
                         </span>

@@ -2,7 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   NATIVE_DEEP_READ_GENERATION_CONFIG,
   NATIVE_DEEP_READ_RETRY_TEMPERATURES,
+  assertNativeDeepReadPreparedMedia,
 } from "./manhuaNativeDeepReadRunner.js";
+import type { NativeProbeManifest } from "./manhuaNativeDeepReadProbeManifest.js";
 import {
   validateNativeProbeGenerationConfig,
   type NativeProbeGenerationConfigValidation,
@@ -28,6 +30,83 @@ const sensitiveKey = /^(?:headers?|authorization|proxyauthorization|cookie|setco
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+type NativeProbeMediaVersion = { bucket: string; objectName: string; generation: string; etag?: string };
+type NativeProbeMediaEvidence = { objectName: string; bytes: number; sha256: string; generation: string };
+type NativeProbeMediaDeps = {
+  stat: (gsUri: string) => Promise<NativeProbeMediaVersion>;
+  sign: (gsUri: string) => string | Promise<string>;
+  probe: (signedUrl: string) => Promise<string>;
+  persist: (input: { segmentIndex: number; kind: "raw" | "parsed"; text: string }) => Promise<NativeProbeMediaEvidence>;
+};
+
+/**
+ * 已有分片也执行生产媒体验收；全部通过才返回可供注入的事实。
+ * 这里只证明媒体时长、局部零位、音轨与字节，不证明素材相对源片的绝对内容偏移。
+ */
+export async function verifyNativeProbeManifestMedia(manifest: NativeProbeManifest, deps: NativeProbeMediaDeps) {
+  const verified: Array<NativeProbeMediaVersion & {
+    gsUri: string;
+    media: { durationSec: number; hasAudio: boolean; bytes: number };
+    rawEvidence: NativeProbeMediaEvidence;
+    parsedEvidence: NativeProbeMediaEvidence;
+  }> = [];
+  for (const segment of manifest.segments) {
+    const label = `第${segment.segmentIndex + 1}片`;
+    const io = async <T>(stage: string, action: () => Promise<T>): Promise<T> => {
+      try { return await action(); }
+      catch {
+        // ffprobe/签名错误可能包含完整命令与签名URL，不传原错误或cause到日志。
+        throw new Error(`${label}${stage}失败，未启动模型调用`);
+      }
+    };
+    const persist = async (kind: "raw" | "parsed", text: string) => {
+      const evidence = await io(`媒体${kind}证据保存`, () => deps.persist({ segmentIndex: segment.segmentIndex, kind, text }));
+      if (!evidence.objectName || !evidence.generation
+        || evidence.bytes !== Buffer.byteLength(text)
+        || evidence.sha256 !== createHash("sha256").update(text).digest("hex")) {
+        throw new Error(`${label}媒体证据落盘回执不完整或不匹配，未启动模型调用`);
+      }
+      return evidence;
+    };
+    const before = await io("对象版本读取", () => deps.stat(segment.gsUri));
+    const signedUrl = await io("媒体签名", async () => deps.sign(segment.gsUri));
+    const rawText = await io("媒体探测", () => deps.probe(signedUrl));
+    // 原始stdout先可靠保存；坏JSON或共享判据失败也不能丢掉已得到的证据。
+    const rawEvidence = await persist("raw", rawText);
+    let metadata: unknown;
+    try { metadata = JSON.parse(rawText); }
+    catch { throw new Error(`${label}媒体元数据JSON无法解析，原文已保留，未启动模型调用`); }
+    const measured = assertNativeDeepReadPreparedMedia(metadata, {
+      durationSec: segment.endSec - segment.startSec,
+      isEpisodeTail: Math.abs(segment.endSec - manifest.sourceDurationSec) < 0.001,
+    });
+    const format = isRecord(metadata) && isRecord(metadata.format) ? metadata.format : {};
+    const bytes = (typeof format.size === "number" || (typeof format.size === "string" && format.size.trim()))
+      ? Number(format.size) : NaN;
+    if (!Number.isSafeInteger(bytes) || bytes <= 0 || bytes !== segment.bytes) {
+      throw new Error(`${label}实测媒体字节数与清单不一致，未启动模型调用`);
+    }
+    if (measured.hasAudio !== segment.hasAudio) {
+      throw new Error(`${label}实测音轨存在性与清单不一致，未启动模型调用`);
+    }
+    const after = await io("对象版本复核", () => deps.stat(segment.gsUri));
+    if (after.generation !== before.generation || after.bucket !== before.bucket || after.objectName !== before.objectName) {
+      throw new Error(`${label}媒体探测期间对象版本发生变化，未启动模型调用`);
+    }
+    const media = { ...measured, bytes };
+    const parsedEvidence = await persist("parsed", JSON.stringify({
+      segmentIndex: segment.segmentIndex, gsUri: segment.gsUri, sourceGeneration: before.generation,
+      startSec: segment.startSec, endSec: segment.endSec, media, rawEvidence,
+      sourceContentOffsetVerified: false,
+    }));
+    verified.push({ ...before, gsUri: segment.gsUri, media, rawEvidence, parsedEvidence });
+  }
+  if (new Set(verified.map((row) => row.media.hasAudio)).size !== 1) {
+    throw new Error("各分片实测音轨存在性不一致，未启动模型调用");
+  }
+  return verified;
 }
 
 /** 不读环境凭证、不截断正文；只隐藏鉴权字段、私钥和签名地址。 */
@@ -144,6 +223,8 @@ export function assertNativeProbeImage(expectedCommit: unknown, imageRef: unknow
 }
 
 export const NATIVE_PROBE_ATTESTATION_REQUIRED_PATHS = [
+  "shared/manhuaNativeDeepReadJob.ts",
+  "server/services/manhuaNativeDeepReadPlan.ts",
   "server/services/manhuaNativeDeepReadRunner.ts",
   "server/services/manhuaNativeDeepReadProbeChecks.ts",
   "server/services/manhuaNativeDeepReadProbeManifest.ts",

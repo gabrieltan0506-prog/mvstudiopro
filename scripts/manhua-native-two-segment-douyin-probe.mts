@@ -3,6 +3,8 @@
  *
  * 只允许在 Fly 内执行：凭证从服务端环境读取。视频 MP4 仅供本轮模型调用，
  * --gcs-manifest=<文件> 复用已有分片，不解析片源、不切片、不删除输入对象。
+ * --segment-seconds=<整数> 与生产共用分片长度，省略默认300秒；清单模式省略则保留原边界。
+ * --fps=<数值> 独立配置视频采样率，省略默认10；不会根据分片长度自动降采样。
  * 上游完整响应、解析后段证据、实际请求审计与核对摘要永久保存在 GCS。
  */
 import { createHash, randomUUID } from "node:crypto";
@@ -15,7 +17,6 @@ import {
   NATIVE_DEEP_READ_GENERATION_CONFIG,
   NATIVE_DEEP_READ_RETRY_TEMPERATURES,
   NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC,
-  NATIVE_DEEP_READ_SEGMENT_FULL_LENGTH_SEC,
   NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY,
   NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
   buildGeminiNativeDeepReadSegmentRequest,
@@ -41,12 +42,17 @@ import {
 import {
   createNativeProbeAuditedPost,
   assertNativeProbeImage,
+  verifyNativeProbeManifestMedia,
   verifyNativeProbeSourceAttestation,
 } from "../server/services/manhuaNativeDeepReadProbeRuntime.js";
 import {
   probeNativeDeepReadDurationSec,
   splitNativeDeepReadSegments,
 } from "../server/services/manhuaNativeDeepReadPlan.js";
+import {
+  parseNativeDeepReadSegmentSeconds,
+  parseNativeDeepReadVideoFps,
+} from "../shared/manhuaNativeDeepReadJob.js";
 import { fetchDouyinAwemeDetailViaWebApi } from "../server/services/manhuaLearnDouyinWebApi.js";
 import { fetchManhua0996EpisodePlayback } from "../server/services/manhuaLearn0996Source.js";
 import {
@@ -66,6 +72,30 @@ const run = promisify(execFile);
 const stringArg = (name: string) => process.argv.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3) || "";
 const execute = process.argv.includes("--execute");
 const manifestPath = stringArg("gcs-manifest");
+// 显式非法输入不能被空值兜底吞掉；只有完全省略参数才使用生产默认。
+const segmentSecondsArgs = process.argv.filter((arg) => arg === "--segment-seconds" || arg.startsWith("--segment-seconds="));
+if (segmentSecondsArgs.length > 1 || segmentSecondsArgs[0] === "--segment-seconds") {
+  throw new Error("--segment-seconds 必须且只能使用一次 --segment-seconds=<整数秒> 形式");
+}
+const segmentSeconds = (() => {
+  try {
+    return parseNativeDeepReadSegmentSeconds(segmentSecondsArgs[0]?.slice("--segment-seconds=".length));
+  } catch (error) {
+    throw new Error(`--segment-seconds 无效：${error instanceof Error ? error.message : "分片长度必须是整数秒"}`);
+  }
+})();
+const requestedSegmentSeconds = segmentSecondsArgs.length ? segmentSeconds : null;
+const fpsArgs = process.argv.filter((arg) => arg === "--fps" || arg.startsWith("--fps="));
+if (fpsArgs.length > 1 || fpsArgs[0] === "--fps") {
+  throw new Error("--fps 必须且只能使用一次 --fps=<数值> 形式");
+}
+const requestedVideoFps = (() => {
+  try {
+    return parseNativeDeepReadVideoFps(fpsArgs[0]?.slice("--fps=".length));
+  } catch (error) {
+    throw new Error(`--fps 无效：${error instanceof Error ? error.message : "视频采样率不合法"}`);
+  }
+})();
 const SOURCE = String(
   process.argv.find((arg) => arg.startsWith("--url="))?.slice("--url=".length) || "",
 ).trim();
@@ -253,11 +283,25 @@ const record = (id: CheckId, nameZh: string, status: CheckStatus, actualZh: stri
 async function main() {
   const manifest = manifestPath
     ? parseNativeProbeManifest(JSON.parse(await readFile(manifestPath, "utf8"))) : undefined;
+  if (manifest && requestedSegmentSeconds !== null) {
+    const expected = splitNativeDeepReadSegments(manifest.sourceDurationSec, requestedSegmentSeconds);
+    if (expected.length !== manifest.segments.length || expected.some((segment, index) => (
+      Math.abs(segment.startSec - manifest.segments[index]!.startSec) > 1e-6
+      || Math.abs(segment.endSec - manifest.segments[index]!.endSec) > 1e-6
+    ))) {
+      throw new Error(`清单边界与 --segment-seconds=${requestedSegmentSeconds} 不一致，禁止改写清单或重新切片`);
+    }
+  }
+  const effectiveSegmentSeconds = manifest && requestedSegmentSeconds === null ? null : segmentSeconds;
+  const describeSegments = (ranges: ReadonlyArray<{ startSec: number; endSec: number }>) => ranges.map(({ startSec, endSec }, segmentIndex) => ({
+    segmentIndex, startSec, endSec, durationSec: endSec - startSec,
+    fps: resolveNativeDeepReadRequestFps(endSec - startSec, requestedVideoFps),
+  }));
   // 检查经过生产请求构造器及 JSON 序列化后的对象，不拿常量与自身比较。
   const preflightRequest = JSON.parse(JSON.stringify(buildGeminiNativeDeepReadSegmentRequest({
     fileUri: manifest?.segments[0]?.gsUri || "gs://probe-preflight/never-sent.mp4",
     fps: resolveNativeDeepReadRequestFps(manifest
-      ? manifest.segments[0]!.endSec - manifest.segments[0]!.startSec : 300),
+      ? manifest.segments[0]!.endSec - manifest.segments[0]!.startSec : segmentSeconds, requestedVideoFps),
     prompt: "仅校验请求，不发送模型调用",
   })));
   const p1 = validateNativeProbeGenerationConfig(
@@ -271,10 +315,11 @@ async function main() {
       mode: "preflight_only", paidCalls: 0, acceptanceStatus: "not_run",
       planVersion: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
       schemaSha256: createHash("sha256").update(JSON.stringify(preflightRequest.generationConfig.responseSchema)).digest("hex"),
+      segmentSeconds: effectiveSegmentSeconds, requestedSegmentSeconds,
+      videoFps: requestedVideoFps,
+      fps: preflightRequest.contents[0].parts[0].videoMetadata.fps,
       manifestValidated: Boolean(manifest), segmentCount: manifest?.segments.length ?? null,
-      segmentPlans: manifest?.segments.map(({ segmentIndex, startSec, endSec }) => ({
-        segmentIndex, startSec, endSec, fps: resolveNativeDeepReadRequestFps(endSec - startSec),
-      })),
+      segmentPlans: manifest ? describeSegments(manifest.segments) : undefined,
       noteZh: "仅预检通过，不代表实弹验收通过；执行前须核对远端 PR HEAD、干净工作树和运行镜像并取得费用确认",
     }, null, 2));
     return;
@@ -294,26 +339,47 @@ async function main() {
   const { mediaUrl, durationSec, kindZh, referer: mediaReferer } = source;
   console.info(`[probe] 阶段：${kindZh}，时长 ${durationSec} 秒`);
   const segments = manifest?.segments.map(({ startSec, endSec }) => ({ startSec, endSec }))
-    ?? splitNativeDeepReadSegments(durationSec);
+    ?? splitNativeDeepReadSegments(durationSec, segmentSeconds);
+  const segmentPlans = describeSegments(segments);
   const coveredEnd = segments[segments.length - 1]!.endSec;
   const sourceDigest = manifest?.sourceDigest ?? makeSourceDigest(coveredEnd);
-  console.info(`[probe] 建单：series=${seriesKey} · 分段 ${segments.map((s) => `${s.startSec}–${s.endSec}`).join(" / ")} · 原始 JSON 永久保留`);
+  console.info(`[probe] 建单：series=${seriesKey} · 分段 ${segmentPlans.map((s) => `${s.startSec}–${s.endSec}（${s.durationSec}秒/${s.fps}fps）`).join(" / ")} · 原始 JSON 永久保留`);
 
   const videoPrefix = "manhua-template-learn/tmp/native-deep-read/";
   const videosBefore = new Set(await listGcsObjectNamesByPrefix({
     prefix: videoPrefix, literalPrefix: true, maxResults: 1_000,
   }));
 
-  const inputVideoVersions = manifest ? await Promise.all(manifest.segments.map(async (segment) => ({
-    gsUri: segment.gsUri, ...await statGcsObjectVersion({ gcsUri: segment.gsUri }),
-  }))) : [];
+  const inputVideoVersions = manifest ? await verifyNativeProbeManifestMedia(manifest, {
+    stat: (gsUri) => statGcsObjectVersion({ gcsUri: gsUri }),
+    sign: (gsUri) => signGsUriV4ReadUrl(gsUri),
+    probe: async (signedUrl) => {
+      const { stdout } = await run("ffprobe", [
+        "-v", "error", "-show_entries",
+        "format=start_time,duration,size:stream=codec_type,start_time,duration,width,height,avg_frame_rate",
+        "-of", "json", "-i", signedUrl,
+      ], { timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
+      return stdout;
+    },
+    persist: async ({ segmentIndex, kind, text }) => {
+      const objectName = `manhua-template-learn/probes/${seriesKey}/media-metadata/seg${segmentIndex}/${kind}.json`;
+      const buffer = Buffer.from(text, "utf8");
+      const saved = await uploadBufferToGcsIfAbsent({ bucket, objectName, contentType: "application/json", buffer });
+      if (!saved.created) throw new Error("媒体证据对象已存在，禁止覆盖");
+      const generation = saved.generation ?? (await statGcsObjectVersion({ gcsUri: `gs://${bucket}/${objectName}` })).generation;
+      const evidence = { objectName, generation, bytes: buffer.byteLength, sha256: createHash("sha256").update(buffer).digest("hex") };
+      console.info(`[probe] 媒体${kind}证据 ${JSON.stringify(evidence)}`);
+      return evidence;
+    },
+  }) : [];
   const requestAudits: Array<{ objectName: string; requestSha256: string | null; status: string }> = [];
   let requestNumber = 0;
   const persistRequestAudit = async (audit: Parameters<Parameters<typeof createNativeProbeAuditedPost>[1]>[0]) => {
     const objectName = `manhua-template-learn/probes/${seriesKey}/requests/request-${++requestNumber}.json`;
     const saved = await uploadBufferToGcsIfAbsent({
       bucket, objectName, contentType: "application/json",
-      buffer: Buffer.from(JSON.stringify({ ...audit, runtimeIdentity, sourceAttestation, sourceDigest, planVersion: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION })),
+      buffer: Buffer.from(JSON.stringify({ ...audit, runtimeIdentity, sourceAttestation, sourceDigest, planVersion: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
+        segmentSeconds: effectiveSegmentSeconds, requestedSegmentSeconds, videoFps: requestedVideoFps, segmentPlans })),
     });
     if (!saved.created) throw new Error("请求审计对象已存在，拒绝覆盖及发车");
     requestAudits.push({ objectName, requestSha256: audit.requestSha256, status: audit.validation.status });
@@ -332,6 +398,8 @@ async function main() {
       }
       return manifest.segments.map((segment, index) => ({
         ...segment,
+        bytes: inputVideoVersions[index]!.media.bytes,
+        hasAudio: inputVideoVersions[index]!.media.hasAudio,
         temporaryGcs: { bucket: inputVideoVersions[index]!.bucket, objectName: inputVideoVersions[index]!.objectName },
       }));
     };
@@ -353,6 +421,7 @@ async function main() {
       },
       preservePreparedVideos: Boolean(manifest),
       segments,
+      videoFps: requestedVideoFps,
       sourceDurationSec: coveredEnd,
       hintZh: "抖音漫剧完整视听证据探针；按真实镜头、表演、光影、声音和叙事变化记录",
       // 🔓 并发上限：命令行给了就用命令行的，没给就走生产默认（切段 10 / 上传 4 / 扇出 10）。
@@ -592,6 +661,8 @@ async function main() {
   const overlong: string[] = [];
   const audioThin: string[] = [];
   const tailSegments: string[] = [];
+  // 自定义短片不能全被叫作尾片；已有不规则清单只据实际最长片核对最后一片。
+  const nominalSegmentSeconds = effectiveSegmentSeconds ?? Math.max(...segmentPlans.map((row) => row.durationSec));
   for (const { segmentIndex, card } of parsedCards) {
     for (const row of objectRows(card.advisories)) {
       advisoriesDetail.push({
@@ -616,7 +687,7 @@ async function main() {
     });
     const audioFloor = resolveNativeDeepReadSegmentFloors(lenSec).minAudioTracks;
     if (lenSec > 0 && tracks.length < audioFloor) audioThin.push(`第${segmentIndex + 1}段 ${tracks.length}/${audioFloor} 段`);
-    if (lenSec > 0 && lenSec < NATIVE_DEEP_READ_SEGMENT_FULL_LENGTH_SEC) {
+    if (segmentIndex === segments.length - 1 && lenSec > 0 && lenSec < nominalSegmentSeconds - 1e-6) {
       tailSegments.push(`第${segmentIndex + 1}段 ${Math.round(lenSec)}秒 ${shots.length}镜`);
     }
   }
@@ -769,6 +840,10 @@ async function main() {
     sourceDigest,
     sourceVideoId: manifest ? undefined : VIDEO_ID || PAGE_URL,
     sourceDurationSec: durationSec,
+    segmentSeconds: effectiveSegmentSeconds,
+    requestedSegmentSeconds,
+    videoFps: requestedVideoFps,
+    segmentPlans,
     ranges: segments.map((s) => [s.startSec, s.endSec]),
     status: runError ? "failed" : "completed",
     error: runError ? sanitizeSensitiveText(runError) : undefined,
