@@ -346,20 +346,20 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
 } as const;
 
 /**
- * 参数冻结（2026-08-30 定稿，非用户明确允许不得变更）。
+ * 首发温度单变量候选（2026-08-31 用户授权），待实测，不是已验收冻结值。
  *
- * 冻结项：temperature 0.65 · maxOutputTokens 65_536 · candidateCount 1 ·
+ * 本轮仅将首发 temperature 从 0.65 调为 0.70；后两次仍为 0.60、0.55。
+ * 保持 maxOutputTokens 65_536 · candidateCount 1 ·
  * audioTimestamp true · responseMimeType/responseSchema ·
- * thinkingConfig { thinkingLevel: "MEDIUM", includeThoughts: false } ·
- * 重试梯度 [0.65, 0.6, 0.55] · PLAN_VERSION。
+ * thinkingConfig { thinkingLevel: "MEDIUM", includeThoughts: false } 及其余请求内容不变。
  *
  * 早期的 thinkingBudget 与禁止 thinkingLevel 口径已被本次 MEDIUM 定稿替代。
  * 变更流程见知识库《schema动刀纪律》：改一字＝新版本＝旧缓存作废＝需重新探针实测。
- * 冻结由 manhuaNativeDeepReadRunner.test.ts「参数冻结锁」逐字段断言看守。
+ * 单变量边界由 manhuaNativeDeepReadRunner.test.ts 的基线请求字节对照检查。
  */
 export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
-  // 当前冻结首发温度；重试温度以 NATIVE_DEEP_READ_RETRY_TEMPERATURES 为准。
-  temperature: 0.65,
+  // 待验首发候选；重试温度仍以 NATIVE_DEEP_READ_RETRY_TEMPERATURES 为准。
+  temperature: 0.7,
   maxOutputTokens: 65_536,
   candidateCount: 1,
   audioTimestamp: true,
@@ -389,10 +389,10 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
 } as const;
 
 /**
- * 同一 Vertex 分片至多三档：0.65 → 0.60 → 0.55。
+ * 待验候选仅改首发，同一 Vertex 分片至多三档：0.70 → 0.60 → 0.55。
  * 是否重试由统一段级判据决定；截断前缀保留、不因覆盖重复购买，用户中止不重试。
  */
-export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.65, 0.6, 0.55] as const;
+export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.7, 0.6, 0.55] as const;
 
 /**
  * 普通建议按三家族及偏差判定；独立覆盖与证据段上限优先于该计数线。
@@ -618,6 +618,50 @@ export type NativeDeepReadBatchRunResult = {
   batchRequestId: string;
 };
 
+/** 选段诊断只交付原索引段证据，不能作为整集结果或产品验收回执。 */
+export type NativeDeepReadSelectedSegmentsResult = {
+  mode: "gemini_selected";
+  assemblyComplete: false;
+  glmStatus: "not_run";
+  productAcceptance: "not_run";
+  sourceDigest: string;
+  sourceDurationSec: number;
+  totalSegmentCount: number;
+  selectedSegmentIndexes: number[];
+  episodeIndex: number;
+  batchRequestId: string;
+  model: string;
+  segments: Array<SegmentAttemptResult & {
+    segmentIndex: number;
+    startSec: number;
+    endSec: number;
+    hasAudio: boolean;
+    requestFingerprint: string;
+    rawAttemptEvidenceObjectName: string;
+    /** 本片全部已回执尝试的用量；外层单次字段保留最后接受尝试的原值。 */
+    paidUsage: { inputTokens: number; outputTokens: number; audioInputTokens: number; reasoningTokens: number; costCny: number };
+  }>;
+  usage: { inputTokens: number; outputTokens: number; costCny: number };
+  rawAttemptEvidenceObjectNames: string[];
+};
+
+export type NativeDeepReadSelectedSegmentsParams = {
+  seriesKey: string;
+  episodeIndex?: number;
+  sourceDigest: string;
+  /** 保持完整原集计划；不得裁成选片长度或把原索引重新编号。 */
+  segments: readonly NativeDeepReadSegmentSpec[];
+  sourceDurationSec: number;
+  videoFps?: number;
+  hintZh?: string;
+  selectedSegmentIndexes: readonly number[];
+  /** 仅包含已验证的选中片；诊断入口不接受片源解析函数。 */
+  preparedVideos: readonly PreparedNativeVideo[];
+  abortSignal?: AbortSignal;
+  onModelReceipt?: (receipt: NativeDeepReadVisualModelReceipt) => void | Promise<void>;
+  segmentModelConcurrency?: number;
+};
+
 export type NativeDeepReadVisualModelReceipt = ManhuaNativeModelReceipt & {
   stage: "visual_model" | "visual_parse";
   batchRequestId: string;
@@ -678,7 +722,7 @@ export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
 /**
  * 精确切片与独立采样配置改变请求语义；旧流复制切片的缓存与确认码不得复用。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-custom-v22-exact-cut-configurable-fps" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-custom-v23-first07-experiment" as const;
 
 /** 分片时长和采样率独立配置；默认 10fps，不按长短片自动降档。 */
 export function resolveNativeDeepReadRequestFps(totalDurationSec: number, requestedFps?: number): number {
@@ -3137,6 +3181,7 @@ type SegmentAttemptResult = {
   finishReason?: string;
   providerRequestId?: string;
   rawAttemptEvidenceObjectName?: string;
+  requestFingerprint?: string;
 };
 
 /** 收到明确 HTTP 失败响应的错误（结果确定），可按路由铁律换通道重试。 */
@@ -3149,10 +3194,10 @@ const ROUTE_LABEL_ZH: Record<NativeDeepReadVisualRoute, string> = {
 
 /**
  * 一次请求读取一集（逐段调用），回传后按段合并成集卡。
- * 任一段失败均按 0.70→0.65→0.60 原通道重试两次，每次间隔 60 秒；
- * 三次仍失败才终止本集（用户主动中止不重试）。
+ * 可重试错误按共享温度常量在原通道最多尝试三次，每次间隔 60 秒；
+ * 用户中止、证据保存失败或 Schema 失败立即终止，不进入后续重试。
  */
-export async function runManhuaNativeDeepReadBatch(params: {
+export type NativeDeepReadBatchRunParams = {
   episodes: readonly NativeDeepReadBatchRunEpisode[];
   abortSignal?: AbortSignal;
   onModelReceipt?: (receipt: NativeDeepReadVisualModelReceipt) => void | Promise<void>;
@@ -3175,8 +3220,36 @@ export async function runManhuaNativeDeepReadBatch(params: {
   onSegmentSnapshotCommitted?: (
     snapshot: NativeDeepReadSegmentSnapshot,
   ) => void | Promise<void>;
-}, deps: NativeDeepReadBatchRunnerDeps = defaultBatchRunnerDeps): Promise<NativeDeepReadBatchRunResult> {
+};
+
+type NativeDeepReadBatchExecutionResult = {
+  batch: NativeDeepReadBatchRunResult;
+  diagnostic?: NativeDeepReadSelectedSegmentsResult;
+};
+
+function validateSelectedSegmentIndexes(indexes: readonly number[], segmentCount: number): number[] {
+  if (!Array.isArray(indexes) || indexes.length < 1 || indexes.length > 3) {
+    throw new Error("选段诊断必须显式选择1至3个原始段索引");
+  }
+  const values = Array.from(indexes);
+  if (values.some((index) => !Number.isInteger(index) || index < 0 || index >= segmentCount)
+    || new Set(values).size !== values.length) {
+    throw new Error("选段诊断含非法、重复或超出完整计划的原始段索引");
+  }
+  return values.sort((a, b) => a - b);
+}
+
+/** 生产与诊断共用请求、解析、计费回执及重试执行器；诊断只改变调度范围与装配终点。 */
+async function executeNativeDeepReadBatch(
+  params: NativeDeepReadBatchRunParams,
+  deps: NativeDeepReadBatchRunnerDeps,
+  diagnosticSelection?: readonly number[],
+): Promise<NativeDeepReadBatchExecutionResult> {
   if (!params.episodes.length) throw new Error("多视频精读批次为空");
+  if (diagnosticSelection && (params.episodes.length !== 1 || !params.preservePreparedVideos
+    || !params.segmentCacheSeriesKey || params.onSegmentSnapshotCommitted)) {
+    throw new Error("选段诊断只允许单集、永久证据与保留已有媒体，禁止部分提案回调");
+  }
   const seen = new Set<number>();
   const validated = params.episodes.map((episode) => {
     if (!Number.isInteger(episode.episodeIndex) || episode.episodeIndex < 1) {
@@ -3197,6 +3270,9 @@ export async function runManhuaNativeDeepReadBatch(params: {
     }
     return { ...episode, segments, videoFps: parseNativeDeepReadVideoFps(episode.videoFps) };
   });
+  const selectedSegmentIndexes = diagnosticSelection
+    ? validateSelectedSegmentIndexes(diagnosticSelection, validated[0]!.segments.length)
+    : undefined;
 
   const batchRequestId = crypto.randomUUID();
   let inputTokens = 0;
@@ -3212,7 +3288,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
   try {
     for (const episode of validated) {
       const cachedSegments = new Map<number, NativeDeepReadSegmentCacheEntry>();
-      if (params.segmentCacheSeriesKey) {
+      if (params.segmentCacheSeriesKey && !selectedSegmentIndexes) {
         if (!/^[0-9a-f]{64}$/.test(String(episode.cacheSourceDigest || ""))) {
           throw new Error(`第${episode.episodeIndex}集缺少稳定来源摘要，禁止启用段缓存`);
         }
@@ -3308,8 +3384,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
         });
       };
 
-      const pendingIndexes = episode.segments
-        .map((_, index) => index)
+      const pendingIndexes = (selectedSegmentIndexes ?? episode.segments.map((_, index) => index))
         .filter((index) => !cachedSegments.has(index));
       await prepareSegmentIndexes(pendingIndexes);
 
@@ -3348,6 +3423,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
         : firstCached?.hasAudio === true;
       const segmentCount = episode.segments.length;
       const rawSegments: Array<Record<string, unknown> | undefined> = new Array(segmentCount);
+      const diagnosticSegments = new Map<number, NativeDeepReadSelectedSegmentsResult["segments"][number]>();
       const committedEntries = new Map<number, NativeDeepReadSegmentCacheEntry>();
       const committedIndexes: number[] = [];
       let episodeInput = 0;
@@ -3913,6 +3989,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
             finishReason: candidate?.finishReason,
             providerRequestId: response.requestId,
             rawAttemptEvidenceObjectName,
+            requestFingerprint,
           };
         } catch (error) {
           if (!isNativeDeepReadGateFailure(error)) {
@@ -3955,8 +4032,8 @@ export async function runManhuaNativeDeepReadBatch(params: {
       };
 
       /**
-       * 同一 Vertex 通道统一三次尝试：所有错误都按 0.70→0.65→0.60 重试，
-       * 两次间隔固定 60 秒。三次后若仍是坏 JSON，才允许 GLM 只修语法，避免第四次读视频。
+       * 同一 Vertex 通道最多三次尝试，温度只读取共享常量，间隔固定 60 秒。
+       * 下面明确列出的不可重试错误立即停止；三次后也不另发 GLM 修复请求。
        */
       const attemptWithSegmentRetry = async (input: {
         route: NativeDeepReadVisualRoute;
@@ -4070,6 +4147,20 @@ export async function runManhuaNativeDeepReadBatch(params: {
           fps,
         });
         if (result.advisories.length) advisoriesBySegment.set(segmentIndex, result.advisories);
+        if (selectedSegmentIndexes) {
+          // 每发 raw/parsed 已由共用尝试器永久保存；诊断不写 active 缓存、不建部分或整集卡。
+          if (!result.requestFingerprint || !result.rawAttemptEvidenceObjectName) {
+            throw new Error("选段诊断缺少已保存原始响应的请求身份");
+          }
+          rawSegments[segmentIndex] = result.raw;
+          diagnosticSegments.set(segmentIndex, {
+            ...result, segmentIndex, startSec: segment.startSec, endSec: segment.endSec,
+            hasAudio, requestFingerprint: result.requestFingerprint,
+            rawAttemptEvidenceObjectName: result.rawAttemptEvidenceObjectName,
+            paidUsage: { ...paidUsageBySegment[segmentIndex]! },
+          });
+          return;
+        }
         if (params.segmentCacheSeriesKey) {
           const sourceDigest = episode.cacheSourceDigest!;
           const entry: NativeDeepReadSegmentCacheEntry = {
@@ -4111,21 +4202,24 @@ export async function runManhuaNativeDeepReadBatch(params: {
       };
 
       const segmentFailures: Array<{ segmentIndex: number; error: unknown }> = [];
+      const scheduledSegmentIndexes = selectedSegmentIndexes ?? episode.segments.map((_, index) => index);
       let nextSegmentIndex = 0;
       // 0829 晚用户拍板：单集有多少片就发多少，十发之内一次发走。
       // 旧写法 Math.min(4, segmentCount) 会把一集 6 片切成 4+2 两波——那是批次串行。
       const segmentModelCap = Math.max(1, Math.floor(
         Number(params.segmentModelConcurrency) || NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY,
       ));
-      const segmentConcurrency = Math.min(segmentModelCap, segmentCount);
+      const segmentConcurrency = Math.min(segmentModelCap, scheduledSegmentIndexes.length);
       console.info(
-        `[nativeDeepRead] 第${episode.episodeIndex}集模型扇出并发 ${segmentConcurrency}/${segmentCount} 片`,
+        `[nativeDeepRead] 第${episode.episodeIndex}集模型扇出并发 ${segmentConcurrency}/${scheduledSegmentIndexes.length} 片`
+        + (selectedSegmentIndexes ? `（诊断原索引 ${selectedSegmentIndexes.join(",")}，全片共${segmentCount}段）` : ""),
       );
       const segmentWorkers = Array.from({ length: segmentConcurrency }, async () => {
         while (!stopSchedulingSegments) {
-          const segmentIndex = nextSegmentIndex;
+          const position = nextSegmentIndex;
           nextSegmentIndex += 1;
-          if (segmentIndex >= segmentCount) return;
+          if (position >= scheduledSegmentIndexes.length) return;
+          const segmentIndex = scheduledSegmentIndexes[position]!;
           try {
             await processSegment(segmentIndex);
           } catch (error) {
@@ -4141,6 +4235,23 @@ export async function runManhuaNativeDeepReadBatch(params: {
       if (segmentFailures.length > 0) {
         const first = segmentFailures.sort((a, b) => a.segmentIndex - b.segmentIndex)[0]!;
         throw first.error;
+      }
+      if (selectedSegmentIndexes) {
+        if (selectedSegmentIndexes.some((index) => !diagnosticSegments.has(index))) {
+          throw new Error("选段诊断缺少选中原索引的完整返回，已停止");
+        }
+        const usage = { inputTokens, outputTokens, costCny };
+        return {
+          batch: { episodes, usage, usingPlanQuota: false, model: NATIVE_DEEP_READ_MODEL, batchRequestId },
+          diagnostic: {
+            mode: "gemini_selected", assemblyComplete: false, glmStatus: "not_run", productAcceptance: "not_run",
+            sourceDigest: episode.cacheSourceDigest!, sourceDurationSec: episode.sourceDurationSec,
+            totalSegmentCount: segmentCount, selectedSegmentIndexes: [...selectedSegmentIndexes],
+            episodeIndex: episode.episodeIndex, batchRequestId: episodeRequestId, model: NATIVE_DEEP_READ_MODEL,
+            segments: selectedSegmentIndexes.map((index) => diagnosticSegments.get(index)!),
+            usage, rawAttemptEvidenceObjectNames: Array.from(rawAttemptEvidenceObjectNames),
+          },
+        };
       }
       if (rawSegments.some((raw) => !raw)) {
         throw new Error(`第${episode.episodeIndex}集并发精读结果不完整，已停止`);
@@ -4467,13 +4578,13 @@ export async function runManhuaNativeDeepReadBatch(params: {
       }
     }
 
-    return {
+    return { batch: {
       episodes,
       usage: { inputTokens, outputTokens, costCny },
       usingPlanQuota: false,
       model: NATIVE_DEEP_READ_MODEL,
       batchRequestId,
-    };
+    } };
   } catch (error) {
     const wrapped = (error instanceof Error ? error : new Error(String(error))) as NativeDeepReadRunError;
     wrapped.nativeDeepReadCostCny = costCny;
@@ -4506,6 +4617,94 @@ export async function runManhuaNativeDeepReadBatch(params: {
       );
     }
   }
+}
+
+/** 生产批处理保持原有公开契约；不向生产调用方暴露诊断分支或半集结果。 */
+export async function runManhuaNativeDeepReadBatch(
+  params: NativeDeepReadBatchRunParams,
+  deps: NativeDeepReadBatchRunnerDeps = defaultBatchRunnerDeps,
+): Promise<NativeDeepReadBatchRunResult> {
+  return (await executeNativeDeepReadBatch(params, deps)).batch;
+}
+
+/**
+ * 已推源码探针专用：从完整计划选择1至3个原索引，只读取调用方已验真的现有GCS片。
+ * 共用生产尝试器和三档重试；不恢复旧缓存、不生成提案、不调用GLM、不删除输入片。
+ */
+export async function runManhuaNativeDeepReadSelectedSegments(
+  params: NativeDeepReadSelectedSegmentsParams,
+  deps: NativeDeepReadBatchRunnerDeps,
+): Promise<NativeDeepReadSelectedSegmentsResult> {
+  if (!params.seriesKey?.trim() || !/^[0-9a-f]{64}$/.test(params.sourceDigest)) {
+    throw new Error("选段诊断缺少运行标识或稳定来源摘要");
+  }
+  if (!Number.isFinite(params.sourceDurationSec) || params.sourceDurationSec <= 0) {
+    throw new Error("选段诊断缺少完整原集时长");
+  }
+  const segments = validateNativeDeepReadSegments(params.segments);
+  const selectedSegmentIndexes = validateSelectedSegmentIndexes(params.selectedSegmentIndexes, segments.length);
+  if (!Array.isArray(params.preparedVideos) || params.preparedVideos.length !== selectedSegmentIndexes.length) {
+    throw new Error("选段诊断已有媒体数量与选中原索引不一致");
+  }
+  const preparedVideos: readonly PreparedNativeVideo[] = params.preparedVideos;
+  const preparedByIndex = new Map<number, PreparedNativeVideo>();
+  for (const video of Array.from(preparedVideos)) {
+    const segmentIndex = selectedSegmentIndexes.find((index) => video
+      && video.startSec === segments[index]!.startSec && video.endSec === segments[index]!.endSec);
+    if (segmentIndex === undefined || preparedByIndex.has(segmentIndex)) {
+      throw new Error("选段诊断媒体与原计划范围不匹配或重复");
+    }
+    if (!Number.isSafeInteger(video.bytes) || video.bytes <= 0 || typeof video.hasAudio !== "boolean"
+      || !/^gs:\/\/[a-zA-Z0-9._-]+\/[a-zA-Z0-9/_\-.]+$/.test(video.gsUri)
+      || video.gsUri.split("/").some((part) => part === "." || part === "..")
+      || !video.temporaryGcs || video.gsUri !== `gs://${video.temporaryGcs.bucket}/${video.temporaryGcs.objectName}`) {
+      throw new Error("选段诊断已有媒体身份或验真元数据无效");
+    }
+    // 复制身份标量，避免调用方后续修改数组或对象造成审计和真正输入不一致。
+    preparedByIndex.set(segmentIndex, { ...video, temporaryGcs: { ...video.temporaryGcs } });
+  }
+  const rejectUnexpected = async (): Promise<never> => {
+    throw new Error("选段诊断禁止解析片源、旧缓存、提案装配、GLM或删除已有媒体");
+  };
+  const diagnosticDeps: NativeDeepReadBatchRunnerDeps = {
+    ...deps,
+    prepareVideos: async (episode) => {
+      if (episode.cacheSourceDigest !== params.sourceDigest || episode.sourceDurationSec !== params.sourceDurationSec
+        || episode.segments.length !== selectedSegmentIndexes.length) {
+        throw new Error("选段诊断备料身份或选择范围发生变化");
+      }
+      return episode.segments.map((segment) => {
+        const index = selectedSegmentIndexes.find((selected) => segment.startSec === segments[selected]!.startSec
+          && segment.endSec === segments[selected]!.endSec);
+        const video = index === undefined ? undefined : preparedByIndex.get(index);
+        if (!video) throw new Error("选段诊断请求了未获授权的原索引媒体");
+        return video;
+      });
+    },
+    remove: rejectUnexpected,
+    invokeGlmStructuring: rejectUnexpected,
+    readSegmentCache: rejectUnexpected,
+    writeSegmentCache: rejectUnexpected,
+    postEvolink: rejectUnexpected,
+  };
+  const executed = await executeNativeDeepReadBatch({
+    episodes: [{
+      episodeIndex: params.episodeIndex ?? 1,
+      resolveNodes: rejectUnexpected,
+      segments,
+      sourceDurationSec: params.sourceDurationSec,
+      videoFps: params.videoFps,
+      hintZh: params.hintZh,
+      cacheSourceDigest: params.sourceDigest,
+    }],
+    abortSignal: params.abortSignal,
+    onModelReceipt: params.onModelReceipt,
+    segmentCacheSeriesKey: params.seriesKey,
+    preservePreparedVideos: true,
+    segmentModelConcurrency: params.segmentModelConcurrency,
+  }, diagnosticDeps, selectedSegmentIndexes);
+  if (!executed.diagnostic) throw new Error("选段诊断未返回独立段证据结果");
+  return executed.diagnostic;
 }
 
 /**

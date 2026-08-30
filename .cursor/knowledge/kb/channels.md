@@ -1,5 +1,7 @@
 # channels · 上游通道血泪事实
 
+> 原生读片2026-08-31口径：本页0825–0827参数只作历史记录，不是PR1328当前配置。现行Gemini MEDIUM无thinkingBudget、GLM medium、原速319秒/12fps；9352588的0.65首发已在固定原帧中发现秒位错配，下一轮按用户授权仅首发试0.70，重试仍0.60/0.55。完整prompt/Schema和其他参数不变，实测过关才冻结。安全选片诊断先1片、稳定后2片再3片，不逐片GLM；同源版本与实跑状态见上级PROGRESS最新记录。
+
 ## 生图（GPT-image-2，三通道）
 - 价格基准序：**EvoLink $0.027/1K < OpenAI $0.030/1K < OpenRouter（官方价+加成，最贵）**。牌价真源 `shared/gptImage2ProviderPricing.ts`。
 - 按 lane 路由：平台线已接「便宜优先」调度器；**资产线（lane=asset）曾直连 OpenAI 烧贵价**（P0 在案，修复以 #1196 部署为准）。点批量前 `fly logs` 看 `slot=` 实证走哪家（work-rules 22）。

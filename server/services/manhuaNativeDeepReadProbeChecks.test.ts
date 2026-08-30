@@ -7,10 +7,10 @@ import {
   type NativeProbeCheckStatus,
 } from "./manhuaNativeDeepReadProbeChecks";
 
-const gradient = [0.65, 0.6, 0.55] as const;
+const gradient = [0.7, 0.6, 0.55] as const;
 function config(): Record<string, unknown> {
   return {
-    temperature: 0.65,
+    temperature: 0.7,
     maxOutputTokens: 65_536,
     candidateCount: 1,
     audioTimestamp: true,
@@ -48,7 +48,7 @@ describe("探针 P1 实际请求契约", () => {
   it.each([
     { field: "temperature", value: Number.NaN },
     { field: "temperature", value: Infinity },
-    { field: "temperature", value: "0.65" },
+    { field: "temperature", value: "0.7" },
     { field: "maxOutputTokens", value: 32_768 },
     { field: "candidateCount", value: 2 },
     { field: "audioTimestamp", value: false },
@@ -66,7 +66,7 @@ describe("探针 P1 实际请求契约", () => {
     expect(result.errorsZh).toContain("缺少生产冻结配置，无法核对参数与 Schema");
   });
 
-  it.each([{ actualGradient: [] }, { actualGradient: [0.65, Number.NaN] }, { actualGradient: [0.6, 0.55] }])("拒绝空、非法或首档错位的梯度 $actualGradient", ({ actualGradient }) => {
+  it.each([{ actualGradient: [] }, { actualGradient: [0.7, Number.NaN] }, { actualGradient: [0.6, 0.55] }])("拒绝空、非法或首档错位的梯度 $actualGradient", ({ actualGradient }) => {
     expect(validateNativeProbeGenerationConfig(config(), config(), actualGradient).status).toBe("fail");
   });
 

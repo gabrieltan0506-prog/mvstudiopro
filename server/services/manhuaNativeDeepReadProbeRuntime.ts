@@ -231,6 +231,7 @@ export const NATIVE_PROBE_ATTESTATION_REQUIRED_PATHS = [
   "server/services/manhuaNativeDeepReadProbeChecks.ts",
   "server/services/manhuaNativeDeepReadProbeManifest.ts",
   "server/services/manhuaNativeDeepReadProbeRuntime.ts",
+  "server/services/manhuaNativeDeepReadProbeDiagnostic.ts",
   "server/services/manhuaNativeDeepReadProbeEvidence.ts",
   "scripts/manhua-native-two-segment-douyin-probe.mts",
   "package.json",

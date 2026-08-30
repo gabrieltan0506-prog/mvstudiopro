@@ -5,6 +5,7 @@
  * --gcs-manifest=<文件> 复用已有分片，不解析片源、不切片、不删除输入对象。
  * --segment-seconds=<整数> 与生产共用分片长度，省略默认300秒；清单模式省略则保留原边界。
  * --fps=<数值> 独立配置视频采样率，省略默认10；不会根据分片长度自动降采样。
+ * --gemini-only --segment-indexes=0 仅诊断完整清单中的1至3个原段，不运行GLM或整集验收。
  * 上游完整响应、解析后段证据、实际请求审计与核对摘要永久保存在 GCS。
  */
 import { createHash, randomUUID } from "node:crypto";
@@ -26,12 +27,18 @@ import {
   resolveNativeDeepReadRequestFps,
   resolveNativeDeepReadSegmentFloors,
   runManhuaNativeDeepRead,
+  runManhuaNativeDeepReadSelectedSegments,
 } from "../server/services/manhuaNativeDeepReadRunner.js";
 import {
   validateNativeProbeGenerationConfig,
   summarizeNativeProbeChecks,
 } from "../server/services/manhuaNativeDeepReadProbeChecks.js";
 import { parseNativeProbeManifest } from "../server/services/manhuaNativeDeepReadProbeManifest.js";
+import {
+  parseNativeProbeDiagnosticOptions,
+  resolveNativeProbeDiagnosticScope,
+  runNativeProbeSelectedDiagnostic,
+} from "../server/services/manhuaNativeDeepReadProbeDiagnostic.js";
 import {
   extractNativeProbeModelJson as extractModelJsonFromRawEvidence,
   reconcileNativeProbeSegment,
@@ -69,6 +76,8 @@ import {
 } from "../server/services/gcs.js";
 
 const run = promisify(execFile);
+// 诊断参数先于清单读取及任何GCS操作验证；缺参不能意外进入整集付费路径。
+const diagnosticOptions = parseNativeProbeDiagnosticOptions(process.argv.slice(2), process.env.FLY_APP_NAME);
 const stringArg = (name: string) => process.argv.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3) || "";
 const execute = process.argv.includes("--execute");
 const manifestPath = stringArg("gcs-manifest");
@@ -196,6 +205,7 @@ async function objectFact(objectName: string) {
   const downloaded = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` });
   return {
     objectName,
+    generation: downloaded.generation,
     bytes: downloaded.buffer.byteLength,
     sha256: createHash("sha256").update(downloaded.buffer).digest("hex"),
     payload: JSON.parse(downloaded.buffer.toString("utf8")) as unknown,
@@ -283,6 +293,8 @@ const record = (id: CheckId, nameZh: string, status: CheckStatus, actualZh: stri
 async function main() {
   const manifest = manifestPath
     ? parseNativeProbeManifest(JSON.parse(await readFile(manifestPath, "utf8"))) : undefined;
+  const diagnosticScope = diagnosticOptions
+    ? resolveNativeProbeDiagnosticScope(manifest, diagnosticOptions.selectedSegmentIndexes) : null;
   if (manifest && requestedSegmentSeconds !== null) {
     const expected = splitNativeDeepReadSegments(manifest.sourceDurationSec, requestedSegmentSeconds);
     if (expected.length !== manifest.segments.length || expected.some((segment, index) => (
@@ -320,6 +332,12 @@ async function main() {
       fps: preflightRequest.contents[0].parts[0].videoMetadata.fps,
       manifestValidated: Boolean(manifest), segmentCount: manifest?.segments.length ?? null,
       segmentPlans: manifest ? describeSegments(manifest.segments) : undefined,
+      ...(diagnosticScope ? {
+        diagnosticMode: "gemini_selected", assemblyComplete: false, productAcceptance: "not_run", glmStatus: "not_run",
+        sourceDurationSec: diagnosticScope.manifest.sourceDurationSec,
+        selectedSegmentIndexes: diagnosticScope.selectedSegmentIndexes,
+        selectedRanges: diagnosticScope.selectedSegments,
+      } : {}),
       noteZh: "仅预检通过，不代表实弹验收通过；执行前须核对远端 PR HEAD、干净工作树和运行镜像并取得费用确认",
     }, null, 2));
     return;
@@ -332,6 +350,64 @@ async function main() {
     // 必须核验正在执行的脚本所属源码树，不能从另一份干净cwd取文件冒充。
     (relativePath) => readFile(new URL(`../${relativePath}`, import.meta.url)),
   );
+  if (diagnosticScope) {
+    const diagnosticPrefix = `manhua-template-learn/probes/${seriesKey}/`;
+    const saveDiagnosticText = async (relativeName: string, text: string) => {
+      const objectName = `${diagnosticPrefix}${relativeName}`;
+      const buffer = Buffer.from(text, "utf8");
+      const saved = await uploadBufferToGcsIfAbsent({ bucket, objectName, contentType: "application/json", buffer });
+      if (!saved.created) throw new Error("诊断证据已存在，禁止覆盖");
+      const generation = saved.generation ?? (await statGcsObjectVersion({ gcsUri: `gs://${bucket}/${objectName}` })).generation;
+      return { objectName, bytes: buffer.byteLength, sha256: createHash("sha256").update(buffer).digest("hex"), generation, created: true };
+    };
+    const diagnosticRequestAudits: Array<{ objectName: string; requestSha256: string | null; status: string }> = [];
+    const diagnosticReceipts: Array<Record<string, unknown>> = [];
+    const diagnosticTransportEvents: Array<Record<string, unknown>> = [];
+    const diagnosticDeps = createNativeDeepReadRunnerDeps();
+    let requestNumber = 0;
+    const auditPost = createNativeProbeAuditedPost(diagnosticDeps.postVertex, async (audit) => {
+      const saved = await saveDiagnosticText(`requests/request-${++requestNumber}.json`, JSON.stringify({
+        ...audit, runtimeIdentity, sourceAttestation, sourceDigest: diagnosticScope.manifest.sourceDigest,
+        planVersion: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION, mode: "gemini_selected",
+        sourceDurationSec: diagnosticScope.manifest.sourceDurationSec,
+        selectedSegmentIndexes: diagnosticScope.selectedSegmentIndexes,
+        fullSegmentPlan: describeSegments(diagnosticScope.manifest.segments), videoFps: requestedVideoFps,
+      }));
+      diagnosticRequestAudits.push({ objectName: saved.objectName, requestSha256: audit.requestSha256, status: audit.validation.status });
+    }, (event) => { diagnosticTransportEvents.push(event); });
+    diagnosticDeps.postVertex = auditPost;
+    const output = await runNativeProbeSelectedDiagnostic({
+      flyAppName: process.env.FLY_APP_NAME, manifest: diagnosticScope.manifest,
+      selectedSegmentIndexes: diagnosticScope.selectedSegmentIndexes, seriesKey, videoFps: requestedVideoFps,
+      runtimeIdentity, sourceAttestation, segmentModelConcurrency: modelConcurrency,
+      hintZh: "抖音漫剧完整视听证据探针；按真实镜头、表演、光影、声音和叙事变化记录",
+      requestAudits: diagnosticRequestAudits, modelReceipts: diagnosticReceipts, transportEvents: diagnosticTransportEvents,
+      onModelReceipt: (receipt) => { diagnosticReceipts.push({ ...receipt, observedAtMs: Date.now() }); },
+    }, {
+      runSelected: (params) => runManhuaNativeDeepReadSelectedSegments(params, diagnosticDeps),
+      media: {
+        stat: (gsUri) => statGcsObjectVersion({ gcsUri: gsUri }),
+        sign: (gsUri) => signGsUriV4ReadUrl(gsUri),
+        probe: async (signedUrl) => {
+          const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries",
+            "format=start_time,duration,size:stream=codec_type,start_time,duration,width,height,avg_frame_rate",
+            "-of", "json", "-i", signedUrl], { timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
+          return stdout;
+        },
+        persist: ({ segmentIndex, kind, text }) => saveDiagnosticText(`media-metadata/seg${segmentIndex}/${kind}.json`, text),
+      },
+      persist: (relativeName, payload) => saveDiagnosticText(relativeName, JSON.stringify(payload)),
+      collect: async (kind) => {
+        const names = await listGcsObjectNamesByPrefix({
+          prefix: kind === "raw" ? rawPrefix : parsedAttemptPrefix, literalPrefix: true, maxResults: 100,
+        });
+        return Promise.all(names.map(objectFact));
+      },
+    });
+    console.info(JSON.stringify({ ...output.summary, summaryEvidence: output.summaryEvidence }, null, 2));
+    process.exitCode = output.exitCode;
+    return;
+  }
   const source = manifest ? {
     mediaUrl: "", durationSec: manifest.sourceDurationSec,
     kindZh: "已有 GCS 分片（不拉源片、不切片）", referer: "",

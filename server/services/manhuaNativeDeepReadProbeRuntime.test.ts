@@ -4,12 +4,12 @@ import { describe, expect, it, vi } from "vitest";
 // 本模块只验包装器行为；所有上游与生产常量以虚构夹具隔离，不加载生产服务。
 vi.mock("./manhuaNativeDeepReadRunner", () => ({
   NATIVE_DEEP_READ_GENERATION_CONFIG: {
-    temperature: 0.65, maxOutputTokens: 65_536, candidateCount: 1, audioTimestamp: true,
+    temperature: 0.7, maxOutputTokens: 65_536, candidateCount: 1, audioTimestamp: true,
     responseMimeType: "application/json", responseSchema: { type: "OBJECT", required: ["shots"] },
     thinkingConfig: { thinkingLevel: "MEDIUM", includeThoughts: false },
     mediaResolution: "MEDIA_RESOLUTION_MEDIUM",
   },
-  NATIVE_DEEP_READ_RETRY_TEMPERATURES: [0.65, 0.6, 0.55],
+  NATIVE_DEEP_READ_RETRY_TEMPERATURES: [0.7, 0.6, 0.55],
 }));
 
 import { NATIVE_DEEP_READ_GENERATION_CONFIG } from "./manhuaNativeDeepReadRunner";
@@ -23,7 +23,7 @@ import {
   type NativeProbeTransportEvent,
 } from "./manhuaNativeDeepReadProbeRuntime";
 
-function request(temperature = 0.65) {
+function request(temperature = 0.7) {
   return {
     contents: [{ role: "user", parts: [
       { fileData: { fileUri: "gs://test-bucket/segment.mp4", mimeType: "video/mp4" }, videoMetadata: { fps: 10 } },
@@ -79,7 +79,7 @@ describe("逐次真实请求审计包装器", () => {
     const recordEvent = (event: NativeProbeTransportEvent) => { events.push(event); };
     const post = vi.fn(async () => "响应");
     await expect(createNativeProbeAuditedPost(post, async () => { throw new Error("保存失败"); }, recordEvent)(request())).rejects.toThrow("保存失败");
-    await expect(createNativeProbeAuditedPost(post, async () => {}, recordEvent)(request(0.7))).rejects.toThrow("不合规");
+    await expect(createNativeProbeAuditedPost(post, async () => {}, recordEvent)(request(0.8))).rejects.toThrow("不合规");
     expect(events).toEqual([]);
     expect(post).not.toHaveBeenCalled();
     const failure = new Error("上游失败");
@@ -88,7 +88,7 @@ describe("逐次真实请求审计包装器", () => {
     expect(measureNativeProbeConcurrency(events)).toEqual({ peak: 1, callCount: 1, errorsZh: [] });
   });
 
-  it.each([0.65, 0.6, 0.55])("生产梯度 %s 保留 MEDIUM，审计完成后只发送一次实际快照", async (temperature) => {
+  it.each([0.7, 0.6, 0.55])("候选梯度 %s 保留 MEDIUM，审计完成后只发送一次实际快照", async (temperature) => {
     const order: string[] = [];
     const response = { status: 200, text: "测试响应" };
     const body = request(temperature);
@@ -109,7 +109,7 @@ describe("逐次真实请求审计包装器", () => {
   it.each([
     { name: "丢失媒体分辨率", change: (body: ReturnType<typeof request>) => { delete body.generationConfig.mediaResolution; } },
     { name: "丢失 Schema", change: (body: ReturnType<typeof request>) => { delete body.generationConfig.responseSchema; } },
-    { name: "未知温度", change: (body: ReturnType<typeof request>) => { body.generationConfig.temperature = 0.7; } },
+    { name: "未知温度", change: (body: ReturnType<typeof request>) => { body.generationConfig.temperature = 0.8; } },
     { name: "旧 budget", change: (body: ReturnType<typeof request>) => { body.generationConfig.thinkingConfig = { thinkingBudget: 12_000 }; } },
     { name: "两种思考参数同传", change: (body: ReturnType<typeof request>) => { body.generationConfig.thinkingConfig = { thinkingLevel: "MEDIUM", thinkingBudget: 12_000, includeThoughts: false }; } },
     { name: "媒体分辨率移到 Part", change: (body: ReturnType<typeof request>) => {
@@ -144,7 +144,7 @@ describe("逐次真实请求审计包装器", () => {
     await createNativeProbeAuditedPost(post, async () => {
       body.generationConfig.temperature = 0.9;
     })(body);
-    expect(post.mock.calls[0]![0]).toMatchObject({ generationConfig: { temperature: 0.65 } });
+    expect(post.mock.calls[0]![0]).toMatchObject({ generationConfig: { temperature: 0.7 } });
   });
 
   it("签名媒体地址仅留原始字节哈希；审计不泄漏签名且不截断正文", async () => {
@@ -230,8 +230,8 @@ describe("已推提交的运行时源码清单核验", () => {
     const { manifest, readSource } = fixture();
     const result = await verifyNativeProbeSourceAttestation(manifest, commit, readSource);
     const canonical = { schemaVersion: 1, commit, files: [...manifest.files].sort((a, b) => a.path < b.path ? -1 : 1) };
-    expect(result).toEqual({ commit, filesChecked: 14, manifestSha256: createHash("sha256").update(JSON.stringify(canonical)).digest("hex") });
-    expect(readSource).toHaveBeenCalledTimes(14);
+    expect(result).toEqual({ commit, filesChecked: NATIVE_PROBE_ATTESTATION_REQUIRED_PATHS.length, manifestSha256: createHash("sha256").update(JSON.stringify(canonical)).digest("hex") });
+    expect(readSource).toHaveBeenCalledTimes(NATIVE_PROBE_ATTESTATION_REQUIRED_PATHS.length);
     expect(JSON.stringify(result)).not.toContain("测试源码内容");
     manifest.files.reverse();
     expect(await verifyNativeProbeSourceAttestation(manifest, commit, readSource)).toEqual(result);
@@ -249,6 +249,7 @@ describe("已推提交的运行时源码清单核验", () => {
   it.each([
     "shared/manhuaNativeDeepReadJob.ts",
     "server/services/manhuaNativeDeepReadPlan.ts",
+    "server/services/manhuaNativeDeepReadProbeDiagnostic.ts",
   ])("自定义分片的生产契约 %s 必须纳入源码校验，缺失或改写都不能发车", async (path) => {
     expect(NATIVE_PROBE_ATTESTATION_REQUIRED_PATHS).toContain(path);
     const { sources, manifest, readSource } = fixture();
@@ -300,7 +301,7 @@ describe("已推提交的运行时源码清单核验", () => {
     const bytes = Buffer.from("测试额外文件");
     sources.set(path, bytes);
     manifest.files.push({ path, sha256: createHash("sha256").update(bytes).digest("hex") });
-    expect((await verifyNativeProbeSourceAttestation(manifest, commit, readSource)).filesChecked).toBe(15);
+    expect((await verifyNativeProbeSourceAttestation(manifest, commit, readSource)).filesChecked).toBe(NATIVE_PROBE_ATTESTATION_REQUIRED_PATHS.length + 1);
     sources.set(path, Buffer.from("已改变"));
     await expect(verifyNativeProbeSourceAttestation(manifest, commit, readSource)).rejects.toThrow("源码 SHA-256 不匹配");
   });
