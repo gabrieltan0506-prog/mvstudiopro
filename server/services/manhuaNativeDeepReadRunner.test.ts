@@ -117,7 +117,7 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_ROUTE_EVOLINK).toBe("evolink_gemini_video");
     expect(NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE).toBe("openrouter_glm_structuring");
     // 换代必须让旧确认码全废
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v19-thinking-level");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v20-media-medium");
   });
 
   it("长视频请求显式使用 30 分钟 HTTP 响应头与响应体时限，不落回 Undici 默认 300 秒", async () => {
@@ -441,6 +441,7 @@ describe("Gemini 请求体（Google 原生格式，Vertex/EvoLink 同构）", ()
           {
             fileData: { fileUri: "gs://bucket/seg.mp4", mimeType: "video/mp4" },
             videoMetadata: { fps: 5 },
+            mediaResolution: "MEDIA_RESOLUTION_MEDIUM",
           },
           { text: "PROMPT" },
         ],
@@ -2601,6 +2602,6 @@ describe("参数冻结锁（0829 用户拍板 · 非用户允许不得变更）"
   it("长镜与分片规格冻结：单条证据段 30 秒、拆分间隔 3 秒、PLAN_VERSION v16", () => {
     expect(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC).toBe(30);
     expect(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC).toBe(3);
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v19-thinking-level");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v20-media-medium");
   });
 });

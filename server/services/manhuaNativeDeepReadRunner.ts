@@ -684,7 +684,7 @@ export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
  * v4（0826 拍板）：视觉调用换 Vertex Gemini 3.1 Pro 从 GCS 直读、每段一次调用、
  * 音轨同调直出、双密度门禁。计划口径与采样语义全变——旧确认码必须全废。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v19-thinking-level" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v20-media-medium" as const;
 
 /** 0827 实弹口径：生产 300 秒分片保持 10fps；仅旧数据超 300 秒时降为 5fps。 */
 export function resolveNativeDeepReadRequestFps(totalDurationSec: number): number {
@@ -1047,15 +1047,20 @@ export function buildGeminiNativeDeepReadSegmentRequest(input: {
         {
           fileData: { fileUri: input.fileUri, mimeType: "video/mp4" },
           /**
-           * ⚠️ mediaResolution **未显式传入**，走 API 默认值。
-           * 0830 晚实测反推：输入 210,134 token ÷（300 秒 × 10fps ＝ 3,000 帧）≈ 70 token/帧，
-           * 对应 MEDIA_RESOLUTION_LOW（66 token/帧 + 音频）。
-           * 改 HIGH 约 258 token/帧 → 单片输入 ~774K token、成本涨约 3.7 倍
-           * （单片 ¥1.9 → ¥7.0，六片一集 ¥11 → ¥42），属付费决策，须用户明确拍板后再加。
-           * 这条与「微表情看不清」直接相关：66 token/帧承载的像素信息可能不足以支撑
-           * microExpressionZh / gazeBreathZh 的细粒度观察（实测两者均长仅 5.9 / 6.0 字）。
+           * 🔴 mediaResolution: MEDIUM（0830 晚用户拍板：「差四倍的 token，那怎麼看得清楚」）。
+           *
+           * 此前未显式传入，走 API 默认 LOW —— 实测反推：输入 210,134 token ÷
+           *（300 秒 × 10fps ＝ 3,000 帧）≈ 70 token/帧，正是 LOW 的 64 token/帧 + 音频。
+           * 64 token 一帧承载的像素信息不足以支撑微表情观察：实测 microExpressionZh
+           * 均长仅 5.9 字、gazeBreathZh 6.0 字、cameraMoveZh 4.8 字，字段用满率 5–23%。
+           * 那不是模型偷懒，是它看不清。
+           *
+           * 代价：MEDIUM 为 256 token/帧，单片输入 210K → 约 840K，成本约 4 倍
+           *（单片 ¥1.9 → ¥7.6，六片一集 ¥11 → ¥45）。用户明确选择这一档。
+           * ⚠️ 4 倍是按 64→256 推算，实际以回执 promptTokenCount 为准。
            */
           videoMetadata: { fps: input.fps },
+          mediaResolution: "MEDIA_RESOLUTION_MEDIUM",
         },
         { text: input.prompt },
       ],
@@ -4246,7 +4251,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
           thinkingLevel: NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig.thinkingLevel,
           // 输入规格入档（0830 晚）：隔天复盘时能说清这份产物是用什么画质读出来的。
           maxFps: NATIVE_DEEP_READ_MAX_FPS,
-          mediaResolution: "default(未显式传入，实测约 66 token/帧＝LOW)",
+          mediaResolution: "MEDIA_RESOLUTION_MEDIUM",
           retryTemperatures: [...NATIVE_DEEP_READ_RETRY_TEMPERATURES],
           segmentCount: episode.segments.length,
           sourceDurationSec: episode.sourceDurationSec,
