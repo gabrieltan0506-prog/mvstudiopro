@@ -26,13 +26,20 @@ const DESCRIPTION_FIELDS = [
 ] as const;
 
 /**
- * 字段取值多样性也要看的枚举字段。
- * ⚠️ 单独命中「中景」「平视」「固定机位」**不是**问题——它们是合法枚举值，
- * 真实镜头本来就大量使用。只有当整段几乎只有一种取值时才是填充信号。
+ * 参与「取值种类是否塌缩」的字段。
+ *
+ * ⚠️ 只放**描述性**字段，**绝不放枚举字段**。0831 首跑实测教训：
+ * 初版把 shotSizeZh（景别）、angleZh（机位角度）、cameraMoveZh（运镜）、
+ * unitTypeZh（单元类型）、transitionInZh（入镜转场）也放了进来，
+ * 结果一份 66 镜的优质产出被判 5 个字段塌缩——纯属误报：
+ * 景别就特写/中景/全景那几种，66 镜里只出现十几种取值本来就是正常的。
+ * 枚举字段天然低基数，拿多样性衡量它等于惩罚模型正确使用枚举。
  */
-const VARIETY_FIELDS = [
-  ...DESCRIPTION_FIELDS, "shotSizeZh", "angleZh", "cameraMoveZh", "unitTypeZh",
-] as const;
+const VARIETY_FIELDS = DESCRIPTION_FIELDS.filter(
+  // transitionInZh（入镜转场）虽在描述字段里参与整行雷同判断，但取值本身是枚举性质
+  // （「直接切入」「承接上一镜」那几种），同样不该用多样性衡量。0831 实测误报过一次。
+  (field) => field !== "transitionInZh",
+);
 
 export type NativeDeepReadQualityInput = {
   readonly shots: ReadonlyArray<Record<string, unknown>>;
@@ -55,6 +62,10 @@ export type NativeDeepReadQualityMetrics = {
   lowVarietyFields: string[];
   /** 描述字段的平均字数。0830 实测模型有输出总量自我配额：镜数越多每条越短。 */
   meanDescriptionChars: number;
+  /** 后半段镜数 ÷ 前半段镜数。明显小于 1 说明模型写到后面开始敷衍。 */
+  tailDensityRatio: number;
+  /** 重复镜头中落在后半段的比例。接近 1 说明重复不是散布全段，而是尾段模板化。 */
+  duplicateTailShare: number;
 };
 
 export type NativeDeepReadQualityFailure = { code: string; detailZh: string };
@@ -81,6 +92,14 @@ export const NATIVE_DEEP_READ_QUALITY_THRESHOLDS = {
   varietyMinShots: 10,
   /** 取值种类数低于镜数的这个比例即视为塌缩。 */
   varietyRatio: 0.2,
+  /**
+   * 后半段镜数低于前半段这个比例即判尾段敷衍。
+   * 0831 首跑实测 0.38（48 镜 → 18 镜），那一段确认是模板循环。
+   * 定 0.5 而不是更松：真实剧集后段就算安静，镜头也不该只剩前段的三分之一。
+   */
+  minTailDensityRatio: 0.5,
+  /** 重复镜有这么高比例挤在后半段，就不是偶发重复而是尾段整片糊弄。 */
+  tailConcentrationTrigger: 0.6,
 } as const;
 
 const text = (value: unknown): string => String(value ?? "").trim();
@@ -118,7 +137,32 @@ export function measureNativeDeepReadQuality(
   const charCounts = shots.map((shot) =>
     DESCRIPTION_FIELDS.reduce((sum, field) => sum + text(shot[field]).length, 0));
 
+  /**
+   * 尾段模板化检测。0831 首跑实测的真实失效形态，记下来免得下次又漏：
+   * 一份 319 秒的产出，前 160 秒给了 48 镜（真实剪辑点，秒位不规则），
+   * 后 159 秒只给 18 镜，其中 12 镜是三条描述**严格 10 秒等分循环四遍**
+   * （200-210 / 230-240 / 260-270 / 290-300 全写「少主在魔界发号施令」）。
+   * 同时段字幕有 44 条且内容是热闹的对话戏——模型听到了、也逐字转写了，
+   * 只是不肯再为后段写镜头，改用模板顶上，写的内容跟字幕完全对不上。
+   *
+   * 所以整体雷同率不够用：它分不出「散布全段的偶发重复」和「尾段整片糊弄」。
+   */
+  const midSec = input.startSec + spanSec / 2;
+  const inTail = (shot: Record<string, unknown>) => Number(shot.startSec) >= midSec;
+  const headCount = shots.filter((shot) => !inTail(shot)).length;
+  const tailCount = shotCount - headCount;
+  const duplicateKeys = new Set(
+    Array.from(counts.entries()).filter(([, n]) => n > 1).map(([key]) => key));
+  const duplicateTailRows = shots.filter(
+    (shot, i) => inTail(shot) && duplicateKeys.has(keys[i]!)).length;
+
   return {
+    tailDensityRatio: headCount
+      ? Math.round((tailCount / headCount) * 100) / 100
+      : (tailCount ? 1 : 0),
+    duplicateTailShare: duplicateRows
+      ? Math.round((duplicateTailRows / (duplicateRows + duplicateKeys.size)) * 100) / 100
+      : 0,
     shotCount,
     spanSec: Math.round(spanSec * 10) / 10,
     secondsPerShot: shotCount ? Math.round((spanSec / shotCount) * 10) / 10 : 0,
@@ -161,6 +205,15 @@ export function judgeNativeDeepReadQuality(
       code: "quality_shot_density_thin",
       detailZh: `平均 ${metrics.secondsPerShot} 秒/镜，超过 ${t.maxSecondsPerShot} 秒`
         + `（${metrics.spanSec} 秒只给了 ${metrics.shotCount} 镜）`,
+    });
+  }
+  if (metrics.shotCount >= t.varietyMinShots && metrics.tailDensityRatio < t.minTailDensityRatio) {
+    failures.push({
+      code: "quality_tail_density_collapsed",
+      detailZh: `后半段镜数只有前半段的 ${Math.round(metrics.tailDensityRatio * 100)}%`
+        + `（低于 ${t.minTailDensityRatio * 100}%），模型可能写到后段就改用模板顶替`
+        + (metrics.duplicateTailShare >= t.tailConcentrationTrigger
+          ? `；且 ${Math.round(metrics.duplicateTailShare * 100)}% 的重复镜挤在后半段` : ""),
     });
   }
   if (metrics.lowVarietyFields.length) {

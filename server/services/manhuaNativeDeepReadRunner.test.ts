@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC,
+  NATIVE_DEEP_READ_TRUTHFULNESS_BLOCK,
   NATIVE_DEEP_READ_SANITY_FLOOR_MIN_SEGMENT_SEC,
   NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC,
   NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC,
@@ -284,7 +285,12 @@ describe("模型与通道收口", () => {
     expect(candidateJson.match(/"temperature":0\.65(?=[,}])/g)).toHaveLength(1);
     const encodedBridge = JSON.stringify(clockBridge).slice(1, -1);
     expect(candidateJson.split(encodedBridge)).toHaveLength(2);
-    const restoredBaseline = candidateJson.replace(encodedBridge, "");
+    // 0831 起首发提示词多了「真实性四条」，同样剥掉后才能落回历史字节与 SHA。
+    const truthBlockJson = JSON.stringify(NATIVE_DEEP_READ_TRUTHFULNESS_BLOCK).slice(1, -1);
+    expect(candidateJson.split(truthBlockJson)).toHaveLength(2);
+    const restoredBaseline = candidateJson
+      .replace(encodedBridge, "")
+      .replace(truthBlockJson, "");
     /**
      * 0831 补一步：本轮删掉了 mediaResolution，故须把该键也逐字补回，才能落回历史固定字节。
      * 补回后仍是 14531 字节与同一个 SHA，正说明「删桥 + 删 mediaResolution」是全部差异。
@@ -299,7 +305,8 @@ describe("模型与通道收口", () => {
     expect(createHash("sha256").update(restoredHistoric).digest("hex"))
       .toBe("ba1ec0187e20c468bde3c2f81f4c9d2bcbbb822686c1d5b93e7cbcc347b2298d");
     const baselineJson = JSON.stringify(buildGeminiNativeDeepReadSegmentRequest({
-      ...input, prompt: input.prompt.replace(clockBridge, ""),
+      ...input,
+      prompt: input.prompt.replace(clockBridge, "").replace(NATIVE_DEEP_READ_TRUTHFULNESS_BLOCK, ""),
       generationConfig: { ...NATIVE_DEEP_READ_GENERATION_CONFIG, temperature: 0.65 },
     }));
     expect(Buffer.from(restoredBaseline).equals(Buffer.from(baselineJson))).toBe(true);
@@ -327,7 +334,15 @@ describe("模型与通道收口", () => {
      */
     const thinkingJson = '"thinkingConfig":{"thinkingLevel":"MEDIUM","includeThoughts":false}';
     expect(candidateJson.split(thinkingJson)).toHaveLength(2);
+    /**
+     * 第三项差异：0831 首跑实测后新增的「真实性四条」。
+     * 剥掉它之后仍须落回 v24 原始 SHA——溯源链不断，差异始终可逐项列举。
+     * 新增这一段的原因见 NATIVE_DEEP_READ_TRUTHFULNESS_BLOCK 注释。
+     */
+    const truthBlockJson = JSON.stringify(NATIVE_DEEP_READ_TRUTHFULNESS_BLOCK).slice(1, -1);
+    expect(candidateJson.split(truthBlockJson)).toHaveLength(2);
     const restoredV24 = candidateJson
+      .replace(truthBlockJson, "")
       .replace('"temperature":0.65', '"temperature":0.7')
       .replace(thinkingJson, `${thinkingJson},"mediaResolution":"MEDIA_RESOLUTION_MEDIUM"`);
     // 固定来自2ac2117已保存的实际request-1，不从本轮生产常量生成预期摘要。
