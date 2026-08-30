@@ -686,7 +686,7 @@ export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
  * v4（0826 拍板）：视觉调用换 Vertex Gemini 3.1 Pro 从 GCS 直读、每段一次调用、
  * 音轨同调直出、双密度门禁。计划口径与采样语义全变——旧确认码必须全废。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v13-anti-divergence" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v14-field-caps" as const;
 
 /** 0827 实弹口径：生产 300 秒分片保持 10fps；仅旧数据超 300 秒时降为 5fps。 */
 export function resolveNativeDeepReadRequestFps(totalDurationSec: number): number {
@@ -888,30 +888,36 @@ c. 输出预算紧张时优先压缩 subtitles，尽量保全镜头表与音轨�
    "unitTypeZh":"剪辑镜头 或 拆分镜证据段",
    "shotSizeZh":"景别：极特写/特写/近景/中景/全景/大远景",
    "angleZh":"机位：平视/仰拍/俯拍/过肩/主观",
-   "compositionZh":"构图、主体位置、前中后景、视线方向与空间层次",
-   "cameraMoveZh":"完整运镜轨迹：起点、方向、速度或节奏、幅度、落点；无运动写固定机位及构图作用",
-   "blockingZh":"角色站位、朝向、距离、进退路径、遮挡关系与群像调度变化",
-   "bodyActionZh":"角色整体姿态、躯体重心、移动方式、结构形变与动作阶段变化",
-   "limbPropActionZh":"角色四肢或等效附肢动作，以及持物方式、道具状态与交互",
-   "microExpressionZh":"面部或等效表情器官的可见细微变化，只写画面证据",
-   "gazeBreathZh":"视线或感知指向、眨眼、呼吸、能量节奏及其可见变化",
-   "relationshipReactionZh":"角色之间的动作因果、反应顺序、感知回应与距离变化",
-   "lightingZh":"主辅光位、色调、明暗关系、轮廓光、环境光与氛围变化",
-   "actionZh":"本镜可见的故事动作过程、信息变化、表演结果与辨识特征",
+   "compositionZh":"构图、主体位置、前中后景、视线方向与空间层次（≤30字）",
+   "cameraMoveZh":"完整运镜轨迹：起点、方向、速度或节奏、幅度、落点；无运动写固定机位及构图作用（≤30字）",
+   "blockingZh":"角色站位、朝向、距离、进退路径、遮挡关系与群像调度变化（≤25字）",
+   "bodyActionZh":"角色整体姿态、躯体重心、移动方式、结构形变与动作阶段变化（≤25字）",
+   "limbPropActionZh":"角色四肢或等效附肢动作，以及持物方式、道具状态与交互（≤25字）",
+   "microExpressionZh":"面部或等效表情器官的可见细微变化，只写画面证据（≤20字）",
+   "gazeBreathZh":"视线或感知指向、眨眼、呼吸、能量节奏及其可见变化（≤20字）",
+   "relationshipReactionZh":"角色之间的动作因果、反应顺序、感知回应与距离变化（≤25字）",
+   "lightingZh":"主辅光位、色调、明暗关系、轮廓光、环境光与氛围变化（≤20字）",
+   "actionZh":"本镜可见的故事动作过程、信息变化、表演结果与辨识特征（≤30字）",
    "transitionInZh":"进入这一镜的转场：硬切/闪白/黑场/遮挡转场/叠化；同一物理长镜的后续证据段写固定标记「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」",
    "evidenceRole":"story 或 non_story_ad；只有与剧情无关的招商广告才写 non_story_ad"}],
- "keyMoments":[{"atSec":整数,"kindZh":"切镜 或 情绪 或 灯光 或 剧情 或 音轨","noteZh":"这一秒发生了什么，一句话"}],
+ "keyMoments":[{"atSec":整数,"kindZh":"切镜 或 情绪 或 灯光 或 剧情 或 音轨","noteZh":"这一秒发生了什么，一句话（≤20字）"}],
  "subtitles":[{"atSec":整数,"textZh":"画面上真实出现的字幕原文，逐字照抄"}],
  // 🔴 subtitles 只收 keyMoments 对应的那几句（0830 晚用户令），不是全片字幕流
- "audioResolution":[{"chunkIndex":${input.segmentIndex},"analysis":{"audioTrack":[{"fromSec":局部整数秒,"toSec":局部整数秒,"emotionArcZh":"情绪强度变化","toneZh":"怎么说，不写台词","sfxZh":"音效","bgmZh":"配乐","atmosphereZh":"气氛","silenceZh":"留白","cues":[{"atSec":局部整数秒,"kind":"source_change/voice_change/sfx/bgm_in/bgm_change/bgm_out/atmosphere_change/dynamics_change/mix_change/silence_in/silence_out","detailZh":"事件"}]}],"audioBeatStructureZh":"声音节奏","mixNotesZh":"混音","reusableAudioZh":"可复用声音手法","genAudioHintZh":"生成声音要素"}}],
- "beatStructureZh":"节奏结构：憋了几秒、第几秒爆、爆后怎么收",
- "moodArcZh":"情绪推进：起点→转折秒位→终点",
+ "audioResolution":[{"chunkIndex":${input.segmentIndex},"analysis":{"audioTrack":[{"fromSec":局部整数秒,"toSec":局部整数秒,"emotionArcZh":"情绪强度变化（≤15字）","toneZh":"怎么说，不写台词（≤12字）","sfxZh":"音效（≤15字）","bgmZh":"配乐（≤15字）","atmosphereZh":"气氛（≤12字）","silenceZh":"留白（≤12字）","cues":[{"atSec":局部整数秒,"kind":"source_change/voice_change/sfx/bgm_in/bgm_change/bgm_out/atmosphere_change/dynamics_change/mix_change/silence_in/silence_out","detailZh":"事件（≤15字）"}]}],"audioBeatStructureZh":"声音节奏","mixNotesZh":"混音","reusableAudioZh":"可复用声音手法","genAudioHintZh":"生成声音要素"}}],
+ "beatStructureZh":"节奏结构：憋了几秒、第几秒爆、爆后怎么收（≤80字）",
+ "moodArcZh":"情绪推进：起点→转折秒位→终点（≤60字）",
  "classification":{"emotionTagsZh":["从真证据提取的情绪标签"],"narrativeFeatureTagsZh":["叙事特色"],"performanceTagsZh":["表演特色"],"audiovisualTagsZh":["视听特色"],"audienceExperienceTagsZh":["观众体验"]},
  "reusableZh":"可复用手法（脱离本剧剧情，写成通用做法）",
  "genPromptHintZh":"若用 AI 生成类似片段，画面提示词该写哪几个要素"
 }
 硬约束（必须遵守）：
 1. shots 与 subtitles 的 startSec/endSec/atSec **一律写全片绝对秒位**：本段即 ${Math.round(input.startSec)}..${Math.round(input.endSec)} 秒；shots 连续无空档覆盖整段。真实剪辑切换的 unitTypeZh 写「剪辑镜头」；若同一物理长镜持续超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，不得截断、丢弃尾部或伪造切镜，必须按镜内真实发生的构图、运镜、角色调度、动作、表演或光影变化拆成至少 2 个连续证据段，每个证据段至少 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒，unitTypeZh 写「拆分镜证据段」，第二段及后续段的 transitionInZh 固定写「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」。
+1.5 🔴 **每个中文描述字段都有字数上限，见上方各字段括号内的「≤N字」，超出即为违规产出。**
+    （0830 晚实弹依据：同样 32 个镜头，第 4 片正文 9,439 token，第 2 片写到 62,307 token 撞
+    65,536 上限被截断；不撞顶的片稳定在 275–306 token/镜，撞顶的 644–1,947，最多差 7 倍。
+    此前只写「用词精炼、不铺陈」——那是形容词，模型无从执行，第 2 片即反证。）
+    上限只砍**长度**，不砍**条数**：镜头该切几条照切几条，绝不许为了省字数合并镜头、
+    丢弃镜头或跳过字段——那是拿证据换字数，比超字数严重得多。
 2. cameraMoveZh 只写真看到的运动，看不出运动就写「固定机位」，禁止套「镜头拉远」这类无依据说法。
 3. 所有中文描述字段【禁止】出现钟表式时间（如 01:23、1:05:30）或「在第X秒」式秒位定位——秒位只进数字字段；描述动作时长（如「1.2秒内推近」）不在此限。
 3.5 **keyMoments 是抓帧秒位表，由你来点**（v12 新增）。下游会**按你给的 atSec 去原片抓那一帧**，所以 atSec 必须是**那一瞬间最有代表性的那一秒**，不是镜头区间的中点，也不要落在转场、运动模糊或空镜上。五类各自的判据：
