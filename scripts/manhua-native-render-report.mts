@@ -7,6 +7,7 @@
  * 用法：--run=<probe seriesKey>
  */
 import { Storage } from "@google-cloud/storage";
+import { buildManhuaReusableTechniqueDigest } from "../shared/manhuaNativeDeepReadReusableDigest.js";
 import {
   downloadGcsObjectVersioned,
   getGcsBucketName,
@@ -38,6 +39,7 @@ const FIELD_LABELS: Record<string, string> = {
   emotionTagsZh: "情绪", narrativeFeatureTagsZh: "叙事特色", performanceTagsZh: "表演",
   audiovisualTagsZh: "视听", audienceExperienceTagsZh: "观众体验",
   beatStructureZh: "节拍结构", moodArcZh: "情绪弧", reusableZh: "可复用手法", genPromptHintZh: "生成提示线索",
+  reusableAudioZh: "可复用声音手法", mixNotesZh: "混音要点", genAudioHintZh: "生成音频线索",
   unitTypeZh: "单元类型", shotSizeZh: "景别", angleZh: "机位角度", compositionZh: "构图", cameraMoveZh: "运镜",
   blockingZh: "调度", bodyActionZh: "身体动作", limbPropActionZh: "肢体道具", microExpressionZh: "微表情",
   gazeBreathZh: "视线呼吸", relationshipReactionZh: "关系反应", lightingZh: "灯光", actionZh: "动作叙述",
@@ -130,15 +132,51 @@ async function main() {
   const FIELDS = ["unitTypeZh", "shotSizeZh", "angleZh", "compositionZh", "cameraMoveZh", "blockingZh", "bodyActionZh", "limbPropActionZh", "microExpressionZh", "gazeBreathZh", "relationshipReactionZh", "lightingZh", "actionZh" , "transitionInZh"];
   const shotRows = shots.map((shot) => `<tr><td style="position:sticky;left:0;background:#141b24;color:#e8c66a;white-space:nowrap">${mmss(Number(shot.startSec) || 0)}–${mmss(Number(shot.endSec) || 0)}</td>${FIELDS.map((field) => `<td style="padding:3px 8px;min-width:90px">${esc(String(shot[field] ?? "").slice(0, 90))}</td>`).join("")}</tr>`).join("");
 
+  /**
+   * 🔴 0831 修真 bug：这里原本写死 `chunkIndex * 300`。
+   * 那是被明令禁止的推断（唯一真源是 chunkSpans），而且生产分片早已是 **319 秒**——
+   * 于是此前每一份报告的音轨秒位都是错的，每片偏 19 秒，第 5 片累计偏到 76 秒，
+   * 音轨与画面对不上。缺 chunkSpans 时**不猜**，标注未知，宁可少显示不可显示错的。
+   */
+  const spanStartByChunk = new Map<number, number>(
+    (Array.isArray(card.chunkSpans) ? card.chunkSpans : [])
+      .map((s) => s as { chunkIndex?: unknown; startSec?: unknown })
+      .filter((s) => Number.isFinite(Number(s.chunkIndex)) && Number.isFinite(Number(s.startSec)))
+      .map((s) => [Number(s.chunkIndex), Number(s.startSec)]),
+  );
   const audioRows = (Array.isArray(card.audioResolution) ? card.audioResolution : [])
     .flatMap((chunk) => {
       const row = chunk as { chunkIndex?: number; analysis?: { audioTrack?: Array<Record<string, unknown>> } };
-      const offset = (Number(row.chunkIndex) || 0) * 300;
+      const offset = spanStartByChunk.get(Number(row.chunkIndex));
       return (row.analysis?.audioTrack ?? []).map((track) => {
         const cues = (Array.isArray(track.cues) ? track.cues : []) as Array<Record<string, unknown>>;
-        return `<tr><td style="color:#e8c66a;white-space:nowrap">${mmss(offset + Number(track.fromSec))}–${mmss(offset + Number(track.toSec))}</td><td>${esc(track.emotionArcZh)}</td><td>${esc(track.bgmZh)}</td><td style="color:#9db4d0">${cues.map((cue) => `<span style="background:#1d2733;border-radius:8px;padding:1px 8px">${mmss(offset + Number(cue.atSec))} ${esc(cue.kind)} ${esc(String(cue.detailZh ?? "").slice(0, 24))}</span>`).join(" ")}</td></tr>`;
+        // 无 chunkSpans 就显示本段局部秒并标注，绝不用猜出来的偏移冒充全片绝对秒。
+        const abs = (local: unknown) => offset === undefined
+          ? `${mmss(Number(local))}⟨段内⟩`
+          : mmss(offset + Number(local));
+        return `<tr><td style="color:#e8c66a;white-space:nowrap">${abs(track.fromSec)}–${abs(track.toSec)}</td><td>${esc(track.emotionArcZh)}</td><td>${esc(track.bgmZh)}</td><td style="color:#9db4d0">${cues.map((cue) => `<span style="background:#1d2733;border-radius:8px;padding:1px 8px">${abs(cue.atSec)} ${esc(cue.kind)} ${esc(String(cue.detailZh ?? "").slice(0, 24))}</span>`).join(" ")}</td></tr>`;
       });
     }).join("");
+
+  /**
+   * 可复用板块 ②：从整集逐镜字段统计蒸馏出的四面向手法（零模型调用）。
+   * 第一个板块是模型自己写的 reusableZh（一段话），这一个是「这部片反复用的那几套」，
+   * 每条都带出现镜数与占比，能回指到具体镜号，不是又一段 AI 总结。
+   */
+  const digestFacets = buildManhuaReusableTechniqueDigest({
+    shots: shots as Array<Record<string, unknown>>,
+    audioAnalyses: (Array.isArray(card.audioResolution) ? card.audioResolution : [])
+      .map((chunk) => (chunk as { analysis?: Record<string, unknown> }).analysis ?? {}),
+  });
+  const digestHtml = digestFacets.map((facet) => {
+    const items = facet.items.length
+      ? facet.items.map((item) => `<span style="background:#16242c;border:1px solid #24404d;border-radius:10px;padding:2px 10px;margin:3px;display:inline-block">${esc(item.textZh)} <b style="color:#6ad0e8">×${item.count}</b> <span style="color:#5d6b80">${Math.round(item.ratio * 100)}%</span></span>`).join(" ")
+      : `<span style="color:#5d6b80">无重复出现两次以上的写法（样本 ${facet.sampleCount}）</span>`;
+    const model = facet.modelTextsZh.length
+      ? `<div style="margin-top:8px;color:#9db4d0;font-size:.9em">模型原文：${facet.modelTextsZh.map((t) => esc(t)).join("<br>")}</div>`
+      : "";
+    return `<div style="background:#141b24;border-left:3px solid #6ad0e8;padding:10px 14px;margin:8px 0"><b>${esc(facet.titleZh)}</b> <span style="color:#5d6b80;font-size:.85em">样本 ${facet.sampleCount}</span><br>${items}${model}</div>`;
+  }).join("");
 
   const subtitles = (Array.isArray(card.subtitles) ? card.subtitles : []) as Array<Record<string, unknown>>;
   const subRows = subtitles.map((s) => `<tr><td style="color:#e8c66a">${mmss(Number(s.atSec))}</td><td>${esc(s.textZh)}</td></tr>`).join("");
@@ -149,6 +187,7 @@ async function main() {
 <h2 style="color:#e8c66a;margin-top:26px">五维分类（模型原文）</h2>${tags}${summaryCards}
 <h2 style="color:#e8c66a;margin-top:30px">画面时间轴</h2><div style="display:flex;flex-wrap:wrap;gap:8px">${tiles.join("")}</div>
 <details style="margin-top:30px" open><summary style="color:#e8c66a;font-size:1.2em;cursor:pointer">全镜头表 · ${shots.length} 镜 × 17 字段</summary><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#141b24">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#8fa3bd">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
+<h2 style="color:#6ad0e8;margin-top:30px">可复用手法蒸馏 · 四面向（统计自逐镜字段，零模型调用）</h2>${digestHtml}
 <h2 style="color:#e8c66a;margin-top:30px">音轨解析（模型原文）</h2><div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.85em">${audioRows}</table></div>
 <details style="margin-top:30px"><summary style="color:#e8c66a;font-size:1.1em;cursor:pointer">字幕原始证据 · ${subtitles.length} 条（折叠存证，不铺开；重点时刻由模型侧 keyMoments 承担）</summary><div style="overflow-x:auto;max-height:50vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.85em">${subRows}</table></div></details>
 <p style="color:#5d6b80;font-size:.8em;margin-top:36px">帧图与本页为 GCS V4 签名链接（6 天）· raw/parsed/GLM 卡永久存 GCS · 本页由代码从模型 JSON 确定性渲染</p></div>`;
