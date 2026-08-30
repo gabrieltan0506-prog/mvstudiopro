@@ -383,7 +383,11 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
   // 0830 用户拍板：首发 0.7 → 0.65。实弹依据：576p 那轮 10 片有 5 片首发违反
   // 30 秒硬约束（40/40/201/162/130 秒巨镜），而**全部 5 片在 0.65 那一发过关、零二次失败**。
   // 0.7 首发合格率 50%，0.65 是 100%——每次重试都要重付一整片视频输入，这一降直接省掉一半重试。
-  temperature: 0.65,
+  // 0830 晚用户拍板：0.65 → 0.6。实弹依据（漫剧 6 片逐片打印，首次拿到思考量分布）：
+  // 思考 8,896→71 镜 · 14,573→34 镜 · 26,836→52 镜 · 39,024→56 镜——**思考越多正文越少**，
+  // 而 thinkingBudget 18,000 名义封顶实际被突破到 39,024（2.17 倍），参数没有真正约束住。
+  // 降温是压制发散的第二道手（第一道是下面的「禁止内部推理」提示词约束）。
+  temperature: 0.6,
   maxOutputTokens: 65_536,
   candidateCount: 1,
   audioTimestamp: true,
@@ -391,7 +395,9 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
   responseSchema: NATIVE_DEEP_READ_RESPONSE_SCHEMA,
   // 0829 用户令：thinkingLevel 移除（0826 由 agent 加入，用户从未设定）；
   // 保留 includeThoughts:false——思考照跑照计费，但绝不混进输出 JSON（知识库定案）。
-  thinkingConfig: { thinkingBudget: 18_000, includeThoughts: false },
+  // 0830 晚：18_000 → 12_000。⚠️ 实测该 budget **不是硬上限**（设 18K 实跑到 39K），
+  // 降它是降「目标值」不是降「天花板」，效果需下一轮实弹验证，不得当作已解决。
+  thinkingConfig: { thinkingBudget: 12_000, includeThoughts: false },
 } as const;
 
 /**
@@ -409,7 +415,7 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
  * 实弹依据见 GENERATION_CONFIG.temperature 注释：0.7 首发合格率 50%，0.65 是 100%。
  * 下限仍是 0.6，三档变两档——第三档在实测中从未被用到过。
  */
-export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.65, 0.6] as const;
+export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.6, 0.5] as const;
 
 /**
  * 段级重试触发线：**不合标准项达到 3 项才重试，1–2 项一律放行**（0830 用户拍板）。
@@ -429,7 +435,7 @@ export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.65, 0.6] as const;
  */
 export const NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES = 3;
 export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 60_000;
-export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.6;
+export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.5;
 
 /** 第二次尝试参数；保留导出供既有调用方与缓存指纹使用。 */
 export const NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG = {
@@ -608,7 +614,7 @@ export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
  * v4（0826 拍板）：视觉调用换 Vertex Gemini 3.1 Pro 从 GCS 直读、每段一次调用、
  * 音轨同调直出、双密度门禁。计划口径与采样语义全变——旧确认码必须全废。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v12-key-moments" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v13-anti-divergence" as const;
 
 /** 0827 实弹口径：生产 300 秒分片保持 10fps；仅旧数据超 300 秒时降为 5fps。 */
 export function resolveNativeDeepReadRequestFps(totalDurationSec: number): number {
@@ -794,6 +800,10 @@ export function buildGeminiNativeDeepReadSegmentPrompt(input: {
 c. 输出预算紧张时优先压缩 subtitles，尽量保全镜头表与音轨栏的密度。`
     : "";
   const base = `你是漫剧成片的「导演手法」分析师。当前视频是全片（共 ${Math.round(input.episodeDurationSec)} 秒）的第 ${Math.round(input.startSec)}–${Math.round(input.endSec)} 秒（第 ${input.segmentIndex + 1}/${input.segmentCount} 段）${hint ? `（${hint}）` : ""}。
+
+**【强制约束·先读这条】禁止内部推理与过度解释，直接输出客观的视觉与听觉物理特征。**
+不要在描述里写因果推断、人物动机、剧情解读或「因为…所以…」式论证；每个字段只写**看得见、听得见**的
+物理事实（谁在画面哪个位置、光从哪来、镜头怎么动、发出什么声音）。用词精炼，不铺陈。
 
 **重点是拍法，不是剧情。** 只返回一个 JSON，不要 Markdown 围栏：
 {
