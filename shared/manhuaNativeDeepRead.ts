@@ -267,6 +267,13 @@ export type NativeDeepReadOutput = {
    * 有真实段界或根本没有广告区间时缺省不出现。绝不用猜的偏移错删。
    */
   audioAdFilterSkipped?: boolean;
+  /**
+   * 同 chunkIndex 多版本分析合并进来的点事件数（0831 修复前这些会被 first-wins 静默丢弃）。
+   * 缺省不出现＝本次没有重复版本，**不等于"没有丢过"**——旧卡由旧代码产出，无从追认。
+   */
+  audioCuesMergedFromDuplicates?: number;
+  /** 合并时落在所有音轨区间之外、无处安放的点事件数；出现即说明上游区间与事件对不齐 */
+  audioCuesUnplaced?: number;
 };
 
 const cut = (v: string | undefined, max: number): string | undefined => {
@@ -344,8 +351,15 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
         droppedCount += 1;
         return [];
       }
-      const start = offsetSec + Math.floor(Number(shot.startSec) || 0);
-      const end = offsetSec + Math.floor(Number(shot.endSec) || 0);
+      /**
+       * 0831 修复：原来两处 Math.floor 会把模型给的小数秒直接抹掉——
+       * 实测第 2 片 77 镜里 75 镜带小数，边界最多提前 0.9 秒；
+       * 更严重的是 319–319.4 这类镜 floor 后 end===start，endSec 被判 undefined 从 JSON 消失。
+       * 模型按 fps 抽帧本就能给出 0.1 秒粒度（与 keyMoments 的 atSec 同口径），保留一位小数。
+       */
+      const round1 = (value: unknown) => Math.round((Number(value) || 0) * 10) / 10;
+      const start = round1(offsetSec + round1(shot.startSec));
+      const end = round1(offsetSec + round1(shot.endSec));
       return [
         {
           atSec: Math.max(0, start),
@@ -402,6 +416,10 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
   // 跳过过滤并置 audioAdFilterSkipped，绝不用猜的偏移错删。
   const resolvedByChunk = new Map<number, ManhuaNativeAudioChunkAnalysis>();
   let audioAdFilterSkipped = false;
+  /** 同 chunk 多版本合并进来的点事件数；0=没有重复版本，不是"没丢" */
+  let audioCuesMerged = 0;
+  /** 落在所有音轨区间之外、无处安放的点事件数：必须可见，不得静默吞掉 */
+  let audioCuesUnplaced = 0;
   for (const { seg } of ok) {
     const adIntervals = [
       ...seg.shots
@@ -415,29 +433,64 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
     const inAd = (absSec: number) =>
       adIntervals.some((interval) => absSec >= interval.startSec && absSec < interval.endSec);
     for (const row of seg.audioResolution) {
-      if (resolvedByChunk.has(row.chunkIndex)) continue;
-      if (!adIntervals.length) {
-        resolvedByChunk.set(row.chunkIndex, row.analysis);
-        continue;
-      }
       const span = spanByChunk.get(row.chunkIndex);
-      if (!span) {
+      const chunkStart = span?.startSec ?? 0;
+      /** 广告过滤后的本份分析；缺 chunkSpans 时不猜偏移，原样保留并标记跳过。 */
+      let incoming: ManhuaNativeAudioChunkAnalysis;
+      if (!adIntervals.length) {
+        incoming = row.analysis;
+      } else if (!span) {
         audioAdFilterSkipped = true;
-        resolvedByChunk.set(row.chunkIndex, row.analysis);
+        incoming = row.analysis;
+      } else {
+        incoming = {
+          ...row.analysis,
+          audioTrack: row.analysis.audioTrack
+            .filter((track) => !adIntervals.some((interval) =>
+              chunkStart + track.fromSec >= interval.startSec
+              && chunkStart + track.toSec <= interval.endSec))
+            .map((track) => ({
+              ...track,
+              cues: track.cues.filter((cue) => !inAd(chunkStart + cue.atSec)),
+            })),
+        };
+      }
+      const existing = resolvedByChunk.get(row.chunkIndex);
+      if (!existing) {
+        resolvedByChunk.set(row.chunkIndex, incoming);
         continue;
       }
-      const chunkStart = span.startSec;
-      resolvedByChunk.set(row.chunkIndex, {
-        ...row.analysis,
-        audioTrack: row.analysis.audioTrack
-          .filter((track) => !adIntervals.some((interval) =>
-            chunkStart + track.fromSec >= interval.startSec
-            && chunkStart + track.toSec <= interval.endSec))
-          .map((track) => ({
-            ...track,
-            cues: track.cues.filter((cue) => !inAd(chunkStart + cue.atSec)),
-          })),
-      });
+      /**
+       * 0831 修复：同 chunkIndex 原来直接 continue 丢弃——实测 GLM 整集回 9 份分析，
+       * first-wins 只留 5 份，46 条不同 cue 静默消失且 droppedCount 完全不反映。
+       *
+       * 但**不能盲目并入整份**：后到的可能来自被标记的失败版本，audioTrack 是区间，
+       * 并进来会产生重叠、撞下游覆盖校验。故只合并**点事件 cue**（去重后是增益，
+       * 不产生区间冲突），区间结构与四项文本总结仍以先到版为准；合并数量落账可观测。
+       */
+      const cueKey = (chunk: number, cue: { atSec: number; kind: string; detailZh: string }) =>
+        `${chunk}|${cue.atSec}|${cue.kind}|${String(cue.detailZh || "").trim()}`;
+      const seenCues = new Set(
+        existing.audioTrack.flatMap((track) =>
+          track.cues.map((cue) => cueKey(row.chunkIndex, cue))),
+      );
+      const pendingCues = incoming.audioTrack
+        .flatMap((track) => track.cues)
+        .filter((cue) => !seenCues.has(cueKey(row.chunkIndex, cue)));
+      if (!pendingCues.length) continue;
+      const mergedTrack = existing.audioTrack.map((track) => ({ ...track, cues: [...track.cues] }));
+      for (const cue of pendingCues) {
+        // 归入时间上包含该事件的区间；落在所有区间之外的事件无处安放，计入未归档
+        const host = mergedTrack.find((track) => cue.atSec >= track.fromSec && cue.atSec <= track.toSec);
+        if (!host) {
+          audioCuesUnplaced += 1;
+          continue;
+        }
+        host.cues.push(cue);
+        audioCuesMerged += 1;
+      }
+      for (const track of mergedTrack) track.cues.sort((a, b) => a.atSec - b.atSec);
+      resolvedByChunk.set(row.chunkIndex, { ...existing, audioTrack: mergedTrack });
     }
   }
   const resolvedAudioChunks = Array.from(resolvedByChunk.entries())
@@ -549,6 +602,8 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
     advisories: advisories.length ? advisories : undefined,
     excludedAdRanges: excludedAdRanges.length ? excludedAdRanges : undefined,
     ...(audioAdFilterSkipped ? { audioAdFilterSkipped: true } : {}),
+    ...(audioCuesMerged > 0 ? { audioCuesMergedFromDuplicates: audioCuesMerged } : {}),
+    ...(audioCuesUnplaced > 0 ? { audioCuesUnplaced } : {}),
   };
 }
 

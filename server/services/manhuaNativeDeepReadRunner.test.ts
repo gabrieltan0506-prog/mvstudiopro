@@ -286,9 +286,18 @@ describe("模型与通道收口", () => {
     const encodedBridge = JSON.stringify(clockBridge).slice(1, -1);
     expect(candidateJson.split(encodedBridge)).toHaveLength(2);
     const restoredBaseline = candidateJson.replace(encodedBridge, "");
-    // 只删上方固定新增文本，不归一空白、不重算旧摘要，其他漂移必须失败。
-    expect(Buffer.byteLength(restoredBaseline)).toBe(14_531);
-    expect(createHash("sha256").update(restoredBaseline).digest("hex"))
+    /**
+     * 0831 补一步：本轮删掉了 mediaResolution，故须把该键也逐字补回，才能落回历史固定字节。
+     * 补回后仍是 14531 字节与同一个 SHA，正说明「删桥 + 删 mediaResolution」是全部差异。
+     * 只删上方固定新增文本，不归一空白、不重算旧摘要，其他漂移必须失败。
+     */
+    const thinkingJson = '"thinkingConfig":{"thinkingLevel":"MEDIUM","includeThoughts":false}';
+    // 锚点必须唯一：否则下面的 replace 静默失配，失败信息会指向 SHA 而不是真因。
+    expect(restoredBaseline.split(thinkingJson)).toHaveLength(2);
+    const restoredHistoric = restoredBaseline
+      .replace(thinkingJson, `${thinkingJson},"mediaResolution":"MEDIA_RESOLUTION_MEDIUM"`);
+    expect(Buffer.byteLength(restoredHistoric)).toBe(14_531);
+    expect(createHash("sha256").update(restoredHistoric).digest("hex"))
       .toBe("ba1ec0187e20c468bde3c2f81f4c9d2bcbbb822686c1d5b93e7cbcc347b2298d");
     const baselineJson = JSON.stringify(buildGeminiNativeDeepReadSegmentRequest({
       ...input, prompt: input.prompt.replace(clockBridge, ""),
@@ -311,7 +320,17 @@ describe("模型与通道收口", () => {
     expect(candidate.generationConfig).toMatchObject({ temperature: 0.65 });
     const candidateJson = JSON.stringify(candidate);
     expect(candidateJson.match(/"temperature":0\.65(?=[,}])/g)).toHaveLength(1);
-    const restoredV24 = candidateJson.replace('"temperature":0.65', '"temperature":0.7');
+    /**
+     * 0831 起当前请求与 v24 相差两项，且**只有**这两项：温度 0.7→0.65、删除 mediaResolution。
+     * 把这两项逐字还原后仍须落回 v24 原始 SHA——这才是「单变量」的证明。
+     * 不要改成新 SHA：那样等于把溯源断言改成自证，任何第三处漂移都不会再被抓到。
+     * mediaResolution 原为 generationConfig 最后一个键，故补在 thinkingConfig 之后。
+     */
+    const thinkingJson = '"thinkingConfig":{"thinkingLevel":"MEDIUM","includeThoughts":false}';
+    expect(candidateJson.split(thinkingJson)).toHaveLength(2);
+    const restoredV24 = candidateJson
+      .replace('"temperature":0.65', '"temperature":0.7')
+      .replace(thinkingJson, `${thinkingJson},"mediaResolution":"MEDIA_RESOLUTION_MEDIUM"`);
     // 固定来自2ac2117已保存的实际request-1，不从本轮生产常量生成预期摘要。
     expect(createHash("sha256").update(restoredV24).digest("hex"))
       .toBe("54931eb5111cf3fa30d5c29296580681b390654e8811fcffbe806efe8abcdc04");
@@ -589,8 +608,13 @@ describe("每段提示词硬约束", () => {
       hasAudio: true,
       rejectedReasonZh: "音轨仅 1 段",
     });
-    expect(retry).toContain("【上一轮被拒原因】音轨仅 1 段");
-    expect(retry).toContain("尽量不要降低镜头表或音轨密度");
+    expect(retry).toContain("【上一轮未通过的检查】音轨仅 1 段");
+    // 0831 加固：原来只有一句软性「尽量不要降低密度」，实测模型把「修正」做成砍条数＋
+    // 通用词填充（35 条降 15 条、12 条描述逐字相同）。四条禁令必须逐条在场。
+    expect(retry).toContain("镜头表条数只增不减");
+    expect(retry).toContain("拆成多条");
+    expect(retry).toContain("各条不得雷同");
+    expect(retry).toContain("不要为了\"补足\"而增加不存在的声音事件");
   });
 });
 
@@ -637,7 +661,23 @@ describe("时间坐标桥单变量候选", () => {
     const retry = buildGeminiNativeDeepReadSegmentPrompt({ ...input, rejectedReasonZh: "镜头证据段超过33秒" });
     expect(first.match(/所附视频文件只有本段/g)).toHaveLength(1);
     expect(retry.match(/所附视频文件只有本段/g)).toHaveLength(1);
-    expect(retry).toBe(`${first}\n【上一轮被拒原因】镜头证据段超过33秒。请修正后重新输出完整 JSON；修正时尽量不要降低镜头表或音轨密度。`);
+    /**
+     * 后缀是纯字面量，**必须全等，不许放松成 startsWith/toContain**。
+     * 审查实测：放松后有两类回归能全绿逃逸——(1) 在四条规则后再追加
+     * 「镜头表压缩到 10 条以内」之类的降密度指令；(2) 把规则 1 反转成
+     * 「其余可酌情精简…但不强求」而仍含子串「镜头表条数只增不减」。
+     * 这两类正是本轮生产改动要根除的那个 bug，绝不能从测试里漏过去。
+     */
+    const expectedSuffix = `
+【上一轮未通过的检查】镜头证据段超过33秒
+
+本轮重做要求（0831 实测加固：上一轮模型把「修正」做成了砍条数＋通用词填充，35 条降到 15 条、12 条描述逐字相同）：
+1. 只修正上面点名的问题，其余一律照常完整观察，**镜头表条数只增不减**。
+2. 证据段过长时的唯一正确做法是**按硬约束 1 拆成多条**，不是删掉、不是合并、不是拉长单条覆盖。
+3. 禁止用「剧情推进」「人物交替出现」「交谈与动作」「表情自然」这类通用词填充字段；
+   每条证据的画面描述必须来自你在该时间段真实看到的内容，各条不得雷同。
+4. 声音部分按实际听到的写，安静段落本来就少——**不要为了"补足"而增加不存在的声音事件**。`;
+    expect(retry).toBe(`${first}${expectedSuffix}`);
   });
 });
 
@@ -649,11 +689,15 @@ describe("Gemini 请求体（Google 原生格式，Vertex/EvoLink 同构）", ()
     expect(createNativeDeepReadRunnerDeps().postVertex).toBe(original.postVertex);
     expect(custom.prepareVideos).toBe(original.prepareVideos);
   });
-  it("实际序列化后MEDIA_RESOLUTION_MEDIUM在全局参数中，视频fps与Schema保持原值", () => {
+  it("实际序列化后不再发送 mediaResolution，视频fps与Schema保持原值", () => {
     const serialized = JSON.parse(JSON.stringify(buildGeminiNativeDeepReadSegmentRequest({
       fileUri: "gs://bucket/segment.mp4", fps: 10, prompt: "测试",
     })));
-    expect(serialized.generationConfig.mediaResolution).toBe("MEDIA_RESOLUTION_MEDIUM");
+    // 0831 改：0830 实测「设了等于没设」（传 MEDIUM 与不传，输入 token 210,198 vs 210,134），
+    // 官方文档亦写明视频档 默认／LOW／MEDIUM 同为 70 token/帧。既然无效就不发，别留噪音字段。
+    // 这里断言「整个键不存在」而非等于某个值——写成默认字符串会让人误以为真发了参数。
+    expect(serialized.generationConfig).not.toHaveProperty("mediaResolution");
+    expect(serialized.generationConfig).not.toHaveProperty("media_resolution");
     expect(serialized.generationConfig.responseSchema).toEqual(NATIVE_DEEP_READ_RESPONSE_SCHEMA);
     expect(serialized.contents[0].parts[0].videoMetadata.fps).toBe(10);
     expect(serialized.contents[0].parts[0]).not.toHaveProperty("mediaResolution");
@@ -2531,7 +2575,7 @@ describe("Vertex 主线：每段一次调用（不再多段合包）", () => {
         const text = String((body as {
           contents: Array<{ parts: Array<{ text?: string }> }>;
         }).contents[0]!.parts[1]!.text);
-        expect(text).toContain("【上一轮被拒原因】");
+        expect(text).toContain("【上一轮未通过的检查】");
         return geminiResponse(good);
       });
     const deps = makeRunnerDeps({

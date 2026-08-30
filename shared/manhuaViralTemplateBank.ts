@@ -438,12 +438,14 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
           /** 空串归 undefined：抽帧产出没有这些字段，不该在库里留一堆空字符串 */
           const opt = (v: unknown, max: number): string | undefined =>
             String(v || "").trim().slice(0, max) || undefined;
-          const endSec = Math.floor(Number(b.endSec) || 0);
+          // 0831 修复：与 mapNativeDeepReadSegments 同口径保留一位小数，勿二次抹零
+          const round1 = (value: unknown) => Math.round((Number(value) || 0) * 10) / 10;
+          const endSec = round1(b.endSec);
           const unitTypeZh = b.unitTypeZh === "剪辑镜头" || b.unitTypeZh === "拆分镜证据段"
             ? b.unitTypeZh
             : undefined;
           return {
-            atSec: Math.max(0, Math.floor(Number(b.atSec) || 0)),
+            atSec: Math.max(0, round1(b.atSec)),
             conflictZh: String(b.conflictZh || "").trim().slice(0, 40),
             visualZh: String(b.visualZh || "").trim().slice(0, 280),
             unitTypeZh,

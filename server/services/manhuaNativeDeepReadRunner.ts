@@ -380,13 +380,12 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
    */
   thinkingConfig: { thinkingLevel: "MEDIUM", includeThoughts: false },
   /**
-   * 使用 generationConfig 的全局枚举。Part 级字段是另一种对象结构，不能传裸字符串。
-   * Google Gemini 3 视频文档：默认、LOW、MEDIUM 均为 70 token/帧，HIGH 为 280。
-   * 因此约 210K 输入不能证明 MEDIUM 被忽略；也不能把 MEDIUM 误称为四倍画质。
-   * https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/video-understanding#video_tokenization
-   * 保持用户冻结值不变，真实请求由探针序列化审计，上游处理效果须另做实证。
+   * 0831 删除 mediaResolution：0830 实测「设了等于没设」——传 MEDIUM 后输入 token
+   * 与 LOW 那轮完全一致（210,198 vs 210,134，仍约 66–70 token/帧）。Google 文档亦写明
+   * Gemini 3 视频档 默认／LOW／MEDIUM 同为 70 token/帧，只有 HIGH 是 280。
+   * 两个已验证成功的历史版本都没有发送此参数，故回到不发送＝默认，去掉这份噪音。
+   * 若日后要提画面精度，唯一有效动作是显式 HIGH（4 倍帧 token，成本与上下文须另算）。
    */
-  mediaResolution: "MEDIA_RESOLUTION_MEDIUM",
 } as const;
 
 /**
@@ -496,6 +495,27 @@ export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES: ReadonlySet<string> = 
   "coverage_tail_gap",
   "timeline_gap",
 ]);
+/**
+ * 不进重试拒因文本的 advisory（0831 修复，实测退化根因）。
+ *
+ * 实锤：第 1 片两次请求只差「追加拒因 + 温度 0.65→0.60」，结果 35 镜→15 镜，
+ * 其中 12 条描述逐字相同、铺满 289 秒（90.6%）。模型对拒因的「修正」方式
+ * 就是砍条数 + 通用词填充——**拒因本身在诱导降密度**。
+ *
+ * 剔除两类：
+ * · 音轨全家族——0829 用户明令「音轨有几段写几段，安静段落 1 段是正常的，
+ *   禁止凑数编造」。把它写进拒因等于当面逼模型编声音事件，与明令直接冲突。
+ * · long_take_count——它的 detailZh 自带「仅提示不拒收」，模型却照单全改。
+ *   真正必须拆的超长镜由硬拒收 shot_evidence_too_long 独立发出，不靠这条。
+ *
+ * 这些条目**仍照常记账、仍参与重试决策**，只是不作为「要模型改什么」的指示发出去。
+ */
+export const NATIVE_DEEP_READ_NON_ACTIONABLE_RETRY_CODES: ReadonlySet<string> = new Set([
+  "audio_track_thin", "audio_cue_thin", "audio_timeline_invalid",
+  "audio_chunk_shape", "audio_schema_invalid", "audio_field_missing", "audio_unexpected",
+  "long_take_count",
+]);
+
 export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 60_000;
 export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.6;
 
@@ -1053,7 +1073,15 @@ shots 条目按 evidenceRole 区分两种结构：
 6. 用题材词代替手法分类，将未呈现的人物动机或推测当作观察事实。
 ${audioSoftRules}`;
   return input.rejectedReasonZh
-    ? `${base}\n【上一轮被拒原因】${String(input.rejectedReasonZh).slice(0, 300)}。请修正后重新输出完整 JSON；修正时尽量不要降低镜头表或音轨密度。`
+    ? `${base}
+【上一轮未通过的检查】${String(input.rejectedReasonZh).slice(0, 300)}
+
+本轮重做要求（0831 实测加固：上一轮模型把「修正」做成了砍条数＋通用词填充，35 条降到 15 条、12 条描述逐字相同）：
+1. 只修正上面点名的问题，其余一律照常完整观察，**镜头表条数只增不减**。
+2. 证据段过长时的唯一正确做法是**按硬约束 1 拆成多条**，不是删掉、不是合并、不是拉长单条覆盖。
+3. 禁止用「剧情推进」「人物交替出现」「交谈与动作」「表情自然」这类通用词填充字段；
+   每条证据的画面描述必须来自你在该时间段真实看到的内容，各条不得雷同。
+4. 声音部分按实际听到的写，安静段落本来就少——**不要为了"补足"而增加不存在的声音事件**。`
     : base;
 }
 
@@ -2506,11 +2534,11 @@ export function assertNativeDeepReadSegmentDensity(input: {
   if (storyShots.length === 0 || storyDurationSec < 1) {
     note("no_story_shots", `${labelZh}没有可学习的剧情镜头（招商广告已排除）`);
   }
-  const storyFloors = resolveNativeDeepReadSegmentFloors(storyDurationSec);
+  // storyFloors（按模型产出的 storyDurationSec 算镜数地板）已随 0830 删除镜数门禁一并作废——
+  // 那正是「回得越少地板越低、越容易过」的洞。音轨 advisory 用**计划片长** lenSec 当分母。
   const audioFloors = resolveNativeDeepReadSegmentFloors(lenSec);
-  // 0829 用户裁决：不足整片（<300 秒）的尾片按实际取值直接入库，不设镜数门禁——
-  // 尾片长度天然不定，用同一把尺子卡它只会把真实产出判死。
-  const isFullLengthSegment = lenSec >= NATIVE_DEEP_READ_SEGMENT_FULL_LENGTH_SEC;
+  // 0829「尾片不设镜数门禁」的开关已无消费者：0830 镜数门禁整条删除后，
+  // 长片尾片走的是同一套（上限＋覆盖），不再需要按 300 秒分流。
 
   /**
    * ❌ 镜数「离谱地板」已整条删除（0830 用户令：「我都设好上限了，不要管下限了」）。
@@ -3865,9 +3893,24 @@ async function executeNativeDeepReadBatch(
             const countableFailures = truncated ? [] : gated.advisories;
             const { failureCount, twoItemOverDeviation, coverageSoloRetry, families } = decision;
             if (decision.retry) {
-              const reasonZh = countableFailures.map((row) => row.detailZh).join("；").slice(0, 500);
+              /**
+               * 两份文本，用途不同，**不得合并成一份**：
+               * · accountedReasonZh＝全部 advisory，进段卡与 console。用户明令
+               *   「每一个有错误的卡点都要吐出原因」，不可执行不等于不用记。
+               * · modelReasonZh＝只留「模型能改且应该改」的项，仅此一份发给模型。
+               * 早先写成同一个变量，等于把音轨那族从段卡本体也抹掉了（观测性倒退）。
+               */
+              const accountedReasonZh = countableFailures.length
+                ? countableFailures.map((row) => row.detailZh).join("；").slice(0, 500)
+                : "";
+              const actionable = countableFailures.filter(
+                (row) => !NATIVE_DEEP_READ_NON_ACTIONABLE_RETRY_CODES.has(row.code),
+              );
+              const reasonZh = actionable.length
+                ? actionable.map((row) => row.detailZh).join("；").slice(0, 500)
+                : "上一轮整体证据密度不足，未定位到可由你直接修正的具体项";
               raw.gateMarked = true;
-              raw.gateMarkedZh = reasonZh;
+              raw.gateMarkedZh = accountedReasonZh || reasonZh;
               raw.attemptNumber = input.attemptNumber;
               // 标记版**只在这里推池一次**（审计必修④）：下面 catch 不再重复推，
               // 否则同一对象引用推两次就把上限 2 的池占满，第 2 发证据永远进不去。
@@ -3885,7 +3928,10 @@ async function executeNativeDeepReadBatch(
                   : twoItemOverDeviation
                     ? `（2 项且偏差超 ${NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO * 100}%）`
                     : `（≥${NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES}）`)
-                + `，重试一发：${reasonZh}`,
+                // 日志走完整版：排障时要看得见被过滤掉的那几族，否则只剩缩写。
+                + `，重试一发：${accountedReasonZh || reasonZh}`
+                + (accountedReasonZh && accountedReasonZh !== reasonZh
+                  ? `；实发模型：${reasonZh}` : ""),
               );
               throw gateError(reasonZh);
             }
@@ -4477,7 +4523,9 @@ async function executeNativeDeepReadBatch(
           // 输入规格入档（0830 晚）：隔天复盘时能说清这份产物是用什么画质读出来的。
           maxFps: NATIVE_DEEP_READ_MAX_FPS,
           requestedFps: episode.videoFps,
-          mediaResolution: NATIVE_DEEP_READ_GENERATION_CONFIG.mediaResolution,
+          // 0831 起不再发送 mediaResolution，走上游默认（Gemini 3 视频默认＝70 token/帧）。
+          // 仍然入档，是为了让旧卡（显式 MEDIUM）与新卡（默认）在溯源上能一眼分开。
+          mediaResolution: "unspecified_default",
           retryTemperatures: [...NATIVE_DEEP_READ_RETRY_TEMPERATURES],
           segmentCount: episode.segments.length,
           sourceDurationSec: episode.sourceDurationSec,

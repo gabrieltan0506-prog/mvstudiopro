@@ -538,11 +538,18 @@ export function mergeEpisodeDigestsIntoProposal(input: {
   const beatMap = new Map<number, ManhuaViralTemplateBeat>();
   for (const d of digests) {
     for (const b of d.beatHints || []) {
-      const key = Math.max(0, Math.floor(b.atSec));
+      /**
+       * 0831 修：这是抹零的**第三层**，前两层（mapNativeDeepReadSegments、
+       * 模板卡组装）已改保留一位小数，这里再 floor 一次等于前功尽弃——
+       * 319.0 与 319.4 会塌成同一个键，first-wins 直接丢掉后者。
+       * 键用「十分之一秒的整数」而不是浮点，避免任何浮点键相等性的疑虑。
+       */
+      const tenths = Math.max(0, Math.round(b.atSec * 10));
+      const key = tenths;
       if (!beatMap.has(key) && b.conflictZh && b.visualZh) {
         beatMap.set(key, {
           ...b,
-          atSec: key,
+          atSec: tenths / 10,
           conflictZh: b.conflictZh.slice(0, 40),
           visualZh: b.visualZh.slice(0, 280),
         });

@@ -489,6 +489,79 @@ describe("音频广告过滤只认真实段界（chunkSpans），禁猜起点", 
     expect(out.resolvedAudioChunks[0]!.analysis.audioTrack).toHaveLength(1);
     expect(out.resolvedAudioChunks[0]!.analysis.audioTrack[0]!.cues.map((cue) => cue.atSec)).toEqual([30]);
   });
+
+  /**
+   * 0831 补：同 chunk 多版本合并，此前**零覆盖**。
+   * 旧实现是 `if (resolvedByChunk.has(chunkIndex)) continue;` 直接丢后到版本——
+   * 实测一次跑掉 GLM 9 份分析里的 4 份、46 条 cue，且 droppedCount 完全不反映。
+   * 事故已发生过，测试却一直不存在，所以这几条是补票不是锦上添花。
+   */
+  describe("同 chunk 多版本：区间 first-wins，但点事件必须合并且可数", () => {
+    it("后到版本的新 cue 并入，重复 cue 去重，合并数落账", () => {
+      const out = mapNativeDeepReadSegments([
+        row({
+          shots: [storyShot(0, 60)],
+          audioResolution: [{ chunkIndex: 0, analysis: analysis([track(0, 60, [10, 20])]) }],
+        }),
+        row({
+          shots: [storyShot(0, 60)],
+          // 20 与先到版重复必须去掉，30 是新的必须并进来。
+          audioResolution: [{ chunkIndex: 0, analysis: analysis([track(0, 60, [20, 30])]) }],
+        }),
+      ]);
+      expect(out.resolvedAudioChunks).toHaveLength(1);
+      const cues = out.resolvedAudioChunks[0]!.analysis.audioTrack[0]!.cues;
+      expect(cues.map((cue) => cue.atSec)).toEqual([10, 20, 30]);
+      expect(out.audioCuesMergedFromDuplicates).toBe(1);
+      expect(out.audioCuesUnplaced ?? 0).toBe(0);
+    });
+
+    it("落在所有区间之外的 cue 不静默吞掉，计入 audioCuesUnplaced", () => {
+      const out = mapNativeDeepReadSegments([
+        row({
+          shots: [storyShot(0, 60)],
+          audioResolution: [{ chunkIndex: 0, analysis: analysis([track(0, 60, [10])]) }],
+        }),
+        row({
+          shots: [storyShot(0, 60)],
+          // 999 秒无处安放：可以不落盘，但必须留下数字，否则又是一次静默丢失。
+          audioResolution: [{ chunkIndex: 0, analysis: analysis([track(0, 60, [999])]) }],
+        }),
+      ]);
+      expect(out.resolvedAudioChunks[0]!.analysis.audioTrack[0]!.cues.map((c) => c.atSec)).toEqual([10]);
+      expect(out.audioCuesUnplaced).toBe(1);
+    });
+
+    it("区间结构仍 first-wins：后到版本不得覆盖先到版的整体判断", () => {
+      const out = mapNativeDeepReadSegments([
+        row({
+          shots: [storyShot(0, 60)],
+          audioResolution: [{ chunkIndex: 0, analysis: { ...analysis([track(0, 60, [10])]), audioBeatStructureZh: "先到版结构" } }],
+        }),
+        row({
+          shots: [storyShot(0, 60)],
+          audioResolution: [{ chunkIndex: 0, analysis: { ...analysis([track(0, 30, [20])]), audioBeatStructureZh: "后到版结构" } }],
+        }),
+      ]);
+      const chunk = out.resolvedAudioChunks[0]!;
+      // 区间不变（仍是先到版那条 0..60），只是把后到版的点事件收进来。
+      expect(chunk.analysis.audioBeatStructureZh).toBe("先到版结构");
+      expect(chunk.analysis.audioTrack).toHaveLength(1);
+      expect(chunk.analysis.audioTrack[0]!.toSec).toBe(60);
+      expect(chunk.analysis.audioTrack[0]!.cues.map((c) => c.atSec)).toEqual([10, 20]);
+    });
+
+    it("没有重复版本时两个计数不出现，0 不等于「没丢」的假象", () => {
+      const out = mapNativeDeepReadSegments([
+        row({
+          shots: [storyShot(0, 60)],
+          audioResolution: [{ chunkIndex: 0, analysis: analysis([track(0, 60, [10])]) }],
+        }),
+      ]);
+      expect(out.audioCuesMergedFromDuplicates).toBeUndefined();
+      expect(out.audioCuesUnplaced).toBeUndefined();
+    });
+  });
 });
 
 
