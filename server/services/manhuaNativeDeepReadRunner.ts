@@ -1479,6 +1479,44 @@ function gateError(detailZh: string): Error {
 }
 
 /**
+ * 三项线的**唯一判据**：这份段卡按当前标准能不能直接入库/复用缓存。
+ *
+ * 抽出来是因为审计必修③：入库口用三项线（1–2 项放行），缓存复验口却仍用
+ * 「硬门抛不抛」——两把尺子会形成死循环：**放行入库 → 下次复验拒绝 → 整片重读
+ * → 再放行**，每次运行按整片重复计费。两处必须问同一个函数。
+ *
+ * 判定与入库口逐条对齐：
+ *   · 截断段豁免计数（重试仍会截断，纯烧钱）
+ *   · 不合标准项 ≥3 → 不可用（该重读/重试）
+ *   · 硬门单独命中 = 1 项 → **可用**（放行）
+ *   · schema / zod 失败 → 不可用（卡根本不能用，不是「不合标准」）
+ *   · 非门禁错误（网络等）原样上抛，不吞
+ */
+export function nativeDeepReadSegmentMeetsThreeItemLine(input: {
+  episodeIndex: number;
+  segmentIndex: number;
+  startSec: number;
+  endSec: number;
+  hasAudio: boolean;
+  raw: Record<string, unknown>;
+  truncated?: boolean;
+}): boolean {
+  const truncated = input.truncated === true;
+  try {
+    const gated = assertNativeDeepReadSegmentDensity(input);
+    const countable = truncated ? [] : gated.advisories;
+    return countable.length < NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES;
+  } catch (error) {
+    if (error instanceof Error
+      && (error.name === NATIVE_DEEP_READ_SCHEMA_ERROR_NAME || error.name === "ZodError")) {
+      return false;
+    }
+    if (!isNativeDeepReadGateFailure(error)) throw error;
+    return true;
+  }
+}
+
+/**
  * schema 解析失败（数据不可用）的关闭式失败标记。0829 起段门禁其余判定都转 advisory，
  * 只有这一类与「JSON 彻底解析不了」是真的没法用；且它不进温度梯度重试（重买解决不了）。
  */
@@ -2864,20 +2902,19 @@ export async function runManhuaNativeDeepReadBatch(params: {
             );
             continue;
           }
-          try {
-            // 门禁代码收紧时，即使指纹未变，旧段也必须按当前标准复验；未过即 miss。
-            assertNativeDeepReadSegmentDensity({
-              episodeIndex: episode.episodeIndex,
-              segmentIndex,
-              startSec: segment.startSec,
-              endSec: segment.endSec,
-              hasAudio: entry.hasAudio,
-              raw: entry.raw,
-            });
-          } catch (error) {
-            if (!isNativeDeepReadGateFailure(error)) throw error;
+          // 门禁代码收紧时，即使指纹未变，旧段也必须按当前标准复验；未过即 miss。
+          // 判据与入库口共用同一个函数——两把尺子会导致「放行入库→复验拒绝→重读」死循环。
+          if (!nativeDeepReadSegmentMeetsThreeItemLine({
+            episodeIndex: episode.episodeIndex,
+            segmentIndex,
+            startSec: segment.startSec,
+            endSec: segment.endSec,
+            hasAudio: entry.hasAudio,
+            raw: entry.raw,
+            truncated: entry.raw?.truncated === true,
+          })) {
             console.warn(
-              `[nativeDeepRead] 第${episode.episodeIndex}集第${segmentIndex + 1}段缓存未过当前门禁，按 miss 重学`,
+              `[nativeDeepRead] 第${episode.episodeIndex}集第${segmentIndex + 1}段缓存未过三项线，按 miss 重学`,
             );
             continue;
           }
@@ -3340,16 +3377,25 @@ export async function runManhuaNativeDeepReadBatch(params: {
               truncated,
             });
             /**
-             * 三项线（0830）：不合标准项 <3 就是放行，不重试、不标记。
-             * 硬门抛出的那条在下面 catch 里按 1 项计——它抛在第一项就停，
-             * 后面还有多少项无从得知，只能保守记 1，因此硬门单独命中必放行。
+             * 三项线（0830 用户拍板）：「只有三項不合標準才重試，只有一項到兩項一率放行」。
+             *
+             * 🔒 截断段豁免（审计必修①）：responseSchema 字段顺序是
+             * shots → keyMoments → subtitles → audioResolution → beatStructureZh →
+             * classification，MAX_TOKENS 从尾部截，所以一个截断段**必然**同时命中
+             * truncated_classification_missing + classification_thin +
+             * empty_beat_structure（或 audio_chunk_shape）＝恰好 3 项。
+             * 不豁免的话，0829 明文定的「MAX_TOKENS 不再重试重买」就被静默推翻；
+             * 而截断是确定性的，重试大概率仍截断 → 温度梯度耗尽 → 整集抛错。
+             * 0829 实测「6 片截 2 片，截断是常态不是意外」。
              */
-            if (gated.advisories.length >= NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES) {
-              const reasonZh = gated.advisories.map((row) => row.detailZh).join("；").slice(0, 500);
+            const countableFailures = truncated ? [] : gated.advisories;
+            if (countableFailures.length >= NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES) {
+              const reasonZh = countableFailures.map((row) => row.detailZh).join("；").slice(0, 500);
               raw.gateMarked = true;
               raw.gateMarkedZh = reasonZh;
               raw.attemptNumber = input.attemptNumber;
-              if (truncated) raw.truncated = true;
+              // 标记版**只在这里推池一次**（审计必修④）：下面 catch 不再重复推，
+              // 否则同一对象引用推两次就把上限 2 的池占满，第 2 发证据永远进不去。
               const pool = markedVersionsBySegment.get(input.segmentIndex) || [];
               if (pool.length < NATIVE_DEEP_READ_RETRY_TEMPERATURES.length) {
                 pool.push(raw);
@@ -3357,7 +3403,7 @@ export async function runManhuaNativeDeepReadBatch(params: {
               }
               console.info(
                 `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段`
-                + `第${input.attemptNumber}发 ${gated.advisories.length} 项不合标准（≥`
+                + `第${input.attemptNumber}发 ${countableFailures.length} 项不合标准（≥`
                 + `${NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES}），重试一发：${reasonZh}`,
               );
               throw gateError(reasonZh);
@@ -3365,12 +3411,21 @@ export async function runManhuaNativeDeepReadBatch(params: {
           } catch (gateFailure) {
             /**
              * 硬门单独命中 = 1 项不合标准 → 按用户规则**放行**，原样入库。
-             * 只有上面那条主动抛的「≥3 项」才继续往下走重试路径。
+             *
+             * ⚠️ 三个必须排除的情况：
+             *   · `gateMarked === true` —— 那是上面 ≥3 项主动抛的，要继续走重试
+             *     （必须用 `!== true`：写成 `!String(raw.gateMarked)` 恒为 false，
+             *      因为 String(undefined) === "undefined" 是 truthy，整支会变死代码）
+             *   · schema / zod 解析失败（审计必修②）—— 那不是「不合标准」，
+             *     是**卡根本不可用**，放行会让坏数据进 GLM 与落库，
+             *     并让「schema 错误不降温重试、直接抛」的既有保护失效
+             *   · 非门禁错误（网络/HTTP）—— 原样上抛
              */
-            // ⚠️ 必须用 !== true：写成 !String(raw.gateMarked) 恒为 false
-            //（String(undefined) === "undefined" 是 truthy），整条放行分支会变死代码。
-            if (isNativeDeepReadGateFailure(gateFailure)
-              && (raw as Record<string, unknown>).gateMarked !== true) {
+            const alreadyMarked = (raw as Record<string, unknown>).gateMarked === true;
+            const unusable = gateFailure instanceof Error
+              && (gateFailure.name === NATIVE_DEEP_READ_SCHEMA_ERROR_NAME
+                || gateFailure.name === "ZodError");
+            if (isNativeDeepReadGateFailure(gateFailure) && !alreadyMarked && !unusable) {
               const markedZh = (gateFailure instanceof Error ? gateFailure.message : String(gateFailure))
                 .replace(`${NATIVE_DEEP_READ_GATE_PREFIX}：`, "")
                 .slice(0, 500);
@@ -3378,31 +3433,20 @@ export async function runManhuaNativeDeepReadBatch(params: {
                 `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段`
                 + `仅 1 项不合标准，按三项线放行入库：${markedZh}`,
               );
+              // 放行 ≠ 抹掉判定：理由既写进段卡，也做成 advisory 随 provenance 上面板，
+              // 否则拒因只活在 console 里，面板与 GLM 都看不见（审计建议⑧）。
               raw.gateMarkedZh = markedZh;
-              gated = { raw, advisories: [] };
+              gated = {
+                raw,
+                advisories: [{
+                  code: "gate_passed_under_threshold",
+                  detailZh: markedZh,
+                  segmentIndex: input.segmentIndex,
+                }],
+              };
             } else {
-            // 门禁是贴标签的：命中硬门仍然重试（给模型改的机会），但这一发**不丢**。
-            // 打上标记留进版本池，稍后连同通过版一起交 GLM 去重合并。
-            if (isNativeDeepReadGateFailure(gateFailure)) {
-              const markedZh = (gateFailure instanceof Error ? gateFailure.message : String(gateFailure))
-                .replace(`${NATIVE_DEEP_READ_GATE_PREFIX}：`, "")
-                .slice(0, 500);
-              raw.gateMarked = true;
-              raw.gateMarkedZh = markedZh;
-              raw.attemptNumber = input.attemptNumber;
-              if (truncated) raw.truncated = true;
-              const pool = markedVersionsBySegment.get(input.segmentIndex) || [];
-              // 每段最多留 3 个标记版本（＝温度梯度上限），防异常路径撑爆 GLM 输入。
-              if (pool.length < NATIVE_DEEP_READ_RETRY_TEMPERATURES.length) {
-                pool.push(raw);
-                markedVersionsBySegment.set(input.segmentIndex, pool);
-              }
-              console.info(
-                `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段`
-                + `第${input.attemptNumber}发被门禁标记，已留版本交 GLM：${markedZh}`,
-              );
-            }
-            throw gateFailure;
+              // 到这里只剩三种：≥3 项主动抛（池已推过，不再推）、卡不可用、非门禁错误。
+              throw gateFailure;
             }
           }
           // 截断标记必须落进段卡本体：只留在外层信封里，缓存命中/断点恢复后就没了。
@@ -3557,26 +3601,20 @@ export async function runManhuaNativeDeepReadBatch(params: {
          * 不过就当没命中、重新读——好片照旧命中不花钱，只有真坏的那几片才重买。
          */
         if (cachedEntry) {
-          try {
-            assertNativeDeepReadSegmentDensity({
-              episodeIndex: episode.episodeIndex,
-              segmentIndex,
-              startSec: segment.startSec,
-              endSec: segment.endSec,
-              hasAudio,
-              raw: cachedEntry.raw,
-              truncated: cachedEntry.raw?.truncated === true,
-            });
-          } catch (staleGateFailure) {
-            if (isNativeDeepReadGateFailure(staleGateFailure)) {
-              console.warn(
-                `[nativeDeepRead] 第${episode.episodeIndex}集第${segmentIndex + 1}段缓存未过当前门禁，`
-                + `按未命中重读：${staleGateFailure instanceof Error ? staleGateFailure.message : ""}`,
-              );
-              cachedEntry = undefined;
-            } else {
-              throw staleGateFailure;
-            }
+          // 判据与入库口共用（审计必修③）：硬门单命中＝1 项，放行复用不重读。
+          if (!nativeDeepReadSegmentMeetsThreeItemLine({
+            episodeIndex: episode.episodeIndex,
+            segmentIndex,
+            startSec: segment.startSec,
+            endSec: segment.endSec,
+            hasAudio,
+            raw: cachedEntry.raw,
+            truncated: cachedEntry.raw?.truncated === true,
+          })) {
+            console.warn(
+              `[nativeDeepRead] 第${episode.episodeIndex}集第${segmentIndex + 1}段缓存未过三项线，按未命中重读`,
+            );
+            cachedEntry = undefined;
           }
         }
         if (cachedEntry) {

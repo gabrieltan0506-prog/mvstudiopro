@@ -1909,6 +1909,91 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(prompt.system).toContain("记录去重，信息取并集");
   });
 
+  /**
+   * 造一份「3 项不合标准但不撞硬门」的段卡：
+   * 丢 classification（classification_thin）+ 空 beatStructureZh（empty_beat_structure）
+   * + 一个空 actionZh（empty_action）＝ 恰好 3 项。
+   */
+  function makeThreeFailurePayload(input: { segmentIndex: number; startSec: number; endSec: number }) {
+    const raw = makeSegmentPayload(input) as Record<string, unknown>;
+    // 五键必须齐全（那是硬门，删掉只会变成 1 项直接放行），这里只让维度「薄」：
+    // 仅一维有值 → classification_thin 是 advisory，不是硬门。
+    raw.classification = {
+      emotionTagsZh: ["紧绷"],
+      narrativeFeatureTagsZh: [],
+      performanceTagsZh: [],
+      audiovisualTagsZh: [],
+      audienceExperienceTagsZh: [],
+    };
+    raw.beatStructureZh = "";
+    const shots = raw.shots as Array<Record<string, unknown>>;
+    shots[0]!.actionZh = "";
+    return raw;
+  }
+
+  it("🔒 3 项不合标准才重试一发（0830 三项线上沿）", async () => {
+    const postVertex = vi.fn()
+      .mockResolvedValueOnce(geminiResponse(makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 })))
+      .mockResolvedValueOnce(geminiResponse(makeThreeFailurePayload({ segmentIndex: 1, startSec: 60, endSec: 120 })))
+      .mockResolvedValueOnce(geminiResponse(makeSegmentPayload({ segmentIndex: 1, startSec: 60, endSec: 120 })));
+    const invokeGlmStructuring = makeGlmStructuringStub();
+    const deps = makeRunnerDeps({
+      postVertex: postVertex as never,
+      invokeGlmStructuring: invokeGlmStructuring as never,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    try {
+      await runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps);
+      // 3 项 ≥ 线 → 重试一发（2 段共 3 次调用）
+      expect(postVertex).toHaveBeenCalledTimes(3);
+      const sent = readRawSegmentsFromGlmPrompt(
+        (invokeGlmStructuring.mock.calls[0]![0] as { user: string }).user,
+      );
+      // 被标记那发不许丢：通过版 2 份 + 标记版 1 份
+      expect(sent).toHaveLength(3);
+      const marked = sent.filter((row) => row.gateMarked === true);
+      // 🔒 只推池一次（审计必修④）：推两次会把上限 2 的池占满，第 2 发证据永远进不去
+      expect(marked).toHaveLength(1);
+      expect(marked[0]!.attemptNumber).toBe(1);
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+    }
+  });
+
+  it("🔒 截断段豁免三项线：不重试，保留可解析前缀入库（0829 决定不得被推翻）", async () => {
+    // 截断段必然同时命中 classification_thin + empty_beat_structure + empty_action 类
+    // ＝恰好 3 项；不豁免就会重试，而重试大概率仍截断 → 梯度耗尽 → 整集抛错。
+    const postVertex = vi.fn()
+      .mockResolvedValueOnce(geminiResponse(makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 })))
+      .mockResolvedValueOnce(geminiResponse(
+        makeThreeFailurePayload({ segmentIndex: 1, startSec: 60, endSec: 120 }),
+        { finishReason: "MAX_TOKENS" },
+      ))
+      .mockResolvedValueOnce(geminiResponse(makeSegmentPayload({ segmentIndex: 1, startSec: 60, endSec: 120 })));
+    const invokeGlmStructuring = makeGlmStructuringStub();
+    const deps = makeRunnerDeps({
+      postVertex: postVertex as never,
+      invokeGlmStructuring: invokeGlmStructuring as never,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    try {
+      await runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps);
+      // 🔴 关键断言：截断段不重买，只打 2 发
+      expect(postVertex).toHaveBeenCalledTimes(2);
+      const sent = readRawSegmentsFromGlmPrompt(
+        (invokeGlmStructuring.mock.calls[0]![0] as { user: string }).user,
+      );
+      expect(sent).toHaveLength(2);
+      expect(sent[1]!.truncated).toBe(true);
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+    }
+  });
+
   it("🔒 硬门单独命中＝1 项不合标准，直接放行不重试（0830 三项线）", async () => {
     const segments = twoSegmentEpisode.segments;
     // 第2段首发把整 60 秒当成一个镜头——撞 30 秒硬上限（探针实弹里段5 就是 45 秒长镜）。
