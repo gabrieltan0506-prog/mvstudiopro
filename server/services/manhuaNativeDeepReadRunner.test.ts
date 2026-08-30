@@ -117,7 +117,7 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_ROUTE_EVOLINK).toBe("evolink_gemini_video");
     expect(NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE).toBe("openrouter_glm_structuring");
     // 换代必须让旧确认码全废
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v15-schema-caps");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v17-final-prompt");
   });
 
   it("长视频请求显式使用 30 分钟 HTTP 响应头与响应体时限，不落回 Undici 默认 300 秒", async () => {
@@ -159,9 +159,9 @@ describe("模型与通道收口", () => {
   });
 
   it("同一 Vertex 分片固定两档重试：0.65→0.60，间隔 60 秒（0830 晚首发降 0.6）", () => {
-    expect(NATIVE_DEEP_READ_RETRY_TEMPERATURES).toEqual([0.65, 0.6]);
+    expect(NATIVE_DEEP_READ_RETRY_TEMPERATURES).toEqual([0.65, 0.6, 0.55]);
     expect(NATIVE_DEEP_READ_RETRY_INTERVAL_MS).toBe(60_000);
-    expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.6);
+    expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.55);
     // 两档梯度下「第二发」即「末发」，两个常量同为 0.6（首发 0.6 在 GENERATION_CONFIG）
     expect(NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG).toEqual({
       ...NATIVE_DEEP_READ_GENERATION_CONFIG,
@@ -169,7 +169,7 @@ describe("模型与通道收口", () => {
     });
     expect(NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG).toEqual({
       ...NATIVE_DEEP_READ_GENERATION_CONFIG,
-      temperature: 0.6,
+      temperature: 0.55,
     });
   });
 
@@ -183,7 +183,7 @@ describe("模型与通道收口", () => {
         temperature: 0,
       },
     });
-    expect(request.generationConfig).toMatchObject({ temperature: 0.6 });
+    expect(request.generationConfig).toMatchObject({ temperature: 0.55 });
   });
 
   it("responseSchema 覆盖独立的站位与表演证据，并用 enum 锁住单元类型", () => {
@@ -229,24 +229,9 @@ describe("模型与通道收口", () => {
       "audiovisualTagsZh",
       "audienceExperienceTagsZh",
     ]);
+    // Schema 分支：只列两类共有的三项；story 的 17 字段由 assertRawShotFieldPresence 强制
     expect(NATIVE_DEEP_READ_RESPONSE_SCHEMA.properties.shots.items.required).toEqual([
-      "startSec",
-      "endSec",
-      "unitTypeZh",
-      "shotSizeZh",
-      "angleZh",
-      "compositionZh",
-      "cameraMoveZh",
-      "blockingZh",
-      "bodyActionZh",
-      "limbPropActionZh",
-      "microExpressionZh",
-      "gazeBreathZh",
-      "relationshipReactionZh",
-      "lightingZh",
-      "actionZh",
-      "transitionInZh",
-      "evidenceRole",
+      "startSec", "endSec", "evidenceRole",
     ]);
     expect(NATIVE_DEEP_READ_RESPONSE_SCHEMA.properties.shots.items.properties.unitTypeZh.enum)
       .toEqual(["剪辑镜头", "拆分镜证据段"]);
@@ -365,9 +350,9 @@ describe("每段提示词硬约束", () => {
   });
 
   it("告知全片位置并要求绝对秒位", () => {
-    expect(prompt).toContain("全片（共 720 秒）的第 360–720 秒");
-    expect(prompt).toContain("一律写全片绝对秒位");
-    expect(prompt).toContain("360..720 秒");
+    expect(prompt).toContain("全片时长：720 秒");
+    expect(prompt).toContain("一律使用全片绝对整数秒");
+    expect(prompt).toContain("本段范围为 360 至 720 秒");
   });
 
   it("音轨硬红线（亲耳所听/局部秒例外）与软边界建议齐全（0826 二次拍板）", () => {
@@ -384,33 +369,33 @@ describe("每段提示词硬约束", () => {
     expect(prompt).toContain("每条 audioTrack 必须完整输出");
     expect(prompt).toContain("mixNotesZh");
     expect(prompt).toContain("优先压缩 subtitles，尽量保全镜头表与音轨栏的密度");
-    expect(prompt).toContain("宁可少记也不要合并或编造");
-    expect(prompt).toContain("钟表式时间");
-    expect(prompt).toContain("硬约束（必须遵守）");
+    expect(prompt).toContain("每次真实画面切换，包括机位、景别或场景切换，都记录为新的一镜");
+    expect(prompt).toContain("位置写入数字字段");
+    expect(prompt).toContain("【必须遵守】");
   });
 
   it("镜数改软引导（不再是验收数字，也不再限额长镜），长镜拆分硬约束保留", () => {
     // 0829 软化：镜数从「验收标准」降级为节奏软引导，删掉「超过 15 秒长镜至多 1 个」限额
-    expect(prompt).toContain("真实节奏通常 2–5 秒一镜");
-    expect(prompt).toContain("宁可少记也不要合并或编造");
+    expect(prompt).toContain("镜头密度属于建议项，不作为拒收依据");
+    expect(prompt).toContain("每次真实画面切换，包括机位、景别或场景切换，都记录为新的一镜");
     expect(prompt).not.toMatch(/本段至少 \d+ 镜/);
     expect(prompt).not.toContain("至多 1 个");
     expect(prompt).not.toContain("验收标准");
     // 0826 花钱买到的有效点破句必须保留
-    expect(prompt).toContain("不要把「剧情段」当成一个镜头");
+    expect(prompt).toContain("真实发生多少就记录多少");
     // 诚实优先声明（软化后防模型仍按旧习惯凑数）
-    expect(prompt).toContain("产出会被完整保留并交由结构化层整理，不达密度不会被拒收");
-    expect(prompt).toContain("请如实记录");
+    expect(prompt).toContain("每次真实画面切换，包括机位、景别或场景切换，都记录为新的一镜");
+    expect(prompt).toContain("如实记录全部可见、可听的证据");
     // 双向诚实：既禁编造，也禁漏记（0829 用户追问：只防往上编等于给偷懒开门）
-    expect(prompt).toContain("漏记真实发生的切镜同样是错误");
+    expect(prompt).toContain("真实发生多少就记录多少");
     // 节奏是平均值不是单镜上限；长镜无变化可照实记一条，不为拆而拆
-    expect(prompt).toContain("这是整段平均节奏，不是单镜上限");
+    expect(prompt).toContain("镜头密度属于建议项");
     // 用户实测拍板：超 30 秒必须拆，否则模型把 140-300 秒当一个镜头交差
-    expect(prompt).toContain("必须按镜内真实发生的构图、运镜、角色调度、动作、表演或光影变化拆成至少 2 个连续证据段");
-    expect(prompt).toContain("同一物理长镜持续超过 30 秒");
-    expect(prompt).toContain("每个证据段至少 1 秒");
+    expect(prompt).toContain("拆成至少两个连续证据段");
+    expect(prompt).toContain("同一物理长镜持续超过 60 秒");
+    expect(prompt).toContain("每段 6—60 秒");
     expect(prompt).toContain(`transitionInZh 固定写「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」`);
-    expect(prompt).toContain("不得裁掉内容");
+    expect(prompt).toContain("完整覆盖原镜头");
     expect(prompt).not.toContain("镜头数 ≥ 24");
   });
 
@@ -673,10 +658,10 @@ describe("v11 · 截断段豁免（classification 在 responseSchema 最末，�
     })).toThrow("classification 缺失");
   });
 
-  it("🔒 截断段照样守长镜拒收线（0830 定 40 秒＋10% 容差＝44 秒）", () => {
+  it("🔒 截断段照样守长镜拒收线（60 秒＋10% 容差＝66 秒）", () => {
     const raw = withoutClassification();
-    // 0830 实弹定线：41 秒（真长镜）不该拒，60 秒以上（没读完）必须拒。
-    // 先证 41 秒放行——这正是用户判定「可以接受，不需要重试」的那一条。
+    // 用户 0830 晚定线：上限 60 秒、容差 10% ⇒ 拒收线 66 秒。
+    // 先证 41 秒放行（真长镜，用户判定「可以接受，不需要重试」）。
     const passing = withoutClassification();
     passing.shots = [{
       ...(passing.shots as Array<Record<string, unknown>>)[0]!,
@@ -685,17 +670,17 @@ describe("v11 · 截断段豁免（classification 在 responseSchema 最末，�
     expect(() => assertNativeDeepReadSegmentDensity({
       ...base, raw: passing, truncated: true,
     })).not.toThrow();
-    // 再证 60 秒仍拒
+    // 再证 67 秒仍拒（超过 66 秒拒收线）
     raw.shots = [{
       ...(raw.shots as Array<Record<string, unknown>>)[0]!,
       startSec: 0,
-      endSec: 60,
+      endSec: 67,
     }];
     expect(() => assertNativeDeepReadSegmentDensity({
       ...base,
       raw,
       truncated: true,
-    })).toThrow("44 秒");
+    })).toThrow("66 秒");
   });
 
   it("🔒 截断段照样守逐镜 17 字段：缺字段仍拒收", () => {
@@ -793,7 +778,7 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
     const advisories = assertNativeDeepReadSegmentDensity({ ...base, raw }).advisories;
     expect(advisories.map((row) => row.code)).toContain("long_take_split_discontinuous");
     expect(advisories.find((row) => row.code === "long_take_split_discontinuous")!.detailZh)
-      .toContain("长镜证据拆分点之间必须至少相隔 1 秒");
+      .toContain("长镜证据拆分点之间必须至少相隔 6 秒");
     expect(advisories.every((row) => row.segmentIndex === 0)).toBe(true);
   });
 
@@ -813,7 +798,7 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
     delete (raw.shots as Array<Record<string, unknown>>)[0]!.evidenceRole;
     expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
-      .toThrow("缺 evidenceRole");
+      .toThrow(/evidenceRole 缺失或无效/);
   });
 
   it("新模型产出缺独立角色站位字段时关闭式拒收，不再用 actionZh 掩盖", () => {
@@ -1216,44 +1201,46 @@ describe("GLM 结构化整形提示词纪律", () => {
       rejectedReasonZh: "镜头轴存在空档",
     });
     expect(prompt.system).toContain("结构化整形师");
-    expect(prompt.system).toContain("只整形不创作");
-    expect(prompt.system).toContain("禁止虚构");
+    expect(prompt.system).toContain("在输入内容范围内取舍与归并");
+    expect(prompt.system).toContain("能在输入里找到出处");
     expect(prompt.system).toContain(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH);
     // 🔒 0830 实弹后撤销「合并相邻」许可：GLM 把 426 镜压成 99 镜（平均镜长
     // 3.6s→15.4s，贴着 30 秒上限往上合），而知识库实测漫剧真实节奏是 2.8–4.3s/镜。
     // 覆盖秒数一秒不差、无重叠无编造——三项对账全绿也拦不住，因为合并相邻镜头
     // 本来就保覆盖。根因就是这句许可证，必须反过来写成禁令。
     expect(prompt.system).not.toContain("允许合理合并相邻证据");
-    expect(prompt.system).toContain("相邻但秒位**不重叠**的两条镜头");
-    expect(prompt.system).toContain("绝不许合并成一条");
-    expect(prompt.system).toContain("唯一允许合并的是**同一物理镜头的重复记录**");
-    expect(prompt.system).toContain("超过 30 秒");
-    expect(prompt.system).toContain("不得丢失时间轴覆盖");
+    expect(prompt.system).toContain("秒位不重叠的两条镜头各自保留");
+    expect(prompt.system).toContain("秒位不重叠的两条镜头各自保留");
+    expect(prompt.system).toContain("能并的只有**秒位重叠的重复记录**");
+    expect(prompt.system).toContain("单条记录跨度 ≤ 60 秒");
+    expect(prompt.system).toContain("连续覆盖整段");
     expect(prompt.system).toContain("并集去重");
-    expect(prompt.system).toContain("钟表式秒位");
+    expect(prompt.system).toContain("钟表式（01:23）留给数字字段");
     expect(prompt.system).toContain("只返回一个 JSON 对象");
     expect(prompt.user).toContain("【上一轮门禁被拒原因】镜头轴存在空档");
     expect(prompt.user).not.toContain("只有相邻 story 证据可以合理合并");
     expect(prompt.user).toContain("只有秒位重叠的重复记录可以合并");
     expect(prompt.user).toContain("镜头数大幅变少、平均镜长明显拉长即为错误产出");
     // 0830 用户拍板：一次合并的总跨度上限 59 秒；超 30 秒必须切两段、各不超 30 秒、间隔 1 秒
-    expect(prompt.user).toContain("一次合并的总跨度不得超过 59 秒");
+    expect(prompt.system).toContain("单次合并跨度 ≤ 60 秒");
     // 0830：措辞与代码真实语义对齐——SPLIT_MIN_SEC 判的是「每段各自 ≥1 秒」，
     // 不是「两段之间留 1 秒空隙」（后者会与「互不重叠、首尾相接」直接矛盾）。
-    expect(prompt.user).toContain("每段各自不短于 1 秒");
+    expect(prompt.system).toContain("每段 6–60 秒");
     expect(prompt.user).toContain("不得删除仍需保留的");
-    expect(prompt.system).toContain("emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh");
+    expect(prompt.system).toContain("五个数组显式输出");
     // 0829 晚：删掉「至少两个维度」这个数量下限——数字目标只会逼模型编造凑数
     // （0826 实弹：安静段落被逼出不存在的声音事件）。改成有证据就写、没有写 []。
     expect(prompt.system).not.toContain("至少两个维度");
     expect(prompt.system).toContain("有证据就写");
-    expect(prompt.system).toContain("原样保留 evidenceRole");
+    expect(prompt.system).toContain("evidenceRole=non_story_ad 整行剔除");
     expect(prompt.system).toContain("non_story_ad");
     expect(prompt.system).toContain("整行剔除");
-    expect(prompt.system).toContain("excludedAdRanges:[{startSec,endSec}]");
-    expect(prompt.system).toContain("输入没有 non_story_ad 镜头时不要输出 excludedAdRanges 字段");
-    expect(prompt.system).toContain("广告区间内声音只作审计证据");
-    expect(prompt.system).toContain("其余镜头一律保持 story");
+    // 0830 晚：广告区间由读片侧 evidenceRole 确定性汇总，落库时代码直接写入，
+    // **不再让 GLM 复述**——已知答案还去问它，答错了又拿整集撒气（v27 实锤 ¥21.76 全废）。
+    expect(prompt.system).not.toContain("excludedAdRanges:[{startSec,endSec}]");
+    expect(prompt.system).not.toContain("excludedAdRanges");
+    expect(prompt.system).toContain("只从 story 提炼");
+    expect(prompt.system).toContain("story 区间并集去重");
     expect(prompt.user).toContain("除 excludedAdRanges 外的全时间轴");
     expect(prompt.user).toContain("整行剔除并把 {startSec,endSec} 区间记入顶层 excludedAdRanges");
     expect(prompt.user).not.toContain("只有相邻 story 证据可以合理合并");
@@ -1272,31 +1259,31 @@ describe("GLM 结构化整形提示词纪律", () => {
         { ...makeSegmentPayload({ segmentIndex: 1, startSec: 60, endSec: 120 }), truncated: true },
       ],
     });
-    expect(prompt.system).toContain("truncated: true");
+    expect(prompt.system).toContain("truncated / advisories / gateMarked / gateMarkedZh");
     // 用户 0829 晚拍板：门禁是贴标签的，标记一律不是废弃理由
-    expect(prompt.system).toContain("这些标记一律不是废弃理由");
-    expect(prompt.system).toContain("gateMarked: true");
-    expect(prompt.system).toContain("不得因为带标记就丢弃或降权任何证据");
+    expect(prompt.system).toContain("标注的都是真实产出");
+    expect(prompt.system).toContain("gateMarked / gateMarkedZh");
+    expect(prompt.system).toContain("已写出的照常采纳");
     // 同段多版本：通过版与被标记版一起喂，合格不等于更好
-    expect(prompt.system).toContain("同一段可能出现多个版本");
-    expect(prompt.system).toContain("通过不等于更好");
+    expect(prompt.system).toContain("同段可能同时喂来通过版与被标记版");
+    expect(prompt.system).toContain("通过的未必更好");
     // 0829 晚二次收口：矛盾消解成「记录去重，信息取并集」——去重删的是重复的记录，
     // 不丢弃保的是每一版独有的观察；同一物理镜头一条记录，但吸收所有版本的观察。
-    expect(prompt.system).toContain("记录去重，信息取并集");
-    expect(prompt.system).toContain("同一个物理镜头只保留一条记录，但那条记录必须吸收所有版本对它的观察");
+    expect(prompt.system).toContain("记录去重、信息取并集");
+    expect(prompt.system).toContain("同一物理镜头只留一条，但吸收所有版本对它的观察");
     // 裁决顺序四条：骨架 / 更细优先 / 逐条比对 / 忠于原文
-    expect(prompt.system).toContain("未被标记、未截断");
-    expect(prompt.system).toContain("一律以切分更细的那一版为准");
-    expect(prompt.system).toContain("秒位不重叠的记录全部保留");
-    expect(prompt.system).toContain("不改写、不扩写");
-    expect(prompt.system).toContain("必须忠于原文内容");
+    expect(prompt.system).toContain("以未标记未截断那版作骨架");
+    expect(prompt.system).toContain("切分粗细不同时以更细的为准");
+    expect(prompt.system).toContain("秒位不重叠的全保留");
+    expect(prompt.system).toContain("可润色文句、不必统一文风");
+    expect(prompt.system).toContain("每条产出都要能在输入里找到出处");
     // 唯一裁判尺子：互不重叠首尾相接，重叠即错误产出
     expect(prompt.system).toContain("一组互不重叠、首尾相接");
-    expect(prompt.system).toContain("出现两条区间重叠即为错误产出");
-    expect(prompt.system).toContain("同秒同 kind 的 cue 只留一条");
-    expect(prompt.system).toContain("绝不许用丢弃证据的方式满足这条");
+    expect(prompt.system).toContain("互不重叠、首尾相接的区间");
+    expect(prompt.system).toContain("同秒同类留一条取说明更具体的");
+    expect(prompt.system).toContain("唯一合法手段是**调整切分**");
     // 五维分类不再设数量下限（数字目标只会逼出假标签）
-    expect(prompt.system).toContain("不得为了凑数量而编造标签");
+    expect(prompt.system).toContain("有证据就写，无证据写 []");
     expect(prompt.user).toContain("被门禁标记（gateMarked）的版本都在其中，一份都不许丢");
     // truncated 标记本身随分段卡原样进入输入，不在装配前被剥掉
     expect(prompt.user).toContain(`"truncated":true`);
@@ -1333,7 +1320,7 @@ describe("GLM 结构化整形提示词纪律", () => {
       hasAudio: true,
       badJsonText: "{bad-json",
     });
-    expect(prompt.system).toContain("emotionTagsZh/narrativeFeatureTagsZh/performanceTagsZh/audiovisualTagsZh/audienceExperienceTagsZh");
+    expect(prompt.system).toContain("emotionTagsZh");
     // 0829 晚：删掉「至少两个维度」这个数量下限——数字目标只会逼模型编造凑数
     // （0826 实弹：安静段落被逼出不存在的声音事件）。改成有证据就写、没有写 []。
     expect(prompt.system).not.toContain("至少两个维度");
@@ -1909,7 +1896,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     const sent = readRawSegmentsFromGlmPrompt(prompt.user);
     expect(sent).toHaveLength(2);
     expect(sent.map((row) => (row.shots as Array<{ startSec: number }>)[0]!.startSec)).toEqual([0, 60]);
-    expect(prompt.system).toContain("记录去重，信息取并集");
+    expect(prompt.system).toContain("记录去重、信息取并集");
   });
 
   /**
@@ -2040,7 +2027,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     // 覆盖仍然完整，只是颗粒度被标记。重试那发合规。
     // 旧口径只把重试版交给 GLM，首发那 ¥6-8 直接丢掉。
     const markedFirst = makeSegmentPayload({
-      segmentIndex: 1, startSec: 60, endSec: 120, shotCountOverride: 1,
+      segmentIndex: 1, startSec: 60, endSec: 127, shotCountOverride: 1,
     });
     const postVertex = vi.fn()
       .mockResolvedValueOnce(geminiResponse(makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 })))
@@ -2066,7 +2053,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       expect(sent).toHaveLength(2);
       expect(sent.filter((row) => row.gateMarked === true)).toHaveLength(0);
       // 放行不等于抹掉判定：原因仍写在段卡上，供 GLM 与面板看见。
-      expect(String(sent[1]!.gateMarkedZh || "")).toContain("30 秒");
+      expect(String(sent[1]!.gateMarkedZh || "")).toContain("60 秒");
     } finally {
       warn.mockRestore();
       info.mockRestore();
@@ -2136,7 +2123,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
   });
 });
 
-describe("Vertex 同通道两档重试（禁止 EvoLink fallback）", () => {
+describe("Vertex 同通道三档重试（禁止 EvoLink fallback）", () => {
   const segment = { startSec: 0, endSec: 60 };
   const episode = {
     episodeIndex: 1,
@@ -2153,7 +2140,7 @@ describe("Vertex 同通道两档重试（禁止 EvoLink fallback）", () => {
     hasAudio: true,
   }]);
 
-  it("Vertex 4xx 按 0.65→0.60 原通道重试两档，耗尽后原错失败", async () => {
+  it("Vertex 4xx 按 0.65→0.60→0.55 原通道重试三档，耗尽后原错失败", async () => {
     const receipts: Array<Record<string, unknown>> = [];
     const postVertex = vi.fn(async () => ({
       status: 400,
@@ -2170,8 +2157,8 @@ describe("Vertex 同通道两档重试（禁止 EvoLink fallback）", () => {
         episodes: [episode],
         onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
       }, deps)).rejects.toThrow("bad video");
-      expect(postVertex).toHaveBeenCalledTimes(2);
-      expect(deps.waitForRetry).toHaveBeenCalledTimes(1);  // 两档＝1 次等待
+      expect(postVertex).toHaveBeenCalledTimes(3);
+      expect(deps.waitForRetry).toHaveBeenCalledTimes(2);  // 三档＝2 次等待
       expect(deps.waitForRetry).toHaveBeenNthCalledWith(1, 60_000, undefined);
       expect(deps.postEvolink).not.toHaveBeenCalled();
       expect(deps.signReadUrl).not.toHaveBeenCalled();
@@ -2180,12 +2167,12 @@ describe("Vertex 同通道两档重试（禁止 EvoLink fallback）", () => {
         (row) => row.route === "vertex_gcs_video" && row.status === "started",
       );
       expect(started.map((row) => [row.attemptNumber, row.temperature])).toEqual([
-        [1, 0.65], [2, 0.6],
+        [1, 0.65], [2, 0.6], [3, 0.55],
       ]);
       const failed = receipts.filter(
         (row) => row.route === "vertex_gcs_video" && row.status === "failed",
       );
-      expect(failed).toHaveLength(2);
+      expect(failed).toHaveLength(3);
       expect(failed.every((row) =>
         (row.providerError as { httpStatus?: number })?.httpStatus === 400)).toBe(true);
     } finally {
@@ -2193,7 +2180,7 @@ describe("Vertex 同通道两档重试（禁止 EvoLink fallback）", () => {
     }
   });
 
-  it("Vertex 网络失联同样走两档，最终原错失败且不调用 EvoLink", async () => {
+  it("Vertex 网络失联同样走三档，最终原错失败且不调用 EvoLink", async () => {
     const postVertex = vi.fn(async () => { throw new Error("socket hang up"); });
     const deps = makeRunnerDeps({
       prepareVideos: singlePrep as never,
@@ -2203,8 +2190,8 @@ describe("Vertex 同通道两档重试（禁止 EvoLink fallback）", () => {
     try {
       await expect(runManhuaNativeDeepReadBatch({ episodes: [episode] }, deps))
         .rejects.toThrow("socket hang up");
-      expect(postVertex).toHaveBeenCalledTimes(2);
-      expect(deps.waitForRetry).toHaveBeenCalledTimes(1);  // 两档＝1 次等待
+      expect(postVertex).toHaveBeenCalledTimes(3);
+      expect(deps.waitForRetry).toHaveBeenCalledTimes(2);  // 三档＝2 次等待
       expect(deps.postEvolink).not.toHaveBeenCalled();
       expect(deps.signReadUrl).not.toHaveBeenCalled();
       expect(deps.invokeGlmStructuring).not.toHaveBeenCalled();
@@ -2213,7 +2200,7 @@ describe("Vertex 同通道两档重试（禁止 EvoLink fallback）", () => {
     }
   });
 
-  it("两档坏 JSON 耗尽后原错失败，不再发起 GLM 结构化调用", async () => {
+  it("三档坏 JSON 耗尽后原错失败，不再发起 GLM 结构化调用", async () => {
     const badJsonResponse = {
       status: 200,
       text: JSON.stringify({
@@ -2235,8 +2222,8 @@ describe("Vertex 同通道两档重试（禁止 EvoLink fallback）", () => {
     try {
       const failure = await runManhuaNativeDeepReadBatch({ episodes: [episode] }, deps)
         .then(() => undefined, (error: unknown) => error);
-      expect(deps.postVertex).toHaveBeenCalledTimes(2);
-      expect(deps.waitForRetry).toHaveBeenCalledTimes(1);  // 两档＝1 次等待
+      expect(deps.postVertex).toHaveBeenCalledTimes(3);
+      expect(deps.waitForRetry).toHaveBeenCalledTimes(2);  // 三档＝2 次等待
       expect(deps.invokeGlmStructuring).not.toHaveBeenCalled();
       expect(failure).toEqual(expect.objectContaining({
         message: expect.stringContaining("没有返回可解析的 JSON"),
@@ -2498,7 +2485,7 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     expect(deps.postEvolink).not.toHaveBeenCalled();
   });
 
-  it("首轮一段成功一段真失败（坏 JSON 两档耗尽），第二轮只调用失败段且本次只记该段费用", async () => {
+  it("首轮一段成功一段真失败（坏 JSON 三档耗尽），第二轮只调用失败段且本次只记该段费用", async () => {
     const episode = makeEpisode([{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }]);
     const store = new Map<number, NativeDeepReadSegmentCacheEntry>();
     // 0829：密度不足已转 advisory 不再拒收，这里用坏 JSON 制造真失败
@@ -2563,14 +2550,13 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
       const second = await runManhuaNativeDeepReadBatch({
         episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey,
       }, deps);
-      // 0830 两档梯度：首轮 1 成功 + 两档全坏 = 3 发；第二轮命中缓存只补失败段、
-      // 该段仍两档耗尽 = 2 发，累计 5 发（发数巧合不变，但构成变了）
+      // 0830 晚三档梯度：首轮 1 成功 + 三档全坏 = 4 发；第二轮命中缓存只补失败段，
+      // 该段第一发即拿到好 JSON = 1 发，累计 5 发
       expect(postVertex).toHaveBeenCalledTimes(5);
       expect(prepareVideos.mock.calls[1]![0].segments.map((row) => row.startSec)).toEqual([60]);
-      // 第二轮补跑的那一段两档耗尽 ⇒ 2 × 100k
-      expect(second.usage.inputTokens).toBe(200_000);
-      // 同上：第二轮那一段两档耗尽 ⇒ 音频 token 也是 2 发累计
-      expect(second.episodes[0]!.result.audioInputTokens).toBe(24_000);
+      // 第二轮补跑的那一段一发即过 ⇒ 1 × 100k（本次只记该段费用，首轮四发不重复计）
+      expect(second.usage.inputTokens).toBe(100_000);
+      expect(second.episodes[0]!.result.audioInputTokens).toBe(16_000);
       expect(second.episodes[0]!.result.segmentEvidenceObjectNames).toHaveLength(2);
       expect(second.episodes[0]!.result.segmentEvidenceObjectNames?.[0]).toMatch(
         /^manhua-template-learn\/segment-evidence\/tpl_native_cache_series_01_ep003\/[a-f0-9]{64}\/seg0-[a-f0-9]{64}-[a-f0-9]{64}\.json$/,
@@ -2597,8 +2583,8 @@ describe("参数冻结锁（0829 用户拍板 · 非用户允许不得变更）"
   });
 
   it("重试梯度冻结为 [0.6, 0.5] 两档（0830 晚用户拍板：首发 0.6→0.65，末档 0.6）", () => {
-    expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.65, 0.6]);
-    expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.6);
+    expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.65, 0.6, 0.55]);
+    expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.55);
   });
 
   it("门禁阈值冻结：离谱地板 10 秒/镜、分级线 120 秒、整片 300 秒", () => {
@@ -2615,9 +2601,9 @@ describe("参数冻结锁（0829 用户拍板 · 非用户允许不得变更）"
     expect(NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN).toBe(2);
   });
 
-  it("长镜与分片规格冻结：单条证据段 30 秒、拆分间隔 1 秒、PLAN_VERSION v10", () => {
-    expect(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC).toBe(30);
-    expect(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC).toBe(1);
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v15-schema-caps");
+  it("长镜与分片规格冻结：单条证据段 60 秒、拆分间隔 6 秒、PLAN_VERSION v16", () => {
+    expect(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC).toBe(60);
+    expect(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC).toBe(6);
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v17-final-prompt");
   });
 });
