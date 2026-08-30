@@ -1051,9 +1051,28 @@ describe("覆盖率与缓存复验回归", () => {
     expect(nativeDeepReadSegmentMeetsThreeItemLine({ ...base, endSec: 60, raw })).toBe(true);
   });
 
-  it("缓存两家族且音轨段数偏差超20%时，与首发一样重试", () => {
+  /**
+   * 0831 实弹改判：音轨段数不足**不再**参与重试/复验决策。
+   *
+   * 旧断言锁的是「音轨 1 段 + 结构缺失 = 两家族 → 重试」。实弹证明这条是错的：
+   * 一发 ¥9.75、三次重试全因「音轨仅 1 段，低于建议地板 2；声音事件仅 3 条」被拒，
+   * 而整片 0–319 秒音轨本来就是连续一段、声音事件本来就只有 3 条——模型没做错。
+   * 拿建议地板拒收真实产出，违反 0829「音轨有几段写几段，禁止凑数编造」
+   * 与「门禁转建议，不再拒收」。
+   *
+   * 注意这不是放宽判据：结构类缺失照样算一家族，可执行项照样触发；
+   * 音轨类也照样记进 advisory 与段卡，只是不再拿它拒收。
+   */
+  it("音轨段数不足不再拖垮缓存复验（只剩结构一家族，不到重试线）", () => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60, audioTrackOverride: 1 });
     raw.beatStructureZh = "";
+    expect(nativeDeepReadSegmentMeetsThreeItemLine({ ...base, endSec: 60, hasAudio: true, raw })).toBe(true);
+  });
+
+  it("音轨结构性错误（有音轨素材却零段）仍然算数，不在豁免之列", () => {
+    // 只有「密度不足」（audio_track_thin / audio_cue_thin）被排除出重试决策。
+    // 零段是结构问题不是密度问题，模型改了就对，属于可执行项，照旧计入。
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60, audioTrackOverride: 0 });
     expect(nativeDeepReadSegmentMeetsThreeItemLine({ ...base, endSec: 60, hasAudio: true, raw })).toBe(false);
   });
 
@@ -2679,7 +2698,15 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     return raw;
   }
 
-  it("🔒 3 项不合标准才重试一发（0830 三项线上沿）", async () => {
+  /**
+   * 0831 实弹改判：音轨类不再计入重试家族，所以这份原本「三项」的 payload
+   * 现在只剩镜头＋结构两家族，落在重试线（3 项）之下——不重试，两段共两次调用。
+   *
+   * 改判依据是实弹而非推理：三次重试全因「音轨仅 1 段，低于建议地板 2；
+   * 声音事件仅 3 条，低于建议地板 14」被拒，烧掉 ¥9.75，而音轨本来就只有一段。
+   * 「三项线」本身没有放宽，变的是哪些项有资格计入。
+   */
+  it("🔒 音轨类不计入家族：原三项 payload 只剩两家族，不重试（三项线未放宽）", async () => {
     const postVertex = vi.fn()
       .mockResolvedValueOnce(geminiResponse(makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 })))
       .mockResolvedValueOnce(geminiResponse(makeThreeFailurePayload({ segmentIndex: 1, startSec: 60, endSec: 120 })))
@@ -2693,17 +2720,14 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     try {
       await runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps);
-      // 3 项 ≥ 线 → 重试一发（2 段共 3 次调用）
-      expect(postVertex).toHaveBeenCalledTimes(3);
+      // 镜头＋结构＝2 家族 < 3 项线 → 不重试（2 段各一次）
+      expect(postVertex).toHaveBeenCalledTimes(2);
       const sent = readRawSegmentsFromGlmPrompt(
         (invokeGlmStructuring.mock.calls[0]![0] as { user: string }).user,
       );
-      // 被标记那发不许丢：通过版 2 份 + 标记版 1 份
-      expect(sent).toHaveLength(3);
-      const marked = sent.filter((row) => row.gateMarked === true);
-      // 🔒 只推池一次（审计必修④）：推两次会把上限 2 的池占满，第 2 发证据永远进不去
-      expect(marked).toHaveLength(1);
-      expect(marked[0]!.attemptNumber).toBe(1);
+      // 两段都直接入库，没有被标记版
+      expect(sent).toHaveLength(2);
+      expect(sent.filter((row) => row.gateMarked === true)).toHaveLength(0);
     } finally {
       warn.mockRestore();
       info.mockRestore();

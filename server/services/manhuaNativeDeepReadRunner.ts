@@ -543,7 +543,8 @@ export const NATIVE_DEEP_READ_TRUTHFULNESS_BLOCK = `
 · 禁止用等长等距切分代替真实剪辑点。真实剪辑的镜头长度不会规律相等，整段每 10 秒一镜是编出来的，不是看出来的。
 · 每条镜头必须与该时间段实际发生的画面一致；该时段有台词时，镜头内容须与台词情境相符，不得写与台词无关的场面。
 · 越靠后的时间段越容易被草率带过。本段最后三分之一与开头同等重要，须以同样的观察密度处理。
-如果某一段你确实看不清或信息不足，就写你能确认的部分，或者该段少记几镜——这是允许的；但**不得用其他段落的描述顶替**。`;
+不确定不等于不记录：某一镜你看不清时，仍要写出它的时间范围与你能确认的字段，看不清的字段写「[看不清]」，**不要因为不确定就跳过整镜**，更不得用其他段落的描述顶替。
+自检基准：这类短剧的真实剪辑节奏通常是每 2—6 秒一次切换。如果你给出的镜头平均长度明显大于这个量级，那是你漏记了切换点，不是这部片真的没有切换——回去补上漏掉的切点，而不是把已有的镜拉长。`;
 
 export const NATIVE_DEEP_READ_NON_ACTIONABLE_RETRY_CODES: ReadonlySet<string> = new Set([
   "audio_track_thin", "audio_cue_thin", "long_take_count",
@@ -1866,7 +1867,27 @@ export function evaluateNativeDeepReadSegmentAcceptance(input: NativeDeepReadSeg
       }],
     };
   }
-  const countableFailures = input.truncated === true ? [] : gated.advisories;
+  /**
+   * 🔴 0831 实测修复：不可执行的 advisory **不得参与重试决策**。
+   *
+   * 此前只把它们从拒因文本里过滤掉（不发给模型），却仍让它们触发重试与最终失败——
+   * 审查当时就点名这是「最差的一档」，我只做了一半。实弹代价：一发 ¥9.75，
+   * 三次重试全部因为下面这句话被拒，而模型什么都没做错：
+   *
+   *   「第1段有 6 个超过 15 秒的真实长镜（最长 21 秒），**仅提示不拒收**；
+   *     第1段音轨仅 1 段，低于建议地板 2；第1段声音事件仅 3 条，低于建议地板 14」
+   *
+   * 音轨真的只有 1 段（整片 0–319 秒连续），声音事件真的只有 3 条。
+   * 拿建议地板拒收真实产出，直接违反用户 0829 两条明令：
+   * 「音轨有几段写几段，禁止凑数编造」与「门禁转建议，不再拒收」。
+   * 那条 long_take_count 更荒谬——它自己的文案就写着「仅提示不拒收」。
+   *
+   * 注意：这里只影响**重试决策**。gated.advisories 原样返回，
+   * 记账、段卡、报告、GLM 提示词照旧看得到全部条目，不是把问题藏起来。
+   */
+  const countableFailures = input.truncated === true ? [] : gated.advisories.filter(
+    (row) => !NATIVE_DEEP_READ_NON_ACTIONABLE_RETRY_CODES.has(row.code),
+  );
   const families = Array.from(new Set(countableFailures.map((row) =>
     nativeDeepReadAdvisoryFamilyOf(row.code))));
   const failureCount = families.length;
