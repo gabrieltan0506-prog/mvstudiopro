@@ -275,7 +275,9 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const nodeRows = subNodes.map((node) => (
     `<tr><td style="color:#e8c66a;white-space:nowrap">${mmss(node.from)}–${mmss(node.to)}</td>`
     + `<td style="white-space:nowrap;color:#9db4d0">${node.lines.length} 句</td>`
-    + `<td>${esc(node.lines.slice(0, 3).join("｜"))}${node.lines.length > 3 ? "…" : ""}</td></tr>`
+    // 🔴 节点内**全部句子照列，一句不砍**（0830 用户发现旧版只显示前 3 句）。
+    // 本表的「不逐字铺」体现在**分组**，不体现在删句子——本文件顶部写明「不做任何内容截断」。
+    + `<td>${esc(node.lines.join("｜"))}</td></tr>`
   )).join("");
 
   /** 镜长分布：一眼看粒度，长镜区间标红。 */
