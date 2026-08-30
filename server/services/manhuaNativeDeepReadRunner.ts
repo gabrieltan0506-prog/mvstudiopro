@@ -701,6 +701,12 @@ export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_SOFT_MAX_SEC = 40;
 export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC =
   NATIVE_DEEP_READ_SHOT_LONG_TAKE_SOFT_MAX_SEC * (1 + NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO);
 /** 覆盖率实际拒收线 = 0.5 × 0.9 = 0.45（同上）。 */
+/**
+ * 整集镜头留存率**实际拒收线** = 0.5 × 0.9 = 0.45（0830 用户令「容错率改为上下百分之十」：
+ * 每条数值门禁按方向各让 10%——上限 +10%，下限 −10%）。此前这条漏了容差。
+ */
+export const NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT =
+  NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_FLOOR * (1 - NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO);
 export const NATIVE_DEEP_READ_SEGMENT_COVERAGE_REJECT_RATIO =
   NATIVE_DEEP_READ_SEGMENT_COVERAGE_FLOOR_RATIO * (1 - NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO);
 /** 微尾段豁免：计划切段真实存在 9s 尾段（如 1080–1089），诚实的单镜结尾不该必拒 */
@@ -2235,11 +2241,12 @@ export function assertNativeDeepReadEpisodeEvidence(input: {
   const inputShots = Math.max(0, Math.floor(Number(input.inputShotCount) || 0));
   if (inputShots > 0 && episodeShots.length > 0) {
     const keepRate = episodeShots.length / inputShots;
-    if (keepRate < NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_FLOOR) {
+    if (keepRate < NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT) {
       throw gateError(
         `第${input.episodeIndex}集镜头留存率仅 ${(keepRate * 100).toFixed(1)}%`
         + `（输入 ${inputShots} 镜 → 输出 ${episodeShots.length} 镜，`
-        + `低于地板 ${(NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_FLOOR * 100).toFixed(0)}%）：`
+        + `低于拒收线 ${(NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT * 100).toFixed(0)}%`
+        + `＝地板 ${(NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_FLOOR * 100).toFixed(0)}% 减 10% 容差）：`
         + `相邻但秒位不重叠的镜头不许合并，只有同一物理镜头的重复记录才能合并`,
       );
     }
@@ -2274,11 +2281,25 @@ export function assertNativeDeepReadEpisodeEvidence(input: {
       ...excludedAdRanges,
     ].sort((a, b) => a.startSec - b.startSec || a.endSec - b.endSec)
     : allShots;
+  /**
+   * 🔴 整集覆盖只出 advisory，**不再拒收整集**（0830 用户拍板）。
+   *
+   * 用户原话：「GLM 就是整形用的，还让他拒绝，有毛病吗」。
+   * 段级门禁 v11 已经改成「贴标记不拒收」，集级这条却还留着「整集拒绝入库」——
+   * 同一个逻辑没走完。而且代价严重不对等：段级拒收只重买一片视频；
+   * **集级拒收是把整集已付费的段证据全部挡在门外**。
+   * 0830 实锤：2817 秒的整集，GLM 合并时在分段边界掉了 **6 秒**（0.2%），
+   * 整集就被判死——为 0.2% 丢掉 ¥37 的证据，不成比例。
+   *
+   * 缺口照记 advisory（写明缺哪几秒），交给人看、交给下游决定，不在这里替他们拒。
+   */
   try {
     assertShotCoverage(coverageIntervals, 0, Math.round(input.durationSec), "整集");
   } catch (error) {
-    throw new Error(
-      `第${input.episodeIndex}集${error instanceof Error ? error.message : String(error)}，整集拒绝入库`,
+    noteEpisode(
+      "episode_coverage_gap",
+      `${error instanceof Error ? error.message : String(error)}（0830 起只记不拒：`
+      + "GLM 是整形层，合并掉几秒不该让整集已付费证据全部作废)",
     );
   }
   const storyShots = allShots.filter((shot) => shot.evidenceRole === "story");

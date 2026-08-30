@@ -1073,14 +1073,23 @@ describe("整集证据门禁（段卡合并后再跑一遍，GLM 之后同样要
     })).toThrow("音轨分段不完整");
   });
 
-  it("整集镜头未覆盖完整片长拒收", () => {
+  it("整集镜头未覆盖完整片长只记 advisory 不拒收（0830：GLM 是整形层，不该被拒）", () => {
     expect(() => assertNativeDeepReadEpisodeEvidence({
       episodeIndex: 1,
       durationSec: 180,
       segments: [{ startSec: 0, endSec: 180 }],
       hasAudio: true,
       rawSegments: [rawSegments[0]!],
-    })).toThrow("整集拒绝入库");
+    })).not.toThrow();
+    // 缺口只记 advisory，写明缺哪几秒，交给人看
+    const codes = assertNativeDeepReadEpisodeEvidence({
+      episodeIndex: 1,
+      durationSec: 180,
+      segments: [{ startSec: 0, endSec: 180 }],
+      hasAudio: true,
+      rawSegments: [rawSegments[0]!],
+    }).map((row) => row.code);
+    expect(codes).toContain("episode_coverage_gap");
   });
 
 });
@@ -1107,7 +1116,7 @@ describe("整集卡广告剔除（段卡→整集卡合并层，原始分段卡�
     expect((raw.subtitles as unknown[])).toHaveLength(2);
   });
 
-  it("整集门禁把 excludedAdRanges 视为合法缺口；无账目同缺口照拒；残留广告行照拒；非法区间照拒", () => {
+  it("整集门禁把 excludedAdRanges 视为合法缺口；无账目缺口只记 advisory；残留广告行照拒；非法区间照拒", () => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60, shotCountOverride: 12 });
     (raw.shots as Array<Record<string, unknown>>)[2]!.evidenceRole = "non_story_ad";
     (raw.shots as Array<Record<string, unknown>>)[3]!.evidenceRole = "non_story_ad";
@@ -1128,7 +1137,8 @@ describe("整集卡广告剔除（段卡→整集卡合并层，原始分段卡�
     const noLedger: Record<string, unknown> = { ...rows[0]! };
     delete noLedger.excludedAdRanges;
     // 0829 晚：空档与重叠已拆成两条明确报错（修法相反，报同一句会让修复轮乱猜）
-    expect(gate([noLedger])).toThrow("存在空档");
+    // 0830：无账目的缺口只记 advisory 不拒收（GLM 是整形层）；广告残留行仍硬拒
+    expect(gate([noLedger])).not.toThrow();
     // end<=start 属非法区间账目，整集拒收
     const badLedger: Record<string, unknown> = {
       ...rows[0]!,

@@ -346,42 +346,59 @@ async function main() {
       && JSON.stringify(rawCounts) === JSON.stringify(parsedCounts));
     return { segmentIndex, rawCounts, parsedCounts, countsEqual };
   });
-  // 关键帧抽取（¥0，模型无关）：每个 story 镜头中点一帧，画面证据永久保留，
-  // 供面板与审片报告展示引用；广告镜头不抽。单帧失败只记错，不阻断摘要。
+  /**
+   * 关键帧抽取（¥0，模型无关）——**按 keyMoments 抽，不再按镜头中点抽**（0830 用户令）。
+   *
+   * 旧法是「每个 story 镜头取中点一帧」：524 镜就要 240 帧（上限截断），而中点常落在
+   * 转场、运动模糊或空镜上——这正是抽帧长期「牛头不对马嘴」的根因。
+   * keyMoments 是**看得见画面的模型自己点的秒位**（五类：切镜/情绪/灯光/剧情/音轨），
+   * 密度跟着戏走：重镜多点、平淡镜不点、广告零点。帧数因此从 240 降到实际有戏的那些。
+   */
   const frameEvidence: Array<{
-    segmentIndex: number; shotIndex: number; atSec: number; objectName: string; bytes: number;
+    segmentIndex: number; atSec: number; kindZh: string; noteZh: string;
+    objectName: string; bytes: number;
   }> = [];
   const frameErrors: string[] = [];
+  let keyMomentTotal = 0;
   for (const fact of parsedFacts) {
     const segmentIndex = segmentIndexFromName(fact.objectName);
-    const entry = fact.payload as { raw?: { shots?: Array<Record<string, unknown>> } };
-    const shots = Array.isArray(entry.raw?.shots) ? entry.raw.shots : [];
-    for (let shotIndex = 0; shotIndex < shots.length && frameEvidence.length < 240; shotIndex += 1) {
-      const shot = shots[shotIndex]!;
-      if (shot.evidenceRole === "non_story_ad") continue;
-      const startSec = Number(shot.startSec) || 0;
-      const endSec = Math.max(startSec, Number(shot.endSec) || startSec);
-      const atSec = Math.round(((startSec + endSec) / 2) * 10) / 10;
-      const local = `/tmp/probe-frame-${segmentIndex}-${shotIndex}.jpg`;
+    const entry = fact.payload as {
+      raw?: { keyMoments?: Array<Record<string, unknown>>; shots?: Array<Record<string, unknown>> };
+    };
+    const moments = (Array.isArray(entry.raw?.keyMoments) ? entry.raw.keyMoments : [])
+      .filter((row) => Number.isFinite(Number(row.atSec)))
+      .sort((a, b) => Number(a.atSec) - Number(b.atSec));
+    keyMomentTotal += moments.length;
+    for (let i = 0; i < moments.length; i += 1) {
+      const moment = moments[i]!;
+      const atSec = Math.round(Number(moment.atSec) * 10) / 10;
+      const kindZh = String(moment.kindZh ?? "");
+      const local = `/tmp/probe-frame-${segmentIndex}-${i}.jpg`;
       try {
         await run("ffmpeg", [
           "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
           "-user_agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-          "-headers", "Referer: https://www.douyin.com/\r\n",
+          // referer 用片源解析器给的那个，不再写死抖音（真人剧片源用抖音 referer 是错的）
+          "-headers", `Referer: ${mediaReferer}\r\n`,
           "-ss", String(atSec), "-i", mediaUrl, "-frames:v", "1", "-q:v", "4", local,
         ], { timeout: 60_000, maxBuffer: 8 * 1024 * 1024 });
         const buffer = await readFile(local);
-        const objectName = `manhua-template-learn/probes/${seriesKey}/frames/seg${segmentIndex}/shot${String(shotIndex).padStart(3, "0")}-${Math.round(atSec * 10)}ds.jpg`;
+        const objectName = `manhua-template-learn/probes/${seriesKey}/frames/seg${segmentIndex}/`
+          + `km${String(i).padStart(3, "0")}-${Math.round(atSec * 10)}ds-${encodeURIComponent(kindZh)}.jpg`;
         await uploadBufferToGcsIfAbsent({ bucket, objectName, contentType: "image/jpeg", buffer });
-        frameEvidence.push({ segmentIndex, shotIndex, atSec, objectName, bytes: buffer.byteLength });
+        frameEvidence.push({
+          segmentIndex, atSec, kindZh,
+          noteZh: String(moment.noteZh ?? "").slice(0, 120),
+          objectName, bytes: buffer.byteLength,
+        });
         await rm(local, { force: true });
         if (frameEvidence.length % 20 === 0) console.info(`[probe] 阶段：关键帧已抽 ${frameEvidence.length} 帧`);
       } catch (error) {
-        frameErrors.push(`seg${segmentIndex}#${shotIndex}@${atSec}s ${sanitizeSensitiveText(error)}`.slice(0, 120));
-        await rm(local, { force: true }).catch(() => {});
+        frameErrors.push(`seg${segmentIndex}#km${i}@${atSec}s ${sanitizeSensitiveText(error)}`.slice(0, 120));
       }
     }
   }
+  console.info(`[probe] 阶段：重点时刻共 ${keyMomentTotal} 条，按此抽帧`);
   console.info(`[probe] 阶段：关键帧抽取完成 ${frameEvidence.length} 帧，失败 ${frameErrors.length}`);
 
   /* ─────────── 失败台账：每条失败给全文原因，不许只留「截断」「error」 ─────────── */
