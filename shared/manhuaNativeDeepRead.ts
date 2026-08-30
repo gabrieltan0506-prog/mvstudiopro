@@ -171,6 +171,15 @@ export type NativeDeepReadAdvisory = {
   code: string;
   detailZh: string;
   segmentIndex?: number;
+  /**
+   * 偏离门槛的比例（0830 晚用户拍板：「不达标等于两项的，要看是否在误差 20% 内，
+   * 超过依然重跑」）。定义 = |实际 − 门槛| / 门槛，只有能量化的门槛类判定才有值。
+   *
+   * 例：音轨地板 5 段实回 1 段 → (5−1)/5 = 0.80；声音事件地板 13 实回 10 → 0.23；
+   * 单镜软上限 40s 实际 41s → 0.025。
+   * 用途见 runner 的三项线：2 项时任一项 > 0.20 即重跑，不放行。
+   */
+  deviationRatio?: number;
 };
 
 /**

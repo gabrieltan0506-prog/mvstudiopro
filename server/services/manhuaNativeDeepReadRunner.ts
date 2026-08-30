@@ -369,7 +369,7 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
  *
  * 冻结项：temperature 0.65 · maxOutputTokens 65_536 · candidateCount 1 ·
  * audioTimestamp true · responseMimeType/responseSchema ·
- * thinkingConfig { thinkingBudget: 18_000, includeThoughts: false } ·
+ * thinkingConfig { thinkingBudget: 12_000, includeThoughts: false } ·
  * 重试梯度 [0.65, 0.6] · PLAN_VERSION。
  *
  * 用户原话：「改好冻结参数，非我允许不可再变，我从没有加上 thinking level 为 high 的指令。」
@@ -415,7 +415,7 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
  * 实弹依据见 GENERATION_CONFIG.temperature 注释：0.7 首发合格率 50%，0.65 是 100%。
  * 下限仍是 0.6，三档变两档——第三档在实测中从未被用到过。
  */
-export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.6, 0.5] as const;
+export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.6, 0.55] as const;
 
 /**
  * 段级重试触发线：**不合标准项达到 3 项才重试，1–2 项一律放行**（0830 用户拍板）。
@@ -434,8 +434,36 @@ export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.6, 0.5] as const;
  *   · 传输层失败（429、超时、空响应）—— 模型没说话，谈不上「出什么就是什么」
  */
 export const NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES = 3;
+
+/**
+ * 2 项不合标准时的重跑判据（0830 晚用户拍板）：任一项偏离门槛超过 **20%** 即重跑。
+ *
+ * 用户原话：「如果不達標等於兩項的，要看是否在誤差百分之二十內，如果超過，依然重跑」
+ * 「這個不能放鬆」「我已經把誤差放鬆了，改重跑還是要跑」。
+ *
+ * 语义：容差已经给到 20%，还超出去的就不是「差一点」而是真不合格。
+ * 与 `NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO`（10%，用于硬门本身的上下让步）不是一回事：
+ * 那条决定**算不算命中**，这条决定**命中 2 项时要不要重买**。
+ */
+export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO = 0.20;
+
+/**
+ * 只有这些判定的偏差才参与「2 项且超 20% 就重跑」（0830 晚用户圈定）：
+ * 用户原话「主要看音軌段數，鏡頭數，這幾樣，音軌長度不在 20% 限制內」。
+ *
+ * 纳入：音轨**段数**（audio_track_thin）、镜头时间轴覆盖（缺整段/缺头/缺尾/中间空档）。
+ * 排除：`audio_cue_thin`（声音事件条数≈音轨长度密度）与 `audio_timeline_invalid`——
+ * 安静段落声音事件天然少，拿它推重买等于为「本来就没声音」付钱。
+ */
+export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES: ReadonlySet<string> = new Set([
+  "audio_track_thin",
+  "coverage_missing",
+  "coverage_head_gap",
+  "coverage_tail_gap",
+  "timeline_gap",
+]);
 export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 60_000;
-export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.5;
+export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.55;
 
 /** 第二次尝试参数；保留导出供既有调用方与缓存指纹使用。 */
 export const NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG = {
@@ -1961,11 +1989,15 @@ function collectShotCoverageAdvisories(
   const tolerance = NATIVE_DEEP_READ_TIMELINE_TOLERANCE_SEC;
   const out: NativeDeepReadAdvisory[] = [];
   const round = (v: number) => Math.round(v * 10) / 10;
+  // 覆盖类的偏差 = 缺口秒数 / 段长（0830 晚三项线 20% 判据用它）
+  const lenSec = Math.max(1, endSec - startSec);
+  const gapRatio = (sec: number) => Math.min(1, Math.max(0, sec) / lenSec);
   if (!shots.length) {
     out.push({
       code: "coverage_missing",
       detailZh: `${labelZh}没有任何可用镜头行，缺 ${round(startSec)}–${round(endSec)} 秒`,
       segmentIndex,
+      deviationRatio: 1,
     });
     return out;
   }
@@ -1974,6 +2006,7 @@ function collectShotCoverageAdvisories(
       code: "coverage_head_gap",
       detailZh: `${labelZh}镜头未从 ${round(startSec)} 秒开始，缺 ${round(startSec)}–${round(shots[0]!.startSec)} 秒`,
       segmentIndex,
+      deviationRatio: gapRatio(shots[0]!.startSec - startSec),
     });
   }
   const gaps: string[] = [];
@@ -2003,6 +2036,7 @@ function collectShotCoverageAdvisories(
       code: "coverage_tail_gap",
       detailZh: `${labelZh}镜头未覆盖到 ${round(endSec)} 秒，缺 ${round(cursor)}–${round(endSec)} 秒`,
       segmentIndex,
+      deviationRatio: gapRatio(endSec - cursor),
     });
   }
   return out;
@@ -2052,8 +2086,13 @@ export function assertNativeDeepReadSegmentDensity(input: {
   const segmentIndex = input.segmentIndex;
   const truncated = input.truncated === true;
   const advisories: NativeDeepReadAdvisory[] = [];
-  const note = (code: string, detailZh: string) =>
-    advisories.push({ code, detailZh, segmentIndex });
+  const note = (code: string, detailZh: string, deviationRatio?: number) =>
+    advisories.push({ code, detailZh, segmentIndex, ...(deviationRatio === undefined
+      ? {}
+      : { deviationRatio }) });
+  /** 偏离门槛的比例 = |实际 − 门槛| / 门槛。门槛为 0 时不产生偏差值。 */
+  const deviation = (actual: number, threshold: number) =>
+    threshold > 0 ? Math.abs(actual - threshold) / threshold : undefined;
 
   /**
    * 硬门禁（0829 用户裁决，不转 advisory）：五维分类五键齐全。
@@ -2237,6 +2276,7 @@ export function assertNativeDeepReadSegmentDensity(input: {
     note(
       "audio_track_thin",
       `${labelZh}音轨仅 ${analysis.audioTrack.length} 段，低于建议地板 ${audioFloors.minAudioTracks}`,
+      deviation(analysis.audioTrack.length, audioFloors.minAudioTracks),
     );
   }
   const cueCount = analysis.audioTrack.reduce((sum, track) => sum + track.cues.length, 0);
@@ -2244,6 +2284,7 @@ export function assertNativeDeepReadSegmentDensity(input: {
     note(
       "audio_cue_thin",
       `${labelZh}声音事件仅 ${cueCount} 条，低于建议地板 ${audioFloors.minAudioCues}`,
+      deviation(cueCount, audioFloors.minAudioCues),
     );
   }
   advisories.push(...advisoryFromThrow("audio_timeline_invalid", segmentIndex, () => {
@@ -3399,7 +3440,23 @@ export async function runManhuaNativeDeepReadBatch(params: {
              * 0829 实测「6 片截 2 片，截断是常态不是意外」。
              */
             const countableFailures = truncated ? [] : gated.advisories;
-            if (countableFailures.length >= NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES) {
+            /**
+             * 0830 晚用户补充：「不達標等於兩項的，要看是否在誤差 20% 內，超過依然重跑」
+             * 「我已經把誤差放鬆了，改重跑還是要跑」。
+             *
+             * 即：容差已经给到 20%，还超出去的就不是「差一点」而是真不合格。
+             * 2 项时任一项 `deviationRatio > 0.20` 即重跑；无量化偏差的项（如
+             * classification_thin、empty_action）按 0 计，不单独把 2 项推成重跑。
+             * 实例：音轨地板 5 实回 1 → 0.80 重跑；声音事件 13 实回 10 → 0.23 重跑；
+             * 单镜软上限 40s 实际 41s → 0.025 放行。
+             */
+            const overDeviation = countableFailures.some(
+              (row) => NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES.has(row.code)
+                && (row.deviationRatio ?? 0) > NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO,
+            );
+            const twoItemOverDeviation = countableFailures.length === 2 && overDeviation;
+            if (countableFailures.length >= NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES
+              || twoItemOverDeviation) {
               const reasonZh = countableFailures.map((row) => row.detailZh).join("；").slice(0, 500);
               raw.gateMarked = true;
               raw.gateMarkedZh = reasonZh;
@@ -3413,8 +3470,11 @@ export async function runManhuaNativeDeepReadBatch(params: {
               }
               console.info(
                 `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段`
-                + `第${input.attemptNumber}发 ${countableFailures.length} 项不合标准（≥`
-                + `${NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES}），重试一发：${reasonZh}`,
+                + `第${input.attemptNumber}发 ${countableFailures.length} 项不合标准`
+                + (twoItemOverDeviation
+                  ? `（2 项且偏差超 ${NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO * 100}%）`
+                  : `（≥${NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES}）`)
+                + `，重试一发：${reasonZh}`,
               );
               throw gateError(reasonZh);
             }

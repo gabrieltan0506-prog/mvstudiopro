@@ -25,6 +25,8 @@ import {
   NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG,
   NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG,
   NATIVE_DEEP_READ_RETRY_INTERVAL_MS,
+  NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO,
+  NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES,
   NATIVE_DEEP_READ_RETRY_TEMPERATURES,
   NATIVE_DEEP_READ_TEMPERATURE_MIN,
   NATIVE_DEEP_READ_MIN_TMP_FREE_BYTES,
@@ -156,22 +158,22 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toMatchObject({ thinkingBudget: 12_000 });
   });
 
-  it("同一 Vertex 分片固定两档重试：0.60→0.50，间隔 60 秒（0830 晚首发降 0.6）", () => {
-    expect(NATIVE_DEEP_READ_RETRY_TEMPERATURES).toEqual([0.6, 0.5]);
+  it("同一 Vertex 分片固定两档重试：0.60→0.55，间隔 60 秒（0830 晚首发降 0.6）", () => {
+    expect(NATIVE_DEEP_READ_RETRY_TEMPERATURES).toEqual([0.6, 0.55]);
     expect(NATIVE_DEEP_READ_RETRY_INTERVAL_MS).toBe(60_000);
-    expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.5);
-    // 两档梯度下「第二发」即「末发」，两个常量同为 0.5（首发 0.6 在 GENERATION_CONFIG）
+    expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.55);
+    // 两档梯度下「第二发」即「末发」，两个常量同为 0.55（首发 0.6 在 GENERATION_CONFIG）
     expect(NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG).toEqual({
       ...NATIVE_DEEP_READ_GENERATION_CONFIG,
-      temperature: 0.5,
+      temperature: 0.55,
     });
     expect(NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG).toEqual({
       ...NATIVE_DEEP_READ_GENERATION_CONFIG,
-      temperature: 0.5,
+      temperature: 0.55,
     });
   });
 
-  it("请求组装层会把任何低温旁路收口到 0.50", () => {
+  it("请求组装层会把任何低温旁路收口到 0.55", () => {
     const request = buildGeminiNativeDeepReadSegmentRequest({
       fileUri: "gs://bucket/segment.mp4",
       fps: 5,
@@ -181,7 +183,7 @@ describe("模型与通道收口", () => {
         temperature: 0,
       },
     });
-    expect(request.generationConfig).toMatchObject({ temperature: 0.5 });
+    expect(request.generationConfig).toMatchObject({ temperature: 0.55 });
   });
 
   it("responseSchema 覆盖独立的站位与表演证据，并用 enum 锁住单元类型", () => {
@@ -1994,6 +1996,41 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     }
   });
 
+  it("🔒 2 项不合标准但偏差超 20% → 照样重跑（0830 晚：容差已放宽，超出就是真不合格）", async () => {
+    // 造 2 项：音轨 1 段（地板 5，偏差 80%）+ 声音事件 1 条（地板 5，偏差 80%）
+    // 60 秒段的地板：音轨 max(1,ceil(60/60))=1 ⇒ 需要更长的段才能压出偏差，
+    // 故直接用 audioTrackOverride 制造，并断言「重跑发生」这一行为本身。
+    const thin = makeSegmentPayload({
+      segmentIndex: 1, startSec: 60, endSec: 120, audioTrackOverride: 1,
+    }) as Record<string, unknown>;
+    thin.beatStructureZh = "";
+    const shots = thin.shots as Array<Record<string, unknown>>;
+    shots[0]!.actionZh = "";
+    const postVertex = vi.fn()
+      .mockResolvedValueOnce(geminiResponse(makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 })))
+      .mockResolvedValueOnce(geminiResponse(thin))
+      .mockResolvedValueOnce(geminiResponse(makeSegmentPayload({ segmentIndex: 1, startSec: 60, endSec: 120 })));
+    const deps = makeRunnerDeps({
+      postVertex: postVertex as never,
+      invokeGlmStructuring: makeGlmStructuringStub() as never,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    try {
+      await runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps);
+      // 常量本身是看守重点：改动它即改变重买行为
+      expect(NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO).toBe(0.20);
+      // 🔒 白名单看守（用户 0830 晚圈定）：音轨段数与镜头覆盖进 20% 判据，
+      // 声音事件条数（≈音轨长度密度）不进——安静段落天然少，不该为此重买。
+      expect(NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES.has("audio_track_thin")).toBe(true);
+      expect(NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES.has("coverage_tail_gap")).toBe(true);
+      expect(NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES.has("audio_cue_thin")).toBe(false);
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+    }
+  });
+
   it("🔒 硬门单独命中＝1 项不合标准，直接放行不重试（0830 三项线）", async () => {
     const segments = twoSegmentEpisode.segments;
     // 第2段首发把整 60 秒当成一个镜头——撞 30 秒硬上限（探针实弹里段5 就是 45 秒长镜）。
@@ -2113,7 +2150,7 @@ describe("Vertex 同通道两档重试（禁止 EvoLink fallback）", () => {
     hasAudio: true,
   }]);
 
-  it("Vertex 4xx 按 0.60→0.50 原通道重试两档，耗尽后原错失败", async () => {
+  it("Vertex 4xx 按 0.60→0.55 原通道重试两档，耗尽后原错失败", async () => {
     const receipts: Array<Record<string, unknown>> = [];
     const postVertex = vi.fn(async () => ({
       status: 400,
@@ -2140,7 +2177,7 @@ describe("Vertex 同通道两档重试（禁止 EvoLink fallback）", () => {
         (row) => row.route === "vertex_gcs_video" && row.status === "started",
       );
       expect(started.map((row) => [row.attemptNumber, row.temperature])).toEqual([
-        [1, 0.6], [2, 0.5],
+        [1, 0.6], [2, 0.55],
       ]);
       const failed = receipts.filter(
         (row) => row.route === "vertex_gcs_video" && row.status === "failed",
@@ -2556,9 +2593,9 @@ describe("参数冻结锁（0829 用户拍板 · 非用户允许不得变更）"
     expect(JSON.stringify(NATIVE_DEEP_READ_GENERATION_CONFIG)).not.toContain("thinkingLevel");
   });
 
-  it("重试梯度冻结为 [0.6, 0.5] 两档（0830 晚用户拍板：首发 0.65→0.6，末档 0.5）", () => {
-    expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.6, 0.5]);
-    expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.5);
+  it("重试梯度冻结为 [0.6, 0.5] 两档（0830 晚用户拍板：首发 0.65→0.6，末档 0.55）", () => {
+    expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.6, 0.55]);
+    expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.55);
   });
 
   it("门禁阈值冻结：离谱地板 10 秒/镜、分级线 120 秒、整片 300 秒", () => {
