@@ -680,9 +680,17 @@ export const NATIVE_DEEP_READ_SEGMENT_COVERAGE_FLOOR_RATIO = 0.5;
  * 只对**数值**门禁生效；字段齐全 / 五维五键 / zod 这类二值判定没有 10% 可言，不受影响。
  */
 export const NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO = 0.10;
-/** 单条证据段实际拒收线 = 30 × 1.1 = 33 秒（0830 用户令放宽容差后的真值）。 */
-export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC =
-  NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC * (1 + NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO);
+/**
+ * 🔒 单条证据段**实际拒收线 45 秒**（0830 用户拍板：「41 秒可以接受，不需要重试」）。
+ *
+ * 提示词仍写 30 秒（目标不放宽），门禁按 45 拦——容差只放在拦截侧。
+ * 45 这条线是用当晚两轮实弹分出来的：
+ *   temp 0.65：唯一违规 41 秒 —— 真长镜，用户判定可接受
+ *   temp 0.70：违规 40 / 40 / 60 / 130 / 162 / 201 秒 —— 60 秒以上明显是没读完
+ * 45 卡在「真长镜」与「偷懒」之间：放过 40–41，仍拦住 60+。
+ * 每重试一片要重付一整片视频输入，为 41 秒去重买不划算。
+ */
+export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC = 45;
 /** 覆盖率实际拒收线 = 0.5 × 0.9 = 0.45（同上）。 */
 export const NATIVE_DEEP_READ_SEGMENT_COVERAGE_REJECT_RATIO =
   NATIVE_DEEP_READ_SEGMENT_COVERAGE_FLOOR_RATIO * (1 - NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO);

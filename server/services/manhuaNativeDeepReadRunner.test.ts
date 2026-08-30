@@ -671,19 +671,29 @@ describe("v11 · 截断段豁免（classification 在 responseSchema 最末，�
     })).toThrow("classification 缺失");
   });
 
-  it("🔒 截断段照样守 30 秒上限（含 10% 容差＝33 秒）：超长证据段仍拒收", () => {
+  it("🔒 截断段照样守长镜拒收线（0830 定 45 秒：放过真长镜，拦住偷懒）", () => {
     const raw = withoutClassification();
-    // 31 秒已落进 10% 容差（30×1.1=33）内，不再拒收；用 35 秒才越过容差线。
+    // 0830 实弹定线：41 秒（真长镜）不该拒，60 秒以上（没读完）必须拒。
+    // 先证 41 秒放行——这正是用户判定「可以接受，不需要重试」的那一条。
+    const passing = withoutClassification();
+    passing.shots = [{
+      ...(passing.shots as Array<Record<string, unknown>>)[0]!,
+      startSec: 0, endSec: 41,
+    }];
+    expect(() => assertNativeDeepReadSegmentDensity({
+      ...base, raw: passing, truncated: true,
+    })).not.toThrow();
+    // 再证 60 秒仍拒
     raw.shots = [{
       ...(raw.shots as Array<Record<string, unknown>>)[0]!,
       startSec: 0,
-      endSec: 35,
+      endSec: 60,
     }];
     expect(() => assertNativeDeepReadSegmentDensity({
       ...base,
       raw,
       truncated: true,
-    })).toThrow("33 秒");
+    })).toThrow("45 秒");
   });
 
   it("🔒 截断段照样守逐镜 17 字段：缺字段仍拒收", () => {
