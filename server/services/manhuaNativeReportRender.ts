@@ -92,6 +92,16 @@ type SegmentRaw = { segmentIndex: number; raw: Record<string, unknown> };
  */
 function assembleCardFromSegments(segments: SegmentRaw[]): Record<string, unknown> {
   const merged: Record<string, unknown> = { shots: [], subtitles: [], audioResolution: [] };
+  /**
+   * 🔴 keyMoments / excludedAdRanges 必须一并合并（0830 审查 P0）。
+   * 生产入口只有 renderNativeEvidenceReportFromObjectNames 一条，从不传 glmCardObjectName，
+   * 因此必然走本函数。此前本函数整字段丢掉这两项 ⇒ 报告里「重点时刻」与「广告区间」
+   * 恒为 0、被高亮的重点时刻表永远空态——**功能在生产上是死的**。
+   * 秒位口径：段卡的 shots/subtitles/keyMoments 都是**全片绝对秒**（段提示词硬约束 1），
+   * 这里与 shots 同样直接拼接，不加 offset。
+   */
+  const keyMoments: Array<Record<string, unknown>> = [];
+  const excludedAdRanges: Array<Record<string, unknown>> = [];
   const chunkSpans: Array<{ chunkIndex: number; startSec: number; endSec: number }> = [];
   const summaryParts: Record<string, string[]> = {};
   const classification: Record<string, unknown[]> = {};
@@ -105,6 +115,12 @@ function assembleCardFromSegments(segments: SegmentRaw[]): Record<string, unknow
         startSec: Number(span.startSec),
         endSec: Number(span.endSec),
       });
+    }
+    for (const row of Array.isArray(raw.keyMoments) ? raw.keyMoments as Array<Record<string, unknown>> : []) {
+      if (Number.isFinite(Number(row?.atSec))) keyMoments.push(row);
+    }
+    for (const row of Array.isArray(raw.excludedAdRanges) ? raw.excludedAdRanges as Array<Record<string, unknown>> : []) {
+      excludedAdRanges.push(row);
     }
     for (const key of SUMMARY_TEXT_KEYS) {
       const value = String(raw[key] ?? "").trim();
@@ -124,6 +140,19 @@ function assembleCardFromSegments(segments: SegmentRaw[]): Record<string, unknow
   }
   if (Object.keys(classification).length) merged.classification = classification;
   if (chunkSpans.length > 0) merged.chunkSpans = chunkSpans;
+  if (keyMoments.length > 0) {
+    // 同秒同类去重后按秒位排序（与 shared mapper 同口径）
+    const seen = new Set<string>();
+    merged.keyMoments = keyMoments
+      .filter((row) => {
+        const key = `${Math.round(Number(row.atSec))}|${String(row.kindZh ?? "")}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((a, b) => Number(a.atSec) - Number(b.atSec));
+  }
+  if (excludedAdRanges.length > 0) merged.excludedAdRanges = excludedAdRanges;
   return merged;
 }
 
@@ -235,9 +264,33 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const shotSpans = shots
     .map((shot) => ({ from: Number(shot.startSec), to: Number(shot.endSec) }))
     .filter((x) => Number.isFinite(x.from) && Number.isFinite(x.to) && x.to > x.from);
-  const coveredSec = shotSpans.reduce((sum, x) => sum + (x.to - x.from), 0);
+  /**
+   * 🔴 覆盖按**区间并集**算，不是时长之和（0830 审查 P0）：
+   * 重叠区间会被重复计入，「覆盖 X 分钟」可能超过整集时长——
+   * 而这份报告存在的意义之一就是抓「镜头重叠/过度合并」，这个指标偏偏在异常时
+   * 往「更好看」的方向失真。重叠另单列成红字告警，那才是审片人要的信号。
+   */
+  const sortedSpans = shotSpans.slice().sort((a, b) => a.from - b.from);
+  let coveredSec = 0;
+  let overlapSec = 0;
+  let overlapCount = 0;
+  let cursor = Number.NEGATIVE_INFINITY;
+  for (const span of sortedSpans) {
+    if (span.from < cursor) {
+      overlapCount += 1;
+      overlapSec += Math.min(cursor, span.to) - span.from;
+    }
+    const from = Math.max(span.from, cursor);
+    if (span.to > from) { coveredSec += span.to - from; cursor = span.to; }
+  }
   const avgShotSec = shotSpans.length ? coveredSec / shotSpans.length : 0;
-  const adShotCount = shots.filter((shot) => shot.evidenceRole === "non_story_ad").length;
+  /**
+   * 🔴 必须从**未过滤**的原始 card.shots 上数（0830 审查 P0）：
+   * 上方 shots 已经 filter 掉 non_story_ad，在它上面再找广告镜恒为空——第三次同型空改。
+   * 文案也随之改成「已剔除 M 广告镜」：这些镜本就不在 shots 里，说「含」是错的。
+   */
+  const adShotCount = (Array.isArray(card.shots) ? card.shots as Array<Record<string, unknown>> : [])
+    .filter((shot) => shot.evidenceRole === "non_story_ad").length;
   const adRanges = (Array.isArray((card as { excludedAdRanges?: unknown }).excludedAdRanges)
     ? (card as { excludedAdRanges: Array<Record<string, unknown>> }).excludedAdRanges
     : []);
@@ -248,7 +301,11 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   /** 重点时刻（v12）：模型自报的抓帧秒位，五类＝切镜/情绪/灯光/剧情/音轨。 */
   const keyMoments = (Array.isArray((card as { keyMoments?: unknown }).keyMoments)
     ? (card as { keyMoments: Array<Record<string, unknown>> }).keyMoments
-    : []).slice().sort((a, b) => Number(a.atSec) - Number(b.atSec));
+    : [])
+    // NaN 参与比较会打乱有效元素顺序，且会渲染出 NaN:NaN 的秒位——先滤再排。
+    .filter((row) => Number.isFinite(Number(row.atSec)))
+    .slice()
+    .sort((a, b) => Number(a.atSec) - Number(b.atSec));
   const KIND_ICON: Record<string, string> = {
     切镜: "🎬", 情绪: "😨", 灯光: "💡", 剧情: "📖", 音轨: "🎵",
   };
@@ -269,7 +326,12 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     const text = String(row.textZh ?? "").trim();
     if (!Number.isFinite(at) || !text) continue;
     const last = subNodes.at(-1);
-    if (last && at - last.to <= 6) { last.to = at; last.lines.push(text); }
+    // 🔴 双封顶（0830 审查 P1）：`at - last.to <= 6` 是**滑动**窗口，
+    // 只要每两句间隔都 ≤6 秒，整集所有字幕会塌成 1 个节点（漫剧 3–5 秒一句是常态）。
+    // 节点跨度上限 45 秒、单节点最多 8 句，超过即强制起新节点。
+    if (last && at - last.to <= 6 && at - last.from <= 45 && last.lines.length < 8) {
+      last.to = at; last.lines.push(text);
+    }
     else subNodes.push({ from: at, to: at, lines: [text] });
   }
   const nodeRows = subNodes.map((node) => (
@@ -304,11 +366,21 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
    * （漫剧 2.8–4.3s/镜，真人剧更长），跨体裁会误判。此处无输入基准，
    * 故只在明显异常（平均 >12 秒）时示警，其余一律按正常呈现。
    */
-  const grainBad = avgShotSec > 12;
+  /**
+   * 🔴 秒位非法的镜必须显式呈报（0830 审查 P0）：shotSpans 会静默丢掉它们，
+   * 而 KPI「镜头数」用的是 shots.length，两个数字会静静地不自洽；
+   * 极端情况全部镜无效 ⇒ avgShotSec=0 ⇒ 旧逻辑输出「✅ 粒度正常 · 0.0 秒」绿灯报喜。
+   */
+  const invalidShotCount = shots.length - shotSpans.length;
+  const grainBad = shotSpans.length === 0 || avgShotSec > 12;
   const grainColor = grainBad ? "#e8756a" : "#cbb3e6";
-  const grainText = grainBad
-    ? `🔴 平均镜长 ${avgShotSec.toFixed(1)} 秒，疑似镜头被过度合并`
-    : `✅ 粒度正常 · 平均镜长 ${avgShotSec.toFixed(1)} 秒`;
+  const grainText = shotSpans.length === 0
+    ? "🔴 全部镜头秒位非法，无法判定粒度"
+    : (avgShotSec > 12
+      ? `🔴 平均镜长 ${avgShotSec.toFixed(1)} 秒，疑似镜头被过度合并`
+      : `✅ 粒度正常 · 平均镜长 ${avgShotSec.toFixed(1)} 秒`)
+      + (invalidShotCount > 0 ? ` · ⚠️ ${invalidShotCount} 镜秒位非法，未计入镜长统计` : "")
+      + (overlapCount > 0 ? ` · 🔴 ${overlapCount} 处镜头重叠，共 ${overlapSec.toFixed(1)} 秒` : "");
 
   const kpi = [
     [String(shots.length), "镜头数"],
@@ -341,7 +413,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const html = `<title>${esc(input.labelZh)} 模型产出报告</title><div style="font-family:'Songti SC',serif;background:linear-gradient(165deg,#7a1f3d 0%,#8e4a8b 55%,#cbb3e6 100%);background-attachment:fixed;color:#dce3ec;padding:28px;max-width:1200px;margin:auto">
 <p style="color:#e8c66a;letter-spacing:.3em;font-size:.8em">${esc(input.labelZh)} · ${esc(input.sourceLabelZh)} · 模型字段原样渲染，无编辑层、无删节</p>
 <h1 style="font-size:1.8em;margin:.2em 0">模型产出报告</h1>
-<p style="color:#8fa3bd;margin:.3em 0 0">${shots.length} 镜（含 ${adShotCount} 广告镜）· ${subtitles.length} 字幕 → ${subNodes.length} 剧情节点 · ${keyMoments.length} 重点时刻 · ${frameSource} ${tiles.length} 帧 · 覆盖 ${(coveredSec / 60).toFixed(1)} 分钟</p>
+<p style="color:#8fa3bd;margin:.3em 0 0">${shots.length} 镜（已剔除 ${adShotCount} 广告镜）· ${subtitles.length} 字幕 → ${subNodes.length} 剧情节点 · ${keyMoments.length} 重点时刻 · ${frameSource} ${tiles.length} 帧 · 覆盖 ${(coveredSec / 60).toFixed(1)} 分钟</p>
 
 <div style="display:flex;gap:12px;flex-wrap:wrap;margin:18px 0">${kpi}</div>
 <p style="color:${grainColor};font-weight:600">${grainText}</p>
