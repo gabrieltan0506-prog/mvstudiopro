@@ -316,15 +316,28 @@ async function main() {
   const temporaryVideoLeaks = videosAfter.filter((name) => !videosBefore.has(name));
   const rawFacts = await Promise.all(rawNames.map(objectFact));
   const parsedFacts = await Promise.all(parsedNames.map(objectFact));
-  const rawBySegment = new Map<number, ReturnType<typeof countsOf>>();
+  const rawBySegment = new Map<number, Array<ReturnType<typeof countsOf>>>();
   const parsedBySegment = new Map<number, ReturnType<typeof countsOf>>();
 
   for (const fact of rawFacts) {
     const segmentIndex = segmentIndexFromName(fact.objectName);
-    // 同段重试可能有多份原始响应；最后一份是最终接受/拒绝判断的输入。
-    // 坏 JSON 的失败尝试同样是合法证据（重试梯度的存在理由），不得让它阻断摘要落盘。
+    /**
+     * 同段重试会有**多份**原始响应，每份都留下。
+     *
+     * 🔴 0830 修：旧写法 `set(segmentIndex, ...)` 只留最后一份，等于断言
+     * 「最后一发就是被接受的那一发」——而重试存在时这个断言本身不成立
+     * （被接受的可能是第 1 发，第 2 发是门禁标记版）。实测 6 片里 3 片重试过，
+     * 9 份 raw 对 6 份 parsed，直接误报 `原始响应与解析后证据条数不一致，已阻断`，
+     * 把一轮跑对的探针拦在最后一步。
+     *
+     * 这道对账真正要验的是**消费层有没有偷偷改数据**：
+     * 解析后的证据必须等于该段收到过的**某一份**原始响应，而不是特定某一份。
+     *
+     * 坏 JSON 的失败尝试同样是合法证据（重试梯度的存在理由），不得让它阻断摘要落盘。
+     */
     try {
-      rawBySegment.set(segmentIndex, countsOf(extractModelJsonFromRawEvidence(fact.payload)));
+      const counts = countsOf(extractModelJsonFromRawEvidence(fact.payload));
+      rawBySegment.set(segmentIndex, [...(rawBySegment.get(segmentIndex) || []), counts]);
     } catch {
       console.error(`[probe] 原始证据不可解析（不阻断摘要）：${fact.objectName}`);
     }
@@ -340,11 +353,21 @@ async function main() {
   }
 
   const reconciliations = segments.map((_, segmentIndex) => {
-    const rawCounts = rawBySegment.get(segmentIndex);
+    const rawAttempts = rawBySegment.get(segmentIndex) || [];
     const parsedCounts = parsedBySegment.get(segmentIndex);
-    const countsEqual = Boolean(rawCounts && parsedCounts
-      && JSON.stringify(rawCounts) === JSON.stringify(parsedCounts));
-    return { segmentIndex, rawCounts, parsedCounts, countsEqual };
+    const parsedKey = parsedCounts ? JSON.stringify(parsedCounts) : null;
+    // 命中哪一发也一并报出来：重试段落到第几发上，验收表里要看得见。
+    const matchedAttempt = parsedKey === null
+      ? -1
+      : rawAttempts.findIndex((counts) => JSON.stringify(counts) === parsedKey);
+    return {
+      segmentIndex,
+      attemptCount: rawAttempts.length,
+      rawCounts: rawAttempts,
+      parsedCounts,
+      matchedAttempt: matchedAttempt >= 0 ? matchedAttempt + 1 : null,
+      countsEqual: rawAttempts.length > 0 && matchedAttempt >= 0,
+    };
   });
   /**
    * 关键帧抽取（¥0，模型无关）——**按 keyMoments 抽，不再按镜头中点抽**（0830 用户令）。
@@ -647,8 +670,15 @@ async function main() {
   if (rawFacts.length < segments.length || parsedFacts.length !== segments.length) {
     throw new Error(`证据不完整：raw=${rawFacts.length} parsed=${parsedFacts.length}`);
   }
-  if (reconciliations.some((row) => !row.countsEqual)) {
-    throw new Error("原始响应与解析后证据条数不一致，已阻断");
+  const unreconciled = reconciliations.filter((row) => !row.countsEqual);
+  if (unreconciled.length > 0) {
+    // 写清是哪几段、各有几发、解析后是多少——旧版只丢一句话，现场无从判断。
+    const detail = unreconciled
+      .map((row) => `第${row.segmentIndex + 1}段(${row.attemptCount}发)`)
+      .join("、");
+    throw new Error(
+      `解析后证据对不上该段任何一发原始响应，已阻断：${detail}`,
+    );
   }
   if (result?.truncated || result?.droppedCount) {
     throw new Error(`消费层仍丢证据：truncated=${result?.truncated} dropped=${result?.droppedCount}`);
