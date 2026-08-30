@@ -189,9 +189,12 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     .filter(([, v]) => Array.isArray(v))
     .map(([k, v]) => `<div style="margin:4px 0"><b style="color:#e8c66a">${esc(fieldLabel(k))}</b>：${(v as unknown[]).map((t) => `<span style="background:#1d2733;border-radius:10px;padding:2px 10px;margin:2px;display:inline-block">${esc(t)}</span>`).join(" ")}</div>`)
     .join("");
-  const summaryCards = SUMMARY_TEXT_KEYS
-    .map((key) => `<div style="background:#141b24;border-left:3px solid #e8c66a;padding:10px 14px;margin:8px 0"><b>${fieldLabel(key)}</b><br><span style="color:#9db4d0;white-space:pre-wrap">${esc(card[key])}</span></div>`)
-    .join("");
+  /**
+   * 0830 报告规格：摘要四栏拆成四个独立区块（可复用手法 / 生成提示要素 /
+   * 节奏结构 / 情绪推进），不再挤成一叠小卡——它们是这张卡最值钱的部分。
+   */
+  const summaryTextOf = (key: (typeof SUMMARY_TEXT_KEYS)[number]): string =>
+    String(card[key] ?? "").trim() || "本卡未产出该项";
 
   const FIELDS = ["unitTypeZh", "shotSizeZh", "angleZh", "compositionZh", "cameraMoveZh", "blockingZh", "bodyActionZh", "limbPropActionZh", "microExpressionZh", "gazeBreathZh", "relationshipReactionZh", "lightingZh", "actionZh", "transitionInZh"];
   const shotRows = shots.map((shot) => `<tr><td style="position:sticky;left:0;background:#141b24;color:#e8c66a;white-space:nowrap">${mmss(Number(shot.startSec) || 0)}–${mmss(Number(shot.endSec) || 0)}</td>${FIELDS.map((field) => `<td style="padding:3px 8px;min-width:90px">${esc(shot[field])}</td>`).join("")}</tr>`).join("");
@@ -227,14 +230,134 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const subtitles = (Array.isArray(card.subtitles) ? card.subtitles : []) as Array<Record<string, unknown>>;
   const subRows = subtitles.map((s) => `<tr><td style="color:#e8c66a">${mmss(Number(s.atSec))}</td><td>${esc(s.textZh)}</td></tr>`).join("");
 
+  /* ───────── 0830 用户拍板的报告规格：KPI / 镜长分布 / 重点时刻 / 剧情节点 ───────── */
+
+  const shotSpans = shots
+    .map((shot) => ({ from: Number(shot.startSec), to: Number(shot.endSec) }))
+    .filter((x) => Number.isFinite(x.from) && Number.isFinite(x.to) && x.to > x.from);
+  const coveredSec = shotSpans.reduce((sum, x) => sum + (x.to - x.from), 0);
+  const avgShotSec = shotSpans.length ? coveredSec / shotSpans.length : 0;
+  const adShotCount = shots.filter((shot) => shot.evidenceRole === "non_story_ad").length;
+  const adRanges = (Array.isArray((card as { excludedAdRanges?: unknown }).excludedAdRanges)
+    ? (card as { excludedAdRanges: Array<Record<string, unknown>> }).excludedAdRanges
+    : []);
+  const audioSegCount = audioChunks.reduce((sum, chunk) => (
+    sum + (Array.isArray(chunk.analysis?.audioTrack) ? chunk.analysis!.audioTrack!.length : 0)
+  ), 0);
+
+  /** 重点时刻（v12）：模型自报的抓帧秒位，五类＝切镜/情绪/灯光/剧情/音轨。 */
+  const keyMoments = (Array.isArray((card as { keyMoments?: unknown }).keyMoments)
+    ? (card as { keyMoments: Array<Record<string, unknown>> }).keyMoments
+    : []).slice().sort((a, b) => Number(a.atSec) - Number(b.atSec));
+  const KIND_ICON: Record<string, string> = {
+    切镜: "🎬", 情绪: "😨", 灯光: "💡", 剧情: "📖", 音轨: "🎵",
+  };
+  const kmRows = keyMoments.map((row) => (
+    `<tr><td style="color:#e8c66a;white-space:nowrap">${mmss(Number(row.atSec))}</td>`
+    + `<td style="white-space:nowrap">${KIND_ICON[String(row.kindZh)] ?? ""} ${esc(row.kindZh)}</td>`
+    + `<td>${esc(row.noteZh)}</td></tr>`
+  )).join("");
+
+  /**
+   * 剧情节点表：字幕**压缩成节点**，不逐字铺（呈现铁律第一条）。
+   * 6 秒内视作同一事件合并；原始逐条字幕仍在下方折叠存证，一条不删。
+   */
+  type SubNode = { from: number; to: number; lines: string[] };
+  const subNodes: SubNode[] = [];
+  for (const row of subtitles.slice().sort((a, b) => Number(a.atSec) - Number(b.atSec))) {
+    const at = Number(row.atSec);
+    const text = String(row.textZh ?? "").trim();
+    if (!Number.isFinite(at) || !text) continue;
+    const last = subNodes.at(-1);
+    if (last && at - last.to <= 6) { last.to = at; last.lines.push(text); }
+    else subNodes.push({ from: at, to: at, lines: [text] });
+  }
+  const nodeRows = subNodes.map((node) => (
+    `<tr><td style="color:#e8c66a;white-space:nowrap">${mmss(node.from)}–${mmss(node.to)}</td>`
+    + `<td style="white-space:nowrap;color:#9db4d0">${node.lines.length} 句</td>`
+    + `<td>${esc(node.lines.slice(0, 3).join("｜"))}${node.lines.length > 3 ? "…" : ""}</td></tr>`
+  )).join("");
+
+  /** 镜长分布：一眼看粒度，长镜区间标红。 */
+  const buckets: Array<[string, number, number]> = [
+    ["0–2s", 0, 2], ["2–4s", 2, 4], ["4–6s", 4, 6], ["6–10s", 6, 10],
+    ["10–15s", 10, 15], ["15–30s", 15, 30], ["30s+", 30, Number.POSITIVE_INFINITY],
+  ];
+  const hist = buckets.map(([label, lo, hi]) => ({
+    label,
+    n: shotSpans.filter((x) => (x.to - x.from) >= lo && (x.to - x.from) < hi).length,
+    warn: lo >= 15,
+  }));
+  const histPeak = Math.max(1, ...hist.map((row) => row.n));
+  const histBars = hist.map((row) => (
+    `<div style="display:flex;align-items:center;gap:10px;margin:5px 0">`
+    + `<span style="width:64px;color:#9db4d0;font-size:12px">${row.label}</span>`
+    + `<span style="height:15px;border-radius:3px;min-width:2px;width:${Math.round((row.n / histPeak) * 100)}%;`
+    + `background:${row.warn ? "#e8756a" : "#cbb3e6"}"></span>`
+    + `<span style="color:#9db4d0;font-size:12px">${row.n}</span></div>`
+  )).join("");
+
+  /**
+   * 粒度判定用**膨胀倍数**而非绝对镜长——绝对值是体裁相关的
+   * （漫剧 2.8–4.3s/镜，真人剧更长），跨体裁会误判。此处无输入基准，
+   * 故只在明显异常（平均 >12 秒）时示警，其余一律按正常呈现。
+   */
+  const grainBad = avgShotSec > 12;
+  const grainColor = grainBad ? "#e8756a" : "#cbb3e6";
+  const grainText = grainBad
+    ? `🔴 平均镜长 ${avgShotSec.toFixed(1)} 秒，疑似镜头被过度合并`
+    : `✅ 粒度正常 · 平均镜长 ${avgShotSec.toFixed(1)} 秒`;
+
+  const kpi = [
+    [String(shots.length), "镜头数"],
+    [`${avgShotSec.toFixed(1)}s`, "平均镜长"],
+    [String(subtitles.length), "字幕"],
+    [String(keyMoments.length), "重点时刻"],
+    [String(audioSegCount), "音轨段"],
+    [String(adRanges.length), "广告区间"],
+  ].map(([value, label]) => (
+    `<div style="background:rgba(20,27,36,.62);border:1px solid rgba(232,198,106,.22);border-radius:10px;`
+    + `padding:12px 16px;min-width:120px"><b style="display:block;font-size:1.7em;color:#fff;line-height:1.3">`
+    + `${esc(value)}</b>${esc(label)}</div>`
+  )).join("");
+
+  const section = (titleZh: string, body: string, highlight = false) => (
+    `<h2 style="color:${highlight ? "#fff" : "#e8c66a"};margin-top:30px;`
+    + `${highlight ? "background:rgba(232,198,106,.18);padding:6px 12px;border-radius:8px;border-left:4px solid #e8c66a" : ""}">`
+    + `${esc(titleZh)}</h2>${body}`
+  );
+  const panel = (text: unknown) => (
+    `<div style="background:rgba(20,27,36,.62);border:1px solid rgba(232,198,106,.22);border-radius:10px;`
+    + `padding:14px 18px;margin-top:10px;white-space:pre-wrap">${esc(text)}</div>`
+  );
+  const tableOf = (headers: string[], rows: string) => (
+    `<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.85em;margin-top:10px">`
+    + `<tr>${headers.map((h) => `<th style="padding:5px 9px;color:#8fa3bd;text-align:left">${esc(h)}</th>`).join("")}</tr>`
+    + `${rows}</table></div>`
+  );
+
   const html = `<title>${esc(input.labelZh)} 模型产出报告</title><div style="font-family:'Songti SC',serif;background:linear-gradient(165deg,#7a1f3d 0%,#8e4a8b 55%,#cbb3e6 100%);background-attachment:fixed;color:#dce3ec;padding:28px;max-width:1200px;margin:auto">
 <p style="color:#e8c66a;letter-spacing:.3em;font-size:.8em">${esc(input.labelZh)} · ${esc(input.sourceLabelZh)} · 模型字段原样渲染，无编辑层、无删节</p>
-<h1 style="font-size:1.8em;margin:.2em 0">模型产出报告（${shots.length} 镜 · ${frameSource} ${tiles.length} 帧）</h1>
-<h2 style="color:#e8c66a;margin-top:26px">五维分类（模型原文）</h2>${tags}${summaryCards}
-<h2 style="color:#e8c66a;margin-top:30px">画面时间轴</h2><div style="display:flex;flex-wrap:wrap;gap:8px">${tiles.join("")}</div>
+<h1 style="font-size:1.8em;margin:.2em 0">模型产出报告</h1>
+<p style="color:#8fa3bd;margin:.3em 0 0">${shots.length} 镜（含 ${adShotCount} 广告镜）· ${subtitles.length} 字幕 → ${subNodes.length} 剧情节点 · ${keyMoments.length} 重点时刻 · ${frameSource} ${tiles.length} 帧 · 覆盖 ${(coveredSec / 60).toFixed(1)} 分钟</p>
+
+<div style="display:flex;gap:12px;flex-wrap:wrap;margin:18px 0">${kpi}</div>
+<p style="color:${grainColor};font-weight:600">${grainText}</p>
+
+${section("镜长分布", histBars)}
+${section("可复用手法总结", panel(summaryTextOf("reusableZh")))}
+${section("生成提示要素", panel(summaryTextOf("genPromptHintZh")))}
+${section("节奏结构", panel(summaryTextOf("beatStructureZh")))}
+${section("情绪推进", panel(summaryTextOf("moodArcZh")))}
+${section("五维标签墙", tags)}
+${section(`重点时刻表 · ${keyMoments.length} 条`, keyMoments.length
+    ? tableOf(["秒位", "类型", "说明"], kmRows)
+    : `<p style="color:#9db4d0">本卡无重点时刻（v12 之前的产出没有这个字段）</p>`, true)}
+${section(`剧情节点表 · ${subNodes.length} 节点（${subtitles.length} 条字幕压缩，非逐字铺）`, tableOf(["区间", "密度", "关键句"], nodeRows))}
+${section("画面时间轴", `<div style="display:flex;flex-wrap:wrap;gap:8px">${tiles.join("")}</div>`)}
+${section("音轨解析（模型原文）", audioSections)}
 <details style="margin-top:30px" open><summary style="color:#e8c66a;font-size:1.2em;cursor:pointer">全镜头表 · ${shots.length} 镜 × ${FIELDS.length} 字段</summary><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#141b24">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#8fa3bd">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
-<h2 style="color:#e8c66a;margin-top:30px">音轨解析（模型原文）</h2>${audioSections}
-<details style="margin-top:30px"><summary style="color:#e8c66a;font-size:1.1em;cursor:pointer">字幕原始证据 · ${subtitles.length} 条（折叠存证，不铺开）</summary><div style="overflow-x:auto;max-height:50vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.85em">${subRows}</table></div></details>
+<details style="margin-top:30px"><summary style="color:#e8c66a;font-size:1.1em;cursor:pointer">字幕原始证据 · ${subtitles.length} 条（折叠存证，一条不删）</summary><div style="overflow-x:auto;max-height:50vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.85em">${subRows}</table></div></details>
 <p style="color:#5d6b80;font-size:.8em;margin-top:36px">帧图与本页为 GCS V4 签名链接（6 天）· 证据永久存 GCS · 本页由代码从模型 JSON 确定性渲染</p></div>`;
 
   await uploadBufferToGcs({
