@@ -78,7 +78,14 @@ function segmentEntry(segmentIndex: number, overrides?: Partial<Record<string, u
           evidenceRole: "story",
         },
       ],
-      subtitles: [{ atSec: segmentIndex * 30, textZh: `第${segmentIndex}段台词` }],
+      subtitles: segmentIndex === 0
+        // 5 条间隔 2 秒的密集字幕：会被节点表合并成同一个节点。
+        // 旧版每节点只显示前 3 句，后 2 句被「…」吞掉——本夹具专门钉住那个洞。
+        ? Array.from({ length: 5 }, (_, i) => ({
+          atSec: i * 2,
+          textZh: `密集台词${i}_UNTRUNCATED_SUB_END`,
+        }))
+        : [{ atSec: segmentIndex * 30, textZh: `第${segmentIndex}段台词` }],
       audioResolution: [
         {
           chunkIndex: segmentIndex,
@@ -180,6 +187,16 @@ describe("精确证据名路径：三段卡渲染成功且无删节", () => {
     // 「17 字段」硬编码已改 FIELDS.length 动态
     expect(html).toContain("× 14 字段");
     expect(html).not.toContain("× 17 字段");
+
+    // 🔒 字幕零截断（0830 补：此前「不做任何内容截断」只是文件头一句话，没有守卫，
+    // 结果剧情节点表每节点只显示前 3 句、其余用「…」吞掉，全仓 3264 测照样绿）。
+    // 五条密集台词必须**每一条**都出现在页面里，且页面不许出现截断标记。
+    for (let i = 0; i < 5; i += 1) {
+      expect(html).toContain(`密集台词${i}_UNTRUNCATED_SUB_END`);
+    }
+    expect(html).not.toContain("…");
+    // 节点表确实做了分组（5 条并成 1 个节点），而不是退回逐条铺开
+    expect(html).toContain("5 句");
   });
 });
 

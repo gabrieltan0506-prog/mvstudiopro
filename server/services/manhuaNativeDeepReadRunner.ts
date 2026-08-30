@@ -380,7 +380,10 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
 export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
   // 0829 晚用户拍板：首发温度回到 0.7。v10 定 0.65 时提示词刚软化，没有为软化后的
   // 提示词重新标定过温度；0826 实测 0.65+硬约束=28 镜躺平、0.75+软边界=100/102 镜。
-  temperature: 0.7,
+  // 0830 用户拍板：首发 0.7 → 0.65。实弹依据：576p 那轮 10 片有 5 片首发违反
+  // 30 秒硬约束（40/40/201/162/130 秒巨镜），而**全部 5 片在 0.65 那一发过关、零二次失败**。
+  // 0.7 首发合格率 50%，0.65 是 100%——每次重试都要重付一整片视频输入，这一降直接省掉一半重试。
+  temperature: 0.65,
   maxOutputTokens: 65_536,
   candidateCount: 1,
   audioTimestamp: true,
@@ -401,7 +404,12 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
  * 把超长镜拆开的修复机制（0828《花开锦绣》seg1 吃一次门禁、重试即过）。
  * 用户主动中止不是失败，不进入重试。
  */
-export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.7, 0.65, 0.6] as const;
+/**
+ * 温度梯度（0830 用户拍板：首发 0.7 → 0.65）。
+ * 实弹依据见 GENERATION_CONFIG.temperature 注释：0.7 首发合格率 50%，0.65 是 100%。
+ * 下限仍是 0.6，三档变两档——第三档在实测中从未被用到过。
+ */
+export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.65, 0.6] as const;
 export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 60_000;
 export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.6;
 
@@ -414,7 +422,7 @@ export const NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG = {
 /** 第三次（末次）尝试参数：收口到温度下限。 */
 export const NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG = {
   ...NATIVE_DEEP_READ_GENERATION_CONFIG,
-  temperature: NATIVE_DEEP_READ_RETRY_TEMPERATURES[2],
+  temperature: NATIVE_DEEP_READ_RETRY_TEMPERATURES[NATIVE_DEEP_READ_RETRY_TEMPERATURES.length - 1],
 } as const;
 
 /** 响应体上限：模型异常时可能吐超大 body，不设限会把内存吃干 */

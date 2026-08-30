@@ -145,7 +145,7 @@ describe("模型与通道收口", () => {
 
   it("generationConfig 按 0829 晚定稿 0.70：官方上限 65_536、单候选、responseSchema、thinkingBudget 封顶 18_000", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG).toMatchObject({
-      temperature: 0.7,
+      temperature: 0.65,
       maxOutputTokens: 65_536,
       candidateCount: 1,
       audioTimestamp: true,
@@ -156,13 +156,14 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toMatchObject({ thinkingBudget: 18_000 });
   });
 
-  it("同一 Vertex 分片固定三档重试：0.70→0.65→0.60，间隔 60 秒", () => {
-    expect(NATIVE_DEEP_READ_RETRY_TEMPERATURES).toEqual([0.7, 0.65, 0.6]);
+  it("同一 Vertex 分片固定两档重试：0.65→0.60，间隔 60 秒（0830 首发降 0.65）", () => {
+    expect(NATIVE_DEEP_READ_RETRY_TEMPERATURES).toEqual([0.65, 0.6]);
     expect(NATIVE_DEEP_READ_RETRY_INTERVAL_MS).toBe(60_000);
     expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.6);
+    // 两档梯度下「第二发」即「末发」，两个常量同为 0.6（首发 0.65 在 GENERATION_CONFIG）
     expect(NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG).toEqual({
       ...NATIVE_DEEP_READ_GENERATION_CONFIG,
-      temperature: 0.65,
+      temperature: 0.6,
     });
     expect(NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG).toEqual({
       ...NATIVE_DEEP_READ_GENERATION_CONFIG,
@@ -1975,7 +1976,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
   });
 });
 
-describe("Vertex 同通道三档重试（禁止 EvoLink fallback）", () => {
+describe("Vertex 同通道两档重试（禁止 EvoLink fallback）", () => {
   const segment = { startSec: 0, endSec: 60 };
   const episode = {
     episodeIndex: 1,
@@ -1992,7 +1993,7 @@ describe("Vertex 同通道三档重试（禁止 EvoLink fallback）", () => {
     hasAudio: true,
   }]);
 
-  it("Vertex 4xx 按 0.70→0.65→0.60 原通道重试三档，耗尽后原错失败", async () => {
+  it("Vertex 4xx 按 0.65→0.60 原通道重试两档，耗尽后原错失败", async () => {
     const receipts: Array<Record<string, unknown>> = [];
     const postVertex = vi.fn(async () => ({
       status: 400,
@@ -2009,8 +2010,8 @@ describe("Vertex 同通道三档重试（禁止 EvoLink fallback）", () => {
         episodes: [episode],
         onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
       }, deps)).rejects.toThrow("bad video");
-      expect(postVertex).toHaveBeenCalledTimes(3);
-      expect(deps.waitForRetry).toHaveBeenCalledTimes(2);
+      expect(postVertex).toHaveBeenCalledTimes(2);
+      expect(deps.waitForRetry).toHaveBeenCalledTimes(1);  // 两档＝1 次等待
       expect(deps.waitForRetry).toHaveBeenNthCalledWith(1, 60_000, undefined);
       expect(deps.postEvolink).not.toHaveBeenCalled();
       expect(deps.signReadUrl).not.toHaveBeenCalled();
@@ -2019,12 +2020,12 @@ describe("Vertex 同通道三档重试（禁止 EvoLink fallback）", () => {
         (row) => row.route === "vertex_gcs_video" && row.status === "started",
       );
       expect(started.map((row) => [row.attemptNumber, row.temperature])).toEqual([
-        [1, 0.7], [2, 0.65], [3, 0.6],
+        [1, 0.65], [2, 0.6],
       ]);
       const failed = receipts.filter(
         (row) => row.route === "vertex_gcs_video" && row.status === "failed",
       );
-      expect(failed).toHaveLength(3);
+      expect(failed).toHaveLength(2);
       expect(failed.every((row) =>
         (row.providerError as { httpStatus?: number })?.httpStatus === 400)).toBe(true);
     } finally {
@@ -2032,7 +2033,7 @@ describe("Vertex 同通道三档重试（禁止 EvoLink fallback）", () => {
     }
   });
 
-  it("Vertex 网络失联同样走三档，最终原错失败且不调用 EvoLink", async () => {
+  it("Vertex 网络失联同样走两档，最终原错失败且不调用 EvoLink", async () => {
     const postVertex = vi.fn(async () => { throw new Error("socket hang up"); });
     const deps = makeRunnerDeps({
       prepareVideos: singlePrep as never,
@@ -2042,8 +2043,8 @@ describe("Vertex 同通道三档重试（禁止 EvoLink fallback）", () => {
     try {
       await expect(runManhuaNativeDeepReadBatch({ episodes: [episode] }, deps))
         .rejects.toThrow("socket hang up");
-      expect(postVertex).toHaveBeenCalledTimes(3);
-      expect(deps.waitForRetry).toHaveBeenCalledTimes(2);
+      expect(postVertex).toHaveBeenCalledTimes(2);
+      expect(deps.waitForRetry).toHaveBeenCalledTimes(1);  // 两档＝1 次等待
       expect(deps.postEvolink).not.toHaveBeenCalled();
       expect(deps.signReadUrl).not.toHaveBeenCalled();
       expect(deps.invokeGlmStructuring).not.toHaveBeenCalled();
@@ -2052,7 +2053,7 @@ describe("Vertex 同通道三档重试（禁止 EvoLink fallback）", () => {
     }
   });
 
-  it("三档坏 JSON 耗尽后原错失败，不再发起 GLM 结构化调用", async () => {
+  it("两档坏 JSON 耗尽后原错失败，不再发起 GLM 结构化调用", async () => {
     const badJsonResponse = {
       status: 200,
       text: JSON.stringify({
@@ -2074,8 +2075,8 @@ describe("Vertex 同通道三档重试（禁止 EvoLink fallback）", () => {
     try {
       const failure = await runManhuaNativeDeepReadBatch({ episodes: [episode] }, deps)
         .then(() => undefined, (error: unknown) => error);
-      expect(deps.postVertex).toHaveBeenCalledTimes(3);
-      expect(deps.waitForRetry).toHaveBeenCalledTimes(2);
+      expect(deps.postVertex).toHaveBeenCalledTimes(2);
+      expect(deps.waitForRetry).toHaveBeenCalledTimes(1);  // 两档＝1 次等待
       expect(deps.invokeGlmStructuring).not.toHaveBeenCalled();
       expect(failure).toEqual(expect.objectContaining({
         message: expect.stringContaining("没有返回可解析的 JSON"),
@@ -2337,7 +2338,7 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     expect(deps.postEvolink).not.toHaveBeenCalled();
   });
 
-  it("首轮一段成功一段真失败（坏 JSON 三档耗尽），第二轮只调用失败段且本次只记该段费用", async () => {
+  it("首轮一段成功一段真失败（坏 JSON 两档耗尽），第二轮只调用失败段且本次只记该段费用", async () => {
     const episode = makeEpisode([{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }]);
     const store = new Map<number, NativeDeepReadSegmentCacheEntry>();
     // 0829：密度不足已转 advisory 不再拒收，这里用坏 JSON 制造真失败
@@ -2402,11 +2403,14 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
       const second = await runManhuaNativeDeepReadBatch({
         episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey,
       }, deps);
-      // 首轮 1 成功 + 3 档全坏 = 4 发；第二轮命中缓存只补失败段 1 发 = 累计 5 发
+      // 0830 两档梯度：首轮 1 成功 + 两档全坏 = 3 发；第二轮命中缓存只补失败段、
+      // 该段仍两档耗尽 = 2 发，累计 5 发（发数巧合不变，但构成变了）
       expect(postVertex).toHaveBeenCalledTimes(5);
       expect(prepareVideos.mock.calls[1]![0].segments.map((row) => row.startSec)).toEqual([60]);
-      expect(second.usage.inputTokens).toBe(100_000);
-      expect(second.episodes[0]!.result.audioInputTokens).toBe(16_000);
+      // 第二轮补跑的那一段两档耗尽 ⇒ 2 × 100k
+      expect(second.usage.inputTokens).toBe(200_000);
+      // 同上：第二轮那一段两档耗尽 ⇒ 音频 token 也是 2 发累计
+      expect(second.episodes[0]!.result.audioInputTokens).toBe(24_000);
       expect(second.episodes[0]!.result.segmentEvidenceObjectNames).toHaveLength(2);
       expect(second.episodes[0]!.result.segmentEvidenceObjectNames?.[0]).toMatch(
         /^manhua-template-learn\/segment-evidence\/tpl_native_cache_series_01_ep003\/[a-f0-9]{64}\/seg0-[a-f0-9]{64}-[a-f0-9]{64}\.json$/,
@@ -2419,7 +2423,7 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
 
 describe("参数冻结锁（0829 用户拍板 · 非用户允许不得变更）", () => {
   it("generationConfig 逐字段冻结：thinkingConfig 只有 thinkingBudget 18K 与 includeThoughts false，绝无 thinkingLevel", () => {
-    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.temperature).toBe(0.7);
+    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.temperature).toBe(0.65);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.maxOutputTokens).toBe(65_536);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.candidateCount).toBe(1);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.audioTimestamp).toBe(true);
@@ -2432,8 +2436,8 @@ describe("参数冻结锁（0829 用户拍板 · 非用户允许不得变更）"
     expect(JSON.stringify(NATIVE_DEEP_READ_GENERATION_CONFIG)).not.toContain("thinkingLevel");
   });
 
-  it("重试梯度冻结为 [0.7, 0.65, 0.6] 三档（0829 晚用户拍板恢复）", () => {
-    expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.7, 0.65, 0.6]);
+  it("重试梯度冻结为 [0.65, 0.6] 两档（0830 用户拍板：首发 0.7→0.65）", () => {
+    expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.65, 0.6]);
     expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.6);
   });
 
