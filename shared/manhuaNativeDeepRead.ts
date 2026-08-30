@@ -513,7 +513,9 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
       // 与同文件音轨过滤 inAd 的 `>= start && < end` 对齐。
       if (segAdSpans.some((r) => local >= r.startSec && local < r.endSec)) return [];
       if (excludedAdRanges.some((r) => atSec >= r.startSec && atSec <= r.endSec)) return [];
-      const key = `${Math.round(atSec)}|${kindZh}`;
+      // 🔴 按 0.1 秒去重（0830 晚）：atSec 允许一位小数后，取整会把 673.6 与 673.7
+      // 这两个不同的帧当成同一条丢掉——输入 10fps，0.1 秒正好是一帧。
+      const key = `${Math.round(atSec * 10)}|${kindZh}`;
       if (keyMomentSeen.has(key)) return [];
       keyMomentSeen.add(key);
       return [{ atSec, kindZh, noteZh: cut(moment.noteZh, 120) || "" }];

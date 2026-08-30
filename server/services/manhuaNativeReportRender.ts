@@ -145,7 +145,7 @@ function assembleCardFromSegments(segments: SegmentRaw[]): Record<string, unknow
     const seen = new Set<string>();
     merged.keyMoments = keyMoments
       .filter((row) => {
-        const key = `${Math.round(Number(row.atSec))}|${String(row.kindZh ?? "")}`;
+        const key = `${Math.round(Number(row.atSec) * 10)}|${String(row.kindZh ?? "")}`;
         if (seen.has(key)) return false;
         seen.add(key);
         return true;

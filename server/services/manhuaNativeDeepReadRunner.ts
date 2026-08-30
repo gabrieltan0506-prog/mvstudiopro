@@ -187,11 +187,11 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
           },
           relationshipReactionZh: {
             type: "STRING",
-            maxLength: 80,
+            maxLength: 60,
             description: "角色之间的动作因果、反应顺序、感知回应与距离变化。",
           },
           lightingZh: { type: "STRING", maxLength: 58 },
-          actionZh: { type: "STRING", maxLength: 80 },
+          actionZh: { type: "STRING", maxLength: 60 },
           transitionInZh: { type: "STRING", maxLength: 50 },
           evidenceRole: {
             type: "STRING",
@@ -220,7 +220,7 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
         properties: {
           atSec: {
             type: "NUMBER",
-            description: "该重点时刻的**精确抓帧秒位**（全片绝对秒），不是镜头区间中点。",
+            description: "该重点时刻的精确抓帧秒位（全片绝对秒，可含一位小数）。取事件真正发生的那一帧，不是镜头区间中点。",
           },
           kindZh: {
             type: "STRING",
@@ -258,12 +258,12 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
                   properties: {
                     fromSec: { type: "INTEGER" },
                     toSec: { type: "INTEGER" },
-                    emotionArcZh: { type: "STRING" },
-                    toneZh: { type: "STRING" },
-                    sfxZh: { type: "STRING" },
-                    bgmZh: { type: "STRING" },
-                    atmosphereZh: { type: "STRING" },
-                    silenceZh: { type: "STRING" },
+                    emotionArcZh: { type: "STRING", maxLength: 18 },
+                    toneZh: { type: "STRING", maxLength: 14 },
+                    sfxZh: { type: "STRING", maxLength: 18 },
+                    bgmZh: { type: "STRING", maxLength: 18 },
+                    atmosphereZh: { type: "STRING", maxLength: 14 },
+                    silenceZh: { type: "STRING", maxLength: 14 },
                     cues: {
                       type: "ARRAY",
                       items: {
@@ -274,7 +274,7 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
                             type: "STRING",
                             enum: MANHUA_NATIVE_AUDIO_CUE_KINDS,
                           },
-                          detailZh: { type: "STRING" },
+                          detailZh: { type: "STRING", maxLength: 18 },
                         },
                         required: ["atSec", "kind", "detailZh"],
                       },
@@ -310,8 +310,8 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
         required: ["chunkIndex", "analysis"],
       },
     },
-    beatStructureZh: { type: "STRING" },
-    moodArcZh: { type: "STRING" },
+    beatStructureZh: { type: "STRING", maxLength: 90 },
+    moodArcZh: { type: "STRING", maxLength: 70 },
     reusableZh: { type: "STRING" },
     genPromptHintZh: { type: "STRING" },
     classification: {
@@ -345,7 +345,7 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
 
 /**
  * 0829 拍板：temperature 0.6 首发、maxOutputTokens 65_536、单候选、
- * responseSchema、thinkingBudget 12K（0829 用户令：thinkingConfig 只留数值预算）。
+ * responseSchema、thinkingLevel MEDIUM（0830 晚：thinkingBudget 是旧模型兼容写法，Gemini 3 系列改用等级）。
  *
  * thinkingBudget 12_000 的依据（0829 订正 0826 的误推）：知识库《原生视频读取-CDN
  * 串流定案》记载「thinkingBudget 写法也通」；0826 那句「禁止传 thinkingBudget」是
@@ -357,7 +357,7 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
  *
  * 冻结项：temperature 0.65 · maxOutputTokens 65_536 · candidateCount 1 ·
  * audioTimestamp true · responseMimeType/responseSchema ·
- * thinkingConfig { thinkingBudget: 12_000, includeThoughts: false } ·
+ * thinkingConfig { thinkingLevel: "MEDIUM", includeThoughts: false } ·
  * 重试梯度 [0.6, 0.55] · PLAN_VERSION。
  *
  * 用户原话：「改好冻结参数，非我允许不可再变，我从没有加上 thinking level 为 high 的指令。」
@@ -383,9 +383,19 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
   responseSchema: NATIVE_DEEP_READ_RESPONSE_SCHEMA,
   // 0829 用户令：thinkingLevel 移除（0826 由 agent 加入，用户从未设定）；
   // 保留 includeThoughts:false——思考照跑照计费，但绝不混进输出 JSON（知识库定案）。
-  // 0830 晚：18_000 → 12_000。⚠️ 实测该 budget **不是硬上限**（设 18K 实跑到 39K），
-  // 降它是降「目标值」不是降「天花板」，效果需下一轮实弹验证，不得当作已解决。
-  thinkingConfig: { thinkingBudget: 12_000, includeThoughts: false },
+  /**
+   * 0830 晚用户拍板：**去掉 thinkingBudget，改用 thinkingLevel**。
+   *
+   * 实测依据：thinkingBudget 从来不是硬上限——设 18K 实跑 39,024，设 12K 实跑 24,674。
+   * Google 对 Gemini 3 系列保留旧 thinkingBudget 兼容但推荐 thinkingLevel；
+   * ⚠️ 官方同时说明**思考等级也是相对控制，不保证固定 token 数**，
+   * 所以改成 MEDIUM 同样不承诺「绝不超过某个值」，只是换一种更受支持的控制方式。
+   *
+   * 🔒 两者不得同时发送。此处只保留 thinkingLevel。
+   * includeThoughts:false 只关闭思考摘要回显，不关闭思考本身，也不消除其用量。
+   * 实际消耗一律以回执里的 thoughtsTokenCount 为准，不拿配置值当实际值。
+   */
+  thinkingConfig: { thinkingLevel: "MEDIUM", includeThoughts: false },
 } as const;
 
 /**
@@ -674,7 +684,7 @@ export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
  * v4（0826 拍板）：视觉调用换 Vertex Gemini 3.1 Pro 从 GCS 直读、每段一次调用、
  * 音轨同调直出、双密度门禁。计划口径与采样语义全变——旧确认码必须全废。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v17-final-prompt" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-300s-v19-thinking-level" as const;
 
 /** 0827 实弹口径：生产 300 秒分片保持 10fps；仅旧数据超 300 秒时降为 5fps。 */
 export function resolveNativeDeepReadRequestFps(totalDurationSec: number): number {
@@ -725,12 +735,24 @@ export const NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC = 15;
  * 「不行，超过三十秒必须要拆」「这个不加模型会一次跑 140-300 秒这样的长镜」「我都试过了」。
  * 提示词硬约束 1 与本门禁必须同时保持硬性，任何 agent 不得单方面放宽。
  */
-export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC = 60;
+export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC = 30;
+
+/**
+ * 单片镜头数**观察线**（不是硬上限，也不进提示词）。
+ *
+ * 🔴 0830 晚订正：它一度被写进提示词当硬上限，与「如实记录全部证据」直接冲突——
+ * 真有 80 镜时模型只剩漏记、合并、超限三条路，每条都违反红线。
+ *
+ * 68 这个数当初按 800 token/镜 保守推算，而 v28 实测只有 221–468 token/镜，估高了约 70%。
+ * 按最坏实测重算：80 镜 × 468 + 最高实测思考 24,674 = 62,114 / 65,536，**并不会撞顶**。
+ * 故降级为代码侧观察指标：超过它只记 advisory 供监控，绝不据此要求模型压缩真实镜头。
+ */
+export const NATIVE_DEEP_READ_SHOT_COUNT_WATCH_PER_SEGMENT = 68;
 export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_ALLOWANCE = 1;
 /** 同一物理长镜超过 30 秒时，后续证据段必须用此固定标记，避免把证据拆分谎报成真实切镜。 */
 export const NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH = "同一长镜证据拆分（非切镜）";
 /** 长镜证据拆分点之间至少相隔 1 秒，禁止用同秒空切凑过 30 秒门禁。 */
-export const NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC = 6;
+export const NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC = 3;
 /**
  * 🔒 单次合并的总跨度硬上限（0830 用户拍板 59 秒）。
  * 59 = 两段各 30 秒、中间相隔 1 秒的上限形态：跨度超过 30 秒就必须表达成两段。
@@ -765,14 +787,6 @@ export const NATIVE_DEEP_READ_SEGMENT_COVERAGE_FLOOR_RATIO = 0.5;
  */
 export const NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO = 0.10;
 /**
- * 🔒 单条证据段上限 **40 秒**（0830 用户拍板，取代此前的 30）。
- * 配合 10% 容差 ⇒ 实际拒收线 44 秒。用户原话：「上限四十秒，容错率 10%」。
- * 提示词仍写 30 秒作为**目标**（要模型往细里切），门禁按 44 拦——
- * 目标与拦截线分开，是为了「要求可以严，重买必须省」：
- * 每重试一片要重付一整片视频输入，为 41 秒去重买不划算。
- */
-export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_SOFT_MAX_SEC = 60;
-/**
  * 🔒 单条证据段**实际拒收线 45 秒**（0830 用户拍板：「41 秒可以接受，不需要重试」）。
  *
  * 提示词仍写 30 秒（目标不放宽），门禁按 45 拦——容差只放在拦截侧。
@@ -782,8 +796,14 @@ export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_SOFT_MAX_SEC = 60;
  * 45 卡在「真长镜」与「偷懒」之间：放过 40–41，仍拦住 60+。
  * 每重试一片要重付一整片视频输入，为 41 秒去重买不划算。
  */
+/**
+ * 单镜拒收线 = 硬上限 × (1 + 10% 容差) = 33 秒（0830 晚用户拍板）。
+ * 🔴 软上限整条删除：用户原话「軟上限就是有偷懒的空間」——
+ * 40–60 秒的镜头此前既不触发 advisory 也不拒收，模型自然往粗里切。
+ * v28 实证：上限放到 60 后，六片镜头数在 18–72 之间摆动 4 倍，三片命中 long_take_count。
+ */
 export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC =
-  NATIVE_DEEP_READ_SHOT_LONG_TAKE_SOFT_MAX_SEC * (1 + NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO);
+  NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC * (1 + NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO);
 /** 覆盖率实际拒收线 = 0.5 × 0.9 = 0.45（同上）。 */
 /**
  * 整集镜头留存率**实际拒收线** = 0.5 × 0.9 = 0.45（0830 用户令「容错率改为上下百分之十」：
@@ -869,6 +889,7 @@ c. 输出预算紧张时优先压缩 subtitles，尽量保全镜头表与音轨�
 1. 时间坐标
 shots.startSec/endSec、keyMoments.atSec、subtitles.atSec 一律使用全片绝对整数秒。本段范围为 ${Math.round(input.startSec)} 至 ${Math.round(input.endSec)} 秒，shots 按时间排序，连续覆盖整段。
 audioResolution 内的 fromSec/toSec、cues.atSec 使用本段局部整数秒，以本段起点为 0；chunkIndex 使用传入原值。
+位置写入数字字段；中文描述里可以写动作持续时长，如「1.2 秒内推近」。
 
 2. 镜头记录与长镜拆分
 真实剪辑切换的 unitTypeZh 写「剪辑镜头」。
@@ -903,16 +924,16 @@ audioResolution 内的 fromSec/toSec、cues.atSec 使用本段局部整数秒，
 - unitTypeZh：剪辑镜头／拆分镜证据段。
 - shotSizeZh：实际景别，如极特写、特写、近景、中景、全景、大远景。
 - angleZh：实际机位，如平视、仰拍、俯拍、过肩、主观。
-- compositionZh：主体位置、前中后景、视线方向与空间层次，≤38字。
-- cameraMoveZh：运镜起点、方向、速度或节奏、幅度与落点；静止画面写「固定机位」，≤38字。
-- blockingZh：角色站位、朝向、距离、进退路径、遮挡与群像调度变化，≤33字。
-- bodyActionZh：整体姿态、躯体重心、移动方式、结构形变与动作阶段，≤33字。
-- limbPropActionZh：四肢或等效附肢动作、持物方式、道具状态与交互，≤33字。
-- microExpressionZh：面部或等效表情器官的可见细微变化，≤27字。
-- gazeBreathZh：视线或感知指向、眨眼、呼吸及可见节律变化，≤27字。
-- relationshipReactionZh：角色动作先后、彼此回应与距离变化，≤33字。
-- lightingZh：主辅光位、色调、明暗关系、轮廓光与环境光变化，≤27字。
-- actionZh：本镜可见动作过程、信息变化、结果与辨识特征，≤38字。
+- compositionZh：主体位置、前中后景、视线方向与空间层次，≤80字。
+- cameraMoveZh：运镜起点、方向、速度或节奏、幅度与落点；静止画面写「固定机位」，≤80字。
+- blockingZh：角色站位、朝向、距离、进退路径、遮挡与群像调度变化，≤70字。
+- bodyActionZh：整体姿态、躯体重心、移动方式、结构形变与动作阶段，≤70字。
+- limbPropActionZh：四肢或等效附肢动作、持物方式、道具状态与交互，≤70字。
+- microExpressionZh：面部或等效表情器官的可见细微变化，≤58字。
+- gazeBreathZh：视线或感知指向、眨眼、呼吸及可见节律变化，≤58字。
+- relationshipReactionZh：角色动作先后、彼此回应与距离变化，≤60字。
+- lightingZh：主辅光位、色调、明暗关系、轮廓光与环境光变化，≤58字。
+- actionZh：本镜可见动作过程、信息变化、结果与辨识特征，≤60字。
 - transitionInZh：进入本镜的实际转场方式；长镜续段使用规定标记。
 - evidenceRole：按统一分类规则填写。
 
@@ -927,14 +948,14 @@ keyMoments 是由你选定的抓帧秒位表。下游会按 atSec 去原片抓�
 - 音轨：声音事件发生秒，例如配乐转折、关键音效或声音分段切换。
 密度跟着戏走：重点镜头可选多条；固定机位、表演和光影均无明显变化的平淡镜头，可以一条都不给。
 每条包含：
-- atSec：全片绝对整数秒。
+- atSec：全片绝对秒，可保留一位小数（如 673.6）。输入按 10fps 抽帧，0.1 秒对应一帧；取事件真正发生的那一帧的秒位。
 - kindZh：切镜／情绪／灯光／剧情／音轨。
-- noteZh：一句话说明该时刻发生的事件，≤27字。
+- noteZh：一句话说明该时刻发生的事件，≤60字。
 keyMoments 为必填字段；本段没有合适抓帧点时输出 []。
 
 【正向要求三：关键时刻字幕 subtitles】
 
-仅收录 atSec 落在任一 keyMoment.atSec 前后 3 秒范围内的真实剧情字幕。
+仅收录 atSec 落在任一 keyMoment.atSec 前后 2 秒范围内的真实剧情字幕。
 每条包含：
 - atSec：字幕实际出现的全片绝对整数秒。
 - textZh：画面中该条字幕的原文，逐字照抄。
@@ -986,14 +1007,12 @@ shots 条目按 evidenceRole 区分两种结构：
 
 【禁止事项】
 
-1. 编造不存在的镜头或声音是错误，漏记真实发生的切镜同样是错误。不得为凑密度、分类维度、抓帧点或声音事件数量补造内容。
-2. 不得为节省字数合并镜头、减少条数、跳过对应分支的必填字段，或截断长镜、丢弃尾部、伪造剪辑切换。
-3. 不得把镜头区间中点机械当作 keyMoment；视觉选点不得落在过渡帧、运动模糊或无代表性的空镜上。
-4. 字幕不得从声音猜字、按剧情补全或添加画面中不存在的台词。
-5. 中文描述字段不得出现「01:23」「在第X秒」等时间定位；位置写入数字字段。动作持续时长，如「1.2秒内推近」，可以保留。
-6. 分析描述不得写外部平台剧名、商标或原台词；subtitles 按其原文收录规则处理。
-7. 不得用题材词代替手法分类，也不得将未呈现的人物动机或推测当作观察事实。
-8. 最终仅返回 JSON，不附 Markdown 围栏或额外说明。
+1. 编造不存在的镜头或声音，漏记真实发生的切镜。为凑密度、分类维度、抓帧点或声音事件数量补造内容。
+2. 为节省字数合并镜头、减少条数、跳过对应分支的必填字段，或截断长镜、丢弃尾部、伪造剪辑切换。
+3. 把镜头区间中点机械当作 keyMoment；视觉选点落在过渡帧、运动模糊或无代表性的空镜上。
+4. 字幕从声音猜字、按剧情想像补全或添加画面中不存在的台词。
+5. 中文描述字段出现「01:23」「在第X秒」等时间定位。
+6. 用题材词代替手法分类，将未呈现的人物动机或推测当作观察事实。
 ${audioSoftRules}`;
   return input.rejectedReasonZh
     ? `${base}\n【上一轮被拒原因】${String(input.rejectedReasonZh).slice(0, 300)}。请修正后重新输出完整 JSON；修正时尽量不要降低镜头表或音轨密度。`
@@ -1027,6 +1046,15 @@ export function buildGeminiNativeDeepReadSegmentRequest(input: {
         // 定稿口径：影片 part 在前，提示词 part 在后
         {
           fileData: { fileUri: input.fileUri, mimeType: "video/mp4" },
+          /**
+           * ⚠️ mediaResolution **未显式传入**，走 API 默认值。
+           * 0830 晚实测反推：输入 210,134 token ÷（300 秒 × 10fps ＝ 3,000 帧）≈ 70 token/帧，
+           * 对应 MEDIA_RESOLUTION_LOW（66 token/帧 + 音频）。
+           * 改 HIGH 约 258 token/帧 → 单片输入 ~774K token、成本涨约 3.7 倍
+           * （单片 ¥1.9 → ¥7.0，六片一集 ¥11 → ¥42），属付费决策，须用户明确拍板后再加。
+           * 这条与「微表情看不清」直接相关：66 token/帧承载的像素信息可能不足以支撑
+           * microExpressionZh / gazeBreathZh 的细粒度观察（实测两者均长仅 5.9 / 6.0 字）。
+           */
           videoMetadata: { fps: input.fps },
         },
         { text: input.prompt },
@@ -4215,7 +4243,10 @@ export async function runManhuaNativeDeepReadBatch(params: {
           planVersion: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
           model: NATIVE_DEEP_READ_MODEL,
           temperature: NATIVE_DEEP_READ_GENERATION_CONFIG.temperature,
-          thinkingBudget: NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig.thinkingBudget,
+          thinkingLevel: NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig.thinkingLevel,
+          // 输入规格入档（0830 晚）：隔天复盘时能说清这份产物是用什么画质读出来的。
+          maxFps: NATIVE_DEEP_READ_MAX_FPS,
+          mediaResolution: "default(未显式传入，实测约 66 token/帧＝LOW)",
           retryTemperatures: [...NATIVE_DEEP_READ_RETRY_TEMPERATURES],
           segmentCount: episode.segments.length,
           sourceDurationSec: episode.sourceDurationSec,

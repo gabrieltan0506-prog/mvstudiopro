@@ -117,7 +117,7 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_ROUTE_EVOLINK).toBe("evolink_gemini_video");
     expect(NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE).toBe("openrouter_glm_structuring");
     // 换代必须让旧确认码全废
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v17-final-prompt");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v19-thinking-level");
   });
 
   it("长视频请求显式使用 30 分钟 HTTP 响应头与响应体时限，不落回 Undici 默认 300 秒", async () => {
@@ -155,7 +155,7 @@ describe("模型与通道收口", () => {
       responseSchema: NATIVE_DEEP_READ_RESPONSE_SCHEMA,
     });
     // 0829 订正：thinkingBudget 不再是禁令，18K 只作成本封顶（长尾段不靠思考吃光 maxOutputTokens）
-    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toMatchObject({ thinkingBudget: 12_000 });
+    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toMatchObject({ thinkingLevel: "MEDIUM" });
   });
 
   it("同一 Vertex 分片固定两档重试：0.65→0.60，间隔 60 秒（0830 晚首发降 0.6）", () => {
@@ -392,8 +392,8 @@ describe("每段提示词硬约束", () => {
     expect(prompt).toContain("镜头密度属于建议项");
     // 用户实测拍板：超 30 秒必须拆，否则模型把 140-300 秒当一个镜头交差
     expect(prompt).toContain("拆成至少两个连续证据段");
-    expect(prompt).toContain("同一物理长镜持续超过 60 秒");
-    expect(prompt).toContain("每段 6—60 秒");
+    expect(prompt).toContain("同一物理长镜持续超过 30 秒");
+    expect(prompt).toContain("每段 3—30 秒");
     expect(prompt).toContain(`transitionInZh 固定写「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」`);
     expect(prompt).toContain("完整覆盖原镜头");
     expect(prompt).not.toContain("镜头数 ≥ 24");
@@ -658,29 +658,29 @@ describe("v11 · 截断段豁免（classification 在 responseSchema 最末，�
     })).toThrow("classification 缺失");
   });
 
-  it("🔒 截断段照样守长镜拒收线（60 秒＋10% 容差＝66 秒）", () => {
+  it("🔒 截断段照样守长镜拒收线（30 秒＋10% 容差＝33 秒）", () => {
     const raw = withoutClassification();
-    // 用户 0830 晚定线：上限 60 秒、容差 10% ⇒ 拒收线 66 秒。
-    // 先证 41 秒放行（真长镜，用户判定「可以接受，不需要重试」）。
+    // 用户 0830 晚定线：上限 30 秒、容差 10% ⇒ 拒收线 33 秒。
+    // 先证 32 秒放行（在 33 秒拒收线内）。
     const passing = withoutClassification();
     passing.shots = [{
       ...(passing.shots as Array<Record<string, unknown>>)[0]!,
-      startSec: 0, endSec: 41,
+      startSec: 0, endSec: 32,
     }];
     expect(() => assertNativeDeepReadSegmentDensity({
       ...base, raw: passing, truncated: true,
     })).not.toThrow();
-    // 再证 67 秒仍拒（超过 66 秒拒收线）
+    // 再证 34 秒仍拒（超过 33 秒拒收线）
     raw.shots = [{
       ...(raw.shots as Array<Record<string, unknown>>)[0]!,
       startSec: 0,
-      endSec: 67,
+      endSec: 34,
     }];
     expect(() => assertNativeDeepReadSegmentDensity({
       ...base,
       raw,
       truncated: true,
-    })).toThrow("66 秒");
+    })).toThrow(/33 秒/);
   });
 
   it("🔒 截断段照样守逐镜 17 字段：缺字段仍拒收", () => {
@@ -778,7 +778,7 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
     const advisories = assertNativeDeepReadSegmentDensity({ ...base, raw }).advisories;
     expect(advisories.map((row) => row.code)).toContain("long_take_split_discontinuous");
     expect(advisories.find((row) => row.code === "long_take_split_discontinuous")!.detailZh)
-      .toContain("长镜证据拆分点之间必须至少相隔 6 秒");
+      .toContain("长镜证据拆分点之间必须至少相隔 3 秒");
     expect(advisories.every((row) => row.segmentIndex === 0)).toBe(true);
   });
 
@@ -1212,7 +1212,7 @@ describe("GLM 结构化整形提示词纪律", () => {
     expect(prompt.system).toContain("秒位不重叠的两条镜头各自保留");
     expect(prompt.system).toContain("秒位不重叠的两条镜头各自保留");
     expect(prompt.system).toContain("能并的只有**秒位重叠的重复记录**");
-    expect(prompt.system).toContain("单条记录跨度 ≤ 60 秒");
+    expect(prompt.system).toContain("单条记录跨度 ≤ 30 秒");
     expect(prompt.system).toContain("连续覆盖整段");
     expect(prompt.system).toContain("并集去重");
     expect(prompt.system).toContain("钟表式（01:23）留给数字字段");
@@ -1225,7 +1225,7 @@ describe("GLM 结构化整形提示词纪律", () => {
     expect(prompt.system).toContain("单次合并跨度 ≤ 60 秒");
     // 0830：措辞与代码真实语义对齐——SPLIT_MIN_SEC 判的是「每段各自 ≥1 秒」，
     // 不是「两段之间留 1 秒空隙」（后者会与「互不重叠、首尾相接」直接矛盾）。
-    expect(prompt.system).toContain("每段 6–60 秒");
+    expect(prompt.system).toContain("每段 3–30 秒");
     expect(prompt.user).toContain("不得删除仍需保留的");
     expect(prompt.system).toContain("五个数组显式输出");
     // 0829 晚：删掉「至少两个维度」这个数量下限——数字目标只会逼模型编造凑数
@@ -2053,7 +2053,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       expect(sent).toHaveLength(2);
       expect(sent.filter((row) => row.gateMarked === true)).toHaveLength(0);
       // 放行不等于抹掉判定：原因仍写在段卡上，供 GLM 与面板看见。
-      expect(String(sent[1]!.gateMarkedZh || "")).toContain("60 秒");
+      expect(String(sent[1]!.gateMarkedZh || "")).toContain("30 秒");
     } finally {
       warn.mockRestore();
       info.mockRestore();
@@ -2568,18 +2568,15 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
 });
 
 describe("参数冻结锁（0829 用户拍板 · 非用户允许不得变更）", () => {
-  it("generationConfig 逐字段冻结：thinkingConfig 只有 thinkingBudget 18K 与 includeThoughts false，绝无 thinkingLevel", () => {
+  it("generationConfig 逐字段冻结：thinkingConfig 只有 thinkingLevel MEDIUM 与 includeThoughts false，绝无 thinkingBudget", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.temperature).toBe(0.65);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.maxOutputTokens).toBe(65_536);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.candidateCount).toBe(1);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.audioTimestamp).toBe(true);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.responseMimeType).toBe("application/json");
-    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toEqual({
-      thinkingBudget: 12_000,
-      includeThoughts: false,
-    });
-    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingLevel");
-    expect(JSON.stringify(NATIVE_DEEP_READ_GENERATION_CONFIG)).not.toContain("thinkingLevel");
+    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
+    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
+    expect(JSON.stringify(NATIVE_DEEP_READ_GENERATION_CONFIG)).not.toContain("thinkingBudget");
   });
 
   it("重试梯度冻结为 [0.6, 0.5] 两档（0830 晚用户拍板：首发 0.6→0.65，末档 0.6）", () => {
@@ -2601,9 +2598,9 @@ describe("参数冻结锁（0829 用户拍板 · 非用户允许不得变更）"
     expect(NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN).toBe(2);
   });
 
-  it("长镜与分片规格冻结：单条证据段 60 秒、拆分间隔 6 秒、PLAN_VERSION v16", () => {
-    expect(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC).toBe(60);
-    expect(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC).toBe(6);
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v17-final-prompt");
+  it("长镜与分片规格冻结：单条证据段 30 秒、拆分间隔 3 秒、PLAN_VERSION v16", () => {
+    expect(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC).toBe(30);
+    expect(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC).toBe(3);
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-300s-v19-thinking-level");
   });
 });
