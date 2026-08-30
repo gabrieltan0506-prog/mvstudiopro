@@ -282,33 +282,33 @@ describe("两档 fps（0827 拍板：≤300s→10，否则5，永不更低）", 
 });
 
 describe("双密度地板线（0826 双密度教训）", () => {
-  it("360s 段：镜头 ≥60（0826 用户拍板时长制 len/6）、音轨段 ≥6、声音事件 ≥15", () => {
+  it("360s 段：镜头 ≥60（时长制 len/6）、音轨段 ≥2（固定地板）、声音事件 ≥15", () => {
     expect(resolveNativeDeepReadSegmentFloors(360)).toEqual({
       minShots: 60,
-      minAudioTracks: 6,
+      minAudioTracks: 2,
       minAudioCues: 15,
     });
   });
-  it("60s 短段音轨地板降为 1（间隔 60 后与 FLOOR_MIN=1 兼容）", () => {
+  it("音轨地板固定 2 段（0830 晚用户拍板：不再按 ceil(段长/60) 放大）", () => {
     expect(resolveNativeDeepReadSegmentFloors(60)).toEqual({
       minShots: 10,
-      minAudioTracks: 1,
+      minAudioTracks: 2,
       minAudioCues: 3,
     });
   });
 
-  it("29s 微尾段：时长制下 5 镜起（真实节奏 2-5s/镜可达标）、1 段音轨、2 事件", () => {
+  it("29s 微尾段：时长制下 5 镜起、2 段音轨（固定地板）、2 事件", () => {
     expect(resolveNativeDeepReadSegmentFloors(29)).toEqual({
       minShots: 5,
-      minAudioTracks: 1,
+      minAudioTracks: 2,
       minAudioCues: 2,
     });
   });
 
-  it("360s 大段地板不受 P0-1 订正影响（间隔 60 下为 6 段音轨）", () => {
+  it("360s 大段音轨地板同为 2 段（0830 晚起不随段长放大）", () => {
     expect(resolveNativeDeepReadSegmentFloors(360)).toEqual({
       minShots: 60,
-      minAudioTracks: 6,
+      minAudioTracks: 2,
       minAudioCues: 15,
     });
   });
@@ -905,7 +905,8 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
         segmentIndex: 0,
         startSec: 0,
         endSec: 360,
-        audioTrackOverride: 3,
+        // 地板固定 2 段（0830 晚）：要触发 audio_track_thin 必须回 1 段
+        audioTrackOverride: 1,
       }),
     };
     expect(() => assertNativeDeepReadSegmentDensity(input)).not.toThrow();
@@ -1917,7 +1918,9 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
    * + 一个空 actionZh（empty_action）＝ 恰好 3 项。
    */
   function makeThreeFailurePayload(input: { segmentIndex: number; startSec: number; endSec: number }) {
-    const raw = makeSegmentPayload(input) as Record<string, unknown>;
+    // 家族计项（0830 晚）：同家族只算 1 项，所以必须命中三个**不同家族**——
+    // 音轨（audio_track_thin）+ 结构（classification_thin/empty_beat_structure）+ 镜头（empty_action）
+    const raw = makeSegmentPayload({ ...input, audioTrackOverride: 1 }) as Record<string, unknown>;
     // 五键必须齐全（那是硬门，删掉只会变成 1 项直接放行），这里只让维度「薄」：
     // 仅一维有值 → classification_thin 是 advisory，不是硬门。
     raw.classification = {
@@ -2609,7 +2612,7 @@ describe("参数冻结锁（0829 用户拍板 · 非用户允许不得变更）"
     expect(NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC).toBe(6);
     expect(NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_INTERVAL_SEC).toBe(60);
     expect(NATIVE_DEEP_READ_AUDIO_CUE_FLOOR_INTERVAL_SEC).toBe(24);
-    expect(NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN).toBe(1);
+    expect(NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN).toBe(2);
   });
 
   it("长镜与分片规格冻结：单条证据段 30 秒、拆分间隔 1 秒、PLAN_VERSION v10", () => {

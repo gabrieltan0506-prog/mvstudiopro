@@ -356,12 +356,12 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
 } as const;
 
 /**
- * 0829 拍板：temperature 0.65 首发、maxOutputTokens 65_536、单候选、
- * responseSchema、thinkingBudget 18K（0829 用户令：thinkingConfig 只留数值预算）。
+ * 0829 拍板：temperature 0.6 首发、maxOutputTokens 65_536、单候选、
+ * responseSchema、thinkingBudget 12K（0829 用户令：thinkingConfig 只留数值预算）。
  *
- * thinkingBudget 18_000 的依据（0829 订正 0826 的误推）：知识库《原生视频读取-CDN
+ * thinkingBudget 12_000 的依据（0829 订正 0826 的误推）：知识库《原生视频读取-CDN
  * 串流定案》记载「thinkingBudget 写法也通」；0826 那句「禁止传 thinkingBudget」是
- * 把「不能关思考（budget=0）」误推成全称禁令。18K 只作成本封顶——实测单段思考量
+ * 把「不能关思考（budget=0）」误推成全称禁令。12K 只作成本封顶——实测单段思考量
  * 4.2k–39.7k tok，封顶后长尾段不再靠思考吃光 maxOutputTokens 把正文挤成坏 JSON。
  */
 /**
@@ -370,7 +370,7 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
  * 冻结项：temperature 0.65 · maxOutputTokens 65_536 · candidateCount 1 ·
  * audioTimestamp true · responseMimeType/responseSchema ·
  * thinkingConfig { thinkingBudget: 12_000, includeThoughts: false } ·
- * 重试梯度 [0.65, 0.6] · PLAN_VERSION。
+ * 重试梯度 [0.6, 0.55] · PLAN_VERSION。
  *
  * 用户原话：「改好冻结参数，非我允许不可再变，我从没有加上 thinking level 为 high 的指令。」
  * thinkingLevel 系 0826 PR #1314 由 agent 自行加入，0829 已按用户令移除，不得以任何理由加回。
@@ -380,7 +380,7 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
 export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
   // 0829 晚用户拍板：首发温度回到 0.7。v10 定 0.65 时提示词刚软化，没有为软化后的
   // 提示词重新标定过温度；0826 实测 0.65+硬约束=28 镜躺平、0.75+软边界=100/102 镜。
-  // 0830 用户拍板：首发 0.7 → 0.65。实弹依据：576p 那轮 10 片有 5 片首发违反
+  // 0830 用户拍板：首发 0.65 → 0.6。实弹依据：576p 那轮 10 片有 5 片首发违反
   // 30 秒硬约束（40/40/201/162/130 秒巨镜），而**全部 5 片在 0.65 那一发过关、零二次失败**。
   // 0.7 首发合格率 50%，0.65 是 100%——每次重试都要重付一整片视频输入，这一降直接省掉一半重试。
   // 0830 晚用户拍板：0.65 → 0.6。实弹依据（漫剧 6 片逐片打印，首次拿到思考量分布）：
@@ -401,7 +401,7 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
 } as const;
 
 /**
- * 同一 Vertex 分片的固定三档尝试：0.70 首发、0.65 复议、0.60 收口；不得静默换供应商。
+ * 同一 Vertex 分片的固定两档尝试：0.60 首发、0.55 收口；不得静默换供应商。
  *
  * 0829 晚用户拍板恢复三档（v10 一度收成两档）。语义仍是 0829 上午定的那套：
  * **只有真失败与硬门禁**才走这条梯度——密度、覆盖、音轨厚度类判定已转 advisory，
@@ -411,9 +411,9 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
  * 用户主动中止不是失败，不进入重试。
  */
 /**
- * 温度梯度（0830 用户拍板：首发 0.7 → 0.65）。
+ * 温度梯度（0830 用户拍板：首发 0.65 → 0.6）。
  * 实弹依据见 GENERATION_CONFIG.temperature 注释：0.7 首发合格率 50%，0.65 是 100%。
- * 下限仍是 0.6，三档变两档——第三档在实测中从未被用到过。
+ * 下限是 0.55，两档——第三档在实测中从未被用到过。
  */
 export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.6, 0.55] as const;
 
@@ -455,6 +455,50 @@ export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO = 0.20;
  * 排除：`audio_cue_thin`（声音事件条数≈音轨长度密度）与 `audio_timeline_invalid`——
  * 安静段落声音事件天然少，拿它推重买等于为「本来就没声音」付钱。
  */
+/**
+ * 判定家族（0830 晚用户拍板②「同源合併繼承一項」）。
+ *
+ * 实证：漫剧第 5 片只是尾部少读 3 秒（1%），却同时点亮「镜头没覆盖到 1500 秒」
+ * 「声音事件仅 12 条」「音频分析未覆盖片段结尾」三条 → 凑够 3 项重买一整片。
+ * 三条说的是同一件事，按三件算就是拿一个缺陷收三次费。
+ * 计数改为**按家族计**：同家族命中多少条都只算 1 项。
+ */
+export const NATIVE_DEEP_READ_ADVISORY_FAMILIES: ReadonlyArray<{
+  familyZh: string;
+  codes: ReadonlySet<string>;
+}> = [
+  { familyZh: "覆盖", codes: new Set([
+    "coverage_missing", "coverage_head_gap", "coverage_tail_gap",
+    "timeline_gap", "timeline_overlap",
+  ]) },
+  { familyZh: "音轨", codes: new Set([
+    "audio_track_thin", "audio_cue_thin", "audio_timeline_invalid",
+    "audio_chunk_shape", "audio_schema_invalid", "audio_field_missing", "audio_unexpected",
+  ]) },
+  { familyZh: "镜头", codes: new Set([
+    "long_take_count", "long_take_split_discontinuous", "no_story_shots", "empty_action",
+  ]) },
+  { familyZh: "结构", codes: new Set([
+    "classification_thin", "empty_beat_structure", "clock_text",
+  ]) },
+];
+
+/** 把 advisory 归到家族；不属任何家族的各自独立成项（用 code 本身当家族名）。 */
+export function nativeDeepReadAdvisoryFamilyOf(code: string): string {
+  for (const fam of NATIVE_DEEP_READ_ADVISORY_FAMILIES) {
+    if (fam.codes.has(code)) return fam.familyZh;
+  }
+  return code;
+}
+
+/**
+ * 覆盖类可**单独触发**重跑（0830 晚用户拍板①）：不必凑够 2 项，
+ * 只要覆盖缺口偏差 > 20% 就重买。少一大段画面是硬伤，不是「差一点」。
+ */
+export const NATIVE_DEEP_READ_COVERAGE_SOLO_RETRY_CODES: ReadonlySet<string> = new Set([
+  "coverage_missing", "coverage_head_gap", "coverage_tail_gap", "timeline_gap",
+]);
+
 export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES: ReadonlySet<string> = new Set([
   "audio_track_thin",
   "coverage_missing",
@@ -773,7 +817,7 @@ export const NATIVE_DEEP_READ_SHOT_MICRO_SEGMENT_SEC = 12;
  * 合法产出，不是偷懒——所以基于时长的地板 ceil(len/60) 与 cue 地板 ceil(len/24)
  * 一律降级为 advisory（记「音轨仅 N 段」给人看），绝不作为重买条件。
  */
-export const NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN = 1;
+export const NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN = 2;
 /**
  * 45 → 60（0826 病历单问题三）：ep8 第3段模型真实听出 7 段 < 地板 8 被误拒——
  * 实际内容声音相位密度低于 45 秒公式，模型没偷懒。360s 段地板 8→6。
@@ -792,10 +836,15 @@ export function resolveNativeDeepReadSegmentFloors(lenSec: number): {
   const len = Math.max(1, Number(lenSec) || 1);
   return {
     minShots: Math.ceil(len / NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC),
-    minAudioTracks: Math.max(
-      NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN,
-      Math.ceil(len / NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_INTERVAL_SEC),
-    ),
+    /**
+     * 🔴 0830 晚用户拍板：「音軌地板最少兩段」——由 `ceil(段长/60)` 改为**固定 2 段**。
+     *
+     * 旧式 300 秒段要 5 段，与提示词自相矛盾：提示词明写「安静段落只有 1 段是正常的，
+     * 禁止为凑数编造」，门禁却拿 1 段推重买——重跑后模型仍会诚实回 1 段，
+     * 第二发同样触发，钱花两遍结果一模一样。漫剧实测 6 片有 4 片栽在这条。
+     * 固定 2 段：既拦得住「整段没听」，又不逼模型为安静段编造。
+     */
+    minAudioTracks: NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN,
     minAudioCues: Math.ceil(len / NATIVE_DEEP_READ_AUDIO_CUE_FLOOR_INTERVAL_SEC),
   };
 }
@@ -2010,10 +2059,14 @@ function collectShotCoverageAdvisories(
     });
   }
   const gaps: string[] = [];
+  let gapTotalSec = 0;
   const overlaps: string[] = [];
   let cursor = shots[0]!.startSec;
   for (const shot of shots) {
-    if (shot.startSec > cursor + tolerance) gaps.push(`${round(cursor)}–${round(shot.startSec)}`);
+    if (shot.startSec > cursor + tolerance) {
+      gaps.push(`${round(cursor)}–${round(shot.startSec)}`);
+      gapTotalSec += shot.startSec - cursor;
+    }
     if (shot.startSec < cursor - tolerance) overlaps.push(`${round(shot.startSec)}–${round(cursor)}`);
     cursor = Math.max(cursor, shot.endSec);
   }
@@ -2022,6 +2075,8 @@ function collectShotCoverageAdvisories(
       code: "timeline_gap",
       detailZh: `${labelZh}镜头时间轴存在 ${gaps.length} 处空档：${gaps.join("、")} 秒`,
       segmentIndex,
+      // 🔴 必须带偏差：它在 20% 判据白名单里，缺了就恒取 0、永远触发不了重跑＝死码。
+      deviationRatio: gapRatio(gapTotalSec),
     });
   }
   if (overlaps.length) {
@@ -3450,13 +3505,33 @@ export async function runManhuaNativeDeepReadBatch(params: {
              * 实例：音轨地板 5 实回 1 → 0.80 重跑；声音事件 13 实回 10 → 0.23 重跑；
              * 单镜软上限 40s 实际 41s → 0.025 放行。
              */
+            /**
+             * ② 同源合并：按**家族**计项，同家族命中多少条都只算 1 项
+             *（用户 0830 晚：「同源合併繼承一項」）。
+             */
+            const familyMax = new Map<string, number>();
+            for (const row of countableFailures) {
+              const fam = nativeDeepReadAdvisoryFamilyOf(row.code);
+              familyMax.set(fam, Math.max(familyMax.get(fam) ?? 0, row.deviationRatio ?? 0));
+            }
+            const failureCount = familyMax.size;
+            /** 20% 判据只认白名单里的 code（用户圈定：音轨段数与镜头覆盖，音轨长度不算）。 */
             const overDeviation = countableFailures.some(
               (row) => NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES.has(row.code)
                 && (row.deviationRatio ?? 0) > NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO,
             );
-            const twoItemOverDeviation = countableFailures.length === 2 && overDeviation;
-            if (countableFailures.length >= NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES
-              || twoItemOverDeviation) {
+            const twoItemOverDeviation = failureCount === 2 && overDeviation;
+            /**
+             * ① 覆盖类**单独触发**：不必凑项，缺口偏差 > 20% 就重买
+             *（用户 0830 晚：「這個可以單獨觸發」）。少一大段画面是硬伤。
+             */
+            const coverageSoloRetry = countableFailures.some(
+              (row) => NATIVE_DEEP_READ_COVERAGE_SOLO_RETRY_CODES.has(row.code)
+                && (row.deviationRatio ?? 0) > NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO,
+            );
+            if (failureCount >= NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES
+              || twoItemOverDeviation
+              || coverageSoloRetry) {
               const reasonZh = countableFailures.map((row) => row.detailZh).join("；").slice(0, 500);
               raw.gateMarked = true;
               raw.gateMarkedZh = reasonZh;
@@ -3470,10 +3545,13 @@ export async function runManhuaNativeDeepReadBatch(params: {
               }
               console.info(
                 `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段`
-                + `第${input.attemptNumber}发 ${countableFailures.length} 项不合标准`
-                + (twoItemOverDeviation
-                  ? `（2 项且偏差超 ${NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO * 100}%）`
-                  : `（≥${NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES}）`)
+                + `第${input.attemptNumber}发 ${failureCount} 项不合标准`
+                + `（${Array.from(familyMax.keys()).join("/")}）`
+                + (coverageSoloRetry
+                  ? `（覆盖缺口超 ${NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO * 100}% 单独触发）`
+                  : twoItemOverDeviation
+                    ? `（2 项且偏差超 ${NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO * 100}%）`
+                    : `（≥${NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES}）`)
                 + `，重试一发：${reasonZh}`,
               );
               throw gateError(reasonZh);
@@ -3993,7 +4071,31 @@ export async function runManhuaNativeDeepReadBatch(params: {
         let structuredRaw = await glmStructure();
         assertGlmAdRangesMatchDeterministic(structuredRaw, deterministicAdRanges, episode.episodeIndex);
         /**
-         * 🔴 GLM 之后**不再设集级门禁、不再重整、也不再转 advisory**（0830 用户拍板）。
+         * 🔒 集级**镜头留存率闸**——0830 晚用户拍板「加回」的唯一一条集级判定。
+         *
+         * 拿掉整套集级门禁是对的（差 6 秒锯掉整集），但这条判的不是「差一点」，
+         * 而是**证据被 GLM 整个吞掉**：0830 P0 实锤 426 镜压成 99 镜、平均镜长
+         * 3.6s→15.4s，而覆盖秒数一秒不差、所有门禁全绿——机器算得出的东西
+         * 不能只靠提示词。低于留存率拒收线即拒，不转 advisory（用户：「不要什麼advisory了」）。
+         */
+        {
+          const keptShots = Array.isArray(structuredRaw.shots)
+            ? (structuredRaw.shots as unknown[]).length
+            : 0;
+          if (preStructuringShotCount > 0 && keptShots > 0) {
+            const keepRate = keptShots / preStructuringShotCount;
+            if (keepRate < NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT) {
+              throw gateError(
+                `第${episode.episodeIndex}集镜头留存率仅 ${(keepRate * 100).toFixed(1)}%`
+                + `（输入 ${preStructuringShotCount} 镜 → 整形后 ${keptShots} 镜，`
+                + `低于拒收线 ${(NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT * 100).toFixed(0)}%）：`
+                + `相邻但秒位不重叠的镜头不许合并，只有同一物理镜头的重复记录才能合并`,
+              );
+            }
+          }
+        }
+        /**
+         * 🔴 除上面那条留存率闸外，GLM 之后**不再设集级门禁、不再重整、也不再转 advisory**（0830 用户拍板）。
          *
          * 用户原话：「GLM 就是整形用的，还让他拒绝，有毛病吗」「3.4 都拿掉」
          * 「不要什么 advisory 了」「一次就都让他入库」「不想搞什么重试了」。
@@ -4010,6 +4112,24 @@ export async function runManhuaNativeDeepReadBatch(params: {
          * 而整形层出了偏差不该让整集证据陪葬。
          */
         const episodeGateAdvisories: NativeDeepReadAdvisory[] = [];
+        /**
+         * ⑤ provenance（0830 晚用户拍板「加上」）：整集卡自报出身。
+         *
+         * 实锤教训：0830 手上那份漫剧整集卡没有任何运行元数据，隔一天就没人说得清
+         * 它是哪次跑的、什么温度跑的——只能靠「连 keyMoments 字段都没有」反推版本。
+         * 机器 /tmp 一清，段级证据也没了，来历就永久丢失。
+         */
+        structuredRaw.provenance = {
+          planVersion: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
+          model: NATIVE_DEEP_READ_MODEL,
+          temperature: NATIVE_DEEP_READ_GENERATION_CONFIG.temperature,
+          thinkingBudget: NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig.thinkingBudget,
+          retryTemperatures: [...NATIVE_DEEP_READ_RETRY_TEMPERATURES],
+          segmentCount: episode.segments.length,
+          sourceDurationSec: episode.sourceDurationSec,
+          batchRequestId: episodeRequestId,
+          inputShotCount: preStructuringShotCount,
+        };
         const episodeRows: Array<Record<string, unknown>> = [structuredRaw];
         // 确定性拼接路与 GLM 整形路统一在此注入 chunkSpans：整集卡携带
         // audioResolution 各 chunk 的真实段界（来自 episode.segments spec），
