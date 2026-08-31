@@ -40,6 +40,7 @@ import {
   assertNativeDeepReadEpisodeEvidence,
   assertNativeDeepReadPreparedMedia,
   assertNativeDeepReadSegmentDensity,
+  evaluateNativeDeepReadSegmentAcceptance,
   buildGeminiNativeDeepReadSegmentPrompt,
   buildGeminiNativeDeepReadSegmentRequest,
   buildNativeDeepReadVideoSegmentArgs,
@@ -197,7 +198,7 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_ROUTE_EVOLINK).toBe("evolink_gemini_video");
     expect(NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE).toBe("openrouter_glm_structuring");
     // 换代必须让旧确认码全废
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-v25-first065-experiment");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260831-unified-shot-timing-v1");
   });
 
   it("长视频请求显式使用 30 分钟 HTTP 响应头与响应体时限，不落回 Undici 默认 300 秒", async () => {
@@ -289,7 +290,7 @@ describe("模型与通道收口", () => {
    *   v24 实际 request-1  54931eb5111cf3fa30d5c29296580681b390654e8811fcffbe806efe8abcdc04
    *   删时间桥后基线      ba1ec0187e20c468bde3c2f81f4c9d2bcbbb822686c1d5b93e7cbcc347b2298d / 14531 字节
    */
-  it("🔒 当前请求字节与 SHA 冻结；responseSchema SHA 不变", () => {
+  it("当前请求使用唯一正负分区正文，responseSchema SHA 不变", () => {
     const candidate = buildGeminiNativeDeepReadSegmentRequest({
       fileUri: "gs://mv-studio-pro-vertex-video-temp/manhua-template-learn/tmp/native-deep-read/71ba09b6-7244-4b5a-a3af-ad6f0b90bc25.mp4",
       fps: 12,
@@ -395,8 +396,8 @@ describe("模型与通道收口", () => {
 });
 
 describe("自定义分片时长和 fps 独立，不按时长降采样", () => {
-  it.each([0.01, 90, 180, 299.99, 300, 300.01, 360, 1080, 7200])("%s 秒始终为缺省 14fps（不按时长降采样）", (duration) => {
-    expect(resolveNativeDeepReadRequestFps(duration)).toBe(14);
+  it.each([0.01, 90, 180, 299.99, 300, 300.01, 360, 1080, 7200])("%s 秒始终为缺省 12fps（不按时长降采样）", (duration) => {
+    expect(resolveNativeDeepReadRequestFps(duration)).toBe(12);
   });
   it.each([0, -1, NaN, Infinity])("拒绝非法时长 %s", (duration) => {
     expect(() => resolveNativeDeepReadRequestFps(duration)).toThrow("有限正数");
@@ -532,7 +533,8 @@ describe("每段提示词硬约束", () => {
     expect(prompt).toContain(`"chunkIndex":1`);
     expect(prompt).toContain("亲耳所听");
     // 0831：禁令搬到【不得出现】区，正面区只留格式规定
-    expect(prompt).toContain("凭画面推测声音——音轨内容只能来自你亲耳所听");
+    expect(prompt).toContain("· 凭画面推测声音。");
+    expect(prompt.slice(0, prompt.indexOf("【不得出现】"))).toContain("音轨内容来自你亲耳所听");
     expect(prompt.slice(0, prompt.indexOf("【不得出现】"))).not.toContain("禁止凭画面编造声音");
     // 不再给「至少 N 段 / 至少 N 条 cue」这类数字目标（0829：数字目标会逼出编造）
     expect(prompt).not.toMatch(/至少 \d+ 段/);
@@ -564,14 +566,14 @@ describe("每段提示词硬约束", () => {
     expect(positive).not.toContain("禁止");
     expect(positive).toContain("如实记录全部可见、可听的证据");
     expect(positive).toContain("每次真实画面切换，包括机位、景别或场景切换，都记录为新的一镜");
-    expect(positive).toContain("每 3—6 秒一次切换");
+    expect(positive).toContain("镜头条数与时长由实际画面切换和镜内变化决定");
     expect(positive).not.toMatch(/本段至少 \d+ 镜/);
     expect(positive).not.toContain("验收标准");
   });
 
   it("禁止区只讲不许做什么：不夹带任何正面要求", () => {
     const start = prompt.indexOf("【不得出现】");
-    const block = prompt.slice(start, prompt.indexOf("【输出前自检】"));
+    const block = prompt.slice(start);
     expect(block).toContain("判定产出无效");
     expect(block).toContain("不得为之");
     // 夹带过的三句已搬回正向区，禁止区不得再出现
@@ -588,16 +590,18 @@ describe("每段提示词硬约束", () => {
   it("输出前自检把重试拒因前置为可执行步骤", () => {
     const block = prompt.slice(prompt.indexOf("【输出前自检】"), prompt.indexOf("【正向要求一"));
     expect(block).toContain("逐条计算 endSec − startSec");
-    expect(block).toContain("数一下 shots 条数");
-    expect(block).toContain("是不是一串相同的数字");
+    expect(block).toContain("完整记录每次真实切换");
+    expect(block).toContain("核对相邻各镜的秒位与实际画面边界");
+    expect(block).not.toMatch(/禁止|不得|不要/);
   });
 
   it("长镜拆分硬约束保留，且约束跟着字段走", () => {
-    expect(prompt).toContain("同一物理长镜持续超过 30 秒");
+    // 首发、自检和重试都引用单条上限；真实短镜不套用长镜拆分下限。
+    expect(prompt).toContain(`每条 shots 记录最长 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒`);
     expect(prompt).toContain(`transitionInZh 固定写「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」`);
     expect(prompt).toContain("完整覆盖原镜头");
     // 时长约束落到 startSec/endSec 字段说明上，不只在开头说一次
-    expect(prompt).toContain("两者之差须在 3—30 秒之间");
+    expect(prompt).toContain(`单条最长 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒；真实短镜按实际时长保留`);
     expect(prompt).not.toContain("至多 1 个");
     expect(prompt).not.toContain("镜头数 ≥ 24");
   });
@@ -685,7 +689,7 @@ describe("时间坐标桥单变量候选", () => {
     expect(silent).not.toContain("audioTrack 与 cues 内时间用");
   });
 
-  it("重试完整复用唯一时间桥，只按原规则追加拒因", () => {
+  it("重试完整复用唯一时间桥，正向追加与禁止追加各自完整保留", () => {
     const input = { episodeDurationSec: 1594, startSec: 638, endSec: 957,
       segmentIndex: 2, segmentCount: 5, videoFps: 12, hasAudio: true };
     const first = buildGeminiNativeDeepReadSegmentPrompt(input);
@@ -699,17 +703,26 @@ describe("时间坐标桥单变量候选", () => {
      * 「其余可酌情精简…但不强求」而仍含子串「镜头表条数只增不减」。
      * 这两类正是本轮生产改动要根除的那个 bug，绝不能从测试里漏过去。
      */
-    const expectedSuffix = `
+    const [firstPositive, firstProhibitions] = first.split("【不得出现】");
+    const [retryPositive, retryProhibitions] = retry.split("【不得出现】");
+    const expectedPositiveSuffix = `
 【上一轮未通过的检查】镜头证据段超过33秒
 
 本轮重做要求（0831 实测加固：上一轮模型把「修正」做成了砍条数＋通用词填充，35 条降到 15 条、12 条描述逐字相同）：
-1. 只修正上面点名的问题，其余一律照常完整观察，**镜头表条数只增不减**。
-2. 证据段过长时的唯一正确做法是**按前文长镜拆分规则拆成多条**（每段 1—30 秒，
-   后续段 transitionInZh 写固定标记），不是删掉、不是合并、不是拉长单条覆盖。
-3. 禁止用「剧情推进」「人物交替出现」「交谈与动作」「表情自然」这类通用词填充字段；
-   每条证据的画面描述必须来自你在该时间段真实看到的内容，各条不得雷同。
-4. 声音部分按实际听到的写，安静段落本来就少——**不要为了"补足"而增加不存在的声音事件**。`;
-    expect(retry).toBe(`${first}${expectedSuffix}`);
+1. 只修正上面点名的问题，其余一律照常完整观察。
+2. 证据段过长时的唯一正确做法是**按前文长镜拆分规则拆成多条**（每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，
+   后续段 transitionInZh 写固定标记）。
+3. 每条证据的画面描述必须来自你在该时间段真实看到的内容。
+4. 声音部分按实际听到的写，安静段落本来就少。`;
+    const expectedProhibitionSuffix = `
+
+重试禁止事项：
+· 镜头表条数只增不减。
+· 修正过长证据段时，不得删掉、不得合并、不得拉长单条覆盖。
+· 禁止用「剧情推进」「人物交替出现」「交谈与动作」「表情自然」这类通用词填充字段；各条不得雷同。
+· 不要为了"补足"而增加不存在的声音事件。`;
+    expect(retryPositive!.trimEnd()).toBe(`${firstPositive!.trimEnd()}\n${expectedPositiveSuffix}`);
+    expect(retryProhibitions).toBe(`${firstProhibitions}${expectedProhibitionSuffix}`);
   });
 });
 
@@ -1089,7 +1102,7 @@ describe("覆盖率与缓存复验回归", () => {
    * 0831 加回 shot_density_low 之后，原来的 2 镜 fixture 会被密度判据带偏，
    * 测出来的就不再是「长镜边界」这一件事了。
    */
-  it.each([[33, true], [33.1, false]] as const)("长镜边界%s秒，缓存可用=%s", (firstEnd, accepted) => {
+  it.each([[30, true], [33, true], [33.1, false]] as const)("长镜边界%s秒，缓存可用=%s", (firstEnd, accepted) => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60, hasAudio: false });
     const shot = (raw.shots as Array<Record<string, unknown>>)[0]!;
     const rest = 60 - firstEnd;
@@ -1118,6 +1131,32 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
       ...base,
       raw: makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 }),
     })).not.toThrow();
+  });
+
+  it("真实剪辑镜头允许短于3秒及相邻等长，原边界保持不变", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60, hasAudio: false, shotCountOverride: 6 });
+    const boundaries = [0, 2, 4, 6, 24, 42, 60];
+    raw.shots = (raw.shots as Array<Record<string, unknown>>).map((shot, index) => ({
+      ...shot, startSec: boundaries[index], endSec: boundaries[index + 1],
+      unitTypeZh: "剪辑镜头", transitionInZh: "硬切",
+    }));
+    const original = JSON.stringify(raw);
+    const decision = evaluateNativeDeepReadSegmentAcceptance({ ...base, hasAudio: false, raw });
+    expect(decision.retry).toBe(false);
+    expect(decision.advisories.map(row => row.code)).not.toContain("long_take_split_discontinuous");
+    expect(JSON.stringify(raw)).toBe(original);
+  });
+
+  it.each([[2.9, true], [3, false]] as const)("同一长镜续接段%s秒，低于拆分下限=%s", (splitSec, underMinimum) => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60, hasAudio: false, shotCountOverride: 6 });
+    const boundaries = [0, 20, 20 + splitSec, 30, 40, 50, 60];
+    raw.shots = (raw.shots as Array<Record<string, unknown>>).map((shot, index) => ({
+      ...shot, startSec: boundaries[index], endSec: boundaries[index + 1],
+      unitTypeZh: index === 1 ? "拆分镜证据段" : "剪辑镜头",
+      transitionInZh: index === 1 ? NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH : "硬切",
+    }));
+    const decision = evaluateNativeDeepReadSegmentAcceptance({ ...base, hasAudio: false, raw });
+    expect(decision.advisories.some(row => row.code === "long_take_split_discontinuous")).toBe(underMinimum);
   });
 
   it("同一物理长镜超过 30 秒可按真实变化拆成多个连续证据段，仍只计一个长镜", () => {
@@ -1151,7 +1190,7 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
     expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw })).not.toThrow();
   });
 
-  it("长镜证据拆分点不足 1 秒转 advisory：只记 long_take_split_discontinuous，不再拒收重买", () => {
+  it("长镜证据拆分点不足3秒转 advisory：只记 long_take_split_discontinuous，不再拒收重买", () => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
     const shot = (startSec: number, endSec: number, transitionInZh = "硬切") => ({
       startSec,
@@ -1619,6 +1658,9 @@ describe("GLM 结构化整形提示词纪律", () => {
     expect(prompt.system).toContain("在输入内容范围内取舍与归并");
     expect(prompt.system).toContain("能在输入里找到出处");
     expect(prompt.system).toContain(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH);
+    expect(prompt.system).toContain(`短于 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒或相邻时长相同也各自保留`);
+    expect(prompt.user).toContain(`短于 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒或相邻时长相同也各自保留`);
+    expect(prompt.system).toContain(`${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒下限仅适用于同一长镜的拆分证据段`);
     // 🔒 0830 实弹后撤销「合并相邻」许可：GLM 把 426 镜压成 99 镜（平均镜长
     // 3.6s→15.4s，贴着 30 秒上限往上合），而知识库实测漫剧真实节奏是 2.8–4.3s/镜。
     // 覆盖秒数一秒不差、无重叠无编造——三项对账全绿也拦不住，因为合并相邻镜头
@@ -2558,7 +2600,7 @@ describe("Vertex 主线：每段一次调用（不再多段合包）", () => {
         segmentIndex: entry.segmentIndex, segmentCount: 2, hasAudio: true,
       };
       expect(entry.fingerprint).toBe(nativeDeepReadSegmentCacheFingerprint({ ...identity, videoFps: 12 }));
-      expect(entry.fingerprint).not.toBe(nativeDeepReadSegmentCacheFingerprint({ ...identity, videoFps: 14 }));
+      expect(entry.fingerprint).not.toBe(nativeDeepReadSegmentCacheFingerprint({ ...identity, videoFps: 10 }));
     }
   });
 
@@ -3543,15 +3585,15 @@ describe("参数基准回归 0831：首发0.65 + thinkingLevel MEDIUM（实测�
    * 注意 thinkingLevel 另有第二道发车闸在 manhuaNativeDeepReadProbeChecks.ts，
    * 改档位时两处必须同步。
    */
-  it("🔒 生产参数冻结：温度 0.7 三档 + thinkingLevel MEDIUM + 默认 14fps", () => {
+  it("🔒 生产参数冻结：温度 0.7 三档 + thinkingLevel MEDIUM + 默认 12fps", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.temperature).toBe(0.65);
     expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.65, 0.65, 0.6]);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig)
       .toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
     // fps 由面板/CLI 传入，缺省必须落在 14——这是冻结基准的一部分，不是随便的默认值。
-    expect(NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS).toBe(14);
-    expect(parseNativeDeepReadVideoFps(undefined)).toBe(14);
+    expect(NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS).toBe(12);
+    expect(parseNativeDeepReadVideoFps(undefined)).toBe(12);
   });
 
   it("门禁阈值冻结：离谱地板 10 秒/镜、分级线 120 秒", () => {
@@ -3567,9 +3609,9 @@ describe("参数基准回归 0831：首发0.65 + thinkingLevel MEDIUM（实测�
     expect(NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN).toBe(2);
   });
 
-  it("首发0.65候选版本v25仍保持单条证据段30秒与拆分间隔3秒", () => {
+  it("正负分区版本仍保持原有门禁阈值", () => {
     expect(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC).toBe(30);
     expect(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC).toBe(3);
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-v25-first065-experiment");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260831-unified-shot-timing-v1");
   });
 });

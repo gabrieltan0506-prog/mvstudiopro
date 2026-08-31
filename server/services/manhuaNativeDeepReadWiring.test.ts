@@ -78,7 +78,7 @@ describe("素材接入层 → 原生精读的接缝", () => {
     expect(plan.videoFps).toBe(12);
     await expect(buildNativeDeepReadEpisodeExecution({
       seriesKey: "s1", ep: ep(), confirmedPlanEpisode, segmentSeconds: 319,
-      videoFps: 14,
+      videoFps: 10,
     }, deps(1593.586))).rejects.toThrow("与确认计划不一致");
     await expect(buildNativeDeepReadEpisodeExecution({
       seriesKey: "s1", ep: ep(), confirmedPlanEpisode,

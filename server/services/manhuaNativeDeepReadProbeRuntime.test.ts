@@ -26,7 +26,7 @@ import {
 function request(temperature = 0.7) {
   return {
     contents: [{ role: "user", parts: [
-      { fileData: { fileUri: "gs://test-bucket/segment.mp4", mimeType: "video/mp4" }, videoMetadata: { fps: 14 } },
+      { fileData: { fileUri: "gs://test-bucket/segment.mp4", mimeType: "video/mp4" }, videoMetadata: { fps: 12 } },
       { text: "完整提示词测试夹具" },
     ] }],
     generationConfig: JSON.parse(JSON.stringify({ ...NATIVE_DEEP_READ_GENERATION_CONFIG, temperature })) as Record<string, unknown>,

@@ -401,7 +401,7 @@ describe("批次预检：在任何模型动作之前", () => {
   it("同一份清单确认码稳定，改一个字段就变 —— 真跑靠它绑定干跑那份计划", () => {
     const a = validateNativeDeepReadBatchPlan([ep(1)], { seriesKey: "series_a" }).planHash;
     expect(validateNativeDeepReadBatchPlan([ep(1)], { seriesKey: "series_a" }).planHash).toBe(a);
-    expect(validateNativeDeepReadBatchPlan([ep(1, { videoFps: 12 })], { seriesKey: "series_a" }).planHash).not.toBe(a);
+    expect(validateNativeDeepReadBatchPlan([ep(1, { videoFps: 10 })], { seriesKey: "series_a" }).planHash).not.toBe(a);
     expect(() => validateNativeDeepReadBatchPlan([ep(1, { videoFps: 25 })])).toThrow("fps");
     expect(
       validateNativeDeepReadBatchPlan(

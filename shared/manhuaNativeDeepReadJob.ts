@@ -25,13 +25,11 @@ export const NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS = 300;
 /** 沿用整片两小时策略，不再另外限制分片为 300 秒。 */
 export const NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS = MANHUA_LEARN_MAX_DURATION_SEC;
 /**
- * 0831 用户拍板 14（原 10）。319 秒 @ 14fps ＝ 4466 帧。
- * ⚠️ 无 2000 帧截断：实测 319 秒 @ 12fps ＝ 3828 帧、VIDEO token 252,648，
- * 即 66 token/帧全额计费全额处理。同文件旧注释提到的 2000 帧是 Qwen 的
- * max_frames，与 Gemini 无关，勿据此降 fps。
- * 代价：相对 10fps 视频输入 token 增加约 40%。
+ * 当前默认12fps；用户已要求不继续提高采样率。
+ * 分片时长与采样率独立配置，实际请求使用调用方确认的值。
+ * 历史镜数和费用应查对应请求及回执，不据镜数推断所有切镜真实或所有帧均被模型处理。
  */
-export const NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS = 14;
+export const NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS = 12;
 /** Google VideoMetadata.fps 的接口范围为 (0, 24]。 */
 export const NATIVE_DEEP_READ_MAX_VIDEO_FPS = 24;
 

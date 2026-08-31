@@ -45,7 +45,7 @@ describe("真实探针 CLI 零付费入口", () => {
     expect(result.stdout).toContain('"paidCalls": 0');
     expect(result.stdout).toContain('"acceptanceStatus": "not_run"');
     expect(result.stdout).not.toContain("片源解析");
-    expect(preflightSummary(result)).toMatchObject({ segmentSeconds: 300, requestedSegmentSeconds: null, fps: 14 });
+    expect(preflightSummary(result)).toMatchObject({ segmentSeconds: 300, requestedSegmentSeconds: null, fps: 12 });
   });
   it("本机显式执行也会在任何上游调用前被阻断", () => {
     const result = probe(["--execute", "--url=https://example.invalid/video/1234567890123"]);
@@ -67,14 +67,14 @@ describe("真实探针 CLI 零付费入口", () => {
     expect(result.stdout).toContain('"segmentCount": 1');
     expect(result.stdout).toContain('"paidCalls": 0');
     expect(preflightSummary(result)).toMatchObject({
-      segmentSeconds: null, requestedSegmentSeconds: null, fps: 14,
-      segmentPlans: [{ segmentIndex: 0, startSec: 0, endSec: 300.3, durationSec: 300.3, fps: 14 }],
+      segmentSeconds: null, requestedSegmentSeconds: null, fps: 12,
+      segmentPlans: [{ segmentIndex: 0, startSec: 0, endSec: 300.3, durationSec: 300.3, fps: 12 }],
     });
   });
-  it.each([1, 180, 600, 7200])("显式%is分片沿生产解析且默认14fps，仍不解析或下载源片", (seconds) => {
+  it.each([1, 180, 600, 7200])("显式%is分片沿生产解析且默认12fps，仍不解析或下载源片", (seconds) => {
     const result = probe([`--segment-seconds=${seconds}`]);
     expect(result.status).toBe(0);
-    expect(preflightSummary(result)).toMatchObject({ segmentSeconds: seconds, requestedSegmentSeconds: seconds, fps: 14 });
+    expect(preflightSummary(result)).toMatchObject({ segmentSeconds: seconds, requestedSegmentSeconds: seconds, fps: 12 });
     expect(result.stdout).toContain('"paidCalls": 0');
     expect(result.stdout).not.toContain("片源解析");
   });
@@ -96,11 +96,11 @@ describe("真实探针 CLI 零付费入口", () => {
     const result = probe([`--gcs-manifest=${manifestFile([0, 180, 360, 450])}`, "--segment-seconds=180"]);
     expect(result.status).toBe(0);
     expect(preflightSummary(result)).toMatchObject({
-      segmentSeconds: 180, requestedSegmentSeconds: 180, fps: 14,
+      segmentSeconds: 180, requestedSegmentSeconds: 180, fps: 12,
       segmentPlans: [
-        { segmentIndex: 0, startSec: 0, endSec: 180, durationSec: 180, fps: 14 },
-        { segmentIndex: 1, startSec: 180, endSec: 360, durationSec: 180, fps: 14 },
-        { segmentIndex: 2, startSec: 360, endSec: 450, durationSec: 90, fps: 14 },
+        { segmentIndex: 0, startSec: 0, endSec: 180, durationSec: 180, fps: 12 },
+        { segmentIndex: 1, startSec: 180, endSec: 360, durationSec: 180, fps: 12 },
+        { segmentIndex: 2, startSec: 360, endSec: 450, durationSec: 90, fps: 12 },
       ],
     });
   });
@@ -123,11 +123,11 @@ describe("真实探针 CLI 零付费入口", () => {
     const result = probe([`--gcs-manifest=${manifestFile([0, 401.5, 590.25, 720])}`]);
     expect(result.status).toBe(0);
     expect(preflightSummary(result)).toMatchObject({
-      segmentSeconds: null, requestedSegmentSeconds: null, fps: 14,
+      segmentSeconds: null, requestedSegmentSeconds: null, fps: 12,
       segmentPlans: [
-        { segmentIndex: 0, startSec: 0, endSec: 401.5, durationSec: 401.5, fps: 14 },
-        { segmentIndex: 1, startSec: 401.5, endSec: 590.25, durationSec: 188.75, fps: 14 },
-        { segmentIndex: 2, startSec: 590.25, endSec: 720, durationSec: 129.75, fps: 14 },
+        { segmentIndex: 0, startSec: 0, endSec: 401.5, durationSec: 401.5, fps: 12 },
+        { segmentIndex: 1, startSec: 401.5, endSec: 590.25, durationSec: 188.75, fps: 12 },
+        { segmentIndex: 2, startSec: 590.25, endSec: 720, durationSec: 129.75, fps: 12 },
       ],
     });
   });

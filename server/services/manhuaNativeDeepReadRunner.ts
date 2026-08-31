@@ -621,7 +621,7 @@ export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES: ReadonlySet<string> = 
  * 门禁那边已有 advisory 在管密度，提示词不替门禁做免责声明。
  */
 export const NATIVE_DEEP_READ_DENSITY_GUIDE_BLOCK =
-  `这类短剧的真实剪辑节奏通常是每 3—6 秒一次切换，据此估算本段应有的镜头量级。
+  `逐镜回看本段，镜头条数与时长由实际画面切换和镜内变化决定。
 本段最后三分之一与开头同等重要，用同样的观察密度处理。`;
 
 
@@ -642,7 +642,7 @@ export const NATIVE_DEEP_READ_DENSITY_GUIDE_BLOCK =
 export const NATIVE_DEEP_READ_PROHIBITION_BLOCK = `
 【不得出现】
 
-以下六条只讲不许做什么。做什么、怎么做见后面的正向要求。
+以下集中列出禁止事项。
 
 判定产出无效：
 · 同一段描述套用到不同时间段；两条镜头的画面描述逐字相同。
@@ -654,7 +654,12 @@ export const NATIVE_DEEP_READ_PROHIBITION_BLOCK = `
 · 逐字转写全片对白；落在 keyMoments 邻域之外的台词一概不收。
 · 为了多写字幕而压缩镜头条数或缩短镜头描述。
 · 为凑够音轨段数或声音事件数而编造不存在的声音。
-· 凭画面推测声音——音轨内容只能来自你亲耳所听。`;
+· 凭画面推测声音。
+· 长镜拆分时不得截断原镜头尾部。
+· 不得为了打破等长而改动真实剪辑点或虚构镜内变化。
+· 总结中不得引入镜头表里没有的内容。
+· non_story_ad 除 startSec、endSec、evidenceRole 外，其他描述及衍生内容严禁写入。
+· 不得提交仍未通过输出前自检的产出。`;
 
 
 export const NATIVE_DEEP_READ_NON_ACTIONABLE_RETRY_CODES: ReadonlySet<string> = new Set([
@@ -889,9 +894,9 @@ export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
  * 精确切片与独立采样配置改变请求语义；旧流复制切片的缓存与确认码不得复用。
  * 本版验证首发0.65与历史两次重试温度，保留既有时间解释；实测过关前不宣称冻结。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-custom-v25-first065-experiment" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-custom-20260831-unified-shot-timing-v1" as const;
 
-/** 分片时长和采样率独立配置；默认 10fps，不按长短片自动降档。 */
+/** 分片时长和采样率独立配置；默认值来自共享配置，不按长短片自动降档。 */
 export function resolveNativeDeepReadRequestFps(totalDurationSec: number, requestedFps?: number): number {
   if (!Number.isFinite(totalDurationSec) || totalDurationSec <= 0) {
     throw new Error("原生精读采样时长必须为有限正数");
@@ -968,11 +973,11 @@ export function buildNativeDeepReadSelfCheckBlock(lenSec: number): string {
   return `
 【输出前自检】
 
-把 JSON 交出来之前，按顺序自己过一遍。这几项若不合，产出会被判定无效：
+提交 JSON 前，按顺序完成以下检查与修正：
 
-1. 逐条计算 endSec − startSec。凡是大于 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 的，回去按硬约束 2 拆开，不要交上来。
-2. 数一下 shots 条数。本段 ${Math.round(lenSec)} 秒按每 3—6 秒一镜估算，若你的条数远低于这个量级，回去找漏掉的切换点。
-3. 看相邻各镜的时长是不是一串相同的数字。若是，说明你在按固定步长切时间轴，回去按真实剪辑点重来。`;
+1. 逐条计算 endSec − startSec。凡是大于 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 的，回去按硬约束 2 拆开。
+2. 核对本段 ${Math.round(lenSec)} 秒的画面与 shots 时间轴，完整记录每次真实切换，保留真实短镜头和长镜尾部。
+3. 核对相邻各镜的秒位与实际画面边界；真实等长的镜头保留原秒位，同一长镜的拆分按镜内变化定位。`;
 }
 
 
@@ -993,8 +998,7 @@ export const NATIVE_DEEP_READ_SHOT_COUNT_WATCH_PER_SEGMENT = 68;
 export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_ALLOWANCE = 1;
 /** 同一物理长镜超过 30 秒时，后续证据段必须用此固定标记，避免把证据拆分谎报成真实切镜。 */
 export const NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH = "同一长镜证据拆分（非切镜）";
-/** 长镜证据拆分点之间至少相隔 1 秒，禁止用同秒空切凑过 30 秒门禁。 */
-/** 0831 用户裁决：保持 3 秒，不回退到 v11 的 1 秒。 */
+/** 仅同一物理长镜的证据拆分段至少3秒；真实剪辑镜头可以更短。 */
 export const NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC = 3;
 /**
  * 🔒 单次合并的总跨度硬上限（0830 用户拍板 59 秒）。
@@ -1130,8 +1134,9 @@ audioResolution 内的 fromSec/toSec、cues.atSec 使用本段局部整数秒，
 
 2. 镜头记录与长镜拆分
 真实剪辑切换的 unitTypeZh 写「剪辑镜头」。
-每条 shots 记录的时长（endSec − startSec）必须在 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒之间。
-同一物理长镜持续超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒时，按镜内真实发生的构图、运镜、角色调度、动作、表演或光影变化，拆成多个连续证据段，完整覆盖原镜头。
+**每条 shots 记录最长 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。**超过就按镜内真实发生的构图、运镜、角色调度、动作、表演或光影变化拆开，完整覆盖原镜头。
+真实剪辑镜头按实际起止秒位记录，短于 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒也完整保留；相邻镜头时长可以相同。
+同一长镜的每个拆分证据段保持 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒；该下限仅适用于同一长镜的拆分证据段。
 拆分后的 unitTypeZh 写「拆分镜证据段」；第二段及后续段的 transitionInZh 固定写「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」。
 
 3. 统一适用范围
@@ -1156,13 +1161,12 @@ ${audioHardRule}
 分段序号：第 ${input.segmentIndex + 1}/${input.segmentCount} 段。
 音轨段号：${input.segmentIndex}。${hint ? `\n补充信息：${hint}。` : ""}
 
-${NATIVE_DEEP_READ_PROHIBITION_BLOCK}
 ${buildNativeDeepReadSelfCheckBlock(lenSec)}
 
 【正向要求一：逐镜分析 shots】
 
 每条 story 镜头填写以下 17 字段：
-- startSec / endSec：本镜起止秒位。两者之差须在 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒之间；超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒的物理长镜按硬约束 2 拆成多段。
+- startSec / endSec：本镜实际起止秒位。单条最长 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒；真实短镜按实际时长保留，超过上限的长镜按硬约束 2 拆成每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。
 - unitTypeZh：剪辑镜头／拆分镜证据段。
 - shotSizeZh：实际景别，如极特写、特写、近景、中景、全景、大远景。
 - angleZh：实际机位，如平视、仰拍、俯拍、过肩、主观。
@@ -1205,7 +1209,7 @@ keyMoments 是由你选定的抓帧秒位表。下游会按 atSec 去原片抓�
 
 【正向要求四：声音解析 audioResolution】
 
-按照实际声音状态及其变化组织 audioTrack。数组形状遵循传入的音轨条件和 Schema。
+按照实际声音状态及其变化组织 audioTrack；音轨内容来自你亲耳所听。数组形状遵循传入的音轨条件和 Schema。
 每段填写：
 - fromSec、toSec：本段局部起止整数秒。
 - emotionArcZh：可听见的情绪强弱变化，≤18字。
@@ -1228,7 +1232,7 @@ keyMoments 是由你选定的抓帧秒位表。下游会按 atSec 去原片抓�
 
 【正向要求五：节奏、情绪与手法总结】
 
-总结只能来自上面已写入的逐镜证据，不引入镜头表里没有的内容。
+根据上面已写入的逐镜证据提炼总结。
 
 - beatStructureZh：概括实际节奏，如「铺垫→蓄势→转折→收束」，≤90字。
 - moodArcZh：依据表演与声画变化描述「起点→变化→终点」，≤70字。
@@ -1246,24 +1250,36 @@ classification 完整输出五个数组：
 
 shots 条目按 evidenceRole 区分两种结构：
 1. story —— 推动剧情因果的镜头。使用完整 17 字段结构，全部 17 字段保持必填。
-2. non_story_ad —— 与剧情无关的商业广告。仅保留 startSec、endSec、evidenceRole 三个字段，用于保存时间轴与分类标记；其他描述及衍生内容严禁写入。
+2. non_story_ad —— 与剧情无关的商业广告。仅保留 startSec、endSec、evidenceRole 三个字段，用于保存时间轴与分类标记。
 `;
-  return input.rejectedReasonZh
+  const retryRequirements = input.rejectedReasonZh
     ? `${base}
 【上一轮未通过的检查】${String(input.rejectedReasonZh).slice(0, 300)}
 
 本轮重做要求（0831 实测加固：上一轮模型把「修正」做成了砍条数＋通用词填充，35 条降到 15 条、12 条描述逐字相同）：
-1. 只修正上面点名的问题，其余一律照常完整观察，**镜头表条数只增不减**。
-2. 证据段过长时的唯一正确做法是**按前文长镜拆分规则拆成多条**（每段 1—30 秒，
-   后续段 transitionInZh 写固定标记），不是删掉、不是合并、不是拉长单条覆盖。
-3. 禁止用「剧情推进」「人物交替出现」「交谈与动作」「表情自然」这类通用词填充字段；
-   每条证据的画面描述必须来自你在该时间段真实看到的内容，各条不得雷同。${
-  // 无音轨片上硬约束 6 已写死「禁止凭画面编造声音」，这里再提「按听到的写」等于开口子。
+1. 只修正上面点名的问题，其余一律照常完整观察。
+2. 证据段过长时的唯一正确做法是**按前文长镜拆分规则拆成多条**（每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，
+   后续段 transitionInZh 写固定标记）。
+3. 每条证据的画面描述必须来自你在该时间段真实看到的内容。${
+  // 无音轨片保持空数组契约；声音观察要求仅用于有音轨片。
   input.hasAudio
     ? `
-4. 声音部分按实际听到的写，安静段落本来就少——**不要为了"补足"而增加不存在的声音事件**。`
+4. 声音部分按实际听到的写，安静段落本来就少。`
     : ""}`
     : base;
+  const retryProhibitions = input.rejectedReasonZh
+    ? `
+
+重试禁止事项：
+· 镜头表条数只增不减。
+· 修正过长证据段时，不得删掉、不得合并、不得拉长单条覆盖。
+· 禁止用「剧情推进」「人物交替出现」「交谈与动作」「表情自然」这类通用词填充字段；各条不得雷同。${input.hasAudio
+    ? `
+· 不要为了"补足"而增加不存在的声音事件。`
+    : ""}`
+    : "";
+  // 首发与重试共用一个禁止区；重试新增禁令也留在此区，避免再次混入正向要求。
+  return `${retryRequirements}\n${NATIVE_DEEP_READ_PROHIBITION_BLOCK}${retryProhibitions}`;
 }
 
 /**
@@ -2191,7 +2207,7 @@ function assertRawShotFieldPresence(raw: Record<string, unknown>, labelZh: strin
 /**
  * 将「真实切镜」与「同一长镜的证据拆分」分开计数。
  * 后者只是在同一物理镜头内增加观察颗粒，不得被误算成多个真实长镜，
- * 也不得用不足 1 秒的空切凑过 30 秒硬上限。
+ * 拆分最短时长只约束带长镜续接标记的证据段，真实短切镜照实保留。
  */
 function groupPhysicalShotDurations(shots: ReadonlyArray<NativeDeepReadShotTiming>): number[] {
   const tolerance = NATIVE_DEEP_READ_TIMELINE_TOLERANCE_SEC;
@@ -2871,7 +2887,7 @@ export function assertNativeDeepReadSegmentDensity(input: {
       "shot_density_low",
       `${labelZh}只有 ${storyShots.length} 个剧情镜头，低于离谱地板 ${shotFloor}`
       + `（${NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC} 秒/镜 × ${lenSec} 秒）；`
-      + `平均 ${Math.round((lenSec / storyShots.length) * 10) / 10} 秒才记一镜，明显漏记了剪辑点`,
+      + `平均 ${Math.round((lenSec / storyShots.length) * 10) / 10} 秒记录一镜，请对照原片核对是否漏记真实切换`,
       deviation(storyShots.length, shotFloor),
     );
   }
@@ -2884,11 +2900,8 @@ export function assertNativeDeepReadSegmentDensity(input: {
    * `NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC = 6` 常量一直在，但 0830 删镜数门禁时
    * 连它的消费者一起删了——常量成了死代码，全仓 grep `shot_avg_too_long` 零结果。
    *
-   * 后果实测（run probe_douyin_20260831120542_7c6a6b0a）：模型交出 32 镜，
-   * 秒位是 0-10、10-20、20-30…一路到底，**18 条连续等长**，
-   * 平均整整 10.0 秒/镜——把 319 秒按 10 秒一刀等分，不是在找剪辑点。
-   * 而 32 镜正好压在离谱地板（ceil(319/10)=32）线上，门禁判它通过。
-   * 镜数地板只看「够不够多」，看不出「是不是等分切的」，必须靠平均镜长补位。
+   * 旧样本7c6a6b0a的32镜合计319秒，实际均长9.96875秒，不会触发下方>10判断。
+   * 均长与条数只能提示复查，不能据此证明模型采用了固定步长或合并了真实切镜。
    *
    * 阈值用**离谱口径 10 秒**而非原来的 6 秒：0827 实测健康值 4–5 秒/镜，
    * 留一倍余量；真人剧 0830 实测 6.55 秒/镜也照样放行，不重蹈那轮误杀半数分片的覆辙。
@@ -2902,8 +2915,8 @@ export function assertNativeDeepReadSegmentDensity(input: {
       note(
         "shot_avg_too_long",
         `${labelZh}平均镜长 ${Math.round(avgSec * 10) / 10} 秒，超过离谱线 `
-        + `${NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC} 秒（健康值 4—6 秒/镜）；`
-        + `镜头被合并或按固定步长等分，没有落在真实剪辑点上`,
+        + `${NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC} 秒；`
+        + `请对照原片核对是否漏记真实切换，秒位以实际画面边界为准`,
         deviation(avgSec, NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC),
       );
     }
@@ -3272,6 +3285,7 @@ export function buildNativeDeepReadGlmStructuringPrompt(input: {
 判准只有一条：输出的 shots 是**一组互不重叠、首尾相接的区间**，连续覆盖整段（广告秒位除外），任何一秒恰好由一条 story 记录覆盖。
 · 能并的只有**秒位重叠的重复记录**（同一物理镜头记了两遍，来自段边界或多版本）。
 · 秒位不重叠的两条镜头各自保留——哪怕表演连续、同场景同机位。
+· 真实剪辑镜头按输入边界保留，短于 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒或相邻时长相同也各自保留；${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒下限仅适用于同一长镜的拆分证据段。
 · 单次合并跨度 ≤ ${NATIVE_DEEP_READ_MERGE_SPAN_HARD_MAX_SEC} 秒；单条记录跨度 ≤ ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。更长的长镜按镜内真实变化切成首尾相接的证据段，每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}–${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，unitTypeZh 写「拆分镜证据段」，第二段起 transitionInZh 写「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」。
 · 唯一合法手段是**调整切分**。unitTypeZh/shotSizeZh/angleZh/compositionZh/cameraMoveZh/blockingZh/bodyActionZh/limbPropActionZh/microExpressionZh/gazeBreathZh/relationshipReactionZh/lightingZh/actionZh/transitionInZh 逐项随记录保留。
 
@@ -3296,7 +3310,7 @@ truncated / advisories / gateMarked / gateMarkedZh / attemptNumber 标注的都�
 3. 不新增 keyMoments 的 atSec。`,
     user: `把以下同一集的 ${input.rawSegments.length} 份分段卡整形合并成**一张整集原生证据卡**（单个 JSON 对象，字段 schema 与分段卡完全相同：shots/subtitles/audioResolution/beatStructureZh/moodArcZh/classification/reusableZh/genPromptHintZh，另加顶层可选 excludedAdRanges）。
 要求：
-1. story 镜头连续无空档覆盖除 excludedAdRanges 外的全时间轴 0..${Math.round(input.durationSec)} 秒（绝对秒位），每镜保留 evidenceRole；🔴 **只有秒位重叠的重复记录可以合并；相邻不重叠的镜头一律各自保留**——整集输出的镜头条数应与输入去重后的真实切分相当，**镜头数大幅变少、平均镜长明显拉长即为错误产出**。non_story_ad 必须整行剔除并把 {startSec,endSec} 区间记入顶层 excludedAdRanges，不得混入 story。🔒 一次合并的总跨度不得超过 ${NATIVE_DEEP_READ_MERGE_SPAN_HARD_MAX_SEC} 秒；超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒必须切成两段、每段不超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒、每段各自不短于 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒，且不得删除仍需保留的「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」续接标记或丢失覆盖。
+1. story 镜头连续无空档覆盖除 excludedAdRanges 外的全时间轴 0..${Math.round(input.durationSec)} 秒（绝对秒位），每镜保留 evidenceRole；🔴 **只有秒位重叠的重复记录可以合并；相邻不重叠的镜头一律各自保留**——整集输出的镜头条数应与输入去重后的真实切分相当，**镜头数大幅变少、平均镜长明显拉长即为错误产出**。non_story_ad 必须整行剔除并把 {startSec,endSec} 区间记入顶层 excludedAdRanges，不得混入 story。🔒 一次合并的总跨度不得超过 ${NATIVE_DEEP_READ_MERGE_SPAN_HARD_MAX_SEC} 秒；真实剪辑镜头按输入边界保留，短于 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒或相邻时长相同也各自保留；超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒的同一长镜按镜内真实变化拆成连续证据段，每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，且不得删除仍需保留的「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」续接标记或丢失覆盖。
 2. audioResolution 保留全部 [{chunkIndex,analysis}] 条目（chunkIndex 即段号，analysis 内为该段局部秒），逐段齐全${input.hasAudio ? "" : "；本集素材无音轨，audioResolution 保持空数组"}。
 3. beatStructureZh/moodArcZh/reusableZh/genPromptHintZh 只整合 story 证据，可加「第X段」标注；classification 五维标签只取 story 输入并集，不得补猜。
 3.9 subtitles 按 keyMoments 解析：每条字幕对应其秒位附近的重点时刻，**不设条数多寡的判断**。照原文合并去重即可，不得补写输入里没有的台词。
