@@ -38,10 +38,10 @@ function preflightSummary(result: ReturnType<typeof probe>) {
   };
 }
 describe("真实探针 CLI 零付费入口", () => {
-  it("默认只预检，MEDIUM通过且明确未做实弹验收", () => {
+  it("默认只预检，HIGH通过且明确未做实弹验收", () => {
     const result = probe([]);
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("thinkingLevel=MEDIUM");
+    expect(result.stdout).toContain("thinkingLevel=HIGH");
     expect(result.stdout).toContain('"paidCalls": 0');
     expect(result.stdout).toContain('"acceptanceStatus": "not_run"');
     expect(result.stdout).not.toContain("片源解析");

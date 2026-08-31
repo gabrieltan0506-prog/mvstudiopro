@@ -222,21 +222,23 @@ describe("模型与通道收口", () => {
     expect(calls[0]!.init.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it("首发0.65待验候选保持65536、单候选、原Schema、MEDIUM无budget", () => {
+  it("参数冻结锁：首发0.7、65536、单候选、原Schema、thinkingLevel HIGH 且无 thinkingBudget", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG).toMatchObject({
-      temperature: 0.65,
+      temperature: 0.7,
       maxOutputTokens: 65_536,
       candidateCount: 1,
       audioTimestamp: true,
       responseMimeType: "application/json",
       responseSchema: NATIVE_DEEP_READ_RESPONSE_SCHEMA,
     });
-    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
+    // 0831 回归用户 0827–0828 验证可用的基准（PR #1322–#1327 用的就是 HIGH）。
+    // 0830 的 MEDIUM 实跑思考量仅 4K–10K，同期产出从 57–76 镜掉到 34–41 镜。
+    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toEqual({ thinkingLevel: "HIGH", includeThoughts: false });
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
   });
 
-  it("同一 Vertex 分片候选三档：0.65→0.65→0.60，间隔60秒", () => {
-    expect(NATIVE_DEEP_READ_RETRY_TEMPERATURES).toEqual([0.65, 0.65, 0.6]);
+  it("同一 Vertex 分片候选三档：0.7→0.65→0.60，间隔60秒（0827 验证可用的梯度）", () => {
+    expect(NATIVE_DEEP_READ_RETRY_TEMPERATURES).toEqual([0.7, 0.65, 0.6]);
     expect(NATIVE_DEEP_READ_RETRY_INTERVAL_MS).toBe(60_000);
     expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.6);
     expect(NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG).toEqual({
@@ -249,7 +251,7 @@ describe("模型与通道收口", () => {
     });
   });
 
-  it("后两次复用b948历史温度与下限，但不恢复旧thinkingBudget", () => {
+  it("后两次复用历史温度与下限，thinkingLevel HIGH，且绝不恢复 thinkingBudget", () => {
     // 固定来源：b948d7c364296a9952ddf023fbd192ab8e218707的三档[0.7,0.65,0.6]及MIN=0.6。
     // 只复用后两档温度；不是恢复该提交的旧Schema、提示词或18K配置。
     const historicalRetryTemperatures = [0.65, 0.6];
@@ -258,7 +260,7 @@ describe("模型与通道收口", () => {
     [NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG, NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG]
       .forEach((config, index) => {
         expect(config.temperature).toBe(historicalRetryTemperatures[index]);
-        expect(config.thinkingConfig).toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
+        expect(config.thinkingConfig).toEqual({ thinkingLevel: "HIGH", includeThoughts: false });
         expect(config.thinkingConfig).not.toHaveProperty("thinkingBudget");
         const request = buildGeminiNativeDeepReadSegmentRequest({
           fileUri: "gs://test-bucket/seg-0.mp4", fps: 12, prompt: "虚构离线请求", generationConfig: config,
@@ -280,9 +282,9 @@ describe("模型与通道收口", () => {
     expect(input.prompt.split(clockBridge)).toHaveLength(2);
     expect(input.prompt).toContain(`1. 时间坐标\n${clockBridge}shots.startSec/endSec`);
     const candidate = buildGeminiNativeDeepReadSegmentRequest(input);
-    expect(candidate.generationConfig).toMatchObject({ temperature: 0.65 });
+    expect(candidate.generationConfig).toMatchObject({ temperature: 0.7 });
     const candidateJson = JSON.stringify(candidate);
-    expect(candidateJson.match(/"temperature":0\.65(?=[,}])/g)).toHaveLength(1);
+    expect(candidateJson.match(/"temperature":0\.7(?=[,}])/g)).toHaveLength(1);
     const encodedBridge = JSON.stringify(clockBridge).slice(1, -1);
     expect(candidateJson.split(encodedBridge)).toHaveLength(2);
     // 0831 起首发提示词多了「真实性四条」，同样剥掉后才能落回历史字节与 SHA。
@@ -296,18 +298,21 @@ describe("模型与通道收口", () => {
      * 补回后仍是 14531 字节与同一个 SHA，正说明「删桥 + 删 mediaResolution」是全部差异。
      * 只删上方固定新增文本，不归一空白、不重算旧摘要，其他漂移必须失败。
      */
-    const thinkingJson = '"thinkingConfig":{"thinkingLevel":"MEDIUM","includeThoughts":false}';
+    // 0831 起 thinkingLevel 回归 HIGH，故还原历史时须先换回 MEDIUM 再补 mediaResolution。
+    const thinkingHigh = '"thinkingConfig":{"thinkingLevel":"HIGH","includeThoughts":false}';
+    const thinkingMedium = '"thinkingConfig":{"thinkingLevel":"MEDIUM","includeThoughts":false}';
     // 锚点必须唯一：否则下面的 replace 静默失配，失败信息会指向 SHA 而不是真因。
-    expect(restoredBaseline.split(thinkingJson)).toHaveLength(2);
+    expect(restoredBaseline.split(thinkingHigh)).toHaveLength(2);
     const restoredHistoric = restoredBaseline
-      .replace(thinkingJson, `${thinkingJson},"mediaResolution":"MEDIA_RESOLUTION_MEDIUM"`);
+      .replace('"temperature":0.7', '"temperature":0.65')
+      .replace(thinkingHigh, `${thinkingMedium},"mediaResolution":"MEDIA_RESOLUTION_MEDIUM"`);
     expect(Buffer.byteLength(restoredHistoric)).toBe(14_531);
     expect(createHash("sha256").update(restoredHistoric).digest("hex"))
       .toBe("ba1ec0187e20c468bde3c2f81f4c9d2bcbbb822686c1d5b93e7cbcc347b2298d");
     const baselineJson = JSON.stringify(buildGeminiNativeDeepReadSegmentRequest({
       ...input,
       prompt: input.prompt.replace(clockBridge, "").replace(NATIVE_DEEP_READ_TRUTHFULNESS_BLOCK, ""),
-      generationConfig: { ...NATIVE_DEEP_READ_GENERATION_CONFIG, temperature: 0.65 },
+      generationConfig: { ...NATIVE_DEEP_READ_GENERATION_CONFIG, temperature: 0.7 },
     }));
     expect(Buffer.from(restoredBaseline).equals(Buffer.from(baselineJson))).toBe(true);
   });
@@ -323,17 +328,18 @@ describe("模型与通道收口", () => {
         hintZh: "抖音漫剧完整视听证据探针；按真实镜头、表演、光影、声音和叙事变化记录",
       }),
     });
-    expect(candidate.generationConfig).toMatchObject({ temperature: 0.65 });
+    expect(candidate.generationConfig).toMatchObject({ temperature: 0.7 });
     const candidateJson = JSON.stringify(candidate);
-    expect(candidateJson.match(/"temperature":0\.65(?=[,}])/g)).toHaveLength(1);
+    expect(candidateJson.match(/"temperature":0\.7(?=[,}])/g)).toHaveLength(1);
     /**
      * 0831 起当前请求与 v24 相差两项，且**只有**这两项：温度 0.7→0.65、删除 mediaResolution。
      * 把这两项逐字还原后仍须落回 v24 原始 SHA——这才是「单变量」的证明。
      * 不要改成新 SHA：那样等于把溯源断言改成自证，任何第三处漂移都不会再被抓到。
      * mediaResolution 原为 generationConfig 最后一个键，故补在 thinkingConfig 之后。
      */
-    const thinkingJson = '"thinkingConfig":{"thinkingLevel":"MEDIUM","includeThoughts":false}';
-    expect(candidateJson.split(thinkingJson)).toHaveLength(2);
+    const thinkingHigh = '"thinkingConfig":{"thinkingLevel":"HIGH","includeThoughts":false}';
+    const thinkingMedium = '"thinkingConfig":{"thinkingLevel":"MEDIUM","includeThoughts":false}';
+    expect(candidateJson.split(thinkingHigh)).toHaveLength(2);
     /**
      * 第三项差异：0831 首跑实测后新增的「真实性四条」。
      * 剥掉它之后仍须落回 v24 原始 SHA——溯源链不断，差异始终可逐项列举。
@@ -341,10 +347,11 @@ describe("模型与通道收口", () => {
      */
     const truthBlockJson = JSON.stringify(NATIVE_DEEP_READ_TRUTHFULNESS_BLOCK).slice(1, -1);
     expect(candidateJson.split(truthBlockJson)).toHaveLength(2);
+    // 温度已回归 0.7（v24 原值），故只需还原两项：thinkingLevel 与 mediaResolution，
+    // 外加剥掉真实性四条。差异始终可逐项列举，不改期望 SHA。
     const restoredV24 = candidateJson
       .replace(truthBlockJson, "")
-      .replace('"temperature":0.65', '"temperature":0.7')
-      .replace(thinkingJson, `${thinkingJson},"mediaResolution":"MEDIA_RESOLUTION_MEDIUM"`);
+      .replace(thinkingHigh, `${thinkingMedium},"mediaResolution":"MEDIA_RESOLUTION_MEDIUM"`);
     // 固定来自2ac2117已保存的实际request-1，不从本轮生产常量生成预期摘要。
     expect(createHash("sha256").update(restoredV24).digest("hex"))
       .toBe("54931eb5111cf3fa30d5c29296580681b390654e8811fcffbe806efe8abcdc04");
@@ -2359,7 +2366,7 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
       });
       expect(row.requestFingerprint).toBe(expectedFingerprint);
       const rawInput = vi.mocked(deps.writeRawAttemptEvidence).mock.calls.find(([input]) => input.segmentIndex === row.segmentIndex)![0];
-      expect(rawInput).toMatchObject({ segmentCount: 5, requestFingerprint: expectedFingerprint, temperature: 0.65 });
+      expect(rawInput).toMatchObject({ segmentCount: 5, requestFingerprint: expectedFingerprint, temperature: 0.7 });
       const request = vi.mocked(deps.postVertex).mock.calls.map(([body]) => body as any)
         .find((body) => body.contents[0].parts[0].fileData.fileUri === `gs://test-bucket/seg-${row.segmentIndex}.mp4`);
       expect(request).toEqual(buildGeminiNativeDeepReadSegmentRequest({
@@ -2398,7 +2405,7 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
     }
   });
 
-  it("两次不合格后第三次通过，前两次同温仍各自执行并保留拒因与永久证据", async () => {
+  it("两次不合格后第三次通过，前两次按梯度各自执行并保留拒因与永久证据", async () => {
     const span = fullSegments[3]!;
     const short = makeSegmentPayload({ segmentIndex: 3, startSec: span.startSec, endSec: span.startSec + 20 });
     const healthy = makeSegmentPayload({ segmentIndex: 3, ...span });
@@ -2407,7 +2414,7 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
     const deps = makeRunnerDeps({ postVertex });
     const result = await runManhuaNativeDeepReadSelectedSegments(selectedParams([3]), deps);
     expect(postVertex).toHaveBeenCalledTimes(3);
-    expect(postVertex.mock.calls.map(([body]) => body.generationConfig.temperature)).toEqual([0.65, 0.65, 0.6]);
+    expect(postVertex.mock.calls.map(([body]) => body.generationConfig.temperature)).toEqual([0.7, 0.65, 0.6]);
     expect(postVertex.mock.calls[1]![0].contents[0].parts[1].text).toContain("6.3%");
     expect(deps.waitForRetry).toHaveBeenCalledTimes(2);
     expect(deps.waitForRetry).toHaveBeenNthCalledWith(1, NATIVE_DEEP_READ_RETRY_INTERVAL_MS, undefined);
@@ -2953,7 +2960,7 @@ describe("Vertex 同通道三档重试（禁止 EvoLink fallback）", () => {
     hasAudio: true,
   }]);
 
-  it("Vertex 4xx 按 0.65→0.65→0.60 原通道重试三档，耗尽后原错失败", async () => {
+  it("Vertex 4xx 按 0.7→0.65→0.60 原通道重试三档，耗尽后原错失败", async () => {
     const receipts: Array<Record<string, unknown>> = [];
     const postVertex = vi.fn(async () => ({
       status: 400,
@@ -2980,7 +2987,7 @@ describe("Vertex 同通道三档重试（禁止 EvoLink fallback）", () => {
         (row) => row.route === "vertex_gcs_video" && row.status === "started",
       );
       expect(started.map((row) => [row.attemptNumber, row.temperature])).toEqual([
-        [1, 0.65], [2, 0.65], [3, 0.6],
+        [1, 0.7], [2, 0.65], [3, 0.6],
       ]);
       const failed = receipts.filter(
         (row) => row.route === "vertex_gcs_video" && row.status === "failed",
@@ -3492,20 +3499,20 @@ describe("门禁前解析稿持久化接线", () => {
   });
 });
 
-describe("首发0.65待验实验与既有参数契约（实测过关前不宣称冻结）", () => {
-  it("generationConfig逐字段保持：thinkingConfig只有MEDIUM与includeThoughts false，绝无thinkingBudget", () => {
-    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.temperature).toBe(0.65);
+describe("参数基准回归 0831：首发0.7 + thinkingLevel HIGH（实测过关前不宣称冻结）", () => {
+  it("generationConfig逐字段保持：thinkingConfig只有 HIGH 与 includeThoughts false，绝无 thinkingBudget", () => {
+    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.temperature).toBe(0.7);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.maxOutputTokens).toBe(65_536);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.candidateCount).toBe(1);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.audioTimestamp).toBe(true);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.responseMimeType).toBe("application/json");
-    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
+    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toEqual({ thinkingLevel: "HIGH", includeThoughts: false });
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
     expect(JSON.stringify(NATIVE_DEEP_READ_GENERATION_CONFIG)).not.toContain("thinkingBudget");
   });
 
-  it("候选首发0.65，后两次0.65/0.60与下限0.60复用旧基准", () => {
-    expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.65, 0.65, 0.6]);
+  it("候选首发0.7，后两次0.65/0.60与下限0.60，回到 0827 验证可用的梯度", () => {
+    expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.7, 0.65, 0.6]);
     expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.6);
   });
 

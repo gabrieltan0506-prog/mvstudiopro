@@ -359,8 +359,13 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
  * 首发请求字节边界与历史重试档位由 manhuaNativeDeepReadRunner.test.ts 分别检查。
  */
 export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
-  // 待验首发候选；重试温度仍以 NATIVE_DEEP_READ_RETRY_TEMPERATURES 为准。
-  temperature: 0.65,
+  /**
+   * 0831 回归用户 0827–0828 验证可用的基准。
+   * 依据 `2026Aug27/probe-and-codes-gpt.md`：温度固定 0.7 → 0.65 → 0.6，
+   * 该配置下 300 秒分片实测产出 57／75／76／50 镜（4–5 秒每镜）。
+   * 中途被改成首发 0.65 的那版，319 秒只拿到 34–41 镜（8–9 秒每镜），产出腰斩。
+   */
+  temperature: 0.7,
   maxOutputTokens: 65_536,
   candidateCount: 1,
   audioTimestamp: true,
@@ -374,11 +379,22 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
    * ⚠️ 官方同时说明**思考等级也是相对控制，不保证固定 token 数**，
    * 所以改成 MEDIUM 同样不承诺「绝不超过某个值」，只是换一种更受支持的控制方式。
    *
+   * 🔴 0831 用户当面拍板：**thinkingLevel HIGH**，推翻 0830 的 MEDIUM。
+   *
+   * 为什么改：MEDIUM 实跑思考量仅 4,401／3,715／4,058／10,115，而思考量与镜数明显正相关
+   * （10,115→41 镜，3,715→15 镜）。同期产出从用户验证可用的 57／75／76／50 镜
+   * （300 秒 / 10fps，见 2026Aug27/probe-and-codes-gpt.md）掉到 319 秒 34–41 镜。
+   * 模型不是不肯写，是没想够。用户 0827–0828 跑了两天验证可用的那批（PR #1322–#1327）
+   * 用的正是 thinkingLevel HIGH，配 300 秒 / 10fps / 温度 0.7→0.65→0.6。
+   *
+   * ⚠️ **thinkingBudget 与 thinkingLevel 互斥，只能二选一**（用户 0831 当面重申）。
+   * 此处只发 thinkingLevel，绝不同时出现 thinkingBudget。
+   *
    * 🔒 两者不得同时发送。此处只保留 thinkingLevel。
    * includeThoughts:false 只关闭思考摘要回显，不关闭思考本身，也不消除其用量。
    * 实际消耗一律以回执里的 thoughtsTokenCount 为准，不拿配置值当实际值。
    */
-  thinkingConfig: { thinkingLevel: "MEDIUM", includeThoughts: false },
+  thinkingConfig: { thinkingLevel: "HIGH", includeThoughts: false },
   /**
    * 0831 删除 mediaResolution：0830 实测「设了等于没设」——传 MEDIUM 后输入 token
    * 与 LOW 那轮完全一致（210,198 vs 210,134，仍约 66–70 token/帧）。Google 文档亦写明
@@ -392,7 +408,7 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
  * 待验候选同一 Vertex 分片至多三次：0.65 → 0.65 → 0.60；后两档复用 b948d7c。
  * 是否重试由统一段级判据决定；截断前缀保留、不因覆盖重复购买，用户中止不重试。
  */
-export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.65, 0.65, 0.6] as const;
+export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.7, 0.65, 0.6] as const;
 
 /**
  * 普通建议按三家族及偏差判定；独立覆盖与证据段上限优先于该计数线。

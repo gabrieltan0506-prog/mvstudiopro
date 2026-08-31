@@ -18,18 +18,18 @@ function config(): Record<string, unknown> {
     responseSchema: {
       type: "OBJECT", properties: { shots: { type: "ARRAY", items: { type: "OBJECT" } } }, required: ["shots"],
     },
-    thinkingConfig: { thinkingLevel: "MEDIUM", includeThoughts: false },
+    thinkingConfig: { thinkingLevel: "HIGH", includeThoughts: false },
     mediaResolution: "MEDIA_RESOLUTION_MEDIUM",
   };
 }
 
 describe("探针 P1 实际请求契约", () => {
-  it("实际请求经 JSON 序列化后匹配现行 MEDIUM 配置，并打印实际参数", () => {
+  it("实际请求经 JSON 序列化后匹配现行 HIGH 配置，并打印实际参数", () => {
     const expected = config();
     const request = JSON.parse(JSON.stringify({ generationConfig: expected }));
     const result = validateNativeProbeGenerationConfig(request.generationConfig, expected, gradient);
     expect(result).toMatchObject({ id: "P1", status: "pass", errorsZh: [] });
-    expect(result.actualZh).toContain("thinkingLevel=MEDIUM");
+    expect(result.actualZh).toContain("thinkingLevel=HIGH");
     expect(result.actualZh).toContain("thinkingBudget=未设置");
     expect(result.actualZh).toContain("mediaResolution=MEDIA_RESOLUTION_MEDIUM");
     expect(result.actualZh).not.toContain("存在（不合规）");
@@ -37,10 +37,12 @@ describe("探针 P1 实际请求契约", () => {
 
   it.each([
     ["旧 budget-only", { thinkingBudget: 12_000, includeThoughts: false }],
-    ["level 与 budget 同传", { thinkingLevel: "MEDIUM", thinkingBudget: 12_000, includeThoughts: false }],
-    ["预算字段即使 undefined 也不是实际 JSON", { thinkingLevel: "MEDIUM", thinkingBudget: undefined, includeThoughts: false }],
-    ["思考摘要开启", { thinkingLevel: "MEDIUM", includeThoughts: true }],
-    ["擅自 HIGH", { thinkingLevel: "HIGH", includeThoughts: false }],
+    ["level 与 budget 同传", { thinkingLevel: "HIGH", thinkingBudget: 12_000, includeThoughts: false }],
+    ["预算字段即使 undefined 也不是实际 JSON", { thinkingLevel: "HIGH", thinkingBudget: undefined, includeThoughts: false }],
+    ["思考摘要开启", { thinkingLevel: "HIGH", includeThoughts: true }],
+    // 0831 基准回到 HIGH，故守卫反转：擅自降档到 MEDIUM 才是要拦的那个。
+    // 这条守卫的意义始终是「档位不得被 agent 擅自改动」，不是偏爱某一档。
+    ["擅自降档 MEDIUM", { thinkingLevel: "MEDIUM", includeThoughts: false }],
   ])("拒绝%s", (_name, thinkingConfig) => {
     expect(validateNativeProbeGenerationConfig({ ...config(), thinkingConfig }, config(), gradient).status).toBe("fail");
   });
