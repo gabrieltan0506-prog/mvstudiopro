@@ -67,15 +67,15 @@ describe("manhuaLearnResultUi soft-fail", () => {
     for (const invalid of ["", " ", "0", "-1", "24.1", "NaN", "Infinity"]) {
       expect(() => parseManhuaLearnVideoFpsInput(invalid)).toThrow();
     }
-    expect(restoreManhuaLearnVideoFps(undefined)).toBe(10);
-    expect(restoreManhuaLearnVideoFps(null)).toBe(10);
+    expect(restoreManhuaLearnVideoFps(undefined)).toBe(14);
+    expect(restoreManhuaLearnVideoFps(null)).toBe(14);
   });
 
   it("采样fps按账号保存，旧设置损坏不改写有效12fps", () => {
     installMemoryLocalStorage();
     writeManhuaLearnVideoFps("user_a", 12);
     expect(readManhuaLearnVideoFps("user_a")).toBe(12);
-    expect(readManhuaLearnVideoFps("user_b")).toBe(10);
+    expect(readManhuaLearnVideoFps("user_b")).toBe(14);
     expect(() => writeManhuaLearnVideoFps("user_a", 25)).toThrow();
     expect(readManhuaLearnVideoFps("user_a")).toBe(12);
   });
@@ -117,7 +117,7 @@ describe("manhuaLearnResultUi soft-fail", () => {
     expect(resolveManhuaLearnSnapshotSegmentSeconds(null, "series_a", "https://douyin.com/video/a")).toBe(300);
     expect(resolveManhuaLearnSnapshotVideoFps(continuation, "series_a", "https://douyin.com/video/a")).toBe(12);
     expect(resolveManhuaLearnSnapshotVideoFps(continuation, "upgraded_series_a", "https://douyin.com/video/a")).toBe(12);
-    expect(resolveManhuaLearnSnapshotVideoFps(continuation, "series_b", "https://douyin.com/video/b")).toBe(10);
+    expect(resolveManhuaLearnSnapshotVideoFps(continuation, "series_b", "https://douyin.com/video/b")).toBe(14);
   });
 
   it.each([319, undefined, 319.5])("活动任务恢复分片设置%s但不改写原job", (nativeSegmentSeconds) => {
@@ -151,7 +151,7 @@ describe("manhuaLearnResultUi soft-fail", () => {
     expect(basket.find((item) => item.seriesKey === "series_0")?.continuation.nativeSegmentSeconds).toBe(319);
     expect(basket.find((item) => item.seriesKey === "series_1")?.continuation.nativeSegmentSeconds).toBe(300);
     expect(basket.find((item) => item.seriesKey === "series_0")?.continuation.nativeVideoFps).toBe(12);
-    expect(basket.find((item) => item.seriesKey === "series_1")?.continuation.nativeVideoFps).toBe(10);
+    expect(basket.find((item) => item.seriesKey === "series_1")?.continuation.nativeVideoFps).toBe(14);
     writeManhuaLearnBasket("user_7", basket);
     expect(readManhuaLearnBasket("user_7")).toEqual(basket);
     expect(JSON.stringify(jobs)).toBe(before);
@@ -170,7 +170,7 @@ describe("manhuaLearnResultUi soft-fail", () => {
       }]);
       localStorage.setItem("mvs-manhua-learn-basket-v1:user_7", raw);
       expect(readManhuaLearnBasket("user_7")[0]).toMatchObject({
-        jobId: "job-old", jobStatus: "running", continuation: { nativeSegmentSeconds: 300, nativeVideoFps: 10 },
+        jobId: "job-old", jobStatus: "running", continuation: { nativeSegmentSeconds: 300, nativeVideoFps: 14 },
       });
       expect(localStorage.getItem("mvs-manhua-learn-basket-v1:user_7")).toBe(raw);
     }

@@ -89,17 +89,17 @@ describe("原生读片批处理CLI凭证边界与参数投影", () => {
       .rejects.toThrow("测试拦截执行，未调用模型");
     expect(mocks.dotenv).not.toHaveBeenCalled();
     expect(mocks.validate).toHaveBeenCalledTimes(2);
-    for (const [episodes] of mocks.validate.mock.calls) expect(episodes[0].videoFps).toBe(fps ?? 10);
+    for (const [episodes] of mocks.validate.mock.calls) expect(episodes[0].videoFps).toBe(fps ?? 14);
     const submitted = mocks.runBatch.mock.calls[0][0].episodes[0];
-    expect(submitted.videoFps).toBe(fps ?? 10);
+    expect(submitted.videoFps).toBe(fps ?? 14);
     expect(submitted.segments).toEqual([{ startSec: 0, endSec: 319 }]);
-    expect(console.log).toHaveBeenCalledWith(expect.stringContaining(`第1集：${fps ?? 10}fps`));
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining(`第1集：${fps ?? 14}fps`));
     await expect(submitted.resolveNodes()).resolves.toEqual([
       { url: "https://example.invalid/media.mp4", referer: "https://example.invalid/" },
     ]);
   });
 
-  it.each([null, "", false, 0, -1, 24.1])("非法fps=%s在列GCS前拒绝，不静默回落10", async (fps) => {
+  it.each([null, "", false, 0, -1, 24.1])("非法fps=%s在列GCS前拒绝，不静默回落缺省值", async (fps) => {
     mocks.readFile.mockResolvedValue(JSON.stringify([episode(fps)]));
     await expect(runCli(["--dry-run"], "mvstudiopro")).rejects.toThrow("测试退出:1");
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("fps"));

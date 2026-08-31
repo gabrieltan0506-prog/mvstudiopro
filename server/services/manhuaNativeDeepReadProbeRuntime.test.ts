@@ -6,7 +6,7 @@ vi.mock("./manhuaNativeDeepReadRunner", () => ({
   NATIVE_DEEP_READ_GENERATION_CONFIG: {
     temperature: 0.7, maxOutputTokens: 65_536, candidateCount: 1, audioTimestamp: true,
     responseMimeType: "application/json", responseSchema: { type: "OBJECT", required: ["shots"] },
-    thinkingConfig: { thinkingLevel: "HIGH", includeThoughts: false },
+    thinkingConfig: { thinkingLevel: "MEDIUM", includeThoughts: false },
     mediaResolution: "MEDIA_RESOLUTION_MEDIUM",
   },
   NATIVE_DEEP_READ_RETRY_TEMPERATURES: [0.7, 0.6, 0.55],
@@ -26,7 +26,7 @@ import {
 function request(temperature = 0.7) {
   return {
     contents: [{ role: "user", parts: [
-      { fileData: { fileUri: "gs://test-bucket/segment.mp4", mimeType: "video/mp4" }, videoMetadata: { fps: 10 } },
+      { fileData: { fileUri: "gs://test-bucket/segment.mp4", mimeType: "video/mp4" }, videoMetadata: { fps: 14 } },
       { text: "完整提示词测试夹具" },
     ] }],
     generationConfig: JSON.parse(JSON.stringify({ ...NATIVE_DEEP_READ_GENERATION_CONFIG, temperature })) as Record<string, unknown>,
@@ -88,7 +88,7 @@ describe("逐次真实请求审计包装器", () => {
     expect(measureNativeProbeConcurrency(events)).toEqual({ peak: 1, callCount: 1, errorsZh: [] });
   });
 
-  it.each([0.7, 0.6, 0.55])("候选梯度 %s 保留 HIGH，审计完成后只发送一次实际快照", async (temperature) => {
+  it.each([0.7, 0.6, 0.55])("候选梯度 %s 保留 MEDIUM，审计完成后只发送一次实际快照", async (temperature) => {
     const order: string[] = [];
     const response = { status: 200, text: "测试响应" };
     const body = request(temperature);
@@ -111,7 +111,7 @@ describe("逐次真实请求审计包装器", () => {
     { name: "丢失 Schema", change: (body: ReturnType<typeof request>) => { delete body.generationConfig.responseSchema; } },
     { name: "未知温度", change: (body: ReturnType<typeof request>) => { body.generationConfig.temperature = 0.8; } },
     { name: "旧 budget", change: (body: ReturnType<typeof request>) => { body.generationConfig.thinkingConfig = { thinkingBudget: 12_000 }; } },
-    { name: "两种思考参数同传", change: (body: ReturnType<typeof request>) => { body.generationConfig.thinkingConfig = { thinkingLevel: "HIGH", thinkingBudget: 12_000, includeThoughts: false }; } },
+    { name: "两种思考参数同传", change: (body: ReturnType<typeof request>) => { body.generationConfig.thinkingConfig = { thinkingLevel: "MEDIUM", thinkingBudget: 12_000, includeThoughts: false }; } },
     { name: "媒体分辨率移到 Part", change: (body: ReturnType<typeof request>) => {
       delete body.generationConfig.mediaResolution;
       Object.assign(body.contents[0]!.parts[0]!, { mediaResolution: "MEDIA_RESOLUTION_MEDIUM" });

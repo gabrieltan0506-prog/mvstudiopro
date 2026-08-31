@@ -11,7 +11,7 @@ import {
 
 describe("原生精读任务墙钟", () => {
   it("采样率独立设置，319秒/12fps不被旧10fps上限截断", () => {
-    expect(parseNativeDeepReadVideoFps(undefined)).toBe(10);
+    expect(parseNativeDeepReadVideoFps(undefined)).toBe(14);
     for (const fps of [0.1, 5, 10, 12, 24]) {
       expect(parseNativeDeepReadVideoFps(fps)).toBe(fps);
       expect(parseNativeDeepReadVideoFps(String(fps))).toBe(fps);
@@ -109,7 +109,7 @@ describe("原生精读任务墙钟", () => {
       maxCalls: NATIVE_DEEP_READ_JOB_MAX_CALLS,
       planLimit: 10,
       segmentSeconds: 300,
-      videoFps: 10,
+      videoFps: 14,
       seriesKey: undefined,
       learnLlm: "gpt",
     });

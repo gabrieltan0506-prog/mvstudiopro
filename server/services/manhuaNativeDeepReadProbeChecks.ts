@@ -78,12 +78,12 @@ export function validateNativeProbeGenerationConfig(
     errorsZh.push("responseSchema 必须是非空对象");
   }
   /**
-   * 0831 用户拍板改回 HIGH（0827–0828 验证可用的那批 PR #1322–#1327 用的就是 HIGH）。
+   * 0831 实弹后用户拍板退回 MEDIUM：HIGH 过热，产出 34 镜秒位越界（写到 519 秒，本片仅 319 秒）。
    * 依据：MEDIUM 实跑思考量仅 4K–10K，同期产出从 57／75／76／50 镜掉到 34–41 镜，
    * 而思考量与镜数正相关。这里是**独立于 generationConfig 的第二道发车闸**，
    * 改档位时两处必须同步，否则预检会拦下自己（本次就栽过一次）。
    */
-  if (thinking.thinkingLevel !== "HIGH") errorsZh.push("thinkingLevel 必须为 HIGH");
+  if (thinking.thinkingLevel !== "MEDIUM") errorsZh.push("thinkingLevel 必须为 MEDIUM");
   // 用户 0831 当面重申：thinkingBudget 与 thinkingLevel 互斥，只能二选一，此处走 thinkingLevel。
   if ("thinkingBudget" in thinking) errorsZh.push("thinkingBudget 不得与现行 thinkingLevel 同传");
   if (thinking.includeThoughts !== false) errorsZh.push("includeThoughts 必须为 false");

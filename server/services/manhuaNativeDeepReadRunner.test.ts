@@ -68,6 +68,8 @@ import {
 import {
   MANHUA_NATIVE_DEEP_READ_MODEL,
   MANHUA_NATIVE_DEEP_READ_MODEL_LABEL,
+  NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS,
+  parseNativeDeepReadVideoFps,
 } from "../../shared/manhuaNativeDeepReadJob";
 import {
   NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
@@ -222,7 +224,7 @@ describe("模型与通道收口", () => {
     expect(calls[0]!.init.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it("参数冻结锁：首发0.7、65536、单候选、原Schema、thinkingLevel HIGH 且无 thinkingBudget", () => {
+  it("参数冻结锁：首发0.7、65536、单候选、原Schema、thinkingLevel MEDIUM 且无 thinkingBudget", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG).toMatchObject({
       temperature: 0.7,
       maxOutputTokens: 65_536,
@@ -233,7 +235,7 @@ describe("模型与通道收口", () => {
     });
     // 0831 回归用户 0827–0828 验证可用的基准（PR #1322–#1327 用的就是 HIGH）。
     // 0830 的 MEDIUM 实跑思考量仅 4K–10K，同期产出从 57–76 镜掉到 34–41 镜。
-    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toEqual({ thinkingLevel: "HIGH", includeThoughts: false });
+    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
   });
 
@@ -251,7 +253,7 @@ describe("模型与通道收口", () => {
     });
   });
 
-  it("后两次复用历史温度与下限，thinkingLevel HIGH，且绝不恢复 thinkingBudget", () => {
+  it("后两次复用历史温度与下限，thinkingLevel MEDIUM，且绝不恢复 thinkingBudget", () => {
     // 固定来源：b948d7c364296a9952ddf023fbd192ab8e218707的三档[0.7,0.65,0.6]及MIN=0.6。
     // 只复用后两档温度；不是恢复该提交的旧Schema、提示词或18K配置。
     const historicalRetryTemperatures = [0.65, 0.6];
@@ -260,7 +262,7 @@ describe("模型与通道收口", () => {
     [NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG, NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG]
       .forEach((config, index) => {
         expect(config.temperature).toBe(historicalRetryTemperatures[index]);
-        expect(config.thinkingConfig).toEqual({ thinkingLevel: "HIGH", includeThoughts: false });
+        expect(config.thinkingConfig).toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
         expect(config.thinkingConfig).not.toHaveProperty("thinkingBudget");
         const request = buildGeminiNativeDeepReadSegmentRequest({
           fileUri: "gs://test-bucket/seg-0.mp4", fps: 12, prompt: "虚构离线请求", generationConfig: config,
@@ -299,7 +301,7 @@ describe("模型与通道收口", () => {
      * 只删上方固定新增文本，不归一空白、不重算旧摘要，其他漂移必须失败。
      */
     // 0831 起 thinkingLevel 回归 HIGH，故还原历史时须先换回 MEDIUM 再补 mediaResolution。
-    const thinkingHigh = '"thinkingConfig":{"thinkingLevel":"HIGH","includeThoughts":false}';
+    const thinkingHigh = '"thinkingConfig":{"thinkingLevel":"MEDIUM","includeThoughts":false}';
     const thinkingMedium = '"thinkingConfig":{"thinkingLevel":"MEDIUM","includeThoughts":false}';
     // 锚点必须唯一：否则下面的 replace 静默失配，失败信息会指向 SHA 而不是真因。
     expect(restoredBaseline.split(thinkingHigh)).toHaveLength(2);
@@ -337,7 +339,7 @@ describe("模型与通道收口", () => {
      * 不要改成新 SHA：那样等于把溯源断言改成自证，任何第三处漂移都不会再被抓到。
      * mediaResolution 原为 generationConfig 最后一个键，故补在 thinkingConfig 之后。
      */
-    const thinkingHigh = '"thinkingConfig":{"thinkingLevel":"HIGH","includeThoughts":false}';
+    const thinkingHigh = '"thinkingConfig":{"thinkingLevel":"MEDIUM","includeThoughts":false}';
     const thinkingMedium = '"thinkingConfig":{"thinkingLevel":"MEDIUM","includeThoughts":false}';
     expect(candidateJson.split(thinkingHigh)).toHaveLength(2);
     /**
@@ -441,8 +443,8 @@ describe("模型与通道收口", () => {
 });
 
 describe("自定义分片时长和 fps 独立，不按时长降采样", () => {
-  it.each([0.01, 90, 180, 299.99, 300, 300.01, 360, 1080, 7200])("%s 秒始终为 10fps", (duration) => {
-    expect(resolveNativeDeepReadRequestFps(duration)).toBe(10);
+  it.each([0.01, 90, 180, 299.99, 300, 300.01, 360, 1080, 7200])("%s 秒始终为缺省 14fps（不按时长降采样）", (duration) => {
+    expect(resolveNativeDeepReadRequestFps(duration)).toBe(14);
   });
   it.each([0, -1, NaN, Infinity])("拒绝非法时长 %s", (duration) => {
     expect(() => resolveNativeDeepReadRequestFps(duration)).toThrow("有限正数");
@@ -2542,7 +2544,7 @@ describe("Vertex 主线：每段一次调用（不再多段合包）", () => {
         segmentIndex: entry.segmentIndex, segmentCount: 2, hasAudio: true,
       };
       expect(entry.fingerprint).toBe(nativeDeepReadSegmentCacheFingerprint({ ...identity, videoFps: 12 }));
-      expect(entry.fingerprint).not.toBe(nativeDeepReadSegmentCacheFingerprint({ ...identity, videoFps: 10 }));
+      expect(entry.fingerprint).not.toBe(nativeDeepReadSegmentCacheFingerprint({ ...identity, videoFps: 14 }));
     }
   });
 
@@ -3499,14 +3501,14 @@ describe("门禁前解析稿持久化接线", () => {
   });
 });
 
-describe("参数基准回归 0831：首发0.7 + thinkingLevel HIGH（实测过关前不宣称冻结）", () => {
+describe("参数基准回归 0831：首发0.7 + thinkingLevel MEDIUM（实测过关前不宣称冻结）", () => {
   it("generationConfig逐字段保持：thinkingConfig只有 HIGH 与 includeThoughts false，绝无 thinkingBudget", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.temperature).toBe(0.7);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.maxOutputTokens).toBe(65_536);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.candidateCount).toBe(1);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.audioTimestamp).toBe(true);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.responseMimeType).toBe("application/json");
-    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toEqual({ thinkingLevel: "HIGH", includeThoughts: false });
+    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
     expect(JSON.stringify(NATIVE_DEEP_READ_GENERATION_CONFIG)).not.toContain("thinkingBudget");
   });
@@ -3514,6 +3516,28 @@ describe("参数基准回归 0831：首发0.7 + thinkingLevel HIGH（实测过�
   it("候选首发0.7，后两次0.65/0.60与下限0.60，回到 0827 验证可用的梯度", () => {
     expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.7, 0.65, 0.6]);
     expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.6);
+  });
+
+  /**
+   * 🔒 生产参数冻结锁（0831 用户当面拍板：「0.7+HIGH+10fps 参数先冻结」）。
+   *
+   * 这一组是**实弹验证过的基准**，非用户明确允许不得变更：
+   * run probe_douyin_20260831030601_bc672813，319 秒单片，
+   * 有效镜数 61（另有 34 镜秒位越界另计），3.4 秒/镜，输出 28,722 token。
+   *
+   * 改任何一项＝新版本＝旧缓存作废＝须重新探针实测（见知识库《schema动刀纪律》）。
+   * 注意 thinkingLevel 另有第二道发车闸在 manhuaNativeDeepReadProbeChecks.ts，
+   * 改档位时两处必须同步。
+   */
+  it("🔒 生产参数冻结：温度 0.7 三档 + thinkingLevel MEDIUM + 默认 14fps", () => {
+    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.temperature).toBe(0.7);
+    expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.7, 0.65, 0.6]);
+    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig)
+      .toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
+    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
+    // fps 由面板/CLI 传入，缺省必须落在 14——这是冻结基准的一部分，不是随便的默认值。
+    expect(NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS).toBe(14);
+    expect(parseNativeDeepReadVideoFps(undefined)).toBe(14);
   });
 
   it("门禁阈值冻结：离谱地板 10 秒/镜、分级线 120 秒", () => {

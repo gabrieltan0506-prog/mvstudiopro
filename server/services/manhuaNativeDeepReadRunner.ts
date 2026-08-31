@@ -379,7 +379,13 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
    * ⚠️ 官方同时说明**思考等级也是相对控制，不保证固定 token 数**，
    * 所以改成 MEDIUM 同样不承诺「绝不超过某个值」，只是换一种更受支持的控制方式。
    *
-   * 🔴 0831 用户当面拍板：**thinkingLevel HIGH**，推翻 0830 的 MEDIUM。
+   * 🔴 0831 实弹后用户拍板退回 **MEDIUM**：HIGH 过热。
+   *
+   * HIGH 那一发（run probe_douyin_20260831030601_bc672813 attempt1）产出 95 镜，
+   * 但其中 **34 镜秒位越界**——本片只有 319 秒，模型却写到 519 秒，
+   * 内容具体到「小女孩举起紫色令牌召唤影七」，而那 200 秒的画面根本不存在。
+   * 同一发 attempt2（温度 0.65）35 镜、零越界。想得越多推演越远，编出后续剧情。
+   * 温度维持 0.7 三档不动，只退思考档位。
    *
    * 为什么改：MEDIUM 实跑思考量仅 4,401／3,715／4,058／10,115，而思考量与镜数明显正相关
    * （10,115→41 镜，3,715→15 镜）。同期产出从用户验证可用的 57／75／76／50 镜
@@ -394,7 +400,7 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
    * includeThoughts:false 只关闭思考摘要回显，不关闭思考本身，也不消除其用量。
    * 实际消耗一律以回执里的 thoughtsTokenCount 为准，不拿配置值当实际值。
    */
-  thinkingConfig: { thinkingLevel: "HIGH", includeThoughts: false },
+  thinkingConfig: { thinkingLevel: "MEDIUM", includeThoughts: false },
   /**
    * 0831 删除 mediaResolution：0830 实测「设了等于没设」——传 MEDIUM 后输入 token
    * 与 LOW 那轮完全一致（210,198 vs 210,134，仍约 66–70 token/帧）。Google 文档亦写明
@@ -2612,6 +2618,34 @@ export function assertNativeDeepReadSegmentDensity(input: {
   }
   // 硬门禁（0829 用户裁决）：逐镜 17 字段/unitTypeZh/evidenceRole 必填，缺则标记并重试（内容仍留给 GLM）。
   assertRawShotFieldPresence(input.raw, labelZh);
+
+  /**
+   * 🔴 越界镜＝编造（0831 实弹发现）。
+   *
+   * run probe_douyin_20260831030601_bc672813 attempt1：本片只有 319 秒，
+   * 模型却给出 95 镜、秒位一路写到 **519 秒**，其中 34 镜整段落在片长之外，
+   * 内容具体到「小女孩举起紫色令牌召唤影七」——那 200 秒的画面根本不存在。
+   * keyMoments 7/23、字幕 7/50 同样越界。
+   *
+   * 覆盖率计算虽然把越界区间 clamp 回段界（不会虚增覆盖率），
+   * 但越界镜本身此前**没有任何检查**，会照常入库并污染整集时间轴。
+   * 这类不是「密度不够」而是「凭空捏造」，必须当场可见。
+   *
+   * 容差取 1 秒：模型给整数秒、段界可能是小数（如 160.1），
+   * 边界镜多出零点几秒是舍入不是编造，不该误报。
+   */
+  const outOfRange = shots.filter((shot) =>
+    Number(shot.startSec) < input.startSec - 1 || Number(shot.endSec) > input.endSec + 1);
+  if (outOfRange.length) {
+    const farthest = Math.max(...outOfRange.map((shot) => Number(shot.endSec) || 0));
+    note(
+      "shot_out_of_segment_range",
+      `${labelZh}有 ${outOfRange.length} 个镜头的秒位落在本段 ${Math.round(input.startSec)}—${
+        Math.round(input.endSec)} 秒范围之外（最远 ${Math.round(farthest)} 秒）；`
+      + `本段素材不存在这些画面，属凭空捏造`,
+      deviation(farthest, input.endSec),
+    );
+  }
 
   advisories.push(...advisoryFromThrow("clock_text", segmentIndex, () =>
     assertVisualTextNoClock(input.raw, labelZh)));

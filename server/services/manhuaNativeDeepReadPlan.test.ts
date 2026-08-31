@@ -99,13 +99,13 @@ describe("原生精读计划", () => {
     const d = deps({ probeDurationSec: vi.fn(async () => 1593.586) });
     const input = { url: "https://www.douyin.com/collection/123456", limit: 1, segmentSeconds: 319 };
     const plan12 = await buildNativeDeepReadPlanPreview({ ...input, videoFps: 12 }, d);
-    const plan10 = await buildNativeDeepReadPlanPreview({ ...input, videoFps: 10 }, d);
+    const plan10 = await buildNativeDeepReadPlanPreview({ ...input, videoFps: 14 }, d);
     expect(plan12.videoFps).toBe(12);
     expect(plan12.episodes[0]?.videoFps).toBe(12);
     expect(plan12.totalSegments).toBe(5);
     expect(plan12.planHash).not.toBe(plan10.planHash);
     expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 200, segmentSeconds: 319, videoFps: 12 }, plan12)).not.toThrow();
-    expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 200, segmentSeconds: 319, videoFps: 10 }, plan12)).toThrow("fps 与任务参数不一致");
+    expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 200, segmentSeconds: 319, videoFps: 14 }, plan12)).toThrow("fps 与任务参数不一致");
   });
 
   it("分段按五分钟连续覆盖，短集保持整集", () => {
@@ -555,7 +555,7 @@ describe("原生精读计划", () => {
       episodeIndex: 1,
       sourceUrl: `https://www.douyin.com/video/${modalId}`,
       durationSec: 2_212,
-      videoFps: 10,
+      videoFps: 14,
       segments: [
         { startSec: 0, endSec: 300 },
         { startSec: 300, endSec: 600 },
