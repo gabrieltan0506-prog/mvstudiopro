@@ -24,6 +24,8 @@ import {
   NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH,
   NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
   NATIVE_DEEP_READ_RESPONSE_SCHEMA,
+  buildNativeDeepReadResponseSchema,
+  resolveNativeDeepReadDensityContract,
   NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG,
   NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG,
   NATIVE_DEEP_READ_RETRY_INTERVAL_MS,
@@ -198,7 +200,7 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_ROUTE_EVOLINK).toBe("evolink_gemini_video");
     expect(NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE).toBe("openrouter_glm_structuring");
     // 换代必须让旧确认码全废
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260831-low-thinking-candidate-v1");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260831-preflight-evidence-v1");
   });
 
   it("长视频请求显式使用 30 分钟 HTTP 响应头与响应体时限，不落回 Undici 默认 300 秒", async () => {
@@ -226,7 +228,7 @@ describe("模型与通道收口", () => {
     expect(calls[0]!.init.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it("参数冻结锁：首发0.65、65536、单候选、原Schema、thinkingLevel LOW 且无 thinkingBudget", () => {
+  it("参数基准锁：首发0.65、65536、单候选、基础Schema目录、thinkingLevel MEDIUM 且无 thinkingBudget", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG).toMatchObject({
       temperature: 0.65,
       maxOutputTokens: 65_536,
@@ -235,8 +237,8 @@ describe("模型与通道收口", () => {
       responseMimeType: "application/json",
       responseSchema: NATIVE_DEEP_READ_RESPONSE_SCHEMA,
     });
-    // MEDIUM 首发经原帧核对失败；LOW是用户指定的下一候选，尚不能称成功。
-    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toEqual({ thinkingLevel: "LOW", includeThoughts: false });
+    // 按用户最新指令保留首发MEDIUM基准，对比prompt/schema，不以旧样本推断思考档位因果。
+    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
   });
 
@@ -254,7 +256,7 @@ describe("模型与通道收口", () => {
     });
   });
 
-  it("后两次复用历史温度与下限，thinkingLevel LOW，且绝不恢复 thinkingBudget", () => {
+  it("后两次复用历史温度与下限，thinkingLevel MEDIUM，且绝不恢复 thinkingBudget", () => {
     // 固定来源：b948d7c364296a9952ddf023fbd192ab8e218707的三档[0.7,0.65,0.6]及MIN=0.6。
     // 只复用后两档温度；不是恢复该提交的旧Schema、提示词或18K配置。
     const historicalRetryTemperatures = [0.65, 0.6];
@@ -263,12 +265,13 @@ describe("模型与通道收口", () => {
     [NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG, NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG]
       .forEach((config, index) => {
         expect(config.temperature).toBe(historicalRetryTemperatures[index]);
-        expect(config.thinkingConfig).toEqual({ thinkingLevel: "LOW", includeThoughts: false });
+        expect(config.thinkingConfig).toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
         expect(config.thinkingConfig).not.toHaveProperty("thinkingBudget");
         const request = buildGeminiNativeDeepReadSegmentRequest({
+          segmentContext: { startSec: 0, endSec: 319, segmentIndex: 0, hasAudio: true },
           fileUri: "gs://test-bucket/seg-0.mp4", fps: 12, prompt: "虚构离线请求", generationConfig: config,
         });
-        expect(request.generationConfig).toEqual(config);
+        expect(request.generationConfig).toEqual({ ...config, responseSchema: buildNativeDeepReadResponseSchema({ startSec: 0, endSec: 319, segmentIndex: 0, hasAudio: true }) });
       });
   });
 
@@ -289,8 +292,9 @@ describe("模型与通道收口", () => {
    *   v24 实际 request-1  54931eb5111cf3fa30d5c29296580681b390654e8811fcffbe806efe8abcdc04
    *   删时间桥后基线      ba1ec0187e20c468bde3c2f81f4c9d2bcbbb822686c1d5b93e7cbcc347b2298d / 14531 字节
    */
-  it("当前请求使用唯一正负分区正文，responseSchema SHA 不变", () => {
+  it("当前请求使用唯一正负分区正文，基础字段目录SHA不变", () => {
     const candidate = buildGeminiNativeDeepReadSegmentRequest({
+          segmentContext: { startSec: 0, endSec: 319, segmentIndex: 0, hasAudio: true },
       fileUri: "gs://mv-studio-pro-vertex-video-temp/manhua-template-learn/tmp/native-deep-read/71ba09b6-7244-4b5a-a3af-ad6f0b90bc25.mp4",
       fps: 12,
       prompt: buildGeminiNativeDeepReadSegmentPrompt({
@@ -315,6 +319,7 @@ describe("模型与通道收口", () => {
 
   it("请求组装层会把低温旁路收口到恢复的历史下限0.6", () => {
     const request = buildGeminiNativeDeepReadSegmentRequest({
+          segmentContext: { startSec: 0, endSec: 319, segmentIndex: 0, hasAudio: true },
       fileUri: "gs://bucket/segment.mp4",
       fps: 5,
       prompt: "test",
@@ -456,7 +461,7 @@ describe("双密度地板线（0826 双密度教训）", () => {
     });
   });
 
-  it("提示词软化后不再下达任何音轨/镜数字目标（0829：数字目标会逼出编造）", () => {
+  it("音轨仍无凑数目标，镜数按现行门禁明确前置", () => {
     const prompt = buildGeminiNativeDeepReadSegmentPrompt({
       episodeDurationSec: 389,
       startSec: 360,
@@ -466,7 +471,7 @@ describe("双密度地板线（0826 双密度教训）", () => {
       hasAudio: true,
     });
     expect(prompt).not.toMatch(/至少 \d+ 段/);
-    expect(prompt).not.toMatch(/至少 \d+ 条/);
+    expect(prompt).not.toMatch(/(?:cue|声音事件|音轨)[^\n]*至少 \d+ 条/);
     expect(prompt).not.toMatch(/本段至少 \d+ 镜/);
     /**
      * 0831 用户令删除全部免责条款：这些句子是模型偷懒时可引用的依据。
@@ -537,7 +542,7 @@ describe("每段提示词硬约束", () => {
     expect(prompt.slice(0, prompt.indexOf("【不得出现】"))).not.toContain("禁止凭画面编造声音");
     // 不再给「至少 N 段 / 至少 N 条 cue」这类数字目标（0829：数字目标会逼出编造）
     expect(prompt).not.toMatch(/至少 \d+ 段/);
-    expect(prompt).not.toMatch(/至少 \d+ 条/);
+    expect(prompt).not.toMatch(/(?:cue|声音事件|音轨)[^\n]*至少 \d+ 条/);
     /**
      * 0831：原先挂在禁止清单末尾的 audioSoftRules 整块删除。
      * 它把「音轨怎么写」的要求贴在禁令列表尾巴上，且七栏必填 Schema 已经管了、
@@ -735,6 +740,7 @@ describe("Gemini 请求体（Google 原生格式，Vertex/EvoLink 同构）", ()
   });
   it("实际序列化后不再发送 mediaResolution，视频fps与Schema保持原值", () => {
     const serialized = JSON.parse(JSON.stringify(buildGeminiNativeDeepReadSegmentRequest({
+          segmentContext: { startSec: 0, endSec: 319, segmentIndex: 0, hasAudio: true },
       fileUri: "gs://bucket/segment.mp4", fps: 10, prompt: "测试",
     })));
     // 0831 改：0830 实测「设了等于没设」（传 MEDIUM 与不传，输入 token 210,198 vs 210,134），
@@ -742,13 +748,14 @@ describe("Gemini 请求体（Google 原生格式，Vertex/EvoLink 同构）", ()
     // 这里断言「整个键不存在」而非等于某个值——写成默认字符串会让人误以为真发了参数。
     expect(serialized.generationConfig).not.toHaveProperty("mediaResolution");
     expect(serialized.generationConfig).not.toHaveProperty("media_resolution");
-    expect(serialized.generationConfig.responseSchema).toEqual(NATIVE_DEEP_READ_RESPONSE_SCHEMA);
+    expect(serialized.generationConfig.responseSchema).toEqual(buildNativeDeepReadResponseSchema({ startSec: 0, endSec: 319, segmentIndex: 0, hasAudio: true }));
     expect(serialized.contents[0].parts[0].videoMetadata.fps).toBe(10);
     expect(serialized.contents[0].parts[0]).not.toHaveProperty("mediaResolution");
     expect(serialized.contents[0].parts[0]).not.toHaveProperty("media_resolution");
   });
   it("fileData + videoMetadata.fps + 定稿 generationConfig", () => {
     const body = buildGeminiNativeDeepReadSegmentRequest({
+          segmentContext: { startSec: 0, endSec: 319, segmentIndex: 0, hasAudio: true },
       fileUri: "gs://bucket/seg.mp4",
       fps: 5,
       prompt: "PROMPT",
@@ -764,7 +771,7 @@ describe("Gemini 请求体（Google 原生格式，Vertex/EvoLink 同构）", ()
           { text: "PROMPT" },
         ],
       }],
-      generationConfig: NATIVE_DEEP_READ_GENERATION_CONFIG,
+      generationConfig: { ...NATIVE_DEEP_READ_GENERATION_CONFIG, responseSchema: buildNativeDeepReadResponseSchema({ startSec: 0, endSec: 319, segmentIndex: 0, hasAudio: true }) },
     });
   });
 });
@@ -2427,6 +2434,7 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
       const request = vi.mocked(deps.postVertex).mock.calls.map(([body]) => body as any)
         .find((body) => body.contents[0].parts[0].fileData.fileUri === `gs://test-bucket/seg-${row.segmentIndex}.mp4`);
       expect(request).toEqual(buildGeminiNativeDeepReadSegmentRequest({
+          segmentContext: { ...span, segmentIndex: row.segmentIndex, hasAudio: true },
         fileUri: `gs://test-bucket/seg-${row.segmentIndex}.mp4`, fps: 12,
         generationConfig: NATIVE_DEEP_READ_GENERATION_CONFIG,
         prompt: buildGeminiNativeDeepReadSegmentPrompt({ episodeDurationSec: 1594,
@@ -3556,14 +3564,14 @@ describe("门禁前解析稿持久化接线", () => {
   });
 });
 
-describe("参数基准回归 0831：首发0.65 + thinkingLevel LOW（实测过关前不宣称冻结）", () => {
-  it("generationConfig逐字段保持：thinkingConfig只有 LOW 与 includeThoughts false，绝无 thinkingBudget", () => {
+describe("参数基准回归 0831：首发0.65 + thinkingLevel MEDIUM（实测过关前不宣称冻结）", () => {
+  it("generationConfig逐字段保持：thinkingConfig只有 MEDIUM 与 includeThoughts false，绝无 thinkingBudget", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.temperature).toBe(0.65);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.maxOutputTokens).toBe(65_536);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.candidateCount).toBe(1);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.audioTimestamp).toBe(true);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.responseMimeType).toBe("application/json");
-    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toEqual({ thinkingLevel: "LOW", includeThoughts: false });
+    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
     expect(JSON.stringify(NATIVE_DEEP_READ_GENERATION_CONFIG)).not.toContain("thinkingBudget");
   });
@@ -3573,14 +3581,14 @@ describe("参数基准回归 0831：首发0.65 + thinkingLevel LOW（实测过�
     expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.6);
   });
 
-  /** LOW候选须与独立发车守卫同步；版本与参数指纹隔离旧缓存，效果待真实验收。 */
-  it("候选参数保持：温度0.65/0.65/0.6 + thinkingLevel LOW + 默认12fps", () => {
+  /** 本轮参数保持首发基准，真实质量尚待新契约单发验收。 */
+  it("候选参数：温度0.65/0.65/0.6 + MEDIUM + 默认12fps", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.temperature).toBe(0.65);
     expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.65, 0.65, 0.6]);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig)
-      .toEqual({ thinkingLevel: "LOW", includeThoughts: false });
+      .toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
-    // fps 仍由面板/CLI 传入，缺省保持12；不提高采样率。
+    // fps由面板/CLI传入，缺省12；本轮不提高采样率。
     expect(NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS).toBe(12);
     expect(parseNativeDeepReadVideoFps(undefined)).toBe(12);
   });
@@ -3601,6 +3609,54 @@ describe("参数基准回归 0831：首发0.65 + thinkingLevel LOW（实测过�
   it("正负分区版本仍保持原有门禁阈值", () => {
     expect(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC).toBe(30);
     expect(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC).toBe(3);
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260831-low-thinking-candidate-v1");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260831-preflight-evidence-v1");
   });
+});
+
+
+describe("生成前契约与实际门禁同源", () => {
+  it.each([1, 31, 120, 300, 319])("%s秒前置镜数保留20%%容差，区别参考值与硬线", lenSec => {
+    const rule = resolveNativeDeepReadDensityContract(lenSec);
+    expect(rule.referenceShots).toBe(Math.ceil(lenSec / 10));
+    expect(rule.minStoryShots).toBe(Math.ceil(Math.ceil(lenSec / 10) * 0.8));
+    expect(rule.maxAverageSec).toBe(12);
+    const prompt = buildGeminiNativeDeepReadSegmentPrompt({ episodeDurationSec: 1594,
+      startSec: 319, endSec: 319 + lenSec, segmentIndex: 1, segmentCount: 5, hasAudio: true });
+    const schema = buildNativeDeepReadResponseSchema({ startSec: 319, endSec: 319 + lenSec, segmentIndex: 1, hasAudio: true }) as any;
+    expect(prompt).toContain(`story 至少 ${rule.minStoryShots} 条`);
+    expect(schema.properties.shots.anyOf[0].minItems).toBe(rule.minStoryShots);
+    expect(schema.properties.shots.anyOf[0].items.anyOf[0].required).toHaveLength(17);
+    expect(schema.properties.shots.anyOf[1].items.required).toEqual(["startSec", "endSec", "evidenceRole"]);
+    expect(schema.properties.shots.anyOf[0].items.anyOf[0].properties.startSec.minimum).toBe(319);
+    expect(schema.properties.keyMoments.items.properties.atSec.maximum).toBe(318.9 + lenSec);
+    expect(schema.properties.audioResolution.items.properties.chunkIndex.minimum).toBe(1);
+    expect(schema.properties.audioResolution.items.properties.analysis.properties.audioTrack.items.properties.toSec.maximum).toBe(lenSec);
+    expect(JSON.stringify(schema)).not.toContain('"maxLength"');
+    expect(JSON.stringify(schema)).not.toContain('"uniqueItems"');
+  });
+  it("精华定义与实际秒位回看同时前置，无声结构仍为空数组", () => {
+    const context = { startSec: 0, endSec: 319, segmentIndex: 0, hasAudio: false };
+    const schema = buildNativeDeepReadResponseSchema(context) as any;
+    const prompt = buildGeminiNativeDeepReadSegmentPrompt({ ...context, episodeDurationSec: 319, segmentCount: 1 });
+    expect(prompt).toContain(schema.properties.keyMoments.description);
+    expect(prompt).toContain("冲突升级、反转、真相揭示");
+    expect(prompt).toContain("平淡区间可以留空");
+    expect(schema.properties.audioResolution.maxItems).toBe(0);
+    expect(schema.properties.audioResolution.minItems).toBe(0);
+    expect(schema.properties.keyMoments).not.toHaveProperty("minItems");
+    expect(schema.properties.keyMoments.items.properties).not.toHaveProperty("verified");
+  });
+});
+
+it("真实schema跨段错配会在探针审计处阻止模型出站", async () => {
+  const { createNativeProbeAuditedPost } = await import("./manhuaNativeDeepReadProbeRuntime.js");
+  const context = { startSec: 319, endSec: 638, segmentIndex: 1, hasAudio: true };
+  const body = buildGeminiNativeDeepReadSegmentRequest({ fileUri: "gs://test-bucket/segment.mp4", fps: 12,
+    prompt: "离线验证", segmentContext: context });
+  const post = vi.fn(async () => "仅测试");
+  const audited = createNativeProbeAuditedPost(post, () => {});
+  await expect(audited(body, undefined, { ...context, segmentIndex: 0 })).rejects.toThrow("不合规");
+  expect(post).not.toHaveBeenCalled();
+  expect(await audited(body, undefined, context)).toBe("仅测试");
+  expect(post).toHaveBeenCalledTimes(1);
 });

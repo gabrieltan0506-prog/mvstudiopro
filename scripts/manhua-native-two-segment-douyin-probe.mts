@@ -21,6 +21,7 @@ import {
   NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY,
   NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
   buildGeminiNativeDeepReadSegmentRequest,
+  buildNativeDeepReadResponseSchema,
   createNativeDeepReadRunnerDeps,
   evaluateNativeDeepReadSegmentAcceptance,
   measureNativeDeepReadSegmentCoverage,
@@ -310,14 +311,18 @@ async function main() {
     fps: resolveNativeDeepReadRequestFps(endSec - startSec, requestedVideoFps),
   }));
   // 检查经过生产请求构造器及 JSON 序列化后的对象，不拿常量与自身比较。
+  const preflightContext = { startSec: manifest?.segments[0]?.startSec ?? 0,
+    endSec: manifest?.segments[0]?.endSec ?? segmentSeconds,
+    segmentIndex: 0, hasAudio: manifest?.segments[0]?.hasAudio ?? true };
   const preflightRequest = JSON.parse(JSON.stringify(buildGeminiNativeDeepReadSegmentRequest({
+    segmentContext: preflightContext,
     fileUri: manifest?.segments[0]?.gsUri || "gs://probe-preflight/never-sent.mp4",
     fps: resolveNativeDeepReadRequestFps(manifest
       ? manifest.segments[0]!.endSec - manifest.segments[0]!.startSec : segmentSeconds, requestedVideoFps),
     prompt: "仅校验请求，不发送模型调用",
   })));
   const p1 = validateNativeProbeGenerationConfig(
-    preflightRequest.generationConfig, NATIVE_DEEP_READ_GENERATION_CONFIG,
+    preflightRequest.generationConfig, { ...NATIVE_DEEP_READ_GENERATION_CONFIG, responseSchema: buildNativeDeepReadResponseSchema(preflightContext) },
     NATIVE_DEEP_READ_RETRY_TEMPERATURES,
   );
   record("P1", p1.nameZh, p1.status, p1.actualZh);

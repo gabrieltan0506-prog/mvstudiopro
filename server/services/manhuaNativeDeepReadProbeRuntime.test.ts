@@ -6,9 +6,10 @@ vi.mock("./manhuaNativeDeepReadRunner", () => ({
   NATIVE_DEEP_READ_GENERATION_CONFIG: {
     temperature: 0.7, maxOutputTokens: 65_536, candidateCount: 1, audioTimestamp: true,
     responseMimeType: "application/json", responseSchema: { type: "OBJECT", required: ["shots"] },
-    thinkingConfig: { thinkingLevel: "LOW", includeThoughts: false },
+    thinkingConfig: { thinkingLevel: "MEDIUM", includeThoughts: false },
     mediaResolution: "MEDIA_RESOLUTION_MEDIUM",
   },
+  buildNativeDeepReadResponseSchema: () => ({ type: "OBJECT", required: ["shots"] }),
   NATIVE_DEEP_READ_RETRY_TEMPERATURES: [0.7, 0.6, 0.55],
 }));
 
@@ -16,12 +17,19 @@ import { NATIVE_DEEP_READ_GENERATION_CONFIG } from "./manhuaNativeDeepReadRunner
 import { measureNativeProbeConcurrency } from "./manhuaNativeDeepReadProbeEvidence";
 import {
   assertNativeProbeImage,
-  createNativeProbeAuditedPost,
+  createNativeProbeAuditedPost as productionAuditedPost,
   NATIVE_PROBE_ATTESTATION_REQUIRED_PATHS,
   verifyNativeProbeSourceAttestation,
   type NativeProbeRequestAudit,
   type NativeProbeTransportEvent,
 } from "./manhuaNativeDeepReadProbeRuntime";
+
+// 各包装器测试共用显式虚构分片；遗漏上下文单独检查为零出站。
+const fixtureContext = { startSec: 0, endSec: 319, segmentIndex: 0, hasAudio: true };
+const createNativeProbeAuditedPost: typeof productionAuditedPost = (...args) => {
+  const audited = productionAuditedPost(...args);
+  return (body, signal, context = fixtureContext) => audited(body, signal, context);
+};
 
 function request(temperature = 0.7) {
   return {
@@ -111,7 +119,7 @@ describe("逐次真实请求审计包装器", () => {
     { name: "丢失 Schema", change: (body: ReturnType<typeof request>) => { delete body.generationConfig.responseSchema; } },
     { name: "未知温度", change: (body: ReturnType<typeof request>) => { body.generationConfig.temperature = 0.8; } },
     { name: "旧 budget", change: (body: ReturnType<typeof request>) => { body.generationConfig.thinkingConfig = { thinkingBudget: 12_000 }; } },
-    { name: "两种思考参数同传", change: (body: ReturnType<typeof request>) => { body.generationConfig.thinkingConfig = { thinkingLevel: "LOW", thinkingBudget: 12_000, includeThoughts: false }; } },
+    { name: "两种思考参数同传", change: (body: ReturnType<typeof request>) => { body.generationConfig.thinkingConfig = { thinkingLevel: "MEDIUM", thinkingBudget: 12_000, includeThoughts: false }; } },
     { name: "媒体分辨率移到 Part", change: (body: ReturnType<typeof request>) => {
       delete body.generationConfig.mediaResolution;
       Object.assign(body.contents[0]!.parts[0]!, { mediaResolution: "MEDIA_RESOLUTION_MEDIUM" });
@@ -305,4 +313,12 @@ describe("已推提交的运行时源码清单核验", () => {
     sources.set(path, Buffer.from("已改变"));
     await expect(verifyNativeProbeSourceAttestation(manifest, commit, readSource)).rejects.toThrow("源码 SHA-256 不匹配");
   });
+});
+
+it("缺少可信分片上下文时审计拒绝且零模型出站", async () => {
+  const post = vi.fn(async () => "响应");
+  const audits: NativeProbeRequestAudit[] = [];
+  await expect(productionAuditedPost(post, audit => { audits.push(audit); })(request())).rejects.toThrow("分片上下文");
+  expect(post).not.toHaveBeenCalled();
+  expect(audits[0]?.validation.status).toBe("fail");
 });

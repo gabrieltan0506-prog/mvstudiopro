@@ -18,18 +18,18 @@ function config(): Record<string, unknown> {
     responseSchema: {
       type: "OBJECT", properties: { shots: { type: "ARRAY", items: { type: "OBJECT" } } }, required: ["shots"],
     },
-    thinkingConfig: { thinkingLevel: "LOW", includeThoughts: false },
+    thinkingConfig: { thinkingLevel: "MEDIUM", includeThoughts: false },
     mediaResolution: "MEDIA_RESOLUTION_MEDIUM",
   };
 }
 
 describe("探针 P1 实际请求契约", () => {
-  it("实际请求经 JSON 序列化后匹配现行 LOW 候选，并打印实际参数", () => {
+  it("实际请求经 JSON 序列化后匹配现行 MEDIUM 配置，并打印实际参数", () => {
     const expected = config();
     const request = JSON.parse(JSON.stringify({ generationConfig: expected }));
     const result = validateNativeProbeGenerationConfig(request.generationConfig, expected, gradient);
     expect(result).toMatchObject({ id: "P1", status: "pass", errorsZh: [] });
-    expect(result.actualZh).toContain("thinkingLevel=LOW");
+    expect(result.actualZh).toContain("thinkingLevel=MEDIUM");
     expect(result.actualZh).toContain("thinkingBudget=未设置");
     expect(result.actualZh).toContain("mediaResolution=MEDIA_RESOLUTION_MEDIUM");
     expect(result.actualZh).not.toContain("存在（不合规）");
@@ -37,11 +37,11 @@ describe("探针 P1 实际请求契约", () => {
 
   it.each([
     ["旧 budget-only", { thinkingBudget: 12_000, includeThoughts: false }],
-    ["level 与 budget 同传", { thinkingLevel: "LOW", thinkingBudget: 12_000, includeThoughts: false }],
-    ["预算字段即使 undefined 也不是实际 JSON", { thinkingLevel: "LOW", thinkingBudget: undefined, includeThoughts: false }],
-    ["思考摘要开启", { thinkingLevel: "LOW", includeThoughts: true }],
-    // 用户条件已触发，当前候选仅允许 LOW；旧 MEDIUM 和 HIGH 均不得混入。
-    ["旧 MEDIUM 请求", { thinkingLevel: "MEDIUM", includeThoughts: false }],
+    ["level 与 budget 同传", { thinkingLevel: "MEDIUM", thinkingBudget: 12_000, includeThoughts: false }],
+    ["预算字段即使 undefined 也不是实际 JSON", { thinkingLevel: "MEDIUM", thinkingBudget: undefined, includeThoughts: false }],
+    ["思考摘要开启", { thinkingLevel: "MEDIUM", includeThoughts: true }],
+    // 0831 实弹后退回 MEDIUM（HIGH 过热编造），守卫拦的是擅自升档到 HIGH。
+    // 这条守卫的意义始终是「档位不得被 agent 擅自改动」，不是偏爱某一档。
     ["擅自升档 HIGH", { thinkingLevel: "HIGH", includeThoughts: false }],
   ])("拒绝%s", (_name, thinkingConfig) => {
     expect(validateNativeProbeGenerationConfig({ ...config(), thinkingConfig }, config(), gradient).status).toBe("fail");

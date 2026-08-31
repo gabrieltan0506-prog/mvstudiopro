@@ -203,10 +203,8 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
           },
         },
         /**
-         * 🔴 Schema 分支（0830 晚用户定稿）：responseSchema 无法按 evidenceRole 条件必填，
-         * 故此处只列两类镜头共有的三项；**story 的 17 字段完整性由 assertRawShotFieldPresence
-         * 按 evidenceRole 分支强制**，绝非放宽 story 要求。
-         * non_story_ad 只保存时间轴与分类标记，多列必填会逼模型给广告镜编描述。
+         * 这里保留基础字段目录；实际发送前由 buildNativeDeepReadResponseSchema
+         * 派生 story 的17字段与广告的3字段 anyOf 分支。基础目录不直接发给模型。
          */
         required: ["startSec", "endSec", "evidenceRole"],
       },
@@ -347,38 +345,23 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
 } as const;
 
 /**
- * 首发与历史重试温度候选（2026-08-31 用户授权），待实测，不是已验收冻结值。
- *
- * 首发按用户指定由 0.70 调为 0.65；后两次复用 b948d7c 的 0.65、0.60，下限恢复 0.60。
- * 温度梯度保持；MEDIUM 首发失败并完成原帧复盘后，按用户此前条件仅试 LOW。
- * 保持 maxOutputTokens 65_536 · candidateCount 1 ·
- * audioTimestamp true · responseMimeType/responseSchema ·
- * 除 thinkingLevel 从 MEDIUM 改为 LOW 外，其余请求内容不变。
- *
- * LOW 只是待验候选，不代表质量已改善；不恢复历史 thinkingBudget。
- * 变更流程见知识库《schema动刀纪律》：改一字＝新版本＝旧缓存作废＝需重新探针实测。
- * 首发请求字节边界与历史重试档位由 manhuaNativeDeepReadRunner.test.ts 分别检查。
+ * 本轮保留首发0.65、重试候选0.65/0.60与MEDIUM；只实验prompt/schema前置契约。
+ * 首片0a7cc362内容失败，原始与解析完全一致，不能据此认定温度或思考档位是根因。
+ * LOW候选d60224f未实跑；用户最新要求先用原参数检验契约对齐，再按结果决定LOW。
  */
 export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
-  /**
-   * 首发保持用户选定的 0.65；本轮只检验思考档位，不以旧样本镜数推断温度因果。
-   */
   temperature: 0.65,
   maxOutputTokens: 65_536,
   candidateCount: 1,
   audioTimestamp: true,
   responseMimeType: "application/json",
+  // 基础字段目录；真正请求按可信分片上下文派生动态schema。
   responseSchema: NATIVE_DEEP_READ_RESPONSE_SCHEMA,
   /**
-   * 0831 用户条件：MEDIUM 仍需重试时试 LOW，不改 HIGH，不恢复 thinkingBudget。
-   * 首发 probe_douyin_20260831150352_0a7cc362 以 MEDIUM 返回22镜并被门禁拒收；
-   * 原始与解析完全一致，实际画面另证实角色错认、合镜及时间错位。
-   * 这些结果尚不能证明 MEDIUM 是根因，LOW 效果必须用同片实测确认。
-   * ProbeChecks 的独立发车守卫同步限定 LOW，实际请求仍须与完整配置逐项相等。
-   * includeThoughts:false 只关闭思考摘要回显，不关闭思考本身，也不消除其用量。
-   * 实际消耗一律以回执里的 thoughtsTokenCount 为准，不拿配置值当实际值。
+   * 只发thinkingLevel，不恢复thinkingBudget。includeThoughts:false仅关闭思考摘要回显；
+   * 实际思考用量以供应商回执为准，不根据档位推断内容质量。
    */
-  thinkingConfig: { thinkingLevel: "LOW", includeThoughts: false },
+  thinkingConfig: { thinkingLevel: "MEDIUM", includeThoughts: false },
   /**
    * 0831 删除 mediaResolution：0830 实测「设了等于没设」——传 MEDIUM 后输入 token
    * 与 LOW 那轮完全一致（210,198 vs 210,134，仍约 66–70 token/帧）。Google 文档亦写明
@@ -630,6 +613,9 @@ export const NATIVE_DEEP_READ_PROHIBITION_BLOCK = `
 不得为之：
 · 逐字转写全片对白；落在 keyMoments 邻域之外的台词一概不收。
 · 为了多写字幕而压缩镜头条数或缩短镜头描述。
+· 为凑镜数而等距拆段、虚构变化或改写真实镜头内容。
+· 将普通切镜、普通打光或持续背景音乐本身当作精华；为前中后覆盖或类别齐全凑 keyMoments。
+· 按剧情顺序猜测 keyMoments 秒位、用附近另一秒的画面顶替，或将尚未核实的人物、地点、动作写进说明。
 · 为凑够音轨段数或声音事件数而编造不存在的声音。
 · 凭画面推测声音。
 · 长镜拆分时不得截断原镜头尾部。
@@ -871,7 +857,7 @@ export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
  * 精确切片与独立采样配置改变请求语义；旧流复制切片的缓存与确认码不得复用。
  * 本版验证首发0.65与历史两次重试温度，保留既有时间解释；实测过关前不宣称冻结。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-custom-20260831-low-thinking-candidate-v1" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-custom-20260831-preflight-evidence-v1" as const;
 
 /** 分片时长和采样率独立配置；默认值来自共享配置，不按长短片自动降档。 */
 export function resolveNativeDeepReadRequestFps(totalDurationSec: number, requestedFps?: number): number {
@@ -954,7 +940,9 @@ export function buildNativeDeepReadSelfCheckBlock(lenSec: number): string {
 
 1. 逐条计算 endSec − startSec。凡是大于 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 的，回去按硬约束 2 拆开。
 2. 核对本段 ${Math.round(lenSec)} 秒的画面与 shots 时间轴，完整记录每次真实切换，保留真实短镜头和长镜尾部。
-3. 核对相邻各镜的秒位与实际画面边界；真实等长的镜头保留原秒位，同一长镜的拆分按镜内变化定位。`;
+3. 核对相邻各镜的秒位与实际画面边界；真实等长的镜头保留原秒位，同一长镜的拆分按镜内变化定位。
+4. ${buildNativeDeepReadDensityContract(lenSec)}
+5. 对每条 keyMoment 重新定位 atSec，核对该帧人物、地点、动作及可见字幕与 noteZh 一致，再保留；音轨类另核对同秒声音。`;
 }
 
 
@@ -1090,10 +1078,8 @@ export function buildGeminiNativeDeepReadSegmentPrompt(input: {
   };
   const hint = String(input.hintZh || "").trim();
   /**
-   * 0826 用户拍板：硬约束只留「错了会污染入库数据」的红线。
-   * 0829 提示词软化：密度不再以「至少 N 镜 / 至少 N 段 / 至少 N 条 cue」的数字下达——
-   * 数字目标只会逼模型编造凑数（0826 实弹：安静段落被逼出不存在的声音事件）。
-   * 密度改为软引导 + 诚实优先声明；结构化层负责整理，门禁只贴标记不再当拒收线。
+   * 音轨条数沿用观察建议，保持真实声音优先；镜数与均长的现行拒收条件
+   * 已在输出前自检及动态schema前置，两者分别处理，避免用声音条数逼出编造。
    */
   const audioHardRule = input.hasAudio
     ? `6. 音轨范围与时间基准
@@ -1145,8 +1131,8 @@ ${buildNativeDeepReadSelfCheckBlock(lenSec)}
 每条 story 镜头填写以下 17 字段：
 - startSec / endSec：本镜实际起止秒位。单条最长 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒；真实短镜按实际时长保留，超过上限的长镜按硬约束 2 拆成每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。
 - unitTypeZh：剪辑镜头／拆分镜证据段。
-- shotSizeZh：实际景别，如极特写、特写、近景、中景、全景、大远景。
-- angleZh：实际机位，如平视、仰拍、俯拍、过肩、主观。
+- shotSizeZh：实际景别，如极特写、特写、近景、中景、全景、大远景，≤28字。
+- angleZh：实际机位，如平视、仰拍、俯拍、过肩、主观，≤28字。
 - compositionZh：主体位置、前中后景、视线方向与空间层次，≤80字。
 - cameraMoveZh：运镜起点、方向、速度或节奏、幅度与落点；静止画面写「固定机位」，≤80字。
 - blockingZh：角色站位、朝向、距离、进退路径、遮挡与群像调度变化，≤70字。
@@ -1157,23 +1143,24 @@ ${buildNativeDeepReadSelfCheckBlock(lenSec)}
 - relationshipReactionZh：角色动作先后、彼此回应与距离变化，≤60字。
 - lightingZh：主辅光位、色调、明暗关系、轮廓光与环境光变化，≤58字。
 - actionZh：本镜可见动作过程、信息变化、结果与辨识特征，≤60字。写你在该时间段真实看到的内容，各镜各写各的。
-- transitionInZh：进入本镜的实际转场方式；长镜续段使用规定标记。
+- transitionInZh：进入本镜的实际转场方式；长镜续段使用规定标记，≤50字。
 - evidenceRole：按统一分类规则填写。
 
 【正向要求二：关键抓帧 keyMoments】
 
-keyMoments 是由你选定的抓帧秒位表。下游会按 atSec 去原片抓取对应画面，因此应选事件最有代表性的实际发生秒位。
-五类选点依据：
+${NATIVE_DEEP_READ_KEY_MOMENT_SELECTION_ZH}
+下游按 atSec 抓取一张原片画面，优先取关键事件已经清晰呈现的代表帧。
+五类选点依据（均以承载上述剧情重点或鲜明视听手法为前提）：
 - 切镜：景别或机位发生突变后，画面清晰落定的代表帧，例如中景切到特写的瞬间。
 - 情绪：微表情的峰值时刻，例如眉头锁紧、眼神变化最明确的那一秒。
 - 灯光：氛围切换前后各一条，例如暖光转为面部阴影加深时，分别记录变化前后的代表帧。
 - 剧情：推动因果的关键节点，例如字幕点明冲突、关键道具亮相。
 - 音轨：声音事件发生秒，例如配乐转折、关键音效或声音分段切换。
-密度跟着戏走：重点镜头可选多条；平淡镜头可以少给。本段前中后三个区间都要有抓帧点。
+逐一审阅本段前、中、后三个区间，按精华事件的实际分布选点；同一事件优先选最清楚的一帧，变化前后确有对照价值时可各选一帧，平淡区间可以留空。
 每条包含：
 - atSec：全片绝对秒，可保留一位小数（如 673.6）。输入按 ${videoFps}fps 抽帧，采样间隔约 ${sampleIntervalSec} 秒；取事件真正发生的那一帧的秒位。
 - kindZh：切镜／情绪／灯光／剧情／音轨。
-- noteZh：一句话说明该时刻发生的事件，≤60字。
+- noteZh：写清本帧可见的关键事件，以及它对冲突、反转、情绪或视听表达的作用，≤60字。
 
 【正向要求三：关键时刻字幕 subtitles】
 
@@ -1259,6 +1246,96 @@ shots 条目按 evidenceRole 区分两种结构：
   return `${retryRequirements}\n${NATIVE_DEEP_READ_PROHIBITION_BLOCK}${retryProhibitions}`;
 }
 
+/** 同一段的可信输入由生产者传递，既用于生成请求，也用于探针独立校验。 */
+export type NativeDeepReadSegmentContext = {
+  startSec: number;
+  endSec: number;
+  segmentIndex: number;
+  hasAudio: boolean;
+};
+
+export const NATIVE_DEEP_READ_KEY_MOMENT_SELECTION_ZH = "keyMoments 是剧情精华与有学习价值的视听瞬间的抓帧秒位表。优先选择冲突升级、反转、真相揭示、关键决定或动作结果、情绪峰值；切镜、灯光和声音只有对这些重点或鲜明导演手法有实质作用时才入选。每个点先回看该秒原帧，核实人物、地点、动作及可见字幕与说明相符；音轨类同时核实该秒真实声音。";
+
+export function resolveNativeDeepReadDensityContract(lenSec: number) {
+  const referenceShots = Math.ceil(Math.max(1, Math.round(lenSec)) / NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC);
+  return {
+    referenceShots,
+    minStoryShots: Math.ceil(referenceShots * (1 - NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO)),
+    maxAverageSec: NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC * (1 + NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO),
+  };
+}
+
+function buildNativeDeepReadDensityContract(lenSec: number): string {
+  const rule = resolveNativeDeepReadDensityContract(lenSec);
+  return `本段镜数参考线为 ${rule.referenceShots} 条；现行门禁容差为20%，存在剧情镜时 story 至少 ${rule.minStoryShots} 条，广告另计。剧情镜平均时长（剧情镜时长总和÷剧情镜数）以10秒为参考，超过 ${rule.maxAverageSec} 秒会要求重做。完整${Math.round(lenSec)}秒均为剧情时，平均时长条件需要至少 ${Math.ceil(lenSec / rule.maxAverageSec)} 条。数值用于复查漏记；逐镜边界和内容以原片实际证据为准，每条写出该时段可辨识的动作与变化。单条目标30秒，现行容差拒收线33秒；完整输出覆盖目标100%，低于90%会要求重做。`;
+}
+
+type NativeResponseSchemaNode = {
+  [key: string]: unknown;
+  type?: string;
+  description?: string;
+  maxLength?: number;
+  properties?: Record<string, NativeResponseSchemaNode>;
+  items?: NativeResponseSchemaNode;
+  anyOf?: NativeResponseSchemaNode[];
+};
+
+/** 将当前门禁的可表达部分前置；内容真假、剧情镜计数和时间差仍由语义验收核对。 */
+export function buildNativeDeepReadResponseSchema(context: NativeDeepReadSegmentContext): Record<string, unknown> {
+  if (!Number.isFinite(context.startSec) || !Number.isFinite(context.endSec)
+    || context.startSec < 0 || context.endSec <= context.startSec
+    || !Number.isSafeInteger(context.segmentIndex) || context.segmentIndex < 0
+    || typeof context.hasAudio !== "boolean") throw new Error("生成schema缺少有效分片上下文");
+  const schema = JSON.parse(JSON.stringify(NATIVE_DEEP_READ_RESPONSE_SCHEMA)) as NativeResponseSchemaNode;
+  const props = schema.properties!;
+  const lenSec = Math.max(1, Math.round(context.endSec - context.startSec));
+  const rule = resolveNativeDeepReadDensityContract(lenSec);
+  const absoluteTime = { type: "NUMBER", minimum: Math.round(context.startSec), maximum: Math.round(context.endSec) };
+  const shot = props.shots!.items!;
+  shot.properties!.startSec = { ...absoluteTime };
+  shot.properties!.endSec = { ...absoluteTime };
+  shot.properties!.evidenceRole = { type: "STRING", enum: ["story"] };
+  shot.required = Object.keys(shot.properties!);
+  const ad: NativeResponseSchemaNode = { type: "OBJECT", properties: {
+    startSec: { ...absoluteTime }, endSec: { ...absoluteTime }, evidenceRole: { type: "STRING", enum: ["non_story_ad"] },
+  }, required: ["startSec", "endSec", "evidenceRole"] };
+  props.shots = {
+    description: buildNativeDeepReadDensityContract(lenSec) + "含剧情时数组总数下限仅是必要条件，story计数单独核对。纯广告仅保存三字段时间轴。",
+    anyOf: [
+      { type: "ARRAY", minItems: rule.minStoryShots, items: { anyOf: [shot, ad] } },
+      // 全广告段保留既有结构口径，避免为了minItems编出剧情；广告真实性仍由现行门禁检查。
+      { type: "ARRAY", items: ad },
+    ],
+  };
+  props.keyMoments!.description = NATIVE_DEEP_READ_KEY_MOMENT_SELECTION_ZH;
+  props.keyMoments!.items!.properties!.atSec = { ...absoluteTime,
+    maximum: Number((Math.ceil(context.endSec * 10) / 10 - 0.1).toFixed(1)),
+    description: "先回看该秒原帧核实说明，再填写全片绝对秒，可保留一位小数。" };
+  props.keyMoments!.items!.properties!.noteZh!.description = "本帧可见的关键事件及其对冲突、反转、情绪或视听表达的作用。";
+  props.subtitles!.items!.properties!.atSec = { ...absoluteTime, type: "INTEGER" };
+  props.audioResolution!.minItems = context.hasAudio ? 1 : 0;
+  props.audioResolution!.maxItems = context.hasAudio ? 1 : 0;
+  props.audioResolution!.items!.properties!.chunkIndex = { type: "INTEGER", minimum: context.segmentIndex, maximum: context.segmentIndex };
+  const track = props.audioResolution!.items!.properties!.analysis!.properties!.audioTrack!.items!;
+  for (const key of ["fromSec", "toSec"]) track.properties![key] = { type: "INTEGER", minimum: 0, maximum: lenSec };
+  track.properties!.cues!.items!.properties!.atSec = { type: "INTEGER", minimum: 0, maximum: lenSec };
+  // Vertex未承诺支持maxLength；字数要求放进description，避免把被忽略的键当作保证。
+  const normalize = (node: NativeResponseSchemaNode): void => {
+    if (node.maxLength !== undefined) {
+      node.description = `${node.description || ""}≤${node.maxLength}字。`;
+      delete node.maxLength;
+    }
+    if (node.properties) {
+      node.propertyOrdering = Object.keys(node.properties);
+      Object.values(node.properties).forEach(normalize);
+    }
+    if (node.items) normalize(node.items);
+    node.anyOf?.forEach(normalize);
+  };
+  normalize(schema);
+  return schema;
+}
+
 /**
  * Google 原生 generateContent 请求体；Vertex 与 EvoLink 同构，只换端点与鉴权。
  * fileData 主线用 gs://（Vertex 服务账号可读），兜底用 GCS V4 签名 https。
@@ -1267,6 +1344,7 @@ export function buildGeminiNativeDeepReadSegmentRequest(input: {
   fileUri: string;
   fps: number;
   prompt: string;
+  segmentContext: NativeDeepReadSegmentContext;
   /** 原地重试传 NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG；缺省=首发参数 */
   generationConfig?: Record<string, unknown>;
 }): Record<string, unknown> {
@@ -1274,6 +1352,7 @@ export function buildGeminiNativeDeepReadSegmentRequest(input: {
   const requestedTemperature = Number(requestedConfig.temperature);
   const generationConfig = {
     ...requestedConfig,
+    responseSchema: buildNativeDeepReadResponseSchema(input.segmentContext),
     // 纵深门禁：未来即使有新旁路误传 0，也在真正组装请求体时收口到 0.60。
     temperature: Number.isFinite(requestedTemperature)
       ? Math.max(NATIVE_DEEP_READ_TEMPERATURE_MIN, requestedTemperature)
@@ -2858,7 +2937,7 @@ export function assertNativeDeepReadSegmentDensity(input: {
    *   · 单条证据段 ≤30 秒（用户三十余次实测拍板，不得放宽）
    *   · 段级覆盖率地板（整片必须读完，回 3 秒即拒）
    */
-  const shotFloor = Math.ceil(lenSec / NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC);
+  const shotFloor = resolveNativeDeepReadDensityContract(lenSec).referenceShots;
   if (storyShots.length > 0 && storyShots.length < shotFloor) {
     note(
       "shot_density_low",
@@ -3373,6 +3452,7 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
     planVersion: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
     model: NATIVE_DEEP_READ_MODEL,
     glmRepairModel: NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL,
+    responseSchema: buildNativeDeepReadResponseSchema({ ...input.segment, segmentIndex: input.segmentIndex, hasAudio: input.hasAudio }),
     generationConfig: NATIVE_DEEP_READ_GENERATION_CONFIG,
     retryGenerationConfig: NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG,
     finalRetryGenerationConfig: NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG,
@@ -3477,8 +3557,8 @@ export async function invokeNativeDeepReadGlmStructuring(
 export type NativeDeepReadBatchRunnerDeps = {
   prepareVideos: typeof prepareEpisodeVideos;
   remove: typeof deleteGcsObject;
-  postVertex: typeof postVertexNativeDeepRead;
-  postEvolink: typeof postEvolinkNativeDeepRead;
+  postVertex: (body: unknown, signal?: AbortSignal, context?: NativeDeepReadSegmentContext) => Promise<NativeDeepReadModelResponse>;
+  postEvolink: (body: unknown, signal?: AbortSignal, context?: NativeDeepReadSegmentContext) => Promise<NativeDeepReadModelResponse>;
   signReadUrl: typeof signGsUriV4ReadUrl;
   invokeGlmStructuring: typeof invokeNativeDeepReadGlmStructuring;
   readSegmentCache: typeof readNativeDeepReadSegmentCacheEntry;
@@ -4012,7 +4092,9 @@ async function executeNativeDeepReadBatch(
           temperature: input.temperature,
           degraded: degraded || undefined,
         }, params.onModelReceipt);
+        const segmentContext = { startSec: segment.startSec, endSec: segment.endSec, segmentIndex: input.segmentIndex, hasAudio };
         const body = buildGeminiNativeDeepReadSegmentRequest({
+          segmentContext,
           fileUri: input.fileUri,
           fps: input.fps,
           generationConfig: {
@@ -4033,8 +4115,8 @@ async function executeNativeDeepReadBatch(
         });
         try {
           const response = await (input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK
-            ? deps.postEvolink(body, params.abortSignal)
-            : deps.postVertex(body, params.abortSignal));
+            ? deps.postEvolink(body, params.abortSignal, segmentContext)
+            : deps.postVertex(body, params.abortSignal, segmentContext));
           if (response.status >= 300) {
             const providerError = parseNativeProviderErrorReceipt({
               httpStatus: response.status,

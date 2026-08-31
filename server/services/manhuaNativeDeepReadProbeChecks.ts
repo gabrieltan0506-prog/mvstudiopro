@@ -77,12 +77,8 @@ export function validateNativeProbeGenerationConfig(
   if (!isRecord(cfg.responseSchema) || Object.keys(cfg.responseSchema).length === 0) {
     errorsZh.push("responseSchema 必须是非空对象");
   }
-  /**
-   * MEDIUM 首发已复盘，按用户预先指定条件试 LOW；这不是通用的任意档位开关。
-   * 这里仍是独立于 generationConfig 的第二道发车闸，候选改档时必须同步；
-   * 后面的完整配置与 Schema 比较照旧，不能只改记录文案或透过守卫换参数。
-   */
-  if (thinking.thinkingLevel !== "LOW") errorsZh.push("thinkingLevel 必须为 LOW");
+  /** 本轮按用户最新要求保持MEDIUM，仅对比前置契约；独立守卫与真实请求逐项核对。 */
+  if (thinking.thinkingLevel !== "MEDIUM") errorsZh.push("thinkingLevel 必须为 MEDIUM");
   // 用户 0831 当面重申：thinkingBudget 与 thinkingLevel 互斥，只能二选一，此处走 thinkingLevel。
   if ("thinkingBudget" in thinking) errorsZh.push("thinkingBudget 不得与现行 thinkingLevel 同传");
   if (thinking.includeThoughts !== false) errorsZh.push("includeThoughts 必须为 false");

@@ -3,6 +3,7 @@ import {
   buildGeminiNativeDeepReadSegmentPrompt,
   buildGeminiNativeDeepReadSegmentRequest,
   NATIVE_DEEP_READ_RESPONSE_SCHEMA,
+  buildNativeDeepReadResponseSchema,
 } from "./manhuaNativeDeepReadRunner.js";
 
 const input = {
@@ -108,6 +109,7 @@ describe("Gemini 原生读片正向要求与禁止事项分区", () => {
       const wire = JSON.parse(
         JSON.stringify(
           buildGeminiNativeDeepReadSegmentRequest({
+            segmentContext: { ...input, hasAudio: row.hasAudio },
             fileUri: "gs://test-bucket/segment.mp4",
             fps: 12,
             prompt,
@@ -116,16 +118,16 @@ describe("Gemini 原生读片正向要求与禁止事项分区", () => {
       );
       expect(wire.contents[0].parts[1].text).toBe(prompt);
       expect(wire.generationConfig.thinkingConfig).toEqual({
-        thinkingLevel: "LOW",
+        thinkingLevel: "MEDIUM",
         includeThoughts: false,
       });
       expect(wire.generationConfig.responseSchema).toEqual(
-        NATIVE_DEEP_READ_RESPONSE_SCHEMA
+        buildNativeDeepReadResponseSchema({ ...input, hasAudio: row.hasAudio })
       );
     }
   );
 
-  it.each(cases)("$name：整理位置后20项字数上限仍与schema相同", row => {
+  it.each(cases)("$name：整理位置后23项字数上限仍与schema相同", row => {
     const prompt = buildGeminiNativeDeepReadSegmentPrompt({
       ...input,
       hasAudio: row.hasAudio,
@@ -134,7 +136,7 @@ describe("Gemini 原生读片正向要求与禁止事项分区", () => {
     const declared = Array.from(
       prompt.matchAll(/^- ([A-Za-z][A-Za-z0-9]*)：[^\n]*?≤(\d+)字/gm)
     );
-    expect(declared).toHaveLength(20);
+    expect(declared).toHaveLength(23);
     const limits = new Map<string, number>();
     const walk = (node: unknown) => {
       if (!node || typeof node !== "object") return;

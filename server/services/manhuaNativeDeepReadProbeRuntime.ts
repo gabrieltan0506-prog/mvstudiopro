@@ -3,6 +3,8 @@ import {
   NATIVE_DEEP_READ_GENERATION_CONFIG,
   NATIVE_DEEP_READ_RETRY_TEMPERATURES,
   assertNativeDeepReadPreparedMedia,
+  buildNativeDeepReadResponseSchema,
+  type NativeDeepReadSegmentContext,
 } from "./manhuaNativeDeepReadRunner.js";
 import type { NativeProbeManifest } from "./manhuaNativeDeepReadProbeManifest.js";
 import {
@@ -152,8 +154,8 @@ export function createNativeProbeAuditedPost<T>(
   recordAudit: (audit: NativeProbeRequestAudit) => void | Promise<void>,
   /** 仅允许同步追加本地事件数组；不得在此执行网络、日志或其他副作用。 */
   onTransportEvent?: (event: NativeProbeTransportEvent) => void,
-): (body: unknown, signal?: AbortSignal) => Promise<T> {
-  return async (body, signal) => {
+): (body: unknown, signal?: AbortSignal, context?: NativeDeepReadSegmentContext) => Promise<T> {
+  return async (body, signal, context) => {
     let serialized: string | undefined;
     let snapshot: unknown;
     try {
@@ -171,9 +173,12 @@ export function createNativeProbeAuditedPost<T>(
     const temperature = config.temperature;
     const allowed = typeof temperature === "number" && Number.isFinite(temperature)
       && (NATIVE_DEEP_READ_RETRY_TEMPERATURES as readonly number[]).includes(temperature);
-    const expected = { ...NATIVE_DEEP_READ_GENERATION_CONFIG, temperature };
+    const expected = { ...NATIVE_DEEP_READ_GENERATION_CONFIG, temperature,
+      ...(context ? { responseSchema: buildNativeDeepReadResponseSchema(context) } : {}),
+    };
     const validation = validateNativeProbeGenerationConfig(config, expected,
       typeof temperature === "number" ? [temperature] : []);
+    if (!context) validation.errorsZh.push("缺少生产者提供的分片上下文，无法核对动态schema");
     if (!allowed) validation.errorsZh.push("实际温度不在生产冻结重试梯度内");
     // 0831 起 generationConfig 里也不再发 mediaResolution，这条只剩「Part 级一律不许出现」。
     if (misplacedMediaResolution(request)) validation.errorsZh.push("媒体分辨率不得出现在 Part 级字段中");
