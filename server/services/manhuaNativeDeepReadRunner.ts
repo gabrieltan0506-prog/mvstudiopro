@@ -366,7 +366,7 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
    * 该配置下 300 秒分片实测产出 57／75／76／50 镜（4–5 秒每镜）。
    * 中途被改成首发 0.65 的那版，319 秒只拿到 34–41 镜（8–9 秒每镜），产出腰斩。
    */
-  temperature: 0.7,
+  temperature: 0.65,
   maxOutputTokens: 65_536,
   candidateCount: 1,
   audioTimestamp: true,
@@ -415,7 +415,14 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
  * 待验候选同一 Vertex 分片至多三次：0.65 → 0.65 → 0.60；后两档复用 b948d7c。
  * 是否重试由统一段级判据决定；截断前缀保留、不因覆盖重复购买，用户中止不重试。
  */
-export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.7, 0.65, 0.6] as const;
+/**
+ * 首发 0.65，梯度 0.65 → 0.65 → 0.6（0831 用户拍板）。
+ *
+ * 实测依据（同素材同日）：首发 0.65 → 66 镜、39 镜；首发 0.7 → 9、10、10、17 镜。
+ * 0827 版代码注释亦记载「0.7 首发合格率 50%，0.65 是 100%——每次重试都要
+ * 重付一整片视频输入，这一降直接省掉一半重试」。
+ */
+export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.65, 0.65, 0.6] as const;
 
 /**
  * 普通建议按三家族及偏差判定；独立覆盖与证据段上限优先于该计数线。

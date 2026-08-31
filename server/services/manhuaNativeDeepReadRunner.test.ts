@@ -225,9 +225,9 @@ describe("模型与通道收口", () => {
     expect(calls[0]!.init.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it("参数冻结锁：首发0.7、65536、单候选、原Schema、thinkingLevel MEDIUM 且无 thinkingBudget", () => {
+  it("参数冻结锁：首发0.65、65536、单候选、原Schema、thinkingLevel MEDIUM 且无 thinkingBudget", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG).toMatchObject({
-      temperature: 0.7,
+      temperature: 0.65,
       maxOutputTokens: 65_536,
       candidateCount: 1,
       audioTimestamp: true,
@@ -240,8 +240,8 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
   });
 
-  it("同一 Vertex 分片候选三档：0.7→0.65→0.60，间隔60秒（0827 验证可用的梯度）", () => {
-    expect(NATIVE_DEEP_READ_RETRY_TEMPERATURES).toEqual([0.7, 0.65, 0.6]);
+  it("同一 Vertex 分片候选三档：0.65→0.65→0.60，间隔60秒", () => {
+    expect(NATIVE_DEEP_READ_RETRY_TEMPERATURES).toEqual([0.65, 0.65, 0.6]);
     expect(NATIVE_DEEP_READ_RETRY_INTERVAL_MS).toBe(60_000);
     expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.6);
     expect(NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG).toEqual({
@@ -299,7 +299,7 @@ describe("模型与通道收口", () => {
         hintZh: "抖音漫剧完整视听证据探针；按真实镜头、表演、光影、声音和叙事变化记录",
       }),
     });
-    expect(candidate.generationConfig).toMatchObject({ temperature: 0.7 });
+    expect(candidate.generationConfig).toMatchObject({ temperature: 0.65 });
     const json = JSON.stringify(candidate);
     // 正面区与禁止区必须各自成段且只出现一次——结构分离是本次重构的要点。
     expect(json.split(JSON.stringify(NATIVE_DEEP_READ_PROHIBITION_BLOCK).slice(1, -1))).toHaveLength(2);
@@ -2380,7 +2380,7 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
       });
       expect(row.requestFingerprint).toBe(expectedFingerprint);
       const rawInput = vi.mocked(deps.writeRawAttemptEvidence).mock.calls.find(([input]) => input.segmentIndex === row.segmentIndex)![0];
-      expect(rawInput).toMatchObject({ segmentCount: 5, requestFingerprint: expectedFingerprint, temperature: 0.7 });
+      expect(rawInput).toMatchObject({ segmentCount: 5, requestFingerprint: expectedFingerprint, temperature: 0.65 });
       const request = vi.mocked(deps.postVertex).mock.calls.map(([body]) => body as any)
         .find((body) => body.contents[0].parts[0].fileData.fileUri === `gs://test-bucket/seg-${row.segmentIndex}.mp4`);
       expect(request).toEqual(buildGeminiNativeDeepReadSegmentRequest({
@@ -2428,7 +2428,7 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
     const deps = makeRunnerDeps({ postVertex });
     const result = await runManhuaNativeDeepReadSelectedSegments(selectedParams([3]), deps);
     expect(postVertex).toHaveBeenCalledTimes(3);
-    expect(postVertex.mock.calls.map(([body]) => body.generationConfig.temperature)).toEqual([0.7, 0.65, 0.6]);
+    expect(postVertex.mock.calls.map(([body]) => body.generationConfig.temperature)).toEqual([0.65, 0.65, 0.6]);
     expect(postVertex.mock.calls[1]![0].contents[0].parts[1].text).toContain("6.3%");
     expect(deps.waitForRetry).toHaveBeenCalledTimes(2);
     expect(deps.waitForRetry).toHaveBeenNthCalledWith(1, NATIVE_DEEP_READ_RETRY_INTERVAL_MS, undefined);
@@ -2974,7 +2974,7 @@ describe("Vertex 同通道三档重试（禁止 EvoLink fallback）", () => {
     hasAudio: true,
   }]);
 
-  it("Vertex 4xx 按 0.7→0.65→0.60 原通道重试三档，耗尽后原错失败", async () => {
+  it("Vertex 4xx 按 0.65→0.65→0.60 原通道重试三档，耗尽后原错失败", async () => {
     const receipts: Array<Record<string, unknown>> = [];
     const postVertex = vi.fn(async () => ({
       status: 400,
@@ -3001,7 +3001,7 @@ describe("Vertex 同通道三档重试（禁止 EvoLink fallback）", () => {
         (row) => row.route === "vertex_gcs_video" && row.status === "started",
       );
       expect(started.map((row) => [row.attemptNumber, row.temperature])).toEqual([
-        [1, 0.7], [2, 0.65], [3, 0.6],
+        [1, 0.65], [2, 0.65], [3, 0.6],
       ]);
       const failed = receipts.filter(
         (row) => row.route === "vertex_gcs_video" && row.status === "failed",
@@ -3513,9 +3513,9 @@ describe("门禁前解析稿持久化接线", () => {
   });
 });
 
-describe("参数基准回归 0831：首发0.7 + thinkingLevel MEDIUM（实测过关前不宣称冻结）", () => {
+describe("参数基准回归 0831：首发0.65 + thinkingLevel MEDIUM（实测过关前不宣称冻结）", () => {
   it("generationConfig逐字段保持：thinkingConfig只有 HIGH 与 includeThoughts false，绝无 thinkingBudget", () => {
-    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.temperature).toBe(0.7);
+    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.temperature).toBe(0.65);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.maxOutputTokens).toBe(65_536);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.candidateCount).toBe(1);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.audioTimestamp).toBe(true);
@@ -3525,8 +3525,8 @@ describe("参数基准回归 0831：首发0.7 + thinkingLevel MEDIUM（实测过
     expect(JSON.stringify(NATIVE_DEEP_READ_GENERATION_CONFIG)).not.toContain("thinkingBudget");
   });
 
-  it("候选首发0.7，后两次0.65/0.60与下限0.60，回到 0827 验证可用的梯度", () => {
-    expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.7, 0.65, 0.6]);
+  it("候选首发0.65，后两次0.65/0.60与下限0.60，回到 0827 验证可用的梯度", () => {
+    expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.65, 0.65, 0.6]);
     expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.6);
   });
 
@@ -3542,8 +3542,8 @@ describe("参数基准回归 0831：首发0.7 + thinkingLevel MEDIUM（实测过
    * 改档位时两处必须同步。
    */
   it("🔒 生产参数冻结：温度 0.7 三档 + thinkingLevel MEDIUM + 默认 14fps", () => {
-    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.temperature).toBe(0.7);
-    expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.7, 0.65, 0.6]);
+    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.temperature).toBe(0.65);
+    expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.65, 0.65, 0.6]);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig)
       .toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
