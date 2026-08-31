@@ -350,21 +350,18 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
  * 首发与历史重试温度候选（2026-08-31 用户授权），待实测，不是已验收冻结值。
  *
  * 首发按用户指定由 0.70 调为 0.65；后两次复用 b948d7c 的 0.65、0.60，下限恢复 0.60。
- * 首发请求只改温度；整轮同时调整重试档位与下限，不能视为只改首发的单变量实验。
+ * 温度梯度保持；MEDIUM 首发失败并完成原帧复盘后，按用户此前条件仅试 LOW。
  * 保持 maxOutputTokens 65_536 · candidateCount 1 ·
  * audioTimestamp true · responseMimeType/responseSchema ·
- * thinkingConfig { thinkingLevel: "MEDIUM", includeThoughts: false } 及其余请求内容不变。
+ * 除 thinkingLevel 从 MEDIUM 改为 LOW 外，其余请求内容不变。
  *
- * 早期的 thinkingBudget 与禁止 thinkingLevel 口径已被本次 MEDIUM 定稿替代。
+ * LOW 只是待验候选，不代表质量已改善；不恢复历史 thinkingBudget。
  * 变更流程见知识库《schema动刀纪律》：改一字＝新版本＝旧缓存作废＝需重新探针实测。
  * 首发请求字节边界与历史重试档位由 manhuaNativeDeepReadRunner.test.ts 分别检查。
  */
 export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
   /**
-   * 0831 回归用户 0827–0828 验证可用的基准。
-   * 依据 `2026Aug27/probe-and-codes-gpt.md`：温度固定 0.7 → 0.65 → 0.6，
-   * 该配置下 300 秒分片实测产出 57／75／76／50 镜（4–5 秒每镜）。
-   * 中途被改成首发 0.65 的那版，319 秒只拿到 34–41 镜（8–9 秒每镜），产出腰斩。
+   * 首发保持用户选定的 0.65；本轮只检验思考档位，不以旧样本镜数推断温度因果。
    */
   temperature: 0.65,
   maxOutputTokens: 65_536,
@@ -373,35 +370,15 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
   responseMimeType: "application/json",
   responseSchema: NATIVE_DEEP_READ_RESPONSE_SCHEMA,
   /**
-   * 0830 晚用户拍板：**去掉 thinkingBudget，改用 thinkingLevel**。
-   *
-   * 实测依据：thinkingBudget 从来不是硬上限——设 18K 实跑 39,024，设 12K 实跑 24,674。
-   * Google 对 Gemini 3 系列保留旧 thinkingBudget 兼容但推荐 thinkingLevel；
-   * ⚠️ 官方同时说明**思考等级也是相对控制，不保证固定 token 数**，
-   * 所以改成 MEDIUM 同样不承诺「绝不超过某个值」，只是换一种更受支持的控制方式。
-   *
-   * 🔴 0831 实弹后用户拍板退回 **MEDIUM**：HIGH 过热。
-   *
-   * HIGH 那一发（run probe_douyin_20260831030601_bc672813 attempt1）产出 95 镜，
-   * 但其中 **34 镜秒位越界**——本片只有 319 秒，模型却写到 519 秒，
-   * 内容具体到「小女孩举起紫色令牌召唤影七」，而那 200 秒的画面根本不存在。
-   * 同一发 attempt2（温度 0.65）35 镜、零越界。想得越多推演越远，编出后续剧情。
-   * 温度维持 0.7 三档不动，只退思考档位。
-   *
-   * 为什么改：MEDIUM 实跑思考量仅 4,401／3,715／4,058／10,115，而思考量与镜数明显正相关
-   * （10,115→41 镜，3,715→15 镜）。同期产出从用户验证可用的 57／75／76／50 镜
-   * （300 秒 / 10fps，见 2026Aug27/probe-and-codes-gpt.md）掉到 319 秒 34–41 镜。
-   * 模型不是不肯写，是没想够。用户 0827–0828 跑了两天验证可用的那批（PR #1322–#1327）
-   * 用的正是 thinkingLevel HIGH，配 300 秒 / 10fps / 温度 0.7→0.65→0.6。
-   *
-   * ⚠️ **thinkingBudget 与 thinkingLevel 互斥，只能二选一**（用户 0831 当面重申）。
-   * 此处只发 thinkingLevel，绝不同时出现 thinkingBudget。
-   *
-   * 🔒 两者不得同时发送。此处只保留 thinkingLevel。
+   * 0831 用户条件：MEDIUM 仍需重试时试 LOW，不改 HIGH，不恢复 thinkingBudget。
+   * 首发 probe_douyin_20260831150352_0a7cc362 以 MEDIUM 返回22镜并被门禁拒收；
+   * 原始与解析完全一致，实际画面另证实角色错认、合镜及时间错位。
+   * 这些结果尚不能证明 MEDIUM 是根因，LOW 效果必须用同片实测确认。
+   * ProbeChecks 的独立发车守卫同步限定 LOW，实际请求仍须与完整配置逐项相等。
    * includeThoughts:false 只关闭思考摘要回显，不关闭思考本身，也不消除其用量。
    * 实际消耗一律以回执里的 thoughtsTokenCount 为准，不拿配置值当实际值。
    */
-  thinkingConfig: { thinkingLevel: "MEDIUM", includeThoughts: false },
+  thinkingConfig: { thinkingLevel: "LOW", includeThoughts: false },
   /**
    * 0831 删除 mediaResolution：0830 实测「设了等于没设」——传 MEDIUM 后输入 token
    * 与 LOW 那轮完全一致（210,198 vs 210,134，仍约 66–70 token/帧）。Google 文档亦写明
@@ -894,7 +871,7 @@ export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
  * 精确切片与独立采样配置改变请求语义；旧流复制切片的缓存与确认码不得复用。
  * 本版验证首发0.65与历史两次重试温度，保留既有时间解释；实测过关前不宣称冻结。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-custom-20260831-unified-shot-timing-v1" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-custom-20260831-low-thinking-candidate-v1" as const;
 
 /** 分片时长和采样率独立配置；默认值来自共享配置，不按长短片自动降档。 */
 export function resolveNativeDeepReadRequestFps(totalDurationSec: number, requestedFps?: number): number {

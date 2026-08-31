@@ -198,7 +198,7 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_ROUTE_EVOLINK).toBe("evolink_gemini_video");
     expect(NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE).toBe("openrouter_glm_structuring");
     // 换代必须让旧确认码全废
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260831-unified-shot-timing-v1");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260831-low-thinking-candidate-v1");
   });
 
   it("长视频请求显式使用 30 分钟 HTTP 响应头与响应体时限，不落回 Undici 默认 300 秒", async () => {
@@ -226,7 +226,7 @@ describe("模型与通道收口", () => {
     expect(calls[0]!.init.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it("参数冻结锁：首发0.65、65536、单候选、原Schema、thinkingLevel MEDIUM 且无 thinkingBudget", () => {
+  it("参数冻结锁：首发0.65、65536、单候选、原Schema、thinkingLevel LOW 且无 thinkingBudget", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG).toMatchObject({
       temperature: 0.65,
       maxOutputTokens: 65_536,
@@ -235,9 +235,8 @@ describe("模型与通道收口", () => {
       responseMimeType: "application/json",
       responseSchema: NATIVE_DEEP_READ_RESPONSE_SCHEMA,
     });
-    // 0831 回归用户 0827–0828 验证可用的基准（PR #1322–#1327 用的就是 HIGH）。
-    // 0830 的 MEDIUM 实跑思考量仅 4K–10K，同期产出从 57–76 镜掉到 34–41 镜。
-    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
+    // MEDIUM 首发经原帧核对失败；LOW是用户指定的下一候选，尚不能称成功。
+    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toEqual({ thinkingLevel: "LOW", includeThoughts: false });
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
   });
 
@@ -255,7 +254,7 @@ describe("模型与通道收口", () => {
     });
   });
 
-  it("后两次复用历史温度与下限，thinkingLevel MEDIUM，且绝不恢复 thinkingBudget", () => {
+  it("后两次复用历史温度与下限，thinkingLevel LOW，且绝不恢复 thinkingBudget", () => {
     // 固定来源：b948d7c364296a9952ddf023fbd192ab8e218707的三档[0.7,0.65,0.6]及MIN=0.6。
     // 只复用后两档温度；不是恢复该提交的旧Schema、提示词或18K配置。
     const historicalRetryTemperatures = [0.65, 0.6];
@@ -264,7 +263,7 @@ describe("模型与通道收口", () => {
     [NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG, NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG]
       .forEach((config, index) => {
         expect(config.temperature).toBe(historicalRetryTemperatures[index]);
-        expect(config.thinkingConfig).toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
+        expect(config.thinkingConfig).toEqual({ thinkingLevel: "LOW", includeThoughts: false });
         expect(config.thinkingConfig).not.toHaveProperty("thinkingBudget");
         const request = buildGeminiNativeDeepReadSegmentRequest({
           fileUri: "gs://test-bucket/seg-0.mp4", fps: 12, prompt: "虚构离线请求", generationConfig: config,
@@ -3557,14 +3556,14 @@ describe("门禁前解析稿持久化接线", () => {
   });
 });
 
-describe("参数基准回归 0831：首发0.65 + thinkingLevel MEDIUM（实测过关前不宣称冻结）", () => {
-  it("generationConfig逐字段保持：thinkingConfig只有 HIGH 与 includeThoughts false，绝无 thinkingBudget", () => {
+describe("参数基准回归 0831：首发0.65 + thinkingLevel LOW（实测过关前不宣称冻结）", () => {
+  it("generationConfig逐字段保持：thinkingConfig只有 LOW 与 includeThoughts false，绝无 thinkingBudget", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.temperature).toBe(0.65);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.maxOutputTokens).toBe(65_536);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.candidateCount).toBe(1);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.audioTimestamp).toBe(true);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.responseMimeType).toBe("application/json");
-    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
+    expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toEqual({ thinkingLevel: "LOW", includeThoughts: false });
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
     expect(JSON.stringify(NATIVE_DEEP_READ_GENERATION_CONFIG)).not.toContain("thinkingBudget");
   });
@@ -3574,24 +3573,14 @@ describe("参数基准回归 0831：首发0.65 + thinkingLevel MEDIUM（实测�
     expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.6);
   });
 
-  /**
-   * 🔒 生产参数冻结锁（0831 用户当面拍板：「0.7+HIGH+10fps 参数先冻结」）。
-   *
-   * 这一组是**实弹验证过的基准**，非用户明确允许不得变更：
-   * run probe_douyin_20260831030601_bc672813，319 秒单片，
-   * 有效镜数 61（另有 34 镜秒位越界另计），3.4 秒/镜，输出 28,722 token。
-   *
-   * 改任何一项＝新版本＝旧缓存作废＝须重新探针实测（见知识库《schema动刀纪律》）。
-   * 注意 thinkingLevel 另有第二道发车闸在 manhuaNativeDeepReadProbeChecks.ts，
-   * 改档位时两处必须同步。
-   */
-  it("🔒 生产参数冻结：温度 0.7 三档 + thinkingLevel MEDIUM + 默认 12fps", () => {
+  /** LOW候选须与独立发车守卫同步；版本与参数指纹隔离旧缓存，效果待真实验收。 */
+  it("候选参数保持：温度0.65/0.65/0.6 + thinkingLevel LOW + 默认12fps", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.temperature).toBe(0.65);
     expect([...NATIVE_DEEP_READ_RETRY_TEMPERATURES]).toEqual([0.65, 0.65, 0.6]);
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig)
-      .toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
+      .toEqual({ thinkingLevel: "LOW", includeThoughts: false });
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
-    // fps 由面板/CLI 传入，缺省必须落在 14——这是冻结基准的一部分，不是随便的默认值。
+    // fps 仍由面板/CLI 传入，缺省保持12；不提高采样率。
     expect(NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS).toBe(12);
     expect(parseNativeDeepReadVideoFps(undefined)).toBe(12);
   });
@@ -3612,6 +3601,6 @@ describe("参数基准回归 0831：首发0.65 + thinkingLevel MEDIUM（实测�
   it("正负分区版本仍保持原有门禁阈值", () => {
     expect(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC).toBe(30);
     expect(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC).toBe(3);
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260831-unified-shot-timing-v1");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260831-low-thinking-candidate-v1");
   });
 });

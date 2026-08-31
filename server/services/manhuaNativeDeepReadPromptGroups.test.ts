@@ -116,7 +116,7 @@ describe("Gemini 原生读片正向要求与禁止事项分区", () => {
       );
       expect(wire.contents[0].parts[1].text).toBe(prompt);
       expect(wire.generationConfig.thinkingConfig).toEqual({
-        thinkingLevel: "MEDIUM",
+        thinkingLevel: "LOW",
         includeThoughts: false,
       });
       expect(wire.generationConfig.responseSchema).toEqual(
