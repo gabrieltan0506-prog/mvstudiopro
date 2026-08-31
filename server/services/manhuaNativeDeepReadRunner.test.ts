@@ -3660,3 +3660,10 @@ it("真实schema跨段错配会在探针审计处阻止模型出站", async () =
   expect(await audited(body, undefined, context)).toBe("仅测试");
   expect(post).toHaveBeenCalledTimes(1);
 });
+
+it("关键帧的小数起点向片内取值，微尾段无可表示秒位时为空", () => {
+  const schema = buildNativeDeepReadResponseSchema({ startSec: 313.04, endSec: 626.04, segmentIndex: 1, hasAudio: true }) as any;
+  expect(schema.properties.keyMoments.items.properties.atSec).toMatchObject({ minimum: 313.1, maximum: 626 });
+  const tiny = buildNativeDeepReadResponseSchema({ startSec: 313.01, endSec: 313.04, segmentIndex: 1, hasAudio: true }) as any;
+  expect(tiny.properties.keyMoments.maxItems).toBe(0);
+});

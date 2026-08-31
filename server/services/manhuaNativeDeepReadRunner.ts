@@ -1308,8 +1308,12 @@ export function buildNativeDeepReadResponseSchema(context: NativeDeepReadSegment
     ],
   };
   props.keyMoments!.description = NATIVE_DEEP_READ_KEY_MOMENT_SELECTION_ZH;
+  const firstFrameSec = Number((Math.ceil(context.startSec * 10) / 10).toFixed(1));
+  const lastFrameSec = Number((Math.ceil(context.endSec * 10) / 10 - 0.1).toFixed(1));
+  // 小数起点向片内收口；微尾段没有可表示的一位小数秒位时保持空数组。
+  if (firstFrameSec > lastFrameSec) props.keyMoments!.maxItems = 0;
   props.keyMoments!.items!.properties!.atSec = { ...absoluteTime,
-    maximum: Number((Math.ceil(context.endSec * 10) / 10 - 0.1).toFixed(1)),
+    minimum: firstFrameSec, maximum: Math.max(firstFrameSec, lastFrameSec),
     description: "先回看该秒原帧核实说明，再填写全片绝对秒，可保留一位小数。" };
   props.keyMoments!.items!.properties!.noteZh!.description = "本帧可见的关键事件及其对冲突、反转、情绪或视听表达的作用。";
   props.subtitles!.items!.properties!.atSec = { ...absoluteTime, type: "INTEGER" };
