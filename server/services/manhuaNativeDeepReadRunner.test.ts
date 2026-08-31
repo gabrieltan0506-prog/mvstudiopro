@@ -200,7 +200,7 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_ROUTE_EVOLINK).toBe("evolink_gemini_video");
     expect(NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE).toBe("openrouter_glm_structuring");
     // 换代必须让旧确认码全废
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260831-preflight-evidence-v1");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260901-simple-schema-v1");
   });
 
   it("长视频请求显式使用 30 分钟 HTTP 响应头与响应体时限，不落回 Undici 默认 300 秒", async () => {
@@ -3609,7 +3609,7 @@ describe("参数基准回归 0831：首发0.65 + thinkingLevel MEDIUM（实测�
   it("正负分区版本仍保持原有门禁阈值", () => {
     expect(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC).toBe(30);
     expect(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC).toBe(3);
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260831-preflight-evidence-v1");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260901-simple-schema-v1");
   });
 });
 
@@ -3624,13 +3624,17 @@ describe("生成前契约与实际门禁同源", () => {
       startSec: 319, endSec: 319 + lenSec, segmentIndex: 1, segmentCount: 5, hasAudio: true });
     const schema = buildNativeDeepReadResponseSchema({ startSec: 319, endSec: 319 + lenSec, segmentIndex: 1, hasAudio: true }) as any;
     expect(prompt).toContain(`story 至少 ${rule.minStoryShots} 条`);
-    expect(schema.properties.shots.anyOf[0].minItems).toBe(rule.minStoryShots);
-    expect(schema.properties.shots.anyOf[0].items.anyOf[0].required).toHaveLength(17);
-    expect(schema.properties.shots.anyOf[1].items.required).toEqual(["startSec", "endSec", "evidenceRole"]);
-    expect(schema.properties.shots.anyOf[0].items.anyOf[0].properties.startSec.minimum).toBe(319);
-    expect(schema.properties.keyMoments.items.properties.atSec.maximum).toBe(318.9 + lenSec);
-    expect(schema.properties.audioResolution.items.properties.chunkIndex.minimum).toBe(1);
-    expect(schema.properties.audioResolution.items.properties.analysis.properties.audioTrack.items.properties.toSec.maximum).toBe(lenSec);
+    expect(schema.properties.shots.description).toContain(`story 至少 ${rule.minStoryShots} 条`);
+    expect(schema.properties.shots).toMatchObject({ type: "ARRAY", items: { type: "OBJECT" } });
+    expect(Object.keys(schema.properties.shots.items.properties)).toHaveLength(17);
+    expect(schema.properties.shots.items.description).toContain("story条目完整填写以下17字段");
+    expect(schema.properties.shots.items.description).toContain("non_story_ad条目仅保留startSec、endSec、evidenceRole三个字段");
+    expect(schema.properties.shots.items.required).toEqual(["startSec", "endSec", "evidenceRole"]);
+    expect(schema.properties.shots.items.properties.evidenceRole.enum).toEqual(["story", "non_story_ad"]);
+    expect(schema.properties.shots.items.properties.startSec.description).toContain(`范围 319 至 ${319 + lenSec} 秒`);
+    expect(schema.properties.keyMoments.items.properties.atSec.description).toContain(`范围 319 至 ${318.9 + lenSec} 秒`);
+    expect(schema.properties.audioResolution.items.properties.chunkIndex.description).toContain("原分片序号 1");
+    expect(schema.properties.audioResolution.items.properties.analysis.properties.audioTrack.items.properties.toSec.description).toContain(`本段局部整数秒，范围 0 至 ${lenSec} 秒`);
     expect(JSON.stringify(schema)).not.toContain('"maxLength"');
     expect(JSON.stringify(schema)).not.toContain('"uniqueItems"');
   });
@@ -3641,8 +3645,8 @@ describe("生成前契约与实际门禁同源", () => {
     expect(prompt).toContain(schema.properties.keyMoments.description);
     expect(prompt).toContain("冲突升级、反转、真相揭示");
     expect(prompt).toContain("平淡区间可以留空");
-    expect(schema.properties.audioResolution.maxItems).toBe(0);
-    expect(schema.properties.audioResolution.minItems).toBe(0);
+    expect(schema.properties.audioResolution.description).toBe("本段素材没有音轨，返回空数组 []。");
+    expect(schema.properties.audioResolution.type).toBe("ARRAY");
     expect(schema.properties.keyMoments).not.toHaveProperty("minItems");
     expect(schema.properties.keyMoments.items.properties).not.toHaveProperty("verified");
   });
@@ -3663,7 +3667,32 @@ it("真实schema跨段错配会在探针审计处阻止模型出站", async () =
 
 it("关键帧的小数起点向片内取值，微尾段无可表示秒位时为空", () => {
   const schema = buildNativeDeepReadResponseSchema({ startSec: 313.04, endSec: 626.04, segmentIndex: 1, hasAudio: true }) as any;
-  expect(schema.properties.keyMoments.items.properties.atSec).toMatchObject({ minimum: 313.1, maximum: 626 });
+  expect(schema.properties.keyMoments.items.properties.atSec.description).toContain("范围 313.1 至 626 秒");
   const tiny = buildNativeDeepReadResponseSchema({ startSec: 313.01, endSec: 313.04, segmentIndex: 1, hasAudio: true }) as any;
-  expect(tiny.properties.keyMoments.maxItems).toBe(0);
+  expect(tiny.properties.keyMoments.description).toContain("返回空数组 []");
+  expect(tiny.properties.keyMoments.items.properties.atSec.description).toContain("keyMoments返回空数组 []");
+  expect(tiny.properties.keyMoments).not.toHaveProperty("maxItems");
+});
+
+it.each([319.066667, 313.04])("实际%s秒素材的出站schema仅保留精简结构，目录不被构造过程修改", endSec => {
+  const before = JSON.stringify(NATIVE_DEEP_READ_RESPONSE_SCHEMA);
+  const context = { startSec: 0, endSec, segmentIndex: 0, hasAudio: true };
+  const request = buildGeminiNativeDeepReadSegmentRequest({
+    fileUri: "gs://test-bucket/segment.mp4", fps: 12, prompt: "离线检查，不调用模型", segmentContext: context,
+  }) as any;
+  // 这是本次选择的精简请求契约，不是供应商支持字段的完整清单。
+  const allowed = new Set(["type", "format", "description", "nullable", "enum", "properties", "required", "items"]);
+  const walk = (node: Record<string, any>) => {
+    for (const key of Object.keys(node)) expect(allowed.has(key), `出站schema多出${key}`).toBe(true);
+    for (const child of Object.values(node.properties || {})) walk(child as Record<string, any>);
+    if (node.items) walk(node.items);
+  };
+  walk(request.generationConfig.responseSchema);
+  expect(request.generationConfig.responseSchema.properties.audioResolution.description).toContain("包含且仅包含1个分析对象");
+  expect(request.generationConfig.responseSchema.properties.keyMoments.items.properties.atSec.description)
+    .toContain(`范围 0 至 ${Math.floor(endSec)} 秒`);
+  expect(request.generationConfig.thinkingConfig).toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
+  expect(request.generationConfig.temperature).toBe(0.65);
+  expect(request.contents[0].parts[0].videoMetadata.fps).toBe(12);
+  expect(JSON.stringify(NATIVE_DEEP_READ_RESPONSE_SCHEMA)).toBe(before);
 });

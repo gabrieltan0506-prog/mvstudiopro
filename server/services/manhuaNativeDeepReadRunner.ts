@@ -203,8 +203,8 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
           },
         },
         /**
-         * 这里保留基础字段目录；实际发送前由 buildNativeDeepReadResponseSchema
-         * 派生 story 的17字段与广告的3字段 anyOf 分支。基础目录不直接发给模型。
+         * 两类条目共用基础字段目录；story的17字段与广告的3字段要求
+         * 由实际请求的description、提示词和返回后的分类门禁共同保留。
          */
         required: ["startSec", "endSec", "evidenceRole"],
       },
@@ -857,7 +857,7 @@ export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
  * 精确切片与独立采样配置改变请求语义；旧流复制切片的缓存与确认码不得复用。
  * 本版验证首发0.65与历史两次重试温度，保留既有时间解释；实测过关前不宣称冻结。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-custom-20260831-preflight-evidence-v1" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-custom-20260901-simple-schema-v1" as const;
 
 /** 分片时长和采样率独立配置；默认值来自共享配置，不按长短片自动降档。 */
 export function resolveNativeDeepReadRequestFps(totalDurationSec: number, requestedFps?: number): number {
@@ -1103,7 +1103,7 @@ audioResolution 内的 fromSec/toSec、cues.atSec 使用本段局部整数秒，
 拆分后的 unitTypeZh 写「拆分镜证据段」；第二段及后续段的 transitionInZh 固定写「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」。
 
 3. 统一适用范围
-以下逐镜内容、抓帧、字幕、音轨与总结要求均适用于 story；其他类别按末尾的统一分类与 Schema 分支规则处理。
+以下逐镜内容、抓帧、字幕、音轨与总结要求均适用于 story；其他类别按末尾的统一分类与字段规则处理。
 
 4. 完整性与密度
 如实记录全部可见、可听的证据。每次真实画面切换，包括机位、景别或场景切换，都记录为新的一镜。
@@ -1112,7 +1112,7 @@ ${NATIVE_DEEP_READ_DENSITY_GUIDE_BLOCK}
 ${audioHardRule}
 
 5. 输出格式
-返回一个 JSON 对象，字段名、类型、枚举及必填项遵循对应的 Schema 分支。各描述字段遵守下列字数上限；镜头条数由真实内容决定。
+返回一个 JSON 对象，字段名、类型、枚举遵循 Schema；各类别的必填项遵循下列分类要求。各描述字段遵守下列字数上限；镜头条数由真实内容决定。
 
 【任务与输入】
 
@@ -1210,7 +1210,7 @@ classification 完整输出五个数组：
 - audienceExperienceTagsZh：观众体验特征。
 标签来自本段真实证据，覆盖至少两个维度。
 
-【统一分类与 Schema 分支规则】
+【统一分类与字段规则】
 
 shots 条目按 evidenceRole 区分两种结构：
 1. story —— 推动剧情因果的镜头。使用完整 17 字段结构，全部 17 字段保持必填。
@@ -1277,10 +1277,9 @@ type NativeResponseSchemaNode = {
   maxLength?: number;
   properties?: Record<string, NativeResponseSchemaNode>;
   items?: NativeResponseSchemaNode;
-  anyOf?: NativeResponseSchemaNode[];
 };
 
-/** 将当前门禁的可表达部分前置；内容真假、剧情镜计数和时间差仍由语义验收核对。 */
+/** 保留基础数组/对象结构，分片数值与分类要求写入描述；返回后的质量门禁不变。 */
 export function buildNativeDeepReadResponseSchema(context: NativeDeepReadSegmentContext): Record<string, unknown> {
   if (!Number.isFinite(context.startSec) || !Number.isFinite(context.endSec)
     || context.startSec < 0 || context.endSec <= context.startSec
@@ -1289,52 +1288,44 @@ export function buildNativeDeepReadResponseSchema(context: NativeDeepReadSegment
   const schema = JSON.parse(JSON.stringify(NATIVE_DEEP_READ_RESPONSE_SCHEMA)) as NativeResponseSchemaNode;
   const props = schema.properties!;
   const lenSec = Math.max(1, Math.round(context.endSec - context.startSec));
-  const rule = resolveNativeDeepReadDensityContract(lenSec);
-  const absoluteTime = { type: "NUMBER", minimum: Math.round(context.startSec), maximum: Math.round(context.endSec) };
+  const absoluteRangeZh = `全片绝对秒，范围 ${Math.round(context.startSec)} 至 ${Math.round(context.endSec)} 秒`;
   const shot = props.shots!.items!;
-  shot.properties!.startSec = { ...absoluteTime };
-  shot.properties!.endSec = { ...absoluteTime };
-  shot.properties!.evidenceRole = { type: "STRING", enum: ["story"] };
-  shot.required = Object.keys(shot.properties!);
-  const ad: NativeResponseSchemaNode = { type: "OBJECT", properties: {
-    startSec: { ...absoluteTime }, endSec: { ...absoluteTime }, evidenceRole: { type: "STRING", enum: ["non_story_ad"] },
-  }, required: ["startSec", "endSec", "evidenceRole"] };
-  props.shots = {
-    description: buildNativeDeepReadDensityContract(lenSec) + "含剧情时数组总数下限仅是必要条件，story计数单独核对。纯广告仅保存三字段时间轴。",
-    anyOf: [
-      { type: "ARRAY", minItems: rule.minStoryShots, items: { anyOf: [shot, ad] } },
-      // 全广告段保留既有结构口径，避免为了minItems编出剧情；广告真实性仍由现行门禁检查。
-      { type: "ARRAY", items: ad },
-    ],
-  };
+  props.shots!.description = buildNativeDeepReadDensityContract(lenSec)
+    + "story与non_story_ad分别按条目分类要求填写。";
+  shot.description = `story条目完整填写以下17字段：${Object.keys(shot.properties!).join("、")}。`
+    + "non_story_ad条目仅保留startSec、endSec、evidenceRole三个字段。";
+  shot.properties!.startSec = { type: "NUMBER", description: `${absoluteRangeZh}，填写实际起点，可保留一位小数。` };
+  shot.properties!.endSec = { type: "NUMBER", description: `${absoluteRangeZh}，填写实际终点且大于startSec，可保留一位小数。` };
   props.keyMoments!.description = NATIVE_DEEP_READ_KEY_MOMENT_SELECTION_ZH;
   const firstFrameSec = Number((Math.ceil(context.startSec * 10) / 10).toFixed(1));
   const lastFrameSec = Number((Math.ceil(context.endSec * 10) / 10 - 0.1).toFixed(1));
-  // 小数起点向片内收口；微尾段没有可表示的一位小数秒位时保持空数组。
-  if (firstFrameSec > lastFrameSec) props.keyMoments!.maxItems = 0;
-  props.keyMoments!.items!.properties!.atSec = { ...absoluteTime,
-    minimum: firstFrameSec, maximum: Math.max(firstFrameSec, lastFrameSec),
-    description: "先回看该秒原帧核实说明，再填写全片绝对秒，可保留一位小数。" };
+  const hasFrameTime = firstFrameSec <= lastFrameSec;
+  if (!hasFrameTime) props.keyMoments!.description += "本微尾段没有可表示的一位小数秒位，返回空数组 []。";
+  props.keyMoments!.items!.properties!.atSec = { type: "NUMBER",
+    description: hasFrameTime
+      ? `先回看该秒原帧核实说明，再填写全片绝对秒，范围 ${firstFrameSec} 至 ${lastFrameSec} 秒，可保留一位小数。`
+      : "本微尾段没有可表示的一位小数秒位，keyMoments返回空数组 []。" };
   props.keyMoments!.items!.properties!.noteZh!.description = "本帧可见的关键事件及其对冲突、反转、情绪或视听表达的作用。";
-  props.subtitles!.items!.properties!.atSec = { ...absoluteTime, type: "INTEGER" };
-  props.audioResolution!.minItems = context.hasAudio ? 1 : 0;
-  props.audioResolution!.maxItems = context.hasAudio ? 1 : 0;
-  props.audioResolution!.items!.properties!.chunkIndex = { type: "INTEGER", minimum: context.segmentIndex, maximum: context.segmentIndex };
+  props.subtitles!.items!.properties!.atSec = { type: "INTEGER", description: `${absoluteRangeZh}，使用整数。` };
+  props.audioResolution!.description = context.hasAudio
+    ? "本段有音轨，数组包含且仅包含1个分析对象，内容来自本段真实声音。"
+    : "本段素材没有音轨，返回空数组 []。";
+  props.audioResolution!.items!.properties!.chunkIndex = { type: "INTEGER", description: `固定填写当前原分片序号 ${context.segmentIndex}。` };
   const track = props.audioResolution!.items!.properties!.analysis!.properties!.audioTrack!.items!;
-  for (const key of ["fromSec", "toSec"]) track.properties![key] = { type: "INTEGER", minimum: 0, maximum: lenSec };
-  track.properties!.cues!.items!.properties!.atSec = { type: "INTEGER", minimum: 0, maximum: lenSec };
-  // Vertex未承诺支持maxLength；字数要求放进description，避免把被忽略的键当作保证。
+  for (const key of ["fromSec", "toSec"]) track.properties![key] = {
+    type: "INTEGER", description: `本段局部整数秒，范围 0 至 ${lenSec} 秒，toSec大于fromSec。`,
+  };
+  track.properties!.cues!.items!.properties!.atSec = {
+    type: "INTEGER", description: `本段局部整数秒，范围 0 至 ${lenSec} 秒，位于所属audioTrack时间区间内。`,
+  };
+  // 本次主动保留简单结构；只迁移字数说明，不注入分支、范围或顺序约束。
   const normalize = (node: NativeResponseSchemaNode): void => {
     if (node.maxLength !== undefined) {
       node.description = `${node.description || ""}≤${node.maxLength}字。`;
       delete node.maxLength;
     }
-    if (node.properties) {
-      node.propertyOrdering = Object.keys(node.properties);
-      Object.values(node.properties).forEach(normalize);
-    }
+    if (node.properties) Object.values(node.properties).forEach(normalize);
     if (node.items) normalize(node.items);
-    node.anyOf?.forEach(normalize);
   };
   normalize(schema);
   return schema;

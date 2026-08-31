@@ -138,19 +138,29 @@ describe("Gemini 原生读片正向要求与禁止事项分区", () => {
     );
     expect(declared).toHaveLength(23);
     const limits = new Map<string, number>();
-    const walk = (node: unknown) => {
+    const schema = buildNativeDeepReadResponseSchema({ ...input, hasAudio: row.hasAudio });
+    const wireLimits = new Map<string, number>();
+    const walk = (node: unknown, target: Map<string, number>, fromDescription = false) => {
       if (!node || typeof node !== "object") return;
       const record = node as Record<string, unknown>;
       for (const [key, value] of Object.entries(record.properties || {})) {
-        if (value && typeof value === "object" && "maxLength" in value) {
-          limits.set(key, Number(value.maxLength));
+        if (value && typeof value === "object") {
+          if (!fromDescription && "maxLength" in value) target.set(key, Number(value.maxLength));
+          if (fromDescription && "description" in value) {
+            const limit = String(value.description).match(/≤(\d+)字/);
+            if (limit) target.set(key, Number(limit[1]));
+          }
         }
-        walk(value);
+        walk(value, target, fromDescription);
       }
-      walk(record.items);
+      walk(record.items, target, fromDescription);
     };
-    walk(NATIVE_DEEP_READ_RESPONSE_SCHEMA);
-    for (const [, field, maximum] of declared)
+    walk(NATIVE_DEEP_READ_RESPONSE_SCHEMA, limits);
+    walk(schema, wireLimits, true);
+    expect(wireLimits.size).toBe(23);
+    for (const [, field, maximum] of declared) {
       expect(Number(maximum), field).toBe(limits.get(field!));
+      expect(Number(maximum), `实际请求${field}`).toBe(wireLimits.get(field!));
+    }
   });
 });
