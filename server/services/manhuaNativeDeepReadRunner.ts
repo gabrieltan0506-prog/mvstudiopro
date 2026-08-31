@@ -804,6 +804,7 @@ export function resolveNativeDeepReadRequestFps(totalDurationSec: number, reques
   return parseNativeDeepReadVideoFps(requestedFps);
 }
 /** 官方视频输入 fps 上限。 */
+/** 0831 用户裁决：保持官方上限 24，不回退到 v11 的 10。实际采样率由 CLI/面板传入。 */
 export const NATIVE_DEEP_READ_MAX_FPS = NATIVE_DEEP_READ_MAX_VIDEO_FPS;
 /** 旧自适应探针保留原来的 10fps 上限，不让官方上限换名悄悄改变旧算法。 */
 const NATIVE_DEEP_READ_LEGACY_MAX_FPS = 10;
@@ -873,6 +874,7 @@ export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_ALLOWANCE = 1;
 /** 同一物理长镜超过 30 秒时，后续证据段必须用此固定标记，避免把证据拆分谎报成真实切镜。 */
 export const NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH = "同一长镜证据拆分（非切镜）";
 /** 长镜证据拆分点之间至少相隔 1 秒，禁止用同秒空切凑过 30 秒门禁。 */
+/** 0831 用户裁决：保持 3 秒，不回退到 v11 的 1 秒。 */
 export const NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC = 3;
 /**
  * 🔒 单次合并的总跨度硬上限（0830 用户拍板 59 秒）。
@@ -899,6 +901,7 @@ export const NATIVE_DEEP_READ_SEGMENT_COVERAGE_FLOOR_RATIO = 0.5;
  * 为了「30.4 秒 vs 30 秒」这种擦边去重买一整片，换回来的产出并不更对。
  * 只对**数值**门禁生效；字段齐全 / 五维五键 / zod 这类二值判定没有 10% 可言，不受影响。
  */
+/** 0831 用户当面确认保留 10% 容差（实际拒收线 33 秒），不回退到 v11 的零容差。 */
 export const NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO = 0.10;
 /**
  * 单镜拒收线 = 硬上限 × (1 + 10% 容差) = 33 秒（0830 晚用户拍板）。
@@ -929,6 +932,7 @@ export const NATIVE_DEEP_READ_SHOT_MICRO_SEGMENT_SEC = 12;
  * 合法产出，不是偷懒——所以基于时长的地板 ceil(len/60) 与 cue 地板 ceil(len/24)
  * 一律降级为 advisory（记「音轨仅 N 段」给人看），绝不作为重买条件。
  */
+/** 0831 用户裁决：保持 2（0830 晚拍板的固定地板），不回退到 v11 的 1。 */
 export const NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN = 2;
 /**
  * 45 → 60（0826 病历单问题三）：ep8 第3段模型真实听出 7 段 < 地板 8 被误拒——
