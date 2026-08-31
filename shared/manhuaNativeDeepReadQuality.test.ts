@@ -4,7 +4,11 @@ import {
   measureNativeDeepReadQuality,
 } from "./manhuaNativeDeepReadQuality";
 
-/** 造一条描述丰富、各不相同的真实镜 */
+/**
+ * 造一条描述丰富、各不相同的真实镜。
+ * ⚠️ 调用方请让镜长**不规律**：等长串本身是模板化信号（见文件末尾那组测试），
+ * 用等长 fixture 测别的判据会互相干扰。
+ */
 const realShot = (startSec: number, endSec: number, seed: number) => ({
   startSec, endSec,
   actionZh: `第${seed}个动作：人物做了具体而不同的事`,
@@ -34,8 +38,15 @@ describe("内容质量验收器", () => {
   it("枚举字段低基数不算塌缩（0831 首跑误报的那条）", () => {
     // 30 镜，景别/角度/运镜各只有 3 种取值、单元类型与转场各只有 1 种。
     // 这是真实剧集的常态；初版把枚举字段放进多样性检查，把一份优质产出误判成 5 字段塌缩。
-    const shots = Array.from({ length: 30 }, (_, i) => realShot(i * 5, i * 5 + 5, i));
-    const verdict = judgeNativeDeepReadQuality({ shots, startSec: 0, endSec: 150 });
+    // 镜长按 3/4/5/6 秒轮转，避免撞上等长串判据——真实剪辑本来就不规律。
+    let cursor = 0;
+    const shots = Array.from({ length: 30 }, (_, i) => {
+      const len = [3, 4, 5, 6][i % 4]!;
+      const shot = realShot(cursor, cursor + len, i);
+      cursor += len;
+      return shot;
+    });
+    const verdict = judgeNativeDeepReadQuality({ shots, startSec: 0, endSec: cursor });
     expect(verdict.metrics.lowVarietyFields).toEqual([]);
     expect(verdict.status).toBe("pass");
   });
@@ -64,9 +75,15 @@ describe("内容质量验收器", () => {
   });
 
   it("均匀分布的真实产出不因尾段判据被误伤", () => {
-    const shots = Array.from({ length: 60 }, (_, i) => realShot(i * 5, i * 5 + 5, i));
-    const verdict = judgeNativeDeepReadQuality({ shots, startSec: 0, endSec: 300 });
-    expect(verdict.metrics.tailDensityRatio).toBe(1);
+    let cursor = 0;
+    const shots = Array.from({ length: 60 }, (_, i) => {
+      const len = [4, 5, 6, 5][i % 4]!;
+      const shot = realShot(cursor, cursor + len, i);
+      cursor += len;
+      return shot;
+    });
+    const verdict = judgeNativeDeepReadQuality({ shots, startSec: 0, endSec: cursor });
+    expect(verdict.metrics.tailDensityRatio).toBeGreaterThan(0.9);
     expect(verdict.failures.map((f) => f.code)).not.toContain("quality_tail_density_collapsed");
   });
 
@@ -96,5 +113,37 @@ describe("内容质量验收器", () => {
     const verdict = judgeNativeDeepReadQuality({ shots, startSec: 0, endSec: 20 });
     expect(verdict.failures.map((f) => f.code))
       .not.toContain("quality_tail_density_collapsed");
+  });
+});
+
+describe("等长镜串：0831 漏网的模板化形态", () => {
+  /** 描述各不相同、但时长完全等长——雷同率抓不到，必须靠步长抓。 */
+  const evenShot = (i: number, len: number) => ({
+    startSec: i * len, endSec: (i + 1) * len,
+    actionZh: `第${i}个各不相同的动作描述`,
+    lightingZh: `第${i}种光`, microExpressionZh: `第${i}种表情`,
+    visualZh: `第${i}个画面`, shotSizeZh: "中景", angleZh: "平视",
+    cameraMoveZh: "固定机位", unitTypeZh: "剪辑镜头", transitionInZh: "直接切入",
+  });
+
+  it("25 条连续 10 秒等长镜必须判出来（此前雷同率为 0 而漏放）", () => {
+    const shots = Array.from({ length: 25 }, (_, i) => evenShot(i, 10));
+    const verdict = judgeNativeDeepReadQuality({ shots, startSec: 0, endSec: 250 });
+    expect(verdict.metrics.duplicateRatio).toBe(0);
+    expect(verdict.metrics.longestEqualLengthRun).toBe(25);
+    expect(verdict.metrics.equalLengthRunSec).toBe(10);
+    expect(verdict.failures.map((f) => f.code)).toContain("quality_equal_length_run");
+    expect(verdict.status).toBe("fail");
+  });
+
+  it("真实剪辑偶有几条同长不算模板（8 条以内放行）", () => {
+    const shots = [
+      ...Array.from({ length: 5 }, (_, i) => evenShot(i, 4)),
+      { ...evenShot(5, 4), startSec: 20, endSec: 27 },
+      { ...evenShot(6, 4), startSec: 27, endSec: 30 },
+    ];
+    const verdict = judgeNativeDeepReadQuality({ shots, startSec: 0, endSec: 30 });
+    expect(verdict.metrics.longestEqualLengthRun).toBeLessThanOrEqual(8);
+    expect(verdict.failures.map((f) => f.code)).not.toContain("quality_equal_length_run");
   });
 });

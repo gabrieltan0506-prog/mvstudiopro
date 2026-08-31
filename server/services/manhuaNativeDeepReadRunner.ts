@@ -488,6 +488,7 @@ export const NATIVE_DEEP_READ_ADVISORY_FAMILIES: ReadonlyArray<{
   ]) },
   { familyZh: "镜头", codes: new Set([
     "long_take_count", "long_take_split_discontinuous", "no_story_shots", "empty_action",
+    "shot_density_low", "shot_out_of_segment_range",
   ]) },
   { familyZh: "结构", codes: new Set([
     "classification_thin", "empty_beat_structure", "clock_text",
@@ -508,9 +509,24 @@ export function nativeDeepReadAdvisoryFamilyOf(code: string): string {
  */
 export const NATIVE_DEEP_READ_COVERAGE_SOLO_RETRY_CODES: ReadonlySet<string> = new Set([
   "coverage_missing", "coverage_head_gap", "coverage_tail_gap", "timeline_gap",
+  /**
+   * 0831 用户拍板加回：镜数低于「离谱地板」可**单独触发**重试。
+   *
+   * 为什么必须有：0830 删掉段级镜数反馈后，模型写 9 镜和写 90 镜，
+   * 门禁反应完全一样。实测 run probe_douyin_20260831035500_86a2a69d attempt1
+   * 给出 **9 镜 / 319 秒 ＝ 35.4 秒一镜**、输出只用 3,689 token（上限的 5.6%）——
+   * 319 秒的漫剧不可能只有 9 个镜头，这是躺平不是「诚实地少写」。
+   * 提示词里的自检基准是软的，模型可以不理，这一发就是不理的证据。
+   *
+   * ⚠️ 这不是回到「硬拒收逼模型凑数」：地板取的是**离谱线 10 秒/镜**
+   * （319 秒＝32 镜），不是 v11 的建议线 6 秒/镜（53 镜）。
+   * 目的只是让「只写 9 镜」有代价，不是逼它写够 53 镜。
+   */
+  "shot_density_low",
 ]);
 
 export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES: ReadonlySet<string> = new Set([
+  "shot_density_low",
   "audio_track_thin",
   "coverage_missing",
   "coverage_head_gap",
@@ -2670,18 +2686,41 @@ export function assertNativeDeepReadSegmentDensity(input: {
   // 长片尾片走的是同一套（上限＋覆盖），不再需要按 300 秒分流。
 
   /**
-   * ❌ 镜数「离谱地板」已整条删除（0830 用户令：「我都设好上限了，不要管下限了」）。
+   * 镜数「离谱地板」：0830 删除，**0831 用户拍板加回**。两段历史都留着，别再来回翻。
    *
-   * 删除理由是实弹账：真人剧那轮 10 片有 5 片因这条被拦、每次重试都要重付一整片视频输入
-   * （¥37.50 里相当一部分花在这上面），而重试回来的产出并不比首发更「对」——
-   * 它只是把镜头切得更碎去满足一个按漫剧节奏定的数字。
-   * 下限本质上是在替模型规定「该看到多少东西」，而不同体裁、不同片源本来就不一样。
+   * 0830 删除的理由（仍然成立，所以这次没有恢复原样）：真人剧那轮 10 片有 5 片因这条
+   * 被拦、每次重试都要重付一整片视频输入（¥37.50 里相当一部分花在这上面），
+   * 而重试回来的产出并不比首发更「对」——它只是把镜头切得更碎去满足一个
+   * 按漫剧节奏定的数字。下限本质上是在替模型规定「该看到多少东西」。
    *
-   * 留下的是**上限与覆盖**这两条与体裁无关的硬约束：
+   * 0831 加回的理由：删掉之后**模型少写没有任何代价**。实测
+   * run probe_douyin_20260831035500_86a2a69d attempt1 给出 9 镜 / 319 秒
+   * ＝ 35.4 秒一镜，输出只用 3,689 token（上限 65,536 的 5.6%）。
+   * 319 秒的漫剧不可能只有 9 个镜头，这是躺平不是「诚实地少写」。
+   * 提示词里的自检基准（每 2—6 秒一次切换）是软的，模型可以不理，那一发就是不理。
+   *
+   * 这次与 0830 被删那版的关键差别，正是为了不重蹈真人剧那轮的覆辙：
+   *   · 地板用**离谱线 10 秒/镜**（319 秒＝32 镜），不是 v11 的建议线 6 秒/镜（53 镜）。
+   *     目的是让「只写 9 镜」有代价，不是逼它写够 53 镜。
+   *   · 只出 advisory，**不硬拒收**；靠偏差 >20% 单独触发一次重试。
+   *     39 镜这种略低于地板的照常放行，不会像真人剧那轮把半数分片拦下来。
+   *   · 分母用**计划片长**，不用模型自报的 storyDurationSec——
+   *     后者正是「回得越少地板越低、越容易过」的洞。
+   *
+   * 上限与覆盖这两条与体裁无关的硬约束照旧：
    *   · 单条证据段 ≤30 秒（用户三十余次实测拍板，不得放宽）
    *   · 段级覆盖率地板（整片必须读完，回 3 秒即拒）
-   * 「切得够不够细」交给提示词软引导与整形层，不再由门禁下数字。
    */
+  const shotFloor = Math.ceil(lenSec / NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC);
+  if (storyShots.length > 0 && storyShots.length < shotFloor) {
+    note(
+      "shot_density_low",
+      `${labelZh}只有 ${storyShots.length} 个剧情镜头，低于离谱地板 ${shotFloor}`
+      + `（${NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC} 秒/镜 × ${lenSec} 秒）；`
+      + `平均 ${Math.round((lenSec / storyShots.length) * 10) / 10} 秒才记一镜，明显漏记了剪辑点`,
+      deviation(storyShots.length, shotFloor),
+    );
+  }
 
   if (storyDurationSec > NATIVE_DEEP_READ_SHOT_MICRO_SEGMENT_SEC) {
     // ❌ 镜数密度 advisory 同批删除（0830）：它与离谱地板同源，同样是按漫剧节奏定的下限。

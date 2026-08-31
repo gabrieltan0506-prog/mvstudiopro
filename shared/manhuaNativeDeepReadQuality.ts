@@ -66,6 +66,13 @@ export type NativeDeepReadQualityMetrics = {
   tailDensityRatio: number;
   /** 重复镜头中落在后半段的比例。接近 1 说明重复不是散布全段，而是尾段模板化。 */
   duplicateTailShare: number;
+  /**
+   * 最长「连续等长镜头」串的长度。真实剪辑的镜头长度不会规律相等，
+   * 一长串完全等长的镜头是模型按固定步长切出来的，不是看出来的。
+   */
+  longestEqualLengthRun: number;
+  /** 上述等长串的镜头时长（秒）；0 表示没有等长串。 */
+  equalLengthRunSec: number;
 };
 
 export type NativeDeepReadQualityFailure = { code: string; detailZh: string };
@@ -100,6 +107,11 @@ export const NATIVE_DEEP_READ_QUALITY_THRESHOLDS = {
   minTailDensityRatio: 0.5,
   /** 重复镜有这么高比例挤在后半段，就不是偶发重复而是尾段整片糊弄。 */
   tailConcentrationTrigger: 0.6,
+  /**
+   * 连续等长镜超过这个条数即判按固定步长编造。
+   * 0831 漏网案例是 25 条连续 10 秒；真实剪辑偶有 3–5 条同长属正常，定 8 条。
+   */
+  maxEqualLengthRun: 8,
 } as const;
 
 const text = (value: unknown): string => String(value ?? "").trim();
@@ -156,7 +168,34 @@ export function measureNativeDeepReadQuality(
   const duplicateTailRows = shots.filter(
     (shot, i) => inTail(shot) && duplicateKeys.has(keys[i]!)).length;
 
+  /**
+   * 等长镜串检测。0831 实测漏网案例：一份产出有 **25 条连续 10 秒等长镜**，
+   * 但每条描述都不同，所以雷同率是 0、尾段密度比 0.84，验收器判了 pass。
+   * 光看文字重复抓不住它——模型换了手法，用固定步长切时间轴，
+   * 描述则各写各的。真实剪辑的镜头长度不会规律相等，一长串等长就是编的。
+   */
+  const durations = shots
+    .slice()
+    .sort((a, b) => Number(a.startSec) - Number(b.startSec))
+    .map((shot) => Math.round((Number(shot.endSec) - Number(shot.startSec)) * 10) / 10);
+  let longestEqualLengthRun = durations.length ? 1 : 0;
+  let equalLengthRunSec = durations.length ? durations[0]! : 0;
+  let currentRun = 1;
+  for (let i = 1; i < durations.length; i += 1) {
+    if (durations[i] === durations[i - 1] && durations[i]! > 0) {
+      currentRun += 1;
+      if (currentRun > longestEqualLengthRun) {
+        longestEqualLengthRun = currentRun;
+        equalLengthRunSec = durations[i]!;
+      }
+    } else {
+      currentRun = 1;
+    }
+  }
+
   return {
+    longestEqualLengthRun,
+    equalLengthRunSec,
     tailDensityRatio: headCount
       ? Math.round((tailCount / headCount) * 100) / 100
       : (tailCount ? 1 : 0),
@@ -214,6 +253,14 @@ export function judgeNativeDeepReadQuality(
         + `（低于 ${t.minTailDensityRatio * 100}%），模型可能写到后段就改用模板顶替`
         + (metrics.duplicateTailShare >= t.tailConcentrationTrigger
           ? `；且 ${Math.round(metrics.duplicateTailShare * 100)}% 的重复镜挤在后半段` : ""),
+    });
+  }
+  if (metrics.longestEqualLengthRun > t.maxEqualLengthRun) {
+    failures.push({
+      code: "quality_equal_length_run",
+      detailZh: `有 ${metrics.longestEqualLengthRun} 条连续镜头时长完全相同`
+        + `（各 ${metrics.equalLengthRunSec} 秒，上限 ${t.maxEqualLengthRun} 条）；`
+        + `真实剪辑的镜头长度不会规律相等，这是按固定步长切出来的时间轴`,
     });
   }
   if (metrics.lowVarietyFields.length) {

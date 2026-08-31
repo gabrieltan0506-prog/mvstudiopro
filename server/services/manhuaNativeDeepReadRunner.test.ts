@@ -1090,10 +1090,24 @@ describe("覆盖率与缓存复验回归", () => {
     expect(nativeDeepReadSegmentMeetsThreeItemLine({ ...base, endSec: 60, raw })).toBe(false);
   });
 
+  /**
+   * 只测 33 秒长镜边界，故意把镜数补到地板之上（60 秒段地板 ceil(60/10)=6 镜）——
+   * 0831 加回 shot_density_low 之后，原来的 2 镜 fixture 会被密度判据带偏，
+   * 测出来的就不再是「长镜边界」这一件事了。
+   */
   it.each([[33, true], [33.1, false]] as const)("长镜边界%s秒，缓存可用=%s", (firstEnd, accepted) => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60, hasAudio: false });
     const shot = (raw.shots as Array<Record<string, unknown>>)[0]!;
-    raw.shots = [{ ...shot, startSec: 0, endSec: firstEnd }, { ...shot, startSec: firstEnd, endSec: 60 }];
+    const rest = 60 - firstEnd;
+    const step = rest / 5;
+    raw.shots = [
+      { ...shot, startSec: 0, endSec: firstEnd },
+      ...Array.from({ length: 5 }, (_, i) => ({
+        ...shot,
+        startSec: Math.round((firstEnd + i * step) * 100) / 100,
+        endSec: i === 4 ? 60 : Math.round((firstEnd + (i + 1) * step) * 100) / 100,
+      })),
+    ];
     expect(nativeDeepReadSegmentMeetsThreeItemLine({ ...base, endSec: 60, raw })).toBe(accepted);
   });
 });
@@ -1260,9 +1274,13 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
     expect(advisoryCodesOf({ ...base, raw })).toContain("classification_thin");
   });
 
-  it("🔒 镜数下限已整条删除（0830 用户令）：360 秒段只有 16 镜也不再拒收", () => {
-    // 「我都设好上限了，不要管下限了」——下限是替模型规定「该看到多少」，
-    // 而不同体裁、不同片源本就不同；重试还要重付一整片视频输入。
+  /**
+   * 0831 用户拍板：镜数离谱地板加回，但**仍然不拒收**——只出 advisory。
+   * 360 秒段的地板是 ceil(360/10)=36 镜，16 镜低于地板故记 shot_density_low，
+   * 但 assertNativeDeepReadSegmentDensity 照旧不抛错。
+   * 0830「不要管下限」的实质（不因镜数少而拒收重买）保留；变的只是「少写要留痕」。
+   */
+  it("🔒 镜数少不拒收（0830 用户令保留），但记 shot_density_low advisory（0831 加回）", () => {
     const input = {
       ...base,
       startSec: 0,
@@ -1271,7 +1289,7 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
     };
     expect(() => assertNativeDeepReadSegmentDensity(input)).not.toThrow();
     const codes = assertNativeDeepReadSegmentDensity(input).advisories.map((r) => r.code);
-    expect(codes).not.toContain("shot_density_low");
+    expect(codes).toContain("shot_density_low");
     expect(codes).not.toContain("shot_avg_too_long");
   });
 
