@@ -62,9 +62,16 @@ jobs:
           wait_for_started_vm() {
             local vm_attempt
             for vm_attempt in 1 2 3 4 5 6 7 8 9 10; do
-              if flyctl status -a mvstudiopro </dev/null | grep -q "started"; then
+              # 🔴 0831 修：必须检查**我们要用的那一台**，不是「有任何一台 started」。
+              # 旧写法在隔离机 started 时会误判通过，随后 ssh --machine 对着一台
+              # 不可用的正式机失败（实测 `--machine="d892541f602228" not found/started`）。
+              # 顺带主动唤醒：auto_stop_machines='off'，机器停了不会自己起来。
+              if flyctl machines list -a mvstudiopro --json </dev/null \
+                | jq -e --arg id "$FLY_MACHINE_ID" \
+                    'any(.[]; .id == $id and .state == "started")' >/dev/null; then
                 return 0
               fi
+              flyctl machine start "$FLY_MACHINE_ID" -a mvstudiopro </dev/null >/dev/null 2>&1 || true
               echo "No started VM yet, retrying in 15s (attempt $vm_attempt/10)"
               sleep 15
             done
@@ -92,9 +99,13 @@ jobs:
           wait_for_started_vm() {
             local vm_attempt
             for vm_attempt in 1 2 3 4 5 6 7 8 9 10; do
-              if flyctl status -a mvstudiopro | grep -q "started"; then
+              # 0831 修：按指定机器判断，不是「有任何一台 started」（详见首个定义处注释）。
+              if flyctl machines list -a mvstudiopro --json </dev/null \
+                | jq -e --arg id "$FLY_MACHINE_ID" \
+                    'any(.[]; .id == $id and .state == "started")' >/dev/null; then
                 return 0
               fi
+              flyctl machine start "$FLY_MACHINE_ID" -a mvstudiopro </dev/null >/dev/null 2>&1 || true
               echo "No started VM yet, retrying in 15s (attempt $vm_attempt/10)"
               sleep 15
             done
@@ -174,9 +185,13 @@ jobs:
           wait_for_started_vm() {
             local vm_attempt
             for vm_attempt in 1 2 3 4 5 6 7 8 9 10; do
-              if flyctl status -a mvstudiopro | grep -q "started"; then
+              # 0831 修：按指定机器判断，不是「有任何一台 started」（详见首个定义处注释）。
+              if flyctl machines list -a mvstudiopro --json </dev/null \
+                | jq -e --arg id "$FLY_MACHINE_ID" \
+                    'any(.[]; .id == $id and .state == "started")' >/dev/null; then
                 return 0
               fi
+              flyctl machine start "$FLY_MACHINE_ID" -a mvstudiopro </dev/null >/dev/null 2>&1 || true
               echo "No started VM yet, retrying in 15s (attempt $vm_attempt/10)"
               sleep 15
             done
@@ -283,7 +298,7 @@ jobs:
             local timeout_seconds="${4:-180}"
             for attempt in 1 2 3 4 5; do
               echo "Fetching file from Fly: ${remote_path} -> ${output_path} (attempt ${attempt}/5)"
-              if wait_for_interactive_workload && run_with_interactive_preemption timeout "${timeout_seconds}" flyctl ssh sftp get -a mvstudiopro "$remote_path" "$output_path"; then
+              if wait_for_interactive_workload && run_with_interactive_preemption timeout "${timeout_seconds}" flyctl ssh sftp get -a mvstudiopro --machine "$FLY_MACHINE_ID" "$remote_path" "$output_path"; then
                 return 0
               fi
               if [ "$required" != "true" ]; then
