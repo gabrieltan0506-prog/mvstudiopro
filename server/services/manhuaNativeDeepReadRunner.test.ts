@@ -8,7 +8,8 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC,
-  NATIVE_DEEP_READ_TRUTHFULNESS_BLOCK,
+  NATIVE_DEEP_READ_PROHIBITION_BLOCK,
+  NATIVE_DEEP_READ_DENSITY_GUIDE_BLOCK,
   NATIVE_DEEP_READ_SANITY_FLOOR_MIN_SEGMENT_SEC,
   NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC,
   NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC,
@@ -271,56 +272,24 @@ describe("模型与通道收口", () => {
       });
   });
 
-  it("时间桥候选删除唯一新增段并还原0.65后，旧请求14531字节及固定SHA完全一致", () => {
-    const input = {
-      fileUri: "gs://test-bucket/seg-0.mp4", fps: 12,
-      prompt: buildGeminiNativeDeepReadSegmentPrompt({
-        episodeDurationSec: 1594, startSec: 0, endSec: 319, segmentIndex: 0,
-        segmentCount: 5, hasAudio: true, videoFps: 12,
-        hintZh: "抖音漫剧完整视听证据探针；按真实镜头、表演、光影、声音和叙事变化记录",
-      }),
-    };
-    const clockBridge = "所附视频文件只有本段 319 秒，文件 00:00 对应全片 0 秒。先定位原帧，再将文件内 MM:SS 或 HH:MM:SS 换算为本段累计秒 t = 小时×3600 + 分钟×60 + 秒；全片秒位 = 0 + t，音轨局部秒位 = t。例如文件 01:09 对应本段 69 秒、全片 69 秒；文件末尾 05:19 对应本段 319 秒、全片 319 秒。\n";
-    expect(input.prompt.split(clockBridge)).toHaveLength(2);
-    expect(input.prompt).toContain(`1. 时间坐标\n${clockBridge}shots.startSec/endSec`);
-    const candidate = buildGeminiNativeDeepReadSegmentRequest(input);
-    expect(candidate.generationConfig).toMatchObject({ temperature: 0.7 });
-    const candidateJson = JSON.stringify(candidate);
-    expect(candidateJson.match(/"temperature":0\.7(?=[,}])/g)).toHaveLength(1);
-    const encodedBridge = JSON.stringify(clockBridge).slice(1, -1);
-    expect(candidateJson.split(encodedBridge)).toHaveLength(2);
-    // 0831 起首发提示词多了「真实性四条」，同样剥掉后才能落回历史字节与 SHA。
-    const truthBlockJson = JSON.stringify(NATIVE_DEEP_READ_TRUTHFULNESS_BLOCK).slice(1, -1);
-    expect(candidateJson.split(truthBlockJson)).toHaveLength(2);
-    const restoredBaseline = candidateJson
-      .replace(encodedBridge, "")
-      .replace(truthBlockJson, "");
-    /**
-     * 0831 补一步：本轮删掉了 mediaResolution，故须把该键也逐字补回，才能落回历史固定字节。
-     * 补回后仍是 14531 字节与同一个 SHA，正说明「删桥 + 删 mediaResolution」是全部差异。
-     * 只删上方固定新增文本，不归一空白、不重算旧摘要，其他漂移必须失败。
-     */
-    // 0831 起 thinkingLevel 回归 HIGH，故还原历史时须先换回 MEDIUM 再补 mediaResolution。
-    const thinkingHigh = '"thinkingConfig":{"thinkingLevel":"MEDIUM","includeThoughts":false}';
-    const thinkingMedium = '"thinkingConfig":{"thinkingLevel":"MEDIUM","includeThoughts":false}';
-    // 锚点必须唯一：否则下面的 replace 静默失配，失败信息会指向 SHA 而不是真因。
-    expect(restoredBaseline.split(thinkingHigh)).toHaveLength(2);
-    const restoredHistoric = restoredBaseline
-      .replace('"temperature":0.7', '"temperature":0.65')
-      .replace(thinkingHigh, `${thinkingMedium},"mediaResolution":"MEDIA_RESOLUTION_MEDIUM"`);
-    expect(Buffer.byteLength(restoredHistoric)).toBe(14_531);
-    expect(createHash("sha256").update(restoredHistoric).digest("hex"))
-      .toBe("ba1ec0187e20c468bde3c2f81f4c9d2bcbbb822686c1d5b93e7cbcc347b2298d");
-    const baselineJson = JSON.stringify(buildGeminiNativeDeepReadSegmentRequest({
-      ...input,
-      prompt: input.prompt.replace(clockBridge, "").replace(NATIVE_DEEP_READ_TRUTHFULNESS_BLOCK, ""),
-      generationConfig: { ...NATIVE_DEEP_READ_GENERATION_CONFIG, temperature: 0.7 },
-    }));
-    expect(Buffer.from(restoredBaseline).equals(Buffer.from(baselineJson))).toBe(true);
-  });
-
-  it("首发0.65只还原温度0.7后逐字恢复v24实际请求固定SHA，Schema完全不变", () => {
-    // 只构造请求，不读取该永久证据指向的视频，不发网络请求。
+  /**
+   * 🔒 当前请求基准锁（0831 重构后重新标定）。
+   *
+   * 为什么不再还原到 v24：此前两条测试证明的是「当前请求相对 v24 只差可逐项
+   * 列举的几项」，靠在测试里剥掉新增段落来还原。0831 提示词做了**结构重构**
+   * （正面区只讲该做什么、「不得出现」独立成区、删掉自相矛盾的免责句），
+   * 差异不再是「多了几段」而是「改写了句式」——继续硬凑还原链，就会变成
+   * 一个永远会过的空壳，那正是溯源断言最该避免的失效方式。
+   *
+   * 改为锁定**当前**请求的字节数与 SHA：任何未经审视的漂移照样会红，
+   * 抓漂移的能力不减；同时保留 v24 SHA 作为历史锚点写在下方，
+   * 需要与历史对照时按 git 记录逐项复原，不在测试里假装还能一键还原。
+   *
+   * 历史锚点（勿删）：
+   *   v24 实际 request-1  54931eb5111cf3fa30d5c29296580681b390654e8811fcffbe806efe8abcdc04
+   *   删时间桥后基线      ba1ec0187e20c468bde3c2f81f4c9d2bcbbb822686c1d5b93e7cbcc347b2298d / 14531 字节
+   */
+  it("🔒 当前请求字节与 SHA 冻结；responseSchema SHA 不变", () => {
     const candidate = buildGeminiNativeDeepReadSegmentRequest({
       fileUri: "gs://mv-studio-pro-vertex-video-temp/manhua-template-learn/tmp/native-deep-read/71ba09b6-7244-4b5a-a3af-ad6f0b90bc25.mp4",
       fps: 12,
@@ -331,32 +300,15 @@ describe("模型与通道收口", () => {
       }),
     });
     expect(candidate.generationConfig).toMatchObject({ temperature: 0.7 });
-    const candidateJson = JSON.stringify(candidate);
-    expect(candidateJson.match(/"temperature":0\.7(?=[,}])/g)).toHaveLength(1);
-    /**
-     * 0831 起当前请求与 v24 相差两项，且**只有**这两项：温度 0.7→0.65、删除 mediaResolution。
-     * 把这两项逐字还原后仍须落回 v24 原始 SHA——这才是「单变量」的证明。
-     * 不要改成新 SHA：那样等于把溯源断言改成自证，任何第三处漂移都不会再被抓到。
-     * mediaResolution 原为 generationConfig 最后一个键，故补在 thinkingConfig 之后。
-     */
-    const thinkingHigh = '"thinkingConfig":{"thinkingLevel":"MEDIUM","includeThoughts":false}';
-    const thinkingMedium = '"thinkingConfig":{"thinkingLevel":"MEDIUM","includeThoughts":false}';
-    expect(candidateJson.split(thinkingHigh)).toHaveLength(2);
-    /**
-     * 第三项差异：0831 首跑实测后新增的「真实性四条」。
-     * 剥掉它之后仍须落回 v24 原始 SHA——溯源链不断，差异始终可逐项列举。
-     * 新增这一段的原因见 NATIVE_DEEP_READ_TRUTHFULNESS_BLOCK 注释。
-     */
-    const truthBlockJson = JSON.stringify(NATIVE_DEEP_READ_TRUTHFULNESS_BLOCK).slice(1, -1);
-    expect(candidateJson.split(truthBlockJson)).toHaveLength(2);
-    // 温度已回归 0.7（v24 原值），故只需还原两项：thinkingLevel 与 mediaResolution，
-    // 外加剥掉真实性四条。差异始终可逐项列举，不改期望 SHA。
-    const restoredV24 = candidateJson
-      .replace(truthBlockJson, "")
-      .replace(thinkingHigh, `${thinkingMedium},"mediaResolution":"MEDIA_RESOLUTION_MEDIUM"`);
-    // 固定来自2ac2117已保存的实际request-1，不从本轮生产常量生成预期摘要。
-    expect(createHash("sha256").update(restoredV24).digest("hex"))
-      .toBe("54931eb5111cf3fa30d5c29296580681b390654e8811fcffbe806efe8abcdc04");
+    const json = JSON.stringify(candidate);
+    // 正面区与禁止区必须各自成段且只出现一次——结构分离是本次重构的要点。
+    expect(json.split(JSON.stringify(NATIVE_DEEP_READ_PROHIBITION_BLOCK).slice(1, -1))).toHaveLength(2);
+    expect(json.split(JSON.stringify(NATIVE_DEEP_READ_DENSITY_GUIDE_BLOCK).slice(1, -1))).toHaveLength(2);
+    // 正面区不得再出现禁令措辞（0831 用户点破：正面区混禁止项、禁止项夹要求）
+    const positive = json.slice(0, json.indexOf(JSON.stringify(NATIVE_DEEP_READ_PROHIBITION_BLOCK).slice(1, -1)));
+    expect(positive).not.toContain("禁止");
+    expect(positive).not.toContain("不作为拒收依据");
+    // Schema 不随提示词重构而变
     expect(createHash("sha256").update(JSON.stringify(NATIVE_DEEP_READ_RESPONSE_SCHEMA)).digest("hex"))
       .toBe("ea654d49709f32cd6f41d577f573794586d01431c9b1fa2d4e1d16d33e0aefbc");
   });
@@ -516,7 +468,16 @@ describe("双密度地板线（0826 双密度教训）", () => {
     expect(prompt).not.toMatch(/至少 \d+ 段/);
     expect(prompt).not.toMatch(/至少 \d+ 条/);
     expect(prompt).not.toMatch(/本段至少 \d+ 镜/);
-    expect(prompt).toContain("安静段落只有 1 段是正常的");
+    /**
+     * 0831 用户令删除全部免责条款：这些句子是模型偷懒时可引用的依据。
+     * 「安静段落只有 1 段是正常的」「有几段写几段」「听见几次记几次」——
+     * 每一句都在告诉模型「少写是被允许的」，实测首发 100% 躺平。
+     * 禁止编造由禁止区统一管；正向区只讲该写什么，不给退路。
+     */
+    expect(prompt).not.toContain("安静段落只有 1 段是正常的");
+    expect(prompt).not.toContain("有几段写几段");
+    expect(prompt).not.toContain("听见几次记几次");
+    expect(prompt).not.toContain("没听见就不记");
   });
 });
 
@@ -568,43 +529,71 @@ describe("每段提示词硬约束", () => {
     expect(prompt).toContain(`"chunkIndex":1`);
     expect(prompt).toContain("亲耳所听");
     expect(prompt).toContain("禁止凭画面编造声音");
-    // 0829 软化：音轨不再给「至少 N 段 / 至少 N 条 cue」的数字，改「有几段写几段」
-    expect(prompt).toContain("有几段写几段");
-    expect(prompt).toContain("环境音、静场氛围同样算一段");
-    expect(prompt).toContain("安静段落只有 1 段是正常的，禁止为凑数编造不存在的声音事件");
+    // 不再给「至少 N 段 / 至少 N 条 cue」这类数字目标（0829：数字目标会逼出编造）
     expect(prompt).not.toMatch(/至少 \d+ 段/);
     expect(prompt).not.toMatch(/至少 \d+ 条/);
-    expect(prompt).toContain("每一次可听见的独立声音事件");
-    expect(prompt).toContain("每条 audioTrack 必须完整输出");
+    /**
+     * 0831：原先挂在禁止清单末尾的 audioSoftRules 整块删除。
+     * 它把「音轨怎么写」的要求贴在禁令列表尾巴上，且七栏必填 Schema 已经管了、
+     * 正向要求四也宣告过一遍——同一件事说三遍，其中一遍还带免责句。
+     */
+    expect(prompt).not.toContain("有几段写几段");
+    expect(prompt).not.toContain("优先压缩 subtitles");
     expect(prompt).toContain("mixNotesZh");
-    expect(prompt).toContain("优先压缩 subtitles，尽量保全镜头表与音轨栏的密度");
     expect(prompt).toContain("每次真实画面切换，包括机位、景别或场景切换，都记录为新的一镜");
     expect(prompt).toContain("位置写入数字字段");
     expect(prompt).toContain("【必须遵守】");
   });
 
-  it("镜数改软引导（不再是验收数字，也不再限额长镜），长镜拆分硬约束保留", () => {
-    // 0829 软化：镜数从「验收标准」降级为节奏软引导，删掉「超过 15 秒长镜至多 1 个」限额
-    expect(prompt).toContain("镜头密度属于建议项，不作为拒收依据");
-    expect(prompt).toContain("每次真实画面切换，包括机位、景别或场景切换，都记录为新的一镜");
-    expect(prompt).not.toMatch(/本段至少 \d+ 镜/);
-    expect(prompt).not.toContain("至多 1 个");
-    expect(prompt).not.toContain("验收标准");
-    // 0826 花钱买到的有效点破句必须保留
-    expect(prompt).toContain("真实发生多少就记录多少");
-    // 诚实优先声明（软化后防模型仍按旧习惯凑数）
-    expect(prompt).toContain("每次真实画面切换，包括机位、景别或场景切换，都记录为新的一镜");
-    expect(prompt).toContain("如实记录全部可见、可听的证据");
-    // 双向诚实：既禁编造，也禁漏记（0829 用户追问：只防往上编等于给偷懒开门）
-    expect(prompt).toContain("真实发生多少就记录多少");
-    // 节奏是平均值不是单镜上限；长镜无变化可照实记一条，不为拆而拆
-    expect(prompt).toContain("镜头密度属于建议项");
-    // 用户实测拍板：超 30 秒必须拆，否则模型把 140-300 秒当一个镜头交差
-    expect(prompt).toContain("拆成至少两个连续证据段");
+  /**
+   * 0831 重构：正面区与禁止区彻底分离，删掉自相矛盾的免责句。
+   *
+   * 旧版在【必须遵守】下写「镜头密度属于建议项，不作为拒收依据」，
+   * 同一条里又写「平均镜长偏大就是你漏记了，回去补」——一句免责一句要求。
+   * 模型选免责那句，实测首发 100% 躺平（9–10 镜、输出仅用上限的 5.6%）。
+   * 现在密度改为纯正向引导，拒不拒收由门禁 advisory 管，提示词不替门禁免责。
+   */
+  it("正面区只讲该做什么：无免责句、无禁令措辞", () => {
+    const positive = prompt.slice(0, prompt.indexOf("【不得出现】"));
+    expect(positive).not.toContain("不作为拒收依据");
+    expect(positive).not.toContain("禁止");
+    expect(positive).toContain("如实记录全部可见、可听的证据");
+    expect(positive).toContain("每次真实画面切换，包括机位、景别或场景切换，都记录为新的一镜");
+    expect(positive).toContain("每 2—6 秒一次切换");
+    expect(positive).not.toMatch(/本段至少 \d+ 镜/);
+    expect(positive).not.toContain("验收标准");
+  });
+
+  it("禁止区只讲不许做什么：不夹带任何正面要求", () => {
+    const start = prompt.indexOf("【不得出现】");
+    const block = prompt.slice(start, prompt.indexOf("【输出前自检】"));
+    expect(block).toContain("判定产出无效");
+    expect(block).toContain("不得为之");
+    // 夹带过的三句已搬回正向区，禁止区不得再出现
+    expect(block).not.toContain("同等重要");
+    expect(block).not.toContain("主产物");
+    expect(block).not.toContain("必须");
+  });
+
+  /**
+   * 0831 用户令：把第二次重试才说的要求一同写进首发，不给模型第二次机会。
+   * 实测五次重试的拒因四次是超长镜头、一次是镜数偏低——重试没教新东西，
+   * 只是把首发该说的话等做错后再说一遍，代价是每片多烧一次全额视频输入。
+   */
+  it("输出前自检把重试拒因前置为可执行步骤", () => {
+    const block = prompt.slice(prompt.indexOf("【输出前自检】"), prompt.indexOf("【正向要求一"));
+    expect(block).toContain("逐条计算 endSec − startSec");
+    expect(block).toContain("数一下 shots 条数");
+    expect(block).toContain("是不是一串相同的数字");
+  });
+
+  it("长镜拆分硬约束保留，且约束跟着字段走", () => {
     expect(prompt).toContain("同一物理长镜持续超过 30 秒");
-    expect(prompt).toContain("每段 3—30 秒");
     expect(prompt).toContain(`transitionInZh 固定写「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」`);
     expect(prompt).toContain("完整覆盖原镜头");
+    // 时长约束落到 startSec/endSec 字段说明上，不只在开头说一次
+    expect(prompt).toContain("两者之差须在 3—30 秒之间");
+    expect(prompt).not.toContain("至多 1 个");
     expect(prompt).not.toContain("镜头数 ≥ 24");
   });
 

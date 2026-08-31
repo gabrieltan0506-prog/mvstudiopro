@@ -1,3 +1,4 @@
+
 /**
  * 原生视频精读 · 生产执行器。
  *
@@ -488,7 +489,7 @@ export const NATIVE_DEEP_READ_ADVISORY_FAMILIES: ReadonlyArray<{
   ]) },
   { familyZh: "镜头", codes: new Set([
     "long_take_count", "long_take_split_discontinuous", "no_story_shots", "empty_action",
-    "shot_density_low", "shot_out_of_segment_range",
+    "shot_density_low", "shot_out_of_segment_range", "ad_ratio_suspicious",
   ]) },
   { familyZh: "结构", codes: new Set([
     "classification_thin", "empty_beat_structure", "clock_text",
@@ -507,6 +508,30 @@ export function nativeDeepReadAdvisoryFamilyOf(code: string): string {
  * 覆盖类可**单独触发**重跑（0830 晚用户拍板①）：不必凑够 2 项，
  * 只要覆盖缺口偏差 > 20% 就重买。少一大段画面是硬伤，不是「差一点」。
  */
+/**
+ * 广告时长占本段的比例上限。超过即判模型拿 non_story_ad 当偷懒出口。
+ *
+ * 为什么必须有（0831 用户点出的口子）：`non_story_ad` 只需填
+ * startSec/endSec/evidenceRole **三个字段**，而 story 要填 **十七个**。
+ * 把正片标成广告，能通过全部 schema 检查、段卡合并时被整行剔除，
+ * 于是「钱照烧、证据为零，而且看起来一切正常」——没有任何 advisory 会亮。
+ * 它还能**绕过镜数地板**：地板数的是 storyShots，广告镜不计入。
+ *
+ * 0.35 的来源：真人剧片头版权卡＋贴片实测约占 30%（0830），漫剧招商更少。
+ * 留 5 个点余量；超过就该有人看一眼，而不是默默把整片当广告丢掉。
+ */
+export const NATIVE_DEEP_READ_AD_RATIO_MAX = 0.35;
+
+/**
+ * 单条广告镜的时长占比上限。
+ *
+ * 只看总占比不够：真实广告是**片头版权卡＋贴片＋中插**这样的多段短区间，
+ * 而偷懒是**一条大广告吞掉整段**。后者才是要抓的形态——模型写一行
+ * `{startSec:0, endSec:300, evidenceRole:"non_story_ad"}` 就交差了。
+ * 两条同时超标才判可疑，避免把「广告多但如实标注」误判成偷懒。
+ */
+export const NATIVE_DEEP_READ_AD_SINGLE_MAX_RATIO = 0.6;
+
 export const NATIVE_DEEP_READ_COVERAGE_SOLO_RETRY_CODES: ReadonlySet<string> = new Set([
   "coverage_missing", "coverage_head_gap", "coverage_tail_gap", "timeline_gap",
   /**
@@ -523,10 +548,13 @@ export const NATIVE_DEEP_READ_COVERAGE_SOLO_RETRY_CODES: ReadonlySet<string> = n
    * 目的只是让「只写 9 镜」有代价，不是逼它写够 53 镜。
    */
   "shot_density_low",
+  // 广告占比异常同样可单独触发重试：整片被标成广告时，其他判据都数不到东西。
+  "ad_ratio_suspicious",
 ]);
 
 export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES: ReadonlySet<string> = new Set([
   "shot_density_low",
+  "ad_ratio_suspicious",
   "audio_track_thin",
   "coverage_missing",
   "coverage_head_gap",
@@ -572,17 +600,51 @@ export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES: ReadonlySet<string> = 
  * 而镜头写的是「少主在魔界发号施令」——听到了、转写了，就是不肯写镜头，改用模板顶替。
  *
  * ⚠️ 这四条是**真实性**要求，不是密度下限。用户 0830 明令「上限设好就别管下限」，
- * 所以这里明确给出诚实的出口：看不清就少记几镜，允许；但不许拿别处的描述顶替。
+ * 0831 用户令删除全部免责条款：素材是高清画面，「看不清」不成立；
+ * 必填字段不得再给「没有就输出空」的后门——那些都是模型偷懒时可引用的依据。
  * 上一句「密度属于建议项，不作为拒收依据」若不配这四条，等于发给模型一张偷懒许可证。
  */
-export const NATIVE_DEEP_READ_TRUTHFULNESS_BLOCK = `
-以下四条不是密度要求，是真实性要求，必须遵守：
-· 禁止把同一段描述套用到不同时间段。两条镜头的画面描述如果逐字相同，说明其中至少一条不是你真实看到的。
-· 禁止用等长等距切分代替真实剪辑点。真实剪辑的镜头长度不会规律相等，整段每 10 秒一镜是编出来的，不是看出来的。
-· 每条镜头必须与该时间段实际发生的画面一致；该时段有台词时，镜头内容须与台词情境相符，不得写与台词无关的场面。
-· 越靠后的时间段越容易被草率带过。本段最后三分之一与开头同等重要，须以同样的观察密度处理。
-不确定不等于不记录：某一镜你看不清时，仍要写出它的时间范围与你能确认的字段，看不清的字段写「[看不清]」，**不要因为不确定就跳过整镜**，更不得用其他段落的描述顶替。
-自检基准：这类短剧的真实剪辑节奏通常是每 2—6 秒一次切换。如果你给出的镜头平均长度明显大于这个量级，那是你漏记了切换点，不是这部片真的没有切换——回去补上漏掉的切点，而不是把已有的镜拉长。`;
+/**
+ * 密度正向引导（0831 重构后新增）。与禁止区分开：这里只说**该做什么**。
+ * 替代了原先那句自相矛盾的「镜头密度属于建议项，不作为拒收依据」——
+ * 一句免责写在「必须遵守」下面，模型当然选它，实测首发 100% 躺平。
+ * 门禁那边已有 advisory 在管密度，提示词不替门禁做免责声明。
+ */
+export const NATIVE_DEEP_READ_DENSITY_GUIDE_BLOCK =
+  `这类短剧的真实剪辑节奏通常是每 2—6 秒一次切换，据此估算本段应有的镜头量级。
+本段最后三分之一与开头同等重要，用同样的观察密度处理。`;
+
+
+/**
+ * 统一禁止区（0831 重构）。
+ *
+ * 用户点破的结构性问题：正面要求区里混了禁止项，禁止项里又夹着「必须做」，
+ * 前提已经禁止又要求模型做，自相矛盾。更糟的是第 4 条曾同时写着
+ * 「镜头密度属于建议项，不作为拒收依据」和「平均镜长偏大就是你漏记了，回去补」——
+ * 一句免责、一句要求，模型当然选免责那句，于是首发 100% 躺平（9-10 镜、
+ * 输出只用上限的 5.6%）。用户此前就警告过「硬限制不能太多，否则模型会直接躺平罢工」。
+ *
+ * 重构原则：
+ *   · 正面区（1-5 条）只讲**该做什么**，不出现任何「禁止/不得/不要」
+ *   · 本区只讲**不许做什么**，不夹带任何要求
+ *   · 删掉一切免责声明——门禁那边已有 advisory 在管，提示词不替门禁做免责
+ */
+export const NATIVE_DEEP_READ_PROHIBITION_BLOCK = `
+【不得出现】
+
+以下六条只讲不许做什么。做什么、怎么做见后面的正向要求。
+
+判定产出无效：
+· 同一段描述套用到不同时间段；两条镜头的画面描述逐字相同。
+· 用等长等距的时间切分代替真实剪辑点，包括整段按固定步长切、以及只在后段这样做。
+· 镜头内容与该时段实际画面不符；该时段有台词时写与台词情境无关的场面。
+· 用其他段落的描述顶替本该逐镜观察的内容。
+
+不得为之：
+· 逐字转写全片对白；落在 keyMoments 邻域之外的台词一概不收。
+· 为了多写字幕而压缩镜头条数或缩短镜头描述。
+· 为凑够音轨段数或声音事件数而编造不存在的声音。`;
+
 
 export const NATIVE_DEEP_READ_NON_ACTIONABLE_RETRY_CODES: ReadonlySet<string> = new Set([
   "audio_track_thin", "audio_cue_thin", "long_take_count",
@@ -882,6 +944,31 @@ export const NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC = 15;
 export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC = 30;
 
 /**
+ * 输出前自检（0831 用户令：把第二次重试才说的要求一同写进首发）。
+ *
+ * 实测五次重试的拒因，四次是同一件事——超长镜头（最长 65／89／109／199 秒），
+ * 一次是镜数低于地板。重试并没有教给模型新东西，只是把首发就该说清的话
+ * 等它做错之后再说一遍，代价是每片多烧一次全额视频输入（≈295k token）。
+ *
+ * 写成**可执行的检查步骤**而非又一条禁令：条件句拦不住（「超过 30 秒时应拆分」
+ * 模型会自判「这不算长镜」），算式拦得住（「两数相减大于 30 就回去拆」）。
+ */
+export function buildNativeDeepReadSelfCheckBlock(lenSec: number): string {
+  return `
+【输出前自检】
+
+把 JSON 交出来之前，按顺序自己过一遍。这几项若不合，产出会被判定无效：
+
+1. 逐条计算 endSec − startSec。凡是大于 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 的，回去按硬约束 2 拆开，不要交上来。
+2. 数一下 shots 条数。本段 ${Math.round(lenSec)} 秒按每 2—6 秒一镜估算，若你的条数远低于这个量级，回去找漏掉的切换点。
+3. 看相邻各镜的时长是不是一串相同的数字。若是，说明你在按固定步长切时间轴，回去按真实剪辑点重来。`;
+}
+
+
+
+
+
+/**
  * 单片镜头数**观察线**（不是硬上限，也不进提示词）。
  *
  * 🔴 0830 晚订正：它一度被写进提示词当硬上限，与「如实记录全部证据」直接冲突——
@@ -1019,10 +1106,6 @@ export function buildGeminiNativeDeepReadSegmentPrompt(input: {
   const audioHardRule = input.hasAudio
     ? `6. audioResolution 固定为 [{"chunkIndex":${input.segmentIndex},"analysis":{…}}]，由你**亲耳所听**产出，禁止凭画面编造声音；audioTrack 与 cues 内时间用**本段局部秒**（0..${lenSec}），这是全 JSON 唯一的局部秒例外。`
     : `6. 本段素材没有音轨：audioResolution 必须返回空数组 []，禁止凭画面编造声音。`;
-  const audioSoftRules = input.hasAudio
-    ? `b. 音轨按声音性质切段、连续覆盖本段：**有几段写几段——环境音、静场氛围同样算一段；安静段落只有 1 段是正常的，禁止为凑数编造不存在的声音事件。** 每条 audioTrack 必须完整输出 emotionArcZh/toneZh/sfxZh/bgmZh/atmosphereZh/silenceZh 与 cues 七栏，禁止省略字段；确实没有某类声音时对应文本写「无」，cues 仍必须是数组。cues 记录每一次可听见的独立声音事件（音效、配乐进出与变化、留白转换、语气突变），听见几次记几次，没听见就不记。analysis 的 audioBeatStructureZh/mixNotesZh/reusableAudioZh/genAudioHintZh 四栏也必须完整输出。
-c. 输出预算紧张时优先压缩 subtitles，尽量保全镜头表与音轨栏的密度。`
-    : "";
   const base = `【必须遵守】
 
 1. 时间坐标
@@ -1033,7 +1116,8 @@ audioResolution 内的 fromSec/toSec、cues.atSec 使用本段局部整数秒，
 
 2. 镜头记录与长镜拆分
 真实剪辑切换的 unitTypeZh 写「剪辑镜头」。
-同一物理长镜持续超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒时，按镜内真实发生的构图、运镜、角色调度、动作、表演或光影变化，拆成至少两个连续证据段。每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，完整覆盖原镜头。
+每条 shots 记录的时长（endSec − startSec）必须在 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒之间。
+同一物理长镜持续超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒时，按镜内真实发生的构图、运镜、角色调度、动作、表演或光影变化，拆成多个连续证据段，完整覆盖原镜头。
 拆分后的 unitTypeZh 写「拆分镜证据段」；第二段及后续段的 transitionInZh 固定写「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」。
 
 3. 统一适用范围
@@ -1041,7 +1125,7 @@ audioResolution 内的 fromSec/toSec、cues.atSec 使用本段局部整数秒，
 
 4. 完整性与密度
 如实记录全部可见、可听的证据。每次真实画面切换，包括机位、景别或场景切换，都记录为新的一镜。
-镜头密度属于建议项，不作为拒收依据。真实发生多少就记录多少。${NATIVE_DEEP_READ_TRUTHFULNESS_BLOCK}
+${NATIVE_DEEP_READ_DENSITY_GUIDE_BLOCK}
 
 5. 输出格式
 返回一个 JSON 对象，字段名、类型、枚举及必填项遵循对应的 Schema 分支。各描述字段遵守下列字数上限；镜头条数由真实内容决定。
@@ -1056,11 +1140,13 @@ audioResolution 内的 fromSec/toSec、cues.atSec 使用本段局部整数秒，
 分段序号：第 ${input.segmentIndex + 1}/${input.segmentCount} 段。
 音轨段号：${input.segmentIndex}。${hint ? `\n补充信息：${hint}。` : ""}
 
+${NATIVE_DEEP_READ_PROHIBITION_BLOCK}
+${buildNativeDeepReadSelfCheckBlock(lenSec)}
+
 【正向要求一：逐镜分析 shots】
 
 每条 story 镜头填写以下 17 字段：
-- startSec：起始秒位。
-- endSec：结束秒位。
+- startSec / endSec：本镜起止秒位。两者之差须在 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒之间；超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒的物理长镜按硬约束 2 拆成多段。
 - unitTypeZh：剪辑镜头／拆分镜证据段。
 - shotSizeZh：实际景别，如极特写、特写、近景、中景、全景、大远景。
 - angleZh：实际机位，如平视、仰拍、俯拍、过肩、主观。
@@ -1073,7 +1159,7 @@ audioResolution 内的 fromSec/toSec、cues.atSec 使用本段局部整数秒，
 - gazeBreathZh：视线或感知指向、眨眼、呼吸及可见节律变化，≤58字。
 - relationshipReactionZh：角色动作先后、彼此回应与距离变化，≤60字。
 - lightingZh：主辅光位、色调、明暗关系、轮廓光与环境光变化，≤58字。
-- actionZh：本镜可见动作过程、信息变化、结果与辨识特征，≤60字。
+- actionZh：本镜可见动作过程、信息变化、结果与辨识特征，≤60字。写你在该时间段真实看到的内容，各镜各写各的。
 - transitionInZh：进入本镜的实际转场方式；长镜续段使用规定标记。
 - evidenceRole：按统一分类规则填写。
 
@@ -1086,20 +1172,20 @@ keyMoments 是由你选定的抓帧秒位表。下游会按 atSec 去原片抓�
 - 灯光：氛围切换前后各一条，例如暖光转为面部阴影加深时，分别记录变化前后的代表帧。
 - 剧情：推动因果的关键节点，例如字幕点明冲突、关键道具亮相。
 - 音轨：声音事件发生秒，例如配乐转折、关键音效或声音分段切换。
-密度跟着戏走：重点镜头可选多条；固定机位、表演和光影均无明显变化的平淡镜头，可以一条都不给。
+密度跟着戏走：重点镜头可选多条；平淡镜头可以少给。本段前中后三个区间都要有抓帧点。
 每条包含：
 - atSec：全片绝对秒，可保留一位小数（如 673.6）。输入按 ${videoFps}fps 抽帧，采样间隔约 ${sampleIntervalSec} 秒；取事件真正发生的那一帧的秒位。
 - kindZh：切镜／情绪／灯光／剧情／音轨。
 - noteZh：一句话说明该时刻发生的事件，≤60字。
-keyMoments 为必填字段；本段没有合适抓帧点时输出 []。
 
 【正向要求三：关键时刻字幕 subtitles】
 
+字幕只是关键时刻的旁证，镜头表才是本次的主产物。
 仅收录 atSec 落在任一 keyMoment.atSec 前后 2 秒范围内的真实剧情字幕。
 每条包含：
 - atSec：字幕实际出现的全片绝对整数秒。
 - textZh：画面中该条字幕的原文，逐字照抄。
-命中几条记录几条；附近没有字幕时留空。不可辨部分标记为「[不可辨]」。keyMoments 为空时，subtitles 输出 []。
+命中几条记录几条。
 
 【正向要求四：声音解析 audioResolution】
 
@@ -1127,6 +1213,8 @@ ${audioHardRule}
 
 【正向要求五：节奏、情绪与手法总结】
 
+总结只能来自上面已写入的逐镜证据，不引入镜头表里没有的内容。
+
 - beatStructureZh：概括实际节奏，如「铺垫→蓄势→转折→收束」，≤90字。
 - moodArcZh：依据表演与声画变化描述「起点→变化→终点」，≤70字。
 - reusableZh：提炼可脱离角色、剧名与具体情节复用的通用做法。
@@ -1137,7 +1225,7 @@ classification 完整输出五个数组：
 - performanceTagsZh：表演特征。
 - audiovisualTagsZh：视听特征。
 - audienceExperienceTagsZh：观众体验特征。
-标签来自本段真实证据。证据充分时覆盖至少两个维度；没有依据的维度填写 []。
+标签来自本段真实证据，覆盖至少两个维度。
 
 【统一分类与 Schema 分支规则】
 
@@ -1152,8 +1240,7 @@ shots 条目按 evidenceRole 区分两种结构：
 3. 把镜头区间中点机械当作 keyMoment；视觉选点落在过渡帧、运动模糊或无代表性的空镜上。
 4. 字幕从声音猜字、按剧情想像补全或添加画面中不存在的台词。
 5. 中文描述字段出现「01:23」「在第X秒」等时间定位。
-6. 用题材词代替手法分类，将未呈现的人物动机或推测当作观察事实。
-${audioSoftRules}`;
+6. 用题材词代替手法分类，将未呈现的人物动机或推测当作观察事实。`;
   return input.rejectedReasonZh
     ? `${base}
 【上一轮未通过的检查】${String(input.rejectedReasonZh).slice(0, 300)}
@@ -2587,6 +2674,52 @@ export function assertNativeDeepReadSegmentDensity(input: {
     );
   }
   const storyShots = shots.filter((shot) => shot.evidenceRole === "story");
+  /**
+   * 🔴 广告标注不得成为偷懒出口（0831 用户点出）。
+   * 广告镜只需三个字段、且会被整行剔除，是这条链路上**最省力**的偷懒方式：
+   * 比写「剧情推进」这种通用词还省——连编都不用编。
+   * 这里按**时长占比**而非条数判：一条 300 秒的「广告」比十条 3 秒的更可疑。
+   */
+  const adDurationSec = shots
+    .filter((shot) => shot.evidenceRole === "non_story_ad")
+    .reduce((total, shot) => total + Math.max(0, Number(shot.endSec) - Number(shot.startSec)), 0);
+  const adRatio = lenSec > 0 ? adDurationSec / lenSec : 0;
+  const longestAdSec = shots
+    .filter((shot) => shot.evidenceRole === "non_story_ad")
+    .reduce((max, shot) => Math.max(max, Number(shot.endSec) - Number(shot.startSec)), 0);
+  const longestAdRatio = lenSec > 0 ? longestAdSec / lenSec : 0;
+  /**
+   * 三条同时成立才判，缺一不可——判据要抓的是**具体形态**不是「广告多」：
+   *   ① 广告总占比超线：真实广告（片头版权卡＋贴片＋中插）通常在 30% 以内
+   *   ② 单条广告吞掉大半段：偷懒是写一行 {0, 300, non_story_ad} 交差，
+   *      真实广告是多段短区间
+   *   ③ story 镜头稀少：广告占大半却还认真写了正片的，不是偷懒
+   *
+   * 第③条是关键分野。有些正当用例（如只测覆盖率的单元测试、或真的整段是
+   * 招商内容的片段）会满足①②，但只要 story 侧有正常密度就不该判。
+   */
+  const storyDensityOk = storyShots.length
+    >= Math.ceil(lenSec / NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC) / 2;
+  /**
+   * ④ 段内**完全没有** story 镜时不由本条报——那种情况 `no_story_shots` 已经在管，
+   * 同一件事不出两条 advisory（用户立过「同一判断只能一个函数」）。
+   * 真正要本条抓的是「标大半为广告、留几镜装样子」：story 侧不为零但明显偏薄，
+   * 单看 no_story_shots 抓不到，单看镜数地板也抓不到（地板只数 story，
+   * 广告镜不计入分母，标成广告反而让地板更容易过）。
+   */
+  if (storyShots.length > 0
+    && adRatio > NATIVE_DEEP_READ_AD_RATIO_MAX
+    && longestAdRatio > NATIVE_DEEP_READ_AD_SINGLE_MAX_RATIO
+    && !storyDensityOk) {
+    note(
+      "ad_ratio_suspicious",
+      `${labelZh}有 ${Math.round(adDurationSec)} 秒被标为商业广告，占本段 `
+      + `${(adRatio * 100).toFixed(1)}%（上限 ${NATIVE_DEEP_READ_AD_RATIO_MAX * 100}%）；`
+      + `其中单条最长 ${Math.round(longestAdSec)} 秒（占 ${(longestAdRatio * 100).toFixed(1)}%）；`
+      + `广告镜只需三个字段且会被整行剔除，一条大广告吞掉整段是把正片当广告跳过的典型形态`,
+      deviation(adRatio, NATIVE_DEEP_READ_AD_RATIO_MAX),
+    );
+  }
   const longTakeAdvisories = collectLongTakeAdvisories({ shots: storyShots, labelZh, segmentIndex });
 
   /**
