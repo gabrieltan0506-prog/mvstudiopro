@@ -88,12 +88,31 @@ export function parseNativeProbeDiagnosticOptions(argv: readonly string[], flyAp
   return { selectedSegmentIndexes };
 }
 
-/** 先验完整清单，再选择原段；末片及未选片仍属于原集身份。 */
+/**
+ * 🔴 顺序闸（0831 用户令）：一次只准读一片。
+ *
+ * 用户原话：「第一片一次成功后，才准接着读第二片；如果第一片失败必须要知道原因，
+ * 没找到原因不准读第二片。」
+ *
+ * 为什么必须硬拦在这里而不是靠自觉：多片一次发车时，若首片就走偏（实测首发
+ * 100% 躺平、9–10 镜），后面几片会用同一套有问题的配置一起烧掉——
+ * 两片那发 ¥15.60、四次调用，其中有一次响应都没拿回来。
+ * 一次一片则最多损失一片的钱，且失败原因当场就能定位到具体那一片。
+ *
+ * 要读第二片，把上一片的产出看过、原因搞清楚之后，改传 --segment-indexes=1 再发一次。
+ */
 export function resolveNativeProbeDiagnosticScope(value: unknown, requestedIndexes: readonly number[]) {
   const manifest = parseNativeProbeManifest(value);
   const selectedSegmentIndexes = indexes(requestedIndexes);
   if (selectedSegmentIndexes.some((index) => index >= manifest.segments.length)) {
     throw new Error("--segment-indexes 超出完整清单原段号范围");
+  }
+  if (selectedSegmentIndexes.length > 1) {
+    throw new Error(
+      `一次只准读一片（本次选了 ${selectedSegmentIndexes.length} 片：`
+      + `${selectedSegmentIndexes.join("、")}）。上一片成功并核对过产出之后，`
+      + `再用 --segment-indexes=<下一片> 单独发车；上一片失败时先查明原因，不得接着读下一片。`,
+    );
   }
   return { manifest, selectedSegmentIndexes, selectedSegments: selectedSegmentIndexes.map((index) => manifest.segments[index]!) };
 }

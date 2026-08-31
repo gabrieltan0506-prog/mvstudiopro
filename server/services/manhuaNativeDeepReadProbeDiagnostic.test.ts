@@ -148,18 +148,19 @@ describe("选片诊断参数：显式入口与完整来源计划", () => {
 
 describe("选片诊断编排：纯假媒体与假模型，不连接网络", () => {
   it("只验选中片，沿原段号使用完整计划并永久保存诊断选用原稿", async () => {
-    const f = fixture([4, 2]);
+    // 0831 顺序闸：一次只读一片，故这里改用单片（原为 [4, 2]）。
+    const f = fixture([2]);
     const output = await runNativeProbeSelectedDiagnostic(f.input, f.deps as never);
     const args = f.deps.runSelected.mock.calls[0]![0];
-    expect(args).toMatchObject({ sourceDigest: digest, sourceDurationSec: 1594, selectedSegmentIndexes: [2, 4], videoFps: 12 });
+    expect(args).toMatchObject({ sourceDigest: digest, sourceDurationSec: 1594, selectedSegmentIndexes: [2], videoFps: 12 });
     expect(args.segments).toHaveLength(5);
-    expect((args.preparedVideos as Array<{ startSec: number }>).map((row) => row.startSec)).toEqual([638, 1276]);
-    expect(f.deps.media.sign.mock.calls.map(([uri]) => uri)).toEqual([manifest().segments[2]!.gsUri, manifest().segments[4]!.gsUri]);
-    expect(f.deps.media.probe).toHaveBeenCalledTimes(2);
+    expect((args.preparedVideos as Array<{ startSec: number }>).map((row) => row.startSec)).toEqual([638]);
+    expect(f.deps.media.sign.mock.calls.map(([uri]) => uri)).toEqual([manifest().segments[2]!.gsUri]);
+    expect(f.deps.media.probe).toHaveBeenCalledTimes(1);
     expect(output.summary).toMatchObject({ diagnosticStatus: "evidence_verified", assemblyComplete: false, productAcceptance: "not_run", glmStatus: "not_run", qualityAcceptance: "not_reviewed", totalSegmentCount: 5, sourceDurationSec: 1594 });
     expect(output.exitCode).toBe(0);
     expect(f.objects.has("diagnostic-selected/seg2.json")).toBe(true);
-    expect(f.objects.has("diagnostic-selected/seg4.json")).toBe(true);
+    expect(f.objects.has("diagnostic-selected/seg4.json")).toBe(false);
     expect(Array.from(f.objects.keys()).some((key) => key.includes("segment-cache") || key.includes("episode-result"))).toBe(false);
   });
   it.each(["outside", "identity", "metadata"])("%s错误在模型前拒绝", async (kind) => {

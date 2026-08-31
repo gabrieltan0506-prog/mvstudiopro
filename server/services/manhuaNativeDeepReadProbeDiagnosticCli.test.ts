@@ -27,7 +27,17 @@ function cli(args: string[]) {
   });
 }
 describe("真实CLI选片诊断离线预检", () => {
-  it.each(["0", "0,1", "4,2,0"])("%s保留完整1594秒5片，只打印实际选中原索引", (selection) => {
+  /**
+   * 0831 用户令：一次只准读一片。多片选段在解析阶段就被拒，不到付费。
+   * 「第一片一次成功后，才准接着读第二片；失败必须知道原因，没找到原因不准读第二片。」
+   */
+  it.each(["0,1", "4,2,0"])("多片选段 %s 被顺序闸拒绝，不进入预检", (selection) => {
+    const result = cli(["--gemini-only", `--segment-indexes=${selection}`, `--gcs-manifest=${file()}`, "--fps=14"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr + result.stdout).toContain("一次只准读一片");
+  });
+
+  it.each(["0"])("%s保留完整1594秒5片，只打印实际选中原索引", (selection) => {
     const result = cli(["--gemini-only", `--segment-indexes=${selection}`, `--gcs-manifest=${file()}`, "--segment-seconds=319", "--fps=12"]);
     expect(result.status).toBe(0);
     const summary = JSON.parse(result.stdout.slice(result.stdout.indexOf("{")));

@@ -518,8 +518,11 @@ describe("每段提示词硬约束", () => {
 
   it("告知全片位置并要求绝对秒位", () => {
     expect(prompt).toContain("全片时长：720 秒");
-    expect(prompt).toContain("一律使用全片绝对整数秒");
-    expect(prompt).toContain("shots.startSec/endSec、subtitles.atSec 一律使用全片绝对整数秒");
+    // 0831 用户裁决：shots/keyMoments 可保留一位小数（实测 77 镜里 75 镜带小数），
+    // subtitles 仍用整数秒。
+    expect(prompt).toContain("使用全片绝对秒，可保留一位小数");
+    expect(prompt).toContain("subtitles.atSec 使用全片绝对整数秒");
+    expect(prompt).toContain("shots.startSec/endSec、keyMoments.atSec 使用全片绝对秒，可保留一位小数");
     expect(prompt).toContain("keyMoments.atSec 使用全片绝对秒，可保留一位小数");
     expect(prompt).not.toContain("shots.startSec/endSec、keyMoments.atSec、subtitles.atSec 一律使用全片绝对整数秒");
     expect(prompt).toContain("本段范围为 360 至 720 秒");
@@ -528,7 +531,9 @@ describe("每段提示词硬约束", () => {
   it("音轨硬红线（亲耳所听/局部秒例外）与软边界建议齐全（0826 二次拍板）", () => {
     expect(prompt).toContain(`"chunkIndex":1`);
     expect(prompt).toContain("亲耳所听");
-    expect(prompt).toContain("禁止凭画面编造声音");
+    // 0831：禁令搬到【不得出现】区，正面区只留格式规定
+    expect(prompt).toContain("凭画面推测声音——音轨内容只能来自你亲耳所听");
+    expect(prompt.slice(0, prompt.indexOf("【不得出现】"))).not.toContain("禁止凭画面编造声音");
     // 不再给「至少 N 段 / 至少 N 条 cue」这类数字目标（0829：数字目标会逼出编造）
     expect(prompt).not.toMatch(/至少 \d+ 段/);
     expect(prompt).not.toMatch(/至少 \d+ 条/);
@@ -559,7 +564,7 @@ describe("每段提示词硬约束", () => {
     expect(positive).not.toContain("禁止");
     expect(positive).toContain("如实记录全部可见、可听的证据");
     expect(positive).toContain("每次真实画面切换，包括机位、景别或场景切换，都记录为新的一镜");
-    expect(positive).toContain("每 2—6 秒一次切换");
+    expect(positive).toContain("每 3—6 秒一次切换");
     expect(positive).not.toMatch(/本段至少 \d+ 镜/);
     expect(positive).not.toContain("验收标准");
   });
@@ -606,8 +611,8 @@ describe("每段提示词硬约束", () => {
       segmentCount: 1,
       hasAudio: false,
     });
-    expect(silent).toContain("audioResolution 必须返回空数组");
-    expect(silent).not.toContain("亲耳所听");
+    expect(silent).toContain("本段素材没有音轨，audioResolution 返回空数组 []");
+    expect(silent).not.toContain("audioTrack 与 cues 内时间用");
   });
 
   it("带拒因重试时附上一轮被拒原因并要求尽量保密度", () => {
@@ -635,7 +640,7 @@ describe("每段提示词硬约束", () => {
       segmentCount: 1, hasAudio: false, rejectedReasonZh: "镜头证据段超过33秒",
     });
     // 硬约束 6 已写死「禁止凭画面编造声音」，重做要求再提「按听到的写」就是开口子。
-    expect(retry).toContain("audioResolution 必须返回空数组");
+    expect(retry).toContain("本段素材没有音轨，audioResolution 返回空数组 []");
     expect(retry).not.toContain("不要为了\"补足\"而增加不存在的声音事件");
     expect(retry).not.toContain("声音部分按实际听到的写");
     // 前三条与有音轨时一致，不因无音轨而削弱。
@@ -676,8 +681,8 @@ describe("时间坐标桥单变量候选", () => {
     const bridge = (prompt: string) => prompt.split("\n").find((line) => line.startsWith("所附视频文件只有本段"));
     expect(bridge(silent)).toBeDefined();
     expect(bridge(silent)).toBe(bridge(withAudio));
-    expect(silent).toContain("本段素材没有音轨：audioResolution 必须返回空数组 []");
-    expect(silent).not.toContain("亲耳所听");
+    expect(silent).toContain("本段素材没有音轨，audioResolution 返回空数组 []");
+    expect(silent).not.toContain("audioTrack 与 cues 内时间用");
   });
 
   it("重试完整复用唯一时间桥，只按原规则追加拒因", () => {

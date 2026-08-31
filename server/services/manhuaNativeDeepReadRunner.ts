@@ -611,7 +611,7 @@ export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES: ReadonlySet<string> = 
  * 门禁那边已有 advisory 在管密度，提示词不替门禁做免责声明。
  */
 export const NATIVE_DEEP_READ_DENSITY_GUIDE_BLOCK =
-  `这类短剧的真实剪辑节奏通常是每 2—6 秒一次切换，据此估算本段应有的镜头量级。
+  `这类短剧的真实剪辑节奏通常是每 3—6 秒一次切换，据此估算本段应有的镜头量级。
 本段最后三分之一与开头同等重要，用同样的观察密度处理。`;
 
 
@@ -643,7 +643,8 @@ export const NATIVE_DEEP_READ_PROHIBITION_BLOCK = `
 不得为之：
 · 逐字转写全片对白；落在 keyMoments 邻域之外的台词一概不收。
 · 为了多写字幕而压缩镜头条数或缩短镜头描述。
-· 为凑够音轨段数或声音事件数而编造不存在的声音。`;
+· 为凑够音轨段数或声音事件数而编造不存在的声音。
+· 凭画面推测声音——音轨内容只能来自你亲耳所听。`;
 
 
 export const NATIVE_DEEP_READ_NON_ACTIONABLE_RETRY_CODES: ReadonlySet<string> = new Set([
@@ -960,7 +961,7 @@ export function buildNativeDeepReadSelfCheckBlock(lenSec: number): string {
 把 JSON 交出来之前，按顺序自己过一遍。这几项若不合，产出会被判定无效：
 
 1. 逐条计算 endSec − startSec。凡是大于 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 的，回去按硬约束 2 拆开，不要交上来。
-2. 数一下 shots 条数。本段 ${Math.round(lenSec)} 秒按每 2—6 秒一镜估算，若你的条数远低于这个量级，回去找漏掉的切换点。
+2. 数一下 shots 条数。本段 ${Math.round(lenSec)} 秒按每 3—6 秒一镜估算，若你的条数远低于这个量级，回去找漏掉的切换点。
 3. 看相邻各镜的时长是不是一串相同的数字。若是，说明你在按固定步长切时间轴，回去按真实剪辑点重来。`;
 }
 
@@ -1104,13 +1105,16 @@ export function buildGeminiNativeDeepReadSegmentPrompt(input: {
    * 密度改为软引导 + 诚实优先声明；结构化层负责整理，门禁只贴标记不再当拒收线。
    */
   const audioHardRule = input.hasAudio
-    ? `6. audioResolution 固定为 [{"chunkIndex":${input.segmentIndex},"analysis":{…}}]，由你**亲耳所听**产出，禁止凭画面编造声音；audioTrack 与 cues 内时间用**本段局部秒**（0..${lenSec}），这是全 JSON 唯一的局部秒例外。`
-    : `6. 本段素材没有音轨：audioResolution 必须返回空数组 []，禁止凭画面编造声音。`;
+    ? `6. 音轨范围与时间基准
+audioResolution 固定为 [{"chunkIndex":${input.segmentIndex},"analysis":{…}}]，内容由你**亲耳所听**产出。
+audioTrack 与 cues 内时间用**本段局部秒**（0..${lenSec}），这是全 JSON 唯一的局部秒例外。`
+    : `6. 音轨范围与时间基准
+本段素材没有音轨，audioResolution 返回空数组 []。`;
   const base = `【必须遵守】
 
 1. 时间坐标
 所附视频文件只有本段 ${lenSec} 秒，文件 00:00 对应全片 ${Math.round(input.startSec)} 秒。先定位原帧，再将文件内 MM:SS 或 HH:MM:SS 换算为本段累计秒 t = 小时×3600 + 分钟×60 + 秒；全片秒位 = ${Math.round(input.startSec)} + t，音轨局部秒位 = t。例如文件 ${fileClock(exampleLocalSec)} 对应本段 ${exampleLocalSec} 秒、全片 ${Math.round(input.startSec) + exampleLocalSec} 秒；文件末尾 ${fileClock(lenSec)} 对应本段 ${lenSec} 秒、全片 ${Math.round(input.endSec)} 秒。
-shots.startSec/endSec、subtitles.atSec 一律使用全片绝对整数秒；keyMoments.atSec 使用全片绝对秒，可保留一位小数。本段范围为 ${Math.round(input.startSec)} 至 ${Math.round(input.endSec)} 秒，shots 按时间排序，连续覆盖整段。
+shots.startSec/endSec、keyMoments.atSec 使用全片绝对秒，可保留一位小数；subtitles.atSec 使用全片绝对整数秒。本段范围为 ${Math.round(input.startSec)} 至 ${Math.round(input.endSec)} 秒，shots 按时间排序，连续覆盖整段。
 audioResolution 内的 fromSec/toSec、cues.atSec 使用本段局部整数秒，以本段起点为 0；chunkIndex 使用传入原值。
 位置写入数字字段；中文描述里可以写动作持续时长，如「1.2 秒内推近」。
 
@@ -1126,6 +1130,8 @@ audioResolution 内的 fromSec/toSec、cues.atSec 使用本段局部整数秒，
 4. 完整性与密度
 如实记录全部可见、可听的证据。每次真实画面切换，包括机位、景别或场景切换，都记录为新的一镜。
 ${NATIVE_DEEP_READ_DENSITY_GUIDE_BLOCK}
+
+${audioHardRule}
 
 5. 输出格式
 返回一个 JSON 对象，字段名、类型、枚举及必填项遵循对应的 Schema 分支。各描述字段遵守下列字数上限；镜头条数由真实内容决定。
@@ -1208,8 +1214,7 @@ keyMoments 是由你选定的抓帧秒位表。下游会按 atSec 去原片抓�
 - mixNotesZh：人声、配乐、音效的层次及强弱关系。
 - reusableAudioZh：脱离具体剧情仍可复用的声音手法。
 - genAudioHintZh：复现这些声音效果所需的生成要素。
-安静、持续不变或事件较少时，按真实情况填写。
-${audioHardRule}
+
 
 【正向要求五：节奏、情绪与手法总结】
 
@@ -1232,15 +1237,7 @@ classification 完整输出五个数组：
 shots 条目按 evidenceRole 区分两种结构：
 1. story —— 推动剧情因果的镜头。使用完整 17 字段结构，全部 17 字段保持必填。
 2. non_story_ad —— 与剧情无关的商业广告。仅保留 startSec、endSec、evidenceRole 三个字段，用于保存时间轴与分类标记；其他描述及衍生内容严禁写入。
-
-【禁止事项】
-
-1. 编造不存在的镜头或声音，漏记真实发生的切镜。为凑密度、分类维度、抓帧点或声音事件数量补造内容。
-2. 为节省字数合并镜头、减少条数、跳过对应分支的必填字段，或截断长镜、丢弃尾部、伪造剪辑切换。
-3. 把镜头区间中点机械当作 keyMoment；视觉选点落在过渡帧、运动模糊或无代表性的空镜上。
-4. 字幕从声音猜字、按剧情想像补全或添加画面中不存在的台词。
-5. 中文描述字段出现「01:23」「在第X秒」等时间定位。
-6. 用题材词代替手法分类，将未呈现的人物动机或推测当作观察事实。`;
+`;
   return input.rejectedReasonZh
     ? `${base}
 【上一轮未通过的检查】${String(input.rejectedReasonZh).slice(0, 300)}
@@ -2229,15 +2226,29 @@ function collectLongTakeAdvisories(input: {
 }): NativeDeepReadAdvisory[] {
   const out: NativeDeepReadAdvisory[] = [];
   const evidenceDurations = input.shots.map((shot) => shot.endSec - shot.startSec);
-  const hardOverlong = evidenceDurations.filter(
-    // 10% 容差（0830 用户令）：提示词仍要求 30 秒，门禁按 33 秒拒——
-    // 容差只放在拦截侧，不放在要求侧；擦边不值得重买一整片视频输入。
-    (shotLen) => shotLen > NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC,
-  );
-  if (hardOverlong.length > 0) {
+  /**
+   * 🔴 出错必须定位到具体镜头（0831 用户令）。
+   *
+   * 旧文案只说「有 N 个超过 33 秒，最长 X 秒」——排查时还得手动去 GCS 捞原始响应
+   * 才知道是哪几条、在哪个秒位。今天为查一次重试原因就撈了三轮证据。
+   * 现在直接把**镜号与秒位**写进错误：拿到报错就能定位，不必回头翻证据。
+   */
+  const overlongShots = input.shots
+    .map((shot, index) => ({ index, shot, lenSec: shot.endSec - shot.startSec }))
+    .filter((row) => row.lenSec > NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC)
+    .sort((a, b) => b.lenSec - a.lenSec);
+  if (overlongShots.length > 0) {
+    // 最多列 5 条：够定位，又不至于把错误信息撑爆（拒因还要塞进下一轮提示词，上限 300 字）。
+    const detail = overlongShots.slice(0, 5)
+      .map((row) => `第${row.index + 1}镜 ${Math.round(row.shot.startSec * 10) / 10}—${
+        Math.round(row.shot.endSec * 10) / 10} 秒（${Math.round(row.lenSec)} 秒）`)
+      .join("、");
+    const more = overlongShots.length > 5 ? `，另有 ${overlongShots.length - 5} 条` : "";
     // 硬门禁（0829 用户令：超过 30 秒必须拆）：单条证据段不得超过硬上限。
     throw new NativeDeepReadRequiredEvidenceError("shot_evidence_too_long",
-      `${input.labelZh}有 ${hardOverlong.length} 个超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC} 秒的镜头证据段（要求 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒 + 10% 容差；最长 ${Math.round(Math.max(...hardOverlong))} 秒）；真实长镜必须按镜内变化拆成连续证据段，禁止截断尾部`,
+      `${input.labelZh}有 ${overlongShots.length} 个超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC} 秒的镜头证据段`
+      + `（要求 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒 + 10% 容差）：${detail}${more}；`
+      + `这几条必须按镜内变化拆成连续证据段，禁止截断尾部`,
     );
   }
   let physicalDurations: number[] = [];
