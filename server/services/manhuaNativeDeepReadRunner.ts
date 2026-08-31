@@ -496,7 +496,7 @@ export const NATIVE_DEEP_READ_ADVISORY_FAMILIES: ReadonlyArray<{
   ]) },
   { familyZh: "镜头", codes: new Set([
     "long_take_count", "long_take_split_discontinuous", "no_story_shots", "empty_action",
-    "shot_density_low", "shot_out_of_segment_range", "ad_ratio_suspicious",
+    "shot_density_low", "shot_avg_too_long", "shot_out_of_segment_range", "ad_ratio_suspicious",
   ]) },
   { familyZh: "结构", codes: new Set([
     "classification_thin", "empty_beat_structure", "clock_text",
@@ -555,12 +555,15 @@ export const NATIVE_DEEP_READ_COVERAGE_SOLO_RETRY_CODES: ReadonlySet<string> = n
    * 目的只是让「只写 9 镜」有代价，不是逼它写够 53 镜。
    */
   "shot_density_low",
+  // 平均镜长同样可单独触发：等分切法能压在镜数地板上蒙混过关，只有它抓得住。
+  "shot_avg_too_long",
   // 广告占比异常同样可单独触发重试：整片被标成广告时，其他判据都数不到东西。
   "ad_ratio_suspicious",
 ]);
 
 export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES: ReadonlySet<string> = new Set([
   "shot_density_low",
+  "shot_avg_too_long",
   "ad_ratio_suspicious",
   "audio_track_thin",
   "coverage_missing",
@@ -2871,6 +2874,39 @@ export function assertNativeDeepReadSegmentDensity(input: {
       + `平均 ${Math.round((lenSec / storyShots.length) * 10) / 10} 秒才记一镜，明显漏记了剪辑点`,
       deviation(storyShots.length, shotFloor),
     );
+  }
+
+  /**
+   * 🔴 平均镜长门禁：接回 0826 就存在、后来被架空的那条线。
+   *
+   * 0826 代码注释原话：「温度只管发挥不管密度，密度必须靠代码门禁：
+   * 镜头数 ≥ ceil(段时长/6) · 平均每镜 ≤6s · 单镜 ≤15s（超了=合并了多次切镜）」。
+   * `NATIVE_DEEP_READ_SHOT_AVG_MAX_SEC = 6` 常量一直在，但 0830 删镜数门禁时
+   * 连它的消费者一起删了——常量成了死代码，全仓 grep `shot_avg_too_long` 零结果。
+   *
+   * 后果实测（run probe_douyin_20260831120542_7c6a6b0a）：模型交出 32 镜，
+   * 秒位是 0-10、10-20、20-30…一路到底，**18 条连续等长**，
+   * 平均整整 10.0 秒/镜——把 319 秒按 10 秒一刀等分，不是在找剪辑点。
+   * 而 32 镜正好压在离谱地板（ceil(319/10)=32）线上，门禁判它通过。
+   * 镜数地板只看「够不够多」，看不出「是不是等分切的」，必须靠平均镜长补位。
+   *
+   * 阈值用**离谱口径 10 秒**而非原来的 6 秒：0827 实测健康值 4–5 秒/镜，
+   * 留一倍余量；真人剧 0830 实测 6.55 秒/镜也照样放行，不重蹈那轮误杀半数分片的覆辙。
+   * 只出 advisory 不硬拒收，靠偏差 >20% 单独触发一次重试。
+   */
+  if (storyShots.length > 0) {
+    const storySec = storyShots.reduce(
+      (total, shot) => total + Math.max(0, shot.endSec - shot.startSec), 0);
+    const avgSec = storySec / storyShots.length;
+    if (avgSec > NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC) {
+      note(
+        "shot_avg_too_long",
+        `${labelZh}平均镜长 ${Math.round(avgSec * 10) / 10} 秒，超过离谱线 `
+        + `${NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC} 秒（健康值 4—6 秒/镜）；`
+        + `镜头被合并或按固定步长等分，没有落在真实剪辑点上`,
+        deviation(avgSec, NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC),
+      );
+    }
   }
 
   if (storyDurationSec > NATIVE_DEEP_READ_SHOT_MICRO_SEGMENT_SEC) {

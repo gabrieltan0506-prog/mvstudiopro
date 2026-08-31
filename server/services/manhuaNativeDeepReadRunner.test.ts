@@ -1284,7 +1284,9 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
     expect(() => assertNativeDeepReadSegmentDensity(input)).not.toThrow();
     const codes = assertNativeDeepReadSegmentDensity(input).advisories.map((r) => r.code);
     expect(codes).toContain("shot_density_low");
-    expect(codes).not.toContain("shot_avg_too_long");
+    // 0831 接回平均镜长门禁：16 镜 / 360 秒＝平均 22.5 秒，远超离谱线 10 秒，
+    // 与 shot_density_low 是两件事——镜数地板看「够不够多」，平均镜长看「是不是等分切的」。
+    expect(codes).toContain("shot_avg_too_long");
   });
 
   it("audioResolution 留空转 advisory：只记 audio_chunk_shape，不再拒收", () => {
