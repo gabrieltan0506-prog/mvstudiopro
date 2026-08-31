@@ -28,6 +28,33 @@ jobs:
         with:
           node-version: 24
       - uses: superfly/flyctl-actions/setup-flyctl@master
+      # 🔴 0831 修：解析出 app 进程组的正式机 ID，后续所有 ssh console 都显式指定。
+      #
+      # 为什么必须有：`flyctl ssh console` 在未指定 --machine 时会往 **stdout** 打印
+      # 「No machine specified, using <id> in region <r>」。本仓库有多处
+      #   flyctl ssh console ... > some.env
+      # 把输出直接当 KEY=值 文件用，那行提示会成为文件第一行，随后 `. some.env`
+      # 拿它当命令执行 → `No: command not found`、退出码 127。
+      #
+      # 这条提示只在 app 里存在多台机器时出现。0829 12:33 创建隔离机
+      # probe-v11-host 之后，冷备从 18:08 那班开始连败 8 次，正是这个原因——
+      # 备份代码本身一个字都没改过。
+      - name: Resolve production app machine
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          # 只认 app 进程组且 started 的机器；探针/临时机不属于 Fly Launch，没有该进程组。
+          MACHINE_ID="$(flyctl machines list -a mvstudiopro --json </dev/null \
+            | jq -r '[.[] | select(.config.metadata.fly_process_group == "app")
+                            | select(.state == "started")][0].id // empty')"
+          if [ -z "$MACHINE_ID" ]; then
+            echo "未找到 started 状态的 app 进程组机器，冷备中止（不猜机器）" >&2
+            flyctl machines list -a mvstudiopro </dev/null >&2 || true
+            exit 1
+          fi
+          echo "使用正式机 $MACHINE_ID"
+          echo "FLY_MACHINE_ID=$MACHINE_ID" >> "$GITHUB_ENV"
       - name: Cleanup stale growth temp files from Fly
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -46,7 +73,7 @@ jobs:
           }
 
           for attempt in 1 2 3 4 5; do
-            if wait_for_started_vm && flyctl ssh console -a mvstudiopro -C "sh -lc '
+            if wait_for_started_vm && flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -lc '
               find /data/growth -type f -name \"*.next\" -mmin +15 -print -delete 2>/dev/null || true
               find /data/growth/backups/current-batches -mindepth 1 -maxdepth 1 -type d -mmin +180 -print -exec rm -rf -- {} + 2>/dev/null || true
             '"; then
@@ -78,7 +105,7 @@ jobs:
           # 前台平台 Job 拥有最高优先级；最多等待 30 分钟，仍繁忙则让本轮冷备失败并由下个周期重试。
           PRIORITY_READY=false
           for attempt in $(seq 1 60); do
-            if wait_for_started_vm && flyctl ssh console -a mvstudiopro -C "sh -lc '
+            if wait_for_started_vm && flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -lc '
               find /data/growth/runtime-interactive-workloads -type f -mmin +2 -delete 2>/dev/null || true
               test -z \"\$(find /data/growth/runtime-interactive-workloads -type f -mmin -2 -print -quit 2>/dev/null)\"
             '"; then
@@ -91,7 +118,7 @@ jobs:
           test "$PRIORITY_READY" = "true"
 
           for attempt in 1 2 3 4 5; do
-            if wait_for_started_vm && flyctl ssh console -a mvstudiopro -C "sh -lc '
+            if wait_for_started_vm && flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -lc '
               current=$(stat -c%s /data/growth/current.json 2>/dev/null || echo 0)
               platforms=$(du -sb /data/growth/platforms 2>/dev/null | awk \"{print \\$1}\" || echo 0)
               platform_current=$(du -sb /data/growth/platform-current 2>/dev/null | awk \"{print \\$1}\" || echo 0)
@@ -108,6 +135,16 @@ jobs:
           done
           test -s /tmp/growth-backup/storage.env
           cat /tmp/growth-backup/storage.env
+          # 🔴 0831 加固：source 之前先验格式。此前 flyctl 的
+          # 「No machine specified, ...」被写进这个文件，`.` 拿它当命令执行，
+          # 报 `No: command not found` 退出码 127，连败 8 班次才被发现。
+          # 只接受 KEY=值 的行；出现任何其他内容就当场失败并把内容打出来，
+          # 而不是丢给 shell 去执行——这是通用防护，不只针对 flyctl 那一行。
+          if grep -qvE '^[A-Z_][A-Z0-9_]*=[0-9]*$' /tmp/growth-backup/storage.env; then
+            echo "storage.env 含非法行（应全部为 KEY=数字），拒绝 source：" >&2
+            grep -nvE '^[A-Z_][A-Z0-9_]*=[0-9]*$' /tmp/growth-backup/storage.env >&2
+            exit 1
+          fi
           . /tmp/growth-backup/storage.env
           HOT_BYTES=$((CURRENT_BYTES + PLATFORMS_BYTES))
           SHOULD_OFFLOAD=false
@@ -167,7 +204,7 @@ jobs:
           SH
             local lane_attempt
             for lane_attempt in $(seq 1 60); do
-              if wait_for_started_vm && flyctl ssh console -a mvstudiopro -C 'sh -s' < /tmp/acquire-growth-backup-lane.sh; then
+              if wait_for_started_vm && flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C 'sh -s' < /tmp/acquire-growth-backup-lane.sh; then
                 return 0
               fi
               echo "采集或前台平台任务仍在运行，冷备暂停 30 秒（${lane_attempt}/60）"
@@ -182,7 +219,7 @@ jobs:
               # 本函数会从 `while read ... < <(jq ...)` 内调用。SSH 若继承循环 stdin，
               # 会把尚未读取的分片清单吞掉，表现为首片成功后整文件大小校验失败。
               # 探针不需要请求体，必须与清单文件描述符隔离。
-              if wait_for_started_vm && timeout 20 flyctl ssh console -a mvstudiopro -C "sh -lc '
+              if wait_for_started_vm && timeout 20 flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -lc '
                 find /data/growth/runtime-interactive-workloads -type f -mmin +2 -delete 2>/dev/null || true
                 test -z \"\$(find /data/growth/runtime-interactive-workloads -type f -mmin -2 -print -quit 2>/dev/null)\"
               '" </dev/null; then
@@ -216,7 +253,7 @@ jobs:
               kill "$BACKUP_HEARTBEAT_PID" 2>/dev/null || true
               wait "$BACKUP_HEARTBEAT_PID" 2>/dev/null || true
             fi
-            flyctl ssh console -a mvstudiopro -C "sh -lc '
+            flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -lc '
               now_ms=\$(date +%s)000
               state=/data/growth/.growth-platform-collection-state.json
               if [ \"${BACKUP_REMOTE_WORK_STARTED:-false}\" = \"true\" ]; then
@@ -233,7 +270,7 @@ jobs:
           BACKUP_REMOTE_WORK_STARTED=false
           (
             while sleep 60; do
-              flyctl ssh console -a mvstudiopro -C 'touch /data/growth/.growth-platform-collection.lock' >/dev/null 2>&1 || true
+              flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C 'touch /data/growth/.growth-platform-collection.lock' >/dev/null 2>&1 || true
             done
           ) &
           BACKUP_HEARTBEAT_PID=$!
@@ -267,7 +304,7 @@ jobs:
             for attempt in 1 2 3 4 5; do
               echo "Capturing Growth directory from Fly: ${directory} (attempt ${attempt}/5)"
               if wait_for_interactive_workload && run_with_interactive_preemption timeout "${timeout_seconds}" \
-                flyctl ssh console -a mvstudiopro -C "sh -s -- stream-directory '${directory}'" \
+                flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -s -- stream-directory '${directory}'" \
                 < scripts/growth-backup-stream-remote.sh > "$output_path"; then
                 return 0
               fi
@@ -314,7 +351,7 @@ jobs:
           REMOTE_BATCH_DIR="/data/growth/backups/current-batches/${BATCH_ID}"
           printf '%s\n' "$REMOTE_BATCH_DIR" > /tmp/growth-backup/remote-current-batch-dir.txt
           wait_for_interactive_workload
-          run_with_interactive_preemption timeout 720 flyctl ssh console -a mvstudiopro -C "sh -lc 'cd /app && GROWTH_STORE_DIR=/data/growth pnpm exec tsx scripts/snapshot-growth-platform-current-batch.mts --output=${REMOTE_BATCH_DIR} --batch-id=${BATCH_ID} --asset-generation=${ASSET_GENERATION}'"
+          run_with_interactive_preemption timeout 720 flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -lc 'cd /app && GROWTH_STORE_DIR=/data/growth pnpm exec tsx scripts/snapshot-growth-platform-current-batch.mts --output=${REMOTE_BATCH_DIR} --batch-id=${BATCH_ID} --asset-generation=${ASSET_GENERATION}'"
           fetch_file_from_fly "${REMOTE_BATCH_DIR}/snapshot-manifest.json" /tmp/growth-backup/platform-current-snapshot-manifest.json true
           test "$(jq '.files | length' /tmp/growth-backup/platform-current-snapshot-manifest.json)" -eq 4
           mkdir -p /tmp/growth-backup/release-current
@@ -346,7 +383,7 @@ jobs:
               rm -f "$next_path"
               echo "Fetching verified part: $(basename "$remote_file") offset=${offset} attempt=${attempt}/5"
               if wait_for_interactive_workload; then
-                if run_with_interactive_preemption timeout 720 flyctl ssh console -a mvstudiopro \
+                if run_with_interactive_preemption timeout 720 flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
                   -C "sh -s -- stream-file '${remote_file}' '${block_bytes}' '${skip_blocks}' '${count_blocks}'" \
                   < scripts/growth-backup-stream-remote.sh > "$next_path"; then
                   transfer_status=0
@@ -573,7 +610,7 @@ jobs:
             /data/growth/backups/current-batches/[0-9]*-[0-9]*) ;;
             *) echo "非法 current hardlink 批次目录: $REMOTE_BATCH_DIR"; exit 1 ;;
           esac
-          flyctl ssh console -a mvstudiopro -C "sh -lc 'rm -rf -- \"$REMOTE_BATCH_DIR\"'"
+          flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -lc 'rm -rf -- \"$REMOTE_BATCH_DIR\"'"
       - name: Create leased archive snapshot on Fly
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -595,7 +632,7 @@ jobs:
           SNAPSHOT_READY=false
           for attempt in $(seq 1 20); do
             rm -f /tmp/growth-archive-offload/snapshot.tsv.next
-            if flyctl ssh console -a mvstudiopro \
+            if flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
               -C "sh -s -- prepare '$BATCH_ID'" \
               < scripts/growth-archive-offload-remote.sh \
               > /tmp/growth-archive-offload/snapshot.tsv.next; then
@@ -638,7 +675,7 @@ jobs:
             BUNDLE_READY=false
             for attempt in $(seq 1 20); do
               rm -f "$output.next"
-              if flyctl ssh console -a mvstudiopro \
+              if flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
                 -C "sh -s -- bundle '$BATCH_ID' '$dir'" \
                 < scripts/growth-archive-offload-remote.sh \
                 > "$output.next"; then
@@ -772,7 +809,7 @@ jobs:
             test "$verified_part_count" -eq "$part_count"
             DELETED=false
             for attempt in $(seq 1 20); do
-              if flyctl ssh console -a mvstudiopro \
+              if flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
                 -C "sh -s -- delete '$BATCH_ID' '$dir' '$source_fingerprint'" \
                 < scripts/growth-archive-offload-remote.sh; then
                 DELETED=true
@@ -783,7 +820,7 @@ jobs:
             done
             test "$DELETED" = "true"
           done < /tmp/growth-archive-offload/archives.tsv
-          flyctl ssh console -a mvstudiopro \
+          flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
             -C "sh -s -- cleanup '$BATCH_ID'" \
             < scripts/growth-archive-offload-remote.sh
       - name: Retain platform-current on Fly after cold backup
@@ -800,6 +837,6 @@ jobs:
             exit 0
           fi
           BATCH_ID=$(cat /tmp/growth-archive-offload/batch-id.txt)
-          flyctl ssh console -a mvstudiopro \
+          flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
             -C "sh -s -- cleanup '$BATCH_ID'" \
             < scripts/growth-archive-offload-remote.sh || true
