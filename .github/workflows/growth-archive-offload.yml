@@ -112,11 +112,16 @@ jobs:
             asset_bytes=$(stat -c%s "$output")
             asset_sha=$(sha256sum "$output" | awk '{print $1}')
             asset_name=$(basename "$output")
-            # GitHub 单 asset 上限为 2GiB，但接近上限的大文件无法断点续传；
-            # 采用 256MiB 分片，把单次失败的重传成本限制在可接受范围内。
-            split -b 268435456 -d -a 4 "$output" "$output.part-"
             part_count=0
-            for part in "$output".part-*; do
+            # 生产冷读端按稳定名 archive-$dir.tar.gz 恢复。当前小时分片远小于 2GiB，
+            # 必须原名上传；超限包仍可分片留证，但下方删除门会保留 Fly 源目录。
+            if [ "$asset_bytes" -lt 2000000000 ]; then
+              parts=("$output")
+            else
+              split -b 268435456 -d -a 4 "$output" "$output.part-"
+              parts=("$output".part-*)
+            fi
+            for part in "${parts[@]}"; do
               test -f "$part"
               part_bytes=$(stat -c%s "$part")
               part_sha=$(sha256sum "$part" | awk '{print $1}')
@@ -130,7 +135,8 @@ jobs:
             printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
               "$dir" "$asset_name" "$asset_bytes" "$asset_sha" "$source_fingerprint" "$source_bytes" "$part_count" \
               >> /tmp/growth-archive-offload/archives.tsv.next
-            rm -f "$output" "$output.list"
+            rm -f "$output.list"
+            if [ "$asset_bytes" -ge 2000000000 ]; then rm -f "$output"; fi
             sleep 5
           done < /tmp/growth-archive-offload/snapshot.tsv
           mv /tmp/growth-archive-offload/assets.tsv.next /tmp/growth-archive-offload/assets.tsv
@@ -186,6 +192,7 @@ jobs:
           done < /tmp/growth-archive-offload/assets.tsv
           node <<'NODE'
           const fs = require("fs");
+          const crypto = require("crypto");
           const parse = (file) => fs.readFileSync(file, "utf8").trim().split(/\r?\n/).filter(Boolean).map((line) => line.split("\t"));
           const batchId = fs.readFileSync("/tmp/growth-archive-offload/batch-id.txt", "utf8").trim();
           const parts = parse("/tmp/growth-archive-offload/assets.tsv").map(([dir, asset, bytes, sha256, archive, partIndex]) => ({
@@ -198,6 +205,22 @@ jobs:
           }));
           const verified = new Set(parse("/tmp/growth-archive-offload/verified-assets.tsv").map(([asset]) => asset));
           if (!archives.length || archives.some((entry) => entry.parts.length !== entry.partCount || entry.parts.some((part) => !verified.has(part.asset)))) throw new Error("archive release read-back incomplete");
+          const manifestRows = [];
+          for (const entry of archives) {
+            const manifestAsset = `archive-${entry.dir}.manifest.json`;
+            const perDir = {
+              schemaVersion: 1,
+              dir: entry.dir,
+              archive: { assetName: entry.asset, bytes: entry.bytes, sha256: entry.sha256 },
+              parts: entry.parts.map((part) => ({ assetName: part.asset, bytes: part.bytes, sha256: part.sha256, index: part.partIndex })),
+            };
+            const manifestPath = `/tmp/growth-archive-offload/assets/${manifestAsset}`;
+            const raw = Buffer.from(JSON.stringify(perDir, null, 2));
+            fs.writeFileSync(manifestPath, raw);
+            manifestRows.push([manifestAsset, raw.length, crypto.createHash("sha256").update(raw).digest("hex")].join("\t"));
+            entry.manifestAsset = manifestAsset;
+          }
+          fs.writeFileSync("/tmp/growth-archive-offload/manifest-assets.tsv", `${manifestRows.join("\n")}\n`);
           const manifest = {
             schemaVersion: 3,
             batchId,
@@ -209,6 +232,10 @@ jobs:
           };
           fs.writeFileSync("/tmp/growth-archive-offload/offload-manifest.json", JSON.stringify(manifest, null, 2));
           NODE
+          while IFS=$'\t' read -r manifest_asset manifest_bytes manifest_sha; do
+            [ -n "$manifest_asset" ] || continue
+            upload_and_readback_asset "/tmp/growth-archive-offload/assets/$manifest_asset"
+          done < /tmp/growth-archive-offload/manifest-assets.tsv
           upload_and_readback_asset /tmp/growth-archive-offload/offload-manifest.json
           sha256sum /tmp/growth-archive-offload/offload-manifest.json > /tmp/growth-archive-offload/DELETE_READY
       - name: Upload GitHub archive offload artifact
@@ -228,6 +255,7 @@ jobs:
           fi
           test -s /tmp/growth-archive-offload/DELETE_READY
           test -s /tmp/growth-archive-offload/verified-assets.tsv
+          test -s /tmp/growth-archive-offload/manifest-assets.tsv
           BATCH_ID=$(cat /tmp/growth-archive-offload/batch-id.txt)
           while IFS=$'\t' read -r dir archive_name archive_bytes archive_sha source_fingerprint source_bytes part_count; do
             [ -n "$dir" ] || continue
@@ -240,6 +268,22 @@ jobs:
               verified_part_count=$((verified_part_count + 1))
             done < /tmp/growth-archive-offload/assets.tsv
             test "$verified_part_count" -eq "$part_count"
+            manifest_asset="archive-$dir.manifest.json"
+            awk -F '\t' -v asset="$manifest_asset" '$1 == asset { found=1 } END { exit(found ? 0 : 1) }' \
+              /tmp/growth-archive-offload/manifest-assets.tsv
+            awk -F '\t' -v asset="$manifest_asset" '$1 == asset { found=1 } END { exit(found ? 0 : 1) }' \
+              /tmp/growth-archive-offload/verified-assets.tsv
+            direct_asset_count=$(awk -F '\t' -v dir="$dir" -v archive="$archive_name" \
+              '$1 == dir && $2 == archive && $5 == archive { count++ } END { print count+0 }' \
+              /tmp/growth-archive-offload/assets.tsv)
+            if [ "$part_count" -ne 1 ] || [ "$direct_asset_count" -ne 1 ]; then
+              echo "::warning::归档 $dir 仅有分片证据，生产冷读端尚不能直接恢复；保留 Fly 源目录"
+              continue
+            fi
+            # 删除前必须让当前正式镜像用生产读取器实际下载、校验 manifest/SHA、
+            # 安全解包并逐个解压解析 JSON；仅有 Release read-back 不能证明消费端可恢复。
+            flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+              -C "GROWTH_GITHUB_OFFLOAD_CACHE_DIR=/tmp/growth-cold-verify-$dir GROWTH_COLD_VERIFY_CLEANUP=1 pnpm exec tsx server/growth/growthArchiveColdRestoreCli.ts '$dir'"
             DELETED=false
             for attempt in $(seq 1 20); do
               if flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \

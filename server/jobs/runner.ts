@@ -2043,8 +2043,7 @@ async function processPlatformJob(
       const windowDays = Number(params.windowDays || 15);
       const snapshotSummary = (params.snapshotSummary || {}) as Record<string, unknown>;
 
-    // Stage 1: GPT-5.6 sol(reasoning high) — deep original content blueprint (director mode, no trend data)
-    // 2026-08-21 用户拍板:双段由 Gemini 3.1 Pro 切 GPT-5.6 sol high(主力)/Kimi K3(兜底),治论文腔。
+    // Stage 1：北京 Qwen 3.8 → 新加坡 Qwen 3.8 → GLM-5.3，生成原创内容蓝图。
     // Strict: no outlines. Must output verbatim copy, precise shooting scripts, emotional direction.
     const stage1SystemInstruction = `你是一位顶级内容创作导演兼文案大师，你的产出标准绝对不接受大纲、空洞建议或模糊描述。
 
@@ -2092,7 +2091,7 @@ async function processPlatformJob(
         contentResult = {};
       }
 
-    // Stage 2: GPT-5.6 sol(reasoning high) — trend calibration + dashboard signals(与 Stage 1 同一主力/兜底链)
+    // Stage 2：沿用同一固定三档，校准趋势与看板信号。
     const stage2SystemInstruction = "你是一位顶尖的平台趋势分析师。根据用户的脚本蓝图与平台快照数据，进行热点数据校准，计算关键指标，输出最终平台看板 JSON。";
       const stage2Response = await invokePlatformAnalysisChat({
       response_format: { type: "json_object" },
@@ -2137,14 +2136,14 @@ async function processPlatformJob(
       }
 
       return {
-        provider: "gpt56-sol",
+        provider: stage2Response.routeEngine,
         output: {
           platformDashboard: dashboardResult,
           platformContent: contentResult,
           completedAt: new Date().toISOString(),
           engines: {
-            stage1: `${PLATFORM_ANALYSIS_PRIMARY_MODEL}(high)`,
-            stage2: `${PLATFORM_ANALYSIS_PRIMARY_MODEL}(high)`,
+            stage1: `${stage1Response.routeEngine}#${stage1Response.routeAttempt}`,
+            stage2: `${stage2Response.routeEngine}#${stage2Response.routeAttempt}`,
             fallback: PLATFORM_ANALYSIS_FALLBACK_MODEL,
             snapshotDepth: "full",
           },
