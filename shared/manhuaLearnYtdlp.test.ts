@@ -164,3 +164,27 @@ describe("manhuaLearnYtdlp", () => {
     );
   });
 });
+
+describe("DOUYIN_COOKIE_EXTRA（0901 uifid 增量追加）", () => {
+  it("片段追加到每份候选；同名字段以追加值为准", () => {
+    const out = listDouyinCookieCandidatesFromEnv({
+      DOUYIN_COOKIE: "ttwid=old; msToken=stale; sessionid=abc",
+      DOUYIN_COOKIE_BACKUP: "ttwid=old2; sessionid=def",
+      DOUYIN_COOKIE_EXTRA: "uifid=fresh123; msToken=fresh456;",
+    } as never);
+    expect(out).toHaveLength(2);
+    for (const c of out) {
+      expect(c).toContain("uifid=fresh123");
+      expect(c).toContain("msToken=fresh456");
+      expect(c).not.toContain("msToken=stale");
+      expect(c).toContain("sessionid=");
+      expect(c).toContain("ttwid=");
+    }
+  });
+  it("无片段时行为不变", () => {
+    const out = listDouyinCookieCandidatesFromEnv({
+      DOUYIN_COOKIE: "ttwid=old; sessionid=abc",
+    } as never);
+    expect(out).toEqual(["ttwid=old; sessionid=abc"]);
+  });
+});

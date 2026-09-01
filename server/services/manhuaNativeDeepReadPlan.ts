@@ -649,8 +649,7 @@ export async function buildNativeDeepReadPlanPreview(
   if (!listed?.episodes?.length) {
     const blockedZh = (listed as { riskControlBlockedZh?: string } | null)?.riskControlBlockedZh;
     throw new Error(blockedZh
-      ? `合集展开被抖音风控拦下：${blockedZh}。若这条视频本身就是完整一季，`
-        + `可勾选「整支即全集」跳过合集展开；否则请更新 DOUYIN_COOKIE 后重试`
+      ? `${blockedZh}：可勾选「整支即全集」，或更新 DOUYIN_COOKIE`
       : "合集展开失败或没有分集，请稍后重试");
   }
   dramaNameZh = listed.mixNameZh || dramaNameZh;
