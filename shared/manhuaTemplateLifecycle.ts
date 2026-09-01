@@ -157,13 +157,23 @@ export function canRetireTemplate(input: {
   if (input.card.status !== "approved") {
     return { ok: false, reasonZh: "该模板不是已批准状态，无需下架" };
   }
+  const isNative = templateLearnGeneration(input.card) === "native_deep_read";
   if (input.sameLaneApprovedCount <= 1) {
+    // 0902：只有**现役精读卡**是赛道最后一张才拦（别把编剧室能选的删空）。
+    // 旧抽帧卡本就该淘汰，是不是某赛道最后一张无所谓——它空的是旧赛道，
+    // 拦着反而挡住批量清库（用户 0902 实测：清旧卡被这条卡住）。
+    if (isNative) {
+      return {
+        ok: false,
+        reasonZh: `「${input.card.laneZh}」只剩这一张精读模板，下架后该赛道会选不出模板。请先批准替代卡再下架`,
+      };
+    }
     return {
-      ok: false,
-      reasonZh: `「${input.card.laneZh}」只剩这一张正式模板，下架后该赛道会选不出模板。请先批准替代卡再下架`,
+      ok: true,
+      warnZh: `「${input.card.laneZh}」旧卡下架后此赛道暂无模板，可稍后学一版精读卡补上`,
     };
   }
-  if (templateLearnGeneration(input.card) === "native_deep_read") {
+  if (isNative) {
     return { ok: true, warnZh: "这是原生精读卡（当前最高门槛的一代），确认要下架？" };
   }
   return { ok: true };

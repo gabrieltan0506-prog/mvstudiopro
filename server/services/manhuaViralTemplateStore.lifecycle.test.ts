@@ -63,6 +63,7 @@ import {
   acquireManhuaTemplateLifecycleLock,
   isLifecycleLeaseExpired,
   manhuaTemplateLifecycleClock,
+  manhuaTemplateLifecycleLockTimers,
   archiveApprovedManhuaViralTemplate,
   compareGenerationDesc,
   listArchivedManhuaViralTemplateIndex,
@@ -107,6 +108,8 @@ const seedArchive = (
 };
 
 beforeEach(() => {
+  // 全局清零 busy 重试等待：不拖测试时间，也不改变「立即拒/接管」判定
+  manhuaTemplateLifecycleLockTimers.sleep = async () => {};
   lockState.held = false;
   lockState.generation = "1";
   gcs.upload.mockClear();
@@ -403,10 +406,13 @@ describe("下架的安全门在 store 内部（终审第七条 2/3/4）", () => 
     gcs.list.mockImplementation(async ({ prefix }: { prefix: string }) =>
       prefix.includes("/approved/") ? [`manhua-template-learn/approved/${ID}.json`] : [],
     );
+    // 0902：最后一张守卫只护现役精读卡（旧抽帧卡放行以便批量清库），故用精读卡验门
     gcs.download.mockResolvedValue({
-      buffer: Buffer.from(JSON.stringify(cardOf()), "utf8"),
+      buffer: Buffer.from(JSON.stringify(cardOf({
+        provenance: { nativeVideoDeepRead: { model: "gemini-3.1-pro-preview", attemptedSegments: 4, successSegments: 4 } },
+      })), "utf8"),
     });
-    await expect(archiveApprovedManhuaViralTemplate(ID)).rejects.toThrow(/只剩这一张/);
+    await expect(archiveApprovedManhuaViralTemplate(ID)).rejects.toThrow(/只剩这一张精读模板/);
   });
 
   it("🔴 并发：第二个请求抢不到生命周期锁，不会同时通过「最后一张」这道门", async () => {
@@ -521,6 +527,20 @@ describe("生命周期租约：不会因为一次失败而永久停摆（终审�
     } finally {
       await release();
     }
+  });
+
+  it("🟢 busy 时有限重试：前一张中途释放，后一张等到锁（0902 批量下架）", async () => {
+    const release = await acquireManhuaTemplateLifecycleLock();
+    let sleeps = 0;
+    manhuaTemplateLifecycleLockTimers.sleep = async () => {
+      sleeps += 1;
+      // 第一次重试等待期间，模拟前一张释放锁
+      if (sleeps === 1) await release();
+    };
+    const second = await acquireManhuaTemplateLifecycleLock();
+    expect(typeof second).toBe("function");
+    expect(sleeps).toBeGreaterThanOrEqual(1);
+    await second();
   });
 
   it("🔴 过期的租约可以被接管（用注入时钟，不真等十分钟）", async () => {
