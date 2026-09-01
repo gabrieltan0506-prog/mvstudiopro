@@ -4415,7 +4415,8 @@ export const appRouter = router({
       }),
 
     /** 配乐 brief 为纯确定性编译，零上游调用；计费口径拍板前仅内部账号可见。 */
-    draftManhuaBgmBrief: adminProcedure
+    // 0902 补解锁：queueManhuaBgm 已降 protected，起草是纯函数零成本，同步放开。
+    draftManhuaBgmBrief: protectedProcedure
       .input(
         z.object({
           laneZh: z.string().trim().min(1).max(120).default("自定义剧情"),

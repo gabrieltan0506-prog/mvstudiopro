@@ -9504,6 +9504,7 @@ export default function OmniCanvas() {
                   blocks={blocks}
                   userId={String(user.id)}
                   userRole={userRole}
+                  bgmSeedNoteZh={audioReferenceLock?.bgmNoteZh || ""}
                 />
               ) : null}
             </div>

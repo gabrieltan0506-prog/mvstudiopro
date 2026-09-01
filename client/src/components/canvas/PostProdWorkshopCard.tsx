@@ -103,6 +103,8 @@ type PostProdWorkshopCardProps = {
   blocks: CanvasBlock[];
   userId: string;
   userRole?: string | null;
+  /** 画布「BGM 风格说明」（audioReferenceLock.bgmNoteZh）——起草 brief 时自动作风格锚 */
+  bgmSeedNoteZh?: string;
 };
 
 type EditableBgmBrief = {
@@ -142,6 +144,7 @@ export default function PostProdWorkshopCard({
   blocks,
   userId,
   userRole,
+  bgmSeedNoteZh,
 }: PostProdWorkshopCardProps) {
   const queueMutation = trpc.mvAnalysis.queuePostProd.useMutation();
   const draftBgmMutation = trpc.mvAnalysis.draftManhuaBgmBrief.useMutation();
@@ -724,6 +727,7 @@ export default function PostProdWorkshopCard({
       return;
     }
     try {
+      const seedNote = String(bgmSeedNoteZh || "").trim().slice(0, 300);
       const result = await draftBgmMutation.mutateAsync({
         laneZh: "自定义剧情",
         durationSec: scoreDurationSec,
@@ -731,6 +735,7 @@ export default function PostProdWorkshopCard({
         moodArcZh: scoreStoryZh.trim(),
         titleZh: "剧情配乐",
         endingZh: "尾钩前收住，不泄尽",
+        ...(seedNote ? { styleAnchorZh: seedNote } : {}),
         hasSilenceBreak: filmEvents.some(event => event.kind === "静音停顿"),
       });
       setScoreBrief(result.brief as EditableBgmBrief);
@@ -1000,6 +1005,12 @@ export default function PostProdWorkshopCard({
               placeholder="写本段剧情、情绪从哪里推进到哪里、哪里要压住或爆开…"
               className="w-full resize-y rounded-lg border border-white/10 bg-black/35 px-2 py-1.5 text-[11px] leading-5 text-white placeholder:text-white/30"
             />
+            {String(bgmSeedNoteZh || "").trim() ? (
+              <div className="col-span-full text-[10px] leading-4 text-emerald-200/70">
+                画布 BGM 说明将自动作为风格锚：
+                {String(bgmSeedNoteZh || "").trim().slice(0, 60)}
+              </div>
+            ) : null}
             <label className="text-[10px] text-white/45">
               画面时长（秒）
               <input
