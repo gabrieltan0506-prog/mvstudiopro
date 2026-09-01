@@ -9833,17 +9833,18 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             message: `配音需要 ${cost} 积分（当前余额 ${creditsInfo.totalAvailable}）`,
           });
         }
-        const { synthesizeTokenPlanDialogue } = await import(
-          "./services/tokenPlanDialogueTts.js"
+        // 0902 实测切路：token-plan 两区网关对 qwen-audio-3.0-tts 全报「url error」
+        // （模型-端点品类不匹配，官方正路是 WebSocket 或 OpenRouter）；OpenRouter 版
+        // 实测 4.4s 出片且目录长音色 id 直接可用。验声门禁已内置于服务。
+        const { synthesizeQwenDialogue } = await import(
+          "./services/qwenDialogueTts.js"
         );
-        let result: Awaited<ReturnType<typeof synthesizeTokenPlanDialogue>>;
+        let result: Awaited<ReturnType<typeof synthesizeQwenDialogue>>;
         try {
-          result = await synthesizeTokenPlanDialogue({
+          result = await synthesizeQwenDialogue({
             input: input.input,
             voice: input.voice || "qwen-audio-3.0-tts-plus-longcanzhuyue",
-            ownerUserId: Number(ctx.user.id),
             seed: input.seed,
-            signal: ctx.clientDisconnected,
           });
         } catch (err) {
           console.error("[manhua-dialogue-tts] preview failed:", err);
