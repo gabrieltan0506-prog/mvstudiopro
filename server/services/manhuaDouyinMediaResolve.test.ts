@@ -80,6 +80,61 @@ describe("resolveDouyinMediaUrl", () => {
     expect(resolved.mediaUrl).toBe("https://www.douyin.com/aweme/v1/play/?video_id=v0300");
   });
 
+  it("页面内嵌多个视频时只返回目标 videoId 的媒体（推荐位排在前面也不误取）", async () => {
+    const html = renderDataHtml({
+      app: {
+        // 推荐位在前：旧实现深搜「第一个 play_addr」会把别人的片子当成本集
+        recommend: [
+          { aweme_id: "7000000000000000001", video: { play_addr: { url_list: ["https://other.douyinvod.com/other.mp4"] } } },
+        ],
+        videoDetail: {
+          aweme_id: "7412345678901234567",
+          video: { duration: 120000, play_addr: { url_list: ["https://v3-web.douyinvod.com/target.mp4"] } },
+        },
+      },
+    });
+    const resolved = await resolveDouyinMediaUrl(PAGE_URL, { fetchImpl: fetchReturning(html) });
+    expect(resolved.mediaUrl).toBe("https://v3-web.douyinvod.com/target.mp4");
+    expect(resolved.durationSec).toBeCloseTo(120);
+  });
+
+  it("唯一候选明确属于其他 videoId → 拒绝采纳，抛未解析到媒体地址", async () => {
+    const html = renderDataHtml({
+      app: {
+        videoDetail: {
+          aweme_id: "7000000000000000001",
+          video: { play_addr: { url_list: ["https://v3-web.douyinvod.com/other.mp4"] } },
+        },
+      },
+    });
+    await expect(resolveDouyinMediaUrl(PAGE_URL, { fetchImpl: fetchReturning(html) }))
+      .rejects.toThrow("未解析到媒体地址");
+  });
+
+  it("身份字段从父节点继承：子树里的 play_addr 也归属父节点的 videoId", async () => {
+    const html = renderDataHtml({
+      app: { list: [{ item_id: "7000000000000000002", detail: { inner: { video: { play_addr: { url_list: ["https://v3-web.douyinvod.com/nested-other.mp4"] } } } } }] },
+    });
+    await expect(resolveDouyinMediaUrl(PAGE_URL, { fetchImpl: fetchReturning(html) }))
+      .rejects.toThrow("未解析到媒体地址");
+  });
+
+  it("白名单外 https 地址一律不采纳（不能把任意出网目标喂给下载器）", async () => {
+    const html = renderDataHtml({
+      video: { play_addr: { url_list: ["https://evil.example.com/payload.mp4"] } },
+    });
+    await expect(resolveDouyinMediaUrl(PAGE_URL, { fetchImpl: fetchReturning(html) }))
+      .rejects.toThrow("未解析到媒体地址");
+  });
+
+  it("playApi 分支同样走白名单：非可信域被拒", async () => {
+    const html = `<html><body><script>window._ROUTER_DATA = ${JSON.stringify({
+      loaderData: { videoInfoRes: { item_list: [{ video: { playApi: "//evil.example.com/play?video_id=v0300" } }] } },
+    })};</script></body></html>`;
+    await expect(resolveDouyinMediaUrl(PAGE_URL, { fetchImpl: fetchReturning(html) }))
+      .rejects.toThrow("未解析到媒体地址");
+  });
+
   it("非法链接直接抛错，不发起请求", async () => {
     let called = false;
     const fetchImpl: DouyinFetchImpl = async () => {

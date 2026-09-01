@@ -42,6 +42,9 @@ export type Manhua0996SeriesPage = {
   episodes: Manhua0996Episode[];
 };
 
+/** 首选清晰度档（0830 用户拍板：从 720p 开始读）。 */
+export const MANHUA_0996_PREFERRED_QUALITY = 720;
+
 export type Manhua0996Playback = {
   playbackUrl: string;
   playbackUrls: string[];
@@ -208,6 +211,19 @@ function marker(input: {
 export function parseManhua0996PlaybackResponse(
   payload: unknown,
   referer = "https://0996zp.com/",
+  /**
+   * 🔑 站点自有凭证已配置时，允许取 `needLogin: true` 的高清档（0830 用户令）。
+   *
+   * 实测（gzcrkt8888 某集，带 cookie+authorization 查接口）返回三档：
+   *   1080p needLogin=true · 720p needLogin=true · 480p needLogin=false
+   * 而 480p 那档的实际流是 **864×360**——低于知识库那条「清晰度地板 540p，
+   * 360p 及以下已确认出现影像判断问题」，实弹表现就是模型看不清切点、
+   * 300 秒只给 2 个镜头、门禁反复拦、钱全烧在重试上。
+   *
+   * 🔒 缺省仍为 false：**没有凭证时行为一字不变**，「不碰登录墙」的边界照旧。
+   * 只有站点主人自己把凭证配进 Fly secrets，才等于授权用自己的账号取高清。
+   */
+  allowLoginRequired = false,
 ): Manhua0996Playback {
   const root = asRecord(payload);
   const data = asRecord(root?.data);
@@ -216,12 +232,30 @@ export function parseManhua0996PlaybackResponse(
   const candidates = rows.flatMap((raw, order) => {
     const row = asRecord(raw);
     const url = String(row?.url ?? row?.playUrl ?? "").trim();
-    if (!row || row.needLogin !== false || row.flag !== true || !isTrustedManhua0996MediaUrl(url)) return [];
+    if (!row || !isTrustedManhua0996MediaUrl(url)) return [];
+    // needLogin：无凭证时只收 false（原行为）；有凭证时两种都收。
+    if (row.needLogin !== false && !allowLoginRequired) return [];
+    // flag：仅在无凭证路径上沿用旧的严格判定，避免改动波及既有片源。
+    if (!allowLoginRequired && row.flag !== true) return [];
     const quality = Number(row.resolution ?? row.height ?? row.quality ?? row.level) || 0;
     return [{ url, quality, order }];
-  }).sort((left, right) => right.quality - left.quality || left.order - right.order);
+  }).sort((left, right) => (
+    // 🎯 从 720p 开始读（0830 用户拍板）：不是「取最高」。
+    // 1080p 的输入 token 明显更贵而对切镜判定的边际收益有限；
+    // 480p 那档实际流是 864×360，低于知识库「清晰度地板 540p」，
+    // 实弹表现是看不清切点、300 秒只给 2 个镜头、门禁反复拦、钱烧在重试上。
+    // 优先序：720p → 其余按清晰度降序（即 1080p → 480p）。
+    (left.quality === MANHUA_0996_PREFERRED_QUALITY ? 0 : 1)
+      - (right.quality === MANHUA_0996_PREFERRED_QUALITY ? 0 : 1)
+    || right.quality - left.quality
+    || left.order - right.order
+  ));
   const playbackUrls = Array.from(new Set(candidates.map((candidate) => candidate.url)));
-  if (!playbackUrls.length) throw new Error("第三方媒体接口没有无需登录的可信媒体档，已停止");
+  if (!playbackUrls.length) {
+    throw new Error(allowLoginRequired
+      ? "第三方媒体接口没有可信媒体档，已停止"
+      : "第三方媒体接口没有无需登录的可信媒体档，已停止");
+  }
   const markers = [
     marker({ kind: "opening", start: data.headStart, end: data.headEnd }),
     marker({ kind: "ending", start: data.tailStart, end: data.tailEnd }),

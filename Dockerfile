@@ -47,8 +47,8 @@ ENV YOUTUBE_DL_PATH=/usr/local/bin/yt-dlp
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Build server code and client assets for production static serving
-RUN pnpm build \
+# 构建阶段必须显式给TypeScript足够堆空间；下方运行时ENV不会追溯影响此RUN。
+RUN NODE_OPTIONS=--max-old-space-size=4096 pnpm build \
  && pnpm exec vite build \
  && rm -rf server/_core/public \
  && mkdir -p server/_core/public \

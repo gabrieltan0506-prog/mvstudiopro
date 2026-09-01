@@ -45,6 +45,7 @@ function makeResult(over: Partial<NativeDeepReadIngestSource> = {}): NativeDeepR
     truncated: false,
     model: "qwen3.8-max",
     attemptedSegments: 6,
+    assemblyComplete: true,
     usingPlanQuota: true,
     usage: { costCny: 1.5 },
     ...over,
@@ -56,6 +57,11 @@ const baseInput = {
   episodeIndex: 3,
   sourceUrl: "https://example.com/v/1",
   durationSec: 1080,
+  segmentSpans: Array.from({ length: 6 }, (_, index) => ({
+    startSec: index * 180,
+    endSec: (index + 1) * 180,
+  })),
+  videoFps: 12,
   laneHintZh: "逆袭 打脸",
 };
 
@@ -173,17 +179,56 @@ describe("入库门禁", () => {
       assemblyComplete: false,
     });
     expect(checkNativeDeepReadIngestable(partial)).toEqual({ ok: true });
-    const card = buildNativeDeepReadProposalCard({ ...baseInput, result: partial })!;
+    const card = buildNativeDeepReadProposalCard({
+      ...baseInput,
+      evidenceFrames: [{
+        atSec: 12,
+        kindZh: "剧情",
+        noteZh: "不应进入部分卡",
+        objectName: `manhua-template-learn/native-frames/abc123/ep003/120ds-${"a".repeat(24)}.jpg`,
+        mimeType: "image/jpeg",
+        bytes: 8,
+        sha256: "a".repeat(64),
+      }],
+      result: partial,
+    })!;
     expect(card.status).toBe("proposed");
     expect(card.summaryZh).toContain("1/6段已入库，余段待续");
     expect(card.provenance?.nativeVideoDeepRead).toMatchObject({
       successSegments: 1,
       attemptedSegments: 6,
       completedSegmentIndexes: [0],
+      segmentSpans: baseInput.segmentSpans,
+      sourceDurationSec: 1080,
+      videoFps: 12,
       assemblyComplete: false,
       sourceDigest: "a".repeat(64),
       snapshotSha256: "b".repeat(64),
     });
+    expect(card.evidenceFrames).toBeUndefined();
+  });
+
+  it("部分提案缺完整原计划或分片不连续时拒绝写卡", () => {
+    const partial = makeResult({
+      segmentCount: 1,
+      failedSegmentCount: 5,
+      completedSegmentIndexes: [0],
+      sourceDigest: "a".repeat(64),
+      segmentSnapshotSha256: "b".repeat(64),
+      assemblyComplete: false,
+    });
+    expect(() => buildNativeDeepReadProposalCard({
+      ...baseInput,
+      segmentSpans: undefined,
+      videoFps: undefined,
+      result: partial,
+    })).toThrow("原分片计划不完整");
+    expect(() => buildNativeDeepReadProposalCard({
+      ...baseInput,
+      segmentSpans: baseInput.segmentSpans.map((span, index) =>
+        index === 1 ? { startSec: 181, endSec: span.endSec } : span),
+      result: partial,
+    })).toThrow("原分片计划不完整");
   });
 
   it("部分提案只接受从第一片开始的连续断点，禁止用错位段冒充进度", () => {
@@ -201,6 +246,24 @@ describe("入库门禁", () => {
 });
 
 describe("装卡", () => {
+  it("完整结果只持久化成功关键帧证据", () => {
+    const evidenceFrames = [{
+      atSec: 12,
+      kindZh: "剧情",
+      noteZh: "发现真相",
+      objectName: `manhua-template-learn/native-frames/abc123/ep003/120ds-${"a".repeat(24)}.jpg`,
+      mimeType: "image/jpeg" as const,
+      bytes: 8,
+      sha256: "a".repeat(64),
+    }];
+    const card = buildNativeDeepReadProposalCard({
+      ...baseInput,
+      evidenceFrames,
+      result: makeResult(),
+    })!;
+    expect(card.evidenceFrames).toEqual(evidenceFrames);
+  });
+
   it("卡面每栏都来自精读产出，不是套话", () => {
     const card = buildNativeDeepReadProposalCard({ ...baseInput, result: makeResult() })!;
     expect(card).toBeTruthy();

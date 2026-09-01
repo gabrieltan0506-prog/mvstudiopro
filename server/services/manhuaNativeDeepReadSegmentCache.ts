@@ -32,6 +32,9 @@ export const NATIVE_DEEP_READ_SEGMENT_EVIDENCE_PREFIX =
  */
 export const NATIVE_DEEP_READ_RAW_ATTEMPT_EVIDENCE_PREFIX =
   "manhua-template-learn/segment-evidence-raw/";
+/** 每次尝试成功解析后的原稿，先于门禁保存；不属于已验段卡或可清理缓存。 */
+export const NATIVE_DEEP_READ_PARSED_ATTEMPT_EVIDENCE_PREFIX =
+  "manhua-template-learn/segment-evidence-parsed-attempt/";
 export const NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION = 1 as const;
 
 export type NativeDeepReadSegmentCacheVisualRoute =
@@ -80,9 +83,53 @@ export type NativeDeepReadRawAttemptEvidenceInput = {
   attemptNumber: number;
   temperature: number;
   visualRoute: NativeDeepReadSegmentCacheVisualRoute;
+  /** 明确的选段诊断允许同契约重复实测；其证据按诊断批次隔离，不参与生产恢复。 */
+  repeatableDiagnostic?: boolean;
   httpStatus: number;
   providerRequestId?: string;
   responseText: string;
+};
+
+export type NativeDeepReadParsedAttemptEvidenceInput = Omit<
+  NativeDeepReadRawAttemptEvidenceInput, "httpStatus" | "responseText"
+> & {
+  model: string;
+  startSec: number;
+  endSec: number;
+  fps: number;
+  hasAudio: boolean;
+  finishReason?: string;
+  truncated: boolean;
+  rawAttemptEvidenceObjectName: string;
+  rawResponseBytes: number;
+  rawResponseSha256: string;
+  /** 保留完整解析结果，包括尚未通过schema或业务门禁的数据。 */
+  parsed: Record<string, unknown>;
+};
+
+export type NativeDeepReadRawAttemptEvidenceReadInput = Pick<
+  NativeDeepReadRawAttemptEvidenceInput,
+  | "seriesKey"
+  | "episodeIndex"
+  | "segmentIndex"
+  | "segmentCount"
+  | "sourceDigest"
+  | "requestFingerprint"
+  | "attemptNumber"
+  | "temperature"
+  | "visualRoute"
+>;
+
+export type NativeDeepReadRawAttemptEvidenceRead = {
+  objectName: string;
+  responseText: string;
+  callId: string;
+  /** 原始调用所属批次；恢复时沿用它写 parsed evidence，不能伪造为本次批次。 */
+  batchRequestId: string;
+  providerRequestId?: string;
+  responseBytes: number;
+  responseSha256: string;
+  httpStatus: number;
 };
 
 export type NativeDeepReadSegmentCacheRead = {
@@ -111,8 +158,8 @@ export function nativeDeepReadSegmentCacheObjectName(
 /**
  * 付费响应本体的内容指纹。同一请求契约（fingerprint/sourceDigest）下，模型每次
  * 真实响应的 raw/paidUsage 都可能不同；证据对象名必须把响应身份编进去，与
- * segment-evidence-raw 层 attemptN-callId 的做法同理，否则同契约重跑必然撞上
- * 不可变对象内容冲突并永久卡死该段。
+ * segment-evidence-raw 层按请求指纹与尝试序号定位；通过段证据还需纳入实际响应，
+ * 否则同契约重跑必然撞上不可变对象内容冲突并永久卡死该段。
  */
 export function nativeDeepReadSegmentEvidenceResponseFingerprint(
   entry: NativeDeepReadSegmentCacheEntry,
@@ -159,8 +206,16 @@ export function nativeDeepReadSegmentEvidenceObjectName(
 export function nativeDeepReadRawAttemptEvidenceObjectName(
   input: Pick<
     NativeDeepReadRawAttemptEvidenceInput,
-    "seriesKey" | "episodeIndex" | "segmentIndex" | "sourceDigest" | "attemptNumber" | "callId"
-  >,
+    | "seriesKey"
+    | "episodeIndex"
+    | "segmentIndex"
+    | "sourceDigest"
+    | "requestFingerprint"
+    | "attemptNumber"
+  > & {
+    batchRequestId?: string;
+    repeatableDiagnostic?: boolean;
+  },
 ): string {
   if (!/^[0-9a-f]{64}$/.test(input.sourceDigest)) {
     throw new Error("原始段证据 sourceDigest 非法");
@@ -171,12 +226,21 @@ export function nativeDeepReadRawAttemptEvidenceObjectName(
   if (!Number.isInteger(input.attemptNumber) || input.attemptNumber < 1 || input.attemptNumber > 9) {
     throw new Error(`原始段证据 attemptNumber 非法：${input.attemptNumber}`);
   }
-  const callId = String(input.callId || "").trim().toLowerCase();
-  if (!/^[0-9a-f-]{16,64}$/.test(callId)) throw new Error("原始段证据 callId 非法");
-  return `${NATIVE_DEEP_READ_RAW_ATTEMPT_EVIDENCE_PREFIX}${nativeDeepReadProposalId(
+  if (!/^[0-9a-f]{64}$/.test(input.requestFingerprint)) {
+    throw new Error("原始段证据 requestFingerprint 非法");
+  }
+  const diagnosticScope = input.repeatableDiagnostic
+    ? `diagnostic/${String(input.batchRequestId || "").trim()}/`
+    : "";
+  if (input.repeatableDiagnostic && !/^[0-9a-f-]{16,64}$/i.test(String(input.batchRequestId || "").trim())) {
+    throw new Error("原始段诊断证据 batchRequestId 非法");
+  }
+  return `${NATIVE_DEEP_READ_RAW_ATTEMPT_EVIDENCE_PREFIX}${diagnosticScope}${nativeDeepReadProposalId(
     input.seriesKey,
     input.episodeIndex,
-  )}/${input.sourceDigest}/seg${input.segmentIndex}/attempt${input.attemptNumber}-${callId}.json`;
+  )}/${input.sourceDigest}/${input.requestFingerprint}/seg${input.segmentIndex}-attempt${
+    input.attemptNumber
+  }.json`;
 }
 
 /**
@@ -195,6 +259,20 @@ export async function writeNativeDeepReadRawAttemptEvidence(
   if (!Number.isInteger(input.httpStatus) || input.httpStatus < 100 || input.httpStatus > 599) {
     throw new Error("原始段证据 httpStatus 非法");
   }
+  if (
+    !Number.isInteger(input.segmentIndex)
+    || input.segmentIndex < 0
+    || input.segmentIndex >= input.segmentCount
+    || !Number.isFinite(input.temperature)
+    || (input.visualRoute !== "vertex_gcs_video" && input.visualRoute !== "evolink_gemini_video")
+    || !String(input.batchRequestId || "").trim()
+    || !/^[0-9a-f-]{16,64}$/i.test(String(input.callId || "").trim())
+    || typeof input.responseText !== "string"
+    || (input.providerRequestId != null
+      && (typeof input.providerRequestId !== "string" || !input.providerRequestId.trim()))
+  ) {
+    throw new Error("原始段证据身份或元数据不完整");
+  }
   const responseBuffer = Buffer.from(String(input.responseText ?? ""), "utf8");
   const responseSha256 = createHash("sha256").update(responseBuffer).digest("hex");
   const objectName = nativeDeepReadRawAttemptEvidenceObjectName(input);
@@ -211,6 +289,7 @@ export async function writeNativeDeepReadRawAttemptEvidence(
     attemptNumber: input.attemptNumber,
     temperature: input.temperature,
     visualRoute: input.visualRoute,
+    repeatableDiagnostic: input.repeatableDiagnostic === true || undefined,
     httpStatus: input.httpStatus,
     providerRequestId: input.providerRequestId,
     responseBytes: responseBuffer.byteLength,
@@ -234,8 +313,187 @@ export async function writeNativeDeepReadRawAttemptEvidence(
   return { objectName, bytes: responseBuffer.byteLength, sha256: responseSha256 };
 }
 
+function parseNativeDeepReadRawAttemptEvidence(
+  value: unknown,
+  expected: NativeDeepReadRawAttemptEvidenceReadInput,
+  objectName: string,
+): NativeDeepReadRawAttemptEvidenceRead {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("原始段证据内容不是 JSON 对象");
+  }
+  const row = value as Record<string, unknown>;
+  const responseText = typeof row.responseText === "string" ? row.responseText : null;
+  const responseBuffer = responseText != null
+    ? Buffer.from(responseText, "utf8")
+    : null;
+  const responseBytes = typeof row.responseBytes === "number" ? row.responseBytes : Number.NaN;
+  const responseSha256 = typeof row.responseSha256 === "string"
+    ? row.responseSha256.trim().toLowerCase()
+    : "";
+  const callId = typeof row.callId === "string" ? row.callId.trim() : "";
+  const batchRequestId = typeof row.batchRequestId === "string" ? row.batchRequestId.trim() : "";
+  const providerRequestId = row.providerRequestId == null
+    ? undefined
+    : typeof row.providerRequestId === "string"
+      ? row.providerRequestId.trim()
+      : null;
+  const httpStatus = typeof row.httpStatus === "number" ? row.httpStatus : Number.NaN;
+  if (
+    row.schemaVersion !== 1
+    || row.seriesKey !== expected.seriesKey
+    || row.episodeIndex !== expected.episodeIndex
+    || row.segmentIndex !== expected.segmentIndex
+    || row.segmentCount !== expected.segmentCount
+    || row.sourceDigest !== expected.sourceDigest
+    || row.requestFingerprint !== expected.requestFingerprint
+    || row.attemptNumber !== expected.attemptNumber
+    || row.temperature !== expected.temperature
+    || row.visualRoute !== expected.visualRoute
+    || row.repeatableDiagnostic === true
+    || !Number.isInteger(httpStatus)
+    || httpStatus < 200
+    || httpStatus > 299
+    || !/^[0-9a-f-]{16,64}$/i.test(callId)
+    || !batchRequestId
+    || providerRequestId === null
+    || (providerRequestId != null && !providerRequestId)
+    || responseText == null
+    || !responseBuffer
+    || !Number.isSafeInteger(responseBytes)
+    || responseBytes < 0
+    || responseBuffer.byteLength !== responseBytes
+    || !/^[0-9a-f]{64}$/.test(responseSha256)
+    || createHash("sha256").update(responseBuffer).digest("hex") !== responseSha256
+  ) {
+    throw new Error("原始段证据字段、内容摘要或对象身份不完整");
+  }
+  return {
+    objectName,
+    responseText,
+    callId,
+    batchRequestId,
+    providerRequestId,
+    responseBytes,
+    responseSha256,
+    httpStatus,
+  };
+}
+
+/**
+ * 按请求契约和尝试序号确定性回读原始付费响应。只有 404 表示尚无该次尝试；
+ * 权限、网络、JSON、身份或内容摘要异常全部关闭式失败，不能据此重发请求。
+ */
+export async function readNativeDeepReadRawAttemptEvidence(
+  input: NativeDeepReadRawAttemptEvidenceReadInput,
+): Promise<NativeDeepReadRawAttemptEvidenceRead | null> {
+  if (
+    !Number.isInteger(input.segmentCount)
+    || input.segmentCount < 1
+    || input.segmentCount > 32
+    || input.segmentIndex >= input.segmentCount
+    || !Number.isFinite(input.temperature)
+    || (input.visualRoute !== "vertex_gcs_video" && input.visualRoute !== "evolink_gemini_video")
+  ) {
+    throw new Error("原始段证据回读身份不完整");
+  }
+  const objectName = nativeDeepReadRawAttemptEvidenceObjectName(input);
+  let versioned: Awaited<ReturnType<typeof downloadGcsObjectVersioned>>;
+  try {
+    versioned = await downloadGcsObjectVersioned({
+      gcsUri: `gs://${getGcsBucketName()}/${objectName}`,
+    });
+  } catch (error) {
+    if (isNotFound(error)) return null;
+    throw new Error("原始段证据读取失败，已停止以避免重复付费", { cause: error });
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(versioned.buffer.toString("utf8"));
+  } catch (error) {
+    throw new Error("原始段证据 JSON 损坏，已停止以避免重复付费", { cause: error });
+  }
+  try {
+    return parseNativeDeepReadRawAttemptEvidence(parsed, input, objectName);
+  } catch (error) {
+    throw new Error("原始段证据身份或内容校验失败，已停止以避免重复付费", {
+      cause: error,
+    });
+  }
+}
+
+export function nativeDeepReadParsedAttemptEvidenceObjectName(
+  input: Parameters<typeof nativeDeepReadRawAttemptEvidenceObjectName>[0],
+): string {
+  return NATIVE_DEEP_READ_PARSED_ATTEMPT_EVIDENCE_PREFIX
+    + nativeDeepReadRawAttemptEvidenceObjectName(input).slice(NATIVE_DEEP_READ_RAW_ATTEMPT_EVIDENCE_PREFIX.length);
+}
+
+/** 解析稿只准创建，不跑接受门禁、不写active缓存；后续拒收、中止或清理不得删除。 */
+export async function writeNativeDeepReadParsedAttemptEvidence(
+  input: NativeDeepReadParsedAttemptEvidenceInput,
+): Promise<{ objectName: string; bytes: number; sha256: string }> {
+  if (input.rawAttemptEvidenceObjectName !== nativeDeepReadRawAttemptEvidenceObjectName(input)) {
+    throw new Error("解析稿与原始证据身份不一致，已停止");
+  }
+  if (!/^[0-9a-f]{64}$/.test(input.requestFingerprint)
+    || !/^[0-9a-f]{64}$/.test(input.rawResponseSha256)
+    || !Number.isInteger(input.rawResponseBytes) || input.rawResponseBytes < 0
+    || !Number.isInteger(input.segmentCount) || input.segmentCount < 1 || input.segmentCount > 32
+    || input.segmentIndex >= input.segmentCount
+    || !Number.isFinite(input.temperature)
+    || !Number.isFinite(input.startSec) || input.startSec < 0
+    || !Number.isFinite(input.endSec) || input.endSec <= input.startSec
+    || !Number.isFinite(input.fps) || input.fps <= 0
+    || !String(input.model || "").trim() || !String(input.batchRequestId || "").trim()
+    || typeof input.hasAudio !== "boolean" || typeof input.truncated !== "boolean"
+    || !input.parsed || typeof input.parsed !== "object" || Array.isArray(input.parsed)) {
+    throw new Error("解析稿证据身份或元数据不完整，已停止");
+  }
+  // 两次序列化都发生在首个await前，后续gateMarked/advisories不会污染这份快照。
+  const parsedBuffer = Buffer.from(JSON.stringify(input.parsed), "utf8");
+  const parsedSha256 = createHash("sha256").update(parsedBuffer).digest("hex");
+  const objectName = nativeDeepReadParsedAttemptEvidenceObjectName(input);
+  const payload = Buffer.from(`${JSON.stringify({
+    schemaVersion: 1,
+    sourceDigest: input.sourceDigest,
+    requestFingerprint: input.requestFingerprint,
+    seriesKey: input.seriesKey,
+    episodeIndex: input.episodeIndex,
+    segmentIndex: input.segmentIndex,
+    segmentCount: input.segmentCount,
+    batchRequestId: input.batchRequestId,
+    callId: input.callId,
+    attemptNumber: input.attemptNumber,
+    temperature: input.temperature,
+    visualRoute: input.visualRoute,
+    providerRequestId: input.providerRequestId,
+    model: input.model,
+    startSec: input.startSec,
+    endSec: input.endSec,
+    fps: input.fps,
+    hasAudio: input.hasAudio,
+    finishReason: input.finishReason,
+    truncated: input.truncated,
+    rawAttemptEvidenceObjectName: input.rawAttemptEvidenceObjectName,
+    rawResponseBytes: input.rawResponseBytes,
+    rawResponseSha256: input.rawResponseSha256,
+    parsedBytes: parsedBuffer.byteLength,
+    parsedSha256,
+    parsed: input.parsed,
+  }, null, 2)}\n`, "utf8");
+  const bucket = getGcsBucketName();
+  const created = await uploadBufferToGcsIfAbsent({
+    bucket, objectName, contentType: "application/json", buffer: payload,
+  });
+  if (!created.created) {
+    const existing = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` });
+    if (!existing.buffer.equals(payload)) throw new Error("解析稿证据对象已存在但内容不同，已停止");
+  }
+  return { objectName, bytes: parsedBuffer.byteLength, sha256: parsedSha256 };
+}
+
 function isNotFound(error: unknown): boolean {
-  return error instanceof Error && error.message.includes("gcs_stat_failed:404");
+  return error instanceof Error && /gcs_(?:stat|download)_failed:404/.test(error.message);
 }
 
 function isGenerationConflict(error: unknown): boolean {

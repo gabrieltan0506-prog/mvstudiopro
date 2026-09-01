@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const ORIGINAL_STORE_DIR = process.env.GROWTH_STORE_DIR;
+const ORIGINAL_FALLBACK_DIR = process.env.GROWTH_INTERACTIVE_FALLBACK_DIR;
 
 describe("growth interactive workload priority", () => {
   let tempRoot = "";
@@ -12,11 +13,15 @@ describe("growth interactive workload priority", () => {
     vi.resetModules();
     tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "growth-priority-"));
     process.env.GROWTH_STORE_DIR = tempRoot;
+    process.env.GROWTH_INTERACTIVE_FALLBACK_DIR = path.join(tempRoot, "fallback-workloads");
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     if (ORIGINAL_STORE_DIR) process.env.GROWTH_STORE_DIR = ORIGINAL_STORE_DIR;
     else delete process.env.GROWTH_STORE_DIR;
+    if (ORIGINAL_FALLBACK_DIR) process.env.GROWTH_INTERACTIVE_FALLBACK_DIR = ORIGINAL_FALLBACK_DIR;
+    else delete process.env.GROWTH_INTERACTIVE_FALLBACK_DIR;
     if (tempRoot) await fs.rm(tempRoot, { recursive: true, force: true });
   });
 
@@ -41,6 +46,22 @@ describe("growth interactive workload priority", () => {
     const { hasActiveGrowthInteractiveWorkload } = await import("./growthWorkloadPriority");
     expect(await hasActiveGrowthInteractiveWorkload()).toBe(false);
     await expect(fs.access(file)).rejects.toThrow();
+  });
+
+  it("/data 满盘时改用临时盘租约，另一进程视角仍能识别前台任务", async () => {
+    const writeSpy = vi.spyOn(fs, "writeFile").mockRejectedValueOnce(
+      Object.assign(new Error("no space left on device"), { code: "ENOSPC" }),
+    );
+    const firstModule = await import("./growthWorkloadPriority");
+    const release = await firstModule.beginGrowthInteractiveWorkload("platform:disk-full");
+    expect(writeSpy).toHaveBeenCalledTimes(2);
+
+    vi.resetModules();
+    const secondModule = await import("./growthWorkloadPriority");
+    expect(await secondModule.hasActiveGrowthInteractiveWorkload()).toBe(true);
+
+    await release();
+    expect(await secondModule.hasActiveGrowthInteractiveWorkload()).toBe(false);
   });
 
   it("只把已抢占且属于真实登录用户的平台 Job 判为前台工作", async () => {

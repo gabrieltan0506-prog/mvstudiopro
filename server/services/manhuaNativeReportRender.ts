@@ -21,7 +21,7 @@ const FIELD_LABELS: Record<string, string> = {
   emotionTagsZh: "情绪", narrativeFeatureTagsZh: "叙事特色", performanceTagsZh: "表演",
   audiovisualTagsZh: "视听", audienceExperienceTagsZh: "观众体验",
   beatStructureZh: "节拍结构", moodArcZh: "情绪弧", reusableZh: "可复用手法", genPromptHintZh: "生成提示线索",
-  unitTypeZh: "单元类型", shotSizeZh: "景别", angleZh: "机位角度", compositionZh: "构图", cameraMoveZh: "运镜",
+  hintZh: "本镜观察", unitTypeZh: "单元类型", shotSizeZh: "景别", angleZh: "机位角度", compositionZh: "构图", cameraMoveZh: "运镜",
   blockingZh: "调度", bodyActionZh: "身体动作", limbPropActionZh: "肢体道具", microExpressionZh: "微表情",
   gazeBreathZh: "视线呼吸", relationshipReactionZh: "关系反应", lightingZh: "灯光", actionZh: "动作叙述",
   transitionInZh: "入镜转场", evidenceRole: "证据角色",
@@ -92,6 +92,16 @@ type SegmentRaw = { segmentIndex: number; raw: Record<string, unknown> };
  */
 function assembleCardFromSegments(segments: SegmentRaw[]): Record<string, unknown> {
   const merged: Record<string, unknown> = { shots: [], subtitles: [], audioResolution: [] };
+  /**
+   * 🔴 keyMoments / excludedAdRanges 必须一并合并（0830 审查 P0）。
+   * 生产入口只有 renderNativeEvidenceReportFromObjectNames 一条，从不传 glmCardObjectName，
+   * 因此必然走本函数。此前本函数整字段丢掉这两项 ⇒ 报告里「重点时刻」与「广告区间」
+   * 恒为 0、被高亮的重点时刻表永远空态——**功能在生产上是死的**。
+   * 秒位口径：段卡的 shots/subtitles/keyMoments 都是**全片绝对秒**（段提示词硬约束 1），
+   * 这里与 shots 同样直接拼接，不加 offset。
+   */
+  const keyMoments: Array<Record<string, unknown>> = [];
+  const excludedAdRanges: Array<Record<string, unknown>> = [];
   const chunkSpans: Array<{ chunkIndex: number; startSec: number; endSec: number }> = [];
   const summaryParts: Record<string, string[]> = {};
   const classification: Record<string, unknown[]> = {};
@@ -105,6 +115,12 @@ function assembleCardFromSegments(segments: SegmentRaw[]): Record<string, unknow
         startSec: Number(span.startSec),
         endSec: Number(span.endSec),
       });
+    }
+    for (const row of Array.isArray(raw.keyMoments) ? raw.keyMoments as Array<Record<string, unknown>> : []) {
+      if (Number.isFinite(Number(row?.atSec))) keyMoments.push(row);
+    }
+    for (const row of Array.isArray(raw.excludedAdRanges) ? raw.excludedAdRanges as Array<Record<string, unknown>> : []) {
+      excludedAdRanges.push(row);
     }
     for (const key of SUMMARY_TEXT_KEYS) {
       const value = String(raw[key] ?? "").trim();
@@ -124,6 +140,19 @@ function assembleCardFromSegments(segments: SegmentRaw[]): Record<string, unknow
   }
   if (Object.keys(classification).length) merged.classification = classification;
   if (chunkSpans.length > 0) merged.chunkSpans = chunkSpans;
+  if (keyMoments.length > 0) {
+    // 同秒同类去重后按秒位排序（与 shared mapper 同口径）
+    const seen = new Set<string>();
+    merged.keyMoments = keyMoments
+      .filter((row) => {
+        const key = `${Math.round(Number(row.atSec) * 10)}|${String(row.kindZh ?? "")}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((a, b) => Number(a.atSec) - Number(b.atSec));
+  }
+  if (excludedAdRanges.length > 0) merged.excludedAdRanges = excludedAdRanges;
   return merged;
 }
 
@@ -189,11 +218,14 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     .filter(([, v]) => Array.isArray(v))
     .map(([k, v]) => `<div style="margin:4px 0"><b style="color:#e8c66a">${esc(fieldLabel(k))}</b>：${(v as unknown[]).map((t) => `<span style="background:#1d2733;border-radius:10px;padding:2px 10px;margin:2px;display:inline-block">${esc(t)}</span>`).join(" ")}</div>`)
     .join("");
-  const summaryCards = SUMMARY_TEXT_KEYS
-    .map((key) => `<div style="background:#141b24;border-left:3px solid #e8c66a;padding:10px 14px;margin:8px 0"><b>${fieldLabel(key)}</b><br><span style="color:#9db4d0;white-space:pre-wrap">${esc(card[key])}</span></div>`)
-    .join("");
+  /**
+   * 0830 报告规格：摘要四栏拆成四个独立区块（可复用手法 / 生成提示要素 /
+   * 节奏结构 / 情绪推进），不再挤成一叠小卡——它们是这张卡最值钱的部分。
+   */
+  const summaryTextOf = (key: (typeof SUMMARY_TEXT_KEYS)[number]): string =>
+    String(card[key] ?? "").trim() || "本卡未产出该项";
 
-  const FIELDS = ["unitTypeZh", "shotSizeZh", "angleZh", "compositionZh", "cameraMoveZh", "blockingZh", "bodyActionZh", "limbPropActionZh", "microExpressionZh", "gazeBreathZh", "relationshipReactionZh", "lightingZh", "actionZh", "transitionInZh"];
+  const FIELDS = ["hintZh", "unitTypeZh", "shotSizeZh", "angleZh", "compositionZh", "cameraMoveZh", "blockingZh", "bodyActionZh", "limbPropActionZh", "microExpressionZh", "gazeBreathZh", "relationshipReactionZh", "lightingZh", "actionZh", "transitionInZh"];
   const shotRows = shots.map((shot) => `<tr><td style="position:sticky;left:0;background:#141b24;color:#e8c66a;white-space:nowrap">${mmss(Number(shot.startSec) || 0)}–${mmss(Number(shot.endSec) || 0)}</td>${FIELDS.map((field) => `<td style="padding:3px 8px;min-width:90px">${esc(shot[field])}</td>`).join("")}</tr>`).join("");
 
   const AUDIO_TRACK_FIELDS = ["emotionArcZh", "toneZh", "sfxZh", "bgmZh", "atmosphereZh", "silenceZh"] as const;
@@ -227,14 +259,179 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const subtitles = (Array.isArray(card.subtitles) ? card.subtitles : []) as Array<Record<string, unknown>>;
   const subRows = subtitles.map((s) => `<tr><td style="color:#e8c66a">${mmss(Number(s.atSec))}</td><td>${esc(s.textZh)}</td></tr>`).join("");
 
+  /* ───────── 0830 用户拍板的报告规格：KPI / 镜长分布 / 重点时刻 / 剧情节点 ───────── */
+
+  const shotSpans = shots
+    .map((shot) => ({ from: Number(shot.startSec), to: Number(shot.endSec) }))
+    .filter((x) => Number.isFinite(x.from) && Number.isFinite(x.to) && x.to > x.from);
+  /**
+   * 🔴 覆盖按**区间并集**算，不是时长之和（0830 审查 P0）：
+   * 重叠区间会被重复计入，「覆盖 X 分钟」可能超过整集时长——
+   * 而这份报告存在的意义之一就是抓「镜头重叠/过度合并」，这个指标偏偏在异常时
+   * 往「更好看」的方向失真。重叠另单列成红字告警，那才是审片人要的信号。
+   */
+  const sortedSpans = shotSpans.slice().sort((a, b) => a.from - b.from);
+  let coveredSec = 0;
+  let overlapSec = 0;
+  let overlapCount = 0;
+  let cursor = Number.NEGATIVE_INFINITY;
+  for (const span of sortedSpans) {
+    if (span.from < cursor) {
+      overlapCount += 1;
+      overlapSec += Math.min(cursor, span.to) - span.from;
+    }
+    const from = Math.max(span.from, cursor);
+    if (span.to > from) { coveredSec += span.to - from; cursor = span.to; }
+  }
+  const avgShotSec = shotSpans.length ? coveredSec / shotSpans.length : 0;
+  /**
+   * 🔴 必须从**未过滤**的原始 card.shots 上数（0830 审查 P0）：
+   * 上方 shots 已经 filter 掉 non_story_ad，在它上面再找广告镜恒为空——第三次同型空改。
+   * 文案也随之改成「已剔除 M 广告镜」：这些镜本就不在 shots 里，说「含」是错的。
+   */
+  const adShotCount = (Array.isArray(card.shots) ? card.shots as Array<Record<string, unknown>> : [])
+    .filter((shot) => shot.evidenceRole === "non_story_ad").length;
+  const adRanges = (Array.isArray((card as { excludedAdRanges?: unknown }).excludedAdRanges)
+    ? (card as { excludedAdRanges: Array<Record<string, unknown>> }).excludedAdRanges
+    : []);
+  const audioSegCount = audioChunks.reduce((sum, chunk) => (
+    sum + (Array.isArray(chunk.analysis?.audioTrack) ? chunk.analysis!.audioTrack!.length : 0)
+  ), 0);
+
+  /** 重点时刻（v12）：模型自报的抓帧秒位，五类＝切镜/情绪/灯光/剧情/音轨。 */
+  const keyMoments = (Array.isArray((card as { keyMoments?: unknown }).keyMoments)
+    ? (card as { keyMoments: Array<Record<string, unknown>> }).keyMoments
+    : [])
+    // NaN 参与比较会打乱有效元素顺序，且会渲染出 NaN:NaN 的秒位——先滤再排。
+    .filter((row) => Number.isFinite(Number(row.atSec)))
+    .slice()
+    .sort((a, b) => Number(a.atSec) - Number(b.atSec));
+  const KIND_ICON: Record<string, string> = {
+    切镜: "🎬", 情绪: "😨", 灯光: "💡", 剧情: "📖", 音轨: "🎵",
+  };
+  const kmRows = keyMoments.map((row) => (
+    `<tr><td style="color:#e8c66a;white-space:nowrap">${mmss(Number(row.atSec))}</td>`
+    + `<td style="white-space:nowrap">${KIND_ICON[String(row.kindZh)] ?? ""} ${esc(row.kindZh)}</td>`
+    + `<td>${esc(row.noteZh)}</td></tr>`
+  )).join("");
+
+  /**
+   * 剧情节点表：字幕**压缩成节点**，不逐字铺（呈现铁律第一条）。
+   * 6 秒内视作同一事件合并；原始逐条字幕仍在下方折叠存证，一条不删。
+   */
+  type SubNode = { from: number; to: number; lines: string[] };
+  const subNodes: SubNode[] = [];
+  for (const row of subtitles.slice().sort((a, b) => Number(a.atSec) - Number(b.atSec))) {
+    const at = Number(row.atSec);
+    const text = String(row.textZh ?? "").trim();
+    if (!Number.isFinite(at) || !text) continue;
+    const last = subNodes.at(-1);
+    // 🔴 双封顶（0830 审查 P1）：`at - last.to <= 6` 是**滑动**窗口，
+    // 只要每两句间隔都 ≤6 秒，整集所有字幕会塌成 1 个节点（漫剧 3–5 秒一句是常态）。
+    // 节点跨度上限 45 秒、单节点最多 8 句，超过即强制起新节点。
+    if (last && at - last.to <= 6 && at - last.from <= 45 && last.lines.length < 8) {
+      last.to = at; last.lines.push(text);
+    }
+    else subNodes.push({ from: at, to: at, lines: [text] });
+  }
+  const nodeRows = subNodes.map((node) => (
+    `<tr><td style="color:#e8c66a;white-space:nowrap">${mmss(node.from)}–${mmss(node.to)}</td>`
+    + `<td style="white-space:nowrap;color:#9db4d0">${node.lines.length} 句</td>`
+    // 🔴 节点内**全部句子照列，一句不砍**（0830 用户发现旧版只显示前 3 句）。
+    // 本表的「不逐字铺」体现在**分组**，不体现在删句子——本文件顶部写明「不做任何内容截断」。
+    + `<td>${esc(node.lines.join("｜"))}</td></tr>`
+  )).join("");
+
+  /** 镜长分布：一眼看粒度，长镜区间标红。 */
+  const buckets: Array<[string, number, number]> = [
+    ["0–2s", 0, 2], ["2–4s", 2, 4], ["4–6s", 4, 6], ["6–10s", 6, 10],
+    ["10–15s", 10, 15], ["15–30s", 15, 30], ["30s+", 30, Number.POSITIVE_INFINITY],
+  ];
+  const hist = buckets.map(([label, lo, hi]) => ({
+    label,
+    n: shotSpans.filter((x) => (x.to - x.from) >= lo && (x.to - x.from) < hi).length,
+    warn: lo >= 15,
+  }));
+  const histPeak = Math.max(1, ...hist.map((row) => row.n));
+  const histBars = hist.map((row) => (
+    `<div style="display:flex;align-items:center;gap:10px;margin:5px 0">`
+    + `<span style="width:64px;color:#9db4d0;font-size:12px">${row.label}</span>`
+    + `<span style="height:15px;border-radius:3px;min-width:2px;width:${Math.round((row.n / histPeak) * 100)}%;`
+    + `background:${row.warn ? "#e8756a" : "#cbb3e6"}"></span>`
+    + `<span style="color:#9db4d0;font-size:12px">${row.n}</span></div>`
+  )).join("");
+
+  /**
+   * 粒度判定用**膨胀倍数**而非绝对镜长——绝对值是体裁相关的
+   * （漫剧 2.8–4.3s/镜，真人剧更长），跨体裁会误判。此处无输入基准，
+   * 故只在明显异常（平均 >12 秒）时示警，其余一律按正常呈现。
+   */
+  /**
+   * 🔴 秒位非法的镜必须显式呈报（0830 审查 P0）：shotSpans 会静默丢掉它们，
+   * 而 KPI「镜头数」用的是 shots.length，两个数字会静静地不自洽；
+   * 极端情况全部镜无效 ⇒ avgShotSec=0 ⇒ 旧逻辑输出「✅ 粒度正常 · 0.0 秒」绿灯报喜。
+   */
+  const invalidShotCount = shots.length - shotSpans.length;
+  const grainBad = shotSpans.length === 0 || avgShotSec > 12;
+  const grainColor = grainBad ? "#e8756a" : "#cbb3e6";
+  const grainText = shotSpans.length === 0
+    ? "🔴 全部镜头秒位非法，无法判定粒度"
+    : (avgShotSec > 12
+      ? `🔴 平均镜长 ${avgShotSec.toFixed(1)} 秒，疑似镜头被过度合并`
+      : `✅ 粒度正常 · 平均镜长 ${avgShotSec.toFixed(1)} 秒`)
+      + (invalidShotCount > 0 ? ` · ⚠️ ${invalidShotCount} 镜秒位非法，未计入镜长统计` : "")
+      + (overlapCount > 0 ? ` · 🔴 ${overlapCount} 处镜头重叠，共 ${overlapSec.toFixed(1)} 秒` : "");
+
+  const kpi = [
+    [String(shots.length), "镜头数"],
+    [`${avgShotSec.toFixed(1)}s`, "平均镜长"],
+    [String(subtitles.length), "字幕"],
+    [String(keyMoments.length), "重点时刻"],
+    [String(audioSegCount), "音轨段"],
+    [String(adRanges.length), "广告区间"],
+  ].map(([value, label]) => (
+    `<div style="background:rgba(20,27,36,.62);border:1px solid rgba(232,198,106,.22);border-radius:10px;`
+    + `padding:12px 16px;min-width:120px"><b style="display:block;font-size:1.7em;color:#fff;line-height:1.3">`
+    + `${esc(value)}</b>${esc(label)}</div>`
+  )).join("");
+
+  const section = (titleZh: string, body: string, highlight = false) => (
+    `<h2 style="color:${highlight ? "#fff" : "#e8c66a"};margin-top:30px;`
+    + `${highlight ? "background:rgba(232,198,106,.18);padding:6px 12px;border-radius:8px;border-left:4px solid #e8c66a" : ""}">`
+    + `${esc(titleZh)}</h2>${body}`
+  );
+  const panel = (text: unknown) => (
+    `<div style="background:rgba(20,27,36,.62);border:1px solid rgba(232,198,106,.22);border-radius:10px;`
+    + `padding:14px 18px;margin-top:10px;white-space:pre-wrap">${esc(text)}</div>`
+  );
+  const tableOf = (headers: string[], rows: string) => (
+    `<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.85em;margin-top:10px">`
+    + `<tr>${headers.map((h) => `<th style="padding:5px 9px;color:#8fa3bd;text-align:left">${esc(h)}</th>`).join("")}</tr>`
+    + `${rows}</table></div>`
+  );
+
   const html = `<title>${esc(input.labelZh)} 模型产出报告</title><div style="font-family:'Songti SC',serif;background:linear-gradient(165deg,#7a1f3d 0%,#8e4a8b 55%,#cbb3e6 100%);background-attachment:fixed;color:#dce3ec;padding:28px;max-width:1200px;margin:auto">
 <p style="color:#e8c66a;letter-spacing:.3em;font-size:.8em">${esc(input.labelZh)} · ${esc(input.sourceLabelZh)} · 模型字段原样渲染，无编辑层、无删节</p>
-<h1 style="font-size:1.8em;margin:.2em 0">模型产出报告（${shots.length} 镜 · ${frameSource} ${tiles.length} 帧）</h1>
-<h2 style="color:#e8c66a;margin-top:26px">五维分类（模型原文）</h2>${tags}${summaryCards}
-<h2 style="color:#e8c66a;margin-top:30px">画面时间轴</h2><div style="display:flex;flex-wrap:wrap;gap:8px">${tiles.join("")}</div>
+<h1 style="font-size:1.8em;margin:.2em 0">模型产出报告</h1>
+<p style="color:#8fa3bd;margin:.3em 0 0">${shots.length} 镜（已剔除 ${adShotCount} 广告镜）· ${subtitles.length} 字幕 → ${subNodes.length} 剧情节点 · ${keyMoments.length} 重点时刻 · ${frameSource} ${tiles.length} 帧 · 覆盖 ${(coveredSec / 60).toFixed(1)} 分钟</p>
+
+<div style="display:flex;gap:12px;flex-wrap:wrap;margin:18px 0">${kpi}</div>
+<p style="color:${grainColor};font-weight:600">${grainText}</p>
+
+${section("镜长分布", histBars)}
+${section("可复用手法总结", panel(summaryTextOf("reusableZh")))}
+${section("生成提示要素", panel(summaryTextOf("genPromptHintZh")))}
+${section("节奏结构", panel(summaryTextOf("beatStructureZh")))}
+${section("情绪推进", panel(summaryTextOf("moodArcZh")))}
+${section("五维标签墙", tags)}
+${section(`重点时刻表 · ${keyMoments.length} 条`, keyMoments.length
+    ? tableOf(["秒位", "类型", "说明"], kmRows)
+    : `<p style="color:#9db4d0">本卡无重点时刻（v12 之前的产出没有这个字段）</p>`, true)}
+${section(`剧情节点表 · ${subNodes.length} 节点（${subtitles.length} 条字幕压缩，非逐字铺）`, tableOf(["区间", "密度", "关键句"], nodeRows))}
+${section("画面时间轴", `<div style="display:flex;flex-wrap:wrap;gap:8px">${tiles.join("")}</div>`)}
+${section("音轨解析（模型原文）", audioSections)}
 <details style="margin-top:30px" open><summary style="color:#e8c66a;font-size:1.2em;cursor:pointer">全镜头表 · ${shots.length} 镜 × ${FIELDS.length} 字段</summary><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#141b24">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#8fa3bd">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
-<h2 style="color:#e8c66a;margin-top:30px">音轨解析（模型原文）</h2>${audioSections}
-<details style="margin-top:30px"><summary style="color:#e8c66a;font-size:1.1em;cursor:pointer">字幕原始证据 · ${subtitles.length} 条（折叠存证，不铺开）</summary><div style="overflow-x:auto;max-height:50vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.85em">${subRows}</table></div></details>
+<details style="margin-top:30px"><summary style="color:#e8c66a;font-size:1.1em;cursor:pointer">字幕原始证据 · ${subtitles.length} 条（折叠存证，一条不删）</summary><div style="overflow-x:auto;max-height:50vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.85em">${subRows}</table></div></details>
 <p style="color:#5d6b80;font-size:.8em;margin-top:36px">帧图与本页为 GCS V4 签名链接（6 天）· 证据永久存 GCS · 本页由代码从模型 JSON 确定性渲染</p></div>`;
 
   await uploadBufferToGcs({
@@ -253,6 +450,12 @@ export type NativeReportFromObjectNamesInput = {
   evidenceObjectNames: string[];
   /** 路由已知集号时传入，与每份证据的 episodeIndex 强校验。 */
   expectEpisodeIndex?: number;
+  /** 路由已知系列时传入，与每份证据的 seriesKey 强校验（防跨系列证据拼进同一报告）。 */
+  expectSeriesKey?: string;
+  /** 卡片 provenance 的 sourceDigest；与证据 digest 强校验（防换来源快照）。 */
+  expectSourceDigest?: string;
+  /** 卡片 provenance 的 attemptedSegments；证据名个数必须严格等于它（防少段导出）。 */
+  expectSegmentCount?: number;
   /** GLM 整集卡对象名（provenance 明示时传入；传了就必须能读到，fail closed）。 */
   glmCardObjectName?: string;
   framesV2SummaryObjectName?: string;
@@ -262,8 +465,11 @@ export type NativeReportFromObjectNamesInput = {
 
 /**
  * 生产路由唯一入口：按精确证据对象名渲染。
- * 校验：每个对象必须存在且合法；episodeIndex 全一致（且与 expectEpisodeIndex 一致）；
- * segmentIndex 无重复且连续；sourceDigest 全一致。任一不满足即抛错，不上传半成品。
+ * 校验：每个对象必须存在且合法；证据名个数与卡片 attemptedSegments 一致；
+ * episodeIndex/seriesKey 全一致（且与 expectEpisodeIndex/expectSeriesKey 一致）；
+ * segmentIndex 无重复且严格等于下标（0..n-1，缺首段/末段一样拦下）；
+ * sourceDigest 合法（64 位 hex）、全一致且与卡片 provenance 一致。
+ * 任一不满足即抛错，不上传半成品。
  */
 export async function renderNativeEvidenceReportFromObjectNames(
   input: NativeReportFromObjectNamesInput,
@@ -286,7 +492,17 @@ export async function renderNativeEvidenceReportFromObjectNames(
   if (names.length === 0) {
     throw new Error("provenance 没有 segmentEvidenceObjectNames，拒绝列目录猜证据；该集需重学后再出报告");
   }
-  const segments: Array<SegmentRaw & { objectName: string; episodeIndex: number; sourceDigest: string }> = [];
+  // 段数门禁：卡片 provenance 说有 N 段，证据名就必须正好 N 个。
+  // 少首段、少末段都在这里拦下——排序连续性检查看不出「整体少一段」。
+  if (input.expectSegmentCount !== undefined) {
+    const expected = Number(input.expectSegmentCount);
+    if (!Number.isInteger(expected) || expected < 1 || names.length !== expected) {
+      throw new Error(`证据段数不完整：卡片应有 ${input.expectSegmentCount} 段，provenance 只有 ${names.length} 段`);
+    }
+  }
+  const segments: Array<SegmentRaw & {
+    objectName: string; episodeIndex: number; seriesKey: string; sourceDigest: string;
+  }> = [];
   for (const objectName of names) {
     const entry = await mustJson(bucket, objectName);
     const raw = entry.raw;
@@ -295,11 +511,18 @@ export async function renderNativeEvidenceReportFromObjectNames(
     }
     const episodeIndex = Number(entry.episodeIndex);
     const segmentIndex = Number(entry.segmentIndex);
-    const sourceDigest = String(entry.sourceDigest ?? "");
+    const seriesKey = String(entry.seriesKey ?? "").trim();
+    const sourceDigest = String(entry.sourceDigest ?? "").trim();
     if (!Number.isInteger(episodeIndex) || !Number.isInteger(segmentIndex) || segmentIndex < 0) {
       throw new Error(`证据对象 episodeIndex/segmentIndex 非法：${objectName}`);
     }
-    segments.push({ objectName, episodeIndex, segmentIndex, sourceDigest, raw: raw as Record<string, unknown> });
+    if (!seriesKey) {
+      throw new Error(`证据对象缺少 seriesKey：${objectName}`);
+    }
+    if (!/^[a-f0-9]{64}$/i.test(sourceDigest)) {
+      throw new Error(`证据对象 sourceDigest 非法：${objectName}`);
+    }
+    segments.push({ objectName, episodeIndex, seriesKey, segmentIndex, sourceDigest, raw: raw as Record<string, unknown> });
   }
 
   const episodes = new Set(segments.map((s) => s.episodeIndex));
@@ -309,17 +532,29 @@ export async function renderNativeEvidenceReportFromObjectNames(
   if (input.expectEpisodeIndex !== undefined && segments[0]!.episodeIndex !== input.expectEpisodeIndex) {
     throw new Error(`证据 episodeIndex=${segments[0]!.episodeIndex} 与请求集号 ${input.expectEpisodeIndex} 不符`);
   }
+  const seriesKeys = new Set(segments.map((s) => s.seriesKey));
+  if (seriesKeys.size !== 1) {
+    throw new Error(`证据 seriesKey 不一致：${Array.from(seriesKeys).join(",")}`);
+  }
+  if (input.expectSeriesKey !== undefined && segments[0]!.seriesKey !== input.expectSeriesKey) {
+    throw new Error(`证据 seriesKey=${segments[0]!.seriesKey} 与请求系列 ${input.expectSeriesKey} 不符`);
+  }
   const digests = new Set(segments.map((s) => s.sourceDigest));
   if (digests.size !== 1) {
     throw new Error("证据 sourceDigest 混杂：不同来源快照的段卡不能拼进同一份报告");
+  }
+  if (input.expectSourceDigest !== undefined
+    && segments[0]!.sourceDigest.toLowerCase() !== String(input.expectSourceDigest).trim().toLowerCase()) {
+    throw new Error("证据 sourceDigest 与卡片 provenance 不符");
   }
   segments.sort((a, b) => a.segmentIndex - b.segmentIndex);
   for (let i = 0; i < segments.length; i++) {
     if (i > 0 && segments[i]!.segmentIndex === segments[i - 1]!.segmentIndex) {
       throw new Error(`证据 segmentIndex 重复：seg${segments[i]!.segmentIndex}`);
     }
-    if (i > 0 && segments[i]!.segmentIndex !== segments[i - 1]!.segmentIndex + 1) {
-      throw new Error(`证据 segmentIndex 断裂：seg${segments[i - 1]!.segmentIndex} 后缺 seg${segments[i - 1]!.segmentIndex + 1}`);
+    // 严格等于下标：0..n-1 一个不缺。只查「相邻连续」会放过整体缺首段/缺末段。
+    if (segments[i]!.segmentIndex !== i) {
+      throw new Error(`证据 segmentIndex 不完整：应有 seg${i}，实际为 seg${segments[i]!.segmentIndex}`);
     }
   }
 

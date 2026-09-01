@@ -9,6 +9,7 @@ describe("formatManhuaTemplateNativeBeatZh", () => {
       formatManhuaTemplateNativeBeatZh({
         ...base,
         endSec: 3,
+        hintZh: "背景未入画，可见手持长剑",
         unitTypeZh: "剪辑镜头",
         shotSizeZh: "特写",
         angleZh: "平视",
@@ -24,7 +25,7 @@ describe("formatManhuaTemplateNativeBeatZh", () => {
         transitionInZh: "硬切",
       }),
     ).toBe(
-      "结束 3s · 单元 剪辑镜头 · 景别 特写 · 机位 平视 · 构图 双人前后分层 · 运镜 固定机位 · "
+      "结束 3s · 本镜观察 背景未入画，可见手持长剑 · 单元 剪辑镜头 · 景别 特写 · 机位 平视 · 构图 双人前后分层 · 运镜 固定机位 · "
       + "站位调度 主角靠左，对手靠右 · 整体动作 主角重心后移 · 四肢/道具 右手握剑 · "
       + "微表情 下颌绷紧 · 视线/呼吸 视线锁定，呼吸短促 · 关系反应 对手逼近后主角退半步 · 光影 冷光 · 转场 硬切",
     );

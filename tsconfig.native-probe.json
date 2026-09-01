@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "client/src/**/*",
+    "shared/**/*",
+    "server/**/*",
+    "scripts/manhua-native-two-segment-douyin-probe.mts",
+    "scripts/manhua-native-deep-read-batch.mts"
+  ],
+  "compilerOptions": {
+    "incremental": false
+  }
+}

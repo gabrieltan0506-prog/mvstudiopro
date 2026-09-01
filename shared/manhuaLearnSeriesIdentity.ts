@@ -42,7 +42,8 @@ export function normalizeManhuaSeriesTitle(raw?: string | null): string {
     .replace(/[\s《》「」『』【】]/g, "");
 }
 
-function sameEpisodeSource(left: string, right: string): boolean {
+/** 稳定来源判同：抖音忽略分享查询参数，其他来源使用上游已规范化的完整地址。 */
+export function sameManhuaLearnEpisodeSource(left: string, right: string): boolean {
   const leftDouyinId = extractDouyinVideoIdFromUrl(left);
   const rightDouyinId = extractDouyinVideoIdFromUrl(right);
   if (leftDouyinId || rightDouyinId) {
@@ -72,7 +73,8 @@ export function placeSingleSourceInExistingSeries<T extends ManhuaLearnListedSou
    * 同一素材重跑会被当成新素材追加。所以比对用调用方给的稳定标识。
    */
   const sourceIdentity = String(opts?.sourceIdentity || only.url).trim();
-  const same = existingSources.find((source) => sameEpisodeSource(source.url, sourceIdentity));
+  const same = existingSources.find((source) =>
+    sameManhuaLearnEpisodeSource(source.url, sourceIdentity));
   if (same) return [{ ...only, index: same.episodeIndex }];
   const occupied = existingSources.map((source) => source.episodeIndex);
   const maxOccupiedIndex = Math.max.apply(null, occupied);

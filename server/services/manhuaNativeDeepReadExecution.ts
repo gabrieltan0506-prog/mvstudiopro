@@ -21,7 +21,8 @@ import {
   NATIVE_DEEP_READ_ROUTE_VERTEX,
   NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC,
   NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
-  assertNativeDeepReadSegmentDensity,
+  resolveNativeDeepReadRequestFps,
+  nativeDeepReadSegmentMeetsThreeItemLine,
   nativeDeepReadSegmentCacheFingerprint,
   runManhuaNativeDeepRead,
   runManhuaNativeDeepReadBatch,
@@ -52,6 +53,11 @@ import {
   type NativeDeepReadSegmentCacheEntry,
 } from "./manhuaNativeDeepReadSegmentCache.js";
 import { statGcsObjectVersion } from "./gcs.js";
+import { extractNativeKeyMomentEvidenceFrames } from "./manhuaNativeKeyMomentFrames.js";
+import {
+  NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS,
+  parseNativeDeepReadVideoFps,
+} from "../../shared/manhuaNativeDeepReadJob.js";
 import {
   finalizeManhuaNativeDirectAudioAnalysis,
   noAudioManhuaNativeDirectAnalysis,
@@ -95,6 +101,7 @@ export type NativeDeepReadEpisodeExecution = {
   }>;
   durationSec: number;
   laneHintZh?: string;
+  videoFps?: number;
   segments: readonly NativeDeepReadSegmentSpec[];
   /**
    * 该集当前可用的媒体节点（零成本，不下载）。
@@ -123,6 +130,7 @@ export type NativeDeepReadExecutionDeps = {
   clearSegmentCache: typeof clearNativeDeepReadSegmentCacheForEpisode;
   migrateSegmentCaches: typeof migrateMisplacedNativeDeepReadSegmentCaches;
   statSourceVersion: typeof statGcsObjectVersion;
+  extractKeyMomentFrames: typeof extractNativeKeyMomentEvidenceFrames;
 };
 
 const defaultDeps: NativeDeepReadExecutionDeps = {
@@ -137,7 +145,37 @@ const defaultDeps: NativeDeepReadExecutionDeps = {
   clearSegmentCache: clearNativeDeepReadSegmentCacheForEpisode,
   migrateSegmentCaches: migrateMisplacedNativeDeepReadSegmentCaches,
   statSourceVersion: statGcsObjectVersion,
+  extractKeyMomentFrames: extractNativeKeyMomentEvidenceFrames,
 };
+
+async function extractFullResultEvidenceFrames(input: {
+  episode: NativeDeepReadEpisodeExecution;
+  result: {
+    assemblyComplete?: boolean;
+    keyMoments?: NativeDeepReadRunResult["keyMoments"];
+    sourceDigest?: string;
+  };
+  deps: NativeDeepReadExecutionDeps;
+}) {
+  // partial snapshot 可能多次写卡，绝不能在这里反复拉媒体、抽帧或写 GCS。
+  if (input.result.assemblyComplete !== true) return undefined;
+  if (!input.result.keyMoments?.length) return [];
+  try {
+    const mediaNodes = await input.episode.resolveNodes();
+    return await input.deps.extractKeyMomentFrames({
+      seriesKey: input.episode.seriesKey,
+      episodeIndex: input.episode.episodeIndex,
+      sourceDigest: input.result.sourceDigest,
+      mediaNodes,
+      keyMoments: input.result.keyMoments,
+      abortSignal: input.episode.abortSignal,
+    });
+  } catch {
+    // 关键帧是审批证据增强层：失败时省略全部/部分帧，已付费的完整卡仍必须入库。
+    console.warn(`[nativeDeepRead] 第${input.episode.episodeIndex}集关键时刻抽帧未完成，卡片继续入库`);
+    return undefined;
+  }
+}
 
 function extractDouyinAwemeId(sourceRef: string): string | undefined {
   try {
@@ -207,6 +245,7 @@ export async function migrateMisplacedNativeDeepReadSegmentCaches(input: {
   segments: readonly NativeDeepReadSegmentSpec[];
   sourceDigest: string;
   hintZh?: string;
+  videoFps?: number;
 }, deps: NativeDeepReadCacheMigrationDeps = defaultCacheMigrationDeps): Promise<{
   migratedSegmentIndexes: number[];
   sourceEpisodeIndexes: number[];
@@ -257,6 +296,7 @@ export async function migrateMisplacedNativeDeepReadSegmentCaches(input: {
         segmentCount: input.segments.length,
         hasAudio: entry.hasAudio,
         hintZh: input.hintZh,
+        videoFps: input.videoFps,
       });
       return oldFingerprint === entry.fingerprint;
     });
@@ -267,14 +307,16 @@ export async function migrateMisplacedNativeDeepReadSegmentCaches(input: {
     }
     const alias = validAliases[0]?.entry;
     if (!alias) continue;
-    assertNativeDeepReadSegmentDensity({
+    if (!nativeDeepReadSegmentMeetsThreeItemLine({
       episodeIndex: input.episodeIndex,
       segmentIndex,
       startSec: segment.startSec,
       endSec: segment.endSec,
       hasAudio: alias.hasAudio,
       raw: alias.raw,
-    });
+      requireShotObservations: true,
+      truncated: alias.raw.truncated === true,
+    })) continue;
     const migrated: NativeDeepReadSegmentCacheEntry = {
       ...alias,
       seriesKey: input.seriesKey,
@@ -288,6 +330,7 @@ export async function migrateMisplacedNativeDeepReadSegmentCaches(input: {
         segmentCount: input.segments.length,
         hasAudio: alias.hasAudio,
         hintZh: input.hintZh,
+        videoFps: input.videoFps,
       }),
     };
     await deps.createTarget(migrated);
@@ -459,6 +502,7 @@ export async function executeAndIngestNativeDeepReadEpisode(
       segments: input.segments,
       sourceDurationSec: input.durationSec,
       hintZh: input.laneHintZh,
+      videoFps: input.videoFps,
       abortSignal: input.abortSignal,
     });
   } catch (error) {
@@ -513,13 +557,21 @@ export async function executeAndIngestNativeDeepReadEpisode(
 
   let stored: NativeDeepReadIngestResult;
   try {
+    const evidenceFrames = await extractFullResultEvidenceFrames({
+      episode: input,
+      result,
+      deps,
+    });
     stored = await deps.ingest({
       seriesKey: input.seriesKey,
       episodeIndex: input.episodeIndex,
       sourceUrl: input.provenanceSourceRef || input.sourceUrl,
       durationSec: input.durationSec,
+      segmentSpans: input.segments.map(({ startSec, endSec }) => ({ startSec, endSec })),
+      videoFps: input.videoFps,
       laneHintZh: input.laneHintZh,
       sourceMarkers: input.sourceMarkers,
+      evidenceFrames,
       result,
     });
   } catch (error) {
@@ -565,8 +617,8 @@ export const NATIVE_DEEP_READ_DEFAULT_BATCH_EPISODES = 20;
 export const NATIVE_DEEP_READ_BATCH_HARD_CEILING = 200;
 /** 单集仍遵守学习策略的两小时上限。 */
 export const NATIVE_DEEP_READ_MAX_EPISODE_SEC = 120 * 60;
-/** 视觉分片最多 5 分钟；分片契约只按时长，不按编码体积变化。 */
-export const NATIVE_DEEP_READ_MAX_SEGMENT_SEC = 5 * 60;
+/** 分片不再另设 300 秒上限，沿用整片两小时策略。 */
+export const NATIVE_DEEP_READ_MAX_SEGMENT_SEC = NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS;
 
 export type NativeDeepReadBatchPlan = {
   totalEpisodes: number;
@@ -623,6 +675,7 @@ export function validateNativeDeepReadBatchPlan(
     }
     if (source.protocol !== "https:") throw new Error(`第${ep}集来源必须是 HTTPS`);
     const duration = Number(episode.durationSec);
+    parseNativeDeepReadVideoFps(episode.videoFps);
     if (!Number.isFinite(duration) || duration <= 0) throw new Error(`第${ep}集时长无效`);
     if (duration > NATIVE_DEEP_READ_MAX_EPISODE_SEC) {
       throw new Error(`第${ep}集超过 ${Math.round(NATIVE_DEEP_READ_MAX_EPISODE_SEC / 60)} 分钟学习上限`);
@@ -634,7 +687,7 @@ export function validateNativeDeepReadBatchPlan(
       const len = segment.endSec - segment.startSec;
       if (len > NATIVE_DEEP_READ_MAX_SEGMENT_SEC) {
         throw new Error(
-          `第${ep}集单片 ${Math.round(len)}s 超过 ${NATIVE_DEEP_READ_MAX_SEGMENT_SEC}s，模型看不完整，请拆段`,
+          `第${ep}集单片 ${Math.round(len)}s 超过整片 ${NATIVE_DEEP_READ_MAX_SEGMENT_SEC}s 策略上限`,
         );
       }
       if (
@@ -660,7 +713,7 @@ export function validateNativeDeepReadBatchPlan(
       version: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
       model: NATIVE_DEEP_READ_MODEL,
       routes: [NATIVE_DEEP_READ_ROUTE_VERTEX, NATIVE_DEEP_READ_ROUTE_EVOLINK],
-      fpsTiers: { shortMaxSec: 180, shortFps: 10, longFps: 5 },
+      defaultFps: resolveNativeDeepReadRequestFps(1),
       maxSegmentSec: NATIVE_DEEP_READ_MAX_SEGMENT_SEC,
       densityFloors: {
         shotIntervalSec: NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC,
@@ -675,7 +728,10 @@ export function validateNativeDeepReadBatchPlan(
       route: MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE,
       schemaVersion: MANHUA_NATIVE_SERIES_AGGREGATION_SCHEMA_VERSION,
     },
-    episodes: episodes.map(({ resolveNodes: _drop, ...rest }) => rest),
+    episodes: episodes.map(({ resolveNodes: _drop, ...rest }) => ({
+      ...rest,
+      videoFps: parseNativeDeepReadVideoFps(rest.videoFps),
+    })),
   });
   const totalVisualCalls = totalSegments;
   return {
@@ -866,6 +922,7 @@ export async function runNativeDeepReadBatch(input: {
           segments: episode.segments,
           sourceDigest: cacheSourceDigest,
           hintZh: episode.laneHintZh,
+          videoFps: episode.videoFps,
         });
         if (migration.migratedSegmentIndexes.length) {
           console.info(
@@ -882,6 +939,7 @@ export async function runNativeDeepReadBatch(input: {
           segments: episode.segments,
           sourceDurationSec: episode.durationSec,
           hintZh: episode.laneHintZh,
+          videoFps: episode.videoFps,
           cacheSourceDigest,
         }],
         segmentCacheSeriesKey: input.seriesKey,
@@ -907,6 +965,8 @@ export async function runNativeDeepReadBatch(input: {
             episodeIndex: episode.episodeIndex,
             sourceUrl: episode.provenanceSourceRef || episode.sourceUrl,
             durationSec: episode.durationSec,
+            segmentSpans: episode.segments.map(({ startSec, endSec }) => ({ startSec, endSec })),
+            videoFps: episode.videoFps,
             laneHintZh: episode.laneHintZh,
             sourceMarkers: episode.sourceMarkers,
             result: partialResult,
@@ -941,13 +1001,21 @@ export async function runNativeDeepReadBatch(input: {
       if (!gate.ok) {
         throw new Error(`第${episode.episodeIndex}集未通过入库门禁：${gate.reasonZh}`);
       }
+      const evidenceFrames = await extractFullResultEvidenceFrames({
+        episode: { ...episode, seriesKey: input.seriesKey },
+        result,
+        deps,
+      });
       const stored = await deps.ingest({
         seriesKey: input.seriesKey,
         episodeIndex: episode.episodeIndex,
         sourceUrl: episode.provenanceSourceRef || episode.sourceUrl,
         durationSec: episode.durationSec,
+        segmentSpans: episode.segments.map(({ startSec, endSec }) => ({ startSec, endSec })),
+        videoFps: episode.videoFps,
         laneHintZh: episode.laneHintZh,
         sourceMarkers: episode.sourceMarkers,
+        evidenceFrames,
         result,
       });
       // 先在 claim 锁内清缓存，再释放 claim；否则等待中的旧计划可抢到 claim 并写新缓存，

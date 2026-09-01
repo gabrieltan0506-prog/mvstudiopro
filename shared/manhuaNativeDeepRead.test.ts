@@ -113,6 +113,74 @@ describe("原生精读产出 → 模板卡（真实形状往返）", () => {
   });
 });
 
+describe("重点时刻 keyMoments（v12）", () => {
+  const rowWith = (moments: unknown) => [{
+    seg: 0, startSec: 100, endSec: 132,
+    text: JSON.stringify({
+      shots: [
+        { startSec: 0, endSec: 10, actionZh: "甲", transitionInZh: "硬切" },
+        { startSec: 10, endSec: 32, actionZh: "乙", transitionInZh: "硬切" },
+      ],
+      keyMoments: moments,
+      beatStructureZh: "节奏", reusableZh: "可复用", genPromptHintZh: "要素",
+    }),
+  }];
+
+  it("🔒 秒位与镜头同一套换算（段内秒 + offset），不是原样当绝对秒", () => {
+    const out = mapNativeDeepReadSegments(rowWith([
+      { atSec: 5, kindZh: "情绪", noteZh: "眉头锁紧" },
+    ]));
+    // 段 offset=100，段内第 5 秒 → 全片第 105 秒。若误当绝对秒会得到 5。
+    expect(out.keyMoments).toEqual([{ atSec: 105, kindZh: "情绪", noteZh: "眉头锁紧" }]);
+  });
+
+  it("🔒 秒位越界或类型非法只丢弃并记 advisory，绝不弄死整段付费产出", () => {
+    const out = mapNativeDeepReadSegments(rowWith([
+      { atSec: 5, kindZh: "灯光", noteZh: "暖转冷" },
+      { atSec: 999, kindZh: "切镜", noteZh: "越界：极可能把局部秒当绝对秒串号了" },
+      { atSec: 8, kindZh: "彩蛋", noteZh: "五类之外" },
+    ]));
+    // 合法的一条留下，两条非法的丢掉——但 shots 与其余证据完好无损
+    expect(out.keyMoments).toEqual([{ atSec: 105, kindZh: "灯光", noteZh: "暖转冷" }]);
+    expect(out.beatGrid).toHaveLength(2);
+    expect(out.advisories?.map((row) => row.code)).toContain("key_moments_invalid_dropped");
+  });
+
+  it("🔒 广告零帧：段卡阶段的 non_story_ad 镜头区间同样不许出现重点时刻", () => {
+    // 广告在画面上恰好满足「切镜/灯光/剧情」的表面特征，最容易被误点。
+    // 段卡阶段广告只表现为 evidenceRole=non_story_ad（excludedAdRanges 是整集卡才有的）。
+    const rows = [{
+      seg: 0, startSec: 100, endSec: 132,
+      text: JSON.stringify({
+        shots: [
+          { startSec: 0, endSec: 10, actionZh: "剧情", transitionInZh: "硬切" },
+          { startSec: 10, endSec: 20, actionZh: "贴片广告", transitionInZh: "硬切",
+            evidenceRole: "non_story_ad" },
+          { startSec: 20, endSec: 32, actionZh: "剧情", transitionInZh: "硬切" },
+        ],
+        keyMoments: [
+          { atSec: 5, kindZh: "剧情", noteZh: "正片关键节点" },
+          { atSec: 15, kindZh: "灯光", noteZh: "广告里的打光切换——不许进" },
+          { atSec: 25, kindZh: "切镜", noteZh: "正片景别突变" },
+        ],
+        beatStructureZh: "节奏", reusableZh: "可复用", genPromptHintZh: "要素",
+      }),
+    }];
+    const out = mapNativeDeepReadSegments(rows);
+    expect(out.keyMoments?.map((k) => k.atSec)).toEqual([105, 125]);
+  });
+
+  it("同秒同类去重；没有 keyMoments 时字段缺省不出现", () => {
+    const dup = mapNativeDeepReadSegments(rowWith([
+      { atSec: 5, kindZh: "剧情", noteZh: "台词点破" },
+      { atSec: 5, kindZh: "剧情", noteZh: "重复记录" },
+      { atSec: 5, kindZh: "音轨", noteZh: "同秒不同类，保留" },
+    ]));
+    expect(dup.keyMoments).toHaveLength(2);
+    expect(mapNativeDeepReadSegments(rowWith(undefined)).keyMoments).toBeUndefined();
+  });
+});
+
 describe("适配器失败与超限语义（复审第六项）", () => {
   const seg = (shots: unknown[], extra?: Record<string, unknown>) => ({
     seg: 0,
@@ -132,6 +200,7 @@ describe("适配器失败与超限语义（复审第六项）", () => {
     const detailed = shot(0, {
       unitTypeZh: "剪辑镜头",
       angleZh: "平视",
+      hintZh: "近景可见卷轴与地面，环境其余部分未入画",
       compositionZh: "双人分居画面两侧，中间保留压迫负空间",
       cameraMoveZh: "固定机位，以构图变化承接关系变化",
       blockingZh: "主角靠左后退，对手从右侧逼近",
@@ -166,18 +235,21 @@ describe("适配器失败与超限语义（复审第六项）", () => {
     });
     const writerAddon = formatManhuaViralTemplateWriterAddonFromCard(parsed);
     expect(writerAddon).toContain("站位调度=主角靠左后退，对手从右侧逼近");
+    expect(parsed.beatGrid[0]?.hintZh).toBe("近景可见卷轴与地面，环境其余部分未入画");
+    expect(writerAddon).toContain("本镜观察=近景可见卷轴与地面，环境其余部分未入画");
     expect(writerAddon).toContain("微表情=瞳孔收紧后下颌绷住");
     expect(writerAddon).toContain("关系反应=对手逼近触发主角后退，主角站稳迫使对手停步");
   });
 
-  it("finish=length 的段整段丢弃，并计入 failedSegmentCount", () => {
+  it("0829 新口径：finish=length 的段保留可解析内容，不再整段丢弃", () => {
     const out = mapNativeDeepReadSegments([
       seg([shot(0), shot(1)]),
       seg([shot(2)], { seg: 1, startSec: 30, finish: "length" }),
     ]);
-    expect(out.segmentCount).toBe(1);
-    expect(out.shotCount).toBe(2);
-    expect(out.failedSegmentCount).toBe(1);
+    // 截断段的已有镜头照常入卡（0829 实证：两段 65k token 内容曾被整段丢弃白烧 ¥13）
+    expect(out.segmentCount).toBe(2);
+    expect(out.shotCount).toBe(3);
+    expect(out.failedSegmentCount).toBe(0);
   });
 
   it("动作为空的镜头丢弃而不是写「未标注」占位", () => {
@@ -420,5 +492,148 @@ describe("音频广告过滤只认真实段界（chunkSpans），禁猜起点", 
     expect(out.resolvedAudioChunks[0]!.analysis.audioTrack).toHaveLength(1);
     expect(out.resolvedAudioChunks[0]!.analysis.audioTrack[0]!.cues.map((cue) => cue.atSec)).toEqual([30]);
   });
+
+  /**
+   * 0831 补：同 chunk 多版本合并，此前**零覆盖**。
+   * 旧实现是 `if (resolvedByChunk.has(chunkIndex)) continue;` 直接丢后到版本——
+   * 实测一次跑掉 GLM 9 份分析里的 4 份、46 条 cue，且 droppedCount 完全不反映。
+   * 事故已发生过，测试却一直不存在，所以这几条是补票不是锦上添花。
+   */
+  describe("同 chunk 多版本：区间 first-wins，但点事件必须合并且可数", () => {
+    it("后到版本的新 cue 并入，重复 cue 去重，合并数落账", () => {
+      const out = mapNativeDeepReadSegments([
+        row({
+          shots: [storyShot(0, 60)],
+          audioResolution: [{ chunkIndex: 0, analysis: analysis([track(0, 60, [10, 20])]) }],
+        }),
+        row({
+          shots: [storyShot(0, 60)],
+          // 20 与先到版重复必须去掉，30 是新的必须并进来。
+          audioResolution: [{ chunkIndex: 0, analysis: analysis([track(0, 60, [20, 30])]) }],
+        }),
+      ]);
+      expect(out.resolvedAudioChunks).toHaveLength(1);
+      const cues = out.resolvedAudioChunks[0]!.analysis.audioTrack[0]!.cues;
+      expect(cues.map((cue) => cue.atSec)).toEqual([10, 20, 30]);
+      expect(out.audioCuesMergedFromDuplicates).toBe(1);
+      expect(out.audioCuesUnplaced ?? 0).toBe(0);
+    });
+
+    it("落在所有区间之外的 cue 不静默吞掉，计入 audioCuesUnplaced", () => {
+      const out = mapNativeDeepReadSegments([
+        row({
+          shots: [storyShot(0, 60)],
+          audioResolution: [{ chunkIndex: 0, analysis: analysis([track(0, 60, [10])]) }],
+        }),
+        row({
+          shots: [storyShot(0, 60)],
+          // 999 秒无处安放：可以不落盘，但必须留下数字，否则又是一次静默丢失。
+          audioResolution: [{ chunkIndex: 0, analysis: analysis([track(0, 60, [999])]) }],
+        }),
+      ]);
+      expect(out.resolvedAudioChunks[0]!.analysis.audioTrack[0]!.cues.map((c) => c.atSec)).toEqual([10]);
+      expect(out.audioCuesUnplaced).toBe(1);
+    });
+
+    it("区间结构仍 first-wins：后到版本不得覆盖先到版的整体判断", () => {
+      const out = mapNativeDeepReadSegments([
+        row({
+          shots: [storyShot(0, 60)],
+          audioResolution: [{ chunkIndex: 0, analysis: { ...analysis([track(0, 60, [10])]), audioBeatStructureZh: "先到版结构" } }],
+        }),
+        row({
+          shots: [storyShot(0, 60)],
+          audioResolution: [{ chunkIndex: 0, analysis: { ...analysis([track(0, 30, [20])]), audioBeatStructureZh: "后到版结构" } }],
+        }),
+      ]);
+      const chunk = out.resolvedAudioChunks[0]!;
+      // 区间不变（仍是先到版那条 0..60），只是把后到版的点事件收进来。
+      expect(chunk.analysis.audioBeatStructureZh).toBe("先到版结构");
+      expect(chunk.analysis.audioTrack).toHaveLength(1);
+      expect(chunk.analysis.audioTrack[0]!.toSec).toBe(60);
+      expect(chunk.analysis.audioTrack[0]!.cues.map((c) => c.atSec)).toEqual([10, 20]);
+    });
+
+    it("没有重复版本时两个计数不出现，0 不等于「没丢」的假象", () => {
+      const out = mapNativeDeepReadSegments([
+        row({
+          shots: [storyShot(0, 60)],
+          audioResolution: [{ chunkIndex: 0, analysis: analysis([track(0, 60, [10])]) }],
+        }),
+      ]);
+      expect(out.audioCuesMergedFromDuplicates).toBeUndefined();
+      expect(out.audioCuesUnplaced).toBeUndefined();
+    });
+  });
 });
 
+
+describe("v11 · advisory 段号与 truncated 落盘", () => {
+  const shot = (startSec: number, endSec: number) => ({
+    startSec,
+    endSec,
+    shotSizeZh: "特写",
+    actionZh: `动作${startSec}`,
+    evidenceRole: "story",
+  });
+  const segRow = (input: {
+    startSec: number;
+    finish?: string;
+    failed?: boolean;
+    inner?: Record<string, unknown>;
+  }) => ({
+    startSec: input.startSec,
+    finish: input.finish ?? "stop",
+    ...(input.failed ? { failed: true } : {}),
+    text: JSON.stringify({
+      beatStructureZh: "憋4秒后爆",
+      shots: [shot(0, 30)],
+      ...(input.inner ?? {}),
+    }),
+  });
+
+  it("seg0 失败时，seg1 的截断提示必须挂在第2段（不能用过滤后下标）", () => {
+    const out = mapNativeDeepReadSegments([
+      segRow({ startSec: 0, failed: true }),
+      segRow({ startSec: 300, finish: "length" }),
+    ]);
+    const truncatedRows = (out.advisories ?? []).filter((row) => row.code === "truncated");
+    expect(truncatedRows).toHaveLength(1);
+    expect(truncatedRows[0]!.segmentIndex).toBe(1);
+    expect(truncatedRows[0]!.detailZh).toContain("第2段");
+  });
+
+  it("段卡自带 truncated:true（缓存命中路径）同样算截断，不依赖外层 finish", () => {
+    const out = mapNativeDeepReadSegments([
+      segRow({ startSec: 0, inner: { truncated: true } }),
+    ]);
+    expect(out.truncated).toBe(true);
+    expect((out.advisories ?? []).some((row) => row.code === "truncated")).toBe(true);
+  });
+
+  it("段卡已带 truncated advisory 时不重复补第二条", () => {
+    const out = mapNativeDeepReadSegments([
+      segRow({
+        startSec: 0,
+        finish: "length",
+        inner: {
+          truncated: true,
+          advisories: [{ code: "truncated", detailZh: "第1段被截断", segmentIndex: 0 }],
+        },
+      }),
+    ]);
+    expect((out.advisories ?? []).filter((row) => row.code === "truncated")).toHaveLength(1);
+  });
+
+  it("段卡自带 advisory 缺 segmentIndex 时按入参下标补全", () => {
+    const out = mapNativeDeepReadSegments([
+      segRow({ startSec: 0 }),
+      segRow({
+        startSec: 300,
+        inner: { advisories: [{ code: "audio_track_thin", detailZh: "音轨仅 1 段" }] },
+      }),
+    ]);
+    const thin = (out.advisories ?? []).find((row) => row.code === "audio_track_thin");
+    expect(thin?.segmentIndex).toBe(1);
+  });
+});

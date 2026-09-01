@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { MANHUA_NATIVE_GLM_REASONING_EFFORT } from "../../shared/manhuaNativeDeepReadJob.js";
 import os from "node:os";
 import path from "node:path";
 import { mkdir, mkdtemp, open, readFile, rename, rm } from "node:fs/promises";
@@ -26,13 +27,21 @@ import {
 } from "./manhuaNativeDeepReadIngest.js";
 import {
   GlmGatewayError,
+  EVOLINK_GLM_MODEL,
+  GLM_MODEL_GATEWAYS,
+  type GlmGatewayName,
   OPENROUTER_GLM_MODEL,
   invokeGlmJsonChatWithGatewayFallback,
   type GlmGatewayUsage,
 } from "./bailianChat.js";
 import { nativeProviderReceiptFromError } from "./manhuaNativeProviderReceipt.js";
 
-export const MANHUA_NATIVE_SERIES_AGGREGATION_MODEL = OPENROUTER_GLM_MODEL;
+/**
+ * 系列聚合的**链路标签**（0829 改线后主档是 EvoLink glm-5.3，兜底才是 OpenRouter）。
+ * 与整形链同口径：两档都是 GLM-5.3，不换模型。
+ */
+export const MANHUA_NATIVE_SERIES_AGGREGATION_MODEL =
+  `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`;
 export const MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE = "openrouter_text" as const;
 export const MANHUA_NATIVE_SERIES_AGGREGATION_SCHEMA_VERSION = "native-series-v2" as const;
 
@@ -41,6 +50,18 @@ const MAX_SNAPSHOT_PAYLOAD_BYTES = 3 * 1024 * 1024;
 const SNAPSHOT_DOWNLOAD_ATTEMPTS = 3;
 const SNAPSHOT_DOWNLOAD_CONCURRENCY = 6;
 const AGGREGATION_RESPONSE_MAX_BYTES = 4 * 1024 * 1024;
+/**
+ * 🔒 整条链的**总**墙钟预算（0830 审查 P1-1 修正）。
+ *
+ * 改线前 gatewayPolicy 是 openrouter_only（只有一档），12 分钟＝最坏耗时，
+ * 20 分钟租约安全。0829 改成 glm_only 后变成 EvoLink→OpenRouter 两档，
+ * 若按「每档 12 分钟」算，最坏 24 分钟 > 20 分钟租约 —— 第二档即使成功交卷，
+ * assertOwnedForCommit 也必然抛「租约已失效」，**这笔已付费的聚合结果被整个丢弃**。
+ * 今晚 EvoLink 撞 Cloudflare 524 已证明「第一档失败」不是假设。
+ *
+ * 修法：把 12 分钟当**整条链**的预算，进网关前算好 deadline 逐档扣减，
+ * 而不是每档各给 12 分钟。这样两档合计仍在租约内，且保住「不设每档硬顶」的口径。
+ */
 const AGGREGATION_TIMEOUT_MS = 12 * 60_000;
 const SERIES_LOCK_TTL_MS = 20 * 60_000;
 /** 提交前至少还要剩这段租期；否则宁可停手，也不让临界过期的旧持有者覆盖新结果。 */
@@ -63,7 +84,13 @@ export type NativeSeriesSnapshot = {
 };
 
 export type NativeSeriesAggregationUsage = {
-  model: typeof MANHUA_NATIVE_SERIES_AGGREGATION_MODEL;
+  /**
+   * **实际交卷**的模型 id（0830 审查 P1-2 修正）。
+   * 原先钉成字面量 typeof MANHUA_NATIVE_SERIES_AGGREGATION_MODEL，
+   * 结构上就不允许记真值 —— 账本上记的模型不是真跑的那个。
+   * 改线后同一条链有两个不同 id（EvoLink `glm-5.3` / OpenRouter `z-ai/glm-5.3`）。
+   */
+  model: string;
   route: typeof MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE;
   inputTokens: number;
   outputTokens: number;
@@ -108,6 +135,9 @@ async function emitSeriesAggregationModelReceipt(
 
 type AggregateGatewayResult = {
   raw: unknown;
+  /** 实际交卷的网关与模型 id（0830 审查 P1-2：回执记真值，不用常量硬写）。 */
+  gateway: GlmGatewayName;
+  model: string;
   inputTokens: number;
   outputTokens: number;
   reasoningTokens: number;
@@ -252,8 +282,14 @@ function buildAggregationPrompt(payloadJson: string): { system: string; user: st
   };
 }
 
-function toAggregateGatewayUsage(usage: GlmGatewayUsage): Omit<AggregateGatewayResult, "raw"> {
+function toAggregateGatewayUsage(
+  usage: GlmGatewayUsage,
+  /** 失败路径下最后一个真发出过的档的身份；取不到就退回链路标签，不假装知道。 */
+  identity?: { gateway?: GlmGatewayName; model?: string },
+): Omit<AggregateGatewayResult, "raw"> {
   return {
+    gateway: identity?.gateway ?? "openrouter",
+    model: identity?.model || MANHUA_NATIVE_SERIES_AGGREGATION_MODEL,
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
     reasoningTokens: usage.reasoningTokens,
@@ -270,6 +306,7 @@ export async function invokeNativeSeriesAggregationModel(
   abortSignal?: AbortSignal,
 ): Promise<AggregateGatewayResult> {
   const prompt = buildAggregationPrompt(payloadJson);
+  const chainStartedAt = Date.now();
   let raw: unknown = undefined;
   try {
     const response = await invokeGlmJsonChatWithGatewayFallback({
@@ -277,9 +314,14 @@ export async function invokeNativeSeriesAggregationModel(
       user: prompt.user,
       maxTokens: 131_072,
       abortSignal,
-      gatewayPolicy: "openrouter_only",
+      gatewayPolicy: "glm_only",
+      // 整条链一个总预算：deadline 送进网关层，由它**每档实时**取 min(本档上限, 剩余)。
+      // ⚠️ 0830 血账：上一版在这里自己算 `AGGREGATION_TIMEOUT_MS - (Date.now() - chainStartedAt)`，
+      // 而 chainStartedAt 与这行在同一个同步块、中间无 await，差值恒为 0 → 传出去仍是满额，
+      // 且网关层每档重读同一个 params，两档各拿满 12 分钟——**那是空改**。
       timeoutMs: AGGREGATION_TIMEOUT_MS,
-      reasoningEffort: "max",
+      deadlineAtMs: chainStartedAt + AGGREGATION_TIMEOUT_MS,
+      reasoningEffort: MANHUA_NATIVE_GLM_REASONING_EFFORT,
       requireParameters: true,
       requireFinishReasonStop: true,
       maxResponseBytes: AGGREGATION_RESPONSE_MAX_BYTES,
@@ -291,11 +333,15 @@ export async function invokeNativeSeriesAggregationModel(
         }
       },
     });
-    if (response.gateway !== "openrouter") {
+    // 通道锁复用单一真源集合：只接受仍是 GLM-5.3 的两档，绝不接受 Qwen 兜底。
+    if (!GLM_MODEL_GATEWAYS.has(response.gateway)) {
       throw new Error(`系列聚合模型锁失效（${response.gateway}）`);
     }
     return {
       raw,
+      // 0830 审查 P1-2：带出**实际交卷**的网关与模型，回执不再由调用方拿常量硬写。
+      gateway: response.gateway,
+      model: response.model,
       inputTokens: Math.max(0, Number(response.usage?.prompt_tokens) || 0),
       outputTokens: Math.max(0, Number(response.usage?.completion_tokens) || 0),
       reasoningTokens: Math.max(
@@ -308,8 +354,15 @@ export async function invokeNativeSeriesAggregationModel(
       finishReason: String(response.choices?.[0]?.finish_reason || "").trim() || undefined,
     };
   } catch (error) {
+    // 0830 审查 P1-1：真实身份就在 trace 里——取最后一个**真发出去过**的档。
+    // 旧版 identity 参数从来没有调用方传，恒定落到假默认「openrouter + 链路标签」，
+    // 等于在账本里编故事。
+    const lastAttempted = error instanceof GlmGatewayError
+      ? [...error.gatewayTrace].reverse().find((row) =>
+          row.outcome !== "skipped_not_configured" && row.outcome !== "skipped_budget_exhausted")
+      : undefined;
     const gatewayUsage = error instanceof GlmGatewayError
-      ? toAggregateGatewayUsage(error.usage)
+      ? toAggregateGatewayUsage(error.usage, lastAttempted)
       : undefined;
     throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
       aggregateGatewayUsage: gatewayUsage,
@@ -526,6 +579,8 @@ export async function stageNativeSeriesSnapshot(input: {
     rows.sort((a, b) => a.snapshot.episodeIndex - b.snapshot.episodeIndex);
     const manifestBody = Buffer.from(`${JSON.stringify({
       schemaVersion: MANHUA_NATIVE_SERIES_AGGREGATION_SCHEMA_VERSION,
+      // 参数进入复用指纹，旧max产物保留，但不能冒充medium的新实测结果。
+      reasoningEffort: MANHUA_NATIVE_GLM_REASONING_EFFORT,
       seriesKey,
       episodes: rows.map((row) => ({
         episodeIndex: row.snapshot.episodeIndex,
@@ -691,7 +746,8 @@ export async function aggregateNativeDeepReadSeries(input: {
       gateway = await deps.invoke(payloadJson, input.abortSignal);
       await emitSeriesAggregationModelReceipt({
         callId: modelCallId,
-        model: MANHUA_NATIVE_SERIES_AGGREGATION_MODEL,
+        // 0830 审查 P1-2：completed 记实际交卷模型；started 才用链路标签。
+        model: gateway.model,
         route: MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE,
         provider: gateway.provider,
         providerRequestId: gateway.providerRequestId,
@@ -731,7 +787,9 @@ export async function aggregateNativeDeepReadSeries(input: {
       throw error;
     }
     const usage: NativeSeriesAggregationUsage = {
-      model: MANHUA_NATIVE_SERIES_AGGREGATION_MODEL,
+      // 0830 审查 P0-2：这份 usage 会经 buildSeriesCard 永久写进系列卡 provenance。
+      // 上一版只修了临时回执（看得见的那条），漏了这条落库的（留得下的那条）。
+      model: gateway.model,
       route: MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE,
       inputTokens: gateway.inputTokens,
       outputTokens: gateway.outputTokens,

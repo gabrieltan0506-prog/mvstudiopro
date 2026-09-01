@@ -621,6 +621,8 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         nativePlanPreview = await buildNativeDeepReadPlanPreviewFromServices({
           url: confirmation.url,
           limit: confirmation.planLimit,
+          segmentSeconds: confirmation.segmentSeconds,
+          videoFps: confirmation.videoFps,
           learnLlm: confirmation.learnLlm,
           abortSignal: abortController.signal,
         });

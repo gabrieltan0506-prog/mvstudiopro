@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
+import { readFile, rm } from "node:fs/promises";
 import type { ManhuaViralTemplateCard } from "../../shared/manhuaViralTemplateBank.js";
 import {
   MANHUA_NATIVE_SERIES_AGGREGATION_MODEL,
@@ -6,6 +8,7 @@ import {
   aggregateNativeDeepReadSeries,
   buildNativeSeriesAggregationPayload,
   invokeNativeSeriesAggregationModel,
+  stageNativeSeriesSnapshot,
   __testBuildNativeSeriesCard,
   type NativeSeriesAggregationUsage,
 } from "./manhuaNativeSeriesAggregation.js";
@@ -91,6 +94,21 @@ function aggregationRaw() {
 }
 
 describe("系列聚合输入保留完整证据", () => {
+  it("high进入快照指纹，不复用旧参数产物", async () => {
+    const { deps } = aggregationDeps();
+    const { snapshot } = await stageNativeSeriesSnapshot({ seriesKey: SERIES_KEY }, deps as never);
+    try {
+      const body = await readFile(snapshot.manifestPath, "utf8");
+      const manifest = JSON.parse(body);
+      expect(manifest.reasoningEffort).toBe("high");
+      expect(snapshot.snapshotSha256).toBe(createHash("sha256").update(body).digest("hex"));
+      delete manifest.reasoningEffort;
+      const legacyHash = createHash("sha256").update(`${JSON.stringify(manifest)}\n`).digest("hex");
+      expect(snapshot.snapshotSha256).not.toBe(legacyHash);
+    } finally {
+      await rm(snapshot.dir, { recursive: true, force: true });
+    }
+  });
   it("不再按集数抽稀 beatGrid、字幕或音轨", () => {
     const card = episodeCard();
     card.beatGrid = Array.from({ length: 160 }, (_, index) => ({
@@ -240,7 +258,9 @@ function aggregationDeps(options: {
   return { deps, order, upload };
 }
 
-describe("原生精读系列结构化 · OpenRouter GLM-5.3", () => {
+const EVOLINK_ENDPOINT = "https://api.evolink.ai/v1/chat/completions";
+
+describe("原生精读系列结构化 · GLM-5.3 两档（0829 改线：EvoLink 主档→OpenRouter 兜底）", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
@@ -249,7 +269,7 @@ describe("原生精读系列结构化 · OpenRouter GLM-5.3", () => {
   it("共用网关发出 GLM 锁定请求体，并携回 input/output/reasoning/cost", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "sk-or-test");
     vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "qwen-must-not-be-used");
-    vi.stubEnv("EVOLINK_API_KEY", "evolink-must-not-be-used");
+    vi.stubEnv("EVOLINK_API_KEY", "evolink-glm-is-primary");
     const calls: Array<{ url: string; init: RequestInit }> = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string | URL, init: RequestInit) => {
       calls.push({ url: String(url), init });
@@ -264,11 +284,14 @@ describe("原生精读系列结构化 · OpenRouter GLM-5.3", () => {
       }), { status: 200, headers: { "content-type": "application/json" } });
     }));
 
-    expect(MANHUA_NATIVE_SERIES_AGGREGATION_MODEL).toBe("z-ai/glm-5.3");
+    expect(MANHUA_NATIVE_SERIES_AGGREGATION_MODEL).toBe("glm-5.3→z-ai/glm-5.3");
     expect(MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE).toBe("openrouter_text");
     await expect(invokeNativeSeriesAggregationModel(JSON.stringify({ episodes: [] })))
       .resolves.toEqual({
         raw: { ok: true },
+        // 0830 审查 P1-2：返回体带出实际交卷的网关与模型，回执才记得了真值
+        gateway: "evolink_glm",
+        model: "glm-5.3",
         inputTokens: 321,
         outputTokens: 45,
         reasoningTokens: 17,
@@ -277,21 +300,42 @@ describe("原生精读系列结构化 · OpenRouter GLM-5.3", () => {
         providerRequestId: undefined,
         finishReason: "stop",
       });
+    // 主档已改 EvoLink GLM-5.3 直连（0829 用户拍板）
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toBe(OPENROUTER_ENDPOINT);
+    expect(calls[0]?.url).toBe(EVOLINK_ENDPOINT);
     const body = JSON.parse(String(calls[0]?.init.body));
     expect(body).toMatchObject({
-      model: "z-ai/glm-5.3",
+      model: "glm-5.3",
       response_format: { type: "json_object" },
-      reasoning: { effort: "max" },
-      provider: { require_parameters: true },
+      reasoning_effort: "high",   // EvoLink 用顶层字符串，不是嵌套 reasoning:{effort}
       max_tokens: 131_072,
+      temperature: 0.8,             // 链级默认，不发＝落到供应商默认 1.0
     });
     expect(body.messages).toHaveLength(2);
     expect(body).not.toHaveProperty("enable_thinking");
-    expect(body).not.toHaveProperty("reasoning_effort");
-    expect(body).not.toHaveProperty("temperature");
+    expect(body).not.toHaveProperty("reasoning");   // OpenRouter 专属形态，别抄过来
+    expect(body).not.toHaveProperty("provider");    // OpenRouter 专属键
     expect(body).not.toHaveProperty("top_p");
+  });
+
+  it("主档失败后的OpenRouter仍使用high，其他请求参数不变", async () => {
+    vi.stubEnv("EVOLINK_API_KEY", "test-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL, init: RequestInit) => {
+      calls.push({ url: String(url), body: JSON.parse(String(init.body)) });
+      if (calls.length === 1) return new Response("test upstream failure", { status: 503 });
+      return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: '{"ok":true}' } }] }), { status: 200 });
+    }));
+    await expect(invokeNativeSeriesAggregationModel("{}")).resolves.toMatchObject({ gateway: "openrouter", raw: { ok: true } });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.body.reasoning_effort).toBe("high");
+    expect(calls[1]).toMatchObject({ url: OPENROUTER_ENDPOINT, body: {
+      model: "z-ai/glm-5.3", reasoning: { effort: "high" }, max_tokens: 131_072,
+      temperature: 0.8, stream: true, response_format: { type: "json_object" },
+      provider: { order: ["z-ai/fp8"], allow_fallbacks: false, require_parameters: true },
+    } });
+    expect(calls[1]!.body).not.toHaveProperty("reasoning_effort");
   });
 
   it("OpenRouter 失败时不静默调用新加坡 Qwen 或 EvoLink", async () => {
@@ -303,13 +347,17 @@ describe("原生精读系列结构化 · OpenRouter GLM-5.3", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(invokeNativeSeriesAggregationModel("{}"))
-      .rejects.toThrow(/OpenRouter GLM-5\.3 调用失败/);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(OPENROUTER_ENDPOINT);
+      .rejects.toThrow(/GLM-5\.3 两档\(EvoLink→OpenRouter\)全部失败/);
+    // 两档 GLM 都试过就停：绝不静默滑到 Qwen（新加坡套餐档 / EvoLink Qwen 档）
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(EVOLINK_ENDPOINT);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(OPENROUTER_ENDPOINT);
   });
 
   it("严格要求 finish_reason=stop，截断、缺失结束原因与坏 JSON 均保留真实 usage", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "sk-or-test");
+    // 只配 OpenRouter 一档，用量断言才对应单发（EvoLink 档跳过为未配置）
+    vi.stubEnv("EVOLINK_API_KEY", "");
     const responses = [
       {
         choices: [{ finish_reason: "length", message: { content: "{}" } }],
@@ -342,10 +390,14 @@ describe("原生精读系列结构化 · OpenRouter GLM-5.3", () => {
     vi.stubGlobal("fetch", vi.fn(async () =>
       new Response(JSON.stringify(responses.shift()), { status: 200 })));
 
+    // 0830 P1-1：失败路径的身份从 gatewayTrace 里取**最后一个真发出过的档**，
+    // 不再是「恒定 openrouter + 链路标签」的假默认。本例只配了 OpenRouter 一档，
+    // 所以记的是它的真实模型 id。
+    const fallbackIdentity = { gateway: "openrouter", model: "z-ai/glm-5.3" };
     for (const expected of [
-      { inputTokens: 800, outputTokens: 131_072, reasoningTokens: 120_000, costUsd: 0.42 },
-      { inputTokens: 600, outputTokens: 90, reasoningTokens: 30, costUsd: 0.04 },
-      { inputTokens: 500, outputTokens: 80, reasoningTokens: 20, costUsd: 0.03 },
+      { ...fallbackIdentity, inputTokens: 800, outputTokens: 131_072, reasoningTokens: 120_000, costUsd: 0.42 },
+      { ...fallbackIdentity, inputTokens: 600, outputTokens: 90, reasoningTokens: 30, costUsd: 0.04 },
+      { ...fallbackIdentity, inputTokens: 500, outputTokens: 80, reasoningTokens: 20, costUsd: 0.03 },
     ]) {
       try {
         await invokeNativeSeriesAggregationModel("{}");
@@ -357,10 +409,10 @@ describe("原生精读系列结构化 · OpenRouter GLM-5.3", () => {
     }
   });
 
-  it("缺 OpenRouter 密钥时即使 Qwen 两档已配置也不发外呼", async () => {
+  it("GLM 两档密钥都缺时即使 Qwen 套餐档已配置也不发外呼", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "");
+    vi.stubEnv("EVOLINK_API_KEY", "");
     vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "qwen-is-configured");
-    vi.stubEnv("EVOLINK_API_KEY", "evolink-is-configured");
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 

@@ -1,6 +1,7 @@
 import type {
   ManhuaViralTemplateCard,
   ManhuaViralTemplateChangeReason,
+  ManhuaViralTemplateEvidenceFrame,
   ManhuaViralTemplateOptimizeField,
   ManhuaViralTemplateOptimizeModel,
 } from "@shared/manhuaViralTemplateBank";
@@ -23,6 +24,8 @@ type OptimizeResult = {
   changedFields: ManhuaViralTemplateOptimizeField[];
   reasons: ManhuaViralTemplateChangeReason[];
 };
+
+type SignedEvidenceFrame = ManhuaViralTemplateEvidenceFrame & { signedUrl: string };
 
 const FIELD_LABELS: Record<ManhuaViralTemplateOptimizeField, string> = {
   nameZh: "模板名称",
@@ -178,6 +181,7 @@ function TemplateColumn({
 export function ManhuaApprovedTemplateOwnerDrawer(props: {
   open: boolean;
   detail: ManhuaViralTemplateCard | null;
+  evidenceFrames: SignedEvidenceFrame[];
   detailLoading: boolean;
   models: ModelOption[];
   selectedModel: ManhuaViralTemplateOptimizeModel;
@@ -258,6 +262,32 @@ export function ManhuaApprovedTemplateOwnerDrawer(props: {
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+          {!props.detailLoading && original && props.evidenceFrames.length ? (
+            <section className="mb-5 rounded-xl border border-cyan-300/20 bg-cyan-400/[0.04] p-3">
+              <div className="mb-2 text-xs font-semibold text-cyan-50">
+                关键时刻原帧 · {props.evidenceFrames.length} 张
+              </div>
+              <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                {props.evidenceFrames.map((frame) => (
+                  <figure
+                    key={`${frame.atSec}-${frame.sha256}`}
+                    className="overflow-hidden rounded-lg border border-white/10 bg-black/30"
+                  >
+                    <img
+                      src={frame.signedUrl}
+                      alt={`${frame.atSec}秒 ${frame.kindZh}`}
+                      loading="lazy"
+                      className="aspect-video w-full object-cover"
+                    />
+                    <figcaption className="space-y-0.5 px-2 py-1.5 text-[10px] leading-4 text-white/60">
+                      <div className="font-semibold text-cyan-100">{frame.atSec}s · {frame.kindZh}</div>
+                      <div>{frame.noteZh}</div>
+                    </figcaption>
+                  </figure>
+                ))}
+              </div>
+            </section>
+          ) : null}
           {props.detailLoading || !original ? (
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-8 text-center text-xs text-white/45">
               正在读取正式模板…

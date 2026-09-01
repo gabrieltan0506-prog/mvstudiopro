@@ -52,6 +52,7 @@ function makeResult(over: Record<string, unknown> = {}) {
     hasAudio: false,
     visualRoutes: ["vertex_gcs_video"],
     degradedFpsSegmentIndexes: [],
+    assemblyComplete: true,
     ...over,
   };
 }
@@ -129,6 +130,7 @@ beforeEach(() => {
       generation: "1",
       etag: "etag-1",
     })) as never,
+    extractKeyMomentFrames: vi.fn(async () => []),
   } as never;
 });
 
@@ -162,12 +164,17 @@ describe("段缓存来源身份", () => {
     expect(fromSearch).toBe(fromVideo);
   });
 
-  it("把同一视频误写在 ep010 的已付费段安全复制为 ep001，不覆盖目标也不重调模型", async () => {
+  it.each([
+    { coveredSec: 10, truncated: false, migrate: true },
+    { coveredSec: 2, truncated: false, migrate: false },
+    { coveredSec: 2, truncated: true, migrate: true },
+  ])("同源alias覆盖$coveredSec/10秒 truncated=$truncated，按生产判据决定迁移", async ({ coveredSec, truncated, migrate }) => {
     const sourceDigest = "d".repeat(64);
     const segments = [{ startSec: 0, endSec: 10 }];
     const raw = {
       shots: [{
-        startSec: 0, endSec: 10, unitTypeZh: "剪辑镜头",
+        startSec: 0, endSec: coveredSec, unitTypeZh: "剪辑镜头",
+        hintZh: "人物近景，背景未入画",
         shotSizeZh: "近景", angleZh: "平视", compositionZh: "角色居中",
         cameraMoveZh: "固定机位", blockingZh: "角色原地站立",
         bodyActionZh: "躯干微微前倾", limbPropActionZh: "双手自然垂落",
@@ -189,6 +196,7 @@ describe("段缓存来源身份", () => {
       },
       reusableZh: "先压后抬",
       genPromptHintZh: "近景反应",
+      truncated,
     };
     const alias: NativeDeepReadSegmentCacheEntry = {
       schemaVersion: NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
@@ -236,7 +244,12 @@ describe("段缓存来源身份", () => {
       createTarget,
     });
 
-    expect(result).toEqual({ migratedSegmentIndexes: [0], sourceEpisodeIndexes: [10] });
+    expect(result).toEqual({ migratedSegmentIndexes: migrate ? [0] : [], sourceEpisodeIndexes: migrate ? [10] : [] });
+    if (!migrate) {
+      expect(createTarget).not.toHaveBeenCalled();
+      expect(alias.raw).toEqual(raw);
+      return;
+    }
     const migrated = createTarget.mock.calls[0]![0];
     expect(migrated.episodeIndex).toBe(1);
     expect(migrated.raw).toEqual(raw);
@@ -337,13 +350,17 @@ describe("批次预检：在任何模型动作之前", () => {
     expect(deps.runBatch).not.toHaveBeenCalled();
   });
 
-  it("单段超过五分钟要求拆段", () => {
-    expect(() =>
-      validateNativeDeepReadBatchPlan([
-        ep(1, { durationSec: 1200, segments: [{ startSec: 0, endSec: 1080 }] }),
-      ]),
-    ).toThrow("请拆段");
-    expect(NATIVE_DEEP_READ_MAX_SEGMENT_SEC).toBe(300);
+  it("自定义单片可超过五分钟，仍要求完整覆盖且保留整片策略", () => {
+    expect(validateNativeDeepReadBatchPlan([
+      ep(1, { durationSec: 1080, segments: [{ startSec: 0, endSec: 1080 }] }),
+    ]).totalVisualCalls).toBe(1);
+    expect(() => validateNativeDeepReadBatchPlan([
+      ep(1, { durationSec: 1200, segments: [{ startSec: 0, endSec: 1080 }] }),
+    ])).toThrow("未完整覆盖全片");
+    expect(NATIVE_DEEP_READ_MAX_SEGMENT_SEC).toBe(7200);
+    expect(() => validateNativeDeepReadBatchPlan([
+      ep(1, { durationSec: 7201, segments: [{ startSec: 0, endSec: 7201 }] }),
+    ])).toThrow("超过 120 分钟");
   });
 
   it("切片超出片长拒绝", () => {
@@ -387,6 +404,8 @@ describe("批次预检：在任何模型动作之前", () => {
   it("同一份清单确认码稳定，改一个字段就变 —— 真跑靠它绑定干跑那份计划", () => {
     const a = validateNativeDeepReadBatchPlan([ep(1)], { seriesKey: "series_a" }).planHash;
     expect(validateNativeDeepReadBatchPlan([ep(1)], { seriesKey: "series_a" }).planHash).toBe(a);
+    expect(validateNativeDeepReadBatchPlan([ep(1, { videoFps: 10 })], { seriesKey: "series_a" }).planHash).not.toBe(a);
+    expect(() => validateNativeDeepReadBatchPlan([ep(1, { videoFps: 25 })])).toThrow("fps");
     expect(
       validateNativeDeepReadBatchPlan(
         [ep(1, { sourceUrl: "https://example.com/e9" })],
@@ -631,6 +650,20 @@ describe("单集执行", () => {
   });
 
   it("跑成功后必经门禁并入库一次", async () => {
+    deps.run = vi.fn(async () => makeResult({
+      keyMoments: [{ atSec: 12, kindZh: "剧情", noteZh: "关键转折" }],
+      sourceDigest: "a".repeat(64),
+    }) as never);
+    const frame = {
+      atSec: 12,
+      kindZh: "剧情",
+      noteZh: "关键转折",
+      objectName: `manhua-template-learn/native-frames/s/ep001/120ds-${"b".repeat(24)}.jpg`,
+      mimeType: "image/jpeg" as const,
+      bytes: 10,
+      sha256: "b".repeat(64),
+    };
+    deps.extractKeyMomentFrames = vi.fn(async () => [frame]);
     const out = await executeAndIngestNativeDeepReadEpisode({ ...episode, seriesKey: "s" }, deps);
     expect(deps.run).toHaveBeenCalledTimes(1);
     expect(deps.run).toHaveBeenCalledWith(
@@ -640,6 +673,13 @@ describe("单集执行", () => {
       }),
     );
     expect(deps.ingest).toHaveBeenCalledTimes(1);
+    expect(deps.extractKeyMomentFrames).toHaveBeenCalledWith(expect.objectContaining({
+      seriesKey: "s",
+      episodeIndex: 1,
+      sourceDigest: "a".repeat(64),
+      keyMoments: [{ atSec: 12, kindZh: "剧情", noteZh: "关键转折" }],
+    }));
+    expect(deps.ingest).toHaveBeenCalledWith(expect.objectContaining({ evidenceFrames: [frame] }));
     expect(out.gcsUri).toBe("gs://b/ep1.json");
     expect(out.usage.model).toBe("gemini-3.1-pro-preview");
     expect(out.usage.usingPlanQuota).toBe(false);
@@ -788,6 +828,7 @@ describe("批量发车", () => {
     expect(progress).toContainEqual(expect.objectContaining({ status: "failed" }));
     expect(deps.clearSegmentCache).not.toHaveBeenCalled();
     expect(deps.aggregateSeries).not.toHaveBeenCalled();
+    expect(deps.extractKeyMomentFrames).not.toHaveBeenCalled();
   });
 
   it("已入库的集直接跳过，不调 runner —— 重跑不重烧", async () => {

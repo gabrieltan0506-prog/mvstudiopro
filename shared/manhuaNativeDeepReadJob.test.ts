@@ -3,11 +3,64 @@ import {
   hasNativeDeepReadJobFields,
   NATIVE_DEEP_READ_JOB_MAX_CALLS,
   NATIVE_DEEP_READ_JOB_MAX_WALL_MS,
+  parseNativeDeepReadSegmentSeconds,
+  parseNativeDeepReadVideoFps,
   parseNativeDeepReadJobConfirmation,
   resolveNativeDeepReadJobTimeoutMs,
 } from "./manhuaNativeDeepReadJob.js";
 
 describe("原生精读任务墙钟", () => {
+  it("采样率独立设置，319秒/12fps不被旧10fps上限截断", () => {
+    expect(parseNativeDeepReadVideoFps(undefined)).toBe(12);
+    for (const fps of [0.1, 5, 10, 12, 24]) {
+      expect(parseNativeDeepReadVideoFps(fps)).toBe(fps);
+      expect(parseNativeDeepReadVideoFps(String(fps))).toBe(fps);
+    }
+    expect(hasNativeDeepReadJobFields({ nativeVideoFps: 12 })).toBe(true);
+    expect(parseNativeDeepReadJobConfirmation({
+      url: "https://www.douyin.com/video/12345",
+      batchSize: 1, nativeDeepReadConfirmed: true, nativeMaxCalls: 200,
+      nativePlanLimit: 1, nativeSegmentSeconds: 319, nativeVideoFps: 12,
+    })).toMatchObject({ segmentSeconds: 319, videoFps: 12 });
+  });
+
+  it.each([null, "", true, [], {}, 0, -1, NaN, Infinity, 24.1])("非法 fps %j 不进入任务", (fps) => {
+    expect(() => parseNativeDeepReadVideoFps(fps)).toThrow("fps");
+  });
+
+  it("分片秒数默认兼容旧任务，允许超过 300 秒且不截断输入", () => {
+    expect(parseNativeDeepReadSegmentSeconds(undefined)).toBe(300);
+    for (const seconds of [1, 180, 300, 317, 319, 600, 7200]) {
+      expect(parseNativeDeepReadSegmentSeconds(seconds)).toBe(seconds);
+      expect(parseNativeDeepReadSegmentSeconds(String(seconds))).toBe(seconds);
+    }
+    expect(hasNativeDeepReadJobFields({ nativeSegmentSeconds: 319 })).toBe(true);
+    const confirmation = parseNativeDeepReadJobConfirmation({
+      url: "https://www.douyin.com/video/12345",
+      batchSize: 1,
+      nativeDeepReadConfirmed: true,
+      nativeMaxCalls: 200,
+      nativePlanLimit: 1,
+      nativeSegmentSeconds: 319,
+    });
+    expect(confirmation.segmentSeconds).toBe(319);
+  });
+
+  it.each([null, "", " ", true, false, [], {}, 0, -1, 1.5, "317.2", NaN, Infinity, 7201])(
+    "非法分片输入 %j 在入队和 worker 共用的解析器中拒绝",
+    (value) => {
+      expect(() => parseNativeDeepReadSegmentSeconds(value)).toThrow("整数秒");
+      expect(() => parseNativeDeepReadJobConfirmation({
+        url: "https://www.douyin.com/video/12345",
+        batchSize: 1,
+        nativeDeepReadConfirmed: true,
+        nativeMaxCalls: 200,
+        nativePlanLimit: 1,
+        nativeSegmentSeconds: value,
+      })).toThrow("整数秒");
+    },
+  );
+
   it("按确认的模型请求数扩展，且不会超过 24 小时", () => {
     expect(resolveNativeDeepReadJobTimeoutMs(2)).toBe(80 * 60_000);
     expect(resolveNativeDeepReadJobTimeoutMs(NATIVE_DEEP_READ_JOB_MAX_CALLS))
@@ -55,6 +108,8 @@ describe("原生精读任务墙钟", () => {
       planHash: undefined,
       maxCalls: NATIVE_DEEP_READ_JOB_MAX_CALLS,
       planLimit: 10,
+      segmentSeconds: 300,
+      videoFps: 12,
       seriesKey: undefined,
       learnLlm: "gpt",
     });

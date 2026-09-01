@@ -135,6 +135,21 @@ export function mergeNativeEpisodeTemplateLearning(
   }
   const subtitleTrack = Array.from(subtitleByIdentity.values()).sort((a, b) => a.atSec - b.atSec);
 
+  const frameBySecond = new Map<
+    string,
+    NonNullable<ManhuaViralTemplateCard["evidenceFrames"]>[number]
+  >();
+  for (const frame of previous.evidenceFrames || []) {
+    frameBySecond.set(String(Math.round(Number(frame.atSec) * 10)), frame);
+  }
+  // 同一物理秒位只保留一帧；补学的新成功帧替换旧帧，其余旧帧继续保留。
+  for (const frame of next.evidenceFrames || []) {
+    frameBySecond.set(String(Math.round(Number(frame.atSec) * 10)), frame);
+  }
+  const evidenceFrames = Array.from(frameBySecond.values()).sort(
+    (left, right) => left.atSec - right.atSec,
+  );
+
   const mergeTags = (
     before: readonly string[] = [],
     after: readonly string[] = [],
@@ -207,6 +222,7 @@ export function mergeNativeEpisodeTemplateLearning(
     hook3sZh: mergeLearnedText(previous.hook3sZh, next.hook3sZh, 200) || next.hook3sZh,
     beatGrid,
     subtitleTrack,
+    evidenceFrames: evidenceFrames.length ? evidenceFrames : undefined,
     reusableZh: mergeLearnedText(previous.reusableZh, next.reusableZh, 600),
     genPromptHintZh: mergeLearnedText(previous.genPromptHintZh, next.genPromptHintZh, 600),
     audioStory,

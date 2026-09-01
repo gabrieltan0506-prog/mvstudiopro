@@ -207,11 +207,35 @@ export const manhuaViralTemplateRouter = router({
           message: "该集精读卡 provenance 没有段证据对象名（旧链路学习产物），需重学后再出报告",
         });
       }
+      // 完整性门禁：部分卡（分片没跑完、装配未完成、证据名少于分片数）一律不许导出。
+      // 否则「少了两段的报告」和「完整报告」长得一模一样，审批人无从分辨。
+      const attemptedSegments = Number(native?.attemptedSegments);
+      const successSegments = Number(native?.successSegments);
+      const completedSegmentIndexes = Array.isArray(native?.completedSegmentIndexes)
+        ? native.completedSegmentIndexes.map((n) => Number(n)).sort((a, b) => a - b)
+        : [];
+      const sourceDigest = String(native?.sourceDigest ?? "").trim();
+      const complete = native?.assemblyComplete === true
+        && Number.isInteger(attemptedSegments) && attemptedSegments > 0
+        && completedSegmentIndexes.length === attemptedSegments
+        && completedSegmentIndexes.every((value, index) => value === index)
+        && successSegments === attemptedSegments
+        && evidenceObjectNames.length === attemptedSegments
+        && /^[a-f0-9]{64}$/i.test(sourceDigest);
+      if (!complete) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "该集精读尚未完成全部分片，拒绝导出不完整报告",
+        });
+      }
       try {
         return await renderNativeEvidenceReportFromObjectNames({
           labelZh: `${input.seriesKey} 第 ${input.episodeIndex} 集`,
           evidenceObjectNames,
           expectEpisodeIndex: input.episodeIndex,
+          expectSeriesKey: input.seriesKey,
+          expectSourceDigest: sourceDigest,
+          expectSegmentCount: attemptedSegments,
           framesV2SummaryObjectName: `manhua-template-learn/probes/${cardKey}/frames-v2-summary.json`,
           framesPrefix: `manhua-template-learn/probes/${cardKey}/frames/`,
           reportObjectName: `manhua-template-learn/reports/${cardKey}.html`,
@@ -229,12 +253,32 @@ export const manhuaViralTemplateRouter = router({
     .input(z.object({ id: z.string().regex(/^tpl_[a-z0-9_-]{1,60}$/i) }))
     .query(async ({ ctx, input }) => {
       assertSiteOwner(ctx.user);
-      const { getGcsManhuaViralApproved } = await import("../services/manhuaViralTemplateStore");
+      const [{ getGcsManhuaViralApproved }, gcs] = await Promise.all([
+        import("../services/manhuaViralTemplateStore"),
+        import("../services/gcs"),
+      ]);
       const card = await getGcsManhuaViralApproved(input.id);
       if (!card || card.status !== "approved") {
         throw new TRPCError({ code: "NOT_FOUND", message: "正式模板不存在" });
       }
-      return { card };
+      let evidenceFrameSigningFailedCount = 0;
+      const evidenceFrames = (card.evidenceFrames || []).flatMap((frame) => {
+        try {
+          return [{
+            ...frame,
+            signedUrl: gcs.signGcsObjectPathV4ReadUrl(
+              gcs.getGcsBucketName(),
+              frame.objectName,
+              15 * 60,
+            ),
+          }];
+        } catch {
+          evidenceFrameSigningFailedCount += 1;
+          return [];
+        }
+      });
+      // 签名只在 owner 响应中临时生成，不写回 card，也不进入公开模板 DTO。
+      return { card, evidenceFrames, evidenceFrameSigningFailedCount };
     }),
 
   /** owner 明确点击后调用一次模型；成功结果只落 proposals/，不覆盖正式模板。 */

@@ -14,7 +14,7 @@ import {
   listDouyinAwemePlaybackUrlsViaWebApi,
   listDouyinMixEpisodesViaWebApi,
 } from "./manhuaLearnDouyinWebApi.js";
-import { listIngestedNativeDeepReadEpisodes } from "./manhuaNativeDeepReadIngest.js";
+import { listIngestedNativeDeepReadEpisodeRecords } from "./manhuaNativeDeepReadIngest.js";
 import { listNativeDeepReadEpisodeClaimStates } from "./manhuaNativeDeepReadClaim.js";
 import { isManhuaNativeDeepReadEnabled } from "./manhuaNativeDeepReadRunner.js";
 import { resolveManhuaSeriesKey } from "./manhuaTemplateLearnService.js";
@@ -29,6 +29,8 @@ import { isManhua0996SourceUrl } from "../../shared/manhuaLearn0996Source.js";
 export type NativeDeepReadPlanRuntimeInput = {
   url: string;
   limit: number;
+  segmentSeconds?: number;
+  videoFps?: number;
   allowPartial?: boolean;
   learnLlm?: ManhuaTemplateLearnLlmProvider;
   abortSignal?: AbortSignal;
@@ -66,7 +68,9 @@ export async function buildNativeDeepReadPlanPreviewFromServices(
     ),
     probeDurationSec: (playbackUrl, abortSignal, referer) =>
       probeNativeDeepReadDurationSec(playbackUrl, abortSignal, undefined, referer),
-    listIngestedEpisodes: listIngestedNativeDeepReadEpisodes,
+    // 必须保留 partial 卡的稳定 sourceUrl：同一单源续跑要在计划阶段就回到原集号，
+    // 才能让执行层命中该集的 GCS 段缓存。
+    listIngestedEpisodeRecords: listIngestedNativeDeepReadEpisodeRecords,
     listClaimStates: listNativeDeepReadEpisodeClaimStates,
     resolveSeriesKey: resolveManhuaSeriesKey,
     isExecutionEnabled: isManhuaNativeDeepReadEnabled,

@@ -11,14 +11,14 @@ vi.mock("../utils/vertex.js", () => ({
   getGcsUserProject: () => "",
 }));
 
-const calls: Array<{ url: string; method: string }> = [];
+const calls: Array<{ url: string; method: string; headers?: HeadersInit; body?: BodyInit | null }> = [];
 function stubFetch(handler: (url: string, init: RequestInit) => { status: number; body?: unknown }) {
   calls.length = 0;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: unknown, init: RequestInit = {}) => {
       const url = String(input);
-      calls.push({ url, method: String(init.method || "GET") });
+      calls.push({ url, method: String(init.method || "GET"), headers: init.headers, body: init.body });
       const r = handler(url, init);
       return {
         ok: r.status >= 200 && r.status < 300,
@@ -114,5 +114,25 @@ describe("downloadGcsObjectVersioned / deleteGcsObject 条件删除", () => {
     expect(a.generation).toBe("91");
     expect(b.created).toBe(false);
     expect(calls[0]!.url).toContain("ifGenerationMatch=0");
+  });
+
+  it("条件创建带 metadata 时使用单次 multipart 上传并保留二进制 JPEG", async () => {
+    stubFetch(() => ({ status: 200, body: { generation: "92" } }));
+    const { uploadBufferToGcsIfAbsent } = await import("./gcs");
+    const jpeg = Buffer.from([0xff, 0xd8, 0x01, 0xff, 0xd9]);
+    await uploadBufferToGcsIfAbsent({
+      objectName: "manhua-template-learn/native-frames/s/ep001/10ds.jpg",
+      buffer: jpeg,
+      contentType: "image/jpeg",
+      metadata: { atSec: "1", producer: "native-deep-read-key-moments" },
+    });
+    expect(calls[0]!.url).toContain("uploadType=multipart");
+    expect(calls[0]!.url).toContain("ifGenerationMatch=0");
+    const headers = calls[0]!.headers as Record<string, string>;
+    expect(headers["Content-Type"]).toMatch(/^multipart\/related; boundary=/);
+    const body = Buffer.from(calls[0]!.body as Uint8Array);
+    expect(body.includes(Buffer.from('"name":"manhua-template-learn/native-frames/s/ep001/10ds.jpg"'))).toBe(true);
+    expect(body.includes(Buffer.from('"metadata":{"atSec":"1","producer":"native-deep-read-key-moments"}'))).toBe(true);
+    expect(body.includes(jpeg)).toBe(true);
   });
 });

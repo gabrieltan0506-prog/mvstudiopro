@@ -1,11 +1,14 @@
 /** 原生精读单任务墙钟与调用数契约；客户端、入队端和 worker 共用。 */
 import { isManhua0996SourceUrl } from "./manhuaLearn0996Source.js";
+import { MANHUA_LEARN_MAX_DURATION_SEC } from "./manhuaTemplateLearnSeries.js";
 /**
  * 0826 拍板：视觉学习整体从新加坡 Qwen 换到 Vertex Gemini 3.1 Pro 从 GCS 直读，
  * 连音轨一次调用出全六栏（实测 360s 段 144s 返回，输入 ≈129k tok）。
  */
 export const MANHUA_NATIVE_DEEP_READ_MODEL = "gemini-3.1-pro-preview" as const;
 export const MANHUA_NATIVE_DEEP_READ_MODEL_LABEL = "Gemini 3.1 Pro" as const;
+/** 用户确认：GLM-5.3 整集结构化、系列聚合及同源探针统一使用官方支持的 high。 */
+export const MANHUA_NATIVE_GLM_REASONING_EFFORT = "high" as const;
 
 export const NATIVE_DEEP_READ_JOB_PREP_MS = 10 * 60_000;
 export const NATIVE_DEEP_READ_JOB_PER_CALL_MS = 35 * 60_000;
@@ -17,12 +20,57 @@ export const NATIVE_DEEP_READ_JOB_MAX_WALL_MS = 24 * 60 * 60_000;
  */
 export const NATIVE_DEEP_READ_JOB_MAX_CALLS = 200;
 
+/** 默认分片长度，不是单片硬上限；采样率由独立设置控制。 */
+export const NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS = 300;
+/** 沿用整片两小时策略，不再另外限制分片为 300 秒。 */
+export const NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS = MANHUA_LEARN_MAX_DURATION_SEC;
+/**
+ * 当前默认12fps；用户已要求不继续提高采样率。
+ * 分片时长与采样率独立配置，实际请求使用调用方确认的值。
+ * 历史镜数和费用应查对应请求及回执，不据镜数推断所有切镜真实或所有帧均被模型处理。
+ */
+export const NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS = 12;
+/** Google VideoMetadata.fps 的接口范围为 (0, 24]。 */
+export const NATIVE_DEEP_READ_MAX_VIDEO_FPS = 24;
+
+export function parseNativeDeepReadVideoFps(value: unknown): number {
+  if (value === undefined) return NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS;
+  if (
+    (typeof value !== "number" && typeof value !== "string")
+    || (typeof value === "string" && !value.trim())
+  ) {
+    throw new Error(`视频采样 fps 必须大于 0 且不超过 ${NATIVE_DEEP_READ_MAX_VIDEO_FPS}`);
+  }
+  const fps = Number(value);
+  if (!Number.isFinite(fps) || fps <= 0 || fps > NATIVE_DEEP_READ_MAX_VIDEO_FPS) {
+    throw new Error(`视频采样 fps 必须大于 0 且不超过 ${NATIVE_DEEP_READ_MAX_VIDEO_FPS}`);
+  }
+  return fps;
+}
+
+export function parseNativeDeepReadSegmentSeconds(value: unknown): number {
+  if (value === undefined) return NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS;
+  if (
+    (typeof value !== "number" && typeof value !== "string")
+    || (typeof value === "string" && !value.trim())
+  ) {
+    throw new Error(`分片时长必须为 1–${NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS} 的整数秒`);
+  }
+  const seconds = Number(value);
+  if (!Number.isInteger(seconds) || seconds < 1 || seconds > NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS) {
+    throw new Error(`分片时长必须为 1–${NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS} 的整数秒`);
+  }
+  return seconds;
+}
+
 export const NATIVE_DEEP_READ_JOB_FIELDS = [
   "nativeDeepReadConfirmed",
   "nativePlanHash",
   "nativeMaxCalls",
   "nativePlanLimit",
   "nativePlanSeriesKey",
+  "nativeSegmentSeconds",
+  "nativeVideoFps",
 ] as const;
 
 export type NativeDeepReadJobConfirmation = {
@@ -31,6 +79,8 @@ export type NativeDeepReadJobConfirmation = {
   planHash?: string;
   maxCalls: number;
   planLimit: number;
+  segmentSeconds: number;
+  videoFps: number;
   /** 与 planHash 成对出现，仅用于兼容已经入队的旧任务。 */
   seriesKey?: string;
   learnLlm: "gpt" | "claude" | "deepseek";
@@ -52,6 +102,8 @@ export function parseNativeDeepReadJobConfirmation(
   const planLimit = Number(params.nativePlanLimit);
   const batchSize = Number(params.batchSize);
   const seriesKey = String(params.nativePlanSeriesKey || "").trim();
+  const segmentSeconds = parseNativeDeepReadSegmentSeconds(params.nativeSegmentSeconds);
+  const videoFps = parseNativeDeepReadVideoFps(params.nativeVideoFps);
   const hasLegacyPlanConfirmation = Boolean(planHash || seriesKey);
   let parsedUrl: URL;
   try {
@@ -88,6 +140,8 @@ export function parseNativeDeepReadJobConfirmation(
     planHash: planHash || undefined,
     maxCalls,
     planLimit,
+    segmentSeconds,
+    videoFps,
     seriesKey: seriesKey || undefined,
     learnLlm:
       params.learnLlm === "claude" || params.learnLlm === "deepseek"

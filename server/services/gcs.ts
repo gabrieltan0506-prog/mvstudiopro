@@ -264,6 +264,8 @@ export async function uploadBufferToGcsIfAbsent(params: {
   buffer: Buffer;
   contentType: string;
   bucket?: string;
+  /** GCS 对象自定义 metadata；传入时用单次 multipart 原子创建，避免媒体上传后补写失败。 */
+  metadata?: Record<string, string>;
 }): Promise<{ created: boolean; generation?: string }> {
   const bucket = params.bucket || getGcsBucketName();
   if (!bucket) throw new Error("GCS bucket is not configured");
@@ -272,19 +274,38 @@ export async function uploadBufferToGcsIfAbsent(params: {
   const uploadUrl = new URL(
     `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o`,
   );
-  uploadUrl.searchParams.set("uploadType", "media");
-  uploadUrl.searchParams.set("name", objectName);
+  const objectMetadata = Object.fromEntries(Object.entries(params.metadata || {})
+    .map(([key, value]) => [String(key || "").trim(), String(value ?? "").trim()] as const)
+    .filter(([key, value]) => key.length > 0 && key.length <= 128 && value.length <= 1_024));
+  const hasMetadata = Object.keys(objectMetadata).length > 0;
+  uploadUrl.searchParams.set("uploadType", hasMetadata ? "multipart" : "media");
+  if (!hasMetadata) uploadUrl.searchParams.set("name", objectName);
   uploadUrl.searchParams.set("ifGenerationMatch", "0");
   const userProject = getGcsUserProject();
   if (userProject) uploadUrl.searchParams.set("userProject", userProject);
+  const boundary = `mvstudiopro-${crypto.randomBytes(12).toString("hex")}`;
+  const multipartBody = hasMetadata
+    ? Buffer.concat([
+        Buffer.from(
+          `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`
+          + `${JSON.stringify({ name: objectName, contentType: params.contentType, metadata: objectMetadata })}\r\n`
+          + `--${boundary}\r\nContent-Type: ${params.contentType || "application/octet-stream"}\r\n\r\n`,
+          "utf8",
+        ),
+        params.buffer,
+        Buffer.from(`\r\n--${boundary}--\r\n`, "utf8"),
+      ])
+    : params.buffer;
   const response = await fetch(uploadUrl, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
-      "Content-Type": params.contentType || "application/octet-stream",
-      "Content-Length": String(params.buffer.byteLength),
+      "Content-Type": hasMetadata
+        ? `multipart/related; boundary=${boundary}`
+        : params.contentType || "application/octet-stream",
+      "Content-Length": String(multipartBody.byteLength),
     },
-    body: new Uint8Array(params.buffer),
+    body: new Uint8Array(multipartBody),
   });
   if (response.status === 412) {
     await response.text().catch(() => "");

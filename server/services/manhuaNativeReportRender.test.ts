@@ -74,11 +74,19 @@ function segmentEntry(segmentIndex: number, overrides?: Partial<Record<string, u
           relationshipReactionZh: "众人后退",
           lightingZh: "侧逆光",
           actionZh: LONG_ACTION,
+          hintZh: "场景道具观察".repeat(25) + "观察尾部保留" + XSS,
           transitionInZh: "硬切",
           evidenceRole: "story",
         },
       ],
-      subtitles: [{ atSec: segmentIndex * 30, textZh: `第${segmentIndex}段台词` }],
+      subtitles: segmentIndex === 0
+        // 5 条间隔 2 秒的密集字幕：会被节点表合并成同一个节点。
+        // 旧版每节点只显示前 3 句，后 2 句被「…」吞掉——本夹具专门钉住那个洞。
+        ? Array.from({ length: 5 }, (_, i) => ({
+          atSec: i * 2,
+          textZh: `密集台词${i}_UNTRUNCATED_SUB_END`,
+        }))
+        : [{ atSec: segmentIndex * 30, textZh: `第${segmentIndex}段台词` }],
       audioResolution: [
         {
           chunkIndex: segmentIndex,
@@ -130,6 +138,9 @@ function baseInput() {
     labelZh: "seriesabc 第 1 集",
     evidenceObjectNames: [...NAMES],
     expectEpisodeIndex: 1,
+    expectSeriesKey: "seriesabc",
+    expectSourceDigest: DIGEST_A,
+    expectSegmentCount: 3,
     framesV2SummaryObjectName: "manhua-template-learn/probes/tpl_native_seriesabc_ep001/frames-v2-summary.json",
     framesPrefix: "manhua-template-learn/probes/tpl_native_seriesabc_ep001/frames/",
     reportObjectName: "manhua-template-learn/reports/tpl_native_seriesabc_ep001.html",
@@ -175,12 +186,84 @@ describe("精确证据名路径：三段卡渲染成功且无删节", () => {
     expect(html).toContain("情绪标签2");
     expect((html.match(/共有标签/g) ?? []).length).toBe(1);
     // 「17 字段」硬编码已改 FIELDS.length 动态
-    expect(html).toContain("× 14 字段");
+    expect(html).toContain("× 15 字段");
+    expect(html).toContain("观察尾部保留&lt;script&gt;");
+    expect(html).toContain("本镜观察");
     expect(html).not.toContain("× 17 字段");
+
+    // 🔒 字幕零截断（0830 补：此前「不做任何内容截断」只是文件头一句话，没有守卫，
+    // 结果剧情节点表每节点只显示前 3 句、其余用「…」吞掉，全仓 3264 测照样绿）。
+    // 五条密集台词必须**每一条**都出现在页面里，且页面不许出现截断标记。
+    for (let i = 0; i < 5; i += 1) {
+      expect(html).toContain(`密集台词${i}_UNTRUNCATED_SUB_END`);
+    }
+    expect(html).not.toContain("…");
+    // 节点表确实做了分组（5 条并成 1 个节点），而不是退回逐条铺开
+    expect(html).toContain("5 句");
   });
 });
 
 describe("fail closed：缺段/段号重复/digest 混杂/集号不符各抛错且不上传", () => {
+  it("🔒 keyMoments 与 excludedAdRanges 必须进合并卡（P0：此前生产路径整字段丢弃，高亮区块永远空）", async () => {
+    seedThreeSegments();
+    const raw = state.objects.get(NAMES[0]!) as { raw: Record<string, unknown> };
+    raw.raw.keyMoments = [
+      { atSec: 7, kindZh: "情绪", noteZh: "眉头锁紧_KM_END" },
+      { atSec: 7, kindZh: "情绪", noteZh: "同秒同类应被去重" },
+      { atSec: 3, kindZh: "切镜", noteZh: "中景转特写_KM_END" },
+    ];
+    raw.raw.excludedAdRanges = [{ startSec: 100, endSec: 139 }];
+    const html = (await renderNativeEvidenceReportFromObjectNames(baseInput()), state.uploads[0]!.html);
+    expect(html).toContain("眉头锁紧_KM_END");
+    expect(html).toContain("中景转特写_KM_END");
+    // 同秒同类去重：只留一条
+    expect(html).not.toContain("同秒同类应被去重");
+    // KPI 两项不再恒 0
+    expect(html).toContain("重点时刻表 · 2 条");
+    expect(html).not.toContain("本卡无重点时刻");
+    expect(html).toMatch(/>1<\/b>广告区间/);
+  });
+
+  it("🔒 广告镜数从未过滤的原始 shots 上数（P0：此前恒为 0 的空改）", async () => {
+    seedThreeSegments();
+    const raw = state.objects.get(NAMES[1]!) as { raw: Record<string, unknown> };
+    (raw.raw.shots as Array<Record<string, unknown>>).push({
+      ...(raw.raw.shots as Array<Record<string, unknown>>)[0]!,
+      startSec: 200, endSec: 205, evidenceRole: "non_story_ad",
+    });
+    await renderNativeEvidenceReportFromObjectNames(baseInput());
+    const html = state.uploads[0]!.html;
+    expect(html).toContain("已剔除 1 广告镜");
+    expect(html).not.toContain("已剔除 0 广告镜");
+  });
+
+  it("🔒 覆盖按并集算并报重叠；秒位非法的镜显式标注，不许绿灯报喜（P0×2）", async () => {
+    seedThreeSegments();
+    const raw = state.objects.get(NAMES[2]!) as { raw: Record<string, unknown> };
+    const shots = raw.raw.shots as Array<Record<string, unknown>>;
+    // 与首镜重叠的镜 + 一条 endSec 缺失的非法镜
+    shots.push({ ...shots[0]!, startSec: 0, endSec: 8 });
+    shots.push({ ...shots[0]!, startSec: 400, endSec: undefined });
+    await renderNativeEvidenceReportFromObjectNames(baseInput());
+    const html = state.uploads[0]!.html;
+    expect(html).toContain("处镜头重叠");
+    expect(html).toContain("镜秒位非法，未计入镜长统计");
+  });
+
+  it("🔒 剧情节点表不许塌成一个节点（P1：滑动窗口 + 密集对白）", async () => {
+    seedThreeSegments();
+    const raw = state.objects.get(NAMES[0]!) as { raw: Record<string, unknown> };
+    // 30 条间隔 5 秒的字幕：滑动窗口下会全部并成 1 个节点
+    raw.raw.subtitles = Array.from({ length: 30 }, (_, i) => ({
+      atSec: i * 5, textZh: `连续台词${i}`,
+    }));
+    await renderNativeEvidenceReportFromObjectNames(baseInput());
+    const html = state.uploads[0]!.html;
+    expect(html).not.toMatch(/剧情节点表 · 1 节点/);
+    // 每条原文仍一句不少
+    for (let i = 0; i < 30; i += 1) expect(html).toContain(`连续台词${i}`);
+  });
+
   it("缺一段抛错", async () => {
     seedThreeSegments();
     state.objects.delete(NAMES[1]!);
@@ -197,11 +280,87 @@ describe("fail closed：缺段/段号重复/digest 混杂/集号不符各抛错�
     expect(state.uploads).toHaveLength(0);
   });
 
-  it("段号断裂抛错", async () => {
+  it("段号必须严格等于下标：seg2 位置放 seg3 抛「不完整」", async () => {
     seedThreeSegments();
     state.objects.set(NAMES[2]!, segmentEntry(3));
     await expect(renderNativeEvidenceReportFromObjectNames(baseInput()))
-      .rejects.toThrow(/segmentIndex 断裂/);
+      .rejects.toThrow("证据 segmentIndex 不完整：应有 seg2，实际为 seg3");
+    expect(state.uploads).toHaveLength(0);
+  });
+
+  it("段数够但整体缺首段（seg1/2/3）抛「不完整」——只查相邻连续会放过", async () => {
+    state.objects.set(NAMES[0]!, segmentEntry(1));
+    state.objects.set(NAMES[1]!, segmentEntry(2));
+    state.objects.set(NAMES[2]!, segmentEntry(3));
+    await expect(renderNativeEvidenceReportFromObjectNames(baseInput()))
+      .rejects.toThrow("证据 segmentIndex 不完整：应有 seg0，实际为 seg1");
+    expect(state.uploads).toHaveLength(0);
+  });
+
+  it("少末段：证据名只有 2 个而卡片 attemptedSegments=3 → 段数不完整", async () => {
+    seedThreeSegments();
+    await expect(renderNativeEvidenceReportFromObjectNames({
+      ...baseInput(),
+      evidenceObjectNames: NAMES.slice(0, 2),
+    })).rejects.toThrow("证据段数不完整：卡片应有 3 段，provenance 只有 2 段");
+    expect(state.uploads).toHaveLength(0);
+  });
+
+  it("少首段：证据名只有 seg1/seg2 → 段数不完整", async () => {
+    seedThreeSegments();
+    await expect(renderNativeEvidenceReportFromObjectNames({
+      ...baseInput(),
+      evidenceObjectNames: NAMES.slice(1),
+    })).rejects.toThrow("证据段数不完整：卡片应有 3 段，provenance 只有 2 段");
+    expect(state.uploads).toHaveLength(0);
+  });
+
+  it("证据 seriesKey 与请求系列不符抛错", async () => {
+    seedThreeSegments();
+    const alien = segmentEntry(2);
+    (alien as { seriesKey: string }).seriesKey = "otherseries";
+    state.objects.set(NAMES[2]!, alien);
+    await expect(renderNativeEvidenceReportFromObjectNames(baseInput()))
+      .rejects.toThrow(/seriesKey/);
+    expect(state.uploads).toHaveLength(0);
+
+    // 三段整体都是别的系列：一致性检查过得去，但与请求系列不符必须拦下
+    NAMES.forEach((name, i) => {
+      const entry = segmentEntry(i);
+      (entry as { seriesKey: string }).seriesKey = "otherseries";
+      state.objects.set(name, entry);
+    });
+    await expect(renderNativeEvidenceReportFromObjectNames(baseInput()))
+      .rejects.toThrow("证据 seriesKey=otherseries 与请求系列 seriesabc 不符");
+    expect(state.uploads).toHaveLength(0);
+  });
+
+  it("证据对象缺少 seriesKey 抛错", async () => {
+    seedThreeSegments();
+    const noKey = segmentEntry(1) as Record<string, unknown>;
+    delete noKey.seriesKey;
+    state.objects.set(NAMES[1]!, noKey);
+    await expect(renderNativeEvidenceReportFromObjectNames(baseInput()))
+      .rejects.toThrow(/证据对象缺少 seriesKey/);
+    expect(state.uploads).toHaveLength(0);
+  });
+
+  it("证据 sourceDigest 与卡片 provenance 不符抛错", async () => {
+    seedThreeSegments();
+    await expect(renderNativeEvidenceReportFromObjectNames({
+      ...baseInput(),
+      expectSourceDigest: DIGEST_B,
+    })).rejects.toThrow("证据 sourceDigest 与卡片 provenance 不符");
+    expect(state.uploads).toHaveLength(0);
+  });
+
+  it("证据 sourceDigest 非 64 位 hex 抛错", async () => {
+    seedThreeSegments();
+    const badDigest = segmentEntry(0);
+    (badDigest as { sourceDigest: string }).sourceDigest = "PRIVATE_SOURCE_DIGEST";
+    state.objects.set(NAMES[0]!, badDigest);
+    await expect(renderNativeEvidenceReportFromObjectNames(baseInput()))
+      .rejects.toThrow(/证据对象 sourceDigest 非法/);
     expect(state.uploads).toHaveLength(0);
   });
 

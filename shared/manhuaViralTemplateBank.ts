@@ -126,6 +126,8 @@ export type ManhuaViralTemplateBeat = {
   unitTypeZh?: "剪辑镜头" | "拆分镜证据段";
   /** 构图、主体位置、前中后景、视线方向与空间层次 */
   compositionZh?: string;
+  /** 本镜原片观察，随atSec/endSec保留；不同于调用前输入提示。 */
+  hintZh?: string;
   /** 运镜：方向与速度，看不出运动写「固定机位」——严禁无依据的「镜头拉远」 */
   cameraMoveZh?: string;
   /** 角色站位、朝向、距离、进退路径、遮挡关系与群像调度 */
@@ -161,6 +163,22 @@ export type ManhuaViralTemplateSourceRef = {
   url: string;
   fetchedAt: string;
   noteZh?: string;
+};
+
+/**
+ * 正式原生读片的关键时刻抽帧证据。
+ *
+ * 只保存成功写入 GCS 的帧；抽取失败的时刻不会产生占位行，也不会阻断整集卡。
+ * objectName 是私有对象名，公开模板 DTO 永不下发；owner 面板由服务端临时签名。
+ */
+export type ManhuaViralTemplateEvidenceFrame = {
+  atSec: number;
+  kindZh: string;
+  noteZh: string;
+  objectName: string;
+  mimeType: "image/jpeg";
+  bytes: number;
+  sha256: string;
 };
 
 export const MANHUA_VIRAL_TEMPLATE_OPTIMIZE_FIELDS = [
@@ -223,6 +241,7 @@ export function isNativeVideoLearnedTemplate(
     (b) => b.shotSizeZh
       || b.angleZh
       || b.compositionZh
+      || b.hintZh
       || b.cameraMoveZh
       || b.blockingZh
       || b.bodyActionZh
@@ -250,6 +269,8 @@ export type ManhuaViralTemplateCard = {
   beatGrid: ManhuaViralTemplateBeat[];
   /** 画面 OCR 原文，仅 owner 审批与音画证据裁决可见；公开 DTO/编剧注入不下发原句。 */
   subtitleTrack?: Array<{ atSec: number; textZh: string }>;
+  /** keyMoments 对应的成功抽帧；失败帧直接省略。仅 owner 审批和报告可见。 */
+  evidenceFrames?: ManhuaViralTemplateEvidenceFrame[];
 
   /**
    * 可复用手法：**脱离本剧剧情**写成的通用做法（0824 新增，原生视频精读独有）。
@@ -335,6 +356,12 @@ export type ManhuaViralTemplateProvenance = {
     costCny: number;
     /** 已通过段门禁并可靠落盘的 0-based 段号；部分审批与断点续学的唯一进度口径。 */
     completedSegmentIndexes?: number[];
+    /** 首次学习时的完整分片计划；partial 续学必须原样恢复，不能跟随当前 UI 重切。 */
+    segmentSpans?: Array<{ startSec: number; endSec: number }>;
+    /** 分片计划对应的完整媒体时长。 */
+    sourceDurationSec?: number;
+    /** 首次学习时的实际视频采样率。 */
+    videoFps?: number;
     /** false 表示当前正式卡只是部分段快照，仍可继续补全。 */
     assemblyComplete?: boolean;
     /** 私有稳定来源摘要与段集合快照；公开 DTO 不得透出。 */
@@ -438,18 +465,21 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
           /** 空串归 undefined：抽帧产出没有这些字段，不该在库里留一堆空字符串 */
           const opt = (v: unknown, max: number): string | undefined =>
             String(v || "").trim().slice(0, max) || undefined;
-          const endSec = Math.floor(Number(b.endSec) || 0);
+          // 0831 修复：与 mapNativeDeepReadSegments 同口径保留一位小数，勿二次抹零
+          const round1 = (value: unknown) => Math.round((Number(value) || 0) * 10) / 10;
+          const endSec = round1(b.endSec);
           const unitTypeZh = b.unitTypeZh === "剪辑镜头" || b.unitTypeZh === "拆分镜证据段"
             ? b.unitTypeZh
             : undefined;
           return {
-            atSec: Math.max(0, Math.floor(Number(b.atSec) || 0)),
+            atSec: Math.max(0, round1(b.atSec)),
             conflictZh: String(b.conflictZh || "").trim().slice(0, 40),
             visualZh: String(b.visualZh || "").trim().slice(0, 280),
             unitTypeZh,
             shotSizeZh: opt(b.shotSizeZh, 32),
             angleZh: opt(b.angleZh, 32),
             compositionZh: opt(b.compositionZh, 160),
+            hintZh: typeof b.hintZh === "string" ? b.hintZh.trim() || undefined : undefined,
             cameraMoveZh: opt(b.cameraMoveZh, 220),
             blockingZh: opt(b.blockingZh, 220),
             bodyActionZh: opt(b.bodyActionZh, 220),
@@ -467,6 +497,29 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
   const cast = o.castShape || { leadDesireZh: "", pressureZh: "" };
   const classification = parseManhuaTemplateClassification(o.classification);
   const revision = parseManhuaViralTemplateRevision(o.revision);
+  const evidenceFrames = (Array.isArray(o.evidenceFrames) ? o.evidenceFrames : [])
+    .flatMap((rawFrame) => {
+      const frame = rawFrame as Partial<ManhuaViralTemplateEvidenceFrame>;
+      const atSec = Math.round(Number(frame.atSec) * 10) / 10;
+      const kindZh = String(frame.kindZh || "").trim().slice(0, 24);
+      const noteZh = String(frame.noteZh || "").trim().slice(0, 160);
+      const objectName = String(frame.objectName || "").trim();
+      const bytes = Math.floor(Number(frame.bytes));
+      const sha256 = String(frame.sha256 || "").trim().toLowerCase();
+      if (
+        !Number.isFinite(atSec)
+        || atSec < 0
+        || !kindZh
+        || !noteZh
+        || !/^manhua-template-learn\/native-frames\/[0-9A-Za-z_\/.\-]{1,360}\.jpe?g$/.test(objectName)
+        || frame.mimeType !== "image/jpeg"
+        || !Number.isSafeInteger(bytes)
+        || bytes <= 0
+        || !/^[a-f0-9]{64}$/.test(sha256)
+      ) return [];
+      return [{ atSec, kindZh, noteZh, objectName, mimeType: "image/jpeg" as const, bytes, sha256 }];
+    })
+    .sort((a, b) => a.atSec - b.atSec || a.kindZh.localeCompare(b.kindZh, "zh-CN"));
   // 只要声明了 revision 或使用修订 id，就必须完整通过修订契约，禁止降级成普通提案。
   if ((o.revision != null || /^tpl_revision_/i.test(id)) && !revision) return null;
   return {
@@ -484,6 +537,7 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
         textZh: String((row as { textZh?: unknown }).textZh || "").trim().slice(0, 160),
       }))
       .filter((row) => row.textZh),
+    evidenceFrames: evidenceFrames.length ? evidenceFrames : undefined,
     reusableZh: String(o.reusableZh || "").trim().slice(0, 600) || undefined,
     genPromptHintZh: String(o.genPromptHintZh || "").trim().slice(0, 600) || undefined,
     audioStory: parseManhuaNativeAudioAnalysis(o.audioStory),
@@ -744,6 +798,34 @@ function parseManhuaViralTemplateProvenance(
         : [];
     const sourceDigest = String(n.sourceDigest || "").trim().toLowerCase();
     const snapshotSha256 = String(n.snapshotSha256 || "").trim().toLowerCase();
+    const sourceDurationSec = Number(n.sourceDurationSec);
+    const videoFps = Number(n.videoFps);
+    const segmentSpans = (() => {
+      if (!Array.isArray(n.segmentSpans) || n.segmentSpans.length !== attemptedSegments) return [];
+      const rows = n.segmentSpans.map((value) => {
+        const row = value as { startSec?: unknown; endSec?: unknown };
+        return { startSec: Number(row?.startSec), endSec: Number(row?.endSec) };
+      });
+      if (
+        !Number.isFinite(sourceDurationSec)
+        || sourceDurationSec <= 0
+        || !Number.isFinite(videoFps)
+        || videoFps <= 0
+        // Google VideoMetadata.fps 的协议上限；避免从 Job 模块反向 import 形成循环依赖。
+        || videoFps > 24
+        || rows.some((row) =>
+          !Number.isFinite(row.startSec)
+          || !Number.isFinite(row.endSec)
+          || row.startSec < 0
+          || row.endSec <= row.startSec)
+        || Math.abs(rows[0]?.startSec || 0) > 0.01
+        || rows.some((row, index) =>
+          index > 0 && Math.abs(row.startSec - rows[index - 1]!.endSec) > 0.01)
+        || Math.abs((rows.at(-1)?.endSec || 0) - sourceDurationSec) > 0.01
+      ) return [];
+      return rows;
+    })();
+    const hasRestorableSegmentPlan = segmentSpans.length === attemptedSegments;
     const segmentEvidenceObjectNames = Array.isArray(n.segmentEvidenceObjectNames)
       ? Array.from(new Set(n.segmentEvidenceObjectNames
           .map((value) => String(value || "").trim())
@@ -766,6 +848,9 @@ function parseManhuaViralTemplateProvenance(
       usingPlanQuota: typeof n.usingPlanQuota === "boolean" ? n.usingPlanQuota : undefined,
       costCny: Math.max(0, Number(n.costCny) || 0),
       completedSegmentIndexes: normalizedCompleted.length ? normalizedCompleted : undefined,
+      segmentSpans: hasRestorableSegmentPlan ? segmentSpans : undefined,
+      sourceDurationSec: hasRestorableSegmentPlan ? sourceDurationSec : undefined,
+      videoFps: hasRestorableSegmentPlan ? videoFps : undefined,
       assemblyComplete: typeof n.assemblyComplete === "boolean"
         ? n.assemblyComplete
         : legacyComplete,
@@ -782,6 +867,7 @@ function parseManhuaViralTemplateProvenance(
         normalizedCompleted.length !== successSegments
         || !/^[a-f0-9]{64}$/.test(sourceDigest)
         || !/^[a-f0-9]{64}$/.test(snapshotSha256)
+        || !hasRestorableSegmentPlan
       )
     ) {
       delete out.nativeVideoDeepRead;
@@ -1007,6 +1093,7 @@ export function fitManhuaViralDensityHintsToSegments(
  */
 function formatNativeBeatEvidenceZh(beat: ManhuaViralTemplateBeat): string {
   return [
+    beat.hintZh ? `本镜观察=${beat.hintZh}` : "",
     beat.unitTypeZh ? `单元=${beat.unitTypeZh}` : "",
     beat.shotSizeZh ? `景别=${beat.shotSizeZh}` : "",
     beat.angleZh ? `机位=${beat.angleZh}` : "",

@@ -73,6 +73,12 @@ function makeInput(over: Partial<NativeDeepReadIngestInput> = {}): NativeDeepRea
     seriesKey: "abc123",
     episodeIndex: 1,
     sourceUrl: "https://example.com/ep1",
+    durationSec: 120,
+    segmentSpans: [
+      { startSec: 0, endSec: 60 },
+      { startSec: 60, endSec: 120 },
+    ],
+    videoFps: 12,
     result,
     ...over,
   };
@@ -125,6 +131,15 @@ describe("断点续跑", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]!.episodeIndex).toBe(1);
     expect(rows[0]!.sourceUrl).toBeTruthy();
+    expect(rows[0]).toMatchObject({
+      durationSec: 120,
+      videoFps: 12,
+      completedSegmentIndexes: [0, 1],
+      segmentSpans: [
+        { startSec: 0, endSec: 60 },
+        { startSec: 60, endSec: 120 },
+      ],
+    });
   });
 
   it("卡片没有稳定来源时按无效处理，不静默放行", async () => {
@@ -257,6 +272,35 @@ describe("入库写入", () => {
     await expect(ingestNativeDeepReadEpisode(partial)).rejects.toThrow(/倒退或分叉/);
     expect(gcs.upload).not.toHaveBeenCalled();
   });
+
+  it("已有部分卡后原分片边界或 fps 漂移时拒绝 CAS 覆盖", async () => {
+    const partial = makeInput({
+      result: {
+        ...makeInput().result,
+        segmentCount: 1,
+        failedSegmentCount: 1,
+        completedSegmentIndexes: [0],
+        assemblyComplete: false,
+        segmentSnapshotSha256: "c".repeat(64),
+      },
+    });
+    const previous = buildNativeDeepReadProposalCard(partial)!;
+    gcs.create.mockResolvedValue({ created: false });
+    gcs.downloadVersioned.mockResolvedValue({
+      buffer: Buffer.from(JSON.stringify(previous), "utf8"),
+      generation: "11",
+    });
+
+    await expect(ingestNativeDeepReadEpisode(makeInput({
+      segmentSpans: [
+        { startSec: 0, endSec: 59 },
+        { startSec: 59, endSec: 120 },
+      ],
+    }))).rejects.toThrow("原分片计划发生变化");
+    await expect(ingestNativeDeepReadEpisode(makeInput({ videoFps: 10 })))
+      .rejects.toThrow("原分片计划发生变化");
+    expect(gcs.upload).not.toHaveBeenCalled();
+  });
 });
 
 describe("部分卡不冒充整集完成", () => {
@@ -276,7 +320,19 @@ describe("部分卡不冒充整集完成", () => {
     gcs.download.mockResolvedValue({ buffer: Buffer.from(JSON.stringify(partialCard), "utf8") });
 
     await expect(listIngestedNativeDeepReadEpisodeRecords("abc123")).resolves.toEqual([
-      expect.objectContaining({ episodeIndex: 1, complete: false, successSegments: 1, attemptedSegments: 2 }),
+      expect.objectContaining({
+        episodeIndex: 1,
+        complete: false,
+        successSegments: 1,
+        attemptedSegments: 2,
+        completedSegmentIndexes: [0],
+        durationSec: 120,
+        videoFps: 12,
+        segmentSpans: [
+          { startSec: 0, endSec: 60 },
+          { startSec: 60, endSec: 120 },
+        ],
+      }),
     ]);
     await expect(listIngestedNativeDeepReadEpisodes("abc123")).resolves.toEqual(new Set());
   });

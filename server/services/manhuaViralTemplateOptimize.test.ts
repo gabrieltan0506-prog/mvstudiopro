@@ -17,6 +17,15 @@ function approvedCard(): ManhuaViralTemplateCard {
       { atSec: 0, conflictZh: "绝境压迫", visualZh: "敌人封住退路" },
       { atSec: 15, conflictZh: "能力觉醒", visualZh: "掌心符纹照亮山壁" },
     ],
+    evidenceFrames: [{
+      atSec: 15,
+      kindZh: "剧情",
+      noteZh: "能力觉醒原帧",
+      objectName: `manhua-template-learn/native-frames/ownerfixture/ep001/150ds-${"a".repeat(24)}.jpg`,
+      mimeType: "image/jpeg",
+      bytes: 10,
+      sha256: "a".repeat(64),
+    }],
     scenePoolHints: ["悬崖", "山门"],
     castShape: { leadDesireZh: "活下来", pressureZh: "宗门追杀", foilZh: "冷眼师兄" },
     densityHints: { minBodyChars: 280, minDialogueLines: 8, minLocationHits: 2 },
@@ -115,6 +124,7 @@ describe("optimizeApprovedManhuaViralTemplate", () => {
       });
       expect(output.proposal.sourceRefs).toEqual(approvedCard().sourceRefs);
       expect(output.proposal.provenance).toEqual(approvedCard().provenance);
+      expect(output.proposal.evidenceFrames).toEqual(approvedCard().evidenceFrames);
       expect(output.proposal.publicCode).toBeUndefined();
     });
   }
@@ -162,6 +172,7 @@ function nativeCard(): ManhuaViralTemplateCard {
       shotSizeZh: "特写",
       angleZh: "平视",
       compositionZh: "角色居中，前后景分层",
+      hintZh: "角色手持道具，近景背景未入画",
       cameraMoveZh: "固定机位",
       blockingZh: "角色前后错位站立",
       bodyActionZh: "重心稳定，躯干微微前倾",
@@ -212,6 +223,13 @@ const runNative = (out: unknown, requestId: string) =>
   });
 
 describe("原生精读模板防丢门禁（复审 P0-1）", () => {
+  it("逐镜观察不能在优化时被省略或补写", async () => {
+    for (const hintZh of [undefined, "原片没有的新道具"]) {
+      const edited = nativeCard().beatGrid.map((beat, i) => i === 0 ? { ...beat, hintZh } : beat);
+      await expect(runNative(nativeOutput(edited, [{ field: "beatGrid", reasonZh: "修改观察" }]),
+        "req_hint_test")).rejects.toThrow(/hintZh/);
+    }
+  });
   it("超过 128 镜的完整证据可通过优化契约，不会在 schema 层截断", async () => {
     const card = nativeCard();
     card.beatGrid = Array.from({ length: 160 }, (_, i) => ({
@@ -267,7 +285,7 @@ describe("原生精读模板防丢门禁（复审 P0-1）", () => {
         ], { summaryZh: "更紧凑的绝境开场。" }),
         "req_native_strip",
       ),
-    ).rejects.toThrow(/缺少 endSec|缺少 shotSizeZh|缺少 cameraMoveZh/);
+    ).rejects.toThrow(/缺少 hintZh|缺少 endSec|缺少 shotSizeZh|缺少 cameraMoveZh/);
   });
 
   it("原生证据完整、只改 conflictZh/visualZh —— 允许", async () => {

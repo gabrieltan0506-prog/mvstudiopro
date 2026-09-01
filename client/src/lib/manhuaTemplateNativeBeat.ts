@@ -4,6 +4,7 @@ import type { ManhuaViralTemplateBeat } from "@shared/manhuaViralTemplateBank";
 export function formatManhuaTemplateNativeBeatZh(beat: ManhuaViralTemplateBeat): string {
   return [
     beat.endSec != null ? `结束 ${beat.endSec}s` : "",
+    beat.hintZh ? `本镜观察 ${beat.hintZh}` : "",
     beat.unitTypeZh ? `单元 ${beat.unitTypeZh}` : "",
     beat.shotSizeZh ? `景别 ${beat.shotSizeZh}` : "",
     beat.angleZh ? `机位 ${beat.angleZh}` : "",
