@@ -369,6 +369,8 @@ export type ManhuaViralTemplateProvenance = {
     snapshotSha256?: string;
     /** 私有 GCS 对象名；每项都是一个已付费分片的完整原始 JSON。 */
     segmentEvidenceObjectNames?: string[];
+    /** 私有 GCS 对象名；最终 GLM 整集整形的消费前 parsed JSON，供报告精确还原整形结果。 */
+    glmParsedObjectName?: string;
   };
   nativeAudioDeepRead?: {
     model: string;
@@ -832,6 +834,7 @@ function parseManhuaViralTemplateProvenance(
           // 响应指纹后缀：新证据为完整 64 位 sha256；历史证据存过截断 16 位，只读兼容两者。
           .filter((value) => /^manhua-template-learn\/segment-evidence\/[0-9A-Za-z_\/-]{1,220}\/seg\d{1,6}-[a-f0-9]{64}(?:-(?:[a-f0-9]{16}|[a-f0-9]{64}))?\.json$/.test(value))))
       : [];
+    const glmParsedObjectName = String(n.glmParsedObjectName || "").trim();
     out.nativeVideoDeepRead = {
       model: String(n.model || "").slice(0, 60),
       attemptedSegments,
@@ -858,6 +861,9 @@ function parseManhuaViralTemplateProvenance(
       snapshotSha256: /^[a-f0-9]{64}$/.test(snapshotSha256) ? snapshotSha256 : undefined,
       segmentEvidenceObjectNames: segmentEvidenceObjectNames.length
         ? segmentEvidenceObjectNames
+        : undefined,
+      glmParsedObjectName: /^manhua-template-learn\/episode-glm-evidence\/[0-9A-Za-z_-]{16,180}\/parsed\.json$/.test(glmParsedObjectName)
+        ? glmParsedObjectName
         : undefined,
     };
     // 新部分卡必须携带可验证的完整进度身份；旧完整卡继续兼容读取。

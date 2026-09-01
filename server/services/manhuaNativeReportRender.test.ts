@@ -141,6 +141,11 @@ function baseInput() {
     expectSeriesKey: "seriesabc",
     expectSourceDigest: DIGEST_A,
     expectSegmentCount: 3,
+    segmentSpans: [
+      { startSec: 0, endSec: 281 },
+      { startSec: 281, endSec: 562 },
+      { startSec: 562, endSec: 843 },
+    ],
     framesV2SummaryObjectName: "manhua-template-learn/probes/tpl_native_seriesabc_ep001/frames-v2-summary.json",
     framesPrefix: "manhua-template-learn/probes/tpl_native_seriesabc_ep001/frames/",
     reportObjectName: "manhua-template-learn/reports/tpl_native_seriesabc_ep001.html",
@@ -190,6 +195,11 @@ describe("精确证据名路径：三段卡渲染成功且无删节", () => {
     expect(html).toContain("观察尾部保留&lt;script&gt;");
     expect(html).toContain("本镜观察");
     expect(html).not.toContain("× 17 字段");
+    // 独立 HTML 自带编码声明；下载到本地后不依赖 GCS 响应头也不能乱码。
+    expect(html).toContain('<meta charset="utf-8">');
+    // 音轨局部秒按真实 281 秒分片边界换算；第 3 片从 09:22 开始，不得用 10:00。
+    expect(html).toContain("09:22–09:32");
+    expect(html).not.toContain("10:00–10:10");
 
     // 🔒 字幕零截断（0830 补：此前「不做任何内容截断」只是文件头一句话，没有守卫，
     // 结果剧情节点表每节点只显示前 3 句、其余用「…」吞掉，全仓 3264 测照样绿）。
@@ -200,6 +210,33 @@ describe("精确证据名路径：三段卡渲染成功且无删节", () => {
     expect(html).not.toContain("…");
     // 节点表确实做了分组（5 条并成 1 个节点），而不是退回逐条铺开
     expect(html).toContain("5 句");
+  });
+
+  it("优先渲染最终 GLM 整集 parsed 证据，并用真实分片计划换算音轨秒位", async () => {
+    seedThreeSegments();
+    const glmObjectName = "manhua-template-learn/episode-glm-evidence/native-structuring-test1234567890/parsed.json";
+    const raws = [0, 1, 2].map((index) => (segmentEntry(index) as { raw: Record<string, unknown> }).raw);
+    const glmCard = {
+      shots: raws.flatMap((raw) => raw.shots as unknown[]),
+      subtitles: raws.flatMap((raw) => raw.subtitles as unknown[]),
+      audioResolution: raws.flatMap((raw) => raw.audioResolution as unknown[]),
+      beatStructureZh: "GLM最终整集节奏_GLM_END",
+      moodArcZh: "GLM最终整集情绪",
+      reusableZh: "GLM最终可复用手法",
+      genPromptHintZh: "GLM最终生成提示",
+      classification: { emotionTagsZh: ["GLM最终标签"] },
+    };
+    state.objects.set(glmObjectName, { parsed: { answer: JSON.stringify(glmCard) } });
+    await renderNativeEvidenceReportFromObjectNames({
+      ...baseInput(),
+      glmCardObjectName: glmObjectName,
+    });
+    const html = state.uploads[0]!.html;
+    expect(html).toContain("GLM 整集卡（provenance 精确寻址）");
+    expect(html).toContain("GLM最终整集节奏_GLM_END");
+    expect(html).toContain("GLM最终标签");
+    expect(html).toContain("09:22–09:32");
+    expect(html).not.toContain("10:00–10:10");
   });
 });
 
