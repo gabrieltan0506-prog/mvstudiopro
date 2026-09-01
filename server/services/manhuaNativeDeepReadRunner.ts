@@ -1676,10 +1676,31 @@ function mediaHeaders(node: NativeDeepReadMediaNode): string[] {
     "-user_agent",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36",
     ...(referer ? ["-headers", `Referer: ${referer}\r\n`] : []),
-    // 0901：小站 CDN 拉长段会中途掐线（TLS End of file / Connection reset）。
-    // 协议层自动重连续拉，整段不作废；不加 -reconnect_at_eof——正常读完会挂住不退。
-    "-reconnect", "1", "-reconnect_streamed", "1",
-    "-reconnect_on_network_error", "1", "-reconnect_delay_max", "15",
+  ];
+}
+
+/** 整片抓取超时：46–52 分钟 vod 以 CDN 限速顺序拉，30 分钟封顶。 */
+export const NATIVE_DEEP_READ_SOURCE_FETCH_TIMEOUT_MS = 30 * 60_000;
+/** 整片落盘的空间估算：按 400KB/s（≈3.2Mbps vod 上限档）估，再叠 500MB 底线。 */
+export const NATIVE_DEEP_READ_SOURCE_BYTES_PER_SEC_ESTIMATE = 400_000;
+
+/**
+ * 0901 定案：多段集不再逐段远程拉流——真人剧小站 CDN（gzcrkt8888 链）对同 IP
+ * 并发长连接连环 reset，且不支持范围续传（-reconnect_streamed 断线后从 0 字节
+ * 重读，把时间轴接歪，被「视频流起点不是本段零位」验收当场拦下）。
+ * 改为整片一条顺序连接 -c copy 落 /tmp（m3u8 天然按小文件逐个请求，抗掐线），
+ * 之后全部分段从本地文件切，切段永不再碰网络。
+ */
+export function buildNativeDeepReadSourceFetchArgs(input: {
+  node: NativeDeepReadMediaNode;
+  outputPath: string;
+}): string[] {
+  return [
+    "-nostdin", "-hide_banner", "-loglevel", "error", "-xerror", "-y",
+    ...(/^https?:\/\//i.test(input.node.url) ? mediaHeaders(input.node) : []),
+    "-i", input.node.url,
+    "-map", "0:v:0", "-map", "0:a?",
+    "-c", "copy", "-movflags", "+faststart", input.outputPath,
   ];
 }
 
@@ -1847,11 +1868,71 @@ export async function prepareEpisodeVideos(
   const segments = validateNativeDeepReadSegments(episode.segments);
 
   // 切段前先看 /tmp：磁盘打满时 ffmpeg 会切出半截片，宁可关闭式停止。
+  // 0901 起整片先落盘再本地切，空间按时长估算叠加 500MB 底线一起验。
+  const sourceBytesEstimate = Math.ceil(
+    episode.sourceDurationSec * NATIVE_DEEP_READ_SOURCE_BYTES_PER_SEC_ESTIMATE,
+  );
   const { freeBytes } = await deps.statfsTmp();
-  if (freeBytes < NATIVE_DEEP_READ_MIN_TMP_FREE_BYTES) {
+  if (freeBytes < NATIVE_DEEP_READ_MIN_TMP_FREE_BYTES + sourceBytesEstimate) {
     throw new Error(
-      `/tmp 可用空间 ${(freeBytes / 1048576).toFixed(0)}MB 低于 500MB 下限，已停止切段`,
+      `/tmp 可用空间 ${(freeBytes / 1048576).toFixed(0)}MB 不足（整片约需 `
+      + `${(sourceBytesEstimate / 1048576).toFixed(0)}MB + 500MB 底线），已停止切段`,
     );
+  }
+
+  // 整片一条顺序连接落盘：小站 CDN 扛不住并发长连接，也不支持范围续传；
+  // 一次拉完后所有分段改从本地切，网络故障面从 9 段收敛到 1 次抓取。
+  const sourceRunId = crypto.randomUUID();
+  const localSourcePath = `/tmp/manhua-native-source-${sourceRunId}.mp4`;
+  {
+    let fetched = false;
+    let lastFetchError: unknown;
+    for (let attempt = 0; attempt < 3 && !fetched; attempt += 1) {
+      abortSignal?.throwIfAborted();
+      try {
+        const nodes = await episode.resolveNodes();
+        const node = nodes[attempt % Math.max(1, nodes.length)];
+        if (!node?.url) throw new Error(`第${episode.episodeIndex}集未解析到媒体节点`);
+        await deps.runMedia(
+          "ffmpeg",
+          buildNativeDeepReadSourceFetchArgs({ node, outputPath: localSourcePath }),
+          NATIVE_DEEP_READ_SOURCE_FETCH_TIMEOUT_MS,
+          abortSignal,
+        );
+        const sourceStat = await deps.statLocal(localSourcePath);
+        if (!Number.isFinite(sourceStat.size) || sourceStat.size <= 0) {
+          throw new Error(`第${episode.episodeIndex}集整片落盘为空`);
+        }
+        // 时长验收：拉不全的片在这里就地拒绝，不让 9 段各自撞尾部缺失
+        const probeText = await deps.runMedia("ffprobe", [
+          "-v", "error", "-select_streams", "v:0",
+          "-show_entries", "format=duration", "-of", "json", localSourcePath,
+        ], 60_000, abortSignal);
+        const probedSec = Number(JSON.parse(probeText)?.format?.duration);
+        if (!Number.isFinite(probedSec) || probedSec < episode.sourceDurationSec - 2) {
+          throw new Error(
+            `第${episode.episodeIndex}集整片时长 ${probedSec ? probedSec.toFixed(1) : "未知"} 秒，`
+            + `低于计划 ${episode.sourceDurationSec} 秒，判定拉取不完整`,
+          );
+        }
+        fetched = true;
+      } catch (error) {
+        await deps.unlinkLocal(localSourcePath).catch(() => undefined);
+        lastFetchError = error;
+        if (abortSignal?.aborted) throw error;
+        if (attempt < 2) {
+          console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集整片落盘失败，退避后重拉`);
+          await (deps.sleepMs
+            ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))))(
+            8_000 * (attempt + 1),
+          );
+          abortSignal?.throwIfAborted();
+        }
+      }
+    }
+    if (!fetched) {
+      throw lastFetchError instanceof Error ? lastFetchError : new Error("整片落盘失败");
+    }
   }
 
   const prepared: Array<PreparedNativeVideo | undefined> = new Array(segments.length);
@@ -1890,15 +1971,10 @@ export async function prepareEpisodeVideos(
         const runId = crypto.randomUUID();
         const localPath = `/tmp/manhua-native-video-${runId}.mp4`;
         try {
-          const nodes = await episode.resolveNodes();
-          const node = nodes[attempt % Math.max(1, nodes.length)];
-          if (!node?.url) {
-            throw new Error(`第${episode.episodeIndex}集第${index + 1}段未解析到媒体节点`);
-          }
           await deps.runMedia(
             "ffmpeg",
             buildNativeDeepReadVideoSegmentArgs({
-              node,
+              node: { url: localSourcePath },
               startSec: segment.startSec,
               durationSec: segment.endSec - segment.startSec,
               outputPath: localPath,
@@ -1929,13 +2005,7 @@ export async function prepareEpisodeVideos(
           lastError = error;
           if (abortSignal?.aborted) throw error;
           if (attempt < 2) {
-            console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集第${index + 1}段媒体准备失败，刷新节点后重试`);
-            // 0901：立即重试仍撞在同一场并发风暴里，三连灭。退避 8s/24s 让 CDN 消气。
-            await (deps.sleepMs
-              ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))))(
-              8_000 * (attempt + 1),
-            );
-            abortSignal?.throwIfAborted();
+            console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集第${index + 1}段本地切段失败，重试`);
           }
         }
       }
@@ -2026,7 +2096,10 @@ export async function prepareEpisodeVideos(
     }
     throw error;
   } finally {
-    await Promise.allSettled(cutRows.flatMap((row) => row ? [deps.unlinkLocal(row.localPath)] : []));
+    await Promise.allSettled([
+      deps.unlinkLocal(localSourcePath),
+      ...cutRows.flatMap((row) => row ? [deps.unlinkLocal(row.localPath)] : []),
+    ]);
   }
 }
 
