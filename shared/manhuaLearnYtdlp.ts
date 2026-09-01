@@ -99,13 +99,30 @@ export function pickDouyinCookieHeaderFromEnv(env?: EnvMap, candidateIndex = 0):
 /** 全部候选凭证（主 → 备 → 池，去重）；web API 拉合集时逐个试到有响应为止 */
 export function listDouyinCookieCandidatesFromEnv(env?: EnvMap): string[] {
   const e = readEnv(env);
+  /**
+   * 0901：抖音 Argus 风控要求 uifid 等新字段。整串换弹容易漏抄，
+   * DOUYIN_COOKIE_EXTRA 存增量片段（如 "uifid=xxx; msToken=yyy"），
+   * 自动追加到每份候选尾部；同名字段以追加值为准（浏览器取的更新）。
+   */
+  const extra = String(e.DOUYIN_COOKIE_EXTRA || "").trim().replace(/;\s*$/, "");
+  const withExtra = (cookie: string): string => {
+    if (!extra) return cookie;
+    const extraKeys = new Set(
+      extra.split(";").map((kv) => kv.split("=")[0]!.trim()).filter(Boolean),
+    );
+    const kept = cookie
+      .split(";")
+      .map((kv) => kv.trim())
+      .filter((kv) => kv && !extraKeys.has(kv.split("=")[0]!.trim()));
+    return [...kept, extra].join("; ");
+  };
   const raw = [
     String(e.DOUYIN_COOKIE || "").trim(),
     String(e.DOUYIN_COOKIE_BACKUP || "").trim(),
     ...String(e.DOUYIN_COOKIE_POOL || "")
       .split("\n")
       .map((s) => s.trim()),
-  ].filter(Boolean);
+  ].filter(Boolean).map(withExtra);
   return Array.from(new Set(raw));
 }
 
