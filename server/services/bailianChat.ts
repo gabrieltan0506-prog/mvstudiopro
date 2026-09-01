@@ -190,7 +190,7 @@ export type GlmParams = {
    * 只在 GLM-5.3 的两档之间降级，绝不静默换成 Qwen（换模型＝换产出口径）。
    * `openrouter_only` 是 0829 改线前的旧名，语义等同 `glm_only`，保留给存量调用方。
    */
-  gatewayPolicy?: "fallback" | "glm_only" | "openrouter_only";
+  gatewayPolicy?: "fallback" | "glm_only" | "openrouter_only" | "qwen_only";
   /**
    * 正式多 JSON 整形的首选 GLM 通道。只改变两档的首发顺序；首选档失败后仍会
    * 自动切到另一条 GLM 通道，绝不因为这个字段换成 Qwen。
@@ -335,9 +335,12 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
   // 旧的 slice(0,1) 会在改序后静默选错一档（下标依赖是改序时最容易漏的雷）。
   const glmOnly = params.gatewayPolicy === "glm_only"
     || params.gatewayPolicy === "openrouter_only";
+  const qwenOnly = params.gatewayPolicy === "qwen_only";
   const eligibleGateways = glmOnly
     ? configuredGateways.filter((g) => GLM_MODEL_GATEWAYS.has(g.name))
-    : configuredGateways;
+    : qwenOnly
+      ? configuredGateways.filter((g) => !GLM_MODEL_GATEWAYS.has(g.name))
+      : configuredGateways;
   const preferred = params.preferredGlmGateway;
   const gateways = preferred
     ? [
@@ -437,6 +440,8 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
   throw new GlmGatewayError(
     glmOnly
       ? `GLM-5.3 两档(${glmOrderZh || "未配置"})全部失败：${trace.map((t) => `${t.gateway}=${t.outcome}`).join(",") || "通道未配置"}`
+      : qwenOnly
+        ? `Qwen 3.8 Max 两档全部失败：${trace.map((t) => `${t.gateway}=${t.outcome}`).join(",") || "通道未配置"}`
       : `GLM 兜底全链失败(含 Qwen 末档)：${trace.map((t) => `${t.gateway}=${t.outcome}`).join(",") || "无可用网关"}`,
     trace,
     accumulatedUsage,

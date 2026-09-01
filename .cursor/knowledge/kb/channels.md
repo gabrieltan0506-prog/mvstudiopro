@@ -1,6 +1,6 @@
 # channels · 上游通道血泪事实
 
-> **0901现行冻结口径（覆盖本页后续历史实验值）**：PR #1328 已合并；Gemini 3.1 Pro 固定 `0.7→0.65→0.6`、`thinkingLevel=MEDIUM`、不发 thinkingBudget/mediaResolution，prompt 与基础/动态 Schema 一并由契约 SHA 锁定；只有每次任务明确给出的分片时长与 fps 可变（默认 300 秒/12fps，14fps 不再实验）。三档均为可解析门禁失败时只从三份永久证据数值择优并标记未通过，不发第四次。GLM-5.3 整形固定 `temperature=0.8`、`reasoningEffort=high`、131072 输出上限。真源：`AGENTS.md` 冻结条款、`shared/manhuaNativeDeepReadJob.ts` 动态输入边界、`server/services/manhuaNativeDeepReadRunner.ts` 冻结契约与 SHA；下文 0825–0831 候选参数只作事故/实验史，不得恢复。
+> **0901现行冻结口径（覆盖本页后续历史实验值）**：PR #1328 已合并；Gemini 3.1 Pro 固定 `0.7→0.65→0.6`、`thinkingLevel=MEDIUM`、不发 thinkingBudget/mediaResolution，prompt 与基础/动态 Schema 一并由契约 SHA 锁定；只有每次任务明确给出的分片时长与 fps 可变。只有门禁失败降档；503/429/资源耗尽等待 60 秒后同温重跑，每个当前温度档最多资源重试3次。三档完成后固定交 Qwen 3.8 Max 三选一，无论 schema 是否通过都必须选出一份，按全方位可用性而非审美或单项分数判断；只把被选原稿交整集 GLM。分片模型并发上限 5，尾片无特例。GLM-5.3 整形固定 `temperature=0.8`、`reasoningEffort=high`、131072 输出上限。真源：`AGENTS.md`、`shared/manhuaNativeDeepReadJob.ts`、`server/services/manhuaNativeDeepReadRunner.ts`；下文 0825–0831 候选参数只作事故/实验史，不得恢复。
 
 > **0901 Growth 恢复冻结规则**：把 GitHub 冷备下载到 Fly `/tmp` 做 manifest、字节数、SHA、tar 路径与 JSON 解析验真，不会写活动数据，可在抓取运行时只读执行；凡是把冷备写回、覆盖、合并或切换到 `/data/growth`，必须先冻结全部平台抓取并取得同一 collection lease，保存恢复前快照，再做原子切换/合并与前后计数验真。当前两条冷备 workflow 只上传和验真，自动源删除已关闭；后续空间释放只允许处理 B站，并须用户显式授权。不得用 GitHub 上传成功代替恢复成功，也不得要求用户从本机中转恢复数据。
 

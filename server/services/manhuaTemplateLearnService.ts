@@ -2637,33 +2637,68 @@ export async function runManhuaTemplateLearn(
                   : `全系列结构整理未完成：${checkpoint.errorZh || "上游未返回完整回执"}`,
             );
           } else {
-            if (
-              checkpoint.route === "gate_retry_pending"
-            ) {
+            if (checkpoint.route === "gate_retry_pending" || checkpoint.route === "resource_retry_pending") {
               const retrySegmentZh = typeof checkpoint.chunkIndex === "number" && checkpoint.segmentCount
                 ? ` · 分片 ${checkpoint.chunkIndex + 1}/${checkpoint.segmentCount}`
                 : "";
+              const retryKindZh = checkpoint.route === "resource_retry_pending"
+                ? `资源拥堵，同温重试 ${checkpoint.resourceRetryNumber || "?"}/${checkpoint.resourceRetryMax || 3}`
+                : "门禁未通过，降档重试";
               await progress(
                 MANHUA_LEARN_STAGE.vision,
-                `${episodeLabel}${retrySegmentZh} · 第 ${checkpoint.attemptNumber || "?"} 次尝试将在 60 秒后开始`
+                `${episodeLabel}${retrySegmentZh} · ${retryKindZh}：60 秒后执行第 ${checkpoint.attemptNumber || "?"} 发`
                 + `${typeof checkpoint.temperature === "number" ? `（temperature ${checkpoint.temperature}）` : ""}`
-                + `：${checkpoint.errorZh || "上一次调用未完成"}`,
+                + `；后台原因：${checkpoint.errorZh || "上一次调用未完成"}`,
+              );
+              return;
+            }
+            const segmentZh = typeof checkpoint.chunkIndex === "number" && checkpoint.segmentCount
+              ? ` · 分片 ${checkpoint.chunkIndex + 1}/${checkpoint.segmentCount}`
+              : "";
+            const attemptZh = checkpoint.attemptNumber
+              ? ` · 第 ${checkpoint.attemptNumber} 发${typeof checkpoint.temperature === "number"
+                ? `（temperature ${checkpoint.temperature}）`
+                : ""}`
+              : "";
+            if (checkpoint.route === "qwen_segment_selection"
+              || checkpoint.route === "qwen_segment_selection_recovered") {
+              const recoveredZh = checkpoint.route === "qwen_segment_selection_recovered" ? "（恢复已付费证据）" : "";
+              await progress(
+                MANHUA_LEARN_STAGE.vision,
+                `${episodeLabel}${segmentZh} · Qwen 3.8 Max 三选一${recoveredZh}${checkpoint.status === "started"
+                  ? "开始"
+                  : checkpoint.status === "completed"
+                    ? `完成：${checkpoint.advisoriesZh || "已返回选择结果"}`
+                    : `失败：${checkpoint.errorZh || "上游未返回完整回执"}`}`,
+              );
+              return;
+            }
+            if (checkpoint.route === "local_schema_gate" && typeof checkpoint.chunkIndex === "number") {
+              const advisoryCodeZh = checkpoint.advisoryCodes?.length
+                ? `；代码 ${checkpoint.advisoryCodes.join(",")}`
+                : "";
+              const detailZh = checkpoint.status === "completed"
+                ? checkpoint.advisoriesZh
+                  ? `；后台详情：${checkpoint.advisoriesZh}`
+                  : ""
+                : `；后台拒因：${checkpoint.errorZh || "未返回具体拒因"}`;
+              await progress(
+                MANHUA_LEARN_STAGE.vision,
+                `${episodeLabel}${segmentZh}${attemptZh} · 分片门禁${checkpoint.status === "completed" ? "通过" : "未通过"}`
+                + `${advisoryCodeZh}${detailZh}`,
               );
               return;
             }
             const stageZh = checkpoint.stage === "visual_parse"
               ? checkpoint.route === "openrouter_glm_structuring"
                 ? "GLM 结构化整形"
-                : "结构校验"
+                : "整集结构校验"
               : checkpoint.degraded
                 ? "画面与声音联合精读（EvoLink 兜底 1fps 降级）"
                 : "画面与声音联合精读";
-            const segmentZh = typeof checkpoint.chunkIndex === "number" && checkpoint.segmentCount
-              ? ` · 分片 ${checkpoint.chunkIndex + 1}/${checkpoint.segmentCount}`
-              : "";
             await progress(
               MANHUA_LEARN_STAGE.vision,
-              `${episodeLabel}${segmentZh} · ${stageZh}${checkpoint.status === "started"
+              `${episodeLabel}${segmentZh}${attemptZh} · ${stageZh}${checkpoint.status === "started"
                 ? "开始"
                 : checkpoint.status === "completed"
                   ? checkpoint.stage === "visual_model"
@@ -2696,7 +2731,7 @@ export async function runManhuaTemplateLearn(
           } else if (outcome.status === "partial") {
             await progress(
               MANHUA_LEARN_STAGE.persist,
-              `第 ${outcome.episodeIndex} 集已生成 ${outcome.completedSegments || 0}/${outcome.totalSegments || 0} 段待审卡 · 已成段已入库，剩余分片将从断点继续`,
+              `第 ${outcome.episodeIndex} 集已通过并缓存 ${outcome.completedSegments || 0}/${outcome.totalSegments || 0} 片 · 剩余分片将从断点继续`,
             );
           } else if (outcome.status === "failed") {
             // 拒因必须随进度行持久化：0826 实弹第9集重试后仍未过门禁，
@@ -2705,7 +2740,7 @@ export async function runManhuaTemplateLearn(
             episodeFailNotes.push(`第 ${outcome.episodeIndex} 集未入库：${failReasonZh}`);
             await progress(
               MANHUA_LEARN_STAGE.failed,
-              `第 ${outcome.episodeIndex} 集未入库：${failReasonZh}；已停止后续请求。已成分段进入缓存，重跑只补未完成段`,
+              `第 ${outcome.episodeIndex} 集未入库：${failReasonZh}；已停止后续请求。已通过分片进入缓存，重跑只补未终态分片`,
             );
           } else if (outcome.status === "aborted") {
             cancelledMidRun = true;
