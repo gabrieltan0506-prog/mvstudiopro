@@ -937,6 +937,58 @@ describe("批量发车", () => {
     expect(deps.extractKeyMomentFrames).not.toHaveBeenCalled();
   });
 
+  it("续跑重放旧前缀时面板沿用 GCS 已存进度，不显示倒退", async () => {
+    const progress: Array<{ status: string; completedSegments?: number; totalSegments?: number }> = [];
+    deps.runBatch = vi.fn(async (input: {
+      onSegmentSnapshotCommitted?: (snapshot: unknown) => Promise<void> | void;
+    }) => {
+      await input.onSegmentSnapshotCommitted?.({
+        episodeIndex: 1,
+        completedSegmentIndexes: [0],
+        learnedThroughSec: 300,
+        result: makeResult({
+          segmentCount: 1,
+          failedSegmentCount: 3,
+          attemptedSegments: 4,
+          completedSegmentIndexes: [0],
+          sourceDigest: "a".repeat(64),
+          segmentSnapshotSha256: "b".repeat(64),
+          assemblyComplete: false,
+        }),
+      });
+      throw new Error("测试停止");
+    }) as never;
+    deps.ingest = vi.fn(async () => ({
+      card: {
+        provenance: {
+          nativeVideoDeepRead: {
+            successSegments: 3,
+            completedSegmentIndexes: [0, 1, 2],
+          },
+        },
+      },
+      gcsUri: "gs://b/ep1.json",
+      objectName: "o/ep1.json",
+      created: false,
+    })) as never;
+
+    await runNativeDeepReadBatch({
+      seriesKey: "s",
+      episodes: [three[0]!],
+      onProgress: (row) => { progress.push(row); },
+    }, deps);
+
+    expect(progress).toContainEqual(expect.objectContaining({
+      status: "partial",
+      completedSegments: 3,
+      totalSegments: 4,
+    }));
+    expect(progress).not.toContainEqual(expect.objectContaining({
+      status: "partial",
+      completedSegments: 1,
+    }));
+  });
+
   it("已入库的集直接跳过，不调 runner —— 重跑不重烧", async () => {
     deps.listIngested = vi.fn(async () => new Set([1, 2]));
     const r = await runNativeDeepReadBatch({ seriesKey: "s", episodes: three }, deps);
