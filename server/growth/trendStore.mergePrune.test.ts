@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { gunzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlatformTrendCollection } from "./trendCollector";
 
@@ -17,6 +18,7 @@ vi.setConfig({ testTimeout: 60_000 });
 
 const ORIGINAL_STORE_DIR = process.env.GROWTH_STORE_DIR;
 const ORIGINAL_WINDOW = process.env.GROWTH_TARGET_WINDOW_DAYS;
+const ORIGINAL_HISTORY_UPDATES = process.env.GROWTH_DISABLE_HISTORY_LEDGER_UPDATES;
 
 function makeItem(id: string, publishedAt: string) {
   return {
@@ -74,6 +76,7 @@ describe("growth store merge + hot-window prune", () => {
     process.env.GROWTH_WRITE_LEGACY_MIRROR = "0";
     process.env.GROWTH_WRITE_DERIVED_PLATFORM_FILES = "1";
     process.env.GROWTH_DISABLE_STORE_LAYOUT_MIGRATE = "1";
+    process.env.GROWTH_DISABLE_HISTORY_LEDGER_UPDATES = "0";
     process.env.GROWTH_TARGET_WINDOW_DAYS = "90";
   });
 
@@ -83,6 +86,8 @@ describe("growth store merge + hot-window prune", () => {
     if (ORIGINAL_WINDOW) process.env.GROWTH_TARGET_WINDOW_DAYS = ORIGINAL_WINDOW;
     else delete process.env.GROWTH_TARGET_WINDOW_DAYS;
     delete process.env.GROWTH_DISABLE_STORE_LAYOUT_MIGRATE;
+    if (ORIGINAL_HISTORY_UPDATES) process.env.GROWTH_DISABLE_HISTORY_LEDGER_UPDATES = ORIGINAL_HISTORY_UPDATES;
+    else delete process.env.GROWTH_DISABLE_HISTORY_LEDGER_UPDATES;
     if (tempRoot) await fs.rm(tempRoot, { recursive: true, force: true });
   });
 
@@ -165,6 +170,75 @@ describe("growth store merge + hot-window prune", () => {
     const ids = store.collections?.douyin?.items.map((it) => it.id) || [];
     expect(ids).toContain("fresh-1");
     expect(ids.filter((id) => id.startsWith("keep-"))).toHaveLength(30);
+  });
+
+  it("封面回补只更新 current，不重复归档整个平台池", async () => {
+    const {
+      mergeTrendCollections,
+      mergeTrendCollectionsWithOptions,
+      readTrendStore,
+      writeTrendStore,
+    } = await import("./trendStore");
+    const baselineAt = new Date(Date.now() - 120_000).toISOString();
+    const baseline = makeCollection(
+      Array.from({ length: 10 }, (_, index) => makeItem(`existing-${index}`, baselineAt)),
+      baselineAt,
+    );
+    await writeTrendStore({ douyin: baseline });
+
+    const firstAt = new Date(Date.now() - 60_000).toISOString();
+    const first = makeCollection([makeItem("new-batch-item", firstAt)], firstAt);
+    await mergeTrendCollections({ douyin: first });
+    const beforeStore = await readTrendStore({ preferDerivedFiles: true });
+    const archiveFile = beforeStore.archiveIndex[0]?.file;
+    expect(archiveFile).toBeTruthy();
+    const beforeArchive = await fs.readFile(archiveFile!);
+    const archivedCollection = JSON.parse(gunzipSync(beforeArchive).toString("utf8")) as PlatformTrendCollection;
+    expect(archivedCollection.items).toHaveLength(1);
+    expect(beforeStore.collections.douyin?.items).toHaveLength(11);
+    const ledgerFile = path.join(tempRoot, "history-ledger", "douyin.json");
+    const beforeLedger = await fs.readFile(ledgerFile);
+
+    const enrichedAt = new Date().toISOString();
+    const enriched: PlatformTrendCollection = {
+      ...beforeStore.collections.douyin!,
+      collectedAt: firstAt,
+      items: beforeStore.collections.douyin!.items.map((item) => ({
+        ...item,
+        ...(item.id === "new-batch-item" ? {
+          coverUrl: "https://example.test/cover.jpg",
+          coverCapturedAt: enrichedAt,
+        } : {}),
+      })),
+    };
+    await mergeTrendCollectionsWithOptions(
+      { douyin: enriched },
+      { skipArchive: true, deferHistoryLedger: true },
+    );
+
+    const store = await readTrendStore({ preferDerivedFiles: true });
+    const matchingIndex = store.archiveIndex.filter((entry) => entry.file === archiveFile);
+    expect(matchingIndex).toHaveLength(1);
+    expect(store.collections.douyin?.items.find((item) => item.id === "new-batch-item")?.coverUrl)
+      .toBe("https://example.test/cover.jpg");
+    expect(await fs.readFile(archiveFile!)).toEqual(beforeArchive);
+    expect(await fs.readFile(ledgerFile)).toEqual(beforeLedger);
+  });
+
+  it("archive index 按物理文件去重并保留最新记录", async () => {
+    const { dedupeGrowthArchiveIndex } = await import("./trendStore");
+    const older = {
+      platform: "douyin" as const,
+      bucket: "feed",
+      bucketCounts: {},
+      archivedAt: "2026-08-31T01:00:00.000Z",
+      source: "live" as const,
+      itemCount: 1,
+      dedupedCount: 1,
+      file: "/data/growth/archive/2026-08-31-01/same.json.gz",
+    };
+    const newer = { ...older, archivedAt: "2026-08-31T01:05:00.000Z", itemCount: 2 };
+    expect(dedupeGrowthArchiveIndex([older, newer])).toEqual([newer]);
   });
 
   it("单平台 merge 不重新 gzip 其他平台真值文件", async () => {

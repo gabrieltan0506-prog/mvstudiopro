@@ -13,6 +13,7 @@ import {
   ensureGrowthStoreSplitGzipLayout,
   readTrendSchedulerState,
   mergeTrendCollections,
+  mergeTrendCollectionsWithOptions,
   readGrowthRuntimeControl,
   reconcileTrendHistoryState,
   resetTrendRuntimeForDeploy,
@@ -549,7 +550,13 @@ async function runPlatformTask(platform: GrowthPlatform) {
         ));
       if (coverOutcome.ok) {
         if (coverOutcome.value.resolved > 0) {
-          mergedStore = await mergeTrendCollections({ [platform]: coverOutcome.value.collection });
+          // 封面回补传入的是已经合并后的完整平台池。若再走普通 merge，会把几十万条
+          // current 当成新采集批次写入 archive；B站曾因此每约 19 分钟落一份约 42MB
+          // 的整库 gzip。这里仅更新 current，不重复写 archive/history。
+          mergedStore = await mergeTrendCollectionsWithOptions(
+            { [platform]: coverOutcome.value.collection },
+            { skipArchive: true, deferHistoryLedger: true },
+          );
         }
       } else if (coverOutcome.priorityAborted) {
         console.info(`[growth.scheduler] ${platform} 核心数据已提交；封面回补为前台任务让路。`);

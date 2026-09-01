@@ -364,6 +364,60 @@ type PlatformCurrentBatchManifest = {
   }>;
 };
 
+type GrowthArchiveColdManifest = {
+  schemaVersion: number;
+  dir: string;
+  archive: { assetName: string; bytes: number; sha256: string };
+  parts: Array<{ assetName: string; bytes: number; sha256: string; index: number }>;
+};
+
+function isSafeArchiveDirName(value: string) {
+  return /^\d{4}-\d{2}-\d{2}(?:-\d{2})?$/.test(value);
+}
+
+export function parseGrowthArchiveColdManifest(
+  value: unknown,
+  expectedDir: string,
+): GrowthArchiveColdManifest {
+  const manifest = value as GrowthArchiveColdManifest;
+  const expectedArchive = `archive-${expectedDir}.tar.gz`;
+  if (
+    !isSafeArchiveDirName(expectedDir)
+    || manifest?.schemaVersion !== 1
+    || manifest.dir !== expectedDir
+    || manifest.archive?.assetName !== expectedArchive
+    || !Number.isSafeInteger(manifest.archive?.bytes)
+    || manifest.archive.bytes <= 0
+    || !/^[a-f0-9]{64}$/.test(String(manifest.archive?.sha256 || ""))
+    || !Array.isArray(manifest.parts)
+    || manifest.parts.length !== 1
+    || manifest.parts[0]?.assetName !== expectedArchive
+    || manifest.parts[0]?.index !== 0
+    || manifest.parts[0]?.bytes !== manifest.archive.bytes
+    || manifest.parts[0]?.sha256 !== manifest.archive.sha256
+  ) {
+    throw new Error(`growth_archive_manifest_invalid:${expectedDir}`);
+  }
+  return manifest;
+}
+
+export function assertSafeGrowthArchiveTarEntries(dirName: string, listing: string) {
+  if (!isSafeArchiveDirName(dirName)) throw new Error(`growth_archive_dir_invalid:${dirName}`);
+  const entries = listing.split(/\r?\n/).map((entry) => entry.replace(/\/$/, "")).filter(Boolean);
+  if (!entries.length) throw new Error(`growth_archive_tar_empty:${dirName}`);
+  for (const entry of entries) {
+    const components = entry.split("/");
+    if (
+      entry.startsWith("/")
+      || entry.includes("\\")
+      || components.includes("..")
+      || (entry !== dirName && !entry.startsWith(`${dirName}/`))
+    ) {
+      throw new Error(`growth_archive_tar_path_invalid:${dirName}:${entry}`);
+    }
+  }
+}
+
 export function assertGrowthColdStoreChunkIntegrity(
   label: string,
   bytes: Uint8Array,
@@ -566,22 +620,78 @@ function resolveArchiveRelativePath(filePath: string) {
   return normalized.replace(/^\/+/, "");
 }
 
-async function ensureOffloadedArchiveDir(dirName: string) {
-  if (!dirName || !canUseGithubColdStore()) return null;
+export async function ensureOffloadedArchiveDir(dirName: string) {
+  if (!isSafeArchiveDirName(dirName) || !canUseGithubColdStore()) return null;
   const targetDir = path.join(GITHUB_OFFLOAD_CACHE_DIR, "archive", dirName);
   try {
     await fs.access(targetDir);
     return targetDir;
   } catch {}
-  const bundle = await downloadColdStoreAsset(`archive-${dirName}.tar.gz`, path.join("bundles", `archive-${dirName}.tar.gz`));
-  if (!bundle) return null;
-  await fs.mkdir(path.join(GITHUB_OFFLOAD_CACHE_DIR, "archive"), { recursive: true });
-  try {
-    await execFileAsync("tar", ["-xzf", bundle, "-C", path.join(GITHUB_OFFLOAD_CACHE_DIR, "archive")], { maxBuffer: 64 * 1024 * 1024 });
-    return targetDir;
-  } catch {
-    return null;
+  const archiveAsset = `archive-${dirName}.tar.gz`;
+  const manifestAsset = `archive-${dirName}.manifest.json`;
+  const manifestPath = await downloadColdStoreAsset(
+    manifestAsset,
+    path.join("manifests", manifestAsset),
+  );
+  let manifest: GrowthArchiveColdManifest | null = null;
+  if (manifestPath) {
+    try {
+      manifest = parseGrowthArchiveColdManifest(
+        JSON.parse(await fs.readFile(manifestPath, "utf8")),
+        dirName,
+      );
+    } catch (error) {
+      console.warn(`[growth.cold-store] archive manifest invalid: ${dirName}`, error);
+      return null;
+    }
   }
+  let bundle = await downloadColdStoreAsset(archiveAsset, path.join("bundles", archiveAsset));
+  if (!bundle) return null;
+  if (manifest) {
+    let integrity = await hashLocalFile(bundle).catch(() => null);
+    if (integrity?.bytes !== manifest.archive.bytes || integrity.sha256 !== manifest.archive.sha256) {
+      await fs.unlink(bundle).catch(() => {});
+      bundle = await downloadColdStoreAsset(archiveAsset, path.join("bundles", archiveAsset));
+      integrity = bundle ? await hashLocalFile(bundle).catch(() => null) : null;
+    }
+    if (!bundle || integrity?.bytes !== manifest.archive.bytes || integrity.sha256 !== manifest.archive.sha256) {
+      console.warn(`[growth.cold-store] archive bundle integrity mismatch: ${dirName}`);
+      return null;
+    }
+  }
+  const archiveRoot = path.join(GITHUB_OFFLOAD_CACHE_DIR, "archive");
+  const stageRoot = path.join(archiveRoot, `.next-${dirName}-${process.pid}-${Date.now()}`);
+  await fs.mkdir(archiveRoot, { recursive: true });
+  await fs.rm(stageRoot, { recursive: true, force: true });
+  await fs.mkdir(stageRoot, { recursive: true });
+  try {
+    const { stdout } = await execFileAsync("tar", ["-tzf", bundle], { maxBuffer: 64 * 1024 * 1024 });
+    assertSafeGrowthArchiveTarEntries(dirName, stdout);
+    await execFileAsync("tar", ["-xzf", bundle, "-C", stageRoot], { maxBuffer: 64 * 1024 * 1024 });
+    const stagedDir = path.join(stageRoot, dirName);
+    if (!(await fs.stat(stagedDir)).isDirectory()) throw new Error(`growth_archive_extract_missing:${dirName}`);
+    await fs.rename(stagedDir, targetDir).catch(async (error: NodeJS.ErrnoException) => {
+      if (error.code !== "EEXIST" && error.code !== "ENOTEMPTY") throw error;
+    });
+    return targetDir;
+  } catch (error) {
+    console.warn(`[growth.cold-store] archive restore failed: ${dirName}`, error);
+    return null;
+  } finally {
+    await fs.rm(stageRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export function dedupeGrowthArchiveIndex(entries: TrendArchiveEntry[]) {
+  const seen = new Set<string>();
+  return [...entries]
+    .sort((left, right) => new Date(right.archivedAt).getTime() - new Date(left.archivedAt).getTime())
+    .filter((entry) => {
+      const key = resolveArchiveRelativePath(entry.file);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 }
 
 function buildGrowthDebugSummary(store: TrendStoreFile): GrowthDebugSummary {
@@ -2903,7 +3013,7 @@ export async function restoreTrendPlatformCurrentFromBaseline(
 
 async function mergeTrendCollectionsWithOptionsUnlocked(
   collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
-  options?: { deferHistoryLedger?: boolean },
+  options?: { deferHistoryLedger?: boolean; skipArchive?: boolean },
 ) {
   const current = await readTrendStore({ preferDerivedFiles: true });
   const next: TrendStoreFile = {
@@ -2921,8 +3031,10 @@ async function mergeTrendCollectionsWithOptionsUnlocked(
     if (!incoming) continue;
     const merged = mergeCollection(next.collections[platformKey], incoming);
     next.collections[platformKey] = merged.collection;
-    const archiveEntry = await archiveCollection(platformKey, incoming, merged.dedupedCount);
-    next.archiveIndex.push(archiveEntry);
+    if (!options?.skipArchive) {
+      const archiveEntry = await archiveCollection(platformKey, incoming, merged.dedupedCount);
+      next.archiveIndex.push(archiveEntry);
+    }
     mergeStats[platformKey] = {
       platform: platformKey,
       source: incoming.source,
@@ -2942,9 +3054,10 @@ async function mergeTrendCollectionsWithOptionsUnlocked(
     };
   }
 
-  next.archiveIndex = (await pruneOldArchives(next.archiveIndex))
-    .sort((left, right) => new Date(right.archivedAt).getTime() - new Date(left.archivedAt).getTime())
-    .slice(0, 5000);
+  // 同一 collectedAt 的封面回补曾把同一路径再次写入 index；只保留最新一条索引，
+  // 物理归档文件不在这里删除，避免索引上限被重复项占满并丢掉较早的真实分片。
+  // 必须先去重再清理过期项；否则同路径的旧重复项可能先删掉仍由新索引引用的文件。
+  next.archiveIndex = (await pruneOldArchives(dedupeGrowthArchiveIndex(next.archiveIndex))).slice(0, 5000);
 
   if (!options?.deferHistoryLedger) {
     await updateHistoryFromCollections(next, collections);
@@ -2968,7 +3081,7 @@ async function mergeTrendCollectionsWithOptionsUnlocked(
 
 export async function mergeTrendCollectionsWithOptions(
   collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
-  options?: { deferHistoryLedger?: boolean },
+  options?: { deferHistoryLedger?: boolean; skipArchive?: boolean },
 ) {
   return withGrowthStoreMutationLock(
     "merge-trend-collections",

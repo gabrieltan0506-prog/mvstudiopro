@@ -4143,7 +4143,7 @@ export const appRouter = router({
             userId: ctx.user.id,
             creditsBilled,
             action: `平台數據分析（${input.windowDays}天窗口）`,
-            externalApiCostHint: "Gemini 3.1 Pro 双阶段推演",
+            externalApiCostHint: "北京 Qwen 3.8→新加坡 Qwen 3.8→GLM-5.3 双阶段",
             metadata: {
               windowDays: input.windowDays,
               requestedPlatforms: input.requestedPlatforms,
@@ -4157,7 +4157,7 @@ export const appRouter = router({
           id: jobId,
           userId: String(ctx.user.id),
           type: "platform",
-          provider: "vertex",
+          provider: "platform_text_analysis",
           input: {
             action: "platform_analysis",
             params: {
@@ -5323,7 +5323,7 @@ export const appRouter = router({
             userId: ctx.user.id,
             creditsBilled: deduct.cost,
             action: `平台趋势报告（${input.windowDays}天）`,
-            externalApiCostHint: "趋势结构化分析(DeepSeek→GLM 自动路由)",
+            externalApiCostHint: "趋势结构化分析(GLM-5.3→DeepSeek 兜底)",
             deduct,
             metadata: {
               action: "platform_visual_report",
