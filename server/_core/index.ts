@@ -410,8 +410,49 @@ async function startServer() {
         if (sourceKey) {
           const active = await findActiveManhuaTemplateLearnJobForSource(resolvedUserId, sourceKey);
           if (active) {
+            const currentParams = params as Record<string, unknown>;
+            const activeInput = active.input && typeof active.input === "object" && !Array.isArray(active.input)
+              ? active.input as Record<string, unknown>
+              : {};
+            const activeParams = activeInput.params && typeof activeInput.params === "object" && !Array.isArray(activeInput.params)
+              ? activeInput.params as Record<string, unknown>
+              : {};
+            const {
+              MANHUA_NATIVE_DEEP_READ_ACTIVE_PARAMS_CONFLICT_CODE,
+              hasNativeDeepReadJobFields,
+              parseNativeDeepReadJobConfirmation,
+              sameNativeDeepReadJobConfirmation,
+            } = await import("../../shared/manhuaNativeDeepReadJob.js");
+            const currentNative = hasNativeDeepReadJobFields(currentParams);
+            const activeNative = hasNativeDeepReadJobFields(activeParams);
+            let sameConfirmedPlan = currentNative === activeNative;
+            if (sameConfirmedPlan && currentNative) {
+              try {
+                const { readManhuaLearnExtraSourceHosts } = await import(
+                  "../services/manhuaLearn0996Source.js"
+                );
+                const options = { extraSourceHosts: readManhuaLearnExtraSourceHosts() };
+                sameConfirmedPlan = sameNativeDeepReadJobConfirmation(
+                  parseNativeDeepReadJobConfirmation(currentParams, options),
+                  parseNativeDeepReadJobConfirmation(activeParams, options),
+                );
+              } catch {
+                sameConfirmedPlan = false;
+              }
+            }
+            if (!sameConfirmedPlan) {
+              return res.status(409).json({
+                code: MANHUA_NATIVE_DEEP_READ_ACTIVE_PARAMS_CONFLICT_CODE,
+                error: "同一来源已有使用另一组确认参数的任务；已保留原任务，未用旧 jobId 冒充本次设置。请先停止原任务后再提交。",
+              });
+            }
             void processManhuaLearnJobsOnce().catch(() => {});
-            return res.status(200).json({ jobId: active.id, status: active.status, reused: true });
+            return res.status(200).json({
+              jobId: active.id,
+              status: active.status,
+              reused: true,
+              reuseMatch: currentNative ? "native_confirmation" : "source_only",
+            });
           }
         }
       }

@@ -27,6 +27,7 @@ import {
 } from "./manhuaNativeDeepReadRunner";
 import { getManhuaLearnPipelineMeta } from "../../shared/manhuaTemplateLearnPipeline";
 import { splitNativeDeepReadSegments } from "./manhuaNativeDeepReadPlan";
+import { validateNativeDeepReadBatchPlan } from "./manhuaNativeDeepReadExecution";
 import { parseNativeDeepReadJobConfirmation } from "../../shared/manhuaNativeDeepReadJob";
 
 /** 生产里 currentEpisodeMediaSource 返回的就是这种「已解析直链 + Referer」 */
@@ -85,12 +86,14 @@ describe("素材接入层 → 原生精读的接缝", () => {
     }, deps(1593.586))).rejects.toThrow("与确认计划不一致");
   });
 
-  it("同源 partial 续学只按确认计划恢复原边界和 fps，不受当前 UI 分片参数影响", async () => {
+  it("同源 partial 原边界符合当前自定义长度时复用，并保留原 fps", async () => {
     const confirmedPlanEpisode = {
       episodeIndex: 1,
       sourceUrl: "https://www.douyin.com/video/7641538290936947889",
       durationSec: 319,
+      segmentSeconds: 200,
       videoFps: 10,
+      laneHintZh: "都市悬疑",
       segments: [
         { startSec: 0, endSec: 200 },
         { startSec: 200, endSec: 319 },
@@ -101,14 +104,26 @@ describe("素材接入层 → 原生精读的接缝", () => {
       seriesKey: "s1",
       ep: ep(),
       confirmedPlanEpisode,
-      segmentSeconds: 100,
+      segmentSeconds: 200,
       videoFps: 12,
+      laneHintZh: "都市悬疑",
+      provenanceSourceRef: "gs://test-bucket/source.mp4",
     }, deps(319));
     expect(plan.segments).toEqual(confirmedPlanEpisode.segments);
+    expect(plan.segmentSeconds).toBe(200);
     expect(plan.videoFps).toBe(10);
+    const previewHash = validateNativeDeepReadBatchPlan([{
+      ...confirmedPlanEpisode,
+      resolveNodes: async () => [],
+    }], { seriesKey: "s1", segmentSeconds: 200 }).planHash;
+    const executionHash = validateNativeDeepReadBatchPlan([plan], {
+      seriesKey: "s1",
+      segmentSeconds: 200,
+    }).planHash;
+    expect(executionHash).toBe(previewHash);
   });
 
-  it("同源 partial 续学不会因当前 UI 分片参数会产生过多片而阻断原计划", async () => {
+  it("同源 partial 的313秒旧边界不能冒充当前60秒设置", async () => {
     const confirmedPlanEpisode = {
       episodeIndex: 1,
       sourceUrl: "https://www.douyin.com/video/7641538290936947889",
@@ -120,18 +135,16 @@ describe("素材接入层 → 原生精读的接缝", () => {
       })),
       resumeStoredSegmentPlan: true,
     };
-    const plan = await buildNativeDeepReadEpisodeExecution({
+    await expect(buildNativeDeepReadEpisodeExecution({
       seriesKey: "s1",
       ep: ep(),
       confirmedPlanEpisode,
       segmentSeconds: 60,
       videoFps: 10,
-    }, deps(2_817));
-    expect(plan.segments).toEqual(confirmedPlanEpisode.segments);
-    expect(plan.videoFps).toBe(12);
+    }, deps(2_817))).rejects.toThrow("实际分片未按自定义 60s 计算");
   });
 
-  it("同源 partial 的精确小数末端贯穿执行与缓存身份，不被四舍五入改写", async () => {
+  it("旧精确等分 partial 与当前300秒设置不一致时关闭式停止", async () => {
     const exactDuration = 1593.899675;
     const confirmedPlanEpisode = {
       episodeIndex: 1,
@@ -144,15 +157,13 @@ describe("素材接入层 → 原生精读的接缝", () => {
       ],
       resumeStoredSegmentPlan: true,
     };
-    const plan = await buildNativeDeepReadEpisodeExecution({
+    await expect(buildNativeDeepReadEpisodeExecution({
       seriesKey: "s1",
       ep: ep(),
       confirmedPlanEpisode,
       segmentSeconds: 300,
       videoFps: 12,
-    }, deps(exactDuration));
-    expect(plan.durationSec).toBe(exactDuration);
-    expect(plan.segments).toEqual(confirmedPlanEpisode.segments);
+    }, deps(exactDuration))).rejects.toThrow("实际分片未按自定义 300s 计算");
   });
 
   it("普通确认计划没有恢复标记时仍拒绝与当前 UI 重算不一致的边界", async () => {

@@ -75,6 +75,8 @@ export type NativeDeepReadPlanEpisode = {
   episodeIndex: number;
   sourceUrl: string;
   durationSec: number;
+  /** 与本次任务确认值一致；尾片可短，其他分片必须严格按它计算。 */
+  segmentSeconds?: number;
   videoFps?: number;
   segments: NativeDeepReadPlanSegment[];
   /** 该集是自动让位的失败重跑（执行时原子接管旧占位；段缓存让已成段零费） */
@@ -139,6 +141,16 @@ export function assertNativeDeepReadPlanConfirmation(
   if (parseNativeDeepReadSegmentSeconds(confirmed.segmentSeconds)
     !== parseNativeDeepReadSegmentSeconds(current.segmentSeconds)) {
     throw new Error("原生精读分片时长与任务参数不一致，未发出模型请求");
+  }
+  if (current.episodes.length) {
+    validateNativeDeepReadBatchPlan(
+      current.episodes.map((episode) => ({ ...episode, resolveNodes: async () => [] })),
+      {
+        maxEpisodes: NATIVE_DEEP_READ_BATCH_HARD_CEILING,
+        seriesKey: current.seriesKey,
+        segmentSeconds: current.segmentSeconds,
+      },
+    );
   }
   const pendingClaims = new Set(current.pendingClaimEpisodeIndexes);
   const overlappingClaims = current.episodes
@@ -297,6 +309,7 @@ export function computeNativeDeepReadPlanHash(
         // 分享链的查询参数会变化；同一 aweme 用稳定视频 id，来源真的换集才让确认码失效。
         u: extractDouyinVideoIdFromUrl(e.sourceUrl) || e.sourceUrl,
         d: Math.floor(e.durationSec),
+        l: parseNativeDeepReadSegmentSeconds(e.segmentSeconds),
         fps: parseNativeDeepReadVideoFps(e.videoFps),
         s: e.segments.map((g) => [Math.round(g.startSec), Math.round(g.endSec)]),
       })),
@@ -590,7 +603,7 @@ export async function buildNativeDeepReadPlanPreview(
       }
     } else {
       // 抖音近期大量“全集/完整版”长视频不再挂官方 mix_info，但详情仍返回
-      // 免费媒体流。它不是坏搜索页，应作为一个独立长学习源进入同一条 300 秒
+      // 免费媒体流。它不是坏搜索页，应作为一个独立长学习源进入同一条自定义时长
       // 分片链；身份只绑定 awemeId，绝不凭标题猜合集或与同名剧串库。
       const playbackUrls = Array.from(new Set([
         ...(detail.playbackUrls || []),
@@ -804,6 +817,7 @@ export async function buildNativeDeepReadPlanPreview(
       episodeIndex: e.index,
       sourceUrl: e.url,
       durationSec,
+      segmentSeconds,
       videoFps: restored?.videoFps ?? videoFps,
       segments: restored?.segments ?? splitNativeDeepReadSegments(durationSec, segmentSeconds),
       ...(reclaimSet.has(e.index) ? { reclaimFailedClaim: true } : {}),
@@ -816,7 +830,7 @@ export async function buildNativeDeepReadPlanPreview(
   const plan = episodes.length
     ? validateNativeDeepReadBatchPlan(
         episodes.map((e) => ({ ...e, resolveNodes: async () => [] })),
-        { maxEpisodes: limit, seriesKey },
+        { maxEpisodes: limit, seriesKey, segmentSeconds },
       )
     : null;
 
@@ -845,4 +859,22 @@ export async function buildNativeDeepReadPlanPreview(
     executableEpisodeCount: episodes.length,
     executionEnabled: deps.isExecutionEnabled(),
   };
+}
+
+/** 面板计划摘要：把实际采用的自定义上限与尾片长度说清楚。 */
+export function describeNativeDeepReadSegmentPlanZh(
+  plan: Pick<NativeDeepReadPlanPreview, "segmentSeconds" | "episodes">,
+): string {
+  const segmentSeconds = parseNativeDeepReadSegmentSeconds(plan.segmentSeconds);
+  const episodesZh = plan.episodes.map((episode) => {
+    const count = episode.segments.length;
+    const tail = episode.segments.at(-1);
+    const tailSeconds = tail
+      ? Math.round((tail.endSec - tail.startSec) * 100) / 100
+      : 0;
+    return count <= 1
+      ? `第 ${episode.episodeIndex} 集 1 片（整片 ${tailSeconds} 秒）`
+      : `第 ${episode.episodeIndex} 集 ${count} 片（前 ${count - 1} 片各 ${segmentSeconds} 秒，尾片 ${tailSeconds} 秒）`;
+  });
+  return `分片上限 ${segmentSeconds} 秒${episodesZh.length ? ` · ${episodesZh.join("；")}` : ""}`;
 }

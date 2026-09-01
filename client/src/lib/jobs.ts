@@ -1,5 +1,6 @@
 import { withFlyHealthGate } from "@/lib/flyHealthGate";
 import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
+import { MANHUA_NATIVE_DEEP_READ_ACTIVE_PARAMS_CONFLICT_CODE } from "@shared/manhuaNativeDeepReadJob";
 
 export type JobType = "video" | "image" | "audio";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";
@@ -9,6 +10,24 @@ export type JobResponse = {
   output?: Record<string, any>;
   error?: string;
 };
+
+export class CreateJobError extends Error {
+  readonly status: number;
+  readonly code?: string;
+
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = "CreateJobError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export function isManhuaNativeDeepReadParamsConflict(error: unknown): error is CreateJobError {
+  return error instanceof CreateJobError
+    && error.status === 409
+    && error.code === MANHUA_NATIVE_DEEP_READ_ACTIVE_PARAMS_CONFLICT_CODE;
+}
 
 export type ManhuaLearnServerJob = {
   jobId: string;
@@ -79,7 +98,12 @@ export async function createJob(payload: {
   type: JobType;
   userId: string;
   input: Record<string, unknown>;
-}): Promise<{ jobId: string }> {
+}): Promise<{
+  jobId: string;
+  status?: JobStatus;
+  reused?: boolean;
+  reuseMatch?: "native_confirmation" | "source_only";
+}> {
   const url = withLongJobsFlyDirect("/api/jobs");
   const response = await withFlyHealthGate(flyHealthProbeOriginForUrl(url), () =>
     fetch(url, {
@@ -93,17 +117,29 @@ export async function createJob(payload: {
   );
 
   if (!response.ok) {
-    throw new Error(await formatCreateJobError(response));
+    const detail = await parseCreateJobError(response);
+    throw new CreateJobError(detail.message, response.status, detail.code);
   }
 
-  return response.json() as Promise<{ jobId: string }>;
+  return response.json() as Promise<{
+    jobId: string;
+    status?: JobStatus;
+    reused?: boolean;
+    reuseMatch?: "native_confirmation" | "source_only";
+  }>;
 }
 
 async function formatCreateJobError(response: Response): Promise<string> {
+  return (await parseCreateJobError(response)).message;
+}
+
+async function parseCreateJobError(response: Response): Promise<{ message: string; code?: string }> {
   const detail = await response.text().catch(() => "");
   let message = detail || `Failed to create job (${response.status})`;
+  let code: string | undefined;
   try {
-    const parsed = JSON.parse(detail) as { error?: string };
+    const parsed = JSON.parse(detail) as { error?: string; code?: string };
+    if (typeof parsed?.code === "string" && parsed.code.trim()) code = parsed.code.trim();
     if (parsed?.error === "Invalid job type") {
       message = "任务类型无效，请刷新后重试";
     } else if (typeof parsed?.error === "string" && parsed.error.trim()) {
@@ -112,7 +148,7 @@ async function formatCreateJobError(response: Response): Promise<string> {
   } catch {
     /* keep raw */
   }
-  return message;
+  return { message, code };
 }
 
 /**

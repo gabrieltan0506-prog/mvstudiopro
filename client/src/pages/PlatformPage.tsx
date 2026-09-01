@@ -94,6 +94,7 @@ import {
   createJob,
   getJob,
   hideManhuaLearnServerSeries,
+  isManhuaNativeDeepReadParamsConflict,
   listManhuaLearnServerJobs,
   pollJobUntilTerminal,
   skipManhuaLearnServerEpisode,
@@ -5647,6 +5648,12 @@ export default function PlatformPage() {
       const gcsUri = String(row.gcsUri || "").trim();
       const title = String(row.mixName || "").trim();
       const source = gcsUri || url;
+      const previousSourceItem = manhuaLearnBasket.find((item) => String(
+        item.continuation.row.gcsUri || item.continuation.row.url || "",
+      ).trim() === source);
+      const previousContinuation = manhuaLearnContinueRef.current;
+      const previousFocusSeriesKey = manhuaLearnFocusSeriesKeyRef.current;
+      const previousResult = manhuaLearnResult;
       const busyKey = String(row.mixId || source || title || rank);
       const isKuaishou = row.platform === "kuaishou";
       if (!source) {
@@ -5794,7 +5801,7 @@ export default function PlatformPage() {
         return next;
       });
       try {
-        const { jobId } = await createJob({
+        const { jobId, reused, reuseMatch, status: acceptedStatus } = await createJob({
           type: "video",
           userId: String(user.id),
           input: {
@@ -5818,11 +5825,12 @@ export default function PlatformPage() {
           },
         });
         if (manhuaLearnUserKeyRef.current !== requestUserKey) return;
+        const reusedExactNativePlan = reused === true && reuseMatch === "native_confirmation";
         setManhuaLearnBasket((prev) => {
           const next = upsertManhuaLearnBasketItem(prev, {
             ...optimisticItem,
             jobId,
-            jobStatus: "queued",
+            jobStatus: acceptedStatus === "running" ? "running" : "queued",
             updatedAt: Date.now(),
           });
           writeManhuaLearnBasket(requestUserKey, next);
@@ -5831,17 +5839,86 @@ export default function PlatformPage() {
         setManhuaLearnJobPollTrace((prev) => ({
           jobId,
           label: prev?.label || `学节奏 · ${title.slice(0, 24) || "未命名"}`,
-          lines: appendPollDebugLine(prev?.lines || [], `${new Date().toISOString()} 已持久入队 jobId=${jobId}`),
+          lines: appendPollDebugLine(
+            prev?.lines || [],
+            `${new Date().toISOString()} ${reusedExactNativePlan ? "接管同参数已有任务" : reused ? "接管同源已有任务" : "已持久入队"} jobId=${jobId}`,
+          ),
           pollCount: 0,
-          currentStep: "服务器已接管",
+          currentStep: reusedExactNativePlan
+            ? "已接管同参数任务"
+            : reused ? "已接管同源任务" : "服务器已接管",
         }));
-        await refreshManhuaLearnServerJobs();
-        toast.message("已交给服务器学习", {
-          description: "最多同时学习两部，其余自动排队；关闭页面也会继续。",
+        try {
+          await refreshManhuaLearnServerJobs();
+        } catch {
+          // 入队/接管已经成功；列表瞬时刷新失败不能把真实运行任务改画成“入队失败”。
+          setManhuaLearnJobPollTrace((prev) => prev ? ({
+            ...prev,
+            lines: appendPollDebugLine(
+              prev.lines,
+              `${new Date().toISOString()} 任务已接管，列表刷新暂时失败，稍后自动重试`,
+            ),
+          }) : prev);
+        }
+        toast.message(reusedExactNativePlan ? "已接管同参数的已有任务" : reused ? "已接管同源已有任务" : "已交给服务器学习", {
+          description: reusedExactNativePlan
+            ? "来源与整份确认参数完全一致，因此继续查看原任务。"
+            : reused
+              ? "旧兼容任务仅按来源复用，请以任务详情中的参数为准。"
+            : "最多同时学习两部，其余自动排队；关闭页面也会继续。",
         });
       } catch (e) {
         if (manhuaLearnUserKeyRef.current !== requestUserKey) return;
         const msg = sanitizePlatformUserMessage(e instanceof Error ? e.message : String(e));
+        if (isManhuaNativeDeepReadParamsConflict(e)) {
+          // 服务端明确保留了另一组参数的旧任务。恢复旧卡并刷新真状态，
+          // 不能把本次未入队的 optimistic 卡写成 failed 覆盖正在运行的任务。
+          if (previousSourceItem) {
+            manhuaLearnContinueRef.current = previousSourceItem.continuation;
+            writeManhuaLearnContinuation(requestUserKey, previousSourceItem.continuation);
+            setManhuaLearnResult(previousSourceItem.result);
+            setManhuaLearnFocusSeriesKey(previousSourceItem.seriesKey);
+            writeManhuaLearnFocusSeriesKey(requestUserKey, previousSourceItem.seriesKey);
+            setManhuaLearnBasket((prev) => {
+              const next = upsertManhuaLearnBasketItem(
+                removeManhuaLearnBasketItem(prev, optimisticItem.seriesKey),
+                previousSourceItem,
+              );
+              writeManhuaLearnBasket(requestUserKey, next);
+              return next;
+            });
+          } else {
+            manhuaLearnContinueRef.current = previousContinuation;
+            writeManhuaLearnContinuation(requestUserKey, previousContinuation);
+            setManhuaLearnResult(previousResult);
+            setManhuaLearnFocusSeriesKey(previousFocusSeriesKey);
+            writeManhuaLearnFocusSeriesKey(requestUserKey, previousFocusSeriesKey);
+            setManhuaLearnBasket((prev) => {
+              const next = removeManhuaLearnBasketItem(prev, optimisticItem.seriesKey);
+              writeManhuaLearnBasket(requestUserKey, next);
+              return next;
+            });
+          }
+          setManhuaLearnJobPollTrace((prev) => ({
+            jobId: previousSourceItem?.jobId || prev?.jobId || "conflict",
+            label: prev?.label || `学节奏 · ${title.slice(0, 24) || "未命名"}`,
+            lines: appendPollDebugLine(
+              prev?.lines || [],
+              `${new Date().toISOString()} 已保留同源旧任务；本次参数不同，未建立新任务`,
+            ),
+            pollCount: prev?.pollCount || 0,
+            currentStep: "已有另一组参数的任务",
+          }));
+          try {
+            await refreshManhuaLearnServerJobs();
+          } catch {
+            // 旧卡已恢复；列表刷新失败时由既有轮询重试，不改写为失败。
+          }
+          toast.error("同一来源已有另一组参数的任务", {
+            description: `${msg} 可先在面板停止原任务，再按当前设置提交。`,
+          });
+          return;
+        }
         const failed = manhuaLearnResultFromFailure({ errorZh: msg, url, title, prev: startUi });
         setManhuaLearnResult(failed);
         setManhuaLearnBasket((prev) => {
@@ -5871,6 +5948,8 @@ export default function PlatformPage() {
       manhuaLearnBatchSize,
       manhuaLearnSegmentSecondsInput,
       manhuaLearnVideoFpsInput,
+      manhuaLearnBasket,
+      manhuaLearnResult,
       manhuaLearnUserKey,
       ownerTemplateOptimizeAllowed,
       manhuaTemplateOwnerCapabilitiesQuery.isError,
@@ -12509,7 +12588,7 @@ export default function PlatformPage() {
                               className="w-24 rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] tabular-nums text-white disabled:opacity-45"
                             />
                             <span id="manhua-learn-segment-seconds-help" className="text-[10px] text-[#c9c0e6]/50">
-                              1–{NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS} 秒，默认 {NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS}；尾片完整保留。分片时长与采样fps分别设置，不自动换档。
+                              1–{NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS} 秒，未设置时默认 {NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS}；本次计划、切片与执行门禁均使用当前值，尾片完整保留。分片时长与采样fps分别设置，不自动换档。
                             </span>
                             {manhuaLearnSegmentSecondsError ? (
                               <span role="alert" className="text-[10px] text-rose-200">{manhuaLearnSegmentSecondsError}</span>

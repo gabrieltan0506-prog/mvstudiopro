@@ -19,6 +19,9 @@ export const NATIVE_DEEP_READ_JOB_MAX_WALL_MS = 24 * 60 * 60_000;
  * 双音轨两路并行、视觉又按多视频装箱；这里仅保留防失控硬顶，墙钟另行封顶 24 小时。
  */
 export const NATIVE_DEEP_READ_JOB_MAX_CALLS = 200;
+/** 同源已有任务但本次确认参数不同；客户端必须保留旧运行卡，不得画成失败。 */
+export const MANHUA_NATIVE_DEEP_READ_ACTIVE_PARAMS_CONFLICT_CODE =
+  "MANHUA_NATIVE_DEEP_READ_ACTIVE_PARAMS_CONFLICT" as const;
 
 /** 默认分片长度，不是单片硬上限；采样率由独立设置控制。 */
 export const NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS = 300;
@@ -85,6 +88,21 @@ export type NativeDeepReadJobConfirmation = {
   seriesKey?: string;
   learnLlm: "gpt" | "claude" | "deepseek";
 };
+
+/** 同源任务只有整份确认契约一致时才可复用，不能让新面板参数接管旧 jobId。 */
+export function sameNativeDeepReadJobConfirmation(
+  left: NativeDeepReadJobConfirmation,
+  right: NativeDeepReadJobConfirmation,
+): boolean {
+  return left.url === right.url
+    && left.planHash === right.planHash
+    && left.maxCalls === right.maxCalls
+    && left.planLimit === right.planLimit
+    && left.segmentSeconds === right.segmentSeconds
+    && left.videoFps === right.videoFps
+    && left.seriesKey === right.seriesKey
+    && left.learnLlm === right.learnLlm;
+}
 
 export function hasNativeDeepReadJobFields(params: Record<string, unknown>): boolean {
   return NATIVE_DEEP_READ_JOB_FIELDS.some((key) =>

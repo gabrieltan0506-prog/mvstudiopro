@@ -23,6 +23,7 @@ import {
   NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
   resolveNativeDeepReadRequestFps,
   nativeDeepReadSegmentMeetsThreeItemLine,
+  isNativeDeepReadFinalSegmentAdmitted,
   nativeDeepReadSegmentCacheFingerprint,
   runManhuaNativeDeepRead,
   runManhuaNativeDeepReadBatch,
@@ -56,6 +57,7 @@ import { statGcsObjectVersion } from "./gcs.js";
 import { extractNativeKeyMomentEvidenceFrames } from "./manhuaNativeKeyMomentFrames.js";
 import {
   NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS,
+  parseNativeDeepReadSegmentSeconds,
   parseNativeDeepReadVideoFps,
 } from "../../shared/manhuaNativeDeepReadJob.js";
 import {
@@ -100,6 +102,8 @@ export type NativeDeepReadEpisodeExecution = {
     origin: "source_api";
   }>;
   durationSec: number;
+  /** 本次任务确认的分片长度；尾片可短，其他分片必须严格按它计算。 */
+  segmentSeconds?: number;
   laneHintZh?: string;
   videoFps?: number;
   segments: readonly NativeDeepReadSegmentSpec[];
@@ -307,7 +311,12 @@ export async function migrateMisplacedNativeDeepReadSegmentCaches(input: {
     }
     const alias = validAliases[0]?.entry;
     if (!alias) continue;
-    if (!nativeDeepReadSegmentMeetsThreeItemLine({
+    const reusableFinalSegmentAdmit = isNativeDeepReadFinalSegmentAdmitted({
+      raw: alias.raw,
+      segmentIndex,
+      segmentCount: input.segments.length,
+    });
+    if (!reusableFinalSegmentAdmit && !nativeDeepReadSegmentMeetsThreeItemLine({
       episodeIndex: input.episodeIndex,
       segmentIndex,
       startSec: segment.startSec,
@@ -459,7 +468,11 @@ export async function executeAndIngestNativeDeepReadEpisode(
   if (input.abortSignal?.aborted) throw new Error("用户已停止学习");
 
   // 单集入口也走同一份预检，不能只依赖批处理调用方。
-  validateNativeDeepReadBatchPlan([input], { maxEpisodes: 1, seriesKey: input.seriesKey });
+  validateNativeDeepReadBatchPlan([input], {
+    maxEpisodes: 1,
+    seriesKey: input.seriesKey,
+    segmentSeconds: input.segmentSeconds,
+  });
 
   // 原子占位必须在 runner 之前：#1295 的 ifGenerationMatch 在模型跑完之后，
   // 只能防卡片覆盖，防不了两个进程各付一次费
@@ -617,7 +630,7 @@ export const NATIVE_DEEP_READ_DEFAULT_BATCH_EPISODES = 20;
 export const NATIVE_DEEP_READ_BATCH_HARD_CEILING = 200;
 /** 单集仍遵守学习策略的两小时上限。 */
 export const NATIVE_DEEP_READ_MAX_EPISODE_SEC = 120 * 60;
-/** 分片不再另设 300 秒上限，沿用整片两小时策略。 */
+/** 配置可到两小时；每次任务的实际分片上限由其自定义 segmentSeconds 决定。 */
 export const NATIVE_DEEP_READ_MAX_SEGMENT_SEC = NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS;
 
 export type NativeDeepReadBatchPlan = {
@@ -643,7 +656,7 @@ export type NativeDeepReadBatchPlan = {
  */
 export function validateNativeDeepReadBatchPlan(
   episodes: readonly NativeDeepReadBatchEpisode[],
-  opts: { maxEpisodes?: number; seriesKey?: string } = {},
+  opts: { maxEpisodes?: number; seriesKey?: string; segmentSeconds?: number } = {},
 ): NativeDeepReadBatchPlan {
   if (!episodes.length) throw new Error("发车清单为空");
   const ceiling = Math.max(
@@ -675,6 +688,10 @@ export function validateNativeDeepReadBatchPlan(
     }
     if (source.protocol !== "https:") throw new Error(`第${ep}集来源必须是 HTTPS`);
     const duration = Number(episode.durationSec);
+    const configuredSegmentSeconds = opts.segmentSeconds ?? episode.segmentSeconds;
+    const segmentSeconds = configuredSegmentSeconds == null
+      ? undefined
+      : parseNativeDeepReadSegmentSeconds(configuredSegmentSeconds);
     parseNativeDeepReadVideoFps(episode.videoFps);
     if (!Number.isFinite(duration) || duration <= 0) throw new Error(`第${ep}集时长无效`);
     if (duration > NATIVE_DEEP_READ_MAX_EPISODE_SEC) {
@@ -685,6 +702,19 @@ export function validateNativeDeepReadBatchPlan(
       const segment = segments[segmentIndex]!;
       if (segment.endSec > duration + 0.5) throw new Error(`第${ep}集切片超出片长`);
       const len = segment.endSec - segment.startSec;
+      const isTail = segmentIndex === segments.length - 1;
+      if (
+        segmentSeconds != null
+        && (
+          (!isTail && Math.abs(len - segmentSeconds) > 0.01)
+          || (isTail && len > segmentSeconds + 0.01)
+        )
+      ) {
+        throw new Error(
+          `第${ep}集实际分片未按自定义 ${segmentSeconds}s 计算（第${segmentIndex + 1}片 ${Math.round(len * 100) / 100}s），`
+          + "已停止且未发出模型请求",
+        );
+      }
       if (len > NATIVE_DEEP_READ_MAX_SEGMENT_SEC) {
         throw new Error(
           `第${ep}集单片 ${Math.round(len)}s 超过整片 ${NATIVE_DEEP_READ_MAX_SEGMENT_SEC}s 策略上限`,
@@ -728,10 +758,34 @@ export function validateNativeDeepReadBatchPlan(
       route: MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE,
       schemaVersion: MANHUA_NATIVE_SERIES_AGGREGATION_SCHEMA_VERSION,
     },
-    episodes: episodes.map(({ resolveNodes: _drop, ...rest }) => ({
-      ...rest,
-      videoFps: parseNativeDeepReadVideoFps(rest.videoFps),
-    })),
+    // 只编码真实发车契约。媒体节点、来源标记与恢复过程标记属于运行态；
+    // 任意 spread 会让同一份已确认分片计划在执行时产生另一枚 hash。
+    // 剧集顺序必须保留：执行器按输入顺序运行且失败即停，换序就是另一份付费计划。
+    episodes: episodes.map((episode) => ({
+        episodeIndex: episode.episodeIndex,
+        sourceUrl: episode.sourceUrl,
+        durationSec: episode.durationSec,
+        ...(opts.segmentSeconds != null || episode.segmentSeconds != null
+          ? {
+              segmentSeconds: parseNativeDeepReadSegmentSeconds(
+                opts.segmentSeconds ?? episode.segmentSeconds,
+              ),
+            }
+          : {}),
+        videoFps: parseNativeDeepReadVideoFps(episode.videoFps),
+        segments: episode.segments.map((segment) => ({
+          startSec: segment.startSec,
+          endSec: segment.endSec,
+          ...(segment.hintZh ? { hintZh: segment.hintZh } : {}),
+        })),
+        ...(String(episode.laneHintZh || "").trim()
+          ? { laneHintZh: String(episode.laneHintZh).trim() }
+          : {}),
+        ...(episode.reclaimFailedClaim === true ? { reclaimFailedClaim: true } : {}),
+        ...(episode.recoverMisplacedSourceCache === true
+          ? { recoverMisplacedSourceCache: true }
+          : {}),
+      })),
   });
   const totalVisualCalls = totalSegments;
   return {
@@ -792,6 +846,7 @@ export type NativeDeepReadBatchResult = {
 export async function runNativeDeepReadBatch(input: {
   seriesKey: string;
   episodes: readonly NativeDeepReadBatchEpisode[];
+  segmentSeconds?: number;
   abortSignal?: AbortSignal;
   onProgress?: (outcome: NativeDeepReadBatchOutcome) => void | Promise<void>;
   onModelCheckpoint?: (checkpoint: NativeDeepReadModelCheckpoint) => void | Promise<void>;
@@ -799,7 +854,10 @@ export async function runNativeDeepReadBatch(input: {
   if (!deps.isEnabled()) throw new Error("原生精读开关未开启");
 
   // 预检在 GCS 列举与任何模型动作之前：清单里写两次第 1 集会真的跑两次模型
-  const plan = validateNativeDeepReadBatchPlan(input.episodes, { seriesKey: input.seriesKey });
+  const plan = validateNativeDeepReadBatchPlan(input.episodes, {
+    seriesKey: input.seriesKey,
+    segmentSeconds: input.segmentSeconds,
+  });
   const alreadyIngested = await deps.listIngested(input.seriesKey);
   const outcomes: NativeDeepReadBatchOutcome[] = [];
   const batchStartedAt = Date.now();
