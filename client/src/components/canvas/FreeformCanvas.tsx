@@ -1182,10 +1182,6 @@ export default function FreeformCanvas({
 
   const generateDialogueReferenceAudio = useCallback(
     async (blockId: string) => {
-      if (userRole !== "admin" && userRole !== "supervisor") {
-        toast.error("对白配音仍在内部验收阶段");
-        return;
-      }
       const block = blocks.find(item => item.id === blockId);
       if (!block) return;
       const draft = dialogueTtsDrafts[blockId] || {
@@ -1200,6 +1196,7 @@ export default function FreeformCanvas({
         const result = await dialogueTtsMutation.mutateAsync({
           input: draft.input.trim(),
           voice: draft.voice,
+          billingRequestId: crypto.randomUUID(),
         });
         const assetId = `dialogue-${Date.now()}`;
         const asset: CanvasUploadedAsset = {

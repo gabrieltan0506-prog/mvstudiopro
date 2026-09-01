@@ -35,6 +35,7 @@ const LS_MANHUA_LEARN_BASKET_PREFIX = "mvs-manhua-learn-basket-v1";
 const LS_MANHUA_LEARN_MISSING_DISMISSED = "mvs-manhua-learn-missing-dismissed-v1";
 const LS_MANHUA_LEARN_SEGMENT_SECONDS = "mvs-manhua-learn-segment-seconds-v1";
 const LS_MANHUA_LEARN_VIDEO_FPS = "mvs-manhua-learn-video-fps-v1";
+const LS_MANHUA_LEARN_STANDALONE = "mvs-manhua-learn-standalone-v1";
 
 function manhuaLearnUserStorageKey(baseKey: string, userKey: string): string {
   const scope = String(userKey || "").trim();
@@ -62,6 +63,26 @@ export function readManhuaLearnSegmentSeconds(userKey: string): number {
     return restoreManhuaLearnSegmentSeconds(stored);
   } catch {
     return NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS;
+  }
+}
+
+/** 「整支即全集」勾选持久化（0902）：刷新/继续都记住，别每次手勾。 */
+export function readManhuaLearnStandalone(userKey: string): boolean {
+  const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_STANDALONE, userKey);
+  try {
+    return key ? JSON.parse(localStorage.getItem(key) || "false") === true : false;
+  } catch {
+    return false;
+  }
+}
+
+export function writeManhuaLearnStandalone(userKey: string, value: boolean): void {
+  const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_STANDALONE, userKey);
+  if (!key) return;
+  try {
+    localStorage.setItem(key, JSON.stringify(value === true));
+  } catch {
+    // 本地存储不可用时仍用当前勾选，真实参数随任务提交
   }
 }
 

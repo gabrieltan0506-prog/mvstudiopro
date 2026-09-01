@@ -15,6 +15,8 @@ import {
 } from "./gcs.js";
 
 const OPENROUTER_TTS_ENDPOINT = "https://openrouter.ai/api/v1/audio/speech";
+import { inspectTokenPlanDialogueAudio } from "./tokenPlanDialogueTts.js";
+import type { ManhuaDialogueVoiceGateResult } from "../../shared/manhuaDialogueVoiceGate.js";
 export const QWEN_DIALOGUE_TTS_MODEL = "qwen/qwen-audio-3.0-tts-plus";
 
 /** Plus 当前可用系统音色；专属复刻音色 id 也走同一个 voice 字段（白名单外直接透传） */
@@ -38,6 +40,8 @@ export type QwenDialogueTtsResult = {
   bytes: number;
   voice: string;
   generationId: string;
+  /** 验声门禁证据（ffprobe 可读 + silencedetect 人声量）；未过门禁不会返回 */
+  voiceGate: import("../../shared/manhuaDialogueVoiceGate.js").ManhuaDialogueVoiceGateResult;
 };
 
 export type QwenDialogueTtsRequestBody = {
@@ -95,6 +99,12 @@ export async function synthesizeQwenDialogue(
   const audio = Buffer.from(await response.arrayBuffer());
   if (!audio.length) throw new Error("对白配音上游返回空音频");
 
+  // 0902：与 token-plan 版同规矩——ffprobe 可读 + silencedetect 有足量人声才进素材库
+  const voiceGate: ManhuaDialogueVoiceGateResult = await inspectTokenPlanDialogueAudio(audio);
+  if (!voiceGate.accepted) {
+    throw new Error(`对白配音未通过验声门禁（${voiceGate.reason}），不进素材库`);
+  }
+
   const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const rand = Math.random().toString(36).slice(2, 8);
   const { gcsUri } = await uploadBufferToGcs({
@@ -104,5 +114,5 @@ export async function synthesizeQwenDialogue(
   });
   const audioUrl = signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
 
-  return { audioUrl, gcsUri, bytes: audio.length, voice, generationId };
+  return { audioUrl, gcsUri, bytes: audio.length, voice, generationId, voiceGate };
 }

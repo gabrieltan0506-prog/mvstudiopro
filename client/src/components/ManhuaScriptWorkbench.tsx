@@ -3083,13 +3083,10 @@ export default function ManhuaScriptWorkbench({
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => onOpenCharacterCard?.()}
-                  className="rounded-lg border border-white/12 px-2.5 py-1.5 text-[11px] text-white/70 hover:bg-white/[0.06]"
-                >
-                  库角色（可选）
-                </button>
+                {/* 入口去重（0901 用户令）：「选角色」此前有三个入口——这里的「库角色（可选）」、
+                    下方「当前出演人物·去选人物」、底部准入区「尚未选角色·点此更换」。
+                    正宗入口收敛为「当前出演人物」区（能看到已选谁再换）；底部那个是准入
+                    检查的就地修复口，各司其职。此处的远端重复按钮删除。 */}
                 <button
                   type="button"
                   onClick={() => onOpenAssetWall?.()}
@@ -5173,6 +5170,15 @@ export default function ManhuaScriptWorkbench({
                 <p className="mh-hint mt-0.5 text-[10px] leading-4 text-white/45">
                   妆造/服装挂进套后，分镜里按段手选启用；换装改套，不改 @角色 脸号。网址不展示。
                 </p>
+                {/* 空态收口（0901 用户令）：一张服装参考都没有、也没建过任何套时，
+                    此前照样铺 4 人 × 3 槽的「@服装? · id=待建」阵列——12 个像坏数据的空槽
+                    吓人且无一可操作。收成一句安静的空态，挂第一张服装图后才展开。 */}
+                {customAssetRefs.every((r) => r.role !== "wardrobe")
+                  && !resolvedLookSets.some((ls) => ls.id) ? (
+                  <p className="mh-hint mt-2 rounded-lg border border-dashed border-white/15 px-3 py-4 text-center text-[11px] text-white/45">
+                    「我的服装」栏还没有参考图；先在上方上传或基于库生成服装图，再回这里挂进造型套。
+                  </p>
+                ) : (
                 <div className="mt-2 space-y-2">
                   {assetLockRegistry.byRole.character.slice(0, 4).map((ch) => {
                     const sets = listManhuaLookSetsForCharacter(resolvedLookSets, ch.id);
@@ -5239,12 +5245,14 @@ export default function ManhuaScriptWorkbench({
                                     </option>
                                   ))}
                                 </select>
-                                <div className="mt-0.5 font-mono text-[8px] text-white/35">
-                                  {assetLockRegistry.wardrobeSlots.find(
-                                    (w) => w.lookSetId === ls.id,
-                                  )?.wardrobeTag || `@服装?`}{" "}
-                                  · id={ls.id || "待建"}
-                                </div>
+                                {ls.id ? (
+                                  <div className="mt-0.5 font-mono text-[8px] text-white/35">
+                                    {assetLockRegistry.wardrobeSlots.find(
+                                      (w) => w.lookSetId === ls.id,
+                                    )?.wardrobeTag || `@服装?`}{" "}
+                                    · id={ls.id}
+                                  </div>
+                                ) : null}
                               </div>
                             );
                           })}
@@ -5253,6 +5261,7 @@ export default function ManhuaScriptWorkbench({
                     );
                   })}
                 </div>
+                )}
               </div>
             ) : null}
 
