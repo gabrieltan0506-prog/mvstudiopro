@@ -130,32 +130,29 @@ describe("manhuaViralTemplateBank", () => {
     })).toBeNull();
   });
 
-  it("按模型多维标签重复归组，不再使用旧题材赛道", () => {
-    const groups = listApprovedManhuaViralTemplatesGrouped([
-      learnedCard(),
-      learnedCard({
-        id: "tpl_series_fixture04",
-        classification: {
-          emotionTagsZh: ["压迫渐强"],
-          narrativeFeatureTagsZh: ["身份揭穿"],
-          performanceTagsZh: ["克制反击"],
-          audiovisualTagsZh: ["强弱声场切换"],
-          audienceExperienceTagsZh: ["持续紧张"],
-        },
-      }),
-    ]);
-    expect(groups.map((g) => g.laneZh)).toContain("压迫渐强");
-    expect(groups.find((g) => g.laneZh === "压迫渐强")?.items).toHaveLength(2);
-    for (const g of groups) {
-      expect(g.items.length).toBeGreaterThan(0);
-      expect(g.items.every((t) => JSON.stringify(t.classification).includes(g.laneZh))).toBe(true);
-    }
+  it("一张卡只出现一次：按学习形态分「原生精读 / 抽帧（旧）」两组，不再按标签扇出", () => {
+    const legacy = learnedCard();
+    const native = learnedCard({
+      id: "tpl_series_fixture04",
+      nameZh: "原生精读样例",
+      reusableZh: "利用看似无害的事物突然异变制造惊吓",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+    });
+    const groups = listApprovedManhuaViralTemplatesGrouped([legacy, native]);
+    expect(groups.map((g) => g.laneZh)).toEqual(["原生精读", "抽帧（旧）"]);
+    expect(groups.find((g) => g.laneZh === "原生精读")?.items.map((t) => t.id))
+      .toEqual(["tpl_series_fixture04"]);
+    expect(groups.find((g) => g.laneZh === "抽帧（旧）")?.items.map((t) => t.id))
+      .toEqual(["tpl_series_fixture01"]);
+    // 全库每张卡恰好出现一次——旧分法按标签扇出时一张卡重复几十次
+    const allIds = groups.flatMap((g) => g.items.map((t) => t.id));
+    expect(allIds.length).toBe(new Set(allIds).size);
   });
 
   it("无新分类字段的旧 approved 卡仍按 laneZh 可见并可推荐", () => {
     const legacy = learnedCard({ classification: undefined, laneZh: "悬疑权谋" });
     const groups = listApprovedManhuaViralTemplatesGrouped([legacy]);
-    expect(groups).toEqual([{ laneZh: "悬疑权谋", items: [legacy] }]);
+    expect(groups).toEqual([{ laneZh: "抽帧（旧）", items: [legacy] }]);
     expect(recommendApprovedManhuaViralTemplate([legacy], "需要悬疑权谋能力")).toMatchObject({
       id: legacy.id,
     });

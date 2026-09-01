@@ -979,26 +979,28 @@ export function listApprovedManhuaViralTemplates(
 export function listApprovedManhuaViralTemplatesGrouped(
   extras?: readonly ManhuaViralTemplateCard[] | null,
 ): Array<{
-  /** 保留字段名兼容现有 tRPC/UI；值已是模型多标签，不再是旧题材赛道。 */
+  /** 保留字段名兼容现有 tRPC/UI；现按学习形态分两组：原生精读 / 抽帧（旧）。 */
   laneZh: string;
   items: ManhuaViralTemplateCard[];
 }> {
+  // 0901 用户拍板：不再按五维标签逐个扇出分组——一张卡带几十个标签就重复出现几十次，
+  // 库里六张卡铺出几十屏。现在一张卡只出现一次，分组只分「学习形态」两代：
+  // 精读是现役形态，抽帧是待淘汰旧库（配合批量下架）。标签仍在卡上，由 UI 以徽章展示。
   const approved = listApprovedManhuaViralTemplates(extras);
-  const groups = new Map<string, ManhuaViralTemplateCard[]>();
+  const byUpdatedDesc = (a: ManhuaViralTemplateCard, b: ManhuaViralTemplateCard) =>
+    String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""))
+    || a.nameZh.localeCompare(b.nameZh, "zh-CN");
+  const native: ManhuaViralTemplateCard[] = [];
+  const legacy: ManhuaViralTemplateCard[] = [];
   for (const card of approved) {
-    const classificationTags = flattenManhuaTemplateClassification(card.classification);
-    const groupingTags = classificationTags.length
-      ? classificationTags
-      : [String(card.laneZh || "未分类").trim() || "未分类"];
-    for (const tag of groupingTags) {
-      const rows = groups.get(tag) || [];
-      rows.push(card);
-      groups.set(tag, rows);
-    }
+    (isNativeVideoLearnedTemplate(card) ? native : legacy).push(card);
   }
-  return Array.from(groups.entries())
-    .sort(([a], [b]) => a.localeCompare(b, "zh-CN"))
-    .map(([laneZh, items]) => ({ laneZh, items }));
+  native.sort(byUpdatedDesc);
+  legacy.sort(byUpdatedDesc);
+  const groups: Array<{ laneZh: string; items: ManhuaViralTemplateCard[] }> = [];
+  if (native.length) groups.push({ laneZh: "原生精读", items: native });
+  if (legacy.length) groups.push({ laneZh: "抽帧（旧）", items: legacy });
+  return groups;
 }
 
 /** 编剧室“推荐 Skill”：只在题材明确命中时推荐，不为凑数强塞模板。 */
