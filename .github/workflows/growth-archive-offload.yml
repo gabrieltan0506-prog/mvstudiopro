@@ -247,6 +247,9 @@ jobs:
           if-no-files-found: error
           retention-days: 30
       - name: Delete only release-verified unchanged shards from Fly
+        # 0901 用户冻结：当前冷备只上传/验真，不自动删除任何平台源数据。
+        # 后续释放空间必须另走“仅 B站 + 冻结抓取 + 显式授权”的专用流程。
+        if: ${{ false }}
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
@@ -283,7 +286,7 @@ jobs:
             # 删除前必须让当前正式镜像用生产读取器实际下载、校验 manifest/SHA、
             # 安全解包并逐个解压解析 JSON；仅有 Release read-back 不能证明消费端可恢复。
             flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
-              -C "GROWTH_GITHUB_OFFLOAD_CACHE_DIR=/tmp/growth-cold-verify-$dir GROWTH_COLD_VERIFY_CLEANUP=1 pnpm exec tsx server/growth/growthArchiveColdRestoreCli.ts '$dir'"
+              -C "sh -lc 'export GROWTH_GITHUB_OFFLOAD_CACHE_DIR=/tmp/growth-cold-verify-$dir; export GROWTH_COLD_VERIFY_CLEANUP=1; exec pnpm exec tsx server/growth/growthArchiveColdRestoreCli.ts $dir'"
             DELETED=false
             for attempt in $(seq 1 20); do
               if flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
