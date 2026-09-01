@@ -98,6 +98,20 @@ export const CANVAS_VIDEO_UPSCALE_MAX_BILLED_SEC = 600;
  */
 export const CANVAS_FREEFORM_RETAIL_MULTIPLIER = 1.1;
 
+/**
+ * TTS 对白配音（0902 解锁给创作者）：Qwen-Audio-3.0-TTS-Plus 一句合成。
+ * 成本约 ¥0.1/句以内（1 积分≈¥0.65），零售 3 积分/句覆盖成本＋验声门禁开销。
+ * 按「句」计费而非字符：一句一次合成、一次验声，口径简单可预期。
+ */
+export const CANVAS_TTS_CREDITS_PER_LINE = 3;
+
+/**
+ * Suno 配乐（0902 解锁给创作者）：EvoLink suno-v5.5-beta 一发出 2 条变体。
+ * 成本一发几毛人民币，零售 20 积分/发（≈¥13）覆盖成本＋转存＋量测。
+ * 按「发」计费：一发不论时长、不论变体数，固定价。
+ */
+export const CANVAS_BGM_CREDITS_PER_RUN = 20;
+
 export function canvasVideoUpscaleCredits(
   target: "2k" | "4k",
   durationSec: number,

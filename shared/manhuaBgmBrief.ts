@@ -71,6 +71,55 @@ const MOOD_ARC_POINT: Record<BgmBeatMood, string> = {
   收束: "余韵沉落",
 };
 
+/**
+ * 0901 接线刀：从段表节拍功能派生 brief 种子——把「审阅成片提示词」里已有的
+ * 〔开场钩子/冲突升级/…〕节拍表和画布 BGM 说明喂进配乐间，别再让用户手填时长手拼情绪。
+ * 纯函数：时长＝段数×每段秒数＋3s 余量（裁切余量规矩），节拍功能→四拍情绪弧映射。
+ */
+export const BGM_SEED_SEGMENT_SECONDS_DEFAULT = 15;
+
+const BEAT_FUNCTION_TO_MOOD: Record<string, BgmBeatMood> = {
+  开场钩子: "蓄力",
+  建置: "蓄力",
+  冲突升级: "冲突",
+  信息揭示: "反转",
+  转折: "反转",
+  情绪高点: "冲突",
+  悬念钩子: "收束",
+};
+
+export function deriveManhuaBgmBriefSeed(input: {
+  laneZh: string;
+  /** 各段的节拍功能序列（按段序拼接；来自秒轴正文的〔…〕标签） */
+  segmentBeatFunctionsZh: readonly (readonly string[])[];
+  /** 每段画面秒数；漫剧分段默认 15 */
+  segmentSeconds?: number;
+  /** 画布「BGM 风格说明」输入框原文（如「古风弦乐·紧张推进」），作风格锚 */
+  bgmNoteZh?: string;
+}): Pick<BgmBriefInput, "laneZh" | "durationSec" | "moods" | "styleAnchorZh" | "endingZh"> {
+  const segCount = Math.max(1, input.segmentBeatFunctionsZh.length);
+  const perSeg = Math.max(1, Math.floor(input.segmentSeconds ?? BGM_SEED_SEGMENT_SECONDS_DEFAULT));
+  const moods: BgmBeatMood[] = [];
+  for (const beats of input.segmentBeatFunctionsZh) {
+    for (const beat of beats) {
+      const mood = BEAT_FUNCTION_TO_MOOD[String(beat).trim()];
+      if (mood && moods.at(-1) !== mood) moods.push(mood);
+    }
+  }
+  if (!moods.length) moods.push("蓄力", "冲突", "收束");
+  // 末拍必须落地：秒轴以悬念钩子收尾时弧线仍要「余韵沉落」，否则 BGM 顶在高点和尾钩打架
+  if (moods.at(-1) !== "收束") moods.push("收束");
+  const note = String(input.bgmNoteZh || "").trim();
+  return {
+    laneZh: input.laneZh,
+    durationSec: segCount * perSeg,
+    moods,
+    styleAnchorZh: note || undefined,
+    // 尾钩画面在末段末拍——收尾写死淡出，别让模型自己选
+    endingZh: "最后两秒渐弱淡出，不顶在高潮上",
+  };
+}
+
 export type BgmBriefInput = {
   laneZh: string;
   /** 画面时长（秒）。BGM 会在此基础上加余量 */

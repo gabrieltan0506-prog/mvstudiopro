@@ -148,7 +148,8 @@ export default function PostProdWorkshopCard({
   const queueBgmMutation = trpc.mvAnalysis.queueManhuaBgm.useMutation();
   const utils = trpc.useUtils();
   const storageKey = useMemo(() => jobsStorageKey(userId), [userId]);
-  const canUseScoringRoom = userRole === "admin" || userRole === "supervisor";
+  // 0902 配乐间解锁给创作者：余额校验与按发扣费在服务端（worker 建单前扣、建单失败退）
+  const canUseScoringRoom = true;
 
   /** 画布成片:视频节点已出片的(签名链走 jobs 证据放行) */
   const blockClipOptions = useMemo(

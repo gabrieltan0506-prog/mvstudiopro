@@ -22,6 +22,8 @@ import {
   readManhuaLearnResult,
   readManhuaLearnMissingDismissedKeys,
   readManhuaLearnSegmentSeconds,
+  readManhuaLearnStandalone,
+  writeManhuaLearnStandalone,
   readManhuaLearnVideoFps,
   removeManhuaLearnBasketItem,
   resolveManhuaLearnBasketFocusKey,
@@ -1099,4 +1101,16 @@ describe("parseNativeProposalEpisodeRef — 待审卡集号解析", () => {
     expect(parseNativeProposalEpisodeRef(null)).toBeNull();
     expect(parseNativeProposalEpisodeRef({ id: "tpl_native_abc_ep12" })).toBeNull();
   });
+
+  it("整支即全集勾选持久化：写入后读回，损坏值与空 userKey 都回退 false", () => {
+    installMemoryLocalStorage();
+    writeManhuaLearnStandalone("user_s", true);
+    expect(readManhuaLearnStandalone("user_s")).toBe(true);
+    writeManhuaLearnStandalone("user_s", false);
+    expect(readManhuaLearnStandalone("user_s")).toBe(false);
+    localStorage.setItem("mvs-manhua-learn-standalone-v1:user_bad", "not-json");
+    expect(readManhuaLearnStandalone("user_bad")).toBe(false);
+    expect(readManhuaLearnStandalone("")).toBe(false);
+  });
+
 });

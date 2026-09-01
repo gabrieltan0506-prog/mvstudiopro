@@ -9,6 +9,7 @@ import {
   buildBgmStructurePrompt,
   buildManhuaBgmBrief,
   clampBgmDurationSec,
+  deriveManhuaBgmBriefSeed,
   countBgmStyleDescriptors,
   assertBgmStyleSubmittable,
   looksLikeArtistName,
@@ -159,3 +160,34 @@ describe("用户改写", () => {
   });
 });
 
+
+describe("deriveManhuaBgmBriefSeed（0901 段表接线）", () => {
+  it("时长＝段数×每段秒数；节拍功能映射四拍情绪弧并去重相邻", () => {
+    const seed = deriveManhuaBgmBriefSeed({
+      laneZh: "古言种田",
+      segmentBeatFunctionsZh: [
+        ["开场钩子", "建置"],
+        ["冲突升级", "冲突升级"],
+        ["信息揭示"],
+        ["情绪高点", "悬念钩子"],
+      ],
+    });
+    expect(seed.durationSec).toBe(60);
+    expect(seed.moods).toEqual(["蓄力", "冲突", "反转", "冲突", "收束"]);
+    expect(seed.endingZh).toContain("淡出");
+  });
+
+  it("末拍不是收束时补收束；空节拍回默认三拍；BGM 说明进风格锚", () => {
+    const seed = deriveManhuaBgmBriefSeed({
+      laneZh: "都市逆袭",
+      segmentBeatFunctionsZh: [["冲突升级"]],
+      segmentSeconds: 10,
+      bgmNoteZh: "古风弦乐·紧张推进",
+    });
+    expect(seed.durationSec).toBe(10);
+    expect(seed.moods).toEqual(["冲突", "收束"]);
+    expect(seed.styleAnchorZh).toBe("古风弦乐·紧张推进");
+    const empty = deriveManhuaBgmBriefSeed({ laneZh: "x", segmentBeatFunctionsZh: [[]] });
+    expect(empty.moods).toEqual(["蓄力", "冲突", "收束"]);
+  });
+});

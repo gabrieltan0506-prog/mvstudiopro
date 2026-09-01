@@ -162,6 +162,8 @@ import {
   readManhuaLearnMissingDismissedKeys,
   readManhuaLearnResult,
   readManhuaLearnSegmentSeconds,
+  readManhuaLearnStandalone,
+  writeManhuaLearnStandalone,
   readManhuaLearnVideoFps,
   removeManhuaLearnBasketItem,
   resolveManhuaLearnBasketFocusKey,
@@ -2576,6 +2578,7 @@ export default function PlatformPage() {
     setManhuaPasteTitle("");
     manhuaLearnSegmentSecondsEditedRef.current = false;
     setManhuaLearnSegmentSecondsInput(String(readManhuaLearnSegmentSeconds(manhuaLearnUserKey)));
+    setManhuaLearnStandaloneSource(readManhuaLearnStandalone(manhuaLearnUserKey));
     setManhuaLearnSegmentSecondsError("");
     manhuaLearnVideoFpsEditedRef.current = false;
     setManhuaLearnVideoFpsInput(String(readManhuaLearnVideoFps(manhuaLearnUserKey)));
@@ -12605,7 +12608,10 @@ export default function PlatformPage() {
                                 type="checkbox"
                                 checked={manhuaLearnStandaloneSource}
                                 disabled={Boolean(manhuaLearnBusyKey)}
-                                onChange={(event) => setManhuaLearnStandaloneSource(event.target.checked)}
+                                onChange={(event) => {
+                                  setManhuaLearnStandaloneSource(event.target.checked);
+                                  writeManhuaLearnStandalone(manhuaLearnUserKey, event.target.checked);
+                                }}
                                 className="h-3.5 w-3.5 accent-violet-400"
                               />
                               整支即全集
