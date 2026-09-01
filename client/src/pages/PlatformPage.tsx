@@ -100,7 +100,7 @@ import {
   skipManhuaLearnServerEpisode,
   type ManhuaLearnServerJob,
 } from "@/lib/jobs";
-import { isNativeVideoLearnedTemplate } from "@shared/manhuaViralTemplateBank";
+import { flattenManhuaTemplateClassification, isNativeVideoLearnedTemplate } from "@shared/manhuaViralTemplateBank";
 import {
   buildApprovedNativeTemplateBadge,
   buildPendingNativeTemplateProgressCopy,
@@ -3201,6 +3201,10 @@ export default function PlatformPage() {
   );
   /** 下架待确认的模板 id：点第一次进入确认态，再点一次才真下架 */
   const [archiveConfirmId, setArchiveConfirmId] = useState("");
+  /** 批量下架：勾选集合、两步确认态、进行中的进度文案（0901 用户令：旧模板要能批量下架） */
+  const [batchArchiveIds, setBatchArchiveIds] = useState<ReadonlySet<string>>(new Set());
+  const [batchArchiveConfirm, setBatchArchiveConfirm] = useState(false);
+  const [batchArchiveProgressZh, setBatchArchiveProgressZh] = useState("");
   const archiveManhuaTemplateMutation = trpc.manhuaViralTemplate.archiveApproved.useMutation();
   /* ── 换代体检与归档回看：学习方式升级后，得先看得出哪些是旧一代学的 ── */
   const [templateReviewOpen, setTemplateReviewOpen] = useState(false);
@@ -13349,6 +13353,88 @@ export default function PlatformPage() {
                           <p className="mb-2 text-[10px] leading-4 text-emerald-50/55">
                             学习提案批准后会出现在此；到 /canvas 编剧室点选即可注入节奏骨架。
                           </p>
+                          {ownerTemplateOptimizeAllowed ? (
+                            <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[10px]">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  // 一步达：旧抽帧组整组勾上（精读是现役形态，不进批量默认选集）
+                                  const legacyIds = (manhuaViralApprovedQuery.data?.groups ?? [])
+                                    .flatMap((g) => g.items)
+                                    .filter((tpl) => !isNativeVideoLearnedTemplate(tpl))
+                                    .map((tpl) => tpl.id);
+                                  setBatchArchiveIds(new Set(legacyIds));
+                                  setBatchArchiveConfirm(false);
+                                }}
+                                className="rounded-md border border-white/15 bg-white/[0.04] px-2 py-0.5 font-semibold text-white/70 hover:border-amber-300/40 hover:text-amber-100"
+                              >
+                                全选旧抽帧
+                              </button>
+                              {batchArchiveIds.size > 0 ? (
+                                <>
+                                  <span className="text-emerald-100/70">已选 {batchArchiveIds.size} 张</span>
+                                  <button
+                                    type="button"
+                                    disabled={Boolean(batchArchiveProgressZh)}
+                                    onClick={async () => {
+                                      if (!batchArchiveConfirm) {
+                                        setBatchArchiveConfirm(true);
+                                        window.setTimeout(() => setBatchArchiveConfirm(false), 6000);
+                                        return;
+                                      }
+                                      setBatchArchiveConfirm(false);
+                                      const ids = Array.from(batchArchiveIds);
+                                      const failed: string[] = [];
+                                      for (let i = 0; i < ids.length; i += 1) {
+                                        setBatchArchiveProgressZh(`下架中 ${i + 1}/${ids.length}…`);
+                                        try {
+                                          await archiveManhuaTemplateMutation.mutateAsync({
+                                            id: ids[i]!,
+                                            confirmArchive: true,
+                                          });
+                                          await invalidateTemplateLifecycle(ids[i]!);
+                                        } catch (e) {
+                                          failed.push(
+                                            `${ids[i]}：${e instanceof Error ? e.message : "未知错误"}`,
+                                          );
+                                        }
+                                      }
+                                      setBatchArchiveProgressZh("");
+                                      setBatchArchiveIds(new Set());
+                                      void manhuaViralApprovedQuery.refetch();
+                                      void trpcUtils.manhuaViralTemplate.listProposals.invalidate();
+                                      if (failed.length) {
+                                        window.alert(`有 ${failed.length} 张下架失败：\n${failed.join("\n")}`);
+                                      }
+                                    }}
+                                    className={`rounded-md border px-2 py-0.5 font-semibold transition disabled:opacity-45 ${
+                                      batchArchiveConfirm
+                                        ? "border-rose-300/60 bg-rose-500/25 text-rose-50"
+                                        : "border-rose-300/30 bg-rose-500/10 text-rose-100/85 hover:bg-rose-500/20"
+                                    }`}
+                                  >
+                                    {batchArchiveProgressZh
+                                      || (batchArchiveConfirm
+                                        ? `再点一次确认下架 ${batchArchiveIds.size} 张`
+                                        : `批量下架（${batchArchiveIds.size}）`)}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setBatchArchiveIds(new Set());
+                                      setBatchArchiveConfirm(false);
+                                    }}
+                                    className="rounded-md border border-white/12 bg-white/[0.03] px-2 py-0.5 text-white/50 hover:text-white/80"
+                                  >
+                                    清空
+                                  </button>
+                                  <span className="text-emerald-50/45">下架＝移入归档，可在下方恢复</span>
+                                </>
+                              ) : (
+                                <span className="text-emerald-50/45">勾选卡片可批量下架；下架＝移入归档，可恢复</span>
+                              )}
+                            </div>
+                          ) : null}
                           <div className="space-y-2">
                             {manhuaViralApprovedQuery.data.groups.map((group) => (
                               <div key={group.laneZh}>
@@ -13364,8 +13450,29 @@ export default function PlatformPage() {
                                     <div
                                       key={tpl.id}
                                       title={tpl.summaryZh}
-                                      className="flex flex-wrap items-center gap-1.5 rounded-lg border border-emerald-300/25 bg-black/25 px-2 py-1 text-[10px] text-emerald-50/80"
+                                      className={`flex flex-wrap items-center gap-1.5 rounded-lg border bg-black/25 px-2 py-1 text-[10px] text-emerald-50/80 ${
+                                        batchArchiveIds.has(tpl.id)
+                                          ? "border-rose-300/50"
+                                          : "border-emerald-300/25"
+                                      }`}
                                     >
+                                      {ownerTemplateOptimizeAllowed ? (
+                                        <input
+                                          type="checkbox"
+                                          aria-label={`勾选下架：${tpl.nameZh}`}
+                                          checked={batchArchiveIds.has(tpl.id)}
+                                          onChange={() => {
+                                            setBatchArchiveIds((cur) => {
+                                              const next = new Set(cur);
+                                              if (next.has(tpl.id)) next.delete(tpl.id);
+                                              else next.add(tpl.id);
+                                              return next;
+                                            });
+                                            setBatchArchiveConfirm(false);
+                                          }}
+                                          className="h-3 w-3 shrink-0 accent-rose-400"
+                                        />
+                                      ) : null}
                                       <span className="font-semibold">{tpl.nameZh}</span>
                                       {isNativeVideoLearnedTemplate(tpl) ? (
                                         <span
@@ -13387,6 +13494,31 @@ export default function PlatformPage() {
                                           {nativeProgressBadge}
                                         </span>
                                       ) : null}
+                                      {(() => {
+                                        // 标签不再当分组标题——收进卡片当小徽章，前 4 个 + 计数
+                                        const tags = flattenManhuaTemplateClassification(tpl.classification);
+                                        if (!tags.length) return null;
+                                        return (
+                                          <span
+                                            title={tags.join("、")}
+                                            className="flex shrink-0 items-center gap-1"
+                                          >
+                                            {tags.slice(0, 4).map((tag) => (
+                                              <span
+                                                key={tag}
+                                                className="rounded border border-white/10 bg-white/[0.04] px-1 text-[9px] text-white/45"
+                                              >
+                                                {tag}
+                                              </span>
+                                            ))}
+                                            {tags.length > 4 ? (
+                                              <span className="text-[9px] text-white/35">
+                                                +{tags.length - 4}
+                                              </span>
+                                            ) : null}
+                                          </span>
+                                        );
+                                      })()}
                                       {ownerTemplateOptimizeAllowed ? (
                                         <>
                                           <select
