@@ -2043,6 +2043,33 @@ export function parseJsonObject(text: string): Record<string, unknown> {
 }
 
 /**
+ * 部分 OpenAI 兼容供应商会在 json_object 模式下把真正对象包成
+ * { answer: "<JSON>" }。永久证据保留供应商原样；业务消费时只展开这一层，
+ * 避免中间批次的 shots 在最终整形与来源门禁中变成空数组。
+ */
+export function unwrapNativeDeepReadStructuredAnswerEnvelope(
+  raw: Record<string, unknown>,
+): Record<string, unknown> {
+  let current = raw;
+  for (let depth = 0; depth < 3 && !Array.isArray(current.shots); depth += 1) {
+    const answer = current.answer;
+    let nested: Record<string, unknown> | null = null;
+    if (typeof answer === "string" && answer.trim()) {
+      try {
+        nested = parseJsonObject(answer);
+      } catch {
+        return current;
+      }
+    } else if (answer && typeof answer === "object" && !Array.isArray(answer)) {
+      nested = answer as Record<string, unknown>;
+    }
+    if (!nested || nested === current) return current;
+    current = nested;
+  }
+  return current;
+}
+
+/**
  * 截断 JSON 的可用前缀修复（0829：MAX_TOKENS 不再整段丢弃）。
  *
  * 实证：一集 6 段里两段是 MAX_TOKENS 截断但前半完全有效，旧口径直接判失败重买。
@@ -2343,11 +2370,15 @@ export function assertNativeDeepReadShotObservationsPreserved(
   sourceRows: ReadonlyArray<Record<string, unknown>>,
   output: Record<string, unknown>,
 ): void {
-  const sources = sourceRows.flatMap(raw => Array.isArray(raw.shots) ? raw.shots : [])
+  const sources = sourceRows.flatMap((raw) => {
+    const normalized = unwrapNativeDeepReadStructuredAnswerEnvelope(raw);
+    return Array.isArray(normalized.shots) ? normalized.shots : [];
+  })
     .filter((row): row is Record<string, unknown> => row && typeof row === "object"
       && row.evidenceRole === "story" && typeof row.hintZh === "string" && Boolean(row.hintZh.trim()));
   if (!sources.length) return; // 历史证据不补写观察。
-  const shots = Array.isArray(output.shots) ? output.shots : [];
+  const normalizedOutput = unwrapNativeDeepReadStructuredAnswerEnvelope(output);
+  const shots = Array.isArray(normalizedOutput.shots) ? normalizedOutput.shots : [];
   for (let index = 0; index < shots.length; index += 1) {
     const row = shots[index];
     if (row?.evidenceRole === "non_story_ad") continue;
@@ -3562,7 +3593,8 @@ ${input.rejectedReasonZh ? `【上一轮门禁被拒原因】${String(input.reje
 export function deterministicallyMergeNativeDeepReadRawSegments(
   rawSegments: ReadonlyArray<Record<string, unknown>>,
 ): Record<string, unknown> {
-  const records = (key: string): Record<string, unknown>[] => rawSegments.flatMap((raw) =>
+  const normalizedRawSegments = rawSegments.map(unwrapNativeDeepReadStructuredAnswerEnvelope);
+  const records = (key: string): Record<string, unknown>[] => normalizedRawSegments.flatMap((raw) =>
     Array.isArray(raw[key])
       ? (raw[key] as unknown[]).filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row))
       : []);
@@ -3598,12 +3630,12 @@ export function deterministicallyMergeNativeDeepReadRawSegments(
     .sort((a, b) => Number(a.chunkIndex) - Number(b.chunkIndex));
   const classification = Object.fromEntries(MANHUA_TEMPLATE_CLASSIFICATION_KEYS.map((key) => [
     key,
-    Array.from(new Set(rawSegments.flatMap((raw) => {
+    Array.from(new Set(normalizedRawSegments.flatMap((raw) => {
       const value = (raw.classification as Record<string, unknown> | undefined)?.[key];
       return Array.isArray(value) ? value.map((item) => String(item || "").trim()).filter(Boolean) : [];
     }))),
   ]));
-  const joinText = (key: string) => rawSegments.map((raw, index) => {
+  const joinText = (key: string) => normalizedRawSegments.map((raw, index) => {
     const text = String(raw[key] || "").trim();
     return text ? `第${index + 1}段：${text}` : "";
   }).filter(Boolean).join("\n");
@@ -5703,7 +5735,7 @@ async function executeNativeDeepReadBatch(
         const allSegmentIndexes = episode.segments.map((_, index) => index);
         if (segmentCount <= maxRawSegmentsPerBatch) {
           const cached = await readCachedStructuring(allSegmentIndexes, glmStructuringInputs, "最终整形");
-          if (cached) return cached;
+          if (cached) return unwrapNativeDeepReadStructuredAnswerEnvelope(cached);
           const result = await runStructuringOrLocalFallback({
             prompt: buildNativeDeepReadGlmStructuringPrompt({
               episodeIndex: episode.episodeIndex,
@@ -5721,6 +5753,7 @@ async function executeNativeDeepReadBatch(
             fallbackRows: annotateSegmentRows(),
             labelZh: `第${episode.episodeIndex}集整集整形`,
           });
+          result.raw = unwrapNativeDeepReadStructuredAnswerEnvelope(result.raw);
           assertNativeDeepReadShotObservationsPreserved(glmStructuringInputs, result.raw);
           await writeCachedStructuring(allSegmentIndexes, glmStructuringInputs, result);
           return result.raw;
@@ -5764,14 +5797,16 @@ async function executeNativeDeepReadBatch(
             fallbackRows: groupCanonicalRows,
             labelZh: `第${episode.episodeIndex}集第${segmentIndexes[0]! + 1}—${segmentIndexes.at(-1)! + 1}片批次整形`,
           });
+          result.raw = unwrapNativeDeepReadStructuredAnswerEnvelope(result.raw);
           assertNativeDeepReadShotObservationsPreserved(groupInputs, result.raw);
           await writeCachedStructuring(segmentIndexes, groupInputs, result);
           return result.raw;
         }));
         const cachedFinal = await readCachedStructuring(allSegmentIndexes, groupRows, "最终整形");
         if (cachedFinal) {
-          cachedFinal.structuringBatches = groups.map((segmentIndexes) => ({ segmentIndexes }));
-          return cachedFinal;
+          const normalizedCachedFinal = unwrapNativeDeepReadStructuredAnswerEnvelope(cachedFinal);
+          normalizedCachedFinal.structuringBatches = groups.map((segmentIndexes) => ({ segmentIndexes }));
+          return normalizedCachedFinal;
         }
         const finalResult = await runStructuringOrLocalFallback({
           prompt: buildNativeDeepReadGlmStructuringPrompt({
@@ -5790,6 +5825,7 @@ async function executeNativeDeepReadBatch(
           fallbackRows: groupRows,
           labelZh: `第${episode.episodeIndex}集最终整形`,
         });
+        finalResult.raw = unwrapNativeDeepReadStructuredAnswerEnvelope(finalResult.raw);
         assertNativeDeepReadShotObservationsPreserved(groupRows, finalResult.raw);
         finalResult.raw.structuringBatches = groups.map((segmentIndexes) => ({ segmentIndexes }));
         await writeCachedStructuring(allSegmentIndexes, groupRows, finalResult);
@@ -5813,7 +5849,7 @@ async function executeNativeDeepReadBatch(
         // 确定性拼接只算一次，取 excludedAdRanges 给 GLM 产物对账（防 GLM 私吞/改写广告区间）。
         const deterministicAdRanges =
           stripNonStoryAdShotsForEpisodeCard(annotateSegmentRows()).excludedAdRanges;
-        const structuredRaw = await structuredEpisodeRaw();
+        const structuredRaw = unwrapNativeDeepReadStructuredAnswerEnvelope(await structuredEpisodeRaw());
         applyDeterministicAdRanges(structuredRaw, deterministicAdRanges);
         /**
          * 🔒 集级**镜头留存率闸**——0830 晚用户拍板「加回」的唯一一条集级判定。

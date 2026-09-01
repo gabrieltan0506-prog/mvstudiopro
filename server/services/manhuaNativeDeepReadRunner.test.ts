@@ -67,6 +67,7 @@ import {
   createNativeDeepReadRunnerDeps,
   attachAudioChunkSpans,
   stripNonStoryAdShotsForEpisodeCard,
+  unwrapNativeDeepReadStructuredAnswerEnvelope,
   validateNativeDeepReadSegments,
   type NativeDeepReadBatchRunnerDeps,
   type NativeDeepReadMediaPreparationDeps,
@@ -2345,9 +2346,9 @@ function readRawSegmentsFromGlmPrompt(user: string): Array<Record<string, unknow
 function makeGlmStructuringStub() {
   return vi.fn(async (prompt: { system: string; user: string }) => {
     // 真 GLM 的首要职责是去重（同段可能被喂进通过版 + 被标记版）。
-    // 桩件按同样口径先剔掉被标记版，否则同秒位区间会重叠——
-    // 这正是「两版一起喂」必须依赖 GLM 去重的地方。
+    // 桩件按同样口径先剔掉被标记版，否则同秒位区间会重叠。
     const rows = readRawSegmentsFromGlmPrompt(prompt.user)
+      .map(unwrapNativeDeepReadStructuredAnswerEnvelope)
       .filter((row) => row.gateMarked !== true);
     const pick = <T>(key: string) => rows.flatMap((row) => (row[key] as T[]) || []);
     const joinText = (key: string) =>
@@ -3011,6 +3012,108 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(3);
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
     expect(result.episodes[0]!.result.attemptedSegments).toBe(9);
+  });
+
+  it("五片续跑可消费历史answer外壳批次缓存，并零付费恢复最终整形证据", async () => {
+    const segments = Array.from({ length: 5 }, (_, index) => ({
+      startSec: index * 60,
+      endSec: (index + 1) * 60,
+    }));
+    const readStructuredBatchCache = vi.fn(async (input: {
+      segmentIndexes: readonly number[];
+      rawSegments: ReadonlyArray<Record<string, unknown>>;
+    }) => JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2, 3]) ? {
+      schemaVersion: 1 as const,
+      frozenContractSha256: "f".repeat(64),
+      seriesKey: "legacy_answer_envelope",
+      sourceDigest: "6".repeat(64),
+      episodeIndex: 1,
+      segmentIndexes: [...input.segmentIndexes],
+      inputDigest: "a".repeat(64),
+      raw: {
+        answer: JSON.stringify(deterministicallyMergeNativeDeepReadRawSegments(input.rawSegments)),
+      },
+      gateway: "openrouter" as const,
+      model: "z-ai/glm-5.3",
+      inputTokens: 1,
+      outputTokens: 1,
+      reasoningTokens: 1,
+      costUsd: 0.01,
+      savedAtIso: "2026-09-01T00:00:00.000Z",
+      source: "formal" as const,
+    } : null);
+    const base = makeGlmStructuringStub();
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => ({
+      ...(await base(prompt)),
+      recoveredPaidEvidence: true,
+      inputTokens: 52_412,
+      outputTokens: 55_231,
+      reasoningTokens: 6_043,
+      costUsd: 0.31632024,
+    }));
+    const receipts: Array<{ route: string; status: string }> = [];
+    const deps = makeRunnerDeps({
+      postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
+      invokeGlmStructuring: invokeGlmStructuring as never,
+      readStructuredBatchCache: readStructuredBatchCache as never,
+    });
+
+    const result = await runManhuaNativeDeepReadBatch({
+      episodes: [{
+        episodeIndex: 1,
+        resolveNodes: async () => [],
+        segments,
+        sourceDurationSec: 300,
+        cacheSourceDigest: "6".repeat(64),
+      }],
+      segmentCacheSeriesKey: "legacy_answer_envelope",
+      onModelReceipt: (receipt) => { receipts.push(receipt); },
+    }, deps);
+
+    expect(readStructuredBatchCache).toHaveBeenCalledTimes(2);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    const finalRows = readRawSegmentsFromGlmPrompt(
+      (invokeGlmStructuring.mock.calls[0]![0] as { user: string }).user,
+    );
+    expect(finalRows).toHaveLength(2);
+    expect(finalRows[0]?.answer).toEqual(expect.any(String));
+    expect(finalRows[1]?.shots).toEqual(expect.any(Array));
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(1);
+    expect(receipts.filter((row) => row.route === NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE)).toEqual([]);
+    expect(result.episodes[0]!.result.beatGrid).toHaveLength(60);
+    expect(result.episodes[0]!.result.segmentCount).toBe(5);
+  });
+
+  it("九片4+4+1的每层GLM都返回answer外壳时仍生成完整整集卡", async () => {
+    const segments = Array.from({ length: 9 }, (_, index) => ({
+      startSec: index * 60,
+      endSec: (index + 1) * 60,
+    }));
+    const base = makeGlmStructuringStub();
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
+      const result = await base(prompt);
+      return { ...result, raw: { answer: JSON.stringify(result.raw) } };
+    });
+    const deps = makeRunnerDeps({
+      postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
+      invokeGlmStructuring: invokeGlmStructuring as never,
+    });
+
+    const result = await runManhuaNativeDeepReadBatch({
+      episodes: [{
+        episodeIndex: 1,
+        resolveNodes: async () => [],
+        segments,
+        sourceDurationSec: 540,
+        cacheSourceDigest: "5".repeat(64),
+      }],
+      segmentCacheSeriesKey: "answer_envelope_9_segments",
+    }, deps);
+
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(3);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(3);
+    expect(result.episodes[0]!.result.beatGrid).toHaveLength(108);
+    expect(result.episodes[0]!.result.segmentCount).toBe(9);
   });
 
   it("中间批次与最终整形命中GCS缓存时都不重跑，只补未缓存批次", async () => {
@@ -4242,6 +4345,18 @@ describe("逐镜动态观察的生产与消费", () => {
     expect(() => assertNativeDeepReadShotObservationsPreserved(sources, { shots: [
       { ...first, hintZh: "有一把未见的长剑" },
     ] })).toThrow("hintZh丢失、改写");
+  });
+
+  it("GLM来源与输出可展开answer字符串外壳", () => {
+    const shot = { startSec: 0, endSec: 4.1, evidenceRole: "story", hintZh: "荒漠中小狗咬住男子的手" };
+    const wrappedSource = { answer: JSON.stringify({ shots: [shot] }) };
+    const wrappedOutput = { answer: JSON.stringify({ shots: [shot] }) };
+
+    expect(unwrapNativeDeepReadStructuredAnswerEnvelope(wrappedSource)).toEqual({ shots: [shot] });
+    expect(() => assertNativeDeepReadShotObservationsPreserved(
+      [wrappedSource], wrappedOutput,
+    )).not.toThrow();
+    expect(deterministicallyMergeNativeDeepReadRawSegments([wrappedSource]).shots).toEqual([shot]);
   });
 
   it("实际批量入口在GLM丢观察后停止消费，原始解析证据已保存且不重发GLM", async () => {
