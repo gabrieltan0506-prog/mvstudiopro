@@ -329,6 +329,15 @@ describe("装卡", () => {
     expect(card.provenance?.nativeVideoDeepRead?.segmentEvidenceObjectNames).toEqual(evidenceNames);
   });
 
+  it("完整卡保存最终 GLM parsed 证据名，HTML 导出可精确读取整形结果", () => {
+    const objectName = `manhua-template-learn/episode-glm-evidence/native-structuring-${"a".repeat(64)}/parsed.json`;
+    const card = buildNativeDeepReadProposalCard({
+      ...baseInput,
+      result: makeResult({ glmEvidence: { parsed: { objectName } } }),
+    })!;
+    expect(card.provenance?.nativeVideoDeepRead?.glmParsedObjectName).toBe(objectName);
+  });
+
   it("provenance 证据名必须按段排序、无重复、数量==attemptedSegments，否则抛错拒写", () => {
     const fingerprint = "a".repeat(64);
     const sourceDigest = "b".repeat(64);

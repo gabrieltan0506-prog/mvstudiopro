@@ -53,6 +53,7 @@ export type NativeDeepReadIngestSource = NativeDeepReadOutput & {
   sourceDigest?: string;
   segmentSnapshotSha256?: string;
   segmentEvidenceObjectNames?: string[];
+  glmEvidence?: { parsed?: { objectName?: string } };
   assemblyComplete?: boolean;
 };
 
@@ -339,6 +340,7 @@ export function buildNativeDeepReadProposalCard(
   if (!sourceUrl) return null;
 
   const r = input.result;
+  const glmParsedObjectName = String(r.glmEvidence?.parsed?.objectName || "").trim();
   const today = new Date().toISOString().slice(0, 10);
   // 新收费模板不再按旧题材套路分桶；lane 只留兼容字段，真实分类看 classification。
   const laneZh = input.laneZh || "多维标签";
@@ -441,6 +443,10 @@ export function buildNativeDeepReadProposalCard(
               completedCount: progress.completed.length,
               complete: progress.complete,
             })
+          : undefined,
+        glmParsedObjectName: progress.complete
+          && /^manhua-template-learn\/episode-glm-evidence\/[0-9A-Za-z_-]{16,180}\/parsed\.json$/.test(glmParsedObjectName)
+          ? glmParsedObjectName
           : undefined,
       },
       nativeAudioDeepRead: {

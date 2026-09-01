@@ -538,19 +538,34 @@ const EVIDENCE_NAMES = [
 ];
 
 const FULL_SOURCE_DIGEST = "c".repeat(64);
+const GLM_PARSED_OBJECT_NAME = "manhua-template-learn/episode-glm-evidence/native-structuring-test1234567890/parsed.json";
 
 /** 完整卡：两段全成功、装配完成、证据名与分片数一致、digest 合法 → 允许导出。 */
 const nativeCardWithEvidence = {
   ...partialNativeCard,
+  evidenceFrames: [{
+    atSec: 12,
+    kindZh: "剧情",
+    noteZh: "冲突爆发",
+    objectName: `manhua-template-learn/native-frames/seriesabc/ep001/120ds-${"d".repeat(24)}.jpg`,
+    mimeType: "image/jpeg",
+    bytes: 1234,
+    sha256: "d".repeat(64),
+  }],
   provenance: {
     nativeVideoDeepRead: {
       ...(partialNativeCard.provenance!.nativeVideoDeepRead as object),
       attemptedSegments: 2,
       successSegments: 2,
       completedSegmentIndexes: [0, 1],
+      segmentSpans: [
+        { startSec: 0, endSec: 300 },
+        { startSec: 300, endSec: 600 },
+      ],
       assemblyComplete: true,
       sourceDigest: FULL_SOURCE_DIGEST,
       segmentEvidenceObjectNames: EVIDENCE_NAMES,
+      glmParsedObjectName: GLM_PARSED_OBJECT_NAME,
     },
   },
 } as unknown as ManhuaViralTemplateCard;
@@ -596,6 +611,12 @@ describe("renderEpisodeReport：canonical 寻址（禁列目录猜证据）", ()
     expect(input.expectSeriesKey).toBe("seriesabc");
     expect(input.expectSourceDigest).toBe(FULL_SOURCE_DIGEST);
     expect(input.expectSegmentCount).toBe(2);
+    expect(input.segmentSpans).toEqual([
+      { startSec: 0, endSec: 300 },
+      { startSec: 300, endSec: 600 },
+    ]);
+    expect(input.glmCardObjectName).toBe(GLM_PARSED_OBJECT_NAME);
+    expect(input.evidenceFrames).toEqual(nativeCardWithEvidence.evidenceFrames);
     expect(input.reportObjectName).toBe(
       "manhua-template-learn/reports/tpl_native_seriesabc_ep001.html",
     );

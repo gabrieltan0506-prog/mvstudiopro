@@ -1,7 +1,7 @@
 /**
  * 原生精读证据 → 报告 HTML 渲染服务（¥0，零模型调用）。
- * **只渲染模型字段原文，不加任何编辑/蒸馏层，不做任何内容截断**；字幕折叠存证不铺开；
- * 帧包优先 frames-v2（按戏抽帧，带 reasons 徽章），回退 frames，均无则出无帧提示。
+ * **只渲染模型字段原文，不加任何编辑/蒸馏层**；完整 JSON 永久保留，报告字幕只展示
+ * keyMoments 前后 2 秒内的旁证。帧优先正式卡 evidenceFrames，再回退旧探针帧包。
  *
  * 两个入口：
  * - renderNativeEvidenceReportFromObjectNames：生产路由唯一入口。按 provenance 里的
@@ -10,6 +10,7 @@
  * - renderNativeEvidenceReport：旧列目录入口，仅供 CLI 探针脚本兼容使用。
  */
 import { Storage } from "@google-cloud/storage";
+import type { ManhuaViralTemplateEvidenceFrame } from "../../shared/manhuaViralTemplateBank.js";
 import {
   downloadGcsObjectVersioned,
   getGcsBucketName,
@@ -81,6 +82,26 @@ async function mustJson(bucket: string, objectName: string): Promise<Record<stri
   return parsed as Record<string, unknown>;
 }
 
+/** GLM 永久证据保存的是 `{ parsed: ... }`；部分网关还会再包一层 `{ answer: "JSON" }`。 */
+function unwrapGlmReportCard(evidence: Record<string, unknown>): Record<string, unknown> {
+  let current: unknown = evidence.parsed ?? evidence;
+  for (let depth = 0; depth < 3; depth += 1) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) break;
+    const row = current as Record<string, unknown>;
+    const answer = row.answer;
+    if (typeof answer !== "string" || !answer.trim()) return row;
+    try {
+      current = JSON.parse(answer);
+    } catch {
+      throw new Error("GLM 整集 parsed 证据的 answer 不是合法 JSON");
+    }
+  }
+  if (!current || typeof current !== "object" || Array.isArray(current)) {
+    throw new Error("GLM 整集 parsed 证据不是 JSON 对象");
+  }
+  return current as Record<string, unknown>;
+}
+
 const SUMMARY_TEXT_KEYS = ["beatStructureZh", "moodArcZh", "reusableZh", "genPromptHintZh"] as const;
 
 type SegmentRaw = { segmentIndex: number; raw: Record<string, unknown> };
@@ -90,7 +111,36 @@ type SegmentRaw = { segmentIndex: number; raw: Record<string, unknown> };
  * 摘要四字段与五维分类不再「取第一个非空」，而是**合并全段**：
  * 文本字段按段号标注拼接，分类标签跨段去重并集。
  */
-function assembleCardFromSegments(segments: SegmentRaw[]): Record<string, unknown> {
+type NativeReportSegmentSpan = { startSec: number; endSec: number };
+
+function normalizedReportChunkSpans(
+  spans: readonly NativeReportSegmentSpan[] | undefined,
+  expectedCount: number,
+): Array<{ chunkIndex: number; startSec: number; endSec: number }> | undefined {
+  if (!spans) return undefined;
+  if (spans.length !== expectedCount) {
+    throw new Error(`报告分片计划应有 ${expectedCount} 段，实际为 ${spans.length} 段`);
+  }
+  const normalized = spans.map((span, chunkIndex) => {
+    const startSec = Number(span.startSec);
+    const endSec = Number(span.endSec);
+    if (!Number.isFinite(startSec) || !Number.isFinite(endSec) || startSec < 0 || endSec <= startSec) {
+      throw new Error(`报告第${chunkIndex + 1}段真实秒位无效`);
+    }
+    return { chunkIndex, startSec, endSec };
+  });
+  if (Math.abs(normalized[0]?.startSec ?? 0) > 0.01
+    || normalized.some((span, index) => index > 0
+      && Math.abs(span.startSec - normalized[index - 1]!.endSec) > 0.01)) {
+    throw new Error("报告真实分片计划不连续或不是从 0 秒开始");
+  }
+  return normalized;
+}
+
+function assembleCardFromSegments(
+  segments: SegmentRaw[],
+  segmentSpans?: readonly NativeReportSegmentSpan[],
+): Record<string, unknown> {
   const merged: Record<string, unknown> = { shots: [], subtitles: [], audioResolution: [] };
   /**
    * 🔴 keyMoments / excludedAdRanges 必须一并合并（0830 审查 P0）。
@@ -139,7 +189,9 @@ function assembleCardFromSegments(segments: SegmentRaw[]): Record<string, unknow
     if (summaryParts[key]?.length) merged[key] = summaryParts[key].join("\n");
   }
   if (Object.keys(classification).length) merged.classification = classification;
-  if (chunkSpans.length > 0) merged.chunkSpans = chunkSpans;
+  const plannedChunkSpans = normalizedReportChunkSpans(segmentSpans, segments.length);
+  if (plannedChunkSpans) merged.chunkSpans = plannedChunkSpans;
+  else if (chunkSpans.length > 0) merged.chunkSpans = chunkSpans;
   if (keyMoments.length > 0) {
     // 同秒同类去重后按秒位排序（与 shared mapper 同口径）
     const seen = new Set<string>();
@@ -161,6 +213,7 @@ type RenderCoreInput = {
   card: Record<string, unknown>;
   /** 报告头部注明的数据来源口径 */
   sourceLabelZh: string;
+  evidenceFrames?: ManhuaViralTemplateEvidenceFrame[];
   framesV2SummaryObjectName?: string;
   framesPrefix?: string;
   reportObjectName: string;
@@ -185,8 +238,13 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const framesSummary = input.framesV2SummaryObjectName
     ? await tryJson(bucket, input.framesV2SummaryObjectName)
     : null;
-  let frameSource = "frames-v2（按戏抽帧）";
-  let frameList = (Array.isArray(framesSummary?.frames) ? framesSummary!.frames : []) as Array<Record<string, unknown>>;
+  let frameSource = "正式卡重点时刻抽帧";
+  let frameList = (Array.isArray(input.evidenceFrames) ? input.evidenceFrames : [])
+    .map((frame) => ({ ...frame, reasons: [frame.kindZh] })) as Array<Record<string, unknown>>;
+  if (frameList.length === 0) {
+    frameSource = "frames-v2（按戏抽帧）";
+    frameList = (Array.isArray(framesSummary?.frames) ? framesSummary!.frames : []) as Array<Record<string, unknown>>;
+  }
   if (frameList.length === 0 && input.framesPrefix) {
     frameSource = "frames（逐镜中点）";
     let names: string[] = [];
@@ -210,7 +268,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     const badge = reasons.map((r) => `<span style="background:#1d2733;border-radius:8px;padding:0 6px;margin-right:3px">${esc(r)}</span>`).join("");
     const frameAtSec = Number(frame.atSec);
     const shot = shots.find((s) => frameAtSec >= Number(s.startSec) && frameAtSec < Number(s.endSec)) || {};
-    tiles.push(`<div style="width:158px"><a href="${url}" target="_blank"><img loading="lazy" src="${url}" style="width:158px;border-radius:4px"></a><div style="font-size:.7em;color:#8fa3bd">${mmss(frameAtSec)} ${badge}${esc(shot.actionZh)}</div></div>`);
+    tiles.push(`<div style="width:158px"><a href="${url}" target="_blank"><img loading="lazy" src="${url}" style="width:158px;border-radius:4px"></a><div style="font-size:.7em;color:#8fa3bd">${mmss(frameAtSec)} ${badge}${esc(String(frame.noteZh ?? "").trim() || shot.actionZh)}</div></div>`);
   }
 
   const cl = (card.classification ?? {}) as Record<string, unknown>;
@@ -253,11 +311,10 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
       const cueSpans = cues.map((cue) => `<span style="background:#1d2733;border-radius:8px;padding:1px 8px;display:inline-block;margin:1px">${mmss(offset + Number(cue.atSec))} ${esc(cue.kind)} ${esc(cue.detailZh)}</span>`).join(" ");
       return `<tr><td style="color:#e8c66a;white-space:nowrap">${mmss(offset + Number(track.fromSec))}–${mmss(offset + Number(track.toSec))}</td>${AUDIO_TRACK_FIELDS.map((key) => `<td style="padding:3px 8px">${esc(track[key])}</td>`).join("")}<td style="color:#9db4d0">${cueSpans}</td></tr>`;
     }).join("");
-    return `<div style="margin:14px 0"><h3 style="color:#8fa3bd;margin:6px 0">分片 ${Number(chunk.chunkIndex) || 0}（模型原文区）</h3>${chunkMeta}<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.85em"><tr><th style="padding:4px 8px;color:#8fa3bd">秒位</th>${AUDIO_TRACK_FIELDS.map((key) => `<th style="padding:4px 8px;color:#8fa3bd">${fieldLabel(key)}</th>`).join("")}<th style="padding:4px 8px;color:#8fa3bd">声音事件</th></tr>${trackRows}</table></div></div>`;
+    return `<div style="margin:14px 0"><h3 style="color:#8fa3bd;margin:6px 0">第${(Number(chunk.chunkIndex) || 0) + 1}片音轨（模型原文区）</h3>${chunkMeta}<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.85em"><tr><th style="padding:4px 8px;color:#8fa3bd">秒位</th>${AUDIO_TRACK_FIELDS.map((key) => `<th style="padding:4px 8px;color:#8fa3bd">${fieldLabel(key)}</th>`).join("")}<th style="padding:4px 8px;color:#8fa3bd">声音事件</th></tr>${trackRows}</table></div></div>`;
   }).join("");
 
   const subtitles = (Array.isArray(card.subtitles) ? card.subtitles : []) as Array<Record<string, unknown>>;
-  const subRows = subtitles.map((s) => `<tr><td style="color:#e8c66a">${mmss(Number(s.atSec))}</td><td>${esc(s.textZh)}</td></tr>`).join("");
 
   /* ───────── 0830 用户拍板的报告规格：KPI / 镜长分布 / 重点时刻 / 剧情节点 ───────── */
 
@@ -309,37 +366,35 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const KIND_ICON: Record<string, string> = {
     切镜: "🎬", 情绪: "😨", 灯光: "💡", 剧情: "📖", 音轨: "🎵",
   };
-  const kmRows = keyMoments.map((row) => (
+  type KeyMomentSubtitle = { atSec: number; textZh: string };
+  const subtitlesByKeyMoment = new Map<number, KeyMomentSubtitle[]>();
+  for (const subtitle of subtitles.slice().sort((a, b) => Number(a.atSec) - Number(b.atSec))) {
+    const atSec = Number(subtitle.atSec);
+    const textZh = String(subtitle.textZh ?? "").trim();
+    if (!Number.isFinite(atSec) || !textZh) continue;
+    let nearestIndex = -1;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    keyMoments.forEach((moment, index) => {
+      const distance = Math.abs(atSec - Number(moment.atSec));
+      if (distance <= 2 && distance < nearestDistance) {
+        nearestIndex = index;
+        nearestDistance = distance;
+      }
+    });
+    if (nearestIndex < 0) continue;
+    const rows = subtitlesByKeyMoment.get(nearestIndex) ?? [];
+    rows.push({ atSec, textZh });
+    subtitlesByKeyMoment.set(nearestIndex, rows);
+  }
+  const keyMomentSubtitleCount = Array.from(subtitlesByKeyMoment.values())
+    .reduce((sum, rows) => sum + rows.length, 0);
+  const kmRows = keyMoments.map((row, index) => (
     `<tr><td style="color:#e8c66a;white-space:nowrap">${mmss(Number(row.atSec))}</td>`
     + `<td style="white-space:nowrap">${KIND_ICON[String(row.kindZh)] ?? ""} ${esc(row.kindZh)}</td>`
-    + `<td>${esc(row.noteZh)}</td></tr>`
-  )).join("");
-
-  /**
-   * 剧情节点表：字幕**压缩成节点**，不逐字铺（呈现铁律第一条）。
-   * 6 秒内视作同一事件合并；原始逐条字幕仍在下方折叠存证，一条不删。
-   */
-  type SubNode = { from: number; to: number; lines: string[] };
-  const subNodes: SubNode[] = [];
-  for (const row of subtitles.slice().sort((a, b) => Number(a.atSec) - Number(b.atSec))) {
-    const at = Number(row.atSec);
-    const text = String(row.textZh ?? "").trim();
-    if (!Number.isFinite(at) || !text) continue;
-    const last = subNodes.at(-1);
-    // 🔴 双封顶（0830 审查 P1）：`at - last.to <= 6` 是**滑动**窗口，
-    // 只要每两句间隔都 ≤6 秒，整集所有字幕会塌成 1 个节点（漫剧 3–5 秒一句是常态）。
-    // 节点跨度上限 45 秒、单节点最多 8 句，超过即强制起新节点。
-    if (last && at - last.to <= 6 && at - last.from <= 45 && last.lines.length < 8) {
-      last.to = at; last.lines.push(text);
-    }
-    else subNodes.push({ from: at, to: at, lines: [text] });
-  }
-  const nodeRows = subNodes.map((node) => (
-    `<tr><td style="color:#e8c66a;white-space:nowrap">${mmss(node.from)}–${mmss(node.to)}</td>`
-    + `<td style="white-space:nowrap;color:#9db4d0">${node.lines.length} 句</td>`
-    // 🔴 节点内**全部句子照列，一句不砍**（0830 用户发现旧版只显示前 3 句）。
-    // 本表的「不逐字铺」体现在**分组**，不体现在删句子——本文件顶部写明「不做任何内容截断」。
-    + `<td>${esc(node.lines.join("｜"))}</td></tr>`
+    + `<td>${esc(row.noteZh)}</td>`
+    + `<td>${(subtitlesByKeyMoment.get(index) ?? []).map((subtitle) => (
+      `<div><span style="color:#e8c66a;white-space:nowrap">${mmss(subtitle.atSec)}</span> ${esc(subtitle.textZh)}</div>`
+    )).join("") || '<span style="color:#5d6b80">—</span>'}</td></tr>`
   )).join("");
 
   /** 镜长分布：一眼看粒度，长镜区间标红。 */
@@ -385,7 +440,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const kpi = [
     [String(shots.length), "镜头数"],
     [`${avgShotSec.toFixed(1)}s`, "平均镜长"],
-    [String(subtitles.length), "字幕"],
+    [String(keyMomentSubtitleCount), "重点字幕"],
     [String(keyMoments.length), "重点时刻"],
     [String(audioSegCount), "音轨段"],
     [String(adRanges.length), "广告区间"],
@@ -410,10 +465,10 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     + `${rows}</table></div>`
   );
 
-  const html = `<title>${esc(input.labelZh)} 模型产出报告</title><div style="font-family:'Songti SC',serif;background:linear-gradient(165deg,#7a1f3d 0%,#8e4a8b 55%,#cbb3e6 100%);background-attachment:fixed;color:#dce3ec;padding:28px;max-width:1200px;margin:auto">
-<p style="color:#e8c66a;letter-spacing:.3em;font-size:.8em">${esc(input.labelZh)} · ${esc(input.sourceLabelZh)} · 模型字段原样渲染，无编辑层、无删节</p>
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(input.labelZh)} 模型产出报告</title></head><body style="margin:0;background:#8e4a8b"><div style="font-family:'Songti SC',serif;background:linear-gradient(165deg,#7a1f3d 0%,#8e4a8b 55%,#cbb3e6 100%);background-attachment:fixed;color:#dce3ec;padding:28px;max-width:1200px;margin:auto">
+<p style="color:#e8c66a;letter-spacing:.3em;font-size:.8em">${esc(input.labelZh)} · ${esc(input.sourceLabelZh)} · 模型证据原样渲染；字幕仅展示重点时刻前后 2 秒，完整 JSON 不改写</p>
 <h1 style="font-size:1.8em;margin:.2em 0">模型产出报告</h1>
-<p style="color:#8fa3bd;margin:.3em 0 0">${shots.length} 镜（已剔除 ${adShotCount} 广告镜）· ${subtitles.length} 字幕 → ${subNodes.length} 剧情节点 · ${keyMoments.length} 重点时刻 · ${frameSource} ${tiles.length} 帧 · 覆盖 ${(coveredSec / 60).toFixed(1)} 分钟</p>
+<p style="color:#8fa3bd;margin:.3em 0 0">${shots.length} 镜（已剔除 ${adShotCount} 广告镜）· ${keyMomentSubtitleCount} 重点字幕 · ${keyMoments.length} 重点时刻 · ${frameSource} ${tiles.length} 帧 · 覆盖 ${(coveredSec / 60).toFixed(1)} 分钟</p>
 
 <div style="display:flex;gap:12px;flex-wrap:wrap;margin:18px 0">${kpi}</div>
 <p style="color:${grainColor};font-weight:600">${grainText}</p>
@@ -425,14 +480,12 @@ ${section("节奏结构", panel(summaryTextOf("beatStructureZh")))}
 ${section("情绪推进", panel(summaryTextOf("moodArcZh")))}
 ${section("五维标签墙", tags)}
 ${section(`重点时刻表 · ${keyMoments.length} 条`, keyMoments.length
-    ? tableOf(["秒位", "类型", "说明"], kmRows)
+    ? tableOf(["秒位", "类型", "说明", "相关字幕（前后 2 秒）"], kmRows)
     : `<p style="color:#9db4d0">本卡无重点时刻（v12 之前的产出没有这个字段）</p>`, true)}
-${section(`剧情节点表 · ${subNodes.length} 节点（${subtitles.length} 条字幕压缩，非逐字铺）`, tableOf(["区间", "密度", "关键句"], nodeRows))}
 ${section("画面时间轴", `<div style="display:flex;flex-wrap:wrap;gap:8px">${tiles.join("")}</div>`)}
 ${section("音轨解析（模型原文）", audioSections)}
 <details style="margin-top:30px" open><summary style="color:#e8c66a;font-size:1.2em;cursor:pointer">全镜头表 · ${shots.length} 镜 × ${FIELDS.length} 字段</summary><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#141b24">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#8fa3bd">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
-<details style="margin-top:30px"><summary style="color:#e8c66a;font-size:1.1em;cursor:pointer">字幕原始证据 · ${subtitles.length} 条（折叠存证，一条不删）</summary><div style="overflow-x:auto;max-height:50vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.85em">${subRows}</table></div></details>
-<p style="color:#5d6b80;font-size:.8em;margin-top:36px">帧图与本页为 GCS V4 签名链接（6 天）· 证据永久存 GCS · 本页由代码从模型 JSON 确定性渲染</p></div>`;
+<p style="color:#5d6b80;font-size:.8em;margin-top:36px">帧图与本页为 GCS V4 签名链接（6 天）· 证据永久存 GCS · 本页由代码从模型 JSON 确定性渲染</p></div></body></html>`;
 
   await uploadBufferToGcs({
     bucket,
@@ -456,8 +509,12 @@ export type NativeReportFromObjectNamesInput = {
   expectSourceDigest?: string;
   /** 卡片 provenance 的 attemptedSegments；证据名个数必须严格等于它（防少段导出）。 */
   expectSegmentCount?: number;
+  /** 首次学习时保存的真实分片边界；音轨局部秒只能用它换算，禁止回退固定 300 秒。 */
+  segmentSpans?: NativeReportSegmentSpan[];
   /** GLM 整集卡对象名（provenance 明示时传入；传了就必须能读到，fail closed）。 */
   glmCardObjectName?: string;
+  /** 完整卡入库时按 keyMoments 抽取的正式帧证据；优先于旧探针帧包。 */
+  evidenceFrames?: ManhuaViralTemplateEvidenceFrame[];
   framesV2SummaryObjectName?: string;
   framesPrefix?: string;
   reportObjectName: string;
@@ -476,18 +533,6 @@ export async function renderNativeEvidenceReportFromObjectNames(
 ): Promise<NativeReportRenderResult> {
   const bucket = getGcsBucketName();
   const names = (input.evidenceObjectNames ?? []).map((n) => String(n || "").trim()).filter(Boolean);
-
-  if (input.glmCardObjectName) {
-    const glm = await mustJson(bucket, input.glmCardObjectName);
-    return renderCardToReport({
-      labelZh: input.labelZh,
-      card: glm,
-      sourceLabelZh: "GLM 整集卡（provenance 精确寻址）",
-      framesV2SummaryObjectName: input.framesV2SummaryObjectName,
-      framesPrefix: input.framesPrefix,
-      reportObjectName: input.reportObjectName,
-    });
-  }
 
   if (names.length === 0) {
     throw new Error("provenance 没有 segmentEvidenceObjectNames，拒绝列目录猜证据；该集需重学后再出报告");
@@ -558,10 +603,30 @@ export async function renderNativeEvidenceReportFromObjectNames(
     }
   }
 
+  const assembledSegments = assembleCardFromSegments(segments, input.segmentSpans);
+  let reportCard = assembledSegments;
+  let sourceLabelZh = `parsed 段卡拼接 · ${segments.length} 段（provenance 精确寻址）`;
+  if (input.glmCardObjectName) {
+    const glmEvidence = await mustJson(bucket, input.glmCardObjectName);
+    reportCard = {
+      ...unwrapGlmReportCard(glmEvidence),
+      // GLM 不负责复述真实分片边界；报告音轨秒位只认首次学习计划。
+      ...(assembledSegments.chunkSpans ? { chunkSpans: assembledSegments.chunkSpans } : {}),
+    };
+    if (Array.isArray(assembledSegments.excludedAdRanges)
+      && assembledSegments.excludedAdRanges.length > 0) {
+      reportCard.excludedAdRanges = assembledSegments.excludedAdRanges;
+    } else {
+      delete reportCard.excludedAdRanges;
+    }
+    sourceLabelZh = "GLM 整集卡（provenance 精确寻址）";
+  }
+
   return renderCardToReport({
     labelZh: input.labelZh,
-    card: assembleCardFromSegments(segments),
-    sourceLabelZh: `parsed 段卡拼接 · ${segments.length} 段（provenance 精确寻址）`,
+    card: reportCard,
+    sourceLabelZh,
+    evidenceFrames: input.evidenceFrames,
     framesV2SummaryObjectName: input.framesV2SummaryObjectName,
     framesPrefix: input.framesPrefix,
     reportObjectName: input.reportObjectName,
