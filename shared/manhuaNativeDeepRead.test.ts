@@ -400,15 +400,18 @@ describe("音频广告过滤只认真实段界（chunkSpans），禁猜起点", 
 
     const chunk0 = out.resolvedAudioChunks[0]!;
     expect(chunk0.chunkIndex).toBe(0);
-    expect(chunk0.analysis.audioTrack).toHaveLength(1);
-    expect(chunk0.analysis.audioTrack[0]!.fromSec).toBe(8);
-    expect(chunk0.analysis.audioTrack[0]!.cues.map((cue) => cue.atSec)).toEqual([12]);
+    // 段首广告轨 0901 起换占位轨（无缝），非广告轨照旧
+    expect(chunk0.analysis.audioTrack.map((t) => t.fromSec)).toEqual([0, 8]);
+    expect(chunk0.analysis.audioTrack[0]!.emotionArcZh).toBe("广告插播，已按区间剔除");
+    expect(chunk0.analysis.audioTrack[1]!.cues.map((cue) => cue.atSec)).toEqual([12]);
 
     const chunk1 = out.resolvedAudioChunks[1]!;
     expect(chunk1.chunkIndex).toBe(1);
-    expect(chunk1.analysis.audioTrack.map((t) => t.fromSec)).toEqual([0, 45]);
-    expect(chunk1.analysis.audioTrack[0]!.cues.map((cue) => cue.atSec)).toEqual([30]);
-    expect(chunk1.analysis.audioTrack[1]!.cues.map((cue) => cue.atSec)).toEqual([55]);
+    expect(chunk1.analysis.audioTrack.map((t) => t.fromSec)).toEqual([40, 0, 45]);
+    expect(chunk1.analysis.audioTrack[0]!.emotionArcZh).toBe("广告插播，已按区间剔除");
+    expect(chunk1.analysis.audioTrack[0]!.cues).toEqual([]);
+    expect(chunk1.analysis.audioTrack[1]!.cues.map((cue) => cue.atSec)).toEqual([30]);
+    expect(chunk1.analysis.audioTrack[2]!.cues.map((cue) => cue.atSec)).toEqual([55]);
   });
 
   it("GLM 合并单行卡：多 chunk 各按自己的真实起点换算，min(shot.startSec) 猜法必然错删/漏删", () => {
@@ -443,12 +446,20 @@ describe("音频广告过滤只认真实段界（chunkSpans），禁猜起点", 
     expect(out.resolvedAudioChunks[0]!.analysis.audioTrack[0]!.fromSec).toBe(350);
 
     const chunk1 = out.resolvedAudioChunks[1]!;
-    expect(chunk1.analysis.audioTrack).toHaveLength(1);
-    expect(chunk1.analysis.audioTrack[0]!.fromSec).toBe(0);
-    expect(chunk1.analysis.audioTrack[0]!.cues.map((cue) => cue.atSec)).toEqual([39, 50]);
+    // 0901 起整段落广告的轨换成占位轨而非剔除：时间轴保持无缝（入库校验要求），
+    // 广告的情绪/音效/配乐字段全空、cue 全清。
+    expect(chunk1.analysis.audioTrack).toHaveLength(2);
+    const placeholder = chunk1.analysis.audioTrack.find((t) => t.fromSec === 40)!;
+    expect(placeholder.toSec).toBe(50);
+    expect(placeholder.emotionArcZh).toBe("广告插播，已按区间剔除");
+    expect(placeholder.sfxZh).toBe("");
+    expect(placeholder.bgmZh).toBe("");
+    expect(placeholder.cues).toEqual([]);
+    const kept = chunk1.analysis.audioTrack.find((t) => t.fromSec === 0)!;
+    expect(kept.cues.map((cue) => cue.atSec)).toEqual([39, 50]);
   });
 
-  it("全广告 chunk：真实段界完全落入广告区间时音轨全删但 chunk 身份保留", () => {
+  it("全广告 chunk：音轨全部换成占位轨，chunk 身份保留且时间轴仍铺满", () => {
     const out = mapNativeDeepReadSegments([
       row({
         shots: [adShot(0, 30), storyShot(30, 60)],
@@ -461,7 +472,10 @@ describe("音频广告过滤只认真实段界（chunkSpans），禁猜起点", 
     ]);
     expect(out.resolvedAudioChunks).toHaveLength(1);
     expect(out.resolvedAudioChunks[0]!.chunkIndex).toBe(0);
-    expect(out.resolvedAudioChunks[0]!.analysis.audioTrack).toEqual([]);
+    const tracks = out.resolvedAudioChunks[0]!.analysis.audioTrack;
+    expect(tracks.map((t) => [t.fromSec, t.toSec])).toEqual([[0, 10], [10, 30]]);
+    expect(tracks.every((t) => t.emotionArcZh === "广告插播，已按区间剔除")).toBe(true);
+    expect(tracks.every((t) => t.cues.length === 0)).toBe(true);
   });
 
   it("旧卡无 chunkSpans 且有广告：跳过音频过滤、原样保留并打 audioAdFilterSkipped 标记", () => {

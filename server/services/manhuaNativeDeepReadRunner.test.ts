@@ -1860,6 +1860,13 @@ describe("GLM 结构化整形提示词纪律", () => {
 
 /* ── 媒体准备 ── */
 
+/** 0901 整片先落盘：runMedia 会先收到无 -ss 的整片抓取与对源文件的 ffprobe。 */
+function isSourceLevelMediaCall(args: readonly unknown[]): boolean {
+  // 切段调用带 -ss 且 -i 指向本地整片——不算源级；源级只有整片抓取与对整片的 ffprobe
+  return !args.includes("-ss")
+    && args.some((a) => String(a).includes("manhua-native-source"));
+}
+
 function makePreparedMediaProbe(duration = 10, hasAudio = true, start = 0) {
   return {
     format: { start_time: String(start), duration: String(duration) },
@@ -1875,8 +1882,11 @@ function makePreparationDeps(
   over: Partial<NativeDeepReadMediaPreparationDeps> = {},
 ): NativeDeepReadMediaPreparationDeps {
   return {
-    runMedia: vi.fn(async (cmd: string) =>
-      cmd === "ffprobe" ? JSON.stringify(makePreparedMediaProbe()) : ""),
+    sleepMs: async () => {},
+    runMedia: vi.fn(async (cmd: string, args: readonly unknown[] = []) =>
+      cmd === "ffprobe"
+        ? JSON.stringify(makePreparedMediaProbe(isSourceLevelMediaCall(args) ? 100_000 : 10))
+        : ""),
     statLocal: vi.fn(async () => ({ size: 200_000 })),
     readLocal: vi.fn(async () => Buffer.from("fixture")),
     unlinkLocal: vi.fn(async () => undefined),
@@ -1977,7 +1987,8 @@ describe("精确切片与实际媒体验收", () => {
         episodeIndex: 1, resolveNodes: async () => [{ url: "https://cdn.example/full.mp4" }],
         segments: [{ startSec, endSec }], sourceDurationSec: 30,
       }, undefined, deps);
-      const args = vi.mocked(deps.runMedia).mock.calls[0]![1];
+      const args = vi.mocked(deps.runMedia).mock.calls
+        .find((call) => call[0] === "ffmpeg" && (call[1] as string[]).includes("-ss"))![1] as string[];
       expect(args.includes("-t")).toBe(!expectEof);
     }
   });
@@ -1986,15 +1997,19 @@ describe("精确切片与实际媒体验收", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const deps = makePreparationDeps({
       statLocal: vi.fn(async () => ({ size: 3_400_000 })),
-      runMedia: vi.fn(async (cmd) => cmd === "ffprobe" ? JSON.stringify(makePreparedMediaProbe(31.319)) : ""),
+      runMedia: vi.fn(async (cmd, args: readonly unknown[] = []) => cmd === "ffprobe"
+        ? JSON.stringify(makePreparedMediaProbe(isSourceLevelMediaCall(args) ? 1691 : 31.319))
+        : ""),
     });
     const resolveNodes = vi.fn(async () => [{ url: "https://cdn.example/full.mp4" }]);
     await expect(prepareEpisodeVideos({
       episodeIndex: 1, resolveNodes, segments: [{ startSec: 1200, endSec: 1500 }], sourceDurationSec: 1691,
     }, undefined, deps)).rejects.toThrow("实际时长 31.319 秒与计划 300 秒不符");
-    expect(resolveNodes).toHaveBeenCalledTimes(3);
+    // 整片只解析一次节点；段级重切在本地进行，不再刷新节点
+    expect(resolveNodes).toHaveBeenCalledTimes(1);
     expect(deps.upload).not.toHaveBeenCalled();
-    expect(deps.unlinkLocal).toHaveBeenCalledTimes(3);
+    // 3 次段级清理 + finally 清整片
+    expect(deps.unlinkLocal).toHaveBeenCalledTimes(4);
     warn.mockRestore();
   });
 
@@ -2009,14 +2024,18 @@ describe("精确切片与实际媒体验收", () => {
       segments: [{ startSec: 0, endSec: 10 }], sourceDurationSec: 10,
     }, undefined, deps)).rejects.toThrow("probe failed");
     expect(deps.upload).not.toHaveBeenCalled();
+    // 源探针即抛 → 整片三连拉失败，各自清一次源文件；未进切段层，finally 无段可清
     expect(deps.unlinkLocal).toHaveBeenCalledTimes(3);
     warn.mockRestore();
   });
 
   it("各片音轨存在性冲突时停在上传前，不用首片覆盖其他片的事实", async () => {
     let probes = 0;
-    const deps = makePreparationDeps({ runMedia: vi.fn(async (cmd) =>
-      cmd === "ffprobe" ? JSON.stringify(makePreparedMediaProbe(10, ++probes === 1)) : "") });
+    const deps = makePreparationDeps({ runMedia: vi.fn(async (cmd, args: readonly unknown[] = []) => {
+      if (cmd !== "ffprobe") return "";
+      if (isSourceLevelMediaCall(args)) return JSON.stringify(makePreparedMediaProbe(20));
+      return JSON.stringify(makePreparedMediaProbe(10, ++probes === 1));
+    }) });
     await expect(prepareEpisodeVideos({
       episodeIndex: 1, resolveNodes: async () => [{ url: "https://cdn.example/full.mp4" }],
       segments: [{ startSec: 0, endSec: 10 }, { startSec: 10, endSec: 20 }], sourceDurationSec: 20,
@@ -2035,18 +2054,20 @@ describe("模型请求前的媒体准备边界", () => {
       resolveNodes: async () => [{ url: "https://cdn.example/full.mp4" }],
       segments: [{ startSec: 0, endSec: 10 }],
       sourceDurationSec: 10,
-    }, undefined, deps)).rejects.toThrow("低于 500MB 下限");
+    }, undefined, deps)).rejects.toThrow("已停止切段");
     expect(deps.runMedia).not.toHaveBeenCalled();
     expect(deps.upload).not.toHaveBeenCalled();
     expect(NATIVE_DEEP_READ_MIN_TMP_FREE_BYTES).toBe(500 * 1024 * 1024);
   });
 
-  it("切片失败会刷新媒体节点后安全重试，上传后立即删本地段文件，产出 gs:// 不签 URL", async () => {
+  it("整片抓取失败会刷新媒体节点后重拉；段切在本地，上传后立即删段文件，产出 gs:// 不签 URL", async () => {
     const resolveNodes = vi.fn()
       .mockResolvedValueOnce([{ url: "https://cdn.example/expired.mp4" }])
       .mockResolvedValueOnce([{ url: "https://cdn.example/fresh.mp4" }]);
     const runMedia = vi.fn()
       .mockRejectedValueOnce(new Error("cdn expired"))
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce(JSON.stringify(makePreparedMediaProbe(20)))
       .mockResolvedValueOnce("")
       .mockResolvedValueOnce(JSON.stringify(makePreparedMediaProbe()));
     const unlinkLocal = vi.fn(async () => undefined);
@@ -2091,19 +2112,23 @@ describe("模型请求前的媒体准备边界", () => {
 
     expect(resolveNodes).toHaveBeenCalledTimes(3);
     const ffmpegCalls = vi.mocked(deps.runMedia).mock.calls.filter((call) => call[0] === "ffmpeg");
-    expect(ffmpegCalls).toHaveLength(1);
+    expect(ffmpegCalls).toHaveLength(2);
     expect(ffmpegCalls[0]?.[1]).toContain("https://cdn.example/fresh.mp4");
+    expect(ffmpegCalls[1]?.[1]).toContain("-ss");
     expect(deps.upload).toHaveBeenCalledTimes(1);
     expect(prepared).toHaveLength(1);
     warn.mockRestore();
   });
 
-  it("默认并发上限 10：5 段一次全发，完成乱序仍逐片验收并按原分段顺序落位", async () => {
+  it("默认并发上限 4：5 段先发 4 路，完成乱序仍逐片验收并按原分段顺序落位", async () => {
     const cutGates = new Map<number, ReturnType<typeof deferred>>();
     let activeCuts = 0;
     let maxActiveCuts = 0;
     let ffprobeCalls = 0;
     const runMedia = vi.fn(async (cmd: string, args: string[]) => {
+      if (isSourceLevelMediaCall(args)) {
+        return cmd === "ffprobe" ? JSON.stringify(makePreparedMediaProbe(100_000)) : "";
+      }
       if (cmd === "ffprobe") {
         ffprobeCalls += 1;
         return JSON.stringify(makePreparedMediaProbe());
@@ -2131,12 +2156,15 @@ describe("模型请求前的媒体准备边界", () => {
       sourceDurationSec: 50,
     }, undefined, deps);
 
-    // 0829 晚用户令「改成并发，不是串行」：默认上限 10，5 段不再切成 4+1 两波。
+    // 0901 降档：默认上限 4（真人剧小站 CDN 被 10 路并发连环 reset 的实锤）。
+    // 5 段先发 4 路，放行一段后第 5 段跟上；仍是并发不是串行。
+    await vi.waitFor(() => expect(cutGates.size).toBe(4));
+    expect(maxActiveCuts).toBe(4);
+    cutGates.get(0)!.resolve();
     await vi.waitFor(() => expect(cutGates.size).toBe(5));
     expect(Array.from(cutGates.keys()).sort((a, b) => a - b)).toEqual([0, 10, 20, 30, 40]);
-    expect(maxActiveCuts).toBe(5);
     // 乱序完成：真正的不变量是「按分段下标落位」，不是「按完成顺序落位」。
-    for (const startSec of [40, 10, 30, 0, 20]) cutGates.get(startSec)!.resolve();
+    for (const startSec of [40, 10, 30, 20]) cutGates.get(startSec)!.resolve();
 
     const prepared = await task;
     expect(prepared.map((row) => row.startSec)).toEqual([0, 10, 20, 30, 40]);
@@ -2153,6 +2181,9 @@ describe("模型请求前的媒体准备边界", () => {
     let activeCuts = 0;
     let maxActiveCuts = 0;
     const runMedia = vi.fn(async (cmd: string, args: string[]) => {
+      if (isSourceLevelMediaCall(args)) {
+        return cmd === "ffprobe" ? JSON.stringify(makePreparedMediaProbe(100_000)) : "";
+      }
       if (cmd === "ffprobe") return JSON.stringify(makePreparedMediaProbe());
       const startSec = Number(args[args.indexOf("-ss") + 1]);
       const gate = deferred();
@@ -2195,6 +2226,9 @@ describe("模型请求前的媒体准备边界", () => {
     const inFlightGates = new Map<number, ReturnType<typeof deferred>>();
     const started: number[] = [];
     const runMedia = vi.fn(async (cmd: string, args: string[]) => {
+      if (isSourceLevelMediaCall(args)) {
+        return cmd === "ffprobe" ? JSON.stringify(makePreparedMediaProbe(100_000)) : "";
+      }
       if (cmd === "ffprobe") return JSON.stringify(makePreparedMediaProbe());
       const startSec = Number(args[args.indexOf("-ss") + 1]);
       started.push(startSec);
@@ -2270,9 +2304,14 @@ describe("精确切片后逐片上传 GCS", () => {
   const MB = 1024 * 1024;
 
   it("多片总体积超过旧预算仍逐片上传，精确切片不按体积降清晰度", async () => {
-    const runMedia = vi.fn(async (cmd: string, _args: string[]) =>
-      cmd === "ffprobe" ? JSON.stringify(makePreparedMediaProbe(300)) : "");
+    const runMedia = vi.fn(async (cmd: string, args: string[]) => {
+      if (isSourceLevelMediaCall(args)) {
+        return cmd === "ffprobe" ? JSON.stringify(makePreparedMediaProbe(100_000)) : "";
+      }
+      return cmd === "ffprobe" ? JSON.stringify(makePreparedMediaProbe(300)) : "";
+    });
     const statLocal = vi.fn()
+      .mockResolvedValueOnce({ size: 500 * MB })
       .mockResolvedValueOnce({ size: 60 * MB })
       .mockResolvedValueOnce({ size: 60 * MB });
     const deps = makePreparationDeps({ runMedia, statLocal });
@@ -2282,7 +2321,9 @@ describe("精确切片后逐片上传 GCS", () => {
       segments: [{ startSec: 0, endSec: 300 }, { startSec: 300, endSec: 600 }],
       sourceDurationSec: 601,
     }, undefined, deps);
-    const ffmpegCalls = runMedia.mock.calls.filter((call) => call[0] === "ffmpeg");
+    const ffmpegCalls = runMedia.mock.calls.filter(
+      (call) => call[0] === "ffmpeg" && (call[1] as string[]).includes("-ss"),
+    );
     expect(ffmpegCalls).toHaveLength(2);
     expect(ffmpegCalls.every((call) => call[1].includes("libx264"))).toBe(true);
     expect(ffmpegCalls.flatMap((call) => call[1])).not.toContain("-vf");
