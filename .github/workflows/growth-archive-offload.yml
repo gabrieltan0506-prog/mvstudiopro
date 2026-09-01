@@ -26,6 +26,21 @@ jobs:
         with:
           node-version: 24
       - uses: superfly/flyctl-actions/setup-flyctl@master
+      # 0831 修：与 growth-backup.yml 同因——未指定 --machine 时 flyctl 会往 stdout
+      # 打印「No machine specified, ...」，污染被重定向当作数据用的输出。
+      - name: Resolve production app machine
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          MACHINE_ID="$(flyctl machines list -a mvstudiopro --json </dev/null \
+            | jq -r '[.[] | select(.config.metadata.fly_process_group == "app")
+                            | select(.state == "started")][0].id // empty')"
+          if [ -z "$MACHINE_ID" ]; then
+            echo "未找到 started 状态的 app 进程组机器，卸载中止（不猜机器）" >&2
+            exit 1
+          fi
+          echo "FLY_MACHINE_ID=$MACHINE_ID" >> "$GITHUB_ENV"
       - name: Create leased archive snapshot on Fly
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -36,7 +51,7 @@ jobs:
           SNAPSHOT_READY=false
           for attempt in $(seq 1 20); do
             rm -f /tmp/growth-archive-offload/snapshot.tsv.next
-            if flyctl ssh console -a mvstudiopro \
+            if flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
               -C "sh -s -- prepare '$BATCH_ID'" \
               < scripts/growth-archive-offload-remote.sh \
               > /tmp/growth-archive-offload/snapshot.tsv.next; then
@@ -79,7 +94,7 @@ jobs:
             BUNDLE_READY=false
             for attempt in $(seq 1 20); do
               rm -f "$output.next"
-              if flyctl ssh console -a mvstudiopro \
+              if flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
                 -C "sh -s -- bundle '$BATCH_ID' '$dir'" \
                 < scripts/growth-archive-offload-remote.sh \
                 > "$output.next"; then
@@ -227,7 +242,7 @@ jobs:
             test "$verified_part_count" -eq "$part_count"
             DELETED=false
             for attempt in $(seq 1 20); do
-              if flyctl ssh console -a mvstudiopro \
+              if flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
                 -C "sh -s -- delete '$BATCH_ID' '$dir' '$source_fingerprint'" \
                 < scripts/growth-archive-offload-remote.sh; then
                 DELETED=true
@@ -238,7 +253,7 @@ jobs:
             done
             test "$DELETED" = "true"
           done < /tmp/growth-archive-offload/archives.tsv
-          flyctl ssh console -a mvstudiopro \
+          flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
             -C "sh -s -- cleanup '$BATCH_ID'" \
             < scripts/growth-archive-offload-remote.sh
       - name: Always release archive hardlink snapshot
@@ -250,6 +265,6 @@ jobs:
             exit 0
           fi
           BATCH_ID=$(cat /tmp/growth-archive-offload/batch-id.txt)
-          flyctl ssh console -a mvstudiopro \
+          flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
             -C "sh -s -- cleanup '$BATCH_ID'" \
             < scripts/growth-archive-offload-remote.sh || true

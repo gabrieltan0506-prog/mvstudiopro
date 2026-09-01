@@ -83,6 +83,16 @@ import {
   normalizeManhuaAssetRegenNoteZh,
   type ManhuaAssetRegenMode,
 } from "@shared/manhuaAssetRegenRequest";
+import {
+  countManhuaSheetSelectionByKind,
+  isManhuaCustomSheetId,
+  isManhuaSheetSectionAllSelected,
+  pruneManhuaSheetSelection,
+  resolveManhuaSheetBatchRegen,
+  resolveManhuaSheetCustomRefIds,
+  setManhuaSheetSectionSelection,
+  toggleManhuaSheetSelection,
+} from "@/lib/manhuaSheetSelection";
 import type { ManhuaDeliveryPackage } from "@shared/manhuaDeliveryPackage";
 import { syncDeliveryPackageSubtitleEnabled } from "@shared/manhuaDeliveryPackage";
 import type { ManhuaCineVocabLocale } from "@shared/manhuaCineVocabBank";
@@ -180,6 +190,7 @@ import { suggestManhuaClipCuts } from "@/lib/manhuaEditAutoCutApi";
 import { parseFineCutByShot } from "@shared/manhuaEditFineCut";
 import {
   isManhuaAssetCardExpanded,
+  shouldShowManhuaAssetFoldToggle,
   shouldShowManhuaAssetRoleChip,
 } from "@/lib/manhuaAssetCardFold";
 import {
@@ -329,6 +340,8 @@ type Props = {
   onClearAllCustomAssets?: () => void;
   /** 删除本集设定图画廊里的一张（画布块）；可随时重出，不扣费 */
   onRemoveEpisodeSheet?: (blockId: string) => void;
+  /** 批量删画布块：必须一次传全部 id（逐个调会因闭包旧值只删掉最后一张） */
+  onRemoveEpisodeSheets?: (blockIds: readonly string[]) => void;
   /** 段意图写回可拍表（工作台编辑） */
   onSegmentIntentChange?: (segmentIndex: number, intentZh: string) => void;
   /** 段出场角色写回可拍表（工作台编辑） */
@@ -596,6 +609,7 @@ export default function ManhuaScriptWorkbench({
   onRemoveCustomAsset,
   onClearAllCustomAssets,
   onRemoveEpisodeSheet,
+  onRemoveEpisodeSheets,
   onSegmentIntentChange,
   onSegmentCastChange,
   deliveryPackage = null,
@@ -676,17 +690,40 @@ export default function ManhuaScriptWorkbench({
     });
   };
   /**
+   * 本集设定图画廊的勾选集合（与上面「我的参考图」那套分开：两片画廊 id 空间不同，
+   * 混一个 state 会出现在 A 区勾了、B 区批量条也亮着的鬼影）。
+   *
+   * 2026-08-23 实测：设定图画廊全页没有一个多选框，唯一的「批量」批的是重出（烧钱），
+   * 而用户真正天天要批的是删除与设置。
+   */
+  const [selectedSheetIds, setSelectedSheetIds] = useState<ReadonlySet<string>>(new Set());
+  const toggleSheetSelected = (id: string) => {
+    setSelectedSheetIds((prev) => toggleManhuaSheetSelection(prev, id));
+  };
+  const clearSheetSelection = useCallback(() => setSelectedSheetIds(new Set()), []);
+  /**
    * 逐卡展开态：简洁模式下资产卡只留 图/名字/✕/⋯，其余点「⋯」才出。
    * 单卡 11–13 个控件 × 13 张全平铺，是用户说「太复杂跟繁琐」的直接来源。
    */
   const [expandedAssetIds, setExpandedAssetIds] = useState<ReadonlySet<string>>(new Set());
+  /**
+   * 非简洁模式下用户手动收起的卡。
+   *
+   * 为什么要单独一个集合：简洁模式的默认态是「收起」，非简洁是「展开」，
+   * 同一个 Set 表达不了两种默认下的「用户改过」。分开存，切模式时各记各的，
+   * 不会出现「切回去发现全乱了」。
+   */
+  const [collapsedAssetIds, setCollapsedAssetIds] = useState<ReadonlySet<string>>(new Set());
   const toggleAssetExpanded = (id: string) => {
-    setExpandedAssetIds((prev) => {
+    const flip = (prev: ReadonlySet<string>) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
-    });
+    };
+    // 简洁模式记「谁被展开了」，非简洁模式记「谁被收起了」
+    if (compactUi) setExpandedAssetIds(flip);
+    else setCollapsedAssetIds(flip);
   };
   /** 待生成虚线卡折条：默认收起（26 张铺满一屏太吵），点「展开补图」再出卡 */
   const [pendingOpenKinds, setPendingOpenKinds] = useState<ReadonlySet<string>>(new Set());
@@ -699,6 +736,16 @@ export default function ManhuaScriptWorkbench({
     });
   };
   /** 简洁模式（默认开）：说明性灰色小字与低频控件收起；「显示说明」随时展开 */
+  /**
+   * 「我的角色/场景/道具」三栏的展开态。
+   *
+   * 为什么默认收起：这三栏与上方「本集设定图」展示的是同一批图
+   * （设定图生成后会同步进这里），同屏两处看同样的东西，用户得先想「点哪个」——
+   * 0823 实测四问第①条不过的直接原因之一。
+   * 分工是：上方「本集设定图」= 看本集出了什么；这三栏 = 上传/生成参考图的工具区。
+   * 工具区默认收起，用到才展开；已经传过参考图的那一栏保持展开，不替用户收走他在用的东西。
+   */
+  const [openCustomRefRoles, setOpenCustomRefRoles] = useState<Record<string, boolean>>({});
   const [compactUi, setCompactUi] = useState(() => {
     try {
       return window.localStorage.getItem("manhua_compact_ui") !== "0";
@@ -1389,6 +1436,96 @@ export default function ManhuaScriptWorkbench({
     [onRemoveCustomAsset, onRemoveEpisodeSheet],
   );
   /**
+   * 批量删除分流。画布块那半**必须一次性交给 onRemoveEpisodeSheets**：
+   * 逐个调用会各自基于同一份旧 blocks 计算、后一次覆盖前一次，
+   * 结果是报「删除 5 项」只少 1 张（审查 P0 实锤）。
+   * 自传参考图那半用的是函数式更新，逐个调是安全的。
+   */
+  const removeEpisodeGalleryItems = useCallback(
+    (galleryIds: readonly string[]) => {
+      const customRefIds: string[] = [];
+      const blockIds: string[] = [];
+      for (const id of galleryIds) {
+        const m = /^(?:charsheet|sceneplate|propsheet)-custom-(.+)$/.exec(id);
+        if (m?.[1]) customRefIds.push(m[1]);
+        else blockIds.push(id);
+      }
+      customRefIds.forEach((refId) => onRemoveCustomAsset?.(refId));
+      if (blockIds.length) {
+        if (onRemoveEpisodeSheets) onRemoveEpisodeSheets(blockIds);
+        // 没有批量口时只删一张也好过假装删了 N 张：明确只处理第一张
+        else if (blockIds.length === 1) onRemoveEpisodeSheet?.(blockIds[0]!);
+      }
+    },
+    [onRemoveCustomAsset, onRemoveEpisodeSheet, onRemoveEpisodeSheets],
+  );
+  /**
+   * 三类设定图各自的剧本锚点全集。
+   *
+   * 道具必须跟出图计划同一把尺：canon 里可能写了十件，而计划只出前
+   * MANHUA_PROP_SHEET_MAX 件符合条件的，按 canon 直数会报「重出 10 张」
+   * 而画廊只有 6 张。
+   */
+  const canonAnchorIdsByKind = useMemo(
+    (): Record<ManhuaCanonSheetKind, string[]> => ({
+      charsheet: assetCanon?.characters.map((c) => c.id) || [],
+      sceneplate: assetCanon?.locations.map((l) => l.id) || [],
+      propsheet: (assetCanon?.props || [])
+        .filter(shouldSpawnManhuaPropPlate)
+        .slice(0, MANHUA_PROP_SHEET_MAX)
+        .map((p) => p.id),
+    }),
+    [assetCanon],
+  );
+  /**
+   * 画廊条目 → 剧本锚点的对照表，供多选/批量重出用。
+   * 重出只认剧本锚点：hero 的 charsheet-face-* 也要落回本人，
+   * 拿画布块 id 去重出会打空（与单卡「改这张」同一把尺）。
+   */
+  const sheetSelectionItems = useMemo(
+    () =>
+      episodeSheetGallery.map((it) => ({
+        id: it.id,
+        kind: it.kind as string,
+        anchorId: canonAnchorIdsByKind[it.kind].find((anchorId) => it.id.includes(anchorId)),
+      })),
+    [episodeSheetGallery, canonAnchorIdsByKind],
+  );
+  /**
+   * 清幽灵勾：图删掉、或改分类后换了画廊 id，勾必须跟着掉——
+   * 否则批量条报「已选 3 项」而实际只剩 1 张，点删除还会去删不存在的 id。
+   */
+  useEffect(() => {
+    setSelectedSheetIds((prev) => {
+      if (!prev.size) return prev;
+      const next = pruneManhuaSheetSelection(prev, sheetSelectionItems);
+      return next.size === prev.size ? prev : next;
+    });
+  }, [sheetSelectionItems]);
+  const selectedSheetCountByKind = useMemo(
+    () => countManhuaSheetSelectionByKind(sheetSelectionItems, selectedSheetIds),
+    [sheetSelectionItems, selectedSheetIds],
+  );
+  const sheetBatchRegen = useMemo(
+    () => resolveManhuaSheetBatchRegen(sheetSelectionItems, selectedSheetIds),
+    [sheetSelectionItems, selectedSheetIds],
+  );
+  const sheetBatchCustom = useMemo(
+    () => resolveManhuaSheetCustomRefIds(sheetSelectionItems, selectedSheetIds),
+    [sheetSelectionItems, selectedSheetIds],
+  );
+  /**
+   * 真删得掉的那批：画布块走 onRemoveEpisodeSheet、自传图走 onRemoveCustomAsset，
+   * 缺哪个回调就不算数——按钮上报的张数必须是真会消失的张数。
+   */
+  const deletableSelectedSheetIds = useMemo(
+    () =>
+      Array.from(selectedSheetIds).filter((id) =>
+        isManhuaCustomSheetId(id) ? Boolean(onRemoveCustomAsset) : Boolean(onRemoveEpisodeSheet),
+      ),
+    [selectedSheetIds, onRemoveCustomAsset, onRemoveEpisodeSheet],
+  );
+  /**
    * 剧本表里点名、但还没有图的角色/场景/道具。
    *
    * 道具从前不收：那会儿它只并进角色定妆卡的特写格，没有独立出图路径，
@@ -1998,6 +2135,22 @@ export default function ManhuaScriptWorkbench({
     setRegenDraft(null);
     void onRegenerateSheets({ anchorIds, noteZh, mode, libraryImageUrl });
   };
+
+  /**
+   * Esc 取消勾选：多选态最常见的动作是「我不选了」，
+   * 不该逼人把手从键盘挪到底栏去找「取消选择」。
+   * 弹层开着时 Esc 归弹层——别把人家的关闭键抢了。
+   */
+  useEffect(() => {
+    if (!selectedSheetIds.size) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (regenDraft || sheetPreview || cropTarget) return;
+      clearSheetSelection();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectedSheetIds, regenDraft, sheetPreview, cropTarget, clearSheetSelection]);
 
   const enterStoryboard = () => {
     if (!outlineComplete) {
@@ -3419,21 +3572,17 @@ export default function ManhuaScriptWorkbench({
                      */
                     const pendingIdSet = new Set(pending.map((a) => a.anchorId));
                     /**
-                     * 道具要跟出图计划同一把尺：canon 里可能写了十件，但计划只出
-                     * 前 MANHUA_PROP_SHEET_MAX 件符合条件的，按数量直报会写成
-                     * 「重出 10 张」而画廊只有 6 张。
+                     * 道具要跟出图计划同一把尺（说明见 canonAnchorIdsByKind）——
+                     * 这里与多选/批量重出共用同一份，免得两处各算一遍算出不同的数。
                      */
-                    const canonAnchorIds = (
-                      sec.kind === "charsheet"
-                        ? assetCanon?.characters.map((c) => c.id)
-                        : sec.kind === "sceneplate"
-                          ? assetCanon?.locations.map((l) => l.id)
-                          : (assetCanon?.props || [])
-                              .filter(shouldSpawnManhuaPropPlate)
-                              .slice(0, MANHUA_PROP_SHEET_MAX)
-                              .map((p) => p.id)
-                    ) || [];
+                    const canonAnchorIds = canonAnchorIdsByKind[sec.kind];
                     const doneAnchorIds = canonAnchorIds.filter((id) => !pendingIdSet.has(id));
+                    /** 本区可勾选的画廊 id（待生成的虚线卡不算，那还没有图可批） */
+                    const sectionIds = items.map((x) => x.id);
+                    const sectionAllSelected = isManhuaSheetSectionAllSelected(
+                      selectedSheetIds,
+                      sectionIds,
+                    );
                     const secRole: ManhuaCustomAssetRole =
                       sec.kind === "sceneplate"
                         ? "scene"
@@ -3458,6 +3607,35 @@ export default function ManhuaScriptWorkbench({
                               </span>
                             ) : null}
                           </div>
+                          {/* 全选本区：用户从不只操作一张，勾第一张之前就得能一把全要 */}
+                          {sectionIds.length ? (
+                            <button
+                              type="button"
+                              data-manhua-action={`select-all-${sec.kind}`}
+                              aria-pressed={sectionAllSelected}
+                              onClick={() =>
+                                setSelectedSheetIds((prev) =>
+                                  setManhuaSheetSectionSelection(
+                                    prev,
+                                    sectionIds,
+                                    !sectionAllSelected,
+                                  ),
+                                )
+                              }
+                              className={`shrink-0 rounded border px-2 py-0.5 text-[9px] font-semibold ${
+                                sectionAllSelected
+                                  ? "border-sky-300/60 bg-sky-500/25 text-sky-50"
+                                  : "border-white/15 bg-white/[0.04] text-white/55 hover:bg-white/10 hover:text-white/85"
+                              }`}
+                              title={
+                                sectionAllSelected
+                                  ? `取消本区这 ${sectionIds.length} 张的勾选`
+                                  : `勾选本区全部 ${sectionIds.length} 张（别区的勾不受影响）`
+                              }
+                            >
+                              {sectionAllSelected ? "取消本区" : `全选本区 ${sectionIds.length}`}
+                            </button>
+                          ) : null}
                           {/* 分类一键补齐：人物/场景/道具各自成批出，免得几十个逐张点 */}
                           {pending.length ? (
                             <button
@@ -3535,7 +3713,7 @@ export default function ManhuaScriptWorkbench({
                                 type="button"
                                 data-manhua-action={`dedupe-${sec.kind}`}
                                 disabled={factoryBusy}
-                                onClick={() => extras.forEach((id) => removeEpisodeGalleryItem(id))}
+                                onClick={() => removeEpisodeGalleryItems(extras)}
                                 className="shrink-0 rounded border border-rose-300/40 bg-rose-500/15 px-2 py-0.5 text-[9px] font-semibold text-rose-50 hover:bg-rose-500/30 disabled:opacity-40"
                                 title={`同名多份只保留第一张，删除免费、可随时重出`}
                               >
@@ -3557,11 +3735,48 @@ export default function ManhuaScriptWorkbench({
                                 Boolean(onRegenerateSheets);
                               const oneKey = `${sec.kind}:${ownAnchorId}`;
                               const oneOpen = regenDraft?.key === oneKey;
+                              const sheetSelected = selectedSheetIds.has(item.id);
                               return (
                                 <div
                                   key={item.id}
-                                  className="group relative w-[88px] overflow-hidden rounded-lg border border-emerald-300/35 bg-black/40 hover:border-emerald-200/60"
+                                  data-manhua-sheet-selected={sheetSelected ? "true" : "false"}
+                                  className={`group relative w-[88px] overflow-hidden rounded-lg border bg-black/40 ${
+                                    sheetSelected
+                                      ? "border-sky-300/80 ring-2 ring-sky-300/70"
+                                      : "border-emerald-300/35 hover:border-emerald-200/60"
+                                  }`}
                                 >
+                                  {/* 勾选框：平时藏起来（一屏三十张全是框太吵），
+                                      鼠标扫到才出；已勾的常驻，否则松开鼠标就看不出选了谁 */}
+                                  <label
+                                    data-manhua-sheet-select={item.id}
+                                    onClick={(e) => e.stopPropagation()}
+                                    title={
+                                      sheetSelected
+                                        ? `取消勾选「${item.labelZh}」`
+                                        : `勾选「${item.labelZh}」，可批量删除 / 重出`
+                                    }
+                                    className={`absolute left-1 top-1 z-[3] flex h-5 w-5 cursor-pointer items-center justify-center rounded-md border backdrop-blur transition-opacity ${
+                                      sheetSelected
+                                        ? "border-sky-200/80 bg-sky-500/85 opacity-100"
+                                        : "border-white/40 bg-black/60 opacity-0 group-hover:opacity-100 focus-within:opacity-100"
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={sheetSelected}
+                                      onChange={() => toggleSheetSelected(item.id)}
+                                      className="sr-only"
+                                    />
+                                    <span
+                                      aria-hidden
+                                      className={`text-[11px] font-bold leading-none ${
+                                        sheetSelected ? "text-white" : "text-white/70"
+                                      }`}
+                                    >
+                                      ✓
+                                    </span>
+                                  </label>
                                   {onRemoveEpisodeSheet ? (
                                     <button
                                       type="button"
@@ -3575,15 +3790,29 @@ export default function ManhuaScriptWorkbench({
                                   <button
                                     type="button"
                                     data-manhua-sheet-id={item.id}
-                                    onClick={() =>
+                                    onClick={(e) => {
+                                      // 已经在勾选中（有选中项）→ 点卡片就是加/减选，
+                                      // 不必去够 20px 的小勾框点三十次；没选中时照常放大看图。
+                                      // 逃生口（审查 P2）：Shift/⌘/Ctrl 点击强制放大——
+                                      // 勾了几张正要删、想先确认某张是不是这个角色时，
+                                      // 不该逼用户清空全部重勾。
+                                      const wantsPreview = e.shiftKey || e.metaKey || e.ctrlKey;
+                                      if (selectedSheetIds.size && !wantsPreview) {
+                                        toggleSheetSelected(item.id);
+                                        return;
+                                      }
                                       setSheetPreview({
                                         id: item.id,
                                         url: item.url,
                                         labelZh: item.labelZh,
-                                      })
-                                    }
+                                      });
+                                    }}
                                     className="flex w-full flex-col text-left"
-                                    title={`放大看「${item.labelZh}」`}
+                                    title={
+                                      selectedSheetIds.size
+                                        ? `点一下加选 / 取消「${item.labelZh}」；按住 Shift 或 ⌘/Ctrl 点击＝放大看图（Esc 退出勾选）`
+                                        : `放大看「${item.labelZh}」`
+                                    }
                                   >
                                     <img
                                       src={item.url}
@@ -3705,6 +3934,166 @@ export default function ManhuaScriptWorkbench({
                         title="只生成这几张还没出的图，不动已出的（不会清全量重出）"
                       >
                         补齐 {pendingSheetAnchors.length} 张
+                      </button>
+                    </div>
+                  ) : null}
+                  {/*
+                    批量条：有勾选才浮出。只放**底层真有对应函数**的动作——
+                    删除走 removeEpisodeGalleryItem、重出走 openRegenDraft/onRegenerateSheets、
+                    改分类与垫图用途走 onCustomAssetRoleChange/onCustomAssetDutyChange。
+                    条件不成立的动作直接不出现：放一个点了没反应的按钮比少一个更糟。
+                  */}
+                  {selectedSheetIds.size ? (
+                    <div
+                      data-manhua-sheet-batch-bar
+                      data-manhua-sheet-selected-count={String(selectedSheetIds.size)}
+                      className="sticky bottom-2 z-[6] flex flex-wrap items-center gap-2 rounded-xl border border-sky-300/45 bg-[#0b1016]/95 px-3 py-2 backdrop-blur"
+                    >
+                      <span className="text-[11px] font-semibold text-sky-50">
+                        已选 {selectedSheetIds.size} 项
+                      </span>
+                      {/* 跨类时只报总数会让人不知道自己都选了些什么 */}
+                      <span className="text-[10px] text-white/45">
+                        {(
+                          [
+                            ["charsheet", "角色"],
+                            ["sceneplate", "场景"],
+                            ["propsheet", "道具"],
+                          ] as const
+                        )
+                          .filter(([k]) => selectedSheetCountByKind[k])
+                          .map(([k, labelZh]) => `${labelZh} ${selectedSheetCountByKind[k]}`)
+                          .join(" · ")}
+                      </span>
+                      {deletableSelectedSheetIds.length ? (
+                        <button
+                          type="button"
+                          data-manhua-action="batch-delete-sheets"
+                          onClick={() => {
+                            const ids = deletableSelectedSheetIds;
+                            // 不可逆动作才拦一道：删掉的图恢复不了，只能花积分重出
+                            if (
+                              !window.confirm(
+                                `删除所选 ${ids.length} 项设定图？删除后不可恢复——要再要这些图只能重新生成，会再次扣积分。`,
+                              )
+                            )
+                              return;
+                            removeEpisodeGalleryItems(ids);
+                            clearSheetSelection();
+                          }}
+                          className="rounded-lg border border-rose-300/50 bg-rose-500/20 px-3 py-1 text-[11px] font-semibold text-rose-100 hover:bg-rose-500/35"
+                          title={`删除这 ${deletableSelectedSheetIds.length} 项（不可恢复，会再问一次）`}
+                        >
+                          删除 {deletableSelectedSheetIds.length} 项
+                        </button>
+                      ) : null}
+                      {onRegenerateSheets && sheetBatchRegen.anchorIds.length ? (
+                        <button
+                          type="button"
+                          data-manhua-action="batch-regen-sheets"
+                          disabled={
+                            !outlineComplete ||
+                            !assetGate.castLocked ||
+                            !assetGate.sceneLocked ||
+                            factoryBusy
+                          }
+                          onClick={() => {
+                            const kind = sheetBatchRegen.kind;
+                            const role: ManhuaCustomAssetRole =
+                              kind === "sceneplate"
+                                ? "scene"
+                                : kind === "propsheet"
+                                  ? "prop"
+                                  : "character";
+                            openRegenDraft({
+                              key: `batch:${kind}`,
+                              titleZh: `所选 ${sheetBatchRegen.anchorIds.length} 张`,
+                              role,
+                              anchorIds: sheetBatchRegen.anchorIds,
+                            });
+                            onRequestLibraryPicker?.(role);
+                            // 弹框已带走 anchorIds，勾就该松开——留着最容易接着误点删除
+                            clearSheetSelection();
+                          }}
+                          className="rounded-lg border border-amber-300/50 bg-amber-500/20 px-3 py-1 text-[11px] font-semibold text-amber-50 hover:bg-amber-500/35 disabled:opacity-45"
+                          title="下一步要写清哪里要改进，再确认才会扣费"
+                        >
+                          {/* 烧钱动作：单价只认 shared 的报价函数，绝不在这里写死数字 */}
+                          重出所选（
+                          {manhuaAssetRegenPriceLabelZh(
+                            sheetBatchRegen.anchorIds.length,
+                            "redraw",
+                          )}
+                          ）…
+                        </button>
+                      ) : sheetBatchRegen.blockedReasonZh &&
+                        sheetBatchRegen.blockedReasonZh !== "尚未勾选" ? (
+                        <span className="text-[10px] text-white/40">
+                          不能批量重出：{sheetBatchRegen.blockedReasonZh}
+                        </span>
+                      ) : null}
+                      {/* 改分类 / 垫图用途只存在于「我上传或生成的参考图」上，
+                          画布出的设定图没有这两个字段——混选时这两项不出现 */}
+                      {sheetBatchCustom.allCustom && onCustomAssetRoleChange ? (
+                        <select
+                          value=""
+                          data-manhua-action="batch-role-sheets"
+                          title="把所选的图一次归到同一分类（改完会挪到对应分区）"
+                          onChange={(e) => {
+                            const role = e.target.value;
+                            if (!role) return;
+                            sheetBatchCustom.refIds.forEach((refId) =>
+                              onCustomAssetRoleChange(refId, role as ManhuaCustomAssetRole),
+                            );
+                            e.currentTarget.value = "";
+                            clearSheetSelection();
+                          }}
+                          className="rounded-lg border border-white/15 bg-black/45 px-2 py-1 text-[11px] text-white/70"
+                        >
+                          <option value="">批量改分类…</option>
+                          {MANHUA_CUSTOM_ASSET_ROLES.map((role) => (
+                            <option key={role} value={role}>
+                              {MANHUA_CUSTOM_ASSET_ROLE_LABEL_ZH[role]}
+                            </option>
+                          ))}
+                        </select>
+                      ) : null}
+                      {sheetBatchCustom.allCustom && onCustomAssetDutyChange ? (
+                        <select
+                          value=""
+                          data-manhua-action="batch-duty-sheets"
+                          title="把所选的图一次设成同一种垫图用途"
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (!v) return;
+                            const duty =
+                              v === "__clear__" ? null : (v as ManhuaCustomAssetRefDuty);
+                            sheetBatchCustom.refIds.forEach((refId) =>
+                              onCustomAssetDutyChange(refId, duty),
+                            );
+                            e.currentTarget.value = "";
+                            // 三个批量动作统一在做完后清勾：留着旧勾最容易接着误点删除
+                            clearSheetSelection();
+                          }}
+                          className="rounded-lg border border-white/15 bg-black/45 px-2 py-1 text-[11px] text-white/70"
+                        >
+                          <option value="">批量设垫图用途…</option>
+                          {MANHUA_REF_DUTIES.map((d) => (
+                            <option key={d} value={d}>
+                              {MANHUA_CUSTOM_ASSET_REF_DUTY_LABEL_ZH[d]}
+                            </option>
+                          ))}
+                          <option value="__clear__">清为未标注</option>
+                        </select>
+                      ) : null}
+                      <button
+                        type="button"
+                        data-manhua-action="clear-sheet-selection"
+                        onClick={clearSheetSelection}
+                        className="ml-auto rounded-lg border border-white/15 px-3 py-1 text-[11px] text-white/60 hover:bg-white/[0.06]"
+                        title="取消全部勾选（也可按 Esc）"
+                      >
+                        取消选择 · Esc
                       </button>
                     </div>
                   ) : null}
@@ -4207,21 +4596,49 @@ export default function ManhuaScriptWorkbench({
                 ] as const
               ).map((sec) => {
                 const refs = customAssetRefs.filter((r) => r.role === sec.role);
+                // 传过参考图的栏默认展开（用户正在用），空栏默认收起
+                const expanded = openCustomRefRoles[sec.role] ?? refs.length > 0;
+                const toggle = () => {
+                  // 收起该栏时必须清掉该栏的勾：卡片连同勾选框一起被摘掉，
+                  // 而底部批量条是四栏共用的——留着勾等于让用户对看不见的图执行删除
+                  // / 改分类（审查 P1 实锤）。
+                  if (expanded) {
+                    setSelectedAssetIds((prev) => {
+                      const next = new Set(prev);
+                      for (const r of refs) next.delete(r.id);
+                      return next;
+                    });
+                  }
+                  setOpenCustomRefRoles((prev) => ({ ...prev, [sec.role]: !expanded }));
+                };
                 return (
                   <div
                     key={sec.role}
                     data-manhua-custom-refs-role={sec.role}
+                    data-manhua-custom-refs-expanded={expanded ? "1" : "0"}
                     className={`rounded-xl border p-3 ${sec.border}`}
                   >
                     <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                        <div className={`text-[11px] font-semibold ${sec.titleCls}`}>
+                      <div className="min-w-0">
+                        <button
+                          type="button"
+                          onClick={toggle}
+                          aria-expanded={expanded}
+                          className={`flex items-center gap-1 text-[11px] font-semibold ${sec.titleCls}`}
+                        >
+                          <span aria-hidden className="text-white/40">{expanded ? "▾" : "▸"}</span>
                           {sec.titleZh}
                           <span className="ml-1 font-normal text-white/40">· {refs.length}</span>
-                        </div>
-                        <p className="mh-hint mt-0.5 text-[10px] leading-4 text-white/45">{sec.hintZh}</p>
+                        </button>
+                        {expanded ? (
+                          <p className="mh-hint mt-0.5 text-[10px] leading-4 text-white/45">{sec.hintZh}</p>
+                        ) : (
+                          <p className="mh-hint mt-0.5 text-[10px] leading-4 text-white/35">
+                            {refs.length ? "点标题展开管理" : "点标题展开：上传参考图 / 基于库生成"}
+                          </p>
+                        )}
                       </div>
-                      <div className="flex flex-wrap gap-1.5">
+                      <div className={`flex flex-wrap gap-1.5 ${expanded ? "" : "hidden"}`}>
                         {onUploadCustomAssets ? (
                           <label
                             className={`inline-flex cursor-pointer items-center rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold ${sec.btnCls}`}
@@ -4275,7 +4692,7 @@ export default function ManhuaScriptWorkbench({
                         ) : null}
                       </div>
                     </div>
-                    {refs.length ? (
+                    {expanded && refs.length ? (
                       <div className="mt-2 grid grid-cols-3 gap-2">
                         {refs.map((ref) => {
                           const lockTag =
@@ -4296,6 +4713,7 @@ export default function ManhuaScriptWorkbench({
                           const cardExpanded = isManhuaAssetCardExpanded({
                             compactUi,
                             expandedIds: expandedAssetIds,
+                            collapsedIds: collapsedAssetIds,
                             id: ref.id,
                             needsReview,
                           });
@@ -4551,8 +4969,10 @@ export default function ManhuaScriptWorkbench({
                                 </label>
                               ) : null}
                               {/* 折叠开关：90% 的时间只需要 图/名字/✕，其余点开再说。
-                                  待人工确认的卡强制展开，不给收起（收起等于把问题藏了）*/}
-                              {compactUi && !needsReview ? (
+                                  待人工确认的卡强制展开，不给收起（收起等于把问题藏了）。
+                                  0830 修正：按钮不再门在 compactUi 上——旧写法下
+                                  「显示说明」模式既强制展开又不给按钮，用户没有退路。*/}
+                              {shouldShowManhuaAssetFoldToggle({ needsReview }) ? (
                                 <button
                                   type="button"
                                   data-manhua-asset-card-toggle={ref.id}
