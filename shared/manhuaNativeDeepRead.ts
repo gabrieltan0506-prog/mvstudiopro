@@ -480,14 +480,34 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
         incomingAdFiltered = true;
         incoming = {
           ...row.analysis,
-          audioTrack: row.analysis.audioTrack
-            .filter((track) => !adIntervals.some((interval) =>
+          audioTrack: row.analysis.audioTrack.map((track) => {
+            const fullyInsideAd = adIntervals.some((interval) =>
               chunkStart + track.fromSec >= interval.startSec
-              && chunkStart + track.toSec <= interval.endSec))
-            .map((track) => ({
-              ...track,
-              cues: track.cues.filter((cue) => !inAd(chunkStart + cue.atSec)),
-            })),
+              && chunkStart + track.toSec <= interval.endSec);
+            if (!fullyInsideAd) {
+              return {
+                ...track,
+                cues: track.cues.filter((cue) => !inAd(chunkStart + cue.atSec)),
+              };
+            }
+            /**
+             * 0901 修复（真人剧首集实锤）：整段落在广告区间的音轨此前直接剔除，
+             * 时间轴留缝，入库校验「无缝」当场拒收整集——模型把中插广告的音轨
+             * 切得越准，死得越冤。改为原位补一块占位轨：时间轴保持无缝，
+             * 广告的情绪/音效/配乐一个字不留，cue 全清。
+             */
+            return {
+              fromSec: track.fromSec,
+              toSec: track.toSec,
+              emotionArcZh: "广告插播，已按区间剔除",
+              toneZh: "",
+              sfxZh: "",
+              bgmZh: "",
+              atmosphereZh: "",
+              silenceZh: "",
+              cues: [],
+            };
+          }),
         };
       }
       const existing = resolvedByChunk.get(row.chunkIndex);
