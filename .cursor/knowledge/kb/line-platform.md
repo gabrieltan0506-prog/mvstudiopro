@@ -1,6 +1,6 @@
 # line-platform · /platform 内容创作线（动态层，每班收班更新）
 
-- **0901已合并真值（覆盖下方所有候选参数）**：PR #1328 已合并并由冻结 SHA 锁定。Gemini 3.1 Pro 为 `0.7→0.65→0.6`、MEDIUM、无 thinkingBudget/mediaResolution，prompt 与 Schema 不得由 agent 修改；只有分片时长和 fps 可按任务明确指定（默认300秒/12fps，14fps不再测）。三档均未过时从已有永久证据数值择优并标记 `best_effort_unqualified`，不得第四发。GLM-5.3 整形固定0.8/high/131072。真源在 `AGENTS.md`、`shared/manhuaNativeDeepReadJob.ts`、`server/services/manhuaNativeDeepReadRunner.ts`；下方0.65首发、LOW、旧梯度和“待冻结”全部仅为历史。
+- **0901现行真值（覆盖下方所有候选参数）**：Gemini 3.1 Pro 为 `0.7→0.65→0.6`、MEDIUM、无 thinkingBudget/mediaResolution；只有门禁失败才降档。503/429/RESOURCE_EXHAUSTED 每60秒同温重试，每个当前温度档最多3次。三档完成后无论schema门禁是否通过，Qwen 3.8 Max必须按结构、时间轴、画面、逐镜、字幕/重点时刻与声音的综合可用性三选一；禁止拒绝全部候选、改写、合并或本地数值择优，只有选中稿进入整集GLM。模型分片并发硬上限5，尾片无特例。真源在 `AGENTS.md`、`server/services/manhuaNativeDeepReadRunner.ts` 与选择器；下方旧梯度、尾片放行和数值择优全部仅为历史。
 
 > 更新：2026-08-17。本线已交接给 UI/功能线 agent，此处存事实供跨线查阅。
 

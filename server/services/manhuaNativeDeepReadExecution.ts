@@ -23,7 +23,7 @@ import {
   NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
   resolveNativeDeepReadRequestFps,
   nativeDeepReadSegmentMeetsThreeItemLine,
-  isNativeDeepReadFinalSegmentAdmitted,
+  readCurrentQwenAttemptSelection,
   nativeDeepReadSegmentCacheFingerprint,
   runManhuaNativeDeepRead,
   runManhuaNativeDeepReadBatch,
@@ -311,12 +311,8 @@ export async function migrateMisplacedNativeDeepReadSegmentCaches(input: {
     }
     const alias = validAliases[0]?.entry;
     if (!alias) continue;
-    const reusableFinalSegmentAdmit = isNativeDeepReadFinalSegmentAdmitted({
-      raw: alias.raw,
-      segmentIndex,
-      segmentCount: input.segments.length,
-    });
-    if (!reusableFinalSegmentAdmit && !nativeDeepReadSegmentMeetsThreeItemLine({
+    const reusableQwenSelection = readCurrentQwenAttemptSelection(alias.raw);
+    if (!reusableQwenSelection && !nativeDeepReadSegmentMeetsThreeItemLine({
       episodeIndex: input.episodeIndex,
       segmentIndex,
       startSec: segment.startSec,

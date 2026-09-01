@@ -224,6 +224,21 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     expect(r.gatewayTrace.map((t: any) => t.gateway)).toEqual(["evolink_glm", "openrouter", "plan_sg_qwen"]);
   });
 
+  it("qwen_only 从新加坡 Token Plan 开始，绝不访问 GLM 网关", async () => {
+    const calls = stubFetchSeq([
+      () => ({ ok: true, status: 200, body: okBody(GOOD, "qwen3.8-max") }),
+    ]);
+    const result = await invokeGlmJsonChatWithGatewayFallback({
+      system: "s",
+      user: "u",
+      gatewayPolicy: "qwen_only",
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toContain("token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode");
+    expect(result.gateway).toBe("plan_sg_qwen");
+    expect(result.gatewayTrace.map((row) => row.gateway)).toEqual(["plan_sg_qwen"]);
+  });
+
   it("HTTP 200 但业务验真失败时继续降级(复审 P1-1 核心)", async () => {
     const calls = stubFetchSeq([
       () => ({ ok: true, status: 200, body: okBody("抱歉这不是报表 JSON") }),

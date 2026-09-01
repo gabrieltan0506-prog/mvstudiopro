@@ -15,10 +15,7 @@ import {
   type NativeDeepReadBatchEpisode,
   type NativeDeepReadExecutionDeps,
 } from "./manhuaNativeDeepReadExecution";
-import {
-  NATIVE_DEEP_READ_FINAL_SEGMENT_ADMIT_CODE,
-  nativeDeepReadSegmentCacheFingerprint,
-} from "./manhuaNativeDeepReadRunner";
+import { nativeDeepReadSegmentCacheFingerprint } from "./manhuaNativeDeepReadRunner";
 import {
   NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
   type NativeDeepReadSegmentCacheEntry,
@@ -266,7 +263,7 @@ describe("段缓存来源身份", () => {
     expect(migrated.fingerprint).not.toBe(alias.fingerprint);
   });
 
-  it("同源迁移保留已明确放行的多片尾片，不因内容门禁复验而重买", async () => {
+  it("同源迁移拒绝历史尾片无条件放行标记", async () => {
     const sourceDigest = "e".repeat(64);
     const segments = [
       { startSec: 0, endSec: 10 },
@@ -277,7 +274,7 @@ describe("段缓存来源身份", () => {
       gateMarked: true,
       gateMarkedZh: "尾片内容门禁已记录并按规则放行",
       advisories: [{
-        code: NATIVE_DEEP_READ_FINAL_SEGMENT_ADMIT_CODE,
+        code: "last_segment_unconditional_admit",
         detailZh: "尾片内容门禁已记录并按规则放行",
         segmentIndex: 1,
       }],
@@ -326,9 +323,8 @@ describe("段缓存来源身份", () => {
       readTarget: vi.fn(async () => null),
       createTarget,
     });
-    expect(result).toEqual({ migratedSegmentIndexes: [1], sourceEpisodeIndexes: [10] });
-    expect(createTarget).toHaveBeenCalledTimes(1);
-    expect(createTarget.mock.calls[0]![0].raw).toEqual(raw);
+    expect(result).toEqual({ migratedSegmentIndexes: [], sourceEpisodeIndexes: [] });
+    expect(createTarget).not.toHaveBeenCalled();
   });
 
   it("ep010 同源错位缓存仍有健康 claim 时，ep001 关闭式阻塞且零模型调用", async () => {

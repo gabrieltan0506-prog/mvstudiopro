@@ -31,6 +31,9 @@ export type ManhuaNativeModelReceipt = {
   attemptNumber?: number;
   /** 本次尝试实际发送的温度；用于对账 0.70→0.65→0.60 降温序列。 */
   temperature?: number;
+  /** 503/429/RESOURCE_EXHAUSTED 同温重试序号，不计入门禁 attemptNumber。 */
+  resourceRetryNumber?: number;
+  resourceRetryMax?: number;
   variant?: "mono_16k" | "stereo_32k";
   batchRequestId?: string;
   videoCount?: number;
@@ -46,6 +49,10 @@ export type ManhuaNativeModelReceipt = {
   degraded?: boolean;
   errorZh?: string;
   providerError?: ManhuaNativeProviderErrorReceipt;
+  /** 分片门禁与 Qwen 选择的后台原始代码，供 Debug Panel 完整展示。 */
+  advisoryCodes?: string[];
+  /** 与 advisoryCodes 对应的不截断业务详情（持久化前仍受总回执容量限制）。 */
+  advisoriesZh?: string;
 };
 
 export const MANHUA_NATIVE_MODEL_RECEIPT_MAX = 1_024;
