@@ -167,6 +167,8 @@ export type ManhuaTemplateLearnInput = {
    */
   nativeDeepReadConfirmed?: boolean;
   nativePlanPreview?: NativeDeepReadPlanPreview;
+  /** 0901「整支即全集」：与计划层同一声明——忽略 mixId，按独立长视频单源学习 */
+  nativeStandaloneSource?: boolean;
   onProgress?: (phase: string, detailZh: string) => void | Promise<void>;
   /** 每完成或中止一段付费精读即持久化累计回执，进程退出也不把已用额度显示成 0。 */
   onNativeUsage?: (receipt: ManhuaNativeDeepReadUsageReceipt) => void | Promise<void>;
@@ -2108,6 +2110,12 @@ export async function runManhuaTemplateLearn(
       mixId = "";
       single = { ...single, episodeIndex: 1 };
     }
+  }
+  // 0901「整支即全集」：显式声明走与「≥60 分钟大合集」同一条保留单源的路，
+  // 不看时长启发式。必须与计划层同判，否则系列身份两头算出两个 key 被守卫拦停。
+  if (input.nativeStandaloneSource === true && single) {
+    mixId = "";
+    single = { ...single, episodeIndex: 1 };
   }
   if (mixId && !String(input.mixId || "").trim()) {
     // 单集/裸链接升级为合集学习：留双 key 日志，排查「旧进度去哪了」用
