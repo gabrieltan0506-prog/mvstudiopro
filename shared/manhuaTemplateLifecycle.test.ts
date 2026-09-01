@@ -101,10 +101,15 @@ describe("处置建议", () => {
 });
 
 describe("淘汰安全检查", () => {
-  it("同赛道最后一张不许下架 —— 下完编剧室就选不出模板了", () => {
-    const r = canRetireTemplate({ card: frame(), sameLaneApprovedCount: 1 });
-    expect(r.ok).toBe(false);
-    expect(r.ok === false && r.reasonZh).toContain("先批准替代卡");
+  it("同赛道最后一张：现役精读卡不许下架，旧抽帧卡放行（0902 批量清库）", () => {
+    // 精读卡是最后一张 → 拦，护住编剧室能选的
+    const nativeLast = canRetireTemplate({ card: native(), sameLaneApprovedCount: 1 });
+    expect(nativeLast.ok).toBe(false);
+    expect(nativeLast.ok === false && nativeLast.reasonZh).toContain("先批准替代卡");
+    // 旧抽帧卡是最后一张 → 放行（带提示），不挡批量清旧库
+    const frameLast = canRetireTemplate({ card: frame(), sameLaneApprovedCount: 1 });
+    expect(frameLast.ok).toBe(true);
+    expect(frameLast.ok === true && frameLast.warnZh).toContain("暂无模板");
   });
 
   it("非 approved 的没什么可淘汰", () => {

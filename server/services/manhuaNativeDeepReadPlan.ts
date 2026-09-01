@@ -554,6 +554,12 @@ export async function buildNativeDeepReadPlanPreview(
     limit: number;
     segmentSeconds?: number;
     videoFps?: number;
+    /**
+     * 0901 用户令「整支即全集」：这条视频本身就是完整一季的长片。勾选后忽略
+     * URL/详情里的 mixId、跳过合集展开（那个端点正被抖音 Argus 风控单独上锁），
+     * 按独立长视频单集进入自定义分片链。身份仍只绑 awemeId，不与同名剧串库。
+     */
+    treatAsStandalone?: boolean;
     allowPartial?: boolean;
     learnLlm?: ManhuaTemplateLearnLlmProvider;
     abortSignal?: AbortSignal;
@@ -579,7 +585,13 @@ export async function buildNativeDeepReadPlanPreview(
 
   // ── 1. 链接 → 合集 id（搜索页的 modal_id 由 extractDouyinVideoIdFromUrl 处理）
   const sourceAwemeId = external ? null : extractDouyinVideoIdFromUrl(url);
-  let mixId = external?.seriesId || extractDouyinMixIdFromUrl(url) || "";
+  const treatAsStandalone = input.treatAsStandalone === true && !external;
+  if (treatAsStandalone && !sourceAwemeId) {
+    throw new Error("勾选了「整支即全集」但链接里没有视频 id（modal_id）；请给出该视频本身的链接");
+  }
+  let mixId = treatAsStandalone
+    ? ""
+    : external?.seriesId || extractDouyinMixIdFromUrl(url) || "";
   let dramaNameZh = external?.titleZh || "";
   let detailEpisodeIndex: number | undefined = external?.currentEpisodeIndex;
   let standaloneSource = false;
@@ -594,7 +606,7 @@ export async function buildNativeDeepReadPlanPreview(
     if (!sourceAwemeId) throw new Error("这个链接里没有 modal_id / 视频 id / 合集 id，认不出是哪一部");
     const detail = await deps.fetchAwemeDetail(sourceAwemeId);
     if (!detail) throw new Error("这条视频的详情暂时无法读取，请稍后重试");
-    if (detail.mixId) {
+    if (detail.mixId && !treatAsStandalone) {
       mixId = detail.mixId;
       dramaNameZh = detail.mixNameZh || "";
       const parsedEpisodeIndex = Number(detail.episodeIndex);
@@ -634,7 +646,12 @@ export async function buildNativeDeepReadPlanPreview(
 
   // ── 2. 合集展开
   if (!listed) listed = await deps.listMixEpisodes(mixId);
-  if (!listed?.episodes?.length) throw new Error("合集展开失败或没有分集，请稍后重试");
+  if (!listed?.episodes?.length) {
+    const blockedZh = (listed as { riskControlBlockedZh?: string } | null)?.riskControlBlockedZh;
+    throw new Error(blockedZh
+      ? `${blockedZh}：可勾选「整支即全集」，或更新 DOUYIN_COOKIE`
+      : "合集展开失败或没有分集，请稍后重试");
+  }
   dramaNameZh = listed.mixNameZh || dramaNameZh;
 
   /**

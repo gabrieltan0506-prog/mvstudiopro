@@ -45,9 +45,18 @@ function makeSigner() {
     credentials: { client_email: creds.client_email, private_key: creds.private_key },
     projectId: creds.project_id,
   });
-  return async (bucketName: string, objectName: string): Promise<string> => {
+  return async (
+    bucketName: string,
+    objectName: string,
+    /** 报告 HTML 传 true：签名里带 attachment，点导出即下载而非浏览器内联预览。 */
+    asDownload = false,
+  ): Promise<string> => {
+    const downloadName = objectName.split("/").pop() || "report.html";
     const [url] = await storage.bucket(bucketName).file(objectName).getSignedUrl({
       version: "v4", action: "read", expires: Date.now() + 6 * 24 * 3600 * 1000,
+      ...(asDownload
+        ? { responseDisposition: `attachment; filename="${downloadName}"` }
+        : {}),
     });
     return url;
   };
@@ -493,7 +502,7 @@ ${section("音轨解析（模型原文）", audioSections)}
     contentType: "text/html; charset=utf-8",
     buffer: Buffer.from(html, "utf8"),
   });
-  const reportUrl = await sign(bucket, input.reportObjectName);
+  const reportUrl = await sign(bucket, input.reportObjectName, true);
   return { reportUrl, bytes: html.length, frames: tiles.length, frameSource, shots: shots.length };
 }
 

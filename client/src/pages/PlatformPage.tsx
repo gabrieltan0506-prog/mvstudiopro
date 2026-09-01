@@ -2542,6 +2542,8 @@ export default function PlatformPage() {
   const [manhuaPasteTitle, setManhuaPasteTitle] = useState("");
   const [manhuaLearnBatchSize, setManhuaLearnBatchSize] = useState(readManhuaLearnBatchSize);
   const [manhuaLearnSegmentSecondsInput, setManhuaLearnSegmentSecondsInput] = useState(String(NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS));
+  /** 0901「整支即全集」：全集单条长视频跳过合集展开（Argus 风控专拦那个端点） */
+  const [manhuaLearnStandaloneSource, setManhuaLearnStandaloneSource] = useState(false);
   const [manhuaLearnSegmentSecondsError, setManhuaLearnSegmentSecondsError] = useState("");
   /** 设置是下一任务草稿；后台轮询不能覆盖用户正在编辑的值。 */
   const manhuaLearnSegmentSecondsEditedRef = useRef(false);
@@ -5758,6 +5760,7 @@ export default function PlatformPage() {
           nativePlanLimit: manhuaLearnBatchSize,
           nativeSegmentSeconds,
           nativeVideoFps,
+          nativeStandaloneSource: manhuaLearnStandaloneSource,
         };
       }
       const continuation: ManhuaLearnContinuation = {
@@ -12597,6 +12600,19 @@ export default function PlatformPage() {
                             {manhuaLearnSegmentSecondsError ? (
                               <span role="alert" className="text-[10px] text-rose-200">{manhuaLearnSegmentSecondsError}</span>
                             ) : null}
+                            <label className="flex items-center gap-1.5 text-[11px] font-semibold text-[#c9c0e6]/90">
+                              <input
+                                type="checkbox"
+                                checked={manhuaLearnStandaloneSource}
+                                disabled={Boolean(manhuaLearnBusyKey)}
+                                onChange={(event) => setManhuaLearnStandaloneSource(event.target.checked)}
+                                className="h-3.5 w-3.5 accent-violet-400"
+                              />
+                              整支即全集
+                            </label>
+                            <span className="text-[10px] text-[#c9c0e6]/50">
+                              这条视频本身就是完整一季时勾选：跳过合集展开（该接口常被抖音风控拦），按独立长视频单集学习
+                            </span>
                             <label htmlFor="manhua-learn-video-fps" className="text-[11px] font-semibold text-[#c9c0e6]/90">
                               采样fps
                             </label>

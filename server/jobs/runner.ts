@@ -626,6 +626,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
           limit: confirmation.planLimit,
           segmentSeconds: confirmation.segmentSeconds,
           videoFps: confirmation.videoFps,
+          treatAsStandalone: confirmation.standaloneSource,
           learnLlm: confirmation.learnLlm,
           abortSignal: abortController.signal,
         });
@@ -673,6 +674,8 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         params.learnLlm === "claude" || params.learnLlm === "deepseek" ? params.learnLlm : undefined,
       nativeDeepReadConfirmed: nativeConfirmed,
       nativePlanPreview,
+      nativeStandaloneSource: params.nativeStandaloneSource === true
+        || params.nativeStandaloneSource === "true",
       onProgress: reportLearnProgress,
       onNativeUsage: async (nativeUsage) => {
         if (!jobId) return;

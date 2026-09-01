@@ -342,10 +342,36 @@ export function isLifecycleLeaseExpired(raw: unknown, nowMs: number): boolean {
     && legacyCreatedAt + MANHUA_TEMPLATE_LOCK_TTL_MS <= nowMs;
 }
 
+/** 抢锁 busy 时的重试等待；测试可替换成零延迟。 */
+export const manhuaTemplateLifecycleLockTimers = {
+  sleep: (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms)),
+};
+const LIFECYCLE_LOCK_ACQUIRE_RETRIES = 4;
+
+/**
+ * 批量下架逐张抢同一把全局锁，前一张释放与后一张抢占之间有短时竞争，
+ * 直接抛 busy 会让批量清库零散失败（用户 0902 实测：3 张里 2 张 busy）。
+ * busy 时有限重试等待，让后一张等前一张释放；非 busy 错误立即上抛。
+ */
 export async function acquireManhuaTemplateLifecycleLock(): Promise<() => Promise<void>> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await attemptAcquireManhuaTemplateLifecycleLock();
+    } catch (error) {
+      const retriable = Boolean((error as { lifecycleBusy?: boolean } | null)?.lifecycleBusy);
+      if (!retriable || attempt >= LIFECYCLE_LOCK_ACQUIRE_RETRIES) throw error;
+      await manhuaTemplateLifecycleLockTimers.sleep(500 * (attempt + 1));
+    }
+  }
+}
+
+async function attemptAcquireManhuaTemplateLifecycleLock(): Promise<() => Promise<void>> {
   const bucket = getGcsBucketName();
   const lockUri = `gs://${bucket}/${MANHUA_TEMPLATE_LIFECYCLE_LOCK}`;
-  const busy = () => new Error("另一项模板批准、下架或恢复正在处理，请稍后重试");
+  const busy = () => Object.assign(
+    new Error("另一项模板批准、下架或恢复正在处理，请稍后重试"),
+    { lifecycleBusy: true as const },
+  );
 
   const makeBody = () => {
     const now = manhuaTemplateLifecycleClock.now();
