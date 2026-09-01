@@ -637,6 +637,12 @@ function isStrictProgressSuperset(next: readonly number[], previous: readonly nu
   return previous.every((value) => values.has(value));
 }
 
+function isStrictProgressSubset(next: readonly number[], previous: readonly number[]): boolean {
+  if (next.length >= previous.length) return false;
+  const values = new Set(previous);
+  return next.every((value) => values.has(value));
+}
+
 function isGcsNotFound(error: unknown): boolean {
   return /(?:gcs_download_failed|gcs_stat_failed):404(?:\b|:)/.test(
     error instanceof Error ? error.message : String(error),
@@ -722,6 +728,13 @@ export async function ingestNativeDeepReadEpisode(
     }
     if (!previous.complete && previous.segmentPlan !== next.segmentPlan) {
       throw new Error(`第${input.episodeIndex}集原分片计划发生变化，拒绝覆盖既有部分学习卡`);
+    }
+    // 同源续跑会先按连续前缀重放已验缓存，例如对象已是 3/5，runner 仍会依次
+    // 提交 1/5、2/5、3/5，再补到 4/5。较短前缀不含新信息，保留现有对象即可；
+    // 不能把这种幂等重放当成倒退并中断后续 4/5、5/5。这里只允许真子集，
+    // 同长度不同快照与互有不同分片的真分叉仍由下面的门禁关闭式拒绝。
+    if (isStrictProgressSubset(next.completed, previous.completed)) {
+      return { card: existing, gcsUri, objectName, created: false };
     }
     if (!isStrictProgressSuperset(next.completed, previous.completed)) {
       const relation = sameNumbers(next.completed, previous.completed) ? "未增加" : "发生倒退或分叉";

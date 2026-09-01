@@ -1025,11 +1025,19 @@ export async function runNativeDeepReadBatch(input: {
             sourceMarkers: episode.sourceMarkers,
             result: partialResult,
           });
+          const storedNativeProgress = stored.card.provenance?.nativeVideoDeepRead;
+          const displayedCompletedSegments = Math.max(
+            snapshot.completedSegmentIndexes.length,
+            storedNativeProgress?.completedSegmentIndexes?.length || 0,
+            Number(storedNativeProgress?.successSegments) || 0,
+          );
           await emitProgress({
             episodeIndex: episode.episodeIndex,
             status: "partial",
             gcsUri: stored.gcsUri,
-            completedSegments: snapshot.completedSegmentIndexes.length,
+            // 续跑重放 1/5、2/5 时，GCS 可能已经保有 3/5；面板必须显示实际存量，
+            // 不能把无害的旧前缀显示成进度倒退。
+            completedSegments: displayedCompletedSegments,
             totalSegments: episode.segments.length,
             costCny: 0,
             elapsedMs: Date.now() - episodeStartedAt,

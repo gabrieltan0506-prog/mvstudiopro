@@ -232,7 +232,7 @@ describe("入库写入", () => {
     expect(gcs.create).not.toHaveBeenCalled();
   });
 
-  it("部分提案按 1/2→2/2 单调 CAS 补全，不覆盖成倒退或分叉", async () => {
+  it("部分提案按 1/2→2/2 单调 CAS 补全，重放旧前缀时保留较新卡", async () => {
     const partial = makeInput({
       result: {
         ...makeInput().result,
@@ -269,8 +269,103 @@ describe("入库写入", () => {
       buffer: storedCardBuffer(),
       generation: "10",
     });
-    await expect(ingestNativeDeepReadEpisode(partial)).rejects.toThrow(/倒退或分叉/);
+    await expect(ingestNativeDeepReadEpisode(partial)).resolves.toMatchObject({
+      created: false,
+      card: {
+        provenance: {
+          nativeVideoDeepRead: {
+            completedSegmentIndexes: [0, 1],
+            assemblyComplete: true,
+          },
+        },
+      },
+    });
     expect(gcs.upload).not.toHaveBeenCalled();
+  });
+
+  it("同源同计划但完成集合真正分叉时仍拒绝覆盖", async () => {
+    const existingInput = makeInput({
+      durationSec: 180,
+      segmentSpans: [
+        { startSec: 0, endSec: 60 },
+        { startSec: 60, endSec: 120 },
+        { startSec: 120, endSec: 180 },
+      ],
+      result: {
+        ...makeInput().result,
+        segmentCount: 2,
+        failedSegmentCount: 1,
+        attemptedSegments: 3,
+        completedSegmentIndexes: [0, 1],
+        assemblyComplete: false,
+        segmentSnapshotSha256: "c".repeat(64),
+      },
+    });
+    const existing = buildNativeDeepReadProposalCard(existingInput)!;
+    gcs.create.mockResolvedValue({ created: false });
+    gcs.downloadVersioned.mockResolvedValue({
+      buffer: Buffer.from(JSON.stringify(existing), "utf8"),
+      generation: "12",
+    });
+
+    const forkedInput = makeInput({
+      durationSec: 180,
+      segmentSpans: existingInput.segmentSpans,
+      result: {
+        ...existingInput.result,
+        completedSegmentIndexes: [0, 2],
+        segmentSnapshotSha256: "d".repeat(64),
+      },
+    });
+    await expect(ingestNativeDeepReadEpisode(forkedInput)).rejects.toThrow(/连续断点|倒退或分叉/);
+    expect(gcs.upload).not.toHaveBeenCalled();
+  });
+
+  it("线上恢复形状：已有3/5时重放1/5、2/5、3/5，再单调补到5/5", async () => {
+    const segmentSpans = Array.from({ length: 5 }, (_, index) => ({
+      startSec: index * 60,
+      endSec: (index + 1) * 60,
+    }));
+    const makeProgressInput = (count: number) => makeInput({
+      durationSec: 300,
+      segmentSpans,
+      result: {
+        ...makeInput().result,
+        segmentCount: count,
+        failedSegmentCount: 5 - count,
+        attemptedSegments: 5,
+        completedSegmentIndexes: Array.from({ length: count }, (_, index) => index),
+        assemblyComplete: count === 5,
+        segmentSnapshotSha256: String(count).repeat(64),
+      },
+    });
+    let stored = Buffer.from(JSON.stringify(buildNativeDeepReadProposalCard(makeProgressInput(3))), "utf8");
+    let generation = 20;
+    gcs.create.mockResolvedValue({ created: false });
+    gcs.downloadVersioned.mockImplementation(async () => ({
+      buffer: stored,
+      generation: String(generation),
+    }));
+    gcs.upload.mockImplementation(async (input: { buffer: Buffer }) => {
+      stored = Buffer.from(input.buffer);
+      generation += 1;
+      return {};
+    });
+
+    for (const count of [1, 2, 3, 4, 5]) {
+      await expect(ingestNativeDeepReadEpisode(makeProgressInput(count))).resolves.toMatchObject({
+        created: false,
+      });
+    }
+
+    expect(gcs.upload).toHaveBeenCalledTimes(2);
+    const finalCard = JSON.parse(stored.toString("utf8"));
+    expect(finalCard.provenance.nativeVideoDeepRead).toMatchObject({
+      successSegments: 5,
+      attemptedSegments: 5,
+      completedSegmentIndexes: [0, 1, 2, 3, 4],
+      assemblyComplete: true,
+    });
   });
 
   it("已有部分卡后原分片边界或 fps 漂移时拒绝 CAS 覆盖", async () => {
