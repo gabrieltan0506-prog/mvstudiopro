@@ -999,6 +999,17 @@ export async function runNativeDeepReadBatch(input: {
         segmentCacheSeriesKey: input.seriesKey,
         abortSignal: input.abortSignal,
         onSegmentSnapshotCommitted: async (snapshot) => {
+          // 0902 自愈心跳：每落一段给占位盖时间戳，证明持锁进程仍活着。
+          // 心跳是旁路自愈证据、绝不打断学习——任何失败（含方法缺失）吞掉；
+          // 被杀后心跳停摆，20 分钟后 isNativeDeepReadClaimReclaimable 判死自动让位。
+          try {
+            await claims.get(episode.episodeIndex)?.heartbeat();
+          } catch (heartbeatError) {
+            console.warn(
+              `[nativeDeepRead] 第${episode.episodeIndex}集心跳未写入（不影响学习）：`,
+              heartbeatError instanceof Error ? heartbeatError.message : heartbeatError,
+            );
+          }
           const completedSegments = snapshot.completedSegmentIndexes.map(
             (index) => episode.segments[index]!,
           );

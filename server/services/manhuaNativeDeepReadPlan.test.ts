@@ -647,6 +647,7 @@ describe("原生精读计划", () => {
           createdAtIso: "2026-08-31T00:00:00.000Z",
           lastErrorZh: "第2段失败，已保留第1段缓存",
           lastFailedAtIso: "2026-08-31T00:10:00.000Z",
+          lastHeartbeatIso: null,
         },
       ]])),
     });
@@ -910,6 +911,7 @@ describe("原生精读计划", () => {
           createdAtIso: "2026-08-26T00:00:00Z",
           lastErrorZh: "上轮失败",
           lastFailedAtIso: "2026-08-26T00:10:00Z",
+          lastHeartbeatIso: null,
         },
       ]])),
     });
@@ -941,7 +943,8 @@ describe("原生精读计划", () => {
       listClaimStates: vi.fn(async () => new Map(
         Array.from({ length: 9 }, (_, index) => [
           index + 1,
-          { createdAtIso: "2026-08-27T00:00:00Z", lastFailedAtIso: null },
+          // 健康「仍在跑」占位：新鲜 createdAt，未到无心跳兜底 45 分钟，应继续阻塞
+          { createdAtIso: new Date().toISOString(), lastFailedAtIso: null },
         ]),
       )),
     });
