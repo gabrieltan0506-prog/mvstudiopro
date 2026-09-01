@@ -151,10 +151,37 @@ describe("原生精读单集占位", () => {
       .rejects.toThrow("占位内容不是对象");
   });
 
-  it("旧格式仅有 lastErrorZh 也属于已失败；单靠创建时间再旧也不能证明可接管", () => {
+  it("旧格式仅有 lastErrorZh 也属于已失败", () => {
     expect(isNativeDeepReadClaimReclaimable({ lastErrorZh: "旧拒因", lastFailedAtIso: null }))
       .toBe(true);
     expect(isNativeDeepReadClaimReclaimable({ lastErrorZh: null, lastFailedAtIso: null }))
+      .toBe(false);
+  });
+
+  it("心跳自愈（0902）：新鲜心跳不判死，超 20 分钟判死", () => {
+    const now = Date.parse("2026-09-02T12:00:00.000Z");
+    // 3 分钟前刚盖过心跳 → 仍在跑，不让位
+    expect(isNativeDeepReadClaimReclaimable(
+      { lastHeartbeatIso: "2026-09-02T11:57:00.000Z", createdAtIso: "2026-09-02T10:00:00.000Z" }, now,
+    )).toBe(false);
+    // 25 分钟没心跳 → 持锁进程已死，让位
+    expect(isNativeDeepReadClaimReclaimable(
+      { lastHeartbeatIso: "2026-09-02T11:35:00.000Z", createdAtIso: "2026-09-02T10:00:00.000Z" }, now,
+    )).toBe(true);
+  });
+
+  it("无心跳兜底（0902）：createdAt 未过 45 分钟隔离，超 45 分钟让位", () => {
+    const now = Date.parse("2026-09-02T12:00:00.000Z");
+    // 刚建 10 分钟、还没盖第一次心跳（整片落盘/首段在跑）→ 继续隔离
+    expect(isNativeDeepReadClaimReclaimable(
+      { lastHeartbeatIso: null, createdAtIso: "2026-09-02T11:50:00.000Z" }, now,
+    )).toBe(false);
+    // 建了 50 分钟仍无心跳（首段没跑完就被杀的孤儿）→ 让位
+    expect(isNativeDeepReadClaimReclaimable(
+      { lastHeartbeatIso: null, createdAtIso: "2026-09-02T11:10:00.000Z" }, now,
+    )).toBe(true);
+    // 时间全读不出 → 保守不让位
+    expect(isNativeDeepReadClaimReclaimable({ lastHeartbeatIso: null, createdAtIso: null }, now))
       .toBe(false);
   });
 
@@ -172,6 +199,7 @@ describe("原生精读单集占位", () => {
         createdAtIso: null,
         lastErrorZh: null,
         lastFailedAtIso: null,
+        lastHeartbeatIso: null,
       },
     ]]));
   });

@@ -24,6 +24,18 @@ import {
 import { nativeDeepReadProposalId } from "./manhuaNativeDeepReadIngest.js";
 
 export const NATIVE_DEEP_READ_CLAIM_PREFIX = "manhua-template-learn/native-claims/";
+/**
+ * 心跳判死（0902）：占位从建立到成功删除/写病历之间原本从不刷新，进程被硬杀
+ * 就留下永解不开的孤儿锁（用户误杀/断网/机器重启都会）。worker 每落一段盖一次
+ * 心跳；超过这个时长没心跳＝持锁进程已死，允许自动让位。单段最坏耗时（整片落盘
+ * 已在 acquire 前完成 + 一段读片含 2 次重试）实测十几分钟，取 20 分钟留足余量。
+ */
+export const NATIVE_DEEP_READ_CLAIM_HEARTBEAT_STALE_MS = 20 * 60_000;
+/**
+ * 无心跳兜底：占位刚建、第一段还没落盘就被杀时没有心跳字段。首段最坏耗时
+ * （整片落盘可能几分钟 + 读片 + 重试）给 45 分钟宽限，之后按 createdAt 判死。
+ */
+export const NATIVE_DEEP_READ_CLAIM_NO_HEARTBEAT_STALE_MS = 45 * 60_000;
 
 export function nativeDeepReadClaimObjectName(seriesKey: string, episodeIndex: number): string {
   // 走同一个 id 生成器：占位与卡片必须同源，否则占了 A 写了 B
@@ -38,6 +50,8 @@ export type NativeDeepReadClaim = {
   releaseAfterSuccess: () => Promise<void>;
   /** 批次尚未发生任何付费调用时，预检失败可安全撤回本轮自己的占位。 */
   releaseBeforePaidCall: () => Promise<void>;
+  /** 每落一段盖心跳，证明持锁进程仍活着；失败只 warn 不打断学习。 */
+  heartbeat: () => Promise<void>;
 };
 
 export async function acquireNativeDeepReadEpisodeClaim(
@@ -107,7 +121,42 @@ export async function acquireNativeDeepReadEpisodeClaim(
     runId,
     releaseAfterSuccess: releaseOwnGeneration,
     releaseBeforePaidCall: releaseOwnGeneration,
+    /** 每落一段盖心跳；失败只 warn 不打断学习（心跳是自愈证据，不是关键路径）。 */
+    heartbeat: () => touchNativeDeepReadClaimHeartbeat(seriesKey, episodeIndex, runId),
   };
+}
+
+/**
+ * 给占位盖心跳时间戳（0902 自愈）：只更新本轮 runId 自己的占位，保留 createdAt。
+ * 旁路写入，任何失败只 warn——心跳丢一两次不影响判死阈值。
+ */
+export async function touchNativeDeepReadClaimHeartbeat(
+  seriesKey: string,
+  episodeIndex: number,
+  expectedRunId: string,
+): Promise<void> {
+  const objectName = nativeDeepReadClaimObjectName(seriesKey, episodeIndex);
+  const bucket = getGcsBucketName();
+  try {
+    const versioned = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` });
+    const parsed = JSON.parse(versioned.buffer.toString("utf8")) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object" || String(parsed.runId || "") !== expectedRunId) return;
+    await uploadBufferToGcs({
+      bucket,
+      objectName,
+      contentType: "application/json",
+      ifGenerationMatch: versioned.generation,
+      buffer: Buffer.from(
+        `${JSON.stringify({ ...parsed, lastHeartbeatIso: new Date().toISOString() }, null, 2)}\n`,
+        "utf8",
+      ),
+    });
+  } catch (error) {
+    console.warn(
+      `[nativeDeepRead] 第${episodeIndex}集占位心跳未写入（不影响学习）：`,
+      error instanceof Error ? error.message : error,
+    );
+  }
 }
 
 /**
@@ -165,18 +214,37 @@ export type NativeDeepReadClaimState = {
   /** 兼容仅写入拒因、尚未带 lastFailedAtIso 的旧占位。 */
   lastErrorZh: string | null;
   lastFailedAtIso: string | null;
+  /** 每落一段刷新；判死看它，旧占位无此字段则按 createdAt 兜底。 */
+  lastHeartbeatIso: string | null;
 };
 
 /**
- * 判定占位是否可自动让位（0826 用户拍板「不要让失败占位永远挡路」）：
- * 只有失败病历（lastFailedAtIso）能证明任务已终态失败；钱账在段缓存/回执里，
- * 此时占位只剩挡路。单靠 createdAt 年龄无法证明旧 worker 已停止，禁止据此接管，
- * 否则超长任务跨过墙钟边界时可能出现两个进程同时付费。
+ * 判定占位是否可自动让位。三条通路（0826 病历 + 0902 心跳自愈）：
+ *   ① 有失败病历（lastFailedAtIso/lastErrorZh）——任务终态失败，占位只剩挡路；
+ *   ② 有心跳但超 20 分钟没刷新——持锁 worker 已死（活着每落一段就刷新）；
+ *   ③ 无心跳（刚建就被杀的孤儿）且 createdAt 已过 45 分钟兜底。
+ * 心跳的存在让「年龄判死」变安全：活着的长任务会持续刷新，永远不会被误判；
+ * 只有真正停摆的进程才让心跳/createdAt 超时。now 由调用方注入，便于测试。
  */
 export function isNativeDeepReadClaimReclaimable(
-  state: { lastErrorZh?: string | null; lastFailedAtIso?: string | null },
+  state: {
+    lastErrorZh?: string | null;
+    lastFailedAtIso?: string | null;
+    lastHeartbeatIso?: string | null;
+    createdAtIso?: string | null;
+  },
+  nowMs: number = Date.now(),
 ): boolean {
-  return Boolean(state.lastFailedAtIso || state.lastErrorZh);
+  if (state.lastFailedAtIso || state.lastErrorZh) return true;
+  const heartbeat = Date.parse(String(state.lastHeartbeatIso || ""));
+  if (Number.isFinite(heartbeat)) {
+    return nowMs - heartbeat > NATIVE_DEEP_READ_CLAIM_HEARTBEAT_STALE_MS;
+  }
+  const created = Date.parse(String(state.createdAtIso || ""));
+  if (Number.isFinite(created)) {
+    return nowMs - created > NATIVE_DEEP_READ_CLAIM_NO_HEARTBEAT_STALE_MS;
+  }
+  return false;
 }
 
 function isNativeDeepReadClaimNotFound(error: unknown): boolean {
@@ -199,16 +267,19 @@ export async function listNativeDeepReadEpisodeClaimStates(
         createdAt?: unknown;
         lastErrorZh?: unknown;
         lastFailedAtIso?: unknown;
+        lastHeartbeatIso?: unknown;
       };
       const createdAt = String(parsed.createdAt || "").trim();
       const lastErrorZh = String(parsed.lastErrorZh || "").trim().slice(0, 500);
       const failedAt = String(parsed.lastFailedAtIso || "").trim();
+      const heartbeat = String(parsed.lastHeartbeatIso || "").trim();
       states.set(episodeIndex, {
         episodeIndex,
         generation: versioned.generation,
         createdAtIso: createdAt && !Number.isNaN(Date.parse(createdAt)) ? createdAt : null,
         lastErrorZh: lastErrorZh || null,
         lastFailedAtIso: failedAt && !Number.isNaN(Date.parse(failedAt)) ? failedAt : null,
+        lastHeartbeatIso: heartbeat && !Number.isNaN(Date.parse(heartbeat)) ? heartbeat : null,
       });
     } catch (error) {
       // 列表与回读之间被终态任务释放：占位已经不存在，本轮应立即重新纳入，
@@ -221,6 +292,7 @@ export async function listNativeDeepReadEpisodeClaimStates(
         createdAtIso: null,
         lastErrorZh: null,
         lastFailedAtIso: null,
+        lastHeartbeatIso: null,
       });
       console.warn(
         `[nativeDeepRead] 第${episodeIndex}集占位状态读取失败，按仍在跑保守隔离：`,

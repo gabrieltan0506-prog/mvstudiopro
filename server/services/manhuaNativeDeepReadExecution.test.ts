@@ -105,12 +105,14 @@ beforeEach(() => {
       runId: "r1",
       releaseBeforePaidCall: async () => {},
       releaseAfterSuccess: async () => {},
+      heartbeat: vi.fn(async () => {}),
     })),
     takeoverClaim: vi.fn(async () => ({
       claimUri: "gs://bucket/takeover.json",
       objectName: "takeover.json",
       runId: "takeover-run",
       releaseAfterSuccess: vi.fn(async () => undefined),
+      heartbeat: vi.fn(async () => {}),
       releaseBeforePaidCall: vi.fn(async () => undefined),
     })),
     aggregateSeries: vi.fn(async () => ({
@@ -368,9 +370,10 @@ describe("段缓存来源身份", () => {
         listClaimStates: vi.fn(async () => new Map([[10, {
           episodeIndex: 10,
           generation: "7",
-          createdAtIso: "2026-08-27T00:00:00.000Z",
+          createdAtIso: new Date().toISOString(),
           lastErrorZh: null,
           lastFailedAtIso: null,
+          lastHeartbeatIso: null,
         }]])),
         readTarget: vi.fn(async () => null),
         createTarget,
@@ -545,6 +548,7 @@ describe("并发与计费", () => {
       runId: "r",
       releaseBeforePaidCall: vi.fn(async () => undefined),
       releaseAfterSuccess: vi.fn(async () => { order.push("release-claim"); }),
+      heartbeat: vi.fn(async () => {}),
     }));
     const result = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1)] }, deps);
     expect(result.ingestedCount).toBe(1);
@@ -572,6 +576,7 @@ describe("并发与计费", () => {
         runId: "r",
         releaseBeforePaidCall: vi.fn(async () => { held = false; }),
         releaseAfterSuccess: vi.fn(async () => { held = false; }),
+        heartbeat: vi.fn(async () => {}),
       };
     });
     const success = deps.runBatch;
@@ -605,6 +610,7 @@ describe("并发与计费", () => {
         runId: "r",
         releaseBeforePaidCall: async () => {},
         releaseAfterSuccess: async () => {},
+        heartbeat: vi.fn(async () => {}),
       };
     });
     const shared = { ...deps, acquireClaim: claim } as NativeDeepReadExecutionDeps;
@@ -646,6 +652,7 @@ describe("并发与计费", () => {
       runId: "r",
       releaseBeforePaidCall: vi.fn(async () => undefined),
       releaseAfterSuccess: release,
+      heartbeat: vi.fn(async () => {}),
     }));
     deps.ingest = vi.fn(async () => { throw new Error("入库暂时不可用"); }) as never;
     const r = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [ep(1)] }, deps);
