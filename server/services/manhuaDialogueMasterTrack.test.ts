@@ -89,3 +89,83 @@ describe("buildDialogueMasterTrackPlan", () => {
     expect(args).not.toContain("copy");
   });
 });
+
+describe("renderManhuaDialogueMasterTrack（执行层，替身依赖）", () => {
+  const makeDeps = (over: Partial<Record<string, unknown>> = {}) => {
+    const written: Record<string, Buffer> = {};
+    const uploads: Array<{ objectName: string; bytes: number }> = [];
+    const runMedia = async (cmd: string, args: string[]) => {
+      if (cmd === "ffprobe") {
+        // 逐句 3.0s；量成品母轨时回计划时长（路径含 master）
+        const isMaster = args.some((a) => String(a).includes("manhua-dialogue-master"));
+        return JSON.stringify({ format: { duration: isMaster ? "10.3" : "3.0" } });
+      }
+      if (args.includes("silencedetect=noise=-45dB:d=0.2")) {
+        return "[silencedetect] silence_start: 5.1\n[silencedetect] silence_end: 6.9";
+      }
+      // 拼轨：把成品写出来，让后续 readFile/probe 能走
+      const out = args.at(-1)!;
+      const { writeFileSync } = await import("node:fs");
+      writeFileSync(out, Buffer.from("master-audio-fixture"));
+      return "";
+    };
+    return {
+      deps: {
+        fetchAudio: async () => Buffer.from("line-audio"),
+        runMedia: runMedia as never,
+        uploadAudio: (async (p: { objectName: string; buffer: Buffer }) => {
+          uploads.push({ objectName: p.objectName, bytes: p.buffer.length });
+          return { bucket: "b", objectName: p.objectName, gcsUri: `gs://b/${p.objectName}` };
+        }) as never,
+        ...over,
+      },
+      uploads,
+      written,
+    };
+  };
+
+  it("逐句实测时长→计划→拼轨→自检→上传，产物单条", async () => {
+    const { renderManhuaDialogueMasterTrack } = await import("./manhuaDialogueMasterTrack");
+    const { deps, uploads } = makeDeps();
+    const out = await renderManhuaDialogueMasterTrack({
+      ownerUserId: 7,
+      lines: [
+        { index: 0, audioUrl: "https://x/a.mp3", startSec: 2 },
+        { index: 1, audioUrl: "https://x/b.mp3", startSec: 7 },
+      ],
+      windowDurationSec: 15,
+      engine: "evolink",
+    }, deps as never);
+    expect(out.audioGcsUri).toMatch(/^gs:\/\/b\/manhua-dialogue-master\/7\//);
+    expect(out.totalDurationSec).toBeCloseTo(10.3, 2);
+    expect(uploads).toHaveLength(1);
+  });
+
+  it("成品时长与计划不符拒绝上传", async () => {
+    const { renderManhuaDialogueMasterTrack } = await import("./manhuaDialogueMasterTrack");
+    let probes = 0;
+    const { deps, uploads } = makeDeps({
+      runMedia: (async (cmd: string, args: string[]) => {
+        if (cmd === "ffprobe") {
+          probes += 1;
+          // 前两次量逐句 3.0s；量成品时给一个错的 20s
+          return JSON.stringify({ format: { duration: probes <= 2 ? "3.0" : "20.0" } });
+        }
+        const out = args.at(-1)!;
+        const { writeFileSync } = await import("node:fs");
+        if (String(out).endsWith(".mp3")) writeFileSync(out, Buffer.from("x"));
+        return "";
+      }) as never,
+    });
+    await expect(renderManhuaDialogueMasterTrack({
+      ownerUserId: 7,
+      lines: [
+        { index: 0, audioUrl: "https://x/a.mp3", startSec: 2 },
+        { index: 1, audioUrl: "https://x/b.mp3", startSec: 7 },
+      ],
+      windowDurationSec: 15,
+      engine: "evolink",
+    }, deps as never)).rejects.toThrow("不符");
+    expect(uploads).toHaveLength(0);
+  });
+});

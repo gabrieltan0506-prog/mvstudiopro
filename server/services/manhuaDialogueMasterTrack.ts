@@ -9,7 +9,29 @@
  * - 30s 顶格裁 29.7s 且必须重编码（-c copy 裁不准）；
  * - 引擎时长下限不许垫静音凑（用户 0822 明令）：不足回 TTS 重出长句。
  */
+import { promises as fs } from "node:fs";
+import crypto from "node:crypto";
 import { z } from "zod";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { uploadBufferToGcs } from "./gcs.js";
+
+const execFileAsync = promisify(execFile);
+/** stdout+stderr 一并返回：silencedetect 的证据写在 stderr */
+export type MasterTrackMediaRunner = (
+  cmd: "ffmpeg" | "ffprobe",
+  args: string[],
+  timeoutMs: number,
+  signal?: AbortSignal,
+) => Promise<string>;
+const defaultRunMedia: MasterTrackMediaRunner = async (cmd, args, timeoutMs, signal) => {
+  const { stdout, stderr } = await execFileAsync(cmd, args, {
+    timeout: timeoutMs,
+    maxBuffer: 16 * 1024 * 1024,
+    signal,
+  });
+  return `${stdout ?? ""}\n${stderr ?? ""}`;
+};
 
 /** 引擎参考音频时长约束（知识库《秒锁单轨工艺》实测口径） */
 export const DIALOGUE_MASTER_TRACK_ENGINE_LIMITS = {
@@ -143,4 +165,115 @@ export function buildDialogueMasterTrackArgs(input: {
     "-c:a", "libmp3lame", "-b:a", "192k", "-ar", "44100",
     input.outputPath,
   ];
+}
+
+
+/* ────────────────── 执行层：逐句合成产物 → 单条母轨落 GCS ────────────────── */
+
+export type MasterTrackRenderDeps = {
+  /** 拉取逐句 mp3（GCS 签名 URL）。可注入替身测试 */
+  fetchAudio?: (url: string, signal?: AbortSignal) => Promise<Buffer>;
+  runMedia?: MasterTrackMediaRunner;
+  uploadAudio?: typeof uploadBufferToGcs;
+};
+
+const defaultFetchAudio = async (url: string, signal?: AbortSignal): Promise<Buffer> => {
+  const res = await fetch(url, { signal: signal ?? AbortSignal.timeout(60_000) });
+  if (!res.ok) throw new Error(`拉取逐句音频失败 HTTP ${res.status}`);
+  return Buffer.from(await res.arrayBuffer());
+};
+
+/** ffprobe 实测一段本地音频时长（母轨秒位以实测为准，不信 TTS 报的） */
+async function probeLocalAudioDurationSec(
+  path: string,
+  runMedia: MasterTrackMediaRunner,
+  signal?: AbortSignal,
+): Promise<number> {
+  const text = await runMedia("ffprobe", [
+    "-v", "error", "-show_entries", "format=duration", "-of", "json", path,
+  ], 30_000, signal);
+  const sec = Number(JSON.parse(text)?.format?.duration);
+  if (!Number.isFinite(sec) || sec <= 0) throw new Error("逐句音频时长探测失败");
+  return sec;
+}
+
+export async function renderManhuaDialogueMasterTrack(input: {
+  ownerUserId: number;
+  /** 逐句：TTS 产物 URL + 台词表开口秒位 */
+  lines: ReadonlyArray<{ index: number; audioUrl: string; startSec: number }>;
+  windowDurationSec: number;
+  engine: DialogueMasterTrackEngine;
+  signal?: AbortSignal;
+}, deps: MasterTrackRenderDeps = {}): Promise<{
+  audioGcsUri: string;
+  objectName: string;
+  totalDurationSec: number;
+  hardCapApplied: boolean;
+  bytes: number;
+}> {
+  const fetchAudio = deps.fetchAudio ?? defaultFetchAudio;
+  const runMedia = deps.runMedia ?? defaultRunMedia;
+  const uploadAudio = deps.uploadAudio ?? uploadBufferToGcs;
+  const runId = crypto.randomUUID();
+  const tmpPaths: string[] = [];
+  try {
+    const measured: DialogueMasterTrackLine[] = [];
+    for (const lineInput of input.lines) {
+      const buf = await fetchAudio(lineInput.audioUrl, input.signal);
+      const path = `/tmp/manhua-dialogue-line-${runId}-${lineInput.index}.mp3`;
+      await fs.writeFile(path, buf);
+      tmpPaths.push(path);
+      measured.push({
+        index: lineInput.index,
+        startSec: lineInput.startSec,
+        audioDurationSec: await probeLocalAudioDurationSec(path, runMedia, input.signal),
+      });
+    }
+    const ordered = [...measured].sort((a, b) => a.startSec - b.startSec);
+    const plan = buildDialogueMasterTrackPlan({
+      lines: ordered,
+      windowDurationSec: input.windowDurationSec,
+      engine: input.engine,
+    });
+    const outputPath = `/tmp/manhua-dialogue-master-${runId}.mp3`;
+    tmpPaths.push(outputPath);
+    const orderedPaths = ordered.map((row) =>
+      `/tmp/manhua-dialogue-line-${runId}-${row.index}.mp3`);
+    await runMedia("ffmpeg", buildDialogueMasterTrackArgs({
+      lineLocalPaths: orderedPaths,
+      plan,
+      outputPath,
+    }), 5 * 60_000, input.signal);
+    // 自检①：成品时长与计划一致（顶格裁切必须真的裁到位）
+    const renderedSec = await probeLocalAudioDurationSec(outputPath, runMedia, input.signal);
+    if (Math.abs(renderedSec - plan.totalDurationSec) > 0.35) {
+      throw new Error(`母轨成品 ${renderedSec.toFixed(2)}s 与计划 ${plan.totalDurationSec.toFixed(2)}s 不符`);
+    }
+    // 自检②：silencedetect 证明句间存在真静音（多句时至少一段；禁 Gemini 耳测）
+    if (ordered.length > 1) {
+      const det = await runMedia("ffmpeg", [
+        "-nostdin", "-hide_banner", "-i", outputPath,
+        "-af", "silencedetect=noise=-45dB:d=0.2", "-f", "null", "-",
+      ], 60_000, input.signal).catch((e) => String(e));
+      if (!/silence_start/.test(String(det))) {
+        throw new Error("母轨自检未测到句间真静音，拒绝入库");
+      }
+    }
+    const master = await fs.readFile(outputPath);
+    const objectName = `manhua-dialogue-master/${input.ownerUserId}/${runId}.mp3`;
+    const uploaded = await uploadAudio({
+      objectName,
+      contentType: "audio/mpeg",
+      buffer: master,
+    });
+    return {
+      audioGcsUri: uploaded.gcsUri,
+      objectName,
+      totalDurationSec: plan.totalDurationSec,
+      hardCapApplied: plan.hardCapApplied,
+      bytes: master.length,
+    };
+  } finally {
+    await Promise.allSettled(tmpPaths.map((path) => fs.unlink(path)));
+  }
 }
