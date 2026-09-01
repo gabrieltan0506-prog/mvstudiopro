@@ -543,6 +543,15 @@ const GLM_PARSED_OBJECT_NAME = "manhua-template-learn/episode-glm-evidence/nativ
 /** 完整卡：两段全成功、装配完成、证据名与分片数一致、digest 合法 → 允许导出。 */
 const nativeCardWithEvidence = {
   ...partialNativeCard,
+  evidenceFrames: [{
+    atSec: 12,
+    kindZh: "剧情",
+    noteZh: "冲突爆发",
+    objectName: `manhua-template-learn/native-frames/seriesabc/ep001/120ds-${"d".repeat(24)}.jpg`,
+    mimeType: "image/jpeg",
+    bytes: 1234,
+    sha256: "d".repeat(64),
+  }],
   provenance: {
     nativeVideoDeepRead: {
       ...(partialNativeCard.provenance!.nativeVideoDeepRead as object),
@@ -607,6 +616,7 @@ describe("renderEpisodeReport：canonical 寻址（禁列目录猜证据）", ()
       { startSec: 300, endSec: 600 },
     ]);
     expect(input.glmCardObjectName).toBe(GLM_PARSED_OBJECT_NAME);
+    expect(input.evidenceFrames).toEqual(nativeCardWithEvidence.evidenceFrames);
     expect(input.reportObjectName).toBe(
       "manhua-template-learn/reports/tpl_native_seriesabc_ep001.html",
     );

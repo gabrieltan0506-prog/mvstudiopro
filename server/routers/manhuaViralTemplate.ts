@@ -238,6 +238,7 @@ export const manhuaViralTemplateRouter = router({
           expectSegmentCount: attemptedSegments,
           segmentSpans: native?.segmentSpans,
           glmCardObjectName: native?.glmParsedObjectName,
+          evidenceFrames: card.evidenceFrames,
           framesV2SummaryObjectName: `manhua-template-learn/probes/${cardKey}/frames-v2-summary.json`,
           framesPrefix: `manhua-template-learn/probes/${cardKey}/frames/`,
           reportObjectName: `manhua-template-learn/reports/${cardKey}.html`,

@@ -201,15 +201,11 @@ describe("精确证据名路径：三段卡渲染成功且无删节", () => {
     expect(html).toContain("09:22–09:32");
     expect(html).not.toContain("10:00–10:10");
 
-    // 🔒 字幕零截断（0830 补：此前「不做任何内容截断」只是文件头一句话，没有守卫，
-    // 结果剧情节点表每节点只显示前 3 句、其余用「…」吞掉，全仓 3264 测照样绿）。
-    // 五条密集台词必须**每一条**都出现在页面里，且页面不许出现截断标记。
-    for (let i = 0; i < 5; i += 1) {
-      expect(html).toContain(`密集台词${i}_UNTRUNCATED_SUB_END`);
-    }
-    expect(html).not.toContain("…");
-    // 节点表确实做了分组（5 条并成 1 个节点），而不是退回逐条铺开
-    expect(html).toContain("5 句");
+    // 没有 keyMoments 时不展示字幕流水账；完整字幕仍留在 JSON，不在报告重复铺开。
+    expect(html).toContain("0 重点字幕");
+    expect(html).not.toContain("密集台词0_UNTRUNCATED_SUB_END");
+    expect(html).not.toContain("字幕原始证据");
+    expect(html).not.toContain("剧情节点表");
   });
 
   it("优先渲染最终 GLM 整集 parsed 证据，并用真实分片计划换算音轨秒位", async () => {
@@ -287,18 +283,18 @@ describe("fail closed：缺段/段号重复/digest 混杂/集号不符各抛错�
     expect(html).toContain("镜秒位非法，未计入镜长统计");
   });
 
-  it("🔒 剧情节点表不许塌成一个节点（P1：滑动窗口 + 密集对白）", async () => {
+  it("字幕只展示 keyMoments 前后 2 秒，并直接并入重点时刻表", async () => {
     seedThreeSegments();
     const raw = state.objects.get(NAMES[0]!) as { raw: Record<string, unknown> };
-    // 30 条间隔 5 秒的字幕：滑动窗口下会全部并成 1 个节点
-    raw.raw.subtitles = Array.from({ length: 30 }, (_, i) => ({
-      atSec: i * 5, textZh: `连续台词${i}`,
-    }));
+    raw.raw.keyMoments = [{ atSec: 4, kindZh: "剧情", noteZh: "冲突落点" }];
     await renderNativeEvidenceReportFromObjectNames(baseInput());
     const html = state.uploads[0]!.html;
-    expect(html).not.toMatch(/剧情节点表 · 1 节点/);
-    // 每条原文仍一句不少
-    for (let i = 0; i < 30; i += 1) expect(html).toContain(`连续台词${i}`);
+    expect(html).toContain("3 重点字幕");
+    expect(html).toContain("相关字幕（前后 2 秒）");
+    for (const i of [1, 2, 3]) expect(html).toContain(`密集台词${i}_UNTRUNCATED_SUB_END`);
+    for (const i of [0, 4]) expect(html).not.toContain(`密集台词${i}_UNTRUNCATED_SUB_END`);
+    expect(html).not.toContain("字幕原始证据");
+    expect(html).not.toContain("剧情节点表");
   });
 
   it("缺一段抛错", async () => {
@@ -438,6 +434,26 @@ describe("fail closed：缺段/段号重复/digest 混杂/集号不符各抛错�
 });
 
 describe("帧包始终可选", () => {
+  it("正式卡 evidenceFrames 优先进入导出，不再只找旧 probes 帧包", async () => {
+    seedThreeSegments();
+    const result = await renderNativeEvidenceReportFromObjectNames({
+      ...baseInput(),
+      evidenceFrames: [{
+        atSec: 7,
+        kindZh: "情绪",
+        noteZh: "眉头锁紧",
+        objectName: `manhua-template-learn/native-frames/seriesabc/ep001/70ds-${"d".repeat(24)}.jpg`,
+        mimeType: "image/jpeg",
+        bytes: 1234,
+        sha256: "d".repeat(64),
+      }],
+    });
+    expect(result.frames).toBe(1);
+    expect(result.frameSource).toBe("正式卡重点时刻抽帧");
+    expect(state.uploads[0]!.html).toContain("眉头锁紧");
+    expect(state.uploads[0]!.html).toContain("正式卡重点时刻抽帧 1 帧");
+  });
+
   it("frames-v2 与 frames 都缺失仍成功，页面明示未抽帧", async () => {
     seedThreeSegments();
     state.listNames = [];
