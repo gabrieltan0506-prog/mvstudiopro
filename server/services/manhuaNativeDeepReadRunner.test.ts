@@ -1875,6 +1875,7 @@ function makePreparationDeps(
   over: Partial<NativeDeepReadMediaPreparationDeps> = {},
 ): NativeDeepReadMediaPreparationDeps {
   return {
+    sleepMs: async () => {},
     runMedia: vi.fn(async (cmd: string) =>
       cmd === "ffprobe" ? JSON.stringify(makePreparedMediaProbe()) : ""),
     statLocal: vi.fn(async () => ({ size: 200_000 })),
@@ -2098,7 +2099,7 @@ describe("模型请求前的媒体准备边界", () => {
     warn.mockRestore();
   });
 
-  it("默认并发上限 10：5 段一次全发，完成乱序仍逐片验收并按原分段顺序落位", async () => {
+  it("默认并发上限 4：5 段先发 4 路，完成乱序仍逐片验收并按原分段顺序落位", async () => {
     const cutGates = new Map<number, ReturnType<typeof deferred>>();
     let activeCuts = 0;
     let maxActiveCuts = 0;
@@ -2131,12 +2132,15 @@ describe("模型请求前的媒体准备边界", () => {
       sourceDurationSec: 50,
     }, undefined, deps);
 
-    // 0829 晚用户令「改成并发，不是串行」：默认上限 10，5 段不再切成 4+1 两波。
+    // 0901 降档：默认上限 4（真人剧小站 CDN 被 10 路并发连环 reset 的实锤）。
+    // 5 段先发 4 路，放行一段后第 5 段跟上；仍是并发不是串行。
+    await vi.waitFor(() => expect(cutGates.size).toBe(4));
+    expect(maxActiveCuts).toBe(4);
+    cutGates.get(0)!.resolve();
     await vi.waitFor(() => expect(cutGates.size).toBe(5));
     expect(Array.from(cutGates.keys()).sort((a, b) => a - b)).toEqual([0, 10, 20, 30, 40]);
-    expect(maxActiveCuts).toBe(5);
     // 乱序完成：真正的不变量是「按分段下标落位」，不是「按完成顺序落位」。
-    for (const startSec of [40, 10, 30, 0, 20]) cutGates.get(startSec)!.resolve();
+    for (const startSec of [40, 10, 30, 20]) cutGates.get(startSec)!.resolve();
 
     const prepared = await task;
     expect(prepared.map((row) => row.startSec)).toEqual([0, 10, 20, 30, 40]);

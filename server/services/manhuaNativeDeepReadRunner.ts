@@ -1653,7 +1653,10 @@ export const NATIVE_DEEP_READ_MIN_TMP_FREE_BYTES = 500 * 1024 * 1024;
  * ⚠️ 这只是**上限**，实际并发仍被 /tmp 可用空间公式二次夹紧（切片会落地本地文件）。
  * 🔓 上限由调用方入参覆盖（用户令「上限应该是我来定的，不是写死的」）。
  */
-export const NATIVE_DEEP_READ_MEDIA_PREP_MAX_CONCURRENCY = 10;
+// 0901 实锤降档：真人剧 9 段 ×10 路并发从小站 CDN（gzcrkt8888 链）拉流，
+// 同 IP 并发长连接被连环 reset（End of file / Connection reset），第 9 段一分钟内即断。
+// 抖音 CDN 扛得住 10 路，小站扛不住；4 路与上传并发同级，对两类源都安全。
+export const NATIVE_DEEP_READ_MEDIA_PREP_MAX_CONCURRENCY = 4;
 /**
  * 分片上传 GCS 的并发上限。曾经是**严格串行**（一个 for 循环），是全链最明显的串行点。
  * 改并发但保留上限：uploadBufferToGcs 会复制 Buffer，10 路并行在极端片源下可放大到 GB 级内存。
@@ -1673,6 +1676,10 @@ function mediaHeaders(node: NativeDeepReadMediaNode): string[] {
     "-user_agent",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36",
     ...(referer ? ["-headers", `Referer: ${referer}\r\n`] : []),
+    // 0901：小站 CDN 拉长段会中途掐线（TLS End of file / Connection reset）。
+    // 协议层自动重连续拉，整段不作废；不加 -reconnect_at_eof——正常读完会挂住不退。
+    "-reconnect", "1", "-reconnect_streamed", "1",
+    "-reconnect_on_network_error", "1", "-reconnect_delay_max", "15",
   ];
 }
 
@@ -1741,6 +1748,8 @@ export type NativeDeepReadMediaPreparationDeps = {
   remove: typeof deleteGcsObject;
   /** 切段前的 /tmp 可用空间检查（node:fs/promises statfs）。 */
   statfsTmp: () => Promise<{ freeBytes: number }>;
+  /** 段级重试退避；测试注入零等待，生产走真实计时器。 */
+  sleepMs?: (ms: number) => Promise<void>;
 };
 
 const defaultMediaPreparationDeps: NativeDeepReadMediaPreparationDeps = {
@@ -1921,6 +1930,12 @@ export async function prepareEpisodeVideos(
           if (abortSignal?.aborted) throw error;
           if (attempt < 2) {
             console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集第${index + 1}段媒体准备失败，刷新节点后重试`);
+            // 0901：立即重试仍撞在同一场并发风暴里，三连灭。退避 8s/24s 让 CDN 消气。
+            await (deps.sleepMs
+              ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))))(
+              8_000 * (attempt + 1),
+            );
+            abortSignal?.throwIfAborted();
           }
         }
       }
