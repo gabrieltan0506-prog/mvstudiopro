@@ -9810,8 +9810,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       }),
 
     /**
-     * 对白配音试听（管理员限定）。只走套餐：新加坡优先、明确 4xx 才换北京；
-     * 网络/5xx/下载中断不换区，避免结果未知时重复合成。情绪写在 input 标签内。
+     * 对白配音试听。套餐优先（新加坡→北京，WebSocket 正门；到期归零先烧），
+     * 套餐未配置/明确拒绝才落 OpenRouter 按量；套餐侧合成开始后结果未知一律
+     * 停手不换路，避免重复合成重复计费。情绪写在 input 标签内。
      */
     manhuaDialogueTtsPreview: protectedProcedure
       .input(
@@ -9833,17 +9834,18 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             message: `配音需要 ${cost} 积分（当前余额 ${creditsInfo.totalAvailable}）`,
           });
         }
-        // 0902 实测切路：token-plan 两区网关对 qwen-audio-3.0-tts 全报「url error」
-        // （模型-端点品类不匹配，官方正路是 WebSocket 或 OpenRouter）；OpenRouter 版
-        // 实测 4.4s 出片且目录长音色 id 直接可用。验声门禁已内置于服务。
-        const { synthesizeQwenDialogue } = await import(
-          "./services/qwenDialogueTts.js"
+        // 0902 二次实弹改路：套餐正门是 WebSocket api-ws（两区实测出音），到期
+        // 归零的套餐额度优先烧；OpenRouter 按量只做兜底。路由纪律见
+        // manhuaDialogueTtsRoute.ts（task-started 后结果未知不换路，防双计费）。
+        const { synthesizeManhuaDialoguePreferred } = await import(
+          "./services/manhuaDialogueTtsRoute.js"
         );
-        let result: Awaited<ReturnType<typeof synthesizeQwenDialogue>>;
+        let result: Awaited<ReturnType<typeof synthesizeManhuaDialoguePreferred>>;
         try {
-          result = await synthesizeQwenDialogue({
+          result = await synthesizeManhuaDialoguePreferred({
             input: input.input,
             voice: input.voice || "qwen-audio-3.0-tts-plus-longcanzhuyue",
+            ownerUserId: ctx.user.id,
             seed: input.seed,
           });
         } catch (err) {
@@ -9866,6 +9868,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           gcsUri: result.gcsUri,
           bytes: result.bytes,
           voice: result.voice,
+          provider: result.provider,
           voiceGate: result.voiceGate,
         };
       }),
