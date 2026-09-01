@@ -39,6 +39,7 @@ import { getDb } from "../db";
 import { users, type User } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { deductCredits, deductCreditsAmount, getCredits, getUserPlan } from "../credits";
+import { CANVAS_BGM_CREDITS_PER_RUN } from "../../shared/canvasGenerationPricing.js";
 import { CREDIT_COSTS } from "../plans";
 import { flatAnalysisCost, flatImageAnalysisCost, MAX_DURATION_SECONDS } from "../utils/costCalculator";
 import {
@@ -1820,9 +1821,42 @@ async function processManhuaBgmJob(params: {
     }
 
     const startedAtMs = Date.now();
-    const created = await createManhuaBgmTask(parsed.params.brief, {
-      abortSignal: controller.signal,
-    });
+    // 0902 解锁计费：此前配乐零积分白烧上游。fresh 提交前按发扣费，
+    // chargeKey=jobId 幂等（重试/恢复不重复扣）；admin 由 deductCreditsAmount 内部免扣。
+    const numericUserId = Number(params.userId);
+    if (Number.isFinite(numericUserId) && CANVAS_BGM_CREDITS_PER_RUN > 0) {
+      const credits = await getCredits(numericUserId);
+      if (credits.totalAvailable < CANVAS_BGM_CREDITS_PER_RUN) {
+        throw new Error(
+          `积分不足，本次配乐需要 ${CANVAS_BGM_CREDITS_PER_RUN} 积分（当前余额 ${credits.totalAvailable}）`,
+        );
+      }
+      await deductCreditsAmount(
+        numericUserId,
+        CANVAS_BGM_CREDITS_PER_RUN,
+        "manhuaBgm",
+        "漫剧配乐（一发两变体）",
+        { chargeKey: `manhua-bgm:${params.jobId}` },
+      );
+    }
+    let created: Awaited<ReturnType<typeof createManhuaBgmTask>>;
+    try {
+      created = await createManhuaBgmTask(parsed.params.brief, {
+        abortSignal: controller.signal,
+      });
+    } catch (createError) {
+      // 上游没建成单＝钱没烧出去，退回；建成单之后失败按「已烧对账」不退（与视频任务同口径）
+      if (Number.isFinite(numericUserId) && CANVAS_BGM_CREDITS_PER_RUN > 0) {
+        const { refundCredits } = await import("../credits");
+        await refundCredits(numericUserId, CANVAS_BGM_CREDITS_PER_RUN, "配乐建单失败退回", {
+          refundKey: `manhua-bgm-refund:${params.jobId}`,
+        }).catch((refundError) => console.warn(
+          "[manhua-bgm] 建单失败退款未完成（幂等键在，可补退）:",
+          refundError instanceof Error ? refundError.message : refundError,
+        ));
+      }
+      throw createError;
+    }
     if (created.briefDigest !== parsed.params.briefDigest) {
       throw new Error("配乐建单摘要与确认内容不一致");
     }

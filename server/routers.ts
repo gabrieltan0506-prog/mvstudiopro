@@ -5,6 +5,10 @@ import { z } from "zod";
 import { WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT } from "../shared/weixinChannelsRules.js";
 
 import { COOKIE_NAME, TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION } from "../shared/const.js";
+import {
+  CANVAS_TTS_CREDITS_PER_LINE,
+  CANVAS_BGM_CREDITS_PER_RUN,
+} from "../shared/canvasGenerationPricing.js";
 import { HTML_PPT_VIZ_KINDS, type HtmlPptVizKind } from "../shared/htmlPptMaker.js";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
@@ -4429,7 +4433,7 @@ export const appRouter = router({
       .mutation(({ input }) => ({ brief: buildScoringRoomBrief(input) })),
 
     /** 同一次确认只建一条任务；相同编号只有内容摘要一致时才能恢复。 */
-    queueManhuaBgm: adminProcedure
+    queueManhuaBgm: protectedProcedure
       .input(
         z.object({
           billingRequestId: z.string().uuid(),
@@ -4473,7 +4477,7 @@ export const appRouter = router({
         return buildManhuaBgmJobResponse(created);
       }),
 
-    getManhuaBgmJob: adminProcedure
+    getManhuaBgmJob: protectedProcedure
       .input(z.object({ jobId: z.string().min(1).max(100) }))
       .query(async ({ ctx, input }) => {
         const job = await getJobByIdStrict(input.jobId);
@@ -4494,7 +4498,7 @@ export const appRouter = router({
         return buildManhuaBgmJobResponse(job);
       }),
 
-    listManhuaBgmJobs: adminProcedure
+    listManhuaBgmJobs: protectedProcedure
       .input(z.object({ limit: z.number().int().min(1).max(30).default(10) }))
       .query(async ({ ctx, input }) => {
         const rows = await listManhuaBgmJobsForUser(String(ctx.user.id), input.limit);
@@ -9809,33 +9813,38 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
      * 对白配音试听（管理员限定）。只走套餐：新加坡优先、明确 4xx 才换北京；
      * 网络/5xx/下载中断不换区，避免结果未知时重复合成。情绪写在 input 标签内。
      */
-    manhuaDialogueTtsPreview: adminProcedure
+    manhuaDialogueTtsPreview: protectedProcedure
       .input(
         z.object({
           input: z.string().min(1).max(4000),
           voice: z.string().min(1).max(80).optional(),
           seed: z.number().int().optional(),
+          /** 幂等键：同一句重试不重复扣费；前端每次「合成」生成一个 */
+          billingRequestId: z.string().uuid(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
+        // 0902 解锁给创作者：先查余额拦下欠费，合成成功再扣（admin 免扣，见 deductCreditsAmount）。
+        const cost = CANVAS_TTS_CREDITS_PER_LINE;
+        const creditsInfo = await getCredits(ctx.user.id);
+        if (creditsInfo.totalAvailable < cost) {
+          throw new TRPCError({
+            code: "PAYMENT_REQUIRED",
+            message: `配音需要 ${cost} 积分（当前余额 ${creditsInfo.totalAvailable}）`,
+          });
+        }
         const { synthesizeTokenPlanDialogue } = await import(
           "./services/tokenPlanDialogueTts.js"
         );
+        let result: Awaited<ReturnType<typeof synthesizeTokenPlanDialogue>>;
         try {
-          const result = await synthesizeTokenPlanDialogue({
+          result = await synthesizeTokenPlanDialogue({
             input: input.input,
             voice: input.voice || "qwen-audio-3.0-tts-plus-longcanzhuyue",
             ownerUserId: Number(ctx.user.id),
             seed: input.seed,
             signal: ctx.clientDisconnected,
           });
-          return {
-            audioUrl: result.audioUrl,
-            gcsUri: result.gcsUri,
-            bytes: result.bytes,
-            voice: result.voice,
-            voiceGate: result.voiceGate,
-          };
         } catch (err) {
           console.error("[manhua-dialogue-tts] preview failed:", err);
           throw new TRPCError({
@@ -9843,6 +9852,21 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             message: "对白配音暂时不可用；未通过验声的音频不会进入素材库",
           });
         }
+        // 合成成功（且过验声门禁）才扣费——失败不扣，用户不为废音付钱。
+        await deductCreditsAmount(
+          ctx.user.id,
+          cost,
+          "manhuaDialogueTts",
+          "漫剧对白配音（一句）",
+          { chargeKey: `manhua-tts:${ctx.user.id}:${input.billingRequestId}` },
+        );
+        return {
+          audioUrl: result.audioUrl,
+          gcsUri: result.gcsUri,
+          bytes: result.bytes,
+          voice: result.voice,
+          voiceGate: result.voiceGate,
+        };
       }),
 
     /**
