@@ -18,6 +18,7 @@ import {
   readManhuaCloudDraftFromGcs,
   writeManhuaCloudDraftToGcs,
 } from "../services/manhuaCloudDraftGcsStore";
+import { refreshManhuaDraftSignedUrls } from "../services/manhuaDraftUrlRefresh";
 
 /** Neon 仅作迁移期回读；新写入一律 GCS */
 async function loadDraftFromNeonLegacy(userId: number): Promise<{
@@ -85,7 +86,15 @@ export const manhuaCloudDraftRouter = router({
     if (!hit) {
       return { draft: null as ManhuaCloudDraftPayload | null, serverUpdatedAt: null as string | null };
     }
-    return { draft: hit.payload, serverUpdatedAt: hit.updatedAt };
+    // 0902 根治：快照里的签名图链最长 7 天、信封留 30 天——超一周回填图全裂。
+    // 返回前按对象路径整包重签（本地运算），老备份的图就地复活。
+    const { payload, stats } = refreshManhuaDraftSignedUrls(hit.payload);
+    if (stats.refreshed > 0) {
+      console.log(
+        `[manhuaCloudDraft] refreshed ${stats.refreshed} signed url(s) for user ${ctx.user.id}`,
+      );
+    }
+    return { draft: payload, serverUpdatedAt: hit.updatedAt };
   }),
 
   /**

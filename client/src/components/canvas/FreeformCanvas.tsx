@@ -78,6 +78,7 @@ import {
 import type { ManhuaWriterAssetCanon } from "@shared/manhuaWriterAssetCanon";
 import ManhuaPromptMentionEditor from "@/components/ManhuaPromptMentionEditor";
 import {
+  collectManhuaCharacterTagsFromPrompt,
   evaluateManhuaCrossSegmentVoiceGate,
   type ManhuaCharacterVoiceLock,
 } from "@shared/manhuaCharacterVoiceLock";
@@ -644,13 +645,12 @@ export default function FreeformCanvas({
   focusEpisode = null,
   spawnKinds,
   characterVoiceLocks = [],
-  onReplaceCharacterVoiceAudio: _onReplaceCharacterVoiceAudio,
+  onReplaceCharacterVoiceAudio,
   /** 嵌入工作台右栏时占满容器，禁止外层再套一层 overflow 双滚动 */
   fillContainer = false,
   manhuaMention,
   compileManhuaRerun,
 }: FreeformCanvasProps) {
-  void _onReplaceCharacterVoiceAudio;
   const canvasRef = useRef<HTMLDivElement>(null);
   const toolbarFileInputRef = useRef<HTMLInputElement>(null);
   const pendingUploadBlockIdRef = useRef<string | null>(null);
@@ -708,6 +708,10 @@ export default function FreeformCanvas({
     trpc.mvAnalysis.manhuaDialogueTtsPreview.useMutation();
   const [dialogueTtsDrafts, setDialogueTtsDrafts] = useState<
     Record<string, { input: string; voice: string }>
+  >({});
+  /** 每个 block 的「写回声线锁」目标 @角色；未选时提示词里恰好一个 @角色则自动选它 */
+  const [dialogueTtsLockTags, setDialogueTtsLockTags] = useState<
+    Record<string, string>
   >({});
   // 每个 block 暂存尚未取得明确终态的增强请求编号:结果未知时复用同一编号,
   // 服务端按 jobs 记录恢复结果,不重复调用模型不重复扣分。
@@ -1216,14 +1220,36 @@ export default function FreeformCanvas({
           seedance25RefAudioUrls: selected,
           seedance25WorkMode: "reference_to_video",
         });
+        // 声线锁闭环：这句配音绑定了 @角色 时，直接写回跨段声线锁，后续段自动挂参考音
+        const promptTags = collectManhuaCharacterTagsFromPrompt(block.prompt);
+        const lockTag =
+          dialogueTtsLockTags[blockId] ??
+          (promptTags.length === 1 ? promptTags[0]! : "");
+        if (lockTag && onReplaceCharacterVoiceAudio) {
+          onReplaceCharacterVoiceAudio({
+            characterTag: lockTag,
+            audioUrl: result.audioUrl,
+          });
+        }
         toast.success("对白已通过人声门禁并写入参考音频", {
-          description: `${result.voiceGate.durationSeconds.toFixed(1)} 秒 · 有效人声 ${result.voiceGate.voicedSeconds.toFixed(1)} 秒`,
+          description: `${result.voiceGate.durationSeconds.toFixed(1)} 秒 · 有效人声 ${result.voiceGate.voicedSeconds.toFixed(1)} 秒${
+            lockTag && onReplaceCharacterVoiceAudio
+              ? ` · 已写回 ${lockTag} 声线锁`
+              : ""
+          }`,
         });
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "对白配音未完成");
       }
     },
-    [blocks, dialogueTtsDrafts, dialogueTtsMutation, patchOne, userRole]
+    [
+      blocks,
+      dialogueTtsDrafts,
+      dialogueTtsLockTags,
+      dialogueTtsMutation,
+      onReplaceCharacterVoiceAudio,
+      patchOne,
+    ]
   );
 
   const removeBlock = useCallback(
@@ -2847,8 +2873,8 @@ export default function FreeformCanvas({
                                                       MP4
                                                     </div>
                                                   )}
-                                                  {userRole === "admin" ||
-                                                  userRole === "supervisor" ? (
+                                                  {/* 0902 解锁给创作者：路由已 protected + 按句计费（admin 免扣） */}
+                                                  {(
                                                     <div className="space-y-1.5 rounded-lg border border-emerald-300/20 bg-emerald-500/[0.06] p-2">
                                                       <div className="text-[10px] font-semibold text-emerald-100/85">
                                                         对白配音 ·
@@ -2923,6 +2949,57 @@ export default function FreeformCanvas({
                                                             )
                                                           )}
                                                         </select>
+                                                        {(() => {
+                                                          const promptTags =
+                                                            collectManhuaCharacterTagsFromPrompt(
+                                                              block.prompt
+                                                            );
+                                                          if (
+                                                            !promptTags.length ||
+                                                            !onReplaceCharacterVoiceAudio
+                                                          )
+                                                            return null;
+                                                          const current =
+                                                            dialogueTtsLockTags[
+                                                              block.id
+                                                            ] ??
+                                                            (promptTags.length ===
+                                                            1
+                                                              ? promptTags[0]!
+                                                              : "");
+                                                          return (
+                                                            <select
+                                                              value={current}
+                                                              onChange={event =>
+                                                                setDialogueTtsLockTags(
+                                                                  map => ({
+                                                                    ...map,
+                                                                    [block.id]:
+                                                                      event
+                                                                        .target
+                                                                        .value,
+                                                                  })
+                                                                )
+                                                              }
+                                                              title="生成成功后把这条配音写回该角色的跨段声线锁"
+                                                              className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[10px] text-white"
+                                                            >
+                                                              <option value="">
+                                                                不写回声线锁
+                                                              </option>
+                                                              {promptTags.map(
+                                                                tag => (
+                                                                  <option
+                                                                    key={tag}
+                                                                    value={tag}
+                                                                  >
+                                                                    写回 {tag}
+                                                                  </option>
+                                                                )
+                                                              )}
+                                                            </select>
+                                                          );
+                                                        })()}
                                                         <button
                                                           type="button"
                                                           disabled={
@@ -2941,7 +3018,7 @@ export default function FreeformCanvas({
                                                         </button>
                                                       </div>
                                                     </div>
-                                                  ) : null}
+                                                  )}
                                                   <div className="text-[10px] text-white/45">
                                                     参考音频（最多 10）· 上传
                                                     MP3/WAV 后勾选

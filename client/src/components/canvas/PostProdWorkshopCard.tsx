@@ -34,6 +34,9 @@ import {
   type FilmEvent,
   type FilmEventKind,
 } from "@shared/manhuaBeatTable";
+import { deriveManhuaBgmBriefSeed } from "@shared/manhuaBgmBrief";
+import { MANHUA_BEAT_FUNCTION_VOCAB_ZH } from "@shared/manhuaClipDialogueTimeline";
+import { resolveClipLocalSegmentIndex } from "@shared/manhuaScriptWorkbench";
 import {
   canSubmitManhuaBgm,
   clearPendingManhuaBgmJob,
@@ -103,6 +106,8 @@ type PostProdWorkshopCardProps = {
   blocks: CanvasBlock[];
   userId: string;
   userRole?: string | null;
+  /** 画布「BGM 风格说明」（audioReferenceLock.bgmNoteZh）——起草 brief 时自动作风格锚 */
+  bgmSeedNoteZh?: string;
 };
 
 type EditableBgmBrief = {
@@ -142,6 +147,7 @@ export default function PostProdWorkshopCard({
   blocks,
   userId,
   userRole,
+  bgmSeedNoteZh,
 }: PostProdWorkshopCardProps) {
   const queueMutation = trpc.mvAnalysis.queuePostProd.useMutation();
   const draftBgmMutation = trpc.mvAnalysis.draftManhuaBgmBrief.useMutation();
@@ -198,6 +204,49 @@ export default function PostProdWorkshopCard({
   );
   const [scoreStoryZh, setScoreStoryZh] = useState(() => defaultStoryContext);
   const [scoreDurationSec, setScoreDurationSec] = useState(30);
+  /**
+   * 全自动种子（0902 最后一根线）：读最新一集 clip 段表里的〔节拍功能〕标签，
+   * 情绪弧和时长自动推——用户一键起草，不再手拼四拍。
+   */
+  const segmentBriefSeed = useMemo(() => {
+    const vocab = new Set<string>(MANHUA_BEAT_FUNCTION_VOCAB_ZH);
+    const rows = blocks
+      .filter(
+        b =>
+          b.kind === "video" &&
+          Number(b.episodeIndex) > 0 &&
+          String(b.prompt || "").includes("〔")
+      )
+      .map(b => ({
+        ep: Math.floor(Number(b.episodeIndex)),
+        seg: resolveClipLocalSegmentIndex(
+          b.id,
+          b.prompt,
+          Math.floor(Number(b.episodeIndex))
+        ),
+        prompt: String(b.prompt || ""),
+      }));
+    if (!rows.length) return null;
+    const episode = Math.max(...rows.map(r => r.ep));
+    const beats = rows
+      .filter(r => r.ep === episode)
+      .sort((a, b) => a.seg - b.seg)
+      .map(r =>
+        Array.from(r.prompt.matchAll(/〔([^〕]{1,12})〕/g))
+          .map(m => String(m[1]).trim())
+          .filter(tag => vocab.has(tag))
+      );
+    if (!beats.some(list => list.length)) return null;
+    return {
+      episode,
+      segCount: beats.length,
+      seed: deriveManhuaBgmBriefSeed({
+        laneZh: "自定义剧情",
+        segmentBeatFunctionsZh: beats,
+        bgmNoteZh: String(bgmSeedNoteZh || "").trim() || undefined,
+      }),
+    };
+  }, [blocks, bgmSeedNoteZh]);
   const [scoreBrief, setScoreBrief] = useState<EditableBgmBrief | null>(null);
   const [bgmPending, setBgmPending] = useState<ManhuaBgmPendingJob | null>(() =>
     readPendingManhuaBgmJob(localStorage, Date.now(), userId)
@@ -724,6 +773,7 @@ export default function PostProdWorkshopCard({
       return;
     }
     try {
+      const seedNote = String(bgmSeedNoteZh || "").trim().slice(0, 300);
       const result = await draftBgmMutation.mutateAsync({
         laneZh: "自定义剧情",
         durationSec: scoreDurationSec,
@@ -731,10 +781,38 @@ export default function PostProdWorkshopCard({
         moodArcZh: scoreStoryZh.trim(),
         titleZh: "剧情配乐",
         endingZh: "尾钩前收住，不泄尽",
+        ...(seedNote ? { styleAnchorZh: seedNote } : {}),
         hasSilenceBreak: filmEvents.some(event => event.kind === "静音停顿"),
       });
       setScoreBrief(result.brief as EditableBgmBrief);
       toast.success("配乐 brief 已起草，可先修改再确认");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "配乐 brief 起草失败"
+      );
+    }
+  };
+
+  /** 段表一键起草：节拍→情绪弧、段数→时长全自动；剧情文本有则一并当情绪弧原文 */
+  const draftScoringBriefFromSegments = async () => {
+    if (!segmentBriefSeed) return;
+    const { seed, episode } = segmentBriefSeed;
+    try {
+      setScoreDurationSec(seed.durationSec);
+      const result = await draftBgmMutation.mutateAsync({
+        laneZh: seed.laneZh,
+        durationSec: seed.durationSec,
+        moods: [...seed.moods],
+        moodArcZh: scoreStoryZh.trim() || undefined,
+        titleZh: `第${episode}集配乐`,
+        endingZh: seed.endingZh,
+        ...(seed.styleAnchorZh ? { styleAnchorZh: seed.styleAnchorZh } : {}),
+        hasSilenceBreak: filmEvents.some(event => event.kind === "静音停顿"),
+      });
+      setScoreBrief(result.brief as EditableBgmBrief);
+      toast.success(
+        `已按第${episode}集段表起草：${segmentBriefSeed.segCount} 段 · ${seed.durationSec}s · 情绪弧 ${seed.moods.join("→")}`
+      );
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "配乐 brief 起草失败"
@@ -1000,6 +1078,12 @@ export default function PostProdWorkshopCard({
               placeholder="写本段剧情、情绪从哪里推进到哪里、哪里要压住或爆开…"
               className="w-full resize-y rounded-lg border border-white/10 bg-black/35 px-2 py-1.5 text-[11px] leading-5 text-white placeholder:text-white/30"
             />
+            {String(bgmSeedNoteZh || "").trim() ? (
+              <div className="col-span-full text-[10px] leading-4 text-emerald-200/70">
+                画布 BGM 说明将自动作为风格锚：
+                {String(bgmSeedNoteZh || "").trim().slice(0, 60)}
+              </div>
+            ) : null}
             <label className="text-[10px] text-white/45">
               画面时长（秒）
               <input
@@ -1022,17 +1106,30 @@ export default function PostProdWorkshopCard({
                 className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-[11px] text-white"
               />
             </label>
-            <button
-              type="button"
-              disabled={draftBgmMutation.isPending}
-              onClick={() => void draftScoringBrief()}
-              className={goCls}
-            >
-              {draftBgmMutation.isPending ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <div className="flex flex-col gap-1.5">
+              <button
+                type="button"
+                disabled={draftBgmMutation.isPending}
+                onClick={() => void draftScoringBrief()}
+                className={goCls}
+              >
+                {draftBgmMutation.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : null}
+                起草 brief
+              </button>
+              {segmentBriefSeed ? (
+                <button
+                  type="button"
+                  disabled={draftBgmMutation.isPending}
+                  onClick={() => void draftScoringBriefFromSegments()}
+                  title={`读第${segmentBriefSeed.episode}集段表的〔节拍功能〕标签：情绪弧与时长自动推，无需手填`}
+                  className="rounded-lg border border-emerald-300/35 bg-emerald-500/10 px-2 py-1.5 text-[10px] font-semibold text-emerald-50 hover:bg-emerald-500/15 disabled:opacity-45"
+                >
+                  按第{segmentBriefSeed.episode}集段表一键起草
+                </button>
               ) : null}
-              起草 brief
-            </button>
+            </div>
           </div>
 
           {scoreBrief ? (
