@@ -4395,6 +4395,23 @@ async function executeNativeDeepReadBatch(
       const markedVersionsBySegment = new Map<number, Array<Record<string, unknown>>>();
       /** 每个已解析尝试的完整返回元数据；仅用于三档全未过时从三份已保存结果中择优。 */
       const parsedAttemptsBySegment = new Map<number, Map<number, SegmentAttemptResult>>();
+      const finalSegmentAdmitCode = "last_segment_unconditional_admit";
+      const markFinalSegmentAdmitted = (
+        raw: Record<string, unknown>,
+        segmentIndex: number,
+        reasons: NativeDeepReadAdvisory[],
+      ): NativeDeepReadAdvisory[] => {
+        const reasonZh = reasons.length
+          ? reasons.map((row) => row.detailZh).join("；").slice(0, 1_500)
+          : "未通过当前段级内容门禁";
+        const detailZh = `第${segmentIndex + 1}段为本集最后一分片，按用户规则跳过内容门禁并入库；原门禁记录：${reasonZh}`;
+        raw.gateMarked = true;
+        raw.gateMarkedZh = detailZh;
+        return dedupeNativeDeepReadAdvisories([
+          ...reasons,
+          { code: finalSegmentAdmitCode, detailZh, segmentIndex },
+        ]);
+      };
       const collectAdvisories = (): NativeDeepReadAdvisory[] =>
         Array.from(advisoriesBySegment.keys())
           .sort((a, b) => a - b)
@@ -4856,6 +4873,7 @@ async function executeNativeDeepReadBatch(
           });
           parsedAttemptsBySegment.set(input.segmentIndex, parsedAttempts);
           let gated: ReturnType<typeof assertNativeDeepReadSegmentDensity>;
+          const isFinalSegment = segmentCount > 1 && input.segmentIndex === segmentCount - 1;
           try {
             const decision = evaluateNativeDeepReadSegmentAcceptance({
               episodeIndex: episode.episodeIndex,
@@ -4873,7 +4891,12 @@ async function executeNativeDeepReadBatch(
             // 截断豁免、家族计数和20%白名单只在共享判据定义；这里仅执行结果并记账。
             const countableFailures = truncated ? [] : gated.advisories;
             const { failureCount, twoItemOverDeviation, coverageSoloRetry, families } = decision;
-            if (decision.retry) {
+            if (decision.retry && isFinalSegment) {
+              gated = {
+                ...decision,
+                advisories: markFinalSegmentAdmitted(raw, input.segmentIndex, decision.advisories),
+              };
+            } else if (decision.retry) {
               /**
                * 两份文本，用途不同，**不得合并成一份**：
                * · accountedReasonZh＝全部 advisory，进段卡与 console。用户明令
@@ -4925,24 +4948,40 @@ async function executeNativeDeepReadBatch(
               throw gateError(accountedReasonZh || modelReasonZh || "证据未通过当前判据", modelReasonZh);
             }
           } catch (gateFailure) {
-            /**
-             * 覆盖与超长证据段使用类型化异常，永不被单项放行吞掉。
-             * 被拒的已付费解析稿也进入标记池，与原始响应一起保留。
-             */
-            const requiredEvidenceFailure = gateFailure instanceof NativeDeepReadRequiredEvidenceError;
-            const alreadyMarked = (raw as Record<string, unknown>).gateMarked === true;
-            if (requiredEvidenceFailure && !alreadyMarked) {
-              raw.gateMarked = true;
-              raw.gateMarkedZh = gateFailure.message.replace(`${NATIVE_DEEP_READ_GATE_PREFIX}：`, "").slice(0, 500);
-              raw.attemptNumber = input.attemptNumber;
-              const pool = markedVersionsBySegment.get(input.segmentIndex) || [];
-              if (pool.length < NATIVE_DEEP_READ_RETRY_TEMPERATURES.length) {
-                pool.push(raw);
-                markedVersionsBySegment.set(input.segmentIndex, pool);
+            const schemaFailure = gateFailure instanceof Error
+              && (gateFailure.name === NATIVE_DEEP_READ_SCHEMA_ERROR_NAME || gateFailure.name === "ZodError");
+            if (isFinalSegment && isNativeDeepReadGateFailure(gateFailure) && !schemaFailure) {
+              const detailZh = (gateFailure instanceof Error ? gateFailure.message : String(gateFailure))
+                .replace(`${NATIVE_DEEP_READ_GATE_PREFIX}：`, "")
+                .slice(0, 1_500);
+              gated = {
+                raw,
+                advisories: markFinalSegmentAdmitted(raw, input.segmentIndex, [{
+                  code: "last_segment_original_gate_failure",
+                  detailZh,
+                  segmentIndex: input.segmentIndex,
+                }]),
+              };
+            } else {
+              /**
+               * 覆盖与超长证据段使用类型化异常，永不被单项放行吞掉。
+               * 被拒的已付费解析稿也进入标记池，与原始响应一起保留。
+               */
+              const requiredEvidenceFailure = gateFailure instanceof NativeDeepReadRequiredEvidenceError;
+              const alreadyMarked = (raw as Record<string, unknown>).gateMarked === true;
+              if (requiredEvidenceFailure && !alreadyMarked) {
+                raw.gateMarked = true;
+                raw.gateMarkedZh = gateFailure.message.replace(`${NATIVE_DEEP_READ_GATE_PREFIX}：`, "").slice(0, 500);
+                raw.attemptNumber = input.attemptNumber;
+                const pool = markedVersionsBySegment.get(input.segmentIndex) || [];
+                if (pool.length < NATIVE_DEEP_READ_RETRY_TEMPERATURES.length) {
+                  pool.push(raw);
+                  markedVersionsBySegment.set(input.segmentIndex, pool);
+                }
               }
+              // 放行已由共享判据处理；不能在此另设catch规则推翻它的拒收结论。
+              throw gateFailure;
             }
-            // 放行已由共享判据处理；不能在此另设catch规则推翻它的拒收结论。
-            throw gateFailure;
           }
           // 截断标记必须落进段卡本体：只留在外层信封里，缓存命中/断点恢复后就没了。
           if (truncated) raw.truncated = true;
@@ -5192,8 +5231,12 @@ async function executeNativeDeepReadBatch(
          */
         if (cachedEntry) {
           const reusableBestEffort = readCurrentBestEffortMarker(cachedEntry.raw);
+          const reusableFinalSegmentAdmit = segmentCount > 1
+            && segmentIndex === segmentCount - 1
+            && readSegmentAdvisories(cachedEntry.raw, segmentIndex)
+              .some((row) => row.code === finalSegmentAdmitCode);
           // 与入库口共用判据：独立证据门不豁免，其余按家族与偏差判断。
-          if (!reusableBestEffort && !nativeDeepReadSegmentMeetsThreeItemLine({
+          if (!reusableBestEffort && !reusableFinalSegmentAdmit && !nativeDeepReadSegmentMeetsThreeItemLine({
             episodeIndex: episode.episodeIndex,
             segmentIndex,
             startSec: segment.startSec,
