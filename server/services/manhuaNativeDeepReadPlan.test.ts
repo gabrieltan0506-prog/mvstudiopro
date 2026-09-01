@@ -985,13 +985,13 @@ describe("整支即全集（0901 treatAsStandalone）", () => {
       listMixEpisodes: vi.fn(async () => ({
         episodes: [],
         complete: false,
-        riskControlBlockedZh: "HTTP 403 · Blocked by ArgusSecurityPlugin Uifid Not Found（凭证缺新字段 uifid，需更新 DOUYIN_COOKIE）",
+        riskControlBlockedZh: "抖音风控拦截（403）",
       })),
     });
     await expect(buildNativeDeepReadPlanPreview(
       { url: `https://www.douyin.com/video/${modalId}`, limit: 10 },
       d,
-    )).rejects.toThrow(/风控拦下[\s\S]*整支即全集/);
+    )).rejects.toThrow(/风控拦截[\s\S]*整支即全集/);
   });
 
   it("勾选但链接没有视频 id 时关闭式拒绝", async () => {

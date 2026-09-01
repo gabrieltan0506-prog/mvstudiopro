@@ -95,7 +95,9 @@ export async function listDouyinMixEpisodesViaWebApi(
       let payload: unknown | null = null;
       try {
         payload = await fetchDouyinJsonWithCookie(url, referer, cookie, (status, head) => {
-          riskControlBlockedZh = `HTTP ${status} · ${head || "Argus 拦截"}（凭证缺新字段 uifid，需更新 DOUYIN_COOKIE）`;
+          // 细节只进日志；riskControlBlockedZh 是给面板的，短句即可
+          console.warn(`[manhuaLearnDouyinWebApi] mix 403: ${head || "Argus"}`);
+          riskControlBlockedZh = "抖音风控拦截（403）";
         });
       } catch (e) {
         console.warn(
