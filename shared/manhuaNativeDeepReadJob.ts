@@ -74,6 +74,7 @@ export const NATIVE_DEEP_READ_JOB_FIELDS = [
   "nativePlanSeriesKey",
   "nativeSegmentSeconds",
   "nativeVideoFps",
+  "nativeStandaloneSource",
 ] as const;
 
 export type NativeDeepReadJobConfirmation = {
@@ -84,6 +85,11 @@ export type NativeDeepReadJobConfirmation = {
   planLimit: number;
   segmentSeconds: number;
   videoFps: number;
+  /**
+   * 0901 用户令「整支即全集」：抖音大量全集长视频仍挂 mixId 但合集列表被风控/收编，
+   * 勾选后跳过合集展开，按独立长视频单集学习（身份仍只绑 awemeId）。
+   */
+  standaloneSource: boolean;
   /** 与 planHash 成对出现，仅用于兼容已经入队的旧任务。 */
   seriesKey?: string;
   learnLlm: "gpt" | "claude" | "deepseek";
@@ -100,6 +106,7 @@ export function sameNativeDeepReadJobConfirmation(
     && left.planLimit === right.planLimit
     && left.segmentSeconds === right.segmentSeconds
     && left.videoFps === right.videoFps
+    && left.standaloneSource === right.standaloneSource
     && left.seriesKey === right.seriesKey
     && left.learnLlm === right.learnLlm;
 }
@@ -122,6 +129,12 @@ export function parseNativeDeepReadJobConfirmation(
   const seriesKey = String(params.nativePlanSeriesKey || "").trim();
   const segmentSeconds = parseNativeDeepReadSegmentSeconds(params.nativeSegmentSeconds);
   const videoFps = parseNativeDeepReadVideoFps(params.nativeVideoFps);
+  const standaloneRaw = params.nativeStandaloneSource;
+  if (standaloneRaw !== undefined && standaloneRaw !== true && standaloneRaw !== false
+    && standaloneRaw !== "true" && standaloneRaw !== "false") {
+    throw new Error("整支即全集开关必须为布尔值");
+  }
+  const standaloneSource = standaloneRaw === true || standaloneRaw === "true";
   const hasLegacyPlanConfirmation = Boolean(planHash || seriesKey);
   let parsedUrl: URL;
   try {
@@ -160,6 +173,7 @@ export function parseNativeDeepReadJobConfirmation(
     planLimit,
     segmentSeconds,
     videoFps,
+    standaloneSource,
     seriesKey: seriesKey || undefined,
     learnLlm:
       params.learnLlm === "claude" || params.learnLlm === "deepseek"

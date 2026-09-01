@@ -30,6 +30,7 @@ async function fetchDouyinJsonWithCookie(
   url: string,
   referer: string,
   cookie: string,
+  onBlocked?: (status: number, bodyHead: string) => void,
 ): Promise<unknown | null> {
   const response = await fetch(url, {
     headers: {
@@ -41,7 +42,15 @@ async function fetchDouyinJsonWithCookie(
     // 挂死一个页面请求不能拖死整条学习任务
     signal: AbortSignal.timeout(12_000),
   });
-  if (!response.ok) return null;
+  if (!response.ok) {
+    // 0901 实锤：Argus 风控对 mix 列表端点回 403「Uifid Not Found」，
+    // 老代码静默当失败，面板只看到「合集展开失败」——把拦截情报带出去说人话。
+    if (response.status === 403 && onBlocked) {
+      const head = await response.text().catch(() => "");
+      onBlocked(response.status, head.slice(0, 80));
+    }
+    return null;
+  }
   // 风控页偶发返回 200 + 空体/HTML，json() 抛错时按失败处理换下一候选
   try {
     return (await response.json()) as unknown;
@@ -56,7 +65,13 @@ async function fetchDouyinJsonWithCookie(
  */
 export async function listDouyinMixEpisodesViaWebApi(
   mixId: string,
-): Promise<{ episodes: DouyinListedEpisode[]; mixNameZh?: string; complete: boolean } | null> {
+): Promise<{
+  episodes: DouyinListedEpisode[];
+  mixNameZh?: string;
+  complete: boolean;
+  /** 全部凭证都被风控拦下时的人话说明（403 Argus/Uifid） */
+  riskControlBlockedZh?: string;
+} | null> {
   const id = String(mixId || "").trim();
   if (!/^\d{6,}$/.test(id)) return null;
   const cookies = listDouyinCookieCandidatesFromEnv();
@@ -67,6 +82,7 @@ export async function listDouyinMixEpisodesViaWebApi(
   // 全部候选都残缺则返回最全的那份（残缺也比全无强，listedEpisodeCount 会随之波动）
   let best: { episodes: DouyinListedEpisode[]; mixNameZh?: string; complete: boolean } | null =
     null;
+  let riskControlBlockedZh: string | undefined;
   for (const cookie of cookies) {
     const pages: DouyinListedEpisode[][] = [];
     let mixNameZh: string | undefined;
@@ -78,7 +94,9 @@ export async function listDouyinMixEpisodesViaWebApi(
       const url = buildDouyinMixAwemeApiUrl(id, cursor, MIX_PAGE_COUNT);
       let payload: unknown | null = null;
       try {
-        payload = await fetchDouyinJsonWithCookie(url, referer, cookie);
+        payload = await fetchDouyinJsonWithCookie(url, referer, cookie, (status, head) => {
+          riskControlBlockedZh = `HTTP ${status} · ${head || "Argus 拦截"}（凭证缺新字段 uifid，需更新 DOUYIN_COOKIE）`;
+        });
       } catch (e) {
         console.warn(
           "[manhuaLearnDouyinWebApi] mix page fetch failed:",
@@ -130,6 +148,10 @@ export async function listDouyinMixEpisodesViaWebApi(
     console.warn(
       `[manhuaLearnDouyinWebApi] mix expand truncated: mixId=${id} entries=${best.episodes.length}（全部凭证候选均未拉全，先用最全一份）`,
     );
+  }
+  if (!best && riskControlBlockedZh) {
+    console.warn("[manhuaLearnDouyinWebApi] mix listing blocked by risk control:", riskControlBlockedZh);
+    return { episodes: [], complete: false, riskControlBlockedZh };
   }
   return best;
 }
