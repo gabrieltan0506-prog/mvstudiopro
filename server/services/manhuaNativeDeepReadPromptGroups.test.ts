@@ -23,12 +23,15 @@ const cases = [
 
 // 按业务规则断言保留项，而不是只验证标题存在或局部关键词消失。
 const commonProhibitions = [
+  "将 MM:SS 或 HH:MM:SS 去掉冒号后直接当作累计秒",
+  "例如把文件内 05:13 的本段累计秒误写为 513",
   "同一段描述套用到不同时间段",
   "两条镜头的画面描述逐字相同",
   "用等长等距的时间切分代替真实剪辑点",
   "镜头内容与该时段实际画面不符",
   "该时段有台词时写与台词情境无关的场面",
   "用其他段落的描述顶替本该逐镜观察的内容",
+  "将补充信息中的场景、道具或动作直接当成当前镜头的可见事实",
   "逐字转写全片对白",
   "落在 keyMoments 邻域之外的台词一概不收",
   "为了多写字幕而压缩镜头条数或缩短镜头描述",
@@ -37,11 +40,28 @@ const commonProhibitions = [
   "长镜拆分时不得截断原镜头尾部",
   "不得为了打破等长而改动真实剪辑点或虚构镜内变化",
   "总结中不得引入镜头表里没有的内容",
-  "non_story_ad 除 startSec、endSec、evidenceRole 外，其他描述及衍生内容严禁写入",
-  "不得提交仍未通过输出前自检的产出",
+  "non_story_ad 的 hintZh 除null空占位外不得写入内容；除 startSec、endSec、evidenceRole 外，其他描述及衍生内容严禁写入",
+  "单条 shots 记录的 endSec − startSec 超过 30 秒",
+  "把同一长镜的证据段边界伪报为真实剪辑切换",
 ];
 
 describe("Gemini 原生读片正向要求与禁止事项分区", () => {
+  it("实际请求逐镜先生成时间、分类与必填观察；广告占位和正文同序", () => {
+    const prompt = buildGeminiNativeDeepReadSegmentPrompt({ ...input, hasAudio: true });
+    const schema = buildNativeDeepReadResponseSchema({ ...input, hasAudio: true }) as any;
+    const shot = schema.properties.shots.items;
+    expect(shot.required).toContain("hintZh");
+    expect(shot.properties.hintZh).toMatchObject({ type: "STRING", nullable: true });
+    expect(shot.properties.hintZh.description).toContain("≤80字");
+    expect(shot.propertyOrdering.slice(0, 4)).toEqual(["startSec", "endSec", "evidenceRole", "hintZh"]);
+    const section = prompt.split("【正向要求一：逐镜分析 shots】")[1]!.split("【正向要求二")[0]!;
+    const fields = Array.from(section.matchAll(/^- ([A-Za-z]+)(?: \/ ([A-Za-z]+))?：/gm))
+      .flatMap(match => [match[1], ...(match[2] ? [match[2]] : [])]);
+    expect(fields).toEqual(shot.propertyOrdering);
+    expect(prompt).toContain("hintZh固定填null");
+    expect(prompt).toContain("看不清时明确可见范围");
+    expect(prompt.split("【不得出现】")[1]).toContain("把上一镜的观察直接套到下一镜");
+  });
   it.each(cases)(
     "$name：整个请求只有一个禁止区，正向区与重试均不夹禁令",
     row => {
@@ -62,7 +82,7 @@ describe("Gemini 原生读片正向要求与禁止事项分区", () => {
       );
       expect(positive).toContain("【正向要求五");
       expect(positive).toContain(
-        "仅保留 startSec、endSec、evidenceRole 三个字段"
+        "仅保留 startSec、endSec、evidenceRole 三个有内容的字段"
       );
       expect(positive).toContain("总结");
       expect(positive).toContain("每条 shots 记录最长 30 秒");
@@ -78,7 +98,7 @@ describe("Gemini 原生读片正向要求与禁止事项分区", () => {
       for (const rule of commonProhibitions) expect(negative).toContain(rule);
 
       if (row.retry) {
-        expect(positive).toContain("【上一轮未通过的检查】镜头证据段超过33秒");
+        expect(positive).toContain("【上一轮未通过的检查】镜头证据段超过30秒输出上限");
         expect(positive).toContain(
           "只修正上面点名的问题，其余一律照常完整观察"
         );
@@ -127,7 +147,30 @@ describe("Gemini 原生读片正向要求与禁止事项分区", () => {
     }
   );
 
-  it.each(cases)("$name：整理位置后23项字数上限仍与schema相同", row => {
+  it("真实108秒拒因进入重试正文时保留位置，去掉内部容差和混入的禁令", () => {
+    const reason = "原生精读密度门禁：第1段有 1 个超过 33 秒的镜头证据段（要求 30 秒 + 10% 容差）：第37镜 205—313 秒（108 秒）；这几条必须按镜内变化拆成连续证据段，禁止截断尾部";
+    const prompt = buildGeminiNativeDeepReadSegmentPrompt({
+      ...input, startSec: 0, endSec: 313.04, hasAudio: true, rejectedReasonZh: reason,
+    });
+    const request = buildGeminiNativeDeepReadSegmentRequest({
+      segmentContext: { startSec: 0, endSec: 313.04, segmentIndex: input.segmentIndex, hasAudio: true },
+      fileUri: "gs://test-bucket/segment.mp4", fps: 12, prompt,
+    }) as any;
+    const wire = JSON.parse(JSON.stringify(request));
+    const positive = wire.contents[0].parts[1].text.split("【不得出现】")[0];
+    expect(positive).toContain("第37镜 205—313 秒（108 秒）");
+    expect(positive).not.toMatch(/(?:超过|拒收线)\s*33\s*秒|容差|禁止|不得|不要|输出前自检|回去拆/);
+    expect(wire.generationConfig.responseSchema.properties.shots.description).not.toMatch(/33秒|容差/);
+    expect(wire.generationConfig.responseSchema.properties.shots.items.properties.endSec.description)
+      .toContain("startSec < endSec ≤ startSec + 30");
+    // 33也可能是原片真实时间，不能通过全局替换抹掉观测值。
+    const realTime = buildGeminiNativeDeepReadSegmentPrompt({
+      ...input, hasAudio: true, rejectedReasonZh: "第2镜 33—141 秒（108 秒）",
+    });
+    expect(realTime).toContain("第2镜 33—141 秒（108 秒）");
+  });
+
+  it.each(cases)("$name：整理位置后24项字数上限仍与schema相同", row => {
     const prompt = buildGeminiNativeDeepReadSegmentPrompt({
       ...input,
       hasAudio: row.hasAudio,
@@ -136,7 +179,7 @@ describe("Gemini 原生读片正向要求与禁止事项分区", () => {
     const declared = Array.from(
       prompt.matchAll(/^- ([A-Za-z][A-Za-z0-9]*)：[^\n]*?≤(\d+)字/gm)
     );
-    expect(declared).toHaveLength(23);
+    expect(declared).toHaveLength(24);
     const limits = new Map<string, number>();
     const schema = buildNativeDeepReadResponseSchema({ ...input, hasAudio: row.hasAudio });
     const wireLimits = new Map<string, number>();
@@ -157,7 +200,7 @@ describe("Gemini 原生读片正向要求与禁止事项分区", () => {
     };
     walk(NATIVE_DEEP_READ_RESPONSE_SCHEMA, limits);
     walk(schema, wireLimits, true);
-    expect(wireLimits.size).toBe(23);
+    expect(wireLimits.size).toBe(24);
     for (const [, field, maximum] of declared) {
       expect(Number(maximum), field).toBe(limits.get(field!));
       expect(Number(maximum), `实际请求${field}`).toBe(wireLimits.get(field!));

@@ -597,6 +597,211 @@ describe("原生精读计划", () => {
     expect(d.probeDurationSec).not.toHaveBeenCalled();
   });
 
+  it("同一单源的部分卡在计划阶段回到原集号，随后可按原集 GCS 分片续学", async () => {
+    const modalId = "7660141869153651987";
+    const stableUrl = `https://www.douyin.com/video/${modalId}`;
+    const d = deps({
+      fetchAwemeDetail: vi.fn(async () => ({
+        titleZh: "百世轮回，凡人百世书",
+        playbackUrl: "https://v.douyinvod.com/standalone.mp4",
+        access: "free" as const,
+      })),
+      listIngestedEpisodeRecords: vi.fn(async () => [{
+        episodeIndex: 7,
+        sourceUrl: `${stableUrl}?share_token=old`,
+        complete: false,
+        attemptedSegments: 2,
+        completedSegmentIndexes: [0],
+        durationSec: 101,
+        segmentSpans: [
+          { startSec: 0, endSec: 50 },
+          { startSec: 50, endSec: 101 },
+        ],
+        videoFps: 10,
+      }]),
+      listClaimStates: vi.fn(async () => new Map([[
+        7,
+        {
+          createdAtIso: "2026-08-31T00:00:00.000Z",
+          lastErrorZh: "第2段失败，已保留第1段缓存",
+          lastFailedAtIso: "2026-08-31T00:10:00.000Z",
+        },
+      ]])),
+    });
+
+    const plan = await buildNativeDeepReadPlanPreview(
+      { url: stableUrl, limit: 1 },
+      d,
+    );
+
+    expect(plan.episodes).toEqual([expect.objectContaining({
+      episodeIndex: 7,
+      sourceUrl: stableUrl,
+      reclaimFailedClaim: true,
+      recoverMisplacedSourceCache: true,
+      resumeStoredSegmentPlan: true,
+      durationSec: 101,
+      videoFps: 10,
+      segments: [
+        { startSec: 0, endSec: 50 },
+        { startSec: 50, endSec: 101 },
+      ],
+    })]);
+    expect(plan.alreadyIngestedEpisodeIndexes).toEqual([]);
+    expect(plan.reclaimEpisodeIndexes).toEqual([7]);
+    expect(d.probeDurationSec).toHaveBeenCalledTimes(1);
+  });
+
+  it("同源部分卡探测片长变化时关闭式停止，不按新边界重跑", async () => {
+    const modalId = "7660141869153651987";
+    const stableUrl = `https://www.douyin.com/video/${modalId}`;
+    const d = deps({
+      fetchAwemeDetail: vi.fn(async () => ({
+        titleZh: "百世轮回，凡人百世书",
+        playbackUrl: "https://v.douyinvod.com/standalone.mp4",
+        access: "free" as const,
+      })),
+      probeDurationSec: vi.fn(async () => 102),
+      listIngestedEpisodeRecords: vi.fn(async () => [{
+        episodeIndex: 7,
+        sourceUrl: stableUrl,
+        complete: false,
+        attemptedSegments: 2,
+        completedSegmentIndexes: [0],
+        durationSec: 101,
+        segmentSpans: [
+          { startSec: 0, endSec: 50 },
+          { startSec: 50, endSec: 101 },
+        ],
+        videoFps: 10,
+      }]),
+    });
+
+    await expect(buildNativeDeepReadPlanPreview(
+      { url: stableUrl, limit: 1 },
+      d,
+    )).rejects.toThrow(/疑似来源内容变化.*未发出模型请求/);
+  });
+
+  it("同源部分卡保留精确小数末端，允许 ffprobe 与整数历史计划的半秒内差异", async () => {
+    const modalId = "7660141869153651987";
+    const stableUrl = `https://www.douyin.com/video/${modalId}`;
+    const exactDuration = 1593.899675;
+    const d = deps({
+      fetchAwemeDetail: vi.fn(async () => ({
+        titleZh: "精确等分来源",
+        playbackUrl: "https://v.douyinvod.com/exact.mp4",
+        access: "free" as const,
+      })),
+      probeDurationSec: vi.fn(async () => exactDuration),
+      listIngestedEpisodeRecords: vi.fn(async () => [{
+        episodeIndex: 7,
+        sourceUrl: stableUrl,
+        complete: false,
+        attemptedSegments: 2,
+        completedSegmentIndexes: [0],
+        durationSec: exactDuration,
+        segmentSpans: [
+          { startSec: 0, endSec: 796.9498375 },
+          { startSec: 796.9498375, endSec: exactDuration },
+        ],
+        videoFps: 12,
+      }]),
+    });
+
+    const plan = await buildNativeDeepReadPlanPreview({ url: stableUrl, limit: 1 }, d);
+    expect(plan.episodes[0]).toMatchObject({
+      episodeIndex: 7,
+      durationSec: exactDuration,
+      resumeStoredSegmentPlan: true,
+      segments: [
+        { startSec: 0, endSec: 796.9498375 },
+        { startSec: 796.9498375, endSec: exactDuration },
+      ],
+    });
+  });
+
+  it("同源部分卡的原分片数量不等于 attemptedSegments 时关闭式停止", async () => {
+    const modalId = "7660141869153651987";
+    const stableUrl = `https://www.douyin.com/video/${modalId}`;
+    const d = deps({
+      fetchAwemeDetail: vi.fn(async () => ({
+        titleZh: "百世轮回，凡人百世书",
+        playbackUrl: "https://v.douyinvod.com/standalone.mp4",
+        access: "free" as const,
+      })),
+      listIngestedEpisodeRecords: vi.fn(async () => [{
+        episodeIndex: 7,
+        sourceUrl: stableUrl,
+        complete: false,
+        attemptedSegments: 3,
+        completedSegmentIndexes: [0],
+        durationSec: 101,
+        segmentSpans: [
+          { startSec: 0, endSec: 50 },
+          { startSec: 50, endSec: 101 },
+        ],
+        videoFps: 10,
+      }]),
+    });
+
+    await expect(buildNativeDeepReadPlanPreview(
+      { url: stableUrl, limit: 1 },
+      d,
+    )).rejects.toThrow("缺少完整原分片计划");
+  });
+
+  it("同名剧的另一条单源不会复用旧部分卡，而是安全追加到下一集号", async () => {
+    const modalId = "7660141869153651987";
+    const d = deps({
+      fetchAwemeDetail: vi.fn(async () => ({
+        titleZh: "另一条同名单源",
+        playbackUrl: "https://v.douyinvod.com/another.mp4",
+        access: "free" as const,
+      })),
+      listIngestedEpisodeRecords: vi.fn(async () => [{
+        episodeIndex: 7,
+        sourceUrl: "https://www.douyin.com/video/7555555555555555555",
+        complete: false,
+      }]),
+    });
+
+    const plan = await buildNativeDeepReadPlanPreview(
+      { url: `https://www.douyin.com/video/${modalId}`, limit: 1 },
+      d,
+    );
+
+    expect(plan.episodes).toEqual([expect.objectContaining({ episodeIndex: 8 })]);
+    expect(plan.alreadyIngestedEpisodeIndexes).toEqual([]);
+  });
+
+  it("同一单源完整卡只跳过原集，不因临时 ep1 再建执行计划", async () => {
+    const modalId = "7660141869153651987";
+    const stableUrl = `https://www.douyin.com/video/${modalId}`;
+    const d = deps({
+      fetchAwemeDetail: vi.fn(async () => ({
+        titleZh: "已完整学习的单源",
+        playbackUrl: "https://v.douyinvod.com/complete.mp4",
+        access: "free" as const,
+      })),
+      listIngestedEpisodeRecords: vi.fn(async () => [{
+        episodeIndex: 7,
+        sourceUrl: stableUrl,
+        complete: true,
+      }]),
+    });
+
+    const plan = await buildNativeDeepReadPlanPreview(
+      { url: stableUrl, limit: 1 },
+      d,
+    );
+
+    expect(plan.episodes).toEqual([]);
+    expect(plan.alreadyIngestedEpisodeIndexes).toEqual([7]);
+    expect(plan.totalModelCalls).toBe(0);
+    expect(d.probeDurationSec).not.toHaveBeenCalled();
+  });
+
   it("无 mix_info 且没有可读媒体时关闭式停止，不建立空计划", async () => {
     const d = deps({
       fetchAwemeDetail: vi.fn(async () => ({ titleZh: "只有标题没有媒体" })),

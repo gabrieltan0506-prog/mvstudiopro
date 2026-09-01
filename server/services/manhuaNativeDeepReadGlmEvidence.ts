@@ -1,6 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
-import { getGcsBucketName, uploadBufferToGcsIfAbsent } from "./gcs.js";
-import type { GlmGatewayName, GlmRawResponseEvidence } from "./bailianChat.js";
+import {
+  downloadGcsObjectVersioned,
+  getGcsBucketName,
+  uploadBufferToGcsIfAbsent,
+} from "./gcs.js";
+import {
+  GLM_MODEL_GATEWAYS,
+  type GlmGatewayName,
+  type GlmRawResponseEvidence,
+} from "./bailianChat.js";
 
 /** 来源只接收调用方已有身份；legacy直调缺失字段明确留空，禁止猜集号。 */
 export type NativeDeepReadGlmEvidenceContext = {
@@ -9,6 +17,12 @@ export type NativeDeepReadGlmEvidenceContext = {
   episodeIndex?: number;
   batchRequestId?: string;
   callId?: string;
+  /** 正式整形调度器分配的首选通道；失败时仍自动切到另一条GLM通道。 */
+  preferredGlmGateway?: "evolink_glm" | "openrouter";
+  /** 稳定调用身份下先回读已付费证据；仅正式可恢复整形使用。 */
+  recoverExisting?: boolean;
+  /** 请求证据落盘后、真正调用上游前发运行回执；恢复命中时不会调用。 */
+  onBeforePaidCall?: () => Promise<void>;
 };
 export type NativeDeepReadGlmEvidenceReceipt = {
   objectName: string;
@@ -34,6 +48,7 @@ export type NativeDeepReadGlmEvidence = {
 export type NativeDeepReadGlmEvidenceDeps = {
   upload: typeof uploadBufferToGcsIfAbsent;
   getBucket: typeof getGcsBucketName;
+  download?: typeof downloadGcsObjectVersioned;
 };
 const defaultDeps: NativeDeepReadGlmEvidenceDeps = {
   upload: uploadBufferToGcsIfAbsent,
@@ -42,6 +57,199 @@ const defaultDeps: NativeDeepReadGlmEvidenceDeps = {
 
 /** 本轮授权仅覆盖现有桶；不提供公开链接、不读取或保存传输鉴权信息。 */
 const EVIDENCE_BUCKET = "mv-studio-pro-vertex-video-temp";
+
+type NativeDeepReadGlmStoredResponse = {
+  gateway: GlmGatewayName;
+  model: string;
+  provider?: string;
+  providerRequestId?: string;
+  finishReason?: string;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    completion_tokens_details?: { reasoning_tokens?: number };
+    cost?: number;
+  };
+  gatewayTrace?: unknown;
+};
+
+export type NativeDeepReadGlmRecoveredEvidence = {
+  parsed: Record<string, unknown>;
+  response: NativeDeepReadGlmStoredResponse;
+  evidence: NativeDeepReadGlmEvidence;
+  preferredGlmGateway: "evolink_glm" | "openrouter";
+};
+
+function evidencePrefix(callId: string): string {
+  return `manhua-template-learn/episode-glm-evidence/${callId}`;
+}
+
+function sha256(buffer: Buffer): string {
+  return createHash("sha256").update(buffer).digest("hex");
+}
+
+function canonicalJson(value: unknown): string {
+  const normalize = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(normalize);
+    if (node && typeof node === "object") {
+      return Object.fromEntries(Object.entries(node as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, child]) => [key, normalize(child)]));
+    }
+    return node;
+  };
+  return JSON.stringify(normalize(value));
+}
+
+function isNotFound(error: unknown): boolean {
+  return /gcs_(?:stat|download)_failed:404/.test(error instanceof Error ? error.message : String(error));
+}
+
+function assertRecord(value: unknown, message: string): asserts value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(message);
+}
+
+function receiptFromDownload(
+  objectName: string,
+  downloaded: Awaited<ReturnType<typeof downloadGcsObjectVersioned>>,
+): NativeDeepReadGlmEvidenceReceipt {
+  return {
+    objectName,
+    bytes: downloaded.buffer.byteLength,
+    sha256: sha256(downloaded.buffer),
+    ...(downloaded.generation ? { generation: downloaded.generation } : {}),
+  };
+}
+
+/**
+ * 只按稳定 callId 回读完整的 request + parsed 证据。request 已存在而 parsed 缺失时
+ * 关闭式停止：此时无法证明上游是否已经计费，自动重发会造成双烧。
+ */
+export async function readNativeDeepReadGlmRecoveredEvidence(input: {
+  context: NativeDeepReadGlmEvidenceContext;
+  expectedRequestWithoutPreferredGateway: Record<string, unknown>;
+  deps?: NativeDeepReadGlmEvidenceDeps;
+}): Promise<NativeDeepReadGlmRecoveredEvidence | null> {
+  const callId = String(input.context.callId || "").trim();
+  const seriesKey = String(input.context.seriesKey || "").trim();
+  const sourceDigest = String(input.context.sourceDigest || "").trim();
+  const episodeIndex = input.context.episodeIndex;
+  if (!callId || !seriesKey || !/^[a-f0-9]{64}$/.test(sourceDigest)
+    || !Number.isSafeInteger(episodeIndex) || Number(episodeIndex) < 1) {
+    throw new Error("整集GLM恢复身份无效，未调用模型");
+  }
+  const deps = input.deps ?? defaultDeps;
+  const bucket = deps.getBucket();
+  if (bucket !== EVIDENCE_BUCKET) throw new Error("整集GLM证据存储桶不在本轮授权范围，未调用模型");
+  const download = deps.download ?? downloadGcsObjectVersioned;
+  const prefix = evidencePrefix(callId);
+  const downloadFile = async (file: string) => {
+    try {
+      return await download({ gcsUri: `gs://${bucket}/${prefix}/${file}.json` });
+    } catch (error) {
+      if (isNotFound(error)) return null;
+      throw new Error(`整集GLM ${file}证据读取失败，已停止以避免重复付费`);
+    }
+  };
+
+  const requestDownloaded = await downloadFile("request");
+  if (!requestDownloaded) return null;
+  const requestObjectName = `${prefix}/request.json`;
+  let requestPayload: Record<string, unknown>;
+  try {
+    requestPayload = JSON.parse(requestDownloaded.buffer.toString("utf8")) as Record<string, unknown>;
+  } catch {
+    throw new Error("整集GLM request证据损坏，已停止以避免重复付费");
+  }
+  assertRecord(requestPayload, "整集GLM request证据格式无效，已停止以避免重复付费");
+  assertRecord(requestPayload.request, "整集GLM request正文缺失，已停止以避免重复付费");
+  const storedPreferred = requestPayload.preferredGlmGateway;
+  if (
+    requestPayload.schemaVersion !== 1
+    || requestPayload.callId !== callId
+    || requestPayload.seriesKey !== seriesKey
+    || requestPayload.sourceDigest !== sourceDigest
+    || requestPayload.episodeIndex !== episodeIndex
+    || typeof requestPayload.batchRequestId !== "string"
+    || !requestPayload.batchRequestId.trim()
+    || (storedPreferred !== "evolink_glm" && storedPreferred !== "openrouter")
+    || (input.context.preferredGlmGateway && storedPreferred !== input.context.preferredGlmGateway)
+  ) throw new Error("整集GLM request证据身份不一致，已停止以避免重复付费");
+  const expectedRequest = {
+    ...input.expectedRequestWithoutPreferredGateway,
+    preferredGlmGateway: storedPreferred,
+  };
+  if (canonicalJson(requestPayload.request) !== canonicalJson(expectedRequest)) {
+    throw new Error("整集GLM request证据与当前冻结请求不一致，已停止以避免重复付费");
+  }
+  const requestReceipt = receiptFromDownload(requestObjectName, requestDownloaded);
+
+  const parsedDownloaded = await downloadFile("parsed");
+  if (!parsedDownloaded) {
+    throw new Error("整集GLM请求证据已存在但解析证据缺失，已停止以避免重复付费");
+  }
+  const parsedObjectName = `${prefix}/parsed.json`;
+  let parsedPayload: Record<string, unknown>;
+  try {
+    parsedPayload = JSON.parse(parsedDownloaded.buffer.toString("utf8")) as Record<string, unknown>;
+  } catch {
+    throw new Error("整集GLM parsed证据损坏，已停止以避免重复付费");
+  }
+  assertRecord(parsedPayload, "整集GLM parsed证据格式无效，已停止以避免重复付费");
+  assertRecord(parsedPayload.parsed, "整集GLM parsed正文缺失，已停止以避免重复付费");
+  assertRecord(parsedPayload.response, "整集GLM parsed响应回执缺失，已停止以避免重复付费");
+  const rawEvidence = parsedPayload.rawEvidence;
+  const selectedRawObjectName = parsedPayload.selectedRawObjectName;
+  if (
+    parsedPayload.schemaVersion !== requestPayload.schemaVersion
+    || parsedPayload.callId !== callId
+    || parsedPayload.seriesKey !== seriesKey
+    || parsedPayload.sourceDigest !== sourceDigest
+    || parsedPayload.episodeIndex !== episodeIndex
+    || parsedPayload.batchRequestId !== requestPayload.batchRequestId
+    || parsedPayload.preferredGlmGateway !== storedPreferred
+    || canonicalJson(parsedPayload.requestEvidence) !== canonicalJson(requestReceipt)
+    || !Array.isArray(rawEvidence) || rawEvidence.length < 1
+    || typeof selectedRawObjectName !== "string"
+  ) throw new Error("整集GLM parsed证据身份不一致，已停止以避免重复付费");
+
+  const validatedRaw = rawEvidence.map((row, index) => {
+    assertRecord(row, "整集GLM raw证据回执无效，已停止以避免重复付费");
+    if (
+      row.objectName !== `${prefix}/raw-${index + 1}.json`
+      || !Number.isSafeInteger(row.bytes) || Number(row.bytes) < 1
+      || !/^[a-f0-9]{64}$/.test(String(row.sha256 || ""))
+      || !GLM_MODEL_GATEWAYS.has(row.gateway as GlmGatewayName)
+      || typeof row.model !== "string" || !row.model.trim()
+      || !Number.isSafeInteger(row.httpStatus) || Number(row.httpStatus) < 100 || Number(row.httpStatus) > 599
+      || typeof row.bodyComplete !== "boolean"
+      || !Number.isSafeInteger(row.receivedBytes) || Number(row.receivedBytes) < 0
+    ) throw new Error("整集GLM raw证据回执无效，已停止以避免重复付费");
+    return row as NativeDeepReadGlmRawEvidenceReceipt;
+  });
+  const selectedRaw = validatedRaw.at(-1)!;
+  const response = parsedPayload.response as NativeDeepReadGlmStoredResponse;
+  if (
+    selectedRawObjectName !== selectedRaw.objectName
+    || !selectedRaw.bodyComplete
+    || response.gateway !== selectedRaw.gateway
+    || response.model !== selectedRaw.model
+    || !GLM_MODEL_GATEWAYS.has(response.gateway)
+  ) throw new Error("整集GLM parsed与原始响应不一致，已停止以避免重复付费");
+
+  return {
+    parsed: parsedPayload.parsed,
+    response,
+    preferredGlmGateway: storedPreferred,
+    evidence: {
+      callId,
+      request: requestReceipt,
+      raw: validatedRaw,
+      parsed: receiptFromDownload(parsedObjectName, parsedDownloaded),
+      selectedRawObjectName,
+    },
+  };
+}
 
 export function createNativeDeepReadGlmEvidenceStore(
   context: NativeDeepReadGlmEvidenceContext = {},
@@ -61,8 +269,9 @@ export function createNativeDeepReadGlmEvidenceStore(
     sourceDigest: context.sourceDigest ?? null,
     episodeIndex: context.episodeIndex ?? null,
     batchRequestId: context.batchRequestId ?? null,
+    preferredGlmGateway: context.preferredGlmGateway ?? null,
   };
-  const prefix = `manhua-template-learn/episode-glm-evidence/${callId}`;
+  const prefix = evidencePrefix(callId);
   let requestEvidence: NativeDeepReadGlmEvidenceReceipt | undefined;
   let rawNumber = 0;
   const rawEvidence: NativeDeepReadGlmRawEvidenceReceipt[] = [];

@@ -31,6 +31,8 @@ const shotSchema = z
   .object({
     startSec: z.number().min(0),
     endSec: z.number().min(0),
+    /** 本镜环境与道具观察；旧证据可缺省，广告使用null空占位。 */
+    hintZh: z.string().trim().nullable().optional(),
     /** 新产出由 runner 门禁强制必填；optional 仅用于读取历史原始证据。 */
     unitTypeZh: z.enum(["剪辑镜头", "拆分镜证据段"]).optional(),
     shotSizeZh: z.string().trim().optional(),
@@ -386,6 +388,7 @@ export function mapNativeDeepReadSegments(rows: readonly unknown[]): NativeDeepR
           conflictZh,
           visualZh,
           unitTypeZh: shot.unitTypeZh,
+          hintZh: shot.hintZh || undefined,
           shotSizeZh: cut(shot.shotSizeZh, 32),
           angleZh: cut(shot.angleZh, 32),
           compositionZh: cut(shot.compositionZh, 160),

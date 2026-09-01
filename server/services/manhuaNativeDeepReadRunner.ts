@@ -43,8 +43,10 @@ import type {
 } from "../../shared/manhuaNativeModelReceipt.js";
 import {
   deleteGcsObject,
+  downloadGcsObject,
   signGsUriV4ReadUrl,
   uploadBufferToGcs,
+  uploadBufferToGcsIfAbsent,
 } from "./gcs.js";
 import {
   errorWithNativeProviderReceipt,
@@ -62,6 +64,7 @@ import {
 import type { GlmGatewayName } from "./bailianChat.js";
 import {
   createNativeDeepReadGlmEvidenceStore,
+  readNativeDeepReadGlmRecoveredEvidence,
   type NativeDeepReadGlmEvidence,
   type NativeDeepReadGlmEvidenceContext,
   type NativeDeepReadGlmEvidenceDeps,
@@ -74,6 +77,7 @@ import {
 import {
   NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
   nativeDeepReadSegmentEvidenceObjectName,
+  readNativeDeepReadRawAttemptEvidence,
   readNativeDeepReadSegmentCacheEntry,
   writeNativeDeepReadRawAttemptEvidence,
   writeNativeDeepReadParsedAttemptEvidence,
@@ -81,6 +85,15 @@ import {
   type NativeDeepReadSegmentCacheEntry,
   type NativeDeepReadSegmentCacheRead,
 } from "./manhuaNativeDeepReadSegmentCache.js";
+
+/** 运行时递归冻结；避免同一进程里的调用方改写共享模型参数或 Schema。 */
+function deepFreezeNativeContract<T>(value: T): T {
+  if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value as Record<string, unknown>)) {
+    deepFreezeNativeContract(child);
+  }
+  return Object.freeze(value);
+}
 
 /** 生产开关：未开时学习链路完全走原有抽帧，零行为变化 */
 export function isManhuaNativeDeepReadEnabled(): boolean {
@@ -130,13 +143,21 @@ function routePrices(route: NativeDeepReadVisualRoute): { inPerM: number; outPer
     : { inPerM: PRICE_IN_PER_M, outPerM: PRICE_OUT_PER_M };
 }
 
+/** 观察说明由prompt与schema共用，保持环境、道具、动作的要求一致。 */
+const NATIVE_DEEP_READ_SHOT_OBSERVATION_ZH = {
+  hintZh: "先观察本镜起止范围内可见的环境、道具及其状态，写成供本镜后续分析使用的观察记录；未入画或无法辨认时明确写出。随镜头时间更新，仅对应本镜。",
+  compositionZh: "先交代本镜实际可见的环境特征与背景核心道具，再写主体位置、前中后景关系、视线方向与空间层次；背景未入画时明确可见范围。",
+  limbPropActionZh: "先辨认本镜实际可见的四肢或等效附肢，以及手中或身边的道具，再写动作、持握方式、道具状态与交互；道具未入画时明确可见动作范围。",
+  actionZh: "结合本镜可见的环境与道具，写出实际动作过程、信息变化、结果与辨识特征；各镜各写该时段的画面事实。",
+} as const;
+
 /**
  * Vertex responseSchema（0826 参数定稿）：与 nativeDeepReadSegmentSchema /
  * manhuaNativeAudioChunkAnalysisSchema 同构的结构骨架。只靠 responseMimeType
  * 不足以保证字段与数组结构正确——schema 约束「可解析、字段齐」，
  * min/max 与语义仍由入库 zod 门禁把守（双门各司其职，不合并）。
  */
-export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
+export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = deepFreezeNativeContract({
   type: "OBJECT",
   properties: {
     shots: {
@@ -146,17 +167,28 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
         properties: {
           startSec: { type: "NUMBER" },
           endSec: { type: "NUMBER" },
+          evidenceRole: {
+            type: "STRING",
+            enum: ["story", "non_story_ad"],
+            description: "story=推动剧情因果的镜头；non_story_ad=与剧情无关的商业广告，仅记录时间轴与分类，hintZh填null。",
+          },
+          hintZh: {
+            type: "STRING",
+            nullable: true,
+            maxLength: 80,
+            description: NATIVE_DEEP_READ_SHOT_OBSERVATION_ZH.hintZh + "story填写非空观察记录；non_story_ad固定为null。",
+          },
           unitTypeZh: {
             type: "STRING",
             enum: ["剪辑镜头", "拆分镜证据段"],
-            description: "真实剪辑切换写剪辑镜头；同一长镜内部由可观察变化触发的细分写拆分镜证据段。",
+            description: "真实剪辑切换写剪辑镜头；同一长镜为满足单条时长上限而连续细分的记录写拆分镜证据段。",
           },
           shotSizeZh: { type: "STRING", maxLength: 28 },
           angleZh: { type: "STRING", maxLength: 28 },
           compositionZh: {
             type: "STRING",
             maxLength: 80,
-            description: "画面构图、主体位置、前中后景关系、视线方向与空间层次。",
+            description: NATIVE_DEEP_READ_SHOT_OBSERVATION_ZH.compositionZh,
           },
           cameraMoveZh: {
             type: "STRING",
@@ -176,7 +208,7 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
           limbPropActionZh: {
             type: "STRING",
             maxLength: 70,
-            description: "角色四肢或等效附肢动作，以及持物方式、道具状态与交互。",
+            description: NATIVE_DEEP_READ_SHOT_OBSERVATION_ZH.limbPropActionZh,
           },
           microExpressionZh: {
             type: "STRING",
@@ -194,19 +226,14 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
             description: "角色之间的动作因果、反应顺序、感知回应与距离变化。",
           },
           lightingZh: { type: "STRING", maxLength: 58 },
-          actionZh: { type: "STRING", maxLength: 60 },
+          actionZh: { type: "STRING", maxLength: 60, description: NATIVE_DEEP_READ_SHOT_OBSERVATION_ZH.actionZh },
           transitionInZh: { type: "STRING", maxLength: 50 },
-          evidenceRole: {
-            type: "STRING",
-            enum: ["story", "non_story_ad"],
-            description: "story=推动剧情因果的镜头；non_story_ad=与剧情无关的商业广告。non_story_ad 镜头只保存时间轴，严禁写入任何内容。",
-          },
         },
         /**
-         * 两类条目共用基础字段目录；story的17字段与广告的3字段要求
+         * 两类条目共用基础字段目录；story的18字段与广告的空观察占位要求
          * 由实际请求的description、提示词和返回后的分类门禁共同保留。
          */
-        required: ["startSec", "endSec", "evidenceRole"],
+        required: ["startSec", "endSec", "evidenceRole", "hintZh"],
       },
     },
     /**
@@ -342,15 +369,14 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = {
   required: [
     "shots", "keyMoments", "subtitles", "audioResolution", "beatStructureZh", "classification",
   ],
-} as const;
+} as const);
 
 /**
- * 本轮保留首发0.65、重试候选0.65/0.60与MEDIUM；只实验prompt/schema前置契约。
- * 首片0a7cc362内容失败，原始与解析完全一致，不能据此认定温度或思考档位是根因。
- * LOW候选d60224f未实跑；用户最新要求先用原参数检验契约对齐，再按结果决定LOW。
+ * 0901 用户冻结：除分片时长与 fps 外，模型参数、prompt 与 Schema 均不得改写。
+ * 固定首发0.7、两次重试0.65/0.6，thinkingLevel=MEDIUM，无thinkingBudget。
  */
-export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
-  temperature: 0.65,
+export const NATIVE_DEEP_READ_GENERATION_CONFIG = deepFreezeNativeContract({
+  temperature: 0.7,
   maxOutputTokens: 65_536,
   candidateCount: 1,
   audioTimestamp: true,
@@ -369,20 +395,14 @@ export const NATIVE_DEEP_READ_GENERATION_CONFIG = {
    * 两个已验证成功的历史版本都没有发送此参数，故回到不发送＝默认，去掉这份噪音。
    * 若日后要提画面精度，唯一有效动作是显式 HIGH（4 倍帧 token，成本与上下文须另算）。
    */
-} as const;
+} as const);
 
 /**
- * 待验候选同一 Vertex 分片至多三次：0.65 → 0.65 → 0.60；后两档复用 b948d7c。
- * 是否重试由统一段级判据决定；截断前缀保留、不因覆盖重复购买，用户中止不重试。
+ * 同一分片固定三档：0.7 → 0.65 → 0.6，共一次首发、两次重试。
+ * 调用方不能插入、删除、换序或覆盖温度；三档均未过时只在已保存、可解析
+ * 的三份结果中按同一数值评分择优，不产生第四发。
  */
-/**
- * 首发 0.65，梯度 0.65 → 0.65 → 0.6（0831 用户拍板）。
- *
- * 实测依据（同素材同日）：首发 0.65 → 66 镜、39 镜；首发 0.7 → 9、10、10、17 镜。
- * 0827 版代码注释亦记载「0.7 首发合格率 50%，0.65 是 100%——每次重试都要
- * 重付一整片视频输入，这一降直接省掉一半重试」。
- */
-export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = [0.65, 0.65, 0.6] as const;
+export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = deepFreezeNativeContract([0.7, 0.65, 0.6] as const);
 
 /**
  * 普通建议按三家族及偏差判定；独立覆盖与证据段上限优先于该计数线。
@@ -584,6 +604,8 @@ export const NATIVE_DEEP_READ_DENSITY_GUIDE_BLOCK =
   `逐镜回看本段，镜头条数与时长由实际画面切换和镜内变化决定。
 本段最后三分之一与开头同等重要，用同样的观察密度处理。`;
 
+/** 单条镜头证据的生成上限；在构造禁止区之前初始化，避免模块加载时访问未初始化常量。 */
+export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC = 30;
 
 /**
  * 统一禁止区（0831 重构）。
@@ -605,10 +627,13 @@ export const NATIVE_DEEP_READ_PROHIBITION_BLOCK = `
 以下集中列出禁止事项。
 
 判定产出无效：
+· 将 MM:SS 或 HH:MM:SS 去掉冒号后直接当作累计秒，跳过分钟×60或小时×3600换算；例如把文件内 05:13 的本段累计秒误写为 513。
 · 同一段描述套用到不同时间段；两条镜头的画面描述逐字相同。
 · 用等长等距的时间切分代替真实剪辑点，包括整段按固定步长切、以及只在后段这样做。
 · 镜头内容与该时段实际画面不符；该时段有台词时写与台词情境无关的场面。
 · 用其他段落的描述顶替本该逐镜观察的内容。
+· 将补充信息中的场景、道具或动作直接当成当前镜头的可见事实。
+· 为填写hintZh而补猜未入画或无法辨认的环境、道具，或把上一镜的观察直接套到下一镜。
 
 不得为之：
 · 逐字转写全片对白；落在 keyMoments 邻域之外的台词一概不收。
@@ -621,8 +646,9 @@ export const NATIVE_DEEP_READ_PROHIBITION_BLOCK = `
 · 长镜拆分时不得截断原镜头尾部。
 · 不得为了打破等长而改动真实剪辑点或虚构镜内变化。
 · 总结中不得引入镜头表里没有的内容。
-· non_story_ad 除 startSec、endSec、evidenceRole 外，其他描述及衍生内容严禁写入。
-· 不得提交仍未通过输出前自检的产出。`;
+· non_story_ad 的 hintZh 除null空占位外不得写入内容；除 startSec、endSec、evidenceRole 外，其他描述及衍生内容严禁写入。
+· 单条 shots 记录的 endSec − startSec 超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。
+· 把同一长镜的证据段边界伪报为真实剪辑切换。`;
 
 
 export const NATIVE_DEEP_READ_NON_ACTIONABLE_RETRY_CODES: ReadonlySet<string> = new Set([
@@ -633,16 +659,16 @@ export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 60_000;
 export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.6;
 
 /** 第二次尝试参数；保留导出供既有调用方与缓存指纹使用。 */
-export const NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG = {
+export const NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG = deepFreezeNativeContract({
   ...NATIVE_DEEP_READ_GENERATION_CONFIG,
   temperature: NATIVE_DEEP_READ_RETRY_TEMPERATURES[1],
-} as const;
+} as const);
 
 /** 第三次（末次）尝试参数：收口到温度下限。 */
-export const NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG = {
+export const NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG = deepFreezeNativeContract({
   ...NATIVE_DEEP_READ_GENERATION_CONFIG,
   temperature: NATIVE_DEEP_READ_RETRY_TEMPERATURES[NATIVE_DEEP_READ_RETRY_TEMPERATURES.length - 1],
-} as const;
+} as const);
 
 /** 响应体上限：模型异常时可能吐超大 body，不设限会把内存吃干 */
 const NATIVE_RESPONSE_CAP_CHARS = 8 * 1024 * 1024;
@@ -686,7 +712,7 @@ export type NativeDeepReadSegmentSpec = {
   /** 全片绝对秒 */
   startSec: number;
   endSec: number;
-  /** 给模型的段落提示（来自粗读 hotspots 的 whyZh） */
+  /** 调用方提供的可选段落定位信息；仅辅助观察，不代替当前镜头的画面证据。 */
   hintZh?: string;
 };
 
@@ -857,7 +883,7 @@ export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
  * 精确切片与独立采样配置改变请求语义；旧流复制切片的缓存与确认码不得复用。
  * 本版验证首发0.65与历史两次重试温度，保留既有时间解释；实测过关前不宣称冻结。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-custom-20260901-simple-schema-v1" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-custom-20260901-shot-observation-v2" as const;
 
 /** 分片时长和采样率独立配置；默认值来自共享配置，不按长短片自动降档。 */
 export function resolveNativeDeepReadRequestFps(totalDurationSec: number, requestedFps?: number): number {
@@ -920,29 +946,18 @@ export const NATIVE_DEEP_READ_SHOT_SINGLE_MAX_SEC = 15;
  * 「不行，超过三十秒必须要拆」「这个不加模型会一次跑 140-300 秒这样的长镜」「我都试过了」。
  * 提示词硬约束 1 与本门禁必须同时保持硬性，任何 agent 不得单方面放宽。
  */
-export const NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC = 30;
-
 /**
- * 输出前自检（0831 用户令：把第二次重试才说的要求一同写进首发）。
- *
- * 实测五次重试的拒因，四次是同一件事——超长镜头（最长 65／89／109／199 秒），
- * 一次是镜数低于地板。重试并没有教给模型新东西，只是把首发就该说清的话
- * 等它做错之后再说一遍，代价是每片多烧一次全额视频输入（≈295k token）。
- *
- * 写成**可执行的检查步骤**而非又一条禁令：条件句拦不住（「超过 30 秒时应拆分」
- * 模型会自判「这不算长镜」），算式拦得住（「两数相减大于 30 就回去拆」）。
+ * 生成前安排观察与边界；返回后的算术验收由代码执行。
+ * 这些文字是生成指引，不代表模型能回退修改已经输出的JSON，也不保证内容正确。
  */
-export function buildNativeDeepReadSelfCheckBlock(lenSec: number): string {
+export function buildNativeDeepReadObservationPlanBlock(lenSec: number): string {
   return `
-【输出前自检】
+【观察与输出顺序】
 
-提交 JSON 前，按顺序完成以下检查与修正：
-
-1. 逐条计算 endSec − startSec。凡是大于 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 的，回去按硬约束 2 拆开。
-2. 核对本段 ${Math.round(lenSec)} 秒的画面与 shots 时间轴，完整记录每次真实切换，保留真实短镜头和长镜尾部。
-3. 核对相邻各镜的秒位与实际画面边界；真实等长的镜头保留原秒位，同一长镜的拆分按镜内变化定位。
-4. ${buildNativeDeepReadDensityContract(lenSec)}
-5. 对每条 keyMoment 重新定位 atSec，核对该帧人物、地点、动作及可见字幕与 noteZh 一致，再保留；音轨类另核对同秒声音。`;
+1. 通览本段 ${Math.round(lenSec)} 秒画面，定位每次真实剪辑切换及镜内变化，规划连续覆盖整段的时间边界。
+2. 按硬约束 2 先确定每条记录的起止秒位，再输出该条字段；每完成一条，沿已观察到的时间轴继续下一条。
+3. ${buildNativeDeepReadDensityContract(lenSec)}
+4. 写入每条 keyMoment 前，先定位 atSec 的原帧，观察人物、地点、动作及可见字幕，再据此填写 noteZh；音轨类同时听取该秒声音。`;
 }
 
 
@@ -1079,7 +1094,7 @@ export function buildGeminiNativeDeepReadSegmentPrompt(input: {
   const hint = String(input.hintZh || "").trim();
   /**
    * 音轨条数沿用观察建议，保持真实声音优先；镜数与均长的现行拒收条件
-   * 已在输出前自检及动态schema前置，两者分别处理，避免用声音条数逼出编造。
+   * 已在观察顺序及动态schema前置，两者分别处理，避免用声音条数逼出编造。
    */
   const audioHardRule = input.hasAudio
     ? `6. 音轨范围与时间基准
@@ -1091,15 +1106,18 @@ audioTrack 与 cues 内时间用**本段局部秒**（0..${lenSec}），这是�
 
 1. 时间坐标
 所附视频文件只有本段 ${lenSec} 秒，文件 00:00 对应全片 ${Math.round(input.startSec)} 秒。先定位原帧，再将文件内 MM:SS 或 HH:MM:SS 换算为本段累计秒 t = 小时×3600 + 分钟×60 + 秒；全片秒位 = ${Math.round(input.startSec)} + t，音轨局部秒位 = t。例如文件 ${fileClock(exampleLocalSec)} 对应本段 ${exampleLocalSec} 秒、全片 ${Math.round(input.startSec) + exampleLocalSec} 秒；文件末尾 ${fileClock(lenSec)} 对应本段 ${lenSec} 秒、全片 ${Math.round(input.endSec)} 秒。
+数字时间字段以累计秒为单位。格式换算示范：文件内 05:13 的本段累计秒 t = 5×60+13 = 313；对应全片绝对秒 = 本段起点 + 313，即 ${Math.round(input.startSec)} + 313 = ${Math.round(input.startSec) + 313}。此示范只说明换算方法，实际秒位范围仍按本段起止确定。
 shots.startSec/endSec、keyMoments.atSec 使用全片绝对秒，可保留一位小数；subtitles.atSec 使用全片绝对整数秒。本段范围为 ${Math.round(input.startSec)} 至 ${Math.round(input.endSec)} 秒，shots 按时间排序，连续覆盖整段。
 audioResolution 内的 fromSec/toSec、cues.atSec 使用本段局部整数秒，以本段起点为 0；chunkIndex 使用传入原值。
 位置写入数字字段；中文描述里可以写动作持续时长，如「1.2 秒内推近」。
 
-2. 镜头记录与长镜拆分
+2. 镜头记录与生成前长镜拆分
 真实剪辑切换的 unitTypeZh 写「剪辑镜头」。
-**每条 shots 记录最长 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。**超过就按镜内真实发生的构图、运镜、角色调度、动作、表演或光影变化拆开，完整覆盖原镜头。
+**每条 shots 记录最长 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。**在输出本条 JSON 对象之前，先确定 startSec 和 endSec，使 0 < endSec − startSec ≤ ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC}；然后填写本条画面内容。
 真实剪辑镜头按实际起止秒位记录，短于 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒也完整保留；相邻镜头时长可以相同。
+遇到持续超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒的同一真实长镜，先规划多个首尾相接的证据段，再逐条输出，完整覆盖原镜头。优先在实际构图、运镜、角色调度、动作、表演或光影变化处分段；持续静止或持续对话同样按上限续接，并如实记录该段保持的状态。
 同一长镜的每个拆分证据段保持 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒；该下限仅适用于同一长镜的拆分证据段。
+在输出前安排好尾段：不足 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒的余量与前段共同调整边界，使各段仍处于上述范围，原镜头首尾保持完整。
 拆分后的 unitTypeZh 写「拆分镜证据段」；第二段及后续段的 transitionInZh 固定写「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」。
 
 3. 统一适用范围
@@ -1122,29 +1140,30 @@ ${audioHardRule}
 全片时长：${Math.round(input.episodeDurationSec)} 秒。
 当前片段：第 ${Math.round(input.startSec)} 至 ${Math.round(input.endSec)} 秒。
 分段序号：第 ${input.segmentIndex + 1}/${input.segmentCount} 段。
-音轨段号：${input.segmentIndex}。${hint ? `\n补充信息：${hint}。` : ""}
+音轨段号：${input.segmentIndex}。${hint ? `\n补充信息：${hint}。\n补充信息用于辅助定位；本镜的环境、道具与动作以该时段原片可见证据为准。` : ""}
 
-${buildNativeDeepReadSelfCheckBlock(lenSec)}
+${buildNativeDeepReadObservationPlanBlock(lenSec)}
 
 【正向要求一：逐镜分析 shots】
 
-每条 story 镜头填写以下 17 字段：
+每条 story 镜头按以下顺序填写18字段：先记录本镜时间与分类，再生成本镜观察 hintZh，随后依据本镜画面填写详细分析。hintZh 是本次输出的逐镜观察，和调用前的补充信息各自独立。
 - startSec / endSec：本镜实际起止秒位。单条最长 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒；真实短镜按实际时长保留，超过上限的长镜按硬约束 2 拆成每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。
+- evidenceRole：按统一分类规则填写。
+- hintZh：${NATIVE_DEEP_READ_SHOT_OBSERVATION_ZH.hintZh}≤80字。
 - unitTypeZh：剪辑镜头／拆分镜证据段。
 - shotSizeZh：实际景别，如极特写、特写、近景、中景、全景、大远景，≤28字。
 - angleZh：实际机位，如平视、仰拍、俯拍、过肩、主观，≤28字。
-- compositionZh：主体位置、前中后景、视线方向与空间层次，≤80字。
+- compositionZh：${NATIVE_DEEP_READ_SHOT_OBSERVATION_ZH.compositionZh}≤80字。
 - cameraMoveZh：运镜起点、方向、速度或节奏、幅度与落点；静止画面写「固定机位」，≤80字。
 - blockingZh：角色站位、朝向、距离、进退路径、遮挡与群像调度变化，≤70字。
 - bodyActionZh：整体姿态、躯体重心、移动方式、结构形变与动作阶段，≤70字。
-- limbPropActionZh：四肢或等效附肢动作、持物方式、道具状态与交互，≤70字。
+- limbPropActionZh：${NATIVE_DEEP_READ_SHOT_OBSERVATION_ZH.limbPropActionZh}≤70字。
 - microExpressionZh：面部或等效表情器官的可见细微变化，≤58字。
 - gazeBreathZh：视线或感知指向、眨眼、呼吸及可见节律变化，≤58字。
 - relationshipReactionZh：角色动作先后、彼此回应与距离变化，≤60字。
 - lightingZh：主辅光位、色调、明暗关系、轮廓光与环境光变化，≤58字。
-- actionZh：本镜可见动作过程、信息变化、结果与辨识特征，≤60字。写你在该时间段真实看到的内容，各镜各写各的。
+- actionZh：${NATIVE_DEEP_READ_SHOT_OBSERVATION_ZH.actionZh}≤60字。
 - transitionInZh：进入本镜的实际转场方式；长镜续段使用规定标记，≤50字。
-- evidenceRole：按统一分类规则填写。
 
 【正向要求二：关键抓帧 keyMoments】
 
@@ -1213,12 +1232,12 @@ classification 完整输出五个数组：
 【统一分类与字段规则】
 
 shots 条目按 evidenceRole 区分两种结构：
-1. story —— 推动剧情因果的镜头。使用完整 17 字段结构，全部 17 字段保持必填。
-2. non_story_ad —— 与剧情无关的商业广告。仅保留 startSec、endSec、evidenceRole 三个字段，用于保存时间轴与分类标记。
+1. story —— 推动剧情因果的镜头。使用完整18字段结构，hintZh填写非空观察；看不清时明确可见范围及无法辨认的部分。
+2. non_story_ad —— 与剧情无关的商业广告。仅保留 startSec、endSec、evidenceRole 三个有内容的字段，用于保存时间轴与分类标记；hintZh固定填null，作为统一Schema的必填空占位。
 `;
   const retryRequirements = input.rejectedReasonZh
     ? `${base}
-【上一轮未通过的检查】${String(input.rejectedReasonZh).slice(0, 300)}
+【上一轮未通过的检查】${nativeDeepReadRetryReasonForPrompt(input.rejectedReasonZh).slice(0, 300)}
 
 本轮重做要求（0831 实测加固：上一轮模型把「修正」做成了砍条数＋通用词填充，35 条降到 15 条、12 条描述逐字相同）：
 1. 只修正上面点名的问题，其余一律照常完整观察。
@@ -1267,7 +1286,17 @@ export function resolveNativeDeepReadDensityContract(lenSec: number) {
 
 function buildNativeDeepReadDensityContract(lenSec: number): string {
   const rule = resolveNativeDeepReadDensityContract(lenSec);
-  return `本段镜数参考线为 ${rule.referenceShots} 条；现行门禁容差为20%，存在剧情镜时 story 至少 ${rule.minStoryShots} 条，广告另计。剧情镜平均时长（剧情镜时长总和÷剧情镜数）以10秒为参考，超过 ${rule.maxAverageSec} 秒会要求重做。完整${Math.round(lenSec)}秒均为剧情时，平均时长条件需要至少 ${Math.ceil(lenSec / rule.maxAverageSec)} 条。数值用于复查漏记；逐镜边界和内容以原片实际证据为准，每条写出该时段可辨识的动作与变化。单条目标30秒，现行容差拒收线33秒；完整输出覆盖目标100%，低于90%会要求重做。`;
+  return `本段镜数参考线为 ${rule.referenceShots} 条；存在剧情镜时 story 至少 ${rule.minStoryShots} 条，广告另计。剧情镜平均时长（剧情镜时长总和÷剧情镜数）上限为 ${rule.maxAverageSec} 秒；完整${Math.round(lenSec)}秒均为剧情时，至少需要 ${Math.ceil(lenSec / rule.maxAverageSec)} 条。镜数和平均时长用于提示可能漏记的内容，逐镜边界和描述以原片实际证据为准。每条 shots 记录的 endSec − startSec 上限固定为 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒；真实长镜按该上限提前规划连续证据段。完整输出覆盖整段时间轴。`;
+}
+
+/** 仅整理模型可见的长镜拒因；完整诊断、内部容差和重试决策原样保留。 */
+function nativeDeepReadRetryReasonForPrompt(reason: string): string {
+  return reason
+    .replace(/超过\s*33\s*秒的镜头证据段（要求\s*30\s*秒\s*\+\s*10%\s*容差）/g,
+      "超过30秒输出上限的镜头证据段")
+    .replace(/镜头证据段超过\s*33\s*秒/g, "镜头证据段超过30秒输出上限")
+    .replace("；这几条必须按镜内变化拆成连续证据段，禁止截断尾部",
+      "；本次生成前按长镜拆分规则安排完整连续的证据段");
 }
 
 type NativeResponseSchemaNode = {
@@ -1292,10 +1321,12 @@ export function buildNativeDeepReadResponseSchema(context: NativeDeepReadSegment
   const shot = props.shots!.items!;
   props.shots!.description = buildNativeDeepReadDensityContract(lenSec)
     + "story与non_story_ad分别按条目分类要求填写。";
-  shot.description = `story条目完整填写以下17字段：${Object.keys(shot.properties!).join("、")}。`
-    + "non_story_ad条目仅保留startSec、endSec、evidenceRole三个字段。";
+  shot.description = `story条目按顺序完整填写以下18字段：${Object.keys(shot.properties!).join("、")}。`
+    + "先写本镜hintZh观察，再写详细分析。non_story_ad仅保留startSec、endSec、evidenceRole三个有内容的字段，hintZh固定为null空占位。";
+  // 官方结构化输出支持propertyOrdering；仅约束逐镜生成顺序，与正文逐项顺序一致。
+  shot.propertyOrdering = Object.keys(shot.properties!);
   shot.properties!.startSec = { type: "NUMBER", description: `${absoluteRangeZh}，填写实际起点，可保留一位小数。` };
-  shot.properties!.endSec = { type: "NUMBER", description: `${absoluteRangeZh}，填写实际终点且大于startSec，可保留一位小数。` };
+  shot.properties!.endSec = { type: "NUMBER", description: `${absoluteRangeZh}，生成本条前确定终点，满足startSec < endSec ≤ startSec + ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC}，可保留一位小数；真实长镜按单条上限连续分段。` };
   props.keyMoments!.description = NATIVE_DEEP_READ_KEY_MOMENT_SELECTION_ZH;
   const firstFrameSec = Number((Math.ceil(context.startSec * 10) / 10).toFixed(1));
   const lastFrameSec = Number((Math.ceil(context.endSec * 10) / 10 - 0.1).toFixed(1));
@@ -1318,7 +1349,7 @@ export function buildNativeDeepReadResponseSchema(context: NativeDeepReadSegment
   track.properties!.cues!.items!.properties!.atSec = {
     type: "INTEGER", description: `本段局部整数秒，范围 0 至 ${lenSec} 秒，位于所属audioTrack时间区间内。`,
   };
-  // 本次主动保留简单结构；只迁移字数说明，不注入分支、范围或顺序约束。
+  // 保留单一对象结构，仅逐镜声明生成顺序；字数继续使用描述，不添加分支或范围约束。
   const normalize = (node: NativeResponseSchemaNode): void => {
     if (node.maxLength !== undefined) {
       node.description = `${node.description || ""}≤${node.maxLength}字。`;
@@ -1332,6 +1363,50 @@ export function buildNativeDeepReadResponseSchema(context: NativeDeepReadSegment
 }
 
 /**
+ * 冻结契约覆盖参数、基础/动态 Schema、首发与拒因 prompt。
+ * 只把分片边界、fps、hint 当作样例输入；它们仍可由任务数据动态提供。
+ */
+export function nativeDeepReadFrozenContractSha256(): string {
+  const animationContext = { startSec: 0, endSec: 319, segmentIndex: 0, hasAudio: true } as const;
+  const liveContext = { startSec: 313, endSec: 626, segmentIndex: 1, hasAudio: false } as const;
+  const promptInput = {
+    episodeDurationSec: 1_594,
+    startSec: animationContext.startSec,
+    endSec: animationContext.endSec,
+    segmentIndex: animationContext.segmentIndex,
+    segmentCount: 5,
+    hasAudio: animationContext.hasAudio,
+    videoFps: 12,
+    hintZh: "冻结契约样例：只作动态补充信息，不代替逐镜观察。",
+  } as const;
+  return crypto.createHash("sha256").update(JSON.stringify({
+    model: NATIVE_DEEP_READ_MODEL,
+    generationConfig: NATIVE_DEEP_READ_GENERATION_CONFIG,
+    retryTemperatures: NATIVE_DEEP_READ_RETRY_TEMPERATURES,
+    retryIntervalMs: NATIVE_DEEP_READ_RETRY_INTERVAL_MS,
+    glmStructuringConfig: NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG,
+    baseResponseSchema: NATIVE_DEEP_READ_RESPONSE_SCHEMA,
+    animationResponseSchema: buildNativeDeepReadResponseSchema(animationContext),
+    liveResponseSchema: buildNativeDeepReadResponseSchema(liveContext),
+    firstPrompt: buildGeminiNativeDeepReadSegmentPrompt(promptInput),
+    retryPrompt: buildGeminiNativeDeepReadSegmentPrompt({
+      ...promptInput,
+      rejectedReasonZh: "第1段镜头时间轴覆盖不足，镜头证据段超过30秒输出上限",
+    }),
+  }), "utf8").digest("hex");
+}
+
+/** 修改冻结项必须由用户在当前任务重新授权；禁止只更新这个摘要让测试变绿。 */
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "fbed790c7b45383bd087ceded91ebd4e45c42464f938e59c920e139a965f42e7" as const;
+
+export function assertNativeDeepReadFrozenContract(): void {
+  const actual = nativeDeepReadFrozenContractSha256();
+  if (actual !== NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256) {
+    throw new Error(`Gemini 3.1 Pro读片冻结契约漂移：${actual}`);
+  }
+}
+
+/**
  * Google 原生 generateContent 请求体；Vertex 与 EvoLink 同构，只换端点与鉴权。
  * fileData 主线用 gs://（Vertex 服务账号可读），兜底用 GCS V4 签名 https。
  */
@@ -1340,18 +1415,19 @@ export function buildGeminiNativeDeepReadSegmentRequest(input: {
   fps: number;
   prompt: string;
   segmentContext: NativeDeepReadSegmentContext;
-  /** 原地重试传 NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG；缺省=首发参数 */
-  generationConfig?: Record<string, unknown>;
+  /** 只允许选择冻结梯度中的尝试序号；调用方不能覆盖 generationConfig。 */
+  attemptIndex?: 0 | 1 | 2;
 }): Record<string, unknown> {
-  const requestedConfig = input.generationConfig || NATIVE_DEEP_READ_GENERATION_CONFIG;
-  const requestedTemperature = Number(requestedConfig.temperature);
+  assertNativeDeepReadFrozenContract();
+  const attemptIndex = input.attemptIndex ?? 0;
+  if (!Number.isSafeInteger(attemptIndex)
+    || attemptIndex < 0 || attemptIndex >= NATIVE_DEEP_READ_RETRY_TEMPERATURES.length) {
+    throw new Error("Gemini 3.1 Pro读片只允许冻结的0.7/0.65/0.6三档尝试序号");
+  }
   const generationConfig = {
-    ...requestedConfig,
+    ...NATIVE_DEEP_READ_GENERATION_CONFIG,
     responseSchema: buildNativeDeepReadResponseSchema(input.segmentContext),
-    // 纵深门禁：未来即使有新旁路误传 0，也在真正组装请求体时收口到 0.60。
-    temperature: Number.isFinite(requestedTemperature)
-      ? Math.max(NATIVE_DEEP_READ_TEMPERATURE_MIN, requestedTemperature)
-      : NATIVE_DEEP_READ_GENERATION_CONFIG.temperature,
+    temperature: NATIVE_DEEP_READ_RETRY_TEMPERATURES[attemptIndex],
   };
   return {
     contents: [{
@@ -2027,10 +2103,10 @@ function gateError(detailZh: string, modelReasonZh?: string): Error {
   return error;
 }
 
-/** 这两类证据缺陷不得被「硬门单项放行」吞掉；不要通过中文错误文案识别。 */
+/** 必需证据缺陷不得被「硬门单项放行」吞掉；不要通过中文错误文案识别。 */
 export class NativeDeepReadRequiredEvidenceError extends Error {
   constructor(
-    readonly code: "coverage_below_90" | "shot_evidence_too_long",
+    readonly code: "coverage_below_90" | "shot_evidence_too_long" | "shot_observation_missing",
     detailZh: string,
   ) {
     super(`${NATIVE_DEEP_READ_GATE_PREFIX}：${detailZh}`);
@@ -2046,10 +2122,13 @@ type NativeDeepReadSegmentGateInput = {
   hasAudio: boolean;
   raw: Record<string, unknown>;
   truncated?: boolean;
+  /** 新请求/当前缓存必填；旧JSON只读检查保持兼容。 */
+  requireShotObservations?: boolean;
 };
 
 /** 首发、缓存、同源迁移共用完整判据，不另按 advisory 条数造第二把尺子。 */
 export function evaluateNativeDeepReadSegmentAcceptance(input: NativeDeepReadSegmentGateInput) {
+  if (input.requireShotObservations) assertNativeDeepReadShotObservations(input.raw);
   let gated: ReturnType<typeof assertNativeDeepReadSegmentDensity>;
   try {
     gated = assertNativeDeepReadSegmentDensity(input);
@@ -2220,6 +2299,55 @@ const NATIVE_DEEP_READ_REQUIRED_SHOT_FIELDS = [
 const NATIVE_DEEP_READ_REQUIRED_AD_SHOT_FIELDS = [
   "startSec", "endSec", "evidenceRole",
 ] as const;
+
+/** 只核对观察是否存在及时间顺序，不把字段齐全当作画面已核实。 */
+export function assertNativeDeepReadShotObservations(raw: Record<string, unknown>): void {
+  let previousStart = -Infinity;
+  const shots = Array.isArray(raw.shots) ? raw.shots : [];
+  for (let index = 0; index < shots.length; index += 1) {
+    const value = shots[index];
+    const row = value as Record<string, unknown> | null;
+    if (!row || typeof row !== "object") continue; // 结构错误交给既有schema门禁。
+    const start = Number(row.startSec);
+    const invalid = row.evidenceRole === "non_story_ad"
+      ? row.hintZh !== null
+      : typeof row.hintZh !== "string" || !row.hintZh.trim();
+    if (invalid || start < previousStart) {
+      throw new NativeDeepReadRequiredEvidenceError("shot_observation_missing",
+        `第${index + 1}镜观察契约不完整：${invalid
+          ? row.evidenceRole === "non_story_ad" ? "广告hintZh应为null空占位" : "hintZh应填写本镜非空观察，看不清时说明可见范围"
+          : "shots应按startSec升序排列，观察随本镜时间保留"}`);
+    }
+    previousStart = start;
+  }
+}
+
+/** GLM只能保留来源镜头的观察；跨镜挪用、改写或丢字段均停止消费，原稿仍永久保存。 */
+export function assertNativeDeepReadShotObservationsPreserved(
+  sourceRows: ReadonlyArray<Record<string, unknown>>,
+  output: Record<string, unknown>,
+): void {
+  const sources = sourceRows.flatMap(raw => Array.isArray(raw.shots) ? raw.shots : [])
+    .filter((row): row is Record<string, unknown> => row && typeof row === "object"
+      && row.evidenceRole === "story" && typeof row.hintZh === "string" && Boolean(row.hintZh.trim()));
+  if (!sources.length) return; // 历史证据不补写观察。
+  const shots = Array.isArray(output.shots) ? output.shots : [];
+  for (let index = 0; index < shots.length; index += 1) {
+    const row = shots[index];
+    if (row?.evidenceRole === "non_story_ad") continue;
+    const hint = typeof row?.hintZh === "string" ? row.hintZh.trim() : "";
+    const spans = sources.filter(source => String(source.hintZh).trim() === hint).map(source => ({
+      startSec: Number(source.startSec) - NATIVE_DEEP_READ_TIMELINE_TOLERANCE_SEC,
+      endSec: Number(source.endSec) + NATIVE_DEEP_READ_TIMELINE_TOLERANCE_SEC,
+    }));
+    const coverage = measureNativeDeepReadSegmentCoverage({
+      shots: spans, startSec: Number(row?.startSec), endSec: Number(row?.endSec),
+    });
+    if (!hint || !spans.length || coverage.durationSec <= 0 || coverage.coverageRatio < 1 - 1e-9) {
+      throw new Error(`整集第${index + 1}镜hintZh丢失、改写或超出来源镜头时间，停止消费；已保存原稿，不自动重发`);
+    }
+  }
+}
 
 function assertRawShotFieldPresence(raw: Record<string, unknown>, labelZh: string): void {
   const rawShots = Array.isArray(raw.shots) ? raw.shots : [];
@@ -2547,6 +2675,7 @@ function assertVisualTextNoClock(raw: Record<string, unknown>, labelZh: string):
   for (const shot of Array.isArray(raw.shots) ? raw.shots : []) {
     const row = shot as Record<string, unknown>;
     for (const field of [
+      "hintZh",
       "shotSizeZh",
       "angleZh",
       "compositionZh",
@@ -3301,7 +3430,7 @@ const GLM_STRUCTURING_MAX_TOKENS = 131_072;
  */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE = 0.8;
 /**
- * 🔒 整形链思考档位（0830 用户拍板 **medium**，从 high 下调）。
+ * 🔒 整形链思考档位（0901 用户拍板恢复 **high**）。
  *
  * 下调依据是 0830 的实弹算术——GLM 的思考与正文**共吃同一个 131,072 预算**：
  *   GLM  effort=high：思考 85,513 → 正文只剩 45,559 → 输出 99 镜（99×455≈45,045，
@@ -3310,8 +3439,8 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE = 0.8;
  * 两边喂的是同一份提示词（sha 27c09dc9a68c8e86）。GLM 很可能不是「觉得该合并」，
  * 而是**装不下**——一路合并压缩来适配剩余预算。降档＝把预算从思考挪回正文。
  *
- * ⚠️ 这是**待实测验证**的推断，不是已证结论：降到 medium 后镜数若明显回升即证实；
- * 若不回升，说明是模型自身的合并倾向，那时该换整形模型而不是继续调档。
+ * 0901 官方契约复核：GLM-5.3 仅接受 low/high/max，medium 不是合法档位；
+ * 因此共享常量和两条供应商请求体都统一为 high，避免一条 400、一条被网关隐式映射。
  */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT = MANHUA_NATIVE_GLM_REASONING_EFFORT;
 /** 四个 300 秒分片的真实组装曾在 12 分钟边界被本地中止；只放宽等待，不自动重提。 */
@@ -3320,6 +3449,26 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT = MANHUA_NATIVE_G
 const GLM_STRUCTURING_TIMEOUT_MS = 6 * 60 * 60_000;
 const OPENROUTER_USD_TO_CNY_EQUIVALENT = 7.2;
 
+/** GLM结构化的完整冻结参数；调用方只能由调度器指定首选通道，不能覆盖这些值。 */
+export const NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG = deepFreezeNativeContract({
+  maxTokens: GLM_STRUCTURING_MAX_TOKENS,
+  gatewayPolicy: "glm_only" as const,
+  timeoutMs: GLM_STRUCTURING_TIMEOUT_MS,
+  temperature: NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE,
+  reasoningEffort: NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT,
+  requireParameters: true,
+  requireFinishReasonStop: true,
+} as const);
+
+let nativeDeepReadGlmDispatchCursor = 0;
+
+/** 两份连续正式整形任务分别首发到两条GLM通道；单档失败由网关层跨通道兜底。 */
+export function nextNativeDeepReadGlmPreferredGateway(): "evolink_glm" | "openrouter" {
+  const gateway = nativeDeepReadGlmDispatchCursor % 2 === 0 ? "evolink_glm" : "openrouter";
+  nativeDeepReadGlmDispatchCursor += 1;
+  return gateway;
+}
+
 export function buildNativeDeepReadGlmStructuringPrompt(input: {
   episodeIndex: number;
   durationSec: number;
@@ -3327,9 +3476,20 @@ export function buildNativeDeepReadGlmStructuringPrompt(input: {
   hasAudio: boolean;
   rawSegments: ReadonlyArray<Record<string, unknown>>;
   rejectedReasonZh?: string;
+  coverageStartSec?: number;
+  coverageEndSec?: number;
+  segmentIndexes?: readonly number[];
+  scopeZh?: "批次" | "整集";
 }): { system: string; user: string } {
+  const coverageStartSec = Number.isFinite(input.coverageStartSec)
+    ? Number(input.coverageStartSec)
+    : 0;
+  const coverageEndSec = Number.isFinite(input.coverageEndSec)
+    ? Number(input.coverageEndSec)
+    : input.durationSec;
+  const scopeZh = input.scopeZh || "整集";
   return {
-    system: `你是影视模板卡的「结构化整形师」，擅长把零碎的片段整理成有参考价值的内容。输入是同一集的多份分段卡，你并成一张整集卡。
+    system: `你是影视模板卡的「结构化整形师」，擅长把零碎的片段整理成有参考价值的内容。输入是同一集的多份证据卡，你并成一张${scopeZh}卡。
 职责是在输入内容范围内取舍与归并：可润色文句、不必统一文风，每条产出都要能在输入里找到出处。
 
 **一、镜头**
@@ -3338,7 +3498,7 @@ export function buildNativeDeepReadGlmStructuringPrompt(input: {
 · 秒位不重叠的两条镜头各自保留——哪怕表演连续、同场景同机位。
 · 真实剪辑镜头按输入边界保留，短于 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒或相邻时长相同也各自保留；${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒下限仅适用于同一长镜的拆分证据段。
 · 单次合并跨度 ≤ ${NATIVE_DEEP_READ_MERGE_SPAN_HARD_MAX_SEC} 秒；单条记录跨度 ≤ ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。更长的长镜按镜内真实变化切成首尾相接的证据段，每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}–${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，unitTypeZh 写「拆分镜证据段」，第二段起 transitionInZh 写「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」。
-· 唯一合法手段是**调整切分**。unitTypeZh/shotSizeZh/angleZh/compositionZh/cameraMoveZh/blockingZh/bodyActionZh/limbPropActionZh/microExpressionZh/gazeBreathZh/relationshipReactionZh/lightingZh/actionZh/transitionInZh 逐项随记录保留。
+· 唯一合法手段是**调整切分**。hintZh/unitTypeZh/shotSizeZh/angleZh/compositionZh/cameraMoveZh/blockingZh/bodyActionZh/limbPropActionZh/microExpressionZh/gazeBreathZh/relationshipReactionZh/lightingZh/actionZh/transitionInZh 逐项随记录保留。
 
 **二、多版本裁决**
 同段可能同时喂来通过版与被标记版，通过的未必更好。**记录去重、信息取并集**：同一物理镜头只留一条，但吸收所有版本对它的观察。
@@ -3349,6 +3509,7 @@ truncated / advisories / gateMarked / gateMarkedZh / attemptNumber 标注的都�
 · 广告镜：evidenceRole=non_story_ad 整行剔除。
 · subtitles：story 区间并集去重，按全片绝对秒位排序；条数多寡不作要求。
 · audioResolution：保留完整听觉证据；audioBeatStructureZh/mixNotesZh/reusableAudioZh/genAudioHintZh 只从 story 提炼。
+· shots[].hintZh：逐镜原样保留，和来源起止范围绑定；不同观察各自保留，历史输入缺该字段时保持缺省。
 · keyMoments：原样保留，同秒同类留一条取说明更具体的，不同秒或不同类全保留；atSec 只来自输入。
 · classification：五个数组显式输出，有证据就写，无证据写 []。
 · 秒位只进数字字段。描述里写时长（如「1.2 秒内推近」），钟表式（01:23）留给数字字段。
@@ -3359,23 +3520,92 @@ truncated / advisories / gateMarked / gateMarkedZh / attemptNumber 标注的都�
 1. 不虚构输入里没有的镜头、字幕、声音或描述。
 2. 不为了精简而合并不重叠的镜头。
 3. 不新增 keyMoments 的 atSec。`,
-    user: `把以下同一集的 ${input.rawSegments.length} 份分段卡整形合并成**一张整集原生证据卡**（单个 JSON 对象，字段 schema 与分段卡完全相同：shots/subtitles/audioResolution/beatStructureZh/moodArcZh/classification/reusableZh/genPromptHintZh，另加顶层可选 excludedAdRanges）。
+    user: `把以下同一集的 ${input.rawSegments.length} 份证据卡整形合并成**一张${scopeZh}原生证据卡**（单个 JSON 对象，字段 schema 与分段卡完全相同：shots/subtitles/audioResolution/beatStructureZh/moodArcZh/classification/reusableZh/genPromptHintZh，另加顶层可选 excludedAdRanges）。
 要求：
-1. story 镜头连续无空档覆盖除 excludedAdRanges 外的全时间轴 0..${Math.round(input.durationSec)} 秒（绝对秒位），每镜保留 evidenceRole；🔴 **只有秒位重叠的重复记录可以合并；相邻不重叠的镜头一律各自保留**——整集输出的镜头条数应与输入去重后的真实切分相当，**镜头数大幅变少、平均镜长明显拉长即为错误产出**。non_story_ad 必须整行剔除并把 {startSec,endSec} 区间记入顶层 excludedAdRanges，不得混入 story。🔒 一次合并的总跨度不得超过 ${NATIVE_DEEP_READ_MERGE_SPAN_HARD_MAX_SEC} 秒；真实剪辑镜头按输入边界保留，短于 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒或相邻时长相同也各自保留；超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒的同一长镜按镜内真实变化拆成连续证据段，每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，且不得删除仍需保留的「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」续接标记或丢失覆盖。
+1. story 镜头连续无空档覆盖除 excludedAdRanges 外的全时间轴 ${Math.round(coverageStartSec)}..${Math.round(coverageEndSec)} 秒（绝对秒位），每镜保留 evidenceRole；🔴 **只有秒位重叠的重复记录可以合并；相邻不重叠的镜头一律各自保留**——${scopeZh}输出的镜头条数应与输入去重后的真实切分相当，**镜头数大幅变少、平均镜长明显拉长即为错误产出**。non_story_ad 必须整行剔除并把 {startSec,endSec} 区间记入顶层 excludedAdRanges，不得混入 story。🔒 一次合并的总跨度不得超过 ${NATIVE_DEEP_READ_MERGE_SPAN_HARD_MAX_SEC} 秒；真实剪辑镜头按输入边界保留，短于 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒或相邻时长相同也各自保留；超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒的同一长镜按镜内真实变化拆成连续证据段，每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，且不得删除仍需保留的「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」续接标记或丢失覆盖。
 2. audioResolution 保留全部 [{chunkIndex,analysis}] 条目（chunkIndex 即段号，analysis 内为该段局部秒），逐段齐全${input.hasAudio ? "" : "；本集素材无音轨，audioResolution 保持空数组"}。
 3. beatStructureZh/moodArcZh/reusableZh/genPromptHintZh 只整合 story 证据，可加「第X段」标注；classification 五维标签只取 story 输入并集，不得补猜。
 3.9 subtitles 按 keyMoments 解析：每条字幕对应其秒位附近的重点时刻，**不设条数多寡的判断**。照原文合并去重即可，不得补写输入里没有的台词。
 4. 输入是本集**全部**产出：合规段、带 advisories 的段、truncated 截断段、被门禁标记（gateMarked）的版本都在其中，一份都不许丢。**同一段可能有多个版本**，按秒位合并去重后取信息更全的；截断段照常采纳已有内容、不补写尾部；段边界的重复镜头/字幕/声音事件同样按秒位合并。
-整集元数据：${JSON.stringify({
+${scopeZh}元数据：${JSON.stringify({
       episodeIndex: input.episodeIndex,
       durationSec: Math.round(input.durationSec),
+      coverageStartSec,
+      coverageEndSec,
       segments: input.segments.map((segment, index) => ({
-        segmentIndex: index,
+        segmentIndex: input.segmentIndexes?.[index] ?? index,
         startSec: Math.round(segment.startSec),
         endSec: Math.round(segment.endSec),
       })),
     })}
 ${input.rejectedReasonZh ? `【上一轮门禁被拒原因】${String(input.rejectedReasonZh).slice(0, 300)}\n` : ""}分段卡 JSON：${JSON.stringify(input.rawSegments)}`,
+  };
+}
+
+/** 两条GLM通道都不可用时的零模型兜底；只做排序、同键去重和字段并集，不创作内容。 */
+export function deterministicallyMergeNativeDeepReadRawSegments(
+  rawSegments: ReadonlyArray<Record<string, unknown>>,
+): Record<string, unknown> {
+  const records = (key: string): Record<string, unknown>[] => rawSegments.flatMap((raw) =>
+    Array.isArray(raw[key])
+      ? (raw[key] as unknown[]).filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row))
+      : []);
+  const chooseMoreSpecific = (rows: Record<string, unknown>[], keyOf: (row: Record<string, unknown>) => string) => {
+    const selected = new Map<string, Record<string, unknown>>();
+    for (const row of rows) {
+      const key = keyOf(row);
+      if (!key) continue;
+      const current = selected.get(key);
+      if (!current || JSON.stringify(row).length > JSON.stringify(current).length) selected.set(key, row);
+    }
+    return Array.from(selected.values());
+  };
+  const allShots = records("shots");
+  const excludedAdRanges = chooseMoreSpecific(
+    allShots.filter((shot) => shot.evidenceRole === "non_story_ad"),
+    (shot) => `${Number(shot.startSec)}:${Number(shot.endSec)}`,
+  ).map((shot) => ({ startSec: Number(shot.startSec), endSec: Number(shot.endSec) }))
+    .filter((span) => Number.isFinite(span.startSec) && Number.isFinite(span.endSec) && span.endSec > span.startSec)
+    .sort((a, b) => a.startSec - b.startSec || a.endSec - b.endSec);
+  const shots = chooseMoreSpecific(
+    allShots.filter((shot) => shot.evidenceRole !== "non_story_ad"),
+    (shot) => `${Number(shot.startSec)}:${Number(shot.endSec)}:${String(shot.evidenceRole || "story")}`,
+  ).sort((a, b) => Number(a.startSec) - Number(b.startSec) || Number(a.endSec) - Number(b.endSec));
+  const keyMoments = chooseMoreSpecific(records("keyMoments"),
+    (row) => `${Number(row.atSec)}:${String(row.kindZh || "")}`)
+    .sort((a, b) => Number(a.atSec) - Number(b.atSec));
+  const subtitles = chooseMoreSpecific(records("subtitles"),
+    (row) => `${Number(row.atSec)}:${String(row.textZh || "")}`)
+    .sort((a, b) => Number(a.atSec) - Number(b.atSec));
+  const audioResolution = chooseMoreSpecific(records("audioResolution"),
+    (row) => String(Number(row.chunkIndex)))
+    .sort((a, b) => Number(a.chunkIndex) - Number(b.chunkIndex));
+  const classification = Object.fromEntries(MANHUA_TEMPLATE_CLASSIFICATION_KEYS.map((key) => [
+    key,
+    Array.from(new Set(rawSegments.flatMap((raw) => {
+      const value = (raw.classification as Record<string, unknown> | undefined)?.[key];
+      return Array.isArray(value) ? value.map((item) => String(item || "").trim()).filter(Boolean) : [];
+    }))),
+  ]));
+  const joinText = (key: string) => rawSegments.map((raw, index) => {
+    const text = String(raw[key] || "").trim();
+    return text ? `第${index + 1}段：${text}` : "";
+  }).filter(Boolean).join("\n");
+  return {
+    shots,
+    keyMoments,
+    subtitles,
+    audioResolution,
+    beatStructureZh: joinText("beatStructureZh"),
+    moodArcZh: joinText("moodArcZh"),
+    reusableZh: joinText("reusableZh"),
+    genPromptHintZh: joinText("genPromptHintZh"),
+    classification,
+    excludedAdRanges,
+    structuringFallback: {
+      kind: "deterministic_local",
+      reasonZh: "两条GLM-5.3正式整形通道均未交付可消费结果；仅按输入原文确定性去重合并",
+    },
   };
 }
 
@@ -3396,7 +3626,7 @@ export function buildNativeDeepReadGlmSegmentRepairPrompt(input: {
   return {
     system: `你是影视模板卡的「JSON 语法修复师」。只修语法不创作：
 1. 输入是一份 JSON 语法损坏的分段卡原文；你的唯一任务是恢复成合法 JSON。
-2. 禁止虚构原文里没有的镜头、字幕、声音或描述；禁止删减原文已有的内容。shots 内 unitTypeZh/shotSizeZh/angleZh/compositionZh/cameraMoveZh/blockingZh/bodyActionZh/limbPropActionZh/microExpressionZh/gazeBreathZh/relationshipReactionZh/lightingZh/actionZh/transitionInZh 必须逐项原样恢复，不能压回 actionZh。
+2. 禁止虚构原文里没有的镜头、字幕、声音或描述；禁止删减原文已有的内容。shots 内 hintZh/unitTypeZh/shotSizeZh/angleZh/compositionZh/cameraMoveZh/blockingZh/bodyActionZh/limbPropActionZh/microExpressionZh/gazeBreathZh/relationshipReactionZh/lightingZh/actionZh/transitionInZh 必须逐项原样恢复，不能压回 actionZh。
 3. 原文若被截断，保留能恢复的完整条目，丢弃最后一条残缺条目，不要补写。
 4. shots 中的 evidenceRole 只能原样恢复为 story 或 non_story_ad，禁止猜测、改写或把 non_story_ad 混入 story；原文缺失该字段则修复失败。
 5. 所有中文描述文本【禁止】出现钟表式秒位（如 01:23）或「在第X秒」定位——秒位只进数字字段。
@@ -3462,6 +3692,8 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
 export type NativeDeepReadGlmStructuringResult = {
   raw: Record<string, unknown>;
   evidence?: NativeDeepReadGlmEvidence;
+  /** true 表示复用了历史已付费永久证据；本轮不得重复记账或伪造模型运行回执。 */
+  recoveredPaidEvidence?: boolean;
   /** 实际交卷网关与模型 id（回执记真值，不用常量硬写）。 */
   gateway: GlmGatewayName;
   model: string;
@@ -3475,28 +3707,179 @@ export type NativeDeepReadGlmStructuringResult = {
   finishReason?: string;
 };
 
+export type NativeDeepReadStructuredBatchCacheEntry = {
+  schemaVersion: 1;
+  frozenContractSha256: string;
+  seriesKey: string;
+  sourceDigest: string;
+  episodeIndex: number;
+  segmentIndexes: number[];
+  inputDigest: string;
+  raw: Record<string, unknown>;
+  evidence?: NativeDeepReadGlmEvidence;
+  gateway: GlmGatewayName;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  costUsd: number;
+  savedAtIso: string;
+  source: "formal" | "manual_import";
+};
+
+function nativeDeepReadStructuredBatchInputDigest(
+  rawSegments: ReadonlyArray<Record<string, unknown>>,
+): string {
+  return crypto.createHash("sha256").update(JSON.stringify(rawSegments), "utf8").digest("hex");
+}
+
+function nativeDeepReadStructuredBatchObjectName(input: {
+  seriesKey: string;
+  sourceDigest: string;
+  episodeIndex: number;
+  segmentIndexes: readonly number[];
+  inputDigest: string;
+}): string {
+  if (!/^[0-9A-Za-z_-]{1,40}$/.test(input.seriesKey)) throw new Error("整形批次seriesKey无效");
+  if (!/^[a-f0-9]{64}$/.test(input.sourceDigest) || !/^[a-f0-9]{64}$/.test(input.inputDigest)) {
+    throw new Error("整形批次来源或输入摘要无效");
+  }
+  if (!Number.isSafeInteger(input.episodeIndex) || input.episodeIndex < 1) throw new Error("整形批次集号无效");
+  if (!input.segmentIndexes.length || input.segmentIndexes.some((index) => !Number.isSafeInteger(index) || index < 0)) {
+    throw new Error("整形批次段号无效");
+  }
+  return `manhua-template-learn/native-structuring-cache/${input.seriesKey}/${input.sourceDigest}`
+    + `/ep-${String(input.episodeIndex).padStart(3, "0")}/segments-${input.segmentIndexes.join("-")}`
+    + `/${NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256}-${input.inputDigest}.json`;
+}
+
+export function nativeDeepReadStructuredBatchCallId(input: {
+  seriesKey: string;
+  sourceDigest: string;
+  episodeIndex: number;
+  segmentIndexes: readonly number[];
+  rawSegments: ReadonlyArray<Record<string, unknown>>;
+}): string {
+  const inputDigest = nativeDeepReadStructuredBatchInputDigest(input.rawSegments);
+  const objectName = nativeDeepReadStructuredBatchObjectName({ ...input, inputDigest });
+  return `native-structuring-${crypto.createHash("sha256").update(objectName, "utf8").digest("hex")}`;
+}
+
+export async function readNativeDeepReadStructuredBatchCache(input: {
+  seriesKey: string;
+  sourceDigest: string;
+  episodeIndex: number;
+  segmentIndexes: readonly number[];
+  rawSegments: ReadonlyArray<Record<string, unknown>>;
+}): Promise<NativeDeepReadStructuredBatchCacheEntry | null> {
+  const inputDigest = nativeDeepReadStructuredBatchInputDigest(input.rawSegments);
+  const objectName = nativeDeepReadStructuredBatchObjectName({ ...input, inputDigest });
+  let buffer: Buffer;
+  try {
+    ({ buffer } = await downloadGcsObject({
+      gcsUri: `gs://mv-studio-pro-vertex-video-temp/${objectName}`,
+    }));
+  } catch (error) {
+    if (/gcs_download_failed:404/.test(error instanceof Error ? error.message : String(error))) return null;
+    throw error;
+  }
+  const parsed = JSON.parse(buffer.toString("utf8")) as NativeDeepReadStructuredBatchCacheEntry;
+  if (
+    parsed.schemaVersion !== 1
+    || parsed.frozenContractSha256 !== NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256
+    || parsed.seriesKey !== input.seriesKey
+    || parsed.sourceDigest !== input.sourceDigest
+    || parsed.episodeIndex !== input.episodeIndex
+    || parsed.inputDigest !== inputDigest
+    || JSON.stringify(parsed.segmentIndexes) !== JSON.stringify(input.segmentIndexes)
+    || !parsed.raw || typeof parsed.raw !== "object" || Array.isArray(parsed.raw)
+    || !GLM_MODEL_GATEWAYS.has(parsed.gateway)
+  ) throw new Error("整形批次缓存身份或契约不一致，停止复用");
+  return parsed;
+}
+
+export async function writeNativeDeepReadStructuredBatchCache(
+  entry: NativeDeepReadStructuredBatchCacheEntry,
+): Promise<NativeDeepReadStructuredBatchCacheEntry> {
+  if (
+    entry.schemaVersion !== 1
+    || entry.frozenContractSha256 !== NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256
+    || !entry.raw || typeof entry.raw !== "object" || Array.isArray(entry.raw)
+    || !GLM_MODEL_GATEWAYS.has(entry.gateway)
+    || !Number.isFinite(entry.inputTokens) || entry.inputTokens < 0
+    || !Number.isFinite(entry.outputTokens) || entry.outputTokens < 0
+    || !Number.isFinite(entry.reasoningTokens) || entry.reasoningTokens < 0
+    || !Number.isFinite(entry.costUsd) || entry.costUsd < 0
+    || Number.isNaN(Date.parse(entry.savedAtIso))
+    || (entry.source !== "formal" && entry.source !== "manual_import")
+  ) {
+    throw new Error("整形批次缓存内容或冻结契约无效，禁止写入");
+  }
+  const objectName = nativeDeepReadStructuredBatchObjectName(entry);
+  const buffer = Buffer.from(JSON.stringify(entry), "utf8");
+  const written = await uploadBufferToGcsIfAbsent({
+    bucket: "mv-studio-pro-vertex-video-temp",
+    objectName,
+    buffer,
+    contentType: "application/json",
+  });
+  if (!written.created) {
+    const { buffer: existingBuffer } = await downloadGcsObject({
+      gcsUri: `gs://mv-studio-pro-vertex-video-temp/${objectName}`,
+    });
+    const existing = JSON.parse(existingBuffer.toString("utf8")) as NativeDeepReadStructuredBatchCacheEntry;
+    const { savedAtIso: _existingSavedAtIso, ...existingIdentity } = existing;
+    const { savedAtIso: _entrySavedAtIso, ...entryIdentity } = entry;
+    if (JSON.stringify(existingIdentity) !== JSON.stringify(entryIdentity)) {
+      throw new Error("整形批次缓存已存在但内容不同，禁止覆盖");
+    }
+    return existing;
+  }
+  return entry;
+}
+
 export async function invokeNativeDeepReadGlmStructuring(
   prompt: { system: string; user: string },
   abortSignal?: AbortSignal,
   context?: NativeDeepReadGlmEvidenceContext,
   deps?: { invoke?: typeof invokeGlmJsonChatWithGatewayFallback; evidence?: NativeDeepReadGlmEvidenceDeps },
 ): Promise<NativeDeepReadGlmStructuringResult> {
-  const store = createNativeDeepReadGlmEvidenceStore(context, deps?.evidence);
-  let raw: Record<string, unknown> | undefined;
-  const request = {
+  const requestWithoutPreferredGateway = {
     system: prompt.system,
     user: prompt.user,
-    maxTokens: GLM_STRUCTURING_MAX_TOKENS,
-    gatewayPolicy: "glm_only" as const,
-    timeoutMs: GLM_STRUCTURING_TIMEOUT_MS,
-    // 🔒 整形链参数（0829 晚用户拍板，改任一项＝改成本与产出口径，改前先报）
-    temperature: NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE,
-    reasoningEffort: NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT,
-    requireParameters: true,
-    requireFinishReasonStop: true,
+    ...NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG,
   };
+  if (context?.recoverExisting) {
+    const recovered = await readNativeDeepReadGlmRecoveredEvidence({
+      context,
+      expectedRequestWithoutPreferredGateway: requestWithoutPreferredGateway,
+      deps: deps?.evidence,
+    });
+    if (recovered) {
+      const usage = recovered.response.usage;
+      return {
+        raw: recovered.parsed,
+        evidence: recovered.evidence,
+        recoveredPaidEvidence: true,
+        gateway: recovered.response.gateway,
+        model: recovered.response.model,
+        inputTokens: Math.max(0, Number(usage?.prompt_tokens) || 0),
+        outputTokens: Math.max(0, Number(usage?.completion_tokens) || 0),
+        reasoningTokens: Math.max(0, Number(usage?.completion_tokens_details?.reasoning_tokens) || 0),
+        costUsd: Math.max(0, Number(usage?.cost) || 0),
+        provider: String(recovered.response.provider || "").trim() || undefined,
+        providerRequestId: String(recovered.response.providerRequestId || "").trim() || undefined,
+        finishReason: String(recovered.response.finishReason || "").trim() || undefined,
+      };
+    }
+  }
+  const preferredGlmGateway = context?.preferredGlmGateway || nextNativeDeepReadGlmPreferredGateway();
+  const store = createNativeDeepReadGlmEvidenceStore({ ...context, preferredGlmGateway }, deps?.evidence);
+  let raw: Record<string, unknown> | undefined;
+  const request = { ...requestWithoutPreferredGateway, preferredGlmGateway };
   // 请求先永久留存；回调在bailian解析SSE/JSON前await，保存失败不得另烧备用。
   await store.writeRequest(request);
+  await context?.onBeforePaidCall?.();
   const response = await (deps?.invoke ?? invokeGlmJsonChatWithGatewayFallback)({
     ...request,
     abortSignal,
@@ -3558,8 +3941,11 @@ export type NativeDeepReadBatchRunnerDeps = {
   invokeGlmStructuring: typeof invokeNativeDeepReadGlmStructuring;
   readSegmentCache: typeof readNativeDeepReadSegmentCacheEntry;
   writeSegmentCache: typeof writeNativeDeepReadSegmentCacheEntry;
+  readRawAttemptEvidence: typeof readNativeDeepReadRawAttemptEvidence;
   writeRawAttemptEvidence: typeof writeNativeDeepReadRawAttemptEvidence;
   writeParsedAttemptEvidence: typeof writeNativeDeepReadParsedAttemptEvidence;
+  readStructuredBatchCache: typeof readNativeDeepReadStructuredBatchCache;
+  writeStructuredBatchCache: typeof writeNativeDeepReadStructuredBatchCache;
   waitForRetry: typeof waitForNativeDeepReadRetry;
 };
 
@@ -3572,8 +3958,11 @@ const defaultBatchRunnerDeps: NativeDeepReadBatchRunnerDeps = {
   invokeGlmStructuring: invokeNativeDeepReadGlmStructuring,
   readSegmentCache: readNativeDeepReadSegmentCacheEntry,
   writeSegmentCache: writeNativeDeepReadSegmentCacheEntry,
+  readRawAttemptEvidence: readNativeDeepReadRawAttemptEvidence,
   writeRawAttemptEvidence: writeNativeDeepReadRawAttemptEvidence,
   writeParsedAttemptEvidence: writeNativeDeepReadParsedAttemptEvidence,
+  readStructuredBatchCache: readNativeDeepReadStructuredBatchCache,
+  writeStructuredBatchCache: writeNativeDeepReadStructuredBatchCache,
   waitForRetry: waitForNativeDeepReadRetry,
 };
 
@@ -3641,6 +4030,107 @@ type SegmentAttemptResult = {
   rawAttemptEvidenceObjectName?: string;
   requestFingerprint?: string;
 };
+
+export type NativeDeepReadBestEffortCandidateScore = {
+  attemptNumber: number;
+  temperature: number;
+  requiredViolationCount: number;
+  coverageRatio: number;
+  storyShotCount: number;
+  keyMomentCount: number;
+};
+
+type NativeDeepReadBestEffortMarker = {
+  status: "best_effort_unqualified";
+  frozenContractSha256: string;
+  selectedAttemptNumber: number;
+  selectedTemperature: number;
+  candidates: NativeDeepReadBestEffortCandidateScore[];
+};
+
+function scoreNativeDeepReadBestEffortCandidate(input: {
+  raw: Record<string, unknown>;
+  segment: NativeDeepReadSegmentSpec;
+  attemptNumber: number;
+}): NativeDeepReadBestEffortCandidateScore {
+  const shots = Array.isArray(input.raw.shots)
+    ? input.raw.shots.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row))
+    : [];
+  let requiredViolationCount = 0;
+  let storyShotCount = 0;
+  const timing: NativeDeepReadShotTiming[] = [];
+  for (const shot of shots) {
+    const role = shot.evidenceRole;
+    const required = role === "non_story_ad"
+      ? NATIVE_DEEP_READ_REQUIRED_AD_SHOT_FIELDS
+      : NATIVE_DEEP_READ_REQUIRED_SHOT_FIELDS;
+    requiredViolationCount += required.filter((field) => !Object.prototype.hasOwnProperty.call(shot, field)).length;
+    if (role === "story") {
+      storyShotCount += 1;
+      if (typeof shot.hintZh !== "string" || !shot.hintZh.trim()) requiredViolationCount += 1;
+    } else if (role !== "non_story_ad") {
+      requiredViolationCount += 1;
+    }
+    const startSec = Number(shot.startSec);
+    const endSec = Number(shot.endSec);
+    if (!Number.isFinite(startSec) || !Number.isFinite(endSec) || endSec <= startSec) {
+      requiredViolationCount += 1;
+      continue;
+    }
+    if (
+      startSec < input.segment.startSec - NATIVE_DEEP_READ_TIMELINE_TOLERANCE_SEC
+      || endSec > input.segment.endSec + NATIVE_DEEP_READ_TIMELINE_TOLERANCE_SEC
+    ) requiredViolationCount += 1;
+    if (endSec - startSec > NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC) requiredViolationCount += 1;
+    timing.push({
+      startSec,
+      endSec,
+      transitionInZh: String(shot.transitionInZh || "").trim(),
+      evidenceRole: shot.evidenceRole === "non_story_ad" ? "non_story_ad" : "story",
+    });
+  }
+  const coverage = measureNativeDeepReadSegmentCoverage({
+    shots: timing,
+    startSec: input.segment.startSec,
+    endSec: input.segment.endSec,
+  });
+  const keyMomentCount = Array.isArray(input.raw.keyMoments) ? input.raw.keyMoments.length : 0;
+  return {
+    attemptNumber: input.attemptNumber,
+    temperature: NATIVE_DEEP_READ_RETRY_TEMPERATURES[input.attemptNumber - 1]!,
+    requiredViolationCount,
+    coverageRatio: Math.round(coverage.coverageRatio * 1_000_000) / 1_000_000,
+    storyShotCount,
+    keyMomentCount,
+  };
+}
+
+function compareNativeDeepReadBestEffortScores(
+  left: NativeDeepReadBestEffortCandidateScore,
+  right: NativeDeepReadBestEffortCandidateScore,
+): number {
+  return left.requiredViolationCount - right.requiredViolationCount
+    || right.coverageRatio - left.coverageRatio
+    || right.storyShotCount - left.storyShotCount
+    || right.keyMomentCount - left.keyMomentCount
+    || left.attemptNumber - right.attemptNumber;
+}
+
+function readCurrentBestEffortMarker(raw: Record<string, unknown>): NativeDeepReadBestEffortMarker | null {
+  const value = raw.bestEffort as Partial<NativeDeepReadBestEffortMarker> | undefined;
+  if (
+    !value
+    || value.status !== "best_effort_unqualified"
+    || value.frozenContractSha256 !== NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256
+    || !Number.isInteger(value.selectedAttemptNumber)
+    || !NATIVE_DEEP_READ_RETRY_TEMPERATURES.includes(value.selectedTemperature as never)
+    || !Array.isArray(value.candidates)
+    || value.candidates.length !== NATIVE_DEEP_READ_RETRY_TEMPERATURES.length
+    || value.candidates.some((candidate, index) => candidate?.attemptNumber !== index + 1
+      || candidate.temperature !== NATIVE_DEEP_READ_RETRY_TEMPERATURES[index])
+  ) return null;
+  return value as NativeDeepReadBestEffortMarker;
+}
 
 /** 收到明确 HTTP 失败响应的错误（结果确定），可按路由铁律换通道重试。 */
 type HttpFailure = Error & { nativeDeepReadHttpStatus?: number };
@@ -3794,6 +4284,7 @@ async function executeNativeDeepReadBatch(
             endSec: segment.endSec,
             hasAudio: entry.hasAudio,
             raw: entry.raw,
+            requireShotObservations: true,
             truncated: entry.raw?.truncated === true,
           })) {
             console.warn(
@@ -3902,6 +4393,8 @@ async function executeNativeDeepReadBatch(
        * 某几个镜头可能比通过那发写得更准。连同通过版一起交 GLM 按秒位去重合并。
        */
       const markedVersionsBySegment = new Map<number, Array<Record<string, unknown>>>();
+      /** 每个已解析尝试的完整返回元数据；仅用于三档全未过时从三份已保存结果中择优。 */
+      const parsedAttemptsBySegment = new Map<number, Map<number, SegmentAttemptResult>>();
       const collectAdvisories = (): NativeDeepReadAdvisory[] =>
         Array.from(advisoriesBySegment.keys())
           .sort((a, b) => a - b)
@@ -4069,33 +4562,18 @@ async function executeNativeDeepReadBatch(
         rejectedReasonZh?: string;
       }): Promise<SegmentAttemptResult> => {
         const segment = episode.segments[input.segmentIndex]!;
-        const callId = crypto.randomUUID();
+        let callId: string = crypto.randomUUID();
         const startedAt = Date.now();
         const degraded = input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK;
-        await emitVisualModelReceipt({
-          callId,
-          model: NATIVE_DEEP_READ_MODEL,
-          route: input.route,
-          stage: "visual_model",
-          status: "started",
-          batchRequestId: episodeRequestId,
-          episodeIndexes: [episode.episodeIndex],
-          chunkIndex: input.segmentIndex,
-          segmentCount: episode.segments.length,
-          videoCount: 1,
-          attemptNumber: input.attemptNumber,
-          temperature: input.temperature,
-          degraded: degraded || undefined,
-        }, params.onModelReceipt);
+        let modelCallStarted = false;
+        let recoveredPaidEvidence = false;
+        let evidenceBatchRequestId: string = episodeRequestId;
         const segmentContext = { startSec: segment.startSec, endSec: segment.endSec, segmentIndex: input.segmentIndex, hasAudio };
         const body = buildGeminiNativeDeepReadSegmentRequest({
           segmentContext,
           fileUri: input.fileUri,
           fps: input.fps,
-          generationConfig: {
-            ...NATIVE_DEEP_READ_GENERATION_CONFIG,
-            temperature: input.temperature,
-          },
+          attemptIndex: (input.attemptNumber - 1) as 0 | 1 | 2,
           prompt: buildGeminiNativeDeepReadSegmentPrompt({
             episodeDurationSec: episode.sourceDurationSec,
             startSec: segment.startSec,
@@ -4108,10 +4586,80 @@ async function executeNativeDeepReadBatch(
             rejectedReasonZh: input.rejectedReasonZh,
           }),
         });
+        let requestFingerprint: string | undefined;
+        if (params.segmentCacheSeriesKey && episode.cacheSourceDigest) {
+          requestFingerprint = nativeDeepReadSegmentCacheFingerprint({
+            sourceDigest: episode.cacheSourceDigest,
+            episodeIndex: episode.episodeIndex,
+            episodeDurationSec: episode.sourceDurationSec,
+            segment,
+            segmentIndex: input.segmentIndex,
+            segmentCount,
+            hasAudio,
+            hintZh: episode.hintZh,
+            videoFps: episode.videoFps,
+          });
+        }
         try {
-          const response = await (input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK
-            ? deps.postEvolink(body, params.abortSignal, segmentContext)
-            : deps.postVertex(body, params.abortSignal, segmentContext));
+          let response: NativeDeepReadModelResponse | undefined;
+          let rawAttemptEvidenceObjectName: string | undefined;
+          let rawAttemptEvidence: Awaited<ReturnType<typeof writeNativeDeepReadRawAttemptEvidence>> | undefined;
+          if (!selectedSegmentIndexes && params.segmentCacheSeriesKey && episode.cacheSourceDigest && requestFingerprint) {
+            const recovered = await deps.readRawAttemptEvidence({
+              seriesKey: params.segmentCacheSeriesKey,
+              episodeIndex: episode.episodeIndex,
+              segmentIndex: input.segmentIndex,
+              segmentCount,
+              sourceDigest: episode.cacheSourceDigest,
+              requestFingerprint,
+              attemptNumber: input.attemptNumber,
+              temperature: input.temperature,
+              visualRoute: input.route,
+            });
+            if (recovered) {
+              recoveredPaidEvidence = true;
+              callId = recovered.callId;
+              evidenceBatchRequestId = recovered.batchRequestId;
+              response = {
+                status: recovered.httpStatus,
+                text: recovered.responseText,
+                requestId: recovered.providerRequestId,
+              };
+              rawAttemptEvidence = {
+                objectName: recovered.objectName,
+                bytes: recovered.responseBytes,
+                sha256: recovered.responseSha256,
+              };
+              rawAttemptEvidenceObjectName = recovered.objectName;
+              rawAttemptEvidenceObjectNames.add(recovered.objectName);
+              console.info(
+                `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段`
+                + `命中已付费原始尝试证据，本次模型调用 0：${recovered.objectName}`,
+              );
+            }
+          }
+          if (!recoveredPaidEvidence) {
+            await emitVisualModelReceipt({
+              callId,
+              model: NATIVE_DEEP_READ_MODEL,
+              route: input.route,
+              stage: "visual_model",
+              status: "started",
+              batchRequestId: episodeRequestId,
+              episodeIndexes: [episode.episodeIndex],
+              chunkIndex: input.segmentIndex,
+              segmentCount: episode.segments.length,
+              videoCount: 1,
+              attemptNumber: input.attemptNumber,
+              temperature: input.temperature,
+              degraded: degraded || undefined,
+            }, params.onModelReceipt);
+            modelCallStarted = true;
+            response = await (input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK
+              ? deps.postEvolink(body, params.abortSignal, segmentContext)
+              : deps.postVertex(body, params.abortSignal, segmentContext));
+          }
+          if (!response) throw new Error("原生精读响应缺失，已停止且不得自动重试");
           if (response.status >= 300) {
             const providerError = parseNativeProviderErrorReceipt({
               httpStatus: response.status,
@@ -4125,21 +4673,7 @@ async function executeNativeDeepReadBatch(
             failure.nativeDeepReadHttpStatus = response.status;
             throw failure;
           }
-          let rawAttemptEvidenceObjectName: string | undefined;
-          let rawAttemptEvidence: Awaited<ReturnType<typeof writeNativeDeepReadRawAttemptEvidence>> | undefined;
-          let requestFingerprint: string | undefined;
-          if (params.segmentCacheSeriesKey && episode.cacheSourceDigest) {
-            requestFingerprint = nativeDeepReadSegmentCacheFingerprint({
-              sourceDigest: episode.cacheSourceDigest,
-              episodeIndex: episode.episodeIndex,
-              episodeDurationSec: episode.sourceDurationSec,
-              segment,
-              segmentIndex: input.segmentIndex,
-              segmentCount,
-              hasAudio,
-              hintZh: episode.hintZh,
-              videoFps: episode.videoFps,
-            });
+          if (!recoveredPaidEvidence && params.segmentCacheSeriesKey && episode.cacheSourceDigest && requestFingerprint) {
             try {
               const evidence = await deps.writeRawAttemptEvidence({
                 seriesKey: params.segmentCacheSeriesKey,
@@ -4153,6 +4687,7 @@ async function executeNativeDeepReadBatch(
                 attemptNumber: input.attemptNumber,
                 temperature: input.temperature,
                 visualRoute: input.route,
+                repeatableDiagnostic: Boolean(selectedSegmentIndexes),
                 httpStatus: response.status,
                 providerRequestId: response.requestId,
                 responseText: response.text,
@@ -4184,15 +4719,17 @@ async function executeNativeDeepReadBatch(
           const prices = routePrices(input.route);
           const attemptCost =
             (attemptInput * prices.inPerM) / 1e6 + (attemptOutput * prices.outPerM) / 1e6;
-          // 门禁在下面才跑；这一次调用的钱已经花了，先入账（失败回执纪律）。
-          inputTokens += attemptInput;
-          outputTokens += attemptOutput;
-          costCny += attemptCost;
-          episodeInput += attemptInput;
-          episodeOutput += attemptOutput;
-          episodeCost += attemptCost;
+          // 恢复旧付费证据时只重建段级历史用量，不伪装成本次外呼或本批新增费用。
+          if (!recoveredPaidEvidence) {
+            inputTokens += attemptInput;
+            outputTokens += attemptOutput;
+            costCny += attemptCost;
+            episodeInput += attemptInput;
+            episodeOutput += attemptOutput;
+            episodeCost += attemptCost;
+            episodeReasoning += attemptReasoning;
+          }
           episodeAudioInput += attemptAudioInput;
-          episodeReasoning += attemptReasoning;
           routesUsed.add(input.route);
           addPaidUsage(input.segmentIndex, {
             inputTokens: attemptInput,
@@ -4202,29 +4739,32 @@ async function executeNativeDeepReadBatch(
             costCny: attemptCost,
           });
           const candidate = envelope.candidates?.[0];
-          const emitCompleted = async () => emitVisualModelReceipt({
-            callId,
-            model: NATIVE_DEEP_READ_MODEL,
-            route: input.route,
-            stage: "visual_model",
-            status: "completed",
-            batchRequestId: episodeRequestId,
-            episodeIndexes: [episode.episodeIndex],
-            chunkIndex: input.segmentIndex,
-            segmentCount: episode.segments.length,
-            videoCount: 1,
-            attemptNumber: input.attemptNumber,
-            temperature: input.temperature,
-            elapsedMs: Date.now() - startedAt,
-            inputTokens: attemptInput,
-            audioInputTokens: attemptAudioInput || undefined,
-            outputTokens: attemptOutput,
-            reasoningTokens: attemptReasoning || undefined,
-            finishReason: candidate?.finishReason,
-            providerRequestId: response.requestId,
-            priceEquivalentCny: attemptCost,
-            degraded: degraded || undefined,
-          }, params.onModelReceipt);
+          const emitCompleted = async () => {
+            if (recoveredPaidEvidence) return;
+            await emitVisualModelReceipt({
+              callId,
+              model: NATIVE_DEEP_READ_MODEL,
+              route: input.route,
+              stage: "visual_model",
+              status: "completed",
+              batchRequestId: episodeRequestId,
+              episodeIndexes: [episode.episodeIndex],
+              chunkIndex: input.segmentIndex,
+              segmentCount: episode.segments.length,
+              videoCount: 1,
+              attemptNumber: input.attemptNumber,
+              temperature: input.temperature,
+              elapsedMs: Date.now() - startedAt,
+              inputTokens: attemptInput,
+              audioInputTokens: attemptAudioInput || undefined,
+              outputTokens: attemptOutput,
+              reasoningTokens: attemptReasoning || undefined,
+              finishReason: candidate?.finishReason,
+              providerRequestId: response.requestId,
+              priceEquivalentCny: attemptCost,
+              degraded: degraded || undefined,
+            }, params.onModelReceipt);
+          };
           // 0829：MAX_TOKENS 不再直接判失败——先试着保留可解析前缀（钱已花，
           // 前半是完整有效证据），解析成功即打 truncated 标记留段，不再重试重买。
           const truncated = candidate?.finishReason === "MAX_TOKENS";
@@ -4266,11 +4806,12 @@ async function executeNativeDeepReadBatch(
                 segmentCount,
                 sourceDigest: episode.cacheSourceDigest,
                 requestFingerprint,
-                batchRequestId: episodeRequestId,
+                batchRequestId: evidenceBatchRequestId,
                 callId,
                 attemptNumber: input.attemptNumber,
                 temperature: input.temperature,
                 visualRoute: input.route,
+                repeatableDiagnostic: Boolean(selectedSegmentIndexes),
                 providerRequestId: response.requestId,
                 model: NATIVE_DEEP_READ_MODEL,
                 startSec: segment.startSec,
@@ -4298,6 +4839,22 @@ async function executeNativeDeepReadBatch(
               throw failure;
             }
           }
+          const parsedAttempts = parsedAttemptsBySegment.get(input.segmentIndex) || new Map<number, SegmentAttemptResult>();
+          parsedAttempts.set(input.attemptNumber, {
+            raw,
+            advisories: [],
+            truncated,
+            inputTokens: attemptInput,
+            outputTokens: attemptOutput,
+            audioInputTokens: attemptAudioInput,
+            reasoningTokens: attemptReasoning,
+            visualRoute: input.route,
+            finishReason: candidate?.finishReason,
+            providerRequestId: response.requestId,
+            rawAttemptEvidenceObjectName,
+            requestFingerprint,
+          });
+          parsedAttemptsBySegment.set(input.segmentIndex, parsedAttempts);
           let gated: ReturnType<typeof assertNativeDeepReadSegmentDensity>;
           try {
             const decision = evaluateNativeDeepReadSegmentAcceptance({
@@ -4308,6 +4865,7 @@ async function executeNativeDeepReadBatch(
               hasAudio,
               raw,
               truncated,
+              requireShotObservations: true,
             });
             gated = decision;
             const passedWithNotice = gated.advisories.find((row) => row.code === "gate_passed_under_threshold");
@@ -4478,7 +5036,7 @@ async function executeNativeDeepReadBatch(
             requestFingerprint,
           };
         } catch (error) {
-          if (!isNativeDeepReadGateFailure(error)) {
+          if (modelCallStarted && !isNativeDeepReadGateFailure(error)) {
             const providerError = nativeProviderReceiptFromError(error);
             await emitVisualModelReceipt({
               callId,
@@ -4529,6 +5087,7 @@ async function executeNativeDeepReadBatch(
       }): Promise<SegmentAttemptResult> => {
         let lastError: unknown;
         let rejectedReasonZh: string | undefined;
+        let onlyParsedGateFailures = true;
         for (let attemptIndex = 0; attemptIndex < NATIVE_DEEP_READ_RETRY_TEMPERATURES.length; attemptIndex += 1) {
           const temperature = NATIVE_DEEP_READ_RETRY_TEMPERATURES[attemptIndex]!;
           if (attemptIndex > 0) {
@@ -4573,12 +5132,46 @@ async function executeNativeDeepReadBatch(
               const raw = carried ?? (error instanceof Error ? error.message : String(error));
               rejectedReasonZh = raw.trim() ? raw.slice(0, 300) : undefined;
             } else {
+              onlyParsedGateFailures = false;
               rejectedReasonZh = undefined;
             }
           }
         }
 
         const retryError = lastError || new Error("分片三次尝试均未完成");
+        const parsedAttempts = parsedAttemptsBySegment.get(input.segmentIndex);
+        const markedVersions = markedVersionsBySegment.get(input.segmentIndex) || [];
+        if (
+          onlyParsedGateFailures
+          && parsedAttempts?.size === NATIVE_DEEP_READ_RETRY_TEMPERATURES.length
+          && markedVersions.length === NATIVE_DEEP_READ_RETRY_TEMPERATURES.length
+        ) {
+          const segment = episode.segments[input.segmentIndex]!;
+          const ranked = Array.from(parsedAttempts.entries()).map(([attemptNumber, result]) => ({
+            result,
+            score: scoreNativeDeepReadBestEffortCandidate({ raw: result.raw, segment, attemptNumber }),
+          })).sort((left, right) => compareNativeDeepReadBestEffortScores(left.score, right.score));
+          const selected = ranked[0]!;
+          const scores = ranked.map((row) => row.score).sort((a, b) => a.attemptNumber - b.attemptNumber);
+          const marker: NativeDeepReadBestEffortMarker = {
+            status: "best_effort_unqualified",
+            frozenContractSha256: NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256,
+            selectedAttemptNumber: selected.score.attemptNumber,
+            selectedTemperature: selected.score.temperature,
+            candidates: scores,
+          };
+          const detailZh = `第${input.segmentIndex + 1}段0.7/0.65/0.6三档均未过门禁；按必填/越界/超长违规数、覆盖率、剧情镜数、重点时刻数择优，采用第${marker.selectedAttemptNumber}发（temperature ${marker.selectedTemperature}），明确标记为择优未通过`;
+          selected.result.raw.bestEffort = marker;
+          selected.result.raw.gateMarked = true;
+          selected.result.raw.gateMarkedZh = detailZh;
+          selected.result.raw.advisories = dedupeNativeDeepReadAdvisories([
+            ...readSegmentAdvisories(selected.result.raw, input.segmentIndex),
+            { code: "best_effort_unqualified", detailZh, segmentIndex: input.segmentIndex },
+          ]);
+          selected.result.advisories = readSegmentAdvisories(selected.result.raw, input.segmentIndex);
+          console.warn(`[nativeDeepRead] ${detailZh}`);
+          return selected.result;
+        }
         // 三次 Vertex 尝试就是付费上限；坏 JSON 也不得自动切到 GLM 形成第四次调用。
         logFinalGateFailure(input.segmentIndex, retryError);
         throw retryError;
@@ -4598,14 +5191,16 @@ async function executeNativeDeepReadBatch(
          * 不过就当没命中、重新读——好片照旧命中不花钱，只有真坏的那几片才重买。
          */
         if (cachedEntry) {
+          const reusableBestEffort = readCurrentBestEffortMarker(cachedEntry.raw);
           // 与入库口共用判据：独立证据门不豁免，其余按家族与偏差判断。
-          if (!nativeDeepReadSegmentMeetsThreeItemLine({
+          if (!reusableBestEffort && !nativeDeepReadSegmentMeetsThreeItemLine({
             episodeIndex: episode.episodeIndex,
             segmentIndex,
             startSec: segment.startSec,
             endSec: segment.endSec,
             hasAudio,
             raw: cachedEntry.raw,
+            requireShotObservations: true,
             truncated: cachedEntry.raw?.truncated === true,
           })) {
             console.warn(
@@ -4758,47 +5353,71 @@ async function executeNativeDeepReadBatch(
         throw new Error(`第${episode.episodeIndex}集并发精读结果不完整，已停止`);
       }
       const completeRawSegments = rawSegments as Array<Record<string, unknown>>;
+      const allGlmStructuringInputs = [
+        ...completeRawSegments,
+        ...Array.from(markedVersionsBySegment.keys()).sort((a, b) => a - b)
+          .flatMap(index => markedVersionsBySegment.get(index) || []),
+      ];
+      const glmStructuringInputs = allGlmStructuringInputs.filter(
+        (raw, index) => allGlmStructuringInputs.indexOf(raw) === index,
+      );
 
       // 段卡合并成集卡：0829 起**每集一律走 GLM 5.3 结构化整形**（去重 + 结构化），
       // 输入是本集全部分段卡（合规段 + 带 advisory 段 + truncated 段），装配前不丢任何
       // 已付费证据。确定性拼接降为交叉校验用（只取 excludedAdRanges 对账，不入库）。
       // 门禁仍在 GLM 之后跑一遍——GLM 只管结构干净与去重，结论仍由门禁/advisory 层给。
       let glmEvidence: NativeDeepReadGlmEvidence | undefined;
-      const glmStructure = async (rejectedReasonZh?: string): Promise<Record<string, unknown>> => {
-        const callId = crypto.randomUUID();
-        const startedAt = Date.now();
-        await emitVisualModelReceipt({
-          callId,
-          model: NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL,
-          route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
-          stage: "visual_parse",
-          status: "started",
-          batchRequestId: episodeRequestId,
-          episodeIndexes: [episode.episodeIndex],
-          videoCount: segmentCount,
-        }, params.onModelReceipt);
+      const glmEvidenceCallIds: string[] = [];
+      const canCacheStructuring = Boolean(params.segmentCacheSeriesKey && episode.cacheSourceDigest);
+      const glmStructure = async (input: {
+        prompt: ReturnType<typeof buildNativeDeepReadGlmStructuringPrompt>;
+        videoCount: number;
+        segmentIndexes: readonly number[];
+        rows: ReadonlyArray<Record<string, unknown>>;
+      }): Promise<NativeDeepReadGlmStructuringResult> => {
+        const callId = canCacheStructuring
+          ? nativeDeepReadStructuredBatchCallId({
+            seriesKey: params.segmentCacheSeriesKey!,
+            sourceDigest: episode.cacheSourceDigest!,
+            episodeIndex: episode.episodeIndex,
+            segmentIndexes: input.segmentIndexes,
+            rawSegments: input.rows,
+          })
+          : crypto.randomUUID();
+        let startedAt: number | undefined;
+        const emitPaidCallStarted = async () => {
+          if (startedAt !== undefined) return;
+          const now = Date.now();
+          await emitVisualModelReceipt({
+            callId,
+            model: NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL,
+            route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
+            stage: "visual_parse",
+            status: "started",
+            batchRequestId: episodeRequestId,
+            episodeIndexes: [episode.episodeIndex],
+            videoCount: input.videoCount,
+          }, params.onModelReceipt);
+          startedAt = now;
+        };
         try {
           const structured = await deps.invokeGlmStructuring(
-            buildNativeDeepReadGlmStructuringPrompt({
-              episodeIndex: episode.episodeIndex,
-              durationSec: episode.sourceDurationSec,
-              segments: episode.segments,
-              hasAudio,
-              // 全收进 GLM：通过版 + 被门禁标记版一起喂，GLM 按秒位去重合并。
-              // 合格 ≠ 更好——同一段两发内容不同，让 GLM 取信息更全的那些镜头。
-              rawSegments: [
-                ...completeRawSegments,
-                ...Array.from(markedVersionsBySegment.keys())
-                  .sort((a, b) => a - b)
-                  .flatMap((index) => markedVersionsBySegment.get(index) || []),
-              ],
-              rejectedReasonZh,
-            }),
+            input.prompt,
             params.abortSignal,
             { seriesKey: params.segmentCacheSeriesKey, sourceDigest: episode.cacheSourceDigest,
-              episodeIndex: episode.episodeIndex, batchRequestId: episodeRequestId, callId },
+              episodeIndex: episode.episodeIndex, batchRequestId: episodeRequestId, callId,
+              recoverExisting: canCacheStructuring, onBeforePaidCall: emitPaidCallStarted },
           );
           glmEvidence = structured.evidence;
+          if (structured.evidence?.callId && !glmEvidenceCallIds.includes(structured.evidence.callId)) {
+            glmEvidenceCallIds.push(structured.evidence.callId);
+          }
+          if (structured.recoveredPaidEvidence) {
+            console.info(`[nativeDeepRead] 第${episode.episodeIndex}集整形命中永久付费证据，模型调用0`);
+            return structured;
+          }
+          // 测试或替换依赖若没有执行回调，仍保持回执完整；正式实现会在网络调用前执行。
+          if (startedAt === undefined) await emitPaidCallStarted();
           const structuringCostCny = structured.costUsd * OPENROUTER_USD_TO_CNY_EQUIVALENT;
           inputTokens += structured.inputTokens;
           outputTokens += structured.outputTokens;
@@ -4814,8 +5433,8 @@ async function executeNativeDeepReadBatch(
             status: "completed",
             batchRequestId: episodeRequestId,
             episodeIndexes: [episode.episodeIndex],
-            videoCount: segmentCount,
-            elapsedMs: Date.now() - startedAt,
+            videoCount: input.videoCount,
+            elapsedMs: Date.now() - startedAt!,
             inputTokens: structured.inputTokens,
             outputTokens: structured.outputTokens,
             reasoningTokens: structured.reasoningTokens || undefined,
@@ -4825,8 +5444,11 @@ async function executeNativeDeepReadBatch(
             providerRequestId: structured.providerRequestId,
             finishReason: structured.finishReason,
           }, params.onModelReceipt);
-          return structured.raw;
+          return structured;
         } catch (error) {
+          // request/parsed恢复证据损坏或缺失会在任何上游调用之前关闭式失败。
+          // 这类错误不得伪造一条模型失败回执，也不得把历史用量记入本轮。
+          if (startedAt === undefined) throw error;
           // 审查 P1-2：整形失败时 OpenRouter 已实扣的费用随 GlmGatewayError 带出，
           // 必须落回执与总账，不能只记 errorZh。
           const failedUsage = error instanceof GlmGatewayError ? error.usage : undefined;
@@ -4849,7 +5471,7 @@ async function executeNativeDeepReadBatch(
             status: "failed",
             batchRequestId: episodeRequestId,
             episodeIndexes: [episode.episodeIndex],
-            videoCount: segmentCount,
+            videoCount: input.videoCount,
             elapsedMs: Date.now() - startedAt,
             inputTokens: failedUsage?.inputTokens || undefined,
             outputTokens: failedUsage?.outputTokens || undefined,
@@ -4892,6 +5514,191 @@ async function executeNativeDeepReadBatch(
         }
         return copy;
       });
+      const structuringFallbackAdvisories: NativeDeepReadAdvisory[] = [];
+      const runStructuringOrLocalFallback = async (input: {
+        prompt: ReturnType<typeof buildNativeDeepReadGlmStructuringPrompt>;
+        videoCount: number;
+        segmentIndexes: readonly number[];
+        rows: ReadonlyArray<Record<string, unknown>>;
+        fallbackRows: ReadonlyArray<Record<string, unknown>>;
+        labelZh: string;
+      }): Promise<NativeDeepReadGlmStructuringResult | { raw: Record<string, unknown>; localFallback: true }> => {
+        try {
+          return await glmStructure({
+            prompt: input.prompt,
+            videoCount: input.videoCount,
+            segmentIndexes: input.segmentIndexes,
+            rows: input.rows,
+          });
+        } catch (error) {
+          // 只有“两条供应商都没有交付可消费结果”才能走本地整形。
+          // 任一网关已经交卷（trace=ok）后才发生的解析证据落盘失败，不是供应商故障；
+          // 这类错误必须关闭式停止，不能用 fallback 掩盖已付费但未可靠留存的结果。
+          if (
+            !(error instanceof GlmGatewayError)
+            || error.code !== "glm_gateway_all_failed"
+            || error.gatewayTrace.some((row) => row.outcome === "ok" || row.outcome === "evidence_persistence_failed")
+          ) throw error;
+          const detailZh = `${input.labelZh}两条GLM-5.3通道均未交付可消费结果，已使用确定性本地整形fallback；未新增或改写证据`;
+          structuringFallbackAdvisories.push({
+            code: "glm_structuring_local_fallback",
+            detailZh,
+            segmentIndex: 0,
+          });
+          console.warn(`[nativeDeepRead] ${detailZh}`);
+          return { raw: deterministicallyMergeNativeDeepReadRawSegments(input.fallbackRows), localFallback: true };
+        }
+      };
+      const readCachedStructuring = async (
+        segmentIndexes: readonly number[],
+        rows: ReadonlyArray<Record<string, unknown>>,
+        labelZh: string,
+      ): Promise<Record<string, unknown> | null> => {
+        if (!canCacheStructuring) return null;
+        const cached = await deps.readStructuredBatchCache({
+          seriesKey: params.segmentCacheSeriesKey!,
+          sourceDigest: episode.cacheSourceDigest!,
+          episodeIndex: episode.episodeIndex,
+          segmentIndexes,
+          rawSegments: rows,
+        });
+        if (!cached) return null;
+        console.info(`[nativeDeepRead] 第${episode.episodeIndex}集${labelZh}命中GCS缓存，模型调用0`);
+        assertNativeDeepReadShotObservationsPreserved(rows, cached.raw);
+        if (cached.evidence) {
+          glmEvidence = cached.evidence;
+          if (!glmEvidenceCallIds.includes(cached.evidence.callId)) {
+            glmEvidenceCallIds.push(cached.evidence.callId);
+          }
+        }
+        return cached.raw;
+      };
+      const writeCachedStructuring = async (
+        segmentIndexes: readonly number[],
+        rows: ReadonlyArray<Record<string, unknown>>,
+        result: NativeDeepReadGlmStructuringResult | { raw: Record<string, unknown>; localFallback: true },
+      ): Promise<void> => {
+        if (!canCacheStructuring || "localFallback" in result) return;
+        await deps.writeStructuredBatchCache({
+          schemaVersion: 1,
+          frozenContractSha256: NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256,
+          seriesKey: params.segmentCacheSeriesKey!,
+          sourceDigest: episode.cacheSourceDigest!,
+          episodeIndex: episode.episodeIndex,
+          segmentIndexes: [...segmentIndexes],
+          inputDigest: nativeDeepReadStructuredBatchInputDigest(rows),
+          raw: result.raw,
+          evidence: result.evidence,
+          gateway: result.gateway,
+          model: result.model,
+          inputTokens: result.inputTokens,
+          outputTokens: result.outputTokens,
+          reasoningTokens: result.reasoningTokens,
+          costUsd: result.costUsd,
+          savedAtIso: new Date().toISOString(),
+          source: "formal",
+        });
+      };
+      const structuredEpisodeRaw = async (): Promise<Record<string, unknown>> => {
+        const maxRawSegmentsPerBatch = 4;
+        const allSegmentIndexes = episode.segments.map((_, index) => index);
+        if (segmentCount <= maxRawSegmentsPerBatch) {
+          const cached = await readCachedStructuring(allSegmentIndexes, glmStructuringInputs, "最终整形");
+          if (cached) return cached;
+          const result = await runStructuringOrLocalFallback({
+            prompt: buildNativeDeepReadGlmStructuringPrompt({
+              episodeIndex: episode.episodeIndex,
+              durationSec: episode.sourceDurationSec,
+              segments: episode.segments,
+              hasAudio,
+              rawSegments: glmStructuringInputs,
+              coverageStartSec: 0,
+              coverageEndSec: episode.sourceDurationSec,
+              scopeZh: "整集",
+            }),
+            videoCount: segmentCount,
+            segmentIndexes: allSegmentIndexes,
+            rows: glmStructuringInputs,
+            fallbackRows: annotateSegmentRows(),
+            labelZh: `第${episode.episodeIndex}集整集整形`,
+          });
+          assertNativeDeepReadShotObservationsPreserved(glmStructuringInputs, result.raw);
+          await writeCachedStructuring(allSegmentIndexes, glmStructuringInputs, result);
+          return result.raw;
+        }
+
+        const groups: number[][] = [];
+        for (let start = 0; start < segmentCount; start += maxRawSegmentsPerBatch) {
+          groups.push(Array.from(
+            { length: Math.min(maxRawSegmentsPerBatch, segmentCount - start) },
+            (_, offset) => start + offset,
+          ));
+        }
+        const groupRows = await Promise.all(groups.map(async (segmentIndexes) => {
+          // 单片无需再做一次中间GLM；直接作为一张已结构化分段卡进入最终合并。
+          if (segmentIndexes.length === 1) return completeRawSegments[segmentIndexes[0]!]!;
+          const groupCanonicalRows = segmentIndexes.map((index) => completeRawSegments[index]!);
+          const allGroupInputs = [
+            ...groupCanonicalRows,
+            ...segmentIndexes.flatMap((index) => markedVersionsBySegment.get(index) || []),
+          ];
+          const groupInputs = allGroupInputs.filter((row, index) => allGroupInputs.indexOf(row) === index);
+          const cached = await readCachedStructuring(
+            segmentIndexes,
+            groupInputs,
+            `整形批次 ${segmentIndexes.join(",")} `,
+          );
+          if (cached) return cached;
+          const groupSegments = segmentIndexes.map((index) => episode.segments[index]!);
+          const result = await runStructuringOrLocalFallback({
+            prompt: buildNativeDeepReadGlmStructuringPrompt({
+              episodeIndex: episode.episodeIndex,
+              durationSec: episode.sourceDurationSec,
+              segments: groupSegments,
+              segmentIndexes,
+              hasAudio,
+              rawSegments: groupInputs,
+              coverageStartSec: groupSegments[0]!.startSec,
+              coverageEndSec: groupSegments.at(-1)!.endSec,
+              scopeZh: "批次",
+            }),
+            videoCount: segmentIndexes.length,
+            segmentIndexes,
+            rows: groupInputs,
+            fallbackRows: groupCanonicalRows,
+            labelZh: `第${episode.episodeIndex}集第${segmentIndexes[0]! + 1}—${segmentIndexes.at(-1)! + 1}片批次整形`,
+          });
+          assertNativeDeepReadShotObservationsPreserved(groupInputs, result.raw);
+          await writeCachedStructuring(segmentIndexes, groupInputs, result);
+          return result.raw;
+        }));
+        const cachedFinal = await readCachedStructuring(allSegmentIndexes, groupRows, "最终整形");
+        if (cachedFinal) {
+          cachedFinal.structuringBatches = groups.map((segmentIndexes) => ({ segmentIndexes }));
+          return cachedFinal;
+        }
+        const finalResult = await runStructuringOrLocalFallback({
+          prompt: buildNativeDeepReadGlmStructuringPrompt({
+            episodeIndex: episode.episodeIndex,
+            durationSec: episode.sourceDurationSec,
+            segments: episode.segments,
+            hasAudio,
+            rawSegments: groupRows,
+            coverageStartSec: 0,
+            coverageEndSec: episode.sourceDurationSec,
+            scopeZh: "整集",
+          }),
+          videoCount: groupRows.length,
+          segmentIndexes: allSegmentIndexes,
+          rows: groupRows,
+          fallbackRows: groupRows,
+          labelZh: `第${episode.episodeIndex}集最终整形`,
+        });
+        assertNativeDeepReadShotObservationsPreserved(groupRows, finalResult.raw);
+        finalResult.raw.structuringBatches = groups.map((segmentIndexes) => ({ segmentIndexes }));
+        await writeCachedStructuring(allSegmentIndexes, groupRows, finalResult);
+        return finalResult.raw;
+      };
       const parseCallId = `${episodeRequestId}:parse`;
       await emitVisualModelReceipt({
         callId: parseCallId,
@@ -4910,7 +5717,7 @@ async function executeNativeDeepReadBatch(
         // 确定性拼接只算一次，取 excludedAdRanges 给 GLM 产物对账（防 GLM 私吞/改写广告区间）。
         const deterministicAdRanges =
           stripNonStoryAdShotsForEpisodeCard(annotateSegmentRows()).excludedAdRanges;
-        let structuredRaw = await glmStructure();
+        const structuredRaw = await structuredEpisodeRaw();
         applyDeterministicAdRanges(structuredRaw, deterministicAdRanges);
         /**
          * 🔒 集级**镜头留存率闸**——0830 晚用户拍板「加回」的唯一一条集级判定。
@@ -4977,6 +5784,9 @@ async function executeNativeDeepReadBatch(
           sourceDurationSec: episode.sourceDurationSec,
           batchRequestId: episodeRequestId,
           inputShotCount: preStructuringShotCount,
+          structuringBatchSize: 4,
+          glmEvidenceCallIds,
+          structuringFallbackCodes: structuringFallbackAdvisories.map((row) => row.code),
         };
         const episodeRows: Array<Record<string, unknown>> = [structuredRaw];
         // 确定性拼接路与 GLM 整形路统一在此注入 chunkSpans：整集卡携带
@@ -5002,6 +5812,7 @@ async function executeNativeDeepReadBatch(
         const episodeAdvisories = dedupeNativeDeepReadAdvisories([
           ...collectAdvisories(),
           ...episodeGateAdvisories,
+          ...structuringFallbackAdvisories,
         ]);
         if (episodeAdvisories.length) {
           console.info(

@@ -40,7 +40,7 @@ const FIELD_LABELS: Record<string, string> = {
   audiovisualTagsZh: "视听", audienceExperienceTagsZh: "观众体验",
   beatStructureZh: "节拍结构", moodArcZh: "情绪弧", reusableZh: "可复用手法", genPromptHintZh: "生成提示线索",
   reusableAudioZh: "可复用声音手法", mixNotesZh: "混音要点", genAudioHintZh: "生成音频线索",
-  unitTypeZh: "单元类型", shotSizeZh: "景别", angleZh: "机位角度", compositionZh: "构图", cameraMoveZh: "运镜",
+  hintZh: "本镜观察", unitTypeZh: "单元类型", shotSizeZh: "景别", angleZh: "机位角度", compositionZh: "构图", cameraMoveZh: "运镜",
   blockingZh: "调度", bodyActionZh: "身体动作", limbPropActionZh: "肢体道具", microExpressionZh: "微表情",
   gazeBreathZh: "视线呼吸", relationshipReactionZh: "关系反应", lightingZh: "灯光", actionZh: "动作叙述",
   transitionInZh: "入镜转场", evidenceRole: "证据角色",
@@ -129,8 +129,8 @@ async function main() {
     .map((key) => `<div style="background:#141b24;border-left:3px solid #e8c66a;padding:10px 14px;margin:8px 0"><b>${fieldLabel(key)}</b><br><span style="color:#9db4d0">${esc(card![key])}</span></div>`)
     .join("");
 
-  const FIELDS = ["unitTypeZh", "shotSizeZh", "angleZh", "compositionZh", "cameraMoveZh", "blockingZh", "bodyActionZh", "limbPropActionZh", "microExpressionZh", "gazeBreathZh", "relationshipReactionZh", "lightingZh", "actionZh" , "transitionInZh"];
-  const shotRows = shots.map((shot) => `<tr><td style="position:sticky;left:0;background:#141b24;color:#e8c66a;white-space:nowrap">${mmss(Number(shot.startSec) || 0)}–${mmss(Number(shot.endSec) || 0)}</td>${FIELDS.map((field) => `<td style="padding:3px 8px;min-width:90px">${esc(String(shot[field] ?? "").slice(0, 90))}</td>`).join("")}</tr>`).join("");
+  const FIELDS = ["hintZh", "unitTypeZh", "shotSizeZh", "angleZh", "compositionZh", "cameraMoveZh", "blockingZh", "bodyActionZh", "limbPropActionZh", "microExpressionZh", "gazeBreathZh", "relationshipReactionZh", "lightingZh", "actionZh" , "transitionInZh"];
+  const shotRows = shots.map((shot) => `<tr><td style="position:sticky;left:0;background:#141b24;color:#e8c66a;white-space:nowrap">${mmss(Number(shot.startSec) || 0)}–${mmss(Number(shot.endSec) || 0)}</td>${FIELDS.map((field) => `<td style="padding:3px 8px;min-width:90px">${esc(String(shot[field] ?? ""))}</td>`).join("")}</tr>`).join("");
 
   /**
    * 🔴 0831 修真 bug：这里原本写死 `chunkIndex * 300`。
@@ -186,7 +186,7 @@ async function main() {
 <h1 style="font-size:1.8em;margin:.2em 0">模型产出报告（${shots.length} 镜 · 帧包 ${frameSource} ${tiles.length} 帧）</h1>
 <h2 style="color:#e8c66a;margin-top:26px">五维分类（模型原文）</h2>${tags}${summaryCards}
 <h2 style="color:#e8c66a;margin-top:30px">画面时间轴</h2><div style="display:flex;flex-wrap:wrap;gap:8px">${tiles.join("")}</div>
-<details style="margin-top:30px" open><summary style="color:#e8c66a;font-size:1.2em;cursor:pointer">全镜头表 · ${shots.length} 镜 × 17 字段</summary><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#141b24">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#8fa3bd">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
+<details style="margin-top:30px" open><summary style="color:#e8c66a;font-size:1.2em;cursor:pointer">全镜头表 · ${shots.length} 镜 × ${FIELDS.length} 字段</summary><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#141b24">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#8fa3bd">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
 <h2 style="color:#6ad0e8;margin-top:30px">可复用手法蒸馏 · 四面向（统计自逐镜字段，零模型调用）</h2>${digestHtml}
 <h2 style="color:#e8c66a;margin-top:30px">音轨解析（模型原文）</h2><div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.85em">${audioRows}</table></div>
 <details style="margin-top:30px"><summary style="color:#e8c66a;font-size:1.1em;cursor:pointer">字幕原始证据 · ${subtitles.length} 条（折叠存证，不铺开；重点时刻由模型侧 keyMoments 承担）</summary><div style="overflow-x:auto;max-height:50vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.85em">${subRows}</table></div></details>

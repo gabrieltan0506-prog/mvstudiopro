@@ -29,6 +29,7 @@ import {
   hasUsableManhuaTemplateClassification,
   parseManhuaViralTemplateCard,
   type ManhuaViralTemplateCard,
+  type ManhuaViralTemplateEvidenceFrame,
   type ManhuaViralTemplateLane,
 } from "../../shared/manhuaViralTemplateBank.js";
 import type { NativeDeepReadOutput } from "../../shared/manhuaNativeDeepRead.js";
@@ -64,6 +65,10 @@ export type NativeDeepReadIngestInput = {
   sourceUrl: string;
   /** 该集时长（秒），进摘要 */
   durationSec?: number;
+  /** 首次发车的完整分片计划；partial 续学按它恢复，不能随 UI 设置漂移。 */
+  segmentSpans?: Array<{ startSec: number; endSec: number }>;
+  /** 首次发车实际使用的视频采样率。 */
+  videoFps?: number;
   /**
    * 赛道判断用的中性文本（题材关键词即可）。
    *
@@ -75,6 +80,8 @@ export type NativeDeepReadIngestInput = {
   laneZh?: ManhuaViralTemplateLane;
   /** 来源端标识的片头/片尾，保留供审批查看；本链绝不自动剪除。 */
   sourceMarkers?: NonNullable<ManhuaViralTemplateCard["provenance"]>["sourceMarkers"];
+  /** 仅 full result 入库前生成；partial snapshot 即使误传也不会落卡。 */
+  evidenceFrames?: ManhuaViralTemplateEvidenceFrame[];
   result: NativeDeepReadIngestSource;
 };
 
@@ -137,6 +144,50 @@ function assertSegmentEvidenceObjectNamesForProvenance(input: {
     );
   }
   return names;
+}
+
+function normalizeSegmentPlanForProvenance(input: {
+  episodeIndex: number;
+  attemptedSegments: number;
+  complete: boolean;
+  durationSec?: number;
+  segmentSpans?: Array<{ startSec: number; endSec: number }>;
+  videoFps?: number;
+}): {
+  sourceDurationSec: number;
+  segmentSpans: Array<{ startSec: number; endSec: number }>;
+  videoFps: number;
+} | undefined {
+  const hasPlanFields = input.segmentSpans != null || input.videoFps != null;
+  if (!hasPlanFields && input.complete) return undefined; // 兼容旧完整卡构造调用。
+  const sourceDurationSec = Number(input.durationSec);
+  const videoFps = Number(input.videoFps);
+  const segmentSpans = Array.isArray(input.segmentSpans)
+    ? input.segmentSpans.map((span) => ({
+        startSec: Number(span?.startSec),
+        endSec: Number(span?.endSec),
+      }))
+    : [];
+  if (
+    !Number.isFinite(sourceDurationSec)
+    || sourceDurationSec <= 0
+    || !Number.isFinite(videoFps)
+    || videoFps <= 0
+    || videoFps > 24
+    || segmentSpans.length !== input.attemptedSegments
+    || segmentSpans.some((span) =>
+      !Number.isFinite(span.startSec)
+      || !Number.isFinite(span.endSec)
+      || span.startSec < 0
+      || span.endSec <= span.startSec)
+    || Math.abs(segmentSpans[0]?.startSec || 0) > 0.01
+    || segmentSpans.some((span, index) =>
+      index > 0 && Math.abs(span.startSec - segmentSpans[index - 1]!.endSec) > 0.01)
+    || Math.abs((segmentSpans.at(-1)?.endSec || 0) - sourceDurationSec) > 0.01
+  ) {
+    throw new Error(`第${input.episodeIndex}集原分片计划不完整或与片长不一致，拒绝写入 provenance`);
+  }
+  return { sourceDurationSec, segmentSpans, videoFps };
 }
 
 /**
@@ -305,6 +356,14 @@ export function buildNativeDeepReadProposalCard(
   const durSec = Math.max(0, Math.floor(Number(input.durationSec) || 0));
   const audio = parseManhuaNativeAudioAnalysis(r.audioAnalysis)!;
   const progress = nativeProgress(r);
+  const storedSegmentPlan = normalizeSegmentPlanForProvenance({
+    episodeIndex: input.episodeIndex,
+    attemptedSegments: r.attemptedSegments,
+    complete: progress.complete,
+    durationSec: input.durationSec,
+    segmentSpans: input.segmentSpans,
+    videoFps: input.videoFps,
+  });
   const factsZh = [
     `原生精读${r.beatGrid.length}镜`,
     `${r.segmentCount}/${r.attemptedSegments}段${progress.complete ? "已完成" : "已入库，余段待续"}`,
@@ -330,6 +389,7 @@ export function buildNativeDeepReadProposalCard(
     hook3sZh,
     beatGrid: r.beatGrid,
     subtitleTrack: r.subtitleTrack,
+    evidenceFrames: r.assemblyComplete === true ? input.evidenceFrames : undefined,
     reusableZh: r.reusableZh,
     genPromptHintZh: r.genPromptHintZh,
     audioStory: audio,
@@ -367,6 +427,9 @@ export function buildNativeDeepReadProposalCard(
         usingPlanQuota: r.usingPlanQuota,
         costCny: Number(r.usage?.costCny) || 0,
         completedSegmentIndexes: progress.completed,
+        segmentSpans: storedSegmentPlan?.segmentSpans,
+        sourceDurationSec: storedSegmentPlan?.sourceDurationSec,
+        videoFps: storedSegmentPlan?.videoFps,
         assemblyComplete: progress.complete,
         sourceDigest: progress.sourceDigest,
         snapshotSha256: progress.snapshotSha256,
@@ -415,6 +478,11 @@ export type IngestedNativeDeepReadEpisode = {
   complete: boolean;
   successSegments: number;
   attemptedSegments: number;
+  completedSegmentIndexes: number[];
+  /** 旧完整卡可以没有；新 partial 必须三项同时存在且已由共享解析器验证。 */
+  segmentSpans?: Array<{ startSec: number; endSec: number }>;
+  durationSec?: number;
+  videoFps?: number;
 };
 
 /**
@@ -495,6 +563,12 @@ export async function listIngestedNativeDeepReadEpisodeRecords(
             === card.provenance.nativeVideoDeepRead.attemptedSegments,
         successSegments: card.provenance.nativeVideoDeepRead.successSegments,
         attemptedSegments: card.provenance.nativeVideoDeepRead.attemptedSegments,
+        completedSegmentIndexes: [
+          ...(card.provenance.nativeVideoDeepRead.completedSegmentIndexes || []),
+        ],
+        segmentSpans: card.provenance.nativeVideoDeepRead.segmentSpans?.map((span) => ({ ...span })),
+        durationSec: card.provenance.nativeVideoDeepRead.sourceDurationSec,
+        videoFps: card.provenance.nativeVideoDeepRead.videoFps,
       });
     } catch (e) {
       throw new Error(
@@ -535,6 +609,7 @@ function cardProgress(card: ManhuaViralTemplateCard): {
   complete: boolean;
   sourceDigest?: string;
   snapshotSha256?: string;
+  segmentPlan?: string;
 } {
   const native = card.provenance?.nativeVideoDeepRead;
   return {
@@ -542,6 +617,13 @@ function cardProgress(card: ManhuaViralTemplateCard): {
     complete: native?.assemblyComplete === true,
     sourceDigest: native?.sourceDigest,
     snapshotSha256: native?.snapshotSha256,
+    segmentPlan: native?.segmentSpans && native.sourceDurationSec && native.videoFps
+      ? JSON.stringify({
+          sourceDurationSec: native.sourceDurationSec,
+          segmentSpans: native.segmentSpans,
+          videoFps: native.videoFps,
+        })
+      : undefined,
   };
 }
 
@@ -637,6 +719,9 @@ export async function ingestNativeDeepReadEpisode(
       && previous.sourceDigest !== next.sourceDigest
     ) {
       throw new Error(`第${input.episodeIndex}集来源摘要变化，拒绝覆盖既有学习卡`);
+    }
+    if (!previous.complete && previous.segmentPlan !== next.segmentPlan) {
+      throw new Error(`第${input.episodeIndex}集原分片计划发生变化，拒绝覆盖既有部分学习卡`);
     }
     if (!isStrictProgressSuperset(next.completed, previous.completed)) {
       const relation = sameNumbers(next.completed, previous.completed) ? "未增加" : "发生倒退或分叉";

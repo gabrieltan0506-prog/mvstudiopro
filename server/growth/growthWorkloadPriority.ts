@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 const HEARTBEAT_MS = 15_000;
@@ -54,6 +55,22 @@ function workloadDir() {
   return path.join(storeDir, "runtime-interactive-workloads");
 }
 
+/**
+ * `/data` 满盘时，前台任务仍要能登记租约并继续执行。Fly 的 root `/tmp` 与
+ * `/data` 是两套文件系统；备用目录只保存几十字节的运行中租约，任务结束即删。
+ */
+function fallbackWorkloadDir() {
+  return path.resolve(
+    process.env.GROWTH_INTERACTIVE_FALLBACK_DIR
+      || path.join(os.tmpdir(), "mvstudiopro-growth-runtime-interactive-workloads"),
+  );
+}
+
+function isPrimaryLeaseStorageUnavailable(error: unknown) {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  return code === "ENOSPC" || code === "EDQUOT" || code === "EROFS";
+}
+
 async function writeLease(file: string, token: string, label: string, startedAt: string) {
   await fs.writeFile(file, JSON.stringify({
     version: 1,
@@ -70,12 +87,25 @@ async function writeLease(file: string, token: string, label: string, startedAt:
  * 错误清掉另一个仍在运行的任务；心跳让异常退出的进程可在两分钟后自动回收。
  */
 export async function beginGrowthInteractiveWorkload(label: string) {
-  const dir = workloadDir();
   const token = `${process.pid}-${randomUUID()}`;
-  const file = path.join(dir, `${token}.json`);
   const startedAt = new Date().toISOString();
-  await fs.mkdir(dir, { recursive: true });
-  await writeLease(file, token, label, startedAt);
+  let file = "";
+  const primaryDir = workloadDir();
+  try {
+    await fs.mkdir(primaryDir, { recursive: true });
+    file = path.join(primaryDir, `${token}.json`);
+    await writeLease(file, token, label, startedAt);
+  } catch (error) {
+    if (!isPrimaryLeaseStorageUnavailable(error)) throw error;
+    if (file) await fs.unlink(file).catch(() => {});
+    const fallbackDir = fallbackWorkloadDir();
+    file = path.join(fallbackDir, `${token}.json`);
+    await fs.mkdir(fallbackDir, { recursive: true });
+    await writeLease(file, token, label, startedAt);
+    console.warn(
+      `[growth.workload-priority] 主存储不可写，前台租约已转入临时盘：${(error as NodeJS.ErrnoException).code}`,
+    );
+  }
   localTokens.add(token);
   const heartbeat = setInterval(() => {
     void writeLease(file, token, label, startedAt).catch(() => {});
@@ -104,28 +134,28 @@ export async function withGrowthInteractiveWorkload<T>(
 
 export async function hasActiveGrowthInteractiveWorkload(nowMs = Date.now()) {
   if (localTokens.size > 0) return true;
-  const dir = workloadDir();
-  let entries: string[];
-  try {
-    entries = await fs.readdir(dir);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    // EACCES/ENOTDIR/I/O 异常不能等同“没有前台任务”；交给调用方按安全暂停处理。
-    throw error;
-  }
-  let active = false;
-  for (const entry of entries) {
-    if (!entry.endsWith(".json")) continue;
-    const file = path.join(dir, entry);
-    const stat = await fs.stat(file).catch(() => null);
-    if (!stat) continue;
-    if (nowMs - stat.mtimeMs > STALE_MS) {
-      await fs.unlink(file).catch(() => {});
-      continue;
+  for (const dir of [workloadDir(), fallbackWorkloadDir()]) {
+    let entries: string[];
+    try {
+      entries = await fs.readdir(dir);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      // EACCES/ENOTDIR/I/O 异常不能等同“没有前台任务”；交给调用方按安全暂停处理。
+      throw error;
     }
-    active = true;
+    for (const entry of entries) {
+      if (!entry.endsWith(".json")) continue;
+      const file = path.join(dir, entry);
+      const stat = await fs.stat(file).catch(() => null);
+      if (!stat) continue;
+      if (nowMs - stat.mtimeMs > STALE_MS) {
+        await fs.unlink(file).catch(() => {});
+        continue;
+      }
+      return true;
+    }
   }
-  return active;
+  return false;
 }
 
 export function isGrowthInteractivePriorityAbortError(error: unknown) {

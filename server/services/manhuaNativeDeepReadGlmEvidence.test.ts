@@ -1,8 +1,15 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { createNativeDeepReadGlmEvidenceStore } from "./manhuaNativeDeepReadGlmEvidence";
+import {
+  createNativeDeepReadGlmEvidenceStore,
+  readNativeDeepReadGlmRecoveredEvidence,
+  type NativeDeepReadGlmEvidenceContext,
+} from "./manhuaNativeDeepReadGlmEvidence";
 
-function fixture(context = { seriesKey: "测试合集", sourceDigest: "a".repeat(64), episodeIndex: 3, batchRequestId: "batch-test", callId: "call-test" }) {
+function fixture(context: NativeDeepReadGlmEvidenceContext = {
+  seriesKey: "测试合集", sourceDigest: "a".repeat(64), episodeIndex: 3,
+  batchRequestId: "batch-test", callId: "call-test",
+}) {
   const saved: Array<{ objectName: string; buffer: Buffer; contentType: string; bucket?: string }> = [];
   const upload = vi.fn(async (input: (typeof saved)[number]) => {
     saved.push(input);
@@ -91,5 +98,84 @@ describe("整集GLM永久原始与解析证据", () => {
     expect(String(error)).toContain("保存失败");
     expect(String(error)).not.toContain("test-secret");
     expect((error as Error).cause).toBeUndefined();
+  });
+
+  it("稳定callId可跨批次回读完整解析证据，且不伪造当前批次身份", async () => {
+    const context: NativeDeepReadGlmEvidenceContext = {
+      seriesKey: "series_recovery",
+      sourceDigest: "b".repeat(64),
+      episodeIndex: 8,
+      batchRequestId: "historical-batch",
+      callId: `native-structuring-${"c".repeat(64)}`,
+      preferredGlmGateway: "openrouter",
+    };
+    const { store, saved } = fixture(context);
+    const expectedRequestWithoutPreferredGateway = {
+      system: "系统", user: "完整分片", maxTokens: 131072, gatewayPolicy: "glm_only",
+    };
+    await store.writeRequest({ ...expectedRequestWithoutPreferredGateway, preferredGlmGateway: "openrouter" });
+    const raw = rawEvent("openrouter");
+    await store.writeRawResponse(raw);
+    const parsed = { shots: [{ startSec: 0, endSec: 12, hintZh: "门前有人交谈" }] };
+    await store.writeParsed(parsed, {
+      gateway: raw.gateway,
+      model: raw.model,
+      provider: "Z.AI",
+      providerRequestId: "provider-8",
+      finishReason: "stop",
+      usage: { prompt_tokens: 123, completion_tokens: 45, cost: 0.006 },
+    });
+    const download = vi.fn(async ({ gcsUri }: { gcsUri: string }) => {
+      const objectName = gcsUri.replace("gs://mv-studio-pro-vertex-video-temp/", "");
+      const hit = saved.find((row) => row.objectName === objectName);
+      if (!hit) throw new Error("gcs_stat_failed:404:not found");
+      return { buffer: hit.buffer, bucket: "mv-studio-pro-vertex-video-temp", objectName, generation: "1" };
+    });
+    const recovered = await readNativeDeepReadGlmRecoveredEvidence({
+      context: { ...context, batchRequestId: "current-batch" },
+      expectedRequestWithoutPreferredGateway,
+      deps: {
+        upload: vi.fn() as never,
+        getBucket: () => "mv-studio-pro-vertex-video-temp",
+        download: download as never,
+      },
+    });
+    expect(recovered).toMatchObject({
+      parsed,
+      preferredGlmGateway: "openrouter",
+      response: {
+        gateway: "openrouter",
+        model: "z-ai/glm-5.3",
+        providerRequestId: "provider-8",
+        usage: { prompt_tokens: 123, completion_tokens: 45, cost: 0.006 },
+      },
+      evidence: { callId: context.callId, selectedRawObjectName: expect.stringContaining("raw-1.json") },
+    });
+    expect(download).toHaveBeenCalledTimes(2);
+  });
+
+  it("request已存在但parsed缺失时关闭式停止，不能把未知状态当缓存miss", async () => {
+    const context: NativeDeepReadGlmEvidenceContext = {
+      seriesKey: "series_incomplete",
+      sourceDigest: "d".repeat(64),
+      episodeIndex: 2,
+      batchRequestId: "historical-batch",
+      callId: `native-structuring-${"e".repeat(64)}`,
+      preferredGlmGateway: "evolink_glm",
+    };
+    const expectedRequestWithoutPreferredGateway = { system: "系统", user: "输入" };
+    const { store, saved } = fixture(context);
+    await store.writeRequest({ ...expectedRequestWithoutPreferredGateway, preferredGlmGateway: "evolink_glm" });
+    const download = vi.fn(async ({ gcsUri }: { gcsUri: string }) => {
+      const objectName = gcsUri.replace("gs://mv-studio-pro-vertex-video-temp/", "");
+      const hit = saved.find((row) => row.objectName === objectName);
+      if (!hit) throw new Error("gcs_stat_failed:404:not found");
+      return { buffer: hit.buffer, bucket: "mv-studio-pro-vertex-video-temp", objectName, generation: "1" };
+    });
+    await expect(readNativeDeepReadGlmRecoveredEvidence({
+      context,
+      expectedRequestWithoutPreferredGateway,
+      deps: { upload: vi.fn() as never, getBucket: () => "mv-studio-pro-vertex-video-temp", download: download as never },
+    })).rejects.toThrow("解析证据缺失");
   });
 });

@@ -22,17 +22,22 @@ import {
   NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
   NATIVE_DEEP_READ_SEGMENT_EVIDENCE_PREFIX,
   NATIVE_DEEP_READ_PARSED_ATTEMPT_EVIDENCE_PREFIX,
+  NATIVE_DEEP_READ_RAW_ATTEMPT_EVIDENCE_PREFIX,
   clearNativeDeepReadSegmentCacheForEpisode,
   createNativeDeepReadSegmentCacheEntryIfAbsent,
   listNativeDeepReadSegmentCacheEntriesBySourceDigest,
+  readNativeDeepReadRawAttemptEvidence,
   readNativeDeepReadSegmentCacheEntry,
   nativeDeepReadSegmentEvidenceObjectName,
   nativeDeepReadSegmentEvidenceResponseFingerprint,
   nativeDeepReadRawAttemptEvidenceObjectName,
+  writeNativeDeepReadRawAttemptEvidence,
   writeNativeDeepReadParsedAttemptEvidence,
   writeNativeDeepReadSegmentCacheEntry,
   type NativeDeepReadSegmentCacheEntry,
   type NativeDeepReadParsedAttemptEvidenceInput,
+  type NativeDeepReadRawAttemptEvidenceInput,
+  type NativeDeepReadRawAttemptEvidenceReadInput,
 } from "./manhuaNativeDeepReadSegmentCache";
 
 const entryOf = (
@@ -69,6 +74,155 @@ beforeEach(() => {
   gcs.upload.mockReset();
   gcs.createIfAbsent.mockReset();
   gcs.createIfAbsent.mockResolvedValue({ created: true });
+});
+
+const rawInputOf = (
+  over: Partial<NativeDeepReadRawAttemptEvidenceInput> = {},
+): NativeDeepReadRawAttemptEvidenceInput => ({
+  seriesKey: "series_a",
+  episodeIndex: 3,
+  segmentIndex: 1,
+  segmentCount: 2,
+  sourceDigest: "b".repeat(64),
+  requestFingerprint: "a".repeat(64),
+  batchRequestId: "test-batch",
+  callId: "11111111-1111-1111-1111-111111111111",
+  attemptNumber: 1,
+  temperature: 0.65,
+  visualRoute: "vertex_gcs_video",
+  httpStatus: 200,
+  providerRequestId: "provider-req-1",
+  responseText: JSON.stringify({ candidates: [{ finishReason: "STOP" }] }),
+  ...over,
+});
+
+const rawReadInputOf = (
+  raw = rawInputOf(),
+): NativeDeepReadRawAttemptEvidenceReadInput => ({
+  seriesKey: raw.seriesKey,
+  episodeIndex: raw.episodeIndex,
+  segmentIndex: raw.segmentIndex,
+  segmentCount: raw.segmentCount,
+  sourceDigest: raw.sourceDigest,
+  requestFingerprint: raw.requestFingerprint,
+  attemptNumber: raw.attemptNumber,
+  temperature: raw.temperature,
+  visualRoute: raw.visualRoute,
+});
+
+const rawStoredPayload = (raw = rawInputOf()): Record<string, unknown> => {
+  const response = Buffer.from(raw.responseText, "utf8");
+  return {
+    schemaVersion: 1,
+    sourceDigest: raw.sourceDigest,
+    requestFingerprint: raw.requestFingerprint,
+    seriesKey: raw.seriesKey,
+    episodeIndex: raw.episodeIndex,
+    segmentIndex: raw.segmentIndex,
+    segmentCount: raw.segmentCount,
+    batchRequestId: raw.batchRequestId,
+    callId: raw.callId,
+    attemptNumber: raw.attemptNumber,
+    temperature: raw.temperature,
+    visualRoute: raw.visualRoute,
+    httpStatus: raw.httpStatus,
+    providerRequestId: raw.providerRequestId,
+    responseBytes: response.byteLength,
+    responseSha256: createHash("sha256").update(response).digest("hex"),
+    responseText: raw.responseText,
+  };
+};
+
+describe("门禁前原始响应确定性证据", () => {
+  it("对象名只由来源、请求契约和尝试序号决定，不依赖随机 callId", () => {
+    const first = rawInputOf();
+    const second = rawInputOf({ callId: "22222222-2222-2222-2222-222222222222" });
+    const expected = `${NATIVE_DEEP_READ_RAW_ATTEMPT_EVIDENCE_PREFIX}`
+      + `tpl_native_series_a_ep003/${"b".repeat(64)}/${"a".repeat(64)}/seg1-attempt1.json`;
+    expect(nativeDeepReadRawAttemptEvidenceObjectName(first)).toBe(expected);
+    expect(nativeDeepReadRawAttemptEvidenceObjectName(second)).toBe(expected);
+    expect(nativeDeepReadRawAttemptEvidenceObjectName(rawInputOf({
+      requestFingerprint: "c".repeat(64),
+    }))).not.toBe(expected);
+  });
+
+  it("严格回读并返回原始响应与上游调用身份", async () => {
+    const raw = rawInputOf();
+    const stored = rawStoredPayload(raw);
+    gcs.downloadVersioned.mockResolvedValue({
+      buffer: Buffer.from(JSON.stringify(stored), "utf8"),
+      generation: "7",
+    });
+
+    await expect(readNativeDeepReadRawAttemptEvidence(rawReadInputOf(raw))).resolves.toEqual({
+      objectName: nativeDeepReadRawAttemptEvidenceObjectName(raw),
+      responseText: raw.responseText,
+      callId: raw.callId,
+      batchRequestId: raw.batchRequestId,
+      providerRequestId: raw.providerRequestId,
+      responseBytes: Buffer.byteLength(raw.responseText),
+      responseSha256: stored.responseSha256,
+      httpStatus: 200,
+    });
+    expect(gcs.downloadVersioned).toHaveBeenCalledWith({
+      gcsUri: `gs://test-bucket/${nativeDeepReadRawAttemptEvidenceObjectName(raw)}`,
+    });
+  });
+
+  it.each([
+    ["seriesKey", "series_b"],
+    ["episodeIndex", 4],
+    ["segmentIndex", 0],
+    ["segmentCount", 3],
+    ["sourceDigest", "c".repeat(64)],
+    ["requestFingerprint", "d".repeat(64)],
+    ["batchRequestId", ""],
+    ["attemptNumber", 2],
+    ["temperature", 0.6],
+    ["visualRoute", "evolink_gemini_video"],
+    ["httpStatus", 500],
+    ["callId", "bad"],
+    ["responseBytes", 1],
+    ["responseSha256", "e".repeat(64)],
+  ] as const)("存稿字段 %s 不匹配时关闭式失败", async (field, value) => {
+    const raw = rawInputOf();
+    const stored = { ...rawStoredPayload(raw), [field]: value };
+    gcs.downloadVersioned.mockResolvedValue({
+      buffer: Buffer.from(JSON.stringify(stored), "utf8"),
+      generation: "7",
+    });
+    await expect(readNativeDeepReadRawAttemptEvidence(rawReadInputOf(raw)))
+      .rejects.toThrow("身份或内容校验失败");
+  });
+
+  it("只有404返回null，权限或网络错误关闭式失败", async () => {
+    const input = rawReadInputOf();
+    gcs.downloadVersioned.mockRejectedValueOnce(new Error("gcs_download_failed:404:not found"));
+    await expect(readNativeDeepReadRawAttemptEvidence(input)).resolves.toBeNull();
+    gcs.downloadVersioned.mockRejectedValueOnce(new Error("gcs_stat_failed:403:denied"));
+    await expect(readNativeDeepReadRawAttemptEvidence(input))
+      .rejects.toThrow("读取失败，已停止以避免重复付费");
+  });
+
+  it("同名同内容幂等，同名不同 callId 或响应内容关闭式失败", async () => {
+    const raw = rawInputOf();
+    await writeNativeDeepReadRawAttemptEvidence(raw);
+    const original = gcs.createIfAbsent.mock.calls[0]![0].buffer as Buffer;
+    gcs.createIfAbsent.mockResolvedValue({ created: false });
+    gcs.downloadVersioned.mockResolvedValue({ buffer: original, generation: "1" });
+    await expect(writeNativeDeepReadRawAttemptEvidence(raw)).resolves.toMatchObject({
+      objectName: nativeDeepReadRawAttemptEvidenceObjectName(raw),
+    });
+    await expect(writeNativeDeepReadRawAttemptEvidence({
+      ...raw,
+      callId: "22222222-2222-2222-2222-222222222222",
+    })).rejects.toThrow("内容不同");
+    await expect(writeNativeDeepReadRawAttemptEvidence({
+      ...raw,
+      responseText: "different",
+    })).rejects.toThrow("内容不同");
+    expect(gcs.upload).not.toHaveBeenCalled();
+  });
 });
 
 describe("门禁前解析稿永久证据", () => {
@@ -111,7 +265,10 @@ describe("门禁前解析稿永久证据", () => {
 
   it("raw对象串到另一attempt时写前阻止", async () => {
     const input = inputOf();
-    input.rawAttemptEvidenceObjectName = input.rawAttemptEvidenceObjectName.replace("attempt1-", "attempt2-");
+    input.rawAttemptEvidenceObjectName = input.rawAttemptEvidenceObjectName.replace(
+      "attempt1.json",
+      "attempt2.json",
+    );
     await expect(writeNativeDeepReadParsedAttemptEvidence(input)).rejects.toThrow("原始证据身份");
     expect(gcs.createIfAbsent).not.toHaveBeenCalled();
   });
@@ -371,12 +528,12 @@ describe("回归：证据身份绑定付费响应", () => {
   it("相同 raw/usage 但不同调用身份仍生成不同不可变对象", () => {
     const first = entryOf({
       rawAttemptEvidenceObjectName:
-        "manhua-template-learn/segment-evidence-raw/a/attempt1-11111111-1111-1111-1111-111111111111.json",
+        `manhua-template-learn/segment-evidence-raw/tpl_native_series_a_ep003/${"b".repeat(64)}/${"a".repeat(64)}/seg1-attempt1.json`,
       savedAtIso: "2026-08-28T10:00:00.000Z",
     });
     const second = entryOf({
       rawAttemptEvidenceObjectName:
-        "manhua-template-learn/segment-evidence-raw/a/attempt1-22222222-2222-2222-2222-222222222222.json",
+        `manhua-template-learn/segment-evidence-raw/tpl_native_series_a_ep003/${"b".repeat(64)}/${"c".repeat(64)}/seg1-attempt1.json`,
       savedAtIso: "2026-08-28T10:01:00.000Z",
     });
 

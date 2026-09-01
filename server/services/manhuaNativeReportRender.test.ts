@@ -74,6 +74,7 @@ function segmentEntry(segmentIndex: number, overrides?: Partial<Record<string, u
           relationshipReactionZh: "众人后退",
           lightingZh: "侧逆光",
           actionZh: LONG_ACTION,
+          hintZh: "场景道具观察".repeat(25) + "观察尾部保留" + XSS,
           transitionInZh: "硬切",
           evidenceRole: "story",
         },
@@ -185,7 +186,9 @@ describe("精确证据名路径：三段卡渲染成功且无删节", () => {
     expect(html).toContain("情绪标签2");
     expect((html.match(/共有标签/g) ?? []).length).toBe(1);
     // 「17 字段」硬编码已改 FIELDS.length 动态
-    expect(html).toContain("× 14 字段");
+    expect(html).toContain("× 15 字段");
+    expect(html).toContain("观察尾部保留&lt;script&gt;");
+    expect(html).toContain("本镜观察");
     expect(html).not.toContain("× 17 字段");
 
     // 🔒 字幕零截断（0830 补：此前「不做任何内容截断」只是文件头一句话，没有守卫，

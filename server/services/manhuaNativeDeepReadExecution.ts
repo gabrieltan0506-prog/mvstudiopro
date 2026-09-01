@@ -53,6 +53,7 @@ import {
   type NativeDeepReadSegmentCacheEntry,
 } from "./manhuaNativeDeepReadSegmentCache.js";
 import { statGcsObjectVersion } from "./gcs.js";
+import { extractNativeKeyMomentEvidenceFrames } from "./manhuaNativeKeyMomentFrames.js";
 import {
   NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS,
   parseNativeDeepReadVideoFps,
@@ -129,6 +130,7 @@ export type NativeDeepReadExecutionDeps = {
   clearSegmentCache: typeof clearNativeDeepReadSegmentCacheForEpisode;
   migrateSegmentCaches: typeof migrateMisplacedNativeDeepReadSegmentCaches;
   statSourceVersion: typeof statGcsObjectVersion;
+  extractKeyMomentFrames: typeof extractNativeKeyMomentEvidenceFrames;
 };
 
 const defaultDeps: NativeDeepReadExecutionDeps = {
@@ -143,7 +145,37 @@ const defaultDeps: NativeDeepReadExecutionDeps = {
   clearSegmentCache: clearNativeDeepReadSegmentCacheForEpisode,
   migrateSegmentCaches: migrateMisplacedNativeDeepReadSegmentCaches,
   statSourceVersion: statGcsObjectVersion,
+  extractKeyMomentFrames: extractNativeKeyMomentEvidenceFrames,
 };
+
+async function extractFullResultEvidenceFrames(input: {
+  episode: NativeDeepReadEpisodeExecution;
+  result: {
+    assemblyComplete?: boolean;
+    keyMoments?: NativeDeepReadRunResult["keyMoments"];
+    sourceDigest?: string;
+  };
+  deps: NativeDeepReadExecutionDeps;
+}) {
+  // partial snapshot 可能多次写卡，绝不能在这里反复拉媒体、抽帧或写 GCS。
+  if (input.result.assemblyComplete !== true) return undefined;
+  if (!input.result.keyMoments?.length) return [];
+  try {
+    const mediaNodes = await input.episode.resolveNodes();
+    return await input.deps.extractKeyMomentFrames({
+      seriesKey: input.episode.seriesKey,
+      episodeIndex: input.episode.episodeIndex,
+      sourceDigest: input.result.sourceDigest,
+      mediaNodes,
+      keyMoments: input.result.keyMoments,
+      abortSignal: input.episode.abortSignal,
+    });
+  } catch {
+    // 关键帧是审批证据增强层：失败时省略全部/部分帧，已付费的完整卡仍必须入库。
+    console.warn(`[nativeDeepRead] 第${input.episode.episodeIndex}集关键时刻抽帧未完成，卡片继续入库`);
+    return undefined;
+  }
+}
 
 function extractDouyinAwemeId(sourceRef: string): string | undefined {
   try {
@@ -282,6 +314,7 @@ export async function migrateMisplacedNativeDeepReadSegmentCaches(input: {
       endSec: segment.endSec,
       hasAudio: alias.hasAudio,
       raw: alias.raw,
+      requireShotObservations: true,
       truncated: alias.raw.truncated === true,
     })) continue;
     const migrated: NativeDeepReadSegmentCacheEntry = {
@@ -524,13 +557,21 @@ export async function executeAndIngestNativeDeepReadEpisode(
 
   let stored: NativeDeepReadIngestResult;
   try {
+    const evidenceFrames = await extractFullResultEvidenceFrames({
+      episode: input,
+      result,
+      deps,
+    });
     stored = await deps.ingest({
       seriesKey: input.seriesKey,
       episodeIndex: input.episodeIndex,
       sourceUrl: input.provenanceSourceRef || input.sourceUrl,
       durationSec: input.durationSec,
+      segmentSpans: input.segments.map(({ startSec, endSec }) => ({ startSec, endSec })),
+      videoFps: input.videoFps,
       laneHintZh: input.laneHintZh,
       sourceMarkers: input.sourceMarkers,
+      evidenceFrames,
       result,
     });
   } catch (error) {
@@ -924,6 +965,8 @@ export async function runNativeDeepReadBatch(input: {
             episodeIndex: episode.episodeIndex,
             sourceUrl: episode.provenanceSourceRef || episode.sourceUrl,
             durationSec: episode.durationSec,
+            segmentSpans: episode.segments.map(({ startSec, endSec }) => ({ startSec, endSec })),
+            videoFps: episode.videoFps,
             laneHintZh: episode.laneHintZh,
             sourceMarkers: episode.sourceMarkers,
             result: partialResult,
@@ -958,13 +1001,21 @@ export async function runNativeDeepReadBatch(input: {
       if (!gate.ok) {
         throw new Error(`第${episode.episodeIndex}集未通过入库门禁：${gate.reasonZh}`);
       }
+      const evidenceFrames = await extractFullResultEvidenceFrames({
+        episode: { ...episode, seriesKey: input.seriesKey },
+        result,
+        deps,
+      });
       const stored = await deps.ingest({
         seriesKey: input.seriesKey,
         episodeIndex: episode.episodeIndex,
         sourceUrl: episode.provenanceSourceRef || episode.sourceUrl,
         durationSec: episode.durationSec,
+        segmentSpans: episode.segments.map(({ startSec, endSec }) => ({ startSec, endSec })),
+        videoFps: episode.videoFps,
         laneHintZh: episode.laneHintZh,
         sourceMarkers: episode.sourceMarkers,
+        evidenceFrames,
         result,
       });
       // 先在 claim 锁内清缓存，再释放 claim；否则等待中的旧计划可抢到 claim 并写新缓存，

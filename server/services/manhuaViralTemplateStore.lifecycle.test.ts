@@ -843,6 +843,12 @@ describe("原生分集部分卡的滚动批准", () => {
         usingPlanQuota: false,
         costCny: 1.2,
         completedSegmentIndexes: Array.from({ length: input.successSegments }, (_, index) => index),
+        segmentSpans: Array.from({ length: 4 }, (_, index) => ({
+          startSec: index * 300,
+          endSec: (index + 1) * 300,
+        })),
+        sourceDurationSec: 1_200,
+        videoFps: 12,
         assemblyComplete: input.successSegments === 4,
         sourceDigest,
         snapshotSha256: input.snapshot,
@@ -1025,6 +1031,34 @@ describe("原生分集部分卡的滚动批准", () => {
       expect.objectContaining({ atSec: 10, visualZh: "新动作描述", cameraMoveZh: "缓慢横移" }),
     ]);
     expect(out.provenance?.nativeVideoDeepRead?.shotCount).toBe(1);
+  });
+
+  it("补学关键帧按 0.1 秒位合并：新成功帧覆盖同秒旧帧，其他旧帧保留", async () => {
+    const { mergeNativeEpisodeTemplateLearning } = await import("./manhuaViralTemplateStore");
+    const oldApproved = partialEpisodeCard({
+      status: "approved", successSegments: 1, publicCode: "EPKEEP", snapshot: "2".repeat(64),
+    }) as ManhuaViralTemplateCard;
+    const nextProposal = partialEpisodeCard({
+      status: "proposed", successSegments: 2, snapshot: "3".repeat(64),
+    }) as ManhuaViralTemplateCard;
+    const frame = (atSec: number, mark: string) => ({
+      atSec,
+      kindZh: "剧情",
+      noteZh: mark,
+      objectName: `manhua-template-learn/native-frames/s/ep001/${Math.round(atSec * 10)}ds-${mark}.jpg`,
+      mimeType: "image/jpeg" as const,
+      bytes: 10,
+      sha256: mark.padEnd(64, "a").slice(0, 64),
+    });
+    oldApproved.evidenceFrames = [frame(10, "b"), frame(20, "c")];
+    nextProposal.evidenceFrames = [frame(10, "d"), frame(30, "e")];
+
+    const out = mergeNativeEpisodeTemplateLearning(oldApproved, nextProposal);
+    expect(out.evidenceFrames?.map((row) => [row.atSec, row.noteZh])).toEqual([
+      [10, "d"],
+      [20, "c"],
+      [30, "e"],
+    ]);
   });
 
   it("同剧补学合并超过 128 镜时保留全部正式证据", async () => {

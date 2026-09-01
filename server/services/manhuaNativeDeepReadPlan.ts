@@ -38,6 +38,10 @@ import {
 } from "../../shared/manhuaNativeDeepReadJob.js";
 import { isManhua0996SourceUrl } from "../../shared/manhuaLearn0996Source.js";
 import {
+  placeSingleSourceInExistingSeries,
+  sameManhuaLearnEpisodeSource,
+} from "../../shared/manhuaLearnSeriesIdentity.js";
+import {
   NATIVE_DEEP_READ_MODEL,
   NATIVE_DEEP_READ_ROUTE_EVOLINK,
   NATIVE_DEEP_READ_ROUTE_VERTEX,
@@ -77,6 +81,8 @@ export type NativeDeepReadPlanEpisode = {
   reclaimFailedClaim?: boolean;
   /** 单集入口锚定的真实集；允许核对并复制旧版误写到其他集号的同源段缓存。 */
   recoverMisplacedSourceCache?: boolean;
+  /** 同源 partial 续学：执行层必须采用本 episode 已恢复的原边界/fps，不按当前 UI 重切。 */
+  resumeStoredSegmentPlan?: boolean;
 };
 
 export type NativeDeepReadPlanPreview = {
@@ -200,6 +206,63 @@ export function splitNativeDeepReadSegments(
     });
   }
   return segments;
+}
+
+type NativeDeepReadIngestedPlanRecord = {
+  episodeIndex: number;
+  sourceUrl: string;
+  complete: boolean;
+  attemptedSegments?: number;
+  completedSegmentIndexes?: number[];
+  segmentSpans?: NativeDeepReadPlanSegment[];
+  durationSec?: number;
+  videoFps?: number;
+};
+
+function restoreNativeDeepReadPartialPlan(input: {
+  episodeIndex: number;
+  probedDurationSec: number;
+  record: NativeDeepReadIngestedPlanRecord;
+}): { durationSec: number; segments: NativeDeepReadPlanSegment[]; videoFps: number } {
+  const durationSec = Number(input.record.durationSec);
+  const attemptedSegments = Number(input.record.attemptedSegments);
+  const segments = Array.isArray(input.record.segmentSpans)
+    ? input.record.segmentSpans.map((span) => ({
+        startSec: Number(span.startSec),
+        endSec: Number(span.endSec),
+      }))
+    : [];
+  const storedFps = input.record.videoFps;
+  if (
+    !Number.isFinite(durationSec)
+    || durationSec <= 0
+    || !Number.isInteger(attemptedSegments)
+    || attemptedSegments < 1
+    || segments.length !== attemptedSegments
+    || storedFps == null
+    || segments.some((span) =>
+      !Number.isFinite(span.startSec)
+      || !Number.isFinite(span.endSec)
+      || span.startSec < 0
+      || span.endSec <= span.startSec)
+    || Math.abs(segments[0]?.startSec || 0) > 0.01
+    || segments.some((span, index) =>
+      index > 0 && Math.abs(span.startSec - segments[index - 1]!.endSec) > 0.01)
+    || Math.abs((segments.at(-1)?.endSec || 0) - durationSec) > 0.01
+  ) {
+    throw new Error(`第${input.episodeIndex}集部分卡缺少完整原分片计划，已停止以避免重复付费`);
+  }
+  const videoFps = parseNativeDeepReadVideoFps(storedFps);
+  const currentDurationSec = Number(input.probedDurationSec);
+  // 历史普通计划把 ffprobe 小数秒四舍五入后保存；等分/精确计划则保存原始末端。
+  // 两者最多相差 0.5 秒。超过该范围视为来源内容实际变化，不能复用旧 GCS 分片。
+  if (!Number.isFinite(currentDurationSec) || Math.abs(currentDurationSec - durationSec) > 0.5) {
+    throw new Error(
+      `第${input.episodeIndex}集当前片长 ${currentDurationSec}s 与已学分片计划 ${durationSec}s 不一致，`
+      + "疑似来源内容变化，已停止且未发出模型请求",
+    );
+  }
+  return { durationSec, segments, videoFps };
 }
 
 /**
@@ -448,7 +511,14 @@ export type NativeDeepReadPlanDeps = {
     abortSignal?: AbortSignal,
     referer?: string,
   ) => Promise<number>;
-  listIngestedEpisodes: (seriesKey: string) => Promise<Set<number>>;
+  /**
+   * 旧调用方只提供整集完成集合；生产运行时应提供下方完整记录，才能让同一单源
+   * 在部分分片恢复时回到原集号，而不是先按 ep1 出计划、执行时才改成 epN。
+   */
+  listIngestedEpisodes?: (seriesKey: string) => Promise<Set<number>>;
+  listIngestedEpisodeRecords?: (
+    seriesKey: string,
+  ) => Promise<NativeDeepReadIngestedPlanRecord[]>;
   listClaimStates: (seriesKey: string) => Promise<
     Map<number, {
       createdAtIso: string | null;
@@ -592,14 +662,15 @@ export async function buildNativeDeepReadPlanPreview(
       `单集详情标为第${detailEpisodeIndex}集，但合集列表标为第${listedSourceEpisode.index}集，已停止以免写错集号`,
     );
   }
-  const sourceEpisodeIndex = listedSourceEpisode?.index ?? detailEpisodeIndex;
+  let sourceEpisodeIndex = listedSourceEpisode?.index ?? detailEpisodeIndex;
   if (isSingleEpisodeEntry && !sourceEpisodeIndex) {
     throw new Error("单集详情与合集列表都没有可靠集号，已停止；不会按历史次数猜集号");
   }
 
   // ── 3. 读到付费集就停
-  const { free, paywallStartEpisodeIndex, unknownAccessEpisodeIndexes } =
-    selectFreeEpisodesUpToPaywall(listed.episodes);
+  const freeSelection = selectFreeEpisodesUpToPaywall(listed.episodes);
+  let free = freeSelection.free;
+  const { paywallStartEpisodeIndex, unknownAccessEpisodeIndexes } = freeSelection;
   if (!free.length) {
     if (unknownAccessEpisodeIndexes.length) {
       throw new Error("第1集缺少明确免费信号，已停止；unknown 不能作为免费集执行");
@@ -615,10 +686,44 @@ export async function buildNativeDeepReadPlanPreview(
     title: standaloneSource ? undefined : dramaNameZh || undefined,
     learnLlm: input.learnLlm || "gpt",
   });
-  const [ingested, claimStates] = await Promise.all([
-    deps.listIngestedEpisodes(seriesKey),
+  if (!deps.listIngestedEpisodeRecords && !deps.listIngestedEpisodes) {
+    throw new Error("原生精读计划缺少已入库记录读取器，未发出模型请求");
+  }
+  const [ingestedState, claimStates] = await Promise.all([
+    deps.listIngestedEpisodeRecords
+      ? deps.listIngestedEpisodeRecords(seriesKey).then((records) => ({
+          records,
+          complete: new Set(
+            records.filter((record) => record.complete).map((record) => record.episodeIndex),
+          ),
+        }))
+      : deps.listIngestedEpisodes!(seriesKey).then((complete) => ({
+          records: [] as NativeDeepReadIngestedPlanRecord[],
+          complete,
+        })),
     deps.listClaimStates(seriesKey),
   ]);
+  const ingested = ingestedState.complete;
+
+  /**
+   * 与真正执行入口共用同一套单源安放规则。
+   *
+   * 同名剧中的长合集可能早已被安放到 ep7；若上次只完成部分分片，complete 集合
+   * 不含 ep7。旧计划因此仍按列表临时值 ep1 出确认码，真正执行入口随后依据卡片
+   * sourceUrl 改回 ep7，最终复核必然失败，GCS 段缓存也永远没有机会命中。
+   * 这里同时纳入 partial 与 complete 记录，只改集号，不把 partial 当整集完成。
+   */
+  if (isSingleEpisodeEntry && listed.episodes.length === 1 && ingestedState.records.length) {
+    free = placeSingleSourceInExistingSeries(
+      free,
+      ingestedState.records.map((record) => ({
+        episodeIndex: record.episodeIndex,
+        url: record.sourceUrl,
+      })),
+      { sourceIdentity: url },
+    );
+    if (free.length === 1) sourceEpisodeIndex = free[0]!.index;
+  }
 
   // ── 4. 逐集探时长（零模型调用）
   // “学 N 集”指接下来新增 N 集，不是永远只看合集前 N 集。
@@ -673,7 +778,23 @@ export async function buildNativeDeepReadPlanPreview(
       deps,
       input.abortSignal,
     );
-    const durationSec = normalizeNativeDeepReadDurationSec(probedDurationSec);
+    const sameEpisodeRecord = ingestedState.records.find((record) =>
+      record.episodeIndex === e.index && !record.complete);
+    if (
+      sameEpisodeRecord
+      && !sameManhuaLearnEpisodeSource(sameEpisodeRecord.sourceUrl, e.url)
+    ) {
+      throw new Error(`第${e.index}集已有另一来源的部分学习卡，已停止以避免覆盖或重复付费`);
+    }
+    const restored = sameEpisodeRecord
+      ? restoreNativeDeepReadPartialPlan({
+          episodeIndex: e.index,
+          probedDurationSec,
+          record: sameEpisodeRecord,
+        })
+      : undefined;
+    const durationSec = restored?.durationSec
+      ?? normalizeNativeDeepReadDurationSec(probedDurationSec);
     if (durationSec > MANHUA_LEARN_MAX_DURATION_SEC) {
       throw new Error(
         `第${e.index}集超过 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟，超出学习策略上限`,
@@ -683,10 +804,11 @@ export async function buildNativeDeepReadPlanPreview(
       episodeIndex: e.index,
       sourceUrl: e.url,
       durationSec,
-      videoFps,
-      segments: splitNativeDeepReadSegments(durationSec, segmentSeconds),
+      videoFps: restored?.videoFps ?? videoFps,
+      segments: restored?.segments ?? splitNativeDeepReadSegments(durationSec, segmentSeconds),
       ...(reclaimSet.has(e.index) ? { reclaimFailedClaim: true } : {}),
       ...(sourceEpisodeIndex === e.index ? { recoverMisplacedSourceCache: true } : {}),
+      ...(restored ? { resumeStoredSegmentPlan: true } : {}),
     });
   }
 

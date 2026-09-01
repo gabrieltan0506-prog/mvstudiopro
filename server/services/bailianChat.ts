@@ -191,6 +191,11 @@ export type GlmParams = {
    * `openrouter_only` 是 0829 改线前的旧名，语义等同 `glm_only`，保留给存量调用方。
    */
   gatewayPolicy?: "fallback" | "glm_only" | "openrouter_only";
+  /**
+   * 正式多 JSON 整形的首选 GLM 通道。只改变两档的首发顺序；首选档失败后仍会
+   * 自动切到另一条 GLM 通道，绝不因为这个字段换成 Qwen。
+   */
+  preferredGlmGateway?: Extract<GlmGatewayName, "evolink_glm" | "openrouter">;
   /** 调用方墙钟；默认 240 秒，长结构任务可显式放宽。**这是每一档的上限**。 */
   timeoutMs?: number;
   /**
@@ -204,7 +209,7 @@ export type GlmParams = {
    * 同步块里、中间无 await，差值恒为 0，改动是**空改**，行为与改前逐字相同。
    */
   deadlineAtMs?: number;
-  /** 思考档位。OpenRouter 档发 `reasoning:{effort}`，EvoLink GLM 档发顶层 `reasoning_effort`。 */
+  /** 思考档位。GLM-5.3 实际只下发 low/high/max；legacy medium 会安全归一为 high。 */
   reasoningEffort?: "low" | "medium" | "high" | "max";
   /**
    * 采样温度（0829 晚用户拍板，整形链用 0.8）。
@@ -257,6 +262,30 @@ function addGlmGatewayUsage(
 
 type GlmGatewayAttemptError = Error & { glmGatewayUsage?: GlmGatewayUsage };
 
+/**
+ * 单进程供应商租约：同一 GLM 通道同一时刻只承接一份正式整形请求。
+ * 两份 JSON 会由调用方分配到不同首选通道；某档失败需要跨通道 fallback 时，
+ * 先等对方释放，避免两份同时压到同一个供应商。多 Fly 实例仍依赖上层任务锁。
+ */
+const glmGatewayLeaseTails = new Map<"evolink_glm" | "openrouter", Promise<void>>();
+
+async function acquireGlmGatewayLease(
+  gateway: "evolink_glm" | "openrouter",
+): Promise<() => void> {
+  const previous = glmGatewayLeaseTails.get(gateway) || Promise.resolve();
+  let releaseCurrent!: () => void;
+  const current = new Promise<void>((resolve) => { releaseCurrent = resolve; });
+  glmGatewayLeaseTails.set(gateway, current);
+  await previous;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    releaseCurrent();
+    if (glmGatewayLeaseTails.get(gateway) === current) glmGatewayLeaseTails.delete(gateway);
+  };
+}
+
 export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): Promise<GlmChatSuccess> {
   const trace: GlmGatewayTraceEntry[] = [];
   let accumulatedUsage = emptyGlmGatewayUsage();
@@ -306,9 +335,16 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
   // 旧的 slice(0,1) 会在改序后静默选错一档（下标依赖是改序时最容易漏的雷）。
   const glmOnly = params.gatewayPolicy === "glm_only"
     || params.gatewayPolicy === "openrouter_only";
-  const gateways = glmOnly
+  const eligibleGateways = glmOnly
     ? configuredGateways.filter((g) => GLM_MODEL_GATEWAYS.has(g.name))
     : configuredGateways;
+  const preferred = params.preferredGlmGateway;
+  const gateways = preferred
+    ? [
+        ...eligibleGateways.filter((gateway) => gateway.name === preferred),
+        ...eligibleGateways.filter((gateway) => gateway.name !== preferred),
+      ]
+    : eligibleGateways;
   for (const g of gateways) {
     if (!g.ready) {
       trace.push({ gateway: g.name, model: g.model, outcome: "skipped_not_configured" });
@@ -324,6 +360,23 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
     }
     if (params.abortSignal?.aborted) {
       throw new GlmGatewayError("GLM 调用已被硬截止取消", trace, accumulatedUsage);
+    }
+    const releaseGateway = GLM_MODEL_GATEWAYS.has(g.name)
+      ? await acquireGlmGatewayLease(g.name as "evolink_glm" | "openrouter")
+      : () => undefined;
+    if (params.abortSignal?.aborted) {
+      releaseGateway();
+      throw new GlmGatewayError("GLM 调用已被硬截止取消", trace, accumulatedUsage);
+    }
+    // 同通道请求可能在租约队列中等待很久；取得租约后必须按当前墙钟重新验预算。
+    // 若已不足以完成一档，先释放租约再跳过，绝不让 invokeOneGlmGateway 的 1 秒下限强发外呼。
+    if (Number.isFinite(Number(params.deadlineAtMs))) {
+      const remainMs = Number(params.deadlineAtMs) - Date.now();
+      if (remainMs < GLM_CHAIN_MIN_GATEWAY_MS) {
+        releaseGateway();
+        trace.push({ gateway: g.name, model: g.model, outcome: "skipped_budget_exhausted" });
+        continue;
+      }
     }
     try {
       const res = await invokeOneGlmGateway(params, g.url, g.key, g.model, g.name);
@@ -373,11 +426,17 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
       const providerError = nativeProviderReceiptFromError(e);
       if (providerError) trace[trace.length - 1]!.providerError = providerError;
       console.warn(`[glmGatewayFallback] ${g.name}: ${msg.slice(0, 200)}`);
+    } finally {
+      releaseGateway();
     }
   }
+  const glmOrderZh = gateways
+    .filter((gateway) => GLM_MODEL_GATEWAYS.has(gateway.name))
+    .map((gateway) => gateway.name === "evolink_glm" ? "EvoLink" : "OpenRouter")
+    .join("→");
   throw new GlmGatewayError(
     glmOnly
-      ? `GLM-5.3 两档(EvoLink→OpenRouter)全部失败：${trace.map((t) => `${t.gateway}=${t.outcome}`).join(",") || "通道未配置"}`
+      ? `GLM-5.3 两档(${glmOrderZh || "未配置"})全部失败：${trace.map((t) => `${t.gateway}=${t.outcome}`).join(",") || "通道未配置"}`
       : `GLM 兜底全链失败(含 Qwen 末档)：${trace.map((t) => `${t.gateway}=${t.outcome}`).join(",") || "无可用网关"}`,
     trace,
     accumulatedUsage,
@@ -569,11 +628,10 @@ async function invokeOneGlmGateway(
     // 🔒 reasoning_effort 必须显式传：官方默认是 "max"，而 glm-5.3 强制思考，
     // 思考 token 与正文共吃同一个 max_tokens（上限 131,072）。不传＝顶格烧思考，
     // 且踩知识库那笔血账——HTTP 200 + finish_reason="length" + content 为空。
-    // 取值域 minimal|none|low|medium|high|xhigh|max。
+    // GLM-5.3 官方取值域只有 low|high|max；legacy medium 必须归一为 high。
     body.max_tokens = budget;
     body.reasoning_effort = params.reasoningEffort === "max" ? "max"
       : params.reasoningEffort === "low" ? "low"
-      : params.reasoningEffort === "medium" ? "medium"
       : EVOLINK_GLM_DEFAULT_REASONING_EFFORT;
     // ⚠️ 不发 provider.require_parameters（OpenRouter 专属键）。
     // temperature 由公共体统一发（链级默认 0.8），两档同参，不在这里另发。
@@ -593,7 +651,11 @@ async function invokeOneGlmGateway(
     // 🔒 思考档位必须显式传：GLM-5.3 强制思考，思考与正文共吃同一个 max_tokens。
     // 0829 实证不传的后果——同一件整形活 Fireworks 烧到 110,030/131,072（84% 天花板），
     // 而 Z.AI 原生 27,630 就 stop。差的八万 token 全是没人要的思考。
-    body.reasoning = { effort: params.reasoningEffort || OPENROUTER_GLM_DEFAULT_REASONING_EFFORT };
+    body.reasoning = {
+      effort: params.reasoningEffort === "max" ? "max"
+        : params.reasoningEffort === "low" ? "low"
+        : OPENROUTER_GLM_DEFAULT_REASONING_EFFORT,
+    };
     // 🔒 provider 钉死原生 Z.AI 且禁止回落：16 家 host 行为不一，抽签＝不可复现。
     // require_parameters 与 order 必须合并进同一个 provider 对象（分开写后一个会覆盖前一个）。
     body.provider = {

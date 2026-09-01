@@ -23,6 +23,15 @@ const secretCard = {
     { atSec: 0, conflictZh: "冲突SECRET_BEAT", visualZh: "画面SECRET_VISUAL" },
     { atSec: 3, conflictZh: "冲突2", visualZh: "画面2" },
   ],
+  evidenceFrames: [{
+    atSec: 3,
+    kindZh: "剧情",
+    noteZh: "秘密原帧",
+    objectName: `manhua-template-learn/native-frames/secret/ep001/30ds-${"a".repeat(24)}.jpg`,
+    mimeType: "image/jpeg",
+    bytes: 10,
+    sha256: "a".repeat(64),
+  }],
   scenePoolHints: ["场景SECRET_SCENE"],
   castShape: { leadDesireZh: "欲望SECRET", pressureZh: "压力SECRET" },
   densityHints: { minBodyChars: 280, minDialogueLines: 12, minLocationHits: 2 },
@@ -107,6 +116,12 @@ vi.mock("../services/manhuaViralTemplateStore", () => ({
   getGcsManhuaViralProposal: vi.fn(async () => proposalForRouter),
   saveManhuaViralTemplateRevisionProposal: vi.fn(async (card: ManhuaViralTemplateCard) => card),
   approveManhuaViralTemplate: vi.fn(async () => secretCard),
+}));
+
+vi.mock("../services/gcs", () => ({
+  getGcsBucketName: () => "test-bucket",
+  signGcsObjectPathV4ReadUrl: (bucket: string, objectName: string, expiresSeconds: number) =>
+    `https://signed.example/${bucket}/${objectName}?expires=${expiresSeconds}`,
 }));
 vi.mock("../services/manhuaViralTemplateCopy", () => ({
   MANHUA_VIRAL_TEMPLATE_COPY: {
@@ -346,8 +361,16 @@ describe("owner 模板查看与优化", () => {
     await expect(otherAdmin.getApprovedOwnerDetail({ id: secretCard.id })).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
-    expect((await owner.getApprovedOwnerDetail({ id: secretCard.id })).card.nameZh)
-      .toContain("真名");
+    const detail = await owner.getApprovedOwnerDetail({ id: secretCard.id });
+    expect(detail.card.nameZh).toContain("真名");
+    expect(detail.evidenceFrameSigningFailedCount).toBe(0);
+    expect(detail.evidenceFrames).toEqual([
+      expect.objectContaining({
+        atSec: 3,
+        objectName: secretCard.evidenceFrames?.[0]?.objectName,
+        signedUrl: expect.stringContaining("expires=900"),
+      }),
+    ]);
   });
 
   it("owner 优化成功后返回真实变更和待审修订；其他 admin 不能调用", async () => {

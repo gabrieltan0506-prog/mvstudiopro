@@ -398,31 +398,12 @@ function writePosterResumeRecord(rec: PlatformPosterResumeRecord | null): void {
   }
 }
 
-function writePosterLastResult(urls: string[], kind: string): void {
+/** 已完成图片只活在当前页面；刷新后主动清除旧版留下的历史结果。 */
+function clearPosterLastResult(): void {
   try {
-    const clean = urls.filter((u) => /^https:\/\//i.test(String(u || "")));
-    if (!clean.length) return;
-    window.localStorage.setItem(
-      PLATFORM_POSTER_LAST_RESULT_LS_KEY,
-      JSON.stringify({ urls: clean.slice(0, 12), kind, at: Date.now() }),
-    );
+    window.localStorage.removeItem(PLATFORM_POSTER_LAST_RESULT_LS_KEY);
   } catch {
-    /* 忽略 */
-  }
-}
-
-function readPosterLastResult(): { urls: string[]; kind: string; at: number } | null {
-  try {
-    const raw = window.localStorage.getItem(PLATFORM_POSTER_LAST_RESULT_LS_KEY);
-    if (!raw) return null;
-    const o = JSON.parse(raw) as { urls?: unknown; kind?: unknown; at?: unknown };
-    const urls = Array.isArray(o.urls)
-      ? o.urls.map((u) => String(u || "")).filter((u) => /^https:\/\//i.test(u))
-      : [];
-    if (!urls.length) return null;
-    return { urls, kind: String(o.kind || ""), at: Number(o.at) || 0 };
-  } catch {
-    return null;
+    /* 隐私模式忽略 */
   }
 }
 /** @deprecated 监管旧键；读取时 fallback */
@@ -3914,7 +3895,6 @@ export default function PlatformPage() {
               setCustomNoteKind(pending.kind);
             }
             setCustomNoteImages([url]);
-            writePosterLastResult([url], pending.kind);
             toast.success("已找回上次未完成的生成结果");
           })
           .catch(() => {
@@ -3927,20 +3907,7 @@ export default function PlatformPage() {
       }
       return;
     }
-    const last = readPosterLastResult();
-    if (last && Date.now() - last.at < 24 * 3600_000) {
-      // 只在结果区为空时找回，并明示这是历史结果（防把昨天的图当本次发出去）
-      setCustomNoteImages((prev) => {
-        if (prev.length) return prev;
-        const mins = Math.max(1, Math.round((Date.now() - last.at) / 60_000));
-        const ago = mins >= 60 ? `${Math.round(mins / 60)} 小时前` : `${mins} 分钟前`;
-        toast.info(`已恢复上次的生成结果（${ago}），重新生成会覆盖`);
-        if (last.kind === "storyboard_sheet_landscape" || last.kind === "single_page_knowledge_card") {
-          setCustomNoteKind(last.kind);
-        }
-        return last.urls;
-      });
-    }
+    clearPosterLastResult();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   /** 扩写改走后台任务 + 轮询：每条写完就渲染，不再等七条跑完 */
@@ -7656,7 +7623,6 @@ export default function PlatformPage() {
       allowBloggerTitle,
     });
     if (res.imageUrl) {
-      writePosterLastResult([res.imageUrl], kind);
       return res.imageUrl;
     }
     if ((res as { isAsync?: boolean }).isAsync && (res as { progressJobId?: string }).progressJobId) {
@@ -7674,7 +7640,6 @@ export default function PlatformPage() {
         const out = j.output as { compositeImageUrl?: string; imageUrl?: string } | null;
         const url = out?.compositeImageUrl || out?.imageUrl || "";
         if (!url) throw new Error("未取得圖片 URL，請重試");
-        writePosterLastResult([url], kind);
         return url;
       } finally {
         // 只清自己的挂账：无条件清会把并发新任务的记录误删（审查抓的竞态）
@@ -7691,6 +7656,9 @@ export default function PlatformPage() {
     }
     if (message.includes("算力紧张")) {
       return message;
+    }
+    if (/ENOSPC|no space left on device/i.test(message)) {
+      return "服务器存储空间不足，尚未完成提炼，请稍后重试";
     }
     if (
       message.includes("Unexpected end of JSON input") ||
@@ -7841,8 +7809,6 @@ export default function PlatformPage() {
           });
           urls.push(url);
           setCustomNoteImages([...urls]);
-          // 逐页累积落库：单页内的写入是覆盖式，只存这里的全量才不会「三页只找回最后一页」
-          writePosterLastResult([...urls], "single_page_knowledge_card");
           setCustomNoteImageUpper(urls[0] ?? null);
           setCustomNoteImageLower(urls[1] ?? null);
         }
@@ -13626,6 +13592,7 @@ export default function PlatformPage() {
                         <ManhuaApprovedTemplateOwnerDrawer
                           open={Boolean(ownerTemplateDetailId)}
                           detail={ownerTemplateDetailQuery.data?.card || null}
+                          evidenceFrames={ownerTemplateDetailQuery.data?.evidenceFrames || []}
                           detailLoading={ownerTemplateDetailQuery.isLoading}
                           models={ownerTemplateOptimizeModels}
                           selectedModel={ownerTemplateOptimizeModel}
@@ -14204,6 +14171,7 @@ export default function PlatformPage() {
                         if (!list.length) return;
                         void (async () => {
                           setCustomNoteUploadBusy(true);
+                          let completedDirectUploads = 0;
                           try {
                             const encoded: KnowledgeCardPendingFile[] = [];
                             for (const file of list) {
@@ -14224,6 +14192,7 @@ export default function PlatformPage() {
                                   label: `${file.name}（${mb}MB）`,
                                 });
                                 encoded.push({ gcsUri, mimeType, fileName: file.name });
+                                completedDirectUploads += 1;
                                 continue;
                               }
                               const buf = await file.arrayBuffer();
@@ -14298,7 +14267,10 @@ export default function PlatformPage() {
                                 ? "文档较长，提炼超时，请稍后重试"
                                 : "算力紧张或请求超时，请稍后重试",
                             );
-                            setCustomNoteUploadStatus(`上传或提炼失败：${failMsg}（请重新上传，勿在失败态叠加）`);
+                            const failedStage = completedDirectUploads > 0
+                              ? `${completedDirectUploads} 个大文件已上传到云端，但读取或提炼失败`
+                              : "文件读取或提炼失败";
+                            setCustomNoteUploadStatus(`${failedStage}：${failMsg}（请重新选择文件重试，勿在失败态叠加）`);
                             toast.error(failMsg);
                           } finally {
                             setCustomNoteUploadBusy(false);
@@ -14311,7 +14283,7 @@ export default function PlatformPage() {
                     上传后自动读文/读图提炼并写入上方文本框；确认后点生成出图
                   </span>
                   {customNoteUploadStatus ? (
-                    <span className={`w-full text-[11px] leading-5 ${customNoteUploadStatus.startsWith("上传失败") || customNoteUploadStatus.includes("未探测") || customNoteUploadStatus.includes("未抽出") ? "text-rose-300/90" : "text-emerald-300/85"}`}>
+                    <span className={`w-full text-[11px] leading-5 ${/失败|不足|未探测|未抽出/.test(customNoteUploadStatus) ? "text-rose-300/90" : "text-emerald-300/85"}`}>
                       {customNoteUploadStatus}
                     </span>
                   ) : null}

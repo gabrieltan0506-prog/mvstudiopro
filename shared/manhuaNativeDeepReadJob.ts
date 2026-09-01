@@ -7,8 +7,8 @@ import { MANHUA_LEARN_MAX_DURATION_SEC } from "./manhuaTemplateLearnSeries.js";
  */
 export const MANHUA_NATIVE_DEEP_READ_MODEL = "gemini-3.1-pro-preview" as const;
 export const MANHUA_NATIVE_DEEP_READ_MODEL_LABEL = "Gemini 3.1 Pro" as const;
-/** 用户确认：读片整集结构化、系列聚合及同源探针统一使用medium；实测后再冻结。 */
-export const MANHUA_NATIVE_GLM_REASONING_EFFORT = "medium" as const;
+/** 用户确认：GLM-5.3 整集结构化、系列聚合及同源探针统一使用官方支持的 high。 */
+export const MANHUA_NATIVE_GLM_REASONING_EFFORT = "high" as const;
 
 export const NATIVE_DEEP_READ_JOB_PREP_MS = 10 * 60_000;
 export const NATIVE_DEEP_READ_JOB_PER_CALL_MS = 35 * 60_000;

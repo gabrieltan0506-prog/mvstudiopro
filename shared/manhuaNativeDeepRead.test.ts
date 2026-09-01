@@ -200,6 +200,7 @@ describe("适配器失败与超限语义（复审第六项）", () => {
     const detailed = shot(0, {
       unitTypeZh: "剪辑镜头",
       angleZh: "平视",
+      hintZh: "近景可见卷轴与地面，环境其余部分未入画",
       compositionZh: "双人分居画面两侧，中间保留压迫负空间",
       cameraMoveZh: "固定机位，以构图变化承接关系变化",
       blockingZh: "主角靠左后退，对手从右侧逼近",
@@ -234,6 +235,8 @@ describe("适配器失败与超限语义（复审第六项）", () => {
     });
     const writerAddon = formatManhuaViralTemplateWriterAddonFromCard(parsed);
     expect(writerAddon).toContain("站位调度=主角靠左后退，对手从右侧逼近");
+    expect(parsed.beatGrid[0]?.hintZh).toBe("近景可见卷轴与地面，环境其余部分未入画");
+    expect(writerAddon).toContain("本镜观察=近景可见卷轴与地面，环境其余部分未入画");
     expect(writerAddon).toContain("微表情=瞳孔收紧后下颌绷住");
     expect(writerAddon).toContain("关系反应=对手逼近触发主角后退，主角站稳迫使对手停步");
   });

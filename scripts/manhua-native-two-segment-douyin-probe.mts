@@ -824,7 +824,7 @@ async function main() {
       if (typeof entry?.hasAudio !== "boolean") throw new Error("已落盘证据缺少明确音轨标记");
       const decision = evaluateNativeDeepReadSegmentAcceptance({
         episodeIndex: 1, segmentIndex, ...span, hasAudio: entry.hasAudio,
-        raw: card, truncated: card.truncated === true,
+        raw: card, truncated: card.truncated === true, requireShotObservations: true,
       });
       const shots = (Array.isArray(card.shots) ? card.shots : []) as Array<{ startSec: number; endSec: number }>;
       return {

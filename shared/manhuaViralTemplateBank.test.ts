@@ -367,6 +367,27 @@ describe("原生视频精读产出入库（0824）", () => {
     expect(many!.beatGrid.at(-1)?.visualZh).toBe("动作160");
   });
 
+  it("关键时刻成功帧严格解析，坏对象名或坏 SHA 只丢对应行", () => {
+    const valid = {
+      atSec: 12.3,
+      kindZh: "剧情",
+      noteZh: "发现真相",
+      objectName: `manhua-template-learn/native-frames/fixture/ep001/123ds-${"a".repeat(24)}.jpg`,
+      mimeType: "image/jpeg",
+      bytes: 123,
+      sha256: "a".repeat(64),
+    };
+    const parsed = parseManhuaViralTemplateCard({
+      ...learnedCard(),
+      evidenceFrames: [
+        valid,
+        { ...valid, objectName: "manhua-template-learn/probes/private.jpg" },
+        { ...valid, atSec: 14, sha256: "bad" },
+      ],
+    });
+    expect(parsed?.evidenceFrames).toEqual([valid]);
+  });
+
   it("读卡时完整保留字幕、声音外证据、场景、标签、故事规则、来源和分片证据索引", () => {
     const parsed = parseManhuaViralTemplateCard({
       ...learnedCard(),
@@ -455,6 +476,55 @@ describe("原生视频精读产出入库（0824）", () => {
       names[1],
       names[2],
     ]);
+  });
+
+  it("部分卡只在完整原分片计划可恢复时保留 native provenance", () => {
+    const nativeVideoDeepRead = {
+      model: "gemini-3.1-pro",
+      attemptedSegments: 2,
+      successSegments: 1,
+      shotCount: 20,
+      droppedCount: 0,
+      truncated: false,
+      costCny: 1,
+      completedSegmentIndexes: [0],
+      assemblyComplete: false,
+      sourceDigest: "a".repeat(64),
+      snapshotSha256: "b".repeat(64),
+      sourceDurationSec: 120,
+      segmentSpans: [
+        { startSec: 0, endSec: 60 },
+        { startSec: 60, endSec: 120 },
+      ],
+      videoFps: 12,
+    };
+    const valid = parseManhuaViralTemplateCard({
+      ...learnedCard(),
+      provenance: { nativeVideoDeepRead },
+    });
+    expect(valid?.provenance?.nativeVideoDeepRead).toMatchObject(nativeVideoDeepRead);
+
+    const missingPlan = parseManhuaViralTemplateCard({
+      ...learnedCard(),
+      provenance: {
+        nativeVideoDeepRead: { ...nativeVideoDeepRead, segmentSpans: undefined },
+      },
+    });
+    expect(missingPlan?.provenance?.nativeVideoDeepRead).toBeUndefined();
+
+    const discontinuous = parseManhuaViralTemplateCard({
+      ...learnedCard(),
+      provenance: {
+        nativeVideoDeepRead: {
+          ...nativeVideoDeepRead,
+          segmentSpans: [
+            { startSec: 0, endSec: 60 },
+            { startSec: 61, endSec: 120 },
+          ],
+        },
+      },
+    });
+    expect(discontinuous?.provenance?.nativeVideoDeepRead).toBeUndefined();
   });
 
   it("isNativeVideoLearnedTemplate 认得出新旧形态", () => {

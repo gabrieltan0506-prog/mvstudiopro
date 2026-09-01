@@ -253,12 +253,32 @@ export const manhuaViralTemplateRouter = router({
     .input(z.object({ id: z.string().regex(/^tpl_[a-z0-9_-]{1,60}$/i) }))
     .query(async ({ ctx, input }) => {
       assertSiteOwner(ctx.user);
-      const { getGcsManhuaViralApproved } = await import("../services/manhuaViralTemplateStore");
+      const [{ getGcsManhuaViralApproved }, gcs] = await Promise.all([
+        import("../services/manhuaViralTemplateStore"),
+        import("../services/gcs"),
+      ]);
       const card = await getGcsManhuaViralApproved(input.id);
       if (!card || card.status !== "approved") {
         throw new TRPCError({ code: "NOT_FOUND", message: "正式模板不存在" });
       }
-      return { card };
+      let evidenceFrameSigningFailedCount = 0;
+      const evidenceFrames = (card.evidenceFrames || []).flatMap((frame) => {
+        try {
+          return [{
+            ...frame,
+            signedUrl: gcs.signGcsObjectPathV4ReadUrl(
+              gcs.getGcsBucketName(),
+              frame.objectName,
+              15 * 60,
+            ),
+          }];
+        } catch {
+          evidenceFrameSigningFailedCount += 1;
+          return [];
+        }
+      });
+      // 签名只在 owner 响应中临时生成，不写回 card，也不进入公开模板 DTO。
+      return { card, evidenceFrames, evidenceFrameSigningFailedCount };
     }),
 
   /** owner 明确点击后调用一次模型；成功结果只落 proposals/，不覆盖正式模板。 */

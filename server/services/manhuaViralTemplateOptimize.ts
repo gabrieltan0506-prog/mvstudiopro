@@ -81,6 +81,7 @@ const beatSchema = z.object({
   shotSizeZh: optionalTrimmed(32),
   angleZh: optionalTrimmed(32),
   compositionZh: optionalTrimmed(160),
+  hintZh: z.string().trim().min(1).optional(),
   cameraMoveZh: optionalTrimmed(220),
   blockingZh: optionalTrimmed(220),
   bodyActionZh: optionalTrimmed(220),
@@ -145,6 +146,7 @@ export function diffManhuaViralTemplateFields(
 
 /** 原生逐镜证据：抽帧给不出，一旦丢失无法重建。 */
 const NATIVE_BEAT_FIELDS = [
+  "hintZh",
   "endSec",
   "unitTypeZh",
   "shotSizeZh",
@@ -188,6 +190,9 @@ function assertNativeBeatMetadataNotDropped(
         throw new Error(`原生精读第 ${index + 1} 镜缺少 ${field}，未生成待审修订`);
       }
     }
+    if (before.hintZh !== undefined && before.hintZh !== after.hintZh) {
+      throw new Error(`原生精读第 ${index + 1} 镜hintZh观察被改写，未生成待审修订`);
+    }
   }
 }
 
@@ -218,7 +223,7 @@ ${JSON.stringify(protectedSource)}
 输出规则：
 1. 只输出一个 JSON 对象，顶层只能有 candidate、reasons。
 2. candidate 只能有 nameZh,laneZh,summaryZh,hook3sZh,beatGrid,reusableZh,genPromptHintZh,scenePoolHints,castShape,densityHints；字段结构与原模板一致。
-2.1 若原模板的 beatGrid 带 endSec/unitTypeZh/shotSizeZh/angleZh/compositionZh/cameraMoveZh/blockingZh/bodyActionZh/limbPropActionZh/microExpressionZh/gazeBreathZh/relationshipReactionZh/lightingZh/transitionInZh（原生精读产出），必须逐镜原样带回，**镜头条数一条都不能少**；这些字段是原始视听差分证据，丢了无法重建。
+2.1 若原模板的 beatGrid 带 endSec/hintZh/unitTypeZh/shotSizeZh/angleZh/compositionZh/cameraMoveZh/blockingZh/bodyActionZh/limbPropActionZh/microExpressionZh/gazeBreathZh/relationshipReactionZh/lightingZh/transitionInZh（原生精读产出），必须逐镜原样带回，**镜头条数一条都不能少**；这些字段是原始视听差分证据，丢了无法重建。
 3. 禁止输出或改写 id、publicCode、status、sourceRefs、provenance、approvedAt、updatedAt。
 4. 只借鉴结构和中性手法；禁止复制来源剧名、原台词、商标或无法从原模板和用户要求得到的事实。
 5. reasons 必须覆盖每个实际变更的顶层字段；field 只能从 ${MANHUA_VIRAL_TEMPLATE_OPTIMIZE_FIELDS.join(",")} 中选，reasonZh 说明该字段为何按用户要求优化。
@@ -271,6 +276,8 @@ export async function optimizeApprovedManhuaViralTemplate(input: {
   const candidateBase = parseManhuaViralTemplateCard({
     ...input.card,
     ...parsed.candidate,
+    // 私有关键帧不是模型可编辑字段；优化只改白名单正文，原证据引用逐字保留。
+    evidenceFrames: input.card.evidenceFrames,
     status: "proposed",
     publicCode: undefined,
     approvedAt: undefined,
@@ -295,6 +302,7 @@ export async function optimizeApprovedManhuaViralTemplate(input: {
     .slice(0, 20)}`;
   const proposal = parseManhuaViralTemplateCard({
     ...candidateBase,
+    evidenceFrames: input.card.evidenceFrames,
     id: revisionId,
     sourceRefs: input.card.sourceRefs,
     provenance: input.card.provenance,

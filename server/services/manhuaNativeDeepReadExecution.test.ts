@@ -52,6 +52,7 @@ function makeResult(over: Record<string, unknown> = {}) {
     hasAudio: false,
     visualRoutes: ["vertex_gcs_video"],
     degradedFpsSegmentIndexes: [],
+    assemblyComplete: true,
     ...over,
   };
 }
@@ -129,6 +130,7 @@ beforeEach(() => {
       generation: "1",
       etag: "etag-1",
     })) as never,
+    extractKeyMomentFrames: vi.fn(async () => []),
   } as never;
 });
 
@@ -172,6 +174,7 @@ describe("段缓存来源身份", () => {
     const raw = {
       shots: [{
         startSec: 0, endSec: coveredSec, unitTypeZh: "剪辑镜头",
+        hintZh: "人物近景，背景未入画",
         shotSizeZh: "近景", angleZh: "平视", compositionZh: "角色居中",
         cameraMoveZh: "固定机位", blockingZh: "角色原地站立",
         bodyActionZh: "躯干微微前倾", limbPropActionZh: "双手自然垂落",
@@ -647,6 +650,20 @@ describe("单集执行", () => {
   });
 
   it("跑成功后必经门禁并入库一次", async () => {
+    deps.run = vi.fn(async () => makeResult({
+      keyMoments: [{ atSec: 12, kindZh: "剧情", noteZh: "关键转折" }],
+      sourceDigest: "a".repeat(64),
+    }) as never);
+    const frame = {
+      atSec: 12,
+      kindZh: "剧情",
+      noteZh: "关键转折",
+      objectName: `manhua-template-learn/native-frames/s/ep001/120ds-${"b".repeat(24)}.jpg`,
+      mimeType: "image/jpeg" as const,
+      bytes: 10,
+      sha256: "b".repeat(64),
+    };
+    deps.extractKeyMomentFrames = vi.fn(async () => [frame]);
     const out = await executeAndIngestNativeDeepReadEpisode({ ...episode, seriesKey: "s" }, deps);
     expect(deps.run).toHaveBeenCalledTimes(1);
     expect(deps.run).toHaveBeenCalledWith(
@@ -656,6 +673,13 @@ describe("单集执行", () => {
       }),
     );
     expect(deps.ingest).toHaveBeenCalledTimes(1);
+    expect(deps.extractKeyMomentFrames).toHaveBeenCalledWith(expect.objectContaining({
+      seriesKey: "s",
+      episodeIndex: 1,
+      sourceDigest: "a".repeat(64),
+      keyMoments: [{ atSec: 12, kindZh: "剧情", noteZh: "关键转折" }],
+    }));
+    expect(deps.ingest).toHaveBeenCalledWith(expect.objectContaining({ evidenceFrames: [frame] }));
     expect(out.gcsUri).toBe("gs://b/ep1.json");
     expect(out.usage.model).toBe("gemini-3.1-pro-preview");
     expect(out.usage.usingPlanQuota).toBe(false);
@@ -804,6 +828,7 @@ describe("批量发车", () => {
     expect(progress).toContainEqual(expect.objectContaining({ status: "failed" }));
     expect(deps.clearSegmentCache).not.toHaveBeenCalled();
     expect(deps.aggregateSeries).not.toHaveBeenCalled();
+    expect(deps.extractKeyMomentFrames).not.toHaveBeenCalled();
   });
 
   it("已入库的集直接跳过，不调 runner —— 重跑不重烧", async () => {

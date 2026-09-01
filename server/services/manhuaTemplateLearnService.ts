@@ -1705,16 +1705,34 @@ export async function buildNativeDeepReadEpisodeExecution(
   // 先探一次确认这一集真的可读；读不到就别建 claim、别进付费流程
   deps.mediaSource(input.ep, probeState);
 
-  const total = normalizeNativeDeepReadDurationSec(durationSec);
-  const segments = splitNativeDeepReadSegments(total, input.segmentSeconds);
+  const resumeStoredSegmentPlan = input.confirmedPlanEpisode?.resumeStoredSegmentPlan === true;
+  const total = resumeStoredSegmentPlan
+    ? Number(input.confirmedPlanEpisode!.durationSec)
+    : normalizeNativeDeepReadDurationSec(durationSec);
+  const recomputedSegments = resumeStoredSegmentPlan
+    ? undefined
+    : splitNativeDeepReadSegments(
+        normalizeNativeDeepReadDurationSec(durationSec),
+        input.segmentSeconds,
+      );
+  const segments = resumeStoredSegmentPlan
+    ? input.confirmedPlanEpisode!.segments.map(({ startSec, endSec }) => ({ startSec, endSec }))
+    : recomputedSegments!;
+  const videoFps = parseNativeDeepReadVideoFps(
+    resumeStoredSegmentPlan ? input.confirmedPlanEpisode!.videoFps : input.videoFps,
+  );
   if (input.confirmedPlanEpisode) {
     const expected = input.confirmedPlanEpisode;
     if (
       expected.episodeIndex !== input.ep.index
       || expected.sourceUrl !== input.ep.url
-      || normalizeNativeDeepReadDurationSec(expected.durationSec) !== total
+      || (resumeStoredSegmentPlan
+        ? Math.abs(Number(durationSec) - Number(expected.durationSec)) > 0.5
+        : normalizeNativeDeepReadDurationSec(expected.durationSec) !== total)
+      || (!resumeStoredSegmentPlan
+        && JSON.stringify(expected.segments) !== JSON.stringify(recomputedSegments!))
       || JSON.stringify(expected.segments) !== JSON.stringify(segments)
-      || parseNativeDeepReadVideoFps(expected.videoFps) !== parseNativeDeepReadVideoFps(input.videoFps)
+      || parseNativeDeepReadVideoFps(expected.videoFps) !== videoFps
     ) {
       throw new Error(`第 ${input.ep.index} 集时长或分段与确认计划不一致，未发出模型请求`);
     }
@@ -1727,7 +1745,7 @@ export async function buildNativeDeepReadEpisodeExecution(
     // 卡片里存永久引用；GCS 导入的 7 天签名短链不进永久卡
     provenanceSourceRef: input.provenanceSourceRef,
     durationSec: total,
-    videoFps: parseNativeDeepReadVideoFps(input.videoFps),
+    videoFps,
     laneHintZh: input.laneHintZh,
     sourceMarkers: probeState.sourceMarkers,
     segments,

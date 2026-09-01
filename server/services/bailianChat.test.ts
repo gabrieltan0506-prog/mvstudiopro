@@ -81,6 +81,25 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     expect(JSON.parse(String(calls[0].init.body)).temperature).toBe(0.8);
   });
 
+  it("正式分流可首选OpenRouter，失败后才跨渠道fallback到EvoLink", async () => {
+    const calls = stubFetchSeq([
+      () => ({ ok: false, status: 503, body: "openrouter down" }),
+      () => ({ ok: true, status: 200, body: meteredBody() }),
+    ]);
+    const result = await invokeGlmJsonChatWithGatewayFallback({
+      system: "s",
+      user: "u",
+      gatewayPolicy: "glm_only",
+      preferredGlmGateway: "openrouter",
+    });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.url).toContain("openrouter.ai");
+    expect(calls[1]!.url).toContain("api.evolink.ai");
+    expect(result.gateway).toBe("evolink_glm");
+    expect(result.gatewayTrace.map((row) => row.gateway)).toEqual(["openrouter", "evolink_glm"]);
+  });
+
   it("glm_only 失败时关闭式停止：EvoLink→OpenRouter 两档都试，绝不回退 Qwen", async () => {
     const calls = stubFetchSeq([() => ({ ok: false, status: 503, body: "openrouter down" })]);
     const err = await invokeGlmJsonChatWithGatewayFallback({
@@ -346,6 +365,50 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     expect(err).toBeInstanceOf(GlmGatewayError);
     expect(err.gatewayTrace.map((t: any) => t.outcome))
       .toEqual(["http_error", "skipped_budget_exhausted"]);
+  });
+
+  it("🔒 等待同通道租约跨过 deadline 后跳过且绝不外呼", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "");
+    const realNow = Date.now();
+    let clock = realNow;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+
+    let markFetchEntered!: () => void;
+    let releaseFetch!: () => void;
+    const fetchEntered = new Promise<void>((resolve) => { markFetchEntered = resolve; });
+    const fetchReleased = new Promise<void>((resolve) => { releaseFetch = resolve; });
+    const fetchSpy = vi.fn(async () => {
+      markFetchEntered();
+      await fetchReleased;
+      return { ok: true, status: 200, text: async () => meteredBody() };
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const leaseHolder = invokeGlmJsonChatWithGatewayFallback({
+      system: "holder",
+      user: "holder",
+      gatewayPolicy: "glm_only",
+    });
+    await fetchEntered;
+
+    const queued = invokeGlmJsonChatWithGatewayFallback({
+      system: "queued",
+      user: "queued",
+      gatewayPolicy: "glm_only",
+      deadlineAtMs: realNow + 120_000,
+    }).catch((error) => error);
+    await Promise.resolve();
+    clock += 60_001;
+    releaseFetch();
+
+    await leaseHolder;
+    const err = await queued;
+    expect(err).toBeInstanceOf(GlmGatewayError);
+    expect(err.gatewayTrace).toEqual([
+      expect.objectContaining({ gateway: "evolink_glm", outcome: "skipped_budget_exhausted" }),
+      expect.objectContaining({ gateway: "openrouter", outcome: "skipped_not_configured" }),
+    ]);
+    expect(fetchSpy).toHaveBeenCalledOnce();
   });
 
   it("🔒 SSE 流式：分帧正文拼接、usage 与 finish_reason 从末帧取（0830 EvoLink 524 / undici 300s 修复）", async () => {

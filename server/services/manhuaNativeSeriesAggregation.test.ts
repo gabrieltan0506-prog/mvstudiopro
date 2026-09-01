@@ -94,13 +94,13 @@ function aggregationRaw() {
 }
 
 describe("系列聚合输入保留完整证据", () => {
-  it("medium进入快照指纹，不复用旧max参数产物", async () => {
+  it("high进入快照指纹，不复用旧参数产物", async () => {
     const { deps } = aggregationDeps();
     const { snapshot } = await stageNativeSeriesSnapshot({ seriesKey: SERIES_KEY }, deps as never);
     try {
       const body = await readFile(snapshot.manifestPath, "utf8");
       const manifest = JSON.parse(body);
-      expect(manifest.reasoningEffort).toBe("medium");
+      expect(manifest.reasoningEffort).toBe("high");
       expect(snapshot.snapshotSha256).toBe(createHash("sha256").update(body).digest("hex"));
       delete manifest.reasoningEffort;
       const legacyHash = createHash("sha256").update(`${JSON.stringify(manifest)}\n`).digest("hex");
@@ -307,7 +307,7 @@ describe("原生精读系列结构化 · GLM-5.3 两档（0829 改线：EvoLink 
     expect(body).toMatchObject({
       model: "glm-5.3",
       response_format: { type: "json_object" },
-      reasoning_effort: "medium",   // EvoLink 用顶层字符串，不是嵌套 reasoning:{effort}
+      reasoning_effort: "high",   // EvoLink 用顶层字符串，不是嵌套 reasoning:{effort}
       max_tokens: 131_072,
       temperature: 0.8,             // 链级默认，不发＝落到供应商默认 1.0
     });
@@ -318,7 +318,7 @@ describe("原生精读系列结构化 · GLM-5.3 两档（0829 改线：EvoLink 
     expect(body).not.toHaveProperty("top_p");
   });
 
-  it("主档失败后的OpenRouter仍使用medium，其他请求参数不变", async () => {
+  it("主档失败后的OpenRouter仍使用high，其他请求参数不变", async () => {
     vi.stubEnv("EVOLINK_API_KEY", "test-key");
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
@@ -329,9 +329,9 @@ describe("原生精读系列结构化 · GLM-5.3 两档（0829 改线：EvoLink 
     }));
     await expect(invokeNativeSeriesAggregationModel("{}")).resolves.toMatchObject({ gateway: "openrouter", raw: { ok: true } });
     expect(calls).toHaveLength(2);
-    expect(calls[0]!.body.reasoning_effort).toBe("medium");
+    expect(calls[0]!.body.reasoning_effort).toBe("high");
     expect(calls[1]).toMatchObject({ url: OPENROUTER_ENDPOINT, body: {
-      model: "z-ai/glm-5.3", reasoning: { effort: "medium" }, max_tokens: 131_072,
+      model: "z-ai/glm-5.3", reasoning: { effort: "high" }, max_tokens: 131_072,
       temperature: 0.8, stream: true, response_format: { type: "json_object" },
       provider: { order: ["z-ai/fp8"], allow_fallbacks: false, require_parameters: true },
     } });
