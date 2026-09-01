@@ -27,11 +27,12 @@ vi.mock("./manhuaNativeDeepReadExecution.ts", () => ({
 }));
 
 const originalArgv = process.argv;
-function episode(videoFps: unknown = undefined) {
+function episode(videoFps: unknown = undefined, segmentSeconds: unknown = undefined) {
   return {
     episodeIndex: 1, sourceUrl: "https://example.invalid/test-episode", durationSec: 319,
     segments: [{ startSec: 0, endSec: 319 }],
     ...(videoFps === undefined ? {} : { videoFps }),
+    ...(segmentSeconds === undefined ? {} : { segmentSeconds }),
   };
 }
 async function runCli(args: string[], flyApp = "") {
@@ -99,10 +100,32 @@ describe("原生读片批处理CLI凭证边界与参数投影", () => {
     ]);
   });
 
+  it.each([undefined, 281, 300, 7200])("清单分片上限=%s进入两次预检与正式执行，缺省显式锁300", async (segmentSeconds) => {
+    mocks.readFile.mockResolvedValue(JSON.stringify([episode(10, segmentSeconds)]));
+    await expect(runCli(["--go", "--confirm=test-confirmation", "--max-calls=2"], "mvstudiopro"))
+      .rejects.toThrow("测试拦截执行，未调用模型");
+    const expected = segmentSeconds ?? 300;
+    expect(mocks.validate).toHaveBeenCalledTimes(2);
+    for (const [episodes] of mocks.validate.mock.calls) {
+      expect(episodes[0].segmentSeconds).toBe(expected);
+    }
+    expect(mocks.runBatch.mock.calls[0][0].episodes[0].segmentSeconds).toBe(expected);
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining(`第1集：${expected}s上限`));
+  });
+
   it.each([null, "", false, 0, -1, 24.1])("非法fps=%s在列GCS前拒绝，不静默回落缺省值", async (fps) => {
     mocks.readFile.mockResolvedValue(JSON.stringify([episode(fps)]));
     await expect(runCli(["--dry-run"], "mvstudiopro")).rejects.toThrow("测试退出:1");
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("fps"));
+    expect(mocks.listIngested).not.toHaveBeenCalled();
+    expect(mocks.listClaims).not.toHaveBeenCalled();
+    expect(mocks.runBatch).not.toHaveBeenCalled();
+  });
+
+  it.each([null, "", false, 0, -1, 1.5, 7201])("非法分片上限=%s在列GCS前拒绝，不绕过到付费入口", async (segmentSeconds) => {
+    mocks.readFile.mockResolvedValue(JSON.stringify([episode(10, segmentSeconds)]));
+    await expect(runCli(["--dry-run"], "mvstudiopro")).rejects.toThrow("测试退出:1");
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("分片时长"));
     expect(mocks.listIngested).not.toHaveBeenCalled();
     expect(mocks.listClaims).not.toHaveBeenCalled();
     expect(mocks.runBatch).not.toHaveBeenCalled();

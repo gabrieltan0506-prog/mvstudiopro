@@ -22,6 +22,7 @@ import {
 import { isManhuaNativeDeepReadEnabled } from "./manhuaNativeDeepReadRunner.js";
 import {
   runNativeDeepReadBatch,
+  validateNativeDeepReadBatchPlan,
   type NativeDeepReadEpisodeExecution,
 } from "./manhuaNativeDeepReadExecution.js";
 import {
@@ -32,6 +33,7 @@ import {
 } from "./manhuaNativeDeepReadPlan.js";
 import {
   MANHUA_NATIVE_DEEP_READ_MODEL,
+  parseNativeDeepReadSegmentSeconds,
   parseNativeDeepReadVideoFps,
 } from "../../shared/manhuaNativeDeepReadJob.js";
 import type { ManhuaNativeModelReceipt } from "../../shared/manhuaNativeModelReceipt.js";
@@ -1706,6 +1708,7 @@ export async function buildNativeDeepReadEpisodeExecution(
   deps.mediaSource(input.ep, probeState);
 
   const resumeStoredSegmentPlan = input.confirmedPlanEpisode?.resumeStoredSegmentPlan === true;
+  const segmentSeconds = parseNativeDeepReadSegmentSeconds(input.segmentSeconds);
   const total = resumeStoredSegmentPlan
     ? Number(input.confirmedPlanEpisode!.durationSec)
     : normalizeNativeDeepReadDurationSec(durationSec);
@@ -1713,7 +1716,7 @@ export async function buildNativeDeepReadEpisodeExecution(
     ? undefined
     : splitNativeDeepReadSegments(
         normalizeNativeDeepReadDurationSec(durationSec),
-        input.segmentSeconds,
+        segmentSeconds,
       );
   const segments = resumeStoredSegmentPlan
     ? input.confirmedPlanEpisode!.segments.map(({ startSec, endSec }) => ({ startSec, endSec }))
@@ -1726,6 +1729,8 @@ export async function buildNativeDeepReadEpisodeExecution(
     if (
       expected.episodeIndex !== input.ep.index
       || expected.sourceUrl !== input.ep.url
+      || (expected.segmentSeconds != null
+        && parseNativeDeepReadSegmentSeconds(expected.segmentSeconds) !== segmentSeconds)
       || (resumeStoredSegmentPlan
         ? Math.abs(Number(durationSec) - Number(expected.durationSec)) > 0.5
         : normalizeNativeDeepReadDurationSec(expected.durationSec) !== total)
@@ -1738,13 +1743,14 @@ export async function buildNativeDeepReadEpisodeExecution(
     }
   }
 
-  return {
+  const execution: NativeDeepReadEpisodeExecution = {
     seriesKey: input.seriesKey,
     episodeIndex: input.ep.index,
     sourceUrl: input.ep.url,
     // 卡片里存永久引用；GCS 导入的 7 天签名短链不进永久卡
     provenanceSourceRef: input.provenanceSourceRef,
     durationSec: total,
+    segmentSeconds,
     videoFps,
     laneHintZh: input.laneHintZh,
     sourceMarkers: probeState.sourceMarkers,
@@ -1764,6 +1770,12 @@ export async function buildNativeDeepReadEpisodeExecution(
       return [{ url: media.url, referer: media.referer }];
     },
   };
+  validateNativeDeepReadBatchPlan([execution], {
+    maxEpisodes: 1,
+    seriesKey: input.seriesKey,
+    segmentSeconds,
+  });
+  return execution;
 }
 
 async function learnOneEpisode(input: {
@@ -2598,6 +2610,7 @@ export async function runManhuaTemplateLearn(
       );
       const batchResult = await runNativeDeepReadBatch({
         seriesKey,
+        segmentSeconds: confirmedNativePlan?.segmentSeconds,
         episodes: executionPlans.map(({ seriesKey: _seriesKey, abortSignal: _abortSignal, ...plan }) => plan),
         abortSignal: input.abortSignal,
         onModelCheckpoint: async (checkpoint) => {

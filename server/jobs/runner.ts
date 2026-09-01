@@ -615,7 +615,10 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         const { buildNativeDeepReadPlanPreviewFromServices } = await import(
           "../services/manhuaNativeDeepReadPlanRuntime.js"
         );
-        const { assertNativeDeepReadPlanConfirmation } = await import(
+        const {
+          assertNativeDeepReadPlanConfirmation,
+          describeNativeDeepReadSegmentPlanZh,
+        } = await import(
           "../services/manhuaNativeDeepReadPlan.js"
         );
         nativePlanPreview = await buildNativeDeepReadPlanPreviewFromServices({
@@ -648,9 +651,10 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         const plannedEpisodesZh = nativePlanPreview.episodes.length
           ? `本次执行第 ${nativePlanPreview.episodes.map((e) => e.episodeIndex).join("、")} 集 · `
           : "";
+        const segmentPlanZh = describeNativeDeepReadSegmentPlanZh(nativePlanPreview);
         await reportLearnProgress(
           MANHUA_LEARN_STAGE.list,
-          `执行计划复核通过：${plannedEpisodesZh}共 ${nativePlanPreview.executableEpisodeCount} 集 · ${nativePlanPreview.totalModelCalls} 次模型请求（画面 ${nativePlanPreview.totalSegments} 个视频分片每段一次调用共 ${nativePlanPreview.totalVisualCalls} 次、音轨随调直出 + 系列整理 1 次） · 确认码 ${nativePlanPreview.planHash}${reclaimZh}${quarantinedClaims}`,
+          `执行计划复核通过：${plannedEpisodesZh}${segmentPlanZh} · 共 ${nativePlanPreview.executableEpisodeCount} 集 · ${nativePlanPreview.totalModelCalls} 次模型请求（画面 ${nativePlanPreview.totalSegments} 个视频分片每段一次调用共 ${nativePlanPreview.totalVisualCalls} 次、音轨随调直出 + 系列整理 1 次） · 确认码 ${nativePlanPreview.planHash}${reclaimZh}${quarantinedClaims}`,
         );
       } else if (hasNativeDeepReadJobFields(params)) {
         throw new Error("原生精读计划未获明确确认，未发出模型请求");

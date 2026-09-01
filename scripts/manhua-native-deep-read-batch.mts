@@ -23,8 +23,9 @@
  *
  * episodes.json 形状：
  *   [{ "episodeIndex": 1, "sourceUrl": "https://…", "durationSec": 1080,
- *      "videoFps": 12, "segments": [{ "startSec": 0, "endSec": 1080 }] }]
- *   videoFps 省略默认10；明确填写时按共享规则校验，不按分片长度推断。
+ *      "segmentSeconds": 1080, "videoFps": 12,
+ *      "segments": [{ "startSec": 0, "endSec": 1080 }] }]
+ *   segmentSeconds 省略默认300、videoFps 省略默认12；两者都按共享规则校验。
  */
 import fs from "node:fs/promises";
 import process from "node:process";
@@ -33,13 +34,11 @@ import { pathToFileURL } from "node:url";
 import {
   isManhuaNativeDeepReadEnabled,
   resolveNativeDeepReadNodeUrls,
-  resolveNativeDeepReadRequestFps,
 } from "../server/services/manhuaNativeDeepReadRunner.ts";
 import { listIngestedNativeDeepReadEpisodes } from "../server/services/manhuaNativeDeepReadIngest.ts";
 import {
   NATIVE_DEEP_READ_BATCH_HARD_CEILING,
   NATIVE_DEEP_READ_DEFAULT_BATCH_EPISODES,
-  NATIVE_DEEP_READ_MAX_SEGMENT_SEC,
   runNativeDeepReadBatch,
   validateNativeDeepReadBatchPlan,
   type NativeDeepReadBatchEpisode,
@@ -53,7 +52,10 @@ import {
   appendManhuaNativeModelReceipt,
   type ManhuaNativeModelReceipt,
 } from "../shared/manhuaNativeModelReceipt.ts";
-import { parseNativeDeepReadVideoFps } from "../shared/manhuaNativeDeepReadJob.ts";
+import {
+  parseNativeDeepReadSegmentSeconds,
+  parseNativeDeepReadVideoFps,
+} from "../shared/manhuaNativeDeepReadJob.ts";
 import { sanitizeSensitiveText } from "../server/services/manhuaMediaSanitize.ts";
 
 function fail(msgZh: string): never {
@@ -108,6 +110,7 @@ export async function main(): Promise<void> {
     sourceUrl: string;
     durationSec: number;
     laneHintZh?: string;
+    segmentSeconds?: unknown;
     videoFps?: unknown;
     segments: Array<{ startSec: number; endSec: number; hintZh?: string }>;
   };
@@ -233,6 +236,8 @@ export async function main(): Promise<void> {
     sourceUrl: e.sourceUrl,
     durationSec: e.durationSec,
     laneHintZh: e.laneHintZh,
+    // 缺省也显式投影为共享默认300，付费CLI不能用“未带字段”绕过分片契约。
+    segmentSeconds: parseNativeDeepReadSegmentSeconds(e.segmentSeconds),
     videoFps: parseNativeDeepReadVideoFps(e.videoFps),
     segments: e.segments,
     resolveNodes: () => resolveNodeUrls(e.sourceUrl, controller.signal),
@@ -241,7 +246,7 @@ export async function main(): Promise<void> {
       : {}),
   });
 
-  // 预检在列GCS之前：重复集号、非法采样率或超出共享时长策略都在这里拒绝。
+  // 预检在列GCS之前：重复集号、非法分片/采样率或超出共享时长策略都在这里拒绝。
   try {
     validateNativeDeepReadBatchPlan(wanted.map(toBatchEpisode), {
       maxEpisodes: limit,
@@ -306,7 +311,7 @@ export async function main(): Promise<void> {
     `模型API总数   ${plan?.totalModelCalls || 0}   ← 视觉（每段一次） + 系列聚合`
   );
   console.log(
-    `单段上限    ${NATIVE_DEEP_READ_MAX_SEGMENT_SEC}s（默认 ${resolveNativeDeepReadRequestFps(NATIVE_DEEP_READ_MAX_SEGMENT_SEC)}fps，不按时长降采样）`
+    `实际分片    ${executable.map(e => `第${e.episodeIndex}集：${parseNativeDeepReadSegmentSeconds(e.segmentSeconds)}s上限`).join(" · ") || "—"}`
   );
   console.log(
     `实际采样    ${executable.map(e => `第${e.episodeIndex}集：${parseNativeDeepReadVideoFps(e.videoFps)}fps`).join(" · ") || "—"}`

@@ -4014,6 +4014,25 @@ function readSegmentAdvisories(
   });
 }
 
+export const NATIVE_DEEP_READ_FINAL_SEGMENT_ADMIT_CODE = "last_segment_unconditional_admit";
+
+/**
+ * 已付费尾片只有同时满足“多分片真实尾片、schema 仍可解析、明确放行标记”才可复用。
+ * 内容门禁可以按用户规则跳过，坏 JSON / 坏 schema 不能借标记混过去。
+ */
+export function isNativeDeepReadFinalSegmentAdmitted(input: {
+  raw: Record<string, unknown>;
+  segmentIndex: number;
+  segmentCount: number;
+}): boolean {
+  return input.segmentCount > 1
+    && input.segmentIndex === input.segmentCount - 1
+    && input.raw.gateMarked === true
+    && nativeDeepReadSegmentSchema.safeParse(input.raw).success
+    && readSegmentAdvisories(input.raw, input.segmentIndex)
+      .some((row) => row.code === NATIVE_DEEP_READ_FINAL_SEGMENT_ADMIT_CODE);
+}
+
 type SegmentAttemptResult = {
   raw: Record<string, unknown>;
   /** 段门禁收集到的改进建议（0829 起只贴标记，不丢内容）。 */
@@ -4277,7 +4296,12 @@ async function executeNativeDeepReadBatch(
           }
           // 门禁代码收紧时，即使指纹未变，旧段也必须按当前标准复验；未过即 miss。
           // 判据与入库口共用同一个函数——两把尺子会导致「放行入库→复验拒绝→重读」死循环。
-          if (!nativeDeepReadSegmentMeetsThreeItemLine({
+          const reusableFinalSegmentAdmit = isNativeDeepReadFinalSegmentAdmitted({
+            raw: entry.raw,
+            segmentIndex,
+            segmentCount: episode.segments.length,
+          });
+          if (!reusableFinalSegmentAdmit && !nativeDeepReadSegmentMeetsThreeItemLine({
             episodeIndex: episode.episodeIndex,
             segmentIndex,
             startSec: segment.startSec,
@@ -4395,7 +4419,6 @@ async function executeNativeDeepReadBatch(
       const markedVersionsBySegment = new Map<number, Array<Record<string, unknown>>>();
       /** 每个已解析尝试的完整返回元数据；仅用于三档全未过时从三份已保存结果中择优。 */
       const parsedAttemptsBySegment = new Map<number, Map<number, SegmentAttemptResult>>();
-      const finalSegmentAdmitCode = "last_segment_unconditional_admit";
       const markFinalSegmentAdmitted = (
         raw: Record<string, unknown>,
         segmentIndex: number,
@@ -4409,7 +4432,7 @@ async function executeNativeDeepReadBatch(
         raw.gateMarkedZh = detailZh;
         return dedupeNativeDeepReadAdvisories([
           ...reasons,
-          { code: finalSegmentAdmitCode, detailZh, segmentIndex },
+          { code: NATIVE_DEEP_READ_FINAL_SEGMENT_ADMIT_CODE, detailZh, segmentIndex },
         ]);
       };
       const collectAdvisories = (): NativeDeepReadAdvisory[] =>
@@ -5231,10 +5254,11 @@ async function executeNativeDeepReadBatch(
          */
         if (cachedEntry) {
           const reusableBestEffort = readCurrentBestEffortMarker(cachedEntry.raw);
-          const reusableFinalSegmentAdmit = segmentCount > 1
-            && segmentIndex === segmentCount - 1
-            && readSegmentAdvisories(cachedEntry.raw, segmentIndex)
-              .some((row) => row.code === finalSegmentAdmitCode);
+          const reusableFinalSegmentAdmit = isNativeDeepReadFinalSegmentAdmitted({
+            raw: cachedEntry.raw,
+            segmentIndex,
+            segmentCount,
+          });
           // 与入库口共用判据：独立证据门不豁免，其余按家族与偏差判断。
           if (!reusableBestEffort && !reusableFinalSegmentAdmit && !nativeDeepReadSegmentMeetsThreeItemLine({
             episodeIndex: episode.episodeIndex,

@@ -15,7 +15,10 @@ import {
   type NativeDeepReadBatchEpisode,
   type NativeDeepReadExecutionDeps,
 } from "./manhuaNativeDeepReadExecution";
-import { nativeDeepReadSegmentCacheFingerprint } from "./manhuaNativeDeepReadRunner";
+import {
+  NATIVE_DEEP_READ_FINAL_SEGMENT_ADMIT_CODE,
+  nativeDeepReadSegmentCacheFingerprint,
+} from "./manhuaNativeDeepReadRunner";
 import {
   NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
   type NativeDeepReadSegmentCacheEntry,
@@ -135,6 +138,38 @@ beforeEach(() => {
 });
 
 describe("段缓存来源身份", () => {
+  const makeMigrationRaw = (input: {
+    startSec: number;
+    coveredEndSec: number;
+    truncated?: boolean;
+  }) => ({
+    shots: [{
+      startSec: input.startSec, endSec: input.coveredEndSec, unitTypeZh: "剪辑镜头",
+      hintZh: "人物近景，背景未入画",
+      shotSizeZh: "近景", angleZh: "平视", compositionZh: "角色居中",
+      cameraMoveZh: "固定机位", blockingZh: "角色原地站立",
+      bodyActionZh: "躯干微微前倾", limbPropActionZh: "双手自然垂落",
+      microExpressionZh: "眉心收紧", gazeBreathZh: "视线抬起，呼吸转稳",
+      relationshipReactionZh: "回应画外角色后重新站稳", lightingZh: "冷调顶光",
+      actionZh: "人物抬眼回应", transitionInZh: "硬切",
+      evidenceRole: "story",
+    }],
+    subtitles: [],
+    audioResolution: [],
+    beatStructureZh: "压迫后回应",
+    moodArcZh: "克制转坚定",
+    classification: {
+      emotionTagsZh: ["压迫渐强"],
+      narrativeFeatureTagsZh: ["信息递进"],
+      performanceTagsZh: ["克制爆发"],
+      audiovisualTagsZh: ["冷暖对撞"],
+      audienceExperienceTagsZh: ["持续紧张"],
+    },
+    reusableZh: "先压后抬",
+    genPromptHintZh: "近景反应",
+    truncated: input.truncated === true,
+  });
+
   it("GCS 同一路径 generation 变化时摘要变化", async () => {
     const first = await resolveNativeDeepReadCacheSourceDigest({
       sourceRef: "gs://b/video.mp4",
@@ -171,33 +206,7 @@ describe("段缓存来源身份", () => {
   ])("同源alias覆盖$coveredSec/10秒 truncated=$truncated，按生产判据决定迁移", async ({ coveredSec, truncated, migrate }) => {
     const sourceDigest = "d".repeat(64);
     const segments = [{ startSec: 0, endSec: 10 }];
-    const raw = {
-      shots: [{
-        startSec: 0, endSec: coveredSec, unitTypeZh: "剪辑镜头",
-        hintZh: "人物近景，背景未入画",
-        shotSizeZh: "近景", angleZh: "平视", compositionZh: "角色居中",
-        cameraMoveZh: "固定机位", blockingZh: "角色原地站立",
-        bodyActionZh: "躯干微微前倾", limbPropActionZh: "双手自然垂落",
-        microExpressionZh: "眉心收紧", gazeBreathZh: "视线抬起，呼吸转稳",
-        relationshipReactionZh: "回应画外角色后重新站稳", lightingZh: "冷调顶光",
-        actionZh: "人物抬眼回应", transitionInZh: "硬切",
-        evidenceRole: "story",
-      }],
-      subtitles: [],
-      audioResolution: [],
-      beatStructureZh: "压迫后回应",
-      moodArcZh: "克制转坚定",
-      classification: {
-        emotionTagsZh: ["压迫渐强"],
-        narrativeFeatureTagsZh: ["信息递进"],
-        performanceTagsZh: ["克制爆发"],
-        audiovisualTagsZh: ["冷暖对撞"],
-        audienceExperienceTagsZh: ["持续紧张"],
-      },
-      reusableZh: "先压后抬",
-      genPromptHintZh: "近景反应",
-      truncated,
-    };
+    const raw = makeMigrationRaw({ startSec: 0, coveredEndSec: coveredSec, truncated });
     const alias: NativeDeepReadSegmentCacheEntry = {
       schemaVersion: NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
       fingerprint: nativeDeepReadSegmentCacheFingerprint({
@@ -255,6 +264,71 @@ describe("段缓存来源身份", () => {
     expect(migrated.raw).toEqual(raw);
     expect(migrated.paidUsage).toEqual(alias.paidUsage);
     expect(migrated.fingerprint).not.toBe(alias.fingerprint);
+  });
+
+  it("同源迁移保留已明确放行的多片尾片，不因内容门禁复验而重买", async () => {
+    const sourceDigest = "e".repeat(64);
+    const segments = [
+      { startSec: 0, endSec: 10 },
+      { startSec: 10, endSec: 20 },
+    ];
+    const raw = {
+      ...makeMigrationRaw({ startSec: 10, coveredEndSec: 12 }),
+      gateMarked: true,
+      gateMarkedZh: "尾片内容门禁已记录并按规则放行",
+      advisories: [{
+        code: NATIVE_DEEP_READ_FINAL_SEGMENT_ADMIT_CODE,
+        detailZh: "尾片内容门禁已记录并按规则放行",
+        segmentIndex: 1,
+      }],
+    };
+    const alias: NativeDeepReadSegmentCacheEntry = {
+      schemaVersion: NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
+      fingerprint: nativeDeepReadSegmentCacheFingerprint({
+        sourceDigest,
+        episodeIndex: 10,
+        episodeDurationSec: 20,
+        segment: segments[1]!,
+        segmentIndex: 1,
+        segmentCount: 2,
+        hasAudio: false,
+      }),
+      sourceDigest,
+      seriesKey: "s1",
+      episodeIndex: 10,
+      segmentIndex: 1,
+      startSec: 10,
+      endSec: 20,
+      hasAudio: false,
+      requestedFps: 10,
+      visualRoute: "vertex_gcs_video",
+      degraded: false,
+      raw,
+      paidUsage: {
+        inputTokens: 100,
+        outputTokens: 20,
+        audioInputTokens: 0,
+        reasoningTokens: 5,
+        costCny: 0.5,
+      },
+      savedAtIso: "2026-08-27T00:00:00.000Z",
+    };
+    const createTarget = vi.fn(async (_entry: NativeDeepReadSegmentCacheEntry) => "created" as const);
+    const result = await migrateMisplacedNativeDeepReadSegmentCaches({
+      seriesKey: "s1",
+      episodeIndex: 1,
+      durationSec: 20,
+      segments,
+      sourceDigest,
+    }, {
+      listAliases: vi.fn(async () => [{ entry: alias, generation: "10", objectName: "ep010" }]),
+      listClaimStates: vi.fn(async () => new Map()),
+      readTarget: vi.fn(async () => null),
+      createTarget,
+    });
+    expect(result).toEqual({ migratedSegmentIndexes: [1], sourceEpisodeIndexes: [10] });
+    expect(createTarget).toHaveBeenCalledTimes(1);
+    expect(createTarget.mock.calls[0]![0].raw).toEqual(raw);
   });
 
   it("ep010 同源错位缓存仍有健康 claim 时，ep001 关闭式阻塞且零模型调用", async () => {
@@ -352,7 +426,11 @@ describe("批次预检：在任何模型动作之前", () => {
 
   it("自定义单片可超过五分钟，仍要求完整覆盖且保留整片策略", () => {
     expect(validateNativeDeepReadBatchPlan([
-      ep(1, { durationSec: 1080, segments: [{ startSec: 0, endSec: 1080 }] }),
+      ep(1, {
+        durationSec: 1080,
+        segmentSeconds: 1080,
+        segments: [{ startSec: 0, endSec: 1080 }],
+      }),
     ]).totalVisualCalls).toBe(1);
     expect(() => validateNativeDeepReadBatchPlan([
       ep(1, { durationSec: 1200, segments: [{ startSec: 0, endSec: 1080 }] }),
@@ -361,6 +439,38 @@ describe("批次预检：在任何模型动作之前", () => {
     expect(() => validateNativeDeepReadBatchPlan([
       ep(1, { durationSec: 7201, segments: [{ startSec: 0, endSec: 7201 }] }),
     ])).toThrow("超过 120 分钟");
+  });
+
+  it("确认281秒时，300秒旧分片在任何模型动作前拒绝", () => {
+    expect(() => validateNativeDeepReadBatchPlan([
+      ep(1, {
+        durationSec: 600,
+        segmentSeconds: 281,
+        segments: [
+          { startSec: 0, endSec: 300 },
+          { startSec: 300, endSec: 581 },
+          { startSec: 581, endSec: 600 },
+        ],
+      }),
+    ])).toThrow("实际分片未按自定义 281s 计算");
+  });
+
+  it("计划确认码绑定实际执行顺序，换集序不能复用旧确认", () => {
+    const first = ep(1);
+    const second = ep(2);
+    const forward = validateNativeDeepReadBatchPlan([first, second], { seriesKey: "s" });
+    const reversed = validateNativeDeepReadBatchPlan([second, first], { seriesKey: "s" });
+    expect(reversed.planHash).not.toBe(forward.planHash);
+  });
+
+  it("计划确认码绑定会进入模型提示词的laneHint", () => {
+    const suspense = validateNativeDeepReadBatchPlan([
+      ep(1, { laneHintZh: "都市悬疑" }),
+    ], { seriesKey: "s" });
+    const costume = validateNativeDeepReadBatchPlan([
+      ep(1, { laneHintZh: "古装仙侠" }),
+    ], { seriesKey: "s" });
+    expect(costume.planHash).not.toBe(suspense.planHash);
   });
 
   it("切片超出片长拒绝", () => {

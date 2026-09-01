@@ -4,6 +4,7 @@ import {
   assertNativeDeepReadPlanConfirmation,
   buildNativeDeepReadPlanPreview,
   computeNativeDeepReadPlanHash,
+  describeNativeDeepReadSegmentPlanZh,
   probeNativeDeepReadDurationSec,
   selectFreeEpisodesUpToPaywall,
   splitNativeDeepReadSegments,
@@ -84,6 +85,25 @@ describe("原生精读计划", () => {
     }, d);
     expect(defaultPlan.totalVisualCalls).toBe(6);
     expect(defaultPlan.planHash).not.toBe(plan.planHash);
+  });
+
+  it("281秒计划明确显示真实尾片，不能只显示分片数量", async () => {
+    const d = deps({ probeDurationSec: vi.fn(async () => 1_404) });
+    const plan = await buildNativeDeepReadPlanPreview({
+      url: "https://www.douyin.com/collection/123456",
+      limit: 1,
+      segmentSeconds: 281,
+      videoFps: 10,
+    }, d);
+    expect(plan.episodes[0]?.segments).toEqual([
+      { startSec: 0, endSec: 281 },
+      { startSec: 281, endSec: 562 },
+      { startSec: 562, endSec: 843 },
+      { startSec: 843, endSec: 1_124 },
+      { startSec: 1_124, endSec: 1_404 },
+    ]);
+    expect(describeNativeDeepReadSegmentPlanZh(plan))
+      .toBe("分片上限 281 秒 · 第 1 集 5 片（前 4 片各 281 秒，尾片 280 秒）");
   });
 
   it("非法自定义长度在访问来源之前拒绝", async () => {
@@ -555,6 +575,7 @@ describe("原生精读计划", () => {
       episodeIndex: 1,
       sourceUrl: `https://www.douyin.com/video/${modalId}`,
       durationSec: 2_212,
+      segmentSeconds: 300,
       videoFps: 12,
       segments: [
         { startSec: 0, endSec: 300 },
@@ -597,7 +618,7 @@ describe("原生精读计划", () => {
     expect(d.probeDurationSec).not.toHaveBeenCalled();
   });
 
-  it("同一单源的部分卡在计划阶段回到原集号，随后可按原集 GCS 分片续学", async () => {
+  it("同一单源 partial 只有原边界符合本次自定义长度时才续学", async () => {
     const modalId = "7660141869153651987";
     const stableUrl = `https://www.douyin.com/video/${modalId}`;
     const d = deps({
@@ -606,16 +627,17 @@ describe("原生精读计划", () => {
         playbackUrl: "https://v.douyinvod.com/standalone.mp4",
         access: "free" as const,
       })),
+      probeDurationSec: vi.fn(async () => 100),
       listIngestedEpisodeRecords: vi.fn(async () => [{
         episodeIndex: 7,
         sourceUrl: `${stableUrl}?share_token=old`,
         complete: false,
         attemptedSegments: 2,
         completedSegmentIndexes: [0],
-        durationSec: 101,
+        durationSec: 100,
         segmentSpans: [
           { startSec: 0, endSec: 50 },
-          { startSec: 50, endSec: 101 },
+          { startSec: 50, endSec: 100 },
         ],
         videoFps: 10,
       }]),
@@ -630,7 +652,7 @@ describe("原生精读计划", () => {
     });
 
     const plan = await buildNativeDeepReadPlanPreview(
-      { url: stableUrl, limit: 1 },
+      { url: stableUrl, limit: 1, segmentSeconds: 50 },
       d,
     );
 
@@ -640,11 +662,12 @@ describe("原生精读计划", () => {
       reclaimFailedClaim: true,
       recoverMisplacedSourceCache: true,
       resumeStoredSegmentPlan: true,
-      durationSec: 101,
+      durationSec: 100,
+      segmentSeconds: 50,
       videoFps: 10,
       segments: [
         { startSec: 0, endSec: 50 },
-        { startSec: 50, endSec: 101 },
+        { startSec: 50, endSec: 100 },
       ],
     })]);
     expect(plan.alreadyIngestedEpisodeIndexes).toEqual([]);
@@ -683,7 +706,7 @@ describe("原生精读计划", () => {
     )).rejects.toThrow(/疑似来源内容变化.*未发出模型请求/);
   });
 
-  it("同源部分卡保留精确小数末端，允许 ffprobe 与整数历史计划的半秒内差异", async () => {
+  it("旧等分 partial 与当前自定义长度不一致时停止，不静默沿用旧边界", async () => {
     const modalId = "7660141869153651987";
     const stableUrl = `https://www.douyin.com/video/${modalId}`;
     const exactDuration = 1593.899675;
@@ -709,16 +732,11 @@ describe("原生精读计划", () => {
       }]),
     });
 
-    const plan = await buildNativeDeepReadPlanPreview({ url: stableUrl, limit: 1 }, d);
-    expect(plan.episodes[0]).toMatchObject({
-      episodeIndex: 7,
-      durationSec: exactDuration,
-      resumeStoredSegmentPlan: true,
-      segments: [
-        { startSec: 0, endSec: 796.9498375 },
-        { startSec: 796.9498375, endSec: exactDuration },
-      ],
-    });
+    await expect(buildNativeDeepReadPlanPreview({
+      url: stableUrl,
+      limit: 1,
+      segmentSeconds: 281,
+    }, d)).rejects.toThrow("实际分片未按自定义 281s 计算");
   });
 
   it("同源部分卡的原分片数量不等于 attemptedSegments 时关闭式停止", async () => {

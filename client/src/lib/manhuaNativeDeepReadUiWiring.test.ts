@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 
 const PAGE = readFileSync(new URL("../pages/PlatformPage.tsx", import.meta.url), "utf8");
 const RESULT_UI = readFileSync(new URL("./manhuaLearnResultUi.ts", import.meta.url), "utf8");
+const JOB_API = readFileSync(new URL("./jobs.ts", import.meta.url), "utf8");
+const SERVER_API = readFileSync(new URL("../../../server/_core/index.ts", import.meta.url), "utf8");
 const START = PAGE.indexOf("const runManhuaTemplateLearnCloud = useCallback");
 const END = PAGE.indexOf("/**\n   * 刷新/断线恢复", START);
 const LEARN_FLOW = PAGE.slice(START, END);
@@ -123,6 +125,22 @@ describe("原生精读页面接线", () => {
     expect(PAGE).toContain("await manhuaViralProposalsRefetchRef.current()");
     expect(PAGE).toContain("await manhuaClaimsRefetchRef.current()");
     expect(PAGE).toContain("if (!terminalRefreshFailed)");
+  });
+
+  it("同源异参数409保留旧运行卡，只刷新状态且不写成failed", () => {
+    const conflictAt = LEARN_FLOW.indexOf("isManhuaNativeDeepReadParamsConflict(e)");
+    const failedAt = LEARN_FLOW.indexOf("const failed = manhuaLearnResultFromFailure", conflictAt);
+    expect(conflictAt).toBeGreaterThan(0);
+    expect(failedAt).toBeGreaterThan(conflictAt);
+    const conflictBlock = LEARN_FLOW.slice(conflictAt, failedAt);
+    expect(conflictBlock).toContain("previousSourceItem");
+    expect(conflictBlock).toContain("removeManhuaLearnBasketItem");
+    expect(conflictBlock).toContain("await refreshManhuaLearnServerJobs()");
+    expect(conflictBlock).toContain("未建立新任务");
+    expect(conflictBlock).not.toContain('jobStatus: "failed"');
+    expect(conflictBlock).not.toContain("manhuaLearnResultFromFailure");
+    expect(SERVER_API).toContain("MANHUA_NATIVE_DEEP_READ_ACTIVE_PARAMS_CONFLICT_CODE");
+    expect(JOB_API).toContain("throw new CreateJobError(detail.message, response.status, detail.code)");
   });
 
   it("模型、token、成本和原始进度只通过 owner/监管技术详情门展示", () => {

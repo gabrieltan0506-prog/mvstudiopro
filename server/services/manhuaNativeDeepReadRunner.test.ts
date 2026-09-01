@@ -39,6 +39,7 @@ import {
   NATIVE_DEEP_READ_ROUTE_EVOLINK,
   NATIVE_DEEP_READ_ROUTE_VERTEX,
   NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
+  NATIVE_DEEP_READ_FINAL_SEGMENT_ADMIT_CODE,
   assertNativeDeepReadEpisodeEvidence,
   assertNativeDeepReadShotObservations,
   assertNativeDeepReadShotObservationsPreserved,
@@ -3569,6 +3570,39 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     expect(result.episodes[0]!.result.degradedFpsSegmentIndexes).toEqual([0]);
     expect(receipts.find((row) => row.route === "segment_cache_hit")).toBeUndefined();
     expect(receipts.some((row) => row.model === "z-ai/glm-5.3" && row.status === "completed")).toBe(true);
+  });
+
+  it("多片尾片已有明确放行标记时，重启预载与执行复验都不重买", async () => {
+    const episode = makeEpisode([
+      { startSec: 0, endSec: 60 },
+      { startSec: 60, endSec: 120 },
+    ]);
+    const entries = [
+      makeCacheEntry({ episode, segmentIndex: 0 }),
+      makeCacheEntry({ episode, segmentIndex: 1 }),
+    ];
+    entries[1]!.raw = {
+      ...makeSegmentPayload({ segmentIndex: 1, startSec: 60, endSec: 70 }),
+      gateMarked: true,
+      gateMarkedZh: "尾片内容门禁已记录并按规则放行",
+      advisories: [{
+        code: NATIVE_DEEP_READ_FINAL_SEGMENT_ADMIT_CODE,
+        detailZh: "尾片内容门禁已记录并按规则放行",
+        segmentIndex: 1,
+      }],
+    };
+    const deps = makeRunnerDeps({
+      readSegmentCache: vi.fn(async ({ segmentIndex }: { segmentIndex: number }) => ({
+        entry: entries[segmentIndex]!,
+        generation: String(segmentIndex + 1),
+      })) as never,
+    });
+    await runManhuaNativeDeepReadBatch({
+      episodes: [episode],
+      segmentCacheSeriesKey: cacheSeriesKey,
+    }, deps);
+    expect(deps.prepareVideos).not.toHaveBeenCalled();
+    expect(deps.postVertex).not.toHaveBeenCalled();
   });
 
   it.each([false, true])("缓存只有20/60秒，truncated=%s时与首发判据一致", async (truncated) => {

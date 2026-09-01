@@ -7,6 +7,7 @@ import {
   parseNativeDeepReadVideoFps,
   parseNativeDeepReadJobConfirmation,
   resolveNativeDeepReadJobTimeoutMs,
+  sameNativeDeepReadJobConfirmation,
 } from "./manhuaNativeDeepReadJob.js";
 
 describe("原生精读任务墙钟", () => {
@@ -113,6 +114,28 @@ describe("原生精读任务墙钟", () => {
       seriesKey: undefined,
       learnLlm: "gpt",
     });
+  });
+
+  it("同源 active job 只有整份确认参数一致才可复用", () => {
+    const params = {
+      url: "https://www.douyin.com/video/12345",
+      batchSize: 1,
+      nativeDeepReadConfirmed: true,
+      nativeMaxCalls: 200,
+      nativePlanLimit: 1,
+      nativeSegmentSeconds: 281,
+      nativeVideoFps: 10,
+    };
+    const current = parseNativeDeepReadJobConfirmation(params);
+    expect(sameNativeDeepReadJobConfirmation(current, { ...current })).toBe(true);
+    expect(sameNativeDeepReadJobConfirmation(current, {
+      ...current,
+      segmentSeconds: 300,
+    })).toBe(false);
+    expect(sameNativeDeepReadJobConfirmation(current, {
+      ...current,
+      videoFps: 12,
+    })).toBe(false);
   });
 
   it("显式可信第三方播放页可进同一确认契约，仿冒域仍拒绝", () => {
