@@ -1,6 +1,6 @@
 # line-platform · /platform 内容创作线（动态层，每班收班更新）
 
-- **0901简化schema候选**：2e0938c两种素材各1次HTTP400，没有模型正文；当前去除新增分支、排序、数值/数量结构约束，要求留在description和prompt，分类/字数/质量门禁保留。0.65/MEDIUM/12fps不变；本地326目标与3847全仓通过，实际API接收与内容质量待本轮单发核验。用户要求不接收即交接，禁止盲目连续重试；详见PROGRESS 0901及Downloads对应证据。
+- **0901已合并真值（覆盖下方所有候选参数）**：PR #1328 已合并并由冻结 SHA 锁定。Gemini 3.1 Pro 为 `0.7→0.65→0.6`、MEDIUM、无 thinkingBudget/mediaResolution，prompt 与 Schema 不得由 agent 修改；只有分片时长和 fps 可按任务明确指定（默认300秒/12fps，14fps不再测）。三档均未过时从已有永久证据数值择优并标记 `best_effort_unqualified`，不得第四发。GLM-5.3 整形固定0.8/high/131072。真源在 `AGENTS.md`、`shared/manhuaNativeDeepReadJob.ts`、`server/services/manhuaNativeDeepReadRunner.ts`；下方0.65首发、LOW、旧梯度和“待冻结”全部仅为历史。
 
 > 更新：2026-08-17。本线已交接给 UI/功能线 agent，此处存事实供跨线查阅。
 
