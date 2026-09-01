@@ -952,3 +952,53 @@ describe("原生精读计划", () => {
     expect(d.probeDurationSec).not.toHaveBeenCalled();
   });
 });
+
+describe("整支即全集（0901 treatAsStandalone）", () => {
+  const modalId = "7676084324495543592";
+  const detailWithMix = () => vi.fn(async () => ({
+    titleZh: "剑宗团宠第二季全集",
+    mixId: "7620830292130924553",
+    mixNameZh: "剑宗团宠",
+    playbackUrl: "https://v.douyinvod.com/full-season.mp4",
+    access: "free" as const,
+  }));
+
+  it("勾选后忽略详情里的 mixId：不调合集展开，按独立长视频单集入计划", async () => {
+    const listMix = vi.fn(async () => ({ episodes: [], complete: false }));
+    const d = deps({
+      fetchAwemeDetail: detailWithMix(),
+      listMixEpisodes: listMix,
+      probeDurationSec: vi.fn(async () => 1_594),
+    });
+    const plan = await buildNativeDeepReadPlanPreview(
+      { url: `https://www.douyin.com/video/${modalId}`, limit: 10, treatAsStandalone: true },
+      d,
+    );
+    expect(listMix).not.toHaveBeenCalled();
+    expect(plan.episodes).toHaveLength(1);
+    expect(plan.episodes[0]!.episodeIndex).toBe(1);
+  });
+
+  it("不勾选时行为不变：仍走合集展开；被风控拦下的报错带原因与出路", async () => {
+    const d = deps({
+      fetchAwemeDetail: detailWithMix(),
+      listMixEpisodes: vi.fn(async () => ({
+        episodes: [],
+        complete: false,
+        riskControlBlockedZh: "HTTP 403 · Blocked by ArgusSecurityPlugin Uifid Not Found（凭证缺新字段 uifid，需更新 DOUYIN_COOKIE）",
+      })),
+    });
+    await expect(buildNativeDeepReadPlanPreview(
+      { url: `https://www.douyin.com/video/${modalId}`, limit: 10 },
+      d,
+    )).rejects.toThrow(/风控拦下[\s\S]*整支即全集/);
+  });
+
+  it("勾选但链接没有视频 id 时关闭式拒绝", async () => {
+    const d = deps({});
+    await expect(buildNativeDeepReadPlanPreview(
+      { url: "https://www.douyin.com/collection/7620830292130924553", limit: 10, treatAsStandalone: true },
+      d,
+    )).rejects.toThrow("整支即全集");
+  });
+});

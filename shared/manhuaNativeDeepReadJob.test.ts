@@ -105,6 +105,7 @@ describe("原生精读任务墙钟", () => {
       nativePlanLimit: 10,
     };
     expect(parseNativeDeepReadJobConfirmation(params)).toEqual({
+      standaloneSource: false,
       url: params.url,
       planHash: undefined,
       maxCalls: NATIVE_DEEP_READ_JOB_MAX_CALLS,
@@ -182,5 +183,28 @@ describe("原生精读任务墙钟", () => {
     expect(hasNativeDeepReadJobFields({ nativePlanHash: base.nativePlanHash })).toBe(true);
     expect(() => parseNativeDeepReadJobConfirmation({ nativePlanHash: base.nativePlanHash }))
       .toThrow();
+  });
+});
+
+describe("nativeStandaloneSource（0901 整支即全集）", () => {
+  const base = {
+    url: "https://www.douyin.com/video/7676084324495543592",
+    nativeDeepReadConfirmed: true,
+    nativeMaxCalls: 60, nativePlanLimit: 1, nativeSegmentSeconds: 313, nativeVideoFps: 12,
+    batchSize: 1,
+  };
+  it("布尔与字符串 true 都认；缺省为 false", () => {
+    expect(parseNativeDeepReadJobConfirmation({ ...base }).standaloneSource).toBe(false);
+    expect(parseNativeDeepReadJobConfirmation({ ...base, nativeStandaloneSource: true }).standaloneSource).toBe(true);
+    expect(parseNativeDeepReadJobConfirmation({ ...base, nativeStandaloneSource: "true" }).standaloneSource).toBe(true);
+    expect(parseNativeDeepReadJobConfirmation({ ...base, nativeStandaloneSource: false }).standaloneSource).toBe(false);
+  });
+  it("非布尔值关闭式拒绝；开关不同则确认契约不相同", () => {
+    expect(() => parseNativeDeepReadJobConfirmation({ ...base, nativeStandaloneSource: 1 }))
+      .toThrow("布尔");
+    const on = parseNativeDeepReadJobConfirmation({ ...base, nativeStandaloneSource: true });
+    const off = parseNativeDeepReadJobConfirmation({ ...base });
+    expect(sameNativeDeepReadJobConfirmation(on, off)).toBe(false);
+    expect(sameNativeDeepReadJobConfirmation(on, { ...on })).toBe(true);
   });
 });

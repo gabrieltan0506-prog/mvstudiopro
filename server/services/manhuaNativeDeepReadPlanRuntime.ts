@@ -30,6 +30,8 @@ export type NativeDeepReadPlanRuntimeInput = {
   url: string;
   limit: number;
   segmentSeconds?: number;
+  /** 整支即全集：跳过合集展开，按独立长视频单集学习 */
+  treatAsStandalone?: boolean;
   videoFps?: number;
   allowPartial?: boolean;
   learnLlm?: ManhuaTemplateLearnLlmProvider;
