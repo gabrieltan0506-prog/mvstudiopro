@@ -3605,9 +3605,10 @@ export function nextNativeDeepReadGlmPreferredGateway(): "evolink_glm" | "openro
 }
 
 /**
- * 🔒 0902 用户授权解冻一次：新增 classificationProseZh 五维连贯判词
- * （标签词云太零散，判词由整形模型直接写洞察），改毕即重新冻结——
- * 再改仍须用户当场授权。
+ * 🔒 0902 用户两次当场授权的解冻均已改毕，**现已重新冻结**：
+ *   ① 新增 classificationProseZh 五维连贯判词 + shots[].craftReadZh 逐镜解读
+ *   ② craftReadZh 收紧为全集最多 30 条最有价值镜头（16 分钟→省回一半产出）
+ * 任何再改动必须由用户在当前任务重新授权，禁止以任何理由自行调整。
  */
 export function buildNativeDeepReadGlmStructuringPrompt(input: {
   episodeIndex: number;
