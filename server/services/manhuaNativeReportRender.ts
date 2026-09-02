@@ -361,9 +361,20 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
       String(shot.limbPropActionZh ?? ""),
       String(shot.microExpressionZh ?? ""),
     ].map((t) => t.trim()).filter(Boolean);
-    for (const c of candidates) if (c.length >= 6) return c.slice(0, 24);
+    // 0902 十一审：旧 24 字硬切把整句腰斩（「冲突正式展」「危机降」）。
+    // 48 字内整句保留；更长的在最近标点处收口加省略号，绝不切在词中间。
+    const capCaption = (text: string): string => {
+      if (text.length <= 48) return text;
+      const head = text.slice(0, 48);
+      const cutAt = Math.max(
+        head.lastIndexOf("，"), head.lastIndexOf("。"),
+        head.lastIndexOf("；"), head.lastIndexOf("、"),
+      );
+      return `${cutAt >= 12 ? head.slice(0, cutAt) : head}…`;
+    };
+    for (const c of candidates) if (c.length >= 6) return capCaption(c);
     const joined = candidates.slice(0, 2).join("·");
-    return joined.length >= 6 ? joined.slice(0, 24) : "";
+    return joined.length >= 6 ? capCaption(joined) : "";
   };
   const tiles: string[] = [];
   /** 帧编号锚点表：重点时刻表用「（图N）」跳转对照（0902 用户拍板） */
