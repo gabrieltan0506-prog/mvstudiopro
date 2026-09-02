@@ -1,5 +1,5 @@
 /**
- * 后期工坊核心(蓝图二①):拼接 / BGM 贴装 / 响度验收。
+ * 后期工坊核心(蓝图二①):拼接 / BGM 贴装 / 响度验收 / 字幕烧录。
  * 纯 ffmpeg + 规则引擎,零大模型 token;配方来自《雷击》《天雷劫》实弹工艺:
  * - BGM 永远后期贴(0.48 规):侧链压对白、入场淡入、按完整时间线淡出;
  * - 响度验收 = ebur128 整体 + 分窗 RMS,媒体命令未完成一律抛错结束本次任务。
@@ -13,13 +13,15 @@
  * - 临时目录一律 finally 清理。
  */
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
+import { z } from "zod";
 import { signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs.js";
 import {
   bgmMountParamsSchema,
@@ -421,6 +423,143 @@ export async function mountBgm(
       signal,
     });
     return { ...up, durationSec: outMeta.durationSec };
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------- 字幕烧录
+
+/**
+ * burn_subtitle 任务参数契约。schema 暂住服务层：任务契约文件
+ * (jobs/postProdInput.ts) 由总装并轨,届时把本 schema 挪进 discriminatedUnion
+ * 即可;服务函数照 bgm_mount 口径自己再 parse 一次,不依赖入口先验证。
+ * 计费口径与 bgm_mount 相同:纯 ffmpeg 零上游调用,不新增计费。
+ */
+const burnMediaSourceSchema = z.string().trim().min(1).max(2048);
+
+export const burnSubtitleStyleOverrideSchema = z
+  .object({
+    /** libass 单位(SRT 默认 PlayResY=288);默认 16 ≈ 竖屏画高 5.5% */
+    fontSize: z.number().int().min(8).max(96).optional(),
+    outline: z.number().min(0).max(8).optional(),
+    /** 底边距,同为 PlayResY 像素;默认 35 ≈ 底部 12% */
+    marginV: z.number().int().min(0).max(200).optional(),
+    /**
+     * 默认不写死字体名(跟随渲染机 fontconfig);中文缺字时由调用方
+     * 显式传 "Noto Sans CJK SC"。白名单字符防 force_style 串里夹带引号/分隔符。
+     */
+    fontName: z
+      .string()
+      .trim()
+      .min(1)
+      .max(64)
+      .regex(/^[0-9A-Za-z ._-]+$/, "字体名格式不正确")
+      .optional(),
+  })
+  .strict();
+
+export const burnSubtitleParamsSchema = z
+  .object({
+    videoUri: burnMediaSourceSchema,
+    /** SRT 全文由共享层 buildManhuaSubtitleBurnSrt 生成(已清洗防注入) */
+    subtitleSrt: z.string().min(1).max(200_000),
+    styleOverride: burnSubtitleStyleOverrideSchema.optional(),
+  })
+  .strict();
+
+export type BurnSubtitleStyleOverride = z.infer<typeof burnSubtitleStyleOverrideSchema>;
+export type BurnSubtitleParams = z.infer<typeof burnSubtitleParamsSchema>;
+export type RawBurnSubtitleParams = z.input<typeof burnSubtitleParamsSchema>;
+
+/**
+ * 滤镜串里的字幕文件路径只收白名单字符。路径全程由我们自己拼
+ * (mkdtemp + 随机名),正常不可能带滤镜保留字符(: ' , ; [ ])——
+ * 真出现说明运行环境异常,直接拒绝比转义硬扛更稳。
+ */
+const SAFE_FILTER_PATH_RE = /^[0-9A-Za-z/_.-]+$/;
+
+/**
+ * 生成 subtitles 滤镜串。独立导出为了纯测试钉住样式与注入面,不真跑 ffmpeg。
+ * 默认样式按竖屏 9:16 短剧口径:白字黑边(BorderStyle=1 描边无底框)、
+ * 底部居中(Alignment=2)、MarginV=35 ≈ 底部 12%。
+ */
+export function buildBurnSubtitleFilter(
+  srtPath: string,
+  styleOverride?: BurnSubtitleStyleOverride,
+): string {
+  if (!SAFE_FILTER_PATH_RE.test(srtPath)) {
+    throw new Error("字幕临时文件路径包含滤镜保留字符");
+  }
+  const style = [
+    `FontSize=${styleOverride?.fontSize ?? 16}`,
+    "PrimaryColour=&H00FFFFFF",
+    "OutlineColour=&H00000000",
+    "BorderStyle=1",
+    `Outline=${styleOverride?.outline ?? 2}`,
+    "Shadow=0",
+    "Alignment=2",
+    `MarginV=${styleOverride?.marginV ?? 35}`,
+  ];
+  if (styleOverride?.fontName) style.push(`FontName=${styleOverride.fontName}`);
+  return `subtitles=filename='${srtPath}':force_style='${style.join(",")}'`;
+}
+
+/**
+ * ffmpeg argv 构造独立成纯函数供测试:路径全部走独立 argv(execFile 不过 shell),
+ * 画面重编码(字幕已画进像素,躲不开),音轨原样 copy 不动。
+ */
+export function buildBurnSubtitleArgs(
+  paths: { videoPath: string; srtPath: string; outPath: string },
+  styleOverride?: BurnSubtitleStyleOverride,
+): string[] {
+  return [
+    "-y",
+    "-i", paths.videoPath,
+    "-vf", buildBurnSubtitleFilter(paths.srtPath, styleOverride),
+    "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+    "-c:a", "copy",
+    paths.outPath,
+  ];
+}
+
+export async function burnSubtitle(
+  input: RawBurnSubtitleParams,
+  userId: string,
+  options?: PostProdRunOptions,
+): Promise<{ gcsUri: string; url: string; bytes: number; durationSec: number; cueCount: number }> {
+  const signal = options?.signal ?? NEVER_ABORT;
+  const normalized = burnSubtitleParamsSchema.parse(input);
+  // 共享层空轨已拦;服务层再验一道时间码,别为一份空 SRT 白烧一整轮转码
+  const cueCount = (normalized.subtitleSrt.match(/\d{2}:\d{2}:\d{2},\d{3} --> /g) || []).length;
+  if (!cueCount) throw new Error("字幕内容不含可用时间码,无法烧字");
+
+  const tmpDir = await mkdtemp(path.join(tmpdir(), "pp-burnsub-"));
+  try {
+    const vPath = path.join(tmpDir, "video.mp4");
+    // 随机文件名 + wx 独占创建:临时目录内也不给同名覆盖留缝
+    const srtPath = path.join(tmpDir, `sub-${randomBytes(8).toString("hex")}.srt`);
+    await fetchPostProdSourceToFile(normalized.videoUri, vPath, { signal });
+    await writeFile(srtPath, normalized.subtitleSrt, { encoding: "utf8", flag: "wx" });
+    // 先探测确认素材是可用视频,坏素材在转码前失败,错误信息也更准
+    await probe(vPath, signal);
+
+    const outPath = path.join(tmpDir, "out.mp4");
+    await runMediaTool(
+      "ffmpeg",
+      buildBurnSubtitleArgs({ videoPath: vPath, srtPath, outPath }, normalized.styleOverride),
+      signal,
+    );
+    const outMeta = await probe(outPath, signal);
+    const up = await uploadResult({
+      filePath: outPath,
+      userId,
+      kind: "burnsub",
+      ext: "mp4",
+      contentType: "video/mp4",
+      signal,
+    });
+    return { ...up, durationSec: outMeta.durationSec, cueCount };
   } finally {
     await rm(tmpDir, { recursive: true, force: true });
   }
