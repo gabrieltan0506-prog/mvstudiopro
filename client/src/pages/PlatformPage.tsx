@@ -2557,6 +2557,8 @@ export default function PlatformPage() {
   }, [manhuaPasteTitle]);
   const retireLearnEpisodeMutation =
     trpc.manhuaViralTemplate.retireLearnSourceEpisode.useMutation();
+  const renameLearnSeriesMutation =
+    trpc.manhuaViralTemplate.renameLearnSeriesTitle.useMutation();
   const manhuaLearnDupQuery = trpc.manhuaViralTemplate.checkLearnSourceLearned.useQuery(
     {
       url: manhuaPasteUrlDebounced,
@@ -12921,6 +12923,35 @@ export default function PlatformPage() {
                                 );
                               })}
                             </select>
+                            <button
+                              type="button"
+                              disabled={!manhuaLearnFocusSeriesKey || Boolean(manhuaLearnControlBusy)}
+                              onClick={() => {
+                                // 0902 剧名改正：矩阵号拼盘常把剧名写脏，改名只动 titleHint 不动产物
+                                const seriesKey = String(
+                                  manhuaLearnResult?.seriesKey || manhuaLearnFocusSeriesKey,
+                                ).trim();
+                                if (!seriesKey) return;
+                                const nextTitle = window.prompt(
+                                  "改正这部剧的剧名（只改显示名，不动集号与学习产物）：",
+                                  "",
+                                );
+                                if (!nextTitle?.trim()) return;
+                                void renameLearnSeriesMutation
+                                  .mutateAsync({ seriesKey, titleZh: nextTitle.trim() })
+                                  .then((r) => {
+                                    toast.success(`剧名已改为《${r.titleHint}》，刷新列表后生效`);
+                                  })
+                                  .catch((error) => {
+                                    toast.error(
+                                      error instanceof Error ? error.message : "改名失败",
+                                    );
+                                  });
+                              }}
+                              className="shrink-0 rounded-lg border border-sky-300/30 bg-sky-500/10 px-2.5 py-1.5 text-[10px] font-semibold text-sky-100 hover:bg-sky-500/20 disabled:opacity-40"
+                            >
+                              改名
+                            </button>
                             <button
                               type="button"
                               disabled={!manhuaLearnFocusSeriesKey || Boolean(manhuaLearnControlBusy)}

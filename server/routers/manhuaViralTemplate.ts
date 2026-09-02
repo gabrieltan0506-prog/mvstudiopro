@@ -583,6 +583,22 @@ export const manhuaViralTemplateRouter = router({
       return await checkManhuaLearnSourceLearned(input.url, input.titleZh);
     }),
 
+  /** 0902 剧名改正：矩阵号把 titleHint 写脏时，owner 可改（只动剧名不动产物） */
+  renameLearnSeriesTitle: protectedProcedure
+    .input(
+      z.object({
+        seriesKey: z.string().regex(/^[0-9A-Za-z_-]{4,64}$/),
+        titleZh: z.string().trim().min(1).max(120),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      assertSiteOwner(ctx.user);
+      const { renameManhuaLearnSeriesTitle } = await import(
+        "../services/manhuaTemplateLearnService"
+      );
+      return await renameManhuaLearnSeriesTitle(input);
+    }),
+
   /** 0902 放行重学：旧代学习卡退位存档、集位让出；重学照常计费（owner 限定） */
   retireLearnSourceEpisode: protectedProcedure
     .input(

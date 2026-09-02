@@ -3422,3 +3422,25 @@ export async function retireNativeLearnEpisodeForRelearn(input: {
   });
   return { seriesKey, retiredObjectName };
 }
+
+/**
+ * 剧名改正（0902）：矩阵号拼盘把 titleHint 写脏（如「缺集找（胖胖说剧）」实为
+ * 《万妖图录》重剪），入库产物公开面匿名，剧名是老板唯一的认账线索——
+ * 必须能改。只动 titleHint，不碰集号/进度/学习产物。
+ */
+export async function renameManhuaLearnSeriesTitle(input: {
+  seriesKey: string;
+  titleZh: string;
+}): Promise<{ seriesKey: string; titleHint: string }> {
+  const seriesKey = String(input.seriesKey || "").trim();
+  if (!/^[0-9A-Za-z_-]{4,64}$/.test(seriesKey)) {
+    throw new Error("seriesKey 格式无效");
+  }
+  const titleHint = cleanManhuaLearnTitle(input.titleZh);
+  if (!titleHint) throw new Error("剧名不能为空");
+  const objectName = `manhua-template-learn/series/${seriesKey}/progress.json`;
+  const progress = await loadSeriesProgress(seriesKey);
+  if (!progress) throw new Error("该系列不存在或没有进度档");
+  await writeJsonGcs(objectName, { ...progress, titleHint });
+  return { seriesKey, titleHint };
+}
