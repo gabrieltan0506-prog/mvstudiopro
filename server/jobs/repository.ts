@@ -298,17 +298,6 @@ export async function listManhuaTemplateLearnJobsForUser(
           // 0902 用户令「失败不留壳」：贴链接在计划阶段就失败的任务（无入库 seriesKey、
           // 只挂 learn_* 队列占位键）不再出现在剧集下拉——它们代表零成果，只会淤塞列表。
           // DB 行保留可审计；有真实 seriesKey 或仍在跑/排队的照常显示。
-          // 0903 修：空壳只在冷却 30 分钟后才隐藏——刚失败的任务必须带死因
-          // 出现在面板（403风控等秒败曾因此完全不可见，用户只看到"已入队"然后消失）。
-          sql`NOT (
-            ${jobs.status} = 'failed'
-            AND ${jobs.updatedAt} < NOW() - INTERVAL '30 minutes'
-            AND coalesce(${jobs.output}::jsonb->>'seriesKey', '') = ''
-            AND (
-              coalesce(${jobs.input}::jsonb->'params'->>'seriesKey', '') = ''
-              OR ${jobs.input}::jsonb->'params'->>'seriesKey' LIKE 'learn\_%'
-            )
-          )`,
         ),
       )
       .orderBy(desc(jobs.createdAt))
