@@ -471,7 +471,9 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const summaryTextOf = (key: (typeof SUMMARY_TEXT_KEYS)[number]): string =>
     String(card[key] ?? "").trim() || "本集未整理出该项";
 
-  const FIELDS = ["hintZh", "unitTypeZh", "shotSizeZh", "angleZh", "compositionZh", "cameraMoveZh", "blockingZh", "bodyActionZh", "limbPropActionZh", "microExpressionZh", "gazeBreathZh", "relationshipReactionZh", "lightingZh", "actionZh", "transitionInZh"];
+  // 0902 十审拍板：入镜转场列摘除——漫剧九成五是硬切，整列零信息；
+  // 非硬切转场（叠化/闪白/甩接/匹配）由 CRAFT 词典写进「运镜解读」+ 蓝色技巧行，证据字段照存不丢。
+  const FIELDS = ["hintZh", "unitTypeZh", "shotSizeZh", "angleZh", "compositionZh", "cameraMoveZh", "blockingZh", "bodyActionZh", "limbPropActionZh", "microExpressionZh", "gazeBreathZh", "relationshipReactionZh", "lightingZh", "actionZh"];
   /**
    * 0902 三审拍板：色块必须有语义，不做斑马纹——只有两类真金上色：
    * 🟥 剧情亮点/转折（仅「剧情/情绪」类重点时刻）；🟦 运镜/剪辑技巧（词表识别）。
