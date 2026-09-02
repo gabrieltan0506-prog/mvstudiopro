@@ -2542,6 +2542,21 @@ export default function PlatformPage() {
   const [manhuaLearnBusyKey, setManhuaLearnBusyKey] = useState<string | null>(null);
   const [manhuaPasteUrl, setManhuaPasteUrl] = useState("");
   const [manhuaPasteTitle, setManhuaPasteTitle] = useState("");
+  /** 0902 查重前置：贴上链接 600ms 后即时查「这支是否已学过」，学过带剧名亮牌 */
+  const [manhuaPasteUrlDebounced, setManhuaPasteUrlDebounced] = useState("");
+  useEffect(() => {
+    const trimmed = manhuaPasteUrl.trim();
+    const timer = window.setTimeout(() => setManhuaPasteUrlDebounced(trimmed), 600);
+    return () => window.clearTimeout(timer);
+  }, [manhuaPasteUrl]);
+  const manhuaLearnDupQuery = trpc.manhuaViralTemplate.checkLearnSourceLearned.useQuery(
+    { url: manhuaPasteUrlDebounced },
+    {
+      enabled: /^https?:\/\/\S+$/i.test(manhuaPasteUrlDebounced),
+      staleTime: 5 * 60_000,
+      retry: false,
+    },
+  );
   const [manhuaLearnBatchSize, setManhuaLearnBatchSize] = useState(readManhuaLearnBatchSize);
   const [manhuaLearnSegmentSecondsInput, setManhuaLearnSegmentSecondsInput] = useState(String(NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS));
   /** 0901「整支即全集」：全集单条长视频跳过合集展开（Argus 风控专拦那个端点） */
@@ -12665,6 +12680,26 @@ export default function PlatformPage() {
                               ? "正在确认可用的学习方式；确认完成前不会建立任务。"
                               : manhuaLearnPipelineMeta.summaryZh}
                           </p>
+                          {manhuaLearnDupQuery.data?.episodes.length ? (
+                            <div className="mt-2 rounded-lg border border-amber-400/35 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-5 text-amber-100">
+                              ⚠️ 这支已学过：
+                              {manhuaLearnDupQuery.data.titleHint
+                                ? `《${manhuaLearnDupQuery.data.titleHint}》`
+                                : "（剧名未记录）"}
+                              {manhuaLearnDupQuery.data.episodes.map((row) => (
+                                <span key={row.episodeIndex}>
+                                  {" "}· 第{row.episodeIndex}集 {row.generationZh}
+                                  {row.complete ? "" : "（部分卡）"}
+                                </span>
+                              ))}
+                              {manhuaLearnDupQuery.data.framesDigestCount > 0
+                                ? ` · 另有抽帧（一代）产物 ${manhuaLearnDupQuery.data.framesDigestCount} 条`
+                                : ""}
+                              <div className="mt-0.5 text-[10px] text-amber-100/70">
+                                三代=当前链路无需重学；二代旧链路想重学，先在模板库把该集卡下架再学。重复提交不出新卡也不扣费。
+                              </div>
+                            </div>
+                          ) : null}
                           <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                             <input
                               type="url"

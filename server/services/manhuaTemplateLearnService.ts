@@ -3182,3 +3182,91 @@ export async function runManhuaTemplateLearn(
     await rmrf(rootTmp);
   }
 }
+
+/**
+ * 贴链接即时查重（0902 用户拍板：学过要前置提示）。
+ * 同一视频（awemeId 定 key）已入库时，面板在提交前就亮牌，并带回剧名——
+ * 入库产物在公开面匿名，连老板都认不出学过什么，这里是唯一的具名出口。
+ * 注意：只覆盖按来源 URL 定 key 的系列（整支即全集/单集直链）；
+ * 按剧名归并的合集学习不在此查（提交链路自身仍会防重复付费）。
+ */
+export type ManhuaLearnSourceLearnedEpisode = {
+  episodeIndex: number;
+  complete: boolean;
+  /**
+   * 学它的链路代际（0902 用户拍板：光说「学过」没法决定要不要重学）——
+   * 三代精读=当前冻结链路（provenance 带段证据对象名，报告门禁同款判据）；
+   * 二代精读=旧原生直读（无段证据，旧产物基本已弃用）；抽帧一代走 digest，另行计数。
+   */
+  generationZh: string;
+};
+
+export async function checkManhuaLearnSourceLearned(url: string): Promise<{
+  seriesKey: string;
+  titleHint: string;
+  episodes: ManhuaLearnSourceLearnedEpisode[];
+  learnedEpisodeIndexes: number[];
+  partialEpisodeIndexes: number[];
+  /** 抽帧（一代）digest 产物条数；>0 说明这系列在抽帧时代也学过 */
+  framesDigestCount: number;
+}> {
+  const cleanUrl = String(url || "").trim();
+  const seriesKey = await resolveManhuaSeriesKey({
+    sourceIdentity: cleanUrl,
+    learnLlm: "gpt",
+  });
+  const [{ listIngestedNativeDeepReadEpisodeRecords, nativeDeepReadProposalId }, store] =
+    await Promise.all([
+      import("./manhuaNativeDeepReadIngest.js"),
+      import("./manhuaViralTemplateStore.js"),
+    ]);
+  const records = await listIngestedNativeDeepReadEpisodeRecords(seriesKey);
+  const episodes = await Promise.all(
+    records.map(async (record): Promise<ManhuaLearnSourceLearnedEpisode> => {
+      let generationZh = "代际未知";
+      try {
+        const cardKey = nativeDeepReadProposalId(seriesKey, record.episodeIndex);
+        const card =
+          (await store.getGcsManhuaViralProposal(cardKey))
+          ?? (await store.getGcsManhuaViralApproved(cardKey));
+        const native = (card as {
+          provenance?: { nativeVideoDeepRead?: { segmentEvidenceObjectNames?: unknown } };
+        } | null)?.provenance?.nativeVideoDeepRead;
+        if (native) {
+          const evidence = native.segmentEvidenceObjectNames;
+          generationZh =
+            Array.isArray(evidence) && evidence.length
+              ? "三代精读（当前代）"
+              : "二代精读（旧链路）";
+        }
+      } catch {
+        /* 判代失败不挡查重提示 */
+      }
+      return { episodeIndex: record.episodeIndex, complete: record.complete, generationZh };
+    }),
+  );
+  let titleHint = "";
+  let framesDigestCount = 0;
+  if (records.length) {
+    const [progress, digests] = await Promise.all([
+      loadSeriesProgress(seriesKey),
+      loadAllDigests(seriesKey).catch(() => []),
+    ]);
+    titleHint = cleanManhuaLearnTitle(progress?.titleHint) || "";
+    framesDigestCount = digests.length;
+  }
+  return {
+    seriesKey,
+    titleHint,
+    episodes,
+    learnedEpisodeIndexes: episodes
+      .filter((row) => row.complete)
+      .map((row) => row.episodeIndex)
+      .sort((a, b) => a - b),
+    partialEpisodeIndexes: episodes
+      .filter((row) => !row.complete)
+      .map((row) => row.episodeIndex)
+      .sort((a, b) => a - b),
+    framesDigestCount,
+  };
+}
