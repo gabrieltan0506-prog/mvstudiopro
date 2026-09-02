@@ -260,6 +260,10 @@ type Props = {
   onActionRecipeIdChange?: (id: string) => void;
   /** 合成长片预览（成片坞合成后） */
   finalVideoUrl?: string | null;
+  /** 0902 烧字：把字幕轨烧进已合成长片（无长片时不传，面板按钮自灰） */
+  onBurnSubtitle?: (subtitleSrt: string) => void | Promise<void>;
+  burnSubtitleBusy?: boolean;
+  burnSubtitleResultUrl?: string | null;
   factoryBusy?: boolean;
   /** 工厂进度一行（如「第2集 · 静帧」） */
   factoryProgress?: string;
@@ -568,6 +572,9 @@ export default function ManhuaScriptWorkbench({
   onPathRecipeIdChange,
   onActionRecipeIdChange,
   finalVideoUrl,
+  onBurnSubtitle,
+  burnSubtitleBusy,
+  burnSubtitleResultUrl,
   factoryBusy,
   factoryProgress,
   onStopFactory,
@@ -5619,6 +5626,9 @@ export default function ManhuaScriptWorkbench({
             onSuggestAutoCuts={() => void handleSuggestAutoCuts()}
             suggestAutoCutsBusy={suggestAutoCutsBusy}
             subtitleEnabled={editSubtitleEnabled}
+            onBurnSubtitle={finalVideoUrl ? onBurnSubtitle : undefined}
+            burnSubtitleBusy={burnSubtitleBusy}
+            burnSubtitleResultUrl={burnSubtitleResultUrl}
             onSubtitleEnabledChange={(next) => {
               setEditSubtitleEnabled(next);
               if (deliveryPackage && onDeliveryPackageChange) {

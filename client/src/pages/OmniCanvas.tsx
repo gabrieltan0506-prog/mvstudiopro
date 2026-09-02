@@ -1108,6 +1108,49 @@ export default function OmniCanvas() {
   );
   const abortRef = useRef<AbortController | null>(null);
   const chargeWorkflowStepMutation = trpc.workflow.chargeStep.useMutation();
+  /** 0902 烧字总装：剪辑台字幕轨 → queuePostProd burn_subtitle → 轮询取新片 */
+  const queueBurnSubtitleMutation = trpc.mvAnalysis.queuePostProd.useMutation();
+  const trpcUtils = trpc.useUtils();
+  const [burnSubtitleBusy, setBurnSubtitleBusy] = useState(false);
+  const [burnSubtitleResultUrl, setBurnSubtitleResultUrl] = useState<string | null>(null);
+  const handleBurnSubtitle = useCallback(
+    async (subtitleSrt: string) => {
+      const videoUri = String(finalAssembleVideoUrl || "").trim();
+      if (!videoUri) {
+        toast.error("先在成片坞合成本集长片，再回来烧字");
+        return;
+      }
+      setBurnSubtitleBusy(true);
+      setBurnSubtitleResultUrl(null);
+      try {
+        const { jobId } = await queueBurnSubtitleMutation.mutateAsync({
+          action: "burn_subtitle",
+          params: { videoUri, subtitleSrt },
+        });
+        // 烧字是整片重编码，轮询上限 10 分钟；超时提示去后期任务列表取件
+        for (let attempt = 0; attempt < 120; attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          const job = await trpcUtils.mvAnalysis.getPostProdJob.fetch({ jobId });
+          if (job?.status === "succeeded") {
+            const output = (job.output ?? {}) as { url?: unknown };
+            const url = String(output.url || "").trim();
+            setBurnSubtitleResultUrl(url || null);
+            toast.success("烧字完成，新视频已就绪（原片保留未动）");
+            return;
+          }
+          if (job?.status === "failed") {
+            throw new Error(String(job.error || "烧字任务失败"));
+          }
+        }
+        throw new Error("烧字任务超时，请稍后在后期任务列表查看");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "烧字失败");
+      } finally {
+        setBurnSubtitleBusy(false);
+      }
+    },
+    [finalAssembleVideoUrl, queueBurnSubtitleMutation, trpcUtils],
+  );
   /** 登录后云端草稿：与本机双通路，互不放弃 */
   const [cloudSyncReady, setCloudSyncReady] = useState(false);
   const cloudHydrateDoneRef = useRef(false);
@@ -7363,6 +7406,9 @@ export default function OmniCanvas() {
                     setFactoryActionRecipeId(id);
                   }}
                   finalVideoUrl={finalAssembleVideoUrl}
+                  onBurnSubtitle={handleBurnSubtitle}
+                  burnSubtitleBusy={burnSubtitleBusy}
+                  burnSubtitleResultUrl={burnSubtitleResultUrl}
                   factoryBusy={factoryBusy || assembleBusy}
                   factoryProgress={
                     assembleBusy ? "正在合成长片与配乐…" : factoryProgress || undefined

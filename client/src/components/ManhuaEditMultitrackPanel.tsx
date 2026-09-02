@@ -484,7 +484,7 @@ export default function ManhuaEditMultitrackPanel({
                 className="inline-flex items-center gap-1 rounded border border-amber-400/40 bg-amber-500/20 px-2 py-0.5 text-[9px] font-semibold text-amber-50 hover:bg-amber-500/30 disabled:opacity-40"
                 title={
                   !onBurnSubtitle
-                    ? "烧字通道未接线（总装接 queuePostProd 的 burn_subtitle 后可用）"
+                    ? "先在成片坞合成本集长片，再回来烧字"
                     : !cues.length
                       ? "当前无字幕可烧"
                       : !burnArmed

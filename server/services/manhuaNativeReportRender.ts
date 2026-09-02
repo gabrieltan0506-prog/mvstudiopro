@@ -467,47 +467,60 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     [String(audioSegCount), "音轨段"],
     [String(adRanges.length), "广告区间"],
   ].map(([value, label]) => (
-    `<div style="background:rgba(255,251,240,.75);border:1px solid rgba(138,106,31,.28);border-radius:10px;`
-    + `padding:12px 16px;min-width:120px"><b style="display:block;font-size:1.7em;color:#5c4a1e;line-height:1.3">`
+    `<div style="background:#fbf6e8;border:1.5px solid #d9c48e;border-radius:12px;`
+    + `padding:12px 16px;min-width:120px;box-shadow:0 1px 6px rgba(120,90,30,.08)"><b style="display:block;font-size:1.7em;color:#b0620f;line-height:1.3">`
     + `${esc(value)}</b>${esc(label)}</div>`
   )).join("");
 
-  const section = (titleZh: string, body: string, highlight = false) => (
-    `<h2 style="color:#8a6a1f;margin-top:30px;`
-    + `${highlight ? "background:rgba(138,106,31,.12);padding:6px 12px;border-radius:8px;border-left:4px solid #8a6a1f" : ""}">`
-    + `${esc(titleZh)}</h2>${body}`
-  );
+  /**
+   * 0902 用户拍板：借图文知识卡片模板的简版基因——每个区块是一张圆角描金
+   * 知识卡，标题带 ①②③ 圈号徽章；highlight 卡加深底突出重点。
+   */
+  let sectionNo = 0;
+  const section = (titleZh: string, body: string, highlight = false) => {
+    sectionNo += 1;
+    const badge = sectionNo <= 10 ? String.fromCharCode(0x245f + sectionNo) : String(sectionNo);
+    return (
+      `<section style="background:${highlight ? "#fdf3dd" : "#fbf6e8"};border:1.5px solid #d9c48e;`
+      + `border-radius:14px;padding:16px 20px;margin-top:22px;box-shadow:0 2px 10px rgba(120,90,30,.08)">`
+      + `<h2 style="display:flex;align-items:center;gap:10px;color:#b0620f;margin:0 0 10px;font-size:1.15em">`
+      + `<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;`
+      + `border-radius:50%;background:#e8931f;color:#fff;font-size:.85em;flex:none">${badge}</span>`
+      + `${esc(titleZh)}</h2>${body}</section>`
+    );
+  };
   const panel = (text: unknown) => (
-    `<div style="background:rgba(255,251,240,.75);border:1px solid rgba(138,106,31,.24);border-radius:10px;`
-    + `padding:14px 18px;margin-top:10px;white-space:pre-wrap">${esc(text)}</div>`
+    `<div style="background:#fffbf0;border:1px dashed #d9c48e;border-radius:10px;`
+    + `padding:14px 18px;margin-top:6px;white-space:pre-wrap;line-height:1.75">${esc(text)}</div>`
   );
   const tableOf = (headers: string[], rows: string) => (
-    `<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.85em;margin-top:10px">`
-    + `<tr>${headers.map((h) => `<th style="padding:5px 9px;color:#7a6f5d;text-align:left">${esc(h)}</th>`).join("")}</tr>`
+    `<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.85em;margin-top:8px">`
+    + `<tr>${headers.map((h) => `<th style="padding:6px 10px;color:#6b4c12;background:#f0e3c4;text-align:left;`
+      + `border:1px solid #e2d2a8">${esc(h)}</th>`).join("")}</tr>`
     + `${rows}</table></div>`
   );
 
-  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(input.labelZh)} 逐帧审片手记</title></head><body style="margin:0;background:#efe5cc"><div style="font-family:'Songti SC',serif;background:linear-gradient(165deg,#f7f0dd 0%,#efe5cc 55%,#e9d9b4 100%);background-attachment:fixed;color:#3d3428;padding:28px;max-width:1200px;margin:auto">
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(input.labelZh)} 逐帧审片手记</title></head><body style="margin:0;background:#efe5cc"><div style="font-family:'Songti SC','Kaiti SC','STKaiti',serif;background:linear-gradient(165deg,#f7f0dd 0%,#efe5cc 55%,#e9d9b4 100%);background-attachment:fixed;color:#3d3428;padding:28px;max-width:1200px;margin:auto">
 <p style="color:#8a6a1f;letter-spacing:.3em;font-size:.8em">${esc(input.labelZh)} · ${esc(input.sourceLabelZh)} · 逐镜逐秒审读整理 · 字幕只记重点时刻前后两秒</p>
-<h1 style="font-size:1.8em;margin:.2em 0">逐帧审片手记</h1>
+<h1 style="font-size:2.1em;margin:.2em 0;color:#c9711a;letter-spacing:.1em;text-shadow:0 0 2px #fff,0 0 6px #fff,0 3px 10px rgba(122,63,150,.35)">逐帧审片手记</h1>
 <p style="color:#7a6f5d;margin:.3em 0 0">${shots.length} 镜（已剔除 ${adShotCount} 广告镜）· ${keyMomentSubtitleCount} 重点字幕 · ${keyMoments.length} 重点时刻 · 精选画面 ${tiles.length} 张 · 覆盖 ${(coveredSec / 60).toFixed(1)} 分钟</p>
 
 <div style="display:flex;gap:12px;flex-wrap:wrap;margin:18px 0">${kpi}</div>
 <p style="color:${grainColor};font-weight:600">${grainText}</p>
 
-${section("镜长分布", histBars)}
-${section("可复用手法总结", panel(summaryTextOf("reusableZh")))}
-${section("生成提示要素", panel(summaryTextOf("genPromptHintZh")))}
-${section("节奏结构", panel(summaryTextOf("beatStructureZh")))}
-${section("情绪推进", panel(summaryTextOf("moodArcZh")))}
-${section("五维标签墙", tags)}
-${section(`重点时刻表 · ${keyMoments.length} 条`, keyMoments.length
+${section("📏 镜长分布", histBars)}
+${section("💡 可复用手法总结", panel(summaryTextOf("reusableZh")))}
+${section("🧭 生成提示要素", panel(summaryTextOf("genPromptHintZh")))}
+${section("🥁 节奏结构", panel(summaryTextOf("beatStructureZh")))}
+${section("🌊 情绪推进", panel(summaryTextOf("moodArcZh")))}
+${section("🏷️ 五维标签墙", tags)}
+${section(`⭐ 重点时刻表 · ${keyMoments.length} 条`, keyMoments.length
     ? tableOf(["秒位", "类型", "说明", "相关字幕（前后 2 秒）"], kmRows)
     : `<p style="color:#857a66">本集手记未单列重点时刻</p>`, true)}
-${section("画面时间轴", `<div style="display:flex;flex-wrap:wrap;gap:8px">${tiles.join("")}</div>`)}
-${section("音轨解析", audioSections)}
+${section("🎞️ 画面时间轴", `<div style="display:flex;flex-wrap:wrap;gap:8px">${tiles.join("")}</div>`)}
+${section("🎧 音轨解析", audioSections)}
 <details style="margin-top:30px" open><summary style="color:#8a6a1f;font-size:1.2em;cursor:pointer">全镜头表 · ${shots.length} 镜 × ${FIELDS.length} 字段</summary><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#efe5cc">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#7a6f5d">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
-<p style="color:#9a8d75;font-size:.8em;margin-top:36px">—— 逐帧逐秒审读整理 · 仅作学习拆解，版权归原作品所有 ——</p></div></body></html>`;
+<div style="text-align:center;margin-top:36px"><span style="display:inline-block;background:#fdf3dd;border:1.5px solid #d9a54e;border-radius:999px;padding:8px 22px;color:#8a5a12;font-size:.85em">⭐ 逐帧逐秒审读整理 · 仅作学习拆解，版权归原作品所有</span></div></div></body></html>`;
 
   await uploadBufferToGcs({
     bucket,
