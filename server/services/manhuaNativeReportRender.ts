@@ -22,7 +22,7 @@ const FIELD_LABELS: Record<string, string> = {
   emotionTagsZh: "情绪", narrativeFeatureTagsZh: "叙事特色", performanceTagsZh: "表演",
   audiovisualTagsZh: "视听", audienceExperienceTagsZh: "观众体验",
   beatStructureZh: "节拍结构", moodArcZh: "情绪弧", reusableZh: "可复用手法", genPromptHintZh: "生成提示线索",
-  hintZh: "本镜观察", unitTypeZh: "镜头变化", shotSizeZh: "景别", angleZh: "机位角度", compositionZh: "构图", cameraMoveZh: "运镜",
+  hintZh: "本镜观察", unitTypeZh: "运镜解读", shotSizeZh: "景别", angleZh: "机位角度", compositionZh: "构图", cameraMoveZh: "运镜",
   blockingZh: "调度", bodyActionZh: "身体动作", limbPropActionZh: "肢体道具", microExpressionZh: "微表情",
   gazeBreathZh: "视线呼吸", relationshipReactionZh: "关系反应", lightingZh: "灯光", actionZh: "动作叙述",
   transitionInZh: "入镜转场", evidenceRole: "证据角色",
@@ -392,32 +392,94 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
    * 前台写「同镜延续」；无变化留空。
    */
   /**
-   * 0902 五审拍板：镜内运动（近景转全景）与剪切变化（上一镜→本镜）是两种事，
-   * 混拼成「全景→近景转全景」没法读。分家各带标签：
-   * 「镜内 …」= 本镜自带的推拉/俯仰（原文自述）；
-   * 「切换 A→B」= 上一镜收尾态 → 本镜起始态（箭头前为先）。
+   * 0902 六审定稿：这栏是「运镜解读」——只写手法的用意与预期效果，
+   * 裸名词（全景/仰拍…）是隔壁景别/机位栏的复读，一律不写。
+   * 全部确定性词典推导，零模型调用。
    */
+  const SIZE_ORDER = ["大远景", "远景", "全景", "中全景", "中景", "中近景", "近景", "特写", "大特写"];
+  const sizeRank = (v: string): number => {
+    for (let i = SIZE_ORDER.length - 1; i >= 0; i -= 1) if (v.includes(SIZE_ORDER[i]!)) return i;
+    return -1;
+  };
   const INTRA_MOVE_RE = /转|→/;
   const endStateOf = (v: string) => v.split(INTRA_MOVE_RE).pop()!.trim();
   const startStateOf = (v: string) => v.split(INTRA_MOVE_RE)[0]!.trim();
-  const changePartZh = (prevRaw: string, curRaw: string): string => {
-    const cur = curRaw.trim();
-    if (!cur) return "";
-    if (INTRA_MOVE_RE.test(cur)) return `镜内${cur}`;
-    const prevEnd = endStateOf(prevRaw.trim());
-    if (!prevEnd || prevEnd === startStateOf(cur)) return "";
-    return `切换${prevEnd}→${cur}`;
-  };
+  /** 特殊运镜/转场 → 用意·效果（审片工艺词典） */
+  const CRAFT_EFFECTS: Array<[RegExp, string]> = [
+    [/甩/, "甩镜·情绪急转不断链"],
+    [/环绕|旋转/, "环绕·对峙张力标记"],
+    [/升格|慢动作/, "升格·关键瞬间放大"],
+    [/定格/, "定格·记忆点盖章"],
+    [/跟拍/, "跟拍·伴随式沉浸"],
+    [/手持|晃动|震动/, "手持·不安临场感"],
+    [/俯冲/, "俯冲·命运压落"],
+    [/急推|变焦/, "急推变焦·压迫聚焦"],
+    [/一镜到底/, "一镜到底·沉浸不切"],
+    [/叠化/, "叠化·时间与心理过渡"],
+    [/闪白|闪黑/, "闪白黑·冲击断点"],
+    [/匹配/, "匹配剪辑·丝滑跨场"],
+    [/甩接/, "甩接·动势缝合"],
+  ];
+  /**
+   * 风格语感词典（蒸馏自 seedance-shot-design/references/director-styles.md
+   * 导演风格参数化映射库；遵循其去名化规范——只用风格称谓不点名）。
+   * 命中镜头构图/光影/运镜签名时吐一句「手法·预期效果」判词。
+   */
+  const SIGNATURE_EFFECTS: Array<[RegExp, string]> = [
+    [/对称|居中构图/, "对称舞台构图·秩序感与仪式感"],
+    [/巨物|渺小|庞然/, "巨物压迫构图·人物渺小宿命感"],
+    [/缓慢推轨|极缓推|缓推/, "冷峻缓推·庄重压场蓄势"],
+    [/霓虹/, "霓虹迷幻光·暧昧疏离情绪"],
+    [/剪影|逆光/, "剪影叙事·遮蔽悬念立轮廓"],
+    [/体积雾|体积光|丁达尔/, "体积光雾·神性纵深氛围"],
+    [/暴雨|雷暴|风雪|大雪/, "天气叙事·情绪外化入景"],
+    [/高对比|硬光/, "高反差布光·冷感惊悚张力"],
+    [/低角度广角|广角贴地/, "低机位广角·夸张气势冲击"],
+    [/浅景深|背景虚化/, "浅景深隔离·视线强制聚焦"],
+    [/长焦压缩/, "长焦压缩·人物与命运贴脸"],
+  ];
   const shotChangeZh = (index: number): string => {
     const cur = shots[index]!;
     if (String(cur.unitTypeZh ?? "").trim() === "拆分镜证据段") return "同镜延续";
-    const prev = index > 0 ? shots[index - 1]! : {};
-    const parts = [
-      changePartZh(String((prev as Record<string, unknown>).shotSizeZh ?? ""), String(cur.shotSizeZh ?? "")),
-      changePartZh(String((prev as Record<string, unknown>).angleZh ?? ""), String(cur.angleZh ?? "")),
-    ].filter(Boolean);
-    if (index === 0) return parts.length ? parts.join(" · ") : "开场镜";
-    return parts.join(" · ");
+    const prev = (index > 0 ? shots[index - 1]! : {}) as Record<string, unknown>;
+    const notes: string[] = [];
+    // 景别语义：只解读方向，不复读名词
+    const curSizeRaw = String(cur.shotSizeZh ?? "").trim();
+    const fromSize = INTRA_MOVE_RE.test(curSizeRaw)
+      ? startStateOf(curSizeRaw)
+      : endStateOf(String(prev.shotSizeZh ?? ""));
+    const toSize = endStateOf(curSizeRaw);
+    const fromRank = sizeRank(fromSize);
+    const toRank = sizeRank(toSize);
+    if (fromRank >= 0 && toRank >= 0 && fromRank !== toRank) {
+      notes.push(toRank > fromRank ? "推近·锁定情绪反应" : "拉远·交代处境格局");
+    }
+    // 机位语义
+    const curAngleRaw = String(cur.angleZh ?? "").trim();
+    const fromAngle = INTRA_MOVE_RE.test(curAngleRaw)
+      ? startStateOf(curAngleRaw)
+      : endStateOf(String(prev.angleZh ?? ""));
+    const toAngle = endStateOf(curAngleRaw);
+    if (toAngle && toAngle !== fromAngle) {
+      if (toAngle.includes("俯")) notes.push("转俯拍·压顶示弱势");
+      else if (toAngle.includes("仰")) notes.push("转仰拍·仰视立威压");
+      else if (toAngle.includes("平") && (fromAngle.includes("俯") || fromAngle.includes("仰"))) {
+        notes.push("回平视·情绪落地");
+      }
+    }
+    // 特殊运镜/转场词典
+    const craftSource = `${String(cur.cameraMoveZh ?? "")} ${String(cur.transitionInZh ?? "")}`;
+    for (const [re, effect] of CRAFT_EFFECTS) {
+      if (re.test(craftSource) && !notes.includes(effect)) notes.push(effect);
+    }
+    // 风格语感：扫构图/光影/运镜签名（导演风格库蒸馏）
+    const signatureSource = `${String(cur.compositionZh ?? "")} ${String(cur.lightingZh ?? "")} ${String(cur.cameraMoveZh ?? "")}`;
+    for (const [re, effect] of SIGNATURE_EFFECTS) {
+      if (notes.length >= 3) break;
+      if (re.test(signatureSource) && !notes.includes(effect)) notes.push(effect);
+    }
+    if (index === 0 && !notes.length) return "开场镜";
+    return notes.slice(0, 3).join(" · ");
   };
   const shotRows = shots.map((shot, shotIndex) => {
     const startSec = Number(shot.startSec) || 0;
