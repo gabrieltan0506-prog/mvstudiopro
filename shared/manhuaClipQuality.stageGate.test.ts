@@ -45,6 +45,25 @@ describe("clip 阶段门禁与合成判据同源", () => {
     expect(clipStageHas(clips)).toBe(true);
   });
 
+  it("质检不可用（unverified）且未放行：不可合成，阶段不算完成", () => {
+    // 接口抖动 ≠ 检了没过，但默认仍不放行——避免未质检的片默默混进长片
+    const clips = [
+      { status: "done", outputUrl: "https://x/seg1.mp4", quality: { status: "unverified" } },
+    ];
+    expect(clipStageHas(clips)).toBe(false);
+  });
+
+  it("unverified 手动放行后：可合成，阶段算完成", () => {
+    const clips = [
+      {
+        status: "done",
+        outputUrl: "https://x/seg1.mp4",
+        quality: { status: "unverified", userAcceptedDespiteQc: true },
+      },
+    ];
+    expect(clipStageHas(clips)).toBe(true);
+  });
+
   it("垫图不算出片：没有 outputUrl 一律不通过", () => {
     expect(clipStageHas([{ status: "done", outputUrl: "", quality: { status: "passed" } }])).toBe(
       false,

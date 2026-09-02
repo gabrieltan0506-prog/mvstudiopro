@@ -1,6 +1,5 @@
 import {
   emptyManhuaClipQualityChecks,
-  MANHUA_CLIP_QUALITY_KEYS,
   type ManhuaClipQualityReport,
 } from "@shared/manhuaClipQuality";
 
@@ -45,11 +44,15 @@ export async function reviewManhuaClipQuality(input: {
   } catch (error) {
     const raw = error instanceof Error ? error.message : String(error);
     return {
-      status: "failed",
+      // 为什么是 unverified 而不是 failed：这里是「检不了」（接口异常/超时），
+      // 不是「检了没过」。以前伪装 failed + 全量 failedKeys，第三方质检一抖
+      // 整条链就被 fail-closed 误杀锁死。unverified 默认仍不进成片坞，
+      // 但 failedKeys 留空（没有任何维度真的被判 NO），并保留重试与手动放行出口。
+      status: "unverified",
       checks: emptyManhuaClipQualityChecks(),
-      failedKeys: [...MANHUA_CLIP_QUALITY_KEYS],
-      // 与内容不合格区分：右栏可据此仍播成片，但不进成片坞
-      summary: "智能质检暂不可用（非成片内容判定），成片已保留但暂不进成片坞",
+      failedKeys: [],
+      // summary 保留「暂不可用」字样：isManhuaClipQualityInfraFailure 靠它识别链路故障
+      summary: "智能质检暂不可用（未质检，非成片内容判定）：可稍后重试，或在工作台「未质检放行」进成片坞",
       raw,
       attempts: input.attempts,
       sourceKeyartId: input.sourceKeyartId,

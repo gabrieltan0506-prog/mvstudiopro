@@ -29,7 +29,10 @@ import {
   queuedManhuaKeyartBlocks,
   stageKeyFromBlockId,
 } from "@/lib/canvasDramaStudio";
-import { manhuaClipQualityAllowsAssemble } from "@shared/manhuaClipQuality";
+import {
+  manhuaClipQualityAllowsAssemble,
+  resolveManhuaClipQualityEffectiveStatus,
+} from "@shared/manhuaClipQuality";
 import {
   buildManhuaAssetsGapItems,
   buildManhuaAssetsGapZh,
@@ -1135,6 +1138,8 @@ export default function ManhuaScriptWorkbench({
     ) || (activeSegNo === 1 ? legacyClip : undefined);
   const clip = activeClip || legacyClip;
   const clipQuality = clip?.manhuaClipQuality;
+  // unverified + 用户已放行 → unverified_waived（持久化只存放行标记，展示层派生）
+  const clipQualityEffective = resolveManhuaClipQualityEffectiveStatus(clipQuality);
   const clipVideoUrl = clipOutputUrl(clip);
   const approvedClipUrl =
     clipQuality?.status === "passed" && clipVideoUrl ? clipVideoUrl : undefined;
@@ -6837,6 +6842,17 @@ export default function ManhuaScriptWorkbench({
                   <AlertTriangle className="h-3 w-3" />
                   质检提醒
                 </span>
+              ) : clipQualityEffective === "unverified_waived" ? (
+                // 未质检放行必须有明显标记：这段没被质检过就进了成片坞，画面要自查
+                <span className="inline-flex items-center gap-1 rounded-full border border-sky-400/45 bg-sky-500/15 px-2 py-0.5 text-[9px] font-semibold text-sky-100">
+                  <AlertTriangle className="h-3 w-3" />
+                  未质检·已放行
+                </span>
+              ) : clipQuality?.status === "unverified" ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-sky-400/40 bg-sky-500/12 px-2 py-0.5 text-[9px] font-semibold text-sky-100/90">
+                  <AlertTriangle className="h-3 w-3" />
+                  质检不可用·未质检
+                </span>
               ) : finalVideoUrl ? (
                 <span className="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-[9px] font-semibold text-cyan-100">
                   长片已合成
@@ -6930,7 +6946,9 @@ export default function ManhuaScriptWorkbench({
                 ? "border-emerald-400/25 bg-emerald-500/[0.07]"
                 : clipQuality?.status === "failed"
                   ? "border-amber-400/30 bg-amber-500/[0.08]"
-                  : "border-white/10 bg-white/[0.025]"
+                  : clipQuality?.status === "unverified"
+                    ? "border-sky-400/30 bg-sky-500/[0.06]"
+                    : "border-white/10 bg-white/[0.025]"
             }`}
           >
             <div className="flex items-center justify-between gap-2">
@@ -6943,9 +6961,13 @@ export default function ManhuaScriptWorkbench({
                   ? `第 ${clipQuality.attempts} 次 · ${
                       clipQuality.status === "passed"
                         ? "可进入成片坞"
-                        : clipQuality.userAcceptedDespiteQc
-                          ? "已采用（质检未过）"
-                          : "提醒·默认不进坞"
+                        : clipQualityEffective === "unverified_waived"
+                          ? "未质检·已放行（画面自查）"
+                          : clipQuality.status === "unverified"
+                            ? "质检不可用·未质检"
+                            : clipQuality.userAcceptedDespiteQc
+                              ? "已采用（质检未过）"
+                              : "提醒·默认不进坞"
                     }`
                   : factoryBusy
                     ? "生成后自动检查"
@@ -6998,6 +7020,38 @@ export default function ManhuaScriptWorkbench({
                   </button>
                 ) : clipQuality.userAcceptedDespiteQc ? (
                   <p className="text-[9px] text-amber-100/70">已采用：可进成片坞勾选合成</p>
+                ) : null}
+              </div>
+            ) : clipQuality?.status === "unverified" ? (
+              <div className="mt-1.5 space-y-1.5">
+                <p className="line-clamp-3 text-[9px] leading-relaxed text-sky-100/85">
+                  {clipQuality.summary || "质检服务暂不可用，本段尚未质检"}
+                  {" → 成片可预览；服务恢复后重跑可补质检，急用可手动放行。"}
+                </p>
+                {clip?.id && onAcceptClipDespiteQc && !clipQuality.userAcceptedDespiteQc ? (
+                  <button
+                    type="button"
+                    data-manhua-action="waive-clip-unverified"
+                    onClick={() => {
+                      // 为什么要二次确认：放行=跳过质检直接进成片坞，
+                      // 问题画面（错人/错景/带字）的把关责任从质检转到用户自查
+                      if (
+                        !window.confirm(
+                          "质检服务不可用，本段跳过质检进入成片坞，问题画面需自查。确认放行？",
+                        )
+                      ) {
+                        return;
+                      }
+                      onAcceptClipDespiteQc(clip.id);
+                    }}
+                    className="rounded-md border border-sky-400/45 bg-sky-500/20 px-2.5 py-1 text-[10px] font-semibold text-sky-50 hover:bg-sky-500/30"
+                  >
+                    未质检放行
+                  </button>
+                ) : clipQuality.userAcceptedDespiteQc ? (
+                  <p className="text-[9px] text-sky-100/70">
+                    已放行（未质检）：可进成片坞勾选合成，问题画面请自查
+                  </p>
                 ) : null}
               </div>
             ) : null}
@@ -7160,6 +7214,10 @@ export default function ManhuaScriptWorkbench({
             const clipAccepted =
               qc?.status === "failed" && qc.userAcceptedDespiteQc && Boolean(clipUrl);
             const clipFailed = qc?.status === "failed" && !clipAccepted;
+            // 未质检（质检服务不可用）也要在胶片条一眼可辨：放行的段问题画面靠自查
+            const clipWaived =
+              qc?.status === "unverified" && Boolean(qc.userAcceptedDespiteQc) && Boolean(clipUrl);
+            const clipUnverified = qc?.status === "unverified" && !clipWaived;
             const stillsShort = seg.stillReady < seg.shotCount;
             // 有图但未垫图改图 → 出片会跑偏，先重出该段静帧
             const hasUnlocked = seg.unlockedCount > 0;
@@ -7171,22 +7229,30 @@ export default function ManhuaScriptWorkbench({
               ? "片✓"
               : clipAccepted
                 ? "已采用"
-                : clipFailed
-                  ? "质检"
-                  : hasUnlocked
-                    ? "未锁"
-                    : stillsShort
-                      ? "缺静帧"
-                      : "待出片";
+                : clipWaived
+                  ? "未检放行"
+                  : clipUnverified
+                    ? "未质检"
+                    : clipFailed
+                      ? "质检"
+                      : hasUnlocked
+                        ? "未锁"
+                        : stillsShort
+                          ? "缺静帧"
+                          : "待出片";
             const statusTone = clipPassed
               ? "bg-emerald-500/90 text-white"
               : clipAccepted
                 ? "bg-amber-500/85 text-black"
-                : clipFailed
-                  ? "bg-rose-500/90 text-white"
-                  : hasUnlocked
-                    ? "bg-red-800/85 text-red-50"
-                    : "bg-amber-500/85 text-black";
+                : clipWaived
+                  ? "bg-sky-500/85 text-black"
+                  : clipUnverified
+                    ? "bg-sky-800/85 text-sky-50"
+                    : clipFailed
+                      ? "bg-rose-500/90 text-white"
+                      : hasUnlocked
+                        ? "bg-red-800/85 text-red-50"
+                        : "bg-amber-500/85 text-black";
             return (
               <div
                 key={`seg-${seg.index}`}
@@ -7196,13 +7262,17 @@ export default function ManhuaScriptWorkbench({
                 data-manhua-fragment-status={
                   clipPassed
                     ? "clip"
-                    : clipFailed
-                      ? "qc-failed"
-                      : hasUnlocked
-                        ? "keyart-unlocked"
-                        : stillsShort
-                          ? "idle"
-                          : "keyart"
+                    : clipWaived
+                      ? "qc-unverified-waived"
+                      : clipUnverified
+                        ? "qc-unverified"
+                        : clipFailed
+                          ? "qc-failed"
+                          : hasUnlocked
+                            ? "keyart-unlocked"
+                            : stillsShort
+                              ? "idle"
+                              : "keyart"
                 }
                 className={`relative w-[132px] shrink-0 overflow-hidden rounded-md border text-left ${
                   checked
