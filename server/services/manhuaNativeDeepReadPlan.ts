@@ -718,7 +718,13 @@ export async function buildNativeDeepReadPlanPreview(
   }
 
   // ── 2. 合集展开
+  // 0903 用户令：展开接口与详情接口同款间歇风控——空手时退避重试两次再放弃，
+  // 连学批次启动不再因一次风控秒败（重试免费，该接口零模型调用）。
   if (!listed) listed = await deps.listMixEpisodes(mixId);
+  for (let retry = 0; (!listed?.episodes?.length) && retry < 2; retry += 1) {
+    await sleepForDetailRetry(deps.detailRetryDelayMs ?? 90_000, input.abortSignal);
+    listed = await deps.listMixEpisodes(mixId);
+  }
   if (!listed?.episodes?.length) {
     const blockedZh = (listed as { riskControlBlockedZh?: string } | null)?.riskControlBlockedZh;
     throw new Error(blockedZh
