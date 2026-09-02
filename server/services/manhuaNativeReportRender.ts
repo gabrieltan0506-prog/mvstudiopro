@@ -335,15 +335,19 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   }
   if (frameList.length === 0) frameSource = "未抽帧（该集尚无帧包）";
   const tiles: string[] = [];
+  /** 帧编号锚点表：重点时刻表用「（图N）」跳转对照（0902 用户拍板） */
+  const frameAnchors: Array<{ no: number; atSec: number }> = [];
   for (const frame of frameList) {
     // 0902：帧图内嵌进 HTML，报告发出去不带任何仓储线索；单帧失败跳过不毁整页
     const dataUri = await embedFrameImage(bucket, String(frame.objectName));
     if (!dataUri) continue;
+    const frameNo = tiles.length + 1;
+    frameAnchors.push({ no: frameNo, atSec: Number(frame.atSec) });
     const reasons = (Array.isArray(frame.reasons) ? frame.reasons : []) as string[];
     const badge = reasons.map((r) => `<span style="background:#f6efe0;border:1px solid #e0d2b4;border-radius:8px;padding:0 6px;margin-right:3px;color:#6b5b4a">${esc(r)}</span>`).join("");
     const frameAtSec = Number(frame.atSec);
     const shot = shots.find((s) => frameAtSec >= Number(s.startSec) && frameAtSec < Number(s.endSec)) || {};
-    tiles.push(`<div style="width:158px"><img loading="lazy" src="${dataUri}" style="width:158px;border-radius:4px"><div style="font-size:.7em;color:#7a6f5d">${mmss(frameAtSec)} ${badge}${esc(String(frame.noteZh ?? "").trim() || shot.actionZh)}</div></div>`);
+    tiles.push(`<div id="frame-${frameNo}" style="width:158px;position:relative;scroll-margin-top:20px"><span style="position:absolute;top:4px;left:4px;background:rgba(58,123,213,.92);color:#fff;font-size:.68em;font-weight:700;border-radius:6px;padding:1px 6px">图${frameNo}</span><img loading="lazy" src="${dataUri}" style="width:158px;border-radius:4px"><div style="font-size:.7em;color:#7a6f5d">${mmss(frameAtSec)} ${badge}${esc(String(frame.noteZh ?? "").trim() || shot.actionZh)}</div></div>`);
   }
 
   const cl = (card.classification ?? {}) as Record<string, unknown>;
@@ -403,7 +407,15 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
       const marks = hitMoments.map((km) => KIND_ICON[String(km.kindZh)] ?? "⭐").join("");
       return `<tr${accent ? ` style="background:${accent}14"` : ""}><td style="color:#8a6a1f;white-space:nowrap${accent ? `;border-left:3px solid ${accent};font-weight:700` : ""}">${marks ? `${marks} ` : ""}${mmss(trackFrom)}–${mmss(trackTo)}</td>${AUDIO_TRACK_FIELDS.map((key) => `<td style="padding:3px 8px">${emphasize(track[key])}</td>`).join("")}<td style="color:#857a66">${cueSpans}</td></tr>`;
     }).join("");
-    return `<div style="margin:14px 0"><h3 style="color:#7a6f5d;margin:6px 0">声音节点 · 第${(Number(chunk.chunkIndex) || 0) + 1}片</h3>${chunkMeta}<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.85em"><tr><th style="padding:4px 8px;color:#7a6f5d">秒位</th>${AUDIO_TRACK_FIELDS.map((key) => `<th style="padding:4px 8px;color:#7a6f5d">${fieldLabel(key)}</th>`).join("")}<th style="padding:4px 8px;color:#7a6f5d">声音事件</th></tr>${trackRows}</table></div></div>`;
+    // 0902 用户拍板：分片是后台手法不进前台——标题只标时间段
+    const trackList = Array.isArray(analysis.audioTrack) ? analysis.audioTrack : [];
+    const rangeFrom = trackList.length
+      ? offset + Math.min(...trackList.map((t) => Number(t.fromSec) || 0))
+      : offset;
+    const rangeTo = trackList.length
+      ? offset + Math.max(...trackList.map((t) => Number(t.toSec) || 0))
+      : offset;
+    return `<div style="margin:14px 0"><h3 style="color:#7a6f5d;margin:6px 0">声音节点 · ${mmss(rangeFrom)}–${mmss(rangeTo)}</h3>${chunkMeta}<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.85em"><tr><th style="padding:4px 8px;color:#7a6f5d">秒位</th>${AUDIO_TRACK_FIELDS.map((key) => `<th style="padding:4px 8px;color:#7a6f5d">${fieldLabel(key)}</th>`).join("")}<th style="padding:4px 8px;color:#7a6f5d">声音事件</th></tr>${trackRows}</table></div></div>`;
   }).join("");
 
   const subtitles = (Array.isArray(card.subtitles) ? card.subtitles : []) as Array<Record<string, unknown>>;
@@ -473,7 +485,17 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const kmRows = keyMoments.map((row, index) => (
     `<tr><td style="color:#8a6a1f;white-space:nowrap">${mmss(Number(row.atSec))}</td>`
     + `<td style="white-space:nowrap">${KIND_ICON[String(row.kindZh)] ?? ""} ${esc(row.kindZh)}</td>`
-    + `<td style="font-weight:700;color:#8a2a1a">${esc(row.noteZh)}</td>`
+    + `<td style="font-weight:700;color:#8a2a1a">${esc(row.noteZh)}${(() => {
+      const at = Number(row.atSec);
+      let best: { no: number; d: number } | null = null;
+      for (const anchor of frameAnchors) {
+        const d = Math.abs(anchor.atSec - at);
+        if (d <= 2.5 && (!best || d < best.d)) best = { no: anchor.no, d };
+      }
+      return best
+        ? ` <a href="#frame-${best.no}" style="color:#3a7bd5;font-weight:600;text-decoration:none">（图${best.no}）</a>`
+        : "";
+    })()}</td>`
     + `<td>${(subtitlesByKeyMoment.get(index) ?? []).map((subtitle) => (
       `<div><span style="color:#8a6a1f;white-space:nowrap">${mmss(subtitle.atSec)}</span> ${esc(subtitle.textZh)}</div>`
     )).join("") || '<span style="color:#9a8d75">—</span>'}</td></tr>`
