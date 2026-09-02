@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { DouyinListedEpisode } from "../../shared/manhuaLearnDouyinWebApi.js";
 import {
   assertNativeDeepReadPlanConfirmation,
+  balancedNativeDeepReadVideoFps,
   buildNativeDeepReadPlanPreview,
   computeNativeDeepReadPlanHash,
   describeNativeDeepReadSegmentPlanZh,
@@ -61,6 +62,15 @@ describe("原生精读计划", () => {
     expect(splitNativeDeepReadSegments(120, 319)).toEqual([{ startSec: 0, endSec: 120 }]);
   });
 
+  it("自动配平 fps 阶梯：≤300→10，此后每 10 秒 +2，封顶 24", () => {
+    for (const [seconds, fps] of [
+      [120, 10], [300, 10], [301, 12], [310, 12], [311, 14],
+      [319, 14], [320, 14], [321, 16], [330, 16], [334, 18], [360, 22], [1000, 24],
+    ] as const) {
+      expect(balancedNativeDeepReadVideoFps(seconds)).toBe(fps);
+    }
+  });
+
   it("非法长度和超过 32 片明确拒绝，不改变用户设置来凑片数", () => {
     expect(() => splitNativeDeepReadSegments(1594, 0)).toThrow("整数秒");
     expect(() => splitNativeDeepReadSegments(1594, 317.5)).toThrow("整数秒");
@@ -83,7 +93,12 @@ describe("原生精读计划", () => {
     const defaultPlan = await buildNativeDeepReadPlanPreview({
       url: "https://www.douyin.com/collection/123456", limit: 1,
     }, d);
-    expect(defaultPlan.totalVisualCalls).toBe(6);
+    // 0902 自动配平：留空时 1594 秒＝round(5.31)=5 段 × ceil(1594/5)=319 秒；
+    // 但配平会按片长阶梯把 fps 调到 14（319∈311–320），与手填 319+默认 12fps
+    // 的计划参数不同——不同参数＝不同计划＝不同 hash
+    expect(defaultPlan.totalVisualCalls).toBe(5);
+    expect(defaultPlan.episodes[0]?.segmentSeconds).toBe(319);
+    expect(defaultPlan.episodes[0]?.videoFps).toBe(14);
     expect(defaultPlan.planHash).not.toBe(plan.planHash);
   });
 
@@ -161,11 +176,11 @@ describe("原生精读计划", () => {
     expect(plan.seriesKey).toBe("series_real");
     expect(plan.episodes.map((row) => row.episodeIndex)).toEqual([3]);
     expect(plan.alreadyIngestedEpisodeIndexes).toEqual([1, 2]);
-    expect(plan.totalSegments).toBe(4);
-    // 每段一次 Gemini 调用（4 段=4 次）；音轨随调直出为 0；聚合 +1
-    expect(plan.totalVisualCalls).toBe(4);
+    // 0902 自动配平：1002 秒＝3 段 × 334 秒，尾片不再是 102 秒的零头
+    expect(plan.totalSegments).toBe(3);
+    expect(plan.totalVisualCalls).toBe(3);
     expect(plan.totalAudioChunks).toBe(0);
-    expect(plan.totalModelCalls).toBe(5);
+    expect(plan.totalModelCalls).toBe(4);
     expect(plan.executableEpisodeCount).toBe(1);
     expect(d.probeDurationSec).toHaveBeenCalledTimes(1);
   });
@@ -575,24 +590,25 @@ describe("原生精读计划", () => {
       episodeIndex: 1,
       sourceUrl: `https://www.douyin.com/video/${modalId}`,
       durationSec: 2_212,
-      segmentSeconds: 300,
-      videoFps: 12,
+      // 0902 自动配平：2212 秒＝7 段 × 316 秒整分，尾片与前片同长；
+      // fps 按片长阶梯落 14（316∈311–320）
+      segmentSeconds: 316,
+      videoFps: 14,
       segments: [
-        { startSec: 0, endSec: 300 },
-        { startSec: 300, endSec: 600 },
-        { startSec: 600, endSec: 900 },
-        { startSec: 900, endSec: 1_200 },
-        { startSec: 1_200, endSec: 1_500 },
-        { startSec: 1_500, endSec: 1_800 },
-        { startSec: 1_800, endSec: 2_100 },
-        { startSec: 2_100, endSec: 2_212 },
+        { startSec: 0, endSec: 316 },
+        { startSec: 316, endSec: 632 },
+        { startSec: 632, endSec: 948 },
+        { startSec: 948, endSec: 1_264 },
+        { startSec: 1_264, endSec: 1_580 },
+        { startSec: 1_580, endSec: 1_896 },
+        { startSec: 1_896, endSec: 2_212 },
       ],
       recoverMisplacedSourceCache: true,
     }]);
     expect(plan.freeEpisodeCount).toBe(1);
     expect(plan.executableEpisodeCount).toBe(1);
-    expect(plan.totalVisualCalls).toBe(8);
-    expect(plan.totalModelCalls).toBe(9);
+    expect(plan.totalVisualCalls).toBe(7);
+    expect(plan.totalModelCalls).toBe(8);
   });
 
   it("无 mix_info 的可读视频与合集一样尊重已入库状态，不重复付费", async () => {

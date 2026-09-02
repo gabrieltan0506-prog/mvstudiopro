@@ -47,7 +47,7 @@ describe("原生精读任务墙钟", () => {
     expect(confirmation.segmentSeconds).toBe(319);
   });
 
-  it.each([null, "", " ", true, false, [], {}, 0, -1, 1.5, "317.2", NaN, Infinity, 7201])(
+  it.each(["", " ", true, false, [], {}, 0, -1, 1.5, "317.2", NaN, Infinity, 7201])(
     "非法分片输入 %j 在入队和 worker 共用的解析器中拒绝",
     (value) => {
       expect(() => parseNativeDeepReadSegmentSeconds(value)).toThrow("整数秒");
@@ -61,6 +61,20 @@ describe("原生精读任务墙钟", () => {
       })).toThrow("整数秒");
     },
   );
+
+  it("缺省/null 分片秒数＝按集自动配平（0902），确认契约保留 undefined 不折成 300", () => {
+    for (const value of [undefined, null]) {
+      const confirmation = parseNativeDeepReadJobConfirmation({
+        url: "https://www.douyin.com/video/12345",
+        batchSize: 1,
+        nativeDeepReadConfirmed: true,
+        nativeMaxCalls: 200,
+        nativePlanLimit: 1,
+        ...(value === undefined ? {} : { nativeSegmentSeconds: value }),
+      });
+      expect(confirmation.segmentSeconds).toBeUndefined();
+    }
+  });
 
   it("按确认的模型请求数扩展，且不会超过 24 小时", () => {
     expect(resolveNativeDeepReadJobTimeoutMs(2)).toBe(80 * 60_000);
@@ -110,7 +124,8 @@ describe("原生精读任务墙钟", () => {
       planHash: undefined,
       maxCalls: NATIVE_DEEP_READ_JOB_MAX_CALLS,
       planLimit: 10,
-      segmentSeconds: 300,
+      // 0902：缺省分片＝自动配平，契约保留 undefined
+      segmentSeconds: undefined,
       videoFps: 12,
       seriesKey: undefined,
       learnLlm: "gpt",

@@ -295,6 +295,17 @@ export async function listManhuaTemplateLearnJobsForUser(
           eq(jobs.type, "video"),
           sql`(${jobs.input}::jsonb->>'action') = 'manhua_template_learn'`,
           sql`coalesce(${jobs.input}::jsonb->>'hiddenAt', '') = ''`,
+          // 0902 用户令「失败不留壳」：贴链接在计划阶段就失败的任务（无入库 seriesKey、
+          // 只挂 learn_* 队列占位键）不再出现在剧集下拉——它们代表零成果，只会淤塞列表。
+          // DB 行保留可审计；有真实 seriesKey 或仍在跑/排队的照常显示。
+          sql`NOT (
+            ${jobs.status} = 'failed'
+            AND coalesce(${jobs.output}::jsonb->>'seriesKey', '') = ''
+            AND (
+              coalesce(${jobs.input}::jsonb->'params'->>'seriesKey', '') = ''
+              OR ${jobs.input}::jsonb->'params'->>'seriesKey' LIKE 'learn\_%'
+            )
+          )`,
         ),
       )
       .orderBy(desc(jobs.createdAt))

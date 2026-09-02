@@ -18,6 +18,7 @@ import { promisify } from "node:util";
 import { normalizeDouyinVideoUrl } from "../../shared/manhuaLearnYtdlp.js";
 import {
   extractDouyinVideoIdFromUrl,
+  isDouyinShortLinkUrl,
   extractDouyinMixIdFromUrl,
   type DouyinAwemeDetailParse,
   type DouyinListedEpisode,
@@ -33,6 +34,7 @@ import type { ManhuaTemplateLearnLlmProvider } from "../../shared/manhuaTemplate
 import {
   NATIVE_DEEP_READ_JOB_MAX_CALLS,
   NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS,
+  NATIVE_DEEP_READ_MAX_VIDEO_FPS,
   parseNativeDeepReadSegmentSeconds,
   parseNativeDeepReadVideoFps,
 } from "../../shared/manhuaNativeDeepReadJob.js";
@@ -203,6 +205,35 @@ export function assertNativeDeepReadPlanConfirmation(
 export const NATIVE_DEEP_READ_VISUAL_SEGMENT_SEC = NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS;
 export function normalizeNativeDeepReadDurationSec(durationSec: number): number {
   return Math.max(1, Math.round(Number(durationSec) || 0));
+}
+
+/**
+ * 0902 用户拍板「分片自动配平」：留空秒数时按集计算，让每片密度尽量一致、
+ * 尾片不再吃零头（旧默认 300 固定切，1154 秒会切成 300×3+254 的瘸尾；
+ * 配平后 段数=round(时长/300)、片长=ceil(时长/段数)＝289×4，与用户手算一致）。
+ * 片长超过 360 秒（默认+20%）时加一段重配，避免短片整支单片超出读片甜区。
+ */
+export function balancedNativeDeepReadSegmentSeconds(durationSec: number): number {
+  const total = normalizeNativeDeepReadDurationSec(durationSec);
+  let n = Math.max(1, Math.round(total / NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS));
+  let length = Math.ceil(total / n);
+  if (length > NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS * 1.2) {
+    n += 1;
+    length = Math.ceil(total / n);
+  }
+  return length;
+}
+
+/**
+ * 0902 用户拍板第二定律：自动配平的分片按片长配采样率——
+ * ≤300 秒一律 10fps，此后每多 10 秒加 2fps（301–310→12、311–320→14、
+ * 321–330→16，顺推），封顶接口上限 24fps。只在自动配平模式下生效。
+ */
+export function balancedNativeDeepReadVideoFps(segmentSeconds: number): number {
+  const seconds = Math.max(1, Math.round(Number(segmentSeconds) || 0));
+  if (seconds <= NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS) return 10;
+  const steps = Math.ceil((seconds - NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS) / 10);
+  return Math.min(NATIVE_DEEP_READ_MAX_VIDEO_FPS, 10 + 2 * steps);
 }
 
 export function splitNativeDeepReadSegments(
@@ -505,6 +536,8 @@ async function probeEpisodeDurationWithCandidateFailover(
 }
 
 export type NativeDeepReadPlanDeps = {
+  /** 0902：v./vm.douyin.com 短链服务端自动展开；解不开返回 null 走既有报错 */
+  resolveShortLink?: (url: string) => Promise<string | null>;
   fetchAwemeDetail: (awemeId: string) => Promise<DouyinAwemeDetailParse | null>;
   listMixEpisodes: (mixId: string) => Promise<{
     episodes: DouyinListedEpisode[];
@@ -575,6 +608,8 @@ export async function buildNativeDeepReadPlanPreview(
   deps: NativeDeepReadPlanDeps,
 ): Promise<NativeDeepReadPlanPreview> {
   // 在解析远程来源之前拒绝非法设置，避免建单后才发现时长输入不可用。
+  // 留空＝按集自动配平；填了数就全程尊重用户的值
+  const autoBalanceSegments = input.segmentSeconds == null;
   const segmentSeconds = parseNativeDeepReadSegmentSeconds(input.segmentSeconds);
   const videoFps = parseNativeDeepReadVideoFps(input.videoFps);
   /**
@@ -582,7 +617,12 @@ export async function buildNativeDeepReadPlanPreview(
    * （sourceIdentity/各消费方），形态不认就死。入口先规范化成 /video/<id> 标准形态
    * （modal_id 弹层链 → 单集页；其余原样返回），下游只见规范 URL。
    */
-  const rawUrl = String(input.url || "").trim();
+  let rawUrl = String(input.url || "").trim();
+  // 0902：App 分享短链先展开成 /share/video/<id> 形态，用户不用再开浏览器倒一手
+  if (deps.resolveShortLink && isDouyinShortLinkUrl(rawUrl)) {
+    const expandedUrl = await deps.resolveShortLink(rawUrl).catch(() => null);
+    if (expandedUrl && expandedUrl.trim()) rawUrl = expandedUrl.trim();
+  }
   const isExternal = deps.isExternalSource?.(rawUrl) === true
     || isManhua0996SourceUrl(rawUrl);
   const external = isExternal && deps.resolveExternalSeries
@@ -838,13 +878,19 @@ export async function buildNativeDeepReadPlanPreview(
         `第${e.index}集超过 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟，超出学习策略上限`,
       );
     }
+    const episodeSegmentSeconds = autoBalanceSegments
+      ? balancedNativeDeepReadSegmentSeconds(durationSec)
+      : segmentSeconds;
+    // 续学恢复的集保持原 fps；自动配平的新集按片长阶梯配采样率
+    const episodeVideoFps = restored?.videoFps
+      ?? (autoBalanceSegments ? balancedNativeDeepReadVideoFps(episodeSegmentSeconds) : videoFps);
     episodes.push({
       episodeIndex: e.index,
       sourceUrl: e.url,
       durationSec,
-      segmentSeconds,
-      videoFps: restored?.videoFps ?? videoFps,
-      segments: restored?.segments ?? splitNativeDeepReadSegments(durationSec, segmentSeconds),
+      segmentSeconds: episodeSegmentSeconds,
+      videoFps: episodeVideoFps,
+      segments: restored?.segments ?? splitNativeDeepReadSegments(durationSec, episodeSegmentSeconds),
       ...(reclaimSet.has(e.index) ? { reclaimFailedClaim: true } : {}),
       ...(sourceEpisodeIndex === e.index ? { recoverMisplacedSourceCache: true } : {}),
       ...(restored ? { resumeStoredSegmentPlan: true } : {}),
@@ -855,13 +901,15 @@ export async function buildNativeDeepReadPlanPreview(
   const plan = episodes.length
     ? validateNativeDeepReadBatchPlan(
         episodes.map((e) => ({ ...e, resolveNodes: async () => [] })),
-        { maxEpisodes: limit, seriesKey, segmentSeconds },
+        // 自动配平时不下发批级片长，让校验与执行按每集自己的 segmentSeconds 走
+        { maxEpisodes: limit, seriesKey, ...(autoBalanceSegments ? {} : { segmentSeconds }) },
       )
     : null;
 
   return {
     planHash: plan?.planHash || computeNativeDeepReadPlanHash(seriesKey, episodes),
-    segmentSeconds,
+    // 自动配平时计划级不落统一片长（每集各带自己的值），执行/复核层据此走 per-episode
+    ...(autoBalanceSegments ? {} : { segmentSeconds }),
     videoFps,
     seriesKey,
     dramaNameZh: dramaNameZh || undefined,
@@ -890,8 +938,9 @@ export async function buildNativeDeepReadPlanPreview(
 export function describeNativeDeepReadSegmentPlanZh(
   plan: Pick<NativeDeepReadPlanPreview, "segmentSeconds" | "episodes">,
 ): string {
-  const segmentSeconds = parseNativeDeepReadSegmentSeconds(plan.segmentSeconds);
+  const fallbackSeconds = parseNativeDeepReadSegmentSeconds(plan.segmentSeconds);
   const episodesZh = plan.episodes.map((episode) => {
+    const episodeSeconds = episode.segmentSeconds ?? fallbackSeconds;
     const count = episode.segments.length;
     const tail = episode.segments.at(-1);
     const tailSeconds = tail
@@ -899,7 +948,11 @@ export function describeNativeDeepReadSegmentPlanZh(
       : 0;
     return count <= 1
       ? `第 ${episode.episodeIndex} 集 1 片（整片 ${tailSeconds} 秒）`
-      : `第 ${episode.episodeIndex} 集 ${count} 片（前 ${count - 1} 片各 ${segmentSeconds} 秒，尾片 ${tailSeconds} 秒）`;
+      : `第 ${episode.episodeIndex} 集 ${count} 片（前 ${count - 1} 片各 ${episodeSeconds} 秒，尾片 ${tailSeconds} 秒）`;
   });
-  return `分片上限 ${segmentSeconds} 秒${episodesZh.length ? ` · ${episodesZh.join("；")}` : ""}`;
+  const perEpisode = new Set(plan.episodes.map((episode) => episode.segmentSeconds ?? fallbackSeconds));
+  const headZh = perEpisode.size > 1
+    ? "分片按集自动配平"
+    : `分片上限 ${Array.from(perEpisode)[0] ?? fallbackSeconds} 秒`;
+  return `${headZh}${episodesZh.length ? ` · ${episodesZh.join("；")}` : ""}`;
 }

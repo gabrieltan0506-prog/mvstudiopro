@@ -11,6 +11,7 @@ import {
 } from "./manhuaNativeDeepReadPlan.js";
 import {
   fetchDouyinAwemeDetailViaWebApi,
+  resolveDouyinShortLinkViaRedirect,
   listDouyinAwemePlaybackUrlsViaWebApi,
   listDouyinMixEpisodesViaWebApi,
 } from "./manhuaLearnDouyinWebApi.js";
@@ -42,6 +43,7 @@ export async function buildNativeDeepReadPlanPreviewFromServices(
   input: NativeDeepReadPlanRuntimeInput,
 ): Promise<NativeDeepReadPlanPreview> {
   return buildNativeDeepReadPlanPreview(input, {
+    resolveShortLink: resolveDouyinShortLinkViaRedirect,
     fetchAwemeDetail: fetchDouyinAwemeDetailViaWebApi,
     listMixEpisodes: listDouyinMixEpisodesViaWebApi,
     refreshPlaybackUrls: listDouyinAwemePlaybackUrlsViaWebApi,

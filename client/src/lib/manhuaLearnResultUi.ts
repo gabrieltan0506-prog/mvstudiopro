@@ -42,27 +42,29 @@ function manhuaLearnUserStorageKey(baseKey: string, userKey: string): string {
   return scope ? `${baseKey}:${encodeURIComponent(scope)}` : "";
 }
 
-/** 新输入必须明确合法；空输入不能经 Number("") 误变成有效设置。 */
-export function parseManhuaLearnSegmentSecondsInput(value: string): number {
+/** 0902：留空＝分片按集自动配平；非空输入必须明确合法。 */
+export function parseManhuaLearnSegmentSecondsInput(value: string): number | undefined {
+  if (!String(value ?? "").trim()) return undefined;
   return parseNativeDeepReadSegmentSeconds(value);
 }
 
-/** 仅恢复下一任务的设置草稿；旧值损坏不修改服务端已经入队的参数。 */
-export function restoreManhuaLearnSegmentSeconds(value: unknown): number {
+/** 仅恢复下一任务的设置草稿；缺省/损坏都回到自动配平（undefined），不再折成 300。 */
+export function restoreManhuaLearnSegmentSeconds(value: unknown): number | undefined {
+  if (value == null || value === "") return undefined;
   try {
     return parseNativeDeepReadSegmentSeconds(value);
   } catch {
-    return NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS;
+    return undefined;
   }
 }
 
-export function readManhuaLearnSegmentSeconds(userKey: string): number {
+export function readManhuaLearnSegmentSeconds(userKey: string): number | undefined {
   const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_SEGMENT_SECONDS, userKey);
   try {
     const stored = key ? JSON.parse(localStorage.getItem(key) || "null") : undefined;
     return restoreManhuaLearnSegmentSeconds(stored);
   } catch {
-    return NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS;
+    return undefined;
   }
 }
 
@@ -86,12 +88,15 @@ export function writeManhuaLearnStandalone(userKey: string, value: boolean): voi
   }
 }
 
-export function writeManhuaLearnSegmentSeconds(userKey: string, value: number): void {
-  const seconds = parseNativeDeepReadSegmentSeconds(value);
+export function writeManhuaLearnSegmentSeconds(userKey: string, value: number | undefined): void {
   const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_SEGMENT_SECONDS, userKey);
   if (!key) return;
   try {
-    localStorage.setItem(key, JSON.stringify(seconds));
+    if (value == null) {
+      localStorage.removeItem(key);
+      return;
+    }
+    localStorage.setItem(key, JSON.stringify(parseNativeDeepReadSegmentSeconds(value)));
   } catch {
     // 本地存储不可用时仍使用当前输入，真实参数随后台任务持久化。
   }
@@ -177,8 +182,8 @@ export function resolveManhuaLearnSnapshotSegmentSeconds(
   continuation: ManhuaLearnActiveJobRecord["continuation"] | null,
   seriesKey: string,
   sourceUrl: string,
-): number {
-  if (!continuation) return NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS;
+): number | undefined {
+  if (!continuation) return undefined;
   const sameSource = (
     Boolean(seriesKey && continuation.seriesKey === seriesKey)
     || Boolean(sourceUrl && continuation.row.url === sourceUrl)
