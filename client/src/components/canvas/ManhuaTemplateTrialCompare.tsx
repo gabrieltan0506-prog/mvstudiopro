@@ -7,6 +7,8 @@
  * 不 import 任何服务端模块，也不出现模型名/供应商名。
  */
 
+import { anchoredPanelStyle, getLastPointerAnchor } from "@/lib/anchoredPanel";
+
 export type ManhuaWriterTrialDraft = {
   logline: string;
   beats: string[];
