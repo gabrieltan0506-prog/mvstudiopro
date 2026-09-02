@@ -69,6 +69,21 @@ const emphasize = (v: unknown): string => {
     })
     .join("");
 };
+/** 声音事件种类中文化（0902 八审：sfx/voice_change 英文尾巴清除）；未知种类原样放行 */
+const CUE_KIND_ZH: Record<string, string> = {
+  sfx: "音效",
+  voice_change: "语调",
+  voicechange: "语调",
+  voice: "语调",
+  bgm: "配乐",
+  music: "配乐",
+  silence: "静默",
+  ambient: "环境音",
+  dialogue: "对白",
+  narration: "旁白",
+};
+const cueKindZh = (kind: string): string =>
+  CUE_KIND_ZH[kind.trim().toLowerCase().replace(/[\s-]+/g, "_")] ?? kind;
 const mmss = (s: number): string => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
 function makeSigner() {
@@ -438,6 +453,16 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     [/浅景深|背景虚化/, "浅景深隔离·视线强制聚焦"],
     [/长焦压缩/, "长焦压缩·人物与命运贴脸"],
   ];
+  // 同义轮换（0902 八审：「逼近对峙·关系张力升温」连发被抓——同一含义换着说，
+  // 按出现次序轮转变体，首个变体为基准键）
+  const phraseSpins = new Map<string, number>();
+  const spinOf = (key: string): number => {
+    const n = phraseSpins.get(key) ?? 0;
+    phraseSpins.set(key, n + 1);
+    return n;
+  };
+  const vary = (variants: readonly string[]): string =>
+    variants[spinOf(variants[0]!) % variants.length]!;
   const shotChangeZh = (index: number): string => {
     const cur = shots[index]!;
     if (String(cur.unitTypeZh ?? "").trim() === "拆分镜证据段") return "同镜延续";
@@ -460,21 +485,23 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
         const hasFight = /打|战|斗|追|劈|斩|挥/.test(String(cur.actionZh ?? ""));
         const hasRelation = Boolean(String(cur.relationshipReactionZh ?? "").trim());
         if (toRank > fromRank) {
-          notes.push(
-            toSize.includes("大特写") ? "怼至大特写·情绪显微镜"
-            : toSize.includes("特写") ? (hasMicro ? "推至特写·微表情入账" : "推至特写·细节定音")
-            : hasRelation ? "逼近对峙·关系张力升温"
-            : jump >= 3 ? "陡然贴近·冲击式聚焦"
-            : "收紧视距·压缩注意力",
-          );
+          notes.push(vary(
+            toSize.includes("大特写") ? ["怼至大特写·情绪显微镜", "极限贴脸·连瞳孔里的戏都收走"]
+            : toSize.includes("特写") ? (hasMicro
+              ? ["推至特写·微表情入账", "镜头贴脸·眉梢眼角替台词说话", "切进特写·把心事写在脸上", "怼近面孔·微表情全程留证"]
+              : ["推至特写·细节定音", "快速切近·细节一锤定音", "视线收拢·关键物证放大呈堂", "逼到跟前·让细节自己开口"])
+            : hasRelation ? ["逼近对峙·关系张力升温", "快速推进镜头·情绪骤然紧绷", "距离一步步压缩·火药味渐浓", "镜头欺身而上·对峙感拉满"]
+            : jump >= 3 ? ["陡然贴近·冲击式聚焦", "一步跨到眼前·观众措手不及"]
+            : ["收紧视距·压缩注意力", "视野收窄·逼观众盯住主角"],
+          ));
         } else {
-          notes.push(
-            toSize.includes("大远景") ? "甩到大远景·个体没入天地"
-            : toSize.includes("远景") ? "退至远景·孤立感与规模感"
-            : hasFight ? "拉开武戏·全身调度入镜"
-            : jump >= 3 ? "骤然抽离·上帝视角断情"
-            : "放宽视野·亮出场面调度",
-          );
+          notes.push(vary(
+            toSize.includes("大远景") ? ["甩到大远景·个体没入天地", "一甩到天地尽头·人如蝼蚁"]
+            : toSize.includes("远景") ? ["退至远景·孤立感与规模感", "镜头抽远·人影孤悬画中", "后撤成远景·处境一目了然"]
+            : hasFight ? ["拉开武戏·全身调度入镜", "退开看打·招式走位尽收眼底"]
+            : jump >= 3 ? ["骤然抽离·上帝视角断情", "猛然拉开·情绪瞬间冷却"]
+            : ["放宽视野·亮出场面调度", "镜头后撤·全场站位摊开", "画幅一松·空间关系交代清楚"],
+          ));
         }
       }
     }
@@ -485,10 +512,10 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
       : endStateOf(String(prev.angleZh ?? ""));
     const toAngle = endStateOf(curAngleRaw);
     if (toAngle && toAngle !== fromAngle) {
-      if (toAngle.includes("俯")) notes.push("转俯拍·压顶示弱势");
-      else if (toAngle.includes("仰")) notes.push("转仰拍·仰视立威压");
+      if (toAngle.includes("俯")) notes.push(vary(["转俯拍·压顶示弱势", "镜头压顶·俯视中人显得渺小"]));
+      else if (toAngle.includes("仰")) notes.push(vary(["转仰拍·仰视立威压", "镜头抬头·威压自上而下"]));
       else if (toAngle.includes("平") && (fromAngle.includes("俯") || fromAngle.includes("仰"))) {
-        notes.push("回平视·情绪落地");
+        notes.push(vary(["回平视·情绪落地", "视线放平·情绪回到对话层"]));
       }
     }
     // 情绪转轨（0902 七审补：前后镜微表情极性变化本身就是技巧）
@@ -503,22 +530,27 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     const curEmotion = emotionBucketOf(`${String(cur.microExpressionZh ?? "")}${String(cur.gazeBreathZh ?? "")}`);
     const prevEmotion = emotionBucketOf(`${String(prev.microExpressionZh ?? "")}${String(prev.gazeBreathZh ?? "")}`);
     if (curEmotion && prevEmotion && curEmotion !== prevEmotion) {
-      notes.push(`情绪转轨·${prevEmotion}转${curEmotion}`);
+      notes.push([
+        `情绪转轨·${prevEmotion}转${curEmotion}`,
+        `脸色由${prevEmotion}入${curEmotion}·心境急转`,
+        `${prevEmotion}意换${curEmotion}色·情绪换挡`,
+      ][spinOf("情绪转轨") % 3]!);
     }
     // 站位改写：调度里出现关键站位语义（新出现才记，避免延续镜刷屏）
-    const BLOCKING_EFFECTS: Array<[RegExp, string]> = [
-      [/背对|背身|转身背/, "背身站位·拒绝对话感"],
-      [/逼近|上前|欺身|贴近/, "逼近站位·压迫升级"],
-      [/后退|后撤|退步/, "后撤站位·势弱让步"],
-      [/跪|伏地|瘫/, "跪伏姿态·权力落差具象"],
-      [/包围|合围|围拢/, "合围站位·困局成型"],
-      [/对峙|相对而立|对视僵/, "对峙站位·顶牛张力"],
+    const BLOCKING_EFFECTS: Array<[RegExp, string[]]> = [
+      [/背对|背身|转身背/, ["背身站位·拒绝对话感", "转身背对·把话堵回去"]],
+      [/逼近|上前|欺身|贴近/, ["逼近站位·压迫升级", "步步上前·气场压过去"]],
+      [/后退|后撤|退步/, ["后撤站位·势弱让步", "脚下退半步·气势先输一筹"]],
+      [/跪|伏地|瘫/, ["跪伏姿态·权力落差具象", "身形塌落·高下立判"]],
+      [/包围|合围|围拢/, ["合围站位·困局成型", "四面围拢·退路尽断"]],
+      [/对峙|相对而立|对视僵/, ["对峙站位·顶牛张力", "针尖对麦芒·僵持入画"]],
     ];
     const curBlocking = String(cur.blockingZh ?? "");
     const prevBlocking = String(prev.blockingZh ?? "");
-    for (const [re, effect] of BLOCKING_EFFECTS) {
-      if (re.test(curBlocking) && !re.test(prevBlocking) && !notes.includes(effect)) {
-        notes.push(effect);
+    for (const [re, variants] of BLOCKING_EFFECTS) {
+      if (re.test(curBlocking) && !re.test(prevBlocking)) {
+        const effect = vary(variants);
+        if (!notes.includes(effect)) notes.push(effect);
         break;
       }
     }
@@ -531,7 +563,10 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     const curEnv = envTokenOf(`${String(cur.lightingZh ?? "")}${String(cur.actionZh ?? "")}`);
     const prevEnv = envTokenOf(`${String(prev.lightingZh ?? "")}${String(prev.actionZh ?? "")}`);
     if (curEnv && prevEnv && curEnv !== prevEnv) {
-      notes.push(`跨场切换·${prevEnv}转${curEnv}空间叙事推进`);
+      notes.push([
+        `跨场切换·${prevEnv}转${curEnv}空间叙事推进`,
+        `${prevEnv}景切${curEnv}景·时空一跳戏就走`,
+      ][spinOf("跨场切换") % 2]!);
     }
     // 特殊运镜/转场词典
     const craftSource = `${String(cur.cameraMoveZh ?? "")} ${String(cur.transitionInZh ?? "")}`;
@@ -602,7 +637,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
       .join("");
     const trackRows = (Array.isArray(analysis.audioTrack) ? analysis.audioTrack : []).map((track) => {
       const cues = (Array.isArray(track.cues) ? track.cues : []) as Array<Record<string, unknown>>;
-      const cueSpans = cues.map((cue) => `<span style="background:#e7dcc2;border-radius:8px;padding:1px 8px;display:inline-block;margin:1px">${mmss(offset + Number(cue.atSec))} ${esc(cue.kind)} ${esc(cue.detailZh)}</span>`).join(" ");
+      const cueSpans = cues.map((cue) => `<span style="background:#e7dcc2;border-radius:8px;padding:1px 8px;display:inline-block;margin:1px">${mmss(offset + Number(cue.atSec))} ${esc(cueKindZh(String(cue.kind ?? "")))} ${esc(cue.detailZh)}</span>`).join(" ");
       const trackFrom = offset + Number(track.fromSec);
       const trackTo = offset + Number(track.toSec);
       const hitMoments = keyMomentsInRange(trackFrom, trackTo)
