@@ -17,7 +17,22 @@ export const MANHUA_CLIP_QUALITY_KEYS = [
 ] as const;
 
 export type ManhuaClipQualityKey = (typeof MANHUA_CLIP_QUALITY_KEYS)[number];
-export type ManhuaClipQualityStatus = "pending" | "passed" | "failed";
+export type ManhuaClipQualityStatus =
+  | "pending"
+  | "passed"
+  | "failed"
+  /**
+   * 质检接口异常/超时：「检不了」≠「检了没过」。
+   * 以前伪装成 failed + 全量 failedKeys，第三方质检一抖整条链锁死（fail-closed 误杀）；
+   * 现在如实标 unverified，默认仍不进成片坞，但保留重试与「未质检放行」出口。
+   */
+  | "unverified"
+  /**
+   * unverified 段经用户显式「未质检放行」后的等效状态。
+   * 持久化仍走「unverified + userAcceptedDespiteQc=true」（复用既有仍采用标记与存储链路），
+   * 展示层用 resolveManhuaClipQualityEffectiveStatus 派生出本值。
+   */
+  | "unverified_waived";
 
 export type ManhuaClipQualityReport = {
   status: ManhuaClipQualityStatus;
@@ -30,11 +45,25 @@ export type ManhuaClipQualityReport = {
   sourceKeyartUrl?: string;
   reviewedAt: string;
   /**
-   * 用户显式「仍采用此片」后为 true。
-   * 质检 failed 时默认不进成片坞；仅此项为 true 才可勾选合成。
+   * 用户显式「仍采用此片」（failed）或「未质检放行」（unverified）后为 true。
+   * 质检 failed / unverified 时默认不进成片坞；仅此项为 true 才可勾选合成。
+   * 两种放行复用同一标记：既有 onAcceptClipDespiteQc 存储链路与刷新恢复逻辑零改动。
    */
   userAcceptedDespiteQc?: boolean;
 };
+
+/**
+ * 展示/判定用的等效状态：unverified + 用户已放行 → unverified_waived。
+ * 为什么派生而不直接改写 status：放行入口只翻 userAcceptedDespiteQc 一个标记
+ * （与 failed 的「仍采用」同链路同持久化），避免新增第二套写状态的路径。
+ */
+export function resolveManhuaClipQualityEffectiveStatus(
+  quality?: Pick<ManhuaClipQualityReport, "status" | "userAcceptedDespiteQc"> | null,
+): ManhuaClipQualityStatus | undefined {
+  if (!quality) return undefined;
+  if (quality.status === "unverified" && quality.userAcceptedDespiteQc) return "unverified_waived";
+  return quality.status;
+}
 
 /** 成片是否允许进入成片坞 / 长片合成（软质检） */
 export function manhuaClipQualityAllowsAssemble(opts: {
@@ -50,6 +79,11 @@ export function manhuaClipQualityAllowsAssemble(opts: {
   if (!q) return true;
   if (q.status === "passed") return true;
   if (q.status === "failed" && q.userAcceptedDespiteQc) return true;
+  // 质检服务不可用（unverified=检不了，≠failed=检了没过）：
+  // 默认不放行——服务恢复后重试即可，不能让未质检的片默默混进长片；
+  // 但用户看过成片后可显式「未质检放行」（问题画面责任转自查），此时放行。
+  if (q.status === "unverified_waived") return true;
+  if (q.status === "unverified" && q.userAcceptedDespiteQc) return true;
   return false;
 }
 
