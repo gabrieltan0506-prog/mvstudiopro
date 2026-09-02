@@ -6262,11 +6262,13 @@ export default function PlatformPage() {
 
   const approveManhuaLearnProposal = useCallback(
     async (id: string, nameZh?: string, revisionOf?: string) => {
-      const confirmMessage = revisionOf
-        ? `确认批准「${nameZh || "该优化修订"}」并替换原正式模板？原版会先归档，公开句柄保持不变。`
-        : `确认批准「${nameZh || "该节奏模板"}」进节奏模板库？批准后编剧室可选，无需改代码发版。`;
-      if (!window.confirm(confirmMessage)) {
-        return;
+      // 0903 用户令「一次点击就入库」：普通批准可用下架撤销，免确认框；
+      // 只有替换原版会归档旧模板，保留一道确认
+      if (revisionOf) {
+        const confirmMessage = `确认批准「${nameZh || "该优化修订"}」并替换原正式模板？原版会先归档，公开句柄保持不变。`;
+        if (!window.confirm(confirmMessage)) {
+          return;
+        }
       }
       try {
         // 审查收紧：只传 id，服务端按落盘提案批准，不信任客户端卡片
