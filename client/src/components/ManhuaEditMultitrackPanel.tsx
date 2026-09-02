@@ -7,6 +7,7 @@ import { copyText } from "@/lib/copyText";
 import {
   AlertTriangle,
   CheckCircle2,
+  Flame,
   Package,
   RefreshCw,
   Scissors,
@@ -28,6 +29,7 @@ import {
   type ManhuaFineCutTrim,
 } from "@shared/manhuaEditFineCut";
 import {
+  buildManhuaSubtitleBurnSrt,
   buildManhuaSubtitleCues,
   formatManhuaSubtitleSrt,
 } from "@shared/manhuaEditSubtitle";
@@ -64,6 +66,15 @@ type Props = {
   suggestAutoCutsBusy?: boolean;
   subtitleEnabled?: boolean;
   onSubtitleEnabledChange?: (next: boolean) => void;
+  /**
+   * 烧字进片:父级把 SRT 送进后期工坊同款任务提交通道
+   * (queuePostProd action=burn_subtitle,与 bgm_mount/concat 一个口)。
+   * 未接线时按钮按反空壳约定灰禁用,不冒充可用。
+   */
+  onBurnSubtitle?: (subtitleSrt: string) => void | Promise<void>;
+  burnSubtitleBusy?: boolean;
+  /** 最近一次烧字成片读链(父级从任务产出回填);有值即展示新视频入口 */
+  burnSubtitleResultUrl?: string | null;
   /** 本集各镜成片/静帧质检原料 */
   shotMedia: ManhuaEditShotMedia[];
   factoryBusy?: boolean;
@@ -147,6 +158,9 @@ export default function ManhuaEditMultitrackPanel({
   suggestAutoCutsBusy = false,
   subtitleEnabled = false,
   onSubtitleEnabledChange,
+  onBurnSubtitle,
+  burnSubtitleBusy = false,
+  burnSubtitleResultUrl,
   shotMedia,
   factoryBusy,
   dockSelectedIds,
@@ -183,6 +197,20 @@ export default function ManhuaEditMultitrackPanel({
     [roughClips, shots, fineCutByShot, subtitleEnabled],
   );
   const srtPreview = useMemo(() => formatManhuaSubtitleSrt(cues), [cues]);
+  // 烧字要整片重编码,单独一道确认开关;提交前随时可关,不跟「字幕轨」开关混用
+  const [burnArmed, setBurnArmed] = useState(false);
+  const submitBurn = () => {
+    if (!onBurnSubtitle || burnSubtitleBusy) return;
+    try {
+      // 空轨/坏时间码在这里就报错,不入队白跑一轮转码
+      const srt = buildManhuaSubtitleBurnSrt(cues);
+      void onBurnSubtitle(srt);
+    } catch (e) {
+      toast.error("无法生成烧字字幕", {
+        description: e instanceof Error ? e.message : undefined,
+      });
+    }
+  };
   const qcRows = useMemo(() => buildManhuaEditShotQcBoard(shotMedia), [shotMedia]);
   const qcSummary = useMemo(() => summarizeManhuaEditQcBoard(qcRows), [qcRows]);
   const exportableIds = useMemo(() => manhuaEditExportableClipIds(qcRows), [qcRows]);
@@ -237,7 +265,8 @@ export default function ManhuaEditMultitrackPanel({
             </span>
           </div>
           <p className="mt-1 max-w-xl text-[10px] leading-relaxed text-white/40">
-            多轨预览：静帧 / 成片 / 对白 / 字幕。可调进出点；字幕只生成轨数据，默认不烧进成片。
+            多轨预览：静帧 / 成片 / 对白 / 字幕。可调进出点；字幕默认只生成轨数据，
+            勾选下方「烧字进片」提交后才真正烧进成片。
             建议切点：气口 + 导戏秒轴对齐，写入成片后合成会真裁切。
           </p>
         </div>
@@ -391,7 +420,7 @@ export default function ManhuaEditMultitrackPanel({
         >
           <div className="flex items-center justify-between gap-2">
             <div className="text-[10px] font-semibold text-white/70">
-              字幕轨数据 · {cues.length} 条（不烧字）
+              字幕轨数据 · {cues.length} 条（默认不烧）
             </div>
             {srtPreview ? (
               <button
@@ -425,6 +454,59 @@ export default function ManhuaEditMultitrackPanel({
           ) : (
             <p className="mt-1 text-[10px] text-white/35">当前粗剪序无对白可铺字幕</p>
           )}
+
+          {/* 烧字进片:与 bgm_mount/concat 同一条后期任务通道(父级接线) */}
+          <div
+            data-manhua-edit-section="subtitle-burn"
+            className="mt-2 rounded-md border border-amber-400/25 bg-amber-500/[0.05] p-2"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label className="inline-flex items-center gap-1.5 text-[10px] text-amber-50/90">
+                <input
+                  type="checkbox"
+                  checked={burnArmed}
+                  onChange={(e) => setBurnArmed(e.target.checked)}
+                  className="accent-amber-400"
+                />
+                <Flame className="h-3 w-3 text-amber-200/90" />
+                烧字进片
+                <span className="text-[9px] font-normal text-white/40">
+                  把上方 {cues.length} 条字幕真正烧进成片（整片重编码，出新视频，原片保留）
+                </span>
+              </label>
+              <button
+                type="button"
+                data-manhua-action="burn-subtitle"
+                disabled={
+                  !onBurnSubtitle || !burnArmed || !cues.length || burnSubtitleBusy || factoryBusy
+                }
+                onClick={submitBurn}
+                className="inline-flex items-center gap-1 rounded border border-amber-400/40 bg-amber-500/20 px-2 py-0.5 text-[9px] font-semibold text-amber-50 hover:bg-amber-500/30 disabled:opacity-40"
+                title={
+                  !onBurnSubtitle
+                    ? "先在成片坞合成本集长片，再回来烧字"
+                    : !cues.length
+                      ? "当前无字幕可烧"
+                      : !burnArmed
+                        ? "先勾选左侧确认烧字"
+                        : "提交烧字任务，产出带字幕的新成片"
+                }
+              >
+                <Flame className="h-3 w-3" />
+                {burnSubtitleBusy ? "烧字处理中…" : "提交烧字任务"}
+              </button>
+            </div>
+            {burnSubtitleResultUrl ? (
+              <a
+                href={burnSubtitleResultUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1.5 inline-block text-[10px] text-emerald-200/90 underline-offset-2 hover:underline"
+              >
+                查看烧字成片（新视频）
+              </a>
+            ) : null}
+          </div>
         </div>
       ) : null}
 

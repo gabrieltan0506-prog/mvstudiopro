@@ -79,10 +79,39 @@ export const loudnessParamsSchema = z
   })
   .strict();
 
+/** 0902 烧字（总装并轨自服务层暂住版）：SRT 由共享层生成已清洗防注入 */
+export const burnSubtitleStyleOverrideSchema = z
+  .object({
+    /** libass 单位(SRT 默认 PlayResY=288);默认 16 ≈ 竖屏画高 5.5% */
+    fontSize: z.number().int().min(8).max(96).optional(),
+    outline: z.number().min(0).max(8).optional(),
+    /** 底边距,同为 PlayResY 像素;默认 35 ≈ 底部 12% */
+    marginV: z.number().int().min(0).max(200).optional(),
+    /** 默认跟随渲染机 fontconfig；白名单字符防 force_style 夹带 */
+    fontName: z
+      .string()
+      .trim()
+      .min(1)
+      .max(64)
+      .regex(/^[0-9A-Za-z ._-]+$/, "字体名格式不正确")
+      .optional(),
+  })
+  .strict();
+
+export const burnSubtitleParamsSchema = z
+  .object({
+    videoUri: mediaSourceSchema,
+    /** SRT 全文由共享层 buildManhuaSubtitleBurnSrt 生成(已清洗防注入) */
+    subtitleSrt: z.string().min(1).max(200_000),
+    styleOverride: burnSubtitleStyleOverrideSchema.optional(),
+  })
+  .strict();
+
 export const postProdJobInputSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("concat"), params: concatParamsSchema }).strict(),
   z.object({ action: z.literal("bgm_mount"), params: bgmMountParamsSchema }).strict(),
   z.object({ action: z.literal("loudness_check"), params: loudnessParamsSchema }).strict(),
+  z.object({ action: z.literal("burn_subtitle"), params: burnSubtitleParamsSchema }).strict(),
 ]);
 
 export type PostProdJobInput = z.infer<typeof postProdJobInputSchema>;
@@ -90,5 +119,8 @@ export type PostProdJobInput = z.infer<typeof postProdJobInputSchema>;
 export type RawPostProdJobInput = z.input<typeof postProdJobInputSchema>;
 export type ConcatParams = z.infer<typeof concatParamsSchema>;
 export type BgmMountParams = z.infer<typeof bgmMountParamsSchema>;
+export type BurnSubtitleStyleOverride = z.infer<typeof burnSubtitleStyleOverrideSchema>;
+export type BurnSubtitleParams = z.infer<typeof burnSubtitleParamsSchema>;
+export type RawBurnSubtitleParams = z.input<typeof burnSubtitleParamsSchema>;
 export type RawBgmMountParams = z.input<typeof bgmMountParamsSchema>;
 export type LoudnessParams = z.infer<typeof loudnessParamsSchema>;

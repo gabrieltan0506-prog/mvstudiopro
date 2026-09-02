@@ -247,6 +247,10 @@ import ManhuaLiveProgressBoard from "@/components/ManhuaLiveProgressBoard";
 import ManhuaScriptWorkbench from "@/components/ManhuaScriptWorkbench";
 import ManhuaAssetWall from "@/components/ManhuaAssetWall";
 import { anchoredPanelStyle, getLastPointerAnchor } from "@/lib/anchoredPanel";
+import {
+  diffManhuaWriterPacks,
+  type WriterPackDiffResult,
+} from "@shared/manhuaWriterPackDiff";
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 import { createJobSameOrigin, pollJobUntilTerminal } from "@/lib/jobs";
 import { buildCanvasGptImage2JobInput } from "@shared/canvasGptImage2JobInput";
@@ -745,6 +749,28 @@ export default function OmniCanvas() {
   const [publicTemplateId, setPublicTemplateId] = useState(
     () => String(initialWriterSession?.publicTemplateId || "").trim(),
   );
+  // 0902：/canvas?tpl=mt_xxx 预选剧情增强方案（平台页「去画布用模板试写」带码跳转）
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const tpl = String(params.get("tpl") || "").trim().toLowerCase();
+      if (/^mt_[a-z0-9]{4,16}$/.test(tpl)) {
+        setPublicTemplateId(tpl);
+        toast.success("已预选剧情增强方案，可直接试写或扩写");
+        params.delete("tpl");
+        const rest = params.toString();
+        window.history.replaceState(
+          null,
+          "",
+          `${window.location.pathname}${rest ? `?${rest}` : ""}`,
+        );
+      }
+    } catch {
+      /* URL 解析失败不影响画布 */
+    }
+    // 只在首挂载消费一次 URL 参数
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [writerEpisodeCount, setWriterEpisodeCount] = useState(() =>
     clampWriterEpisodeCount(initialWriterSession?.episodeCount ?? MANHUA_WRITER_EPISODE_DEFAULT),
   );
@@ -822,6 +848,9 @@ export default function OmniCanvas() {
   const [writerPack, setWriterPack] = useState<ManhuaWriterPack | null>(
     () => initialWriterSession?.writerPack ?? null,
   );
+  /** 0902：扩写前后逐行对比（高亮）——「全部扩写也没列出对比」用户拍板 */
+  const [writerPackDiff, setWriterPackDiff] = useState<WriterPackDiffResult | null>(null);
+  const [writerPackDiffOpen, setWriterPackDiffOpen] = useState(false);
   const [writerConfirmed, setWriterConfirmed] = useState(
     () => Boolean(initialWriterSession?.writerConfirmed),
   );
@@ -1079,6 +1108,49 @@ export default function OmniCanvas() {
   );
   const abortRef = useRef<AbortController | null>(null);
   const chargeWorkflowStepMutation = trpc.workflow.chargeStep.useMutation();
+  /** 0902 烧字总装：剪辑台字幕轨 → queuePostProd burn_subtitle → 轮询取新片 */
+  const queueBurnSubtitleMutation = trpc.mvAnalysis.queuePostProd.useMutation();
+  const trpcUtils = trpc.useUtils();
+  const [burnSubtitleBusy, setBurnSubtitleBusy] = useState(false);
+  const [burnSubtitleResultUrl, setBurnSubtitleResultUrl] = useState<string | null>(null);
+  const handleBurnSubtitle = useCallback(
+    async (subtitleSrt: string) => {
+      const videoUri = String(finalAssembleVideoUrl || "").trim();
+      if (!videoUri) {
+        toast.error("先在成片坞合成本集长片，再回来烧字");
+        return;
+      }
+      setBurnSubtitleBusy(true);
+      setBurnSubtitleResultUrl(null);
+      try {
+        const { jobId } = await queueBurnSubtitleMutation.mutateAsync({
+          action: "burn_subtitle",
+          params: { videoUri, subtitleSrt },
+        });
+        // 烧字是整片重编码，轮询上限 10 分钟；超时提示去后期任务列表取件
+        for (let attempt = 0; attempt < 120; attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          const job = await trpcUtils.mvAnalysis.getPostProdJob.fetch({ jobId });
+          if (job?.status === "succeeded") {
+            const output = (job.output ?? {}) as { url?: unknown };
+            const url = String(output.url || "").trim();
+            setBurnSubtitleResultUrl(url || null);
+            toast.success("烧字完成，新视频已就绪（原片保留未动）");
+            return;
+          }
+          if (job?.status === "failed") {
+            throw new Error(String(job.error || "烧字任务失败"));
+          }
+        }
+        throw new Error("烧字任务超时，请稍后在后期任务列表查看");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "烧字失败");
+      } finally {
+        setBurnSubtitleBusy(false);
+      }
+    },
+    [finalAssembleVideoUrl, queueBurnSubtitleMutation, trpcUtils],
+  );
   /** 登录后云端草稿：与本机双通路，互不放弃 */
   const [cloudSyncReady, setCloudSyncReady] = useState(false);
   const cloudHydrateDoneRef = useRef(false);
@@ -3752,6 +3824,16 @@ export default function OmniCanvas() {
         setWorkflowPhase("outline");
       }
       setWriterPack(pack);
+      // 扩写对比：旧包快照 vs 新包，逐集逐行高亮；首次扩写无旧包不出对比
+      if (writerPack) {
+        const packDiff = diffManhuaWriterPacks(writerPack, pack);
+        setWriterPackDiff(packDiff);
+        toast.success(`扩写完成：${packDiff.summaryZh}`, {
+          description: "点「对比上一版」查看逐行高亮",
+        });
+      } else {
+        setWriterPackDiff(null);
+      }
       setWriterFocusEpisode(fromEpisode || 1);
       setWriterConfirmBlockers([]);
       // 新剧本立刻落盘并覆盖本机+云端旧稿，避免刷新后又被旧云草稿盖回
@@ -7324,6 +7406,9 @@ export default function OmniCanvas() {
                     setFactoryActionRecipeId(id);
                   }}
                   finalVideoUrl={finalAssembleVideoUrl}
+                  onBurnSubtitle={handleBurnSubtitle}
+                  burnSubtitleBusy={burnSubtitleBusy}
+                  burnSubtitleResultUrl={burnSubtitleResultUrl}
                   factoryBusy={factoryBusy || assembleBusy}
                   factoryProgress={
                     assembleBusy ? "正在合成长片与配乐…" : factoryProgress || undefined
@@ -7998,9 +8083,16 @@ export default function OmniCanvas() {
                             ...b.manhuaClipQuality,
                             userAcceptedDespiteQc: true,
                           },
-                          error: b.manhuaClipQuality.summary
-                            ? `已采用（质检未过）：${b.manhuaClipQuality.summary}`
-                            : "已采用（质检未过）",
+                          error: (() => {
+                            // unverified 段的措辞要如实：是「没检成」不是「检了没过」
+                            const wording =
+                              b.manhuaClipQuality.status === "unverified"
+                                ? "未质检放行"
+                                : "已采用（质检未过）";
+                            return b.manhuaClipQuality.summary
+                              ? `${wording}：${b.manhuaClipQuality.summary}`
+                              : wording;
+                          })(),
                         };
                       });
                       setEdges((eds) => {
@@ -8537,6 +8629,15 @@ export default function OmniCanvas() {
                       重扩写以新剧本为准，旧稿不再备份。
                     </p>
                   ) : null}
+                  {writerPackDiff ? (
+                    <button
+                      type="button"
+                      onClick={() => setWriterPackDiffOpen(true)}
+                      className="rounded-lg border border-emerald-300/40 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-50 hover:bg-emerald-500/15"
+                    >
+                      对比上一版：{writerPackDiff.summaryZh}
+                    </button>
+                  ) : null}
                 </div>
                 <button
                   type="button"
@@ -8871,6 +8972,11 @@ export default function OmniCanvas() {
                   assembleBusy ? "正在合成长片与配乐…" : factoryProgress || undefined
                 }
                 onStopFactory={factoryBusy ? stopFactory : undefined}
+                onOpenClipDock={() => {
+                  document
+                    .getElementById("manhua-clip-dock-zone")
+                    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
                 onFocusEpisode={(ep) => {
                   setWriterFocusEpisode(ep);
                   setManhuaUiMode("workbench");
@@ -9470,9 +9576,15 @@ export default function OmniCanvas() {
                           ...b.manhuaClipQuality,
                           userAcceptedDespiteQc: true,
                         },
-                        error: b.manhuaClipQuality.summary
-                          ? `已采用（质检未过）：${b.manhuaClipQuality.summary}`
-                          : "已采用（质检未过）",
+                        error: (() => {
+                          const wording =
+                            b.manhuaClipQuality.status === "unverified"
+                              ? "未质检放行"
+                              : "已采用（质检未过）";
+                          return b.manhuaClipQuality.summary
+                            ? `${wording}：${b.manhuaClipQuality.summary}`
+                            : wording;
+                        })(),
                       };
                     });
                     setEdges((eds) => {
@@ -9555,6 +9667,88 @@ export default function OmniCanvas() {
           </div>
           ) : null}
 
+          {/* 扩写对比弹层：逐集逐行高亮（绿=新增、红=删除） */}
+          {writerPackDiffOpen && writerPackDiff ? (
+            <div className="fixed inset-0 z-[85] bg-black/60 backdrop-blur-[2px]">
+              <button
+                type="button"
+                className="absolute inset-0 cursor-default"
+                aria-label="关闭扩写对比"
+                onClick={() => setWriterPackDiffOpen(false)}
+              />
+              <div
+                className="z-[86] flex flex-col overflow-hidden rounded-xl border border-white/15 bg-[#0c1118] shadow-2xl"
+                style={anchoredPanelStyle(getLastPointerAnchor(), 860, 760)}
+              >
+                <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-2.5">
+                  <div className="text-sm font-semibold text-white/90">
+                    扩写对比 · {writerPackDiff.summaryZh}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setWriterPackDiffOpen(false)}
+                    className="rounded-lg border border-white/15 px-2 py-1 text-[11px] text-white/70 hover:bg-white/10"
+                  >
+                    关闭
+                  </button>
+                </div>
+                <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+                  {writerPackDiff.episodes.map((ep) => (
+                    <div
+                      key={ep.episodeIndex}
+                      className="rounded-lg border border-white/10 bg-black/30 p-2.5"
+                    >
+                      <div className="flex items-center gap-2 text-[12px] font-semibold text-white/85">
+                        第{ep.episodeIndex}集 · {ep.titleZh || "（无题）"}
+                        <span
+                          className={`rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${
+                            ep.status === "unchanged"
+                              ? "border-white/15 text-white/45"
+                              : ep.status === "added"
+                                ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-100"
+                                : ep.status === "removed"
+                                  ? "border-red-400/40 bg-red-500/10 text-red-100"
+                                  : "border-amber-400/40 bg-amber-500/10 text-amber-100"
+                          }`}
+                        >
+                          {ep.status === "unchanged"
+                            ? "未动"
+                            : ep.status === "added"
+                              ? "新增"
+                              : ep.status === "removed"
+                                ? "已删"
+                                : `改写 +${ep.addedLineCount} / -${ep.removedLineCount}`}
+                        </span>
+                      </div>
+                      {ep.status === "changed" && !ep.tooLargeForLineDiff ? (
+                        <div className="mt-1.5 max-h-72 overflow-auto rounded bg-black/40 p-2 text-[11px] leading-5">
+                          {ep.lines.map((line, lineIndex) => (
+                            <div
+                              key={lineIndex}
+                              className={
+                                line.kind === "add"
+                                  ? "bg-emerald-500/15 text-emerald-100"
+                                  : line.kind === "del"
+                                    ? "bg-red-500/15 text-red-200/75 line-through"
+                                    : "text-white/50"
+                              }
+                            >
+                              {line.kind === "add" ? "＋ " : line.kind === "del" ? "－ " : "　 "}
+                              {line.text || " "}
+                            </div>
+                          ))}
+                        </div>
+                      ) : ep.tooLargeForLineDiff ? (
+                        <div className="mt-1 text-[10px] text-white/40">
+                          本集过长（超 400 行），不做逐行对比，按整集改写处理
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : null}
           {/* 角色库 / 资产墙：锚定弹层——宽屏贴右缘抽屉离触发点太远，用户以为没反应（0902 拍板） */}
           {manhuaAssetDrawer ? (
             <div className="fixed inset-0 z-[80] bg-black/55 backdrop-blur-[2px]">

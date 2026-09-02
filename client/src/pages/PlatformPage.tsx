@@ -2557,6 +2557,8 @@ export default function PlatformPage() {
   }, [manhuaPasteTitle]);
   const retireLearnEpisodeMutation =
     trpc.manhuaViralTemplate.retireLearnSourceEpisode.useMutation();
+  const renameLearnSeriesMutation =
+    trpc.manhuaViralTemplate.renameLearnSeriesTitle.useMutation();
   const manhuaLearnDupQuery = trpc.manhuaViralTemplate.checkLearnSourceLearned.useQuery(
     {
       url: manhuaPasteUrlDebounced,
@@ -2587,6 +2589,56 @@ export default function PlatformPage() {
   const [manhuaLearnHydratedUserKey, setManhuaLearnHydratedUserKey] = useState("");
   const [manhuaLearnActiveJob, setManhuaLearnActiveJob] = useState<ManhuaLearnActiveJob | null>(null);
   const [manhuaLearnServerJobs, setManhuaLearnServerJobs] = useState<ManhuaLearnServerJob[]>([]);
+  /** 0902 用户实测：任务 4 秒失败面板不吭声，人干等 4 分钟——失败即 toast + 常驻红条 */
+  const manhuaLearnFailureSeenRef = useRef<Set<string>>(new Set());
+  const [manhuaLearnLatestFailure, setManhuaLearnLatestFailure] = useState<
+    { jobId: string; errorZh: string; atIso: string } | null
+  >(null);
+  useEffect(() => {
+    for (const job of manhuaLearnServerJobs) {
+      if (job.status !== "failed") continue;
+      if (manhuaLearnFailureSeenRef.current.has(job.jobId)) continue;
+      manhuaLearnFailureSeenRef.current.add(job.jobId);
+      const atMs = Date.parse(String(job.updatedAt || "")) || 0;
+      // 只弹近 10 分钟内的失败；更早的历史失败首拉时静默记档不打扰
+      if (Date.now() - atMs > 10 * 60_000) continue;
+      const errorZh = sanitizePlatformUserMessage(String(job.error || "学习任务失败"));
+      setManhuaLearnLatestFailure({
+        jobId: job.jobId,
+        errorZh,
+        atIso: String(job.updatedAt || ""),
+      });
+      toast.error("学习任务已失败", { description: errorZh, duration: 12_000 });
+      // 僵尸卡对账：任务已死但篮子里还挂「排队中」（刷新从 localStorage 还原旧态，
+      // jobId 可能没落上）——按 jobId 或来源 URL 双路匹配翻成失败态。
+      const jobSource = String(
+        job.input?.params?.dedupeKey
+          || job.input?.params?.url
+          || job.input?.params?.gcsUri
+          || "",
+      ).trim();
+      setManhuaLearnBasket((prev) =>
+        prev.map((item) => {
+          const itemSource = String(
+            item.continuation?.row?.gcsUri || item.continuation?.row?.url || "",
+          ).trim();
+          const matched =
+            (item.jobId && item.jobId === job.jobId)
+            || (jobSource && itemSource && itemSource === jobSource);
+          if (!matched) return item;
+          if (item.jobStatus === "failed" || item.jobStatus === "succeeded") return item;
+          return {
+            ...item,
+            jobId: item.jobId || job.jobId,
+            jobStatus: "failed" as const,
+            jobErrorZh: errorZh,
+            result: { ...item.result, liveStatus: "failed" as const },
+            updatedAt: Date.now(),
+          };
+        }),
+      );
+    }
+  }, [manhuaLearnServerJobs]);
   const [manhuaLearnServerJobsHydrated, setManhuaLearnServerJobsHydrated] = useState(false);
   const [manhuaLearnControlBusy, setManhuaLearnControlBusy] = useState<"cancel" | "skip" | "delete" | null>(null);
   /** 同一页面只允许一个轮询 owner；刷新后新页面从 active job 接手。 */
@@ -3584,6 +3636,23 @@ export default function PlatformPage() {
       approvedSuccessSegments: approvedProgress?.successSegments,
     });
   }, [approvedManhuaTemplateById, selectedManhuaProposal]);
+  /**
+   * 0902 用户拍板：学习仍在跑时待审卡只报进度不放「批准」——GLM 整形完成
+   * （任务终态）才亮按钮。断点停跑后的「批准当前 X/Y 入库」维持原行为。
+   */
+  const selectedManhuaProposalLearningInFlight = useMemo(() => {
+    const idMatch = /^tpl_native_([0-9A-Za-z_-]+)_ep\d{3}$/.exec(
+      String(selectedManhuaProposal?.id || ""),
+    );
+    const seriesKey = idMatch?.[1] || "";
+    if (!seriesKey) return false;
+    return manhuaLearnServerJobs.some((job) => {
+      if (job.status !== "queued" && job.status !== "running") return false;
+      const output = (job.output ?? {}) as { nativeSeriesKey?: unknown; seriesKey?: unknown };
+      const jobSeriesKey = String(output.nativeSeriesKey || output.seriesKey || "").trim();
+      return jobSeriesKey === seriesKey;
+    });
+  }, [manhuaLearnServerJobs, selectedManhuaProposal?.id]);
   const [ownerTemplateDetailId, setOwnerTemplateDetailId] = useState<string | null>(null);
   const [ownerTemplateOptimizeModel, setOwnerTemplateOptimizeModel] =
     useState<ManhuaViralTemplateOptimizeModel>("terra_high");
@@ -12691,6 +12760,24 @@ export default function PlatformPage() {
                               ? "正在确认可用的学习方式；确认完成前不会建立任务。"
                               : manhuaLearnPipelineMeta.summaryZh}
                           </p>
+                          {manhuaLearnLatestFailure ? (
+                            <div className="mt-2 flex items-start justify-between gap-2 rounded-lg border border-red-400/40 bg-red-500/10 px-2.5 py-1.5 text-[11px] leading-5 text-red-100">
+                              <span>
+                                ❌ 上次学习失败
+                                {manhuaLearnLatestFailure.atIso
+                                  ? `（${manhuaLearnLatestFailure.atIso.slice(11, 16)}）`
+                                  : ""}
+                                ：{manhuaLearnLatestFailure.errorZh}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setManhuaLearnLatestFailure(null)}
+                                className="shrink-0 rounded border border-red-300/40 px-1.5 py-0.5 text-[10px] text-red-100/80 hover:bg-red-400/15"
+                              >
+                                知道了
+                              </button>
+                            </div>
+                          ) : null}
                           {manhuaLearnDupQuery.data?.episodes.length ? (
                             <div className="mt-2 rounded-lg border border-amber-400/35 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-5 text-amber-100">
                               ⚠️ 这支已学过：
@@ -12740,16 +12827,23 @@ export default function PlatformPage() {
                               </div>
                             </div>
                           ) : null}
-                          {manhuaLearnDupQuery.data?.sameTitleSeries ? (
+                          {manhuaLearnDupQuery.data?.sameTitleSeriesList?.length ? (
                             <div className="mt-1.5 rounded-lg border border-sky-400/30 bg-sky-500/10 px-2.5 py-1.5 text-[11px] leading-5 text-sky-100">
-                              ℹ️ 同名剧旧账：《{manhuaLearnDupQuery.data.sameTitleSeries.titleHint}》
-                              {manhuaLearnDupQuery.data.sameTitleSeries.framesDigestCount > 0
-                                ? ` 抽帧（一代）学过 ${manhuaLearnDupQuery.data.sameTitleSeries.framesDigestCount} 集`
-                                : ""}
-                              {manhuaLearnDupQuery.data.sameTitleSeries.learnedEpisodeIndexes.length
-                                ? ` · 精读入库第${manhuaLearnDupQuery.data.sameTitleSeries.learnedEpisodeIndexes.join("、")}集`
-                                : ""}
-                              ——重剪合集是另一来源，用三代重学不冲突
+                              ℹ️ 这部剧的旧账（按剧名归并全部来源）：
+                              {manhuaLearnDupQuery.data.sameTitleSeriesList.map((row) => (
+                                <div key={row.seriesKey}>
+                                  《{row.titleHint}》
+                                  {row.framesDigestCount > 0
+                                    ? ` 抽帧（一代）学过 ${row.framesDigestCount} 集`
+                                    : ""}
+                                  {row.learnedEpisodeIndexes.length
+                                    ? ` · 精读入库第${row.learnedEpisodeIndexes.join("、")}集`
+                                    : ""}
+                                </div>
+                              ))}
+                              <div className="mt-0.5 text-[10px] text-sky-100/60">
+                                拼盘/重剪是另一来源，用三代重学不冲突；缺哪集自己对着这份账挑着学
+                              </div>
                             </div>
                           ) : null}
                           <div className="mt-2 flex flex-col gap-2 sm:flex-row">
@@ -12846,6 +12940,35 @@ export default function PlatformPage() {
                                 );
                               })}
                             </select>
+                            <button
+                              type="button"
+                              disabled={!manhuaLearnFocusSeriesKey || Boolean(manhuaLearnControlBusy)}
+                              onClick={() => {
+                                // 0902 剧名改正：矩阵号拼盘常把剧名写脏，改名只动 titleHint 不动产物
+                                const seriesKey = String(
+                                  manhuaLearnResult?.seriesKey || manhuaLearnFocusSeriesKey,
+                                ).trim();
+                                if (!seriesKey) return;
+                                const nextTitle = window.prompt(
+                                  "改正这部剧的剧名（只改显示名，不动集号与学习产物）：",
+                                  "",
+                                );
+                                if (!nextTitle?.trim()) return;
+                                void renameLearnSeriesMutation
+                                  .mutateAsync({ seriesKey, titleZh: nextTitle.trim() })
+                                  .then((r) => {
+                                    toast.success(`剧名已改为《${r.titleHint}》，刷新列表后生效`);
+                                  })
+                                  .catch((error) => {
+                                    toast.error(
+                                      error instanceof Error ? error.message : "改名失败",
+                                    );
+                                  });
+                              }}
+                              className="shrink-0 rounded-lg border border-sky-300/30 bg-sky-500/10 px-2.5 py-1.5 text-[10px] font-semibold text-sky-100 hover:bg-sky-500/20 disabled:opacity-40"
+                            >
+                              改名
+                            </button>
                             <button
                               type="button"
                               disabled={!manhuaLearnFocusSeriesKey || Boolean(manhuaLearnControlBusy)}
@@ -13364,12 +13487,19 @@ export default function PlatformPage() {
                                         : `导出第 ${d.episodeIndex} 集 HTML`}
                                     </button>
                                   ) : null}
-                                  {/* 轻入口：学习产出的模板要能被走到画布试写；
-                                      本刀不做学习提案→公开模板 id 的映射，不带预选，v2 再接 */}
+                                  {/* 0902 v2：提案已有 publicCode 时带码跳转，画布自动预选；无码降级裸跳 */}
                                   <button
                                     type="button"
                                     onClick={() => {
-                                      window.location.href = "/canvas";
+                                      const proposalCard = manhuaLearnResult?.proposal?.card as
+                                        | { publicCode?: unknown }
+                                        | undefined;
+                                      const code = String(proposalCard?.publicCode || "")
+                                        .trim()
+                                        .toLowerCase();
+                                      window.location.href = /^[a-z0-9]{4,16}$/.test(code)
+                                        ? `/canvas?tpl=mt_${code}`
+                                        : "/canvas";
                                     }}
                                     className="ml-2 inline-flex items-center rounded-full border border-emerald-300/25 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-100 transition hover:bg-emerald-400/20"
                                   >
@@ -13970,7 +14100,15 @@ export default function PlatformPage() {
                             </select>
                             <button
                               type="button"
-                              disabled={approveManhuaViralTemplateMutation.isPending}
+                              disabled={
+                                approveManhuaViralTemplateMutation.isPending
+                                || selectedManhuaProposalLearningInFlight
+                              }
+                              title={
+                                selectedManhuaProposalLearningInFlight
+                                  ? "该剧学习仍在进行，GLM 整形完成后才可批准；进度会逐段刷新"
+                                  : undefined
+                              }
                               onClick={() =>
                                 void approveManhuaLearnProposal(
                                   selectedManhuaProposal.id,
@@ -13982,9 +14120,11 @@ export default function PlatformPage() {
                             >
                               {approveManhuaViralTemplateMutation.isPending
                                 ? "处理中…"
-                                : selectedManhuaProposal.revisionOf
-                                  ? "批准替换原版"
-                                  : selectedManhuaProposalProgressCopy?.approveButtonZh || "批准入库"}
+                                : selectedManhuaProposalLearningInFlight
+                                  ? `学习中 ${selectedManhuaProposal.nativeProgress ? `${selectedManhuaProposal.nativeProgress.successSegments}/${selectedManhuaProposal.nativeProgress.attemptedSegments} 段` : "…"} · 整形完成后可批准`
+                                  : selectedManhuaProposal.revisionOf
+                                    ? "批准替换原版"
+                                    : selectedManhuaProposalProgressCopy?.approveButtonZh || "批准入库"}
                             </button>
                             {(() => {
                               /* 待审卡的导出入口：只有能从卡 id 干净解析出

@@ -119,9 +119,10 @@ export default function ManhuaClipDock({
   const qualityFailedEpCount = useMemo(() => {
     const eps = new Set<number>();
     for (const it of items) {
+      // failed=检了没过；unverified=质检不可用没检成——两者都待用户决定（0902）
       if (
         it.stage === "clip" &&
-        it.clipQuality?.status === "failed" &&
+        (it.clipQuality?.status === "failed" || it.clipQuality?.status === "unverified") &&
         !it.clipQuality.userAcceptedDespiteQc
       ) {
         eps.add(it.episodeIndex);

@@ -9638,6 +9638,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           MANHUA_WRITER_TRIAL_LIMIT_MESSAGE,
           buildManhuaWriterTrialPrompt,
           countManhuaWriterTrialToday,
+          deleteManhuaWriterTrialUse,
           findManhuaWriterTrialByChargeKey,
           logManhuaWriterTrialUse,
           parseManhuaWriterTrialDraft,
@@ -9672,6 +9673,40 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           });
         }
 
+        // 0902 TOCTOU 根治：模型调用前先占位落流水——并发多发同时过闸时，
+        // 唯一索引只放一发进模型；失败路径统一退占位，兑现「不计入额度」。
+        try {
+          await logManhuaWriterTrialUse({
+            userId,
+            chargeKey,
+            publicTemplateId: input.publicTemplateId,
+            topic: trialInput.topic || trialInput.brief,
+          });
+        } catch {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "这次试写已经生成过了，请换个题材或补充条件再试",
+          });
+        }
+        const refundTrialSlot = async () => {
+          try {
+            await deleteManhuaWriterTrialUse(chargeKey);
+          } catch {
+            /* 退占位失败只影响该用户当日一次额度，不影响资金 */
+          }
+        };
+        // 插后复核关死并发窗：两发同时过闸各自插了占位时，看到超限的自退让位
+        if (!isAdminUser) {
+          const usedAfterReserve = await countManhuaWriterTrialToday(userId);
+          if (usedAfterReserve > gate.dailyLimit) {
+            await refundTrialSlot();
+            throw new TRPCError({
+              code: "TOO_MANY_REQUESTS",
+              message: MANHUA_WRITER_TRIAL_LIMIT_MESSAGE,
+            });
+          }
+        }
+
         // 模板解析与正式扩写同函数（fail-closed）：无 publicCode / 未 approved 一律拒
         const [{ resolveViralTemplateForExpand }, bank] = await Promise.all([
           import("./services/manhuaViralTemplateStore.js"),
@@ -9679,6 +9714,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         ]);
         const resolved = await resolveViralTemplateForExpand(input.publicTemplateId);
         if ("error" in resolved) {
+          await refundTrialSlot();
           throw new TRPCError({
             code: "BAD_REQUEST",
             message:
@@ -9689,6 +9725,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
         const templateAddon = bank.formatManhuaViralTemplateWriterSkillFromCard(resolved.card);
         if (!templateAddon) {
+          await refundTrialSlot();
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: "所选剧情增强方案内容不完整，未调用试写模型",
@@ -9716,34 +9753,21 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             runManhuaWriterExpand({ prompt: promptControl, tier: "excellent", episodeCount: 1 }),
           ]);
         } catch (err) {
+          await refundTrialSlot();
           const msg = err instanceof Error ? err.message : String(err);
           throw new TRPCError({
             code: "SERVICE_UNAVAILABLE",
-            message: `模板试写暂时不可用：${msg.slice(0, 200)}`,
+            message: `模板试写暂时不可用：${msg.slice(0, 200)}（本次不计入额度）`,
           });
         }
         const withDraft = parseManhuaWriterTrialDraft(withRaw);
         const controlDraft = parseManhuaWriterTrialDraft(controlRaw);
         if (!withDraft || !controlDraft) {
-          // 解析失败不落流水：模型没交出可对比的两版，就不该消耗用户额度
+          // 解析失败退占位：模型没交出可对比的两版，就不该消耗用户额度
+          await refundTrialSlot();
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
             message: "试写结果不完整，请再试一次（本次不计入额度）",
-          });
-        }
-
-        // 成功才落流水（计数 + 幂等占位）；并发同 requestId 撞唯一索引 → 拒绝
-        try {
-          await logManhuaWriterTrialUse({
-            userId,
-            chargeKey,
-            publicTemplateId: resolved.appliedTemplate.publicId,
-            topic: trialInput.topic || trialInput.brief,
-          });
-        } catch {
-          throw new TRPCError({
-            code: "CONFLICT",
-            message: "这次试写已经生成过了，请换个题材或补充条件再试",
           });
         }
 
@@ -9871,6 +9895,111 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           voice: result.voice,
           provider: result.provider,
           voiceGate: result.voiceGate,
+        };
+      }),
+
+    /**
+     * 0902 P0 闭环：整段配音一键出母轨。
+     * 秒轴正文 → compileManhuaDialogueTtsPlan 逐句（≤12 句）→ 套餐优先 TTS →
+     * renderManhuaDialogueMasterTrack 拼单条母轨（真静音底 + 顶格纪律）→ 落 GCS。
+     * 计费 = 每句 CANVAS_TTS_CREDITS_PER_LINE，母轨拼接不另收；全部成功才扣，
+     * 幂等 chargeKey 防重试双扣。产物 gcsUri 由前端挂进段成片参考音，链路即闭。
+     */
+    manhuaDialogueMasterTrackRun: protectedProcedure
+      .input(
+        z.object({
+          /** 段秒轴正文（含对白行）；解析不到对白直接拒绝，不烧一分钱 */
+          prompt: z.string().min(1).max(40_000),
+          /** 段成片引擎，决定母轨时长跑道 */
+          engine: z.enum(["evolink", "byteplus", "wan30"]),
+          /** 段画面时长（秒）；母轨不会超过它的引擎上限 */
+          windowDurationSec: z.number().min(1).max(60),
+          /** @角色N → 音色 id 覆盖（默认走编译器内置音色表） */
+          voiceByTag: z.record(z.string(), z.string().min(1).max(80)).optional(),
+          billingRequestId: z.string().uuid(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const [{ compileManhuaDialogueTtsPlan }, { synthesizeManhuaDialoguePreferred }, masterTrack] =
+          await Promise.all([
+            import("../shared/manhuaDialogueTtsCompile.js"),
+            import("./services/manhuaDialogueTtsRoute.js"),
+            import("./services/manhuaDialogueMasterTrack.js"),
+          ]);
+        const lines = compileManhuaDialogueTtsPlan(input.prompt, {
+          voiceByTag: input.voiceByTag,
+        });
+        if (!lines.length) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "秒轴里没有可合成的对白行（需「约 X–Ys …@角色N 说「…」」格式）",
+          });
+        }
+        const cost = CANVAS_TTS_CREDITS_PER_LINE * lines.length;
+        const creditsInfo = await getCredits(ctx.user.id);
+        if (creditsInfo.totalAvailable < cost) {
+          throw new TRPCError({
+            code: "PAYMENT_REQUIRED",
+            message: `整段配音需要 ${cost} 积分（${lines.length} 句 × ${CANVAS_TTS_CREDITS_PER_LINE}），当前余额 ${creditsInfo.totalAvailable}`,
+          });
+        }
+        const synthesized: Array<{ index: number; audioUrl: string; startSec: number }> = [];
+        const providers: string[] = [];
+        for (let index = 0; index < lines.length; index += 1) {
+          const line = lines[index]!;
+          try {
+            const one = await synthesizeManhuaDialoguePreferred({
+              input: line.input,
+              voice: line.voice,
+              ownerUserId: ctx.user.id,
+            });
+            providers.push(one.provider);
+            synthesized.push({ index, audioUrl: one.audioUrl, startSec: line.startSec });
+          } catch (err) {
+            console.error(
+              `[manhua-mastertrack] 第${index + 1}句合成失败:`,
+              err instanceof Error ? err.message : err,
+            );
+            throw new TRPCError({
+              code: "SERVICE_UNAVAILABLE",
+              message: `第 ${index + 1} 句「${line.dialogueZh.slice(0, 12)}…」配音失败，本次未扣费；请稍后重试`,
+            });
+          }
+        }
+        let master: Awaited<ReturnType<typeof masterTrack.renderManhuaDialogueMasterTrack>>;
+        try {
+          master = await masterTrack.renderManhuaDialogueMasterTrack({
+            ownerUserId: ctx.user.id,
+            lines: synthesized,
+            windowDurationSec: input.windowDurationSec,
+            engine: input.engine,
+          });
+        } catch (err) {
+          console.error(
+            "[manhua-mastertrack] 拼轨失败:",
+            err instanceof Error ? err.message : err,
+          );
+          throw new TRPCError({
+            code: "SERVICE_UNAVAILABLE",
+            message: "对白母轨拼接失败，本次未扣费；单句素材未入正式库",
+          });
+        }
+        await deductCreditsAmount(
+          ctx.user.id,
+          cost,
+          "manhuaDialogueMasterTrack",
+          `漫剧整段配音母轨（${lines.length} 句）`,
+          { chargeKey: `manhua-mastertrack:${ctx.user.id}:${input.billingRequestId}` },
+        );
+        const { signGsUriV4ReadUrl } = await import("./services/gcs.js");
+        return {
+          audioGcsUri: master.audioGcsUri,
+          audioUrl: signGsUriV4ReadUrl(master.audioGcsUri, 7 * 24 * 3600),
+          totalDurationSec: master.totalDurationSec,
+          hardCapApplied: master.hardCapApplied,
+          lineCount: lines.length,
+          creditsCost: cost,
+          providers,
         };
       }),
 

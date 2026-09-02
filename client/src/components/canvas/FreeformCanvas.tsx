@@ -82,6 +82,8 @@ import {
   evaluateManhuaCrossSegmentVoiceGate,
   type ManhuaCharacterVoiceLock,
 } from "@shared/manhuaCharacterVoiceLock";
+import { compileManhuaDialogueTtsPlan } from "@shared/manhuaDialogueTtsCompile";
+import { CANVAS_TTS_CREDITS_PER_LINE } from "@shared/canvasGenerationPricing";
 import { resolveClipLocalSegmentIndex } from "@shared/manhuaScriptWorkbench";
 import {
   parseManhuaClipDirectorCardSummary,
@@ -706,6 +708,8 @@ export default function FreeformCanvas({
     trpc.mvAnalysis.enhanceCanvasPrompt.useMutation();
   const dialogueTtsMutation =
     trpc.mvAnalysis.manhuaDialogueTtsPreview.useMutation();
+  const dialogueMasterTrackMutation =
+    trpc.mvAnalysis.manhuaDialogueMasterTrackRun.useMutation();
   const [dialogueTtsDrafts, setDialogueTtsDrafts] = useState<
     Record<string, { input: string; voice: string }>
   >({});
@@ -1250,6 +1254,70 @@ export default function FreeformCanvas({
       onReplaceCharacterVoiceAudio,
       patchOne,
     ]
+  );
+
+  /**
+   * 0902 P0 闭环：整段配音一键出母轨——秒轴逐句 TTS → 单条母轨 → 自动挂参考音。
+   * 用户不需要懂 TTS：引擎跑道、段时长、音色都从块上自动推。
+   */
+  const generateDialogueMasterTrack = useCallback(
+    async (blockId: string) => {
+      const block = blocks.find(item => item.id === blockId);
+      if (!block) return;
+      const masterLines = compileManhuaDialogueTtsPlan(block.prompt);
+      if (!masterLines.length) {
+        toast.error("本段秒轴没有可合成的对白行");
+        return;
+      }
+      const model = String(block.videoModel || "");
+      const engine = model.startsWith("wan")
+        ? ("wan30" as const)
+        : model === "seedance-2.0-mini"
+          ? ("evolink" as const)
+          : ("byteplus" as const);
+      const cardDurationSec =
+        parseManhuaClipDirectorCardSummary(block.prompt).durationSec ?? 15;
+      const windowDurationSec = Math.min(60, Math.max(1, cardDurationSec));
+      try {
+        const result = await dialogueMasterTrackMutation.mutateAsync({
+          prompt: block.prompt,
+          engine,
+          windowDurationSec,
+          billingRequestId: crypto.randomUUID(),
+        });
+        const assetId = `mastertrack-${Date.now()}`;
+        const asset: CanvasUploadedAsset = {
+          id: assetId,
+          url: result.audioUrl,
+          previewUrl: result.audioUrl,
+          gcsUri: result.audioGcsUri,
+          fileName: `对白母轨-${result.lineCount}句.mp3`,
+          kind: "audio",
+          mimeType: "audio/mpeg",
+        };
+        const selected = Array.from(
+          new Set([...(block.seedance25RefAudioUrls || []), result.audioGcsUri])
+        ).slice(0, 10);
+        patchOne(blockId, {
+          uploadedAssets: [...(block.uploadedAssets || []), asset],
+          seedance25RefAudioUrls: selected,
+          seedance25WorkMode: "reference_to_video",
+        });
+        toast.success(
+          `母轨已出并挂进参考音：${result.lineCount} 句 · ${result.totalDurationSec.toFixed(1)} 秒 · ${result.creditsCost} 积分`,
+          {
+            description: result.hardCapApplied
+              ? "对白总长顶到引擎上限，已按纪律截断"
+              : "句间为真静音底，可直接送成片",
+          }
+        );
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "整段配音未完成，本次未扣费"
+        );
+      }
+    },
+    [blocks, dialogueMasterTrackMutation, patchOne]
   );
 
   const removeBlock = useCallback(
@@ -3017,6 +3085,34 @@ export default function FreeformCanvas({
                                                             : "生成并选用"}
                                                         </button>
                                                       </div>
+                                                      {(() => {
+                                                        // 0902 P0 闭环：秒轴有对白行就给「整段出母轨」一键
+                                                        const masterLines =
+                                                          compileManhuaDialogueTtsPlan(
+                                                            block.prompt
+                                                          );
+                                                        if (!masterLines.length)
+                                                          return null;
+                                                        return (
+                                                          <button
+                                                            type="button"
+                                                            disabled={
+                                                              dialogueMasterTrackMutation.isPending
+                                                            }
+                                                            onClick={() =>
+                                                              void generateDialogueMasterTrack(
+                                                                block.id
+                                                              )
+                                                            }
+                                                            title="按秒轴逐句配音并拼成单条母轨（句间真静音），自动挂进本段参考音频"
+                                                            className="w-full rounded-lg border border-emerald-300/45 bg-emerald-500/15 px-2 py-1.5 text-[11px] font-semibold text-emerald-50 hover:bg-emerald-500/25 disabled:opacity-45"
+                                                          >
+                                                            {dialogueMasterTrackMutation.isPending
+                                                              ? "母轨合成中…"
+                                                              : `整段配音出母轨（${masterLines.length} 句 · ${masterLines.length * CANVAS_TTS_CREDITS_PER_LINE} 积分）`}
+                                                          </button>
+                                                        );
+                                                      })()}
                                                     </div>
                                                   )}
                                                   <div className="text-[10px] text-white/45">
