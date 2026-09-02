@@ -62,6 +62,17 @@ function makeSigner() {
   };
 }
 
+/** 0902 用户拍板：帧图内嵌 data URI——报告自包含、可直接发客户，不外泄存储与链接细节。 */
+async function embedFrameImage(bucket: string, objectName: string): Promise<string | null> {
+  try {
+    const { buffer } = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` });
+    const mime = objectName.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg";
+    return `data:${mime};base64,${buffer.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
 async function tryJson(bucket: string, objectName: string): Promise<Record<string, unknown> | null> {
   try {
     const { buffer } = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` });
@@ -272,12 +283,14 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   if (frameList.length === 0) frameSource = "未抽帧（该集尚无帧包）";
   const tiles: string[] = [];
   for (const frame of frameList) {
-    const url = await sign(bucket, String(frame.objectName));
+    // 0902：帧图内嵌进 HTML，报告发出去不带任何仓储线索；单帧失败跳过不毁整页
+    const dataUri = await embedFrameImage(bucket, String(frame.objectName));
+    if (!dataUri) continue;
     const reasons = (Array.isArray(frame.reasons) ? frame.reasons : []) as string[];
     const badge = reasons.map((r) => `<span style="background:#1d2733;border-radius:8px;padding:0 6px;margin-right:3px">${esc(r)}</span>`).join("");
     const frameAtSec = Number(frame.atSec);
     const shot = shots.find((s) => frameAtSec >= Number(s.startSec) && frameAtSec < Number(s.endSec)) || {};
-    tiles.push(`<div style="width:158px"><a href="${url}" target="_blank"><img loading="lazy" src="${url}" style="width:158px;border-radius:4px"></a><div style="font-size:.7em;color:#8fa3bd">${mmss(frameAtSec)} ${badge}${esc(String(frame.noteZh ?? "").trim() || shot.actionZh)}</div></div>`);
+    tiles.push(`<div style="width:158px"><img loading="lazy" src="${dataUri}" style="width:158px;border-radius:4px"><div style="font-size:.7em;color:#8fa3bd">${mmss(frameAtSec)} ${badge}${esc(String(frame.noteZh ?? "").trim() || shot.actionZh)}</div></div>`);
   }
 
   const cl = (card.classification ?? {}) as Record<string, unknown>;
@@ -290,7 +303,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
    * 节奏结构 / 情绪推进），不再挤成一叠小卡——它们是这张卡最值钱的部分。
    */
   const summaryTextOf = (key: (typeof SUMMARY_TEXT_KEYS)[number]): string =>
-    String(card[key] ?? "").trim() || "本卡未产出该项";
+    String(card[key] ?? "").trim() || "本集未整理出该项";
 
   const FIELDS = ["hintZh", "unitTypeZh", "shotSizeZh", "angleZh", "compositionZh", "cameraMoveZh", "blockingZh", "bodyActionZh", "limbPropActionZh", "microExpressionZh", "gazeBreathZh", "relationshipReactionZh", "lightingZh", "actionZh", "transitionInZh"];
   const shotRows = shots.map((shot) => `<tr><td style="position:sticky;left:0;background:#141b24;color:#e8c66a;white-space:nowrap">${mmss(Number(shot.startSec) || 0)}–${mmss(Number(shot.endSec) || 0)}</td>${FIELDS.map((field) => `<td style="padding:3px 8px;min-width:90px">${esc(shot[field])}</td>`).join("")}</tr>`).join("");
@@ -474,10 +487,10 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     + `${rows}</table></div>`
   );
 
-  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(input.labelZh)} 模型产出报告</title></head><body style="margin:0;background:#8e4a8b"><div style="font-family:'Songti SC',serif;background:linear-gradient(165deg,#7a1f3d 0%,#8e4a8b 55%,#cbb3e6 100%);background-attachment:fixed;color:#dce3ec;padding:28px;max-width:1200px;margin:auto">
-<p style="color:#e8c66a;letter-spacing:.3em;font-size:.8em">${esc(input.labelZh)} · ${esc(input.sourceLabelZh)} · 模型证据原样渲染；字幕仅展示重点时刻前后 2 秒，完整 JSON 不改写</p>
-<h1 style="font-size:1.8em;margin:.2em 0">模型产出报告</h1>
-<p style="color:#8fa3bd;margin:.3em 0 0">${shots.length} 镜（已剔除 ${adShotCount} 广告镜）· ${keyMomentSubtitleCount} 重点字幕 · ${keyMoments.length} 重点时刻 · ${frameSource} ${tiles.length} 帧 · 覆盖 ${(coveredSec / 60).toFixed(1)} 分钟</p>
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(input.labelZh)} 逐帧审片手记</title></head><body style="margin:0;background:#8e4a8b"><div style="font-family:'Songti SC',serif;background:linear-gradient(165deg,#7a1f3d 0%,#8e4a8b 55%,#cbb3e6 100%);background-attachment:fixed;color:#dce3ec;padding:28px;max-width:1200px;margin:auto">
+<p style="color:#e8c66a;letter-spacing:.3em;font-size:.8em">${esc(input.labelZh)} · ${esc(input.sourceLabelZh)} · 逐镜逐秒审读整理 · 字幕只记重点时刻前后两秒</p>
+<h1 style="font-size:1.8em;margin:.2em 0">逐帧审片手记</h1>
+<p style="color:#8fa3bd;margin:.3em 0 0">${shots.length} 镜（已剔除 ${adShotCount} 广告镜）· ${keyMomentSubtitleCount} 重点字幕 · ${keyMoments.length} 重点时刻 · 精选画面 ${tiles.length} 张 · 覆盖 ${(coveredSec / 60).toFixed(1)} 分钟</p>
 
 <div style="display:flex;gap:12px;flex-wrap:wrap;margin:18px 0">${kpi}</div>
 <p style="color:${grainColor};font-weight:600">${grainText}</p>
@@ -490,11 +503,11 @@ ${section("情绪推进", panel(summaryTextOf("moodArcZh")))}
 ${section("五维标签墙", tags)}
 ${section(`重点时刻表 · ${keyMoments.length} 条`, keyMoments.length
     ? tableOf(["秒位", "类型", "说明", "相关字幕（前后 2 秒）"], kmRows)
-    : `<p style="color:#9db4d0">本卡无重点时刻（v12 之前的产出没有这个字段）</p>`, true)}
+    : `<p style="color:#9db4d0">本集手记未单列重点时刻</p>`, true)}
 ${section("画面时间轴", `<div style="display:flex;flex-wrap:wrap;gap:8px">${tiles.join("")}</div>`)}
-${section("音轨解析（模型原文）", audioSections)}
+${section("音轨解析", audioSections)}
 <details style="margin-top:30px" open><summary style="color:#e8c66a;font-size:1.2em;cursor:pointer">全镜头表 · ${shots.length} 镜 × ${FIELDS.length} 字段</summary><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#141b24">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#8fa3bd">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
-<p style="color:#5d6b80;font-size:.8em;margin-top:36px">帧图与本页为 GCS V4 签名链接（6 天）· 证据永久存 GCS · 本页由代码从模型 JSON 确定性渲染</p></div></body></html>`;
+<p style="color:#5d6b80;font-size:.8em;margin-top:36px">—— 逐帧逐秒审读整理 · 仅作学习拆解，版权归原作品所有 ——</p></div></body></html>`;
 
   await uploadBufferToGcs({
     bucket,

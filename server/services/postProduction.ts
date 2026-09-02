@@ -25,11 +25,16 @@ import { z } from "zod";
 import { signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs.js";
 import {
   bgmMountParamsSchema,
+  burnSubtitleParamsSchema,
   isSafePostProdVolumeExpr,
+  type BurnSubtitleStyleOverride,
   type RawBgmMountParams,
+  type RawBurnSubtitleParams,
   type ConcatParams,
   type LoudnessParams,
 } from "../jobs/postProdInput";
+// 契约已并轨到 jobs 层；这里保留再导出，测试与旧调用方免改路径
+export { burnSubtitleParamsSchema, burnSubtitleStyleOverrideSchema } from "../jobs/postProdInput";
 
 const execFileAsync = promisify(execFile);
 
@@ -431,46 +436,10 @@ export async function mountBgm(
 // ---------------------------------------------------------------- 字幕烧录
 
 /**
- * burn_subtitle 任务参数契约。schema 暂住服务层：任务契约文件
- * (jobs/postProdInput.ts) 由总装并轨,届时把本 schema 挪进 discriminatedUnion
- * 即可;服务函数照 bgm_mount 口径自己再 parse 一次,不依赖入口先验证。
- * 计费口径与 bgm_mount 相同:纯 ffmpeg 零上游调用,不新增计费。
+ * burn_subtitle 任务契约已并轨进 jobs/postProdInput.ts（0902 总装）；
+ * 服务函数照 bgm_mount 口径自己再 parse 一次，不依赖入口先验证。
+ * 计费口径与 bgm_mount 相同：纯 ffmpeg 零上游调用，不新增计费。
  */
-const burnMediaSourceSchema = z.string().trim().min(1).max(2048);
-
-export const burnSubtitleStyleOverrideSchema = z
-  .object({
-    /** libass 单位(SRT 默认 PlayResY=288);默认 16 ≈ 竖屏画高 5.5% */
-    fontSize: z.number().int().min(8).max(96).optional(),
-    outline: z.number().min(0).max(8).optional(),
-    /** 底边距,同为 PlayResY 像素;默认 35 ≈ 底部 12% */
-    marginV: z.number().int().min(0).max(200).optional(),
-    /**
-     * 默认不写死字体名(跟随渲染机 fontconfig);中文缺字时由调用方
-     * 显式传 "Noto Sans CJK SC"。白名单字符防 force_style 串里夹带引号/分隔符。
-     */
-    fontName: z
-      .string()
-      .trim()
-      .min(1)
-      .max(64)
-      .regex(/^[0-9A-Za-z ._-]+$/, "字体名格式不正确")
-      .optional(),
-  })
-  .strict();
-
-export const burnSubtitleParamsSchema = z
-  .object({
-    videoUri: burnMediaSourceSchema,
-    /** SRT 全文由共享层 buildManhuaSubtitleBurnSrt 生成(已清洗防注入) */
-    subtitleSrt: z.string().min(1).max(200_000),
-    styleOverride: burnSubtitleStyleOverrideSchema.optional(),
-  })
-  .strict();
-
-export type BurnSubtitleStyleOverride = z.infer<typeof burnSubtitleStyleOverrideSchema>;
-export type BurnSubtitleParams = z.infer<typeof burnSubtitleParamsSchema>;
-export type RawBurnSubtitleParams = z.input<typeof burnSubtitleParamsSchema>;
 
 /**
  * 滤镜串里的字幕文件路径只收白名单字符。路径全程由我们自己拼

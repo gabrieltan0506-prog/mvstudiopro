@@ -4,7 +4,7 @@
  * 任务时限用 AbortSignal 贯通到下载与 ffmpeg/ffprobe 子进程,
  * 即使 operation 不读取 signal,等待也会在时限附近结束;不自动重做。
  */
-import { concatClips, loudnessCheck, mountBgm } from "../services/postProduction";
+import { burnSubtitle, concatClips, loudnessCheck, mountBgm } from "../services/postProduction";
 import { resolvePostProdInputSources } from "../services/postProdMediaSource";
 import { postProdJobInputSchema } from "./postProdInput";
 
@@ -30,6 +30,10 @@ export async function processPostProdJob(
     }
     case "loudness_check": {
       const output = await loudnessCheck(input.params, runOptions);
+      return { output, provider: "ffmpeg-post-prod" };
+    }
+    case "burn_subtitle": {
+      const output = await burnSubtitle(input.params, userId, runOptions);
       return { output, provider: "ffmpeg-post-prod" };
     }
   }

@@ -165,6 +165,10 @@ describe("精确证据名路径：三段卡渲染成功且无删节", () => {
       "manhua-template-learn/probes/tpl_native_seriesabc_ep001/frames-v2-summary.json",
       { frames: [{ atSec: 5, reasons: ["高潮"], objectName: "frames-v2/seg0/f1.jpg" }] },
     );
+    state.objects.set(
+      "frames-v2/seg0/f1.jpg",
+      "fake-jpeg-bytes",
+    );
     const result = await renderNativeEvidenceReportFromObjectNames(baseInput());
     expect(result.shots).toBe(3);
     expect(result.frames).toBe(1);
@@ -436,6 +440,10 @@ describe("fail closed：缺段/段号重复/digest 混杂/集号不符各抛错�
 describe("帧包始终可选", () => {
   it("正式卡 evidenceFrames 优先进入导出，不再只找旧 probes 帧包", async () => {
     seedThreeSegments();
+    state.objects.set(
+      `manhua-template-learn/native-frames/seriesabc/ep001/70ds-${"d".repeat(24)}.jpg`,
+      "fake-jpeg-bytes",
+    );
     const result = await renderNativeEvidenceReportFromObjectNames({
       ...baseInput(),
       evidenceFrames: [{
@@ -451,7 +459,9 @@ describe("帧包始终可选", () => {
     expect(result.frames).toBe(1);
     expect(result.frameSource).toBe("正式卡重点时刻抽帧");
     expect(state.uploads[0]!.html).toContain("眉头锁紧");
-    expect(state.uploads[0]!.html).toContain("正式卡重点时刻抽帧 1 帧");
+    // 0902 内嵌改造：页面不再出现内部帧包来源词，只写「精选画面 N 张」且图为 data URI
+    expect(state.uploads[0]!.html).toContain("精选画面 1 张");
+    expect(state.uploads[0]!.html).toContain("data:image/jpeg;base64,");
   });
 
   it("frames-v2 与 frames 都缺失仍成功，页面明示未抽帧", async () => {
@@ -460,7 +470,7 @@ describe("帧包始终可选", () => {
     const result = await renderNativeEvidenceReportFromObjectNames(baseInput());
     expect(result.frames).toBe(0);
     expect(result.frameSource).toContain("未抽帧");
-    expect(state.uploads[0]!.html).toContain("未抽帧");
+    expect(state.uploads[0]!.html).toContain("精选画面 0 张");
   });
 });
 

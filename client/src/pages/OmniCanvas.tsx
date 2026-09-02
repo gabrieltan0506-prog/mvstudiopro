@@ -8037,9 +8037,16 @@ export default function OmniCanvas() {
                             ...b.manhuaClipQuality,
                             userAcceptedDespiteQc: true,
                           },
-                          error: b.manhuaClipQuality.summary
-                            ? `已采用（质检未过）：${b.manhuaClipQuality.summary}`
-                            : "已采用（质检未过）",
+                          error: (() => {
+                            // unverified 段的措辞要如实：是「没检成」不是「检了没过」
+                            const wording =
+                              b.manhuaClipQuality.status === "unverified"
+                                ? "未质检放行"
+                                : "已采用（质检未过）";
+                            return b.manhuaClipQuality.summary
+                              ? `${wording}：${b.manhuaClipQuality.summary}`
+                              : wording;
+                          })(),
                         };
                       });
                       setEdges((eds) => {
@@ -9518,9 +9525,15 @@ export default function OmniCanvas() {
                           ...b.manhuaClipQuality,
                           userAcceptedDespiteQc: true,
                         },
-                        error: b.manhuaClipQuality.summary
-                          ? `已采用（质检未过）：${b.manhuaClipQuality.summary}`
-                          : "已采用（质检未过）",
+                        error: (() => {
+                          const wording =
+                            b.manhuaClipQuality.status === "unverified"
+                              ? "未质检放行"
+                              : "已采用（质检未过）";
+                          return b.manhuaClipQuality.summary
+                            ? `${wording}：${b.manhuaClipQuality.summary}`
+                            : wording;
+                        })(),
                       };
                     });
                     setEdges((eds) => {
