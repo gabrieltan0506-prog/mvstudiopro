@@ -55,9 +55,18 @@ describe("模板换代与归档接线契约", () => {
     });
 
     it("下架后失效 —— 下架同时产生新归档版本", () => {
-      const at = PAGE.indexOf("archiveManhuaTemplateMutation.mutateAsync");
-      const body = PAGE.slice(at, at + 900);
-      expect(body).toContain("invalidateTemplateLifecycle(tpl.id)");
+      // 单个下架与批量下架是两个调用点（tpl.id / ids[i]!），逐个截取窗口，
+      // 每处都必须用与下架相同的 id 走失效入口，谁漏失效谁暴露。
+      const sites: number[] = [];
+      for (let at = PAGE.indexOf("archiveManhuaTemplateMutation.mutateAsync"); at >= 0;
+        at = PAGE.indexOf("archiveManhuaTemplateMutation.mutateAsync", at + 1)) sites.push(at);
+      expect(sites.length).toBeGreaterThanOrEqual(2);
+      for (const at of sites) {
+        const body = PAGE.slice(at, at + 900);
+        const idArg = /mutateAsync\(\{\s*id: ([^,\s]+),/.exec(body)?.[1];
+        expect(idArg).toBeTruthy();
+        expect(body).toContain(`invalidateTemplateLifecycle(${idArg})`);
+      }
     });
   });
 

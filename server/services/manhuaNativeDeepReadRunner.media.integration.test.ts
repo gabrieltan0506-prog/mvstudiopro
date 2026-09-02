@@ -150,9 +150,11 @@ describe("生产同源精确切片：本地真实 ffmpeg，无云、无模型", 
         statfsTmp: async () => ({ freeBytes: 2 * 1024 ** 3 }), upload,
         remove: vi.fn(async () => undefined),
       };
+      // 原片 8.4 秒，计划 10 秒：在整片验收的 2 秒容差内放行拉取，
+      // 让尾段 7.2..10.2 只切得 1.2/3 秒，命中分段截短守卫（计划 20 秒会先触发整片守卫）。
       await expect(prepareEpisodeVideos({
         episodeIndex: 1, resolveNodes: async () => [{ url: source }],
-        segments: [{ startSec: 7.2, endSec: 10.2 }], sourceDurationSec: 20,
+        segments: [{ startSec: 7.2, endSec: 10.2 }], sourceDurationSec: 10,
       }, undefined, deps, { cutConcurrency: 1 })).rejects.toThrow("视频流实际时长 1.2 秒与计划");
       expect(upload).not.toHaveBeenCalled();
     } finally {
