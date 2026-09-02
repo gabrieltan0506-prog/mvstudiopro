@@ -88,3 +88,17 @@ describe("第三方播放页纯解析", () => {
     })).toThrow("没有无需登录的可信媒体档");
   });
 });
+
+describe("0902 电影单片页豁免", () => {
+  it("只有一个播放条目且无「共X集」声明时按单片放行，不再误报目录未展开", () => {
+    const source = { host: "0996zp.com", vodId: "113224", nid: "751903" } as any;
+    const html = `
+      <h1 class="title_name">盗梦空间</h1>
+      <a href="/vod/play/113224/sid/751903">HD</a>
+    `;
+    const page = parseManhua0996SeriesPage(html, source);
+    expect(page.episodes).toHaveLength(1);
+    expect(page.currentEpisodeIndex).toBe(1);
+    expect(page.titleZh).toBe("盗梦空间");
+  });
+});

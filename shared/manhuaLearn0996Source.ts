@@ -166,7 +166,14 @@ export function parseManhua0996SeriesPage(
   if (!episodes.length) throw new Error("第三方播放页没有解析到分集目录，已停止");
   const totalMatch = /第\s*\d+\s*集[^<]{0,32}共\s*(\d+)\s*集/i.exec(text);
   const declaredTotal = Number(totalMatch?.[1]);
-  if (!Number.isInteger(declaredTotal) || declaredTotal < 1 || episodes.length !== declaredTotal) {
+  /**
+   * 0902 用户令（拉盗梦空间实战）：电影/单片页只有一个播放条目、且页面没有
+   * 「共 X 集」声明——它不可能集号错位（唯一条目必须就是当前播放条），豁免
+   * 完整性校验。多条目页仍必须与声明总数吻合，防懒加载半截目录。
+   */
+  const isSingleEntryPage = episodes.length === 1;
+  if (!isSingleEntryPage
+    && (!Number.isInteger(declaredTotal) || declaredTotal < 1 || episodes.length !== declaredTotal)) {
     throw new Error("第三方播放页分集目录未完整展开，已停止以免集号错位");
   }
   const current = episodes.find((episode) => episode.nid === source.nid);
