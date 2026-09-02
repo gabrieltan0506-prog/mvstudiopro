@@ -45,6 +45,8 @@ type Props = {
   factoryProgress?: string;
   /** 生成中随时中断 */
   onStopFactory?: () => void;
+  /** 0902：后期三件套不在阶段键里，推进条尾部挂显示级直达（配音/配乐/烧字/合成在成片坞） */
+  onOpenClipDock?: () => void;
   onFocusEpisode: (ep: number) => void;
   onFocusBlock?: (blockId: string) => void;
   /** 编剧室已选引擎：静帧分母要按它的段表截断，否则 2.5 会卡在 12/18 */
@@ -57,6 +59,7 @@ export default function ManhuaLiveProgressBoard({
   factoryBusy,
   factoryProgress,
   onStopFactory,
+  onOpenClipDock,
   onFocusEpisode,
   onFocusBlock,
   videoModel,
@@ -189,6 +192,17 @@ export default function ManhuaLiveProgressBoard({
           ) : (
             <span className="text-[10px] text-white/35">点集可切换焦点 · 点阶段可定位节点</span>
           )}
+          {onOpenClipDock ? (
+            <button
+              type="button"
+              data-manhua-action="open-clip-dock"
+              onClick={onOpenClipDock}
+              className="inline-flex items-center gap-1 rounded-md border border-cyan-300/40 bg-cyan-500/12 px-2.5 py-1 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/20"
+              title="配音母轨 / 配乐 / 烧字 / 合成长片都在成片坞"
+            >
+              🎬 后期 · 成片坞 →
+            </button>
+          ) : null}
         </div>
       </div>
 

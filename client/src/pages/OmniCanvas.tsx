@@ -8972,6 +8972,11 @@ export default function OmniCanvas() {
                   assembleBusy ? "正在合成长片与配乐…" : factoryProgress || undefined
                 }
                 onStopFactory={factoryBusy ? stopFactory : undefined}
+                onOpenClipDock={() => {
+                  document
+                    .getElementById("manhua-clip-dock-zone")
+                    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
                 onFocusEpisode={(ep) => {
                   setWriterFocusEpisode(ep);
                   setManhuaUiMode("workbench");
