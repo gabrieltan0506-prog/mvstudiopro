@@ -384,7 +384,13 @@ export function buildNativeDeepReadProposalCard(
   const card: ManhuaViralTemplateCard = {
     id: nativeDeepReadProposalId(input.seriesKey, input.episodeIndex),
     // 中性命名：不写外部剧名，只写赛道与集号
-    nameZh: cut(`${laneZh}·原生第${input.episodeIndex}集节奏`, 32),
+    // 0902 用户令：卡名优先用 GLM 起的「主线·特色型」名（templateTitleZh），
+    // 「多维标签·原生第N集节奏」罐头名只给旧卡兜底——哪部剧不是多维标签？
+    nameZh: cut(
+      String(r.templateTitleZh || "").trim()
+        || `${laneZh}·原生第${input.episodeIndex}集节奏`,
+      32,
+    ),
     laneZh,
     classification: r.classification,
     summaryZh,

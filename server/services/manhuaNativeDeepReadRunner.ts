@@ -3605,9 +3605,10 @@ export function nextNativeDeepReadGlmPreferredGateway(): "evolink_glm" | "openro
 }
 
 /**
- * 🔒 0902 用户两次当场授权的解冻均已改毕，**现已重新冻结**：
+ * 🔒 0902 用户三次当场授权的解冻均已改毕，**现已重新冻结**：
  *   ① 新增 classificationProseZh 五维连贯判词 + shots[].craftReadZh 逐镜解读
  *   ② craftReadZh 收紧为全集最多 30 条最有价值镜头（16 分钟→省回一半产出）
+ *   ③ 新增 templateTitleZh 卡名（「多维标签·原生第N集节奏」罐头名太水，用户令模板卡名必须写主线与特色）
  * 任何再改动必须由用户在当前任务重新授权，禁止以任何理由自行调整。
  */
 export function buildNativeDeepReadGlmStructuringPrompt(input: {
@@ -3654,6 +3655,7 @@ truncated / advisories / gateMarked / gateMarkedZh / attemptNumber 标注的都�
 · keyMoments：原样保留，同秒同类留一条取说明更具体的，不同秒或不同类全保留；atSec 只来自输入。
 · classification：五个数组显式输出，有证据就写，无证据写 []。
 · shots[].craftReadZh：可选新字段，**全集最多写 30 条，只挑手法价值最高的镜头**（剧情转折处的运镜、罕见的剪辑技巧、景别陡跳、站位改写、情绪极性翻转、昼夜跨场——按参考价值排序取前 30）。中选的镜写一句 6–20 字的「手法·用意与预期效果」解读（例「怼至大特写·情绪显微镜」「夜转日跨场·时间跳进」「合围站位·困局成型」）；判读只能以该镜与前镜**已记录的字段**为据，不许虚构画面；其余镜头一律写 "" 或省略该字段（0902 拍板：全量逐镜写解读把产出撑到 5.7 万 token、整形拖到 16 分钟，收紧到 30 条换回速度，未中选镜头由渲染端词典兜底）。同类手法反复出现时必须换不同措辞点出当次的具体用意，不许复读同一句。
+· templateTitleZh：顶层新字段，给这张模板卡起 **10–20 字的卡名**，格式「主线一句话·特色型」（例「杂役捡宝炼丹逆袭·金手指验证型」「寒门修士步步登阶·隐忍蓄力型」）。必须点出**本集独有**的剧情主线与手法特色；🚫 禁止出现「多维标签」「原生」「第N集」「节奏」「模板」「系列」这类放之任何剧都成立的通用词。
 · classificationProseZh：顶层新对象，五键 emotionZh/narrativeZh/performanceZh/audiovisualZh/audienceZh，分别对应情绪/叙事特色/表演/视听/观众体验。把该维标签织成**一到两句连贯陈述**，点出这一集独有的组合与用意（例：「情绪线以紧张、愤怒打底，中段被角色牺牲翻入绝望，收在决绝的反击里」），不许罗列词条式排比、不许写放之任何剧都成立的空话；每句都要能在证据里找到出处，无证据的维度写空字符串 ""。
 · 秒位只进数字字段。描述里写时长（如「1.2 秒内推近」），钟表式（01:23）留给数字字段。
 
@@ -3663,7 +3665,7 @@ truncated / advisories / gateMarked / gateMarkedZh / attemptNumber 标注的都�
 1. 不虚构输入里没有的镜头、字幕、声音或描述（craftReadZh 与 classificationProseZh 是仅有的两处**推导**字段，允许解读但同样只能以输入为据）。
 2. 不为了精简而合并不重叠的镜头。
 3. 不新增 keyMoments 的 atSec。`,
-    user: `把以下同一集的 ${input.rawSegments.length} 份证据卡整形合并成**一张${scopeZh}原生证据卡**（单个 JSON 对象，字段 schema 与分段卡完全相同：shots/subtitles/audioResolution/beatStructureZh/moodArcZh/classification/reusableZh/genPromptHintZh，另加顶层可选 excludedAdRanges 与 classificationProseZh）。
+    user: `把以下同一集的 ${input.rawSegments.length} 份证据卡整形合并成**一张${scopeZh}原生证据卡**（单个 JSON 对象，字段 schema 与分段卡完全相同：shots/subtitles/audioResolution/beatStructureZh/moodArcZh/classification/reusableZh/genPromptHintZh，另加顶层可选 excludedAdRanges、classificationProseZh 与 templateTitleZh）。
 要求：
 1. story 镜头连续无空档覆盖除 excludedAdRanges 外的全时间轴 ${Math.round(coverageStartSec)}..${Math.round(coverageEndSec)} 秒（绝对秒位），每镜保留 evidenceRole；🔴 **只有秒位重叠的重复记录可以合并；相邻不重叠的镜头一律各自保留**——${scopeZh}输出的镜头条数应与输入去重后的真实切分相当，**镜头数大幅变少、平均镜长明显拉长即为错误产出**。non_story_ad 必须整行剔除并把 {startSec,endSec} 区间记入顶层 excludedAdRanges，不得混入 story。🔒 一次合并的总跨度不得超过 ${NATIVE_DEEP_READ_MERGE_SPAN_HARD_MAX_SEC} 秒；真实剪辑镜头按输入边界保留，短于 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒或相邻时长相同也各自保留；超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒的同一长镜按镜内真实变化拆成连续证据段，每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，且不得删除仍需保留的「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」续接标记或丢失覆盖。
 2. audioResolution 保留全部 [{chunkIndex,analysis}] 条目（chunkIndex 即段号，analysis 内为该段局部秒），逐段齐全${input.hasAudio ? "" : "；本集素材无音轨，audioResolution 保持空数组"}。
