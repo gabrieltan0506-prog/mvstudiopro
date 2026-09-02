@@ -175,7 +175,7 @@ describe("精确证据名路径：三段卡渲染成功且无删节", () => {
     expect(state.uploads).toHaveLength(1);
     const html = state.uploads[0]!.html;
     // 镜头表全字段名（含中文标签）
-    for (const label of ["运镜解读", "景别", "机位角度", "构图", "运镜", "调度", "身体动作", "肢体道具", "微表情", "视线呼吸", "关系反应", "灯光", "动作叙述", "入镜转场"]) {
+    for (const label of ["运镜解读", "景别", "机位角度", "构图", "运镜", "调度", "身体动作", "肢体道具", "微表情", "视线呼吸", "关系反应", "灯光", "动作叙述"]) {
       expect(html).toContain(label);
     }
     // 音轨表全字段 + chunk 级模型原文区
@@ -195,7 +195,7 @@ describe("精确证据名路径：三段卡渲染成功且无删节", () => {
     expect(html).toContain("情绪标签2");
     expect((html.match(/共有标签/g) ?? []).length).toBe(1);
     // 「17 字段」硬编码已改 FIELDS.length 动态
-    expect(html).toContain("× 15 字段");
+    expect(html).toContain("× 14 字段");
     expect(html).toContain("观察尾部保留&lt;script&gt;");
     expect(html).toContain("本镜观察");
     expect(html).not.toContain("× 17 字段");

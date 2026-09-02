@@ -361,9 +361,20 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
       String(shot.limbPropActionZh ?? ""),
       String(shot.microExpressionZh ?? ""),
     ].map((t) => t.trim()).filter(Boolean);
-    for (const c of candidates) if (c.length >= 6) return c.slice(0, 24);
+    // 0902 十一审：旧 24 字硬切把整句腰斩（「冲突正式展」「危机降」）。
+    // 48 字内整句保留；更长的在最近标点处收口加省略号，绝不切在词中间。
+    const capCaption = (text: string): string => {
+      if (text.length <= 48) return text;
+      const head = text.slice(0, 48);
+      const cutAt = Math.max(
+        head.lastIndexOf("，"), head.lastIndexOf("。"),
+        head.lastIndexOf("；"), head.lastIndexOf("、"),
+      );
+      return `${cutAt >= 12 ? head.slice(0, cutAt) : head}…`;
+    };
+    for (const c of candidates) if (c.length >= 6) return capCaption(c);
     const joined = candidates.slice(0, 2).join("·");
-    return joined.length >= 6 ? joined.slice(0, 24) : "";
+    return joined.length >= 6 ? capCaption(joined) : "";
   };
   const tiles: string[] = [];
   /** 帧编号锚点表：重点时刻表用「（图N）」跳转对照（0902 用户拍板） */
@@ -471,7 +482,9 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const summaryTextOf = (key: (typeof SUMMARY_TEXT_KEYS)[number]): string =>
     String(card[key] ?? "").trim() || "本集未整理出该项";
 
-  const FIELDS = ["hintZh", "unitTypeZh", "shotSizeZh", "angleZh", "compositionZh", "cameraMoveZh", "blockingZh", "bodyActionZh", "limbPropActionZh", "microExpressionZh", "gazeBreathZh", "relationshipReactionZh", "lightingZh", "actionZh", "transitionInZh"];
+  // 0902 十审拍板：入镜转场列摘除——漫剧九成五是硬切，整列零信息；
+  // 非硬切转场（叠化/闪白/甩接/匹配）由 CRAFT 词典写进「运镜解读」+ 蓝色技巧行，证据字段照存不丢。
+  const FIELDS = ["hintZh", "unitTypeZh", "shotSizeZh", "angleZh", "compositionZh", "cameraMoveZh", "blockingZh", "bodyActionZh", "limbPropActionZh", "microExpressionZh", "gazeBreathZh", "relationshipReactionZh", "lightingZh", "actionZh"];
   /**
    * 0902 三审拍板：色块必须有语义，不做斑马纹——只有两类真金上色：
    * 🟥 剧情亮点/转折（仅「剧情/情绪」类重点时刻）；🟦 运镜/剪辑技巧（词表识别）。
@@ -662,9 +675,13 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   };
   // GLM 整形写了逐镜解读（0902 起 shots[].craftReadZh）优先用模型原句；
   // 旧卡缺该字段才落回上面的词典推导。相邻镜同判词只留第一次——语义不因重复贬值
+  // 0902 十一审：模型时代的卡（任一镜带 craftReadZh）里，留白是模型按 30 条配额
+  // **挑剩的**——词典不得再往空格里灌推导，否则解读密度被兜底填回逐镜复读。
+  // 词典推导只服务没有任何模型判词的旧卡。
+  const hasModelCraftReads = shots.some((shot) => String(shot.craftReadZh ?? "").trim());
   const changeNotesByIndex = shots.map((shot, index) => {
     const modelRead = String(shot.craftReadZh ?? "").trim();
-    return modelRead || shotChangeZh(index);
+    return hasModelCraftReads ? modelRead : shotChangeZh(index);
   });
   for (let i = shots.length - 1; i > 0; i -= 1) {
     if (changeNotesByIndex[i] && changeNotesByIndex[i] === changeNotesByIndex[i - 1]) {
