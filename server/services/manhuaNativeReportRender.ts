@@ -35,6 +35,20 @@ const fieldLabel = (key: string): string => FIELD_LABELS[key] ?? key;
 
 const esc = (v: unknown): string => String(v ?? "")
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+/**
+ * 0902 用户拍板：内容密度高，转折/爆点类戏眼词自动「荧光笔」——先 esc 再上色，
+ * 词表只收两字以上强信号词，避免满页高亮反而失焦。
+ */
+const EMPHASIS_WORDS = [
+  "转折", "反转", "逆转", "高潮", "爆发", "爆点", "钩子", "悬念", "揭示",
+  "冲突", "对峙", "黑化", "觉醒", "决裂", "告白", "威胁", "牺牲", "杀气",
+  "骤停", "定格", "静默", "留白", "怒吼", "嘶吼", "崩溃", "绝境", "复仇",
+];
+const EMPHASIS_RE = new RegExp(`(${EMPHASIS_WORDS.join("|")})`, "g");
+const emphasize = (v: unknown): string => esc(v).replace(
+  EMPHASIS_RE,
+  '<b style="background:linear-gradient(transparent 55%,#ffdf8a 55%);color:#8a4a0e;padding:0 2px;border-radius:2px">$1</b>',
+);
 const mmss = (s: number): string => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
 function makeSigner() {
@@ -306,7 +320,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     String(card[key] ?? "").trim() || "本集未整理出该项";
 
   const FIELDS = ["hintZh", "unitTypeZh", "shotSizeZh", "angleZh", "compositionZh", "cameraMoveZh", "blockingZh", "bodyActionZh", "limbPropActionZh", "microExpressionZh", "gazeBreathZh", "relationshipReactionZh", "lightingZh", "actionZh", "transitionInZh"];
-  const shotRows = shots.map((shot) => `<tr><td style="position:sticky;left:0;background:#efe5cc;color:#8a6a1f;white-space:nowrap">${mmss(Number(shot.startSec) || 0)}–${mmss(Number(shot.endSec) || 0)}</td>${FIELDS.map((field) => `<td style="padding:3px 8px;min-width:90px">${esc(shot[field])}</td>`).join("")}</tr>`).join("");
+  const shotRows = shots.map((shot) => `<tr><td style="position:sticky;left:0;background:#efe5cc;color:#8a6a1f;white-space:nowrap">${mmss(Number(shot.startSec) || 0)}–${mmss(Number(shot.endSec) || 0)}</td>${FIELDS.map((field) => `<td style="padding:3px 8px;min-width:90px">${emphasize(shot[field])}</td>`).join("")}</tr>`).join("");
 
   const AUDIO_TRACK_FIELDS = ["emotionArcZh", "toneZh", "sfxZh", "bgmZh", "atmosphereZh", "silenceZh"] as const;
   const AUDIO_CHUNK_FIELDS = ["audioBeatStructureZh", "mixNotesZh", "reusableAudioZh", "genAudioHintZh"] as const;
@@ -331,7 +345,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     const trackRows = (Array.isArray(analysis.audioTrack) ? analysis.audioTrack : []).map((track) => {
       const cues = (Array.isArray(track.cues) ? track.cues : []) as Array<Record<string, unknown>>;
       const cueSpans = cues.map((cue) => `<span style="background:#e7dcc2;border-radius:8px;padding:1px 8px;display:inline-block;margin:1px">${mmss(offset + Number(cue.atSec))} ${esc(cue.kind)} ${esc(cue.detailZh)}</span>`).join(" ");
-      return `<tr><td style="color:#8a6a1f;white-space:nowrap">${mmss(offset + Number(track.fromSec))}–${mmss(offset + Number(track.toSec))}</td>${AUDIO_TRACK_FIELDS.map((key) => `<td style="padding:3px 8px">${esc(track[key])}</td>`).join("")}<td style="color:#857a66">${cueSpans}</td></tr>`;
+      return `<tr><td style="color:#8a6a1f;white-space:nowrap">${mmss(offset + Number(track.fromSec))}–${mmss(offset + Number(track.toSec))}</td>${AUDIO_TRACK_FIELDS.map((key) => `<td style="padding:3px 8px">${emphasize(track[key])}</td>`).join("")}<td style="color:#857a66">${cueSpans}</td></tr>`;
     }).join("");
     return `<div style="margin:14px 0"><h3 style="color:#7a6f5d;margin:6px 0">声音节点 · 第${(Number(chunk.chunkIndex) || 0) + 1}片</h3>${chunkMeta}<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.85em"><tr><th style="padding:4px 8px;color:#7a6f5d">秒位</th>${AUDIO_TRACK_FIELDS.map((key) => `<th style="padding:4px 8px;color:#7a6f5d">${fieldLabel(key)}</th>`).join("")}<th style="padding:4px 8px;color:#7a6f5d">声音事件</th></tr>${trackRows}</table></div></div>`;
   }).join("");
@@ -413,7 +427,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const kmRows = keyMoments.map((row, index) => (
     `<tr><td style="color:#8a6a1f;white-space:nowrap">${mmss(Number(row.atSec))}</td>`
     + `<td style="white-space:nowrap">${KIND_ICON[String(row.kindZh)] ?? ""} ${esc(row.kindZh)}</td>`
-    + `<td>${esc(row.noteZh)}</td>`
+    + `<td>${emphasize(row.noteZh)}</td>`
     + `<td>${(subtitlesByKeyMoment.get(index) ?? []).map((subtitle) => (
       `<div><span style="color:#8a6a1f;white-space:nowrap">${mmss(subtitle.atSec)}</span> ${esc(subtitle.textZh)}</div>`
     )).join("") || '<span style="color:#9a8d75">—</span>'}</td></tr>`
@@ -499,7 +513,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   };
   const panel = (text: unknown) => (
     `<div style="background:#fffbf0;border:1px dashed #d9c48e;border-radius:10px;`
-    + `padding:14px 18px;margin-top:6px;white-space:pre-wrap;line-height:1.75">${esc(text)}</div>`
+    + `padding:14px 18px;margin-top:6px;white-space:pre-wrap;line-height:1.75">${emphasize(text)}</div>`
   );
   const tableOf = (headers: string[], rows: string) => (
     `<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.85em;margin-top:8px">`
