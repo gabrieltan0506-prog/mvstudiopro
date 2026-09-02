@@ -94,6 +94,18 @@ export async function hideManhuaLearnServerSeries(jobId: string) {
   return response.json() as Promise<{ hiddenCount: number; hiddenJobIds: string[]; messageZh?: string }>;
 }
 
+export async function clearOtherManhuaLearnSeries(keepJobId: string) {
+  const response = await fetch(
+    `/api/jobs/manhua-learn/${encodeURIComponent(keepJobId)}/clear-others`,
+    {
+      method: "POST",
+      credentials: "include",
+    },
+  );
+  if (!response.ok) throw new Error(await formatCreateJobError(response));
+  return response.json() as Promise<{ removedJobIds: string[]; keptJobIds: string[]; messageZh?: string }>;
+}
+
 export async function createJob(payload: {
   type: JobType;
   userId: string;

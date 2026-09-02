@@ -16,6 +16,7 @@ import {
   findActiveManhuaTemplateLearnJobForSource,
   getJobById,
   hideManhuaTemplateLearnSeriesForUser,
+  clearManhuaTemplateLearnJobsExceptSeriesForUser,
   isGrowthCampAnalyzeJobRecord,
   isManhuaTemplateLearnJobRecord,
   recoverInterruptedManhuaBgmJobsOnStartup,
@@ -651,6 +652,32 @@ async function startServer() {
     } catch (error) {
       console.error("[Jobs] hide manhua learn series failed:", error);
       return res.status(500).json({ error: "从列表删除失败，请稍后重试" });
+    }
+  });
+
+  // 0903 一键清空：只留 :id 同一部剧，其余任务行真删（running 隐藏+取消）
+  app.post("/api/jobs/manhua-learn/:id/clear-others", async (req, res) => {
+    try {
+      const ctx = await createContext({ req: req as any, res: res as any } as any);
+      if (!ctx.user) return res.status(401).json({ error: "请先登录" });
+      const { resolvePlatformSupervisorOpsAllowed } = await import("../services/access-policy");
+      if (!resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession)) {
+        return res.status(403).json({ error: "学节奏为监管专用" });
+      }
+      const cleared = await clearManhuaTemplateLearnJobsExceptSeriesForUser({
+        keepJobId: String(req.params.id || ""),
+        userId: String(ctx.user.id),
+      });
+      if (!cleared) return res.status(404).json({ error: "学习任务不存在或不属于当前用户" });
+      cleared.runningJobIds.forEach((jobId) => abortRunningManhuaLearnJob(jobId));
+      return res.status(200).json({
+        removedJobIds: cleared.removedJobIds,
+        keptJobIds: cleared.keptJobIds,
+        messageZh: `已清空 ${cleared.removedJobIds.length} 条，保留当前剧；已落盘学习成果不受影响`,
+      });
+    } catch (error) {
+      console.error("[Jobs] clear manhua learn list failed:", error);
+      return res.status(500).json({ error: "清空列表失败，请稍后重试" });
     }
   });
 

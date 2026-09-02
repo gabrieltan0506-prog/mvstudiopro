@@ -416,25 +416,101 @@ export async function hideManhuaTemplateLearnSeriesForUser(input: {
   if (!hiddenJobIds.length) return { hiddenJobIds: [], runningJobIds: [] };
 
   const hiddenAt = new Date().toISOString();
-  // 每条 input 都需保留原 params；逐行构造后串行写，数量仅限当前用户同剧的历史任务。
+  // 0903 用户令「不要藏了，藏了刷新又跑出来」：终态/排队任务直接删行——jobs 表只是列表源，
+  // GCS 分集检查点、静帧、提案与已批准模板都在别的表，不受影响。
+  // 仅 running 保留旧的隐藏+取消标记：worker 结束时还要回写这一行，真删会让回写扑空。
   for (const job of matched) {
+    if (job.status !== "running") {
+      await db.delete(jobs).where(and(eq(jobs.id, job.id), eq(jobs.userId, String(input.userId))));
+      continue;
+    }
     const raw = parseMaybeJson(job.input);
     const base = raw && typeof raw === "object" && !Array.isArray(raw)
       ? raw as Record<string, unknown>
       : { action: "manhua_template_learn" };
-    const active = job.status === "queued" || job.status === "running";
     await db.update(jobs).set({
       input: {
         ...base,
         hiddenAt,
-        ...(active ? { cancelRequestedAt: hiddenAt } : {}),
+        cancelRequestedAt: hiddenAt,
       } as InsertJob["input"],
-      status: job.status === "queued" ? "failed" : job.status,
-      error: job.status === "queued" ? "用户已从列表删除（未开始执行）" : job.error,
       updatedAt: new Date(),
     }).where(and(eq(jobs.id, job.id), eq(jobs.userId, String(input.userId))));
   }
   return { hiddenJobIds, runningJobIds };
+}
+
+/**
+ * 0903 用户令「只留缺集找，其他都删」：一键清空列表——保留锚点任务同一部剧的全部行，
+ * 其余终态/排队任务真删，运行中的隐藏+落取消标记（由调用方 abort）。
+ */
+export async function clearManhuaTemplateLearnJobsExceptSeriesForUser(input: {
+  keepJobId: string;
+  userId: string;
+}): Promise<{ removedJobIds: string[]; runningJobIds: string[]; keptJobIds: string[] } | null> {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable — cannot clear manhua learn list");
+  const anchor = await getJobById(input.keepJobId);
+  if (!anchor || !isManhuaTemplateLearnJob(anchor)) return null;
+  if (String(anchor.userId) !== String(input.userId)) return null;
+
+  const readIdentity = (job: Pick<Job, "id" | "input" | "output">) => {
+    const rawInput = parseMaybeJson(job.input);
+    const rawOutput = parseMaybeJson(job.output);
+    const params = rawInput && typeof rawInput === "object" && !Array.isArray(rawInput)
+      && (rawInput as Record<string, unknown>).params
+      && typeof (rawInput as Record<string, unknown>).params === "object"
+      && !Array.isArray((rawInput as Record<string, unknown>).params)
+      ? (rawInput as Record<string, unknown>).params as Record<string, unknown>
+      : {};
+    const output = rawOutput && typeof rawOutput === "object" && !Array.isArray(rawOutput)
+      ? rawOutput as Record<string, unknown>
+      : {};
+    return {
+      seriesKey: String(output.seriesKey || params.seriesKey || "").trim(),
+      sourceKey: String(params.dedupeKey || params.gcsUri || params.url || "").trim(),
+    };
+  };
+  const target = readIdentity(anchor);
+  const rows = await db
+    .select()
+    .from(jobs)
+    .where(
+      and(
+        eq(jobs.userId, String(input.userId)),
+        eq(jobs.type, "video"),
+        sql`(${jobs.input}::jsonb->>'action') = 'manhua_template_learn'`,
+      ),
+    );
+  const keptJobIds: string[] = [];
+  const removedJobIds: string[] = [];
+  const runningJobIds: string[] = [];
+  const hiddenAt = new Date().toISOString();
+  for (const job of rows) {
+    const identity = readIdentity(job);
+    const keep = job.id === anchor.id
+      || (target.seriesKey && identity.seriesKey === target.seriesKey)
+      || (target.sourceKey && identity.sourceKey === target.sourceKey);
+    if (keep) {
+      keptJobIds.push(job.id);
+      continue;
+    }
+    removedJobIds.push(job.id);
+    if (job.status !== "running") {
+      await db.delete(jobs).where(and(eq(jobs.id, job.id), eq(jobs.userId, String(input.userId))));
+      continue;
+    }
+    runningJobIds.push(job.id);
+    const raw = parseMaybeJson(job.input);
+    const base = raw && typeof raw === "object" && !Array.isArray(raw)
+      ? raw as Record<string, unknown>
+      : { action: "manhua_template_learn" };
+    await db.update(jobs).set({
+      input: { ...base, hiddenAt, cancelRequestedAt: hiddenAt } as InsertJob["input"],
+      updatedAt: new Date(),
+    }).where(and(eq(jobs.id, job.id), eq(jobs.userId, String(input.userId))));
+  }
+  return { removedJobIds, runningJobIds, keptJobIds };
 }
 
 /** 持久化取消请求；queued 直接终止，running 由 worker 在下一检查点停止。 */

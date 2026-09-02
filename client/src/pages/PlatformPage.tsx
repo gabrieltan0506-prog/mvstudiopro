@@ -94,6 +94,7 @@ import {
   createJob,
   getJob,
   hideManhuaLearnServerSeries,
+  clearOtherManhuaLearnSeries,
   isManhuaNativeDeepReadParamsConflict,
   listManhuaLearnServerJobs,
   pollJobUntilTerminal,
@@ -2640,7 +2641,7 @@ export default function PlatformPage() {
     }
   }, [manhuaLearnServerJobs]);
   const [manhuaLearnServerJobsHydrated, setManhuaLearnServerJobsHydrated] = useState(false);
-  const [manhuaLearnControlBusy, setManhuaLearnControlBusy] = useState<"cancel" | "skip" | "delete" | null>(null);
+  const [manhuaLearnControlBusy, setManhuaLearnControlBusy] = useState<"cancel" | "skip" | "delete" | "clear" | null>(null);
   /** 同一页面只允许一个轮询 owner；刷新后新页面从 active job 接手。 */
   const manhuaLearnPollingJobIdRef = useRef<string | null>(null);
   const [manhuaLearnContinueDismissedKey, setManhuaLearnContinueDismissedKey] = useState("");
@@ -3915,6 +3916,29 @@ export default function PlatformPage() {
       setManhuaLearnControlBusy(null);
     }
   }, [focusedManhuaLearnBasketItem?.jobId, focusedManhuaLearnServerJob?.jobId, manhuaLearnBasket, manhuaLearnControlBusy, manhuaLearnFocusSeriesKey, manhuaLearnResult?.seriesKey, manhuaLearnUserKey, selectManhuaLearnBasketItem]);
+  /** 0903 用户令「只留缺集找，其他都删」：一键清空列表，服务端真删其余任务行，本地篮子只留当前剧。 */
+  const clearOtherManhuaLearnSeriesFromList = useCallback(async () => {
+    const keepJobId = focusedManhuaLearnServerJob?.jobId || focusedManhuaLearnBasketItem?.jobId;
+    const keepSeriesKey = String(manhuaLearnResult?.seriesKey || manhuaLearnFocusSeriesKey).trim();
+    const userKey = manhuaLearnUserKey;
+    if (!keepJobId || !keepSeriesKey || !userKey || manhuaLearnControlBusy) return;
+    const others = manhuaLearnBasket.filter((item) => item.seriesKey !== keepSeriesKey).length;
+    if (!window.confirm(`只保留当前选中的剧，其余 ${others} 部从列表删除（任务行会真删，已落盘分集、静帧和已批准模板保留）？`)) return;
+    setManhuaLearnControlBusy("clear");
+    try {
+      const cleared = await clearOtherManhuaLearnSeries(keepJobId);
+      const nextBasket = manhuaLearnBasket.filter((item) => item.seriesKey === keepSeriesKey);
+      setManhuaLearnBasket(nextBasket);
+      writeManhuaLearnBasket(userKey, nextBasket);
+      const removed = new Set(cleared.removedJobIds);
+      setManhuaLearnServerJobs((prev) => prev.filter((job) => !removed.has(job.jobId)));
+      toast.success(`已清空 ${cleared.removedJobIds.length} 条`, { description: "只留当前剧；落盘学习成果和已批准模板没有删除。" });
+    } catch (error) {
+      toast.error("清空失败", { description: sanitizePlatformUserMessage(error instanceof Error ? error.message : String(error)) });
+    } finally {
+      setManhuaLearnControlBusy(null);
+    }
+  }, [focusedManhuaLearnServerJob?.jobId, focusedManhuaLearnBasketItem?.jobId, manhuaLearnBasket, manhuaLearnControlBusy, manhuaLearnFocusSeriesKey, manhuaLearnResult?.seriesKey, manhuaLearnUserKey]);
   const [allowBloggerTitle, setAllowBloggerTitle] = useState(() => readAllowBloggerTitleFromLs());
   /** 全案分析确认前：Skill/提示词优先级对话气泡 */
   const [fullAnalysisConfirmOpen, setFullAnalysisConfirmOpen] = useState(false);
@@ -13050,6 +13074,19 @@ export default function PlatformPage() {
                               className="shrink-0 rounded-lg border border-rose-300/30 bg-rose-500/10 px-2.5 py-1.5 text-[10px] font-semibold text-rose-100 hover:bg-rose-500/20 disabled:opacity-40"
                             >
                               {manhuaLearnControlBusy === "delete" ? "正在删除…" : "删除这部剧"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={
+                                !manhuaLearnFocusSeriesKey
+                                || Boolean(manhuaLearnControlBusy)
+                                || !(focusedManhuaLearnServerJob?.jobId || focusedManhuaLearnBasketItem?.jobId)
+                                || manhuaLearnBasket.length < 2
+                              }
+                              onClick={() => void clearOtherManhuaLearnSeriesFromList()}
+                              className="shrink-0 rounded-lg border border-rose-300/30 bg-rose-500/10 px-2.5 py-1.5 text-[10px] font-semibold text-rose-100 hover:bg-rose-500/20 disabled:opacity-40"
+                            >
+                              {manhuaLearnControlBusy === "clear" ? "正在清空…" : "只留这部·清空其他"}
                             </button>
                           </div>
                           <p className="mt-1.5 text-[10px] text-amber-100/50">
