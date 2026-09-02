@@ -85,6 +85,53 @@ export async function listNativeDeepReadClaimAdminRows(
 }
 
 /**
+ * 部署重启后的孤儿占位清扫（0902 用户拍板：被部署打断不该等 45 分钟判死）。
+ *
+ * 依据：本产品单机部署（deploy 原地替换同一台机器），进程刚启动、worker 尚未
+ * 开跑时，任何现存占位的持有进程都已随上一世死亡——立刻清掉即可，零双跑风险。
+ * 两条保守边界：
+ *   ① 带失败病历的占位**保留**——它们本就自动让位不挡路，且面板要靠病历答「卡在哪」；
+ *   ② 建立不足 2 分钟的占位跳过——万一部署存在新旧机重叠窗口，不误杀邻机刚建的锁；
+ * 删除一律按读到的 generation 条件执行，换代（说明有活任务重建）就放手。
+ */
+export async function sweepOrphanNativeDeepReadClaimsOnStartup(
+  nowMs: number = Date.now(),
+): Promise<{ swept: number; kept: number }> {
+  const bucket = getGcsBucketName();
+  const names = await listGcsObjectNamesByPrefix({
+    prefix: NATIVE_DEEP_READ_CLAIM_PREFIX,
+    maxResults: CLAIM_ADMIN_SCAN_LIMIT,
+  });
+  let swept = 0;
+  let kept = 0;
+  for (const name of names) {
+    try {
+      const versioned = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${name}` });
+      const parsed = JSON.parse(versioned.buffer.toString("utf8")) as {
+        createdAt?: unknown;
+        lastErrorZh?: unknown;
+        lastFailedAtIso?: unknown;
+      };
+      const hasFailureRecord = Boolean(
+        String(parsed.lastErrorZh || "").trim() || String(parsed.lastFailedAtIso || "").trim(),
+      );
+      const createdMs = Date.parse(String(parsed.createdAt || ""));
+      const freshMs = 2 * 60_000;
+      if (hasFailureRecord || (Number.isFinite(createdMs) && nowMs - createdMs < freshMs)) {
+        kept += 1;
+        continue;
+      }
+      await deleteGcsObject({ bucket, objectName: name, ifGenerationMatch: versioned.generation });
+      swept += 1;
+    } catch {
+      // 读不动或删除换代冲突都按保留计——宁可留给 20/45 分钟判死或面板人工弃置
+      kept += 1;
+    }
+  }
+  return { swept, kept };
+}
+
+/**
  * 人工弃置一条占位：条件删除（按读到的 generation），
  * 期间若执行链重建了同名占位（说明该集正在真跑），删除会 412 失败——宁停勿删。
  */

@@ -8,6 +8,7 @@ import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import uploadRouter from "../upload";
 import { registerStripeWebhook } from "../stripe-webhook";
+import { sweepOrphanNativeDeepReadClaimsOnStartup } from "../services/manhuaNativeDeepReadClaimAdmin";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import {
@@ -836,6 +837,18 @@ async function startServer() {
           console.warn(
             `[manhua-learn] startup recovery: requeued=${requeued} cancelled=${cancelled} completed=${completed} exhausted=${exhausted}`,
           );
+        }
+        // 0902：部署重启即扫孤儿精读占位（旧进程必死），用户不必再等 45 分钟判死。
+        // 清扫失败只警告不阻塞——判死兜底与面板「弃置」仍在。
+        try {
+          const claimSweep = await sweepOrphanNativeDeepReadClaimsOnStartup();
+          if (claimSweep.swept > 0) {
+            console.warn(
+              `[manhua-learn] startup claim sweep: swept=${claimSweep.swept} kept=${claimSweep.kept}`,
+            );
+          }
+        } catch (error) {
+          console.warn("[manhua-learn] startup claim sweep failed:", error);
         }
         const bgmRecovery = await recoverInterruptedManhuaBgmJobsOnStartup();
         if (bgmRecovery.resumed > 0 || bgmRecovery.completed > 0 || bgmRecovery.manual > 0) {

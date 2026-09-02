@@ -16,6 +16,7 @@ vi.mock("./gcs.js", () => ({
 import {
   discardNativeDeepReadClaimForEpisode,
   listNativeDeepReadClaimAdminRows,
+  sweepOrphanNativeDeepReadClaimsOnStartup,
 } from "./manhuaNativeDeepReadClaimAdmin";
 import { nativeDeepReadClaimObjectName } from "./manhuaNativeDeepReadClaim";
 
@@ -61,5 +62,47 @@ describe("原生精读占位管理", () => {
     gcs.remove.mockRejectedValue(new Error("gcs_delete_generation_conflict"));
     await expect(discardNativeDeepReadClaimForEpisode("series_a", 3, "77"))
       .rejects.toThrow("占位已变化，请刷新后重试");
+  });
+});
+
+describe("启动孤儿占位清扫", () => {
+  const NOW = Date.parse("2026-09-02T06:00:00.000Z");
+  const claimAt = (iso: string, extra: Record<string, unknown> = {}) => ({
+    buffer: Buffer.from(JSON.stringify({ runId: "r", createdAt: iso, ...extra })),
+    bucket: "bucket-a",
+    objectName: "manhua-template-learn/native-claims/tpl_native_x_ep001.json",
+    generation: "9",
+  });
+
+  it("重启后无病历的旧占位立即清除（条件删除带 generation）", async () => {
+    gcs.list.mockResolvedValue(["manhua-template-learn/native-claims/tpl_native_x_ep001.json"]);
+    gcs.download.mockResolvedValue(claimAt("2026-09-02T05:41:00.000Z"));
+    await expect(sweepOrphanNativeDeepReadClaimsOnStartup(NOW)).resolves.toEqual({ swept: 1, kept: 0 });
+    expect(gcs.remove).toHaveBeenCalledWith({
+      bucket: "bucket-a",
+      objectName: "manhua-template-learn/native-claims/tpl_native_x_ep001.json",
+      ifGenerationMatch: "9",
+    });
+  });
+
+  it("带失败病历的占位保留——面板要靠病历答「卡在哪」，它们本就自动让位", async () => {
+    gcs.list.mockResolvedValue(["manhua-template-learn/native-claims/tpl_native_x_ep001.json"]);
+    gcs.download.mockResolvedValue(claimAt("2026-09-02T04:00:00.000Z", { lastErrorZh: "门禁未过" }));
+    await expect(sweepOrphanNativeDeepReadClaimsOnStartup(NOW)).resolves.toEqual({ swept: 0, kept: 1 });
+    expect(gcs.remove).not.toHaveBeenCalled();
+  });
+
+  it("建立不足 2 分钟的占位跳过，防部署重叠窗口误杀新锁", async () => {
+    gcs.list.mockResolvedValue(["manhua-template-learn/native-claims/tpl_native_x_ep001.json"]);
+    gcs.download.mockResolvedValue(claimAt("2026-09-02T05:59:30.000Z"));
+    await expect(sweepOrphanNativeDeepReadClaimsOnStartup(NOW)).resolves.toEqual({ swept: 0, kept: 1 });
+    expect(gcs.remove).not.toHaveBeenCalled();
+  });
+
+  it("删除换代冲突按保留计，不当成清扫成功", async () => {
+    gcs.list.mockResolvedValue(["manhua-template-learn/native-claims/tpl_native_x_ep001.json"]);
+    gcs.download.mockResolvedValue(claimAt("2026-09-02T05:00:00.000Z"));
+    gcs.remove.mockRejectedValue(new Error("gcs_delete_generation_conflict"));
+    await expect(sweepOrphanNativeDeepReadClaimsOnStartup(NOW)).resolves.toEqual({ swept: 0, kept: 1 });
   });
 });
