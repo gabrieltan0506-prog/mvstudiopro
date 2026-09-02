@@ -3489,6 +3489,7 @@ export default function PlatformPage() {
     }
   }, [pendingManhuaViralProposals, selectedManhuaProposalId]);
 
+  const manhuaLearnLagProbeRef = useRef("");
   const refreshManhuaLearnServerJobs = useCallback(async () => {
     const requestUserKey = manhuaLearnUserKeyRef.current;
     if (!requestUserKey) return { items: [] as ManhuaLearnServerJob[] };
@@ -3500,12 +3501,26 @@ export default function PlatformPage() {
     setManhuaLearnServerJobs((prev) =>
       reuseManhuaLearnServerJobsIfUnchanged(prev, listed.items));
     setManhuaLearnServerJobsHydrated(true);
+    // 0903 显示迟到打点：进度行落库时刻 vs 本次轮询收到时刻，>10s 即在控制台留证
+    const runningJob = listed.items.find((job) => job.status === "running" || job.status === "queued");
+    const progressLog = Array.isArray((runningJob?.output as Record<string, unknown> | undefined)?.learnProgressLog)
+      ? (runningJob!.output as { learnProgressLog: Array<{ atIso?: string }> }).learnProgressLog
+      : [];
+    const lastProgressAt = String(progressLog[progressLog.length - 1]?.atIso || "");
+    if (lastProgressAt && lastProgressAt !== manhuaLearnLagProbeRef.current) {
+      manhuaLearnLagProbeRef.current = lastProgressAt;
+      const lagSec = (Date.now() - Date.parse(lastProgressAt)) / 1000;
+      if (Number.isFinite(lagSec) && lagSec > 10) {
+        console.info(`[learn-lag] 进度行 ${lastProgressAt} 抵达浏览器晚了 ${lagSec.toFixed(1)}s`);
+      }
+    }
     setManhuaLearnBasket((prev) => {
       const merged = demoteStaleRunningManhuaLearnItems(
         mergeManhuaLearnServerJobsIntoBasket(prev, listed.items),
         listed.items,
       );
-      writeManhuaLearnBasket(requestUserKey, merged);
+      // 内容没变就不重写 localStorage——整篮 JSON.stringify 每 3 秒烧主线程是面板变卡的实测浪费
+      if (merged !== prev) writeManhuaLearnBasket(requestUserKey, merged);
       const focused = merged.find(
         (item) => item.seriesKey === manhuaLearnFocusSeriesKeyRef.current,
       );
