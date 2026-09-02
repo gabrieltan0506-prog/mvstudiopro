@@ -3225,6 +3225,8 @@ export async function checkManhuaLearnSourceLearned(
    * 用户填了剧名时，同名剧系列（抽帧时代按剧名归并）的旧记录也亮出来供判断。
    */
   sameTitleSeries: ManhuaLearnSameTitleSeries | null;
+  /** 同剧模糊归并（互含或公共前缀≥4 字）命中的全部系列，最多 8 条 */
+  sameTitleSeriesList: ManhuaLearnSameTitleSeries[];
 }> {
   const rawUrl = String(url || "").trim();
   // 搜索页 modal_id 链接与干净 /video/ 链接必须算同一系列（seriesKeyFrom 按
@@ -3299,32 +3301,53 @@ export async function checkManhuaLearnSourceLearned(
     framesDigestCount = digests.length;
   }
   let sameTitleSeries: ManhuaLearnSameTitleSeries | null = null;
+  let sameTitleSeriesList: ManhuaLearnSameTitleSeries[] = [];
   const cleanTitle = String(titleZh || "").trim();
-  if (normalizeManhuaSeriesTitle(cleanTitle)) {
+  const normalizedQueryTitle = normalizeManhuaSeriesTitle(cleanTitle);
+  if (normalizedQueryTitle) {
     try {
-      const titleKey = await resolveManhuaSeriesKey({
-        sourceIdentity: cleanUrl,
-        title: cleanTitle,
-        learnLlm: "gpt",
+      /**
+       * 0902 拼盘账号痛点：胖胖说剧类会自标已更缺集，拼盘号全靠用户脑子记。
+       * 同剧不同季/不同来源标题写法不一（万妖图录 / 万妖图录传第十一季…），
+       * 精确同名认不了亲——扫全部系列做模糊归并（互含或公共前缀≥4 字），
+       * 把这部剧在所有来源学过的账一次列全。系列总量小（当前 13 个），扫得起。
+       */
+      const names = await listGcsObjectNamesByPrefix({
+        prefix: "manhua-template-learn/series/",
+        maxResults: 500,
       });
-      if (titleKey !== seriesKey) {
-        const [titleRecords, titleProgress, titleDigests] = await Promise.all([
-          listIngestedNativeDeepReadEpisodeRecords(titleKey),
-          loadSeriesProgress(titleKey),
-          loadAllDigests(titleKey).catch(() => []),
-        ]);
-        if (titleRecords.length || titleDigests.length) {
-          sameTitleSeries = {
-            seriesKey: titleKey,
-            titleHint: cleanManhuaLearnTitle(titleProgress?.titleHint) || cleanTitle,
-            framesDigestCount: titleDigests.length,
-            learnedEpisodeIndexes: titleRecords
-              .filter((record) => record.complete)
-              .map((record) => record.episodeIndex)
-              .sort((a, b) => a - b),
-          };
+      const likelySameDrama = (a: string, b: string): boolean => {
+        if (!a || !b) return false;
+        if (a.includes(b) || b.includes(a)) return true;
+        let i = 0;
+        while (i < a.length && i < b.length && a[i] === b[i]) i += 1;
+        return i >= 4;
+      };
+      for (const name of names) {
+        const existingKey = seriesKeyFromProgressObjectName(name);
+        if (!existingKey || existingKey === seriesKey) continue;
+        const progressRow = await loadSeriesProgress(existingKey).catch(() => null);
+        const rowTitle = cleanManhuaLearnTitle(progressRow?.titleHint) || "";
+        if (!likelySameDrama(normalizeManhuaSeriesTitle(rowTitle), normalizedQueryTitle)) {
+          continue;
         }
+        const [titleRecords, titleDigests] = await Promise.all([
+          listIngestedNativeDeepReadEpisodeRecords(existingKey).catch(() => []),
+          loadAllDigests(existingKey).catch(() => []),
+        ]);
+        if (!titleRecords.length && !titleDigests.length) continue;
+        sameTitleSeriesList.push({
+          seriesKey: existingKey,
+          titleHint: rowTitle || cleanTitle,
+          framesDigestCount: titleDigests.length,
+          learnedEpisodeIndexes: titleRecords
+            .filter((record) => record.complete)
+            .map((record) => record.episodeIndex)
+            .sort((a, b) => a - b),
+        });
       }
+      sameTitleSeriesList = sameTitleSeriesList.slice(0, 8);
+      sameTitleSeries = sameTitleSeriesList[0] ?? null;
     } catch {
       /* 同名剧旧账查失败不挡主查重 */
     }
@@ -3343,6 +3366,7 @@ export async function checkManhuaLearnSourceLearned(
       .sort((a, b) => a - b),
     framesDigestCount,
     sameTitleSeries,
+    sameTitleSeriesList,
   };
 }
 

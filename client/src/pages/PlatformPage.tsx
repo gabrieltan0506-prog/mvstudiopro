@@ -2587,6 +2587,56 @@ export default function PlatformPage() {
   const [manhuaLearnHydratedUserKey, setManhuaLearnHydratedUserKey] = useState("");
   const [manhuaLearnActiveJob, setManhuaLearnActiveJob] = useState<ManhuaLearnActiveJob | null>(null);
   const [manhuaLearnServerJobs, setManhuaLearnServerJobs] = useState<ManhuaLearnServerJob[]>([]);
+  /** 0902 用户实测：任务 4 秒失败面板不吭声，人干等 4 分钟——失败即 toast + 常驻红条 */
+  const manhuaLearnFailureSeenRef = useRef<Set<string>>(new Set());
+  const [manhuaLearnLatestFailure, setManhuaLearnLatestFailure] = useState<
+    { jobId: string; errorZh: string; atIso: string } | null
+  >(null);
+  useEffect(() => {
+    for (const job of manhuaLearnServerJobs) {
+      if (job.status !== "failed") continue;
+      if (manhuaLearnFailureSeenRef.current.has(job.jobId)) continue;
+      manhuaLearnFailureSeenRef.current.add(job.jobId);
+      const atMs = Date.parse(String(job.updatedAt || "")) || 0;
+      // 只弹近 10 分钟内的失败；更早的历史失败首拉时静默记档不打扰
+      if (Date.now() - atMs > 10 * 60_000) continue;
+      const errorZh = sanitizePlatformUserMessage(String(job.error || "学习任务失败"));
+      setManhuaLearnLatestFailure({
+        jobId: job.jobId,
+        errorZh,
+        atIso: String(job.updatedAt || ""),
+      });
+      toast.error("学习任务已失败", { description: errorZh, duration: 12_000 });
+      // 僵尸卡对账：任务已死但篮子里还挂「排队中」（刷新从 localStorage 还原旧态，
+      // jobId 可能没落上）——按 jobId 或来源 URL 双路匹配翻成失败态。
+      const jobSource = String(
+        job.input?.params?.dedupeKey
+          || job.input?.params?.url
+          || job.input?.params?.gcsUri
+          || "",
+      ).trim();
+      setManhuaLearnBasket((prev) =>
+        prev.map((item) => {
+          const itemSource = String(
+            item.continuation?.row?.gcsUri || item.continuation?.row?.url || "",
+          ).trim();
+          const matched =
+            (item.jobId && item.jobId === job.jobId)
+            || (jobSource && itemSource && itemSource === jobSource);
+          if (!matched) return item;
+          if (item.jobStatus === "failed" || item.jobStatus === "succeeded") return item;
+          return {
+            ...item,
+            jobId: item.jobId || job.jobId,
+            jobStatus: "failed" as const,
+            jobErrorZh: errorZh,
+            result: { ...item.result, liveStatus: "failed" as const },
+            updatedAt: Date.now(),
+          };
+        }),
+      );
+    }
+  }, [manhuaLearnServerJobs]);
   const [manhuaLearnServerJobsHydrated, setManhuaLearnServerJobsHydrated] = useState(false);
   const [manhuaLearnControlBusy, setManhuaLearnControlBusy] = useState<"cancel" | "skip" | "delete" | null>(null);
   /** 同一页面只允许一个轮询 owner；刷新后新页面从 active job 接手。 */
@@ -12691,6 +12741,24 @@ export default function PlatformPage() {
                               ? "正在确认可用的学习方式；确认完成前不会建立任务。"
                               : manhuaLearnPipelineMeta.summaryZh}
                           </p>
+                          {manhuaLearnLatestFailure ? (
+                            <div className="mt-2 flex items-start justify-between gap-2 rounded-lg border border-red-400/40 bg-red-500/10 px-2.5 py-1.5 text-[11px] leading-5 text-red-100">
+                              <span>
+                                ❌ 上次学习失败
+                                {manhuaLearnLatestFailure.atIso
+                                  ? `（${manhuaLearnLatestFailure.atIso.slice(11, 16)}）`
+                                  : ""}
+                                ：{manhuaLearnLatestFailure.errorZh}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setManhuaLearnLatestFailure(null)}
+                                className="shrink-0 rounded border border-red-300/40 px-1.5 py-0.5 text-[10px] text-red-100/80 hover:bg-red-400/15"
+                              >
+                                知道了
+                              </button>
+                            </div>
+                          ) : null}
                           {manhuaLearnDupQuery.data?.episodes.length ? (
                             <div className="mt-2 rounded-lg border border-amber-400/35 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-5 text-amber-100">
                               ⚠️ 这支已学过：
@@ -12740,16 +12808,23 @@ export default function PlatformPage() {
                               </div>
                             </div>
                           ) : null}
-                          {manhuaLearnDupQuery.data?.sameTitleSeries ? (
+                          {manhuaLearnDupQuery.data?.sameTitleSeriesList?.length ? (
                             <div className="mt-1.5 rounded-lg border border-sky-400/30 bg-sky-500/10 px-2.5 py-1.5 text-[11px] leading-5 text-sky-100">
-                              ℹ️ 同名剧旧账：《{manhuaLearnDupQuery.data.sameTitleSeries.titleHint}》
-                              {manhuaLearnDupQuery.data.sameTitleSeries.framesDigestCount > 0
-                                ? ` 抽帧（一代）学过 ${manhuaLearnDupQuery.data.sameTitleSeries.framesDigestCount} 集`
-                                : ""}
-                              {manhuaLearnDupQuery.data.sameTitleSeries.learnedEpisodeIndexes.length
-                                ? ` · 精读入库第${manhuaLearnDupQuery.data.sameTitleSeries.learnedEpisodeIndexes.join("、")}集`
-                                : ""}
-                              ——重剪合集是另一来源，用三代重学不冲突
+                              ℹ️ 这部剧的旧账（按剧名归并全部来源）：
+                              {manhuaLearnDupQuery.data.sameTitleSeriesList.map((row) => (
+                                <div key={row.seriesKey}>
+                                  《{row.titleHint}》
+                                  {row.framesDigestCount > 0
+                                    ? ` 抽帧（一代）学过 ${row.framesDigestCount} 集`
+                                    : ""}
+                                  {row.learnedEpisodeIndexes.length
+                                    ? ` · 精读入库第${row.learnedEpisodeIndexes.join("、")}集`
+                                    : ""}
+                                </div>
+                              ))}
+                              <div className="mt-0.5 text-[10px] text-sky-100/60">
+                                拼盘/重剪是另一来源，用三代重学不冲突；缺哪集自己对着这份账挑着学
+                              </div>
                             </div>
                           ) : null}
                           <div className="mt-2 flex flex-col gap-2 sm:flex-row">
