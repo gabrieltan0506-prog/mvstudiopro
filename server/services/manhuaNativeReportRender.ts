@@ -382,9 +382,87 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   }
 
   const cl = (card.classification ?? {}) as Record<string, unknown>;
-  const tags = Object.entries(cl)
-    .filter(([, v]) => Array.isArray(v))
-    .map(([k, v]) => `<div style="margin:4px 0"><b style="color:#8a6a1f">${esc(fieldLabel(k))}</b>：${(v as unknown[]).map((t) => `<span style="background:#f6efe0;border:1px solid #e0d2b4;border-radius:10px;padding:2px 10px;margin:2px;display:inline-block;color:#6b5b4a">${esc(t)}</span>`).join(" ")}</div>`)
+  /**
+   * 0902 九审拍板：标签词云太零散（任何剧都有这些词），每维改织成一两句
+   * 连贯判词，标签词句中高亮保扫读。近义标签先合并（互为子串，或字集互含
+   * 且长度差 ≤2：特写镜头/特写镜头强调、爽感/爽快感），每维最多取 7 词。
+   */
+  const isTagDup = (a: string, b: string): boolean => {
+    if (a.includes(b) || b.includes(a)) return true;
+    if (Math.abs(a.length - b.length) > 2) return false;
+    const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+    return short.split("").every((ch) => long.includes(ch));
+  };
+  const tagListOf = (key: string): string[] => {
+    const raw = (Array.isArray(cl[key]) ? cl[key] : []) as unknown[];
+    const kept: string[] = [];
+    for (const t of raw.map((v) => String(v ?? "").trim()).filter(Boolean)) {
+      if (kept.some((k) => isTagDup(k, t))) continue;
+      kept.push(t);
+      if (kept.length >= 7) break;
+    }
+    return kept;
+  };
+  const hiTag = (t: string): string =>
+    `<b style="color:#8a5a1f;background:#f9edd2;border-radius:6px;padding:0 5px">${esc(t)}</b>`;
+  const joinTags = (list: string[]): string => list.map(hiTag).join("、");
+  const weaveDimension = (key: string): string => {
+    const kept = tagListOf(key);
+    if (!kept.length) return "";
+    if (key === "audienceExperienceTagsZh") {
+      // 钩子类体验（悬念/期待/好奇）挪到句尾，收在「引向下一集」才通顺
+      kept.sort((x, y) => Number(/悬念|期待|好奇/.test(x)) - Number(/悬念|期待|好奇/.test(y)));
+    }
+    const a = kept.slice(0, 2);
+    const b = kept.slice(2, 5);
+    const c = kept.slice(5, 7);
+    switch (key) {
+      case "emotionTagsZh": {
+        const calm = kept.find((t) => /平静|冷静|淡然/.test(t));
+        const coda = calm
+          ? `——偶有${hiTag(calm)}片刻，反而衬得压迫更沉`
+          : "——极性切换密，几乎不给观众留喘息";
+        return `情绪线以${joinTags(a)}打底${b.length ? `，中段翻出${joinTags(b)}` : ""}${c.length ? `，尾程在${joinTags(c)}里收拢` : ""}${coda}。`;
+      }
+      case "narrativeFeatureTagsZh":
+        return `叙事骨架立在${joinTags(a)}上${b.length ? `，靠${joinTags(b)}推着冲突走` : ""}${c.length ? `，并用${joinTags(c)}埋下后续的钩子` : ""}。`;
+      case "performanceTagsZh":
+        return `表演上${joinTags(a)}撑住大场面${b.length ? `，细处靠${joinTags(b)}见真章` : ""}${c.length ? `，${joinTags(c)}补足层次` : ""}。`;
+      case "audiovisualTagsZh":
+        return `视听语言用${joinTags(a)}造势${b.length ? `，以${joinTags(b)}强化关键瞬间` : ""}${c.length ? `，${joinTags(c)}收束整体质感` : ""}。`;
+      case "audienceExperienceTagsZh":
+        return `落到观感，${joinTags(a)}是主菜${b.length ? `，${joinTags(b)}穿插其间` : ""}${c.length ? `，再用${joinTags(c)}把人引向下一集` : ""}。`;
+      default:
+        return `${joinTags(kept)}。`;
+    }
+  };
+  // GLM 整形已产出五维判词（0902 起 classificationProseZh）就用模型原句——
+  // 标签词在句中高亮；旧卡没有该字段才退回上面的模板织句。
+  const prose = (card.classificationProseZh ?? {}) as Record<string, unknown>;
+  const PROSE_KEY_OF: Record<string, string> = {
+    emotionTagsZh: "emotionZh",
+    narrativeFeatureTagsZh: "narrativeZh",
+    performanceTagsZh: "performanceZh",
+    audiovisualTagsZh: "audiovisualZh",
+    audienceExperienceTagsZh: "audienceZh",
+  };
+  const highlightTagsInProse = (sentence: string, key: string): string => {
+    let html = esc(sentence);
+    for (const t of tagListOf(key).sort((x, y) => y.length - x.length)) {
+      const escaped = esc(t);
+      if (html.includes(escaped)) html = html.replace(escaped, hiTag(t));
+    }
+    return html;
+  };
+  const tags = ["emotionTagsZh", "narrativeFeatureTagsZh", "performanceTagsZh", "audiovisualTagsZh", "audienceExperienceTagsZh"]
+    .concat(Object.keys(cl).filter((k) => Array.isArray(cl[k]) && !FIELD_LABELS[k]))
+    .map((key) => {
+      const modelSentence = String(prose[PROSE_KEY_OF[key] ?? ""] ?? "").trim();
+      const sentence = modelSentence ? highlightTagsInProse(modelSentence, key) : weaveDimension(key);
+      return sentence
+        ? `<div style="margin:7px 0;line-height:1.85;color:#6b5b4a"><b style="color:#8a6a1f">${esc(fieldLabel(key))}</b>：${sentence}</div>`
+        : "";
+    })
     .join("");
   /**
    * 0830 报告规格：摘要四栏拆成四个独立区块（可复用手法 / 生成提示要素 /
@@ -582,8 +660,12 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     if (index === 0 && !notes.length) return "开场镜";
     return notes.slice(0, 3).join(" · ");
   };
-  // 相邻镜同判词只留第一次——语义不因重复贬值
-  const changeNotesByIndex = shots.map((_, index) => shotChangeZh(index));
+  // GLM 整形写了逐镜解读（0902 起 shots[].craftReadZh）优先用模型原句；
+  // 旧卡缺该字段才落回上面的词典推导。相邻镜同判词只留第一次——语义不因重复贬值
+  const changeNotesByIndex = shots.map((shot, index) => {
+    const modelRead = String(shot.craftReadZh ?? "").trim();
+    return modelRead || shotChangeZh(index);
+  });
   for (let i = shots.length - 1; i > 0; i -= 1) {
     if (changeNotesByIndex[i] && changeNotesByIndex[i] === changeNotesByIndex[i - 1]) {
       changeNotesByIndex[i] = "";
@@ -850,7 +932,7 @@ ${section("💡 可复用手法总结", panel(summaryTextOf("reusableZh")))}
 ${section("🧭 生成提示要素", panel(summaryTextOf("genPromptHintZh")))}
 ${section("🥁 节奏结构", panel(summaryTextOf("beatStructureZh")))}
 ${section("🌊 情绪推进", panel(summaryTextOf("moodArcZh")))}
-${section("🏷️ 五维标签墙", tags)}
+${section("🏷️ 五维风格判词", tags)}
 ${section(`⭐ 重点时刻表 · ${keyMoments.length} 条`, keyMoments.length
     ? tableOf(["秒位", "类型", "关键字幕（前后 2 秒）", "对照截图"], kmRows)
     : `<p style="color:#857a66">本集手记未单列重点时刻</p>`, true)}

@@ -3604,6 +3604,11 @@ export function nextNativeDeepReadGlmPreferredGateway(): "evolink_glm" | "openro
   return gateway;
 }
 
+/**
+ * 🔒 0902 用户授权解冻一次：新增 classificationProseZh 五维连贯判词
+ * （标签词云太零散，判词由整形模型直接写洞察），改毕即重新冻结——
+ * 再改仍须用户当场授权。
+ */
 export function buildNativeDeepReadGlmStructuringPrompt(input: {
   episodeIndex: number;
   durationSec: number;
@@ -3647,19 +3652,21 @@ truncated / advisories / gateMarked / gateMarkedZh / attemptNumber 标注的都�
 · shots[].hintZh：逐镜原样保留，和来源起止范围绑定；不同观察各自保留，历史输入缺该字段时保持缺省。
 · keyMoments：原样保留，同秒同类留一条取说明更具体的，不同秒或不同类全保留；atSec 只来自输入。
 · classification：五个数组显式输出，有证据就写，无证据写 []。
+· shots[].craftReadZh：可选新字段。该镜相对前一镜存在显著手法变化（运镜/剪辑/景别跳档/机位角度/站位调度/情绪极性/昼夜场景）时，写一句 6–20 字的「手法·用意与预期效果」解读（例「怼至大特写·情绪显微镜」「夜转日跨场·时间跳进」「合围站位·困局成型」）；判读只能以该镜与前镜**已记录的字段**为据，不许虚构画面；无显著变化写 ""。同类手法反复出现时必须换不同措辞点出当次的具体用意，整集不许复读同一句。
+· classificationProseZh：顶层新对象，五键 emotionZh/narrativeZh/performanceZh/audiovisualZh/audienceZh，分别对应情绪/叙事特色/表演/视听/观众体验。把该维标签织成**一到两句连贯陈述**，点出这一集独有的组合与用意（例：「情绪线以紧张、愤怒打底，中段被角色牺牲翻入绝望，收在决绝的反击里」），不许罗列词条式排比、不许写放之任何剧都成立的空话；每句都要能在证据里找到出处，无证据的维度写空字符串 ""。
 · 秒位只进数字字段。描述里写时长（如「1.2 秒内推近」），钟表式（01:23）留给数字字段。
 
 **四、输出**：只返回一个 JSON 对象，无 Markdown 围栏、无解释。
 
 **五、三条红线**
-1. 不虚构输入里没有的镜头、字幕、声音或描述。
+1. 不虚构输入里没有的镜头、字幕、声音或描述（craftReadZh 与 classificationProseZh 是仅有的两处**推导**字段，允许解读但同样只能以输入为据）。
 2. 不为了精简而合并不重叠的镜头。
 3. 不新增 keyMoments 的 atSec。`,
-    user: `把以下同一集的 ${input.rawSegments.length} 份证据卡整形合并成**一张${scopeZh}原生证据卡**（单个 JSON 对象，字段 schema 与分段卡完全相同：shots/subtitles/audioResolution/beatStructureZh/moodArcZh/classification/reusableZh/genPromptHintZh，另加顶层可选 excludedAdRanges）。
+    user: `把以下同一集的 ${input.rawSegments.length} 份证据卡整形合并成**一张${scopeZh}原生证据卡**（单个 JSON 对象，字段 schema 与分段卡完全相同：shots/subtitles/audioResolution/beatStructureZh/moodArcZh/classification/reusableZh/genPromptHintZh，另加顶层可选 excludedAdRanges 与 classificationProseZh）。
 要求：
 1. story 镜头连续无空档覆盖除 excludedAdRanges 外的全时间轴 ${Math.round(coverageStartSec)}..${Math.round(coverageEndSec)} 秒（绝对秒位），每镜保留 evidenceRole；🔴 **只有秒位重叠的重复记录可以合并；相邻不重叠的镜头一律各自保留**——${scopeZh}输出的镜头条数应与输入去重后的真实切分相当，**镜头数大幅变少、平均镜长明显拉长即为错误产出**。non_story_ad 必须整行剔除并把 {startSec,endSec} 区间记入顶层 excludedAdRanges，不得混入 story。🔒 一次合并的总跨度不得超过 ${NATIVE_DEEP_READ_MERGE_SPAN_HARD_MAX_SEC} 秒；真实剪辑镜头按输入边界保留，短于 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒或相邻时长相同也各自保留；超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒的同一长镜按镜内真实变化拆成连续证据段，每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，且不得删除仍需保留的「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」续接标记或丢失覆盖。
 2. audioResolution 保留全部 [{chunkIndex,analysis}] 条目（chunkIndex 即段号，analysis 内为该段局部秒），逐段齐全${input.hasAudio ? "" : "；本集素材无音轨，audioResolution 保持空数组"}。
-3. beatStructureZh/moodArcZh/reusableZh/genPromptHintZh 只整合 story 证据，可加「第X段」标注；classification 五维标签只取 story 输入并集，不得补猜。
+3. beatStructureZh/moodArcZh/reusableZh/genPromptHintZh 只整合 story 证据，可加「第X段」标注；classification 五维标签只取 story 输入并集，不得补猜；另按 system 要求输出顶层 classificationProseZh 五句连贯判词（每维一到两句、只依据证据）。
 3.9 subtitles 按 keyMoments 解析：每条字幕对应其秒位附近的重点时刻，**不设条数多寡的判断**。照原文合并去重即可，不得补写输入里没有的台词。
 4. 输入是本集**全部**产出：合规段、带 advisories 的段、truncated 截断段、被门禁标记（gateMarked）的版本都在其中，一份都不许丢。**同一段可能有多个版本**，按秒位合并去重后取信息更全的；截断段照常采纳已有内容、不补写尾部；段边界的重复镜头/字幕/声音事件同样按秒位合并。
 ${scopeZh}元数据：${JSON.stringify({
