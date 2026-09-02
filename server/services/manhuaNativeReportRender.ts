@@ -287,7 +287,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     const dataUri = await embedFrameImage(bucket, String(frame.objectName));
     if (!dataUri) continue;
     const reasons = (Array.isArray(frame.reasons) ? frame.reasons : []) as string[];
-    const badge = reasons.map((r) => `<span style="background:#e7dcc2;border-radius:8px;padding:0 6px;margin-right:3px">${esc(r)}</span>`).join("");
+    const badge = reasons.map((r) => `<span style="background:#f6efe0;border:1px solid #e0d2b4;border-radius:8px;padding:0 6px;margin-right:3px;color:#6b5b4a">${esc(r)}</span>`).join("");
     const frameAtSec = Number(frame.atSec);
     const shot = shots.find((s) => frameAtSec >= Number(s.startSec) && frameAtSec < Number(s.endSec)) || {};
     tiles.push(`<div style="width:158px"><img loading="lazy" src="${dataUri}" style="width:158px;border-radius:4px"><div style="font-size:.7em;color:#7a6f5d">${mmss(frameAtSec)} ${badge}${esc(String(frame.noteZh ?? "").trim() || shot.actionZh)}</div></div>`);
@@ -296,7 +296,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const cl = (card.classification ?? {}) as Record<string, unknown>;
   const tags = Object.entries(cl)
     .filter(([, v]) => Array.isArray(v))
-    .map(([k, v]) => `<div style="margin:4px 0"><b style="color:#8a6a1f">${esc(fieldLabel(k))}</b>：${(v as unknown[]).map((t) => `<span style="background:#e7dcc2;border-radius:10px;padding:2px 10px;margin:2px;display:inline-block">${esc(t)}</span>`).join(" ")}</div>`)
+    .map(([k, v]) => `<div style="margin:4px 0"><b style="color:#8a6a1f">${esc(fieldLabel(k))}</b>：${(v as unknown[]).map((t) => `<span style="background:#f6efe0;border:1px solid #e0d2b4;border-radius:10px;padding:2px 10px;margin:2px;display:inline-block;color:#6b5b4a">${esc(t)}</span>`).join(" ")}</div>`)
     .join("");
   /**
    * 0830 报告规格：摘要四栏拆成四个独立区块（可复用手法 / 生成提示要素 /
@@ -434,7 +434,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     `<div style="display:flex;align-items:center;gap:10px;margin:5px 0">`
     + `<span style="width:64px;color:#857a66;font-size:12px">${row.label}</span>`
     + `<span style="height:15px;border-radius:3px;min-width:2px;width:${Math.round((row.n / histPeak) * 100)}%;`
-    + `background:${row.warn ? "#b5473a" : "#e9d9b4"}"></span>`
+    + `background:${row.warn ? "#b5473a" : "linear-gradient(90deg,#3a7bd5,#7b5cd6)"}"></span>`
     + `<span style="color:#857a66;font-size:12px">${row.n}</span></div>`
   )).join("");
 
@@ -515,10 +515,11 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(displayLabelZh)} 逐帧审片手记</title></head><body style="margin:0;background:#f4e3cb"><div style="font-family:'Songti SC','Kaiti SC','STKaiti',serif;background:linear-gradient(180deg,#f8f0e1 0%,#f4e3cb 55%,#eecaa4 100%);background-attachment:fixed;color:#3d3428;padding:28px;max-width:1200px;margin:auto">
 <p style="color:#8a5a12;letter-spacing:.3em;font-size:.8em">${esc(displayLabelZh)} · 逐镜逐秒审读整理 · 字幕只记重点时刻前后两秒</p>
 <h1 style="font-size:2.1em;margin:.2em 0;color:#472a56;letter-spacing:.1em">逐帧审片手记</h1>
+<div style="height:4px;max-width:420px;background:linear-gradient(90deg,#7b5cd6,#e0559d,#e8823a,#2f9e8f,#3a7bd5);border-radius:3px;margin:6px 0 2px"></div>
 <p style="color:#7a6f5d;margin:.3em 0 0">${shots.length} 镜（已剔除 ${adShotCount} 广告镜）· ${keyMomentSubtitleCount} 重点字幕 · ${keyMoments.length} 重点时刻 · 精选画面 ${tiles.length} 张 · 覆盖 ${(coveredSec / 60).toFixed(1)} 分钟</p>
 
 <div style="display:flex;gap:12px;flex-wrap:wrap;margin:18px 0">${kpi}</div>
-<p style="color:${grainColor};font-weight:600">${grainText}</p>
+<p style="margin:6px 0 0"><span style="display:inline-block;background:#fffdf6;border:1px solid ${grainColor}55;border-radius:999px;padding:4px 14px;color:${grainColor};font-weight:600;font-size:.9em">${grainText}</span></p>
 
 ${section("📏 镜长分布", histBars)}
 ${section("💡 可复用手法总结", panel(summaryTextOf("reusableZh")))}
@@ -531,7 +532,7 @@ ${section(`⭐ 重点时刻表 · ${keyMoments.length} 条`, keyMoments.length
     : `<p style="color:#857a66">本集手记未单列重点时刻</p>`, true)}
 ${section("🎞️ 画面时间轴", `<div style="display:flex;flex-wrap:wrap;gap:8px">${tiles.join("")}</div>`)}
 ${section("🎧 音轨解析", audioSections)}
-<details style="margin-top:30px" open><summary style="color:#8a6a1f;font-size:1.2em;cursor:pointer">全镜头表 · ${shots.length} 镜 × ${FIELDS.length} 字段</summary><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#efe5cc">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#7a6f5d">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
+<details style="margin-top:22px;background:#fffdf6;border:1px solid #b8452f33;border-top:4px solid #b8452f;border-radius:14px;padding:14px 20px;box-shadow:0 2px 10px rgba(150,110,60,.10)" open><summary style="color:#b8452f;font-weight:600;font-size:1.1em;cursor:pointer">全镜头表 · ${shots.length} 镜 × ${FIELDS.length} 字段</summary><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#efe5cc">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#7a6f5d">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
 <div style="text-align:center;margin-top:36px"><span style="display:inline-block;background:#fdf3dd;border:1.5px solid #e8823a;border-radius:999px;padding:8px 22px;color:#b25a1a;font-size:.85em">⭐ 逐帧逐秒审读整理 · 仅作学习拆解，版权归原作品所有</span></div></div></body></html>`;
 
   await uploadBufferToGcs({
