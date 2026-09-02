@@ -8116,11 +8116,21 @@ export default function OmniCanvas() {
                 <summary
                   className={
                     writerConfirmed
-                      ? "cursor-pointer text-[11px] text-cyan-200/75 hover:text-cyan-100"
+                      ? "cursor-pointer list-none [&::-webkit-details-marker]:hidden"
                       : "list-none text-[0px] leading-none [&::-webkit-details-marker]:hidden"
                   }
                 >
-                  {writerConfirmed ? "展开编剧室（改题材 / 重扩写）" : "\u00a0"}
+                  {/* 0902 用户实测「藏得太深」：收起态从 11px 文字链升级成真按钮 */}
+                  {writerConfirmed ? (
+                    <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-cyan-300/45 bg-cyan-500/12 px-3 py-2 text-xs font-semibold text-cyan-50 hover:bg-cyan-500/20">
+                      ✍️ 改剧情 / 重新扩写
+                      <span className="font-normal text-cyan-100/65">
+                        题材 · 补充条件 · 改写范围（全部 / 第N集第N段起）· 档位
+                      </span>
+                    </span>
+                  ) : (
+                    "\u00a0"
+                  )}
                 </summary>
                 <div className={writerConfirmed ? "mt-3" : "mt-1"}>
               <label className="block text-[11px] text-white/45">题材</label>
