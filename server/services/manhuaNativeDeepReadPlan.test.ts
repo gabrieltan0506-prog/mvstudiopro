@@ -42,6 +42,8 @@ function deps(overrides: Partial<NativeDeepReadPlanDeps> = {}): NativeDeepReadPl
     listClaimStates: vi.fn(async () => new Map()),
     resolveSeriesKey: vi.fn(async () => "series_real"),
     isExecutionEnabled: vi.fn(() => true),
+    // 生产默认 90 秒退避；测试注入 0，避免既有用例被真实等待拖超时
+    detailRetryDelayMs: 0,
     ...overrides,
   };
 }
@@ -632,6 +634,43 @@ describe("原生精读计划", () => {
     expect(plan.alreadyIngestedEpisodeIndexes).toEqual([1]);
     expect(plan.totalModelCalls).toBe(0);
     expect(d.probeDurationSec).not.toHaveBeenCalled();
+  });
+
+  it("详情接口前两次 null、第三次返回正常时退避重试后计划成功", async () => {
+    const modalId = "10001"; // 对应默认桩合集里第 1 集的视频 id
+    let detailCalls = 0;
+    const d = deps({
+      fetchAwemeDetail: vi.fn(async () => {
+        detailCalls += 1;
+        if (detailCalls < 3) return null;
+        return { mixId: "123456", mixNameZh: "测试剧", episodeIndex: 1 };
+      }),
+    });
+
+    const plan = await buildNativeDeepReadPlanPreview(
+      { url: `https://www.douyin.com/video/${modalId}`, limit: 1 },
+      d,
+    );
+
+    expect(d.fetchAwemeDetail).toHaveBeenCalledTimes(3);
+    expect(plan.dramaNameZh).toBe("测试剧");
+    expect(plan.episodes.map((row) => row.episodeIndex)).toEqual([1]);
+  });
+
+  it("详情接口三次全 null 时明确报「已间隔重试 2 次」，不再无限等", async () => {
+    const modalId = "7660141869153651987";
+    const d = deps({
+      fetchAwemeDetail: vi.fn(async () => null),
+      listMixEpisodes: vi.fn(async () => {
+        throw new Error("详情读不到时不应调用合集接口");
+      }),
+    });
+
+    await expect(buildNativeDeepReadPlanPreview(
+      { url: `https://www.douyin.com/video/${modalId}`, limit: 1 },
+      d,
+    )).rejects.toThrow("已间隔重试 2 次");
+    expect(d.fetchAwemeDetail).toHaveBeenCalledTimes(3);
   });
 
   it("同一单源 partial 只有原边界符合本次自定义长度时才续学", async () => {
