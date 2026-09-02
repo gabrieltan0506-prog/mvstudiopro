@@ -253,7 +253,9 @@ describe("fail closed：缺段/段号重复/digest 混杂/集号不符各抛错�
     ];
     raw.raw.excludedAdRanges = [{ startSec: 100, endSec: 139 }];
     const html = (await renderNativeEvidenceReportFromObjectNames(baseInput()), state.uploads[0]!.html);
-    expect(html).toContain("眉头锁紧_KM_END");
+    // 0902 表瘦身：说明列删除（与截图标注同源），noteZh 不再渲染进页面
+    expect(html).not.toContain("眉头锁紧_KM_END");
+    expect(html).toContain("关键字幕（前后 2 秒）");
     expect(html).toContain("中景转特写_KM_END");
     // 同秒同类去重：只留一条
     expect(html).not.toContain("同秒同类应被去重");
@@ -296,7 +298,7 @@ describe("fail closed：缺段/段号重复/digest 混杂/集号不符各抛错�
     await renderNativeEvidenceReportFromObjectNames(baseInput());
     const html = state.uploads[0]!.html;
     expect(html).toContain("3 重点字幕");
-    expect(html).toContain("相关字幕（前后 2 秒）");
+    expect(html).toContain("关键字幕（前后 2 秒）");
     for (const i of [1, 2, 3]) expect(html).toContain(`密集台词${i}_UNTRUNCATED_SUB_END`);
     for (const i of [0, 4]) expect(html).not.toContain(`密集台词${i}_UNTRUNCATED_SUB_END`);
     expect(html).not.toContain("字幕原始证据");

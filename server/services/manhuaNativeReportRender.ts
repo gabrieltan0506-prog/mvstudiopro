@@ -498,30 +498,25 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   }
   const keyMomentSubtitleCount = Array.from(subtitlesByKeyMoment.values())
     .reduce((sum, rows) => sum + rows.length, 0);
-  const kmRows = keyMoments.map((row, index) => (
-    `<tr><td style="color:#8a6a1f;white-space:nowrap">${mmss(Number(row.atSec))}</td>`
-    + `<td style="white-space:nowrap">${KIND_ICON[String(row.kindZh)] ?? ""} ${esc(row.kindZh)}</td>`
-    + `<td style="font-weight:700;color:#8a2a1a">${(() => {
-      const note = String(row.noteZh ?? "").trim();
-      if (note.length >= 6) return esc(note);
-      const at = Number(row.atSec);
-      const hostShot = shots.find((sh) => at >= Number(sh.startSec) && at < Number(sh.endSec)) || {};
-      return esc(richCaption(note, hostShot as Record<string, unknown>) || note);
-    })()}${(() => {
-      const at = Number(row.atSec);
-      let best: { no: number; d: number } | null = null;
-      for (const anchor of frameAnchors) {
-        const d = Math.abs(anchor.atSec - at);
-        if (d <= 2.5 && (!best || d < best.d)) best = { no: anchor.no, d };
-      }
-      return best
-        ? ` <a href="#frame-${best.no}" style="color:#3a7bd5;font-weight:600;text-decoration:none">（图${best.no}）</a>`
-        : "";
-    })()}</td>`
-    + `<td>${(subtitlesByKeyMoment.get(index) ?? []).map((subtitle) => (
-      `<div><span style="color:#8a6a1f;white-space:nowrap">${mmss(subtitle.atSec)}</span> ${esc(subtitle.textZh)}</div>`
-    )).join("") || '<span style="color:#9a8d75">—</span>'}</td></tr>`
-  )).join("");
+  // 0902 用户拍板：说明列与截图标注同源重复——瘦身为 秒位/类型/关键字幕/对照截图 四栏
+  const kmRows = keyMoments.map((row, index) => {
+    const at = Number(row.atSec);
+    let best: { no: number; d: number } | null = null;
+    for (const anchor of frameAnchors) {
+      const d = Math.abs(anchor.atSec - at);
+      if (d <= 2.5 && (!best || d < best.d)) best = { no: anchor.no, d };
+    }
+    const frameRef = best
+      ? `<a href="#frame-${best.no}" style="color:#3a7bd5;font-weight:700;text-decoration:none">图${best.no}</a>`
+      : '<span style="color:#9a8d75">—</span>';
+    const subtitleCell = (subtitlesByKeyMoment.get(index) ?? []).map((subtitle) => (
+      `<div><span style="color:#8a6a1f;white-space:nowrap">${mmss(subtitle.atSec)}</span> <b style="color:#8a2a1a">${esc(subtitle.textZh)}</b></div>`
+    )).join("") || '<span style="color:#9a8d75">—</span>';
+    return `<tr><td style="color:#8a6a1f;white-space:nowrap">${mmss(at)}</td>`
+      + `<td style="white-space:nowrap">${KIND_ICON[String(row.kindZh)] ?? ""} ${esc(row.kindZh)}</td>`
+      + `<td>${subtitleCell}</td>`
+      + `<td style="white-space:nowrap;text-align:center">${frameRef}</td></tr>`;
+  }).join("");
 
   /** 镜长分布：一眼看粒度，长镜区间标红。 */
   const buckets: Array<[string, number, number]> = [
@@ -632,7 +627,7 @@ ${section("🥁 节奏结构", panel(summaryTextOf("beatStructureZh")))}
 ${section("🌊 情绪推进", panel(summaryTextOf("moodArcZh")))}
 ${section("🏷️ 五维标签墙", tags)}
 ${section(`⭐ 重点时刻表 · ${keyMoments.length} 条`, keyMoments.length
-    ? tableOf(["秒位", "类型", "说明", "相关字幕（前后 2 秒）"], kmRows)
+    ? tableOf(["秒位", "类型", "关键字幕（前后 2 秒）", "对照截图"], kmRows)
     : `<p style="color:#857a66">本集手记未单列重点时刻</p>`, true)}
 ${section("🎞️ 视频节点区域", `<div style="display:flex;flex-wrap:wrap;gap:8px">${tiles.join("")}</div>`)}
 ${section("🎧 声音节点区域", audioSections)}
