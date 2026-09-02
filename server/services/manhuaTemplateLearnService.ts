@@ -3249,15 +3249,38 @@ export async function checkManhuaLearnSourceLearned(
         const card =
           (await store.getGcsManhuaViralProposal(cardKey))
           ?? (await store.getGcsManhuaViralApproved(cardKey));
-        const native = (card as {
-          provenance?: { nativeVideoDeepRead?: { segmentEvidenceObjectNames?: unknown } };
-        } | null)?.provenance?.nativeVideoDeepRead;
+        const typed = card as {
+          approvedAt?: string;
+          updatedAt?: string;
+          provenance?: {
+            nativeVideoDeepRead?: {
+              segmentEvidenceObjectNames?: unknown;
+              model?: string;
+              successSegments?: number;
+              attemptedSegments?: number;
+            };
+          };
+        } | null;
+        const native = typed?.provenance?.nativeVideoDeepRead;
         if (native) {
           const evidence = native.segmentEvidenceObjectNames;
-          generationZh =
-            Array.isArray(evidence) && evidence.length
-              ? "三代精读（当前代）"
-              : "二代精读（旧链路）";
+          const evidenceCount = Array.isArray(evidence) ? evidence.length : 0;
+          // 0902 用户拍板：二代三代光贴标签不好说，要带回执让人自己断代——
+          // 模型名 + 学习日期 + 段证据条数（三代=冻结链路，段证据必然落盘）。
+          const learnedDay = String(typed?.approvedAt || typed?.updatedAt || "").slice(0, 10);
+          const receipt = [
+            String(native.model || "").trim(),
+            learnedDay,
+            evidenceCount
+              ? `段证据 ${evidenceCount} 条`
+              : "无段证据",
+            Number.isFinite(Number(native.successSegments))
+              ? `${native.successSegments}/${native.attemptedSegments ?? "?"}段`
+              : "",
+          ].filter(Boolean).join(" · ");
+          generationZh = evidenceCount
+            ? `三代精读（当前代｜${receipt}）`
+            : `二代精读（旧链路｜${receipt}）`;
         }
       } catch {
         /* 判代失败不挡查重提示 */
