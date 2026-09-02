@@ -175,7 +175,7 @@ describe("精确证据名路径：三段卡渲染成功且无删节", () => {
     expect(state.uploads).toHaveLength(1);
     const html = state.uploads[0]!.html;
     // 镜头表全字段名（含中文标签）
-    for (const label of ["单元类型", "景别", "机位角度", "构图", "运镜", "调度", "身体动作", "肢体道具", "微表情", "视线呼吸", "关系反应", "灯光", "动作叙述", "入镜转场"]) {
+    for (const label of ["镜头变化", "景别", "机位角度", "构图", "运镜", "调度", "身体动作", "肢体道具", "微表情", "视线呼吸", "关系反应", "灯光", "动作叙述", "入镜转场"]) {
       expect(html).toContain(label);
     }
     // 音轨表全字段 + chunk 级模型原文区
