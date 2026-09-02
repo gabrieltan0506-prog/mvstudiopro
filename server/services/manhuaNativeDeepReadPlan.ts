@@ -71,6 +71,20 @@ type NativeDeepReadProbeExecutor = (
 /** CDN 要求带 Referer，素材接入层一路带着它；漏掉会被拒。 */
 const DOUYIN_REFERER = "https://www.douyin.com/";
 
+/** 详情重试的可中止等待：任务被取消时立即放弃，不空占 90 秒。 */
+function sleepForDetailRetry(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new Error("任务已取消")); return; }
+    const timer = setTimeout(() => { cleanup(); resolve(); }, ms);
+    const onAbort = () => { cleanup(); reject(new Error("任务已取消")); };
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export type NativeDeepReadPlanSegment = { startSec: number; endSec: number };
 
 export type NativeDeepReadPlanEpisode = {
@@ -538,6 +552,8 @@ async function probeEpisodeDurationWithCandidateFailover(
 export type NativeDeepReadPlanDeps = {
   /** 0902：v./vm.douyin.com 短链服务端自动展开；解不开返回 null 走既有报错 */
   resolveShortLink?: (url: string) => Promise<string | null>;
+  /** 详情接口退避重试间隔（生产默认 90 秒；测试注入 0 免等待） */
+  detailRetryDelayMs?: number;
   fetchAwemeDetail: (awemeId: string) => Promise<DouyinAwemeDetailParse | null>;
   listMixEpisodes: (mixId: string) => Promise<{
     episodes: DouyinListedEpisode[];
@@ -652,8 +668,17 @@ export async function buildNativeDeepReadPlanPreview(
     : null;
   if (!external && !mixId) {
     if (!sourceAwemeId) throw new Error("这个链接里没有 modal_id / 视频 id / 合集 id，认不出是哪一部");
-    const detail = await deps.fetchAwemeDetail(sourceAwemeId);
-    if (!detail) throw new Error("这条视频的详情暂时无法读取，请稍后重试");
+    /**
+     * 0902 用户拍板：抖音详情接口的风控是间歇窗（实测同一 id 两分钟内一拒一通，
+     * 一天连吃两次一发判死）。null 时退避重试两次再放弃——播放层的多 CDN 容错
+     * 管不到这道更靠前的门，这里必须自己扛。
+     */
+    let detail = await deps.fetchAwemeDetail(sourceAwemeId);
+    for (let retry = 0; !detail && retry < 2; retry += 1) {
+      await sleepForDetailRetry(deps.detailRetryDelayMs ?? 90_000, input.abortSignal);
+      detail = await deps.fetchAwemeDetail(sourceAwemeId);
+    }
+    if (!detail) throw new Error("这条视频的详情暂时无法读取（已间隔重试 2 次），请稍后重试");
     if (detail.mixId && !treatAsStandalone) {
       mixId = detail.mixId;
       dramaNameZh = detail.mixNameZh || "";
