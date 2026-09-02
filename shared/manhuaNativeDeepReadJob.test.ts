@@ -47,7 +47,7 @@ describe("原生精读任务墙钟", () => {
     expect(confirmation.segmentSeconds).toBe(319);
   });
 
-  it.each(["", " ", true, false, [], {}, 0, -1, 1.5, "317.2", NaN, Infinity, 7201])(
+  it.each(["", " ", true, false, [], {}, 0, -1, 1.5, "317.2", NaN, Infinity, 14401])(
     "非法分片输入 %j 在入队和 worker 共用的解析器中拒绝",
     (value) => {
       expect(() => parseNativeDeepReadSegmentSeconds(value)).toThrow("整数秒");

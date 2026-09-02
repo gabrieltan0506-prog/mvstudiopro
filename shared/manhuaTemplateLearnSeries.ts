@@ -31,7 +31,9 @@ export const MANHUA_LEARN_ANALYSIS_MIN = 16;
 /** 出分析目标累计集数（有则尽量采到） */
 export const MANHUA_LEARN_ANALYSIS_TARGET = 20;
 /** 单集允许的最长成片（合集单集可能很长） */
-export const MANHUA_LEARN_MAX_DURATION_SEC = 120 * 60;
+// 0902 用户令：上限 2h→4h（首个用例：148 分钟电影整片精读）。
+// ⚠️ 自动配平 300s/片时 >160 分钟会撞 32 片上限——超长片需手填更大的分片秒数。
+export const MANHUA_LEARN_MAX_DURATION_SEC = 240 * 60;
 /**
  * 分片学习检查点：每学满 N 秒就合并写入分集 JSON 一次。
  * 中断后可从 learnedThroughSec 续学，不是「只学前 N 秒」。
