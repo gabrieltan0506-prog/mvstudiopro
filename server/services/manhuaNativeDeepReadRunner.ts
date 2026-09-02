@@ -3595,13 +3595,13 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG = deepFreezeNativeContract(
   requireFinishReasonStop: true,
 } as const);
 
-let nativeDeepReadGlmDispatchCursor = 0;
-
-/** 两份连续正式整形任务分别首发到两条GLM通道；单档失败由网关层跨通道兜底。 */
+/**
+ * 0902 用户点名纠偏：旧的「两通道轮流首发」违背 0829 拍板的
+ * 「主档 EvoLink glm-5.3，兜底才是 OpenRouter」。恒定 EvoLink 首发；
+ * 单档失败仍由网关层跨通道兜底，OpenRouter 只在兜底时出场。
+ */
 export function nextNativeDeepReadGlmPreferredGateway(): "evolink_glm" | "openrouter" {
-  const gateway = nativeDeepReadGlmDispatchCursor % 2 === 0 ? "evolink_glm" : "openrouter";
-  nativeDeepReadGlmDispatchCursor += 1;
-  return gateway;
+  return "evolink_glm";
 }
 
 /**
