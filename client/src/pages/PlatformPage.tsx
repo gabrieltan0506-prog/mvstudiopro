@@ -12912,11 +12912,13 @@ export default function PlatformPage() {
                       {/* 0903 用户令「刷新也要看到任务在跑」：实况卡不依赖聚焦剧，
                           直接读服务端任务快照（进度时间线+分片断点），刷新即回灌；
                           最新进度行自带「分片上限X秒·N片·fps」＝配平值回显。 */}
-                      {manhuaLearnServerJobs.some((job) => job.status === "queued" || job.status === "running") ? (
+                      {manhuaLearnServerJobs.some((job) => job.status === "queued" || job.status === "running"
+                        || (job.status === "failed" && Date.now() - new Date(job.updatedAt || 0).getTime() < 30 * 60_000)) ? (
                         <div className="mt-3 rounded-xl border border-emerald-300/25 bg-emerald-500/10 px-3 py-2.5">
                           <div className="text-[11px] font-semibold text-emerald-100/90">⏱ 正在学习（刷新可见 · 排队≠卡死）</div>
                           {manhuaLearnServerJobs
-                            .filter((job) => job.status === "queued" || job.status === "running")
+                            .filter((job) => job.status === "queued" || job.status === "running"
+                              || (job.status === "failed" && Date.now() - new Date(job.updatedAt || 0).getTime() < 30 * 60_000))
                             .map((job) => {
                               const output = (job.output ?? {}) as Record<string, unknown>;
                               const params = ((job.input as Record<string, unknown> | undefined)?.params ?? {}) as Record<string, unknown>;
@@ -12934,8 +12936,8 @@ export default function PlatformPage() {
                               return (
                                 <div key={job.jobId} className="mt-1.5 rounded-lg border border-white/10 bg-black/30 px-2.5 py-1.5 text-[10px] text-[#d7f0e2]">
                                   <div className="flex flex-wrap items-center gap-2">
-                                    <span className={job.status === "running" ? "font-bold text-emerald-200" : "font-bold text-amber-200"}>
-                                      {job.status === "running" ? "运行中" : "排队中"}
+                                    <span className={job.status === "running" ? "font-bold text-emerald-200" : job.status === "failed" ? "font-bold text-rose-300" : "font-bold text-amber-200"}>
+                                      {job.status === "running" ? "运行中" : job.status === "failed" ? "刚失败" : "排队中"}
                                     </span>
                                     <span className="min-w-0 flex-1 truncate" title={url}>{title}</span>
                                     {partial ? (
@@ -12945,6 +12947,9 @@ export default function PlatformPage() {
                                     ) : null}
                                   </div>
                                   <div className="mt-0.5 truncate text-[#c9c0e6]/70" title={lastZh}>{lastZh}</div>
+                                  {job.status === "failed" && job.error ? (
+                                    <div className="mt-0.5 text-rose-200/90" title={job.error}>死因：{String(job.error).slice(0, 90)}</div>
+                                  ) : null}
                                 </div>
                               );
                             })}
