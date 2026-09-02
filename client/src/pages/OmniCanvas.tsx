@@ -246,6 +246,7 @@ import ManhuaCastStrip from "@/components/ManhuaCastStrip";
 import ManhuaLiveProgressBoard from "@/components/ManhuaLiveProgressBoard";
 import ManhuaScriptWorkbench from "@/components/ManhuaScriptWorkbench";
 import ManhuaAssetWall from "@/components/ManhuaAssetWall";
+import { anchoredPanelStyle, getLastPointerAnchor } from "@/lib/anchoredPanel";
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 import { createJobSameOrigin, pollJobUntilTerminal } from "@/lib/jobs";
 import { buildCanvasGptImage2JobInput } from "@shared/canvasGptImage2JobInput";
@@ -581,6 +582,13 @@ export default function OmniCanvas() {
   const immersiveExtrasOpen = immersiveWorkspaceView !== "workbench";
   /** 角色库 / 资产墙改抽屉，避免长期占主流程 */
   const [manhuaAssetDrawer, setManhuaAssetDrawer] = useState<null | "characters" | "assets">(null);
+  /** 抽屉打开瞬间记录点击位置，面板锚到点击处旁（零位移铁律） */
+  const [manhuaAssetDrawerAnchor, setManhuaAssetDrawerAnchor] = useState<
+    { x: number; y: number } | null
+  >(null);
+  useEffect(() => {
+    if (manhuaAssetDrawer) setManhuaAssetDrawerAnchor(getLastPointerAnchor());
+  }, [manhuaAssetDrawer]);
   /** 资产暂存区条数（清图/重出前存的，可救回）；boot 时从本地读 */
   const [assetStashCount, setAssetStashCount] = useState<number>(() => {
     if (typeof window === "undefined") return 0;
@@ -8108,11 +8116,21 @@ export default function OmniCanvas() {
                 <summary
                   className={
                     writerConfirmed
-                      ? "cursor-pointer text-[11px] text-cyan-200/75 hover:text-cyan-100"
+                      ? "cursor-pointer list-none [&::-webkit-details-marker]:hidden"
                       : "list-none text-[0px] leading-none [&::-webkit-details-marker]:hidden"
                   }
                 >
-                  {writerConfirmed ? "展开编剧室（改题材 / 重扩写）" : "\u00a0"}
+                  {/* 0902 用户实测「藏得太深」：收起态从 11px 文字链升级成真按钮 */}
+                  {writerConfirmed ? (
+                    <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-cyan-300/45 bg-cyan-500/12 px-3 py-2 text-xs font-semibold text-cyan-50 hover:bg-cyan-500/20">
+                      ✍️ 改剧情 / 重新扩写
+                      <span className="font-normal text-cyan-100/65">
+                        题材 · 补充条件 · 改写范围（全部 / 第N集第N段起）· 档位
+                      </span>
+                    </span>
+                  ) : (
+                    "\u00a0"
+                  )}
                 </summary>
                 <div className={writerConfirmed ? "mt-3" : "mt-1"}>
               <label className="block text-[11px] text-white/45">题材</label>
@@ -9537,16 +9555,19 @@ export default function OmniCanvas() {
           </div>
           ) : null}
 
-          {/* 角色库 / 资产墙：抽屉，不长期占主流程 */}
+          {/* 角色库 / 资产墙：锚定弹层——宽屏贴右缘抽屉离触发点太远，用户以为没反应（0902 拍板） */}
           {manhuaAssetDrawer ? (
-            <div className="fixed inset-0 z-[80] flex justify-end bg-black/55 backdrop-blur-[2px]">
+            <div className="fixed inset-0 z-[80] bg-black/55 backdrop-blur-[2px]">
               <button
                 type="button"
                 className="absolute inset-0 cursor-default"
                 aria-label="关闭资产抽屉"
                 onClick={() => setManhuaAssetDrawer(null)}
               />
-              <aside className="relative z-[81] flex h-full w-full max-w-3xl flex-col border-l border-cyan-400/20 bg-gradient-to-b from-[#0c1520] to-[#0a0e18] shadow-2xl">
+              <aside
+                className="z-[81] flex flex-col overflow-hidden rounded-xl border border-cyan-400/20 bg-gradient-to-b from-[#0c1520] to-[#0a0e18] shadow-2xl"
+                style={anchoredPanelStyle(manhuaAssetDrawerAnchor, 768, 760)}
+              >
                 <div className="flex items-center justify-between border-b border-cyan-400/15 px-4 py-3">
                   <div>
                     <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-white/90">

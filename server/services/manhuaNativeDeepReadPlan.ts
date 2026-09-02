@@ -162,6 +162,14 @@ export function assertNativeDeepReadPlanConfirmation(
     );
   }
   if (!current.episodes.length || current.totalModelCalls < 1) {
+    // 0902 用户实测：重复学已入库视频时报「没有可执行的新集」是废话——
+    // 用户干等以为链路卡死。已入库导致的空计划必须直说原因和下一步。
+    if (!current.episodes.length && current.alreadyIngestedEpisodeIndexes.length) {
+      throw new Error(
+        `第${current.alreadyIngestedEpisodeIndexes.join("、")}集已学完入库（同一视频不重复学习、不重复付费）；` +
+          "学习卡可在模板库查看，想学新内容请换未学过的视频链接",
+      );
+    }
     throw new Error("当前没有可执行的新集，未发出模型请求");
   }
   if (current.totalModelCalls > NATIVE_DEEP_READ_JOB_MAX_CALLS) {

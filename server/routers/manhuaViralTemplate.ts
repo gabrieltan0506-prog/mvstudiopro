@@ -566,6 +566,39 @@ export const manhuaViralTemplateRouter = router({
    * owner：列出一部剧仍存在的精读占位（native-claims），供面板人工裁决。
    * 金额与卡点从本人学习任务的模型回执聚合；对不上号时如实返回「未知」，不编数。
    */
+  /** 0902：贴链接即时查重——已学过在提交前亮牌（带剧名），不让用户点了学习才撞墙 */
+  checkLearnSourceLearned: protectedProcedure
+    .input(
+      z.object({
+        url: z.string().trim().url().max(600),
+        /** 选填剧名：野生重剪合集与官方分集同剧不同源，靠剧名把旧账也亮出来 */
+        titleZh: z.string().trim().max(120).optional(),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      assertSiteOwner(ctx.user);
+      const { checkManhuaLearnSourceLearned } = await import(
+        "../services/manhuaTemplateLearnService"
+      );
+      return await checkManhuaLearnSourceLearned(input.url, input.titleZh);
+    }),
+
+  /** 0902 放行重学：旧代学习卡退位存档、集位让出；重学照常计费（owner 限定） */
+  retireLearnSourceEpisode: protectedProcedure
+    .input(
+      z.object({
+        url: z.string().trim().url().max(600),
+        episodeIndex: z.number().int().min(1).max(999),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      assertSiteOwner(ctx.user);
+      const { retireNativeLearnEpisodeForRelearn } = await import(
+        "../services/manhuaTemplateLearnService"
+      );
+      return await retireNativeLearnEpisodeForRelearn(input);
+    }),
+
   listNativeDeepReadClaims: protectedProcedure
     .input(z.object({ seriesKey: z.string().regex(/^[0-9A-Za-z_-]{4,64}$/) }))
     .query(async ({ ctx, input }) => {

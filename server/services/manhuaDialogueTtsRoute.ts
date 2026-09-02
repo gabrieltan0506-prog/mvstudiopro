@@ -45,6 +45,36 @@ function isTokenPlanFallbackAllowed(error: unknown): boolean {
   );
 }
 
+/**
+ * 音色拒绝记忆（0902 实弹：longcanzhuyue 两区套餐引擎都报 cosyvoice 411，
+ * 系统音色 longanlingxin 秒过）。同一音色被套餐明确拒过就直接走 OpenRouter，
+ * 免得每句都白握手两区各一次。只记引擎级拒绝（http>=400），连接失败不记。
+ */
+const PLAN_VOICE_REJECT_TTL_MS = 6 * 3600_000;
+const planVoiceRejectedAt = new Map<string, number>();
+
+export function notePlanVoiceRejected(voice: string, nowMs = Date.now()): void {
+  planVoiceRejectedAt.set(voice, nowMs);
+}
+
+export function isPlanVoiceRecentlyRejected(
+  voice: string,
+  nowMs = Date.now()
+): boolean {
+  const at = planVoiceRejectedAt.get(voice);
+  if (at == null) return false;
+  if (nowMs - at > PLAN_VOICE_REJECT_TTL_MS) {
+    planVoiceRejectedAt.delete(voice);
+    return false;
+  }
+  return true;
+}
+
+/** 测试用：清空音色拒绝记忆 */
+export function resetPlanVoiceRejectMemo(): void {
+  planVoiceRejectedAt.clear();
+}
+
 export async function synthesizeManhuaDialoguePreferred(
   input: ManhuaDialogueTtsRouteInput,
   dependencies: ManhuaDialogueTtsRouteDependencies = {}
@@ -54,7 +84,11 @@ export async function synthesizeManhuaDialoguePreferred(
   const synthesizeOpenRouter =
     dependencies.synthesizeOpenRouter || synthesizeQwenDialogue;
 
+  const skipPlan = isPlanVoiceRecentlyRejected(input.voice);
   try {
+    if (skipPlan) throw new TokenPlanDialogueTtsConfigurationError(
+      "token_plan_voice_recently_rejected"
+    );
     const planResult = await synthesizeTokenPlan({
       input: input.input,
       voice: input.voice,
@@ -75,10 +109,18 @@ export async function synthesizeManhuaDialoguePreferred(
     };
   } catch (error) {
     if (!isTokenPlanFallbackAllowed(error)) throw error;
-    console.error(
-      "[manhua-tts-route] token plan unavailable, falling back to openrouter:",
-      error instanceof Error ? error.message : String(error)
-    );
+    if (
+      error instanceof TokenPlanDialogueTtsExplicitRejectionError &&
+      error.status >= 400
+    ) {
+      notePlanVoiceRejected(input.voice);
+    }
+    if (!skipPlan) {
+      console.error(
+        "[manhua-tts-route] token plan unavailable, falling back to openrouter:",
+        error instanceof Error ? error.message : String(error)
+      );
+    }
   }
 
   const orResult = await synthesizeOpenRouter({

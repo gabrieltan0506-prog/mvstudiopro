@@ -7,6 +7,8 @@
  * 不 import 任何服务端模块，也不出现模型名/供应商名。
  */
 
+import { anchoredPanelStyle, getLastPointerAnchor } from "@/lib/anchoredPanel";
+
 export type ManhuaWriterTrialDraft = {
   logline: string;
   beats: string[];
@@ -69,12 +71,16 @@ export default function ManhuaTemplateTrialCompare(props: {
   const { result } = props;
   return (
     <div
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 p-4"
+      className="fixed inset-0 z-[90] bg-black/70 p-4"
       role="dialog"
       aria-modal="true"
       aria-label="模板试写对比"
     >
-      <div className="max-h-[85vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-white/15 bg-[#101418] p-4 shadow-2xl">
+      {/* 0902 拍板：宽屏居中弹窗离「套用模板试写」按钮太远，改锚到点击处旁 */}
+      <div
+        className="overflow-y-auto rounded-2xl border border-white/15 bg-[#101418] p-4 shadow-2xl"
+        style={anchoredPanelStyle(getLastPointerAnchor(), 768, 720)}
+      >
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-sm font-semibold text-white">

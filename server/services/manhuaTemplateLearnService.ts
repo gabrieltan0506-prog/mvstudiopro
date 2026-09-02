@@ -3182,3 +3182,219 @@ export async function runManhuaTemplateLearn(
     await rmrf(rootTmp);
   }
 }
+
+/**
+ * 贴链接即时查重（0902 用户拍板：学过要前置提示）。
+ * 同一视频（awemeId 定 key）已入库时，面板在提交前就亮牌，并带回剧名——
+ * 入库产物在公开面匿名，连老板都认不出学过什么，这里是唯一的具名出口。
+ * 注意：只覆盖按来源 URL 定 key 的系列（整支即全集/单集直链）；
+ * 按剧名归并的合集学习不在此查（提交链路自身仍会防重复付费）。
+ */
+export type ManhuaLearnSourceLearnedEpisode = {
+  episodeIndex: number;
+  complete: boolean;
+  /**
+   * 学它的链路代际（0902 用户拍板：光说「学过」没法决定要不要重学）——
+   * 三代精读=当前冻结链路（provenance 带段证据对象名，报告门禁同款判据）；
+   * 二代精读=旧原生直读（无段证据，旧产物基本已弃用）；抽帧一代走 digest，另行计数。
+   */
+  generationZh: string;
+};
+
+export type ManhuaLearnSameTitleSeries = {
+  seriesKey: string;
+  titleHint: string;
+  /** 抽帧一代 digest 条数（用户抽帧时代最高一次连学 20 集，全在这类记录里） */
+  framesDigestCount: number;
+  learnedEpisodeIndexes: number[];
+};
+
+export async function checkManhuaLearnSourceLearned(
+  url: string,
+  titleZh?: string,
+): Promise<{
+  seriesKey: string;
+  titleHint: string;
+  episodes: ManhuaLearnSourceLearnedEpisode[];
+  learnedEpisodeIndexes: number[];
+  partialEpisodeIndexes: number[];
+  /** 抽帧（一代）digest 产物条数；>0 说明这系列在抽帧时代也学过 */
+  framesDigestCount: number;
+  /**
+   * 0902 补：野生重剪合集和官方分集是同一部剧的两种载体，按视频 ID 认不出旧账。
+   * 用户填了剧名时，同名剧系列（抽帧时代按剧名归并）的旧记录也亮出来供判断。
+   */
+  sameTitleSeries: ManhuaLearnSameTitleSeries | null;
+}> {
+  const rawUrl = String(url || "").trim();
+  // 搜索页 modal_id 链接与干净 /video/ 链接必须算同一系列（seriesKeyFrom 按
+  // 原始 URL 哈希，不归一化会漏查）。提交链路同样以干净链接落库。
+  const awemeId = extractDouyinVideoIdFromUrl(rawUrl);
+  const cleanUrl = awemeId ? `https://www.douyin.com/video/${awemeId}` : rawUrl;
+  const seriesKey = await resolveManhuaSeriesKey({
+    sourceIdentity: cleanUrl,
+    learnLlm: "gpt",
+  });
+  const [{ listIngestedNativeDeepReadEpisodeRecords, nativeDeepReadProposalId }, store] =
+    await Promise.all([
+      import("./manhuaNativeDeepReadIngest.js"),
+      import("./manhuaViralTemplateStore.js"),
+    ]);
+  const records = await listIngestedNativeDeepReadEpisodeRecords(seriesKey);
+  const episodes = await Promise.all(
+    records.map(async (record): Promise<ManhuaLearnSourceLearnedEpisode> => {
+      let generationZh = "代际未知";
+      try {
+        const cardKey = nativeDeepReadProposalId(seriesKey, record.episodeIndex);
+        const card =
+          (await store.getGcsManhuaViralProposal(cardKey))
+          ?? (await store.getGcsManhuaViralApproved(cardKey));
+        const typed = card as {
+          approvedAt?: string;
+          updatedAt?: string;
+          provenance?: {
+            nativeVideoDeepRead?: {
+              segmentEvidenceObjectNames?: unknown;
+              model?: string;
+              successSegments?: number;
+              attemptedSegments?: number;
+            };
+          };
+        } | null;
+        const native = typed?.provenance?.nativeVideoDeepRead;
+        if (native) {
+          const evidence = native.segmentEvidenceObjectNames;
+          const evidenceCount = Array.isArray(evidence) ? evidence.length : 0;
+          // 0902 用户拍板：二代三代光贴标签不好说，要带回执让人自己断代——
+          // 模型名 + 学习日期 + 段证据条数（三代=冻结链路，段证据必然落盘）。
+          const learnedDay = String(typed?.approvedAt || typed?.updatedAt || "").slice(0, 10);
+          const receipt = [
+            String(native.model || "").trim(),
+            learnedDay,
+            evidenceCount
+              ? `段证据 ${evidenceCount} 条`
+              : "无段证据",
+            Number.isFinite(Number(native.successSegments))
+              ? `${native.successSegments}/${native.attemptedSegments ?? "?"}段`
+              : "",
+          ].filter(Boolean).join(" · ");
+          generationZh = evidenceCount
+            ? `三代精读（当前代｜${receipt}）`
+            : `二代精读（旧链路｜${receipt}）`;
+        }
+      } catch {
+        /* 判代失败不挡查重提示 */
+      }
+      return { episodeIndex: record.episodeIndex, complete: record.complete, generationZh };
+    }),
+  );
+  let titleHint = "";
+  let framesDigestCount = 0;
+  if (records.length) {
+    const [progress, digests] = await Promise.all([
+      loadSeriesProgress(seriesKey),
+      loadAllDigests(seriesKey).catch(() => []),
+    ]);
+    titleHint = cleanManhuaLearnTitle(progress?.titleHint) || "";
+    framesDigestCount = digests.length;
+  }
+  let sameTitleSeries: ManhuaLearnSameTitleSeries | null = null;
+  const cleanTitle = String(titleZh || "").trim();
+  if (normalizeManhuaSeriesTitle(cleanTitle)) {
+    try {
+      const titleKey = await resolveManhuaSeriesKey({
+        sourceIdentity: cleanUrl,
+        title: cleanTitle,
+        learnLlm: "gpt",
+      });
+      if (titleKey !== seriesKey) {
+        const [titleRecords, titleProgress, titleDigests] = await Promise.all([
+          listIngestedNativeDeepReadEpisodeRecords(titleKey),
+          loadSeriesProgress(titleKey),
+          loadAllDigests(titleKey).catch(() => []),
+        ]);
+        if (titleRecords.length || titleDigests.length) {
+          sameTitleSeries = {
+            seriesKey: titleKey,
+            titleHint: cleanManhuaLearnTitle(titleProgress?.titleHint) || cleanTitle,
+            framesDigestCount: titleDigests.length,
+            learnedEpisodeIndexes: titleRecords
+              .filter((record) => record.complete)
+              .map((record) => record.episodeIndex)
+              .sort((a, b) => a - b),
+          };
+        }
+      }
+    } catch {
+      /* 同名剧旧账查失败不挡主查重 */
+    }
+  }
+  return {
+    seriesKey,
+    titleHint,
+    episodes,
+    learnedEpisodeIndexes: episodes
+      .filter((row) => row.complete)
+      .map((row) => row.episodeIndex)
+      .sort((a, b) => a - b),
+    partialEpisodeIndexes: episodes
+      .filter((row) => !row.complete)
+      .map((row) => row.episodeIndex)
+      .sort((a, b) => a - b),
+    framesDigestCount,
+    sameTitleSeries,
+  };
+}
+
+/**
+ * 放行重学（0902 用户拍板：「不能只说学过了，然后就锁住不让我重学」）。
+ *
+ * 查重的唯一依据是 proposals/tpl_native_<key>_ep*.json；模板库「下架」只动
+ * approved 正本，proposals 副本还在 → 下架**不能**放行。这里把 proposals 卡
+ * 退位到 proposals-retired/（copy → 条件删除，保留审计），集位即让出，
+ * 下次学习照常排片、照常计费。抽帧一代 digest 本来就不挡原生学习，无需放行。
+ */
+export async function retireNativeLearnEpisodeForRelearn(input: {
+  url: string;
+  episodeIndex: number;
+}): Promise<{ seriesKey: string; retiredObjectName: string }> {
+  const rawUrl = String(input.url || "").trim();
+  const awemeId = extractDouyinVideoIdFromUrl(rawUrl);
+  const cleanUrl = awemeId ? `https://www.douyin.com/video/${awemeId}` : rawUrl;
+  const seriesKey = await resolveManhuaSeriesKey({
+    sourceIdentity: cleanUrl,
+    learnLlm: "gpt",
+  });
+  const [{ nativeDeepReadProposalObjectName, nativeDeepReadProposalId }, gcs] =
+    await Promise.all([
+      import("./manhuaNativeDeepReadIngest.js"),
+      import("./gcs.js"),
+    ]);
+  const objectName = nativeDeepReadProposalObjectName(seriesKey, input.episodeIndex);
+  let versioned: { buffer: Buffer; bucket: string; generation: string };
+  try {
+    versioned = await gcs.downloadGcsObjectVersioned({
+      gcsUri: `gs://${gcs.getGcsBucketName()}/${objectName}`,
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (/404/.test(message)) {
+      throw new Error("该集学习卡不存在或已放行，无需重复操作");
+    }
+    throw e;
+  }
+  const cardId = nativeDeepReadProposalId(seriesKey, input.episodeIndex);
+  const retiredObjectName =
+    `manhua-template-learn/proposals-retired/${cardId}.${versioned.generation}.json`;
+  // 先落存档再删原件；generation 命名幂等，条件删除防覆盖并发新写
+  await gcs.uploadBufferToGcsIfAbsent({
+    objectName: retiredObjectName,
+    buffer: versioned.buffer,
+    contentType: "application/json",
+  });
+  await gcs.deleteGcsObject({
+    objectName,
+    ifGenerationMatch: versioned.generation,
+  });
+  return { seriesKey, retiredObjectName };
+}

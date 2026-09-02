@@ -2542,6 +2542,32 @@ export default function PlatformPage() {
   const [manhuaLearnBusyKey, setManhuaLearnBusyKey] = useState<string | null>(null);
   const [manhuaPasteUrl, setManhuaPasteUrl] = useState("");
   const [manhuaPasteTitle, setManhuaPasteTitle] = useState("");
+  /** 0902 查重前置：贴上链接 600ms 后即时查「这支是否已学过」，学过带剧名亮牌 */
+  const [manhuaPasteUrlDebounced, setManhuaPasteUrlDebounced] = useState("");
+  useEffect(() => {
+    const trimmed = manhuaPasteUrl.trim();
+    const timer = window.setTimeout(() => setManhuaPasteUrlDebounced(trimmed), 600);
+    return () => window.clearTimeout(timer);
+  }, [manhuaPasteUrl]);
+  const [manhuaPasteTitleDebounced, setManhuaPasteTitleDebounced] = useState("");
+  useEffect(() => {
+    const trimmed = manhuaPasteTitle.trim();
+    const timer = window.setTimeout(() => setManhuaPasteTitleDebounced(trimmed), 600);
+    return () => window.clearTimeout(timer);
+  }, [manhuaPasteTitle]);
+  const retireLearnEpisodeMutation =
+    trpc.manhuaViralTemplate.retireLearnSourceEpisode.useMutation();
+  const manhuaLearnDupQuery = trpc.manhuaViralTemplate.checkLearnSourceLearned.useQuery(
+    {
+      url: manhuaPasteUrlDebounced,
+      ...(manhuaPasteTitleDebounced ? { titleZh: manhuaPasteTitleDebounced } : {}),
+    },
+    {
+      enabled: /^https?:\/\/\S+$/i.test(manhuaPasteUrlDebounced),
+      staleTime: 5 * 60_000,
+      retry: false,
+    },
+  );
   const [manhuaLearnBatchSize, setManhuaLearnBatchSize] = useState(readManhuaLearnBatchSize);
   const [manhuaLearnSegmentSecondsInput, setManhuaLearnSegmentSecondsInput] = useState(String(NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS));
   /** 0901「整支即全集」：全集单条长视频跳过合集展开（Argus 风控专拦那个端点） */
@@ -12665,6 +12691,67 @@ export default function PlatformPage() {
                               ? "正在确认可用的学习方式；确认完成前不会建立任务。"
                               : manhuaLearnPipelineMeta.summaryZh}
                           </p>
+                          {manhuaLearnDupQuery.data?.episodes.length ? (
+                            <div className="mt-2 rounded-lg border border-amber-400/35 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-5 text-amber-100">
+                              ⚠️ 这支已学过：
+                              {manhuaLearnDupQuery.data.titleHint
+                                ? `《${manhuaLearnDupQuery.data.titleHint}》`
+                                : "（剧名未记录）"}
+                              {manhuaLearnDupQuery.data.episodes.map((row) => (
+                                <span key={row.episodeIndex} className="inline-flex flex-wrap items-center gap-1">
+                                  {" "}· 第{row.episodeIndex}集 {row.generationZh}
+                                  {row.complete ? "" : "（部分卡）"}
+                                  <button
+                                    type="button"
+                                    disabled={retireLearnEpisodeMutation.isPending}
+                                    onClick={async () => {
+                                      if (
+                                        !window.confirm(
+                                          `放行重学第${row.episodeIndex}集？旧学习卡将退位存档（可审计不丢失），重学会重新计费。`,
+                                        )
+                                      )
+                                        return;
+                                      try {
+                                        await retireLearnEpisodeMutation.mutateAsync({
+                                          url: manhuaPasteUrlDebounced,
+                                          episodeIndex: row.episodeIndex,
+                                        });
+                                        await manhuaLearnDupQuery.refetch();
+                                        toast.success(
+                                          `第${row.episodeIndex}集已放行，现在可以重新学习`,
+                                        );
+                                      } catch (error) {
+                                        toast.error(
+                                          error instanceof Error ? error.message : "放行失败",
+                                        );
+                                      }
+                                    }}
+                                    className="rounded border border-amber-300/45 bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-50 hover:bg-amber-400/25 disabled:opacity-45"
+                                  >
+                                    {retireLearnEpisodeMutation.isPending ? "放行中…" : "放行重学"}
+                                  </button>
+                                </span>
+                              ))}
+                              {manhuaLearnDupQuery.data.framesDigestCount > 0
+                                ? ` · 另有抽帧（一代）产物 ${manhuaLearnDupQuery.data.framesDigestCount} 条`
+                                : ""}
+                              <div className="mt-0.5 text-[10px] text-amber-100/70">
+                                三代=当前链路一般无需重学；旧代想重学点「放行重学」——旧卡退位存档、集位让出、重学重新计费。抽帧（一代）产物不占集位，无需放行。
+                              </div>
+                            </div>
+                          ) : null}
+                          {manhuaLearnDupQuery.data?.sameTitleSeries ? (
+                            <div className="mt-1.5 rounded-lg border border-sky-400/30 bg-sky-500/10 px-2.5 py-1.5 text-[11px] leading-5 text-sky-100">
+                              ℹ️ 同名剧旧账：《{manhuaLearnDupQuery.data.sameTitleSeries.titleHint}》
+                              {manhuaLearnDupQuery.data.sameTitleSeries.framesDigestCount > 0
+                                ? ` 抽帧（一代）学过 ${manhuaLearnDupQuery.data.sameTitleSeries.framesDigestCount} 集`
+                                : ""}
+                              {manhuaLearnDupQuery.data.sameTitleSeries.learnedEpisodeIndexes.length
+                                ? ` · 精读入库第${manhuaLearnDupQuery.data.sameTitleSeries.learnedEpisodeIndexes.join("、")}集`
+                                : ""}
+                              ——重剪合集是另一来源，用三代重学不冲突
+                            </div>
+                          ) : null}
                           <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                             <input
                               type="url"

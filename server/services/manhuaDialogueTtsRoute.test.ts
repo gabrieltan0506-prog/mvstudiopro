@@ -1,5 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
-import { synthesizeManhuaDialoguePreferred } from "./manhuaDialogueTtsRoute.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  resetPlanVoiceRejectMemo,
+  synthesizeManhuaDialoguePreferred,
+} from "./manhuaDialogueTtsRoute.js";
 import {
   TokenPlanDialogueTtsConfigurationError,
   TokenPlanDialogueTtsExplicitRejectionError,
@@ -34,6 +37,8 @@ const input = {
 };
 
 describe("synthesizeManhuaDialoguePreferred", () => {
+  beforeEach(() => resetPlanVoiceRejectMemo());
+
   it("prefers the token plan route when it succeeds", async () => {
     const synthesizeOpenRouter = vi.fn();
     const result = await synthesizeManhuaDialoguePreferred(input, {
@@ -64,6 +69,34 @@ describe("synthesizeManhuaDialoguePreferred", () => {
       synthesizeOpenRouter: vi.fn(async () => orResult) as any,
     });
     expect(result.provider).toBe("openrouter");
+  });
+
+  it("remembers engine-rejected voices and skips the plan handshake next time", async () => {
+    const synthesizeTokenPlan = vi.fn(async () => {
+      throw new TokenPlanDialogueTtsExplicitRejectionError("beijing", 400);
+    });
+    const deps = {
+      synthesizeTokenPlan: synthesizeTokenPlan as any,
+      synthesizeOpenRouter: vi.fn(async () => orResult) as any,
+    };
+    await synthesizeManhuaDialoguePreferred(input, deps);
+    const again = await synthesizeManhuaDialoguePreferred(input, deps);
+    expect(again.provider).toBe("openrouter");
+    // 第二句同音色不再去套餐白握手
+    expect(synthesizeTokenPlan).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not blacklist a voice on connect-level failures (status 0)", async () => {
+    const synthesizeTokenPlan = vi.fn(async () => {
+      throw new TokenPlanDialogueTtsExplicitRejectionError("singapore", 0);
+    });
+    const deps = {
+      synthesizeTokenPlan: synthesizeTokenPlan as any,
+      synthesizeOpenRouter: vi.fn(async () => orResult) as any,
+    };
+    await synthesizeManhuaDialoguePreferred(input, deps);
+    await synthesizeManhuaDialoguePreferred(input, deps);
+    expect(synthesizeTokenPlan).toHaveBeenCalledTimes(2);
   });
 
   it("does NOT fall back on unknown plan result (double-billing guard)", async () => {
