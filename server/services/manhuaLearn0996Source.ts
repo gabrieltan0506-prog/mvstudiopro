@@ -153,6 +153,12 @@ async function fetchWithTimeout(
   }
 }
 
+/**
+ * 0903 用户令「0996 站一律双钥匙」：凭证配置了就每一发都直接带
+ * Authorization + Cookie，不再先匿名试探（匿名首发在站点风控抖动时白吃一跳
+ * 甚至拿 403 假阴性）。凭证只发往白名单可信域——调用方在每一跳前都先过
+ * isTrustedManhua0996SiteUrl + 公网地址校验，此边界不动。
+ */
 async function fetchTrustedSourceWithAuthFallback(
   url: string,
   init: RequestInit,
@@ -160,13 +166,8 @@ async function fetchTrustedSourceWithAuthFallback(
   fetchImpl: FetchLike = defaultSourceFetch,
 ): Promise<Response> {
   const authHeaders = readManhuaMirrorSourceAuthHeaders();
-  const hasFallback = Object.keys(authHeaders).length > 0;
-  try {
-    const anonymous = await fetchWithTimeout(url, init, signal, fetchImpl);
-    // manual redirect 是成功的逐跳结果，不得误触带生产凭证的鉴权兜底。
-    if (anonymous.ok || isRedirectStatus(anonymous.status) || !hasFallback) return anonymous;
-  } catch (error) {
-    if (!hasFallback || signal?.aborted) throw error;
+  if (!Object.keys(authHeaders).length) {
+    return fetchWithTimeout(url, init, signal, fetchImpl);
   }
   return fetchWithTimeout(url, {
     ...init,
@@ -295,8 +296,7 @@ export async function fetchManhua0996EpisodePlayback(
   const request = buildManhua0996EpisodeApiRequest(source, Date.now());
   await assertPublicManhuaSourceHost(source.host);
   /**
-   * 🔒 凭证**不在这里主动发**：fetchTrustedApiResponse 内部是「先匿名、失败才带凭证」，
-   * 那是刻意的安全边界（凭证只在必要时出网），不许为了拿高清就把它拆掉。
+   * 0903 用户令：凭证由 fetchTrustedApiResponse 每一发直接带（双钥匙直发，只发可信域）。
    * 这里只读「有没有配凭证」，用来决定**解析层要不要接受 needLogin:true 的高清档**。
    */
   const hasAuth = Object.keys(readManhuaMirrorSourceAuthHeaders({}) || {}).length > 0;

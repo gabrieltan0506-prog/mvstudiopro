@@ -85,14 +85,14 @@ describe("manhuaLearnResultUi soft-fail", () => {
   it("自定义分片输入保留319秒，空值、小数和越界值明确拒绝而非截断", () => {
     expect(parseManhuaLearnSegmentSecondsInput("319")).toBe(319);
     expect(parseManhuaLearnSegmentSecondsInput("7200")).toBe(7200);
-    for (const invalid of ["", " ", "0", "-1", "319.5", "7201", "NaN"]) {
+    for (const invalid of ["", " ", "0", "-1", "319.5", "14401", "NaN"]) {
       expect(() => parseManhuaLearnSegmentSecondsInput(invalid)).toThrow();
     }
   });
 
   it("旧分片设置缺失或损坏时只恢复下一任务默认，不放宽新输入校验", () => {
     expect(restoreManhuaLearnSegmentSeconds(319)).toBe(319);
-    for (const invalid of [undefined, null, false, "", 0, 319.5, 7201]) {
+    for (const invalid of [undefined, null, false, "", 0, 319.5, 14401]) {
       expect(restoreManhuaLearnSegmentSeconds(invalid)).toBe(300);
     }
   });

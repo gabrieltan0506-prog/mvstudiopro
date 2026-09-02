@@ -94,6 +94,7 @@ import {
   createJob,
   getJob,
   hideManhuaLearnServerSeries,
+  clearOtherManhuaLearnSeries,
   isManhuaNativeDeepReadParamsConflict,
   listManhuaLearnServerJobs,
   pollJobUntilTerminal,
@@ -2571,7 +2572,7 @@ export default function PlatformPage() {
     },
   );
   const [manhuaLearnBatchSize, setManhuaLearnBatchSize] = useState(readManhuaLearnBatchSize);
-  const [manhuaLearnSegmentSecondsInput, setManhuaLearnSegmentSecondsInput] = useState("");
+  const [manhuaLearnSegmentSecondsInput, setManhuaLearnSegmentSecondsInput] = useState(String(NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS));
   /** 0901「整支即全集」：全集单条长视频跳过合集展开（Argus 风控专拦那个端点） */
   const [manhuaLearnStandaloneSource, setManhuaLearnStandaloneSource] = useState(false);
   const [manhuaLearnSegmentSecondsError, setManhuaLearnSegmentSecondsError] = useState("");
@@ -2640,7 +2641,7 @@ export default function PlatformPage() {
     }
   }, [manhuaLearnServerJobs]);
   const [manhuaLearnServerJobsHydrated, setManhuaLearnServerJobsHydrated] = useState(false);
-  const [manhuaLearnControlBusy, setManhuaLearnControlBusy] = useState<"cancel" | "skip" | "delete" | null>(null);
+  const [manhuaLearnControlBusy, setManhuaLearnControlBusy] = useState<"cancel" | "skip" | "delete" | "clear" | null>(null);
   /** 同一页面只允许一个轮询 owner；刷新后新页面从 active job 接手。 */
   const manhuaLearnPollingJobIdRef = useRef<string | null>(null);
   const [manhuaLearnContinueDismissedKey, setManhuaLearnContinueDismissedKey] = useState("");
@@ -3489,6 +3490,7 @@ export default function PlatformPage() {
     }
   }, [pendingManhuaViralProposals, selectedManhuaProposalId]);
 
+  const manhuaLearnLagProbeRef = useRef("");
   const refreshManhuaLearnServerJobs = useCallback(async () => {
     const requestUserKey = manhuaLearnUserKeyRef.current;
     if (!requestUserKey) return { items: [] as ManhuaLearnServerJob[] };
@@ -3500,12 +3502,26 @@ export default function PlatformPage() {
     setManhuaLearnServerJobs((prev) =>
       reuseManhuaLearnServerJobsIfUnchanged(prev, listed.items));
     setManhuaLearnServerJobsHydrated(true);
+    // 0903 显示迟到打点：进度行落库时刻 vs 本次轮询收到时刻，>10s 即在控制台留证
+    const runningJob = listed.items.find((job) => job.status === "running" || job.status === "queued");
+    const progressLog = Array.isArray((runningJob?.output as Record<string, unknown> | undefined)?.learnProgressLog)
+      ? (runningJob!.output as { learnProgressLog: Array<{ atIso?: string }> }).learnProgressLog
+      : [];
+    const lastProgressAt = String(progressLog[progressLog.length - 1]?.atIso || "");
+    if (lastProgressAt && lastProgressAt !== manhuaLearnLagProbeRef.current) {
+      manhuaLearnLagProbeRef.current = lastProgressAt;
+      const lagSec = (Date.now() - Date.parse(lastProgressAt)) / 1000;
+      if (Number.isFinite(lagSec) && lagSec > 10) {
+        console.info(`[learn-lag] 进度行 ${lastProgressAt} 抵达浏览器晚了 ${lagSec.toFixed(1)}s`);
+      }
+    }
     setManhuaLearnBasket((prev) => {
       const merged = demoteStaleRunningManhuaLearnItems(
         mergeManhuaLearnServerJobsIntoBasket(prev, listed.items),
         listed.items,
       );
-      writeManhuaLearnBasket(requestUserKey, merged);
+      // 内容没变就不重写 localStorage——整篮 JSON.stringify 每 3 秒烧主线程是面板变卡的实测浪费
+      if (merged !== prev) writeManhuaLearnBasket(requestUserKey, merged);
       const focused = merged.find(
         (item) => item.seriesKey === manhuaLearnFocusSeriesKeyRef.current,
       );
@@ -3900,6 +3916,29 @@ export default function PlatformPage() {
       setManhuaLearnControlBusy(null);
     }
   }, [focusedManhuaLearnBasketItem?.jobId, focusedManhuaLearnServerJob?.jobId, manhuaLearnBasket, manhuaLearnControlBusy, manhuaLearnFocusSeriesKey, manhuaLearnResult?.seriesKey, manhuaLearnUserKey, selectManhuaLearnBasketItem]);
+  /** 0903 用户令「只留缺集找，其他都删」：一键清空列表，服务端真删其余任务行，本地篮子只留当前剧。 */
+  const clearOtherManhuaLearnSeriesFromList = useCallback(async () => {
+    const keepJobId = focusedManhuaLearnServerJob?.jobId || focusedManhuaLearnBasketItem?.jobId;
+    const keepSeriesKey = String(manhuaLearnResult?.seriesKey || manhuaLearnFocusSeriesKey).trim();
+    const userKey = manhuaLearnUserKey;
+    if (!keepJobId || !keepSeriesKey || !userKey || manhuaLearnControlBusy) return;
+    const others = manhuaLearnBasket.filter((item) => item.seriesKey !== keepSeriesKey).length;
+    if (!window.confirm(`只保留当前选中的剧，其余 ${others} 部从列表删除（任务行会真删，已落盘分集、静帧和已批准模板保留）？`)) return;
+    setManhuaLearnControlBusy("clear");
+    try {
+      const cleared = await clearOtherManhuaLearnSeries(keepJobId);
+      const nextBasket = manhuaLearnBasket.filter((item) => item.seriesKey === keepSeriesKey);
+      setManhuaLearnBasket(nextBasket);
+      writeManhuaLearnBasket(userKey, nextBasket);
+      const removed = new Set(cleared.removedJobIds);
+      setManhuaLearnServerJobs((prev) => prev.filter((job) => !removed.has(job.jobId)));
+      toast.success(`已清空 ${cleared.removedJobIds.length} 条`, { description: "只留当前剧；落盘学习成果和已批准模板没有删除。" });
+    } catch (error) {
+      toast.error("清空失败", { description: sanitizePlatformUserMessage(error instanceof Error ? error.message : String(error)) });
+    } finally {
+      setManhuaLearnControlBusy(null);
+    }
+  }, [focusedManhuaLearnServerJob?.jobId, focusedManhuaLearnBasketItem?.jobId, manhuaLearnBasket, manhuaLearnControlBusy, manhuaLearnFocusSeriesKey, manhuaLearnResult?.seriesKey, manhuaLearnUserKey]);
   const [allowBloggerTitle, setAllowBloggerTitle] = useState(() => readAllowBloggerTitleFromLs());
   /** 全案分析确认前：Skill/提示词优先级对话气泡 */
   const [fullAnalysisConfirmOpen, setFullAnalysisConfirmOpen] = useState(false);
@@ -5837,7 +5876,7 @@ export default function PlatformPage() {
         setManhuaLearnBusyKey(null);
         return;
       }
-      let nativeSegmentSeconds: number | undefined;
+      let nativeSegmentSeconds: number;
       try {
         nativeSegmentSeconds = parseManhuaLearnSegmentSecondsInput(manhuaLearnSegmentSecondsInput);
       } catch (error) {
@@ -6247,11 +6286,13 @@ export default function PlatformPage() {
 
   const approveManhuaLearnProposal = useCallback(
     async (id: string, nameZh?: string, revisionOf?: string) => {
-      const confirmMessage = revisionOf
-        ? `确认批准「${nameZh || "该优化修订"}」并替换原正式模板？原版会先归档，公开句柄保持不变。`
-        : `确认批准「${nameZh || "该节奏模板"}」进节奏模板库？批准后编剧室可选，无需改代码发版。`;
-      if (!window.confirm(confirmMessage)) {
-        return;
+      // 0903 用户令「一次点击就入库」：普通批准可用下架撤销，免确认框；
+      // 只有替换原版会归档旧模板，保留一道确认
+      if (revisionOf) {
+        const confirmMessage = `确认批准「${nameZh || "该优化修订"}」并替换原正式模板？原版会先归档，公开句柄保持不变。`;
+        if (!window.confirm(confirmMessage)) {
+          return;
+        }
       }
       try {
         // 审查收紧：只传 id，服务端按落盘提案批准，不信任客户端卡片
@@ -12703,7 +12744,7 @@ export default function PlatformPage() {
                               className="w-24 rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] tabular-nums text-white disabled:opacity-45"
                             />
                             <span id="manhua-learn-segment-seconds-help" className="text-[10px] text-[#c9c0e6]/50">
-                              留空＝按集自动配平：整集均分尾片不吃零头（1154 秒→4×289），采样fps 随片长阶梯自动配（≤300s→10，每多 10 秒 +2）；填 1–{NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS} 则秒数与 fps 都按手填值，不自动换档。
+                              1–{NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS} 秒，未设置时默认 {NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS}；本次计划、切片与执行门禁均使用当前值，尾片完整保留。
                             </span>
                             {manhuaLearnSegmentSecondsError ? (
                               <span role="alert" className="text-[10px] text-rose-200">{manhuaLearnSegmentSecondsError}</span>
@@ -12912,11 +12953,13 @@ export default function PlatformPage() {
                       {/* 0903 用户令「刷新也要看到任务在跑」：实况卡不依赖聚焦剧，
                           直接读服务端任务快照（进度时间线+分片断点），刷新即回灌；
                           最新进度行自带「分片上限X秒·N片·fps」＝配平值回显。 */}
-                      {manhuaLearnServerJobs.some((job) => job.status === "queued" || job.status === "running") ? (
+                      {manhuaLearnServerJobs.some((job) => job.status === "queued" || job.status === "running"
+                        || (job.status === "failed" && Date.now() - new Date(job.updatedAt || 0).getTime() < 30 * 60_000)) ? (
                         <div className="mt-3 rounded-xl border border-emerald-300/25 bg-emerald-500/10 px-3 py-2.5">
                           <div className="text-[11px] font-semibold text-emerald-100/90">⏱ 正在学习（刷新可见 · 排队≠卡死）</div>
                           {manhuaLearnServerJobs
-                            .filter((job) => job.status === "queued" || job.status === "running")
+                            .filter((job) => job.status === "queued" || job.status === "running"
+                              || (job.status === "failed" && Date.now() - new Date(job.updatedAt || 0).getTime() < 30 * 60_000))
                             .map((job) => {
                               const output = (job.output ?? {}) as Record<string, unknown>;
                               const params = ((job.input as Record<string, unknown> | undefined)?.params ?? {}) as Record<string, unknown>;
@@ -12934,8 +12977,8 @@ export default function PlatformPage() {
                               return (
                                 <div key={job.jobId} className="mt-1.5 rounded-lg border border-white/10 bg-black/30 px-2.5 py-1.5 text-[10px] text-[#d7f0e2]">
                                   <div className="flex flex-wrap items-center gap-2">
-                                    <span className={job.status === "running" ? "font-bold text-emerald-200" : "font-bold text-amber-200"}>
-                                      {job.status === "running" ? "运行中" : "排队中"}
+                                    <span className={job.status === "running" ? "font-bold text-emerald-200" : job.status === "failed" ? "font-bold text-rose-300" : "font-bold text-amber-200"}>
+                                      {job.status === "running" ? "运行中" : job.status === "failed" ? "刚失败" : "排队中"}
                                     </span>
                                     <span className="min-w-0 flex-1 truncate" title={url}>{title}</span>
                                     {partial ? (
@@ -12945,6 +12988,9 @@ export default function PlatformPage() {
                                     ) : null}
                                   </div>
                                   <div className="mt-0.5 truncate text-[#c9c0e6]/70" title={lastZh}>{lastZh}</div>
+                                  {job.status === "failed" && job.error ? (
+                                    <div className="mt-0.5 text-rose-200/90" title={job.error}>死因：{String(job.error).slice(0, 90)}</div>
+                                  ) : null}
                                 </div>
                               );
                             })}
@@ -13028,6 +13074,19 @@ export default function PlatformPage() {
                               className="shrink-0 rounded-lg border border-rose-300/30 bg-rose-500/10 px-2.5 py-1.5 text-[10px] font-semibold text-rose-100 hover:bg-rose-500/20 disabled:opacity-40"
                             >
                               {manhuaLearnControlBusy === "delete" ? "正在删除…" : "删除这部剧"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={
+                                !manhuaLearnFocusSeriesKey
+                                || Boolean(manhuaLearnControlBusy)
+                                || !(focusedManhuaLearnServerJob?.jobId || focusedManhuaLearnBasketItem?.jobId)
+                                || manhuaLearnBasket.length < 2
+                              }
+                              onClick={() => void clearOtherManhuaLearnSeriesFromList()}
+                              className="shrink-0 rounded-lg border border-rose-300/30 bg-rose-500/10 px-2.5 py-1.5 text-[10px] font-semibold text-rose-100 hover:bg-rose-500/20 disabled:opacity-40"
+                            >
+                              {manhuaLearnControlBusy === "clear" ? "正在清空…" : "只留这部·清空其他"}
                             </button>
                           </div>
                           <p className="mt-1.5 text-[10px] text-amber-100/50">

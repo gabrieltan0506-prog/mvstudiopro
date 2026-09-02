@@ -68,9 +68,25 @@ describe("第三方播放页服务端安全边界", () => {
     })).toEqual({});
   });
 
-  it("匿名媒体接口成功时只请求一次，绝不预先发送 Fly Cookie 或 Authorization", async () => {
+  it("0903 用户令：配了凭证就每一发都直接带双钥匙，且只请求一次", async () => {
     vi.stubEnv(MANHUA_MIRROR_SOURCE_COOKIE_ENV, "session=test-cookie");
     vi.stubEnv(MANHUA_MIRROR_SOURCE_AUTHORIZATION_ENV, "Bearer test-token");
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("cookie")).toBe("session=test-cookie");
+      expect(headers.get("authorization")).toBe("Bearer test-token");
+      return new Response(JSON.stringify(playbackPayload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    await expect(fetchManhua0996EpisodePlayback(sourceUrl, undefined, fetchImpl))
+      .resolves.toMatchObject({ playbackUrl: playbackPayload.data.list[0].url });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("没配凭证时保持纯匿名请求，不无中生有鉴权头", async () => {
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
       expect(headers.has("cookie")).toBe(false);
@@ -86,29 +102,7 @@ describe("第三方播放页服务端安全边界", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it("匿名媒体接口失败后才用 Fly-only 鉴权重试，且不产生第三次请求", async () => {
-    vi.stubEnv(MANHUA_MIRROR_SOURCE_COOKIE_ENV, "session=test-cookie");
-    vi.stubEnv(MANHUA_MIRROR_SOURCE_AUTHORIZATION_ENV, "Bearer test-token");
-    const seenHeaders: Headers[] = [];
-    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      seenHeaders.push(new Headers(init?.headers));
-      if (seenHeaders.length === 1) return new Response(null, { status: 503 });
-      return new Response(JSON.stringify(playbackPayload), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    }) as typeof fetch;
-
-    await expect(fetchManhua0996EpisodePlayback(sourceUrl, undefined, fetchImpl))
-      .resolves.toMatchObject({ playbackUrl: playbackPayload.data.list[0].url });
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(seenHeaders[0]!.has("cookie")).toBe(false);
-    expect(seenHeaders[0]!.has("authorization")).toBe(false);
-    expect(seenHeaders[1]!.get("cookie")).toBe("session=test-cookie");
-    expect(seenHeaders[1]!.get("authorization")).toBe("Bearer test-token");
-  });
-
-  it("同源 307 逐跳跟随且不误触 Fly 鉴权兜底", async () => {
+  it("同源 307 逐跳跟随，双钥匙随行", async () => {
     vi.stubEnv(MANHUA_MIRROR_SOURCE_COOKIE_ENV, "session=test-cookie");
     vi.stubEnv(MANHUA_MIRROR_SOURCE_AUTHORIZATION_ENV, "Bearer test-token");
     const seenUrls: string[] = [];
@@ -132,8 +126,9 @@ describe("第三方播放页服务端安全边界", () => {
       .resolves.toMatchObject({ playbackUrl: playbackPayload.data.list[0].url });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(new URL(seenUrls[1]!).pathname).toBe("/GE/CC/VALIDATOR");
-    expect(seenHeaders.every((headers) => !headers.has("cookie"))).toBe(true);
-    expect(seenHeaders.every((headers) => !headers.has("authorization"))).toBe(true);
+    // 双钥匙直发：每一跳（仍限可信同源）都带凭证，签名原样随行
+    expect(seenHeaders.every((headers) => headers.get("cookie") === "session=test-cookie")).toBe(true);
+    expect(seenHeaders.every((headers) => headers.get("authorization") === "Bearer test-token")).toBe(true);
     expect(seenHeaders[1]!.get("sign")).toBe(seenHeaders[0]!.get("sign"));
   });
 
