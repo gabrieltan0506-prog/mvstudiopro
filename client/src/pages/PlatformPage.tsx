@@ -2571,7 +2571,7 @@ export default function PlatformPage() {
     },
   );
   const [manhuaLearnBatchSize, setManhuaLearnBatchSize] = useState(readManhuaLearnBatchSize);
-  const [manhuaLearnSegmentSecondsInput, setManhuaLearnSegmentSecondsInput] = useState("");
+  const [manhuaLearnSegmentSecondsInput, setManhuaLearnSegmentSecondsInput] = useState(String(NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS));
   /** 0901「整支即全集」：全集单条长视频跳过合集展开（Argus 风控专拦那个端点） */
   const [manhuaLearnStandaloneSource, setManhuaLearnStandaloneSource] = useState(false);
   const [manhuaLearnSegmentSecondsError, setManhuaLearnSegmentSecondsError] = useState("");
@@ -5837,7 +5837,7 @@ export default function PlatformPage() {
         setManhuaLearnBusyKey(null);
         return;
       }
-      let nativeSegmentSeconds: number | undefined;
+      let nativeSegmentSeconds: number;
       try {
         nativeSegmentSeconds = parseManhuaLearnSegmentSecondsInput(manhuaLearnSegmentSecondsInput);
       } catch (error) {
@@ -12703,7 +12703,7 @@ export default function PlatformPage() {
                               className="w-24 rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] tabular-nums text-white disabled:opacity-45"
                             />
                             <span id="manhua-learn-segment-seconds-help" className="text-[10px] text-[#c9c0e6]/50">
-                              留空＝按集自动配平：整集均分尾片不吃零头（1154 秒→4×289），采样fps 随片长阶梯自动配（≤300s→10，每多 10 秒 +2）；填 1–{NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS} 则秒数与 fps 都按手填值，不自动换档。
+                              1–{NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS} 秒，未设置时默认 {NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS}；本次计划、切片与执行门禁均使用当前值，尾片完整保留。
                             </span>
                             {manhuaLearnSegmentSecondsError ? (
                               <span role="alert" className="text-[10px] text-rose-200">{manhuaLearnSegmentSecondsError}</span>
