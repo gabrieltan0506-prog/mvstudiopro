@@ -664,9 +664,13 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   };
   // GLM 整形写了逐镜解读（0902 起 shots[].craftReadZh）优先用模型原句；
   // 旧卡缺该字段才落回上面的词典推导。相邻镜同判词只留第一次——语义不因重复贬值
+  // 0902 十一审：模型时代的卡（任一镜带 craftReadZh）里，留白是模型按 30 条配额
+  // **挑剩的**——词典不得再往空格里灌推导，否则解读密度被兜底填回逐镜复读。
+  // 词典推导只服务没有任何模型判词的旧卡。
+  const hasModelCraftReads = shots.some((shot) => String(shot.craftReadZh ?? "").trim());
   const changeNotesByIndex = shots.map((shot, index) => {
     const modelRead = String(shot.craftReadZh ?? "").trim();
-    return modelRead || shotChangeZh(index);
+    return hasModelCraftReads ? modelRead : shotChangeZh(index);
   });
   for (let i = shots.length - 1; i > 0; i -= 1) {
     if (changeNotesByIndex[i] && changeNotesByIndex[i] === changeNotesByIndex[i - 1]) {
