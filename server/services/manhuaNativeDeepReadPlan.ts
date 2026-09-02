@@ -977,9 +977,11 @@ export function describeNativeDeepReadSegmentPlanZh(
     const tailSeconds = tail
       ? Math.round((tail.endSec - tail.startSec) * 100) / 100
       : 0;
+    // 0903 用户令：配平出的 fps 也要在面板计划行可见，不再只有秒数
+    const fpsZh = `·${parseNativeDeepReadVideoFps(episode.videoFps)}fps`;
     return count <= 1
-      ? `第 ${episode.episodeIndex} 集 1 片（整片 ${tailSeconds} 秒）`
-      : `第 ${episode.episodeIndex} 集 ${count} 片（前 ${count - 1} 片各 ${episodeSeconds} 秒，尾片 ${tailSeconds} 秒）`;
+      ? `第 ${episode.episodeIndex} 集 1 片（整片 ${tailSeconds} 秒${fpsZh}）`
+      : `第 ${episode.episodeIndex} 集 ${count} 片（前 ${count - 1} 片各 ${episodeSeconds} 秒，尾片 ${tailSeconds} 秒${fpsZh}）`;
   });
   const perEpisode = new Set(plan.episodes.map((episode) => episode.segmentSeconds ?? fallbackSeconds));
   const headZh = perEpisode.size > 1

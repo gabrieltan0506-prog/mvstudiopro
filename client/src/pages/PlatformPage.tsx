@@ -2655,7 +2655,13 @@ export default function PlatformPage() {
     setManhuaPasteUrl("");
     setManhuaPasteTitle("");
     manhuaLearnSegmentSecondsEditedRef.current = false;
-    setManhuaLearnSegmentSecondsInput(String(readManhuaLearnSegmentSeconds(manhuaLearnUserKey)));
+    {
+      // 0903 修：#1357 漏网点——存档为空时 String(undefined) 会把字面量 "undefined"
+      // 灌进秒数栏（提交必炸「整数秒」），有旧手填值则每次加载替用户填回去，
+      // 「留空＝自动配平」因此从未真正生效。空档一律回空串。
+      const storedSeconds = readManhuaLearnSegmentSeconds(manhuaLearnUserKey);
+      setManhuaLearnSegmentSecondsInput(storedSeconds == null ? "" : String(storedSeconds));
+    }
     setManhuaLearnStandaloneSource(readManhuaLearnStandalone(manhuaLearnUserKey));
     setManhuaLearnSegmentSecondsError("");
     manhuaLearnVideoFpsEditedRef.current = false;
@@ -12902,6 +12908,48 @@ export default function PlatformPage() {
                           快手榜：有样本链可点开或学节奏；无链时展示剧名、类别与标签，可复制剧名自行查找。
                         </p>
                       )}
+
+                      {/* 0903 用户令「刷新也要看到任务在跑」：实况卡不依赖聚焦剧，
+                          直接读服务端任务快照（进度时间线+分片断点），刷新即回灌；
+                          最新进度行自带「分片上限X秒·N片·fps」＝配平值回显。 */}
+                      {manhuaLearnServerJobs.some((job) => job.status === "queued" || job.status === "running") ? (
+                        <div className="mt-3 rounded-xl border border-emerald-300/25 bg-emerald-500/10 px-3 py-2.5">
+                          <div className="text-[11px] font-semibold text-emerald-100/90">⏱ 正在学习（刷新可见 · 排队≠卡死）</div>
+                          {manhuaLearnServerJobs
+                            .filter((job) => job.status === "queued" || job.status === "running")
+                            .map((job) => {
+                              const output = (job.output ?? {}) as Record<string, unknown>;
+                              const params = ((job.input as Record<string, unknown> | undefined)?.params ?? {}) as Record<string, unknown>;
+                              const url = String(params.url || "");
+                              const title = String(params.titleHint || "").trim()
+                                || (url ? url.replace(/^https?:\/\//, "").slice(0, 46) : "未命名任务");
+                              const partial = (output.nativePartialProposalCheckpoint ?? null) as Record<string, unknown> | null;
+                              const log = Array.isArray(output.learnProgressLog) ? output.learnProgressLog : [];
+                              const lastLine = log.length
+                                ? (log[log.length - 1] as Record<string, unknown>)
+                                : null;
+                              const lastZh = lastLine
+                                ? `${String(lastLine.atIso || "").slice(11, 19)} ${String(lastLine.detailZh || lastLine.stage || "")}`
+                                : "等待首条进度…";
+                              return (
+                                <div key={job.jobId} className="mt-1.5 rounded-lg border border-white/10 bg-black/30 px-2.5 py-1.5 text-[10px] text-[#d7f0e2]">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className={job.status === "running" ? "font-bold text-emerald-200" : "font-bold text-amber-200"}>
+                                      {job.status === "running" ? "运行中" : "排队中"}
+                                    </span>
+                                    <span className="min-w-0 flex-1 truncate" title={url}>{title}</span>
+                                    {partial ? (
+                                      <span className="font-semibold text-emerald-100">
+                                        第{Number(partial.episodeIndex) || 1}集 · {Number(partial.completedSegments) || 0}/{Number(partial.totalSegments) || 0} 片
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  <div className="mt-0.5 truncate text-[#c9c0e6]/70" title={lastZh}>{lastZh}</div>
+                                </div>
+                              );
+                            })}
+                        </div>
+                      ) : null}
 
                       {manhuaLearnBasket.length > 0 ? (
                         <div className="mt-3 rounded-xl border border-amber-300/20 bg-amber-500/10 px-3 py-2.5">

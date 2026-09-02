@@ -120,7 +120,7 @@ describe("原生精读计划", () => {
       { startSec: 1_124, endSec: 1_404 },
     ]);
     expect(describeNativeDeepReadSegmentPlanZh(plan))
-      .toBe("分片上限 281 秒 · 第 1 集 5 片（前 4 片各 281 秒，尾片 280 秒）");
+      .toBe("分片上限 281 秒 · 第 1 集 5 片（前 4 片各 281 秒，尾片 280 秒·10fps）");
   });
 
   it("非法自定义长度在访问来源之前拒绝", async () => {
