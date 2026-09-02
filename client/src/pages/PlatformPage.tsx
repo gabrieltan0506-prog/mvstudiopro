@@ -2549,8 +2549,17 @@ export default function PlatformPage() {
     const timer = window.setTimeout(() => setManhuaPasteUrlDebounced(trimmed), 600);
     return () => window.clearTimeout(timer);
   }, [manhuaPasteUrl]);
+  const [manhuaPasteTitleDebounced, setManhuaPasteTitleDebounced] = useState("");
+  useEffect(() => {
+    const trimmed = manhuaPasteTitle.trim();
+    const timer = window.setTimeout(() => setManhuaPasteTitleDebounced(trimmed), 600);
+    return () => window.clearTimeout(timer);
+  }, [manhuaPasteTitle]);
   const manhuaLearnDupQuery = trpc.manhuaViralTemplate.checkLearnSourceLearned.useQuery(
-    { url: manhuaPasteUrlDebounced },
+    {
+      url: manhuaPasteUrlDebounced,
+      ...(manhuaPasteTitleDebounced ? { titleZh: manhuaPasteTitleDebounced } : {}),
+    },
     {
       enabled: /^https?:\/\/\S+$/i.test(manhuaPasteUrlDebounced),
       staleTime: 5 * 60_000,
@@ -12698,6 +12707,18 @@ export default function PlatformPage() {
                               <div className="mt-0.5 text-[10px] text-amber-100/70">
                                 三代=当前链路无需重学；二代旧链路想重学，先在模板库把该集卡下架再学。重复提交不出新卡也不扣费。
                               </div>
+                            </div>
+                          ) : null}
+                          {manhuaLearnDupQuery.data?.sameTitleSeries ? (
+                            <div className="mt-1.5 rounded-lg border border-sky-400/30 bg-sky-500/10 px-2.5 py-1.5 text-[11px] leading-5 text-sky-100">
+                              ℹ️ 同名剧旧账：《{manhuaLearnDupQuery.data.sameTitleSeries.titleHint}》
+                              {manhuaLearnDupQuery.data.sameTitleSeries.framesDigestCount > 0
+                                ? ` 抽帧（一代）学过 ${manhuaLearnDupQuery.data.sameTitleSeries.framesDigestCount} 集`
+                                : ""}
+                              {manhuaLearnDupQuery.data.sameTitleSeries.learnedEpisodeIndexes.length
+                                ? ` · 精读入库第${manhuaLearnDupQuery.data.sameTitleSeries.learnedEpisodeIndexes.join("、")}集`
+                                : ""}
+                              ——重剪合集是另一来源，用三代重学不冲突
                             </div>
                           ) : null}
                           <div className="mt-2 flex flex-col gap-2 sm:flex-row">

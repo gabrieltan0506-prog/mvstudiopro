@@ -568,13 +568,19 @@ export const manhuaViralTemplateRouter = router({
    */
   /** 0902：贴链接即时查重——已学过在提交前亮牌（带剧名），不让用户点了学习才撞墙 */
   checkLearnSourceLearned: protectedProcedure
-    .input(z.object({ url: z.string().trim().url().max(600) }))
+    .input(
+      z.object({
+        url: z.string().trim().url().max(600),
+        /** 选填剧名：野生重剪合集与官方分集同剧不同源，靠剧名把旧账也亮出来 */
+        titleZh: z.string().trim().max(120).optional(),
+      }),
+    )
     .query(async ({ ctx, input }) => {
       assertSiteOwner(ctx.user);
       const { checkManhuaLearnSourceLearned } = await import(
         "../services/manhuaTemplateLearnService"
       );
-      return await checkManhuaLearnSourceLearned(input.url);
+      return await checkManhuaLearnSourceLearned(input.url, input.titleZh);
     }),
 
   listNativeDeepReadClaims: protectedProcedure

@@ -3201,7 +3201,18 @@ export type ManhuaLearnSourceLearnedEpisode = {
   generationZh: string;
 };
 
-export async function checkManhuaLearnSourceLearned(url: string): Promise<{
+export type ManhuaLearnSameTitleSeries = {
+  seriesKey: string;
+  titleHint: string;
+  /** 抽帧一代 digest 条数（用户抽帧时代最高一次连学 20 集，全在这类记录里） */
+  framesDigestCount: number;
+  learnedEpisodeIndexes: number[];
+};
+
+export async function checkManhuaLearnSourceLearned(
+  url: string,
+  titleZh?: string,
+): Promise<{
   seriesKey: string;
   titleHint: string;
   episodes: ManhuaLearnSourceLearnedEpisode[];
@@ -3209,8 +3220,17 @@ export async function checkManhuaLearnSourceLearned(url: string): Promise<{
   partialEpisodeIndexes: number[];
   /** 抽帧（一代）digest 产物条数；>0 说明这系列在抽帧时代也学过 */
   framesDigestCount: number;
+  /**
+   * 0902 补：野生重剪合集和官方分集是同一部剧的两种载体，按视频 ID 认不出旧账。
+   * 用户填了剧名时，同名剧系列（抽帧时代按剧名归并）的旧记录也亮出来供判断。
+   */
+  sameTitleSeries: ManhuaLearnSameTitleSeries | null;
 }> {
-  const cleanUrl = String(url || "").trim();
+  const rawUrl = String(url || "").trim();
+  // 搜索页 modal_id 链接与干净 /video/ 链接必须算同一系列（seriesKeyFrom 按
+  // 原始 URL 哈希，不归一化会漏查）。提交链路同样以干净链接落库。
+  const awemeId = extractDouyinVideoIdFromUrl(rawUrl);
+  const cleanUrl = awemeId ? `https://www.douyin.com/video/${awemeId}` : rawUrl;
   const seriesKey = await resolveManhuaSeriesKey({
     sourceIdentity: cleanUrl,
     learnLlm: "gpt",
@@ -3255,6 +3275,37 @@ export async function checkManhuaLearnSourceLearned(url: string): Promise<{
     titleHint = cleanManhuaLearnTitle(progress?.titleHint) || "";
     framesDigestCount = digests.length;
   }
+  let sameTitleSeries: ManhuaLearnSameTitleSeries | null = null;
+  const cleanTitle = String(titleZh || "").trim();
+  if (normalizeManhuaSeriesTitle(cleanTitle)) {
+    try {
+      const titleKey = await resolveManhuaSeriesKey({
+        sourceIdentity: cleanUrl,
+        title: cleanTitle,
+        learnLlm: "gpt",
+      });
+      if (titleKey !== seriesKey) {
+        const [titleRecords, titleProgress, titleDigests] = await Promise.all([
+          listIngestedNativeDeepReadEpisodeRecords(titleKey),
+          loadSeriesProgress(titleKey),
+          loadAllDigests(titleKey).catch(() => []),
+        ]);
+        if (titleRecords.length || titleDigests.length) {
+          sameTitleSeries = {
+            seriesKey: titleKey,
+            titleHint: cleanManhuaLearnTitle(titleProgress?.titleHint) || cleanTitle,
+            framesDigestCount: titleDigests.length,
+            learnedEpisodeIndexes: titleRecords
+              .filter((record) => record.complete)
+              .map((record) => record.episodeIndex)
+              .sort((a, b) => a - b),
+          };
+        }
+      }
+    } catch {
+      /* 同名剧旧账查失败不挡主查重 */
+    }
+  }
   return {
     seriesKey,
     titleHint,
@@ -3268,5 +3319,6 @@ export async function checkManhuaLearnSourceLearned(url: string): Promise<{
       .map((row) => row.episodeIndex)
       .sort((a, b) => a - b),
     framesDigestCount,
+    sameTitleSeries,
   };
 }
