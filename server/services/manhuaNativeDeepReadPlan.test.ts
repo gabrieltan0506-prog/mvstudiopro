@@ -83,8 +83,11 @@ describe("原生精读计划", () => {
     const defaultPlan = await buildNativeDeepReadPlanPreview({
       url: "https://www.douyin.com/collection/123456", limit: 1,
     }, d);
-    expect(defaultPlan.totalVisualCalls).toBe(6);
-    expect(defaultPlan.planHash).not.toBe(plan.planHash);
+    // 0902 自动配平：留空时 1594 秒＝round(5.31)=5 段 × ceil(1594/5)=319 秒——
+    // 与上面手填 319 完全同切分，同切分＝同计划＝同 hash
+    expect(defaultPlan.totalVisualCalls).toBe(5);
+    expect(defaultPlan.episodes[0]?.segmentSeconds).toBe(319);
+    expect(defaultPlan.planHash).toBe(plan.planHash);
   });
 
   it("281秒计划明确显示真实尾片，不能只显示分片数量", async () => {
@@ -161,11 +164,11 @@ describe("原生精读计划", () => {
     expect(plan.seriesKey).toBe("series_real");
     expect(plan.episodes.map((row) => row.episodeIndex)).toEqual([3]);
     expect(plan.alreadyIngestedEpisodeIndexes).toEqual([1, 2]);
-    expect(plan.totalSegments).toBe(4);
-    // 每段一次 Gemini 调用（4 段=4 次）；音轨随调直出为 0；聚合 +1
-    expect(plan.totalVisualCalls).toBe(4);
+    // 0902 自动配平：1002 秒＝3 段 × 334 秒，尾片不再是 102 秒的零头
+    expect(plan.totalSegments).toBe(3);
+    expect(plan.totalVisualCalls).toBe(3);
     expect(plan.totalAudioChunks).toBe(0);
-    expect(plan.totalModelCalls).toBe(5);
+    expect(plan.totalModelCalls).toBe(4);
     expect(plan.executableEpisodeCount).toBe(1);
     expect(d.probeDurationSec).toHaveBeenCalledTimes(1);
   });
@@ -575,24 +578,24 @@ describe("原生精读计划", () => {
       episodeIndex: 1,
       sourceUrl: `https://www.douyin.com/video/${modalId}`,
       durationSec: 2_212,
-      segmentSeconds: 300,
+      // 0902 自动配平：2212 秒＝7 段 × 316 秒整分，尾片与前片同长
+      segmentSeconds: 316,
       videoFps: 12,
       segments: [
-        { startSec: 0, endSec: 300 },
-        { startSec: 300, endSec: 600 },
-        { startSec: 600, endSec: 900 },
-        { startSec: 900, endSec: 1_200 },
-        { startSec: 1_200, endSec: 1_500 },
-        { startSec: 1_500, endSec: 1_800 },
-        { startSec: 1_800, endSec: 2_100 },
-        { startSec: 2_100, endSec: 2_212 },
+        { startSec: 0, endSec: 316 },
+        { startSec: 316, endSec: 632 },
+        { startSec: 632, endSec: 948 },
+        { startSec: 948, endSec: 1_264 },
+        { startSec: 1_264, endSec: 1_580 },
+        { startSec: 1_580, endSec: 1_896 },
+        { startSec: 1_896, endSec: 2_212 },
       ],
       recoverMisplacedSourceCache: true,
     }]);
     expect(plan.freeEpisodeCount).toBe(1);
     expect(plan.executableEpisodeCount).toBe(1);
-    expect(plan.totalVisualCalls).toBe(8);
-    expect(plan.totalModelCalls).toBe(9);
+    expect(plan.totalVisualCalls).toBe(7);
+    expect(plan.totalModelCalls).toBe(8);
   });
 
   it("无 mix_info 的可读视频与合集一样尊重已入库状态，不重复付费", async () => {

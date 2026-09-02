@@ -223,3 +223,38 @@ export async function listDouyinAwemePlaybackUrlsViaWebApi(
   }
   return playbackUrls;
 }
+
+/**
+ * 展开抖音短链（v./vm.douyin.com）：只跟重定向头，不下载正文。
+ * 最多 3 跳、单跳 10 秒；解不开返回 null，调用方保持原链走既有的明确报错。
+ */
+export async function resolveDouyinShortLinkViaRedirect(
+  url: string,
+): Promise<string | null> {
+  let current = String(url || "").trim();
+  if (!current) return null;
+  for (let hop = 0; hop < 3; hop += 1) {
+    let response: Response;
+    try {
+      response = await fetch(current, {
+        method: "HEAD",
+        redirect: "manual",
+        headers: { "user-agent": DOUYIN_WEB_UA },
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch {
+      return null;
+    }
+    const location = String(response.headers.get("location") || "").trim();
+    if (!location) {
+      return hop > 0 ? current : null;
+    }
+    current = new URL(location, current).toString();
+    // 一旦落到带视频 id 的正式域名就收工，不再多跳
+    if (/(?:^|\.)(?:ies)?douyin\.com$/i.test(new URL(current).hostname)
+      && /\/(?:share\/)?(?:video|note)\/\d{5,}|modal_id=\d{5,}/i.test(current)) {
+      return current;
+    }
+  }
+  return null;
+}

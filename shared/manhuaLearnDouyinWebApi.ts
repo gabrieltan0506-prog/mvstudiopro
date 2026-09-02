@@ -88,6 +88,21 @@ export function buildDouyinAwemeDetailApiUrl(awemeId: string): string {
   return withCommonParams(url).toString();
 }
 
+/**
+ * 抖音 App「分享→复制链接」的短链（v./vm.douyin.com）：网址字面里没有视频 id，
+ * 必须跟一跳重定向才能拿到 /share/video/<id>。0902 起服务端自动展开，
+ * 用户不用再开浏览器手动倒一手。
+ */
+export function isDouyinShortLinkUrl(url: string): boolean {
+  const u = String(url || "").trim();
+  if (!u) return false;
+  try {
+    return /^(?:v|vm)\.douyin\.com$/i.test(new URL(u).hostname);
+  } catch {
+    return /^https?:\/\/(?:v|vm)\.douyin\.com\//i.test(u);
+  }
+}
+
 /** /video/、/note/（含 iesdouyin /share/ 前缀）或 modal_id 弹层形态里的视频 id */
 export function extractDouyinVideoIdFromUrl(url: string): string | null {
   const u = String(url || "").trim();

@@ -120,11 +120,13 @@ import {
 import {
   extractDouyinMixIdFromUrl,
   extractDouyinVideoIdFromUrl,
+  isDouyinShortLinkUrl,
   isTrustedDouyinPlaybackUrl,
   type DouyinEpisodeAccess,
 } from "../../shared/manhuaLearnDouyinWebApi.js";
 import {
   fetchDouyinAwemeDetailViaWebApi,
+  resolveDouyinShortLinkViaRedirect,
   listDouyinAwemePlaybackUrlsViaWebApi,
   listDouyinMixEpisodesViaWebApi,
 } from "./manhuaLearnDouyinWebApi.js";
@@ -2046,7 +2048,16 @@ export async function runManhuaTemplateLearn(
   input: ManhuaTemplateLearnInput,
 ): Promise<ManhuaTemplateLearnResult> {
   const title = stripBookTitleMarks(cleanManhuaLearnTitle(input.title));
-  const { sourceGcsUri, sourceUrl } = normalizeManhuaTemplateLearnSourceInput(input);
+  const normalizedSource = normalizeManhuaTemplateLearnSourceInput(input);
+  const sourceGcsUri = normalizedSource.sourceGcsUri;
+  let sourceUrl = normalizedSource.sourceUrl;
+  // 0902：App 分享短链（v./vm.douyin.com）服务端自动展开，不再要求用户开浏览器倒一手
+  if (!sourceGcsUri && isDouyinShortLinkUrl(sourceUrl)) {
+    const expandedUrl = await resolveDouyinShortLinkViaRedirect(sourceUrl).catch(() => null);
+    if (expandedUrl && expandedUrl.trim()) {
+      sourceUrl = normalizeDouyinVideoUrl(expandedUrl.trim());
+    }
+  }
   // 与预演层同口径：搜索弹层只要带有效 modal_id，就先归一成稳定 /video/<id>。
   // sourceIdentity 也用规范地址，避免同一视频因搜索参数变化被当成新素材追加集号。
   if (!sourceUrl && !sourceGcsUri) {

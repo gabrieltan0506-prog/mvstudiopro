@@ -83,7 +83,8 @@ export type NativeDeepReadJobConfirmation = {
   planHash?: string;
   maxCalls: number;
   planLimit: number;
-  segmentSeconds: number;
+  /** 缺省＝分片按集自动配平（0902）；显式数值＝用户手填的每片上限 */
+  segmentSeconds?: number;
   videoFps: number;
   /**
    * 0901 用户令「整支即全集」：抖音大量全集长视频仍挂 mixId 但合集列表被风控/收编，
@@ -127,7 +128,10 @@ export function parseNativeDeepReadJobConfirmation(
   const planLimit = Number(params.nativePlanLimit);
   const batchSize = Number(params.batchSize);
   const seriesKey = String(params.nativePlanSeriesKey || "").trim();
-  const segmentSeconds = parseNativeDeepReadSegmentSeconds(params.nativeSegmentSeconds);
+  // 0902：缺省不再折算成默认 300——保留 undefined 让计划层按集自动配平
+  const segmentSeconds = params.nativeSegmentSeconds == null
+    ? undefined
+    : parseNativeDeepReadSegmentSeconds(params.nativeSegmentSeconds);
   const videoFps = parseNativeDeepReadVideoFps(params.nativeVideoFps);
   const standaloneRaw = params.nativeStandaloneSource;
   if (standaloneRaw !== undefined && standaloneRaw !== true && standaloneRaw !== false
