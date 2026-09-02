@@ -175,7 +175,7 @@ describe("精确证据名路径：三段卡渲染成功且无删节", () => {
     expect(state.uploads).toHaveLength(1);
     const html = state.uploads[0]!.html;
     // 镜头表全字段名（含中文标签）
-    for (const label of ["单元类型", "景别", "机位角度", "构图", "运镜", "调度", "身体动作", "肢体道具", "微表情", "视线呼吸", "关系反应", "灯光", "动作叙述", "入镜转场"]) {
+    for (const label of ["镜头变化", "景别", "机位角度", "构图", "运镜", "调度", "身体动作", "肢体道具", "微表情", "视线呼吸", "关系反应", "灯光", "动作叙述", "入镜转场"]) {
       expect(html).toContain(label);
     }
     // 音轨表全字段 + chunk 级模型原文区
@@ -253,8 +253,12 @@ describe("fail closed：缺段/段号重复/digest 混杂/集号不符各抛错�
     ];
     raw.raw.excludedAdRanges = [{ startSec: 100, endSec: 139 }];
     const html = (await renderNativeEvidenceReportFromObjectNames(baseInput()), state.uploads[0]!.html);
-    expect(html).toContain("眉头锁紧_KM_END");
-    expect(html).toContain("中景转特写_KM_END");
+    // 0902 表瘦身：说明列删除（与截图标注同源），noteZh 不再渲染进页面
+    expect(html).not.toContain("眉头锁紧_KM_END");
+    expect(html).toContain("关键字幕（前后 2 秒）");
+    // 0902 表瘦身后 noteZh 不进页面——改验类型行仍渲染（keyMoments 字段没被产线丢弃）
+    expect(html).toContain("关键字幕（前后 2 秒）");
+    expect(html).not.toContain("中景转特写_KM_END");
     // 同秒同类去重：只留一条
     expect(html).not.toContain("同秒同类应被去重");
     // KPI 两项不再恒 0
@@ -296,7 +300,7 @@ describe("fail closed：缺段/段号重复/digest 混杂/集号不符各抛错�
     await renderNativeEvidenceReportFromObjectNames(baseInput());
     const html = state.uploads[0]!.html;
     expect(html).toContain("3 重点字幕");
-    expect(html).toContain("相关字幕（前后 2 秒）");
+    expect(html).toContain("关键字幕（前后 2 秒）");
     for (const i of [1, 2, 3]) expect(html).toContain(`密集台词${i}_UNTRUNCATED_SUB_END`);
     for (const i of [0, 4]) expect(html).not.toContain(`密集台词${i}_UNTRUNCATED_SUB_END`);
     expect(html).not.toContain("字幕原始证据");
@@ -451,7 +455,7 @@ describe("帧包始终可选", () => {
       evidenceFrames: [{
         atSec: 7,
         kindZh: "情绪",
-        noteZh: "眉头锁紧",
+        noteZh: "眉头锁紧指节发白",
         objectName: `manhua-template-learn/native-frames/seriesabc/ep001/70ds-${"d".repeat(24)}.jpg`,
         mimeType: "image/jpeg",
         bytes: 1234,
@@ -460,7 +464,8 @@ describe("帧包始终可选", () => {
     });
     expect(result.frames).toBe(1);
     expect(result.frameSource).toBe("正式卡重点时刻抽帧");
-    expect(state.uploads[0]!.html).toContain("眉头锁紧");
+    // 0902 短标注富化规则：≥6 字的原标注原样保留
+    expect(state.uploads[0]!.html).toContain("眉头锁紧指节发白");
     // 0902 内嵌改造：页面不再出现内部帧包来源词，只写「精选画面 N 张」且图为 data URI
     expect(state.uploads[0]!.html).toContain("精选画面 1 张");
     expect(state.uploads[0]!.html).toContain("data:image/jpeg;base64,");

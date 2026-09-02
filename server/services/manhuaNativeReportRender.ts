@@ -22,7 +22,7 @@ const FIELD_LABELS: Record<string, string> = {
   emotionTagsZh: "情绪", narrativeFeatureTagsZh: "叙事特色", performanceTagsZh: "表演",
   audiovisualTagsZh: "视听", audienceExperienceTagsZh: "观众体验",
   beatStructureZh: "节拍结构", moodArcZh: "情绪弧", reusableZh: "可复用手法", genPromptHintZh: "生成提示线索",
-  hintZh: "本镜观察", unitTypeZh: "单元类型", shotSizeZh: "景别", angleZh: "机位角度", compositionZh: "构图", cameraMoveZh: "运镜",
+  hintZh: "本镜观察", unitTypeZh: "镜头变化", shotSizeZh: "景别", angleZh: "机位角度", compositionZh: "构图", cameraMoveZh: "运镜",
   blockingZh: "调度", bodyActionZh: "身体动作", limbPropActionZh: "肢体道具", microExpressionZh: "微表情",
   gazeBreathZh: "视线呼吸", relationshipReactionZh: "关系反应", lightingZh: "灯光", actionZh: "动作叙述",
   transitionInZh: "入镜转场", evidenceRole: "证据角色",
@@ -36,19 +36,39 @@ const fieldLabel = (key: string): string => FIELD_LABELS[key] ?? key;
 const esc = (v: unknown): string => String(v ?? "")
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 /**
- * 0902 用户拍板：内容密度高，转折/爆点类戏眼词自动「荧光笔」——先 esc 再上色，
- * 词表只收两字以上强信号词，避免满页高亮反而失焦。
+ * 0902 荧光笔 v2（用户实测打回 v1：词表只会点亮「留白/静默」这类通用词，
+ * 真戏眼是整句——「女子妖化反杀」「妖物骇人登场」）。改为**子句级提炼**：
+ * 按中文标点切子句，含强信号词的整个子句上实心亮黄底；未命中的子句里
+ * 再做词级次高亮。全部在 esc 之后进行，防注入不松动。
  */
-const EMPHASIS_WORDS = [
-  "转折", "反转", "逆转", "高潮", "爆发", "爆点", "钩子", "悬念", "揭示",
-  "冲突", "对峙", "黑化", "觉醒", "决裂", "告白", "威胁", "牺牲", "杀气",
-  "骤停", "定格", "静默", "留白", "怒吼", "嘶吼", "崩溃", "绝境", "复仇",
-];
-const EMPHASIS_RE = new RegExp(`(${EMPHASIS_WORDS.join("|")})`, "g");
-const emphasize = (v: unknown): string => esc(v).replace(
-  EMPHASIS_RE,
-  '<b style="background:linear-gradient(transparent 55%,#ffdf8a 55%);color:#8a4a0e;padding:0 2px;border-radius:2px">$1</b>',
-);
+const STRONG_SIGNAL_RE = new RegExp([
+  "反杀", "妖化", "黑化", "觉醒", "夺舍", "骇人", "登场", "现身", "突破",
+  "蜕变", "暴露", "揭穿", "真相", "身份", "翻脸", "背叛", "贪婪", "杀机",
+  "反转", "转折", "高潮", "爆发", "决裂", "复仇", "绝境", "崩溃", "牺牲",
+  "坠落", "激战", "斩", "弑", "灭口", "质问", "威胁", "告白", "生死",
+].join("|"));
+const WORD_EMPHASIS_RE = new RegExp(`(${[
+  "钩子", "悬念", "冲突", "对峙", "蓄势", "铺垫", "收束", "骤停", "定格",
+  "静默", "留白", "怒吼", "嘶吼", "升级", "召见",
+].join("|")})`, "g");
+const STRONG_STYLE =
+  "background:#ffd23f;color:#6b3200;font-weight:700;padding:0 3px;border-radius:3px";
+const WORD_STYLE =
+  "background:#ffe08a;color:#8a2a00;font-weight:600;padding:0 2px;border-radius:2px";
+/** 子句切分保留分隔符；子句上限 60 字防整段刷黄失焦 */
+const emphasize = (v: unknown): string => {
+  const escaped = esc(v);
+  return escaped
+    .split(/([，。；！？：\n]|→)/)
+    .map((piece) => {
+      if (/^[，。；！？：\n→]$/.test(piece)) return piece;
+      if (piece.length >= 2 && piece.length <= 60 && STRONG_SIGNAL_RE.test(piece)) {
+        return `<b style="${STRONG_STYLE}">${piece}</b>`;
+      }
+      return piece.replace(WORD_EMPHASIS_RE, `<b style="${WORD_STYLE}">$1</b>`);
+    })
+    .join("");
+};
 const mmss = (s: number): string => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
 function makeSigner() {
@@ -264,6 +284,25 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
 
   const shots = ((Array.isArray(card.shots) ? card.shots : []) as Array<Record<string, unknown>>)
     .filter((shot) => shot.evidenceRole !== "non_story_ad");
+  const keyMoments = (Array.isArray((card as { keyMoments?: unknown }).keyMoments)
+    ? (card as { keyMoments: Array<Record<string, unknown>> }).keyMoments
+    : [])
+    // NaN 参与比较会打乱有效元素顺序，且会渲染出 NaN:NaN 的秒位——先滤再排。
+    .filter((row) => Number.isFinite(Number(row.atSec)))
+    .slice()
+    .sort((a, b) => Number(a.atSec) - Number(b.atSec));
+  const KIND_ICON: Record<string, string> = {
+    切镜: "🎬", 情绪: "😨", 灯光: "💡", 剧情: "📖", 音轨: "🎵",
+  };
+  /** 0902 精华投影：模型自标「重点时刻」按秒位点亮命中的镜头行/音轨行——真提炼不靠词表猜 */
+  const KM_KIND_COLOR: Record<string, string> = {
+    切镜: "#3a7bd5", 情绪: "#e0559d", 灯光: "#e8823a", 剧情: "#b8452f", 音轨: "#2f9e8f",
+  };
+  const keyMomentsInRange = (startSec: number, endSec: number) =>
+    keyMoments.filter((km) => {
+      const at = Number(km.atSec);
+      return at >= startSec && at < endSec;
+    });
   if (shots.length === 0) {
     throw new Error("该集没有逐镜证据层（v8 之前学习的旧集需重学后才能出报告）");
   }
@@ -295,16 +334,36 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     });
   }
   if (frameList.length === 0) frameSource = "未抽帧（该集尚无帧包）";
+  /**
+   * 0902 用户拍板：「留白」「气势爆发」这类 ≤5 字标注没信息量——过短时从命中
+   * 镜头的动作/肢体/微表情字段里捡 6–24 字的描述顶上，实在凑不出就只留秒位。
+   */
+  const richCaption = (primary: unknown, shot: Record<string, unknown>): string => {
+    const candidates = [
+      String(primary ?? ""),
+      String(shot.actionZh ?? ""),
+      String(shot.bodyActionZh ?? ""),
+      String(shot.limbPropActionZh ?? ""),
+      String(shot.microExpressionZh ?? ""),
+    ].map((t) => t.trim()).filter(Boolean);
+    for (const c of candidates) if (c.length >= 6) return c.slice(0, 24);
+    const joined = candidates.slice(0, 2).join("·");
+    return joined.length >= 6 ? joined.slice(0, 24) : "";
+  };
   const tiles: string[] = [];
+  /** 帧编号锚点表：重点时刻表用「（图N）」跳转对照（0902 用户拍板） */
+  const frameAnchors: Array<{ no: number; atSec: number }> = [];
   for (const frame of frameList) {
     // 0902：帧图内嵌进 HTML，报告发出去不带任何仓储线索；单帧失败跳过不毁整页
     const dataUri = await embedFrameImage(bucket, String(frame.objectName));
     if (!dataUri) continue;
+    const frameNo = tiles.length + 1;
+    frameAnchors.push({ no: frameNo, atSec: Number(frame.atSec) });
     const reasons = (Array.isArray(frame.reasons) ? frame.reasons : []) as string[];
     const badge = reasons.map((r) => `<span style="background:#f6efe0;border:1px solid #e0d2b4;border-radius:8px;padding:0 6px;margin-right:3px;color:#6b5b4a">${esc(r)}</span>`).join("");
     const frameAtSec = Number(frame.atSec);
     const shot = shots.find((s) => frameAtSec >= Number(s.startSec) && frameAtSec < Number(s.endSec)) || {};
-    tiles.push(`<div style="width:158px"><img loading="lazy" src="${dataUri}" style="width:158px;border-radius:4px"><div style="font-size:.7em;color:#7a6f5d">${mmss(frameAtSec)} ${badge}${esc(String(frame.noteZh ?? "").trim() || shot.actionZh)}</div></div>`);
+    tiles.push(`<div id="frame-${frameNo}" style="width:158px;position:relative;scroll-margin-top:20px"><span style="position:absolute;top:4px;left:4px;background:rgba(58,123,213,.92);color:#fff;font-size:.68em;font-weight:700;border-radius:6px;padding:1px 6px">图${frameNo}</span><img loading="lazy" src="${dataUri}" style="width:158px;border-radius:4px"><div style="font-size:.7em;color:#7a6f5d">${mmss(frameAtSec)} ${badge}${esc(richCaption(frame.noteZh, shot))}</div></div>`);
   }
 
   const cl = (card.classification ?? {}) as Record<string, unknown>;
@@ -320,7 +379,57 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     String(card[key] ?? "").trim() || "本集未整理出该项";
 
   const FIELDS = ["hintZh", "unitTypeZh", "shotSizeZh", "angleZh", "compositionZh", "cameraMoveZh", "blockingZh", "bodyActionZh", "limbPropActionZh", "microExpressionZh", "gazeBreathZh", "relationshipReactionZh", "lightingZh", "actionZh", "transitionInZh"];
-  const shotRows = shots.map((shot) => `<tr><td style="position:sticky;left:0;background:#efe5cc;color:#8a6a1f;white-space:nowrap">${mmss(Number(shot.startSec) || 0)}–${mmss(Number(shot.endSec) || 0)}</td>${FIELDS.map((field) => `<td style="padding:3px 8px;min-width:90px">${emphasize(shot[field])}</td>`).join("")}</tr>`).join("");
+  /**
+   * 0902 三审拍板：色块必须有语义，不做斑马纹——只有两类真金上色：
+   * 🟥 剧情亮点/转折（仅「剧情/情绪」类重点时刻）；🟦 运镜/剪辑技巧（词表识别）。
+   */
+  const CAMERA_CRAFT_RE = /甩|环绕|旋转|升格|慢动作|定格|一镜到底|俯冲|希区柯克|急推|急拉|变焦|穿越|跟拍/;
+  const TRANSITION_CRAFT_RE = /叠化|闪白|闪黑|匹配|遮罩|甩接|变速/;
+  const STORY_KINDS = new Set(["剧情", "情绪"]);
+  /**
+   * 0902 四审拍板：「剪辑镜头」占 99% 是废话填充——这栏改推导「镜头变化」：
+   * 景别/机位对比前一镜（特写→近景、俯拍→平视）；拆分镜是内部手法，
+   * 前台写「同镜延续」；无变化留空。
+   */
+  const shotChangeZh = (index: number): string => {
+    const cur = shots[index]!;
+    if (String(cur.unitTypeZh ?? "").trim() === "拆分镜证据段") return "同镜延续";
+    if (index === 0) return "开场镜";
+    const prev = shots[index - 1]!;
+    const parts: string[] = [];
+    const prevSize = String(prev.shotSizeZh ?? "").trim();
+    const curSize = String(cur.shotSizeZh ?? "").trim();
+    if (prevSize && curSize && prevSize !== curSize) parts.push(`${prevSize}→${curSize}`);
+    const prevAngle = String(prev.angleZh ?? "").trim();
+    const curAngle = String(cur.angleZh ?? "").trim();
+    if (prevAngle && curAngle && prevAngle !== curAngle) parts.push(`${prevAngle}→${curAngle}`);
+    return parts.join("·");
+  };
+  const shotRows = shots.map((shot, shotIndex) => {
+    const startSec = Number(shot.startSec) || 0;
+    const endSec = Number(shot.endSec) || 0;
+    const storyMoments = keyMomentsInRange(startSec, endSec)
+      .filter((km) => STORY_KINDS.has(String(km.kindZh)));
+    const cameraCraft = CAMERA_CRAFT_RE.test(String(shot.cameraMoveZh ?? ""))
+      || TRANSITION_CRAFT_RE.test(String(shot.transitionInZh ?? ""));
+    const accent = storyMoments.length ? "#b8452f" : cameraCraft ? "#3a7bd5" : "";
+    const marks = storyMoments.length
+      ? storyMoments.map((km) => KIND_ICON[String(km.kindZh)] ?? "⭐").join("")
+      : cameraCraft ? "🎥" : "";
+    const stickyStyle = `position:sticky;left:0;background:${accent ? "#fff3d6" : "#efe5cc"};color:#8a6a1f;white-space:nowrap${accent ? `;border-left:3px solid ${accent};font-weight:700` : ""}`;
+    return `<tr${accent ? ` style="background:${accent}14"` : ""}><td style="${stickyStyle}">${marks ? `${marks} ` : ""}${mmss(startSec)}–${mmss(endSec)}</td>${FIELDS.map((field) => {
+      if (field === "unitTypeZh") {
+        const change = shotChangeZh(shotIndex);
+        return `<td style="padding:3px 8px;min-width:90px;color:#6b5b4a">${change ? `<b style="color:#4a6b8a">${esc(change)}</b>` : ""}</td>`;
+      }
+      const craftCell = cameraCraft
+        && (field === "cameraMoveZh" || field === "transitionInZh")
+        && (CAMERA_CRAFT_RE.test(String(shot[field] ?? "")) || TRANSITION_CRAFT_RE.test(String(shot[field] ?? "")));
+      return `<td style="padding:3px 8px;min-width:90px">${craftCell
+        ? `<span style="background:#3a7bd51f;border:1px solid #3a7bd5;border-radius:6px;padding:0 5px;color:#2a5da8;font-weight:700">${esc(shot[field])}</span>`
+        : emphasize(shot[field])}</td>`;
+    }).join("")}</tr>`;
+  }).join("");
 
   const AUDIO_TRACK_FIELDS = ["emotionArcZh", "toneZh", "sfxZh", "bgmZh", "atmosphereZh", "silenceZh"] as const;
   const AUDIO_CHUNK_FIELDS = ["audioBeatStructureZh", "mixNotesZh", "reusableAudioZh", "genAudioHintZh"] as const;
@@ -345,9 +454,25 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     const trackRows = (Array.isArray(analysis.audioTrack) ? analysis.audioTrack : []).map((track) => {
       const cues = (Array.isArray(track.cues) ? track.cues : []) as Array<Record<string, unknown>>;
       const cueSpans = cues.map((cue) => `<span style="background:#e7dcc2;border-radius:8px;padding:1px 8px;display:inline-block;margin:1px">${mmss(offset + Number(cue.atSec))} ${esc(cue.kind)} ${esc(cue.detailZh)}</span>`).join(" ");
-      return `<tr><td style="color:#8a6a1f;white-space:nowrap">${mmss(offset + Number(track.fromSec))}–${mmss(offset + Number(track.toSec))}</td>${AUDIO_TRACK_FIELDS.map((key) => `<td style="padding:3px 8px">${emphasize(track[key])}</td>`).join("")}<td style="color:#857a66">${cueSpans}</td></tr>`;
+      const trackFrom = offset + Number(track.fromSec);
+      const trackTo = offset + Number(track.toSec);
+      const hitMoments = keyMomentsInRange(trackFrom, trackTo)
+        .filter((km) => ["剧情", "情绪", "音轨"].includes(String(km.kindZh)));
+      const accent = hitMoments.length
+        ? KM_KIND_COLOR[String(hitMoments[0]!.kindZh)] || "#b8452f"
+        : "";
+      const marks = hitMoments.map((km) => KIND_ICON[String(km.kindZh)] ?? "⭐").join("");
+      return `<tr${accent ? ` style="background:${accent}14"` : ""}><td style="color:#8a6a1f;white-space:nowrap${accent ? `;border-left:3px solid ${accent};font-weight:700` : ""}">${marks ? `${marks} ` : ""}${mmss(trackFrom)}–${mmss(trackTo)}</td>${AUDIO_TRACK_FIELDS.map((key) => `<td style="padding:3px 8px">${emphasize(track[key])}</td>`).join("")}<td style="color:#857a66">${cueSpans}</td></tr>`;
     }).join("");
-    return `<div style="margin:14px 0"><h3 style="color:#7a6f5d;margin:6px 0">声音节点 · 第${(Number(chunk.chunkIndex) || 0) + 1}片</h3>${chunkMeta}<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.85em"><tr><th style="padding:4px 8px;color:#7a6f5d">秒位</th>${AUDIO_TRACK_FIELDS.map((key) => `<th style="padding:4px 8px;color:#7a6f5d">${fieldLabel(key)}</th>`).join("")}<th style="padding:4px 8px;color:#7a6f5d">声音事件</th></tr>${trackRows}</table></div></div>`;
+    // 0902 用户拍板：分片是后台手法不进前台——标题只标时间段
+    const trackList = Array.isArray(analysis.audioTrack) ? analysis.audioTrack : [];
+    const rangeFrom = trackList.length
+      ? offset + Math.min(...trackList.map((t) => Number(t.fromSec) || 0))
+      : offset;
+    const rangeTo = trackList.length
+      ? offset + Math.max(...trackList.map((t) => Number(t.toSec) || 0))
+      : offset;
+    return `<div style="margin:14px 0"><h3 style="color:#7a6f5d;margin:6px 0">声音节点 · ${mmss(rangeFrom)}–${mmss(rangeTo)}</h3>${chunkMeta}<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.85em"><tr><th style="padding:4px 8px;color:#7a6f5d">秒位</th>${AUDIO_TRACK_FIELDS.map((key) => `<th style="padding:4px 8px;color:#7a6f5d">${fieldLabel(key)}</th>`).join("")}<th style="padding:4px 8px;color:#7a6f5d">声音事件</th></tr>${trackRows}</table></div></div>`;
   }).join("");
 
   const subtitles = (Array.isArray(card.subtitles) ? card.subtitles : []) as Array<Record<string, unknown>>;
@@ -392,16 +517,6 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   ), 0);
 
   /** 重点时刻（v12）：模型自报的抓帧秒位，五类＝切镜/情绪/灯光/剧情/音轨。 */
-  const keyMoments = (Array.isArray((card as { keyMoments?: unknown }).keyMoments)
-    ? (card as { keyMoments: Array<Record<string, unknown>> }).keyMoments
-    : [])
-    // NaN 参与比较会打乱有效元素顺序，且会渲染出 NaN:NaN 的秒位——先滤再排。
-    .filter((row) => Number.isFinite(Number(row.atSec)))
-    .slice()
-    .sort((a, b) => Number(a.atSec) - Number(b.atSec));
-  const KIND_ICON: Record<string, string> = {
-    切镜: "🎬", 情绪: "😨", 灯光: "💡", 剧情: "📖", 音轨: "🎵",
-  };
   type KeyMomentSubtitle = { atSec: number; textZh: string };
   const subtitlesByKeyMoment = new Map<number, KeyMomentSubtitle[]>();
   for (const subtitle of subtitles.slice().sort((a, b) => Number(a.atSec) - Number(b.atSec))) {
@@ -424,14 +539,25 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   }
   const keyMomentSubtitleCount = Array.from(subtitlesByKeyMoment.values())
     .reduce((sum, rows) => sum + rows.length, 0);
-  const kmRows = keyMoments.map((row, index) => (
-    `<tr><td style="color:#8a6a1f;white-space:nowrap">${mmss(Number(row.atSec))}</td>`
-    + `<td style="white-space:nowrap">${KIND_ICON[String(row.kindZh)] ?? ""} ${esc(row.kindZh)}</td>`
-    + `<td>${emphasize(row.noteZh)}</td>`
-    + `<td>${(subtitlesByKeyMoment.get(index) ?? []).map((subtitle) => (
-      `<div><span style="color:#8a6a1f;white-space:nowrap">${mmss(subtitle.atSec)}</span> ${esc(subtitle.textZh)}</div>`
-    )).join("") || '<span style="color:#9a8d75">—</span>'}</td></tr>`
-  )).join("");
+  // 0902 用户拍板：说明列与截图标注同源重复——瘦身为 秒位/类型/关键字幕/对照截图 四栏
+  const kmRows = keyMoments.map((row, index) => {
+    const at = Number(row.atSec);
+    let best: { no: number; d: number } | null = null;
+    for (const anchor of frameAnchors) {
+      const d = Math.abs(anchor.atSec - at);
+      if (d <= 2.5 && (!best || d < best.d)) best = { no: anchor.no, d };
+    }
+    const frameRef = best
+      ? `<a href="#frame-${best.no}" style="color:#3a7bd5;font-weight:700;text-decoration:none">图${best.no}</a>`
+      : '<span style="color:#9a8d75">—</span>';
+    const subtitleCell = (subtitlesByKeyMoment.get(index) ?? []).map((subtitle) => (
+      `<div><span style="color:#8a6a1f;white-space:nowrap">${mmss(subtitle.atSec)}</span> <b style="color:#8a2a1a">${esc(subtitle.textZh)}</b></div>`
+    )).join("") || '<span style="color:#9a8d75">—</span>';
+    return `<tr><td style="color:#8a6a1f;white-space:nowrap">${mmss(at)}</td>`
+      + `<td style="white-space:nowrap">${KIND_ICON[String(row.kindZh)] ?? ""} ${esc(row.kindZh)}</td>`
+      + `<td>${subtitleCell}</td>`
+      + `<td style="white-space:nowrap;text-align:center">${frameRef}</td></tr>`;
+  }).join("");
 
   /** 镜长分布：一眼看粒度，长镜区间标红。 */
   const buckets: Array<[string, number, number]> = [
@@ -542,11 +668,11 @@ ${section("🥁 节奏结构", panel(summaryTextOf("beatStructureZh")))}
 ${section("🌊 情绪推进", panel(summaryTextOf("moodArcZh")))}
 ${section("🏷️ 五维标签墙", tags)}
 ${section(`⭐ 重点时刻表 · ${keyMoments.length} 条`, keyMoments.length
-    ? tableOf(["秒位", "类型", "说明", "相关字幕（前后 2 秒）"], kmRows)
+    ? tableOf(["秒位", "类型", "关键字幕（前后 2 秒）", "对照截图"], kmRows)
     : `<p style="color:#857a66">本集手记未单列重点时刻</p>`, true)}
 ${section("🎞️ 视频节点区域", `<div style="display:flex;flex-wrap:wrap;gap:8px">${tiles.join("")}</div>`)}
 ${section("🎧 声音节点区域", audioSections)}
-<details style="margin-top:22px;background:#fffdf6;border:1px solid #b8452f33;border-top:4px solid #b8452f;border-radius:14px;padding:14px 20px;box-shadow:0 2px 10px rgba(150,110,60,.10)" open><summary style="color:#b8452f;font-weight:600;font-size:1.1em;cursor:pointer">全镜头表 · ${shots.length} 镜 × ${FIELDS.length} 字段</summary><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#efe5cc">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#7a6f5d">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
+<details style="margin-top:22px;background:#fffdf6;border:1px solid #b8452f33;border-top:4px solid #b8452f;border-radius:14px;padding:14px 20px;box-shadow:0 2px 10px rgba(150,110,60,.10)" open><summary style="color:#b8452f;font-weight:600;font-size:1.1em;cursor:pointer">全镜头表 · ${shots.length} 镜 × ${FIELDS.length} 字段</summary><div style="margin:8px 0 4px;font-size:.8em;color:#7a6f5d">色块图例：<span style="background:#b8452f14;border-left:3px solid #b8452f;padding:1px 8px;font-weight:700;color:#8a2a1a">剧情亮点/转折</span>　<span style="background:#3a7bd514;border-left:3px solid #3a7bd5;padding:1px 8px;font-weight:700;color:#2a5da8">运镜/剪辑技巧</span>　其余行不上色</div><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#efe5cc">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#7a6f5d">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
 <div style="text-align:center;margin-top:36px"><span style="display:inline-block;background:#fdf3dd;border:1.5px solid #e8823a;border-radius:999px;padding:8px 22px;color:#b25a1a;font-size:.85em">⭐ 逐帧逐秒审读整理 · 仅作学习拆解，版权归原作品所有</span></div></div></body></html>`;
 
   await uploadBufferToGcs({
