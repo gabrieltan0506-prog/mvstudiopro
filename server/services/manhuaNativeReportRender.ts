@@ -287,16 +287,16 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     const dataUri = await embedFrameImage(bucket, String(frame.objectName));
     if (!dataUri) continue;
     const reasons = (Array.isArray(frame.reasons) ? frame.reasons : []) as string[];
-    const badge = reasons.map((r) => `<span style="background:#1d2733;border-radius:8px;padding:0 6px;margin-right:3px">${esc(r)}</span>`).join("");
+    const badge = reasons.map((r) => `<span style="background:#e7dcc2;border-radius:8px;padding:0 6px;margin-right:3px">${esc(r)}</span>`).join("");
     const frameAtSec = Number(frame.atSec);
     const shot = shots.find((s) => frameAtSec >= Number(s.startSec) && frameAtSec < Number(s.endSec)) || {};
-    tiles.push(`<div style="width:158px"><img loading="lazy" src="${dataUri}" style="width:158px;border-radius:4px"><div style="font-size:.7em;color:#8fa3bd">${mmss(frameAtSec)} ${badge}${esc(String(frame.noteZh ?? "").trim() || shot.actionZh)}</div></div>`);
+    tiles.push(`<div style="width:158px"><img loading="lazy" src="${dataUri}" style="width:158px;border-radius:4px"><div style="font-size:.7em;color:#7a6f5d">${mmss(frameAtSec)} ${badge}${esc(String(frame.noteZh ?? "").trim() || shot.actionZh)}</div></div>`);
   }
 
   const cl = (card.classification ?? {}) as Record<string, unknown>;
   const tags = Object.entries(cl)
     .filter(([, v]) => Array.isArray(v))
-    .map(([k, v]) => `<div style="margin:4px 0"><b style="color:#e8c66a">${esc(fieldLabel(k))}</b>：${(v as unknown[]).map((t) => `<span style="background:#1d2733;border-radius:10px;padding:2px 10px;margin:2px;display:inline-block">${esc(t)}</span>`).join(" ")}</div>`)
+    .map(([k, v]) => `<div style="margin:4px 0"><b style="color:#8a6a1f">${esc(fieldLabel(k))}</b>：${(v as unknown[]).map((t) => `<span style="background:#e7dcc2;border-radius:10px;padding:2px 10px;margin:2px;display:inline-block">${esc(t)}</span>`).join(" ")}</div>`)
     .join("");
   /**
    * 0830 报告规格：摘要四栏拆成四个独立区块（可复用手法 / 生成提示要素 /
@@ -306,7 +306,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     String(card[key] ?? "").trim() || "本集未整理出该项";
 
   const FIELDS = ["hintZh", "unitTypeZh", "shotSizeZh", "angleZh", "compositionZh", "cameraMoveZh", "blockingZh", "bodyActionZh", "limbPropActionZh", "microExpressionZh", "gazeBreathZh", "relationshipReactionZh", "lightingZh", "actionZh", "transitionInZh"];
-  const shotRows = shots.map((shot) => `<tr><td style="position:sticky;left:0;background:#141b24;color:#e8c66a;white-space:nowrap">${mmss(Number(shot.startSec) || 0)}–${mmss(Number(shot.endSec) || 0)}</td>${FIELDS.map((field) => `<td style="padding:3px 8px;min-width:90px">${esc(shot[field])}</td>`).join("")}</tr>`).join("");
+  const shotRows = shots.map((shot) => `<tr><td style="position:sticky;left:0;background:#efe5cc;color:#8a6a1f;white-space:nowrap">${mmss(Number(shot.startSec) || 0)}–${mmss(Number(shot.endSec) || 0)}</td>${FIELDS.map((field) => `<td style="padding:3px 8px;min-width:90px">${esc(shot[field])}</td>`).join("")}</tr>`).join("");
 
   const AUDIO_TRACK_FIELDS = ["emotionArcZh", "toneZh", "sfxZh", "bgmZh", "atmosphereZh", "silenceZh"] as const;
   const AUDIO_CHUNK_FIELDS = ["audioBeatStructureZh", "mixNotesZh", "reusableAudioZh", "genAudioHintZh"] as const;
@@ -326,14 +326,14 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
       ?? (Number(chunk.chunkIndex) || 0) * 300;
     const analysis = (chunk.analysis ?? {}) as Record<string, unknown> & { audioTrack?: Array<Record<string, unknown>> };
     const chunkMeta = AUDIO_CHUNK_FIELDS
-      .map((key) => `<div style="margin:2px 0"><b style="color:#e8c66a">${fieldLabel(key)}</b>：<span style="color:#9db4d0;white-space:pre-wrap">${esc(analysis[key])}</span></div>`)
+      .map((key) => `<div style="margin:2px 0"><b style="color:#8a6a1f">${fieldLabel(key)}</b>：<span style="color:#857a66;white-space:pre-wrap">${esc(analysis[key])}</span></div>`)
       .join("");
     const trackRows = (Array.isArray(analysis.audioTrack) ? analysis.audioTrack : []).map((track) => {
       const cues = (Array.isArray(track.cues) ? track.cues : []) as Array<Record<string, unknown>>;
-      const cueSpans = cues.map((cue) => `<span style="background:#1d2733;border-radius:8px;padding:1px 8px;display:inline-block;margin:1px">${mmss(offset + Number(cue.atSec))} ${esc(cue.kind)} ${esc(cue.detailZh)}</span>`).join(" ");
-      return `<tr><td style="color:#e8c66a;white-space:nowrap">${mmss(offset + Number(track.fromSec))}–${mmss(offset + Number(track.toSec))}</td>${AUDIO_TRACK_FIELDS.map((key) => `<td style="padding:3px 8px">${esc(track[key])}</td>`).join("")}<td style="color:#9db4d0">${cueSpans}</td></tr>`;
+      const cueSpans = cues.map((cue) => `<span style="background:#e7dcc2;border-radius:8px;padding:1px 8px;display:inline-block;margin:1px">${mmss(offset + Number(cue.atSec))} ${esc(cue.kind)} ${esc(cue.detailZh)}</span>`).join(" ");
+      return `<tr><td style="color:#8a6a1f;white-space:nowrap">${mmss(offset + Number(track.fromSec))}–${mmss(offset + Number(track.toSec))}</td>${AUDIO_TRACK_FIELDS.map((key) => `<td style="padding:3px 8px">${esc(track[key])}</td>`).join("")}<td style="color:#857a66">${cueSpans}</td></tr>`;
     }).join("");
-    return `<div style="margin:14px 0"><h3 style="color:#8fa3bd;margin:6px 0">第${(Number(chunk.chunkIndex) || 0) + 1}片音轨（模型原文区）</h3>${chunkMeta}<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.85em"><tr><th style="padding:4px 8px;color:#8fa3bd">秒位</th>${AUDIO_TRACK_FIELDS.map((key) => `<th style="padding:4px 8px;color:#8fa3bd">${fieldLabel(key)}</th>`).join("")}<th style="padding:4px 8px;color:#8fa3bd">声音事件</th></tr>${trackRows}</table></div></div>`;
+    return `<div style="margin:14px 0"><h3 style="color:#7a6f5d;margin:6px 0">第${(Number(chunk.chunkIndex) || 0) + 1}片音轨（模型原文区）</h3>${chunkMeta}<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.85em"><tr><th style="padding:4px 8px;color:#7a6f5d">秒位</th>${AUDIO_TRACK_FIELDS.map((key) => `<th style="padding:4px 8px;color:#7a6f5d">${fieldLabel(key)}</th>`).join("")}<th style="padding:4px 8px;color:#7a6f5d">声音事件</th></tr>${trackRows}</table></div></div>`;
   }).join("");
 
   const subtitles = (Array.isArray(card.subtitles) ? card.subtitles : []) as Array<Record<string, unknown>>;
@@ -411,12 +411,12 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const keyMomentSubtitleCount = Array.from(subtitlesByKeyMoment.values())
     .reduce((sum, rows) => sum + rows.length, 0);
   const kmRows = keyMoments.map((row, index) => (
-    `<tr><td style="color:#e8c66a;white-space:nowrap">${mmss(Number(row.atSec))}</td>`
+    `<tr><td style="color:#8a6a1f;white-space:nowrap">${mmss(Number(row.atSec))}</td>`
     + `<td style="white-space:nowrap">${KIND_ICON[String(row.kindZh)] ?? ""} ${esc(row.kindZh)}</td>`
     + `<td>${esc(row.noteZh)}</td>`
     + `<td>${(subtitlesByKeyMoment.get(index) ?? []).map((subtitle) => (
-      `<div><span style="color:#e8c66a;white-space:nowrap">${mmss(subtitle.atSec)}</span> ${esc(subtitle.textZh)}</div>`
-    )).join("") || '<span style="color:#5d6b80">—</span>'}</td></tr>`
+      `<div><span style="color:#8a6a1f;white-space:nowrap">${mmss(subtitle.atSec)}</span> ${esc(subtitle.textZh)}</div>`
+    )).join("") || '<span style="color:#9a8d75">—</span>'}</td></tr>`
   )).join("");
 
   /** 镜长分布：一眼看粒度，长镜区间标红。 */
@@ -432,10 +432,10 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const histPeak = Math.max(1, ...hist.map((row) => row.n));
   const histBars = hist.map((row) => (
     `<div style="display:flex;align-items:center;gap:10px;margin:5px 0">`
-    + `<span style="width:64px;color:#9db4d0;font-size:12px">${row.label}</span>`
+    + `<span style="width:64px;color:#857a66;font-size:12px">${row.label}</span>`
     + `<span style="height:15px;border-radius:3px;min-width:2px;width:${Math.round((row.n / histPeak) * 100)}%;`
-    + `background:${row.warn ? "#e8756a" : "#cbb3e6"}"></span>`
-    + `<span style="color:#9db4d0;font-size:12px">${row.n}</span></div>`
+    + `background:${row.warn ? "#b5473a" : "#e9d9b4"}"></span>`
+    + `<span style="color:#857a66;font-size:12px">${row.n}</span></div>`
   )).join("");
 
   /**
@@ -450,7 +450,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
    */
   const invalidShotCount = shots.length - shotSpans.length;
   const grainBad = shotSpans.length === 0 || avgShotSec > 12;
-  const grainColor = grainBad ? "#e8756a" : "#cbb3e6";
+  const grainColor = grainBad ? "#b5473a" : "#5c7a3a";
   const grainText = shotSpans.length === 0
     ? "🔴 全部镜头秒位非法，无法判定粒度"
     : (avgShotSec > 12
@@ -467,30 +467,30 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     [String(audioSegCount), "音轨段"],
     [String(adRanges.length), "广告区间"],
   ].map(([value, label]) => (
-    `<div style="background:rgba(20,27,36,.62);border:1px solid rgba(232,198,106,.22);border-radius:10px;`
-    + `padding:12px 16px;min-width:120px"><b style="display:block;font-size:1.7em;color:#fff;line-height:1.3">`
+    `<div style="background:rgba(255,251,240,.75);border:1px solid rgba(138,106,31,.28);border-radius:10px;`
+    + `padding:12px 16px;min-width:120px"><b style="display:block;font-size:1.7em;color:#5c4a1e;line-height:1.3">`
     + `${esc(value)}</b>${esc(label)}</div>`
   )).join("");
 
   const section = (titleZh: string, body: string, highlight = false) => (
-    `<h2 style="color:${highlight ? "#fff" : "#e8c66a"};margin-top:30px;`
-    + `${highlight ? "background:rgba(232,198,106,.18);padding:6px 12px;border-radius:8px;border-left:4px solid #e8c66a" : ""}">`
+    `<h2 style="color:#8a6a1f;margin-top:30px;`
+    + `${highlight ? "background:rgba(138,106,31,.12);padding:6px 12px;border-radius:8px;border-left:4px solid #8a6a1f" : ""}">`
     + `${esc(titleZh)}</h2>${body}`
   );
   const panel = (text: unknown) => (
-    `<div style="background:rgba(20,27,36,.62);border:1px solid rgba(232,198,106,.22);border-radius:10px;`
+    `<div style="background:rgba(255,251,240,.75);border:1px solid rgba(138,106,31,.24);border-radius:10px;`
     + `padding:14px 18px;margin-top:10px;white-space:pre-wrap">${esc(text)}</div>`
   );
   const tableOf = (headers: string[], rows: string) => (
     `<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.85em;margin-top:10px">`
-    + `<tr>${headers.map((h) => `<th style="padding:5px 9px;color:#8fa3bd;text-align:left">${esc(h)}</th>`).join("")}</tr>`
+    + `<tr>${headers.map((h) => `<th style="padding:5px 9px;color:#7a6f5d;text-align:left">${esc(h)}</th>`).join("")}</tr>`
     + `${rows}</table></div>`
   );
 
-  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(input.labelZh)} 逐帧审片手记</title></head><body style="margin:0;background:#8e4a8b"><div style="font-family:'Songti SC',serif;background:linear-gradient(165deg,#7a1f3d 0%,#8e4a8b 55%,#cbb3e6 100%);background-attachment:fixed;color:#dce3ec;padding:28px;max-width:1200px;margin:auto">
-<p style="color:#e8c66a;letter-spacing:.3em;font-size:.8em">${esc(input.labelZh)} · ${esc(input.sourceLabelZh)} · 逐镜逐秒审读整理 · 字幕只记重点时刻前后两秒</p>
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(input.labelZh)} 逐帧审片手记</title></head><body style="margin:0;background:#efe5cc"><div style="font-family:'Songti SC',serif;background:linear-gradient(165deg,#f7f0dd 0%,#efe5cc 55%,#e9d9b4 100%);background-attachment:fixed;color:#3d3428;padding:28px;max-width:1200px;margin:auto">
+<p style="color:#8a6a1f;letter-spacing:.3em;font-size:.8em">${esc(input.labelZh)} · ${esc(input.sourceLabelZh)} · 逐镜逐秒审读整理 · 字幕只记重点时刻前后两秒</p>
 <h1 style="font-size:1.8em;margin:.2em 0">逐帧审片手记</h1>
-<p style="color:#8fa3bd;margin:.3em 0 0">${shots.length} 镜（已剔除 ${adShotCount} 广告镜）· ${keyMomentSubtitleCount} 重点字幕 · ${keyMoments.length} 重点时刻 · 精选画面 ${tiles.length} 张 · 覆盖 ${(coveredSec / 60).toFixed(1)} 分钟</p>
+<p style="color:#7a6f5d;margin:.3em 0 0">${shots.length} 镜（已剔除 ${adShotCount} 广告镜）· ${keyMomentSubtitleCount} 重点字幕 · ${keyMoments.length} 重点时刻 · 精选画面 ${tiles.length} 张 · 覆盖 ${(coveredSec / 60).toFixed(1)} 分钟</p>
 
 <div style="display:flex;gap:12px;flex-wrap:wrap;margin:18px 0">${kpi}</div>
 <p style="color:${grainColor};font-weight:600">${grainText}</p>
@@ -503,11 +503,11 @@ ${section("情绪推进", panel(summaryTextOf("moodArcZh")))}
 ${section("五维标签墙", tags)}
 ${section(`重点时刻表 · ${keyMoments.length} 条`, keyMoments.length
     ? tableOf(["秒位", "类型", "说明", "相关字幕（前后 2 秒）"], kmRows)
-    : `<p style="color:#9db4d0">本集手记未单列重点时刻</p>`, true)}
+    : `<p style="color:#857a66">本集手记未单列重点时刻</p>`, true)}
 ${section("画面时间轴", `<div style="display:flex;flex-wrap:wrap;gap:8px">${tiles.join("")}</div>`)}
 ${section("音轨解析", audioSections)}
-<details style="margin-top:30px" open><summary style="color:#e8c66a;font-size:1.2em;cursor:pointer">全镜头表 · ${shots.length} 镜 × ${FIELDS.length} 字段</summary><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#141b24">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#8fa3bd">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
-<p style="color:#5d6b80;font-size:.8em;margin-top:36px">—— 逐帧逐秒审读整理 · 仅作学习拆解，版权归原作品所有 ——</p></div></body></html>`;
+<details style="margin-top:30px" open><summary style="color:#8a6a1f;font-size:1.2em;cursor:pointer">全镜头表 · ${shots.length} 镜 × ${FIELDS.length} 字段</summary><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#efe5cc">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#7a6f5d">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
+<p style="color:#9a8d75;font-size:.8em;margin-top:36px">—— 逐帧逐秒审读整理 · 仅作学习拆解，版权归原作品所有 ——</p></div></body></html>`;
 
   await uploadBufferToGcs({
     bucket,
