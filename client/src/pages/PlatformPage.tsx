@@ -2655,7 +2655,13 @@ export default function PlatformPage() {
     setManhuaPasteUrl("");
     setManhuaPasteTitle("");
     manhuaLearnSegmentSecondsEditedRef.current = false;
-    setManhuaLearnSegmentSecondsInput(String(readManhuaLearnSegmentSeconds(manhuaLearnUserKey)));
+    {
+      // 0903 修：#1357 漏网点——存档为空时 String(undefined) 会把字面量 "undefined"
+      // 灌进秒数栏（提交必炸「整数秒」），有旧手填值则每次加载替用户填回去，
+      // 「留空＝自动配平」因此从未真正生效。空档一律回空串。
+      const storedSeconds = readManhuaLearnSegmentSeconds(manhuaLearnUserKey);
+      setManhuaLearnSegmentSecondsInput(storedSeconds == null ? "" : String(storedSeconds));
+    }
     setManhuaLearnStandaloneSource(readManhuaLearnStandalone(manhuaLearnUserKey));
     setManhuaLearnSegmentSecondsError("");
     manhuaLearnVideoFpsEditedRef.current = false;
