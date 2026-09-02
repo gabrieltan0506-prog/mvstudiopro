@@ -62,7 +62,25 @@ export async function findManhuaWriterTrialByChargeKey(
   return Number(row?.c || 0) > 0;
 }
 
-/** 试写完成后落流水：既是限流计数来源，也是幂等占位（chargeKey 唯一索引兜底并发） */
+/**
+ * 0902 TOCTOU 根治：占位改到模型调用**之前**——并发多发同时过「查数」闸门时，
+ * 谁先插到流水谁占额度，后来者撞唯一索引/超数即拒，平台不再被并发白嫖模型费。
+ * 模型失败/解析失败时用 deleteManhuaWriterTrialUse 退占位，兑现「本次不计入额度」。
+ */
+export async function deleteManhuaWriterTrialUse(chargeKey: string): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .delete(stripeUsageLogs)
+    .where(
+      and(
+        eq(stripeUsageLogs.chargeKey, chargeKey),
+        eq(stripeUsageLogs.action, MANHUA_WRITER_TRIAL_ACTION),
+      ),
+    );
+}
+
+/** 试写落流水：既是限流计数来源，也是幂等占位（chargeKey 唯一索引兜底并发） */
 export async function logManhuaWriterTrialUse(params: {
   userId: number;
   chargeKey: string;
