@@ -528,7 +528,10 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       const parsedLearned = Number(/累计\s*(\d+)\s*集/.exec(label)?.[1] || 0);
       const parsedListed = Number(/已解析\s*(\d+)\s*集/.exec(label)?.[1] || 0);
       const parsedEpisode = Number(/第\s*(\d+)\s*集/.exec(label)?.[1] || 0);
-      const partialMatch = /第\s*(\d+)\s*集已生成\s*(\d+)\/(\d+)\s*段待审卡/.exec(label);
+      // 0902 修漂移：执行层实际喊「已通过并缓存 X/Y 片」，旧正则只认「已生成 X/Y 段待审卡」，
+      // 检查点从未写入 → 待审卡分段进度不实时。两种句式都认，旧日志不作废。
+      const partialMatch =
+        /第\s*(\d+)\s*集已(?:生成|通过并缓存)\s*(\d+)\/(\d+)\s*(?:段待审卡|片)/.exec(label);
       const nativePartialProposalCheckpoint = partialMatch
         ? {
             episodeIndex: Number(partialMatch[1]),

@@ -3636,6 +3636,23 @@ export default function PlatformPage() {
       approvedSuccessSegments: approvedProgress?.successSegments,
     });
   }, [approvedManhuaTemplateById, selectedManhuaProposal]);
+  /**
+   * 0902 用户拍板：学习仍在跑时待审卡只报进度不放「批准」——GLM 整形完成
+   * （任务终态）才亮按钮。断点停跑后的「批准当前 X/Y 入库」维持原行为。
+   */
+  const selectedManhuaProposalLearningInFlight = useMemo(() => {
+    const idMatch = /^tpl_native_([0-9A-Za-z_-]+)_ep\d{3}$/.exec(
+      String(selectedManhuaProposal?.id || ""),
+    );
+    const seriesKey = idMatch?.[1] || "";
+    if (!seriesKey) return false;
+    return manhuaLearnServerJobs.some((job) => {
+      if (job.status !== "queued" && job.status !== "running") return false;
+      const output = (job.output ?? {}) as { nativeSeriesKey?: unknown; seriesKey?: unknown };
+      const jobSeriesKey = String(output.nativeSeriesKey || output.seriesKey || "").trim();
+      return jobSeriesKey === seriesKey;
+    });
+  }, [manhuaLearnServerJobs, selectedManhuaProposal?.id]);
   const [ownerTemplateDetailId, setOwnerTemplateDetailId] = useState<string | null>(null);
   const [ownerTemplateOptimizeModel, setOwnerTemplateOptimizeModel] =
     useState<ManhuaViralTemplateOptimizeModel>("terra_high");
@@ -14083,7 +14100,15 @@ export default function PlatformPage() {
                             </select>
                             <button
                               type="button"
-                              disabled={approveManhuaViralTemplateMutation.isPending}
+                              disabled={
+                                approveManhuaViralTemplateMutation.isPending
+                                || selectedManhuaProposalLearningInFlight
+                              }
+                              title={
+                                selectedManhuaProposalLearningInFlight
+                                  ? "该剧学习仍在进行，GLM 整形完成后才可批准；进度会逐段刷新"
+                                  : undefined
+                              }
                               onClick={() =>
                                 void approveManhuaLearnProposal(
                                   selectedManhuaProposal.id,
@@ -14095,9 +14120,11 @@ export default function PlatformPage() {
                             >
                               {approveManhuaViralTemplateMutation.isPending
                                 ? "处理中…"
-                                : selectedManhuaProposal.revisionOf
-                                  ? "批准替换原版"
-                                  : selectedManhuaProposalProgressCopy?.approveButtonZh || "批准入库"}
+                                : selectedManhuaProposalLearningInFlight
+                                  ? `学习中 ${selectedManhuaProposal.nativeProgress ? `${selectedManhuaProposal.nativeProgress.successSegments}/${selectedManhuaProposal.nativeProgress.attemptedSegments} 段` : "…"} · 整形完成后可批准`
+                                  : selectedManhuaProposal.revisionOf
+                                    ? "批准替换原版"
+                                    : selectedManhuaProposalProgressCopy?.approveButtonZh || "批准入库"}
                             </button>
                             {(() => {
                               /* 待审卡的导出入口：只有能从卡 id 干净解析出
