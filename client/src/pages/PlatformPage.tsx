@@ -12697,7 +12697,7 @@ export default function PlatformPage() {
                               className="w-24 rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] tabular-nums text-white disabled:opacity-45"
                             />
                             <span id="manhua-learn-segment-seconds-help" className="text-[10px] text-[#c9c0e6]/50">
-                              留空＝按集自动配平（约 {NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS} 秒/片整集均分，尾片不吃零头，如 1154 秒自动切 4×289）；填 1–{NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS} 则按填的值。分片时长与采样fps分别设置，不自动换档。
+                              留空＝按集自动配平：整集均分尾片不吃零头（1154 秒→4×289），采样fps 随片长阶梯自动配（≤300s→10，每多 10 秒 +2）；填 1–{NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS} 则秒数与 fps 都按手填值，不自动换档。
                             </span>
                             {manhuaLearnSegmentSecondsError ? (
                               <span role="alert" className="text-[10px] text-rose-200">{manhuaLearnSegmentSecondsError}</span>

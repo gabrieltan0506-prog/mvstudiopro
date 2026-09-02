@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { DouyinListedEpisode } from "../../shared/manhuaLearnDouyinWebApi.js";
 import {
   assertNativeDeepReadPlanConfirmation,
+  balancedNativeDeepReadVideoFps,
   buildNativeDeepReadPlanPreview,
   computeNativeDeepReadPlanHash,
   describeNativeDeepReadSegmentPlanZh,
@@ -61,6 +62,15 @@ describe("原生精读计划", () => {
     expect(splitNativeDeepReadSegments(120, 319)).toEqual([{ startSec: 0, endSec: 120 }]);
   });
 
+  it("自动配平 fps 阶梯：≤300→10，此后每 10 秒 +2，封顶 24", () => {
+    for (const [seconds, fps] of [
+      [120, 10], [300, 10], [301, 12], [310, 12], [311, 14],
+      [319, 14], [320, 14], [321, 16], [330, 16], [334, 18], [360, 22], [1000, 24],
+    ] as const) {
+      expect(balancedNativeDeepReadVideoFps(seconds)).toBe(fps);
+    }
+  });
+
   it("非法长度和超过 32 片明确拒绝，不改变用户设置来凑片数", () => {
     expect(() => splitNativeDeepReadSegments(1594, 0)).toThrow("整数秒");
     expect(() => splitNativeDeepReadSegments(1594, 317.5)).toThrow("整数秒");
@@ -83,11 +93,13 @@ describe("原生精读计划", () => {
     const defaultPlan = await buildNativeDeepReadPlanPreview({
       url: "https://www.douyin.com/collection/123456", limit: 1,
     }, d);
-    // 0902 自动配平：留空时 1594 秒＝round(5.31)=5 段 × ceil(1594/5)=319 秒——
-    // 与上面手填 319 完全同切分，同切分＝同计划＝同 hash
+    // 0902 自动配平：留空时 1594 秒＝round(5.31)=5 段 × ceil(1594/5)=319 秒；
+    // 但配平会按片长阶梯把 fps 调到 14（319∈311–320），与手填 319+默认 12fps
+    // 的计划参数不同——不同参数＝不同计划＝不同 hash
     expect(defaultPlan.totalVisualCalls).toBe(5);
     expect(defaultPlan.episodes[0]?.segmentSeconds).toBe(319);
-    expect(defaultPlan.planHash).toBe(plan.planHash);
+    expect(defaultPlan.episodes[0]?.videoFps).toBe(14);
+    expect(defaultPlan.planHash).not.toBe(plan.planHash);
   });
 
   it("281秒计划明确显示真实尾片，不能只显示分片数量", async () => {
@@ -578,9 +590,10 @@ describe("原生精读计划", () => {
       episodeIndex: 1,
       sourceUrl: `https://www.douyin.com/video/${modalId}`,
       durationSec: 2_212,
-      // 0902 自动配平：2212 秒＝7 段 × 316 秒整分，尾片与前片同长
+      // 0902 自动配平：2212 秒＝7 段 × 316 秒整分，尾片与前片同长；
+      // fps 按片长阶梯落 14（316∈311–320）
       segmentSeconds: 316,
-      videoFps: 12,
+      videoFps: 14,
       segments: [
         { startSec: 0, endSec: 316 },
         { startSec: 316, endSec: 632 },

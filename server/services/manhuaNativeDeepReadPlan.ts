@@ -34,6 +34,7 @@ import type { ManhuaTemplateLearnLlmProvider } from "../../shared/manhuaTemplate
 import {
   NATIVE_DEEP_READ_JOB_MAX_CALLS,
   NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS,
+  NATIVE_DEEP_READ_MAX_VIDEO_FPS,
   parseNativeDeepReadSegmentSeconds,
   parseNativeDeepReadVideoFps,
 } from "../../shared/manhuaNativeDeepReadJob.js";
@@ -221,6 +222,18 @@ export function balancedNativeDeepReadSegmentSeconds(durationSec: number): numbe
     length = Math.ceil(total / n);
   }
   return length;
+}
+
+/**
+ * 0902 用户拍板第二定律：自动配平的分片按片长配采样率——
+ * ≤300 秒一律 10fps，此后每多 10 秒加 2fps（301–310→12、311–320→14、
+ * 321–330→16，顺推），封顶接口上限 24fps。只在自动配平模式下生效。
+ */
+export function balancedNativeDeepReadVideoFps(segmentSeconds: number): number {
+  const seconds = Math.max(1, Math.round(Number(segmentSeconds) || 0));
+  if (seconds <= NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS) return 10;
+  const steps = Math.ceil((seconds - NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS) / 10);
+  return Math.min(NATIVE_DEEP_READ_MAX_VIDEO_FPS, 10 + 2 * steps);
 }
 
 export function splitNativeDeepReadSegments(
@@ -868,12 +881,15 @@ export async function buildNativeDeepReadPlanPreview(
     const episodeSegmentSeconds = autoBalanceSegments
       ? balancedNativeDeepReadSegmentSeconds(durationSec)
       : segmentSeconds;
+    // 续学恢复的集保持原 fps；自动配平的新集按片长阶梯配采样率
+    const episodeVideoFps = restored?.videoFps
+      ?? (autoBalanceSegments ? balancedNativeDeepReadVideoFps(episodeSegmentSeconds) : videoFps);
     episodes.push({
       episodeIndex: e.index,
       sourceUrl: e.url,
       durationSec,
       segmentSeconds: episodeSegmentSeconds,
-      videoFps: restored?.videoFps ?? videoFps,
+      videoFps: episodeVideoFps,
       segments: restored?.segments ?? splitNativeDeepReadSegments(durationSec, episodeSegmentSeconds),
       ...(reclaimSet.has(e.index) ? { reclaimFailedClaim: true } : {}),
       ...(sourceEpisodeIndex === e.index ? { recoverMisplacedSourceCache: true } : {}),
