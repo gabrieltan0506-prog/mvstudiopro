@@ -379,16 +379,33 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     String(card[key] ?? "").trim() || "本集未整理出该项";
 
   const FIELDS = ["hintZh", "unitTypeZh", "shotSizeZh", "angleZh", "compositionZh", "cameraMoveZh", "blockingZh", "bodyActionZh", "limbPropActionZh", "microExpressionZh", "gazeBreathZh", "relationshipReactionZh", "lightingZh", "actionZh", "transitionInZh"];
+  /**
+   * 0902 三审拍板：色块必须有语义，不做斑马纹——只有两类真金上色：
+   * 🟥 剧情亮点/转折（仅「剧情/情绪」类重点时刻）；🟦 运镜/剪辑技巧（词表识别）。
+   */
+  const CAMERA_CRAFT_RE = /甩|环绕|旋转|升格|慢动作|定格|一镜到底|俯冲|希区柯克|急推|急拉|变焦|穿越|跟拍/;
+  const TRANSITION_CRAFT_RE = /叠化|闪白|闪黑|匹配|遮罩|甩接|变速/;
+  const STORY_KINDS = new Set(["剧情", "情绪"]);
   const shotRows = shots.map((shot) => {
     const startSec = Number(shot.startSec) || 0;
     const endSec = Number(shot.endSec) || 0;
-    const hitMoments = keyMomentsInRange(startSec, endSec);
-    const accent = hitMoments.length
-      ? KM_KIND_COLOR[String(hitMoments[0]!.kindZh)] || "#b8452f"
-      : "";
-    const marks = hitMoments.map((km) => KIND_ICON[String(km.kindZh)] ?? "⭐").join("");
+    const storyMoments = keyMomentsInRange(startSec, endSec)
+      .filter((km) => STORY_KINDS.has(String(km.kindZh)));
+    const cameraCraft = CAMERA_CRAFT_RE.test(String(shot.cameraMoveZh ?? ""))
+      || TRANSITION_CRAFT_RE.test(String(shot.transitionInZh ?? ""));
+    const accent = storyMoments.length ? "#b8452f" : cameraCraft ? "#3a7bd5" : "";
+    const marks = storyMoments.length
+      ? storyMoments.map((km) => KIND_ICON[String(km.kindZh)] ?? "⭐").join("")
+      : cameraCraft ? "🎥" : "";
     const stickyStyle = `position:sticky;left:0;background:${accent ? "#fff3d6" : "#efe5cc"};color:#8a6a1f;white-space:nowrap${accent ? `;border-left:3px solid ${accent};font-weight:700` : ""}`;
-    return `<tr${accent ? ` style="background:${accent}14"` : ""}><td style="${stickyStyle}">${marks ? `${marks} ` : ""}${mmss(startSec)}–${mmss(endSec)}</td>${FIELDS.map((field) => `<td style="padding:3px 8px;min-width:90px">${emphasize(shot[field])}</td>`).join("")}</tr>`;
+    return `<tr${accent ? ` style="background:${accent}14"` : ""}><td style="${stickyStyle}">${marks ? `${marks} ` : ""}${mmss(startSec)}–${mmss(endSec)}</td>${FIELDS.map((field) => {
+      const craftCell = cameraCraft
+        && (field === "cameraMoveZh" || field === "transitionInZh")
+        && (CAMERA_CRAFT_RE.test(String(shot[field] ?? "")) || TRANSITION_CRAFT_RE.test(String(shot[field] ?? "")));
+      return `<td style="padding:3px 8px;min-width:90px">${craftCell
+        ? `<span style="background:#3a7bd51f;border:1px solid #3a7bd5;border-radius:6px;padding:0 5px;color:#2a5da8;font-weight:700">${esc(shot[field])}</span>`
+        : emphasize(shot[field])}</td>`;
+    }).join("")}</tr>`;
   }).join("");
 
   const AUDIO_TRACK_FIELDS = ["emotionArcZh", "toneZh", "sfxZh", "bgmZh", "atmosphereZh", "silenceZh"] as const;
@@ -416,7 +433,8 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
       const cueSpans = cues.map((cue) => `<span style="background:#e7dcc2;border-radius:8px;padding:1px 8px;display:inline-block;margin:1px">${mmss(offset + Number(cue.atSec))} ${esc(cue.kind)} ${esc(cue.detailZh)}</span>`).join(" ");
       const trackFrom = offset + Number(track.fromSec);
       const trackTo = offset + Number(track.toSec);
-      const hitMoments = keyMomentsInRange(trackFrom, trackTo);
+      const hitMoments = keyMomentsInRange(trackFrom, trackTo)
+        .filter((km) => ["剧情", "情绪", "音轨"].includes(String(km.kindZh)));
       const accent = hitMoments.length
         ? KM_KIND_COLOR[String(hitMoments[0]!.kindZh)] || "#b8452f"
         : "";
@@ -631,7 +649,7 @@ ${section(`⭐ 重点时刻表 · ${keyMoments.length} 条`, keyMoments.length
     : `<p style="color:#857a66">本集手记未单列重点时刻</p>`, true)}
 ${section("🎞️ 视频节点区域", `<div style="display:flex;flex-wrap:wrap;gap:8px">${tiles.join("")}</div>`)}
 ${section("🎧 声音节点区域", audioSections)}
-<details style="margin-top:22px;background:#fffdf6;border:1px solid #b8452f33;border-top:4px solid #b8452f;border-radius:14px;padding:14px 20px;box-shadow:0 2px 10px rgba(150,110,60,.10)" open><summary style="color:#b8452f;font-weight:600;font-size:1.1em;cursor:pointer">全镜头表 · ${shots.length} 镜 × ${FIELDS.length} 字段</summary><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#efe5cc">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#7a6f5d">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
+<details style="margin-top:22px;background:#fffdf6;border:1px solid #b8452f33;border-top:4px solid #b8452f;border-radius:14px;padding:14px 20px;box-shadow:0 2px 10px rgba(150,110,60,.10)" open><summary style="color:#b8452f;font-weight:600;font-size:1.1em;cursor:pointer">全镜头表 · ${shots.length} 镜 × ${FIELDS.length} 字段</summary><div style="margin:8px 0 4px;font-size:.8em;color:#7a6f5d">色块图例：<span style="background:#b8452f14;border-left:3px solid #b8452f;padding:1px 8px;font-weight:700;color:#8a2a1a">剧情亮点/转折</span>　<span style="background:#3a7bd514;border-left:3px solid #3a7bd5;padding:1px 8px;font-weight:700;color:#2a5da8">运镜/剪辑技巧</span>　其余行不上色</div><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#efe5cc">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#7a6f5d">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
 <div style="text-align:center;margin-top:36px"><span style="display:inline-block;background:#fdf3dd;border:1.5px solid #e8823a;border-radius:999px;padding:8px 22px;color:#b25a1a;font-size:.85em">⭐ 逐帧逐秒审读整理 · 仅作学习拆解，版权归原作品所有</span></div></div></body></html>`;
 
   await uploadBufferToGcs({
