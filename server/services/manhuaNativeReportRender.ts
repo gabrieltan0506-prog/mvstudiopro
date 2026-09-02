@@ -466,26 +466,34 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     [String(keyMoments.length), "重点时刻"],
     [String(audioSegCount), "音轨段"],
     [String(adRanges.length), "广告区间"],
-  ].map(([value, label]) => (
-    `<div style="background:#fbf6e8;border:1.5px solid #d9c48e;border-radius:12px;`
-    + `padding:12px 16px;min-width:120px;box-shadow:0 1px 6px rgba(120,90,30,.08)"><b style="display:block;font-size:1.7em;color:#b0620f;line-height:1.3">`
-    + `${esc(value)}</b>${esc(label)}</div>`
-  )).join("");
+  ].map(([value, label], kpiIndex) => {
+    const accent = ["#7b5cd6", "#e0559d", "#e8823a", "#2f9e8f", "#3a7bd5", "#b8452f"][kpiIndex % 6]!;
+    return (
+      `<div style="background:#fffdf6;border:1.5px solid ${accent};border-radius:12px;`
+      + `padding:12px 16px;min-width:120px;box-shadow:0 1px 6px rgba(150,110,60,.10)">`
+      + `<b style="display:block;font-size:1.7em;color:${accent};line-height:1.3">${esc(value)}</b>`
+      + `<span style="color:#6b5b4a">${esc(label)}</span></div>`
+    );
+  }).join("");
 
   /**
    * 0902 用户拍板：借图文知识卡片模板的简版基因——每个区块是一张圆角描金
    * 知识卡，标题带 ①②③ 圈号徽章；highlight 卡加深底突出重点。
    */
+  // 0902 用户拍板：配色对齐其小红书趋势报告色号——每张知识卡轮换一个强调色
+  const CARD_ACCENTS = ["#7b5cd6", "#e0559d", "#e8823a", "#2f9e8f", "#3a7bd5", "#b8452f"] as const;
   let sectionNo = 0;
   const section = (titleZh: string, body: string, highlight = false) => {
     sectionNo += 1;
+    const accent = CARD_ACCENTS[(sectionNo - 1) % CARD_ACCENTS.length]!;
     const badge = sectionNo <= 10 ? String.fromCharCode(0x245f + sectionNo) : String(sectionNo);
     return (
-      `<section style="background:${highlight ? "#fdf3dd" : "#fbf6e8"};border:1.5px solid #d9c48e;`
-      + `border-radius:14px;padding:16px 20px;margin-top:22px;box-shadow:0 2px 10px rgba(120,90,30,.08)">`
-      + `<h2 style="display:flex;align-items:center;gap:10px;color:#b0620f;margin:0 0 10px;font-size:1.15em">`
+      `<section style="background:${highlight ? "#fff8ec" : "#fffdf6"};border:1px solid ${accent}33;`
+      + `border-top:4px solid ${accent};border-radius:14px;padding:16px 20px;margin-top:22px;`
+      + `box-shadow:0 2px 10px rgba(150,110,60,.10)">`
+      + `<h2 style="display:flex;align-items:center;gap:10px;color:${accent};margin:0 0 10px;font-size:1.12em">`
       + `<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;`
-      + `border-radius:50%;background:#e8931f;color:#fff;font-size:.85em;flex:none">${badge}</span>`
+      + `border-radius:50%;background:${accent};color:#fff;font-size:.85em;flex:none">${badge}</span>`
       + `${esc(titleZh)}</h2>${body}</section>`
     );
   };
@@ -500,9 +508,13 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     + `${rows}</table></div>`
   );
 
-  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(input.labelZh)} 逐帧审片手记</title></head><body style="margin:0;background:#efe5cc"><div style="font-family:'Songti SC','Kaiti SC','STKaiti',serif;background:linear-gradient(165deg,#f7f0dd 0%,#efe5cc 55%,#e9d9b4 100%);background-attachment:fixed;color:#3d3428;padding:28px;max-width:1200px;margin:auto">
-<p style="color:#8a6a1f;letter-spacing:.3em;font-size:.8em">${esc(input.labelZh)} · ${esc(input.sourceLabelZh)} · 逐镜逐秒审读整理 · 字幕只记重点时刻前后两秒</p>
-<h1 style="font-size:2.1em;margin:.2em 0;color:#c9711a;letter-spacing:.1em;text-shadow:0 0 2px #fff,0 0 6px #fff,0 3px 10px rgba(122,63,150,.35)">逐帧审片手记</h1>
+  // 0902 用户拍板：labelZh 里的 seriesKey 前缀与来源术语不进客户页面，只留「第 N 集」
+  const displayLabelZh = (/第\s*\d+\s*集/.exec(String(input.labelZh || ""))?.[0])
+    || String(input.labelZh || "").trim()
+    || "本集";
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(displayLabelZh)} 逐帧审片手记</title></head><body style="margin:0;background:#f4e3cb"><div style="font-family:'Songti SC','Kaiti SC','STKaiti',serif;background:linear-gradient(180deg,#f8f0e1 0%,#f4e3cb 55%,#eecaa4 100%);background-attachment:fixed;color:#3d3428;padding:28px;max-width:1200px;margin:auto">
+<p style="color:#8a5a12;letter-spacing:.3em;font-size:.8em">${esc(displayLabelZh)} · 逐镜逐秒审读整理 · 字幕只记重点时刻前后两秒</p>
+<h1 style="font-size:2.1em;margin:.2em 0;color:#472a56;letter-spacing:.1em">逐帧审片手记</h1>
 <p style="color:#7a6f5d;margin:.3em 0 0">${shots.length} 镜（已剔除 ${adShotCount} 广告镜）· ${keyMomentSubtitleCount} 重点字幕 · ${keyMoments.length} 重点时刻 · 精选画面 ${tiles.length} 张 · 覆盖 ${(coveredSec / 60).toFixed(1)} 分钟</p>
 
 <div style="display:flex;gap:12px;flex-wrap:wrap;margin:18px 0">${kpi}</div>
@@ -520,7 +532,7 @@ ${section(`⭐ 重点时刻表 · ${keyMoments.length} 条`, keyMoments.length
 ${section("🎞️ 画面时间轴", `<div style="display:flex;flex-wrap:wrap;gap:8px">${tiles.join("")}</div>`)}
 ${section("🎧 音轨解析", audioSections)}
 <details style="margin-top:30px" open><summary style="color:#8a6a1f;font-size:1.2em;cursor:pointer">全镜头表 · ${shots.length} 镜 × ${FIELDS.length} 字段</summary><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#efe5cc">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#7a6f5d">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
-<div style="text-align:center;margin-top:36px"><span style="display:inline-block;background:#fdf3dd;border:1.5px solid #d9a54e;border-radius:999px;padding:8px 22px;color:#8a5a12;font-size:.85em">⭐ 逐帧逐秒审读整理 · 仅作学习拆解，版权归原作品所有</span></div></div></body></html>`;
+<div style="text-align:center;margin-top:36px"><span style="display:inline-block;background:#fdf3dd;border:1.5px solid #e8823a;border-radius:999px;padding:8px 22px;color:#b25a1a;font-size:.85em">⭐ 逐帧逐秒审读整理 · 仅作学习拆解，版权归原作品所有</span></div></div></body></html>`;
 
   await uploadBufferToGcs({
     bucket,

@@ -232,7 +232,9 @@ describe("精确证据名路径：三段卡渲染成功且无删节", () => {
       glmCardObjectName: glmObjectName,
     });
     const html = state.uploads[0]!.html;
-    expect(html).toContain("GLM 整集卡（provenance 精确寻址）");
+    // 0902 去内部术语：来源说明只留在返回值里给面板，客户 HTML 一律不出现
+    expect(html).not.toContain("provenance");
+    expect(html).toContain("第 1 集 · 逐镜逐秒审读整理");
     expect(html).toContain("GLM最终整集节奏_GLM_END");
     expect(html).toContain("GLM最终标签");
     expect(html).toContain("09:22–09:32");
@@ -258,7 +260,7 @@ describe("fail closed：缺段/段号重复/digest 混杂/集号不符各抛错�
     // KPI 两项不再恒 0
     expect(html).toContain("重点时刻表 · 2 条");
     expect(html).not.toContain("本卡无重点时刻");
-    expect(html).toMatch(/>1<\/b>广告区间/);
+    expect(html).toMatch(/>1<\/b><span[^>]*>广告区间/);
   });
 
   it("🔒 广告镜数从未过滤的原始 shots 上数（P0：此前恒为 0 的空改）", async () => {
