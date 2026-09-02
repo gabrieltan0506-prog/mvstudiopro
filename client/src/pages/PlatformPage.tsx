@@ -13439,12 +13439,19 @@ export default function PlatformPage() {
                                         : `导出第 ${d.episodeIndex} 集 HTML`}
                                     </button>
                                   ) : null}
-                                  {/* 轻入口：学习产出的模板要能被走到画布试写；
-                                      本刀不做学习提案→公开模板 id 的映射，不带预选，v2 再接 */}
+                                  {/* 0902 v2：提案已有 publicCode 时带码跳转，画布自动预选；无码降级裸跳 */}
                                   <button
                                     type="button"
                                     onClick={() => {
-                                      window.location.href = "/canvas";
+                                      const proposalCard = manhuaLearnResult?.proposal?.card as
+                                        | { publicCode?: unknown }
+                                        | undefined;
+                                      const code = String(proposalCard?.publicCode || "")
+                                        .trim()
+                                        .toLowerCase();
+                                      window.location.href = /^[a-z0-9]{4,16}$/.test(code)
+                                        ? `/canvas?tpl=mt_${code}`
+                                        : "/canvas";
                                     }}
                                     className="ml-2 inline-flex items-center rounded-full border border-emerald-300/25 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-100 transition hover:bg-emerald-400/20"
                                   >

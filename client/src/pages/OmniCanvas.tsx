@@ -749,6 +749,28 @@ export default function OmniCanvas() {
   const [publicTemplateId, setPublicTemplateId] = useState(
     () => String(initialWriterSession?.publicTemplateId || "").trim(),
   );
+  // 0902：/canvas?tpl=mt_xxx 预选剧情增强方案（平台页「去画布用模板试写」带码跳转）
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const tpl = String(params.get("tpl") || "").trim().toLowerCase();
+      if (/^mt_[a-z0-9]{4,16}$/.test(tpl)) {
+        setPublicTemplateId(tpl);
+        toast.success("已预选剧情增强方案，可直接试写或扩写");
+        params.delete("tpl");
+        const rest = params.toString();
+        window.history.replaceState(
+          null,
+          "",
+          `${window.location.pathname}${rest ? `?${rest}` : ""}`,
+        );
+      }
+    } catch {
+      /* URL 解析失败不影响画布 */
+    }
+    // 只在首挂载消费一次 URL 参数
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [writerEpisodeCount, setWriterEpisodeCount] = useState(() =>
     clampWriterEpisodeCount(initialWriterSession?.episodeCount ?? MANHUA_WRITER_EPISODE_DEFAULT),
   );
