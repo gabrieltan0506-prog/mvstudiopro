@@ -22,7 +22,7 @@ const FIELD_LABELS: Record<string, string> = {
   emotionTagsZh: "情绪", narrativeFeatureTagsZh: "叙事特色", performanceTagsZh: "表演",
   audiovisualTagsZh: "视听", audienceExperienceTagsZh: "观众体验",
   beatStructureZh: "节拍结构", moodArcZh: "情绪弧", reusableZh: "可复用手法", genPromptHintZh: "生成提示线索",
-  hintZh: "本镜观察", unitTypeZh: "单元类型", shotSizeZh: "景别", angleZh: "机位角度", compositionZh: "构图", cameraMoveZh: "运镜",
+  hintZh: "本镜观察", unitTypeZh: "镜头变化", shotSizeZh: "景别", angleZh: "机位角度", compositionZh: "构图", cameraMoveZh: "运镜",
   blockingZh: "调度", bodyActionZh: "身体动作", limbPropActionZh: "肢体道具", microExpressionZh: "微表情",
   gazeBreathZh: "视线呼吸", relationshipReactionZh: "关系反应", lightingZh: "灯光", actionZh: "动作叙述",
   transitionInZh: "入镜转场", evidenceRole: "证据角色",
@@ -386,7 +386,26 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const CAMERA_CRAFT_RE = /甩|环绕|旋转|升格|慢动作|定格|一镜到底|俯冲|希区柯克|急推|急拉|变焦|穿越|跟拍/;
   const TRANSITION_CRAFT_RE = /叠化|闪白|闪黑|匹配|遮罩|甩接|变速/;
   const STORY_KINDS = new Set(["剧情", "情绪"]);
-  const shotRows = shots.map((shot) => {
+  /**
+   * 0902 四审拍板：「剪辑镜头」占 99% 是废话填充——这栏改推导「镜头变化」：
+   * 景别/机位对比前一镜（特写→近景、俯拍→平视）；拆分镜是内部手法，
+   * 前台写「同镜延续」；无变化留空。
+   */
+  const shotChangeZh = (index: number): string => {
+    const cur = shots[index]!;
+    if (String(cur.unitTypeZh ?? "").trim() === "拆分镜证据段") return "同镜延续";
+    if (index === 0) return "开场镜";
+    const prev = shots[index - 1]!;
+    const parts: string[] = [];
+    const prevSize = String(prev.shotSizeZh ?? "").trim();
+    const curSize = String(cur.shotSizeZh ?? "").trim();
+    if (prevSize && curSize && prevSize !== curSize) parts.push(`${prevSize}→${curSize}`);
+    const prevAngle = String(prev.angleZh ?? "").trim();
+    const curAngle = String(cur.angleZh ?? "").trim();
+    if (prevAngle && curAngle && prevAngle !== curAngle) parts.push(`${prevAngle}→${curAngle}`);
+    return parts.join("·");
+  };
+  const shotRows = shots.map((shot, shotIndex) => {
     const startSec = Number(shot.startSec) || 0;
     const endSec = Number(shot.endSec) || 0;
     const storyMoments = keyMomentsInRange(startSec, endSec)
@@ -399,6 +418,10 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
       : cameraCraft ? "🎥" : "";
     const stickyStyle = `position:sticky;left:0;background:${accent ? "#fff3d6" : "#efe5cc"};color:#8a6a1f;white-space:nowrap${accent ? `;border-left:3px solid ${accent};font-weight:700` : ""}`;
     return `<tr${accent ? ` style="background:${accent}14"` : ""}><td style="${stickyStyle}">${marks ? `${marks} ` : ""}${mmss(startSec)}–${mmss(endSec)}</td>${FIELDS.map((field) => {
+      if (field === "unitTypeZh") {
+        const change = shotChangeZh(shotIndex);
+        return `<td style="padding:3px 8px;min-width:90px;color:#6b5b4a">${change ? `<b style="color:#4a6b8a">${esc(change)}</b>` : ""}</td>`;
+      }
       const craftCell = cameraCraft
         && (field === "cameraMoveZh" || field === "transitionInZh")
         && (CAMERA_CRAFT_RE.test(String(shot[field] ?? "")) || TRANSITION_CRAFT_RE.test(String(shot[field] ?? "")));
