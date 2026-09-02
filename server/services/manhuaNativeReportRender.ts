@@ -443,7 +443,8 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     if (String(cur.unitTypeZh ?? "").trim() === "拆分镜证据段") return "同镜延续";
     const prev = (index > 0 ? shots[index - 1]! : {}) as Record<string, unknown>;
     const notes: string[] = [];
-    // 景别语义：只解读方向，不复读名词
+    // 景别语义（0902 七审：跳两档以上或触端点才说话；措辞按目标景别+镜内容变化，
+    // 「推近·锁定情绪反应」曾 56 连发沦为新复读机——同方向也必须不同词）
     const curSizeRaw = String(cur.shotSizeZh ?? "").trim();
     const fromSize = INTRA_MOVE_RE.test(curSizeRaw)
       ? startStateOf(curSizeRaw)
@@ -452,7 +453,30 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     const fromRank = sizeRank(fromSize);
     const toRank = sizeRank(toSize);
     if (fromRank >= 0 && toRank >= 0 && fromRank !== toRank) {
-      notes.push(toRank > fromRank ? "推近·锁定情绪反应" : "拉远·交代处境格局");
+      const jump = Math.abs(toRank - fromRank);
+      const toExtreme = toSize.includes("特写") || toSize.includes("远景");
+      if (jump >= 2 || toExtreme) {
+        const hasMicro = Boolean(String(cur.microExpressionZh ?? "").trim());
+        const hasFight = /打|战|斗|追|劈|斩|挥/.test(String(cur.actionZh ?? ""));
+        const hasRelation = Boolean(String(cur.relationshipReactionZh ?? "").trim());
+        if (toRank > fromRank) {
+          notes.push(
+            toSize.includes("大特写") ? "怼至大特写·情绪显微镜"
+            : toSize.includes("特写") ? (hasMicro ? "推至特写·微表情入账" : "推至特写·细节定音")
+            : hasRelation ? "逼近对峙·关系张力升温"
+            : jump >= 3 ? "陡然贴近·冲击式聚焦"
+            : "收紧视距·压缩注意力",
+          );
+        } else {
+          notes.push(
+            toSize.includes("大远景") ? "甩到大远景·个体没入天地"
+            : toSize.includes("远景") ? "退至远景·孤立感与规模感"
+            : hasFight ? "拉开武戏·全身调度入镜"
+            : jump >= 3 ? "骤然抽离·上帝视角断情"
+            : "放宽视野·亮出场面调度",
+          );
+        }
+      }
     }
     // 机位语义
     const curAngleRaw = String(cur.angleZh ?? "").trim();
@@ -466,6 +490,48 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
       else if (toAngle.includes("平") && (fromAngle.includes("俯") || fromAngle.includes("仰"))) {
         notes.push("回平视·情绪落地");
       }
+    }
+    // 情绪转轨（0902 七审补：前后镜微表情极性变化本身就是技巧）
+    const EMOTION_BUCKETS: Array<[RegExp, string]> = [
+      [/怒|狠|咬牙|暴戾/, "怒"], [/恐|惧|怕|颤|瑟/, "惧"], [/泪|哭|悲|哀|恸/, "悲"],
+      [/惊|愕|瞪/, "惊"], [/笑|喜|悦|欣/, "喜"], [/冷|漠|淡然|面无表情/, "冷"],
+    ];
+    const emotionBucketOf = (text: string): string => {
+      for (const [re, name] of EMOTION_BUCKETS) if (re.test(text)) return name;
+      return "";
+    };
+    const curEmotion = emotionBucketOf(`${String(cur.microExpressionZh ?? "")}${String(cur.gazeBreathZh ?? "")}`);
+    const prevEmotion = emotionBucketOf(`${String(prev.microExpressionZh ?? "")}${String(prev.gazeBreathZh ?? "")}`);
+    if (curEmotion && prevEmotion && curEmotion !== prevEmotion) {
+      notes.push(`情绪转轨·${prevEmotion}转${curEmotion}`);
+    }
+    // 站位改写：调度里出现关键站位语义（新出现才记，避免延续镜刷屏）
+    const BLOCKING_EFFECTS: Array<[RegExp, string]> = [
+      [/背对|背身|转身背/, "背身站位·拒绝对话感"],
+      [/逼近|上前|欺身|贴近/, "逼近站位·压迫升级"],
+      [/后退|后撤|退步/, "后撤站位·势弱让步"],
+      [/跪|伏地|瘫/, "跪伏姿态·权力落差具象"],
+      [/包围|合围|围拢/, "合围站位·困局成型"],
+      [/对峙|相对而立|对视僵/, "对峙站位·顶牛张力"],
+    ];
+    const curBlocking = String(cur.blockingZh ?? "");
+    const prevBlocking = String(prev.blockingZh ?? "");
+    for (const [re, effect] of BLOCKING_EFFECTS) {
+      if (re.test(curBlocking) && !re.test(prevBlocking) && !notes.includes(effect)) {
+        notes.push(effect);
+        break;
+      }
+    }
+    // 跨场切换：昼夜/内外光环境跳变
+    const envTokenOf = (text: string): string => {
+      if (/夜|月|烛|灯笼/.test(text)) return "夜";
+      if (/日|昼|阳光|白天/.test(text)) return "日";
+      return "";
+    };
+    const curEnv = envTokenOf(`${String(cur.lightingZh ?? "")}${String(cur.actionZh ?? "")}`);
+    const prevEnv = envTokenOf(`${String(prev.lightingZh ?? "")}${String(prev.actionZh ?? "")}`);
+    if (curEnv && prevEnv && curEnv !== prevEnv) {
+      notes.push(`跨场切换·${prevEnv}转${curEnv}空间叙事推进`);
     }
     // 特殊运镜/转场词典
     const craftSource = `${String(cur.cameraMoveZh ?? "")} ${String(cur.transitionInZh ?? "")}`;
@@ -481,6 +547,13 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     if (index === 0 && !notes.length) return "开场镜";
     return notes.slice(0, 3).join(" · ");
   };
+  // 相邻镜同判词只留第一次——语义不因重复贬值
+  const changeNotesByIndex = shots.map((_, index) => shotChangeZh(index));
+  for (let i = shots.length - 1; i > 0; i -= 1) {
+    if (changeNotesByIndex[i] && changeNotesByIndex[i] === changeNotesByIndex[i - 1]) {
+      changeNotesByIndex[i] = "";
+    }
+  }
   const shotRows = shots.map((shot, shotIndex) => {
     const startSec = Number(shot.startSec) || 0;
     const endSec = Number(shot.endSec) || 0;
@@ -495,7 +568,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     const stickyStyle = `position:sticky;left:0;background:${accent ? "#fff3d6" : "#efe5cc"};color:#8a6a1f;white-space:nowrap${accent ? `;border-left:3px solid ${accent};font-weight:700` : ""}`;
     return `<tr${accent ? ` style="background:${accent}14"` : ""}><td style="${stickyStyle}">${marks ? `${marks} ` : ""}${mmss(startSec)}–${mmss(endSec)}</td>${FIELDS.map((field) => {
       if (field === "unitTypeZh") {
-        const change = shotChangeZh(shotIndex);
+        const change = changeNotesByIndex[shotIndex]!;
         return `<td style="padding:3px 8px;min-width:90px;color:#6b5b4a">${change ? `<b style="color:#4a6b8a">${esc(change)}</b>` : ""}</td>`;
       }
       const craftCell = cameraCraft
