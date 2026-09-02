@@ -391,19 +391,33 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
    * 景别/机位对比前一镜（特写→近景、俯拍→平视）；拆分镜是内部手法，
    * 前台写「同镜延续」；无变化留空。
    */
+  /**
+   * 0902 五审拍板：镜内运动（近景转全景）与剪切变化（上一镜→本镜）是两种事，
+   * 混拼成「全景→近景转全景」没法读。分家各带标签：
+   * 「镜内 …」= 本镜自带的推拉/俯仰（原文自述）；
+   * 「切换 A→B」= 上一镜收尾态 → 本镜起始态（箭头前为先）。
+   */
+  const INTRA_MOVE_RE = /转|→/;
+  const endStateOf = (v: string) => v.split(INTRA_MOVE_RE).pop()!.trim();
+  const startStateOf = (v: string) => v.split(INTRA_MOVE_RE)[0]!.trim();
+  const changePartZh = (prevRaw: string, curRaw: string): string => {
+    const cur = curRaw.trim();
+    if (!cur) return "";
+    if (INTRA_MOVE_RE.test(cur)) return `镜内${cur}`;
+    const prevEnd = endStateOf(prevRaw.trim());
+    if (!prevEnd || prevEnd === startStateOf(cur)) return "";
+    return `切换${prevEnd}→${cur}`;
+  };
   const shotChangeZh = (index: number): string => {
     const cur = shots[index]!;
     if (String(cur.unitTypeZh ?? "").trim() === "拆分镜证据段") return "同镜延续";
-    if (index === 0) return "开场镜";
-    const prev = shots[index - 1]!;
-    const parts: string[] = [];
-    const prevSize = String(prev.shotSizeZh ?? "").trim();
-    const curSize = String(cur.shotSizeZh ?? "").trim();
-    if (prevSize && curSize && prevSize !== curSize) parts.push(`${prevSize}→${curSize}`);
-    const prevAngle = String(prev.angleZh ?? "").trim();
-    const curAngle = String(cur.angleZh ?? "").trim();
-    if (prevAngle && curAngle && prevAngle !== curAngle) parts.push(`${prevAngle}→${curAngle}`);
-    return parts.join("·");
+    const prev = index > 0 ? shots[index - 1]! : {};
+    const parts = [
+      changePartZh(String((prev as Record<string, unknown>).shotSizeZh ?? ""), String(cur.shotSizeZh ?? "")),
+      changePartZh(String((prev as Record<string, unknown>).angleZh ?? ""), String(cur.angleZh ?? "")),
+    ].filter(Boolean);
+    if (index === 0) return parts.length ? parts.join(" · ") : "开场镜";
+    return parts.join(" · ");
   };
   const shotRows = shots.map((shot, shotIndex) => {
     const startSec = Number(shot.startSec) || 0;
