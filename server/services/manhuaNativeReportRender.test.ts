@@ -256,7 +256,9 @@ describe("fail closed：缺段/段号重复/digest 混杂/集号不符各抛错�
     // 0902 表瘦身：说明列删除（与截图标注同源），noteZh 不再渲染进页面
     expect(html).not.toContain("眉头锁紧_KM_END");
     expect(html).toContain("关键字幕（前后 2 秒）");
-    expect(html).toContain("中景转特写_KM_END");
+    // 0902 表瘦身后 noteZh 不进页面——改验类型行仍渲染（keyMoments 字段没被产线丢弃）
+    expect(html).toContain("关键字幕（前后 2 秒）");
+    expect(html).not.toContain("中景转特写_KM_END");
     // 同秒同类去重：只留一条
     expect(html).not.toContain("同秒同类应被去重");
     // KPI 两项不再恒 0
