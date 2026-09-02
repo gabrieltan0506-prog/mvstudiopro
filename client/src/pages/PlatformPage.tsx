@@ -2555,6 +2555,8 @@ export default function PlatformPage() {
     const timer = window.setTimeout(() => setManhuaPasteTitleDebounced(trimmed), 600);
     return () => window.clearTimeout(timer);
   }, [manhuaPasteTitle]);
+  const retireLearnEpisodeMutation =
+    trpc.manhuaViralTemplate.retireLearnSourceEpisode.useMutation();
   const manhuaLearnDupQuery = trpc.manhuaViralTemplate.checkLearnSourceLearned.useQuery(
     {
       url: manhuaPasteUrlDebounced,
@@ -12696,16 +12698,45 @@ export default function PlatformPage() {
                                 ? `《${manhuaLearnDupQuery.data.titleHint}》`
                                 : "（剧名未记录）"}
                               {manhuaLearnDupQuery.data.episodes.map((row) => (
-                                <span key={row.episodeIndex}>
+                                <span key={row.episodeIndex} className="inline-flex flex-wrap items-center gap-1">
                                   {" "}· 第{row.episodeIndex}集 {row.generationZh}
                                   {row.complete ? "" : "（部分卡）"}
+                                  <button
+                                    type="button"
+                                    disabled={retireLearnEpisodeMutation.isPending}
+                                    onClick={async () => {
+                                      if (
+                                        !window.confirm(
+                                          `放行重学第${row.episodeIndex}集？旧学习卡将退位存档（可审计不丢失），重学会重新计费。`,
+                                        )
+                                      )
+                                        return;
+                                      try {
+                                        await retireLearnEpisodeMutation.mutateAsync({
+                                          url: manhuaPasteUrlDebounced,
+                                          episodeIndex: row.episodeIndex,
+                                        });
+                                        await manhuaLearnDupQuery.refetch();
+                                        toast.success(
+                                          `第${row.episodeIndex}集已放行，现在可以重新学习`,
+                                        );
+                                      } catch (error) {
+                                        toast.error(
+                                          error instanceof Error ? error.message : "放行失败",
+                                        );
+                                      }
+                                    }}
+                                    className="rounded border border-amber-300/45 bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-50 hover:bg-amber-400/25 disabled:opacity-45"
+                                  >
+                                    {retireLearnEpisodeMutation.isPending ? "放行中…" : "放行重学"}
+                                  </button>
                                 </span>
                               ))}
                               {manhuaLearnDupQuery.data.framesDigestCount > 0
                                 ? ` · 另有抽帧（一代）产物 ${manhuaLearnDupQuery.data.framesDigestCount} 条`
                                 : ""}
                               <div className="mt-0.5 text-[10px] text-amber-100/70">
-                                三代=当前链路无需重学；二代旧链路想重学，先在模板库把该集卡下架再学。重复提交不出新卡也不扣费。
+                                三代=当前链路一般无需重学；旧代想重学点「放行重学」——旧卡退位存档、集位让出、重学重新计费。抽帧（一代）产物不占集位，无需放行。
                               </div>
                             </div>
                           ) : null}

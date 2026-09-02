@@ -3345,3 +3345,56 @@ export async function checkManhuaLearnSourceLearned(
     sameTitleSeries,
   };
 }
+
+/**
+ * 放行重学（0902 用户拍板：「不能只说学过了，然后就锁住不让我重学」）。
+ *
+ * 查重的唯一依据是 proposals/tpl_native_<key>_ep*.json；模板库「下架」只动
+ * approved 正本，proposals 副本还在 → 下架**不能**放行。这里把 proposals 卡
+ * 退位到 proposals-retired/（copy → 条件删除，保留审计），集位即让出，
+ * 下次学习照常排片、照常计费。抽帧一代 digest 本来就不挡原生学习，无需放行。
+ */
+export async function retireNativeLearnEpisodeForRelearn(input: {
+  url: string;
+  episodeIndex: number;
+}): Promise<{ seriesKey: string; retiredObjectName: string }> {
+  const rawUrl = String(input.url || "").trim();
+  const awemeId = extractDouyinVideoIdFromUrl(rawUrl);
+  const cleanUrl = awemeId ? `https://www.douyin.com/video/${awemeId}` : rawUrl;
+  const seriesKey = await resolveManhuaSeriesKey({
+    sourceIdentity: cleanUrl,
+    learnLlm: "gpt",
+  });
+  const [{ nativeDeepReadProposalObjectName, nativeDeepReadProposalId }, gcs] =
+    await Promise.all([
+      import("./manhuaNativeDeepReadIngest.js"),
+      import("./gcs.js"),
+    ]);
+  const objectName = nativeDeepReadProposalObjectName(seriesKey, input.episodeIndex);
+  let versioned: { buffer: Buffer; bucket: string; generation: string };
+  try {
+    versioned = await gcs.downloadGcsObjectVersioned({
+      gcsUri: `gs://${gcs.getGcsBucketName()}/${objectName}`,
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (/404/.test(message)) {
+      throw new Error("该集学习卡不存在或已放行，无需重复操作");
+    }
+    throw e;
+  }
+  const cardId = nativeDeepReadProposalId(seriesKey, input.episodeIndex);
+  const retiredObjectName =
+    `manhua-template-learn/proposals-retired/${cardId}.${versioned.generation}.json`;
+  // 先落存档再删原件；generation 命名幂等，条件删除防覆盖并发新写
+  await gcs.uploadBufferToGcsIfAbsent({
+    objectName: retiredObjectName,
+    buffer: versioned.buffer,
+    contentType: "application/json",
+  });
+  await gcs.deleteGcsObject({
+    objectName,
+    ifGenerationMatch: versioned.generation,
+  });
+  return { seriesKey, retiredObjectName };
+}

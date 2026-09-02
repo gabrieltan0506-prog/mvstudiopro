@@ -583,6 +583,22 @@ export const manhuaViralTemplateRouter = router({
       return await checkManhuaLearnSourceLearned(input.url, input.titleZh);
     }),
 
+  /** 0902 放行重学：旧代学习卡退位存档、集位让出；重学照常计费（owner 限定） */
+  retireLearnSourceEpisode: protectedProcedure
+    .input(
+      z.object({
+        url: z.string().trim().url().max(600),
+        episodeIndex: z.number().int().min(1).max(999),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      assertSiteOwner(ctx.user);
+      const { retireNativeLearnEpisodeForRelearn } = await import(
+        "../services/manhuaTemplateLearnService"
+      );
+      return await retireNativeLearnEpisodeForRelearn(input);
+    }),
+
   listNativeDeepReadClaims: protectedProcedure
     .input(z.object({ seriesKey: z.string().regex(/^[0-9A-Za-z_-]{4,64}$/) }))
     .query(async ({ ctx, input }) => {
