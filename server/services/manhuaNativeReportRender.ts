@@ -334,6 +334,22 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     });
   }
   if (frameList.length === 0) frameSource = "未抽帧（该集尚无帧包）";
+  /**
+   * 0902 用户拍板：「留白」「气势爆发」这类 ≤5 字标注没信息量——过短时从命中
+   * 镜头的动作/肢体/微表情字段里捡 6–24 字的描述顶上，实在凑不出就只留秒位。
+   */
+  const richCaption = (primary: unknown, shot: Record<string, unknown>): string => {
+    const candidates = [
+      String(primary ?? ""),
+      String(shot.actionZh ?? ""),
+      String(shot.bodyActionZh ?? ""),
+      String(shot.limbPropActionZh ?? ""),
+      String(shot.microExpressionZh ?? ""),
+    ].map((t) => t.trim()).filter(Boolean);
+    for (const c of candidates) if (c.length >= 6) return c.slice(0, 24);
+    const joined = candidates.slice(0, 2).join("·");
+    return joined.length >= 6 ? joined.slice(0, 24) : "";
+  };
   const tiles: string[] = [];
   /** 帧编号锚点表：重点时刻表用「（图N）」跳转对照（0902 用户拍板） */
   const frameAnchors: Array<{ no: number; atSec: number }> = [];
@@ -347,7 +363,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     const badge = reasons.map((r) => `<span style="background:#f6efe0;border:1px solid #e0d2b4;border-radius:8px;padding:0 6px;margin-right:3px;color:#6b5b4a">${esc(r)}</span>`).join("");
     const frameAtSec = Number(frame.atSec);
     const shot = shots.find((s) => frameAtSec >= Number(s.startSec) && frameAtSec < Number(s.endSec)) || {};
-    tiles.push(`<div id="frame-${frameNo}" style="width:158px;position:relative;scroll-margin-top:20px"><span style="position:absolute;top:4px;left:4px;background:rgba(58,123,213,.92);color:#fff;font-size:.68em;font-weight:700;border-radius:6px;padding:1px 6px">图${frameNo}</span><img loading="lazy" src="${dataUri}" style="width:158px;border-radius:4px"><div style="font-size:.7em;color:#7a6f5d">${mmss(frameAtSec)} ${badge}${esc(String(frame.noteZh ?? "").trim() || shot.actionZh)}</div></div>`);
+    tiles.push(`<div id="frame-${frameNo}" style="width:158px;position:relative;scroll-margin-top:20px"><span style="position:absolute;top:4px;left:4px;background:rgba(58,123,213,.92);color:#fff;font-size:.68em;font-weight:700;border-radius:6px;padding:1px 6px">图${frameNo}</span><img loading="lazy" src="${dataUri}" style="width:158px;border-radius:4px"><div style="font-size:.7em;color:#7a6f5d">${mmss(frameAtSec)} ${badge}${esc(richCaption(frame.noteZh, shot))}</div></div>`);
   }
 
   const cl = (card.classification ?? {}) as Record<string, unknown>;
@@ -485,7 +501,13 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const kmRows = keyMoments.map((row, index) => (
     `<tr><td style="color:#8a6a1f;white-space:nowrap">${mmss(Number(row.atSec))}</td>`
     + `<td style="white-space:nowrap">${KIND_ICON[String(row.kindZh)] ?? ""} ${esc(row.kindZh)}</td>`
-    + `<td style="font-weight:700;color:#8a2a1a">${esc(row.noteZh)}${(() => {
+    + `<td style="font-weight:700;color:#8a2a1a">${(() => {
+      const note = String(row.noteZh ?? "").trim();
+      if (note.length >= 6) return esc(note);
+      const at = Number(row.atSec);
+      const hostShot = shots.find((sh) => at >= Number(sh.startSec) && at < Number(sh.endSec)) || {};
+      return esc(richCaption(note, hostShot as Record<string, unknown>) || note);
+    })()}${(() => {
       const at = Number(row.atSec);
       let best: { no: number; d: number } | null = null;
       for (const anchor of frameAnchors) {

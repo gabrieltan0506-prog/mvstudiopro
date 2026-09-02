@@ -451,7 +451,7 @@ describe("帧包始终可选", () => {
       evidenceFrames: [{
         atSec: 7,
         kindZh: "情绪",
-        noteZh: "眉头锁紧",
+        noteZh: "眉头锁紧指节发白",
         objectName: `manhua-template-learn/native-frames/seriesabc/ep001/70ds-${"d".repeat(24)}.jpg`,
         mimeType: "image/jpeg",
         bytes: 1234,
@@ -460,7 +460,8 @@ describe("帧包始终可选", () => {
     });
     expect(result.frames).toBe(1);
     expect(result.frameSource).toBe("正式卡重点时刻抽帧");
-    expect(state.uploads[0]!.html).toContain("眉头锁紧");
+    // 0902 短标注富化规则：≥6 字的原标注原样保留
+    expect(state.uploads[0]!.html).toContain("眉头锁紧指节发白");
     // 0902 内嵌改造：页面不再出现内部帧包来源词，只写「精选画面 N 张」且图为 data URI
     expect(state.uploads[0]!.html).toContain("精选画面 1 张");
     expect(state.uploads[0]!.html).toContain("data:image/jpeg;base64,");
