@@ -84,7 +84,10 @@ export function diffManhuaWriterPacks(
   const prevEpisodes = new Map((prev?.episodes || []).map((e) => [e.index, e] as const));
   const nextEpisodes = new Map((next?.episodes || []).map((e) => [e.index, e] as const));
   const allIndexes = Array.from(
-    new Set([...prevEpisodes.keys(), ...nextEpisodes.keys()]),
+    new Set([
+      ...Array.from(prevEpisodes.keys()),
+      ...Array.from(nextEpisodes.keys()),
+    ]),
   ).sort((a, b) => a - b);
 
   const episodes: WriterPackEpisodeDiff[] = [];
