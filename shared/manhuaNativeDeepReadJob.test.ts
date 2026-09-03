@@ -113,6 +113,7 @@ describe("原生精读任务墙钟", () => {
       planLimit: 10,
       segmentSeconds: 300,
       videoFps: 12,
+      readModel: "gemini-3.1-pro-preview",
       seriesKey: undefined,
       learnLlm: "gpt",
     });

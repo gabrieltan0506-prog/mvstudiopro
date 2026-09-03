@@ -21,6 +21,9 @@ import {
 } from "../../shared/manhuaNativeDeepRead.js";
 import {
   MANHUA_NATIVE_DEEP_READ_MODEL,
+  MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS,
+  parseNativeDeepReadModel,
+  type ManhuaNativeDeepReadModelId,
   MANHUA_NATIVE_GLM_REASONING_EFFORT,
   NATIVE_DEEP_READ_MAX_VIDEO_FPS,
   parseNativeDeepReadVideoFps,
@@ -132,22 +135,20 @@ function resolveNativeDeepReadEvolinkBaseUrl(): string {
 }
 
 /**
- * 计价常量（¥/M token）：按 Vertex Gemini 3.1 Pro 目录价 $1.25/$10 × 7.2 折算。
- * ⚠️ 待账单核实。
+ * 计价常量（¥/M token）：3.1 Pro 按 Vertex 目录价 $1.25/$10 × 7.2 折算；
+ * 3.8 Flash 按 flash 档目录价 $0.30/$2.50 × 7.2 折算。⚠️ 均待账单核实。
+ * EvoLink 兜底档：仓库暂无对应计价样例，先按 Vertex 同价折算记账。
  */
-const PRICE_IN_PER_M = 9.0;
-const PRICE_OUT_PER_M = 72.0;
-/**
- * EvoLink 兜底档价：仓库暂无 Gemini 3.1 Pro 的 EvoLink 计价样例，
- * 先按 Vertex 同价折算记账。⚠️ 待账单核实。
- */
-const EVOLINK_PRICE_IN_PER_M = 9.0;
-const EVOLINK_PRICE_OUT_PER_M = 72.0;
+const MODEL_PRICES_PER_M: Record<ManhuaNativeDeepReadModelId, { inPerM: number; outPerM: number }> = {
+  "gemini-3.1-pro-preview": { inPerM: 9.0, outPerM: 72.0 },
+  "gemini-3.8-flash": { inPerM: 2.16, outPerM: 18.0 },
+};
 
-function routePrices(route: NativeDeepReadVisualRoute): { inPerM: number; outPerM: number } {
-  return route === NATIVE_DEEP_READ_ROUTE_EVOLINK
-    ? { inPerM: EVOLINK_PRICE_IN_PER_M, outPerM: EVOLINK_PRICE_OUT_PER_M }
-    : { inPerM: PRICE_IN_PER_M, outPerM: PRICE_OUT_PER_M };
+function routePrices(
+  _route: NativeDeepReadVisualRoute,
+  model: ManhuaNativeDeepReadModelId,
+): { inPerM: number; outPerM: number } {
+  return MODEL_PRICES_PER_M[model];
 }
 
 /** 观察说明由prompt与schema共用，保持环境、道具、动作的要求一致。 */
@@ -1395,7 +1396,8 @@ export function nativeDeepReadFrozenContractSha256(): string {
     hintZh: "冻结契约样例：只作动态补充信息，不代替逐镜观察。",
   } as const;
   return crypto.createHash("sha256").update(JSON.stringify({
-    model: NATIVE_DEEP_READ_MODEL,
+    // 0903 双模型拍板：冻结「允许的模型集合」而非单一模型；扩表需用户重新授权
+    models: MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS,
     generationConfig: NATIVE_DEEP_READ_GENERATION_CONFIG,
     retryTemperatures: NATIVE_DEEP_READ_RETRY_TEMPERATURES,
     retryIntervalMs: NATIVE_DEEP_READ_RETRY_INTERVAL_MS,
@@ -1411,8 +1413,9 @@ export function nativeDeepReadFrozenContractSha256(): string {
   }), "utf8").digest("hex");
 }
 
-/** 修改冻结项必须由用户在当前任务重新授权；禁止只更新这个摘要让测试变绿。 */
-export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "fbed790c7b45383bd087ceded91ebd4e45c42464f938e59c920e139a965f42e7" as const;
+/** 修改冻结项必须由用户在当前任务重新授权；禁止只更新这个摘要让测试变绿。
+ * 0903 更新授权：用户拍板读片双模型（3.1 Pro / 3.8 Flash 面板可选），冻结集合随之换代。 */
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "e1050cfd8393b5b4062c158e32fec9ed25f0d2f24b2739920f3dbf225e3f1cf8" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
   const actual = nativeDeepReadFrozenContractSha256();
@@ -1547,10 +1550,12 @@ export async function postNativeDeepReadGenerateContent(input: {
 async function postVertexNativeDeepRead(
   body: unknown,
   abortSignal?: AbortSignal,
+  _context?: NativeDeepReadSegmentContext,
+  model: ManhuaNativeDeepReadModelId = MANHUA_NATIVE_DEEP_READ_MODEL,
 ): Promise<NativeDeepReadModelResponse> {
   const url = `${baseUrlForVertex(NATIVE_DEEP_READ_VERTEX_LOCATION)}/v1/projects/`
     + `${encodeURIComponent(getVertexProjectId())}/locations/${NATIVE_DEEP_READ_VERTEX_LOCATION}`
-    + `/publishers/google/models/${encodeURIComponent(NATIVE_DEEP_READ_MODEL)}:generateContent`;
+    + `/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
   return postNativeDeepReadGenerateContent({
     url,
     headers: await getVertexAuthHeaders(),
@@ -1562,11 +1567,13 @@ async function postVertexNativeDeepRead(
 async function postEvolinkNativeDeepRead(
   body: unknown,
   abortSignal?: AbortSignal,
+  _context?: NativeDeepReadSegmentContext,
+  model: ManhuaNativeDeepReadModelId = MANHUA_NATIVE_DEEP_READ_MODEL,
 ): Promise<NativeDeepReadModelResponse> {
   const apiKey = String(process.env.EVOLINK_API_KEY || "").trim();
   if (!apiKey) throw new Error("EVOLINK_API_KEY 未配置，EvoLink 兜底不可用");
   const url = `${resolveNativeDeepReadEvolinkBaseUrl()}/v1beta/models/`
-    + `${encodeURIComponent(NATIVE_DEEP_READ_MODEL)}:generateContent`;
+    + `${encodeURIComponent(model)}:generateContent`;
   return postNativeDeepReadGenerateContent({
     url,
     headers: { Authorization: `Bearer ${apiKey}` },
@@ -3798,6 +3805,8 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
   hasAudio: boolean;
   videoFps?: number;
   hintZh?: string;
+  /** 0903 双模型：缺省＝3.1 Pro，与历史指纹一致；换模型＝新指纹，不吃错缓存。 */
+  model?: ManhuaNativeDeepReadModelId;
 }): string {
   const fps = resolveNativeDeepReadRequestFps(input.segment.endSec - input.segment.startSec, input.videoFps);
   const prompt = buildGeminiNativeDeepReadSegmentPrompt({
@@ -3821,7 +3830,7 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
   return crypto.createHash("sha256").update(JSON.stringify({
     cacheSchemaVersion: NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
     planVersion: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
-    model: NATIVE_DEEP_READ_MODEL,
+    model: input.model ?? NATIVE_DEEP_READ_MODEL,
     glmRepairModel: NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL,
     responseSchema: buildNativeDeepReadResponseSchema({ ...input.segment, segmentIndex: input.segmentIndex, hasAudio: input.hasAudio }),
     generationConfig: NATIVE_DEEP_READ_GENERATION_CONFIG,
@@ -4081,8 +4090,8 @@ export async function invokeNativeDeepReadGlmStructuring(
 export type NativeDeepReadBatchRunnerDeps = {
   prepareVideos: typeof prepareEpisodeVideos;
   remove: typeof deleteGcsObject;
-  postVertex: (body: unknown, signal?: AbortSignal, context?: NativeDeepReadSegmentContext) => Promise<NativeDeepReadModelResponse>;
-  postEvolink: (body: unknown, signal?: AbortSignal, context?: NativeDeepReadSegmentContext) => Promise<NativeDeepReadModelResponse>;
+  postVertex: (body: unknown, signal?: AbortSignal, context?: NativeDeepReadSegmentContext, model?: ManhuaNativeDeepReadModelId) => Promise<NativeDeepReadModelResponse>;
+  postEvolink: (body: unknown, signal?: AbortSignal, context?: NativeDeepReadSegmentContext, model?: ManhuaNativeDeepReadModelId) => Promise<NativeDeepReadModelResponse>;
   signReadUrl: typeof signGsUriV4ReadUrl;
   invokeGlmStructuring: typeof invokeNativeDeepReadGlmStructuring;
   selectAttemptWithQwen: typeof selectNativeDeepReadAttemptWithQwen;
@@ -4241,6 +4250,8 @@ export type NativeDeepReadBatchRunParams = {
   onModelReceipt?: (receipt: NativeDeepReadVisualModelReceipt) => void | Promise<void>;
   /** 传入即启用段级恢复与永久证据；生产 execution 和单集入口都必须传稳定 seriesKey。 */
   segmentCacheSeriesKey?: string;
+  /** 0903 双模型：读片主模型；缺省＝3.1 Pro。 */
+  readModel?: ManhuaNativeDeepReadModelId;
   /** 仅获授权证据探针使用：保留 GCS 视频分片，不执行 finally 清理。 */
   preservePreparedVideos?: boolean;
   /**
@@ -4283,6 +4294,7 @@ async function executeNativeDeepReadBatch(
   deps: NativeDeepReadBatchRunnerDeps,
   diagnosticSelection?: readonly number[],
 ): Promise<NativeDeepReadBatchExecutionResult> {
+  const readModel = parseNativeDeepReadModel(params.readModel);
   if (!params.episodes.length) throw new Error("多视频精读批次为空");
   if (diagnosticSelection && (params.episodes.length !== 1 || !params.preservePreparedVideos
     || !params.segmentCacheSeriesKey || params.onSegmentSnapshotCommitted)) {
@@ -4581,7 +4593,7 @@ async function executeNativeDeepReadBatch(
             segmentCount: sortedIndexes.length,
             failedSegmentCount: segmentCount - sortedIndexes.length,
             attemptedSegments: segmentCount,
-            model: NATIVE_DEEP_READ_MODEL,
+            model: readModel,
             usingPlanQuota: false,
             batchRequestId: episodeRequestId,
             batchEpisodeCount: 1,
@@ -4687,6 +4699,7 @@ async function executeNativeDeepReadBatch(
         let requestFingerprint: string | undefined;
         if (params.segmentCacheSeriesKey && episode.cacheSourceDigest) {
           requestFingerprint = nativeDeepReadSegmentCacheFingerprint({
+            model: readModel,
             sourceDigest: episode.cacheSourceDigest,
             episodeIndex: episode.episodeIndex,
             episodeDurationSec: episode.sourceDurationSec,
@@ -4739,7 +4752,7 @@ async function executeNativeDeepReadBatch(
           if (!recoveredPaidEvidence) {
             await emitVisualModelReceipt({
               callId,
-              model: NATIVE_DEEP_READ_MODEL,
+              model: readModel,
               route: input.route,
               stage: "visual_model",
               status: "started",
@@ -4754,8 +4767,8 @@ async function executeNativeDeepReadBatch(
             }, params.onModelReceipt);
             modelCallStarted = true;
             response = await (input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK
-              ? deps.postEvolink(body, params.abortSignal, segmentContext)
-              : deps.postVertex(body, params.abortSignal, segmentContext));
+              ? deps.postEvolink(body, params.abortSignal, segmentContext, readModel)
+              : deps.postVertex(body, params.abortSignal, segmentContext, readModel));
           }
           if (!response) throw new Error("原生精读响应缺失，已停止且不得自动重试");
           if (response.status >= 300) {
@@ -4814,7 +4827,7 @@ async function executeNativeDeepReadBatch(
             + Math.max(0, Number(usage?.thoughtsTokenCount) || 0);
           const attemptAudioInput = audioTokensFromUsage(usage?.promptTokensDetails);
           const attemptReasoning = Math.max(0, Number(usage?.thoughtsTokenCount) || 0);
-          const prices = routePrices(input.route);
+          const prices = routePrices(input.route, readModel);
           const attemptCost =
             (attemptInput * prices.inPerM) / 1e6 + (attemptOutput * prices.outPerM) / 1e6;
           // 恢复旧付费证据时只重建段级历史用量，不伪装成本次外呼或本批新增费用。
@@ -4841,7 +4854,7 @@ async function executeNativeDeepReadBatch(
             if (recoveredPaidEvidence) return;
             await emitVisualModelReceipt({
               callId,
-              model: NATIVE_DEEP_READ_MODEL,
+              model: readModel,
               route: input.route,
               stage: "visual_model",
               status: "completed",
@@ -4911,7 +4924,7 @@ async function executeNativeDeepReadBatch(
                 visualRoute: input.route,
                 repeatableDiagnostic: Boolean(selectedSegmentIndexes),
                 providerRequestId: response.requestId,
-                model: NATIVE_DEEP_READ_MODEL,
+                model: readModel,
                 startSec: segment.startSec,
                 endSec: segment.endSec,
                 fps: input.fps,
@@ -5099,7 +5112,7 @@ async function executeNativeDeepReadBatch(
           if (segmentAdvisories.length) raw.advisories = segmentAdvisories;
           await emitVisualModelReceipt({
             callId: `${episodeRequestId}:segment-${input.segmentIndex}:gate-${input.attemptNumber}`,
-            model: NATIVE_DEEP_READ_MODEL,
+            model: readModel,
             route: "local_schema_gate",
             stage: "visual_parse",
             status: "completed",
@@ -5135,7 +5148,7 @@ async function executeNativeDeepReadBatch(
             const providerError = nativeProviderReceiptFromError(error);
             await emitVisualModelReceipt({
               callId,
-              model: NATIVE_DEEP_READ_MODEL,
+              model: readModel,
               route: input.route,
               stage: "visual_model",
               status: "failed",
@@ -5315,7 +5328,7 @@ async function executeNativeDeepReadBatch(
             );
             await emitVisualModelReceipt({
               callId: `${episodeRequestId}:segment-${input.segmentIndex}:retry-${attemptIndex + 1}`,
-              model: NATIVE_DEEP_READ_MODEL,
+              model: readModel,
               route: "gate_retry_pending",
               stage: "visual_parse",
               status: "started",
@@ -5352,7 +5365,7 @@ async function executeNativeDeepReadBatch(
                 const errorZh = (error instanceof Error ? error.message : String(error)).slice(0, 2_000);
                 await emitVisualModelReceipt({
                   callId: `${episodeRequestId}:segment-${input.segmentIndex}:resource-retry-${attemptIndex + 1}-${resourceRetryCount}`,
-                  model: NATIVE_DEEP_READ_MODEL,
+                  model: readModel,
                   route: "resource_retry_pending",
                   stage: "visual_parse",
                   status: "started",
@@ -5380,7 +5393,7 @@ async function executeNativeDeepReadBatch(
               if (!isNativeDeepReadGateFailure(error) && !schemaGateFailure) throw error;
               await emitVisualModelReceipt({
                 callId: `${episodeRequestId}:segment-${input.segmentIndex}:gate-${attemptIndex + 1}`,
-                model: NATIVE_DEEP_READ_MODEL,
+                model: readModel,
                 route: "local_schema_gate",
                 stage: "visual_parse",
                 status: "failed",
@@ -5574,12 +5587,12 @@ async function executeNativeDeepReadBatch(
         }
         const usage = { inputTokens, outputTokens, costCny };
         return {
-          batch: { episodes, usage, usingPlanQuota: false, model: NATIVE_DEEP_READ_MODEL, batchRequestId },
+          batch: { episodes, usage, usingPlanQuota: false, model: readModel, batchRequestId },
           diagnostic: {
             mode: "gemini_selected", assemblyComplete: false, glmStatus: "not_run", productAcceptance: "not_run",
             sourceDigest: episode.cacheSourceDigest!, sourceDurationSec: episode.sourceDurationSec,
             totalSegmentCount: segmentCount, selectedSegmentIndexes: [...selectedSegmentIndexes],
-            episodeIndex: episode.episodeIndex, batchRequestId: episodeRequestId, model: NATIVE_DEEP_READ_MODEL,
+            episodeIndex: episode.episodeIndex, batchRequestId: episodeRequestId, model: readModel,
             segments: selectedSegmentIndexes.map((index) => diagnosticSegments.get(index)!),
             usage, rawAttemptEvidenceObjectNames: Array.from(rawAttemptEvidenceObjectNames),
           },
@@ -5932,7 +5945,7 @@ async function executeNativeDeepReadBatch(
       const parseCallId = `${episodeRequestId}:parse`;
       await emitVisualModelReceipt({
         callId: parseCallId,
-        model: NATIVE_DEEP_READ_MODEL,
+        model: readModel,
         route: "local_schema_gate",
         stage: "visual_parse",
         status: "started",
@@ -6000,7 +6013,7 @@ async function executeNativeDeepReadBatch(
          */
         structuredRaw.provenance = {
           planVersion: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
-          model: NATIVE_DEEP_READ_MODEL,
+          model: readModel,
           temperature: NATIVE_DEEP_READ_GENERATION_CONFIG.temperature,
           thinkingLevel: NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig.thinkingLevel,
           // 输入规格入档（0830 晚）：隔天复盘时能说清这份产物是用什么画质读出来的。
@@ -6064,7 +6077,7 @@ async function executeNativeDeepReadBatch(
             segmentCount,
             failedSegmentCount: 0,
             attemptedSegments: segmentCount,
-            model: NATIVE_DEEP_READ_MODEL,
+            model: readModel,
             usingPlanQuota: false,
             batchRequestId: episodeRequestId,
             batchEpisodeCount: 1,
@@ -6088,7 +6101,7 @@ async function executeNativeDeepReadBatch(
         });
         await emitVisualModelReceipt({
           callId: parseCallId,
-          model: NATIVE_DEEP_READ_MODEL,
+          model: readModel,
           route: "local_schema_gate",
           stage: "visual_parse",
           status: "completed",
@@ -6107,7 +6120,7 @@ async function executeNativeDeepReadBatch(
       } catch (error) {
         await emitVisualModelReceipt({
           callId: parseCallId,
-          model: NATIVE_DEEP_READ_MODEL,
+          model: readModel,
           route: "local_schema_gate",
           stage: "visual_parse",
           status: "failed",
@@ -6126,7 +6139,7 @@ async function executeNativeDeepReadBatch(
       episodes,
       usage: { inputTokens, outputTokens, costCny },
       usingPlanQuota: false,
-      model: NATIVE_DEEP_READ_MODEL,
+      model: readModel,
       batchRequestId,
     } };
   } catch (error) {

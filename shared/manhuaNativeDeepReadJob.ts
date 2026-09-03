@@ -7,6 +7,29 @@ import { MANHUA_LEARN_MAX_DURATION_SEC } from "./manhuaTemplateLearnSeries.js";
  */
 export const MANHUA_NATIVE_DEEP_READ_MODEL = "gemini-3.1-pro-preview" as const;
 export const MANHUA_NATIVE_DEEP_READ_MODEL_LABEL = "Gemini 3.1 Pro" as const;
+/**
+ * 0903 用户拍板：读片双模型面板可选——3.1 Pro 质量基线 / 3.8 Flash 低成本档。
+ * 官方规格（API 元数据实测）两者同为输入 1M tok / 输出 64K tok / generateContent+缓存+批量。
+ * 不许静默扩表：加模型必须经用户拍板后同时更新冻结契约。
+ */
+export const MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS = [
+  "gemini-3.1-pro-preview",
+  "gemini-3.8-flash",
+] as const;
+export type ManhuaNativeDeepReadModelId = (typeof MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS)[number];
+export const MANHUA_NATIVE_DEEP_READ_MODEL_LABELS: Record<ManhuaNativeDeepReadModelId, string> = {
+  "gemini-3.1-pro-preview": "Gemini 3.1 Pro",
+  "gemini-3.8-flash": "Gemini 3.8 Flash",
+} as const;
+
+export function parseNativeDeepReadModel(value: unknown): ManhuaNativeDeepReadModelId {
+  if (value === undefined || value === null || value === "") return MANHUA_NATIVE_DEEP_READ_MODEL;
+  const id = String(value).trim();
+  if ((MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS as readonly string[]).includes(id)) {
+    return id as ManhuaNativeDeepReadModelId;
+  }
+  throw new Error("读片模型只允许 Gemini 3.1 Pro 或 Gemini 3.8 Flash");
+}
 /** 用户确认：GLM-5.3 整集结构化、系列聚合及同源探针统一使用官方支持的 high。 */
 export const MANHUA_NATIVE_GLM_REASONING_EFFORT = "high" as const;
 
@@ -75,6 +98,7 @@ export const NATIVE_DEEP_READ_JOB_FIELDS = [
   "nativeSegmentSeconds",
   "nativeVideoFps",
   "nativeStandaloneSource",
+  "nativeReadModel",
 ] as const;
 
 export type NativeDeepReadJobConfirmation = {
@@ -90,6 +114,8 @@ export type NativeDeepReadJobConfirmation = {
    * 勾选后跳过合集展开，按独立长视频单集学习（身份仍只绑 awemeId）。
    */
   standaloneSource: boolean;
+  /** 0903 双模型：读片主模型，面板可选；缺省＝3.1 Pro。 */
+  readModel: ManhuaNativeDeepReadModelId;
   /** 与 planHash 成对出现，仅用于兼容已经入队的旧任务。 */
   seriesKey?: string;
   learnLlm: "gpt" | "claude" | "deepseek";
@@ -107,6 +133,7 @@ export function sameNativeDeepReadJobConfirmation(
     && left.segmentSeconds === right.segmentSeconds
     && left.videoFps === right.videoFps
     && left.standaloneSource === right.standaloneSource
+    && left.readModel === right.readModel
     && left.seriesKey === right.seriesKey
     && left.learnLlm === right.learnLlm;
 }
@@ -135,6 +162,7 @@ export function parseNativeDeepReadJobConfirmation(
     throw new Error("整支即全集开关必须为布尔值");
   }
   const standaloneSource = standaloneRaw === true || standaloneRaw === "true";
+  const readModel = parseNativeDeepReadModel(params.nativeReadModel);
   const hasLegacyPlanConfirmation = Boolean(planHash || seriesKey);
   let parsedUrl: URL;
   try {
@@ -174,6 +202,7 @@ export function parseNativeDeepReadJobConfirmation(
     segmentSeconds,
     videoFps,
     standaloneSource,
+    readModel,
     seriesKey: seriesKey || undefined,
     learnLlm:
       params.learnLlm === "claude" || params.learnLlm === "deepseek"
