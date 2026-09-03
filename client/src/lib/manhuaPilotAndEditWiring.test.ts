@@ -44,4 +44,11 @@ describe("漫剧首10秒质检与视频编辑接线", () => {
     expect(workbenchSource).toContain("轨迹与底图分开保存");
     expect(workbenchSource).toContain("确认轨迹");
   });
+
+  it("keeps five user-facing phases without changing legacy internal keys", () => {
+    expect(workbenchSource).toContain('id: "storyboard",\n        label: "分镜"');
+    expect(workbenchSource).toContain('id: "edit",\n        label: "成片"');
+    expect(workbenchSource).toContain('id: "final",\n        label: "终审"');
+    expect(workbenchSource).not.toContain('label: "剪辑"');
+  });
 });
