@@ -7086,6 +7086,14 @@ export default function OmniCanvas() {
                   >
                     经典表单
                   </button>
+                  <button
+                    type="button"
+                    className="rounded-lg border border-white/15 px-2.5 py-1.5 font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
+                    onClick={() => selectCanvasMode("freeform")}
+                    title="切到自由画布"
+                  >
+                    ⇄ 自由画布
+                  </button>
                 </div>
               ) : (
                 <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
@@ -7653,19 +7661,30 @@ export default function OmniCanvas() {
                       block?.outputUrl || block?.outputUrls?.[0] || block?.refImageUrl || "",
                     ).trim();
                     if (!ref) throw new Error("这张卡还没有可编辑的图片");
-                    const url = await runGptImage2(prompt, "9:16", {
-                      refImageUrl: ref,
-                      openaiOnly: true,
-                      imageLane: resolveOpenAiImageLaneForBlockId(blockId),
-                      userId: user?.id ? String(user.id) : "",
-                    });
+                    // 审查修1：不钉官方单供应商（0812 P0 旧案），走 EvoLink 优先的便宜链
+                    // 审查修2：比例跟卡走，场景空镜 16:9 不被硬掰成 9:16
+                    const url = await runGptImage2(
+                      prompt,
+                      block?.aspectRatio === "16:9" ? "16:9" : "9:16",
+                      {
+                        refImageUrl: ref,
+                        imageLane: resolveOpenAiImageLaneForBlockId(blockId),
+                        userId: user?.id ? String(user.id) : "",
+                      },
+                    );
                     handleBlocksChange((prev) =>
                       prev.map((b) =>
                         b.id === blockId
                           ? {
                               ...b,
                               outputUrl: url,
-                              outputUrls: [url, ...(b.outputUrls || []).filter((u) => u && u !== url)].slice(0, 8),
+                              // 审查修5：显式把被编辑的旧 outputUrl 押进历史位，不依赖它已在 outputUrls 的隐含前提
+                              outputUrls: [
+                                url,
+                                ...[b.outputUrl, ...(b.outputUrls || [])].filter(
+                                  (u): u is string => Boolean(u) && u !== url,
+                                ),
+                              ].filter((u, i, arr) => arr.indexOf(u) === i).slice(0, 8),
                               status: "done" as const,
                             }
                           : b,

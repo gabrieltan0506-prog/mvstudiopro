@@ -3,6 +3,7 @@
  * 一集：5–6 段 × 每段 3–4 关键静帧；每段一条成片（Seedance ≤15s，按时长合计钳制）。
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -3413,7 +3414,10 @@ export default function ManhuaScriptWorkbench({
               {sheetPreview ? (
                 <div
                   className="fixed inset-0 z-[75] flex flex-col items-center justify-center gap-3 bg-black/85 px-4 py-6"
-                  onClick={() => setSheetPreview(null)}
+                  onClick={() => {
+                    if (imageEditDraft?.busy) return;
+                    setSheetPreview(null);
+                  }}
                 >
                   <img
                     src={sheetPreview.url}
@@ -3454,8 +3458,9 @@ export default function ManhuaScriptWorkbench({
                     ) : null}
                     <button
                       type="button"
+                      disabled={Boolean(imageEditDraft?.busy)}
                       onClick={() => setSheetPreview(null)}
-                      className="rounded border border-white/15 px-2 py-0.5 text-[11px] text-white/60 hover:bg-white/[0.06]"
+                      className="rounded border border-white/15 px-2 py-0.5 text-[11px] text-white/60 hover:bg-white/[0.06] disabled:opacity-40"
                     >
                       关闭
                     </button>
@@ -3488,15 +3493,27 @@ export default function ManhuaScriptWorkbench({
                           onClick={() => {
                             const draft = imageEditDraft;
                             if (!draft || !onEditImageBlock) return;
+                            try {
+                              assertOpenAiImagePromptWithinLimit(draft.prompt.trim());
+                            } catch (limitErr) {
+                              setImageEditDraft({
+                                ...draft,
+                                errorZh: limitErr instanceof Error ? limitErr.message : "提示词过长",
+                              });
+                              return;
+                            }
                             setImageEditDraft({ ...draft, busy: true, errorZh: "" });
                             void onEditImageBlock({ blockId: draft.blockId, prompt: draft.prompt.trim() })
                               .then((url) => {
-                                setImageEditDraft(null);
-                                setSheetPreview((prev) => (prev ? { ...prev, url } : prev));
+                                // 审查修3：只更新仍属于本次编辑目标的草稿/预览，防止串卡
+                                setImageEditDraft((d) => (d && d.blockId === draft.blockId ? null : d));
+                                setSheetPreview((prev) =>
+                                  prev && prev.id === draft.blockId ? { ...prev, url } : prev,
+                                );
                               })
                               .catch((err) => {
                                 setImageEditDraft((d) =>
-                                  d
+                                  d && d.blockId === draft.blockId
                                     ? {
                                         ...d,
                                         busy: false,
