@@ -11,6 +11,7 @@
  * 3. **中止立刻停**，且不把中止记成「这集失败了」
  */
 import crypto from "node:crypto";
+import { MANHUA_LEARN_MAX_DURATION_SEC } from "../../shared/manhuaTemplateLearnSeries.js";
 import {
   isManhuaNativeDeepReadEnabled,
   NATIVE_DEEP_READ_AUDIO_CUE_FLOOR_INTERVAL_SEC,
@@ -624,8 +625,8 @@ export const NATIVE_DEEP_READ_DEFAULT_BATCH_EPISODES = 20;
 
 /** 失控保险：清单误写成几千集时兜底，正常发车碰不到 */
 export const NATIVE_DEEP_READ_BATCH_HARD_CEILING = 200;
-/** 单集仍遵守学习策略的两小时上限。 */
-export const NATIVE_DEEP_READ_MAX_EPISODE_SEC = 120 * 60;
+/** 单集时长上限挂学习策略总开关（#1361 抬到 4 小时）；此前写死 120 分钟导致整片电影被执行层拦下。 */
+export const NATIVE_DEEP_READ_MAX_EPISODE_SEC = MANHUA_LEARN_MAX_DURATION_SEC;
 /** 配置可到两小时；每次任务的实际分片上限由其自定义 segmentSeconds 决定。 */
 export const NATIVE_DEEP_READ_MAX_SEGMENT_SEC = NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS;
 
