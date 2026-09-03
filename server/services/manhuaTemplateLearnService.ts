@@ -539,7 +539,10 @@ export async function resolveManhuaSeriesKey(input: {
   mixId?: string;
   title?: string;
   learnLlm: ManhuaTemplateLearnLlmProvider;
+  /** 0903 双模型：同名剧匹配必须分车道——flash 只认带 -g38f 的系列，pro 只认不带的。 */
+  readModel?: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeDeepReadModelId;
 }): Promise<string> {
+  const wantFlashLane = input.readModel === "gemini-3.8-flash";
   const normalizedTitle = normalizeManhuaSeriesTitle(input.title);
   if (normalizedTitle) {
     const names = await listGcsObjectNamesByPrefix({
@@ -556,6 +559,9 @@ export async function resolveManhuaSeriesKey(input: {
       if (read.status !== "found") continue;
       const existingProvider = read.value.learnLlm || "gpt";
       if (existingProvider !== input.learnLlm) continue;
+      // 车道过滤：Pro 单绝不复用 flash 系列，反之亦然（复审抓的非确定性路由雷）
+      const existingIsFlash = String(read.value.seriesKey || existingKey).endsWith("-g38f");
+      if (existingIsFlash !== wantFlashLane) continue;
       if (normalizeManhuaSeriesTitle(read.value.titleHint) === normalizedTitle) {
         return read.value.seriesKey || existingKey;
       }
@@ -2204,6 +2210,7 @@ export async function runManhuaTemplateLearn(
           mixId,
         }),
         learnLlm,
+        readModel: input.nativeReadModel,
       }),
       input.nativeReadModel,
     );

@@ -84,7 +84,7 @@ export async function buildNativeDeepReadPlanPreviewFromServices(
     listIngestedEpisodeRecords: listIngestedNativeDeepReadEpisodeRecords,
     listClaimStates: listNativeDeepReadEpisodeClaimStates,
     resolveSeriesKey: async (keyInput) => nativeDeepReadSeriesKeyForModel(
-      await resolveManhuaSeriesKey(keyInput),
+      await resolveManhuaSeriesKey({ ...keyInput, readModel: input.readModel }),
       input.readModel,
     ),
     isExecutionEnabled: isManhuaNativeDeepReadEnabled,
