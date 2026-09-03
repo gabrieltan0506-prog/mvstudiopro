@@ -84,7 +84,7 @@ export function buildOpenRouterHailuoSubmitBody(input: {
   imageUrls?: string[];
   aspectRatio?: string;
   duration?: number;
-  /** 768p 草稿 / 2K 高清；缺省或认不出一律 768p */
+  /** 768p 草稿 / 2K 高清；缺省或认不出一律按产品默认 2K */
   resolution?: string;
   generateAudio?: boolean;
 }): Record<string, unknown> {
@@ -171,7 +171,7 @@ export type OpenRouterHailuoRunInput = {
   imageUrls?: string[];
   aspectRatio?: string;
   duration?: number;
-  /** 768p 草稿 / 2K 高清；缺省或认不出一律 768p */
+  /** 768p 草稿 / 2K 高清；缺省或认不出一律按产品默认 2K */
   resolution?: string;
   generateAudio?: boolean;
 };

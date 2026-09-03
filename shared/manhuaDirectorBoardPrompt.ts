@@ -8,12 +8,19 @@
 
 import type { ManhuaEpisodeSegmentBeat } from "./manhuaEpisodeSegmentPlan.js";
 import { splitManhuaCastZhNames } from "./manhuaAssetLockRegistry.js";
+import {
+  formatManhuaDirectorStrategyStage,
+  parseManhuaDirectorStrategyContract,
+  type ManhuaDirectorStrategyContract,
+} from "./manhuaDirectorStrategy.js";
 
 export type ManhuaDirectorBoardPromptInput = {
   /** 第几集，用于右侧文字栏「第NN集」 */
   episodeNumber: number;
   episodeTitleZh: string;
   segments: ManhuaEpisodeSegmentBeat[];
+  /** 扩写时冻结的同一份去名策略；只投影分镜阶段，不重新匹配。 */
+  directorStrategyContract?: ManhuaDirectorStrategyContract | null;
 };
 
 export type ManhuaDirectorBoardPromptResult = {
@@ -178,6 +185,12 @@ export function buildManhuaDirectorBoardPromptZh(
   const lightingZh = summarizeManhuaLightingZh(segments);
   const intentZh = summarizeManhuaIntentZh(segments);
   const peak = pickManhuaPeakSegment(segments);
+  const directorStrategyContract = parseManhuaDirectorStrategyContract(
+    input.directorStrategyContract,
+  );
+  const directorStrategyBlock = directorStrategyContract
+    ? formatManhuaDirectorStrategyStage(directorStrategyContract, "storyboard")
+    : "";
 
   const centerPictureZh = [peak?.sceneZh, peak?.performanceZh, peak?.lightingCameraZh]
     .map((s) => String(s || "").trim())
@@ -210,6 +223,7 @@ export function buildManhuaDirectorBoardPromptZh(
     "【戏剧核心】",
     intentZh || "无",
     "须写清：观众先看见什么 → 接着误会/紧张什么 → 最后留下什么疑问。",
+    ...(directorStrategyBlock ? ["", directorStrategyBlock] : []),
     "",
     "【人物连续性】",
     castZh.join("、") || "无",
@@ -226,8 +240,7 @@ export function buildManhuaDirectorBoardPromptZh(
     "下方横向排列三个编号证据/动作小分镜。",
     "右侧深色垂直信息栏。",
     "中央叠加淡色 9:16 竖屏安全框（青色虚线）。",
-    "红色箭头：人物与道具运动方向。",
-    "青色箭头：摄影机运动轨迹。",
+    "主画面保持干净，不烧入人物轨迹、摄影机轨迹、空间轴线或落点标记；这些由工作台可编辑 SVG 图层叠加。",
     "",
     "【中央主画面】",
     centerPictureZh || "无",
@@ -235,13 +248,11 @@ export function buildManhuaDirectorBoardPromptZh(
     "【下方三个小分镜】",
     ...smallPanelsZh,
     "",
-    "【运镜】",
-    "青色箭头表示摄影机运动。",
-    "每条运镜写清：从哪里开始 → 往哪里移动 → 最后停在哪里。",
+    "【运镜文字说明】",
+    "每条运镜写清：从哪里开始 → 往哪里移动 → 最后停在哪里；不要在图片中画箭头。",
     `全板控制在 3–4 种主要运镜：${cameraMovesZh || "无"}`,
     "",
-    "【人物与道具运动】",
-    "红色箭头表示人物和道具轨迹。",
+    "【人物与道具运动文字说明】",
     `动作节拍链（进入→急停→蹲下→发现→藏物→回望…）：${actionBeatsZh || "无"}`,
     "",
     "【灯光】",

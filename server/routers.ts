@@ -9448,6 +9448,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           "./services/manhuaWriterExpandBilling.js"
         );
         const { runManhuaWriterExpand } = await import("./services/manhuaWriterExpandRun.js");
+        const { resolveManhuaDirectorStrategyContract } = await import(
+          "../shared/manhuaDirectorStrategy.js"
+        );
 
         const layout = resolveManhuaSeedanceLayoutProfile(input.videoModel);
         const { resolveManhuaWriterTemplateRequest } = await import(
@@ -9541,6 +9544,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           viralTemplateId: appliedInternalTemplateId,
           viralTemplateAddon,
         });
+        // 与 buildManhuaWriterExpandPrompt 使用同一纯函数输入；返回的是去名、白名单化合同，
+        // 不含完整商业模板，也不让客户端自造来源或规则。
+        const directorStrategyContract = resolveManhuaDirectorStrategyContract({ topic, brief });
         const { createHash } = await import("node:crypto");
         const chargeKey = `mwe_${createHash("sha256")
           .update(`${userId}:${input.requestId}:${quota.runTier}:${prompt}`)
@@ -9591,6 +9597,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             labelZh: layout.labelZh,
           },
           appliedTemplate,
+          directorStrategyContract,
         };
       }),
 
@@ -10013,6 +10020,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         z.object({
           episodeNumber: z.number().int().min(1),
           episodeTitleZh: z.string().max(200).default(""),
+          directorStrategyId: z.string().max(80).optional(),
           segments: z
             .array(
               z.object({
@@ -10035,10 +10043,16 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const { buildManhuaDirectorBoardPromptZh } = await import(
           "../shared/manhuaDirectorBoardPrompt.js"
         );
+        const { getManhuaDirectorStrategyContract } = await import(
+          "../shared/manhuaDirectorStrategy.js"
+        );
         return buildManhuaDirectorBoardPromptZh({
           episodeNumber: input.episodeNumber,
           episodeTitleZh: input.episodeTitleZh,
           segments: input.segments,
+          directorStrategyContract: getManhuaDirectorStrategyContract(
+            input.directorStrategyId,
+          ),
         });
       }),
 

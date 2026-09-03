@@ -9,6 +9,10 @@ import {
   type ManhuaWriterAssetCanon,
 } from "./manhuaWriterAssetCanon.js";
 import { getManhuaArtStylePreset } from "./manhuaCharacterAssetLibrary.js";
+import {
+  parseManhuaDirectorStrategyContract,
+  type ManhuaDirectorStrategyContract,
+} from "./manhuaDirectorStrategy.js";
 
 export const MANHUA_PROJECT_BIBLE_FORMAT = "mv-manhua-project-bible-v1" as const;
 
@@ -38,6 +42,8 @@ export type ManhuaProjectBible = {
   episodes: Array<{ index: number; title: string; endHook: string }>;
   cast: ManhuaProjectBibleCast;
   focusEpisode: number;
+  /** 编剧确认时冻结；资产、分镜、剪辑与成片读取同一份策略。 */
+  directorStrategyContract?: ManhuaDirectorStrategyContract | null;
   /**
    * 编剧表解析的系列资产真源（人物/道具/场景池 + 每集主场景）。
    * 优先于库 ID；库仅为可选参考。
@@ -68,6 +74,7 @@ export type BuildManhuaProjectBibleInput = {
   confirmedAt?: string | Date;
   assetCanon?: ManhuaWriterAssetCanon | null;
   manualOverrides?: ManhuaProjectBible["manualOverrides"];
+  directorStrategyContract?: ManhuaDirectorStrategyContract | null;
 };
 
 /** 从编剧确认瞬间的状态生成专案 Bible */
@@ -128,6 +135,7 @@ export function buildManhuaProjectBible(input: BuildManhuaProjectBibleInput): Ma
       boundEpisodeIndexes: bound.length ? bound : [1],
     },
     focusEpisode,
+    directorStrategyContract: parseManhuaDirectorStrategyContract(input.directorStrategyContract),
     assetCanon,
     manualOverrides: input.manualOverrides,
   };
@@ -173,6 +181,7 @@ export function parseManhuaProjectBible(raw: unknown): ManhuaProjectBible | null
         boundEpisodeIndexes: o.cast.boundEpisodeIndexes,
       },
       focusEpisode: o.focusEpisode,
+      directorStrategyContract: o.directorStrategyContract,
       confirmedAt: o.confirmedAt,
       assetCanon: (o as { assetCanon?: ManhuaWriterAssetCanon }).assetCanon,
       manualOverrides: o.manualOverrides,

@@ -172,6 +172,11 @@ export type CanvasRunDeps = {
   manhuaDirectorBoardUrlByEpisode?: Record<number, string> | null;
   /** 段级导演板（段级为主、集级兜底）：集号 → 本集段号(1 起) → HTTPS */
   manhuaDirectorBoardUrlByEpisodeSegment?: Record<number, Record<number, string>> | null;
+  /** 集号 → 段号 → 已确认的导演板矢量轨迹；与位图分开保存。 */
+  manhuaDirectorBoardMotionOverlayByEpisodeSegment?: Record<
+    number,
+    Record<number, import("@shared/manhuaDirectorBoardOverlay").ManhuaBoardMotionOverlay>
+  > | null;
   /** @引用索引（@图NN 平铺→锁表槽位）；由画布层按当前 registry 预构建 */
   manhuaAtReferenceEntries?: import("@shared/manhuaAtReference").ManhuaAtReferenceEntry[] | null;
   /**
@@ -723,7 +728,35 @@ async function runSeedanceProductVideo(
   throw new Error(json.error || json.message || "成片生成失败");
 }
 
-/** MiniMax H3 · OpenRouter（2K；时长 5–15s） */
+export function buildHailuo3CanvasRequestBody(input: {
+  prompt: string;
+  imageUrl?: string;
+  imageUrls?: string[];
+  aspectRatio: "9:16" | "16:9";
+  duration?: number;
+  resolution?: string;
+  episodeIndex?: number;
+  clipIndex?: number;
+}): Record<string, unknown> {
+  const imageUrls = (input.imageUrls || [])
+    .map((u) => String(u || "").trim())
+    .filter(Boolean);
+  return {
+    prompt: renderManhuaClipPromptForSeedance(input.prompt),
+    imageUrl: input.imageUrl || imageUrls[0] || undefined,
+    imageUrls: imageUrls.length
+      ? imageUrls.slice(0, HAILUO_REFERENCE_MAX.image)
+      : undefined,
+    aspectRatio: input.aspectRatio,
+    duration: clampHailuoOpenRouterDuration(input.duration),
+    resolution: input.resolution,
+    generateAudio: true,
+    ...(Number(input.episodeIndex) > 0 ? { episodeIndex: Number(input.episodeIndex) } : {}),
+    ...(Number(input.clipIndex) > 0 ? { clipIndex: Number(input.clipIndex) } : {}),
+  };
+}
+
+/** MiniMax H3 · OpenRouter（画质由服务端归一；时长 5–15s） */
 async function runHailuo3(
   prompt: string,
   imageUrl: string | undefined,
@@ -731,6 +764,7 @@ async function runHailuo3(
   opts?: {
     imageUrls?: string[];
     duration?: number;
+    resolution?: string;
     /** 漫剧集号／段号：服务端据此走整集折算段价 */
     episodeIndex?: number;
     clipIndex?: number;
@@ -738,27 +772,23 @@ async function runHailuo3(
 ): Promise<string> {
   const hailuoUrl = withLongJobsFlyDirect("/api/jobs?op=hailuo3Video");
   const probeOrigin = flyHealthProbeOriginForUrl(hailuoUrl);
-  const imageUrls = (opts?.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
-  // 时长由共享层钉死 15s，节拍解析结果只影响提示词展示
-  const duration = clampHailuoOpenRouterDuration();
+  const requestBody = buildHailuo3CanvasRequestBody({
+    prompt,
+    imageUrl,
+    imageUrls: opts?.imageUrls,
+    aspectRatio,
+    duration: opts?.duration,
+    resolution: opts?.resolution,
+    episodeIndex: opts?.episodeIndex,
+    clipIndex: opts?.clipIndex,
+  });
   const res = await withFlyHealthGate(probeOrigin, () =>
     fetch(hailuoUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      // 服务端已要求登录（H3 一段 2K·15s 是真钱），必须带上登录态
+      // 服务端已要求登录（H3 成片会真实扣费），必须带上登录态。
       credentials: "include",
-      body: JSON.stringify({
-        prompt: renderManhuaClipPromptForSeedance(prompt),
-        imageUrl: imageUrl || imageUrls[0] || undefined,
-        imageUrls: imageUrls.length
-          ? imageUrls.slice(0, HAILUO_REFERENCE_MAX.image)
-          : undefined,
-        aspectRatio,
-        duration,
-        generateAudio: true,
-        ...(Number(opts?.episodeIndex) > 0 ? { episodeIndex: Number(opts?.episodeIndex) } : {}),
-        ...(Number(opts?.clipIndex) > 0 ? { clipIndex: Number(opts?.clipIndex) } : {}),
-      }),
+      body: JSON.stringify(requestBody),
     }),
   );
   const text = await res.text();
@@ -1644,6 +1674,7 @@ export async function runCanvasBlock(
         url = await runHailuo3(seedancePrompt, seedStill, ar, {
           imageUrls: httpsImages.length ? httpsImages : undefined,
           duration: clipDuration,
+          resolution: block.videoResolution,
           episodeIndex: block.episodeIndex,
           clipIndex: parseClipIndexFromBlockId(block.id),
         });

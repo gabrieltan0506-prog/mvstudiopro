@@ -5,6 +5,7 @@ describe("buildManhuaAssembleJobInput", () => {
   it("wraps clips for video job worker", () => {
     const input = buildManhuaAssembleJobInput({
       clips: [{ episodeIndex: 1, clipUrl: "https://example.com/a.mp4" }],
+      expectedSegments: [{ episodeIndex: 1, segmentIndex: 1 }],
       topic: "测试",
       musicDuration: 240,
     });
@@ -13,5 +14,8 @@ describe("buildManhuaAssembleJobInput", () => {
     expect(input.params.resolution).toBe("9:16");
     expect(input.params.clips).toHaveLength(1);
     expect(input.params.musicDuration).toBe(240);
+    expect(input.params.expectedSegments).toEqual([
+      { episodeIndex: 1, segmentIndex: 1 },
+    ]);
   });
 });

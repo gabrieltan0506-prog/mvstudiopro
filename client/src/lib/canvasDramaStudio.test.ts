@@ -915,7 +915,7 @@ describe("canvasDramaStudio factory", () => {
     expect(clips.length).toBe(6);
   });
 
-  it("ensureManhuaFragmentClips 接入集级导演板：@图片N 硬绑与红/青箭头引导句都在，最终提示词不留原始 URL", () => {
+  it("ensureManhuaFragmentClips 接入集级导演板：@图片N 硬绑但不把矢量标记烧进成片，最终提示词不留原始 URL", () => {
     const { blocks, edges } = spawnManhuaDramaStudio({
       topic: "江湖刀客雨夜客栈",
       episodeIndex: 1,
@@ -950,8 +950,9 @@ describe("canvasDramaStudio factory", () => {
       const p = clip.prompt || "";
       expect(p).toContain("【垫图】");
       expect(p).toContain("导演板");
-      expect(p).toContain("红箭头");
-      expect(p).toContain("青箭头");
+      expect(p).toContain("轨迹由独立空间调度字段提供");
+      expect(p).not.toContain("红箭头");
+      expect(p).not.toContain("青箭头");
       expect(p).toContain("不得出现在成片画面");
       // 最终成片提示词禁止残留原始网址（下游统一走 @图片N + editFusionUrls 传图）
       expect(p).not.toMatch(/https?:\/\//);

@@ -354,6 +354,36 @@ export function canvasVideoTaskNeedsSubmit(task: CanvasVideoTaskRecord): boolean
   return !task.pollingUrl;
 }
 
+/**
+ * H3 任务记录 -> OpenRouter 实际提交体。
+ *
+ * 画质在 API 扣费前已经归一并持久化到 `task.resolution`；这里必须继续透传，
+ * 否则 builder 会按缺省值回落到 2K，造成草稿档按 768p 计费却实际提交 2K。
+ * 抽成纯函数是为了让回归测试直接核对最终上游请求体，而不是只测中间任务字段。
+ */
+export function buildHailuoSubmitBodyFromTask(
+  task: Pick<
+    CanvasVideoTaskRecord,
+    | "prompt"
+    | "imageUrl"
+    | "imageUrls"
+    | "aspectRatio"
+    | "duration"
+    | "resolution"
+    | "generateAudio"
+  >,
+): Record<string, unknown> {
+  return buildOpenRouterHailuoSubmitBody({
+    prompt: task.prompt,
+    imageUrl: task.imageUrl,
+    imageUrls: task.imageUrls,
+    aspectRatio: task.aspectRatio,
+    duration: task.duration,
+    resolution: task.resolution,
+    generateAudio: task.generateAudio,
+  });
+}
+
 function seedance25RunInput(task: CanvasVideoTaskRecord): EvolinkSeedanceRunInput {
   return {
     prompt: task.prompt,
@@ -632,14 +662,7 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
   }
 
   if (task.engine === "hailuo-openrouter") {
-    const body = buildOpenRouterHailuoSubmitBody({
-      prompt: task.prompt,
-      imageUrl: task.imageUrl,
-      imageUrls: task.imageUrls,
-      aspectRatio: task.aspectRatio,
-      duration: task.duration,
-      generateAudio: task.generateAudio,
-    });
+    const body = buildHailuoSubmitBodyFromTask(task);
     const submitted = await submitOpenRouterVideoJob(body);
     task.openRouterJobId = submitted.openRouterJobId;
     task.pollingUrl = submitted.pollingUrl;

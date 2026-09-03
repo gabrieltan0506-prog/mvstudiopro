@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildManhuaProjectBible } from "./manhuaProjectBible";
+import { resolveManhuaDirectorStrategyContract } from "./manhuaDirectorStrategy";
 import {
   buildManhuaWriterSession,
   healManhuaWriterSessionCanonDrift,
@@ -27,6 +28,9 @@ describe("manhuaWriterSession", () => {
   };
 
   it("round-trips writer pack + bible", () => {
+    const directorStrategyContract = resolveManhuaDirectorStrategyContract({
+      topic: "江湖刀光打斗交锋的短剧",
+    });
     const bible = buildManhuaProjectBible({
       topic: "江湖刀光打斗交锋的短剧",
       pack,
@@ -39,6 +43,7 @@ describe("manhuaWriterSession", () => {
         wardrobePropContinuityIds: [],
       },
       focusEpisode: 2,
+      directorStrategyContract,
     });
     const session = buildManhuaWriterSession({
       topic: "江湖刀光打斗交锋的短剧",
@@ -49,6 +54,7 @@ describe("manhuaWriterSession", () => {
       writerConfirmed: true,
       directorUnlocked: true,
       projectBible: bible,
+      directorStrategyContract,
       manhuaUiMode: "workbench",
     });
     const again = parseManhuaWriterSession(serializeManhuaWriterSession(session));
@@ -62,6 +68,10 @@ describe("manhuaWriterSession", () => {
     expect(again?.workflowPhase).toBe("storyboard");
     expect(again?.customAssetRefs).toEqual([]);
     expect(again?.publicTemplateId).toBe("");
+    expect(again?.directorStrategyContract?.strategyId).toBe("relational_action");
+    expect(again?.projectBible?.directorStrategyContract?.strategyId).toBe(
+      "relational_action",
+    );
   });
 
   it("persists publicTemplateId", () => {

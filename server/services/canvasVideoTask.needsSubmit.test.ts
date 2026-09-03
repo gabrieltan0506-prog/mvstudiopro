@@ -1,8 +1,42 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildHailuoSubmitBodyFromTask,
   canvasVideoTaskNeedsSubmit,
   type CanvasVideoTaskRecord,
 } from "./canvasVideoTask";
+
+describe("buildHailuoSubmitBodyFromTask", () => {
+  const baseTask = {
+    prompt: "雨夜巷道缓慢推近",
+    aspectRatio: "16:9",
+    duration: 10,
+    generateAudio: true,
+  } satisfies Pick<
+    CanvasVideoTaskRecord,
+    "prompt" | "aspectRatio" | "duration" | "generateAudio"
+  >;
+
+  it.each([
+    ["768p", "768p"],
+    // H3 上游没有 1080p 档；旧任务或旁路传入时必须显式归到产品默认 2K。
+    ["1080p", "2K"],
+    ["2K", "2K"],
+  ])("把任务画质 %s 送成上游请求体 %s", (taskResolution, expectedResolution) => {
+    const body = buildHailuoSubmitBodyFromTask({
+      ...baseTask,
+      resolution: taskResolution,
+    });
+
+    expect(body).toMatchObject({
+      model: "minimax/hailuo-3",
+      prompt: "雨夜巷道缓慢推近",
+      duration: 10,
+      resolution: expectedResolution,
+      aspect_ratio: "16:9",
+      generate_audio: true,
+    });
+  });
+});
 
 describe("canvasVideoTaskNeedsSubmit(六审第7条:HH 官方单不得重复提交)", () => {
   it("已有 bailianTaskId 时不得再次提交", () => {

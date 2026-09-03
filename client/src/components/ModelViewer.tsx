@@ -15,6 +15,10 @@ export interface ModelViewerProps {
   [key: string]: any;
 }
 
+export function resolveModelViewerUrl(props: Pick<ModelViewerProps, "glbUrl" | "modelUrl" | "src">): string | null {
+  return String(props.glbUrl || props.modelUrl || props.src || "").trim() || null;
+}
+
 function generateModelViewerHTML(props: {
   modelUrl: string;
   thumbnailUrl?: string | null;
@@ -147,6 +151,8 @@ function generateModelViewerHTML(props: {
 
 export function ModelViewer({
   glbUrl,
+  modelUrl: modelUrlProp,
+  src,
   objUrl,
   thumbnailUrl,
   textureUrl,
@@ -157,7 +163,7 @@ export function ModelViewer({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
-  const modelUrl = glbUrl || null;
+  const modelUrl = resolveModelViewerUrl({ glbUrl, modelUrl: modelUrlProp, src });
   const canShowViewer = !!modelUrl;
 
   const iframeHtml = useMemo(() => {
