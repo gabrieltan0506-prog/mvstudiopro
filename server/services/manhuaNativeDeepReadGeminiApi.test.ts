@@ -1,0 +1,83 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  isFlashReadViaGeminiApiEnabled,
+  uploadSegmentToGeminiFiles,
+} from "./manhuaNativeDeepReadRunner.js";
+
+const zeroSleep = async () => undefined;
+
+describe("flash 走 Gemini API key 开关", () => {
+  const saved = { flag: process.env.MANHUA_FLASH_READ_VIA_GEMINI_API, key: process.env.GEMINI_API_KEY };
+  afterEach(() => {
+    process.env.MANHUA_FLASH_READ_VIA_GEMINI_API = saved.flag ?? "";
+    process.env.GEMINI_API_KEY = saved.key ?? "";
+  });
+  it("开关与钥匙都在才开；缺一即关（回旧 Vertex 行为）", () => {
+    process.env.MANHUA_FLASH_READ_VIA_GEMINI_API = "1";
+    process.env.GEMINI_API_KEY = "k";
+    expect(isFlashReadViaGeminiApiEnabled()).toBe(true);
+    process.env.GEMINI_API_KEY = "";
+    expect(isFlashReadViaGeminiApiEnabled()).toBe(false);
+    process.env.MANHUA_FLASH_READ_VIA_GEMINI_API = "";
+    process.env.GEMINI_API_KEY = "k";
+    expect(isFlashReadViaGeminiApiEnabled()).toBe(false);
+  });
+});
+
+describe("uploadSegmentToGeminiFiles", () => {
+  const realFetch = globalThis.fetch;
+  beforeEach(() => {
+    process.env.GEMINI_API_KEY = "test-key";
+  });
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  it("start→upload→轮询 ACTIVE 后返回 files URI", async () => {
+    const calls: string[] = [];
+    globalThis.fetch = vi.fn(async (url: any, init?: any) => {
+      const u = String(url);
+      calls.push(u);
+      if (u.endsWith("/upload/v1beta/files") && init?.method === "POST" && !u.includes("upload-session")) {
+        return new Response("{}", { status: 200, headers: { "x-goog-upload-url": "https://generativelanguage.googleapis.com/upload-session/1" } });
+      }
+      if (u.includes("upload-session")) {
+        return Response.json({ file: { name: "files/abc", uri: "https://generativelanguage.googleapis.com/v1beta/files/abc", state: "PROCESSING" } });
+      }
+      return Response.json({ state: "ACTIVE", uri: "https://generativelanguage.googleapis.com/v1beta/files/abc" });
+    }) as never;
+    const out = await uploadSegmentToGeminiFiles({ buffer: Buffer.from("x"), sleepMs: zeroSleep });
+    expect(out.fileUri).toBe("https://generativelanguage.googleapis.com/v1beta/files/abc");
+    expect(calls.some((u) => u.endsWith("/v1beta/files/abc"))).toBe(true);
+  });
+
+  it("缺上传地址关闭式失败", async () => {
+    globalThis.fetch = vi.fn(async () => new Response("{}", { status: 200 })) as never;
+    await expect(uploadSegmentToGeminiFiles({ buffer: Buffer.from("x"), sleepMs: zeroSleep }))
+      .rejects.toThrow("上传地址");
+  });
+
+  it("终态非 ACTIVE（FAILED）关闭式失败，不返回可读 URI", async () => {
+    globalThis.fetch = vi.fn(async (url: any, init?: any) => {
+      const u = String(url);
+      if (u.endsWith("/upload/v1beta/files") && init?.method === "POST") {
+        return new Response("{}", { status: 200, headers: { "x-goog-upload-url": "https://g/upload-session/1" } });
+      }
+      if (u.includes("upload-session")) {
+        return Response.json({ file: { name: "files/abc", uri: "https://g/v1beta/files/abc", state: "FAILED" } });
+      }
+      return Response.json({ state: "FAILED" });
+    }) as never;
+    await expect(uploadSegmentToGeminiFiles({ buffer: Buffer.from("x"), sleepMs: zeroSleep }))
+      .rejects.toThrow("FAILED");
+  });
+
+  it("GEMINI_API_KEY 缺失直接拒绝，不发网络请求", async () => {
+    process.env.GEMINI_API_KEY = "";
+    const spy = vi.fn();
+    globalThis.fetch = spy as never;
+    await expect(uploadSegmentToGeminiFiles({ buffer: Buffer.from("x"), sleepMs: zeroSleep }))
+      .rejects.toThrow("GEMINI_API_KEY");
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
