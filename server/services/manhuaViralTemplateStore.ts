@@ -697,6 +697,20 @@ async function getGcsManhuaViralProposalVersioned(id: string): Promise<{
   return { card, generation: versioned.generation };
 }
 
+/**
+ * 0903 用户令：双模型对照学后只挑一版入库，另一版待审卡可直接删除。
+ * 只删 proposals/ 待审对象——已批准模板、分集学习产物与回执全部不动；
+ * generation 匹配防止并发批准与删除互踩。
+ */
+export async function discardGcsManhuaViralProposal(
+  id: string,
+): Promise<{ id: string; nameZh: string }> {
+  const { card, generation } = await getGcsManhuaViralProposalVersioned(id);
+  const objectName = `${MANHUA_VIRAL_PROPOSALS_PREFIX}${card.id}.json`;
+  await deleteGcsObject({ objectName, ifGenerationMatch: generation });
+  return { id: card.id, nameZh: card.nameZh };
+}
+
 export async function getGcsManhuaViralApproved(
   id: string,
 ): Promise<ManhuaViralTemplateCard | null> {

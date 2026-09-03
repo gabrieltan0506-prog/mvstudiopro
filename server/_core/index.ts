@@ -428,33 +428,46 @@ async function startServer() {
             const currentNative = hasNativeDeepReadJobFields(currentParams);
             const activeNative = hasNativeDeepReadJobFields(activeParams);
             let sameConfirmedPlan = currentNative === activeNative;
-            if (sameConfirmedPlan && currentNative) {
+            // 0903 双模型对照例外：同一来源、其余确认参数全同、只有读片模型不同
+            // （3.1 Pro vs 3.8 Flash 对照学）→ 自动放行为新任务排队，不判冲突。
+            let onlyReadModelDiffers = false;
+            if (currentNative && activeNative) {
               try {
                 const { readManhuaLearnExtraSourceHosts } = await import(
                   "../services/manhuaLearn0996Source.js"
                 );
                 const options = { extraSourceHosts: readManhuaLearnExtraSourceHosts() };
-                sameConfirmedPlan = sameNativeDeepReadJobConfirmation(
-                  parseNativeDeepReadJobConfirmation(currentParams, options),
-                  parseNativeDeepReadJobConfirmation(activeParams, options),
-                );
+                const current = parseNativeDeepReadJobConfirmation(currentParams, options);
+                const activeConf = parseNativeDeepReadJobConfirmation(activeParams, options);
+                sameConfirmedPlan = sameNativeDeepReadJobConfirmation(current, activeConf);
+                onlyReadModelDiffers = !sameConfirmedPlan
+                  && current.readModel !== activeConf.readModel
+                  && sameNativeDeepReadJobConfirmation(
+                    { ...current, readModel: activeConf.readModel },
+                    activeConf,
+                  );
               } catch {
                 sameConfirmedPlan = false;
               }
+            } else if (sameConfirmedPlan && currentNative) {
+              sameConfirmedPlan = false;
             }
-            if (!sameConfirmedPlan) {
+            if (!sameConfirmedPlan && !onlyReadModelDiffers) {
               return res.status(409).json({
                 code: MANHUA_NATIVE_DEEP_READ_ACTIVE_PARAMS_CONFLICT_CODE,
                 error: "同一来源已有使用另一组确认参数的任务；已保留原任务，未用旧 jobId 冒充本次设置。请先停止原任务后再提交。",
               });
             }
-            void processManhuaLearnJobsOnce().catch(() => {});
-            return res.status(200).json({
-              jobId: active.id,
-              status: active.status,
-              reused: true,
-              reuseMatch: currentNative ? "native_confirmation" : "source_only",
-            });
+            if (sameConfirmedPlan) {
+              void processManhuaLearnJobsOnce().catch(() => {});
+              return res.status(200).json({
+                jobId: active.id,
+                status: active.status,
+                reused: true,
+                reuseMatch: currentNative ? "native_confirmation" : "source_only",
+              });
+            }
+            // onlyReadModelDiffers：不复用旧 jobId，继续向下正常建新任务（串行排队）
           }
         }
       }
