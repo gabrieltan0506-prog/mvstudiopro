@@ -3435,12 +3435,13 @@ export default function ManhuaScriptWorkbench({
                     {sheetPreview.id ? (
                       <button
                         type="button"
+                        disabled={Boolean(imageEditDraft?.busy)}
                         onClick={() => {
                           const id = sheetPreview.id;
                           setSheetPreview(null);
                           focusBlockAndOpenCanvas(id);
                         }}
-                        className="rounded border border-white/20 px-2 py-0.5 text-[11px] text-white/80 hover:bg-white/[0.08]"
+                        className="rounded border border-white/20 px-2 py-0.5 text-[11px] text-white/80 hover:bg-white/[0.08] disabled:opacity-40"
                       >
                         在画布中定位
                       </button>
