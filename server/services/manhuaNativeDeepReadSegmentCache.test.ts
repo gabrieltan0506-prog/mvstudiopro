@@ -179,7 +179,7 @@ describe("门禁前原始响应确定性证据", () => {
     ["batchRequestId", ""],
     ["attemptNumber", 2],
     ["temperature", 0.6],
-    ["visualRoute", "evolink_gemini_video"],
+    ["visualRoute", "not_a_known_route"],
     ["httpStatus", 500],
     ["callId", "bad"],
     ["responseBytes", 1],
@@ -193,6 +193,19 @@ describe("门禁前原始响应确定性证据", () => {
     });
     await expect(readNativeDeepReadRawAttemptEvidence(rawReadInputOf(raw)))
       .rejects.toThrow("身份或内容校验失败");
+  });
+
+  it("0904：换道续跑不作废已付费证据——存稿 visualRoute 为其他已知路由时照常回读", async () => {
+    const raw = rawInputOf();
+    for (const storedRoute of ["evolink_gemini_video", "gemini_api_files_video"] as const) {
+      const stored = { ...rawStoredPayload(raw), visualRoute: storedRoute };
+      gcs.downloadVersioned.mockResolvedValue({
+        buffer: Buffer.from(JSON.stringify(stored), "utf8"),
+        generation: "7",
+      });
+      const read = await readNativeDeepReadRawAttemptEvidence(rawReadInputOf(raw));
+      expect(read?.responseText).toBe(stored.responseText);
+    }
   });
 
   it("只有404返回null，权限或网络错误关闭式失败", async () => {

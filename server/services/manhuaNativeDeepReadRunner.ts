@@ -1632,6 +1632,32 @@ export async function uploadSegmentToGeminiFiles(input: {
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey) throw new Error("GEMINI_API_KEY 未配置，Gemini Files 上传不可用");
   const base = resolveGeminiApiBaseUrl();
+  const sleep = input.sleepMs ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  // 上传本身免费幂等（48h 过期对象），瞬时抖动重试一次，别让一次 5xx 废掉整集备料。
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (attempt > 0) {
+      input.signal?.throwIfAborted();
+      await sleep(5_000);
+    }
+    try {
+      return await uploadSegmentToGeminiFilesOnce({ ...input, apiKey, base, sleep });
+    } catch (error) {
+      if (input.signal?.aborted) throw error;
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Gemini Files 上传失败");
+}
+
+async function uploadSegmentToGeminiFilesOnce(input: {
+  buffer: Buffer;
+  signal?: AbortSignal;
+  apiKey: string;
+  base: string;
+  sleep: (ms: number) => Promise<void>;
+}): Promise<{ fileUri: string }> {
+  const { apiKey, base } = input;
   const start = await fetch(`${base}/upload/v1beta/files`, {
     method: "POST",
     headers: {
@@ -1668,7 +1694,7 @@ export async function uploadSegmentToGeminiFiles(input: {
   let uri = String(meta.file?.uri || "");
   let state = String(meta.file?.state || "");
   if (!name || !uri) throw new Error("Gemini Files 响应缺少文件标识");
-  const sleep = input.sleepMs ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const sleep = input.sleep;
   const deadline = Date.now() + 5 * 60_000;
   while (state === "PROCESSING" || state === "STATE_UNSPECIFIED" || state === "") {
     if (Date.now() > deadline) throw new Error("Gemini Files 转码超时（5 分钟未 ACTIVE），已停止");
@@ -2175,10 +2201,16 @@ export async function prepareEpisodeVideos(
       // Gemini API key 路由与 GCS 双备料：GCS 留证据链与 Vertex/EvoLink 通道，Files API 供 flash 读片。
       let geminiFileUri: string | undefined;
       if (limits?.geminiFilesUpload) {
-        geminiFileUri = (await (deps.uploadGeminiFile ?? uploadSegmentToGeminiFiles)({
-          buffer: segmentBuffer,
-          signal: abortSignal,
-        })).fileUri;
+        try {
+          geminiFileUri = (await (deps.uploadGeminiFile ?? uploadSegmentToGeminiFiles)({
+            buffer: segmentBuffer,
+            signal: abortSignal,
+          })).fileUri;
+        } catch (error) {
+          // 本段 GCS 对象尚未登记进 prepared，外层清理看不见它；就地删掉再抛，不留垃圾。
+          await deps.remove({ bucket: uploaded.bucket, objectName: uploaded.objectName }).catch(() => undefined);
+          throw error;
+        }
       }
       await deps.unlinkLocal(row.localPath).catch(() => undefined);
       prepared[index] = {

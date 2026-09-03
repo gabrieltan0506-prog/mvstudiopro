@@ -72,6 +72,25 @@ describe("uploadSegmentToGeminiFiles", () => {
       .rejects.toThrow("FAILED");
   });
 
+  it("瞬时 5xx 重试一次后成功", async () => {
+    let startCalls = 0;
+    globalThis.fetch = vi.fn(async (url: any, init?: any) => {
+      const u = String(url);
+      if (u.endsWith("/upload/v1beta/files") && init?.method === "POST") {
+        startCalls += 1;
+        if (startCalls === 1) return new Response("boom", { status: 503 });
+        return new Response("{}", { status: 200, headers: { "x-goog-upload-url": "https://g/upload-session/1" } });
+      }
+      if (u.includes("upload-session")) {
+        return Response.json({ file: { name: "files/r1", uri: "https://g/v1beta/files/r1", state: "ACTIVE" } });
+      }
+      return Response.json({ state: "ACTIVE", uri: "https://g/v1beta/files/r1" });
+    }) as never;
+    const out = await uploadSegmentToGeminiFiles({ buffer: Buffer.from("x"), sleepMs: zeroSleep });
+    expect(out.fileUri).toBe("https://g/v1beta/files/r1");
+    expect(startCalls).toBe(2);
+  });
+
   it("GEMINI_API_KEY 缺失直接拒绝，不发网络请求", async () => {
     process.env.GEMINI_API_KEY = "";
     const spy = vi.fn();
