@@ -101,6 +101,7 @@ import type { ManhuaDeliveryPackage } from "@shared/manhuaDeliveryPackage";
 import { syncDeliveryPackageSubtitleEnabled } from "@shared/manhuaDeliveryPackage";
 import type { ManhuaCineVocabLocale } from "@shared/manhuaCineVocabBank";
 import type { ManhuaRetakeVariable } from "@shared/manhuaDirectingWorkflow";
+import type { ManhuaPilotGateStatus } from "@shared/manhuaPilotGate";
 import type { ManhuaAssetStandardizeQuality } from "@shared/manhuaAssetStandardize";
 import { MANHUA_REF_DUTIES } from "@shared/manhuaDirectingWorkflow";
 import {
@@ -163,9 +164,16 @@ import { applyShotDialoguesFromText } from "@shared/manhuaShotDialoguePersist";
 import { summarizeManhuaVisualBriefForUi } from "@shared/manhuaScriptVisualBrief";
 import { MANHUA_DRAFT_RETENTION_HINT_ZH } from "@shared/manhuaCloudDraft";
 import ManhuaPathRecipePicker from "@/components/ManhuaPathRecipePicker";
+import { ManhuaDirectorBoardOverlay } from "@/components/ManhuaDirectorBoardOverlay";
+import {
+  confirmManhuaBoardOverlayReview,
+  type ManhuaBoardMotionOverlay,
+} from "@shared/manhuaDirectorBoardOverlay";
+import { compileManhuaDirectorBoardOverlay } from "@shared/manhuaDirectorBoardOverlayCompile";
 import ManhuaPromptAssetChips from "@/components/ManhuaPromptAssetChips";
 import ManhuaPromptMentionEditor from "@/components/ManhuaPromptMentionEditor";
 import { downloadRemoteFile } from "@/lib/downloadRemoteFile";
+import { mergeManhuaMediaVersions } from "@/lib/manhuaMediaVersions";
 import ManhuaRoughEditTimeline from "@/components/ManhuaRoughEditTimeline";
 import ManhuaStylePackPanel from "@/components/ManhuaStylePackPanel";
 import type { ManhuaStylePack } from "@shared/manhuaStylePack";
@@ -359,6 +367,8 @@ type Props = {
   cineVocabLocale?: ManhuaCineVocabLocale;
   onCineVocabLocaleChange?: (locale: ManhuaCineVocabLocale) => void;
   onRetakeClip?: (clipBlockId: string, variable: ManhuaRetakeVariable) => void;
+  onVideoEditClip?: (clipBlockId: string, instructionZh: string) => void;
+  onSelectClipVersion?: (clipBlockId: string, url: string) => void;
   /** 可拍表点名的角色在资产库找不到；非空则拦住出片并在左栏红条提示 */
   segmentCastMismatchHintZh?: string | null;
   /** 有人在场却没绑上任何角色定妆图；非空则拦住出片并在左栏提示去补图 */
@@ -428,6 +438,14 @@ type Props = {
   }) => void;
   /** 本集缺成片/质检失败的段号依次生成 */
   onGenerateMissingFragments?: (segmentIndexes: number[]) => void;
+  /** 首段 10 秒质检门；未通过时只开放第 1 段试片。 */
+  pilotGate?: {
+    status: ManhuaPilotGateStatus;
+    videoModel: string;
+    durationSec: number;
+    outputUrl?: string;
+  } | null;
+  onReviewPilot?: (decision: "approve" | "reject") => void;
   /** 资产锁定后：一次生成本集全部分镜静帧（主路径） */
   onGenerateAllEpisodeKeyarts?: () => void;
   /** 画布竖排：资产行 → 静帧行 → 成片提示词行 */
@@ -441,6 +459,12 @@ type Props = {
   directorBoardMainUrl?: string | null;
   /** 本集段号(1 起) → 段级导演板 URL（段级为主、集级兜底；用于段选择接入状态） */
   directorBoardSegUrls?: Record<number, string> | null;
+  /** 本集段号 → 与底图分离的动作／运镜矢量层。 */
+  directorBoardMotionOverlays?: Record<number, ManhuaBoardMotionOverlay> | null;
+  onDirectorBoardMotionOverlayChange?: (
+    segmentIndex: number,
+    overlay: ManhuaBoardMotionOverlay,
+  ) => void;
   /** segIndex 为空/0 = 本集共用；>0 = 只作用该段 */
   onIngestDirectorBoardFile?: (file: File, segIndex?: number | null) => void | Promise<void>;
   onClearDirectorBoard?: () => void;
@@ -630,6 +654,8 @@ export default function ManhuaScriptWorkbench({
   cineVocabLocale,
   onCineVocabLocaleChange,
   onRetakeClip,
+  onVideoEditClip,
+  onSelectClipVersion,
   segmentCastMismatchHintZh = null,
   segmentNoFaceLockHintZh = null,
   onGenerateCustomAssetFromLibrary,
@@ -649,11 +675,15 @@ export default function ManhuaScriptWorkbench({
   onSpawnAndRunClip,
   onGenerateFragment,
   onGenerateMissingFragments,
+  pilotGate,
+  onReviewPilot,
   onGenerateAllEpisodeKeyarts,
   onLayoutReadableChain,
   onEnsureSegmentClips,
   directorBoardMainUrl = null,
   directorBoardSegUrls = null,
+  directorBoardMotionOverlays = null,
+  onDirectorBoardMotionOverlayChange,
   onIngestDirectorBoardFile,
   onClearDirectorBoard,
   directorBoardBusy = false,
@@ -1160,6 +1190,36 @@ export default function ManhuaScriptWorkbench({
   const previewUrl = playableClipUrl || mediaUrl(activeKeyart) || anyKeyartUrl;
   const previewIsVideo = Boolean(playableClipUrl);
   const annotateStillUrl = mediaUrl(activeKeyart) || anyKeyartUrl;
+  const activeBoardBaseUrl =
+    directorBoardSegUrls?.[activeSegNo] || directorBoardMainUrl || annotateStillUrl || null;
+  const activeDirectorBoardMotionOverlay = useMemo(() => {
+    const beat = shootablePlan.segments.find((entry) => entry.index === activeSegNo);
+    const segment = segments.find((entry) => entry.index === activeSegNo);
+    const firstShot = segment?.shots[0];
+    return compileManhuaDirectorBoardOverlay({
+      episodeIndex: focusEpisode,
+      segmentIndex: activeSegNo,
+      shotIndex: firstShot?.index,
+      baseAspectRatio: "16:9",
+      baseMediaIdentity: String(activeBoardBaseUrl || "").split(/[?#]/, 1)[0],
+      beat,
+      shot: segment
+        ? {
+            index: firstShot?.index,
+            actionZh: segment.shots.map((entry) => entry.actionZh).filter(Boolean).join("；"),
+            cameraZh: segment.shots.map((entry) => entry.cameraZh).filter(Boolean).join("；"),
+          }
+        : null,
+      existingOverlay: directorBoardMotionOverlays?.[activeSegNo],
+    });
+  }, [
+    activeSegNo,
+    activeBoardBaseUrl,
+    directorBoardMotionOverlays,
+    focusEpisode,
+    segments,
+    shootablePlan.segments,
+  ]);
 
   /** 切镜 / 成片：分镜有静帧时画布常开（阿硕 C2）；否则未出片展开、已出片收起 */
   useEffect(() => {
@@ -1760,6 +1820,7 @@ export default function ManhuaScriptWorkbench({
     toast.error("还差一步", { description: hint });
     return true;
   };
+  const pilotLocked = Boolean(pilotGate && pilotGate.status !== "approved");
   /**
    * 审阅提示词（阿硕/OiiOii：有静帧图 → 铺段节点到画布看提示词）。
    * 只卡「有没有图」；垫图锁只拦真正出片，不拦审阅与画布展示。
@@ -1796,6 +1857,14 @@ export default function ManhuaScriptWorkbench({
   };
   const runGenerateFragment = () => {
     if (refuseIfBlocked(clipGateHint)) return;
+    if (pilotLocked && activeSegNo !== 1) {
+      toast.message("请先生成并审阅第 1 段的 10 秒试片");
+      return;
+    }
+    if (pilotGate?.status === "generated") {
+      toast.message("10 秒试片正在等待审阅");
+      return;
+    }
     if (activePhase !== "storyboard") setActivePhase("storyboard");
     if (onGenerateFragment) {
       onGenerateFragment({
@@ -2552,15 +2621,87 @@ export default function ManhuaScriptWorkbench({
                 </button>
               ) : null}
                   </div>
+                  {activeBoardBaseUrl && activeDirectorBoardMotionOverlay ? (
+                    <div className="mt-2 overflow-hidden rounded-xl border border-white/12 bg-black/45">
+                      <div className="relative aspect-video w-full overflow-hidden bg-black">
+                        <img
+                          src={activeBoardBaseUrl}
+                          alt={`第${activeSegNo}段导演板轨迹预览`}
+                          className="h-full w-full object-cover"
+                        />
+                        <ManhuaDirectorBoardOverlay
+                          overlay={activeDirectorBoardMotionOverlay}
+                          onChange={
+                            onDirectorBoardMotionOverlayChange
+                              ? (next) =>
+                                  onDirectorBoardMotionOverlayChange(activeSegNo, next)
+                              : undefined
+                          }
+                        />
+                      </div>
+                      <div className="flex items-center justify-between gap-2 px-2 py-1.5 text-[10px] text-white/50">
+                        <span>段{String(activeSegNo).padStart(2, "0")} · 轨迹与底图分开保存</span>
+                        {activeDirectorBoardMotionOverlay.needsReview &&
+                        onDirectorBoardMotionOverlayChange ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const confirmed = confirmManhuaBoardOverlayReview(
+                                activeDirectorBoardMotionOverlay,
+                              );
+                              if (confirmed) {
+                                onDirectorBoardMotionOverlayChange(activeSegNo, confirmed);
+                              }
+                            }}
+                            className="rounded-md border border-emerald-300/35 bg-emerald-500/12 px-2 py-1 font-semibold text-emerald-50 hover:bg-emerald-500/20"
+                          >
+                            确认轨迹
+                          </button>
+                        ) : (
+                          <span className="text-emerald-200/75">已接入成片空间调度</span>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
                 <div
                   data-manhua-toolbar-group="generation-workspace"
                   className="mt-2 rounded-lg border border-white/10 bg-white/[0.025] p-2"
                 >
-                  <div className="mb-2 text-[10px] font-semibold tracking-wide text-violet-100/75">
-                    生成范围与画布
+                <div className="mb-2 text-[10px] font-semibold tracking-wide text-violet-100/75">
+                  生成范围与画布
+                </div>
+                {pilotLocked ? (
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-300/25 bg-amber-500/[0.08] px-2.5 py-2">
+                    <div>
+                      <div className="text-[10px] font-semibold text-amber-50">
+                        首段 10 秒质检门
+                      </div>
+                      <div className="text-[9px] text-amber-100/60">
+                        当前生成档单独验收 · 通过后才解锁其余片段
+                      </div>
+                    </div>
+                    {pilotGate?.status === "generated" && onReviewPilot ? (
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => onReviewPilot("reject")}
+                          className="rounded border border-white/15 px-2 py-1 text-[9px] text-white/70"
+                        >
+                          退回调整
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onReviewPilot("approve")}
+                          className="rounded border border-emerald-300/35 bg-emerald-500/20 px-2 py-1 text-[9px] font-semibold text-emerald-50"
+                        >
+                          质量达标，解锁
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
-                  <div className="flex flex-wrap items-center gap-1.5">
+                ) : null}
+                <div className="flex flex-wrap items-center gap-1.5">
               <button
                 type="button"
                 onClick={toggleCompactUi}
@@ -2573,13 +2714,15 @@ export default function ManhuaScriptWorkbench({
                 type="button"
                 data-manhua-action="generate-fragment"
                   data-manhua-action-cost={manhuaToolbarActionCost("generate-fragment")}
-                disabled={Boolean(factoryBusy)}
+                disabled={Boolean(factoryBusy) || (pilotLocked && activeSegNo !== 1)}
                 onClick={runGenerateFragment}
                 className="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[10px] font-semibold text-white/75 hover:bg-white/[0.08] disabled:opacity-45"
                 title={`当前第 ${String(activeSegNo).padStart(2, "0")} 段（含镜 ${String(activeShotNo).padStart(2, "0")}）：缺静帧则只补本段再出片`
                 }
               >
-                {`生成第 ${String(activeSegNo).padStart(2, "0")} 段成片`}
+                {pilotLocked && activeSegNo === 1
+                  ? "生成首段 10 秒试片"
+                  : `生成第 ${String(activeSegNo).padStart(2, "0")} 段成片`}
               </button>
           {onLayoutReadableChain ? (
             <button
@@ -2602,7 +2745,7 @@ export default function ManhuaScriptWorkbench({
               type="button"
               data-manhua-action="generate-selected-fragments"
                   data-manhua-action-cost={manhuaToolbarActionCost("generate-selected-fragments")}
-              disabled={Boolean(factoryBusy)}
+              disabled={Boolean(factoryBusy) || pilotLocked}
               onClick={() => {
                 if (refuseIfBlocked(clipGateHint)) return;
                 setActivePhase("storyboard");
@@ -5758,6 +5901,20 @@ export default function ManhuaScriptWorkbench({
             cineVocabLocale={cineVocabLocale}
             onCineVocabLocaleChange={onCineVocabLocaleChange}
             onRetakeClip={onRetakeClip}
+            onVideoEditClip={onVideoEditClip}
+            clipVersionsByBlockId={Object.fromEntries(
+              episodeClips.map((episodeClip) => [
+                episodeClip.id,
+                {
+                  activeUrl: episodeClip.outputUrl,
+                  urls: mergeManhuaMediaVersions(
+                    [episodeClip.outputUrl],
+                    episodeClip.outputUrls || [],
+                  ),
+                },
+              ]),
+            )}
+            onSelectClipVersion={onSelectClipVersion}
             onToggleDockClip={(clipBlockId, selected) => {
               if (!onDockSelectedIdsChange) return;
               const next = new Set(dockSelectedIds || []);
@@ -6788,7 +6945,11 @@ export default function ManhuaScriptWorkbench({
                     {onGenerateMissingFragments ? (
                       <button
                         type="button"
-                        disabled={Boolean(factoryBusy) || !missingFragmentIndexes.length}
+                        disabled={
+                          Boolean(factoryBusy) ||
+                          pilotLocked ||
+                          !missingFragmentIndexes.length
+                        }
                         onClick={() => {
                           if (refuseIfBlocked(clipGateHint)) return;
                           setClipPromptReviewOpen(false);
@@ -7478,7 +7639,10 @@ export default function ManhuaScriptWorkbench({
                     type="button"
                     data-manhua-action="retry-fragment"
                     data-manhua-retry-segment={seg.index}
-                    disabled={Boolean(factoryBusy)}
+                    disabled={
+                      Boolean(factoryBusy) ||
+                      (pilotLocked && seg.index !== 1)
+                    }
                     onClick={() => {
                       if (refuseIfBlocked(clipGateHint)) return;
                       setActivePhase("storyboard");

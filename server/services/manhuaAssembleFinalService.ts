@@ -11,6 +11,10 @@ import {
   type ManhuaAssembleClipInput,
   type ManhuaAssembleSceneVideo,
 } from "../../shared/manhuaFinalAssemble.js";
+import {
+  inspectManhuaAssembleCompleteness,
+  type ManhuaAssembleSegmentRef,
+} from "../../shared/manhuaAssembleCompleteness.js";
 
 function s(v: unknown): string {
   if (v == null) return "";
@@ -146,6 +150,7 @@ export type ManhuaAssembleFinalInput = {
   clips?: ManhuaAssembleClipInput[];
   sceneVideos?: ManhuaAssembleSceneVideo[];
   episodeIndexes?: number[];
+  expectedSegments?: ManhuaAssembleSegmentRef[];
   musicUrl?: string;
   musicPrompt?: string;
   topic?: string;
@@ -247,6 +252,25 @@ export async function runManhuaAssembleFinal(
     const episodeIndexes = Array.isArray(raw.episodeIndexes)
       ? raw.episodeIndexes.map((n) => Math.floor(Number(n) || 0)).filter((n) => n >= 1)
       : undefined;
+    const expectedSegments = Array.isArray(raw.expectedSegments)
+      ? raw.expectedSegments
+      : [];
+    if (expectedSegments.length) {
+      const completeness = inspectManhuaAssembleCompleteness({
+        planned: expectedSegments,
+        selected: clips
+          .filter((clip) => Boolean(String(clip.clipUrl || "").trim()))
+          .map((clip) => ({
+            episodeIndex: clip.episodeIndex,
+            segmentIndex: Math.max(1, Math.floor(Number(clip.segmentIndex) || 1)),
+          })),
+      });
+      if (!completeness.complete) {
+        const error = new Error(completeness.hintZh);
+        (error as Error & { code?: string }).code = "manhua_assemble_incomplete";
+        throw error;
+      }
+    }
     const plan = buildManhuaAssemblePlan(clips, { episodeIndexes });
     sceneVideos = plan.sceneVideos;
     skippedEpisodes = plan.skippedEpisodes;

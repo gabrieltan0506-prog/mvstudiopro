@@ -2,6 +2,11 @@
  * 集级导演分镜板本机持久化：长期只认 gcsUri，展示/出片前现签 HTTPS。
  */
 
+import {
+  parseManhuaBoardMotionOverlay,
+  type ManhuaBoardMotionOverlay,
+} from "@shared/manhuaDirectorBoardOverlay";
+
 const LS_KEY = "mv-manhua-director-board-main-v2";
 
 export type ManhuaDirectorBoardMainEntry = {
@@ -165,4 +170,60 @@ export function directorBoardHttpsByEpisodeSegment(
     if (Object.keys(https).length) out[ep] = https;
   }
   return out;
+}
+
+/**
+ * 可编辑轨迹必须与底图分离：底图仍按 GCS 真源保存，矢量层单独落草稿。
+ * 结构为 集号 → 本集段号 → overlay；旧稿没有此字段时返回空表。
+ */
+const LS_OVERLAY_KEY = "mv-manhua-director-board-overlay-v1";
+
+export type ManhuaDirectorBoardOverlayBySegment = Record<
+  number,
+  Record<number, ManhuaBoardMotionOverlay>
+>;
+
+export function normalizeDirectorBoardOverlayBySegment(
+  raw: unknown,
+): ManhuaDirectorBoardOverlayBySegment {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: ManhuaDirectorBoardOverlayBySegment = {};
+  for (const [epKey, segRaw] of Object.entries(raw as Record<string, unknown>)) {
+    const ep = Number(epKey);
+    if (!Number.isInteger(ep) || ep < 1 || !segRaw || typeof segRaw !== "object") continue;
+    const segOut: Record<number, ManhuaBoardMotionOverlay> = {};
+    for (const [segKey, overlayRaw] of Object.entries(segRaw as Record<string, unknown>)) {
+      const seg = Number(segKey);
+      if (!Number.isInteger(seg) || seg < 1) continue;
+      const overlay = parseManhuaBoardMotionOverlay(overlayRaw);
+      if (!overlay || overlay.episodeIndex !== ep || overlay.segmentIndex !== seg) continue;
+      segOut[seg] = overlay;
+    }
+    if (Object.keys(segOut).length) out[ep] = segOut;
+  }
+  return out;
+}
+
+export function loadManhuaDirectorBoardOverlayBySegment(): ManhuaDirectorBoardOverlayBySegment {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(LS_OVERLAY_KEY);
+    return raw ? normalizeDirectorBoardOverlayBySegment(JSON.parse(raw)) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveManhuaDirectorBoardOverlayBySegment(
+  map: ManhuaDirectorBoardOverlayBySegment,
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      LS_OVERLAY_KEY,
+      JSON.stringify(normalizeDirectorBoardOverlayBySegment(map)),
+    );
+  } catch {
+    /* quota：内存状态仍保留，云草稿可在下一次手动备份时接住 */
+  }
 }

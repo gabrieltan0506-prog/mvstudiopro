@@ -88,6 +88,10 @@ type Props = {
   onAcceptDespiteQc?: (clipBlockId: string) => void;
   /** 质检失败：单变量轻量重拍（真返工） */
   onRetakeClip?: (clipBlockId: string, variable: ManhuaRetakeVariable) => void;
+  /** Seedance 2.5 局部视频编辑；原片必须保留为可回退版本。 */
+  onVideoEditClip?: (clipBlockId: string, instructionZh: string) => void;
+  clipVersionsByBlockId?: Record<string, { activeUrl?: string; urls: string[] }>;
+  onSelectClipVersion?: (clipBlockId: string, url: string) => void;
   onOpenClipDock?: () => void;
   deliveryPackage?: ManhuaDeliveryPackage | null;
   onDeliveryPackageChange?: (next: ManhuaDeliveryPackage) => void;
@@ -171,6 +175,9 @@ export default function ManhuaEditMultitrackPanel({
   onReworkStill,
   onAcceptDespiteQc,
   onRetakeClip,
+  onVideoEditClip,
+  clipVersionsByBlockId,
+  onSelectClipVersion,
   onOpenClipDock,
   deliveryPackage,
   onDeliveryPackageChange,
@@ -199,6 +206,7 @@ export default function ManhuaEditMultitrackPanel({
   const srtPreview = useMemo(() => formatManhuaSubtitleSrt(cues), [cues]);
   // 烧字要整片重编码,单独一道确认开关;提交前随时可关,不跟「字幕轨」开关混用
   const [burnArmed, setBurnArmed] = useState(false);
+  const [videoEditInstruction, setVideoEditInstruction] = useState("");
   const submitBurn = () => {
     if (!onBurnSubtitle || burnSubtitleBusy) return;
     try {
@@ -215,6 +223,9 @@ export default function ManhuaEditMultitrackPanel({
   const qcSummary = useMemo(() => summarizeManhuaEditQcBoard(qcRows), [qcRows]);
   const exportableIds = useMemo(() => manhuaEditExportableClipIds(qcRows), [qcRows]);
   const activeQc = qcRows.find((r) => r.shotIndex === activeShotIndex);
+  const activeVersions = activeQc?.clipBlockId
+    ? clipVersionsByBlockId?.[activeQc.clipBlockId]
+    : undefined;
 
   const activeClip = roughClips.find((c) => c.shotIndex === activeShotIndex);
   const activeTrim = activeClip
@@ -662,6 +673,57 @@ export default function ManhuaEditMultitrackPanel({
                 </button>
               ) : null}
             </div>
+            {activeQc.clipBlockId && activeQc.gate !== "missing" && onVideoEditClip ? (
+              <div className="mt-2 rounded-md border border-cyan-400/20 bg-cyan-500/[0.06] p-2">
+                <label className="block text-[9px] font-semibold text-cyan-50/85">
+                  局部改画面 · 原片保留可切回
+                </label>
+                <div className="mt-1 flex gap-1.5">
+                  <input
+                    value={videoEditInstruction}
+                    maxLength={240}
+                    onChange={(e) => setVideoEditInstruction(e.target.value)}
+                    placeholder="例如：移除背景路人，主体动作、构图与时长不变"
+                    className="min-w-0 flex-1 rounded border border-white/12 bg-black/45 px-2 py-1 text-[9px] text-white/85 outline-none focus:border-cyan-400/45"
+                  />
+                  <button
+                    type="button"
+                    disabled={factoryBusy || !videoEditInstruction.trim()}
+                    data-manhua-action="video-edit-clip"
+                    onClick={() => {
+                      onVideoEditClip(activeQc.clipBlockId!, videoEditInstruction);
+                      setVideoEditInstruction("");
+                    }}
+                    className="rounded border border-cyan-400/35 bg-cyan-500/15 px-2 py-1 text-[9px] font-semibold text-cyan-50 disabled:opacity-40"
+                  >
+                    提交编辑
+                  </button>
+                </div>
+                <p className="mt-1 text-[8px] leading-snug text-white/35">
+                  位于单镜质检之后、最终拼接之前；编辑版需重新质检。
+                </p>
+              </div>
+            ) : null}
+            {activeQc.clipBlockId && activeVersions && activeVersions.urls.length > 1 ? (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <span className="text-[8px] text-white/35">成片版本</span>
+                {activeVersions.urls.map((url, index) => (
+                  <button
+                    key={url}
+                    type="button"
+                    disabled={factoryBusy || !onSelectClipVersion}
+                    onClick={() => onSelectClipVersion?.(activeQc.clipBlockId!, url)}
+                    className={`rounded border px-1.5 py-0.5 text-[8px] ${
+                      activeVersions.activeUrl === url
+                        ? "border-emerald-300/40 bg-emerald-500/20 text-emerald-50"
+                        : "border-white/12 bg-white/[0.04] text-white/55"
+                    }`}
+                  >
+                    {index === 0 ? "最新版" : `旧版 ${index}`}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
         ) : (
           <p className="mt-1.5 text-[10px] text-white/35">点选片段查看该镜质检</p>

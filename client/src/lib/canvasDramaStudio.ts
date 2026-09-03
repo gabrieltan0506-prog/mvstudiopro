@@ -73,7 +73,18 @@ import {
   composeManhuaSceneDemoAnchorBlock,
   composeManhuaSelectedPropAnchorBlock,
 } from "@shared/manhuaScenePropDemoCatalog";
-import { CANVAS_DIRECTOR_CRAFT_PROMPT_BLOCK } from "@shared/manhuaWriterRoom";
+import {
+  formatManhuaDirectorStrategyClipLine,
+  formatManhuaDirectorStrategyStage,
+  readManhuaDirectorStrategyContract,
+  resolveManhuaDirectorStrategyContract,
+  stripManhuaDirectorStrategyStage,
+  type ManhuaDirectorStrategyContract,
+} from "@shared/manhuaDirectorStrategy";
+import {
+  formatManhuaBoardMotionOverlayPromptZh,
+  type ManhuaBoardMotionOverlay,
+} from "@shared/manhuaDirectorBoardOverlay";
 import {
   formatManhuaStylePackInjectBlock,
   type ManhuaStylePack,
@@ -160,6 +171,7 @@ import {
 } from "@shared/manhuaScriptWorkbench";
 import { applyShotAnglesFromText } from "@shared/manhuaShotAnglePersist";
 import { extractManhuaSceneHintFromPrompt } from "@shared/manhuaClipDialogueTimeline";
+import { mergeManhuaMediaVersions } from "./manhuaMediaVersions";
 import {
   resolvePreviousSegmentClipUrl,
 } from "@shared/manhuaClipContinuity";
@@ -380,6 +392,8 @@ export type SpawnManhuaDramaStudioOpts = {
   writerContext?: string;
   /** 进入编导后为节拍/反推/静帧注入手法约束 */
   includeDirectorCraft?: boolean;
+  /** 编剧扩写冻结的同一份策略；旧调用缺失时才按题材稳定补一份。 */
+  directorStrategyContract?: ManhuaDirectorStrategyContract | null;
   /** 连载集号；有值时 id 带 eXX，并写入 block.episodeIndex */
   episodeIndex?: number;
   /** 本集标题 */
@@ -793,6 +807,27 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     (opts.wardrobePropContinuityIds || []).map((id) => String(id || "").trim()).filter(Boolean),
   );
   const includeDirectorCraft = Boolean(opts.includeDirectorCraft || writerContext);
+  const directorStrategyContract =
+    opts.directorStrategyContract === null
+      ? null
+      : opts.directorStrategyContract ||
+        resolveManhuaDirectorStrategyContract({
+          topic: opts.topic,
+          brief: writerContext,
+          craftShotId: craftShotIds[0],
+        });
+  const directorStoryBlock = includeDirectorCraft && directorStrategyContract
+    ? formatManhuaDirectorStrategyStage(directorStrategyContract, "story")
+    : "";
+  const directorAssetsBlock = includeDirectorCraft && directorStrategyContract
+    ? formatManhuaDirectorStrategyStage(directorStrategyContract, "assets")
+    : "";
+  const directorStoryboardBlock = includeDirectorCraft && directorStrategyContract
+    ? formatManhuaDirectorStrategyStage(directorStrategyContract, "storyboard")
+    : "";
+  const directorReviewBlock = includeDirectorCraft && directorStrategyContract
+    ? formatManhuaDirectorStrategyStage(directorStrategyContract, "review")
+    : "";
   const episodeIndex =
     typeof opts.episodeIndex === "number" && opts.episodeIndex >= 1
       ? Math.floor(opts.episodeIndex)
@@ -807,8 +842,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     sceneId,
     topic: opts.topic,
     writerContext: writerContext || undefined,
-    includeDirectorCraft,
-    directorCraftBlock: includeDirectorCraft ? CANVAS_DIRECTOR_CRAFT_PROMPT_BLOCK : undefined,
+    // 分阶段投影由本文件精确拼接，避免同一整卡重复灌进多个节点。
+    includeDirectorCraft: false,
   };
   const usePack = Boolean(
     genreId || sceneId || writerContext || characterBlock || ancientBlock || craftShotBlock,
@@ -853,7 +888,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   if (episodeHeader) {
     storyPrompt = `${episodeHeader}\n\n${storyPrompt}`;
   }
-  story.prompt = [storyPrompt, narrativeEngineBlock].filter(Boolean).join("\n\n");
+  story.prompt = [storyPrompt, narrativeEngineBlock, directorStoryBlock].filter(Boolean).join("\n\n");
   story.width = 400;
   story.height = 320;
   story.textModel = "kimi-k3";
@@ -874,6 +909,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     maleHairstyleBlock,
     wardrobeBlock,
     propAnchorBlock,
+    directorAssetsBlock,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -896,6 +932,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     narrativeLightingBlock,
     maleMicroBlock,
     propAnchorBlock,
+    directorStoryboardBlock,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -916,6 +953,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     actionCameraBlock,
     cineVocabBlock,
     narrativeLightingBlock,
+    directorReviewBlock,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -1150,6 +1188,21 @@ export function applyFactoryPrefsToBlocks(
     assetCanon?: ManhuaWriterAssetCanon | null;
   },
 ): CanvasBlock[] {
+  const directorStrategyContract = blocks
+    .map((block) => readManhuaDirectorStrategyContract(block.prompt))
+    .find((contract): contract is ManhuaDirectorStrategyContract => Boolean(contract));
+  const directorStoryBlock = directorStrategyContract
+    ? formatManhuaDirectorStrategyStage(directorStrategyContract, "story")
+    : "";
+  const directorAssetsBlock = directorStrategyContract
+    ? formatManhuaDirectorStrategyStage(directorStrategyContract, "assets")
+    : "";
+  const directorStoryboardBlock = directorStrategyContract
+    ? formatManhuaDirectorStrategyStage(directorStrategyContract, "storyboard")
+    : "";
+  const directorReviewBlock = directorStrategyContract
+    ? formatManhuaDirectorStrategyStage(directorStrategyContract, "review")
+    : "";
   const craftBlock = buildCraftShotInjectBlock(opts.craftShotIds || []);
   const pathCameraBlock = buildPathCameraInjectBlock(opts.pathCameraRecipeIds || []);
   const narrativeLightingBlock = buildNarrativeLightingInjectBlock(opts.narrativeLightingIds || []);
@@ -1259,7 +1312,8 @@ export function applyFactoryPrefsToBlocks(
     }
 
     if (b.id.startsWith("beats-") || b.id.startsWith("reverse-")) {
-      let base = stripInjectBlock(b.prompt, "【手法条目库·原子镜头】");
+      let base = stripManhuaDirectorStrategyStage(b.prompt);
+      base = stripInjectBlock(base, "【手法条目库·原子镜头】");
       base = stripMarkedSection(base, "【路径运镜配方】");
       base = stripMarkedSection(base, "【动作运镜配方】");
       base = stripMarkedSection(base, "【电影级可拍词表】");
@@ -1287,6 +1341,7 @@ export function applyFactoryPrefsToBlocks(
           ? stylePackBlock
           : "",
         b.id.startsWith("beats-") && propAnchorBlock ? propAnchorBlock : "",
+        b.id.startsWith("beats-") ? directorStoryboardBlock : directorReviewBlock,
       ].filter(Boolean);
       return {
         ...b,
@@ -1295,7 +1350,7 @@ export function applyFactoryPrefsToBlocks(
       };
     }
     if (b.id.startsWith("story-") || b.id.startsWith("bible-")) {
-      let base = b.prompt;
+      let base = stripManhuaDirectorStrategyStage(b.prompt);
       if (syncGenre) base = stripMarkedSection(base, "【编剧剧种模板");
       if (b.id.startsWith("story-")) {
         base = stripMarkedSection(base, "【漫剧场景资产库");
@@ -1322,6 +1377,7 @@ export function applyFactoryPrefsToBlocks(
         b.id.startsWith("bible-") && maleHairstyleBlock ? maleHairstyleBlock : "",
         b.id.startsWith("bible-") && wardrobeBlock ? wardrobeBlock : "",
         b.id.startsWith("bible-") && propAnchorBlock ? propAnchorBlock : "",
+        b.id.startsWith("story-") ? directorStoryBlock : directorAssetsBlock,
       ].filter(Boolean);
       return { ...b, prompt: parts.join("\n\n") };
     }
@@ -1490,6 +1546,13 @@ export function resolveManhuaFragmentRunTargets(
   const ep = Math.max(1, Math.floor(episodeIndex));
   const segmentIndex = Math.max(1, Math.floor(shotIndex));
   const sameEpisode = (b: CanvasBlock) => (getBlockEpisodeIndex(b) ?? 1) === ep;
+  const directorStrategyContract = blocks
+    .filter(sameEpisode)
+    .map((block) => readManhuaDirectorStrategyContract(block.prompt))
+    .find((contract): contract is ManhuaDirectorStrategyContract => Boolean(contract));
+  const directorStrategyClipLine = directorStrategyContract
+    ? formatManhuaDirectorStrategyClipLine(directorStrategyContract)
+    : "";
   const keyarts = blocks
     .filter(
       (b) =>
@@ -1805,6 +1868,11 @@ export function ensureManhuaFragmentClips(
     directorBoardUrlByEpisode?: Record<number, string> | null;
     /** 段级导演板（段级为主、集级兜底，2026-08-11 拍板）：集号→本集段号→HTTPS */
     directorBoardUrlByEpisodeSegment?: Record<number, Record<number, string>> | null;
+    /** 与底图分离的可编辑矢量层；只有已确认数据会编译进成片提示词。 */
+    directorBoardMotionOverlayByEpisodeSegment?: Record<
+      number,
+      Record<number, ManhuaBoardMotionOverlay>
+    > | null;
     /**
      * 用户选定的成片引擎。段数与段时长必须跟它的段表走——铺几条 clip 就是实收
      * 几段积分，不能由反推这次吐了几镜来定。缺省只在旧调用兜底。
@@ -1828,6 +1896,13 @@ export function ensureManhuaFragmentClips(
       : getBlockEpisodeIndex(blocks.find((b) => b.id.startsWith("reverse-")) || blocks[0]!) ?? 1;
   const sameEpisode = (b: CanvasBlock) => (getBlockEpisodeIndex(b) ?? 1) === ep;
   const directorBoardUrl = String(opts?.directorBoardUrlByEpisode?.[ep] || "").trim();
+  const directorStrategyContract = blocks
+    .filter(sameEpisode)
+    .map((block) => readManhuaDirectorStrategyContract(block.prompt))
+    .find((contract): contract is ManhuaDirectorStrategyContract => Boolean(contract));
+  const directorStrategyClipLine = directorStrategyContract
+    ? formatManhuaDirectorStrategyClipLine(directorStrategyContract)
+    : "";
   const shots = resolveShotsForEpisodeKeyarts(blocks, ep);
   /**
    * 引擎优先级：显式入参 > 本集已有 clip 节点上盖的引擎（spawn 时按用户选择写入）
@@ -2062,6 +2137,9 @@ export function ensureManhuaFragmentClips(
       segmentPerformanceZh: planBeat?.performanceZh,
       speakerTagByNameZh,
     });
+    const directorBoardMotionLine = formatManhuaBoardMotionOverlayPromptZh(
+      opts?.directorBoardMotionOverlayByEpisodeSegment?.[ep]?.[seg.index],
+    );
     /**
      * 手法条目库过去只进节拍/反推节点，段成片一条都吃不到——而段成片才是真正
      * 发给引擎的那份。可拍表缺光或缺运镜时才补，不跟编剧已写好的调度打架。
@@ -2234,7 +2312,7 @@ export function ensureManhuaFragmentClips(
     // URL 放在本行最末尾（紧跟其后是块间换行）：stripManhuaAssetUrlsFromPrompt 的
     // URL 正则遇 \s（含换行）即止，URL 放中间会把后面的中文引导句一并吃掉。
     const boardAddonZh = boardBoundUrl
-      ? `｜导演板：红箭头=人物/道具动向，青箭头=镜头运镜，青虚线=竖屏安全框，均为拍摄引导，不得出现在成片画面｜${boardBoundUrl}`
+      ? `｜导演板：仅作构图与空间参考；轨迹由独立空间调度字段提供，标记不得出现在成片画面｜${boardBoundUrl}`
       : "";
     const padLockBlock = !segUrls.length
       ? "【垫图·缺失】禁止出片"
@@ -2248,6 +2326,8 @@ export function ensureManhuaFragmentClips(
         stripManhuaPromptSlop(
           [
             timelineBlock,
+            directorStrategyClipLine,
+            directorBoardMotionLine,
             craftLine,
             padLockBlock,
             assetLockBlock,
@@ -3018,6 +3098,11 @@ export function expandManhuaShotKeyartsAfterReverse(
   opts?: {
     /** 与 ensure 同契约：工厂/反推旁路不得丢导演板垫图 */
     directorBoardUrlByEpisode?: Record<number, string> | null;
+    directorBoardUrlByEpisodeSegment?: Record<number, Record<number, string>> | null;
+    directorBoardMotionOverlayByEpisodeSegment?: Record<
+      number,
+      Record<number, ManhuaBoardMotionOverlay>
+    > | null;
     /** 同上：本集还没有 clip 节点时，没有它会掉到兜底默认档而不是用户选的引擎 */
     videoModel?: string | null;
   },
@@ -3040,6 +3125,9 @@ export function expandManhuaShotKeyartsAfterReverse(
   if (shots.length < 2) {
     return ensureManhuaFragmentClips(blocks, edges, ep ?? 1, {
       directorBoardUrlByEpisode: opts?.directorBoardUrlByEpisode,
+      directorBoardUrlByEpisodeSegment: opts?.directorBoardUrlByEpisodeSegment,
+      directorBoardMotionOverlayByEpisodeSegment:
+        opts?.directorBoardMotionOverlayByEpisodeSegment,
       videoModel: opts?.videoModel,
     });
   }
@@ -3141,6 +3229,9 @@ export function expandManhuaShotKeyartsAfterReverse(
 
   return ensureManhuaFragmentClips(nextBlocks, nextEdges, ep ?? 1, {
     directorBoardUrlByEpisode: opts?.directorBoardUrlByEpisode,
+    directorBoardUrlByEpisodeSegment: opts?.directorBoardUrlByEpisodeSegment,
+    directorBoardMotionOverlayByEpisodeSegment:
+      opts?.directorBoardMotionOverlayByEpisodeSegment,
     videoModel: opts?.videoModel,
   });
 }
@@ -3439,6 +3530,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   stopOnError?: boolean;
   /** 单阶段瞬时失败重试次数（不含首次），默认 2 */
   maxRetries?: number;
+  /** 调用方已经为单节点编译好重拍/视频编辑载荷时，禁止 ensure 覆盖该节点。 */
+  preservePreparedTargetBlocks?: boolean;
   onBlocksChange?: (blocks: CanvasBlock[]) => void;
   onStageStart?: (blockId: string, index: number, total: number, label: string) => void;
   onStageDone?: (blockId: string, index: number, total: number, label: string) => void;
@@ -3465,6 +3558,10 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   const defaultMaxRetries = Math.max(0, Math.min(4, opts.maxRetries ?? 2));
   /** 工厂内 ensure/反推展开必须吃同一张导演板表，禁止只靠工作台审阅路径传参 */
   const directorBoardUrlByEpisode = opts.deps.manhuaDirectorBoardUrlByEpisode ?? null;
+  const directorBoardUrlByEpisodeSegment =
+    opts.deps.manhuaDirectorBoardUrlByEpisodeSegment ?? null;
+  const directorBoardMotionOverlayByEpisodeSegment =
+    opts.deps.manhuaDirectorBoardMotionOverlayByEpisodeSegment ?? null;
   /** 同理：编剧室选的引擎要一路带到 ensure，否则本集没 clip 时会掉回兜底默认档 */
   const writerVideoModel = opts.deps.manhuaWriterVideoModel ?? null;
   const hadPoisonedRecapLink = opts.blocks.some(
@@ -3476,6 +3573,16 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   );
   let working = sanitized.blocks;
   let edges = sanitized.edges;
+  const preparedTargetById = opts.preservePreparedTargetBlocks
+    ? new Map(
+        (opts.targetBlockIds || [])
+          .map((id) => {
+            const block = working.find((candidate) => candidate.id === id);
+            return block ? ([id, block] as const) : null;
+          })
+          .filter((entry): entry is readonly [string, CanvasBlock] => Boolean(entry)),
+      )
+    : null;
   if (hadPoisonedRecapLink) {
     // 旧画布误挂 recap→story 时，写回清理后的 parentId，避免手点节点仍吃到提要图
     opts.onBlocksChange?.(working);
@@ -3492,6 +3599,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   if (reverseReady) {
     const expanded = expandManhuaShotKeyartsAfterReverse(working, edges, reverseReady.id, {
       directorBoardUrlByEpisode,
+      directorBoardUrlByEpisodeSegment,
+      directorBoardMotionOverlayByEpisodeSegment,
       videoModel: writerVideoModel,
     });
     working = expanded.blocks;
@@ -3504,10 +3613,16 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   ) {
     const ensured = ensureManhuaFragmentClips(working, edges, opts.episodeIndex, {
       directorBoardUrlByEpisode,
+      directorBoardUrlByEpisodeSegment,
+      directorBoardMotionOverlayByEpisodeSegment,
       videoModel: writerVideoModel,
     });
     working = ensured.blocks;
     edges = ensured.edges;
+    opts.onBlocksChange?.(working);
+  }
+  if (preparedTargetById?.size) {
+    working = working.map((block) => preparedTargetById.get(block.id) || block);
     opts.onBlocksChange?.(working);
   }
 
@@ -3770,8 +3885,10 @@ export async function runManhuaDramaFactoryPipeline(opts: {
                     status: "done" as const,
                     outputText: out.outputText,
                     outputUrl: out.outputUrl,
-                    outputUrls:
-                      out.outputUrls ?? (out.outputUrl ? [out.outputUrl] : b.outputUrls),
+                    outputUrls: mergeManhuaMediaVersions(
+                      [...(out.outputUrls || []), out.outputUrl],
+                      [b.outputUrl, ...(b.outputUrls || [])],
+                    ),
                     error: undefined,
                   }
                 : b,
@@ -3919,7 +4036,10 @@ export async function runManhuaDramaFactoryPipeline(opts: {
                 status: "done" as const,
                 outputText: out.outputText,
                 outputUrl: out.outputUrl,
-                outputUrls: out.outputUrls ?? (out.outputUrl ? [out.outputUrl] : b.outputUrls),
+                outputUrls: mergeManhuaMediaVersions(
+                  [...(out.outputUrls || []), out.outputUrl],
+                  [b.outputUrl, ...(b.outputUrls || [])],
+                ),
                 // 无条件写入：本次没抽到尾帧就清旧值，绝不让上一版尾帧顶给下一段当起幅
                 lastFrameUrl: out.lastFrameUrl,
                 ...(out.seedance25ThreadId

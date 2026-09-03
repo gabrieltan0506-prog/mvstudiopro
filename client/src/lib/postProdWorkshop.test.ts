@@ -118,12 +118,14 @@ describe("后期产物进入下一道工序", () => {
     const options = buildPostProdClipOptions([
       job({ jobId: "c1", action: "concat", output: { gcsUri: "gs://b/post-prod/7/concat.mp4" } }),
       job({ jobId: "b1", action: "bgm_mount", output: { gcsUri: "gs://b/post-prod/7/bgm.mp4" } }),
+      job({ jobId: "s1", action: "burn_subtitle", output: { gcsUri: "gs://b/post-prod/7/sub.mp4" } }),
       job({ jobId: "l1", action: "loudness_check", output: { status: "ok" } }),
       job({ jobId: "pending", action: "concat", status: "running", output: null }),
     ]);
     expect(options.map((o) => o.url)).toEqual([
       "gs://b/post-prod/7/concat.mp4",
       "gs://b/post-prod/7/bgm.mp4",
+      "gs://b/post-prod/7/sub.mp4",
     ]);
   });
 

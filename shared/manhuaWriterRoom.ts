@@ -20,6 +20,10 @@ import {
 } from "./manhuaPlotPurposeCameraBank.js";
 import { formatCraftShotWriterVocabBlock } from "./craftShotBank.js";
 import {
+  formatManhuaDirectorStrategyStage,
+  resolveManhuaDirectorStrategyContract,
+} from "./manhuaDirectorStrategy.js";
+import {
   formatManhuaEpisodeSegmentPlanBeatsBlock,
   formatManhuaEpisodeSegmentPlanPromptBlock,
   parseManhuaEpisodeSegmentPlanFromMarkdown,
@@ -135,6 +139,8 @@ export function buildManhuaWriterExpandPrompt(opts: {
   const purpose = getManhuaPlotPurposeById(opts.plotPurposeId);
   const pacing = getManhuaScenePacingById(opts.scenePacingId);
   const layout = resolveManhuaSeedanceLayoutProfile(opts.videoModel);
+  const directorStrategy = resolveManhuaDirectorStrategyContract({ topic, brief });
+  const directorStoryBlock = formatManhuaDirectorStrategyStage(directorStrategy, "story");
   // 模板证据是付费学习产物；不得在编剧入口静默截断。上下文不足应由模型调用层显式失败或回退。
   const viralTemplateAddon = String(opts.viralTemplateAddon || "").trim();
   const viralTemplateBlock = viralTemplateAddon
@@ -204,6 +210,8 @@ export function buildManhuaWriterExpandPrompt(opts: {
     ancientBlock,
     purpose ? formatPlotPurposeCameraBlock(purpose) : "",
     pacing ? formatScenePacingBlock(pacing) : "",
+    // 一次编译一份全局策略；编剧阶段只拿 story 投影，不把整张导演卡灌进 prompt
+    directorStoryBlock,
     // 手法条目库同时供段成片兜底补条：两端取同一套词，成片才不会各说各话
     formatCraftShotWriterVocabBlock(),
     partialBlock,

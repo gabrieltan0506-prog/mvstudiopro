@@ -37,6 +37,10 @@ import {
   normalizeManhuaSegmentLookBindings,
   type ManhuaCharacterLookSet,
 } from "./manhuaCharacterLookSets.js";
+import {
+  parseManhuaDirectorStrategyContract,
+  type ManhuaDirectorStrategyContract,
+} from "./manhuaDirectorStrategy.js";
 
 export const MANHUA_WRITER_SESSION_FORMAT = "mv-manhua-writer-session-v1" as const;
 export const MANHUA_WRITER_SESSION_LS_KEY = "mv-manhua-writer-session-v1";
@@ -68,6 +72,8 @@ export type ManhuaWriterSession = {
   shareAssetToLibrary: boolean;
   /** 匿名化剧情增强方案公开句柄（mt_*）；扩写注入用 */
   publicTemplateId: string;
+  /** 扩写时冻结的去名导演策略；五阶段都从这一个版本化合同取投影。 */
+  directorStrategyContract: ManhuaDirectorStrategyContract | null;
   /**
    * 开场选定的成片引擎（2.0-mini / 2.0 / 2.0-fast / 2.5 / H3）。
    * 空字符串 = 尚未选择，扩写前必须选定。
@@ -195,6 +201,7 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
     audioReferenceLock: normalizeManhuaAudioReferenceLock(input.audioReferenceLock),
     shareAssetToLibrary: Boolean(input.shareAssetToLibrary),
     publicTemplateId: migrateManhuaWriterTemplateId(input).publicTemplateId,
+    directorStrategyContract: parseManhuaDirectorStrategyContract(input.directorStrategyContract),
     // 已移出漫剧的 happyhorse-1.1 旧会话迁到等价档 2.0-fast（同 6×15s 段表、同段价），
     // 不让它落到画布默认的 2.5——那会悄悄改段表、改权限门。其余未知值回到「未选引擎」。
     videoModel: migrateRetiredManhuaLayoutVideoModel(input.videoModel),

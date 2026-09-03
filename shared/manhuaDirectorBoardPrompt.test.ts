@@ -9,6 +9,7 @@ import {
   summarizeManhuaIntentZh,
 } from "./manhuaDirectorBoardPrompt.js";
 import type { ManhuaEpisodeSegmentBeat } from "./manhuaEpisodeSegmentPlan.js";
+import { resolveManhuaDirectorStrategyContract } from "./manhuaDirectorStrategy.js";
 
 function beat(overrides: Partial<ManhuaEpisodeSegmentBeat>): ManhuaEpisodeSegmentBeat {
   return {
@@ -120,8 +121,8 @@ describe("buildManhuaDirectorBoardPromptZh", () => {
       "【版式】",
       "【中央主画面】",
       "【下方三个小分镜】",
-      "【运镜】",
-      "【人物与道具运动】",
+      "【运镜文字说明】",
+      "【人物与道具运动文字说明】",
       "【灯光】",
       "【右侧文字，必须逐字呈现】",
       "【视觉风格】",
@@ -135,9 +136,22 @@ describe("buildManhuaDirectorBoardPromptZh", () => {
     }
   });
 
-  it("uses 青色 (cyan) for the camera-arrow convention, never 蓝色", () => {
-    expect(result.promptZh).toContain("青色箭头");
-    expect(result.promptZh).not.toMatch(/蓝色箭头/);
+  it("keeps the generated board clean because editable SVG owns every trajectory", () => {
+    expect(result.promptZh).toContain("不要在图片中画箭头");
+    expect(result.promptZh).toContain("可编辑 SVG 图层叠加");
+    expect(result.promptZh).not.toMatch(/红色箭头：|青色箭头表示/);
+  });
+
+  it("injects only the frozen de-identified storyboard projection", () => {
+    const r = buildManhuaDirectorBoardPromptZh({
+      episodeNumber: 1,
+      episodeTitleZh: "追逐",
+      segments: SEGMENTS,
+      directorStrategyContract: resolveManhuaDirectorStrategyContract({ topic: "赛车追逐" }),
+    });
+    expect(r.promptZh).toContain("【创作策略·v1·character_action】");
+    expect(r.promptZh).toContain("按发起、路径、结果、反应组织动作镜头");
+    expect(r.promptZh).not.toMatch(/Justin Lin|林诣彬|Nolan|诺兰|Cameron|卡梅隆/i);
   });
 
   it("bans fantasy/modern/gore/watermark/logo/extra text in 【禁止事项】", () => {

@@ -6,7 +6,7 @@
  * - 异常缓存结构清理、终态只提示一次的判定。
  */
 
-export type PostProdAction = "concat" | "bgm_mount" | "loudness_check";
+export type PostProdAction = "concat" | "bgm_mount" | "burn_subtitle" | "loudness_check";
 export type PostProdJobStatus = "queued" | "running" | "succeeded" | "failed";
 
 export type TrackedJob = {
@@ -22,10 +22,16 @@ export type TrackedJob = {
 export const ACTION_LABEL: Record<PostProdAction, string> = {
   concat: "拼接成片",
   bgm_mount: "BGM 贴装",
+  burn_subtitle: "字幕烧录",
   loudness_check: "响度验收",
 };
 
-const ACTIONS: readonly string[] = ["concat", "bgm_mount", "loudness_check"];
+const ACTIONS: readonly string[] = [
+  "concat",
+  "bgm_mount",
+  "burn_subtitle",
+  "loudness_check",
+];
 const STATUSES: readonly string[] = ["queued", "running", "succeeded", "failed"];
 
 /** localStorage 键按用户分隔:换账号不串单 */
@@ -142,7 +148,9 @@ export function buildPostProdClipOptions(jobs: TrackedJob[]): ClipOption[] {
     .filter(
       (job) =>
         job.status === "succeeded" &&
-        (job.action === "concat" || job.action === "bgm_mount") &&
+        (job.action === "concat" ||
+          job.action === "bgm_mount" ||
+          job.action === "burn_subtitle") &&
         job.output,
     )
     .map((job) => {
