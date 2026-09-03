@@ -21,6 +21,7 @@ import {
 } from "../../shared/manhuaNativeDeepRead.js";
 import {
   MANHUA_NATIVE_DEEP_READ_MODEL,
+  MANHUA_NATIVE_DEEP_READ_MODEL_LABELS,
   MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS,
   parseNativeDeepReadModel,
   type ManhuaNativeDeepReadModelId,
@@ -4233,14 +4234,9 @@ function isNativeDeepReadResourceExhausted(error: unknown): boolean {
   return status === 503 || status === 429 || /RESOURCE_EXHAUSTED|resource exhausted/i.test(text);
 }
 
-const READ_MODEL_LABEL_ZH: Record<string, string> = {
-  "gemini-3.1-pro-preview": "Gemini 3.1 Pro",
-  "gemini-3.8-flash": "Gemini 3.8 Flash",
-};
-
 /** 路由标签必须反映本次任务实际读片模型，不得写死（0904：选 flash 曾显示 3.1 Pro）。 */
-function routeLabelZh(route: NativeDeepReadVisualRoute, readModel: string): string {
-  const model = READ_MODEL_LABEL_ZH[readModel] ?? readModel;
+function routeLabelZh(route: NativeDeepReadVisualRoute, readModel: ManhuaNativeDeepReadModelId): string {
+  const model = MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[readModel] ?? readModel;
   return route === NATIVE_DEEP_READ_ROUTE_EVOLINK
     ? `EvoLink ${model} 视频精读（兜底）`
     : `Vertex ${model} 视频精读`;
