@@ -39,7 +39,8 @@ export const NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION = 1 as const;
 
 export type NativeDeepReadSegmentCacheVisualRoute =
   | "vertex_gcs_video"
-  | "evolink_gemini_video";
+  | "evolink_gemini_video"
+  | "gemini_api_files_video";
 
 export type NativeDeepReadSegmentCacheEntry = {
   schemaVersion: typeof NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION;
@@ -264,7 +265,7 @@ export async function writeNativeDeepReadRawAttemptEvidence(
     || input.segmentIndex < 0
     || input.segmentIndex >= input.segmentCount
     || !Number.isFinite(input.temperature)
-    || (input.visualRoute !== "vertex_gcs_video" && input.visualRoute !== "evolink_gemini_video")
+    || (input.visualRoute !== "vertex_gcs_video" && input.visualRoute !== "evolink_gemini_video" && input.visualRoute !== "gemini_api_files_video")
     || !String(input.batchRequestId || "").trim()
     || !/^[0-9a-f-]{16,64}$/i.test(String(input.callId || "").trim())
     || typeof input.responseText !== "string"
@@ -307,7 +308,21 @@ export async function writeNativeDeepReadRawAttemptEvidence(
       gcsUri: `gs://${getGcsBucketName()}/${objectName}`,
     });
     if (!existing.buffer.equals(payload)) {
-      throw new Error("原始段证据对象已存在但内容不同，已停止");
+      // 0904：路由不属于证据身份。换道续跑时同名对象只差 visualRoute 字段属正常，
+      // 剥掉路由后仍不同才是真冲突（内容/摘要被改，必须关闭式停止）。
+      const stripRoute = (buffer: Buffer): string => {
+        try {
+          const parsed = JSON.parse(buffer.toString("utf8")) as Record<string, unknown>;
+          delete parsed.visualRoute;
+          return JSON.stringify(parsed);
+        } catch {
+          return "";
+        }
+      };
+      const existingStripped = stripRoute(existing.buffer);
+      if (!existingStripped || existingStripped !== stripRoute(payload)) {
+        throw new Error("原始段证据对象已存在但内容不同，已停止");
+      }
     }
   }
   return { objectName, bytes: responseBuffer.byteLength, sha256: responseSha256 };
@@ -348,7 +363,11 @@ function parseNativeDeepReadRawAttemptEvidence(
     || row.requestFingerprint !== expected.requestFingerprint
     || row.attemptNumber !== expected.attemptNumber
     || row.temperature !== expected.temperature
-    || row.visualRoute !== expected.visualRoute
+    // 0904：证据身份不含路由（对象名与指纹都没有它）。换道续跑（Vertex↔Gemini API）
+    // 不得作废已付费证据，只要求存的是已知路由值；不一致即卡死会让半路集永远跑不过。
+    || (row.visualRoute !== "vertex_gcs_video"
+      && row.visualRoute !== "evolink_gemini_video"
+      && row.visualRoute !== "gemini_api_files_video")
     || row.repeatableDiagnostic === true
     || !Number.isInteger(httpStatus)
     || httpStatus < 200
@@ -392,7 +411,7 @@ export async function readNativeDeepReadRawAttemptEvidence(
     || input.segmentCount > 32
     || input.segmentIndex >= input.segmentCount
     || !Number.isFinite(input.temperature)
-    || (input.visualRoute !== "vertex_gcs_video" && input.visualRoute !== "evolink_gemini_video")
+    || (input.visualRoute !== "vertex_gcs_video" && input.visualRoute !== "evolink_gemini_video" && input.visualRoute !== "gemini_api_files_video")
   ) {
     throw new Error("原始段证据回读身份不完整");
   }
@@ -526,7 +545,7 @@ function parseCacheEntry(
     || !/^[0-9a-f]{64}$/.test(String(entry.fingerprint || ""))
     || !/^[0-9a-f]{64}$/.test(String(entry.sourceDigest || ""))
     || typeof entry.hasAudio !== "boolean"
-    || (entry.visualRoute !== "vertex_gcs_video" && entry.visualRoute !== "evolink_gemini_video")
+    || (entry.visualRoute !== "vertex_gcs_video" && entry.visualRoute !== "evolink_gemini_video" && entry.visualRoute !== "gemini_api_files_video")
     || typeof entry.degraded !== "boolean"
     || !entry.raw
     || typeof entry.raw !== "object"
