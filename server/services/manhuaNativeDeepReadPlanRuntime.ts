@@ -21,7 +21,7 @@ import { isManhuaNativeDeepReadEnabled } from "./manhuaNativeDeepReadRunner.js";
 import { resolveManhuaSeriesKey } from "./manhuaTemplateLearnService.js";
 import type { ManhuaTemplateLearnLlmProvider } from "../../shared/manhuaTemplateLearnFrameVision.js";
 import {
-  MANHUA_NATIVE_DEEP_READ_MODEL,
+  nativeDeepReadSeriesKeyForModel,
   type ManhuaNativeDeepReadModelId,
 } from "../../shared/manhuaNativeDeepReadJob.js";
 import {
@@ -45,15 +45,6 @@ export type NativeDeepReadPlanRuntimeInput = {
   abortSignal?: AbortSignal;
 };
 
-/** flash 版剧集库后缀；40 字符上限内先截基名再拼，保证合法。 */
-export function nativeDeepReadSeriesKeyForModel(
-  baseSeriesKey: string,
-  readModel?: ManhuaNativeDeepReadModelId,
-): string {
-  if (!readModel || readModel === MANHUA_NATIVE_DEEP_READ_MODEL) return baseSeriesKey;
-  const suffix = "-g38f";
-  return `${baseSeriesKey.slice(0, 40 - suffix.length)}${suffix}`;
-}
 
 export async function buildNativeDeepReadPlanPreviewFromServices(
   input: NativeDeepReadPlanRuntimeInput,
@@ -93,7 +84,7 @@ export async function buildNativeDeepReadPlanPreviewFromServices(
     listIngestedEpisodeRecords: listIngestedNativeDeepReadEpisodeRecords,
     listClaimStates: listNativeDeepReadEpisodeClaimStates,
     resolveSeriesKey: async (keyInput) => nativeDeepReadSeriesKeyForModel(
-      await resolveManhuaSeriesKey(keyInput),
+      await resolveManhuaSeriesKey({ ...keyInput, readModel: input.readModel }),
       input.readModel,
     ),
     isExecutionEnabled: isManhuaNativeDeepReadEnabled,

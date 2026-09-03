@@ -22,6 +22,17 @@ export const MANHUA_NATIVE_DEEP_READ_MODEL_LABELS: Record<ManhuaNativeDeepReadMo
   "gemini-3.8-flash": "Gemini 3.8 Flash",
 } as const;
 
+/** flash 平行剧集库后缀；40 字符上限内先截基名再拼。所有 seriesKey 解析点都必须过这一层。 */
+export function nativeDeepReadSeriesKeyForModel(
+  baseSeriesKey: string,
+  readModel?: ManhuaNativeDeepReadModelId,
+): string {
+  if (!readModel || readModel === MANHUA_NATIVE_DEEP_READ_MODEL) return baseSeriesKey;
+  const suffix = "-g38f";
+  if (baseSeriesKey.endsWith(suffix)) return baseSeriesKey;
+  return `${baseSeriesKey.slice(0, 40 - suffix.length)}${suffix}`;
+}
+
 export function parseNativeDeepReadModel(value: unknown): ManhuaNativeDeepReadModelId {
   if (value === undefined || value === null || value === "") return MANHUA_NATIVE_DEEP_READ_MODEL;
   const id = String(value).trim();

@@ -33,6 +33,7 @@ import {
 } from "./manhuaNativeDeepReadPlan.js";
 import {
   MANHUA_NATIVE_DEEP_READ_MODEL,
+  nativeDeepReadSeriesKeyForModel,
   parseNativeDeepReadSegmentSeconds,
   parseNativeDeepReadVideoFps,
 } from "../../shared/manhuaNativeDeepReadJob.js";
@@ -538,7 +539,10 @@ export async function resolveManhuaSeriesKey(input: {
   mixId?: string;
   title?: string;
   learnLlm: ManhuaTemplateLearnLlmProvider;
+  /** 0903 双模型：同名剧匹配必须分车道——flash 只认带 -g38f 的系列，pro 只认不带的。 */
+  readModel?: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeDeepReadModelId;
 }): Promise<string> {
+  const wantFlashLane = input.readModel === "gemini-3.8-flash";
   const normalizedTitle = normalizeManhuaSeriesTitle(input.title);
   if (normalizedTitle) {
     const names = await listGcsObjectNamesByPrefix({
@@ -555,6 +559,9 @@ export async function resolveManhuaSeriesKey(input: {
       if (read.status !== "found") continue;
       const existingProvider = read.value.learnLlm || "gpt";
       if (existingProvider !== input.learnLlm) continue;
+      // 车道过滤：Pro 单绝不复用 flash 系列，反之亦然（复审抓的非确定性路由雷）
+      const existingIsFlash = String(read.value.seriesKey || existingKey).endsWith("-g38f");
+      if (existingIsFlash !== wantFlashLane) continue;
       if (normalizeManhuaSeriesTitle(read.value.titleHint) === normalizedTitle) {
         return read.value.seriesKey || existingKey;
       }
@@ -2192,17 +2199,21 @@ export async function runManhuaTemplateLearn(
     }
     // 剧名口径：用户手填 > 详情/合集接口回填的剧名（后者是单集路径「剧名恒空」的修复）
     const titleHint = title || dramaNameZh;
-    seriesKey = await resolveManhuaSeriesKey({
-      sourceIdentity,
-      mixId,
-      title: resolveManhuaLearnSeriesIdentityTitle({
-        titleHint,
-        nativeDeepReadMode,
-        sourceAwemeId,
+    seriesKey = nativeDeepReadSeriesKeyForModel(
+      await resolveManhuaSeriesKey({
+        sourceIdentity,
         mixId,
+        title: resolveManhuaLearnSeriesIdentityTitle({
+          titleHint,
+          nativeDeepReadMode,
+          sourceAwemeId,
+          mixId,
+        }),
+        learnLlm,
+        readModel: input.nativeReadModel,
       }),
-      learnLlm,
-    });
+      input.nativeReadModel,
+    );
     workId = `tpl_series_${seriesKey}`;
     const confirmedNativePlan = nativeDeepReadMode ? input.nativePlanPreview : undefined;
     let nativeUsage: ManhuaNativeDeepReadUsageReceipt | undefined;
@@ -3226,6 +3237,7 @@ export type ManhuaLearnSameTitleSeries = {
 export async function checkManhuaLearnSourceLearned(
   url: string,
   titleZh?: string,
+  readModel?: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeDeepReadModelId,
 ): Promise<{
   seriesKey: string;
   titleHint: string;
@@ -3247,10 +3259,13 @@ export async function checkManhuaLearnSourceLearned(
   // 原始 URL 哈希，不归一化会漏查）。提交链路同样以干净链接落库。
   const awemeId = extractDouyinVideoIdFromUrl(rawUrl);
   const cleanUrl = awemeId ? `https://www.douyin.com/video/${awemeId}` : rawUrl;
-  const seriesKey = await resolveManhuaSeriesKey({
-    sourceIdentity: cleanUrl,
-    learnLlm: "gpt",
-  });
+  const seriesKey = nativeDeepReadSeriesKeyForModel(
+    await resolveManhuaSeriesKey({
+      sourceIdentity: cleanUrl,
+      learnLlm: "gpt",
+    }),
+    readModel,
+  );
   const [{ listIngestedNativeDeepReadEpisodeRecords, nativeDeepReadProposalId }, store] =
     await Promise.all([
       import("./manhuaNativeDeepReadIngest.js"),
@@ -3395,14 +3410,18 @@ export async function checkManhuaLearnSourceLearned(
 export async function retireNativeLearnEpisodeForRelearn(input: {
   url: string;
   episodeIndex: number;
+  readModel?: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeDeepReadModelId;
 }): Promise<{ seriesKey: string; retiredObjectName: string }> {
   const rawUrl = String(input.url || "").trim();
   const awemeId = extractDouyinVideoIdFromUrl(rawUrl);
   const cleanUrl = awemeId ? `https://www.douyin.com/video/${awemeId}` : rawUrl;
-  const seriesKey = await resolveManhuaSeriesKey({
-    sourceIdentity: cleanUrl,
-    learnLlm: "gpt",
-  });
+  const seriesKey = nativeDeepReadSeriesKeyForModel(
+    await resolveManhuaSeriesKey({
+      sourceIdentity: cleanUrl,
+      learnLlm: "gpt",
+    }),
+    input.readModel,
+  );
   const [{ nativeDeepReadProposalObjectName, nativeDeepReadProposalId }, gcs] =
     await Promise.all([
       import("./manhuaNativeDeepReadIngest.js"),
