@@ -3230,6 +3230,7 @@ export type ManhuaLearnSameTitleSeries = {
 export async function checkManhuaLearnSourceLearned(
   url: string,
   titleZh?: string,
+  readModel?: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeDeepReadModelId,
 ): Promise<{
   seriesKey: string;
   titleHint: string;
@@ -3251,10 +3252,13 @@ export async function checkManhuaLearnSourceLearned(
   // 原始 URL 哈希，不归一化会漏查）。提交链路同样以干净链接落库。
   const awemeId = extractDouyinVideoIdFromUrl(rawUrl);
   const cleanUrl = awemeId ? `https://www.douyin.com/video/${awemeId}` : rawUrl;
-  const seriesKey = await resolveManhuaSeriesKey({
-    sourceIdentity: cleanUrl,
-    learnLlm: "gpt",
-  });
+  const seriesKey = nativeDeepReadSeriesKeyForModel(
+    await resolveManhuaSeriesKey({
+      sourceIdentity: cleanUrl,
+      learnLlm: "gpt",
+    }),
+    readModel,
+  );
   const [{ listIngestedNativeDeepReadEpisodeRecords, nativeDeepReadProposalId }, store] =
     await Promise.all([
       import("./manhuaNativeDeepReadIngest.js"),
@@ -3399,14 +3403,18 @@ export async function checkManhuaLearnSourceLearned(
 export async function retireNativeLearnEpisodeForRelearn(input: {
   url: string;
   episodeIndex: number;
+  readModel?: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeDeepReadModelId;
 }): Promise<{ seriesKey: string; retiredObjectName: string }> {
   const rawUrl = String(input.url || "").trim();
   const awemeId = extractDouyinVideoIdFromUrl(rawUrl);
   const cleanUrl = awemeId ? `https://www.douyin.com/video/${awemeId}` : rawUrl;
-  const seriesKey = await resolveManhuaSeriesKey({
-    sourceIdentity: cleanUrl,
-    learnLlm: "gpt",
-  });
+  const seriesKey = nativeDeepReadSeriesKeyForModel(
+    await resolveManhuaSeriesKey({
+      sourceIdentity: cleanUrl,
+      learnLlm: "gpt",
+    }),
+    input.readModel,
+  );
   const [{ nativeDeepReadProposalObjectName, nativeDeepReadProposalId }, gcs] =
     await Promise.all([
       import("./manhuaNativeDeepReadIngest.js"),

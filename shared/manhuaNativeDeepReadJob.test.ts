@@ -6,6 +6,7 @@ import {
   parseNativeDeepReadSegmentSeconds,
   parseNativeDeepReadVideoFps,
   parseNativeDeepReadJobConfirmation,
+  nativeDeepReadSeriesKeyForModel,
   resolveNativeDeepReadJobTimeoutMs,
   sameNativeDeepReadJobConfirmation,
 } from "./manhuaNativeDeepReadJob.js";
@@ -208,5 +209,22 @@ describe("nativeStandaloneSource（0901 整支即全集）", () => {
     const off = parseNativeDeepReadJobConfirmation({ ...base });
     expect(sameNativeDeepReadJobConfirmation(on, off)).toBe(false);
     expect(sameNativeDeepReadJobConfirmation(on, { ...on })).toBe(true);
+  });
+});
+
+describe("nativeDeepReadSeriesKeyForModel", () => {
+  it("默认/未传模型不加后缀", () => {
+    expect(nativeDeepReadSeriesKeyForModel("abc123")).toBe("abc123");
+    expect(nativeDeepReadSeriesKeyForModel("abc123", "gemini-3.1-pro-preview")).toBe("abc123");
+  });
+  it("flash 加 -g38f 且总长不超 40", () => {
+    expect(nativeDeepReadSeriesKeyForModel("abc123", "gemini-3.8-flash")).toBe("abc123-g38f");
+    const long = "x".repeat(40);
+    const out = nativeDeepReadSeriesKeyForModel(long, "gemini-3.8-flash");
+    expect(out.endsWith("-g38f")).toBe(true);
+    expect(out.length).toBe(40);
+  });
+  it("已带后缀幂等，不得二次拼接", () => {
+    expect(nativeDeepReadSeriesKeyForModel("abc123-g38f", "gemini-3.8-flash")).toBe("abc123-g38f");
   });
 });

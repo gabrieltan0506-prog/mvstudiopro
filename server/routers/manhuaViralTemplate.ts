@@ -597,6 +597,7 @@ export const manhuaViralTemplateRouter = router({
         url: z.string().trim().url().max(600),
         /** 选填剧名：野生重剪合集与官方分集同剧不同源，靠剧名把旧账也亮出来 */
         titleZh: z.string().trim().max(120).optional(),
+        readModel: z.enum(["gemini-3.1-pro-preview", "gemini-3.8-flash"]).optional(),
       }),
     )
     .query(async ({ ctx, input }) => {
@@ -604,7 +605,7 @@ export const manhuaViralTemplateRouter = router({
       const { checkManhuaLearnSourceLearned } = await import(
         "../services/manhuaTemplateLearnService"
       );
-      return await checkManhuaLearnSourceLearned(input.url, input.titleZh);
+      return await checkManhuaLearnSourceLearned(input.url, input.titleZh, input.readModel);
     }),
 
   /** 0902 剧名改正：矩阵号把 titleHint 写脏时，owner 可改（只动剧名不动产物） */
@@ -629,6 +630,7 @@ export const manhuaViralTemplateRouter = router({
       z.object({
         url: z.string().trim().url().max(600),
         episodeIndex: z.number().int().min(1).max(999),
+        readModel: z.enum(["gemini-3.1-pro-preview", "gemini-3.8-flash"]).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {

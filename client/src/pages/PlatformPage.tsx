@@ -2560,6 +2560,8 @@ export default function PlatformPage() {
     const timer = window.setTimeout(() => setManhuaPasteTitleDebounced(trimmed), 600);
     return () => window.clearTimeout(timer);
   }, [manhuaPasteTitle]);
+  /** 0903 双模型：读片主模型面板可选；默认 3.1 Pro 质量基线，3.8 Flash 为低成本对照档。 */
+  const [manhuaLearnReadModel, setManhuaLearnReadModel] = useState<ManhuaNativeDeepReadModelId>(MANHUA_NATIVE_DEEP_READ_MODEL);
   const retireLearnEpisodeMutation =
     trpc.manhuaViralTemplate.retireLearnSourceEpisode.useMutation();
   const renameLearnSeriesMutation =
@@ -2567,6 +2569,7 @@ export default function PlatformPage() {
   const manhuaLearnDupQuery = trpc.manhuaViralTemplate.checkLearnSourceLearned.useQuery(
     {
       url: manhuaPasteUrlDebounced,
+      readModel: manhuaLearnReadModel,
       ...(manhuaPasteTitleDebounced ? { titleZh: manhuaPasteTitleDebounced } : {}),
     },
     {
@@ -2583,8 +2586,6 @@ export default function PlatformPage() {
   /** 设置是下一任务草稿；后台轮询不能覆盖用户正在编辑的值。 */
   const manhuaLearnSegmentSecondsEditedRef = useRef(false);
   const [manhuaLearnVideoFpsInput, setManhuaLearnVideoFpsInput] = useState(String(NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS));
-  /** 0903 双模型：读片主模型面板可选；默认 3.1 Pro 质量基线，3.8 Flash 为低成本对照档。 */
-  const [manhuaLearnReadModel, setManhuaLearnReadModel] = useState<ManhuaNativeDeepReadModelId>(MANHUA_NATIVE_DEEP_READ_MODEL);
   const [manhuaLearnVideoFpsError, setManhuaLearnVideoFpsError] = useState("");
   const manhuaLearnVideoFpsEditedRef = useRef(false);
   const [manhuaLearnFocusSeriesKey, setManhuaLearnFocusSeriesKey] = useState("");
@@ -12876,6 +12877,7 @@ export default function PlatformPage() {
                                         return;
                                       try {
                                         await retireLearnEpisodeMutation.mutateAsync({
+                                          readModel: manhuaLearnReadModel,
                                           url: manhuaPasteUrlDebounced,
                                           episodeIndex: row.episodeIndex,
                                         });
