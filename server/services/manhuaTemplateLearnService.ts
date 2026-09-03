@@ -33,6 +33,7 @@ import {
 } from "./manhuaNativeDeepReadPlan.js";
 import {
   MANHUA_NATIVE_DEEP_READ_MODEL,
+  nativeDeepReadSeriesKeyForModel,
   parseNativeDeepReadSegmentSeconds,
   parseNativeDeepReadVideoFps,
 } from "../../shared/manhuaNativeDeepReadJob.js";
@@ -2192,17 +2193,20 @@ export async function runManhuaTemplateLearn(
     }
     // 剧名口径：用户手填 > 详情/合集接口回填的剧名（后者是单集路径「剧名恒空」的修复）
     const titleHint = title || dramaNameZh;
-    seriesKey = await resolveManhuaSeriesKey({
-      sourceIdentity,
-      mixId,
-      title: resolveManhuaLearnSeriesIdentityTitle({
-        titleHint,
-        nativeDeepReadMode,
-        sourceAwemeId,
+    seriesKey = nativeDeepReadSeriesKeyForModel(
+      await resolveManhuaSeriesKey({
+        sourceIdentity,
         mixId,
+        title: resolveManhuaLearnSeriesIdentityTitle({
+          titleHint,
+          nativeDeepReadMode,
+          sourceAwemeId,
+          mixId,
+        }),
+        learnLlm,
       }),
-      learnLlm,
-    });
+      input.nativeReadModel,
+    );
     workId = `tpl_series_${seriesKey}`;
     const confirmedNativePlan = nativeDeepReadMode ? input.nativePlanPreview : undefined;
     let nativeUsage: ManhuaNativeDeepReadUsageReceipt | undefined;
