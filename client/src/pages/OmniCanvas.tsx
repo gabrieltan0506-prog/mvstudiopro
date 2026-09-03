@@ -10,7 +10,8 @@ import PostProdWorkshopCard from "@/components/canvas/PostProdWorkshopCard";
 import ManhuaCreativeAdvisorPanel from "@/components/canvas/ManhuaCreativeAdvisorPanel";
 import type { CanvasBlock, CanvasEdge } from "@/lib/canvasTypes";
 import { defaultCanvasBlock, makeCanvasBlockId, normalizeCanvasBlock } from "@/lib/canvasTypes";
-import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
+import { runCanvasBlock, runGptImage2, type CanvasRunDeps } from "@/lib/canvasRunBlock";
+import { resolveOpenAiImageLaneForBlockId } from "@shared/openaiImageLane";
 import { copyText } from "@/lib/copyText";
 import { cropManhuaSheet2x2 } from "@/lib/manhuaSheetCropApi";
 import type { ManhuaSceneTileSlot } from "@shared/manhuaSceneTilePick";
@@ -7085,18 +7086,46 @@ export default function OmniCanvas() {
                   >
                     经典表单
                   </button>
+                  <button
+                    type="button"
+                    className="rounded-lg border border-white/15 px-2.5 py-1.5 font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
+                    disabled={Boolean(factoryBusy || writerBusy || assembleBusy)}
+                        onClick={() => selectCanvasMode("freeform")}
+                    title="切到自由画布"
+                  >
+                    ⇄ 自由画布
+                  </button>
                 </div>
               ) : (
                 <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
+                  {/* 0903 用户令：模式互切钉在标题旁边显眼处，不藏边角 */}
                   {canvasMode === "manhua" ? (
                     <>
                       <Clapperboard className="h-3.5 w-3.5" />
                       漫剧创作
+                      <button
+                        type="button"
+                        disabled={Boolean(factoryBusy || writerBusy || assembleBusy)}
+                        onClick={() => selectCanvasMode("freeform")}
+                        className="ml-1 rounded-full border border-white/25 bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-white/85 hover:bg-white/20"
+                        title="切到自由画布"
+                      >
+                        ⇄ 自由画布
+                      </button>
                     </>
                   ) : canvasMode === "freeform" ? (
                     <>
                       <LayoutTemplate className="h-3.5 w-3.5" />
                       自由画布
+                      <button
+                        type="button"
+                        disabled={Boolean(factoryBusy || writerBusy || assembleBusy)}
+                        onClick={() => selectCanvasMode("manhua")}
+                        className="ml-1 rounded-full border border-white/25 bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-white/85 hover:bg-white/20"
+                        title="切到漫剧工厂"
+                      >
+                        ⇄ 漫剧工厂
+                      </button>
                     </>
                   ) : (
                     <>
@@ -7623,6 +7652,49 @@ export default function OmniCanvas() {
                   }}
                   onFocusBlock={(id) => {
                     openManhuaFactoryCanvas(id);
+                  }}
+                  onEditImageBlock={async ({ blockId, prompt }) => {
+                    /**
+                     * 0903 用户令：工厂内原地 image-2 改图——不跳画布节点。
+                     * 走与自由画布同一条 canvas_gpt_image2 任务管线（worker 计费幂等），
+                     * 成图后旧图进 outputUrls 历史位，卡面即时换新。
+                     */
+                    if (!user?.id) throw new Error("请先登录后再改图");
+                    const block = blocks.find((b) => b.id === blockId);
+                    const ref = String(
+                      block?.outputUrl || block?.outputUrls?.[0] || block?.refImageUrl || "",
+                    ).trim();
+                    if (!ref) throw new Error("这张卡还没有可编辑的图片");
+                    // 审查修1：不钉官方单供应商（0812 P0 旧案），走 EvoLink 优先的便宜链
+                    // 审查修2：比例跟卡走，场景空镜 16:9 不被硬掰成 9:16
+                    const url = await runGptImage2(
+                      prompt,
+                      block?.aspectRatio === "16:9" ? "16:9" : "9:16",
+                      {
+                        refImageUrl: ref,
+                        imageLane: resolveOpenAiImageLaneForBlockId(blockId),
+                        userId: user?.id ? String(user.id) : "",
+                      },
+                    );
+                    handleBlocksChange((prev) =>
+                      prev.map((b) =>
+                        b.id === blockId
+                          ? {
+                              ...b,
+                              outputUrl: url,
+                              // 审查修5：显式把被编辑的旧 outputUrl 押进历史位，不依赖它已在 outputUrls 的隐含前提
+                              outputUrls: [
+                                url,
+                                ...[b.outputUrl, ...(b.outputUrls || [])].filter(
+                                  (u): u is string => Boolean(u) && u !== url,
+                                ),
+                              ].filter((u, i, arr) => arr.indexOf(u) === i).slice(0, 8),
+                              status: "done" as const,
+                            }
+                          : b,
+                      ),
+                    );
+                    return url;
                   }}
                   previewCanvasToolbar={
                     <label className="inline-flex items-center gap-1 text-[10px] text-white/45">

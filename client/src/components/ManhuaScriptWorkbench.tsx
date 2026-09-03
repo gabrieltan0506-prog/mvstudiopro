@@ -3,6 +3,7 @@
  * 一集：5–6 段 × 每段 3–4 关键静帧；每段一条成片（Seedance ≤15s，按时长合计钳制）。
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -472,6 +473,8 @@ type Props = {
   dockSelectedIds?: Set<string>;
   onDockSelectedIdsChange?: (next: Set<string>) => void;
   onFocusBlock?: (blockId: string) => void;
+  /** 0903 原地 image-2 改图：返回新图 URL；抛错=失败（由本组件展示错误）。 */
+  onEditImageBlock?: (input: { blockId: string; prompt: string }) => Promise<string>;
   /** 确认编剧后：整屏编辑器壳（无圆角卡片、三栏占满视口） */
   immersive?: boolean;
   /**
@@ -667,6 +670,7 @@ export default function ManhuaScriptWorkbench({
   dockSelectedIds,
   onDockSelectedIdsChange,
   onFocusBlock,
+  onEditImageBlock,
   immersive = false,
   previewCanvas,
   previewCanvasToolbar,
@@ -1183,6 +1187,13 @@ export default function ManhuaScriptWorkbench({
     autoLaidClipLocksRef.current = true;
     onReviewClipPromptsOnCanvas({ segmentIndex: activeSegNo });
   }, [activePhase, episodeStillCount, activeSegNo, onReviewClipPromptsOnCanvas]);
+  const imageEditSubmitLockRef = useRef(false);
+  const [imageEditDraft, setImageEditDraft] = useState<{
+    blockId: string;
+    prompt: string;
+    busy: boolean;
+    errorZh: string;
+  } | null>(null);
   const focusBlockAndOpenCanvas = (blockId: string) => {
     if (!blockId) return;
     setCanvasDockOpen(true);
@@ -3404,7 +3415,10 @@ export default function ManhuaScriptWorkbench({
               {sheetPreview ? (
                 <div
                   className="fixed inset-0 z-[75] flex flex-col items-center justify-center gap-3 bg-black/85 px-4 py-6"
-                  onClick={() => setSheetPreview(null)}
+                  onClick={() => {
+                    if (imageEditDraft?.busy) return;
+                    setSheetPreview(null);
+                  }}
                 >
                   <img
                     src={sheetPreview.url}
@@ -3422,24 +3436,122 @@ export default function ManhuaScriptWorkbench({
                     {sheetPreview.id ? (
                       <button
                         type="button"
+                        disabled={Boolean(imageEditDraft?.busy)}
                         onClick={() => {
                           const id = sheetPreview.id;
                           setSheetPreview(null);
                           focusBlockAndOpenCanvas(id);
                         }}
-                        className="rounded border border-white/20 px-2 py-0.5 text-[11px] text-white/80 hover:bg-white/[0.08]"
+                        className="rounded border border-white/20 px-2 py-0.5 text-[11px] text-white/80 hover:bg-white/[0.08] disabled:opacity-40"
                       >
                         在画布中定位
                       </button>
                     ) : null}
+                    {sheetPreview.id && onEditImageBlock && !sheetPreview.id.includes("-custom-") ? (
+                      <button
+                        type="button"
+                        disabled={Boolean(factoryBusy)}
+                        title={factoryBusy ? "工厂任务进行中，先等它跑完再改图" : undefined}
+                        onClick={() =>
+                          setImageEditDraft({ blockId: sheetPreview.id, prompt: "", busy: false, errorZh: "" })
+                        }
+                        className="rounded border border-amber-300/40 bg-amber-400/10 px-2 py-0.5 text-[11px] font-semibold text-amber-100 hover:bg-amber-400/20 disabled:opacity-40"
+                      >
+                        改图 · image-2
+                      </button>
+                    ) : null}
                     <button
                       type="button"
+                      disabled={Boolean(imageEditDraft?.busy)}
                       onClick={() => setSheetPreview(null)}
-                      className="rounded border border-white/15 px-2 py-0.5 text-[11px] text-white/60 hover:bg-white/[0.06]"
+                      className="rounded border border-white/15 px-2 py-0.5 text-[11px] text-white/60 hover:bg-white/[0.06] disabled:opacity-40"
                     >
                       关闭
                     </button>
                   </div>
+                  {imageEditDraft && imageEditDraft.blockId === sheetPreview.id ? (
+                    <div
+                      onClick={(e) => e.stopPropagation()}
+                      className="flex w-full max-w-xl flex-col gap-2 rounded-xl border border-amber-300/30 bg-[#141210] px-3 py-2.5"
+                    >
+                      <div className="text-[11px] font-semibold text-amber-100">
+                        image-2 改图（以当前图为底，只写要改什么）
+                      </div>
+                      <textarea
+                        value={imageEditDraft.prompt}
+                        disabled={imageEditDraft.busy}
+                        onChange={(e) =>
+                          setImageEditDraft((d) => (d ? { ...d, prompt: e.target.value, errorZh: "" } : d))
+                        }
+                        placeholder="例：表情改温柔一点；衣服换深蓝色；去掉背景杂物"
+                        rows={2}
+                        className="w-full resize-none rounded-lg border border-white/15 bg-black/45 px-2.5 py-1.5 text-[12px] text-white placeholder:text-white/30"
+                      />
+                      {imageEditDraft.errorZh ? (
+                        <div className="text-[11px] text-rose-300">{imageEditDraft.errorZh}</div>
+                      ) : null}
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={imageEditDraft.busy || !imageEditDraft.prompt.trim()}
+                          onClick={() => {
+                            const draft = imageEditDraft;
+                            if (!draft || !onEditImageBlock) return;
+                            // 红队修3：ref 互斥锁，双击/连点不产生第二次付费调用
+                            if (imageEditSubmitLockRef.current) return;
+                            // 红队修1：工厂批量任务在途时不发改图，避免陈旧快照覆盖互踩
+                            if (factoryBusy) {
+                              setImageEditDraft({ ...draft, errorZh: "工厂任务进行中，等它跑完再改图" });
+                              return;
+                            }
+                            try {
+                              assertOpenAiImagePromptWithinLimit(draft.prompt.trim());
+                            } catch (limitErr) {
+                              setImageEditDraft({
+                                ...draft,
+                                errorZh: limitErr instanceof Error ? limitErr.message : "提示词过长",
+                              });
+                              return;
+                            }
+                            imageEditSubmitLockRef.current = true;
+                            setImageEditDraft({ ...draft, busy: true, errorZh: "" });
+                            void onEditImageBlock({ blockId: draft.blockId, prompt: draft.prompt.trim() })
+                              .then((url) => {
+                                imageEditSubmitLockRef.current = false;
+                                // 审查修3：只更新仍属于本次编辑目标的草稿/预览，防止串卡
+                                setImageEditDraft((d) => (d && d.blockId === draft.blockId ? null : d));
+                                setSheetPreview((prev) =>
+                                  prev && prev.id === draft.blockId ? { ...prev, url } : prev,
+                                );
+                              })
+                              .catch((err) => {
+                                imageEditSubmitLockRef.current = false;
+                                setImageEditDraft((d) =>
+                                  d && d.blockId === draft.blockId
+                                    ? {
+                                        ...d,
+                                        busy: false,
+                                        errorZh: err instanceof Error ? err.message : "改图失败，请重试",
+                                      }
+                                    : d,
+                                );
+                              });
+                          }}
+                          className="rounded-lg border border-amber-300/40 bg-amber-400/15 px-3 py-1 text-[12px] font-semibold text-amber-100 hover:bg-amber-400/25 disabled:opacity-45"
+                        >
+                          {imageEditDraft.busy ? "生成中…（约1分钟）" : "跑一发改图"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={imageEditDraft.busy}
+                          onClick={() => setImageEditDraft(null)}
+                          className="rounded-lg border border-white/15 px-3 py-1 text-[12px] text-white/60 hover:bg-white/[0.06] disabled:opacity-45"
+                        >
+                          取消
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               {regenDraft ? (
