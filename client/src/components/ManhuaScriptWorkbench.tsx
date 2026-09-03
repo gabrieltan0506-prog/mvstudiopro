@@ -1187,6 +1187,7 @@ export default function ManhuaScriptWorkbench({
     autoLaidClipLocksRef.current = true;
     onReviewClipPromptsOnCanvas({ segmentIndex: activeSegNo });
   }, [activePhase, episodeStillCount, activeSegNo, onReviewClipPromptsOnCanvas]);
+  const imageEditSubmitLockRef = useRef(false);
   const [imageEditDraft, setImageEditDraft] = useState<{
     blockId: string;
     prompt: string;
@@ -3446,13 +3447,15 @@ export default function ManhuaScriptWorkbench({
                         在画布中定位
                       </button>
                     ) : null}
-                    {sheetPreview.id && onEditImageBlock ? (
+                    {sheetPreview.id && onEditImageBlock && !sheetPreview.id.includes("-custom-") ? (
                       <button
                         type="button"
+                        disabled={Boolean(factoryBusy)}
+                        title={factoryBusy ? "工厂任务进行中，先等它跑完再改图" : undefined}
                         onClick={() =>
                           setImageEditDraft({ blockId: sheetPreview.id, prompt: "", busy: false, errorZh: "" })
                         }
-                        className="rounded border border-amber-300/40 bg-amber-400/10 px-2 py-0.5 text-[11px] font-semibold text-amber-100 hover:bg-amber-400/20"
+                        className="rounded border border-amber-300/40 bg-amber-400/10 px-2 py-0.5 text-[11px] font-semibold text-amber-100 hover:bg-amber-400/20 disabled:opacity-40"
                       >
                         改图 · image-2
                       </button>
@@ -3494,6 +3497,13 @@ export default function ManhuaScriptWorkbench({
                           onClick={() => {
                             const draft = imageEditDraft;
                             if (!draft || !onEditImageBlock) return;
+                            // 红队修3：ref 互斥锁，双击/连点不产生第二次付费调用
+                            if (imageEditSubmitLockRef.current) return;
+                            // 红队修1：工厂批量任务在途时不发改图，避免陈旧快照覆盖互踩
+                            if (factoryBusy) {
+                              setImageEditDraft({ ...draft, errorZh: "工厂任务进行中，等它跑完再改图" });
+                              return;
+                            }
                             try {
                               assertOpenAiImagePromptWithinLimit(draft.prompt.trim());
                             } catch (limitErr) {
@@ -3503,9 +3513,11 @@ export default function ManhuaScriptWorkbench({
                               });
                               return;
                             }
+                            imageEditSubmitLockRef.current = true;
                             setImageEditDraft({ ...draft, busy: true, errorZh: "" });
                             void onEditImageBlock({ blockId: draft.blockId, prompt: draft.prompt.trim() })
                               .then((url) => {
+                                imageEditSubmitLockRef.current = false;
                                 // 审查修3：只更新仍属于本次编辑目标的草稿/预览，防止串卡
                                 setImageEditDraft((d) => (d && d.blockId === draft.blockId ? null : d));
                                 setSheetPreview((prev) =>
@@ -3513,6 +3525,7 @@ export default function ManhuaScriptWorkbench({
                                 );
                               })
                               .catch((err) => {
+                                imageEditSubmitLockRef.current = false;
                                 setImageEditDraft((d) =>
                                   d && d.blockId === draft.blockId
                                     ? {

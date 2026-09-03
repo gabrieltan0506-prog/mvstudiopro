@@ -7089,7 +7089,8 @@ export default function OmniCanvas() {
                   <button
                     type="button"
                     className="rounded-lg border border-white/15 px-2.5 py-1.5 font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
-                    onClick={() => selectCanvasMode("freeform")}
+                    disabled={Boolean(factoryBusy || writerBusy || assembleBusy)}
+                        onClick={() => selectCanvasMode("freeform")}
                     title="切到自由画布"
                   >
                     ⇄ 自由画布
@@ -7104,6 +7105,7 @@ export default function OmniCanvas() {
                       漫剧创作
                       <button
                         type="button"
+                        disabled={Boolean(factoryBusy || writerBusy || assembleBusy)}
                         onClick={() => selectCanvasMode("freeform")}
                         className="ml-1 rounded-full border border-white/25 bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-white/85 hover:bg-white/20"
                         title="切到自由画布"
@@ -7117,6 +7119,7 @@ export default function OmniCanvas() {
                       自由画布
                       <button
                         type="button"
+                        disabled={Boolean(factoryBusy || writerBusy || assembleBusy)}
                         onClick={() => selectCanvasMode("manhua")}
                         className="ml-1 rounded-full border border-white/25 bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-white/85 hover:bg-white/20"
                         title="切到漫剧工厂"
@@ -7656,6 +7659,7 @@ export default function OmniCanvas() {
                      * 走与自由画布同一条 canvas_gpt_image2 任务管线（worker 计费幂等），
                      * 成图后旧图进 outputUrls 历史位，卡面即时换新。
                      */
+                    if (!user?.id) throw new Error("请先登录后再改图");
                     const block = blocks.find((b) => b.id === blockId);
                     const ref = String(
                       block?.outputUrl || block?.outputUrls?.[0] || block?.refImageUrl || "",
