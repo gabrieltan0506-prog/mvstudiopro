@@ -198,7 +198,7 @@ describe("门禁前原始响应确定性证据", () => {
   it("0904：换道续跑不作废已付费证据——存稿 visualRoute 为其他已知路由时照常回读", async () => {
     const raw = rawInputOf();
     for (const storedRoute of ["evolink_gemini_video", "gemini_api_files_video"] as const) {
-      const stored = { ...rawStoredPayload(raw), visualRoute: storedRoute };
+      const stored = { ...rawStoredPayload(raw), visualRoute: storedRoute } as Record<string, unknown>;
       gcs.downloadVersioned.mockResolvedValue({
         buffer: Buffer.from(JSON.stringify(stored), "utf8"),
         generation: "7",
