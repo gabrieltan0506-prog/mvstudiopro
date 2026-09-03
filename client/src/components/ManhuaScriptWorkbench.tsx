@@ -1979,7 +1979,7 @@ export default function ManhuaScriptWorkbench({
 
   const workflowPhases = useMemo(() => {
     const byStage = new Map(stageStrip.map((item) => [item.stage, item]));
-    // 大纲 → 资产 → 分镜 → 剪辑
+    // 用户可见语义：大纲 → 资产 → 分镜 → 成片 → 终审；内部键保持兼容旧草稿。
     const clipHas = Boolean(byStage.get("clip")?.has);
     const clipDone = episodeClips.filter(
       (b) =>
@@ -2038,11 +2038,11 @@ export default function ManhuaScriptWorkbench({
       {
         /**
          * 原来是「或」：只要有静帧就算分镜完成，哪怕一段成片都没出。
-         * 于是用户看到「分镜视频 ✅」以为能进剪辑，点进去发现待开始，
+         * 于是用户看到「分镜 ✅」以为能进成片，点进去发现待开始，
          * 而且没有任何提示说还差什么。改成与剪辑同源：至少一段成片可用。
          */
         id: "storyboard",
-        label: "分镜视频",
+        label: "分镜",
         complete: clipHas,
         gapZh: clipHas
           ? ""
@@ -2052,7 +2052,7 @@ export default function ManhuaScriptWorkbench({
       },
       {
         id: "edit",
-        label: "剪辑",
+        label: "成片",
         complete: clipHas && roughClips.length > 0,
         gapZh: clipHas
           ? roughClips.length
@@ -2063,11 +2063,11 @@ export default function ManhuaScriptWorkbench({
       {
         /**
          * 第五格：后期三件套（拼接 / BGM / 响度）都做完了，却不在流程条里 ——
-         * 用户走到「剪辑 ✅」就以为到头了，根本不知道还有成片这一步，
+         * 用户走到「成片 ✅」就以为到头了，根本不知道还有终审这一步，
          * 于是画布上永远没有长片。闭环的最后一格必须看得见。
          */
         id: "final",
-        label: "成片",
+        label: "终审",
         complete: Boolean(finalVideoUrl),
         gapZh: finalVideoUrl
           ? ""
@@ -2131,7 +2131,7 @@ export default function ManhuaScriptWorkbench({
     }
     if (phase === "edit" && !storyboardReadyEnough) {
       toast.message("请先准备分镜镜头", {
-        description: "剪辑台需要分镜就绪后再进入",
+        description: "成片台需要分镜就绪后再进入",
       });
       setActivePhase("storyboard");
       return;
@@ -3001,7 +3001,7 @@ export default function ManhuaScriptWorkbench({
         </div>
       ) : null}
 
-      {/* 阿硕式：只留一条阶段轨（大纲→资产→分镜→剪辑→成片），勿叠第二套进度 */}
+      {/* 只留一条阶段轨（大纲→资产→分镜→成片→终审），内部键 edit/final 保持旧草稿兼容。 */}
       <div
         data-manhua-workflow-rail
         data-manhua-ashuo-stepper
@@ -5976,11 +5976,11 @@ export default function ManhuaScriptWorkbench({
               onClick={() => selectPhase("storyboard")}
               className="text-[10px] text-cyan-200/80 underline-offset-2 hover:underline"
             >
-              ← 返回分镜视频
+              ← 返回分镜
             </button>
             {!storyboardReadyEnough ? (
               <span className="ml-3 text-[10px] text-amber-100/70">
-                请先在分镜阶段准备镜头后再剪辑
+                请先在分镜阶段准备镜头后再进入成片
               </span>
             ) : null}
           </div>
