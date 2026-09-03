@@ -1440,7 +1440,7 @@ export function buildGeminiNativeDeepReadSegmentRequest(input: {
   const attemptIndex = input.attemptIndex ?? 0;
   if (!Number.isSafeInteger(attemptIndex)
     || attemptIndex < 0 || attemptIndex >= NATIVE_DEEP_READ_RETRY_TEMPERATURES.length) {
-    throw new Error("Gemini 3.1 Pro读片只允许冻结的0.7/0.65/0.6三档尝试序号");
+    throw new Error("原生精读只允许冻结的0.7/0.65/0.6三档尝试序号");
   }
   const generationConfig = {
     ...NATIVE_DEEP_READ_GENERATION_CONFIG,
@@ -4233,10 +4233,18 @@ function isNativeDeepReadResourceExhausted(error: unknown): boolean {
   return status === 503 || status === 429 || /RESOURCE_EXHAUSTED|resource exhausted/i.test(text);
 }
 
-const ROUTE_LABEL_ZH: Record<NativeDeepReadVisualRoute, string> = {
-  [NATIVE_DEEP_READ_ROUTE_VERTEX]: "Vertex Gemini 3.1 Pro 视频精读",
-  [NATIVE_DEEP_READ_ROUTE_EVOLINK]: "EvoLink Gemini 3.1 Pro 视频精读（兜底）",
+const READ_MODEL_LABEL_ZH: Record<string, string> = {
+  "gemini-3.1-pro-preview": "Gemini 3.1 Pro",
+  "gemini-3.8-flash": "Gemini 3.8 Flash",
 };
+
+/** 路由标签必须反映本次任务实际读片模型，不得写死（0904：选 flash 曾显示 3.1 Pro）。 */
+function routeLabelZh(route: NativeDeepReadVisualRoute, readModel: string): string {
+  const model = READ_MODEL_LABEL_ZH[readModel] ?? readModel;
+  return route === NATIVE_DEEP_READ_ROUTE_EVOLINK
+    ? `EvoLink ${model} 视频精读（兜底）`
+    : `Vertex ${model} 视频精读`;
+}
 
 /**
  * 一次请求读取一集（逐段调用），回传后按段合并成集卡。
@@ -4778,7 +4786,7 @@ async function executeNativeDeepReadBatch(
               requestId: response.requestId,
             });
             const failure = errorWithNativeProviderReceipt(
-              formatNativeProviderErrorZh(ROUTE_LABEL_ZH[input.route], providerError),
+              formatNativeProviderErrorZh(routeLabelZh(input.route, readModel), providerError),
               providerError,
             ) as HttpFailure;
             failure.nativeDeepReadHttpStatus = response.status;
