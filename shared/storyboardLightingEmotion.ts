@@ -260,6 +260,48 @@ export const CRAFT_TECHNIQUE_PROFILES: readonly CraftTechniqueProfile[] = [
       "暖遇合 vs 冷分离的光线温差",
     ],
   },
+  {
+    id: "underdog_comedy_beat",
+    sourceLabel: "internal:chow-craft",
+    sourceRefZh: "周星驰（电影）",
+    medium: "film",
+    lightingZh:
+      "市井暖黄实用光打底，关键笑点瞬间切舞台式硬光定格；悲喜切换用冷暖对跳，惨境冷蓝一拍即回暖",
+    emotionZh:
+      "小人物窘迫先铺满，认真到荒诞的反差出笑点；笑中带酸，煽情只给一拍立即收，绝不恋战",
+    cameraZh:
+      "笑点前稳镜蓄势，爆点急推或甩镜定格；反应镜头连切放大尴尬；慢动作只留给最离谱的瞬间",
+    copyRhythmZh: "一本正经铺垫 → 突然荒诞反转 → 装没事继续；口癖式短句重复造记忆点",
+    lightingEn:
+      "warm practical street-light base; hard stage-light freeze on gag beats; cold-to-warm snap for tragicomedy",
+    emotionEn: "underdog embarrassment played dead serious until absurdity lands; bittersweet one-beat sentiment",
+    cameraEn: "steady build then whip or crash-in on punchline; rapid reaction-shot chains; slow-mo only for peak absurdity",
+    creativeMotifsZh: [
+      "越惨越认真、越认真越好笑的底层翻身节拍（改写进用户题材）",
+      "众人嘲笑→瞬间打脸的群像反应链",
+    ],
+  },
+  {
+    id: "creature_gothic_awe",
+    sourceLabel: "internal:deltoro-craft",
+    sourceRefZh: "Guillermo del Toro（电影）",
+    medium: "film",
+    lightingZh:
+      "琥珀与青碧双色对撞、生物自体发光点缀、潮湿反光面拉体积；暗部藏细节不藏形，怪物出场先给局部轮廓",
+    emotionZh:
+      "怪物先怖后美：畏惧与共情同镜并存；人类反派比怪物更冷，生物的温柔用眼神与肢体微动作给",
+    cameraZh:
+      "低机位仰拍塑体量，缓慢横移绕生物展示工艺细节；显形瞬间先局部（爪/角/翼）再全身，留一拍静场",
+    copyRhythmZh: "先以细节起悬（一枚鳞、一道影）→ 揭示体量 → 收在共情反转",
+    lightingEn:
+      "amber vs teal dual palette, bioluminescent accents, wet reflective surfaces for volume; silhouette-first reveals",
+    emotionEn: "monsters feared then adored; empathy lives in creature micro-gestures, cruelty in humans",
+    cameraEn: "low-angle scale worship, slow lateral orbits over creature craft; part-before-whole reveals with a held beat",
+    creativeMotifsZh: [
+      "「怪物才是有情者」的错位共情（巨兽显形场直接可用）",
+      "局部→全身的三段式生物揭示",
+    ],
+  },
 ] as const;
 
 function mediumLabelZh(m: CraftMedium): string {
