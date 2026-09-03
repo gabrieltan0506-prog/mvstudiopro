@@ -3420,17 +3420,38 @@ export default function ManhuaScriptWorkbench({
                       {sheetPreview.labelZh}
                     </span>
                     {sheetPreview.id ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const id = sheetPreview.id;
-                          setSheetPreview(null);
-                          focusBlockAndOpenCanvas(id);
-                        }}
-                        className="rounded border border-white/20 px-2 py-0.5 text-[11px] text-white/80 hover:bg-white/[0.08]"
-                      >
-                        在画布中定位
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const id = sheetPreview.id;
+                            setSheetPreview(null);
+                            focusBlockAndOpenCanvas(id);
+                          }}
+                          className="rounded border border-white/20 px-2 py-0.5 text-[11px] text-white/80 hover:bg-white/[0.08]"
+                        >
+                          在画布中定位
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // 0903 用户令「image-2 edit 接进漫剧工作流」：直达画布节点的
+                            // GPT-Image-2 编辑区（提示词/画笔遮罩/参考图勾选→运行即计费生成，
+                            // 与自由画布同一条 canvas_gpt_image2 任务管线，非独立壳）。
+                            const id = sheetPreview.id;
+                            setSheetPreview(null);
+                            focusBlockAndOpenCanvas(id);
+                            window.setTimeout(() => {
+                              document
+                                .querySelector(`[data-block-id="${id}"] textarea, [data-block-id="${id}"] input[type="text"]`)
+                                ?.dispatchEvent(new Event("focus", { bubbles: true }));
+                            }, 400);
+                          }}
+                          className="rounded border border-amber-300/40 bg-amber-400/10 px-2 py-0.5 text-[11px] font-semibold text-amber-100 hover:bg-amber-400/20"
+                        >
+                          改图 · image-2
+                        </button>
+                      </>
                     ) : null}
                     <button
                       type="button"
