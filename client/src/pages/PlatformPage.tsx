@@ -3329,8 +3329,13 @@ export default function PlatformPage() {
     && manhuaTemplateOwnerCapabilitiesQuery.isLoading;
   const ownerTemplateOptimizeModels =
     manhuaTemplateOwnerCapabilitiesQuery.data?.models || [];
+  /**
+   * 0903 用户令「设置控件不该等数据」：能力查询在途时面板骨架先渲染（设置行可见、
+   * 发车按钮由 pending 态禁用），服务端仍是唯一授权真源——查询回来 allowed=false 再收起。
+   */
   const ownerNativeDeepReadPanel =
-    aiManhuaPlatformTab === "douyin" && ownerTemplateOptimizeAllowed;
+    aiManhuaPlatformTab === "douyin"
+    && (ownerTemplateOptimizeAllowed || ownerTemplateCapabilityPending);
   const canSeeManhuaLearnTechnicalDetails =
     hasSupervisorOpsAccess || ownerTemplateOptimizeAllowed;
   const manhuaLearnPipelineMeta = getManhuaLearnPipelineMeta({
