@@ -2,7 +2,7 @@
  * 创作顾问 v1 · 问题上下文组装（纯函数层）。
  *
  * 产品口径（0826 用户拍板 + 0827 方案裁剪）：
- * - 顾问只准引用库内真实内容：approved 模板匿名卡 + 12 张导演手法卡；禁编造。
+ * - 顾问只准引用库内真实内容：approved 模板匿名卡 + 库内全部导演手法卡（数量随库增长）；禁编造。
  * - v1 是只读顾问：诊断/解释/推荐 + 「用这个模板试写→」直通试写，不做写操作。
  * - 前台与注入内容零泄漏：不带模型名/供应商名/来源片名/导演名——
  *   手法卡的 sourceLabel/sourceRefZh 与 creativeMotifsZh（含括号片名）一律不进上下文。
@@ -61,7 +61,7 @@ export type AdvisorContextInput = {
   selectedTemplate?: PublicManhuaViralTemplateCard | null;
   /** 可引用的 approved 模板卡（匿名），组装时最多取前 6 张 */
   templates?: PublicManhuaViralTemplateCard[];
-  /** 手法卡（默认 12 张库内卡） */
+  /** 手法卡（默认全库手法卡） */
   craftProfiles?: readonly CraftTechniqueProfile[];
 };
 
