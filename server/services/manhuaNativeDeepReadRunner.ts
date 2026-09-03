@@ -1601,6 +1601,20 @@ async function postEvolinkNativeDeepRead(
   });
 }
 
+/**
+ * generativelanguage 不认的 Vertex 专属 generationConfig 字段（0904 实弹：audioTimestamp
+ * 直接 400）。只在发线前剥离；冻结契约与 requestFingerprint 均按原 body 计算，不受影响。
+ * 返回新对象，绝不改写传入的冻结 body。
+ */
+export function stripVertexOnlyGenerationConfigFields(body: unknown): unknown {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return body;
+  const record = body as Record<string, unknown>;
+  const config = record.generationConfig;
+  if (!config || typeof config !== "object" || Array.isArray(config)) return body;
+  const { audioTimestamp: _audioTimestamp, ...rest } = config as Record<string, unknown>;
+  return { ...record, generationConfig: rest };
+}
+
 async function postGeminiApiNativeDeepRead(
   body: unknown,
   abortSignal?: AbortSignal,
@@ -1614,7 +1628,7 @@ async function postGeminiApiNativeDeepRead(
   return postNativeDeepReadGenerateContent({
     url,
     headers: { "x-goog-api-key": apiKey },
-    body,
+    body: stripVertexOnlyGenerationConfigFields(body),
     abortSignal,
   });
 }

@@ -100,3 +100,30 @@ describe("uploadSegmentToGeminiFiles", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 });
+
+describe("stripVertexOnlyGenerationConfigFields", () => {
+  it("剥掉 audioTimestamp，其余字段与嵌套结构原样保留", async () => {
+    const { stripVertexOnlyGenerationConfigFields, buildGeminiNativeDeepReadSegmentRequest } =
+      await import("./manhuaNativeDeepReadRunner.js");
+    const body = buildGeminiNativeDeepReadSegmentRequest({
+      fileUri: "https://g/v1beta/files/x",
+      fps: 12,
+      prompt: "p",
+      segmentContext: { startSec: 0, endSec: 300, segmentIndex: 0, hasAudio: true },
+    }) as { generationConfig: Record<string, unknown> };
+    expect(body.generationConfig.audioTimestamp).toBe(true);
+    const wire = stripVertexOnlyGenerationConfigFields(body) as { generationConfig: Record<string, unknown> };
+    expect("audioTimestamp" in wire.generationConfig).toBe(false);
+    expect(wire.generationConfig.temperature).toBe(body.generationConfig.temperature);
+    expect(wire.generationConfig.responseSchema).toBe(body.generationConfig.responseSchema);
+    expect(wire.generationConfig.thinkingConfig).toBe(body.generationConfig.thinkingConfig);
+    // 冻结契约不被改写：原 body 的 audioTimestamp 仍在
+    expect(body.generationConfig.audioTimestamp).toBe(true);
+  });
+  it("非对象与缺 generationConfig 的 body 原样返回", async () => {
+    const { stripVertexOnlyGenerationConfigFields } = await import("./manhuaNativeDeepReadRunner.js");
+    expect(stripVertexOnlyGenerationConfigFields(null)).toBe(null);
+    const noConfig = { contents: [] };
+    expect(stripVertexOnlyGenerationConfigFields(noConfig)).toBe(noConfig);
+  });
+});
