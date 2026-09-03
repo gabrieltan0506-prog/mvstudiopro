@@ -110,6 +110,10 @@ import {
 import {
   NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS,
   NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS,
+  MANHUA_NATIVE_DEEP_READ_MODEL,
+  MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS,
+  MANHUA_NATIVE_DEEP_READ_MODEL_LABELS,
+  type ManhuaNativeDeepReadModelId,
   NATIVE_DEEP_READ_JOB_MAX_CALLS,
   NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS,
   NATIVE_DEEP_READ_MAX_VIDEO_FPS,
@@ -2579,6 +2583,8 @@ export default function PlatformPage() {
   /** 设置是下一任务草稿；后台轮询不能覆盖用户正在编辑的值。 */
   const manhuaLearnSegmentSecondsEditedRef = useRef(false);
   const [manhuaLearnVideoFpsInput, setManhuaLearnVideoFpsInput] = useState(String(NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS));
+  /** 0903 双模型：读片主模型面板可选；默认 3.1 Pro 质量基线，3.8 Flash 为低成本对照档。 */
+  const [manhuaLearnReadModel, setManhuaLearnReadModel] = useState<ManhuaNativeDeepReadModelId>(MANHUA_NATIVE_DEEP_READ_MODEL);
   const [manhuaLearnVideoFpsError, setManhuaLearnVideoFpsError] = useState("");
   const manhuaLearnVideoFpsEditedRef = useRef(false);
   const [manhuaLearnFocusSeriesKey, setManhuaLearnFocusSeriesKey] = useState("");
@@ -3254,6 +3260,7 @@ export default function PlatformPage() {
   const askPlatformSkillQaMutation = trpc.mvAnalysis.askPlatformSkillQa.useMutation();
   const confirmPlatformSkillQaImageMutation = trpc.mvAnalysis.confirmPlatformSkillQaImage.useMutation();
   const approveManhuaViralTemplateMutation = trpc.manhuaViralTemplate.approve.useMutation();
+  const discardManhuaViralProposalMutation = trpc.manhuaViralTemplate.discardProposal.useMutation();
   const renderEpisodeReportMutation = trpc.manhuaViralTemplate.renderEpisodeReport.useMutation();
   /** 按集导出报告：只锁正在请求的那一集，其他集的导出按钮保持可用 */
   const [manhuaEpisodeExportPending, setManhuaEpisodeExportPending] = useState<number | null>(null);
@@ -5908,6 +5915,7 @@ export default function PlatformPage() {
           nativeSegmentSeconds,
           nativeVideoFps,
           nativeStandaloneSource: manhuaLearnStandaloneSource,
+          nativeReadModel: manhuaLearnReadModel,
         };
       }
       const continuation: ManhuaLearnContinuation = {
@@ -12798,8 +12806,25 @@ export default function PlatformPage() {
                             ) : null}
                           </>
                         ) : null}
+                        <label htmlFor="manhua-learn-read-model" className="text-[11px] font-semibold text-[#c9c0e6]/90">
+                          读片模型
+                        </label>
+                        <select
+                          id="manhua-learn-read-model"
+                          value={manhuaLearnReadModel}
+                          disabled={Boolean(manhuaLearnBusyKey)}
+                          onChange={(event) => setManhuaLearnReadModel(event.target.value as ManhuaNativeDeepReadModelId)}
+                          className="rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] text-white disabled:opacity-45"
+                        >
+                          {MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS.map((model) => (
+                            <option key={model} value={model}>
+                              {MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[model]}{model === MANHUA_NATIVE_DEEP_READ_MODEL ? "（质量基线）" : "（低成本对照）"}
+                            </option>
+                          ))}
+                        </select>
                         <span className="rounded-md border border-[#8cefff]/20 bg-black/25 px-2 py-1 text-[10px] font-semibold text-[#8cefff]">
-                          学习模型：Gemini 3.1 Pro · 原生视频精读
+                          学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[manhuaLearnReadModel]} · 原生视频精读
+                          {manhuaLearnReadModel !== MANHUA_NATIVE_DEEP_READ_MODEL ? " · 对照版单独成剧，两版各审后留一版入库" : ""}
                         </span>
                       </div>
 
@@ -14236,6 +14261,31 @@ export default function PlatformPage() {
                                   : selectedManhuaProposal.revisionOf
                                     ? "批准替换原版"
                                     : selectedManhuaProposalProgressCopy?.approveButtonZh || "批准入库"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={
+                                approveManhuaViralTemplateMutation.isPending
+                                || discardManhuaViralProposalMutation.isPending
+                              }
+                              onClick={() => {
+                                const target = selectedManhuaProposal;
+                                if (!target) return;
+                                if (!window.confirm(`删除待审卡「${target.nameZh}」？只删这张未入库的卡，已入库模板与学习产物不动。`)) return;
+                                void discardManhuaViralProposalMutation
+                                  .mutateAsync({ id: target.id, confirmDiscard: true })
+                                  .then(async (res) => {
+                                    toast.success(`已删除待审卡：${res.removed.nameZh}`);
+                                    setSelectedManhuaProposalId("");
+                                    await manhuaViralProposalsQuery.refetch();
+                                  })
+                                  .catch((error) => {
+                                    toast.error(sanitizePlatformUserMessage(error instanceof Error ? error.message : String(error)));
+                                  });
+                              }}
+                              className="shrink-0 rounded-lg border border-rose-300/30 bg-rose-500/10 px-2.5 py-1.5 font-semibold text-rose-100 disabled:opacity-50"
+                            >
+                              {discardManhuaViralProposalMutation.isPending ? "删除中…" : "删除此卡"}
                             </button>
                             {(() => {
                               /* 待审卡的导出入口：只有能从卡 id 干净解析出

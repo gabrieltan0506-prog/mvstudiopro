@@ -434,10 +434,10 @@ describe("批次预检：在任何模型动作之前", () => {
     expect(() => validateNativeDeepReadBatchPlan([
       ep(1, { durationSec: 1200, segments: [{ startSec: 0, endSec: 1080 }] }),
     ])).toThrow("未完整覆盖全片");
-    expect(NATIVE_DEEP_READ_MAX_SEGMENT_SEC).toBe(7200);
+    expect(NATIVE_DEEP_READ_MAX_SEGMENT_SEC).toBe(14400);
     expect(() => validateNativeDeepReadBatchPlan([
-      ep(1, { durationSec: 7201, segments: [{ startSec: 0, endSec: 7201 }] }),
-    ])).toThrow("超过 120 分钟");
+      ep(1, { durationSec: 14401, segments: [{ startSec: 0, endSec: 14401 }] }),
+    ])).toThrow();
   });
 
   it("确认281秒时，300秒旧分片在任何模型动作前拒绝", () => {

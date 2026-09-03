@@ -21,6 +21,10 @@ import { isManhuaNativeDeepReadEnabled } from "./manhuaNativeDeepReadRunner.js";
 import { resolveManhuaSeriesKey } from "./manhuaTemplateLearnService.js";
 import type { ManhuaTemplateLearnLlmProvider } from "../../shared/manhuaTemplateLearnFrameVision.js";
 import {
+  MANHUA_NATIVE_DEEP_READ_MODEL,
+  type ManhuaNativeDeepReadModelId,
+} from "../../shared/manhuaNativeDeepReadJob.js";
+import {
   fetchManhua0996EpisodePlayback,
   readManhuaLearnExtraSourceHosts,
   resolveManhua0996Series,
@@ -36,8 +40,20 @@ export type NativeDeepReadPlanRuntimeInput = {
   videoFps?: number;
   allowPartial?: boolean;
   learnLlm?: ManhuaTemplateLearnLlmProvider;
+  /** 0903 双模型：非默认模型的学习走带后缀的平行 seriesKey，卡库两版并存互不覆盖。 */
+  readModel?: ManhuaNativeDeepReadModelId;
   abortSignal?: AbortSignal;
 };
+
+/** flash 版剧集库后缀；40 字符上限内先截基名再拼，保证合法。 */
+export function nativeDeepReadSeriesKeyForModel(
+  baseSeriesKey: string,
+  readModel?: ManhuaNativeDeepReadModelId,
+): string {
+  if (!readModel || readModel === MANHUA_NATIVE_DEEP_READ_MODEL) return baseSeriesKey;
+  const suffix = "-g38f";
+  return `${baseSeriesKey.slice(0, 40 - suffix.length)}${suffix}`;
+}
 
 export async function buildNativeDeepReadPlanPreviewFromServices(
   input: NativeDeepReadPlanRuntimeInput,
@@ -76,7 +92,10 @@ export async function buildNativeDeepReadPlanPreviewFromServices(
     // 才能让执行层命中该集的 GCS 段缓存。
     listIngestedEpisodeRecords: listIngestedNativeDeepReadEpisodeRecords,
     listClaimStates: listNativeDeepReadEpisodeClaimStates,
-    resolveSeriesKey: resolveManhuaSeriesKey,
+    resolveSeriesKey: async (keyInput) => nativeDeepReadSeriesKeyForModel(
+      await resolveManhuaSeriesKey(keyInput),
+      input.readModel,
+    ),
     isExecutionEnabled: isManhuaNativeDeepReadEnabled,
   });
 }

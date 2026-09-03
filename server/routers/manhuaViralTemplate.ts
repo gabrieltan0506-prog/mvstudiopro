@@ -555,6 +555,30 @@ export const manhuaViralTemplateRouter = router({
       }
     }),
 
+  /** 0903：删除待审卡（入库前的删除；入库后的对应操作是下架）。只删 proposals/ 对象。 */
+  discardProposal: protectedProcedure
+    .input(
+      z.object({
+        id: z.string().max(64),
+        confirmDiscard: z.literal(true),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const ownerAllowed = resolveSiteOwnerOnlyAllowed(ctx.user);
+      if (!ownerAllowed) assertSupervisorOps(ctx.user, ctx.supervisorSession);
+      try {
+        const { discardGcsManhuaViralProposal } = await import(
+          "../services/manhuaViralTemplateStore"
+        );
+        const removed = await discardGcsManhuaViralProposal(String(input.id).trim());
+        return { ok: true as const, removed };
+      } catch (e) {
+        if (e instanceof TRPCError) throw e;
+        const msg = e instanceof Error ? e.message : String(e);
+        throw new TRPCError({ code: "BAD_REQUEST", message: msg.slice(0, 200) || "删除待审卡失败" });
+      }
+    }),
+
   /** 调试用：仅站点 owner 可读 GCS approved 原始列表 */
   listApprovedGcsOnly: protectedProcedure.query(async ({ ctx }) => {
     assertSiteOwner(ctx.user);

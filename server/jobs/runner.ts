@@ -609,6 +609,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
     let result: Awaited<ReturnType<typeof runManhuaTemplateLearn>>;
     const nativeConfirmed = params.nativeDeepReadConfirmed === true;
     try {
+      let nativeReadModel: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeDeepReadModelId | undefined;
       let nativePlanPreview: Awaited<ReturnType<
         typeof import("../services/manhuaNativeDeepReadPlanRuntime.js")["buildNativeDeepReadPlanPreviewFromServices"]
       >> | undefined;
@@ -616,6 +617,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         const confirmation = parseNativeDeepReadJobConfirmation(params, {
           extraSourceHosts: readManhuaLearnExtraSourceHosts(),
         });
+        nativeReadModel = confirmation.readModel;
         const { buildNativeDeepReadPlanPreviewFromServices } = await import(
           "../services/manhuaNativeDeepReadPlanRuntime.js"
         );
@@ -630,6 +632,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
           limit: confirmation.planLimit,
           segmentSeconds: confirmation.segmentSeconds,
           videoFps: confirmation.videoFps,
+          readModel: confirmation.readModel,
           treatAsStandalone: confirmation.standaloneSource,
           learnLlm: confirmation.learnLlm,
           abortSignal: abortController.signal,
@@ -677,6 +680,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       learnLlm:
         params.learnLlm === "claude" || params.learnLlm === "deepseek" ? params.learnLlm : undefined,
       nativeDeepReadConfirmed: nativeConfirmed,
+      nativeReadModel,
       nativePlanPreview,
       nativeStandaloneSource: params.nativeStandaloneSource === true
         || params.nativeStandaloneSource === "true",
