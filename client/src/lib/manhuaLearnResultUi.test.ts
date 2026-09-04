@@ -6,6 +6,9 @@ import {
   getManhuaLearnContinueControl,
   isManhuaLearnEmptyBatchFailure,
   listExportableEpisodes,
+  hasStoredManhuaLearnSegmentSeconds,
+  hasStoredManhuaLearnVideoFps,
+  mergeManhuaLearnSnapshotDigests,
   parseNativeProposalEpisodeRef,
   parseManhuaLearnSegmentSecondsInput,
   parseManhuaLearnVideoFpsInput,
@@ -1113,4 +1116,58 @@ describe("parseNativeProposalEpisodeRef — 待审卡集号解析", () => {
     expect(readManhuaLearnStandalone("")).toBe(false);
   });
 
+});
+
+describe("0905 · 秒数固定与失败态并入快照摘要", () => {
+  it("用户亲手存过秒数/fps 才算存过；坏值与未存视为未设置", () => {
+    installMemoryLocalStorage();
+    expect(hasStoredManhuaLearnSegmentSeconds("user_a")).toBe(false);
+    expect(hasStoredManhuaLearnVideoFps("user_a")).toBe(false);
+    writeManhuaLearnSegmentSeconds("user_a", 286);
+    writeManhuaLearnVideoFps("user_a", 12);
+    expect(hasStoredManhuaLearnSegmentSeconds("user_a")).toBe(true);
+    expect(hasStoredManhuaLearnVideoFps("user_a")).toBe(true);
+    expect(hasStoredManhuaLearnSegmentSeconds("user_b")).toBe(false);
+    expect(readManhuaLearnSegmentSeconds("user_a")).toBe(286);
+    localStorage.setItem("mvs-manhua-learn-segment-seconds-v1:user_a", "\"abc\"");
+    expect(hasStoredManhuaLearnSegmentSeconds("user_a")).toBe(false);
+  });
+
+  it("失败态结果保留错误与状态，但已落盘分集从快照并入，导出集号回来", () => {
+    const base = manhuaLearnResultFromSnapshot({
+      seriesKey: "s1",
+      progress: null,
+      digestsPreview: [],
+      completedCount: 0,
+      pipelineMode: "native_deep_read",
+      analysisReady: false,
+      proposal: null,
+    });
+    const prev = { ...base, liveStatus: "failed" as const, errorZh: "用户已停止学习（未开始执行）", learnedCount: 3, digestsPreview: [
+      { episodeIndex: 4, title: "", hookNoteZh: "", transcriptPreview: "", durationSec: 0, learnedThroughSec: 600, complete: false },
+    ] };
+    const snapshot = manhuaLearnResultFromSnapshot({
+      seriesKey: "s1",
+      progress: null,
+      digestsPreview: [
+        ...[1, 2, 3].map((episodeIndex) => ({
+          episodeIndex, title: `第${episodeIndex}集`, hookNoteZh: "", transcriptPreview: "", durationSec: 1700, complete: true,
+        })),
+        { episodeIndex: 4, title: "", hookNoteZh: "", transcriptPreview: "", durationSec: 1700, learnedThroughSec: 300, complete: false },
+      ],
+      completedCount: 3,
+      pipelineMode: "native_deep_read",
+      analysisReady: false,
+      proposal: null,
+    });
+    const merged = mergeManhuaLearnSnapshotDigests(prev, snapshot);
+    expect(merged.liveStatus).toBe("failed");
+    expect(merged.errorZh).toBe(prev.errorZh);
+    expect(merged.learnedCount).toBe(3);
+    expect(merged.digestsPreview.map((d) => `${d.episodeIndex}:${d.complete ? "C" : d.learnedThroughSec}`))
+      .toEqual(["1:C", "2:C", "3:C", "4:600"]);
+    expect(listExportableEpisodes(merged.digestsPreview).map((e) => e.episodeIndex)).toEqual([1, 2, 3]);
+    // 无变化时返回同一引用，避免面板无谓重渲
+    expect(mergeManhuaLearnSnapshotDigests(merged, snapshot)).toBe(merged);
+  });
 });

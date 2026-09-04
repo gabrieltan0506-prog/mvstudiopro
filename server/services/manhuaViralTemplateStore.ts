@@ -281,13 +281,28 @@ async function listCardsUnderPrefixStrict(
   prefix: string,
   _limit = MANHUA_TEMPLATE_LIST_HARD_LIMIT,
 ): Promise<ManhuaViralTemplateCard[]> {
-  const names = await listObjectNamesStrict(prefix);
-  const cards: ManhuaViralTemplateCard[] = [];
-  for (const name of names) {
-    if (!/\.json$/i.test(name)) continue;
-    cards.push(await readCardFromObjectStrict(name));
-  }
-  return cards;
+  const names = (await listObjectNamesStrict(prefix)).filter((name) => /\.json$/i.test(name));
+  return mapWithConcurrency(names, MANHUA_TEMPLATE_READ_CONCURRENCY, readCardFromObjectStrict);
+}
+
+/** 逐张 GCS GET 串行读 1000 张卡要几十秒；限并发批量读，保持原顺序 */
+const MANHUA_TEMPLATE_READ_CONCURRENCY = 8;
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      results[index] = await fn(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 /**
@@ -631,13 +646,12 @@ async function listCardsUnderPrefix(
     );
     return [];
   }
-  const cards: ManhuaViralTemplateCard[] = [];
-  for (const name of names) {
-    if (!/\.json$/i.test(name)) continue;
-    const card = await readCardFromObject(name);
-    if (card) cards.push(card);
-  }
-  return cards;
+  const cards = await mapWithConcurrency(
+    names.filter((name) => /\.json$/i.test(name)),
+    MANHUA_TEMPLATE_READ_CONCURRENCY,
+    readCardFromObject,
+  );
+  return cards.filter((card): card is ManhuaViralTemplateCard => card !== null);
 }
 
 export async function listGcsManhuaViralProposals(): Promise<ManhuaViralTemplateCard[]> {

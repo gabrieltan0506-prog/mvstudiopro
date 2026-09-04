@@ -51,16 +51,20 @@ describe("原生精读页面接线", () => {
     expect(inputBlock).not.toMatch(/clamp|Math\.(?:floor|round|min|max)/);
   });
 
-  it("刷新、切剧与快照保存分片设置，轮询不覆盖用户正在编辑的下一任务设置", () => {
+  it("用户存过的分片秒数/fps 永远优先：刷新只在从未设置时借快照垫底，轮询、切剧、快照一律不盖输入框（0905）", () => {
     expect(PAGE.includes("restoreManhuaLearnSegmentSeconds(parsed.nativeSegmentSeconds)")).toBe(true);
     expect(PAGE.includes("nativeSegmentSeconds: value.nativeSegmentSeconds")).toBe(true);
     expect(PAGE.includes("resolveManhuaLearnSnapshotSegmentSeconds(")).toBe(true);
-    expect(PAGE.includes("restoreManhuaLearnSegmentSeconds(continuation.nativeSegmentSeconds)")).toBe(true);
-    expect(PAGE.includes("if (!manhuaLearnSegmentSecondsEditedRef.current)")).toBe(true);
+    expect(PAGE.includes("if (!hasStoredManhuaLearnSegmentSeconds(manhuaLearnUserKey))")).toBe(true);
+    expect(PAGE.includes("if (!hasStoredManhuaLearnVideoFps(manhuaLearnUserKey))")).toBe(true);
     expect(PAGE.includes("restoreManhuaLearnVideoFps(parsed.nativeVideoFps)")).toBe(true);
     expect(PAGE.includes("nativeVideoFps: value.nativeVideoFps")).toBe(true);
     expect(PAGE.includes("resolveManhuaLearnSnapshotVideoFps(")).toBe(true);
-    expect(PAGE.includes("if (!manhuaLearnVideoFpsEditedRef.current)")).toBe(true);
+    // 只有用户输入与「从未设置」两处会写秒数输入框；续跑快照/轮询/切剧不得再碰
+    expect(PAGE.match(/setManhuaLearnSegmentSecondsInput\(/g)).toHaveLength(3);
+    expect(PAGE.match(/setManhuaLearnVideoFpsInput\(/g)).toHaveLength(3);
+    expect(PAGE.includes("轮询不碰秒数/fps 输入框")).toBe(true);
+    expect(PAGE.includes("切剧只换焦点，不改用户设好的秒数/fps")).toBe(true);
     expect(PAGE.match(/runManhuaTemplateLearnCloud\(next.row, next.rank, next.seriesKey\)/g)).toHaveLength(2);
     const recoveryAt = PAGE.indexOf("刷新/断线恢复：接管同一个后台 job");
     const recoveryEnd = PAGE.indexOf("const approveManhuaLearnProposal", recoveryAt);

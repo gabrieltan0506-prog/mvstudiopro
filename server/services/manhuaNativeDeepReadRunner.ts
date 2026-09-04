@@ -1697,6 +1697,8 @@ function mediaHeaders(node: NativeDeepReadMediaNode): string[] {
 
 /** 整片抓取超时：46–52 分钟 vod 以 CDN 限速顺序拉，30 分钟封顶。 */
 export const NATIVE_DEEP_READ_SOURCE_FETCH_TIMEOUT_MS = 30 * 60_000;
+/** 整片拉取进度播报间隔。 */
+export const NATIVE_DEEP_READ_SOURCE_FETCH_PROGRESS_INTERVAL_MS = 20_000;
 /** 整片落盘的空间估算：按 400KB/s（≈3.2Mbps vod 上限档）估，再叠 500MB 底线。 */
 export const NATIVE_DEEP_READ_SOURCE_BYTES_PER_SEC_ESTIMATE = 400_000;
 
@@ -1879,7 +1881,12 @@ export async function prepareEpisodeVideos(
   episode: NativeDeepReadBatchRunEpisode,
   abortSignal?: AbortSignal,
   deps: NativeDeepReadMediaPreparationDeps = defaultMediaPreparationDeps,
-  limits?: { cutConcurrency?: number; uploadConcurrency?: number },
+  limits?: {
+    cutConcurrency?: number;
+    uploadConcurrency?: number;
+    /** 整片落盘期间的进度播报（0905 用户令：面板不许十几分钟零进度）。 */
+    onSourceFetchProgress?: (zh: string) => void | Promise<void>;
+  },
 ): Promise<PreparedNativeVideo[]> {
   const segments = validateNativeDeepReadSegments(episode.segments);
 
@@ -1909,12 +1916,50 @@ export async function prepareEpisodeVideos(
         const nodes = await episode.resolveNodes();
         const node = nodes[attempt % Math.max(1, nodes.length)];
         if (!node?.url) throw new Error(`第${episode.episodeIndex}集未解析到媒体节点`);
-        await deps.runMedia(
+        const fetchStartedAt = Date.now();
+        const reportFetch = async (zh: string) => {
+          try {
+            await limits?.onSourceFetchProgress?.(zh);
+          } catch {
+            // 进度播报是旁路，写不进去不影响拉流
+          }
+        };
+        await reportFetch(
+          `第${episode.episodeIndex}集 · 整片拉取开始（节点 ${attempt + 1}/${Math.max(1, nodes.length)}，`
+          + `片长 ${Math.round(episode.sourceDurationSec)} 秒，预计约 ${(sourceBytesEstimate / 1048576).toFixed(0)}MB）`,
+        );
+        // ffmpeg 顺序拉流没有进度回调：每 20 秒看一次本地文件长度，按预计体积报百分比
+        const fetchPromise = deps.runMedia(
           "ffmpeg",
           buildNativeDeepReadSourceFetchArgs({ node, outputPath: localSourcePath }),
           NATIVE_DEEP_READ_SOURCE_FETCH_TIMEOUT_MS,
           abortSignal,
         );
+        // 播报节拍走真实挂钟计时器（不走 deps.sleepMs：测试注入零等待会让这里空转）
+        let fetchSettled = false;
+        let wake: (() => void) | undefined;
+        const ticker = (async () => {
+          while (!fetchSettled) {
+            await new Promise<void>((resolve) => {
+              wake = resolve;
+              setTimeout(resolve, NATIVE_DEEP_READ_SOURCE_FETCH_PROGRESS_INTERVAL_MS);
+            });
+            if (fetchSettled) break;
+            const size = await deps.statLocal(localSourcePath).then((s) => s.size).catch(() => 0);
+            const pct = Math.min(99, Math.round((size / Math.max(1, sourceBytesEstimate)) * 100));
+            await reportFetch(
+              `第${episode.episodeIndex}集 · 整片拉取中 ${pct}%（已下 ${(size / 1048576).toFixed(0)}MB / 预计约 `
+              + `${(sourceBytesEstimate / 1048576).toFixed(0)}MB · 已耗时 ${Math.round((Date.now() - fetchStartedAt) / 1000)} 秒）`,
+            );
+          }
+        })();
+        try {
+          await fetchPromise;
+        } finally {
+          fetchSettled = true;
+          wake?.();
+          await ticker.catch(() => undefined);
+        }
         const sourceStat = await deps.statLocal(localSourcePath);
         if (!Number.isFinite(sourceStat.size) || sourceStat.size <= 0) {
           throw new Error(`第${episode.episodeIndex}集整片落盘为空`);
@@ -4282,6 +4327,8 @@ export type NativeDeepReadBatchRunParams = {
   onSegmentSnapshotCommitted?: (
     snapshot: NativeDeepReadSegmentSnapshot,
   ) => void | Promise<void>;
+  /** 媒体备料（整片拉取）进度中文行，旁路写面板；不影响模型链。 */
+  onMediaProgressZh?: (zh: string) => void | Promise<void>;
 };
 
 type NativeDeepReadBatchExecutionResult = {
@@ -4430,6 +4477,7 @@ async function executeNativeDeepReadBatch(
           {
             cutConcurrency: params.mediaCutConcurrency,
             uploadConcurrency: params.mediaUploadConcurrency,
+            onSourceFetchProgress: params.onMediaProgressZh,
           },
         );
         if (prepared.length !== indexes.length) {

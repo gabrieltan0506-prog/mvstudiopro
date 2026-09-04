@@ -2651,6 +2651,9 @@ export async function runManhuaTemplateLearn(
         segmentSeconds: confirmedNativePlan?.segmentSeconds,
         episodes: executionPlans.map(({ seriesKey: _seriesKey, abortSignal: _abortSignal, ...plan }) => plan),
         abortSignal: input.abortSignal,
+        onMediaProgressZh: async (zh) => {
+          await progress(MANHUA_LEARN_STAGE.vision, zh);
+        },
         onModelCheckpoint: async (checkpoint) => {
           try {
             await input.onNativeModelReceipt?.(checkpoint);

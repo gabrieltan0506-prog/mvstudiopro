@@ -86,6 +86,35 @@ describe("第三方播放页服务端安全边界", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it("0905 用户令：源站网络失败/5xx/403 时换白名单镜像域重试，最多三发，每发仍带双钥匙", async () => {
+    vi.stubEnv(MANHUA_MIRROR_SOURCE_COOKIE_ENV, "session=test-cookie");
+    vi.stubEnv(MANHUA_MIRROR_SOURCE_AUTHORIZATION_ENV, "Bearer test-token");
+    const hosts: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      hosts.push(url.hostname);
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer test-token");
+      if (hosts.length === 1) throw Object.assign(new Error("fetch failed"), { cause: { code: "ECONNRESET" } });
+      if (hosts.length === 2) return new Response("", { status: 503 });
+      return new Response(JSON.stringify(playbackPayload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    await expect(fetchManhua0996EpisodePlayback(sourceUrl, undefined, fetchImpl))
+      .resolves.toMatchObject({ playbackUrl: playbackPayload.data.list[0].url });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(hosts).toEqual(["0996zp.com", "www.0996zp.com", "gzcrkt8888.com"]);
+  }, 10_000);
+
+  it("换域只在网络/5xx/403 上触发：404 之类直接判死，不换域", async () => {
+    const fetchImpl = vi.fn(async () => new Response("", { status: 404 })) as typeof fetch;
+    await expect(fetchManhua0996EpisodePlayback(sourceUrl, undefined, fetchImpl))
+      .rejects.toThrow("HTTP 404");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it("没配凭证时保持纯匿名请求，不无中生有鉴权头", async () => {
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const headers = new Headers(init?.headers);

@@ -167,6 +167,9 @@ import {
   readManhuaLearnMissingDismissedKeys,
   readManhuaLearnResult,
   readManhuaLearnSegmentSeconds,
+  hasStoredManhuaLearnSegmentSeconds,
+  hasStoredManhuaLearnVideoFps,
+  mergeManhuaLearnSnapshotDigests,
   readManhuaLearnStandalone,
   writeManhuaLearnStandalone,
   readManhuaLearnVideoFps,
@@ -2720,12 +2723,15 @@ export default function PlatformPage() {
     const restoredSettings = activeJob?.continuation
       || continuation
       || storedBasket.find((item) => item.seriesKey === decision.focusSeriesKey)?.continuation;
+    // 用户亲手存过的秒数/fps 永远优先；只有从未设置过时才借上一任务的快照垫底
     if (restoredSettings) {
-      {
+      if (!hasStoredManhuaLearnSegmentSeconds(manhuaLearnUserKey)) {
         const restoredSeconds = restoreManhuaLearnSegmentSeconds(restoredSettings.nativeSegmentSeconds);
         setManhuaLearnSegmentSecondsInput(restoredSeconds == null ? "" : String(restoredSeconds));
       }
-      setManhuaLearnVideoFpsInput(String(restoreManhuaLearnVideoFps(restoredSettings.nativeVideoFps)));
+      if (!hasStoredManhuaLearnVideoFps(manhuaLearnUserKey)) {
+        setManhuaLearnVideoFpsInput(String(restoreManhuaLearnVideoFps(restoredSettings.nativeVideoFps)));
+      }
     }
     if (decision.clearFailedAutoResume) {
       writeManhuaLearnFocusSeriesKey(manhuaLearnUserKey, "");
@@ -3541,13 +3547,7 @@ export default function PlatformPage() {
       if (focused) {
         manhuaLearnContinueRef.current = focused.continuation;
         writeManhuaLearnContinuation(requestUserKey, focused.continuation);
-        if (!manhuaLearnSegmentSecondsEditedRef.current) {
-          const restoredSeconds = restoreManhuaLearnSegmentSeconds(focused.continuation.nativeSegmentSeconds);
-          setManhuaLearnSegmentSecondsInput(restoredSeconds == null ? "" : String(restoredSeconds));
-        }
-        if (!manhuaLearnVideoFpsEditedRef.current) {
-          setManhuaLearnVideoFpsInput(String(restoreManhuaLearnVideoFps(focused.continuation.nativeVideoFps)));
-        }
+        // 轮询不碰秒数/fps 输入框：那是用户下一任务的设置，不是当前任务的回显
         setManhuaLearnResult((prev) =>
           reuseManhuaLearnResultIfUnchanged(prev, focused.result));
       }
@@ -3590,8 +3590,8 @@ export default function PlatformPage() {
     return listed;
   }, []);
 
-  const stopFocusedManhuaLearnJob = useCallback(async () => {
-    const jobId = focusedManhuaLearnServerJob?.jobId || focusedManhuaLearnBasketItem?.jobId;
+  /** 按 jobId 停止：实况列表与聚焦面板共用，不依赖「选中剧」 */
+  const stopManhuaLearnServerJobById = useCallback(async (jobId: string) => {
     if (!jobId || manhuaLearnControlBusy) return;
     if (!window.confirm("停止这部剧的学习？已落盘分集和静帧会保留，后续媒体流读取与模型调用将停止。")) return;
     setManhuaLearnControlBusy("cancel");
@@ -3604,7 +3604,13 @@ export default function PlatformPage() {
     } finally {
       setManhuaLearnControlBusy(null);
     }
-  }, [focusedManhuaLearnServerJob?.jobId, focusedManhuaLearnBasketItem?.jobId, manhuaLearnControlBusy, refreshManhuaLearnServerJobs]);
+  }, [manhuaLearnControlBusy, refreshManhuaLearnServerJobs]);
+
+  const stopFocusedManhuaLearnJob = useCallback(async () => {
+    const jobId = focusedManhuaLearnServerJob?.jobId || focusedManhuaLearnBasketItem?.jobId;
+    if (!jobId) return;
+    await stopManhuaLearnServerJobById(jobId);
+  }, [focusedManhuaLearnServerJob?.jobId, focusedManhuaLearnBasketItem?.jobId, stopManhuaLearnServerJobById]);
 
   const skipFocusedManhuaLearnEpisode = useCallback(async () => {
     const jobId = focusedManhuaLearnServerJob?.jobId || focusedManhuaLearnBasketItem?.jobId;
@@ -3809,29 +3815,8 @@ export default function PlatformPage() {
       };
       manhuaLearnContinueRef.current = continuation;
       writeManhuaLearnContinuation(manhuaLearnUserKey, continuation);
-      if (!manhuaLearnSegmentSecondsEditedRef.current) {
-        setManhuaLearnSegmentSecondsInput(continuation.nativeSegmentSeconds == null ? "" : String(continuation.nativeSegmentSeconds));
-      }
-      if (!manhuaLearnVideoFpsEditedRef.current) {
-        setManhuaLearnVideoFpsInput(String(continuation.nativeVideoFps));
-      }
     }
     setManhuaLearnResult((prev) => {
-      // 本轮 Job / 失败态优先：勿被空 GCS 快照盖成「尚无已学分集」
-      if (prev && prev.seriesKey === manhuaLearnFocusSeriesKey) {
-        if (
-          prev.liveStatus === "running" ||
-          prev.liveStatus === "queued" ||
-          prev.liveStatus === "failed" ||
-          Boolean(prev.errorZh) ||
-          prev.batchLearned > 0
-        ) {
-          return prev;
-        }
-        const snapN = Array.isArray(snap.digestsPreview) ? snap.digestsPreview.length : 0;
-        const prevN = prev.digestsPreview?.length || 0;
-        if (prevN > snapN) return prev;
-      }
       const next = manhuaLearnResultFromSnapshot({
         seriesKey: manhuaLearnFocusSeriesKey,
         progress: snap.progress,
@@ -3854,6 +3839,22 @@ export default function PlatformPage() {
         analysisReady: snap.analysisReady,
         proposal: snap.proposal as Record<string, unknown> | null,
       });
+      // 本轮 Job / 失败态保留自己的状态与日志，但已落盘分集要从 GCS 快照并进来——
+      // 否则「已学 3」的剧在失败态下摘要为空，导出按钮跟着消失（0905 实测）
+      if (prev && prev.seriesKey === manhuaLearnFocusSeriesKey) {
+        if (
+          prev.liveStatus === "running" ||
+          prev.liveStatus === "queued" ||
+          prev.liveStatus === "failed" ||
+          Boolean(prev.errorZh) ||
+          prev.batchLearned > 0
+        ) {
+          return mergeManhuaLearnSnapshotDigests(prev, next);
+        }
+        const snapN = next.digestsPreview.length;
+        const prevN = prev.digestsPreview?.length || 0;
+        if (prevN > snapN) return mergeManhuaLearnSnapshotDigests(prev, next);
+      }
       return reuseManhuaLearnResultIfUnchanged(prev, next);
     });
   }, [
@@ -3874,11 +3875,8 @@ export default function PlatformPage() {
         nativeVideoFps: restoreManhuaLearnVideoFps(item.continuation.nativeVideoFps),
         savedAt: Date.now(),
       };
-      manhuaLearnSegmentSecondsEditedRef.current = false;
-      setManhuaLearnSegmentSecondsInput(String(restoreManhuaLearnSegmentSeconds(continuation.nativeSegmentSeconds)));
+      // 切剧只换焦点，不改用户设好的秒数/fps
       setManhuaLearnSegmentSecondsError("");
-      manhuaLearnVideoFpsEditedRef.current = false;
-      setManhuaLearnVideoFpsInput(String(restoreManhuaLearnVideoFps(continuation.nativeVideoFps)));
       setManhuaLearnVideoFpsError("");
       manhuaLearnContinueRef.current = continuation;
       writeManhuaLearnContinuation(manhuaLearnUserKey, continuation);
@@ -3890,6 +3888,23 @@ export default function PlatformPage() {
     },
     [manhuaLearnBasket, manhuaLearnUserKey],
   );
+
+  // 0905 用户令「只留一个面板」：有任务在跑/排队而没选中剧时，自动聚焦到该剧，
+  // 让实时进度、停止/跳过、续学都在同一块学习面板里，不再另起一块实况框。
+  useEffect(() => {
+    if (manhuaLearnFocusSeriesKey || !manhuaLearnHydratedUserKey) return;
+    const live = manhuaLearnServerJobs.find((job) => job.status === "running" || job.status === "queued");
+    if (!live) return;
+    const params = (live.input?.params || {}) as Record<string, unknown>;
+    const source = String(params.dedupeKey || params.gcsUri || params.url || "").trim();
+    const item = manhuaLearnBasket.find((candidate) => candidate.jobId === live.jobId)
+      || manhuaLearnBasket.find((candidate) => (
+        (params.seriesKey && candidate.seriesKey === String(params.seriesKey))
+        || (live.output?.seriesKey && candidate.seriesKey === String(live.output.seriesKey))
+        || (source && (candidate.continuation.row.gcsUri || candidate.continuation.row.url) === source)
+      ));
+    if (item) selectManhuaLearnBasketItem(item.seriesKey);
+  }, [manhuaLearnFocusSeriesKey, manhuaLearnHydratedUserKey, manhuaLearnServerJobs, manhuaLearnBasket, selectManhuaLearnBasketItem]);
 
   const deleteFocusedManhuaLearnSeries = useCallback(async () => {
     const seriesKey = String(manhuaLearnResult?.seriesKey || manhuaLearnFocusSeriesKey).trim();
@@ -6145,12 +6160,6 @@ export default function PlatformPage() {
     manhuaLearnPollingJobIdRef.current = jobId;
     manhuaLearnContinueRef.current = continuation;
     writeManhuaLearnContinuation(manhuaLearnUserKey, continuation);
-    if (!manhuaLearnSegmentSecondsEditedRef.current) {
-      setManhuaLearnSegmentSecondsInput(String(restoreManhuaLearnSegmentSeconds(continuation.nativeSegmentSeconds)));
-    }
-    if (!manhuaLearnVideoFpsEditedRef.current) {
-      setManhuaLearnVideoFpsInput(String(restoreManhuaLearnVideoFps(continuation.nativeVideoFps)));
-    }
     setTrendInsightTab("ai_manhua");
     setManhuaLearnBusyKey(busyKey);
     if (continuation.seriesKey) {
@@ -11981,6 +11990,96 @@ export default function PlatformPage() {
     );
   }
 
+  /** 实况任务条：运行中/排队中/刚失败的服务端任务，带停止与续学；只在一个面板里出现（0905 用户令） */
+  const manhuaLearnLiveJobsStrip = manhuaLearnServerJobs.some((job) => job.status === "queued" || job.status === "running"
+      || (job.status === "failed" && Date.now() - new Date(job.updatedAt || 0).getTime() < 30 * 60_000)) ? (
+      <div className="mt-3 rounded-xl border border-emerald-300/25 bg-emerald-500/10 px-3 py-2.5">
+        <div className="text-[11px] font-semibold text-emerald-100/90">
+          ⏱ 实时任务 · 运行中 {manhuaLearnServerJobs.filter((job) => job.status === "running").length}
+          {" · 排队待学 "}{manhuaLearnServerJobs.filter((job) => job.status === "queued").length}
+          <span className="ml-2 font-normal text-emerald-100/60">刷新可见 · 排队≠卡死</span>
+        </div>
+        {manhuaLearnServerJobs
+          .filter((job) => job.status === "queued" || job.status === "running"
+            || (job.status === "failed" && Date.now() - new Date(job.updatedAt || 0).getTime() < 30 * 60_000))
+          .map((job) => {
+            const output = (job.output ?? {}) as Record<string, unknown>;
+            const params = ((job.input as Record<string, unknown> | undefined)?.params ?? {}) as Record<string, unknown>;
+            const url = String(params.url || "");
+            const title = String(params.titleHint || "").trim()
+              || (url ? url.replace(/^https?:\/\//, "").slice(0, 46) : "未命名任务");
+            const partial = (output.nativePartialProposalCheckpoint ?? null) as Record<string, unknown> | null;
+            const log = Array.isArray(output.learnProgressLog) ? output.learnProgressLog : [];
+            const lastLine = log.length
+              ? (log[log.length - 1] as Record<string, unknown>)
+              : null;
+            const lastZh = lastLine
+              ? `${String(lastLine.atIso || "").slice(11, 19)} ${String(lastLine.detailZh || lastLine.stage || "")}`
+              : "等待首条进度…";
+            return (
+              <div key={job.jobId} className="mt-1.5 rounded-lg border border-white/10 bg-black/30 px-2.5 py-1.5 text-[10px] text-[#d7f0e2]">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={job.status === "running" ? "font-bold text-emerald-200" : job.status === "failed" ? "font-bold text-rose-300" : "font-bold text-amber-200"}>
+                    {job.status === "running" ? "运行中" : job.status === "failed" ? "刚失败" : "排队中"}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate" title={url}>{title}</span>
+                  {partial ? (
+                    <span className="font-semibold text-emerald-100">
+                      第{Number(partial.episodeIndex) || 1}集 · {Number(partial.completedSegments) || 0}/{Number(partial.totalSegments) || 0} 片
+                    </span>
+                  ) : null}
+                </div>
+                <div className="mt-0.5 truncate text-[#c9c0e6]/70" title={lastZh}>{lastZh}</div>
+                {job.status === "failed" && job.error ? (
+                  <div className="mt-0.5 text-rose-200/90" title={job.error}>死因：{String(job.error).slice(0, 90)}</div>
+                ) : null}
+                {/* 0905 用户令：停止/继续必须在实况卡上一步可达，不依赖下方「选中剧」面板
+                    （焦点一丢面板就没了，用户对着运行中的任务无处可点） */}
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  {(job.status === "running" || job.status === "queued")
+                    && !(manhuaLearnResult && job.jobId === focusedManhuaLearnServerJob?.jobId) ? (
+                    <button
+                      type="button"
+                      disabled={Boolean(manhuaLearnControlBusy)}
+                      onClick={() => void stopManhuaLearnServerJobById(job.jobId)}
+                      className="rounded-md border border-rose-300/40 bg-rose-500/15 px-2.5 py-1 text-[10px] font-semibold text-rose-50 hover:bg-rose-500/25 disabled:opacity-40"
+                    >
+                      {manhuaLearnControlBusy === "cancel" ? "正在停止…" : "停止这部剧"}
+                    </button>
+                  ) : null}
+                  {job.status === "failed" ? (
+                    <button
+                      type="button"
+                      disabled={Boolean(manhuaLearnBusyKey) || Boolean(manhuaLearnControlBusy) || (!url && !String(params.gcsUri || ""))}
+                      onClick={() => {
+                        const basketItem = manhuaLearnBasket.find((item) => item.jobId === job.jobId)
+                          || manhuaLearnBasket.find((item) => url && item.continuation.row.url === url);
+                        const seriesKey = String(basketItem?.seriesKey || params.seriesKey || output.seriesKey || "").trim();
+                        if (basketItem) selectManhuaLearnBasketItem(basketItem.seriesKey);
+                        const row: ManhuaLearnSourceRow = basketItem?.continuation.row || {
+                          url: url || null,
+                          gcsUri: String(params.gcsUri || "").trim() || null,
+                          fileName: String(params.fileName || "").trim() || null,
+                          mixName: String(params.titleHint || params.title || "").trim() || null,
+                          mixId: String(params.mixId || "").trim() || null,
+                          platform: String(params.platform || (/kuaishou\.com/i.test(url) ? "kuaishou" : "douyin")),
+                        };
+                        const rank = basketItem?.continuation.rank ?? Math.max(0, Math.floor(Number(params.rank) || 0));
+                        void runManhuaTemplateLearnCloud(row, rank, seriesKey || undefined);
+                      }}
+                      className="rounded-md border border-sky-200/40 bg-sky-400/15 px-2.5 py-1 text-[10px] font-semibold text-sky-50 hover:bg-sky-400/25 disabled:opacity-40"
+                    >
+                      {manhuaLearnBusyKey ? "处理中…" : "继续学这部 · 从断点续跑"}
+                    </button>
+                  ) : null}
+                  <span className="text-[10px] text-white/45">已落盘内容与静帧不会删除</span>
+                </div>
+              </div>
+            );
+          })}
+      </div>
+    ) : null;
+
   return (
     <div className="min-h-screen bg-transparent text-[#f7f2ff]">
       <style>{`@keyframes pulseHighlight{0%,95%,100%{box-shadow:none}96%{box-shadow:0 0 0 2px rgba(73,230,255,0.7),0 0 24px rgba(73,230,255,0.3)}98%{box-shadow:0 0 0 3px rgba(127,103,255,0.8),0 0 32px rgba(127,103,255,0.4)}}@keyframes mvspPlatformOrb{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(12px,-10px) scale(1.07)}}@keyframes coverGenWaitCarouselProgress{from{transform:scaleX(0)}to{transform:scaleX(1)}}@keyframes platformCarouselProg{from{transform:scaleX(0)}to{transform:scaleX(1)}}@keyframes platformCarouselGlow{0%,100%{opacity:0.4}50%{opacity:0.92}}`}</style>
@@ -12982,52 +13081,8 @@ export default function PlatformPage() {
                         </p>
                       )}
 
-                      {/* 0903 用户令「刷新也要看到任务在跑」：实况卡不依赖聚焦剧，
-                          直接读服务端任务快照（进度时间线+分片断点），刷新即回灌；
-                          最新进度行自带「分片上限X秒·N片·fps」＝配平值回显。 */}
-                      {manhuaLearnServerJobs.some((job) => job.status === "queued" || job.status === "running"
-                        || (job.status === "failed" && Date.now() - new Date(job.updatedAt || 0).getTime() < 30 * 60_000)) ? (
-                        <div className="mt-3 rounded-xl border border-emerald-300/25 bg-emerald-500/10 px-3 py-2.5">
-                          <div className="text-[11px] font-semibold text-emerald-100/90">⏱ 正在学习（刷新可见 · 排队≠卡死）</div>
-                          {manhuaLearnServerJobs
-                            .filter((job) => job.status === "queued" || job.status === "running"
-                              || (job.status === "failed" && Date.now() - new Date(job.updatedAt || 0).getTime() < 30 * 60_000))
-                            .map((job) => {
-                              const output = (job.output ?? {}) as Record<string, unknown>;
-                              const params = ((job.input as Record<string, unknown> | undefined)?.params ?? {}) as Record<string, unknown>;
-                              const url = String(params.url || "");
-                              const title = String(params.titleHint || "").trim()
-                                || (url ? url.replace(/^https?:\/\//, "").slice(0, 46) : "未命名任务");
-                              const partial = (output.nativePartialProposalCheckpoint ?? null) as Record<string, unknown> | null;
-                              const log = Array.isArray(output.learnProgressLog) ? output.learnProgressLog : [];
-                              const lastLine = log.length
-                                ? (log[log.length - 1] as Record<string, unknown>)
-                                : null;
-                              const lastZh = lastLine
-                                ? `${String(lastLine.atIso || "").slice(11, 19)} ${String(lastLine.detailZh || lastLine.stage || "")}`
-                                : "等待首条进度…";
-                              return (
-                                <div key={job.jobId} className="mt-1.5 rounded-lg border border-white/10 bg-black/30 px-2.5 py-1.5 text-[10px] text-[#d7f0e2]">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span className={job.status === "running" ? "font-bold text-emerald-200" : job.status === "failed" ? "font-bold text-rose-300" : "font-bold text-amber-200"}>
-                                      {job.status === "running" ? "运行中" : job.status === "failed" ? "刚失败" : "排队中"}
-                                    </span>
-                                    <span className="min-w-0 flex-1 truncate" title={url}>{title}</span>
-                                    {partial ? (
-                                      <span className="font-semibold text-emerald-100">
-                                        第{Number(partial.episodeIndex) || 1}集 · {Number(partial.completedSegments) || 0}/{Number(partial.totalSegments) || 0} 片
-                                      </span>
-                                    ) : null}
-                                  </div>
-                                  <div className="mt-0.5 truncate text-[#c9c0e6]/70" title={lastZh}>{lastZh}</div>
-                                  {job.status === "failed" && job.error ? (
-                                    <div className="mt-0.5 text-rose-200/90" title={job.error}>死因：{String(job.error).slice(0, 90)}</div>
-                                  ) : null}
-                                </div>
-                              );
-                            })}
-                        </div>
-                      ) : null}
+                      {/* 没选中剧时实况条单独站；选中后并进下方学习面板，永远只有一个面板 */}
+                      {!manhuaLearnResult || manhuaLearnPanelCollapsed ? manhuaLearnLiveJobsStrip : null}
 
                       {manhuaLearnBasket.length > 0 ? (
                         <div className="mt-3 rounded-xl border border-amber-300/20 bg-amber-500/10 px-3 py-2.5">
@@ -13324,6 +13379,7 @@ export default function PlatformPage() {
                                 || getManhuaLearnSafeProgressLabelZh(manhuaLearnResult)
                               : getManhuaLearnSafeProgressLabelZh(manhuaLearnResult)}
                           </p>
+                          {manhuaLearnLiveJobsStrip}
                           {focusedManhuaLearnJobActive ? (
                             <div className="flex flex-wrap gap-2">
                               <button

@@ -352,6 +352,8 @@ export async function downloadGcsObject(params: {
 }
 
 /** 按前缀列出对象名（最多 maxResults，自动翻页直到凑满或无更多） */
+const GCS_LIST_MAX_ATTEMPTS = 3;
+
 export async function listGcsObjectNamesByPrefix(params: {
   prefix: string;
   maxResults?: number;
@@ -383,10 +385,28 @@ export async function listGcsObjectNamesByPrefix(params: {
     url.searchParams.set("maxResults", String(Math.min(100, maxResults - names.length)));
     if (pageToken) url.searchParams.set("pageToken", pageToken);
     if (userProject) url.searchParams.set("userProject", userProject);
-    const response = await fetch(url, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    // 列举是断点续跑的「已入库核对」真源，一次 fetch failed 就把整轮学习判死太脆：
+    // 网络层错误与 5xx/429 退避重试三次，4xx 仍即时失败（0904 实锤：fetch failed 直接判死）。
+    let response: Response | undefined;
+    let lastNetworkError: unknown;
+    for (let attempt = 0; attempt < GCS_LIST_MAX_ATTEMPTS; attempt += 1) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 1_000 * attempt));
+      try {
+        response = await fetch(url, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        lastNetworkError = undefined;
+        if (response.status < 500 && response.status !== 429) break;
+      } catch (error) {
+        lastNetworkError = error;
+        response = undefined;
+      }
+    }
+    if (!response) {
+      const detail = lastNetworkError instanceof Error ? lastNetworkError.message : String(lastNetworkError);
+      throw new Error(`gcs_list_failed:network:${detail}（已重试 ${GCS_LIST_MAX_ATTEMPTS} 次）`);
+    }
     const json = (await response.json().catch(() => null)) as {
       items?: Array<{ name?: string }>;
       nextPageToken?: string;
