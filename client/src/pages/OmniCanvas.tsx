@@ -52,6 +52,7 @@ import {
   defaultManhuaCustomAssetRefDuty,
   makeManhuaCustomAssetId,
   MANHUA_CUSTOM_ASSET_REFS_MAX,
+  normalizeManhuaCustomAssetRole,
   normalizeManhuaCustomAssetRefs,
   upsertGeneratedManhuaCustomAssetRef,
   type ManhuaCustomAssetRef,
@@ -4806,8 +4807,7 @@ export default function OmniCanvas() {
         toast.message("请选择图片文件");
         return;
       }
-      const resolvedRole: ManhuaCustomAssetRef["role"] =
-        role === "character" || role === "scene" || role === "prop" ? role : "unset";
+      const resolvedRole = normalizeManhuaCustomAssetRole(role);
       try {
         const { assets, failed } = await uploadCanvasFilesParallel({
           files: list,
@@ -4818,6 +4818,7 @@ export default function OmniCanvas() {
           .map((a) => ({
             id: makeManhuaCustomAssetId(),
             url: a.url,
+            gcsUri: a.gcsUri,
             role: resolvedRole,
             labelZh: a.fileName?.replace(/\.[^.]+$/, "").slice(0, 40) || "上传参考",
             source: "upload" as const,
@@ -4832,8 +4833,10 @@ export default function OmniCanvas() {
               : resolvedRole === "scene"
                 ? "场景"
                 : resolvedRole === "prop"
-                  ? "服装道具"
-                  : "";
+                  ? "道具"
+                  : resolvedRole === "wardrobe"
+                    ? "服装"
+                    : "";
           toast.message(`已上传 ${added.length} 张${roleZh || "参考"}图`, {
             description: roleZh
               ? `已归入「我的${roleZh}」。`
