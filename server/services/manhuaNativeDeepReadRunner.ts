@@ -123,27 +123,9 @@ export const NATIVE_DEEP_READ_ROUTE_VERTEX = "vertex_gcs_video" as const;
  * 128,926）——即按默认 1fps 抽帧，兜底属**降采样降级模式**，门禁照跑，宁缺勿滥。
  */
 export const NATIVE_DEEP_READ_ROUTE_EVOLINK = "evolink_gemini_video" as const;
-/**
- * 0904：flash 主线改走 Gemini API key（generativelanguage）。Vertex 上 3.8 flash
- * 无固定配额（纯动态共享池，挤时 503），AI Studio Tier1 有 1000 RPM/200 万 TPM 真容量。
- * gs:// 只有 Vertex 认，本路由用 Files API 的 files/xxx URI（48 小时自动过期，无需清理）。
- */
-export const NATIVE_DEEP_READ_ROUTE_GEMINI_API = "gemini_api_files_video" as const;
 export type NativeDeepReadVisualRoute =
   | typeof NATIVE_DEEP_READ_ROUTE_VERTEX
-  | typeof NATIVE_DEEP_READ_ROUTE_EVOLINK
-  | typeof NATIVE_DEEP_READ_ROUTE_GEMINI_API;
-
-/** 生产开关：MANHUA_FLASH_READ_VIA_GEMINI_API=1 且配了 GEMINI_API_KEY 才生效；只影响 flash 读片。 */
-export function isFlashReadViaGeminiApiEnabled(): boolean {
-  return String(process.env.MANHUA_FLASH_READ_VIA_GEMINI_API || "").trim() === "1"
-    && Boolean(String(process.env.GEMINI_API_KEY || "").trim());
-}
-
-function resolveGeminiApiBaseUrl(): string {
-  return String(process.env.GEMINI_API_BASE_URL || "https://generativelanguage.googleapis.com")
-    .trim().replace(/\/+$/, "") || "https://generativelanguage.googleapis.com";
-}
+  | typeof NATIVE_DEEP_READ_ROUTE_EVOLINK;
 
 /** 实弹口径：gemini-3.1-pro-preview 只在 global location 验证过。 */
 export const NATIVE_DEEP_READ_VERTEX_LOCATION = "global" as const;
@@ -688,9 +670,16 @@ export const NATIVE_DEEP_READ_REQUIRED_RETRY_CODES: ReadonlySet<string> = new Se
   "audio_timeline_invalid",
 ]);
 
+/** 门禁未过的降温重试间隔（进契约 SHA 与请求指纹，非用户明令不得改）。 */
 export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 60_000;
-/** 503/429/RESOURCE_EXHAUSTED 不降温；原档每隔一分钟最多补发三次。 */
-export const NATIVE_DEEP_READ_RESOURCE_RETRY_MAX = 3;
+/**
+ * 503/429/RESOURCE_EXHAUSTED（视频服务器繁忙）专用退避：不降温、原档补发。
+ * 0904 用户令：**隔 30 秒重试 4 次**（原为 60 秒 3 次）。
+ * 单开一条常量而不改 RETRY_INTERVAL_MS，是为了不动契约 SHA 与段缓存指纹——
+ * 那条一改，已买断的分片缓存会全部失配、重复付费。
+ */
+export const NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS = 30_000;
+export const NATIVE_DEEP_READ_RESOURCE_RETRY_MAX = 4;
 export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.6;
 
 /** 第二次尝试参数；保留导出供既有调用方与缓存指纹使用。 */
@@ -1601,139 +1590,13 @@ async function postEvolinkNativeDeepRead(
   });
 }
 
-/**
- * generativelanguage 不认的 Vertex 专属 generationConfig 字段（0904 实弹：audioTimestamp
- * 直接 400）。只在发线前剥离；冻结契约与 requestFingerprint 均按原 body 计算，不受影响。
- * 返回新对象，绝不改写传入的冻结 body。
- */
-export function stripVertexOnlyGenerationConfigFields(body: unknown): unknown {
-  if (!body || typeof body !== "object" || Array.isArray(body)) return body;
-  const record = body as Record<string, unknown>;
-  const config = record.generationConfig;
-  if (!config || typeof config !== "object" || Array.isArray(config)) return body;
-  const { audioTimestamp: _audioTimestamp, ...rest } = config as Record<string, unknown>;
-  return { ...record, generationConfig: rest };
-}
-
-async function postGeminiApiNativeDeepRead(
-  body: unknown,
-  abortSignal?: AbortSignal,
-  _context?: NativeDeepReadSegmentContext,
-  model: ManhuaNativeDeepReadModelId = MANHUA_NATIVE_DEEP_READ_MODEL,
-): Promise<NativeDeepReadModelResponse> {
-  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
-  if (!apiKey) throw new Error("GEMINI_API_KEY 未配置，Gemini API 读片不可用");
-  const url = `${resolveGeminiApiBaseUrl()}/v1beta/models/`
-    + `${encodeURIComponent(model)}:generateContent`;
-  return postNativeDeepReadGenerateContent({
-    url,
-    headers: { "x-goog-api-key": apiKey },
-    body: stripVertexOnlyGenerationConfigFields(body),
-    abortSignal,
-  });
-}
-
-/**
- * 上传分片到 Gemini Files API 并等待转码完成（视频 PROCESSING→ACTIVE 才可读）。
- * 单档 ≤2GB、项目仓 20GB、48 小时自动删除；上传与存储不计费。
- */
-export async function uploadSegmentToGeminiFiles(input: {
-  buffer: Buffer;
-  signal?: AbortSignal;
-  /** 测试注入零等待；生产走真实计时器。 */
-  sleepMs?: (ms: number) => Promise<void>;
-}): Promise<{ fileUri: string }> {
-  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
-  if (!apiKey) throw new Error("GEMINI_API_KEY 未配置，Gemini Files 上传不可用");
-  const base = resolveGeminiApiBaseUrl();
-  const sleep = input.sleepMs ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  // 上传本身免费幂等（48h 过期对象），瞬时抖动重试一次，别让一次 5xx 废掉整集备料。
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    if (attempt > 0) {
-      input.signal?.throwIfAborted();
-      await sleep(5_000);
-    }
-    try {
-      return await uploadSegmentToGeminiFilesOnce({ ...input, apiKey, base, sleep });
-    } catch (error) {
-      if (input.signal?.aborted) throw error;
-      lastError = error;
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error("Gemini Files 上传失败");
-}
-
-async function uploadSegmentToGeminiFilesOnce(input: {
-  buffer: Buffer;
-  signal?: AbortSignal;
-  apiKey: string;
-  base: string;
-  sleep: (ms: number) => Promise<void>;
-}): Promise<{ fileUri: string }> {
-  const { apiKey, base } = input;
-  const start = await fetch(`${base}/upload/v1beta/files`, {
-    method: "POST",
-    headers: {
-      "x-goog-api-key": apiKey,
-      "X-Goog-Upload-Protocol": "resumable",
-      "X-Goog-Upload-Command": "start",
-      "X-Goog-Upload-Header-Content-Length": String(input.buffer.byteLength),
-      "X-Goog-Upload-Header-Content-Type": "video/mp4",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ file: { displayName: "manhua-native-segment.mp4" } }),
-    signal: input.signal,
-  });
-  if (!start.ok) {
-    throw new Error(`Gemini Files 上传初始化失败 HTTP ${start.status}：${(await start.text()).slice(0, 300)}`);
-  }
-  const uploadUrl = start.headers.get("x-goog-upload-url");
-  if (!uploadUrl) throw new Error("Gemini Files 未返回上传地址");
-  const up = await fetch(uploadUrl, {
-    method: "POST",
-    headers: {
-      "X-Goog-Upload-Command": "upload, finalize",
-      "X-Goog-Upload-Offset": "0",
-      "Content-Length": String(input.buffer.byteLength),
-    },
-    body: new Uint8Array(input.buffer),
-    signal: input.signal,
-  });
-  if (!up.ok) {
-    throw new Error(`Gemini Files 分片上传失败 HTTP ${up.status}：${(await up.text()).slice(0, 300)}`);
-  }
-  const meta = await up.json() as { file?: { name?: string; uri?: string; state?: string } };
-  const name = String(meta.file?.name || "");
-  let uri = String(meta.file?.uri || "");
-  let state = String(meta.file?.state || "");
-  if (!name || !uri) throw new Error("Gemini Files 响应缺少文件标识");
-  const sleep = input.sleep;
-  const deadline = Date.now() + 5 * 60_000;
-  while (state === "PROCESSING" || state === "STATE_UNSPECIFIED" || state === "") {
-    if (Date.now() > deadline) throw new Error("Gemini Files 转码超时（5 分钟未 ACTIVE），已停止");
-    input.signal?.throwIfAborted();
-    await sleep(5_000);
-    const got = await fetch(`${base}/v1beta/${name}`, {
-      headers: { "x-goog-api-key": apiKey },
-      signal: input.signal,
-    });
-    if (!got.ok) throw new Error(`Gemini Files 状态查询失败 HTTP ${got.status}`);
-    const j = await got.json() as { state?: string; uri?: string };
-    state = String(j.state || "");
-    if (j.uri) uri = String(j.uri);
-  }
-  if (state !== "ACTIVE") throw new Error(`Gemini Files 文件状态 ${state}，不可读，已停止`);
-  return { fileUri: uri };
-}
-
 /* ────────────────── 媒体节点解析（yt-dlp，与批处理脚本共用） ────────────────── */
 
 /** 按体积挑 format：同为 720p，h264 是 477MB 而 bytevc1 只有 225MB —— 不能按 height 排 */
 export function pickSmallestVideoFormat(
   formats: ReadonlyArray<Record<string, unknown>>,
 ): { url: string; sizeMB: number } | null {
-  // 清晰度以可用为准：抖音最低档就是 540p（非用户选择，0829 用户看画面可辨认后放行）；取不到降 480p，再取不到用任意可用带音画档。
+  // 清晰度以可用为准（0829 用户拍板）：540p 优先，取不到降 480p，再取不到用任意可用带音画档。
   const rank = (f: Record<string, unknown>): number => {
     const id = String(f.format_id || "");
     if (id.startsWith("bytevc1_540p")) return 0;
@@ -1817,10 +1680,11 @@ export const NATIVE_DEEP_READ_MEDIA_PREP_MAX_CONCURRENCY = 4;
  */
 export const NATIVE_DEEP_READ_MEDIA_UPLOAD_MAX_CONCURRENCY = 4;
 /**
- * 单集模型调用并发上限（0901 用户拍板）：最多同时 5 片。
+ * 单集模型调用并发上限。0901 拍板 5 片；**0904 用户令降到 4**，为的是压住 503：
+ * Vertex 上 3.8 flash 无固定配额（动态共享池），5 路扇出会把自己挤成资源拥堵。
  * 调用方可调低，不能抬高生产上限。
  */
-export const NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY = 5;
+export const NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY = 4;
 
 function mediaHeaders(node: NativeDeepReadMediaNode): string[] {
   const referer = String(node.referer || "").trim();
@@ -1898,8 +1762,6 @@ export function buildCutSegmentArgs(
 export type PreparedNativeVideo = {
   /** GCS 对象地址（gs://）；Vertex 主线直读，EvoLink 兜底再签 https。 */
   gsUri: string;
-  /** Gemini API key 路由的 files/xxx URI；仅 flash 走 API key 开关开启时备料。 */
-  geminiFileUri?: string;
   startSec: number;
   endSec: number;
   temporaryGcs: { bucket: string; objectName: string };
@@ -1920,8 +1782,6 @@ export type NativeDeepReadMediaPreparationDeps = {
   readLocal: (path: string) => Promise<Buffer>;
   unlinkLocal: (path: string) => Promise<void>;
   upload: typeof uploadBufferToGcs;
-  /** flash 走 Gemini API key 时的 Files API 上传；缺省用真实现。 */
-  uploadGeminiFile?: typeof uploadSegmentToGeminiFiles;
   remove: typeof deleteGcsObject;
   /** 切段前的 /tmp 可用空间检查（node:fs/promises statfs）。 */
   statfsTmp: () => Promise<{ freeBytes: number }>;
@@ -2019,7 +1879,7 @@ export async function prepareEpisodeVideos(
   episode: NativeDeepReadBatchRunEpisode,
   abortSignal?: AbortSignal,
   deps: NativeDeepReadMediaPreparationDeps = defaultMediaPreparationDeps,
-  limits?: { cutConcurrency?: number; uploadConcurrency?: number; geminiFilesUpload?: boolean },
+  limits?: { cutConcurrency?: number; uploadConcurrency?: number },
 ): Promise<PreparedNativeVideo[]> {
   const segments = validateNativeDeepReadSegments(episode.segments);
 
@@ -2205,30 +2065,14 @@ export async function prepareEpisodeVideos(
     const uploadOne = async (index: number): Promise<void> => {
       abortSignal?.throwIfAborted();
       const row = completeCutRows[index]!;
-      const segmentBuffer = await deps.readLocal(row.localPath);
       const uploaded = await deps.upload({
         objectName: `${NATIVE_VIDEO_TEMP_PREFIX}/${row.runId}.mp4`,
-        buffer: segmentBuffer,
+        buffer: await deps.readLocal(row.localPath),
         contentType: "video/mp4",
         signal: abortSignal,
       });
-      // Gemini API key 路由与 GCS 双备料：GCS 留证据链与 Vertex/EvoLink 通道，Files API 供 flash 读片。
-      let geminiFileUri: string | undefined;
-      if (limits?.geminiFilesUpload) {
-        try {
-          geminiFileUri = (await (deps.uploadGeminiFile ?? uploadSegmentToGeminiFiles)({
-            buffer: segmentBuffer,
-            signal: abortSignal,
-          })).fileUri;
-        } catch (error) {
-          // 本段 GCS 对象尚未登记进 prepared，外层清理看不见它；就地删掉再抛，不留垃圾。
-          await deps.remove({ bucket: uploaded.bucket, objectName: uploaded.objectName }).catch(() => undefined);
-          throw error;
-        }
-      }
       await deps.unlinkLocal(row.localPath).catch(() => undefined);
       prepared[index] = {
-        ...(geminiFileUri ? { geminiFileUri } : {}),
         gsUri: uploaded.gcsUri,
         startSec: row.startSec,
         endSec: row.endSec,
@@ -4257,7 +4101,6 @@ export type NativeDeepReadBatchRunnerDeps = {
   remove: typeof deleteGcsObject;
   postVertex: (body: unknown, signal?: AbortSignal, context?: NativeDeepReadSegmentContext, model?: ManhuaNativeDeepReadModelId) => Promise<NativeDeepReadModelResponse>;
   postEvolink: (body: unknown, signal?: AbortSignal, context?: NativeDeepReadSegmentContext, model?: ManhuaNativeDeepReadModelId) => Promise<NativeDeepReadModelResponse>;
-  postGeminiApi: (body: unknown, signal?: AbortSignal, context?: NativeDeepReadSegmentContext, model?: ManhuaNativeDeepReadModelId) => Promise<NativeDeepReadModelResponse>;
   signReadUrl: typeof signGsUriV4ReadUrl;
   invokeGlmStructuring: typeof invokeNativeDeepReadGlmStructuring;
   selectAttemptWithQwen: typeof selectNativeDeepReadAttemptWithQwen;
@@ -4276,7 +4119,6 @@ const defaultBatchRunnerDeps: NativeDeepReadBatchRunnerDeps = {
   remove: deleteGcsObject,
   postVertex: postVertexNativeDeepRead,
   postEvolink: postEvolinkNativeDeepRead,
-  postGeminiApi: postGeminiApiNativeDeepRead,
   signReadUrl: signGsUriV4ReadUrl,
   invokeGlmStructuring: invokeNativeDeepReadGlmStructuring,
   selectAttemptWithQwen: selectNativeDeepReadAttemptWithQwen,
@@ -4403,15 +4245,16 @@ function isNativeDeepReadResourceExhausted(error: unknown): boolean {
 /** 路由标签必须反映本次任务实际读片模型，不得写死（0904：选 flash 曾显示 3.1 Pro）。 */
 function routeLabelZh(route: NativeDeepReadVisualRoute, readModel: ManhuaNativeDeepReadModelId): string {
   const model = MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[readModel] ?? readModel;
-  if (route === NATIVE_DEEP_READ_ROUTE_EVOLINK) return `EvoLink ${model} 视频精读（兜底）`;
-  if (route === NATIVE_DEEP_READ_ROUTE_GEMINI_API) return `Gemini API ${model} 视频精读`;
-  return `Vertex ${model} 视频精读`;
+  return route === NATIVE_DEEP_READ_ROUTE_EVOLINK
+    ? `EvoLink ${model} 视频精读（兜底）`
+    : `Vertex ${model} 视频精读`;
 }
 
 /**
  * 一次请求读取一集（逐段调用），回传后按段合并成集卡。
- * 只有门禁失败才按 0.7→0.65→0.6 降档，每档间隔 60 秒；
- * 503/429/RESOURCE_EXHAUSTED 等 60 秒后保持当前温度重试，不消耗降档次数。
+ * 只有门禁失败才按 0.7→0.65→0.6 降档，每档间隔 60 秒（RETRY_INTERVAL_MS）；
+ * 503/429/RESOURCE_EXHAUSTED 走另一条线：隔 30 秒（RESOURCE_RETRY_INTERVAL_MS）
+ * 保持当前温度重试，最多 4 次（RESOURCE_RETRY_MAX），不消耗降档次数。
  * 用户中止、证据保存失败和其他传输错误立即终止。
  */
 export type NativeDeepReadBatchRunParams = {
@@ -4465,8 +4308,6 @@ async function executeNativeDeepReadBatch(
   diagnosticSelection?: readonly number[],
 ): Promise<NativeDeepReadBatchExecutionResult> {
   const readModel = parseNativeDeepReadModel(params.readModel);
-  // 0904：flash 主线切 Gemini API key（有真容量），pro 照旧 Vertex；开关关掉即回旧行为。
-  const useGeminiApiRoute = readModel === "gemini-3.8-flash" && isFlashReadViaGeminiApiEnabled();
   if (!params.episodes.length) throw new Error("多视频精读批次为空");
   if (diagnosticSelection && (params.episodes.length !== 1 || !params.preservePreparedVideos
     || !params.segmentCacheSeriesKey || params.onSegmentSnapshotCommitted)) {
@@ -4589,7 +4430,6 @@ async function executeNativeDeepReadBatch(
           {
             cutConcurrency: params.mediaCutConcurrency,
             uploadConcurrency: params.mediaUploadConcurrency,
-            geminiFilesUpload: useGeminiApiRoute,
           },
         );
         if (prepared.length !== indexes.length) {
@@ -4941,9 +4781,7 @@ async function executeNativeDeepReadBatch(
             modelCallStarted = true;
             response = await (input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK
               ? deps.postEvolink(body, params.abortSignal, segmentContext, readModel)
-              : input.route === NATIVE_DEEP_READ_ROUTE_GEMINI_API
-                ? deps.postGeminiApi(body, params.abortSignal, segmentContext, readModel)
-                : deps.postVertex(body, params.abortSignal, segmentContext, readModel));
+              : deps.postVertex(body, params.abortSignal, segmentContext, readModel));
           }
           if (!response) throw new Error("原生精读响应缺失，已停止且不得自动重试");
           if (response.status >= 300) {
@@ -5557,9 +5395,10 @@ async function executeNativeDeepReadBatch(
                 }, params.onModelReceipt);
                 console.warn(
                   `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段资源拥堵，`
-                  + `60 秒后保持 temperature ${temperature} 重试：${errorZh}`,
+                  + `30 秒后保持 temperature ${temperature} 重试`
+                  + `（第 ${resourceRetryCount}/${NATIVE_DEEP_READ_RESOURCE_RETRY_MAX} 次）：${errorZh}`,
                 );
-                await deps.waitForRetry(NATIVE_DEEP_READ_RETRY_INTERVAL_MS, params.abortSignal);
+                await deps.waitForRetry(NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS, params.abortSignal);
                 params.abortSignal?.throwIfAborted();
                 continue;
               }
@@ -5659,12 +5498,9 @@ async function executeNativeDeepReadBatch(
           throw new Error(`第${episode.episodeIndex}集第${segmentIndex + 1}段缺少对应备料，已停止`);
         }
         const fps = resolveNativeDeepReadRequestFps(video.endSec - video.startSec, episode.videoFps);
-        if (useGeminiApiRoute && !video.geminiFileUri) {
-          throw new Error(`第${episode.episodeIndex}集第${segmentIndex + 1}段缺少 Gemini Files 备料，已停止`);
-        }
         const result = await attemptWithSegmentRetry({
-          route: useGeminiApiRoute ? NATIVE_DEEP_READ_ROUTE_GEMINI_API : NATIVE_DEEP_READ_ROUTE_VERTEX,
-          fileUri: useGeminiApiRoute ? video.geminiFileUri! : video.gsUri,
+          route: NATIVE_DEEP_READ_ROUTE_VERTEX,
+          fileUri: video.gsUri,
           segmentIndex,
           fps,
         });
@@ -5726,10 +5562,9 @@ async function executeNativeDeepReadBatch(
       const segmentFailures: Array<{ segmentIndex: number; error: unknown }> = [];
       const scheduledSegmentIndexes = selectedSegmentIndexes ?? episode.segments.map((_, index) => index);
       let nextSegmentIndex = 0;
-      // 0901 用户拍板：最多同时 5 片；调用方只能调低，不能把生产上限抬高。
-      // Gemini API key 路由压到 3：AI Studio Tier1 200 万输入 tokens/分钟，视频段大，5 路会撞 429。
+      // 0904 用户令：最多同时 4 片（原 5，为压 503 下调）；调用方只能调低，不能抬高生产上限。
       const segmentModelCap = Math.min(
-        useGeminiApiRoute ? 3 : NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY,
+        NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY,
         Math.max(1, Math.floor(Number(params.segmentModelConcurrency)
           || NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY)),
       );
@@ -6422,7 +6257,6 @@ export async function runManhuaNativeDeepReadSelectedSegments(
     readSegmentCache: rejectUnexpected,
     writeSegmentCache: rejectUnexpected,
     postEvolink: rejectUnexpected,
-    postGeminiApi: rejectUnexpected,
   };
   const executed = await executeNativeDeepReadBatch({
     episodes: [{
