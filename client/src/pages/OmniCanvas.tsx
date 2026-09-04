@@ -54,10 +54,12 @@ import {
   MANHUA_CUSTOM_ASSET_REFS_MAX,
   normalizeManhuaCustomAssetRole,
   normalizeManhuaCustomAssetRefs,
+  selectManhuaCharacterPrimaryRef,
   upsertGeneratedManhuaCustomAssetRef,
   type ManhuaCustomAssetRef,
   type ManhuaCustomAssetRefDuty,
   type ManhuaCustomAssetRole,
+  type ManhuaCharacterPrimaryDuty,
 } from "@shared/manhuaCustomAssetRefs";
 import type { ManhuaAsset3dRef, ManhuaAsset3dStatus } from "@shared/manhuaAsset3d";
 import {
@@ -5114,6 +5116,28 @@ export default function OmniCanvas() {
     );
   }, []);
 
+  const setCharacterPrimaryRef = useCallback(
+    (
+      id: string,
+      anchorId: string,
+      duty: ManhuaCharacterPrimaryDuty,
+      groupRefIds: string[],
+    ) => {
+      setCustomAssetRefs((prev) =>
+        selectManhuaCharacterPrimaryRef(prev, {
+          refId: id,
+          anchorId,
+          duty,
+          groupRefIds,
+        }),
+      );
+      toast.success(duty === "identity" ? "已设为当前锁脸图" : "已设为当前妆造图", {
+        description: "其他版本仍保留，但不会再作为额外角色进入生成。",
+      });
+    },
+    [],
+  );
+
   const acceptCustomAssetReview = useCallback((id: string) => {
     setCustomAssetRefs((prev) =>
       normalizeManhuaCustomAssetRefs(
@@ -5173,6 +5197,7 @@ export default function OmniCanvas() {
               qualityIssues: [],
               claimSource: "converted",
               source: "generated",
+              primaryBindings: [],
             },
           ]),
         );
@@ -5247,6 +5272,7 @@ export default function OmniCanvas() {
               qualityIssues: [],
               claimSource: "converted",
               source: "generated",
+              primaryBindings: [],
             },
           ]),
         );
@@ -5351,6 +5377,7 @@ export default function OmniCanvas() {
               qualityIssues: [],
               claimSource: "converted",
               source: "generated",
+              primaryBindings: [],
             },
           ]),
         );
@@ -8227,6 +8254,7 @@ export default function OmniCanvas() {
                   onEditCustomAsset={editCustomAsset}
                   onCropCustomAsset={cropCustomAssetToFile}
                   onCustomAssetClaimsChange={setCustomAssetClaims}
+                  onSetCharacterPrimaryRef={setCharacterPrimaryRef}
                   onCustomAssetReviewAccept={acceptCustomAssetReview}
                   onStandardizeCustomAsset={standardizeCustomAsset}
                   assetStandardizeBusyId={assetStandardizeBusyId}

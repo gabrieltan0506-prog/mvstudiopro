@@ -167,6 +167,29 @@ describe("manhuaAssetImageGate", () => {
     expect(urls).toContain("https://cdn.example/sheet.jpg");
   });
 
+  it("身份图收集只消费当前锁脸图，不把候选算成额外角色", () => {
+    const urls = collectManhuaIdentityImageUrls({
+      customRefs: [
+        {
+          id: "old",
+          url: "https://cdn.example/old.jpg",
+          role: "character",
+          refDuty: "identity",
+          claimedAnchorIds: ["wa_char_heiqi"],
+        },
+        {
+          id: "current",
+          url: "https://cdn.example/current.jpg",
+          role: "character",
+          refDuty: "identity",
+          claimedAnchorIds: ["wa_char_heiqi"],
+          primaryBindings: [{ anchorId: "wa_char_heiqi", duty: "identity" }],
+        },
+      ],
+    });
+    expect(urls).toEqual(["https://cdn.example/current.jpg"]);
+  });
+
   it("viaWriterCanon: plans charsheet/sceneplate from table anchors", () => {
     const assetCanon = {
       characters: [

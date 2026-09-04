@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   buildManhuaCustomAssetGenFromLibraryPrompt,
+  consumableManhuaCustomAssetRefs,
   countManhuaUnclassifiedCustomAssetRefs,
+  findManhuaCharacterPrimaryRefId,
   hasCustomCastAndScene,
   inferManhuaCustomAssetRole,
   MANHUA_CUSTOM_ASSET_REFS_MAX,
   normalizeManhuaCustomAssetRefs,
+  selectManhuaCharacterPrimaryRef,
   taggedManhuaCustomAssetRefs,
   upsertGeneratedManhuaCustomAssetRef,
 } from "./manhuaCustomAssetRefs";
@@ -91,6 +94,98 @@ describe("manhuaCustomAssetRefs", () => {
         { id: "5", url: "https://cdn.example/s.jpg", role: "scene" },
       ]),
     ).toBe(true);
+  });
+
+  it("同一人物同一职责只消费用户选中的当前图，候选仍完整保留", () => {
+    const refs = [
+      {
+        id: "old",
+        url: "https://cdn.example/old.png",
+        role: "character" as const,
+        refDuty: "identity" as const,
+        claimedAnchorIds: ["wa_char_heiqi"],
+      },
+      {
+        id: "edited",
+        url: "https://cdn.example/edited.png",
+        role: "character" as const,
+        refDuty: "identity" as const,
+        claimedAnchorIds: ["wa_char_heiqi"],
+      },
+      {
+        id: "body",
+        url: "https://cdn.example/body.png",
+        role: "character" as const,
+        refDuty: "look" as const,
+        claimedAnchorIds: ["wa_char_heiqi"],
+      },
+    ];
+    const selected = selectManhuaCharacterPrimaryRef(refs, {
+      refId: "edited",
+      anchorId: "wa_char_heiqi",
+      duty: "identity",
+      groupRefIds: ["old", "edited"],
+    });
+    expect(selected).toHaveLength(3);
+    expect(findManhuaCharacterPrimaryRefId(selected, {
+      anchorId: "wa_char_heiqi",
+      duty: "identity",
+    })).toBe("edited");
+    expect(consumableManhuaCustomAssetRefs(selected).map((ref) => ref.id)).toEqual([
+      "edited",
+      "body",
+    ]);
+    expect(
+      consumableManhuaCustomAssetRefs(selected.filter((ref) => ref.id !== "edited")).map(
+        (ref) => ref.id,
+      ),
+    ).toEqual(["body"]);
+  });
+
+  it("旧稿无当前图时保持全部候选；改职责或清认领会清掉失效绑定", () => {
+    const legacy = normalizeManhuaCustomAssetRefs([
+      {
+        id: "a",
+        url: "https://cdn.example/a.png",
+        role: "character",
+        refDuty: "identity",
+        claimedAnchorIds: ["wa_char_a"],
+      },
+      {
+        id: "b",
+        url: "https://cdn.example/b.png",
+        role: "character",
+        refDuty: "identity",
+        claimedAnchorIds: ["wa_char_a"],
+      },
+    ]);
+    expect(consumableManhuaCustomAssetRefs(legacy)).toHaveLength(2);
+
+    const selected = selectManhuaCharacterPrimaryRef(legacy, {
+      refId: "b",
+      anchorId: "wa_char_a",
+      duty: "identity",
+    });
+    const changedDuty = normalizeManhuaCustomAssetRefs(
+      selected.map((ref) => ref.id === "b" ? { ...ref, refDuty: "look" } : ref),
+    );
+    expect(changedDuty.find((ref) => ref.id === "b")?.primaryBindings).toEqual([]);
+  });
+
+  it("待确认图片不能成为当前图", () => {
+    const refs = [{
+      id: "pending",
+      url: "https://cdn.example/pending.png",
+      role: "character" as const,
+      refDuty: "identity" as const,
+      claimedAnchorIds: ["wa_char_a"],
+      reviewStatus: "needs_review" as const,
+    }];
+    expect(selectManhuaCharacterPrimaryRef(refs, {
+      refId: "pending",
+      anchorId: "wa_char_a",
+      duty: "identity",
+    })[0]?.primaryBindings).toEqual([]);
   });
 
   it("builds gen-from-library prompt without forcing clone and with hard no-text", () => {

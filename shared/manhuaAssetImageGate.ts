@@ -22,6 +22,8 @@ import {
   normalizeManhuaAssetRegenNoteZh,
 } from "./manhuaAssetRegenRequest.js";
 import {
+  consumableCustomRefsByRole,
+  consumableManhuaCustomAssetRefs,
   customRefsByRole,
   hasCustomCastAndScene,
   inferManhuaCustomAssetRole,
@@ -118,7 +120,8 @@ export function collectManhuaIdentityImageUrls(
   >,
 ): string[] {
   const urls: string[] = [];
-  for (const c of customRefsByRole(input.customRefs, "character")) {
+  for (const c of consumableCustomRefsByRole(input.customRefs, "character")) {
+    if (c.reviewStatus === "needs_review") continue;
     const u = String(c.url || "").trim();
     if (u && /^https?:\/\//i.test(u)) urls.push(u);
   }
@@ -142,7 +145,9 @@ export function evaluateManhuaAssetImageGate(
 ): ManhuaAssetImageGateResult {
   const canonForGate = input.assetCanon;
   const hasCanon = Boolean(canonForGate?.characters?.length);
-  const consumableRefs = (input.customRefs || []).filter((r) => r.reviewStatus !== "needs_review");
+  const consumableRefs = consumableManhuaCustomAssetRefs(input.customRefs).filter(
+    (r) => r.reviewStatus !== "needs_review",
+  );
   const customReady = hasCustomCastAndScene(consumableRefs);
   /**
    * 有剧本表时不能因为「上传过人物+场景」就直接放行：扩写和导入外部剧本都会
@@ -175,8 +180,8 @@ export function evaluateManhuaAssetImageGate(
     .filter(Boolean);
   const sceneId = writerSceneId || String(input.sceneId || "").trim();
   const blocks = input.assetBlocks || [];
-  const customChars = customRefsByRole(consumableRefs, "character");
-  const customScenes = customRefsByRole(consumableRefs, "scene");
+  const customChars = consumableCustomRefsByRole(consumableRefs, "character");
+  const customScenes = consumableCustomRefsByRole(consumableRefs, "scene");
 
   const episodeBody = String(
     (input.episodes || []).find((item) => Number(item.index) === ep)?.body || "",
