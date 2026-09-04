@@ -39,8 +39,7 @@ export const NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION = 1 as const;
 
 export type NativeDeepReadSegmentCacheVisualRoute =
   | "vertex_gcs_video"
-  | "evolink_gemini_video"
-  | "gemini_api_files_video";
+  | "evolink_gemini_video";
 
 export type NativeDeepReadSegmentCacheEntry = {
   schemaVersion: typeof NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION;
@@ -265,7 +264,7 @@ export async function writeNativeDeepReadRawAttemptEvidence(
     || input.segmentIndex < 0
     || input.segmentIndex >= input.segmentCount
     || !Number.isFinite(input.temperature)
-    || (input.visualRoute !== "vertex_gcs_video" && input.visualRoute !== "evolink_gemini_video" && input.visualRoute !== "gemini_api_files_video")
+    || (input.visualRoute !== "vertex_gcs_video" && input.visualRoute !== "evolink_gemini_video")
     || !String(input.batchRequestId || "").trim()
     || !/^[0-9a-f-]{16,64}$/i.test(String(input.callId || "").trim())
     || typeof input.responseText !== "string"
@@ -411,7 +410,7 @@ export async function readNativeDeepReadRawAttemptEvidence(
     || input.segmentCount > 32
     || input.segmentIndex >= input.segmentCount
     || !Number.isFinite(input.temperature)
-    || (input.visualRoute !== "vertex_gcs_video" && input.visualRoute !== "evolink_gemini_video" && input.visualRoute !== "gemini_api_files_video")
+    || (input.visualRoute !== "vertex_gcs_video" && input.visualRoute !== "evolink_gemini_video")
   ) {
     throw new Error("原始段证据回读身份不完整");
   }
@@ -545,7 +544,7 @@ function parseCacheEntry(
     || !/^[0-9a-f]{64}$/.test(String(entry.fingerprint || ""))
     || !/^[0-9a-f]{64}$/.test(String(entry.sourceDigest || ""))
     || typeof entry.hasAudio !== "boolean"
-    || (entry.visualRoute !== "vertex_gcs_video" && entry.visualRoute !== "evolink_gemini_video" && entry.visualRoute !== "gemini_api_files_video")
+    || (entry.visualRoute !== "vertex_gcs_video" && entry.visualRoute !== "evolink_gemini_video")
     || typeof entry.degraded !== "boolean"
     || !entry.raw
     || typeof entry.raw !== "object"

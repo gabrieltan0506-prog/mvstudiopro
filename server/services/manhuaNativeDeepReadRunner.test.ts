@@ -2472,7 +2472,6 @@ function makeRunnerDeps(over: Partial<NativeDeepReadBatchRunnerDeps> = {}): Nati
     remove: vi.fn(async () => undefined),
     postVertex: vi.fn() as never,
     postEvolink: vi.fn() as never,
-    postGeminiApi: vi.fn() as never,
     signReadUrl: vi.fn(() => "https://storage.googleapis.com/signed.mp4"),
     invokeGlmStructuring: makeGlmStructuringStub() as never,
     readSegmentCache: vi.fn(async () => null) as never,
