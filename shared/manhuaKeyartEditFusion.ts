@@ -21,8 +21,8 @@ import {
   listManhuaDemoAssetsForSceneTemplate,
 } from "./manhuaScenePropDemoCatalog.js";
 import {
-  customRefsByRole,
-  taggedManhuaCustomAssetRefs,
+  consumableCustomRefsByRole,
+  consumableManhuaCustomAssetRefs,
   type ManhuaCustomAssetRef,
 } from "./manhuaCustomAssetRefs.js";
 import { buildManhuaAssetLockRegistry } from "./manhuaAssetLockRegistry.js";
@@ -123,17 +123,24 @@ export function planManhuaKeyartEditFusion(opts?: {
 }): ManhuaKeyartEditPlan {
   const refs: ManhuaKeyartEditRef[] = [];
   const missingLabelsZh: string[] = [];
+  const consumableRefs = consumableManhuaCustomAssetRefs(opts?.customRefs);
   // 生成定妆不进人物身份垫图（易漂）；只认上传或库预览
-  const customTagged = taggedManhuaCustomAssetRefs(opts?.customRefs).filter(
-    (c) => !(c.role === "character" && c.source === "generated"),
+  const customTagged = consumableRefs.filter(
+    (
+      c,
+    ): c is ManhuaCustomAssetRef & {
+      role: "character" | "scene" | "prop" | "wardrobe";
+    } =>
+      c.role !== "unset" &&
+      !(c.role === "character" && c.source === "generated"),
   );
-  const customChars = customRefsByRole(opts?.customRefs, "character").filter(
+  const customChars = consumableCustomRefsByRole(consumableRefs, "character").filter(
     (c) => c.source !== "generated",
   );
-  const customScenes = customRefsByRole(opts?.customRefs, "scene").filter(
+  const customScenes = consumableCustomRefsByRole(consumableRefs, "scene").filter(
     (c) => c.source !== "generated",
   );
-  const customProps = customRefsByRole(opts?.customRefs, "prop").filter(
+  const customProps = consumableCustomRefsByRole(consumableRefs, "prop").filter(
     (c) => c.source !== "generated",
   );
   /**
@@ -146,8 +153,8 @@ export function planManhuaKeyartEditFusion(opts?: {
    *
    * 人物身份仍只认上传/库预览（generated 定妆易漂脸），那条不动。
    */
-  const preferCustomScene = customRefsByRole(opts?.customRefs, "scene").length > 0;
-  const preferCustomProp = customRefsByRole(opts?.customRefs, "prop").length > 0;
+  const preferCustomScene = consumableCustomRefsByRole(consumableRefs, "scene").length > 0;
+  const preferCustomProp = consumableCustomRefsByRole(consumableRefs, "prop").length > 0;
   const ancientIds = (opts?.ancientArchetypeIds || [])
     .map((id) => String(id || "").trim())
     .filter(Boolean);

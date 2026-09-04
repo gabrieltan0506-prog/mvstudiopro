@@ -68,6 +68,7 @@ import {
   type ManhuaWriterAssetCanon,
 } from "@shared/manhuaWriterAssetCanon";
 import {
+  findManhuaCharacterPrimaryRefId,
   MANHUA_CUSTOM_ASSET_REF_DUTY_LABEL_ZH,
   MANHUA_CUSTOM_ASSET_ROLE_LABEL_ZH,
   MANHUA_CUSTOM_ASSET_ROLES,
@@ -75,6 +76,7 @@ import {
   type ManhuaCustomAssetRef,
   type ManhuaCustomAssetRefDuty,
   type ManhuaCustomAssetRole,
+  type ManhuaCharacterPrimaryDuty,
 } from "@shared/manhuaCustomAssetRefs";
 import { customAssetRefClaimsAnchor } from "@shared/manhuaAssetScriptSync";
 import {
@@ -351,6 +353,13 @@ type Props = {
   onCropCustomAsset?: (id: string, crop: { x: number; y: number; w: number; h: number }) => void | Promise<void>;
   /** 明确认领稳定锚点；场景允许一图多选，替代用显示名猜主键。 */
   onCustomAssetClaimsChange?: (id: string, anchorIds: string[]) => void;
+  /** 同一人物同一职责只选一张当前图；其余图片保留为候选。 */
+  onSetCharacterPrimaryRef?: (
+    id: string,
+    anchorId: string,
+    duty: ManhuaCharacterPrimaryDuty,
+    groupRefIds: string[],
+  ) => void;
   onCustomAssetReviewAccept?: (id: string) => void;
   onStandardizeCustomAsset?: (id: string, quality: ManhuaAssetStandardizeQuality) => void | Promise<void>;
   /** 以当前人物正面参考建立可选 3D 参考；不进入默认出片门禁。 */
@@ -646,6 +655,7 @@ export default function ManhuaScriptWorkbench({
   onEditCustomAsset,
   onCropCustomAsset,
   onCustomAssetClaimsChange,
+  onSetCharacterPrimaryRef,
   onCustomAssetReviewAccept,
   onStandardizeCustomAsset,
   onGenerateAsset3d,
@@ -5058,7 +5068,7 @@ export default function ManhuaScriptWorkbench({
                       </div>
                     </div>
                     {expanded && refs.length ? (
-                      <div className="mt-2 grid grid-cols-3 gap-2">
+                      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
                         {refs.map((ref) => {
                           const lockTag =
                             assetLockRegistry.slots.find((s) => s.path === ref.url)?.tag ||
@@ -5074,6 +5084,40 @@ export default function ManhuaScriptWorkbench({
                                 : ref.role === "prop"
                                   ? assetCanon?.props || []
                                   : [];
+                          const claimedCharacterAnchors =
+                            ref.role === "character"
+                              ? claimOptions.filter((anchor) =>
+                                  customAssetRefClaimsAnchor(ref, anchor),
+                                )
+                              : [];
+                          const primaryDuty: ManhuaCharacterPrimaryDuty | null =
+                            ref.refDuty === "identity" || ref.refDuty === "look"
+                              ? ref.refDuty
+                              : null;
+                          const primaryAnchor =
+                            claimedCharacterAnchors.length === 1
+                              ? claimedCharacterAnchors[0]!
+                              : null;
+                          const primaryRefId =
+                            primaryAnchor && primaryDuty
+                              ? findManhuaCharacterPrimaryRefId(customAssetRefs, {
+                                  anchorId: primaryAnchor.id,
+                                  duty: primaryDuty,
+                                })
+                              : null;
+                          const primaryGroupRefIds =
+                            primaryAnchor && primaryDuty
+                              ? customAssetRefs
+                                  .filter(
+                                    (candidate) =>
+                                      candidate.role === "character" &&
+                                      candidate.refDuty === primaryDuty &&
+                                      customAssetRefClaimsAnchor(candidate, primaryAnchor),
+                                  )
+                                  .map((candidate) => candidate.id)
+                              : [];
+                          const isPrimaryRef = primaryRefId === ref.id;
+                          const isAlternativeRef = Boolean(primaryRefId && !isPrimaryRef);
                           const needsReview = ref.reviewStatus === "needs_review";
                           const cardExpanded = isManhuaAssetCardExpanded({
                             compactUi,
@@ -5087,7 +5131,14 @@ export default function ManhuaScriptWorkbench({
                             key={ref.id}
                             data-manhua-custom-ref-id={ref.id}
                             data-manhua-asset-lock-tag={lockTag || ""}
-                            className="relative overflow-hidden rounded-lg border border-white/12 bg-black/35"
+                            data-manhua-primary-ref={isPrimaryRef ? "true" : "false"}
+                            className={`relative overflow-hidden rounded-lg border bg-black/35 transition-colors ${
+                              isPrimaryRef
+                                ? "border-cyan-300/65 ring-1 ring-cyan-300/25"
+                                : isAlternativeRef
+                                  ? "border-white/8"
+                                  : "border-white/12"
+                            }`}
                           >
                             {onRemoveCustomAsset ? (
                               <>
@@ -5096,7 +5147,8 @@ export default function ManhuaScriptWorkbench({
                                   checked={selectedAssetIds.has(ref.id)}
                                   onChange={() => toggleAssetSelected(ref.id)}
                                   title="勾选后底部可一键批量删除"
-                                  className="absolute left-1.5 top-1.5 z-[2] h-4 w-4 cursor-pointer accent-rose-400"
+                                  aria-label={`选择${displayNameZh || "这张参考图"}`}
+                                  className="absolute left-1.5 top-1.5 z-[2] h-5 w-5 cursor-pointer accent-rose-400"
                                 />
                                 <button
                                   type="button"
@@ -5110,7 +5162,8 @@ export default function ManhuaScriptWorkbench({
                                     });
                                   }}
                                   title="删除这张参考图"
-                                  className="absolute right-1.5 top-1.5 z-[2] flex h-5 w-5 items-center justify-center rounded-full bg-black/70 text-[13px] leading-none text-rose-200 hover:bg-rose-500/70 hover:text-white"
+                                  aria-label={`删除${displayNameZh || "这张参考图"}`}
+                                  className="absolute right-1.5 top-1.5 z-[2] flex h-7 w-7 items-center justify-center rounded-full bg-black/75 text-[15px] leading-none text-rose-100 hover:bg-rose-500/70 hover:text-white"
                                 >
                                   ×
                                 </button>
@@ -5121,9 +5174,8 @@ export default function ManhuaScriptWorkbench({
                                 {lockTag}
                               </span>
                             ) : null}
-                            <img
-                              src={ref.url}
-                              alt=""
+                            <button
+                              type="button"
                               onClick={() =>
                                 setSheetPreview({
                                   id: "",
@@ -5131,10 +5183,55 @@ export default function ManhuaScriptWorkbench({
                                   labelZh: ref.labelZh || "参考图",
                                 })
                               }
-                              title="点开放大看"
-                              className="aspect-[3/4] w-full cursor-zoom-in object-cover object-top"
-                              loading="lazy"
-                            />
+                              aria-label={`放大查看${displayNameZh || "参考图"}`}
+                              className="block w-full cursor-zoom-in focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300"
+                            >
+                              <img
+                                src={ref.url}
+                                alt={displayNameZh || "漫剧资产参考图"}
+                                className="aspect-[3/4] w-full object-cover object-top"
+                                loading="lazy"
+                              />
+                            </button>
+                            {ref.role === "character" && primaryDuty && onSetCharacterPrimaryRef ? (
+                              primaryAnchor ? (
+                                <button
+                                  type="button"
+                                  aria-pressed={isPrimaryRef}
+                                  disabled={needsReview || isPrimaryRef}
+                                  onClick={() =>
+                                    onSetCharacterPrimaryRef(
+                                      ref.id,
+                                      primaryAnchor.id,
+                                      primaryDuty,
+                                      primaryGroupRefIds,
+                                    )
+                                  }
+                                  className={`flex min-h-10 w-full items-center justify-center gap-1.5 border-y px-2 text-[10px] font-semibold transition-colors ${
+                                    isPrimaryRef
+                                      ? "border-cyan-300/25 bg-cyan-500/15 text-cyan-50"
+                                      : "border-white/10 bg-white/[0.025] text-white/60 hover:bg-cyan-500/10 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-45"
+                                  }`}
+                                  title={
+                                    isPrimaryRef
+                                      ? `当前用于「${primaryAnchor.nameZh}」的${primaryDuty === "identity" ? "锁脸" : "妆造"}参考`
+                                      : `设为「${primaryAnchor.nameZh}」的当前${primaryDuty === "identity" ? "锁脸" : "妆造"}图；其他版本仍保留`
+                                  }
+                                >
+                                  <span aria-hidden>{isPrimaryRef ? "✓" : "○"}</span>
+                                  {isPrimaryRef
+                                    ? `当前${primaryDuty === "identity" ? "锁脸" : "妆造"}`
+                                    : `设为当前${primaryDuty === "identity" ? "锁脸" : "妆造"}`}
+                                  {!isPrimaryRef && isAlternativeRef ? (
+                                    <span className="font-normal text-white/35">· 候选保留</span>
+                                  ) : null}
+                                </button>
+                              ) : (
+                                <div className="flex min-h-10 items-center justify-center border-y border-amber-300/15 bg-amber-500/[0.05] px-2 text-[10px] text-amber-100/70">
+                                  先认领一个剧本人物
+                                </div>
+                              )
+                            ) : null}
                             <div className="space-y-1.5 p-2">
                               {ref.reviewStatus === "needs_review" ? (
                                 <div className="rounded border border-amber-400/35 bg-amber-500/10 p-1.5 text-[9px] text-amber-100">

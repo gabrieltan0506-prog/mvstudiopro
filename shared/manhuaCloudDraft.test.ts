@@ -95,6 +95,17 @@ describe("manhuaCloudDraft", () => {
           episodeCount: 2,
         },
         writerConfirmed: true,
+        customAssetRefs: [
+          {
+            id: "cust_heiqi",
+            url: "https://cdn.example/heiqi.jpg",
+            role: "character",
+            refDuty: "identity",
+            claimedAnchorIds: ["wa_char_heiqi"],
+            primaryBindings: [{ anchorId: "wa_char_heiqi", duty: "identity" }],
+            primarySelectionScopes: [{ anchorId: "wa_char_heiqi", duty: "identity" }],
+          },
+        ],
       },
       blocks: [
         {
@@ -122,6 +133,12 @@ describe("manhuaCloudDraft", () => {
     });
     const again = parseManhuaCloudDraftPayload(JSON.stringify(payload));
     expect(again?.writerSession.writerPack?.seriesTitle).toBe("花名册");
+    expect(again?.writerSession.customAssetRefs[0]?.primaryBindings).toEqual([
+      { anchorId: "wa_char_heiqi", duty: "identity" },
+    ]);
+    expect(again?.writerSession.customAssetRefs[0]?.primarySelectionScopes).toEqual([
+      { anchorId: "wa_char_heiqi", duty: "identity" },
+    ]);
     expect(again?.canvas.blocks.find((b) => b.id.startsWith("keyart"))?.outputUrl).toContain(".jpg");
     expect(again?.canvas.blocks.find((b) => b.id.startsWith("clip"))?.outputUrl).toBeUndefined();
   });

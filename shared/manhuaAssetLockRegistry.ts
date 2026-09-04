@@ -12,7 +12,7 @@ import {
 } from "./manhuaScenePropDemoCatalog.js";
 import { getManhuaSceneTemplate } from "./manhuaSceneAssetLibrary.js";
 import {
-  customRefsByRole,
+  consumableCustomRefsByRole,
   type ManhuaCustomAssetRef,
   type ManhuaCustomAssetRole,
 } from "./manhuaCustomAssetRefs.js";
@@ -151,7 +151,7 @@ export function buildManhuaAssetLockRegistry(opts?: {
   };
 
   // 上传与本集生成的人物垫图都进锁（生成图也是可用 HTTPS）
-  const customChars = customRefsByRole(consumableRefs, "character");
+  const customChars = consumableCustomRefsByRole(consumableRefs, "character");
   for (const c of customChars) {
     pushRole(
       "character",
@@ -176,7 +176,7 @@ export function buildManhuaAssetLockRegistry(opts?: {
   }
 
   // 上传 + 本集生成的场景图都进锁；有自有图时不再塞库内皇宫大殿示范
-  const customScenes = customRefsByRole(consumableRefs, "scene");
+  const customScenes = consumableCustomRefsByRole(consumableRefs, "scene");
   for (const c of customScenes) {
     pushRole(
       "scene",
@@ -196,7 +196,7 @@ export function buildManhuaAssetLockRegistry(opts?: {
     }
   }
 
-  const customProps = customRefsByRole(consumableRefs, "prop");
+  const customProps = consumableCustomRefsByRole(consumableRefs, "prop");
   for (const c of customProps) {
     pushRole(
       "prop",
@@ -216,7 +216,7 @@ export function buildManhuaAssetLockRegistry(opts?: {
     }
   }
 
-  const customWardrobes = customRefsByRole(consumableRefs, "wardrobe");
+  const customWardrobes = consumableCustomRefsByRole(consumableRefs, "wardrobe");
   for (const c of customWardrobes) {
     pushRole(
       "wardrobe",

@@ -43,6 +43,19 @@ export type ManhuaCustomAssetRefDuty =
   | "last_frame"
   | "style";
 
+export type ManhuaCharacterPrimaryDuty = "identity" | "look";
+
+/**
+ * 同一剧本人物、同一参考职责只能有一张当前图。
+ *
+ * 绑定放在候选图自身，随 customAssetRefs 走现有本机／云草稿链；旧稿没有该字段时
+ * 保持原行为。其他候选仍留在资产栏，只是不再进入生成锁。
+ */
+export type ManhuaCharacterPrimaryBinding = {
+  anchorId: string;
+  duty: ManhuaCharacterPrimaryDuty;
+};
+
 export const MANHUA_CUSTOM_ASSET_REF_DUTY_LABEL_ZH: Record<ManhuaCustomAssetRefDuty, string> = {
   identity: "锁脸·大头照",
   look: "锁妆造·全身",
@@ -86,6 +99,10 @@ export type ManhuaCustomAssetRef = {
   sourceHeight?: number;
   /** 视频生成时的参考职责 */
   refDuty?: ManhuaCustomAssetRefDuty | null;
+  /** 用户明确选中的人物当前图；按剧本人物锚点 + 锁脸／妆造职责唯一。 */
+  primaryBindings?: ManhuaCharacterPrimaryBinding[];
+  /** 用户已对该人物/职责做过版本选择；当前图删除后也不退回随机候选。 */
+  primarySelectionScopes?: ManhuaCharacterPrimaryBinding[];
   /**
    * gs:// 对象地址（有则说明 url 是签名读链接，会过期）。
    * 长期引用的资产（如道具拼板切图）必须存这个，取用前用它现签新 url，
@@ -144,9 +161,9 @@ export function countManhuaUnclassifiedCustomAssetRefs(
 
 /** 从资产列表编译【参考职责】注入块（无职责则空串） */
 export function formatCustomAssetRefsDutyBlock(
-  refs: Array<Pick<ManhuaCustomAssetRef, "refDuty" | "labelZh" | "role"> | null | undefined>,
+  refs: ManhuaCustomAssetRef[] | null | undefined,
 ): string {
-  const duties = (refs || [])
+  const duties = consumableManhuaCustomAssetRefs(refs)
     .filter(Boolean)
     .map((r) => {
       const duty = r!.refDuty;
@@ -390,6 +407,31 @@ export function normalizeManhuaCustomAssetRefs(
     ).includes(refDutyRaw as ManhuaCustomAssetRefDuty)
       ? (refDutyRaw as ManhuaCustomAssetRefDuty)
       : null;
+    const finalDuty = parsedDuty || defaultManhuaCustomAssetRefDuty(role);
+    const parsePrimaryBindings = (raw: unknown): ManhuaCharacterPrimaryBinding[] => {
+      if (role !== "character" || (finalDuty !== "identity" && finalDuty !== "look")) {
+        return [] as ManhuaCharacterPrimaryBinding[];
+      }
+      const claimed = new Set(claimedAnchorIds);
+      const seenBindings = new Set<string>();
+      const bindings: ManhuaCharacterPrimaryBinding[] = [];
+      for (const item of Array.isArray(raw) ? raw : []) {
+        if (!item || typeof item !== "object") continue;
+        const anchorId = String((item as { anchorId?: unknown }).anchorId || "")
+          .trim()
+          .slice(0, 120);
+        const duty = String((item as { duty?: unknown }).duty || "");
+        if (!anchorId || !claimed.has(anchorId) || duty !== finalDuty) continue;
+        const key = `${anchorId}:${duty}`;
+        if (seenBindings.has(key)) continue;
+        seenBindings.add(key);
+        bindings.push({ anchorId, duty: duty as ManhuaCharacterPrimaryDuty });
+        if (bindings.length >= 4) break;
+      }
+      return bindings;
+    };
+    const primaryBindings = parsePrimaryBindings(o.primaryBindings);
+    const primarySelectionScopes = parsePrimaryBindings(o.primarySelectionScopes);
     out.push({
       id,
       url,
@@ -405,7 +447,9 @@ export function normalizeManhuaCustomAssetRefs(
       sourceWidth,
       sourceHeight,
       // 未标注时按分栏自动填；手选过的原样保留
-      refDuty: parsedDuty || defaultManhuaCustomAssetRefDuty(role),
+      refDuty: finalDuty,
+      primaryBindings,
+      primarySelectionScopes,
       tileUrls: parseSceneTileUrls((o as { tileUrls?: unknown }).tileUrls),
       gcsUri: /^gs:\/\//i.test(String(o.gcsUri || "")) ? String(o.gcsUri).trim() : undefined,
       model3d: normalizeManhuaAsset3dRef((o as { model3d?: unknown }).model3d),
@@ -413,6 +457,131 @@ export function normalizeManhuaCustomAssetRefs(
     if (out.length >= max) break;
   }
   return out;
+}
+
+function primaryBindingKey(binding: ManhuaCharacterPrimaryBinding): string {
+  return `${binding.anchorId}:${binding.duty}`;
+}
+
+/**
+ * 用户把一张候选设为当前图：同人物、同职责的旧当前图自动退回候选，不删除图片。
+ */
+export function selectManhuaCharacterPrimaryRef(
+  refs: ManhuaCustomAssetRef[] | null | undefined,
+  input: {
+    refId: string;
+    anchorId: string;
+    duty: ManhuaCharacterPrimaryDuty;
+    /** UI 以剧本锚点匹配出的同人物、同职责候选，防止未显式认领的旧图漏筛。 */
+    groupRefIds?: string[];
+  },
+): ManhuaCustomAssetRef[] {
+  const list = normalizeManhuaCustomAssetRefs(refs);
+  const refId = String(input.refId || "").trim();
+  const anchorId = String(input.anchorId || "").trim().slice(0, 120);
+  const target = list.find((ref) => ref.id === refId);
+  if (
+    !target ||
+    target.role !== "character" ||
+    target.reviewStatus === "needs_review" ||
+    !anchorId ||
+    target.refDuty !== input.duty
+  ) {
+    return list;
+  }
+  const key = `${anchorId}:${input.duty}`;
+  const groupRefIds = new Set([
+    refId,
+    ...(input.groupRefIds || []).map((id) => String(id || "").trim()).filter(Boolean),
+  ]);
+  return normalizeManhuaCustomAssetRefs(
+    list.map((ref) => {
+      const primaryBindings = (ref.primaryBindings || []).filter(
+        (binding) => primaryBindingKey(binding) !== key,
+      );
+      const belongsToGroup =
+        ref.role === "character" &&
+        ref.refDuty === input.duty &&
+        (groupRefIds.has(ref.id) ||
+          (ref.claimedAnchorIds || []).includes(anchorId) ||
+          (ref.primaryBindings || []).some((binding) => primaryBindingKey(binding) === key) ||
+          (ref.primarySelectionScopes || []).some(
+            (binding) => primaryBindingKey(binding) === key,
+          ));
+      if (!belongsToGroup) return { ...ref, primaryBindings };
+      const claimedAnchorIds = Array.from(
+        new Set([...(ref.claimedAnchorIds || []), anchorId]),
+      ).slice(0, 24);
+      const primarySelectionScopes = [
+        ...(ref.primarySelectionScopes || []).filter(
+          (binding) => primaryBindingKey(binding) !== key,
+        ),
+        { anchorId, duty: input.duty },
+      ];
+      return {
+        ...ref,
+        claimedAnchorIds,
+        claimSource: "manual" as const,
+        primarySelectionScopes,
+        primaryBindings:
+          ref.id === refId
+            ? [...primaryBindings, { anchorId, duty: input.duty }]
+            : primaryBindings,
+      };
+    }),
+  );
+}
+
+export function findManhuaCharacterPrimaryRefId(
+  refs: ManhuaCustomAssetRef[] | null | undefined,
+  input: { anchorId: string; duty: ManhuaCharacterPrimaryDuty },
+): string | null {
+  const key = `${String(input.anchorId || "").trim()}:${input.duty}`;
+  for (const ref of normalizeManhuaCustomAssetRefs(refs)) {
+    if ((ref.primaryBindings || []).some((binding) => primaryBindingKey(binding) === key)) {
+      return ref.id;
+    }
+  }
+  return null;
+}
+
+/**
+ * 只影响生成消费者：UI 仍拿完整数组展示全部候选。
+ * 没有任何显式当前图的旧稿不做静默筛选。
+ */
+export function consumableManhuaCustomAssetRefs(
+  refs: ManhuaCustomAssetRef[] | null | undefined,
+): ManhuaCustomAssetRef[] {
+  const list = normalizeManhuaCustomAssetRefs(refs);
+  const primaryByKey = new Map<string, string>();
+  const explicitSelectionKeys = new Set<string>();
+  for (const ref of list) {
+    for (const binding of ref.primaryBindings || []) {
+      const key = primaryBindingKey(binding);
+      if (!primaryByKey.has(key)) primaryByKey.set(key, ref.id);
+      explicitSelectionKeys.add(key);
+    }
+    for (const binding of ref.primarySelectionScopes || []) {
+      explicitSelectionKeys.add(primaryBindingKey(binding));
+    }
+  }
+  if (!explicitSelectionKeys.size) return list;
+  return list.filter((ref) => {
+    if (
+      ref.role !== "character" ||
+      (ref.refDuty !== "identity" && ref.refDuty !== "look") ||
+      !(ref.claimedAnchorIds || []).length
+    ) {
+      return true;
+    }
+    const controlledKeys = (ref.claimedAnchorIds || [])
+      .map((anchorId) => `${anchorId}:${ref.refDuty}`)
+      .filter((key) => explicitSelectionKeys.has(key));
+    if (!controlledKeys.length) return true;
+    return controlledKeys.some(
+      (key) => primaryByKey.has(key) && primaryByKey.get(key) === ref.id,
+    );
+  });
 }
 
 /** 基于库参考生成「新」资产图的提示（库只作气质/环境参考，禁止复刻同一张） */
@@ -471,10 +640,20 @@ export function customRefsByRole(
   return taggedManhuaCustomAssetRefs(refs).filter((r) => r.role === role);
 }
 
+/** 生成链专用：同一人物/职责存在显式当前图时，只返回当前图。 */
+export function consumableCustomRefsByRole(
+  refs: ManhuaCustomAssetRef[] | null | undefined,
+  role: ManhuaCustomAssetRole,
+): Array<ManhuaCustomAssetRef & { role: ManhuaCustomAssetRole }> {
+  return consumableManhuaCustomAssetRefs(refs).filter(
+    (r): r is ManhuaCustomAssetRef & { role: ManhuaCustomAssetRole } => r.role === role,
+  );
+}
+
 export function hasCustomCastAndScene(
   refs: ManhuaCustomAssetRef[] | null | undefined,
 ): boolean {
-  const tagged = taggedManhuaCustomAssetRefs(refs);
+  const tagged = consumableManhuaCustomAssetRefs(refs);
   return (
     tagged.some((r) => r.role === "character") && tagged.some((r) => r.role === "scene")
   );

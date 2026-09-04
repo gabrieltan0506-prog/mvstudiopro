@@ -143,6 +143,36 @@ describe("manhuaKeyartEditFusion", () => {
     expect(plan.refs.some((r) => r.path.includes("ignore.jpg"))).toBe(false);
   });
 
+  it("只把用户选中的当前锁脸图送入融图，候选仍可留在资产库", () => {
+    const plan = planManhuaKeyartEditFusion({
+      customRefs: [
+        {
+          id: "heiqi-old",
+          url: "https://cdn.example/heiqi-old.jpg",
+          role: "character",
+          source: "upload",
+          refDuty: "identity",
+          claimedAnchorIds: ["wa_char_heiqi"],
+        },
+        {
+          id: "heiqi-current",
+          url: "https://cdn.example/heiqi-current.jpg",
+          role: "character",
+          source: "upload",
+          refDuty: "identity",
+          claimedAnchorIds: ["wa_char_heiqi"],
+          primaryBindings: [{ anchorId: "wa_char_heiqi", duty: "identity" }],
+        },
+      ],
+    });
+    expect(plan.refs.map((ref) => ref.path)).toContain(
+      "https://cdn.example/heiqi-current.jpg",
+    );
+    expect(plan.refs.map((ref) => ref.path)).not.toContain(
+      "https://cdn.example/heiqi-old.jpg",
+    );
+  });
+
   it("ancient lane keeps hard lock with custom cast and never uses modern character as edit base", () => {
     const plan = planManhuaKeyartEditFusion({
       ancientArchetypeIds: ["arch_phoenix_empress"],

@@ -73,6 +73,46 @@ describe("manhuaAssetLockRegistry", () => {
     expect(reg.byRole.character[0]?.tag).toBe("@角色1");
   });
 
+  it("同角色多张候选只把显式当前图编入 @角色，另一职责仍可并存", () => {
+    const reg = buildManhuaAssetLockRegistry({
+      customRefs: [
+        {
+          id: "heiqi-old",
+          url: "https://cdn.example/heiqi-old.png",
+          role: "character",
+          source: "upload",
+          labelZh: "黑奇",
+          refDuty: "identity",
+          claimedAnchorIds: ["wa_char_heiqi"],
+        },
+        {
+          id: "heiqi-current",
+          url: "https://cdn.example/heiqi-current.png",
+          role: "character",
+          source: "generated",
+          labelZh: "黑奇",
+          refDuty: "identity",
+          claimedAnchorIds: ["wa_char_heiqi"],
+          primaryBindings: [{ anchorId: "wa_char_heiqi", duty: "identity" }],
+        },
+        {
+          id: "heiqi-look",
+          url: "https://cdn.example/heiqi-look.png",
+          role: "character",
+          source: "generated",
+          labelZh: "黑奇",
+          refDuty: "look",
+          claimedAnchorIds: ["wa_char_heiqi"],
+        },
+      ],
+    });
+    expect(reg.byRole.character.map((slot) => slot.id)).toEqual([
+      "heiqi-current",
+      "heiqi-look",
+    ]);
+    expect(reg.promptBlockZh).not.toContain("heiqi-old");
+  });
+
   it("stamps @ tags onto canvas asset sheet prompts", () => {
     const stamped = assignManhuaCanvasAssetAtTags([
       { id: "charsheet-hero", prompt: "女主定妆" },

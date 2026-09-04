@@ -102,6 +102,10 @@ describe("manhuaWriterSession", () => {
           url: "https://cdn.example/a.jpg",
           role: "character",
           source: "upload",
+          refDuty: "identity",
+          claimedAnchorIds: ["wa_char_a"],
+          primaryBindings: [{ anchorId: "wa_char_a", duty: "identity" }],
+          primarySelectionScopes: [{ anchorId: "wa_char_a", duty: "identity" }],
         },
         {
           id: "cust_b",
@@ -115,6 +119,12 @@ describe("manhuaWriterSession", () => {
     });
     expect(session.customAssetRefs).toHaveLength(2);
     expect(session.customAssetRefs[0]?.role).toBe("character");
+    expect(session.customAssetRefs[0]?.primaryBindings).toEqual([
+      { anchorId: "wa_char_a", duty: "identity" },
+    ]);
+    expect(session.customAssetRefs[0]?.primarySelectionScopes).toEqual([
+      { anchorId: "wa_char_a", duty: "identity" },
+    ]);
     expect(session.customAssetRefs[1]?.seedLibraryId).toBe("scene_04");
   });
 
