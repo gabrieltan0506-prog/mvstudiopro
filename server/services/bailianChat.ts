@@ -33,7 +33,10 @@ export type GlmGatewayName =
   | "evolink_glm"
   | "openrouter"
   | "plan_sg_qwen"
-  | "evolink_qwen";
+  | "evolink_qwen"
+  /** 0905 整形专用链（30 分钟逐档切换）：GLM 两档都超时才换 Qwen——北京套餐 → 新加坡套餐 → OpenRouter Qwen。 */
+  | "plan_bj_qwen"
+  | "openrouter_qwen";
 
 /** OpenRouter 档模型 id。 */
 export const OPENROUTER_GLM_MODEL = "z-ai/glm-5.3";
@@ -95,6 +98,12 @@ export const GLM_MODEL_GATEWAYS: ReadonlySet<GlmGatewayName> = new Set<GlmGatewa
 ]);
 /** 末档兜底:GLM 全线不可用时换 Qwen3.8-Max(Wan official 百炼直连 → EvoLink,与扩写链同 id) */
 export const GLM_CHAIN_FALLBACK_MODEL = "qwen3.8-max";
+/** OpenRouter 上的 Qwen3.8-Max id（整形链末档）。 */
+export const OPENROUTER_QWEN_MODEL = "qwen/qwen3.8-max";
+/** 0905 整形专用链的固定顺序；只有 gatewayPolicy="structuring_chain" 才会用到两个新档。 */
+export const STRUCTURING_CHAIN_GATEWAYS: readonly GlmGatewayName[] = [
+  "evolink_glm", "openrouter", "plan_bj_qwen", "plan_sg_qwen", "openrouter_qwen",
+];
 
 export type BailianChatResponse = {
   choices?: Array<{ message?: { content?: unknown }; finish_reason?: string | null }>;
@@ -190,7 +199,7 @@ export type GlmParams = {
    * 只在 GLM-5.3 的两档之间降级，绝不静默换成 Qwen（换模型＝换产出口径）。
    * `openrouter_only` 是 0829 改线前的旧名，语义等同 `glm_only`，保留给存量调用方。
    */
-  gatewayPolicy?: "fallback" | "glm_only" | "openrouter_only" | "qwen_only";
+  gatewayPolicy?: "fallback" | "glm_only" | "openrouter_only" | "qwen_only" | "structuring_chain";
   /**
    * 正式多 JSON 整形的首选 GLM 通道。只改变两档的首发顺序；首选档失败后仍会
    * 自动切到另一条 GLM 通道，绝不因为这个字段换成 Qwen。
@@ -289,13 +298,7 @@ async function acquireGlmGatewayLease(
 export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): Promise<GlmChatSuccess> {
   const trace: GlmGatewayTraceEntry[] = [];
   let accumulatedUsage = emptyGlmGatewayUsage();
-  const configuredGateways: Array<{
-    name: GlmGatewayName;
-    model: string;
-    ready: boolean;
-    url: string;
-    key: string;
-  }> = [
+  const configuredGateways: Array<{ name: GlmGatewayName; model: string; ready: boolean; url: string; key: string; structuringOnly?: boolean }> = [
     {
       // 主档:EvoLink GLM-5.3(0829 晚用户拍板改线,原话「GLM5.3 改用 evolink 优先,
       // fallback 再走 open router」)。上线状态当日 Fly 内 /v1/models 实测确认。
@@ -330,17 +333,40 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
       url: "https://api.evolink.ai/v1/chat/completions",
       key: String(process.env.EVOLINK_API_KEY || "").trim(),
     },
+    {
+      // 0905 整形链专用：北京 Token Plan（与对白 TTS 同一把 WAN_PLAN_API_KEY），只走套餐域不走官方直连
+      name: "plan_bj_qwen",
+      model: GLM_CHAIN_FALLBACK_MODEL,
+      ready: Boolean(String(process.env.WAN_PLAN_API_KEY || "").trim()),
+      url: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions",
+      key: String(process.env.WAN_PLAN_API_KEY || "").trim(),
+      structuringOnly: true,
+    },
+    {
+      // 0905 整形链末档：OpenRouter 上的 Qwen3.8-Max
+      name: "openrouter_qwen",
+      model: OPENROUTER_QWEN_MODEL,
+      ready: Boolean(String(process.env.OPENROUTER_API_KEY || "").trim()),
+      url: "https://openrouter.ai/api/v1/chat/completions",
+      key: String(process.env.OPENROUTER_API_KEY || "").trim(),
+      structuringOnly: true,
+    },
   ];
   // 🔒 按网关名筛选，不用 slice 下标——0829 改线把 EvoLink GLM 插到第一位，
   // 旧的 slice(0,1) 会在改序后静默选错一档（下标依赖是改序时最容易漏的雷）。
   const glmOnly = params.gatewayPolicy === "glm_only"
     || params.gatewayPolicy === "openrouter_only";
   const qwenOnly = params.gatewayPolicy === "qwen_only";
-  const eligibleGateways = glmOnly
-    ? configuredGateways.filter((g) => GLM_MODEL_GATEWAYS.has(g.name))
-    : qwenOnly
-      ? configuredGateways.filter((g) => !GLM_MODEL_GATEWAYS.has(g.name))
-      : configuredGateways;
+  const structuringChain = params.gatewayPolicy === "structuring_chain";
+  // 两个整形专用档只在 structuring_chain 里出现，其他策略的链序与历史逐字相同
+  const generalGateways = configuredGateways.filter((g) => !g.structuringOnly);
+  const eligibleGateways = structuringChain
+    ? STRUCTURING_CHAIN_GATEWAYS.flatMap((name) => configuredGateways.filter((g) => g.name === name))
+    : glmOnly
+      ? generalGateways.filter((g) => GLM_MODEL_GATEWAYS.has(g.name))
+      : qwenOnly
+        ? generalGateways.filter((g) => !GLM_MODEL_GATEWAYS.has(g.name))
+        : generalGateways;
   const preferred = params.preferredGlmGateway;
   const gateways = preferred
     ? [
@@ -611,7 +637,10 @@ async function invokeOneGlmGateway(
   const timeoutMs = Math.max(1_000, Math.min(perGatewayMs, remainMs));
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const signal = params.abortSignal ? AbortSignal.any([params.abortSignal, timeoutSignal]) : timeoutSignal;
-  const budget = Math.max(8_192, Math.min(131_072, Math.floor(Number(params.maxTokens) || 65_536)));
+  // 输出上限按网关夹紧（0905 用户令整形链 262K）：GLM-5.3 两档 262,144（OpenRouter Z.AI 原生档实测），
+  // Qwen 三档 131,072（qwen3.8-max 公开上限）；超发会被百炼按参数越界拒掉，白跳一档。
+  const gatewayMaxOutput = GLM_MODEL_GATEWAYS.has(gateway) ? 262_144 : 131_072;
+  const budget = Math.max(8_192, Math.min(gatewayMaxOutput, Math.floor(Number(params.maxTokens) || 65_536)));
   const body: Record<string, unknown> = {
     model,
     response_format: { type: "json_object" },
@@ -646,11 +675,15 @@ async function invokeOneGlmGateway(
     body.enable_thinking = true;
     body.reasoning_effort = "xhigh";
     body.max_completion_tokens = budget;
-  } else if (gateway === "plan_sg_qwen") {
-    // DashScope compatible-mode Qwen(含新加坡 Token Plan):只认 enable_thinking
+  } else if (gateway === "plan_sg_qwen" || gateway === "plan_bj_qwen") {
+    // DashScope compatible-mode Qwen(含新加坡/北京 Token Plan):只认 enable_thinking
     // (不认 reasoning_effort),预算走 max_tokens——七审第4条:换档时这条分支键漏改过
     body.enable_thinking = true;
     body.max_tokens = budget;
+  } else if (gateway === "openrouter_qwen") {
+    // OpenRouter 上的 Qwen3.8-Max：思考走 reasoning.enabled，预算走 max_tokens；不钉 provider
+    body.max_tokens = budget;
+    body.reasoning = { enabled: true };
   } else {
     body.max_tokens = budget;
     // 🔒 思考档位必须显式传：GLM-5.3 强制思考，思考与正文共吃同一个 max_tokens。

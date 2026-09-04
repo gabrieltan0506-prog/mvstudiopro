@@ -63,6 +63,7 @@ import {
   GLM_MODEL_GATEWAYS,
   GlmGatewayError,
   OPENROUTER_GLM_MODEL,
+  STRUCTURING_CHAIN_GATEWAYS,
   invokeGlmJsonChatWithGatewayFallback,
 } from "./bailianChat.js";
 import type { GlmGatewayName } from "./bailianChat.js";
@@ -1423,7 +1424,8 @@ export function nativeDeepReadFrozenContractSha256(): string {
 
 /** 修改冻结项必须由用户在当前任务重新授权；禁止只更新这个摘要让测试变绿。
  * 0903 更新授权：用户拍板读片双模型（3.1 Pro / 3.8 Flash 面板可选），冻结集合随之换代。 */
-export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "e1050cfd8393b5b4062c158e32fec9ed25f0d2f24b2739920f3dbf225e3f1cf8" as const;
+/** 0905 用户重新授权：整形链改五档逐档 30 分钟切换 + maxTokens 262K，冻结集合随之换代（只作废整形批次缓存，不动读片分片缓存）。 */
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "b05ae90e4c8535ec9f06359fb1c11bbe11b17651e3aad00d9ad39066faff641d" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
   const actual = nativeDeepReadFrozenContractSha256();
@@ -3690,7 +3692,26 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE = "openrouter_glm_structurin
  * completed/failed 回执一律记 `structured.model` 真值，不用本常量。
  */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`;
-const GLM_STRUCTURING_MAX_TOKENS = 131_072;
+/** 开始/失败回执的人话链路标签（0905：用户看了几百次「z-ai/glm-5.3」以为一直走 OpenRouter）。 */
+export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 EvoLink → OpenRouter → Qwen 北京 → 新加坡 → OpenRouter（每档 30 分钟）";
+/** 完成回执按实际网关写人话名，面板一眼看出这一发走的是哪家。 */
+/** 整形链可接受的网关集合（缓存校验与通道锁共用）。 */
+export const STRUCTURING_GATEWAYS: ReadonlySet<string> = new Set<string>([
+  ...Array.from(GLM_MODEL_GATEWAYS), ...STRUCTURING_CHAIN_GATEWAYS,
+]);
+export function glmGatewayDisplayLabel(gateway: string): string {
+  switch (gateway) {
+    case "evolink_glm": return "EvoLink";
+    case "openrouter": return "OpenRouter";
+    case "plan_bj_qwen": return "Qwen北京套餐";
+    case "plan_sg_qwen": return "Qwen新加坡套餐";
+    case "openrouter_qwen": return "OpenRouter-Qwen";
+    case "evolink_qwen": return "EvoLink-Qwen";
+    default: return gateway || "未知网关";
+  }
+}
+/** 0905 用户令：全部 262K（OpenRouter Z.AI 原生档实测上限 262,144；EvoLink 若不吃会 4xx 落到下一档）。 */
+const GLM_STRUCTURING_MAX_TOKENS = 262_144;
 /**
  * 🔒 整形链采样温度（0829 晚用户拍板 0.8）。
  * 不传＝EvoLink 默认 1.0（太飘）；0.2 又太死板，会变成照抄不敢取舍——
@@ -3713,15 +3734,16 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE = 0.8;
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT = MANHUA_NATIVE_GLM_REASONING_EFFORT;
 /** 四个 300 秒分片的真实组装曾在 12 分钟边界被本地中止；只放宽等待，不自动重提。 */
 // 0829 曾放宽到 6 小时（15 分钟硬顶曾在 900,005ms 掐断成 network_error）。
-// 0905 用户令改 40 分钟：6 小时意味着 GLM 一挂任务就 running 到天亮；
-// 实测慢发在 9–21 分钟量级，超过 40 分钟按失败走本地确定性整形兜底，不重读片。
-const GLM_STRUCTURING_TIMEOUT_MS = 40 * 60_000;
+// 0905 用户令：**每一档 30 分钟**，超时自动切下一档——
+// EvoLink GLM → OpenRouter GLM → Qwen 北京套餐 → Qwen 新加坡套餐 → OpenRouter Qwen；
+// 五档全失败才走本地确定性整形兜底，不重读片。
+const GLM_STRUCTURING_TIMEOUT_MS = 30 * 60_000;
 const OPENROUTER_USD_TO_CNY_EQUIVALENT = 7.2;
 
 /** GLM结构化的完整冻结参数；调用方只能由调度器指定首选通道，不能覆盖这些值。 */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG = deepFreezeNativeContract({
   maxTokens: GLM_STRUCTURING_MAX_TOKENS,
-  gatewayPolicy: "glm_only" as const,
+  gatewayPolicy: "structuring_chain" as const,
   timeoutMs: GLM_STRUCTURING_TIMEOUT_MS,
   temperature: NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE,
   reasoningEffort: NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT,
@@ -4075,7 +4097,7 @@ export async function readNativeDeepReadStructuredBatchCache(input: {
     || parsed.inputDigest !== inputDigest
     || JSON.stringify(parsed.segmentIndexes) !== JSON.stringify(input.segmentIndexes)
     || !parsed.raw || typeof parsed.raw !== "object" || Array.isArray(parsed.raw)
-    || !GLM_MODEL_GATEWAYS.has(parsed.gateway)
+    || !STRUCTURING_GATEWAYS.has(parsed.gateway)
   ) throw new Error("整形批次缓存身份或契约不一致，停止复用");
   return parsed;
 }
@@ -4087,7 +4109,7 @@ export async function writeNativeDeepReadStructuredBatchCache(
     entry.schemaVersion !== 1
     || entry.frozenContractSha256 !== NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256
     || !entry.raw || typeof entry.raw !== "object" || Array.isArray(entry.raw)
-    || !GLM_MODEL_GATEWAYS.has(entry.gateway)
+    || !STRUCTURING_GATEWAYS.has(entry.gateway)
     || !Number.isFinite(entry.inputTokens) || entry.inputTokens < 0
     || !Number.isFinite(entry.outputTokens) || entry.outputTokens < 0
     || !Number.isFinite(entry.reasoningTokens) || entry.reasoningTokens < 0
@@ -4171,9 +4193,8 @@ export async function invokeNativeDeepReadGlmStructuring(
       raw = parseJsonObject(content);
     },
   });
-  // 通道锁：只接受仍然是 GLM-5.3 的两档（EvoLink / OpenRouter）。
-  // 判据复用 bailianChat 的单一真源集合，不在这里再写一遍网关名。
-  if (!GLM_MODEL_GATEWAYS.has(response.gateway) || !raw) {
+  // 通道锁：只接受整形链五档（GLM 两档 + Qwen 三档）；判据复用 bailianChat 的单一真源。
+  if (!STRUCTURING_GATEWAYS.has(response.gateway) || !raw) {
     throw new Error("GLM 结构化整形通道锁失效或未返回 JSON");
   }
   const result: NativeDeepReadGlmStructuringResult = {
@@ -5751,6 +5772,8 @@ async function executeNativeDeepReadBatch(
         videoCount: number;
         segmentIndexes: readonly number[];
         rows: ReadonlyArray<Record<string, unknown>>;
+        /** 面板标签：批次整形 / 最终归并，让用户看得出是第几次 */
+        labelZh?: string;
       }): Promise<NativeDeepReadGlmStructuringResult> => {
         const callId = canCacheStructuring
           ? nativeDeepReadStructuredBatchCallId({
@@ -5767,13 +5790,15 @@ async function executeNativeDeepReadBatch(
           const now = Date.now();
           await emitVisualModelReceipt({
             callId,
-            model: NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL,
+            // 0905：开始行明说链路顺序；完成/失败行改记实际网关，面板不再把 EvoLink 显示成 OpenRouter
+            model: NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL,
             route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
             stage: "visual_parse",
             status: "started",
             batchRequestId: episodeRequestId,
             episodeIndexes: [episode.episodeIndex],
             videoCount: input.videoCount,
+            labelZh: input.labelZh,
           }, params.onModelReceipt);
           startedAt = now;
         };
@@ -5804,13 +5829,14 @@ async function executeNativeDeepReadBatch(
           episodeCost += structuringCostCny;
           await emitVisualModelReceipt({
             callId,
-            model: structured.model,
+            model: `${glmGatewayDisplayLabel(structured.gateway)}·${structured.model}`,
             route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
             stage: "visual_parse",
             status: "completed",
             batchRequestId: episodeRequestId,
             episodeIndexes: [episode.episodeIndex],
             videoCount: input.videoCount,
+            labelZh: input.labelZh,
             elapsedMs: Date.now() - startedAt!,
             inputTokens: structured.inputTokens,
             outputTokens: structured.outputTokens,
@@ -5842,13 +5868,14 @@ async function executeNativeDeepReadBatch(
           }
           await emitVisualModelReceipt({
             callId,
-            model: NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL,
+            model: NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL,
             route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
             stage: "visual_parse",
             status: "failed",
             batchRequestId: episodeRequestId,
             episodeIndexes: [episode.episodeIndex],
             videoCount: input.videoCount,
+            labelZh: input.labelZh,
             elapsedMs: Date.now() - startedAt,
             inputTokens: failedUsage?.inputTokens || undefined,
             outputTokens: failedUsage?.outputTokens || undefined,
@@ -5906,6 +5933,7 @@ async function executeNativeDeepReadBatch(
             videoCount: input.videoCount,
             segmentIndexes: input.segmentIndexes,
             rows: input.rows,
+            labelZh: input.labelZh,
           });
         } catch (error) {
           // 只有“两条供应商都没有交付可消费结果”才能走本地整形。
@@ -5997,7 +6025,7 @@ async function executeNativeDeepReadBatch(
             segmentIndexes: allSegmentIndexes,
             rows: glmStructuringInputs,
             fallbackRows: annotateSegmentRows(),
-            labelZh: `第${episode.episodeIndex}集整集整形`,
+            labelZh: `第${episode.episodeIndex}集整集整形（一次）`,
           });
           result.raw = unwrapNativeDeepReadStructuredAnswerEnvelope(result.raw);
           assertNativeDeepReadShotObservationsPreserved(glmStructuringInputs, result.raw);
@@ -6069,7 +6097,7 @@ async function executeNativeDeepReadBatch(
           segmentIndexes: allSegmentIndexes,
           rows: groupRows,
           fallbackRows: groupRows,
-          labelZh: `第${episode.episodeIndex}集最终整形`,
+          labelZh: `第${episode.episodeIndex}集最终归并`,
         });
         finalResult.raw = unwrapNativeDeepReadStructuredAnswerEnvelope(finalResult.raw);
         assertNativeDeepReadShotObservationsPreserved(groupRows, finalResult.raw);
