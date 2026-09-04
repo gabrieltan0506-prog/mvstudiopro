@@ -2679,7 +2679,7 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
     expect(receipts.some((row) => row.route === "gate_retry_pending")).toBe(false);
   });
 
-  it("资源拥堵在当前温度最多重试3次，第3次仍失败就停止", async () => {
+  it("资源拥堵在当前温度最多重试4次（0904 用户令），第4次仍失败就停止", async () => {
     const overloaded = Object.assign(new Error("RESOURCE_EXHAUSTED"), { nativeDeepReadHttpStatus: 503 });
     const postVertex = vi.fn(async (_body: any) => { throw overloaded; });
     const receipts: Array<Record<string, unknown>> = [];
@@ -2688,13 +2688,17 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
       ...selectedParams([3]),
       onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
     }, deps)).rejects.toThrow("RESOURCE_EXHAUSTED");
-    expect(postVertex).toHaveBeenCalledTimes(4);
+    // 首发 1 次 + 资源重试 4 次 = 5 次调用，全程不降温
+    expect(postVertex).toHaveBeenCalledTimes(5);
     expect(postVertex.mock.calls.map(([body]) => body.generationConfig.temperature))
-      .toEqual([0.7, 0.7, 0.7, 0.7]);
-    expect(deps.waitForRetry).toHaveBeenCalledTimes(3);
+      .toEqual([0.7, 0.7, 0.7, 0.7, 0.7]);
+    expect(deps.waitForRetry).toHaveBeenCalledTimes(4);
+    // 退避间隔走 503 专用的 30 秒线，不是门禁降温那条 60 秒线
+    expect(vi.mocked(deps.waitForRetry).mock.calls.map(([ms]) => ms))
+      .toEqual([30_000, 30_000, 30_000, 30_000]);
     const resourceRetries = receipts.filter((row) => row.route === "resource_retry_pending");
     expect(resourceRetries.map((row) => [row.resourceRetryNumber, row.resourceRetryMax]))
-      .toEqual([[1, 3], [2, 3], [3, 3]]);
+      .toEqual([[1, 4], [2, 4], [3, 4], [4, 4]]);
     expect(receipts.some((row) => row.route === "gate_retry_pending")).toBe(false);
   });
 
@@ -2824,7 +2828,7 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
 });
 
 describe("Vertex 主线：每段一次调用（不再多段合包）", () => {
-  it("调用方即使传入16并发，分片模型扇出也不超过5", async () => {
+  it("调用方即使传入16并发，分片模型扇出也不超过4（0904 用户令由 5 降到 4）", async () => {
     const segments = Array.from({ length: 6 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
     let active = 0;
     let peak = 0;
@@ -2833,7 +2837,7 @@ describe("Vertex 主线：每段一次调用（不再多段合包）", () => {
     const postVertex = vi.fn(async (body: unknown) => {
       active += 1;
       peak = Math.max(peak, active);
-      if (postVertex.mock.calls.length <= 5) await firstWave;
+      if (postVertex.mock.calls.length <= 4) await firstWave;
       const fileUri = (body as {
         contents: Array<{ parts: Array<{ fileData?: { fileUri: string } }> }>;
       }).contents[0]!.parts[0]!.fileData!.fileUri;
@@ -2846,12 +2850,12 @@ describe("Vertex 主线：每段一次调用（不再多段合包）", () => {
       episodes: [{ ...twoSegmentEpisode, segments, sourceDurationSec: 360 }],
       segmentModelConcurrency: 16,
     }, deps);
-    await vi.waitFor(() => expect(postVertex).toHaveBeenCalledTimes(5));
-    expect(peak).toBe(5);
+    await vi.waitFor(() => expect(postVertex).toHaveBeenCalledTimes(4));
+    expect(peak).toBe(4);
     releaseFirstWave();
     await running;
     expect(postVertex).toHaveBeenCalledTimes(6);
-    expect(peak).toBe(5);
+    expect(peak).toBe(4);
   });
 
   it("单集入口319秒/12fps穿透首发、重试、尾片、提示词与段缓存指纹", async () => {

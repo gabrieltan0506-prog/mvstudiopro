@@ -6,20 +6,23 @@ import {
 
 const zeroSleep = async () => undefined;
 
-describe("flash 走 Gemini API key 开关", () => {
+describe("flash 走 Gemini API key 开关（0904 已停用）", () => {
   const saved = { flag: process.env.MANHUA_FLASH_READ_VIA_GEMINI_API, key: process.env.GEMINI_API_KEY };
   afterEach(() => {
     process.env.MANHUA_FLASH_READ_VIA_GEMINI_API = saved.flag ?? "";
     process.env.GEMINI_API_KEY = saved.key ?? "";
   });
-  it("开关与钥匙都在才开；缺一即关（回旧 Vertex 行为）", () => {
+  it("开关与钥匙都在也恒为 false——读片一律走 Vertex", () => {
     process.env.MANHUA_FLASH_READ_VIA_GEMINI_API = "1";
     process.env.GEMINI_API_KEY = "k";
-    expect(isFlashReadViaGeminiApiEnabled()).toBe(true);
-    process.env.GEMINI_API_KEY = "";
     expect(isFlashReadViaGeminiApiEnabled()).toBe(false);
+  });
+  it("开关缺失同样为 false", () => {
     process.env.MANHUA_FLASH_READ_VIA_GEMINI_API = "";
     process.env.GEMINI_API_KEY = "k";
+    expect(isFlashReadViaGeminiApiEnabled()).toBe(false);
+    process.env.MANHUA_FLASH_READ_VIA_GEMINI_API = "1";
+    process.env.GEMINI_API_KEY = "";
     expect(isFlashReadViaGeminiApiEnabled()).toBe(false);
   });
 });

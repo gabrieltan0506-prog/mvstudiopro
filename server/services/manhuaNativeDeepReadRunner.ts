@@ -124,9 +124,12 @@ export const NATIVE_DEEP_READ_ROUTE_VERTEX = "vertex_gcs_video" as const;
  */
 export const NATIVE_DEEP_READ_ROUTE_EVOLINK = "evolink_gemini_video" as const;
 /**
- * 0904：flash 主线改走 Gemini API key（generativelanguage）。Vertex 上 3.8 flash
- * 无固定配额（纯动态共享池，挤时 503），AI Studio Tier1 有 1000 RPM/200 万 TPM 真容量。
- * gs:// 只有 Vertex 认，本路由用 Files API 的 files/xxx URI（48 小时自动过期，无需清理）。
+ * ⛔ 0904 晚已停用（用户令：读片全部走 Vertex）。
+ * 曾于 0904 早把 flash 主线切到 Gemini API key（generativelanguage + Files API）。
+ * 停用原因：Vertex 与 AI Studio 两套配额、限流与错误语义不一致，同一集在两条路由上
+ * 表现不同，断点续跑还会跨路由，学习稳定性反而变差。
+ * 常量与下方实现保留，仅供历史数据识别与将来经用户授权后回退；`isFlashReadViaGeminiApiEnabled`
+ * 恒为 false，生产不会再产生该路由的新分片。
  */
 export const NATIVE_DEEP_READ_ROUTE_GEMINI_API = "gemini_api_files_video" as const;
 export type NativeDeepReadVisualRoute =
@@ -134,10 +137,23 @@ export type NativeDeepReadVisualRoute =
   | typeof NATIVE_DEEP_READ_ROUTE_EVOLINK
   | typeof NATIVE_DEEP_READ_ROUTE_GEMINI_API;
 
-/** 生产开关：MANHUA_FLASH_READ_VIA_GEMINI_API=1 且配了 GEMINI_API_KEY 才生效；只影响 flash 读片。 */
+/**
+ * 0904 用户令：**读片全部走 Vertex**，flash 不再走 Gemini API key。
+ * 两条路由分流后学习不稳定（同一集在 Vertex/AI Studio 两套配额与限流下表现不一致，
+ * 断点续跑还会跨路由），因此收敛为单主线：Vertex 直读 gs://，EvoLink 仍作降级兜底。
+ * 本函数恒为 false；`MANHUA_FLASH_READ_VIA_GEMINI_API` 已失效，设了也不生效（下方会告警一次）。
+ * 要恢复双路由必须用户重新授权，不得靠改环境变量私自打开。
+ */
+let warnedFlashGeminiApiRetired = false;
 export function isFlashReadViaGeminiApiEnabled(): boolean {
-  return String(process.env.MANHUA_FLASH_READ_VIA_GEMINI_API || "").trim() === "1"
-    && Boolean(String(process.env.GEMINI_API_KEY || "").trim());
+  if (!warnedFlashGeminiApiRetired
+    && String(process.env.MANHUA_FLASH_READ_VIA_GEMINI_API || "").trim() === "1") {
+    warnedFlashGeminiApiRetired = true;
+    console.warn(
+      "[nativeDeepRead] MANHUA_FLASH_READ_VIA_GEMINI_API 已于 0904 停用：读片一律走 Vertex，该开关被忽略。",
+    );
+  }
+  return false;
 }
 
 function resolveGeminiApiBaseUrl(): string {
@@ -688,9 +704,16 @@ export const NATIVE_DEEP_READ_REQUIRED_RETRY_CODES: ReadonlySet<string> = new Se
   "audio_timeline_invalid",
 ]);
 
+/** 门禁未过的降温重试间隔（进契约 SHA 与请求指纹，非用户明令不得改）。 */
 export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 60_000;
-/** 503/429/RESOURCE_EXHAUSTED 不降温；原档每隔一分钟最多补发三次。 */
-export const NATIVE_DEEP_READ_RESOURCE_RETRY_MAX = 3;
+/**
+ * 503/429/RESOURCE_EXHAUSTED（视频服务器繁忙）专用退避：不降温、原档补发。
+ * 0904 用户令：**隔 30 秒重试 4 次**（原为 60 秒 3 次）。
+ * 单开一条常量而不改 RETRY_INTERVAL_MS，是为了不动契约 SHA 与段缓存指纹——
+ * 那条一改，已买断的分片缓存会全部失配、重复付费。
+ */
+export const NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS = 30_000;
+export const NATIVE_DEEP_READ_RESOURCE_RETRY_MAX = 4;
 export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.6;
 
 /** 第二次尝试参数；保留导出供既有调用方与缓存指纹使用。 */
@@ -1817,10 +1840,11 @@ export const NATIVE_DEEP_READ_MEDIA_PREP_MAX_CONCURRENCY = 4;
  */
 export const NATIVE_DEEP_READ_MEDIA_UPLOAD_MAX_CONCURRENCY = 4;
 /**
- * 单集模型调用并发上限（0901 用户拍板）：最多同时 5 片。
+ * 单集模型调用并发上限。0901 拍板 5 片；**0904 用户令降到 4**，为的是压住 503：
+ * Vertex 上 3.8 flash 无固定配额（动态共享池），5 路扇出会把自己挤成资源拥堵。
  * 调用方可调低，不能抬高生产上限。
  */
-export const NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY = 5;
+export const NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY = 4;
 
 function mediaHeaders(node: NativeDeepReadMediaNode): string[] {
   const referer = String(node.referer || "").trim();
@@ -5557,9 +5581,10 @@ async function executeNativeDeepReadBatch(
                 }, params.onModelReceipt);
                 console.warn(
                   `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段资源拥堵，`
-                  + `60 秒后保持 temperature ${temperature} 重试：${errorZh}`,
+                  + `30 秒后保持 temperature ${temperature} 重试`
+                  + `（第 ${resourceRetryCount}/${NATIVE_DEEP_READ_RESOURCE_RETRY_MAX} 次）：${errorZh}`,
                 );
-                await deps.waitForRetry(NATIVE_DEEP_READ_RETRY_INTERVAL_MS, params.abortSignal);
+                await deps.waitForRetry(NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS, params.abortSignal);
                 params.abortSignal?.throwIfAborted();
                 continue;
               }
@@ -5726,8 +5751,8 @@ async function executeNativeDeepReadBatch(
       const segmentFailures: Array<{ segmentIndex: number; error: unknown }> = [];
       const scheduledSegmentIndexes = selectedSegmentIndexes ?? episode.segments.map((_, index) => index);
       let nextSegmentIndex = 0;
-      // 0901 用户拍板：最多同时 5 片；调用方只能调低，不能把生产上限抬高。
-      // Gemini API key 路由压到 3：AI Studio Tier1 200 万输入 tokens/分钟，视频段大，5 路会撞 429。
+      // 0904 用户令：最多同时 4 片（原 5，为压 503 下调）；调用方只能调低，不能抬高生产上限。
+      // useGeminiApiRoute 自 0904 起恒为 false（读片一律 Vertex），保留分支只为可回退。
       const segmentModelCap = Math.min(
         useGeminiApiRoute ? 3 : NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY,
         Math.max(1, Math.floor(Number(params.segmentModelConcurrency)
