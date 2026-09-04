@@ -2566,7 +2566,6 @@ export default function PlatformPage() {
     trpc.manhuaViralTemplate.retireLearnSourceEpisode.useMutation();
   const renameLearnSeriesMutation =
     trpc.manhuaViralTemplate.renameLearnSeriesTitle.useMutation();
-  /** 贴上链接即对照入库记录：一进链路就知道这支学没学过，避免白跑一趟。 */
   const manhuaLearnDupQuery = trpc.manhuaViralTemplate.checkLearnSourceLearned.useQuery(
     {
       url: manhuaPasteUrlDebounced,
@@ -2598,20 +2597,6 @@ export default function PlatformPage() {
   const [manhuaLearnHydratedUserKey, setManhuaLearnHydratedUserKey] = useState("");
   const [manhuaLearnActiveJob, setManhuaLearnActiveJob] = useState<ManhuaLearnActiveJob | null>(null);
   const [manhuaLearnServerJobs, setManhuaLearnServerJobs] = useState<ManhuaLearnServerJob[]>([]);
-  /**
-   * 0905 用户令：「学习排队中」与「学习面板」合并为一块，不再并排两张卡。
-   * 这里统一算出合并块顶部要显示的实况任务：在跑 / 排队 / 30 分钟内刚失败。
-   */
-  // 刻意不用 useMemo：过滤条件含 Date.now()，而轮询在内容不变时会复用旧数组引用，
-  // memo 就不再重算——「刚失败」的任务过了 30 分钟不会自动从实况区消失。
-  // 这里只有几十条，渲染期直接算，与合并前内联 filter 的行为一致。
-  const manhuaLearnLiveJobs = manhuaLearnServerJobs.filter(
-    (job) =>
-      job.status === "queued"
-      || job.status === "running"
-      || (job.status === "failed"
-        && Date.now() - new Date(job.updatedAt || 0).getTime() < 30 * 60_000),
-  );
   /** 0902 用户实测：任务 4 秒失败面板不吭声，人干等 4 分钟——失败即 toast + 常驻红条 */
   const manhuaLearnFailureSeenRef = useRef<Set<string>>(new Set());
   const [manhuaLearnLatestFailure, setManhuaLearnLatestFailure] = useState<
@@ -3662,12 +3647,6 @@ export default function PlatformPage() {
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [refreshManhuaLearnServerJobs, hasSupervisorOpsAccess, trendInsightTab, user?.id]);
-  /**
-   * 0905 用户令：模板库**改成可折叠**，默认折起。
-   * 注意与「懒加载」不同——查询照常发（保留原有加载行为），折的只是显示，
-   * 所以展开时数据已经在手，不会再等一次网络。
-   */
-  const [manhuaTemplateLibraryOpen, setManhuaTemplateLibraryOpen] = useState(false);
   /** owner 专用完整库；先通过能力查询再请求，其他监管账号不会触发私有列表请求。 */
   const manhuaViralApprovedQuery = trpc.manhuaViralTemplate.listApprovedPrivate.useQuery(
     undefined,
@@ -12881,24 +12860,6 @@ export default function PlatformPage() {
                               </button>
                             </div>
                           ) : null}
-                          {manhuaLearnDupQuery.isFetching ? (
-                            <div className="mt-2 text-[10px] text-white/45">对照入库记录中…</div>
-                          ) : null}
-                          {manhuaLearnDupQuery.isError ? (
-                            <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-rose-200/80">
-                              <span>
-                                入库对照失败：
-                                {manhuaLearnDupQuery.error?.message || "未知错误"}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => void manhuaLearnDupQuery.refetch()}
-                                className="shrink-0 rounded border border-rose-300/40 px-1.5 py-0.5 text-rose-100/80 hover:bg-rose-400/15"
-                              >
-                                重试
-                              </button>
-                            </div>
-                          ) : null}
                           {manhuaLearnDupQuery.data?.episodes.length ? (
                             <div className="mt-2 rounded-lg border border-amber-400/35 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-5 text-amber-100">
                               ⚠️ 这支已学过：
@@ -13024,16 +12985,13 @@ export default function PlatformPage() {
                       {/* 0903 用户令「刷新也要看到任务在跑」：实况卡不依赖聚焦剧，
                           直接读服务端任务快照（进度时间线+分片断点），刷新即回灌；
                           最新进度行自带「分片上限X秒·N片·fps」＝配平值回显。 */}
-                      {manhuaLearnLiveJobs.length > 0 || manhuaLearnBasket.length > 0 ? (
-                        <div className="mt-3 rounded-xl border border-amber-300/20 bg-amber-500/10 px-3 py-2.5">
-                          {manhuaLearnLiveJobs.length > 0 ? (
-                            <div
-                              className={manhuaLearnBasket.length > 0
-                                ? "mb-2.5 border-b border-amber-200/15 pb-2.5"
-                                : ""}
-                            >
-                              <div className="text-[11px] font-semibold text-emerald-100/90">⏱ 正在学习（刷新可见 · 排队≠卡死）</div>
-                              {manhuaLearnLiveJobs
+                      {manhuaLearnServerJobs.some((job) => job.status === "queued" || job.status === "running"
+                        || (job.status === "failed" && Date.now() - new Date(job.updatedAt || 0).getTime() < 30 * 60_000)) ? (
+                        <div className="mt-3 rounded-xl border border-emerald-300/25 bg-emerald-500/10 px-3 py-2.5">
+                          <div className="text-[11px] font-semibold text-emerald-100/90">⏱ 正在学习（刷新可见 · 排队≠卡死）</div>
+                          {manhuaLearnServerJobs
+                            .filter((job) => job.status === "queued" || job.status === "running"
+                              || (job.status === "failed" && Date.now() - new Date(job.updatedAt || 0).getTime() < 30 * 60_000))
                             .map((job) => {
                               const output = (job.output ?? {}) as Record<string, unknown>;
                               const params = ((job.input as Record<string, unknown> | undefined)?.params ?? {}) as Record<string, unknown>;
@@ -13068,11 +13026,11 @@ export default function PlatformPage() {
                                 </div>
                               );
                             })}
-                            </div>
-                          ) : null}
+                        </div>
+                      ) : null}
 
-                          {manhuaLearnBasket.length > 0 ? (
-                          <>
+                      {manhuaLearnBasket.length > 0 ? (
+                        <div className="mt-3 rounded-xl border border-amber-300/20 bg-amber-500/10 px-3 py-2.5">
                           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                             <label
                               htmlFor="manhua-learn-series-select"
@@ -13166,8 +13124,6 @@ export default function PlatformPage() {
                           <p className="mt-1.5 text-[10px] text-amber-100/50">
                             每部剧独立续学；刷新后仍保留。删除会停止该剧，但保留已经落盘的成果。
                           </p>
-                          </>
-                          ) : null}
                         </div>
                       ) : null}
 
@@ -13773,38 +13729,9 @@ export default function PlatformPage() {
 
                       {manhuaViralApprovedQuery.data?.groups?.length ? (
                         <div className="mt-3 rounded-xl border border-emerald-400/20 bg-emerald-500/10 px-3 py-2.5 text-[10px] text-emerald-50/85">
-                          <button
-                            type="button"
-                            aria-expanded={manhuaTemplateLibraryOpen}
-                            aria-controls="manhua-template-library-body"
-                            onClick={() => {
-                              const next = !manhuaTemplateLibraryOpen;
-                              // 折起时一并清掉批量下架的勾选：留着的话下次展开会直接
-                              // 亮出「批量下架（N）」这个破坏性动作，用户已经忘了勾过什么。
-                              // （已在跑的批量循环开跑前已快照 ids，清空不会打断它。）
-                              if (!next) {
-                                setBatchArchiveIds(new Set());
-                                setBatchArchiveConfirm(false);
-                              }
-                              setManhuaTemplateLibraryOpen(next);
-                            }}
-                            className="mb-1 flex w-full items-center justify-between gap-2 text-left font-semibold text-emerald-50/95 hover:text-emerald-50"
-                          >
-                            <span>
-                              {manhuaTemplateLibraryOpen ? "▾" : "▸"} 模板库（已批准 · 编剧室可选）
-                              <span className="ml-1.5 font-normal text-emerald-100/55">
-                                {manhuaViralApprovedQuery.data.groups.reduce(
-                                  (n, g) => n + g.items.length,
-                                  0,
-                                )} 张
-                              </span>
-                            </span>
-                            <span className="shrink-0 font-normal text-emerald-100/50">
-                              {manhuaTemplateLibraryOpen ? "收起" : "展开"}
-                            </span>
-                          </button>
-                          {manhuaTemplateLibraryOpen ? (
-                          <div id="manhua-template-library-body">
+                          <div className="mb-1 font-semibold text-emerald-50/95">
+                            模板库（已批准 · 编剧室可选）
+                          </div>
                           <p className="mb-2 text-[10px] leading-4 text-emerald-50/55">
                             学习提案批准后会出现在此；到 /canvas 编剧室点选即可注入节奏骨架。
                           </p>
@@ -14046,8 +13973,6 @@ export default function PlatformPage() {
                               </div>
                             ))}
                           </div>
-                          </div>
-                          ) : null}
                         </div>
                       ) : null}
 
