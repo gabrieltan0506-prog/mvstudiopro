@@ -2103,7 +2103,8 @@ export default function ManhuaScriptWorkbench({
   ]);
 
   useEffect(() => {
-    if (!outlineComplete && activePhase !== "outline") {
+    // 未确认剧本时仍允许进入资产页先上传参考图；分镜、剪辑与付费生成继续受门禁保护。
+    if (!outlineComplete && activePhase !== "outline" && activePhase !== "assets") {
       setActivePhase("outline");
     }
   }, [outlineComplete, activePhase]);
@@ -2117,9 +2118,9 @@ export default function ManhuaScriptWorkbench({
       return;
     }
     if (phase === "assets" && !outlineComplete) {
-      toast.error("还差一步", { description: "请先确认剧本大纲" });
-      setActivePhase("outline");
-      return;
+      toast.message("可以先导入参考图", {
+        description: "生成设定图和进入分镜仍需先确认剧本大纲。",
+      });
     }
     if (
       (phase === "storyboard" || phase === "edit") &&
@@ -3209,6 +3210,16 @@ export default function ManhuaScriptWorkbench({
                   确认大纲，进入资产设定
                 </button>
               ) : null}
+              {!outlineComplete && onUploadCustomAssets ? (
+                <button
+                  type="button"
+                  data-manhua-action="open-assets-for-upload"
+                  onClick={() => selectPhase("assets")}
+                  className="rounded-lg border border-white/15 bg-white/[0.04] px-3.5 py-2 text-[12px] font-semibold text-white/75 hover:bg-white/[0.08]"
+                >
+                  先导入参考图
+                </button>
+              ) : null}
               {!outlineComplete && !writerPackReady ? (
                 <p className="text-[11px] text-amber-100/80">
                   请先在上方「改题材」扩写或导入剧本，再回来确认大纲。
@@ -3236,6 +3247,55 @@ export default function ManhuaScriptWorkbench({
           className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6"
         >
           <div className="mx-auto max-w-4xl">
+            {onUploadCustomAssets ? (
+              <div
+                data-manhua-quick-asset-upload
+                className="sticky top-0 z-10 mb-3 rounded-xl border border-cyan-300/25 bg-[#111925]/95 p-3 shadow-lg backdrop-blur"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[12px] font-semibold text-cyan-50">快速导入参考图</div>
+                    <p className="mt-0.5 text-[10px] text-white/45">
+                      上传免费；人物、场景、服装、道具会直接进入对应分栏。
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(
+                      [
+                        ["character", "导入人物图"],
+                        ["scene", "导入场景图"],
+                        ["wardrobe", "导入服装图"],
+                        ["prop", "导入道具图"],
+                      ] as const
+                    ).map(([role, labelZh]) => (
+                      <label
+                        key={role}
+                        data-manhua-action={`quick-upload-${role}`}
+                        className="inline-flex cursor-pointer items-center rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] font-semibold text-cyan-50 hover:bg-cyan-500/25"
+                      >
+                        {labelZh}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          multiple
+                          className="hidden"
+                          onChange={(e) => {
+                            const files = e.target.files;
+                            if (files?.length) void onUploadCustomAssets(files, role);
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                {!outlineComplete ? (
+                  <p className="mt-2 rounded-lg bg-amber-500/10 px-2 py-1 text-[10px] text-amber-100/80">
+                    参考图可先上传；确认剧本大纲后才能生成设定图或进入分镜。
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <div className={`text-[15px] font-bold tracking-wide text-white/95 ${compactUi ? "hidden" : ""}`}>
@@ -4144,7 +4204,7 @@ export default function ManhuaScriptWorkbench({
                                 type="button"
                                 data-manhua-action="generate-canon-sheet"
                                 data-manhua-pending-anchor={p.anchorId}
-                                disabled={factoryBusy || !onGenerateCanonAssetSheet}
+                                disabled={!outlineComplete || factoryBusy || !onGenerateCanonAssetSheet}
                                 onClick={() => {
                                   void onGenerateCanonAssetSheet?.({
                                     anchorId: p.anchorId,
@@ -4942,7 +5002,7 @@ export default function ManhuaScriptWorkbench({
                         {onGenerateCustomAssetFromLibrary ? (
                           <button
                             type="button"
-                            disabled={factoryBusy || !sec.seedReady}
+                            disabled={!outlineComplete || factoryBusy || !sec.seedReady}
                             onClick={() =>
                               void onGenerateCustomAssetFromLibrary({
                                 role: sec.role,
@@ -5051,7 +5111,7 @@ export default function ManhuaScriptWorkbench({
                                     <div className="mt-1 flex gap-1">
                                       <button
                                         type="button"
-                                        disabled={assetStandardizeBusyId != null}
+                                        disabled={!outlineComplete || assetStandardizeBusyId != null}
                                         onClick={() => void onStandardizeCustomAsset(ref.id, "medium")}
                                         className="rounded bg-cyan-300/15 px-1.5 py-0.5 font-medium text-cyan-100 disabled:opacity-40"
                                       >
@@ -5059,7 +5119,7 @@ export default function ManhuaScriptWorkbench({
                                       </button>
                                       <button
                                         type="button"
-                                        disabled={assetStandardizeBusyId != null}
+                                        disabled={!outlineComplete || assetStandardizeBusyId != null}
                                         onClick={() => void onStandardizeCustomAsset(ref.id, "high")}
                                         className="rounded bg-violet-300/15 px-1.5 py-0.5 font-medium text-violet-100 disabled:opacity-40"
                                       >
@@ -5159,7 +5219,7 @@ export default function ManhuaScriptWorkbench({
                                   {onDetextCustomAsset ? (
                                     <button
                                       type="button"
-                                      disabled={assetStandardizeBusyId != null}
+                                      disabled={!outlineComplete || assetStandardizeBusyId != null}
                                       onClick={() => void onDetextCustomAsset(ref.id)}
                                       title="文字在画面中间裁不掉？AI 精确擦除文字，其余像素保持原样"
                                       className="rounded border border-cyan-300/40 bg-cyan-500/10 px-1.5 py-0.5 text-[9px] font-medium text-cyan-100 hover:bg-cyan-500/25 disabled:opacity-40"
@@ -6071,7 +6131,7 @@ export default function ManhuaScriptWorkbench({
                           key={p.anchorId}
                           type="button"
                           data-manhua-pending-anchor={p.anchorId}
-                          disabled={factoryBusy || !onGenerateCanonAssetSheet}
+                          disabled={!outlineComplete || factoryBusy || !onGenerateCanonAssetSheet}
                           onClick={() => {
                             void onGenerateCanonAssetSheet?.({
                               anchorId: p.anchorId,
