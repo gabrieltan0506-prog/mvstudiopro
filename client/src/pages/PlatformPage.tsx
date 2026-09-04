@@ -2602,16 +2602,15 @@ export default function PlatformPage() {
    * 0905 用户令：「学习排队中」与「学习面板」合并为一块，不再并排两张卡。
    * 这里统一算出合并块顶部要显示的实况任务：在跑 / 排队 / 30 分钟内刚失败。
    */
-  const manhuaLearnLiveJobs = useMemo(
-    () =>
-      manhuaLearnServerJobs.filter(
-        (job) =>
-          job.status === "queued"
-          || job.status === "running"
-          || (job.status === "failed"
-            && Date.now() - new Date(job.updatedAt || 0).getTime() < 30 * 60_000),
-      ),
-    [manhuaLearnServerJobs],
+  // 刻意不用 useMemo：过滤条件含 Date.now()，而轮询在内容不变时会复用旧数组引用，
+  // memo 就不再重算——「刚失败」的任务过了 30 分钟不会自动从实况区消失。
+  // 这里只有几十条，渲染期直接算，与合并前内联 filter 的行为一致。
+  const manhuaLearnLiveJobs = manhuaLearnServerJobs.filter(
+    (job) =>
+      job.status === "queued"
+      || job.status === "running"
+      || (job.status === "failed"
+        && Date.now() - new Date(job.updatedAt || 0).getTime() < 30 * 60_000),
   );
   /** 0902 用户实测：任务 4 秒失败面板不吭声，人干等 4 分钟——失败即 toast + 常驻红条 */
   const manhuaLearnFailureSeenRef = useRef<Set<string>>(new Set());
@@ -13028,7 +13027,11 @@ export default function PlatformPage() {
                       {manhuaLearnLiveJobs.length > 0 || manhuaLearnBasket.length > 0 ? (
                         <div className="mt-3 rounded-xl border border-amber-300/20 bg-amber-500/10 px-3 py-2.5">
                           {manhuaLearnLiveJobs.length > 0 ? (
-                            <div className="mb-2.5 border-b border-amber-200/15 pb-2.5">
+                            <div
+                              className={manhuaLearnBasket.length > 0
+                                ? "mb-2.5 border-b border-amber-200/15 pb-2.5"
+                                : ""}
+                            >
                               <div className="text-[11px] font-semibold text-emerald-100/90">⏱ 正在学习（刷新可见 · 排队≠卡死）</div>
                               {manhuaLearnLiveJobs
                             .map((job) => {
@@ -13773,14 +13776,17 @@ export default function PlatformPage() {
                           <button
                             type="button"
                             aria-expanded={manhuaTemplateLibraryOpen}
+                            aria-controls="manhua-template-library-body"
                             onClick={() => {
+                              const next = !manhuaTemplateLibraryOpen;
                               // 折起时一并清掉批量下架的勾选：留着的话下次展开会直接
                               // 亮出「批量下架（N）」这个破坏性动作，用户已经忘了勾过什么。
-                              if (manhuaTemplateLibraryOpen) {
+                              // （已在跑的批量循环开跑前已快照 ids，清空不会打断它。）
+                              if (!next) {
                                 setBatchArchiveIds(new Set());
                                 setBatchArchiveConfirm(false);
                               }
-                              setManhuaTemplateLibraryOpen((v) => !v);
+                              setManhuaTemplateLibraryOpen(next);
                             }}
                             className="mb-1 flex w-full items-center justify-between gap-2 text-left font-semibold text-emerald-50/95 hover:text-emerald-50"
                           >
@@ -13798,7 +13804,7 @@ export default function PlatformPage() {
                             </span>
                           </button>
                           {manhuaTemplateLibraryOpen ? (
-                          <>
+                          <div id="manhua-template-library-body">
                           <p className="mb-2 text-[10px] leading-4 text-emerald-50/55">
                             学习提案批准后会出现在此；到 /canvas 编剧室点选即可注入节奏骨架。
                           </p>
@@ -14040,7 +14046,7 @@ export default function PlatformPage() {
                               </div>
                             ))}
                           </div>
-                          </>
+                          </div>
                           ) : null}
                         </div>
                       ) : null}
