@@ -1,5 +1,6 @@
 /** Canvas 共用的 Google 文本、图像与素材 API 封装（文件名仅为历史兼容）。 */
 import { resolveGeminiScriptFallbackModel } from "@shared/geminiScriptFallback";
+import { withLongJobsFlyDirect } from "./longJobsFlyOrigin";
 
 async function parseJson(resp: Response) {
   const text = await resp.text();
@@ -14,9 +15,12 @@ async function parseJson(resp: Response) {
 }
 
 export async function resolveCanvasMaterialUrl(gcsUri: string): Promise<string> {
-  const resp = await fetch(`/api/google?op=materialReadUrl&gcsUri=${encodeURIComponent(gcsUri)}`, {
-    credentials: "include",
-  });
+  const resp = await fetch(
+    withLongJobsFlyDirect(
+      `/api/google?op=materialReadUrl&gcsUri=${encodeURIComponent(gcsUri)}`,
+    ),
+    { credentials: "include" },
+  );
   const json = await parseJson(resp);
   if (!resp.ok || !json.ok) throw new Error(String(json.message || json.error || "签名 URL 失败"));
   return String(json.url || "");
