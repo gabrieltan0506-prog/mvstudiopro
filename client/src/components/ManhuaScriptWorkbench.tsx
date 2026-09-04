@@ -104,6 +104,7 @@ import type { ManhuaRetakeVariable } from "@shared/manhuaDirectingWorkflow";
 import type { ManhuaPilotGateStatus } from "@shared/manhuaPilotGate";
 import type { ManhuaAssetStandardizeQuality } from "@shared/manhuaAssetStandardize";
 import { MANHUA_REF_DUTIES } from "@shared/manhuaDirectingWorkflow";
+import ModelViewer from "@/components/ModelViewer";
 import {
   areManhuaKeyartsPixelLocked,
   isBindableAssetPath,
@@ -350,6 +351,8 @@ type Props = {
   onCustomAssetClaimsChange?: (id: string, anchorIds: string[]) => void;
   onCustomAssetReviewAccept?: (id: string) => void;
   onStandardizeCustomAsset?: (id: string, quality: ManhuaAssetStandardizeQuality) => void | Promise<void>;
+  /** 以当前人物正面参考建立可选 3D 参考；不进入默认出片门禁。 */
+  onGenerateAsset3d?: (id: string) => void | Promise<void>;
   assetStandardizeBusyId?: string | null;
   onRemoveCustomAsset?: (id: string) => void;
   /** 一键清空全部参考图（清了重导资产包用）；带确认 */
@@ -642,6 +645,7 @@ export default function ManhuaScriptWorkbench({
   onCustomAssetClaimsChange,
   onCustomAssetReviewAccept,
   onStandardizeCustomAsset,
+  onGenerateAsset3d,
   assetStandardizeBusyId = null,
   onRemoveCustomAsset,
   onClearAllCustomAssets,
@@ -2210,6 +2214,10 @@ export default function ManhuaScriptWorkbench({
     url: string;
     labelZh: string;
   } | null>(null);
+  const [model3dPreview, setModel3dPreview] = useState<{
+    url: string;
+    labelZh: string;
+  } | null>(null);
   const regenTileCount = regenDraft?.anchorIds.length || 1;
   const openRegenDraft = (opts: {
     key: string;
@@ -3612,6 +3620,36 @@ export default function ManhuaScriptWorkbench({
                     >
                       取消
                     </button>
+                  </div>
+                </div>
+              ) : null}
+              {model3dPreview ? (
+                <div
+                  className="fixed inset-0 z-[76] flex items-center justify-center bg-black/85 px-4 py-6"
+                  onClick={() => setModel3dPreview(null)}
+                >
+                  <div
+                    className="w-full max-w-3xl space-y-3 rounded-2xl border border-cyan-300/20 bg-[#101417] p-4 shadow-2xl"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-white/90">
+                          {model3dPreview.labelZh}
+                        </div>
+                        <div className="text-[10px] text-white/45">
+                          可旋转检查造型与比例；跛行等动作仍由分镜运动规格控制
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setModel3dPreview(null)}
+                        className="rounded-lg border border-white/15 px-3 py-1.5 text-xs text-white/65 hover:bg-white/[0.06]"
+                      >
+                        关闭
+                      </button>
+                    </div>
+                    <ModelViewer glbUrl={model3dPreview.url} height={520} />
                   </div>
                 </div>
               ) : null}
@@ -5291,6 +5329,51 @@ export default function ManhuaScriptWorkbench({
                                     ))}
                                   </select>
                                 </label>
+                              ) : null}
+                              {ref.role === "character" && cardExpanded && onGenerateAsset3d ? (
+                                <div className="space-y-1">
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      ref.reviewStatus === "needs_review" ||
+                                      ref.model3d?.status === "queued" ||
+                                      ref.model3d?.status === "running" ||
+                                      ref.model3d?.status === "failed" ||
+                                      ref.model3d?.status === "reconcile_manual"
+                                    }
+                                    onClick={() => {
+                                      if (ref.model3d?.status === "succeeded" && ref.model3d.glbUrl) {
+                                        setModel3dPreview({
+                                          url: ref.model3d.glbUrl,
+                                          labelZh: displayNameZh || "人物 3D 参考",
+                                        });
+                                        return;
+                                      }
+                                      void onGenerateAsset3d(ref.id);
+                                    }}
+                                    title={
+                                      ref.reviewStatus === "needs_review"
+                                        ? "先确认或标准化人物参考图"
+                                        : "可选增强：建立可旋转的造型与比例参考，不影响默认出片"
+                                    }
+                                    className="w-full rounded border border-cyan-300/30 bg-cyan-500/10 px-1.5 py-1 text-[9px] font-medium text-cyan-100 hover:bg-cyan-500/20 disabled:opacity-40"
+                                  >
+                                    {ref.model3d?.status === "succeeded"
+                                      ? "查看 3D 参考"
+                                      : ref.model3d?.status === "queued" || ref.model3d?.status === "running"
+                                        ? "3D 参考建立中…"
+                                      : ref.model3d?.status === "failed"
+                                          ? "3D 建立失败"
+                                          : ref.model3d?.status === "reconcile_manual"
+                                            ? "3D 结果待核对"
+                                            : "建立 3D 参考（可选）"}
+                                  </button>
+                                  {ref.model3d?.errorZh ? (
+                                    <p className="text-[9px] leading-3 text-rose-200/80">
+                                      {ref.model3d.errorZh}
+                                    </p>
+                                  ) : null}
+                                </div>
                               ) : null}
                               {/* 折叠开关：90% 的时间只需要 图/名字/✕，其余点开再说。
                                   待人工确认的卡强制展开，不给收起（收起等于把问题藏了）。

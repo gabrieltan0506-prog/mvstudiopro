@@ -24,4 +24,10 @@ describe("resolveModelViewerUrl", () => {
   it("returns null for an empty input", () => {
     expect(resolveModelViewerUrl({})).toBeNull();
   });
+
+  it("rejects non-HTTPS and malformed model URLs before building srcDoc", () => {
+    expect(resolveModelViewerUrl({ src: "javascript:alert(1)" })).toBeNull();
+    expect(resolveModelViewerUrl({ src: "data:model/gltf-binary;base64,AAAA" })).toBeNull();
+    expect(resolveModelViewerUrl({ src: "not-a-url" })).toBeNull();
+  });
 });

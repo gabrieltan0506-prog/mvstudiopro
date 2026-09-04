@@ -37,6 +37,44 @@ describe("manhuaCustomAssetRefs", () => {
     });
   });
 
+  it("保留有效 3D 任务身份并拒绝只有临时链接的伪成功态", () => {
+    const valid = normalizeManhuaCustomAssetRefs([
+      {
+        id: "c1",
+        url: "https://cdn.example.com/c1.png",
+        role: "character",
+        model3d: {
+          status: "succeeded",
+          taskId: "task-1",
+          sourceImageUrl: "https://cdn.example.com/c1.png",
+          sourceVersion: "gs://bucket/c1.png",
+          predictionId: "prediction-1",
+          glbGcsUri: "gs://bucket/models/c1.glb",
+          glbUrl: "https://cdn.example.com/models/c1.glb",
+          updatedAt: 1_777_777_777_000,
+        },
+      },
+    ]);
+    expect(valid[0]?.model3d?.glbGcsUri).toBe("gs://bucket/models/c1.glb");
+
+    const missingDurableIdentity = normalizeManhuaCustomAssetRefs([
+      {
+        id: "c2",
+        url: "https://cdn.example.com/c2.png",
+        role: "character",
+        model3d: {
+          status: "succeeded",
+          taskId: "task-2",
+          sourceImageUrl: "https://cdn.example.com/c2.png",
+          sourceVersion: "v1",
+          glbUrl: "https://provider.example.com/temporary.glb",
+          updatedAt: 1,
+        },
+      },
+    ]);
+    expect(missingDurableIdentity[0]?.model3d).toBeUndefined();
+  });
+
   it("keeps https only and drops unset from tagged", () => {
     const refs = normalizeManhuaCustomAssetRefs([
       { id: "1", url: "https://cdn.example/a.jpg", role: "character" },

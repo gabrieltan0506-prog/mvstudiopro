@@ -59,6 +59,7 @@ import {
   type ManhuaCustomAssetRefDuty,
   type ManhuaCustomAssetRole,
 } from "@shared/manhuaCustomAssetRefs";
+import type { ManhuaAsset3dRef, ManhuaAsset3dStatus } from "@shared/manhuaAsset3d";
 import {
   collectStaleAssetSheetBlockIds,
   evaluateManhuaAssetScriptAlignment,
@@ -502,11 +503,39 @@ function manhuaAssetSelectionScopeKey(
   return `${String(topic || "").trim().slice(0, 80)}::${fingerprintManhuaWriterAssetCanon(canon)}`;
 }
 
+type Manhua3dTaskViewLike = {
+  taskId: string;
+  assetRef: string;
+  sourceVersion: string;
+  sourceImageUrl: string;
+  status: ManhuaAsset3dStatus;
+  predictionId?: string | null;
+  glbGcsUri?: string | null;
+  glbUrl?: string | null;
+  errorZh?: string | null;
+  updatedAt: string;
+};
+
+function toManhuaAsset3dRef(task: Manhua3dTaskViewLike): ManhuaAsset3dRef {
+  return {
+    status: task.status,
+    taskId: task.taskId,
+    sourceImageUrl: task.sourceImageUrl,
+    sourceVersion: task.sourceVersion,
+    predictionId: task.predictionId || undefined,
+    glbGcsUri: task.glbGcsUri || undefined,
+    glbUrl: task.glbUrl || undefined,
+    errorZh: task.errorZh || undefined,
+    updatedAt: Number.isFinite(Date.parse(task.updatedAt)) ? Date.parse(task.updatedAt) : Date.now(),
+  };
+}
+
 export default function OmniCanvas() {
   const { user } = useAuth({ redirectOnUnauthenticated: false });
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
   const canShowCanvasDebug =
     supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
+  const canUseManhua3d = user?.role === "admin" || user?.role === "supervisor";
   /** 成片·加长门禁：与服务端 resolveSeedance25Access 同口径，工厂批量段成片也要吃到 plan+role */
   const subscriptionQuery = trpc.stripe.getSubscription.useQuery(undefined, { retry: false });
   const userPlan = (subscriptionQuery.data?.plan || "free") as string;
@@ -1155,6 +1184,121 @@ export default function OmniCanvas() {
   /** 0902 烧字总装：剪辑台字幕轨 → queuePostProd burn_subtitle → 轮询取新片 */
   const queueBurnSubtitleMutation = trpc.mvAnalysis.queuePostProd.useMutation();
   const trpcUtils = trpc.useUtils();
+  const submitManhua3dMutation = trpc.manhua3d.submit.useMutation();
+  const manhua3dPollInFlightRef = useRef<Set<string>>(new Set());
+  const manhua3dReadyRefreshRef = useRef<Set<string>>(new Set());
+  const applyManhua3dTaskView = useCallback((task: Manhua3dTaskViewLike) => {
+    setCustomAssetRefs((prev) =>
+      normalizeManhuaCustomAssetRefs(
+        prev.map((ref) =>
+          ref.id === task.assetRef ? { ...ref, model3d: toManhuaAsset3dRef(task) } : ref,
+        ),
+      ),
+    );
+  }, []);
+  const pollManhua3dTask = useCallback(
+    async (taskId: string) => {
+      if (manhua3dPollInFlightRef.current.has(taskId)) return;
+      manhua3dPollInFlightRef.current.add(taskId);
+      try {
+        for (let attempt = 0; attempt < 225; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 8_000));
+          const task = await trpcUtils.manhua3d.getStatus.fetch({ taskId });
+          applyManhua3dTaskView(task);
+          if (task.status === "succeeded") {
+            toast.success("3D 参考已建立，可在人物卡中旋转查看");
+            return;
+          }
+          if (task.status === "failed" || task.status === "reconcile_manual") {
+            toast.error(task.errorZh || "3D 参考未能完成，请查看人物卡状态");
+            return;
+          }
+        }
+        toast.message("3D 参考仍在建立，可稍后回到人物卡继续查看");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "3D 参考状态读取失败");
+      } finally {
+        manhua3dPollInFlightRef.current.delete(taskId);
+      }
+    },
+    [applyManhua3dTaskView, trpcUtils],
+  );
+  const generateManhua3dAsset = useCallback(
+    async (assetRefId: string) => {
+      const ref = customAssetRefs.find((item) => item.id === assetRefId);
+      if (!ref || ref.role !== "character") {
+        toast.error("只支持从已确认的人物参考图建立 3D 参考");
+        return;
+      }
+      if (ref.reviewStatus === "needs_review") {
+        toast.error("请先确认或标准化这张人物参考图");
+        return;
+      }
+      if (ref.model3d?.status === "queued" || ref.model3d?.status === "running") {
+        void pollManhua3dTask(ref.model3d.taskId);
+        return;
+      }
+      if (ref.model3d?.status === "failed" || ref.model3d?.status === "reconcile_manual") {
+        toast.message("当前素材版本已有任务记录；请先处理状态或更换参考图，系统不会重复建单");
+        return;
+      }
+      if (
+        !window.confirm(
+          "将以当前人物正面图建立可旋转的 3D 参考。此操作会调用外部生成服务并产生实际调用成本；3D 不会成为默认出片门禁。确认继续？",
+        )
+      ) {
+        return;
+      }
+      try {
+        const task = await submitManhua3dMutation.mutateAsync({
+          assetRef: ref.id,
+          sourceVersion: ref.gcsUri || ref.url,
+          sourceImageUrl: ref.url,
+        });
+        applyManhua3dTaskView(task);
+        if (task.status === "queued" || task.status === "running") {
+          toast.message("3D 参考已开始建立，完成后会回到当前人物卡");
+          void pollManhua3dTask(task.taskId);
+        } else if (task.status === "succeeded") {
+          toast.success("3D 参考已建立");
+        } else {
+          toast.error(task.errorZh || "3D 参考任务未能启动");
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "3D 参考任务提交失败");
+      }
+    },
+    [
+      applyManhua3dTaskView,
+      customAssetRefs,
+      pollManhua3dTask,
+      submitManhua3dMutation,
+    ],
+  );
+  useEffect(() => {
+    if (!canUseManhua3d) return;
+    for (const ref of customAssetRefs) {
+      if (ref.model3d?.status === "queued" || ref.model3d?.status === "running") {
+        void pollManhua3dTask(ref.model3d.taskId);
+      } else if (
+        ref.model3d?.status === "succeeded" &&
+        !manhua3dReadyRefreshRef.current.has(ref.model3d.taskId)
+      ) {
+        // 草稿保存的是长期 gs:// 身份；页面恢复时查询一次，让服务端刷新过期签名 URL。
+        manhua3dReadyRefreshRef.current.add(ref.model3d.taskId);
+        void trpcUtils.manhua3d.getStatus
+          .fetch({ taskId: ref.model3d.taskId })
+          .then(applyManhua3dTaskView)
+          .catch(() => manhua3dReadyRefreshRef.current.delete(ref.model3d!.taskId));
+      }
+    }
+  }, [
+    applyManhua3dTaskView,
+    canUseManhua3d,
+    customAssetRefs,
+    pollManhua3dTask,
+    trpcUtils,
+  ]);
   const [burnSubtitleBusy, setBurnSubtitleBusy] = useState(false);
   const [burnSubtitleResultUrl, setBurnSubtitleResultUrl] = useState<string | null>(null);
   const handleBurnSubtitle = useCallback(
@@ -7932,6 +8076,7 @@ export default function OmniCanvas() {
                   stylePack={stylePack}
                   onStylePackChange={setStylePack}
                   customAssetRefs={customAssetRefs}
+                  onGenerateAsset3d={canUseManhua3d ? generateManhua3dAsset : undefined}
                   characterLookSets={characterLookSets}
                   onCharacterLookSetsChange={setCharacterLookSets}
                   segmentLookBindings={segmentLookBindings}
