@@ -933,6 +933,11 @@ async function startServer() {
         console.warn("[canvasVideoTask] resume failed:", e),
       );
     }).catch(() => {});
+    import("../services/manhua3dTask").then(({ resumeManhua3dTasksOnStartup }) => {
+      resumeManhua3dTasksOnStartup().catch((e) =>
+        console.warn("[manhua3dTask] resume failed:", e),
+      );
+    }).catch(() => {});
     // 启动即扫 + 每 5 分钟常驻补扫；防止退款失败只有等下次部署才会恢复。
     import("../services/paidJobLedger").then(({ startPaidJobLedgerReaper }) => {
       startPaidJobLedgerReaper();

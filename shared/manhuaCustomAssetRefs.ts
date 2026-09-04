@@ -11,6 +11,7 @@ import {
   MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
   MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
 } from "./manhuaScriptWorkbench.js";
+import { normalizeManhuaAsset3dRef } from "./manhuaAsset3d.js";
 
 export const MANHUA_CUSTOM_ASSET_ROLES = [
   "character",
@@ -97,6 +98,8 @@ export type ManhuaCustomAssetRef = {
    * 俯拍段喂平视图等于让引擎自己想象地面动线。
    */
   tileUrls?: Partial<Record<ManhuaSceneTileSlot, string>> | null;
+  /** 人物参考图派生的可选 3D 资产，不参与默认出片门禁。 */
+  model3d?: import("./manhuaAsset3d").ManhuaAsset3dRef;
 };
 
 const SCENE_TILE_SLOTS: ManhuaSceneTileSlot[] = [
@@ -405,6 +408,7 @@ export function normalizeManhuaCustomAssetRefs(
       refDuty: parsedDuty || defaultManhuaCustomAssetRefDuty(role),
       tileUrls: parseSceneTileUrls((o as { tileUrls?: unknown }).tileUrls),
       gcsUri: /^gs:\/\//i.test(String(o.gcsUri || "")) ? String(o.gcsUri).trim() : undefined,
+      model3d: normalizeManhuaAsset3dRef((o as { model3d?: unknown }).model3d),
     });
     if (out.length >= max) break;
   }

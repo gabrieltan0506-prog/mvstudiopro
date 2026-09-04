@@ -16,7 +16,29 @@ export interface ModelViewerProps {
 }
 
 export function resolveModelViewerUrl(props: Pick<ModelViewerProps, "glbUrl" | "modelUrl" | "src">): string | null {
-  return String(props.glbUrl || props.modelUrl || props.src || "").trim() || null;
+  const raw = String(props.glbUrl || props.modelUrl || props.src || "").trim();
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === "https:" ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[char] || char);
+}
+
+function normalizeViewerColor(value: string): string {
+  const trimmed = String(value || "").trim();
+  return /^#[0-9a-f]{3,8}$/i.test(trimmed) ? trimmed : "#1a1a2e";
 }
 
 function generateModelViewerHTML(props: {
@@ -25,13 +47,19 @@ function generateModelViewerHTML(props: {
   autoRotate: boolean;
   backgroundColor: string;
 }): string {
-  const { modelUrl, thumbnailUrl, autoRotate, backgroundColor } = props;
+  const modelUrl = escapeHtmlAttribute(props.modelUrl);
+  const thumbnailUrl = props.thumbnailUrl
+    ? escapeHtmlAttribute(resolveModelViewerUrl({ src: props.thumbnailUrl }) || "")
+    : "";
+  const autoRotate = props.autoRotate;
+  const backgroundColor = normalizeViewerColor(props.backgroundColor);
 
   return `<!DOCTYPE html>
 <html lang="zh">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src https: data:; connect-src https:;">
   <title>3D Model Viewer</title>
   <script>
     window.ModelViewerElement = {
