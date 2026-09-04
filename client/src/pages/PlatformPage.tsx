@@ -3468,6 +3468,10 @@ export default function PlatformPage() {
         (hasSupervisorOpsAccess || ownerTemplateOptimizeAllowed),
       staleTime: 30_000,
       retry: false,
+      // 0905 用户令「中途过门禁也要更新」：有任务在跑就定时重拉，待审卡的 k/M 段进度不再停在开页那一刻
+      refetchInterval: manhuaLearnServerJobs.some((job) => job.status === "running" || job.status === "queued")
+        ? 30_000
+        : false,
     },
   );
   const pendingManhuaViralProposals = useMemo(
