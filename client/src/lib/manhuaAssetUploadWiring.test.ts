@@ -42,4 +42,18 @@ describe("漫剧参考图导入接线", () => {
   it("未确认剧本时资产页的付费生成与 AI 编辑按钮保持禁用", () => {
     expect(WORKBENCH.match(/disabled=\{!outlineComplete \|\|/g)?.length ?? 0).toBeGreaterThanOrEqual(5);
   });
+
+  it("自定义编辑从资产卡进入同一条服务端长任务，保留原图并追加新图", () => {
+    expect(WORKBENCH).toContain("编辑图片·3分");
+    expect(WORKBENCH).toContain("void onEditCustomAsset(ref.id, instructionZh)");
+    const start = CANVAS.indexOf("const editCustomAsset = useCallback");
+    const end = CANVAS.indexOf("const cropCustomAssetToFile = useCallback", start);
+    const editFlow = CANVAS.slice(start, end);
+    expect(editFlow).toContain("buildManhuaAssetImageEditPrompt(instructionZh)");
+    expect(editFlow).toContain("referenceImageUrls: [ref.url]");
+    expect(editFlow).toContain('gcsSubdir: "manhua-asset-edited"');
+    expect(editFlow).toContain('assetStandardizeQuality: "medium"');
+    expect(editFlow).toContain("normalizeManhuaCustomAssetRefs([\n            ...prev,");
+    expect(editFlow).toContain('labelZh: `${ref.labelZh || "资产"}·编辑`');
+  });
 });

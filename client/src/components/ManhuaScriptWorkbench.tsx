@@ -345,6 +345,8 @@ type Props = {
   onCustomAssetLabelChange?: (id: string, labelZh: string) => void;
   /** AI 去字（3 分）：物理擦除画面文字 */
   onDetextCustomAsset?: (id: string) => void | Promise<void>;
+  /** 按用户指令编辑图片；原图保留，新图作为同类参考入库。 */
+  onEditCustomAsset?: (id: string, instructionZh: string) => void | Promise<void>;
   /** 免费裁字：按保留区比例裁剪后入库为新参考图 */
   onCropCustomAsset?: (id: string, crop: { x: number; y: number; w: number; h: number }) => void | Promise<void>;
   /** 明确认领稳定锚点；场景允许一图多选，替代用显示名猜主键。 */
@@ -641,6 +643,7 @@ export default function ManhuaScriptWorkbench({
   onCustomAssetDutyChange,
   onCustomAssetLabelChange,
   onDetextCustomAsset,
+  onEditCustomAsset,
   onCropCustomAsset,
   onCustomAssetClaimsChange,
   onCustomAssetReviewAccept,
@@ -5239,7 +5242,7 @@ export default function ManhuaScriptWorkbench({
                                   ) : null}
                                 </div>
                               ) : null}
-                              {cardExpanded && (onCropCustomAsset || onDetextCustomAsset) ? (
+                              {cardExpanded && (onCropCustomAsset || onDetextCustomAsset || onEditCustomAsset) ? (
                                 <div className="flex flex-wrap gap-1">
                                   {onCropCustomAsset ? (
                                     <button
@@ -5263,6 +5266,25 @@ export default function ManhuaScriptWorkbench({
                                       className="rounded border border-cyan-300/40 bg-cyan-500/10 px-1.5 py-0.5 text-[9px] font-medium text-cyan-100 hover:bg-cyan-500/25 disabled:opacity-40"
                                     >
                                       {assetStandardizeBusyId === ref.id ? "去字中…" : "AI 去字·3分"}
+                                    </button>
+                                  ) : null}
+                                  {onEditCustomAsset ? (
+                                    <button
+                                      type="button"
+                                      disabled={!outlineComplete || assetStandardizeBusyId != null}
+                                      onClick={() => {
+                                        const instructionZh = window.prompt(
+                                          "写清楚这张图要改什么。未提到的部分会尽量保持原样：",
+                                          "",
+                                        );
+                                        if (instructionZh?.trim()) {
+                                          void onEditCustomAsset(ref.id, instructionZh);
+                                        }
+                                      }}
+                                      title="输入修改要求后编辑这张图；原图保留，新图进入同一资产栏"
+                                      className="rounded border border-violet-300/40 bg-violet-500/10 px-1.5 py-0.5 text-[9px] font-medium text-violet-100 hover:bg-violet-500/25 disabled:opacity-40"
+                                    >
+                                      {assetStandardizeBusyId === ref.id ? "编辑中…" : "编辑图片·3分"}
                                     </button>
                                   ) : null}
                                 </div>
