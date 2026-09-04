@@ -1712,14 +1712,51 @@ export const NATIVE_DEEP_READ_SOURCE_BYTES_PER_SEC_ESTIMATE = 400_000;
 export function buildNativeDeepReadSourceFetchArgs(input: {
   node: NativeDeepReadMediaNode;
   outputPath: string;
+  /** 传入即让 ffmpeg 把 out_time 等进度键值追加写到该文件，供拉取进度按真实片长播报。 */
+  progressPath?: string;
 }): string[] {
   return [
     "-nostdin", "-hide_banner", "-loglevel", "error", "-xerror", "-y",
+    ...(input.progressPath ? ["-progress", input.progressPath] : []),
     ...(/^https?:\/\//i.test(input.node.url) ? mediaHeaders(input.node) : []),
     "-i", input.node.url,
     "-map", "0:v:0", "-map", "0:a?",
     "-c", "copy", "-movflags", "+faststart", input.outputPath,
   ];
+}
+
+/**
+ * 解析 ffmpeg `-progress` 文件里最后一次上报的已处理片长（秒）。
+ * 新版写 out_time_us（微秒）、旧版写 out_time_ms（实际也是微秒）、另有 out_time=HH:MM:SS.micro；
+ * 三者取最后出现的一个；无可用值返回 null（调用方回落到「只报已下 MB」）。
+ */
+export function parseFfmpegProgressOutTimeSec(text: string): number | null {
+  let last: number | null = null;
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const m = /^out_time_(?:us|ms)=(-?\d+)\s*$/.exec(line);
+    if (m) {
+      const value = Number(m[1]) / 1_000_000;
+      if (Number.isFinite(value) && value >= 0) last = value;
+      continue;
+    }
+    const clock = /^out_time=(\d+):(\d{2}):(\d{2}(?:\.\d+)?)\s*$/.exec(line);
+    if (clock) {
+      const value = Number(clock[1]) * 3600 + Number(clock[2]) * 60 + Number(clock[3]);
+      if (Number.isFinite(value) && value >= 0) last = value;
+    }
+  }
+  return last;
+}
+
+/** 秒 → mm:ss（≥1 小时用 h:mm:ss），给面板读。 */
+export function formatClockSec(sec: number): string {
+  const total = Math.max(0, Math.floor(Number(sec) || 0));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+    : `${m}:${String(s).padStart(2, "0")}`;
 }
 
 /**
@@ -1884,11 +1921,21 @@ export async function prepareEpisodeVideos(
   limits?: {
     cutConcurrency?: number;
     uploadConcurrency?: number;
-    /** 整片落盘期间的进度播报（0905 用户令：面板不许十几分钟零进度）。 */
+    /** 媒体备料全程进度播报：整片拉取 / 落盘完成 / 切片 N/M / 上传 N/M（0905 用户令：面板不许十几分钟零进度）。 */
     onSourceFetchProgress?: (zh: string) => void | Promise<void>;
   },
 ): Promise<PreparedNativeVideo[]> {
   const segments = validateNativeDeepReadSegments(episode.segments);
+  // 播报是旁路：写不进去不影响备料
+  const reportMedia = async (zh: string) => {
+    try {
+      await limits?.onSourceFetchProgress?.(zh);
+    } catch {
+      /* ignore */
+    }
+  };
+  let cutDone = 0;
+  let uploadDone = 0;
 
   // 切段前先看 /tmp：磁盘打满时 ffmpeg 会切出半截片，宁可关闭式停止。
   // 0901 起整片先落盘再本地切，空间按时长估算叠加 500MB 底线一起验。
@@ -1917,21 +1964,18 @@ export async function prepareEpisodeVideos(
         const node = nodes[attempt % Math.max(1, nodes.length)];
         if (!node?.url) throw new Error(`第${episode.episodeIndex}集未解析到媒体节点`);
         const fetchStartedAt = Date.now();
-        const reportFetch = async (zh: string) => {
-          try {
-            await limits?.onSourceFetchProgress?.(zh);
-          } catch {
-            // 进度播报是旁路，写不进去不影响拉流
-          }
-        };
+        const reportFetch = reportMedia;
+        const totalSec = Math.max(1, episode.sourceDurationSec);
         await reportFetch(
           `第${episode.episodeIndex}集 · 整片拉取开始（节点 ${attempt + 1}/${Math.max(1, nodes.length)}，`
-          + `片长 ${Math.round(episode.sourceDurationSec)} 秒，预计约 ${(sourceBytesEstimate / 1048576).toFixed(0)}MB）`,
+          + `片长 ${formatClockSec(totalSec)}）`,
         );
-        // ffmpeg 顺序拉流没有进度回调：每 20 秒看一次本地文件长度，按预计体积报百分比
+        // 0905 用户令「只显示真实值」：百分比按 ffmpeg -progress 报出的已读片长 / 真实总片长算，
+        // 不再按码率估体积（估值偏大会让进度停在半路，用户以为卡死去掐任务）
+        const progressPath = `${localSourcePath}.progress`;
         const fetchPromise = deps.runMedia(
           "ffmpeg",
-          buildNativeDeepReadSourceFetchArgs({ node, outputPath: localSourcePath }),
+          buildNativeDeepReadSourceFetchArgs({ node, outputPath: localSourcePath, progressPath }),
           NATIVE_DEEP_READ_SOURCE_FETCH_TIMEOUT_MS,
           abortSignal,
         );
@@ -1949,10 +1993,16 @@ export async function prepareEpisodeVideos(
             });
             if (fetchSettled) break;
             const size = await deps.statLocal(localSourcePath).then((s) => s.size).catch(() => 0);
-            const pct = Math.min(99, Math.round((size / Math.max(1, sourceBytesEstimate)) * 100));
+            const readSec = await deps.readLocal(progressPath)
+              .then((buf) => parseFfmpegProgressOutTimeSec(buf.toString("utf8")))
+              .catch(() => null);
+            const elapsedSec = Math.max(1, Math.round((Date.now() - fetchStartedAt) / 1000));
+            const speedZh = `${(size / 1048576 / elapsedSec).toFixed(1)}MB/s`;
             await reportFetch(
-              `第${episode.episodeIndex}集 · 整片拉取中 ${pct}%（已下 ${(size / 1048576).toFixed(0)}MB / 预计约 `
-              + `${(sourceBytesEstimate / 1048576).toFixed(0)}MB · 已耗时 ${Math.round((Date.now() - fetchStartedAt) / 1000)} 秒）`,
+              readSec == null
+                ? `第${episode.episodeIndex}集 · 整片拉取中 · 已下 ${(size / 1048576).toFixed(0)}MB · ${speedZh} · 已耗时 ${elapsedSec} 秒`
+                : `第${episode.episodeIndex}集 · 整片拉取中 ${Math.min(99, Math.floor((readSec / totalSec) * 100))}%`
+                  + `（已读到 ${formatClockSec(readSec)} / ${formatClockSec(totalSec)} · 已下 ${(size / 1048576).toFixed(0)}MB · ${speedZh} · 已耗时 ${elapsedSec} 秒）`,
             );
           }
         })();
@@ -1962,6 +2012,7 @@ export async function prepareEpisodeVideos(
           fetchSettled = true;
           wake?.();
           await ticker.catch(() => undefined);
+          await deps.unlinkLocal(progressPath).catch(() => undefined);
         }
         const sourceStat = await deps.statLocal(localSourcePath);
         if (!Number.isFinite(sourceStat.size) || sourceStat.size <= 0) {
@@ -1979,6 +2030,11 @@ export async function prepareEpisodeVideos(
             + `低于计划 ${episode.sourceDurationSec} 秒，判定拉取不完整`,
           );
         }
+        await reportMedia(
+          `第${episode.episodeIndex}集 · 整片落盘完成 100% · ${(sourceStat.size / 1048576).toFixed(0)}MB`
+          + ` · 片长 ${formatClockSec(probedSec)} · 耗时 ${Math.round((Date.now() - fetchStartedAt) / 1000)} 秒`
+          + ` · 开始本地切 ${segments.length} 段`,
+        );
         fetched = true;
       } catch (error) {
         await deps.unlinkLocal(localSourcePath).catch(() => undefined);
@@ -2064,6 +2120,11 @@ export async function prepareEpisodeVideos(
             hasAudio: media.hasAudio,
           };
           completed = true;
+          cutDone += 1;
+          await reportMedia(
+            `第${episode.episodeIndex}集 · 切片 ${cutDone}/${segments.length} 完成`
+            + `（第 ${index + 1} 段 ${Math.round(segment.startSec)}–${Math.round(segment.endSec)} 秒 · ${(fileStat.size / 1048576).toFixed(0)}MB）`,
+          );
         } catch (error) {
           await deps.unlinkLocal(localPath).catch(() => undefined);
           lastError = error;
@@ -2128,6 +2189,11 @@ export async function prepareEpisodeVideos(
         bytes: row.bytes,
         hasAudio: row.hasAudio,
       };
+      uploadDone += 1;
+      await reportMedia(
+        `第${episode.episodeIndex}集 · 上传 ${uploadDone}/${completeCutRows.length} 完成`
+        + (uploadDone === completeCutRows.length ? " · 备料齐全，开始逐段模型调用" : ""),
+      );
     };
     const uploadWorkers = Array.from({ length: uploadConcurrency }, async () => {
       while (!stopUploading) {

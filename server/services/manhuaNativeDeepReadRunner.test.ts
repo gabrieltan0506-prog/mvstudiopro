@@ -2020,8 +2020,8 @@ describe("精确切片与实际媒体验收", () => {
     // 整片只解析一次节点；段级重切在本地进行，不再刷新节点
     expect(resolveNodes).toHaveBeenCalledTimes(1);
     expect(deps.upload).not.toHaveBeenCalled();
-    // 3 次段级清理 + finally 清整片
-    expect(deps.unlinkLocal).toHaveBeenCalledTimes(4);
+    // 3 次段级清理 + finally 清整片 + 拉取进度文件
+    expect(deps.unlinkLocal).toHaveBeenCalledTimes(5);
     warn.mockRestore();
   });
 
@@ -2037,7 +2037,8 @@ describe("精确切片与实际媒体验收", () => {
     }, undefined, deps)).rejects.toThrow("probe failed");
     expect(deps.upload).not.toHaveBeenCalled();
     // 源探针即抛 → 整片三连拉失败，各自清一次源文件；未进切段层，finally 无段可清
-    expect(deps.unlinkLocal).toHaveBeenCalledTimes(3);
+    // 每发拉取失败各清一次源文件与进度文件（3×2），未进切段层
+    expect(deps.unlinkLocal).toHaveBeenCalledTimes(6);
     warn.mockRestore();
   });
 
@@ -4435,5 +4436,23 @@ describe("逐镜动态观察的生产与消费", () => {
     expect(deps.writeParsedAttemptEvidence).toHaveBeenCalledTimes(1);
     expect(vi.mocked(deps.writeParsedAttemptEvidence).mock.calls[0]![0].parsed.shots).toEqual(
       expect.arrayContaining([expect.objectContaining({ hintZh: expect.any(String) })]));
+  });
+});
+
+describe("0905 · 整片拉取真实进度（不用预估值）", () => {
+  it("解析 ffmpeg -progress 文件取最后一次 out_time，三种键都认，缺失回 null", async () => {
+    const { parseFfmpegProgressOutTimeSec, formatClockSec, buildNativeDeepReadSourceFetchArgs } = await import(
+      "./manhuaNativeDeepReadRunner"
+    );
+    expect(parseFfmpegProgressOutTimeSec("frame=1\nout_time_us=1500000\nprogress=continue\nout_time_us=2573000000\nprogress=end\n")).toBe(2573);
+    expect(parseFfmpegProgressOutTimeSec("out_time_ms=90000000\n")).toBe(90);
+    expect(parseFfmpegProgressOutTimeSec("out_time=00:42:53.000000\n")).toBe(2573);
+    expect(parseFfmpegProgressOutTimeSec("frame=1\nspeed=2x\n")).toBeNull();
+    expect(parseFfmpegProgressOutTimeSec("")).toBeNull();
+    expect(formatClockSec(2573)).toBe("42:53");
+    expect(formatClockSec(3725)).toBe("1:02:05");
+    const args = buildNativeDeepReadSourceFetchArgs({ node: { url: "https://cdn.example/x.m3u8" }, outputPath: "/tmp/a.mp4", progressPath: "/tmp/a.mp4.progress" });
+    expect(args.slice(0, 8)).toEqual(["-nostdin", "-hide_banner", "-loglevel", "error", "-xerror", "-y", "-progress", "/tmp/a.mp4.progress"]);
+    expect(buildNativeDeepReadSourceFetchArgs({ node: { url: "https://cdn.example/x.m3u8" }, outputPath: "/tmp/a.mp4" })).not.toContain("-progress");
   });
 });
