@@ -19,7 +19,12 @@ import {
   selectFramesForVisionAnalysis,
   type ManhuaTemplateLearnLlmProvider,
 } from "../../shared/manhuaTemplateLearnFrameVision.js";
-import { isManhuaNativeDeepReadEnabled } from "./manhuaNativeDeepReadRunner.js";
+import {
+  isManhuaNativeDeepReadEnabled,
+  NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS,
+  NATIVE_DEEP_READ_RESOURCE_RETRY_MAX,
+  NATIVE_DEEP_READ_RETRY_INTERVAL_MS,
+} from "./manhuaNativeDeepReadRunner.js";
 import {
   runNativeDeepReadBatch,
   validateNativeDeepReadBatchPlan,
@@ -2674,12 +2679,20 @@ export async function runManhuaTemplateLearn(
               const retrySegmentZh = typeof checkpoint.chunkIndex === "number" && checkpoint.segmentCount
                 ? ` · 分片 ${checkpoint.chunkIndex + 1}/${checkpoint.segmentCount}`
                 : "";
-              const retryKindZh = checkpoint.route === "resource_retry_pending"
-                ? `资源拥堵，同温重试 ${checkpoint.resourceRetryNumber || "?"}/${checkpoint.resourceRetryMax || 3}`
+              const isResourceRetry = checkpoint.route === "resource_retry_pending";
+              const retryKindZh = isResourceRetry
+                ? `资源拥堵，同温重试 ${checkpoint.resourceRetryNumber || "?"}`
+                  + `/${checkpoint.resourceRetryMax || NATIVE_DEEP_READ_RESOURCE_RETRY_MAX}`
                 : "门禁未通过，降档重试";
+              // 两类重试退避线不同：资源拥堵 30 秒、门禁降档 60 秒，别写字面量。
+              const retryWaitSec = Math.round(
+                (isResourceRetry
+                  ? NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS
+                  : NATIVE_DEEP_READ_RETRY_INTERVAL_MS) / 1000,
+              );
               await progress(
                 MANHUA_LEARN_STAGE.vision,
-                `${episodeLabel}${retrySegmentZh} · ${retryKindZh}：60 秒后执行第 ${checkpoint.attemptNumber || "?"} 发`
+                `${episodeLabel}${retrySegmentZh} · ${retryKindZh}：${retryWaitSec} 秒后执行第 ${checkpoint.attemptNumber || "?"} 发`
                 + `${typeof checkpoint.temperature === "number" ? `（temperature ${checkpoint.temperature}）` : ""}`
                 + `；后台原因：${checkpoint.errorZh || "上一次调用未完成"}`,
               );

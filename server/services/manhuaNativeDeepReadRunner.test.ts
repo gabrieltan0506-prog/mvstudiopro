@@ -28,7 +28,10 @@ import {
   resolveNativeDeepReadDensityContract,
   NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG,
   NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG,
+  NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS,
+  NATIVE_DEEP_READ_RESOURCE_RETRY_MAX,
   NATIVE_DEEP_READ_RETRY_INTERVAL_MS,
+  NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY,
   NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO,
   NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES,
   NATIVE_DEEP_READ_RETRY_TEMPERATURES,
@@ -290,6 +293,15 @@ describe("模型与通道收口", () => {
     // 按用户最新指令保留首发MEDIUM基准，对比prompt/schema，不以旧样本推断思考档位因果。
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
+  });
+
+  it("503 退避与并发上限（0904 用户令）：30 秒 × 4 次、并发 4，且都不进契约哈希", () => {
+    expect(NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS).toBe(30_000);
+    expect(NATIVE_DEEP_READ_RESOURCE_RETRY_MAX).toBe(4);
+    expect(NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY).toBe(4);
+    // 资源退避线必须与门禁降温线分开：后者进契约 SHA 与段缓存指纹，改了会让已购分片重新付费。
+    expect(NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS)
+      .not.toBe(NATIVE_DEEP_READ_RETRY_INTERVAL_MS);
   });
 
   it("同一 Vertex 分片候选三档：0.70→0.65→0.60，间隔60秒", () => {

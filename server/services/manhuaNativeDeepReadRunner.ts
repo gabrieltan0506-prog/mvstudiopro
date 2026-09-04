@@ -4434,8 +4434,9 @@ function routeLabelZh(route: NativeDeepReadVisualRoute, readModel: ManhuaNativeD
 
 /**
  * 一次请求读取一集（逐段调用），回传后按段合并成集卡。
- * 只有门禁失败才按 0.7→0.65→0.6 降档，每档间隔 60 秒；
- * 503/429/RESOURCE_EXHAUSTED 等 60 秒后保持当前温度重试，不消耗降档次数。
+ * 只有门禁失败才按 0.7→0.65→0.6 降档，每档间隔 60 秒（RETRY_INTERVAL_MS）；
+ * 503/429/RESOURCE_EXHAUSTED 走另一条线：隔 30 秒（RESOURCE_RETRY_INTERVAL_MS）
+ * 保持当前温度重试，最多 4 次（RESOURCE_RETRY_MAX），不消耗降档次数。
  * 用户中止、证据保存失败和其他传输错误立即终止。
  */
 export type NativeDeepReadBatchRunParams = {
@@ -4489,7 +4490,7 @@ async function executeNativeDeepReadBatch(
   diagnosticSelection?: readonly number[],
 ): Promise<NativeDeepReadBatchExecutionResult> {
   const readModel = parseNativeDeepReadModel(params.readModel);
-  // 0904：flash 主线切 Gemini API key（有真容量），pro 照旧 Vertex；开关关掉即回旧行为。
+  // 0904 晚起 useGeminiApiRoute 恒为 false（读片一律 Vertex），分支仅供将来经授权回退。
   const useGeminiApiRoute = readModel === "gemini-3.8-flash" && isFlashReadViaGeminiApiEnabled();
   if (!params.episodes.length) throw new Error("多视频精读批次为空");
   if (diagnosticSelection && (params.episodes.length !== 1 || !params.preservePreparedVideos
