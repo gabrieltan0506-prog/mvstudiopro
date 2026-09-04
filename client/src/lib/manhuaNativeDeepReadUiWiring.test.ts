@@ -51,16 +51,20 @@ describe("原生精读页面接线", () => {
     expect(inputBlock).not.toMatch(/clamp|Math\.(?:floor|round|min|max)/);
   });
 
-  it("刷新、切剧与快照保存分片设置，轮询不覆盖用户正在编辑的下一任务设置", () => {
+  it("用户存过的分片秒数/fps 永远优先：刷新只在从未设置时借快照垫底，轮询、切剧、快照一律不盖输入框（0905）", () => {
     expect(PAGE.includes("restoreManhuaLearnSegmentSeconds(parsed.nativeSegmentSeconds)")).toBe(true);
     expect(PAGE.includes("nativeSegmentSeconds: value.nativeSegmentSeconds")).toBe(true);
     expect(PAGE.includes("resolveManhuaLearnSnapshotSegmentSeconds(")).toBe(true);
-    expect(PAGE.includes("restoreManhuaLearnSegmentSeconds(continuation.nativeSegmentSeconds)")).toBe(true);
-    expect(PAGE.includes("if (!manhuaLearnSegmentSecondsEditedRef.current)")).toBe(true);
+    expect(PAGE.includes("if (!hasStoredManhuaLearnSegmentSeconds(manhuaLearnUserKey))")).toBe(true);
+    expect(PAGE.includes("if (!hasStoredManhuaLearnVideoFps(manhuaLearnUserKey))")).toBe(true);
     expect(PAGE.includes("restoreManhuaLearnVideoFps(parsed.nativeVideoFps)")).toBe(true);
     expect(PAGE.includes("nativeVideoFps: value.nativeVideoFps")).toBe(true);
     expect(PAGE.includes("resolveManhuaLearnSnapshotVideoFps(")).toBe(true);
-    expect(PAGE.includes("if (!manhuaLearnVideoFpsEditedRef.current)")).toBe(true);
+    // 只有用户输入与「从未设置」两处会写秒数输入框；续跑快照/轮询/切剧不得再碰
+    expect(PAGE.match(/setManhuaLearnSegmentSecondsInput\(/g)).toHaveLength(3);
+    expect(PAGE.match(/setManhuaLearnVideoFpsInput\(/g)).toHaveLength(3);
+    expect(PAGE.includes("轮询不碰秒数/fps 输入框")).toBe(true);
+    expect(PAGE.includes("切剧只换焦点，不改用户设好的秒数/fps")).toBe(true);
     expect(PAGE.match(/runManhuaTemplateLearnCloud\(next.row, next.rank, next.seriesKey\)/g)).toHaveLength(2);
     const recoveryAt = PAGE.indexOf("刷新/断线恢复：接管同一个后台 job");
     const recoveryEnd = PAGE.indexOf("const approveManhuaLearnProposal", recoveryAt);
@@ -94,7 +98,7 @@ describe("原生精读页面接线", () => {
 
   it("owner 面板使用原生精读说明与直接开始按钮", () => {
     expect(PAGE).toContain("nativeDeepRead: ownerNativeDeepReadPanel");
-    expect(PAGE).toContain("学习模型：Gemini 3.1 Pro · 原生视频精读");
+    expect(PAGE).toContain("学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[manhuaLearnReadModel]} · 原生视频精读");
     expect(PAGE).toContain("开始精读 ${manhuaLearnBatchSize} 集");
     expect(PAGE).not.toContain("预演并精读 ${manhuaLearnBatchSize} 集");
     expect(PAGE).not.toContain("旧抽帧任务");
@@ -111,9 +115,10 @@ describe("原生精读页面接线", () => {
     expect(PAGE).toContain('|| ownerTemplateCapabilityPending');
   });
 
-  it("原生精读徽标固定为当前生产模型，不读取任务回执或旧模型状态", () => {
-    expect(PAGE).toContain("学习模型：Gemini 3.1 Pro · 原生视频精读");
-    expect(PAGE).not.toContain("MANHUA_NATIVE_DEEP_READ_MODEL_LABEL");
+  it("原生精读徽标跟随面板所选模型，不读取任务回执或旧模型状态", () => {
+    expect(PAGE).toContain("学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[manhuaLearnReadModel]} · 原生视频精读");
+    // 0903 双模型：徽标按面板所选模型显示，仍不读任务回执或旧模型状态
+    expect(PAGE).not.toContain("nativeModelReceipts[0]?.model");
     expect(PAGE).not.toContain("MANHUA_TEMPLATE_FRAME_VISION_LABEL");
   });
 
@@ -154,7 +159,7 @@ describe("原生精读页面接线", () => {
       "canSeeManhuaLearnTechnicalDetails\n                            && (manhuaLearnResult.progressLines?.length || 0) > 0",
     );
     expect(PAGE).toContain("getManhuaLearnSafeProgressLabelZh(manhuaLearnResult)");
-    expect(PAGE).toContain("学习模型：Gemini 3.1 Pro · 原生视频精读");
+    expect(PAGE).toContain("学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[manhuaLearnReadModel]} · 原生视频精读");
   });
 
   it("逐次模型回执只从当前服务端 Job 读取并仅向 owner 展示", () => {

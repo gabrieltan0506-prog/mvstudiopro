@@ -849,6 +849,8 @@ export async function runNativeDeepReadBatch(input: {
   abortSignal?: AbortSignal;
   onProgress?: (outcome: NativeDeepReadBatchOutcome) => void | Promise<void>;
   onModelCheckpoint?: (checkpoint: NativeDeepReadModelCheckpoint) => void | Promise<void>;
+  /** 整片拉取等媒体备料进度中文行。 */
+  onMediaProgressZh?: (zh: string) => void | Promise<void>;
 }, deps: NativeDeepReadExecutionDeps = defaultDeps): Promise<NativeDeepReadBatchResult> {
   if (!deps.isEnabled()) throw new Error("原生精读开关未开启");
 
@@ -1062,6 +1064,7 @@ export async function runNativeDeepReadBatch(input: {
           if (receipt.status === "started") paidEpisodeIndexes.add(episode.episodeIndex);
           await input.onModelCheckpoint?.(receipt);
         },
+        onMediaProgressZh: input.onMediaProgressZh,
       });
       const visualResult = visualBatch.episodes[0]?.result;
       if (!visualResult) throw new Error(`第${episode.episodeIndex}集批次结果缺失，停止入库`);

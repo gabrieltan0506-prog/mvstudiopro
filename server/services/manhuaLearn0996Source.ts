@@ -3,6 +3,7 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { Agent, fetch as undiciFetch } from "undici";
 import {
+  MANHUA_0996_SOURCE_HOSTS,
   isTrustedManhua0996MediaUrl,
   isTrustedManhua0996SiteUrl,
   parseManhua0996PlaybackResponse,
@@ -15,6 +16,13 @@ import {
 
 const REQUEST_TIMEOUT_MS = 20_000;
 const MAX_REDIRECTS = 4;
+/**
+ * 0905 用户令：源站抖一下不许直接判死——同一部剧在白名单镜像域之间换域名重试，
+ * 最多三发（原域一发 + 两个镜像域），每发都带双钥匙。只在网络失败/超时与
+ * 5xx/403/429 上换域；4xx 其他状态与用户主动停止不重试。
+ */
+const SOURCE_HOST_MAX_ATTEMPTS = 3;
+const SOURCE_HOST_RETRY_BACKOFF_MS = 2_000;
 // 站点公开前端 bundle 使用的匿名请求签名常量，不是账号密钥或生产凭证。
 const ANONYMOUS_SIGN_KEY = "cb808529bae6b6be45ecfab29a4889bc";
 
@@ -275,6 +283,74 @@ export function buildManhua0996EpisodeApiRequest(
   };
 }
 
+/** 同一部剧的候选域：原域优先，其后是白名单里的其它镜像域与 Fly 追加域。 */
+export function listManhua0996SourceHostCandidates(
+  source: Manhua0996SourceRef,
+  additionalHosts: readonly string[] = readManhuaLearnExtraSourceHosts(),
+): string[] {
+  const registrable = (host: string) => host.replace(/^www\./, "");
+  const others = Array.from(new Set(
+    [...MANHUA_0996_SOURCE_HOSTS, ...additionalHosts]
+      .map((host) => String(host || "").trim().toLowerCase())
+      .filter((host) => host && host !== source.host),
+  ));
+  // 真正换站的域排前面（www 变体多半同一台机，抖动时一起抖），同站变体垫后
+  const crossSite = others.filter((host) => registrable(host) !== registrable(source.host));
+  const sameSite = others.filter((host) => registrable(host) === registrable(source.host));
+  return [source.host, ...crossSite, ...sameSite].slice(0, SOURCE_HOST_MAX_ATTEMPTS);
+}
+
+function withManhua0996Host(source: Manhua0996SourceRef, host: string): Manhua0996SourceRef {
+  return {
+    ...source,
+    host,
+    canonicalUrl: `https://${host}/vod/play/${source.vodId}/sid/${source.nid}`,
+  };
+}
+
+/** 换域名重试的判据：网络失败/超时、以及站点侧 5xx/403/429。 */
+function isManhua0996HostRetryable(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (/网络请求失败或超时/.test(error.message)) return true;
+  const status = Number(/HTTP (\d{3})/.exec(error.message)?.[1]);
+  return status >= 500 || status === 403 || status === 429;
+}
+
+async function runWithManhua0996HostFallback<T>(
+  source: Manhua0996SourceRef,
+  signal: AbortSignal | undefined,
+  attempt: (candidate: Manhua0996SourceRef, attemptIndex: number) => Promise<T>,
+  sleepMs: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => {
+    // 退避期间用户点停止要立刻醒来，不多等 2 秒
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    }
+    signal?.addEventListener("abort", done, { once: true });
+  }),
+): Promise<T> {
+  const hosts = listManhua0996SourceHostCandidates(source);
+  let lastError: unknown;
+  for (let index = 0; index < hosts.length; index += 1) {
+    if (signal?.aborted) throw abortError(signal);
+    const candidate = withManhua0996Host(source, hosts[index]!);
+    try {
+      return await attempt(candidate, index);
+    } catch (error) {
+      lastError = error;
+      if (signal?.aborted || !isManhua0996HostRetryable(error) || index === hosts.length - 1) throw error;
+      console.warn(
+        `[manhua-0996] ${candidate.host} 第 ${index + 1} 发失败，${SOURCE_HOST_RETRY_BACKOFF_MS / 1000} 秒后换域名 ${hosts[index + 1]} 重试：`,
+        error instanceof Error ? error.message : error,
+      );
+      await sleepMs(SOURCE_HOST_RETRY_BACKOFF_MS);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("第三方播放站点所有候选域均失败");
+}
+
 export async function fetchManhua0996SeriesPage(
   rawUrl: string,
   signal?: AbortSignal,
@@ -282,8 +358,10 @@ export async function fetchManhua0996SeriesPage(
 ): Promise<Manhua0996SeriesPage> {
   const source = parseManhua0996SourceUrl(rawUrl, readManhuaLearnExtraSourceHosts());
   if (!source) throw new Error("第三方播放页链接无效或不在可信站点内");
-  const html = await fetchTrustedPageHtml(source.canonicalUrl, signal, fetchImpl);
-  return parseManhua0996SeriesPage(html, source);
+  return runWithManhua0996HostFallback(source, signal, async (candidate) => {
+    const html = await fetchTrustedPageHtml(candidate.canonicalUrl, signal, fetchImpl);
+    return parseManhua0996SeriesPage(html, candidate);
+  });
 }
 
 export async function fetchManhua0996EpisodePlayback(
@@ -293,24 +371,34 @@ export async function fetchManhua0996EpisodePlayback(
 ): Promise<Manhua0996Playback> {
   const source = parseManhua0996SourceUrl(rawUrl, readManhuaLearnExtraSourceHosts());
   if (!source) throw new Error("第三方播放页链接无效或不在可信站点内");
-  const request = buildManhua0996EpisodeApiRequest(source, Date.now());
-  await assertPublicManhuaSourceHost(source.host);
   /**
    * 0903 用户令：凭证由 fetchTrustedApiResponse 每一发直接带（双钥匙直发，只发可信域）。
    * 这里只读「有没有配凭证」，用来决定**解析层要不要接受 needLogin:true 的高清档**。
    */
   const hasAuth = Object.keys(readManhuaMirrorSourceAuthHeaders({}) || {}).length > 0;
-  const response = await fetchTrustedApiResponse(request.url, {
-    method: "GET",
-    headers: request.headers,
-  }, signal, fetchImpl);
-  if (!response.ok) throw new Error(`第三方媒体接口请求失败（HTTP ${response.status}）`);
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new Error("第三方媒体接口返回了无效 JSON，已停止");
-  }
+  return runWithManhua0996HostFallback(source, signal, async (candidate) => {
+    const request = buildManhua0996EpisodeApiRequest(candidate, Date.now());
+    await assertPublicManhuaSourceHost(candidate.host);
+    const response = await fetchTrustedApiResponse(request.url, {
+      method: "GET",
+      headers: request.headers,
+    }, signal, fetchImpl);
+    if (!response.ok) throw new Error(`第三方媒体接口请求失败（HTTP ${response.status}）`);
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      throw new Error("第三方媒体接口返回了无效 JSON，已停止");
+    }
+    return finishManhua0996Playback(payload, candidate, hasAuth);
+  });
+}
+
+async function finishManhua0996Playback(
+  payload: unknown,
+  source: Manhua0996SourceRef,
+  hasAuth: boolean,
+): Promise<Manhua0996Playback> {
   const parsed = parseManhua0996PlaybackResponse(payload, `https://${source.host}/`, hasAuth);
   for (const mediaUrl of parsed.playbackUrls) {
     if (!isTrustedManhua0996MediaUrl(mediaUrl)) {

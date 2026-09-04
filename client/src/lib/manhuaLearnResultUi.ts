@@ -66,6 +66,32 @@ export function readManhuaLearnSegmentSeconds(userKey: string): number {
   }
 }
 
+/**
+ * 用户是否亲手存过分片秒数。存过＝以用户为准，任何续跑快照/轮询/切剧都不得盖回旧值
+ * （0905 用户实测：设好的秒数一刷新就变回上一任务的值）。
+ */
+export function hasStoredManhuaLearnSegmentSeconds(userKey: string): boolean {
+  const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_SEGMENT_SECONDS, userKey);
+  if (!key) return false;
+  try {
+    parseNativeDeepReadSegmentSeconds(JSON.parse(localStorage.getItem(key) || "null"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function hasStoredManhuaLearnVideoFps(userKey: string): boolean {
+  const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_VIDEO_FPS, userKey);
+  if (!key) return false;
+  try {
+    parseNativeDeepReadVideoFps(JSON.parse(localStorage.getItem(key) || "null"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** 「整支即全集」勾选持久化（0902）：刷新/继续都记住，别每次手勾。 */
 export function readManhuaLearnStandalone(userKey: string): boolean {
   const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_STANDALONE, userKey);
@@ -1568,6 +1594,39 @@ export function listExportableEpisodes(
  * renderEpisodeReport 接口，对象名由服务端唯一拼装。
  * 解析不出（旧系列卡、格式不符）就返回 null，调用方隐藏导出入口，不硬猜。
  */
+/**
+ * 本轮任务的失败/进行中结果保留自己的状态、日志与错误，但分集摘要必须并入
+ * GCS 快照里已落盘的集（0905 用户实测：失败态空摘要把「已学 3」盖成空白，
+ * 导出 HTML 按钮跟着消失）。同一集以「已完整落盘」优先，其次取学得更远的检查点。
+ */
+export function mergeManhuaLearnSnapshotDigests(
+  prev: ManhuaLearnResultUi,
+  snapshot: ManhuaLearnResultUi,
+): ManhuaLearnResultUi {
+  type Digest = ManhuaLearnResultUi["digestsPreview"][number];
+  const byIndex = new Map<number, Digest>();
+  const better = (candidate: Digest, current: Digest | undefined): boolean => {
+    if (!current) return true;
+    if (candidate.complete === true && current.complete !== true) return true;
+    if (candidate.complete !== true && current.complete === true) return false;
+    return (Number(candidate.learnedThroughSec) || 0) > (Number(current.learnedThroughSec) || 0);
+  };
+  for (const digest of prev.digestsPreview || []) {
+    if (better(digest, byIndex.get(digest.episodeIndex))) byIndex.set(digest.episodeIndex, digest);
+  }
+  for (const digest of snapshot.digestsPreview || []) {
+    if (better(digest, byIndex.get(digest.episodeIndex))) byIndex.set(digest.episodeIndex, digest);
+  }
+  const digestsPreview = Array.from(byIndex.values()).sort((a, b) => a.episodeIndex - b.episodeIndex);
+  const prevDigests = prev.digestsPreview || [];
+  const unchanged = digestsPreview.length === prevDigests.length
+    && digestsPreview.every((digest, index) => digest === prevDigests[index]);
+  const learnedCount = Math.max(prev.learnedCount || 0, snapshot.learnedCount || 0);
+  const pipelineMode = prev.pipelineMode || snapshot.pipelineMode;
+  if (unchanged && learnedCount === prev.learnedCount && pipelineMode === prev.pipelineMode) return prev;
+  return { ...prev, digestsPreview, learnedCount, pipelineMode };
+}
+
 export function parseNativeProposalEpisodeRef(
   card: { id?: unknown; revision?: { parentTemplateId?: unknown } | null } | null | undefined,
 ): { seriesKey: string; episodeIndex: number } | null {
