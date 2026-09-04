@@ -2566,6 +2566,13 @@ export default function PlatformPage() {
     trpc.manhuaViralTemplate.retireLearnSourceEpisode.useMutation();
   const renameLearnSeriesMutation =
     trpc.manhuaViralTemplate.renameLearnSeriesTitle.useMutation();
+  /**
+   * 0905 用户令：**开始学习前不再自动对照是否已入库**——贴上链接就查那一发要扫全库，
+   * 把「开始学习」拖慢；学完再对照即可。
+   * 打开时机只有两个：①本会话里学习任务由「在跑」变成「不在跑」（＝学完了，这时对照才有意义）
+   * ②用户手动点「查是否学过」。换链接即重新关闭。
+   */
+  const [manhuaLearnDupCheckOn, setManhuaLearnDupCheckOn] = useState(false);
   const manhuaLearnDupQuery = trpc.manhuaViralTemplate.checkLearnSourceLearned.useQuery(
     {
       url: manhuaPasteUrlDebounced,
@@ -2573,11 +2580,15 @@ export default function PlatformPage() {
       ...(manhuaPasteTitleDebounced ? { titleZh: manhuaPasteTitleDebounced } : {}),
     },
     {
-      enabled: /^https?:\/\/\S+$/i.test(manhuaPasteUrlDebounced),
+      enabled: manhuaLearnDupCheckOn && /^https?:\/\/\S+$/i.test(manhuaPasteUrlDebounced),
       staleTime: 5 * 60_000,
       retry: false,
     },
   );
+  useEffect(() => {
+    // 换了链接就把对照关掉：上一支的结论对这一支没有意义。
+    setManhuaLearnDupCheckOn(false);
+  }, [manhuaPasteUrlDebounced]);
   const [manhuaLearnBatchSize, setManhuaLearnBatchSize] = useState(readManhuaLearnBatchSize);
   const [manhuaLearnSegmentSecondsInput, setManhuaLearnSegmentSecondsInput] = useState(String(NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS));
   /** 0901「整支即全集」：全集单条长视频跳过合集展开（Argus 风控专拦那个端点） */
@@ -2597,6 +2608,15 @@ export default function PlatformPage() {
   const [manhuaLearnHydratedUserKey, setManhuaLearnHydratedUserKey] = useState("");
   const [manhuaLearnActiveJob, setManhuaLearnActiveJob] = useState<ManhuaLearnActiveJob | null>(null);
   const [manhuaLearnServerJobs, setManhuaLearnServerJobs] = useState<ManhuaLearnServerJob[]>([]);
+  /** 「学完再对照」的触发点：任务由在跑变成不在跑那一刻，才打开入库对照。 */
+  const manhuaLearnWasRunningRef = useRef(false);
+  useEffect(() => {
+    const running = manhuaLearnServerJobs.some(
+      (job) => job.status === "queued" || job.status === "running",
+    );
+    if (manhuaLearnWasRunningRef.current && !running) setManhuaLearnDupCheckOn(true);
+    manhuaLearnWasRunningRef.current = running;
+  }, [manhuaLearnServerJobs]);
   /** 0902 用户实测：任务 4 秒失败面板不吭声，人干等 4 分钟——失败即 toast + 常驻红条 */
   const manhuaLearnFailureSeenRef = useRef<Set<string>>(new Set());
   const [manhuaLearnLatestFailure, setManhuaLearnLatestFailure] = useState<
@@ -3647,13 +3667,20 @@ export default function PlatformPage() {
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [refreshManhuaLearnServerJobs, hasSupervisorOpsAccess, trendInsightTab, user?.id]);
+  /**
+   * 0905 用户令：模板库**不预加载**，默认折叠，点开才请求。
+   * 它拉的是 owner 全量已批准卡（走 GCS，卡越多越慢），进页面就拉会把首屏拖住；
+   * 而绝大多数时候进来是为了贴链接开始学习，不是为了翻库。
+   */
+  const [manhuaTemplateLibraryOpen, setManhuaTemplateLibraryOpen] = useState(false);
   /** owner 专用完整库；先通过能力查询再请求，其他监管账号不会触发私有列表请求。 */
   const manhuaViralApprovedQuery = trpc.manhuaViralTemplate.listApprovedPrivate.useQuery(
     undefined,
     {
       enabled:
         trendInsightTab === "ai_manhua" &&
-        ownerTemplateOptimizeAllowed,
+        ownerTemplateOptimizeAllowed &&
+        manhuaTemplateLibraryOpen,
       staleTime: 60_000,
       retry: false,
     },
@@ -12860,6 +12887,20 @@ export default function PlatformPage() {
                               </button>
                             </div>
                           ) : null}
+                          {!manhuaLearnDupCheckOn
+                          && /^https?:\/\/\S+$/i.test(manhuaPasteUrlDebounced) ? (
+                            <button
+                              type="button"
+                              onClick={() => setManhuaLearnDupCheckOn(true)}
+                              className="mt-2 rounded-md border border-white/15 px-2 py-0.5 text-[10px] text-white/55 hover:bg-white/5"
+                              title="开始学习不查库（那一发拖慢启动）；学完会自动对照，也可以现在手动查"
+                            >
+                              查是否学过
+                            </button>
+                          ) : null}
+                          {manhuaLearnDupCheckOn && manhuaLearnDupQuery.isFetching ? (
+                            <div className="mt-2 text-[10px] text-white/45">对照入库记录中…</div>
+                          ) : null}
                           {manhuaLearnDupQuery.data?.episodes.length ? (
                             <div className="mt-2 rounded-lg border border-amber-400/35 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-5 text-amber-100">
                               ⚠️ 这支已学过：
@@ -13727,10 +13768,50 @@ export default function PlatformPage() {
                         </div>
                       ) : null}
 
-                      {manhuaViralApprovedQuery.data?.groups?.length ? (
+                      {ownerTemplateOptimizeAllowed && !manhuaTemplateLibraryOpen ? (
+                        <button
+                          type="button"
+                          onClick={() => setManhuaTemplateLibraryOpen(true)}
+                          className="mt-3 flex w-full items-center justify-between rounded-xl border border-emerald-400/20 bg-emerald-500/[0.06] px-3 py-2 text-[10px] text-emerald-50/70 hover:bg-emerald-500/10"
+                        >
+                          <span className="font-semibold text-emerald-50/90">
+                            ▸ 模板库（已批准 · 编剧室可选）
+                          </span>
+                          <span className="text-emerald-100/50">点开加载</span>
+                        </button>
+                      ) : null}
+                      {manhuaTemplateLibraryOpen && manhuaViralApprovedQuery.isFetching
+                      && !manhuaViralApprovedQuery.data ? (
+                        <div className="mt-3 rounded-xl border border-emerald-400/20 bg-emerald-500/[0.06] px-3 py-2 text-[10px] text-emerald-50/60">
+                          模板库加载中…
+                        </div>
+                      ) : null}
+                      {manhuaTemplateLibraryOpen && manhuaViralApprovedQuery.data
+                      && !manhuaViralApprovedQuery.data.groups?.length ? (
+                        <div className="mt-3 flex items-center justify-between rounded-xl border border-emerald-400/20 bg-emerald-500/[0.06] px-3 py-2 text-[10px] text-emerald-50/60">
+                          <span>模板库还没有已批准的卡。</span>
+                          <button
+                            type="button"
+                            onClick={() => setManhuaTemplateLibraryOpen(false)}
+                            className="text-emerald-100/50 hover:text-emerald-100/80"
+                          >
+                            收起
+                          </button>
+                        </div>
+                      ) : null}
+                      {manhuaTemplateLibraryOpen && manhuaViralApprovedQuery.data?.groups?.length ? (
                         <div className="mt-3 rounded-xl border border-emerald-400/20 bg-emerald-500/10 px-3 py-2.5 text-[10px] text-emerald-50/85">
-                          <div className="mb-1 font-semibold text-emerald-50/95">
-                            模板库（已批准 · 编剧室可选）
+                          <div className="mb-1 flex items-center justify-between gap-2">
+                            <span className="font-semibold text-emerald-50/95">
+                              ▾ 模板库（已批准 · 编剧室可选）
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setManhuaTemplateLibraryOpen(false)}
+                              className="shrink-0 rounded border border-emerald-300/30 px-1.5 py-0.5 text-[10px] text-emerald-100/70 hover:bg-emerald-400/15"
+                            >
+                              收起
+                            </button>
                           </div>
                           <p className="mb-2 text-[10px] leading-4 text-emerald-50/55">
                             学习提案批准后会出现在此；到 /canvas 编剧室点选即可注入节奏骨架。
