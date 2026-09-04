@@ -1941,8 +1941,11 @@ export async function prepareEpisodeVideos(
         const ticker = (async () => {
           while (!fetchSettled) {
             await new Promise<void>((resolve) => {
-              wake = resolve;
-              setTimeout(resolve, NATIVE_DEEP_READ_SOURCE_FETCH_PROGRESS_INTERVAL_MS);
+              const timer = setTimeout(resolve, NATIVE_DEEP_READ_SOURCE_FETCH_PROGRESS_INTERVAL_MS);
+              wake = () => {
+                clearTimeout(timer);
+                resolve();
+              };
             });
             if (fetchSettled) break;
             const size = await deps.statLocal(localSourcePath).then((s) => s.size).catch(() => 0);

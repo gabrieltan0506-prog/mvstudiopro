@@ -98,7 +98,7 @@ describe("原生精读页面接线", () => {
 
   it("owner 面板使用原生精读说明与直接开始按钮", () => {
     expect(PAGE).toContain("nativeDeepRead: ownerNativeDeepReadPanel");
-    expect(PAGE).toContain("学习模型：Gemini 3.1 Pro · 原生视频精读");
+    expect(PAGE).toContain("学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[manhuaLearnReadModel]} · 原生视频精读");
     expect(PAGE).toContain("开始精读 ${manhuaLearnBatchSize} 集");
     expect(PAGE).not.toContain("预演并精读 ${manhuaLearnBatchSize} 集");
     expect(PAGE).not.toContain("旧抽帧任务");
@@ -115,9 +115,10 @@ describe("原生精读页面接线", () => {
     expect(PAGE).toContain('|| ownerTemplateCapabilityPending');
   });
 
-  it("原生精读徽标固定为当前生产模型，不读取任务回执或旧模型状态", () => {
-    expect(PAGE).toContain("学习模型：Gemini 3.1 Pro · 原生视频精读");
-    expect(PAGE).not.toContain("MANHUA_NATIVE_DEEP_READ_MODEL_LABEL");
+  it("原生精读徽标跟随面板所选模型，不读取任务回执或旧模型状态", () => {
+    expect(PAGE).toContain("学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[manhuaLearnReadModel]} · 原生视频精读");
+    // 0903 双模型：徽标按面板所选模型显示，仍不读任务回执或旧模型状态
+    expect(PAGE).not.toContain("nativeModelReceipts[0]?.model");
     expect(PAGE).not.toContain("MANHUA_TEMPLATE_FRAME_VISION_LABEL");
   });
 
@@ -158,7 +159,7 @@ describe("原生精读页面接线", () => {
       "canSeeManhuaLearnTechnicalDetails\n                            && (manhuaLearnResult.progressLines?.length || 0) > 0",
     );
     expect(PAGE).toContain("getManhuaLearnSafeProgressLabelZh(manhuaLearnResult)");
-    expect(PAGE).toContain("学习模型：Gemini 3.1 Pro · 原生视频精读");
+    expect(PAGE).toContain("学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[manhuaLearnReadModel]} · 原生视频精读");
   });
 
   it("逐次模型回执只从当前服务端 Job 读取并仅向 owner 展示", () => {

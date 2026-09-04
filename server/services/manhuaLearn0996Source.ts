@@ -288,10 +288,16 @@ export function listManhua0996SourceHostCandidates(
   source: Manhua0996SourceRef,
   additionalHosts: readonly string[] = readManhuaLearnExtraSourceHosts(),
 ): string[] {
-  const ordered = [source.host, ...MANHUA_0996_SOURCE_HOSTS, ...additionalHosts]
-    .map((host) => String(host || "").trim().toLowerCase())
-    .filter(Boolean);
-  return Array.from(new Set(ordered)).slice(0, SOURCE_HOST_MAX_ATTEMPTS);
+  const registrable = (host: string) => host.replace(/^www\./, "");
+  const others = Array.from(new Set(
+    [...MANHUA_0996_SOURCE_HOSTS, ...additionalHosts]
+      .map((host) => String(host || "").trim().toLowerCase())
+      .filter((host) => host && host !== source.host),
+  ));
+  // 真正换站的域排前面（www 变体多半同一台机，抖动时一起抖），同站变体垫后
+  const crossSite = others.filter((host) => registrable(host) !== registrable(source.host));
+  const sameSite = others.filter((host) => registrable(host) === registrable(source.host));
+  return [source.host, ...crossSite, ...sameSite].slice(0, SOURCE_HOST_MAX_ATTEMPTS);
 }
 
 function withManhua0996Host(source: Manhua0996SourceRef, host: string): Manhua0996SourceRef {
@@ -314,7 +320,16 @@ async function runWithManhua0996HostFallback<T>(
   source: Manhua0996SourceRef,
   signal: AbortSignal | undefined,
   attempt: (candidate: Manhua0996SourceRef, attemptIndex: number) => Promise<T>,
-  sleepMs: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  sleepMs: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => {
+    // 退避期间用户点停止要立刻醒来，不多等 2 秒
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    }
+    signal?.addEventListener("abort", done, { once: true });
+  }),
 ): Promise<T> {
   const hosts = listManhua0996SourceHostCandidates(source);
   let lastError: unknown;

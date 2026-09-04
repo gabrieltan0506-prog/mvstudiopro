@@ -105,7 +105,8 @@ describe("第三方播放页服务端安全边界", () => {
     await expect(fetchManhua0996EpisodePlayback(sourceUrl, undefined, fetchImpl))
       .resolves.toMatchObject({ playbackUrl: playbackPayload.data.list[0].url });
     expect(fetchImpl).toHaveBeenCalledTimes(3);
-    expect(hosts).toEqual(["0996zp.com", "www.0996zp.com", "gzcrkt8888.com"]);
+    // 真正换站的域排前面，同站 www 变体垫后
+    expect(hosts).toEqual(["0996zp.com", "gzcrkt8888.com", "www.gzcrkt8888.com"]);
   }, 10_000);
 
   it("换域只在网络/5xx/403 上触发：404 之类直接判死，不换域", async () => {

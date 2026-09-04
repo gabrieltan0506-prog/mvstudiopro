@@ -398,6 +398,8 @@ export async function listGcsObjectNamesByPrefix(params: {
         });
         lastNetworkError = undefined;
         if (response.status < 500 && response.status !== 429) break;
+        // 要重试的响应把 body 读掉，别占着连接
+        if (attempt < GCS_LIST_MAX_ATTEMPTS - 1) await response.text().catch(() => undefined);
       } catch (error) {
         lastNetworkError = error;
         response = undefined;

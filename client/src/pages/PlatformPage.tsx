@@ -2586,11 +2586,8 @@ export default function PlatformPage() {
   /** 0901「整支即全集」：全集单条长视频跳过合集展开（Argus 风控专拦那个端点） */
   const [manhuaLearnStandaloneSource, setManhuaLearnStandaloneSource] = useState(false);
   const [manhuaLearnSegmentSecondsError, setManhuaLearnSegmentSecondsError] = useState("");
-  /** 设置是下一任务草稿；后台轮询不能覆盖用户正在编辑的值。 */
-  const manhuaLearnSegmentSecondsEditedRef = useRef(false);
   const [manhuaLearnVideoFpsInput, setManhuaLearnVideoFpsInput] = useState(String(NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS));
   const [manhuaLearnVideoFpsError, setManhuaLearnVideoFpsError] = useState("");
-  const manhuaLearnVideoFpsEditedRef = useRef(false);
   const [manhuaLearnFocusSeriesKey, setManhuaLearnFocusSeriesKey] = useState("");
   const [manhuaLearnPanelCollapsed, setManhuaLearnPanelCollapsed] = useState(false);
   const [manhuaLearnResult, setManhuaLearnResult] = useState<ManhuaLearnResultUi | null>(null);
@@ -2665,7 +2662,6 @@ export default function PlatformPage() {
     setManhuaLearnBusyKey(null);
     setManhuaPasteUrl("");
     setManhuaPasteTitle("");
-    manhuaLearnSegmentSecondsEditedRef.current = false;
     {
       // 0903 修：#1357 漏网点——存档为空时 String(undefined) 会把字面量 "undefined"
       // 灌进秒数栏（提交必炸「整数秒」），有旧手填值则每次加载替用户填回去，
@@ -2675,7 +2671,6 @@ export default function PlatformPage() {
     }
     setManhuaLearnStandaloneSource(readManhuaLearnStandalone(manhuaLearnUserKey));
     setManhuaLearnSegmentSecondsError("");
-    manhuaLearnVideoFpsEditedRef.current = false;
     setManhuaLearnVideoFpsInput(String(readManhuaLearnVideoFps(manhuaLearnUserKey)));
     setManhuaLearnVideoFpsError("");
     setManhuaLearnServerJobs([]);
@@ -12037,7 +12032,7 @@ export default function PlatformPage() {
                     （焦点一丢面板就没了，用户对着运行中的任务无处可点） */}
                 <div className="mt-1 flex flex-wrap items-center gap-2">
                   {(job.status === "running" || job.status === "queued")
-                    && !(manhuaLearnResult && job.jobId === focusedManhuaLearnServerJob?.jobId) ? (
+                    && !(manhuaLearnResult && !manhuaLearnPanelCollapsed && job.jobId === focusedManhuaLearnServerJob?.jobId) ? (
                     <button
                       type="button"
                       disabled={Boolean(manhuaLearnControlBusy)}
@@ -12047,7 +12042,9 @@ export default function PlatformPage() {
                       {manhuaLearnControlBusy === "cancel" ? "正在停止…" : "停止这部剧"}
                     </button>
                   ) : null}
-                  {job.status === "failed" ? (
+                  {job.status === "failed"
+                    && !(manhuaLearnResult && !manhuaLearnPanelCollapsed && manhuaLearnFocusSeriesKey
+                      && manhuaLearnBasket.some((item) => item.jobId === job.jobId && item.seriesKey === manhuaLearnFocusSeriesKey)) ? (
                     <button
                       type="button"
                       disabled={Boolean(manhuaLearnBusyKey) || Boolean(manhuaLearnControlBusy) || (!url && !String(params.gcsUri || ""))}
@@ -12846,7 +12843,6 @@ export default function PlatformPage() {
                               aria-describedby="manhua-learn-segment-seconds-help"
                               onChange={(event) => {
                                 setManhuaLearnSegmentSecondsInput(event.target.value);
-                                manhuaLearnSegmentSecondsEditedRef.current = true;
                                 setManhuaLearnSegmentSecondsError("");
                                 try {
                                   writeManhuaLearnSegmentSeconds(manhuaLearnUserKey, parseManhuaLearnSegmentSecondsInput(event.target.value));
@@ -12893,7 +12889,6 @@ export default function PlatformPage() {
                               aria-describedby="manhua-learn-video-fps-help"
                               onChange={(event) => {
                                 setManhuaLearnVideoFpsInput(event.target.value);
-                                manhuaLearnVideoFpsEditedRef.current = true;
                                 setManhuaLearnVideoFpsError("");
                                 try {
                                   writeManhuaLearnVideoFps(manhuaLearnUserKey, parseManhuaLearnVideoFpsInput(event.target.value));
