@@ -288,6 +288,7 @@ import {
   manhuaAssetStandardizeCredits,
   type ManhuaAssetStandardizeQuality,
 } from "@shared/manhuaAssetStandardize";
+import { buildManhuaAssetImageEditPrompt } from "@shared/manhuaAssetImageEdit";
 import {
   CRAFT_SHOT_BANK,
   CRAFT_SHOT_CATEGORY_LABEL_ZH,
@@ -5187,6 +5188,82 @@ export default function OmniCanvas() {
     [assetStandardizeBusyId, customAssetRefs, user?.id],
   );
 
+  /**
+   * 自定义图片编辑：复用资产标准化的短入队、服务端幂等扣费与失败退分。
+   * 原图不覆盖；成功结果以新资产追加，便于用户对照和恢复。
+   */
+  const editCustomAsset = useCallback(
+    async (id: string, instructionZh: string) => {
+      if (assetStandardizeBusyId) return;
+      const ref = customAssetRefs.find((item) => item.id === id);
+      if (!ref) return;
+      const prompt = buildManhuaAssetImageEditPrompt(instructionZh);
+      if (!prompt) {
+        toast.error("请先写清楚要修改的内容");
+        return;
+      }
+      const cost = manhuaAssetStandardizeCredits("medium");
+      if (
+        !window.confirm(
+          `将按你的要求编辑这张图片。\n\n${cost} 积分/张；失败自动退回。原图会保留，新图进入同一资产栏。\n处理约需 1–2 分钟，期间请不要关闭页面。继续？`,
+        )
+      )
+        return;
+      setAssetStandardizeBusyId(id);
+      try {
+        const { jobId } = await createJobSameOrigin({
+          type: "image",
+          userId: String(user?.id || ""),
+          input: buildCanvasGptImage2JobInput({
+            prompt,
+            aspectRatio: (ref.sourceWidth || 0) >= (ref.sourceHeight || 1) ? "16:9" : "9:16",
+            referenceImageUrls: [ref.url],
+            generalImageEdit: true,
+            providerOverride: "openai",
+            imageLane: "asset",
+            gcsSubdir: "manhua-asset-edited",
+            assetStandardizeQuality: "medium",
+            assetRefId: ref.id,
+          }),
+        });
+        const job = await pollJobUntilTerminal(jobId, {
+          maxWaitMs: 12 * 60_000,
+          intervalMs: 2500,
+        });
+        if (job.status !== "succeeded") throw new Error(job.error || "图片编辑失败");
+        const out = (job.output || {}) as { imageUrl?: string; imageUrls?: string[] };
+        const imageUrl = String(out.imageUrl || out.imageUrls?.[0] || "").trim();
+        if (!/^https:\/\//i.test(imageUrl)) throw new Error("图片编辑未返回有效图片");
+        setCustomAssetRefs((prev) =>
+          normalizeManhuaCustomAssetRefs([
+            ...prev,
+            {
+              ...ref,
+              id: makeManhuaCustomAssetId(),
+              url: imageUrl,
+              gcsUri: undefined,
+              labelZh: `${ref.labelZh || "资产"}·编辑`,
+              reviewStatus: "converted",
+              qualityIssues: [],
+              claimSource: "converted",
+              source: "generated",
+            },
+          ]),
+        );
+        toast.success(`图片编辑完成 · 已扣 ${cost} 积分`, {
+          description: "原图仍保留，可对比后再决定是否删除。",
+        });
+      } catch (error) {
+        toast.error("图片编辑失败", {
+          description: error instanceof Error ? error.message : "已进入失败退分流程",
+        });
+      } finally {
+        setAssetStandardizeBusyId(null);
+      }
+    },
+    [assetStandardizeBusyId, customAssetRefs, user?.id],
+  );
+
   /** 免费裁字：客户端裁剪后作为新参考图入库（零调用零扣费），旧图保留待删 */
   const cropCustomAssetToFile = useCallback(
     async (id: string, crop: { x: number; y: number; w: number; h: number }) => {
@@ -8147,6 +8224,7 @@ export default function OmniCanvas() {
                   onCustomAssetDutyChange={setCustomAssetDuty}
                   onCustomAssetLabelChange={setCustomAssetLabel}
                   onDetextCustomAsset={detextCustomAsset}
+                  onEditCustomAsset={editCustomAsset}
                   onCropCustomAsset={cropCustomAssetToFile}
                   onCustomAssetClaimsChange={setCustomAssetClaims}
                   onCustomAssetReviewAccept={acceptCustomAssetReview}
