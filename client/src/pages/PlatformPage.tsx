@@ -2608,13 +2608,36 @@ export default function PlatformPage() {
   const [manhuaLearnHydratedUserKey, setManhuaLearnHydratedUserKey] = useState("");
   const [manhuaLearnActiveJob, setManhuaLearnActiveJob] = useState<ManhuaLearnActiveJob | null>(null);
   const [manhuaLearnServerJobs, setManhuaLearnServerJobs] = useState<ManhuaLearnServerJob[]>([]);
-  /** 「学完再对照」的触发点：任务由在跑变成不在跑那一刻，才打开入库对照。 */
+  /**
+   * 0905 用户令：「学习排队中」与「学习面板」合并为一块，不再并排两张卡。
+   * 这里统一算出合并块顶部要显示的实况任务：在跑 / 排队 / 30 分钟内刚失败。
+   */
+  const manhuaLearnLiveJobs = useMemo(
+    () =>
+      manhuaLearnServerJobs.filter(
+        (job) =>
+          job.status === "queued"
+          || job.status === "running"
+          || (job.status === "failed"
+            && Date.now() - new Date(job.updatedAt || 0).getTime() < 30 * 60_000),
+      ),
+    [manhuaLearnServerJobs],
+  );
+  /**
+   * 「学完再对照」的触发点：**必须真的学完过**才打开入库对照。
+   * 只看「在跑→不在跑」不够——删除本剧、只留这部清空其他、切账号都会让数组缩水，
+   * 那三件事都不是学完；失败终态也不该触发（对照结论对失败任务没意义）。
+   * 因此要求：上一轮确有在跑，且这一轮出现了 succeeded 终态。
+   */
   const manhuaLearnWasRunningRef = useRef(false);
   useEffect(() => {
     const running = manhuaLearnServerJobs.some(
       (job) => job.status === "queued" || job.status === "running",
     );
-    if (manhuaLearnWasRunningRef.current && !running) setManhuaLearnDupCheckOn(true);
+    const hasSucceeded = manhuaLearnServerJobs.some((job) => job.status === "succeeded");
+    if (manhuaLearnWasRunningRef.current && !running && hasSucceeded) {
+      setManhuaLearnDupCheckOn(true);
+    }
     manhuaLearnWasRunningRef.current = running;
   }, [manhuaLearnServerJobs]);
   /** 0902 用户实测：任务 4 秒失败面板不吭声，人干等 4 分钟——失败即 toast + 常驻红条 */
@@ -6354,7 +6377,10 @@ export default function PlatformPage() {
         );
         await manhuaViralProposalsQuery.refetch();
         setSelectedManhuaProposalId("");
-        void manhuaViralApprovedQuery.refetch();
+        // refetch() 不看 enabled，照发请求——模板库折叠时不能在这里捅穿懒加载。
+        // 折叠态靠下方 invalidateTemplateLifecycle 标脏即可（disabled observer 不算 active，
+        // 只标脏不重取），用户点开时自然拿到新数据。
+        if (manhuaTemplateLibraryOpen) void manhuaViralApprovedQuery.refetch();
         // 批准改变了「哪些卡是现役的」，换代体检的结论必须跟着重算，
         // 否则体检还在建议「换成这张待审卡」，而它已经批准进库了
         await invalidateTemplateLifecycle(res.card.id);
@@ -6367,6 +6393,7 @@ export default function PlatformPage() {
       manhuaViralProposalsQuery,
       manhuaViralApprovedQuery,
       invalidateTemplateLifecycle,
+      manhuaTemplateLibraryOpen,
     ],
   );
 
@@ -12901,7 +12928,24 @@ export default function PlatformPage() {
                           {manhuaLearnDupCheckOn && manhuaLearnDupQuery.isFetching ? (
                             <div className="mt-2 text-[10px] text-white/45">对照入库记录中…</div>
                           ) : null}
-                          {manhuaLearnDupQuery.data?.episodes.length ? (
+                          {manhuaLearnDupCheckOn && manhuaLearnDupQuery.isError ? (
+                            <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-rose-200/80">
+                              <span>
+                                入库对照失败：
+                                {manhuaLearnDupQuery.error?.message || "未知错误"}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => void manhuaLearnDupQuery.refetch()}
+                                className="shrink-0 rounded border border-rose-300/40 px-1.5 py-0.5 text-rose-100/80 hover:bg-rose-400/15"
+                              >
+                                重试
+                              </button>
+                            </div>
+                          ) : null}
+                          {/* 结论也要跟着开关走：staleTime 内缓存仍在，
+                              否则会出现「查是否学过」按钮与已学过横幅同屏。 */}
+                          {manhuaLearnDupCheckOn && manhuaLearnDupQuery.data?.episodes.length ? (
                             <div className="mt-2 rounded-lg border border-amber-400/35 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-5 text-amber-100">
                               ⚠️ 这支已学过：
                               {manhuaLearnDupQuery.data.titleHint
@@ -12951,7 +12995,7 @@ export default function PlatformPage() {
                               </div>
                             </div>
                           ) : null}
-                          {manhuaLearnDupQuery.data?.sameTitleSeriesList?.length ? (
+                          {manhuaLearnDupCheckOn && manhuaLearnDupQuery.data?.sameTitleSeriesList?.length ? (
                             <div className="mt-1.5 rounded-lg border border-sky-400/30 bg-sky-500/10 px-2.5 py-1.5 text-[11px] leading-5 text-sky-100">
                               ℹ️ 这部剧的旧账（按剧名归并全部来源）：
                               {manhuaLearnDupQuery.data.sameTitleSeriesList.map((row) => (
@@ -13026,13 +13070,12 @@ export default function PlatformPage() {
                       {/* 0903 用户令「刷新也要看到任务在跑」：实况卡不依赖聚焦剧，
                           直接读服务端任务快照（进度时间线+分片断点），刷新即回灌；
                           最新进度行自带「分片上限X秒·N片·fps」＝配平值回显。 */}
-                      {manhuaLearnServerJobs.some((job) => job.status === "queued" || job.status === "running"
-                        || (job.status === "failed" && Date.now() - new Date(job.updatedAt || 0).getTime() < 30 * 60_000)) ? (
-                        <div className="mt-3 rounded-xl border border-emerald-300/25 bg-emerald-500/10 px-3 py-2.5">
-                          <div className="text-[11px] font-semibold text-emerald-100/90">⏱ 正在学习（刷新可见 · 排队≠卡死）</div>
-                          {manhuaLearnServerJobs
-                            .filter((job) => job.status === "queued" || job.status === "running"
-                              || (job.status === "failed" && Date.now() - new Date(job.updatedAt || 0).getTime() < 30 * 60_000))
+                      {manhuaLearnLiveJobs.length > 0 || manhuaLearnBasket.length > 0 ? (
+                        <div className="mt-3 rounded-xl border border-amber-300/20 bg-amber-500/10 px-3 py-2.5">
+                          {manhuaLearnLiveJobs.length > 0 ? (
+                            <div className="mb-2.5 border-b border-amber-200/15 pb-2.5">
+                              <div className="text-[11px] font-semibold text-emerald-100/90">⏱ 正在学习（刷新可见 · 排队≠卡死）</div>
+                              {manhuaLearnLiveJobs
                             .map((job) => {
                               const output = (job.output ?? {}) as Record<string, unknown>;
                               const params = ((job.input as Record<string, unknown> | undefined)?.params ?? {}) as Record<string, unknown>;
@@ -13067,11 +13110,11 @@ export default function PlatformPage() {
                                 </div>
                               );
                             })}
-                        </div>
-                      ) : null}
+                            </div>
+                          ) : null}
 
-                      {manhuaLearnBasket.length > 0 ? (
-                        <div className="mt-3 rounded-xl border border-amber-300/20 bg-amber-500/10 px-3 py-2.5">
+                          {manhuaLearnBasket.length > 0 ? (
+                          <>
                           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                             <label
                               htmlFor="manhua-learn-series-select"
@@ -13165,6 +13208,8 @@ export default function PlatformPage() {
                           <p className="mt-1.5 text-[10px] text-amber-100/50">
                             每部剧独立续学；刷新后仍保留。删除会停止该剧，但保留已经落盘的成果。
                           </p>
+                          </>
+                          ) : null}
                         </div>
                       ) : null}
 
@@ -13771,6 +13816,7 @@ export default function PlatformPage() {
                       {ownerTemplateOptimizeAllowed && !manhuaTemplateLibraryOpen ? (
                         <button
                           type="button"
+                          aria-expanded={false}
                           onClick={() => setManhuaTemplateLibraryOpen(true)}
                           className="mt-3 flex w-full items-center justify-between rounded-xl border border-emerald-400/20 bg-emerald-500/[0.06] px-3 py-2 text-[10px] text-emerald-50/70 hover:bg-emerald-500/10"
                         >
@@ -13780,10 +13826,34 @@ export default function PlatformPage() {
                           <span className="text-emerald-100/50">点开加载</span>
                         </button>
                       ) : null}
-                      {manhuaTemplateLibraryOpen && manhuaViralApprovedQuery.isFetching
-                      && !manhuaViralApprovedQuery.data ? (
-                        <div className="mt-3 rounded-xl border border-emerald-400/20 bg-emerald-500/[0.06] px-3 py-2 text-[10px] text-emerald-50/60">
-                          模板库加载中…
+                      {/* 展开后但还没拿到数据的一切情形都归这里：加载中、传输报错、以及点开那一帧
+                          （observer 尚未发请求，isFetching 仍为 false）。少了这个兜底，
+                          出错时四个分支全不命中，整块凭空消失且入口按钮也没了，只能刷新整页。 */}
+                      {manhuaTemplateLibraryOpen && !manhuaViralApprovedQuery.data ? (
+                        <div className="mt-3 flex items-center justify-between gap-2 rounded-xl border border-emerald-400/20 bg-emerald-500/[0.06] px-3 py-2 text-[10px] text-emerald-50/60">
+                          <span>
+                            {manhuaViralApprovedQuery.isError
+                              ? `模板库加载失败：${manhuaViralApprovedQuery.error?.message || "未知错误"}`
+                              : "模板库加载中…"}
+                          </span>
+                          <span className="flex shrink-0 items-center gap-2">
+                            {manhuaViralApprovedQuery.isError ? (
+                              <button
+                                type="button"
+                                onClick={() => void manhuaViralApprovedQuery.refetch()}
+                                className="rounded border border-emerald-300/30 px-1.5 py-0.5 text-emerald-100/70 hover:bg-emerald-400/15"
+                              >
+                                重试
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => setManhuaTemplateLibraryOpen(false)}
+                              className="text-emerald-100/50 hover:text-emerald-100/80"
+                            >
+                              收起
+                            </button>
+                          </span>
                         </div>
                       ) : null}
                       {manhuaTemplateLibraryOpen && manhuaViralApprovedQuery.data
@@ -13807,7 +13877,14 @@ export default function PlatformPage() {
                             </span>
                             <button
                               type="button"
-                              onClick={() => setManhuaTemplateLibraryOpen(false)}
+                              aria-expanded
+                              onClick={() => {
+                                // 收起时一并清空批量下架的勾选：留着的话下次展开会直接
+                                // 亮出「批量下架（N）」这个破坏性动作，用户已经忘了勾过什么。
+                                setBatchArchiveIds(new Set());
+                                setBatchArchiveConfirm(false);
+                                setManhuaTemplateLibraryOpen(false);
+                              }}
                               className="shrink-0 rounded border border-emerald-300/30 px-1.5 py-0.5 text-[10px] text-emerald-100/70 hover:bg-emerald-400/15"
                             >
                               收起
