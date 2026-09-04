@@ -1750,7 +1750,7 @@ export function parseFfmpegProgressOutTimeSec(text: string): number | null {
 
 /** 秒 → mm:ss（≥1 小时用 h:mm:ss），给面板读。 */
 export function formatClockSec(sec: number): string {
-  const total = Math.max(0, Math.floor(Number(sec) || 0));
+  const total = Number.isFinite(Number(sec)) ? Math.max(0, Math.floor(Number(sec))) : 0;
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
@@ -1993,9 +1993,12 @@ export async function prepareEpisodeVideos(
             });
             if (fetchSettled) break;
             const size = await deps.statLocal(localSourcePath).then((s) => s.size).catch(() => 0);
-            const readSec = await deps.readLocal(progressPath)
-              .then((buf) => parseFfmpegProgressOutTimeSec(buf.toString("utf8")))
-              .catch(() => null);
+            let readSec: number | null = null;
+            try {
+              readSec = parseFfmpegProgressOutTimeSec((await deps.readLocal(progressPath)).toString("utf8"));
+            } catch {
+              readSec = null;
+            }
             const elapsedSec = Math.max(1, Math.round((Date.now() - fetchStartedAt) / 1000));
             const speedZh = `${(size / 1048576 / elapsedSec).toFixed(1)}MB/s`;
             await reportFetch(
