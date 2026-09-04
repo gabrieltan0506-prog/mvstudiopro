@@ -3712,9 +3712,10 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE = 0.8;
  */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT = MANHUA_NATIVE_GLM_REASONING_EFFORT;
 /** 四个 300 秒分片的真实组装曾在 12 分钟边界被本地中止；只放宽等待，不自动重提。 */
-// 0829 用户令：不设硬超时，跑出结果为止。全收进 GLM 后输入更大（六段卡 ~21.7 万 tok
-// 再叠标记版），旧的 15 分钟硬顶在 900,005ms 处把调用掐断成 network_error。
-const GLM_STRUCTURING_TIMEOUT_MS = 6 * 60 * 60_000;
+// 0829 曾放宽到 6 小时（15 分钟硬顶曾在 900,005ms 掐断成 network_error）。
+// 0905 用户令改 40 分钟：6 小时意味着 GLM 一挂任务就 running 到天亮；
+// 实测慢发在 9–21 分钟量级，超过 40 分钟按失败走本地确定性整形兜底，不重读片。
+const GLM_STRUCTURING_TIMEOUT_MS = 40 * 60_000;
 const OPENROUTER_USD_TO_CNY_EQUIVALENT = 7.2;
 
 /** GLM结构化的完整冻结参数；调用方只能由调度器指定首选通道，不能覆盖这些值。 */
