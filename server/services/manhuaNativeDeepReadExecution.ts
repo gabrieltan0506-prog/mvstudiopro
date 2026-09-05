@@ -19,6 +19,7 @@ import {
   NATIVE_DEEP_READ_AUDIO_TRACK_FLOOR_MIN,
   NATIVE_DEEP_READ_MODEL,
   NATIVE_DEEP_READ_ROUTE_EVOLINK,
+  NATIVE_DEEP_READ_ROUTE_GEMINI_API,
   NATIVE_DEEP_READ_ROUTE_VERTEX,
   NATIVE_DEEP_READ_SHOT_FLOOR_INTERVAL_SEC,
   NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
@@ -381,10 +382,13 @@ export function buildNativeDeepReadDirectAudioAnalysis(input: {
   segments: readonly NativeDeepReadSegmentSpec[];
   visualResult: NativeDeepReadRunResult;
 }): ManhuaNativeAudioAnalysis {
+  // 0906：只要有一段走了 AI Studio 兜底，音轨路由就不能按 Vertex 口径硬要「音频 token > 0」
   const route: ManhuaNativeAudioDirectRoute =
     (input.visualResult.degradedFpsSegmentIndexes?.length ?? 0) > 0
       ? NATIVE_DEEP_READ_ROUTE_EVOLINK
-      : NATIVE_DEEP_READ_ROUTE_VERTEX;
+      : (input.visualResult.visualRoutes ?? []).includes(NATIVE_DEEP_READ_ROUTE_GEMINI_API)
+        ? NATIVE_DEEP_READ_ROUTE_GEMINI_API
+        : NATIVE_DEEP_READ_ROUTE_VERTEX;
   if (input.visualResult.hasAudio !== true) {
     return noAudioManhuaNativeDirectAnalysis(input.durationSec, route);
   }
