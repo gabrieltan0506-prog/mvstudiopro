@@ -64,3 +64,16 @@
 5. 合并前再次读取学习任务及部署流水线；有 queued/running 学习时不触发部署。合并授权与部署验收另记。
 
 回退以新的修复提交或明确授权的 revert 进行，不删用户草稿、模型 JSON、旧成片或任务回执；不得回退为匿名付费入口或恢复隐式配乐。数据库没有迁移；旧回执缺失走明示兼容分支。
+
+## 同步最新主线后的最终复验
+
+本地功能提交 `f65bea4`，随后在 `9a180fc` 无冲突合入主线 `6171f0d`（PR #1396）。PR 相对主线没有学习冻结文件差异。
+
+- `pnpm check --incremental false --pretty false`：退出 0，`types-synced.log`。
+- `pnpm exec vitest run`：退出 1；**479 文件通过、2 失败、2 跳过；4497 项通过、2 失败、4 跳过**，114.82 秒，`full-tests-synced.log`。失败仍仅为前述两个主线已有 CLI 断言。
+- `pnpm exec vite build`：退出 0，1 分 10 秒，`vite-synced.log`；未消除既有大包警告。
+- 单独新增 service 回执传递测试所在文件：9 项通过，退出 0，`service-receipt.log`；最终全仓已包含此测试。
+- `git diff origin/main...HEAD --check`：退出 0。
+- 2026-09-06 02:49:29（上海）仅通过 Fly 服务端只读查询发现一条 `manhua_template_learn` 为 running 且心跳更新。因此此时**禁止合并触发部署**。主线 `6171f0d` 的 Fly Deploy 已成功；本 PR 尚未合并/部署，也没有新增生产调用。
+
+该复验支持将本批提交推送供合并审查，不支持声称已做线上成片、退款或 Chrome 验收。学习任务终态和实际合并权限须在合并当刻重新确认。
