@@ -11,6 +11,8 @@
 import type { ManhuaEpisodeSegmentBeat } from "./manhuaEpisodeSegmentPlan.js";
 import {
   MANHUA_EPISODE_SEGMENT_DURATION_SEC,
+  extractManhuaDialogueSpeakerName,
+  extractManhuaSegmentDialogueQuotes,
   type ManhuaEpisodeSegmentPlan,
 } from "./manhuaEpisodeSegmentPlan.js";
 import {
@@ -49,6 +51,8 @@ export type ManhuaDistillShot = {
   cameraZh: string;
   actionZh: string;
   dialogueZh?: string;
+  /** 原剧本对白说话人名，供成片阶段绑定真实 @角色N。 */
+  dialogueSpeakerNameZh?: string;
   emotionZh?: string;
   /** 所属段意图（可拍表） */
   intentZh?: string;
@@ -176,6 +180,7 @@ export function buildWorkbenchShotsFromSegmentPlan(
   const out: Array<ManhuaDistillShot & { durationSec: number }> = [];
   let global = 0;
   for (const beat of segs) {
+    const dialogueLines = extractManhuaSegmentDialogueQuotes(beat.dialogueZh || "");
     for (let k = 1; k <= per; k++) {
       global += 1;
       const role = resolveKeyframeRoleInSegment(k, per);
@@ -184,7 +189,15 @@ export function buildWorkbenchShotsFromSegmentPlan(
         durationSec: 0,
         cameraZh: roleCameraZh(role, beat.lightingCameraZh),
         actionZh: roleActionZh(role, beat),
-        dialogueZh: k === 2 || (per >= 4 && k === 3) ? beat.dialogueZh : undefined,
+        dialogueZh: dialogueLines[k - 1]
+          ? String(dialogueLines[k - 1])
+              .replace(/^([\u4e00-\u9fff·A-Za-z]{2,12})\s*[：:]\s*/, "")
+              .replace(/^[「『"“]|[」』"”]$/g, "")
+              .trim()
+          : undefined,
+        dialogueSpeakerNameZh: dialogueLines[k - 1]
+          ? extractManhuaDialogueSpeakerName(dialogueLines[k - 1]) || undefined
+          : undefined,
         emotionZh:
           beat.performanceZh ||
           (beat.dialogueZh ? "贴合对白施压/反应" : undefined),

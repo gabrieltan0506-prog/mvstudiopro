@@ -61,7 +61,11 @@ import {
   type ManhuaCustomAssetRole,
   type ManhuaCharacterPrimaryDuty,
 } from "@shared/manhuaCustomAssetRefs";
-import type { ManhuaAsset3dRef, ManhuaAsset3dStatus } from "@shared/manhuaAsset3d";
+import {
+  evaluateManhuaAsset3dEligibility,
+  type ManhuaAsset3dRef,
+  type ManhuaAsset3dStatus,
+} from "@shared/manhuaAsset3d";
 import {
   collectStaleAssetSheetBlockIds,
   evaluateManhuaAssetScriptAlignment,
@@ -108,7 +112,12 @@ import {
   type ManhuaAssetStashRole,
 } from "@shared/manhuaAssetStash";
 import { uploadCanvasFilesParallel } from "@/lib/canvasUpload";
-import { resolveCanvasMaterialUrl } from "@/lib/omniCanvasApi";
+import {
+  resolveCanvasMaterialUrl,
+  uploadFileToSignedUrl,
+} from "@/lib/omniCanvasApi";
+import { assertValidManhuaGlbFile } from "@/lib/manhuaGlbImport";
+import { applyManhua3dBinding, createManhua3dOperationGuard } from "@/lib/manhua3dBinding";
 import {
   MANHUA_FACTORY_STAGE_LABEL_ZH,
   MANHUA_FACTORY_STAGE_ORDER,
@@ -162,7 +171,7 @@ import {
 } from "@shared/manhuaScriptWorkbench";
 import { extractManhuaSceneHintFromPrompt } from "@shared/manhuaClipDialogueTimeline";
 import { upsertShotAngleSection } from "@shared/manhuaShotAnglePersist";
-import { upsertShotDialogueSection } from "@shared/manhuaShotDialoguePersist";
+import { patchShotDialogueSection } from "@shared/manhuaShotDialoguePersist";
 import {
   listScreenwriterGenres,
   MANHUA_SCENE_GENRE_LABEL_ZH,
@@ -657,7 +666,10 @@ export default function OmniCanvas() {
   const [projectBible, setProjectBible] = useState<ManhuaProjectBible | null>(() => bootBible);
   const [directorStrategyContract, setDirectorStrategyContract] =
     useState<ManhuaDirectorStrategyContract | null>(
-      () => initialWriterSession?.directorStrategyContract || bootBible?.directorStrategyContract || null,
+      () =>
+        bootBible
+          ? bootBible.directorStrategyContract ?? null
+          : initialWriterSession?.directorStrategyContract || null,
     );
   /** 集号 → 导演板裁后主画面（长期 gcsUri + 现签 url） */
   const [directorBoardMainByEpisode, setDirectorBoardMainByEpisode] =
@@ -1187,15 +1199,21 @@ export default function OmniCanvas() {
   /** 0902 烧字总装：剪辑台字幕轨 → queuePostProd burn_subtitle → 轮询取新片 */
   const queueBurnSubtitleMutation = trpc.mvAnalysis.queuePostProd.useMutation();
   const trpcUtils = trpc.useUtils();
+  const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const submitManhua3dMutation = trpc.manhua3d.submit.useMutation();
+  const retryManhua3dMutation = trpc.manhua3d.retry.useMutation();
+  const importExistingManhua3dMutation = trpc.manhua3d.importExisting.useMutation();
   const manhua3dPollInFlightRef = useRef<Set<string>>(new Set());
   const manhua3dReadyRefreshRef = useRef<Set<string>>(new Set());
-  const applyManhua3dTaskView = useCallback((task: Manhua3dTaskViewLike) => {
+  const manhua3dOperationGuard = useRef(createManhua3dOperationGuard());
+  const [asset3dBusyIds, setAsset3dBusyIds] = useState<string[]>([]);
+  const applyManhua3dTaskView = useCallback((
+    task: Manhua3dTaskViewLike,
+    expectedTaskId: string | null = task.taskId,
+  ) => {
     setCustomAssetRefs((prev) =>
       normalizeManhuaCustomAssetRefs(
-        prev.map((ref) =>
-          ref.id === task.assetRef ? { ...ref, model3d: toManhuaAsset3dRef(task) } : ref,
-        ),
+        applyManhua3dBinding(prev, task.assetRef, toManhuaAsset3dRef(task), expectedTaskId),
       ),
     );
   }, []);
@@ -1229,36 +1247,46 @@ export default function OmniCanvas() {
   const generateManhua3dAsset = useCallback(
     async (assetRefId: string) => {
       const ref = customAssetRefs.find((item) => item.id === assetRefId);
-      if (!ref || ref.role !== "character") {
-        toast.error("只支持从已确认的人物参考图建立 3D 参考");
+      if (!ref) {
+        toast.error("人物参考图不存在");
         return;
       }
-      if (ref.reviewStatus === "needs_review") {
-        toast.error("请先确认或标准化这张人物参考图");
+      const eligibility = evaluateManhuaAsset3dEligibility(ref);
+      if (!eligibility.eligible) {
+        toast.error(eligibility.reasonZh || "当前人物参考图不能建立 3D 参考");
         return;
       }
-      if (ref.model3d?.status === "queued" || ref.model3d?.status === "running") {
-        void pollManhua3dTask(ref.model3d.taskId);
+      const currentModel3d = eligibility.currentModel3d;
+      if (currentModel3d?.status === "queued" || currentModel3d?.status === "running") {
+        void pollManhua3dTask(currentModel3d.taskId);
         return;
       }
-      if (ref.model3d?.status === "failed" || ref.model3d?.status === "reconcile_manual") {
-        toast.message("当前素材版本已有任务记录；请先处理状态或更换参考图，系统不会重复建单");
+      if (currentModel3d?.status === "reconcile_manual") {
+        toast.message("任务结果仍待核对，为避免重复计费不会再次提交");
         return;
       }
+      const isRetry = currentModel3d?.status === "failed";
       if (
         !window.confirm(
-          "将以当前人物正面图建立可旋转的 3D 参考。此操作会调用外部生成服务并产生实际调用成本；3D 不会成为默认出片门禁。确认继续？",
+          isRetry
+            ? "将重新建立当前人物的 3D 参考。重试会调用外部生成服务并产生实际调用成本；原人物图不会被替换。确认继续？"
+            : "将以当前人物正面图建立可旋转的 3D 参考。此操作会调用外部生成服务并产生实际调用成本；3D 不会成为默认出片门禁。确认继续？",
         )
       ) {
         return;
       }
+      const operationToken = manhua3dOperationGuard.current.begin(assetRefId);
+      if (!operationToken) return;
+      setAsset3dBusyIds(manhua3dOperationGuard.current.assetIds());
       try {
-        const task = await submitManhua3dMutation.mutateAsync({
-          assetRef: ref.id,
-          sourceVersion: ref.gcsUri || ref.url,
-          sourceImageUrl: ref.url,
-        });
-        applyManhua3dTaskView(task);
+        const task = isRetry
+          ? await retryManhua3dMutation.mutateAsync({ taskId: currentModel3d.taskId })
+          : await submitManhua3dMutation.mutateAsync({
+              assetRef: ref.id,
+              sourceVersion: eligibility.sourceVersion,
+              sourceImageUrl: ref.url,
+            });
+        applyManhua3dTaskView(task, ref.model3d?.taskId || null);
         if (task.status === "queued" || task.status === "running") {
           toast.message("3D 参考已开始建立，完成后会回到当前人物卡");
           void pollManhua3dTask(task.taskId);
@@ -1269,30 +1297,98 @@ export default function OmniCanvas() {
         }
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "3D 参考任务提交失败");
+      } finally {
+        manhua3dOperationGuard.current.end(assetRefId, operationToken);
+        setAsset3dBusyIds(manhua3dOperationGuard.current.assetIds());
       }
     },
     [
       applyManhua3dTaskView,
       customAssetRefs,
       pollManhua3dTask,
+      retryManhua3dMutation,
       submitManhua3dMutation,
+    ],
+  );
+  const importExistingManhua3dAsset = useCallback(
+    async (assetRefId: string, file: File) => {
+      const ref = customAssetRefs.find(item => item.id === assetRefId);
+      if (!ref) {
+        toast.error("人物参考图不存在");
+        return;
+      }
+      const eligibility = evaluateManhuaAsset3dEligibility(ref);
+      if (!eligibility.eligible) {
+        toast.error(eligibility.reasonZh || "当前人物参考图不能导入 3D 参考");
+        return;
+      }
+      if (
+        eligibility.currentModel3d?.status === "queued" ||
+        eligibility.currentModel3d?.status === "running" ||
+        eligibility.currentModel3d?.status === "reconcile_manual"
+      ) {
+        toast.error("当前 3D 任务尚未结束，不能覆盖导入");
+        return;
+      }
+      if (
+        eligibility.currentModel3d?.status === "succeeded" &&
+        !window.confirm("将替换当前人物的 3D 辅助参考；原人物图和原 GLB 文件不会删除。确认继续？")
+      ) {
+        return;
+      }
+      const operationToken = manhua3dOperationGuard.current.begin(assetRefId);
+      if (!operationToken) return;
+      setAsset3dBusyIds(manhua3dOperationGuard.current.assetIds());
+      try {
+        await assertValidManhuaGlbFile(file);
+        const signed = await getSignedUrlMutation.mutateAsync({
+          fileName: file.name,
+          mimeType: "model/gltf-binary",
+        });
+        await uploadFileToSignedUrl({
+          file,
+          uploadUrl: signed.uploadUrl,
+          contentType: "model/gltf-binary",
+          headers: signed.requiredHeaders,
+        });
+        const task = await importExistingManhua3dMutation.mutateAsync({
+          assetRef: ref.id,
+          sourceVersion: eligibility.sourceVersion,
+          sourceImageUrl: ref.url,
+          glbGcsUri: signed.gcsUri,
+        });
+        applyManhua3dTaskView(task, ref.model3d?.taskId || null);
+        toast.success("已有 GLB 已绑定到当前人物，可旋转查看");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "GLB 导入失败");
+      } finally {
+        manhua3dOperationGuard.current.end(assetRefId, operationToken);
+        setAsset3dBusyIds(manhua3dOperationGuard.current.assetIds());
+      }
+    },
+    [
+      applyManhua3dTaskView,
+      customAssetRefs,
+      getSignedUrlMutation,
+      importExistingManhua3dMutation,
     ],
   );
   useEffect(() => {
     if (!canUseManhua3d) return;
     for (const ref of customAssetRefs) {
-      if (ref.model3d?.status === "queued" || ref.model3d?.status === "running") {
-        void pollManhua3dTask(ref.model3d.taskId);
+      const model3d = evaluateManhuaAsset3dEligibility(ref).currentModel3d;
+      if (model3d?.status === "queued" || model3d?.status === "running") {
+        void pollManhua3dTask(model3d.taskId);
       } else if (
-        ref.model3d?.status === "succeeded" &&
-        !manhua3dReadyRefreshRef.current.has(ref.model3d.taskId)
+        model3d?.status === "succeeded" &&
+        !manhua3dReadyRefreshRef.current.has(model3d.taskId)
       ) {
         // 草稿保存的是长期 gs:// 身份；页面恢复时查询一次，让服务端刷新过期签名 URL。
-        manhua3dReadyRefreshRef.current.add(ref.model3d.taskId);
+        manhua3dReadyRefreshRef.current.add(model3d.taskId);
         void trpcUtils.manhua3d.getStatus
-          .fetch({ taskId: ref.model3d.taskId })
+          .fetch({ taskId: model3d.taskId })
           .then(applyManhua3dTaskView)
-          .catch(() => manhua3dReadyRefreshRef.current.delete(ref.model3d!.taskId));
+          .catch(() => manhua3dReadyRefreshRef.current.delete(model3d.taskId));
       }
     }
   }, [
@@ -1914,9 +2010,20 @@ export default function OmniCanvas() {
     setDirectorUnlocked(Boolean(session.directorUnlocked));
     setProjectBible(session.projectBible);
     setDirectorStrategyContract(
-      session.directorStrategyContract || session.projectBible?.directorStrategyContract || null,
+      session.projectBible
+        ? session.projectBible.directorStrategyContract ?? null
+        : session.directorStrategyContract || null,
     );
-    setManhuaUiMode(session.manhuaUiMode === "form" ? "form" : "workbench");
+    // 已确认项目刷新后必须回到主工作台；旧云草稿里的 form 只能作为未确认剧本的编辑选择，
+    // 不能覆盖启动规则并把整套分镜／轨迹／3D 界面静默藏掉。
+    setManhuaUiMode(
+      session.writerConfirmed
+        ? "workbench"
+        : session.manhuaUiMode === "form"
+          ? "form"
+          : "workbench",
+    );
+    if (session.writerConfirmed) setImmersiveWorkspaceView("workbench");
     setAssetsSkipped(Boolean(session.assetsSkipped));
     setCustomAssetRefs(normalizeManhuaCustomAssetRefs(session.customAssetRefs));
     setCharacterVoiceLocks(
@@ -2855,7 +2962,6 @@ export default function OmniCanvas() {
       toast.message("剧情增强方案已更新，请重新选择");
     }
   }, [approvedViralTemplateCards, manhuaViralTemplatesQuery.isSuccess, publicTemplateId]);
-  const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const splitPropSheetMutation = trpc.mvAnalysis.splitManhuaPropSheet.useMutation();
   const cropDirectorBoardMutation = trpc.mvAnalysis.cropManhuaDirectorBoardMain.useMutation();
   const buildDirectorBoardPromptMutation =
@@ -3039,6 +3145,9 @@ export default function OmniCanvas() {
       projectBible?.seriesTitle,
       projectBible?.logline,
       projectBible?.assetCanon,
+      writerPack,
+      characterLookSets,
+      segmentLookBindings,
       writerFocusEpisode,
       pushDebug,
       user?.id,
@@ -4322,6 +4431,8 @@ export default function OmniCanvas() {
         }),
       );
       setWriterConfirmed(false);
+      setManhuaUiMode("workbench");
+      setImmersiveWorkspaceView("topic");
       setProjectBible(null);
       setCustomAssetRefs([]);
       // 导入新剧本：清掉库选角残留——「当前出演人物」以剧本人物表为准，
@@ -6921,18 +7032,42 @@ export default function OmniCanvas() {
             const forceFromStage =
               opts?.forceFromStageByEpisode?.[episodeIndex] ?? opts?.forceFromStage;
             let effectiveTargetBlockIds = opts?.targetBlockIds;
+            const episodeBody =
+              writerPack?.episodes.find((episode) => episode.index === episodeIndex)?.body ||
+              "";
+            const episodeSegmentPlan =
+              parseManhuaEpisodeSegmentPlanFromMarkdown(episodeBody);
+            // 审阅、10 秒试片、单段、整集、失败续跑共用同一份真实编译上下文。
+            // 以前只有工作台审阅传了资产/造型/可拍表，runFactory 会再次 ensure 后把它们冲掉。
+            const ensureOptions = {
+              assetCanon: projectBible?.assetCanon,
+              characterSheetUrlById: collectManhuaCharacterSheetUrlById(
+                workingBlocks,
+                projectBible?.assetCanon,
+              ),
+              propImageUrlById: collectManhuaPropImageUrlById(
+                customAssetRefs,
+                projectBible?.assetCanon,
+              ),
+              customRefs: customAssetRefs,
+              segmentPlan: episodeSegmentPlan.segments.length
+                ? episodeSegmentPlan
+                : null,
+              characterLookSets,
+              segmentLookBindings,
+              directorBoardUrlByEpisode,
+              directorBoardUrlByEpisodeSegment,
+              directorBoardMotionOverlayByEpisodeSegment:
+                directorBoardMotionOverlayBySegment,
+              videoModel:
+                explicitWriterVideoModel || writerVideoModel || undefined,
+            };
             if (opts?.pilotRun) {
               const prepared = ensureManhuaFragmentClips(
                 workingBlocks,
                 workingEdges,
                 episodeIndex,
-                {
-                  directorBoardUrlByEpisode,
-                  directorBoardUrlByEpisodeSegment,
-                  directorBoardMotionOverlayByEpisodeSegment:
-                    directorBoardMotionOverlayBySegment,
-                  videoModel: explicitWriterVideoModel || writerVideoModel || undefined,
-                },
+                ensureOptions,
               );
               workingBlocks = prepared.blocks;
               workingEdges = prepared.edges;
@@ -7093,6 +7228,7 @@ export default function OmniCanvas() {
               overwriteKeyarts: opts?.overwriteKeyarts === true,
               preservePreparedTargetBlocks:
                 opts?.pilotRun || opts?.preservePreparedTargetBlocks === true,
+              ensureOptions,
               maxRetries: opts?.pilotRun ? 0 : opts?.maxRetries,
               stopOnError: opts?.pilotRun ? true : opts?.stopOnError,
               signal: ac.signal,
@@ -8058,6 +8194,8 @@ export default function OmniCanvas() {
                 <ManhuaScriptWorkbench
                   immersive={immersiveWorkbench}
                   blocks={blocks}
+                  videoModel={activePilotVideoModel}
+                  directorStrategyContract={directorStrategyContract}
                   topic={factoryTopic}
                   shotContinuity={shotContinuity}
                   onShotContinuityChange={(next) => {
@@ -8181,6 +8319,8 @@ export default function OmniCanvas() {
                   onStylePackChange={setStylePack}
                   customAssetRefs={customAssetRefs}
                   onGenerateAsset3d={canUseManhua3d ? generateManhua3dAsset : undefined}
+                  onImportAsset3d={canUseManhua3d ? importExistingManhua3dAsset : undefined}
+                  asset3dBusyIds={asset3dBusyIds}
                   characterLookSets={characterLookSets}
                   onCharacterLookSetsChange={setCharacterLookSets}
                   segmentLookBindings={segmentLookBindings}
@@ -8308,17 +8448,39 @@ export default function OmniCanvas() {
                       }),
                     );
                   }}
-                  onUpsertShotDialogues={(dialogues) => {
+                  onUpsertShotDialogues={(dialogues, _segmentIndex) => {
                     const ep = writerFocusEpisode;
+                    // writerPack 是刷新/云草稿后的剧本文本真源；只写画布节点会在恢复后复活旧台词。
+                    setWriterPack((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            episodes: prev.episodes.map((episode) =>
+                              episode.index === ep
+                                ? {
+                                    ...episode,
+                                    body: patchShotDialogueSection(episode.body || "", dialogues),
+                                  }
+                                : episode,
+                            ),
+                          }
+                        : prev,
+                    );
                     handleBlocksChange((prev) =>
                       prev.map((b) => {
                         if ((getBlockEpisodeIndex(b) ?? 1) !== ep) return b;
                         const stage = stageKeyFromBlockId(b.id);
-                        if (stage !== "reverse" && stage !== "beats") return b;
+                        if (
+                          stage !== "story" &&
+                          stage !== "reverse" &&
+                          stage !== "beats"
+                        ) {
+                          return b;
+                        }
                         const base = b.outputText || b.prompt || "";
                         return {
                           ...b,
-                          outputText: upsertShotDialogueSection(base, dialogues),
+                          outputText: patchShotDialogueSection(base, dialogues),
                           status: "done" as const,
                         };
                       }),

@@ -139,6 +139,8 @@ export async function runUpscaleImage(body: { imageUrl: string; upscaleFactor?: 
 export async function uploadFileToSignedUrl(params: {
   file: File;
   uploadUrl: string;
+  /** 必须与申请签名时的 MIME 相同；未指定时保留浏览器文件类型。 */
+  contentType?: string;
   headers?: Record<string, string>;
 }) {
   return new Promise<void>((resolve, reject) => {
@@ -152,9 +154,15 @@ export async function uploadFileToSignedUrl(params: {
       }
       resolve();
     };
-    xhr.setRequestHeader("Content-Type", params.file.type || "application/octet-stream");
+    const signedContentType = Object.entries(params.headers || {}).find(
+      ([key]) => key.toLowerCase() === "content-type",
+    )?.[1];
+    xhr.setRequestHeader(
+      "Content-Type",
+      signedContentType || params.contentType || params.file.type || "application/octet-stream",
+    );
     for (const [key, value] of Object.entries(params.headers || {})) {
-      if (value) xhr.setRequestHeader(key, value);
+      if (value && key.toLowerCase() !== "content-type") xhr.setRequestHeader(key, value);
     }
     xhr.send(params.file);
   });

@@ -351,6 +351,94 @@ export async function downloadGcsObject(params: {
   };
 }
 
+export type GcsObjectBoundedInspection = {
+  bucket: string;
+  objectName: string;
+  byteLength: number;
+  /** 只保留格式验真所需的文件头，不把整个大对象常驻内存。 */
+  header: Buffer;
+  sha256: string;
+};
+
+/**
+ * 对大对象做有界流式验真。共用 downloadGcsObject 的既有行为保持不变；
+ * 仅需要文件头、总长度和摘要的调用方应走这里，避免先整包 arrayBuffer 再限流。
+ */
+export async function inspectGcsObjectBounded(params: {
+  gcsUri: string;
+  maxBytes: number;
+  headerBytes?: number;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}): Promise<GcsObjectBoundedInspection> {
+  const { bucket, objectName } = parseGsUri(params.gcsUri);
+  const maxBytes = Math.max(1, Math.floor(Number(params.maxBytes) || 0));
+  const headerBytes = Math.max(1, Math.min(4_096, Math.floor(Number(params.headerBytes) || 12)));
+  const timeoutMs = Math.max(10, Math.min(10 * 60_000, Math.floor(Number(params.timeoutMs) || 120_000)));
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = params.signal ? AbortSignal.any([params.signal, timeoutSignal]) : timeoutSignal;
+  signal.throwIfAborted();
+
+  const accessToken = await getVertexAccessToken();
+  const downloadUrl = new URL(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}`);
+  downloadUrl.searchParams.set("alt", "media");
+  const userProject = getGcsUserProject();
+  if (userProject) downloadUrl.searchParams.set("userProject", userProject);
+
+  const response = await fetch(downloadUrl, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    signal,
+    redirect: "error",
+  });
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(`gcs_download_failed:${response.status}`);
+  }
+
+  const declaredBytes = Number(response.headers.get("content-length") || 0);
+  if (Number.isFinite(declaredBytes) && declaredBytes > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error("gcs_download_too_large");
+  }
+  if (!response.body) throw new Error("gcs_download_empty");
+
+  const header = Buffer.alloc(headerBytes);
+  let headerLength = 0;
+  let byteLength = 0;
+  const hash = crypto.createHash("sha256");
+  const reader = response.body.getReader();
+  try {
+    while (true) {
+      signal.throwIfAborted();
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+      byteLength += chunk.byteLength;
+      if (byteLength > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error("gcs_download_too_large");
+      }
+      hash.update(chunk);
+      if (headerLength < headerBytes) {
+        const copyBytes = Math.min(headerBytes - headerLength, chunk.byteLength);
+        chunk.copy(header, headerLength, 0, copyBytes);
+        headerLength += copyBytes;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return {
+    bucket,
+    objectName,
+    byteLength,
+    header: header.subarray(0, headerLength),
+    sha256: hash.digest("hex"),
+  };
+}
+
 /** 按前缀列出对象名（最多 maxResults，自动翻页直到凑满或无更多） */
 const GCS_LIST_MAX_ATTEMPTS = 3;
 

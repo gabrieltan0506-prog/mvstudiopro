@@ -3,6 +3,8 @@
  */
 
 const DIALOGUE_SECTION = "## 分镜台词";
+/** 表内持久化 tombstone：区分“用户明确清空”与“本镜没有覆盖、继续继承剧本”。 */
+export const MANHUA_DIALOGUE_SILENCE_TOKEN = "<无对白>";
 
 export function parseShotDialogueTable(text: string): Record<number, string> {
   const out: Record<number, string> = {};
@@ -52,14 +54,29 @@ export function upsertShotDialogueSection(
   return `${base}\n\n${lines.join("\n")}\n`;
 }
 
-export function applyShotDialoguesFromText<T extends { index: number; dialogueZh?: string }>(
+/** 只修改传入镜号，保留同表其它镜的覆盖/清空状态。 */
+export function patchShotDialogueSection(
+  text: string,
+  patch: Record<number, string>,
+): string {
+  const merged = { ...parseShotDialogueTable(text), ...patch };
+  return upsertShotDialogueSection(text, merged);
+}
+
+export function applyShotDialoguesFromText<
+  T extends { index: number; dialogueZh?: string; dialogueSuppressed?: boolean },
+>(
   shots: T[],
   text: string,
-): T[] {
+): Array<T & { dialogueSuppressed?: boolean }> {
   const map = parseShotDialogueTable(text);
   if (!Object.keys(map).length) return shots;
   return shots.map((s) => {
+    if (!Object.prototype.hasOwnProperty.call(map, s.index)) return s;
     const line = map[s.index];
-    return line ? { ...s, dialogueZh: line } : s;
+    if (line === MANHUA_DIALOGUE_SILENCE_TOKEN) {
+      return { ...s, dialogueZh: undefined, dialogueSuppressed: true };
+    }
+    return line ? { ...s, dialogueZh: line, dialogueSuppressed: false } : s;
   });
 }

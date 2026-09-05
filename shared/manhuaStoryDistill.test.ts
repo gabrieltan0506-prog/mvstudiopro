@@ -40,6 +40,11 @@ describe("manhuaStoryDistill", () => {
     expect(shots[0]?.keyframeRole).toBe("start");
     expect(shots[1]?.keyframeRole).toBe("key_action");
     expect(shots[2]?.keyframeRole).toBe("edit_out");
+    expect(shots.slice(0, 3).map((shot) => shot.dialogueZh)).toEqual([
+      "把玉珏交出来——第1次。",
+      "你再装傻，我就掀了这屏风。",
+      "……拿去，别碰她。",
+    ]);
   });
 
   it("builds second cue sheet and image-2 prompt without tech leak", () => {

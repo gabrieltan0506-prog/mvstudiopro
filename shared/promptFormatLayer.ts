@@ -37,17 +37,37 @@ function normalizeDialogueMarkers(text: string): string {
   return text.replace(/[「『]([^」』{}]{1,80})[」』]/g, "{$1}");
 }
 
+/** Seedance 台词标记回到国产自然语言引号。 */
+function normalizeNaturalDialogueMarkers(text: string): string {
+  return text
+    .replace(/\{([^{}]{1,80})\}/g, "“$1”")
+    .replace(/[「『]([^」』]{1,80})[」』]/g, "“$1”");
+}
+
+/** 非 Seedance 方言不识别资产库 @ 标签；只去掉 @，保留角色/场景/道具编号语义。 */
+function normalizeAssetRoleTagsToNatural(text: string): string {
+  return text.replace(/@(角色|场景|道具)(\d+)/g, "$1$2");
+}
+
 /** 图引用统一为 @图N */
 export function normalizeImageRefs(text: string): string {
   return text.replace(IMAGE_REF_RE, (_m, num: string) => `@图${toArabic(num)}`);
 }
 
-/** H3 三类参考标记:@图N/@视频N/@音频N → Image/Video/Audio N */
+/** H3 自然语言引用标记；当前生产路由仅允许其中的 Image N。 */
 export function normalizeH3ReferenceMarkers(text: string): string {
   return text
     .replace(/@(?:图|图片)(\d+)/g, "Image $1")
     .replace(/@(?:视频|影片)(\d+)/g, "Video $1")
     .replace(/@(?:音频|声音)(\d+)/g, "Audio $1");
+}
+
+/** Wan 中文自然语言引用：保留三类素材职责，不沿用 Seedance 专属 @ 标记。 */
+export function normalizeWanReferenceMarkers(text: string): string {
+  return text
+    .replace(/@(?:图|图片)(\d+)/g, "Reference image $1")
+    .replace(/@(?:视频|影片)(\d+)/g, "Reference video $1")
+    .replace(/@(?:音频|声音)(\d+)/g, "Reference audio $1");
 }
 
 /** 避审替换(逐条查表;新词只进表不散写) */
@@ -80,6 +100,22 @@ export function hasBlockingFormatIssues(issues: readonly FormatIssue[]): boolean
   return issues.some(isBlockingFormatIssue);
 }
 
+function maxReferencedIndex(text: string, kind: ShotMediaRefKind): number {
+  const source = String(text || "");
+  const patterns: Record<ShotMediaRefKind, RegExp> = {
+    image: /@(?:图|图片)(\d+)|\b(?:Reference\s+)?Image\s+(\d+)/gi,
+    video: /@(?:视频|影片)(\d+)|\b(?:Reference\s+)?Video\s+(\d+)/gi,
+    audio: /@(?:音频|声音)(\d+)|\b(?:Reference\s+)?Audio\s+(\d+)/gi,
+  };
+  let max = 0;
+  const pattern = patterns[kind];
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(source)) !== null) {
+    max = Math.max(max, Number(match[1] || match[2]) || 0);
+  }
+  return max;
+}
+
 export type FormatResult = {
   text: string;
   issues: FormatIssue[];
@@ -94,9 +130,15 @@ export type FormatResult = {
 export function formatPromptForEngine(
   raw: string,
   engine: CompilerEngineId,
-  opts?: { durationSec?: number; imageRefCount?: number },
+  opts?: {
+    durationSec?: number;
+    imageRefCount?: number;
+    videoRefCount?: number;
+    audioRefCount?: number;
+    /** 生产出站必须为 false：不得在用户不知情时改写对白或剧情语义。 */
+    applyCensorReplacements?: boolean;
+  },
 ): FormatResult {
-  // 任何公开入口先拦 reserved:Wan 不许落进 H3 分支产伪结果
   assertCompilerEngineReady(engine);
 
   const limits: CompilerEngineProfile = COMPILER_ENGINE_LIMITS[engine];
@@ -110,24 +152,62 @@ export function formatPromptForEngine(
     };
   }
 
+  const declaredRefCounts: Array<[ShotMediaRefKind, number | undefined, string]> = [
+    ["image", opts?.imageRefCount, "参考图"],
+    ["video", opts?.videoRefCount, "参考视频"],
+    ["audio", opts?.audioRefCount, "参考音频"],
+  ];
+  for (const [kind, rawCount, labelZh] of declaredRefCounts) {
+    const count = Number(rawCount);
+    const maxIndex = maxReferencedIndex(text, kind);
+    if (Number.isFinite(count) && maxIndex > count) {
+      issues.push({
+        kind: "reference_missing",
+        detailZh: `提示词引用${labelZh}第 ${maxIndex} 项，但实际只收到 ${count} 项`,
+      });
+    }
+  }
+
+  // 引擎能力为 0 时，即使调用方漏传计数，正文里的伪引用也必须明确阻断。
+  if (
+    limits.references.video === 0 &&
+    /(?:@(?:视频|影片)\d+|\b(?:Reference\s+)?Video\s+\d+)/i.test(text)
+  ) {
+    issues.push({ kind: "video_refs", detailZh: "该引擎不支持参考视频" });
+  }
+  if (
+    limits.references.audio === 0 &&
+    /(?:@(?:音频|声音)\d+|\b(?:Reference\s+)?Audio\s+\d+)/i.test(text)
+  ) {
+    issues.push({ kind: "audio_refs", detailZh: "该引擎不支持参考音频" });
+  }
+
   text = normalizeImageRefs(text);
   if (limits.dialect === "seedance") {
     text = normalizeDialogueMarkers(text);
   } else if (limits.dialect === "h3") {
-    // H3 自然语言方向:三类参考编号化,剥四标记与括号
+    // H3 自然语言方向：参考编号化，剥 Seedance 专属四类标记。
     text = normalizeH3ReferenceMarkers(text);
-    text = text.replace(/\{([^{}]{1,80})\}/g, "“$1”");
+    text = normalizeAssetRoleTagsToNatural(text);
+    text = normalizeNaturalDialogueMarkers(text);
     text = text.replace(/[<＜]([^<>＜＞]{1,80})[>＞]/g, "$1");
     text = text.replace(/【([^【】]{1,80})】/g, "$1");
     text = text.replace(/[（(]([^()（）]{1,80})[)）]/g, "$1");
   } else {
-    throw new Error(`${engine} 的提示词方言尚未接线`);
+    // Wan 使用中文自然语言职责，不发送 Seedance 的 @引用/{}<>【】协议。
+    text = normalizeWanReferenceMarkers(text);
+    text = normalizeAssetRoleTagsToNatural(text);
+    text = normalizeNaturalDialogueMarkers(text);
+    text = text.replace(/[<＜]([^<>＜＞]{1,80})[>＞]/g, "音效：$1");
+    text = text.replace(/【([^【】]{1,80})】/g, "$1：");
   }
 
-  const censored = applyCensorReplacements(text);
-  text = censored.text;
-  for (const r of censored.replaced) {
-    issues.push({ kind: "censor", detailZh: `已替换易拒审措辞(${r})` });
+  if (opts?.applyCensorReplacements !== false) {
+    const censored = applyCensorReplacements(text);
+    text = censored.text;
+    for (const r of censored.replaced) {
+      issues.push({ kind: "censor", detailZh: `已替换易拒审措辞(${r})` });
+    }
   }
 
   let clampedDurationSec: number | undefined;
@@ -153,13 +233,23 @@ export function formatPromptForEngine(
       });
     }
   }
-  const imageRefCount = Number(opts?.imageRefCount);
-  if (Number.isFinite(imageRefCount) && imageRefCount > limits.references.image) {
-    issues.push({
-      kind: "image_refs",
-      detailZh: `该引擎参考图上限 ${limits.references.image} 张，当前 ${imageRefCount} 张`,
-    });
-  }
+  const checkRefCount = (
+    rawCount: number | undefined,
+    limit: number,
+    kind: "image_refs" | "video_refs" | "audio_refs",
+    labelZh: string,
+  ) => {
+    const count = Number(rawCount);
+    if (Number.isFinite(count) && count > limit) {
+      issues.push({
+        kind,
+        detailZh: `该引擎${labelZh}上限 ${limit} 项，当前 ${count} 项`,
+      });
+    }
+  };
+  checkRefCount(opts?.imageRefCount, limits.references.image, "image_refs", "参考图");
+  checkRefCount(opts?.videoRefCount, limits.references.video, "video_refs", "参考视频");
+  checkRefCount(opts?.audioRefCount, limits.references.audio, "audio_refs", "参考音频");
   if (limits.maxPromptChars !== undefined && text.length > limits.maxPromptChars) {
     issues.push({
       kind: "prompt_length",

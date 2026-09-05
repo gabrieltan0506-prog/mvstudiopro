@@ -277,6 +277,7 @@ export async function submitWan30ViaChannels(
           prompt: input.prompt,
           imageUrls: input.imageUrls,
           audioUrls: input.audioUrls,
+          videoUrls: input.videoUrls,
           duration: input.duration,
           resolution: input.resolution,
           aspectRatio: input.aspectRatio,

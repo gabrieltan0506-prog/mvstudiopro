@@ -2,11 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { SubmitUnknownError } from "./submitOutcomeErrors.js";
+import {
+  SubmitRejectedError,
+  SubmitUnknownError,
+} from "./submitOutcomeErrors.js";
 import {
   assertGlbBuffer,
   createManhua3dTask,
   getManhua3dTask,
+  importExistingManhua3dAsset,
+  retryManhua3dTask,
   resetManhua3dTaskDependenciesForTests,
   setManhua3dTaskDependenciesForTests,
 } from "./manhua3dTask.js";
@@ -17,6 +22,14 @@ function validGlb(payload = Buffer.alloc(0)): Buffer {
   header.writeUInt32LE(2, 4);
   header.writeUInt32LE(header.byteLength + payload.byteLength, 8);
   return Buffer.concat([header, payload]);
+}
+
+function inspectedGlb(buffer: Buffer) {
+  return {
+    header: buffer.subarray(0, 12),
+    byteLength: buffer.byteLength,
+    sha256: "a".repeat(64),
+  };
 }
 
 describe("manhua3dTask", () => {
@@ -117,6 +130,138 @@ describe("manhua3dTask", () => {
     expect(await fs.readdir(dir)).toEqual([]);
   });
 
+  it("导入同账号 GCS 下的有效 GLB，不调用建模上游并可幂等恢复", async () => {
+    const submit = vi.fn();
+    const glb = validGlb(Buffer.from("existing-model"));
+    const inspectUploadedGlb = vi.fn(async () => {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      return inspectedGlb(glb);
+    });
+    setManhua3dTaskDependenciesForTests({
+      submit,
+      getBucketName: () => "test-bucket",
+      inspectUploadedGlb,
+      signGlb: uri => `https://signed.test/${encodeURIComponent(uri)}`,
+    });
+    const input = {
+      userId: 7,
+      assetRef: "character:black-horse",
+      sourceVersion: "sha256:source-v1",
+      sourceImageUrl: "https://assets.test/black-horse-front.png",
+      glbGcsUri: "gs://test-bucket/uploads/u7/existing.glb",
+    };
+
+    const [first, second] = await Promise.all([
+      importExistingManhua3dAsset(input),
+      importExistingManhua3dAsset(input),
+    ]);
+    const restored = await importExistingManhua3dAsset(input);
+
+    expect(first.status).toBe("succeeded");
+    expect(first.taskId).toMatch(/^m3d_import_/);
+    expect(first.glbGcsUri).toBe(input.glbGcsUri);
+    expect(first.glbUrl).toContain("https://signed.test/");
+    expect(second.taskId).toBe(first.taskId);
+    expect(restored.taskId).toBe(first.taskId);
+    expect(submit).not.toHaveBeenCalled();
+    expect(inspectUploadedGlb).toHaveBeenCalledTimes(1);
+  });
+
+  it("导入 GLB 拒绝跨账号对象与伪造文件头", async () => {
+    const inspectUploadedGlb = vi
+      .fn()
+      .mockResolvedValue(inspectedGlb(Buffer.alloc(12)));
+    setManhua3dTaskDependenciesForTests({
+      getBucketName: () => "test-bucket",
+      inspectUploadedGlb,
+    });
+    const base = {
+      userId: 7,
+      assetRef: "character:black-horse",
+      sourceVersion: "sha256:source-v1",
+      sourceImageUrl: "https://assets.test/black-horse-front.png",
+    };
+
+    await expect(
+      importExistingManhua3dAsset({
+        ...base,
+        glbGcsUri: "gs://test-bucket/uploads/u8/stolen.glb",
+      })
+    ).rejects.toThrow("manhua3d_glb_forbidden");
+    expect(inspectUploadedGlb).not.toHaveBeenCalled();
+
+    await expect(
+      importExistingManhua3dAsset({
+        ...base,
+        glbGcsUri: "gs://test-bucket/uploads/u7/fake.glb",
+      })
+    ).rejects.toThrow("invalid_glb_magic");
+  });
+
+  it("导入流式验真超过 250MB 时保留 glb_too_large 错误分类", async () => {
+    const inspectUploadedGlb = vi
+      .fn()
+      .mockRejectedValue(new Error("gcs_download_too_large"));
+    setManhua3dTaskDependenciesForTests({
+      getBucketName: () => "test-bucket",
+      inspectUploadedGlb,
+    });
+
+    await expect(
+      importExistingManhua3dAsset({
+        userId: 7,
+        assetRef: "character:black-horse",
+        sourceVersion: "sha256:oversize",
+        sourceImageUrl: "https://assets.test/black-horse-front.png",
+        glbGcsUri: "gs://test-bucket/uploads/u7/oversize.glb",
+      })
+    ).rejects.toThrow("glb_too_large");
+  });
+
+  it("不同 GLB 最多同时验真两个，拥塞时关闭式拒绝且不触发建模", async () => {
+    const submit = vi.fn();
+    const resolvers: Array<() => void> = [];
+    const glb = validGlb(Buffer.from("mesh"));
+    const inspectUploadedGlb = vi.fn(
+      () =>
+        new Promise<ReturnType<typeof inspectedGlb>>(resolve => {
+          resolvers.push(() => resolve(inspectedGlb(glb)));
+        })
+    );
+    setManhua3dTaskDependenciesForTests({
+      submit,
+      getBucketName: () => "test-bucket",
+      inspectUploadedGlb,
+      signGlb: uri => `https://signed.test/${encodeURIComponent(uri)}`,
+    });
+    const base = {
+      userId: 7,
+      assetRef: "character:black-horse",
+      sourceVersion: "sha256:source-v1",
+      sourceImageUrl: "https://assets.test/black-horse-front.png",
+    };
+    const first = importExistingManhua3dAsset({
+      ...base,
+      glbGcsUri: "gs://test-bucket/uploads/u7/first.glb",
+    });
+    const second = importExistingManhua3dAsset({
+      ...base,
+      glbGcsUri: "gs://test-bucket/uploads/u7/second.glb",
+    });
+
+    await vi.waitFor(() => expect(inspectUploadedGlb).toHaveBeenCalledTimes(2));
+    await expect(
+      importExistingManhua3dAsset({
+        ...base,
+        glbGcsUri: "gs://test-bucket/uploads/u7/third.glb",
+      })
+    ).rejects.toThrow("manhua3d_glb_import_busy");
+    expect(submit).not.toHaveBeenCalled();
+
+    resolvers.splice(0).forEach(resolve => resolve());
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+  });
+
   it("POST 结果未知后转 reconcile_manual，后续查询也不会重复提交", async () => {
     const submit = vi
       .fn()
@@ -135,6 +280,40 @@ describe("manhua3dTask", () => {
     const queried = await getManhua3dTask(created.taskId, 7);
     expect(queried?.status).toBe("reconcile_manual");
     expect(submit).toHaveBeenCalledTimes(1);
+    await expect(retryManhua3dTask(created.taskId, 7)).rejects.toThrow(
+      "manhua3d_retry_reconcile_forbidden"
+    );
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("明确失败可生成新的幂等重试任务，同一失败任务不会重复提交", async () => {
+    const submit = vi
+      .fn()
+      .mockRejectedValueOnce(new SubmitRejectedError("bad image"))
+      .mockResolvedValueOnce({ predictionId: "pred-retry" });
+    setManhua3dTaskDependenciesForTests({
+      isConfigured: () => true,
+      submit,
+      poll: vi
+        .fn()
+        .mockResolvedValue({ state: "running", status: "processing" }),
+    });
+    const failed = await createManhua3dTask({
+      userId: 7,
+      assetRef: "character:black-horse",
+      sourceVersion: "sha256:retry-v1",
+      sourceImageUrl: "https://assets.test/black-horse-front.png",
+    });
+    expect(failed.status).toBe("failed");
+    expect(await retryManhua3dTask(failed.taskId, 8)).toBeNull();
+    expect(submit).toHaveBeenCalledTimes(1);
+
+    const retried = await retryManhua3dTask(failed.taskId, 7);
+    const duplicate = await retryManhua3dTask(failed.taskId, 7);
+    expect(retried?.taskId).not.toBe(failed.taskId);
+    expect(retried?.status).toBe("running");
+    expect(duplicate?.taskId).toBe(retried?.taskId);
+    expect(submit).toHaveBeenCalledTimes(2);
   });
 
   it("完成后验证 glTF 头、上传 GCS，并持久返回重新签发的下载地址", async () => {

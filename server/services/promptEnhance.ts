@@ -48,7 +48,9 @@ export async function enhancePromptForEngine(params: {
   const dialectHint =
     profile.dialect === "seedance"
       ? "目标引擎为 Seedance 系:对白用 {台词} 标记,音效用 <描述>,参考写 @图N/@视频N/@音频N。"
-      : "目标引擎为 Minimax H3:全自然语言,禁止 {}<>【】() 标记,参考写 Image N/Video N/Audio N。";
+      : profile.dialect === "h3"
+        ? "目标引擎为 H3:全自然语言,禁止 {}<>【】() 标记,只支持图片参考并写 Image N。"
+        : "目标引擎为 Wan:使用中文自然语言,图片/视频/音频职责分别写 Reference image N/Reference video N/Reference audio N。";
 
   const res = await invokeGlmJsonChatWithGatewayFallback({
     system: ENHANCE_SYSTEM_ZH,

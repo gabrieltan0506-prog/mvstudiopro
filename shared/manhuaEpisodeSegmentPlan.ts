@@ -323,7 +323,8 @@ export function extractManhuaSegmentDialogueQuotes(dialogueZh: string): string[]
     if (inner.length < 1 || consumedQuotes.has(inner)) continue;
     push(inner);
   }
-  return out.slice(0, 8);
+  // 句数由真实段落决定；下游会在同一视觉镜位内继续排对白，不能在这里无声明截断。
+  return out;
 }
 
 /** 从 `苏照雪：「台词」` 或行首姓名抽出说话人名 */

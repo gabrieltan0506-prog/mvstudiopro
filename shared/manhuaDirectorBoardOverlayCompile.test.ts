@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   compileManhuaDirectorBoardOverlay,
+  compileManhuaSegmentDirectorBoardOverlay,
   type CompileManhuaDirectorBoardOverlayInput,
 } from "./manhuaDirectorBoardOverlayCompile";
 
@@ -208,5 +209,73 @@ describe("compileManhuaDirectorBoardOverlay", () => {
     );
     expect(rebound?.sourceRevision).not.toBe(confirmed.sourceRevision);
     expect(rebound?.needsReview).toBe(true);
+  });
+
+  it("段级 UI 与消费共用同一 revision；换板或改整段动作后恢复待复核", () => {
+    const segmentInput = {
+      episodeIndex: 2,
+      segmentIndex: 3,
+      segmentBoardUrls: { 3: "https://cdn.example/segment-03.png" },
+      segmentFirstShotStillUrl: "https://cdn.example/shot-07.png",
+      beat: {
+        castZh: "沈策",
+        performanceZh: "沈策从画面左侧向右走",
+        lightingCameraZh: "镜头向右横移跟拍",
+      },
+      shots: [
+        { index: 7, actionZh: "沈策从画面左侧向中央走", cameraZh: "固定机位" },
+        { index: 8, actionZh: "沈策从中央继续向画面右侧走", cameraZh: "向右跟拍" },
+      ],
+    };
+    const compiled = compileManhuaSegmentDirectorBoardOverlay({
+      ...segmentInput,
+      baseAspectRatio: "9:16",
+    })!;
+    const confirmed = { ...compiled, needsReview: false };
+
+    const consumed = compileManhuaSegmentDirectorBoardOverlay({
+      ...segmentInput,
+      existingOverlay: confirmed,
+    });
+    expect(consumed).toEqual(confirmed);
+
+    const changedBoard = compileManhuaSegmentDirectorBoardOverlay({
+      ...segmentInput,
+      segmentBoardUrls: { 3: "https://cdn.example/segment-03-v2.png" },
+      existingOverlay: confirmed,
+    });
+    expect(changedBoard?.sourceRevision).not.toBe(confirmed.sourceRevision);
+    expect(changedBoard?.baseAspectRatio).toBe("9:16");
+    expect(changedBoard?.needsReview).toBe(true);
+
+    const changedAction = compileManhuaSegmentDirectorBoardOverlay({
+      ...segmentInput,
+      shots: [
+        segmentInput.shots[0],
+        { ...segmentInput.shots[1], actionZh: "沈策从中央退回画面左侧" },
+      ],
+      existingOverlay: confirmed,
+    });
+    expect(changedAction?.sourceRevision).not.toBe(confirmed.sourceRevision);
+    expect(changedAction?.needsReview).toBe(true);
+  });
+
+  it("消费端旧草稿没有 overlay 或同段底图时保持空值惰性", () => {
+    expect(
+      compileManhuaSegmentDirectorBoardOverlay({
+        episodeIndex: 1,
+        segmentIndex: 1,
+        segmentFirstShotStillUrl: "https://cdn.example/shot-01.png",
+        shots: [{ index: 1, actionZh: "人物从左向右走" }],
+      }),
+    ).toBeNull();
+    expect(
+      compileManhuaSegmentDirectorBoardOverlay({
+        episodeIndex: 1,
+        segmentIndex: 1,
+        baseAspectRatio: "16:9",
+        shots: [{ index: 1, actionZh: "人物从左向右走" }],
+      }),
+    ).toBeNull();
   });
 });

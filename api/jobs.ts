@@ -4147,18 +4147,45 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       const audioUrls = rawAudios
         .map((u) => s(u).trim())
         .filter((u) => /^https?:\/\//i.test(u));
+      const rawVideos: unknown[] = Array.isArray(b.videoUrls) ? b.videoUrls : [];
+      const videoUrls = Array.from(
+        new Set(
+          rawVideos
+            .map((u) => s(u).trim())
+            .filter((u) => /^https?:\/\//i.test(u)),
+        ),
+      );
       const aspectRatio = s(b.aspectRatio || q.aspectRatio || "9:16").trim() || "9:16";
       try {
         // 0825 拍板：Wan 3.0 三通道（OpenRouter → EvoLink → WaveSpeed）。
-        // 七审第9条：闸口按**本单资格**判——带参考音频的单子必须有一条吃得下音频的通道，
+        // 七审第9条：闸口按**本单资格**判——带参考音频/视频的单子必须有一条吃得下的通道，
         // 否则会先扣费后必然全链拒单（扣费/退款摩擦）。
-        const { hasEligibleWan30Channel } = await import("../server/services/wan30Channels.js");
-        if (!hasEligibleWan30Channel({ hasAudioRefs: audioUrls.length > 0 })) {
-          return res.status(503).json({ ok: false, error: "Wan 3.0 通道暂不可用，请稍后重试" });
-        }
         const { clampWan30Duration, normalizeWan30Resolution, WAN30_REFERENCE_MAX } = await import(
           "../shared/wanWavespeedModels.js"
         );
+        const overLimit = [
+          imageUrls.length > WAN30_REFERENCE_MAX.image
+            ? `参考图上限 ${WAN30_REFERENCE_MAX.image} 张，实际收到 ${imageUrls.length} 张`
+            : "",
+          audioUrls.length > WAN30_REFERENCE_MAX.audio
+            ? `参考音频上限 ${WAN30_REFERENCE_MAX.audio} 条，实际收到 ${audioUrls.length} 条`
+            : "",
+          videoUrls.length > WAN30_REFERENCE_MAX.video
+            ? `参考视频上限 ${WAN30_REFERENCE_MAX.video} 条，实际收到 ${videoUrls.length} 条`
+            : "",
+        ].filter(Boolean);
+        if (overLimit.length) {
+          return res
+            .status(400)
+            .json({ ok: false, error: `当前视频引擎：${overLimit.join("；")}` });
+        }
+        const { hasEligibleWan30Channel } = await import("../server/services/wan30Channels.js");
+        if (!hasEligibleWan30Channel({
+          hasAudioRefs: audioUrls.length > 0,
+          hasVideoRefs: videoUrls.length > 0,
+        })) {
+          return res.status(503).json({ ok: false, error: "视频生成通道暂不可用，请稍后重试" });
+        }
         const duration = clampWan30Duration(b.duration ?? b.durationSec ?? q.duration);
         const resolution = normalizeWan30Resolution(b.resolution || q.resolution);
         const label = `画布成片·Wan 3.0（${resolution}·${duration}s·排队较长）`;
@@ -4186,8 +4213,9 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             label,
             prompt,
             imageUrl: imageUrls[0],
-            imageUrls: imageUrls.slice(0, WAN30_REFERENCE_MAX.image),
-            audioUrls: audioUrls.slice(0, WAN30_REFERENCE_MAX.audio),
+            imageUrls,
+            audioUrls,
+            videoUrls,
             aspectRatio,
             duration,
             resolution,

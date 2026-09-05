@@ -79,6 +79,20 @@ export type CompileManhuaDirectorBoardOverlayInput = {
   existingOverlay?: unknown;
 };
 
+export type CompileManhuaSegmentDirectorBoardOverlayInput = {
+  episodeIndex: number;
+  segmentIndex: number;
+  /** 段级裁切导演板优先；没有时只允许回退同段首镜静帧。 */
+  segmentBoardUrls?: Readonly<Record<number, string>> | null;
+  segmentFirstShotStillUrl?: string | null;
+  /** UI 传实测像素比例；消费端省略时只复用已保存 overlay 的实测比例。 */
+  baseAspectRatio?: ManhuaBoardAspectRatio;
+  beat?: SegmentMotionFields | null;
+  /** 必须传整段镜头，revision 同时覆盖全部动作与运镜变化。 */
+  shots?: ReadonlyArray<ShotMotionFields> | null;
+  existingOverlay?: unknown;
+};
+
 type DirectionMatch = {
   points: ManhuaBoardNormalizedPoint[];
   screenDirection?: ManhuaBoardScreenDirection;
@@ -540,6 +554,67 @@ function hasStructuredSource(
         input.axis ||
         (input.landingPoints?.length || 0) > 0)
   );
+}
+
+/**
+ * 轨迹坐标只允许叠在同段导演板或该段首镜静帧上。
+ * 整集共用板和别段静帧的布局不对应，不能用来承载当前段坐标。
+ */
+export function resolveManhuaDirectorOverlayBaseUrl(input: {
+  segmentIndex: number;
+  segmentBoardUrls?: Readonly<Record<number, string>> | null;
+  segmentFirstShotStillUrl?: string | null;
+}): string | null {
+  const segmentIndex = Math.max(1, Math.floor(Number(input.segmentIndex) || 1));
+  const segmentBoardUrl = cleanText(input.segmentBoardUrls?.[segmentIndex]);
+  if (segmentBoardUrl) return segmentBoardUrl;
+  return cleanText(input.segmentFirstShotStillUrl) || null;
+}
+
+/**
+ * UI 预览与成片消费共用的段级编译入口。
+ *
+ * 消费端拿不到底图像素，但已保存 overlay 带有 UI 实测比例；仅在集／段身份匹配时
+ * 才复用该比例。旧草稿没有 overlay 或没有同段底图时惰性返回 null，不新增语义。
+ */
+export function compileManhuaSegmentDirectorBoardOverlay(
+  input: CompileManhuaSegmentDirectorBoardOverlayInput
+): ManhuaBoardMotionOverlayV1 | null {
+  const episodeIndex = Math.max(1, Math.floor(Number(input.episodeIndex) || 1));
+  const segmentIndex = Math.max(1, Math.floor(Number(input.segmentIndex) || 1));
+  const baseMediaIdentity = resolveManhuaDirectorOverlayBaseUrl({
+    segmentIndex,
+    segmentBoardUrls: input.segmentBoardUrls,
+    segmentFirstShotStillUrl: input.segmentFirstShotStillUrl,
+  });
+  if (!baseMediaIdentity) return null;
+
+  const existing = parseManhuaBoardMotionOverlay(input.existingOverlay);
+  const savedAspectRatio =
+    existing?.episodeIndex === episodeIndex && existing.segmentIndex === segmentIndex
+      ? existing.baseAspectRatio
+      : undefined;
+  const baseAspectRatio = input.baseAspectRatio || savedAspectRatio;
+  if (!baseAspectRatio) return null;
+
+  const shots = input.shots || [];
+  const firstShot = shots[0];
+  return compileManhuaDirectorBoardOverlay({
+    episodeIndex,
+    segmentIndex,
+    shotIndex: firstShot?.index,
+    baseAspectRatio,
+    baseMediaIdentity,
+    beat: input.beat,
+    shot: shots.length
+      ? {
+          index: firstShot?.index,
+          actionZh: shots.map((shot) => cleanText(shot.actionZh)).filter(Boolean).join("；"),
+          cameraZh: shots.map((shot) => cleanText(shot.cameraZh)).filter(Boolean).join("；"),
+        }
+      : null,
+    existingOverlay: input.existingOverlay,
+  });
 }
 
 /**

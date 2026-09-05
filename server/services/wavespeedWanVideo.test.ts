@@ -15,7 +15,7 @@ describe("wavespeedWanVideo · 提交体契约(审查 P1)", () => {
     delete process.env.WAVESPEED_API_KEY;
   });
 
-  it("请求体带 aspect_ratio / thinking_mode(默认开)/ seed,并钳制参考上限", async () => {
+  it("请求体带 aspect_ratio / thinking_mode(默认开)/ seed 和视频参考", async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
       json: async () => ({ data: { id: "pred-1" } }),
@@ -24,6 +24,7 @@ describe("wavespeedWanVideo · 提交体契约(审查 P1)", () => {
       prompt: "p",
       imageUrls: IMG(12),
       audioUrls: Array.from({ length: 7 }, (_, i) => `https://a.example/${i}.mp3`),
+      videoUrls: ["https://v.example/action.mp4", "https://v.example/action.mp4"],
       duration: 30,
       resolution: "720p",
       aspectRatio: "9:16",
@@ -35,8 +36,20 @@ describe("wavespeedWanVideo · 提交体契约(审查 P1)", () => {
     expect(body.seed).toBe(12345);
     expect(body.reference_images).toHaveLength(10);
     expect(body.reference_audios).toHaveLength(5);
+    expect(body.reference_videos).toEqual(["https://v.example/action.mp4"]);
     expect(body.duration).toBe(30);
     expect(body.enable_audio).toBe(true);
+  });
+
+  it("第 6 条视频参考明确拒绝且不发送上游", async () => {
+    await expect(
+      submitWavespeedWanVideo({
+        prompt: "p",
+        imageUrls: IMG(1),
+        videoUrls: Array.from({ length: 6 }, (_, i) => `https://v.example/${i}.mp4`),
+      }),
+    ).rejects.toThrow(/参考视频上限 5/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("时长按文档钳到 2..30;非法比例回默认 16:9;越界 seed 不发", async () => {

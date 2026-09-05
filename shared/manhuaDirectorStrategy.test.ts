@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   MANHUA_DIRECTOR_STRATEGY_FORMAT,
+  MANHUA_DIRECTOR_STRATEGY_APPROVED_MANIFEST_VERSION,
+  MANHUA_DIRECTOR_STRATEGY_VERSION,
   formatManhuaDirectorStrategyClipLine,
   formatManhuaDirectorStrategyStage,
   getManhuaDirectorStrategyAuditTrace,
   listManhuaDirectorStrategyContracts,
+  parseManhuaDirectorStrategyContract,
   readManhuaDirectorStrategyContract,
   resolveManhuaDirectorStrategyContract,
 } from "./manhuaDirectorStrategy";
@@ -18,7 +21,9 @@ describe("manhuaDirectorStrategy", () => {
     ["非人怪物进入异世界仪式", "embodied_world"],
     ["兄弟背叛后的江湖对决", "relational_action"],
   ])("按题材把 %s 稳定匹配为 %s", (topic, expected) => {
-    expect(resolveManhuaDirectorStrategyContract({ topic }).strategyId).toBe(expected);
+    expect(resolveManhuaDirectorStrategyContract({ topic }).strategyId).toBe(
+      expected
+    );
   });
 
   it("题材无命中时让现有拍摄手法成为第二信号", () => {
@@ -26,7 +31,7 @@ describe("manhuaDirectorStrategy", () => {
       resolveManhuaDirectorStrategyContract({
         topic: "一个普通场景",
         craftShotId: "cam_03_track_follow",
-      }).strategyId,
+      }).strategyId
     ).toBe("character_action");
   });
 
@@ -35,8 +40,23 @@ describe("manhuaDirectorStrategy", () => {
     expect(contracts).toHaveLength(6);
     for (const contract of contracts) {
       expect(contract.format).toBe(MANHUA_DIRECTOR_STRATEGY_FORMAT);
-      expect(contract.version).toBe(1);
+      expect(contract.version).toBe(MANHUA_DIRECTOR_STRATEGY_VERSION);
+      expect(contract.revision).toBe(
+        MANHUA_DIRECTOR_STRATEGY_APPROVED_MANIFEST_VERSION
+      );
+      expect(Object.keys(contract).sort()).toEqual(
+        [
+          "format",
+          "labelZh",
+          "projections",
+          "revision",
+          "strategyId",
+          "version",
+        ].sort()
+      );
       expect(contract).not.toHaveProperty("sourceClaimIds");
+      expect(contract).not.toHaveProperty("sourceProfileIds");
+      expect(contract).not.toHaveProperty("sourceRevision");
       expect(contract).not.toHaveProperty("moduleIds");
       const trace = getManhuaDirectorStrategyAuditTrace(contract.strategyId);
       expect(trace?.sourceClaimIds.length).toBeGreaterThanOrEqual(3);
@@ -48,20 +68,118 @@ describe("manhuaDirectorStrategy", () => {
   });
 
   it("生产投影去名且可从已存节点恢复同一策略", () => {
-    const contract = resolveManhuaDirectorStrategyContract({ topic: "怪物与异世界" });
+    const contract = resolveManhuaDirectorStrategyContract({
+      topic: "怪物与异世界",
+    });
     const stage = formatManhuaDirectorStrategyStage(contract, "storyboard");
     const clip = formatManhuaDirectorStrategyClipLine(contract);
     const publicText = `${stage}\n${clip}`;
-    expect(publicText).toContain("【创作策略·v1·embodied_world】");
-    expect(publicText).not.toMatch(
-      /Nolan|Cameron|Spielberg|Abrams|Ridley|Scott|del Toro|Justin Lin|John Woo|诺兰|卡梅隆|斯皮尔伯格|艾布拉姆斯|雷德利|林诣彬|吴宇森/i,
+    expect(publicText).toContain(
+      `【创作策略·v2·${MANHUA_DIRECTOR_STRATEGY_APPROVED_MANIFEST_VERSION}·embodied_world】`
     );
-    expect(readManhuaDirectorStrategyContract(stage)?.strategyId).toBe("embodied_world");
+    expect(publicText).not.toMatch(
+      /Nolan|Cameron|Spielberg|Abrams|Ridley|Scott|del Toro|Justin Lin|John Woo|诺兰|卡梅隆|斯皮尔伯格|艾布拉姆斯|雷德利|林诣彬|吴宇森/i
+    );
+    expect(readManhuaDirectorStrategyContract(stage)?.strategyId).toBe(
+      "embodied_world"
+    );
     expect(readManhuaDirectorStrategyContract("旧节点，无策略标记")).toBeNull();
   });
 
+  it("内部溯源使用正式卡 id、完整 claim id 与来源修订", () => {
+    expect(
+      getManhuaDirectorStrategyAuditTrace("information_causality")
+    ).toMatchObject({
+      sourceProfileIds: [
+        "parallel_action_editing",
+        "world_space_previsualization",
+        "mystery_reveal",
+      ],
+      sourceClaimIds: [
+        "CN-DM-02",
+        "CN-DM-04",
+        "CN-DM-05",
+        "CN-DM-06",
+        "CN-DM-10",
+        "WSPV-001",
+        "AB-D-01",
+      ],
+      sourceRevision: "parallel_action_editing@2026-09-04",
+    });
+    expect(
+      getManhuaDirectorStrategyAuditTrace("character_action")?.sourceClaimIds
+    ).toEqual([
+      "KE-01-character-pov-before-scale",
+      "KE-02-beat-contract-before-scale",
+      "KE-03-spatial-tactile-causality",
+      "WSPV-001",
+      "AB-D-01",
+    ]);
+    expect(
+      getManhuaDirectorStrategyAuditTrace("emotion_space")?.sourceProfileIds[0]
+    ).toBe("human_scale_causal_staging");
+    expect(
+      getManhuaDirectorStrategyAuditTrace("audience_discovery")
+        ?.sourceProfileIds[0]
+    ).toBe("audience_aligned_discovery");
+    expect(
+      getManhuaDirectorStrategyAuditTrace("embodied_world")?.sourceProfileIds[0]
+    ).toBe("embodied_fable_system");
+    expect(
+      getManhuaDirectorStrategyAuditTrace("relational_action")
+        ?.sourceProfileIds[0]
+    ).toBe("relational_action_rhythm");
+  });
+
+  it("关键帧投影只描述静态构图终态、光影与材质", () => {
+    for (const contract of listManhuaDirectorStrategyContracts()) {
+      const text = formatManhuaDirectorStrategyStage(contract, "keyframe");
+      expect(text).toMatch(/静态|终态/);
+      expect(text).toContain("光影");
+      expect(text).toContain("材质");
+      expect(text).not.toMatch(/推近|拉远|跟拍|摇镜|横移|甩镜|环绕/);
+      expect(text).toMatch(/不得写运镜|不写运镜/);
+    }
+  });
+
+  it("旧 v1 合同与标记只迁移白名单内同一 strategyId", () => {
+    const legacy = {
+      format: "mv-manhua-director-strategy-v1",
+      version: 1,
+      strategyId: "relational_action",
+      labelZh: "不可信旧文案",
+      projections: {},
+    };
+    const migrated = parseManhuaDirectorStrategyContract(legacy);
+    expect(migrated).toMatchObject({
+      version: MANHUA_DIRECTOR_STRATEGY_VERSION,
+      revision: MANHUA_DIRECTOR_STRATEGY_APPROVED_MANIFEST_VERSION,
+      strategyId: "relational_action",
+      labelZh: "关系驱动动作",
+    });
+    expect(
+      readManhuaDirectorStrategyContract(
+        "【创作策略·v1·relational_action】旧文案"
+      )?.strategyId
+    ).toBe("relational_action");
+    expect(
+      parseManhuaDirectorStrategyContract({ ...legacy, strategyId: "unknown" })
+    ).toBeNull();
+    expect(
+      readManhuaDirectorStrategyContract("【创作策略·v1·unknown】")
+    ).toBeNull();
+    expect(
+      parseManhuaDirectorStrategyContract({
+        ...migrated,
+        revision: "unapproved-r9",
+      })
+    ).toBeNull();
+  });
+
   it("每次只输出当前阶段，不把五阶段合同整包灌入", () => {
-    const contract = resolveManhuaDirectorStrategyContract({ topic: "悬疑调查" });
+    const contract = resolveManhuaDirectorStrategyContract({
+      topic: "悬疑调查",
+    });
     const story = formatManhuaDirectorStrategyStage(contract, "story");
     const assets = formatManhuaDirectorStrategyStage(contract, "assets");
     expect(story).toContain("并行行动");

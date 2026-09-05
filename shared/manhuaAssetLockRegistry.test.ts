@@ -393,6 +393,27 @@ describe("manhuaAssetLockRegistry", () => {
     expect(plan.entries.map((e) => e.imageIndex)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
   });
 
+  it("2.5 的 30 图配额不会在共享绑定层被旧的 16 图硬顶截断", () => {
+    const assetRows = Array.from({ length: 40 }, (_, i) => ({
+      id: `asset-${i + 1}`,
+      tag: `@角色${i + 1}`,
+      labelZh: `角色${i + 1}`,
+      path: `https://cdn.example/asset-${i + 1}.jpg`,
+    }));
+    const plan = planManhuaClipSeedanceImageBind({
+      assetRows,
+      stillUrls: ["https://cdn.example/still.jpg"],
+      tailUrls: ["https://cdn.example/tail.jpg"],
+      maxImages: 30,
+    });
+    expect(plan.imageUrls).toHaveLength(30);
+    expect(plan.entries.map((entry) => entry.imageIndex)).toEqual(
+      Array.from({ length: 30 }, (_, index) => index + 1),
+    );
+    expect(plan.entries.filter((entry) => entry.kind === "still")).toHaveLength(1);
+    expect(plan.entries.filter((entry) => entry.kind === "tail")).toHaveLength(1);
+  });
+
   /**
    * 导演板优先级：本段静帧 > 上段末帧 > @角色(identity) > @角色(look) >
    * @服装 > @场景 > 【导演板】 > @道具。板是加分项，不是基准项。

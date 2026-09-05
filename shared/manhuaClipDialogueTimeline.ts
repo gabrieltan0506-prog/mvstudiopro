@@ -29,9 +29,15 @@ export type ManhuaDialogueTimelineBeat = {
   voiceToneZh: string;
   /** 说话人 @角色N */
   speakerAtTag: string;
+  /** 同一视觉镜位内继续发生的对白，按原剧本顺序排入本镜时间窗。 */
+  additionalDialogueCues: Array<{
+    dialogueZh: string;
+    speakerAtTag: string;
+  }>;
 };
 
 function resolveShotDialogue(shot: ManhuaWorkbenchShot): string {
+  if (shot.dialogueSuppressed) return "";
   const direct = String(shot.dialogueZh || "").trim();
   if (direct) return direct;
   return extractManhuaPerformanceCue(shot.actionZh).dialogueZh;
@@ -95,6 +101,14 @@ export function buildManhuaDialogueTimelineBeats(
         s.actionZh,
         fromAction.speakerAtTag,
       ),
+      additionalDialogueCues: (s.additionalDialogueCues || [])
+        .map((cue) => ({
+          dialogueZh: stripManhuaSpeakerAtPrefix(cue.dialogueZh).trim(),
+          speakerAtTag: String(
+            cue.speakerAtTag || extractManhuaSpeakerAtTag(cue.dialogueZh, s.actionZh),
+          ).trim(),
+        }))
+        .filter((cue) => cue.dialogueZh),
     };
   });
   /**
@@ -109,6 +123,9 @@ export function buildManhuaDialogueTimelineBeats(
     const only = Array.from(speakers)[0]!;
     for (const b of beats) {
       if (b.dialogueZh && !b.speakerAtTag) b.speakerAtTag = only;
+      for (const cue of b.additionalDialogueCues) {
+        if (!cue.speakerAtTag) cue.speakerAtTag = only;
+      }
     }
   }
   return beats;
@@ -293,7 +310,7 @@ export function formatManhuaDialogueTimelineBlock(
   const sharedMicro = pickShared(microOf);
   const sharedTone = pickShared(toneOf);
 
-  const lines = beats.map((b, i) => {
+  const lines = beats.flatMap((b, i) => {
     const frame = extractManhuaFramingLabelZh(b.cameraZh, b.actionZh);
     const traj = cameraTrajectoryZh(b.cameraZh, b.actionZh);
     const speaker = b.speakerAtTag;
@@ -344,9 +361,38 @@ export function formatManhuaDialogueTimelineBlock(
       contextZh: `${b.actionZh || ""}｜${b.dialogueZh || ""}`,
     });
     // 节拍功能标进秒轴正文（〔…〕），紧跟时间头之后、运镜之前，与样片右上角节拍对齐
-    const head = `${b.startSec}–${b.endSec}s：〔${fn}〕`;
-    if (!bits.length) return `${head}${camera}。`;
-    return camera ? `${head}${camera}；${bits.join("，")}。` : `${head}${bits.join("，")}。`;
+    const cues = [
+      ...(line ? [{ dialogueZh: line, speakerAtTag: speaker }] : []),
+      ...b.additionalDialogueCues,
+    ];
+    if (cues.length <= 1) {
+      const head = `${b.startSec}–${b.endSec}s：〔${fn}〕`;
+      if (!bits.length) return [`${head}${camera}。`];
+      return [camera ? `${head}${camera}；${bits.join("，")}。` : `${head}${bits.join("，")}。`];
+    }
+
+    // 视觉镜位数与对白句数是两条轴：长段可能只有三张静帧、却有四句以上真对白。
+    // 在同一镜位时间窗内均分对白 cue，保留全部原句与先后，不伪造额外切镜。
+    const slot = Math.max(0.1, (b.endSec - b.startSec) / cues.length);
+    return cues.map((cue, cueIndex) => {
+      const cueStart = Math.round((b.startSec + cueIndex * slot) * 10) / 10;
+      const cueEnd =
+        cueIndex === cues.length - 1
+          ? b.endSec
+          : Math.round(Math.min(b.endSec, b.startSec + (cueIndex + 1) * slot) * 10) / 10;
+      const cueHead = `${cueStart}–${cueEnd}s：〔${fn}〕`;
+      const speech = `${cue.speakerAtTag ? trimTrailPunct(cue.speakerAtTag) : ""}${
+        tone ? `以${trimTrailPunct(tone)}` : ""
+      }说「${cue.dialogueZh}」`;
+      if (cueIndex === 0) {
+        const firstBits = bits.filter((bit) => !/说「/.test(bit));
+        firstBits.push(speech);
+        return camera
+          ? `${cueHead}${camera}；${firstBits.join("，")}。`
+          : `${cueHead}${firstBits.join("，")}。`;
+      }
+      return `${cueHead}同一镜位续演，${speech}。`;
+    });
   });
 
   const sharedBits = [

@@ -16,6 +16,7 @@ import { OpenRouterSubmitRejectedError, OpenRouterSubmitUnknownError } from "./o
 
 const IMG = ["https://cdn.example.com/a.png", "https://cdn.example.com/b.png"];
 const AUD = ["https://cdn.example.com/ref.mp3"];
+const VID = ["https://cdn.example.com/ref.mp4"];
 const baseInput = { prompt: "夜市灯笼下的乐队", imageUrls: IMG };
 
 function deps(over: Partial<Wan30ChannelDeps>): Wan30ChannelDeps {
@@ -35,10 +36,11 @@ function deps(over: Partial<Wan30ChannelDeps>): Wan30ChannelDeps {
 }
 
 describe("载荷字段（官方契约，不是猜的）", () => {
-  it("EvoLink：model/image_urls/audio_urls/quality/aspect_ratio 逐字段锁死；音频进 audio_urls", () => {
+  it("EvoLink：图片/音频/视频参考逐字段锁死", () => {
     const body = buildEvolinkWanRequestBody({
       ...baseInput,
       audioUrls: AUD,
+      videoUrls: VID,
       duration: 22,
       resolution: "720p",
       aspectRatio: "9:16",
@@ -48,6 +50,7 @@ describe("载荷字段（官方契约，不是猜的）", () => {
       model: "wan3.0-reference-video",
       image_urls: IMG,
       audio_urls: AUD,
+      video_urls: VID,
       duration: 22,
       quality: "720p",
       aspect_ratio: "9:16",
@@ -114,6 +117,16 @@ describe("submitWan30ViaChannels 回落纪律", () => {
     expect(r.submitted.channel).toBe("evolink");
     expect(d.submitOpenrouter).not.toHaveBeenCalled();
     expect(r.skippedZh.join("")).toContain("参考音频");
+  });
+
+  it("🔴 带参考视频：跳过 OpenRouter并把同一 videoUrls 送入 EvoLink", async () => {
+    const d = deps({});
+    const input = { ...baseInput, videoUrls: VID };
+    const r = await submitWan30ViaChannels(input, d);
+    expect(r.submitted.channel).toBe("evolink");
+    expect(d.submitOpenrouter).not.toHaveBeenCalled();
+    expect(d.submitEvolink).toHaveBeenCalledWith(input);
+    expect(r.skippedZh.join("")).toContain("参考视频");
   });
 
   it("OpenRouter 明确 4xx 拒绝 → 安全回落 EvoLink", async () => {
@@ -194,14 +207,24 @@ describe("submitWan30ViaChannels 回落纪律", () => {
       .toThrow("参考轨静默丢失");
   });
 
-  it("WaveSpeed 收到的载荷保持老口径（enableAudio/thinkingMode 透传）", async () => {
+  it("WaveSpeed 收到的载荷保持生成参数并透传视频参考", async () => {
     const d = deps({
       openrouterConfigured: () => false,
       evolinkConfigured: () => false,
     });
-    await submitWan30ViaChannels({ ...baseInput, generateAudio: false, thinkingMode: false }, d);
+    await submitWan30ViaChannels({
+      ...baseInput,
+      videoUrls: VID,
+      generateAudio: false,
+      thinkingMode: false,
+    }, d);
     expect(d.submitWavespeed).toHaveBeenCalledWith(
-      expect.objectContaining({ enableAudio: false, thinkingMode: false, imageUrls: IMG }),
+      expect.objectContaining({
+        enableAudio: false,
+        thinkingMode: false,
+        imageUrls: IMG,
+        videoUrls: VID,
+      }),
     );
   });
 });

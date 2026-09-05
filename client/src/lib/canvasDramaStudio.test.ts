@@ -45,6 +45,8 @@ import {
 } from "./canvasDramaStudio";
 import { buildManhuaAssetLockRegistry } from "@shared/manhuaAssetLockRegistry";
 import { parseManhuaEpisodeSegmentPlanFromMarkdown } from "@shared/manhuaEpisodeSegmentPlan";
+import { upsertShotDialogueSection } from "@shared/manhuaShotDialoguePersist";
+import { upsertManhuaClipUserSupplement } from "@shared/manhuaClipUserSupplement";
 import {
   collectVisionImages,
   defaultCanvasBlock,
@@ -56,11 +58,541 @@ import type { CanvasRunDeps } from "./canvasRunBlock";
 import {
   MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
   MANHUA_KEYARTS_PER_SEGMENT_MIN,
+  groupShotsIntoSegments,
+  parseWorkbenchShotsFromText,
   resolveClipSegmentIndex,
   resolveKeyartShotIndex,
 } from "@shared/manhuaScriptWorkbench";
+import { compileManhuaSegmentDirectorBoardOverlay } from "@shared/manhuaDirectorBoardOverlayCompile";
 
 describe("canvasDramaStudio factory", () => {
+  it("重编译段主体时保留用户补充，但淘汰旧派生秒轴", () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "雨夜门前对峙",
+      episodeIndex: 1,
+    });
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const scripted = blocks.map((b) =>
+      b.id === reverse.id
+        ? {
+            ...b,
+            status: "done" as const,
+            outputText: "1. 玄璃抬眼\n2. 玄璃转身\n3. 门扇合拢",
+          }
+        : b,
+    );
+    const expanded = expandManhuaShotKeyartsAfterReverse(scripted, edges, reverse.id);
+    const withKeyarts = expanded.blocks.map((b) =>
+      b.id.startsWith("keyart-")
+        ? {
+            ...b,
+            status: "done" as const,
+            outputUrl: `https://example.com/${b.id}.jpg`,
+          }
+        : b,
+    );
+    const first = ensureManhuaFragmentClips(withKeyarts, expanded.edges, 1);
+    const firstClip = first.blocks.find((b) => b.id.startsWith("clip-") && /-g01/i.test(b.id))!;
+    const manuallyEdited = first.blocks.map((b) =>
+      b.id === firstClip.id
+        ? {
+            ...b,
+            prompt: upsertManhuaClipUserSupplement(
+              `${b.prompt}\n旧派生秒轴占位`,
+              "玄璃转身时停半拍",
+            ),
+          }
+        : b,
+    );
+    const rebuilt = ensureManhuaFragmentClips(manuallyEdited, first.edges, 1);
+    const nextPrompt = rebuilt.blocks.find((b) => b.id === firstClip.id)?.prompt || "";
+    expect(nextPrompt).toContain("玄璃转身时停半拍");
+    expect(nextPrompt).not.toContain("旧派生秒轴占位");
+  });
+
+  it("pipeline 在已有 reverse 的整集入口消费与审阅相同的资产编译上下文", async () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "玄璃雨夜调查秘密",
+      episodeIndex: 1,
+      includeDirectorCraft: true,
+    });
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const scripted = blocks.map((b) =>
+      b.id === reverse.id
+        ? {
+            ...b,
+            status: "done" as const,
+            outputText: "1. 玄璃推门\n2. 玄璃抬眼\n3. 玄璃转身",
+          }
+        : b,
+    );
+    const expanded = expandManhuaShotKeyartsAfterReverse(scripted, edges, reverse.id);
+    const ready = expanded.blocks.map((b) =>
+      b.id.startsWith("keyart-")
+        ? {
+            ...b,
+            status: "done" as const,
+            outputUrl: `https://example.com/${b.id}.jpg`,
+          }
+        : b,
+    );
+    const spy = vi
+      .spyOn(canvasRunBlock, "runCanvasBlock")
+      .mockImplementation(async (_deps, block) =>
+        block.id.startsWith("clip-")
+          ? { outputUrl: `https://example.com/${block.id}.mp4` }
+          : { outputText: "skip" },
+      );
+    const qualityBodies: Array<Record<string, unknown>> = [];
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      qualityBodies.push(JSON.parse(String(init?.body || "{}")) as Record<string, unknown>);
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          report: {
+            status: "passed",
+            checks: {
+              CHARACTER_MATCH: true,
+              SCENE_MATCH: true,
+              PLOT_MATCH: true,
+              CAMERA_MOTION: true,
+              LIGHTING: true,
+              DURATION_OK: true,
+              NO_UNRELATED_CONTENT: true,
+            },
+            failedKeys: [],
+            summary: "全部通过",
+            raw: "全部通过",
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+    try {
+      await runManhuaDramaFactoryPipeline({
+        deps: { optimizeCopy: async () => "" },
+        blocks: ready,
+        edges: expanded.edges,
+        episodeIndex: 1,
+        untilStage: "clip",
+        forceFromStage: "clip",
+        maxRetries: 0,
+        ensureOptions: {
+          customRefs: [
+            {
+              id: "hero",
+              url: "https://example.com/hero.jpg",
+              role: "character",
+              source: "upload",
+              labelZh: "玄璃",
+            },
+          ],
+          videoModel: "seedance-2.0-mini",
+        },
+      });
+      const clipCall = spy.mock.calls.find(([, block]) => block.id.startsWith("clip-"));
+      expect(clipCall?.[1].prompt).toContain("【资产·Image对照】");
+      expect(clipCall?.[1].prompt).toContain("id=hero");
+      expect(clipCall?.[1].prompt).toContain("@角色1");
+      expect(qualityBodies).toHaveLength(1);
+      expect(String(qualityBodies[0]?.expectedContext || "")).toContain(
+        "检查观众能否复述每次转线的原因",
+      );
+      expect(qualityBodies[0]?.shotIndex).toBe(1);
+      expect(qualityBodies[0]?.expectedDurationSec).toBe(15);
+      expect(String(qualityBodies[0]?.expectedContext || "")).toContain(
+        "只评价这次上传的片段，不外推整集结论",
+      );
+      expect(String(qualityBodies[0]?.expectedContext || "")).not.toMatch(
+        /Nolan|Cameron|Spielberg|Abrams|Ridley|Scott|del Toro|Justin Lin|John Woo/i,
+      );
+    } finally {
+      spy.mockRestore();
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it("pipeline 本轮刚完成 reverse 后仍沿同一 ensureOptions 生成静帧与成片", async () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "玄璃穿过雨巷追踪黑影",
+      episodeIndex: 1,
+    });
+    const ready = blocks.map((block) => {
+      if (["story-", "bible-", "beats-"].some((prefix) => block.id.startsWith(prefix))) {
+        return { ...block, status: "done" as const, outputText: "已确认" };
+      }
+      if (block.id.startsWith("keyart-")) {
+        return {
+          ...block,
+          imageMode: "edit" as const,
+          refImageUrl: "https://example.com/hero.jpg",
+        };
+      }
+      return block;
+    });
+    const runSpy = vi
+      .spyOn(canvasRunBlock, "runCanvasBlock")
+      .mockImplementation(async (_deps, block) => {
+        if (block.id.startsWith("reverse-")) {
+          return { outputText: "1. 玄璃推门\n2. 玄璃抬眼\n3. 玄璃转身" };
+        }
+        if (block.id.startsWith("keyart-")) {
+          return { outputUrl: `https://example.com/${block.id}.jpg` };
+        }
+        if (block.id.startsWith("clip-")) {
+          return { outputUrl: `https://example.com/${block.id}.mp4` };
+        }
+        return { outputText: "已完成" };
+      });
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          report: {
+            status: "passed",
+            checks: {
+              CHARACTER_MATCH: true,
+              SCENE_MATCH: true,
+              PLOT_MATCH: true,
+              CAMERA_MOTION: true,
+              LIGHTING: true,
+              DURATION_OK: true,
+              NO_UNRELATED_CONTENT: true,
+            },
+            failedKeys: [],
+            summary: "首段通过",
+            raw: "首段通过",
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      )) as typeof fetch;
+    try {
+      const result = await runManhuaDramaFactoryPipeline({
+        deps: { optimizeCopy: async () => "" },
+        blocks: ready,
+        edges,
+        episodeIndex: 1,
+        untilStage: "clip",
+        forceFromStage: "reverse",
+        maxRetries: 0,
+        ensureOptions: {
+          assetCanon: {
+            characters: [
+              {
+                id: "hero",
+                role: "character",
+                nameZh: "玄璃",
+                lookZh: "黑衣少女",
+                promptZh: "黑衣少女玄璃",
+              },
+            ],
+            props: [],
+            locations: [],
+            episodeMainSceneId: {},
+          },
+          characterSheetUrlById: {
+            hero: "https://example.com/hero.jpg",
+          },
+          customRefs: [
+            {
+              id: "hero",
+              url: "https://example.com/hero.jpg",
+              role: "character",
+              source: "upload",
+              labelZh: "玄璃",
+            },
+          ],
+          videoModel: "wan-3.0",
+        },
+      });
+      const clipCalls = runSpy.mock.calls.filter(([, block]) => block.id.startsWith("clip-"));
+      expect(clipCalls.length).toBeGreaterThan(0);
+      expect(clipCalls.every(([, block]) => block.videoModel === "wan-3.0")).toBe(true);
+      expect(clipCalls[0]?.[1].prompt).toContain("【资产·Image对照】");
+      expect(clipCalls[0]?.[1].prompt).toContain("id=hero");
+      expect(result.errors).toEqual([]);
+    } finally {
+      runSpy.mockRestore();
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it("Wan 同一次 pipeline 自动重试复用提交键，下一次显式重跑换新键", async () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "玄璃雨夜追踪",
+      episodeIndex: 1,
+    });
+    const reverse = blocks.find((block) => block.id.startsWith("reverse-"))!;
+    const expanded = expandManhuaShotKeyartsAfterReverse(
+      blocks.map((block) =>
+        block.id === reverse.id
+          ? {
+              ...block,
+              status: "done" as const,
+              outputText: "1. 玄璃推门\n2. 玄璃抬眼\n3. 玄璃转身",
+            }
+          : block,
+      ),
+      edges,
+      reverse.id,
+      { videoModel: "wan-3.0" },
+    );
+    const withKeyarts = expanded.blocks.map((block) =>
+      block.id.startsWith("keyart-")
+        ? {
+            ...block,
+            status: "done" as const,
+            outputUrl: `https://example.com/${block.id}.jpg`,
+          }
+        : block,
+    );
+    const ensured = ensureManhuaFragmentClips(withKeyarts, expanded.edges, 1, {
+      videoModel: "wan-3.0",
+    });
+    const target = ensured.blocks.find((block) => block.id.startsWith("clip-"))!;
+    const submissionKeys: Array<string | undefined> = [];
+    let shouldLoseFirstResponse = true;
+    const runSpy = vi
+      .spyOn(canvasRunBlock, "runCanvasBlock")
+      .mockImplementation(async (_deps, block, _upstream, runOptions) => {
+        if (block.id !== target.id) return { outputText: "已完成" };
+        submissionKeys.push(runOptions?.videoSubmissionKey);
+        if (shouldLoseFirstResponse) {
+          shouldLoseFirstResponse = false;
+          // 模拟服务端已接受创建，但浏览器没有收到响应；pipeline 会自动重试同一操作。
+          throw new Error("Failed to fetch");
+        }
+        return { outputUrl: `https://example.com/${block.id}.mp4` };
+      });
+    try {
+      const firstRun = await runManhuaDramaFactoryPipeline({
+        deps: { optimizeCopy: async () => "" },
+        blocks: ensured.blocks,
+        edges: ensured.edges,
+        episodeIndex: 1,
+        untilStage: "clip",
+        forceFromStage: "clip",
+        targetBlockIds: [target.id],
+        maxRetries: 1,
+        ensureOptions: { videoModel: "wan-3.0" },
+      });
+      expect(firstRun.errors).toEqual([]);
+      expect(submissionKeys).toHaveLength(2);
+      expect(submissionKeys[0]).toBeTruthy();
+      expect(submissionKeys[1]).toBe(submissionKeys[0]);
+
+      await runManhuaDramaFactoryPipeline({
+        deps: { optimizeCopy: async () => "" },
+        blocks: firstRun.blocks,
+        edges: ensured.edges,
+        episodeIndex: 1,
+        untilStage: "clip",
+        forceFromStage: "clip",
+        targetBlockIds: [target.id],
+        maxRetries: 0,
+        ensureOptions: { videoModel: "wan-3.0" },
+      });
+      expect(submissionKeys).toHaveLength(3);
+      expect(submissionKeys[2]).toBeTruthy();
+      expect(submissionKeys[2]).not.toBe(submissionKeys[0]);
+    } finally {
+      runSpy.mockRestore();
+    }
+  });
+
+  it("视频编辑只质检本次编辑的 clip 与对应段静帧，不借第 1 段结果冒充", async () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "玄璃穿过长廊追踪黑影",
+      episodeIndex: 1,
+    });
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const expanded = expandManhuaShotKeyartsAfterReverse(
+      blocks.map((b) =>
+        b.id === reverse.id
+          ? {
+              ...b,
+              status: "done" as const,
+              outputText: Array.from(
+                { length: 6 },
+                (_, index) => `${index + 1}. 玄璃推进动作 ${index + 1}`,
+              ).join("\n"),
+            }
+          : b,
+      ),
+      edges,
+      reverse.id,
+      { videoModel: "seedance-2.0-mini" },
+    );
+    const withKeyarts = expanded.blocks.map((b) =>
+      b.id.startsWith("keyart-")
+        ? {
+            ...b,
+            status: "done" as const,
+            outputUrl: `https://example.com/${b.id}.jpg`,
+          }
+        : b,
+    );
+    const ensured = ensureManhuaFragmentClips(withKeyarts, expanded.edges, 1, {
+      videoModel: "seedance-2.0-mini",
+    });
+    const clips = ensured.blocks
+      .filter((b) => b.id.startsWith("clip-") && /-g\d{2,}/i.test(b.id))
+      .sort(
+        (a, b) => resolveClipSegmentIndex(a.id, a.prompt) - resolveClipSegmentIndex(b.id, b.prompt),
+      );
+    expect(clips.length).toBeGreaterThanOrEqual(2);
+    const first = clips[0]!;
+    const target = clips[1]!;
+    const prepared = {
+      ...target,
+      status: "idle" as const,
+      outputUrl: undefined,
+      outputUrls: [`https://example.com/old-${target.id}.mp4`],
+      videoModel: "seedance-2.5" as const,
+      seedance25WorkMode: "video_edit" as const,
+      refVideoUrl: `https://example.com/old-${target.id}.mp4`,
+      seedance25RefVideoUrls: [`https://example.com/old-${target.id}.mp4`],
+    };
+    const ready = ensured.blocks.map((b) => {
+      if (b.id === target.id) return prepared;
+      if (b.id.startsWith("clip-") && /-g\d{2,}/i.test(b.id)) {
+        return {
+          ...b,
+          status: "done" as const,
+          outputUrl: `https://example.com/old-${b.id}.mp4`,
+        };
+      }
+      return b;
+    });
+    const generatedUrl = `https://example.com/edited-${target.id}.mp4`;
+    const runSpy = vi
+      .spyOn(canvasRunBlock, "runCanvasBlock")
+      .mockResolvedValue({ outputUrl: generatedUrl });
+    const qualityBodies: Array<Record<string, unknown>> = [];
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      qualityBodies.push(JSON.parse(String(init?.body || "{}")) as Record<string, unknown>);
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          report: {
+            status: "passed",
+            checks: {
+              CHARACTER_MATCH: true,
+              SCENE_MATCH: true,
+              PLOT_MATCH: true,
+              CAMERA_MOTION: true,
+              LIGHTING: true,
+              DURATION_OK: true,
+              NO_UNRELATED_CONTENT: true,
+            },
+            failedKeys: [],
+            summary: "编辑段通过",
+            raw: "编辑段通过",
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+    try {
+      const result = await runManhuaDramaFactoryPipeline({
+        deps: { optimizeCopy: async () => "" },
+        blocks: ready,
+        edges: ensured.edges,
+        episodeIndex: 1,
+        untilStage: "clip",
+        forceFromStage: "clip",
+        targetBlockIds: [target.id],
+        preservePreparedTargetBlocks: true,
+        maxRetries: 0,
+        ensureOptions: { videoModel: "seedance-2.0-mini" },
+      });
+      expect(runSpy).toHaveBeenCalledTimes(1);
+      expect(qualityBodies).toHaveLength(1);
+      expect(qualityBodies[0]?.videoUrl).toBe(generatedUrl);
+      expect(qualityBodies[0]?.shotIndex).toBe(2);
+      expect(qualityBodies[0]?.referenceImageUrl).toContain("-s04-");
+      expect(result.blocks.find((b) => b.id === target.id)?.manhuaClipQuality?.summary).toBe(
+        "编辑段通过",
+      );
+      expect(result.blocks.find((b) => b.id === first.id)?.manhuaClipQuality).toBeUndefined();
+    } finally {
+      runSpy.mockRestore();
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it("spawn 与 prefs 把静态策略接入关键帧，reverse 继续使用分镜策略", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "悬疑调查里的多线秘密",
+      includeDirectorCraft: true,
+    });
+    const keyart = blocks.find((b) => b.id.startsWith("keyart-"))!;
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    expect(keyart.prompt).toContain("用静态终态明确决定性信息的位置");
+    expect(keyart.prompt).toContain("光影层级和材质差异");
+    expect(keyart.prompt).not.toContain("每镜只推进一个信息变化");
+    expect(reverse.prompt).toContain("每镜交出一个清楚的信息位置");
+    expect(reverse.prompt).not.toContain("检查观众能否复述每次转线的原因");
+
+    const next = applyFactoryPrefsToBlocks(blocks, { craftShotIds: [] });
+    const nextKeyart = next.find((b) => b.id === keyart.id)!;
+    const nextReverse = next.find((b) => b.id === reverse.id)!;
+    expect(nextKeyart.prompt.match(/用静态终态明确决定性信息的位置/g)).toHaveLength(1);
+    expect(nextReverse.prompt).toContain("每镜交出一个清楚的信息位置");
+    expect(nextReverse.prompt).not.toContain("检查观众能否复述每次转线的原因");
+  });
+
+  it("工作台台词覆盖进入真实段成片生产者，beats 覆盖 reverse 旧值", () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "雨夜门前对峙",
+      episodeIndex: 1,
+    });
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const beats = blocks.find((b) => b.id.startsWith("beats-"))!;
+    const withDialogueTables = blocks.map((b) => {
+      if (b.id === reverse.id) {
+        return {
+          ...b,
+          status: "done" as const,
+          outputText: upsertShotDialogueSection("1. 玄璃抬眼\n2. 玄璃转身\n3. 门扇合拢", {
+            1: "这句已经过时",
+          }),
+        };
+      }
+      if (b.id === beats.id) {
+        return {
+          ...b,
+          status: "done" as const,
+          outputText: upsertShotDialogueSection("节拍已确认", {
+            1: "现在跟我走",
+          }),
+        };
+      }
+      return b;
+    });
+    const expanded = expandManhuaShotKeyartsAfterReverse(withDialogueTables, edges, reverse.id);
+    const withKeyarts = expanded.blocks.map((b) =>
+      b.id.startsWith("keyart-")
+        ? {
+            ...b,
+            status: "done" as const,
+            outputUrl: `https://example.com/${b.id}.jpg`,
+          }
+        : b,
+    );
+    const ensured = ensureManhuaFragmentClips(withKeyarts, expanded.edges, 1, {
+      videoModel: "seedance-2.0-mini",
+    });
+    const firstClip = ensured.blocks.find(
+      (b) => b.id.startsWith("clip-") && /-g01(?:-|$)/i.test(b.id),
+    );
+    expect(firstClip?.prompt || "").toContain("现在跟我走");
+    expect(firstClip?.prompt || "").not.toContain("这句已经过时");
+  });
+
   it("does not hard-apply dynasty wardrobe from topic text", () => {
     const { blocks } = spawnManhuaDramaStudio({
       topic: "唐朝贵女宫廷复仇",
@@ -380,7 +912,10 @@ describe("canvasDramaStudio factory", () => {
   });
 
   it("resolveManhuaFragmentRunTargets refuses clip-only when keyart missing", () => {
-    const { blocks } = spawnManhuaDramaStudio({ topic: "江湖刀客", episodeIndex: 1 });
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "江湖刀客",
+      episodeIndex: 1,
+    });
     const onlyClip = resolveManhuaFragmentRunTargets(
       blocks.filter((b) => !b.id.startsWith("keyart-")),
       1,
@@ -492,13 +1027,21 @@ describe("canvasDramaStudio factory", () => {
               "1. 刀客推门进客栈\n2. 油灯下对峙\n3. 拔刀交锋\n4. 雨夜收刀\n5. 撑伞离去留钩子",
           }
         : b.id.startsWith("keyart-")
-          ? { ...b, status: "done" as const, outputUrl: "https://example.com/k1.jpg" }
+          ? {
+              ...b,
+              status: "done" as const,
+              outputUrl: "https://example.com/k1.jpg",
+            }
           : b,
     );
     const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
     const withKeyarts = expanded.blocks.map((b) =>
       b.id.startsWith("keyart-")
-        ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` }
+        ? {
+            ...b,
+            status: "done" as const,
+            outputUrl: `https://example.com/${b.id}.jpg`,
+          }
         : b,
     );
     const withSheets = [
@@ -586,7 +1129,11 @@ describe("canvasDramaStudio factory", () => {
       const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
       const withKeyarts = expanded.blocks.map((b) =>
         b.id.startsWith("keyart-")
-          ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` }
+          ? {
+              ...b,
+              status: "done" as const,
+              outputUrl: `https://example.com/${b.id}.jpg`,
+            }
           : b,
       );
       const ensured = ensureManhuaFragmentClips(withKeyarts, expanded.edges, 1, {});
@@ -625,7 +1172,11 @@ describe("canvasDramaStudio factory", () => {
     const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
     const withKeyarts = expanded.blocks.map((b) =>
       b.id.startsWith("keyart-")
-        ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` }
+        ? {
+            ...b,
+            status: "done" as const,
+            outputUrl: `https://example.com/${b.id}.jpg`,
+          }
         : b,
     );
     // 模拟局部改写清空本集成片：一条未归档 clip 都不剩，只能靠 opts.videoModel 认引擎
@@ -717,7 +1268,11 @@ describe("canvasDramaStudio factory", () => {
     );
     const withKeyarts = expanded.blocks.map((b) =>
       b.id.startsWith("keyart-")
-        ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` }
+        ? {
+            ...b,
+            status: "done" as const,
+            outputUrl: `https://example.com/${b.id}.jpg`,
+          }
         : b,
     );
     // 先按 mini 铺满六段
@@ -735,7 +1290,11 @@ describe("canvasDramaStudio factory", () => {
     const staged = [
       ...mini.blocks.map((b) =>
         b.id === renderedSeg5
-          ? { ...b, status: "done" as const, outputUrl: "https://cdn.example/g05.mp4" }
+          ? {
+              ...b,
+              status: "done" as const,
+              outputUrl: "https://cdn.example/g05.mp4",
+            }
           : b,
       ),
       {
@@ -800,7 +1359,11 @@ describe("canvasDramaStudio factory", () => {
     // mini 的 18 张都已出图，此时改选 2.5（一集 4 段 → 只用 12 张）
     const printed = mini.blocks.map((b) =>
       b.id.startsWith("keyart-")
-        ? { ...b, status: "done" as const, outputUrl: `https://cdn.example/${b.id}.png` }
+        ? {
+            ...b,
+            status: "done" as const,
+            outputUrl: `https://cdn.example/${b.id}.png`,
+          }
         : b,
     );
     const switched = expandManhuaShotKeyartsAfterReverse(printed, mini.edges, reverse.id, {
@@ -854,7 +1417,11 @@ describe("canvasDramaStudio factory", () => {
     const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
     const withKeyarts = expanded.blocks.map((b) =>
       b.id.startsWith("keyart-")
-        ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` }
+        ? {
+            ...b,
+            status: "done" as const,
+            outputUrl: `https://example.com/${b.id}.jpg`,
+          }
         : b,
     );
     // 先按默认 mini 铺一轮，再改选 2.5 重铺
@@ -895,7 +1462,11 @@ describe("canvasDramaStudio factory", () => {
     const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
     const staged = expanded.blocks.map((b) => {
       if (b.id.startsWith("keyart-")) {
-        return { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` };
+        return {
+          ...b,
+          status: "done" as const,
+          outputUrl: `https://example.com/${b.id}.jpg`,
+        };
       }
       // 归档的旧成片挂 2.5（4 段）；兜底默认档是 mini（6 段），读错就会铺成 4 段
       if (b.id.startsWith("clip-")) {
@@ -930,17 +1501,27 @@ describe("canvasDramaStudio factory", () => {
               "1. 刀客推门进客栈\n2. 油灯下对峙\n3. 拔刀交锋\n4. 雨夜收刀\n5. 撑伞离去留钩子",
           }
         : b.id.startsWith("keyart-")
-          ? { ...b, status: "done" as const, outputUrl: "https://example.com/k1.jpg" }
+          ? {
+              ...b,
+              status: "done" as const,
+              outputUrl: "https://example.com/k1.jpg",
+            }
           : b,
     );
     const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
     const withKeyarts = expanded.blocks.map((b) =>
       b.id.startsWith("keyart-")
-        ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` }
+        ? {
+            ...b,
+            status: "done" as const,
+            outputUrl: `https://example.com/${b.id}.jpg`,
+          }
         : b,
     );
     const ensured = ensureManhuaFragmentClips(withKeyarts, expanded.edges, 1, {
-      directorBoardUrlByEpisode: { 1: "https://cdn.example/ep01-board-main.png" },
+      directorBoardUrlByEpisode: {
+        1: "https://cdn.example/ep01-board-main.png",
+      },
     });
     const segClips = ensured.blocks.filter(
       (b) => b.id.startsWith("clip-") && (/-g\d{2,}/i.test(b.id) || /-s\d{2,}/.test(b.id)),
@@ -959,6 +1540,114 @@ describe("canvasDramaStudio factory", () => {
     }
   });
 
+  it("段轨迹仅在当前底图与整段动作仍匹配已确认 revision 时进入真实成片提示词", () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "沈策穿过长廊",
+      episodeIndex: 1,
+    });
+    const reverseText = Array.from({ length: 12 }, (_, index) => {
+      if (index === 0) return "1. 固定机位：沈策从画面左侧向中央走";
+      if (index === 1) return "2. 向右跟拍：沈策从中央继续向画面右侧走";
+      if (index === 2) return "3. 缓慢推近：沈策在画面右侧停下";
+      return `${index + 1}. 固定机位：沈策在长廊继续前行`;
+    }).join("\n");
+    const reverse = blocks.find((block) => block.id.startsWith("reverse-"))!;
+    const scripted = blocks.map((block) =>
+      block.id === reverse.id
+        ? { ...block, status: "done" as const, outputText: reverseText }
+        : block,
+    );
+    const expanded = expandManhuaShotKeyartsAfterReverse(scripted, edges, reverse.id, {
+      videoModel: "seedance-2.5",
+    });
+    const ready = expanded.blocks.map((block) =>
+      block.id.startsWith("keyart-")
+        ? {
+            ...block,
+            status: "done" as const,
+            outputUrl: `https://example.com/${block.id}.jpg`,
+          }
+        : block,
+    );
+    const beats = Array.from({ length: 4 }, (_, index) => ({
+      index: index + 1,
+      intentZh: index === 0 ? "穿过长廊抵达门前" : "继续前行",
+      dialogueZh: "",
+      performanceZh:
+        index === 0 ? "沈策从画面左侧向右走" : "沈策在长廊继续前行",
+      sceneZh: "长廊",
+      paletteZh: "冷灰",
+      castZh: "沈策",
+      wardrobePropZh: "",
+      lightingCameraZh: index === 0 ? "镜头向右横移跟拍" : "固定机位",
+    }));
+    const segmentPlan = {
+      segmentCount: 4,
+      durationSecPerSegment: 30,
+      targetSec: 120,
+      segments: beats,
+    };
+    const segment = groupShotsIntoSegments(parseWorkbenchShotsFromText(reverseText), {
+      videoModel: "seedance-2.5",
+      segmentCount: 4,
+    })[0]!;
+    const boardA = "https://cdn.example/segment-01.png";
+    const boardB = "https://cdn.example/segment-01-v2.png";
+    const compiled = compileManhuaSegmentDirectorBoardOverlay({
+      episodeIndex: 1,
+      segmentIndex: 1,
+      segmentBoardUrls: { 1: boardA },
+      segmentFirstShotStillUrl: segment.shots[0]
+        ? "https://example.com/keyart-e01-s01.jpg"
+        : null,
+      baseAspectRatio: "16:9",
+      beat: beats[0],
+      shots: segment.shots,
+    })!;
+    const confirmed = { ...compiled, needsReview: false };
+    const ensureWith = (input: {
+      boardUrl: string;
+      sourceBlocks?: CanvasBlock[];
+      overlay?: typeof confirmed;
+    }) =>
+      ensureManhuaFragmentClips(input.sourceBlocks || ready, expanded.edges, 1, {
+        videoModel: "seedance-2.5",
+        segmentPlan,
+        directorBoardUrlByEpisodeSegment: { 1: { 1: input.boardUrl } },
+        directorBoardMotionOverlayByEpisodeSegment: input.overlay
+          ? { 1: { 1: input.overlay } }
+          : undefined,
+      }).blocks.find((block) => /clip-e01-g01/i.test(block.id))?.prompt || "";
+
+    const confirmedPrompt = ensureWith({ boardUrl: boardA, overlay: confirmed });
+    expect(confirmedPrompt).toContain("【空间调度】");
+    expect(confirmedPrompt).toContain("人物沈策");
+
+    const changedBoardPrompt = ensureWith({ boardUrl: boardB, overlay: confirmed });
+    expect(changedBoardPrompt).not.toContain("【空间调度】");
+
+    const changedActionBlocks = ready.map((block) =>
+      block.id === reverse.id
+        ? {
+            ...block,
+            outputText: reverseText.replace(
+              "沈策从画面左侧向中央走",
+              "沈策从画面右侧退回中央",
+            ),
+          }
+        : block,
+    );
+    const changedActionPrompt = ensureWith({
+      boardUrl: boardA,
+      sourceBlocks: changedActionBlocks,
+      overlay: confirmed,
+    });
+    expect(changedActionPrompt).not.toContain("【空间调度】");
+
+    const oldDraftPrompt = ensureWith({ boardUrl: boardA });
+    expect(oldDraftPrompt).not.toContain("【空间调度】");
+  });
+
   it("ensureManhuaFragmentClips 拆假锁：有人出场但对照为空 → 不写 @图片N 锁定构图假硬绑", () => {
     const { blocks, edges } = spawnManhuaDramaStudio({
       topic: "江湖刀客雨夜客栈",
@@ -974,13 +1663,21 @@ describe("canvasDramaStudio factory", () => {
               "1. 黑衣剑客推门进客栈，黑衣剑客：「你来了。」\n2. 油灯下对峙，黑衣剑客：「刀在何处？」\n3. 拔刀交锋\n4. 雨夜收刀\n5. 撑伞离去留钩子",
           }
         : b.id.startsWith("keyart-")
-          ? { ...b, status: "done" as const, outputUrl: "https://example.com/k1.jpg" }
+          ? {
+              ...b,
+              status: "done" as const,
+              outputUrl: "https://example.com/k1.jpg",
+            }
           : b,
     );
     const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
     const withKeyarts = expanded.blocks.map((b) =>
       b.id.startsWith("keyart-")
-        ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` }
+        ? {
+            ...b,
+            status: "done" as const,
+            outputUrl: `https://example.com/${b.id}.jpg`,
+          }
         : b,
     );
     // 可拍表点了「黑衣剑客」，资产库却只有对不上的「都市白领」→ 段有人却锁不到脸
@@ -1041,7 +1738,11 @@ describe("canvasDramaStudio factory", () => {
     const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
     const withKeyarts = expanded.blocks.map((b) =>
       b.id.startsWith("keyart-")
-        ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` }
+        ? {
+            ...b,
+            status: "done" as const,
+            outputUrl: `https://example.com/${b.id}.jpg`,
+          }
         : b,
     );
     const withSheets = [
@@ -1312,7 +2013,11 @@ describe("canvasDramaStudio factory", () => {
     const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
     const withKeyarts = expanded.blocks.map((b) =>
       b.id.startsWith("keyart-")
-        ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` }
+        ? {
+            ...b,
+            status: "done" as const,
+            outputUrl: `https://example.com/${b.id}.jpg`,
+          }
         : b,
     );
     const ensured = ensureManhuaFragmentClips(withKeyarts, expanded.edges, 2);
@@ -1330,7 +2035,11 @@ describe("canvasDramaStudio factory", () => {
     const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
     const fourShotBlocks = blocks.map((b) =>
       b.id === reverse.id
-        ? { ...b, status: "done" as const, outputText: "1. 推门\n2. 对峙\n3. 拔刀\n4. 收刀" }
+        ? {
+            ...b,
+            status: "done" as const,
+            outputText: "1. 推门\n2. 对峙\n3. 拔刀\n4. 收刀",
+          }
         : b,
     );
     const expanded = expandManhuaShotKeyartsAfterReverse(fourShotBlocks, edges, reverse.id);
@@ -1472,7 +2181,11 @@ describe("canvasDramaStudio factory", () => {
     // 预置上游文本段为 done，只跑反推以触发 enrich
     const primed = spawned.blocks.map((b) => {
       if (b.id.startsWith("story-") || b.id.startsWith("bible-") || b.id.startsWith("beats-")) {
-        return { ...b, status: "done" as const, outputText: "上游已完成\n角色：青衫弟子" };
+        return {
+          ...b,
+          status: "done" as const,
+          outputText: "上游已完成\n角色：青衫弟子",
+        };
       }
       return b;
     });
@@ -1520,7 +2233,9 @@ slow push, crystal glow
             ok: true,
             text: reverseMd,
             markdown: reverseMd,
-            raw: { candidates: [{ content: { parts: [{ text: reverseMd }] } }] },
+            raw: {
+              candidates: [{ content: { parts: [{ text: reverseMd }] } }],
+            },
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
@@ -1642,8 +2357,18 @@ slow dolly in, soft rain, trembling hand
       topic: "仙侠外门闯秘境",
       genreId: "xianxia",
       episodes: [
-        { index: 1, title: "石门异响", body: "听见异响", endHook: "门缝透出冷光" },
-        { index: 2, title: "冷光之后", body: "推门", endHook: "身后有人叫她本名" },
+        {
+          index: 1,
+          title: "石门异响",
+          body: "听见异响",
+          endHook: "门缝透出冷光",
+        },
+        {
+          index: 2,
+          title: "冷光之后",
+          body: "推门",
+          endHook: "身后有人叫她本名",
+        },
         { index: 3, title: "本名", body: "回头", endHook: "玉佩碎裂" },
       ],
       writerContextForEpisode: (ep) => `【本集优先】第${ep.index}集《${ep.title}》\n${ep.body || ""}`,
@@ -1710,8 +2435,18 @@ slow dolly in, soft rain, trembling hand
 
   it("resolveManhuaEpisodeSpawnContinuity mirrors series prior hooks/recap", () => {
     const eps = [
-      { index: 1, title: "石门异响", body: "听见异响", endHook: "门缝透出冷光" },
-      { index: 2, title: "冷光之后", body: "推门", endHook: "身后有人叫她本名" },
+      {
+        index: 1,
+        title: "石门异响",
+        body: "听见异响",
+        endHook: "门缝透出冷光",
+      },
+      {
+        index: 2,
+        title: "冷光之后",
+        body: "推门",
+        endHook: "身后有人叫她本名",
+      },
       { index: 3, title: "本名", body: "回头", endHook: "玉佩碎裂" },
     ];
     const c2 = resolveManhuaEpisodeSpawnContinuity(eps, 2);
@@ -1741,7 +2476,11 @@ slow dolly in, soft rain, trembling hand
 
     const withRecapOut = blocks.map((b) =>
       b.id === recap.id
-        ? { ...b, status: "done" as const, outputUrl: "https://cdn.example/recap.jpg" }
+        ? {
+            ...b,
+            status: "done" as const,
+            outputUrl: "https://cdn.example/recap.jpg",
+          }
         : b,
     );
     const keyart = withRecapOut.find((b) => b.id.startsWith("keyart-"))!;
@@ -1822,7 +2561,11 @@ slow dolly in, soft rain, trembling hand
   });
 
   it("stripManhuaFactoryCanvasArtifacts drops factory/keyart but keeps free nodes", () => {
-    const factory = spawnManhuaDramaStudio({ topic: "旧剧", episodeIndex: 1, episodeTitle: "旧" });
+    const factory = spawnManhuaDramaStudio({
+      topic: "旧剧",
+      episodeIndex: 1,
+      episodeTitle: "旧",
+    });
     const free = {
       ...factory.blocks[0]!,
       id: "text-free-note",
@@ -1956,14 +2699,21 @@ slow dolly in, soft rain, trembling hand
   });
 
   it("rerun skips keyarts that already have images even with forceFromStage", async () => {
-    const spawned = spawnManhuaDramaStudio({ topic: "宫廷夺嫡", episodeIndex: 1 });
+    const spawned = spawnManhuaDramaStudio({
+      topic: "宫廷夺嫡",
+      episodeIndex: 1,
+    });
     const reverseId = spawned.blocks.find((b) => b.id.startsWith("reverse-"))!.id;
     const primed = spawned.blocks.map((b) => {
       if (b.id.startsWith("story-") || b.id.startsWith("bible-") || b.id.startsWith("beats-")) {
         return { ...b, status: "done" as const, outputText: "上游已完成" };
       }
       if (b.id.startsWith("reverse-")) {
-        return { ...b, status: "done" as const, outputText: "1. 入殿\n2. 对峙\n3. 退场" };
+        return {
+          ...b,
+          status: "done" as const,
+          outputText: "1. 入殿\n2. 对峙\n3. 退场",
+        };
       }
       return b;
     });
@@ -2064,7 +2814,10 @@ slow dolly in, soft rain, trembling hand
   });
 
   it("expand only adds missing shots and keeps existing media", () => {
-    const spawned = spawnManhuaDramaStudio({ topic: "雨夜江湖", episodeIndex: 1 });
+    const spawned = spawnManhuaDramaStudio({
+      topic: "雨夜江湖",
+      episodeIndex: 1,
+    });
     const reverse = spawned.blocks.find((b) => b.id.startsWith("reverse-"))!;
     const withTwo = spawned.blocks.map((b) =>
       b.id === reverse.id
@@ -2074,7 +2827,11 @@ slow dolly in, soft rain, trembling hand
     const first = expandManhuaShotKeyartsAfterReverse(withTwo, spawned.edges, reverse.id);
     const marked = first.blocks.map((b) =>
       b.id.startsWith("keyart-") && resolveKeyartShotIndex(b.id, b.prompt) === 1
-        ? { ...b, status: "done" as const, outputUrl: "https://cdn.example/keep.png" }
+        ? {
+            ...b,
+            status: "done" as const,
+            outputUrl: "https://cdn.example/keep.png",
+          }
         : b,
     );
     const grown = marked.map((b) =>
@@ -2109,7 +2866,9 @@ describe("局部改写起点", () => {
       blk("clip-e01-s01", 1, "https://x/a.mp4"),
       blk("keyart-e03-s01", 3, "https://x/c.jpg"),
     ];
-    const out = stripManhuaFactoryCanvasArtifacts(blocks, [], { fromEpisode: 3 });
+    const out = stripManhuaFactoryCanvasArtifacts(blocks, [], {
+      fromEpisode: 3,
+    });
     expect(out.keptCount).toBeGreaterThan(0);
     // 保留集：原样不动，不带归档标
     expect(
@@ -2143,7 +2902,9 @@ describe("局部改写起点", () => {
 
   it("起点之后已出片的段落归档而非删除", () => {
     const blocks = [blk("clip-e03-s01", 3, "https://x/paid.mp4")];
-    const out = stripManhuaFactoryCanvasArtifacts(blocks, [], { fromEpisode: 3 });
+    const out = stripManhuaFactoryCanvasArtifacts(blocks, [], {
+      fromEpisode: 3,
+    });
     expect(out.archivedCount).toBe(1);
     const kept = out.blocks.find((b) => b.id === "clip-e03-s01");
     expect(kept?.archivedFromPreviousScript).toBe(true);
@@ -2154,8 +2915,20 @@ describe("局部改写起点", () => {
 describe("锁脸选图：优先脸特写，没有就用全身（画布全身也锁脸）", () => {
   const canon = {
     characters: [
-      { id: "wa_char_a", role: "character", nameZh: "陆清和", lookZh: "月白劲装", promptZh: "x" },
-      { id: "wa_char_b", role: "character", nameZh: "韩伯", lookZh: "灰布短褂", promptZh: "x" },
+      {
+        id: "wa_char_a",
+        role: "character",
+        nameZh: "陆清和",
+        lookZh: "月白劲装",
+        promptZh: "x",
+      },
+      {
+        id: "wa_char_b",
+        role: "character",
+        nameZh: "韩伯",
+        lookZh: "灰布短褂",
+        promptZh: "x",
+      },
     ],
     props: [],
     locations: [],
@@ -2193,8 +2966,20 @@ describe("collectManhuaPropImageUrlById：从「我的道具」按名字匹配�
   const canon = {
     characters: [],
     props: [
-      { id: "wa_prop_jade", role: "prop", nameZh: "残玉", lookZh: "半块古玉", promptZh: "x" },
-      { id: "wa_prop_awl", role: "prop", nameZh: "修复锥与修复笔", lookZh: "x", promptZh: "x" },
+      {
+        id: "wa_prop_jade",
+        role: "prop",
+        nameZh: "残玉",
+        lookZh: "半块古玉",
+        promptZh: "x",
+      },
+      {
+        id: "wa_prop_awl",
+        role: "prop",
+        nameZh: "修复锥与修复笔",
+        lookZh: "x",
+        promptZh: "x",
+      },
     ],
     locations: [],
     episodeMainSceneId: {},
@@ -2239,7 +3024,14 @@ describe("collectManhuaPropImageUrlById：从「我的道具」按名字匹配�
     expect(collectManhuaPropImageUrlById(undefined, canon)).toEqual({});
     expect(
       collectManhuaPropImageUrlById(
-        [{ id: "cust_5", url: "https://cdn.example/x.png", role: "prop", labelZh: "残玉" }],
+        [
+          {
+            id: "cust_5",
+            url: "https://cdn.example/x.png",
+            role: "prop",
+            labelZh: "残玉",
+          },
+        ],
         { ...canon, props: [] } as unknown as Parameters<typeof collectManhuaPropImageUrlById>[1],
       ),
     ).toEqual({});

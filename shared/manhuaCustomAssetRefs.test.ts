@@ -12,6 +12,7 @@ import {
   taggedManhuaCustomAssetRefs,
   upsertGeneratedManhuaCustomAssetRef,
 } from "./manhuaCustomAssetRefs";
+import { evaluateManhuaAsset3dEligibility } from "./manhuaAsset3d";
 
 describe("manhuaCustomAssetRefs", () => {
   it("保留稳定认领与隔离状态，清洗重复锚点", () => {
@@ -78,6 +79,52 @@ describe("manhuaCustomAssetRefs", () => {
     expect(missingDurableIdentity[0]?.model3d).toBeUndefined();
   });
 
+  it("3D 只接受已确认单角色当前图，换图后旧模型不再作为当前预览", () => {
+    const current = normalizeManhuaCustomAssetRefs([
+      {
+        id: "c1",
+        url: "https://cdn.example.com/c1-v2.png",
+        gcsUri: "gs://bucket/c1-v2.png",
+        role: "character",
+        reviewStatus: "accepted",
+        claimedAnchorIds: ["hero-1"],
+        model3d: {
+          status: "succeeded",
+          taskId: "task-old",
+          sourceImageUrl: "https://cdn.example.com/c1-v1.png",
+          sourceVersion: "gs://bucket/c1-v1.png",
+          glbGcsUri: "gs://bucket/models/c1-v1.glb",
+          glbUrl: "https://cdn.example.com/models/c1-v1.glb",
+          updatedAt: 1,
+        },
+      },
+    ])[0]!;
+    expect(evaluateManhuaAsset3dEligibility(current)).toMatchObject({
+      eligible: true,
+      sourceVersion: "gs://bucket/c1-v2.png",
+      currentModel3d: undefined,
+    });
+
+    expect(
+      evaluateManhuaAsset3dEligibility({
+        ...current,
+        claimedAnchorIds: ["hero-1", "hero-2"],
+      })
+    ).toMatchObject({
+      eligible: false,
+      reasonZh: "一张图只能对应一个角色后再建立 3D 参考",
+    });
+    expect(
+      evaluateManhuaAsset3dEligibility({
+        ...current,
+        reviewStatus: "needs_review",
+      })
+    ).toMatchObject({
+      eligible: false,
+      reasonZh: "请先确认或标准化这张人物参考图",
+    });
+  });
+
   it("keeps https only and drops unset from tagged", () => {
     const refs = normalizeManhuaCustomAssetRefs([
       { id: "1", url: "https://cdn.example/a.jpg", role: "character" },
@@ -92,7 +139,7 @@ describe("manhuaCustomAssetRefs", () => {
       hasCustomCastAndScene([
         ...refs,
         { id: "5", url: "https://cdn.example/s.jpg", role: "scene" },
-      ]),
+      ])
     ).toBe(true);
   });
 
@@ -208,7 +255,7 @@ describe("manhuaCustomAssetRefs", () => {
         role: "character",
         seedLibraryId: "scene_06",
         labelZh: "皇宫大殿",
-      }),
+      })
     ).toBe("scene");
     const repaired = normalizeManhuaCustomAssetRefs([
       {
@@ -301,19 +348,30 @@ describe("manhuaCustomAssetRefs", () => {
 
     expect(refs).toHaveLength(2);
     // 旧拼版图与大头照同为 identity → 被顶掉，不残留在垫图里
-    expect(refs.map((r) => r.url)).not.toContain("https://cdn.example/old-sheet.png");
-    expect(refs.find((r) => r.refDuty === "identity")?.url).toBe(
-      "https://cdn.example/face.png",
+    expect(refs.map(r => r.url)).not.toContain(
+      "https://cdn.example/old-sheet.png"
     );
-    expect(refs.find((r) => r.refDuty === "look")?.url).toBe(
-      "https://cdn.example/body.png",
+    expect(refs.find(r => r.refDuty === "identity")?.url).toBe(
+      "https://cdn.example/face.png"
+    );
+    expect(refs.find(r => r.refDuty === "look")?.url).toBe(
+      "https://cdn.example/body.png"
     );
   });
 
   it("一集全量设定图（8人+6场景+6道具）都装得下，不在第十六张截断", () => {
     let refs: ReturnType<typeof normalizeManhuaCustomAssetRefs> = [];
     // 8 名人物，其中两位主角脸与全身各一张 → 10 条
-    const chars = ["沈沧澜", "陆清和", "沈岐山", "苏问蝉", "陆镇渊", "萧承弼", "韩伯", "玄甲卫"];
+    const chars = [
+      "沈沧澜",
+      "陆清和",
+      "沈岐山",
+      "苏问蝉",
+      "陆镇渊",
+      "萧承弼",
+      "韩伯",
+      "玄甲卫",
+    ];
     chars.forEach((nameZh, i) => {
       refs = upsertGeneratedManhuaCustomAssetRef(refs, {
         url: `https://cdn.example/char-${i}-body.png`,
@@ -352,11 +410,11 @@ describe("manhuaCustomAssetRefs", () => {
     }
 
     expect(refs).toHaveLength(22);
-    expect(refs.filter((r) => r.role === "character")).toHaveLength(10);
-    expect(refs.filter((r) => r.role === "scene")).toHaveLength(6);
-    expect(refs.filter((r) => r.role === "prop")).toHaveLength(6);
+    expect(refs.filter(r => r.role === "character")).toHaveLength(10);
+    expect(refs.filter(r => r.role === "scene")).toHaveLength(6);
+    expect(refs.filter(r => r.role === "prop")).toHaveLength(6);
     // 最后挂上的道具没有被容量截掉
-    expect(refs.map((r) => r.url)).toContain("https://cdn.example/prop-5.png");
+    expect(refs.map(r => r.url)).toContain("https://cdn.example/prop-5.png");
   });
 
   it("counts unclassified refs for the migration prompt（有 N 张未归类图，请归类或删除）", () => {
@@ -367,7 +425,7 @@ describe("manhuaCustomAssetRefs", () => {
         { role: "unset" },
         { role: "unset" },
         null,
-      ]),
+      ])
     ).toBe(2);
   });
 
@@ -382,7 +440,7 @@ describe("manhuaCustomAssetRefs", () => {
     expect(MANHUA_CUSTOM_ASSET_REFS_MAX).toBe(48);
     expect(refs).toHaveLength(48);
     expect(refs[0]!.url).toBe("https://cdn.example/r-0.jpg");
-    expect(refs.map((r) => r.url)).not.toContain("https://cdn.example/r-59.jpg");
+    expect(refs.map(r => r.url)).not.toContain("https://cdn.example/r-59.jpg");
   });
 
   it("labelZh 防脏：@tag 形态不落名位；兜底串让位 seed 人名", () => {
@@ -407,8 +465,8 @@ describe("manhuaCustomAssetRefs", () => {
         labelZh: "傅临渊",
       },
     ]);
-    expect(refs.find((r) => r.id === "t1")?.labelZh).toBeUndefined();
-    expect(refs.find((r) => r.id === "t2")?.labelZh).toBe("沈清辞");
-    expect(refs.find((r) => r.id === "t3")?.labelZh).toBe("傅临渊");
+    expect(refs.find(r => r.id === "t1")?.labelZh).toBeUndefined();
+    expect(refs.find(r => r.id === "t2")?.labelZh).toBe("沈清辞");
+    expect(refs.find(r => r.id === "t3")?.labelZh).toBe("傅临渊");
   });
 });

@@ -68,7 +68,7 @@ export type CompilerEngineId =
   | "wan-3.0"
   | typeof CANVAS_VIDEO_MODEL_HAILUO_H3;
 
-export type ReadyCompilerEngineId = Exclude<CompilerEngineId, "wan-3.0">;
+export type ReadyCompilerEngineId = CompilerEngineId;
 
 export type CompilerDialect = "seedance" | "h3" | "wan";
 export type CompilerSupportStatus = "ready" | "reserved";
@@ -145,21 +145,16 @@ export const COMPILER_ENGINE_LIMITS = {
     status: "ready",
   },
   [CANVAS_VIDEO_MODEL_HAILUO_H3]: {
-    minSegmentSec: 4,
+    // 画布只开放 5/10/15 秒三档；OpenRouter 这条生产路由只消费图片参考。
+    minSegmentSec: 5,
     maxSegmentSec: 15,
     maxPromptChars: 7000,
     requiresIntegerSegmentSec: true,
     references: {
       image: HAILUO_REFERENCE_MAX.image,
-      video: 3,
-      audio: 3,
-      total: 12,
-      minVideoItemSec: 2,
-      maxVideoItemSec: 15,
-      maxVideoTotalSec: 15,
-      minAudioItemSec: 2,
-      maxAudioItemSec: 15,
-      maxAudioTotalSec: 15,
+      video: 0,
+      audio: 0,
+      total: HAILUO_REFERENCE_MAX.image,
     },
     dialect: "h3",
     status: "ready",
@@ -173,9 +168,7 @@ export const COMPILER_ENGINE_LIMITS = {
       audio: WAN30_REFERENCE_MAX.audio,
     },
     dialect: "wan",
-    status: "reserved",
-    noteZh:
-      "Wan 3.0 独立提示词方言与参考职责适配器已预留,公开使用方式稳定前不提交编译结果",
+    status: "ready",
   },
 } satisfies Record<CompilerEngineId, CompilerEngineProfile>;
 
@@ -206,7 +199,10 @@ export function assertCompilerEngineReady(
 ): asserts engine is ReadyCompilerEngineId {
   const profile = COMPILER_ENGINE_LIMITS[engine];
   if (profile.status !== "ready") {
-    throw new Error(profile.noteZh || `${engine} 的提示词方言尚未接线`);
+    throw new Error(
+      ("noteZh" in profile ? String(profile.noteZh || "") : "") ||
+        `${engine} 的提示词方言尚未接线`,
+    );
   }
 }
 

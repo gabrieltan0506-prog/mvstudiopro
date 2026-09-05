@@ -56,7 +56,7 @@ export type CompiledReferencePlan = {
     | "seedance_reference"
     | "h3_reference_to_video"
     | "h3_text_to_video"
-    | "wan_reserved";
+    | "wan_reference";
   bindings: ShotMediaRef[];
 };
 
@@ -80,6 +80,16 @@ function formatH3MediaReference(ref: ShotMediaRef): string {
   const marker =
     ref.kind === "image" ? `Image ${ref.n}` : ref.kind === "video" ? `Video ${ref.n}` : `Audio ${ref.n}`;
   return `${marker} 仅用于${ref.roleZh}`;
+}
+
+function formatWanMediaReference(ref: ShotMediaRef): string {
+  const marker =
+    ref.kind === "image"
+      ? `Reference image ${ref.n}`
+      : ref.kind === "video"
+        ? `Reference video ${ref.n}`
+        : `Reference audio ${ref.n}`;
+  return `${marker}仅用于${ref.roleZh}`;
 }
 
 type PositionedShot = SegmentPlan["shots"][number] & { startSec: number };
@@ -113,9 +123,30 @@ function shotLineH3(shot: PositionedShot): string {
       ? `${shot.dialogue.speakerZh}${shot.dialogue.emotionZh ? `以${shot.dialogue.emotionZh}的语气` : ""}说：“${shot.dialogue.textZh}”`
       : "",
     shot.sfxZh ? `环境声为${shot.sfxZh}` : "",
-    (shot.mediaRefs ?? []).map(formatH3MediaReference).join("，"),
+    // 生产 H3 路由只消费图片；音频/视频在 formatIssues 明确报错，不写入伪职责。
+    (shot.mediaRefs ?? [])
+      .filter((ref) => ref.kind === "image")
+      .map(formatH3MediaReference)
+      .join("，"),
   ].filter(Boolean);
   return parts.join(",");
+}
+
+function shotLineWan(shot: PositionedShot): string {
+  const end = shot.startSec + shot.durationSec;
+  const parts = [
+    `${shot.startSec}-${end}秒，第${shot.index}镜`,
+    `场景：${shot.sceneZh}`,
+    `主体动作：${shot.actionZh}`,
+    shot.cameraZh ? `摄影机：${shot.cameraZh}` : "",
+    shot.microExpressionZh ? `表演：${shot.microExpressionZh}` : "",
+    shot.dialogue
+      ? `${shot.dialogue.speakerZh}${shot.dialogue.emotionZh ? `以${shot.dialogue.emotionZh}的语气` : ""}说：“${shot.dialogue.textZh}”`
+      : "",
+    shot.sfxZh ? `音效：${shot.sfxZh}` : "",
+    (shot.mediaRefs ?? []).map(formatWanMediaReference).join("；"),
+  ].filter(Boolean);
+  return parts.join("；");
 }
 
 /**
@@ -200,7 +231,13 @@ function compileSegmentPromptResult(
   const lines: string[] = [];
   for (const shot of segment.shots) {
     const withStart: PositionedShot = { ...shot, startSec };
-    lines.push(dialect === "seedance" ? shotLineSeedance(withStart) : shotLineH3(withStart));
+    lines.push(
+      dialect === "seedance"
+        ? shotLineSeedance(withStart)
+        : dialect === "h3"
+          ? shotLineH3(withStart)
+          : shotLineWan(withStart),
+    );
     startSec += shot.durationSec;
   }
   const head =
@@ -212,7 +249,7 @@ function compileSegmentPromptResult(
   return { prompt: formatted.text, issues: formatted.issues };
 }
 
-/** 单段提示词公开入口:与内部版同一道闸(reserved 拒 + 时长终检) */
+/** 单段提示词公开入口：与内部版同一道时长和结构终检。 */
 export function compileSegmentPrompt(
   segment: SegmentPlan,
   engine: CompilerEngineId,
@@ -283,7 +320,7 @@ function collectSegmentRefs(rawRefs: ShotMediaRef[]): ShotMediaRef[] {
   return Array.from(slotMap.values());
 }
 
-/** 总入口:IR + 引擎 → 编译产物;reserved 引擎(wan-3.0)明确拒绝不产伪结果 */
+/** 总入口：IR + 引擎 → 编译产物。 */
 export function compileEpisode(ir: EpisodeIR, engine: CompilerEngineId): CompiledEpisode {
   assertCompilerEngineReady(engine);
 
@@ -305,11 +342,12 @@ export function compileEpisode(ir: EpisodeIR, engine: CompilerEngineId): Compile
   const compiled = segments.map((segment) => {
     const rawRefs = collectRawSegmentRefs(segment);
     const refs = collectSegmentRefs(rawRefs);
+    const planRefs = profile.dialect === "h3" ? refs.filter((ref) => ref.kind === "image") : refs;
     const promptResult = compileSegmentPromptResult(segment, engine, ir.styleZh);
     return {
       segment,
       prompt: promptResult.prompt,
-      refs,
+      planRefs,
       issues: [
         ...promptResult.issues,
         ...validateSegmentMediaRefs(rawRefs, profile.references),
@@ -328,11 +366,13 @@ export function compileEpisode(ir: EpisodeIR, engine: CompilerEngineId): Compile
       segmentIndex: item.segment.index,
       mode:
         profile.dialect === "h3"
-          ? item.refs.length > 0
+          ? item.planRefs.length > 0
             ? "h3_reference_to_video"
             : "h3_text_to_video"
-          : "seedance_reference",
-      bindings: item.refs,
+          : profile.dialect === "wan"
+            ? "wan_reference"
+            : "seedance_reference",
+      bindings: item.planRefs,
     })),
     ttsCueSheet: buildTtsCueSheet(segments),
     bgmBrief: buildBgmBrief(ir, segments),

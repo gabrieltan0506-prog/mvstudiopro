@@ -4,7 +4,9 @@ import {
   mapWithConcurrency,
   takeFilesFromInput,
   uploadCanvasFilesParallel,
+  uploadOneCanvasAsset,
 } from "@/lib/canvasUpload";
+import { uploadFileToSignedUrl } from "@/lib/omniCanvasApi";
 
 vi.mock("@/lib/omniCanvasApi", () => ({
   uploadFileToSignedUrl: vi.fn(async () => undefined),
@@ -12,6 +14,17 @@ vi.mock("@/lib/omniCanvasApi", () => ({
 }));
 
 describe("canvasUpload", () => {
+  it("无浏览器 MIME 的素材把推断类型同时用于签名与 PUT", async () => {
+    const file = new File(["test"], "shot.png");
+    const getSignedUploadUrl = vi.fn(async () => ({
+      uploadUrl: "https://upload.example/shot.png",
+      gcsUri: "gs://test-bucket/canvas/shot.png",
+    }));
+    await uploadOneCanvasAsset({ file, index: 0, getSignedUploadUrl });
+    expect(getSignedUploadUrl).toHaveBeenCalledWith(expect.objectContaining({ mimeType: "image/png" }));
+    expect(uploadFileToSignedUrl).toHaveBeenLastCalledWith(expect.objectContaining({ file, contentType: "image/png" }));
+  });
+
   it("CANVAS_UPLOAD_CONCURRENCY 为 10", () => {
     expect(CANVAS_UPLOAD_CONCURRENCY).toBe(10);
   });

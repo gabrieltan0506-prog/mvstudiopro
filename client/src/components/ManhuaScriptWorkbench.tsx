@@ -129,6 +129,7 @@ import {
   type ManhuaCharacterVoiceLock,
 } from "@shared/manhuaCharacterVoiceLock";
 import { type ManhuaAudioReferenceLock } from "@shared/manhuaAudioReferenceLock";
+import type { ManhuaDirectorStrategyContract } from "@shared/manhuaDirectorStrategy";
 import {
   groupShotsIntoSegments,
   MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
@@ -163,16 +164,28 @@ import {
   inferManhuaCastZhFromDialogue,
   parseManhuaEpisodeSegmentPlanFromMarkdown,
 } from "@shared/manhuaEpisodeSegmentPlan";
-import { applyShotDialoguesFromText } from "@shared/manhuaShotDialoguePersist";
+import {
+  applyShotDialoguesFromText,
+  MANHUA_DIALOGUE_SILENCE_TOKEN,
+} from "@shared/manhuaShotDialoguePersist";
+import {
+  extractManhuaClipUserSupplement,
+  upsertManhuaClipUserSupplement,
+} from "@shared/manhuaClipUserSupplement";
 import { summarizeManhuaVisualBriefForUi } from "@shared/manhuaScriptVisualBrief";
+import { evaluateManhuaAsset3dEligibility } from "@shared/manhuaAsset3d";
 import { MANHUA_DRAFT_RETENTION_HINT_ZH } from "@shared/manhuaCloudDraft";
 import ManhuaPathRecipePicker from "@/components/ManhuaPathRecipePicker";
 import { ManhuaDirectorBoardOverlay } from "@/components/ManhuaDirectorBoardOverlay";
 import {
   confirmManhuaBoardOverlayReview,
+  type ManhuaBoardAspectRatio,
   type ManhuaBoardMotionOverlay,
 } from "@shared/manhuaDirectorBoardOverlay";
-import { compileManhuaDirectorBoardOverlay } from "@shared/manhuaDirectorBoardOverlayCompile";
+import {
+  compileManhuaSegmentDirectorBoardOverlay,
+  resolveManhuaDirectorOverlayBaseUrl as resolveManhuaDirectorOverlayBaseUrlShared,
+} from "@shared/manhuaDirectorBoardOverlayCompile";
 import ManhuaPromptAssetChips from "@/components/ManhuaPromptAssetChips";
 import ManhuaPromptMentionEditor from "@/components/ManhuaPromptMentionEditor";
 import { downloadRemoteFile } from "@/lib/downloadRemoteFile";
@@ -243,6 +256,10 @@ type ManhuaPendingSheetAnchor = {
 
 type Props = {
   blocks: CanvasBlock[];
+  /** 顶部当前真选的成片引擎；优先于尚未重铺的旧 clip 盖章。 */
+  videoModel?: string | null;
+  /** 已冻结的去名导演策略；前台只展示中性策略名与批准修订。 */
+  directorStrategyContract?: ManhuaDirectorStrategyContract | null;
   topic: string;
   seriesTitle?: string;
   logline?: string;
@@ -364,6 +381,9 @@ type Props = {
   onStandardizeCustomAsset?: (id: string, quality: ManhuaAssetStandardizeQuality) => void | Promise<void>;
   /** 以当前人物正面参考建立可选 3D 参考；不进入默认出片门禁。 */
   onGenerateAsset3d?: (id: string) => void | Promise<void>;
+  /** 导入用户已有 GLB；不调用建模服务，仍绑定当前人物图版本。 */
+  onImportAsset3d?: (id: string, file: File) => void | Promise<void>;
+  asset3dBusyIds?: readonly string[];
   assetStandardizeBusyId?: string | null;
   onRemoveCustomAsset?: (id: string) => void;
   /** 一键清空全部参考图（清了重导资产包用）；带确认 */
@@ -537,7 +557,10 @@ type Props = {
   /** 机位选定写回反推/节拍（供工厂注入） */
   onUpsertShotAngles?: (angles: Record<number, string>) => void;
   /** 分镜台词写回（成片注入用；静帧不读字面） */
-  onUpsertShotDialogues?: (dialogues: Record<number, string>) => void;
+  onUpsertShotDialogues?: (
+    dialogues: Record<number, string>,
+    segmentIndex: number,
+  ) => void;
 };
 
 function blockByStage(blocks: CanvasBlock[], episode: number, stage: string): CanvasBlock | undefined {
@@ -589,8 +612,70 @@ const CLIP_QUALITY_ROWS = [
   ["DURATION_OK", "时长"],
 ] as const;
 
+/**
+ * 轨迹坐标只允许叠在同段导演板或该段首镜静帧上。
+ * 整集共用板和别段静帧仍可用于普通预览／成片参考，但布局不对应，不能拿来承载当前段坐标。
+ */
+export const resolveManhuaDirectorOverlayBaseUrl =
+  resolveManhuaDirectorOverlayBaseUrlShared;
+
+/** SVG 与底图必须共用实际像素比例；尺寸未知时不生成可确认的轨迹。 */
+export function resolveManhuaDirectorBoardImageGeometry(input: {
+  width: number;
+  height: number;
+}): {
+  width: number;
+  height: number;
+  ratio: number;
+  baseAspectRatio: ManhuaBoardAspectRatio;
+} | null {
+  const width = Math.floor(Number(input.width));
+  const height = Math.floor(Number(input.height));
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    return null;
+  }
+  return {
+    width,
+    height,
+    ratio: width / height,
+    baseAspectRatio: width < height ? "9:16" : "16:9",
+  };
+}
+
+/** 两个导演板上传入口共用同一错误反馈，避免快捷入口只留下未处理 Promise。 */
+export async function ingestManhuaDirectorBoardFileWithFeedback(input: {
+  file: File;
+  segmentIndex: number | null;
+  onIngest: (file: File, segmentIndex: number | null) => void | Promise<void>;
+  onError: (message: string) => void;
+}): Promise<boolean> {
+  try {
+    await input.onIngest(input.file, input.segmentIndex);
+    return true;
+  } catch (error) {
+    input.onError(error instanceof Error ? error.message : "导演板接入失败");
+    return false;
+  }
+}
+
+/** 3D 是人物卡的可选辅助层；非人物资产不展示无关的资格原因。 */
+export function shouldShowManhuaAsset3dRow(input: {
+  role: unknown;
+  cardExpanded: boolean;
+  hasAction: boolean;
+}): boolean {
+  return input.role === "character" && input.cardExpanded && input.hasAction;
+}
+
 export default function ManhuaScriptWorkbench({
   blocks,
+  videoModel,
+  directorStrategyContract,
   topic,
   seriesTitle,
   logline,
@@ -659,6 +744,8 @@ export default function ManhuaScriptWorkbench({
   onCustomAssetReviewAccept,
   onStandardizeCustomAsset,
   onGenerateAsset3d,
+  onImportAsset3d,
+  asset3dBusyIds = [],
   assetStandardizeBusyId = null,
   onRemoveCustomAsset,
   onClearAllCustomAssets,
@@ -927,20 +1014,24 @@ export default function ManhuaScriptWorkbench({
     const beatsText = beats?.outputText || beats?.prompt || "";
     const storyText = story?.outputText || story?.prompt || "";
     // 方案 C：五至六段可拍表优先编译为每段 3 静帧（起幅/戏核/落幅）
-    const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(
-      `${storyText}\n${beatsText}\n${reverseText}`,
-    );
+    const plan = [beatsText, reverseText, storyText]
+      .map((text) => parseManhuaEpisodeSegmentPlanFromMarkdown(text))
+      .find((candidate) => candidate.segments.length > 0) ||
+      parseManhuaEpisodeSegmentPlanFromMarkdown("");
     const fromPlan = buildWorkbenchShotsFromSegmentPlan(plan);
     const segMin = manhuaSegmentCountBounds(
-      episodeClips[0]?.videoModel || legacyClip?.videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
+      String(videoModel || "").trim() ||
+        episodeClips[0]?.videoModel ||
+        legacyClip?.videoModel ||
+        MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
     ).min;
     let list: ManhuaWorkbenchShot[];
     if (fromPlan.length >= segMin * MANHUA_KEYARTS_PER_SEGMENT_MIN) {
       list = fromPlan as ManhuaWorkbenchShot[];
-    } else if (reverseText.trim()) {
-      list = parseWorkbenchShotsFromText(reverseText);
     } else if (beatsText.trim()) {
       list = parseWorkbenchShotsFromText(beatsText);
+    } else if (reverseText.trim()) {
+      list = parseWorkbenchShotsFromText(reverseText);
     } else {
       list = fromPlan.length
         ? (fromPlan as ManhuaWorkbenchShot[])
@@ -959,10 +1050,14 @@ export default function ManhuaScriptWorkbench({
     story?.prompt,
     episodeClips,
     legacyClip?.videoModel,
+    videoModel,
   ]);
 
   const episodeVideoModel =
-    episodeClips[0]?.videoModel || legacyClip?.videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
+    String(videoModel || "").trim() ||
+    episodeClips[0]?.videoModel ||
+    legacyClip?.videoModel ||
+    MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
   // 静帧一律取「这一轮真正会被跑到」的节点：从 mini（18 张）改选 2.5（12 张）后，
   // 超出新段表的静帧只是停放，队列不会跑它们。分母若仍按画布节点数算，成片门禁会卡死在 12/18。
   const episodeKeyarts = useMemo(() => {
@@ -1206,34 +1301,56 @@ export default function ManhuaScriptWorkbench({
   const anyKeyartUrl = episodeKeyarts.map(mediaUrl).find(Boolean);
   const previewUrl = playableClipUrl || mediaUrl(activeKeyart) || anyKeyartUrl;
   const previewIsVideo = Boolean(playableClipUrl);
-  const annotateStillUrl = mediaUrl(activeKeyart) || anyKeyartUrl;
-  const activeBoardBaseUrl =
-    directorBoardSegUrls?.[activeSegNo] || directorBoardMainUrl || annotateStillUrl || null;
+  const activeShotStillUrl = mediaUrl(activeKeyart);
+  const annotateStillUrl = activeShotStillUrl || anyKeyartUrl;
+  const directorOverlaySegment = segments.find((segment) => segment.index === activeSegNo);
+  const segmentFirstShotNo = directorOverlaySegment?.shots[0]?.index;
+  const segmentFirstShotKeyart = segmentFirstShotNo
+    ? episodeKeyarts.find(
+        (block) => resolveKeyartShotIndex(block.id, block.prompt) === segmentFirstShotNo,
+      ) || (segmentFirstShotNo === 1 ? keyart : undefined)
+    : undefined;
+  const activeBoardBaseUrl = resolveManhuaDirectorOverlayBaseUrl({
+    segmentIndex: activeSegNo,
+    segmentBoardUrls: directorBoardSegUrls,
+    segmentFirstShotStillUrl: mediaUrl(segmentFirstShotKeyart),
+  });
+  const [activeBoardImageMeta, setActiveBoardImageMeta] = useState<{
+    url: string;
+    width: number;
+    height: number;
+  } | null>(null);
+  const activeBoardImageGeometry =
+    activeBoardImageMeta?.url === activeBoardBaseUrl
+      ? resolveManhuaDirectorBoardImageGeometry(activeBoardImageMeta)
+      : null;
+  const activeBoardImageMeasureFailed = Boolean(
+    activeBoardBaseUrl &&
+      activeBoardImageMeta?.url === activeBoardBaseUrl &&
+      !activeBoardImageGeometry,
+  );
   const activeDirectorBoardMotionOverlay = useMemo(() => {
+    if (!activeBoardBaseUrl || !activeBoardImageGeometry) return null;
     const beat = shootablePlan.segments.find((entry) => entry.index === activeSegNo);
     const segment = segments.find((entry) => entry.index === activeSegNo);
-    const firstShot = segment?.shots[0];
-    return compileManhuaDirectorBoardOverlay({
+    return compileManhuaSegmentDirectorBoardOverlay({
       episodeIndex: focusEpisode,
       segmentIndex: activeSegNo,
-      shotIndex: firstShot?.index,
-      baseAspectRatio: "16:9",
-      baseMediaIdentity: String(activeBoardBaseUrl || "").split(/[?#]/, 1)[0],
+      baseAspectRatio: activeBoardImageGeometry.baseAspectRatio,
+      segmentBoardUrls: directorBoardSegUrls,
+      segmentFirstShotStillUrl: mediaUrl(segmentFirstShotKeyart),
       beat,
-      shot: segment
-        ? {
-            index: firstShot?.index,
-            actionZh: segment.shots.map((entry) => entry.actionZh).filter(Boolean).join("；"),
-            cameraZh: segment.shots.map((entry) => entry.cameraZh).filter(Boolean).join("；"),
-          }
-        : null,
+      shots: segment?.shots,
       existingOverlay: directorBoardMotionOverlays?.[activeSegNo],
     });
   }, [
     activeSegNo,
     activeBoardBaseUrl,
+    activeBoardImageGeometry,
     directorBoardMotionOverlays,
+    directorBoardSegUrls,
     focusEpisode,
+    segmentFirstShotKeyart,
     segments,
     shootablePlan.segments,
   ]);
@@ -2385,6 +2502,32 @@ export default function ManhuaScriptWorkbench({
                 {artStyleLabelZh ? ` · ${artStyleLabelZh}` : ""}
               </span>
             </div>
+            {directorStrategyContract ? (
+              <div
+                data-manhua-director-strategy-status
+                className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1 text-[9px] text-teal-100/80"
+                title="该策略已按项目 Bible 冻结，并投影到故事、资产、分镜、关键帧、成片与终审"
+              >
+                <ShieldCheck className="h-3 w-3 shrink-0 text-teal-300" />
+                <span className="font-semibold">
+                  创作策略 · {directorStrategyContract.labelZh}
+                </span>
+                <span className="rounded border border-teal-300/20 bg-teal-500/10 px-1 py-px text-[8px] text-teal-100/65">
+                  {directorStrategyContract.revision}
+                </span>
+                <span className="text-emerald-200/70">已锁定</span>
+              </div>
+            ) : outlineComplete ? (
+              <div
+                data-manhua-director-strategy-status
+                data-status="upgrade-required"
+                className="mt-0.5 flex items-center gap-1 text-[9px] text-amber-100/75"
+                title="这是旧项目，尚未冻结新版创作策略；现有剧本和资产不会被自动改写"
+              >
+                <AlertTriangle className="h-3 w-3 shrink-0 text-amber-300" />
+                <span className="font-semibold">创作策略 · 旧项目待升级</span>
+              </div>
+            ) : null}
             {immersive ? (
               <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px]">
                 <button
@@ -2569,10 +2712,11 @@ export default function ManhuaScriptWorkbench({
                               const file = e.target.files?.[0];
                               e.target.value = "";
                               if (!file) return;
-                              void Promise.resolve(
-                                onIngestDirectorBoardFile(file, segChoice > 0 ? segChoice : null),
-                              ).catch((err: unknown) => {
-                                toast.error(err instanceof Error ? err.message : "导演板接入失败");
+                              void ingestManhuaDirectorBoardFileWithFeedback({
+                                file,
+                                segmentIndex: segChoice > 0 ? segChoice : null,
+                                onIngest: onIngestDirectorBoardFile,
+                                onError: (message) => toast.error(message),
                               });
                             }}
                           />
@@ -2643,48 +2787,6 @@ export default function ManhuaScriptWorkbench({
                 </button>
               ) : null}
                   </div>
-                  {activeBoardBaseUrl && activeDirectorBoardMotionOverlay ? (
-                    <div className="mt-2 overflow-hidden rounded-xl border border-white/12 bg-black/45">
-                      <div className="relative aspect-video w-full overflow-hidden bg-black">
-                        <img
-                          src={activeBoardBaseUrl}
-                          alt={`第${activeSegNo}段导演板轨迹预览`}
-                          className="h-full w-full object-cover"
-                        />
-                        <ManhuaDirectorBoardOverlay
-                          overlay={activeDirectorBoardMotionOverlay}
-                          onChange={
-                            onDirectorBoardMotionOverlayChange
-                              ? (next) =>
-                                  onDirectorBoardMotionOverlayChange(activeSegNo, next)
-                              : undefined
-                          }
-                        />
-                      </div>
-                      <div className="flex items-center justify-between gap-2 px-2 py-1.5 text-[10px] text-white/50">
-                        <span>段{String(activeSegNo).padStart(2, "0")} · 轨迹与底图分开保存</span>
-                        {activeDirectorBoardMotionOverlay.needsReview &&
-                        onDirectorBoardMotionOverlayChange ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const confirmed = confirmManhuaBoardOverlayReview(
-                                activeDirectorBoardMotionOverlay,
-                              );
-                              if (confirmed) {
-                                onDirectorBoardMotionOverlayChange(activeSegNo, confirmed);
-                              }
-                            }}
-                            className="rounded-md border border-emerald-300/35 bg-emerald-500/12 px-2 py-1 font-semibold text-emerald-50 hover:bg-emerald-500/20"
-                          >
-                            确认轨迹
-                          </button>
-                        ) : (
-                          <span className="text-emerald-200/75">已接入成片空间调度</span>
-                        )}
-                      </div>
-                    </div>
-                  ) : null}
                 </div>
                 <div
                   data-manhua-toolbar-group="generation-workspace"
@@ -5119,6 +5221,8 @@ export default function ManhuaScriptWorkbench({
                           const isPrimaryRef = primaryRefId === ref.id;
                           const isAlternativeRef = Boolean(primaryRefId && !isPrimaryRef);
                           const needsReview = ref.reviewStatus === "needs_review";
+                          const model3dEligibility = evaluateManhuaAsset3dEligibility(ref);
+                          const currentModel3d = model3dEligibility.currentModel3d;
                           const cardExpanded = isManhuaAssetCardExpanded({
                             compactUi,
                             expandedIds: expandedAssetIds,
@@ -5449,47 +5553,89 @@ export default function ManhuaScriptWorkbench({
                                   </select>
                                 </label>
                               ) : null}
-                              {ref.role === "character" && cardExpanded && onGenerateAsset3d ? (
-                                <div className="space-y-1">
-                                  <button
-                                    type="button"
-                                    disabled={
-                                      ref.reviewStatus === "needs_review" ||
-                                      ref.model3d?.status === "queued" ||
-                                      ref.model3d?.status === "running" ||
-                                      ref.model3d?.status === "failed" ||
-                                      ref.model3d?.status === "reconcile_manual"
-                                    }
-                                    onClick={() => {
-                                      if (ref.model3d?.status === "succeeded" && ref.model3d.glbUrl) {
-                                        setModel3dPreview({
-                                          url: ref.model3d.glbUrl,
-                                          labelZh: displayNameZh || "人物 3D 参考",
-                                        });
-                                        return;
+                              {shouldShowManhuaAsset3dRow({
+                                role: ref.role,
+                                cardExpanded,
+                                hasAction: Boolean(onGenerateAsset3d || onImportAsset3d),
+                              }) ? (
+                                <div
+                                  data-manhua-asset-3d-row
+                                  data-eligible={model3dEligibility.eligible ? "true" : "false"}
+                                  className="space-y-1 rounded border border-white/10 bg-white/[0.025] p-1.5"
+                                >
+                                  {model3dEligibility.eligible && onGenerateAsset3d ? (
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        asset3dBusyIds.includes(ref.id) ||
+                                        currentModel3d?.status === "queued" ||
+                                        currentModel3d?.status === "running" ||
+                                        currentModel3d?.status === "reconcile_manual"
                                       }
-                                      void onGenerateAsset3d(ref.id);
-                                    }}
-                                    title={
-                                      ref.reviewStatus === "needs_review"
-                                        ? "先确认或标准化人物参考图"
-                                        : "可选增强：建立可旋转的造型与比例参考，不影响默认出片"
-                                    }
-                                    className="w-full rounded border border-cyan-300/30 bg-cyan-500/10 px-1.5 py-1 text-[9px] font-medium text-cyan-100 hover:bg-cyan-500/20 disabled:opacity-40"
-                                  >
-                                    {ref.model3d?.status === "succeeded"
-                                      ? "查看 3D 参考"
-                                      : ref.model3d?.status === "queued" || ref.model3d?.status === "running"
-                                        ? "3D 参考建立中…"
-                                      : ref.model3d?.status === "failed"
-                                          ? "3D 建立失败"
-                                          : ref.model3d?.status === "reconcile_manual"
-                                            ? "3D 结果待核对"
-                                            : "建立 3D 参考（可选）"}
-                                  </button>
-                                  {ref.model3d?.errorZh ? (
+                                      onClick={() => {
+                                        if (
+                                          currentModel3d?.status === "succeeded" &&
+                                          currentModel3d.glbUrl
+                                        ) {
+                                          setModel3dPreview({
+                                            url: currentModel3d.glbUrl,
+                                            labelZh: displayNameZh || "人物 3D 参考",
+                                          });
+                                          return;
+                                        }
+                                        void onGenerateAsset3d(ref.id);
+                                      }}
+                                      title={
+                                        currentModel3d?.status === "failed"
+                                          ? "明确失败后可重试；原人物图不会被替换"
+                                          : "可选增强：建立可旋转的造型与比例参考，不影响默认出片"
+                                      }
+                                      className="w-full rounded border border-cyan-300/30 bg-cyan-500/10 px-1.5 py-1 text-[9px] font-medium text-cyan-100 hover:bg-cyan-500/20 disabled:opacity-40"
+                                    >
+                                      {currentModel3d?.status === "succeeded"
+                                        ? "查看 3D 参考"
+                                        : currentModel3d?.status === "queued" ||
+                                            currentModel3d?.status === "running"
+                                          ? "3D 参考建立中…"
+                                          : currentModel3d?.status === "failed"
+                                            ? "重试建立 3D 参考"
+                                            : currentModel3d?.status === "reconcile_manual"
+                                              ? "3D 结果待核对"
+                                              : "建立 3D 参考（可选）"}
+                                    </button>
+                                  ) : null}
+                                  {model3dEligibility.eligible && onImportAsset3d ? (
+                                    <label
+                                      className="block w-full cursor-pointer rounded border border-white/15 bg-white/[0.04] px-1.5 py-1 text-center text-[9px] font-medium text-white/65 hover:bg-white/[0.08] has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-40"
+                                      title="导入已有 GLB，不调用外部建模服务；人物原图仍是身份真源"
+                                    >
+                                      <input
+                                        type="file"
+                                        accept=".glb,model/gltf-binary"
+                                        className="sr-only"
+                                        disabled={
+                                          asset3dBusyIds.includes(ref.id) ||
+                                          currentModel3d?.status === "queued" ||
+                                          currentModel3d?.status === "running" ||
+                                          currentModel3d?.status === "reconcile_manual"
+                                        }
+                                        onChange={(event) => {
+                                          const file = event.currentTarget.files?.[0];
+                                          event.currentTarget.value = "";
+                                          if (file) void onImportAsset3d(ref.id, file);
+                                        }}
+                                      />
+                                      {asset3dBusyIds.includes(ref.id) ? "3D 参考处理中…" : "导入已有 GLB（免建模）"}
+                                    </label>
+                                  ) : null}
+                                  {!model3dEligibility.eligible ? (
+                                    <p className="text-[9px] leading-3 text-amber-100/75">
+                                      3D 参考暂不可用：
+                                      {model3dEligibility.reasonZh || "请先完成当前人物图确认"}
+                                    </p>
+                                  ) : currentModel3d?.errorZh ? (
                                     <p className="text-[9px] leading-3 text-rose-200/80">
-                                      {ref.model3d.errorZh}
+                                      {currentModel3d.errorZh}
                                     </p>
                                   ) : null}
                                 </div>
@@ -6882,16 +7028,11 @@ export default function ManhuaScriptWorkbench({
                                   maxLength={80}
                                   onChange={(e) => {
                                     const line = e.target.value.slice(0, 80);
-                                    const next: Record<number, string> = {};
-                                    for (const s of shots) {
-                                      const v =
-                                        s.index === shot.index
-                                          ? line
-                                          : String(s.dialogueZh || "").trim();
-                                      if (v) next[s.index] = v;
-                                    }
-                                    if (line.trim()) next[shot.index] = line.trim();
-                                    onUpsertShotDialogues?.(next);
+                                    const next: Record<number, string> = {
+                                      [shot.index]:
+                                        line.trim() || MANHUA_DIALOGUE_SILENCE_TOKEN,
+                                    };
+                                    onUpsertShotDialogues?.(next, activeSegNo);
                                   }}
                                   className="mt-0.5 w-full rounded border border-rose-400/25 bg-black/35 px-1.5 py-1 text-[10px] text-rose-50 outline-none placeholder:text-white/25 focus:border-rose-300/45"
                                 />
@@ -7142,7 +7283,7 @@ export default function ManhuaScriptWorkbench({
                                 }
                                 className="rounded border border-white/15 px-1.5 py-0.5 text-[9px] text-white/55 hover:bg-white/5"
                               >
-                                {raw ? "看药丸视图" : "编辑原文"}
+                                {raw ? "查看系统编译" : "补充指令"}
                               </button>
                             </div>
                             {raw ? (
@@ -7151,9 +7292,14 @@ export default function ManhuaScriptWorkbench({
                                 disabled={
                                   !row.clip?.id || !onUpdateClipPrompt || factoryBusy
                                 }
-                                value={promptText}
+                                value={extractManhuaClipUserSupplement(promptText)}
                                 onChange={(next) => {
-                                  if (row.clip?.id) onUpdateClipPrompt?.(row.clip.id, next);
+                                  if (row.clip?.id) {
+                                    onUpdateClipPrompt?.(
+                                      row.clip.id,
+                                      upsertManhuaClipUserSupplement(promptText, next),
+                                    );
+                                  }
                                 }}
                                 thumbUrlByAssetId={chipThumbByAssetId}
                                 registry={assetLockRegistry}
@@ -7175,7 +7321,7 @@ export default function ManhuaScriptWorkbench({
                                 }
                                 placeholder={
                                   row.clip?.id
-                                    ? "段成片提示词（输入 @ 挑本集人物/场景/道具/导演板）"
+                                    ? "只写本段补充；输入 @ 挑人物/场景/道具/导演板。系统秒轴会随剧本与引擎自动更新"
                                     : "点「审阅」时会先铺段节点；若仍空请对齐画布竖排"
                                 }
                               />
@@ -7422,6 +7568,133 @@ export default function ManhuaScriptWorkbench({
               )}
             </div>
           </div>
+          <section
+            data-manhua-director-overlay-panel
+            data-state={
+              !activeBoardBaseUrl
+                ? "missing-base"
+                : activeBoardImageMeasureFailed
+                  ? "invalid-base"
+                  : !activeBoardImageGeometry
+                    ? "measuring-base"
+                    : activeDirectorBoardMotionOverlay
+                      ? "ready"
+                      : "missing-direction"
+            }
+            className="mb-2 shrink-0 overflow-hidden rounded-lg border border-cyan-300/20 bg-[#07121a]"
+          >
+            <div className="flex items-center justify-between gap-2 border-b border-white/10 px-2 py-1.5">
+              <div>
+                <div className="text-[10px] font-semibold text-cyan-50">
+                  轨迹导演板 · 段{String(activeSegNo).padStart(2, "0")}
+                </div>
+                <div className="text-[9px] text-white/40">
+                  红线是人物／道具路线，青色虚线是摄影机路线
+                </div>
+              </div>
+              {activeDirectorBoardMotionOverlay?.needsReview &&
+              onDirectorBoardMotionOverlayChange ? (
+                <button
+                  type="button"
+                  data-manhua-action="confirm-director-overlay"
+                  onClick={() => {
+                    const confirmed = confirmManhuaBoardOverlayReview(
+                      activeDirectorBoardMotionOverlay,
+                    );
+                    if (confirmed) {
+                      onDirectorBoardMotionOverlayChange(activeSegNo, confirmed);
+                    }
+                  }}
+                  className="rounded-md border border-emerald-300/35 bg-emerald-500/12 px-2 py-1 text-[9px] font-semibold text-emerald-50 hover:bg-emerald-500/20"
+                >
+                  确认轨迹
+                </button>
+              ) : activeDirectorBoardMotionOverlay ? (
+                <span className="text-[9px] text-emerald-200/75">已接入成片调度</span>
+              ) : null}
+            </div>
+            {activeBoardBaseUrl ? (
+              <div className="flex w-full justify-center overflow-hidden bg-black">
+                <div
+                  data-manhua-director-overlay-frame
+                  className="relative max-h-[28vh] overflow-hidden bg-black"
+                  style={{
+                    aspectRatio: activeBoardImageGeometry
+                      ? `${activeBoardImageGeometry.width} / ${activeBoardImageGeometry.height}`
+                      : "16 / 9",
+                    width: activeBoardImageGeometry
+                      ? `min(100%, ${Math.max(1, 28 * activeBoardImageGeometry.ratio)}vh)`
+                      : "100%",
+                  }}
+                >
+                  <img
+                    src={activeBoardBaseUrl}
+                    alt={`第${activeSegNo}段导演板轨迹预览`}
+                    className="absolute inset-0 h-full w-full object-contain"
+                    onLoad={(event) => {
+                      setActiveBoardImageMeta({
+                        url: activeBoardBaseUrl,
+                        width: event.currentTarget.naturalWidth,
+                        height: event.currentTarget.naturalHeight,
+                      });
+                    }}
+                    onError={() => {
+                      setActiveBoardImageMeta({
+                        url: activeBoardBaseUrl,
+                        width: 0,
+                        height: 0,
+                      });
+                    }}
+                  />
+                  {activeDirectorBoardMotionOverlay ? (
+                    <ManhuaDirectorBoardOverlay
+                      overlay={activeDirectorBoardMotionOverlay}
+                      onChange={
+                        onDirectorBoardMotionOverlayChange
+                          ? (next) => onDirectorBoardMotionOverlayChange(activeSegNo, next)
+                          : undefined
+                      }
+                    />
+                  ) : (
+                    <div className="absolute inset-x-2 bottom-2 rounded bg-black/75 px-2 py-1 text-center text-[9px] text-amber-100">
+                      {activeBoardImageGeometry
+                        ? "当前分镜没有明确起点、落点或主运镜；不会猜造路线"
+                        : activeBoardImageMeasureFailed
+                          ? "底图尺寸读取失败；当前轨迹不可确认，请重新上传本段导演板"
+                          : "正在核对底图尺寸；确认比例前不会套用或确认轨迹"}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="flex min-h-16 items-center justify-between gap-3 px-3 py-2 text-[9px] text-white/45">
+                <span>先生成本段静帧，或上传本段导演板，轨迹会在这里直接显示。</span>
+                {onIngestDirectorBoardFile ? (
+                  <label className="shrink-0 cursor-pointer rounded-md border border-cyan-300/30 bg-cyan-500/10 px-2 py-1 font-semibold text-cyan-50 hover:bg-cyan-500/20">
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      className="sr-only"
+                      disabled={Boolean(factoryBusy || directorBoardBusy)}
+                      onChange={(event) => {
+                        const file = event.currentTarget.files?.[0];
+                        event.currentTarget.value = "";
+                        if (file) {
+                          void ingestManhuaDirectorBoardFileWithFeedback({
+                            file,
+                            segmentIndex: activeSegNo,
+                            onIngest: onIngestDirectorBoardFile,
+                            onError: (message) => toast.error(message),
+                          });
+                        }
+                      }}
+                    />
+                    上传本段导演板
+                  </label>
+                ) : null}
+              </div>
+            )}
+          </section>
           {dockCanvas ? (
             <div
               id="freeform-canvas-zone"

@@ -61,6 +61,19 @@ export type ManhuaWorkbenchShot = {
   actionZh: string;
   /** 本镜台词（只作表演，不烧字） */
   dialogueZh?: string;
+  /** 用户明确清空本镜台词；区别于“尚无覆盖、可继承剧本”。 */
+  dialogueSuppressed?: boolean;
+  /** 原剧本对白说话人名；仅用于稍后绑定真实 @角色N，不直接进入模型提示词。 */
+  dialogueSpeakerNameZh?: string;
+  /**
+   * 同一视觉镜位内继续发生的对白。30 秒段允许对白句数多于视觉静帧数；这些句子
+   * 由成片秒轴在本镜时间窗内继续排布，不能因为“一镜一个 dialogueZh”静默丢弃。
+   */
+  additionalDialogueCues?: Array<{
+    dialogueZh: string;
+    speakerAtTag?: string;
+    speakerNameZh?: string;
+  }>;
   /** 所属段的单一意图（观众应感到什么；同源可拍表） */
   intentZh?: string;
   /** 情绪弧：委屈不信 / 愧疚无力… */
@@ -1011,29 +1024,35 @@ export function hydrateWorkbenchShotsWithSegmentDialogue(
 ): ManhuaWorkbenchShot[] {
   const list = Array.isArray(shots) ? shots : [];
   const tagByName = opts?.speakerTagByNameZh || {};
-  const resolveSpeakerTag = (line: string, actionZh: string, fallback: string) => {
-    const fromAt = extractManhuaSpeakerAtTag(line, actionZh, fallback);
-    if (fromAt) return fromAt;
+  const resolveSpeakerTag = (
+    line: string,
+    actionZh: string,
+    fallback: string,
+    speakerNameZh?: string,
+  ) => {
+    const fromLineAt = extractManhuaSpeakerAtTag(line);
+    if (fromLineAt) return fromLineAt;
     const name =
-      line.match(/^([\u4e00-\u9fff·A-Za-z]{2,12})\s*[：:]\s*[「『"“]/)?.[1] ||
-      line.match(/^([\u4e00-\u9fff·A-Za-z]{2,12})\s*[「『"“]/)?.[1] ||
+      line.match(/^([\u4e00-\u9fff·A-Za-z]{1,12})\s*[：:]\s*[「『"“]/)?.[1] ||
+      line.match(/^([\u4e00-\u9fff·A-Za-z]{1,12})\s*[「『"“]/)?.[1] ||
       "";
-    const n = String(name || "").trim();
+    const n = String(speakerNameZh || name || "").trim();
     if (n && tagByName[n]) return tagByName[n];
     for (const [k, tag] of Object.entries(tagByName)) {
       if (k.length >= 2 && (line.includes(k) || actionZh.includes(k))) return tag;
     }
-    return "";
+    return extractManhuaSpeakerAtTag(actionZh, fallback);
   };
   const lines = (dialogueLines || [])
     .map((d) => String(d || "").trim())
-    .filter((d) => d.length >= 1)
-    .slice(0, 8);
+    .filter((d) => d.length >= 1);
   if (!list.length || !lines.length) return list;
   const perf = extractManhuaPerformanceCue(performanceZh || "");
-  let lineCursor = 0;
-  return list.map((s) => {
+  const hydrated = list.map((s, shotOffset) => {
     const fromAction = extractManhuaPerformanceCue(s.actionZh);
+    if (s.dialogueSuppressed) {
+      return { ...s, dialogueZh: undefined };
+    }
     const existing =
       String(s.dialogueZh || "").trim() || fromAction.dialogueZh;
     if (existing) {
@@ -1041,23 +1060,31 @@ export function hydrateWorkbenchShotsWithSegmentDialogue(
         existing,
         String(s.actionZh || ""),
         fromAction.speakerAtTag || "",
+        s.dialogueSpeakerNameZh,
       );
-      if (!speakerAtTag || /@角色\d+/.test(s.actionZh || "")) return s;
+      const dialogueZh = stripManhuaSpeakerAtPrefix(
+        existing.replace(/^([\u4e00-\u9fff·A-Za-z]{1,12})\s*[：:]\s*/, ""),
+      );
+      if (!speakerAtTag || /@角色\d+/.test(s.actionZh || "")) {
+        return { ...s, dialogueZh: dialogueZh || existing };
+      }
       return {
         ...s,
+        dialogueZh: dialogueZh || existing,
         actionZh: `${speakerAtTag} ${String(s.actionZh || "").trim()}`.trim(),
       };
     }
-    const line = lines[lineCursor] || lines[lines.length - 1];
+    // 可拍表对白按镜位顺序对应：第 N 句只补第 N 镜。若用户已覆盖本镜台词，
+    // 原可拍表的第 N 句必须让位，不能把它右移到下一镜重新出现。
+    const line = lines[shotOffset];
     if (!line) return s;
-    lineCursor += 1;
     const speakerAtTag = resolveSpeakerTag(
       line,
       String(s.actionZh || ""),
       fromAction.speakerAtTag || "",
     );
     const dialogueOnly = stripManhuaSpeakerAtPrefix(
-      line.replace(/^([\u4e00-\u9fff·A-Za-z]{2,12})\s*[：:]\s*/, ""),
+      line.replace(/^([\u4e00-\u9fff·A-Za-z]{1,12})\s*[：:]\s*/, ""),
     );
     return {
       ...s,
@@ -1079,6 +1106,36 @@ export function hydrateWorkbenchShotsWithSegmentDialogue(
         : s.actionZh,
     };
   });
+  const extraLines = lines.slice(list.length);
+  if (!extraLines.length) return hydrated;
+  const tailIndex = hydrated.length - 1;
+  const tail = hydrated[tailIndex]!;
+  const fromAction = extractManhuaPerformanceCue(tail.actionZh);
+  const additionalDialogueCues = extraLines.map((line) => {
+    const speakerAtTag = resolveSpeakerTag(
+      line,
+      String(tail.actionZh || ""),
+      fromAction.speakerAtTag || "",
+    );
+    const speakerNameZh = String(
+      line.match(/^([\u4e00-\u9fff·A-Za-z]{1,12})\s*[：:]\s*[「『"“]/)?.[1] || "",
+    ).trim();
+    const dialogueZh =
+      stripManhuaSpeakerAtPrefix(
+        line.replace(/^([\u4e00-\u9fff·A-Za-z]{1,12})\s*[：:]\s*/, ""),
+      ) || stripManhuaSpeakerAtPrefix(line);
+    return {
+      dialogueZh,
+      ...(speakerAtTag ? { speakerAtTag } : {}),
+      ...(speakerNameZh ? { speakerNameZh } : {}),
+    };
+  });
+  hydrated[tailIndex] = {
+    ...tail,
+    // 这些 cue 由同一份段对白派生；重编译时替换而不是再追加，避免重跑越叠越多。
+    additionalDialogueCues,
+  };
+  return hydrated;
 }
 
 /** 写入单镜成片 prompt（兼容旧「一镜一片」）；新路径用 formatWorkbenchSegmentClipInjectBlock */

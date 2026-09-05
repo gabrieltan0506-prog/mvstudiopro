@@ -5,6 +5,7 @@ import {
   manhuaClipQualityAllowsAssemble,
   MANHUA_CLIP_QUALITY_KEYS,
   parseManhuaClipQualityMarkdown,
+  resolveManhuaClipQualityDurationSec,
   resolveManhuaClipQualityEffectiveStatus,
 } from "./manhuaClipQuality";
 import { reviewManhuaClipQuality } from "../client/src/lib/manhuaClipQuality";
@@ -86,6 +87,17 @@ describe("manhuaClipQuality", () => {
     expect(prompt).toContain("DURATION_OK");
     expect(prompt).toContain("只评判本镜");
     expect(prompt).not.toContain("DURATION_10S=YES或NO");
+  });
+
+  it("30 秒片段质检保留真实目标时长，不再截成 12 秒", () => {
+    expect(resolveManhuaClipQualityDurationSec(30)).toBe(30);
+    const prompt = buildManhuaClipQualityPrompt({
+      expectedContext: "玄璃穿过长廊",
+      expectedDurationSec: 30,
+      shotIndex: 2,
+    });
+    expect(prompt).toContain("目标约 30 秒");
+    expect(prompt).not.toContain("目标约 12 秒");
   });
 
   it("detects quality infra failure separately from content fail", () => {

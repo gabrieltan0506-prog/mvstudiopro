@@ -31,6 +31,8 @@ import {
 } from "@/lib/canvasTypes";
 import { SEEDANCE_25_PAID_ONLY_LABEL_ZH } from "@shared/seedance25Access";
 import { normalizeSeedance25EvolinkMode } from "@shared/seedanceEvolinkModels";
+import { SEEDANCE_25_REFERENCE_MAX } from "@shared/seedanceOpenRouterModels";
+import { WAN30_REFERENCE_MAX } from "@shared/wanWavespeedModels";
 import {
   downgradeUnauthorizedSeedance25Blocks,
   filterCanvasVideoModelOptions,
@@ -136,6 +138,121 @@ import {
     id: buildQwenTtsVoiceId("plus", voice.suffix),
     label: `${voice.nameZh} · ${voice.gender} · ${voice.traitZh}`,
   }));
+
+/** 各引擎真实参考视频上限；UI 与出站编译器共用共享常量，避免显示配额漂移。 */
+export function resolveCanvasVideoReferencePickerLimit(videoModel: unknown): number | null {
+  const normalized = String(videoModel || "").trim();
+  if (normalized === "seedance-2.5") return SEEDANCE_25_REFERENCE_MAX.video;
+  if (normalized === "wan-3.0") return WAN30_REFERENCE_MAX.video;
+  return null;
+}
+
+/** 参考视频选择是显式、可逆操作；达到上限后不截旧值，用户仍可逐项取消。 */
+export function toggleCanvasVideoReferenceSelection(
+  currentUrls: readonly string[],
+  urlRaw: unknown,
+  max: number,
+): string[] {
+  const url = String(urlRaw || "").trim();
+  const current = Array.from(
+    new Set(
+      currentUrls
+        .map((item) => String(item || "").trim())
+        .filter((item) => /^https?:\/\//i.test(item)),
+    ),
+  );
+  if (!/^https?:\/\//i.test(url)) return current;
+  if (current.includes(url)) return current.filter((item) => item !== url);
+  if (current.length >= max) return current;
+  return [...current, url];
+}
+
+type CanvasWanVideoReferencePickerProps = {
+  uploadedAssets: readonly CanvasUploadedAsset[];
+  selectedUrls: readonly string[];
+  onChange: (urls: string[]) => void;
+};
+
+/** Wan 独立入口：不要求用户先切 Seedance 留下隐形选择。 */
+export function CanvasWanVideoReferencePicker({
+  uploadedAssets,
+  selectedUrls,
+  onChange,
+}: CanvasWanVideoReferencePickerProps) {
+  const max = WAN30_REFERENCE_MAX.video;
+  const selected = Array.from(
+    new Set(
+      selectedUrls
+        .map((url) => String(url || "").trim())
+        .filter((url) => /^https?:\/\//i.test(url)),
+    ),
+  );
+  const selectedSet = new Set(selected);
+  const videoAssets = uploadedAssets.filter(
+    (asset) =>
+      /^https?:\/\//i.test(String(asset.url || "").trim()) &&
+      (asset.kind === "video" ||
+        /\.(mp4|mov|webm|m4v)(\?|$)/i.test(asset.url || asset.fileName || "")),
+  );
+  const assetByUrl = new Map(videoAssets.map((asset) => [asset.url, asset]));
+  const optionUrls = Array.from(new Set([...selected, ...videoAssets.map((asset) => asset.url)]));
+
+  return (
+    <div
+      className="space-y-2 rounded-lg border border-cyan-300/20 bg-cyan-500/[0.05] px-2 py-2"
+      data-engine="wan-3.0"
+      data-max-video-refs={max}
+    >
+      <div className="flex items-center justify-between gap-2 text-[10px]">
+        <span className="font-semibold text-cyan-100/90">动作与镜头参考视频</span>
+        <span className={selected.length > max ? "text-amber-200" : "text-white/50"}>
+          已选 {selected.length}/{max}
+        </span>
+      </div>
+      <div className="text-[10px] leading-4 text-white/45">
+        从已上传视频中选择，按顺序绑定为参考视频 1–{max}；只继承明确需要的动作、节奏或镜头信息。
+      </div>
+      {selected.length > max ? (
+        <div className="rounded-md border border-amber-300/30 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-100">
+          当前保留了 {selected.length} 条旧选择，超过当前引擎上限；请取消到 {max} 条后再生成。
+        </div>
+      ) : null}
+      {optionUrls.length ? (
+        <div className="flex flex-wrap gap-1.5">
+          {optionUrls.map((url, index) => {
+            const asset = assetByUrl.get(url);
+            const on = selectedSet.has(url);
+            const disabled = !on && selected.length >= max;
+            return (
+              <button
+                key={url}
+                type="button"
+                disabled={disabled}
+                title={
+                  disabled
+                    ? `当前引擎最多选择 ${max} 条参考视频`
+                    : asset?.fileName || `已选视频 ${index + 1}`
+                }
+                onClick={() =>
+                  onChange(toggleCanvasVideoReferenceSelection(selected, url, max))
+                }
+                className={`max-w-[10rem] truncate rounded-md border px-2 py-1 text-[10px] disabled:cursor-not-allowed disabled:opacity-35 ${
+                  on
+                    ? "border-cyan-300/80 bg-cyan-500/15 text-cyan-50"
+                    : "border-white/15 text-white/70"
+                }`}
+              >
+                {asset?.fileName || `已选视频 ${index + 1}`}
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="text-[10px] text-white/35">尚无可用视频；请先从右侧上传 MP4 / MOV / WebM。</div>
+      )}
+    </div>
+  );
+}
 
 /** 左栏节点列表标题（学参考画布：可读名 + 类型，不泄供应商） */
 function freeformNodeListLabel(block: CanvasBlock): string {
@@ -2617,7 +2734,7 @@ export default function FreeformCanvas({
                                     : block.videoModel === "happyhorse-1.1"
                                       ? "Happy Horse 1.1：首帧图生，最长 15s；挂 2–9 张参考图自动切多图参考模式（提示词用 character1/character2 指代各图角色）"
                                       : block.videoModel === "wan-3.0"
-                                        ? "Wan 3.0：多图参考 + 参考音频，可直出 30s；排队时间较长，适合不赶时间的镜头"
+                                        ? "多图参考 + 参考音频，可直出约 30s；排队时间较长，适合不赶时间的镜头"
                                         : "Seedance 2.0 fast：多图参考 + 运镜/动作/对白，更快更省，最长约 15s"}
                           </div>
                           {/* 画质只对标准档开放：快速档定位是便宜快，H3 固定 2K，2.5 固定 720p */}
@@ -2885,6 +3002,8 @@ export default function FreeformCanvas({
                                 );
                                 const selectedV = new Set(block.seedance25RefVideoUrls || []);
                                 const selectedA = new Set(block.seedance25RefAudioUrls || []);
+                                const maxSeedanceVideoRefs =
+                                  resolveCanvasVideoReferencePickerLimit(block.videoModel) ?? 10;
                                 const toggle = (
                                   set: Set<string>,
                                   url: string,
@@ -2899,7 +3018,7 @@ export default function FreeformCanvas({
                                 return (
                                   <div className="space-y-1.5">
                                     <div className="text-[10px] text-white/45">
-                                      参考视频（最多 10）· 先上传 MP4 再勾选
+                                      参考视频（最多 {maxSeedanceVideoRefs}）· 先上传 MP4 再勾选
                                       {block.seedance25WorkMode === "video_edit" ||
                                       block.seedance25WorkMode === "video_extend"
                                         ? "——勾选的第 1 条是被编辑/延长的主片，其余作参考"
@@ -2908,7 +3027,7 @@ export default function FreeformCanvas({
                                     </div>
                                     {vids.length ? (
                                       <div className="flex flex-wrap gap-1.5">
-                                        {vids.slice(0, 10).map((a) => {
+                                        {vids.slice(0, maxSeedanceVideoRefs).map((a) => {
                                           const on = selectedV.has(a.url);
                                           return (
                                             <button
@@ -2919,7 +3038,7 @@ export default function FreeformCanvas({
                                                 toggle(
                                                   selectedV,
                                                   a.url,
-                                                  10,
+                                                  maxSeedanceVideoRefs,
                                                   "seedance25RefVideoUrls",
                                                 )
                                               }
@@ -3284,6 +3403,15 @@ export default function FreeformCanvas({
                                 </a>
                               ) : null}
                             </div>
+                          ) : null}
+                          {block.videoModel === "wan-3.0" ? (
+                            <CanvasWanVideoReferencePicker
+                              uploadedAssets={block.uploadedAssets || []}
+                              selectedUrls={block.seedance25RefVideoUrls || []}
+                              onChange={(urls) =>
+                                patchOne(block.id, { seedance25RefVideoUrls: urls })
+                              }
+                            />
                           ) : null}
                         </>
                       ) : null}
