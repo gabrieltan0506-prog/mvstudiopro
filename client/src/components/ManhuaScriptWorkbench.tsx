@@ -2,7 +2,7 @@
  * 剧本工作台：左=本集资产 · 中=一集剧本+按段静帧 · 右=预览 · 底=集/段时间线
  * 一集：5–6 段 × 每段 3–4 关键静帧；每段一条成片（Seedance ≤15s，按时长合计钳制）。
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
 import { isManhuaKeyartLookCurrent } from "@shared/manhuaKeyartLookState";
 import {
@@ -30,6 +30,7 @@ import {
   getBlockEpisodeIndex,
   MANHUA_FACTORY_STAGE_LABEL_ZH,
   queuedManhuaKeyartBlocks,
+  resolveShotsForEpisodeKeyarts,
   stageKeyFromBlockId,
 } from "@/lib/canvasDramaStudio";
 import {
@@ -690,6 +691,82 @@ export async function ingestManhuaDirectorBoardFileWithFeedback(input: {
   }
 }
 
+export type ManhuaMotionPanelState =
+  | "missing-base"
+  | "invalid-base"
+  | "measuring-base"
+  | "missing-direction"
+  | "needs-review"
+  | "needs-review-readonly"
+  | "confirmed";
+
+/** 轨迹板状态必须按实际底图、测量、方向与确认权限逐级判定，禁止把待确认误报成已接入。 */
+export function resolveManhuaMotionPanelStatus(input: {
+  hasBase: boolean;
+  measureFailed: boolean;
+  geometryReady: boolean;
+  overlay: Pick<ManhuaBoardMotionOverlay, "needsReview"> | null | undefined;
+  canChange: boolean;
+}): { state: ManhuaMotionPanelState; labelZh: string } {
+  if (!input.hasBase) return { state: "missing-base", labelZh: "缺少本段底图" };
+  if (input.measureFailed) return { state: "invalid-base", labelZh: "底图读取失败" };
+  if (!input.geometryReady) return { state: "measuring-base", labelZh: "正在核对底图尺寸" };
+  if (!input.overlay) return { state: "missing-direction", labelZh: "本段暂无明确轨迹" };
+  if (input.overlay.needsReview) {
+    return input.canChange
+      ? { state: "needs-review", labelZh: "待确认" }
+      : { state: "needs-review-readonly", labelZh: "待确认 · 当前只读" };
+  }
+  return { state: "confirmed", labelZh: "已确认 · 接入成片调度" };
+}
+
+/** 左栏入口直接带用户到现有矢量轨迹板；中栏仍保留文字运镜配方。 */
+export function ManhuaMotionEntryButton({
+  panelRef,
+  onOpenPathTab,
+  pathTrackLabelZh,
+  narrativeLightingLabelZh,
+}: {
+  panelRef: { current: HTMLElement | null };
+  onOpenPathTab: () => void;
+  pathTrackLabelZh?: string;
+  narrativeLightingLabelZh?: string;
+}) {
+  const focusMotionPanel = () => {
+    onOpenPathTab();
+    const panel = panelRef.current;
+    if (!panel) return;
+    panel.scrollIntoView({ behavior: "instant", block: "center", inline: "nearest" });
+    panel.focus({ preventScroll: true });
+  };
+  return (
+    <button
+      type="button"
+      data-manhua-open-path-tab
+      onClick={focusMotionPanel}
+      className="mt-3 w-full rounded-xl border border-cyan-400/25 bg-cyan-500/[0.08] px-2.5 py-2 text-left text-[10px] leading-relaxed text-white/65 hover:border-cyan-300/40 hover:bg-cyan-500/[0.12]"
+    >
+      <div className="mb-1 text-[10px] font-semibold text-cyan-100/90">
+        人物动作与运镜
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        <span className="rounded-md border border-sky-400/35 bg-sky-500/20 px-1.5 py-0.5 text-sky-50">
+          青色虚线 · 摄影机
+        </span>
+        <span className="rounded-md border border-rose-400/35 bg-rose-500/20 px-1.5 py-0.5 text-rose-50">
+          红色实线 · 人物／道具
+        </span>
+      </div>
+      <div className="mt-1.5 text-white/55">
+        {pathTrackLabelZh || "点击到右侧校准轨迹；中栏运镜用于文字配方"}
+      </div>
+      <div className="mt-0.5 text-white/45">
+        灯光：{narrativeLightingLabelZh || "未选"}
+      </div>
+    </button>
+  );
+}
+
 /** 3D 是人物卡的可选辅助层；非人物资产不展示无关的资格原因。 */
 export function shouldShowManhuaAsset3dRow(input: {
   role: unknown;
@@ -997,6 +1074,7 @@ export default function ManhuaScriptWorkbench({
     });
   };
   const [downloadBusy, setDownloadBusy] = useState(false);
+  const directorOverlayPanelRef = useRef<HTMLElement>(null);
   /** 默认药丸视图；按段记「谁被切到了原文编辑」 */
   const [rawPromptSegments, setRawPromptSegments] = useState<Set<number>>(
     () => new Set(),
@@ -1074,49 +1152,11 @@ export default function ManhuaScriptWorkbench({
   ).values()), [episodeClips, legacyClip]);
   const story = blockByStage(blocks, focusEpisode, "story");
 
-  const shots: ManhuaWorkbenchShot[] = useMemo(() => {
-    const reverseText = reverse?.outputText || reverse?.prompt || "";
-    const beatsText = beats?.outputText || beats?.prompt || "";
-    const storyText = story?.outputText || story?.prompt || "";
-    // 方案 C：五至六段可拍表优先编译为每段 3 静帧（起幅/戏核/落幅）
-    const plan = [beatsText, reverseText, storyText]
-      .map((text) => parseManhuaEpisodeSegmentPlanFromMarkdown(text))
-      .find((candidate) => candidate.segments.length > 0) ||
-      parseManhuaEpisodeSegmentPlanFromMarkdown("");
-    const fromPlan = buildWorkbenchShotsFromSegmentPlan(plan);
-    const segMin = manhuaSegmentCountBounds(
-      String(videoModel || "").trim() ||
-        episodeClips[0]?.videoModel ||
-        legacyClip?.videoModel ||
-        MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
-    ).min;
-    let list: ManhuaWorkbenchShot[];
-    if (fromPlan.length >= segMin * MANHUA_KEYARTS_PER_SEGMENT_MIN) {
-      list = fromPlan as ManhuaWorkbenchShot[];
-    } else if (beatsText.trim()) {
-      list = parseWorkbenchShotsFromText(beatsText);
-    } else if (reverseText.trim()) {
-      list = parseWorkbenchShotsFromText(reverseText);
-    } else {
-      list = fromPlan.length
-        ? (fromPlan as ManhuaWorkbenchShot[])
-        : parseWorkbenchShotsFromText(storyText);
-    }
-    // 工作台改过的「分镜台词」表优先写回（成片用）
-    list = applyShotDialoguesFromText(list, reverseText);
-    list = applyShotDialoguesFromText(list, beatsText);
-    return list;
-  }, [
-    beats?.outputText,
-    beats?.prompt,
-    reverse?.outputText,
-    reverse?.prompt,
-    story?.outputText,
-    story?.prompt,
-    episodeClips,
-    legacyClip?.videoModel,
-    videoModel,
-  ]);
+  // 与静帧展开、成片编排共用真实来源，不能拿待运行模板生成另一套界面骨架。
+  const shots: ManhuaWorkbenchShot[] = useMemo(
+    () => resolveShotsForEpisodeKeyarts(blocks, focusEpisode),
+    [blocks, focusEpisode],
+  );
 
   const episodeVideoModel =
     String(videoModel || "").trim() ||
@@ -1165,7 +1205,6 @@ export default function ManhuaScriptWorkbench({
         // 而工厂那边对它们不钉段，界面段数与实收段数会再次脱节
         videoModel: episodeVideoModel,
         segmentCount: pinnedManhuaSegmentCount(episodeVideoModel),
-        padToDefaultEpisode: true,
       }),
     [shots, episodeVideoModel],
   );
@@ -1632,6 +1671,13 @@ export default function ManhuaScriptWorkbench({
     segments,
     shootablePlan.segments,
   ]);
+  const activeMotionPanelStatus = resolveManhuaMotionPanelStatus({
+    hasBase: Boolean(activeBoardBaseUrl),
+    measureFailed: activeBoardImageMeasureFailed,
+    geometryReady: Boolean(activeBoardImageGeometry),
+    overlay: activeDirectorBoardMotionOverlay,
+    canChange: Boolean(onDirectorBoardMotionOverlayChange),
+  });
 
   /** 切镜 / 成片：分镜有静帧时画布常开（阿硕 C2）；否则未出片展开、已出片收起 */
   useEffect(() => {
@@ -6998,26 +7044,12 @@ export default function ManhuaScriptWorkbench({
           </>
           )}
 
-          <button
-            type="button"
-            data-manhua-open-path-tab
-            onClick={() => setScriptTab("path")}
-            className="mt-3 w-full rounded-xl border border-cyan-400/25 bg-cyan-500/[0.08] px-2.5 py-2 text-left text-[10px] leading-relaxed text-white/65 hover:border-cyan-300/40 hover:bg-cyan-500/[0.12]"
-          >
-            <div className="mb-1 text-[10px] font-semibold text-cyan-100/90">运镜 · 点此画轨</div>
-            <div className="flex flex-wrap gap-1.5">
-              <span className="rounded-md border border-sky-400/35 bg-sky-500/20 px-1.5 py-0.5 text-sky-50">
-                蓝线·镜头
-              </span>
-              <span className="rounded-md border border-rose-400/35 bg-rose-500/20 px-1.5 py-0.5 text-rose-50">
-                红线·人物
-              </span>
-            </div>
-            <div className="mt-1.5 text-white/55">{pathTrackLabelZh || "尚未画轨 · 中栏「运镜」可画"}</div>
-            <div className="mt-0.5 text-white/45">
-              灯光：{narrativeLightingLabelZh || "未选"}
-            </div>
-          </button>
+          <ManhuaMotionEntryButton
+            panelRef={directorOverlayPanelRef}
+            onOpenPathTab={() => setScriptTab("path")}
+            pathTrackLabelZh={pathTrackLabelZh}
+            narrativeLightingLabelZh={narrativeLightingLabelZh}
+          />
         </aside>
 
         {/* 中：分镜图卡（阿硕 C2：图为主、文为辅；右栏才是主预览） */}
@@ -7921,19 +7953,11 @@ export default function ManhuaScriptWorkbench({
             </div>
           </div>
           <section
+            ref={directorOverlayPanelRef}
+            tabIndex={-1}
             data-manhua-director-overlay-panel
-            data-state={
-              !activeBoardBaseUrl
-                ? "missing-base"
-                : activeBoardImageMeasureFailed
-                  ? "invalid-base"
-                  : !activeBoardImageGeometry
-                    ? "measuring-base"
-                    : activeDirectorBoardMotionOverlay
-                      ? "ready"
-                      : "missing-direction"
-            }
-            className="mb-2 shrink-0 overflow-hidden rounded-lg border border-cyan-300/20 bg-[#07121a]"
+            data-state={activeMotionPanelStatus.state}
+            className="mb-2 shrink-0 overflow-hidden rounded-lg border border-cyan-300/20 bg-[#07121a] outline-none focus-visible:border-cyan-200/70 focus-visible:ring-2 focus-visible:ring-cyan-300/35"
           >
             <div className="flex items-center justify-between gap-2 border-b border-white/10 px-2 py-1.5">
               <div>
@@ -7944,7 +7968,8 @@ export default function ManhuaScriptWorkbench({
                   红线是人物／道具路线，青色虚线是摄影机路线；轨迹与底图分开保存
                 </div>
               </div>
-              {activeDirectorBoardMotionOverlay?.needsReview &&
+              {activeMotionPanelStatus.state === "needs-review" &&
+              activeDirectorBoardMotionOverlay &&
               onDirectorBoardMotionOverlayChange ? (
                 <button
                   type="button"
@@ -7959,11 +7984,23 @@ export default function ManhuaScriptWorkbench({
                   }}
                   className="rounded-md border border-emerald-300/35 bg-emerald-500/12 px-2 py-1 text-[9px] font-semibold text-emerald-50 hover:bg-emerald-500/20"
                 >
-                  确认轨迹
+                  待确认 · 确认轨迹
                 </button>
-              ) : activeDirectorBoardMotionOverlay ? (
-                <span className="text-[9px] text-emerald-200/75">已接入成片调度</span>
-              ) : null}
+              ) : (
+                <span
+                  data-manhua-motion-status={activeMotionPanelStatus.state}
+                  className={`text-[9px] ${
+                    activeMotionPanelStatus.state === "confirmed"
+                      ? "text-emerald-200/75"
+                      : activeMotionPanelStatus.state === "invalid-base" ||
+                          activeMotionPanelStatus.state === "needs-review-readonly"
+                        ? "text-amber-200/80"
+                        : "text-white/45"
+                  }`}
+                >
+                  {activeMotionPanelStatus.labelZh}
+                </span>
+              )}
             </div>
             {activeBoardBaseUrl ? (
               <div className="flex w-full justify-center overflow-hidden bg-black">

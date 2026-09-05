@@ -3,6 +3,7 @@
  * 目标：阿硕级「脚本进、成片出」分步编排核（按阶段跑；不引导一键全自动）。
  */
 
+import { buildWorkbenchShotsFromSegmentPlan } from "@shared/manhuaStoryDistill";
 import {
   collectDocumentAssets,
   collectUpstreamTexts,
@@ -1744,7 +1745,8 @@ export function countExpectedManhuaKeyartShots(
   ).length;
 }
 
-function resolveShotsForEpisodeKeyarts(
+/** 工作台、静帧和成片共同读取的分镜真源；模板不能覆盖已返回的结构正文。 */
+export function resolveShotsForEpisodeKeyarts(
   blocks: CanvasBlock[],
   episodeIndex: number | null | undefined,
 ): ManhuaWorkbenchShot[] {
@@ -1755,8 +1757,10 @@ function resolveShotsForEpisodeKeyarts(
   };
   const reverse = blocks.find((b) => b.id.startsWith("reverse-") && sameEpisode(b));
   const beats = blocks.find((b) => b.id.startsWith("beats-") && sameEpisode(b));
+  const story = blocks.find((b) => b.id.startsWith("story-") && sameEpisode(b));
   const reverseText = reverse?.outputText || reverse?.prompt || "";
   const beatsText = beats?.outputText || beats?.prompt || "";
+  const storyText = story?.outputText || story?.prompt || "";
   const hasExplicitShots = (text: string) => {
     if (parseManhuaEpisodeSegmentPlanFromMarkdown(text).segments.length > 0) return true;
     const numberedRows = String(text || "").match(
@@ -1768,10 +1772,17 @@ function resolveShotsForEpisodeKeyarts(
   const shotSource = [
     String(beats?.outputText || "").trim(),
     String(reverse?.outputText || "").trim(),
+    String(story?.outputText || "").trim(),
     beatsText,
     reverseText,
+    storyText,
   ].find((text) => text && hasExplicitShots(text));
-  const shots = parseWorkbenchShotsFromText(shotSource || reverseText || beatsText);
+  // 三类节点遵循同一成稿优先顺序；旧段表必须先编译，不能误落逐镜解析骨架。
+  const selectedText = shotSource || reverseText || beatsText || storyText;
+  const selectedPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(selectedText);
+  const shots = selectedPlan.segments.length
+    ? buildWorkbenchShotsFromSegmentPlan(selectedPlan)
+    : parseWorkbenchShotsFromText(selectedText);
   const withAngles = applyShotAnglesFromText(shots, `${reverseText}\n${beatsText}`);
   // 工作台的「成片台词」会把覆盖表同时写回 reverse / beats。这里是静帧与段成片
   // 共用的真实分镜生产者，必须在分段、说话人绑定和提示词编译之前消费覆盖表。
