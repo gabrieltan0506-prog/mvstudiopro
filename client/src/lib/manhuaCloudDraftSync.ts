@@ -5,7 +5,6 @@
 
 import {
   buildManhuaCloudDraftPayload,
-  isManhuaCloudDraftFinalVideoBlock,
   isManhuaCloudDraftNewer,
   isManhuaCloudDraftVideoBlock,
   manhuaCloudDraftPayloadSizeOk,
@@ -15,7 +14,8 @@ import {
 import {
   buildManhuaWriterSession,
   loadManhuaWriterSessionFromStorage,
-  saveManhuaWriterSessionToStorage,
+  MANHUA_WRITER_SESSION_LS_KEY,
+  serializeManhuaWriterSession,
   type ManhuaWriterSession,
   type ManhuaWriterSessionPartial,
 } from "@shared/manhuaWriterSession";
@@ -35,7 +35,8 @@ import {
   scheduleCacheCanvasMediaToLocalStore,
 } from "@/lib/manhuaLocalMediaStore";
 
-export const MANHUA_CLOUD_DRAFT_LOCAL_AT_KEY = "mv-manhua-cloud-draft-local-at-v1";
+export const MANHUA_CLOUD_DRAFT_LOCAL_AT_KEY =
+  "mv-manhua-cloud-draft-local-at-v1";
 export const MANHUA_CLOUD_DRAFT_SYNC_DEBOUNCE_MS = 2500;
 
 const CANVAS_LS_KEY = "mv-freeform-canvas-v1";
@@ -59,7 +60,7 @@ export type ManhuaLocalPersistResult = {
 };
 
 export function tryLoadLocalClientUpdatedAt(
-  storage: Pick<Storage, "getItem"> = localStorage,
+  storage: Pick<Storage, "getItem"> = localStorage
 ): string | null {
   try {
     const raw = storage.getItem(MANHUA_CLOUD_DRAFT_LOCAL_AT_KEY);
@@ -73,7 +74,7 @@ export function tryLoadLocalClientUpdatedAt(
 
 export function trySaveLocalClientUpdatedAt(
   iso: string,
-  storage: Pick<Storage, "setItem"> = localStorage,
+  storage: Pick<Storage, "setItem"> = localStorage
 ): boolean {
   try {
     storage.setItem(MANHUA_CLOUD_DRAFT_LOCAL_AT_KEY, iso);
@@ -84,14 +85,19 @@ export function trySaveLocalClientUpdatedAt(
 }
 
 export function tryLoadLocalCanvas(
-  storage: Pick<Storage, "getItem"> = localStorage,
+  storage: Pick<Storage, "getItem"> = localStorage
 ): { blocks: CanvasBlock[]; edges: CanvasEdge[] } | null {
   try {
     const raw = storage.getItem(CANVAS_LS_KEY);
     if (!raw) return { blocks: [], edges: [] };
-    const parsed = JSON.parse(raw) as { blocks?: CanvasBlock[]; edges?: CanvasEdge[] };
+    const parsed = JSON.parse(raw) as {
+      blocks?: CanvasBlock[];
+      edges?: CanvasEdge[];
+    };
     return {
-      blocks: (parsed.blocks || []).map((b) => normalizeCanvasBlock(b as CanvasBlock)),
+      blocks: (parsed.blocks || []).map(b =>
+        normalizeCanvasBlock(b as CanvasBlock)
+      ),
       edges: parsed.edges || [],
     };
   } catch {
@@ -124,58 +130,52 @@ function persistableLocalUrl(u: unknown): string | undefined {
   return undefined;
 }
 
-/** 本机保存当前及明确归档的整集版本；归档规则不用于扩大云同步范围。 */
-function isLocalFinalVideoBlock(block: CanvasBlock): boolean {
-  return isManhuaCloudDraftFinalVideoBlock(block) || (
-    block.kind === "video" && block.archivedFromPreviousScript === true &&
-    /^final-e\d+-archived(?:-\d+)?$/i.test(block.id)
-  );
-}
-
-/** 本机落盘瘦身：整集版本保留，其余视频按旧规则；已缓存图改为本机指针。 */
-export function slimBlocksForLocalPersist(blocks: CanvasBlock[]): CanvasBlock[] {
+/** 本机落盘：全部视频只存已有远端引用；图片仍使用既有本机媒体指针。 */
+export function slimBlocksForLocalPersist(
+  blocks: CanvasBlock[]
+): CanvasBlock[] {
   const pointed = applyLocalMediaPointersToBlocks(blocks);
-  return pointed.map((b) => {
-    if (isLocalFinalVideoBlock(b)) {
+  return pointed.map(b => {
+    if (isManhuaCloudDraftVideoBlock(b)) {
       const outputUrls = (b.outputUrls || [])
-        .map((u) => persistableLocalUrl(u))
+        .map(u => resolveUrlForCloudSync(u))
+        .filter(u => isHttpUrl(u))
         .filter((u): u is string => Boolean(u));
-      const outputUrl = persistableLocalUrl(b.outputUrl) || outputUrls[0];
+      const selected = resolveUrlForCloudSync(b.outputUrl);
+      const outputUrl = isHttpUrl(selected) ? selected : undefined;
       return {
         ...b,
         outputUrl,
         outputUrls:
-          outputUrl && !outputUrls.includes(outputUrl) ? [outputUrl, ...outputUrls] : outputUrls,
-        uploadedAssets: [],
-        uploadFailures: undefined,
-        status: outputUrl ? "done" : b.status,
-      };
-    }
-    if (isManhuaCloudDraftVideoBlock(b)) {
-      return {
-        ...b,
-        outputUrl: undefined,
-        outputUrls: [],
-        refVideoUrl: undefined,
-        status: b.status === "done" ? "idle" : b.status,
-        error: undefined,
+          outputUrl && !outputUrls.includes(outputUrl)
+            ? [outputUrl, ...outputUrls]
+            : outputUrls,
+        // 上传参考仍是原视频输入的一部分，不能因补保存输出而清掉。
+        refVideoUrl: resolveUrlForCloudSync(b.refVideoUrl),
+        seedance25RefVideoUrls: (b.seedance25RefVideoUrls || [])
+          .map(resolveUrlForCloudSync)
+          .filter((u): u is string => Boolean(u)),
+        status: b.status === "done" && !outputUrl ? "idle" : b.status,
       };
     }
     const outputUrls = (b.outputUrls || [])
-      .map((u) => persistableLocalUrl(u))
+      .map(u => persistableLocalUrl(u))
       .filter((u): u is string => Boolean(u))
       .slice(0, 8);
     const outputUrl = persistableLocalUrl(b.outputUrl) || outputUrls[0];
     return {
       ...b,
       outputUrl,
-      outputUrls: outputUrl && !outputUrls.includes(outputUrl) ? [outputUrl, ...outputUrls] : outputUrls,
+      outputUrls:
+        outputUrl && !outputUrls.includes(outputUrl)
+          ? [outputUrl, ...outputUrls]
+          : outputUrls,
       refImageUrl: persistableLocalUrl(b.refImageUrl),
       uploadedAssets: [],
       uploadFailures: undefined,
       editMaskUrl: persistableLocalUrl(b.editMaskUrl),
       editFusionUrls: (b.editFusionUrls || [])
-        .map((u) => persistableLocalUrl(u))
+        .map(u => persistableLocalUrl(u))
         .filter((u): u is string => Boolean(u))
         .slice(0, 15),
       lastFrameUrl: persistableLocalUrl(b.lastFrameUrl),
@@ -183,7 +183,6 @@ export function slimBlocksForLocalPersist(blocks: CanvasBlock[]): CanvasBlock[] 
     };
   });
 }
-
 
 /**
  * GCS 签名链 → 站内永久链(/api/canvas-media/…,请求时现签现跳)。
@@ -193,7 +192,7 @@ export function slimBlocksForLocalPersist(blocks: CanvasBlock[]): CanvasBlock[] 
 export function toStableCanvasMediaUrl(u: unknown): string {
   const raw = String(u || "").trim();
   const m = raw.match(
-    /^https:\/\/storage\.googleapis\.com\/[^/]+\/(generated\/[^?]+\.(?:png|jpe?g|webp))(?:\?|$)/i,
+    /^https:\/\/storage\.googleapis\.com\/[^/]+\/(generated\/[^?]+\.(?:png|jpe?g|webp))(?:\?|$)/i
   );
   if (!m) return raw;
   return `/api/canvas-media/${m[1].split("/").map(encodeURIComponent).join("/")}`;
@@ -220,42 +219,52 @@ function localFirstThenCloud(u: unknown): string | undefined {
 
 /** 云同步前：blob:/local-media: → 溯源 https（有则带上；无则留给本机库）;GCS 签名链一律换永久链 */
 export function blocksForCloudDraftSync(blocks: CanvasBlock[]): CanvasBlock[] {
-  return blocks.map((b) => {
-    if (isManhuaCloudDraftFinalVideoBlock(b)) {
+  return blocks.map(b => {
+    if (isManhuaCloudDraftVideoBlock(b)) {
       const outputUrls = (b.outputUrls || [])
-        .map((u) => stableOrUndefined(resolveUrlForCloudSync(u)))
+        .map(u => stableOrUndefined(resolveUrlForCloudSync(u)))
         .filter((u): u is string => Boolean(u));
-      const outputUrl = stableOrUndefined(resolveUrlForCloudSync(b.outputUrl)) || outputUrls[0];
+      const outputUrl = stableOrUndefined(resolveUrlForCloudSync(b.outputUrl));
       return {
         ...b,
         outputUrl,
         outputUrls:
-          outputUrl && !outputUrls.includes(outputUrl) ? [outputUrl, ...outputUrls] : outputUrls,
+          outputUrl && !outputUrls.includes(outputUrl)
+            ? [outputUrl, ...outputUrls]
+            : outputUrls,
         uploadedAssets: [],
         uploadFailures: undefined,
-        status: outputUrl ? "done" : b.status,
-      };
-    }
-    if (isManhuaCloudDraftVideoBlock(b)) {
-      return {
-        ...b,
-        outputUrl: undefined,
-        outputUrls: [],
+        status: b.status === "done" && !outputUrl ? "idle" : b.status,
+        refVideoUrl: stableOrUndefined(resolveUrlForCloudSync(b.refVideoUrl)),
+        seedance25RefVideoUrls: (b.seedance25RefVideoUrls || [])
+          .map(u => stableOrUndefined(resolveUrlForCloudSync(u)))
+          .filter((u): u is string => Boolean(u)),
+        seedance25RefAudioUrls: (b.seedance25RefAudioUrls || [])
+          .map(u => stableOrUndefined(resolveUrlForCloudSync(u)))
+          .filter((u): u is string => Boolean(u)),
         refImageUrl: stableOrUndefined(resolveUrlForCloudSync(b.refImageUrl)),
+        editFusionUrls: (b.editFusionUrls || [])
+          .map(u => stableOrUndefined(resolveUrlForCloudSync(u)))
+          .filter((u): u is string => Boolean(u)),
+        lastFrameUrl: stableOrUndefined(resolveUrlForCloudSync(b.lastFrameUrl)),
       };
     }
     const outputUrls = (b.outputUrls || [])
-      .map((u) => stableOrUndefined(resolveUrlForCloudSync(u)))
+      .map(u => stableOrUndefined(resolveUrlForCloudSync(u)))
       .filter((u): u is string => Boolean(u))
       .slice(0, 8);
-    const outputUrl = stableOrUndefined(resolveUrlForCloudSync(b.outputUrl)) || outputUrls[0];
+    const outputUrl =
+      stableOrUndefined(resolveUrlForCloudSync(b.outputUrl)) || outputUrls[0];
     return {
       ...b,
       outputUrl,
-      outputUrls: outputUrl && !outputUrls.includes(outputUrl) ? [outputUrl, ...outputUrls] : outputUrls,
+      outputUrls:
+        outputUrl && !outputUrls.includes(outputUrl)
+          ? [outputUrl, ...outputUrls]
+          : outputUrls,
       refImageUrl: stableOrUndefined(resolveUrlForCloudSync(b.refImageUrl)),
       editFusionUrls: (b.editFusionUrls || [])
-        .map((u) => stableOrUndefined(resolveUrlForCloudSync(u)))
+        .map(u => stableOrUndefined(resolveUrlForCloudSync(u)))
         .filter((u): u is string => Boolean(u))
         .slice(0, 15),
       editMaskUrl: stableOrUndefined(resolveUrlForCloudSync(b.editMaskUrl)),
@@ -267,7 +276,7 @@ export function blocksForCloudDraftSync(blocks: CanvasBlock[]): CanvasBlock[] {
 export function trySaveLocalCanvas(
   blocks: CanvasBlock[],
   edges: CanvasEdge[],
-  storage: Pick<Storage, "setItem"> = localStorage,
+  storage: Pick<Storage, "setItem"> = localStorage
 ): boolean {
   // 旁路：尽快把仍有效的远端图写入本机媒体库（下次落盘可改写为指针）
   scheduleCacheCanvasMediaToLocalStore(blocks);
@@ -276,17 +285,17 @@ export function trySaveLocalCanvas(
     storage.setItem(CANVAS_LS_KEY, JSON.stringify({ blocks: slim, edges }));
     return true;
   } catch {
-    // 配额仍满：可裁长文本，但 final 已登记版本不能被降级写成空壳。
+    // 配额仍满：可裁长文本，但付费视频引用和质检不能被降级写成空壳。
     try {
-      const shell = slim.map((b) => {
+      const shell = slim.map(b => {
         const isKeyart = String(b.id || "").startsWith("keyart-");
-        const isFinalVideo = isLocalFinalVideoBlock(b);
-        if (isKeyart || isFinalVideo) {
+        const isVideo = isManhuaCloudDraftVideoBlock(b);
+        if (isKeyart || isVideo) {
           return {
             ...b,
             outputText: undefined,
             uploadedAssets: [],
-            // 保留关键静帧以及整集成片全部版本；若仍超额，下层 catch 明确返回 false。
+            // 保留关键静帧及全部视频版本；若仍超额，下层 catch 明确返回 false。
           };
         }
         return {
@@ -296,7 +305,9 @@ export function trySaveLocalCanvas(
           refImageUrl: undefined,
           editFusionUrls: [] as string[],
           outputText:
-            b.kind === "text" || b.kind === "copy_organize" || b.kind === "video_reverse"
+            b.kind === "text" ||
+            b.kind === "copy_organize" ||
+            b.kind === "video_reverse"
               ? String(b.outputText || "").slice(0, 4_000) || undefined
               : undefined,
         };
@@ -310,13 +321,15 @@ export function trySaveLocalCanvas(
 }
 
 export function tryLoadLocalFactoryPrefs(
-  storage: Pick<Storage, "getItem"> = localStorage,
+  storage: Pick<Storage, "getItem"> = localStorage
 ): Record<string, unknown> | null {
   try {
     const raw = storage.getItem(FACTORY_PREFS_LS_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+    return parsed && typeof parsed === "object"
+      ? (parsed as Record<string, unknown>)
+      : {};
   } catch {
     return null;
   }
@@ -324,7 +337,7 @@ export function tryLoadLocalFactoryPrefs(
 
 export function trySaveLocalFactoryPrefs(
   prefs: Record<string, unknown>,
-  storage: Pick<Storage, "setItem"> = localStorage,
+  storage: Pick<Storage, "setItem"> = localStorage
 ): boolean {
   try {
     storage.setItem(FACTORY_PREFS_LS_KEY, JSON.stringify(prefs));
@@ -345,15 +358,27 @@ export function persistManhuaDraftLocally(input: {
   const clientUpdatedAt = input.clientUpdatedAt || new Date().toISOString();
   let writerOk = false;
   try {
-    saveManhuaWriterSessionToStorage(input.writerSession);
+    // 使用同一序列化契约，但此处必须接收写入错误；旧便捷函数会吞掉配额异常。
+    localStorage.setItem(
+      MANHUA_WRITER_SESSION_LS_KEY,
+      serializeManhuaWriterSession(
+        buildManhuaWriterSession(input.writerSession)
+      )
+    );
     writerOk = true;
   } catch {
     writerOk = false;
   }
   const canvasOk = trySaveLocalCanvas(input.blocks, input.edges);
   const prefsOk =
-    input.factoryPrefs == null ? true : trySaveLocalFactoryPrefs(input.factoryPrefs);
-  const atOk = trySaveLocalClientUpdatedAt(clientUpdatedAt);
+    input.factoryPrefs == null
+      ? true
+      : trySaveLocalFactoryPrefs(input.factoryPrefs);
+  // 部分保存失败不能推进整份草稿修订时间，否则旧画布会冒充比云端更新。
+  const atOk =
+    writerOk && canvasOk && prefsOk
+      ? trySaveLocalClientUpdatedAt(clientUpdatedAt)
+      : false;
   return {
     writerOk,
     canvasOk,
@@ -362,6 +387,25 @@ export function persistManhuaDraftLocally(input: {
     anyLocalOk: writerOk || canvasOk || prefsOk || atOk,
     clientUpdatedAt,
   };
+}
+
+/** 缓存晚回只替换仍是原对象的节点；同 ID 的新片、改稿或换项目绝不覆盖。 */
+export function mergeHydratedCanvasBlocks(
+  current: CanvasBlock[],
+  snapshot: CanvasBlock[],
+  hydrated: CanvasBlock[]
+): CanvasBlock[] {
+  const before = new Map(snapshot.map(b => [b.id, b]));
+  const after = new Map(hydrated.map(b => [b.id, b]));
+  let changed = false;
+  const next = current.map(b => {
+    if (before.get(b.id) !== b) return b;
+    const restored = after.get(b.id);
+    if (!restored || restored === b) return b;
+    changed = true;
+    return restored;
+  });
+  return changed ? next : current;
 }
 
 /** 默认档改 mini 之前的旧云草稿兜底档 */
@@ -380,17 +424,19 @@ const LEGACY_CLOUD_DRAFT_VIDEO_MODEL = "seedance-2.0-fast";
  */
 export function cloudDraftBlocksToCanvas(
   blocks: ManhuaCloudDraftPayload["canvas"]["blocks"],
-  opts?: { videoModel?: string | null },
+  opts?: { videoModel?: string | null }
 ): CanvasBlock[] {
   const sessionVideoModel = String(opts?.videoModel || "").trim();
-  const anyBlockStamped = blocks.some((b) => String(b.videoModel || "").trim());
+  const anyBlockStamped = blocks.some(b => String(b.videoModel || "").trim());
   const fallbackVideoModel: CanvasBlock["videoModel"] = sessionVideoModel
     ? normalizeCanvasVideoModel(sessionVideoModel)
     : anyBlockStamped
       ? MANHUA_FACTORY_DEFAULT_VIDEO_MODEL
       : normalizeCanvasVideoModel(LEGACY_CLOUD_DRAFT_VIDEO_MODEL);
-  return blocks.map((raw) => {
-    const kind = (KIND_OK.has(raw.kind as CanvasBlockKind) ? raw.kind : "text") as CanvasBlockKind;
+  return blocks.map(raw => {
+    const kind = (
+      KIND_OK.has(raw.kind as CanvasBlockKind) ? raw.kind : "text"
+    ) as CanvasBlockKind;
     const base = {
       id: raw.id,
       kind,
@@ -404,13 +450,14 @@ export function cloudDraftBlocksToCanvas(
       episodeTitle: raw.episodeTitle,
       status: (raw.status as CanvasBlock["status"]) || "idle",
       outputText: raw.outputText,
+      error: raw.error,
       outputUrl: localFirstThenCloud(raw.outputUrl),
       outputUrls: (raw.outputUrls || [])
-        .map((u) => localFirstThenCloud(u))
+        .map(u => localFirstThenCloud(u))
         .filter((u): u is string => Boolean(u)),
       refImageUrl: localFirstThenCloud(raw.refImageUrl),
       editFusionUrls: (raw.editFusionUrls || [])
-        .map((u) => localFirstThenCloud(u))
+        .map(u => localFirstThenCloud(u))
         .filter((u): u is string => Boolean(u)),
       imageMode: raw.imageMode === "edit" ? "edit" : "generate",
       aspectRatio: raw.aspectRatio === "16:9" ? "16:9" : "9:16",
@@ -418,11 +465,28 @@ export function cloudDraftBlocksToCanvas(
       // 长排队任务字段随云草稿往返:换机/刷新也能接管轮询(审查 P1)
       videoTaskId: (raw as { videoTaskId?: string }).videoTaskId,
       videoTaskEngine: (raw as { videoTaskEngine?: string }).videoTaskEngine,
-      videoTaskStatus: (raw as { videoTaskStatus?: CanvasBlock["videoTaskStatus"] }).videoTaskStatus,
-      manhuaEditTrim: (raw as { manhuaEditTrim?: CanvasBlock["manhuaEditTrim"] }).manhuaEditTrim,
+      videoTaskStatus: (
+        raw as { videoTaskStatus?: CanvasBlock["videoTaskStatus"] }
+      ).videoTaskStatus,
+      manhuaEditTrim: (
+        raw as { manhuaEditTrim?: CanvasBlock["manhuaEditTrim"] }
+      ).manhuaEditTrim,
       manhuaFinalPostProd: (
         raw as { manhuaFinalPostProd?: CanvasBlock["manhuaFinalPostProd"] }
       ).manhuaFinalPostProd,
+      manhuaFinalVersions: raw.manhuaFinalVersions,
+      manhuaRetake: raw.manhuaRetake,
+      videoResolution: raw.videoResolution,
+      manhuaClipQuality: raw.manhuaClipQuality,
+      archivedFromPreviousScript: raw.archivedFromPreviousScript,
+      refVideoUrl: raw.refVideoUrl,
+      seedance25WorkMode: raw.seedance25WorkMode,
+      seedance25RefVideoUrls: raw.seedance25RefVideoUrls,
+      seedance25RefAudioUrls: raw.seedance25RefAudioUrls,
+      seedance25TimestampStoryboard: raw.seedance25TimestampStoryboard,
+      seedance25ReshootFromSec: raw.seedance25ReshootFromSec,
+      seedance25ReshootToSec: raw.seedance25ReshootToSec,
+      lastFrameUrl: localFirstThenCloud(raw.lastFrameUrl),
       // 手动划线标注已废除，历史草稿字段读取处兼容忽略，不再还原进画布节点。
       textModel: "kimi-k3",
       imageModel: "gpt-image-2",
@@ -455,7 +519,9 @@ export function buildLocalCloudDraftSnapshot(input: {
   });
 }
 
-export function serializeCloudDraftForUpload(payload: ManhuaCloudDraftPayload): string | null {
+export function serializeCloudDraftForUpload(
+  payload: ManhuaCloudDraftPayload
+): string | null {
   const s = serializeManhuaCloudDraftPayload(payload);
   return manhuaCloudDraftPayloadSizeOk(s) ? s : null;
 }
@@ -480,7 +546,7 @@ function formatCloudDraftDirectError(e: unknown): string {
   // GCS PUT / 网关常返回空 body；上层若误 .json() 会抛此错——对用户给业务句
   if (
     /Unexpected end of JSON|is not valid JSON|Failed to execute 'json'|JSON\.parse/i.test(
-      msg,
+      msg
     )
   ) {
     return "云草稿直传响应异常，将改用备用通道";
@@ -568,30 +634,35 @@ export function chooseManhuaDraftHydrate(input: {
 }): ManhuaDraftHydrateChoice {
   const cloud = input.cloud || null;
   const localReadable =
-    input.localWriter != null || input.localCanvas != null || input.localPrefs != null;
-  const localDraft =
-    localReadable
-      ? buildLocalCloudDraftSnapshot({
-          writerSession: input.localWriter || {},
-          blocks: input.localCanvas?.blocks || [],
-          edges: input.localCanvas?.edges || [],
-          factoryPrefs: input.localPrefs,
-          clientUpdatedAt: input.localClientUpdatedAt || undefined,
-        })
-      : null;
+    input.localWriter != null ||
+    input.localCanvas != null ||
+    input.localPrefs != null;
+  const localDraft = localReadable
+    ? buildLocalCloudDraftSnapshot({
+        writerSession: input.localWriter || {},
+        blocks: input.localCanvas?.blocks || [],
+        edges: input.localCanvas?.edges || [],
+        factoryPrefs: input.localPrefs,
+        clientUpdatedAt: input.localClientUpdatedAt || undefined,
+      })
+    : null;
 
   if (!cloud && !localDraft) return { source: "none" };
   if (cloud && !localDraft) return { source: "cloud", draft: cloud };
   if (!cloud && localDraft) return { source: "local", draft: localDraft };
 
-  if (isManhuaCloudDraftNewer(cloud!.clientUpdatedAt, localDraft!.clientUpdatedAt)) {
+  if (
+    isManhuaCloudDraftNewer(cloud!.clientUpdatedAt, localDraft!.clientUpdatedAt)
+  ) {
     return { source: "cloud", draft: cloud! };
   }
   return { source: "local", draft: localDraft! };
 }
 
 /** 把胜出草稿尽量写回本机（补写失败不抛）;并把云端图立即回灌本机媒体库(生产资产本机备份,0820) */
-export function repairLocalFromCloudDraft(draft: ManhuaCloudDraftPayload): ManhuaLocalPersistResult {
+export function repairLocalFromCloudDraft(
+  draft: ManhuaCloudDraftPayload
+): ManhuaLocalPersistResult {
   const restoredBlocks = cloudDraftBlocksToCanvas(draft.canvas.blocks, {
     videoModel: draft.writerSession?.videoModel,
   });
@@ -625,6 +696,8 @@ export function readLocalDraftPartsForHydrate(): {
   };
 }
 
-export function writerSessionFromCloudDraft(draft: ManhuaCloudDraftPayload): ManhuaWriterSession {
+export function writerSessionFromCloudDraft(
+  draft: ManhuaCloudDraftPayload
+): ManhuaWriterSession {
   return buildManhuaWriterSession(draft.writerSession);
 }

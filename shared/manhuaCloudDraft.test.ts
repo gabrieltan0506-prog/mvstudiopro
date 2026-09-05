@@ -11,7 +11,7 @@ import { formatManhuaDirectorStrategyStage } from "./manhuaDirectorStrategy";
 import { getManhuaDirectorStrategyV1Snapshot } from "./manhuaDirectorStrategyV1Snapshot";
 
 describe("manhuaCloudDraft", () => {
-  it("strips video outputs but keeps keyart image urls", () => {
+  it("保存视频引用与关键静帧，不包含视频字节", () => {
     const keyart = sanitizeManhuaCloudDraftBlock({
       id: "keyart-e01-s01-a",
       kind: "image",
@@ -39,12 +39,12 @@ describe("manhuaCloudDraft", () => {
       status: "done",
     });
     expect(isManhuaCloudDraftVideoBlock(clip!)).toBe(true);
-    expect(clip?.outputUrl).toBeUndefined();
-    expect(clip?.outputUrls).toEqual([]);
+    expect(clip?.outputUrl).toBe("https://cdn.example/c1.mp4");
+    expect(clip?.outputUrls).toEqual(["https://cdn.example/c1.mp4"]);
     expect(clip?.prompt).toContain("成片");
   });
 
-  it("keeps only final-eXX video versions and its post-production GCS identity", () => {
+  it("保存整集视频版本及后期GCS身份", () => {
     const final = sanitizeManhuaCloudDraftBlock({
       id: "final-e01",
       kind: "video",
@@ -79,7 +79,7 @@ describe("manhuaCloudDraft", () => {
     );
   });
 
-  it("keeps clip edit trim while still stripping the clip video bytes", () => {
+  it("保存片段引用与对应裁切，不包含视频字节", () => {
     const clip = sanitizeManhuaCloudDraftBlock({
       id: "clip-e01-s01",
       kind: "video",
@@ -99,7 +99,7 @@ describe("manhuaCloudDraft", () => {
         updatedAt: 100,
       },
     });
-    expect(clip?.outputUrl).toBeUndefined();
+    expect(clip?.outputUrl).toBe("https://cdn.example/clip.mp4");
     expect(clip?.manhuaEditTrim?.sourceDurationSec).toBe(15);
     expect(clip?.manhuaEditTrim?.shotPieces?.[0]).toEqual({
       shotIndex: 1,
@@ -217,7 +217,7 @@ describe("manhuaCloudDraft", () => {
       { anchorId: "wa_char_heiqi", duty: "identity" },
     ]);
     expect(again?.canvas.blocks.find((b) => b.id.startsWith("keyart"))?.outputUrl).toContain(".jpg");
-    expect(again?.canvas.blocks.find((b) => b.id.startsWith("clip"))?.outputUrl).toBeUndefined();
+    expect(again?.canvas.blocks.find((b) => b.id.startsWith("clip"))?.outputUrl).toBe("https://cdn.example/a.mp4");
   });
 
   it("云端旧 v1 草稿恢复时保留快照版本，不盖成当前 revision", () => {

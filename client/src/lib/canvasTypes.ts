@@ -269,7 +269,7 @@ export type CanvasBlock = {
   };
   /** 整集后期任务身份；final-eXX 专用，job/GCS 为长期身份，HTTPS 仅当前读链。 */
   manhuaFinalPostProd?: ManhuaFinalPostProdBinding;
-  /** 整集每个版本的任务/GCS 长期身份；只跟随本机画布，不扩大云同步范围。 */
+  /** 整集每个版本的任务/GCS 长期身份；本机与云草稿同批保存，不包含视频字节。 */
   manhuaFinalVersions?: ManhuaFinalVersionIdentity[];
 };
 

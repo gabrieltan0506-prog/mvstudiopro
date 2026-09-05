@@ -4,6 +4,7 @@ import * as canvasRunBlock from "./canvasRunBlock";
 import { runManhuaDramaFactoryPipeline } from "./canvasDramaStudio";
 import { applyManhuaVideoEditInstruction } from "./manhuaMediaVersions";
 import { hasFailedManhuaVideoEdit } from "./manhuaFactoryRunIntent";
+import { buildLocalCloudDraftSnapshot, cloudDraftBlocksToCanvas } from "./manhuaCloudDraftSync";
 import {
   emptyManhuaClipQualityChecks,
   manhuaClipQualityAllowsAssemble,
@@ -43,6 +44,32 @@ function preparedEdit(): CanvasBlock {
 }
 
 describe("已有原片编辑不重新制作资产", () => {
+  it("工作台提交即保存任务号，后续失败publish和云恢复不丢原任务、不重下单", async () => {
+    const target = preparedEdit();
+    const published: CanvasBlock[][] = [];
+    const callback = vi.fn();
+    const run = vi.spyOn(canvasRunBlock, "runCanvasBlock").mockImplementation(async (deps, block) => {
+      deps.onVideoTaskCreated?.(block.id, {taskId: "test-pending-edit", engine: "seedance-2.5"});
+      expect(published.at(-1)?.find(b => b.id === target.id)?.videoTaskId).toBe("test-pending-edit");
+      throw new Error("任务仍待核对");
+    });
+    const result = await runManhuaDramaFactoryPipeline({
+      deps: {optimizeCopy: async () => "", onVideoTaskCreated: callback},
+      blocks: [target], edges: [], episodeIndex: 1, untilStage: "clip", forceFromStage: "clip",
+      targetBlockIds: [target.id], preservePreparedTargetBlocks: true,
+      onBlocksChange: blocks => published.push(blocks),
+    });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(callback).toHaveBeenCalledWith(target.id, {taskId: "test-pending-edit", engine: "seedance-2.5"});
+    const cloud = buildLocalCloudDraftSnapshot({writerSession: {}, blocks: result.blocks, edges: []});
+    const [restored] = cloudDraftBlocksToCanvas(cloud.canvas.blocks);
+    expect(restored).toMatchObject({
+      videoTaskId: "test-pending-edit", videoTaskEngine: "seedance-2.5", videoTaskStatus: "running",
+      status: "error", outputUrl: target.outputUrl, seedance25WorkMode: "video_edit",
+    });
+    expect(restored.outputUrls).toEqual(target.outputUrls);
+    expect(hasFailedManhuaVideoEdit([restored], [1])).toBe(true);
+  });
   it.each(["没有分镜", "已有反推文本", "有静帧节点但未出图"])(
     "%s：只编辑指定原片，不补图也不改动其他段",
     async (caseName) => {

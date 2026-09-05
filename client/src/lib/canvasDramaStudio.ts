@@ -4170,7 +4170,20 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             : [];
         const texts = preparedVideoEdit ? [] : [...collectUpstreamTexts(blockId, working, edges), ...docTexts];
         const out = await runCanvasBlock(
-          opts.deps,
+          {
+            ...opts.deps,
+            onVideoTaskCreated: (createdBlockId, info) => {
+              // 任务号必须先进入编排器的真实工作副本；只写 React 会被后续整批 publish 冲掉。
+              if (createdBlockId !== blockId) return;
+              publish(working.map(b => b.id === blockId ? {
+                ...b,
+                videoTaskId: info.taskId,
+                videoTaskEngine: info.engine,
+                videoTaskStatus: "running" as const,
+              } : b));
+              opts.deps.onVideoTaskCreated?.(createdBlockId, info);
+            },
+          },
           runBlockPayload,
           {
             visionImages,

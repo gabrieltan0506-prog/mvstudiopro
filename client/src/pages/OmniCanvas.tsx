@@ -284,12 +284,12 @@ import {
   buildLocalCloudDraftSnapshot,
   chooseManhuaDraftHydrate,
   cloudDraftBlocksToCanvas,
+  mergeHydratedCanvasBlocks,
   persistManhuaDraftLocally,
   readLocalDraftPartsForHydrate,
   repairLocalFromCloudDraft,
   serializeCloudDraftForUpload,
   trySaveLocalCanvas,
-  trySaveLocalClientUpdatedAt,
   uploadManhuaCloudDraftViaGcsDirect,
 } from "@/lib/manhuaCloudDraftSync";
 import {
@@ -475,8 +475,16 @@ function loadCanvasState(): { blocks: CanvasBlock[]; edges: CanvasEdge[] } {
 }
 
 function saveCanvasState(blocks: CanvasBlock[], edges: CanvasEdge[]) {
-  // 本机瘦身：去视频/blob；配额失败时再降级（见 trySaveLocalCanvas）
-  trySaveLocalCanvas(blocks, edges);
+  const saved = trySaveLocalCanvas(blocks, edges);
+  if (!saved) {
+    toast.error("当前画布未能保存，请勿关闭或刷新页面", {
+      id: "manhua-canvas-save-failed",
+      description: "已有文件不会删除。请先导出备份或释放浏览器空间后重试。",
+    });
+  } else {
+    toast.dismiss("manhua-canvas-save-failed");
+  }
+  return saved;
 }
 
 function loadFactoryCharacterPrefs(): FactoryCharacterPrefs {
@@ -1852,7 +1860,7 @@ export default function OmniCanvas() {
       const payloadJson = serializeCloudDraftForUpload(payload);
       if (!payloadJson) {
         pushDebug("cloudDraft:skip-too-large", { level: "warn" });
-        return false;
+        throw new Error("备份超过容量限制，尚未上传；请先导出工程备份，已有视频和版本不会被删减");
       }
       cloudDraftSyncInFlightRef.current = true;
       try {
@@ -1863,7 +1871,7 @@ export default function OmniCanvas() {
           commit: () => cloudDraftCommitMutateRef.current(),
         });
         if (direct.ok) {
-          trySaveLocalClientUpdatedAt(payload.clientUpdatedAt);
+          // 云上传成功不代表本机各键已保存，不能替本机推进修订时间。
           pushDebug("cloudDraft:gcs-direct-ok", { level: "ok" });
           return true;
         }
@@ -1875,7 +1883,6 @@ export default function OmniCanvas() {
           { payloadJson },
           {
             onSuccess: () => {
-              trySaveLocalClientUpdatedAt(payload.clientUpdatedAt);
               pushDebug("cloudDraft:upsert-fallback-ok", { level: "ok" });
             },
           },
@@ -2294,13 +2301,7 @@ export default function OmniCanvas() {
     void (async () => {
       await cacheCanvasMediaToLocalStore(nextBlocks);
       const hydrated = await rehydrateBlocksFromLocalMedia(nextBlocks);
-      setBlocks((cur) => {
-        // 仅当用户尚未改稿时回灌，避免覆盖新出图
-        const sameLen = cur.length === nextBlocks.length;
-        const sameIds =
-          sameLen && cur.every((b, i) => b.id === nextBlocks[i]?.id);
-        return sameIds ? hydrated : cur;
-      });
+      setBlocks((cur) => mergeHydratedCanvasBlocks(cur, nextBlocks, hydrated));
     })();
     setFactoryTopic(session.topic || "");
     setWriterBrief(session.brief || "");
@@ -2752,12 +2753,9 @@ export default function OmniCanvas() {
       // 本机读失败键再尽力写一次
       persistManhuaDraftLocally({
         writerSession: choice.draft.writerSession,
-        blocks: cloudDraftBlocksToCanvas(choice.draft.canvas.blocks, {
-          videoModel: migrateRetiredManhuaLayoutVideoModel(
-            choice.draft.writerSession?.videoModel,
-          ),
-        }),
-        edges: choice.draft.canvas.edges as CanvasEdge[],
+        // 本机胜出时使用本机原稿，不经云字段白名单再清洗一次。
+        blocks: localParts.canvas?.blocks || [],
+        edges: localParts.canvas?.edges || [],
         factoryPrefs: choice.draft.factoryPrefs,
         clientUpdatedAt: choice.draft.clientUpdatedAt,
       });
@@ -4045,28 +4043,17 @@ export default function OmniCanvas() {
       scheduleCacheCanvasMediaToLocalStore(boot);
       await cacheCanvasMediaToLocalStore(boot);
       if (cancelled) return;
-      const hydrated = await rehydrateBlocksFromLocalMedia(blocksRef.current);
+      const snapshot = blocksRef.current;
+      const hydrated = await rehydrateBlocksFromLocalMedia(snapshot);
       if (cancelled) return;
       setBlocks((cur) => {
-        // 指针/过期 https → blob:；若无变化则保持引用
-        let changed = cur.length !== hydrated.length;
-        if (!changed) {
-          for (let i = 0; i < cur.length; i++) {
-            if (
-              cur[i]?.outputUrl !== hydrated[i]?.outputUrl ||
-              cur[i]?.refImageUrl !== hydrated[i]?.refImageUrl
-            ) {
-              changed = true;
-              break;
-            }
-          }
-        }
-        if (!changed) return cur;
+        const merged = mergeHydratedCanvasBlocks(cur, snapshot, hydrated);
+        if (merged === cur) return cur;
         setEdges((edges) => {
-          saveCanvasState(hydrated, edges);
+          saveCanvasState(merged, edges);
           return edges;
         });
-        return hydrated;
+        return merged;
       });
     })();
     return () => {
