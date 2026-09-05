@@ -3790,6 +3790,12 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = `${EVOLINK_GLM_MODEL}→${
 /** 开始/失败回执的人话链路标签（0905：用户看了几百次「z-ai/glm-5.3」以为一直走 OpenRouter）。 */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 EvoLink → OpenRouter → Qwen 北京 → 新加坡 → OpenRouter（每档 30 分钟）";
 export const NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL = "Qwen3.8-Max 严格 schema · 第1批 北京→EvoLink→OpenRouter · 第2批 新加坡→OpenRouter→EvoLink（Qwen 单档 25 分钟 · GLM 15 分钟）";
+/** 面板「整形模型」开关 → 链策略：默认 Qwen 首发；只有明确选 GLM-5.3 才走 GLM 首发（0905 用户拍板）。 */
+export function nativeDeepReadStructuringPolicyForModel(
+  model: ManhuaNativeStructuringModelId | undefined,
+): "structuring_chain" | "structuring_chain_qwen_first" {
+  return model === "glm-5.3" ? "structuring_chain" : "structuring_chain_qwen_first";
+}
 export function nativeDeepReadStructuringStartedLabel(policy: "structuring_chain" | "structuring_chain_qwen_first"): string {
   return policy === "structuring_chain_qwen_first" ? NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL : NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL;
 }
@@ -5918,10 +5924,7 @@ async function executeNativeDeepReadBatch(
       let glmEvidence: NativeDeepReadGlmEvidence | undefined;
       const glmEvidenceCallIds: string[] = [];
       const canCacheStructuring = Boolean(params.segmentCacheSeriesKey && episode.cacheSourceDigest);
-      // 0905 用户拍板：默认 Qwen 首发链；只有面板明确选 GLM 才走 GLM 首发链
-      const structuringGatewayPolicy = params.structuringModel === "glm-5.3"
-        ? "structuring_chain" as const
-        : "structuring_chain_qwen_first" as const;
+      const structuringGatewayPolicy = nativeDeepReadStructuringPolicyForModel(params.structuringModel);
       const glmStructure = async (input: {
         prompt: ReturnType<typeof buildNativeDeepReadGlmStructuringPrompt>;
         videoCount: number;

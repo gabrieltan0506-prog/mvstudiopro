@@ -4499,4 +4499,43 @@ describe("0905 · 整形按批次序号分流链", () => {
     expect(nativeDeepReadStructuringGatewayOrder("structuring_chain", 0)[0]).toBe("evolink_glm");
     expect(nativeDeepReadStructuringGatewayOrder("structuring_chain", 1)[0]).toBe("openrouter");
   });
+
+  it("整形模型开关：qwen3.8-max / 缺省 → Qwen 首发链；glm-5.3 → GLM 首发链；started 标签跟着开关走", async () => {
+    const m = await import("./manhuaNativeDeepReadRunner");
+    expect(m.nativeDeepReadStructuringPolicyForModel("qwen3.8-max")).toBe("structuring_chain_qwen_first");
+    expect(m.nativeDeepReadStructuringPolicyForModel(undefined)).toBe("structuring_chain_qwen_first");
+    expect(m.nativeDeepReadStructuringPolicyForModel("glm-5.3")).toBe("structuring_chain");
+    expect(m.nativeDeepReadStructuringStartedLabel("structuring_chain_qwen_first")).toMatch(/^Qwen3\.8-Max/);
+    expect(m.nativeDeepReadStructuringStartedLabel("structuring_chain")).not.toMatch(/^Qwen3\.8-Max/);
+    // GLM 链的兜底档必须含 Qwen 两档，Qwen 链的兜底档必须含 GLM 两档（两档败切对方）
+    expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain", 0)).toEqual(["evolink_glm", "openrouter", "plan_bj_qwen", "plan_sg_qwen"]);
+    expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain_qwen_first", 0).slice(1)).toEqual(["evolink_glm", "openrouter"]);
+  });
+
+  it("上下文里的 gatewayPolicy / gatewayOrder 原样落到网关请求；严格 schema 始终随请求", async () => {
+    const { invokeNativeDeepReadGlmStructuring } = await import("./manhuaNativeDeepReadRunner");
+    const seen: Array<Record<string, unknown>> = [];
+    const invoke = vi.fn(async (p: GlmParams) => {
+      seen.push(p as unknown as Record<string, unknown>);
+      const content = '{"shots":[{"startSec":0,"endSec":12}]}';
+      await p.onRawResponse!({ gateway: "plan_bj_qwen", model: "qwen3.8-max", httpStatus: 200, contentType: "application/json",
+        bodyText: JSON.stringify({ content }), bodyComplete: true, receivedBytes: 10 });
+      p.validateContent!(content);
+      return { gateway: "plan_bj_qwen", model: "qwen3.8-max", gatewayTrace: [], usage: { prompt_tokens: 1, completion_tokens: 1 },
+        choices: [{ finish_reason: "stop" }], requestId: "r" } as never;
+    });
+    const upload = vi.fn(async () => ({ created: true, generation: "1" }));
+    const deps = { invoke, evidence: { upload: upload as never, getBucket: () => "mv-studio-pro-vertex-video-temp" } };
+    for (const policy of ["structuring_chain", "structuring_chain_qwen_first"] as const) {
+      await invokeNativeDeepReadGlmStructuring({ system: "s", user: "u" }, undefined,
+        { callId: `c-${policy}`, gatewayPolicy: policy, gatewayOrder: policy === "structuring_chain" ? ["evolink_glm", "openrouter"] : ["plan_bj_qwen", "evolink_glm"] }, deps);
+    }
+    expect(seen[0]).toMatchObject({ gatewayPolicy: "structuring_chain", gatewayOrder: ["evolink_glm", "openrouter"] });
+    expect(seen[1]).toMatchObject({ gatewayPolicy: "structuring_chain_qwen_first", gatewayOrder: ["plan_bj_qwen", "evolink_glm"] });
+    for (const p of seen) {
+      expect(p.responseJsonSchema).toMatchObject({ name: expect.any(String) });
+      expect(p.thinkingBudget).toBe(32_768);
+      expect(p.gatewayTimeoutMsOverrides).toMatchObject({ plan_bj_qwen: 25 * 60_000, evolink_glm: 15 * 60_000 });
+    }
+  });
 });
