@@ -264,7 +264,7 @@ export function repairJsonTextBestEffort(text: string): string | null {
       return step === 0 ? null : current;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (/Unexpected end of JSON input/.test(msg)) {
+      if (/Unexpected end of JSON input|Unterminated string in JSON/.test(msg)) {
         const closers = missingJsonClosers(current);
         if (!closers) return null;
         current += closers;
