@@ -21,7 +21,7 @@ import {
 const FIELD_LABELS: Record<string, string> = {
   emotionTagsZh: "情绪", narrativeFeatureTagsZh: "叙事特色", performanceTagsZh: "表演",
   audiovisualTagsZh: "视听", audienceExperienceTagsZh: "观众体验",
-  beatStructureZh: "节拍结构", moodArcZh: "情绪弧", reusableZh: "可复用手法", genPromptHintZh: "生成提示线索",
+  beatStructureZh: "节拍结构", moodArcZh: "情绪弧", reusableZh: "可复用手法", genPromptHintZh: "剧情要素",
   hintZh: "本镜观察", unitTypeZh: "运镜解读", shotSizeZh: "景别", angleZh: "机位角度", compositionZh: "构图", cameraMoveZh: "运镜",
   blockingZh: "调度", bodyActionZh: "身体动作", limbPropActionZh: "肢体道具", microExpressionZh: "微表情",
   gazeBreathZh: "视线呼吸", relationshipReactionZh: "关系反应", lightingZh: "灯光", actionZh: "动作叙述",
@@ -95,6 +95,28 @@ const CUE_KIND_ZH: Record<string, string> = {
 const cueKindZh = (kind: string): string =>
   CUE_KIND_ZH[kind.trim().toLowerCase().replace(/[\s-]+/g, "_")] ?? (kind.trim() ? "声音事件" : "");
 const mmss = (s: number): string => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+
+/**
+ * 🔒 0905 用户冻结（报告呈现契约）：分段摘要不按「第1…第9段」逐段铺，
+ * 按时间三分成前/中/后三段，每段只留前 3 句——报告是商品，读得快比写得全重要。
+ * 没有分段标记的文本原样返回（只截前 6 句）。
+ */
+export function condenseSegmentedSummaryZh(text: string, sentencesPerPart = 3): string {
+  const clean = String(text || "").trim();
+  if (!clean) return "";
+  const parts = clean.split(/【第\d+段】/).map((t) => t.trim()).filter(Boolean);
+  const sentences = (t: string, n: number) =>
+    t.split(/(?<=[。！？；])/).map((x) => x.trim()).filter(Boolean).slice(0, n).join("");
+  if (parts.length < 2) return sentences(clean, sentencesPerPart * 2);
+  const third = Math.ceil(parts.length / 3);
+  const groups = [parts.slice(0, third), parts.slice(third, third * 2), parts.slice(third * 2)]
+    .filter((g) => g.length > 0);
+  const labels = groups.length === 3 ? ["前段", "中段", "后段"] : groups.length === 2 ? ["前段", "后段"] : ["全集"];
+  return groups
+    .map((g, i) => `【${labels[i]}】${sentences(g.join(""), sentencesPerPart)}`)
+    .join("\n");
+}
 
 function makeSigner() {
   const creds = JSON.parse(String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "{}")) as {
@@ -490,7 +512,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
    * 节奏结构 / 情绪推进），不再挤成一叠小卡——它们是这张卡最值钱的部分。
    */
   const summaryTextOf = (key: (typeof SUMMARY_TEXT_KEYS)[number]): string =>
-    String(card[key] ?? "").trim() || "本集未整理出该项";
+    condenseSegmentedSummaryZh(String(card[key] ?? "").trim()) || "本集未整理出该项";
 
   // 0902 十审拍板：入镜转场列摘除——漫剧九成五是硬切，整列零信息；
   // 非硬切转场（叠化/闪白/甩接/匹配）由 CRAFT 词典写进「运镜解读」+ 蓝色技巧行，证据字段照存不丢。
@@ -962,7 +984,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
 
 ${section("📏 镜长分布", histBars)}
 ${section("💡 可复用手法总结", panel(summaryTextOf("reusableZh")))}
-${section("🧭 生成提示要素", panel(summaryTextOf("genPromptHintZh")))}
+${section("🧭 剧情要素", panel(summaryTextOf("genPromptHintZh")))}
 ${section("🥁 节奏结构", panel(summaryTextOf("beatStructureZh")))}
 ${section("🌊 情绪推进", panel(summaryTextOf("moodArcZh")))}
 ${section("🏷️ 五维风格判词", tags)}
