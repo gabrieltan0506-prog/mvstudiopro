@@ -204,6 +204,21 @@ export function getManhuaSegmentLookBinding(
   return { ...(normalizeManhuaSegmentLookBindings(bindings)[key] || {}) };
 }
 
+/** 造型可选同角色参考或服装图；候选与全局当前脸选择分离，待复核图片不可用。 */
+export function listManhuaLookReferenceCandidates(
+  refs: ManhuaCustomAssetRef[] | null | undefined,
+  characterId: string,
+): ManhuaCustomAssetRef[] {
+  return (refs || []).filter((ref) => {
+    if (ref.reviewStatus === "needs_review") return false;
+    if (ref.role === "wardrobe") {
+      return !ref.claimedAnchorIds?.length || ref.claimedAnchorIds.includes(characterId);
+    }
+    return ref.role === "character" &&
+      (ref.id === characterId || Boolean(ref.claimedAnchorIds?.includes(characterId)));
+  });
+}
+
 function refUrlById(
   refs: ManhuaCustomAssetRef[] | null | undefined,
   id: string | undefined,
@@ -227,7 +242,6 @@ export function buildManhuaWardrobeSubSlotsFromLookSets(opts: {
   if (!sets.length) return [];
   const tagById = opts.characterTagById || {};
   const nameById = opts.characterNameById || {};
-  const refs = opts.customRefs || [];
 
   type Draft = {
     lookSet: ManhuaCharacterLookSet;
@@ -236,6 +250,7 @@ export function buildManhuaWardrobeSubSlotsFromLookSets(opts: {
   };
   const drafts: Draft[] = [];
   for (const ls of sets) {
+    const refs = listManhuaLookReferenceCandidates(opts.customRefs, ls.characterId);
     const path =
       refUrlById(refs, ls.wardrobeRefId) ||
       refUrlById(refs, ls.lookRefId) ||
@@ -313,19 +328,21 @@ export function resolveActiveLookSetIdsForSegment(opts: {
   const bind = opts.binding || {};
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const lsId of Object.values(bind)) {
-    const id = String(lsId || "").trim();
-    if (!id || seen.has(id)) continue;
-    if (!sets.some((s) => s.id === id)) continue;
-    seen.add(id);
-    out.push(id);
-  }
-  if (out.length) return out;
-  for (const cid of opts.fallbackCharacterIds || []) {
-    const first = listManhuaLookSetsForCharacter(sets, cid)[0];
-    if (first && !seen.has(first.id)) {
-      seen.add(first.id);
-      out.push(first.id);
+  // 显式出演范围即白名单；一人的手选不能取消其他出演角色的默认造型。
+  const characterIds = Array.isArray(opts.fallbackCharacterIds)
+    ? opts.fallbackCharacterIds
+    : Object.keys(bind);
+  for (const cid of characterIds) {
+    const selectedId = String(bind[cid] || "").trim();
+    const selected = selectedId
+      ? sets.find((s) => s.id === selectedId && s.characterId === cid)
+      : listManhuaLookSetsForCharacter(sets, cid)[0];
+    if (selectedId && !selected) {
+      throw new Error("本段造型绑定已失效，请重新选择对应角色的造型。");
+    }
+    if (selected && !seen.has(selected.id)) {
+      seen.add(selected.id);
+      out.push(selected.id);
     }
   }
   return out;

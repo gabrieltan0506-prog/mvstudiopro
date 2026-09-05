@@ -24,6 +24,29 @@ import { inferManhuaCastZhFromDialogue } from "./manhuaEpisodeSegmentPlan";
 import type { ManhuaWriterAssetCanon } from "./manhuaWriterAssetCanon";
 
 describe("manhuaAssetLockRegistry", () => {
+  it("已上传造型图仍建立造型别名，按本段角色和手选进入实际垫图", () => {
+    const reg = buildManhuaAssetLockRegistry({
+      customRefs: [
+        { id: "heiqi", role: "character", url: "https://example.com/heiqi.png", labelZh: "黑奇" },
+        { id: "before-image", role: "wardrobe", url: "https://example.com/before.png", labelZh: "普通形态" },
+        { id: "after-image", role: "wardrobe", url: "https://example.com/after.png", labelZh: "金鳞形态" },
+      ],
+      characterLookSets: [
+        { id: "look-before", characterId: "heiqi", index: 1, labelZh: "普通形态", lookRefId: "before-image" },
+        { id: "look-after", characterId: "heiqi", index: 2, labelZh: "金鳞形态", lookRefId: "after-image" },
+      ],
+    });
+    expect(reg.slots.find(s => s.id === "look-after")?.path).toBe("https://example.com/after.png");
+    expect(new Set(reg.byRole.wardrobe.map(s => s.tag)).size).toBe(reg.byRole.wardrobe.length);
+    const compiled = formatManhuaAssetImageBindBlock(reg, 8, { allowedIds: ["heiqi"], activeLookSetIds: ["look-after"] });
+    const rows = resolveManhuaAssetImageBindRows(parseManhuaAssetImageBindBlock(compiled), buildManhuaAssetPathById(reg));
+    expect(rows.map(r => r.id)).toEqual(["heiqi", "look-after"]);
+    const plan = planManhuaClipSeedanceImageBind({ assetRows: rows, stillUrls: ["https://example.com/still.png"], maxImages: 9 });
+    expect(JSON.stringify(plan)).toContain("https://example.com/after.png");
+    expect(JSON.stringify(plan)).not.toContain("https://example.com/before.png");
+    expect(formatManhuaAssetImageBindBlock(reg, 8, { allowedIds: [], activeLookSetIds: ["look-after"] })).toBe("");
+    expect(formatManhuaAssetImageBindBlock(reg, 8, { allowedIds: ["heiqi"], activeLookSetIds: [] })).not.toContain("|kind=服装");
+  });
   it("numbers upload character/scene/prop as @角色/@场景/@道具", () => {
     const reg = buildManhuaAssetLockRegistry({
       customRefs: [

@@ -1742,9 +1742,12 @@ export async function runCanvasBlock(
         }
       }
       // 节点只含 id；path 从 deps 后台表解析，绝不依赖提示词里的网址
+      const requestedAssetRows = isClip
+        ? parseManhuaAssetImageBindBlock(block.prompt || motionPrompt)
+        : [];
       const assetRows = isClip
         ? resolveManhuaAssetImageBindRows(
-            parseManhuaAssetImageBindBlock(block.prompt || motionPrompt),
+            requestedAssetRows,
             deps.manhuaAssetPathById,
           ).map((r) => {
             const abs = absolutizeManhuaAssetUrl(r.path) || r.path;
@@ -1758,6 +1761,10 @@ export async function runCanvasBlock(
             return { ...r, path: absolutizeManhuaAssetUrl(picked.url) || picked.url };
           })
         : [];
+      const requiredLookRows = requestedAssetRows.filter((row) => row.tag.startsWith("@服装"));
+      if (requiredLookRows.some((row) => !assetRows.some((resolved) => resolved.id === row.id))) {
+        throw new Error("本段所选造型的参考图已失效，请重新挂图并确认；本次未提交生成。");
+      }
       const mentionedTags = isClip
         ? extractManhuaMentionedAssetTags(motionPrompt)
         : [];
@@ -1816,6 +1823,12 @@ export async function runCanvasBlock(
       const rawPool = bindPlan?.imageUrls?.length
         ? bindPlan.imageUrls
         : [...tailFrames, ...absStills];
+      if (requiredLookRows.some((row) => {
+        const path = assetRows.find((resolved) => resolved.id === row.id)?.path;
+        return !path || !rawPool.includes(path);
+      })) {
+        throw new Error("本段参考图名额不足，所选造型未能进入生成，请减少参考图后重试。");
+      }
       const httpsImages = await toHttpsImageUrls(
         deps,
         rawPool.slice(0, maxVideoImageRefs),

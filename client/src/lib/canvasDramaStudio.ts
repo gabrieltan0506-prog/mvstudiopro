@@ -1942,6 +1942,8 @@ export type ManhuaFragmentClipEnsureOptions = {
   segmentPlan?: ManhuaEpisodeSegmentPlan | null;
   /** 人物造型套（服装子类） */
   characterLookSets?: ManhuaCharacterLookSet[] | null;
+  /** 造型可读取同角色候选原图；不会替换全局身份主图。 */
+  lookRefs?: ManhuaCustomAssetRef[] | null;
   /** 段手选造型 e集:s段 → characterId → lookSetId */
   segmentLookBindings?: Record<string, Record<string, string>> | null;
   /** 集级导演分镜板（已裁成仅主画面）的可下载地址。 */
@@ -2081,6 +2083,7 @@ export function ensureManhuaFragmentClips(
       propImageUrlById: opts?.propImageUrlById,
       customRefs: mergedCustomRefs,
       characterLookSets: opts?.characterLookSets,
+      lookRefs: opts?.lookRefs,
       characterIds: (opts?.assetCanon?.characters || []).map((c) => c.id),
       sceneId: mainScene?.id,
       propIds: (opts?.assetCanon?.props || []).map((p) => p.id),
@@ -2256,6 +2259,14 @@ export function ensureManhuaFragmentClips(
       binding: segBinding,
       fallbackCharacterIds: segAssets.characterIds,
     });
+    const selectedLookIds = Object.entries(segBinding)
+      .filter(([cid]) => segAssets.characterIds.includes(cid))
+      .map(([, id]) => id);
+    for (const id of selectedLookIds) {
+      if (!lockRegistry.slots.some((s) => s.id === id && s.role === "wardrobe")) {
+        throw new Error("本段所选造型缺少可用参考图，请重新挂图并确认后再生成。");
+      }
+    }
     const assetLockBlock = formatManhuaAssetImageBindBlock(lockRegistry, 8, {
       activeLookSetIds: activeLookIds,
       allowedIds: segAssets.allowedIds,
@@ -2304,19 +2315,10 @@ export function ensureManhuaFragmentClips(
     const segHasCastNoFaceLock = segNeedsFace && !segHasFaceLock;
     const lookLine = formatManhuaSegmentActiveLookLine({
       lookSets,
-      binding:
-        Object.keys(segBinding).length > 0
-          ? Object.fromEntries(
-              Object.entries(segBinding).filter(([cid]) => segAssets.characterIds.includes(cid)),
-            )
-          : Object.fromEntries(
-              segAssets.characterIds
-                .map((cid) => {
-                  const first = lookSets.find((l) => l.characterId === cid);
-                  return first ? ([cid, first.id] as [string, string]) : null;
-                })
-                .filter(Boolean) as Array<[string, string]>,
-            ),
+      binding: Object.fromEntries(
+        lookSets.filter((look) => activeLookIds.includes(look.id))
+          .map((look) => [look.characterId, look.id]),
+      ),
       wardrobeSlots: lockRegistry.wardrobeSlots,
       characterTagById: charTagById,
     });
@@ -2354,6 +2356,12 @@ export function ensureManhuaFragmentClips(
           null,
       });
     })();
+    for (const id of selectedLookIds) {
+      const path = assetPathById[id];
+      if (!path || !bindPlan?.imageUrls.includes(path)) {
+        throw new Error("本段参考图数量超出可用名额，所选造型未能入选，请减少参考后重试。");
+      }
+    }
     /**
      * 未锁脸时只保留真·资产绑定（@场景/@道具 若命中），把静帧那几条
      * 「@图片N锁定构图」剔掉——它们正是让人误以为"锁上了"的假锁。

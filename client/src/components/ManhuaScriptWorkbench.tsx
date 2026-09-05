@@ -116,11 +116,13 @@ import {
   isBindableAssetPath,
   isManhuaKeyartPixelLocked,
   buildManhuaAssetLockRegistry,
+  resolveManhuaSegmentClipAllowedAssets,
 } from "@shared/manhuaAssetLockRegistry";
 import {
   ensureDefaultLookSetsForCharacters,
   getManhuaSegmentLookBinding,
   listManhuaLookSetsForCharacter,
+  listManhuaLookReferenceCandidates,
   MANHUA_LOOK_SETS_PER_CHARACTER_MAX,
   setManhuaSegmentLookBinding,
   upsertManhuaCharacterLookSet,
@@ -2106,6 +2108,7 @@ export default function ManhuaScriptWorkbench({
         characterSheetUrlById,
         propImageUrlById,
         characterLookSets: resolvedLookSets,
+        lookRefs: customAssetRefs,
       }),
     [
       characterIds,
@@ -2117,9 +2120,19 @@ export default function ManhuaScriptWorkbench({
       characterSheetUrlById,
       propImageUrlById,
       resolvedLookSets,
+      customAssetRefs,
     ],
   );
   const outlineComplete = Boolean(canRun);
+  const activeLookCharacterIds = useMemo(() => {
+    const beat = shootablePlan.segments.find((s) => s.index === activeSegNo);
+    return resolveManhuaSegmentClipAllowedAssets({
+      haystack: (activeSegment?.shots || []).flatMap((shot) => [shot.actionZh, shot.dialogueZh]).filter(Boolean).join("\n"),
+      castZh: beat?.castZh || inferManhuaCastZhFromDialogue("", beat?.dialogueZh || ""),
+      registry: assetLockRegistry,
+      assetCanon,
+    }).characterIds;
+  }, [activeSegNo, activeSegment, shootablePlan, assetLockRegistry, assetCanon]);
   /** 方案 B：剧本确认 + 角色/场景锁定 + 角色图/场景图齐，才可进分镜出片 */
   const assetsComplete = assetGate.ready && !assetScriptStaleHintZh;
   const productionProgress = useMemo((): ManhuaProductionProgress => {
@@ -6104,7 +6117,7 @@ export default function ManhuaScriptWorkbench({
                   造型套（每人最多 {MANHUA_LOOK_SETS_PER_CHARACTER_MAX} 套）
                 </div>
                 <p className="mh-hint mt-0.5 text-[10px] leading-4 text-white/45">
-                  妆造/服装挂进套后，分镜里按段手选启用；换装改套，不改 @角色 脸号。网址不展示。
+                  为同一角色保存不同外观，再到分镜选择本段使用的造型。变身前、过程和变身后可分别挂图；不会创建新角色或覆盖原图。
                 </p>
                 {/* 空态收口（0901 用户令）：一张服装参考都没有、也没建过任何套时，
                     此前照样铺 4 人 × 3 槽的「@服装? · id=待建」阵列——12 个像坏数据的空槽
@@ -6118,7 +6131,7 @@ export default function ManhuaScriptWorkbench({
                 <div className="mt-2 space-y-2">
                   {assetLockRegistry.byRole.character.slice(0, 4).map((ch) => {
                     const sets = listManhuaLookSetsForCharacter(resolvedLookSets, ch.id);
-                    const wardrobeRefs = customAssetRefs.filter((r) => r.role === "wardrobe");
+                    const lookRefs = listManhuaLookReferenceCandidates(customAssetRefs, ch.id);
                     return (
                       <div
                         key={ch.id}
@@ -6143,8 +6156,17 @@ export default function ManhuaScriptWorkbench({
                                 key={`${ch.id}-${idx}`}
                                 className="min-w-[9rem] flex-1 rounded border border-rose-300/25 bg-rose-500/10 px-1.5 py-1"
                               >
+                                {lookRefs.find((r) => r.id === (ls.wardrobeRefId || ls.lookRefId)) ? (
+                                  <img
+                                    src={lookRefs.find((r) => r.id === (ls.wardrobeRefId || ls.lookRefId))!.url}
+                                    alt={`${ch.labelZh} · ${ls.labelZh}`}
+                                    loading="lazy"
+                                    className="mb-1 aspect-[3/4] w-full rounded bg-black/25 object-contain"
+                                  />
+                                ) : null}
                                 <input
                                   value={ls.labelZh}
+                                  aria-label={`${ch.labelZh}造型${idx}名称`}
                                   onChange={(e) =>
                                     onCharacterLookSetsChange(
                                       upsertManhuaCharacterLookSet(resolvedLookSets, {
@@ -6159,6 +6181,7 @@ export default function ManhuaScriptWorkbench({
                                   placeholder={`造型${idx}`}
                                 />
                                 <select
+                                  aria-label={`${ch.labelZh}造型${idx}参考图`}
                                   value={ls.wardrobeRefId || ls.lookRefId || ""}
                                   onChange={(e) => {
                                     const refId = e.target.value;
@@ -6167,26 +6190,26 @@ export default function ManhuaScriptWorkbench({
                                         ...ls,
                                         characterId: ch.id,
                                         index: idx,
-                                        wardrobeRefId: refId || undefined,
+                                        wardrobeRefId: lookRefs.find((r) => r.id === refId)?.role === "wardrobe" ? refId : undefined,
                                         lookRefId: refId || undefined,
                                       }),
                                     );
                                   }}
                                   className="mt-1 w-full rounded border border-white/10 bg-black/40 px-1 py-0.5 text-[9px] text-white/70"
                                 >
-                                  <option value="">挂服装图…</option>
-                                  {wardrobeRefs.map((r) => (
+                                  <option value="">选择造型参考图…</option>
+                                  {(ls.wardrobeRefId || ls.lookRefId) && !lookRefs.some((r) => r.id === (ls.wardrobeRefId || ls.lookRefId)) ? (
+                                    <option value={ls.wardrobeRefId || ls.lookRefId}>原参考不可用，请重新选择</option>
+                                  ) : null}
+                                  {lookRefs.map((r) => (
                                     <option key={r.id} value={r.id}>
                                       {r.labelZh || r.id.slice(0, 12)}
                                     </option>
                                   ))}
                                 </select>
                                 {ls.id ? (
-                                  <div className="mt-0.5 font-mono text-[8px] text-white/35">
-                                    {assetLockRegistry.wardrobeSlots.find(
-                                      (w) => w.lookSetId === ls.id,
-                                    )?.wardrobeTag || `@服装?`}{" "}
-                                    · id={ls.id}
+                                  <div className="mt-0.5 text-[10px] text-white/45">
+                                    {lookRefs.some((r) => r.id === (ls.wardrobeRefId || ls.lookRefId)) ? "参考已选择 · 分镜中按段使用" : "尚无可用参考图"}
                                   </div>
                                 ) : null}
                               </div>
@@ -7036,6 +7059,36 @@ export default function ManhuaScriptWorkbench({
                 </div>
               ) : null}
             </div>
+            {onSegmentLookBindingsChange && activeLookCharacterIds.length > 0 ? (
+              <details className="my-2 rounded-lg border border-cyan-400/20 bg-cyan-500/[0.04] p-2" data-manhua-segment-looks>
+                <summary className="cursor-pointer text-[11px] font-medium text-cyan-50">本段造型 · 保持角色身份</summary>
+                <div className="mt-2 grid gap-2">
+                  {activeLookCharacterIds.map((characterId) => {
+                    const character = assetLockRegistry.byRole.character.find((row) => row.id === characterId);
+                    const sets = listManhuaLookSetsForCharacter(resolvedLookSets, characterId);
+                    const selected = getManhuaSegmentLookBinding(segmentLookBindings, focusEpisode, activeSegNo)[characterId] || "";
+                    const selectableRefs = listManhuaLookReferenceCandidates(customAssetRefs, characterId);
+                    return <label key={characterId} className="grid gap-1 text-[10px] text-white/65">
+                      <span>{character?.labelZh || "角色"}</span>
+                      <select
+                        aria-label={`${character?.labelZh || "角色"}本段造型`}
+                        value={selected}
+                        disabled={Boolean(factoryBusy)}
+                        onChange={(event) => onSegmentLookBindingsChange(setManhuaSegmentLookBinding({ bindings: segmentLookBindings, episodeIndex: focusEpisode, segmentIndex: activeSegNo, characterId, lookSetId: event.target.value }))}
+                        className="rounded-md border border-white/15 bg-black/40 px-2 py-1.5 text-[11px] text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-400"
+                      >
+                        <option value="">默认造型</option>
+                        {selected && !sets.some((look) => look.id === selected) ? <option value={selected}>原造型已失效，请重新选择</option> : null}
+                        {sets.map((look) => {
+                          const ready = selectableRefs.some((ref) => ref.id === (look.wardrobeRefId || look.lookRefId));
+                          return <option key={look.id} value={look.id} disabled={!ready}>{look.labelZh}{ready ? "" : " · 待挂图"}</option>;
+                        })}
+                      </select>
+                    </label>;
+                  })}
+                </div>
+              </details>
+            ) : null}
             <div className="flex flex-wrap gap-1 rounded-lg border border-white/10 bg-black/30 p-0.5">
               {(
                 [

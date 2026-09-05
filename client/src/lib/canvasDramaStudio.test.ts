@@ -46,7 +46,7 @@ import {
   spawnManhuaDramaStudioSeries,
   syncManhuaClipAssetEdges,
 } from "./canvasDramaStudio";
-import { buildManhuaAssetLockRegistry } from "@shared/manhuaAssetLockRegistry";
+import { buildManhuaAssetLockRegistry, buildManhuaAssetPathById, parseManhuaAssetImageBindBlock, resolveManhuaAssetImageBindRows } from "@shared/manhuaAssetLockRegistry";
 import { parseManhuaEpisodeSegmentPlanFromMarkdown } from "@shared/manhuaEpisodeSegmentPlan";
 import { upsertShotDialogueSection } from "@shared/manhuaShotDialoguePersist";
 import { upsertManhuaClipUserSupplement } from "@shared/manhuaClipUserSupplement";
@@ -1232,6 +1232,34 @@ describe("canvasDramaStudio factory", () => {
     expect(frag.targetBlockIds).toEqual([frag.clipId]);
     const ordered = resolveManhuaFactoryOrderedIds(ensured.blocks, "clip", 1);
     expect(filterManhuaFactoryTargetIds(ordered, frag.targetBlockIds)).toEqual([frag.clipId]);
+  });
+
+  it("造型重选进入实际成片引用，旧造型退出且原静帧保留", () => {
+    const spawned = spawnManhuaDramaStudio({ topic: "黑奇保护阿菁", episodeIndex: 1 });
+    const reverse = spawned.blocks.find(b => b.id.startsWith("reverse-"))!;
+    const source = spawned.blocks.map(b => b.id === reverse.id ? { ...b, outputText: "1. 黑奇抬头\n2. 黑奇站直\n3. 黑奇向前", status: "done" as const } : b);
+    const expanded = expandManhuaShotKeyartsAfterReverse(source, spawned.edges, reverse.id);
+    const ready = expanded.blocks.map(b => b.id.startsWith("keyart-") ? { ...b, outputUrl: `https://example.com/${b.id}.png`, status: "done" as const } : b);
+    const customRefs = [
+      { id: "heiqi", role: "character" as const, url: "https://example.com/heiqi.png", labelZh: "黑奇" },
+      { id: "before-image", role: "wardrobe" as const, url: "https://example.com/before.png", labelZh: "变身前" },
+      { id: "after-image", role: "wardrobe" as const, url: "https://example.com/after.png", labelZh: "变身后" },
+    ];
+    const characterLookSets = [
+      { id: "look-before", characterId: "heiqi", index: 1, labelZh: "变身前", lookRefId: "before-image" },
+      { id: "look-after", characterId: "heiqi", index: 2, labelZh: "变身后", lookRefId: "after-image" },
+    ];
+    const first = ensureManhuaFragmentClips(ready, expanded.edges, 1, { customRefs, characterLookSets, segmentLookBindings: { "e1:s1": { heiqi: "look-before" } } });
+    const second = ensureManhuaFragmentClips(first.blocks, first.edges, 1, { customRefs, characterLookSets, segmentLookBindings: { "e1:s1": { heiqi: "look-after" } } });
+    const clip = second.blocks.find(b => b.id === resolveManhuaFragmentRunTargets(second.blocks, 1, 1).clipId)!;
+    // 静帧留在节点；角色和造型由执行器按后台路径表解析，不混写进静帧数组。
+    const paths = buildManhuaAssetPathById(buildManhuaAssetLockRegistry({ customRefs, characterLookSets }));
+    const refs = resolveManhuaAssetImageBindRows(parseManhuaAssetImageBindBlock(clip.prompt), paths).map(r => r.path);
+    expect(refs).toContain("https://example.com/after.png");
+    expect(refs).not.toContain("https://example.com/before.png");
+    expect(clip.prompt).toContain("变身后");
+    expect(second.blocks.filter(b => b.id.startsWith("keyart-")).map(b => b.outputUrl)).toEqual(ready.filter(b => b.id.startsWith("keyart-")).map(b => b.outputUrl));
+    expect(() => ensureManhuaFragmentClips(ready, expanded.edges, 1, { customRefs: customRefs.filter(r => r.id !== "after-image"), characterLookSets, segmentLookBindings: { "e1:s1": { heiqi: "look-after" } } })).toThrow(/造型/);
   });
 
   /**

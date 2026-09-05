@@ -15,7 +15,8 @@ vi.mock("./longJobsFlyOrigin", () => ({
 import { compileManhuaPilotPrompt } from "@shared/manhuaPilotGate";
 import { defaultCanvasBlock, type CanvasBlock } from "./canvasTypes";
 import { runCanvasBlock } from "./canvasRunBlock";
-import { runManhuaDramaFactoryPipeline } from "./canvasDramaStudio";
+import { runManhuaDramaFactoryPipeline, spawnManhuaDramaStudio, expandManhuaShotKeyartsAfterReverse, ensureManhuaFragmentClips, resolveManhuaFragmentRunTargets } from "./canvasDramaStudio";
+import { buildManhuaAssetLockRegistry, buildManhuaAssetPathById } from "@shared/manhuaAssetLockRegistry";
 
 const originalPrompt = [
   "【第1段·30s】雨夜仓库",
@@ -46,6 +47,26 @@ function pilotBlock(videoModel: CanvasBlock["videoModel"]): CanvasBlock {
 }
 
 describe("首段试片的实际出站载荷（仅虚构网络边界）", () => {
+  it("本段选择的同角色形态图穿过编排及执行器进入最终 POST，缺路径时零提交", async () => {
+    const spawned = spawnManhuaDramaStudio({ topic: "黑奇保护阿菁", episodeIndex: 1 });
+    const reverse = spawned.blocks.find(b => b.id.startsWith("reverse-"))!;
+    const source = spawned.blocks.map(b => b.id === reverse.id ? { ...b, outputText: "1. 黑奇抬头\n2. 黑奇站直\n3. 黑奇向前", status: "done" as const } : b);
+    const expanded = expandManhuaShotKeyartsAfterReverse(source, spawned.edges, reverse.id);
+    const ready = expanded.blocks.map(b => b.id.startsWith("keyart-") ? { ...b, outputUrl: `https://test.invalid/${b.id}.png`, status: "done" as const } : b);
+    const customRefs = [{ id: "heiqi", role: "character" as const, url: "https://test.invalid/heiqi.png", labelZh: "黑奇" }];
+    const lookRefs = [{ id: "after-image", role: "character" as const, claimedAnchorIds: ["heiqi"], url: "https://test.invalid/after.png", labelZh: "变身后" }];
+    const characterLookSets = [{ id: "look-after", characterId: "heiqi", index: 1, labelZh: "变身后", lookRefId: "after-image" }];
+    const registry = buildManhuaAssetLockRegistry({ customRefs, lookRefs, characterLookSets });
+    const ensured = ensureManhuaFragmentClips(ready, expanded.edges, 1, { customRefs, lookRefs, characterLookSets, segmentLookBindings: { "e1:s1": { heiqi: "look-after" } } });
+    const clip = ensured.blocks.find(b => b.id === resolveManhuaFragmentRunTargets(ensured.blocks, 1, 1).clipId)!;
+    const deps = { userRole: "admin", userId: "test-user", optimizeCopy: async () => "", manhuaAssetPathById: buildManhuaAssetPathById(registry), authorizeManhuaClip: async () => ({ projectVersion: "a".repeat(64), episodeIndex: 1, segmentIndex: 1, intent: "pilot" as const }) };
+    await runCanvasBlock(deps, clip, undefined, { pilotRun: true });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.body.imageUrls).toContain("https://test.invalid/after.png");
+    requests = [];
+    await expect(runCanvasBlock({ ...deps, manhuaAssetPathById: { heiqi: "https://test.invalid/heiqi.png" } }, clip, undefined, { pilotRun: true })).rejects.toThrow(/造型/);
+    expect(requests).toHaveLength(0);
+  });
   it.each(["seedance-2.0", "seedance-2.0-mini", "seedance-2.0-fast", "seedance-2.5", "wan-3.0", "minimax-hailuo-3"] as const)(
     "%s：共用执行入口真实消费审核身份，稳定任务键进入最终POST",
     async (videoModel) => {

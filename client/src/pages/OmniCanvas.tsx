@@ -2253,6 +2253,8 @@ export default function OmniCanvas() {
         customAssetRefs,
         characterVoiceLocks,
         audioReferenceLock,
+        characterLookSets,
+        segmentLookBindings,
         shareAssetToLibrary,
         publicTemplateId,
         stylePack,
@@ -2276,6 +2278,8 @@ export default function OmniCanvas() {
     customAssetRefs,
     characterVoiceLocks,
     audioReferenceLock,
+    characterLookSets,
+    segmentLookBindings,
     shareAssetToLibrary,
     publicTemplateId,
     stylePack,
@@ -3444,6 +3448,7 @@ export default function OmniCanvas() {
       customRefs: consumableCustomAssetRefs,
       characterLookSets,
       assetCanon: projectBible?.assetCanon,
+      lookRefs: customAssetRefs,
       characterSheetUrlById: collectManhuaCharacterSheetUrlById(
         blocks,
         projectBible?.assetCanon,
@@ -3463,6 +3468,7 @@ export default function OmniCanvas() {
     consumableCustomAssetRefs,
     characterLookSets,
     projectBible?.assetCanon,
+    customAssetRefs,
     blocks,
   ]);
 
@@ -3950,6 +3956,7 @@ export default function OmniCanvas() {
           customRefs: consumableCustomAssetRefs,
           segmentPlan: segmentPlan.segments.length ? segmentPlan : null,
           characterLookSets,
+          lookRefs: customAssetRefs,
           segmentLookBindings,
           directorBoardUrlByEpisode,
           directorBoardUrlByEpisodeSegment,
@@ -7531,6 +7538,7 @@ export default function OmniCanvas() {
                 ? episodeSegmentPlan
                 : null,
               characterLookSets,
+              lookRefs: customAssetRefs,
               segmentLookBindings,
               directorBoardUrlByEpisode,
               directorBoardUrlByEpisodeSegment,
@@ -9231,6 +9239,7 @@ export default function OmniCanvas() {
                   assetZipBusy={assetZipBusy}
                   onEnsureSegmentClips={() => {
                     setBlocks((prev) => {
+                      try {
                       const sheetUrls = collectManhuaCharacterSheetUrlById(
                         prev,
                         projectBible?.assetCanon,
@@ -9249,6 +9258,7 @@ export default function OmniCanvas() {
                         customRefs: consumableCustomAssetRefs,
                         segmentPlan: segmentPlan.segments.length ? segmentPlan : null,
                         characterLookSets,
+                        lookRefs: customAssetRefs,
                         segmentLookBindings,
                         directorBoardUrlByEpisode,
                         directorBoardUrlByEpisodeSegment,
@@ -9274,12 +9284,18 @@ export default function OmniCanvas() {
                         return ensured.edges;
                       });
                       return next;
+                      } catch (error) {
+                        toast.error(error instanceof Error ? error.message : "造型参考检查失败，请检查本段选图");
+                        return prev;
+                      }
                     });
                   }}
                   onReviewClipPromptsOnCanvas={(opts) => {
                     const wantSeg = Math.max(1, opts?.segmentIndex ?? 1);
                     let focusId = "";
+                    let compileFailed = false;
                     setBlocks((prev) => {
+                      try {
                       const sheetUrls = collectManhuaCharacterSheetUrlById(
                         prev,
                         projectBible?.assetCanon,
@@ -9298,6 +9314,7 @@ export default function OmniCanvas() {
                         customRefs: consumableCustomAssetRefs,
                         segmentPlan: segmentPlan.segments.length ? segmentPlan : null,
                         characterLookSets,
+                        lookRefs: customAssetRefs,
                         segmentLookBindings,
                         directorBoardUrlByEpisode,
                         directorBoardUrlByEpisodeSegment,
@@ -9334,9 +9351,15 @@ export default function OmniCanvas() {
                         epClips[0]?.id ||
                         "";
                       return next;
+                      } catch (error) {
+                        compileFailed = true;
+                        toast.error(error instanceof Error ? error.message : "造型参考检查失败，请检查本段选图");
+                        return prev;
+                      }
                     });
                     // 等 layout 写入后再 focus，才能滚到真实坐标并高亮
                     window.setTimeout(() => {
+                      if (compileFailed) return;
                       if (focusId) openManhuaFactoryCanvas(focusId);
                       else openManhuaFactoryCanvas();
                     }, 120);
@@ -9362,6 +9385,7 @@ export default function OmniCanvas() {
                   }}
                   onLayoutReadableChain={() => {
                     setBlocks((prev) => {
+                      try {
                       const sheetUrls = collectManhuaCharacterSheetUrlById(
                         prev,
                         projectBible?.assetCanon,
@@ -9380,6 +9404,7 @@ export default function OmniCanvas() {
                         customRefs: consumableCustomAssetRefs,
                         segmentPlan: segmentPlan.segments.length ? segmentPlan : null,
                         characterLookSets,
+                        lookRefs: customAssetRefs,
                         segmentLookBindings,
                         directorBoardUrlByEpisode,
                         directorBoardUrlByEpisodeSegment,
@@ -9405,10 +9430,10 @@ export default function OmniCanvas() {
                         return ensured.edges;
                       });
                       return next;
-                    });
-                    toast.message("已对齐画布竖排模块", {
-                      description:
-                        "资产带 → 静帧左→右多列竖排（缩略）→ 段成片另起横带；右栏可点「看全图」",
+                      } catch (error) {
+                        toast.error(error instanceof Error ? error.message : "造型参考检查失败，请检查本段选图");
+                        return prev;
+                      }
                     });
                   }}
                   onGenerateMissingFragments={(segmentIndexes) => {
