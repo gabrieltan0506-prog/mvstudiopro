@@ -6,9 +6,21 @@ import {
 } from "./gcs.js";
 import {
   GLM_MODEL_GATEWAYS,
+  STRUCTURING_CHAIN_GATEWAYS,
+  STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS,
   type GlmGatewayName,
   type GlmRawResponseEvidence,
 } from "./bailianChat.js";
+
+/**
+ * 0906 实弹（第 7 集重跑）：证据回读只认 GLM 两档，Qwen 北京套餐写的整形证据被判「回执无效」，
+ * 整集零付费重跑直接炸。回读白名单必须与整形链一致：GLM 两档 + Qwen 三档。
+ */
+const STRUCTURING_EVIDENCE_GATEWAYS: ReadonlySet<string> = new Set<string>([
+  ...Array.from(GLM_MODEL_GATEWAYS),
+  ...STRUCTURING_CHAIN_GATEWAYS,
+  ...STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS,
+]);
 
 /** 来源只接收调用方已有身份；legacy直调缺失字段明确留空，禁止猜集号。 */
 export type NativeDeepReadGlmEvidenceContext = {
@@ -230,7 +242,7 @@ export async function readNativeDeepReadGlmRecoveredEvidence(input: {
       row.objectName !== `${prefix}/raw-${index + 1}.json`
       || !Number.isSafeInteger(row.bytes) || Number(row.bytes) < 1
       || !/^[a-f0-9]{64}$/.test(String(row.sha256 || ""))
-      || !GLM_MODEL_GATEWAYS.has(row.gateway as GlmGatewayName)
+      || !STRUCTURING_EVIDENCE_GATEWAYS.has(String(row.gateway))
       || typeof row.model !== "string" || !row.model.trim()
       || !Number.isSafeInteger(row.httpStatus) || Number(row.httpStatus) < 100 || Number(row.httpStatus) > 599
       || typeof row.bodyComplete !== "boolean"
@@ -245,7 +257,7 @@ export async function readNativeDeepReadGlmRecoveredEvidence(input: {
     || !selectedRaw.bodyComplete
     || response.gateway !== selectedRaw.gateway
     || response.model !== selectedRaw.model
-    || !GLM_MODEL_GATEWAYS.has(response.gateway)
+    || !STRUCTURING_EVIDENCE_GATEWAYS.has(String(response.gateway))
   ) throw new Error("整集GLM parsed与原始响应不一致，已停止以避免重复付费");
 
   return {
