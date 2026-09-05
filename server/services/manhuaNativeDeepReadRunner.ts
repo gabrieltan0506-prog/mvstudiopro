@@ -3869,7 +3869,7 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG = deepFreezeNativeContract(
 
 /**
  * 0905 用户令（推翻 0902「恒定 EvoLink 首发」）：并发批次必须分到不同通道真并行——
- * 同通道有租约，两批都首发 EvoLink 就是排队＝串行（0904 夜实测第二批 21 分钟即此）。
+ * 同通道租约已于 0905 拆掉（bailianChat），首发分流只为避免同一供应商被两份同时压满（0904 夜实测第二批 21 分钟即同档排队）。
  * 按整形开关取链首两档轮流首发；失败仍由网关层按链序逐档切换，GLM 两档败即到 Qwen（反之亦然）。
  */
 const structuringRoundRobin = new Map<string, number>();
