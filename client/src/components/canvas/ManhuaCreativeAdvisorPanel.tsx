@@ -52,6 +52,8 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   const listRef = useRef<HTMLDivElement | null>(null);
   const askMutation = trpc.mvAnalysis.askPlatformSkillQa.useMutation({ retry: false });
   const sessionStorageBlocked = Boolean(sessionKey && !initial.writable);
+  // 唯一 pending 槽仍属于这个非终态请求；先恢复，不能被新问题覆盖。
+  const unresolvedFailed = Boolean(failed && !failed.newAttempt);
 
   useEffect(() => {
     mounted.current = true;
@@ -129,12 +131,12 @@ export default function ManhuaCreativeAdvisorPanel(props: {
       if (!mounted.current) return;
       if (/已用完|PAYMENT_REQUIRED|扣除.*积分/.test(message) && !/不足/.test(message)) {
         setPendingPaid({ request, hint: message.replace(/\b(?:Sol|Terra)\b/g, "").replace(/（成本\+60%）/g, "") });
-      } else setFailed({ request, confirmPaid, message: formatManhuaAdvisorError(message), newAttempt: /ADVISOR_OPERATION_FAILED/.test(message) });
+      } else setFailed({ request, confirmPaid, message: formatManhuaAdvisorError(message), newAttempt: /ADVISOR_OPERATION_(?:FAILED|MISMATCH)/.test(message) });
     } finally { inFlight.current = false; }
   }
 
   function send(rawQuestion: string) {
-    if (inFlight.current || pendingPaid || !userId || sessionStorageBlocked) return;
+    if (inFlight.current || pendingPaid || unresolvedFailed || !userId || sessionStorageBlocked) return;
     const question = rawQuestion.trim();
     if (question.length < 2 || question.length > 1200) { toast.error("请输入 2—1200 字的问题，内容不会被自动截断。"); return; }
     const result = project ? manhuaCreativeAdvisorContextSchema.safeParse({ ...project.context, history: advisorRecentHistory(turns) }) : null;
@@ -206,15 +208,15 @@ export default function ManhuaCreativeAdvisorPanel(props: {
           {!sessionKey && <p className="mt-2 font-semibold">先确认项目后再付费咨询，避免改稿丢回执。本次不会发起扣点请求。</p>}
           <div className="mt-2 flex gap-3">{sessionKey && <button type="button" disabled={askMutation.isPending || sessionStorageBlocked} onClick={() => void submit(pendingPaid.request, true)} className="rounded border border-amber-200/40 px-3 py-1">确认扣点继续</button>}<button type="button" onClick={() => setPendingPaid(null)}>取消</button></div>
         </div>}
-        {failed && <div role="alert" className="rounded-lg border border-rose-300/25 p-3 text-xs text-rose-100"><p>{failed.message}</p><p className="mt-1 text-white/70">原问题：{failed.request.label}</p><p className="mt-1 whitespace-pre-wrap text-white/70">{failed.request.rawQuestion}</p><button type="button" disabled={askMutation.isPending || sessionStorageBlocked || (failed.confirmPaid && !sessionKey)} onClick={() => void submit(failed.newAttempt ? { ...failed.request, requestId: crypto.randomUUID() } : failed.request, failed.newAttempt ? false : failed.confirmPaid)} className="mt-2 rounded border border-white/20 px-3 py-1">{failed.newAttempt ? "重新提问（新的一次，重新检查额度）" : "恢复原问题（沿用原请求编号）"}</button></div>}
+        {failed && <div role="alert" className="rounded-lg border border-rose-300/25 p-3 text-xs text-rose-100"><p>{failed.message}</p><p className="mt-1 text-white/70">原问题：{failed.request.label}</p><p className="mt-1 whitespace-pre-wrap text-white/70">{failed.request.rawQuestion}</p>{!failed.newAttempt && <p className="mt-2 text-amber-100">此请求仍未决，请先恢复原问题；草稿可以继续编辑，但不会覆盖恢复记录。</p>}<button type="button" disabled={askMutation.isPending || sessionStorageBlocked || (failed.confirmPaid && !sessionKey)} onClick={() => void submit(failed.newAttempt ? { ...failed.request, requestId: crypto.randomUUID() } : failed.request, failed.newAttempt ? false : failed.confirmPaid)} className="mt-2 rounded border border-white/20 px-3 py-1">{failed.newAttempt ? "重新提问（新的一次，重新检查额度）" : "恢复原问题（沿用原请求编号）"}</button></div>}
       </div>
       <footer className="border-t border-white/10 p-3">
-        <div className="mb-2 flex flex-wrap gap-2">{quick.map(([label, question]) => <button key={label} type="button" disabled={!userId || askMutation.isPending || Boolean(pendingPaid) || sessionStorageBlocked} onClick={() => send(question!)} className="rounded-md border border-white/15 px-2 py-1.5 text-xs text-white/75 hover:border-cyan-300/60 disabled:opacity-40">{label}</button>)}</div>
+        <div className="mb-2 flex flex-wrap gap-2">{quick.map(([label, question]) => <button key={label} type="button" disabled={!userId || askMutation.isPending || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked} onClick={() => send(question!)} className="rounded-md border border-white/15 px-2 py-1.5 text-xs text-white/75 hover:border-cyan-300/60 disabled:opacity-40">{label}</button>)}</div>
         <div className="flex items-end gap-2">
           <textarea aria-label="向创作顾问提问" value={draft} onChange={(event) => setDraft(event.target.value)} rows={3} maxLength={1200} disabled={!userId || sessionStorageBlocked}
             onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(draft); } }}
             placeholder="问当前剧本、人物或镜头…" className="min-w-0 flex-1 resize-none rounded-lg border border-white/20 bg-black/20 px-3 py-2 text-sm outline-none focus:border-cyan-300" />
-          <button type="button" disabled={!userId || askMutation.isPending || Boolean(pendingPaid) || sessionStorageBlocked || draft.trim().length < 2} onClick={() => send(draft)} className="rounded-lg bg-cyan-400 px-3 py-2.5 text-sm font-semibold text-slate-950 disabled:opacity-40">发送</button>
+          <button type="button" disabled={!userId || askMutation.isPending || Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked || draft.trim().length < 2} onClick={() => send(draft)} className="rounded-lg bg-cyan-400 px-3 py-2.5 text-sm font-semibold text-slate-950 disabled:opacity-40">发送</button>
         </div>
         <p className="mt-2 text-[11px] leading-4 text-white/45">只给建议，不自动修改或生成。{sessionKey ? "历史按已确认项目版本保存在本机。" : "未确认稿仅保留本次页面会话，改稿后重新咨询。"}追问携带最近 8 条，长答复标记为节选。</p>
         {quota && <p className="mt-1 text-[11px] text-white/55">本轮回执：免费剩余 {quota.remaining} 次；超额 {quota.price} 积分/次，确认后才扣点。</p>}

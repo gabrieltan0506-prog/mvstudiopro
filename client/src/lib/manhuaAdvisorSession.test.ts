@@ -78,6 +78,11 @@ describe("顾问会话隔离与追问", () => {
     expect(panel).toContain("先确认项目后再付费咨询，避免改稿丢回执");
     expect(panel).not.toContain("capturedRecoveryKey && !initialRecovery.error");
     expect(panel).toContain("failed.newAttempt ? false : failed.confirmPaid");
+    expect(panel).toContain("const unresolvedFailed = Boolean(failed && !failed.newAttempt)");
+    expect(panel).toContain("inFlight.current || pendingPaid || unresolvedFailed");
+    expect(panel).toContain("Boolean(pendingPaid) || unresolvedFailed || sessionStorageBlocked");
+    expect(panel).toContain("ADVISOR_OPERATION_(?:FAILED|MISMATCH)");
+    expect(panel).toContain("此请求仍未决，请先恢复原问题");
   });
 
   it("坏 pending 原文先隔离再释放活动槽，新请求不再被旧错误永久阻断", () => {
