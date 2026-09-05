@@ -4855,19 +4855,17 @@ async function executeNativeDeepReadBatch(
         segmentIndex: number,
         committedEntry: NativeDeepReadSegmentCacheEntry,
       ): Promise<void> => {
-        // 0905 用户令：字幕只取 keyMoments 前后 2 秒（读片提示词第 1214 行本就这么写，模型不听、整形又照单全收）——
-        // 代码在入卡前硬过滤；段缓存/证据对象仍是原样，不影响付费证据。
-        const entry: NativeDeepReadSegmentCacheEntry = {
-          ...committedEntry,
-          raw: filterNativeDeepReadSubtitlesToKeyMoments(committedEntry.raw),
-        };
+        // 0905 用户令：字幕只取 keyMoments 前后 2 秒——只过滤送整形/入卡的那份 raw；
+        // committedEntries 必须保持原样：证据对象名由原始 raw 的指纹算出（0905 实锤：拿过滤后的
+        // raw 算名字，provenance 指向不存在的对象，导出 404）。
+        const entry = committedEntry;
         committedEntries.set(segmentIndex, entry);
         proposalCommitChain = proposalCommitChain.then(async () => {
           while (committedIndexes.length < segmentCount) {
             const nextIndex = committedIndexes.length;
             const nextEntry = committedEntries.get(nextIndex);
             if (!nextEntry) break;
-            rawSegments[nextIndex] = nextEntry.raw;
+            rawSegments[nextIndex] = filterNativeDeepReadSubtitlesToKeyMoments(nextEntry.raw);
             committedIndexes.push(nextIndex);
             // 末片由后面的整集门禁写入；这里只生成中间快照。
             // Qwen 在三份未过门禁数据中选出的结果只是该分片的终态，
