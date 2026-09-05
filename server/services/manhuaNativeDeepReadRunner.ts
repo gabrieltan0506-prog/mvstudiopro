@@ -910,7 +910,7 @@ export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
  * 精确切片与独立采样配置改变请求语义；旧流复制切片的缓存与确认码不得复用。
  * 本版验证首发0.65与历史两次重试温度，保留既有时间解释；实测过关前不宣称冻结。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-custom-20260901-shot-observation-v2" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-custom-20260905-key-shot-tiers-v3" as const;
 
 /** 分片时长和采样率独立配置；默认值来自共享配置，不按长短片自动降档。 */
 export function resolveNativeDeepReadRequestFps(totalDurationSec: number, requestedFps?: number): number {
@@ -1173,7 +1173,10 @@ ${buildNativeDeepReadObservationPlanBlock(lenSec)}
 
 【正向要求一：逐镜分析 shots】
 
-每条 story 镜头按以下顺序填写18字段：先记录本镜时间与分类，再生成本镜观察 hintZh，随后依据本镜画面填写详细分析。hintZh 是本次输出的逐镜观察，和调用前的补充信息各自独立。
+story 镜头分两档（0905 用户令，省 token）：
+- **重点镜**：起止秒与任一 keyMoments.atSec 前后 ${NATIVE_DEEP_READ_KEY_SHOT_WINDOW_SEC} 秒有交集的镜头，按以下顺序完整填写 18 字段——先记录本镜时间与分类，再生成本镜观察 hintZh，随后依据本镜画面填写详细分析。
+- **简写镜**：其余镜头只填 startSec、endSec、evidenceRole、hintZh（≤40字）、actionZh（≤40字），**其它字段一律省略不写**。镜头切分、时间覆盖与数量要求两档相同，简写不是少记镜头，只是少写字段。
+先定 keyMoments 再决定各镜档位；hintZh 是本次输出的逐镜观察，和调用前的补充信息各自独立。
 - startSec / endSec：本镜实际起止秒位。单条最长 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒；真实短镜按实际时长保留，超过上限的长镜按硬约束 2 拆成每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。
 - evidenceRole：按统一分类规则填写。
 - hintZh：${NATIVE_DEEP_READ_SHOT_OBSERVATION_ZH.hintZh}≤80字。
@@ -1348,7 +1351,7 @@ export function buildNativeDeepReadResponseSchema(context: NativeDeepReadSegment
   const shot = props.shots!.items!;
   props.shots!.description = buildNativeDeepReadDensityContract(lenSec)
     + "story与non_story_ad分别按条目分类要求填写。";
-  shot.description = `story条目按顺序完整填写以下18字段：${Object.keys(shot.properties!).join("、")}。`
+  shot.description = `story条目分两档：重点镜（起止与任一 keyMoments.atSec 前后 ${NATIVE_DEEP_READ_KEY_SHOT_WINDOW_SEC} 秒有交集）按顺序完整填写以下18字段：${Object.keys(shot.properties!).join("、")}；其余简写镜只填 startSec、endSec、evidenceRole、hintZh、actionZh，其它字段省略。`
     + "先写本镜hintZh观察，再写详细分析。non_story_ad仅保留startSec、endSec、evidenceRole三个有内容的字段，hintZh固定为null空占位。";
   // 官方结构化输出支持propertyOrdering；仅约束逐镜生成顺序，与正文逐项顺序一致。
   shot.propertyOrdering = Object.keys(shot.properties!);
@@ -1425,9 +1428,12 @@ export function nativeDeepReadFrozenContractSha256(): string {
 }
 
 /** 修改冻结项必须由用户在当前任务重新授权；禁止只更新这个摘要让测试变绿。
- * 0903 更新授权：用户拍板读片双模型（3.1 Pro / 3.8 Flash 面板可选），冻结集合随之换代。 */
+ * 0903 更新授权：用户拍板读片双模型（3.1 Pro / 3.8 Flash 面板可选），冻结集合随之换代。
+ * 0905 更新授权：用户解冻逐镜字段契约——18 字段只写重点镜（keyMoment ±6 秒），其余简写镜；
+ * 改毕即**重新冻结**（`NATIVE_DEEP_READ_KEY_SHOT_WINDOW_SEC`、两档必填字段表、提示词两档说明与本摘要一起冻结，再改需用户授权）。
+ * 同时整形 maxTokens 退回 131,072、链序 structuring_chain（用户 0905 拍板）。 */
 /** 0905 用户重新授权：整形链改五档逐档 30 分钟切换 + maxTokens 262K，冻结集合随之换代（只作废整形批次缓存，不动读片分片缓存）。 */
-export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "dc6e0c413f42c3ca9da09ca5753e1e9465ed82e1c5cbc3309256487a0fb24ecc" as const;
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "d0754171f47e91131506cded9a1a96e1ab286d21ba7ff0304167a5f41632fbe5" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
   const actual = nativeDeepReadFrozenContractSha256();
@@ -2543,6 +2549,30 @@ export function measureNativeDeepReadSegmentCoverage(input: {
   return { coveredSec, durationSec, coverageRatio: durationSec > 0 ? coveredSec / durationSec : 0 };
 }
 
+/**
+ * 0905 用户解冻：逐镜 18 字段只写在 keyMoment 前后 ±6 秒的「重点镜」；其余镜头只写
+ * 起止秒 / evidenceRole / hintZh / actionZh（简写镜）。用户原话「我从没这样要求过」——
+ * 18 字段全写是 PR #1324（0828）把 0827 探针字段全量推上生产并设为必填所致，第 5 集 379 镜
+ * 每镜约 450 字节，是读片输出 token 的大头。
+ */
+export const NATIVE_DEEP_READ_KEY_SHOT_WINDOW_SEC = 6;
+const NATIVE_DEEP_READ_REQUIRED_BRIEF_SHOT_FIELDS = [
+  "startSec", "endSec", "evidenceRole", "actionZh",
+] as const; // hintZh 由 assertNativeDeepReadShotObservations 单独把关
+export function isNativeDeepReadKeyShot(
+  shot: { startSec?: unknown; endSec?: unknown },
+  keyMomentSecs: readonly number[],
+  windowSec = NATIVE_DEEP_READ_KEY_SHOT_WINDOW_SEC,
+): boolean {
+  const start = Number(shot.startSec); const end = Number(shot.endSec);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+  return keyMomentSecs.some((at) => at + windowSec >= start && at - windowSec <= end);
+}
+export function nativeDeepReadKeyMomentSecs(raw: Record<string, unknown>): number[] {
+  return Array.isArray(raw.keyMoments)
+    ? (raw.keyMoments as Array<{ atSec?: unknown }>).map((row) => Number(row?.atSec)).filter(Number.isFinite)
+    : [];
+}
 const NATIVE_DEEP_READ_REQUIRED_SHOT_FIELDS = [
   "startSec",
   "endSec",
@@ -2623,6 +2653,7 @@ export function assertNativeDeepReadShotObservationsPreserved(
 
 function assertRawShotFieldPresence(raw: Record<string, unknown>, labelZh: string): void {
   const rawShots = Array.isArray(raw.shots) ? raw.shots : [];
+  const keyMomentSecs = nativeDeepReadKeyMomentSecs(raw);
   for (let index = 0; index < rawShots.length; index += 1) {
     const shot = rawShots[index];
     if (!shot || typeof shot !== "object" || Array.isArray(shot)) continue;
@@ -2637,16 +2668,18 @@ function assertRawShotFieldPresence(raw: Record<string, unknown>, labelZh: strin
      * · non_story_ad —— 只保存时间轴与分类标记，仅需 startSec/endSec/evidenceRole。
      * 不得靠全局取消必填来放宽 story 的完整性要求。
      */
+    // 0905 解冻：只有重点镜（keyMoment ±6 秒）要求 18 字段齐全，其余镜按简写镜校验
+    const keyShot = role === "story" && isNativeDeepReadKeyShot(row, keyMomentSecs);
     const requiredFields: ReadonlyArray<string> = role === "non_story_ad"
       ? NATIVE_DEEP_READ_REQUIRED_AD_SHOT_FIELDS
-      : NATIVE_DEEP_READ_REQUIRED_SHOT_FIELDS;
+      : keyShot ? NATIVE_DEEP_READ_REQUIRED_SHOT_FIELDS : NATIVE_DEEP_READ_REQUIRED_BRIEF_SHOT_FIELDS;
     const missingFields = requiredFields.filter(
       (field) => !Object.prototype.hasOwnProperty.call(row, field),
     );
     if (missingFields.length > 0) {
       throw gateError(`${labelZh}第${index + 1}镜字段不完整：缺 ${missingFields.join("、")}`);
     }
-    if (role === "story") {
+    if (role === "story" && keyShot) {
       const unitTypeZh = row.unitTypeZh;
       if (unitTypeZh !== "剪辑镜头" && unitTypeZh !== "拆分镜证据段") {
         throw gateError(`${labelZh}第${index + 1}镜 unitTypeZh 缺失或无效`);
