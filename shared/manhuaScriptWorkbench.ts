@@ -650,6 +650,8 @@ type ParsedShotRow = {
   index: number;
   cameraZh: string;
   actionZh: string;
+  /** 原稿明确给出秒位时保留实长；无时间的旧表仍由段编排决定。 */
+  durationSec?: number;
 } & Partial<ManhuaPerformanceCue>;
 
 function enrichRowWithPerformance(row: ParsedShotRow): ParsedShotRow {
@@ -680,9 +682,46 @@ function parseShotRowsFromText(raw: string): ParsedShotRow[] {
     .filter(Boolean);
 
   const byIndex = new Map<number, ParsedShotRow>();
+  let timedColumns: { index: number; time: number; camera: number; action: number; dialogue: number } | null = null;
 
   for (const line of lines) {
     if (/^\|?\s*[-:| ]+\s*\|?\s*$/.test(line)) continue;
+    const cells = line.startsWith("|")
+      ? line.replace(/^\|/, "").replace(/\|\s*$/, "").split("|").map(cell => cell.trim())
+      : [];
+    const headings = cells.map(cell => cell.replace(/\*\*/g, ""));
+    const timeColumn = headings.findIndex(cell => /^(?:秒位|时间|时间轴|起止秒位)$/.test(cell));
+    if (timeColumn >= 0) {
+      const columns = {
+        index: headings.findIndex(cell => /^(?:#|镜号|序号|镜头)$/.test(cell)),
+        time: timeColumn,
+        camera: headings.findIndex(cell => /景别|运镜|机位/.test(cell)),
+        action: headings.findIndex(cell => /^(?:画面|内容|动作)$/.test(cell)),
+        dialogue: headings.findIndex(cell => /台词|对白/.test(cell)),
+      };
+      timedColumns = columns.index >= 0 && columns.camera >= 0 && columns.action >= 0
+        ? columns : null;
+      continue;
+    }
+    // 六列生产表按表头取值，不能沿旧三列表的位置把秒位当运镜、画面当对白。
+    if (timedColumns && cells.length && /^\d+$/.test(cells[timedColumns.index] || "")) {
+      const time = (cells[timedColumns.time] || "").match(/^(\d+(?:\.\d+)?)\s*(?:-|–|—|~|～|至)\s*(\d+(?:\.\d+)?)\s*(?:s|秒)?$/i);
+      const duration = time ? Number(time[2]) - Number(time[1]) : 0;
+      const dialogue = cells[timedColumns.dialogue] || "";
+      byIndex.set(Number(cells[timedColumns.index]), enrichRowWithPerformance({
+        index: Number(cells[timedColumns.index]),
+        cameraZh: cells[timedColumns.camera] || "",
+        actionZh: cells[timedColumns.action] || "",
+        durationSec: duration > 0 && Number.isFinite(duration) ? duration : undefined,
+        // 屏幕字幕和无对白标记不是角色口播；音效列也不借用情绪字段。
+        dialogueZh: !dialogue || /^(?:[-—–]+|无|无对白)$/.test(dialogue) || /^(?:闪回)?字幕\s*[:：]/.test(dialogue)
+          ? undefined : dialogue,
+      }));
+      continue;
+    }
+    if (/^#{1,6}\s/.test(line) || (cells.length && /镜号|景别|内容|镜头/.test(line))) {
+      timedColumns = null;
+    }
     if (/镜号|景别|内容|镜头/.test(line) && /\|\s*镜|\|\s*景|\|\s*内/.test(line)) continue;
 
     // Markdown 表：| 1 | 近景 | 女主推门 | 或加台词/情绪列
@@ -733,8 +772,7 @@ function parseShotRowsFromText(raw: string): ParsedShotRow[] {
   }
 
   return Array.from(byIndex.values())
-    .sort((a, b) => a.index - b.index)
-    .slice(0, MANHUA_SHOT_KEYART_MAX);
+    .sort((a, b) => a.index - b.index);
 }
 
 /** 从节拍 / 反推正文拆出多镜；失败则回落为「6 段 × 3 静帧」骨架 */
@@ -745,10 +783,10 @@ export function parseWorkbenchShotsFromText(raw: string | undefined | null): Man
   const rows = parseShotRowsFromText(text);
   if (rows.length < 2) return defaultWorkbenchShots(text.slice(0, 180));
 
-  // 重新编号为 1..n；单镜秒数仅作占位，成片时长按段模型
-  return rows.slice(0, MANHUA_SHOT_KEYART_MAX).map((row, i) => ({
+  // 重新编号为 1..n；有原稿秒位则保留，无秒位的旧表仍使用 0 占位。
+  return rows.map((row, i) => ({
     index: i + 1,
-    durationSec: 0,
+    durationSec: row.durationSec || 0,
     cameraZh: row.cameraZh || DEFAULT_CAMERAS[i % DEFAULT_CAMERAS.length]!,
     actionZh: row.actionZh.slice(0, 280),
     dialogueZh: row.dialogueZh || undefined,

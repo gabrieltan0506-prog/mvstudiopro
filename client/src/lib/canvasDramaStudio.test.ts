@@ -75,6 +75,23 @@ import {
 import { getManhuaDirectorStrategyV1Snapshot } from "@shared/manhuaDirectorStrategyV1Snapshot";
 
 describe("canvasDramaStudio factory", () => {
+  it("29镜原稿的结尾进入关键帧编排，不被容量截尾", () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({ topic: "黑奇变身", episodeIndex: 1 });
+    const reverse = blocks.find(block => block.id.startsWith("reverse-"))!;
+    const table = [
+      "| # | 秒位 | 景别·运镜 | 画面 | 台词/字幕 | 音效·配乐 |",
+      "|---|---|---|---|---|---|",
+      ...Array.from({ length: 29 }, (_, i) =>
+        `| ${i + 1} | ${i * 4}-${(i + 1) * 4} | 中景 | ${i === 28 ? "黑奇驮阿菁踏云离开坊市" : `黑奇向前迈出第${i + 1}步`} | —— | 蹄声 |`),
+    ].join("\n");
+    const source = blocks.map(block => block.id === reverse.id
+      ? { ...block, outputText: table, status: "done" as const } : block);
+    const expanded = expandManhuaShotKeyartsAfterReverse(source, edges, reverse.id);
+    const keyarts = expanded.blocks.filter(block => block.id.startsWith("keyart-"));
+    expect(keyarts.length).toBeGreaterThan(0);
+    expect(keyarts.some(block => block.prompt.includes("黑奇驮阿菁踏云离开坊市"))).toBe(true);
+  });
+
   it("重编译段主体时保留用户补充，但淘汰旧派生秒轴", () => {
     const { blocks, edges } = spawnManhuaDramaStudio({
       topic: "雨夜门前对峙",

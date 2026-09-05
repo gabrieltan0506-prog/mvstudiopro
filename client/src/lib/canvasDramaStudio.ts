@@ -151,6 +151,7 @@ import {
   formatWorkbenchSegmentClipInjectBlock,
   formatWorkbenchShotInjectBlock,
   groupShotsIntoSegments,
+  recutWorkbenchShotsTo,
   hydrateWorkbenchShotsWithSegmentDialogue,
   scrubManhuaWorkbenchShotSlop,
   inferWorkbenchShotCastCount,
@@ -161,7 +162,6 @@ import {
   MANHUA_KEYART_NO_TEXT_LOCK,
   MANHUA_KEYARTS_PER_SEGMENT_MIN,
   MANHUA_SEGMENT_DEFAULT,
-  MANHUA_SHOT_KEYART_MAX,
   parseWorkbenchShotsFromText,
   parseManhuaClipTargetDurationSec,
   resolveClipLocalSegmentIndex,
@@ -1777,7 +1777,8 @@ function resolveShotsForEpisodeKeyarts(
   const withReverseDialogues = applyShotDialoguesFromText(withAngles, reverseText);
   const withDialogues = applyShotDialoguesFromText(withReverseDialogues, beatsText);
   // 返回分镜列表本身；成段/注水在 ensureManhuaFragmentClips / 工作台侧做
-  return withDialogues.slice(0, MANHUA_SHOT_KEYART_MAX);
+  // 保留完整正文；引擎容量由后续统一重切处理，不能在解析后先丢掉尾部剧情。
+  return withDialogues;
 }
 
 function makeShotBlockId(
@@ -1910,12 +1911,13 @@ export function resolveManhuaEpisodeClipVideoModel(
 }
 
 /**
- * 该集最多铺几张关键静帧：钉段引擎按 `段数 × 3` 截断，不钉段的由镜数决定。
- * 与 groupShotsIntoSegments 的截断口径同源。
+ * 该集最多铺几张关键静帧：保持既有段数与调用预算，超出的正文按内容合并，
+ * 不截掉尾部剧情；与 groupShotsIntoSegments 使用同一重切函数。
  */
-function capShotsToPinnedSegments<T>(shots: T[], videoModel: string): T[] {
+function capShotsToPinnedSegments(shots: ManhuaWorkbenchShot[], videoModel: string): ManhuaWorkbenchShot[] {
   const max = pinnedKeyartShotMax(videoModel);
-  return Number.isFinite(max) ? shots.slice(0, max) : shots;
+  return Number.isFinite(max) && shots.length > max
+    ? recutWorkbenchShotsTo(shots, max).shots : shots;
 }
 
 /** 钉段引擎的静帧镜号上限（`段数 × 3`）；不钉段的引擎无上限。 */
@@ -3184,8 +3186,8 @@ export function expandManhuaShotKeyartsAfterReverse(
     return be == null ? ep === 1 : be === ep;
   };
   /**
-   * 钉段引擎（mini / 2.5 / H3）按段表截镜：2.5 只铺 4 段，反推吐 18 镜就有 6 张静帧
-   * 没有任何成片会用，一张 54 积分白烧。截断口径与 groupShotsIntoSegments 同源。
+   * 钉段引擎保持既有关键帧预算；超出的原稿镜头按内容重切，而不是截掉结尾。
+   * 静帧与段成片使用同一重切规则，不额外增加生成调用。
    */
   const episodeClipModel = resolveEpisodeClipVideoModel(blocks, ep ?? 1, opts?.videoModel);
   const shots = capShotsToPinnedSegments(
