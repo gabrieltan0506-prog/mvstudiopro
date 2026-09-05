@@ -367,7 +367,8 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
       : qwenOnly
         ? generalGateways.filter((g) => !GLM_MODEL_GATEWAYS.has(g.name))
         : generalGateways;
-  const preferred = params.preferredGlmGateway;
+  // structuring_chain 的顺序是用户拍板的固定链，不受首选档重排
+  const preferred = structuringChain ? undefined : params.preferredGlmGateway;
   const gateways = preferred
     ? [
         ...eligibleGateways.filter((gateway) => gateway.name === preferred),
@@ -637,8 +638,8 @@ async function invokeOneGlmGateway(
   const timeoutMs = Math.max(1_000, Math.min(perGatewayMs, remainMs));
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const signal = params.abortSignal ? AbortSignal.any([params.abortSignal, timeoutSignal]) : timeoutSignal;
-  // 输出上限按网关夹紧（0905 用户令整形链 262K）：GLM-5.3 两档 262,144（OpenRouter Z.AI 原生档实测），
-  // Qwen 三档 131,072（qwen3.8-max 公开上限）；超发会被百炼按参数越界拒掉，白跳一档。
+  // 输出上限按网关夹紧（0905 用户令整形链 262K；超发会被供应商按参数越界拒掉，白跳一档）
+  // GLM 两档都发 262,144（用户令：EvoLink 没写死上限，能通就赚，不通落下一档）；Qwen 三档按公开上限 131,072
   const gatewayMaxOutput = GLM_MODEL_GATEWAYS.has(gateway) ? 262_144 : 131_072;
   const budget = Math.max(8_192, Math.min(gatewayMaxOutput, Math.floor(Number(params.maxTokens) || 65_536)));
   const body: Record<string, unknown> = {
@@ -684,6 +685,8 @@ async function invokeOneGlmGateway(
     // OpenRouter 上的 Qwen3.8-Max：思考走 reasoning.enabled，预算走 max_tokens；不钉 provider
     body.max_tokens = budget;
     body.reasoning = { enabled: true };
+    // OpenRouter 流式末帧不保证带 usage.cost，显式要回来，账本才记得到这一档
+    body.usage = { include: true };
   } else {
     body.max_tokens = budget;
     // 🔒 思考档位必须显式传：GLM-5.3 强制思考，思考与正文共吃同一个 max_tokens。

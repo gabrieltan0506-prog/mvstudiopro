@@ -3058,16 +3058,17 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentCacheSeriesKey: "hierarchy_9_segments",
     }, deps);
 
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(3);
+    // 0905 用户令「不归并」：4/4/1 三批，前两批各整形一次，单片批直接用分段卡，整集由代码确定性拼接
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
     const sent = invokeGlmStructuring.mock.calls.map(([prompt]) =>
       readRawSegmentsFromGlmPrompt((prompt as { user: string }).user));
-    expect(sent.map((rows) => rows.length)).toEqual([4, 4, 3]);
+    expect(sent.map((rows) => rows.length)).toEqual([4, 4]);
     expect((invokeGlmStructuring.mock.calls[0]![0] as { user: string }).user)
       .toContain('"segments":[{"segmentIndex":0');
     expect((invokeGlmStructuring.mock.calls[1]![0] as { user: string }).user)
       .toContain('"segments":[{"segmentIndex":4');
-    expect(deps.readStructuredBatchCache).toHaveBeenCalledTimes(3);
-    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(3);
+    expect(deps.readStructuredBatchCache).toHaveBeenCalledTimes(2);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
     expect(result.episodes[0]!.result.attemptedSegments).toBe(9);
   });
@@ -3128,15 +3129,10 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       onModelReceipt: (receipt) => { receipts.push(receipt); },
     }, deps);
 
-    expect(readStructuredBatchCache).toHaveBeenCalledTimes(2);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
-    const finalRows = readRawSegmentsFromGlmPrompt(
-      (invokeGlmStructuring.mock.calls[0]![0] as { user: string }).user,
-    );
-    expect(finalRows).toHaveLength(2);
-    expect(finalRows[0]?.answer).toEqual(expect.any(String));
-    expect(finalRows[1]?.shots).toEqual(expect.any(Array));
-    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(1);
+    // 0905：5 片＝[0..3]+[4]；前批命中缓存、单片批不进 GLM，整集零模型调用拼出
+    expect(readStructuredBatchCache).toHaveBeenCalledTimes(1);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(0);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(0);
     expect(receipts.filter((row) => row.route === NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE)).toEqual([]);
     expect(result.episodes[0]!.result.beatGrid).toHaveLength(60);
     expect(result.episodes[0]!.result.segmentCount).toBe(5);
@@ -3168,8 +3164,9 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentCacheSeriesKey: "answer_envelope_9_segments",
     }, deps);
 
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(3);
-    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(3);
+    // 0905：不再有第三次归并，5 片＝两个批次，各整形一次；整集由代码确定性拼接
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
     expect(result.episodes[0]!.result.beatGrid).toHaveLength(108);
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
   });
@@ -3228,12 +3225,13 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentCacheSeriesKey: "hierarchy_cache_hit",
     }, deps);
 
-    expect(readStructuredBatchCache).toHaveBeenCalledTimes(3);
+    // 0905：没有最终归并；9 片＝[0..3]+[4..7]+[8]，只有 [0..3] 命中缓存，[4..7] 跑一次，单片批不进 GLM
+    expect(readStructuredBatchCache).toHaveBeenCalledTimes(2);
     expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
     expect(invokeGlmStructuring.mock.calls.map(([prompt]) =>
       readRawSegmentsFromGlmPrompt((prompt as { user: string }).user).length)).toEqual([4]);
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(1);
-    expect(result.episodes[0]!.result.glmEvidence?.callId).toBe("cached-final-call");
+    expect(result.episodes[0]!.result.glmEvidence?.callId).not.toBe("cached-final-call");
   });
 
   it("整形缓存缺失但永久付费证据恢复时不重记用量、不发模型回执，并补写结构缓存", async () => {
@@ -3861,7 +3859,7 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     expect(result.episodes[0]!.result.degradedFpsSegmentIndexes).toEqual([0]);
     expect(receipts.find((row) => row.route === "segment_cache_hit")).toBeUndefined();
     // 0905：完成回执的 model 带实际网关人话名（如「OpenRouter·z-ai/glm-5.3」）
-    expect(receipts.some((row) => row.model.endsWith("·z-ai/glm-5.3") && row.status === "completed")).toBe(true);
+    expect(receipts.some((row) => String(row.model).endsWith("·z-ai/glm-5.3") && row.status === "completed")).toBe(true);
   });
 
   it("历史尾片无条件放行标记不再有效，好片复用且只重跑坏尾片", async () => {

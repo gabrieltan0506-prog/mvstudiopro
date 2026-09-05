@@ -5944,7 +5944,7 @@ async function executeNativeDeepReadBatch(
             || error.code !== "glm_gateway_all_failed"
             || error.gatewayTrace.some((row) => row.outcome === "ok" || row.outcome === "evidence_persistence_failed")
           ) throw error;
-          const detailZh = `${input.labelZh}两条GLM-5.3通道均未交付可消费结果，已使用确定性本地整形fallback；未新增或改写证据`;
+          const detailZh = `${input.labelZh}整形链五档均未交付可消费结果，已使用确定性本地整形fallback；未新增或改写证据`;
           structuringFallbackAdvisories.push({
             code: "glm_structuring_local_fallback",
             detailZh,
@@ -6076,34 +6076,13 @@ async function executeNativeDeepReadBatch(
           await writeCachedStructuring(segmentIndexes, groupInputs, result);
           return result.raw;
         }));
-        const cachedFinal = await readCachedStructuring(allSegmentIndexes, groupRows, "最终整形");
-        if (cachedFinal) {
-          const normalizedCachedFinal = unwrapNativeDeepReadStructuredAnswerEnvelope(cachedFinal);
-          normalizedCachedFinal.structuringBatches = groups.map((segmentIndexes) => ({ segmentIndexes }));
-          return normalizedCachedFinal;
-        }
-        const finalResult = await runStructuringOrLocalFallback({
-          prompt: buildNativeDeepReadGlmStructuringPrompt({
-            episodeIndex: episode.episodeIndex,
-            durationSec: episode.sourceDurationSec,
-            segments: episode.segments,
-            hasAudio,
-            rawSegments: groupRows,
-            coverageStartSec: 0,
-            coverageEndSec: episode.sourceDurationSec,
-            scopeZh: "整集",
-          }),
-          videoCount: groupRows.length,
-          segmentIndexes: allSegmentIndexes,
-          rows: groupRows,
-          fallbackRows: groupRows,
-          labelZh: `第${episode.episodeIndex}集最终归并`,
-        });
-        finalResult.raw = unwrapNativeDeepReadStructuredAnswerEnvelope(finalResult.raw);
-        assertNativeDeepReadShotObservationsPreserved(groupRows, finalResult.raw);
-        finalResult.raw.structuringBatches = groups.map((segmentIndexes) => ({ segmentIndexes }));
-        await writeCachedStructuring(allSegmentIndexes, groupRows, finalResult);
-        return finalResult.raw;
+        // 0905 用户令「不归并，分上下集」：批次各自整形完，按秒位确定性拼成整集卡，
+        // 省掉第三次 GLM（实测归并一发 49 分钟、输入 212K）。批次边界的重复镜头由
+        // deterministicallyMerge 的「同秒位取信息更全」规则收口，零模型调用。
+        const finalRaw = deterministicallyMergeNativeDeepReadRawSegments(groupRows);
+        assertNativeDeepReadShotObservationsPreserved(groupRows, finalRaw);
+        finalRaw.structuringBatches = groups.map((segmentIndexes) => ({ segmentIndexes }));
+        return finalRaw;
       };
       const parseCallId = `${episodeRequestId}:parse`;
       await emitVisualModelReceipt({
