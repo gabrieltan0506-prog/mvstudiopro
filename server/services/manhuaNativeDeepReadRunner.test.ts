@@ -3245,6 +3245,51 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
   });
 
+  it("0906 观察锁判坏：同档先重试一次，再坏才换档只重整形这一批；其他批不动，整集不死", async () => {
+    const segments = Array.from({ length: 9 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
+    const base = makeGlmStructuringStub();
+    const seen: Array<{ segs: string; callId?: string; gatewayOrder?: readonly string[] }> = [];
+    let badLeft = 2; // 批次 3,4,5：前两次（同档两次）交坏卷，第三次（换档）才交好卷
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }, _signal: unknown, context: { callId?: string; gatewayOrder?: readonly string[] }) => {
+      const result = await base(prompt);
+      const rows = readRawSegmentsFromGlmPrompt(prompt.user);
+      const firstStart = Math.min(...rows.flatMap((r) => ((r as { shots?: Array<{ startSec: number }> }).shots || []).map((s) => Number(s.startSec))));
+      const segs = firstStart >= 180 && firstStart < 360 ? "3,4,5" : firstStart < 180 ? "0,1,2" : "6,7,8";
+      seen.push({ segs, callId: context?.callId, gatewayOrder: context?.gatewayOrder });
+      const gateway = context?.gatewayOrder?.[0] ?? "plan_bj_qwen";
+      if (segs === "3,4,5" && badLeft > 0) {
+        badLeft -= 1;
+        const shots = (result.raw.shots as Array<Record<string, unknown>>).map((s, i) => i === 0 ? { ...s, hintZh: "被模型改写过的观察" } : s);
+        return { ...result, gateway, raw: { ...result.raw, shots } };
+      }
+      return { ...result, gateway };
+    });
+    const receipts: Array<Record<string, unknown>> = [];
+    const deps = makeRunnerDeps({
+      postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
+      invokeGlmStructuring: invokeGlmStructuring as never,
+    });
+    const result = await runManhuaNativeDeepReadBatch({
+      episodes: [{ episodeIndex: 7, resolveNodes: async () => [], segments, sourceDurationSec: 540, cacheSourceDigest: "7".repeat(64) }],
+      segmentCacheSeriesKey: "lock_retry_9_segments",
+      onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
+    }, deps);
+    // 三批：0,1,2 与 6,7,8 各 1 次；3,4,5 = 原发 + 同档重试 + 换档 = 3 次
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(5);
+    const mid = seen.filter((row) => row.segs === "3,4,5");
+    expect(mid).toHaveLength(3);
+    expect(mid[0]!.callId).not.toMatch(/-lockretry/);
+    expect(mid[1]!.callId).toMatch(/-lockretry1$/);
+    expect(mid[2]!.callId).toMatch(/-lockretry2$/);
+    // 第 2 次仍同档首发；第 3 次把交坏卷的档排到链尾
+    expect(mid[1]!.gatewayOrder?.[0]).toBe(mid[0]!.gatewayOrder?.[0]);
+    expect(mid[2]!.gatewayOrder?.[0]).not.toBe(mid[0]!.gatewayOrder?.[0]);
+    expect(mid[2]!.gatewayOrder?.at(-1)).toBe(mid[0]!.gatewayOrder?.[0]);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(3);
+    expect(receipts.filter((row) => String(row.model).includes("过不了观察锁"))).toHaveLength(2);
+    expect(result.episodes[0]!.result.segmentCount).toBe(9);
+  });
+
   it("命中GCS缓存的批次不重跑，只补未缓存批次；整集由代码拼接", async () => {
     const segments = Array.from({ length: 9 }, (_, index) => ({
       startSec: index * 60,
@@ -4491,7 +4536,7 @@ describe("逐镜动态观察的生产与消费", () => {
     expect(deterministicallyMergeNativeDeepReadRawSegments([wrappedSource]).shots).toEqual([shot]);
   });
 
-  it("实际批量入口在GLM丢观察后停止消费，原始解析证据已保存且不重发GLM", async () => {
+  it("实际批量入口在GLM丢观察后：同档重试一次、再换档，链上三档各两次都丢观察才停止；每次原始解析证据都保存（0906 用户令）", async () => {
     const segments = [{ startSec: 0, endSec: 60 }];
     const base = makeGlmStructuringStub();
     const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
@@ -4505,7 +4550,8 @@ describe("逐镜动态观察的生产与消费", () => {
       episodes: [{ episodeIndex: 1, segments, cacheSourceDigest: "a".repeat(64),
       sourceDurationSec: 60, resolveNodes: async () => [] }] }, deps)).rejects.toThrow("hintZh丢失");
     expect(deps.postVertex).toHaveBeenCalledTimes(1);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    // 单批链序 3 档 × 每档 2 次 = 6 次整形；读片只读 1 次（分片缓存不重读）
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(6);
     expect(deps.writeRawAttemptEvidence).toHaveBeenCalledTimes(1);
     expect(deps.writeParsedAttemptEvidence).toHaveBeenCalledTimes(1);
     expect(vi.mocked(deps.writeParsedAttemptEvidence).mock.calls[0]![0].parsed.shots).toEqual(
@@ -4561,6 +4607,19 @@ describe("0905 · 整形 JSON Schema（Qwen strict）", () => {
     expect(schema.properties.shots.items?.properties).toHaveProperty("craftReadZh");
     expect(schema.required).toContain("shots");
     expect(JSON.stringify(schema)).not.toMatch(/"type":"(OBJECT|ARRAY|STRING|NUMBER|INTEGER)"/);
+  });
+});
+
+describe("0906 · 整形缓存与证据按整形模型分命名空间", () => {
+  it("GLM 链的 callId 与 Qwen 链不同；Qwen 链与历史（无策略）callId 逐字相同，已付费缓存不失配", async () => {
+    const { nativeDeepReadStructuredBatchCallId } = await import("./manhuaNativeDeepReadRunner");
+    const base = { seriesKey: "series_x", sourceDigest: "a".repeat(64), episodeIndex: 7, segmentIndexes: [3, 4, 5], rawSegments: [{ shots: [] }] };
+    const legacy = nativeDeepReadStructuredBatchCallId(base);
+    const qwen = nativeDeepReadStructuredBatchCallId({ ...base, structuringPolicy: "structuring_chain_qwen_first" });
+    const glm = nativeDeepReadStructuredBatchCallId({ ...base, structuringPolicy: "structuring_chain" });
+    expect(qwen).toBe(legacy);
+    expect(glm).not.toBe(legacy);
+    expect(glm).toMatch(/^native-structuring-[a-f0-9]{64}$/);
   });
 });
 
