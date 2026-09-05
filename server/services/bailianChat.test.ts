@@ -382,48 +382,24 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
       .toEqual(["http_error", "skipped_budget_exhausted"]);
   });
 
-  it("🔒 等待同通道租约跨过 deadline 后跳过且绝不外呼", async () => {
+  it("0905 拆租约：同通道两份请求同时外呼，不排队", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "");
-    const realNow = Date.now();
-    let clock = realNow;
-    vi.spyOn(Date, "now").mockImplementation(() => clock);
-
-    let markFetchEntered!: () => void;
+    let inFlight = 0; let peak = 0;
     let releaseFetch!: () => void;
-    const fetchEntered = new Promise<void>((resolve) => { markFetchEntered = resolve; });
     const fetchReleased = new Promise<void>((resolve) => { releaseFetch = resolve; });
     const fetchSpy = vi.fn(async () => {
-      markFetchEntered();
+      inFlight += 1; peak = Math.max(peak, inFlight);
       await fetchReleased;
+      inFlight -= 1;
       return { ok: true, status: 200, text: async () => meteredBody() };
     });
     vi.stubGlobal("fetch", fetchSpy);
-
-    const leaseHolder = invokeGlmJsonChatWithGatewayFallback({
-      system: "holder",
-      user: "holder",
-      gatewayPolicy: "glm_only",
-    });
-    await fetchEntered;
-
-    const queued = invokeGlmJsonChatWithGatewayFallback({
-      system: "queued",
-      user: "queued",
-      gatewayPolicy: "glm_only",
-      deadlineAtMs: realNow + 120_000,
-    }).catch((error) => error);
-    await Promise.resolve();
-    clock += 60_001;
+    const a = invokeGlmJsonChatWithGatewayFallback({ system: "a", user: "a", gatewayPolicy: "glm_only" });
+    const b = invokeGlmJsonChatWithGatewayFallback({ system: "b", user: "b", gatewayPolicy: "glm_only" });
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
+    expect(peak).toBe(2);
     releaseFetch();
-
-    await leaseHolder;
-    const err = await queued;
-    expect(err).toBeInstanceOf(GlmGatewayError);
-    expect(err.gatewayTrace).toEqual([
-      expect.objectContaining({ gateway: "evolink_glm", outcome: "skipped_budget_exhausted" }),
-      expect.objectContaining({ gateway: "openrouter", outcome: "skipped_not_configured" }),
-    ]);
-    expect(fetchSpy).toHaveBeenCalledOnce();
+    await Promise.all([a, b]);
   });
 
   it("🔒 SSE 流式：分帧正文拼接、usage 与 finish_reason 从末帧取（0830 EvoLink 524 / undici 300s 修复）", async () => {
@@ -730,5 +706,71 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
       if (/api\.evolink\.ai/.test(c.url)) expect(["glm-5.3", "qwen3.8-max"]).toContain(model);
     }
     expect(calls[0].init?.signal).toBeInstanceOf(AbortSignal);
+  });
+});
+
+describe("0905 · GLM 流无数据即断档", () => {
+  it("read() 超过空闲上限即取消并抛错；有数据时原样返回", async () => {
+    const { readWithIdleTimeout } = await import("./bailianChat");
+    const cancelled: unknown[] = [];
+    const stuck = { read: () => new Promise<never>(() => {}), cancel: async (reason?: unknown) => { cancelled.push(reason); } };
+    await expect(readWithIdleTimeout(stuck, 30)).rejects.toThrow("无数据");
+    expect(cancelled).toEqual(["idle"]);
+    const ok = { read: async () => ({ done: false, value: new Uint8Array([1]) }), cancel: async () => {} };
+    await expect(readWithIdleTimeout(ok, 30)).resolves.toEqual({ done: false, value: new Uint8Array([1]) });
+  });
+});
+
+describe("0905 · 回包 JSON 确定性修复", () => {
+  it("缺逗号补逗号、提前结束补括号；本就合法或修不好返回 null", async () => {
+    const { repairJsonTextBestEffort } = await import("./bailianChat");
+    const parsed = (t: string) => JSON.parse(repairJsonTextBestEffort(t) || "null");
+    expect(parsed('{"a":[1,2 3],"b":{"c":"x"}}')).toEqual({ a: [1, 2, 3], b: { c: "x" } });
+    expect(parsed('{"a":[{"x":1} {"x":2}]}')).toEqual({ a: [{ x: 1 }, { x: 2 }] });
+    expect(parsed('{"a":[1,2,{"b":"c')).toEqual({ a: [1, 2, { b: "c" }] });
+    expect(repairJsonTextBestEffort('{"ok":true}')).toBeNull();
+    expect(repairJsonTextBestEffort('not json at all')).toBeNull();
+  });
+});
+
+describe("0905 · Qwen 套餐档带 json_schema strict", () => {
+  it("qwen_only + responseJsonSchema：新加坡档请求体是 json_schema strict；不带 schema 时仍是 json_object", async () => {
+    vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "sg-plan-key");
+    vi.stubEnv("WAN_PLAN_API_KEY", "");
+    const { invokeGlmJsonChatWithGatewayFallback } = await import("./bailianChat");
+    const okBody = JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ok: true }) }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 }, model: "qwen3.8-max" });
+    for (const withSchema of [true, false]) {
+      const calls: Array<{ url: string; init: any }> = [];
+      vi.stubGlobal("fetch", vi.fn(async (url: string, init: any) => { calls.push({ url, init }); return new Response(okBody, { status: 200, headers: { "content-type": "application/json" } }); }));
+      await invokeGlmJsonChatWithGatewayFallback({
+        system: "s", user: "u", gatewayPolicy: "qwen_only",
+        ...(withSchema ? { thinkingBudget: 32_768, responseJsonSchema: { name: "card", schema: { type: "object", additionalProperties: false, properties: { ok: { type: "boolean" } }, required: ["ok"] } } } : {}),
+      } as never);
+      const body = JSON.parse(String(calls[0]!.init.body));
+      if (withSchema) {
+        expect(body.response_format).toEqual({ type: "json_schema", json_schema: { name: "card", strict: true, schema: { type: "object", additionalProperties: false, properties: { ok: { type: "boolean" } }, required: ["ok"] } } });
+        expect(body.thinking_budget).toBe(32768);
+      } else {
+        expect(body.response_format).toEqual({ type: "json_object" });
+      }
+    }
+  });
+});
+
+describe("0905 · gatewayOrder 显式链序", () => {
+  it("按给定顺序逐档立即切换，不做 20 秒重试轮", async () => {
+    vi.stubEnv("WAN_PLAN_API_KEY", "bj-plan-key");
+    vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "sg-plan-key");
+    vi.stubEnv("EVOLINK_API_KEY", "evo-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "or-key");
+    const { invokeGlmJsonChatWithGatewayFallback } = await import("./bailianChat");
+    const urls: string[] = [];
+    const okBody = JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ok: true }) }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 }, model: "glm-5.3" });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => { urls.push(url); return urls.length === 1 ? new Response("boom", { status: 503 }) : new Response(okBody, { status: 200, headers: { "content-type": "application/json" } }); }));
+    const r = await invokeGlmJsonChatWithGatewayFallback({ system: "s", user: "u", gatewayPolicy: "structuring_chain_qwen_first", gatewayOrder: ["plan_bj_qwen", "evolink_glm", "openrouter"] } as never);
+    expect(urls[0]).toContain("token-plan.cn-beijing");
+    expect(urls[1]).toContain("api.evolink.ai");
+    expect(r.gateway).toBe("evolink_glm");
+    expect(r.gatewayTrace.map((t) => t.gateway)).toEqual(["plan_bj_qwen", "evolink_glm"]);
   });
 });
