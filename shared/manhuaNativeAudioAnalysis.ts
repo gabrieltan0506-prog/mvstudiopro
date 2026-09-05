@@ -262,10 +262,14 @@ export function normalizeManhuaNativeAudioChunkAnalysis(input: {
     if (!next.trim()) throw new Error("音频描述剥离文本秒位后正文为空，拒绝入库");
     return next;
   };
+  // 0905 实锤（花开锦绣第 6 集）：8 段全过门禁后拼整集音轨时，某段一条声音事件秒位落在它声明的区间外，
+  // 旧口径整集 throw——9 次读片付完钱才在最后一步炸。改为：越界事件丢弃并计数告警（不编造、不挪秒位），
+  // 区间覆盖的硬校验（assertTrackCoverage）不动。
+  let droppedCueCount = 0;
   const audioTrack = localTracks.map((track): ManhuaNativeAudioTrack => {
-    if (track.cues.some((cue) => cue.atSec < track.fromSec || cue.atSec > track.toSec)) {
-      throw new Error("音频事件秒位不属于声明区间");
-    }
+    const inRange = track.cues.filter((cue) => cue.atSec >= track.fromSec && cue.atSec <= track.toSec);
+    droppedCueCount += track.cues.length - inRange.length;
+    track = { ...track, cues: inRange };
     return {
       fromSec: input.chunk.startSec + track.fromSec,
       toSec: input.chunk.startSec + track.toSec,
@@ -287,6 +291,9 @@ export function normalizeManhuaNativeAudioChunkAnalysis(input: {
   const mixNotesZh = sanitize(parsed.mixNotesZh);
   const reusableAudioZh = sanitizeRequired(parsed.reusableAudioZh);
   const genAudioHintZh = sanitizeRequired(parsed.genAudioHintZh);
+  if (droppedCueCount > 0) {
+    console.warn(`[nativeAudioAnalysis] 第 ${input.chunk.startSec}–${input.chunk.endSec} 秒段丢弃 ${droppedCueCount} 条越界声音事件（秒位不在声明区间内）`);
+  }
   if (strippedCount > 0) {
     console.warn(
       `[nativeAudioAnalysis] 已剥离文本秒位 ${strippedCount} 处（数字时间轴为唯一真源）`,

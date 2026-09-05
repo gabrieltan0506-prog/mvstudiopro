@@ -147,17 +147,23 @@ describe("normalize 写入路：先剥离再入库（0826 拍板）", () => {
     );
   });
 
-  it("数字时间轴校验仍是硬门禁：cue 越界照抛", () => {
-    expect(() => normalizeManhuaNativeAudioChunkAnalysis({
+  it("0905：cue 越界不再整集炸，越界事件丢弃、区间内保留", () => {
+    const out = normalizeManhuaNativeAudioChunkAnalysis({
       raw: {
         ...rawChunk,
         audioTrack: [{
           ...rawChunk.audioTrack[0],
-          cues: [{ atSec: 99, kind: "sfx", detailZh: "越界" }],
+          cues: [
+            { atSec: 99, kind: "sfx", detailZh: "越界" },
+            { atSec: 3, kind: "sfx", detailZh: "在内" },
+          ],
         }],
       },
       chunk: { index: 0, startSec: 0, endSec: 10 },
-    })).toThrow("音频事件秒位不属于声明区间");
+    });
+    const cues = out.audioTrack[0]!.cues;
+    expect(cues).toHaveLength(1);
+    expect(cues[0]!.detailZh).toBe("在内");
   });
 
   it("必填字段剥离后为空则拒绝入库", () => {
