@@ -99,22 +99,21 @@ const mmss = (s: number): string => `${String(Math.floor(s / 60)).padStart(2, "0
 
 /**
  * 🔒 0905 用户冻结（报告呈现契约）：分段摘要不按「第1…第9段」逐段铺，
- * 按时间三分成前/中/后三段，每段只留前 3 句——报告是商品，读得快比写得全重要。
- * 没有分段标记的文本原样返回（只截前 6 句）。
+ * 按时间三分成前/中/后三段，内容一字不删（要压缩由用户另行指定）。
+ * 没有分段标记的文本原样返回。
  */
-export function condenseSegmentedSummaryZh(text: string, sentencesPerPart = 3): string {
+export function condenseSegmentedSummaryZh(text: string): string {
   const clean = String(text || "").trim();
   if (!clean) return "";
   const parts = clean.split(/【第\d+段】/).map((t) => t.trim()).filter(Boolean);
-  const sentences = (t: string, n: number) =>
-    t.split(/(?<=[。！？；])/).map((x) => x.trim()).filter(Boolean).slice(0, n).join("");
-  if (parts.length < 2) return sentences(clean, sentencesPerPart * 2);
+  // 0905 用户令：只按前/中/后重新分组，内容一字不删——要压缩内容由用户另行指定
+  if (parts.length < 2) return clean;
   const third = Math.ceil(parts.length / 3);
   const groups = [parts.slice(0, third), parts.slice(third, third * 2), parts.slice(third * 2)]
     .filter((g) => g.length > 0);
   const labels = groups.length === 3 ? ["前段", "中段", "后段"] : groups.length === 2 ? ["前段", "后段"] : ["全集"];
   return groups
-    .map((g, i) => `【${labels[i]}】${sentences(g.join(""), sentencesPerPart)}`)
+    .map((g, i) => `【${labels[i]}】${g.join("")}`)
     .join("\n");
 }
 
@@ -523,7 +522,6 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
    */
   const CAMERA_CRAFT_RE = /甩|环绕|旋转|升格|慢动作|定格|一镜到底|俯冲|希区柯克|急推|急拉|变焦|穿越|跟拍/;
   const TRANSITION_CRAFT_RE = /叠化|闪白|闪黑|匹配|遮罩|甩接|变速/;
-  const STORY_KINDS = new Set(["剧情", "情绪"]);
   /**
    * 0902 四审拍板：「剪辑镜头」占 99% 是废话填充——这栏改推导「镜头变化」：
    * 景别/机位对比前一镜（特写→近景、俯拍→平视）；拆分镜是内部手法，
@@ -727,8 +725,8 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const shotRows = shots.map((shot, shotIndex) => {
     const startSec = Number(shot.startSec) || 0;
     const endSec = Number(shot.endSec) || 0;
-    const storyMoments = keyMomentsInRange(startSec, endSec)
-      .filter((km) => STORY_KINDS.has(String(km.kindZh)));
+    // 0905 用户令：镜头表＝keyMoments 所在镜（五类重点时刻全算）+ 运镜/剪辑技巧镜
+    const storyMoments = keyMomentsInRange(startSec, endSec);
     const cameraCraft = CAMERA_CRAFT_RE.test(String(shot.cameraMoveZh ?? ""))
       || TRANSITION_CRAFT_RE.test(String(shot.transitionInZh ?? ""));
     const accent = storyMoments.length ? "#b8452f" : cameraCraft ? "#3a7bd5" : "";
