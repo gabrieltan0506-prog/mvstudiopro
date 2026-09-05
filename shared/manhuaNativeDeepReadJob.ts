@@ -49,7 +49,7 @@ export type ManhuaNativeStructuringModelId = (typeof MANHUA_NATIVE_STRUCTURING_M
 export const MANHUA_NATIVE_STRUCTURING_MODEL = "qwen3.8-max" as const;
 export const MANHUA_NATIVE_STRUCTURING_MODEL_LABELS: Record<ManhuaNativeStructuringModelId, string> = {
   "qwen3.8-max": "Qwen3.8-Max（北京 / 新加坡套餐分流·严格 schema，两档败回 GLM）",
-  "glm-5.3": "GLM-5.3（EvoLink / OpenRouter 分流，两档败切 Qwen）",
+  "glm-5.3": "GLM-5.3（各批并行首发 OpenRouter，EvoLink 兜底，两档败切 Qwen）",
 };
 export function parseNativeStructuringModel(value: unknown): ManhuaNativeStructuringModelId {
   if (value === undefined || value === null || value === "") return MANHUA_NATIVE_STRUCTURING_MODEL;

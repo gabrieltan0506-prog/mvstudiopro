@@ -1381,8 +1381,8 @@ export const NATIVE_DEEP_READ_STRUCTURING_JSON_SCHEMA_NAME = "native_structuring
 /**
  * 0905 用户拍板的整形分流链（按批次序号，0 起；单批＝第 1 批）：
  * Qwen 首发：第 1 批 北京 → EvoLink → OpenRouter；第 2 批 新加坡 → OpenRouter → EvoLink（两路都挂时 OpenRouter/EvoLink 各接一批真并发）。
- * GLM 首发：第 1 批 EvoLink → OpenRouter → 北京 → 新加坡；第 2 批 OpenRouter → EvoLink → 新加坡 → 北京。
- * 任一档 25 分钟（Qwen）/30 分钟（GLM）不回即切下一档，不做 20 秒重试轮。
+ * GLM 首发：各批一律 OpenRouter → EvoLink → Qwen（第 1 批 北京→新加坡，第 2 批 新加坡→北京）；用户 0905「并行走 OpenRouter」。
+ * 任一档 25 分钟（Qwen）/15 分钟（GLM）不回即切下一档，不做 20 秒重试轮。
  */
 export function nativeDeepReadStructuringGatewayOrder(
   policy: "structuring_chain" | "structuring_chain_qwen_first",
@@ -1392,7 +1392,8 @@ export function nativeDeepReadStructuringGatewayOrder(
   if (policy === "structuring_chain_qwen_first") {
     return odd ? ["plan_sg_qwen", "openrouter", "evolink_glm"] : ["plan_bj_qwen", "evolink_glm", "openrouter"];
   }
-  return odd ? ["openrouter", "evolink_glm", "plan_sg_qwen", "plan_bj_qwen"] : ["evolink_glm", "openrouter", "plan_bj_qwen", "plan_sg_qwen"];
+  // 0905 用户拍板「并行走 OpenRouter」：GLM 模式所有批次首发 OpenRouter（Z.AI 官方，并发稳），EvoLink 兜底，两档败切 Qwen
+  return odd ? ["openrouter", "evolink_glm", "plan_sg_qwen", "plan_bj_qwen"] : ["openrouter", "evolink_glm", "plan_bj_qwen", "plan_sg_qwen"];
 }
 
 /** 保留基础数组/对象结构，分片数值与分类要求写入描述；返回后的质量门禁不变。 */
@@ -3788,7 +3789,7 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE = "openrouter_glm_structurin
  */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`;
 /** 开始/失败回执的人话链路标签（0905：用户看了几百次「z-ai/glm-5.3」以为一直走 OpenRouter）。 */
-export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 EvoLink → OpenRouter → Qwen 北京 → 新加坡 → OpenRouter（每档 30 分钟）";
+export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 各批并行首发 OpenRouter → EvoLink → Qwen 北京 / 新加坡（GLM 单档 15 分钟 · Qwen 25 分钟）";
 export const NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL = "Qwen3.8-Max 严格 schema · 第1批 北京→EvoLink→OpenRouter · 第2批 新加坡→OpenRouter→EvoLink（Qwen 单档 25 分钟 · GLM 15 分钟）";
 /** 面板「整形模型」开关 → 链策略：默认 Qwen 首发；只有明确选 GLM-5.3 才走 GLM 首发（0905 用户拍板）。 */
 export function nativeDeepReadStructuringPolicyForModel(

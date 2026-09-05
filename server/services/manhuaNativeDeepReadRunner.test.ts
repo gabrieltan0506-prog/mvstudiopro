@@ -4491,12 +4491,12 @@ describe("0905 · 整形 JSON Schema（Qwen strict）", () => {
 });
 
 describe("0905 · 整形按批次序号分流链", () => {
-  it("Qwen 首发：第 1 批 北京→EvoLink→OpenRouter，第 2 批 新加坡→OpenRouter→EvoLink；GLM 首发对称", async () => {
+  it("Qwen 首发：第 1 批 北京→EvoLink→OpenRouter，第 2 批 新加坡→OpenRouter→EvoLink；GLM 各批一律 OpenRouter 首发", async () => {
     const { nativeDeepReadStructuringGatewayOrder } = await import("./manhuaNativeDeepReadRunner");
     expect(nativeDeepReadStructuringGatewayOrder("structuring_chain_qwen_first", 0)).toEqual(["plan_bj_qwen", "evolink_glm", "openrouter"]);
     expect(nativeDeepReadStructuringGatewayOrder("structuring_chain_qwen_first", 1)).toEqual(["plan_sg_qwen", "openrouter", "evolink_glm"]);
     expect(nativeDeepReadStructuringGatewayOrder("structuring_chain_qwen_first", 2)).toEqual(["plan_bj_qwen", "evolink_glm", "openrouter"]);
-    expect(nativeDeepReadStructuringGatewayOrder("structuring_chain", 0)[0]).toBe("evolink_glm");
+    expect(nativeDeepReadStructuringGatewayOrder("structuring_chain", 0)[0]).toBe("openrouter");
     expect(nativeDeepReadStructuringGatewayOrder("structuring_chain", 1)[0]).toBe("openrouter");
   });
 
@@ -4508,7 +4508,8 @@ describe("0905 · 整形按批次序号分流链", () => {
     expect(m.nativeDeepReadStructuringStartedLabel("structuring_chain_qwen_first")).toMatch(/^Qwen3\.8-Max/);
     expect(m.nativeDeepReadStructuringStartedLabel("structuring_chain")).not.toMatch(/^Qwen3\.8-Max/);
     // GLM 链的兜底档必须含 Qwen 两档，Qwen 链的兜底档必须含 GLM 两档（两档败切对方）
-    expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain", 0)).toEqual(["evolink_glm", "openrouter", "plan_bj_qwen", "plan_sg_qwen"]);
+    expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain", 0)).toEqual(["openrouter", "evolink_glm", "plan_bj_qwen", "plan_sg_qwen"]);
+    expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain", 1)).toEqual(["openrouter", "evolink_glm", "plan_sg_qwen", "plan_bj_qwen"]);
     expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain_qwen_first", 0).slice(1)).toEqual(["evolink_glm", "openrouter"]);
   });
 
