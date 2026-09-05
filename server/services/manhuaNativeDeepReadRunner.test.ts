@@ -2477,6 +2477,9 @@ function makeRunnerDeps(over: Partial<NativeDeepReadBatchRunnerDeps> = {}): Nati
     remove: vi.fn(async () => undefined),
     postVertex: vi.fn() as never,
     postEvolink: vi.fn() as never,
+    postGeminiApi: vi.fn() as never,
+    uploadGeminiFile: vi.fn() as never,
+    geminiApiFallbackAvailable: () => false,
     signReadUrl: vi.fn(() => "https://storage.googleapis.com/signed.mp4"),
     invokeGlmStructuring: makeGlmStructuringStub() as never,
     readSegmentCache: vi.fn(async () => null) as never,
@@ -2711,6 +2714,77 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
     expect(resourceRetries.map((row) => [row.resourceRetryNumber, row.resourceRetryMax]))
       .toEqual([[1, 4], [2, 4], [3, 4], [4, 4]]);
     expect(receipts.some((row) => row.route === "gate_retry_pending")).toBe(false);
+  });
+
+  it("0905 AI Studio 兜底：Vertex 重试 2 次仍 503 → 传 Files API 改走 Gemini API 读，成功即段路由记 gemini_api_files_video", async () => {
+    const span = fullSegments[3]!;
+    const overloaded = Object.assign(new Error("RESOURCE_EXHAUSTED"), { nativeDeepReadHttpStatus: 503 });
+    const postVertex = vi.fn(async (_body: any) => { throw overloaded; });
+    const postGeminiApi = vi.fn().mockResolvedValueOnce(geminiResponse(makeSegmentPayload({ segmentIndex: 3, ...span })));
+    const uploadGeminiFile = vi.fn(async (_input: { gsUri: string }) => ({ fileUri: "https://generativelanguage.googleapis.com/v1beta/files/abc123" }));
+    const receipts: Array<Record<string, unknown>> = [];
+    const deps = makeRunnerDeps({ postVertex, postGeminiApi: postGeminiApi as never, uploadGeminiFile: uploadGeminiFile as never, geminiApiFallbackAvailable: () => true });
+    const result = await runManhuaNativeDeepReadSelectedSegments({
+      ...selectedParams([3]),
+      onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
+    }, deps);
+    // 首发 1 + Vertex 重试 2 = 3 次 Vertex；第 3 次资源错误触发兜底，不再等 30 秒
+    expect(postVertex).toHaveBeenCalledTimes(3);
+    expect(uploadGeminiFile).toHaveBeenCalledTimes(1);
+    expect(uploadGeminiFile.mock.calls[0]![0]).toMatchObject({ gsUri: "gs://test-bucket/seg-3.mp4" });
+    expect(postGeminiApi).toHaveBeenCalledTimes(1);
+    expect(postGeminiApi.mock.calls[0]![0].contents[0].parts[0].fileData.fileUri).toContain("files/abc123");
+    expect(postGeminiApi.mock.calls[0]![0].generationConfig.temperature).toBe(0.7);
+    expect(vi.mocked(deps.waitForRetry).mock.calls.map(([ms]) => ms)).toEqual([30_000, 30_000]);
+    expect(receipts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ route: "gemini_api_fallback_pending", resourceRetryNumber: 3 }),
+      expect.objectContaining({ route: "gemini_api_files_video", status: "started" }),
+    ]));
+    // 选段诊断不写 active 缓存；路由落在段结果与永久证据上
+    expect(result.segments[0]!.visualRoute).toBe("gemini_api_files_video");
+    expect(vi.mocked(deps.writeRawAttemptEvidence).mock.calls.at(-1)![0]).toMatchObject({ visualRoute: "gemini_api_files_video" });
+  });
+
+  it("0905 AI Studio 兜底自身失败：不计入 Vertex 次数，回 Vertex 跑完剩余 2 次重试后才停", async () => {
+    const overloaded = Object.assign(new Error("RESOURCE_EXHAUSTED"), { nativeDeepReadHttpStatus: 503 });
+    const postVertex = vi.fn(async (_body: any) => { throw overloaded; });
+    const postGeminiApi = vi.fn(async (_body: any) => {
+      throw Object.assign(new Error("AI Studio 429"), { nativeDeepReadHttpStatus: 429 });
+    });
+    const uploadGeminiFile = vi.fn(async () => ({ fileUri: "https://generativelanguage.googleapis.com/v1beta/files/abc123" }));
+    const receipts: Array<Record<string, unknown>> = [];
+    const deps = makeRunnerDeps({ postVertex, postGeminiApi: postGeminiApi as never, uploadGeminiFile: uploadGeminiFile as never, geminiApiFallbackAvailable: () => true });
+    await expect(runManhuaNativeDeepReadSelectedSegments({
+      ...selectedParams([3]),
+      onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
+    }, deps)).rejects.toThrow("RESOURCE_EXHAUSTED");
+    // Vertex：首发 1 + 重试 4 = 5；AI Studio 只试 1 次
+    expect(postVertex).toHaveBeenCalledTimes(5);
+    expect(postGeminiApi).toHaveBeenCalledTimes(1);
+    expect(uploadGeminiFile).toHaveBeenCalledTimes(1);
+    expect(receipts.some((row) => row.route === "gemini_api_fallback_failed")).toBe(true);
+    const resourceRetries = receipts.filter((row) => row.route === "resource_retry_pending");
+    // 第 3 次资源错误由「改走 AI Studio」回执顶替，不再发 30 秒等待回执
+    expect(resourceRetries.map((row) => row.resourceRetryNumber)).toEqual([1, 2, 4]);
+  });
+
+  it("0905 AI Studio 兜底未配置（无 GEMINI_API_KEY）时行为与 0904 基线完全一致：纯 Vertex 4 次重试", async () => {
+    const overloaded = Object.assign(new Error("RESOURCE_EXHAUSTED"), { nativeDeepReadHttpStatus: 503 });
+    const postVertex = vi.fn(async (_body: any) => { throw overloaded; });
+    const postGeminiApi = vi.fn();
+    const deps = makeRunnerDeps({ postVertex, postGeminiApi: postGeminiApi as never, geminiApiFallbackAvailable: () => false });
+    await expect(runManhuaNativeDeepReadSelectedSegments(selectedParams([3]), deps)).rejects.toThrow("RESOURCE_EXHAUSTED");
+    expect(postVertex).toHaveBeenCalledTimes(5);
+    expect(postGeminiApi).not.toHaveBeenCalled();
+  });
+
+  it("0905 发往 generativelanguage 前剥掉 Vertex 专属 audioTimestamp，且不改写原 body", async () => {
+    const { stripVertexOnlyGenerationConfigFields, NATIVE_DEEP_READ_RESOURCE_FALLBACK_AFTER } = await import("./manhuaNativeDeepReadRunner");
+    const body = { contents: [], generationConfig: { audioTimestamp: true, temperature: 0.7, responseMimeType: "application/json" } };
+    const stripped = stripVertexOnlyGenerationConfigFields(body) as typeof body;
+    expect(stripped.generationConfig).toEqual({ temperature: 0.7, responseMimeType: "application/json" });
+    expect(body.generationConfig.audioTimestamp).toBe(true);
+    expect(NATIVE_DEEP_READ_RESOURCE_FALLBACK_AFTER).toBe(2);
   });
 
   it("最后一分片与其他分片一视同仁，三次门禁失败后由 Qwen 三选一", async () => {
