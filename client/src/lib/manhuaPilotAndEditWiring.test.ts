@@ -19,6 +19,20 @@ const pipelineSource = readFileSync(
 );
 
 describe("漫剧首10秒质检与视频编辑接线", () => {
+  it("两个粗剪入口当场批量写回画布，合成扣费前检查同一顺序合同", () => {
+    expect(workbenchSource.match(/onReorder=\{handleRoughShotReorder\}/g)).toHaveLength(2);
+    expect(workbenchSource).not.toContain("onReorder={setRoughShotOrder}");
+    expect(workbenchSource).toContain("persistClipEdits(fineCutByShot, order)");
+    expect(workbenchSource).toContain("onApplyClipEditTrims(updates)");
+    expect(workbenchSource).toContain("latestEditSourceIdentity.current !== sourceIdentity");
+    expect(workbenchSource).toContain("[clip.shotIndex, clip.durationSec, clip.order]");
+    expect(workbenchSource).toContain("onlyShotIndex == null || legacyOrderNeedsPersist");
+    expect(omniSource).toContain("onApplyClipEditTrims={(updates)");
+    const assemble = omniSource.slice(omniSource.indexOf("const assembleManhuaFinal"));
+    expect(assemble.indexOf("buildManhuaAssemblePlan(ready)")).toBeGreaterThan(-1);
+    expect(assemble.indexOf("buildManhuaAssemblePlan(ready)")).toBeLessThan(assemble.indexOf("await createJobSameOrigin"));
+    expect(assemble.slice(0, assemble.indexOf("const out ="))).not.toContain("chargeWorkflowStepMutation.mutateAsync");
+  });
   it("forces the pilot through the real clip pipeline with one submission", () => {
     expect(omniSource).toContain("compileManhuaPilotPrompt(pilotClip.prompt)");
     expect(omniSource).toContain("maxRetries: opts?.pilotRun ? 0");
@@ -39,9 +53,31 @@ describe("漫剧首10秒质检与视频编辑接线", () => {
     expect(pipelineSource).toContain("mergeManhuaMediaVersions");
   });
 
+  it("loads workbench edit state only on episode key changes and guards writes until hydrated", () => {
+    expect(workbenchSource).toContain("if (hydratedBPersistKey !== bPersistKey) return;");
+    expect(workbenchSource).toContain("setHydratedBPersistKey(bPersistKey);");
+    expect(workbenchSource).toMatch(
+      /const hit = loadManhuaWorkbenchBPersist\(bPersistKey\);[\s\S]*?\}, \[bPersistKey\]\);/,
+    );
+    expect(workbenchSource).not.toMatch(
+      /loadManhuaWorkbenchBPersist\(bPersistKey\)[\s\S]{0,1800}?\[bPersistKey,[\s\S]*?roughClips/,
+    );
+  });
+
+  it("persists the probed source duration and never infers it from an already-cut out point", () => {
+    expect(workbenchSource).toContain("sourceDurationSec: out.durationSec");
+    expect(workbenchSource).toContain(
+      "Number(clipBlock.manhuaEditTrim?.sourceDurationSec) || 0",
+    );
+    expect(workbenchSource).not.toContain(
+      "Number(clipBlock.manhuaEditTrim?.outSec) || 0",
+    );
+  });
+
   it("passes the separate trajectory layer from store to generation dependencies", () => {
     expect(omniSource).toContain("manhuaDirectorBoardMotionOverlayByEpisodeSegment");
-    expect(workbenchSource).toContain("轨迹与底图分开保存");
+    expect(workbenchSource).toContain("directorBoardMotionOverlays?:");
+    expect(workbenchSource).toContain("onDirectorBoardMotionOverlayChange");
     expect(workbenchSource).toContain("确认轨迹");
   });
 

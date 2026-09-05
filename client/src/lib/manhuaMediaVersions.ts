@@ -5,7 +5,6 @@
 export function mergeManhuaMediaVersions(
   newest: readonly (string | null | undefined)[],
   previous: readonly (string | null | undefined)[],
-  maxVersions = 8,
 ): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -14,7 +13,6 @@ export function mergeManhuaMediaVersions(
     if (!/^https?:\/\//i.test(url) || seen.has(url)) continue;
     seen.add(url);
     out.push(url);
-    if (out.length >= Math.max(1, Math.floor(maxVersions) || 8)) break;
   }
   return out;
 }

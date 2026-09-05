@@ -5,14 +5,36 @@ import {
   cloudDraftBlocksToCanvas,
   serializeCloudDraftForUpload,
   slimBlocksForLocalPersist,
+  trySaveLocalCanvas,
   uploadManhuaCloudDraftViaGcsDirect,
 } from "./manhuaCloudDraftSync";
 import { buildManhuaCloudDraftPayload } from "@shared/manhuaCloudDraft";
 import { buildManhuaWriterSession } from "@shared/manhuaWriterSession";
 import { MANHUA_FACTORY_DEFAULT_VIDEO_MODEL } from "@shared/manhuaScriptWorkbench";
-import type { CanvasBlock } from "@/lib/canvasTypes";
+import { defaultCanvasBlock, type CanvasBlock } from "@/lib/canvasTypes";
+import { stripManhuaFactoryCanvasArtifacts } from "./canvasDramaStudio";
 
 describe("manhuaCloudDraftSync dual-path", () => {
+  it("换剧归档的整集版本经本机保存及配额降级仍保留，云同步不扩大范围", () => {
+    const source = {
+      ...defaultCanvasBlock("video", 0, 0), id: "final-e01",
+      outputUrl: "https://cdn.example/final-current.mp4",
+      outputUrls: ["https://cdn.example/final-current.mp4", "https://cdn.example/final-original.mp4"],
+    };
+    const archived = stripManhuaFactoryCanvasArtifacts([source], []).blocks;
+    expect(archived[0]?.id).toBe("final-e01-archived");
+    expect(slimBlocksForLocalPersist(archived)[0]?.outputUrls).toEqual(source.outputUrls);
+    let firstAttempt = true;
+    let saved = "";
+    expect(trySaveLocalCanvas(archived, [], { setItem(_key, value) {
+      if (firstAttempt) { firstAttempt = false; throw new Error("QuotaExceededError"); }
+      saved = value;
+    } })).toBe(true);
+    expect(JSON.parse(saved).blocks[0].outputUrls).toEqual(source.outputUrls);
+    const cloud = buildManhuaCloudDraftPayload({ clientUpdatedAt: "2026-09-05T00:00:00Z", writerSession: {}, blocks: archived, edges: [] });
+    expect(cloud.canvas.blocks[0]?.outputUrl).toBeUndefined();
+  });
+
   it("prefers cloud when timestamps equal or newer", () => {
     const cloud = buildManhuaCloudDraftPayload({
       clientUpdatedAt: "2026-07-20T10:00:00.000Z",
@@ -164,7 +186,7 @@ describe("manhuaCloudDraftSync dual-path", () => {
     expect(cloudDraftBlocksToCanvas(payload.canvas.blocks)[0]?.videoModel).toBe("seedance-2.5");
   });
 
-  it("slims local canvas by dropping video outputs", () => {
+  it("drops clip outputs but keeps final-eXX selected version and history", () => {
     const slim = slimBlocksForLocalPersist([
       {
         id: "clip-e01-s01",
@@ -204,9 +226,120 @@ describe("manhuaCloudDraftSync dual-path", () => {
         imageBatchCount: 1,
         uploadedAssets: [],
       } as CanvasBlock,
+      {
+        id: "final-e01",
+        kind: "video",
+        x: 0,
+        y: 0,
+        width: 400,
+        height: 360,
+        prompt: "整集成片",
+        outputUrl: "https://signed.example/burned.mp4",
+        outputUrls: [
+          "https://signed.example/burned.mp4",
+          "https://cdn.example/original.mp4",
+        ],
+        status: "done",
+        textModel: "gpt-5.6-sol",
+        imageModel: "gpt-image-2",
+        videoModel: "gemini-omni-flash",
+        aspectRatio: "9:16",
+        imageMode: "generate",
+        imageBatchCount: 1,
+        uploadedAssets: [],
+      } as CanvasBlock,
     ]);
     expect(slim[0]?.outputUrl).toBeUndefined();
     expect(slim[1]?.outputUrl).toContain("k.jpg");
+    expect(slim[2]?.outputUrl).toBe("https://signed.example/burned.mp4");
+    expect(slim[2]?.outputUrls).toHaveLength(2);
+  });
+
+  it("restores final video and clip trim from a cloud canvas snapshot", () => {
+    const restored = cloudDraftBlocksToCanvas([
+      {
+        id: "final-e01",
+        kind: "video",
+        x: 0,
+        y: 0,
+        width: 400,
+        height: 360,
+        prompt: "整集成片",
+        status: "done",
+        outputUrl: "https://signed.example/burned.mp4",
+        outputUrls: [
+          "https://signed.example/burned.mp4",
+          "https://cdn.example/original.mp4",
+        ],
+      },
+      {
+        id: "clip-e01-s01",
+        kind: "video",
+        x: 0,
+        y: 0,
+        width: 400,
+        height: 360,
+        prompt: "段成片",
+        manhuaEditTrim: {
+          sourceDurationSec: 15,
+          inSec: 0,
+          outSec: 12,
+          shotPieces: [
+            { shotIndex: 1, trimInSec: 0.5, trimOutSec: 4, durationSec: 3.5 },
+          ],
+        },
+      },
+    ]);
+    expect(restored[0]?.outputUrl).toBe("https://signed.example/burned.mp4");
+    expect(restored[1]?.manhuaEditTrim?.sourceDurationSec).toBe(15);
+    expect(restored[1]?.manhuaEditTrim?.shotPieces?.[0]?.trimInSec).toBe(0.5);
+  });
+
+  it("does not silently discard final video versions when localStorage quota fallback runs", () => {
+    const versions = Array.from(
+      { length: 12 },
+      (_, index) => `https://cdn.example/final-v${index + 1}.mp4`,
+    );
+    const writes: string[] = [];
+    const storage = {
+      setItem(_key: string, value: string) {
+        if (!writes.length) {
+          writes.push("first-attempt");
+          throw new Error("QuotaExceededError");
+        }
+        writes.push(value);
+      },
+    };
+    expect(
+      trySaveLocalCanvas(
+        [
+          {
+            ...defaultCanvasBlock("video", 0, 0),
+            id: "final-e01",
+            kind: "video",
+            x: 0,
+            y: 0,
+            width: 400,
+            height: 360,
+            prompt: "整集成片",
+            outputUrl: versions[0],
+            outputUrls: versions,
+          },
+        ],
+        [],
+        storage,
+      ),
+    ).toBe(true);
+    const saved = JSON.parse(writes[1] || "{}") as { blocks?: CanvasBlock[] };
+    expect(saved.blocks?.[0]?.outputUrls).toHaveLength(12);
+
+    expect(
+      trySaveLocalCanvas([], [], {
+        setItem() {
+          throw new Error("QuotaExceededError");
+        },
+      }),
+    ).toBe(false);
   });
 
   it("maps empty-JSON fetch errors to a soft direct-upload failure", async () => {

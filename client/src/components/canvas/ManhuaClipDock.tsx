@@ -22,6 +22,7 @@ import {
   type ManhuaClipDockItem,
 } from "@/lib/manhuaProjectExport";
 import { MANHUA_DRAFT_EXPORT_HINT_ZH } from "@shared/manhuaCloudDraft";
+import { CREDIT_COSTS } from "@shared/plans";
 import {
   defaultManhuaDeliveryPackage,
   formatManhuaDeliveryPackageMarkdown,
@@ -49,6 +50,8 @@ type Props = {
   onSelectedIdsChange: (next: Set<string>) => void;
   onFocusBlock?: (blockId: string) => void;
   assembleBusy?: boolean;
+  assembleCredits?: number;
+  assembleReceipts?: import("@/lib/manhuaAssembleResultGuard").ManhuaAssembleReceipt[];
   finalVideoUrl?: string | null;
   onAssembleFinal?: (clips: ReturnType<typeof collectManhuaAssembleClipsFromDock>) => void;
   /** 尚无可合成成片时，引导回工作台 */
@@ -84,6 +87,8 @@ export default function ManhuaClipDock({
   onSelectedIdsChange,
   onFocusBlock,
   assembleBusy,
+  assembleCredits = CREDIT_COSTS.workflowFinalRender,
+  assembleReceipts = [],
   finalVideoUrl,
   onAssembleFinal,
   onGoWorkbench,
@@ -304,7 +309,7 @@ export default function ManhuaClipDock({
               </span>
             </div>
             <p className="mt-1 max-w-xl text-[11px] leading-relaxed text-white/45">
-              各集微动就绪后，一键拼成长片并自动配乐。质检未过可在本坞或剪辑台点「仍采用此片」/「按建议重拍」。勾选集号可同时作为工厂运行范围。
+              各集成片就绪后，保留原声拼成长片；配乐在配乐间另行确认。质检未过可选择「仍采用此片」或重拍。勾选集号可同时作为工厂运行范围。
               {canAssemble ? (
                 <span className="text-cyan-100/70">
                   {" "}
@@ -363,7 +368,7 @@ export default function ManhuaClipDock({
               className="inline-flex min-w-[9.5rem] items-center justify-center gap-2 rounded-xl border border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 px-4 py-2.5 text-[12px] font-semibold text-cyan-50 shadow-[0_0_24px_rgba(34,211,238,0.12)] hover:from-cyan-400/40 hover:to-cyan-600/35 disabled:opacity-40"
               title={
                 canAssemble
-                  ? `将用 ${assembleClips.length} 段成片合成长片并自动配乐`
+                  ? `将用 ${assembleClips.length} 段成片保留原声合成长片，${assembleCredits} 积分；不会自动生成配乐`
                   : "需至少一集有微动成片"
               }
             >
@@ -371,8 +376,8 @@ export default function ManhuaClipDock({
               {assembleBusy
                 ? "合成中…"
                 : canAssemble
-                  ? `合成长片（${assembleClips.length} 段·含配乐）`
-                  : "合成长片（含配乐）"}
+                  ? `合成长片（${assembleClips.length} 段·${assembleCredits} 积分）`
+                  : "合成长片（保留原声）"}
             </button>
             {!canAssemble && !assembleBusy && onGoWorkbench ? (
               <button
@@ -386,6 +391,14 @@ export default function ManhuaClipDock({
           </div>
         </div>
 
+        {assembleReceipts.length > 0 ? (
+          <details className="mt-2 text-xs text-cyan-100/80">
+            <summary className="cursor-pointer">成片恢复记录（{assembleReceipts.length}）</summary>
+            <div className="mt-2 max-h-40 space-y-1 overflow-auto">
+              {assembleReceipts.map(row => <a key={row.jobId} href={row.url} target="_blank" rel="noreferrer" className="block underline">{row.title} · {new Date(row.createdAt).toLocaleString()} · 查看原片</a>)}
+            </div>
+          </details>
+        ) : null}
         {!canAssemble && !finalVideoUrl && !assembleBusy ? (
           <div className="mt-3 rounded-xl border border-dashed border-cyan-400/25 bg-cyan-500/[0.06] px-3 py-2.5">
             <p className="text-[11px] font-medium text-cyan-50/90">合成前提：至少一集微动成片就绪</p>
@@ -408,7 +421,7 @@ export default function ManhuaClipDock({
           <div className="mt-3">
             <div className="mb-1 flex items-center gap-1.5 text-[10px] text-cyan-100/80">
               <Music2 className="h-3 w-3" />
-              配乐生成与多集拼接进行中，可离开本区稍候…
+              正在裁切、拼接并保留原声，可离开本区稍候…
             </div>
             <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
               <div className="h-full w-2/3 animate-pulse rounded-full bg-gradient-to-r from-cyan-400/80 via-teal-300/90 to-cyan-400/80" />
@@ -421,7 +434,7 @@ export default function ManhuaClipDock({
         <div className="border-b border-white/10 bg-black/35 px-3 py-3 md:px-4">
           <div className="mb-2 flex items-center justify-between gap-2">
             <div className="text-[11px] font-semibold text-cyan-100/90">长片预览</div>
-            <span className="text-[10px] text-white/40">多集拼接 · 已混配乐</span>
+            <span className="text-[10px] text-white/40">多集拼接 · 保留原声</span>
           </div>
           <div className="overflow-hidden rounded-xl border border-cyan-400/25 bg-black/60">
             <video src={finalVideoUrl} controls className="max-h-64 w-full object-contain" />

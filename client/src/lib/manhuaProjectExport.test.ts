@@ -151,6 +151,122 @@ describe("manhuaProjectExport", () => {
     }
   });
 
+  it("final-only 工程包保存当前版、历史版文件与长期任务身份", async () => {
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(new Uint8Array([7, 8, 9]), { status: 200 })) as typeof fetch;
+    const current = "https://cdn.example/final-burned.mp4";
+    const original = "https://cdn.example/final-original.mp4";
+    const final = {
+      ...defaultCanvasBlock("video", 0, 0),
+      id: "final-e02",
+      episodeIndex: 2,
+      episodeTitle: "第二集",
+      outputUrl: current,
+      outputUrls: [current, original],
+      manhuaFinalVersions: [
+        {
+          origin: "burn_subtitle" as const,
+          url: current,
+          jobId: "burn-2",
+          gcsUri: "gs://bucket/final-burned.mp4",
+          createdAt: 20,
+        },
+        {
+          origin: "assemble" as const,
+          url: original,
+          jobId: "assemble-2",
+          gcsUri: "gs://bucket/final-original.mp4",
+          createdAt: 10,
+        },
+      ],
+      manhuaFinalPostProd: {
+        action: "burn_subtitle" as const,
+        jobId: "burn-2",
+        sourceUrl: original,
+        sourceGcsUri: "gs://bucket/final-original.mp4",
+        sourceSelected: false,
+        status: "succeeded" as const,
+        resultUrl: current,
+        resultGcsUri: "gs://bucket/final-burned.mp4",
+        resultSelected: true,
+        updatedAt: 20,
+      },
+    };
+
+    try {
+      const result = await exportManhuaProjectZip({
+        items: [],
+        selectedIds: [],
+        seriesTitle: "只含整集成片",
+        finalVideoBlocks: [final],
+        includeLibraryRefs: false,
+      });
+      expect(result.filename).toBe("mv-manhua-ep02-只含整集成片.zip");
+      expect(result.okCount).toBe(2);
+      expect(result.failCount).toBe(0);
+      expect(result.manifest.finalVideos?.[0]?.versions).toEqual([
+        expect.objectContaining({
+          url: current,
+          active: true,
+          path: "ep02/final-v01.mp4",
+          jobId: "burn-2",
+          gcsUri: "gs://bucket/final-burned.mp4",
+        }),
+        expect.objectContaining({
+          url: original,
+          active: false,
+          path: "ep02/final-v02.mp4",
+          jobId: "assemble-2",
+          gcsUri: "gs://bucket/final-original.mp4",
+        }),
+      ]);
+      const JSZip = (await import("jszip")).default;
+      const zip = await JSZip.loadAsync(await result.blob.arrayBuffer());
+      expect(zip.file("ep02/final-v01.mp4")).toBeTruthy();
+      expect(zip.file("ep02/final-v02.mp4")).toBeTruthy();
+      expect(await zip.file("manifest.json")!.async("string")).toContain(
+        "gs://bucket/final-original.mp4",
+      );
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
+  });
+
+  it("整集历史版本下载失败会进入 failed，不能被当成完整备份", async () => {
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request) =>
+      new Response(new Uint8Array([1]), {
+        status: String(input).includes("old") ? 503 : 200,
+      })) as typeof fetch;
+    const final = {
+      ...defaultCanvasBlock("video", 0, 0),
+      id: "final-e01",
+      episodeIndex: 1,
+      outputUrl: "https://cdn.example/current.mp4",
+      outputUrls: [
+        "https://cdn.example/current.mp4",
+        "https://cdn.example/old.mp4",
+      ],
+    };
+    try {
+      const result = await exportManhuaProjectZip({
+        items: [],
+        selectedIds: [],
+        finalVideoBlocks: [final],
+        includeLibraryRefs: false,
+      });
+      expect(result.okCount).toBe(1);
+      expect(result.failCount).toBe(1);
+      expect(result.manifest.failed[0]).toEqual(
+        expect.objectContaining({ blockId: "final-e01#v2", url: "https://cdn.example/old.mp4" }),
+      );
+      expect(result.manifest.finalVideos?.[0]?.versions[1]?.path).toBeUndefined();
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
+  });
+
   it("exports bible/beats text and selectExportable helpers", async () => {
     const prevFetch = globalThis.fetch;
     globalThis.fetch = (async () =>

@@ -1,6 +1,13 @@
 import type { LucideIcon } from "lucide-react";
+import { normalizeManhuaTimelineOrder } from "@shared/manhuaEditOrder";
 import { Clapperboard, FileText, Image as ImageIcon, LayoutTemplate, Video } from "lucide-react";
 import type { ManhuaClipQualityReport } from "@shared/manhuaClipQuality";
+import {
+  normalizeManhuaFinalPostProdBinding,
+  normalizeManhuaFinalVersionIdentities,
+  type ManhuaFinalPostProdBinding,
+  type ManhuaFinalVersionIdentity,
+} from "@shared/manhuaFinalPostProd";
 import { normalizeSeedance25EvolinkMode } from "@shared/seedanceEvolinkModels";
 
 export type CanvasBlockKind = "text" | "image" | "video" | "copy_organize" | "video_reverse";
@@ -247,16 +254,23 @@ export type CanvasBlock = {
    * segment：整段包络；shotPieces：按导戏窗映射后的绝对秒切片（优先）。
    */
   manhuaEditTrim?: {
+    /** 源视频真实总长；与裁切输出点分离，避免再次编辑时镜窗漂移。 */
+    sourceDurationSec?: number;
     inSec: number;
     outSec: number;
     shotPieces?: Array<{
       shotIndex: number;
+      timelineOrder?: number;
       trimInSec: number;
       trimOutSec: number;
       durationSec: number;
     }>;
     updatedAt?: number;
   };
+  /** 整集后期任务身份；final-eXX 专用，job/GCS 为长期身份，HTTPS 仅当前读链。 */
+  manhuaFinalPostProd?: ManhuaFinalPostProdBinding;
+  /** 整集每个版本的任务/GCS 长期身份；只跟随本机画布，不扩大云同步范围。 */
+  manhuaFinalVersions?: ManhuaFinalVersionIdentity[];
 };
 
 export type CanvasEdge = { fromId: string; toId: string };
@@ -550,6 +564,7 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
         ? t.shotPieces
             .map((p) => ({
               shotIndex: Math.floor(Number(p?.shotIndex) || 0),
+              ...(p?.timelineOrder !== undefined ? { timelineOrder: normalizeManhuaTimelineOrder(p.timelineOrder) } : {}),
               trimInSec: Number(p?.trimInSec),
               trimOutSec: Number(p?.trimOutSec),
               durationSec: Number(p?.durationSec) || 0,
@@ -570,12 +585,18 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
             }))
         : undefined;
       return {
+        sourceDurationSec:
+          Number.isFinite(Number(t.sourceDurationSec)) && Number(t.sourceDurationSec) >= 0.5
+            ? Number(t.sourceDurationSec)
+            : undefined,
         inSec,
         outSec,
         shotPieces: shotPieces?.length ? shotPieces : undefined,
         updatedAt: Number(t.updatedAt) || undefined,
       };
     })(),
+    manhuaFinalPostProd: normalizeManhuaFinalPostProdBinding(block.manhuaFinalPostProd),
+    manhuaFinalVersions: normalizeManhuaFinalVersionIdentities(block.manhuaFinalVersions),
   };
 }
 

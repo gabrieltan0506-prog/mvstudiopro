@@ -140,6 +140,58 @@ describe("canvas spawn + defaults", () => {
     legacy.refImageUrl = "https://example.com/keyart.jpg";
     expect(normalizeCanvasBlock(legacy).seedance25WorkMode).toBe("image_to_video");
   });
+
+  it("normalizes final post-production job identity without accepting malformed URLs", () => {
+    const block = normalizeCanvasBlock({
+      ...defaultCanvasBlock("video", 0, 0),
+      id: "final-e01",
+      manhuaFinalPostProd: {
+        action: "burn_subtitle",
+        jobId: "pp-1",
+        sourceUrl: "https://cdn.example/original.mp4",
+        status: "succeeded",
+        resultGcsUri: "gs://bucket/post-prod/u1/out.mp4",
+        resultUrl: "https://signed.example/out.mp4",
+        updatedAt: 20,
+      },
+    });
+    expect(block.manhuaFinalPostProd).toMatchObject({
+      jobId: "pp-1",
+      resultGcsUri: "gs://bucket/post-prod/u1/out.mp4",
+    });
+    expect(
+      normalizeCanvasBlock({
+        ...block,
+        manhuaFinalPostProd: { ...block.manhuaFinalPostProd!, sourceUrl: "javascript:x" },
+      }).manhuaFinalPostProd,
+    ).toBeUndefined();
+  });
+
+  it("keeps edit source duration and normalizes local final version identities", () => {
+    const block = normalizeCanvasBlock({
+      ...defaultCanvasBlock("video", 0, 0),
+      id: "final-e01",
+      manhuaEditTrim: {
+        sourceDurationSec: 15,
+        inSec: 0,
+        outSec: 12,
+      },
+      manhuaFinalVersions: [
+        {
+          origin: "burn_subtitle",
+          url: "https://signed.example/burned.mp4",
+          jobId: "pp-1",
+          gcsUri: "gs://bucket/post-prod/u1/burned.mp4",
+          createdAt: 20,
+        },
+        { origin: "burn_subtitle", url: "javascript:x", jobId: "bad", createdAt: 30 },
+      ],
+    });
+    expect(block.manhuaEditTrim?.sourceDurationSec).toBe(15);
+    expect(block.manhuaFinalVersions).toEqual([
+      expect.objectContaining({ jobId: "pp-1", origin: "burn_subtitle" }),
+    ]);
+  });
 });
 
 describe("canvas upstream handoff", () => {

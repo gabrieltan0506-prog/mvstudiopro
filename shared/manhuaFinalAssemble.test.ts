@@ -3,6 +3,7 @@ import {
   buildManhuaAssemblePlan,
   buildManhuaSunoPrompt,
   summarizeManhuaPathTrackStatus,
+  type ManhuaAssembleClipInput,
 } from "./manhuaFinalAssemble";
 
 describe("manhuaFinalAssemble", () => {
@@ -10,17 +11,22 @@ describe("manhuaFinalAssemble", () => {
     const plan = buildManhuaAssemblePlan([
       { episodeIndex: 3, clipUrl: "https://x/e3.mp4", episodeTitle: "三" },
       { episodeIndex: 1, keyartUrl: "https://x/k1.jpg", episodeTitle: "一" },
-      { episodeIndex: 2, clipUrl: "https://x/e2.mp4", keyartUrl: "https://x/k2.jpg" },
+      {
+        episodeIndex: 2,
+        clipUrl: "https://x/e2.mp4",
+        keyartUrl: "https://x/k2.jpg",
+      },
       { episodeIndex: 1, clipUrl: "https://x/e1.mp4" },
     ]);
     expect(plan.episodeIndexes).toEqual([1, 2, 3]);
-    expect(plan.sceneVideos.map((s) => s.url)).toEqual([
+    expect(plan.sceneVideos.map(s => s.url)).toEqual([
       "https://x/e1.mp4",
       "https://x/e2.mp4",
       "https://x/e3.mp4",
     ]);
     expect(plan.sceneVideos[0].stillImageUrl).toBe("https://x/k1.jpg");
     expect(plan.sceneVideos[1].stillImageUrl).toBe("https://x/k2.jpg");
+    expect(plan.sceneVideos[2].stillImageUrl).toBeUndefined();
     expect(plan.skippedEpisodes).toEqual([]);
   });
 
@@ -52,6 +58,212 @@ describe("manhuaFinalAssemble", () => {
     expect(plan.sceneVideos[2]?.url).toBe("https://x/ep1-s2.mp4");
     expect(plan.sceneVideos[2]?.trimInSec).toBe(1);
     expect(plan.sceneVideos[2]?.duration).toBe("8s");
+    expect(plan.sceneVideos.every(scene => !scene.stillImageUrl)).toBe(true);
+  });
+
+  it("applies one complete episode-wide timeline order across segment sources", () => {
+    const plan = buildManhuaAssemblePlan([
+      {
+        episodeIndex: 1,
+        segmentIndex: 1,
+        clipUrl: "https://x/e1-s1.mp4",
+        keyartUrl: "https://x/k1.jpg",
+        shotPieces: [
+          { shotIndex: 1, timelineOrder: 2, trimInSec: 0, trimOutSec: 1 },
+          { shotIndex: 2, timelineOrder: 4, trimInSec: 1, trimOutSec: 2 },
+          { shotIndex: 3, timelineOrder: 5, trimInSec: 2, trimOutSec: 3 },
+        ],
+      },
+      {
+        episodeIndex: 1,
+        segmentIndex: 2,
+        clipUrl: "https://x/e1-s2.mp4",
+        shotPieces: [
+          { shotIndex: 4, timelineOrder: 1, trimInSec: 10, trimOutSec: 11 },
+          { shotIndex: 5, timelineOrder: 3, trimInSec: 11, trimOutSec: 12 },
+          { shotIndex: 6, timelineOrder: 6, trimInSec: 12, trimOutSec: 13 },
+        ],
+      },
+      {
+        episodeIndex: 2,
+        segmentIndex: 1,
+        clipUrl: "https://x/e2-s1.mp4",
+        shotPieces: [{ shotIndex: 1, trimInSec: 20, trimOutSec: 21 }],
+      },
+    ]);
+
+    expect(
+      plan.sceneVideos.map(scene => [
+        scene.url,
+        scene.trimInSec,
+        scene.trimOutSec,
+      ])
+    ).toEqual([
+      ["https://x/e1-s2.mp4", 10, 11],
+      ["https://x/e1-s1.mp4", 0, 1],
+      ["https://x/e1-s2.mp4", 11, 12],
+      ["https://x/e1-s1.mp4", 1, 2],
+      ["https://x/e1-s1.mp4", 2, 3],
+      ["https://x/e1-s2.mp4", 12, 13],
+      ["https://x/e2-s1.mp4", 20, 21],
+    ]);
+    expect(plan.sceneVideos.map(scene => scene.stillImageUrl)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "https://x/k1.jpg",
+      undefined,
+    ]);
+  });
+
+  it.each([
+    {
+      name: "部分镜片没有顺序",
+      rows: [
+        {
+          episodeIndex: 1,
+          segmentIndex: 1,
+          clipUrl: "https://x/e1-s1.mp4",
+          shotPieces: [
+            { shotIndex: 1, timelineOrder: 1, trimInSec: 0, trimOutSec: 1 },
+            { shotIndex: 2, trimInSec: 1, trimOutSec: 2 },
+          ],
+        },
+      ],
+    },
+    {
+      name: "顺序重复或不连续",
+      rows: [
+        {
+          episodeIndex: 1,
+          segmentIndex: 1,
+          clipUrl: "https://x/e1-s1.mp4",
+          shotPieces: [
+            { shotIndex: 1, timelineOrder: 1, trimInSec: 0, trimOutSec: 1 },
+            { shotIndex: 2, timelineOrder: 1, trimInSec: 1, trimOutSec: 2 },
+          ],
+        },
+      ],
+    },
+    {
+      name: "唯一顺序对应重复镜号",
+      rows: [
+        {
+          episodeIndex: 1,
+          segmentIndex: 1,
+          clipUrl: "https://x/e1-s1.mp4",
+          shotPieces: [
+            { shotIndex: 1, timelineOrder: 1, trimInSec: 0, trimOutSec: 1 },
+            { shotIndex: 1, timelineOrder: 2, trimInSec: 1, trimOutSec: 2 },
+          ],
+        },
+      ],
+    },
+    {
+      name: "有序镜片裁切无效",
+      rows: [
+        {
+          episodeIndex: 1,
+          segmentIndex: 1,
+          clipUrl: "https://x/e1-s1.mp4",
+          shotPieces: [
+            { shotIndex: 1, timelineOrder: 1, trimInSec: 2, trimOutSec: 2.2 },
+          ],
+        },
+      ],
+    },
+    {
+      name: "有序镜片混入整段素材",
+      rows: [
+        {
+          episodeIndex: 1,
+          segmentIndex: 1,
+          clipUrl: "https://x/e1-s1.mp4",
+          shotPieces: [
+            { shotIndex: 1, timelineOrder: 1, trimInSec: 0, trimOutSec: 1 },
+          ],
+        },
+        {
+          episodeIndex: 1,
+          segmentIndex: 2,
+          clipUrl: "https://x/e1-s2.mp4",
+          trimInSec: 0,
+          trimOutSec: 5,
+        },
+      ],
+    },
+  ])(
+    "rejects $name instead of silently restoring segment order",
+    ({ rows }) => {
+      expect(() => buildManhuaAssemblePlan(rows)).toThrow(
+        "粗剪顺序不完整或重复"
+      );
+    }
+  );
+
+  it("rejects a null piece in an ordered episode with the public error instead of TypeError", () => {
+    const rows = [
+      {
+        episodeIndex: 1,
+        segmentIndex: 1,
+        clipUrl: "https://x/e1-s1.mp4",
+        shotPieces: [
+          null,
+          { shotIndex: 1, timelineOrder: 1, trimInSec: 0, trimOutSec: 1 },
+        ],
+      },
+    ] as unknown as ManhuaAssembleClipInput[];
+    expect(() => buildManhuaAssemblePlan(rows)).toThrow("粗剪顺序不完整或重复");
+  });
+
+  it("places one still only on the last scene at a real episode boundary", () => {
+    const plan = buildManhuaAssemblePlan([
+      {
+        episodeIndex: 1,
+        segmentIndex: 1,
+        clipUrl: "https://x/e1-s1.mp4",
+        keyartUrl: "https://x/k1.jpg",
+        shotPieces: [
+          { shotIndex: 1, trimInSec: 0, trimOutSec: 2 },
+          { shotIndex: 2, trimInSec: 2, trimOutSec: 4 },
+        ],
+      },
+      { episodeIndex: 1, segmentIndex: 2, clipUrl: "https://x/e1-s2.mp4" },
+      {
+        episodeIndex: 2,
+        segmentIndex: 1,
+        clipUrl: "https://x/e2-s1.mp4",
+        keyartUrl: "https://x/k2.jpg",
+      },
+    ]);
+
+    expect(plan.sceneVideos).toHaveLength(4);
+    expect(plan.sceneVideos.map(scene => scene.stillImageUrl)).toEqual([
+      undefined,
+      undefined,
+      "https://x/k1.jpg",
+      undefined,
+    ]);
+  });
+
+  it("does not create a still for a missing episode or after the last real episode", () => {
+    const plan = buildManhuaAssemblePlan([
+      { episodeIndex: 1, keyartUrl: "https://x/k1.jpg", episodeTitle: "缺片" },
+      {
+        episodeIndex: 2,
+        clipUrl: "https://x/e2.mp4",
+        keyartUrl: "https://x/k2.jpg",
+      },
+    ]);
+
+    expect(plan.episodeIndexes).toEqual([2]);
+    expect(plan.sceneVideos).toHaveLength(1);
+    expect(plan.sceneVideos[0]?.stillImageUrl).toBeUndefined();
+    expect(plan.skippedEpisodes).toEqual([
+      { episodeIndex: 1, title: "缺片", reason: "缺成片" },
+    ]);
   });
 
   it("filters by episodeIndexes and records skip when clip missing", () => {
@@ -61,10 +273,12 @@ describe("manhuaFinalAssemble", () => {
         { episodeIndex: 2, episodeTitle: "待跑" },
         { episodeIndex: 3, clipUrl: "https://x/e3.mp4" },
       ],
-      { episodeIndexes: [2, 3] },
+      { episodeIndexes: [2, 3] }
     );
     expect(plan.episodeIndexes).toEqual([3]);
-    expect(plan.skippedEpisodes).toEqual([{ episodeIndex: 2, title: "待跑", reason: "缺成片" }]);
+    expect(plan.skippedEpisodes).toEqual([
+      { episodeIndex: 2, title: "待跑", reason: "缺成片" },
+    ]);
   });
 
   it("builds instrumental suno prompt from jianghu+court topic", () => {
@@ -91,8 +305,26 @@ describe("manhuaFinalAssemble", () => {
     const s = summarizeManhuaPathTrackStatus({
       version: 1,
       anchors: [
-        { index: 1, x: 0.2, y: 0.3, focusZh: "人", cameraEn: "", subjectActionEn: "", durationHintSec: 2, trackRole: "subject" },
-        { index: 2, x: 0.5, y: 0.4, focusZh: "镜", cameraEn: "", subjectActionEn: "", durationHintSec: 2, trackRole: "camera" },
+        {
+          index: 1,
+          x: 0.2,
+          y: 0.3,
+          focusZh: "人",
+          cameraEn: "",
+          subjectActionEn: "",
+          durationHintSec: 2,
+          trackRole: "subject",
+        },
+        {
+          index: 2,
+          x: 0.5,
+          y: 0.4,
+          focusZh: "镜",
+          cameraEn: "",
+          subjectActionEn: "",
+          durationHintSec: 2,
+          trackRole: "camera",
+        },
       ],
       strokes: [{ trackRole: "camera", points: [{ x: 0.1, y: 0.1 }] }],
     });

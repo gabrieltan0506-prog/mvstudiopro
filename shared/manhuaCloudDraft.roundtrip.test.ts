@@ -70,4 +70,49 @@ describe("manhuaCloudDraft · 稳定图链与任务字段往返", () => {
     expect(blk?.videoTaskId).toBe("cv_xyz");
     expect(blk?.videoTaskStatus).toBe("running");
   });
+
+  it("final 成片版本与烧字 GCS 身份可跨 serialize → parse 恢复", () => {
+    const payload = {
+      format: "mv-manhua-cloud-draft-v1",
+      clientUpdatedAt: new Date(0).toISOString(),
+      writerSession: {} as ManhuaCloudDraftPayload["writerSession"],
+      canvas: {
+        blocks: [
+          sanitizeManhuaCloudDraftBlock({
+            id: "final-e02",
+            kind: "video",
+            x: 0,
+            y: 0,
+            width: 420,
+            height: 360,
+            prompt: "第2集整集成片",
+            outputUrl: "https://signed.example/burned.mp4",
+            outputUrls: [
+              "https://signed.example/burned.mp4",
+              "https://cdn.example/original.mp4",
+            ],
+            manhuaFinalPostProd: {
+              action: "burn_subtitle",
+              jobId: "pp-final-2",
+              sourceUrl: "https://cdn.example/original.mp4",
+              status: "succeeded",
+              resultGcsUri: "gs://bucket/post-prod/u2/burned.mp4",
+              resultUrl: "https://signed.example/burned.mp4",
+              updatedAt: 30,
+            },
+          })!,
+        ],
+        edges: [],
+      },
+      factoryPrefs: null,
+    } as ManhuaCloudDraftPayload;
+    const restored = parseManhuaCloudDraftPayload(
+      JSON.parse(serializeManhuaCloudDraftPayload(payload)),
+    );
+    expect(restored?.canvas.blocks[0]?.outputUrls).toHaveLength(2);
+    expect(restored?.canvas.blocks[0]?.manhuaFinalPostProd?.jobId).toBe("pp-final-2");
+    expect(restored?.canvas.blocks[0]?.manhuaFinalPostProd?.resultGcsUri).toBe(
+      "gs://bucket/post-prod/u2/burned.mp4",
+    );
+  });
 });

@@ -16,6 +16,8 @@ import {
   filterBlocksByEpisode,
   getBlockEpisodeIndex,
   filterManhuaFactoryTargetIds,
+  isManhuaFactoryArtifactBlock,
+  isManhuaFinalVideoBlockId,
   isTransientFactoryError,
   layoutManhuaEpisodeReadableChain,
   MANHUA_LAYOUT_ASSET_H,
@@ -2651,6 +2653,45 @@ slow dolly in, soft rain, trembling hand
     expect(cleaned.blocks.some((b) => b.id.startsWith("keyart-"))).toBe(false);
   });
 
+  it("把 final 识别为产物但不加入自动阶段，并用唯一 id 归档保留版本身份", () => {
+    const final = {
+      ...defaultCanvasBlock("video", 0, 0),
+      id: "final-e01",
+      episodeIndex: 1,
+      outputUrl: "https://cdn.example/final-current.mp4",
+      outputUrls: ["https://cdn.example/final-old.mp4"],
+      manhuaFinalVersions: [
+        {
+          origin: "assemble" as const,
+          url: "https://cdn.example/final-current.mp4",
+          jobId: "assemble-1",
+          gcsUri: "gs://bucket/final-current.mp4",
+          createdAt: 1,
+        },
+      ],
+    };
+    const child = {
+      ...defaultCanvasBlock("text", 0, 0),
+      id: "free-note",
+      parentId: final.id,
+    };
+    expect(isManhuaFinalVideoBlockId(final.id)).toBe(true);
+    expect(isManhuaFactoryArtifactBlock(final)).toBe(true);
+    expect((MANHUA_FACTORY_STAGE_ORDER as readonly string[]).includes("final")).toBe(false);
+
+    const out = stripManhuaFactoryCanvasArtifacts(
+      [final, child],
+      [{ fromId: final.id, toId: child.id }],
+    );
+    const archived = out.blocks.find((b) => b.archivedFromPreviousScript);
+    expect(archived?.id).toBe("final-e01-archived");
+    expect(archived?.outputUrl).toBe(final.outputUrl);
+    expect(archived?.outputUrls).toEqual(final.outputUrls);
+    expect(archived?.manhuaFinalVersions).toEqual(final.manhuaFinalVersions);
+    expect(out.blocks.find((b) => b.id === child.id)?.parentId).toBe(archived?.id);
+    expect(out.edges).toEqual([{ fromId: archived?.id, toId: child.id }]);
+  });
+
   it("exposes keyart parallel concurrency > 1", () => {
     expect(MANHUA_KEYART_PARALLEL_CONCURRENCY).toBeGreaterThanOrEqual(2);
   });
@@ -2963,6 +3004,21 @@ describe("局部改写起点", () => {
     const kept = out.blocks.find((b) => b.id === "clip-e03-s01");
     expect(kept?.archivedFromPreviousScript).toBe(true);
     expect(kept?.outputUrl).toBe("https://x/paid.mp4");
+  });
+
+  it("整集 final 按改写起点归档或清理，不波及更早集", () => {
+    const before = blk("final-e02", 2, "https://x/ep2.mp4");
+    const paid = blk("final-e03", 3, "https://x/ep3.mp4");
+    const unpaid = blk("final-e04", 4);
+    const out = stripManhuaFactoryCanvasArtifacts([before, paid, unpaid], [], {
+      fromEpisode: 3,
+      fromSegment: 4,
+    });
+    expect(out.blocks.find((b) => b.id === "final-e02")?.archivedFromPreviousScript).toBeFalsy();
+    expect(out.blocks.find((b) => b.id === "final-e03-archived")?.outputUrl).toBe(
+      "https://x/ep3.mp4",
+    );
+    expect(out.blocks.some((b) => b.id === "final-e04")).toBe(false);
   });
 });
 

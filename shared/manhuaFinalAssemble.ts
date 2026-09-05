@@ -3,8 +3,12 @@
  * 前台文案禁止出现供应商 / 渲染栈名。
  */
 
+import type { ManhuaSubtitleSource } from "./manhuaRenderedSubtitle.js";
+
 export type ManhuaAssembleShotPieceInput = {
   shotIndex: number;
+  /** 同一集内的最终播放顺序（1-based）；缺失时保持旧版段序。 */
+  timelineOrder?: number;
   /** 源片绝对入点（秒） */
   trimInSec: number;
   /** 源片绝对出点（秒） */
@@ -13,6 +17,7 @@ export type ManhuaAssembleShotPieceInput = {
 };
 
 export type ManhuaAssembleClipInput = {
+  subtitleSource?: ManhuaSubtitleSource;
   episodeIndex: number;
   episodeTitle?: string;
   /** 成片视频 URL（必填才进拼接） */
@@ -31,6 +36,8 @@ export type ManhuaAssembleClipInput = {
 };
 
 export type ManhuaAssembleSceneVideo = {
+  subtitleSource?: ManhuaSubtitleSource;
+  subtitleShotIndex?: number;
   sceneIndex: number;
   url: string;
   duration: string;
@@ -60,6 +67,96 @@ export type ManhuaSunoPromptInput = {
  */
 export const MANHUA_ASSEMBLE_MUSIC_DURATION_SEC = 240;
 
+export const MANHUA_ASSEMBLE_INVALID_TIMELINE_ORDER_CODE =
+  "manhua_assemble_invalid_timeline_order" as const;
+
+type TimelineEntry = {
+  row: ManhuaAssembleClipInput;
+  piece?: ManhuaAssembleShotPieceInput;
+};
+
+function invalidTimelineOrderError(): Error & { code: string } {
+  const error = new Error(
+    "粗剪顺序不完整或重复，请重新确认本集镜头顺序"
+  ) as Error & {
+    code: string;
+  };
+  error.code = MANHUA_ASSEMBLE_INVALID_TIMELINE_ORDER_CODE;
+  return error;
+}
+
+function hasTimelineOrder(
+  piece: unknown
+): piece is ManhuaAssembleShotPieceInput {
+  return (
+    Boolean(piece) &&
+    typeof piece === "object" &&
+    Object.prototype.hasOwnProperty.call(piece, "timelineOrder")
+  );
+}
+
+/**
+ * 同一集只接受两种合同：全旧稿（完全没有 timelineOrder），或所有可播镜片均有
+ * 唯一连续的 1..N。只要出现新字段，就禁止混入整段、缺号或部分标记。
+ */
+function buildEpisodeTimelineEntries(
+  rows: ManhuaAssembleClipInput[]
+): TimelineEntry[] {
+  const playable = rows.filter(row =>
+    Boolean(String(row.clipUrl || "").trim())
+  );
+  const pieces = playable.flatMap(row =>
+    (Array.isArray(row.shotPieces) ? row.shotPieces : []).map(piece => ({
+      row,
+      piece,
+    }))
+  );
+  const hasAnyOrder = pieces.some(({ piece }) => hasTimelineOrder(piece));
+
+  if (!hasAnyOrder) {
+    return playable.flatMap(row => {
+      const legacyPieces = Array.isArray(row.shotPieces) ? row.shotPieces : [];
+      return legacyPieces.length
+        ? legacyPieces.map(piece => ({ row, piece }))
+        : [{ row }];
+    });
+  }
+
+  if (
+    playable.some(
+      row => !Array.isArray(row.shotPieces) || row.shotPieces.length === 0
+    ) ||
+    pieces.some(
+      ({ piece }) =>
+        !hasTimelineOrder(piece) ||
+        !Number.isInteger(piece.timelineOrder) ||
+        Number(piece.timelineOrder) < 1 ||
+        !Number.isInteger(piece.shotIndex) ||
+        piece.shotIndex < 1 ||
+        !Number.isFinite(piece.trimInSec) ||
+        !Number.isFinite(piece.trimOutSec) ||
+        piece.trimOutSec - piece.trimInSec < 0.5
+    )
+  ) {
+    throw invalidTimelineOrderError();
+  }
+
+  const orders = pieces.map(({ piece }) => Number(piece.timelineOrder));
+  const sortedOrders = [...orders].sort((a, b) => a - b);
+  const shotIndexes = pieces.map(({ piece }) => piece.shotIndex);
+  if (
+    new Set(orders).size !== orders.length ||
+    new Set(shotIndexes).size !== shotIndexes.length ||
+    sortedOrders.some((order, index) => order !== index + 1)
+  ) {
+    throw invalidTimelineOrderError();
+  }
+
+  return pieces.sort(
+    (a, b) => Number(a.piece.timelineOrder) - Number(b.piece.timelineOrder)
+  );
+}
+
 function normalizeTrimPair(
   inSec: unknown,
   outSec: unknown,
@@ -77,6 +174,28 @@ function normalizeTrimPair(
     };
   }
   return { durationSec: fallbackDur };
+}
+
+/**
+ * renderer 会把 still 追加在其所属 scene 之后，因此这里只能把垫帧挂到本集最后一条
+ * scene。最后一集不挂；缺片集不在 episodeIndexes 中，也不会凭空生成垫帧。
+ */
+function attachInterEpisodeStills(
+  sceneVideos: ManhuaAssembleSceneVideo[],
+  episodeIndexes: number[],
+  lastScenePositionByEpisode: Map<number, number>,
+  keyartByEpisode: Map<number, string>,
+): void {
+  for (const episodeIndex of episodeIndexes.slice(0, -1)) {
+    const stillImageUrl = keyartByEpisode.get(episodeIndex);
+    const scenePosition = lastScenePositionByEpisode.get(episodeIndex);
+    if (!stillImageUrl || scenePosition == null) continue;
+    sceneVideos[scenePosition] = {
+      ...sceneVideos[scenePosition]!,
+      stillImageUrl,
+      stillDuration: "1.2s",
+    };
+  }
 }
 
 /** 从坞条目组装 sceneVideos；支持同集多段 + 镜级/段级 trim */
@@ -104,6 +223,7 @@ export function buildManhuaAssemblePlan(
   const sceneVideos: ManhuaAssembleSceneVideo[] = [];
   const skippedEpisodes: ManhuaAssemblePlan["skippedEpisodes"] = [];
   const seenEps = new Set<number>();
+  const lastScenePositionByEpisode = new Map<number, number>();
 
   if (multiSegment) {
     const sorted = [...list].sort((a, b) => {
@@ -117,42 +237,51 @@ export function buildManhuaAssemblePlan(
     }
     let sceneNo = 0;
     const epsWithClip = new Set<number>();
+    const episodeRows = new Map<number, ManhuaAssembleClipInput[]>();
     for (const row of sorted) {
-      const url = String(row.clipUrl || "").trim();
-      if (!url) continue;
+      if (!String(row.clipUrl || "").trim()) continue;
       epsWithClip.add(row.episodeIndex);
-      const pieces = Array.isArray(row.shotPieces) ? row.shotPieces : [];
-      const still =
-        row.segmentIndex <= 1 ? keyartByEp.get(row.episodeIndex) || "" : "";
-      if (pieces.length) {
-        for (const p of pieces) {
+      const rows = episodeRows.get(row.episodeIndex) || [];
+      rows.push(row);
+      episodeRows.set(row.episodeIndex, rows);
+    }
+    for (const episodeIndex of Array.from(episodeRows.keys()).sort(
+      (a, b) => a - b
+    )) {
+      for (const entry of buildEpisodeTimelineEntries(
+        episodeRows.get(episodeIndex)!
+      )) {
+        const row = entry.row;
+        const url = String(row.clipUrl || "").trim();
+        if (entry.piece) {
+          const p = entry.piece;
           const fb = Math.max(0.5, Number(p.durationSec) || defaultDur);
           const trim = normalizeTrimPair(p.trimInSec, p.trimOutSec, fb);
           sceneNo += 1;
           sceneVideos.push({
+            subtitleSource: row.subtitleSource,
+            subtitleShotIndex: p.shotIndex,
             sceneIndex: sceneNo,
             url,
             duration: `${trim.durationSec}s`,
             trimInSec: trim.trimInSec,
             trimOutSec: trim.trimOutSec,
-            stillImageUrl: sceneNo === 1 && still ? still : undefined,
-            stillDuration: sceneNo === 1 && still ? "1.2s" : undefined,
           });
+          lastScenePositionByEpisode.set(row.episodeIndex, sceneVideos.length - 1);
+        } else {
+          const fb = Math.max(5, Math.min(30, Math.floor(Number(row.durationSec) || defaultDur)));
+          const trim = normalizeTrimPair(row.trimInSec, row.trimOutSec, fb);
+          sceneNo += 1;
+          sceneVideos.push({
+            subtitleSource: row.subtitleSource,
+            sceneIndex: sceneNo,
+            url,
+            duration: `${trim.durationSec}s`,
+            trimInSec: trim.trimInSec,
+            trimOutSec: trim.trimOutSec,
+          });
+          lastScenePositionByEpisode.set(row.episodeIndex, sceneVideos.length - 1);
         }
-      } else {
-        const fb = Math.max(5, Math.min(30, Math.floor(Number(row.durationSec) || defaultDur)));
-        const trim = normalizeTrimPair(row.trimInSec, row.trimOutSec, fb);
-        sceneNo += 1;
-        sceneVideos.push({
-          sceneIndex: sceneNo,
-          url,
-          duration: `${trim.durationSec}s`,
-          trimInSec: trim.trimInSec,
-          trimOutSec: trim.trimOutSec,
-          stillImageUrl: (row.segmentIndex <= 1 || !row.segmentIndex) && still ? still : undefined,
-          stillDuration:
-            (row.segmentIndex <= 1 || !row.segmentIndex) && still ? "1.2s" : undefined,
-        });
       }
     }
     for (const row of sorted) {
@@ -166,10 +295,17 @@ export function buildManhuaAssemblePlan(
         });
       }
     }
+    const episodeIndexes = Array.from(epsWithClip).sort((a, b) => a - b);
+    attachInterEpisodeStills(
+      sceneVideos,
+      episodeIndexes,
+      lastScenePositionByEpisode,
+      keyartByEp,
+    );
     return {
       sceneVideos,
       skippedEpisodes,
-      episodeIndexes: Array.from(epsWithClip).sort((a, b) => a - b),
+      episodeIndexes,
     };
   }
 
@@ -191,10 +327,12 @@ export function buildManhuaAssemblePlan(
       trimInSec: prev.trimInSec ?? c.trimInSec,
       trimOutSec: prev.trimOutSec ?? c.trimOutSec,
       shotPieces: prev.shotPieces?.length ? prev.shotPieces : c.shotPieces,
+      subtitleSource: prev.subtitleSource || c.subtitleSource,
     });
   }
 
   const sortedEps = Array.from(byEp.keys()).sort((a, b) => a - b);
+  const keyartByEp = new Map<number, string>();
   for (const ep of sortedEps) {
     const row = byEp.get(ep)!;
     const url = String(row.clipUrl || "").trim();
@@ -206,51 +344,61 @@ export function buildManhuaAssemblePlan(
       });
       continue;
     }
-    const pieces = Array.isArray(row.shotPieces) ? row.shotPieces : [];
     const still = String(row.keyartUrl || "").trim();
-    if (pieces.length) {
-      for (let i = 0; i < pieces.length; i++) {
-        const p = pieces[i]!;
+    if (still) keyartByEp.set(ep, still);
+    const entries = buildEpisodeTimelineEntries([row]);
+    if (entries[0]?.piece) {
+      for (const entry of entries) {
+        const p = entry.piece!;
         const fb = Math.max(0.5, Number(p.durationSec) || defaultDur);
         const trim = normalizeTrimPair(p.trimInSec, p.trimOutSec, fb);
         sceneVideos.push({
+          subtitleSource: row.subtitleSource,
+          subtitleShotIndex: p.shotIndex,
           sceneIndex: sceneVideos.length + 1,
           url,
           duration: `${trim.durationSec}s`,
           trimInSec: trim.trimInSec,
           trimOutSec: trim.trimOutSec,
-          stillImageUrl: i === 0 && still ? still : undefined,
-          stillDuration: i === 0 && still ? "1.2s" : undefined,
         });
+        lastScenePositionByEpisode.set(ep, sceneVideos.length - 1);
       }
     } else {
       const fb = Math.max(5, Math.min(30, Math.floor(Number(row.durationSec) || defaultDur)));
       const trim = normalizeTrimPair(row.trimInSec, row.trimOutSec, fb);
       sceneVideos.push({
+        subtitleSource: row.subtitleSource,
         sceneIndex: ep,
         url,
         duration: `${trim.durationSec}s`,
         trimInSec: trim.trimInSec,
         trimOutSec: trim.trimOutSec,
-        stillImageUrl: still || undefined,
-        stillDuration: still ? "1.2s" : undefined,
       });
+      lastScenePositionByEpisode.set(ep, sceneVideos.length - 1);
     }
   }
+
+  const episodeIndexes = sceneVideos.length
+    ? Array.from(
+        new Set(
+          sortedEps.filter((ep) => {
+            const row = byEp.get(ep);
+            return Boolean(String(row?.clipUrl || "").trim());
+          }),
+        ),
+      )
+    : [];
+  attachInterEpisodeStills(
+    sceneVideos,
+    episodeIndexes,
+    lastScenePositionByEpisode,
+    keyartByEp,
+  );
 
   return {
     sceneVideos,
     skippedEpisodes,
-    episodeIndexes: sceneVideos.length
-      ? Array.from(
-          new Set(
-            sortedEps.filter((ep) => {
-              const row = byEp.get(ep);
-              return Boolean(String(row?.clipUrl || "").trim());
-            }),
-          ),
-        )
-      : [],
+    episodeIndexes,
   };
 }
 

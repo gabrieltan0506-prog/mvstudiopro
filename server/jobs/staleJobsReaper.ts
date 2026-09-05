@@ -1,6 +1,8 @@
 import { and, eq, lt, ne, or, sql } from "drizzle-orm";
 import { jobs } from "../../drizzle/schema";
 import { getDb } from "../db";
+import { readActiveJob, refundCreditsOnFailure } from "../services/paidJobLedger.js";
+import { MANHUA_ASSEMBLE_LEDGER_TYPE } from "../services/manhuaAssembleBilling.js";
 
 /**
  * Neon **`jobs` 表**只承載異步隊列：`video` / `image` / `audio` / `platform` / `pdf_export`（`server/jobs/repository` · `JobType`）。
@@ -86,14 +88,35 @@ export async function reapStaleJobsOnce(
         ),
       );
 
+    // 合成任务保留输入、成片和字幕回执。只终止确已失活的记录，不删除、不重排。
+    const staleAssembles = await db.select({ id: jobs.id, userId: jobs.userId, status: jobs.status, updatedAt: jobs.updatedAt })
+      .from(jobs).where(and(
+        eq(jobs.type, "video"), sql`${jobs.input}::jsonb->>'action' = 'manhua_assemble_final'`,
+        or(and(eq(jobs.status, "running"), lt(jobs.updatedAt, runCutoff)),
+          and(eq(jobs.status, "queued"), lt(jobs.createdAt, qCutoff))),
+      ));
+    for (const stale of staleAssembles) {
+      const hold = await readActiveJob(stale.id, MANHUA_ASSEMBLE_LEDGER_TYPE);
+      // SQL updatedAt 不代表 FFmpeg 活性，worker 的真实账本心跳优先。
+      if (hold?.status === "active" && Date.now() - Date.parse(hold.lastHeartbeatAt) < 90_000) continue;
+      const changed = await db.update(jobs).set({
+        status: "failed", error: "合成任务已停止，原输入与回执已保留，请先核对原任务", updatedAt: new Date(),
+      }).where(and(eq(jobs.id, stale.id), eq(jobs.status, stale.status), eq(jobs.updatedAt, stale.updatedAt)))
+        .returning({ id: jobs.id });
+      if (changed.length > 0 && hold && String(hold.userId) === String(stale.userId)) {
+        // 使用既有幂等退款；失败留给持久账本补偿，不再执行媒体处理。
+        await refundCreditsOnFailure(stale.id, MANHUA_ASSEMBLE_LEDGER_TYPE, "process_crashed", "合成任务失活·退回积分");
+      }
+    }
+
     // 漫剧学习与配乐都有持久检查点/上游 taskId 恢复。创作顾问 running 行还承担
     // 成功结果与退款 CAS 证据，必须交给 paidJobLedger 的专用回收器，不能先删。
     const nonRecoverableRunningJob = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
-      'manhua_template_learn', 'manhua_bgm_v55', 'manhua_advisor_qa'
+      'manhua_template_learn', 'manhua_bgm_v55', 'manhua_advisor_qa', 'manhua_assemble_final'
     )`;
     // 尚未付费确认的顾问 queued 占位没有扣分；过期后仍按通用规则清理，避免永久堆积。
     const nonRecoverableQueuedJob = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
-      'manhua_template_learn', 'manhua_bgm_v55'
+      'manhua_template_learn', 'manhua_bgm_v55', 'manhua_assemble_final'
     )`;
     const runningRows = await db
       .delete(jobs)

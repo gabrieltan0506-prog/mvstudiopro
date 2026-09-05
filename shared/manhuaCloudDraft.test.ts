@@ -44,6 +44,81 @@ describe("manhuaCloudDraft", () => {
     expect(clip?.prompt).toContain("成片");
   });
 
+  it("keeps only final-eXX video versions and its post-production GCS identity", () => {
+    const final = sanitizeManhuaCloudDraftBlock({
+      id: "final-e01",
+      kind: "video",
+      x: 0,
+      y: 0,
+      width: 400,
+      height: 360,
+      prompt: "整集成片",
+      outputUrl: "https://signed.example/burned.mp4",
+      outputUrls: [
+        "https://signed.example/burned.mp4",
+        "https://cdn.example/original.mp4",
+      ],
+      status: "done",
+      manhuaFinalPostProd: {
+        action: "burn_subtitle",
+        jobId: "pp-1",
+        sourceUrl: "https://cdn.example/original.mp4",
+        status: "succeeded",
+        resultGcsUri: "gs://bucket/post-prod/u1/burned.mp4",
+        resultUrl: "https://signed.example/burned.mp4",
+        updatedAt: 20,
+      },
+    });
+    expect(final?.outputUrl).toBe("https://signed.example/burned.mp4");
+    expect(final?.outputUrls).toEqual([
+      "https://signed.example/burned.mp4",
+      "https://cdn.example/original.mp4",
+    ]);
+    expect(final?.manhuaFinalPostProd?.resultGcsUri).toBe(
+      "gs://bucket/post-prod/u1/burned.mp4",
+    );
+  });
+
+  it("keeps clip edit trim while still stripping the clip video bytes", () => {
+    const clip = sanitizeManhuaCloudDraftBlock({
+      id: "clip-e01-s01",
+      kind: "video",
+      x: 0,
+      y: 0,
+      width: 400,
+      height: 360,
+      prompt: "成片",
+      outputUrl: "https://cdn.example/clip.mp4",
+      manhuaEditTrim: {
+        sourceDurationSec: 15,
+        inSec: 0,
+        outSec: 12,
+        shotPieces: [
+          { shotIndex: 1, trimInSec: 0.5, trimOutSec: 4, durationSec: 3.5 },
+        ],
+        updatedAt: 100,
+      },
+    });
+    expect(clip?.outputUrl).toBeUndefined();
+    expect(clip?.manhuaEditTrim?.sourceDurationSec).toBe(15);
+    expect(clip?.manhuaEditTrim?.shotPieces?.[0]).toEqual({
+      shotIndex: 1,
+      trimInSec: 0.5,
+      trimOutSec: 4,
+      durationSec: 3.5,
+    });
+  });
+
+  it("旧草稿的空裁切条目不会中断整份草稿恢复", () => {
+    const clip = sanitizeManhuaCloudDraftBlock({
+      id: "clip-e01-s01", kind: "video", x: 0, y: 0, width: 400, height: 360,
+      manhuaEditTrim: { inSec: 0, outSec: 12, shotPieces: [null, "旧值", { shotIndex: 1, trimInSec: 1, trimOutSec: 4 }] },
+    });
+    expect(clip?.manhuaEditTrim?.shotPieces).toEqual([
+      { shotIndex: 1, trimInSec: 1, trimOutSec: 4, durationSec: 3 },
+    ]);
+  });
+
   it("rejects blob urls for images", () => {
     const b = sanitizeManhuaCloudDraftBlock({
       id: "keyart-x",

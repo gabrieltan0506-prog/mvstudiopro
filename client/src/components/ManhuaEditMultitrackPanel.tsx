@@ -72,9 +72,13 @@ type Props = {
    * 未接线时按钮按反空壳约定灰禁用,不冒充可用。
    */
   onBurnSubtitle?: (subtitleSrt: string) => void | Promise<void>;
+  finalSubtitleTimeline?: import("@shared/manhuaRenderedSubtitle").ManhuaRenderedSubtitle;
   burnSubtitleBusy?: boolean;
   /** 最近一次烧字成片读链(父级从任务产出回填);有值即展示新视频入口 */
   burnSubtitleResultUrl?: string | null;
+  burnSubtitleRecoveryError?: string | null;
+  finalVideoVersions?: { activeUrl?: string; urls: string[] };
+  onSelectFinalVideoVersion?: (url: string) => void;
   /** 本集各镜成片/静帧质检原料 */
   shotMedia: ManhuaEditShotMedia[];
   factoryBusy?: boolean;
@@ -163,8 +167,12 @@ export default function ManhuaEditMultitrackPanel({
   subtitleEnabled = false,
   onSubtitleEnabledChange,
   onBurnSubtitle,
+  finalSubtitleTimeline,
   burnSubtitleBusy = false,
   burnSubtitleResultUrl,
+  burnSubtitleRecoveryError,
+  finalVideoVersions,
+  onSelectFinalVideoVersion,
   shotMedia,
   factoryBusy,
   dockSelectedIds,
@@ -193,7 +201,7 @@ export default function ManhuaEditMultitrackPanel({
     subtitleEnabled,
   });
   const stages = listRoughTimelineStages();
-  const cues = useMemo(
+  const plannedCues = useMemo(
     () =>
       buildManhuaSubtitleCues({
         roughClips,
@@ -203,15 +211,20 @@ export default function ManhuaEditMultitrackPanel({
       }),
     [roughClips, shots, fineCutByShot, subtitleEnabled],
   );
-  const srtPreview = useMemo(() => formatManhuaSubtitleSrt(cues), [cues]);
+  const cues = finalSubtitleTimeline?.cues || plannedCues;
+  const burnCues = finalSubtitleTimeline?.cues || [];
+  const srtPreview = useMemo(() => formatManhuaSubtitleSrt(finalSubtitleTimeline?.cues || cues), [finalSubtitleTimeline, cues]);
   // 烧字要整片重编码,单独一道确认开关;提交前随时可关,不跟「字幕轨」开关混用
-  const [burnArmed, setBurnArmed] = useState(false);
+  const burnConsentKey = JSON.stringify([finalVideoVersions?.activeUrl, finalSubtitleTimeline]);
+  const [burnConfirmedKey, setBurnConfirmedKey] = useState<string | null>(null);
+  const burnArmed = burnConfirmedKey === burnConsentKey;
   const [videoEditInstruction, setVideoEditInstruction] = useState("");
   const submitBurn = () => {
     if (!onBurnSubtitle || burnSubtitleBusy) return;
     try {
       // 空轨/坏时间码在这里就报错,不入队白跑一轮转码
-      const srt = buildManhuaSubtitleBurnSrt(cues);
+      if (!finalSubtitleTimeline) throw new Error("当前成片缺少字幕时间表，请重新合成后再烧字；原片保留");
+      const srt = buildManhuaSubtitleBurnSrt(burnCues);
       void onBurnSubtitle(srt);
     } catch (e) {
       toast.error("无法生成烧字字幕", {
@@ -431,7 +444,7 @@ export default function ManhuaEditMultitrackPanel({
         >
           <div className="flex items-center justify-between gap-2">
             <div className="text-[10px] font-semibold text-white/70">
-              字幕轨数据 · {cues.length} 条（默认不烧）
+              {finalSubtitleTimeline ? "当前成片字幕" : "计划字幕预览"} · {cues.length} 条（默认不烧）
             </div>
             {srtPreview ? (
               <button
@@ -476,27 +489,29 @@ export default function ManhuaEditMultitrackPanel({
                 <input
                   type="checkbox"
                   checked={burnArmed}
-                  onChange={(e) => setBurnArmed(e.target.checked)}
+                  onChange={(e) => setBurnConfirmedKey(e.target.checked ? burnConsentKey : null)}
                   className="accent-amber-400"
                 />
                 <Flame className="h-3 w-3 text-amber-200/90" />
-                烧字进片
+                已核对对白与成片一致，烧字进片
                 <span className="text-[9px] font-normal text-white/40">
-                  把上方 {cues.length} 条字幕真正烧进成片（整片重编码，出新视频，原片保留）
+                  使用该版合成时冻结的 {burnCues.length} 条对白（按实际镜窗对齐，未经语音识别；原片保留）
                 </span>
               </label>
               <button
                 type="button"
                 data-manhua-action="burn-subtitle"
                 disabled={
-                  !onBurnSubtitle || !burnArmed || !cues.length || burnSubtitleBusy || factoryBusy
+                  !onBurnSubtitle || !burnArmed || !burnCues.length || !finalSubtitleTimeline || burnSubtitleBusy || factoryBusy
                 }
                 onClick={submitBurn}
                 className="inline-flex items-center gap-1 rounded border border-amber-400/40 bg-amber-500/20 px-2 py-0.5 text-[9px] font-semibold text-amber-50 hover:bg-amber-500/30 disabled:opacity-40"
                 title={
                   !onBurnSubtitle
                     ? "先在成片坞合成本集长片，再回来烧字"
-                    : !cues.length
+                    : !finalSubtitleTimeline
+                      ? "当前版本缺少字幕时间表，请重新合成后再烧字"
+                    : !burnCues.length
                       ? "当前无字幕可烧"
                       : !burnArmed
                         ? "先勾选左侧确认烧字"
@@ -507,6 +522,9 @@ export default function ManhuaEditMultitrackPanel({
                 {burnSubtitleBusy ? "烧字处理中…" : "提交烧字任务"}
               </button>
             </div>
+            {!finalSubtitleTimeline && onBurnSubtitle ? (
+              <p className="mt-1 text-[10px] text-amber-100/80">当前版本没有可核对的字幕时间表，不能套用新稿字幕。重新合成后可用，原片保留。</p>
+            ) : null}
             {burnSubtitleResultUrl ? (
               <a
                 href={burnSubtitleResultUrl}
@@ -516,6 +534,35 @@ export default function ManhuaEditMultitrackPanel({
               >
                 查看烧字成片（新视频）
               </a>
+            ) : null}
+            {burnSubtitleRecoveryError ? (
+              <p className="mt-1.5 text-[9px] text-amber-100/80">
+                {burnSubtitleRecoveryError}
+              </p>
+            ) : null}
+            {finalVideoVersions && finalVideoVersions.urls.length > 1 ? (
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <span className="text-[8px] text-white/35">整集成片版本</span>
+                {finalVideoVersions.urls.map((url, index) => (
+                  <button
+                    key={url}
+                    type="button"
+                    disabled={factoryBusy || burnSubtitleBusy || !onSelectFinalVideoVersion}
+                    onClick={() => onSelectFinalVideoVersion?.(url)}
+                    className={`rounded border px-1.5 py-0.5 text-[8px] ${
+                      finalVideoVersions.activeUrl === url
+                        ? "border-emerald-300/40 bg-emerald-500/20 text-emerald-50"
+                        : "border-white/12 bg-white/[0.04] text-white/55"
+                    }`}
+                  >
+                    {finalVideoVersions.activeUrl === url
+                      ? "当前下载版"
+                      : index === 0
+                        ? "字幕版"
+                        : `保留版 ${index}`}
+                  </button>
+                ))}
+              </div>
             ) : null}
           </div>
         </div>

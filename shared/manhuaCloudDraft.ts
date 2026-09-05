@@ -2,12 +2,19 @@
  * 漫剧云端草稿：分集剧本 + 静帧；刻意不落成片视频。
  */
 
+import { normalizeManhuaTimelineOrder } from "./manhuaEditOrder.js";
 import {
   buildManhuaWriterSession,
   migrateManhuaWriterTemplateId,
   type ManhuaWriterSession,
   type ManhuaWriterSessionPartial,
 } from "./manhuaWriterSession.js";
+import {
+  normalizeManhuaFinalPostProdBinding,
+  normalizeManhuaFinalVersionIdentities,
+  type ManhuaFinalVersionIdentity,
+  type ManhuaFinalPostProdBinding,
+} from "./manhuaFinalPostProd.js";
 
 export const MANHUA_CLOUD_DRAFT_FORMAT = "mv-manhua-cloud-draft-v1" as const;
 /** 约 3.5MB JSON 上限，避免撑爆单行 */
@@ -62,6 +69,24 @@ export type ManhuaCloudDraftCanvasBlock = {
   videoTaskId?: string;
   videoTaskEngine?: string;
   videoTaskStatus?: string;
+  /** 成片节点的真实裁切合同；视频字节不进草稿，但合成参数必须可恢复。 */
+  manhuaEditTrim?: {
+    /** 源视频真实总长；旧稿缺失时由客户端按已编译目标时长回退。 */
+    sourceDurationSec?: number;
+    inSec: number;
+    outSec: number;
+    shotPieces?: Array<{
+      shotIndex: number;
+      timelineOrder?: number;
+      trimInSec: number;
+      trimOutSec: number;
+      durationSec: number;
+    }>;
+    updatedAt?: number;
+  };
+  /** final-eXX 的烧字任务身份与 GCS 长期身份。 */
+  manhuaFinalPostProd?: ManhuaFinalPostProdBinding;
+  manhuaFinalVersions?: ManhuaFinalVersionIdentity[];
 };
 
 export type ManhuaCloudDraftEdge = { fromId: string; toId: string };
@@ -105,6 +130,11 @@ function keepImageUrls(urls: unknown): string[] {
   return urls.map((u) => String(u || "").trim()).filter(isPersistableAssetUrl).slice(0, 16);
 }
 
+function keepHttpUrls(urls: unknown): string[] {
+  if (!Array.isArray(urls)) return [];
+  return urls.map((u) => String(u || "").trim()).filter(isHttpUrl);
+}
+
 /** 是否为成片/视频节点（云端不存其产物） */
 export function isManhuaCloudDraftVideoBlock(block: {
   id?: string;
@@ -115,6 +145,57 @@ export function isManhuaCloudDraftVideoBlock(block: {
   if (kind === "video") return true;
   if (/^(clip|omni_edit)-/i.test(id)) return true;
   return false;
+}
+
+/** 只有整集 final 节点允许把已登记的 HTTPS 版本地址写进草稿。 */
+export function isManhuaCloudDraftFinalVideoBlock(block: {
+  id?: string;
+  kind?: string;
+}): boolean {
+  return String(block.kind || "") === "video" && /^final-e\d+$/i.test(String(block.id || ""));
+}
+
+function sanitizeManhuaEditTrim(raw: unknown): ManhuaCloudDraftCanvasBlock["manhuaEditTrim"] {
+  if (!raw || typeof raw !== "object") return undefined;
+  const row = raw as Record<string, unknown>;
+  const inSec = Number(row.inSec);
+  const outSec = Number(row.outSec);
+  if (!Number.isFinite(inSec) || !Number.isFinite(outSec) || outSec - inSec < 0.5) {
+    return undefined;
+  }
+  const shotPieces = Array.isArray(row.shotPieces)
+    ? row.shotPieces
+        .filter((piece): piece is Record<string, unknown> => Boolean(piece) && typeof piece === "object")
+        .map((piece) => {
+          const p = piece as Record<string, unknown>;
+          const trimInSec = Number(p.trimInSec);
+          const trimOutSec = Number(p.trimOutSec);
+          return {
+            shotIndex: Math.floor(Number(p.shotIndex) || 0),
+            ...(p.timelineOrder !== undefined ? { timelineOrder: normalizeManhuaTimelineOrder(p.timelineOrder) } : {}),
+            trimInSec,
+            trimOutSec,
+            durationSec: Number(p.durationSec) || Math.max(0, trimOutSec - trimInSec),
+          };
+        })
+        .filter(
+          (piece) =>
+            piece.shotIndex >= 1 &&
+            Number.isFinite(piece.trimInSec) &&
+            Number.isFinite(piece.trimOutSec) &&
+            piece.trimOutSec - piece.trimInSec >= 0.5,
+        )
+    : [];
+  return {
+    sourceDurationSec:
+      Number.isFinite(Number(row.sourceDurationSec)) && Number(row.sourceDurationSec) >= 0.5
+        ? Number(row.sourceDurationSec)
+        : undefined,
+    inSec,
+    outSec,
+    shotPieces: shotPieces.length ? shotPieces : undefined,
+    updatedAt: Math.max(0, Math.floor(Number(row.updatedAt) || 0)) || undefined,
+  };
 }
 
 /**
@@ -150,7 +231,24 @@ export function sanitizeManhuaCloudDraftBlock(raw: unknown): ManhuaCloudDraftCan
     videoTaskId: b.videoTaskId != null ? String(b.videoTaskId).slice(0, 80) : undefined,
     videoTaskEngine: b.videoTaskEngine != null ? String(b.videoTaskEngine).slice(0, 40) : undefined,
     videoTaskStatus: b.videoTaskStatus != null ? String(b.videoTaskStatus).slice(0, 40) : undefined,
+    manhuaEditTrim: sanitizeManhuaEditTrim(b.manhuaEditTrim),
+    manhuaFinalPostProd: normalizeManhuaFinalPostProdBinding(b.manhuaFinalPostProd),
+    manhuaFinalVersions: normalizeManhuaFinalVersionIdentities(b.manhuaFinalVersions),
   };
+
+  if (isManhuaCloudDraftFinalVideoBlock(base)) {
+    const outputUrls = keepHttpUrls(b.outputUrls);
+    const outputUrl = isHttpUrl(b.outputUrl)
+      ? String(b.outputUrl).trim()
+      : outputUrls[0];
+    return {
+      ...base,
+      status: outputUrl ? "done" : base.status,
+      outputUrl,
+      outputUrls:
+        outputUrl && !outputUrls.includes(outputUrl) ? [outputUrl, ...outputUrls] : outputUrls,
+    };
+  }
 
   if (isManhuaCloudDraftVideoBlock(base)) {
     // 保留节点壳与提示词，不落视频 URL
