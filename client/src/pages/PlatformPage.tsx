@@ -3492,8 +3492,9 @@ export default function PlatformPage() {
       staleTime: 30_000,
       retry: false,
       // 0905 用户令「中途过门禁也要更新」：有任务在跑就定时重拉，待审卡的 k/M 段进度不再停在开页那一刻
+      // 0905 夜实测：30 秒重拉 68 张大卡（约 20MB）会把页面卡死，导出点不动；放宽到 2 分钟，分片进度靠签名触发即时重拉
       refetchInterval: manhuaLearnServerJobs.some((job) => job.status === "running" || job.status === "queued")
-        ? 30_000
+        ? 120_000
         : false,
     },
   );
@@ -3515,12 +3516,32 @@ export default function PlatformPage() {
     nativeProposalRefreshSignatureRef.current = "";
   }, [manhuaLearnUserKey]);
   const [selectedManhuaProposalId, setSelectedManhuaProposalId] = useState("");
-  const selectedManhuaProposal = useMemo(
+  const selectedManhuaProposalRow = useMemo(
     () => pendingManhuaViralProposals.find((item) => item.id === selectedManhuaProposalId)
       || pendingManhuaViralProposals[0]
       || null,
     [pendingManhuaViralProposals, selectedManhuaProposalId],
   );
+  // 0905：列表只回轻量行，重字段（节拍/字幕/音轨/骨架）选中时单独取，页面不再每次重拉 20MB
+  const manhuaProposalDetailQuery = trpc.manhuaViralTemplate.getProposalDetail.useQuery(
+    { id: selectedManhuaProposalRow?.id || "tpl_placeholder" },
+    {
+      enabled: Boolean(selectedManhuaProposalRow?.id)
+        && trendInsightTab === "ai_manhua"
+        && (hasSupervisorOpsAccess || ownerTemplateOptimizeAllowed),
+      staleTime: 30_000,
+      retry: false,
+    },
+  );
+  const selectedManhuaProposal = useMemo(() => {
+    if (!selectedManhuaProposalRow) return null;
+    const detail = manhuaProposalDetailQuery.data?.item;
+    type ProposalDetail = NonNullable<typeof detail>;
+    const merged: typeof selectedManhuaProposalRow & Partial<ProposalDetail> = detail && detail.id === selectedManhuaProposalRow.id
+      ? { ...selectedManhuaProposalRow, ...detail }
+      : { ...selectedManhuaProposalRow };
+    return merged;
+  }, [selectedManhuaProposalRow, manhuaProposalDetailQuery.data?.item]);
   useEffect(() => {
     if (!pendingManhuaViralProposals.length) {
       setSelectedManhuaProposalId("");
