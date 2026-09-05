@@ -1473,7 +1473,7 @@ export function nativeDeepReadFrozenContractSha256(): string {
  * 改毕即**重新冻结**（`NATIVE_DEEP_READ_KEY_SHOT_WINDOW_SEC`、两档必填字段表、提示词两档说明与本摘要一起冻结，再改需用户授权）。
  * 同时整形 maxTokens 退回 131,072、链序 structuring_chain（用户 0905 拍板）。 */
 /** 0905 用户重新授权：整形链改五档逐档 30 分钟切换 + maxTokens 262K，冻结集合随之换代（只作废整形批次缓存，不动读片分片缓存）。 */
-export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "f935285f528d48a50b948545a1c5ce7cd0986a184e3f5873c10837a7f09fb527" as const;
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "74e51e813f1db61b92398e853ee9e8cf80f21bb732999634f9579022b073d777" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
   const actual = nativeDeepReadFrozenContractSha256();
@@ -3832,6 +3832,8 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG = deepFreezeNativeContract(
   timeoutMs: GLM_STRUCTURING_TIMEOUT_MS,
   temperature: NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE,
   reasoningEffort: NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT,
+  // 0905 用户令：Qwen 套餐档思考上限 32,768（第 5 集实测每批思考 12K–18K，只拦失控长考不伤正常发）
+  thinkingBudget: 32_768,
   requireParameters: true,
   requireFinishReasonStop: true,
 } as const);

@@ -768,11 +768,12 @@ describe("0905 · Qwen 套餐档带 json_schema strict", () => {
       vi.stubGlobal("fetch", vi.fn(async (url: string, init: any) => { calls.push({ url, init }); return new Response(okBody, { status: 200, headers: { "content-type": "application/json" } }); }));
       await invokeGlmJsonChatWithGatewayFallback({
         system: "s", user: "u", gatewayPolicy: "qwen_only",
-        ...(withSchema ? { responseJsonSchema: { name: "card", schema: { type: "object", additionalProperties: false, properties: { ok: { type: "boolean" } }, required: ["ok"] } } } : {}),
+        ...(withSchema ? { thinkingBudget: 32_768, responseJsonSchema: { name: "card", schema: { type: "object", additionalProperties: false, properties: { ok: { type: "boolean" } }, required: ["ok"] } } } : {}),
       } as never);
       const body = JSON.parse(String(calls[0]!.init.body));
       if (withSchema) {
         expect(body.response_format).toEqual({ type: "json_schema", json_schema: { name: "card", strict: true, schema: { type: "object", additionalProperties: false, properties: { ok: { type: "boolean" } }, required: ["ok"] } } });
+        expect(body.thinking_budget).toBe(32768);
       } else {
         expect(body.response_format).toEqual({ type: "json_object" });
       }
