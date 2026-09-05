@@ -3283,14 +3283,14 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
   it("0906 观察锁判坏：同档先重试一次，再坏才换档只重整形这一批；其他批不动，整集不死", async () => {
     const segments = Array.from({ length: 9 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
     const base = makeGlmStructuringStub();
-    const seen: Array<{ segs: string; callId?: string; gatewayOrder?: readonly string[] }> = [];
+    const seen: Array<{ segs: string; callId?: string; gatewayOrder?: readonly string[]; temperature?: number }> = [];
     let badLeft = 2; // 批次 3,4,5：前两次（同档两次）交坏卷，第三次（换档）才交好卷
-    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }, _signal: unknown, context: { callId?: string; gatewayOrder?: readonly string[] }) => {
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }, _signal: unknown, context: { callId?: string; gatewayOrder?: readonly string[]; temperature?: number }) => {
       const result = await base(prompt);
       const rows = readRawSegmentsFromGlmPrompt(prompt.user);
       const firstStart = Math.min(...rows.flatMap((r) => ((r as { shots?: Array<{ startSec: number }> }).shots || []).map((s) => Number(s.startSec))));
       const segs = firstStart >= 180 && firstStart < 360 ? "3,4,5" : firstStart < 180 ? "0,1,2" : "6,7,8";
-      seen.push({ segs, callId: context?.callId, gatewayOrder: context?.gatewayOrder });
+      seen.push({ segs, callId: context?.callId, gatewayOrder: context?.gatewayOrder, temperature: context?.temperature });
       const gateway = context?.gatewayOrder?.[0] ?? "plan_bj_qwen";
       if (segs === "3,4,5" && badLeft > 0) {
         badLeft -= 1;
@@ -3321,8 +3321,40 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(mid[2]!.gatewayOrder?.[0]).not.toBe(mid[0]!.gatewayOrder?.[0]);
     expect(mid[2]!.gatewayOrder?.at(-1)).toBe(mid[0]!.gatewayOrder?.[0]);
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(3);
-    expect(receipts.filter((row) => String(row.model).includes("过不了观察锁"))).toHaveLength(2);
+    const retryReceipts = receipts.filter((row) => row.route === "structuring_retry_pending");
+    expect(retryReceipts).toHaveLength(2);
+    expect(String(retryReceipts[0]!.model)).toContain("同档降温到 0.75 再试一次");
+    expect(String(retryReceipts[1]!.model)).toContain("换下一档重整形这一批");
+    // 同档重试降温 0.75；换档后回到冻结首发温度
+    expect(mid[1]!.temperature).toBe(0.75);
+    expect(mid[2]!.temperature).toBeUndefined();
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
+  });
+
+  it("0906 坏缓存不覆盖：缓存代次 0 过不了锁 → 重整形成功后写到 -r1，不再撞「已存在但内容不同」", async () => {
+    const segments = Array.from({ length: 3 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
+    const base = makeGlmStructuringStub();
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => ({ ...(await base(prompt)), gateway: "plan_bj_qwen" }));
+    const readStructuredBatchCache = vi.fn(async (input: { retryGeneration?: number; rawSegments: ReadonlyArray<Record<string, unknown>> }) => {
+      if (input.retryGeneration) return null;
+      const good = await base({ system: "", user: `分段卡 JSON：${JSON.stringify(input.rawSegments)}` });
+      const shots = (good.raw.shots as Array<Record<string, unknown>>).map((s, i) => i === 0 ? { ...s, hintZh: "坏缓存改写的观察" } : s);
+      return { schemaVersion: 1 as const, frozenContractSha256: "x", seriesKey: "s", sourceDigest: "3".repeat(64), episodeIndex: 3, segmentIndexes: [0, 1, 2],
+        inputDigest: "d", raw: { ...good.raw, shots }, gateway: "plan_bj_qwen", model: "qwen3.8-max", inputTokens: 1, outputTokens: 1, reasoningTokens: 0, costUsd: 0, savedAtIso: new Date().toISOString(), source: "formal" as const };
+    });
+    const deps = makeRunnerDeps({
+      postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
+      invokeGlmStructuring: invokeGlmStructuring as never,
+      readStructuredBatchCache: readStructuredBatchCache as never,
+    });
+    const result = await runManhuaNativeDeepReadBatch({
+      episodes: [{ episodeIndex: 3, resolveNodes: async () => [], segments, sourceDurationSec: 180, cacheSourceDigest: "3".repeat(64) }],
+      segmentCacheSeriesKey: "bad_cache_generation",
+    }, deps);
+    expect(readStructuredBatchCache.mock.calls.map(([input]) => input.retryGeneration)).toEqual([undefined, 1]);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(deps.writeStructuredBatchCache).mock.calls[0]![0]).toMatchObject({ retryGeneration: 1 });
+    expect(result.episodes[0]!.result.segmentCount).toBe(3);
   });
 
   it("命中GCS缓存的批次不重跑，只补未缓存批次；整集由代码拼接", async () => {
