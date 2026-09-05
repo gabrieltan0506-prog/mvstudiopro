@@ -5772,7 +5772,7 @@ async function executeNativeDeepReadBatch(
         videoCount: number;
         segmentIndexes: readonly number[];
         rows: ReadonlyArray<Record<string, unknown>>;
-        /** 面板标签：批次整形 / 最终归并，让用户看得出是第几次 */
+        /** 面板标签：第几批整形，让用户看得出是第几次 */
         labelZh?: string;
       }): Promise<NativeDeepReadGlmStructuringResult> => {
         const callId = canCacheStructuring
@@ -6041,7 +6041,7 @@ async function executeNativeDeepReadBatch(
           ));
         }
         const groupRows = await Promise.all(groups.map(async (segmentIndexes) => {
-          // 单片无需再做一次中间GLM；直接作为一张已结构化分段卡进入最终合并。
+          // 单片无需再做一次中间GLM；直接作为一张已结构化分段卡进入确定性拼接。
           if (segmentIndexes.length === 1) return completeRawSegments[segmentIndexes[0]!]!;
           const groupInputs = segmentIndexes.map((index) => completeRawSegments[index]!);
           const annotatedRows = annotateSegmentRows();
@@ -6082,6 +6082,28 @@ async function executeNativeDeepReadBatch(
         const finalRaw = deterministicallyMergeNativeDeepReadRawSegments(groupRows);
         assertNativeDeepReadShotObservationsPreserved(groupRows, finalRaw);
         finalRaw.structuringBatches = groups.map((segmentIndexes) => ({ segmentIndexes }));
+        // 这不是兜底，是正式路径：不许烙「本地兜底」标记
+        delete finalRaw.structuringFallback;
+        // 0902 用户令字段从批次卡合并回来：标题取最长的非空一条，五维判词逐维取非空并拼接
+        const batchCards = groupRows.map(unwrapNativeDeepReadStructuredAnswerEnvelope);
+        const titles = batchCards.map((card) => String(card.templateTitleZh || "").trim()).filter(Boolean);
+        if (titles.length) finalRaw.templateTitleZh = titles.sort((x, y) => y.length - x.length)[0];
+        const proseByKey: Record<string, string[]> = {};
+        for (const card of batchCards) {
+          const prose = card.classificationProseZh;
+          if (!prose || typeof prose !== "object" || Array.isArray(prose)) continue;
+          for (const [key, value] of Object.entries(prose as Record<string, unknown>)) {
+            const text = String(value || "").trim();
+            if (text) (proseByKey[key] ||= []).push(text);
+          }
+        }
+        if (Object.keys(proseByKey).length) {
+          finalRaw.classificationProseZh = Object.fromEntries(
+            Object.entries(proseByKey).map(([key, texts]) => [key, Array.from(new Set(texts)).join("；")]),
+          );
+        }
+        // 整集级 GLM 证据不存在（没有归并这一发）：报告导出走分段卡拼装，不许指向某一半批次卡
+        glmEvidence = undefined;
         return finalRaw;
       };
       const parseCallId = `${episodeRequestId}:parse`;

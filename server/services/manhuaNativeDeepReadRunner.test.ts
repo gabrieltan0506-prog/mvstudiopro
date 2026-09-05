@@ -3171,7 +3171,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
   });
 
-  it("中间批次与最终整形命中GCS缓存时都不重跑，只补未缓存批次", async () => {
+  it("命中GCS缓存的批次不重跑，只补未缓存批次；整集由代码拼接", async () => {
     const segments = Array.from({ length: 9 }, (_, index) => ({
       startSec: index * 60,
       endSec: (index + 1) * 60,
@@ -3231,7 +3231,8 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(invokeGlmStructuring.mock.calls.map(([prompt]) =>
       readRawSegmentsFromGlmPrompt((prompt as { user: string }).user).length)).toEqual([4]);
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(1);
-    expect(result.episodes[0]!.result.glmEvidence?.callId).not.toBe("cached-final-call");
+    // 没有整集级 GLM 证据：报告导出必须走分段卡拼装，不许指向某一半批次卡
+    expect(result.episodes[0]!.result.glmEvidence).toBeUndefined();
   });
 
   it("整形缓存缺失但永久付费证据恢复时不重记用量、不发模型回执，并补写结构缓存", async () => {
