@@ -184,7 +184,9 @@ export async function readNativeDeepReadGlmRecoveredEvidence(input: {
     ...input.expectedRequestWithoutPreferredGateway,
     preferredGlmGateway: storedPreferred,
   };
-  if (canonicalJson(requestPayload.request) !== canonicalJson(expectedRequest)) {
+  // responseJsonSchema 只影响 Qwen 档的 response_format，不改提示词与冻结参数；比对身份时剔除，旧证据仍可恢复
+  const stripSchema = (r: unknown) => { const o = { ...(r as Record<string, unknown>) }; delete o.responseJsonSchema; return o; };
+  if (canonicalJson(stripSchema(requestPayload.request)) !== canonicalJson(stripSchema(expectedRequest))) {
     throw new Error("整集GLM request证据与当前冻结请求不一致，已停止以避免重复付费");
   }
   const requestReceipt = receiptFromDownload(requestObjectName, requestDownloaded);

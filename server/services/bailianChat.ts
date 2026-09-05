@@ -246,6 +246,8 @@ export type GlmParams = {
   onRawResponse?: (response: GlmRawResponseEvidence) => Promise<void>;
   /** 业务验真钩子:抛错=该网关响应不可用,继续降级(复审 P1-1) */
   validateContent?: (content: string) => void;
+  /** 0905：标准 JSON Schema；只有支持 strict 的网关（Qwen 套餐两档）会以 json_schema strict 发出，其余仍 json_object。 */
+  responseJsonSchema?: { name: string; schema: Record<string, unknown> };
   /** 0905：每次换档时回调（面板要看得见「首发档失败、正在第二档重跑」），失败不影响链路。 */
   onGatewayFallback?: (info: { gateway: string; outcome: string; detail?: string }) => void | Promise<void>;
 };
@@ -824,6 +826,10 @@ async function invokeOneGlmGateway(
     body.reasoning_effort = "xhigh";
     body.max_completion_tokens = budget;
   } else if (gateway === "plan_sg_qwen" || gateway === "plan_bj_qwen") {
+    // 0905 实弹：Qwen3.8-Max 套餐档 json_schema strict 是真语法级约束（对抗提示词也拦得住）
+    if (params.responseJsonSchema) {
+      body.response_format = { type: "json_schema", json_schema: { name: params.responseJsonSchema.name, strict: true, schema: params.responseJsonSchema.schema } };
+    }
     // DashScope compatible-mode Qwen(含新加坡/北京 Token Plan):只认 enable_thinking
     // (不认 reasoning_effort),预算走 max_tokens——七审第4条:换档时这条分支键漏改过
     body.enable_thinking = true;

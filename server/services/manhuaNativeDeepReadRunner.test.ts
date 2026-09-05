@@ -4472,3 +4472,20 @@ describe("0905 · 字幕只取 keyMoments 前后 2 秒", () => {
     expect(filterNativeDeepReadSubtitlesToKeyMoments({ subtitles: raw.subtitles })).toEqual({ subtitles: raw.subtitles });
   });
 });
+
+describe("0905 · 整形 JSON Schema（Qwen strict）", () => {
+  it("Gemini 格式转标准 JSON Schema：类型小写、nullable 变联合、对象封闭；整形卡带三个顶层可选字段与 craftReadZh", async () => {
+    const { geminiSchemaToJsonSchema, nativeDeepReadStructuringJsonSchema } = await import("./manhuaNativeDeepReadRunner");
+    expect(geminiSchemaToJsonSchema({ type: "OBJECT", properties: { a: { type: "STRING", nullable: true, maxLength: 5 }, b: { type: "ARRAY", items: { type: "NUMBER" } } }, required: ["a"] } as never)).toEqual({
+      type: "object", additionalProperties: false, required: ["a"],
+      properties: { a: { type: ["string", "null"], maxLength: 5 }, b: { type: "array", items: { type: "number" } } },
+    });
+    const schema = nativeDeepReadStructuringJsonSchema() as { properties: Record<string, { type: unknown; items?: { properties?: Record<string, unknown> } }>; required: string[] };
+    expect(schema.properties.excludedAdRanges.type).toBe("array");
+    expect(Object.keys(schema.properties.classificationProseZh)).toContain("properties");
+    expect(schema.properties.templateTitleZh.type).toBe("string");
+    expect(schema.properties.shots.items?.properties).toHaveProperty("craftReadZh");
+    expect(schema.required).toContain("shots");
+    expect(JSON.stringify(schema)).not.toMatch(/"type":"(OBJECT|ARRAY|STRING|NUMBER|INTEGER)"/);
+  });
+});

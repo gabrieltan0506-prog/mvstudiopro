@@ -1338,6 +1338,46 @@ type NativeResponseSchemaNode = {
   items?: NativeResponseSchemaNode;
 };
 
+/**
+ * 0905 用户拍板「彻底解决约束问题只能选 2」：把 Gemini 格式的响应 schema 转成标准 JSON Schema，
+ * 挂到 Qwen3.8-Max 套餐档的 `response_format: json_schema strict`（实弹：Qwen 两档真约束，GLM 两档无）。
+ * 整形卡 = 分段卡 schema + 顶层可选 excludedAdRanges / classificationProseZh / templateTitleZh + shots[].craftReadZh。
+ */
+export function geminiSchemaToJsonSchema(node: NativeResponseSchemaNode): Record<string, unknown> {
+  const type = String(node.type || "").toLowerCase();
+  const out: Record<string, unknown> = {};
+  if (node.description) out.description = node.description;
+  if (Array.isArray((node as { enum?: unknown }).enum)) out.enum = (node as { enum: unknown[] }).enum;
+  if (typeof node.maxLength === "number") out.maxLength = node.maxLength;
+  if (type === "object") {
+    out.type = "object";
+    out.properties = Object.fromEntries(Object.entries(node.properties || {}).map(([k, v]) => [k, geminiSchemaToJsonSchema(v)]));
+    if (Array.isArray((node as { required?: unknown }).required)) out.required = (node as { required: unknown[] }).required;
+    out.additionalProperties = false;
+  } else if (type === "array") {
+    out.type = "array";
+    if (node.items) out.items = geminiSchemaToJsonSchema(node.items);
+  } else if (type) {
+    out.type = (node as { nullable?: boolean }).nullable === true ? [type, "null"] : type;
+  }
+  return out;
+}
+
+export function nativeDeepReadStructuringJsonSchema(): Record<string, unknown> {
+  const base = JSON.parse(JSON.stringify(NATIVE_DEEP_READ_RESPONSE_SCHEMA)) as NativeResponseSchemaNode;
+  const shot = base.properties!.shots!.items!;
+  shot.properties!.craftReadZh = { type: "STRING", maxLength: 60, description: "手法·用意与预期效果，可选，全集最多 30 条" };
+  base.properties!.excludedAdRanges = { type: "ARRAY", items: { type: "OBJECT", properties: { startSec: { type: "NUMBER" }, endSec: { type: "NUMBER" } }, required: ["startSec", "endSec"] } as NativeResponseSchemaNode };
+  base.properties!.classificationProseZh = {
+    type: "OBJECT",
+    properties: Object.fromEntries(["emotionZh", "narrativeZh", "performanceZh", "audiovisualZh", "audienceZh"].map((k) => [k, { type: "STRING", maxLength: 200 }])),
+  } as NativeResponseSchemaNode;
+  base.properties!.templateTitleZh = { type: "STRING", maxLength: 60 };
+  return geminiSchemaToJsonSchema(base);
+}
+
+export const NATIVE_DEEP_READ_STRUCTURING_JSON_SCHEMA_NAME = "native_structuring_card";
+
 /** 保留基础数组/对象结构，分片数值与分类要求写入描述；返回后的质量门禁不变。 */
 export function buildNativeDeepReadResponseSchema(context: NativeDeepReadSegmentContext): Record<string, unknown> {
   if (!Number.isFinite(context.startSec) || !Number.isFinite(context.endSec)
@@ -4220,6 +4260,8 @@ export async function invokeNativeDeepReadGlmStructuring(
     system: prompt.system,
     user: prompt.user,
     ...NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG,
+    // 只在 Qwen 套餐档生效（bailianChat 按网关决定），GLM 档照旧 json_object
+    responseJsonSchema: { name: NATIVE_DEEP_READ_STRUCTURING_JSON_SCHEMA_NAME, schema: nativeDeepReadStructuringJsonSchema() },
     // 整形开关只改链序（首发哪家），其余冻结参数原样
     gatewayPolicy: context?.gatewayPolicy ?? NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG.gatewayPolicy,
   };

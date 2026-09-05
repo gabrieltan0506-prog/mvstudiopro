@@ -756,3 +756,26 @@ describe("0905 · 回包 JSON 确定性修复", () => {
     expect(repairJsonTextBestEffort('not json at all')).toBeNull();
   });
 });
+
+describe("0905 · Qwen 套餐档带 json_schema strict", () => {
+  it("qwen_only + responseJsonSchema：新加坡档请求体是 json_schema strict；不带 schema 时仍是 json_object", async () => {
+    vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "sg-plan-key");
+    vi.stubEnv("WAN_PLAN_API_KEY", "");
+    const { invokeGlmJsonChatWithGatewayFallback } = await import("./bailianChat");
+    const okBody = JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ok: true }) }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 }, model: "qwen3.8-max" });
+    for (const withSchema of [true, false]) {
+      const calls: Array<{ url: string; init: any }> = [];
+      vi.stubGlobal("fetch", vi.fn(async (url: string, init: any) => { calls.push({ url, init }); return new Response(okBody, { status: 200, headers: { "content-type": "application/json" } }); }));
+      await invokeGlmJsonChatWithGatewayFallback({
+        system: "s", user: "u", gatewayPolicy: "qwen_only",
+        ...(withSchema ? { responseJsonSchema: { name: "card", schema: { type: "object", additionalProperties: false, properties: { ok: { type: "boolean" } }, required: ["ok"] } } } : {}),
+      } as never);
+      const body = JSON.parse(String(calls[0]!.init.body));
+      if (withSchema) {
+        expect(body.response_format).toEqual({ type: "json_schema", json_schema: { name: "card", strict: true, schema: { type: "object", additionalProperties: false, properties: { ok: { type: "boolean" } }, required: ["ok"] } } });
+      } else {
+        expect(body.response_format).toEqual({ type: "json_object" });
+      }
+    }
+  });
+});
