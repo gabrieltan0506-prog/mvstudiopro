@@ -222,26 +222,41 @@ export const manhuaViralTemplateRouter = router({
         && successSegments === attemptedSegments
         && evidenceObjectNames.length === attemptedSegments
         && /^[a-f0-9]{64}$/i.test(sourceDigest);
-      if (!complete) {
+      // 0905 用户令：分片过门禁就能导出，不必等整形/入库——未完整时出「分段预览」版：
+      // 标题与文件名都明写「已含 k/N 段 · 整形未完成」，与完整报告一眼可辨，不再拒绝。
+      const previewSegments = completedSegmentIndexes.length;
+      const previewable = !complete
+        && previewSegments >= 1
+        && completedSegmentIndexes.every((value, index) => value === index)
+        && evidenceObjectNames.length === previewSegments
+        && /^[a-f0-9]{64}$/i.test(sourceDigest);
+      if (!complete && !previewable) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
-          message: "该集精读尚未完成全部分片，拒绝导出不完整报告",
+          message: "该集精读尚无可导出的连续分片证据（需从第 1 片起连续过门禁）",
         });
       }
+      const previewSuffixZh = complete
+        ? ""
+        : `（分段预览 · 已含 ${previewSegments}/${attemptedSegments} 段 · 整形未完成）`;
       try {
         return await renderNativeEvidenceReportFromObjectNames({
-          labelZh: `${input.seriesKey} 第 ${input.episodeIndex} 集`,
+          labelZh: `${input.seriesKey} 第 ${input.episodeIndex} 集${previewSuffixZh}`,
           evidenceObjectNames,
           expectEpisodeIndex: input.episodeIndex,
           expectSeriesKey: input.seriesKey,
           expectSourceDigest: sourceDigest,
-          expectSegmentCount: attemptedSegments,
-          segmentSpans: native?.segmentSpans,
-          glmCardObjectName: native?.glmParsedObjectName,
-          evidenceFrames: card.evidenceFrames,
+          expectSegmentCount: complete ? attemptedSegments : previewSegments,
+          segmentSpans: complete
+            ? native?.segmentSpans
+            : (native?.segmentSpans || []).slice(0, previewSegments),
+          glmCardObjectName: complete ? native?.glmParsedObjectName : undefined,
+          evidenceFrames: complete ? card.evidenceFrames : undefined,
           framesV2SummaryObjectName: `manhua-template-learn/probes/${cardKey}/frames-v2-summary.json`,
           framesPrefix: `manhua-template-learn/probes/${cardKey}/frames/`,
-          reportObjectName: `manhua-template-learn/reports/${cardKey}.html`,
+          reportObjectName: complete
+            ? `manhua-template-learn/reports/${cardKey}.html`
+            : `manhua-template-learn/reports/${cardKey}-preview-${previewSegments}of${attemptedSegments}.html`,
         });
       } catch (e) {
         throw new TRPCError({
