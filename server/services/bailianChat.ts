@@ -246,7 +246,60 @@ export type GlmParams = {
   onRawResponse?: (response: GlmRawResponseEvidence) => Promise<void>;
   /** 业务验真钩子:抛错=该网关响应不可用,继续降级(复审 P1-1) */
   validateContent?: (content: string) => void;
+  /** 0905：每次换档时回调（面板要看得见「首发档失败、正在第二档重跑」），失败不影响链路。 */
+  onGatewayFallback?: (info: { gateway: string; outcome: string; detail?: string }) => void | Promise<void>;
 };
+
+/**
+ * 0905 实锤：EvoLink 一发 9 分钟、6 万 token 的整集卡，第 58,259 字缺一个逗号，整份被判无效重跑。
+ * 按 JSON.parse 报的位置做确定性修复：缺逗号补逗号、提前结束补括号，最多 20 步；修不好回 null。
+ * 只动语法字符，不改内容。
+ */
+export function repairJsonTextBestEffort(text: string): string | null {
+  let current = String(text || "").trim();
+  if (!current) return null;
+  for (let step = 0; step < 20; step += 1) {
+    try {
+      JSON.parse(current);
+      return step === 0 ? null : current;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/Unexpected end of JSON input/.test(msg)) {
+        const closers = missingJsonClosers(current);
+        if (!closers) return null;
+        current += closers;
+        continue;
+      }
+      const pos = Number(/position (\d+)/.exec(msg)?.[1]);
+      if (!Number.isInteger(pos) || pos <= 0 || pos > current.length) return null;
+      if (/Expected ',' or [\]}]/.test(msg) || /Expected ','/.test(msg)) {
+        current = `${current.slice(0, pos)},${current.slice(pos)}`;
+        continue;
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
+function missingJsonClosers(text: string): string {
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (const ch of text) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") stack.push("}");
+    else if (ch === "[") stack.push("]");
+    else if (ch === "}" || ch === "]") stack.pop();
+  }
+  return (inString ? '"' : "") + stack.reverse().join("");
+}
 
 function emptyGlmGatewayUsage(): GlmGatewayUsage {
   return { inputTokens: 0, outputTokens: 0, reasoningTokens: 0, costUsd: 0 };
@@ -475,12 +528,26 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
         try {
           params.validateContent(text);
         } catch (ve) {
-          trace.push({
-            gateway: g.name,
-            model: g.model,
-            outcome: "content_invalid",
-            detail: (ve instanceof Error ? ve.message : String(ve)).slice(0, 120),
-          });
+          const detail = (ve instanceof Error ? ve.message : String(ve)).slice(0, 120);
+          // 0905：先做确定性 JSON 修复，修好再验一次；修不好才换档
+          const repaired = repairJsonTextBestEffort(text);
+          let repairedOk = false;
+          if (repaired) {
+            try {
+              params.validateContent(repaired);
+              repairedOk = true;
+            } catch {
+              repairedOk = false;
+            }
+          }
+          if (repairedOk && repaired) {
+            console.warn(`[glmGatewayFallback] ${g.name}: 回包 JSON 语法已确定性修复后采用（原因：${detail}）`);
+            trace.push({ gateway: g.name, model: g.model, outcome: "ok", detail: `content_repaired: ${detail}` });
+            const patched = { ...res, choices: [{ ...res.choices![0], message: { ...res.choices![0]!.message, content: repaired } }, ...res.choices!.slice(1)] };
+            return { ...patched, gateway: g.name, model: g.model, gatewayTrace: trace };
+          }
+          trace.push({ gateway: g.name, model: g.model, outcome: "content_invalid", detail });
+          await params.onGatewayFallback?.({ gateway: g.name, outcome: "content_invalid", detail })?.catch?.(() => undefined);
           continue;
         }
       }
@@ -510,6 +577,7 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
       const providerError = nativeProviderReceiptFromError(e);
       if (providerError) trace[trace.length - 1]!.providerError = providerError;
       console.warn(`[glmGatewayFallback] ${g.name}: ${msg.slice(0, 200)}`);
+      try { await params.onGatewayFallback?.({ gateway: g.name, outcome, detail: msg.slice(0, 120) }); } catch { /* 旁路 */ }
     } finally {
       releaseGateway();
     }

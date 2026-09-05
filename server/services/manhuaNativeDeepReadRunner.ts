@@ -4263,6 +4263,7 @@ export async function invokeNativeDeepReadGlmStructuring(
       store.assertRawResponseSaved();
       raw = parseJsonObject(content);
     },
+    onGatewayFallback: context?.onGatewayFallback,
   });
   // 通道锁：只接受整形链五档（GLM 两档 + Qwen 三档）；判据复用 bailianChat 的单一真源。
   if (!STRUCTURING_GATEWAYS.has(response.gateway) || !raw) {
@@ -5889,7 +5890,22 @@ async function executeNativeDeepReadBatch(
             { seriesKey: params.segmentCacheSeriesKey, sourceDigest: episode.cacheSourceDigest,
               episodeIndex: episode.episodeIndex, batchRequestId: episodeRequestId, callId,
               recoverExisting: canCacheStructuring, onBeforePaidCall: emitPaidCallStarted,
-              gatewayPolicy: structuringGatewayPolicy },
+              gatewayPolicy: structuringGatewayPolicy,
+              // 0905：换档也要在面板看得见——同 callId 再发一条 started 回执，行文改成「X 档失败，切下一档」
+              onGatewayFallback: async (info) => {
+                if (startedAt === undefined) return;
+                await emitVisualModelReceipt({
+                  callId,
+                  model: `${glmGatewayDisplayLabel(info.gateway)} 失败（${String(info.detail || info.outcome).slice(0, 60)}），切下一档重跑`,
+                  route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
+                  stage: "visual_parse",
+                  status: "started",
+                  batchRequestId: episodeRequestId,
+                  episodeIndexes: [episode.episodeIndex],
+                  videoCount: input.videoCount,
+                  labelZh: input.labelZh,
+                }, params.onModelReceipt);
+              } },
           );
           glmEvidence = structured.evidence;
           if (structured.evidence?.callId && !glmEvidenceCallIds.includes(structured.evidence.callId)) {

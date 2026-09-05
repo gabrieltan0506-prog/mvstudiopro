@@ -744,3 +744,15 @@ describe("0905 · GLM 流无数据即断档", () => {
     await expect(readWithIdleTimeout(ok, 30)).resolves.toEqual({ done: false, value: new Uint8Array([1]) });
   });
 });
+
+describe("0905 · 回包 JSON 确定性修复", () => {
+  it("缺逗号补逗号、提前结束补括号；本就合法或修不好返回 null", async () => {
+    const { repairJsonTextBestEffort } = await import("./bailianChat");
+    const parsed = (t: string) => JSON.parse(repairJsonTextBestEffort(t) || "null");
+    expect(parsed('{"a":[1,2 3],"b":{"c":"x"}}')).toEqual({ a: [1, 2, 3], b: { c: "x" } });
+    expect(parsed('{"a":[{"x":1} {"x":2}]}')).toEqual({ a: [{ x: 1 }, { x: 2 }] });
+    expect(parsed('{"a":[1,2,{"b":"c')).toEqual({ a: [1, 2, { b: "c" }] });
+    expect(repairJsonTextBestEffort('{"ok":true}')).toBeNull();
+    expect(repairJsonTextBestEffort('not json at all')).toBeNull();
+  });
+});
