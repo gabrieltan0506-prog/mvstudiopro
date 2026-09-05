@@ -6144,6 +6144,9 @@ export default function PlatformPage() {
       manhuaLearnBatchSize,
       manhuaLearnSegmentSecondsInput,
       manhuaLearnVideoFpsInput,
+      // 0905 实证：这里漏了读片模型，重选 Flash 后建单闭包仍拿默认 Pro
+      manhuaLearnReadModel,
+      manhuaLearnStandaloneSource,
       manhuaLearnBasket,
       manhuaLearnResult,
       manhuaLearnUserKey,
