@@ -4347,7 +4347,7 @@ export async function invokeNativeDeepReadGlmStructuring(
   });
   // 通道锁：只接受整形链五档（GLM 两档 + Qwen 三档）；判据复用 bailianChat 的单一真源。
   if (!STRUCTURING_GATEWAYS.has(response.gateway) || !raw) {
-    throw new Error("GLM 结构化整形通道锁失效或未返回 JSON");
+    throw new Error("结构化整形通道锁失效或未返回 JSON");
   }
   const result: NativeDeepReadGlmStructuringResult = {
     raw,
