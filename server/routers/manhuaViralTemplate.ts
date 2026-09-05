@@ -256,11 +256,11 @@ export const manhuaViralTemplateRouter = router({
     .input(z.object({ id: z.string().regex(/^tpl_[a-z0-9_-]{1,60}$/i) }))
     .query(async ({ ctx, input }) => {
       assertSiteOwner(ctx.user);
-      const [{ getGcsManhuaViralApproved }, gcs] = await Promise.all([
+      const [{ getGcsManhuaViralApprovedForDisplay }, gcs] = await Promise.all([
         import("../services/manhuaViralTemplateStore"),
         import("../services/gcs"),
       ]);
-      const card = await getGcsManhuaViralApproved(input.id);
+      const card = await getGcsManhuaViralApprovedForDisplay(input.id);
       if (!card || card.status !== "approved") {
         throw new TRPCError({ code: "NOT_FOUND", message: "正式模板不存在" });
       }

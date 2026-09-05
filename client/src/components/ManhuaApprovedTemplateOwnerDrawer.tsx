@@ -183,6 +183,11 @@ export function ManhuaApprovedTemplateOwnerDrawer(props: {
   detail: ManhuaViralTemplateCard | null;
   evidenceFrames: SignedEvidenceFrame[];
   detailLoading: boolean;
+  /** 读取失败原因；有值时面板显示错误而不是永远「正在读取」 */
+  detailError?: string | null;
+  /** 原生逐集卡：给一个不等面板加载的出口，直接打开该集 HTML 报告（0905 用户令） */
+  reportEpisodeIndex?: number | null;
+  onOpenReport?: () => void;
   models: ModelOption[];
   selectedModel: ManhuaViralTemplateOptimizeModel;
   promptZh: string;
@@ -210,6 +215,15 @@ export function ManhuaApprovedTemplateOwnerDrawer(props: {
               完整模板仅站点拥有者可见。优化先生成待审修订，不会直接覆盖正式模板。
             </p>
           </div>
+          {props.reportEpisodeIndex && props.onOpenReport ? (
+            <button
+              type="button"
+              onClick={props.onOpenReport}
+              className="mr-2 rounded-lg border border-[#8cefff]/35 bg-[rgba(140,239,255,0.12)] px-3 py-1.5 text-[11px] font-semibold text-[#8cefff] hover:bg-[rgba(140,239,255,0.2)]"
+            >
+              直接打开第 {props.reportEpisodeIndex} 集 HTML 报告
+            </button>
+          ) : null}
           <button
             type="button"
             aria-label="关闭模板详情"
@@ -288,7 +302,11 @@ export function ManhuaApprovedTemplateOwnerDrawer(props: {
               </div>
             </section>
           ) : null}
-          {props.detailLoading || !original ? (
+          {!props.detailLoading && !original && props.detailError ? (
+            <div role="alert" className="rounded-xl border border-rose-300/30 bg-rose-500/10 p-6 text-center text-xs text-rose-100">
+              正式模板读取失败：{props.detailError}
+            </div>
+          ) : props.detailLoading || !original ? (
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-8 text-center text-xs text-white/45">
               正在读取正式模板…
             </div>

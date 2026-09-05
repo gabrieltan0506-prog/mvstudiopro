@@ -14263,6 +14263,12 @@ export default function PlatformPage() {
                           detail={ownerTemplateDetailQuery.data?.card || null}
                           evidenceFrames={ownerTemplateDetailQuery.data?.evidenceFrames || []}
                           detailLoading={ownerTemplateDetailQuery.isLoading}
+                          detailError={ownerTemplateDetailQuery.error?.message || null}
+                          reportEpisodeIndex={parseNativeProposalEpisodeRef({ id: ownerTemplateDetailId })?.episodeIndex ?? null}
+                          onOpenReport={() => {
+                            const ref = parseNativeProposalEpisodeRef({ id: ownerTemplateDetailId });
+                            if (ref) void exportManhuaEpisodeReport(ref.seriesKey, ref.episodeIndex);
+                          }}
                           models={ownerTemplateOptimizeModels}
                           selectedModel={ownerTemplateOptimizeModel}
                           promptZh={ownerTemplateOptimizePrompt}
