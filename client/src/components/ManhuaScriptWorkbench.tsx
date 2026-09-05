@@ -78,7 +78,11 @@ import {
   type ManhuaCustomAssetRole,
   type ManhuaCharacterPrimaryDuty,
 } from "@shared/manhuaCustomAssetRefs";
-import { customAssetRefClaimsAnchor } from "@shared/manhuaAssetScriptSync";
+import {
+  consumableManhuaCustomAssetRefsForCanon,
+  customAssetRefClaimsAnchor,
+  resolveManhuaAssetClaimEntry,
+} from "@shared/manhuaAssetScriptSync";
 import {
   buildManhuaAtReferenceIndex,
   resolveManhuaAtReferences,
@@ -302,6 +306,16 @@ type Props = {
   /** 剧情包已出、尚未确认编剧 */
   writerPackReady?: boolean;
   onConfirmOutline?: () => void;
+  /** 打开可粘贴/导入完整人物表的编剧入口；缺 canon 时禁止只给不可操作的认领提示。 */
+  onOpenWriterEditor?: () => void;
+  /** 把内部真实选中镜只读上报给同页顾问；无镜头时上报 null。 */
+  onAdvisorSelectionChange?: (
+    selection: {
+      episodeIndex: number;
+      segmentIndex: number;
+      shot: ManhuaWorkbenchShot | null;
+    } | null,
+  ) => void;
   /** @deprecated 方案 B 已取消跳过；保留字段仅兼容旧会话 */
   assetsSkipped?: boolean;
   onAssetsSkippedChange?: (skipped: boolean) => void;
@@ -672,6 +686,56 @@ export function shouldShowManhuaAsset3dRow(input: {
   return input.role === "character" && input.cardExpanded && input.hasAction;
 }
 
+export function resolveManhuaAdvisorSelection(input: {
+  episodeIndex: number;
+  shot: ManhuaWorkbenchShot | null | undefined;
+}): {
+  episodeIndex: number;
+  segmentIndex: number;
+  shot: ManhuaWorkbenchShot;
+} | null {
+  if (!input.shot) return null;
+  return {
+    episodeIndex: Math.max(1, Math.floor(input.episodeIndex || 1)),
+    segmentIndex: resolveSegmentIndexFromShotIndex(input.shot.index),
+    shot: input.shot,
+  };
+}
+
+function hasExplicitManhuaShotSyntax(text: string): boolean {
+  return (
+    /^\s*(?:\d{1,3}[.、)]|镜(?:头)?\s*\d{1,3})\s*/m.test(text) ||
+    /^\s*\|\s*镜(?:号|头)?\s*\|/m.test(text)
+  );
+}
+
+/**
+ * 顾问只读真实产物：节点 prompt 是待运行模板，不能当成已生成分镜。
+ * 仅 outputText 中的可拍段表或显式镜号可上报；无结构正文不生成默认骨架。
+ */
+export function resolveManhuaAdvisorShotsFromBlocks(input: {
+  beats?: Pick<CanvasBlock, "outputText" | "prompt"> | null;
+  reverse?: Pick<CanvasBlock, "outputText" | "prompt"> | null;
+  story?: Pick<CanvasBlock, "outputText" | "prompt"> | null;
+}): ManhuaWorkbenchShot[] {
+  const beatsText = String(input.beats?.outputText || "").trim();
+  const reverseText = String(input.reverse?.outputText || "").trim();
+  const storyText = String(input.story?.outputText || "").trim();
+  if (!beatsText && !reverseText && !storyText) return [];
+  const plan = [beatsText, reverseText, storyText]
+    .filter(Boolean)
+    .map((text) => parseManhuaEpisodeSegmentPlanFromMarkdown(text))
+    .find((candidate) => candidate.segments.length > 0);
+  if (plan) return buildWorkbenchShotsFromSegmentPlan(plan) as ManhuaWorkbenchShot[];
+  const source = [beatsText, reverseText, storyText].find(
+    (text) => text && hasExplicitManhuaShotSyntax(text),
+  );
+  if (!source) return [];
+  let shots = parseWorkbenchShotsFromText(source);
+  shots = applyShotDialoguesFromText(shots, reverseText);
+  return applyShotDialoguesFromText(shots, beatsText);
+}
+
 export default function ManhuaScriptWorkbench({
   blocks,
   videoModel,
@@ -707,6 +771,8 @@ export default function ManhuaScriptWorkbench({
   canRun,
   writerPackReady,
   onConfirmOutline,
+  onOpenWriterEditor,
+  onAdvisorSelectionChange,
   assetsSkipped: _assetsSkippedProp,
   onAssetsSkippedChange: _onAssetsSkippedChange,
   workflowPhase: workflowPhaseProp,
@@ -1281,6 +1347,24 @@ export default function ManhuaScriptWorkbench({
   const activeShotNo = activeShot?.index ?? 1;
   const activeSegNo = resolveSegmentIndexFromShotIndex(activeShotNo);
   const activeSegment = segments.find((s) => s.index === activeSegNo) || segments[0];
+  const advisorShots = useMemo(
+    () => resolveManhuaAdvisorShotsFromBlocks({ beats, reverse, story }),
+    [beats, reverse, story],
+  );
+  const advisorActiveShot = activeShot
+    ? advisorShots.find((shot) => shot.index === activeShot.index) || null
+    : null;
+  useEffect(() => {
+    onAdvisorSelectionChange?.(
+      resolveManhuaAdvisorSelection({ episodeIndex: focusEpisode, shot: advisorActiveShot }),
+    );
+  }, [advisorActiveShot, focusEpisode, onAdvisorSelectionChange]);
+  useEffect(
+    () => () => {
+      onAdvisorSelectionChange?.(null);
+    },
+    [onAdvisorSelectionChange],
+  );
   // 严格按镜号对齐：禁止用「列表第 N 张」顶替，避免剧本与静帧错位
   const activeKeyart =
     episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === activeShotNo) ||
@@ -1547,6 +1631,10 @@ export default function ManhuaScriptWorkbench({
     const listIndex = shots.findIndex((s) => s.index === first);
     selectShotAndFocusCanvas(listIndex >= 0 ? listIndex : 0);
   };
+  const consumableCustomAssetRefs = useMemo(
+    () => consumableManhuaCustomAssetRefsForCanon(customAssetRefs, assetCanon),
+    [assetCanon, customAssetRefs],
+  );
   const assetGate = useMemo(
     () =>
       evaluateManhuaAssetImageGate({
@@ -1554,7 +1642,7 @@ export default function ManhuaScriptWorkbench({
         ancientArchetypeIds,
         sceneId,
         artStyleId: activeArtStyleId,
-        customRefs: customAssetRefs,
+        customRefs: consumableCustomAssetRefs,
         assetCanon,
         episodeIndex: focusEpisode,
         assetBlocks: blocks.filter(
@@ -1566,7 +1654,7 @@ export default function ManhuaScriptWorkbench({
       ancientArchetypeIds,
       sceneId,
       activeArtStyleId,
-      customAssetRefs,
+      consumableCustomAssetRefs,
       assetCanon,
       focusEpisode,
       blocks,
@@ -1848,7 +1936,7 @@ export default function ManhuaScriptWorkbench({
         artStyleId: activeArtStyleId,
         sceneId: lockSceneId,
         propIds,
-        customRefs: customAssetRefs,
+        customRefs: consumableCustomAssetRefs,
         assetCanon,
         characterSheetUrlById,
         propImageUrlById,
@@ -1859,7 +1947,7 @@ export default function ManhuaScriptWorkbench({
       activeArtStyleId,
       lockSceneId,
       propIds,
-      customAssetRefs,
+      consumableCustomAssetRefs,
       assetCanon,
       characterSheetUrlById,
       propImageUrlById,
@@ -2506,14 +2594,16 @@ export default function ManhuaScriptWorkbench({
               <div
                 data-manhua-director-strategy-status
                 className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1 text-[9px] text-teal-100/80"
-                title="该策略已按项目 Bible 冻结，并投影到故事、资产、分镜、关键帧、成片与终审"
+                title={directorStrategyContract.version === 2
+                  ? "该策略已按项目 Bible 冻结，并投影到故事、资产、分镜、关键帧、成片与终审"
+                  : "保留项目原版策略与投影，不自动升级，也不补入新版关键帧规则"}
               >
                 <ShieldCheck className="h-3 w-3 shrink-0 text-teal-300" />
                 <span className="font-semibold">
                   创作策略 · {directorStrategyContract.labelZh}
                 </span>
                 <span className="rounded border border-teal-300/20 bg-teal-500/10 px-1 py-px text-[8px] text-teal-100/65">
-                  {directorStrategyContract.revision}
+                  {directorStrategyContract.version === 2 ? directorStrategyContract.revision : "原版 v1 · 保持不变"}
                 </span>
                 <span className="text-emerald-200/70">已锁定</span>
               </div>
@@ -5200,6 +5290,12 @@ export default function ManhuaScriptWorkbench({
                             claimedCharacterAnchors.length === 1
                               ? claimedCharacterAnchors[0]!
                               : null;
+                          const claimEntry = resolveManhuaAssetClaimEntry({
+                            role: ref.role,
+                            primaryDuty,
+                            canonCharacterCount: assetCanon?.characters.length || 0,
+                            claimedCharacterCount: claimedCharacterAnchors.length,
+                          });
                           const primaryRefId =
                             primaryAnchor && primaryDuty
                               ? findManhuaCharacterPrimaryRefId(customAssetRefs, {
@@ -5330,6 +5426,15 @@ export default function ManhuaScriptWorkbench({
                                     <span className="font-normal text-white/35">· 候选保留</span>
                                   ) : null}
                                 </button>
+                              ) : claimEntry === "confirm_script" && onOpenWriterEditor ? (
+                                <button
+                                  type="button"
+                                  onClick={onOpenWriterEditor}
+                                  className="flex min-h-10 w-full items-center justify-center border-y border-cyan-300/20 bg-cyan-500/[0.07] px-2 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/[0.13]"
+                                  title="打开编剧室，补齐并重新导入含人物表的完整剧本"
+                                >
+                                  先补齐并确认剧本人物表
+                                </button>
                               ) : (
                                 <div className="flex min-h-10 items-center justify-center border-y border-amber-300/15 bg-amber-500/[0.05] px-2 text-[10px] text-amber-100/70">
                                   先认领一个剧本人物
@@ -5374,7 +5479,11 @@ export default function ManhuaScriptWorkbench({
                               {onCustomAssetLabelChange ? (
                                 <div
                                   className="flex items-center gap-1"
-                                  title="识别错了就改名：改成与剧本表一致的人物/场景名，这张图立即被认领"
+                                  title={
+                                    claimOptions.length
+                                      ? "识别错了就改名：改成与剧本表一致的人物/场景名，这张图立即被认领"
+                                      : "当前没有已确认的剧本资产表；改名只改显示名，不会凭空创建人物"
+                                  }
                                 >
                                   {lockTag ? (
                                     <span className="shrink-0 text-[10px] text-white/55">{lockTag} ·</span>
@@ -5383,7 +5492,11 @@ export default function ManhuaScriptWorkbench({
                                     key={`${ref.id}:${displayNameZh}`}
                                     type="text"
                                     defaultValue={displayNameZh}
-                                    placeholder="改名认领：填剧本表里的名字"
+                                    placeholder={
+                                      claimOptions.length
+                                        ? "改名认领：填剧本表里的名字"
+                                        : "当前仅修改显示名"
+                                    }
                                     maxLength={40}
                                     onBlur={(e) => {
                                       // 与预填名（含认领回查名）相同就不写：零编辑失焦不落库
@@ -5593,7 +5706,9 @@ export default function ManhuaScriptWorkbench({
                                       className="w-full rounded border border-cyan-300/30 bg-cyan-500/10 px-1.5 py-1 text-[9px] font-medium text-cyan-100 hover:bg-cyan-500/20 disabled:opacity-40"
                                     >
                                       {currentModel3d?.status === "succeeded"
-                                        ? "查看 3D 参考"
+                                        ? currentModel3d.glbUrl
+                                          ? "查看 3D 参考"
+                                          : "重新获取 3D 预览"
                                         : currentModel3d?.status === "queued" ||
                                             currentModel3d?.status === "running"
                                           ? "3D 参考建立中…"
@@ -7589,7 +7704,7 @@ export default function ManhuaScriptWorkbench({
                   轨迹导演板 · 段{String(activeSegNo).padStart(2, "0")}
                 </div>
                 <div className="text-[9px] text-white/40">
-                  红线是人物／道具路线，青色虚线是摄影机路线
+                  红线是人物／道具路线，青色虚线是摄影机路线；轨迹与底图分开保存
                 </div>
               </div>
               {activeDirectorBoardMotionOverlay?.needsReview &&

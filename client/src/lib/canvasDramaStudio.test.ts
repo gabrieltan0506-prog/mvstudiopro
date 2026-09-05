@@ -64,6 +64,11 @@ import {
   resolveKeyartShotIndex,
 } from "@shared/manhuaScriptWorkbench";
 import { compileManhuaSegmentDirectorBoardOverlay } from "@shared/manhuaDirectorBoardOverlayCompile";
+import {
+  formatManhuaDirectorStrategyClipLine,
+  formatManhuaDirectorStrategyStage,
+} from "@shared/manhuaDirectorStrategy";
+import { getManhuaDirectorStrategyV1Snapshot } from "@shared/manhuaDirectorStrategyV1Snapshot";
 
 describe("canvasDramaStudio factory", () => {
   it("重编译段主体时保留用户补充，但淘汰旧派生秒轴", () => {
@@ -543,6 +548,55 @@ describe("canvasDramaStudio factory", () => {
     expect(nextKeyart.prompt.match(/用静态终态明确决定性信息的位置/g)).toHaveLength(1);
     expect(nextReverse.prompt).toContain("每镜交出一个清楚的信息位置");
     expect(nextReverse.prompt).not.toContain("检查观众能否复述每次转线的原因");
+  });
+
+  it("旧 v1 marker 续跑仍生成同版成片投影，不补 v2 keyframe", () => {
+    const legacy = getManhuaDirectorStrategyV1Snapshot("relational_action")!;
+    const spawned = spawnManhuaDramaStudio({
+      topic: "雨夜对峙",
+      episodeIndex: 1,
+      includeDirectorCraft: false,
+      directorStrategyContract: null,
+    });
+    const reverse = spawned.blocks.find((block) => block.id.startsWith("reverse-"))!;
+    const withLegacyReverse = spawned.blocks.map((block) =>
+      block.id === reverse.id
+        ? {
+            ...block,
+            prompt: `${block.prompt}\n\n${formatManhuaDirectorStrategyStage(legacy, "storyboard")}`,
+            outputText: "1. 玄璃逼近\n2. 黑奇后退\n3. 门扇合拢",
+            status: "done" as const,
+          }
+        : block,
+    );
+    const expanded = expandManhuaShotKeyartsAfterReverse(
+      withLegacyReverse,
+      spawned.edges,
+      reverse.id,
+    );
+    const ready = expanded.blocks.map((block) =>
+      block.id.startsWith("keyart-")
+        ? {
+            ...block,
+            outputUrl: `https://example.com/${block.id}.jpg`,
+            status: "done" as const,
+          }
+        : block,
+    );
+    const ensured = ensureManhuaFragmentClips(ready, expanded.edges, 1);
+    const clip = ensured.blocks.find((block) => block.id.startsWith("clip-"))!;
+    const expectedLegacyClip = formatManhuaDirectorStrategyClipLine(legacy);
+
+    expect(clip.prompt).toContain(expectedLegacyClip);
+    expect(expectedLegacyClip).toBe(
+      "【创作策略·v1·relational_action】关系驱动动作｜同帧主要动作主体不超过两人；延时效果改写为目光停留、材质余振、呼吸或光影状态变化｜边界：禁止复杂长镜、多主体高速运动和危险动作指令。",
+    );
+    expect(clip.prompt).not.toContain("approved-");
+    expect(
+      expanded.blocks
+        .filter((block) => block.id.startsWith("keyart-"))
+        .every((block: CanvasBlock) => !block.prompt.includes("【创作策略·v2·")),
+    ).toBe(true);
   });
 
   it("工作台台词覆盖进入真实段成片生产者，beats 覆盖 reverse 旧值", () => {

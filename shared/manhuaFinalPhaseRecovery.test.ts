@@ -4,10 +4,19 @@ import {
   resolveFinalVideoUrlFromBlocks,
   resolveLatestFinalVideoUrlFromBlocks,
   shouldOpenClipDockForPhase,
+  workspaceViewForRestoredManhuaPhase,
 } from "./manhuaFinalPhaseRecovery";
 import { parseManhuaWorkflowPhase } from "./manhuaWriterSession";
 
 describe("成片阶段刷新恢复", () => {
+  it("重复回填同一阶段也显式恢复面板，不依赖 phase 变化触发 effect", () => {
+    const phase = parseManhuaWorkflowPhase("final", true);
+    let view = "workbench";
+    view = workspaceViewForRestoredManhuaPhase(phase, true);
+    expect(view).toBe("clip_dock");
+    expect(workspaceViewForRestoredManhuaPhase("assets", true)).toBe("workbench");
+    expect(workspaceViewForRestoredManhuaPhase("outline", false)).toBe("topic");
+  });
   it("刷新后 phase 仍是 final，坞必须自动打开 —— 否则是一块空白工作台", () => {
     // 模拟刷新：会话读回 final，坞开关不持久化、从 false 开始
     const restored = parseManhuaWorkflowPhase("final", true);

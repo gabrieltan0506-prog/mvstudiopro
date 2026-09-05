@@ -733,7 +733,8 @@ export async function claimNextQueuedJobExcluding(excludeTypes: string[]): Promi
   let rows: Job[] = [];
   try {
     const actionCondition = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
-      'growth_analyze_video', 'growth_analyze_images', 'manhua_template_learn'
+      'growth_analyze_video', 'growth_analyze_images', 'manhua_template_learn',
+      'manhua_advisor_qa'
     )`;
     const condition =
       excludeTypes.length > 0
@@ -863,7 +864,8 @@ export async function claimNextQueuedJob(): Promise<NormalizedJob | null> {
   let rows: Job[] = [];
   try {
     const actionCondition = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
-      'growth_analyze_video', 'growth_analyze_images', 'manhua_template_learn'
+      'growth_analyze_video', 'growth_analyze_images', 'manhua_template_learn',
+      'manhua_advisor_qa'
     )`;
     const condition =
       excludeTypes.length > 0

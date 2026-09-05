@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { buildManhuaProjectBible } from "./manhuaProjectBible";
-import { resolveManhuaDirectorStrategyContract } from "./manhuaDirectorStrategy";
+import {
+  formatManhuaDirectorStrategyClipLine,
+  resolveManhuaDirectorStrategyContract,
+} from "./manhuaDirectorStrategy";
+import { getManhuaDirectorStrategyV1Snapshot } from "./manhuaDirectorStrategyV1Snapshot";
 import {
   buildManhuaWriterSession,
   healManhuaWriterSessionCanonDrift,
@@ -97,6 +101,55 @@ describe("manhuaWriterSession", () => {
     });
     expect(session.projectBible?.directorStrategyContract?.strategyId).toBe("emotion_space");
     expect(session.directorStrategyContract?.strategyId).toBe("emotion_space");
+  });
+
+  it("完整旧 v1 Bible／session 恢复与再次保存均保留旧合同和原标记", () => {
+    const bibleWithoutStrategy = buildManhuaProjectBible({
+      topic: "江湖对决",
+      pack,
+      cast: {
+        lane: "ancient",
+        characterIds: [],
+        ancientArchetypeIds: ["arch_rain_jianghu_dao"],
+        artStyleId: "cg_manhua",
+        propIds: [],
+        wardrobePropContinuityIds: [],
+      },
+    });
+    const legacyContract = getManhuaDirectorStrategyV1Snapshot("relational_action")!;
+    const restored = parseManhuaWriterSession(
+      JSON.stringify({
+        format: MANHUA_WRITER_SESSION_FORMAT,
+        topic: "江湖对决",
+        writerConfirmed: true,
+        projectBible: {
+          ...bibleWithoutStrategy,
+          directorStrategyContract: legacyContract,
+        },
+        directorStrategyContract: legacyContract,
+      }),
+    );
+
+    expect(restored?.directorStrategyContract).toMatchObject({
+      format: "mv-manhua-director-strategy-v1",
+      version: 1,
+      strategyId: "relational_action",
+      labelZh: "关系驱动动作",
+    });
+    expect(restored?.directorStrategyContract).not.toHaveProperty("revision");
+    expect(formatManhuaDirectorStrategyClipLine(restored!.directorStrategyContract!)).toBe(
+      "【创作策略·v1·relational_action】关系驱动动作｜同帧主要动作主体不超过两人；延时效果改写为目光停留、材质余振、呼吸或光影状态变化｜边界：禁止复杂长镜、多主体高速运动和危险动作指令。",
+    );
+    const savedAgain = JSON.parse(serializeManhuaWriterSession(restored!)) as {
+      projectBible?: { directorStrategyContract?: Record<string, unknown> };
+      directorStrategyContract?: Record<string, unknown>;
+    };
+    expect(savedAgain.directorStrategyContract).toMatchObject({
+      format: "mv-manhua-director-strategy-v1",
+      version: 1,
+    });
+    expect(savedAgain.directorStrategyContract).not.toHaveProperty("revision");
+    expect(savedAgain.projectBible?.directorStrategyContract).not.toHaveProperty("revision");
   });
 
   it("persists publicTemplateId", () => {

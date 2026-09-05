@@ -3,6 +3,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT } from "../shared/weixinChannelsRules.js";
+import {
+  MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS,
+  manhuaCreativeAdvisorContextSchema,
+} from "../shared/manhuaCreativeAdvisor.js";
 
 import { COOKIE_NAME, TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION } from "../shared/const.js";
 import {
@@ -6655,13 +6659,47 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
     askPlatformSkillQa: protectedProcedure
       .input(
         z.object({
-          question: z.string().min(2).max(4000),
+          question: z
+            .string()
+            .trim()
+            .min(2)
+            .max(MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.wrappedQuestionChars),
+          /** 漫剧问答的原始用户问题；与结构化包装 question 分离。 */
+          rawQuestion: z
+            .string()
+            .trim()
+            .min(2)
+            .max(MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.questionChars)
+            .optional(),
           enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
           allowBloggerTitle: z.boolean().optional(),
           /** 所有登录用户可选；计费与免费额度不同 */
           qaModel: z.enum(["gpt-5.6-terra", "gpt-5.6-sol"]).optional(),
           /** 超额付费确认（前端 confirm 后传 true） */
           confirmPaid: z.boolean().optional(),
+          /** 同一次漫剧顾问发送/确认/网络重试保持不变；新提问生成新 UUID。 */
+          requestId: z.string().uuid().optional(),
+          /** 漫剧工厂当前集真实上下文；strict schema 禁止夹带身份、URL 或凭证字段。 */
+          manhuaContext: manhuaCreativeAdvisorContextSchema.optional(),
+        }).superRefine((input, validationContext) => {
+          if (input.manhuaContext && !input.requestId) {
+            validationContext.addIssue({
+              code: "custom",
+              path: ["requestId"],
+              message: "漫剧顾问请求缺少操作编号，请刷新页面后重试",
+            });
+          }
+          if (
+            input.manhuaContext &&
+            !input.rawQuestion &&
+            input.question.length > MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.questionChars
+          ) {
+            validationContext.addIssue({
+              code: "custom",
+              path: ["rawQuestion"],
+              message: "当前漫剧顾问请求缺少原始问题，请刷新页面后重试",
+            });
+          }
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -6674,20 +6712,368 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const { resolvePlatformSkillQaPaidCredits } = await import("./config/platformSwitches.js");
         const { platformSkillQaDailyFreeLimit } = await import("../shared/plans.js");
         const qaMode = resolveSkillQaBillingMode(input.qaModel);
+        const qaModel = input.qaModel || "gpt-5.6-terra";
+        const advisorTierLabel = qaMode === "sol" ? "深度顾问" : "标准顾问";
         const dailyLimit = platformSkillQaDailyFreeLimit(qaMode);
         const paidUnit = resolvePlatformSkillQaPaidCredits(qaMode);
+
+        let advisorOperationInput:
+          | {
+              userId: number;
+              requestId: string;
+              question: string;
+              rawQuestion: string;
+              qaModel: string;
+              manhuaContext: NonNullable<typeof input.manhuaContext>;
+            }
+          | undefined;
+        if (input.manhuaContext) {
+          if (!input.requestId || !input.rawQuestion) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "ADVISOR_OPERATION_MISMATCH：漫剧顾问请求缺少操作编号或原始问题",
+            });
+          }
+          advisorOperationInput = {
+            userId: ctx.user.id,
+            requestId: input.requestId,
+            question: input.question,
+            rawQuestion: input.rawQuestion,
+            qaModel,
+            manhuaContext: input.manhuaContext,
+          };
+          const { reserveManhuaAdvisorOperation } = await import(
+            "./services/manhuaAdvisorOperation.js"
+          );
+          const existing = await reserveManhuaAdvisorOperation({
+            ...advisorOperationInput,
+            allowExecute: false,
+          });
+          if (existing.kind === "replay") return existing.result;
+          if (existing.kind === "mismatch") {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "ADVISOR_OPERATION_MISMATCH：同一操作编号已绑定不同内容，请重新提问",
+            });
+          }
+          if (existing.kind === "running") {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "ADVISOR_OPERATION_RUNNING：本次问答仍在处理中，请稍后用原请求重试",
+            });
+          }
+          if (existing.kind === "refund_pending") {
+            throw new TRPCError({
+              code: "PRECONDITION_FAILED",
+              message: "ADVISOR_OPERATION_REFUND_PENDING：本次问答失败，积分仍在对账中，请勿重复提交",
+            });
+          }
+          if (existing.kind === "failed") {
+            throw new TRPCError({
+              code: "PRECONDITION_FAILED",
+              message: "ADVISOR_OPERATION_FAILED：本次问答未完成，请重新提问",
+            });
+          }
+        }
+
         const usedToday = isAdminUser
           ? 0
           : await countPlatformSkillQaToday(ctx.user.id, qaMode);
         const needPay = !isAdminUser && usedToday >= dailyLimit;
-        let paidCreditsAlreadyCharged = 0;
-        if (needPay) {
-          if (!input.confirmPaid) {
+
+        if (needPay && !input.confirmPaid) {
+          throw new TRPCError({
+            code: "PAYMENT_REQUIRED",
+            message: advisorOperationInput
+              ? `今日${advisorTierLabel}免费 ${dailyLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次，请确认后重试。`
+              : `今日${qaMode === "sol" ? " Sol" : " Terra"}免费 ${dailyLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次（成本+60%）。请确认后重试。`,
+          });
+        }
+
+        if (advisorOperationInput) {
+          const {
+            claimManhuaAdvisorFailed,
+            claimManhuaAdvisorRefundPending,
+            markManhuaAdvisorRefundReconciled,
+            markManhuaAdvisorSucceededWithRetry,
+            reserveManhuaAdvisorOperation,
+            withManhuaAdvisorHeartbeat,
+            MANHUA_ADVISOR_TASK_TYPE,
+          } = await import("./services/manhuaAdvisorOperation.js");
+          const operation = await reserveManhuaAdvisorOperation({
+            ...advisorOperationInput,
+            allowExecute: true,
+          });
+          if (operation.kind === "replay") return operation.result;
+          if (operation.kind === "mismatch") {
             throw new TRPCError({
-              code: "PAYMENT_REQUIRED",
-              message: `今日${qaMode === "sol" ? " Sol" : " Terra"}免费 ${dailyLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次（成本+60%）。请确认后重试。`,
+              code: "BAD_REQUEST",
+              message: "ADVISOR_OPERATION_MISMATCH：同一操作编号已绑定不同内容，请重新提问",
             });
           }
+          if (operation.kind === "running") {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "ADVISOR_OPERATION_RUNNING：本次问答仍在处理中，请稍后用原请求重试",
+            });
+          }
+          if (operation.kind === "refund_pending") {
+            throw new TRPCError({
+              code: "PRECONDITION_FAILED",
+              message: "ADVISOR_OPERATION_REFUND_PENDING：本次问答失败，积分仍在对账中，请勿重复提交",
+            });
+          }
+          if (operation.kind === "failed") {
+            throw new TRPCError({
+              code: "PRECONDITION_FAILED",
+              message: "ADVISOR_OPERATION_FAILED：本次问答未完成，请重新提问",
+            });
+          }
+          if (operation.kind !== "execute") {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "ADVISOR_OPERATION_RUNNING：本次问答正在等待确认，请稍后重试",
+            });
+          }
+
+          const jobId = operation.jobId;
+          const taskType = MANHUA_ADVISOR_TASK_TYPE;
+          const chargeKey = `${taskType}/${jobId}`.slice(0, 120);
+          const {
+            canonicalRefundKey,
+            markSettlementPending,
+            refundCreditsOnFailure,
+            refundMarkerFor,
+            registerActiveJob,
+            unregisterActiveJob,
+          } = await import("./services/paidJobLedger.js");
+          const refundKey = canonicalRefundKey(taskType, jobId);
+          type DeductReceipt = Awaited<ReturnType<typeof deductCreditsAmount>>;
+          let deducted: DeductReceipt = {
+            success: true,
+            cost: 0,
+            remainingBalance: -1,
+            source: isAdminUser ? "admin" : "none",
+          };
+
+          if (needPay) {
+            const creditsInfo = await getCredits(ctx.user.id);
+            if (creditsInfo.totalAvailable < paidUnit) {
+              await claimManhuaAdvisorFailed(jobId, "积分不足");
+              throw new TRPCError({
+                code: "PAYMENT_REQUIRED",
+                message: `ADVISOR_OPERATION_FAILED：积分不足，需要 ${paidUnit} 点（当前可用：${creditsInfo.totalAvailable}）`,
+              });
+            }
+            try {
+              deducted = await deductCreditsAmount(
+                ctx.user.id,
+                paidUnit,
+                qaMode === "sol" ? "platformSkillQaSol" : "platformSkillQaTerra",
+                `创作顾问问答·${qaMode === "sol" ? "Sol" : "Terra"}超额 · ${input.question.slice(0, 48)}`,
+                { chargeKey },
+              );
+            } catch (deductError) {
+              console.error(
+                `[askPlatformSkillQa] deduct failed jobId=${jobId}`,
+                deductError,
+              );
+              try {
+                const terminal = await claimManhuaAdvisorRefundPending(
+                  jobId,
+                  "扣分结果尚待对账",
+                );
+                if (terminal === "succeeded") {
+                  throw new Error("advisor_deduct_claim_collided_with_success");
+                }
+                if (terminal !== "failed") {
+                  throw new Error(`advisor_deduct_terminal_claim:${terminal}`);
+                }
+                const { refunded } = await refundChargeByKey({
+                  userId: ctx.user.id,
+                  chargeKey,
+                  reason: `创作顾问问答·扣分结果待对账 ${refundMarkerFor(taskType, jobId)}`,
+                  actionForLog: "platformSkillQaRefund",
+                  refundKey,
+                });
+                const reconciled = await markManhuaAdvisorRefundReconciled(jobId, refunded);
+                if (!reconciled) throw new Error("advisor_deduct_reconcile_persist_failed");
+              } catch (reconcileError) {
+                console.error(
+                  `[askPlatformSkillQa] deduct reconcile pending jobId=${jobId}`,
+                  reconcileError,
+                );
+                throw new TRPCError({
+                  code: "SERVICE_UNAVAILABLE",
+                  message: "ADVISOR_OPERATION_REFUND_PENDING：扣分结果仍在对账中，请勿重复提交",
+                });
+              }
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: "ADVISOR_OPERATION_FAILED：本次扣点未完成，请重新提问",
+              });
+            }
+          }
+
+          try {
+            await registerActiveJob({
+              jobId,
+              taskType,
+              userId: ctx.user.id,
+              creditsBilled: deducted.cost,
+              action: `漫剧创作顾问问答·${qaMode === "sol" ? "Sol" : "Terra"}`,
+              deduct: deducted,
+              metadata: { requestFingerprint: operation.requestFingerprint, qaMode },
+            });
+          } catch (registerError) {
+            console.error(
+              `[askPlatformSkillQa] register failed jobId=${jobId}`,
+              registerError,
+            );
+            try {
+              const terminal = await claimManhuaAdvisorRefundPending(
+                jobId,
+                "任务登记失败，积分对账处理中",
+              );
+              if (terminal !== "failed") {
+                throw new Error(`advisor_register_terminal_claim:${terminal}`);
+              }
+              await refundCreditsForDeductAmount(
+                ctx.user.id,
+                `创作顾问任务登记失败 ${refundMarkerFor(taskType, jobId)}`,
+                deducted,
+                "platformSkillQaRefund",
+                { refundKey },
+              );
+              const reconciled = await markManhuaAdvisorRefundReconciled(
+                jobId,
+                deducted.cost,
+              );
+              if (!reconciled) throw new Error("advisor_register_reconcile_persist_failed");
+            } catch (reconcileError) {
+              console.error(
+                `[askPlatformSkillQa] register reconcile pending jobId=${jobId}`,
+                reconcileError,
+              );
+              throw new TRPCError({
+                code: "SERVICE_UNAVAILABLE",
+                message: "ADVISOR_OPERATION_REFUND_PENDING：任务登记失败，积分仍在对账中",
+              });
+            }
+            throw new TRPCError({
+              code: "SERVICE_UNAVAILABLE",
+              message: `ADVISOR_OPERATION_FAILED：本次问答未能开始${deducted.cost > 0 ? "，积分已原路退回" : ""}，请重新提问`,
+            });
+          }
+
+          let response:
+            | ({ success: true } & Awaited<ReturnType<typeof askPlatformSkillQa>>)
+            | undefined;
+          try {
+            response = await withManhuaAdvisorHeartbeat(jobId, async () => {
+              const result = await askPlatformSkillQa({
+                userId: ctx.user.id,
+                question: input.question,
+                rawQuestion: input.rawQuestion,
+                enabledSkillIds: null,
+                allowBloggerTitle: false,
+                isAdmin: isAdminUser,
+                allowQaModelOverride: true,
+                qaModel,
+                manhuaContext: input.manhuaContext,
+                paidCreditsAlreadyCharged: deducted.cost,
+              });
+              const completed = { success: true as const, ...result };
+              const persisted = await markManhuaAdvisorSucceededWithRetry(
+                jobId,
+                operation.requestFingerprint,
+                completed,
+              );
+              if (!persisted) throw new Error("advisor_result_persist_failed");
+              return completed;
+            });
+          } catch (operationError) {
+            console.error(
+              `[askPlatformSkillQa] operation failed jobId=${jobId}`,
+              operationError,
+            );
+            try {
+              const terminal = await claimManhuaAdvisorRefundPending(
+                jobId,
+                "顾问回答未完成，积分对账处理中",
+              );
+              if (terminal === "succeeded") {
+                const replay = await reserveManhuaAdvisorOperation({
+                  ...advisorOperationInput,
+                  allowExecute: false,
+                });
+                if (replay.kind === "replay") return replay.result;
+                throw new Error("advisor_success_result_unreadable");
+              }
+              if (terminal !== "failed") {
+                throw new Error(`advisor_failure_terminal_claim:${terminal}`);
+              }
+              const refund = await refundCreditsOnFailure(
+                jobId,
+                taskType,
+                "task_failed",
+                "顾问回答未完成",
+              );
+              let creditsRefunded = refund.creditsRefunded;
+              if (refund.status === "missing") {
+                const fallback = await refundChargeByKey({
+                  userId: ctx.user.id,
+                  chargeKey,
+                  reason: `创作顾问问答失败 ${refundMarkerFor(taskType, jobId)}`,
+                  actionForLog: "platformSkillQaRefund",
+                  refundKey,
+                });
+                creditsRefunded = fallback.refunded;
+              } else if (refund.status !== "refunded") {
+                throw new Error(`advisor_refund_not_terminal:${refund.status}`);
+              }
+              const reconciled = await markManhuaAdvisorRefundReconciled(
+                jobId,
+                creditsRefunded,
+              );
+              if (!reconciled) throw new Error("advisor_refund_reconcile_persist_failed");
+            } catch (refundError) {
+              console.error(`[askPlatformSkillQa] refund pending jobId=${jobId}`, refundError);
+              throw new TRPCError({
+                code: "SERVICE_UNAVAILABLE",
+                message: "ADVISOR_OPERATION_REFUND_PENDING：本次问答失败，积分仍在对账中，请勿重复提交",
+              });
+            }
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `ADVISOR_OPERATION_FAILED：本次问答未完成${deducted.cost > 0 ? "；积分已原路退回" : ""}，请重新提问`,
+            });
+          }
+
+          if (!response) {
+            throw new TRPCError({
+              code: "SERVICE_UNAVAILABLE",
+              message: "ADVISOR_OPERATION_RUNNING：回答状态尚未确认，请用原请求重试",
+            });
+          }
+
+          try {
+            const settled = await unregisterActiveJob(jobId, taskType, "settled");
+            if (!settled.ok) throw new Error("advisor_hold_missing_after_success");
+          } catch {
+            const recorded = await markSettlementPending(jobId, taskType);
+            if (!recorded) {
+              throw new TRPCError({
+                code: "SERVICE_UNAVAILABLE",
+                message: "ADVISOR_OPERATION_RUNNING：回答已保存，结算状态待恢复，请用原请求重试",
+              });
+            }
+          }
+          return response;
+        }
+
+        let paidCreditsAlreadyCharged = 0;
+        if (needPay) {
           const creditsInfo = await getCredits(ctx.user.id);
           if (creditsInfo.totalAvailable < paidUnit) {
             throw new TRPCError({
@@ -6707,11 +7093,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           const result = await askPlatformSkillQa({
             userId: ctx.user.id,
             question: input.question,
+            rawQuestion: input.rawQuestion,
             enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
             allowBloggerTitle: Boolean(input.allowBloggerTitle),
             isAdmin: isAdminUser,
             allowQaModelOverride: true,
-            qaModel: input.qaModel || "gpt-5.6-terra",
+            qaModel,
             paidCreditsAlreadyCharged,
           });
           return { success: true as const, ...result };
@@ -6722,7 +7109,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               ctx.user.id,
               paidCreditsAlreadyCharged,
               "创作顾问问答失败退还",
-            ).catch(() => undefined);
+            ).catch((refundError: unknown) => {
+              console.error("[askPlatformSkillQa] refund failed:", refundError);
+            });
           }
           const msg = e instanceof Error ? e.message : "问答失败";
           const friendly =

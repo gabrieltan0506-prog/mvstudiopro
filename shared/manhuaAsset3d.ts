@@ -123,8 +123,9 @@ export function normalizeManhuaAsset3dRef(
   const glbUrl = isHttpsUrl(glbUrlRaw) ? glbUrlRaw : undefined;
   const updatedAt = Math.max(0, Math.floor(Number(input.updatedAt) || 0));
 
-  // 成功态必须同时保留长期对象身份与当前可读地址，避免只保存会过期的上游 URL。
-  if (status === "succeeded" && (!glbGcsUri || !glbUrl)) return undefined;
+  // 成功态只把长期 gs:// 身份作为硬条件。签名 URL 续签可瞬时失败；此时保留
+  // taskId + glbGcsUri，客户端才能稍后通过 getStatus 重试续签，而不是丢掉整项任务。
+  if (status === "succeeded" && !glbGcsUri) return undefined;
 
   return {
     status,

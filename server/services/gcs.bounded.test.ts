@@ -1,8 +1,12 @@
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const getVertexAccessTokenMock = vi.hoisted(() =>
+  vi.fn(async () => "test-token")
+);
+
 vi.mock("../utils/vertex.js", () => ({
-  getVertexAccessToken: async () => "test-token",
+  getVertexAccessToken: getVertexAccessTokenMock,
 }));
 
 function chunkedResponse(
@@ -29,6 +33,8 @@ function chunkedResponse(
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  getVertexAccessTokenMock.mockReset();
+  getVertexAccessTokenMock.mockResolvedValue("test-token");
 });
 
 describe("inspectGcsObjectBounded", () => {
@@ -121,5 +127,124 @@ describe("inspectGcsObjectBounded", () => {
         timeoutMs: 10,
       })
     ).rejects.toMatchObject({ name: "TimeoutError" });
+  });
+
+  it("指定 generation 时读取 URL 同时锁定版本，并逐块交给格式验证器", async () => {
+    const { response } = chunkedResponse([Buffer.from("fixed-generation")]);
+    const fetchMock = vi.fn().mockResolvedValue(response);
+    vi.stubGlobal("fetch", fetchMock);
+    const onChunk = vi.fn();
+    const { inspectGcsObjectBounded } = await import("./gcs.js");
+
+    const result = await inspectGcsObjectBounded({
+      gcsUri: "gs://test-bucket/uploads/u7/model.glb",
+      generation: "42",
+      maxBytes: 64,
+      onChunk,
+    });
+
+    const requested = fetchMock.mock.calls[0]?.[0] as URL;
+    expect(requested.searchParams.get("generation")).toBe("42");
+    expect(requested.searchParams.get("ifGenerationMatch")).toBe("42");
+    expect(result.generation).toBe("42");
+    expect(onChunk).toHaveBeenCalledTimes(1);
+  });
+
+  it("格式验证器提前拒绝时取消剩余下载流", async () => {
+    const { response, cancelled } = chunkedResponse([
+      Buffer.from("bad!"),
+      Buffer.alloc(64),
+    ]);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+    const { inspectGcsObjectBounded } = await import("./gcs.js");
+
+    await expect(
+      inspectGcsObjectBounded({
+        gcsUri: "gs://test-bucket/uploads/u7/invalid.glb",
+        maxBytes: 128,
+        onChunk: () => {
+          throw new Error("invalid_glb_magic");
+        },
+      }),
+    ).rejects.toThrow("invalid_glb_magic");
+    expect(cancelled).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("rewriteGcsObjectGenerationIfAbsent", () => {
+  it("同时锁定源 generation 和目标不存在，成功后返回不可变地址", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ done: true, resource: { generation: "99" } }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { rewriteGcsObjectGenerationIfAbsent } = await import("./gcs.js");
+
+    await expect(
+      rewriteGcsObjectGenerationIfAbsent({
+        sourceGcsUri: "gs://test-bucket/uploads/u7/model.glb",
+        sourceGeneration: "42",
+        destinationObjectName: "manhua-3d/u7/imports/asset/hash/model.glb",
+      }),
+    ).resolves.toEqual({
+      created: true,
+      gcsUri: "gs://test-bucket/manhua-3d/u7/imports/asset/hash/model.glb",
+      generation: "99",
+    });
+    const requested = fetchMock.mock.calls[0]?.[0] as URL;
+    expect(requested.searchParams.get("sourceGeneration")).toBe("42");
+    expect(requested.searchParams.get("ifSourceGenerationMatch")).toBe("42");
+    expect(requested.searchParams.get("ifGenerationMatch")).toBe("0");
+  });
+
+  it("目标已由同内容请求建立时复用；源竞态且目标不存在时拒绝", async () => {
+    const destinationMetadata = new Response(
+      JSON.stringify({ generation: "99" }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 412 }))
+      .mockResolvedValueOnce(destinationMetadata)
+      .mockResolvedValueOnce(new Response(null, { status: 412 }))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { rewriteGcsObjectGenerationIfAbsent } = await import("./gcs.js");
+    const input = {
+      sourceGcsUri: "gs://test-bucket/uploads/u7/model.glb",
+      sourceGeneration: "42",
+      destinationObjectName: "manhua-3d/u7/imports/asset/hash/model.glb",
+    };
+
+    await expect(rewriteGcsObjectGenerationIfAbsent(input)).resolves.toMatchObject({
+      created: false,
+      generation: "99",
+    });
+    await expect(rewriteGcsObjectGenerationIfAbsent(input)).rejects.toThrow(
+      "gcs_rewrite_precondition_failed",
+    );
+  });
+});
+
+describe("GCS 共用截止时间", () => {
+  it("metadata 取 token 阶段也受调用方 signal 约束，超时后不再发 fetch", async () => {
+    getVertexAccessTokenMock.mockImplementationOnce(
+      () => new Promise<string>(() => undefined)
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { statGcsObjectVersion } = await import("./gcs.js");
+    const controller = new AbortController();
+    const pending = statGcsObjectVersion({
+      gcsUri: "gs://test-bucket/uploads/u7/model.glb",
+      signal: controller.signal,
+    });
+
+    controller.abort(new DOMException("deadline", "TimeoutError"));
+
+    await expect(pending).rejects.toMatchObject({ name: "TimeoutError" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

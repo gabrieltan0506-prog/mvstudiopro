@@ -6,6 +6,13 @@
  * 来源人物、作品和证据编号只留在本文件的审计注册表，绝不进入接口响应。
  */
 
+import {
+  getManhuaDirectorStrategyV1Snapshot,
+  type ManhuaDirectorStrategyLegacyContract,
+} from "./manhuaDirectorStrategyV1Snapshot.js";
+
+export type { ManhuaDirectorStrategyLegacyContract } from "./manhuaDirectorStrategyV1Snapshot.js";
+
 export const MANHUA_DIRECTOR_STRATEGY_FORMAT =
   "mv-manhua-director-strategy-v2" as const;
 export const MANHUA_DIRECTOR_STRATEGY_VERSION = 2 as const;
@@ -29,13 +36,13 @@ export type ManhuaDirectorStrategyId =
   | "embodied_world"
   | "relational_action";
 
-type ManhuaDirectorStrategyProjection = {
+export type ManhuaDirectorStrategyProjection = {
   objectiveZh: string;
   directivesZh: readonly string[];
   avoidZh: string;
 };
 
-export type ManhuaDirectorStrategyContract = {
+export type ManhuaDirectorStrategyCurrentContract = {
   format: typeof MANHUA_DIRECTOR_STRATEGY_FORMAT;
   version: typeof MANHUA_DIRECTOR_STRATEGY_VERSION;
   revision: typeof MANHUA_DIRECTOR_STRATEGY_APPROVED_MANIFEST_VERSION;
@@ -47,8 +54,13 @@ export type ManhuaDirectorStrategyContract = {
   >;
 };
 
+/** 已冻结合同可能来自 v1 快照；判别依据是 format/version，禁止按 ID 升级。 */
+export type ManhuaDirectorStrategyContract =
+  | ManhuaDirectorStrategyCurrentContract
+  | ManhuaDirectorStrategyLegacyContract;
+
 type StrategySeed = Omit<
-  ManhuaDirectorStrategyContract,
+  ManhuaDirectorStrategyCurrentContract,
   "format" | "version" | "revision"
 > & {
   /** 内部审计字段；toContract 必须剥离，不能进入浏览器或草稿。 */
@@ -560,7 +572,7 @@ const BY_ID = new Map(
   STRATEGIES.map(entry => [entry.strategyId, entry] as const)
 );
 
-function toContract(seed: StrategySeed): ManhuaDirectorStrategyContract {
+function toContract(seed: StrategySeed): ManhuaDirectorStrategyCurrentContract {
   const {
     sourceProfileIds: _sourceProfileIds,
     sourceClaimIds: _sourceClaimIds,
@@ -597,7 +609,7 @@ export function getManhuaDirectorStrategyAuditTrace(
 
 export function getManhuaDirectorStrategyContract(
   id: string | null | undefined
-): ManhuaDirectorStrategyContract | null {
+): ManhuaDirectorStrategyCurrentContract | null {
   const seed = BY_ID.get(String(id || "").trim() as ManhuaDirectorStrategyId);
   return seed ? toContract(seed) : null;
 }
@@ -620,7 +632,10 @@ export function parseManhuaDirectorStrategyContract(
     input.format === MANHUA_DIRECTOR_STRATEGY_FORMAT &&
     Number(input.version) === MANHUA_DIRECTOR_STRATEGY_VERSION &&
     input.revision === MANHUA_DIRECTOR_STRATEGY_APPROVED_MANIFEST_VERSION;
-  if (!isLegacyV1 && !isCurrent) return null;
+  if (isLegacyV1) {
+    return getManhuaDirectorStrategyV1Snapshot(String(input.strategyId || ""));
+  }
+  if (!isCurrent) return null;
   return getManhuaDirectorStrategyContract(String(input.strategyId || ""));
 }
 
@@ -632,7 +647,7 @@ export function resolveManhuaDirectorStrategyContract(input: {
   topic?: string | null;
   brief?: string | null;
   craftShotId?: string | null;
-}): ManhuaDirectorStrategyContract {
+}): ManhuaDirectorStrategyCurrentContract {
   const text =
     `${String(input.topic || "")}\n${String(input.brief || "")}`.trim();
   for (const seed of STRATEGIES) {
@@ -651,15 +666,35 @@ export function resolveManhuaDirectorStrategyContract(input: {
 const STRATEGY_MARKER_RE =
   /【创作策略·v(\d+)·(?:(approved-[a-z0-9-]+)·)?([a-z_]+)】/;
 
+function formatManhuaDirectorStrategyMarker(
+  contract: ManhuaDirectorStrategyContract,
+): string {
+  return contract.version === 1
+    ? `【创作策略·v1·${contract.strategyId}】${contract.labelZh}`
+    : `【创作策略·v${contract.version}·${contract.revision}·${contract.strategyId}】${contract.labelZh}`;
+}
+
+function getManhuaDirectorStrategyProjection(
+  contract: ManhuaDirectorStrategyContract,
+  stage: ManhuaDirectorStrategyStage,
+): ManhuaDirectorStrategyProjection | null {
+  if (contract.version === 1) {
+    if (stage === "keyframe") return null;
+    return contract.projections[stage];
+  }
+  return contract.projections[stage];
+}
+
 /** 生产投影：只输出中性方法，不输出来源人物、作品或内部 claim。 */
 export function formatManhuaDirectorStrategyStage(
   contract: ManhuaDirectorStrategyContract,
   stage: ManhuaDirectorStrategyStage
 ): string {
-  const projection = contract.projections[stage];
+  const projection = getManhuaDirectorStrategyProjection(contract, stage);
+  if (!projection) return "";
   const lines = projection.directivesZh.map(line => `- ${line}`);
   return [
-    `【创作策略·v${contract.version}·${contract.revision}·${contract.strategyId}】${contract.labelZh}`,
+    formatManhuaDirectorStrategyMarker(contract),
     `目标：${projection.objectiveZh}`,
     ...lines,
     `边界：${projection.avoidZh}`,
@@ -671,7 +706,7 @@ export function formatManhuaDirectorStrategyClipLine(
   contract: ManhuaDirectorStrategyContract
 ): string {
   const projection = contract.projections.clip;
-  return `【创作策略·v${contract.version}·${contract.revision}·${contract.strategyId}】${contract.labelZh}｜${projection.directivesZh.join("；")}｜边界：${projection.avoidZh}`;
+  return `${formatManhuaDirectorStrategyMarker(contract)}｜${projection.directivesZh.join("；")}｜边界：${projection.avoidZh}`;
 }
 
 /** 从已存节点恢复同一版本策略；旧板无标记时返回 null，不猜、不静默换策略。 */
@@ -687,7 +722,8 @@ export function readManhuaDirectorStrategyContract(
   const isCurrent =
     version === MANHUA_DIRECTOR_STRATEGY_VERSION &&
     revision === MANHUA_DIRECTOR_STRATEGY_APPROVED_MANIFEST_VERSION;
-  if (!isLegacyV1 && !isCurrent) return null;
+  if (isLegacyV1) return getManhuaDirectorStrategyV1Snapshot(strategyId);
+  if (!isCurrent) return null;
   return getManhuaDirectorStrategyContract(strategyId);
 }
 
@@ -705,6 +741,6 @@ export function stripManhuaDirectorStrategyStage(
     .trim();
 }
 
-export function listManhuaDirectorStrategyContracts(): ManhuaDirectorStrategyContract[] {
+export function listManhuaDirectorStrategyContracts(): ManhuaDirectorStrategyCurrentContract[] {
   return STRATEGIES.map(toContract);
 }

@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   ingestManhuaDirectorBoardFileWithFeedback,
+  resolveManhuaAdvisorSelection,
+  resolveManhuaAdvisorShotsFromBlocks,
   resolveManhuaDirectorBoardImageGeometry,
   resolveManhuaDirectorOverlayBaseUrl,
   shouldShowManhuaAsset3dRow,
@@ -17,13 +19,52 @@ const omniSource = readFileSync(
 );
 
 describe("漫剧导演策略前台接线", () => {
+  it("顾问只接收工作台真实选中镜，无镜头时不制造兜底镜", () => {
+    const shot = {
+      index: 4,
+      durationSec: 5,
+      sceneZh: "雨巷",
+      shotSizeZh: "近景",
+      cameraZh: "平视跟拍",
+      actionZh: "阿菁停步回望",
+    } as never;
+    expect(resolveManhuaAdvisorSelection({ episodeIndex: 2, shot })).toEqual({
+      episodeIndex: 2,
+      segmentIndex: 2,
+      shot,
+    });
+    expect(resolveManhuaAdvisorSelection({ episodeIndex: 2, shot: null })).toBeNull();
+  });
+
+  it("未运行节点只有 prompt 时不上报假镜；outputText 才产生真实镜头", () => {
+    expect(
+      resolveManhuaAdvisorShotsFromBlocks({
+        beats: {
+          prompt: "1. 默认模板镜头\n2. 默认模板动作",
+          outputText: "",
+        },
+      }),
+    ).toEqual([]);
+    const actual = resolveManhuaAdvisorShotsFromBlocks({
+      beats: {
+        prompt: "1. 默认模板镜头",
+        outputText: "1. 近景：阿菁停步回望\n2. 全景：雨巷尽头亮起灯火",
+      },
+    });
+    expect(actual).toHaveLength(2);
+    expect(actual.map((shot) => shot.actionZh)).toEqual([
+      "阿菁停步回望",
+      "雨巷尽头亮起灯火",
+    ]);
+  });
+
   it("展示去名冻结状态，但不新增工作流阶段", () => {
     expect(omniSource).toContain(
       "directorStrategyContract={directorStrategyContract}",
     );
     expect(workbenchSource).toContain("data-manhua-director-strategy-status");
     expect(workbenchSource).toContain("创作策略 · {directorStrategyContract.labelZh}");
-    expect(workbenchSource).toContain("{directorStrategyContract.revision}");
+    expect(workbenchSource).toContain('directorStrategyContract.version === 2 ? directorStrategyContract.revision : "原版 v1 · 保持不变"');
     expect(workbenchSource).toContain("已锁定");
     expect(workbenchSource).toContain("创作策略 · 旧项目待升级");
     expect(workbenchSource).toContain("data-manhua-director-overlay-panel");

@@ -11,6 +11,7 @@ vi.mock("../services/drProSecondaryStaging.js", () => ({
 
 import {
   claimNextPostProdJob,
+  claimNextQueuedJob,
   claimNextQueuedJobExcluding,
   MAIN_QUEUE_EXCLUDED_TYPES,
   markManhuaLearnJobFailedWithOutputRetry,
@@ -34,11 +35,14 @@ const QUEUED_ROW = {
 };
 
 /** rowsAffected：每次 update...returning 影响的行数，按调用顺序取 */
-function fakeDb(rowsAffected: number[]) {
+function fakeDb(rowsAffected: number[], onSelectWhere?: (condition: unknown) => void) {
   let updateCall = 0;
   const selectChain = {
     from: () => selectChain,
-    where: () => selectChain,
+    where: (condition: unknown) => {
+      onSelectWhere?.(condition);
+      return selectChain;
+    },
     orderBy: () => selectChain,
     limit: async () => [QUEUED_ROW],
   };
@@ -98,6 +102,20 @@ describe("queued 任务抢占", () => {
     const db = fakeDb([0]);
     getDb.mockResolvedValue(db);
     expect(await claimNextQueuedJobExcluding([])).toBeNull();
+  });
+
+  it("等待用户付费确认的 manhua_advisor_qa 不进入通用异步 worker", async () => {
+    const selectConditions: unknown[] = [];
+    const db = fakeDb([1, 1], (condition) => {
+      selectConditions.push(condition);
+    });
+    getDb.mockResolvedValue(db);
+    await claimNextQueuedJobExcluding([]);
+    await claimNextQueuedJob();
+    const queueConditions = selectConditions.filter((condition) =>
+      sqlStringValues(condition).join("\n").includes("manhua_advisor_qa"),
+    );
+    expect(queueConditions).toHaveLength(2);
   });
 });
 

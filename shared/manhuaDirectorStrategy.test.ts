@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   MANHUA_DIRECTOR_STRATEGY_FORMAT,
@@ -11,6 +12,7 @@ import {
   readManhuaDirectorStrategyContract,
   resolveManhuaDirectorStrategyContract,
 } from "./manhuaDirectorStrategy";
+import { listManhuaDirectorStrategyV1Snapshots } from "./manhuaDirectorStrategyV1Snapshot";
 
 describe("manhuaDirectorStrategy", () => {
   it.each([
@@ -142,7 +144,7 @@ describe("manhuaDirectorStrategy", () => {
     }
   });
 
-  it("旧 v1 合同与标记只迁移白名单内同一 strategyId", () => {
+  it("旧 v1 合同与标记从不可变快照恢复，不升级成当前 revision", () => {
     const legacy = {
       format: "mv-manhua-director-strategy-v1",
       version: 1,
@@ -150,18 +152,34 @@ describe("manhuaDirectorStrategy", () => {
       labelZh: "不可信旧文案",
       projections: {},
     };
-    const migrated = parseManhuaDirectorStrategyContract(legacy);
-    expect(migrated).toMatchObject({
-      version: MANHUA_DIRECTOR_STRATEGY_VERSION,
-      revision: MANHUA_DIRECTOR_STRATEGY_APPROVED_MANIFEST_VERSION,
+    const restored = parseManhuaDirectorStrategyContract(legacy);
+    expect(restored).toMatchObject({
+      format: "mv-manhua-director-strategy-v1",
+      version: 1,
       strategyId: "relational_action",
       labelZh: "关系驱动动作",
     });
-    expect(
-      readManhuaDirectorStrategyContract(
-        "【创作策略·v1·relational_action】旧文案"
-      )?.strategyId
-    ).toBe("relational_action");
+    expect(restored).not.toHaveProperty("revision");
+    expect(restored?.projections.clip.directivesZh).toEqual([
+      "同帧主要动作主体不超过两人",
+      "延时效果改写为目光停留、材质余振、呼吸或光影状态变化",
+    ]);
+    const oldStoryboardGolden = [
+      "【创作策略·v1·relational_action】关系驱动动作",
+      "目标：动作覆盖交代起点、变化、结果与关系反应。",
+      "- 常速保持因果可读",
+      "- 只在目光、身体转折、道德选择或冲击余韵处延时",
+      "边界：禁止整场统一慢速，也不规定固定帧率、镜头数或焦段。",
+    ].join("\n");
+    expect(formatManhuaDirectorStrategyStage(restored!, "storyboard")).toBe(
+      oldStoryboardGolden,
+    );
+    expect(formatManhuaDirectorStrategyStage(restored!, "keyframe")).toBe("");
+    const fromMarker = readManhuaDirectorStrategyContract(oldStoryboardGolden);
+    expect(formatManhuaDirectorStrategyStage(fromMarker!, "storyboard")).toBe(
+      oldStoryboardGolden,
+    );
+    expect(fromMarker).not.toHaveProperty("revision");
     expect(
       parseManhuaDirectorStrategyContract({ ...legacy, strategyId: "unknown" })
     ).toBeNull();
@@ -170,10 +188,32 @@ describe("manhuaDirectorStrategy", () => {
     ).toBeNull();
     expect(
       parseManhuaDirectorStrategyContract({
-        ...migrated,
+        ...resolveManhuaDirectorStrategyContract({ topic: "关系动作" }),
         revision: "unapproved-r9",
       })
     ).toBeNull();
+  });
+
+  it("8ef1555 的六份 v1 快照只含去名生产字段且运行时不可变", () => {
+    const snapshots = listManhuaDirectorStrategyV1Snapshots();
+    expect(snapshots).toHaveLength(6);
+    expect(
+      createHash("sha256").update(JSON.stringify(snapshots)).digest("hex"),
+    ).toBe("40982eb4b629cae60cbf921c9980e94b268dc8de603afc5c3c192df9bcc393b5");
+    for (const contract of snapshots) {
+      expect(Object.keys(contract).sort()).toEqual(
+        ["format", "labelZh", "projections", "strategyId", "version"].sort(),
+      );
+      expect(Object.keys(contract.projections).sort()).toEqual(
+        ["assets", "clip", "review", "story", "storyboard"].sort(),
+      );
+      expect(contract).not.toHaveProperty("revision");
+      expect(contract).not.toHaveProperty("sourceClaimIds");
+      expect(contract).not.toHaveProperty("sourceProfileIds");
+      expect(Object.isFrozen(contract)).toBe(true);
+      expect(Object.isFrozen(contract.projections)).toBe(true);
+      expect(Object.isFrozen(contract.projections.clip.directivesZh)).toBe(true);
+    }
   });
 
   it("每次只输出当前阶段，不把五阶段合同整包灌入", () => {

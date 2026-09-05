@@ -7,6 +7,8 @@ import {
   parseManhuaCloudDraftPayload,
   sanitizeManhuaCloudDraftBlock,
 } from "./manhuaCloudDraft";
+import { formatManhuaDirectorStrategyStage } from "./manhuaDirectorStrategy";
+import { getManhuaDirectorStrategyV1Snapshot } from "./manhuaDirectorStrategyV1Snapshot";
 
 describe("manhuaCloudDraft", () => {
   it("strips video outputs but keeps keyart image urls", () => {
@@ -141,6 +143,45 @@ describe("manhuaCloudDraft", () => {
     ]);
     expect(again?.canvas.blocks.find((b) => b.id.startsWith("keyart"))?.outputUrl).toContain(".jpg");
     expect(again?.canvas.blocks.find((b) => b.id.startsWith("clip"))?.outputUrl).toBeUndefined();
+  });
+
+  it("云端旧 v1 草稿恢复时保留快照版本，不盖成当前 revision", () => {
+    const legacy = getManhuaDirectorStrategyV1Snapshot("information_causality")!;
+    const restored = parseManhuaCloudDraftPayload({
+      format: "mv-manhua-cloud-draft-v1",
+      clientUpdatedAt: "2026-09-01T00:00:00.000Z",
+      writerSession: {
+        format: "mv-manhua-writer-session-v1",
+        topic: "多线悬疑",
+        writerConfirmed: true,
+        directorStrategyContract: legacy,
+      },
+      canvas: {
+        blocks: [
+          {
+            id: "reverse-e01",
+            kind: "text",
+            x: 0,
+            y: 0,
+            width: 400,
+            height: 360,
+            prompt: formatManhuaDirectorStrategyStage(legacy, "storyboard"),
+          },
+        ],
+        edges: [],
+      },
+    });
+
+    expect(restored?.writerSession.directorStrategyContract).toMatchObject({
+      format: "mv-manhua-director-strategy-v1",
+      version: 1,
+      strategyId: "information_causality",
+    });
+    expect(restored?.writerSession.directorStrategyContract).not.toHaveProperty("revision");
+    expect(restored?.canvas.blocks[0]?.prompt).toContain(
+      "【创作策略·v1·information_causality】信息因果推进",
+    );
+    expect(restored?.canvas.blocks[0]?.prompt).not.toContain("approved-");
   });
 
   it("旧草稿 mt_* 平移；tpl_* 清空并附一次性迁移提示", () => {

@@ -15,6 +15,12 @@ export function shouldOpenClipDockForPhase(phase: string): boolean {
   return phase === "final";
 }
 
+/** 回填必须同时恢复页面，即便 phase 的值没变，也不能依赖 effect 再次触发。 */
+export function workspaceViewForRestoredManhuaPhase(phase: string, writerConfirmed: boolean): "clip_dock" | "workbench" | "topic" {
+  if (shouldOpenClipDockForPhase(phase)) return "clip_dock";
+  return writerConfirmed ? "workbench" : "topic";
+}
+
 /** 离开坞时 final 要收回 edit；其它阶段原样不动 */
 export function phaseAfterLeavingClipDock<T extends string>(current: T): T | "edit" {
   return current === "final" ? "edit" : current;

@@ -18,6 +18,10 @@ import {
   buildManhuaAssetManifestClaims,
   resolveManhuaAssetManifestClaim,
 } from "@shared/manhuaAssetManifestClaims";
+import {
+  validateManhuaDirectorBoardBackupState,
+  type ManhuaDirectorBoardBackupState,
+} from "./manhuaDirectorBoardStore";
 
 async function sha256Hex(buf: ArrayBuffer): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", buf);
@@ -56,6 +60,8 @@ export type ManhuaAssetZipImportResult = {
    * 会被换剧逻辑判成「旧资产」清空。把文本带出来，调用方就能先写剧本再挂资产。
    */
   scripts: Array<{ path: string; text: string; charCount: number; dialogueCount: number }>;
+  /** 换剧备份 v2 的导演板底图索引与矢量轨迹；旧 ZIP 没有时为 null。 */
+  directorBoardState: ManhuaDirectorBoardBackupState | null;
 };
 
 async function readImageDimensions(blob: Blob): Promise<{ width: number; height: number }> {
@@ -117,6 +123,24 @@ export async function importManhuaAssetZipFile(opts: {
     } catch {
       // 坏 manifest 不得拖垮整包；后续仍可走文件名自动匹配 + 手动认领。
     }
+  }
+  const directorBoardStatePath = paths.find((path) =>
+    /(^|\/)director[_-]boards\/state\.json$/i.test(path),
+  );
+  let directorBoardState: ManhuaDirectorBoardBackupState | null = null;
+  if (directorBoardStatePath) {
+    let parsed: unknown;
+    try {
+      const raw = await zip.file(directorBoardStatePath)?.async("string");
+      parsed = raw ? JSON.parse(raw) : null;
+    } catch {
+      throw new Error("导演板状态文件无效：JSON 无法解析；未上传或修改任何资产");
+    }
+    const checked = validateManhuaDirectorBoardBackupState(parsed);
+    if (!checked.ok) {
+      throw new Error(`导演板状态文件无效：${checked.errorZh}；未上传或修改任何资产`);
+    }
+    directorBoardState = checked.state;
   }
 
   const withHash: Array<{
@@ -241,5 +265,6 @@ export async function importManhuaAssetZipFile(opts: {
       (a, b) =>
         Number(b.dialogueCount > 0) - Number(a.dialogueCount > 0) || b.charCount - a.charCount,
     ),
+    directorBoardState,
   };
 }

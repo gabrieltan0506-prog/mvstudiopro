@@ -9,6 +9,7 @@ import {
 import {
   assertGlbBuffer,
   createManhua3dTask,
+  downloadGlb,
   getManhua3dTask,
   importExistingManhua3dAsset,
   retryManhua3dTask,
@@ -16,12 +17,59 @@ import {
   setManhua3dTaskDependenciesForTests,
 } from "./manhua3dTask.js";
 
+function chunkedResponse(
+  chunks: Buffer[],
+  closeAfterChunks = true
+): {
+  response: Response;
+  cancelled: ReturnType<typeof vi.fn>;
+} {
+  const cancelled = vi.fn();
+  let index = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const chunk = chunks[index++];
+      if (!chunk) {
+        if (closeAfterChunks) controller.close();
+        return closeAfterChunks ? undefined : new Promise<void>(() => undefined);
+      }
+      controller.enqueue(chunk);
+    },
+    cancel(reason) {
+      cancelled(reason);
+    },
+  });
+  return { response: new Response(body, { status: 200 }), cancelled };
+}
+
 function validGlb(payload = Buffer.alloc(0)): Buffer {
+  const json = Buffer.from('{"asset":{"version":"2.0"}}');
+  const jsonPaddedLength = Math.ceil(json.byteLength / 4) * 4;
+  const jsonChunkHeader = Buffer.alloc(8);
+  jsonChunkHeader.writeUInt32LE(jsonPaddedLength, 0);
+  jsonChunkHeader.writeUInt32LE(0x4e4f534a, 4);
+  const jsonChunk = Buffer.concat([
+    jsonChunkHeader,
+    json,
+    Buffer.alloc(jsonPaddedLength - json.byteLength, 0x20),
+  ]);
+  const binPaddedLength = Math.ceil(payload.byteLength / 4) * 4;
+  const binChunkHeader = Buffer.alloc(8);
+  binChunkHeader.writeUInt32LE(binPaddedLength, 0);
+  binChunkHeader.writeUInt32LE(0x004e4942, 4);
+  const body = payload.byteLength
+    ? Buffer.concat([
+        jsonChunk,
+        binChunkHeader,
+        payload,
+        Buffer.alloc(binPaddedLength - payload.byteLength),
+      ])
+    : jsonChunk;
   const header = Buffer.alloc(12);
   header.write("glTF", 0, "ascii");
   header.writeUInt32LE(2, 4);
-  header.writeUInt32LE(header.byteLength + payload.byteLength, 8);
-  return Buffer.concat([header, payload]);
+  header.writeUInt32LE(header.byteLength + body.byteLength, 8);
+  return Buffer.concat([header, body]);
 }
 
 function inspectedGlb(buffer: Buffer) {
@@ -29,6 +77,7 @@ function inspectedGlb(buffer: Buffer) {
     header: buffer.subarray(0, 12),
     byteLength: buffer.byteLength,
     sha256: "a".repeat(64),
+    generation: "42",
   };
 }
 
@@ -44,7 +93,35 @@ describe("manhua3dTask", () => {
   afterEach(async () => {
     resetManhua3dTaskDependenciesForTests();
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("生成 GLB 按流读取并在累计超限时取消下载", async () => {
+    const glb = validGlb(Buffer.from("streamed-mesh"));
+    const accepted = chunkedResponse([
+      glb.subarray(0, 7),
+      glb.subarray(7, 19),
+      glb.subarray(19),
+    ]);
+    const arrayBuffer = vi.spyOn(accepted.response, "arrayBuffer");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(accepted.response));
+
+    await expect(
+      downloadGlb("https://result.test/model.glb", glb.byteLength)
+    ).resolves.toEqual(glb);
+    expect(arrayBuffer).not.toHaveBeenCalled();
+
+    const oversizedGlb = validGlb(Buffer.alloc(32));
+    const oversized = chunkedResponse(
+      [oversizedGlb.subarray(0, 8), oversizedGlb.subarray(8)],
+      false
+    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(oversized.response));
+    await expect(
+      downloadGlb("https://result.test/oversized.glb", 12)
+    ).rejects.toThrow("glb_too_large");
+    expect(oversized.cancelled).toHaveBeenCalledTimes(1);
   });
 
   it("同用户、素材、来源版本及选项只提交一次", async () => {
@@ -137,10 +214,13 @@ describe("manhua3dTask", () => {
       await new Promise(resolve => setTimeout(resolve, 10));
       return inspectedGlb(glb);
     });
+    const immutableGcsUri = `gs://test-bucket/manhua-3d/u7/imports/character-black-horse/${"a".repeat(64)}/model.glb`;
+    const rewriteUploadedGlb = vi.fn().mockResolvedValue({ gcsUri: immutableGcsUri });
     setManhua3dTaskDependenciesForTests({
       submit,
       getBucketName: () => "test-bucket",
       inspectUploadedGlb,
+      rewriteUploadedGlb,
       signGlb: uri => `https://signed.test/${encodeURIComponent(uri)}`,
     });
     const input = {
@@ -159,21 +239,27 @@ describe("manhua3dTask", () => {
 
     expect(first.status).toBe("succeeded");
     expect(first.taskId).toMatch(/^m3d_import_/);
-    expect(first.glbGcsUri).toBe(input.glbGcsUri);
+    expect(first.glbGcsUri).toBe(immutableGcsUri);
     expect(first.glbUrl).toContain("https://signed.test/");
     expect(second.taskId).toBe(first.taskId);
     expect(restored.taskId).toBe(first.taskId);
     expect(submit).not.toHaveBeenCalled();
     expect(inspectUploadedGlb).toHaveBeenCalledTimes(1);
+    expect(rewriteUploadedGlb).toHaveBeenCalledWith({
+      sourceGcsUri: input.glbGcsUri,
+      sourceGeneration: "42",
+      destinationObjectName: `manhua-3d/u7/imports/character-black-horse/${"a".repeat(64)}/model.glb`,
+    });
   });
 
   it("导入 GLB 拒绝跨账号对象与伪造文件头", async () => {
     const inspectUploadedGlb = vi
       .fn()
-      .mockResolvedValue(inspectedGlb(Buffer.alloc(12)));
+      .mockRejectedValue(new Error("invalid_glb_magic"));
     setManhua3dTaskDependenciesForTests({
       getBucketName: () => "test-bucket",
       inspectUploadedGlb,
+      rewriteUploadedGlb: vi.fn(),
     });
     const base = {
       userId: 7,
@@ -205,6 +291,7 @@ describe("manhua3dTask", () => {
     setManhua3dTaskDependenciesForTests({
       getBucketName: () => "test-bucket",
       inspectUploadedGlb,
+      rewriteUploadedGlb: vi.fn(),
     });
 
     await expect(
@@ -232,6 +319,9 @@ describe("manhua3dTask", () => {
       submit,
       getBucketName: () => "test-bucket",
       inspectUploadedGlb,
+      rewriteUploadedGlb: vi.fn(async input => ({
+        gcsUri: `gs://test-bucket/${input.destinationObjectName}`,
+      })),
       signGlb: uri => `https://signed.test/${encodeURIComponent(uri)}`,
     });
     const base = {
@@ -363,6 +453,60 @@ describe("manhua3dTask", () => {
     );
     expect(disk.glbGcsUri).toBe(task.glbGcsUri);
     expect(disk.glbUrl).toBe(task.glbUrl);
+  });
+
+  it("过期地址续签失败时清除旧 URL，但保留成功任务与 GCS 身份", async () => {
+    const glb = validGlb(Buffer.from("mesh-sign-refresh"));
+    let now = new Date("2026-09-04T00:00:00.000Z");
+    const signGlb = vi
+      .fn()
+      .mockReturnValueOnce("https://storage.test/first-signed.glb")
+      .mockImplementationOnce(() => {
+        throw new Error("signer unavailable");
+      });
+    setManhua3dTaskDependenciesForTests({
+      isConfigured: () => true,
+      submit: vi.fn().mockResolvedValue({ predictionId: "pred-sign-refresh" }),
+      poll: vi.fn().mockResolvedValue({
+        state: "completed",
+        sourceGlbUrl: "https://result.test/model.glb",
+      }),
+      downloadGlb: vi.fn().mockResolvedValue(glb),
+      uploadGlb: vi.fn().mockResolvedValue({
+        bucket: "test-bucket",
+        objectName: "manhua-3d/u7/sign-refresh/model.glb",
+        gcsUri: "gs://test-bucket/manhua-3d/u7/sign-refresh/model.glb",
+      }),
+      signGlb,
+      now: () => now,
+    });
+    const created = await createManhua3dTask({
+      userId: 7,
+      assetRef: "character:black-horse",
+      sourceVersion: "sha256:sign-refresh-v1",
+      sourceImageUrl: "https://assets.test/black-horse-front.png",
+    });
+    expect(created.glbUrl).toBe("https://storage.test/first-signed.glb");
+
+    now = new Date("2026-09-12T00:00:00.000Z");
+    const refreshed = await getManhua3dTask(created.taskId, 7);
+    expect(refreshed).toMatchObject({
+      taskId: created.taskId,
+      status: "succeeded",
+      glbGcsUri: "gs://test-bucket/manhua-3d/u7/sign-refresh/model.glb",
+    });
+    expect(refreshed?.glbUrl).toBeUndefined();
+    expect(refreshed?.glbUrlExpiresAt).toBeUndefined();
+
+    const disk = JSON.parse(
+      await fs.readFile(path.join(dir, `${created.taskId}.json`), "utf8")
+    );
+    expect(disk.status).toBe("succeeded");
+    expect(disk.taskId).toBe(created.taskId);
+    expect(disk.glbGcsUri).toBe(refreshed?.glbGcsUri);
+    expect(disk.glbUrl).toBeUndefined();
+    expect(disk.glbUrlExpiresAt).toBeUndefined();
+    expect(disk.lastTransientError).toBe("sign_failed:signer unavailable");
   });
 
   it("拒绝伪装成 GLB 的上游文件，不上传坏产物", async () => {

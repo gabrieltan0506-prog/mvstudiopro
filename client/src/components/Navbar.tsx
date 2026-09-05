@@ -9,6 +9,7 @@ import {
   COMPETITOR_RESEARCH_BETA_NOTE_ZH,
 } from "@/lib/competitorResearchBeta";
 import { requestOpenProAgent } from "@/components/PlatformProAgentDock";
+import { useManhuaAdvisorScope } from "@/hooks/useManhuaAdvisorScope";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -56,13 +57,15 @@ function isNavItemActive(href: string, locationPath: string): boolean {
 export default function Navbar() {
   const { user, isAuthenticated, logout } = useAuth();
   const [location, navigate] = useLocation();
+  const manhuaAdvisorActive = useManhuaAdvisorScope(location);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [, setSearchTick] = useState(0);
   const showTestLab = import.meta.env.DEV || user?.role === "admin";
   const showProAgent = useMemo(
     () =>
-      hasSupervisorAccess() || user?.role === "admin" || user?.role === "supervisor",
-    [user?.role],
+      !manhuaAdvisorActive &&
+      (hasSupervisorAccess() || user?.role === "admin" || user?.role === "supervisor"),
+    [user?.role, manhuaAdvisorActive],
   );
   const navItems = showTestLab
     ? [...NAV_ITEMS, { label: "测试台", href: "/test-lab" }]

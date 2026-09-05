@@ -20,6 +20,13 @@ import {
   selectExportableDockIds,
   type ExportManhuaProjectZipOpts,
 } from "./manhuaProjectExport";
+import {
+  buildManhuaDirectorBoardBackupState,
+  hasManhuaDirectorBoardBackupContent,
+  type ManhuaDirectorBoardBySegment,
+  type ManhuaDirectorBoardMainByEpisode,
+  type ManhuaDirectorBoardOverlayBySegment,
+} from "./manhuaDirectorBoardStore";
 
 export type ManhuaSeriesSwitchRisk = {
   seriesTitle: string;
@@ -27,6 +34,7 @@ export type ManhuaSeriesSwitchRisk = {
   paidSeriesAssetCount: number;
   paidFactoryOutputCount: number;
   customRefCount: number;
+  directorBoardCount?: number;
   /** 有任一旧资产/剧本即须走备份门禁 */
   needsBackup: boolean;
   summaryZh: string;
@@ -119,6 +127,9 @@ export function inspectManhuaSeriesSwitchRisk(input: {
   writerPack?: ManhuaWriterPack | null;
   blocks?: CanvasBlock[] | null;
   customAssetRefs?: ManhuaCustomAssetRef[] | null;
+  directorBoardMainByEpisode?: ManhuaDirectorBoardMainByEpisode | null;
+  directorBoardBySegment?: ManhuaDirectorBoardBySegment | null;
+  directorBoardMotionOverlayBySegment?: ManhuaDirectorBoardOverlayBySegment | null;
 }): ManhuaSeriesSwitchRisk {
   const pack = input.writerPack || null;
   const blocks = input.blocks || [];
@@ -142,16 +153,28 @@ export function inspectManhuaSeriesSwitchRisk(input: {
       manhuaBlockHasPaidOutput(b),
   ).length;
   const customRefCount = refs.filter((r) => String(r.url || "").trim()).length;
+  const directorBoardCount =
+    Object.keys(input.directorBoardMainByEpisode || {}).length +
+    Object.values(input.directorBoardBySegment || {}).reduce(
+      (sum, segments) => sum + Object.keys(segments || {}).length,
+      0,
+    ) +
+    Object.values(input.directorBoardMotionOverlayBySegment || {}).reduce(
+      (sum, segments) => sum + Object.keys(segments || {}).length,
+      0,
+    );
   const needsBackup =
     hasWriterPack ||
     paidSeriesAssetCount > 0 ||
     paidFactoryOutputCount > 0 ||
-    customRefCount > 0;
+    customRefCount > 0 ||
+    directorBoardCount > 0;
   const bits = [
     hasWriterPack ? "剧本" : null,
     paidSeriesAssetCount > 0 ? `人物/场景/道具设定 ${paidSeriesAssetCount} 张` : null,
     paidFactoryOutputCount > 0 ? `分镜/成片 ${paidFactoryOutputCount} 个` : null,
     customRefCount > 0 ? `上传参考 ${customRefCount} 张` : null,
+    directorBoardCount > 0 ? `导演板/轨迹 ${directorBoardCount} 项` : null,
   ].filter(Boolean);
   return {
     seriesTitle,
@@ -159,6 +182,7 @@ export function inspectManhuaSeriesSwitchRisk(input: {
     paidSeriesAssetCount,
     paidFactoryOutputCount,
     customRefCount,
+    directorBoardCount,
     needsBackup,
     summaryZh: bits.length
       ? `旧专案「${seriesTitle}」含：${bits.join(" · ")}（多为付费生成，清空后无法自动找回）`
@@ -200,6 +224,9 @@ export type DownloadManhuaSeriesSwitchBackupOpts = {
   askPreviousTitle?: boolean;
   blocks: CanvasBlock[];
   customAssetRefs?: ManhuaCustomAssetRef[] | null;
+  directorBoardMainByEpisode?: ManhuaDirectorBoardMainByEpisode | null;
+  directorBoardBySegment?: ManhuaDirectorBoardBySegment | null;
+  directorBoardMotionOverlayBySegment?: ManhuaDirectorBoardOverlayBySegment | null;
   characterIds?: string[];
   artStyleId?: string;
   sceneId?: string;
@@ -264,6 +291,12 @@ export async function downloadManhuaSeriesSwitchBackup(
   const zip = new JSZip();
   let okCount = 0;
   let failCount = 0;
+  const directorBoardState = buildManhuaDirectorBoardBackupState({
+    mainByEpisode: opts.directorBoardMainByEpisode,
+    bySegment: opts.directorBoardBySegment,
+    motionOverlayBySegment: opts.directorBoardMotionOverlayBySegment,
+  });
+  const hasDirectorBoardState = hasManhuaDirectorBoardBackupContent(directorBoardState);
   if (writerMd.trim()) {
     zip.file("writer-pack.md", writerMd.trim());
     okCount += 1;
@@ -280,6 +313,9 @@ export async function downloadManhuaSeriesSwitchBackup(
         : "",
       "",
       "本包含：剧本（writer-pack.md）、人物/场景/道具设定图（series-assets/）、上传参考（custom-refs/）。",
+      hasDirectorBoardState
+        ? "导演板底图索引与手调轨迹位于 director_boards/state.json；恢复时会重新签发 GCS 预览地址。"
+        : "",
       "若同时导出了成片坞工程包，那是另一份 zip，请一并保管。",
       "",
       "换新剧正确顺序：① 下载本备份（用先前剧名）→ ② 清空旧设定 → ③ 再导入/扩写新剧。",
@@ -287,6 +323,10 @@ export async function downloadManhuaSeriesSwitchBackup(
       .filter((line) => line !== undefined)
       .join("\n"),
   );
+  if (hasDirectorBoardState) {
+    zip.file("director_boards/state.json", JSON.stringify(directorBoardState, null, 2));
+    okCount += 1;
+  }
 
   const seriesBlocks = opts.blocks.filter(
     (b) => isManhuaSeriesAssetBlockId(b.id) && manhuaBlockHasPaidOutput(b),
@@ -323,7 +363,7 @@ export async function downloadManhuaSeriesSwitchBackup(
     "manifest.json",
     JSON.stringify(
       {
-        format: "mv-manhua-series-switch-backup-v1",
+        format: "mv-manhua-series-switch-backup-v2",
         /** 备份专案名 = 先前剧名，不是新剧名 */
         seriesTitle,
         previousSeriesTitle: seriesTitle,
@@ -333,6 +373,7 @@ export async function downloadManhuaSeriesSwitchBackup(
         writerPack: Boolean(writerMd.trim()),
         seriesAssetIds: seriesBlocks.map((b) => b.id),
         customRefIds: refs.map((r) => r.id),
+        directorBoardState: hasDirectorBoardState,
         dockExportableCount: exportableIds.length,
       },
       null,
@@ -340,7 +381,13 @@ export async function downloadManhuaSeriesSwitchBackup(
     ),
   );
 
-  if (okCount === 0 && !writerMd.trim() && seriesBlocks.length === 0 && refs.length === 0) {
+  if (
+    okCount === 0 &&
+    !writerMd.trim() &&
+    seriesBlocks.length === 0 &&
+    refs.length === 0 &&
+    !hasDirectorBoardState
+  ) {
     throw new Error("没有可备份的剧本或资产");
   }
 

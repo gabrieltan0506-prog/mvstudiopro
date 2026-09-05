@@ -8,9 +8,12 @@ import {
 import {
   getGcsBucketName,
   inspectGcsObjectBounded,
+  rewriteGcsObjectGenerationIfAbsent,
   signGsUriV4ReadUrl,
+  statGcsObjectVersion,
   uploadBufferToGcs,
 } from "./gcs.js";
+import { assertValidGlb2, Glb2StreamValidator } from "../../shared/glbValidation.js";
 import {
   pollWavespeedTripo3dOnce,
   isWavespeedTripo3dConfigured,
@@ -107,7 +110,13 @@ type Manhua3dTaskDependencies = {
     header: Buffer;
     byteLength: number;
     sha256: string;
+    generation: string;
   }>;
+  rewriteUploadedGlb: (input: {
+    sourceGcsUri: string;
+    sourceGeneration: string;
+    destinationObjectName: string;
+  }) => Promise<{ gcsUri: string }>;
   getBucketName: () => string;
   signGlb: typeof signGsUriV4ReadUrl;
   now: () => Date;
@@ -119,11 +128,25 @@ const productionDependencies: Manhua3dTaskDependencies = {
   poll: pollWavespeedTripo3dOnce,
   downloadGlb: downloadGlb,
   uploadGlb: uploadBufferToGcs,
-  inspectUploadedGlb: async gcsUri =>
-    inspectGcsObjectBounded({
+  inspectUploadedGlb: async gcsUri => {
+    const signal = AbortSignal.timeout(120_000);
+    const version = await statGcsObjectVersion({ gcsUri, signal });
+    const validator = new Glb2StreamValidator();
+    const inspected = await inspectGcsObjectBounded({
       gcsUri,
       maxBytes: MAX_GLB_BYTES,
       headerBytes: 12,
+      timeoutMs: 120_000,
+      signal,
+      generation: version.generation,
+      onChunk: chunk => validator.push(chunk),
+    });
+    validator.finish();
+    return { ...inspected, generation: version.generation };
+  },
+  rewriteUploadedGlb: input =>
+    rewriteGcsObjectGenerationIfAbsent({
+      ...input,
       timeoutMs: 120_000,
     }),
   getBucketName: getGcsBucketName,
@@ -260,36 +283,58 @@ function normalizeOptions(
 }
 
 export function assertGlbBuffer(buffer: Buffer): void {
-  assertGlbHeader(buffer.subarray(0, 12), buffer.byteLength);
+  assertValidGlb2(buffer);
 }
 
-function assertGlbHeader(header: Buffer, actualByteLength: number): void {
-  if (
-    header.byteLength < 12 ||
-    header.subarray(0, 4).toString("ascii") !== "glTF"
-  ) {
-    throw new Error("invalid_glb_magic");
-  }
-  const version = header.readUInt32LE(4);
-  const declaredLength = header.readUInt32LE(8);
-  if (version !== 2 || declaredLength !== actualByteLength) {
-    throw new Error("invalid_glb_header");
-  }
-}
-
-async function downloadGlb(url: string): Promise<Buffer> {
+export async function downloadGlb(
+  url: string,
+  maxBytes = MAX_GLB_BYTES
+): Promise<Buffer> {
   if (!/^https:\/\//i.test(String(url || "")))
     throw new Error("invalid_glb_source_url");
-  const response = await fetch(url, { signal: AbortSignal.timeout(120_000) });
-  if (!response.ok) throw new Error(`glb_download_http_${response.status}`);
+  const signal = AbortSignal.timeout(120_000);
+  const byteLimit = Math.max(
+    1,
+    Math.min(
+      MAX_GLB_BYTES,
+      Math.floor(Number(maxBytes) || MAX_GLB_BYTES)
+    )
+  );
+  const response = await fetch(url, { signal });
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(`glb_download_http_${response.status}`);
+  }
   const declaredBytes = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declaredBytes) && declaredBytes > MAX_GLB_BYTES) {
+  if (Number.isFinite(declaredBytes) && declaredBytes > byteLimit) {
+    await response.body?.cancel().catch(() => undefined);
     throw new Error("glb_too_large");
   }
-  const buffer = Buffer.from(await response.arrayBuffer());
-  if (buffer.byteLength > MAX_GLB_BYTES) throw new Error("glb_too_large");
-  assertGlbBuffer(buffer);
-  return buffer;
+  if (!response.body) throw new Error("glb_download_empty");
+
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  const validator = new Glb2StreamValidator();
+  let byteLength = 0;
+  let completed = false;
+  try {
+    while (true) {
+      signal.throwIfAborted();
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+      byteLength += chunk.byteLength;
+      if (byteLength > byteLimit) throw new Error("glb_too_large");
+      validator.push(chunk);
+      chunks.push(chunk);
+    }
+    validator.finish();
+    completed = true;
+    return Buffer.concat(chunks, byteLength);
+  } finally {
+    if (!completed) await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
 }
 
 function glbObjectName(task: Manhua3dTaskRecord): string {
@@ -298,6 +343,14 @@ function glbObjectName(task: Manhua3dTaskRecord): string {
     .digest("hex")
     .slice(0, 16);
   return `manhua-3d/u${task.userId}/${safePart(task.assetRef)}/${versionDigest}/model.glb`;
+}
+
+function importedGlbObjectName(input: {
+  userId: number;
+  assetRef: string;
+  sha256: string;
+}): string {
+  return `manhua-3d/u${input.userId}/imports/${safePart(input.assetRef)}/${input.sha256}/model.glb`;
 }
 
 function toView(record: Manhua3dTaskRecord): Manhua3dTaskView {
@@ -349,6 +402,8 @@ async function refreshSignedUrl(
   ) {
     return record;
   }
+  record.glbUrl = undefined;
+  record.glbUrlExpiresAt = undefined;
   try {
     record.glbUrl = dependencies.signGlb(
       record.glbGcsUri,
@@ -365,6 +420,7 @@ async function refreshSignedUrl(
         0,
         280
       );
+    await writeRecord(record);
   }
   return record;
 }
@@ -655,7 +711,18 @@ export async function importExistingManhua3dAsset(input: {
       }
       if (inspection.byteLength > MAX_GLB_BYTES)
         throw new Error("glb_too_large");
-      assertGlbHeader(inspection.header, inspection.byteLength);
+      if (!/^\d+$/.test(inspection.generation)) {
+        throw new Error("invalid_gcs_generation");
+      }
+      const immutable = await dependencies.rewriteUploadedGlb({
+        sourceGcsUri: glbGcsUri,
+        sourceGeneration: inspection.generation,
+        destinationObjectName: importedGlbObjectName({
+          userId: input.userId,
+          assetRef,
+          sha256: inspection.sha256,
+        }),
+      });
 
       const now = isoNow();
       const record: Manhua3dTaskRecord = {
@@ -667,7 +734,7 @@ export async function importExistingManhua3dAsset(input: {
         status: "succeeded",
         options: normalizeOptions({}),
         sourceGlbUrl: glbGcsUri,
-        glbGcsUri,
+        glbGcsUri: immutable.gcsUri,
         glbBytes: inspection.byteLength,
         glbSha256: inspection.sha256,
         createdAt: now,
