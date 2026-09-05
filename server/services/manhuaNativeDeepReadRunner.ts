@@ -6005,7 +6005,8 @@ async function executeNativeDeepReadBatch(
         });
       };
       const structuredEpisodeRaw = async (): Promise<Record<string, unknown>> => {
-        const maxRawSegmentsPerBatch = 4;
+        // 0905 用户拍板 5：29 片＝6 组 6 次 GLM；5 片一批实测输出 120K，131K 内也安全，不依赖 262K 是否真生效
+        const maxRawSegmentsPerBatch = 5;
         const allSegmentIndexes = episode.segments.map((_, index) => index);
         if (segmentCount <= maxRawSegmentsPerBatch) {
           const cached = await readCachedStructuring(allSegmentIndexes, glmStructuringInputs, "最终整形");

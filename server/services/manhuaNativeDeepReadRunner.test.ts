@@ -3058,15 +3058,15 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentCacheSeriesKey: "hierarchy_9_segments",
     }, deps);
 
-    // 0905 用户令「不归并」：4/4/1 三批，前两批各整形一次，单片批直接用分段卡，整集由代码确定性拼接
+    // 0905 用户令「不归并、每批 5 片」：9 片＝5/4 两批各整形一次，整集由代码确定性拼接
     expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
     const sent = invokeGlmStructuring.mock.calls.map(([prompt]) =>
       readRawSegmentsFromGlmPrompt((prompt as { user: string }).user));
-    expect(sent.map((rows) => rows.length)).toEqual([4, 4]);
+    expect(sent.map((rows) => rows.length)).toEqual([5, 4]);
     expect((invokeGlmStructuring.mock.calls[0]![0] as { user: string }).user)
       .toContain('"segments":[{"segmentIndex":0');
     expect((invokeGlmStructuring.mock.calls[1]![0] as { user: string }).user)
-      .toContain('"segments":[{"segmentIndex":4');
+      .toContain('"segments":[{"segmentIndex":5');
     expect(deps.readStructuredBatchCache).toHaveBeenCalledTimes(2);
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
@@ -3081,7 +3081,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     const readStructuredBatchCache = vi.fn(async (input: {
       segmentIndexes: readonly number[];
       rawSegments: ReadonlyArray<Record<string, unknown>>;
-    }) => JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2, 3]) ? {
+    }) => JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2, 3, 4]) ? {
       schemaVersion: 1 as const,
       frozenContractSha256: "f".repeat(64),
       seriesKey: "legacy_answer_envelope",
@@ -3129,7 +3129,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       onModelReceipt: (receipt) => { receipts.push(receipt); },
     }, deps);
 
-    // 0905：5 片＝[0..3]+[4]；前批命中缓存、单片批不进 GLM，整集零模型调用拼出
+    // 0905：每批 5 片，5 片＝一批 [0..4]；命中缓存则零模型调用，整集由代码拼出
     expect(readStructuredBatchCache).toHaveBeenCalledTimes(1);
     expect(invokeGlmStructuring).toHaveBeenCalledTimes(0);
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(0);
@@ -3180,7 +3180,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentIndexes: readonly number[];
       rawSegments: ReadonlyArray<Record<string, unknown>>;
     }) => (
-      JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2, 3])
+      JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2, 3, 4])
       || JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8])
     ) ? {
           schemaVersion: 1 as const,
@@ -3225,7 +3225,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentCacheSeriesKey: "hierarchy_cache_hit",
     }, deps);
 
-    // 0905：没有最终归并；9 片＝[0..3]+[4..7]+[8]，只有 [0..3] 命中缓存，[4..7] 跑一次，单片批不进 GLM
+    // 0905：没有最终归并；9 片＝[0..4]+[5..8]，只有 [0..4] 命中缓存，[5..8] 跑一次
     expect(readStructuredBatchCache).toHaveBeenCalledTimes(2);
     expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
     expect(invokeGlmStructuring.mock.calls.map(([prompt]) =>
