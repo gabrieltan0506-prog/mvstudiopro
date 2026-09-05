@@ -109,7 +109,8 @@ export const STRUCTURING_CHAIN_GATEWAYS: readonly GlmGatewayName[] = [
 export const STRUCTURING_PRIMARY_ROUNDS = 3;
 export const STRUCTURING_PRIMARY_RETRY_DELAY_MS = 20_000;
 export const STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS: readonly GlmGatewayName[] = [
-  "plan_bj_qwen", "plan_sg_qwen", "evolink_glm", "openrouter", "openrouter_qwen",
+  // 0905 用户拍板默认链：Qwen 北京套餐 → 新加坡套餐 → OpenRouter（GLM）→ EvoLink（GLM）
+  "plan_bj_qwen", "plan_sg_qwen", "openrouter", "evolink_glm",
 ];
 
 export type BailianChatResponse = {

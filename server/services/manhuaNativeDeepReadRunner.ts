@@ -3772,6 +3772,10 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE = "openrouter_glm_structurin
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`;
 /** 开始/失败回执的人话链路标签（0905：用户看了几百次「z-ai/glm-5.3」以为一直走 OpenRouter）。 */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 EvoLink → OpenRouter → Qwen 北京 → 新加坡 → OpenRouter（每档 30 分钟）";
+export const NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL = "Qwen3.8-Max 北京套餐 → 新加坡套餐 → OpenRouter GLM → EvoLink GLM（严格 schema · 每档 30 分钟）";
+export function nativeDeepReadStructuringStartedLabel(policy: "structuring_chain" | "structuring_chain_qwen_first"): string {
+  return policy === "structuring_chain_qwen_first" ? NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL : NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL;
+}
 /** 完成回执按实际网关写人话名，面板一眼看出这一发走的是哪家。 */
 /** 整形链可接受的网关集合（缓存校验与通道锁共用）。 */
 export const STRUCTURING_GATEWAYS: ReadonlySet<string> = new Set<string>([
@@ -5887,9 +5891,10 @@ async function executeNativeDeepReadBatch(
       let glmEvidence: NativeDeepReadGlmEvidence | undefined;
       const glmEvidenceCallIds: string[] = [];
       const canCacheStructuring = Boolean(params.segmentCacheSeriesKey && episode.cacheSourceDigest);
-      const structuringGatewayPolicy = params.structuringModel === "qwen3.8-max"
-        ? "structuring_chain_qwen_first" as const
-        : "structuring_chain" as const;
+      // 0905 用户拍板：默认 Qwen 首发链；只有面板明确选 GLM 才走 GLM 首发链
+      const structuringGatewayPolicy = params.structuringModel === "glm-5.3"
+        ? "structuring_chain" as const
+        : "structuring_chain_qwen_first" as const;
       const glmStructure = async (input: {
         prompt: ReturnType<typeof buildNativeDeepReadGlmStructuringPrompt>;
         videoCount: number;
@@ -5914,7 +5919,7 @@ async function executeNativeDeepReadBatch(
           await emitVisualModelReceipt({
             callId,
             // 0905：开始行明说链路顺序；完成/失败行改记实际网关，面板不再把 EvoLink 显示成 OpenRouter
-            model: NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL,
+            model: nativeDeepReadStructuringStartedLabel(structuringGatewayPolicy),
             route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
             stage: "visual_parse",
             status: "started",
@@ -6007,7 +6012,7 @@ async function executeNativeDeepReadBatch(
           }
           await emitVisualModelReceipt({
             callId,
-            model: NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL,
+            model: nativeDeepReadStructuringStartedLabel(structuringGatewayPolicy),
             route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
             stage: "visual_parse",
             status: "failed",
