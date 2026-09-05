@@ -8,7 +8,7 @@ import {
   resolvePlatformSupervisorOpsAllowed,
   resolveSiteOwnerOnlyAllowed,
 } from "../services/access-policy";
-import { describeManhuaTemplateLearnSourceZh } from "../../shared/manhuaViralTemplateBank";
+import { describeManhuaTemplateLearnSourceZh, type ManhuaViralTemplateCard } from "../../shared/manhuaViralTemplateBank";
 
 type NativeTemplateProgressSource = {
   attemptedSegments?: unknown;
@@ -222,26 +222,41 @@ export const manhuaViralTemplateRouter = router({
         && successSegments === attemptedSegments
         && evidenceObjectNames.length === attemptedSegments
         && /^[a-f0-9]{64}$/i.test(sourceDigest);
-      if (!complete) {
+      // 0905 用户令：分片过门禁就能导出，不必等整形/入库——未完整时出「分段预览」版：
+      // 标题与文件名都明写「已含 k/N 段 · 整形未完成」，与完整报告一眼可辨，不再拒绝。
+      const previewSegments = completedSegmentIndexes.length;
+      const previewable = !complete
+        && previewSegments >= 1
+        && completedSegmentIndexes.every((value, index) => value === index)
+        && evidenceObjectNames.length === previewSegments
+        && /^[a-f0-9]{64}$/i.test(sourceDigest);
+      if (!complete && !previewable) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
-          message: "该集精读尚未完成全部分片，拒绝导出不完整报告",
+          message: "该集精读尚无可导出的连续分片证据（需从第 1 片起连续过门禁）",
         });
       }
+      const previewSuffixZh = complete
+        ? ""
+        : `（分段预览 · 已含 ${previewSegments}/${attemptedSegments} 段 · 整形未完成）`;
       try {
         return await renderNativeEvidenceReportFromObjectNames({
-          labelZh: `${input.seriesKey} 第 ${input.episodeIndex} 集`,
+          labelZh: `${input.seriesKey} 第 ${input.episodeIndex} 集${previewSuffixZh}`,
           evidenceObjectNames,
           expectEpisodeIndex: input.episodeIndex,
           expectSeriesKey: input.seriesKey,
           expectSourceDigest: sourceDigest,
-          expectSegmentCount: attemptedSegments,
-          segmentSpans: native?.segmentSpans,
-          glmCardObjectName: native?.glmParsedObjectName,
-          evidenceFrames: card.evidenceFrames,
+          expectSegmentCount: complete ? attemptedSegments : previewSegments,
+          segmentSpans: complete
+            ? native?.segmentSpans
+            : (native?.segmentSpans || []).slice(0, previewSegments),
+          glmCardObjectName: complete ? native?.glmParsedObjectName : undefined,
+          evidenceFrames: complete ? card.evidenceFrames : undefined,
           framesV2SummaryObjectName: `manhua-template-learn/probes/${cardKey}/frames-v2-summary.json`,
           framesPrefix: `manhua-template-learn/probes/${cardKey}/frames/`,
-          reportObjectName: `manhua-template-learn/reports/${cardKey}.html`,
+          reportObjectName: complete
+            ? `manhua-template-learn/reports/${cardKey}.html`
+            : `manhua-template-learn/reports/${cardKey}-preview-${previewSegments}of${attemptedSegments}.html`,
         });
       } catch (e) {
         throw new TRPCError({
@@ -256,11 +271,11 @@ export const manhuaViralTemplateRouter = router({
     .input(z.object({ id: z.string().regex(/^tpl_[a-z0-9_-]{1,60}$/i) }))
     .query(async ({ ctx, input }) => {
       assertSiteOwner(ctx.user);
-      const [{ getGcsManhuaViralApproved }, gcs] = await Promise.all([
+      const [{ getGcsManhuaViralApprovedForDisplay }, gcs] = await Promise.all([
         import("../services/manhuaViralTemplateStore"),
         import("../services/gcs"),
       ]);
-      const card = await getGcsManhuaViralApproved(input.id);
+      const card = await getGcsManhuaViralApprovedForDisplay(input.id);
       if (!card || card.status !== "approved") {
         throw new TRPCError({ code: "NOT_FOUND", message: "正式模板不存在" });
       }
@@ -345,43 +360,23 @@ export const manhuaViralTemplateRouter = router({
       const items = (await listGcsManhuaViralProposals()).filter(
         (card) => !card.revision || ownerAllowed,
       );
-      return {
-        items: items.map((c) => ({
-          id: c.id,
-          nameZh: c.nameZh,
-          laneZh: c.laneZh,
-          summaryZh: c.summaryZh,
-          hook3sZh: c.hook3sZh,
-          status: c.status,
-          updatedAt: c.updatedAt,
-          revisionOf: c.revision?.parentTemplateId,
-          changedFields: c.revision?.changedFields,
-          reasons: c.revision?.reasons,
-          // 审批可见性：批准前必须看得见学到了什么，不能盲批。
-          // 这几项一直落盘，此前被这个白名单 map 过滤掉，前端连数据都收不到。
-          beatGrid: c.beatGrid,
-          classification: c.classification,
-          storyStructure: c.storyStructure,
-          subtitleTrack: c.subtitleTrack,
-          // 原生视频精读独有的两栏：审批前必须看得见，否则最有门槛的产出被白名单挡在外面
-          reusableZh: c.reusableZh,
-          genPromptHintZh: c.genPromptHintZh,
-          // 只给 owner/监管审批区：普通用户公开 DTO 不含这份逐秒声音结构。
-          audioStory: c.audioStory,
-          scenePoolHints: c.scenePoolHints,
-          castShape: c.castShape,
-          densityHints: c.densityHints,
-          // 列表只展示来源数量，不下发来源 URL：listProposals 对 admin/supervisor
-          // 也开放，下发完整 sourceRefs 会扩大来源地址的暴露面。
-          sourceRefCount: c.sourceRefs.length,
-          // 学习来源摘要：卡落库了却不下发，审批人分辨不出精读卡与抽帧卡，
-          // 也看不见静默丢镜/触顶抽稀 —— 等于没落库。只给摘要，不给成本与地址。
-          learnSourceZh: describeManhuaTemplateLearnSourceZh(c.provenance),
-          nativeProgress: toSafeNativeTemplateProgress(
-            c.provenance?.nativeVideoDeepRead as NativeTemplateProgressSource | undefined,
-          ),
-        })),
-      };
+      // 0905 实测：68 张卡整份带节拍/字幕/音轨约 20MB，页面每次重拉都卡死几秒；
+      // 列表只回轻量行，选中那张再走 getProposalDetail 取重字段。
+      return { items: items.map((c) => proposalListRowDto(c)) };
+    }),
+
+  /** 单张待审卡的重字段（节拍/字幕/音轨/骨架等），选中时才取。 */
+  getProposalDetail: protectedProcedure
+    .input(z.object({ id: z.string().regex(/^tpl_[a-z0-9_-]{1,60}$/i) }))
+    .query(async ({ ctx, input }) => {
+      const ownerAllowed = resolveSiteOwnerOnlyAllowed(ctx.user);
+      if (!ownerAllowed) assertSupervisorOps(ctx.user, ctx.supervisorSession);
+      const { getGcsManhuaViralProposal } = await import("../services/manhuaViralTemplateStore");
+      const c = await getGcsManhuaViralProposal(input.id);
+      if (!c || (c.revision && !ownerAllowed)) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "待审卡不存在" });
+      }
+      return { item: { ...proposalListRowDto(c), ...proposalDetailFieldsDto(c) } };
     }),
 
   /**
@@ -801,3 +796,42 @@ export const manhuaViralTemplateRouter = router({
       return getManhuaSeriesLearnSnapshot(input.seriesKey);
     }),
 });
+
+/** listProposals 的轻量行：不带节拍/字幕/音轨这些重字段。 */
+function proposalListRowDto(c: ManhuaViralTemplateCard) {
+  return {
+    id: c.id,
+    nameZh: c.nameZh,
+    laneZh: c.laneZh,
+    summaryZh: c.summaryZh,
+    hook3sZh: c.hook3sZh,
+    status: c.status,
+    updatedAt: c.updatedAt,
+    revisionOf: c.revision?.parentTemplateId,
+    changedFields: c.revision?.changedFields,
+    reasons: c.revision?.reasons,
+    classification: c.classification,
+    // 列表只展示来源数量，不下发来源 URL
+    sourceRefCount: c.sourceRefs.length,
+    learnSourceZh: describeManhuaTemplateLearnSourceZh(c.provenance),
+    nativeProgress: toSafeNativeTemplateProgress(
+      c.provenance?.nativeVideoDeepRead as NativeTemplateProgressSource | undefined,
+    ),
+  };
+}
+
+/** 选中卡才下发的重字段（审批前必须看得见学到了什么，不能盲批）。 */
+function proposalDetailFieldsDto(c: ManhuaViralTemplateCard) {
+  return {
+    beatGrid: c.beatGrid,
+    storyStructure: c.storyStructure,
+    subtitleTrack: c.subtitleTrack,
+    reusableZh: c.reusableZh,
+    genPromptHintZh: c.genPromptHintZh,
+    // 只给 owner/监管审批区：普通用户公开 DTO 不含这份逐秒声音结构。
+    audioStory: c.audioStory,
+    scenePoolHints: c.scenePoolHints,
+    castShape: c.castShape,
+    densityHints: c.densityHints,
+  };
+}

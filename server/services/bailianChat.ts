@@ -104,6 +104,14 @@ export const OPENROUTER_QWEN_MODEL = "qwen/qwen3.8-max";
 export const STRUCTURING_CHAIN_GATEWAYS: readonly GlmGatewayName[] = [
   "evolink_glm", "openrouter", "plan_bj_qwen", "plan_sg_qwen", "openrouter_qwen",
 ];
+/** 0905 用户令：整形开关选 Qwen 时的链序——北京/新加坡套餐首发（并发批次轮流分流），两档败回 GLM，末档 OpenRouter Qwen。 */
+/** 整形链首发两档的轮数与轮间隔（0905 用户令：两档都败隔 20 秒再试，共重试两轮）。 */
+export const STRUCTURING_PRIMARY_ROUNDS = 3;
+export const STRUCTURING_PRIMARY_RETRY_DELAY_MS = 20_000;
+export const STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS: readonly GlmGatewayName[] = [
+  // 0905 用户拍板默认链：Qwen 北京套餐 → 新加坡套餐 → OpenRouter（GLM）→ EvoLink（GLM）
+  "plan_bj_qwen", "plan_sg_qwen", "openrouter", "evolink_glm",
+];
 
 export type BailianChatResponse = {
   choices?: Array<{ message?: { content?: unknown }; finish_reason?: string | null }>;
@@ -199,12 +207,12 @@ export type GlmParams = {
    * 只在 GLM-5.3 的两档之间降级，绝不静默换成 Qwen（换模型＝换产出口径）。
    * `openrouter_only` 是 0829 改线前的旧名，语义等同 `glm_only`，保留给存量调用方。
    */
-  gatewayPolicy?: "fallback" | "glm_only" | "openrouter_only" | "qwen_only" | "structuring_chain";
+  gatewayPolicy?: "fallback" | "glm_only" | "openrouter_only" | "qwen_only" | "structuring_chain" | "structuring_chain_qwen_first";
   /**
    * 正式多 JSON 整形的首选 GLM 通道。只改变两档的首发顺序；首选档失败后仍会
    * 自动切到另一条 GLM 通道，绝不因为这个字段换成 Qwen。
    */
-  preferredGlmGateway?: Extract<GlmGatewayName, "evolink_glm" | "openrouter">;
+  preferredGlmGateway?: GlmGatewayName;
   /** 调用方墙钟；默认 240 秒，长结构任务可显式放宽。**这是每一档的上限**。 */
   timeoutMs?: number;
   /**
@@ -239,7 +247,73 @@ export type GlmParams = {
   onRawResponse?: (response: GlmRawResponseEvidence) => Promise<void>;
   /** 业务验真钩子:抛错=该网关响应不可用,继续降级(复审 P1-1) */
   validateContent?: (content: string) => void;
+  /**
+   * 0905 用户拍板：调度器按批次给出**完整链序**（第 1 批 北京→EvoLink→OpenRouter，第 2 批 新加坡→OpenRouter→EvoLink）。
+   * 给了它就逐档立即切换、不做 20 秒重试轮；只允许整形链五档内的网关名。
+   */
+  gatewayOrder?: readonly GlmGatewayName[];
+  /** 0905 用户令：按网关覆盖单档超时（Qwen 两档 10 分钟不回就切下一档），未列出的档用 timeoutMs。 */
+  gatewayTimeoutMsOverrides?: Partial<Record<GlmGatewayName, number>>;
+  /** 0905 用户令「总不能傻等」：流式每 30 秒回报已收字节数，面板显示心跳。 */
+  onStreamProgress?: (info: { gateway: string; receivedBytes: number; elapsedMs: number }) => void | Promise<void>;
+  /** 0905 用户令：Qwen 套餐档思考 token 上限（DashScope `thinking_budget`），拦失控长考；GLM 档忽略。 */
+  thinkingBudget?: number;
+  /** 0905：标准 JSON Schema；只有支持 strict 的网关（Qwen 套餐两档）会以 json_schema strict 发出，其余仍 json_object。 */
+  responseJsonSchema?: { name: string; schema: Record<string, unknown> };
+  /** 0905：每次换档时回调（面板要看得见「首发档失败、正在第二档重跑」），失败不影响链路。 */
+  onGatewayFallback?: (info: { gateway: string; outcome: string; detail?: string }) => void | Promise<void>;
 };
+
+/**
+ * 0905 实锤：EvoLink 一发 9 分钟、6 万 token 的整集卡，第 58,259 字缺一个逗号，整份被判无效重跑。
+ * 按 JSON.parse 报的位置做确定性修复：缺逗号补逗号、提前结束补括号，最多 20 步；修不好回 null。
+ * 只动语法字符，不改内容。
+ */
+export function repairJsonTextBestEffort(text: string): string | null {
+  let current = String(text || "").trim();
+  if (!current) return null;
+  for (let step = 0; step < 20; step += 1) {
+    try {
+      JSON.parse(current);
+      return step === 0 ? null : current;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/Unexpected end of JSON input|Unterminated string in JSON/.test(msg)) {
+        const closers = missingJsonClosers(current);
+        if (!closers) return null;
+        current += closers;
+        continue;
+      }
+      const pos = Number(/position (\d+)/.exec(msg)?.[1]);
+      if (!Number.isInteger(pos) || pos <= 0 || pos > current.length) return null;
+      if (/Expected ',' or [\]}]/.test(msg) || /Expected ','/.test(msg)) {
+        current = `${current.slice(0, pos)},${current.slice(pos)}`;
+        continue;
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
+function missingJsonClosers(text: string): string {
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (const ch of text) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") stack.push("}");
+    else if (ch === "[") stack.push("]");
+    else if (ch === "}" || ch === "]") stack.pop();
+  }
+  return (inString ? '"' : "") + stack.reverse().join("");
+}
 
 function emptyGlmGatewayUsage(): GlmGatewayUsage {
   return { inputTokens: 0, outputTokens: 0, reasoningTokens: 0, costUsd: 0 };
@@ -271,29 +345,7 @@ function addGlmGatewayUsage(
 
 type GlmGatewayAttemptError = Error & { glmGatewayUsage?: GlmGatewayUsage };
 
-/**
- * 单进程供应商租约：同一 GLM 通道同一时刻只承接一份正式整形请求。
- * 两份 JSON 会由调用方分配到不同首选通道；某档失败需要跨通道 fallback 时，
- * 先等对方释放，避免两份同时压到同一个供应商。多 Fly 实例仍依赖上层任务锁。
- */
-const glmGatewayLeaseTails = new Map<"evolink_glm" | "openrouter", Promise<void>>();
-
-async function acquireGlmGatewayLease(
-  gateway: "evolink_glm" | "openrouter",
-): Promise<() => void> {
-  const previous = glmGatewayLeaseTails.get(gateway) || Promise.resolve();
-  let releaseCurrent!: () => void;
-  const current = new Promise<void>((resolve) => { releaseCurrent = resolve; });
-  glmGatewayLeaseTails.set(gateway, current);
-  await previous;
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    releaseCurrent();
-    if (glmGatewayLeaseTails.get(gateway) === current) glmGatewayLeaseTails.delete(gateway);
-  };
-}
+// 0905 用户令：拆掉 GLM 同通道租约。并发批次各自直连供应商，同一档同时多份请求由供应商自己限流，不在本进程排队。
 
 export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): Promise<GlmChatSuccess> {
   const trace: GlmGatewayTraceEntry[] = [];
@@ -357,25 +409,79 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
   const glmOnly = params.gatewayPolicy === "glm_only"
     || params.gatewayPolicy === "openrouter_only";
   const qwenOnly = params.gatewayPolicy === "qwen_only";
-  const structuringChain = params.gatewayPolicy === "structuring_chain";
+  const structuringChain = params.gatewayPolicy === "structuring_chain"
+    || params.gatewayPolicy === "structuring_chain_qwen_first";
+  const structuringChainOrder = params.gatewayPolicy === "structuring_chain_qwen_first"
+    ? STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS
+    : STRUCTURING_CHAIN_GATEWAYS;
   // 两个整形专用档只在 structuring_chain 里出现，其他策略的链序与历史逐字相同
   const generalGateways = configuredGateways.filter((g) => !g.structuringOnly);
-  const eligibleGateways = structuringChain
-    ? STRUCTURING_CHAIN_GATEWAYS.flatMap((name) => configuredGateways.filter((g) => g.name === name))
+  const explicitOrder = Array.isArray(params.gatewayOrder) && params.gatewayOrder.length
+    ? params.gatewayOrder.filter((name) => STRUCTURING_CHAIN_GATEWAYS.includes(name) || STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS.includes(name))
+    : null;
+  const eligibleGateways = explicitOrder
+    ? explicitOrder.flatMap((name) => configuredGateways.filter((g) => g.name === name))
+    : structuringChain
+    ? structuringChainOrder.flatMap((name) => configuredGateways.filter((g) => g.name === name))
     : glmOnly
       ? generalGateways.filter((g) => GLM_MODEL_GATEWAYS.has(g.name))
       : qwenOnly
         ? generalGateways.filter((g) => !GLM_MODEL_GATEWAYS.has(g.name))
         : generalGateways;
-  // structuring_chain 的顺序是用户拍板的固定链，不受首选档重排
-  const preferred = structuringChain ? undefined : params.preferredGlmGateway;
+  // 0905 用户令：并发批次必须分流到不同通道真并行（同通道有租约会排队＝串行），
+  // 首发档由调度器按批次轮流指定；失败仍按链序逐档往下切。
+  const preferred = params.preferredGlmGateway;
   const gateways = preferred
     ? [
         ...eligibleGateways.filter((gateway) => gateway.name === preferred),
         ...eligibleGateways.filter((gateway) => gateway.name !== preferred),
       ]
     : eligibleGateways;
-  for (const g of gateways) {
+  // 0905 用户令：整形链首发两档都失败 → 隔 20 秒再来一轮，共重试两轮；三轮都败才落到兜底模型那几档。
+  const plan: Array<{ gateway: (typeof gateways)[number]; delayBeforeMs: number }> = explicitOrder
+    ? gateways.map((gateway) => ({ gateway, delayBeforeMs: 0 }))
+    : structuringChain
+    ? (() => {
+        // 未配置的首发档只 trace 一次、不进重试轮，免得白等 20 秒×2
+        const primaryAll = gateways.slice(0, 2);
+        const primary = primaryAll.filter((gateway) => gateway.ready);
+        const unconfiguredPrimary = primaryAll.filter((gateway) => !gateway.ready);
+        const rest = gateways.slice(2);
+        const rounds: typeof plan = [];
+        for (let round = 0; round < (primary.length ? STRUCTURING_PRIMARY_ROUNDS : 0); round += 1) {
+          primary.forEach((gateway, index) => {
+            rounds.push({ gateway, delayBeforeMs: round > 0 && index === 0 ? STRUCTURING_PRIMARY_RETRY_DELAY_MS : 0 });
+          });
+        }
+        return [
+          ...unconfiguredPrimary.map((gateway) => ({ gateway, delayBeforeMs: 0 })),
+          ...rounds,
+          ...rest.map((gateway) => ({ gateway, delayBeforeMs: 0 })),
+        ];
+      })()
+    : gateways.map((gateway) => ({ gateway, delayBeforeMs: 0 }));
+  for (const step of plan) {
+    const g = step.gateway;
+    if (step.delayBeforeMs > 0) {
+      if (params.abortSignal?.aborted) {
+        throw new GlmGatewayError("GLM 调用已被硬截止取消", trace, accumulatedUsage);
+      }
+      // 预算已不够再跑一档就别等了，直接进下一步的「预算耗尽跳过」
+      if (Number.isFinite(Number(params.deadlineAtMs))
+        && Number(params.deadlineAtMs) - Date.now() < GLM_CHAIN_MIN_GATEWAY_MS + step.delayBeforeMs) {
+        trace.push({ gateway: g.name, model: g.model, outcome: "skipped_budget_exhausted" });
+        continue;
+      }
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(done, step.delayBeforeMs);
+        function done() {
+          clearTimeout(timer);
+          params.abortSignal?.removeEventListener("abort", done);
+          resolve();
+        }
+        params.abortSignal?.addEventListener("abort", done, { once: true });
+      });
+    }
     if (!g.ready) {
       trace.push({ gateway: g.name, model: g.model, outcome: "skipped_not_configured" });
       continue;
@@ -391,19 +497,10 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
     if (params.abortSignal?.aborted) {
       throw new GlmGatewayError("GLM 调用已被硬截止取消", trace, accumulatedUsage);
     }
-    const releaseGateway = GLM_MODEL_GATEWAYS.has(g.name)
-      ? await acquireGlmGatewayLease(g.name as "evolink_glm" | "openrouter")
-      : () => undefined;
-    if (params.abortSignal?.aborted) {
-      releaseGateway();
-      throw new GlmGatewayError("GLM 调用已被硬截止取消", trace, accumulatedUsage);
-    }
-    // 同通道请求可能在租约队列中等待很久；取得租约后必须按当前墙钟重新验预算。
-    // 若已不足以完成一档，先释放租约再跳过，绝不让 invokeOneGlmGateway 的 1 秒下限强发外呼。
+    // 逐档切换前按当前墙钟重新验预算；不足以完成一档就跳过，绝不让 invokeOneGlmGateway 的 1 秒下限强发外呼。
     if (Number.isFinite(Number(params.deadlineAtMs))) {
       const remainMs = Number(params.deadlineAtMs) - Date.now();
       if (remainMs < GLM_CHAIN_MIN_GATEWAY_MS) {
-        releaseGateway();
         trace.push({ gateway: g.name, model: g.model, outcome: "skipped_budget_exhausted" });
         continue;
       }
@@ -421,12 +518,26 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
         try {
           params.validateContent(text);
         } catch (ve) {
-          trace.push({
-            gateway: g.name,
-            model: g.model,
-            outcome: "content_invalid",
-            detail: (ve instanceof Error ? ve.message : String(ve)).slice(0, 120),
-          });
+          const detail = (ve instanceof Error ? ve.message : String(ve)).slice(0, 120);
+          // 0905：先做确定性 JSON 修复，修好再验一次；修不好才换档
+          const repaired = repairJsonTextBestEffort(text);
+          let repairedOk = false;
+          if (repaired) {
+            try {
+              params.validateContent(repaired);
+              repairedOk = true;
+            } catch {
+              repairedOk = false;
+            }
+          }
+          if (repairedOk && repaired) {
+            console.warn(`[glmGatewayFallback] ${g.name}: 回包 JSON 语法已确定性修复后采用（原因：${detail}）`);
+            trace.push({ gateway: g.name, model: g.model, outcome: "ok", detail: `content_repaired: ${detail}` });
+            const patched = { ...res, choices: [{ ...res.choices![0], message: { ...res.choices![0]!.message, content: repaired } }, ...res.choices!.slice(1)] };
+            return { ...patched, gateway: g.name, model: g.model, gatewayTrace: trace };
+          }
+          trace.push({ gateway: g.name, model: g.model, outcome: "content_invalid", detail });
+          await params.onGatewayFallback?.({ gateway: g.name, outcome: "content_invalid", detail })?.catch?.(() => undefined);
           continue;
         }
       }
@@ -456,8 +567,7 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
       const providerError = nativeProviderReceiptFromError(e);
       if (providerError) trace[trace.length - 1]!.providerError = providerError;
       console.warn(`[glmGatewayFallback] ${g.name}: ${msg.slice(0, 200)}`);
-    } finally {
-      releaseGateway();
+      try { await params.onGatewayFallback?.({ gateway: g.name, outcome, detail: msg.slice(0, 120) }); } catch { /* 旁路 */ }
     }
   }
   const glmOrderZh = gateways
@@ -481,9 +591,11 @@ async function readGlmRawResponseWithEvidence(
   metadata: Pick<GlmRawResponseEvidence, "gateway" | "model" | "httpStatus" | "providerRequestId" | "contentType">,
   rawCap: number,
   onRawResponse: NonNullable<GlmParams["onRawResponse"]>,
+  onProgress?: (receivedBytes: number) => void,
 ): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let receivedBytes = 0;
+  let lastProgressAt = Date.now();
   let bodyComplete = false;
   let readFailed = false;
   let readError: unknown;
@@ -491,12 +603,16 @@ async function readGlmRawResponseWithEvidence(
   try {
     if (reader) {
       for (;;) {
-        const { done, value } = await reader.read();
+        const { done, value } = await readWithIdleTimeout(reader);
         if (done) { bodyComplete = true; break; }
         // 超限检查不裁掉已经到达的最后一块；取证会明确标注未完整读完。
         chunks.push(Buffer.from(value));
         receivedBytes += value.byteLength;
         if (receivedBytes > rawCap) throw new Error("GLM 链响应超过处理上限");
+        if (onProgress && Date.now() - lastProgressAt >= 30_000) {
+          lastProgressAt = Date.now();
+          try { onProgress(receivedBytes); } catch { /* 心跳是旁路 */ }
+        }
       }
     } else {
       const bytes = Buffer.from(await response.text(), "utf8");
@@ -532,6 +648,30 @@ async function readGlmRawResponseWithEvidence(
  * 读 SSE 流并还原成非流式同形的 JSON 字符串，**返回体形状与改流式前逐字一致**——
  * 上游解析、usage 折算、finish_reason 判定全都不用改，只换了传输方式。
  */
+
+/**
+ * 0905 实锤：EvoLink 整形流把正文吐完后连接挂着不发结束帧，链路干等到 30 分钟档才切档。
+ * 任何一次 read() 超过 GLM_STREAM_IDLE_TIMEOUT_MS（用户 0905 定 10 分钟）没有新字节，就判本档失败（抛错→网关层按链序切下一档）。
+ */
+export const GLM_STREAM_IDLE_TIMEOUT_MS = 10 * 60_000;
+export async function readWithIdleTimeout<T>(
+  reader: { read(): Promise<T>; cancel(reason?: unknown): Promise<void> },
+  idleMs = GLM_STREAM_IDLE_TIMEOUT_MS,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const idle = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reader.cancel("idle").catch(() => undefined);
+      reject(new Error(`上游流 ${Math.round(idleMs / 1000)} 秒无数据，判本档失败并切下一档`));
+    }, idleMs);
+  });
+  try {
+    return await Promise.race([reader.read(), idle]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function readGlmSseStream(
   body: ReadableStream<Uint8Array>,
   maxResponseBytes?: number,
@@ -589,7 +729,7 @@ async function readGlmSseStream(
   let parseFailures = 0;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readWithIdleTimeout(reader);
       if (done) break;
       rawBytes += value.byteLength;
       if (rawBytes > rawCap) throw new Error("GLM 链响应超过处理上限");
@@ -631,7 +771,7 @@ async function invokeOneGlmGateway(
   // 而 0827 定的口径本就是「单次 30 分钟等待、绝不自动重提」——15 分钟传不进去。
   // 全部产出（含被门禁标记的版本）进 GLM 后输入更大，上限必须留够。
   // 每档实际墙钟 = min(本档上限, 整链剩余预算)。deadlineAtMs 缺省时退回旧行为。
-  const perGatewayMs = Math.floor(Number(params.timeoutMs) || 240_000);
+  const perGatewayMs = Math.floor(Number(params.gatewayTimeoutMsOverrides?.[gateway]) || Number(params.timeoutMs) || 240_000);
   const remainMs = Number.isFinite(Number(params.deadlineAtMs))
     ? Number(params.deadlineAtMs) - Date.now()
     : Number.POSITIVE_INFINITY;
@@ -639,8 +779,9 @@ async function invokeOneGlmGateway(
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const signal = params.abortSignal ? AbortSignal.any([params.abortSignal, timeoutSignal]) : timeoutSignal;
   // 输出上限按网关夹紧（0905 用户令整形链 262K；超发会被供应商按参数越界拒掉，白跳一档）
-  // GLM 两档都发 262,144（用户令：EvoLink 没写死上限，能通就赚，不通落下一档）；Qwen 三档按公开上限 131,072
-  const gatewayMaxOutput = GLM_MODEL_GATEWAYS.has(gateway) ? 262_144 : 131_072;
+  // 0905 实弹：EvoLink 400「max_tokens 限制 [1,131072]」、OpenRouter 钉死 Z.AI 档 262K 直接 404 无端点；
+  // 五档统一夹在 131,072，GLM 才真能接单。
+  const gatewayMaxOutput = 131_072;
   const budget = Math.max(8_192, Math.min(gatewayMaxOutput, Math.floor(Number(params.maxTokens) || 65_536)));
   const body: Record<string, unknown> = {
     model,
@@ -677,9 +818,16 @@ async function invokeOneGlmGateway(
     body.reasoning_effort = "xhigh";
     body.max_completion_tokens = budget;
   } else if (gateway === "plan_sg_qwen" || gateway === "plan_bj_qwen") {
+    // 0905 实弹：Qwen3.8-Max 套餐档 json_schema strict 是真语法级约束（对抗提示词也拦得住）
+    if (params.responseJsonSchema) {
+      body.response_format = { type: "json_schema", json_schema: { name: params.responseJsonSchema.name, strict: true, schema: params.responseJsonSchema.schema } };
+    }
     // DashScope compatible-mode Qwen(含新加坡/北京 Token Plan):只认 enable_thinking
     // (不认 reasoning_effort),预算走 max_tokens——七审第4条:换档时这条分支键漏改过
     body.enable_thinking = true;
+    if (Number.isFinite(Number(params.thinkingBudget)) && Number(params.thinkingBudget) > 0) {
+      body.thinking_budget = Math.floor(Number(params.thinkingBudget));
+    }
     body.max_tokens = budget;
   } else if (gateway === "openrouter_qwen") {
     // OpenRouter 上的 Qwen3.8-Max：思考走 reasoning.enabled，预算走 max_tokens；不钉 provider
@@ -752,9 +900,12 @@ async function invokeOneGlmGateway(
     const streamSse = Boolean(res.ok && res.body && isSse);
     // 沿用既有 SSE 原文护栏，不能把信封开销算进还原正文上限。
     const rawCap = streamSse ? Math.max(maxResponseBytes * 64, 64 * 1024 * 1024) : maxResponseBytes;
+    const streamStartedAt = Date.now();
     const bytes = await readGlmRawResponseWithEvidence(res, {
       gateway, model, httpStatus: res.status, providerRequestId, contentType,
-    }, rawCap, params.onRawResponse);
+    }, rawCap, params.onRawResponse, (receivedBytes) => {
+      void params.onStreamProgress?.({ gateway, receivedBytes, elapsedMs: Date.now() - streamStartedAt });
+    });
     raw = streamSse
       ? await readGlmSseStream(new ReadableStream<Uint8Array>({
         start(controller) { controller.enqueue(bytes); controller.close(); },

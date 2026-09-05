@@ -17,12 +17,20 @@ export type NativeDeepReadGlmEvidenceContext = {
   episodeIndex?: number;
   batchRequestId?: string;
   callId?: string;
-  /** 正式整形调度器分配的首选通道；失败时仍自动切到另一条GLM通道。 */
-  preferredGlmGateway?: "evolink_glm" | "openrouter";
+  /** 正式整形调度器分配的首选通道；失败时仍按链序自动切到下一档。 */
+  preferredGlmGateway?: string;
+  /** 0905 整形开关：GLM 首发链或 Qwen 首发链。 */
+  gatewayPolicy?: "structuring_chain" | "structuring_chain_qwen_first";
   /** 稳定调用身份下先回读已付费证据；仅正式可恢复整形使用。 */
   recoverExisting?: boolean;
   /** 请求证据落盘后、真正调用上游前发运行回执；恢复命中时不会调用。 */
   onBeforePaidCall?: () => Promise<void>;
+  /** 0905 用户拍板：本批完整链序（按批次序号分配），给了就逐档立即切换。 */
+  gatewayOrder?: readonly string[];
+  /** 0905：流式心跳（每 30 秒已收字节数），面板据此显示「还活着」。 */
+  onStreamProgress?: (info: { gateway: string; receivedBytes: number; elapsedMs: number }) => void | Promise<void>;
+  /** 0905：换档时通知面板（首发档失败原因 + 正在切下一档）。 */
+  onGatewayFallback?: (info: { gateway: string; outcome: string; detail?: string }) => void | Promise<void>;
 };
 export type NativeDeepReadGlmEvidenceReceipt = {
   objectName: string;
@@ -77,7 +85,7 @@ export type NativeDeepReadGlmRecoveredEvidence = {
   parsed: Record<string, unknown>;
   response: NativeDeepReadGlmStoredResponse;
   evidence: NativeDeepReadGlmEvidence;
-  preferredGlmGateway: "evolink_glm" | "openrouter";
+  preferredGlmGateway: string;
 };
 
 function evidencePrefix(callId: string): string {
@@ -172,14 +180,17 @@ export async function readNativeDeepReadGlmRecoveredEvidence(input: {
     || requestPayload.episodeIndex !== episodeIndex
     || typeof requestPayload.batchRequestId !== "string"
     || !requestPayload.batchRequestId.trim()
-    || (storedPreferred !== "evolink_glm" && storedPreferred !== "openrouter")
+    // 0905 整形链五档（GLM 两档 + Qwen 三档）都可能是首发档，只要求非空字符串
+    || typeof storedPreferred !== "string" || !storedPreferred.trim()
     || (input.context.preferredGlmGateway && storedPreferred !== input.context.preferredGlmGateway)
   ) throw new Error("整集GLM request证据身份不一致，已停止以避免重复付费");
   const expectedRequest = {
     ...input.expectedRequestWithoutPreferredGateway,
     preferredGlmGateway: storedPreferred,
   };
-  if (canonicalJson(requestPayload.request) !== canonicalJson(expectedRequest)) {
+  // responseJsonSchema 只影响 Qwen 档的 response_format，不改提示词与冻结参数；比对身份时剔除，旧证据仍可恢复
+  const stripSchema = (r: unknown) => { const o = { ...(r as Record<string, unknown>) }; delete o.responseJsonSchema; return o; };
+  if (canonicalJson(stripSchema(requestPayload.request)) !== canonicalJson(stripSchema(expectedRequest))) {
     throw new Error("整集GLM request证据与当前冻结请求不一致，已停止以避免重复付费");
   }
   const requestReceipt = receiptFromDownload(requestObjectName, requestDownloaded);

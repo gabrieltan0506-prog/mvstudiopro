@@ -147,17 +147,23 @@ describe("normalize 写入路：先剥离再入库（0826 拍板）", () => {
     );
   });
 
-  it("数字时间轴校验仍是硬门禁：cue 越界照抛", () => {
-    expect(() => normalizeManhuaNativeAudioChunkAnalysis({
+  it("0905：cue 越界不再整集炸，越界事件丢弃、区间内保留", () => {
+    const out = normalizeManhuaNativeAudioChunkAnalysis({
       raw: {
         ...rawChunk,
         audioTrack: [{
           ...rawChunk.audioTrack[0],
-          cues: [{ atSec: 99, kind: "sfx", detailZh: "越界" }],
+          cues: [
+            { atSec: 99, kind: "sfx", detailZh: "越界" },
+            { atSec: 3, kind: "sfx", detailZh: "在内" },
+          ],
         }],
       },
       chunk: { index: 0, startSec: 0, endSec: 10 },
-    })).toThrow("音频事件秒位不属于声明区间");
+    });
+    const cues = out.audioTrack[0]!.cues;
+    expect(cues).toHaveLength(1);
+    expect(cues[0]!.detailZh).toBe("在内");
   });
 
   it("必填字段剥离后为空则拒绝入库", () => {
@@ -225,5 +231,19 @@ describe("门禁类失败判定", () => {
   it("审查#3：相邻数字拼出的新钟表文本被多轮剥净；标点残渣收敛", () => {
     expect(stripClockTextZh("2在1:05处:15")).toBe("");
     expect(stripClockTextZh("在01:23处鼓点，，在02:10处收")).toBe("鼓点，收");
+  });
+});
+
+describe("0905 · 音轨时间段修补", () => {
+  it("结尾未覆盖/开头偏移/空洞/重叠都修补为连续覆盖，不再抛错", async () => {
+    const { repairTrackCoverage } = await import("./manhuaNativeAudioAnalysis");
+    const out = repairTrackCoverage([
+      { fromSec: 1, toSec: 90 },
+      { fromSec: 100, toSec: 180 },
+      { fromSec: 170, toSec: 250 },
+    ], 0, 301);
+    expect(out.tracks.map((t) => [t.fromSec, t.toSec])).toEqual([[0, 100], [100, 170], [170, 301]]);
+    expect(out.repairs).toHaveLength(4);
+    expect(() => repairTrackCoverage([], 0, 10)).toThrow("音频分析没有有效时间段");
   });
 });

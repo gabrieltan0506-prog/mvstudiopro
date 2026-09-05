@@ -168,23 +168,30 @@ export async function fetchDouyinAwemeDetailViaWebApi(
   if (!cookies.length) return null;
   const url = buildDouyinAwemeDetailApiUrl(id);
   const referer = `https://www.douyin.com/video/${id}`;
-  for (const cookie of cookies) {
-    let payload: unknown | null = null;
-    try {
-      payload = await fetchDouyinJsonWithCookie(url, referer, cookie);
-    } catch (e) {
-      console.warn(
-        "[manhuaLearnDouyinWebApi] detail fetch failed:",
-        id,
-        e instanceof Error ? e.message : e,
-      );
+  // 0905 用户令：详情接口抽风一次就把整集判「没有免费信号」太脆——全部 cookie 都失手后隔 5 秒再来，共 3 轮
+  for (let round = 0; round < DOUYIN_DETAIL_FETCH_ROUNDS; round += 1) {
+    if (round > 0) await new Promise((resolve) => setTimeout(resolve, DOUYIN_DETAIL_FETCH_RETRY_DELAY_MS));
+    for (const cookie of cookies) {
+      let payload: unknown | null = null;
+      try {
+        payload = await fetchDouyinJsonWithCookie(url, referer, cookie);
+      } catch (e) {
+        console.warn(
+          `[manhuaLearnDouyinWebApi] detail fetch failed (round ${round + 1}/${DOUYIN_DETAIL_FETCH_ROUNDS}):`,
+          id,
+          e instanceof Error ? e.message : e,
+        );
+      }
+      if (payload == null) continue;
+      const parsed = parseDouyinAwemeDetailResponse(payload);
+      if (parsed) return parsed;
     }
-    if (payload == null) continue;
-    const parsed = parseDouyinAwemeDetailResponse(payload);
-    if (parsed) return parsed;
   }
   return null;
 }
+
+const DOUYIN_DETAIL_FETCH_ROUNDS = 3;
+const DOUYIN_DETAIL_FETCH_RETRY_DELAY_MS = 5_000;
 
 /**
  * 下载失败后的轻量刷新：从备用候选开始逐个取一遍详情，返回去重后的新鲜播放地址。

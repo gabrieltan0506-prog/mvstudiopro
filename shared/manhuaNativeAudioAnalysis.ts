@@ -237,6 +237,45 @@ function assertTrackCoverage(
   if (Math.abs(cursor - endSec) > 0.5) throw new Error("音频分析未覆盖片段结尾");
 }
 
+/**
+ * 0905 用户令：音轨时间段的开头/空洞/重叠/结尾偏差不再在整集拼装时把整集判死
+ * （实锤：抖音《万妖图录传》第 1 集 8 段全过门禁后「音频分析未覆盖片段结尾」整集失败）。
+ * 改为确定性修补：开头对齐段首、空洞由前一段延伸补上、重叠裁掉、结尾延伸到段尾；
+ * 只改秒位边界不改内容，修补数量写警告。没有任何时间段仍抛错。
+ */
+export function repairTrackCoverage<T extends Pick<ManhuaNativeAudioTrack, "fromSec" | "toSec">>(
+  tracks: readonly T[],
+  startSec: number,
+  endSec: number,
+): { tracks: T[]; repairs: string[] } {
+  if (!tracks.length) throw new Error("音频分析没有有效时间段");
+  const ordered = [...tracks].sort((a, b) => a.fromSec - b.fromSec || a.toSec - b.toSec).map((t) => ({ ...t }));
+  const repairs: string[] = [];
+  if (Math.abs(ordered[0]!.fromSec - startSec) > 0.5) {
+    repairs.push(`开头 ${ordered[0]!.fromSec.toFixed(1)}→${startSec.toFixed(1)}`);
+    ordered[0]!.fromSec = startSec;
+  }
+  for (let i = 1; i < ordered.length; i += 1) {
+    const prev = ordered[i - 1]!;
+    const cur = ordered[i]!;
+    if (cur.fromSec > prev.toSec + 0.5) {
+      repairs.push(`空洞 ${prev.toSec.toFixed(1)}–${cur.fromSec.toFixed(1)} 由前段延伸补上`);
+      prev.toSec = cur.fromSec;
+    } else if (cur.fromSec < prev.toSec - 0.5) {
+      repairs.push(`重叠 ${cur.fromSec.toFixed(1)}–${prev.toSec.toFixed(1)} 裁掉前段`);
+      prev.toSec = cur.fromSec;
+    }
+  }
+  const last = ordered[ordered.length - 1]!;
+  if (Math.abs(last.toSec - endSec) > 0.5) {
+    repairs.push(`结尾 ${last.toSec.toFixed(1)}→${endSec.toFixed(1)}`);
+    last.toSec = endSec;
+  }
+  const valid = ordered.filter((t) => t.toSec > t.fromSec);
+  if (!valid.length) throw new Error("音频分析时间段修补后为空");
+  return { tracks: valid, repairs };
+}
+
 /** 校验段内结果并换算为全片绝对秒。 */
 export function normalizeManhuaNativeAudioChunkAnalysis(input: {
   raw: unknown;
@@ -244,8 +283,11 @@ export function normalizeManhuaNativeAudioChunkAnalysis(input: {
 }): ManhuaNativeAudioChunkAnalysis {
   const parsed = manhuaNativeAudioChunkAnalysisSchema.parse(input.raw);
   const lenSec = input.chunk.endSec - input.chunk.startSec;
-  const localTracks = [...parsed.audioTrack]
-    .sort((a, b) => a.fromSec - b.fromSec || a.toSec - b.toSec);
+  const repaired = repairTrackCoverage(parsed.audioTrack, 0, lenSec);
+  if (repaired.repairs.length) {
+    console.warn(`[nativeAudioAnalysis] 第 ${input.chunk.startSec}–${input.chunk.endSec} 秒段音轨时间段修补 ${repaired.repairs.length} 处：${repaired.repairs.join("；")}`);
+  }
+  const localTracks = repaired.tracks;
   assertTrackCoverage(localTracks, 0, lenSec);
   /**
    * 写入路（0826 用户拍板）：文本秒位不再 assert 拒收，改为先剥离再入库。
@@ -262,10 +304,14 @@ export function normalizeManhuaNativeAudioChunkAnalysis(input: {
     if (!next.trim()) throw new Error("音频描述剥离文本秒位后正文为空，拒绝入库");
     return next;
   };
+  // 0905 实锤（花开锦绣第 6 集）：8 段全过门禁后拼整集音轨时，某段一条声音事件秒位落在它声明的区间外，
+  // 旧口径整集 throw——9 次读片付完钱才在最后一步炸。改为：越界事件丢弃并计数告警（不编造、不挪秒位），
+  // 区间覆盖的硬校验（assertTrackCoverage）不动。
+  let droppedCueCount = 0;
   const audioTrack = localTracks.map((track): ManhuaNativeAudioTrack => {
-    if (track.cues.some((cue) => cue.atSec < track.fromSec || cue.atSec > track.toSec)) {
-      throw new Error("音频事件秒位不属于声明区间");
-    }
+    const inRange = track.cues.filter((cue) => cue.atSec >= track.fromSec && cue.atSec <= track.toSec);
+    droppedCueCount += track.cues.length - inRange.length;
+    track = { ...track, cues: inRange };
     return {
       fromSec: input.chunk.startSec + track.fromSec,
       toSec: input.chunk.startSec + track.toSec,
@@ -287,6 +333,9 @@ export function normalizeManhuaNativeAudioChunkAnalysis(input: {
   const mixNotesZh = sanitize(parsed.mixNotesZh);
   const reusableAudioZh = sanitizeRequired(parsed.reusableAudioZh);
   const genAudioHintZh = sanitizeRequired(parsed.genAudioHintZh);
+  if (droppedCueCount > 0) {
+    console.warn(`[nativeAudioAnalysis] 第 ${input.chunk.startSec}–${input.chunk.endSec} 秒段丢弃 ${droppedCueCount} 条越界声音事件（秒位不在声明区间内）`);
+  }
   if (strippedCount > 0) {
     console.warn(
       `[nativeAudioAnalysis] 已剥离文本秒位 ${strippedCount} 处（数字时间轴为唯一真源）`,
@@ -311,8 +360,15 @@ function mergeManhuaNativeAudioChunksCore(input: {
 > {
   if (!input.chunks.length) throw new Error("音频分析分段为空");
   const durationSec = Math.max(1, Math.floor(Number(input.durationSec) || 0));
-  const allTracks = input.chunks.flatMap((row) => row.audioTrack)
-    .sort((a, b) => a.fromSec - b.fromSec || a.toSec - b.toSec);
+  const repairedAll = repairTrackCoverage(
+    input.chunks.flatMap((row) => row.audioTrack),
+    0,
+    durationSec,
+  );
+  if (repairedAll.repairs.length) {
+    console.warn(`[nativeAudioAnalysis] 整集音轨时间段修补 ${repairedAll.repairs.length} 处：${repairedAll.repairs.join("；")}`);
+  }
+  const allTracks = repairedAll.tracks;
   assertTrackCoverage(allTracks, 0, durationSec);
   const join = (pick: (row: ManhuaNativeAudioChunkAnalysis) => string, max: number) =>
     cut(input.chunks.map(pick).filter(Boolean).join("；"), max);

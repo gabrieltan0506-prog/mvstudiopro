@@ -21,7 +21,7 @@ import {
 const FIELD_LABELS: Record<string, string> = {
   emotionTagsZh: "情绪", narrativeFeatureTagsZh: "叙事特色", performanceTagsZh: "表演",
   audiovisualTagsZh: "视听", audienceExperienceTagsZh: "观众体验",
-  beatStructureZh: "节拍结构", moodArcZh: "情绪弧", reusableZh: "可复用手法", genPromptHintZh: "生成提示线索",
+  beatStructureZh: "节拍结构", moodArcZh: "情绪弧", reusableZh: "可复用手法", genPromptHintZh: "剧情要素",
   hintZh: "本镜观察", unitTypeZh: "运镜解读", shotSizeZh: "景别", angleZh: "机位角度", compositionZh: "构图", cameraMoveZh: "运镜",
   blockingZh: "调度", bodyActionZh: "身体动作", limbPropActionZh: "肢体道具", microExpressionZh: "微表情",
   gazeBreathZh: "视线呼吸", relationshipReactionZh: "关系反应", lightingZh: "灯光", actionZh: "动作叙述",
@@ -70,21 +70,52 @@ const emphasize = (v: unknown): string => {
     .join("");
 };
 /** 声音事件种类中文化（0902 八审：sfx/voice_change 英文尾巴清除）；未知种类原样放行 */
+// 0905 用户令：报告不许中英夹杂。0827 定稿的 11 项声音事件词表全部给中文名，未知值兜底「声音事件」而不是露英文
 const CUE_KIND_ZH: Record<string, string> = {
+  source_change: "声源切换",
+  voice_change: "语调变化",
+  voicechange: "语调变化",
+  voice: "语调变化",
   sfx: "音效",
-  voice_change: "语调",
-  voicechange: "语调",
-  voice: "语调",
+  bgm_in: "配乐进入",
+  bgm_change: "配乐转折",
+  bgm_out: "配乐退出",
   bgm: "配乐",
   music: "配乐",
+  atmosphere_change: "环境氛围变化",
+  dynamics_change: "强弱变化",
+  mix_change: "混音变化",
+  silence_in: "静默开始",
+  silence_out: "静默结束",
   silence: "静默",
   ambient: "环境音",
   dialogue: "对白",
   narration: "旁白",
 };
 const cueKindZh = (kind: string): string =>
-  CUE_KIND_ZH[kind.trim().toLowerCase().replace(/[\s-]+/g, "_")] ?? kind;
+  CUE_KIND_ZH[kind.trim().toLowerCase().replace(/[\s-]+/g, "_")] ?? (kind.trim() ? "声音事件" : "");
 const mmss = (s: number): string => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+
+/**
+ * 🔒 0905 用户冻结（报告呈现契约）：分段摘要不按「第1…第9段」逐段铺，
+ * 按时间三分成前/中/后三段，内容一字不删（要压缩由用户另行指定）。
+ * 没有分段标记的文本原样返回。
+ */
+export function condenseSegmentedSummaryZh(text: string): string {
+  const clean = String(text || "").trim();
+  if (!clean) return "";
+  const parts = clean.split(/【第\d+段】/).map((t) => t.trim()).filter(Boolean);
+  // 0905 用户令：只按前/中/后重新分组，内容一字不删——要压缩内容由用户另行指定
+  if (parts.length < 2) return clean;
+  const third = Math.ceil(parts.length / 3);
+  const groups = [parts.slice(0, third), parts.slice(third, third * 2), parts.slice(third * 2)]
+    .filter((g) => g.length > 0);
+  const labels = groups.length === 3 ? ["前段", "中段", "后段"] : groups.length === 2 ? ["前段", "后段"] : ["全集"];
+  return groups
+    .map((g, i) => `【${labels[i]}】${g.join("")}`)
+    .join("\n");
+}
 
 function makeSigner() {
   const creds = JSON.parse(String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "{}")) as {
@@ -480,7 +511,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
    * 节奏结构 / 情绪推进），不再挤成一叠小卡——它们是这张卡最值钱的部分。
    */
   const summaryTextOf = (key: (typeof SUMMARY_TEXT_KEYS)[number]): string =>
-    String(card[key] ?? "").trim() || "本集未整理出该项";
+    condenseSegmentedSummaryZh(String(card[key] ?? "").trim()) || "本集未整理出该项";
 
   // 0902 十审拍板：入镜转场列摘除——漫剧九成五是硬切，整列零信息；
   // 非硬切转场（叠化/闪白/甩接/匹配）由 CRAFT 词典写进「运镜解读」+ 蓝色技巧行，证据字段照存不丢。
@@ -491,7 +522,6 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
    */
   const CAMERA_CRAFT_RE = /甩|环绕|旋转|升格|慢动作|定格|一镜到底|俯冲|希区柯克|急推|急拉|变焦|穿越|跟拍/;
   const TRANSITION_CRAFT_RE = /叠化|闪白|闪黑|匹配|遮罩|甩接|变速/;
-  const STORY_KINDS = new Set(["剧情", "情绪"]);
   /**
    * 0902 四审拍板：「剪辑镜头」占 99% 是废话填充——这栏改推导「镜头变化」：
    * 景别/机位对比前一镜（特写→近景、俯拍→平视）；拆分镜是内部手法，
@@ -688,14 +718,20 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
       changeNotesByIndex[i] = "";
     }
   }
+  // 🔒 0905 用户冻结（报告呈现契约）：镜头表只列重点镜（剧情亮点/转折 + 运镜/剪辑技巧）、
+  // 声音事件 11 项全中文、页脚「逐帧精炼审读整理，仅作学习拆解，影视版权归原出品方所有」。
+  // 改任何一项需用户重新授权，与读片两档契约（NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256）同级。
+  let highlightShotCount = 0;
   const shotRows = shots.map((shot, shotIndex) => {
     const startSec = Number(shot.startSec) || 0;
     const endSec = Number(shot.endSec) || 0;
-    const storyMoments = keyMomentsInRange(startSec, endSec)
-      .filter((km) => STORY_KINDS.has(String(km.kindZh)));
+    // 0905 用户令：镜头表＝keyMoments 所在镜（五类重点时刻全算）+ 运镜/剪辑技巧镜
+    const storyMoments = keyMomentsInRange(startSec, endSec);
     const cameraCraft = CAMERA_CRAFT_RE.test(String(shot.cameraMoveZh ?? ""))
       || TRANSITION_CRAFT_RE.test(String(shot.transitionInZh ?? ""));
     const accent = storyMoments.length ? "#b8452f" : cameraCraft ? "#3a7bd5" : "";
+    if (!accent) return "";
+    highlightShotCount += 1;
     const marks = storyMoments.length
       ? storyMoments.map((km) => KIND_ICON[String(km.kindZh)] ?? "⭐").join("")
       : cameraCraft ? "🎥" : "";
@@ -946,7 +982,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
 
 ${section("📏 镜长分布", histBars)}
 ${section("💡 可复用手法总结", panel(summaryTextOf("reusableZh")))}
-${section("🧭 生成提示要素", panel(summaryTextOf("genPromptHintZh")))}
+${section("🧭 剧情要素", panel(summaryTextOf("genPromptHintZh")))}
 ${section("🥁 节奏结构", panel(summaryTextOf("beatStructureZh")))}
 ${section("🌊 情绪推进", panel(summaryTextOf("moodArcZh")))}
 ${section("🏷️ 五维风格判词", tags)}
@@ -955,8 +991,8 @@ ${section(`⭐ 重点时刻表 · ${keyMoments.length} 条`, keyMoments.length
     : `<p style="color:#857a66">本集手记未单列重点时刻</p>`, true)}
 ${section("🎞️ 视频节点区域", `<div style="display:flex;flex-wrap:wrap;gap:8px">${tiles.join("")}</div>`)}
 ${section("🎧 声音节点区域", audioSections)}
-<details style="margin-top:22px;background:#fffdf6;border:1px solid #b8452f33;border-top:4px solid #b8452f;border-radius:14px;padding:14px 20px;box-shadow:0 2px 10px rgba(150,110,60,.10)" open><summary style="color:#b8452f;font-weight:600;font-size:1.1em;cursor:pointer">全镜头表 · ${shots.length} 镜 × ${FIELDS.length} 字段</summary><div style="margin:8px 0 4px;font-size:.8em;color:#7a6f5d">色块图例：<span style="background:#b8452f14;border-left:3px solid #b8452f;padding:1px 8px;font-weight:700;color:#8a2a1a">剧情亮点/转折</span>　<span style="background:#3a7bd514;border-left:3px solid #3a7bd5;padding:1px 8px;font-weight:700;color:#2a5da8">运镜/剪辑技巧</span>　其余行不上色</div><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#efe5cc">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#7a6f5d">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
-<div style="text-align:center;margin-top:36px"><span style="display:inline-block;background:#fdf3dd;border:1.5px solid #e8823a;border-radius:999px;padding:8px 22px;color:#b25a1a;font-size:.85em">⭐ 逐帧逐秒审读整理 · 仅作学习拆解，版权归原作品所有</span></div></div></body></html>`;
+<details style="margin-top:22px;background:#fffdf6;border:1px solid #b8452f33;border-top:4px solid #b8452f;border-radius:14px;padding:14px 20px;box-shadow:0 2px 10px rgba(150,110,60,.10)" open><summary style="color:#b8452f;font-weight:600;font-size:1.1em;cursor:pointer">重点镜头表 · ${highlightShotCount} 镜（全片 ${shots.length} 镜中只列重点时刻与技巧镜）</summary><div style="margin:8px 0 4px;font-size:.8em;color:#7a6f5d">图例：<span style="background:#b8452f14;border-left:3px solid #b8452f;padding:1px 8px;font-weight:700;color:#8a2a1a">剧情亮点/转折</span>　<span style="background:#3a7bd514;border-left:3px solid #3a7bd5;padding:1px 8px;font-weight:700;color:#2a5da8">运镜/剪辑技巧</span></div><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#efe5cc">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#7a6f5d">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
+<div style="text-align:center;margin-top:36px"><span style="display:inline-block;background:#fdf3dd;border:1.5px solid #e8823a;border-radius:999px;padding:8px 22px;color:#b25a1a;font-size:.85em">⭐ 逐帧精炼审读整理，仅作学习拆解，影视版权归原出品方所有</span></div></div></body></html>`;
 
   await uploadBufferToGcs({
     bucket,

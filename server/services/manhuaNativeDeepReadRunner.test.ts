@@ -128,7 +128,7 @@ describe("整集GLM消费前永久取证", () => {
     expect(result.evidence?.raw).toHaveLength(2);
     expect(result.evidence?.selectedRawObjectName).toContain("raw-2.json");
     expect(f.saved[3]).toMatchObject({ episodeIndex: 2, batchRequestId: "batch-test", parsed: result.raw });
-    expect(f.saved[0].request).toMatchObject({ system: "系统", user: "全部分片", maxTokens: 262144, gatewayPolicy: "structuring_chain" });
+    expect(f.saved[0].request).toMatchObject({ system: "系统", user: "全部分片", maxTokens: 131072, gatewayPolicy: "structuring_chain" });
     expect(f.saved[0].request).not.toHaveProperty("abortSignal");
   });
 
@@ -253,7 +253,7 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_ROUTE_EVOLINK).toBe("evolink_gemini_video");
     expect(NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE).toBe("openrouter_glm_structuring");
     // 换代必须让旧确认码全废
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260901-shot-observation-v2");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260905-key-shot-tiers-v3");
   });
 
   it("长视频请求显式使用 30 分钟 HTTP 响应头与响应体时限，不落回 Undici 默认 300 秒", async () => {
@@ -1089,6 +1089,7 @@ describe("v11 · 截断段豁免（classification 在 responseSchema 最末，�
   it("🔒 截断段照样守逐镜 17 字段：缺字段仍拒收", () => {
     const raw = withoutClassification();
     const shots = raw.shots as Array<Record<string, unknown>>;
+    raw.keyMoments = [{ atSec: Number(shots[0]!.startSec), kindZh: "剧情", noteZh: "重点镜" }];
     const stripped = { ...shots[0]! };
     delete stripped.microExpressionZh;
     raw.shots = [stripped, ...shots.slice(1)];
@@ -1334,6 +1335,8 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
 
   it("新模型产出缺独立角色站位字段时关闭式拒收，不再用 actionZh 掩盖", () => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    // 0905 两档契约：只有 keyMoment ±6 秒内的重点镜才要求 18 字段齐全
+    raw.keyMoments = [{ atSec: Number((raw.shots as Array<Record<string, unknown>>)[0]!.startSec), kindZh: "剧情", noteZh: "重点镜" }];
     delete (raw.shots as Array<Record<string, unknown>>)[0]!.blockingZh;
     expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
       .toThrow("缺 blockingZh");
@@ -1341,6 +1344,7 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
 
   it("unitTypeZh 只能使用批准的 enum 值", () => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    raw.keyMoments = [{ atSec: Number((raw.shots as Array<Record<string, unknown>>)[0]!.startSec), kindZh: "剧情", noteZh: "重点镜" }];
     (raw.shots as Array<Record<string, unknown>>)[0]!.unitTypeZh = "长镜头";
     expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
       .toThrow("unitTypeZh");
@@ -2642,7 +2646,7 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
     expectNoAssemblyOrMediaMutation(deps);
   });
 
-  it("音频事件越出声明区间属于门禁失败，下一发降到0.65", async () => {
+  it("0905：音频事件越出声明区间不再判门禁失败——越界事件丢弃，单发即过", async () => {
     const span = fullSegments[3]!;
     const invalid = makeSegmentPayload({ segmentIndex: 3, ...span });
     const firstTrack = (invalid.audioResolution as Array<{
@@ -2659,15 +2663,10 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
       ...selectedParams([3]),
       onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
     }, deps);
-    expect(postVertex.mock.calls.map(([body]) => body.generationConfig.temperature)).toEqual([0.7, 0.65]);
-    expect(deps.waitForRetry).toHaveBeenCalledTimes(1);
+    expect(postVertex.mock.calls.map(([body]) => body.generationConfig.temperature)).toEqual([0.7]);
+    expect(deps.waitForRetry).not.toHaveBeenCalled();
     expect(deps.selectAttemptWithQwen).not.toHaveBeenCalled();
     expect(result.segments[0]!.raw.shots).toEqual(healthy.shots);
-    expect(receipts).toEqual(expect.arrayContaining([
-      expect.objectContaining({ route: "local_schema_gate", status: "failed", attemptNumber: 1, temperature: 0.7 }),
-      expect.objectContaining({ route: "gate_retry_pending", attemptNumber: 2, temperature: 0.65 }),
-      expect.objectContaining({ route: "local_schema_gate", status: "completed", attemptNumber: 2 }),
-    ]));
   });
 
   it("503 只等待60秒并保持0.7同温重跑，不消耗门禁降档", async () => {
@@ -3058,17 +3057,17 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentCacheSeriesKey: "hierarchy_9_segments",
     }, deps);
 
-    // 0905 用户令「不归并、每批 5 片」：9 片＝5/4 两批各整形一次，整集由代码确定性拼接
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    // 0905 用户令「不归并、每批 4 片、批次均分」：9 片＝3+3+3 三批各整形一次，整集由代码确定性拼接
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(3);
     const sent = invokeGlmStructuring.mock.calls.map(([prompt]) =>
       readRawSegmentsFromGlmPrompt((prompt as { user: string }).user));
-    expect(sent.map((rows) => rows.length)).toEqual([5, 4]);
+    expect(sent.map((rows) => rows.length)).toEqual([3, 3, 3]);
     expect((invokeGlmStructuring.mock.calls[0]![0] as { user: string }).user)
       .toContain('"segments":[{"segmentIndex":0');
     expect((invokeGlmStructuring.mock.calls[1]![0] as { user: string }).user)
-      .toContain('"segments":[{"segmentIndex":5');
-    expect(deps.readStructuredBatchCache).toHaveBeenCalledTimes(2);
-    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
+      .toContain('"segments":[{"segmentIndex":3');
+    expect(deps.readStructuredBatchCache).toHaveBeenCalledTimes(3);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(3);
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
     expect(result.episodes[0]!.result.attemptedSegments).toBe(9);
   });
@@ -3081,7 +3080,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     const readStructuredBatchCache = vi.fn(async (input: {
       segmentIndexes: readonly number[];
       rawSegments: ReadonlyArray<Record<string, unknown>>;
-    }) => JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2, 3, 4]) ? {
+    }) => JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2]) ? {
       schemaVersion: 1 as const,
       frozenContractSha256: "f".repeat(64),
       seriesKey: "legacy_answer_envelope",
@@ -3129,16 +3128,16 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       onModelReceipt: (receipt) => { receipts.push(receipt); },
     }, deps);
 
-    // 0905：每批 5 片，5 片＝一批 [0..4]；命中缓存则零模型调用，整集由代码拼出
-    expect(readStructuredBatchCache).toHaveBeenCalledTimes(1);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(0);
-    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(0);
+    // 0905：每批 4 片均分，5 片＝[0..2]+[3,4]；前批命中缓存，后批跑一次
+    expect(readStructuredBatchCache).toHaveBeenCalledTimes(2);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(1);
     expect(receipts.filter((row) => row.route === NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE)).toEqual([]);
     expect(result.episodes[0]!.result.beatGrid).toHaveLength(60);
     expect(result.episodes[0]!.result.segmentCount).toBe(5);
   });
 
-  it("九片4+4+1的每层GLM都返回answer外壳时仍生成完整整集卡", async () => {
+  it("九片3+3+3的每层GLM都返回answer外壳时仍生成完整整集卡", async () => {
     const segments = Array.from({ length: 9 }, (_, index) => ({
       startSec: index * 60,
       endSec: (index + 1) * 60,
@@ -3165,8 +3164,9 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     }, deps);
 
     // 0905：不再有第三次归并，5 片＝两个批次，各整形一次；整集由代码确定性拼接
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
-    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
+    // 0905：每批 4 片均分 → 9 片＝3+3+3 三批
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(3);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(3);
     expect(result.episodes[0]!.result.beatGrid).toHaveLength(108);
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
   });
@@ -3180,7 +3180,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentIndexes: readonly number[];
       rawSegments: ReadonlyArray<Record<string, unknown>>;
     }) => (
-      JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2, 3, 4])
+      JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2])
       || JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8])
     ) ? {
           schemaVersion: 1 as const,
@@ -3225,12 +3225,12 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentCacheSeriesKey: "hierarchy_cache_hit",
     }, deps);
 
-    // 0905：没有最终归并；9 片＝[0..4]+[5..8]，只有 [0..4] 命中缓存，[5..8] 跑一次
-    expect(readStructuredBatchCache).toHaveBeenCalledTimes(2);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    // 0905：没有最终归并；9 片＝[0..2]+[3..5]+[6..8]，只有 [0..2] 命中缓存，另两批各跑一次
+    expect(readStructuredBatchCache).toHaveBeenCalledTimes(3);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
     expect(invokeGlmStructuring.mock.calls.map(([prompt]) =>
-      readRawSegmentsFromGlmPrompt((prompt as { user: string }).user).length)).toEqual([4]);
-    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(1);
+      readRawSegmentsFromGlmPrompt((prompt as { user: string }).user).length)).toEqual([3, 3]);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
     // 没有整集级 GLM 证据：报告导出必须走分段卡拼装，不许指向某一半批次卡
     expect(result.episodes[0]!.result.glmEvidence).toBeUndefined();
   });
@@ -4279,7 +4279,7 @@ describe("参数契约冻结 0901：0.70→0.65→0.60 + thinkingLevel MEDIUM", 
   it("正负分区版本仍保持原有门禁阈值", () => {
     expect(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC).toBe(30);
     expect(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC).toBe(3);
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260901-shot-observation-v2");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260905-key-shot-tiers-v3");
   });
 });
 
@@ -4297,7 +4297,7 @@ describe("生成前契约与实际门禁同源", () => {
     expect(schema.properties.shots.description).toContain(`story 至少 ${rule.minStoryShots} 条`);
     expect(schema.properties.shots).toMatchObject({ type: "ARRAY", items: { type: "OBJECT" } });
     expect(Object.keys(schema.properties.shots.items.properties)).toHaveLength(18);
-    expect(schema.properties.shots.items.description).toContain("story条目按顺序完整填写以下18字段");
+    expect(schema.properties.shots.items.description).toContain("重点镜（起止与任一 keyMoments.atSec 前后 6 秒有交集）按顺序完整填写以下18字段");
     expect(schema.properties.shots.items.description).toContain("non_story_ad仅保留startSec、endSec、evidenceRole三个有内容的字段");
     expect(schema.properties.shots.items.required).toEqual(["startSec", "endSec", "evidenceRole", "hintZh"]);
     expect(schema.properties.shots.items.properties.evidenceRole.enum).toEqual(["story", "non_story_ad"]);
@@ -4454,5 +4454,89 @@ describe("0905 · 整片拉取真实进度（不用预估值）", () => {
     const args = buildNativeDeepReadSourceFetchArgs({ node: { url: "https://cdn.example/x.m3u8" }, outputPath: "/tmp/a.mp4", progressPath: "/tmp/a.mp4.progress" });
     expect(args.slice(0, 8)).toEqual(["-nostdin", "-hide_banner", "-loglevel", "error", "-xerror", "-y", "-progress", "/tmp/a.mp4.progress"]);
     expect(buildNativeDeepReadSourceFetchArgs({ node: { url: "https://cdn.example/x.m3u8" }, outputPath: "/tmp/a.mp4" })).not.toContain("-progress");
+  });
+});
+
+describe("0905 · 字幕只取 keyMoments 前后 2 秒", () => {
+  it("过滤掉不在任何 keyMoment ±2 秒内的字幕；无 keyMoments 时原样返回", async () => {
+    const { filterNativeDeepReadSubtitlesToKeyMoments } = await import("./manhuaNativeDeepReadRunner");
+    const raw = {
+      keyMoments: [{ atSec: 10 }, { atSec: 100.4 }],
+      subtitles: [
+        { atSec: 8, textZh: "留" }, { atSec: 12, textZh: "留" }, { atSec: 13, textZh: "丢" },
+        { atSec: 99, textZh: "留" }, { atSec: 50, textZh: "丢" },
+      ],
+    };
+    const out = filterNativeDeepReadSubtitlesToKeyMoments(raw);
+    expect((out.subtitles as Array<{ atSec: number }>).map((s) => s.atSec)).toEqual([8, 12, 99]);
+    expect(filterNativeDeepReadSubtitlesToKeyMoments({ subtitles: raw.subtitles })).toEqual({ subtitles: raw.subtitles });
+  });
+});
+
+describe("0905 · 整形 JSON Schema（Qwen strict）", () => {
+  it("Gemini 格式转标准 JSON Schema：类型小写、nullable 变联合、对象封闭；整形卡带三个顶层可选字段与 craftReadZh", async () => {
+    const { geminiSchemaToJsonSchema, nativeDeepReadStructuringJsonSchema } = await import("./manhuaNativeDeepReadRunner");
+    expect(geminiSchemaToJsonSchema({ type: "OBJECT", properties: { a: { type: "STRING", nullable: true, maxLength: 5 }, b: { type: "ARRAY", items: { type: "NUMBER" } } }, required: ["a"] } as never)).toEqual({
+      type: "object", additionalProperties: false, required: ["a"],
+      properties: { a: { type: ["string", "null"], maxLength: 5 }, b: { type: "array", items: { type: "number" } } },
+    });
+    const schema = nativeDeepReadStructuringJsonSchema() as { properties: Record<string, { type: unknown; items?: { properties?: Record<string, unknown> } }>; required: string[] };
+    expect(schema.properties.excludedAdRanges.type).toBe("array");
+    expect(Object.keys(schema.properties.classificationProseZh)).toContain("properties");
+    expect(schema.properties.templateTitleZh.type).toBe("string");
+    expect(schema.properties.shots.items?.properties).toHaveProperty("craftReadZh");
+    expect(schema.required).toContain("shots");
+    expect(JSON.stringify(schema)).not.toMatch(/"type":"(OBJECT|ARRAY|STRING|NUMBER|INTEGER)"/);
+  });
+});
+
+describe("0905 · 整形按批次序号分流链", () => {
+  it("Qwen 首发：第 1 批 北京→EvoLink→OpenRouter，第 2 批 新加坡→OpenRouter→EvoLink；GLM 各批一律 OpenRouter 首发", async () => {
+    const { nativeDeepReadStructuringGatewayOrder } = await import("./manhuaNativeDeepReadRunner");
+    expect(nativeDeepReadStructuringGatewayOrder("structuring_chain_qwen_first", 0)).toEqual(["plan_bj_qwen", "evolink_glm", "openrouter"]);
+    expect(nativeDeepReadStructuringGatewayOrder("structuring_chain_qwen_first", 1)).toEqual(["plan_sg_qwen", "openrouter", "evolink_glm"]);
+    expect(nativeDeepReadStructuringGatewayOrder("structuring_chain_qwen_first", 2)).toEqual(["plan_bj_qwen", "evolink_glm", "openrouter"]);
+    expect(nativeDeepReadStructuringGatewayOrder("structuring_chain", 0)[0]).toBe("openrouter");
+    expect(nativeDeepReadStructuringGatewayOrder("structuring_chain", 1)[0]).toBe("openrouter");
+  });
+
+  it("整形模型开关：qwen3.8-max / 缺省 → Qwen 首发链；glm-5.3 → GLM 首发链；started 标签跟着开关走", async () => {
+    const m = await import("./manhuaNativeDeepReadRunner");
+    expect(m.nativeDeepReadStructuringPolicyForModel("qwen3.8-max")).toBe("structuring_chain_qwen_first");
+    expect(m.nativeDeepReadStructuringPolicyForModel(undefined)).toBe("structuring_chain_qwen_first");
+    expect(m.nativeDeepReadStructuringPolicyForModel("glm-5.3")).toBe("structuring_chain");
+    expect(m.nativeDeepReadStructuringStartedLabel("structuring_chain_qwen_first")).toMatch(/^Qwen3\.8-Max/);
+    expect(m.nativeDeepReadStructuringStartedLabel("structuring_chain")).not.toMatch(/^Qwen3\.8-Max/);
+    // GLM 链的兜底档必须含 Qwen 两档，Qwen 链的兜底档必须含 GLM 两档（两档败切对方）
+    expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain", 0)).toEqual(["openrouter", "evolink_glm", "plan_bj_qwen", "plan_sg_qwen"]);
+    expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain", 1)).toEqual(["openrouter", "evolink_glm", "plan_sg_qwen", "plan_bj_qwen"]);
+    expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain_qwen_first", 0).slice(1)).toEqual(["evolink_glm", "openrouter"]);
+  });
+
+  it("上下文里的 gatewayPolicy / gatewayOrder 原样落到网关请求；严格 schema 始终随请求", async () => {
+    const { invokeNativeDeepReadGlmStructuring } = await import("./manhuaNativeDeepReadRunner");
+    const seen: Array<Record<string, unknown>> = [];
+    const invoke = vi.fn(async (p: GlmParams) => {
+      seen.push(p as unknown as Record<string, unknown>);
+      const content = '{"shots":[{"startSec":0,"endSec":12}]}';
+      await p.onRawResponse!({ gateway: "plan_bj_qwen", model: "qwen3.8-max", httpStatus: 200, contentType: "application/json",
+        bodyText: JSON.stringify({ content }), bodyComplete: true, receivedBytes: 10 });
+      p.validateContent!(content);
+      return { gateway: "plan_bj_qwen", model: "qwen3.8-max", gatewayTrace: [], usage: { prompt_tokens: 1, completion_tokens: 1 },
+        choices: [{ finish_reason: "stop" }], requestId: "r" } as never;
+    });
+    const upload = vi.fn(async () => ({ created: true, generation: "1" }));
+    const deps = { invoke, evidence: { upload: upload as never, getBucket: () => "mv-studio-pro-vertex-video-temp" } };
+    for (const policy of ["structuring_chain", "structuring_chain_qwen_first"] as const) {
+      await invokeNativeDeepReadGlmStructuring({ system: "s", user: "u" }, undefined,
+        { callId: `c-${policy}`, gatewayPolicy: policy, gatewayOrder: policy === "structuring_chain" ? ["evolink_glm", "openrouter"] : ["plan_bj_qwen", "evolink_glm"] }, deps);
+    }
+    expect(seen[0]).toMatchObject({ gatewayPolicy: "structuring_chain", gatewayOrder: ["evolink_glm", "openrouter"] });
+    expect(seen[1]).toMatchObject({ gatewayPolicy: "structuring_chain_qwen_first", gatewayOrder: ["plan_bj_qwen", "evolink_glm"] });
+    for (const p of seen) {
+      expect(p.responseJsonSchema).toMatchObject({ name: expect.any(String) });
+      expect(p.thinkingBudget).toBe(32_768);
+      expect(p.gatewayTimeoutMsOverrides).toMatchObject({ plan_bj_qwen: 25 * 60_000, evolink_glm: 15 * 60_000 });
+    }
   });
 });

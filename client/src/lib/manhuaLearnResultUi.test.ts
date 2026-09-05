@@ -9,6 +9,7 @@ import {
   hasStoredManhuaLearnSegmentSeconds,
   hasStoredManhuaLearnVideoFps,
   mergeManhuaLearnSnapshotDigests,
+  mergeManhuaLearnLiveProgress as mergeLiveProgressForUnionTest,
   parseNativeProposalEpisodeRef,
   parseManhuaLearnSegmentSecondsInput,
   parseManhuaLearnVideoFpsInput,
@@ -1169,5 +1170,31 @@ describe("0905 · 秒数固定与失败态并入快照摘要", () => {
     expect(listExportableEpisodes(merged.digestsPreview).map((e) => e.episodeIndex)).toEqual([1, 2, 3]);
     // 无变化时返回同一引用，避免面板无谓重渲
     expect(mergeManhuaLearnSnapshotDigests(merged, snapshot)).toBe(merged);
+  });
+});
+
+describe("0905 · 同剧新任务接管旧失败结果", () => {
+  it("新任务 running 后清掉旧 errorZh，已落盘分集摘要并集保留（导出按钮不消失）", () => {
+    const prev = {
+      ...manhuaLearnResultFromSnapshot({
+        seriesKey: "s1", progress: null, completedCount: 4, pipelineMode: "native_deep_read", analysisReady: false, proposal: null,
+        digestsPreview: [4].map((episodeIndex) => ({ episodeIndex, title: "第4集", hookNoteZh: "", transcriptPreview: "", durationSec: 2573, complete: true })),
+      }),
+      liveStatus: "failed" as const,
+      errorZh: "用户已停止学习（未开始执行）",
+    };
+    const live = mergeLiveProgressForUnionTest(prev, {
+      status: "running",
+      output: {
+        seriesKey: "s1",
+        analysisStage: "manhua_learn_vision",
+        analysisStageLabel: "第5集 · 整片落盘完成 100%",
+        digestsPreview: [{ episodeIndex: 5, title: "", learnedThroughSec: 300, complete: false, durationSec: 2600 }],
+      },
+    });
+    expect(live.liveStatus).toBe("running");
+    expect(live.errorZh).toBeUndefined();
+    expect(live.digestsPreview.map((d) => `${d.episodeIndex}:${d.complete ? "C" : "p"}`)).toEqual(["4:C", "5:p"]);
+    expect(listExportableEpisodes(live.digestsPreview).map((e) => e.episodeIndex)).toEqual([4]);
   });
 });
