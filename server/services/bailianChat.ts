@@ -589,9 +589,9 @@ async function readGlmRawResponseWithEvidence(
 
 /**
  * 0905 实锤：EvoLink 整形流把正文吐完后连接挂着不发结束帧，链路干等到 30 分钟档才切档。
- * 任何一次 read() 超过 GLM_STREAM_IDLE_TIMEOUT_MS 没有新字节，就判本档失败（抛错→网关层按链序切下一档）。
+ * 任何一次 read() 超过 GLM_STREAM_IDLE_TIMEOUT_MS（用户 0905 定 10 分钟）没有新字节，就判本档失败（抛错→网关层按链序切下一档）。
  */
-export const GLM_STREAM_IDLE_TIMEOUT_MS = 120_000;
+export const GLM_STREAM_IDLE_TIMEOUT_MS = 10 * 60_000;
 export async function readWithIdleTimeout<T>(
   reader: { read(): Promise<T>; cancel(reason?: unknown): Promise<void> },
   idleMs = GLM_STREAM_IDLE_TIMEOUT_MS,
