@@ -159,12 +159,12 @@ function isPersistableAssetUrl(u: unknown): u is string {
   );
 }
 
-function keepImageUrls(urls: unknown): string[] {
+function keepImageUrls(urls: unknown, max?: number): string[] {
   if (!Array.isArray(urls)) return [];
-  return urls
+  const valid = urls
     .map(u => String(u || "").trim())
-    .filter(isPersistableAssetUrl)
-    .slice(0, 16);
+    .filter(isPersistableAssetUrl);
+  return max == null ? valid : valid.slice(0, max);
 }
 
 function keepHttpUrls(urls: unknown): string[] {
@@ -435,7 +435,7 @@ export function sanitizeManhuaCloudDraftBlock(
       refImageUrl: isPersistableAssetUrl(b.refImageUrl)
         ? String(b.refImageUrl).trim()
         : undefined,
-      editFusionUrls: keepImageUrls(b.editFusionUrls),
+      editFusionUrls: keepImageUrls(b.editFusionUrls, 16),
       lastFrameUrl: isPersistableAssetUrl(b.lastFrameUrl)
         ? String(b.lastFrameUrl).trim()
         : undefined,

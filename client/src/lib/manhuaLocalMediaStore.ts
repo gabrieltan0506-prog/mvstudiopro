@@ -66,6 +66,12 @@ export function makeLocalMediaRecordId(blockId: string, slot: ManhuaLocalMediaSl
   return `${String(blockId || "").trim()}::${slot}`;
 }
 
+/** 新记录按来源分版本；同节点重出不能覆盖旧指针的字节。旧槽位记录只读兼容。 */
+async function sourceRecordId(sourceUrl: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(sourceUrl));
+  return `source-sha256-${Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+}
+
 export function rememberLocalMediaDisplay(input: {
   displayUrl: string;
   pointer: string;
@@ -103,10 +109,12 @@ export function resolveUrlForLocalPersist(url: unknown): string | undefined {
   if (!s) return undefined;
   if (isLocalMediaPointer(s)) return s;
   if (s.startsWith("blob:")) {
-    return displayToPointer.get(s);
+    const pointer = displayToPointer.get(s);
+    const source = displayToSourceUrl.get(s);
+    return pointer && source === displayToSourceUrl.get(pointer) ? pointer : source;
   }
   const fromSource = sourceToPointer.get(s);
-  if (fromSource) return fromSource;
+  if (fromSource && displayToSourceUrl.get(fromSource) === s) return fromSource;
   if (/^https?:\/\//i.test(s) || s.startsWith("/manhua-") || s.startsWith("/assets/") || s.startsWith("/demo/")) {
     return s;
   }
@@ -146,11 +154,11 @@ async function getBackend(): Promise<StoreBackend> {
 }
 
 /** 测试用：注入内存后端并清空映射 */
-export async function __resetManhuaLocalMediaStoreForTests(): Promise<void> {
+export async function __resetManhuaLocalMediaStoreForTests(options?: { keepRecords?: boolean }): Promise<void> {
   displayToSourceUrl.clear();
   displayToPointer.clear();
   sourceToPointer.clear();
-  backendPromise = Promise.resolve({ kind: "memory", map: new Map() });
+  if (!options?.keepRecords) backendPromise = Promise.resolve({ kind: "memory", map: new Map() });
   cacheQueue = Promise.resolve();
 }
 
@@ -279,9 +287,9 @@ async function cacheOne(
   const existingPtr = sourceToPointer.get(sourceUrl);
   if (existingPtr) {
     const rec = await getLocalMediaRecord(localMediaPointerId(existingPtr));
-    if (rec?.blob?.size) return existingPtr;
+    if (rec?.blob?.size && rec.sourceUrl === sourceUrl) return existingPtr;
   }
-  const recordId = makeLocalMediaRecordId(blockId, slot);
+  const recordId = await sourceRecordId(sourceUrl);
   const prior = await getLocalMediaRecord(recordId);
   if (prior?.blob?.size && prior.sourceUrl === sourceUrl) {
     const pointer = makeLocalMediaPointer(recordId);
@@ -365,13 +373,29 @@ export async function resolvePointerToDisplayUrl(pointer: string): Promise<strin
   return displayUrl;
 }
 
-/** 远端 403/过期时：按 blockId 槽位从本机目录取显示 URL */
+/** 远端失效时按当前图片来源恢复；不能拿同节点的另一版充数。 */
 export async function tryLocalMediaDisplayForBlock(
   blockId: string,
   slot: ManhuaLocalMediaSlot = "output",
+  expectedUrl?: string,
 ): Promise<string | null> {
-  const pointer = makeLocalMediaPointer(makeLocalMediaRecordId(blockId, slot));
-  return resolvePointerToDisplayUrl(pointer);
+  const source = String(expectedUrl || "").trim();
+  if (!source) return null;
+  if (isLocalMediaPointer(source)) return resolvePointerToDisplayUrl(source);
+  if (source.startsWith("blob:")) return null;
+  const remembered = sourceToPointer.get(source);
+  const ids = [
+    ...(remembered ? [localMediaPointerId(remembered)] : []),
+    await sourceRecordId(source),
+    makeLocalMediaRecordId(blockId, slot),
+  ];
+  for (const id of ids) {
+    const record = await getLocalMediaRecord(id);
+    if (record?.blob?.size && record.sourceUrl === source) {
+      return resolvePointerToDisplayUrl(makeLocalMediaPointer(id));
+    }
+  }
+  return null;
 }
 
 async function resolveAnyToDisplayUrl(url: string): Promise<string> {
@@ -383,8 +407,15 @@ async function resolveAnyToDisplayUrl(url: string): Promise<string> {
   }
   const ptr = sourceToPointer.get(s);
   if (ptr) {
-    const display = await resolvePointerToDisplayUrl(ptr);
-    if (display) return display;
+    const record = await getLocalMediaRecord(localMediaPointerId(ptr));
+    if (record?.sourceUrl === s) {
+      const display = await resolvePointerToDisplayUrl(ptr);
+      if (display) return display;
+    }
+  }
+  const stored = await getLocalMediaRecord(await sourceRecordId(s));
+  if (stored?.sourceUrl === s && stored.blob?.size) {
+    return (await resolvePointerToDisplayUrl(makeLocalMediaPointer(stored.id))) || s;
   }
   // 已按稳定 id 缓存过则直接取
   return s;
@@ -439,10 +470,8 @@ export async function rehydrateBlocksFromLocalMedia(blocks: CanvasBlock[]): Prom
 
     // 仅有远端 https 时尝试从本机 id 回灌（source 映射尚未建）
     if (!changed && outputUrl && /^https?:\/\//i.test(outputUrl)) {
-      const ptr = makeLocalMediaPointer(makeLocalMediaRecordId(b.id, "output"));
-      const display = await resolvePointerToDisplayUrl(ptr);
+      const display = await tryLocalMediaDisplayForBlock(b.id, "output", outputUrl);
       if (display) {
-        rememberLocalMediaDisplay({ displayUrl: display, pointer: ptr, sourceUrl: outputUrl });
         outputUrl = display;
         changed = true;
       }

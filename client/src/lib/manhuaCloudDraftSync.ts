@@ -161,8 +161,7 @@ export function slimBlocksForLocalPersist(
     }
     const outputUrls = (b.outputUrls || [])
       .map(u => persistableLocalUrl(u))
-      .filter((u): u is string => Boolean(u))
-      .slice(0, 8);
+      .filter((u): u is string => Boolean(u));
     const outputUrl = persistableLocalUrl(b.outputUrl) || outputUrls[0];
     return {
       ...b,
@@ -253,8 +252,7 @@ export function blocksForCloudDraftSync(blocks: CanvasBlock[]): CanvasBlock[] {
     }
     const outputUrls = (b.outputUrls || [])
       .map(u => stableOrUndefined(resolveUrlForCloudSync(u)))
-      .filter((u): u is string => Boolean(u))
-      .slice(0, 8);
+      .filter((u): u is string => Boolean(u));
     const outputUrl =
       stableOrUndefined(resolveUrlForCloudSync(b.outputUrl)) || outputUrls[0];
     return {

@@ -7299,17 +7299,19 @@ export default function ManhuaScriptWorkbench({
                           {thumb ? (
                             <>
                               <img
+                                key={thumb}
                                 src={thumb}
                                 alt=""
                                 className="h-full w-full object-cover"
                                 onError={(e) => {
                                   const el = e.currentTarget;
+                                  const failedSrc = el.getAttribute("src");
                                   if (el.dataset.localRetry === "1") return;
                                   el.dataset.localRetry = "1";
                                   const id = shotKey?.id;
                                   if (!id) return;
-                                  void tryLocalMediaDisplayForBlock(id, "output").then((local) => {
-                                    if (local) el.src = local;
+                                  void tryLocalMediaDisplayForBlock(id, "output", thumb).then((local) => {
+                                    if (local && el.getAttribute("src") === failedSrc) el.src = local;
                                   });
                                 }}
                               />

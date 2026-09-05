@@ -1,7 +1,11 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import {
   __resetManhuaLocalMediaStoreForTests,
   applyLocalMediaPointersToBlocks,
+  cacheCanvasMediaToLocalStore,
+  getLocalMediaRecord,
+  localMediaPointerId,
+  tryLocalMediaDisplayForBlock,
   isLocalMediaPointer,
   makeLocalMediaPointer,
   makeLocalMediaRecordId,
@@ -48,6 +52,56 @@ describe("manhuaLocalMediaStore", () => {
     const ptr = makeLocalMediaPointer(makeLocalMediaRecordId("keyart-e01-s01", "output"));
     expect(isLocalMediaPointer(ptr)).toBe(true);
     expect(isLocalMediaPointer("https://cdn.example/a.jpg")).toBe(false);
+  });
+
+  it("同节点重出不覆盖旧缓存，历史原地址不会映射到新图", async () => {
+    const first = "https://test.invalid/cache-first.png";
+    const second = "https://test.invalid/cache-second.png";
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(new Blob([url], { type: "image/png" }))));
+    try {
+      const block = baseBlock({ id: "keyart-e01-s01-version", outputUrl: first });
+      await cacheCanvasMediaToLocalStore([block]);
+      const firstPointer = resolveUrlForLocalPersist(first)!;
+      await cacheCanvasMediaToLocalStore([{ ...block, outputUrl: second, outputUrls: [second, first] }]);
+      const secondPointer = resolveUrlForLocalPersist(second)!;
+      expect(firstPointer).not.toBe(secondPointer);
+      expect(await (await getLocalMediaRecord(localMediaPointerId(firstPointer)))!.blob.text()).toBe(first);
+      expect(await (await getLocalMediaRecord(localMediaPointerId(secondPointer)))!.blob.text()).toBe(second);
+      expect(resolveUrlForCloudSync(resolveUrlForLocalPersist(first))).toBe(first);
+      const fallback = await tryLocalMediaDisplayForBlock(block.id, "output", first);
+      expect(resolveUrlForCloudSync(fallback)).toBe(first);
+      expect(await tryLocalMediaDisplayForBlock(block.id, "output", "https://test.invalid/not-cached.png")).toBeNull();
+      await __resetManhuaLocalMediaStoreForTests({ keepRecords: true });
+      const refreshed = await rehydrateBlocksFromLocalMedia([{ ...block, outputUrls: [first, second] }]);
+      expect(resolveUrlForCloudSync(refreshed[0].outputUrl)).toBe(first);
+      expect(refreshed[0].outputUrls?.map(resolveUrlForCloudSync)).toEqual([first, second]);
+      expect((await getLocalMediaRecord(localMediaPointerId(firstPointer)))!.sourceUrl).toBe(first);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it("旧槽位来源不一致时拒绝错误图片，过期映射不能冒充本机命中", async () => {
+    const id = makeLocalMediaRecordId("keyart-e01-legacy", "output");
+    const source = "https://test.invalid/legacy-original.png";
+    const other = "https://test.invalid/legacy-replaced.png";
+    const oldPointer = await putLocalMediaRecord({ id, blockId: "keyart-e01-legacy", slot: "output", blob: new Blob(["old"]), mime: "image/png", sourceUrl: source, updatedAt: 1 });
+    rememberLocalMediaDisplay({ displayUrl: "blob:legacy-original", pointer: oldPointer, sourceUrl: source });
+    await putLocalMediaRecord({ id, blockId: "keyart-e01-legacy", slot: "output", blob: new Blob(["new"]), mime: "image/png", sourceUrl: other, updatedAt: 2 });
+    expect(resolveUrlForLocalPersist(source)).toBe(source);
+    expect(resolveUrlForLocalPersist("blob:legacy-original")).toBe(source);
+    expect(await tryLocalMediaDisplayForBlock("keyart-e01-legacy", "output", source)).toBeNull();
+    const restored = await rehydrateBlocksFromLocalMedia([baseBlock({ id: "keyart-e01-legacy", outputUrl: source })]);
+    expect(restored[0].outputUrl).toBe(source);
+  });
+
+  it("超过16张的图片版本经本机、云清洗和恢复不截断，输入参考仍限16张", () => {
+    const history = Array.from({ length: 25 }, (_, index) => `https://test.invalid/history-${index}.png`);
+    const block = baseBlock({ id: "keyart-e01-s01-history", outputUrl: history[0], outputUrls: history, refImageUrl: history[0], editFusionUrls: history.slice(1) });
+    const local = slimBlocksForLocalPersist([block]);
+    expect(local[0].outputUrls).toEqual(history);
+    const cloud = buildManhuaCloudDraftPayload({ writerSession: {}, blocks: blocksForCloudDraftSync(local), edges: [] });
+    expect(cloud.canvas.blocks[0].outputUrls).toEqual(history);
+    expect(cloudDraftBlocksToCanvas(cloud.canvas.blocks)[0].outputUrls).toEqual(history);
+    expect(cloud.canvas.blocks[0].editFusionUrls).toHaveLength(15);
   });
 
   it("静帧回执贯穿原地址→本机指针→显示地址→云清洗→恢复，旧版本不获新回执", async () => {

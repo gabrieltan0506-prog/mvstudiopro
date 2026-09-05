@@ -727,6 +727,7 @@ function CanvasAssetVisualBody({
         {imgUrl ? (
           <>
             <img
+              key={imgUrl}
               src={imgUrl}
               alt={shortId}
               title="双击放大"
@@ -736,13 +737,15 @@ function CanvasAssetVisualBody({
               }}
               onError={e => {
                 const el = e.currentTarget;
+                const failedSrc = el.getAttribute("src");
                 if (el.dataset.localRetry === "1") return;
                 el.dataset.localRetry = "1";
                 void tryLocalMediaDisplayForBlock(
                   String(block.id || ""),
-                  "output"
+                  "output",
+                  imgUrl
                 ).then(local => {
-                  if (local) el.src = local;
+                  if (local && el.getAttribute("src") === failedSrc) el.src = local;
                 });
               }}
               className="h-full w-full cursor-zoom-in object-contain"
