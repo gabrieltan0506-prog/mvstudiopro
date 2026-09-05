@@ -4449,11 +4449,20 @@ export async function invokeNativeDeepReadGlmStructuring(
     gatewayPolicy: context?.gatewayPolicy ?? NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG.gatewayPolicy,
   };
   if (context?.recoverExisting) {
-    const recovered = await readNativeDeepReadGlmRecoveredEvidence({
-      context,
-      expectedRequestWithoutPreferredGateway: requestWithoutPreferredGateway,
-      deps: deps?.evidence,
-    });
+    // 0906 用户令「都是坏的结构了还冻结他」「换个模型整形都不可以」：旧证据身份对不上、损坏、缺 parsed，
+    // 一律当作没有可复用证据，直接新发付费调用；不再拿「避免重复付费」硬停整集。
+    let recovered: Awaited<ReturnType<typeof readNativeDeepReadGlmRecoveredEvidence>> = null;
+    try {
+      recovered = await readNativeDeepReadGlmRecoveredEvidence({
+        context,
+        expectedRequestWithoutPreferredGateway: requestWithoutPreferredGateway,
+        deps: deps?.evidence,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/已停止以避免重复付费/.test(message)) throw error;
+      console.warn(`[nativeDeepRead] 旧整形证据不可复用，改为新发整形：${message}`);
+    }
     if (recovered) {
       const usage = recovered.response.usage;
       return {
@@ -4474,11 +4483,22 @@ export async function invokeNativeDeepReadGlmStructuring(
   }
   const preferredGlmGateway = (context?.preferredGlmGateway
     || nextNativeDeepReadGlmPreferredGateway(context?.gatewayPolicy)) as GlmGatewayName;
-  const store = createNativeDeepReadGlmEvidenceStore({ ...context, preferredGlmGateway }, deps?.evidence);
   let raw: Record<string, unknown> | undefined;
   const request = { ...requestWithoutPreferredGateway, preferredGlmGateway };
   // 请求先永久留存；回调在bailian解析SSE/JSON前await，保存失败不得另烧备用。
-  await store.writeRequest(request);
+  // 0906：同编号下已有旧（不可复用的）证据时不硬停，顺延编号 -v2/-v3… 另起一份证据链。
+  let store = createNativeDeepReadGlmEvidenceStore({ ...context, preferredGlmGateway }, deps?.evidence);
+  for (let version = 2; ; version += 1) {
+    try {
+      await store.writeRequest(request);
+      break;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/证据已存在，禁止覆盖/.test(message) || !context?.callId || version > 9) throw error;
+      console.warn(`[nativeDeepRead] 整形证据编号 ${context.callId} 已被旧证据占用，顺延为 -v${version}`);
+      store = createNativeDeepReadGlmEvidenceStore({ ...context, callId: `${context.callId}-v${version}`, preferredGlmGateway }, deps?.evidence);
+    }
+  }
   await context?.onBeforePaidCall?.();
   const response = await (deps?.invoke ?? invokeGlmJsonChatWithGatewayFallback)({
     ...request,

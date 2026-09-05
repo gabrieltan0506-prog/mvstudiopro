@@ -132,6 +132,41 @@ describe("整集GLM消费前永久取证", () => {
     expect(f.saved[0].request).not.toHaveProperty("abortSignal");
   });
 
+  it("0906 拆冻结：旧证据身份不一致 → 不硬停，改为新发整形；同编号已被旧 request 占用 → 顺延 -v2 另起证据链", async () => {
+    const saved: Array<{ objectName: string; body: Record<string, unknown> }> = [];
+    const upload = vi.fn(async (input: { objectName: string; buffer: Buffer }) => {
+      // 基础编号下的 request.json 已存在（旧的、内容不同）→ if-absent 返回未创建
+      if (input.objectName.endsWith("/request.json") && !/-v2\//.test(input.objectName)) return { created: false, generation: "old" };
+      saved.push({ objectName: input.objectName, body: JSON.parse(input.buffer.toString("utf8")) });
+      return { created: true, generation: String(saved.length) };
+    });
+    const download = vi.fn(async ({ gcsUri }: { gcsUri: string }) => {
+      if (gcsUri.endsWith("/request.json") && !/-v2\//.test(gcsUri)) {
+        // 旧证据：同 callId、同身份，但请求正文不同（当年的链策略/提示词）
+        const body = { schemaVersion: 1, callId: "native-structuring-" + "f".repeat(64), seriesKey: "s", sourceDigest: "a".repeat(64), episodeIndex: 7,
+          batchRequestId: "old-batch", preferredGlmGateway: "plan_sg_qwen", request: { system: "旧", user: "旧", gatewayPolicy: "structuring_chain" } };
+        return { buffer: Buffer.from(JSON.stringify(body)), bucket: "mv-studio-pro-vertex-video-temp", objectName: "x", generation: "old" };
+      }
+      throw new Error("gcs_stat_failed:404:not found");
+    });
+    const invoke = vi.fn(async (p: GlmParams) => {
+      const content = '{"shots":[{"startSec":0,"endSec":12}]}';
+      await p.onRawResponse!({ gateway: "plan_bj_qwen", model: "qwen3.8-max", httpStatus: 200, contentType: "application/json",
+        bodyText: JSON.stringify({ content }), bodyComplete: true, receivedBytes: 10 });
+      p.validateContent!(content);
+      return { gateway: "plan_bj_qwen", model: "qwen3.8-max", gatewayTrace: [], usage: { prompt_tokens: 1, completion_tokens: 1 },
+        choices: [{ finish_reason: "stop" }], requestId: "r" } as never;
+    });
+    const result = await invokeNativeDeepReadGlmStructuring({ system: "新", user: "新" }, undefined,
+      { seriesKey: "s", sourceDigest: "a".repeat(64), episodeIndex: 7, batchRequestId: "new-batch",
+        callId: "native-structuring-" + "f".repeat(64), recoverExisting: true, gatewayPolicy: "structuring_chain_qwen_first" },
+      { invoke, evidence: { upload: upload as never, getBucket: () => "mv-studio-pro-vertex-video-temp", download: download as never } });
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(result.recoveredPaidEvidence).toBeFalsy();
+    expect(result.evidence?.callId).toBe("native-structuring-" + "f".repeat(64) + "-v2");
+    expect(saved.some((row) => /-v2\/request\.json$/.test(row.objectName))).toBe(true);
+  });
+
   it("请求证据失败时零模型调用", async () => {
     const f = fixture("request.json");
     await expect(invokeNativeDeepReadGlmStructuring({ system: "系统", user: "输入" }, undefined, undefined, f.deps)).rejects.toThrow("保存失败");
