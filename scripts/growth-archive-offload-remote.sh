@@ -48,6 +48,7 @@ acquire_collection_lease() {
   mkdir -p "$ROOT"
   if has_interactive_workload; then
     echo "前台交互任务运行中，archive offload 主动让行" >&2
+    echo "GROWTH_ARCHIVE_BUSY" >&2
     exit 42
   fi
   if [ -e "$COLLECTION_LOCK" ]; then
@@ -55,17 +56,20 @@ acquire_collection_lease() {
       rm -f -- "$COLLECTION_LOCK"
     else
       echo "采集 lease 正在使用，archive offload 主动让行" >&2
+      echo "GROWTH_ARCHIVE_BUSY" >&2
       exit 43
     fi
   fi
   if ! (set -C; umask 077; printf '%s' "$lock_owner" > "$COLLECTION_LOCK") 2>/dev/null; then
     echo "采集 lease 竞争失败，archive offload 主动让行" >&2
+    echo "GROWTH_ARCHIVE_BUSY" >&2
     exit 43
   fi
   lock_acquired=true
   if has_interactive_workload; then
     release_collection_lease
     echo "取得 lease 后检测到前台交互任务，archive offload 主动让行" >&2
+    echo "GROWTH_ARCHIVE_BUSY" >&2
     exit 42
   fi
   (
@@ -159,6 +163,7 @@ prepare_snapshot() {
     validate_dir_name "$dir"
     if has_interactive_workload; then
       echo "创建 archive 快照时出现前台交互任务，本轮让行" >&2
+      echo "GROWTH_ARCHIVE_BUSY" >&2
       exit 42
     fi
     cp -al -- "$ARCHIVE_ROOT/$dir" "$snapshot_next/$dir"
@@ -177,6 +182,7 @@ stream_bundle() {
   validate_dir_name "$dir"
   if has_interactive_workload; then
     echo "前台交互任务运行中，archive 压缩主动让行" >&2
+    echo "GROWTH_ARCHIVE_BUSY" >&2
     exit 42
   fi
   source_dir="$snapshot_root/$dir"
