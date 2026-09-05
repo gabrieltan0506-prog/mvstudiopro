@@ -3807,12 +3807,13 @@ export const STRUCTURING_GATEWAYS: ReadonlySet<string> = new Set<string>([
 ]);
 export function glmGatewayDisplayLabel(gateway: string): string {
   switch (gateway) {
-    case "evolink_glm": return "EvoLink";
-    case "openrouter": return "OpenRouter";
-    case "plan_bj_qwen": return "Qwen北京套餐";
-    case "plan_sg_qwen": return "Qwen新加坡套餐";
-    case "openrouter_qwen": return "OpenRouter-Qwen";
-    case "evolink_qwen": return "EvoLink-Qwen";
+    // 0905 用户令「整形哪个模型面板就显示哪个模型」：模型名在前，网关在后
+    case "evolink_glm": return "GLM-5.3 · EvoLink";
+    case "openrouter": return "GLM-5.3 · OpenRouter";
+    case "plan_bj_qwen": return "Qwen3.8-Max · 北京套餐";
+    case "plan_sg_qwen": return "Qwen3.8-Max · 新加坡套餐";
+    case "openrouter_qwen": return "Qwen3.8-Max · OpenRouter";
+    case "evolink_qwen": return "Qwen3.8-Max · EvoLink";
     default: return gateway || "未知网关";
   }
 }
@@ -4347,7 +4348,7 @@ export async function invokeNativeDeepReadGlmStructuring(
   });
   // 通道锁：只接受整形链五档（GLM 两档 + Qwen 三档）；判据复用 bailianChat 的单一真源。
   if (!STRUCTURING_GATEWAYS.has(response.gateway) || !raw) {
-    throw new Error("GLM 结构化整形通道锁失效或未返回 JSON");
+    throw new Error("结构化整形通道锁失效或未返回 JSON");
   }
   const result: NativeDeepReadGlmStructuringResult = {
     raw,
@@ -6022,7 +6023,7 @@ async function executeNativeDeepReadBatch(
           episodeCost += structuringCostCny;
           await emitVisualModelReceipt({
             callId,
-            model: `${glmGatewayDisplayLabel(structured.gateway)}·${structured.model}`,
+            model: `${glmGatewayDisplayLabel(structured.gateway)}（${structured.model}）`,
             route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
             stage: "visual_parse",
             status: "completed",
