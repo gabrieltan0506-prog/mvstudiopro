@@ -63,6 +63,7 @@ import {
   GLM_MODEL_GATEWAYS,
   GlmGatewayError,
   OPENROUTER_GLM_MODEL,
+  STRUCTURING_CHAIN_GATEWAYS,
   invokeGlmJsonChatWithGatewayFallback,
 } from "./bailianChat.js";
 import type { GlmGatewayName } from "./bailianChat.js";
@@ -1423,7 +1424,8 @@ export function nativeDeepReadFrozenContractSha256(): string {
 
 /** 修改冻结项必须由用户在当前任务重新授权；禁止只更新这个摘要让测试变绿。
  * 0903 更新授权：用户拍板读片双模型（3.1 Pro / 3.8 Flash 面板可选），冻结集合随之换代。 */
-export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "e1050cfd8393b5b4062c158e32fec9ed25f0d2f24b2739920f3dbf225e3f1cf8" as const;
+/** 0905 用户重新授权：整形链改五档逐档 30 分钟切换 + maxTokens 262K，冻结集合随之换代（只作废整形批次缓存，不动读片分片缓存）。 */
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "b05ae90e4c8535ec9f06359fb1c11bbe11b17651e3aad00d9ad39066faff641d" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
   const actual = nativeDeepReadFrozenContractSha256();
@@ -1712,14 +1714,51 @@ export const NATIVE_DEEP_READ_SOURCE_BYTES_PER_SEC_ESTIMATE = 400_000;
 export function buildNativeDeepReadSourceFetchArgs(input: {
   node: NativeDeepReadMediaNode;
   outputPath: string;
+  /** 传入即让 ffmpeg 把 out_time 等进度键值追加写到该文件，供拉取进度按真实片长播报。 */
+  progressPath?: string;
 }): string[] {
   return [
     "-nostdin", "-hide_banner", "-loglevel", "error", "-xerror", "-y",
+    ...(input.progressPath ? ["-progress", input.progressPath] : []),
     ...(/^https?:\/\//i.test(input.node.url) ? mediaHeaders(input.node) : []),
     "-i", input.node.url,
     "-map", "0:v:0", "-map", "0:a?",
     "-c", "copy", "-movflags", "+faststart", input.outputPath,
   ];
+}
+
+/**
+ * 解析 ffmpeg `-progress` 文件里最后一次上报的已处理片长（秒）。
+ * 新版写 out_time_us（微秒）、旧版写 out_time_ms（实际也是微秒）、另有 out_time=HH:MM:SS.micro；
+ * 三者取最后出现的一个；无可用值返回 null（调用方回落到「只报已下 MB」）。
+ */
+export function parseFfmpegProgressOutTimeSec(text: string): number | null {
+  let last: number | null = null;
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const m = /^out_time_(?:us|ms)=(-?\d+)\s*$/.exec(line);
+    if (m) {
+      const value = Number(m[1]) / 1_000_000;
+      if (Number.isFinite(value) && value >= 0) last = value;
+      continue;
+    }
+    const clock = /^out_time=(\d+):(\d{2}):(\d{2}(?:\.\d+)?)\s*$/.exec(line);
+    if (clock) {
+      const value = Number(clock[1]) * 3600 + Number(clock[2]) * 60 + Number(clock[3]);
+      if (Number.isFinite(value) && value >= 0) last = value;
+    }
+  }
+  return last;
+}
+
+/** 秒 → mm:ss（≥1 小时用 h:mm:ss），给面板读。 */
+export function formatClockSec(sec: number): string {
+  const total = Number.isFinite(Number(sec)) ? Math.max(0, Math.floor(Number(sec))) : 0;
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+    : `${m}:${String(s).padStart(2, "0")}`;
 }
 
 /**
@@ -1884,11 +1923,21 @@ export async function prepareEpisodeVideos(
   limits?: {
     cutConcurrency?: number;
     uploadConcurrency?: number;
-    /** 整片落盘期间的进度播报（0905 用户令：面板不许十几分钟零进度）。 */
+    /** 媒体备料全程进度播报：整片拉取 / 落盘完成 / 切片 N/M / 上传 N/M（0905 用户令：面板不许十几分钟零进度）。 */
     onSourceFetchProgress?: (zh: string) => void | Promise<void>;
   },
 ): Promise<PreparedNativeVideo[]> {
   const segments = validateNativeDeepReadSegments(episode.segments);
+  // 播报是旁路：写不进去不影响备料
+  const reportMedia = async (zh: string) => {
+    try {
+      await limits?.onSourceFetchProgress?.(zh);
+    } catch {
+      /* ignore */
+    }
+  };
+  let cutDone = 0;
+  let uploadDone = 0;
 
   // 切段前先看 /tmp：磁盘打满时 ffmpeg 会切出半截片，宁可关闭式停止。
   // 0901 起整片先落盘再本地切，空间按时长估算叠加 500MB 底线一起验。
@@ -1917,21 +1966,18 @@ export async function prepareEpisodeVideos(
         const node = nodes[attempt % Math.max(1, nodes.length)];
         if (!node?.url) throw new Error(`第${episode.episodeIndex}集未解析到媒体节点`);
         const fetchStartedAt = Date.now();
-        const reportFetch = async (zh: string) => {
-          try {
-            await limits?.onSourceFetchProgress?.(zh);
-          } catch {
-            // 进度播报是旁路，写不进去不影响拉流
-          }
-        };
+        const reportFetch = reportMedia;
+        const totalSec = Math.max(1, episode.sourceDurationSec);
         await reportFetch(
           `第${episode.episodeIndex}集 · 整片拉取开始（节点 ${attempt + 1}/${Math.max(1, nodes.length)}，`
-          + `片长 ${Math.round(episode.sourceDurationSec)} 秒，预计约 ${(sourceBytesEstimate / 1048576).toFixed(0)}MB）`,
+          + `片长 ${formatClockSec(totalSec)}）`,
         );
-        // ffmpeg 顺序拉流没有进度回调：每 20 秒看一次本地文件长度，按预计体积报百分比
+        // 0905 用户令「只显示真实值」：百分比按 ffmpeg -progress 报出的已读片长 / 真实总片长算，
+        // 不再按码率估体积（估值偏大会让进度停在半路，用户以为卡死去掐任务）
+        const progressPath = `${localSourcePath}.progress`;
         const fetchPromise = deps.runMedia(
           "ffmpeg",
-          buildNativeDeepReadSourceFetchArgs({ node, outputPath: localSourcePath }),
+          buildNativeDeepReadSourceFetchArgs({ node, outputPath: localSourcePath, progressPath }),
           NATIVE_DEEP_READ_SOURCE_FETCH_TIMEOUT_MS,
           abortSignal,
         );
@@ -1949,10 +1995,19 @@ export async function prepareEpisodeVideos(
             });
             if (fetchSettled) break;
             const size = await deps.statLocal(localSourcePath).then((s) => s.size).catch(() => 0);
-            const pct = Math.min(99, Math.round((size / Math.max(1, sourceBytesEstimate)) * 100));
+            let readSec: number | null = null;
+            try {
+              readSec = parseFfmpegProgressOutTimeSec((await deps.readLocal(progressPath)).toString("utf8"));
+            } catch {
+              readSec = null;
+            }
+            const elapsedSec = Math.max(1, Math.round((Date.now() - fetchStartedAt) / 1000));
+            const speedZh = `${(size / 1048576 / elapsedSec).toFixed(1)}MB/s`;
             await reportFetch(
-              `第${episode.episodeIndex}集 · 整片拉取中 ${pct}%（已下 ${(size / 1048576).toFixed(0)}MB / 预计约 `
-              + `${(sourceBytesEstimate / 1048576).toFixed(0)}MB · 已耗时 ${Math.round((Date.now() - fetchStartedAt) / 1000)} 秒）`,
+              readSec == null
+                ? `第${episode.episodeIndex}集 · 整片拉取中 · 已下 ${(size / 1048576).toFixed(0)}MB · ${speedZh} · 已耗时 ${elapsedSec} 秒`
+                : `第${episode.episodeIndex}集 · 整片拉取中 ${Math.min(99, Math.floor((readSec / totalSec) * 100))}%`
+                  + `（已读到 ${formatClockSec(readSec)} / ${formatClockSec(totalSec)} · 已下 ${(size / 1048576).toFixed(0)}MB · ${speedZh} · 已耗时 ${elapsedSec} 秒）`,
             );
           }
         })();
@@ -1962,6 +2017,7 @@ export async function prepareEpisodeVideos(
           fetchSettled = true;
           wake?.();
           await ticker.catch(() => undefined);
+          await deps.unlinkLocal(progressPath).catch(() => undefined);
         }
         const sourceStat = await deps.statLocal(localSourcePath);
         if (!Number.isFinite(sourceStat.size) || sourceStat.size <= 0) {
@@ -1979,6 +2035,11 @@ export async function prepareEpisodeVideos(
             + `低于计划 ${episode.sourceDurationSec} 秒，判定拉取不完整`,
           );
         }
+        await reportMedia(
+          `第${episode.episodeIndex}集 · 整片落盘完成 100% · ${(sourceStat.size / 1048576).toFixed(0)}MB`
+          + ` · 片长 ${formatClockSec(probedSec)} · 耗时 ${Math.round((Date.now() - fetchStartedAt) / 1000)} 秒`
+          + ` · 开始本地切 ${segments.length} 段`,
+        );
         fetched = true;
       } catch (error) {
         await deps.unlinkLocal(localSourcePath).catch(() => undefined);
@@ -2064,6 +2125,11 @@ export async function prepareEpisodeVideos(
             hasAudio: media.hasAudio,
           };
           completed = true;
+          cutDone += 1;
+          await reportMedia(
+            `第${episode.episodeIndex}集 · 切片 ${cutDone}/${segments.length} 完成`
+            + `（第 ${index + 1} 段 ${Math.round(segment.startSec)}–${Math.round(segment.endSec)} 秒 · ${(fileStat.size / 1048576).toFixed(0)}MB）`,
+          );
         } catch (error) {
           await deps.unlinkLocal(localPath).catch(() => undefined);
           lastError = error;
@@ -2128,6 +2194,11 @@ export async function prepareEpisodeVideos(
         bytes: row.bytes,
         hasAudio: row.hasAudio,
       };
+      uploadDone += 1;
+      await reportMedia(
+        `第${episode.episodeIndex}集 · 上传 ${uploadDone}/${completeCutRows.length} 完成`
+        + (uploadDone === completeCutRows.length ? " · 备料齐全，开始逐段模型调用" : ""),
+      );
     };
     const uploadWorkers = Array.from({ length: uploadConcurrency }, async () => {
       while (!stopUploading) {
@@ -3621,7 +3692,26 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE = "openrouter_glm_structurin
  * completed/failed 回执一律记 `structured.model` 真值，不用本常量。
  */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`;
-const GLM_STRUCTURING_MAX_TOKENS = 131_072;
+/** 开始/失败回执的人话链路标签（0905：用户看了几百次「z-ai/glm-5.3」以为一直走 OpenRouter）。 */
+export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 EvoLink → OpenRouter → Qwen 北京 → 新加坡 → OpenRouter（每档 30 分钟）";
+/** 完成回执按实际网关写人话名，面板一眼看出这一发走的是哪家。 */
+/** 整形链可接受的网关集合（缓存校验与通道锁共用）。 */
+export const STRUCTURING_GATEWAYS: ReadonlySet<string> = new Set<string>([
+  ...Array.from(GLM_MODEL_GATEWAYS), ...STRUCTURING_CHAIN_GATEWAYS,
+]);
+export function glmGatewayDisplayLabel(gateway: string): string {
+  switch (gateway) {
+    case "evolink_glm": return "EvoLink";
+    case "openrouter": return "OpenRouter";
+    case "plan_bj_qwen": return "Qwen北京套餐";
+    case "plan_sg_qwen": return "Qwen新加坡套餐";
+    case "openrouter_qwen": return "OpenRouter-Qwen";
+    case "evolink_qwen": return "EvoLink-Qwen";
+    default: return gateway || "未知网关";
+  }
+}
+/** 0905 用户令：全部 262K（OpenRouter Z.AI 原生档实测上限 262,144；EvoLink 若不吃会 4xx 落到下一档）。 */
+const GLM_STRUCTURING_MAX_TOKENS = 262_144;
 /**
  * 🔒 整形链采样温度（0829 晚用户拍板 0.8）。
  * 不传＝EvoLink 默认 1.0（太飘）；0.2 又太死板，会变成照抄不敢取舍——
@@ -3643,15 +3733,17 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE = 0.8;
  */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT = MANHUA_NATIVE_GLM_REASONING_EFFORT;
 /** 四个 300 秒分片的真实组装曾在 12 分钟边界被本地中止；只放宽等待，不自动重提。 */
-// 0829 用户令：不设硬超时，跑出结果为止。全收进 GLM 后输入更大（六段卡 ~21.7 万 tok
-// 再叠标记版），旧的 15 分钟硬顶在 900,005ms 处把调用掐断成 network_error。
-const GLM_STRUCTURING_TIMEOUT_MS = 6 * 60 * 60_000;
+// 0829 曾放宽到 6 小时（15 分钟硬顶曾在 900,005ms 掐断成 network_error）。
+// 0905 用户令：**每一档 30 分钟**，超时自动切下一档——
+// EvoLink GLM → OpenRouter GLM → Qwen 北京套餐 → Qwen 新加坡套餐 → OpenRouter Qwen；
+// 五档全失败才走本地确定性整形兜底，不重读片。
+const GLM_STRUCTURING_TIMEOUT_MS = 30 * 60_000;
 const OPENROUTER_USD_TO_CNY_EQUIVALENT = 7.2;
 
 /** GLM结构化的完整冻结参数；调用方只能由调度器指定首选通道，不能覆盖这些值。 */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG = deepFreezeNativeContract({
   maxTokens: GLM_STRUCTURING_MAX_TOKENS,
-  gatewayPolicy: "glm_only" as const,
+  gatewayPolicy: "structuring_chain" as const,
   timeoutMs: GLM_STRUCTURING_TIMEOUT_MS,
   temperature: NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE,
   reasoningEffort: NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT,
@@ -4005,7 +4097,7 @@ export async function readNativeDeepReadStructuredBatchCache(input: {
     || parsed.inputDigest !== inputDigest
     || JSON.stringify(parsed.segmentIndexes) !== JSON.stringify(input.segmentIndexes)
     || !parsed.raw || typeof parsed.raw !== "object" || Array.isArray(parsed.raw)
-    || !GLM_MODEL_GATEWAYS.has(parsed.gateway)
+    || !STRUCTURING_GATEWAYS.has(parsed.gateway)
   ) throw new Error("整形批次缓存身份或契约不一致，停止复用");
   return parsed;
 }
@@ -4017,7 +4109,7 @@ export async function writeNativeDeepReadStructuredBatchCache(
     entry.schemaVersion !== 1
     || entry.frozenContractSha256 !== NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256
     || !entry.raw || typeof entry.raw !== "object" || Array.isArray(entry.raw)
-    || !GLM_MODEL_GATEWAYS.has(entry.gateway)
+    || !STRUCTURING_GATEWAYS.has(entry.gateway)
     || !Number.isFinite(entry.inputTokens) || entry.inputTokens < 0
     || !Number.isFinite(entry.outputTokens) || entry.outputTokens < 0
     || !Number.isFinite(entry.reasoningTokens) || entry.reasoningTokens < 0
@@ -4101,9 +4193,8 @@ export async function invokeNativeDeepReadGlmStructuring(
       raw = parseJsonObject(content);
     },
   });
-  // 通道锁：只接受仍然是 GLM-5.3 的两档（EvoLink / OpenRouter）。
-  // 判据复用 bailianChat 的单一真源集合，不在这里再写一遍网关名。
-  if (!GLM_MODEL_GATEWAYS.has(response.gateway) || !raw) {
+  // 通道锁：只接受整形链五档（GLM 两档 + Qwen 三档）；判据复用 bailianChat 的单一真源。
+  if (!STRUCTURING_GATEWAYS.has(response.gateway) || !raw) {
     throw new Error("GLM 结构化整形通道锁失效或未返回 JSON");
   }
   const result: NativeDeepReadGlmStructuringResult = {
@@ -5681,6 +5772,8 @@ async function executeNativeDeepReadBatch(
         videoCount: number;
         segmentIndexes: readonly number[];
         rows: ReadonlyArray<Record<string, unknown>>;
+        /** 面板标签：第几批整形，让用户看得出是第几次 */
+        labelZh?: string;
       }): Promise<NativeDeepReadGlmStructuringResult> => {
         const callId = canCacheStructuring
           ? nativeDeepReadStructuredBatchCallId({
@@ -5697,13 +5790,15 @@ async function executeNativeDeepReadBatch(
           const now = Date.now();
           await emitVisualModelReceipt({
             callId,
-            model: NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL,
+            // 0905：开始行明说链路顺序；完成/失败行改记实际网关，面板不再把 EvoLink 显示成 OpenRouter
+            model: NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL,
             route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
             stage: "visual_parse",
             status: "started",
             batchRequestId: episodeRequestId,
             episodeIndexes: [episode.episodeIndex],
             videoCount: input.videoCount,
+            labelZh: input.labelZh,
           }, params.onModelReceipt);
           startedAt = now;
         };
@@ -5734,13 +5829,14 @@ async function executeNativeDeepReadBatch(
           episodeCost += structuringCostCny;
           await emitVisualModelReceipt({
             callId,
-            model: structured.model,
+            model: `${glmGatewayDisplayLabel(structured.gateway)}·${structured.model}`,
             route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
             stage: "visual_parse",
             status: "completed",
             batchRequestId: episodeRequestId,
             episodeIndexes: [episode.episodeIndex],
             videoCount: input.videoCount,
+            labelZh: input.labelZh,
             elapsedMs: Date.now() - startedAt!,
             inputTokens: structured.inputTokens,
             outputTokens: structured.outputTokens,
@@ -5772,13 +5868,14 @@ async function executeNativeDeepReadBatch(
           }
           await emitVisualModelReceipt({
             callId,
-            model: NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL,
+            model: NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL,
             route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
             stage: "visual_parse",
             status: "failed",
             batchRequestId: episodeRequestId,
             episodeIndexes: [episode.episodeIndex],
             videoCount: input.videoCount,
+            labelZh: input.labelZh,
             elapsedMs: Date.now() - startedAt,
             inputTokens: failedUsage?.inputTokens || undefined,
             outputTokens: failedUsage?.outputTokens || undefined,
@@ -5836,6 +5933,7 @@ async function executeNativeDeepReadBatch(
             videoCount: input.videoCount,
             segmentIndexes: input.segmentIndexes,
             rows: input.rows,
+            labelZh: input.labelZh,
           });
         } catch (error) {
           // 只有“两条供应商都没有交付可消费结果”才能走本地整形。
@@ -5846,7 +5944,7 @@ async function executeNativeDeepReadBatch(
             || error.code !== "glm_gateway_all_failed"
             || error.gatewayTrace.some((row) => row.outcome === "ok" || row.outcome === "evidence_persistence_failed")
           ) throw error;
-          const detailZh = `${input.labelZh}两条GLM-5.3通道均未交付可消费结果，已使用确定性本地整形fallback；未新增或改写证据`;
+          const detailZh = `${input.labelZh}整形链五档均未交付可消费结果，已使用确定性本地整形fallback；未新增或改写证据`;
           structuringFallbackAdvisories.push({
             code: "glm_structuring_local_fallback",
             detailZh,
@@ -5907,7 +6005,8 @@ async function executeNativeDeepReadBatch(
         });
       };
       const structuredEpisodeRaw = async (): Promise<Record<string, unknown>> => {
-        const maxRawSegmentsPerBatch = 4;
+        // 0905 用户拍板 5：29 片＝6 组 6 次 GLM；5 片一批实测输出 120K，131K 内也安全，不依赖 262K 是否真生效
+        const maxRawSegmentsPerBatch = 5;
         const allSegmentIndexes = episode.segments.map((_, index) => index);
         if (segmentCount <= maxRawSegmentsPerBatch) {
           const cached = await readCachedStructuring(allSegmentIndexes, glmStructuringInputs, "最终整形");
@@ -5927,7 +6026,7 @@ async function executeNativeDeepReadBatch(
             segmentIndexes: allSegmentIndexes,
             rows: glmStructuringInputs,
             fallbackRows: annotateSegmentRows(),
-            labelZh: `第${episode.episodeIndex}集整集整形`,
+            labelZh: `第${episode.episodeIndex}集整集整形（一次）`,
           });
           result.raw = unwrapNativeDeepReadStructuredAnswerEnvelope(result.raw);
           assertNativeDeepReadShotObservationsPreserved(glmStructuringInputs, result.raw);
@@ -5943,7 +6042,7 @@ async function executeNativeDeepReadBatch(
           ));
         }
         const groupRows = await Promise.all(groups.map(async (segmentIndexes) => {
-          // 单片无需再做一次中间GLM；直接作为一张已结构化分段卡进入最终合并。
+          // 单片无需再做一次中间GLM；直接作为一张已结构化分段卡进入确定性拼接。
           if (segmentIndexes.length === 1) return completeRawSegments[segmentIndexes[0]!]!;
           const groupInputs = segmentIndexes.map((index) => completeRawSegments[index]!);
           const annotatedRows = annotateSegmentRows();
@@ -5978,34 +6077,35 @@ async function executeNativeDeepReadBatch(
           await writeCachedStructuring(segmentIndexes, groupInputs, result);
           return result.raw;
         }));
-        const cachedFinal = await readCachedStructuring(allSegmentIndexes, groupRows, "最终整形");
-        if (cachedFinal) {
-          const normalizedCachedFinal = unwrapNativeDeepReadStructuredAnswerEnvelope(cachedFinal);
-          normalizedCachedFinal.structuringBatches = groups.map((segmentIndexes) => ({ segmentIndexes }));
-          return normalizedCachedFinal;
+        // 0905 用户令「不归并，分上下集」：批次各自整形完，按秒位确定性拼成整集卡，
+        // 省掉第三次 GLM（实测归并一发 49 分钟、输入 212K）。批次边界的重复镜头由
+        // deterministicallyMerge 的「同秒位取信息更全」规则收口，零模型调用。
+        const finalRaw = deterministicallyMergeNativeDeepReadRawSegments(groupRows);
+        assertNativeDeepReadShotObservationsPreserved(groupRows, finalRaw);
+        finalRaw.structuringBatches = groups.map((segmentIndexes) => ({ segmentIndexes }));
+        // 这不是兜底，是正式路径：不许烙「本地兜底」标记
+        delete finalRaw.structuringFallback;
+        // 0902 用户令字段从批次卡合并回来：标题取最长的非空一条，五维判词逐维取非空并拼接
+        const batchCards = groupRows.map(unwrapNativeDeepReadStructuredAnswerEnvelope);
+        const titles = batchCards.map((card) => String(card.templateTitleZh || "").trim()).filter(Boolean);
+        if (titles.length) finalRaw.templateTitleZh = titles.sort((x, y) => y.length - x.length)[0];
+        const proseByKey: Record<string, string[]> = {};
+        for (const card of batchCards) {
+          const prose = card.classificationProseZh;
+          if (!prose || typeof prose !== "object" || Array.isArray(prose)) continue;
+          for (const [key, value] of Object.entries(prose as Record<string, unknown>)) {
+            const text = String(value || "").trim();
+            if (text) (proseByKey[key] ||= []).push(text);
+          }
         }
-        const finalResult = await runStructuringOrLocalFallback({
-          prompt: buildNativeDeepReadGlmStructuringPrompt({
-            episodeIndex: episode.episodeIndex,
-            durationSec: episode.sourceDurationSec,
-            segments: episode.segments,
-            hasAudio,
-            rawSegments: groupRows,
-            coverageStartSec: 0,
-            coverageEndSec: episode.sourceDurationSec,
-            scopeZh: "整集",
-          }),
-          videoCount: groupRows.length,
-          segmentIndexes: allSegmentIndexes,
-          rows: groupRows,
-          fallbackRows: groupRows,
-          labelZh: `第${episode.episodeIndex}集最终整形`,
-        });
-        finalResult.raw = unwrapNativeDeepReadStructuredAnswerEnvelope(finalResult.raw);
-        assertNativeDeepReadShotObservationsPreserved(groupRows, finalResult.raw);
-        finalResult.raw.structuringBatches = groups.map((segmentIndexes) => ({ segmentIndexes }));
-        await writeCachedStructuring(allSegmentIndexes, groupRows, finalResult);
-        return finalResult.raw;
+        if (Object.keys(proseByKey).length) {
+          finalRaw.classificationProseZh = Object.fromEntries(
+            Object.entries(proseByKey).map(([key, texts]) => [key, Array.from(new Set(texts)).join("；")]),
+          );
+        }
+        // 整集级 GLM 证据不存在（没有归并这一发）：报告导出走分段卡拼装，不许指向某一半批次卡
+        glmEvidence = undefined;
+        return finalRaw;
       };
       const parseCallId = `${episodeRequestId}:parse`;
       await emitVisualModelReceipt({

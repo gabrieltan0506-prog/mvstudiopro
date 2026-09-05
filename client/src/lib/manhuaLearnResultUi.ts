@@ -396,6 +396,7 @@ export function parseManhuaNativeModelReceipts(raw: unknown): ManhuaNativeModelR
       route,
       provider: optionalReceiptText(row.provider, 128),
       providerRequestId: optionalReceiptText(row.providerRequestId, 256),
+      labelZh: optionalReceiptText(row.labelZh, 64),
       stage: stage as ManhuaNativeModelReceipt["stage"],
       status: status as ManhuaNativeModelReceipt["status"],
       atIso: optionalReceiptText(row.atIso, 64),

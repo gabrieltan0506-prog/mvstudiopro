@@ -128,7 +128,7 @@ describe("整集GLM消费前永久取证", () => {
     expect(result.evidence?.raw).toHaveLength(2);
     expect(result.evidence?.selectedRawObjectName).toContain("raw-2.json");
     expect(f.saved[3]).toMatchObject({ episodeIndex: 2, batchRequestId: "batch-test", parsed: result.raw });
-    expect(f.saved[0].request).toMatchObject({ system: "系统", user: "全部分片", maxTokens: 131072, gatewayPolicy: "glm_only" });
+    expect(f.saved[0].request).toMatchObject({ system: "系统", user: "全部分片", maxTokens: 262144, gatewayPolicy: "structuring_chain" });
     expect(f.saved[0].request).not.toHaveProperty("abortSignal");
   });
 
@@ -2020,8 +2020,8 @@ describe("精确切片与实际媒体验收", () => {
     // 整片只解析一次节点；段级重切在本地进行，不再刷新节点
     expect(resolveNodes).toHaveBeenCalledTimes(1);
     expect(deps.upload).not.toHaveBeenCalled();
-    // 3 次段级清理 + finally 清整片
-    expect(deps.unlinkLocal).toHaveBeenCalledTimes(4);
+    // 3 次段级清理 + finally 清整片 + 拉取进度文件
+    expect(deps.unlinkLocal).toHaveBeenCalledTimes(5);
     warn.mockRestore();
   });
 
@@ -2037,7 +2037,8 @@ describe("精确切片与实际媒体验收", () => {
     }, undefined, deps)).rejects.toThrow("probe failed");
     expect(deps.upload).not.toHaveBeenCalled();
     // 源探针即抛 → 整片三连拉失败，各自清一次源文件；未进切段层，finally 无段可清
-    expect(deps.unlinkLocal).toHaveBeenCalledTimes(3);
+    // 每发拉取失败各清一次源文件与进度文件（3×2），未进切段层
+    expect(deps.unlinkLocal).toHaveBeenCalledTimes(6);
     warn.mockRestore();
   });
 
@@ -3057,16 +3058,17 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentCacheSeriesKey: "hierarchy_9_segments",
     }, deps);
 
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(3);
+    // 0905 用户令「不归并、每批 5 片」：9 片＝5/4 两批各整形一次，整集由代码确定性拼接
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
     const sent = invokeGlmStructuring.mock.calls.map(([prompt]) =>
       readRawSegmentsFromGlmPrompt((prompt as { user: string }).user));
-    expect(sent.map((rows) => rows.length)).toEqual([4, 4, 3]);
+    expect(sent.map((rows) => rows.length)).toEqual([5, 4]);
     expect((invokeGlmStructuring.mock.calls[0]![0] as { user: string }).user)
       .toContain('"segments":[{"segmentIndex":0');
     expect((invokeGlmStructuring.mock.calls[1]![0] as { user: string }).user)
-      .toContain('"segments":[{"segmentIndex":4');
-    expect(deps.readStructuredBatchCache).toHaveBeenCalledTimes(3);
-    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(3);
+      .toContain('"segments":[{"segmentIndex":5');
+    expect(deps.readStructuredBatchCache).toHaveBeenCalledTimes(2);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
     expect(result.episodes[0]!.result.attemptedSegments).toBe(9);
   });
@@ -3079,7 +3081,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     const readStructuredBatchCache = vi.fn(async (input: {
       segmentIndexes: readonly number[];
       rawSegments: ReadonlyArray<Record<string, unknown>>;
-    }) => JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2, 3]) ? {
+    }) => JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2, 3, 4]) ? {
       schemaVersion: 1 as const,
       frozenContractSha256: "f".repeat(64),
       seriesKey: "legacy_answer_envelope",
@@ -3127,15 +3129,10 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       onModelReceipt: (receipt) => { receipts.push(receipt); },
     }, deps);
 
-    expect(readStructuredBatchCache).toHaveBeenCalledTimes(2);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
-    const finalRows = readRawSegmentsFromGlmPrompt(
-      (invokeGlmStructuring.mock.calls[0]![0] as { user: string }).user,
-    );
-    expect(finalRows).toHaveLength(2);
-    expect(finalRows[0]?.answer).toEqual(expect.any(String));
-    expect(finalRows[1]?.shots).toEqual(expect.any(Array));
-    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(1);
+    // 0905：每批 5 片，5 片＝一批 [0..4]；命中缓存则零模型调用，整集由代码拼出
+    expect(readStructuredBatchCache).toHaveBeenCalledTimes(1);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(0);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(0);
     expect(receipts.filter((row) => row.route === NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE)).toEqual([]);
     expect(result.episodes[0]!.result.beatGrid).toHaveLength(60);
     expect(result.episodes[0]!.result.segmentCount).toBe(5);
@@ -3167,13 +3164,14 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentCacheSeriesKey: "answer_envelope_9_segments",
     }, deps);
 
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(3);
-    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(3);
+    // 0905：不再有第三次归并，5 片＝两个批次，各整形一次；整集由代码确定性拼接
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
     expect(result.episodes[0]!.result.beatGrid).toHaveLength(108);
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
   });
 
-  it("中间批次与最终整形命中GCS缓存时都不重跑，只补未缓存批次", async () => {
+  it("命中GCS缓存的批次不重跑，只补未缓存批次；整集由代码拼接", async () => {
     const segments = Array.from({ length: 9 }, (_, index) => ({
       startSec: index * 60,
       endSec: (index + 1) * 60,
@@ -3182,7 +3180,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentIndexes: readonly number[];
       rawSegments: ReadonlyArray<Record<string, unknown>>;
     }) => (
-      JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2, 3])
+      JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2, 3, 4])
       || JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8])
     ) ? {
           schemaVersion: 1 as const,
@@ -3227,12 +3225,14 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentCacheSeriesKey: "hierarchy_cache_hit",
     }, deps);
 
-    expect(readStructuredBatchCache).toHaveBeenCalledTimes(3);
+    // 0905：没有最终归并；9 片＝[0..4]+[5..8]，只有 [0..4] 命中缓存，[5..8] 跑一次
+    expect(readStructuredBatchCache).toHaveBeenCalledTimes(2);
     expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
     expect(invokeGlmStructuring.mock.calls.map(([prompt]) =>
       readRawSegmentsFromGlmPrompt((prompt as { user: string }).user).length)).toEqual([4]);
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(1);
-    expect(result.episodes[0]!.result.glmEvidence?.callId).toBe("cached-final-call");
+    // 没有整集级 GLM 证据：报告导出必须走分段卡拼装，不许指向某一半批次卡
+    expect(result.episodes[0]!.result.glmEvidence).toBeUndefined();
   });
 
   it("整形缓存缺失但永久付费证据恢复时不重记用量、不发模型回执，并补写结构缓存", async () => {
@@ -3859,7 +3859,8 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     expect(result.episodes[0]!.result.visualRoutes).toEqual(["evolink_gemini_video"]);
     expect(result.episodes[0]!.result.degradedFpsSegmentIndexes).toEqual([0]);
     expect(receipts.find((row) => row.route === "segment_cache_hit")).toBeUndefined();
-    expect(receipts.some((row) => row.model === "z-ai/glm-5.3" && row.status === "completed")).toBe(true);
+    // 0905：完成回执的 model 带实际网关人话名（如「OpenRouter·z-ai/glm-5.3」）
+    expect(receipts.some((row) => String(row.model).endsWith("·z-ai/glm-5.3") && row.status === "completed")).toBe(true);
   });
 
   it("历史尾片无条件放行标记不再有效，好片复用且只重跑坏尾片", async () => {
@@ -4435,5 +4436,23 @@ describe("逐镜动态观察的生产与消费", () => {
     expect(deps.writeParsedAttemptEvidence).toHaveBeenCalledTimes(1);
     expect(vi.mocked(deps.writeParsedAttemptEvidence).mock.calls[0]![0].parsed.shots).toEqual(
       expect.arrayContaining([expect.objectContaining({ hintZh: expect.any(String) })]));
+  });
+});
+
+describe("0905 · 整片拉取真实进度（不用预估值）", () => {
+  it("解析 ffmpeg -progress 文件取最后一次 out_time，三种键都认，缺失回 null", async () => {
+    const { parseFfmpegProgressOutTimeSec, formatClockSec, buildNativeDeepReadSourceFetchArgs } = await import(
+      "./manhuaNativeDeepReadRunner"
+    );
+    expect(parseFfmpegProgressOutTimeSec("frame=1\nout_time_us=1500000\nprogress=continue\nout_time_us=2573000000\nprogress=end\n")).toBe(2573);
+    expect(parseFfmpegProgressOutTimeSec("out_time_ms=90000000\n")).toBe(90);
+    expect(parseFfmpegProgressOutTimeSec("out_time=00:42:53.000000\n")).toBe(2573);
+    expect(parseFfmpegProgressOutTimeSec("frame=1\nspeed=2x\n")).toBeNull();
+    expect(parseFfmpegProgressOutTimeSec("")).toBeNull();
+    expect(formatClockSec(2573)).toBe("42:53");
+    expect(formatClockSec(3725)).toBe("1:02:05");
+    const args = buildNativeDeepReadSourceFetchArgs({ node: { url: "https://cdn.example/x.m3u8" }, outputPath: "/tmp/a.mp4", progressPath: "/tmp/a.mp4.progress" });
+    expect(args.slice(0, 8)).toEqual(["-nostdin", "-hide_banner", "-loglevel", "error", "-xerror", "-y", "-progress", "/tmp/a.mp4.progress"]);
+    expect(buildNativeDeepReadSourceFetchArgs({ node: { url: "https://cdn.example/x.m3u8" }, outputPath: "/tmp/a.mp4" })).not.toContain("-progress");
   });
 });

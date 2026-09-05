@@ -38,6 +38,8 @@ export type ManhuaNativeModelReceipt = {
   batchRequestId?: string;
   videoCount?: number;
   elapsedMs?: number;
+  /** 面板用的人话标签（如「第4集第1—4片批次整形」「第4集最终归并」）；缺省按 stage/route 推。 */
+  labelZh?: string;
   inputTokens?: number;
   audioInputTokens?: number;
   outputTokens?: number;
@@ -73,6 +75,7 @@ export function appendManhuaNativeModelReceipt(
     route: String(next.route || "").trim().slice(0, 128),
     provider: String(next.provider || "").trim().slice(0, 128) || undefined,
     providerRequestId: String(next.providerRequestId || "").trim().slice(0, 256) || undefined,
+    labelZh: String(next.labelZh || "").trim().slice(0, 64) || undefined,
     atIso: String(next.atIso || atIso),
     episodeIndexes: Array.from(new Set(next.episodeIndexes
       .map((value) => Math.floor(Number(value)))
