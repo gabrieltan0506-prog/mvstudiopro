@@ -639,8 +639,9 @@ async function invokeOneGlmGateway(
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const signal = params.abortSignal ? AbortSignal.any([params.abortSignal, timeoutSignal]) : timeoutSignal;
   // 输出上限按网关夹紧（0905 用户令整形链 262K；超发会被供应商按参数越界拒掉，白跳一档）
-  // GLM 两档都发 262,144（用户令：EvoLink 没写死上限，能通就赚，不通落下一档）；Qwen 三档按公开上限 131,072
-  const gatewayMaxOutput = GLM_MODEL_GATEWAYS.has(gateway) ? 262_144 : 131_072;
+  // 0905 实弹：EvoLink 400「max_tokens 限制 [1,131072]」、OpenRouter 钉死 Z.AI 档 262K 直接 404 无端点；
+  // 五档统一夹在 131,072，GLM 才真能接单。
+  const gatewayMaxOutput = 131_072;
   const budget = Math.max(8_192, Math.min(gatewayMaxOutput, Math.floor(Number(params.maxTokens) || 65_536)));
   const body: Record<string, unknown> = {
     model,

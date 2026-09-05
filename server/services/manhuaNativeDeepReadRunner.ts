@@ -1425,7 +1425,7 @@ export function nativeDeepReadFrozenContractSha256(): string {
 /** 修改冻结项必须由用户在当前任务重新授权；禁止只更新这个摘要让测试变绿。
  * 0903 更新授权：用户拍板读片双模型（3.1 Pro / 3.8 Flash 面板可选），冻结集合随之换代。 */
 /** 0905 用户重新授权：整形链改五档逐档 30 分钟切换 + maxTokens 262K，冻结集合随之换代（只作废整形批次缓存，不动读片分片缓存）。 */
-export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "b05ae90e4c8535ec9f06359fb1c11bbe11b17651e3aad00d9ad39066faff641d" as const;
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "dc6e0c413f42c3ca9da09ca5753e1e9465ed82e1c5cbc3309256487a0fb24ecc" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
   const actual = nativeDeepReadFrozenContractSha256();
@@ -3710,8 +3710,11 @@ export function glmGatewayDisplayLabel(gateway: string): string {
     default: return gateway || "未知网关";
   }
 }
-/** 0905 用户令：全部 262K（OpenRouter Z.AI 原生档实测上限 262,144；EvoLink 若不吃会 4xx 落到下一档）。 */
-const GLM_STRUCTURING_MAX_TOKENS = 262_144;
+/**
+ * 0905 实弹推翻 262K：EvoLink 400（范围 [1,131072]）、OpenRouter Z.AI 档 404 无端点，两档 GLM 秒败全落 Qwen。
+ * 官方表（百炼 GLM-5.3）最大输出 131,072，按此定死。
+ */
+const GLM_STRUCTURING_MAX_TOKENS = 131_072;
 /**
  * 🔒 整形链采样温度（0829 晚用户拍板 0.8）。
  * 不传＝EvoLink 默认 1.0（太飘）；0.2 又太死板，会变成照抄不敢取舍——

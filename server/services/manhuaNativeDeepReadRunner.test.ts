@@ -128,7 +128,7 @@ describe("整集GLM消费前永久取证", () => {
     expect(result.evidence?.raw).toHaveLength(2);
     expect(result.evidence?.selectedRawObjectName).toContain("raw-2.json");
     expect(f.saved[3]).toMatchObject({ episodeIndex: 2, batchRequestId: "batch-test", parsed: result.raw });
-    expect(f.saved[0].request).toMatchObject({ system: "系统", user: "全部分片", maxTokens: 262144, gatewayPolicy: "structuring_chain" });
+    expect(f.saved[0].request).toMatchObject({ system: "系统", user: "全部分片", maxTokens: 131072, gatewayPolicy: "structuring_chain" });
     expect(f.saved[0].request).not.toHaveProperty("abortSignal");
   });
 
