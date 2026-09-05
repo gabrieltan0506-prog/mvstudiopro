@@ -17,6 +17,7 @@ jobs:
   backup:
     name: Backup growth store from Fly
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     permissions:
       contents: write
       actions: write
@@ -629,6 +630,7 @@ jobs:
           esac
           flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -lc 'rm -rf -- \"$REMOTE_BATCH_DIR\"'"
       - name: Create leased archive snapshot on Fly
+        timeout-minutes: 15
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
@@ -649,13 +651,19 @@ jobs:
           SNAPSHOT_READY=false
           for attempt in $(seq 1 20); do
             rm -f /tmp/growth-archive-offload/snapshot.tsv.next
-            if flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+            if node scripts/growth-archive-transfer.mjs --max-ms 120000 -- flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
               -C "sh -s -- prepare '$BATCH_ID'" \
               < scripts/growth-archive-offload-remote.sh \
               > /tmp/growth-archive-offload/snapshot.tsv.next; then
               mv /tmp/growth-archive-offload/snapshot.tsv.next /tmp/growth-archive-offload/snapshot.tsv
               SNAPSHOT_READY=true
               break
+            else
+              transfer_status=$?
+            fi
+            if [ "$transfer_status" -ne 75 ]; then
+              echo "::error::archive 快照失败（status=${transfer_status}），停止本轮；保留源数据"
+              exit "$transfer_status"
             fi
             echo "采集 lease 或前台任务繁忙，archive 快照让行 30 秒（${attempt}/20）"
             sleep 30
@@ -673,6 +681,7 @@ jobs:
             touch /tmp/growth-archive-offload/EMPTY
           fi
       - name: Download and verify archive bundles locally
+        timeout-minutes: 30
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
@@ -692,13 +701,20 @@ jobs:
             BUNDLE_READY=false
             for attempt in $(seq 1 20); do
               rm -f "$output.next"
-              if flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+              echo "开始下载归档：${dir}（${attempt}/20）"
+              if node scripts/growth-archive-transfer.mjs -- flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
                 -C "sh -s -- bundle '$BATCH_ID' '$dir'" \
                 < scripts/growth-archive-offload-remote.sh \
                 > "$output.next"; then
                 mv "$output.next" "$output"
                 BUNDLE_READY=true
                 break
+              else
+                transfer_status=$?
+              fi
+              if [ "$transfer_status" -ne 75 ]; then
+                echo "::error::归档 $dir 传输失败（status=${transfer_status}），未发布本轮归档；保留源数据"
+                exit "$transfer_status"
               fi
               echo "前台任务繁忙，archive bundle 让行 30 秒：$dir（${attempt}/20）"
               sleep 30
@@ -749,6 +765,7 @@ jobs:
           mv /tmp/growth-archive-offload/archives.tsv.next /tmp/growth-archive-offload/archives.tsv
           test "$(wc -l < /tmp/growth-archive-offload/archives.tsv)" -eq "$(wc -l < /tmp/growth-archive-offload/snapshot.tsv)"
       - name: Publish and read back archive bundles
+        timeout-minutes: 30
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -900,6 +917,7 @@ jobs:
           # 禁止自动删除后再依赖 GitHub → Fly 恢复；空间回收只处理已逐包验真的 archive 分片。
           echo "platform-current retained on Fly; no automatic GitHub-to-Fly recovery path was invoked"
       - name: Always release archive hardlink snapshot
+        timeout-minutes: 2
         if: always()
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -908,6 +926,6 @@ jobs:
             exit 0
           fi
           BATCH_ID=$(cat /tmp/growth-archive-offload/batch-id.txt)
-          flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+          timeout --kill-after=5s 60s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
             -C "sh -s -- cleanup '$BATCH_ID'" \
-            < scripts/growth-archive-offload-remote.sh || true
+            < scripts/growth-archive-offload-remote.sh || echo "::warning::临时快照清理未完成，保留待后续回收；未删除源归档"
