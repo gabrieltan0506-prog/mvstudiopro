@@ -3624,6 +3624,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   /** 调用方已经为单节点编译好重拍/视频编辑载荷时，禁止 ensure 覆盖该节点。 */
   preservePreparedTargetBlocks?: boolean;
   onBlocksChange?: (blocks: CanvasBlock[]) => void;
+  /** 本次执行是首段 10 秒试片；只约束成片载荷，不修改草稿中的独立分镜原文。 */
+  pilotRun?: boolean;
   onStageStart?: (blockId: string, index: number, total: number, label: string) => void;
   onStageDone?: (blockId: string, index: number, total: number, label: string) => void;
   /** 单节点最终失败（含关键静帧批量中的一张） */
@@ -4165,7 +4167,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             visionImages,
             texts,
           },
-          { videoSubmissionKey },
+          { videoSubmissionKey, pilotRun: opts.pilotRun === true && stage === "clip" },
         );
         if (preparedVideoEdit && !String(out.outputUrl || out.outputUrls?.[0] || "").trim()) {
           throw new Error("未取得视频编辑结果，原片已保留；请先核对任务记录，不要重复提交");

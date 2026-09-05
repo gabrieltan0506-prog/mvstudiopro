@@ -43,6 +43,7 @@ import {
   parseManhuaClipTargetDurationSec,
   resolveClipLocalSegmentIndex,
 } from "@shared/manhuaScriptWorkbench";
+import { compileManhuaPilotPrompt, MANHUA_PILOT_DURATION_SEC } from "@shared/manhuaPilotGate";
 import {
   clampSeedanceOpenRouterDuration,
   SEEDANCE_25_REFERENCE_MAX,
@@ -1278,6 +1279,8 @@ export async function runCanvasBlock(
   runOptions?: {
     /** 同一次用户操作的自动重试必须复用；新一次显式运行不传旧值，自动生成新键。 */
     videoSubmissionKey?: string;
+    /** 仅本次首段试片的执行约束，不写入节点、草稿或供应商字段。 */
+    pilotRun?: boolean;
   },
 ): Promise<{
   outputText?: string;
@@ -1291,6 +1294,22 @@ export async function runCanvasBlock(
   seedance25ThreadId?: string;
   seedance25WebThreadLink?: string;
 }> {
+  if (runOptions?.pilotRun) {
+    if (
+      block.kind !== "video" || !block.id.startsWith("clip-") ||
+      block.seedance25WorkMode === "video_edit" || block.seedance25WorkMode === "video_extend"
+    ) {
+      throw new Error("10 秒试片只用于新生成片段，不能代替原片编辑或延长");
+    }
+    // 只裁本次执行副本；独立秒级分镜原稿仍留在节点，正式生成时可继续使用。
+    block = {
+      ...block,
+      prompt: compileManhuaPilotPrompt(block.prompt).prompt,
+      ...(block.seedance25TimestampStoryboard != null ? {
+        seedance25TimestampStoryboard: compileManhuaPilotPrompt(block.seedance25TimestampStoryboard).prompt,
+      } : {}),
+    };
+  }
   const refTexts = upstream.texts.filter(Boolean);
   const prompt = block.prompt.trim();
   const refUrl = block.refImageUrl || upstream.visionImages[0]?.url;
@@ -1826,6 +1845,7 @@ export async function runCanvasBlock(
         `[canvasRunBlock] clip image-bind · assets=${assetRows.length} · kept=${keptEntries.length} · urls=${httpsImages.length} · bind=${String(imageBind).slice(0, 180)}`,
       );
       const clipDurationRaw =
+        runOptions?.pilotRun ? MANHUA_PILOT_DURATION_SEC :
         parseManhuaClipTargetDurationSec(motionPrompt) ??
         parseManhuaClipTargetDurationSec(block.prompt) ??
         undefined;

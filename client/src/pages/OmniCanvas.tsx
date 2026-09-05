@@ -7741,6 +7741,7 @@ export default function OmniCanvas() {
               ensureOptions,
               maxRetries: opts?.pilotRun ? 0 : opts?.maxRetries,
               stopOnError: opts?.pilotRun ? true : opts?.stopOnError,
+              pilotRun: opts?.pilotRun === true,
               signal: ac.signal,
               onBlocksChange: (next) => {
                 workingBlocks = next;

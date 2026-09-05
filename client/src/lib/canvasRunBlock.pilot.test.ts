@@ -1,0 +1,140 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("./extractVideoFrames", () => ({
+  extractVideoTailFramesFromUrl: vi.fn(async () => ({ frames: [] })),
+  extractVideoFramesFromUrl: vi.fn(),
+}));
+vi.mock("./flyHealthGate", () => ({
+  withFlyHealthGate: async (_origin: string, run: () => Promise<unknown>) => run(),
+}));
+vi.mock("./longJobsFlyOrigin", () => ({
+  withLongJobsFlyDirect: (url: string) => url,
+  flyHealthProbeOriginForUrl: () => "https://test.invalid",
+}));
+
+import { compileManhuaPilotPrompt } from "@shared/manhuaPilotGate";
+import { defaultCanvasBlock, type CanvasBlock } from "./canvasTypes";
+import { runCanvasBlock } from "./canvasRunBlock";
+import { runManhuaDramaFactoryPipeline } from "./canvasDramaStudio";
+
+const originalPrompt = [
+  "【第1段·30s】雨夜仓库",
+  "0–6s：人物从左侧进入，摄影机固定。",
+  "6–12s：人物抬头，摄影机推近。",
+  "12–30s：后段铁门坍塌，人物逃出画面。",
+].join("\n");
+let requests: Array<{ url: string; body: Record<string, unknown> }>;
+
+beforeEach(() => {
+  requests = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (!/^\/api\/jobs\?op=(seedanceI2V|hailuo3Video|wan30Video)$/.test(url) || init?.method !== "POST") {
+      throw new Error("禁止真实网络或未声明请求");
+    }
+    requests.push({ url, body: JSON.parse(String(init.body)) });
+    return new Response(JSON.stringify({ ok: true, videoUrl: "https://test.invalid/pilot.mp4" }));
+  }));
+});
+afterEach(() => vi.unstubAllGlobals());
+
+function pilotBlock(videoModel: CanvasBlock["videoModel"]): CanvasBlock {
+  return {
+    ...defaultCanvasBlock("video", 0, 0), id: "clip-e01-g01", episodeIndex: 1,
+    videoModel, refImageUrl: "https://test.invalid/first-frame.png",
+    prompt: compileManhuaPilotPrompt(originalPrompt).prompt,
+  };
+}
+
+describe("首段试片的实际出站载荷（仅虚构网络边界）", () => {
+  it.each(["seedance-2.0", "seedance-2.5", "wan-3.0", "minimax-hailuo-3"] as const)(
+    "%s：只提交 10 秒且正文不包含后 10 秒剧情",
+    async (videoModel) => {
+      const result = await runCanvasBlock(
+        { userRole: "admin", userId: "test-user", optimizeCopy: async () => "" },
+        pilotBlock(videoModel),
+        undefined, { pilotRun: true },
+      );
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.body.duration).toBe(10);
+      expect(requests[0]?.body.prompt).toContain("人物从左侧进入");
+      expect(requests[0]?.body.prompt).toContain("人物抬头");
+      expect(requests[0]?.body.prompt).not.toMatch(/后段铁门坍塌|12[–—-]30/);
+      expect(result.outputUrl).toBe("https://test.invalid/pilot.mp4");
+    },
+  );
+
+  it("独立秒级分镜也必须裁成 10 秒，不能在主提示词之后重新灌入长片后段", async () => {
+    const block = {
+      ...pilotBlock("seedance-2.5"),
+      seedance25TimestampStoryboard: "0–6s：灯笼亮起。\n6–12s：人物停步。\n12–30s：后段石桥断裂。",
+    };
+    const before = JSON.stringify(block);
+    await runCanvasBlock(
+      { userRole: "admin", userId: "test-user", optimizeCopy: async () => "" }, block,
+      undefined, { pilotRun: true },
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.body.duration).toBe(10);
+    expect(requests[0]?.body.prompt).not.toMatch(/后段石桥断裂|12[–—-]30/);
+    expect(requests[0]?.body.prompt).toContain("6–10s：人物停步");
+    expect(requests[0]?.body).not.toHaveProperty("pilotRun");
+    expect(JSON.stringify(block)).toBe(before);
+  });
+
+  it("正式生成保持原 30 秒和独立秒级分镜，不被试片编译改短", async () => {
+    const block = {
+      ...pilotBlock("seedance-2.5"), prompt: originalPrompt,
+      seedance25TimestampStoryboard: "12–30s：后段石桥断裂。",
+    };
+    const before = JSON.stringify(block);
+    await runCanvasBlock({ userRole: "admin", optimizeCopy: async () => "" }, block);
+    expect(requests[0]?.body.duration).toBe(30);
+    expect(requests[0]?.body.prompt).toContain("后段石桥断裂");
+    expect(JSON.stringify(block)).toBe(before);
+  });
+
+  it("没有可解析的时长标题时，试片的实际请求仍为 10 秒", async () => {
+    await runCanvasBlock(
+      { userRole: "admin", optimizeCopy: async () => "" },
+      { ...pilotBlock("wan-3.0"), prompt: "人物走进雨夜仓库，摄影机固定。" },
+      undefined, { pilotRun: true },
+    );
+    expect(requests[0]?.body.duration).toBe(10);
+  });
+
+  it("实际编排核把试片约束传到最终请求，但保留节点中的独立分镜原稿", async () => {
+    const block = {
+      ...pilotBlock("seedance-2.5"),
+      seedance25TimestampStoryboard: "0–6s：灯笼亮起。\n6–12s：人物停步。\n12–30s：后段石桥断裂。",
+    };
+    const keys = [1, 2, 3].map((shot) => ({
+      ...defaultCanvasBlock("image", 0, shot * 100),
+      id: `keyart-e01-s0${shot}-test`, episodeIndex: 1,
+      status: "done" as const, prompt: `第${shot}镜`,
+      outputUrl: `https://test.invalid/still${shot}.png`,
+    }));
+    const result = await runManhuaDramaFactoryPipeline({
+      deps: { userRole: "admin", optimizeCopy: async () => "" },
+      blocks: [...keys, block], edges: [], episodeIndex: 1,
+      untilStage: "clip", forceFromStage: "clip", fragmentShotIndex: 1,
+      targetBlockIds: [block.id], preservePreparedTargetBlocks: true,
+      pilotRun: true, maxRetries: 0, ensureOptions: { videoModel: "seedance-2.5" },
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.completedIds).toEqual([block.id]);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.body.duration).toBe(10);
+    expect(requests[0]?.body.prompt).not.toContain("后段石桥断裂");
+    expect(result.blocks.find((item) => item.id === block.id)?.seedance25TimestampStoryboard)
+      .toBe(block.seedance25TimestampStoryboard);
+  });
+
+  it.each(["video_edit", "video_extend"] as const)("试片不能误用原片 %s 路径", async (mode) => {
+    await expect(runCanvasBlock(
+      { userRole: "admin", optimizeCopy: async () => "" },
+      { ...pilotBlock("seedance-2.5"), seedance25WorkMode: mode, refVideoUrl: "https://test.invalid/source.mp4" },
+      undefined, { pilotRun: true },
+    )).rejects.toThrow("不能代替原片编辑或延长");
+    expect(requests).toEqual([]);
+  });
+});
