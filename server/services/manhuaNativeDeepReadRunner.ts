@@ -1894,13 +1894,16 @@ export function assertNativeDeepReadPreparedMedia(
   const durationSec = assertSpan(video, "视频流", frameTolerance);
   // AAC 编码帧会带来毫秒级尾差，不能拿容器的较长音轨掩盖视频截短。
   assertSpan(record(data.format), "容器", frameTolerance + 0.05);
+  // 0905 实锤（花开锦绣第 6 集尾段 2107–2402 秒）：整集尾片读至 EOF 时，片源音轨常比最后一帧画面多出
+  // 零点几秒到一两秒，属片源本身的尾差，不是切段截短；尾片放宽到 2 秒，中间段仍按 0.1 秒严卡。
+  const audioTailOverrunTolerance = expected.isEpisodeTail ? 2 : 0;
   for (const audio of audios) {
     const start = number(audio.start_time);
     const duration = number(audio.duration);
     // 真实音轨允许晚起或早停；不把无声区当截短，也不填造静默音频。
     if (!Number.isFinite(start) || start < 0 || !Number.isFinite(duration) || duration <= 0
-      || start + duration > durationSec + 0.1 + 1e-6) {
-      fail("音轨时间范围无效或超出实际视频");
+      || start + duration > durationSec + 0.1 + audioTailOverrunTolerance + 1e-6) {
+      fail(`音轨时间范围无效或超出实际视频（音轨 ${Number.isFinite(start) ? start.toFixed(2) : "?"}+${Number.isFinite(duration) ? duration.toFixed(2) : "?"} 秒 · 视频 ${durationSec.toFixed(2)} 秒）`);
     }
   }
   return { hasAudio: audios.length > 0, durationSec };
