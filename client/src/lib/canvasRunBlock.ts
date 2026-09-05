@@ -41,6 +41,7 @@ import {
 } from "@shared/manhuaScriptWorkbench";
 import {
   clampSeedanceOpenRouterDuration,
+  SEEDANCE_25_REFERENCE_MAX,
   SEEDANCE_REFERENCE_MAX,
 } from "@shared/seedanceOpenRouterModels";
 import {
@@ -56,6 +57,10 @@ import {
   isCanvasHailuoH3VideoModel,
 } from "@shared/hailuoOpenRouterModels";
 import {
+  clampWan30Duration,
+  WAN30_REFERENCE_MAX,
+} from "@shared/wanWavespeedModels";
+import {
   clampHappyHorseCanvasDuration,
   HAPPYHORSE_REFERENCE_MAX,
   isCanvasHappyHorseVideoModel,
@@ -69,6 +74,14 @@ import {
   renderManhuaClipPromptForSeedance,
   stripManhuaStaleAssetBindForModel,
 } from "@shared/manhuaClipPromptSanitize";
+import {
+  normalizeCompilerEngineId,
+  type CompilerEngineId,
+} from "@shared/manhuaShotIR";
+import {
+  formatPromptForEngine,
+  hasBlockingFormatIssues,
+} from "@shared/promptFormatLayer";
 import {
   extractManhuaMentionedAssetTags,
   formatManhuaClipImageRoleBindLine,
@@ -99,6 +112,7 @@ import {
   planManhuaVoiceAudioForPrompt,
   type ManhuaCharacterVoiceLock,
   type ManhuaEpisodeSegmentPromptRow,
+  type ManhuaVoicePickPlan,
 } from "@shared/manhuaCharacterVoiceLock";
 import {
   formatManhuaAudioReferenceLockBlock,
@@ -596,6 +610,53 @@ function parseClipIndexFromBlockId(id: string): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
+/**
+ * 成片提示词唯一出站编译器：只做确定性方言转换与硬校验，不发请求、不扣费。
+ * 生产路径禁用敏感词静默替换，避免对白与剧情在用户不知情时被改写。
+ */
+export function compileManhuaVideoPromptForOutbound(input: {
+  prompt: string;
+  engine: CompilerEngineId | string;
+  durationSec?: number;
+  imageRefCount?: number;
+  videoRefCount?: number;
+  audioRefCount?: number;
+}): string {
+  const engine = normalizeCompilerEngineId(input.engine);
+  if (!engine) {
+    throw new Error("当前成片引擎缺少提示词编译规则");
+  }
+  const seedanceSource = engine.startsWith("seedance-")
+    ? renderManhuaClipPromptForSeedance(input.prompt)
+    : input.prompt;
+  const formatted = formatPromptForEngine(seedanceSource, engine, {
+    durationSec: input.durationSec,
+    imageRefCount: input.imageRefCount,
+    videoRefCount: input.videoRefCount,
+    audioRefCount: input.audioRefCount,
+    applyCensorReplacements: false,
+  });
+  if (hasBlockingFormatIssues(formatted.issues)) {
+    throw new Error(
+      `成片提示词未通过出站校验：${formatted.issues.map((issue) => issue.detailZh).join("；")}`,
+    );
+  }
+  // 生产绑定层按官方素材类型标记生成 @图片N；格式层内部统一成 @图N 后在出口还原。
+  return engine.startsWith("seedance-")
+    ? formatted.text.replace(/@图(\d+)/g, "@图片$1")
+    : formatted.text;
+}
+
+/** 段级绑定与最终取图共用同一上限，防止 2.5 在任一前置层退回 9。 */
+export function resolveManhuaCanvasVideoImageReferenceMax(videoModelRaw: unknown): number {
+  const videoModel = normalizeCanvasVideoModel(videoModelRaw);
+  if (isCanvasHappyHorseVideoModel(videoModel)) return HAPPYHORSE_REFERENCE_MAX.image;
+  if (isCanvasHailuoH3VideoModel(videoModel)) return HAILUO_REFERENCE_MAX.image;
+  if (isCanvasWan30VideoModel(videoModel)) return WAN30_REFERENCE_MAX.image;
+  if (videoModel === "seedance-2.5") return SEEDANCE_25_REFERENCE_MAX.image;
+  return SEEDANCE_REFERENCE_MAX.image;
+}
+
 async function runSeedanceProductVideo(
   prompt: string,
   imageUrl: string | undefined,
@@ -654,14 +715,25 @@ async function runSeedanceProductVideo(
       : undefined;
   const episodeIndex = Number(opts?.episodeIndex);
   const clipIndex = Number(opts?.clipIndex);
+  const compilerEngine: CompilerEngineId = `seedance-${version}`;
+  const outboundPrompt = compileManhuaVideoPromptForOutbound({
+    prompt,
+    engine: compilerEngine,
+    durationSec: duration,
+    imageRefCount: new Set(
+      [imageUrl, ...imageUrls].map((url) => String(url || "").trim()).filter(Boolean),
+    ).size,
+    videoRefCount: videoUrls.length,
+    audioRefCount: audioUrls.length,
+  });
   const res = await withFlyHealthGate(probeOrigin, () =>
     fetch(seedanceUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
       body: JSON.stringify({
-        // 换官方符号只在出线这一刻做：上面的时长解析等仍认【第N段·Xs】
-        prompt: renderManhuaClipPromptForSeedance(prompt),
+        // 方言与引用上限只在出线这一刻统一把关；上面的时长解析仍认【第N段·Xs】。
+        prompt: outboundPrompt,
         imageUrl: imageUrl || imageUrls[0] || undefined,
         // 配额按版本分流：2.5 官方收图 30/视频 10/音频 10，2.0 系 9/3/3。
         // 原先无版本区分统一按 9/3/3 切，2.5 的高配额在出线口被砍——
@@ -738,17 +810,27 @@ export function buildHailuo3CanvasRequestBody(input: {
   episodeIndex?: number;
   clipIndex?: number;
 }): Record<string, unknown> {
-  const imageUrls = (input.imageUrls || [])
-    .map((u) => String(u || "").trim())
-    .filter(Boolean);
+  const imageUrls = Array.from(
+    new Set(
+      [input.imageUrl, ...(input.imageUrls || [])]
+        .map((url) => String(url || "").trim())
+        .filter(Boolean),
+    ),
+  );
+  const duration = clampHailuoOpenRouterDuration(input.duration);
   return {
-    prompt: renderManhuaClipPromptForSeedance(input.prompt),
-    imageUrl: input.imageUrl || imageUrls[0] || undefined,
-    imageUrls: imageUrls.length
-      ? imageUrls.slice(0, HAILUO_REFERENCE_MAX.image)
-      : undefined,
+    prompt: compileManhuaVideoPromptForOutbound({
+      prompt: input.prompt,
+      engine: "minimax-hailuo-3",
+      durationSec: duration,
+      imageRefCount: imageUrls.length,
+      videoRefCount: 0,
+      audioRefCount: 0,
+    }),
+    imageUrl: imageUrls[0] || undefined,
+    imageUrls: imageUrls.length ? imageUrls : undefined,
     aspectRatio: input.aspectRatio,
-    duration: clampHailuoOpenRouterDuration(input.duration),
+    duration,
     resolution: input.resolution,
     generateAudio: true,
     ...(Number(input.episodeIndex) > 0 ? { episodeIndex: Number(input.episodeIndex) } : {}),
@@ -874,6 +956,58 @@ export function buildWanReferenceRoleBlock(
   return `【参考图职责】\n${lines.join("\n")}\n每张参考图只承担上述唯一职责,人物身份必须与对应人物定妆图完全一致,禁止串位、换脸、混合身份。`;
 }
 
+/** Wan 参考视频只接收真实 HTTP(S) 地址；保序去重但不截断，超限交出站编译器阻断。 */
+export function resolveWan30CanvasVideoUrls(input: {
+  selectedVideoUrls?: string[];
+  continuityVideoUrl?: string;
+}): string[] {
+  return Array.from(
+    new Set(
+      [...(input.selectedVideoUrls || []), input.continuityVideoUrl]
+        .map((url) => String(url || "").trim())
+        .filter((url) => /^https?:\/\//i.test(url)),
+    ),
+  );
+}
+
+/** 与 videoUrls 数组同序生成唯一职责，保证 Reference video N 不悬空、不串位。 */
+export function buildWanVideoReferenceRoleBlock(
+  videoUrls: string[],
+  opts?: { continuityVideoUrl?: string },
+): string {
+  if (!videoUrls.length) return "";
+  const continuity = String(opts?.continuityVideoUrl || "").trim();
+  const lines = videoUrls.map((url, index) =>
+    url === continuity
+      ? `Reference video ${index + 1}:上一段成片，仅用于承接起幅、人物状态与空间连续性`
+      : `Reference video ${index + 1}:用户选定的视频参考，仅继承明确相关的动作、节奏或镜头信息`,
+  );
+  return `【参考视频职责】\n${lines.join("\n")}\n每条参考视频只承担上述职责，禁止把无关人物、服装、文字或背景迁移到本段。`;
+}
+
+/** Wan 音频职责与实际 audioUrls 同序编号；相同声样供多人共用时合并点名。 */
+export function buildWanAudioReferenceRoleBlock(
+  audioUrls: string[],
+  attached: ManhuaVoicePickPlan["attached"],
+  opts?: { accentFallbackUrl?: string },
+): string {
+  if (!audioUrls.length) return "";
+  const accentFallbackUrl = String(opts?.accentFallbackUrl || "").trim();
+  const lines = audioUrls.map((url, index) => {
+    const speakers = attached
+      .filter((item) => item.audioUrl === url)
+      .map((item) => String(item.labelZh || item.characterTag || "").trim())
+      .filter((label, itemIndex, all) => Boolean(label) && all.indexOf(label) === itemIndex);
+    const role = speakers.length
+      ? `${speakers.join("、")}的角色声线，仅锁定对应人物的音色、口音与发声质感，禁止串给其他角色`
+      : url === accentFallbackUrl
+        ? "全片对白口音基准，仅统一口音方向，不替代角色专属声线"
+        : "对白音色参考，仅继承与本段说话人直接相关的声音特征";
+    return `Reference audio ${index + 1}:${role}`;
+  });
+  return `【参考音频职责】\n${lines.join("\n")}\n每条参考音频只承担上述职责，禁止交换说话人或把一种声线套给全部角色。`;
+}
+
 /**
  * 单次用户提交 ID(复审 P0-2):每次点击生成都必须换新键。
  * 内容散列键的坑:上一单 failed 已退款后,同内容重跑会命中旧扣费记录(alreadyCharged),
@@ -893,6 +1027,7 @@ export function buildWan30RequestBody(input: {
   prompt: string;
   images: string[];
   aspectRatio: "9:16" | "16:9";
+  videoUrls?: string[];
   audioUrls?: string[];
   duration?: number;
   resolution?: string;
@@ -901,13 +1036,31 @@ export function buildWan30RequestBody(input: {
   idempotencyKey?: string;
   seed?: number;
 }): Record<string, unknown> {
+  const images = Array.from(
+    new Set(input.images.map((url) => String(url || "").trim()).filter(Boolean)),
+  );
+  const audioUrls = Array.from(
+    new Set((input.audioUrls || []).map((url) => String(url || "").trim()).filter(Boolean)),
+  );
+  const videoUrls = Array.from(
+    new Set((input.videoUrls || []).map((url) => String(url || "").trim()).filter(Boolean)),
+  );
+  const duration = clampWan30Duration(input.duration);
   return {
-    prompt: input.prompt,
-    imageUrl: input.images[0],
-    imageUrls: input.images.slice(0, 10),
-    audioUrls: (input.audioUrls || []).filter(Boolean).slice(0, 5),
+    prompt: compileManhuaVideoPromptForOutbound({
+      prompt: input.prompt,
+      engine: "wan-3.0",
+      durationSec: duration,
+      imageRefCount: images.length,
+      videoRefCount: videoUrls.length,
+      audioRefCount: audioUrls.length,
+    }),
+    imageUrl: images[0],
+    imageUrls: images,
+    videoUrls,
+    audioUrls,
     aspectRatio: input.aspectRatio,
-    duration: Math.min(30, Math.max(2, Math.floor(Number(input.duration) || 30))),
+    duration,
     resolution: input.resolution || "720p",
     generateAudio: true,
     ...(Number(input.episodeIndex) > 0 ? { episodeIndex: Number(input.episodeIndex) } : {}),
@@ -923,6 +1076,7 @@ async function runWan30(
   imageUrls: string[],
   aspectRatio: "9:16" | "16:9",
   opts?: {
+    videoUrls?: string[];
     audioUrls?: string[];
     duration?: number;
     resolution?: string;
@@ -953,6 +1107,7 @@ async function runWan30(
           prompt,
           images,
           aspectRatio,
+          videoUrls: opts?.videoUrls,
           audioUrls: opts?.audioUrls,
           duration: opts?.duration,
           resolution: opts?.resolution,
@@ -1093,6 +1248,10 @@ export async function runCanvasBlock(
   deps: CanvasRunDeps,
   block: CanvasBlock,
   upstream: CanvasUpstreamContext = { visionImages: [], texts: [] },
+  runOptions?: {
+    /** 同一次用户操作的自动重试必须复用；新一次显式运行不传旧值，自动生成新键。 */
+    videoSubmissionKey?: string;
+  },
 ): Promise<{
   outputText?: string;
   outputUrl?: string;
@@ -1420,6 +1579,7 @@ export async function runCanvasBlock(
     const useHappyHorse = isCanvasHappyHorseVideoModel(videoModel);
     const useWan30 = isCanvasWan30VideoModel(videoModel);
     const useSeedance25 = videoModel === "seedance-2.5";
+    const maxVideoImageRefs = resolveManhuaCanvasVideoImageReferenceMax(videoModel);
     if (useSeedance25) {
       // 与服务端 assertSeedance25PaidAccess 同一套判定（到点 + 会员 + 内部角色），
       // 不只判 plan——否则未到点的 supervisor/free 组合会被前端自己拦掉。
@@ -1537,29 +1697,16 @@ export async function runCanvasBlock(
             stillUrls: absStills,
             tailUrls: tailFrames,
             mentionedTags,
-            maxImages: useHappyHorse
-              ? HAPPYHORSE_REFERENCE_MAX.image
-              : useHailuoH3
-                ? HAILUO_REFERENCE_MAX.image
-                : useWan30
-                  ? 10
-                  : SEEDANCE_REFERENCE_MAX.image,
+            maxImages: maxVideoImageRefs,
             boardUrl: boardUrl || null,
           })
         : null;
       const rawPool = bindPlan?.imageUrls?.length
         ? bindPlan.imageUrls
         : [...tailFrames, ...absStills];
-      const maxRefImages = useHappyHorse
-        ? HAPPYHORSE_REFERENCE_MAX.image
-        : useHailuoH3
-          ? HAILUO_REFERENCE_MAX.image
-          : useWan30
-            ? 10
-            : SEEDANCE_REFERENCE_MAX.image;
       const httpsImages = await toHttpsImageUrls(
         deps,
-        rawPool.slice(0, maxRefImages),
+        rawPool.slice(0, maxVideoImageRefs),
       );
       const keptEntries: ManhuaClipSeedanceImageBindEntry[] = [];
       if (bindPlan?.entries.length) {
@@ -1636,8 +1783,23 @@ export async function runCanvasBlock(
         // Wan 3.0 公测:多图参考 + 可选对白参考音;30s 直出;排队时间较长。
         // 提示词按 Wan 口径编译:不用 Seedance 的 @图片N 绑定,改为按数组顺序的参考职责表(审查 P1)
         const wanImages = httpsImages.length ? httpsImages : ([seedStill].filter(Boolean) as string[]);
+        const wanVideoUrls = resolveWan30CanvasVideoUrls({
+          selectedVideoUrls: block.seedance25RefVideoUrls,
+          continuityVideoUrl,
+        });
+        const wanAudioUrls = Array.from(
+          new Set(
+            seedanceAudioUrls
+              .map((audioUrl) => String(audioUrl || "").trim())
+              .filter((audioUrl) => /^https?:\/\//i.test(audioUrl)),
+          ),
+        );
         const wanPrompt = [
           buildWanReferenceRoleBlock(wanImages, keptEntries),
+          buildWanVideoReferenceRoleBlock(wanVideoUrls, { continuityVideoUrl }),
+          buildWanAudioReferenceRoleBlock(wanAudioUrls, voicePlan.attached, {
+            accentFallbackUrl,
+          }),
           isClip ? stripManhuaStaleAssetBindForModel(motionPrompt) : motionPrompt,
           voiceOneLine ? `【声线】${voiceOneLine}` : "",
           audioRefBlock,
@@ -1646,12 +1808,13 @@ export async function runCanvasBlock(
           .join("\n")
           .trim();
         url = await runWan30(wanPrompt, wanImages, ar, {
-          audioUrls: seedanceAudioUrls,
+          videoUrls: wanVideoUrls,
+          audioUrls: wanAudioUrls,
           duration: clipDurationRaw ?? 30,
           resolution: block.videoResolution,
           episodeIndex: block.episodeIndex,
           clipIndex: parseClipIndexFromBlockId(block.id),
-          idempotencyKey: newWanSubmissionKey(block.id),
+          idempotencyKey: runOptions?.videoSubmissionKey || newWanSubmissionKey(block.id),
           onTaskId: (taskId) =>
             deps.onVideoTaskCreated?.(block.id, { taskId, engine: "wan-3.0" }),
         });

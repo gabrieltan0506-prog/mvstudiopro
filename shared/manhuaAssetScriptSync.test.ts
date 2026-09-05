@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyManhuaScriptImportTransition,
   collectStaleAssetSheetBlockIds,
+  consumableManhuaCustomAssetRefsForCanon,
   evaluateManhuaAssetScriptAlignment,
   findManhuaAssetCoverageGaps,
   customAssetRefClaimsAnchor,
   fingerprintManhuaWriterAssetCanon,
+  markManhuaCustomAssetRefsForCanonChanges,
   planManhuaSheetAdoptions,
   purgeStaleCustomAssetRefsForCanon,
+  resolveManhuaAssetClaimEntry,
 } from "./manhuaAssetScriptSync";
 import type { ManhuaWriterAssetCanon } from "./manhuaWriterAssetCanon";
 
@@ -34,6 +38,36 @@ const canon: ManhuaWriterAssetCanon = {
 };
 
 describe("manhuaAssetScriptSync", () => {
+  it("只有标题可确认相同才按同剧导入；缺标题的旧专案继续走换剧保护", () => {
+    expect(
+      classifyManhuaScriptImportTransition({
+        currentSeriesTitle: "《墨菁传》",
+        incomingSeriesTitle: "墨 菁 传",
+        hasExistingProject: true,
+      }),
+    ).toBe("same_series");
+    expect(
+      classifyManhuaScriptImportTransition({
+        currentSeriesTitle: "墨菁传",
+        incomingSeriesTitle: "另一部剧",
+        hasExistingProject: true,
+      }),
+    ).toBe("new_series");
+    expect(
+      classifyManhuaScriptImportTransition({
+        currentSeriesTitle: "",
+        incomingSeriesTitle: "墨菁传",
+        hasExistingProject: true,
+      }),
+    ).toBe("new_series");
+    expect(
+      classifyManhuaScriptImportTransition({
+        incomingSeriesTitle: "墨菁传",
+        hasExistingProject: false,
+      }),
+    ).toBe("initial");
+  });
+
   it("显式多认领优先，隔离图不参与门禁", () => {
     const scene = canon.locations[0]!;
     expect(
@@ -72,7 +106,7 @@ describe("manhuaAssetScriptSync", () => {
     expect(a).not.toBe(b);
   });
 
-  it("flags stale generated refs and sheets from old cast", () => {
+  it("旧角色图保留为候选不阻断；当前角色缺图仍按 coverage 阻断", () => {
     const align = evaluateManhuaAssetScriptAlignment({
       assetCanon: canon,
       customRefs: [
@@ -106,10 +140,126 @@ describe("manhuaAssetScriptSync", () => {
         { id: "sceneplate-wa_l_bridge" },
       ],
     });
-    expect(align.aligned).toBe(false);
+    expect(align.aligned).toBe(true);
     expect(align.staleGeneratedRefCount).toBe(1);
     expect(align.staleSheetBlockCount).toBe(1);
-    expect(align.hintZh).toMatch(/剧本人物\/场景已变/);
+    expect(align.hintZh).toBeNull();
+  });
+
+  it("同剧重确认保留全部候选与主图元数据，但旧 canon 绑定不进入生成消费者", () => {
+    const refs = [
+      {
+        id: "current-edit",
+        role: "character" as const,
+        source: "generated" as const,
+        url: "https://cdn.example/current-edit.png",
+        labelZh: "沈照野·编辑",
+        refDuty: "identity" as const,
+        claimedAnchorIds: ["wa_c_shen"],
+        claimSource: "manual" as const,
+        primaryBindings: [{ anchorId: "wa_c_shen", duty: "identity" as const }],
+        primarySelectionScopes: [
+          { anchorId: "wa_c_shen", duty: "identity" as const },
+        ],
+      },
+      {
+        id: "old-primary",
+        role: "character" as const,
+        source: "generated" as const,
+        url: "https://cdn.example/old.png",
+        labelZh: "旧人·编辑",
+        refDuty: "identity" as const,
+        claimedAnchorIds: ["wa_c_old"],
+        claimSource: "manual" as const,
+        primaryBindings: [{ anchorId: "wa_c_old", duty: "identity" as const }],
+        primarySelectionScopes: [{ anchorId: "wa_c_old", duty: "identity" as const }],
+      },
+      {
+        id: "unclaimed-upload",
+        role: "character" as const,
+        source: "upload" as const,
+        url: "https://cdn.example/unclaimed.png",
+        labelZh: "无法识别",
+        refDuty: "identity" as const,
+      },
+    ];
+    const before = JSON.stringify(refs);
+    const active = consumableManhuaCustomAssetRefsForCanon(refs, canon);
+    expect(active.map((ref) => ref.id)).toEqual(["current-edit"]);
+    expect(JSON.stringify(refs)).toBe(before);
+    expect(refs).toHaveLength(3);
+    expect(refs[1]?.primaryBindings).toEqual([
+      { anchorId: "wa_c_old", duty: "identity" },
+    ]);
+  });
+
+  it("缺人物表时给确认剧本入口；有表但未认领才提示认领", () => {
+    expect(
+      resolveManhuaAssetClaimEntry({
+        role: "character",
+        primaryDuty: "identity",
+        canonCharacterCount: 0,
+        claimedCharacterCount: 0,
+      }),
+    ).toBe("confirm_script");
+    expect(
+      resolveManhuaAssetClaimEntry({
+        role: "character",
+        primaryDuty: "identity",
+        canonCharacterCount: 2,
+        claimedCharacterCount: 0,
+      }),
+    ).toBe("claim_character");
+    expect(
+      resolveManhuaAssetClaimEntry({
+        role: "scene",
+        primaryDuty: null,
+        canonCharacterCount: 0,
+        claimedCharacterCount: 0,
+      }),
+    ).toBe("none");
+  });
+
+  it("同 anchor 改外形时保留候选与主图元数据，但先隔离旧造型", () => {
+    const refs = [
+      {
+        id: "hero-edit",
+        role: "character" as const,
+        source: "generated" as const,
+        url: "https://cdn.example/hero-edit.png",
+        claimedAnchorIds: ["wa_c_shen"],
+        claimSource: "manual" as const,
+        refDuty: "look" as const,
+        primaryBindings: [{ anchorId: "wa_c_shen", duty: "look" as const }],
+        primarySelectionScopes: [{ anchorId: "wa_c_shen", duty: "look" as const }],
+      },
+    ];
+    const nextCanon: ManhuaWriterAssetCanon = {
+      ...canon,
+      characters: [
+        {
+          ...canon.characters[0]!,
+          lookZh: "黑衣蒙眼、前腿微跛",
+          promptZh: "沈照野 黑衣蒙眼 前腿微跛",
+        },
+      ],
+    };
+    const changed = markManhuaCustomAssetRefsForCanonChanges({
+      refs,
+      previousCanon: canon,
+      nextCanon,
+    });
+
+    expect(changed.changedAnchorIds).toEqual(["wa_c_shen"]);
+    expect(changed.markedRefCount).toBe(1);
+    expect(changed.refs[0]).toMatchObject({
+      id: "hero-edit",
+      url: refs[0]!.url,
+      reviewStatus: "needs_review",
+      primaryBindings: refs[0]!.primaryBindings,
+      primarySelectionScopes: refs[0]!.primarySelectionScopes,
+    });
+    expect(consumableManhuaCustomAssetRefsForCanon(changed.refs, nextCanon)).toEqual([]);
   });
 
   it("purge removes stale generated; forceAll drops all generated", () => {

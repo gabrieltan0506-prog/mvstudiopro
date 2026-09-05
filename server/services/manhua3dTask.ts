@@ -5,7 +5,15 @@ import {
   SubmitRejectedError,
   SubmitUnknownError,
 } from "./submitOutcomeErrors.js";
-import { signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs.js";
+import {
+  getGcsBucketName,
+  inspectGcsObjectBounded,
+  rewriteGcsObjectGenerationIfAbsent,
+  signGsUriV4ReadUrl,
+  statGcsObjectVersion,
+  uploadBufferToGcs,
+} from "./gcs.js";
+import { assertValidGlb2, Glb2StreamValidator } from "../../shared/glbValidation.js";
 import {
   pollWavespeedTripo3dOnce,
   isWavespeedTripo3dConfigured,
@@ -98,6 +106,18 @@ type Manhua3dTaskDependencies = {
   poll: (predictionId: string) => Promise<WavespeedTripo3dPollSnapshot>;
   downloadGlb: (url: string) => Promise<Buffer>;
   uploadGlb: typeof uploadBufferToGcs;
+  inspectUploadedGlb: (gcsUri: string) => Promise<{
+    header: Buffer;
+    byteLength: number;
+    sha256: string;
+    generation: string;
+  }>;
+  rewriteUploadedGlb: (input: {
+    sourceGcsUri: string;
+    sourceGeneration: string;
+    destinationObjectName: string;
+  }) => Promise<{ gcsUri: string }>;
+  getBucketName: () => string;
   signGlb: typeof signGsUriV4ReadUrl;
   now: () => Date;
 };
@@ -108,12 +128,37 @@ const productionDependencies: Manhua3dTaskDependencies = {
   poll: pollWavespeedTripo3dOnce,
   downloadGlb: downloadGlb,
   uploadGlb: uploadBufferToGcs,
+  inspectUploadedGlb: async gcsUri => {
+    const signal = AbortSignal.timeout(120_000);
+    const version = await statGcsObjectVersion({ gcsUri, signal });
+    const validator = new Glb2StreamValidator();
+    const inspected = await inspectGcsObjectBounded({
+      gcsUri,
+      maxBytes: MAX_GLB_BYTES,
+      headerBytes: 12,
+      timeoutMs: 120_000,
+      signal,
+      generation: version.generation,
+      onChunk: chunk => validator.push(chunk),
+    });
+    validator.finish();
+    return { ...inspected, generation: version.generation };
+  },
+  rewriteUploadedGlb: input =>
+    rewriteGcsObjectGenerationIfAbsent({
+      ...input,
+      timeoutMs: 120_000,
+    }),
+  getBucketName: getGcsBucketName,
   signGlb: signGsUriV4ReadUrl,
   now: () => new Date(),
 };
 
 let dependencies = productionDependencies;
 const inflight = new Set<string>();
+const importedGlbInflight = new Map<string, Promise<Manhua3dTaskView>>();
+const MAX_CONCURRENT_IMPORTED_GLB_INSPECTIONS = 2;
+let activeImportedGlbInspections = 0;
 let workerTimer: NodeJS.Timeout | null = null;
 
 function taskDir(): string {
@@ -238,32 +283,58 @@ function normalizeOptions(
 }
 
 export function assertGlbBuffer(buffer: Buffer): void {
-  if (
-    buffer.byteLength < 12 ||
-    buffer.subarray(0, 4).toString("ascii") !== "glTF"
-  ) {
-    throw new Error("invalid_glb_magic");
-  }
-  const version = buffer.readUInt32LE(4);
-  const declaredLength = buffer.readUInt32LE(8);
-  if (version !== 2 || declaredLength !== buffer.byteLength) {
-    throw new Error("invalid_glb_header");
-  }
+  assertValidGlb2(buffer);
 }
 
-async function downloadGlb(url: string): Promise<Buffer> {
+export async function downloadGlb(
+  url: string,
+  maxBytes = MAX_GLB_BYTES
+): Promise<Buffer> {
   if (!/^https:\/\//i.test(String(url || "")))
     throw new Error("invalid_glb_source_url");
-  const response = await fetch(url, { signal: AbortSignal.timeout(120_000) });
-  if (!response.ok) throw new Error(`glb_download_http_${response.status}`);
+  const signal = AbortSignal.timeout(120_000);
+  const byteLimit = Math.max(
+    1,
+    Math.min(
+      MAX_GLB_BYTES,
+      Math.floor(Number(maxBytes) || MAX_GLB_BYTES)
+    )
+  );
+  const response = await fetch(url, { signal });
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(`glb_download_http_${response.status}`);
+  }
   const declaredBytes = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declaredBytes) && declaredBytes > MAX_GLB_BYTES) {
+  if (Number.isFinite(declaredBytes) && declaredBytes > byteLimit) {
+    await response.body?.cancel().catch(() => undefined);
     throw new Error("glb_too_large");
   }
-  const buffer = Buffer.from(await response.arrayBuffer());
-  if (buffer.byteLength > MAX_GLB_BYTES) throw new Error("glb_too_large");
-  assertGlbBuffer(buffer);
-  return buffer;
+  if (!response.body) throw new Error("glb_download_empty");
+
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  const validator = new Glb2StreamValidator();
+  let byteLength = 0;
+  let completed = false;
+  try {
+    while (true) {
+      signal.throwIfAborted();
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+      byteLength += chunk.byteLength;
+      if (byteLength > byteLimit) throw new Error("glb_too_large");
+      validator.push(chunk);
+      chunks.push(chunk);
+    }
+    validator.finish();
+    completed = true;
+    return Buffer.concat(chunks, byteLength);
+  } finally {
+    if (!completed) await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
 }
 
 function glbObjectName(task: Manhua3dTaskRecord): string {
@@ -272,6 +343,14 @@ function glbObjectName(task: Manhua3dTaskRecord): string {
     .digest("hex")
     .slice(0, 16);
   return `manhua-3d/u${task.userId}/${safePart(task.assetRef)}/${versionDigest}/model.glb`;
+}
+
+function importedGlbObjectName(input: {
+  userId: number;
+  assetRef: string;
+  sha256: string;
+}): string {
+  return `manhua-3d/u${input.userId}/imports/${safePart(input.assetRef)}/${input.sha256}/model.glb`;
 }
 
 function toView(record: Manhua3dTaskRecord): Manhua3dTaskView {
@@ -323,6 +402,8 @@ async function refreshSignedUrl(
   ) {
     return record;
   }
+  record.glbUrl = undefined;
+  record.glbUrlExpiresAt = undefined;
   try {
     record.glbUrl = dependencies.signGlb(
       record.glbGcsUri,
@@ -339,6 +420,7 @@ async function refreshSignedUrl(
         0,
         280
       );
+    await writeRecord(record);
   }
   return record;
 }
@@ -560,6 +642,178 @@ export async function createManhua3dTask(input: {
   return toView(advanced);
 }
 
+/**
+ * 把用户已经拥有的 GLB 绑定到当前人物图版本。
+ * 文件先走用户隔离的 GCS 直传，再由服务端重新读取并验真；此路径不调用建模上游。
+ */
+export async function importExistingManhua3dAsset(input: {
+  userId: number;
+  assetRef: string;
+  sourceVersion: string;
+  sourceImageUrl: string;
+  glbGcsUri: string;
+}): Promise<Manhua3dTaskView> {
+  const assetRef = String(input.assetRef || "").trim();
+  const sourceVersion = String(input.sourceVersion || "").trim();
+  const sourceImageUrl = String(input.sourceImageUrl || "").trim();
+  const glbGcsUri = String(input.glbGcsUri || "").trim();
+  if (!Number.isInteger(input.userId) || input.userId <= 0)
+    throw new Error("invalid_user_id");
+  if (!assetRef || !sourceVersion || !/^https:\/\//i.test(sourceImageUrl)) {
+    throw new Error("invalid_manhua_3d_task_input");
+  }
+  const ownedPrefix = `gs://${dependencies.getBucketName()}/uploads/u${input.userId}/`;
+  if (!glbGcsUri.startsWith(ownedPrefix)) {
+    throw new Error("manhua3d_glb_forbidden");
+  }
+
+  const digest = createHash("sha256")
+    .update(
+      JSON.stringify([
+        "existing-glb",
+        input.userId,
+        assetRef,
+        sourceVersion,
+        glbGcsUri,
+      ])
+    )
+    .digest("hex");
+  const taskId = `m3d_import_${digest.slice(0, 20)}`;
+  const persisted = await readRecord(taskId);
+  if (persisted) {
+    if (persisted.userId !== input.userId || persisted.status !== "succeeded") {
+      throw new Error("manhua3d_idempotency_record_missing");
+    }
+    return toView(await refreshSignedUrl(persisted));
+  }
+  const inProgress = importedGlbInflight.get(taskId);
+  if (inProgress) return inProgress;
+  if (activeImportedGlbInspections >= MAX_CONCURRENT_IMPORTED_GLB_INSPECTIONS) {
+    throw new Error("manhua3d_glb_import_busy");
+  }
+
+  const operation = (async () => {
+    activeImportedGlbInspections += 1;
+    try {
+      let inspection: Awaited<
+        ReturnType<Manhua3dTaskDependencies["inspectUploadedGlb"]>
+      >;
+      try {
+        inspection = await dependencies.inspectUploadedGlb(glbGcsUri);
+      } catch (error) {
+        if (
+          (error instanceof Error ? error.message : String(error)) ===
+          "gcs_download_too_large"
+        ) {
+          throw new Error("glb_too_large");
+        }
+        throw error;
+      }
+      if (inspection.byteLength > MAX_GLB_BYTES)
+        throw new Error("glb_too_large");
+      if (!/^\d+$/.test(inspection.generation)) {
+        throw new Error("invalid_gcs_generation");
+      }
+      const immutable = await dependencies.rewriteUploadedGlb({
+        sourceGcsUri: glbGcsUri,
+        sourceGeneration: inspection.generation,
+        destinationObjectName: importedGlbObjectName({
+          userId: input.userId,
+          assetRef,
+          sha256: inspection.sha256,
+        }),
+      });
+
+      const now = isoNow();
+      const record: Manhua3dTaskRecord = {
+        taskId,
+        userId: input.userId,
+        assetRef,
+        sourceVersion,
+        sourceImageUrl,
+        status: "succeeded",
+        options: normalizeOptions({}),
+        sourceGlbUrl: glbGcsUri,
+        glbGcsUri: immutable.gcsUri,
+        glbBytes: inspection.byteLength,
+        glbSha256: inspection.sha256,
+        createdAt: now,
+        updatedAt: now,
+        finishedAt: now,
+      };
+      const created = await createRecordExclusive(record);
+      const stored = created ? record : await readRecord(taskId);
+      if (
+        !stored ||
+        stored.userId !== input.userId ||
+        stored.status !== "succeeded"
+      ) {
+        throw new Error("manhua3d_idempotency_record_missing");
+      }
+      return toView(await refreshSignedUrl(stored));
+    } finally {
+      activeImportedGlbInspections -= 1;
+    }
+  })();
+  importedGlbInflight.set(taskId, operation);
+  try {
+    return await operation;
+  } finally {
+    if (importedGlbInflight.get(taskId) === operation) {
+      importedGlbInflight.delete(taskId);
+    }
+  }
+}
+
+/**
+ * 只允许对“明确失败”的任务重试。新任务 id 由上一次 taskId 派生：
+ * 同一次重试请求保持幂等，而连续失败后仍可从最新 taskId 发起下一次重试。
+ * reconcile_manual 代表上游是否建单未知，绝不能据此再提交。
+ */
+export async function retryManhua3dTask(
+  taskId: string,
+  userId: number
+): Promise<Manhua3dTaskView | null> {
+  const previous = await readRecord(String(taskId || "").trim());
+  if (!previous || previous.userId !== userId) return null;
+  if (previous.status === "reconcile_manual") {
+    throw new Error("manhua3d_retry_reconcile_forbidden");
+  }
+  if (previous.status !== "failed") {
+    throw new Error("manhua3d_retry_not_failed");
+  }
+  if (!dependencies.isConfigured()) {
+    throw new Error("manhua3d_service_unavailable");
+  }
+
+  const retryDigest = createHash("sha256")
+    .update(JSON.stringify(["retry", previous.taskId]))
+    .digest("hex");
+  const nextTaskId = `m3d_${retryDigest.slice(0, 24)}`;
+  const now = isoNow();
+  const next: Manhua3dTaskRecord = {
+    taskId: nextTaskId,
+    userId,
+    assetRef: previous.assetRef,
+    sourceVersion: previous.sourceVersion,
+    sourceImageUrl: previous.sourceImageUrl,
+    status: "queued",
+    options: previous.options,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const created = await createRecordExclusive(next);
+  if (!created) {
+    const existing = await readRecord(nextTaskId);
+    if (!existing) throw new Error("manhua3d_idempotency_record_missing");
+    return toView(await refreshSignedUrl(existing));
+  }
+
+  const advanced = (await advanceManhua3dTask(nextTaskId)) || next;
+  ensureManhua3dWorker();
+  return toView(advanced);
+}
+
 export async function getManhua3dTask(
   taskId: string,
   userId: number
@@ -614,4 +868,6 @@ export function resetManhua3dTaskDependenciesForTests(): void {
     throw new Error("test_dependencies_only");
   dependencies = productionDependencies;
   inflight.clear();
+  importedGlbInflight.clear();
+  activeImportedGlbInspections = 0;
 }

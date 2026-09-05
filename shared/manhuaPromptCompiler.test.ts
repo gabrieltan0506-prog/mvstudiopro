@@ -1,6 +1,6 @@
 /**
- * 防废片编译器测试(终审十一条):IR 不因引擎改写/拆镜抛错/双方言字段保全/
- * H3 三类参考与上限/TTS 起止秒位/Wan 预留不产伪实现。
+ * 防废片编译器测试(终审十一条):IR 不因引擎改写/拆镜抛错/三方言字段保全/
+ * H3 图片参考与上限/TTS 起止秒位/Wan 三类参考方言。
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -74,7 +74,7 @@ describe("IR 不因引擎切换被改写", () => {
   });
 });
 
-describe("双方言字段保全", () => {
+describe("三方言字段保全", () => {
   it("Seedance:场景/动作/运镜/表演/{}对白/<>音效/@图@音频职责全在", () => {
     const p = compileEpisode(IR, "seedance-2.5").segmentPrompts[0];
     for (const part of [
@@ -87,66 +87,73 @@ describe("双方言字段保全", () => {
     }
   });
 
-  it("H3:同字段自然语言保全;Image/Video/Audio N;无 @标记与 {}<>【】()", () => {
+  it("H3:同字段自然语言保全;仅 Image N;无 @标记与 {}<>【】()", () => {
     const out = compileEpisode(IR, "minimax-hailuo-3");
     expect(out.segments).toHaveLength(2);
     const all = out.segmentPrompts.join("\n");
     for (const part of [
       "场景为军械库", "人物动作是第1镜动作", "镜头侧向跟拍", "瞳孔骤缩",
       "“放你可以,向警方自首”", "环境声为雨打伞棚",
-      "Image 1 仅用于谢明彰锁脸", "Audio 1 仅用于谢明彰声线", "Video 1 仅用于动作轨迹",
+      "Image 1 仅用于谢明彰锁脸",
     ]) {
       expect(all).toContain(part);
     }
     expect(all).not.toMatch(/@图|@视频|@音频/);
+    expect(all).not.toMatch(/Audio \d|Video \d/);
     expect(all).not.toMatch(/[{}<>【】()（）]/);
+    expect(out.formatIssues.map((issue) => issue.kind)).toEqual(
+      expect.arrayContaining(["audio_refs", "video_refs"]),
+    );
+  });
+
+  it("Wan:中文自然语言正文保全;图片/视频/音频职责均使用 Reference 标记", () => {
+    const out = compileEpisode(IR, "wan-3.0");
+    expect(out.segments).toHaveLength(1);
+    const prompt = out.segmentPrompts[0];
+    for (const part of [
+      "场景：军械库",
+      "主体动作：第1镜动作",
+      "摄影机：侧向跟拍",
+      "表演：瞳孔骤缩",
+      "“放你可以,向警方自首”",
+      "音效：雨打伞棚",
+      "Reference image 1仅用于谢明彰锁脸",
+      "Reference audio 1仅用于谢明彰声线",
+      "Reference video 1仅用于动作轨迹",
+    ]) {
+      expect(prompt).toContain(part);
+    }
+    expect(prompt).not.toMatch(/@图|@视频|@音频|[{}<>【】]/);
+    expect(out.referencePlans[0]).toMatchObject({ mode: "wan_reference" });
   });
 });
 
-describe("H3 多模态参考上限(validateSegmentMediaRefs)", () => {
+describe("H3 图片参考上限(validateSegmentMediaRefs)", () => {
   const H3_LIMITS = {
-    image: 9, video: 3, audio: 3, total: 12,
-    minVideoItemSec: 2, maxVideoItemSec: 15, maxVideoTotalSec: 15,
-    minAudioItemSec: 2, maxAudioItemSec: 15, maxAudioTotalSec: 15,
+    image: 9, video: 0, audio: 0, total: 9,
   };
   const refs = (kind: "image" | "video" | "audio", count: number, durationSec?: number): ShotMediaRef[] =>
     Array.from({ length: count }, (_v, i) => ({ kind, n: i + 1, roleZh: `${kind}${i + 1}`, durationSec }));
 
-  it("9图/3视频/3音频/合计12 全通过", () => {
-    expect(
-      validateSegmentMediaRefs([...refs("image", 9), ...refs("video", 2, 5), ...refs("audio", 1, 5)], H3_LIMITS),
-    ).toEqual([]);
+  it("9 图通过", () => {
+    expect(validateSegmentMediaRefs(refs("image", 9), H3_LIMITS)).toEqual([]);
   });
 
-  it("10图/4视频/4音频/合计13 各出对应 issue", () => {
+  it("10 图或任意视频/音频都明确报对应 issue", () => {
     expect(validateSegmentMediaRefs(refs("image", 10), H3_LIMITS).map((i) => i.kind)).toContain("image_refs");
-    expect(validateSegmentMediaRefs(refs("video", 4, 3), H3_LIMITS).map((i) => i.kind)).toContain("video_refs");
-    expect(validateSegmentMediaRefs(refs("audio", 4, 3), H3_LIMITS).map((i) => i.kind)).toContain("audio_refs");
-    const thirteen = [...refs("image", 8), ...refs("video", 3, 4), ...refs("audio", 2, 4)];
-    expect(validateSegmentMediaRefs(thirteen, H3_LIMITS).map((i) => i.kind)).toContain("total_refs");
-  });
-
-  it("视频/音频合计超 15s 出 total_duration;单段短于 2s 出 duration", () => {
-    expect(validateSegmentMediaRefs(refs("video", 3, 6), H3_LIMITS).map((i) => i.kind)).toContain(
-      "video_total_duration",
-    );
-    expect(validateSegmentMediaRefs(refs("audio", 3, 6), H3_LIMITS).map((i) => i.kind)).toContain(
-      "audio_total_duration",
-    );
-    expect(validateSegmentMediaRefs(refs("audio", 1, 1), H3_LIMITS).map((i) => i.kind)).toContain(
-      "audio_duration",
-    );
+    expect(validateSegmentMediaRefs(refs("video", 1, 3), H3_LIMITS).map((i) => i.kind)).toContain("video_refs");
+    expect(validateSegmentMediaRefs(refs("audio", 1, 3), H3_LIMITS).map((i) => i.kind)).toContain("audio_refs");
   });
 
   it("compileEpisode 把超限问题带 segmentIndex 上抛进 formatIssues,并出 referencePlans", () => {
     const bad: EpisodeIR = {
       ...IR,
-      shots: [shot(1, 5, { mediaRefs: refs("video", 4, 3) })],
+      shots: [shot(1, 5, { mediaRefs: refs("video", 1, 3) })],
     };
     const out = compileEpisode(bad, "minimax-hailuo-3");
     expect(out.formatIssues.some((i) => i.kind === "video_refs" && i.segmentIndex === 1)).toBe(true);
-    expect(out.referencePlans[0]).toMatchObject({ segmentIndex: 1, mode: "h3_reference_to_video" });
-    expect(out.referencePlans[0].bindings).toHaveLength(4);
+    expect(out.referencePlans[0]).toMatchObject({ segmentIndex: 1, mode: "h3_text_to_video" });
+    expect(out.referencePlans[0].bindings).toHaveLength(0);
   });
 });
 
@@ -165,29 +172,28 @@ describe("TTS 起止秒位", () => {
   });
 });
 
-describe("Wan 3.0 预留边界(三入口完整封闭)", () => {
-  it("别名归一/非 ready/编译明确拒绝,不产伪提示词", () => {
+describe("Wan 3.0 正式方言入口", () => {
+  it("别名归一且三个公开入口均可编译", () => {
     expect(normalizeCompilerEngineId("wan30")).toBe("wan-3.0");
     expect(normalizeCompilerEngineId("minimax-h3")).toBe("minimax-hailuo-3");
-    expect(isReadyCompilerEngineId("wan-3.0")).toBe(false);
-    expect(() => compileEpisode(IR, "wan-3.0")).toThrow(/预留|尚未接线/);
-  });
-
-  it("compileSegmentPrompt 与 formatPromptForEngine 同样拒绝 reserved 引擎", () => {
+    expect(isReadyCompilerEngineId("wan-3.0")).toBe(true);
+    expect(compileEpisode(IR, "wan-3.0").segmentPrompts[0]).toContain("主体动作：第1镜动作");
     const seg = packShotsIntoSegments([shot(1, 5)], 15)[0];
-    expect(() => compileSegmentPrompt(seg, "wan-3.0")).toThrow(/预留|尚未接线/);
-    expect(() => formatPromptForEngine("@图1 人物特写", "wan-3.0")).toThrow(/预留|尚未接线/);
+    expect(compileSegmentPrompt(seg, "wan-3.0")).toContain("主体动作：第1镜动作");
+    expect(formatPromptForEngine("@图1 人物特写", "wan-3.0").text).toContain(
+      "Reference image 1",
+    );
   });
 });
 
-describe("H3 输出时长正式契约(4-15s 整数)", () => {
-  it("段 3s 低于最短 4s:抛错要求合并镜头", () => {
+describe("H3 画布输出时长正式契约(5/10/15s 整数)", () => {
+  it("段 3s 低于最短 5s:抛错要求合并镜头", () => {
     const seg = packShotsIntoSegments([shot(1, 3)], 15)[0];
     expect(() => compileSegmentPrompt(seg, "minimax-hailuo-3")).toThrow(/最短/);
   });
 
-  it("段 4.5s 小数:H3 抛错要求整数;Seedance 不受限", () => {
-    const seg = packShotsIntoSegments([shot(1, 4.5)], 15)[0];
+  it("段 7.5s 小数:H3 抛错要求整数;Seedance 不受限", () => {
+    const seg = packShotsIntoSegments([shot(1, 7.5)], 15)[0];
     expect(() => compileSegmentPrompt(seg, "minimax-hailuo-3")).toThrow(/整数/);
     expect(compileSegmentPrompt(seg, "seedance-2.5")).toContain("场景:军械库");
   });
@@ -314,6 +320,15 @@ describe("空提示词与阻止提交判定", () => {
     const result = formatPromptForEngine("杀了他", "minimax-hailuo-3", { durationSec: 5 });
     expect(result.issues.some((issue) => issue.kind === "censor")).toBe(true);
     expect(hasBlockingFormatIssues(result.issues)).toBe(false);
+  });
+
+  it("生产可禁用静默替换，保留用户原始对白", () => {
+    const result = formatPromptForEngine("杀了他", "minimax-hailuo-3", {
+      durationSec: 5,
+      applyCensorReplacements: false,
+    });
+    expect(result.text).toBe("杀了他");
+    expect(result.issues).toEqual([]);
   });
 
   it("格式、引用与时长问题均阻止提交", () => {

@@ -15,6 +15,11 @@ import {
   stripManhuaClipForbiddenBoards,
 } from "./manhuaScriptWorkbench";
 import { extractManhuaSegmentDialogueQuotes } from "./manhuaEpisodeSegmentPlan";
+import {
+  applyShotDialoguesFromText,
+  MANHUA_DIALOGUE_SILENCE_TOKEN,
+  upsertShotDialogueSection,
+} from "./manhuaShotDialoguePersist";
 
 describe("manhua clip prompt slim (Seedance skill style)", () => {
   it("writes second-axis with action/camera tracks, framing, scene+light lock", () => {
@@ -80,6 +85,66 @@ describe("manhua clip prompt slim (Seedance skill style)", () => {
     });
     expect(text).toContain("说「把玉珏交出来。」");
     expect(text).toContain("说「你再装傻。」");
+  });
+
+  it("单字说话人也会被剥离姓名并绑定角色，不把姓名重复进台词", () => {
+    const text = formatWorkbenchSegmentClipInjectBlock({
+      segmentIndex: 1,
+      durationSec: 10,
+      shots: [
+        { index: 1, durationSec: 0, cameraZh: "近景", actionZh: "甲抬头" },
+      ],
+      segmentDialogueLines: ["甲：「别过来。」"],
+      speakerTagByNameZh: { 甲: "@角色1" },
+    });
+    expect(text).toContain('@角色1说「别过来。」');
+    expect(text).not.toContain('说「甲：');
+  });
+
+  it("keeps every dialogue cue when a 30s segment has more lines than visual shots", () => {
+    const dialogue = [
+      "甲方：「第一句。」",
+      "乙方：「第二句。」",
+      "甲方：「第三句。」",
+      "乙方：「第四句。」",
+    ].join("");
+    const text = formatWorkbenchSegmentClipInjectBlock({
+      segmentIndex: 1,
+      durationSec: 30,
+      shots: [
+        { index: 1, durationSec: 0, cameraZh: "全景", actionZh: "甲方走近" },
+        { index: 2, durationSec: 0, cameraZh: "中景", actionZh: "乙方抬头" },
+        { index: 3, durationSec: 0, cameraZh: "近景", actionZh: "两人对视" },
+      ],
+      segmentDialogueLines: extractManhuaSegmentDialogueQuotes(dialogue),
+      speakerTagByNameZh: { 甲方: "@角色1", 乙方: "@角色2" },
+    });
+    const positions = ["第一句", "第二句", "第三句", "第四句"].map((line) =>
+      text.indexOf(line),
+    );
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+    expect(text).toContain("同一镜位续演");
+    expect(text).toContain("@角色2说「第四句。」");
+  });
+
+  it("does not truncate nine real dialogue quotes before timeline compilation", () => {
+    const source = Array.from({ length: 9 }, (_, index) => `「第${index + 1}句」`).join("");
+    expect(extractManhuaSegmentDialogueQuotes(source)).toHaveLength(9);
+  });
+
+  it("does not resurrect a dialogue explicitly cleared by the user", () => {
+    const shots = applyShotDialoguesFromText(
+      [{ index: 1, durationSec: 0, cameraZh: "近景", actionZh: "角色抬头" }],
+      upsertShotDialogueSection("", { 1: MANHUA_DIALOGUE_SILENCE_TOKEN }),
+    );
+    const text = formatWorkbenchSegmentClipInjectBlock({
+      segmentIndex: 1,
+      durationSec: 15,
+      shots,
+      segmentDialogueLines: ["原剧本旧台词"],
+    });
+    expect(text).not.toContain("原剧本旧台词");
   });
 
   it("strips ancient boards; asset Image bind is id-only in prompt (no URL leak)", () => {

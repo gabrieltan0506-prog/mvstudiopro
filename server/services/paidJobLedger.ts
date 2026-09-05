@@ -75,6 +75,7 @@ export type PaidTaskType =
   | "growthDocument"
   | "platformAnalysis"
   | "platformQA"
+  | "manhuaAdvisor"
   | "competitorResearch"
   | "aiAssistEditor"
   | "imageUpscale"
@@ -838,18 +839,27 @@ export async function reapStuckPaidJobs(opts?: {
     reason: PaidJobRefundReason,
     detail?: string,
   ) => {
-    if (hold.taskType === "promptEnhance") {
-      const { claimPromptEnhanceFailed } = await import("./promptEnhanceOperation.js");
-      const terminal = await claimPromptEnhanceFailed(
-        hold.jobId,
-        "提示词增强未完成，积分已退回",
-      );
+    if (hold.taskType === "promptEnhance" || hold.taskType === "manhuaAdvisor") {
+      const terminal =
+        hold.taskType === "promptEnhance"
+          ? await import("./promptEnhanceOperation.js").then((module) =>
+              module.claimPromptEnhanceFailed(
+                hold.jobId,
+                "提示词增强未完成，积分已退回",
+              ),
+            )
+          : await import("./manhuaAdvisorOperation.js").then((module) =>
+              module.claimManhuaAdvisorFailed(
+                hold.jobId,
+                "创作顾问问答未完成，积分已退回",
+              ),
+            );
       if (terminal === "succeeded") {
-        await unregisterActiveJob(hold.jobId, "promptEnhance", "settled");
+        await unregisterActiveJob(hold.jobId, hold.taskType, "settled");
         return { refunded: false, creditsRefunded: 0, status: "settled" as PaidJobStatus };
       }
       if (terminal !== "failed") {
-        throw new Error(`prompt_enhance_terminal_claim_failed:${hold.jobId}`);
+        throw new Error(`${hold.taskType}_terminal_claim_failed:${hold.jobId}`);
       }
     }
     return refundCreditsOnFailure(hold.jobId, hold.taskType, reason, detail);
@@ -869,14 +879,14 @@ export async function reapStuckPaidJobs(opts?: {
       // promptEnhance 成功证据检查:jobs=succeeded 时无论 hold 处于
       // active/refund_pending/settlement_pending 都只补 settled,绝不退分;
       // 证据查询失败(DB 不可用)时跳过本轮,不许在证据缺席下走退分。
-      if (hold.taskType === "promptEnhance") {
+      if (hold.taskType === "promptEnhance" || hold.taskType === "manhuaAdvisor") {
         let evidence: { status: string } | null | undefined;
         try {
           const { getJobByIdStrict } = await import("../jobs/repository.js");
           evidence = await getJobByIdStrict(hold.jobId);
         } catch (e: any) {
           console.warn(
-            `[paidJobLedger] promptEnhance 成功证据查询失败,跳过本轮 jobId=${hold.jobId}: ${e?.message}`,
+            `[paidJobLedger] ${hold.taskType} 成功证据查询失败,跳过本轮 jobId=${hold.jobId}: ${e?.message}`,
           );
           continue;
         }
@@ -887,7 +897,7 @@ export async function reapStuckPaidJobs(opts?: {
           hold.settledAt = new Date().toISOString();
           await writeHoldFile(file, hold);
           console.log(
-            `[paidJobLedger] ✓ promptEnhance 成功证据在案,补 settled jobId=${hold.jobId}`,
+            `[paidJobLedger] ✓ ${hold.taskType} 成功证据在案,补 settled jobId=${hold.jobId}`,
           );
           continue;
         }
@@ -903,14 +913,23 @@ export async function reapStuckPaidJobs(opts?: {
 
       // 上一次退分中途崩过的：每轮 reaper 都对账补偿（与心跳/force 无关）
       if (hold.status === "refund_pending") {
-        if (hold.taskType === "promptEnhance") {
+        if (hold.taskType === "promptEnhance" || hold.taskType === "manhuaAdvisor") {
           // 证据查询到此刻之间任务可能已转 succeeded:与 active 分支一致,
           // 先 CAS 认领 failed;认领撞上 succeeded 就补 settled,绝不再退。
-          const { claimPromptEnhanceFailed } = await import("./promptEnhanceOperation.js");
-          const terminal = await claimPromptEnhanceFailed(
-            hold.jobId,
-            "提示词增强未完成，积分已退回",
-          );
+          const terminal =
+            hold.taskType === "promptEnhance"
+              ? await import("./promptEnhanceOperation.js").then((module) =>
+                  module.claimPromptEnhanceFailed(
+                    hold.jobId,
+                    "提示词增强未完成，积分已退回",
+                  ),
+                )
+              : await import("./manhuaAdvisorOperation.js").then((module) =>
+                  module.claimManhuaAdvisorFailed(
+                    hold.jobId,
+                    "创作顾问问答未完成，积分已退回",
+                  ),
+                );
           if (terminal === "succeeded") {
             const dir = await getLedgerDir();
             hold.status = "settled";
@@ -919,7 +938,7 @@ export async function reapStuckPaidJobs(opts?: {
             continue;
           }
           if (terminal !== "failed") {
-            throw new Error(`prompt_enhance_terminal_claim_failed:${hold.jobId}`);
+            throw new Error(`${hold.taskType}_terminal_claim_failed:${hold.jobId}`);
           }
         }
         const dir = await getLedgerDir();
@@ -1075,6 +1094,76 @@ export async function reapStuckPaidJobs(opts?: {
     }
   } catch (e: any) {
     console.warn(`[paidJobLedger] promptEnhance 孤儿扫描不可用(下轮再试): ${e?.message}`);
+  }
+
+  // manhuaAdvisor 孤儿对账：与 promptEnhance 使用相同的 jobs CAS、确定
+  // chargeKey 和 refundKey，但严格只扫描 action=manhua_advisor_qa。
+  try {
+    const {
+      claimManhuaAdvisorRefundPending,
+      listManhuaAdvisorRefundPendingJobs,
+      listStaleManhuaAdvisorRunningJobs,
+      markManhuaAdvisorRefundReconciled,
+    } = await import("./manhuaAdvisorOperation.js");
+    const [staleJobs, pendingJobs] = await Promise.all([
+      listStaleManhuaAdvisorRunningJobs(),
+      listManhuaAdvisorRefundPendingJobs(),
+    ]);
+    const candidates = [
+      ...staleJobs.map((job) => ({ ...job, state: "running" as const })),
+      ...pendingJobs.map((job) => ({ ...job, state: "refund_pending" as const })),
+    ];
+    const uniqueCandidates = Array.from(
+      new Map(candidates.map((job) => [job.id, job])).values(),
+    );
+
+    for (const staleJob of uniqueCandidates) {
+      try {
+        const dir = await getLedgerDir();
+        const hold = await readHoldFile(holdFilePath(dir, "manhuaAdvisor", staleJob.id));
+        if (staleJob.state === "running" && hold) continue;
+        const userIdNum = Number(staleJob.userId);
+        if (!Number.isFinite(userIdNum)) {
+          throw new Error(`manhua_advisor_invalid_user_id:${staleJob.id}`);
+        }
+        if (staleJob.state === "running") {
+          const terminal = await claimManhuaAdvisorRefundPending(
+            staleJob.id,
+            "创作顾问问答未完成，积分对账处理中",
+          );
+          if (terminal === "succeeded") continue;
+          if (terminal !== "failed") {
+            throw new Error(`manhua_advisor_orphan_terminal_claim_failed:${staleJob.id}`);
+          }
+        }
+        const { refundChargeByKey } = await import("../credits");
+        const { refunded: creditsBack } = await refundChargeByKey({
+          userId: userIdNum,
+          chargeKey: `manhuaAdvisor/${staleJob.id}`.slice(0, 120),
+          reason: `创作顾问问答 · task_timeout · 积分已退还至您的账户 ${refundMarkerFor("manhuaAdvisor", staleJob.id)}`,
+          actionForLog: "platformSkillQaRefund",
+          refundKey: canonicalRefundKey("manhuaAdvisor", staleJob.id),
+        });
+        const reconciled = await markManhuaAdvisorRefundReconciled(
+          staleJob.id,
+          creditsBack,
+        );
+        if (!reconciled) {
+          throw new Error(`manhua_advisor_refund_reconciled_persist_failed:${staleJob.id}`);
+        }
+        if (creditsBack > 0) refunded += 1;
+        console.log(
+          `[paidJobLedger] manhuaAdvisor 孤儿对账完成 jobId=${staleJob.id} refunded=${creditsBack}`,
+        );
+      } catch (error: any) {
+        errors += 1;
+        console.error(
+          `[paidJobLedger] manhuaAdvisor 孤儿对账待下轮处理 jobId=${staleJob.id}: ${error?.message}`,
+        );
+      }
+    }
+  } catch (e: any) {
+    console.warn(`[paidJobLedger] manhuaAdvisor 孤儿扫描不可用(下轮再试): ${e?.message}`);
   }
 
   if (refunded + errors + cancelled > 0 || all.length > 0) {

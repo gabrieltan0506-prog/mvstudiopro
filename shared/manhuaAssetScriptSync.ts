@@ -4,6 +4,7 @@
  */
 
 import {
+  consumableManhuaCustomAssetRefs,
   stripManhuaCustomAssetLabelPrefix,
   type ManhuaCustomAssetRef,
 } from "./manhuaCustomAssetRefs.js";
@@ -20,6 +21,33 @@ export function fingerprintManhuaWriterAssetCanon(
     .map((l) => `${l.id}|${l.nameZh}|${String(l.lookZh || "").slice(0, 80)}`)
     .join(";");
   return `${chars}::${locs}`;
+}
+
+export type ManhuaScriptImportTransition = "initial" | "same_series" | "new_series";
+
+function normalizeManhuaSeriesIdentity(value: string | null | undefined): string {
+  return String(value || "")
+    .trim()
+    .replace(/^[《「『【\s]+|[》」』】\s]+$/g, "")
+    .replace(/[\s·•_\-—–，,。.!！?？:：；;]+/g, "")
+    .toLocaleLowerCase("zh-CN");
+}
+
+/**
+ * 导入剧本前先判定是否真的换剧。
+ *
+ * 已有专案但任一标题缺失时不能猜成同剧，继续走换剧备份；只有两边均有标题且
+ * 归一化后严格相同，才允许保留同剧的图片、编辑版本与主图选择。
+ */
+export function classifyManhuaScriptImportTransition(input: {
+  currentSeriesTitle?: string | null;
+  incomingSeriesTitle?: string | null;
+  hasExistingProject: boolean;
+}): ManhuaScriptImportTransition {
+  if (!input.hasExistingProject) return "initial";
+  const current = normalizeManhuaSeriesIdentity(input.currentSeriesTitle);
+  const incoming = normalizeManhuaSeriesIdentity(input.incomingSeriesTitle);
+  return current && incoming && current === incoming ? "same_series" : "new_series";
 }
 
 /**
@@ -108,6 +136,103 @@ export function isCustomAssetRefAlignedWithCanon(
     return refMatchesCanonProp(ref, canon);
   }
   return true;
+}
+
+/**
+ * 生成消费者读取的安全视图；原数组不修改，候选图、编辑产物与主图选择仍可恢复。
+ *
+ * 有剧本表时，人物/场景/道具必须实际认领到当前锚点才进入提示词与 Image 对照。
+ * 旧锚点的 primaryBindings 可以留在草稿里，但不会因此把旧角色静默灌进新剧本。
+ */
+export function consumableManhuaCustomAssetRefsForCanon(
+  refs: ManhuaCustomAssetRef[] | null | undefined,
+  canon: ManhuaWriterAssetCanon | null | undefined,
+): ManhuaCustomAssetRef[] {
+  const list = consumableManhuaCustomAssetRefs(refs).filter(
+    (ref) => ref.reviewStatus !== "needs_review",
+  );
+  if (!canon) return list;
+  return list.filter((ref) => {
+    if (ref.role === "character") {
+      return canon.characters.some((anchor) => customAssetRefClaimsAnchor(ref, anchor));
+    }
+    if (ref.role === "scene") {
+      return canon.locations.some((anchor) => customAssetRefClaimsAnchor(ref, anchor));
+    }
+    if (ref.role === "prop") {
+      return canon.props.some((anchor) => customAssetRefClaimsAnchor(ref, anchor));
+    }
+    // 服装由造型套另行绑定；未分类图片本来就不会进入按角色/场景/道具消费者。
+    return ref.role === "wardrobe";
+  });
+}
+
+function assetAnchorVisualFingerprint(
+  anchor: ManhuaWriterAssetAnchor | null | undefined,
+): string {
+  if (!anchor) return "";
+  return [
+    anchor.role,
+    anchor.nameZh,
+    anchor.aliasZh,
+    anchor.lookZh,
+    anchor.promptZh,
+  ]
+    .map((value) => String(value || "").trim().replace(/\s+/g, " "))
+    .join("|");
+}
+
+function canonAnchorsById(
+  canon: ManhuaWriterAssetCanon | null | undefined,
+): Map<string, ManhuaWriterAssetAnchor> {
+  return new Map(
+    [...(canon?.characters || []), ...(canon?.locations || []), ...(canon?.props || [])]
+      .filter((anchor) => String(anchor.id || "").trim())
+      .map((anchor) => [anchor.id, anchor]),
+  );
+}
+
+/**
+ * 同剧改稿保留图片与主图选择，但同一 anchor 的外形/场景/道具描述变化后必须重审。
+ * 受影响图只进入 needs_review 隔离区，不删除 URL、编辑版本、认领和 primary 元数据。
+ */
+export function markManhuaCustomAssetRefsForCanonChanges(input: {
+  refs: ManhuaCustomAssetRef[] | null | undefined;
+  previousCanon: ManhuaWriterAssetCanon | null | undefined;
+  nextCanon: ManhuaWriterAssetCanon | null | undefined;
+}): { refs: ManhuaCustomAssetRef[]; changedAnchorIds: string[]; markedRefCount: number } {
+  const refs = input.refs || [];
+  const previousById = canonAnchorsById(input.previousCanon);
+  const nextById = canonAnchorsById(input.nextCanon);
+  const changedAnchorIds = Array.from(previousById.entries())
+    .filter(([id, previous]) => {
+      const next = nextById.get(id);
+      return next && assetAnchorVisualFingerprint(previous) !== assetAnchorVisualFingerprint(next);
+    })
+    .map(([id]) => id)
+    .sort();
+  if (!changedAnchorIds.length) {
+    return { refs: [...refs], changedAnchorIds: [], markedRefCount: 0 };
+  }
+  const changed = new Set(changedAnchorIds);
+  let markedRefCount = 0;
+  const nextRefs = refs.map((ref) => {
+    const previousClaims = Array.from(previousById.values()).filter(
+      (anchor) => changed.has(anchor.id) && customAssetRefClaimsAnchor(ref, anchor),
+    );
+    if (!previousClaims.length) return ref;
+    const issue = `剧本设定已变更：${previousClaims.map((anchor) => anchor.nameZh).join("、")}，请重新确认此图`;
+    const qualityIssues = Array.from(
+      new Set([...(ref.qualityIssues || []), issue]),
+    ).slice(0, 8);
+    markedRefCount += 1;
+    return {
+      ...ref,
+      reviewStatus: "needs_review" as const,
+      qualityIssues,
+    };
+  });
+  return { refs: nextRefs, changedAnchorIds, markedRefCount };
 }
 
 export function extractAssetSheetSeedId(blockId: string): {
@@ -234,12 +359,11 @@ export function evaluateManhuaAssetScriptAlignment(input: {
     customRefs: refs,
     assetBlocks: blocks,
   });
-  const aligned =
-    staleGeneratedRefCount === 0 && staleSheetBlockCount === 0 && coverageGaps.length === 0;
+  // 旧图只作候选并由 consumableManhuaCustomAssetRefsForCanon 隔离，不应逼用户删除。
+  // 真正阻断生产的是当前人物/场景仍缺图。
+  const aligned = coverageGaps.length === 0;
   let hintZh: string | null = null;
-  if (staleGeneratedRefCount > 0 || staleSheetBlockCount > 0) {
-    hintZh = `剧本人物/场景已变：有 ${staleGeneratedRefCount + staleSheetBlockCount} 项旧设定图与现稿不符，请清掉并按剧本重出`;
-  } else if (coverageGaps.length > 0) {
+  if (coverageGaps.length > 0) {
     const names = coverageGaps.map((g) => g.nameZh).filter(Boolean).slice(0, 4).join("、");
     hintZh = `剧本新增了 ${coverageGaps.length} 个还没有设定图的人物/场景${names ? `（${names}）` : ""}，请先补图再进分镜`;
   }
@@ -251,6 +375,21 @@ export function evaluateManhuaAssetScriptAlignment(input: {
     coverageGaps,
     hintZh,
   };
+}
+
+export type ManhuaAssetClaimEntry = "none" | "confirm_script" | "claim_character";
+
+/** 人物主图卡该给确认剧本入口，还是给认领提示；禁止缺 canon 时显示死提示。 */
+export function resolveManhuaAssetClaimEntry(input: {
+  role: ManhuaCustomAssetRef["role"];
+  primaryDuty: "identity" | "look" | null;
+  canonCharacterCount: number;
+  claimedCharacterCount: number;
+}): ManhuaAssetClaimEntry {
+  if (input.role !== "character" || !input.primaryDuty) return "none";
+  if (input.canonCharacterCount <= 0) return "confirm_script";
+  if (input.claimedCharacterCount !== 1) return "claim_character";
+  return "none";
 }
 
 /**

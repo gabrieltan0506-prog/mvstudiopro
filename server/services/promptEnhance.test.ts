@@ -22,12 +22,19 @@ describe("enhancePromptForEngine", () => {
     expect(r.gateway).toBe("bailian");
   });
 
-  it("reserved 引擎直接调用:服务层自拒,模型 0 次", async () => {
-    const before = invoke.mock.calls.length;
-    await expect(
-      enhancePromptForEngine({ prompt: "写打斗", engine: "wan-3.0" }),
-    ).rejects.toThrow(/预留|尚未接线/);
-    expect(invoke.mock.calls.length).toBe(before);
+  it("Wan:语义增强与格式层使用同一自然语言方言", async () => {
+    invoke.mockResolvedValueOnce(ok("@图1 锁脸，@视频1 管动作，@音频1 管声线，角色说{别动}，<门响>"));
+    const r = await enhancePromptForEngine({ prompt: "写打斗", engine: "wan-3.0" });
+    expect(
+      String((invoke.mock.calls[invoke.mock.calls.length - 1]?.[0] as { user: string }).user),
+    ).toContain(
+      "Reference image N",
+    );
+    expect(r.enhancedPrompt).toContain("Reference image 1");
+    expect(r.enhancedPrompt).toContain("Reference video 1");
+    expect(r.enhancedPrompt).toContain("Reference audio 1");
+    expect(r.enhancedPrompt).toContain("“别动”");
+    expect(r.enhancedPrompt).toContain("音效：门响");
   });
 
   it("增强结果含阻止级问题(prompt_length):抛错不返回成功", async () => {
@@ -45,7 +52,9 @@ describe("enhancePromptForEngine", () => {
       return ok("镜头推近,人物说:“我认罪”");
     });
     const r = await enhancePromptForEngine({ prompt: "认罪戏", engine: "minimax-hailuo-3" });
-    expect(String((invoke.mock.calls[1][0] as { user: string }).user)).toContain("Image N");
+    const lastInput = invoke.mock.calls[invoke.mock.calls.length - 1]?.[0] as { user: string };
+    expect(String(lastInput.user)).toContain("Image N");
+    expect(String(lastInput.user)).toContain("只支持图片参考");
     expect(r.enhancedPrompt).not.toMatch(/[{}<>【】]/);
   });
 });

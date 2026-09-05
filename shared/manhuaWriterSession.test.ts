@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { buildManhuaProjectBible } from "./manhuaProjectBible";
-import { resolveManhuaDirectorStrategyContract } from "./manhuaDirectorStrategy";
+import {
+  formatManhuaDirectorStrategyClipLine,
+  resolveManhuaDirectorStrategyContract,
+} from "./manhuaDirectorStrategy";
+import { getManhuaDirectorStrategyV1Snapshot } from "./manhuaDirectorStrategyV1Snapshot";
 import {
   buildManhuaWriterSession,
   healManhuaWriterSessionCanonDrift,
@@ -74,6 +78,80 @@ describe("manhuaWriterSession", () => {
     );
   });
 
+  it("Bible 与 session 策略冲突时，以已确认 Bible 的冻结值为准", () => {
+    const bibleStrategy = resolveManhuaDirectorStrategyContract({ topic: "深海救援" });
+    const staleSessionStrategy = resolveManhuaDirectorStrategyContract({ topic: "赛车追逐" });
+    const bible = buildManhuaProjectBible({
+      topic: "深海救援",
+      pack,
+      cast: {
+        lane: "urban",
+        characterIds: [],
+        ancientArchetypeIds: [],
+        artStyleId: "cg_manhua",
+        propIds: [],
+        wardrobePropContinuityIds: [],
+      },
+      directorStrategyContract: bibleStrategy,
+    });
+    const session = buildManhuaWriterSession({
+      projectBible: bible,
+      directorStrategyContract: staleSessionStrategy,
+      writerConfirmed: true,
+    });
+    expect(session.projectBible?.directorStrategyContract?.strategyId).toBe("emotion_space");
+    expect(session.directorStrategyContract?.strategyId).toBe("emotion_space");
+  });
+
+  it("完整旧 v1 Bible／session 恢复与再次保存均保留旧合同和原标记", () => {
+    const bibleWithoutStrategy = buildManhuaProjectBible({
+      topic: "江湖对决",
+      pack,
+      cast: {
+        lane: "ancient",
+        characterIds: [],
+        ancientArchetypeIds: ["arch_rain_jianghu_dao"],
+        artStyleId: "cg_manhua",
+        propIds: [],
+        wardrobePropContinuityIds: [],
+      },
+    });
+    const legacyContract = getManhuaDirectorStrategyV1Snapshot("relational_action")!;
+    const restored = parseManhuaWriterSession(
+      JSON.stringify({
+        format: MANHUA_WRITER_SESSION_FORMAT,
+        topic: "江湖对决",
+        writerConfirmed: true,
+        projectBible: {
+          ...bibleWithoutStrategy,
+          directorStrategyContract: legacyContract,
+        },
+        directorStrategyContract: legacyContract,
+      }),
+    );
+
+    expect(restored?.directorStrategyContract).toMatchObject({
+      format: "mv-manhua-director-strategy-v1",
+      version: 1,
+      strategyId: "relational_action",
+      labelZh: "关系驱动动作",
+    });
+    expect(restored?.directorStrategyContract).not.toHaveProperty("revision");
+    expect(formatManhuaDirectorStrategyClipLine(restored!.directorStrategyContract!)).toBe(
+      "【创作策略·v1·relational_action】关系驱动动作｜同帧主要动作主体不超过两人；延时效果改写为目光停留、材质余振、呼吸或光影状态变化｜边界：禁止复杂长镜、多主体高速运动和危险动作指令。",
+    );
+    const savedAgain = JSON.parse(serializeManhuaWriterSession(restored!)) as {
+      projectBible?: { directorStrategyContract?: Record<string, unknown> };
+      directorStrategyContract?: Record<string, unknown>;
+    };
+    expect(savedAgain.directorStrategyContract).toMatchObject({
+      format: "mv-manhua-director-strategy-v1",
+      version: 1,
+    });
+    expect(savedAgain.directorStrategyContract).not.toHaveProperty("revision");
+    expect(savedAgain.projectBible?.directorStrategyContract).not.toHaveProperty("revision");
+  });
+
   it("persists publicTemplateId", () => {
     const session = buildManhuaWriterSession({
       topic: "边关",
@@ -100,12 +178,22 @@ describe("manhuaWriterSession", () => {
         {
           id: "cust_a",
           url: "https://cdn.example/a.jpg",
+          gcsUri: "gs://bucket/a.jpg",
           role: "character",
           source: "upload",
           refDuty: "identity",
           claimedAnchorIds: ["wa_char_a"],
           primaryBindings: [{ anchorId: "wa_char_a", duty: "identity" }],
           primarySelectionScopes: [{ anchorId: "wa_char_a", duty: "identity" }],
+          reviewStatus: "accepted",
+          model3d: {
+            status: "running",
+            taskId: "m3d_0123456789abcdef01234567",
+            sourceImageUrl: "https://cdn.example/a.jpg",
+            sourceVersion: "gs://bucket/a.jpg",
+            predictionId: "pred-a",
+            updatedAt: 1_777_777_777_000,
+          },
         },
         {
           id: "cust_b",
@@ -125,7 +213,22 @@ describe("manhuaWriterSession", () => {
     expect(session.customAssetRefs[0]?.primarySelectionScopes).toEqual([
       { anchorId: "wa_char_a", duty: "identity" },
     ]);
+    expect(session.customAssetRefs[0]?.model3d).toMatchObject({
+      status: "running",
+      taskId: "m3d_0123456789abcdef01234567",
+      sourceVersion: "gs://bucket/a.jpg",
+    });
     expect(session.customAssetRefs[1]?.seedLibraryId).toBe("scene_04");
+
+    const restored = parseManhuaWriterSession(serializeManhuaWriterSession(session));
+    expect(restored?.customAssetRefs[0]?.model3d?.predictionId).toBe("pred-a");
+    const legacy = parseManhuaWriterSession(
+      serializeManhuaWriterSession({
+        ...session,
+        customAssetRefs: session.customAssetRefs.map(({ model3d: _model3d, ...ref }) => ref),
+      }),
+    );
+    expect(legacy?.customAssetRefs[0]?.model3d).toBeUndefined();
   });
 
   it("loads/saves via storage mock", () => {

@@ -63,6 +63,8 @@ export type AdvisorContextInput = {
   templates?: PublicManhuaViralTemplateCard[];
   /** 手法卡（默认全库手法卡） */
   craftProfiles?: readonly CraftTechniqueProfile[];
+  /** 当前请求另带已校验的项目证据，不能用“只看模板”盖过真实剧本。 */
+  hasProjectEvidence?: boolean;
 };
 
 function formatTemplateLine(t: PublicManhuaViralTemplateCard): string {
@@ -76,6 +78,23 @@ function formatTemplateLine(t: PublicManhuaViralTemplateCard): string {
  * 超长时依次砍 手法卡尾部 → 模板列表尾部，绝不砍用户问题。
  */
 export function buildAdvisorQuestion(input: AdvisorContextInput): string {
+  if (input.hasProjectEvidence) {
+    const question = String(input.question || "").trim();
+    if (question.length < 2 || question.length > 1200) {
+      throw new Error("请输入 2—1200 字的问题，内容不会被自动截断。");
+    }
+    // 当前项目的手法和引擎规则由服务端同源合同派生，不能再混入旧版全库摘要。
+    // 公开模板仅是可选线索，不修改项目已冻结的导演策略。
+    const selected = input.selectedTemplate;
+    return [
+      "【身份】你是漫剧工厂的创作顾问，围绕另附的当前项目证据提供建议。",
+      selected
+        ? `【当前候选模板】${clip(selected.nameZh, 160)}：${clip(selected.featureZh || selected.introZh, 240)}`
+        : "【当前候选模板】未选择；不需要为了答问选择模板。",
+      "【回答要求】明确问题位置、依据、修改建议和影响范围；区分观察事实与建议。先给简短结论，再按用户要求展开。只给建议，不声称已经修改、生成或审过未读取的媒体。",
+      `【用户问题】${question}`,
+    ].join("\n\n");
+  }
   const question = clip(input.question, 1200);
   const selected = input.selectedTemplate || null;
 
@@ -88,7 +107,9 @@ export function buildAdvisorQuestion(input: AdvisorContextInput): string {
 
   const rules = [
     "【回答要求】",
-    "1. 只依据下方「可引用模板」与「可引用手法」作答；库里没有的不要编造，直说没有。",
+    input.hasProjectEvidence
+      ? "1. 优先依据另附的当前项目证据回答；下方模板与手法只是可选参考。未读取的图像、声音和片段不能宣称已审过。"
+      : "1. 只依据下方「可引用模板」与「可引用手法」作答；库里没有的不要编造，直说没有。",
     "2. 引用时点名模板全名或手法编号，说明为什么适合当前问题。",
     "3. 末尾单独一行给「下一步」：一句可执行动作（如：选中某模板→点『试写一集』看两版对比）。",
     "4. 不得出现任何影视作品名、导演名、演员名；不得出现技术供应商或模型名。",

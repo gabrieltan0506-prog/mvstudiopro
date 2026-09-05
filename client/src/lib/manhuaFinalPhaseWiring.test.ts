@@ -30,6 +30,7 @@ describe("成片阶段接线契约", () => {
 
   it("进 final 必须自动开坞 —— 第五格的面板就是坞", () => {
     expect(SRC).toContain("shouldOpenClipDockForPhase(workflowPhase)");
+    expect(SRC).toContain("setImmersiveWorkspaceView(workspaceViewForRestoredManhuaPhase(restoredPhase, Boolean(session.writerConfirmed)))");
   });
 
   it("返回工作台时只把 final 收回 edit，并切回工作台", () => {

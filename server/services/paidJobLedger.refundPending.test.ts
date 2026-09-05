@@ -40,6 +40,23 @@ vi.mock("./promptEnhanceOperation.js", () => ({
     markPromptEnhanceRefundReconciled(...args),
 }));
 
+const listStaleManhuaAdvisorRunningJobs = vi.fn(async (..._a: unknown[]) => []);
+const claimManhuaAdvisorFailed = vi.fn(async (..._a: unknown[]) => "failed" as const);
+const claimManhuaAdvisorRefundPending = vi.fn(async (..._a: unknown[]) => "failed" as const);
+const listManhuaAdvisorRefundPendingJobs = vi.fn(async (..._a: unknown[]) => []);
+const markManhuaAdvisorRefundReconciled = vi.fn(async (..._a: unknown[]) => true);
+vi.mock("./manhuaAdvisorOperation.js", () => ({
+  listStaleManhuaAdvisorRunningJobs: (...args: unknown[]) =>
+    listStaleManhuaAdvisorRunningJobs(...args),
+  claimManhuaAdvisorFailed: (...args: unknown[]) => claimManhuaAdvisorFailed(...args),
+  claimManhuaAdvisorRefundPending: (...args: unknown[]) =>
+    claimManhuaAdvisorRefundPending(...args),
+  listManhuaAdvisorRefundPendingJobs: (...args: unknown[]) =>
+    listManhuaAdvisorRefundPendingJobs(...args),
+  markManhuaAdvisorRefundReconciled: (...args: unknown[]) =>
+    markManhuaAdvisorRefundReconciled(...args),
+}));
+
 /** hasRefundMarker 的真账查询桩：markerRows 非空 = 账里已有这笔退分 */
 let markerRows: Array<{ id: number }> = [];
 let dbAvailable = true;

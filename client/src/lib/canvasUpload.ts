@@ -108,6 +108,7 @@ export async function uploadOneCanvasAsset(params: {
   await uploadFileToSignedUrl({
     file,
     uploadUrl: signed.uploadUrl,
+    contentType: mimeType,
     headers: signed.requiredHeaders,
   });
 

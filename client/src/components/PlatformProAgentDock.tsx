@@ -9,6 +9,8 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { hasSupervisorAccess } from "@/lib/supervisorAccess";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+import { useLocation } from "wouter";
+import { useManhuaAdvisorScope } from "@/hooks/useManhuaAdvisorScope";
 
 export const PRO_AGENT_OPEN_EVENT = "mvs:pro-agent-open";
 export const PRO_AGENT_TOGGLE_EVENT = "mvs:pro-agent-toggle";
@@ -49,9 +51,12 @@ function readFileAsDataUrl(file: File): Promise<string> {
 
 export default function PlatformProAgentDock() {
   const { user } = useAuth();
+  const [location] = useLocation();
+  const manhuaAdvisorActive = useManhuaAdvisorScope(location);
   const supervisorAccess = useMemo(() => hasSupervisorAccess(), []);
   const canSee =
-    supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
+    !manhuaAdvisorActive &&
+    (supervisorAccess || user?.role === "admin" || user?.role === "supervisor");
 
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
@@ -61,7 +66,7 @@ export default function PlatformProAgentDock() {
   const chatMutation = trpc.mvAnalysis.chatPlatformProAgent.useMutation();
 
   useEffect(() => {
-    if (!canSee) return;
+    if (!canSee) { setOpen(false); return; }
     const onOpen = () => setOpen(true);
     const onToggle = () => setOpen((v) => !v);
     window.addEventListener(PRO_AGENT_OPEN_EVENT, onOpen);

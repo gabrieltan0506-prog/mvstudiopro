@@ -9,7 +9,10 @@ import {
   summarizeManhuaIntentZh,
 } from "./manhuaDirectorBoardPrompt.js";
 import type { ManhuaEpisodeSegmentBeat } from "./manhuaEpisodeSegmentPlan.js";
-import { resolveManhuaDirectorStrategyContract } from "./manhuaDirectorStrategy.js";
+import {
+  MANHUA_DIRECTOR_STRATEGY_APPROVED_MANIFEST_VERSION,
+  resolveManhuaDirectorStrategyContract,
+} from "./manhuaDirectorStrategy.js";
 
 function beat(overrides: Partial<ManhuaEpisodeSegmentBeat>): ManhuaEpisodeSegmentBeat {
   return {
@@ -149,7 +152,9 @@ describe("buildManhuaDirectorBoardPromptZh", () => {
       segments: SEGMENTS,
       directorStrategyContract: resolveManhuaDirectorStrategyContract({ topic: "赛车追逐" }),
     });
-    expect(r.promptZh).toContain("【创作策略·v1·character_action】");
+    expect(r.promptZh).toContain(
+      `【创作策略·v2·${MANHUA_DIRECTOR_STRATEGY_APPROVED_MANIFEST_VERSION}·character_action】`,
+    );
     expect(r.promptZh).toContain("按发起、路径、结果、反应组织动作镜头");
     expect(r.promptZh).not.toMatch(/Justin Lin|林诣彬|Nolan|诺兰|Cameron|卡梅隆/i);
   });

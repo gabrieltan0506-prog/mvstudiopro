@@ -48,6 +48,25 @@ describe("digestCraftProfiles 零泄漏", () => {
 });
 
 describe("buildAdvisorQuestion", () => {
+  it("当前项目走真实上下文，不混入旧全库手法或要求强选模板", () => {
+    const question = "动".repeat(1200);
+    const q = buildAdvisorQuestion({ question, hasProjectEvidence: true, templates: [tpl("mt_abc1", "其他候选 AB12")] });
+    expect(q).toContain(`【用户问题】${question}`);
+    expect(q).toContain("不需要为了答问选择模板");
+    expect(q).not.toContain("【可引用手法】");
+    expect(q).not.toContain("其他候选 AB12");
+    expect(q.length).toBeLessThanOrEqual(ADVISOR_QUESTION_MAX_CHARS);
+  });
+
+  it("项目提问超限明确拒绝；只携带已选模板的有界公开线索", () => {
+    expect(() => buildAdvisorQuestion({ question: "问".repeat(1201), hasProjectEvidence: true })).toThrow("不会被自动截断");
+    const q = buildAdvisorQuestion({ question: "分析本镜动作", hasProjectEvidence: true,
+      selectedTemplate: tpl("mt_abc1", "关系驱动 AB12") });
+    expect(q).toContain("关系驱动 AB12");
+    expect(q).toContain("关系变化驱动");
+    expect(q).not.toContain("不超过 400 字");
+  });
+
   it("含身份/状态/模板/手法/规则/用户问题六段，且引用了已选模板名", () => {
     const q = buildAdvisorQuestion({
       question: "这一集为什么不够吸引人？",

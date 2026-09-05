@@ -50,6 +50,31 @@ vi.mock("./promptEnhanceOperation.js", () => ({
   markPromptEnhanceRefundReconciled: (...a: unknown[]) => markPromptEnhanceRefundReconciled(...a),
 }));
 
+const listStaleManhuaAdvisorRunningJobs = vi.fn(
+  async (..._a: unknown[]) => [] as Array<{ id: string; userId: string }>,
+);
+const claimManhuaAdvisorFailed = vi.fn(
+  async (..._a: unknown[]) => "failed" as "failed" | "succeeded" | "missing",
+);
+const claimManhuaAdvisorRefundPending = vi.fn(
+  async (..._a: unknown[]) => "failed" as "failed" | "succeeded" | "missing",
+);
+const listManhuaAdvisorRefundPendingJobs = vi.fn(
+  async (..._a: unknown[]) => [] as Array<{ id: string; userId: string }>,
+);
+const markManhuaAdvisorRefundReconciled = vi.fn(async (..._a: unknown[]) => true);
+vi.mock("./manhuaAdvisorOperation.js", () => ({
+  listStaleManhuaAdvisorRunningJobs: (...a: unknown[]) =>
+    listStaleManhuaAdvisorRunningJobs(...a),
+  claimManhuaAdvisorFailed: (...a: unknown[]) => claimManhuaAdvisorFailed(...a),
+  claimManhuaAdvisorRefundPending: (...a: unknown[]) =>
+    claimManhuaAdvisorRefundPending(...a),
+  listManhuaAdvisorRefundPendingJobs: (...a: unknown[]) =>
+    listManhuaAdvisorRefundPendingJobs(...a),
+  markManhuaAdvisorRefundReconciled: (...a: unknown[]) =>
+    markManhuaAdvisorRefundReconciled(...a),
+}));
+
 const EMPTY: ReapResult = { scanned: 0, refunded: 0, errors: 0, cancelled: 0 };
 
 describe("paidJobLedger 常驻 reaper", () => {
@@ -103,6 +128,16 @@ describe("promptEnhance 任务记录与账本双向对账", () => {
     markPromptEnhanceRefundReconciled.mockResolvedValue(true);
     listStalePromptEnhanceRunningJobs.mockReset();
     listStalePromptEnhanceRunningJobs.mockResolvedValue([]);
+    claimManhuaAdvisorFailed.mockReset();
+    claimManhuaAdvisorFailed.mockResolvedValue("failed");
+    claimManhuaAdvisorRefundPending.mockReset();
+    claimManhuaAdvisorRefundPending.mockResolvedValue("failed");
+    listManhuaAdvisorRefundPendingJobs.mockReset();
+    listManhuaAdvisorRefundPendingJobs.mockResolvedValue([]);
+    markManhuaAdvisorRefundReconciled.mockReset();
+    markManhuaAdvisorRefundReconciled.mockResolvedValue(true);
+    listStaleManhuaAdvisorRunningJobs.mockReset();
+    listStaleManhuaAdvisorRunningJobs.mockResolvedValue([]);
     markerRows = [];
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "pe-ledger-test-"));
     process.env.PAID_JOB_LEDGER_DIR = tempDir;
@@ -331,5 +366,76 @@ describe("promptEnhance 任务记录与账本双向对账", () => {
     await reapStuckPaidJobs();
     expect(refundChargeByKey).not.toHaveBeenCalled();
     expect(refundCredits).not.toHaveBeenCalled();
+  });
+
+  it("manhuaAdvisor 孤儿按固定 chargeKey 原路对账，且使用同一退款幂等键", async () => {
+    const advisorJobId = "manhua_advisor_abc123";
+    listStaleManhuaAdvisorRunningJobs.mockResolvedValue([
+      { id: advisorJobId, userId: "7" },
+    ]);
+    refundChargeByKey.mockResolvedValueOnce({ refunded: 3 });
+    const { reapStuckPaidJobs } = await ledger();
+    const result = await reapStuckPaidJobs();
+    expect(claimManhuaAdvisorRefundPending).toHaveBeenCalledWith(
+      advisorJobId,
+      "创作顾问问答未完成，积分对账处理中",
+    );
+    expect(refundChargeByKey).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 7,
+        chargeKey: `manhuaAdvisor/${advisorJobId}`,
+        refundKey: `refund:[refundKey:manhuaAdvisor/${advisorJobId}]`,
+        actionForLog: "platformSkillQaRefund",
+      }),
+    );
+    expect(markManhuaAdvisorRefundReconciled).toHaveBeenCalledWith(advisorJobId, 3);
+    expect(result.refunded).toBe(1);
+  });
+
+  it("manhuaAdvisor 免费任务崩溃也关闭 jobs，查无扣分时不产生退款", async () => {
+    const advisorJobId = "manhua_advisor_free";
+    listStaleManhuaAdvisorRunningJobs.mockResolvedValue([
+      { id: advisorJobId, userId: "7" },
+    ]);
+    refundChargeByKey.mockResolvedValueOnce({ refunded: 0 });
+    const { reapStuckPaidJobs } = await ledger();
+    const result = await reapStuckPaidJobs();
+    expect(claimManhuaAdvisorRefundPending).toHaveBeenCalledWith(
+      advisorJobId,
+      "创作顾问问答未完成，积分对账处理中",
+    );
+    expect(refundChargeByKey).toHaveBeenCalledWith(
+      expect.objectContaining({ chargeKey: `manhuaAdvisor/${advisorJobId}` }),
+    );
+    expect(markManhuaAdvisorRefundReconciled).toHaveBeenCalledWith(advisorJobId, 0);
+    expect(result.refunded).toBe(0);
+  });
+
+  it("manhuaAdvisor hold 的 jobs 成功证据优先，绝不退款", async () => {
+    const advisorJobId = "manhua_advisor_success";
+    const dir = path.join(tempDir, "manhuaAdvisor");
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(
+      path.join(dir, `${advisorJobId}.json`),
+      JSON.stringify({
+        jobId: advisorJobId,
+        taskType: "manhuaAdvisor",
+        userId: 7,
+        creditsBilled: 3,
+        action: "创作顾问问答",
+        status: "refund_pending",
+        chargedAt: new Date(Date.now() - 3_600_000).toISOString(),
+        lastHeartbeatAt: new Date(Date.now() - 3_600_000).toISOString(),
+      }),
+    );
+    getJobByIdStrict.mockResolvedValue({ id: advisorJobId, status: "succeeded" });
+    const { reapStuckPaidJobs } = await ledger();
+    await reapStuckPaidJobs();
+    const hold = JSON.parse(
+      await fs.readFile(path.join(dir, `${advisorJobId}.json`), "utf8"),
+    ) as { status: string };
+    expect(hold.status).toBe("settled");
+    expect(claimManhuaAdvisorFailed).not.toHaveBeenCalled();
+    expect(refundChargeByKey).not.toHaveBeenCalled();
   });
 });

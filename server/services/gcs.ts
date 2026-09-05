@@ -49,6 +49,28 @@ function parseGsUri(gcsUri: string) {
   };
 }
 
+async function awaitWithAbortSignal<T>(
+  operation: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (!signal) return operation;
+  signal.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason || new Error("operation_aborted"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    operation.then(
+      value => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      error => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
 function parseServiceAccountJson(raw: string) {
   try {
     return JSON.parse(raw);
@@ -351,6 +373,187 @@ export async function downloadGcsObject(params: {
   };
 }
 
+export type GcsObjectBoundedInspection = {
+  bucket: string;
+  objectName: string;
+  byteLength: number;
+  /** 只保留格式验真所需的文件头，不把整个大对象常驻内存。 */
+  header: Buffer;
+  sha256: string;
+  /** 指定 generation 读取时原样带回，供后续条件复制锁定同一版。 */
+  generation?: string;
+};
+
+/**
+ * 对大对象做有界流式验真。共用 downloadGcsObject 的既有行为保持不变；
+ * 仅需要文件头、总长度和摘要的调用方应走这里，避免先整包 arrayBuffer 再限流。
+ */
+export async function inspectGcsObjectBounded(params: {
+  gcsUri: string;
+  maxBytes: number;
+  headerBytes?: number;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  generation?: string;
+  onChunk?: (chunk: Uint8Array) => void;
+}): Promise<GcsObjectBoundedInspection> {
+  const { bucket, objectName } = parseGsUri(params.gcsUri);
+  const maxBytes = Math.max(1, Math.floor(Number(params.maxBytes) || 0));
+  const headerBytes = Math.max(1, Math.min(4_096, Math.floor(Number(params.headerBytes) || 12)));
+  const timeoutMs = Math.max(10, Math.min(10 * 60_000, Math.floor(Number(params.timeoutMs) || 120_000)));
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = params.signal ? AbortSignal.any([params.signal, timeoutSignal]) : timeoutSignal;
+  signal.throwIfAborted();
+
+  const accessToken = await awaitWithAbortSignal(getVertexAccessToken(), signal);
+  const downloadUrl = new URL(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}`);
+  downloadUrl.searchParams.set("alt", "media");
+  const generation = String(params.generation || "").trim();
+  if (generation) {
+    downloadUrl.searchParams.set("generation", generation);
+    downloadUrl.searchParams.set("ifGenerationMatch", generation);
+  }
+  const userProject = getGcsUserProject();
+  if (userProject) downloadUrl.searchParams.set("userProject", userProject);
+
+  const response = await fetch(downloadUrl, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    signal,
+    redirect: "error",
+  });
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(`gcs_download_failed:${response.status}`);
+  }
+
+  const declaredBytes = Number(response.headers.get("content-length") || 0);
+  if (Number.isFinite(declaredBytes) && declaredBytes > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error("gcs_download_too_large");
+  }
+  if (!response.body) throw new Error("gcs_download_empty");
+
+  const header = Buffer.alloc(headerBytes);
+  let headerLength = 0;
+  let byteLength = 0;
+  const hash = crypto.createHash("sha256");
+  const reader = response.body.getReader();
+  let completed = false;
+  try {
+    while (true) {
+      signal.throwIfAborted();
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+      byteLength += chunk.byteLength;
+      if (byteLength > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error("gcs_download_too_large");
+      }
+      params.onChunk?.(chunk);
+      hash.update(chunk);
+      if (headerLength < headerBytes) {
+        const copyBytes = Math.min(headerBytes - headerLength, chunk.byteLength);
+        chunk.copy(header, headerLength, 0, copyBytes);
+        headerLength += copyBytes;
+      }
+    }
+    completed = true;
+  } finally {
+    if (!completed) await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+
+  return {
+    bucket,
+    objectName,
+    byteLength,
+    header: header.subarray(0, headerLength),
+    sha256: hash.digest("hex"),
+    ...(generation ? { generation } : {}),
+  };
+}
+
+/**
+ * 把已经按 generation 验真的对象条件复制到服务端长期路径。
+ * 源版本必须相同，目标必须不存在；目标已由先前同内容请求建立时安全复用。
+ */
+export async function rewriteGcsObjectGenerationIfAbsent(params: {
+  sourceGcsUri: string;
+  sourceGeneration: string;
+  destinationObjectName: string;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}): Promise<{ created: boolean; gcsUri: string; generation?: string }> {
+  const source = parseGsUri(params.sourceGcsUri);
+  const sourceGeneration = String(params.sourceGeneration || "").trim();
+  if (!/^\d+$/.test(sourceGeneration)) throw new Error("invalid_gcs_generation");
+  const destinationObjectName = normalizeObjectName(params.destinationObjectName);
+  if (!destinationObjectName) throw new Error("invalid_gcs_object_path");
+  const timeoutMs = Math.max(1_000, Math.min(10 * 60_000, Math.floor(Number(params.timeoutMs) || 120_000)));
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = params.signal ? AbortSignal.any([params.signal, timeoutSignal]) : timeoutSignal;
+  signal.throwIfAborted();
+
+  const accessToken = await awaitWithAbortSignal(getVertexAccessToken(), signal);
+  const rewriteUrl = new URL(
+    `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(source.bucket)}/o/${encodeURIComponent(source.objectName)}/rewriteTo/b/${encodeURIComponent(source.bucket)}/o/${encodeURIComponent(destinationObjectName)}`,
+  );
+  rewriteUrl.searchParams.set("sourceGeneration", sourceGeneration);
+  rewriteUrl.searchParams.set("ifSourceGenerationMatch", sourceGeneration);
+  rewriteUrl.searchParams.set("ifGenerationMatch", "0");
+  const userProject = getGcsUserProject();
+  if (userProject) rewriteUrl.searchParams.set("userProject", userProject);
+
+  let rewriteToken = "";
+  for (let attempt = 0; attempt < 128; attempt += 1) {
+    signal.throwIfAborted();
+    if (rewriteToken) rewriteUrl.searchParams.set("rewriteToken", rewriteToken);
+    const response = await fetch(rewriteUrl, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal,
+      redirect: "error",
+    });
+    if (response.status === 412) {
+      await response.body?.cancel().catch(() => undefined);
+      try {
+        const existing = await statGcsObjectVersion({
+          gcsUri: `gs://${source.bucket}/${destinationObjectName}`,
+          signal,
+        });
+        return {
+          created: false,
+          gcsUri: `gs://${source.bucket}/${destinationObjectName}`,
+          generation: existing.generation,
+        };
+      } catch {
+        throw new Error("gcs_rewrite_precondition_failed");
+      }
+    }
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error(`gcs_rewrite_failed:${response.status}`);
+    }
+    const result = (await response.json()) as {
+      done?: boolean;
+      rewriteToken?: string;
+      resource?: { generation?: string };
+    };
+    if (result.done) {
+      return {
+        created: true,
+        gcsUri: `gs://${source.bucket}/${destinationObjectName}`,
+        generation: String(result.resource?.generation || "").trim() || undefined,
+      };
+    }
+    rewriteToken = String(result.rewriteToken || "").trim();
+    if (!rewriteToken) throw new Error("gcs_rewrite_missing_token");
+  }
+  throw new Error("gcs_rewrite_too_many_steps");
+}
+
 /** 按前缀列出对象名（最多 maxResults，自动翻页直到凑满或无更多） */
 const GCS_LIST_MAX_ATTEMPTS = 3;
 
@@ -479,9 +682,13 @@ export async function deleteGcsObject(params: {
  */
 export async function statGcsObjectVersion(params: {
   gcsUri: string;
+  signal?: AbortSignal;
 }): Promise<{ bucket: string; objectName: string; generation: string; etag?: string }> {
   const { bucket, objectName } = parseGsUri(params.gcsUri);
-  const accessToken = await getVertexAccessToken();
+  const accessToken = await awaitWithAbortSignal(
+    getVertexAccessToken(),
+    params.signal,
+  );
   const userProject = getGcsUserProject();
   const metaUrl = new URL(
     `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}`,
@@ -490,6 +697,7 @@ export async function statGcsObjectVersion(params: {
   const metaRes = await fetch(metaUrl, {
     method: "GET",
     headers: { Authorization: `Bearer ${accessToken}` },
+    signal: params.signal,
   });
   if (!metaRes.ok) throw new Error(`gcs_stat_failed:${metaRes.status}`);
   const meta = (await metaRes.json()) as { generation?: string; etag?: string };

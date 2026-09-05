@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildWan30RequestBody, buildWanReferenceRoleBlock, newWanSubmissionKey } from "./canvasRunBlock";
+import {
+  buildWan30RequestBody,
+  buildWanAudioReferenceRoleBlock,
+  buildWanReferenceRoleBlock,
+  buildWanVideoReferenceRoleBlock,
+  newWanSubmissionKey,
+  resolveWan30CanvasVideoUrls,
+} from "./canvasRunBlock";
 
 describe("Wan 提示词编译与提交键(复审 P0-2 / P1-5)", () => {
   it("职责表编号与数组顺序严格一致;导演板只管构图运镜,绝不锁脸", () => {
@@ -47,10 +54,133 @@ describe("Wan 提示词编译与提交键(复审 P0-2 / P1-5)", () => {
     expect(body.idempotencyKey).toBe("wan30_clip_abc123");
     expect(body.seed).toBe(777);
     expect(body.duration).toBe(30);
+    expect(body.prompt).toBe("p");
     // 同一次提交的网络重放:同一载荷序列化完全一致(键不漂移)
     expect(JSON.stringify(buildWan30RequestBody(input))).toBe(JSON.stringify(body));
     // 用户下一次点击换新键
     expect(newWanSubmissionKey("clip")).not.toBe(newWanSubmissionKey("clip"));
+  });
+
+  it("真实提交体把正文编译成 Wan 自然语言，不发送 Seedance 专属标记", () => {
+    const body = buildWan30RequestBody({
+      prompt: "【参考】@图片1 锁脸，@音频1 管声线，角色说{别动}，<门响>",
+      images: ["https://x/1.png"],
+      audioUrls: ["https://x/voice.mp3"],
+      aspectRatio: "9:16",
+      duration: 10,
+    });
+    expect(body.prompt).toContain("Reference image 1");
+    expect(body.prompt).toContain("Reference audio 1");
+    expect(body.prompt).toContain("“别动”");
+    expect(body.prompt).toContain("音效：门响");
+    expect(body.prompt).not.toMatch(/@图片|@音频|[{}<>【】]/);
+  });
+
+  it("第 11 张图与第 6 条音频明确阻断，不截断后提交", () => {
+    expect(() =>
+      buildWan30RequestBody({
+        prompt: "人物走近",
+        images: Array.from({ length: 11 }, (_, i) => `https://x/${i + 1}.png`),
+        aspectRatio: "9:16",
+      }),
+    ).toThrow(/参考图上限 10/);
+    expect(() =>
+      buildWan30RequestBody({
+        prompt: "人物走近",
+        images: ["https://x/1.png"],
+        audioUrls: Array.from({ length: 6 }, (_, i) => `https://x/${i + 1}.mp3`),
+        aspectRatio: "9:16",
+      }),
+    ).toThrow(/参考音频上限 5/);
+  });
+
+  it("正文引用了未随提交体发送的视频时明确阻断", () => {
+    expect(() =>
+      buildWan30RequestBody({
+        prompt: "@视频1 只管动作",
+        images: ["https://x/1.png"],
+        aspectRatio: "9:16",
+      }),
+    ).toThrow(/参考视频第 1 项.*实际只收到 0 项/);
+  });
+
+  it("参考视频保序去重且只收 HTTP(S)，提示词编号与真实 JSON 数组严格一致", () => {
+    const continuityVideoUrl = "https://cdn.example/episode-1-segment-1.mp4";
+    const videoUrls = resolveWan30CanvasVideoUrls({
+      selectedVideoUrls: [
+        "https://cdn.example/action.mp4",
+        "javascript:alert(1)",
+        "http://cdn.example/rhythm.mp4",
+        "https://cdn.example/action.mp4",
+      ],
+      continuityVideoUrl,
+    });
+    expect(videoUrls).toEqual([
+      "https://cdn.example/action.mp4",
+      "http://cdn.example/rhythm.mp4",
+      continuityVideoUrl,
+    ]);
+    const roleBlock = buildWanVideoReferenceRoleBlock(videoUrls, { continuityVideoUrl });
+    const body = buildWan30RequestBody({
+      prompt: roleBlock,
+      images: ["https://cdn.example/still.png"],
+      videoUrls,
+      aspectRatio: "16:9",
+      duration: 10,
+    });
+    // runWan30 对这份对象直接 JSON.stringify 后 POST；验证线上的 JSON 形状而非只看内存对象。
+    const postedJson = JSON.parse(JSON.stringify(body)) as Record<string, unknown>;
+    expect(postedJson.videoUrls).toEqual(videoUrls);
+    expect(postedJson.prompt).toBe(body.prompt);
+    expect(body.prompt).toContain("Reference video 1:用户选定的视频参考");
+    expect(body.prompt).toContain("Reference video 2:用户选定的视频参考");
+    expect(body.prompt).toContain("Reference video 3:上一段成片");
+    expect(body.prompt).not.toContain("cdn.example");
+  });
+
+  it("第 6 条参考视频明确阻断，不截成 5 条后提交", () => {
+    const videoUrls = Array.from({ length: 6 }, (_, i) => `https://x/${i + 1}.mp4`);
+    expect(() =>
+      buildWan30RequestBody({
+        prompt: buildWanVideoReferenceRoleBlock(videoUrls),
+        images: ["https://x/1.png"],
+        videoUrls,
+        aspectRatio: "9:16",
+      }),
+    ).toThrow(/参考视频上限 5/);
+  });
+
+  it("真实音频数组与角色声线职责同序编号，重复声样合并点名", () => {
+    const audioUrls = ["https://x/shared.mp3", "https://x/accent.mp3"];
+    const roleBlock = buildWanAudioReferenceRoleBlock(
+      audioUrls,
+      [
+        {
+          characterTag: "@角色1",
+          labelZh: "玄璃",
+          audioUrl: audioUrls[0]!,
+          weightSec: 4,
+        },
+        {
+          characterTag: "@角色2",
+          labelZh: "谢明彰",
+          audioUrl: audioUrls[0]!,
+          weightSec: 2,
+        },
+      ],
+      { accentFallbackUrl: audioUrls[1] },
+    );
+    const body = buildWan30RequestBody({
+      prompt: roleBlock,
+      images: ["https://x/still.png"],
+      audioUrls,
+      aspectRatio: "9:16",
+      duration: 30,
+    });
+    expect(body.audioUrls).toEqual(audioUrls);
+    expect(body.prompt).toContain("Reference audio 1:玄璃、谢明彰的角色声线");
+    expect(body.prompt).toContain("Reference audio 2:全片对白口音基准");
+    expect(body.prompt).not.toContain("https://x/");
   });
 
   it("空图列表不产出职责表", () => {

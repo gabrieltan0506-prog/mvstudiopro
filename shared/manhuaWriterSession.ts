@@ -183,6 +183,10 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
   const mode = input.manhuaUiMode === "form" ? "form" : "workbench";
   const writerConfirmed = Boolean(input.writerConfirmed);
   const workflowPhase = parseManhuaWorkflowPhase(input.workflowPhase, writerConfirmed);
+  const projectBible = parseManhuaProjectBible(input.projectBible);
+  const sessionDirectorStrategy = parseManhuaDirectorStrategyContract(
+    input.directorStrategyContract,
+  );
   return {
     format: MANHUA_WRITER_SESSION_FORMAT,
     topic: String(input.topic || "").trim(),
@@ -192,7 +196,7 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
     writerPack: normalizeWriterPack(input.writerPack),
     writerConfirmed,
     directorUnlocked: Boolean(input.directorUnlocked),
-    projectBible: parseManhuaProjectBible(input.projectBible),
+    projectBible,
     manhuaUiMode: mode,
     assetsSkipped: Boolean(input.assetsSkipped),
     workflowPhase,
@@ -201,7 +205,11 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
     audioReferenceLock: normalizeManhuaAudioReferenceLock(input.audioReferenceLock),
     shareAssetToLibrary: Boolean(input.shareAssetToLibrary),
     publicTemplateId: migrateManhuaWriterTemplateId(input).publicTemplateId,
-    directorStrategyContract: parseManhuaDirectorStrategyContract(input.directorStrategyContract),
+    // 已确认项目以 Bible 冻结值为真源。旧草稿若 session 与 Bible 不一致，不能让
+    // session 的较新字段静默换掉已进入资产/分镜/成片链的同一套导演策略。
+    directorStrategyContract: projectBible
+      ? projectBible.directorStrategyContract ?? null
+      : sessionDirectorStrategy,
     // 已移出漫剧的 happyhorse-1.1 旧会话迁到等价档 2.0-fast（同 6×15s 段表、同段价），
     // 不让它落到画布默认的 2.5——那会悄悄改段表、改权限门。其余未知值回到「未选引擎」。
     videoModel: migrateRetiredManhuaLayoutVideoModel(input.videoModel),

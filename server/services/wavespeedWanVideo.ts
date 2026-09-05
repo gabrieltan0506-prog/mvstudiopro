@@ -83,6 +83,7 @@ export async function submitWavespeedWanVideo(input: {
   prompt: string;
   imageUrls: string[];
   audioUrls?: string[];
+  videoUrls?: string[];
   duration?: number;
   resolution?: string;
   aspectRatio?: string;
@@ -104,6 +105,18 @@ export async function submitWavespeedWanVideo(input: {
     .map((u) => String(u || "").trim())
     .filter((u) => /^https?:\/\//i.test(u))
     .slice(0, WAN30_REFERENCE_MAX.audio);
+  const videos = Array.from(
+    new Set(
+      (input.videoUrls || [])
+        .map((u) => String(u || "").trim())
+        .filter((u) => /^https?:\/\//i.test(u)),
+    ),
+  );
+  if (videos.length > WAN30_REFERENCE_MAX.video) {
+    throw new SubmitRejectedError(
+      `当前视频引擎参考视频上限 ${WAN30_REFERENCE_MAX.video} 条，实际收到 ${videos.length} 条`,
+    );
+  }
 
   const body: Record<string, unknown> = {
     prompt: String(input.prompt || "").trim(),
@@ -117,6 +130,7 @@ export async function submitWavespeedWanVideo(input: {
   const seed = Math.floor(Number(input.seed));
   if (Number.isFinite(seed) && seed >= 0 && seed <= 2147483647) body.seed = seed;
   if (audios.length) body.reference_audios = audios;
+  if (videos.length) body.reference_videos = videos;
 
   return submitWavespeedPredictionRequest(WAN30_WAVESPEED_PATH, body, "Wan 3.0");
 }

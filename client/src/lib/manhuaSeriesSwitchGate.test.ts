@@ -34,6 +34,19 @@ describe("manhuaSeriesSwitchGate", () => {
     expect(manhuaSeriesSwitchBackupConfirmZh(risk)).toMatch(/付费生成|备份/);
   });
 
+  it("只有导演板状态也必须先备份", () => {
+    const risk = inspectManhuaSeriesSwitchRisk({
+      blocks: [],
+      customAssetRefs: [],
+      directorBoardMainByEpisode: { 1: { gcsUri: "gs://bucket/main.png" } },
+      directorBoardBySegment: { 1: { 2: { gcsUri: "gs://bucket/seg.png" } } },
+      directorBoardMotionOverlayBySegment: {},
+    });
+    expect(risk.needsBackup).toBe(true);
+    expect(risk.directorBoardCount).toBe(2);
+    expect(risk.summaryZh).toContain("导演板/轨迹 2 项");
+  });
+
   it("aborts when user declines backup confirm", async () => {
     const ok = await confirmManhuaSeriesSwitchWithBackup({
       risk: {

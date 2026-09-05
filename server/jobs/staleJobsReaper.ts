@@ -86,9 +86,13 @@ export async function reapStaleJobsOnce(
         ),
       );
 
-    // 漫剧学习与配乐都有持久检查点/上游 taskId 恢复。不能先删 running/queued 行，
-    // 否则学习会丢断点，配乐会丢已付费原单并诱发用户重新提交。
-    const nonRecoverableLongJob = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
+    // 漫剧学习与配乐都有持久检查点/上游 taskId 恢复。创作顾问 running 行还承担
+    // 成功结果与退款 CAS 证据，必须交给 paidJobLedger 的专用回收器，不能先删。
+    const nonRecoverableRunningJob = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
+      'manhua_template_learn', 'manhua_bgm_v55', 'manhua_advisor_qa'
+    )`;
+    // 尚未付费确认的顾问 queued 占位没有扣分；过期后仍按通用规则清理，避免永久堆积。
+    const nonRecoverableQueuedJob = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
       'manhua_template_learn', 'manhua_bgm_v55'
     )`;
     const runningRows = await db
@@ -96,7 +100,7 @@ export async function reapStaleJobsOnce(
       .where(
         and(
           eq(jobs.status, "running"),
-          nonRecoverableLongJob,
+          nonRecoverableRunningJob,
           ne(jobs.type, "post_prod"),
           lt(jobs.updatedAt, runCutoff),
         ),
@@ -108,7 +112,7 @@ export async function reapStaleJobsOnce(
       .where(
         and(
           eq(jobs.status, "queued"),
-          nonRecoverableLongJob,
+          nonRecoverableQueuedJob,
           ne(jobs.type, "post_prod"),
           lt(jobs.createdAt, qCutoff),
         ),

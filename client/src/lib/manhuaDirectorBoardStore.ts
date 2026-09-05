@@ -204,6 +204,25 @@ export function normalizeDirectorBoardOverlayBySegment(
   return out;
 }
 
+/**
+ * 同一系列改稿时保留用户手调坐标，但旧轨迹不能直接进入新稿出片。
+ * 统一标成待复核后，消费端会继续按 overlay.needsReview 拒绝注入，直到用户确认。
+ */
+export function markManhuaDirectorBoardOverlaysForReview(
+  raw: unknown,
+): ManhuaDirectorBoardOverlayBySegment {
+  const normalized = normalizeDirectorBoardOverlayBySegment(raw);
+  const out: ManhuaDirectorBoardOverlayBySegment = {};
+  for (const [epKey, segMap] of Object.entries(normalized)) {
+    const ep = Number(epKey);
+    out[ep] = {};
+    for (const [segKey, overlay] of Object.entries(segMap)) {
+      out[ep][Number(segKey)] = { ...overlay, needsReview: true };
+    }
+  }
+  return out;
+}
+
 export function loadManhuaDirectorBoardOverlayBySegment(): ManhuaDirectorBoardOverlayBySegment {
   if (typeof window === "undefined") return {};
   try {
@@ -226,4 +245,96 @@ export function saveManhuaDirectorBoardOverlayBySegment(
   } catch {
     /* quota：内存状态仍保留，云草稿可在下一次手动备份时接住 */
   }
+}
+
+export const MANHUA_DIRECTOR_BOARD_BACKUP_FORMAT =
+  "mv-manhua-director-board-backup-v1" as const;
+
+export type ManhuaDirectorBoardBackupState = {
+  format: typeof MANHUA_DIRECTOR_BOARD_BACKUP_FORMAT;
+  mainByEpisode: ManhuaDirectorBoardMainByEpisode;
+  bySegment: ManhuaDirectorBoardBySegment;
+  motionOverlayBySegment: ManhuaDirectorBoardOverlayBySegment;
+};
+
+/** 换剧 ZIP 的导演板状态；只保存长期 GCS 身份、合法临时 URL 与已校验轨迹。 */
+export function buildManhuaDirectorBoardBackupState(input: {
+  mainByEpisode?: unknown;
+  bySegment?: unknown;
+  motionOverlayBySegment?: unknown;
+}): ManhuaDirectorBoardBackupState {
+  return {
+    format: MANHUA_DIRECTOR_BOARD_BACKUP_FORMAT,
+    mainByEpisode: normalizeDirectorBoardMainByEpisode(input.mainByEpisode),
+    bySegment: normalizeDirectorBoardBySegment(input.bySegment),
+    motionOverlayBySegment: normalizeDirectorBoardOverlayBySegment(
+      input.motionOverlayBySegment,
+    ),
+  };
+}
+
+export function parseManhuaDirectorBoardBackupState(
+  raw: unknown,
+): ManhuaDirectorBoardBackupState | null {
+  const checked = validateManhuaDirectorBoardBackupState(raw);
+  return checked.ok ? checked.state : null;
+}
+
+function stableJsonValue(raw: unknown): unknown {
+  if (Array.isArray(raw)) return raw.map(stableJsonValue);
+  if (!raw || typeof raw !== "object") return raw;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(raw as Record<string, unknown>).sort()) {
+    out[key] = stableJsonValue((raw as Record<string, unknown>)[key]);
+  }
+  return out;
+}
+
+function sameJsonShape(a: unknown, b: unknown): boolean {
+  return JSON.stringify(stableJsonValue(a)) === JSON.stringify(stableJsonValue(b));
+}
+
+export type ManhuaDirectorBoardBackupValidation =
+  | { ok: true; state: ManhuaDirectorBoardBackupState }
+  | { ok: false; errorZh: string };
+
+/** 有状态文件却损坏时必须整包拒绝，禁止成功提示后才发现轨迹或底图静默缺失。 */
+export function validateManhuaDirectorBoardBackupState(
+  raw: unknown,
+): ManhuaDirectorBoardBackupValidation {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { ok: false, errorZh: "根对象不是合法 JSON 对象" };
+  }
+  const obj = raw as Record<string, unknown>;
+  if (obj.format !== MANHUA_DIRECTOR_BOARD_BACKUP_FORMAT) {
+    return { ok: false, errorZh: "format 版本未知" };
+  }
+  for (const field of ["mainByEpisode", "bySegment", "motionOverlayBySegment"] as const) {
+    const value = obj[field];
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return { ok: false, errorZh: `${field} 必须是对象` };
+    }
+  }
+  const state = buildManhuaDirectorBoardBackupState({
+    mainByEpisode: obj.mainByEpisode,
+    bySegment: obj.bySegment,
+    motionOverlayBySegment: obj.motionOverlayBySegment,
+  });
+  for (const field of ["mainByEpisode", "bySegment", "motionOverlayBySegment"] as const) {
+    if (!sameJsonShape(obj[field], state[field])) {
+      return { ok: false, errorZh: `${field} 含无效、缺失或会被截断的条目` };
+    }
+  }
+  return { ok: true, state };
+}
+
+export function hasManhuaDirectorBoardBackupContent(
+  state: ManhuaDirectorBoardBackupState | null | undefined,
+): boolean {
+  return Boolean(
+    state &&
+      (Object.keys(state.mainByEpisode).length ||
+        Object.keys(state.bySegment).length ||
+        Object.keys(state.motionOverlayBySegment).length),
+  );
 }

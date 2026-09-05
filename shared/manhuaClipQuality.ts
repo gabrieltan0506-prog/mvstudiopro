@@ -132,7 +132,8 @@ export function parseManhuaClipQualityMarkdown(
 export function resolveManhuaClipQualityDurationSec(sec?: number): number {
   const n = Number(sec);
   if (!Number.isFinite(n) || n <= 0) return 2.5;
-  return Math.max(1.5, Math.min(12, Math.round(n * 10) / 10));
+  // 质检只描述真实目标时长，不参与计费或供应商钳制；30 秒片段不得被旧 12 秒上限改写。
+  return Math.max(1.5, Math.round(n * 10) / 10);
 }
 
 export function buildManhuaClipQualityPrompt(
@@ -194,4 +195,3 @@ export function isManhuaClipQualityInfraFailure(
   }
   return false;
 }
-
