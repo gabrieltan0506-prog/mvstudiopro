@@ -70,20 +70,30 @@ const emphasize = (v: unknown): string => {
     .join("");
 };
 /** 声音事件种类中文化（0902 八审：sfx/voice_change 英文尾巴清除）；未知种类原样放行 */
+// 0905 用户令：报告不许中英夹杂。0827 定稿的 11 项声音事件词表全部给中文名，未知值兜底「声音事件」而不是露英文
 const CUE_KIND_ZH: Record<string, string> = {
+  source_change: "声源切换",
+  voice_change: "语调变化",
+  voicechange: "语调变化",
+  voice: "语调变化",
   sfx: "音效",
-  voice_change: "语调",
-  voicechange: "语调",
-  voice: "语调",
+  bgm_in: "配乐进入",
+  bgm_change: "配乐转折",
+  bgm_out: "配乐退出",
   bgm: "配乐",
   music: "配乐",
+  atmosphere_change: "环境氛围变化",
+  dynamics_change: "强弱变化",
+  mix_change: "混音变化",
+  silence_in: "静默开始",
+  silence_out: "静默结束",
   silence: "静默",
   ambient: "环境音",
   dialogue: "对白",
   narration: "旁白",
 };
 const cueKindZh = (kind: string): string =>
-  CUE_KIND_ZH[kind.trim().toLowerCase().replace(/[\s-]+/g, "_")] ?? kind;
+  CUE_KIND_ZH[kind.trim().toLowerCase().replace(/[\s-]+/g, "_")] ?? (kind.trim() ? "声音事件" : "");
 const mmss = (s: number): string => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
 function makeSigner() {
