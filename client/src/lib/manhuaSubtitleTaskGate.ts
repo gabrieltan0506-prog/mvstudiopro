@@ -78,6 +78,7 @@ export function toManhuaSubtitlePublicError(
     return "后期任务记录暂不可用，请从后期任务列表重新取件。";
   }
   if (/超时|timed?.?out|timeout/i.test(raw)) {
+    if (phase === "submit") return "提交结果暂未确认，请先到后期任务列表核对，勿重复提交。";
     return "字幕烧录或取件超时，原片与任务记录已保留，可稍后继续取件。";
   }
   if (/长期成片身份缺失|长期版本身份缺失/.test(raw)) {
@@ -89,7 +90,7 @@ export function toManhuaSubtitlePublicError(
   if (/字幕.{0,8}(?:格式|为空|无效)|subtitle.{0,12}(?:invalid|empty|format)/i.test(raw)) {
     return "字幕内容或格式无效，请检查字幕轨后重试。";
   }
-  if (phase === "submit") return "字幕烧录任务未能提交，请稍后重试。";
+  if (phase === "submit") return "提交结果暂未确认，请先到后期任务列表核对，勿重复提交。";
   if (phase === "job") return "字幕烧录未完成，原片与任务记录已保留。";
   if (phase === "refresh") return "历史成片链接刷新失败，长期版本身份仍已保留。";
   return "字幕任务查询暂时失败，任务记录已保留，可刷新后继续取件。";

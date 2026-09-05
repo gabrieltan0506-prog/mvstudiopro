@@ -48,4 +48,13 @@ describe("manhuaSubtitleTaskGate", () => {
     expect(unknown).toBe("字幕烧录未完成，原片与任务记录已保留。");
     expect(unknown).not.toMatch(/secret|request-id|gs:\/\//i);
   });
+
+  it("提交超时或网络结果未知时要求先对账，不诱导用户重复下单", () => {
+    for (const message of ["request timeout", "fetch failed", "connection closed"]) {
+      const hint = toManhuaSubtitlePublicError(new Error(message), "submit");
+      expect(hint).toContain("暂未确认");
+      expect(hint).toContain("勿重复提交");
+      expect(hint).not.toContain("稍后重试");
+    }
+  });
 });
