@@ -167,6 +167,8 @@ import {
   readManhuaLearnMissingDismissedKeys,
   readManhuaLearnResult,
   readManhuaLearnSegmentSeconds,
+  readManhuaLearnReadModel,
+  writeManhuaLearnReadModel,
   hasStoredManhuaLearnSegmentSeconds,
   hasStoredManhuaLearnVideoFps,
   mergeManhuaLearnSnapshotDigests,
@@ -2673,6 +2675,7 @@ export default function PlatformPage() {
     setManhuaLearnSegmentSecondsError("");
     setManhuaLearnVideoFpsInput(String(readManhuaLearnVideoFps(manhuaLearnUserKey)));
     setManhuaLearnVideoFpsError("");
+    setManhuaLearnReadModel(readManhuaLearnReadModel(manhuaLearnUserKey));
     setManhuaLearnServerJobs([]);
     setManhuaLearnServerJobsHydrated(false);
     setManhuaLearnControlBusy(null);
@@ -3272,7 +3275,18 @@ export default function PlatformPage() {
       // 同步预开空白页，异步拿到 URL 再跳转，避免浏览器拦截弹窗
       const reportTab = window.open("", "_blank");
       try {
-        const report = await renderEpisodeReportMutation.mutateAsync({ seriesKey, episodeIndex });
+        // 0905 用户实测：入库写卡的同一时刻点导出会撞到对象刚换代而失败——等 3 秒自动重试一次
+        let report: Awaited<ReturnType<typeof renderEpisodeReportMutation.mutateAsync>>;
+        try {
+          report = await renderEpisodeReportMutation.mutateAsync({ seriesKey, episodeIndex });
+        } catch (firstError) {
+          await new Promise((resolve) => setTimeout(resolve, 3_000));
+          try {
+            report = await renderEpisodeReportMutation.mutateAsync({ seriesKey, episodeIndex });
+          } catch {
+            throw firstError;
+          }
+        }
         if (reportTab) reportTab.location.href = report.reportUrl;
         toast.success(`第 ${episodeIndex} 集学习报告已生成（${report.shots} 镜 · ${report.frames} 帧）`, {
           action: reportTab
@@ -12917,7 +12931,11 @@ export default function PlatformPage() {
                           id="manhua-learn-read-model"
                           value={manhuaLearnReadModel}
                           disabled={Boolean(manhuaLearnBusyKey)}
-                          onChange={(event) => setManhuaLearnReadModel(event.target.value as ManhuaNativeDeepReadModelId)}
+                          onChange={(event) => {
+                            const next = event.target.value as ManhuaNativeDeepReadModelId;
+                            setManhuaLearnReadModel(next);
+                            writeManhuaLearnReadModel(manhuaLearnUserKey, next);
+                          }}
                           className="rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] text-white disabled:opacity-45"
                         >
                           {MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS.map((model) => (
