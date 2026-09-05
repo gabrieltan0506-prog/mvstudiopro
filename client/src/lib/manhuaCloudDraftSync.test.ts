@@ -15,7 +15,7 @@ import { defaultCanvasBlock, type CanvasBlock } from "@/lib/canvasTypes";
 import { stripManhuaFactoryCanvasArtifacts } from "./canvasDramaStudio";
 
 describe("manhuaCloudDraftSync dual-path", () => {
-  it("换剧归档的整集版本经本机保存及配额降级仍保留，云同步不扩大范围", () => {
+  it("换剧归档的整集引用经本机、配额降级和云同步仍保留", () => {
     const source = {
       ...defaultCanvasBlock("video", 0, 0), id: "final-e01",
       outputUrl: "https://cdn.example/final-current.mp4",
@@ -32,7 +32,8 @@ describe("manhuaCloudDraftSync dual-path", () => {
     } })).toBe(true);
     expect(JSON.parse(saved).blocks[0].outputUrls).toEqual(source.outputUrls);
     const cloud = buildManhuaCloudDraftPayload({ clientUpdatedAt: "2026-09-05T00:00:00Z", writerSession: {}, blocks: archived, edges: [] });
-    expect(cloud.canvas.blocks[0]?.outputUrl).toBeUndefined();
+    expect(cloud.canvas.blocks[0]?.outputUrl).toBe(source.outputUrl);
+    expect(cloud.canvas.blocks[0]?.archivedFromPreviousScript).toBe(true);
   });
 
   it("prefers cloud when timestamps equal or newer", () => {
@@ -186,7 +187,7 @@ describe("manhuaCloudDraftSync dual-path", () => {
     expect(cloudDraftBlocksToCanvas(payload.canvas.blocks)[0]?.videoModel).toBe("seedance-2.5");
   });
 
-  it("drops clip outputs but keeps final-eXX selected version and history", () => {
+  it("本机同时保留片段与整集的当前版本和历史", () => {
     const slim = slimBlocksForLocalPersist([
       {
         id: "clip-e01-s01",
@@ -249,7 +250,7 @@ describe("manhuaCloudDraftSync dual-path", () => {
         uploadedAssets: [],
       } as CanvasBlock,
     ]);
-    expect(slim[0]?.outputUrl).toBeUndefined();
+    expect(slim[0]?.outputUrl).toBe("https://cdn.example/a.mp4");
     expect(slim[1]?.outputUrl).toContain("k.jpg");
     expect(slim[2]?.outputUrl).toBe("https://signed.example/burned.mp4");
     expect(slim[2]?.outputUrls).toHaveLength(2);

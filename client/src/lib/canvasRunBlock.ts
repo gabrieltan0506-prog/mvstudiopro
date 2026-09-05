@@ -4,6 +4,10 @@ import { withFlyHealthGate } from "./flyHealthGate";
 import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "./longJobsFlyOrigin";
 import { probeVideoDurationSec } from "./videoUpscaleApi";
 import { createJobSameOrigin, pollJobUntilTerminal } from "./jobs";
+import {
+  compileManhuaVideoEditPrompt,
+  isManhuaVideoEditBlock,
+} from "./manhuaMediaVersions";
 import { runGeminiScript } from "./omniCanvasApi";
 import {
   compileI2VMotionPrompt,
@@ -39,6 +43,8 @@ import {
   parseManhuaClipTargetDurationSec,
   resolveClipLocalSegmentIndex,
 } from "@shared/manhuaScriptWorkbench";
+import { compileManhuaPilotPrompt, MANHUA_PILOT_DURATION_SEC } from "@shared/manhuaPilotGate";
+import { manhuaPilotSubmissionSchema, type ManhuaPilotSubmission } from "@shared/manhuaPilotReview";
 import {
   clampSeedanceOpenRouterDuration,
   SEEDANCE_25_REFERENCE_MAX,
@@ -144,6 +150,11 @@ function resolveCanvasTextPrimaryModel(textModel: string | undefined): string {
 const CANVAS_GPT_IMAGE2_POLL_MAX_MS = 12 * 60_000;
 
 export type CanvasRunDeps = {
+  /** 所有工厂/画布 clip 共用的服务端审核预检；返回元数据仍由服务端再次验证。 */
+  authorizeManhuaClip?: (request: {
+    episodeIndex: number; segmentIndex: number; videoModel: string; pilotRun: boolean; durationSec: number;
+  }) => Promise<ManhuaPilotSubmission>;
+  onManhuaPilotChanged?: () => void;
   /** 长排队任务创建即回写节点(taskId 持久化,刷新可恢复;审查 P1);缺省不回写 */
   onVideoTaskCreated?: (blockId: string, info: { taskId: string; engine: string }) => void;
   optimizeCopy: (input: {
@@ -685,6 +696,9 @@ async function runSeedanceProductVideo(
      * 快速档与 2.5 加长仍固定 720p，由服务端 normalize 兜住。
      */
     resolution?: CanvasVideoResolution;
+    manhuaPilot?: ManhuaPilotSubmission;
+    idempotencyKey?: string;
+    onTaskId?: (taskId: string) => void;
   },
 ): Promise<SeedanceProductVideoResult> {
   // 与 Creative / TestLab 一致：直连 Fly/api 子域，避免 www→Vercel→Fly 反代 ~120s 被 ROUTER_EXTERNAL 腰斩
@@ -754,6 +768,8 @@ async function runSeedanceProductVideo(
         // 产品口径：只用引擎自带 Audio on，暂不另开后期配音 API
         generateAudio: true,
         version,
+        ...(opts?.manhuaPilot ? { manhuaPilot: opts.manhuaPilot } : {}),
+        ...(opts?.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
         ...(version === "2.5" ? { workMode } : {}),
         ...(Number.isFinite(episodeIndex) && episodeIndex > 0 ? { episodeIndex } : {}),
         ...(Number.isFinite(clipIndex) && clipIndex > 0 ? { clipIndex } : {}),
@@ -782,6 +798,7 @@ async function runSeedanceProductVideo(
   if (!res.ok || !json.ok) {
     throw new Error(json.error || json.message || "成片生成失败");
   }
+  if (json.taskId) opts?.onTaskId?.(json.taskId);
   if (json.videoUrl) {
     return {
       videoUrl: String(json.videoUrl),
@@ -809,6 +826,8 @@ export function buildHailuo3CanvasRequestBody(input: {
   resolution?: string;
   episodeIndex?: number;
   clipIndex?: number;
+  manhuaPilot?: ManhuaPilotSubmission;
+  idempotencyKey?: string;
 }): Record<string, unknown> {
   const imageUrls = Array.from(
     new Set(
@@ -833,6 +852,8 @@ export function buildHailuo3CanvasRequestBody(input: {
     duration,
     resolution: input.resolution,
     generateAudio: true,
+    ...(input.manhuaPilot ? { manhuaPilot: input.manhuaPilot } : {}),
+    ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
     ...(Number(input.episodeIndex) > 0 ? { episodeIndex: Number(input.episodeIndex) } : {}),
     ...(Number(input.clipIndex) > 0 ? { clipIndex: Number(input.clipIndex) } : {}),
   };
@@ -850,6 +871,9 @@ async function runHailuo3(
     /** 漫剧集号／段号：服务端据此走整集折算段价 */
     episodeIndex?: number;
     clipIndex?: number;
+    manhuaPilot?: ManhuaPilotSubmission;
+    idempotencyKey?: string;
+    onTaskId?: (taskId: string) => void;
   },
 ): Promise<string> {
   const hailuoUrl = withLongJobsFlyDirect("/api/jobs?op=hailuo3Video");
@@ -863,6 +887,8 @@ async function runHailuo3(
     resolution: opts?.resolution,
     episodeIndex: opts?.episodeIndex,
     clipIndex: opts?.clipIndex,
+    manhuaPilot: opts?.manhuaPilot,
+    idempotencyKey: opts?.idempotencyKey,
   });
   const res = await withFlyHealthGate(probeOrigin, () =>
     fetch(hailuoUrl, {
@@ -894,6 +920,7 @@ async function runHailuo3(
   if (!res.ok || !json.ok) {
     throw new Error(json.error || json.message || "成片生成失败");
   }
+  if (json.taskId) opts?.onTaskId?.(json.taskId);
   if (json.videoUrl) return String(json.videoUrl);
   if (json.taskId) {
     const polled = await pollCanvasVideoTask(json.taskId);
@@ -1034,6 +1061,7 @@ export function buildWan30RequestBody(input: {
   episodeIndex?: number;
   clipIndex?: number;
   idempotencyKey?: string;
+  manhuaPilot?: ManhuaPilotSubmission;
   seed?: number;
 }): Record<string, unknown> {
   const images = Array.from(
@@ -1066,6 +1094,7 @@ export function buildWan30RequestBody(input: {
     ...(Number(input.episodeIndex) > 0 ? { episodeIndex: Number(input.episodeIndex) } : {}),
     ...(Number(input.clipIndex) > 0 ? { clipIndex: Number(input.clipIndex) } : {}),
     ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+    ...(input.manhuaPilot ? { manhuaPilot: input.manhuaPilot } : {}),
     ...(Number.isFinite(Number(input.seed)) ? { seed: Math.floor(Number(input.seed)) } : {}),
   };
 }
@@ -1084,6 +1113,7 @@ async function runWan30(
     clipIndex?: number;
     /** 稳定幂等键:同节点同内容重试复用同键,防双击双扣费(审查 P1) */
     idempotencyKey?: string;
+    manhuaPilot?: ManhuaPilotSubmission;
     seed?: number;
     /** 拿到 taskId 立即回调(先持久化再慢慢轮询) */
     onTaskId?: (taskId: string) => void;
@@ -1114,6 +1144,7 @@ async function runWan30(
           episodeIndex: opts?.episodeIndex,
           clipIndex: opts?.clipIndex,
           idempotencyKey: opts?.idempotencyKey,
+          manhuaPilot: opts?.manhuaPilot,
           seed: opts?.seed,
         }),
       ),
@@ -1140,13 +1171,15 @@ async function runWan30(
   if (!res.ok || !json.ok) {
     throw new Error(json.error || json.message || "成片生成失败");
   }
-  if (json.videoUrl) return String(json.videoUrl);
   if (json.taskId) {
     try {
       opts?.onTaskId?.(String(json.taskId));
     } catch {
       /* 回写失败不阻塞生成 */
     }
+  }
+  if (json.videoUrl) return String(json.videoUrl);
+  if (json.taskId) {
     try {
       // Wan 公测排队以小时计:前端轮询期限对齐后端(3h)+缓冲
       const polled = await pollCanvasVideoTask(json.taskId, { timeoutMs: 200 * 60_000 });
@@ -1228,6 +1261,29 @@ async function runHappyHorse(
 const MANHUA_VIDEO_FOLLOW_STILL_ZH =
   "【参考静帧】成片画面风格、人物造型、服装与场景材质请直接对齐本段参考静帧；以参考图为准做微动演绎。";
 
+/** 只抽新产物的尾帧供后续工序使用；不把编辑原片的结尾误当成新片首帧。 */
+async function captureManhuaClipResultTail(deps: CanvasRunDeps, blockId: string, url: string) {
+  if (!/^https?:\/\//i.test(url) || !blockId.startsWith("clip-")) return undefined;
+  try {
+    const { frames } = await extractVideoTailFramesFromUrl(url, {
+      frameCount: 1,
+      tailWindowSec: MANHUA_CLIP_TAIL_WINDOW_SEC,
+    });
+    const urls = await toHttpsImageUrls(
+      deps,
+      frames.map((frame) => frame.dataUrl).filter(Boolean),
+    );
+    return urls[urls.length - 1];
+  } catch (error) {
+    console.warn(
+      `[canvasRunBlock] clip lastFrame extract failed · ${
+        error instanceof Error ? error.message.slice(0, 120) : "unknown"
+      }`,
+    );
+    return undefined;
+  }
+}
+
 export function formatCanvasUpstreamPrompt(basePrompt: string, upstreamTexts: string[]): string {
   const trimmed = basePrompt.trim();
   const texts = upstreamTexts.map((t) => t.trim()).filter(Boolean);
@@ -1251,6 +1307,8 @@ export async function runCanvasBlock(
   runOptions?: {
     /** 同一次用户操作的自动重试必须复用；新一次显式运行不传旧值，自动生成新键。 */
     videoSubmissionKey?: string;
+    /** 仅本次首段试片的执行约束，不写入节点、草稿或供应商字段。 */
+    pilotRun?: boolean;
   },
 ): Promise<{
   outputText?: string;
@@ -1264,6 +1322,22 @@ export async function runCanvasBlock(
   seedance25ThreadId?: string;
   seedance25WebThreadLink?: string;
 }> {
+  if (runOptions?.pilotRun) {
+    if (
+      block.kind !== "video" || !block.id.startsWith("clip-") ||
+      block.seedance25WorkMode === "video_edit" || block.seedance25WorkMode === "video_extend"
+    ) {
+      throw new Error("10 秒试片只用于新生成片段，不能代替原片编辑或延长");
+    }
+    // 只裁本次执行副本；独立秒级分镜原稿仍留在节点，正式生成时可继续使用。
+    block = {
+      ...block,
+      prompt: compileManhuaPilotPrompt(block.prompt).prompt,
+      ...(block.seedance25TimestampStoryboard != null ? {
+        seedance25TimestampStoryboard: compileManhuaPilotPrompt(block.seedance25TimestampStoryboard).prompt,
+      } : {}),
+    };
+  }
   const refTexts = upstream.texts.filter(Boolean);
   const prompt = block.prompt.trim();
   const refUrl = block.refImageUrl || upstream.visionImages[0]?.url;
@@ -1536,6 +1610,30 @@ export async function runCanvasBlock(
 
   if (block.kind === "video") {
     const ar = block.aspectRatio;
+    if (isManhuaVideoEditBlock(block)) {
+      const access = resolveSeedance25Access({ plan: deps.userPlan, role: deps.userRole });
+      if (!access.allowed) throw new Error(access.message || "当前账号未开放高级视频编辑");
+      // 工厂编辑入口只选择一条原片；旧上游片、静帧、导演板与声线不能自动混入。
+      const source = String(block.seedance25RefVideoUrls?.[0] || block.refVideoUrl || "").trim();
+      if (!/^https?:\/\//i.test(source)) throw new Error("请先选择本次要修改的原片");
+      const editPrompt = compileManhuaVideoEditPrompt(block.prompt);
+      const editSourceDurationSec = (await probeVideoDurationSec(source)) || undefined;
+      const edited = await runSeedanceProductVideo(editPrompt, undefined, ar, {
+        version: "2.5",
+        workMode: "video_edit",
+        videoUrls: [source],
+        duration:
+          editSourceDurationSec ?? parseManhuaClipTargetDurationSec(block.prompt) ?? undefined,
+        editSourceDurationSec,
+        resolution: block.videoResolution,
+        episodeIndex: block.episodeIndex,
+        clipIndex: parseClipIndexFromBlockId(block.id),
+      });
+      return {
+        outputUrl: edited.videoUrl,
+        lastFrameUrl: await captureManhuaClipResultTail(deps, block.id, edited.videoUrl),
+      };
+    }
     const looksLikeVideo = (u?: string) => Boolean(u && /\.(mp4|mov|webm)(\?|$)/i.test(u));
     const continuityVideoUrl =
       block.refVideoUrl ||
@@ -1575,8 +1673,22 @@ export async function runCanvasBlock(
       ? stripManhuaAssetUrlsFromPrompt(appendManhuaClipEngineOptics(compiledMotion))
       : compiledMotion;
     const videoModel = normalizeCanvasVideoModel(block.videoModel || DEFAULT_CANVAS_VIDEO_MODEL);
+    const submissionKey = runOptions?.videoSubmissionKey || newWanSubmissionKey(block.id);
+    let manhuaPilot: ManhuaPilotSubmission | undefined;
+    if (isClip && deps.authorizeManhuaClip) {
+      const episodeIndex = Number(block.episodeIndex) || Number(block.id.match(/^clip-e(\d+)-/)?.[1]) || 1;
+      manhuaPilot = manhuaPilotSubmissionSchema.parse(await deps.authorizeManhuaClip({
+        episodeIndex,
+        segmentIndex: resolveClipLocalSegmentIndex(block.id, block.prompt, episodeIndex),
+        videoModel,
+        pilotRun: runOptions?.pilotRun === true,
+        durationSec: runOptions?.pilotRun ? MANHUA_PILOT_DURATION_SEC
+          : clampManhuaClipDurationSecForVideoModel(videoModel, parseManhuaClipTargetDurationSec(block.prompt)),
+      }));
+    }
     const useHailuoH3 = isCanvasHailuoH3VideoModel(videoModel);
     const useHappyHorse = isCanvasHappyHorseVideoModel(videoModel);
+    if (useHappyHorse && manhuaPilot) throw new Error("当前生成档未接入试片审核，请先选择受支持的漫剧成片引擎");
     const useWan30 = isCanvasWan30VideoModel(videoModel);
     const useSeedance25 = videoModel === "seedance-2.5";
     const maxVideoImageRefs = resolveManhuaCanvasVideoImageReferenceMax(videoModel);
@@ -1630,9 +1742,12 @@ export async function runCanvasBlock(
         }
       }
       // 节点只含 id；path 从 deps 后台表解析，绝不依赖提示词里的网址
+      const requestedAssetRows = isClip
+        ? parseManhuaAssetImageBindBlock(block.prompt || motionPrompt)
+        : [];
       const assetRows = isClip
         ? resolveManhuaAssetImageBindRows(
-            parseManhuaAssetImageBindBlock(block.prompt || motionPrompt),
+            requestedAssetRows,
             deps.manhuaAssetPathById,
           ).map((r) => {
             const abs = absolutizeManhuaAssetUrl(r.path) || r.path;
@@ -1646,6 +1761,10 @@ export async function runCanvasBlock(
             return { ...r, path: absolutizeManhuaAssetUrl(picked.url) || picked.url };
           })
         : [];
+      const requiredLookRows = requestedAssetRows.filter((row) => row.tag.startsWith("@服装"));
+      if (requiredLookRows.some((row) => !assetRows.some((resolved) => resolved.id === row.id))) {
+        throw new Error("本段所选造型的参考图已失效，请重新挂图并确认；本次未提交生成。");
+      }
       const mentionedTags = isClip
         ? extractManhuaMentionedAssetTags(motionPrompt)
         : [];
@@ -1704,6 +1823,12 @@ export async function runCanvasBlock(
       const rawPool = bindPlan?.imageUrls?.length
         ? bindPlan.imageUrls
         : [...tailFrames, ...absStills];
+      if (requiredLookRows.some((row) => {
+        const path = assetRows.find((resolved) => resolved.id === row.id)?.path;
+        return !path || !rawPool.includes(path);
+      })) {
+        throw new Error("本段参考图名额不足，所选造型未能进入生成，请减少参考图后重试。");
+      }
       const httpsImages = await toHttpsImageUrls(
         deps,
         rawPool.slice(0, maxVideoImageRefs),
@@ -1775,6 +1900,7 @@ export async function runCanvasBlock(
         `[canvasRunBlock] clip image-bind · assets=${assetRows.length} · kept=${keptEntries.length} · urls=${httpsImages.length} · bind=${String(imageBind).slice(0, 180)}`,
       );
       const clipDurationRaw =
+        runOptions?.pilotRun ? MANHUA_PILOT_DURATION_SEC :
         parseManhuaClipTargetDurationSec(motionPrompt) ??
         parseManhuaClipTargetDurationSec(block.prompt) ??
         undefined;
@@ -1814,7 +1940,8 @@ export async function runCanvasBlock(
           resolution: block.videoResolution,
           episodeIndex: block.episodeIndex,
           clipIndex: parseClipIndexFromBlockId(block.id),
-          idempotencyKey: runOptions?.videoSubmissionKey || newWanSubmissionKey(block.id),
+          idempotencyKey: submissionKey,
+          manhuaPilot,
           onTaskId: (taskId) =>
             deps.onVideoTaskCreated?.(block.id, { taskId, engine: "wan-3.0" }),
         });
@@ -1840,6 +1967,9 @@ export async function runCanvasBlock(
           resolution: block.videoResolution,
           episodeIndex: block.episodeIndex,
           clipIndex: parseClipIndexFromBlockId(block.id),
+          manhuaPilot,
+          idempotencyKey: submissionKey,
+          onTaskId: (taskId) => deps.onVideoTaskCreated?.(block.id, { taskId, engine: videoModel }),
         });
       } else {
         const userRefVideos = (block.seedance25RefVideoUrls || [])
@@ -1940,6 +2070,9 @@ export async function runCanvasBlock(
                   : "2.0",
           duration: clipDuration,
           workMode: useSeedance25 ? workMode : undefined,
+          manhuaPilot,
+          idempotencyKey: submissionKey,
+          onTaskId: (taskId) => deps.onVideoTaskCreated?.(block.id, { taskId, engine: videoModel }),
           editSourceDurationSec,
           episodeIndex: block.episodeIndex,
           clipIndex: parseClipIndexFromBlockId(block.id),
@@ -1954,24 +2087,8 @@ export async function runCanvasBlock(
         }
       }
     }
-    let lastFrameUrl: string | undefined;
-    if (url && /^https?:\/\//i.test(url) && block.id.startsWith("clip-")) {
-      try {
-        const { frames } = await extractVideoTailFramesFromUrl(url, {
-          frameCount: 1,
-          tailWindowSec: MANHUA_CLIP_TAIL_WINDOW_SEC,
-        });
-        const raw = frames.map((f) => f.dataUrl).filter(Boolean);
-        const https = await toHttpsImageUrls(deps, raw);
-        lastFrameUrl = https[https.length - 1];
-      } catch (err) {
-        console.warn(
-          `[canvasRunBlock] clip lastFrame extract failed · ${
-            err instanceof Error ? err.message.slice(0, 120) : "unknown"
-          }`,
-        );
-      }
-    }
+    if (manhuaPilot) deps.onManhuaPilotChanged?.();
+    const lastFrameUrl = await captureManhuaClipResultTail(deps, block.id, url);
     return {
       outputUrl: url,
       lastFrameUrl,

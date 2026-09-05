@@ -37,6 +37,7 @@ import {
   queuedManhuaClipBlocks,
   queuedManhuaKeyartBlocks,
   resolveManhuaCanvasClipVideoModel,
+  resolveManhuaEpisodeClipVideoModel,
   resolveManhuaFactoryOrderedIds,
   resolveManhuaFragmentRunTargets,
   runManhuaDramaFactoryPipeline,
@@ -45,7 +46,7 @@ import {
   spawnManhuaDramaStudioSeries,
   syncManhuaClipAssetEdges,
 } from "./canvasDramaStudio";
-import { buildManhuaAssetLockRegistry } from "@shared/manhuaAssetLockRegistry";
+import { buildManhuaAssetLockRegistry, buildManhuaAssetPathById, parseManhuaAssetImageBindBlock, resolveManhuaAssetImageBindRows } from "@shared/manhuaAssetLockRegistry";
 import { parseManhuaEpisodeSegmentPlanFromMarkdown } from "@shared/manhuaEpisodeSegmentPlan";
 import { upsertShotDialogueSection } from "@shared/manhuaShotDialoguePersist";
 import { upsertManhuaClipUserSupplement } from "@shared/manhuaClipUserSupplement";
@@ -56,6 +57,7 @@ import {
   type CanvasBlock,
 } from "./canvasTypes";
 import * as canvasRunBlock from "./canvasRunBlock";
+import { applyManhuaVideoEditInstruction } from "./manhuaMediaVersions";
 import type { CanvasRunDeps } from "./canvasRunBlock";
 import {
   MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
@@ -73,6 +75,23 @@ import {
 import { getManhuaDirectorStrategyV1Snapshot } from "@shared/manhuaDirectorStrategyV1Snapshot";
 
 describe("canvasDramaStudio factory", () => {
+  it("29镜原稿的结尾进入关键帧编排，不被容量截尾", () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({ topic: "黑奇变身", episodeIndex: 1 });
+    const reverse = blocks.find(block => block.id.startsWith("reverse-"))!;
+    const table = [
+      "| # | 秒位 | 景别·运镜 | 画面 | 台词/字幕 | 音效·配乐 |",
+      "|---|---|---|---|---|---|",
+      ...Array.from({ length: 29 }, (_, i) =>
+        `| ${i + 1} | ${i * 4}-${(i + 1) * 4} | 中景 | ${i === 28 ? "黑奇驮阿菁踏云离开坊市" : `黑奇向前迈出第${i + 1}步`} | —— | 蹄声 |`),
+    ].join("\n");
+    const source = blocks.map(block => block.id === reverse.id
+      ? { ...block, outputText: table, status: "done" as const } : block);
+    const expanded = expandManhuaShotKeyartsAfterReverse(source, edges, reverse.id);
+    const keyarts = expanded.blocks.filter(block => block.id.startsWith("keyart-"));
+    expect(keyarts.length).toBeGreaterThan(0);
+    expect(keyarts.some(block => block.prompt.includes("黑奇驮阿菁踏云离开坊市"))).toBe(true);
+  });
+
   it("重编译段主体时保留用户补充，但淘汰旧派生秒轴", () => {
     const { blocks, edges } = spawnManhuaDramaStudio({
       topic: "雨夜门前对峙",
@@ -454,6 +473,10 @@ describe("canvasDramaStudio factory", () => {
     const target = clips[1]!;
     const prepared = {
       ...target,
+      prompt: applyManhuaVideoEditInstruction(
+        upsertManhuaClipUserSupplement(target.prompt, "本段袖口保持旧金色"),
+        "只把左侧红色灯笼改为蓝色",
+      ),
       status: "idle" as const,
       outputUrl: undefined,
       outputUrls: [`https://example.com/old-${target.id}.mp4`],
@@ -473,6 +496,16 @@ describe("canvasDramaStudio factory", () => {
       }
       return b;
     });
+    const regeneration = ensureManhuaFragmentClips(ready, ensured.edges, 1, {
+      videoModel: "seedance-2.0-mini",
+    }).blocks.find((b) => b.id === target.id)!;
+    expect(regeneration.videoModel).toBe("seedance-2.0-mini");
+    expect(regeneration.seedance25WorkMode).toBeUndefined();
+    expect(regeneration.refVideoUrl).toBeUndefined();
+    expect(regeneration.seedance25RefVideoUrls).toEqual([]);
+    expect(regeneration.prompt).not.toContain("只把左侧红色灯笼改为蓝色");
+    expect(regeneration.prompt).toContain("本段袖口保持旧金色");
+    expect(regeneration.outputUrls).toEqual(prepared.outputUrls);
     const generatedUrl = `https://example.com/edited-${target.id}.mp4`;
     const runSpy = vi
       .spyOn(canvasRunBlock, "runCanvasBlock")
@@ -517,6 +550,14 @@ describe("canvasDramaStudio factory", () => {
         ensureOptions: { videoModel: "seedance-2.0-mini" },
       });
       expect(runSpy).toHaveBeenCalledTimes(1);
+      expect(runSpy.mock.calls[0]?.[1]).toMatchObject({
+        id: target.id,
+        videoModel: "seedance-2.5",
+        seedance25WorkMode: "video_edit",
+        refVideoUrl: prepared.refVideoUrl,
+        seedance25RefVideoUrls: prepared.seedance25RefVideoUrls,
+        prompt: prepared.prompt,
+      });
       expect(qualityBodies).toHaveLength(1);
       expect(qualityBodies[0]?.videoUrl).toBe(generatedUrl);
       expect(qualityBodies[0]?.shotIndex).toBe(2);
@@ -525,6 +566,36 @@ describe("canvasDramaStudio factory", () => {
         "编辑段通过",
       );
       expect(result.blocks.find((b) => b.id === first.id)?.manhuaClipQuality).toBeUndefined();
+      expect(result.blocks.find((b) => b.id === target.id)?.outputUrls).toEqual([
+        generatedUrl,
+        ...prepared.outputUrls,
+      ]);
+
+      // 网络异常无法证明上游未受理，不能用通用瞬态重试自动创建第二次编辑。
+      runSpy.mockClear().mockRejectedValue(new Error("Failed to fetch"));
+      qualityBodies.length = 0;
+      const failed = await runManhuaDramaFactoryPipeline({
+        deps: { optimizeCopy: async () => "" },
+        blocks: ready,
+        edges: ensured.edges,
+        episodeIndex: 1,
+        untilStage: "clip",
+        forceFromStage: "clip",
+        targetBlockIds: [target.id],
+        preservePreparedTargetBlocks: true,
+        maxRetries: 2,
+        ensureOptions: { videoModel: "seedance-2.0-mini" },
+      });
+      expect(runSpy).toHaveBeenCalledTimes(1);
+      expect(qualityBodies).toEqual([]);
+      expect(failed.blocks.find((b) => b.id === target.id)).toMatchObject({
+        status: "error",
+        error: "Failed to fetch",
+        outputUrls: prepared.outputUrls,
+      });
+      expect(failed.blocks.find((b) => b.id === first.id)?.outputUrl).toBe(
+        `https://example.com/old-${first.id}.mp4`,
+      );
     } finally {
       runSpy.mockRestore();
       globalThis.fetch = previousFetch;
@@ -1163,6 +1234,38 @@ describe("canvasDramaStudio factory", () => {
     expect(filterManhuaFactoryTargetIds(ordered, frag.targetBlockIds)).toEqual([frag.clipId]);
   });
 
+  it("造型重选进入实际成片引用，旧造型退出且原静帧保留", () => {
+    const spawned = spawnManhuaDramaStudio({ topic: "黑奇保护阿菁", episodeIndex: 1 });
+    const reverse = spawned.blocks.find(b => b.id.startsWith("reverse-"))!;
+    const source = spawned.blocks.map(b => b.id === reverse.id ? { ...b, outputText: "1. 黑奇抬头\n2. 黑奇站直\n3. 黑奇向前", status: "done" as const } : b);
+    const expanded = expandManhuaShotKeyartsAfterReverse(source, spawned.edges, reverse.id);
+    const ready = expanded.blocks.map(b => b.id.startsWith("keyart-") ? { ...b, outputUrl: `https://example.com/${b.id}.png`, status: "done" as const } : b);
+    const customRefs = [
+      { id: "heiqi", role: "character" as const, url: "https://example.com/heiqi.png", labelZh: "黑奇" },
+      { id: "before-image", role: "wardrobe" as const, url: "https://example.com/before.png", labelZh: "变身前" },
+      { id: "after-image", role: "wardrobe" as const, url: "https://example.com/after.png", labelZh: "变身后" },
+    ];
+    const characterLookSets = [
+      { id: "look-before", characterId: "heiqi", index: 1, labelZh: "变身前", lookRefId: "before-image" },
+      { id: "look-after", characterId: "heiqi", index: 2, labelZh: "变身后", lookRefId: "after-image" },
+    ];
+    const first = ensureManhuaFragmentClips(ready, expanded.edges, 1, { customRefs, characterLookSets, segmentLookBindings: { "e1:s1": { heiqi: "look-before" } } });
+    const second = ensureManhuaFragmentClips(first.blocks, first.edges, 1, { customRefs, characterLookSets, segmentLookBindings: { "e1:s1": { heiqi: "look-after" } } });
+    const clip = second.blocks.find(b => b.id === resolveManhuaFragmentRunTargets(second.blocks, 1, 1).clipId)!;
+    // 静帧留在节点；角色和造型由执行器按后台路径表解析，不混写进静帧数组。
+    const paths = buildManhuaAssetPathById(buildManhuaAssetLockRegistry({ customRefs, characterLookSets }));
+    const refs = resolveManhuaAssetImageBindRows(parseManhuaAssetImageBindBlock(clip.prompt), paths).map(r => r.path);
+    expect(refs).toContain("https://example.com/after.png");
+    expect(refs).not.toContain("https://example.com/before.png");
+    expect(clip.prompt).toContain("变身后");
+    const freshKeyart = second.blocks.find(b => b.id.startsWith("keyart-"))!;
+    expect([freshKeyart.refImageUrl, ...(freshKeyart.editFusionUrls || [])]).toContain("https://example.com/after.png");
+    expect([freshKeyart.refImageUrl, ...(freshKeyart.editFusionUrls || [])]).not.toContain("https://example.com/before.png");
+    expect(freshKeyart.prompt).toContain("【静帧·本段造型参考】");
+    expect(second.blocks.filter(b => b.id.startsWith("keyart-")).map(b => b.outputUrl)).toEqual(ready.filter(b => b.id.startsWith("keyart-")).map(b => b.outputUrl));
+    expect(() => ensureManhuaFragmentClips(ready, expanded.edges, 1, { customRefs: customRefs.filter(r => r.id !== "after-image"), characterLookSets, segmentLookBindings: { "e1:s1": { heiqi: "look-after" } } })).toThrow(/造型/);
+  });
+
   /**
    * 铺几条 clip 就是实收几段积分。旧行为固定按 3 镜切段，18 镜切 6 段，
    * 2.5（段表 4 段 × 30s）会多收两段、总长也从 120s 变 180s。
@@ -1393,6 +1496,32 @@ describe("canvasDramaStudio factory", () => {
     );
     // 画布上一条 clip 都没有才用兜底
     expect(resolveManhuaCanvasClipVideoModel([])).toBe(MANHUA_FACTORY_DEFAULT_VIDEO_MODEL);
+  });
+
+  it("历史 2.5 的审核档与真实铺段一致，不受未显式选择的 Mini 影响", () => {
+    const spawned = spawnManhuaDramaStudio({ topic: "雨夜客栈", episodeIndex: 1, videoModel: "seedance-2.5" });
+    const historical = ensureManhuaFragmentClips(spawned.blocks, spawned.edges, 1, { videoModel: "seedance-2.5" });
+    const autoUiModel = "seedance-2.0-mini";
+    const picked = false;
+    const explicit = picked ? autoUiModel : undefined;
+    const reviewModel = resolveManhuaEpisodeClipVideoModel(historical.blocks, 1, explicit);
+    const next = ensureManhuaFragmentClips(historical.blocks, historical.edges, 1, { videoModel: explicit });
+    const clips = next.blocks.filter(b => b.id.startsWith("clip-") && !b.archivedFromPreviousScript);
+    expect(reviewModel).toBe("seedance-2.5");
+    expect(clips.length).toBeGreaterThan(0);
+    expect(clips.every(b => b.videoModel === reviewModel)).toBe(true);
+  });
+
+  it("跨集审核分别解析本集引擎，归档节点不能污染审核 scope", () => {
+    const clips: CanvasBlock[] = [
+      { ...defaultCanvasBlock("video", 0, 0), id: "clip-e02-g01-old", episodeIndex: 2, videoModel: "seedance-2.5", archivedFromPreviousScript: true },
+      { ...defaultCanvasBlock("video", 0, 0), id: "clip-e01-g01-a", episodeIndex: 1, videoModel: "seedance-2.5" },
+      { ...defaultCanvasBlock("video", 0, 0), id: "clip-e02-g01-b", episodeIndex: 2, videoModel: "seedance-2.0-mini" },
+    ];
+    expect(resolveManhuaEpisodeClipVideoModel(clips, 1)).toBe("seedance-2.5");
+    expect(resolveManhuaEpisodeClipVideoModel(clips, 2)).toBe("seedance-2.0-mini");
+    expect(resolveManhuaEpisodeClipVideoModel(clips, 3)).toBe("seedance-2.0-mini");
+    expect(resolveManhuaEpisodeClipVideoModel(clips, 2, "seedance-2.5")).toBe("seedance-2.5");
   });
 
   it("改档变窄只停放超额静帧，不删掉已出图（一张 54 积分）", () => {

@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import { normalizeManhuaTimelineOrder } from "@shared/manhuaEditOrder";
 import { Clapperboard, FileText, Image as ImageIcon, LayoutTemplate, Video } from "lucide-react";
 import type { ManhuaClipQualityReport } from "@shared/manhuaClipQuality";
+import { normalizeManhuaKeyartLookState } from "@shared/manhuaKeyartLookState";
 import {
   normalizeManhuaFinalPostProdBinding,
   normalizeManhuaFinalVersionIdentities,
@@ -226,6 +227,7 @@ export type CanvasBlock = {
    * 用户「仍采用」后 quality.userAcceptedDespiteQc=true 才可合成。
    */
   manhuaClipQuality?: ManhuaClipQualityReport;
+  manhuaKeyartLookState?: import("@shared/manhuaKeyartLookState").ManhuaKeyartLookState;
   /** 本段成片抽取的尾帧 HTTPS（续拍硬锚） */
   lastFrameUrl?: string;
   /**
@@ -269,7 +271,7 @@ export type CanvasBlock = {
   };
   /** 整集后期任务身份；final-eXX 专用，job/GCS 为长期身份，HTTPS 仅当前读链。 */
   manhuaFinalPostProd?: ManhuaFinalPostProdBinding;
-  /** 整集每个版本的任务/GCS 长期身份；只跟随本机画布，不扩大云同步范围。 */
+  /** 整集每个版本的任务/GCS 长期身份；本机与云草稿同批保存，不包含视频字节。 */
   manhuaFinalVersions?: ManhuaFinalVersionIdentity[];
 };
 
@@ -501,6 +503,7 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
 
   return {
     ...withVideo,
+    manhuaKeyartLookState: normalizeManhuaKeyartLookState(block.manhuaKeyartLookState),
     textModel: normalizeCanvasTextModel(block.textModel),
     imageModel: normalizeCanvasImageModel(block.imageModel),
     videoModel: withVideo.videoModel,

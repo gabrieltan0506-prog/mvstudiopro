@@ -65,6 +65,7 @@ import {
   SEEDANCE_EVOLINK_CONTENT_FILTER,
   type SeedanceEvolinkMode,
 } from "../../shared/seedanceEvolinkModels.js";
+import type { ManhuaPilotSubmission } from "../../shared/manhuaPilotReview.js";
 
 const TASK_TYPE = "canvasVideo" as const;
 const PRIMARY_DIR =
@@ -166,6 +167,8 @@ export type CanvasVideoTaskRecord = {
   lastTransientError?: string;
   /** 客户端幂等键；同键重复创建返回同一任务（见 createCanvasVideoTask） */
   idempotencyKey?: string;
+  /** 漫剧试片服务端身份；旧任务没有该字段，绝不据此自动批准。 */
+  manhuaPilot?: ManhuaPilotSubmission & { videoModel: string };
   /** 扣费来源快照：hold 丢失时按此同源退回（团队扣款不得退进个人） */
   deduct?: PaidJobDeductSnapshot;
   /** wavespeed-upscale 专用：要放大的源视频（必须是真实成片 URL）与目标档 */
@@ -1315,6 +1318,8 @@ export async function findCanvasVideoTaskByIdemKey(
 }
 
 export async function createCanvasVideoTask(input: {
+  /** 试片 registry 在扣费前预留的任务号；普通任务仍由本服务生成。 */
+  taskId?: string;
   userId: number;
   creditsCharged: number;
   engine: CanvasVideoEngine;
@@ -1332,6 +1337,7 @@ export async function createCanvasVideoTask(input: {
   workMode?: SeedanceEvolinkMode;
   /** 客户端提交的稳定幂等键：同键并发/重试返回同一任务（文件 wx 原子排他当唯一约束） */
   idempotencyKey?: string;
+  manhuaPilot?: ManhuaPilotSubmission & { videoModel: string };
   /** 扣费来源快照：进账本 hold，退分时按同源退回 */
   deduct?: PaidJobDeductSnapshot;
   /** wavespeed-upscale 专用 */
@@ -1343,7 +1349,11 @@ export async function createCanvasVideoTask(input: {
   const prompt = String(input.prompt || "").trim();
   if (!prompt && input.engine !== "wavespeed-upscale") throw new Error("请填写视频提示词");
 
-  let taskId = `cv_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
+  const reservedTaskId = String(input.taskId || "").trim();
+  if (reservedTaskId && !/^cv_[a-z0-9_-]{8,160}$/i.test(reservedTaskId)) {
+    throw new Error("试片任务编号无效");
+  }
+  let taskId = reservedTaskId || `cv_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
   const now = new Date().toISOString();
 
   const idemKey = String(input.idempotencyKey || "").trim();
@@ -1402,6 +1412,7 @@ export async function createCanvasVideoTask(input: {
     seedanceVersion: input.seedanceVersion,
     workMode: input.workMode,
     idempotencyKey: idemKey || undefined,
+    manhuaPilot: input.manhuaPilot,
     deduct: input.deduct,
     upscaleSourceUrl: input.upscaleSourceUrl,
     upscaleTarget: input.upscaleTarget,
@@ -1459,6 +1470,15 @@ export async function getCanvasVideoTask(
     return (await advanceTask(task.taskId)) || task;
   }
   return task;
+}
+
+/** 只读任务快照，不触发轮询或外部请求；试片预留/审批 CAS 使用。 */
+export async function peekCanvasVideoTask(
+  taskId: string,
+  userId: number,
+): Promise<CanvasVideoTaskRecord | null> {
+  const task = await readTask(String(taskId || "").trim());
+  return task && task.userId === userId ? task : null;
 }
 
 export function ensureCanvasVideoWorker(): void {

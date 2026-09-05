@@ -1,5 +1,12 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
+import { mergeManhuaMediaVersions } from "@/lib/manhuaMediaVersions";
+import { recordManhuaKeyartLookOutput } from "@shared/manhuaKeyartLookState";
+import {
+  retainCanvasVideoTaskResumeSnapshots,
+  resolveCanvasVideoTaskResume,
+  type CanvasVideoTaskResumeSnapshot,
+} from "@/lib/canvasVideoTaskResume";
 import {
   CANVAS_BLOCK_DEFAULT_HEIGHT,
   CANVAS_BLOCK_DEFAULT_WIDTH,
@@ -326,6 +333,11 @@ type FreeformCanvasProps = {
    * 返回 patch 则写入节点后再跑；返回 null 则沿用旧 prompt（自由画布非漫剧节点）。
    */
   compileManhuaRerun?: (block: CanvasBlock) => Promise<{
+    imageRunPatch?: Pick<CanvasBlock, "imageMode" | "refImageUrl" | "editFusionUrls" | "manhuaKeyartLookState">;
+    videoRunPatch?: Pick<
+      CanvasBlock,
+      "videoModel" | "seedance25WorkMode" | "seedance25RefVideoUrls" | "refVideoUrl"
+    >;
     prompt: string;
     outputUrl?: undefined;
     outputUrls?: string[];
@@ -715,6 +727,7 @@ function CanvasAssetVisualBody({
         {imgUrl ? (
           <>
             <img
+              key={imgUrl}
               src={imgUrl}
               alt={shortId}
               title="双击放大"
@@ -724,13 +737,15 @@ function CanvasAssetVisualBody({
               }}
               onError={e => {
                 const el = e.currentTarget;
+                const failedSrc = el.getAttribute("src");
                 if (el.dataset.localRetry === "1") return;
                 el.dataset.localRetry = "1";
                 void tryLocalMediaDisplayForBlock(
                   String(block.id || ""),
-                  "output"
+                  "output",
+                  imgUrl
                 ).then(local => {
-                  if (local) el.src = local;
+                  if (local && el.getAttribute("src") === failedSrc) el.src = local;
                 });
               }}
               className="h-full w-full cursor-zoom-in object-contain"
@@ -871,6 +886,14 @@ export default function FreeformCanvas({
   );
   /** patchOne 声明在后,经 ref 间接引用避免 TDZ;渲染期同步赋值,不会漏拍 */
   const patchOneRef = useRef<((id: string, patch: Partial<CanvasBlock>) => void) | null>(null);
+  const blocksRef = useRef(blocks);
+  const onBlocksChangeRef = useRef(onBlocksChange);
+  const videoResumeSnapshotsRef = useRef({
+    userId: authUser?.id,
+    entries: new Map<string, CanvasVideoTaskResumeSnapshot>(),
+  });
+  blocksRef.current = blocks;
+  onBlocksChangeRef.current = onBlocksChange;
   const runDepsWithPlan = useMemo(
     () => ({
       ...runDeps,
@@ -878,6 +901,7 @@ export default function FreeformCanvas({
       userRole,
       // 长排队任务(Wan 公测等):taskId 创建即落节点,字段随画布持久化,刷新后由下方 effect 接管(审查 P1)
       onVideoTaskCreated: (blockId: string, info: { taskId: string; engine: string }) => {
+        runDeps.onVideoTaskCreated?.(blockId, info);
         patchOneRef.current?.(blockId, {
           videoTaskId: info.taskId,
           videoTaskEngine: info.engine,
@@ -1599,30 +1623,44 @@ export default function FreeformCanvas({
   }, [activeUpscaleKey, patchOne]);
 
   // 长排队成片任务统一轮询(含刷新恢复):Wan 公测以小时计,20 分钟前端断线不等于任务失败(审查 P1)
-  const activeVideoTaskKey = blocks
-    .filter(
-      (b) =>
-        b.videoTaskId &&
-        b.videoTaskStatus &&
-        b.videoTaskStatus !== "succeeded" &&
-        b.videoTaskStatus !== "failed" &&
-        b.videoTaskStatus !== "reconcile_manual",
-    )
-    .map((b) => `${b.id}:${b.videoTaskId}`)
-    .join(",");
+  const activeVideoTaskKey = JSON.stringify(
+    blocks
+      .filter(
+        (b) =>
+          b.videoTaskId &&
+          b.videoTaskStatus &&
+          b.videoTaskStatus !== "succeeded" &&
+          b.videoTaskStatus !== "failed" &&
+          b.videoTaskStatus !== "reconcile_manual",
+      )
+      .map((b) => [b.id, b.videoTaskId]),
+  );
   useEffect(() => {
-    if (!activeVideoTaskKey) return;
-    const entries = activeVideoTaskKey.split(",").map((item) => {
-      const [blockId, taskId] = item.split(":");
-      return { blockId, taskId };
+    const identities = JSON.parse(activeVideoTaskKey) as Array<[string, string]>;
+    if (videoResumeSnapshotsRef.current.userId !== authUser?.id) {
+      videoResumeSnapshotsRef.current = { userId: authUser?.id, entries: new Map() };
+    }
+    // 本轮只认开始时的节点输入快照。taskId 没变但同 ID 已换稿时，旧回执不会写入新节点。
+    const activeBlocks = identities.flatMap(([blockId, taskId]) => {
+      const block = blocksRef.current.find(
+        (item) => item.id === blockId && item.videoTaskId === taskId,
+      );
+      return block ? [block] : [];
     });
+    const snapshots = retainCanvasVideoTaskResumeSnapshots(videoResumeSnapshotsRef.current.entries, activeBlocks);
+    videoResumeSnapshotsRef.current.entries = snapshots;
+    const entries = Array.from(snapshots.values());
+    if (!entries.length) return;
     let cancelled = false;
+    const inFlight = new Set<string>();
     const tick = () => {
-      for (const { blockId, taskId } of entries) {
+      for (const snapshot of entries) {
+        if (inFlight.has(snapshot.taskId)) continue;
+        inFlight.add(snapshot.taskId);
         void (async () => {
           try {
             const res = await fetch(
-              withLongJobsFlyDirect(`/api/jobs?op=canvasVideoStatus&taskId=${encodeURIComponent(taskId)}`),
+              withLongJobsFlyDirect(`/api/jobs?op=canvasVideoStatus&taskId=${encodeURIComponent(snapshot.taskId)}`),
               { credentials: "include", cache: "no-store" },
             );
             const j = (await res.json().catch(() => ({}))) as {
@@ -1631,26 +1669,28 @@ export default function FreeformCanvas({
               videoUrl?: string;
               error?: string;
             };
-            if (cancelled || !j?.status) return;
-            if (j.status === "succeeded" && j.videoUrl) {
-              patchOne(blockId, {
-                videoTaskStatus: "succeeded",
-                outputUrl: j.videoUrl,
-                status: "done",
-                error: undefined,
-              });
-              toast.success("后台成片完成,已回填到原节点");
-            } else if (j.status === "failed" || j.status === "reconcile_manual") {
-              patchOne(blockId, {
-                videoTaskStatus: j.status as CanvasBlock["videoTaskStatus"],
-                status: "error",
-                error: j.error || "成片失败(费用按对账规则处理)",
-              });
-            } else {
-              patchOne(blockId, { videoTaskStatus: "running" });
-            }
+            if (cancelled) return;
+            onBlocksChangeRef.current((prev) => {
+              const current = prev.find((item) => item.id === snapshot.blockId);
+              const resolution = resolveCanvasVideoTaskResume(
+                current,
+                snapshot,
+                {
+                  transportOk: res.ok,
+                  payloadOk: j.ok,
+                  status: j.status,
+                  videoUrl: j.videoUrl,
+                  error: j.error,
+                },
+                new Date().toISOString(),
+              );
+              if (!resolution) return prev;
+              return patchBlock(prev, snapshot.blockId, resolution.patch);
+            });
           } catch {
             /* 查询失败视为瞬态,下一轮再试 */
+          } finally {
+            inFlight.delete(snapshot.taskId);
           }
         })();
       }
@@ -1661,7 +1701,7 @@ export default function FreeformCanvas({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [activeVideoTaskKey, patchOne]);
+  }, [activeVideoTaskKey, authUser?.id]);
 
   const runBlock = useCallback(
     async (blockId: string) => {
@@ -1680,7 +1720,7 @@ export default function FreeformCanvas({
       let workingBlock = block;
       if (compileManhuaRerun) {
         const mustRecompile =
-          /^(charsheet|sceneplate|propsheet|propplate|clip)-/i.test(block.id);
+          /^(charsheet|sceneplate|propsheet|propplate|keyart|clip)-/i.test(block.id);
         try {
           const compiled = await compileManhuaRerun(block);
           if (mustRecompile && !compiled?.prompt?.trim()) {
@@ -1691,6 +1731,8 @@ export default function FreeformCanvas({
           }
           if (compiled?.prompt?.trim()) {
             const patch = {
+              ...compiled.videoRunPatch,
+              ...compiled.imageRunPatch,
               prompt: compiled.prompt,
               outputUrl: compiled.outputUrl,
               outputUrls: compiled.outputUrls ?? block.outputUrls,
@@ -1763,16 +1805,19 @@ export default function FreeformCanvas({
           status: "done",
           outputText: out.outputText,
           outputUrl: out.outputUrl,
-          outputUrls: out.outputUrls ??
-            (out.outputUrl
-              ? Array.from(new Set([out.outputUrl, ...stashUrls])).slice(0, 8)
-              : stashUrls),
+          outputUrls: /^(clip|keyart)-/.test(blockId)
+            ? mergeManhuaMediaVersions([...(out.outputUrls || []), out.outputUrl], stashUrls)
+            : out.outputUrls ??
+              (out.outputUrl
+                ? Array.from(new Set([out.outputUrl, ...stashUrls])).slice(0, 8)
+                : stashUrls),
           // 手点重跑也要写回尾帧锚点（否则下一段续拍拿不到起幅）。
           // 无条件写入：本次没抽到尾帧时必须清掉旧值——残留 v1 的尾帧会让
           // 下一段拿旧片画面当起幅（审阅结论必须修#5）
           lastFrameUrl: out.lastFrameUrl,
           // 重跑出了新片：旧质检报告（连同旧的「仍采用」授权）作废，按未质检状态重新走
           ...(blockId.startsWith("clip-") ? { manhuaClipQuality: undefined } : {}),
+          ...(blockId.startsWith("keyart-") ? { manhuaKeyartLookState: recordManhuaKeyartLookOutput(runBlockPayload, out.outputUrl) } : {}),
           ...(out.seedance25ThreadId ? { seedance25ThreadId: out.seedance25ThreadId } : {}),
           ...(out.seedance25WebThreadLink
             ? { seedance25WebThreadLink: out.seedance25WebThreadLink }

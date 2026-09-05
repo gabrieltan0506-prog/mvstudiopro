@@ -999,6 +999,184 @@ async function resolveJobUser(
   }
 }
 
+type PreparedManhuaPilot = Awaited<
+  ReturnType<typeof import("../server/services/manhuaPilotReview.js")["prepareManhuaPilotSubmission"]>
+>;
+
+async function prepareManhuaPilotForVideo(input: {
+  userId: number;
+  raw: unknown;
+  actualVideoModel: string;
+  durationSec: number;
+}): Promise<PreparedManhuaPilot> {
+  const { prepareManhuaPilotSubmission } = await import(
+    "../server/services/manhuaPilotReview.js"
+  );
+  return prepareManhuaPilotSubmission({
+    userId: input.userId,
+    submissionRaw: input.raw,
+    actualVideoModel: input.actualVideoModel,
+    durationSec: input.durationSec,
+  });
+}
+
+function assertManhuaPilotMetadataPresent(
+  raw: unknown,
+  episodeIndex: unknown,
+  clipIndex: unknown,
+): void {
+  const looksLikeManhuaClip = Number(episodeIndex) > 0 || Number(clipIndex) > 0;
+  if (looksLikeManhuaClip && raw == null) {
+    throw new Error("当前漫剧成片请求缺少试片审核身份，请刷新页面后重试");
+  }
+}
+
+function manhuaPilotTaskFields(prepared: PreparedManhuaPilot): Record<string, unknown> {
+  if (prepared.kind !== "pilot" && prepared.kind !== "full") return {};
+  return {
+    ...(prepared.kind === "pilot" ? { taskId: prepared.taskId } : {}),
+    manhuaPilot: { ...prepared.submission, videoModel: prepared.scope.videoModel },
+  };
+}
+
+async function markPreparedManhuaPilotFailed(
+  prepared: PreparedManhuaPilot,
+  userId: number,
+  reason: string,
+): Promise<string | null> {
+  if (prepared.kind !== "pilot") return null;
+  const { markManhuaPilotReservationFailed } = await import(
+    "../server/services/manhuaPilotReview.js"
+  );
+  try {
+    await markManhuaPilotReservationFailed({
+      userId,
+      scope: prepared.scope,
+      taskId: prepared.taskId,
+      reason,
+    });
+    return null;
+  } catch {
+    return "试片状态暂未确认，已锁定重复生成；请刷新后核对任务";
+  }
+}
+
+async function markPreparedManhuaPilotManual(
+  prepared: PreparedManhuaPilot,
+  userId: number,
+  reason: string,
+): Promise<string | null> {
+  if (prepared.kind !== "pilot") return null;
+  const { markManhuaPilotReservationReconcileManual } = await import(
+    "../server/services/manhuaPilotReview.js"
+  );
+  try {
+    await markManhuaPilotReservationReconcileManual({
+      userId,
+      scope: prepared.scope,
+      taskId: prepared.taskId,
+      reason,
+    });
+    return null;
+  } catch {
+    return "试片状态无法持久确认，已停止重复生成；请联系管理员核对任务";
+  }
+}
+
+async function settlePreparedManhuaPilotChargeFailure(
+  prepared: PreparedManhuaPilot,
+  userId: number,
+  failure: { status: number; error: string },
+): Promise<string | null> {
+  if ([401, 402, 403].includes(failure.status)) {
+    return markPreparedManhuaPilotFailed(prepared, userId, failure.error);
+  }
+  if (prepared.kind !== "pilot") return null;
+  const persistenceError = await markPreparedManhuaPilotManual(
+    prepared,
+    userId,
+    `扣费结果未知：${failure.error}`,
+  );
+  return persistenceError || "扣费结果待核对，已停止重复生成；请联系管理员核对任务";
+}
+
+async function settlePreparedManhuaPilotCreateFailure(
+  prepared: PreparedManhuaPilot,
+  userId: number,
+  reason: string,
+): Promise<{ message: string | null; allowRefund: boolean }> {
+  if (prepared.kind !== "pilot") return { message: null, allowRefund: true };
+  const { peekCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
+  let task: Awaited<ReturnType<typeof peekCanvasVideoTask>>;
+  try {
+    task = await peekCanvasVideoTask(prepared.taskId, userId);
+  } catch {
+    const persistenceError = await markPreparedManhuaPilotManual(
+      prepared,
+      userId,
+      "任务持久状态读取失败，提交结果未知",
+    );
+    return {
+      message:
+        persistenceError || "任务提交结果待核对，已停止重复生成；请联系管理员核对任务",
+      allowRefund: false,
+    };
+  }
+  const definitelyNotSubmitted =
+    reason === "paid_job_ledger_register_failed" &&
+    task?.status === "failed" &&
+      !task.openRouterJobId &&
+      !task.pollingUrl &&
+      !task.evolinkTaskId &&
+      !task.byteplusTaskId &&
+      !task.bailianTaskId &&
+      !task.wavespeedPredictionId;
+  if (definitelyNotSubmitted) {
+    return {
+      message: await markPreparedManhuaPilotFailed(prepared, userId, reason),
+      allowRefund: true,
+    };
+  }
+  const persistenceError = await markPreparedManhuaPilotManual(
+    prepared,
+    userId,
+    `任务提交结果未知：${reason}`,
+  );
+  return {
+    message:
+      persistenceError || "任务提交结果待核对，已停止重复生成；请联系管理员核对任务",
+    allowRefund: false,
+  };
+}
+
+async function reconcilePreparedManhuaPilotTask(
+  prepared: PreparedManhuaPilot,
+  task: import("../server/services/canvasVideoTask.js").CanvasVideoTaskRecord,
+): Promise<void> {
+  if (prepared.kind !== "pilot") return;
+  const { reconcileManhuaPilotTask } = await import(
+    "../server/services/manhuaPilotReview.js"
+  );
+  await reconcileManhuaPilotTask(task).catch(() => {
+    console.warn(`[manhuaPilot] registry reconcile failed taskId=${task.taskId}`);
+  });
+}
+
+async function existingManhuaPilotTaskPayload(prepared: PreparedManhuaPilot, userId: number) {
+  if (prepared.kind !== "reuse") return null;
+  const { peekCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
+  const task = prepared.review.taskId
+    ? await peekCanvasVideoTask(prepared.review.taskId, userId)
+    : null;
+  return {
+    taskId: prepared.review.taskId,
+    status: task?.status || (prepared.review.status === "generated" ? "succeeded" : "queued"),
+    videoUrl: prepared.review.outputUrl || task?.videoUrl || undefined,
+    creditsUsed: task?.creditsCharged || 0,
+    missingTask: !task,
+  };
+}
+
 /**
  * 画布成片扣费：验登录 → 预检余额 → 扣 → 跑 → 失败退回。
  *
@@ -1185,8 +1363,8 @@ async function chargeCanvasVideoCredits(
       chargeKey: marker || undefined,
     };
   } catch (error) {
-    // 只有真·余额不足才回 402；其余异常（DB 抖动等）是「扣费未执行」，
-    // 伪装成 402 会误导用户充值，且重试语义完全不同
+    // 只有明确余额不足才回 402；数据库响应异常不证明事务未提交。
+    // 不引导充值或直接重试，先核对原扣费记录。
     if (error instanceof InsufficientCreditsError) {
       return {
         ok: false,
@@ -1194,11 +1372,11 @@ async function chargeCanvasVideoCredits(
         error: `积分不足：本段成片需要 ${credits} 积分，请补充积分后重试`,
       };
     }
-    console.error("[chargeCanvasVideoCredits] deduct failed (not charged):", error);
+    console.error("[chargeCanvasVideoCredits] deduct result unconfirmed:", error);
     return {
       ok: false,
       status: 503,
-      error: "扣费服务暂不可用，本次未扣费，请稍后重试",
+      error: "扣费服务响应异常，结果尚未确认，请先核对原任务记录",
     };
   }
 }
@@ -1560,10 +1738,47 @@ async function runSeedance25EvolinkJob(
     video_extend: "视频延长",
   }[mode];
   const label = `${labelPrefix}·${modeLabel}（${duration}s）`;
+  let preparedPilot: PreparedManhuaPilot = { kind: "none" };
+  if (mode !== "video_edit") {
+    try {
+      assertManhuaPilotMetadataPresent(body.manhuaPilot, body.episodeIndex, body.clipIndex);
+      preparedPilot = await prepareManhuaPilotForVideo({
+        userId: access.userId,
+        raw: body.manhuaPilot,
+        actualVideoModel: "seedance-2.5",
+        durationSec: duration,
+      });
+      const existing = await existingManhuaPilotTaskPayload(preparedPilot, access.userId);
+      if (existing?.missingTask) {
+        throw new Error("试片提交状态待服务端核对，已停止重复生成；请稍后刷新状态");
+      }
+      if (existing?.taskId) {
+        return {
+          ok: true,
+          async: true,
+          taskId: existing.taskId,
+          status: existing.status,
+          credits: existing.creditsUsed,
+          resolution,
+          duration,
+          workMode: mode,
+          videoUrl: existing.videoUrl,
+          provider: "existing",
+        };
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        status: 409,
+        error: error instanceof Error ? error.message : "试片审核状态不可用，请稍后重试",
+      };
+    }
+  }
   try {
     // 第五轮复审 P0·6：稳定请求键——客户端带则用客户端的（跨重试稳定），
     // 缺省服务端生成（至少保证本次扣费与其退款/任务稳定关联）
     const requestKey =
+      (preparedPilot.kind === "pilot" ? preparedPilot.idempotencyKey : "") ||
       String((body as Record<string, unknown>).idempotencyKey || "").trim() ||
       `srv25_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
     const charged = await chargeCanvasVideoCredits(req, {
@@ -1572,11 +1787,19 @@ async function runSeedance25EvolinkJob(
       label,
       idempotencyKey: requestKey,
     });
-    if (!charged.ok) return charged;
+    if (!charged.ok) {
+      const stateError = await settlePreparedManhuaPilotChargeFailure(
+        preparedPilot,
+        access.userId,
+        charged,
+      );
+      return stateError ? { ...charged, status: 503, error: `${charged.error}；${stateError}` } : charged;
+    }
 
     const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
     try {
       const task = await createCanvasVideoTask({
+        ...manhuaPilotTaskFields(preparedPilot),
         userId: charged.userId,
         creditsCharged: charged.credits,
         deduct: charged.deduct,
@@ -1598,6 +1821,7 @@ async function runSeedance25EvolinkJob(
         generateAudio,
         workMode: mode,
       });
+      await reconcilePreparedManhuaPilotTask(preparedPilot, task);
       return {
         ok: true,
         async: true,
@@ -1611,7 +1835,14 @@ async function runSeedance25EvolinkJob(
         provider: task.provider || (preferByteplus ? "byteplus" : "evolink"),
       };
     } catch (error: any) {
-      const refundOutcome = await refundCanvasChargeOnCreateFail(charged, label);
+      const pilotSettlement = await settlePreparedManhuaPilotCreateFailure(
+        preparedPilot,
+        access.userId,
+        error instanceof Error ? error.message : "试片任务创建失败",
+      );
+      const refundOutcome = pilotSettlement.allowRefund
+        ? await refundCanvasChargeOnCreateFail(charged, label)
+        : "skipped";
       if (error instanceof Error && refundOutcome !== "skipped") {
         error.message +=
               refundOutcome === "refunded"
@@ -1619,6 +1850,12 @@ async function runSeedance25EvolinkJob(
                 : refundOutcome === "pending"
                   ? "（退款处理中，将自动补退）"
                   : "（退款受阻已记录，需人工对账）";
+      }
+      if (error instanceof Error && !pilotSettlement.allowRefund) {
+        error.message += "（任务结果待核对，未自动退款）";
+      }
+      if (error instanceof Error && pilotSettlement.message) {
+        error.message += `；${pilotSettlement.message}`;
       }
       throw error;
     }
@@ -4014,7 +4251,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
       // 成片一段真金白银（2K · 15s），未登录不得起片
-      if (!(await resolveJobUser(req))) {
+      const hailuoViewer = await resolveJobUser(req);
+      if (!hailuoViewer) {
         return res.status(401).json({ ok: false, error: "请先登录后再生成成片" });
       }
       const prompt =
@@ -4056,7 +4294,37 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
          */
         const billedResolution = resolution === "2K" ? "2K" : "720p";
         const label = `画布成片·H3（${resolution}·${duration}s）`;
+        let preparedPilot: PreparedManhuaPilot;
+        try {
+          assertManhuaPilotMetadataPresent(b.manhuaPilot, b.episodeIndex, b.clipIndex);
+          preparedPilot = await prepareManhuaPilotForVideo({
+            userId: hailuoViewer.userId,
+            raw: b.manhuaPilot,
+            actualVideoModel: "minimax-hailuo-3",
+            durationSec: duration,
+          });
+          const existing = await existingManhuaPilotTaskPayload(preparedPilot, hailuoViewer.userId);
+          if (existing?.missingTask) {
+            throw new Error("试片提交状态待服务端核对，已停止重复生成；请稍后刷新状态");
+          }
+          if (existing?.taskId) {
+            return res.status(200).json({
+              ok: true,
+              async: true,
+              ...existing,
+              provider: "existing",
+              version: "hailuo-3",
+              resolution,
+            });
+          }
+        } catch (error) {
+          return res.status(409).json({
+            ok: false,
+            error: error instanceof Error ? error.message : "试片审核状态不可用，请稍后重试",
+          });
+        }
         const requestKey =
+          (preparedPilot.kind === "pilot" ? preparedPilot.idempotencyKey : "") ||
           s(b.idempotencyKey || q.idempotencyKey || "").trim() ||
           `srvh3_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
         const charged = await chargeCanvasVideoCredits(req, {
@@ -4068,11 +4336,20 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           videoModel: CANVAS_VIDEO_MODEL_HAILUO_H3,
         });
         if (!charged.ok) {
-          return res.status(charged.status).json({ ok: false, error: charged.error });
+          const stateError = await settlePreparedManhuaPilotChargeFailure(
+            preparedPilot,
+            hailuoViewer.userId,
+            charged,
+          );
+          return res.status(stateError ? 503 : charged.status).json({
+            ok: false,
+            error: stateError ? `${charged.error}；${stateError}` : charged.error,
+          });
         }
         try {
           const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
           const task = await createCanvasVideoTask({
+            ...manhuaPilotTaskFields(preparedPilot),
             userId: charged.userId,
             creditsCharged: charged.credits,
             deduct: charged.deduct,
@@ -4087,6 +4364,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             resolution,
             generateAudio,
           });
+          await reconcilePreparedManhuaPilotTask(preparedPilot, task);
           return res.status(200).json({
             ok: true,
             async: true,
@@ -4099,7 +4377,14 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             creditsUsed: charged.credits,
           });
         } catch (error: any) {
-          const refundOutcome = await refundCanvasChargeOnCreateFail(charged, label);
+          const pilotSettlement = await settlePreparedManhuaPilotCreateFailure(
+            preparedPilot,
+            hailuoViewer.userId,
+            error instanceof Error ? error.message : "试片任务创建失败",
+          );
+          const refundOutcome = pilotSettlement.allowRefund
+            ? await refundCanvasChargeOnCreateFail(charged, label)
+            : "skipped";
           if (error instanceof Error && refundOutcome !== "skipped") {
             error.message +=
               refundOutcome === "refunded"
@@ -4107,6 +4392,12 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
                 : refundOutcome === "pending"
                   ? "（退款处理中，将自动补退）"
                   : "（退款受阻已记录，需人工对账）";
+          }
+          if (error instanceof Error && !pilotSettlement.allowRefund) {
+            error.message += "（任务结果待核对，未自动退款）";
+          }
+          if (error instanceof Error && pilotSettlement.message) {
+            error.message += `；${pilotSettlement.message}`;
           }
           throw error;
         }
@@ -4123,7 +4414,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
-      if (!(await resolveJobUser(req))) {
+      const wanViewer = await resolveJobUser(req);
+      if (!wanViewer) {
         return res.status(401).json({ ok: false, error: "请先登录后再生成成片" });
       }
       const prompt =
@@ -4183,7 +4475,37 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         const duration = clampWan30Duration(b.duration ?? b.durationSec ?? q.duration);
         const resolution = normalizeWan30Resolution(b.resolution || q.resolution);
         const label = `画布成片·Wan 3.0（${resolution}·${duration}s·排队较长）`;
+        let preparedPilot: PreparedManhuaPilot;
+        try {
+          assertManhuaPilotMetadataPresent(b.manhuaPilot, b.episodeIndex, b.clipIndex);
+          preparedPilot = await prepareManhuaPilotForVideo({
+            userId: wanViewer.userId,
+            raw: b.manhuaPilot,
+            actualVideoModel: "wan-3.0",
+            durationSec: duration,
+          });
+          const existing = await existingManhuaPilotTaskPayload(preparedPilot, wanViewer.userId);
+          if (existing?.missingTask) {
+            throw new Error("试片提交状态待服务端核对，已停止重复生成；请稍后刷新状态");
+          }
+          if (existing?.taskId) {
+            return res.status(200).json({
+              ok: true,
+              async: true,
+              ...existing,
+              provider: "existing",
+              version: "wan-3.0",
+              resolution,
+            });
+          }
+        } catch (error) {
+          return res.status(409).json({
+            ok: false,
+            error: error instanceof Error ? error.message : "试片审核状态不可用，请稍后重试",
+          });
+        }
         const requestKey =
+          (preparedPilot.kind === "pilot" ? preparedPilot.idempotencyKey : "") ||
           s(b.idempotencyKey || q.idempotencyKey || "").trim() ||
           `srvwan_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
         const charged = await chargeCanvasVideoCredits(req, {
@@ -4194,11 +4516,20 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           resolution,
         });
         if (!charged.ok) {
-          return res.status(charged.status).json({ ok: false, error: charged.error });
+          const stateError = await settlePreparedManhuaPilotChargeFailure(
+            preparedPilot,
+            wanViewer.userId,
+            charged,
+          );
+          return res.status(stateError ? 503 : charged.status).json({
+            ok: false,
+            error: stateError ? `${charged.error}；${stateError}` : charged.error,
+          });
         }
         try {
           const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
           const task = await createCanvasVideoTask({
+            ...manhuaPilotTaskFields(preparedPilot),
             userId: charged.userId,
             creditsCharged: charged.credits,
             deduct: charged.deduct,
@@ -4218,6 +4549,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
               ? { seed: Math.floor(Number(b.seed)) }
               : {}),
           });
+          await reconcilePreparedManhuaPilotTask(preparedPilot, task);
           return res.status(200).json({
             ok: true,
             async: true,
@@ -4230,7 +4562,14 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             creditsUsed: charged.credits,
           });
         } catch (error: any) {
-          const refundOutcome = await refundCanvasChargeOnCreateFail(charged, label);
+          const pilotSettlement = await settlePreparedManhuaPilotCreateFailure(
+            preparedPilot,
+            wanViewer.userId,
+            error instanceof Error ? error.message : "试片任务创建失败",
+          );
+          const refundOutcome = pilotSettlement.allowRefund
+            ? await refundCanvasChargeOnCreateFail(charged, label)
+            : "skipped";
           if (error instanceof Error && refundOutcome !== "skipped") {
             error.message +=
               refundOutcome === "refunded"
@@ -4238,6 +4577,12 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
                 : refundOutcome === "pending"
                   ? "（退款处理中，将自动补退）"
                   : "（退款受阻已记录，需人工对账）";
+          }
+          if (error instanceof Error && !pilotSettlement.allowRefund) {
+            error.message += "（任务结果待核对，未自动退款）";
+          }
+          if (error instanceof Error && pilotSettlement.message) {
+            error.message += `；${pilotSettlement.message}`;
           }
           throw error;
         }
@@ -4249,6 +4594,12 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
     if (op === "happyHorseVideo") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      if (b.manhuaPilot != null || Number(b.episodeIndex) > 0 || Number(b.clipIndex) > 0) {
+        return res.status(400).json({
+          ok: false,
+          error: "当前生成档未接入试片审核，请先选择受支持的漫剧成片引擎",
+        });
       }
       if (!(await resolveJobUser(req))) {
         return res.status(401).json({ ok: false, error: "请先登录后再生成成片" });
@@ -4824,6 +5175,9 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           const label = `画布成片·${productVersion === "2.0-fast" ? "快速" : "标准"}${
             photorealToEvolink ? "·仿真人" : ""
           }·${resolution}（${durationSec}s）`;
+          if (isProbe && b.manhuaPilot != null) {
+            return res.status(400).json({ ok: false, error: "服务探针不能代替漫剧试片审核" });
+          }
           // 探针仍走同步，方便脚本一次拿结果；正式用户走异步 task
           if (isProbe) {
             const charged = await chargeCanvasVideoAndRun(
@@ -4875,7 +5229,51 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
               creditsUsed: charged.credits,
             });
           }
+          let preparedPilot: PreparedManhuaPilot = { kind: "none" };
+          let pilotViewerId = 0;
+          if (!isProbe) {
+            try {
+              assertManhuaPilotMetadataPresent(b.manhuaPilot, b.episodeIndex, b.clipIndex);
+            } catch (error) {
+              return res.status(409).json({
+                ok: false,
+                error: error instanceof Error ? error.message : "试片审核身份无效",
+              });
+            }
+          }
+          if (b.manhuaPilot != null) {
+            const viewer = await resolveJobUser(req);
+            if (!viewer) return res.status(401).json({ ok: false, error: "请先登录后再生成成片" });
+            pilotViewerId = viewer.userId;
+            try {
+              preparedPilot = await prepareManhuaPilotForVideo({
+                userId: viewer.userId,
+                raw: b.manhuaPilot,
+                actualVideoModel: `seedance-${productVersion}`,
+                durationSec,
+              });
+              const existing = await existingManhuaPilotTaskPayload(preparedPilot, viewer.userId);
+              if (existing?.missingTask) {
+                throw new Error("试片提交状态待服务端核对，已停止重复生成；请稍后刷新状态");
+              }
+              if (existing?.taskId) {
+                return res.status(200).json({
+                  ok: true,
+                  async: true,
+                  ...existing,
+                  version: productVersion,
+                  resolution,
+                });
+              }
+            } catch (error) {
+              return res.status(409).json({
+                ok: false,
+                error: error instanceof Error ? error.message : "试片审核状态不可用，请稍后重试",
+              });
+            }
+          }
           const requestKey =
+            (preparedPilot.kind === "pilot" ? preparedPilot.idempotencyKey : "") ||
             s(b.idempotencyKey || q.idempotencyKey || "").trim() ||
             `srv20_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
           const charged = await chargeCanvasVideoCredits(req, {
@@ -4888,11 +5286,20 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             videoModel: billingVideoModel,
           });
           if (!charged.ok) {
-            return res.status(charged.status).json({ ok: false, error: charged.error });
+            const stateError = await settlePreparedManhuaPilotChargeFailure(
+              preparedPilot,
+              pilotViewerId,
+              charged,
+            );
+            return res.status(stateError ? 503 : charged.status).json({
+              ok: false,
+              error: stateError ? `${charged.error}；${stateError}` : charged.error,
+            });
           }
           try {
             const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
             const task = await createCanvasVideoTask({
+              ...manhuaPilotTaskFields(preparedPilot),
               userId: charged.userId,
               creditsCharged: charged.credits,
               deduct: charged.deduct,
@@ -4911,6 +5318,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
               generateAudio,
               seedanceVersion: productVersion === "2.0-fast" ? "2.0-fast" : "2.0",
             });
+            await reconcilePreparedManhuaPilotTask(preparedPilot, task);
             return res.status(200).json({
               ok: true,
               async: true,
@@ -4922,7 +5330,14 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
               creditsUsed: charged.credits,
             });
           } catch (error: any) {
-            const refundOutcome = await refundCanvasChargeOnCreateFail(charged, label);
+            const pilotSettlement = await settlePreparedManhuaPilotCreateFailure(
+              preparedPilot,
+              pilotViewerId,
+              error instanceof Error ? error.message : "试片任务创建失败",
+            );
+            const refundOutcome = pilotSettlement.allowRefund
+              ? await refundCanvasChargeOnCreateFail(charged, label)
+              : "skipped";
             if (error instanceof Error && refundOutcome !== "skipped") {
               error.message +=
               refundOutcome === "refunded"
@@ -4930,6 +5345,12 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
                 : refundOutcome === "pending"
                   ? "（退款处理中，将自动补退）"
                   : "（退款受阻已记录，需人工对账）";
+            }
+            if (error instanceof Error && !pilotSettlement.allowRefund) {
+              error.message += "（任务结果待核对，未自动退款）";
+            }
+            if (error instanceof Error && pilotSettlement.message) {
+              error.message += `；${pilotSettlement.message}`;
             }
             throw error;
           }
@@ -4965,6 +5386,9 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           });
         }
         const label = `画布成片·草稿·${resolution}（${durationSec}s）`;
+        if (isProbe && b.manhuaPilot != null) {
+          return res.status(400).json({ ok: false, error: "服务探针不能代替漫剧试片审核" });
+        }
         // 探针仍走同步，方便脚本一次拿结果；正式用户走异步 task，避免 HTTP 超时
         if (isProbe) {
           const out = await runEvolinkSeedanceVideo({
@@ -4989,7 +5413,51 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             resolution,
           });
         }
+        let preparedPilot: PreparedManhuaPilot = { kind: "none" };
+        let pilotViewerId = 0;
+        if (!isProbe) {
+          try {
+            assertManhuaPilotMetadataPresent(b.manhuaPilot, b.episodeIndex, b.clipIndex);
+          } catch (error) {
+            return res.status(409).json({
+              ok: false,
+              error: error instanceof Error ? error.message : "试片审核身份无效",
+            });
+          }
+        }
+        if (b.manhuaPilot != null) {
+          const viewer = await resolveJobUser(req);
+          if (!viewer) return res.status(401).json({ ok: false, error: "请先登录后再生成成片" });
+          pilotViewerId = viewer.userId;
+          try {
+            preparedPilot = await prepareManhuaPilotForVideo({
+              userId: viewer.userId,
+              raw: b.manhuaPilot,
+              actualVideoModel: "seedance-2.0-mini",
+              durationSec,
+            });
+            const existing = await existingManhuaPilotTaskPayload(preparedPilot, viewer.userId);
+            if (existing?.missingTask) {
+              throw new Error("试片提交状态待服务端核对，已停止重复生成；请稍后刷新状态");
+            }
+            if (existing?.taskId) {
+              return res.status(200).json({
+                ok: true,
+                async: true,
+                ...existing,
+                version: "2.0-mini",
+                resolution,
+              });
+            }
+          } catch (error) {
+            return res.status(409).json({
+              ok: false,
+              error: error instanceof Error ? error.message : "试片审核状态不可用，请稍后重试",
+            });
+          }
+        }
         const requestKey =
+          (preparedPilot.kind === "pilot" ? preparedPilot.idempotencyKey : "") ||
           s(b.idempotencyKey || q.idempotencyKey || "").trim() ||
           `srvmini_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
         const chargedMini = await chargeCanvasVideoCredits(req, {
@@ -5001,11 +5469,20 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           label,
         });
         if (!chargedMini.ok) {
-          return res.status(chargedMini.status).json({ ok: false, error: chargedMini.error });
+          const stateError = await settlePreparedManhuaPilotChargeFailure(
+            preparedPilot,
+            pilotViewerId,
+            chargedMini,
+          );
+          return res.status(stateError ? 503 : chargedMini.status).json({
+            ok: false,
+            error: stateError ? `${chargedMini.error}；${stateError}` : chargedMini.error,
+          });
         }
         try {
           const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
           const task = await createCanvasVideoTask({
+            ...manhuaPilotTaskFields(preparedPilot),
             userId: chargedMini.userId,
             creditsCharged: chargedMini.credits,
             deduct: chargedMini.deduct,
@@ -5023,6 +5500,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             generateAudio,
             seedanceVersion: "2.0-mini",
           });
+          await reconcilePreparedManhuaPilotTask(preparedPilot, task);
           return res.status(200).json({
             ok: true,
             async: true,
@@ -5034,7 +5512,14 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             creditsUsed: chargedMini.credits,
           });
         } catch (error: any) {
-          const refundOutcome = await refundCanvasChargeOnCreateFail(chargedMini, label);
+          const pilotSettlement = await settlePreparedManhuaPilotCreateFailure(
+            preparedPilot,
+            pilotViewerId,
+            error instanceof Error ? error.message : "试片任务创建失败",
+          );
+          const refundOutcome = pilotSettlement.allowRefund
+            ? await refundCanvasChargeOnCreateFail(chargedMini, label)
+            : "skipped";
           if (error instanceof Error && refundOutcome !== "skipped") {
             error.message +=
               refundOutcome === "refunded"
@@ -5042,6 +5527,12 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
                 : refundOutcome === "pending"
                   ? "（退款处理中，将自动补退）"
                   : "（退款受阻已记录，需人工对账）";
+          }
+          if (error instanceof Error && !pilotSettlement.allowRefund) {
+            error.message += "（任务结果待核对，未自动退款）";
+          }
+          if (error instanceof Error && pilotSettlement.message) {
+            error.message += `；${pilotSettlement.message}`;
           }
           throw error;
         }
@@ -5078,6 +5569,55 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       });
     }
 
+    if (op === "manhuaPilotStatus") {
+      res.setHeader("Cache-Control", "private, no-store");
+      if (req.method !== "GET") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const viewer = await resolveJobUser(req);
+      if (!viewer) return res.status(401).json({ ok: false, error: "请先登录后再查看试片" });
+      try {
+        const { getManhuaPilotReviewState } = await import(
+          "../server/services/manhuaPilotReview.js"
+        );
+        const review = await getManhuaPilotReviewState({
+          userId: viewer.userId,
+          scopeRaw: {
+            projectVersion: s(q.projectVersion).trim(),
+            episodeIndex: Number(q.episodeIndex),
+            videoModel: s(q.videoModel).trim(),
+          },
+        });
+        return res.status(200).json({ ok: true, review });
+      } catch (error) {
+        return res.status(400).json({
+          ok: false,
+          error: error instanceof Error ? error.message : "试片状态查询失败",
+        });
+      }
+    }
+
+    if (op === "manhuaPilotReview") {
+      res.setHeader("Cache-Control", "private, no-store");
+      if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const viewer = await resolveJobUser(req);
+      if (!viewer) return res.status(401).json({ ok: false, error: "请先登录后再审阅试片" });
+      try {
+        const { reviewManhuaPilot } = await import(
+          "../server/services/manhuaPilotReview.js"
+        );
+        const review = await reviewManhuaPilot({ userId: viewer.userId, decisionRaw: b });
+        return res.status(200).json({ ok: true, review });
+      } catch (error) {
+        return res.status(409).json({
+          ok: false,
+          error: error instanceof Error ? error.message : "试片审核失败，请刷新后重试",
+        });
+      }
+    }
+
     if (op === "canvasVideoStatus") {
       if (req.method !== "GET" && req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
@@ -5095,6 +5635,14 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         const task = await getCanvasVideoTask(taskId, viewer.userId);
         if (!task) {
           return res.status(404).json({ ok: false, error: "任务不存在或无权查看" });
+        }
+        if (task.manhuaPilot?.intent === "pilot") {
+          const { reconcileManhuaPilotTask } = await import(
+            "../server/services/manhuaPilotReview.js"
+          );
+          await reconcileManhuaPilotTask(task).catch(() => {
+            console.warn(`[manhuaPilot] registry reconcile failed taskId=${task.taskId}`);
+          });
         }
         return res.status(200).json({
           ok: true,

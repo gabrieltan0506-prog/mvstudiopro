@@ -29,6 +29,39 @@ import {
 } from "./manhuaScriptWorkbench";
 
 describe("manhuaScriptWorkbench", () => {
+  it("六列生产表保留秒位，动作对白和声音不串列", () => {
+    const shots = parseWorkbenchShotsFromText([
+      "| # | 秒位 | 景别·运镜 | 画面 | 台词/字幕 | 音效·配乐 |",
+      "|---|---|---|---|---|---|",
+      "| 17 | 68-72 | 近景 | 驮兽缓缓抬头，吐出鞭子，开口——人言 | 黑奇：「打她之前，问过我吗？」 | 全场倒吸凉气 |",
+      "| 19 | 76-81 | 中景·环绕 | 灰皮寸寸剥落，金鳞自蹄踝爬满全身，瘸腿挺直 | —— | 鳞片铮鸣如刀出鞘 |",
+      "| 20 | 81-86 | 大远景·仰拍 | 兽躯暴涨三丈，独角撑破雾层，日光倾泻 | 字幕：上古凶兽·墨屠 | BGM爆开 |",
+    ].join("\n"));
+    expect(shots).toHaveLength(3);
+    expect(shots.map(shot => shot.durationSec)).toEqual([4, 5, 5]);
+    expect(shots[0]?.cameraZh).toContain("近景");
+    expect(shots[0]?.actionZh).toContain("吐出鞭子");
+    expect(shots[0]?.dialogueZh).toContain("打她之前，问过我吗");
+    expect(shots[1]?.actionZh).toContain("瘸腿挺直");
+    expect(shots[1]?.dialogueZh).toBeUndefined();
+    expect(shots[2]?.actionZh).toContain("独角撑破雾层");
+    expect(shots[2]?.dialogueZh).toBeUndefined();
+    expect(shots.every(shot => !/BGM|铮鸣|倒吸凉气/.test(shot.emotionZh || ""))).toBe(true);
+  });
+
+  it("引擎重切前保留原稿全部29镜", () => {
+    const shots = parseWorkbenchShotsFromText([
+      "| # | 秒位 | 景别·运镜 | 画面 | 台词/字幕 | 音效·配乐 |",
+      "|---|---|---|---|---|---|",
+      ...Array.from({ length: 29 }, (_, i) =>
+        `| ${i + 1} | ${i * 5}-${(i + 1) * 5} | 中景 | 剧情动作${i + 1} | 黑奇：对白${i + 1} | 环境音 |`),
+    ].join("\n"));
+    expect(shots).toHaveLength(29);
+    expect(shots.reduce((sum, shot) => sum + shot.durationSec, 0)).toBe(145);
+    expect(shots[28]?.actionZh).toBe("剧情动作29");
+    expect(shots[28]?.dialogueZh).toBe("黑奇：对白29");
+  });
+
   it("parses numbered beat lines into shots", () => {
     const shots = parseWorkbenchShotsFromText(
       ["1. 女主推门进厅", "2. 对视沉默三秒", "3. 男主递玉佩", "4. 特写玉佩裂纹"].join("\n"),
