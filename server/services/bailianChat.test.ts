@@ -780,3 +780,21 @@ describe("0905 · Qwen 套餐档带 json_schema strict", () => {
     }
   });
 });
+
+describe("0905 · gatewayOrder 显式链序", () => {
+  it("按给定顺序逐档立即切换，不做 20 秒重试轮", async () => {
+    vi.stubEnv("WAN_PLAN_API_KEY", "bj-plan-key");
+    vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "sg-plan-key");
+    vi.stubEnv("EVOLINK_API_KEY", "evo-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "or-key");
+    const { invokeGlmJsonChatWithGatewayFallback } = await import("./bailianChat");
+    const urls: string[] = [];
+    const okBody = JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ok: true }) }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 }, model: "glm-5.3" });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => { urls.push(url); return urls.length === 1 ? new Response("boom", { status: 503 }) : new Response(okBody, { status: 200, headers: { "content-type": "application/json" } }); }));
+    const r = await invokeGlmJsonChatWithGatewayFallback({ system: "s", user: "u", gatewayPolicy: "structuring_chain_qwen_first", gatewayOrder: ["plan_bj_qwen", "evolink_glm", "openrouter"] } as never);
+    expect(urls[0]).toContain("token-plan.cn-beijing");
+    expect(urls[1]).toContain("api.evolink.ai");
+    expect(r.gateway).toBe("evolink_glm");
+    expect(r.gatewayTrace.map((t) => t.gateway)).toEqual(["plan_bj_qwen", "evolink_glm"]);
+  });
+});

@@ -1378,6 +1378,23 @@ export function nativeDeepReadStructuringJsonSchema(): Record<string, unknown> {
 
 export const NATIVE_DEEP_READ_STRUCTURING_JSON_SCHEMA_NAME = "native_structuring_card";
 
+/**
+ * 0905 用户拍板的整形分流链（按批次序号，0 起；单批＝第 1 批）：
+ * Qwen 首发：第 1 批 北京 → EvoLink → OpenRouter；第 2 批 新加坡 → OpenRouter → EvoLink（两路都挂时 OpenRouter/EvoLink 各接一批真并发）。
+ * GLM 首发：第 1 批 EvoLink → OpenRouter → 北京 → 新加坡；第 2 批 OpenRouter → EvoLink → 新加坡 → 北京。
+ * 任一档 25 分钟（Qwen）/30 分钟（GLM）不回即切下一档，不做 20 秒重试轮。
+ */
+export function nativeDeepReadStructuringGatewayOrder(
+  policy: "structuring_chain" | "structuring_chain_qwen_first",
+  batchOrdinal: number,
+): readonly GlmGatewayName[] {
+  const odd = batchOrdinal % 2 === 1;
+  if (policy === "structuring_chain_qwen_first") {
+    return odd ? ["plan_sg_qwen", "openrouter", "evolink_glm"] : ["plan_bj_qwen", "evolink_glm", "openrouter"];
+  }
+  return odd ? ["openrouter", "evolink_glm", "plan_sg_qwen", "plan_bj_qwen"] : ["evolink_glm", "openrouter", "plan_bj_qwen", "plan_sg_qwen"];
+}
+
 /** 保留基础数组/对象结构，分片数值与分类要求写入描述；返回后的质量门禁不变。 */
 export function buildNativeDeepReadResponseSchema(context: NativeDeepReadSegmentContext): Record<string, unknown> {
   if (!Number.isFinite(context.startSec) || !Number.isFinite(context.endSec)
@@ -3772,7 +3789,7 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE = "openrouter_glm_structurin
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`;
 /** 开始/失败回执的人话链路标签（0905：用户看了几百次「z-ai/glm-5.3」以为一直走 OpenRouter）。 */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 EvoLink → OpenRouter → Qwen 北京 → 新加坡 → OpenRouter（每档 30 分钟）";
-export const NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL = "Qwen3.8-Max 北京套餐 → 新加坡套餐 → OpenRouter GLM → EvoLink GLM（严格 schema · 每档 30 分钟）";
+export const NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL = "Qwen3.8-Max 严格 schema · 第1批 北京→EvoLink→OpenRouter · 第2批 新加坡→OpenRouter→EvoLink（单档 25 分钟）";
 export function nativeDeepReadStructuringStartedLabel(policy: "structuring_chain" | "structuring_chain_qwen_first"): string {
   return policy === "structuring_chain_qwen_first" ? NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL : NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL;
 }
@@ -4315,6 +4332,7 @@ export async function invokeNativeDeepReadGlmStructuring(
     },
     onGatewayFallback: context?.onGatewayFallback,
     onStreamProgress: context?.onStreamProgress,
+    gatewayOrder: context?.gatewayOrder as GlmGatewayName[] | undefined,
   });
   // 通道锁：只接受整形链五档（GLM 两档 + Qwen 三档）；判据复用 bailianChat 的单一真源。
   if (!STRUCTURING_GATEWAYS.has(response.gateway) || !raw) {
@@ -5907,6 +5925,8 @@ async function executeNativeDeepReadBatch(
         rows: ReadonlyArray<Record<string, unknown>>;
         /** 面板标签：第几批整形，让用户看得出是第几次 */
         labelZh?: string;
+        /** 0905 用户拍板：批次序号决定链序（0 起）；单批＝第 1 批 */
+        batchOrdinal?: number;
       }): Promise<NativeDeepReadGlmStructuringResult> => {
         const callId = canCacheStructuring
           ? nativeDeepReadStructuredBatchCallId({
@@ -5943,6 +5963,7 @@ async function executeNativeDeepReadBatch(
               episodeIndex: episode.episodeIndex, batchRequestId: episodeRequestId, callId,
               recoverExisting: canCacheStructuring, onBeforePaidCall: emitPaidCallStarted,
               gatewayPolicy: structuringGatewayPolicy,
+              gatewayOrder: nativeDeepReadStructuringGatewayOrder(structuringGatewayPolicy, input.batchOrdinal ?? 0),
               // 0905 用户令「总不能傻等」：流式心跳，同 callId 更新 started 行「X 档 · 已收 N KB · M 秒」
               onStreamProgress: async (info) => {
                 if (startedAt === undefined) return;
@@ -6090,6 +6111,7 @@ async function executeNativeDeepReadBatch(
         rows: ReadonlyArray<Record<string, unknown>>;
         fallbackRows: ReadonlyArray<Record<string, unknown>>;
         labelZh: string;
+        batchOrdinal?: number;
       }): Promise<NativeDeepReadGlmStructuringResult | { raw: Record<string, unknown>; localFallback: true }> => {
         try {
           return await glmStructure({
@@ -6098,6 +6120,7 @@ async function executeNativeDeepReadBatch(
             segmentIndexes: input.segmentIndexes,
             rows: input.rows,
             labelZh: input.labelZh,
+            batchOrdinal: input.batchOrdinal,
           });
         } catch (error) {
           // 只有“两条供应商都没有交付可消费结果”才能走本地整形。
@@ -6210,7 +6233,7 @@ async function executeNativeDeepReadBatch(
           groups.push(Array.from({ length: size }, (_, offset) => start + offset));
           start += size;
         }
-        const groupRows = await Promise.all(groups.map(async (segmentIndexes) => {
+        const groupRows = await Promise.all(groups.map(async (segmentIndexes, batchOrdinal) => {
           // 单片无需再做一次中间GLM；直接作为一张已结构化分段卡进入确定性拼接。
           if (segmentIndexes.length === 1) return completeRawSegments[segmentIndexes[0]!]!;
           const groupInputs = segmentIndexes.map((index) => completeRawSegments[index]!);
@@ -6240,6 +6263,7 @@ async function executeNativeDeepReadBatch(
             rows: groupInputs,
             fallbackRows: groupCanonicalRows,
             labelZh: `第${episode.episodeIndex}集第${segmentIndexes[0]! + 1}—${segmentIndexes.at(-1)! + 1}片批次整形`,
+            batchOrdinal,
           });
           result.raw = unwrapNativeDeepReadStructuredAnswerEnvelope(result.raw);
           assertNativeDeepReadShotObservationsPreserved(groupInputs, result.raw);

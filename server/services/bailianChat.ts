@@ -247,6 +247,11 @@ export type GlmParams = {
   onRawResponse?: (response: GlmRawResponseEvidence) => Promise<void>;
   /** 业务验真钩子:抛错=该网关响应不可用,继续降级(复审 P1-1) */
   validateContent?: (content: string) => void;
+  /**
+   * 0905 用户拍板：调度器按批次给出**完整链序**（第 1 批 北京→EvoLink→OpenRouter，第 2 批 新加坡→OpenRouter→EvoLink）。
+   * 给了它就逐档立即切换、不做 20 秒重试轮；只允许整形链五档内的网关名。
+   */
+  gatewayOrder?: readonly GlmGatewayName[];
   /** 0905 用户令：按网关覆盖单档超时（Qwen 两档 10 分钟不回就切下一档），未列出的档用 timeoutMs。 */
   gatewayTimeoutMsOverrides?: Partial<Record<GlmGatewayName, number>>;
   /** 0905 用户令「总不能傻等」：流式每 30 秒回报已收字节数，面板显示心跳。 */
@@ -433,7 +438,12 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
     : STRUCTURING_CHAIN_GATEWAYS;
   // 两个整形专用档只在 structuring_chain 里出现，其他策略的链序与历史逐字相同
   const generalGateways = configuredGateways.filter((g) => !g.structuringOnly);
-  const eligibleGateways = structuringChain
+  const explicitOrder = Array.isArray(params.gatewayOrder) && params.gatewayOrder.length
+    ? params.gatewayOrder.filter((name) => STRUCTURING_CHAIN_GATEWAYS.includes(name) || STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS.includes(name))
+    : null;
+  const eligibleGateways = explicitOrder
+    ? explicitOrder.flatMap((name) => configuredGateways.filter((g) => g.name === name))
+    : structuringChain
     ? structuringChainOrder.flatMap((name) => configuredGateways.filter((g) => g.name === name))
     : glmOnly
       ? generalGateways.filter((g) => GLM_MODEL_GATEWAYS.has(g.name))
@@ -450,7 +460,9 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
       ]
     : eligibleGateways;
   // 0905 用户令：整形链首发两档都失败 → 隔 20 秒再来一轮，共重试两轮；三轮都败才落到兜底模型那几档。
-  const plan: Array<{ gateway: (typeof gateways)[number]; delayBeforeMs: number }> = structuringChain
+  const plan: Array<{ gateway: (typeof gateways)[number]; delayBeforeMs: number }> = explicitOrder
+    ? gateways.map((gateway) => ({ gateway, delayBeforeMs: 0 }))
+    : structuringChain
     ? (() => {
         // 未配置的首发档只 trace 一次、不进重试轮，免得白等 20 秒×2
         const primaryAll = gateways.slice(0, 2);

@@ -4489,3 +4489,14 @@ describe("0905 · 整形 JSON Schema（Qwen strict）", () => {
     expect(JSON.stringify(schema)).not.toMatch(/"type":"(OBJECT|ARRAY|STRING|NUMBER|INTEGER)"/);
   });
 });
+
+describe("0905 · 整形按批次序号分流链", () => {
+  it("Qwen 首发：第 1 批 北京→EvoLink→OpenRouter，第 2 批 新加坡→OpenRouter→EvoLink；GLM 首发对称", async () => {
+    const { nativeDeepReadStructuringGatewayOrder } = await import("./manhuaNativeDeepReadRunner");
+    expect(nativeDeepReadStructuringGatewayOrder("structuring_chain_qwen_first", 0)).toEqual(["plan_bj_qwen", "evolink_glm", "openrouter"]);
+    expect(nativeDeepReadStructuringGatewayOrder("structuring_chain_qwen_first", 1)).toEqual(["plan_sg_qwen", "openrouter", "evolink_glm"]);
+    expect(nativeDeepReadStructuringGatewayOrder("structuring_chain_qwen_first", 2)).toEqual(["plan_bj_qwen", "evolink_glm", "openrouter"]);
+    expect(nativeDeepReadStructuringGatewayOrder("structuring_chain", 0)[0]).toBe("evolink_glm");
+    expect(nativeDeepReadStructuringGatewayOrder("structuring_chain", 1)[0]).toBe("openrouter");
+  });
+});
