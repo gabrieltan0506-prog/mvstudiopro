@@ -286,6 +286,27 @@ describe.skipIf(!available)(
       }
     }, 30_000);
 
+    it("字幕回执取实际源长而非标注时长，并跟随跨段重排和真实淡化", async () => {
+      const onSubtitleTimeline = vi.fn();
+      const plan = buildManhuaAssemblePlan([
+        { episodeIndex: 1, segmentIndex: 1, clipUrl: "https://test.invalid/first",
+          subtitleSource: { shots: [{ shotIndex: 1, durationSec: 0.1, textZh: "前句" }, { shotIndex: 2, durationSec: 0.1, textZh: "后句" }] },
+          shotPieces: [{ shotIndex: 1, timelineOrder: 3, trimInSec: 0, trimOutSec: 1 }, { shotIndex: 2, timelineOrder: 1, trimInSec: 1, trimOutSec: 2 }] },
+        { episodeIndex: 1, segmentIndex: 2, clipUrl: "https://test.invalid/last",
+          subtitleSource: { shots: [{ shotIndex: 3, durationSec: 99, textZh: "另一段" }] },
+          shotPieces: [{ shotIndex: 3, timelineOrder: 2, trimInSec: 0, trimOutSec: 1 }] },
+      ]);
+      const result = await renderSourceAudioFinal({ sceneVideos: plan.sceneVideos, transition: "fade", onSubtitleTimeline }, { width: 160, height: 90 }, await workDir());
+      const actual = await inspect(result);
+      expect(onSubtitleTimeline).toHaveBeenCalledOnce();
+      const timeline = onSubtitleTimeline.mock.calls[0]![0];
+      expect(timeline.durationSec).toBeCloseTo(actual.video, 3);
+      expect(timeline.durationSec).toBeCloseTo(2, 1);
+      expect(timeline.cues.map((cue: any) => [cue.textZh, cue.startSec, cue.endSec])).toEqual([
+        ["后句", 0, 1], ["另一段", 0.5, 1.5], ["前句", 1, 2],
+      ]);
+    }, 30_000);
+
     it("手动裁切取到后半段真实原声；有声、无声、不同帧率片段拼接后不串位", async () => {
       const result = await renderSourceAudioFinal(
         {

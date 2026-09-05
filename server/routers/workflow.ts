@@ -14,6 +14,7 @@ import {
 } from "../credits";
 import { CREDIT_COSTS } from "../plans";
 import { hasUnlimitedAccess } from "../services/access-policy";
+import { hasSupervisorRole } from "../../shared/internalMediaEndpointPolicy.js";
 
 /**
  * 歷史表名 `stripe_usage_logs` 僅為功能計次／審計，與 Stripe Checkout 金流無關。
@@ -625,6 +626,11 @@ export const workflowRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const costKey = WORKFLOW_STEP_COST_KEY[input.step];
+      // 这两项旧预扣仅对应已限监管的 workflow API；普通创作者改由持久任务结算。
+      // 先拦旧页面，避免其预扣一次后又进入新的合成任务重复扣费。
+      if ((input.step === "music" || input.step === "final_render") && !hasSupervisorRole(ctx.user.role)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "计费流程已更新，请刷新页面后通过配乐间或成片坞提交任务，未扣积分" });
+      }
       const unitCost = CREDIT_COSTS[costKey];
       const useOverride =
         input.step === "scene_video" && input.creditsOverride != null && input.creditsOverride > 0;

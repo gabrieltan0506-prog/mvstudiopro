@@ -10,6 +10,7 @@ import uploadRouter from "../upload";
 import { registerStripeWebhook } from "../stripe-webhook";
 import { sweepOrphanNativeDeepReadClaimsOnStartup } from "../services/manhuaNativeDeepReadClaimAdmin";
 import { createContext } from "./context";
+import { resolveManhuaAssembleAccess, hasCurrentManhuaAssembleBillingContract } from "../services/manhuaAssembleAccess.js";
 import { serveStatic, setupVite } from "./vite";
 import {
   createJob,
@@ -300,6 +301,14 @@ async function startServer() {
       }
 
       const action = typeof (input as any).action === "string" ? String((input as any).action) : "";
+      if (action === "manhua_assemble_final") {
+        const access = resolveManhuaAssembleAccess({ user: ctx.user, claimedUserId: userId, type });
+        if (!access.ok) return res.status(access.status).json({ error: access.error });
+        if (!hasCurrentManhuaAssembleBillingContract(inputRecord.params)) {
+          return res.status(409).json({ error: "合成计费协议已更新，请刷新页面后重新确认，未重复扣费" });
+        }
+        resolvedUserId = access.userId;
+      }
       if (action === "canvas_gpt_image2" || action === CREATIVE_NANO_IMAGE_ACTION) {
         /**
          * 五审 P0-2:这条队列调用付费 GPT-Image-2,曾允许匿名(public)入队+客户端

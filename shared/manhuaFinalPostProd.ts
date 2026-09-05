@@ -6,6 +6,8 @@
  * 用户后来合成或选中的版本。
  */
 
+import { normalizeManhuaRenderedSubtitle, type ManhuaRenderedSubtitle } from "./manhuaRenderedSubtitle.js";
+
 export type ManhuaFinalPostProdBinding = {
   action: "burn_subtitle";
   jobId: string;
@@ -24,6 +26,7 @@ export type ManhuaFinalPostProdBinding = {
 
 /** 每个整集成片版本的可恢复身份；URL 可续签，job/GCS 才是长期溯源。 */
 export type ManhuaFinalVersionIdentity = {
+  subtitleTimeline?: ManhuaRenderedSubtitle;
   origin: "assemble" | "burn_subtitle";
   url: string;
   jobId?: string;
@@ -86,6 +89,7 @@ export function normalizeManhuaFinalVersionIdentities(
     const url = httpUrl(row.url);
     if (!origin || !url) continue;
     const normalized: ManhuaFinalVersionIdentity = {
+      subtitleTimeline: normalizeManhuaRenderedSubtitle(row.subtitleTimeline),
       origin,
       url,
       jobId: String(row.jobId || "").trim().slice(0, 80) || undefined,
@@ -272,6 +276,7 @@ export function applyManhuaFinalSubtitleBurnSuccess<T extends ManhuaFinalPostPro
     ),
     manhuaFinalVersions: upsertVersionIdentity(block.manhuaFinalVersions, {
       origin: "burn_subtitle",
+      subtitleTimeline: findManhuaFinalVideoVersionIdentity(block, binding.sourceUrl)?.subtitleTimeline,
       url: resultUrl,
       jobId: input.jobId,
       gcsUri: resultGcsUri,
@@ -381,10 +386,10 @@ export function selectManhuaFinalVideoVersion<T extends ManhuaFinalPostProdBlock
 /** 新的整集合成成为当前版；在途烧字保留为晚到归档任务，其余旧绑定清掉。 */
 export function replaceManhuaFinalAssembleVersion<T extends ManhuaFinalPostProdBlock>(
   block: T,
-  next: unknown | { url: unknown; jobId?: string; createdAt?: number },
+  next: unknown | { url: unknown; jobId?: string; createdAt?: number; subtitleTimeline?: ManhuaRenderedSubtitle },
 ): T & ManhuaFinalPostProdBlock {
   const nextInput = next && typeof next === "object" && "url" in next
-    ? (next as { url: unknown; jobId?: string; createdAt?: number })
+    ? (next as { url: unknown; jobId?: string; createdAt?: number; subtitleTimeline?: ManhuaRenderedSubtitle })
     : { url: next };
   const outputUrl = httpUrl(nextInput.url);
   if (!outputUrl) return block;
@@ -402,6 +407,7 @@ export function replaceManhuaFinalAssembleVersion<T extends ManhuaFinalPostProdB
         : undefined,
     manhuaFinalVersions: upsertVersionIdentity(block.manhuaFinalVersions, {
       origin: "assemble",
+      subtitleTimeline: normalizeManhuaRenderedSubtitle(nextInput.subtitleTimeline),
       url: outputUrl,
       jobId: String(nextInput.jobId || "").trim().slice(0, 80) || undefined,
       createdAt: Math.max(0, Math.floor(Number(nextInput.createdAt) || Date.now())),

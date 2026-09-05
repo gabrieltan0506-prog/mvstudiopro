@@ -4,6 +4,9 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { RenderWorkflowInput } from "./renderTypes.js";
 import { downloadFileToPath, parseDurationSeconds } from "./renderUtils.js";
+import { buildRenderedSubtitleTimeline, manhuaRenderOverlap, normalizeManhuaSubtitleSource,
+  subtitleCuesForRenderedSource } from "../../shared/manhuaRenderedSubtitle.js";
+import type { ManhuaSubtitleCue } from "../../shared/manhuaEditSubtitle.js";
 
 const execFileAsync = promisify(execFile);
 const SAMPLE_RATE = 48_000;
@@ -120,7 +123,8 @@ export async function renderSourceAudioFinal(
     "-movflags",
     "+faststart",
   ];
-  const normalized: Array<{ file: string; duration: number }> = [];
+  const normalized: Array<{ file: string; duration: number; cues: ManhuaSubtitleCue[] }> = [];
+  const hasSubtitleSources = input.sceneVideos.every(scene => Boolean(normalizeManhuaSubtitleSource(scene.subtitleSource)));
   const sources = new Map<
     string,
     { file: string; duration: number; hasAudio: boolean }
@@ -162,7 +166,12 @@ export async function renderSourceAudioFinal(
       file
     );
     await mediaTool("ffmpeg", args);
-    normalized.push({ file, duration: (await inspectVideo(file)).duration });
+    const renderedDuration = (await inspectVideo(file)).duration;
+    const subtitleSource = normalizeManhuaSubtitleSource(scene.subtitleSource);
+    normalized.push({ file, duration: renderedDuration, cues: subtitleSource ? subtitleCuesForRenderedSource({
+      source: subtitleSource, sourceDuration: source.duration, trimStart: start,
+      renderedDuration, shotIndex: scene.subtitleShotIndex,
+    }) : [] });
 
     if (scene.stillImageUrl) {
       const still = path.join(tmpDir, `source-audio-${i}-still.jpg`);
@@ -194,6 +203,7 @@ export async function renderSourceAudioFinal(
       normalized.push({
         file: stillVideo,
         duration: (await inspectVideo(stillVideo)).duration,
+        cues: [],
       });
     }
   }
@@ -214,11 +224,7 @@ export async function renderSourceAudioFinal(
     if (String(input.transition || "cut").toLowerCase() === "fade") {
       for (let i = 1; i < normalized.length; i += 1) {
         // 短镜转场不得吃掉整镜；声画使用相同重叠时长。
-        const overlap = Math.min(
-          1,
-          normalized[i - 1]!.duration / 2,
-          normalized[i]!.duration / 2
-        );
+        const overlap = manhuaRenderOverlap(normalized[i - 1]!.duration, normalized[i]!.duration, input.transition);
         filters.push(
           `[${video}][v${i}]xfade=transition=fade:duration=${overlap}:offset=${timeline - overlap}[vx${i}]`
         );
@@ -250,7 +256,14 @@ export async function renderSourceAudioFinal(
     ]);
   }
 
-  if (!String(input.musicUrl || "").trim()) return merged;
+  const finish = async (file: string) => {
+    if (hasSubtitleSources && input.onSubtitleTimeline) {
+      const actualDuration = (await inspectVideo(file)).duration;
+      input.onSubtitleTimeline(buildRenderedSubtitleTimeline(normalized, input.transition, actualDuration));
+    }
+    return file;
+  };
+  if (!String(input.musicUrl || "").trim()) return finish(merged);
   const music = path.join(tmpDir, "source-audio-music");
   await downloadSourceMedia(input.musicUrl!, music);
   const start = nonNegative(input.musicStartSec, 0);
@@ -292,5 +305,5 @@ export async function renderSourceAudioFinal(
     "+faststart",
     final,
   ]);
-  return final;
+  return finish(final);
 }

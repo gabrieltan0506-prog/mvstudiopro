@@ -3,6 +3,8 @@
  */
 
 import JSZip from "jszip";
+import { buildManhuaAssembleSubtitleSource } from "./manhuaAssembleSubtitleSource";
+import type { ManhuaSubtitleSource } from "@shared/manhuaRenderedSubtitle";
 import {
   getManhuaDemoAssetPublicUrl,
   listManhuaDemoAssetsForSceneTemplate,
@@ -151,6 +153,7 @@ export function selectExportableDockIds(items: ManhuaClipDockItem[]): string[] {
 }
 
 export type ManhuaDockAssembleClip = {
+  subtitleSource?: ManhuaSubtitleSource;
   episodeIndex: number;
   episodeTitle?: string;
   clipUrl?: string;
@@ -218,6 +221,7 @@ export function collectManhuaAssembleClipsFromDock(
     const trim = block?.manhuaEditTrim;
     const shotPieces = trim?.shotPieces;
     clips.push({
+      subtitleSource: buildManhuaAssembleSubtitleSource(opts?.blocks || [], it.episodeIndex, segmentIndex, block?.prompt),
       episodeIndex: it.episodeIndex,
       episodeTitle: it.episodeTitle,
       clipUrl: it.outputUrl,
@@ -242,7 +246,9 @@ export function collectManhuaAssembleClipsFromDock(
       if (it.episodeTitle) cur.episodeTitle = it.episodeTitle;
       if (it.stage === "clip" && manhuaClipDockItemAllowsAssemble(it)) {
         cur.clipUrl = it.outputUrl;
+        cur.blockId = it.blockId;
         const block = blockById.get(it.blockId);
+        cur.subtitleSource = buildManhuaAssembleSubtitleSource(opts?.blocks || [], it.episodeIndex, 1, block?.prompt);
         if (block?.manhuaEditTrim) {
           cur.trimInSec = block.manhuaEditTrim.inSec;
           cur.trimOutSec = block.manhuaEditTrim.outSec;
@@ -342,6 +348,7 @@ export type ManhuaProjectExportManifest = {
       jobId?: string;
       gcsUri?: string;
       createdAt?: number;
+      subtitleTimeline?: import("@shared/manhuaRenderedSubtitle").ManhuaRenderedSubtitle;
     }>;
     postProd?: NonNullable<CanvasBlock["manhuaFinalPostProd"]>;
   }>;
@@ -584,6 +591,7 @@ export async function exportManhuaProjectZip(
           identity?.gcsUri ||
           (matchesResult ? postProd?.resultGcsUri : matchesSource ? postProd?.sourceGcsUri : undefined),
         createdAt: identity?.createdAt,
+        subtitleTimeline: identity?.subtitleTimeline,
       };
       try {
         const buf = await fetchAsArrayBuffer(url);

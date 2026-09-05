@@ -19,7 +19,7 @@ function fixture(context: NativeDeepReadGlmEvidenceContext = {
   return { saved, upload, store };
 }
 const request = { system: "系统原文", user: "全量分段证据", maxTokens: 131072, temperature: 0.8, gatewayPolicy: "glm_only" };
-const rawEvent = (gateway: "evolink_glm" | "openrouter" = "evolink_glm") => ({
+const rawEvent = (gateway: "evolink_glm" | "openrouter" | "plan_bj_qwen" | "plan_sg_qwen" = "evolink_glm") => ({
   gateway, model: gateway === "evolink_glm" ? "glm-5.3" : "z-ai/glm-5.3",
   httpStatus: 200, providerRequestId: `request-${gateway}`, contentType: "application/json",
   bodyText: '{"choices":[{"message":{"content":"{\\\"shots\\\":[]}"}}]}',
@@ -98,6 +98,41 @@ describe("整集GLM永久原始与解析证据", () => {
     expect(String(error)).toContain("保存失败");
     expect(String(error)).not.toContain("test-secret");
     expect((error as Error).cause).toBeUndefined();
+  });
+
+  it("0906：Qwen 北京套餐写的整形证据可零付费回读（第 7 集重跑实弹：原只认 GLM 两档判回执无效）", async () => {
+    const context: NativeDeepReadGlmEvidenceContext = {
+      seriesKey: "series_qwen",
+      sourceDigest: "d".repeat(64),
+      episodeIndex: 7,
+      batchRequestId: "historical-batch",
+      callId: `native-structuring-${"e".repeat(64)}`,
+      preferredGlmGateway: "plan_bj_qwen",
+    };
+    const { store, saved } = fixture(context);
+    const expectedRequestWithoutPreferredGateway = {
+      system: "系统", user: "分片 3-5", maxTokens: 131072, gatewayPolicy: "structuring_chain_qwen_first",
+    };
+    await store.writeRequest({ ...expectedRequestWithoutPreferredGateway, preferredGlmGateway: "plan_bj_qwen" });
+    const raw = { ...rawEvent("plan_bj_qwen"), model: "qwen3.8-max" };
+    await store.writeRawResponse(raw);
+    await store.writeParsed({ shots: [{ startSec: 0, endSec: 12 }] }, {
+      gateway: raw.gateway, model: raw.model, finishReason: "stop",
+      usage: { prompt_tokens: 34_865, completion_tokens: 61_262 },
+    });
+    const download = vi.fn(async ({ gcsUri }: { gcsUri: string }) => {
+      const objectName = gcsUri.replace("gs://mv-studio-pro-vertex-video-temp/", "");
+      const hit = saved.find((row) => row.objectName === objectName);
+      if (!hit) throw new Error("gcs_stat_failed:404:not found");
+      return { buffer: hit.buffer, bucket: "mv-studio-pro-vertex-video-temp", objectName, generation: "1" };
+    });
+    const recovered = await readNativeDeepReadGlmRecoveredEvidence({
+      context: { ...context, batchRequestId: "current-batch" },
+      expectedRequestWithoutPreferredGateway,
+      deps: { upload: vi.fn() as never, getBucket: () => "mv-studio-pro-vertex-video-temp", download: download as never },
+    });
+    expect(recovered?.response.gateway).toBe("plan_bj_qwen");
+    expect(recovered?.parsed).toEqual({ shots: [{ startSec: 0, endSec: 12 }] });
   });
 
   it("稳定callId可跨批次回读完整解析证据，且不伪造当前批次身份", async () => {

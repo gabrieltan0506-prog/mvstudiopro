@@ -2,6 +2,8 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import fs from "node:fs/promises";
 import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";
+import { resolveManhuaAssembleAccess } from "../server/services/manhuaAssembleAccess.js";
+import { CREDIT_COSTS } from "../server/plans.js";
 import type { PaidJobDeductSnapshot } from "../server/services/paidJobLedger.js";
 import sharp from "sharp";
 import { get, put } from "@vercel/blob";
@@ -2135,6 +2137,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const op = queryOp || bodyOp;
     const opNormalized = op.toLowerCase();
 
+    // 前后端分批部署时先握手；不查账号／账本，也不读取或访问供应商配置。
+    if (opNormalized === "manhuaassemblecapabilities") {
+      res.setHeader("Cache-Control", "no-store");
+      if (req.method !== "GET") return res.status(405).json(fail("Method not allowed"));
+      return res.status(200).json({
+        ok: true,
+        billingContractVersion: "manhua-assemble-v1",
+        implicitMusic: false,
+        finalRenderCredits: CREDIT_COSTS.workflowFinalRender,
+      });
+    }
+
     /**
      * 大师级视频基地是监管验收工具。整个 workflow 命名空间（含 test/status/poll/save
      * 与未来新动作）以及 startWorkflow 都在任何读写或付费上游之前统一鉴权，避免手写
@@ -3681,33 +3695,13 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
      */
     if (opNormalized === "manhuaassemblefinal") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
-      // 同步调试入口；正式前台走 POST /api/jobs 入队 + GET 轮询（见 manhua_assemble_final worker）
-      try {
-        const { runManhuaAssembleFinal } = await import("../server/services/manhuaAssembleFinalService.js");
-        const result = await runManhuaAssembleFinal({
-          clips: Array.isArray(b.clips) ? b.clips : undefined,
-          sceneVideos: Array.isArray(b.sceneVideos) ? b.sceneVideos : undefined,
-          episodeIndexes: Array.isArray(b.episodeIndexes) ? b.episodeIndexes : undefined,
-          musicUrl: s(b.musicUrl).trim() || undefined,
-          musicPrompt: s(b.musicPrompt).trim() || undefined,
-          topic: s(b.topic),
-          seriesTitle: s(b.seriesTitle),
-          logline: s(b.logline),
-          musicDuration: Number(b.musicDuration) || undefined,
-          musicProvider: s(b.musicProvider).trim() || undefined,
-          musicVolume: Number(b.musicVolume),
-          musicFadeInSec: Number(b.musicFadeInSec),
-          musicFadeOutSec: Number(b.musicFadeOutSec),
-          transition: s(b.transition).trim() || undefined,
-          resolution: s(b.resolution).trim() || undefined,
-        });
-        return res.status(200).json({ ok: true, ...result });
-      } catch (error: any) {
-        const code = s(error?.code).trim() || "manhua_assemble_failed";
-        const msg = error?.message || String(error) || "assemble failed";
-        const status = code === "manhua_assemble_no_clips" ? 400 : 502;
-        return res.status(status).json(fail(code, msg));
-      }
+      const viewer = await resolveJobUser(req);
+      const access = resolveManhuaAssembleAccess({
+        user: viewer ? { id: viewer.userId } : null, claimedUserId: b.userId,
+      });
+      if (!access.ok) return res.status(access.status).json(fail(access.error));
+      // 旧同步口没有持久任务号，不能绕开正式队列的扣费、恢复与退款账本。
+      return res.status(409).json(fail("manhua_assemble_queue_required", "请返回成片坞，通过正式合成按钮提交任务"));
     }
 
     if (opNormalized === "generatevoice") {

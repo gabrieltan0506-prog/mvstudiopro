@@ -3,6 +3,8 @@
  * 前台文案禁止出现供应商 / 渲染栈名。
  */
 
+import type { ManhuaSubtitleSource } from "./manhuaRenderedSubtitle.js";
+
 export type ManhuaAssembleShotPieceInput = {
   shotIndex: number;
   /** 同一集内的最终播放顺序（1-based）；缺失时保持旧版段序。 */
@@ -15,6 +17,7 @@ export type ManhuaAssembleShotPieceInput = {
 };
 
 export type ManhuaAssembleClipInput = {
+  subtitleSource?: ManhuaSubtitleSource;
   episodeIndex: number;
   episodeTitle?: string;
   /** 成片视频 URL（必填才进拼接） */
@@ -33,6 +36,8 @@ export type ManhuaAssembleClipInput = {
 };
 
 export type ManhuaAssembleSceneVideo = {
+  subtitleSource?: ManhuaSubtitleSource;
+  subtitleShotIndex?: number;
   sceneIndex: number;
   url: string;
   duration: string;
@@ -254,6 +259,8 @@ export function buildManhuaAssemblePlan(
           const trim = normalizeTrimPair(p.trimInSec, p.trimOutSec, fb);
           sceneNo += 1;
           sceneVideos.push({
+            subtitleSource: row.subtitleSource,
+            subtitleShotIndex: p.shotIndex,
             sceneIndex: sceneNo,
             url,
             duration: `${trim.durationSec}s`,
@@ -266,6 +273,7 @@ export function buildManhuaAssemblePlan(
           const trim = normalizeTrimPair(row.trimInSec, row.trimOutSec, fb);
           sceneNo += 1;
           sceneVideos.push({
+            subtitleSource: row.subtitleSource,
             sceneIndex: sceneNo,
             url,
             duration: `${trim.durationSec}s`,
@@ -319,6 +327,7 @@ export function buildManhuaAssemblePlan(
       trimInSec: prev.trimInSec ?? c.trimInSec,
       trimOutSec: prev.trimOutSec ?? c.trimOutSec,
       shotPieces: prev.shotPieces?.length ? prev.shotPieces : c.shotPieces,
+      subtitleSource: prev.subtitleSource || c.subtitleSource,
     });
   }
 
@@ -344,6 +353,8 @@ export function buildManhuaAssemblePlan(
         const fb = Math.max(0.5, Number(p.durationSec) || defaultDur);
         const trim = normalizeTrimPair(p.trimInSec, p.trimOutSec, fb);
         sceneVideos.push({
+          subtitleSource: row.subtitleSource,
+          subtitleShotIndex: p.shotIndex,
           sceneIndex: sceneVideos.length + 1,
           url,
           duration: `${trim.durationSec}s`,
@@ -356,6 +367,7 @@ export function buildManhuaAssemblePlan(
       const fb = Math.max(5, Math.min(30, Math.floor(Number(row.durationSec) || defaultDur)));
       const trim = normalizeTrimPair(row.trimInSec, row.trimOutSec, fb);
       sceneVideos.push({
+        subtitleSource: row.subtitleSource,
         sceneIndex: ep,
         url,
         duration: `${trim.durationSec}s`,

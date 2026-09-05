@@ -3,6 +3,7 @@ import {
   MANHUA_NATIVE_AUDIO_CUE_KINDS,
   isManhuaNativeAudioGateFailureZh,
   mergeManhuaNativeAudioChunks,
+  mergeManhuaNativeDirectAudioChunks,
   normalizeManhuaNativeAudioChunkAnalysis,
   parseManhuaNativeAudioAnalysis,
   stripClockTextZh,
@@ -82,6 +83,32 @@ describe("原生精读音轨合并", () => {
       index === 0 || row.fromSec === rows[index - 1]?.toSec,
     )).toBe(true);
     expect(parseManhuaNativeAudioAnalysis(merged)).toBeDefined();
+  });
+
+  it("0906：AI Studio 兜底路由不硬要音频 token > 0，Vertex 主线仍要", () => {
+    const durationSec = 30;
+    const chunk = {
+      audioTrack: Array.from({ length: durationSec }, (_, index) => ({
+        ...track(index),
+        cues: [{ atSec: index, kind: "sfx" as const, detailZh: `事件${index}` }],
+      })),
+      audioBeatStructureZh: "持续推进",
+      mixNotesZh: "人声居中",
+      reusableAudioZh: "连续增强",
+      genAudioHintZh: "保留层次",
+    };
+    const zeroAudioUsage = {
+      inputTokens: 0, audioInputTokens: 0, outputTokens: 0, costCny: 0, receiptComplete: true,
+      geminiInputTokens: 0, geminiAudioInputTokens: 0, geminiOutputTokens: 0, geminiCostCny: 0, geminiCalls: 1,
+    };
+    const viaGeminiApi = mergeManhuaNativeDirectAudioChunks({
+      durationSec, chunks: [chunk], usage: zeroAudioUsage, route: "gemini_api_files_video",
+    });
+    expect(parseManhuaNativeAudioAnalysis(JSON.parse(JSON.stringify(viaGeminiApi)))?.resolverRoute).toBe("gemini_api_files_video");
+    const viaVertex = mergeManhuaNativeDirectAudioChunks({
+      durationSec, chunks: [chunk], usage: zeroAudioUsage, route: "vertex_gcs_video",
+    });
+    expect(parseManhuaNativeAudioAnalysis(JSON.parse(JSON.stringify(viaVertex)))).toBeUndefined();
   });
 });
 

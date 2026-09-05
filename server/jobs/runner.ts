@@ -36,6 +36,8 @@ import { isOwnedManhuaLearnImportGcsUri } from "../../shared/manhuaLearnVideoSeg
 import { resolveWatermark } from "../services/tier-provider-routing.js";
 import { buildStage1StrategicHandoffForStage2 } from "../services/stage1StrategicHandoff.js";
 import { getDb } from "../db";
+import { assertManhuaAssembleJobOwner } from "../services/manhuaAssembleAccess.js";
+import { MANHUA_ASSEMBLE_LEDGER_TYPE, runPaidManhuaAssemble } from "../services/manhuaAssembleBilling.js";
 import { users, type User } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { deductCredits, deductCreditsAmount, getCredits, getUserPlan } from "../credits";
@@ -464,8 +466,13 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
   const progress = createAssetAnalysisProgressReporter(jobId);
 
   if (input.action === "manhua_assemble_final") {
+    const numericUserId = assertManhuaAssembleJobOwner({
+      userId, jobId, job: jobId ? await getJobByIdStrict(jobId) : null,
+    });
+    // 身份取持久任务，执行前确认账号仍存在；不接受 params.userId／role 自报身份。
+    await resolveUserForJob(String(numericUserId));
     const { runManhuaAssembleFinal } = await import("../services/manhuaAssembleFinalService");
-    const result = await runManhuaAssembleFinal({
+    const result = await runPaidManhuaAssemble({ userId: numericUserId, jobId: jobId!, run: () => runManhuaAssembleFinal({
       ...(isRecord(params) ? params : {}),
       clips: Array.isArray(params.clips) ? (params.clips as any) : undefined,
       sceneVideos: Array.isArray(params.sceneVideos) ? (params.sceneVideos as any) : undefined,
@@ -484,7 +491,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       musicFadeOutSec: typeof params.musicFadeOutSec === "number" ? params.musicFadeOutSec : undefined,
       transition: typeof params.transition === "string" ? params.transition : undefined,
       resolution: typeof params.resolution === "string" ? params.resolution : undefined,
-    });
+    }) });
     return {
       provider: "manhua-assemble",
       output: {
@@ -3261,12 +3268,13 @@ async function runClaimedJob(
       jobType === "video" &&
       isRecord(job.input) &&
       job.input.action === "manhua_template_learn";
-    if (paidImageTaskType) {
+    const manhuaAssembleJob = jobType === "video" && isRecord(job.input) && job.input.action === "manhua_assemble_final";
+    if (paidImageTaskType || manhuaAssembleJob) {
       const { heartbeatActiveJob } = await import(
         "../services/paidJobLedger.js"
       );
       paidImageHeartbeat = setInterval(() => {
-        void heartbeatActiveJob(job.id, paidImageTaskType).catch(() => {});
+        void heartbeatActiveJob(job.id, paidImageTaskType || MANHUA_ASSEMBLE_LEDGER_TYPE).catch(() => {});
       }, 30_000);
       paidImageHeartbeat.unref?.();
     }
@@ -3299,9 +3307,22 @@ async function runClaimedJob(
     );
     const succeededPersisted = manhuaLearnJob
       ? await markManhuaLearnJobSucceededWithRetry(job.id, output, provider)
-      : manhuaBgmJob
+      : manhuaBgmJob || manhuaAssembleJob
         ? await markJobSucceededWithRetry(job.id, output, provider)
         : await markJobSucceeded(job.id, output, provider);
+    if (manhuaAssembleJob) {
+      const { refundCreditsOnFailure, unregisterActiveJob, markSettlementPending } = await import("../services/paidJobLedger.js");
+      if (!succeededPersisted) {
+        await refundCreditsOnFailure(job.id, MANHUA_ASSEMBLE_LEDGER_TYPE, "task_failed", "合成结果保存失败·退回积分");
+        await markJobFailed(job.id, "合成结果保存失败，已进入退分流程");
+        return;
+      }
+      try {
+        await unregisterActiveJob(job.id, MANHUA_ASSEMBLE_LEDGER_TYPE, "settled");
+      } catch {
+        await markSettlementPending(job.id, MANHUA_ASSEMBLE_LEDGER_TYPE);
+      }
+    }
     if (manhuaLearnJob && !succeededPersisted) {
       // terminalOutput 已先写入 running.output；列表端与下次启动都能按 done 收敛成功。
       // 此处绝不 throw/requeue，否则会把已经完成的媒体与模型工作整条再烧一次。
@@ -3569,6 +3590,12 @@ async function runClaimedJob(
       if (!failedPersisted) {
         console.error(`[Jobs] native manhua learn failed terminal persistence exhausted: jobId=${job.id}`);
       }
+    } else if (job.type === "video" && isRecord(job.input) && job.input.action === "manhua_assemble_final") {
+      // 包含外层墙钟超时；不重排渲染，退款失败由持久账本补偿。
+      const { refundCreditsOnFailure } = await import("../services/paidJobLedger.js");
+      await refundCreditsOnFailure(job.id, MANHUA_ASSEMBLE_LEDGER_TYPE, "task_failed", "合成失败或超时·退回积分")
+        .catch(refundError => console.error("[Jobs] assemble refund pending:", refundError));
+      await markJobFailed(job.id, message);
     } else if (userCancelled) {
       await markJobFailed(job.id, "用户已停止学习；已落盘内容保留");
     } else if (

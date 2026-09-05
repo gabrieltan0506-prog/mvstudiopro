@@ -132,6 +132,41 @@ describe("整集GLM消费前永久取证", () => {
     expect(f.saved[0].request).not.toHaveProperty("abortSignal");
   });
 
+  it("0906 拆冻结：旧证据身份不一致 → 不硬停，改为新发整形；同编号已被旧 request 占用 → 顺延 -v2 另起证据链", async () => {
+    const saved: Array<{ objectName: string; body: Record<string, unknown> }> = [];
+    const upload = vi.fn(async (input: { objectName: string; buffer: Buffer }) => {
+      // 基础编号下的 request.json 已存在（旧的、内容不同）→ if-absent 返回未创建
+      if (input.objectName.endsWith("/request.json") && !/-v2\//.test(input.objectName)) return { created: false, generation: "old" };
+      saved.push({ objectName: input.objectName, body: JSON.parse(input.buffer.toString("utf8")) });
+      return { created: true, generation: String(saved.length) };
+    });
+    const download = vi.fn(async ({ gcsUri }: { gcsUri: string }) => {
+      if (gcsUri.endsWith("/request.json") && !/-v2\//.test(gcsUri)) {
+        // 旧证据：同 callId、同身份，但请求正文不同（当年的链策略/提示词）
+        const body = { schemaVersion: 1, callId: "native-structuring-" + "f".repeat(64), seriesKey: "s", sourceDigest: "a".repeat(64), episodeIndex: 7,
+          batchRequestId: "old-batch", preferredGlmGateway: "plan_sg_qwen", request: { system: "旧", user: "旧", gatewayPolicy: "structuring_chain" } };
+        return { buffer: Buffer.from(JSON.stringify(body)), bucket: "mv-studio-pro-vertex-video-temp", objectName: "x", generation: "old" };
+      }
+      throw new Error("gcs_stat_failed:404:not found");
+    });
+    const invoke = vi.fn(async (p: GlmParams) => {
+      const content = '{"shots":[{"startSec":0,"endSec":12}]}';
+      await p.onRawResponse!({ gateway: "plan_bj_qwen", model: "qwen3.8-max", httpStatus: 200, contentType: "application/json",
+        bodyText: JSON.stringify({ content }), bodyComplete: true, receivedBytes: 10 });
+      p.validateContent!(content);
+      return { gateway: "plan_bj_qwen", model: "qwen3.8-max", gatewayTrace: [], usage: { prompt_tokens: 1, completion_tokens: 1 },
+        choices: [{ finish_reason: "stop" }], requestId: "r" } as never;
+    });
+    const result = await invokeNativeDeepReadGlmStructuring({ system: "新", user: "新" }, undefined,
+      { seriesKey: "s", sourceDigest: "a".repeat(64), episodeIndex: 7, batchRequestId: "new-batch",
+        callId: "native-structuring-" + "f".repeat(64), recoverExisting: true, gatewayPolicy: "structuring_chain_qwen_first" },
+      { invoke, evidence: { upload: upload as never, getBucket: () => "mv-studio-pro-vertex-video-temp", download: download as never } });
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(result.recoveredPaidEvidence).toBeFalsy();
+    expect(result.evidence?.callId).toBe("native-structuring-" + "f".repeat(64) + "-v2");
+    expect(saved.some((row) => /-v2\/request\.json$/.test(row.objectName))).toBe(true);
+  });
+
   it("请求证据失败时零模型调用", async () => {
     const f = fixture("request.json");
     await expect(invokeNativeDeepReadGlmStructuring({ system: "系统", user: "输入" }, undefined, undefined, f.deps)).rejects.toThrow("保存失败");
@@ -2477,6 +2512,9 @@ function makeRunnerDeps(over: Partial<NativeDeepReadBatchRunnerDeps> = {}): Nati
     remove: vi.fn(async () => undefined),
     postVertex: vi.fn() as never,
     postEvolink: vi.fn() as never,
+    postGeminiApi: vi.fn() as never,
+    uploadGeminiFile: vi.fn() as never,
+    geminiApiFallbackAvailable: () => false,
     signReadUrl: vi.fn(() => "https://storage.googleapis.com/signed.mp4"),
     invokeGlmStructuring: makeGlmStructuringStub() as never,
     readSegmentCache: vi.fn(async () => null) as never,
@@ -2711,6 +2749,77 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
     expect(resourceRetries.map((row) => [row.resourceRetryNumber, row.resourceRetryMax]))
       .toEqual([[1, 4], [2, 4], [3, 4], [4, 4]]);
     expect(receipts.some((row) => row.route === "gate_retry_pending")).toBe(false);
+  });
+
+  it("0905 AI Studio 兜底：Vertex 重试 2 次仍 503 → 传 Files API 改走 Gemini API 读，成功即段路由记 gemini_api_files_video", async () => {
+    const span = fullSegments[3]!;
+    const overloaded = Object.assign(new Error("RESOURCE_EXHAUSTED"), { nativeDeepReadHttpStatus: 503 });
+    const postVertex = vi.fn(async (_body: any) => { throw overloaded; });
+    const postGeminiApi = vi.fn().mockResolvedValueOnce(geminiResponse(makeSegmentPayload({ segmentIndex: 3, ...span })));
+    const uploadGeminiFile = vi.fn(async (_input: { gsUri: string }) => ({ fileUri: "https://generativelanguage.googleapis.com/v1beta/files/abc123" }));
+    const receipts: Array<Record<string, unknown>> = [];
+    const deps = makeRunnerDeps({ postVertex, postGeminiApi: postGeminiApi as never, uploadGeminiFile: uploadGeminiFile as never, geminiApiFallbackAvailable: () => true });
+    const result = await runManhuaNativeDeepReadSelectedSegments({
+      ...selectedParams([3]),
+      onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
+    }, deps);
+    // 首发 1 + Vertex 重试 2 = 3 次 Vertex；第 3 次资源错误触发兜底，不再等 30 秒
+    expect(postVertex).toHaveBeenCalledTimes(3);
+    expect(uploadGeminiFile).toHaveBeenCalledTimes(1);
+    expect(uploadGeminiFile.mock.calls[0]![0]).toMatchObject({ gsUri: "gs://test-bucket/seg-3.mp4" });
+    expect(postGeminiApi).toHaveBeenCalledTimes(1);
+    expect(postGeminiApi.mock.calls[0]![0].contents[0].parts[0].fileData.fileUri).toContain("files/abc123");
+    expect(postGeminiApi.mock.calls[0]![0].generationConfig.temperature).toBe(0.7);
+    expect(vi.mocked(deps.waitForRetry).mock.calls.map(([ms]) => ms)).toEqual([30_000, 30_000]);
+    expect(receipts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ route: "gemini_api_fallback_pending", resourceRetryNumber: 3 }),
+      expect.objectContaining({ route: "gemini_api_files_video", status: "started" }),
+    ]));
+    // 选段诊断不写 active 缓存；路由落在段结果与永久证据上
+    expect(result.segments[0]!.visualRoute).toBe("gemini_api_files_video");
+    expect(vi.mocked(deps.writeRawAttemptEvidence).mock.calls.at(-1)![0]).toMatchObject({ visualRoute: "gemini_api_files_video" });
+  });
+
+  it("0905 AI Studio 兜底自身失败：不计入 Vertex 次数，回 Vertex 跑完剩余 2 次重试后才停", async () => {
+    const overloaded = Object.assign(new Error("RESOURCE_EXHAUSTED"), { nativeDeepReadHttpStatus: 503 });
+    const postVertex = vi.fn(async (_body: any) => { throw overloaded; });
+    const postGeminiApi = vi.fn(async (_body: any) => {
+      throw Object.assign(new Error("AI Studio 429"), { nativeDeepReadHttpStatus: 429 });
+    });
+    const uploadGeminiFile = vi.fn(async () => ({ fileUri: "https://generativelanguage.googleapis.com/v1beta/files/abc123" }));
+    const receipts: Array<Record<string, unknown>> = [];
+    const deps = makeRunnerDeps({ postVertex, postGeminiApi: postGeminiApi as never, uploadGeminiFile: uploadGeminiFile as never, geminiApiFallbackAvailable: () => true });
+    await expect(runManhuaNativeDeepReadSelectedSegments({
+      ...selectedParams([3]),
+      onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
+    }, deps)).rejects.toThrow("RESOURCE_EXHAUSTED");
+    // Vertex：首发 1 + 重试 4 = 5；AI Studio 只试 1 次
+    expect(postVertex).toHaveBeenCalledTimes(5);
+    expect(postGeminiApi).toHaveBeenCalledTimes(1);
+    expect(uploadGeminiFile).toHaveBeenCalledTimes(1);
+    expect(receipts.some((row) => row.route === "gemini_api_fallback_failed")).toBe(true);
+    const resourceRetries = receipts.filter((row) => row.route === "resource_retry_pending");
+    // 第 3 次资源错误由「改走 AI Studio」回执顶替，不再发 30 秒等待回执
+    expect(resourceRetries.map((row) => row.resourceRetryNumber)).toEqual([1, 2, 4]);
+  });
+
+  it("0905 AI Studio 兜底未配置（无 GEMINI_API_KEY）时行为与 0904 基线完全一致：纯 Vertex 4 次重试", async () => {
+    const overloaded = Object.assign(new Error("RESOURCE_EXHAUSTED"), { nativeDeepReadHttpStatus: 503 });
+    const postVertex = vi.fn(async (_body: any) => { throw overloaded; });
+    const postGeminiApi = vi.fn();
+    const deps = makeRunnerDeps({ postVertex, postGeminiApi: postGeminiApi as never, geminiApiFallbackAvailable: () => false });
+    await expect(runManhuaNativeDeepReadSelectedSegments(selectedParams([3]), deps)).rejects.toThrow("RESOURCE_EXHAUSTED");
+    expect(postVertex).toHaveBeenCalledTimes(5);
+    expect(postGeminiApi).not.toHaveBeenCalled();
+  });
+
+  it("0905 发往 generativelanguage 前剥掉 Vertex 专属 audioTimestamp，且不改写原 body", async () => {
+    const { stripVertexOnlyGenerationConfigFields, NATIVE_DEEP_READ_RESOURCE_FALLBACK_AFTER } = await import("./manhuaNativeDeepReadRunner");
+    const body = { contents: [], generationConfig: { audioTimestamp: true, temperature: 0.7, responseMimeType: "application/json" } };
+    const stripped = stripVertexOnlyGenerationConfigFields(body) as typeof body;
+    expect(stripped.generationConfig).toEqual({ temperature: 0.7, responseMimeType: "application/json" });
+    expect(body.generationConfig.audioTimestamp).toBe(true);
+    expect(NATIVE_DEEP_READ_RESOURCE_FALLBACK_AFTER).toBe(2);
   });
 
   it("最后一分片与其他分片一视同仁，三次门禁失败后由 Qwen 三选一", async () => {
@@ -3169,6 +3278,83 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(3);
     expect(result.episodes[0]!.result.beatGrid).toHaveLength(108);
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
+  });
+
+  it("0906 观察锁判坏：同档先重试一次，再坏才换档只重整形这一批；其他批不动，整集不死", async () => {
+    const segments = Array.from({ length: 9 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
+    const base = makeGlmStructuringStub();
+    const seen: Array<{ segs: string; callId?: string; gatewayOrder?: readonly string[]; temperature?: number }> = [];
+    let badLeft = 2; // 批次 3,4,5：前两次（同档两次）交坏卷，第三次（换档）才交好卷
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }, _signal: unknown, context: { callId?: string; gatewayOrder?: readonly string[]; temperature?: number }) => {
+      const result = await base(prompt);
+      const rows = readRawSegmentsFromGlmPrompt(prompt.user);
+      const firstStart = Math.min(...rows.flatMap((r) => ((r as { shots?: Array<{ startSec: number }> }).shots || []).map((s) => Number(s.startSec))));
+      const segs = firstStart >= 180 && firstStart < 360 ? "3,4,5" : firstStart < 180 ? "0,1,2" : "6,7,8";
+      seen.push({ segs, callId: context?.callId, gatewayOrder: context?.gatewayOrder, temperature: context?.temperature });
+      const gateway = context?.gatewayOrder?.[0] ?? "plan_bj_qwen";
+      if (segs === "3,4,5" && badLeft > 0) {
+        badLeft -= 1;
+        const shots = (result.raw.shots as Array<Record<string, unknown>>).map((s, i) => i === 0 ? { ...s, hintZh: "被模型改写过的观察" } : s);
+        return { ...result, gateway, raw: { ...result.raw, shots } };
+      }
+      return { ...result, gateway };
+    });
+    const receipts: Array<Record<string, unknown>> = [];
+    const deps = makeRunnerDeps({
+      postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
+      invokeGlmStructuring: invokeGlmStructuring as never,
+    });
+    const result = await runManhuaNativeDeepReadBatch({
+      episodes: [{ episodeIndex: 7, resolveNodes: async () => [], segments, sourceDurationSec: 540, cacheSourceDigest: "7".repeat(64) }],
+      segmentCacheSeriesKey: "lock_retry_9_segments",
+      onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
+    }, deps);
+    // 三批：0,1,2 与 6,7,8 各 1 次；3,4,5 = 原发 + 同档重试 + 换档 = 3 次
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(5);
+    const mid = seen.filter((row) => row.segs === "3,4,5");
+    expect(mid).toHaveLength(3);
+    expect(mid[0]!.callId).not.toMatch(/-lockretry/);
+    expect(mid[1]!.callId).toMatch(/-lockretry1$/);
+    expect(mid[2]!.callId).toMatch(/-lockretry2$/);
+    // 第 2 次仍同档首发；第 3 次把交坏卷的档排到链尾
+    expect(mid[1]!.gatewayOrder?.[0]).toBe(mid[0]!.gatewayOrder?.[0]);
+    expect(mid[2]!.gatewayOrder?.[0]).not.toBe(mid[0]!.gatewayOrder?.[0]);
+    expect(mid[2]!.gatewayOrder?.at(-1)).toBe(mid[0]!.gatewayOrder?.[0]);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(3);
+    const retryReceipts = receipts.filter((row) => row.route === "structuring_retry_pending");
+    expect(retryReceipts).toHaveLength(2);
+    expect(String(retryReceipts[0]!.model)).toContain("同档降温到 0.75 再试一次");
+    expect(String(retryReceipts[1]!.model)).toContain("换下一档重整形这一批");
+    // 同档重试降温 0.75；换档后回到冻结首发温度
+    expect(mid[1]!.temperature).toBe(0.75);
+    expect(mid[2]!.temperature).toBeUndefined();
+    expect(result.episodes[0]!.result.segmentCount).toBe(9);
+  });
+
+  it("0906 坏缓存直接砍：缓存输出过不了锁 → 删掉该对象、重整形、结果写回同名", async () => {
+    const segments = Array.from({ length: 3 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
+    const base = makeGlmStructuringStub();
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => ({ ...(await base(prompt)), gateway: "plan_bj_qwen" }));
+    const readStructuredBatchCache = vi.fn(async (input: { rawSegments: ReadonlyArray<Record<string, unknown>> }) => {
+      const good = await base({ system: "", user: `分段卡 JSON：${JSON.stringify(input.rawSegments)}` });
+      const shots = (good.raw.shots as Array<Record<string, unknown>>).map((s, i) => i === 0 ? { ...s, hintZh: "坏缓存改写的观察" } : s);
+      return { schemaVersion: 1 as const, frozenContractSha256: "x", seriesKey: "s", sourceDigest: "3".repeat(64), episodeIndex: 3, segmentIndexes: [0, 1, 2],
+        inputDigest: "d", raw: { ...good.raw, shots }, gateway: "plan_bj_qwen", model: "qwen3.8-max", inputTokens: 1, outputTokens: 1, reasoningTokens: 0, costUsd: 0, savedAtIso: new Date().toISOString(), source: "formal" as const };
+    });
+    const deps = makeRunnerDeps({
+      postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
+      invokeGlmStructuring: invokeGlmStructuring as never,
+      readStructuredBatchCache: readStructuredBatchCache as never,
+    });
+    const result = await runManhuaNativeDeepReadBatch({
+      episodes: [{ episodeIndex: 3, resolveNodes: async () => [], segments, sourceDurationSec: 180, cacheSourceDigest: "3".repeat(64) }],
+      segmentCacheSeriesKey: "bad_cache_delete",
+    }, deps);
+    const removed = vi.mocked(deps.remove).mock.calls.map(([input]) => (input as { objectName: string }).objectName);
+    expect(removed.some((name) => /native-structuring-cache\/bad_cache_delete\/.*\/ep-003\/segments-0-1-2\/.*\.json$/.test(name))).toBe(true);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(1);
+    expect(result.episodes[0]!.result.segmentCount).toBe(3);
   });
 
   it("命中GCS缓存的批次不重跑，只补未缓存批次；整集由代码拼接", async () => {
@@ -4417,7 +4603,7 @@ describe("逐镜动态观察的生产与消费", () => {
     expect(deterministicallyMergeNativeDeepReadRawSegments([wrappedSource]).shots).toEqual([shot]);
   });
 
-  it("实际批量入口在GLM丢观察后停止消费，原始解析证据已保存且不重发GLM", async () => {
+  it("实际批量入口在GLM丢观察后：同档重试一次、再换档，链上三档各两次都丢观察才停止；每次原始解析证据都保存（0906 用户令）", async () => {
     const segments = [{ startSec: 0, endSec: 60 }];
     const base = makeGlmStructuringStub();
     const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
@@ -4431,7 +4617,8 @@ describe("逐镜动态观察的生产与消费", () => {
       episodes: [{ episodeIndex: 1, segments, cacheSourceDigest: "a".repeat(64),
       sourceDurationSec: 60, resolveNodes: async () => [] }] }, deps)).rejects.toThrow("hintZh丢失");
     expect(deps.postVertex).toHaveBeenCalledTimes(1);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    // 单批链序 3 档 × 每档 2 次 = 6 次整形；读片只读 1 次（分片缓存不重读）
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(6);
     expect(deps.writeRawAttemptEvidence).toHaveBeenCalledTimes(1);
     expect(deps.writeParsedAttemptEvidence).toHaveBeenCalledTimes(1);
     expect(vi.mocked(deps.writeParsedAttemptEvidence).mock.calls[0]![0].parsed.shots).toEqual(
@@ -4487,6 +4674,19 @@ describe("0905 · 整形 JSON Schema（Qwen strict）", () => {
     expect(schema.properties.shots.items?.properties).toHaveProperty("craftReadZh");
     expect(schema.required).toContain("shots");
     expect(JSON.stringify(schema)).not.toMatch(/"type":"(OBJECT|ARRAY|STRING|NUMBER|INTEGER)"/);
+  });
+});
+
+describe("0906 · 整形缓存与证据按整形模型分命名空间", () => {
+  it("GLM 链的 callId 与 Qwen 链不同；Qwen 链与历史（无策略）callId 逐字相同，已付费缓存不失配", async () => {
+    const { nativeDeepReadStructuredBatchCallId } = await import("./manhuaNativeDeepReadRunner");
+    const base = { seriesKey: "series_x", sourceDigest: "a".repeat(64), episodeIndex: 7, segmentIndexes: [3, 4, 5], rawSegments: [{ shots: [] }] };
+    const legacy = nativeDeepReadStructuredBatchCallId(base);
+    const qwen = nativeDeepReadStructuredBatchCallId({ ...base, structuringPolicy: "structuring_chain_qwen_first" });
+    const glm = nativeDeepReadStructuredBatchCallId({ ...base, structuringPolicy: "structuring_chain" });
+    expect(qwen).toBe(legacy);
+    expect(glm).not.toBe(legacy);
+    expect(glm).toMatch(/^native-structuring-[a-f0-9]{64}$/);
   });
 });
 
