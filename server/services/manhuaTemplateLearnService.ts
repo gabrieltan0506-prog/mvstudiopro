@@ -177,6 +177,8 @@ export type ManhuaTemplateLearnInput = {
   nativePlanPreview?: NativeDeepReadPlanPreview;
   /** 0903 双模型：读片主模型；缺省＝3.1 Pro。 */
   nativeReadModel?: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeDeepReadModelId;
+  /** 0905 整形开关 */
+  nativeStructuringModel?: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeStructuringModelId;
   /** 0901「整支即全集」：与计划层同一声明——忽略 mixId，按独立长视频单源学习 */
   nativeStandaloneSource?: boolean;
   onProgress?: (phase: string, detailZh: string) => void | Promise<void>;
@@ -2648,6 +2650,7 @@ export async function runManhuaTemplateLearn(
       const batchResult = await runNativeDeepReadBatch({
         seriesKey,
         readModel: input.nativeReadModel,
+        structuringModel: input.nativeStructuringModel,
         segmentSeconds: confirmedNativePlan?.segmentSeconds,
         episodes: executionPlans.map(({ seriesKey: _seriesKey, abortSignal: _abortSignal, ...plan }) => plan),
         abortSignal: input.abortSignal,
@@ -2740,7 +2743,7 @@ export async function runManhuaTemplateLearn(
             }
             const stageZh = checkpoint.stage === "visual_parse"
               ? checkpoint.route === "openrouter_glm_structuring"
-                ? `${checkpoint.labelZh ? `${checkpoint.labelZh} · ` : ""}GLM 结构化整形（${checkpoint.model}）`
+                ? `${checkpoint.labelZh ? `${checkpoint.labelZh} · ` : ""}结构化整形 · ${checkpoint.model}`
                 : "整集结构校验"
               : checkpoint.degraded
                 ? "画面与声音联合精读（EvoLink 兜底 1fps 降级）"

@@ -733,6 +733,28 @@ export async function getGcsManhuaViralApproved(
   return readCardFromObject(`${MANHUA_VIRAL_APPROVED_PREFIX}${key}.json`);
 }
 
+/**
+ * 只给「读给人看」的路径（owner 详情、报告渲染）用的短缓存：0905 实测一张 300KB 正式卡
+ * 单次 GCS 读要 5–14 秒，用户重复打开同一张卡不该每次都等。生命周期判断（批准/下架/恢复）
+ * 走 strict 读取，不经这里；写路径不清缓存，靠 60 秒 TTL 自然过期。
+ */
+const APPROVED_CARD_READ_CACHE_TTL_MS = 60_000;
+const approvedCardReadCache = new Map<string, { at: number; card: ManhuaViralTemplateCard | null }>();
+export async function getGcsManhuaViralApprovedForDisplay(
+  id: string,
+): Promise<ManhuaViralTemplateCard | null> {
+  const key = String(id || "").trim();
+  const hit = approvedCardReadCache.get(key);
+  if (hit && Date.now() - hit.at < APPROVED_CARD_READ_CACHE_TTL_MS) return hit.card;
+  const card = await getGcsManhuaViralApproved(key);
+  if (card) approvedCardReadCache.set(key, { at: Date.now(), card });
+  if (approvedCardReadCache.size > 64) {
+    const oldest = Array.from(approvedCardReadCache.entries()).sort((a, b) => a[1].at - b[1].at)[0];
+    if (oldest) approvedCardReadCache.delete(oldest[0]);
+  }
+  return card;
+}
+
 /** 优化成功后只写 proposals/；正式 approved/ 在 owner 再次批准前保持不变。 */
 export async function saveManhuaViralTemplateRevisionProposal(
   card: ManhuaViralTemplateCard,
