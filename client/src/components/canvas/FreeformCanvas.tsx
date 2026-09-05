@@ -883,6 +883,7 @@ export default function FreeformCanvas({
       userRole,
       // 长排队任务(Wan 公测等):taskId 创建即落节点,字段随画布持久化,刷新后由下方 effect 接管(审查 P1)
       onVideoTaskCreated: (blockId: string, info: { taskId: string; engine: string }) => {
+        runDeps.onVideoTaskCreated?.(blockId, info);
         patchOneRef.current?.(blockId, {
           videoTaskId: info.taskId,
           videoTaskEngine: info.engine,

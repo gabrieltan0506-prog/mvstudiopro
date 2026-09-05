@@ -152,6 +152,7 @@ import {
   queuedManhuaKeyartBlocks,
   queuedManhuaClipBlocks,
   resolveManhuaCanvasClipVideoModel,
+  resolveManhuaEpisodeClipVideoModel,
   resolveManhuaClipRelatedAssetNodeIds,
   runManhuaDramaFactoryPipeline,
   sanitizeManhuaClipBlocksPrompts,
@@ -272,18 +273,10 @@ import {
   isPreparedManhuaVideoEditRun,
   MANHUA_EDIT_RESUME_HINT_ZH,
 } from "@/lib/manhuaFactoryRunIntent";
-import {
-  loadManhuaPilotGateStore,
-  saveManhuaPilotGateStore,
-} from "@/lib/manhuaPilotGateStore";
+import { useManhuaPilotReview } from "@/lib/useManhuaPilotReview";
 import {
   MANHUA_PILOT_DURATION_SEC,
   compileManhuaPilotPrompt,
-  evaluateManhuaPilotGate,
-  getManhuaPilotGateEntry,
-  recordManhuaPilotGenerated,
-  reviewManhuaPilot,
-  type ManhuaPilotGateStore,
 } from "@shared/manhuaPilotGate";
 import type { ManhuaCloudDraftPayload } from "@shared/manhuaCloudDraft";
 import {
@@ -728,9 +721,6 @@ export default function OmniCanvas() {
     useState<ManhuaDirectorBoardBySegment>(loadManhuaDirectorBoardBySegment);
   const [directorBoardMotionOverlayBySegment, setDirectorBoardMotionOverlayBySegment] =
     useState<ManhuaDirectorBoardOverlayBySegment>(loadManhuaDirectorBoardOverlayBySegment);
-  /** 付费成片安全门：仅本机保留小样审阅态，云草稿不保存视频地址。 */
-  const [manhuaPilotGateStore, setManhuaPilotGateStore] =
-    useState<ManhuaPilotGateStore>(loadManhuaPilotGateStore);
   const directorBoardUrlByEpisodeSegment = useMemo(
     () => directorBoardHttpsByEpisodeSegment(directorBoardBySegment),
     [directorBoardBySegment],
@@ -911,16 +901,6 @@ export default function OmniCanvas() {
   );
   /** 只有真选过才向下游透传；否则交给存量节点的既有引擎 */
   const explicitWriterVideoModel = writerVideoModelPicked ? writerVideoModel : "";
-  const activePilotVideoModel = useMemo(
-    () =>
-      String(
-        resolveManhuaCanvasClipVideoModel(
-          blocks,
-          explicitWriterVideoModel || writerVideoModel || undefined,
-        ),
-      ),
-    [blocks, explicitWriterVideoModel, writerVideoModel],
-  );
   // 订阅/角色到位后：无会话选型时预选权限许可的默认档；会话里若是无权限的 2.5 则降级
   useEffect(() => {
     if (subscriptionQuery.isLoading) return;
@@ -980,15 +960,22 @@ export default function OmniCanvas() {
   const [writerFocusEpisode, setWriterFocusEpisode] = useState(() =>
     Math.max(1, Math.floor(Number(initialWriterSession?.focusEpisode) || 1)),
   );
-  const activePilotGateEntry = useMemo(
-    () =>
-      getManhuaPilotGateEntry(
-        manhuaPilotGateStore,
-        writerFocusEpisode,
-        activePilotVideoModel,
-      ),
-    [manhuaPilotGateStore, writerFocusEpisode, activePilotVideoModel],
+  const activePilotVideoModel = useMemo(
+    () => resolveManhuaEpisodeClipVideoModel(
+      blocks,
+      writerFocusEpisode,
+      explicitWriterVideoModel || undefined,
+    ),
+    [blocks, writerFocusEpisode, explicitWriterVideoModel],
   );
+  const pilotReview = useManhuaPilotReview({
+    userId: user?.id != null ? String(user.id) : "",
+    confirmedAt: projectBible?.confirmedAt,
+    pack: writerPack,
+    episodeIndex: writerFocusEpisode,
+    videoModel: activePilotVideoModel,
+  });
+  const activePilotGateEntry = pilotReview.review;
   const [directorUnlocked, setDirectorUnlocked] = useState(
     () => Boolean(initialWriterSession?.directorUnlocked),
   );
@@ -3294,9 +3281,10 @@ export default function OmniCanvas() {
         queuedManhuaClipBlocks(
           blocks,
           episodeIndex,
-          resolveManhuaCanvasClipVideoModel(
+          resolveManhuaEpisodeClipVideoModel(
             blocks,
-            explicitWriterVideoModel || writerVideoModel || undefined,
+            episodeIndex,
+            explicitWriterVideoModel || undefined,
           ),
         )
           .filter((block) => (getBlockEpisodeIndex(block) ?? 1) === episodeIndex)
@@ -3520,6 +3508,9 @@ export default function OmniCanvas() {
       userId: user?.id ? String(user.id) : "",
       userPlan,
       userRole,
+      authorizeManhuaClip: pilotReview.authorize,
+      onManhuaPilotChanged: pilotReview.refresh,
+      onVideoTaskCreated: () => pilotReview.refresh(),
       characterVoiceLocks,
       audioReferenceLock,
       manhuaAssetPathById: manhuaAssetMaps.pathById,
@@ -3624,6 +3615,8 @@ export default function OmniCanvas() {
       user?.id,
       userPlan,
       userRole,
+      pilotReview.authorize,
+      pilotReview.refresh,
       characterVoiceLocks,
       audioReferenceLock,
       manhuaAssetMaps,
@@ -3964,7 +3957,7 @@ export default function OmniCanvas() {
           directorBoardUrlByEpisodeSegment,
           directorBoardMotionOverlayByEpisodeSegment:
             directorBoardMotionOverlayBySegment,
-          videoModel: explicitWriterVideoModel || writerVideoModel || undefined,
+          videoModel: explicitWriterVideoModel || undefined,
         });
         const fresh = ensured.blocks.find((b) => b.id === block.id);
         if (!fresh?.prompt?.trim()) {
@@ -4589,8 +4582,6 @@ export default function OmniCanvas() {
         setDirectorBoardMotionOverlayBySegment(overlaysForReview);
         saveManhuaDirectorBoardOverlayBySegment(overlaysForReview);
       }
-      setManhuaPilotGateStore({});
-      saveManhuaPilotGateStore({});
       materializedBoardIdsRef.current.clear();
       setWriterConfirmBlockers([]);
       setWriterPack(pack);
@@ -4894,8 +4885,6 @@ export default function OmniCanvas() {
         setDirectorBoardMotionOverlayBySegment(overlaysForReview);
         saveManhuaDirectorBoardOverlayBySegment(overlaysForReview);
       }
-      setManhuaPilotGateStore({});
-      saveManhuaPilotGateStore({});
       materializedBoardIdsRef.current.clear();
       setWriterFocusEpisode(1);
       setWriterEpisodeCount(res.pack.episodeCount);
@@ -5087,8 +5076,6 @@ export default function OmniCanvas() {
     saveManhuaDirectorBoardBySegment({});
     setDirectorBoardMotionOverlayBySegment({});
     saveManhuaDirectorBoardOverlayBySegment({});
-    setManhuaPilotGateStore({});
-    saveManhuaPilotGateStore({});
     materializedBoardIdsRef.current.clear();
     setWriterFocusEpisode(1);
     setWriterImportDraft("");
@@ -7417,22 +7404,18 @@ export default function OmniCanvas() {
           : resolveRunEpisodeIndexes(workingBlocks);
         if (untilStage === "clip" && !opts?.bypassPilotGate) {
           const pilotIndexes = opts?.pilotRun ? [1] : uniqueFragmentIndexes;
-          const allApproved = episodeIndexes.every((episodeIndex) => {
-            const decision = evaluateManhuaPilotGate({
-              store: manhuaPilotGateStore,
+          for (const episodeIndex of episodeIndexes) {
+            await pilotReview.authorize({
               episodeIndex,
-              videoModel: activePilotVideoModel,
-              segmentIndex: pilotIndexes.length === 1 ? pilotIndexes[0]! : 0,
-              requestedDurationSec: opts?.pilotRun ? MANHUA_PILOT_DURATION_SEC : 15,
+              videoModel: resolveManhuaEpisodeClipVideoModel(
+                workingBlocks,
+                episodeIndex,
+                explicitWriterVideoModel || undefined,
+              ),
+              segmentIndex: pilotIndexes.length === 1 ? pilotIndexes[0]! : 1,
+              durationSec: opts?.pilotRun ? MANHUA_PILOT_DURATION_SEC : 15,
+              pilotRun: opts?.pilotRun === true,
             });
-            return decision.allowed && (opts?.pilotRun ? decision.mode === "pilot" : decision.mode === "full");
-          });
-          if (!allApproved) {
-            toast.message(
-              opts?.pilotRun ? "10 秒试片正在等待审阅或参数不匹配" : "请先生成并审阅首段 10 秒试片",
-              { description: "同一集、当前生成档通过后，才会解锁其余片段。" },
-            );
-            return;
           }
         }
         pushDebug("factoryRun:episodes", {
@@ -7561,7 +7544,7 @@ export default function OmniCanvas() {
               directorBoardMotionOverlayByEpisodeSegment:
                 directorBoardMotionOverlayBySegment,
               videoModel:
-                explicitWriterVideoModel || writerVideoModel || undefined,
+                explicitWriterVideoModel || undefined,
             };
             if (opts?.pilotRun) {
               const prepared = ensureManhuaFragmentClips(
@@ -7848,29 +7831,7 @@ export default function OmniCanvas() {
               },
             });
             workingBlocks = result.blocks;
-            if (opts?.pilotRun && !result.errors.length) {
-              const pilotOutput = workingBlocks.find(
-                (block) =>
-                  block.id.startsWith("clip-") &&
-                  (getBlockEpisodeIndex(block) ?? 1) === episodeIndex &&
-                  resolveClipLocalSegmentIndex(block.id, block.prompt, episodeIndex) === 1,
-              );
-              const outputUrl = String(
-                pilotOutput?.outputUrl || pilotOutput?.outputUrls?.[0] || "",
-              ).trim();
-              if (outputUrl) {
-                setManhuaPilotGateStore((previous) => {
-                  const next = recordManhuaPilotGenerated(previous, {
-                    episodeIndex,
-                    videoModel: activePilotVideoModel,
-                    outputUrl,
-                    updatedAt: new Date().toISOString(),
-                  });
-                  saveManhuaPilotGateStore(next);
-                  return next;
-                });
-              }
-            }
+            if (opts?.pilotRun) pilotReview.refresh();
             completed += result.completedIds.length;
             skipped += result.skippedIds.length;
             if (stageStartedAtRef.current != null) {
@@ -8012,8 +7973,8 @@ export default function OmniCanvas() {
       shotContinuity,
       chainIgnoreByScene,
       confirmAssetsAndPrepareImages,
-      manhuaPilotGateStore,
-      activePilotVideoModel,
+      pilotReview.authorize,
+      pilotReview.refresh,
       directorBoardUrlByEpisode,
       directorBoardUrlByEpisodeSegment,
       directorBoardMotionOverlayBySegment,
@@ -8037,9 +7998,10 @@ export default function OmniCanvas() {
       const localFrag = resolveClipLocalSegmentIndex(hit.id, hit.prompt, episodeIndex);
       const attempt = Math.max(1, Math.floor((hit.manhuaRetake?.attempt || 0) + 1));
       const retakeBase = clearManhuaVideoEditOperation(hit);
-      const retakeVideoModel = resolveManhuaCanvasClipVideoModel(
+      const retakeVideoModel = resolveManhuaEpisodeClipVideoModel(
         blocks,
-        explicitWriterVideoModel || writerVideoModel || undefined,
+        episodeIndex,
+        explicitWriterVideoModel || undefined,
       );
       if (!isCanvasProductVideoModel(retakeVideoModel)) {
         toast.error("请先选择可用的成片引擎");
@@ -8168,17 +8130,8 @@ export default function OmniCanvas() {
   );
 
   const handleReviewPilot = useCallback(
-    (decision: "approve" | "reject") => {
-      setManhuaPilotGateStore((previous) => {
-        const next = reviewManhuaPilot(previous, {
-          episodeIndex: writerFocusEpisode,
-          videoModel: activePilotVideoModel,
-          decision,
-          updatedAt: new Date().toISOString(),
-        });
-        saveManhuaPilotGateStore(next);
-        return next;
-      });
+    async (decision: "approve" | "reject", taskId: string) => {
+      await pilotReview.decide(decision, taskId);
       toast.message(decision === "approve" ? "10 秒试片已通过" : "10 秒试片已退回", {
         description:
           decision === "approve"
@@ -8186,7 +8139,7 @@ export default function OmniCanvas() {
             : "可调整提示词、轨迹或生成档后重新生成首段试片。",
       });
     },
-    [writerFocusEpisode, activePilotVideoModel],
+    [pilotReview.decide],
   );
 
   const handleSelectClipVersion = useCallback((clipBlockId: string, url: string) => {
@@ -9244,8 +9197,13 @@ export default function OmniCanvas() {
                     ...(activePilotGateEntry?.outputUrl
                       ? { outputUrl: activePilotGateEntry.outputUrl }
                       : {}),
+                    taskId: activePilotGateEntry?.taskId,
+                    reviewKey: pilotReview.key,
+                    error: pilotReview.error,
+                    busy: pilotReview.busy,
                   }}
                   onReviewPilot={handleReviewPilot}
+                  onRefreshPilot={pilotReview.refresh}
                   directorBoardMainUrl={
                     directorBoardMainByEpisode[writerFocusEpisode]?.url ||
                     directorBoardUrlByEpisode[writerFocusEpisode] ||

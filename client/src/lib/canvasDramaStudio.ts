@@ -1900,6 +1900,15 @@ export function resolveManhuaCanvasClipVideoModel(
   return resolveEpisodeClipVideoModel(blocks, null, explicit);
 }
 
+/** 审核与执行按同一集解析；界面自动预选不能作为显式覆盖传入。 */
+export function resolveManhuaEpisodeClipVideoModel(
+  blocks: CanvasBlock[],
+  episodeIndex: number,
+  explicit?: string | null,
+): string {
+  return resolveEpisodeClipVideoModel(blocks, episodeIndex, explicit);
+}
+
 /**
  * 该集最多铺几张关键静帧：钉段引擎按 `段数 × 3` 截断，不钉段的由镜数决定。
  * 与 groupShotsIntoSegments 的截断口径同源。

@@ -37,6 +37,7 @@ import {
   queuedManhuaClipBlocks,
   queuedManhuaKeyartBlocks,
   resolveManhuaCanvasClipVideoModel,
+  resolveManhuaEpisodeClipVideoModel,
   resolveManhuaFactoryOrderedIds,
   resolveManhuaFragmentRunTargets,
   runManhuaDramaFactoryPipeline,
@@ -1446,6 +1447,32 @@ describe("canvasDramaStudio factory", () => {
     );
     // 画布上一条 clip 都没有才用兜底
     expect(resolveManhuaCanvasClipVideoModel([])).toBe(MANHUA_FACTORY_DEFAULT_VIDEO_MODEL);
+  });
+
+  it("历史 2.5 的审核档与真实铺段一致，不受未显式选择的 Mini 影响", () => {
+    const spawned = spawnManhuaDramaStudio({ topic: "雨夜客栈", episodeIndex: 1, videoModel: "seedance-2.5" });
+    const historical = ensureManhuaFragmentClips(spawned.blocks, spawned.edges, 1, { videoModel: "seedance-2.5" });
+    const autoUiModel = "seedance-2.0-mini";
+    const picked = false;
+    const explicit = picked ? autoUiModel : undefined;
+    const reviewModel = resolveManhuaEpisodeClipVideoModel(historical.blocks, 1, explicit);
+    const next = ensureManhuaFragmentClips(historical.blocks, historical.edges, 1, { videoModel: explicit });
+    const clips = next.blocks.filter(b => b.id.startsWith("clip-") && !b.archivedFromPreviousScript);
+    expect(reviewModel).toBe("seedance-2.5");
+    expect(clips.length).toBeGreaterThan(0);
+    expect(clips.every(b => b.videoModel === reviewModel)).toBe(true);
+  });
+
+  it("跨集审核分别解析本集引擎，归档节点不能污染审核 scope", () => {
+    const clips: CanvasBlock[] = [
+      { ...defaultCanvasBlock("video", 0, 0), id: "clip-e02-g01-old", episodeIndex: 2, videoModel: "seedance-2.5", archivedFromPreviousScript: true },
+      { ...defaultCanvasBlock("video", 0, 0), id: "clip-e01-g01-a", episodeIndex: 1, videoModel: "seedance-2.5" },
+      { ...defaultCanvasBlock("video", 0, 0), id: "clip-e02-g01-b", episodeIndex: 2, videoModel: "seedance-2.0-mini" },
+    ];
+    expect(resolveManhuaEpisodeClipVideoModel(clips, 1)).toBe("seedance-2.5");
+    expect(resolveManhuaEpisodeClipVideoModel(clips, 2)).toBe("seedance-2.0-mini");
+    expect(resolveManhuaEpisodeClipVideoModel(clips, 3)).toBe("seedance-2.0-mini");
+    expect(resolveManhuaEpisodeClipVideoModel(clips, 2, "seedance-2.5")).toBe("seedance-2.5");
   });
 
   it("改档变窄只停放超额静帧，不删掉已出图（一张 54 积分）", () => {

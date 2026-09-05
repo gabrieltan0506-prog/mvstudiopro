@@ -21,8 +21,23 @@ const freeformSource = readFileSync(
   new URL("../components/canvas/FreeformCanvas.tsx", import.meta.url),
   "utf8",
 );
+const reviewPanelSource = readFileSync(new URL("../components/ManhuaPilotReviewPanel.tsx", import.meta.url), "utf8");
+const reviewHookSource = readFileSync(new URL("./useManhuaPilotReview.ts", import.meta.url), "utf8");
 
 describe("漫剧首10秒质检与视频编辑接线", () => {
+  it("审核与批量预检使用本集真实引擎，界面自动预选不覆盖历史节点", () => {
+    const activeModel = omniSource.split("const activePilotVideoModel = useMemo(")[1]!
+      .split("const pilotReview = useManhuaPilotReview(")[0]!;
+    expect(activeModel).toContain("resolveManhuaEpisodeClipVideoModel(");
+    expect(activeModel).toContain("writerFocusEpisode");
+    expect(activeModel).not.toContain("explicitWriterVideoModel || writerVideoModel");
+    const factory = omniSource.split("const runFactory = useCallback(")[1]!
+      .split("const handleRetakeClip = useCallback(")[0]!;
+    expect(factory).toMatch(/videoModel: resolveManhuaEpisodeClipVideoModel\(\s*workingBlocks,\s*episodeIndex,\s*explicitWriterVideoModel \|\| undefined,/);
+    expect(factory).not.toContain("videoModel: activePilotVideoModel");
+    expect(factory).not.toContain("explicitWriterVideoModel || writerVideoModel");
+    expect(omniSource).not.toContain("explicitWriterVideoModel || writerVideoModel");
+  });
   it("两个粗剪入口当场批量写回画布，合成扣费前检查同一顺序合同", () => {
     expect(workbenchSource.match(/onReorder=\{handleRoughShotReorder\}/g)).toHaveLength(2);
     expect(workbenchSource).not.toContain("onReorder={setRoughShotOrder}");
@@ -40,9 +55,16 @@ describe("漫剧首10秒质检与视频编辑接线", () => {
     expect(omniSource).toContain("stopOnError: opts?.pilotRun ? true");
     expect(omniSource).toContain("pilotRun: opts?.pilotRun === true");
     expect(pipelineSource).toContain('pilotRun: opts.pilotRun === true && stage === "clip"');
-    expect(omniSource).toContain("recordManhuaPilotGenerated");
-    expect(workbenchSource).toContain("首段 10 秒质检门");
-    expect(workbenchSource).toContain("质量达标，解锁");
+    expect(omniSource).toContain("pilotReview.refresh()");
+    expect(omniSource).toContain("authorizeManhuaClip: pilotReview.authorize");
+    expect(omniSource).not.toContain("saveManhuaPilotGateStore");
+    expect(workbenchSource).toContain("<ManhuaPilotReviewPanel");
+    expect(reviewPanelSource).toContain("首段 10 秒质检门");
+    expect(reviewPanelSource).toContain("质量达标，解锁");
+    expect(reviewPanelSource).toContain("src={outputUrl}");
+    expect(reviewPanelSource).toContain("onReview(decision, state.taskId)");
+    expect(reviewHookSource).toContain("review.taskId !== taskId");
+    expect(reviewHookSource).not.toContain("localStorage");
   });
 
   it("places video edit after clip QC and preserves prepared payload/history", () => {

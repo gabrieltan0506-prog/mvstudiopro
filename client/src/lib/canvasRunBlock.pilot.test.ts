@@ -32,7 +32,7 @@ beforeEach(() => {
       throw new Error("禁止真实网络或未声明请求");
     }
     requests.push({ url, body: JSON.parse(String(init.body)) });
-    return new Response(JSON.stringify({ ok: true, videoUrl: "https://test.invalid/pilot.mp4" }));
+    return new Response(JSON.stringify({ ok: true, taskId: "test-created-task", videoUrl: "https://test.invalid/pilot.mp4" }));
   }));
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -46,6 +46,57 @@ function pilotBlock(videoModel: CanvasBlock["videoModel"]): CanvasBlock {
 }
 
 describe("首段试片的实际出站载荷（仅虚构网络边界）", () => {
+  it.each(["seedance-2.0", "seedance-2.0-mini", "seedance-2.0-fast", "seedance-2.5", "wan-3.0", "minimax-hailuo-3"] as const)(
+    "%s：共用执行入口真实消费审核身份，稳定任务键进入最终POST",
+    async (videoModel) => {
+      const authorize = vi.fn(async () => ({
+        projectVersion: "a".repeat(64), episodeIndex: 1, segmentIndex: 1, intent: "pilot" as const,
+      }));
+      const created = vi.fn();
+      await runCanvasBlock(
+        { userRole: "admin", userId: "test-user", optimizeCopy: async () => "", authorizeManhuaClip: authorize, onVideoTaskCreated: created },
+        pilotBlock(videoModel), undefined, { pilotRun: true, videoSubmissionKey: "test-explicit-submission" },
+      );
+      expect(authorize).toHaveBeenCalledWith({ episodeIndex: 1, segmentIndex: 1, videoModel, pilotRun: true, durationSec: 10 });
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.body.manhuaPilot).toEqual(await authorize.mock.results[0]?.value);
+      expect(requests[0]?.body.idempotencyKey).toBe("test-explicit-submission");
+      expect(created).toHaveBeenCalledTimes(1);
+      expect(created).toHaveBeenCalledWith("clip-e01-g01", { taskId: "test-created-task", engine: videoModel });
+    },
+  );
+
+  it("画布直接运行未批准长片在网络/上游之前拒绝", async () => {
+    const authorize = vi.fn(async () => { throw new Error("请先审阅并批准试片"); });
+    await expect(runCanvasBlock(
+      { userRole: "admin", optimizeCopy: async () => "", authorizeManhuaClip: authorize },
+      { ...pilotBlock("seedance-2.5"), prompt: originalPrompt },
+    )).rejects.toThrow("请先审阅");
+    expect(authorize).toHaveBeenCalledWith(expect.objectContaining({ pilotRun: false, durationSec: 30 }));
+    expect(requests).toEqual([]);
+  });
+
+  it("编排入口同样不能绕过审核，失败不提交和不删除独立分镜", async () => {
+    const block = { ...pilotBlock("seedance-2.5"), seedance25TimestampStoryboard: "0–30s：原稿保留。" };
+    const keys = [1, 2, 3].map((shot) => ({
+      ...defaultCanvasBlock("image", 0, shot * 100),
+      id: `keyart-e01-s0${shot}-test`, episodeIndex: 1, status: "done" as const,
+      prompt: `第${shot}镜`, outputUrl: `https://test.invalid/still${shot}.png`,
+    }));
+    const authorize = vi.fn(async () => { throw new Error("请先审阅并批准试片"); });
+    const result = await runManhuaDramaFactoryPipeline({
+      deps: { userRole: "admin", optimizeCopy: async () => "", authorizeManhuaClip: authorize },
+      blocks: [...keys, block], edges: [], episodeIndex: 1, untilStage: "clip", forceFromStage: "clip",
+      fragmentShotIndex: 1, targetBlockIds: [block.id], preservePreparedTargetBlocks: true, maxRetries: 0,
+      ensureOptions: { videoModel: "seedance-2.5" },
+    });
+    expect(result.errors.length).toBeGreaterThan(0);
+    expect(authorize).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(result.errors)).toContain("请先审阅并批准试片");
+    expect(requests).toEqual([]);
+    expect(result.blocks.find((item) => item.id === block.id)?.seedance25TimestampStoryboard).toBe(block.seedance25TimestampStoryboard);
+  });
+
   it.each(["seedance-2.0", "seedance-2.5", "wan-3.0", "minimax-hailuo-3"] as const)(
     "%s：只提交 10 秒且正文不包含后 10 秒剧情",
     async (videoModel) => {

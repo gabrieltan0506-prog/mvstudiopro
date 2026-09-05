@@ -107,7 +107,7 @@ import type { ManhuaDeliveryPackage } from "@shared/manhuaDeliveryPackage";
 import { syncDeliveryPackageSubtitleEnabled } from "@shared/manhuaDeliveryPackage";
 import type { ManhuaCineVocabLocale } from "@shared/manhuaCineVocabBank";
 import type { ManhuaRetakeVariable } from "@shared/manhuaDirectingWorkflow";
-import type { ManhuaPilotGateStatus } from "@shared/manhuaPilotGate";
+import { ManhuaPilotReviewPanel, type ManhuaPilotPanelState } from "./ManhuaPilotReviewPanel";
 import type { ManhuaAssetStandardizeQuality } from "@shared/manhuaAssetStandardize";
 import { MANHUA_REF_DUTIES } from "@shared/manhuaDirectingWorkflow";
 import ModelViewer from "@/components/ModelViewer";
@@ -496,13 +496,12 @@ type Props = {
   /** 本集缺成片/质检失败的段号依次生成 */
   onGenerateMissingFragments?: (segmentIndexes: number[]) => void;
   /** 首段 10 秒质检门；未通过时只开放第 1 段试片。 */
-  pilotGate?: {
-    status: ManhuaPilotGateStatus;
+  pilotGate?: ManhuaPilotPanelState & {
     videoModel: string;
     durationSec: number;
-    outputUrl?: string;
   } | null;
-  onReviewPilot?: (decision: "approve" | "reject") => void;
+  onReviewPilot?: (decision: "approve" | "reject", taskId: string) => Promise<void>;
+  onRefreshPilot?: () => void;
   /** 资产锁定后：一次生成本集全部分镜静帧（主路径） */
   onGenerateAllEpisodeKeyarts?: () => void;
   /** 画布竖排：资产行 → 静帧行 → 成片提示词行 */
@@ -859,6 +858,7 @@ export default function ManhuaScriptWorkbench({
   onGenerateMissingFragments,
   pilotGate,
   onReviewPilot,
+  onRefreshPilot,
   onGenerateAllEpisodeKeyarts,
   onLayoutReadableChain,
   onEnsureSegmentClips,
@@ -2208,6 +2208,9 @@ export default function ManhuaScriptWorkbench({
     return true;
   };
   const pilotLocked = Boolean(pilotGate && pilotGate.status !== "approved");
+  const pilotSubmissionBlocked = Boolean(pilotLocked && pilotGate && (
+    pilotGate.busy || pilotGate.error || ["submitting", "reconcile_manual", "generated"].includes(pilotGate.status)
+  ));
   /**
    * 审阅提示词（阿硕/OiiOii：有静帧图 → 铺段节点到画布看提示词）。
    * 只卡「有没有图」；垫图锁只拦真正出片，不拦审阅与画布展示。
@@ -2243,6 +2246,10 @@ export default function ManhuaScriptWorkbench({
     });
   };
   const runGenerateFragment = () => {
+    if (pilotSubmissionBlocked) {
+      toast.message("请先核对原试片任务并完成审核，不要重复生成");
+      return;
+    }
     if (refuseIfBlocked(clipGateHint)) return;
     if (pilotLocked && activeSegNo !== 1) {
       toast.message("请先生成并审阅第 1 段的 10 秒试片");
@@ -3050,36 +3057,10 @@ export default function ManhuaScriptWorkbench({
                 <div className="mb-2 text-[10px] font-semibold tracking-wide text-violet-100/75">
                   生成范围与画布
                 </div>
-                {pilotLocked ? (
-                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-300/25 bg-amber-500/[0.08] px-2.5 py-2">
-                    <div>
-                      <div className="text-[10px] font-semibold text-amber-50">
-                        首段 10 秒质检门
-                      </div>
-                      <div className="text-[9px] text-amber-100/60">
-                        当前生成档单独验收 · 通过后才解锁其余片段
-                      </div>
-                    </div>
-                    {pilotGate?.status === "generated" && onReviewPilot ? (
-                      <div className="flex gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => onReviewPilot("reject")}
-                          className="rounded border border-white/15 px-2 py-1 text-[9px] text-white/70"
-                        >
-                          退回调整
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onReviewPilot("approve")}
-                          className="rounded border border-emerald-300/35 bg-emerald-500/20 px-2 py-1 text-[9px] font-semibold text-emerald-50"
-                        >
-                          质量达标，解锁
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
+                {pilotLocked && pilotGate ? <ManhuaPilotReviewPanel
+                  key={`${pilotGate.reviewKey}:${pilotGate.taskId}:${pilotGate.outputUrl}`}
+                  state={pilotGate} onReview={onReviewPilot} onRefresh={onRefreshPilot}
+                /> : null}
                 <div className="flex flex-wrap items-center gap-1.5">
               <button
                 type="button"
@@ -3093,7 +3074,7 @@ export default function ManhuaScriptWorkbench({
                 type="button"
                 data-manhua-action="generate-fragment"
                   data-manhua-action-cost={manhuaToolbarActionCost("generate-fragment")}
-                disabled={Boolean(factoryBusy) || (pilotLocked && activeSegNo !== 1)}
+                disabled={Boolean(factoryBusy) || pilotSubmissionBlocked || (pilotLocked && activeSegNo !== 1)}
                 onClick={runGenerateFragment}
                 className="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[10px] font-semibold text-white/75 hover:bg-white/[0.08] disabled:opacity-45"
                 title={`当前第 ${String(activeSegNo).padStart(2, "0")} 段（含镜 ${String(activeShotNo).padStart(2, "0")}）：缺静帧则只补本段再出片`
@@ -8457,6 +8438,7 @@ export default function ManhuaScriptWorkbench({
                     data-manhua-retry-segment={seg.index}
                     disabled={
                       Boolean(factoryBusy) ||
+                      pilotSubmissionBlocked ||
                       (pilotLocked && seg.index !== 1)
                     }
                     onClick={() => {
