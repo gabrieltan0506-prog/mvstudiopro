@@ -7,7 +7,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getDb = vi.fn();
+const ledger = vi.hoisted(() => ({ readActiveJob: vi.fn(async () => null), refundCreditsOnFailure: vi.fn(async () => ({})) }));
 vi.mock("../db", () => ({ getDb: () => getDb() }));
+vi.mock("../services/paidJobLedger.js", () => ledger);
 
 import { reapStaleJobsOnce } from "./staleJobsReaper";
 
@@ -17,12 +19,14 @@ type Call = {
   condition?: unknown;
 };
 
-function fakeDb(calls: Call[]) {
+function fakeDb(calls: Call[], staleAssembles: unknown[] = [], changed = true) {
   return {
+    select: () => ({ from: () => ({ where: async () => staleAssembles }) }),
     update: () => ({
       set: (payload: Record<string, unknown>) => ({
-        where: async () => {
-          calls.push({ kind: "update", payload });
+        where: (condition: unknown) => {
+          calls.push({ kind: "update", payload, condition });
+          return { returning: async () => changed ? [{ id: "asm-7" }] : [] };
         },
       }),
     }),
@@ -60,7 +64,7 @@ function sqlStringValues(value: unknown): string[] {
 }
 
 describe("reapStaleJobsOnce 与 post_prod 记录保留", () => {
-  beforeEach(() => getDb.mockReset());
+  beforeEach(() => { getDb.mockReset(); ledger.readActiveJob.mockReset().mockResolvedValue(null); ledger.refundCreditsOnFailure.mockClear(); });
 
   it("先把停止更新的 post_prod 改判 failed,再执行两次通用删除", async () => {
     const calls: Call[] = [];
@@ -82,7 +86,36 @@ describe("reapStaleJobsOnce 与 post_prod 记录保留", () => {
     expect(sqlStringValues(deletes[1]?.condition).join("\n")).not.toContain(
       "manhua_advisor_qa",
     );
+    for (const deletion of deletes) expect(sqlStringValues(deletion.condition).join("\n")).toContain("manhua_assemble_final");
     expect(r).toEqual({ runningCleared: 1, queuedCleared: 1 });
+  });
+
+  it("失活合成只改状态并触发原任务退款，保留input/output与字幕回执", async () => {
+    const calls: Call[] = [];
+    getDb.mockResolvedValue(fakeDb(calls, [{ id: "asm-7", userId: "7", status: "running", updatedAt: new Date(0) }]));
+    ledger.readActiveJob.mockResolvedValue({ userId: 7, status: "active", lastHeartbeatAt: new Date(0).toISOString() } as never);
+    await reapStaleJobsOnce({ bypassDisable: true });
+    const assembleUpdate = calls.filter(call => call.kind === "update")[1];
+    expect(assembleUpdate.payload).toEqual({ status: "failed", error: expect.stringContaining("回执已保留"), updatedAt: expect.any(Date) });
+    expect(assembleUpdate.payload).not.toHaveProperty("input"); expect(assembleUpdate.payload).not.toHaveProperty("output");
+    expect(ledger.refundCreditsOnFailure).toHaveBeenCalledWith("asm-7", "manhuaFinalAssemble", "process_crashed", expect.any(String));
+  });
+
+  it("真实worker心跳仍新鲜时不把长合成误判失败", async () => {
+    const calls: Call[] = [];
+    getDb.mockResolvedValue(fakeDb(calls, [{ id: "asm-7", userId: "7", status: "running", updatedAt: new Date(0) }]));
+    ledger.readActiveJob.mockResolvedValue({ userId: 7, status: "active", lastHeartbeatAt: new Date().toISOString() } as never);
+    await reapStaleJobsOnce({ bypassDisable: true });
+    expect(calls.filter(call => call.kind === "update")).toHaveLength(1);
+    expect(ledger.refundCreditsOnFailure).not.toHaveBeenCalled();
+  });
+
+  it("扫描后任务已改变，CAS未命中时不退款", async () => {
+    const calls: Call[] = [];
+    getDb.mockResolvedValue(fakeDb(calls, [{ id: "asm-7", userId: "7", status: "running", updatedAt: new Date(0) }], false));
+    ledger.readActiveJob.mockResolvedValue({ userId: 7, status: "active", lastHeartbeatAt: new Date(0).toISOString() } as never);
+    await reapStaleJobsOnce({ bypassDisable: true });
+    expect(ledger.refundCreditsOnFailure).not.toHaveBeenCalled();
   });
 
   it("数据库不可用时安静返回零计数", async () => {

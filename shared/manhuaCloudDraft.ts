@@ -11,6 +11,8 @@ import {
 } from "./manhuaWriterSession.js";
 import {
   normalizeManhuaFinalPostProdBinding,
+  normalizeManhuaFinalVersionIdentities,
+  type ManhuaFinalVersionIdentity,
   type ManhuaFinalPostProdBinding,
 } from "./manhuaFinalPostProd.js";
 
@@ -84,6 +86,7 @@ export type ManhuaCloudDraftCanvasBlock = {
   };
   /** final-eXX 的烧字任务身份与 GCS 长期身份。 */
   manhuaFinalPostProd?: ManhuaFinalPostProdBinding;
+  manhuaFinalVersions?: ManhuaFinalVersionIdentity[];
 };
 
 export type ManhuaCloudDraftEdge = { fromId: string; toId: string };
@@ -230,6 +233,7 @@ export function sanitizeManhuaCloudDraftBlock(raw: unknown): ManhuaCloudDraftCan
     videoTaskStatus: b.videoTaskStatus != null ? String(b.videoTaskStatus).slice(0, 40) : undefined,
     manhuaEditTrim: sanitizeManhuaEditTrim(b.manhuaEditTrim),
     manhuaFinalPostProd: normalizeManhuaFinalPostProdBinding(b.manhuaFinalPostProd),
+    manhuaFinalVersions: normalizeManhuaFinalVersionIdentities(b.manhuaFinalVersions),
   };
 
   if (isManhuaCloudDraftFinalVideoBlock(base)) {

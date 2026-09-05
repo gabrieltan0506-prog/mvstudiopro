@@ -301,6 +301,7 @@ type Props = {
   finalVideoUrl?: string | null;
   /** 0902 烧字：把字幕轨烧进已合成长片（无长片时不传，面板按钮自灰） */
   onBurnSubtitle?: (subtitleSrt: string) => void | Promise<void>;
+  finalSubtitleTimeline?: import("@shared/manhuaRenderedSubtitle").ManhuaRenderedSubtitle;
   burnSubtitleBusy?: boolean;
   burnSubtitleResultUrl?: string | null;
   burnSubtitleRecoveryError?: string | null;
@@ -772,6 +773,7 @@ export default function ManhuaScriptWorkbench({
   onActionRecipeIdChange,
   finalVideoUrl,
   onBurnSubtitle,
+  finalSubtitleTimeline,
   burnSubtitleBusy,
   burnSubtitleResultUrl,
   burnSubtitleRecoveryError,
@@ -6568,6 +6570,7 @@ export default function ManhuaScriptWorkbench({
             suggestAutoCutsBusy={suggestAutoCutsBusy}
             subtitleEnabled={editSubtitleEnabled}
             onBurnSubtitle={finalVideoUrl ? onBurnSubtitle : undefined}
+            finalSubtitleTimeline={finalSubtitleTimeline}
             burnSubtitleBusy={burnSubtitleBusy}
             burnSubtitleResultUrl={burnSubtitleResultUrl}
             burnSubtitleRecoveryError={burnSubtitleRecoveryError}

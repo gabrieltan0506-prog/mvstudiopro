@@ -28,7 +28,10 @@ describe("漫剧首10秒质检与视频编辑接线", () => {
     expect(workbenchSource).toContain("[clip.shotIndex, clip.durationSec, clip.order]");
     expect(workbenchSource).toContain("onlyShotIndex == null || legacyOrderNeedsPersist");
     expect(omniSource).toContain("onApplyClipEditTrims={(updates)");
-    expect(omniSource.indexOf("buildManhuaAssemblePlan(ready)")).toBeLessThan(omniSource.indexOf('chargeWorkflowStepMutation.mutateAsync({ step: "music"'));
+    const assemble = omniSource.slice(omniSource.indexOf("const assembleManhuaFinal"));
+    expect(assemble.indexOf("buildManhuaAssemblePlan(ready)")).toBeGreaterThan(-1);
+    expect(assemble.indexOf("buildManhuaAssemblePlan(ready)")).toBeLessThan(assemble.indexOf("await createJobSameOrigin"));
+    expect(assemble.slice(0, assemble.indexOf("const out ="))).not.toContain("chargeWorkflowStepMutation.mutateAsync");
   });
   it("forces the pilot through the real clip pipeline with one submission", () => {
     expect(omniSource).toContain("compileManhuaPilotPrompt(pilotClip.prompt)");

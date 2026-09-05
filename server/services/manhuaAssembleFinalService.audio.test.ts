@@ -7,10 +7,37 @@ vi.mock("../vercel-api-core/render.js", () => ({
 }));
 import { runManhuaAssembleFinal } from "./manhuaAssembleFinalService";
 import type { ManhuaAssembleShotPieceInput } from "../../shared/manhuaFinalAssemble";
+import type { ManhuaRenderedSubtitle } from "../../shared/manhuaRenderedSubtitle";
 
 describe("漫剧成片原声入口", () => {
   beforeEach(() => {
     render.mockClear();
+  });
+
+  it("实际渲染回执原样进入成片结果，不回退到请求中的计划秒位", async () => {
+    const timeline: ManhuaRenderedSubtitle = {
+      version: 1, textSource: "assembly_script_snapshot", timing: "rendered_shot_windows", durationSec: 8,
+      cues: [{ shotIndex: 1, order: 1, startSec: 0, endSec: 8, textZh: "原句" }],
+    };
+    render.mockImplementationOnce(async input => {
+      (input as { onSubtitleTimeline?: (value: ManhuaRenderedSubtitle) => void }).onSubtitleTimeline?.(timeline);
+      return "https://test.invalid/final.mp4";
+    });
+    const result = await runManhuaAssembleFinal({ clips: [{ episodeIndex: 1,
+      clipUrl: "https://test.invalid/source.mp4",
+      subtitleSource: { shots: [{ shotIndex: 1, durationSec: 4, textZh: "原句" }] },
+    }] });
+    expect(result.subtitleTimeline).toEqual(timeline);
+    expect(result.finalVideoUrl).toBe("https://test.invalid/final.mp4");
+  });
+
+  it("未选配乐时只合成原声，不隐式请求任何生成供应商", async () => {
+    const noNetwork = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("禁止上游请求"));
+    try {
+      await runManhuaAssembleFinal({ clips: [{ episodeIndex: 1, clipUrl: "https://test.invalid/source.mp4" }], musicPrompt: "旧稿附带的配乐想法" });
+      expect(noNetwork).not.toHaveBeenCalled();
+      expect(render.mock.calls[0]?.[0]).toMatchObject({ preserveSourceAudio: true, musicUrl: undefined });
+    } finally { noNetwork.mockRestore(); }
   });
 
   it("真实合成生产者显式保留原声和逐镜裁切，不新增生成请求", async () => {

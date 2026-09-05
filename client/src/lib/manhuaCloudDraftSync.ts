@@ -420,6 +420,7 @@ export function cloudDraftBlocksToCanvas(
       videoTaskEngine: (raw as { videoTaskEngine?: string }).videoTaskEngine,
       videoTaskStatus: (raw as { videoTaskStatus?: CanvasBlock["videoTaskStatus"] }).videoTaskStatus,
       manhuaEditTrim: (raw as { manhuaEditTrim?: CanvasBlock["manhuaEditTrim"] }).manhuaEditTrim,
+      manhuaFinalVersions: (raw as { manhuaFinalVersions?: CanvasBlock["manhuaFinalVersions"] }).manhuaFinalVersions,
       manhuaFinalPostProd: (
         raw as { manhuaFinalPostProd?: CanvasBlock["manhuaFinalPostProd"] }
       ).manhuaFinalPostProd,

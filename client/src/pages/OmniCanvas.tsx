@@ -308,8 +308,11 @@ import {
   saveManhuaShotContinuityPrefs,
   type ManhuaShotContinuityPrefs,
 } from "@shared/manhuaShotContinuity";
-import { buildManhuaAssemblePlan, MANHUA_ASSEMBLE_MUSIC_DURATION_SEC } from "@shared/manhuaFinalAssemble";
-import { buildManhuaAssembleJobInput } from "@shared/manhuaAssembleJobInput";
+import { buildManhuaAssemblePlan } from "@shared/manhuaFinalAssemble";
+import { buildManhuaAssembleJobInput, hasManhuaAssembleCapabilities } from "@shared/manhuaAssembleJobInput";
+import { canApplyManhuaAssembleResult, readManhuaAssembleReceipts, saveManhuaAssembleReceipt, type ManhuaAssembleReceipt } from "@/lib/manhuaAssembleResultGuard";
+import { buildManhuaSubtitleBurnSrt } from "@shared/manhuaEditSubtitle";
+import { normalizeManhuaRenderedSubtitle, type ManhuaRenderedSubtitle, type ManhuaSubtitleSource } from "@shared/manhuaRenderedSubtitle";
 import { inspectManhuaAssembleCompleteness } from "@shared/manhuaAssembleCompleteness";
 import ManhuaCharacterGallery from "@/components/ManhuaCharacterGallery";
 import ManhuaGuidedPathRail from "@/components/ManhuaGuidedPathRail";
@@ -1252,6 +1255,9 @@ export default function OmniCanvas() {
     [finalAssembleBlock],
   );
   const abortRef = useRef<AbortController | null>(null);
+  const finalSubtitleTimeline = normalizeManhuaRenderedSubtitle(
+    findManhuaFinalVideoVersionIdentity(finalAssembleBlock, finalAssembleVideoUrl)?.subtitleTimeline,
+  );
   const chargeWorkflowStepMutation = trpc.workflow.chargeStep.useMutation();
   /** 0902 烧字总装：剪辑台字幕轨 → queuePostProd burn_subtitle → 轮询取新片 */
   const queueBurnSubtitleMutation = trpc.mvAnalysis.queuePostProd.useMutation();
@@ -1618,9 +1624,15 @@ export default function OmniCanvas() {
         return;
       }
       try {
+        const timeline = normalizeManhuaRenderedSubtitle(
+          findManhuaFinalVideoVersionIdentity(finalAssembleBlock, videoUri)?.subtitleTimeline,
+        );
+        if (!timeline) throw new Error("这版成片没有可核对的字幕时间表，请重新合成后再烧字；原片仍保留");
+        const boundSrt = buildManhuaSubtitleBurnSrt(timeline.cues);
+        if (subtitleSrt !== boundSrt) throw new Error("成片版本已变化，请核对当前版本字幕后再提交");
         const { jobId } = await queueBurnSubtitleMutation.mutateAsync({
           action: "burn_subtitle",
-          params: { videoUri, subtitleSrt },
+          params: { videoUri, subtitleSrt: boundSrt },
         });
         const sourceGcsUri = findManhuaFinalVideoVersionIdentity(
           finalAssembleBlock,
@@ -3252,9 +3264,22 @@ export default function OmniCanvas() {
     return e ? `${e.nameZh}（${e.stageZh}）` : "";
   }, [factoryNarrativeLightingId]);
 
+  const assembleProjectKey = JSON.stringify([user?.id, projectBible?.seriesTitle, projectBible?.assetCanon, writerPack?.rawMarkdown,
+    blocks.filter(block => stageKeyFromBlockId(block.id) === "clip").map(block => [block.id, block.outputUrl, block.prompt, block.manhuaEditTrim])]);
+  const assembleContextRef = useRef({ projectKey: assembleProjectKey, blocks });
+  assembleContextRef.current = { projectKey: assembleProjectKey, blocks };
+  const assembleSubmitRef = useRef(false);
+  const [assembleReceipts, setAssembleReceipts] = useState<ManhuaAssembleReceipt[]>([]);
+  useEffect(() => {
+    if (!user?.id) { setAssembleReceipts([]); return; }
+    try { setAssembleReceipts(readManhuaAssembleReceipts(window.localStorage, String(user.id))); }
+    catch { toast.error("合成恢复记录暂不可读，原记录已保留"); }
+  }, [user?.id]);
+
   const assembleManhuaFinal = useCallback(
     async (
       clips: Array<{
+        subtitleSource?: ManhuaSubtitleSource;
         episodeIndex: number;
         episodeTitle?: string;
         clipUrl?: string;
@@ -3272,7 +3297,7 @@ export default function OmniCanvas() {
         }>;
       }>,
     ) => {
-      if (assembleBusy || factoryBusy) return;
+      if (assembleBusy || factoryBusy || assembleSubmitRef.current) return;
       const ready = clips.filter((c) => c.clipUrl);
       if (!ready.length) {
         toast.error("至少需要一集成片才能合成长片");
@@ -3314,18 +3339,23 @@ export default function OmniCanvas() {
         toast.error("剪辑顺序不完整，请在剪辑台重新确认后再合成");
         return;
       }
+      assembleSubmitRef.current = true;
       setAssembleBusy(true);
       pushDebug("assemble:start", {
         level: "info",
         detail: `clips=${ready.map((c) => c.episodeIndex).join(",")}`,
       });
       try {
-        // 七审 P0-1:客户端退款能力已下线;失败退款迁往服务端计费契约
-        await chargeWorkflowStepMutation.mutateAsync({ step: "music", quantity: 1 });
-        await chargeWorkflowStepMutation.mutateAsync({ step: "final_render", quantity: 1 });
+        // 合成由服务端按任务统一扣费/退款；配乐在配乐间单独确认，不在此隐式生成。
+        const capabilities = await fetch("/api/jobs?op=manhuaAssembleCapabilities", {
+          credentials: "include", cache: "no-store", signal: AbortSignal.timeout(10_000),
+        });
+        if (!capabilities.ok || !hasManhuaAssembleCapabilities(await capabilities.json())) {
+          throw new Error("合成服务正在更新，请稍后再试；尚未提交任务或扣积分");
+        }
 
         // 短入队（www→Vercel rewrite→Fly）+ GET 轮询，不走长任务直连 api 子域
-        pushDebug("assemble:music", { level: "info", detail: "queued · polling…" });
+        pushDebug("assemble:render", { level: "info", detail: "queued · polling…" });
         const { jobId } = await createJobSameOrigin({
           type: "video",
           userId: user?.id ? String(user.id) : "",
@@ -3335,7 +3365,6 @@ export default function OmniCanvas() {
             topic: factoryTopic,
             seriesTitle: writerPack?.seriesTitle || projectBible?.seriesTitle || "",
             logline: writerPack?.logline || projectBible?.logline || "",
-            musicDuration: MANHUA_ASSEMBLE_MUSIC_DURATION_SEC,
             musicVolume: 0.35,
             musicFadeInSec: 1,
             musicFadeOutSec: 2,
@@ -3358,15 +3387,29 @@ export default function OmniCanvas() {
           throw new Error(job.error || "合成失败");
         }
         const out = (job.output || {}) as {
+          subtitleTimeline?: ManhuaRenderedSubtitle;
           finalVideoUrl?: string;
           videoUrl?: string;
           sceneCount?: number;
         };
         const finalVideoUrl = String(out.finalVideoUrl || out.videoUrl || "").trim();
         if (!finalVideoUrl) throw new Error("合成完成但未返回成片地址");
+        const receipt: ManhuaAssembleReceipt = { jobId, ownerId: String(user?.id || ""),
+          title: writerPack?.seriesTitle || projectBible?.seriesTitle || "整集成片", url: finalVideoUrl,
+          createdAt: Date.now(), subtitleTimeline: normalizeManhuaRenderedSubtitle(out.subtitleTimeline) };
+        setAssembleReceipts(previous => [receipt, ...previous.filter(row => row.jobId !== jobId)]);
+        try { saveManhuaAssembleReceipt(window.localStorage, receipt); }
+        catch { toast.error("成片已返回，但本机恢复记录未保存，请及时从恢复记录打开下载"); }
+        const mayApply = () => canApplyManhuaAssembleResult({ submittedProject: assembleProjectKey,
+          currentProject: assembleContextRef.current.projectKey, blocks: assembleContextRef.current.blocks, clips: ready });
+        if (!mayApply()) {
+          toast.message("原项目合成已返回，可在成片恢复记录中查看；未写入当前项目");
+          return;
+        }
         // 不再 setState：下面把成片节点写进 blocks，finalAssembleVideoUrl 会自动跟上
         // 整集节点落画布（段列制最右收口）：成片不再只活在坞面板的 state 里
         setBlocks((prev) => {
+          if (!canApplyManhuaAssembleResult({ submittedProject: assembleProjectKey, currentProject: assembleContextRef.current.projectKey, blocks: prev, clips: ready })) return prev;
           const finalId = `final-e${String(writerFocusEpisode).padStart(2, "0")}`;
           const existing = prev.find((b) => b.id === finalId);
           const baseBlock = {
@@ -3378,6 +3421,7 @@ export default function OmniCanvas() {
             prompt: existing?.prompt || `第${writerFocusEpisode}集 · 整集成片`,
           };
           const nextBlock = replaceManhuaFinalAssembleVersion(baseBlock, {
+            subtitleTimeline: out.subtitleTimeline,
             url: finalVideoUrl,
             jobId,
           });
@@ -3398,7 +3442,7 @@ export default function OmniCanvas() {
           detail: `scenes=${out.sceneCount || ready.length} · final ok`,
           response: finalVideoUrl.slice(0, 180),
         });
-        toast.success(`长片已合成（${out.sceneCount || ready.length} 集 + 配乐）`);
+        toast.success(`长片已合成（${out.sceneCount || ready.length} 个镜片，保留原声）`);
         // 沉浸态下坞是独立视图，先切换再滚动
         setImmersiveWorkspaceView("clip_dock");
         window.setTimeout(() => {
@@ -3412,11 +3456,13 @@ export default function OmniCanvas() {
         pushDebug("assemble:error", { level: "error", detail: msg });
         toast.error(msg);
       } finally {
+        assembleSubmitRef.current = false;
         setAssembleBusy(false);
       }
     },
     [
       assembleBusy,
+      assembleProjectKey,
       factoryBusy,
       chargeWorkflowStepMutation,
       factoryTopic,
@@ -8704,6 +8750,7 @@ export default function OmniCanvas() {
                   }}
                   finalVideoUrl={finalAssembleVideoUrl}
                   onBurnSubtitle={handleBurnSubtitle}
+                  finalSubtitleTimeline={finalSubtitleTimeline}
                   burnSubtitleBusy={burnSubtitleBusy}
                   burnSubtitleResultUrl={burnSubtitleResultUrl}
                   burnSubtitleRecoveryError={burnSubtitleRecoveryError}
@@ -10979,6 +11026,8 @@ export default function OmniCanvas() {
                 selectedIds={dockSelectedIds}
                 onSelectedIdsChange={setDockSelectedIds}
                 assembleBusy={assembleBusy}
+                assembleReceipts={assembleReceipts.filter(row => row.ownerId === String(user?.id || ""))}
+                assembleCredits={user?.role === "admin" || user?.role === "supervisor" ? 0 : undefined}
                 finalVideoUrl={finalAssembleVideoUrl}
                 onAssembleFinal={(clips) => void assembleManhuaFinal(clips)}
                 deliveryPackage={deliveryPackage}
