@@ -2681,6 +2681,20 @@ export async function runManhuaTemplateLearn(
                   : `全系列结构整理未完成：${checkpoint.errorZh || "上游未返回完整回执"}`,
             );
           } else {
+            if (checkpoint.route === "gemini_api_fallback_pending" || checkpoint.route === "gemini_api_fallback_failed") {
+              const segZh = typeof checkpoint.chunkIndex === "number" && checkpoint.segmentCount
+                ? ` · 分片 ${checkpoint.chunkIndex + 1}/${checkpoint.segmentCount}`
+                : "";
+              await progress(
+                MANHUA_LEARN_STAGE.vision,
+                checkpoint.route === "gemini_api_fallback_pending"
+                  ? `${episodeLabel}${segZh} · Vertex 连撞 ${checkpoint.resourceRetryNumber || "?"} 次资源拥堵，改走 AI Studio（Files API 上传后读，第 ${checkpoint.attemptNumber || "?"} 发`
+                    + `${typeof checkpoint.temperature === "number" ? `，temperature ${checkpoint.temperature}` : ""}）；后台原因：${checkpoint.errorZh || "503"}`
+                  : `${episodeLabel}${segZh} · AI Studio 兜底失败，${Math.round(NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS / 1000)} 秒后回 Vertex 继续重试`
+                    + `（已用 ${checkpoint.resourceRetryNumber || "?"}/${checkpoint.resourceRetryMax || NATIVE_DEEP_READ_RESOURCE_RETRY_MAX}）；后台原因：${checkpoint.errorZh || "未知"}`,
+              );
+              return;
+            }
             if (checkpoint.route === "gate_retry_pending" || checkpoint.route === "resource_retry_pending") {
               const retrySegmentZh = typeof checkpoint.chunkIndex === "number" && checkpoint.segmentCount
                 ? ` · 分片 ${checkpoint.chunkIndex + 1}/${checkpoint.segmentCount}`
