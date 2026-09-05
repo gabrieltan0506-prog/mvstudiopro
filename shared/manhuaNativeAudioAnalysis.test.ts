@@ -233,3 +233,17 @@ describe("门禁类失败判定", () => {
     expect(stripClockTextZh("在01:23处鼓点，，在02:10处收")).toBe("鼓点，收");
   });
 });
+
+describe("0905 · 音轨时间段修补", () => {
+  it("结尾未覆盖/开头偏移/空洞/重叠都修补为连续覆盖，不再抛错", async () => {
+    const { repairTrackCoverage } = await import("./manhuaNativeAudioAnalysis");
+    const out = repairTrackCoverage([
+      { fromSec: 1, toSec: 90 },
+      { fromSec: 100, toSec: 180 },
+      { fromSec: 170, toSec: 250 },
+    ], 0, 301);
+    expect(out.tracks.map((t) => [t.fromSec, t.toSec])).toEqual([[0, 100], [100, 170], [170, 301]]);
+    expect(out.repairs).toHaveLength(4);
+    expect(() => repairTrackCoverage([], 0, 10)).toThrow("音频分析没有有效时间段");
+  });
+});
