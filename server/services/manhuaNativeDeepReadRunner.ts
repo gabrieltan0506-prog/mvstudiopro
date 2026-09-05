@@ -1338,6 +1338,64 @@ type NativeResponseSchemaNode = {
   items?: NativeResponseSchemaNode;
 };
 
+/**
+ * 0905 用户拍板「彻底解决约束问题只能选 2」：把 Gemini 格式的响应 schema 转成标准 JSON Schema，
+ * 挂到 Qwen3.8-Max 套餐档的 `response_format: json_schema strict`（实弹：Qwen 两档真约束，GLM 两档无）。
+ * 整形卡 = 分段卡 schema + 顶层可选 excludedAdRanges / classificationProseZh / templateTitleZh + shots[].craftReadZh。
+ */
+export function geminiSchemaToJsonSchema(node: NativeResponseSchemaNode): Record<string, unknown> {
+  const type = String(node.type || "").toLowerCase();
+  const out: Record<string, unknown> = {};
+  if (node.description) out.description = node.description;
+  if (Array.isArray((node as { enum?: unknown }).enum)) out.enum = (node as { enum: unknown[] }).enum;
+  if (typeof node.maxLength === "number") out.maxLength = node.maxLength;
+  if (type === "object") {
+    out.type = "object";
+    out.properties = Object.fromEntries(Object.entries(node.properties || {}).map(([k, v]) => [k, geminiSchemaToJsonSchema(v)]));
+    if (Array.isArray((node as { required?: unknown }).required)) out.required = (node as { required: unknown[] }).required;
+    out.additionalProperties = false;
+  } else if (type === "array") {
+    out.type = "array";
+    if (node.items) out.items = geminiSchemaToJsonSchema(node.items);
+  } else if (type) {
+    out.type = (node as { nullable?: boolean }).nullable === true ? [type, "null"] : type;
+  }
+  return out;
+}
+
+export function nativeDeepReadStructuringJsonSchema(): Record<string, unknown> {
+  const base = JSON.parse(JSON.stringify(NATIVE_DEEP_READ_RESPONSE_SCHEMA)) as NativeResponseSchemaNode;
+  const shot = base.properties!.shots!.items!;
+  shot.properties!.craftReadZh = { type: "STRING", maxLength: 60, description: "手法·用意与预期效果，可选，全集最多 30 条" };
+  base.properties!.excludedAdRanges = { type: "ARRAY", items: { type: "OBJECT", properties: { startSec: { type: "NUMBER" }, endSec: { type: "NUMBER" } }, required: ["startSec", "endSec"] } as NativeResponseSchemaNode };
+  base.properties!.classificationProseZh = {
+    type: "OBJECT",
+    properties: Object.fromEntries(["emotionZh", "narrativeZh", "performanceZh", "audiovisualZh", "audienceZh"].map((k) => [k, { type: "STRING", maxLength: 200 }])),
+  } as NativeResponseSchemaNode;
+  base.properties!.templateTitleZh = { type: "STRING", maxLength: 60 };
+  return geminiSchemaToJsonSchema(base);
+}
+
+export const NATIVE_DEEP_READ_STRUCTURING_JSON_SCHEMA_NAME = "native_structuring_card";
+
+/**
+ * 0905 用户拍板的整形分流链（按批次序号，0 起；单批＝第 1 批）：
+ * Qwen 首发：第 1 批 北京 → EvoLink → OpenRouter；第 2 批 新加坡 → OpenRouter → EvoLink（两路都挂时 OpenRouter/EvoLink 各接一批真并发）。
+ * GLM 首发：各批一律 OpenRouter → EvoLink → Qwen（第 1 批 北京→新加坡，第 2 批 新加坡→北京）；用户 0905「并行走 OpenRouter」。
+ * 任一档 25 分钟（Qwen）/15 分钟（GLM）不回即切下一档，不做 20 秒重试轮。
+ */
+export function nativeDeepReadStructuringGatewayOrder(
+  policy: "structuring_chain" | "structuring_chain_qwen_first",
+  batchOrdinal: number,
+): readonly GlmGatewayName[] {
+  const odd = batchOrdinal % 2 === 1;
+  if (policy === "structuring_chain_qwen_first") {
+    return odd ? ["plan_sg_qwen", "openrouter", "evolink_glm"] : ["plan_bj_qwen", "evolink_glm", "openrouter"];
+  }
+  // 0905 用户拍板「并行走 OpenRouter」：GLM 模式所有批次首发 OpenRouter（Z.AI 官方，并发稳），EvoLink 兜底，两档败切 Qwen
+  return odd ? ["openrouter", "evolink_glm", "plan_sg_qwen", "plan_bj_qwen"] : ["openrouter", "evolink_glm", "plan_bj_qwen", "plan_sg_qwen"];
+}
+
 /** 保留基础数组/对象结构，分片数值与分类要求写入描述；返回后的质量门禁不变。 */
 export function buildNativeDeepReadResponseSchema(context: NativeDeepReadSegmentContext): Record<string, unknown> {
   if (!Number.isFinite(context.startSec) || !Number.isFinite(context.endSec)
@@ -1433,7 +1491,7 @@ export function nativeDeepReadFrozenContractSha256(): string {
  * 改毕即**重新冻结**（`NATIVE_DEEP_READ_KEY_SHOT_WINDOW_SEC`、两档必填字段表、提示词两档说明与本摘要一起冻结，再改需用户授权）。
  * 同时整形 maxTokens 退回 131,072、链序 structuring_chain（用户 0905 拍板）。 */
 /** 0905 用户重新授权：整形链改五档逐档 30 分钟切换 + maxTokens 262K，冻结集合随之换代（只作废整形批次缓存，不动读片分片缓存）。 */
-export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "f935285f528d48a50b948545a1c5ce7cd0986a184e3f5873c10837a7f09fb527" as const;
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "3642723bbe094d97333bb0e890223f1ed7b9cfe464823094de6c05604d0c9eac" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
   const actual = nativeDeepReadFrozenContractSha256();
@@ -3731,7 +3789,17 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE = "openrouter_glm_structurin
  */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`;
 /** 开始/失败回执的人话链路标签（0905：用户看了几百次「z-ai/glm-5.3」以为一直走 OpenRouter）。 */
-export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 EvoLink → OpenRouter → Qwen 北京 → 新加坡 → OpenRouter（每档 30 分钟）";
+export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 各批并行首发 OpenRouter → EvoLink → Qwen 北京 / 新加坡（GLM 单档 15 分钟 · Qwen 25 分钟）";
+export const NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL = "Qwen3.8-Max 严格 schema · 第1批 北京→EvoLink→OpenRouter · 第2批 新加坡→OpenRouter→EvoLink（Qwen 单档 25 分钟 · GLM 15 分钟）";
+/** 面板「整形模型」开关 → 链策略：默认 Qwen 首发；只有明确选 GLM-5.3 才走 GLM 首发（0905 用户拍板）。 */
+export function nativeDeepReadStructuringPolicyForModel(
+  model: ManhuaNativeStructuringModelId | undefined,
+): "structuring_chain" | "structuring_chain_qwen_first" {
+  return model === "glm-5.3" ? "structuring_chain" : "structuring_chain_qwen_first";
+}
+export function nativeDeepReadStructuringStartedLabel(policy: "structuring_chain" | "structuring_chain_qwen_first"): string {
+  return policy === "structuring_chain_qwen_first" ? NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL : NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL;
+}
 /** 完成回执按实际网关写人话名，面板一眼看出这一发走的是哪家。 */
 /** 整形链可接受的网关集合（缓存校验与通道锁共用）。 */
 export const STRUCTURING_GATEWAYS: ReadonlySet<string> = new Set<string>([
@@ -3788,13 +3856,21 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG = deepFreezeNativeContract(
   timeoutMs: GLM_STRUCTURING_TIMEOUT_MS,
   temperature: NATIVE_DEEP_READ_GLM_STRUCTURING_TEMPERATURE,
   reasoningEffort: NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT,
+  // 0905 用户令：Qwen 套餐档思考上限 32,768（第 5 集实测每批思考 12K–18K，只拦失控长考不伤正常发）
+  thinkingBudget: 32_768,
+  // 0905 用户拍板：每批 4 片，Qwen 两档单档 25 分钟不回就切下一档（实弹 4 片 15 分钟）；GLM 档仍 timeoutMs
+  gatewayTimeoutMsOverrides: {
+    plan_bj_qwen: 25 * 60_000, plan_sg_qwen: 25 * 60_000,
+    // 0905 用户令：GLM 两档作兜底只给 15 分钟（实弹 4 片 7–9 分钟）
+    evolink_glm: 15 * 60_000, openrouter: 15 * 60_000,
+  } as const,
   requireParameters: true,
   requireFinishReasonStop: true,
 } as const);
 
 /**
  * 0905 用户令（推翻 0902「恒定 EvoLink 首发」）：并发批次必须分到不同通道真并行——
- * 同通道有租约，两批都首发 EvoLink 就是排队＝串行（0904 夜实测第二批 21 分钟即此）。
+ * 同通道租约已于 0905 拆掉（bailianChat），首发分流只为避免同一供应商被两份同时压满（0904 夜实测第二批 21 分钟即同档排队）。
  * 按整形开关取链首两档轮流首发；失败仍由网关层按链序逐档切换，GLM 两档败即到 Qwen（反之亦然）。
  */
 const structuringRoundRobin = new Map<string, number>();
@@ -4220,6 +4296,8 @@ export async function invokeNativeDeepReadGlmStructuring(
     system: prompt.system,
     user: prompt.user,
     ...NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG,
+    // 只在 Qwen 套餐档生效（bailianChat 按网关决定），GLM 档照旧 json_object
+    responseJsonSchema: { name: NATIVE_DEEP_READ_STRUCTURING_JSON_SCHEMA_NAME, schema: nativeDeepReadStructuringJsonSchema() },
     // 整形开关只改链序（首发哪家），其余冻结参数原样
     gatewayPolicy: context?.gatewayPolicy ?? NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG.gatewayPolicy,
   };
@@ -4263,6 +4341,9 @@ export async function invokeNativeDeepReadGlmStructuring(
       store.assertRawResponseSaved();
       raw = parseJsonObject(content);
     },
+    onGatewayFallback: context?.onGatewayFallback,
+    onStreamProgress: context?.onStreamProgress,
+    gatewayOrder: context?.gatewayOrder as GlmGatewayName[] | undefined,
   });
   // 通道锁：只接受整形链五档（GLM 两档 + Qwen 三档）；判据复用 bailianChat 的单一真源。
   if (!STRUCTURING_GATEWAYS.has(response.gateway) || !raw) {
@@ -5844,9 +5925,7 @@ async function executeNativeDeepReadBatch(
       let glmEvidence: NativeDeepReadGlmEvidence | undefined;
       const glmEvidenceCallIds: string[] = [];
       const canCacheStructuring = Boolean(params.segmentCacheSeriesKey && episode.cacheSourceDigest);
-      const structuringGatewayPolicy = params.structuringModel === "qwen3.8-max"
-        ? "structuring_chain_qwen_first" as const
-        : "structuring_chain" as const;
+      const structuringGatewayPolicy = nativeDeepReadStructuringPolicyForModel(params.structuringModel);
       const glmStructure = async (input: {
         prompt: ReturnType<typeof buildNativeDeepReadGlmStructuringPrompt>;
         videoCount: number;
@@ -5854,6 +5933,8 @@ async function executeNativeDeepReadBatch(
         rows: ReadonlyArray<Record<string, unknown>>;
         /** 面板标签：第几批整形，让用户看得出是第几次 */
         labelZh?: string;
+        /** 0905 用户拍板：批次序号决定链序（0 起）；单批＝第 1 批 */
+        batchOrdinal?: number;
       }): Promise<NativeDeepReadGlmStructuringResult> => {
         const callId = canCacheStructuring
           ? nativeDeepReadStructuredBatchCallId({
@@ -5871,7 +5952,7 @@ async function executeNativeDeepReadBatch(
           await emitVisualModelReceipt({
             callId,
             // 0905：开始行明说链路顺序；完成/失败行改记实际网关，面板不再把 EvoLink 显示成 OpenRouter
-            model: NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL,
+            model: nativeDeepReadStructuringStartedLabel(structuringGatewayPolicy),
             route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
             stage: "visual_parse",
             status: "started",
@@ -5889,7 +5970,38 @@ async function executeNativeDeepReadBatch(
             { seriesKey: params.segmentCacheSeriesKey, sourceDigest: episode.cacheSourceDigest,
               episodeIndex: episode.episodeIndex, batchRequestId: episodeRequestId, callId,
               recoverExisting: canCacheStructuring, onBeforePaidCall: emitPaidCallStarted,
-              gatewayPolicy: structuringGatewayPolicy },
+              gatewayPolicy: structuringGatewayPolicy,
+              gatewayOrder: nativeDeepReadStructuringGatewayOrder(structuringGatewayPolicy, input.batchOrdinal ?? 0),
+              // 0905 用户令「总不能傻等」：流式心跳，同 callId 更新 started 行「X 档 · 已收 N KB · M 秒」
+              onStreamProgress: async (info) => {
+                if (startedAt === undefined) return;
+                await emitVisualModelReceipt({
+                  callId,
+                  model: `${glmGatewayDisplayLabel(info.gateway)} · 已收 ${(info.receivedBytes / 1024).toFixed(0)}KB · ${Math.round(info.elapsedMs / 1000)} 秒`,
+                  route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
+                  stage: "visual_parse",
+                  status: "started",
+                  batchRequestId: episodeRequestId,
+                  episodeIndexes: [episode.episodeIndex],
+                  videoCount: input.videoCount,
+                  labelZh: input.labelZh,
+                }, params.onModelReceipt);
+              },
+              // 0905：换档也要在面板看得见——同 callId 再发一条 started 回执，行文改成「X 档失败，切下一档」
+              onGatewayFallback: async (info) => {
+                if (startedAt === undefined) return;
+                await emitVisualModelReceipt({
+                  callId,
+                  model: `${glmGatewayDisplayLabel(info.gateway)} 失败（${String(info.detail || info.outcome).slice(0, 60)}），切下一档重跑`,
+                  route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
+                  stage: "visual_parse",
+                  status: "started",
+                  batchRequestId: episodeRequestId,
+                  episodeIndexes: [episode.episodeIndex],
+                  videoCount: input.videoCount,
+                  labelZh: input.labelZh,
+                }, params.onModelReceipt);
+              } },
           );
           glmEvidence = structured.evidence;
           if (structured.evidence?.callId && !glmEvidenceCallIds.includes(structured.evidence.callId)) {
@@ -5949,7 +6061,7 @@ async function executeNativeDeepReadBatch(
           }
           await emitVisualModelReceipt({
             callId,
-            model: NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL,
+            model: nativeDeepReadStructuringStartedLabel(structuringGatewayPolicy),
             route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
             stage: "visual_parse",
             status: "failed",
@@ -6007,6 +6119,7 @@ async function executeNativeDeepReadBatch(
         rows: ReadonlyArray<Record<string, unknown>>;
         fallbackRows: ReadonlyArray<Record<string, unknown>>;
         labelZh: string;
+        batchOrdinal?: number;
       }): Promise<NativeDeepReadGlmStructuringResult | { raw: Record<string, unknown>; localFallback: true }> => {
         try {
           return await glmStructure({
@@ -6015,6 +6128,7 @@ async function executeNativeDeepReadBatch(
             segmentIndexes: input.segmentIndexes,
             rows: input.rows,
             labelZh: input.labelZh,
+            batchOrdinal: input.batchOrdinal,
           });
         } catch (error) {
           // 只有“两条供应商都没有交付可消费结果”才能走本地整形。
@@ -6086,8 +6200,9 @@ async function executeNativeDeepReadBatch(
         });
       };
       const structuredEpisodeRaw = async (): Promise<Record<string, unknown>> => {
-        // 0905 用户拍板 5：29 片＝6 组 6 次 GLM；5 片一批实测输出 120K，131K 内也安全，不依赖 262K 是否真生效
-        const maxRawSegmentsPerBatch = 5;
+        // 0905 用户改回 4：5 片一批单次输出 120K 贴 131K 上限、几万字 JSON 更容易丢符号；
+        // 4 片一批输出 ≈90K 更稳。批次数＝片数÷4 向上取整后均分：8→4+4、9→3+3+3、29→8 组（5 个 4 + 3 个 3）
+        const maxRawSegmentsPerBatch = 4;
         const allSegmentIndexes = episode.segments.map((_, index) => index);
         if (segmentCount <= maxRawSegmentsPerBatch) {
           const cached = await readCachedStructuring(allSegmentIndexes, glmStructuringInputs, "最终整形");
@@ -6126,7 +6241,7 @@ async function executeNativeDeepReadBatch(
           groups.push(Array.from({ length: size }, (_, offset) => start + offset));
           start += size;
         }
-        const groupRows = await Promise.all(groups.map(async (segmentIndexes) => {
+        const groupRows = await Promise.all(groups.map(async (segmentIndexes, batchOrdinal) => {
           // 单片无需再做一次中间GLM；直接作为一张已结构化分段卡进入确定性拼接。
           if (segmentIndexes.length === 1) return completeRawSegments[segmentIndexes[0]!]!;
           const groupInputs = segmentIndexes.map((index) => completeRawSegments[index]!);
@@ -6156,6 +6271,7 @@ async function executeNativeDeepReadBatch(
             rows: groupInputs,
             fallbackRows: groupCanonicalRows,
             labelZh: `第${episode.episodeIndex}集第${segmentIndexes[0]! + 1}—${segmentIndexes.at(-1)! + 1}片批次整形`,
+            batchOrdinal,
           });
           result.raw = unwrapNativeDeepReadStructuredAnswerEnvelope(result.raw);
           assertNativeDeepReadShotObservationsPreserved(groupInputs, result.raw);

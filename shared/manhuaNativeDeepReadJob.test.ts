@@ -115,7 +115,7 @@ describe("原生精读任务墙钟", () => {
       segmentSeconds: 300,
       videoFps: 12,
       readModel: "gemini-3.1-pro-preview",
-      structuringModel: "glm-5.3",
+      structuringModel: "qwen3.8-max",
       seriesKey: undefined,
       learnLlm: "gpt",
     });

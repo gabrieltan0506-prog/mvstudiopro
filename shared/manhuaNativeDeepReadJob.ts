@@ -43,12 +43,13 @@ export function parseNativeDeepReadModel(value: unknown): ManhuaNativeDeepReadMo
 }
 
 /** 0905 用户令：整形模型可选 GLM-5.3（默认）或 Qwen3.8-Max；两者互为兜底，只改首发链序。 */
-export const MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS = ["glm-5.3", "qwen3.8-max"] as const;
+export const MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS = ["qwen3.8-max", "glm-5.3"] as const;
 export type ManhuaNativeStructuringModelId = (typeof MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS)[number];
-export const MANHUA_NATIVE_STRUCTURING_MODEL = "glm-5.3" as const;
+/** 0905 用户拍板：默认 Qwen3.8-Max（套餐档 strict schema 真约束），GLM 为兜底。 */
+export const MANHUA_NATIVE_STRUCTURING_MODEL = "qwen3.8-max" as const;
 export const MANHUA_NATIVE_STRUCTURING_MODEL_LABELS: Record<ManhuaNativeStructuringModelId, string> = {
-  "glm-5.3": "GLM-5.3（EvoLink / OpenRouter 分流，两档败切 Qwen）",
-  "qwen3.8-max": "Qwen3.8-Max（北京 / 新加坡套餐分流，两档败回 GLM）",
+  "qwen3.8-max": "Qwen3.8-Max（北京 / 新加坡套餐分流·严格 schema，两档败回 GLM）",
+  "glm-5.3": "GLM-5.3（各批并行首发 OpenRouter，EvoLink 兜底，两档败切 Qwen）",
 };
 export function parseNativeStructuringModel(value: unknown): ManhuaNativeStructuringModelId {
   if (value === undefined || value === null || value === "") return MANHUA_NATIVE_STRUCTURING_MODEL;
