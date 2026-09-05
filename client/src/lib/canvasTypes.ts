@@ -1,4 +1,5 @@
 import type { LucideIcon } from "lucide-react";
+import { normalizeManhuaTimelineOrder } from "@shared/manhuaEditOrder";
 import { Clapperboard, FileText, Image as ImageIcon, LayoutTemplate, Video } from "lucide-react";
 import type { ManhuaClipQualityReport } from "@shared/manhuaClipQuality";
 import {
@@ -259,6 +260,7 @@ export type CanvasBlock = {
     outSec: number;
     shotPieces?: Array<{
       shotIndex: number;
+      timelineOrder?: number;
       trimInSec: number;
       trimOutSec: number;
       durationSec: number;
@@ -562,6 +564,7 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
         ? t.shotPieces
             .map((p) => ({
               shotIndex: Math.floor(Number(p?.shotIndex) || 0),
+              ...(p?.timelineOrder !== undefined ? { timelineOrder: normalizeManhuaTimelineOrder(p.timelineOrder) } : {}),
               trimInSec: Number(p?.trimInSec),
               trimOutSec: Number(p?.trimOutSec),
               durationSec: Number(p?.durationSec) || 0,

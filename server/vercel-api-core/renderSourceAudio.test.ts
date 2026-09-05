@@ -31,6 +31,7 @@ import {
   resolveSourceTrim,
   resolveSourceVideoFacts,
 } from "./renderSourceAudio";
+import { buildManhuaAssemblePlan } from "../../shared/manhuaFinalAssemble.js";
 
 const exec = promisify(execFile);
 const available = ["ffmpeg", "ffprobe"].every(
@@ -256,6 +257,33 @@ describe.skipIf(!available)(
         still,
       }))
         media.sources.set(`https://test.invalid/${key}`, value);
+    }, 30_000);
+
+    it("粗剪跨段重排同时改变真实画面和原声，不仅是请求数组变了", async () => {
+      const plan = buildManhuaAssemblePlan([
+        { episodeIndex: 1, segmentIndex: 1, clipUrl: "https://test.invalid/first", shotPieces: [
+          { shotIndex: 1, timelineOrder: 3, trimInSec: 0, trimOutSec: 1 },
+          { shotIndex: 2, timelineOrder: 1, trimInSec: 1, trimOutSec: 2 },
+        ] },
+        { episodeIndex: 1, segmentIndex: 2, clipUrl: "https://test.invalid/last", shotPieces: [
+          { shotIndex: 3, timelineOrder: 2, trimInSec: 0, trimOutSec: 1 },
+        ] },
+      ]);
+      const result = await renderSourceAudioFinal({ sceneVideos: plan.sceneVideos, transition: "cut" }, { width: 160, height: 90 }, await workDir());
+      const durations = await inspect(result);
+      expect(durations.video).toBeCloseTo(3, 1);
+      expect(Math.abs(durations.video - durations.audio)).toBeLessThan(0.06);
+      for (const [at, expectedHz, unexpectedHz] of [[0.25, 660, 440], [1.25, 880, 660], [2.25, 440, 880]]) {
+        const sound = await audioWindow(result, at!);
+        expect(sound.magnitude(expectedHz!)).toBeGreaterThan(0.03);
+        expect(sound.magnitude(expectedHz!)).toBeGreaterThan(sound.magnitude(unexpectedHz!) * 8);
+      }
+      for (const [at, channel] of [[0.25, 0], [1.25, 1], [2.25, 0]]) {
+        const { stdout } = await exec("ffmpeg", ["-v", "error", "-ss", String(at), "-i", result, "-frames:v", "1", "-vf", "scale=1:1", "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"], { encoding: "buffer" });
+        expect(stdout.length).toBe(3);
+        expect(stdout[channel!]!).toBeGreaterThan(60);
+        expect(stdout[channel!]!).toBeGreaterThan(stdout[1 - channel!]! * 3);
+      }
     }, 30_000);
 
     it("手动裁切取到后半段真实原声；有声、无声、不同帧率片段拼接后不串位", async () => {

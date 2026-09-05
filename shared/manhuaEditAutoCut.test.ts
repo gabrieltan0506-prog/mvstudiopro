@@ -25,6 +25,30 @@ const directorPrompt = `
 `;
 
 describe("manhuaEditAutoCut", () => {
+  it("交换粗剪顺序不会交换源片镜窗，细剪仍切原镜头", () => {
+    const shots = [
+      { shotIndex: 2, durationSec: 6 },
+      { shotIndex: 1, durationSec: 4 },
+    ];
+    const fineCutByShot = {
+      1: { inSec: 1, outSec: 4 },
+      2: { inSec: 0, outSec: 5 },
+    };
+    const trim = buildManhuaManualClipEditTrim({
+      videoDurationSec: 20,
+      shots,
+      fineCutByShot,
+    });
+    expect(trim.shotPieces).toEqual([
+      { shotIndex: 2, trimInSec: 8, trimOutSec: 18, durationSec: 10 },
+      { shotIndex: 1, trimInSec: 2, trimOutSec: 8, durationSec: 6 },
+    ]);
+    expect(restoreManhuaFineCutsFromShotPieces({
+      videoDurationSec: 20, shots, shotPieces: trim.shotPieces,
+    })).toEqual(fineCutByShot);
+    expect(shots.map((shot) => shot.shotIndex)).toEqual([2, 1]);
+  });
+
   it("trims head/tail silence from speech envelope", () => {
     const r = suggestManhuaFineCutFromSpeechRegions(
       [
@@ -37,6 +61,17 @@ describe("manhuaEditAutoCut", () => {
     expect(r.trim.inSec).toBeGreaterThanOrEqual(0.5);
     expect(r.trim.outSec).toBeLessThanOrEqual(8.5);
     expect(r.trim.outSec - r.trim.inSec).toBeGreaterThanOrEqual(2);
+  });
+
+  it("段内镜标签只有局部序号时，重排仍按原镜号映射导戏时间窗", () => {
+    const wins = resolveManhuaShotWindowsForSegment({
+      directorPrompt,
+      videoDurationSec: 12,
+      shots: [6, 4, 5].map((shotIndex) => ({ shotIndex, durationSec: 4 })),
+    });
+    expect(wins.map((win) => [win.shotIndex, win.winStart, win.winEnd, win.source])).toEqual([
+      [4, 0, 4, "cue"], [5, 4, 8, "cue"], [6, 8, 12, "cue"],
+    ]);
   });
 
   it("falls back to full length when no speech", () => {

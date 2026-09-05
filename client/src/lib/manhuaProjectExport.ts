@@ -161,6 +161,7 @@ export type ManhuaDockAssembleClip = {
   trimOutSec?: number;
   shotPieces?: Array<{
     shotIndex: number;
+    timelineOrder?: number;
     trimInSec: number;
     trimOutSec: number;
     durationSec: number;

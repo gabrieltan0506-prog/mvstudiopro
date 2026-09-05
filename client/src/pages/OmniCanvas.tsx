@@ -308,7 +308,7 @@ import {
   saveManhuaShotContinuityPrefs,
   type ManhuaShotContinuityPrefs,
 } from "@shared/manhuaShotContinuity";
-import { MANHUA_ASSEMBLE_MUSIC_DURATION_SEC } from "@shared/manhuaFinalAssemble";
+import { buildManhuaAssemblePlan, MANHUA_ASSEMBLE_MUSIC_DURATION_SEC } from "@shared/manhuaFinalAssemble";
 import { buildManhuaAssembleJobInput } from "@shared/manhuaAssembleJobInput";
 import { inspectManhuaAssembleCompleteness } from "@shared/manhuaAssembleCompleteness";
 import ManhuaCharacterGallery from "@/components/ManhuaCharacterGallery";
@@ -3265,6 +3265,7 @@ export default function OmniCanvas() {
         trimOutSec?: number;
         shotPieces?: Array<{
           shotIndex: number;
+          timelineOrder?: number;
           trimInSec: number;
           trimOutSec: number;
           durationSec: number;
@@ -3304,6 +3305,13 @@ export default function OmniCanvas() {
         toast.error("不能把试片或半集导出为整集", {
           description: completeness.hintZh,
         });
+        return;
+      }
+      try {
+        // 无效／半份粗剪顺序在扣费前拒绝，服务端随后再次按同一合同校验。
+        buildManhuaAssemblePlan(ready);
+      } catch {
+        toast.error("剪辑顺序不完整，请在剪辑台重新确认后再合成");
         return;
       }
       setAssembleBusy(true);
@@ -9512,10 +9520,11 @@ export default function OmniCanvas() {
                       description: "可在成片坞勾选并参与长片合成。",
                     });
                   }}
-                  onApplyClipEditTrim={(clipBlockId, trim) => {
+                  onApplyClipEditTrims={(updates) => {
                     setBlocks((prev) => {
+                      const trimByBlock = new Map(updates.map((update) => [update.clipBlockId, update.trim]));
                       const next = prev.map((b) =>
-                        b.id === clipBlockId ? { ...b, manhuaEditTrim: trim } : b,
+                        trimByBlock.has(b.id) ? { ...b, manhuaEditTrim: trimByBlock.get(b.id) } : b,
                       );
                       setEdges((eds) => {
                         saveCanvasState(next, eds);

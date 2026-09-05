@@ -19,6 +19,17 @@ const pipelineSource = readFileSync(
 );
 
 describe("漫剧首10秒质检与视频编辑接线", () => {
+  it("两个粗剪入口当场批量写回画布，合成扣费前检查同一顺序合同", () => {
+    expect(workbenchSource.match(/onReorder=\{handleRoughShotReorder\}/g)).toHaveLength(2);
+    expect(workbenchSource).not.toContain("onReorder={setRoughShotOrder}");
+    expect(workbenchSource).toContain("persistClipEdits(fineCutByShot, order)");
+    expect(workbenchSource).toContain("onApplyClipEditTrims(updates)");
+    expect(workbenchSource).toContain("latestEditSourceIdentity.current !== sourceIdentity");
+    expect(workbenchSource).toContain("[clip.shotIndex, clip.durationSec, clip.order]");
+    expect(workbenchSource).toContain("onlyShotIndex == null || legacyOrderNeedsPersist");
+    expect(omniSource).toContain("onApplyClipEditTrims={(updates)");
+    expect(omniSource.indexOf("buildManhuaAssemblePlan(ready)")).toBeLessThan(omniSource.indexOf('chargeWorkflowStepMutation.mutateAsync({ step: "music"'));
+  });
   it("forces the pilot through the real clip pipeline with one submission", () => {
     expect(omniSource).toContain("compileManhuaPilotPrompt(pilotClip.prompt)");
     expect(omniSource).toContain("maxRetries: opts?.pilotRun ? 0");

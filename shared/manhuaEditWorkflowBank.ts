@@ -3,6 +3,8 @@
  * 前台只露中性阶段名；与工厂出片、成片坞互补：本库定义粗剪轨上的阶段与检查项。
  */
 
+import { normalizeManhuaRoughShotOrder } from "./manhuaEditOrder.js";
+
 export type ManhuaEditStageId =
   | "edit_understand"
   | "edit_rough_cut"
@@ -121,9 +123,7 @@ export function buildRoughCutClipsFromShots(
     order?: number[];
   },
 ): ManhuaRoughCutClip[] {
-  const order = opts?.order?.length
-    ? opts.order
-    : shots.map((s) => s.index);
+  const order = normalizeManhuaRoughShotOrder(shots.map((s) => s.index), opts?.order);
   const byIndex = new Map(shots.map((s) => [s.index, s]));
   return order
     .map((idx, i) => {

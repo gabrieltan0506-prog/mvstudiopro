@@ -30,6 +30,8 @@ export type ManhuaAutoCutSuggestResult = {
 /** 写入成片节点、供合成 ffmpeg 裁切的绝对秒片 */
 export type ManhuaAssembleShotPiece = {
   shotIndex: number;
+  /** 同集全局播放位置；不参与源片秒位计算。 */
+  timelineOrder?: number;
   trimInSec: number;
   trimOutSec: number;
   durationSec: number;
@@ -133,7 +135,8 @@ export function resolveManhuaShotWindowsForSegment(params: {
   shots: Array<{ shotIndex: number; durationSec: number }>;
 }): ManhuaShotTimeWindow[] {
   const videoDur = Math.max(0.5, Number(params.videoDurationSec) || 0.5);
-  const shots = params.shots.filter((s) => s.shotIndex >= 1);
+  // 镜号标识源片中的原始位置；粗剪数组顺序只决定输出顺序，不能重分配物理镜窗。
+  const shots = params.shots.filter((s) => s.shotIndex >= 1).sort((a, b) => a.shotIndex - b.shotIndex);
   if (!shots.length) return [];
 
   const summary = parseManhuaClipDirectorCardSummary(params.directorPrompt);

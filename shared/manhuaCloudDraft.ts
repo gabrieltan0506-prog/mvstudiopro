@@ -2,6 +2,7 @@
  * 漫剧云端草稿：分集剧本 + 静帧；刻意不落成片视频。
  */
 
+import { normalizeManhuaTimelineOrder } from "./manhuaEditOrder.js";
 import {
   buildManhuaWriterSession,
   migrateManhuaWriterTemplateId,
@@ -74,6 +75,7 @@ export type ManhuaCloudDraftCanvasBlock = {
     outSec: number;
     shotPieces?: Array<{
       shotIndex: number;
+      timelineOrder?: number;
       trimInSec: number;
       trimOutSec: number;
       durationSec: number;
@@ -167,6 +169,7 @@ function sanitizeManhuaEditTrim(raw: unknown): ManhuaCloudDraftCanvasBlock["manh
           const trimOutSec = Number(p.trimOutSec);
           return {
             shotIndex: Math.floor(Number(p.shotIndex) || 0),
+            ...(p.timelineOrder !== undefined ? { timelineOrder: normalizeManhuaTimelineOrder(p.timelineOrder) } : {}),
             trimInSec,
             trimOutSec,
             durationSec: Number(p.durationSec) || Math.max(0, trimOutSec - trimInSec),

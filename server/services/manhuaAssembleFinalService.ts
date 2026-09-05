@@ -5,6 +5,7 @@
 import { put } from "@vercel/blob";
 import { renderWorkflowFinalVideo } from "../vercel-api-core/render.js";
 import {
+  MANHUA_ASSEMBLE_INVALID_TIMELINE_ORDER_CODE,
   MANHUA_ASSEMBLE_MUSIC_DURATION_SEC,
   buildManhuaAssemblePlan,
   buildManhuaSunoPrompt,
@@ -146,6 +147,16 @@ function deriveMusicError(status: string, payload: any) {
   );
 }
 
+function invalidTimelineOrderError(): Error & { code: string } {
+  const error = new Error(
+    "粗剪顺序不完整或重复，请重新确认本集镜头顺序"
+  ) as Error & {
+    code: string;
+  };
+  error.code = MANHUA_ASSEMBLE_INVALID_TIMELINE_ORDER_CODE;
+  return error;
+}
+
 export type ManhuaAssembleFinalInput = {
   clips?: ManhuaAssembleClipInput[];
   sceneVideos?: ManhuaAssembleSceneVideo[];
@@ -205,18 +216,45 @@ export async function runManhuaAssembleFinal(
       const piecesRaw = Array.isArray((row as { shotPieces?: unknown[] }).shotPieces)
         ? (row as { shotPieces: unknown[] }).shotPieces
         : [];
+      const orderedPieceContract = piecesRaw.some(
+        (piece) =>
+          Boolean(piece) &&
+          typeof piece === "object" &&
+          Object.prototype.hasOwnProperty.call(piece, "timelineOrder")
+      );
       const shotPieces = piecesRaw
         .map((p) => {
-          const o = p as {
-            shotIndex?: number;
-            trimInSec?: number;
-            trimOutSec?: number;
-            durationSec?: number;
-          };
+          const o =
+            p && typeof p === "object"
+              ? (p as {
+                  shotIndex?: number;
+                  timelineOrder?: number;
+                  trimInSec?: number;
+                  trimOutSec?: number;
+                  durationSec?: number;
+                })
+              : {};
+          const hasTimelineOrder = Object.prototype.hasOwnProperty.call(o, "timelineOrder");
+          const timelineOrder = o?.timelineOrder;
+          const shotIndex = Math.floor(Number(o?.shotIndex) || 0);
+          const trimInSec = Number(o?.trimInSec);
+          const trimOutSec = Number(o?.trimOutSec);
+          const validPiece = shotIndex >= 1 && Number.isFinite(trimInSec) &&
+            Number.isFinite(trimOutSec) && trimOutSec - trimInSec >= 0.5;
+          if (
+            (hasTimelineOrder &&
+              (typeof timelineOrder !== "number" ||
+                !Number.isInteger(timelineOrder) ||
+                timelineOrder < 1)) ||
+            (orderedPieceContract && (!hasTimelineOrder || !validPiece))
+          ) {
+            throw invalidTimelineOrderError();
+          }
           return {
-            shotIndex: Math.floor(Number(o?.shotIndex) || 0),
-            trimInSec: Number(o?.trimInSec),
-            trimOutSec: Number(o?.trimOutSec),
+            shotIndex,
+            ...(hasTimelineOrder ? { timelineOrder } : {}),
+            trimInSec,
+            trimOutSec,
             durationSec: Number(o?.durationSec) || undefined,
           };
         })
