@@ -698,7 +698,9 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
       changeNotesByIndex[i] = "";
     }
   }
-  // 0905 用户令：报告是商品，不列全镜；镜头表只保留重点时刻所在镜（剧情亮点/转折）与运镜/剪辑技巧镜
+  // 🔒 0905 用户冻结（报告呈现契约）：镜头表只列重点镜（剧情亮点/转折 + 运镜/剪辑技巧）、
+  // 声音事件 11 项全中文、页脚「逐帧精炼审读整理，仅作学习拆解，影视版权归原出品方所有」。
+  // 改任何一项需用户重新授权，与读片两档契约（NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256）同级。
   let highlightShotCount = 0;
   const shotRows = shots.map((shot, shotIndex) => {
     const startSec = Number(shot.startSec) || 0;
