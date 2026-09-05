@@ -172,7 +172,11 @@ import { applyShotAnglesFromText } from "@shared/manhuaShotAnglePersist";
 import { applyShotDialoguesFromText } from "@shared/manhuaShotDialoguePersist";
 import { mergeManhuaDerivedClipPrompt } from "@shared/manhuaClipUserSupplement";
 import { extractManhuaSceneHintFromPrompt } from "@shared/manhuaClipDialogueTimeline";
-import { mergeManhuaMediaVersions } from "./manhuaMediaVersions";
+import {
+  clearManhuaVideoEditOperation,
+  isManhuaVideoEditBlock,
+  mergeManhuaMediaVersions,
+} from "./manhuaMediaVersions";
 import { resolvePreviousSegmentClipUrl } from "@shared/manhuaClipContinuity";
 import {
   planManhuaKeyartEditFusion,
@@ -1458,6 +1462,8 @@ export function applyFactoryPrefsToBlocks(
       };
     }
     if (b.id.startsWith("clip-")) {
+      // 编辑使用已选原片和本次指令；生成偏好清洗会吞掉指令边界，不能再次改写。
+      if (isManhuaVideoEditBlock(b)) return b;
       // 禁止 prefs 回灌古风板/规则墙/画风废话；图锁了画风就锁了
       const cleaned = stripManhuaAssetUrlsFromPrompt(
         stripManhuaClipForbiddenBoards(String(b.prompt || "")),
@@ -2396,10 +2402,12 @@ export function ensureManhuaFragmentClips(
     );
     if (existing) {
       // 已有段成片：刷新导戏 prompt（对白锁/@角色），保留已生成成片 URL
+      // 新生成不得继承上一轮编辑指令；本次显式编辑由 preparedTargetById 原样恢复。
+      const generationBase = clearManhuaVideoEditOperation(existing);
       keepSegClipIds.add(existing.id);
       clipBySeg.set(globalSeg, {
-        ...existing,
-        prompt: mergeManhuaDerivedClipPrompt(segPrompt, existing.prompt),
+        ...generationBase,
+        prompt: mergeManhuaDerivedClipPrompt(segPrompt, generationBase.prompt),
         parentId: primary.id,
         refImageUrl: segUrls[0] || mediaUrlOf(primary) || existing.refImageUrl,
         editFusionUrls: segUrls.slice(1).slice(0, 15),
@@ -3992,8 +4000,9 @@ export async function runManhuaDramaFactoryPipeline(opts: {
     );
 
     // 角色卡 / 故事大纲易遇网关抖动（含浏览器 Failed to fetch）：多给两次退避
-    const maxRetries =
-      stage === "bible" || stage === "story"
+    const maxRetries = isManhuaVideoEditBlock(block)
+      ? 0 // 编辑 POST 结果未知时不能自动创建另一单；原片与任务记录仍保留。
+      : stage === "bible" || stage === "story"
         ? Math.min(5, defaultMaxRetries + 2)
         : defaultMaxRetries;
     // 一次 pipeline 操作内自动重试复用同键；用户再次显式运行会创建新的 pipeline 与新键。

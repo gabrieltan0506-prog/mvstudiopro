@@ -17,6 +17,10 @@ const pipelineSource = readFileSync(
   new URL("./canvasDramaStudio.ts", import.meta.url),
   "utf8",
 );
+const freeformSource = readFileSync(
+  new URL("../components/canvas/FreeformCanvas.tsx", import.meta.url),
+  "utf8",
+);
 
 describe("漫剧首10秒质检与视频编辑接线", () => {
   it("两个粗剪入口当场批量写回画布，合成扣费前检查同一顺序合同", () => {
@@ -48,6 +52,12 @@ describe("漫剧首10秒质检与视频编辑接线", () => {
     expect(omniSource).toContain("preparedTargetBlocks: [preparedBlock]");
     expect(pipelineSource).toContain("preservePreparedTargetBlocks");
     expect(pipelineSource).toContain("mergeManhuaMediaVersions");
+    expect(omniSource).toContain("const preparedVideoEdit = isPreparedManhuaVideoEditRun({");
+    expect(omniSource).toMatch(/fragmentShotIndex > 1 &&\s*!preparedVideoEdit/);
+    expect(omniSource).toContain("const retakeBase = clearManhuaVideoEditOperation(hit)");
+    expect(omniSource).toContain("if (!isCanvasProductVideoModel(retakeVideoModel))");
+    expect(omniSource).toContain("seedance25WorkMode: fresh.seedance25WorkMode");
+    expect(freeformSource).toContain("...compiled.videoRunPatch");
   });
 
   it("loads workbench edit state only on episode key changes and guards writes until hydrated", () => {

@@ -4,6 +4,10 @@ import { withFlyHealthGate } from "./flyHealthGate";
 import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "./longJobsFlyOrigin";
 import { probeVideoDurationSec } from "./videoUpscaleApi";
 import { createJobSameOrigin, pollJobUntilTerminal } from "./jobs";
+import {
+  compileManhuaVideoEditPrompt,
+  isManhuaVideoEditBlock,
+} from "./manhuaMediaVersions";
 import { runGeminiScript } from "./omniCanvasApi";
 import {
   compileI2VMotionPrompt,
@@ -1228,6 +1232,29 @@ async function runHappyHorse(
 const MANHUA_VIDEO_FOLLOW_STILL_ZH =
   "【参考静帧】成片画面风格、人物造型、服装与场景材质请直接对齐本段参考静帧；以参考图为准做微动演绎。";
 
+/** 只抽新产物的尾帧供后续工序使用；不把编辑原片的结尾误当成新片首帧。 */
+async function captureManhuaClipResultTail(deps: CanvasRunDeps, blockId: string, url: string) {
+  if (!/^https?:\/\//i.test(url) || !blockId.startsWith("clip-")) return undefined;
+  try {
+    const { frames } = await extractVideoTailFramesFromUrl(url, {
+      frameCount: 1,
+      tailWindowSec: MANHUA_CLIP_TAIL_WINDOW_SEC,
+    });
+    const urls = await toHttpsImageUrls(
+      deps,
+      frames.map((frame) => frame.dataUrl).filter(Boolean),
+    );
+    return urls[urls.length - 1];
+  } catch (error) {
+    console.warn(
+      `[canvasRunBlock] clip lastFrame extract failed · ${
+        error instanceof Error ? error.message.slice(0, 120) : "unknown"
+      }`,
+    );
+    return undefined;
+  }
+}
+
 export function formatCanvasUpstreamPrompt(basePrompt: string, upstreamTexts: string[]): string {
   const trimmed = basePrompt.trim();
   const texts = upstreamTexts.map((t) => t.trim()).filter(Boolean);
@@ -1536,6 +1563,30 @@ export async function runCanvasBlock(
 
   if (block.kind === "video") {
     const ar = block.aspectRatio;
+    if (isManhuaVideoEditBlock(block)) {
+      const access = resolveSeedance25Access({ plan: deps.userPlan, role: deps.userRole });
+      if (!access.allowed) throw new Error(access.message || "当前账号未开放高级视频编辑");
+      // 工厂编辑入口只选择一条原片；旧上游片、静帧、导演板与声线不能自动混入。
+      const source = String(block.seedance25RefVideoUrls?.[0] || block.refVideoUrl || "").trim();
+      if (!/^https?:\/\//i.test(source)) throw new Error("请先选择本次要修改的原片");
+      const editPrompt = compileManhuaVideoEditPrompt(block.prompt);
+      const editSourceDurationSec = (await probeVideoDurationSec(source)) || undefined;
+      const edited = await runSeedanceProductVideo(editPrompt, undefined, ar, {
+        version: "2.5",
+        workMode: "video_edit",
+        videoUrls: [source],
+        duration:
+          editSourceDurationSec ?? parseManhuaClipTargetDurationSec(block.prompt) ?? undefined,
+        editSourceDurationSec,
+        resolution: block.videoResolution,
+        episodeIndex: block.episodeIndex,
+        clipIndex: parseClipIndexFromBlockId(block.id),
+      });
+      return {
+        outputUrl: edited.videoUrl,
+        lastFrameUrl: await captureManhuaClipResultTail(deps, block.id, edited.videoUrl),
+      };
+    }
     const looksLikeVideo = (u?: string) => Boolean(u && /\.(mp4|mov|webm)(\?|$)/i.test(u));
     const continuityVideoUrl =
       block.refVideoUrl ||
@@ -1954,24 +2005,7 @@ export async function runCanvasBlock(
         }
       }
     }
-    let lastFrameUrl: string | undefined;
-    if (url && /^https?:\/\//i.test(url) && block.id.startsWith("clip-")) {
-      try {
-        const { frames } = await extractVideoTailFramesFromUrl(url, {
-          frameCount: 1,
-          tailWindowSec: MANHUA_CLIP_TAIL_WINDOW_SEC,
-        });
-        const raw = frames.map((f) => f.dataUrl).filter(Boolean);
-        const https = await toHttpsImageUrls(deps, raw);
-        lastFrameUrl = https[https.length - 1];
-      } catch (err) {
-        console.warn(
-          `[canvasRunBlock] clip lastFrame extract failed · ${
-            err instanceof Error ? err.message.slice(0, 120) : "unknown"
-          }`,
-        );
-      }
-    }
+    const lastFrameUrl = await captureManhuaClipResultTail(deps, block.id, url);
     return {
       outputUrl: url,
       lastFrameUrl,

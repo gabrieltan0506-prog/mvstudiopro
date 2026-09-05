@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
+import { mergeManhuaMediaVersions } from "@/lib/manhuaMediaVersions";
 import {
   CANVAS_BLOCK_DEFAULT_HEIGHT,
   CANVAS_BLOCK_DEFAULT_WIDTH,
@@ -326,6 +327,10 @@ type FreeformCanvasProps = {
    * 返回 patch 则写入节点后再跑；返回 null 则沿用旧 prompt（自由画布非漫剧节点）。
    */
   compileManhuaRerun?: (block: CanvasBlock) => Promise<{
+    videoRunPatch?: Pick<
+      CanvasBlock,
+      "videoModel" | "seedance25WorkMode" | "seedance25RefVideoUrls" | "refVideoUrl"
+    >;
     prompt: string;
     outputUrl?: undefined;
     outputUrls?: string[];
@@ -1691,6 +1696,7 @@ export default function FreeformCanvas({
           }
           if (compiled?.prompt?.trim()) {
             const patch = {
+              ...compiled.videoRunPatch,
               prompt: compiled.prompt,
               outputUrl: compiled.outputUrl,
               outputUrls: compiled.outputUrls ?? block.outputUrls,
@@ -1763,10 +1769,12 @@ export default function FreeformCanvas({
           status: "done",
           outputText: out.outputText,
           outputUrl: out.outputUrl,
-          outputUrls: out.outputUrls ??
-            (out.outputUrl
-              ? Array.from(new Set([out.outputUrl, ...stashUrls])).slice(0, 8)
-              : stashUrls),
+          outputUrls: blockId.startsWith("clip-")
+            ? mergeManhuaMediaVersions([...(out.outputUrls || []), out.outputUrl], stashUrls)
+            : out.outputUrls ??
+              (out.outputUrl
+                ? Array.from(new Set([out.outputUrl, ...stashUrls])).slice(0, 8)
+                : stashUrls),
           // 手点重跑也要写回尾帧锚点（否则下一段续拍拿不到起幅）。
           // 无条件写入：本次没抽到尾帧时必须清掉旧值——残留 v1 的尾帧会让
           // 下一段拿旧片画面当起幅（审阅结论必须修#5）

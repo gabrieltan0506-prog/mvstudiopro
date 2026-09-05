@@ -34,6 +34,7 @@ describe("漫剧对白与引擎选择真实接线", () => {
   it("人工只编辑独立补充区，系统主体仍可安全重编译", () => {
     expect(workbench).toContain("extractManhuaClipUserSupplement(promptText)");
     expect(workbench).toContain("upsertManhuaClipUserSupplement(promptText, next)");
-    expect(studio).toContain("mergeManhuaDerivedClipPrompt(segPrompt, existing.prompt)");
+    expect(studio).toContain("const generationBase = clearManhuaVideoEditOperation(existing)");
+    expect(studio).toContain("mergeManhuaDerivedClipPrompt(segPrompt, generationBase.prompt)");
   });
 });

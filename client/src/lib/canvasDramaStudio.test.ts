@@ -56,6 +56,7 @@ import {
   type CanvasBlock,
 } from "./canvasTypes";
 import * as canvasRunBlock from "./canvasRunBlock";
+import { applyManhuaVideoEditInstruction } from "./manhuaMediaVersions";
 import type { CanvasRunDeps } from "./canvasRunBlock";
 import {
   MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
@@ -454,6 +455,10 @@ describe("canvasDramaStudio factory", () => {
     const target = clips[1]!;
     const prepared = {
       ...target,
+      prompt: applyManhuaVideoEditInstruction(
+        upsertManhuaClipUserSupplement(target.prompt, "本段袖口保持旧金色"),
+        "只把左侧红色灯笼改为蓝色",
+      ),
       status: "idle" as const,
       outputUrl: undefined,
       outputUrls: [`https://example.com/old-${target.id}.mp4`],
@@ -473,6 +478,16 @@ describe("canvasDramaStudio factory", () => {
       }
       return b;
     });
+    const regeneration = ensureManhuaFragmentClips(ready, ensured.edges, 1, {
+      videoModel: "seedance-2.0-mini",
+    }).blocks.find((b) => b.id === target.id)!;
+    expect(regeneration.videoModel).toBe("seedance-2.0-mini");
+    expect(regeneration.seedance25WorkMode).toBeUndefined();
+    expect(regeneration.refVideoUrl).toBeUndefined();
+    expect(regeneration.seedance25RefVideoUrls).toEqual([]);
+    expect(regeneration.prompt).not.toContain("只把左侧红色灯笼改为蓝色");
+    expect(regeneration.prompt).toContain("本段袖口保持旧金色");
+    expect(regeneration.outputUrls).toEqual(prepared.outputUrls);
     const generatedUrl = `https://example.com/edited-${target.id}.mp4`;
     const runSpy = vi
       .spyOn(canvasRunBlock, "runCanvasBlock")
@@ -517,6 +532,14 @@ describe("canvasDramaStudio factory", () => {
         ensureOptions: { videoModel: "seedance-2.0-mini" },
       });
       expect(runSpy).toHaveBeenCalledTimes(1);
+      expect(runSpy.mock.calls[0]?.[1]).toMatchObject({
+        id: target.id,
+        videoModel: "seedance-2.5",
+        seedance25WorkMode: "video_edit",
+        refVideoUrl: prepared.refVideoUrl,
+        seedance25RefVideoUrls: prepared.seedance25RefVideoUrls,
+        prompt: prepared.prompt,
+      });
       expect(qualityBodies).toHaveLength(1);
       expect(qualityBodies[0]?.videoUrl).toBe(generatedUrl);
       expect(qualityBodies[0]?.shotIndex).toBe(2);
@@ -525,6 +548,36 @@ describe("canvasDramaStudio factory", () => {
         "编辑段通过",
       );
       expect(result.blocks.find((b) => b.id === first.id)?.manhuaClipQuality).toBeUndefined();
+      expect(result.blocks.find((b) => b.id === target.id)?.outputUrls).toEqual([
+        generatedUrl,
+        ...prepared.outputUrls,
+      ]);
+
+      // 网络异常无法证明上游未受理，不能用通用瞬态重试自动创建第二次编辑。
+      runSpy.mockClear().mockRejectedValue(new Error("Failed to fetch"));
+      qualityBodies.length = 0;
+      const failed = await runManhuaDramaFactoryPipeline({
+        deps: { optimizeCopy: async () => "" },
+        blocks: ready,
+        edges: ensured.edges,
+        episodeIndex: 1,
+        untilStage: "clip",
+        forceFromStage: "clip",
+        targetBlockIds: [target.id],
+        preservePreparedTargetBlocks: true,
+        maxRetries: 2,
+        ensureOptions: { videoModel: "seedance-2.0-mini" },
+      });
+      expect(runSpy).toHaveBeenCalledTimes(1);
+      expect(qualityBodies).toEqual([]);
+      expect(failed.blocks.find((b) => b.id === target.id)).toMatchObject({
+        status: "error",
+        error: "Failed to fetch",
+        outputUrls: prepared.outputUrls,
+      });
+      expect(failed.blocks.find((b) => b.id === first.id)?.outputUrl).toBe(
+        `https://example.com/old-${first.id}.mp4`,
+      );
     } finally {
       runSpy.mockRestore();
       globalThis.fetch = previousFetch;

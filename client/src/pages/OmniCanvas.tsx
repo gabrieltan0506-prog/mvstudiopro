@@ -12,7 +12,12 @@ import { manhuaAdvisorMountKey } from "@/lib/manhuaAdvisorSession";
 import { buildManhuaAdvisorProject, type AdvisorSelection } from "@/lib/manhuaAdvisorProject";
 import { MANHUA_ADVISOR_STAGE_LABELS, publishManhuaAdvisorScope } from "@/lib/manhuaAdvisorEntry";
 import type { CanvasBlock, CanvasEdge } from "@/lib/canvasTypes";
-import { defaultCanvasBlock, makeCanvasBlockId, normalizeCanvasBlock } from "@/lib/canvasTypes";
+import {
+  defaultCanvasBlock,
+  isCanvasProductVideoModel,
+  makeCanvasBlockId,
+  normalizeCanvasBlock,
+} from "@/lib/canvasTypes";
 import { runCanvasBlock, runGptImage2, type CanvasRunDeps } from "@/lib/canvasRunBlock";
 import { resolveOpenAiImageLaneForBlockId } from "@shared/openaiImageLane";
 import { copyText } from "@/lib/copyText";
@@ -259,8 +264,10 @@ import {
 import { extractManhuaClipAudio } from "@/lib/manhuaCharacterVoiceApi";
 import {
   applyManhuaVideoEditInstruction,
+  clearManhuaVideoEditOperation,
   mergeManhuaMediaVersions,
 } from "@/lib/manhuaMediaVersions";
+import { isPreparedManhuaVideoEditRun } from "@/lib/manhuaFactoryRunIntent";
 import {
   loadManhuaPilotGateStore,
   saveManhuaPilotGateStore,
@@ -3953,7 +3960,7 @@ export default function OmniCanvas() {
           directorBoardUrlByEpisodeSegment,
           directorBoardMotionOverlayByEpisodeSegment:
             directorBoardMotionOverlayBySegment,
-          videoModel: explicitWriterVideoModel || undefined,
+          videoModel: explicitWriterVideoModel || writerVideoModel || undefined,
         });
         const fresh = ensured.blocks.find((b) => b.id === block.id);
         if (!fresh?.prompt?.trim()) {
@@ -3969,7 +3976,7 @@ export default function OmniCanvas() {
             new Set(
               [block.outputUrl, ...(block.outputUrls || [])].filter(Boolean) as string[],
             ),
-          ).slice(0, 8),
+          ),
           changed: beforePrompt.trim() !== afterPrompt,
         };
         return {
@@ -3977,6 +3984,13 @@ export default function OmniCanvas() {
           changed: compiled.changed,
           beforePrompt,
           afterPrompt,
+          // 与新生成稿同批透传；只改 prompt 会留下上一轮 video_edit 模式和原片绑定。
+          videoRunPatch: {
+            videoModel: fresh.videoModel,
+            seedance25WorkMode: fresh.seedance25WorkMode,
+            seedance25RefVideoUrls: fresh.seedance25RefVideoUrls,
+            refVideoUrl: fresh.refVideoUrl,
+          },
         };
       }
       return null;
@@ -3996,7 +4010,9 @@ export default function OmniCanvas() {
       segmentLookBindings,
       directorBoardUrlByEpisode,
       directorBoardUrlByEpisodeSegment,
+      directorBoardMotionOverlayBySegment,
       explicitWriterVideoModel,
+      writerVideoModel,
     ],
   );
 
@@ -7559,11 +7575,20 @@ export default function OmniCanvas() {
               setEdges(workingEdges);
               saveCanvasState(workingBlocks, workingEdges);
             }
-            // 片段续拍：须挂上一段尾帧/成片；同场景链式深度封顶（超限引导重锚设定板）
+            // 已有原片的局部编辑不是续拍；只豁免本次明确准备的同集同段单目标。
+            const preparedVideoEdit = isPreparedManhuaVideoEditRun({
+              episodeIndex,
+              fragmentShotIndex,
+              targetBlockIds: effectiveTargetBlockIds,
+              preparedTargetBlocks: opts?.preparedTargetBlocks,
+              preservePreparedTargetBlocks: opts?.preservePreparedTargetBlocks,
+            });
+            // 真正续拍仍须挂上一段尾帧/成片，并保留原来的链式深度检查。
             if (
               untilStage === "clip" &&
               typeof fragmentShotIndex === "number" &&
-              fragmentShotIndex > 1
+              fragmentShotIndex > 1 &&
+              !preparedVideoEdit
             ) {
               const {
                 canContinueManhuaChain,
@@ -7983,9 +8008,19 @@ export default function OmniCanvas() {
       const episodeIndex = getBlockEpisodeIndex(hit) ?? writerFocusEpisode;
       const localFrag = resolveClipLocalSegmentIndex(hit.id, hit.prompt, episodeIndex);
       const attempt = Math.max(1, Math.floor((hit.manhuaRetake?.attempt || 0) + 1));
+      const retakeBase = clearManhuaVideoEditOperation(hit);
+      const retakeVideoModel = resolveManhuaCanvasClipVideoModel(
+        blocks,
+        explicitWriterVideoModel || writerVideoModel || undefined,
+      );
+      if (!isCanvasProductVideoModel(retakeVideoModel)) {
+        toast.error("请先选择可用的成片引擎");
+        return;
+      }
       const preparedBlock: CanvasBlock = {
-        ...hit,
-        prompt: patchPromptForRetakeVariable(hit.prompt, variable, attempt),
+        ...retakeBase,
+        videoModel: retakeVideoModel,
+        prompt: patchPromptForRetakeVariable(retakeBase.prompt, variable, attempt),
         status: "idle",
         error: undefined,
         manhuaClipQuality: undefined,
@@ -8025,6 +8060,8 @@ export default function OmniCanvas() {
       factoryTopic,
       ensureStudioSpawned,
       runFactory,
+      explicitWriterVideoModel,
+      writerVideoModel,
     ],
   );
 
@@ -8081,7 +8118,7 @@ export default function OmniCanvas() {
         });
         return next;
       });
-      toast.message("已提交局部视频编辑", {
+      toast.message("正在准备局部视频编辑", {
         description: "原片保留在版本历史；编辑结果回来后会重新质检。",
       });
       setFactoryRunScope("focus");
