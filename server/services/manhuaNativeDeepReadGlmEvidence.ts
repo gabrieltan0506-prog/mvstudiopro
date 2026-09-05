@@ -25,6 +25,8 @@ export type NativeDeepReadGlmEvidenceContext = {
   recoverExisting?: boolean;
   /** 请求证据落盘后、真正调用上游前发运行回执；恢复命中时不会调用。 */
   onBeforePaidCall?: () => Promise<void>;
+  /** 0905：流式心跳（每 30 秒已收字节数），面板据此显示「还活着」。 */
+  onStreamProgress?: (info: { gateway: string; receivedBytes: number; elapsedMs: number }) => void | Promise<void>;
   /** 0905：换档时通知面板（首发档失败原因 + 正在切下一档）。 */
   onGatewayFallback?: (info: { gateway: string; outcome: string; detail?: string }) => void | Promise<void>;
 };

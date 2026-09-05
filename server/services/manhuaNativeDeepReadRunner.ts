@@ -1473,7 +1473,7 @@ export function nativeDeepReadFrozenContractSha256(): string {
  * 改毕即**重新冻结**（`NATIVE_DEEP_READ_KEY_SHOT_WINDOW_SEC`、两档必填字段表、提示词两档说明与本摘要一起冻结，再改需用户授权）。
  * 同时整形 maxTokens 退回 131,072、链序 structuring_chain（用户 0905 拍板）。 */
 /** 0905 用户重新授权：整形链改五档逐档 30 分钟切换 + maxTokens 262K，冻结集合随之换代（只作废整形批次缓存，不动读片分片缓存）。 */
-export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "74e51e813f1db61b92398e853ee9e8cf80f21bb732999634f9579022b073d777" as const;
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "081a37148efe695cbb84a1363b579132120fc6f9da27fd9496d7917ed0257a45" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
   const actual = nativeDeepReadFrozenContractSha256();
@@ -3834,6 +3834,8 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG = deepFreezeNativeContract(
   reasoningEffort: NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT,
   // 0905 用户令：Qwen 套餐档思考上限 32,768（第 5 集实测每批思考 12K–18K，只拦失控长考不伤正常发）
   thinkingBudget: 32_768,
+  // 0905 用户令：Qwen 两档 10 分钟不回就切下一档（北京 → 新加坡 → OpenRouter GLM）；GLM 档仍 timeoutMs
+  gatewayTimeoutMsOverrides: { plan_bj_qwen: 10 * 60_000, plan_sg_qwen: 10 * 60_000 } as const,
   requireParameters: true,
   requireFinishReasonStop: true,
 } as const);
@@ -4312,6 +4314,7 @@ export async function invokeNativeDeepReadGlmStructuring(
       raw = parseJsonObject(content);
     },
     onGatewayFallback: context?.onGatewayFallback,
+    onStreamProgress: context?.onStreamProgress,
   });
   // 通道锁：只接受整形链五档（GLM 两档 + Qwen 三档）；判据复用 bailianChat 的单一真源。
   if (!STRUCTURING_GATEWAYS.has(response.gateway) || !raw) {
@@ -5940,6 +5943,21 @@ async function executeNativeDeepReadBatch(
               episodeIndex: episode.episodeIndex, batchRequestId: episodeRequestId, callId,
               recoverExisting: canCacheStructuring, onBeforePaidCall: emitPaidCallStarted,
               gatewayPolicy: structuringGatewayPolicy,
+              // 0905 用户令「总不能傻等」：流式心跳，同 callId 更新 started 行「X 档 · 已收 N KB · M 秒」
+              onStreamProgress: async (info) => {
+                if (startedAt === undefined) return;
+                await emitVisualModelReceipt({
+                  callId,
+                  model: `${glmGatewayDisplayLabel(info.gateway)} · 已收 ${(info.receivedBytes / 1024).toFixed(0)}KB · ${Math.round(info.elapsedMs / 1000)} 秒`,
+                  route: NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE,
+                  stage: "visual_parse",
+                  status: "started",
+                  batchRequestId: episodeRequestId,
+                  episodeIndexes: [episode.episodeIndex],
+                  videoCount: input.videoCount,
+                  labelZh: input.labelZh,
+                }, params.onModelReceipt);
+              },
               // 0905：换档也要在面板看得见——同 callId 再发一条 started 回执，行文改成「X 档失败，切下一档」
               onGatewayFallback: async (info) => {
                 if (startedAt === undefined) return;

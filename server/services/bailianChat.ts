@@ -247,6 +247,10 @@ export type GlmParams = {
   onRawResponse?: (response: GlmRawResponseEvidence) => Promise<void>;
   /** 业务验真钩子:抛错=该网关响应不可用,继续降级(复审 P1-1) */
   validateContent?: (content: string) => void;
+  /** 0905 用户令：按网关覆盖单档超时（Qwen 两档 10 分钟不回就切下一档），未列出的档用 timeoutMs。 */
+  gatewayTimeoutMsOverrides?: Partial<Record<GlmGatewayName, number>>;
+  /** 0905 用户令「总不能傻等」：流式每 30 秒回报已收字节数，面板显示心跳。 */
+  onStreamProgress?: (info: { gateway: string; receivedBytes: number; elapsedMs: number }) => void | Promise<void>;
   /** 0905 用户令：Qwen 套餐档思考 token 上限（DashScope `thinking_budget`），拦失控长考；GLM 档忽略。 */
   thinkingBudget?: number;
   /** 0905：标准 JSON Schema；只有支持 strict 的网关（Qwen 套餐两档）会以 json_schema strict 发出，其余仍 json_object。 */
@@ -608,9 +612,11 @@ async function readGlmRawResponseWithEvidence(
   metadata: Pick<GlmRawResponseEvidence, "gateway" | "model" | "httpStatus" | "providerRequestId" | "contentType">,
   rawCap: number,
   onRawResponse: NonNullable<GlmParams["onRawResponse"]>,
+  onProgress?: (receivedBytes: number) => void,
 ): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let receivedBytes = 0;
+  let lastProgressAt = Date.now();
   let bodyComplete = false;
   let readFailed = false;
   let readError: unknown;
@@ -624,6 +630,10 @@ async function readGlmRawResponseWithEvidence(
         chunks.push(Buffer.from(value));
         receivedBytes += value.byteLength;
         if (receivedBytes > rawCap) throw new Error("GLM 链响应超过处理上限");
+        if (onProgress && Date.now() - lastProgressAt >= 30_000) {
+          lastProgressAt = Date.now();
+          try { onProgress(receivedBytes); } catch { /* 心跳是旁路 */ }
+        }
       }
     } else {
       const bytes = Buffer.from(await response.text(), "utf8");
@@ -782,7 +792,7 @@ async function invokeOneGlmGateway(
   // 而 0827 定的口径本就是「单次 30 分钟等待、绝不自动重提」——15 分钟传不进去。
   // 全部产出（含被门禁标记的版本）进 GLM 后输入更大，上限必须留够。
   // 每档实际墙钟 = min(本档上限, 整链剩余预算)。deadlineAtMs 缺省时退回旧行为。
-  const perGatewayMs = Math.floor(Number(params.timeoutMs) || 240_000);
+  const perGatewayMs = Math.floor(Number(params.gatewayTimeoutMsOverrides?.[gateway]) || Number(params.timeoutMs) || 240_000);
   const remainMs = Number.isFinite(Number(params.deadlineAtMs))
     ? Number(params.deadlineAtMs) - Date.now()
     : Number.POSITIVE_INFINITY;
@@ -911,9 +921,12 @@ async function invokeOneGlmGateway(
     const streamSse = Boolean(res.ok && res.body && isSse);
     // 沿用既有 SSE 原文护栏，不能把信封开销算进还原正文上限。
     const rawCap = streamSse ? Math.max(maxResponseBytes * 64, 64 * 1024 * 1024) : maxResponseBytes;
+    const streamStartedAt = Date.now();
     const bytes = await readGlmRawResponseWithEvidence(res, {
       gateway, model, httpStatus: res.status, providerRequestId, contentType,
-    }, rawCap, params.onRawResponse);
+    }, rawCap, params.onRawResponse, (receivedBytes) => {
+      void params.onStreamProgress?.({ gateway, receivedBytes, elapsedMs: Date.now() - streamStartedAt });
+    });
     raw = streamSse
       ? await readGlmSseStream(new ReadableStream<Uint8Array>({
         start(controller) { controller.enqueue(bytes); controller.close(); },
