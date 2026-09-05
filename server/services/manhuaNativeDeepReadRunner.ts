@@ -4855,19 +4855,17 @@ async function executeNativeDeepReadBatch(
         segmentIndex: number,
         committedEntry: NativeDeepReadSegmentCacheEntry,
       ): Promise<void> => {
-        // 0905 用户令：字幕只取 keyMoments 前后 2 秒（读片提示词第 1214 行本就这么写，模型不听、整形又照单全收）——
-        // 代码在入卡前硬过滤；段缓存/证据对象仍是原样，不影响付费证据。
-        const entry: NativeDeepReadSegmentCacheEntry = {
-          ...committedEntry,
-          raw: filterNativeDeepReadSubtitlesToKeyMoments(committedEntry.raw),
-        };
+        // 0905 用户令：字幕只取 keyMoments 前后 2 秒——只过滤送整形/入卡的那份 raw；
+        // committedEntries 必须保持原样：证据对象名由原始 raw 的指纹算出（0905 实锤：拿过滤后的
+        // raw 算名字，provenance 指向不存在的对象，导出 404）。
+        const entry = committedEntry;
         committedEntries.set(segmentIndex, entry);
         proposalCommitChain = proposalCommitChain.then(async () => {
           while (committedIndexes.length < segmentCount) {
             const nextIndex = committedIndexes.length;
             const nextEntry = committedEntries.get(nextIndex);
             if (!nextEntry) break;
-            rawSegments[nextIndex] = nextEntry.raw;
+            rawSegments[nextIndex] = filterNativeDeepReadSubtitlesToKeyMoments(nextEntry.raw);
             committedIndexes.push(nextIndex);
             // 末片由后面的整集门禁写入；这里只生成中间快照。
             // Qwen 在三份未过门禁数据中选出的结果只是该分片的终态，
@@ -6117,12 +6115,16 @@ async function executeNativeDeepReadBatch(
           return result.raw;
         }
 
+        // 0905 用户令：批次要均分，不是「前面塞满、尾巴一小撮」——8 片＝4+4、9 片＝5+4、29 片＝5×5+4，
+        // 两路并发才真正对半分担；批次数仍按每批上限（5）决定。
+        const groupCount = Math.ceil(segmentCount / maxRawSegmentsPerBatch);
+        const baseSize = Math.floor(segmentCount / groupCount);
+        const extra = segmentCount % groupCount;
         const groups: number[][] = [];
-        for (let start = 0; start < segmentCount; start += maxRawSegmentsPerBatch) {
-          groups.push(Array.from(
-            { length: Math.min(maxRawSegmentsPerBatch, segmentCount - start) },
-            (_, offset) => start + offset,
-          ));
+        for (let g = 0, start = 0; g < groupCount; g += 1) {
+          const size = baseSize + (g < extra ? 1 : 0);
+          groups.push(Array.from({ length: size }, (_, offset) => start + offset));
+          start += size;
         }
         const groupRows = await Promise.all(groups.map(async (segmentIndexes) => {
           // 单片无需再做一次中间GLM；直接作为一张已结构化分段卡进入确定性拼接。
