@@ -1490,7 +1490,7 @@ export function nativeDeepReadFrozenContractSha256(): string {
  * 改毕即**重新冻结**（`NATIVE_DEEP_READ_KEY_SHOT_WINDOW_SEC`、两档必填字段表、提示词两档说明与本摘要一起冻结，再改需用户授权）。
  * 同时整形 maxTokens 退回 131,072、链序 structuring_chain（用户 0905 拍板）。 */
 /** 0905 用户重新授权：整形链改五档逐档 30 分钟切换 + maxTokens 262K，冻结集合随之换代（只作废整形批次缓存，不动读片分片缓存）。 */
-export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "90196a2d663c15d0a548d4eea5ce60e1d8516d6bb5aaef7c1161b8b1b776f0a2" as const;
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "3642723bbe094d97333bb0e890223f1ed7b9cfe464823094de6c05604d0c9eac" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
   const actual = nativeDeepReadFrozenContractSha256();
@@ -3789,7 +3789,7 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE = "openrouter_glm_structurin
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`;
 /** 开始/失败回执的人话链路标签（0905：用户看了几百次「z-ai/glm-5.3」以为一直走 OpenRouter）。 */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 EvoLink → OpenRouter → Qwen 北京 → 新加坡 → OpenRouter（每档 30 分钟）";
-export const NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL = "Qwen3.8-Max 严格 schema · 第1批 北京→EvoLink→OpenRouter · 第2批 新加坡→OpenRouter→EvoLink（单档 25 分钟）";
+export const NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL = "Qwen3.8-Max 严格 schema · 第1批 北京→EvoLink→OpenRouter · 第2批 新加坡→OpenRouter→EvoLink（Qwen 单档 25 分钟 · GLM 15 分钟）";
 export function nativeDeepReadStructuringStartedLabel(policy: "structuring_chain" | "structuring_chain_qwen_first"): string {
   return policy === "structuring_chain_qwen_first" ? NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL : NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL;
 }
@@ -3852,7 +3852,11 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG = deepFreezeNativeContract(
   // 0905 用户令：Qwen 套餐档思考上限 32,768（第 5 集实测每批思考 12K–18K，只拦失控长考不伤正常发）
   thinkingBudget: 32_768,
   // 0905 用户拍板：每批 4 片，Qwen 两档单档 25 分钟不回就切下一档（实弹 4 片 15 分钟）；GLM 档仍 timeoutMs
-  gatewayTimeoutMsOverrides: { plan_bj_qwen: 25 * 60_000, plan_sg_qwen: 25 * 60_000 } as const,
+  gatewayTimeoutMsOverrides: {
+    plan_bj_qwen: 25 * 60_000, plan_sg_qwen: 25 * 60_000,
+    // 0905 用户令：GLM 两档作兜底只给 15 分钟（实弹 4 片 7–9 分钟）
+    evolink_glm: 15 * 60_000, openrouter: 15 * 60_000,
+  } as const,
   requireParameters: true,
   requireFinishReasonStop: true,
 } as const);
