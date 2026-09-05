@@ -2374,13 +2374,12 @@ export default function OmniCanvas() {
       // 会话里存过选型才算数；没有就是界面自动预选，不能拿去盖存量段节点
       setWriterVideoModelPicked(Boolean(v));
     }
-    if (session.deliveryPackage) {
-      setDeliveryPackage(
-        normalizeManhuaDeliveryPackage(session.deliveryPackage, {
-          seriesTitle: session.writerPack?.seriesTitle,
-        }),
-      );
-    }
+    // 旧稿没有交付要求时恢复本剧默认值，不沿用上一剧的配音或字幕要求。
+    setDeliveryPackage(
+      normalizeManhuaDeliveryPackage(session.deliveryPackage, {
+        seriesTitle: session.writerPack?.seriesTitle,
+      }),
+    );
     if (session.cineVocabLocale) setFactoryCineVocabLocale(session.cineVocabLocale);
     if (session.chainIgnoreByScene) setChainIgnoreByScene(session.chainIgnoreByScene);
     const restoredPhase = parseManhuaWorkflowPhase(session.workflowPhase, Boolean(session.writerConfirmed));

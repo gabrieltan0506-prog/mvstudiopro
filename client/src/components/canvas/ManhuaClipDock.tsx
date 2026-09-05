@@ -25,6 +25,7 @@ import { MANHUA_DRAFT_EXPORT_HINT_ZH } from "@shared/manhuaCloudDraft";
 import { CREDIT_COSTS } from "@shared/plans";
 import {
   defaultManhuaDeliveryPackage,
+  MANHUA_DELIVERY_REQUIREMENTS_HINT_ZH,
   formatManhuaDeliveryPackageMarkdown,
   summarizeManhuaDeliveryPackageProgress,
   type ManhuaDeliveryPackage,
@@ -58,7 +59,7 @@ type Props = {
   onGoWorkbench?: () => void;
   /** 点胶片条集卡时切换焦点集 */
   onSelectEpisode?: (episodeIndex: number) => void;
-  /** 与剪辑台同源的交付包（非默认壳） */
+  /** 与剪辑台同源的交付要求，不是媒体产物回执。 */
   deliveryPackage?: ManhuaDeliveryPackage | null;
   cineVocabIds?: string[];
   onAcceptClipDespiteQc?: (clipBlockId: string) => void;
@@ -168,7 +169,7 @@ export default function ManhuaClipDock({
     [deliveryPkg],
   );
 
-  const handleDownloadDeliveryPack = () => {
+  const handleDownloadDeliveryNotes = () => {
     const md = [
       formatManhuaDeliveryPackageMarkdown(deliveryPkg),
       "",
@@ -178,7 +179,7 @@ export default function ManhuaClipDock({
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `交付包-${(seriesTitle || topic || "manhua").slice(0, 24)}.md`;
+    a.download = `交付说明-${(seriesTitle || topic || "manhua").slice(0, 24)}.md`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -329,13 +330,16 @@ export default function ManhuaClipDock({
               </span>
               <button
                 type="button"
-                onClick={handleDownloadDeliveryPack}
+                onClick={handleDownloadDeliveryNotes}
                 className="inline-flex items-center gap-1 rounded-md border border-cyan-400/30 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-medium text-cyan-50 hover:bg-cyan-500/18"
               >
                 <Download className="h-3 w-3" />
-                下载交付包（成色/字幕/配音 + 多语言词表）
+                下载交付说明（Markdown）
               </button>
             </div>
+            <p className="mt-1 text-[10px] leading-relaxed text-white/45">
+              {MANHUA_DELIVERY_REQUIREMENTS_HINT_ZH}
+            </p>
             <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
               <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-white/60">
                 {summary.episodeCount || 0} 集
