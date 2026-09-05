@@ -4313,7 +4313,6 @@ export type NativeDeepReadStructuredBatchCacheEntry = {
   source: "formal" | "manual_import";
   /** 0906 用户令「改用 GLM 就重新整形九片」：GLM 链的批次缓存与证据另立命名空间，不复用 Qwen 结果。缺省＝Qwen 首发链（沿用旧对象名，已付费缓存不失配）。 */
   structuringPolicy?: NativeDeepReadStructuringPolicy;
-  retryGeneration?: number;
 };
 
 export type NativeDeepReadStructuringPolicy = "structuring_chain" | "structuring_chain_qwen_first";
@@ -4335,8 +4334,6 @@ function nativeDeepReadStructuredBatchObjectName(input: {
   segmentIndexes: readonly number[];
   inputDigest: string;
   structuringPolicy?: NativeDeepReadStructuringPolicy;
-  /** 0906：同名对象被坏输出占着时顺延代次（-r1/-r2…），不覆盖也不整集死 */
-  retryGeneration?: number;
 }): string {
   if (!/^[0-9A-Za-z_-]{1,40}$/.test(input.seriesKey)) throw new Error("整形批次seriesKey无效");
   if (!/^[a-f0-9]{64}$/.test(input.sourceDigest) || !/^[a-f0-9]{64}$/.test(input.inputDigest)) {
@@ -4348,8 +4345,7 @@ function nativeDeepReadStructuredBatchObjectName(input: {
   }
   return `manhua-template-learn/native-structuring-cache/${input.seriesKey}/${input.sourceDigest}`
     + `/ep-${String(input.episodeIndex).padStart(3, "0")}/segments-${input.segmentIndexes.join("-")}`
-    + `/${NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256}-${input.inputDigest}${structuringPolicyCacheSuffix(input.structuringPolicy)}`
-    + `${input.retryGeneration ? `-r${input.retryGeneration}` : ""}.json`;
+    + `/${NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256}-${input.inputDigest}${structuringPolicyCacheSuffix(input.structuringPolicy)}.json`;
 }
 
 export function nativeDeepReadStructuredBatchCallId(input: {
@@ -4372,7 +4368,6 @@ export async function readNativeDeepReadStructuredBatchCache(input: {
   segmentIndexes: readonly number[];
   rawSegments: ReadonlyArray<Record<string, unknown>>;
   structuringPolicy?: NativeDeepReadStructuringPolicy;
-  retryGeneration?: number;
 }): Promise<NativeDeepReadStructuredBatchCacheEntry | null> {
   const inputDigest = nativeDeepReadStructuredBatchInputDigest(input.rawSegments);
   const objectName = nativeDeepReadStructuredBatchObjectName({ ...input, inputDigest });
@@ -6502,37 +6497,38 @@ async function executeNativeDeepReadBatch(
           return result.raw;
         }
       };
-      /** 0906：坏缓存占着同名对象 → 记下该批下一个空闲代次，重整形成功后写到 -rN，不覆盖不整集死 */
-      const cacheWriteGenerationByBatch = new Map<string, number>();
-      const MAX_CACHE_GENERATIONS = 6;
+      const badCacheUndeletable = new Set<string>();
+      /** 0906 用户令「坏缓存直接砍了，留着等新数据去爆炸吗」：缓存输出过不了观察锁 → 当场删掉那个对象，当没缓存重整形。 */
       const readCachedStructuring = async (
         segmentIndexes: readonly number[],
         rows: ReadonlyArray<Record<string, unknown>>,
         labelZh: string,
       ): Promise<Record<string, unknown> | null> => {
         if (!canCacheStructuring) return null;
-        const batchKey = segmentIndexes.join("-");
-        let cached: NativeDeepReadStructuredBatchCacheEntry | null = null;
-        for (let generation = 0; generation < MAX_CACHE_GENERATIONS; generation += 1) {
-          const candidate = await deps.readStructuredBatchCache({
-            seriesKey: params.segmentCacheSeriesKey!,
-            sourceDigest: episode.cacheSourceDigest!,
-            episodeIndex: episode.episodeIndex,
-            segmentIndexes,
-            rawSegments: rows,
-            structuringPolicy: structuringGatewayPolicy,
-            retryGeneration: generation || undefined,
-          });
-          if (!candidate) { cacheWriteGenerationByBatch.set(batchKey, generation); break; }
+        const cacheIdentity = {
+          seriesKey: params.segmentCacheSeriesKey!,
+          sourceDigest: episode.cacheSourceDigest!,
+          episodeIndex: episode.episodeIndex,
+          segmentIndexes,
+          structuringPolicy: structuringGatewayPolicy,
+        };
+        let cached = await deps.readStructuredBatchCache({ ...cacheIdentity, rawSegments: rows });
+        if (cached) {
           try {
-            assertNativeDeepReadShotObservationsPreserved(rows, candidate.raw);
-            cached = candidate;
-            break;
+            assertNativeDeepReadShotObservationsPreserved(rows, cached.raw);
           } catch (error) {
             if (!isNativeDeepReadObservationLockError(error)) throw error;
-            // 0906：缓存里是坏输出 → 当作没缓存，看下一代次；都没有就重整形写到下一空位；不整集死
-            console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${labelZh}缓存代次 ${generation} 过不了观察锁，弃用：${(error as Error).message.slice(0, 160)}`);
-            cacheWriteGenerationByBatch.set(batchKey, generation + 1);
+            const objectName = nativeDeepReadStructuredBatchObjectName({
+              ...cacheIdentity, inputDigest: nativeDeepReadStructuredBatchInputDigest(rows),
+            });
+            console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${labelZh}缓存输出过不了观察锁，删掉坏缓存 ${objectName} 后重整形：${(error as Error).message.slice(0, 160)}`);
+            try {
+              await deps.remove({ bucket: "mv-studio-pro-vertex-video-temp", objectName });
+            } catch (removeError) {
+              console.warn(`[nativeDeepRead] 坏缓存删除未成（重整形结果将不写缓存）：${removeError instanceof Error ? removeError.message : String(removeError)}`);
+              badCacheUndeletable.add(segmentIndexes.join("-"));
+            }
+            cached = null;
           }
         }
         if (!cached) return null;
@@ -6551,9 +6547,8 @@ async function executeNativeDeepReadBatch(
         result: NativeDeepReadGlmStructuringResult | { raw: Record<string, unknown>; localFallback: true },
       ): Promise<void> => {
         if (!canCacheStructuring || "localFallback" in result) return;
-        const retryGeneration = cacheWriteGenerationByBatch.get(segmentIndexes.join("-")) || 0;
-        if (retryGeneration >= MAX_CACHE_GENERATIONS) {
-          console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集批次 ${segmentIndexes.join(",")} 缓存代次已满，本次结果不写缓存`);
+        if (badCacheUndeletable.has(segmentIndexes.join("-"))) {
+          console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集批次 ${segmentIndexes.join(",")} 坏缓存未能删除，本次结果不写缓存（下次重跑会再删一次）`);
           return;
         }
         await deps.writeStructuredBatchCache({
@@ -6566,7 +6561,6 @@ async function executeNativeDeepReadBatch(
           inputDigest: nativeDeepReadStructuredBatchInputDigest(rows),
           // Qwen 链不写该字段：与历史条目身份逐字相同，if-absent 撞同名时不会误判「内容不同」
           ...(structuringGatewayPolicy === "structuring_chain" ? { structuringPolicy: structuringGatewayPolicy } : {}),
-          ...(retryGeneration ? { retryGeneration } : {}),
           raw: result.raw,
           evidence: result.evidence,
           gateway: result.gateway,

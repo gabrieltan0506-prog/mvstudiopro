@@ -3331,12 +3331,11 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
   });
 
-  it("0906 坏缓存不覆盖：缓存代次 0 过不了锁 → 重整形成功后写到 -r1，不再撞「已存在但内容不同」", async () => {
+  it("0906 坏缓存直接砍：缓存输出过不了锁 → 删掉该对象、重整形、结果写回同名", async () => {
     const segments = Array.from({ length: 3 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
     const base = makeGlmStructuringStub();
     const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => ({ ...(await base(prompt)), gateway: "plan_bj_qwen" }));
-    const readStructuredBatchCache = vi.fn(async (input: { retryGeneration?: number; rawSegments: ReadonlyArray<Record<string, unknown>> }) => {
-      if (input.retryGeneration) return null;
+    const readStructuredBatchCache = vi.fn(async (input: { rawSegments: ReadonlyArray<Record<string, unknown>> }) => {
       const good = await base({ system: "", user: `分段卡 JSON：${JSON.stringify(input.rawSegments)}` });
       const shots = (good.raw.shots as Array<Record<string, unknown>>).map((s, i) => i === 0 ? { ...s, hintZh: "坏缓存改写的观察" } : s);
       return { schemaVersion: 1 as const, frozenContractSha256: "x", seriesKey: "s", sourceDigest: "3".repeat(64), episodeIndex: 3, segmentIndexes: [0, 1, 2],
@@ -3349,11 +3348,12 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     });
     const result = await runManhuaNativeDeepReadBatch({
       episodes: [{ episodeIndex: 3, resolveNodes: async () => [], segments, sourceDurationSec: 180, cacheSourceDigest: "3".repeat(64) }],
-      segmentCacheSeriesKey: "bad_cache_generation",
+      segmentCacheSeriesKey: "bad_cache_delete",
     }, deps);
-    expect(readStructuredBatchCache.mock.calls.map(([input]) => input.retryGeneration)).toEqual([undefined, 1]);
+    const removed = vi.mocked(deps.remove).mock.calls.map(([input]) => (input as { objectName: string }).objectName);
+    expect(removed.some((name) => /native-structuring-cache\/bad_cache_delete\/.*\/ep-003\/segments-0-1-2\/.*\.json$/.test(name))).toBe(true);
     expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(deps.writeStructuredBatchCache).mock.calls[0]![0]).toMatchObject({ retryGeneration: 1 });
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(1);
     expect(result.episodes[0]!.result.segmentCount).toBe(3);
   });
 
