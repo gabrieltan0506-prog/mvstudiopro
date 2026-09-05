@@ -3278,6 +3278,12 @@ export default function PlatformPage() {
   const renderEpisodeReportMutation = trpc.manhuaViralTemplate.renderEpisodeReport.useMutation();
   /** 按集导出报告：只锁正在请求的那一集，其他集的导出按钮保持可用 */
   const [manhuaEpisodeExportPending, setManhuaEpisodeExportPending] = useState<number | null>(null);
+  /** 报告下载走当前页 location.assign；这几秒内 beforeunload 不得拦（草稿脏时 Chrome 会先问「离开此页」，点取消就不下载） */
+  const manhuaReportDownloadUntilRef = useRef(0);
+  const startManhuaReportDownload = useCallback((url: string) => {
+    manhuaReportDownloadUntilRef.current = Date.now() + 8_000;
+    window.location.assign(url);
+  }, []);
   const exportManhuaEpisodeReport = useCallback(
     async (seriesKey: string, episodeIndex: number) => {
       setManhuaEpisodeExportPending(episodeIndex);
@@ -3296,9 +3302,9 @@ export default function PlatformPage() {
             throw firstError;
           }
         }
-        window.location.assign(report.reportUrl);
+        startManhuaReportDownload(report.reportUrl);
         toast.success(`第 ${episodeIndex} 集学习报告已生成（${report.shots} 镜 · ${report.frames} 帧），已开始下载`, {
-          action: { label: "重新下载", onClick: () => window.location.assign(report.reportUrl) },
+          action: { label: "重新下载", onClick: () => startManhuaReportDownload(report.reportUrl) },
         });
       } catch (e) {
         toast.error(`第 ${episodeIndex} 集报告生成失败：${e instanceof Error ? e.message : String(e)}`);
@@ -3307,7 +3313,7 @@ export default function PlatformPage() {
         setManhuaEpisodeExportPending((cur) => (cur === episodeIndex ? null : cur));
       }
     },
-    [renderEpisodeReportMutation],
+    [renderEpisodeReportMutation, startManhuaReportDownload],
   );
   /** 可按集导出的集号（complete 升序）；导出入口只对原生精读结果开放 */
   const manhuaExportableEpisodes = useMemo(
@@ -11520,6 +11526,7 @@ export default function PlatformPage() {
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (Date.now() < manhuaReportDownloadUntilRef.current) return;
       if (!workbenchUserKey) return;
       const draft = readWorkbenchDraft(workbenchUserKey);
       if (focusPrompt.trim() && (!draft || draft.focusPrompt !== focusPrompt.trim())) {

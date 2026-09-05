@@ -2743,7 +2743,7 @@ export async function runManhuaTemplateLearn(
             }
             const stageZh = checkpoint.stage === "visual_parse"
               ? checkpoint.route === "openrouter_glm_structuring"
-                ? `${checkpoint.labelZh ? `${checkpoint.labelZh} · ` : ""}结构化整形（${checkpoint.model}）`
+                ? `${checkpoint.labelZh ? `${checkpoint.labelZh} · ` : ""}结构化整形 · ${checkpoint.model}`
                 : "整集结构校验"
               : checkpoint.degraded
                 ? "画面与声音联合精读（EvoLink 兜底 1fps 降级）"
