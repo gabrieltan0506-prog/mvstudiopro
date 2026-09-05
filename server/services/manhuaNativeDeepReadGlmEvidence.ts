@@ -6,9 +6,21 @@ import {
 } from "./gcs.js";
 import {
   GLM_MODEL_GATEWAYS,
+  STRUCTURING_CHAIN_GATEWAYS,
+  STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS,
   type GlmGatewayName,
   type GlmRawResponseEvidence,
 } from "./bailianChat.js";
+
+/**
+ * 0906 实弹（第 7 集重跑）：证据回读只认 GLM 两档，Qwen 北京套餐写的整形证据被判「回执无效」，
+ * 整集零付费重跑直接炸。回读白名单必须与整形链一致：GLM 两档 + Qwen 三档。
+ */
+const STRUCTURING_EVIDENCE_GATEWAYS: ReadonlySet<string> = new Set<string>([
+  ...Array.from(GLM_MODEL_GATEWAYS),
+  ...STRUCTURING_CHAIN_GATEWAYS,
+  ...STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS,
+]);
 
 /** 来源只接收调用方已有身份；legacy直调缺失字段明确留空，禁止猜集号。 */
 export type NativeDeepReadGlmEvidenceContext = {
@@ -23,6 +35,8 @@ export type NativeDeepReadGlmEvidenceContext = {
   gatewayPolicy?: "structuring_chain" | "structuring_chain_qwen_first";
   /** 稳定调用身份下先回读已付费证据；仅正式可恢复整形使用。 */
   recoverExisting?: boolean;
+  /** 0906 用户令：镜数不合/过不了观察锁 → 同档降温重试（0.8→0.75）；给了就覆盖冻结配置里的 temperature，证据 request 里原样记录。 */
+  temperature?: number;
   /** 请求证据落盘后、真正调用上游前发运行回执；恢复命中时不会调用。 */
   onBeforePaidCall?: () => Promise<void>;
   /** 0905 用户拍板：本批完整链序（按批次序号分配），给了就逐档立即切换。 */
@@ -230,7 +244,7 @@ export async function readNativeDeepReadGlmRecoveredEvidence(input: {
       row.objectName !== `${prefix}/raw-${index + 1}.json`
       || !Number.isSafeInteger(row.bytes) || Number(row.bytes) < 1
       || !/^[a-f0-9]{64}$/.test(String(row.sha256 || ""))
-      || !GLM_MODEL_GATEWAYS.has(row.gateway as GlmGatewayName)
+      || !STRUCTURING_EVIDENCE_GATEWAYS.has(String(row.gateway))
       || typeof row.model !== "string" || !row.model.trim()
       || !Number.isSafeInteger(row.httpStatus) || Number(row.httpStatus) < 100 || Number(row.httpStatus) > 599
       || typeof row.bodyComplete !== "boolean"
@@ -245,7 +259,7 @@ export async function readNativeDeepReadGlmRecoveredEvidence(input: {
     || !selectedRaw.bodyComplete
     || response.gateway !== selectedRaw.gateway
     || response.model !== selectedRaw.model
-    || !GLM_MODEL_GATEWAYS.has(response.gateway)
+    || !STRUCTURING_EVIDENCE_GATEWAYS.has(String(response.gateway))
   ) throw new Error("整集GLM parsed与原始响应不一致，已停止以避免重复付费");
 
   return {
