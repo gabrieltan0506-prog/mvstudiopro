@@ -113,6 +113,7 @@ vi.mock("../services/manhuaViralTemplateStore", () => ({
   restoreArchivedManhuaViralTemplate: vi.fn(async () => secretCard),
   archiveApprovedManhuaViralTemplate: vi.fn(async () => secretCard),
   getGcsManhuaViralApproved: vi.fn(async () => secretCard),
+  getGcsManhuaViralApprovedForDisplay: vi.fn(async () => secretCard),
   getGcsManhuaViralProposal: vi.fn(async () => proposalForRouter),
   saveManhuaViralTemplateRevisionProposal: vi.fn(async (card: ManhuaViralTemplateCard) => card),
   approveManhuaViralTemplate: vi.fn(async () => secretCard),
@@ -428,8 +429,14 @@ describe("owner 模板查看与优化", () => {
     expect(proposals).toMatchObject([
       { id: revisionCard.id, revisionOf: secretCard.id },
     ]);
-    // 审批可见性：结构字段必须下发，来源 URL 必须不下发。
-    expect(proposals[0]).toMatchObject({
+    // 0905 列表瘦身：轻量行只带来源数量，节拍/结构等重字段走 getProposalDetail；来源 URL 两边都不下发。
+    expect(proposals[0]).toMatchObject({ sourceRefCount: 1 });
+    expect(proposals[0]).not.toHaveProperty("beatGrid");
+    expect(proposals[0]).not.toHaveProperty("sourceRefs");
+    expect(JSON.stringify(proposals)).not.toContain("SECRET_URL");
+    proposalForRouter = revisionCard;
+    const detail = (await owner.getProposalDetail({ id: revisionCard.id })).item;
+    expect(detail).toMatchObject({
       beatGrid: secretCard.beatGrid,
       storyStructure: secretCard.storyStructure,
       scenePoolHints: secretCard.scenePoolHints,
@@ -437,8 +444,8 @@ describe("owner 模板查看与优化", () => {
       densityHints: secretCard.densityHints,
       sourceRefCount: 1,
     });
-    expect(proposals[0]).not.toHaveProperty("sourceRefs");
-    expect(JSON.stringify(proposals)).not.toContain("SECRET_URL");
+    expect(detail).not.toHaveProperty("sourceRefs");
+    expect(JSON.stringify(detail)).not.toContain("SECRET_URL");
 
     await expect(owner.approve({
       id: revisionCard.id,
@@ -650,7 +657,7 @@ describe("renderEpisodeReport：canonical 寻址（禁列目录猜证据）", ()
     expect(renderMock.mock.calls.length).toBe(before);
   });
 
-  it("部分卡即使已有证据名也拒绝导出：PRECONDITION_FAILED，渲染服务一次不被调用", async () => {
+  it("无连续过门禁分片的部分卡拒绝导出：PRECONDITION_FAILED，渲染服务一次不被调用（0905：有连续分片则出分段预览）", async () => {
     proposalForRouter = partialCardWithEvidence;
     const render = await import("../services/manhuaNativeReportRender");
     const renderMock = render.renderNativeEvidenceReportFromObjectNames as unknown as {
@@ -661,7 +668,7 @@ describe("renderEpisodeReport：canonical 寻址（禁列目录猜证据）", ()
     await expect(caller.renderEpisodeReport({ seriesKey: "seriesabc", episodeIndex: 1 }))
       .rejects.toMatchObject({
         code: "PRECONDITION_FAILED",
-        message: "该集精读尚未完成全部分片，拒绝导出不完整报告",
+        message: "该集精读尚无可导出的连续分片证据（需从第 1 片起连续过门禁）",
       });
     expect(renderMock.mock.calls.length).toBe(before);
   });
