@@ -1169,3 +1169,17 @@ describe("失败占位自动让位（0826 用户拍板）", () => {
     expect(deps.acquireClaim).not.toHaveBeenCalled();
   });
 });
+
+describe("0906 AI Studio 兜底段的音轨路由", () => {
+  it("有段走 gemini_api_files_video 时音轨 resolverRoute 跟着走；降级段仍优先记 EvoLink", async () => {
+    const { buildNativeDeepReadDirectAudioAnalysis } = await import("./manhuaNativeDeepReadExecution");
+    const build = (over: Record<string, unknown>) => buildNativeDeepReadDirectAudioAnalysis({
+      durationSec: 60,
+      segments: [{ startSec: 0, endSec: 60 }] as never,
+      visualResult: { hasAudio: false, degradedFpsSegmentIndexes: [], visualRoutes: ["vertex_gcs_video"], ...over } as never,
+    });
+    expect(build({ visualRoutes: ["vertex_gcs_video", "gemini_api_files_video"] }).resolverRoute).toBe("gemini_api_files_video");
+    expect(build({}).resolverRoute).toBe("vertex_gcs_video");
+    expect(build({ visualRoutes: ["gemini_api_files_video"], degradedFpsSegmentIndexes: [1] }).resolverRoute).toBe("evolink_gemini_video");
+  });
+});

@@ -18,6 +18,8 @@ export const MANHUA_NATIVE_AUDIO_DIRECT_MODEL = "gemini-3.1-pro-preview" as cons
 export const MANHUA_NATIVE_AUDIO_DIRECT_ROUTES = [
   "vertex_gcs_video",
   "evolink_gemini_video",
+  // 0906：Vertex 503 兜底改走 AI Studio（Files API）的段；是否回报 AUDIO modality 明细未实测，不据此拒卡
+  "gemini_api_files_video",
 ] as const;
 export type ManhuaNativeAudioDirectRoute =
   (typeof MANHUA_NATIVE_AUDIO_DIRECT_ROUTES)[number];
