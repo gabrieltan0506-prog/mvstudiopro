@@ -194,8 +194,8 @@ describe("精确证据名路径：三段卡渲染成功且无删节", () => {
     expect(html).toContain("情绪标签0");
     expect(html).toContain("情绪标签2");
     expect((html.match(/共有标签/g) ?? []).length).toBe(1);
-    // 「17 字段」硬编码已改 FIELDS.length 动态
-    expect(html).toContain("× 14 字段");
+    // 0905 用户令：镜头表只列重点镜（剧情亮点/转折 + 运镜/剪辑技巧），不再全镜
+    expect(html).toContain("重点镜头表 · ");
     expect(html).toContain("观察尾部保留&lt;script&gt;");
     expect(html).toContain("本镜观察");
     expect(html).not.toContain("× 17 字段");

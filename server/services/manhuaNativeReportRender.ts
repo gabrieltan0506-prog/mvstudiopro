@@ -698,6 +698,8 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
       changeNotesByIndex[i] = "";
     }
   }
+  // 0905 用户令：报告是商品，不列全镜；镜头表只保留重点时刻所在镜（剧情亮点/转折）与运镜/剪辑技巧镜
+  let highlightShotCount = 0;
   const shotRows = shots.map((shot, shotIndex) => {
     const startSec = Number(shot.startSec) || 0;
     const endSec = Number(shot.endSec) || 0;
@@ -706,6 +708,8 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
     const cameraCraft = CAMERA_CRAFT_RE.test(String(shot.cameraMoveZh ?? ""))
       || TRANSITION_CRAFT_RE.test(String(shot.transitionInZh ?? ""));
     const accent = storyMoments.length ? "#b8452f" : cameraCraft ? "#3a7bd5" : "";
+    if (!accent) return "";
+    highlightShotCount += 1;
     const marks = storyMoments.length
       ? storyMoments.map((km) => KIND_ICON[String(km.kindZh)] ?? "⭐").join("")
       : cameraCraft ? "🎥" : "";
@@ -965,7 +969,7 @@ ${section(`⭐ 重点时刻表 · ${keyMoments.length} 条`, keyMoments.length
     : `<p style="color:#857a66">本集手记未单列重点时刻</p>`, true)}
 ${section("🎞️ 视频节点区域", `<div style="display:flex;flex-wrap:wrap;gap:8px">${tiles.join("")}</div>`)}
 ${section("🎧 声音节点区域", audioSections)}
-<details style="margin-top:22px;background:#fffdf6;border:1px solid #b8452f33;border-top:4px solid #b8452f;border-radius:14px;padding:14px 20px;box-shadow:0 2px 10px rgba(150,110,60,.10)" open><summary style="color:#b8452f;font-weight:600;font-size:1.1em;cursor:pointer">全镜头表 · ${shots.length} 镜 × ${FIELDS.length} 字段</summary><div style="margin:8px 0 4px;font-size:.8em;color:#7a6f5d">色块图例：<span style="background:#b8452f14;border-left:3px solid #b8452f;padding:1px 8px;font-weight:700;color:#8a2a1a">剧情亮点/转折</span>　<span style="background:#3a7bd514;border-left:3px solid #3a7bd5;padding:1px 8px;font-weight:700;color:#2a5da8">运镜/剪辑技巧</span>　其余行不上色</div><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#efe5cc">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#7a6f5d">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
+<details style="margin-top:22px;background:#fffdf6;border:1px solid #b8452f33;border-top:4px solid #b8452f;border-radius:14px;padding:14px 20px;box-shadow:0 2px 10px rgba(150,110,60,.10)" open><summary style="color:#b8452f;font-weight:600;font-size:1.1em;cursor:pointer">重点镜头表 · ${highlightShotCount} 镜（全片 ${shots.length} 镜中只列重点时刻与技巧镜）</summary><div style="margin:8px 0 4px;font-size:.8em;color:#7a6f5d">图例：<span style="background:#b8452f14;border-left:3px solid #b8452f;padding:1px 8px;font-weight:700;color:#8a2a1a">剧情亮点/转折</span>　<span style="background:#3a7bd514;border-left:3px solid #3a7bd5;padding:1px 8px;font-weight:700;color:#2a5da8">运镜/剪辑技巧</span></div><div style="overflow-x:auto;max-height:70vh;overflow-y:auto"><table style="border-collapse:collapse;font-size:.8em"><tr><th style="position:sticky;left:0;background:#efe5cc">秒位</th>${FIELDS.map((f) => `<th style="padding:4px 8px;color:#7a6f5d">${fieldLabel(f)}</th>`).join("")}</tr>${shotRows}</table></div></details>
 <div style="text-align:center;margin-top:36px"><span style="display:inline-block;background:#fdf3dd;border:1.5px solid #e8823a;border-radius:999px;padding:8px 22px;color:#b25a1a;font-size:.85em">⭐ 逐帧精炼审读整理，仅作学习拆解，影视版权归原出品方所有</span></div></div></body></html>`;
 
   await uploadBufferToGcs({
