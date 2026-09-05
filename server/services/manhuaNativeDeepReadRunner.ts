@@ -3857,6 +3857,25 @@ ${input.rejectedReasonZh ? `【上一轮门禁被拒原因】${String(input.reje
 }
 
 /** 两条GLM通道都不可用时的零模型兜底；只做排序、同键去重和字段并集，不创作内容。 */
+/** 字幕只保留落在任一 keyMoment.atSec ±windowSec 内的条目；没有 keyMoments 时原样返回（不敢清空）。 */
+export function filterNativeDeepReadSubtitlesToKeyMoments(
+  raw: Record<string, unknown>,
+  windowSec = 2,
+): Record<string, unknown> {
+  const keyMoments = Array.isArray(raw.keyMoments)
+    ? (raw.keyMoments as unknown[])
+        .map((row) => Number((row as { atSec?: unknown })?.atSec))
+        .filter((value) => Number.isFinite(value))
+    : [];
+  if (!keyMoments.length || !Array.isArray(raw.subtitles)) return raw;
+  const subtitles = (raw.subtitles as unknown[]).filter((row) => {
+    const atSec = Number((row as { atSec?: unknown })?.atSec);
+    return Number.isFinite(atSec) && keyMoments.some((moment) => Math.abs(moment - atSec) <= windowSec);
+  });
+  if (subtitles.length === (raw.subtitles as unknown[]).length) return raw;
+  return { ...raw, subtitles };
+}
+
 export function deterministicallyMergeNativeDeepReadRawSegments(
   rawSegments: ReadonlyArray<Record<string, unknown>>,
 ): Record<string, unknown> {
@@ -4798,8 +4817,14 @@ async function executeNativeDeepReadBatch(
       let stopSchedulingSegments = false;
       const commitSegmentToProposal = async (
         segmentIndex: number,
-        entry: NativeDeepReadSegmentCacheEntry,
+        committedEntry: NativeDeepReadSegmentCacheEntry,
       ): Promise<void> => {
+        // 0905 用户令：字幕只取 keyMoments 前后 2 秒（读片提示词第 1214 行本就这么写，模型不听、整形又照单全收）——
+        // 代码在入卡前硬过滤；段缓存/证据对象仍是原样，不影响付费证据。
+        const entry: NativeDeepReadSegmentCacheEntry = {
+          ...committedEntry,
+          raw: filterNativeDeepReadSubtitlesToKeyMoments(committedEntry.raw),
+        };
         committedEntries.set(segmentIndex, entry);
         proposalCommitChain = proposalCommitChain.then(async () => {
           while (committedIndexes.length < segmentCount) {

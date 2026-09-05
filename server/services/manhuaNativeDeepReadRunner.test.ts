@@ -4456,3 +4456,19 @@ describe("0905 · 整片拉取真实进度（不用预估值）", () => {
     expect(buildNativeDeepReadSourceFetchArgs({ node: { url: "https://cdn.example/x.m3u8" }, outputPath: "/tmp/a.mp4" })).not.toContain("-progress");
   });
 });
+
+describe("0905 · 字幕只取 keyMoments 前后 2 秒", () => {
+  it("过滤掉不在任何 keyMoment ±2 秒内的字幕；无 keyMoments 时原样返回", async () => {
+    const { filterNativeDeepReadSubtitlesToKeyMoments } = await import("./manhuaNativeDeepReadRunner");
+    const raw = {
+      keyMoments: [{ atSec: 10 }, { atSec: 100.4 }],
+      subtitles: [
+        { atSec: 8, textZh: "留" }, { atSec: 12, textZh: "留" }, { atSec: 13, textZh: "丢" },
+        { atSec: 99, textZh: "留" }, { atSec: 50, textZh: "丢" },
+      ],
+    };
+    const out = filterNativeDeepReadSubtitlesToKeyMoments(raw);
+    expect((out.subtitles as Array<{ atSec: number }>).map((s) => s.atSec)).toEqual([8, 12, 99]);
+    expect(filterNativeDeepReadSubtitlesToKeyMoments({ subtitles: raw.subtitles })).toEqual({ subtitles: raw.subtitles });
+  });
+});
