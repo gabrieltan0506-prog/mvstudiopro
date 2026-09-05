@@ -690,6 +690,8 @@ export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 60_000;
  */
 export const NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS = 30_000;
 export const NATIVE_DEEP_READ_RESOURCE_RETRY_MAX = 4;
+/** 0906 用户令：整形判坏（镜数不合/过不了观察锁）同档降温重试用的温度（首发 0.8 → 重试 0.75），再坏才换路由。 */
+export const NATIVE_DEEP_READ_STRUCTURING_RETRY_TEMPERATURE = 0.75;
 /** 0905 用户拍板：Vertex 重试 2 次仍 503 就切 AI Studio 兜底（第 3 次资源错误触发）。 */
 export const NATIVE_DEEP_READ_RESOURCE_FALLBACK_AFTER = 2;
 export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.6;
@@ -2809,6 +2811,11 @@ export function assertNativeDeepReadShotObservations(raw: Record<string, unknown
   }
 }
 
+/** 观察锁错误名：整形输出改写/挪用/丢失来源镜观察。0906 用户令：判坏就换下一档只重整形这一批，不整集死。 */
+export const NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME = "NativeDeepReadObservationLockError" as const;
+export function isNativeDeepReadObservationLockError(error: unknown): boolean {
+  return error instanceof Error && error.name === NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
+}
 /** GLM只能保留来源镜头的观察；跨镜挪用、改写或丢字段均停止消费，原稿仍永久保存。 */
 export function assertNativeDeepReadShotObservationsPreserved(
   sourceRows: ReadonlyArray<Record<string, unknown>>,
@@ -2835,7 +2842,9 @@ export function assertNativeDeepReadShotObservationsPreserved(
       shots: spans, startSec: Number(row?.startSec), endSec: Number(row?.endSec),
     });
     if (!hint || !spans.length || coverage.durationSec <= 0 || coverage.coverageRatio < 1 - 1e-9) {
-      throw new Error(`整集第${index + 1}镜hintZh丢失、改写或超出来源镜头时间，停止消费；已保存原稿，不自动重发`);
+      const error = new Error(`整集第${index + 1}镜hintZh丢失、改写或超出来源镜头时间，停止消费；已保存原稿`);
+      error.name = NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
+      throw error;
     }
   }
 }
@@ -4302,7 +4311,15 @@ export type NativeDeepReadStructuredBatchCacheEntry = {
   costUsd: number;
   savedAtIso: string;
   source: "formal" | "manual_import";
+  /** 0906 用户令「改用 GLM 就重新整形九片」：GLM 链的批次缓存与证据另立命名空间，不复用 Qwen 结果。缺省＝Qwen 首发链（沿用旧对象名，已付费缓存不失配）。 */
+  structuringPolicy?: NativeDeepReadStructuringPolicy;
 };
+
+export type NativeDeepReadStructuringPolicy = "structuring_chain" | "structuring_chain_qwen_first";
+/** GLM 链加后缀；Qwen 链保持历史对象名，昨天以前付费的批次缓存原样命中。 */
+function structuringPolicyCacheSuffix(policy: NativeDeepReadStructuringPolicy | undefined): string {
+  return policy === "structuring_chain" ? "-glm" : "";
+}
 
 function nativeDeepReadStructuredBatchInputDigest(
   rawSegments: ReadonlyArray<Record<string, unknown>>,
@@ -4316,6 +4333,7 @@ function nativeDeepReadStructuredBatchObjectName(input: {
   episodeIndex: number;
   segmentIndexes: readonly number[];
   inputDigest: string;
+  structuringPolicy?: NativeDeepReadStructuringPolicy;
 }): string {
   if (!/^[0-9A-Za-z_-]{1,40}$/.test(input.seriesKey)) throw new Error("整形批次seriesKey无效");
   if (!/^[a-f0-9]{64}$/.test(input.sourceDigest) || !/^[a-f0-9]{64}$/.test(input.inputDigest)) {
@@ -4327,7 +4345,7 @@ function nativeDeepReadStructuredBatchObjectName(input: {
   }
   return `manhua-template-learn/native-structuring-cache/${input.seriesKey}/${input.sourceDigest}`
     + `/ep-${String(input.episodeIndex).padStart(3, "0")}/segments-${input.segmentIndexes.join("-")}`
-    + `/${NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256}-${input.inputDigest}.json`;
+    + `/${NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256}-${input.inputDigest}${structuringPolicyCacheSuffix(input.structuringPolicy)}.json`;
 }
 
 export function nativeDeepReadStructuredBatchCallId(input: {
@@ -4336,6 +4354,7 @@ export function nativeDeepReadStructuredBatchCallId(input: {
   episodeIndex: number;
   segmentIndexes: readonly number[];
   rawSegments: ReadonlyArray<Record<string, unknown>>;
+  structuringPolicy?: NativeDeepReadStructuringPolicy;
 }): string {
   const inputDigest = nativeDeepReadStructuredBatchInputDigest(input.rawSegments);
   const objectName = nativeDeepReadStructuredBatchObjectName({ ...input, inputDigest });
@@ -4348,6 +4367,7 @@ export async function readNativeDeepReadStructuredBatchCache(input: {
   episodeIndex: number;
   segmentIndexes: readonly number[];
   rawSegments: ReadonlyArray<Record<string, unknown>>;
+  structuringPolicy?: NativeDeepReadStructuringPolicy;
 }): Promise<NativeDeepReadStructuredBatchCacheEntry | null> {
   const inputDigest = nativeDeepReadStructuredBatchInputDigest(input.rawSegments);
   const objectName = nativeDeepReadStructuredBatchObjectName({ ...input, inputDigest });
@@ -4429,13 +4449,24 @@ export async function invokeNativeDeepReadGlmStructuring(
     responseJsonSchema: { name: NATIVE_DEEP_READ_STRUCTURING_JSON_SCHEMA_NAME, schema: nativeDeepReadStructuringJsonSchema() },
     // 整形开关只改链序（首发哪家），其余冻结参数原样
     gatewayPolicy: context?.gatewayPolicy ?? NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG.gatewayPolicy,
+    // 0906 用户令：判坏后同档降温重试；只在重试时覆盖，首发仍是冻结值
+    ...(Number.isFinite(Number(context?.temperature)) ? { temperature: Number(context!.temperature) } : {}),
   };
   if (context?.recoverExisting) {
-    const recovered = await readNativeDeepReadGlmRecoveredEvidence({
-      context,
-      expectedRequestWithoutPreferredGateway: requestWithoutPreferredGateway,
-      deps: deps?.evidence,
-    });
+    // 0906 用户令「都是坏的结构了还冻结他」「换个模型整形都不可以」：旧证据身份对不上、损坏、缺 parsed，
+    // 一律当作没有可复用证据，直接新发付费调用；不再拿「避免重复付费」硬停整集。
+    let recovered: Awaited<ReturnType<typeof readNativeDeepReadGlmRecoveredEvidence>> = null;
+    try {
+      recovered = await readNativeDeepReadGlmRecoveredEvidence({
+        context,
+        expectedRequestWithoutPreferredGateway: requestWithoutPreferredGateway,
+        deps: deps?.evidence,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/已停止以避免重复付费/.test(message)) throw error;
+      console.warn(`[nativeDeepRead] 旧整形证据不可复用，改为新发整形：${message}`);
+    }
     if (recovered) {
       const usage = recovered.response.usage;
       return {
@@ -4456,11 +4487,22 @@ export async function invokeNativeDeepReadGlmStructuring(
   }
   const preferredGlmGateway = (context?.preferredGlmGateway
     || nextNativeDeepReadGlmPreferredGateway(context?.gatewayPolicy)) as GlmGatewayName;
-  const store = createNativeDeepReadGlmEvidenceStore({ ...context, preferredGlmGateway }, deps?.evidence);
   let raw: Record<string, unknown> | undefined;
   const request = { ...requestWithoutPreferredGateway, preferredGlmGateway };
   // 请求先永久留存；回调在bailian解析SSE/JSON前await，保存失败不得另烧备用。
-  await store.writeRequest(request);
+  // 0906：同编号下已有旧（不可复用的）证据时不硬停，顺延编号 -v2/-v3… 另起一份证据链。
+  let store = createNativeDeepReadGlmEvidenceStore({ ...context, preferredGlmGateway }, deps?.evidence);
+  for (let version = 2; ; version += 1) {
+    try {
+      await store.writeRequest(request);
+      break;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/证据已存在，禁止覆盖/.test(message) || !context?.callId || version > 9) throw error;
+      console.warn(`[nativeDeepRead] 整形证据编号 ${context.callId} 已被旧证据占用，顺延为 -v${version}`);
+      store = createNativeDeepReadGlmEvidenceStore({ ...context, callId: `${context.callId}-v${version}`, preferredGlmGateway }, deps?.evidence);
+    }
+  }
   await context?.onBeforePaidCall?.();
   const response = await (deps?.invoke ?? invokeGlmJsonChatWithGatewayFallback)({
     ...request,
@@ -6157,16 +6199,27 @@ async function executeNativeDeepReadBatch(
         labelZh?: string;
         /** 0905 用户拍板：批次序号决定链序（0 起）；单批＝第 1 批 */
         batchOrdinal?: number;
+        /** 0906：观察锁判坏后的第几次重整形（1 起）；证据编号带后缀，不回读坏证据 */
+        lockRetry?: number;
+        /** 0906：已交出坏输出的网关，本次链序把它们排到最后 */
+        badGateways?: readonly string[];
+        /** 0906：同档降温重试的温度；缺省用冻结值 */
+        temperature?: number;
       }): Promise<NativeDeepReadGlmStructuringResult> => {
-        const callId = canCacheStructuring
+        const baseCallId = canCacheStructuring
           ? nativeDeepReadStructuredBatchCallId({
             seriesKey: params.segmentCacheSeriesKey!,
             sourceDigest: episode.cacheSourceDigest!,
             episodeIndex: episode.episodeIndex,
             segmentIndexes: input.segmentIndexes,
             rawSegments: input.rows,
+            structuringPolicy: structuringGatewayPolicy,
           })
           : crypto.randomUUID();
+        const callId = input.lockRetry ? `${baseCallId}-lockretry${input.lockRetry}` : baseCallId;
+        const baseOrder = nativeDeepReadStructuringGatewayOrder(structuringGatewayPolicy, input.batchOrdinal ?? 0);
+        const bad = new Set(input.badGateways ?? []);
+        const gatewayOrder = [...baseOrder.filter((g) => !bad.has(g)), ...baseOrder.filter((g) => bad.has(g))];
         let startedAt: number | undefined;
         const emitPaidCallStarted = async () => {
           if (startedAt !== undefined) return;
@@ -6193,7 +6246,8 @@ async function executeNativeDeepReadBatch(
               episodeIndex: episode.episodeIndex, batchRequestId: episodeRequestId, callId,
               recoverExisting: canCacheStructuring, onBeforePaidCall: emitPaidCallStarted,
               gatewayPolicy: structuringGatewayPolicy,
-              gatewayOrder: nativeDeepReadStructuringGatewayOrder(structuringGatewayPolicy, input.batchOrdinal ?? 0),
+              gatewayOrder,
+              temperature: input.temperature,
               // 0905 用户令「总不能傻等」：流式心跳，同 callId 更新 started 行「X 档 · 已收 N KB · M 秒」
               onStreamProgress: async (info) => {
                 if (startedAt === undefined) return;
@@ -6342,6 +6396,9 @@ async function executeNativeDeepReadBatch(
         fallbackRows: ReadonlyArray<Record<string, unknown>>;
         labelZh: string;
         batchOrdinal?: number;
+        lockRetry?: number;
+        badGateways?: readonly string[];
+        temperature?: number;
       }): Promise<NativeDeepReadGlmStructuringResult | { raw: Record<string, unknown>; localFallback: true }> => {
         try {
           return await glmStructure({
@@ -6351,6 +6408,9 @@ async function executeNativeDeepReadBatch(
             rows: input.rows,
             labelZh: input.labelZh,
             batchOrdinal: input.batchOrdinal,
+            lockRetry: input.lockRetry,
+            badGateways: input.badGateways,
+            temperature: input.temperature,
           });
         } catch (error) {
           // 只有“两条供应商都没有交付可消费结果”才能走本地整形。
@@ -6371,22 +6431,108 @@ async function executeNativeDeepReadBatch(
           return { raw: deterministicallyMergeNativeDeepReadRawSegments(input.fallbackRows), localFallback: true };
         }
       };
+      /**
+       * 0906 用户令「判断是坏的就改用其他路由重试，别一个批次错了整集死掉」「重试一次，再报错就换路由」：
+       * 一批整形输出过不了观察锁 → 同一档先重试一次；同档两次都交坏卷才把它排到链尾换下一档；
+       * 每次都用新证据编号（不回读坏证据）、只重整形这一批。链上每档都用完两次才停。
+       * 本地 fallback 结果不经此锁（其 raw 就是原稿拼接）。
+       */
+      const NATIVE_DEEP_READ_LOCK_TRIES_PER_GATEWAY = 2;
+      const structureBatchWithLockRetry = async (input: {
+        prompt: ReturnType<typeof buildNativeDeepReadGlmStructuringPrompt>;
+        videoCount: number;
+        segmentIndexes: readonly number[];
+        rows: ReadonlyArray<Record<string, unknown>>;
+        fallbackRows: ReadonlyArray<Record<string, unknown>>;
+        labelZh: string;
+        batchOrdinal?: number;
+      }): Promise<Record<string, unknown>> => {
+        const chain = nativeDeepReadStructuringGatewayOrder(structuringGatewayPolicy, input.batchOrdinal ?? 0);
+        const maxAttempts = chain.length * NATIVE_DEEP_READ_LOCK_TRIES_PER_GATEWAY;
+        const badCountByGateway = new Map<string, number>();
+        const inputShotCount = stripNonStoryAdShotsForEpisodeCard(input.rows)
+          .rows.reduce((sum, raw) => sum + (Array.isArray(raw.shots) ? raw.shots.length : 0), 0);
+        let nextTemperature: number | undefined; // 同档第 2 次降到 0.75；换档后回到冻结首发温度
+        for (let attempt = 0; ; attempt += 1) {
+          const badGateways = Array.from(badCountByGateway.entries())
+            .filter(([, n]) => n >= NATIVE_DEEP_READ_LOCK_TRIES_PER_GATEWAY).map(([g]) => g);
+          const result = await runStructuringOrLocalFallback({ ...input, lockRetry: attempt || undefined, badGateways, temperature: nextTemperature });
+          result.raw = unwrapNativeDeepReadStructuredAnswerEnvelope(result.raw);
+          if ("localFallback" in result) return result.raw;
+          try {
+            assertNativeDeepReadShotObservationsPreserved(input.rows, result.raw);
+            // 0906 用户令「镜数不合」也算坏：批次留存率低于拒收线，同样降温重试再换路由
+            const keptShots = Array.isArray(result.raw.shots) ? (result.raw.shots as unknown[]).length : 0;
+            if (inputShotCount > 0 && keptShots > 0 && keptShots / inputShotCount < NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT) {
+              const error = new Error(`批次镜头留存率仅 ${((keptShots / inputShotCount) * 100).toFixed(1)}%（输入 ${inputShotCount} 镜 → 整形后 ${keptShots} 镜，低于拒收线 ${(NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT * 100).toFixed(0)}%）`);
+              error.name = NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
+              throw error;
+            }
+          } catch (error) {
+            if (!isNativeDeepReadObservationLockError(error) || attempt + 1 >= maxAttempts) throw error;
+            const n = (badCountByGateway.get(result.gateway) ?? 0) + 1;
+            badCountByGateway.set(result.gateway, n);
+            const reasonZh = (error instanceof Error ? error.message : String(error)).slice(0, 200);
+            const sameGatewayRetry = n < NATIVE_DEEP_READ_LOCK_TRIES_PER_GATEWAY;
+            nextTemperature = sameGatewayRetry ? NATIVE_DEEP_READ_STRUCTURING_RETRY_TEMPERATURE : undefined;
+            const nextZh = sameGatewayRetry
+              ? `同档降温到 ${NATIVE_DEEP_READ_STRUCTURING_RETRY_TEMPERATURE} 再试一次`
+              : "换下一档重整形这一批";
+            console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${input.labelZh}：${glmGatewayDisplayLabel(result.gateway)} 交出的整形过不了观察锁（${reasonZh}），${nextZh}（第 ${attempt + 1}/${maxAttempts - 1} 次重整形）`);
+            await emitVisualModelReceipt({
+              callId: `${episodeRequestId}:structuring-lock-retry:${input.segmentIndexes.join("-")}:${attempt + 1}`,
+              model: `${glmGatewayDisplayLabel(result.gateway)} 输出过不了观察锁（${reasonZh.slice(0, 80)}），${nextZh}（第 ${attempt + 1}/${maxAttempts - 1} 次）`,
+              route: "structuring_retry_pending",
+              stage: "visual_parse",
+              status: "failed",
+              batchRequestId: episodeRequestId,
+              episodeIndexes: [episode.episodeIndex],
+              videoCount: input.videoCount,
+              labelZh: input.labelZh,
+              errorZh: reasonZh,
+            }, params.onModelReceipt);
+            continue;
+          }
+          await writeCachedStructuring(input.segmentIndexes, input.rows, result);
+          return result.raw;
+        }
+      };
+      const badCacheUndeletable = new Set<string>();
+      /** 0906 用户令「坏缓存直接砍了，留着等新数据去爆炸吗」：缓存输出过不了观察锁 → 当场删掉那个对象，当没缓存重整形。 */
       const readCachedStructuring = async (
         segmentIndexes: readonly number[],
         rows: ReadonlyArray<Record<string, unknown>>,
         labelZh: string,
       ): Promise<Record<string, unknown> | null> => {
         if (!canCacheStructuring) return null;
-        const cached = await deps.readStructuredBatchCache({
+        const cacheIdentity = {
           seriesKey: params.segmentCacheSeriesKey!,
           sourceDigest: episode.cacheSourceDigest!,
           episodeIndex: episode.episodeIndex,
           segmentIndexes,
-          rawSegments: rows,
-        });
+          structuringPolicy: structuringGatewayPolicy,
+        };
+        let cached = await deps.readStructuredBatchCache({ ...cacheIdentity, rawSegments: rows });
+        if (cached) {
+          try {
+            assertNativeDeepReadShotObservationsPreserved(rows, cached.raw);
+          } catch (error) {
+            if (!isNativeDeepReadObservationLockError(error)) throw error;
+            const objectName = nativeDeepReadStructuredBatchObjectName({
+              ...cacheIdentity, inputDigest: nativeDeepReadStructuredBatchInputDigest(rows),
+            });
+            console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${labelZh}缓存输出过不了观察锁，删掉坏缓存 ${objectName} 后重整形：${(error as Error).message.slice(0, 160)}`);
+            try {
+              await deps.remove({ bucket: "mv-studio-pro-vertex-video-temp", objectName });
+            } catch (removeError) {
+              console.warn(`[nativeDeepRead] 坏缓存删除未成（重整形结果将不写缓存）：${removeError instanceof Error ? removeError.message : String(removeError)}`);
+              badCacheUndeletable.add(segmentIndexes.join("-"));
+            }
+            cached = null;
+          }
+        }
         if (!cached) return null;
         console.info(`[nativeDeepRead] 第${episode.episodeIndex}集${labelZh}命中GCS缓存，模型调用0`);
-        assertNativeDeepReadShotObservationsPreserved(rows, cached.raw);
         if (cached.evidence) {
           glmEvidence = cached.evidence;
           if (!glmEvidenceCallIds.includes(cached.evidence.callId)) {
@@ -6401,6 +6547,10 @@ async function executeNativeDeepReadBatch(
         result: NativeDeepReadGlmStructuringResult | { raw: Record<string, unknown>; localFallback: true },
       ): Promise<void> => {
         if (!canCacheStructuring || "localFallback" in result) return;
+        if (badCacheUndeletable.has(segmentIndexes.join("-"))) {
+          console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集批次 ${segmentIndexes.join(",")} 坏缓存未能删除，本次结果不写缓存（下次重跑会再删一次）`);
+          return;
+        }
         await deps.writeStructuredBatchCache({
           schemaVersion: 1,
           frozenContractSha256: NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256,
@@ -6409,6 +6559,8 @@ async function executeNativeDeepReadBatch(
           episodeIndex: episode.episodeIndex,
           segmentIndexes: [...segmentIndexes],
           inputDigest: nativeDeepReadStructuredBatchInputDigest(rows),
+          // Qwen 链不写该字段：与历史条目身份逐字相同，if-absent 撞同名时不会误判「内容不同」
+          ...(structuringGatewayPolicy === "structuring_chain" ? { structuringPolicy: structuringGatewayPolicy } : {}),
           raw: result.raw,
           evidence: result.evidence,
           gateway: result.gateway,
@@ -6429,7 +6581,7 @@ async function executeNativeDeepReadBatch(
         if (segmentCount <= maxRawSegmentsPerBatch) {
           const cached = await readCachedStructuring(allSegmentIndexes, glmStructuringInputs, "最终整形");
           if (cached) return unwrapNativeDeepReadStructuredAnswerEnvelope(cached);
-          const result = await runStructuringOrLocalFallback({
+          return structureBatchWithLockRetry({
             prompt: buildNativeDeepReadGlmStructuringPrompt({
               episodeIndex: episode.episodeIndex,
               durationSec: episode.sourceDurationSec,
@@ -6446,10 +6598,6 @@ async function executeNativeDeepReadBatch(
             fallbackRows: annotateSegmentRows(),
             labelZh: `第${episode.episodeIndex}集整集整形（一次）`,
           });
-          result.raw = unwrapNativeDeepReadStructuredAnswerEnvelope(result.raw);
-          assertNativeDeepReadShotObservationsPreserved(glmStructuringInputs, result.raw);
-          await writeCachedStructuring(allSegmentIndexes, glmStructuringInputs, result);
-          return result.raw;
         }
 
         // 0905 用户令：批次要均分，不是「前面塞满、尾巴一小撮」——8 片＝4+4、9 片＝5+4、29 片＝5×5+4，
@@ -6476,7 +6624,7 @@ async function executeNativeDeepReadBatch(
           );
           if (cached) return cached;
           const groupSegments = segmentIndexes.map((index) => episode.segments[index]!);
-          const result = await runStructuringOrLocalFallback({
+          return structureBatchWithLockRetry({
             prompt: buildNativeDeepReadGlmStructuringPrompt({
               episodeIndex: episode.episodeIndex,
               durationSec: episode.sourceDurationSec,
@@ -6495,10 +6643,6 @@ async function executeNativeDeepReadBatch(
             labelZh: `第${episode.episodeIndex}集第${segmentIndexes[0]! + 1}—${segmentIndexes.at(-1)! + 1}片批次整形`,
             batchOrdinal,
           });
-          result.raw = unwrapNativeDeepReadStructuredAnswerEnvelope(result.raw);
-          assertNativeDeepReadShotObservationsPreserved(groupInputs, result.raw);
-          await writeCachedStructuring(segmentIndexes, groupInputs, result);
-          return result.raw;
         }));
         // 0905 用户令「不归并，分上下集」：批次各自整形完，按秒位确定性拼成整集卡，
         // 省掉第三次 GLM（实测归并一发 49 分钟、输入 212K）。批次边界的重复镜头由

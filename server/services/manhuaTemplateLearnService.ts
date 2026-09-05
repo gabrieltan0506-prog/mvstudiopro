@@ -2681,6 +2681,13 @@ export async function runManhuaTemplateLearn(
                   : `全系列结构整理未完成：${checkpoint.errorZh || "上游未返回完整回执"}`,
             );
           } else {
+            if (checkpoint.route === "structuring_retry_pending") {
+              await progress(
+                MANHUA_LEARN_STAGE.vision,
+                `${episodeLabel}${checkpoint.labelZh ? ` · ${checkpoint.labelZh}` : ""} · ${checkpoint.model}`,
+              );
+              return;
+            }
             if (checkpoint.route === "gemini_api_fallback_pending" || checkpoint.route === "gemini_api_fallback_failed") {
               const segZh = typeof checkpoint.chunkIndex === "number" && checkpoint.segmentCount
                 ? ` · 分片 ${checkpoint.chunkIndex + 1}/${checkpoint.segmentCount}`
