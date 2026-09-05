@@ -390,15 +390,22 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
   // 0905 用户令：整形链首发两档都失败 → 隔 20 秒再来一轮，共重试两轮；三轮都败才落到兜底模型那几档。
   const plan: Array<{ gateway: (typeof gateways)[number]; delayBeforeMs: number }> = structuringChain
     ? (() => {
-        const primary = gateways.slice(0, 2);
+        // 未配置的首发档只 trace 一次、不进重试轮，免得白等 20 秒×2
+        const primaryAll = gateways.slice(0, 2);
+        const primary = primaryAll.filter((gateway) => gateway.ready);
+        const unconfiguredPrimary = primaryAll.filter((gateway) => !gateway.ready);
         const rest = gateways.slice(2);
         const rounds: typeof plan = [];
-        for (let round = 0; round < STRUCTURING_PRIMARY_ROUNDS; round += 1) {
+        for (let round = 0; round < (primary.length ? STRUCTURING_PRIMARY_ROUNDS : 0); round += 1) {
           primary.forEach((gateway, index) => {
             rounds.push({ gateway, delayBeforeMs: round > 0 && index === 0 ? STRUCTURING_PRIMARY_RETRY_DELAY_MS : 0 });
           });
         }
-        return [...rounds, ...rest.map((gateway) => ({ gateway, delayBeforeMs: 0 }))];
+        return [
+          ...unconfiguredPrimary.map((gateway) => ({ gateway, delayBeforeMs: 0 })),
+          ...rounds,
+          ...rest.map((gateway) => ({ gateway, delayBeforeMs: 0 })),
+        ];
       })()
     : gateways.map((gateway) => ({ gateway, delayBeforeMs: 0 }));
   for (const step of plan) {
@@ -406,6 +413,12 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
     if (step.delayBeforeMs > 0) {
       if (params.abortSignal?.aborted) {
         throw new GlmGatewayError("GLM 调用已被硬截止取消", trace, accumulatedUsage);
+      }
+      // 预算已不够再跑一档就别等了，直接进下一步的「预算耗尽跳过」
+      if (Number.isFinite(Number(params.deadlineAtMs))
+        && Number(params.deadlineAtMs) - Date.now() < GLM_CHAIN_MIN_GATEWAY_MS + step.delayBeforeMs) {
+        trace.push({ gateway: g.name, model: g.model, outcome: "skipped_budget_exhausted" });
+        continue;
       }
       await new Promise<void>((resolve) => {
         const timer = setTimeout(done, step.delayBeforeMs);

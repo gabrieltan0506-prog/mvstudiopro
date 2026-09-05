@@ -174,7 +174,8 @@ export async function readNativeDeepReadGlmRecoveredEvidence(input: {
     || requestPayload.episodeIndex !== episodeIndex
     || typeof requestPayload.batchRequestId !== "string"
     || !requestPayload.batchRequestId.trim()
-    || (storedPreferred !== "evolink_glm" && storedPreferred !== "openrouter")
+    // 0905 整形链五档（GLM 两档 + Qwen 三档）都可能是首发档，只要求非空字符串
+    || typeof storedPreferred !== "string" || !storedPreferred.trim()
     || (input.context.preferredGlmGateway && storedPreferred !== input.context.preferredGlmGateway)
   ) throw new Error("整集GLM request证据身份不一致，已停止以避免重复付费");
   const expectedRequest = {
