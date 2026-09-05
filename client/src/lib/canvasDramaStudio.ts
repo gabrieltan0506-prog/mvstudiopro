@@ -1745,6 +1745,18 @@ export function countExpectedManhuaKeyartShots(
   ).length;
 }
 
+/**
+ * 统一识别已生成的逐镜/段计划结构；至少两条逐镜才算成稿，单行摘要不得触发默认骨架。
+ * 顾问只用它检查 outputText，生产链也用同一规则选真源。
+ */
+export function hasExplicitManhuaShotStructure(text: string): boolean {
+  if (parseManhuaEpisodeSegmentPlanFromMarkdown(text).segments.length > 0) return true;
+  const numberedRows = String(text || "").match(
+    /^(?:\|?\s*)(?:分镜|镜头|节拍|Shot)?\s*\d{1,2}\s*(?:[.、:：)\]】]|\|)/gim,
+  );
+  return (numberedRows?.length || 0) >= 2;
+}
+
 /** 工作台、静帧和成片共同读取的分镜真源；模板不能覆盖已返回的结构正文。 */
 export function resolveShotsForEpisodeKeyarts(
   blocks: CanvasBlock[],
@@ -1761,13 +1773,6 @@ export function resolveShotsForEpisodeKeyarts(
   const reverseText = reverse?.outputText || reverse?.prompt || "";
   const beatsText = beats?.outputText || beats?.prompt || "";
   const storyText = story?.outputText || story?.prompt || "";
-  const hasExplicitShots = (text: string) => {
-    if (parseManhuaEpisodeSegmentPlanFromMarkdown(text).segments.length > 0) return true;
-    const numberedRows = String(text || "").match(
-      /^(?:\|?\s*)(?:分镜|镜头|节拍|Shot)?\s*\d{1,2}\s*(?:[.、:：)\]】]|\|)/gim,
-    );
-    return (numberedRows?.length || 0) >= 2;
-  };
   // 只把真实生成的可拍表/分镜行当结构真源；beats 的模板 prompt 不能压过 reverse 成稿。
   const shotSource = [
     String(beats?.outputText || "").trim(),
@@ -1776,7 +1781,7 @@ export function resolveShotsForEpisodeKeyarts(
     beatsText,
     reverseText,
     storyText,
-  ].find((text) => text && hasExplicitShots(text));
+  ].find((text) => text && hasExplicitManhuaShotStructure(text));
   // 三类节点遵循同一成稿优先顺序；旧段表必须先编译，不能误落逐镜解析骨架。
   const selectedText = shotSource || reverseText || beatsText || storyText;
   const selectedPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(selectedText);

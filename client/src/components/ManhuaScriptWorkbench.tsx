@@ -28,6 +28,7 @@ import {
   collectManhuaPropImageUrlById,
   ensureManhuaFragmentClips,
   getBlockEpisodeIndex,
+  hasExplicitManhuaShotStructure,
   MANHUA_FACTORY_STAGE_LABEL_ZH,
   queuedManhuaKeyartBlocks,
   resolveShotsForEpisodeKeyarts,
@@ -146,7 +147,6 @@ import {
   manhuaSegmentCountBounds,
   pinnedManhuaSegmentCount,
   parseManhuaClipTargetDurationSec,
-  parseWorkbenchShotsFromText,
   resolveClipLocalSegmentIndex,
   resolveClipSegmentIndex,
   resolveKeyartShotIndex,
@@ -167,17 +167,13 @@ import {
 } from "@shared/manhuaWorkbenchActionGate";
 import {
   buildManhuaSecondCueSheet,
-  buildWorkbenchShotsFromSegmentPlan,
   evaluateManhuaCueSheetReady,
 } from "@shared/manhuaStoryDistill";
 import {
   inferManhuaCastZhFromDialogue,
   parseManhuaEpisodeSegmentPlanFromMarkdown,
 } from "@shared/manhuaEpisodeSegmentPlan";
-import {
-  applyShotDialoguesFromText,
-  MANHUA_DIALOGUE_SILENCE_TOKEN,
-} from "@shared/manhuaShotDialoguePersist";
+import { MANHUA_DIALOGUE_SILENCE_TOKEN } from "@shared/manhuaShotDialoguePersist";
 import {
   extractManhuaClipUserSupplement,
   upsertManhuaClipUserSupplement,
@@ -792,38 +788,28 @@ export function resolveManhuaAdvisorSelection(input: {
   };
 }
 
-function hasExplicitManhuaShotSyntax(text: string): boolean {
-  return (
-    /^\s*(?:\d{1,3}[.、)]|镜(?:头)?\s*\d{1,3})\s*/m.test(text) ||
-    /^\s*\|\s*镜(?:号|头)?\s*\|/m.test(text)
-  );
-}
-
 /**
  * 顾问只读真实产物：节点 prompt 是待运行模板，不能当成已生成分镜。
- * 仅 outputText 中的可拍段表或显式镜号可上报；无结构正文不生成默认骨架。
+ * 仅 outputText 中的可拍段表或至少两条逐镜可上报；无结构正文不生成默认骨架。
  */
 export function resolveManhuaAdvisorShotsFromBlocks(input: {
   beats?: Pick<CanvasBlock, "outputText" | "prompt"> | null;
   reverse?: Pick<CanvasBlock, "outputText" | "prompt"> | null;
   story?: Pick<CanvasBlock, "outputText" | "prompt"> | null;
+  /** 工作台已从统一生产函数取得的同镜列表；生产渲染传入它，测试/旧调用可省略。 */
+  productionShots?: ManhuaWorkbenchShot[];
 }): ManhuaWorkbenchShot[] {
   const beatsText = String(input.beats?.outputText || "").trim();
   const reverseText = String(input.reverse?.outputText || "").trim();
   const storyText = String(input.story?.outputText || "").trim();
-  if (!beatsText && !reverseText && !storyText) return [];
-  const plan = [beatsText, reverseText, storyText]
-    .filter(Boolean)
-    .map((text) => parseManhuaEpisodeSegmentPlanFromMarkdown(text))
-    .find((candidate) => candidate.segments.length > 0);
-  if (plan) return buildWorkbenchShotsFromSegmentPlan(plan) as ManhuaWorkbenchShot[];
-  const source = [beatsText, reverseText, storyText].find(
-    (text) => text && hasExplicitManhuaShotSyntax(text),
-  );
-  if (!source) return [];
-  let shots = parseWorkbenchShotsFromText(source);
-  shots = applyShotDialoguesFromText(shots, reverseText);
-  return applyShotDialoguesFromText(shots, beatsText);
+  if (![beatsText, reverseText, storyText].some(hasExplicitManhuaShotStructure)) return [];
+  if (input.productionShots) return input.productionShots;
+  const blocks = [
+    input.reverse ? { ...input.reverse, id: "reverse-e01", kind: "text" as const } : null,
+    input.beats ? { ...input.beats, id: "beats-e01", kind: "text" as const } : null,
+    input.story ? { ...input.story, id: "story-e01", kind: "text" as const } : null,
+  ].filter((block): block is NonNullable<typeof block> => Boolean(block)) as CanvasBlock[];
+  return resolveShotsForEpisodeKeyarts(blocks, 1);
 }
 
 export default function ManhuaScriptWorkbench({
@@ -1581,8 +1567,8 @@ export default function ManhuaScriptWorkbench({
   const activeSegNo = resolveSegmentIndexFromShotIndex(activeShotNo);
   const activeSegment = segments.find((s) => s.index === activeSegNo) || segments[0];
   const advisorShots = useMemo(
-    () => resolveManhuaAdvisorShotsFromBlocks({ beats, reverse, story }),
-    [beats, reverse, story],
+    () => resolveManhuaAdvisorShotsFromBlocks({ beats, reverse, story, productionShots: shots }),
+    [beats, reverse, story, shots],
   );
   const advisorActiveShot = activeShot
     ? advisorShots.find((shot) => shot.index === activeShot.index) || null

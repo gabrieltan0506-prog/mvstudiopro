@@ -110,3 +110,14 @@
 - 兼容修正后的 `pnpm exec vite build` 退出 0，43.27 秒，既有大包警告仍在。原始回执保留于 `ui-compat-full.log`、`ui-compat-build.log`；类型早期两次红灯分别是宽泛 string 和未剥除可选参数 undefined，均只发生在新增测试夹具。
 - 最终 `pnpm check --incremental false --pretty false` 退出 0（`ui-release-types.log`），不使用缓存或放宽类型。完整 diff-check 通过；没有独立 lint 脚本，未做 Docker 镜像构建或线上部署。
 - 九层增量状态：需求边界、真实数据源及兼容契约已验证；入口/存储恢复/最终消费仅离线部分验证；服务层无新副作用但未做真实模型/扣退；静态回归保留上述两项基线失败；真实链路未验。回退仅撤销本次共用解析和入口代码，不改已存正文/轨迹，不删除任何媒体或 JSON。
+
+## 追加：创作顾问选中镜同源（2026-09-06 凌晨）
+
+- 改前证据：工作台选中镜为真实六列表解析结果，顾问却另用不接受 `| 1 |` 的规则，镜号相同仍找不到镜头；单行旧 beats 又被误判成稿，产生默认骨架。只修来源和门控，不改顾问 API、模型、额度、计费、超时、任务或恢复合同。
+- 实际文件：`canvasDramaStudio.ts` 把现有段表/至少两条逐镜结构判定原样抽成共享函数；`ManhuaScriptWorkbench.tsx` 仅允许真实 outputText 结构进入顾问，通过后读取工作台同一 shots；`manhuaDirectorStrategyUiWiring.test.ts` 补六列、story-only、旧单行和五/六段回归；新增 `manhuaAdvisorSelectedShotPipeline.test.ts`。
+- 正向证据：真实逐镜正文 → 同源 shots → 镜号选择 → resolveManhuaAdvisorSelection → buildManhuaAdvisorProject → 生产 Panel 的 send 函数 → strict schema → 请求 → 服务端 buildManhuaCreativeAdvisorLlmMessages。逆向断言服务端 user 消息逐字包含选中镜 JSON、动作、运镜、对白，不混入镜 3；只有 prompt 时仍是未指定镜头，不输出默认假镜。
+- 既有实际 submit 调用 askPlatformSkillQa；requestId、原问题、上下文、确认付费、恢复编号与服务端幂等合同未改。此次在提交边界截获请求，仅调用纯消息组装器，没有访问外部模型、数据库或扣费。
+- 改前专项目标 3 失败：reverse/story 六列为空、旧单行 beats 遮盖；主代理真实请求链改前 1 失败/1 通过，直接显示镜 2 为 undefined。修正后七文件 147 项通过（13.67 秒），包括生产编排、顾问投影、上下文、服务端消息及真实发送回调；不是点击浏览器或模型回答质量验收。
+- 九层增量状态：需求边界、数据生产/转换、请求及服务端消息消费已离线验证；UI 交互为部分验证；未修改存储恢复或计费服务，真实模型/扣退/浏览器未验证；不称线上闭环。回退保留正文与历史问答，不得恢复“默认骨架当事实”的旧行为。
+- 本次是上一轮 4694 项全仓之后的小增量，未将上一轮全仓结果冒充本次结果。原始日志为 `advisor-pipeline-before.log`、`advisor-final-target.log`、`advisor-final-types.log`、`advisor-final-build.log`，最终静态退出状态另记下条。
+- 最终命令及结果：`pnpm check --incremental false --pretty false` 退出 0；`pnpm exec vite build` 退出 0，31.79 秒，既有大包警告；新增测试格式化通过；完整 `git diff --check` 退出 0。无独立 lint 脚本，无新依赖；未做 Docker 镜像、线上 Chrome 或本增量全仓重跑，相关七文件 147 项为本次最终回归。
