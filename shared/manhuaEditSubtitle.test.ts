@@ -38,6 +38,36 @@ describe("manhuaEditSubtitle", () => {
     expect(srt).toContain("00:00:00,000 --> 00:00:03,000");
     expect(srt).toContain("你好");
   });
+
+  it.each([
+    [1.9996, 3, "00:00:02,000 --> 00:00:03,000"],
+    [59.9996, 61.25, "00:01:00,000 --> 00:01:01,250"],
+    [3599.9996, 3601.25, "01:00:00,000 --> 01:00:01,250"],
+  ])("预览和复制 SRT 正确进位（%s 秒）", (startSec, endSec, expected) => {
+    const cues = [
+      { shotIndex: 1, order: 1, startSec, endSec, textZh: "原文不变" },
+    ];
+    const preview = formatManhuaSubtitleSrt(cues);
+    const burn = buildManhuaSubtitleBurnSrt(cues);
+    expect(preview).toContain(expected);
+    expect(preview).not.toContain(",1000");
+    expect(preview.split("\n")[1]).toBe(burn.split("\n")[1]);
+    expect(preview.split("\n")[2]).toBe("原文不变");
+  });
+
+  it("空轨仍为空，预览不改变对白原文和输入镜序", () => {
+    expect(formatManhuaSubtitleSrt([])).toBe("");
+    const cues = [
+      { shotIndex: 2, order: 2, startSec: 4, endSec: 6, textZh: "{原文}\n第二行" },
+      { shotIndex: 1, order: 1, startSec: 0, endSec: 3, textZh: "第一镜" },
+    ];
+    const before = JSON.stringify(cues);
+    const preview = formatManhuaSubtitleSrt(cues);
+    expect(preview).toBe(
+      "1\n00:00:04,000 --> 00:00:06,000\n{原文}\n第二行\n\n2\n00:00:00,000 --> 00:00:03,000\n第一镜\n",
+    );
+    expect(JSON.stringify(cues)).toBe(before);
+  });
 });
 
 describe("buildManhuaSubtitleBurnSrt(烧字 SRT)", () => {

@@ -53,14 +53,8 @@ export function buildManhuaSubtitleCues(opts: BuildSubtitleCuesOpts): ManhuaSubt
 /** 简易 SRT 文本（导出/预览用，不自动烧字） */
 export function formatManhuaSubtitleSrt(cues: ManhuaSubtitleCue[]): string {
   if (!cues.length) return "";
-  const pad = (n: number) => String(Math.floor(n)).padStart(2, "0");
-  const ts = (sec: number) => {
-    const h = Math.floor(sec / 3600);
-    const m = Math.floor((sec % 3600) / 60);
-    const s = Math.floor(sec % 60);
-    const ms = Math.round((sec % 1) * 1000);
-    return `${pad(h)}:${pad(m)}:${pad(s)},${String(ms).padStart(3, "0")}`;
-  };
+  // 预览／复制与烧字共用整毫秒进位，不能生成 59,1000 这种非法时间码。
+  const ts = (sec: number) => subtitleTimecode(Math.round(sec * 1000));
   return cues
     .map((c, i) => `${i + 1}\n${ts(c.startSec)} --> ${ts(c.endSec)}\n${c.textZh}\n`)
     .join("\n");
@@ -90,7 +84,7 @@ export function sanitizeBurnSubtitleText(text: string): string {
 }
 
 /** 毫秒 → HH:MM:SS,mmm。输入已整体取整，不会再出现 1000ms 进位残位。 */
-function burnTimecode(totalMs: number): string {
+function subtitleTimecode(totalMs: number): string {
   const pad = (n: number, w: number) => String(n).padStart(w, "0");
   const h = Math.floor(totalMs / 3_600_000);
   const m = Math.floor((totalMs % 3_600_000) / 60_000);
@@ -100,7 +94,7 @@ function burnTimecode(totalMs: number): string {
 
 /**
  * 字幕轨 → 真正进 ffmpeg 的 SRT 文本。
- * 与 formatManhuaSubtitleSrt（导出/预览用）分开实现，因为烧字容不得两处松动：
+ * 与导出／预览共用时间码格式；烧字额外执行台词清洗与时间范围校验：
  * - 毫秒先整体取整再拆位：秒数尾差按位拆会出 "01,1000" 这类坏时间码；
  * - 台词过 sanitizeBurnSubtitleText，清洗后全空视同空轨；
  * - 时间码非法（负数/终点不晚于起点）直接报错，宁可不入队也不烧出错位片。
@@ -120,7 +114,7 @@ export function buildManhuaSubtitleBurnSrt(track: ManhuaSubtitleCue[]): string {
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs < 0 || endMs <= startMs) {
       throw new Error(`字幕时间码不可用（镜 ${cue.shotIndex}）`);
     }
-    lines.push(String(i + 1), `${burnTimecode(startMs)} --> ${burnTimecode(endMs)}`, cue.textZh, "");
+    lines.push(String(i + 1), `${subtitleTimecode(startMs)} --> ${subtitleTimecode(endMs)}`, cue.textZh, "");
   });
   return lines.join("\n");
 }
