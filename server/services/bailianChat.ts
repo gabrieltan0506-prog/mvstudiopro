@@ -545,7 +545,7 @@ async function readGlmRawResponseWithEvidence(
   try {
     if (reader) {
       for (;;) {
-        const { done, value } = await reader.read();
+        const { done, value } = await readWithIdleTimeout(reader);
         if (done) { bodyComplete = true; break; }
         // 超限检查不裁掉已经到达的最后一块；取证会明确标注未完整读完。
         chunks.push(Buffer.from(value));
@@ -586,6 +586,30 @@ async function readGlmRawResponseWithEvidence(
  * 读 SSE 流并还原成非流式同形的 JSON 字符串，**返回体形状与改流式前逐字一致**——
  * 上游解析、usage 折算、finish_reason 判定全都不用改，只换了传输方式。
  */
+
+/**
+ * 0905 实锤：EvoLink 整形流把正文吐完后连接挂着不发结束帧，链路干等到 30 分钟档才切档。
+ * 任何一次 read() 超过 GLM_STREAM_IDLE_TIMEOUT_MS 没有新字节，就判本档失败（抛错→网关层按链序切下一档）。
+ */
+export const GLM_STREAM_IDLE_TIMEOUT_MS = 120_000;
+export async function readWithIdleTimeout<T>(
+  reader: { read(): Promise<T>; cancel(reason?: unknown): Promise<void> },
+  idleMs = GLM_STREAM_IDLE_TIMEOUT_MS,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const idle = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reader.cancel("idle").catch(() => undefined);
+      reject(new Error(`上游流 ${Math.round(idleMs / 1000)} 秒无数据，判本档失败并切下一档`));
+    }, idleMs);
+  });
+  try {
+    return await Promise.race([reader.read(), idle]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function readGlmSseStream(
   body: ReadableStream<Uint8Array>,
   maxResponseBytes?: number,
@@ -643,7 +667,7 @@ async function readGlmSseStream(
   let parseFailures = 0;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readWithIdleTimeout(reader);
       if (done) break;
       rawBytes += value.byteLength;
       if (rawBytes > rawCap) throw new Error("GLM 链响应超过处理上限");

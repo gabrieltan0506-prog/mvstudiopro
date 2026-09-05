@@ -732,3 +732,15 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
     expect(calls[0].init?.signal).toBeInstanceOf(AbortSignal);
   });
 });
+
+describe("0905 · GLM 流无数据即断档", () => {
+  it("read() 超过空闲上限即取消并抛错；有数据时原样返回", async () => {
+    const { readWithIdleTimeout } = await import("./bailianChat");
+    const cancelled: unknown[] = [];
+    const stuck = { read: () => new Promise<never>(() => {}), cancel: async (reason?: unknown) => { cancelled.push(reason); } };
+    await expect(readWithIdleTimeout(stuck, 30)).rejects.toThrow("无数据");
+    expect(cancelled).toEqual(["idle"]);
+    const ok = { read: async () => ({ done: false, value: new Uint8Array([1]) }), cancel: async () => {} };
+    await expect(readWithIdleTimeout(ok, 30)).resolves.toEqual({ done: false, value: new Uint8Array([1]) });
+  });
+});
