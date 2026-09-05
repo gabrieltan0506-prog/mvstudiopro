@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { isManhuaKeyartLookCurrent } from "@shared/manhuaKeyartLookState";
 import Navbar from "@/components/Navbar";
 import FreeformCanvas from "@/components/canvas/FreeformCanvas";
 import ManhuaClipDock from "@/components/canvas/ManhuaClipDock";
@@ -34,6 +35,7 @@ import {
   compileManhuaAssetSheetPromptForRerun,
   isManhuaAssetSheetBlockId,
   isManhuaClipBlockId,
+  isManhuaKeyartBlockId,
   shouldRecompileManhuaBlockOnRerun,
 } from "@shared/manhuaCanvasRerunCompile";
 import {
@@ -3941,7 +3943,7 @@ export default function OmniCanvas() {
           afterPrompt: compiled.afterPrompt,
         };
       }
-      if (isManhuaClipBlockId(block.id)) {
+      if (isManhuaClipBlockId(block.id) || isManhuaKeyartBlockId(block.id)) {
         const sheetUrls = collectManhuaCharacterSheetUrlById(blocks, projectBible?.assetCanon);
         const epBody =
           writerPack?.episodes.find((e) => e.index === ep)?.body || "";
@@ -3965,6 +3967,16 @@ export default function OmniCanvas() {
           videoModel: explicitWriterVideoModel || undefined,
         });
         const fresh = ensured.blocks.find((b) => b.id === block.id);
+        if (isManhuaClipBlockId(block.id)) {
+          const segment = resolveClipLocalSegmentIndex(block.id, block.prompt, ep);
+          const staleKeyarts = ensured.blocks.filter((candidate) =>
+            candidate.id.startsWith("keyart-") && !candidate.archivedFromPreviousScript &&
+            (getBlockEpisodeIndex(candidate) ?? 1) === ep &&
+            resolveSegmentIndexFromShotIndex(resolveKeyartShotIndex(candidate.id, candidate.prompt)) === segment &&
+            !isManhuaKeyartLookCurrent(candidate),
+          );
+          if (staleKeyarts.length) throw new Error("本段造型已变更，请先重出对应关键静帧；原图已保留，本次未提交视频。");
+        }
         if (!fresh?.prompt?.trim()) {
           throw new Error("无法重算本段成片提示词，请先「审阅成片提示词」铺段");
         }
@@ -3986,6 +3998,14 @@ export default function OmniCanvas() {
           changed: compiled.changed,
           beforePrompt,
           afterPrompt,
+          ...(isManhuaKeyartBlockId(block.id) ? {
+            imageRunPatch: {
+              imageMode: fresh.imageMode,
+              refImageUrl: fresh.refImageUrl,
+              editFusionUrls: fresh.editFusionUrls,
+              manhuaKeyartLookState: fresh.manhuaKeyartLookState,
+            },
+          } : {}),
           // 与新生成稿同批透传；只改 prompt 会留下上一轮 video_edit 模式和原片绑定。
           videoRunPatch: {
             videoModel: fresh.videoModel,

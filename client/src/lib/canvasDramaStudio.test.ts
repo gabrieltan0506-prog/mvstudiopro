@@ -1258,6 +1258,10 @@ describe("canvasDramaStudio factory", () => {
     expect(refs).toContain("https://example.com/after.png");
     expect(refs).not.toContain("https://example.com/before.png");
     expect(clip.prompt).toContain("变身后");
+    const freshKeyart = second.blocks.find(b => b.id.startsWith("keyart-"))!;
+    expect([freshKeyart.refImageUrl, ...(freshKeyart.editFusionUrls || [])]).toContain("https://example.com/after.png");
+    expect([freshKeyart.refImageUrl, ...(freshKeyart.editFusionUrls || [])]).not.toContain("https://example.com/before.png");
+    expect(freshKeyart.prompt).toContain("【静帧·本段造型参考】");
     expect(second.blocks.filter(b => b.id.startsWith("keyart-")).map(b => b.outputUrl)).toEqual(ready.filter(b => b.id.startsWith("keyart-")).map(b => b.outputUrl));
     expect(() => ensureManhuaFragmentClips(ready, expanded.edges, 1, { customRefs: customRefs.filter(r => r.id !== "after-image"), characterLookSets, segmentLookBindings: { "e1:s1": { heiqi: "look-after" } } })).toThrow(/造型/);
   });

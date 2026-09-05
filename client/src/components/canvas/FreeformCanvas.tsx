@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 import { mergeManhuaMediaVersions } from "@/lib/manhuaMediaVersions";
+import { recordManhuaKeyartLookOutput } from "@shared/manhuaKeyartLookState";
 import {
   retainCanvasVideoTaskResumeSnapshots,
   resolveCanvasVideoTaskResume,
@@ -332,6 +333,7 @@ type FreeformCanvasProps = {
    * 返回 patch 则写入节点后再跑；返回 null 则沿用旧 prompt（自由画布非漫剧节点）。
    */
   compileManhuaRerun?: (block: CanvasBlock) => Promise<{
+    imageRunPatch?: Pick<CanvasBlock, "imageMode" | "refImageUrl" | "editFusionUrls" | "manhuaKeyartLookState">;
     videoRunPatch?: Pick<
       CanvasBlock,
       "videoModel" | "seedance25WorkMode" | "seedance25RefVideoUrls" | "refVideoUrl"
@@ -1715,7 +1717,7 @@ export default function FreeformCanvas({
       let workingBlock = block;
       if (compileManhuaRerun) {
         const mustRecompile =
-          /^(charsheet|sceneplate|propsheet|propplate|clip)-/i.test(block.id);
+          /^(charsheet|sceneplate|propsheet|propplate|keyart|clip)-/i.test(block.id);
         try {
           const compiled = await compileManhuaRerun(block);
           if (mustRecompile && !compiled?.prompt?.trim()) {
@@ -1727,6 +1729,7 @@ export default function FreeformCanvas({
           if (compiled?.prompt?.trim()) {
             const patch = {
               ...compiled.videoRunPatch,
+              ...compiled.imageRunPatch,
               prompt: compiled.prompt,
               outputUrl: compiled.outputUrl,
               outputUrls: compiled.outputUrls ?? block.outputUrls,
@@ -1799,7 +1802,7 @@ export default function FreeformCanvas({
           status: "done",
           outputText: out.outputText,
           outputUrl: out.outputUrl,
-          outputUrls: blockId.startsWith("clip-")
+          outputUrls: /^(clip|keyart)-/.test(blockId)
             ? mergeManhuaMediaVersions([...(out.outputUrls || []), out.outputUrl], stashUrls)
             : out.outputUrls ??
               (out.outputUrl
@@ -1811,6 +1814,7 @@ export default function FreeformCanvas({
           lastFrameUrl: out.lastFrameUrl,
           // 重跑出了新片：旧质检报告（连同旧的「仍采用」授权）作废，按未质检状态重新走
           ...(blockId.startsWith("clip-") ? { manhuaClipQuality: undefined } : {}),
+          ...(blockId.startsWith("keyart-") ? { manhuaKeyartLookState: recordManhuaKeyartLookOutput(runBlockPayload, out.outputUrl) } : {}),
           ...(out.seedance25ThreadId ? { seedance25ThreadId: out.seedance25ThreadId } : {}),
           ...(out.seedance25WebThreadLink
             ? { seedance25WebThreadLink: out.seedance25WebThreadLink }

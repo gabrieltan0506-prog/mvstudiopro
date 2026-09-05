@@ -12,6 +12,9 @@ import {
   resolveUrlForLocalPersist,
 } from "./manhuaLocalMediaStore";
 import type { CanvasBlock } from "@/lib/canvasTypes";
+import { isManhuaKeyartLookCurrent } from "@shared/manhuaKeyartLookState";
+import { blocksForCloudDraftSync, cloudDraftBlocksToCanvas, slimBlocksForLocalPersist } from "./manhuaCloudDraftSync";
+import { buildManhuaCloudDraftPayload } from "@shared/manhuaCloudDraft";
 
 function baseBlock(over: Partial<CanvasBlock> & { id: string }): CanvasBlock {
   const { id, ...rest } = over;
@@ -45,6 +48,28 @@ describe("manhuaLocalMediaStore", () => {
     const ptr = makeLocalMediaPointer(makeLocalMediaRecordId("keyart-e01-s01", "output"));
     expect(isLocalMediaPointer(ptr)).toBe(true);
     expect(isLocalMediaPointer("https://cdn.example/a.jpg")).toBe(false);
+  });
+
+  it("静帧回执贯穿原地址→本机指针→显示地址→云清洗→恢复，旧版本不获新回执", async () => {
+    const source = "https://cdn.example/current-look.png";
+    const block = baseBlock({ id: "keyart-e01-s01-look", imageMode: "edit", outputUrl: source,
+      outputUrls: [source, "https://cdn.example/old-look.png"],
+      manhuaKeyartLookState: { required: "selected-look", generatedFor: "selected-look", generatedUrl: source } });
+    await putLocalMediaRecord({ id: makeLocalMediaRecordId(block.id, "output"), blockId: block.id, slot: "output", blob: new Blob(["test-image"]), mime: "image/png", sourceUrl: source, updatedAt: Date.now() });
+    const local = slimBlocksForLocalPersist([block]);
+    expect(isLocalMediaPointer(local[0].outputUrl)).toBe(true);
+    expect(isManhuaKeyartLookCurrent(local[0])).toBe(true);
+    const display = await rehydrateBlocksFromLocalMedia(local);
+    expect(display[0].outputUrl).toMatch(/^blob:/);
+    expect(isManhuaKeyartLookCurrent(display[0])).toBe(true);
+    const cloud = buildManhuaCloudDraftPayload({ writerSession: {}, blocks: blocksForCloudDraftSync(display), edges: [] });
+    const restored = cloudDraftBlocksToCanvas(cloud.canvas.blocks);
+    expect(isLocalMediaPointer(restored[0].outputUrl)).toBe(true);
+    expect(isManhuaKeyartLookCurrent(restored[0])).toBe(true);
+    const old = { ...block, outputUrl: "https://cdn.example/old-look.png" };
+    expect(isManhuaKeyartLookCurrent(slimBlocksForLocalPersist([old])[0])).toBe(false);
+    const pending = { ...block, manhuaKeyartLookState: { ...block.manhuaKeyartLookState!, required: "another-look" } };
+    expect(isManhuaKeyartLookCurrent(slimBlocksForLocalPersist([pending])[0])).toBe(false);
   });
 
   it("persists blob→pointer and cloud sync keeps source https", async () => {

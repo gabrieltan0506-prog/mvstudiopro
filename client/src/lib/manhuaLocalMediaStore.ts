@@ -5,6 +5,7 @@
  */
 
 import type { CanvasBlock } from "@/lib/canvasTypes";
+import { remapManhuaKeyartLookOutput } from "@shared/manhuaKeyartLookState";
 
 export const LOCAL_MEDIA_PTR_PREFIX = "local-media:v1/";
 export const MANHUA_LOCAL_MEDIA_DB = "mv-manhua-local-media-v1";
@@ -452,6 +453,7 @@ export async function rehydrateBlocksFromLocalMedia(blocks: CanvasBlock[]): Prom
         ? {
             ...b,
             outputUrl,
+            manhuaKeyartLookState: remapManhuaKeyartLookOutput(b, outputUrl),
             refImageUrl,
             outputUrls: outputUrls || [],
             editFusionUrls,
@@ -483,6 +485,7 @@ export function applyLocalMediaPointersToBlocks(blocks: CanvasBlock[]): CanvasBl
     return {
       ...b,
       outputUrl,
+      manhuaKeyartLookState: remapManhuaKeyartLookOutput(b, outputUrl),
       refImageUrl,
       outputUrls,
       editFusionUrls: editFusionUrls.length ? editFusionUrls : undefined,

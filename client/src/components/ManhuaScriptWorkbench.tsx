@@ -4,6 +4,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
+import { isManhuaKeyartLookCurrent } from "@shared/manhuaKeyartLookState";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -25,6 +26,7 @@ import {
   collectManhuaCharacterSheetUrlById,
   collectManhuaEpisodeSegmentPromptsForVoiceGate,
   collectManhuaPropImageUrlById,
+  ensureManhuaFragmentClips,
   getBlockEpisodeIndex,
   MANHUA_FACTORY_STAGE_LABEL_ZH,
   queuedManhuaKeyartBlocks,
@@ -1121,12 +1123,35 @@ export default function ManhuaScriptWorkbench({
     MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
   // 静帧一律取「这一轮真正会被跑到」的节点：从 mini（18 张）改选 2.5（12 张）后，
   // 超出新段表的静帧只是停放，队列不会跑它们。分母若仍按画布节点数算，成片门禁会卡死在 12/18。
-  const episodeKeyarts = useMemo(() => {
+  const episodeKeyartReview = useMemo(() => {
     const queued = new Set(
       queuedManhuaKeyartBlocks(blocks, focusEpisode, episodeVideoModel).map((b) => b.id),
     );
-    return keyartsForEpisode(blocks, focusEpisode).filter((b) => queued.has(b.id));
-  }, [blocks, focusEpisode, episodeVideoModel]);
+    const current = keyartsForEpisode(blocks, focusEpisode).filter((b) => queued.has(b.id));
+    try {
+      // 只推导当前锁定状态，不写画布、不提交生成；与真实出片共用段造型编译器。
+      const compiled = ensureManhuaFragmentClips(blocks, [], focusEpisode, {
+        assetCanon,
+        customRefs: consumableManhuaCustomAssetRefsForCanon(customAssetRefs, assetCanon),
+        lookRefs: customAssetRefs,
+        characterLookSets,
+        segmentLookBindings,
+        characterSheetUrlById: collectManhuaCharacterSheetUrlById(blocks, assetCanon),
+        propImageUrlById: collectManhuaPropImageUrlById(customAssetRefs, assetCanon),
+        videoModel: episodeVideoModel,
+      });
+      const byId = new Map(compiled.blocks.map((block) => [block.id, block]));
+      return { blocks: current.map((block) => byId.get(block.id) || block), error: "" };
+    } catch (error) {
+      // 无法证明选图有效时不能显示已锁定；保留原图，错误就地展示。
+      return {
+        blocks: current.map((block) => ({ ...block, manhuaKeyartLookState: { required: "invalid" } })),
+        error: error instanceof Error ? error.message : "本段造型参考无法核验，请重新确认选图。",
+      };
+    }
+  }, [blocks, focusEpisode, episodeVideoModel, assetCanon, customAssetRefs, characterLookSets, segmentLookBindings]);
+  const episodeKeyarts = episodeKeyartReview.blocks;
+  const staleLookStillCount = episodeKeyarts.filter((block) => !isManhuaKeyartLookCurrent(block)).length;
   const keyart = episodeKeyarts[0];
   const episodeSegmentBounds = manhuaSegmentCountBounds(episodeVideoModel);
   const episodeVideoLabelZh =
@@ -2192,7 +2217,9 @@ export default function ManhuaScriptWorkbench({
     : !stillsCountReady
       ? `请先出齐关键静帧（每段至少 ${MANHUA_KEYARTS_PER_SEGMENT_MIN} 张）`
       : !keyartsPixelLocked
-        ? "关键静帧须垫图改图锁定（改图模式 + 定妆/场景参考图），纯文生成的图不能出成片"
+        ? episodeKeyartReview.error || (staleLookStillCount
+          ? "本段造型已变更，请重出对应关键静帧；旧图仍保留，不会自动生成。"
+          : "关键静帧须垫图改图锁定（改图模式 + 定妆/场景参考图），纯文生成的图不能出成片")
         : !productionProgress.keyartsReady
           ? "请先完成垫图改图锁定的关键静帧"
           : "请先确认按秒导戏单（静帧锁定后自动生成）";
@@ -7088,6 +7115,11 @@ export default function ManhuaScriptWorkbench({
                   })}
                 </div>
               </details>
+            ) : null}
+            {episodeKeyartReview.error || staleLookStillCount ? (
+              <p role="status" className="rounded-lg border border-amber-300/25 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-100">
+                {episodeKeyartReview.error || `${staleLookStillCount} 张静帧尚未按当前造型生成，请重出对应镜头；旧图保留，不会自动生成。`}
+              </p>
             ) : null}
             <div className="flex flex-wrap gap-1 rounded-lg border border-white/10 bg-black/30 p-0.5">
               {(

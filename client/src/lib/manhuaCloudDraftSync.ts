@@ -3,6 +3,7 @@
  * 任一侧失败都不放弃另一侧；恢复时用较新副本补写较弱一侧。
  */
 
+import { remapManhuaKeyartLookOutput } from "@shared/manhuaKeyartLookState";
 import {
   buildManhuaCloudDraftPayload,
   isManhuaCloudDraftNewer,
@@ -166,6 +167,7 @@ export function slimBlocksForLocalPersist(
     return {
       ...b,
       outputUrl,
+      manhuaKeyartLookState: remapManhuaKeyartLookOutput(b, persistableLocalUrl(b.outputUrl)),
       outputUrls:
         outputUrl && !outputUrls.includes(outputUrl)
           ? [outputUrl, ...outputUrls]
@@ -258,6 +260,7 @@ export function blocksForCloudDraftSync(blocks: CanvasBlock[]): CanvasBlock[] {
     return {
       ...b,
       outputUrl,
+      manhuaKeyartLookState: remapManhuaKeyartLookOutput(b, stableOrUndefined(resolveUrlForCloudSync(b.outputUrl))),
       outputUrls:
         outputUrl && !outputUrls.includes(outputUrl)
           ? [outputUrl, ...outputUrls]
@@ -452,6 +455,7 @@ export function cloudDraftBlocksToCanvas(
       outputText: raw.outputText,
       error: raw.error,
       outputUrl: localFirstThenCloud(raw.outputUrl),
+      manhuaKeyartLookState: remapManhuaKeyartLookOutput(raw, localFirstThenCloud(raw.outputUrl)),
       outputUrls: (raw.outputUrls || [])
         .map(u => localFirstThenCloud(u))
         .filter((u): u is string => Boolean(u)),

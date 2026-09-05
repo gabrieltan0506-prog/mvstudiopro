@@ -48,6 +48,8 @@ import {
   resolveActiveLookSetIdsForSegment,
   type ManhuaCharacterLookSet,
 } from "@shared/manhuaCharacterLookSets";
+import { compileManhuaKeyartLookBindings, appendManhuaKeyartLookContinuity } from "@shared/manhuaKeyartLookBindings";
+import { isManhuaKeyartLookCurrent, recordManhuaKeyartLookOutput } from "@shared/manhuaKeyartLookState";
 import {
   resolveEpisodeMainScene,
   type ManhuaWriterAssetCanon,
@@ -2092,6 +2094,7 @@ export function ensureManhuaFragmentClips(
   const segmentPlan = resolveSegmentPlanForEpisodeClips(blocks, ep, opts?.segmentPlan);
   const lookSets = opts?.characterLookSets || [];
   const charTagById: Record<string, string> = {};
+  const refreshedKeyarts = new Map<string, CanvasBlock>();
   for (const s of lockRegistry.byRole.character) {
     if (s.id) charTagById[s.id] = s.tag;
   }
@@ -2266,6 +2269,13 @@ export function ensureManhuaFragmentClips(
       if (!lockRegistry.slots.some((s) => s.id === id && s.role === "wardrobe")) {
         throw new Error("本段所选造型缺少可用参考图，请重新挂图并确认后再生成。");
       }
+    }
+    for (const keyart of segKeyarts) {
+      refreshedKeyarts.set(keyart.id, compileManhuaKeyartLookBindings(keyart, {
+        registry: lockRegistry,
+        allowedIds: segAssets.allowedIds,
+        activeLookSetIds: activeLookIds,
+      }));
     }
     const assetLockBlock = formatManhuaAssetImageBindBlock(lockRegistry, 8, {
       activeLookSetIds: activeLookIds,
@@ -2490,6 +2500,7 @@ export function ensureManhuaFragmentClips(
   const refreshedById = new Map(Array.from(clipBySeg.values()).map((c) => [c.id, c] as const));
 
   let nextBlocks = [...blocks.filter((b) => !staleClipIds.has(b.id)), ...nextExtras].map((b) => {
+    if (refreshedKeyarts.has(b.id)) return refreshedKeyarts.get(b.id)!;
     if (!b.id.startsWith("clip-") || !sameEpisode(b)) return b;
     if (!keepSegClipIds.has(b.id)) {
       // 改档后掉出新段表的已出片段（走到这没进 stale = 有产出）：停放 = 不删、
@@ -3997,7 +4008,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
               const prevStill = resolvePreviousShotKeyartUrl(working, epForShot, shotForCont);
               if (prevStill) {
                 const basePrompt = String(runBlockPayload.prompt || "");
-                runBlockPayload = {
+                runBlockPayload = appendManhuaKeyartLookContinuity(runBlockPayload, prevStill) ?? {
                   ...runBlockPayload,
                   refImageUrl: prevStill,
                   imageMode: "edit",
@@ -4034,6 +4045,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
                       [...(out.outputUrls || []), out.outputUrl],
                       [b.outputUrl, ...(b.outputUrls || [])],
                     ),
+                    manhuaKeyartLookState: recordManhuaKeyartLookOutput(runBlockPayload, out.outputUrl),
                     error: undefined,
                   }
                 : b,
@@ -4165,6 +4177,9 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             )
             .sort(sortKeyartBlocks);
           const segUrls = segKeyarts.map((b) => mediaUrlOf(b)).filter(Boolean) as string[];
+          if (segKeyarts.some((keyart) => !isManhuaKeyartLookCurrent(keyart))) {
+            throw new Error("本段造型已变更，请先重出对应关键静帧；原图已保留，本次未提交视频。");
+          }
           if (segUrls.length) {
             runBlockPayload = {
               ...runBlockPayload,

@@ -3,6 +3,7 @@
  */
 
 import { normalizeManhuaTimelineOrder } from "./manhuaEditOrder.js";
+import { normalizeManhuaKeyartLookState } from "./manhuaKeyartLookState";
 import {
   buildManhuaWriterSession,
   migrateManhuaWriterTemplateId,
@@ -99,6 +100,7 @@ export type ManhuaCloudDraftCanvasBlock = {
   archivedFromPreviousScript?: boolean;
   /** 必须与当前视频一起保存，否则失败片恢复后会落入无报告历史放行分支。 */
   manhuaClipQuality?: ManhuaClipQualityReport;
+  manhuaKeyartLookState?: import("./manhuaKeyartLookState").ManhuaKeyartLookState;
   error?: string;
   refVideoUrl?: string;
   seedance25WorkMode?: SeedanceEvolinkMode;
@@ -341,6 +343,7 @@ export function sanitizeManhuaCloudDraftBlock(
     episodeTitle:
       b.episodeTitle != null ? String(b.episodeTitle).slice(0, 120) : undefined,
     status: b.status != null ? String(b.status).slice(0, 24) : undefined,
+    manhuaKeyartLookState: normalizeManhuaKeyartLookState(b.manhuaKeyartLookState),
     imageMode:
       b.imageMode != null ? String(b.imageMode).slice(0, 24) : undefined,
     aspectRatio:
