@@ -128,7 +128,7 @@ describe("整集GLM消费前永久取证", () => {
     expect(result.evidence?.raw).toHaveLength(2);
     expect(result.evidence?.selectedRawObjectName).toContain("raw-2.json");
     expect(f.saved[3]).toMatchObject({ episodeIndex: 2, batchRequestId: "batch-test", parsed: result.raw });
-    expect(f.saved[0].request).toMatchObject({ system: "系统", user: "全部分片", maxTokens: 262144, gatewayPolicy: "structuring_chain" });
+    expect(f.saved[0].request).toMatchObject({ system: "系统", user: "全部分片", maxTokens: 131072, gatewayPolicy: "structuring_chain" });
     expect(f.saved[0].request).not.toHaveProperty("abortSignal");
   });
 
@@ -253,7 +253,7 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_ROUTE_EVOLINK).toBe("evolink_gemini_video");
     expect(NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE).toBe("openrouter_glm_structuring");
     // 换代必须让旧确认码全废
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260901-shot-observation-v2");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260905-key-shot-tiers-v3");
   });
 
   it("长视频请求显式使用 30 分钟 HTTP 响应头与响应体时限，不落回 Undici 默认 300 秒", async () => {
@@ -1089,6 +1089,7 @@ describe("v11 · 截断段豁免（classification 在 responseSchema 最末，�
   it("🔒 截断段照样守逐镜 17 字段：缺字段仍拒收", () => {
     const raw = withoutClassification();
     const shots = raw.shots as Array<Record<string, unknown>>;
+    raw.keyMoments = [{ atSec: Number(shots[0]!.startSec), kindZh: "剧情", noteZh: "重点镜" }];
     const stripped = { ...shots[0]! };
     delete stripped.microExpressionZh;
     raw.shots = [stripped, ...shots.slice(1)];
@@ -1334,6 +1335,8 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
 
   it("新模型产出缺独立角色站位字段时关闭式拒收，不再用 actionZh 掩盖", () => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    // 0905 两档契约：只有 keyMoment ±6 秒内的重点镜才要求 18 字段齐全
+    raw.keyMoments = [{ atSec: Number((raw.shots as Array<Record<string, unknown>>)[0]!.startSec), kindZh: "剧情", noteZh: "重点镜" }];
     delete (raw.shots as Array<Record<string, unknown>>)[0]!.blockingZh;
     expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
       .toThrow("缺 blockingZh");
@@ -1341,6 +1344,7 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
 
   it("unitTypeZh 只能使用批准的 enum 值", () => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    raw.keyMoments = [{ atSec: Number((raw.shots as Array<Record<string, unknown>>)[0]!.startSec), kindZh: "剧情", noteZh: "重点镜" }];
     (raw.shots as Array<Record<string, unknown>>)[0]!.unitTypeZh = "长镜头";
     expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
       .toThrow("unitTypeZh");
@@ -4279,7 +4283,7 @@ describe("参数契约冻结 0901：0.70→0.65→0.60 + thinkingLevel MEDIUM", 
   it("正负分区版本仍保持原有门禁阈值", () => {
     expect(NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC).toBe(30);
     expect(NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC).toBe(3);
-    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260901-shot-observation-v2");
+    expect(NATIVE_DEEP_READ_VISUAL_PLAN_VERSION).toBe("time-custom-20260905-key-shot-tiers-v3");
   });
 });
 
@@ -4297,7 +4301,7 @@ describe("生成前契约与实际门禁同源", () => {
     expect(schema.properties.shots.description).toContain(`story 至少 ${rule.minStoryShots} 条`);
     expect(schema.properties.shots).toMatchObject({ type: "ARRAY", items: { type: "OBJECT" } });
     expect(Object.keys(schema.properties.shots.items.properties)).toHaveLength(18);
-    expect(schema.properties.shots.items.description).toContain("story条目按顺序完整填写以下18字段");
+    expect(schema.properties.shots.items.description).toContain("重点镜（起止与任一 keyMoments.atSec 前后 6 秒有交集）按顺序完整填写以下18字段");
     expect(schema.properties.shots.items.description).toContain("non_story_ad仅保留startSec、endSec、evidenceRole三个有内容的字段");
     expect(schema.properties.shots.items.required).toEqual(["startSec", "endSec", "evidenceRole", "hintZh"]);
     expect(schema.properties.shots.items.properties.evidenceRole.enum).toEqual(["story", "non_story_ad"]);
@@ -4454,5 +4458,21 @@ describe("0905 · 整片拉取真实进度（不用预估值）", () => {
     const args = buildNativeDeepReadSourceFetchArgs({ node: { url: "https://cdn.example/x.m3u8" }, outputPath: "/tmp/a.mp4", progressPath: "/tmp/a.mp4.progress" });
     expect(args.slice(0, 8)).toEqual(["-nostdin", "-hide_banner", "-loglevel", "error", "-xerror", "-y", "-progress", "/tmp/a.mp4.progress"]);
     expect(buildNativeDeepReadSourceFetchArgs({ node: { url: "https://cdn.example/x.m3u8" }, outputPath: "/tmp/a.mp4" })).not.toContain("-progress");
+  });
+});
+
+describe("0905 · 字幕只取 keyMoments 前后 2 秒", () => {
+  it("过滤掉不在任何 keyMoment ±2 秒内的字幕；无 keyMoments 时原样返回", async () => {
+    const { filterNativeDeepReadSubtitlesToKeyMoments } = await import("./manhuaNativeDeepReadRunner");
+    const raw = {
+      keyMoments: [{ atSec: 10 }, { atSec: 100.4 }],
+      subtitles: [
+        { atSec: 8, textZh: "留" }, { atSec: 12, textZh: "留" }, { atSec: 13, textZh: "丢" },
+        { atSec: 99, textZh: "留" }, { atSec: 50, textZh: "丢" },
+      ],
+    };
+    const out = filterNativeDeepReadSubtitlesToKeyMoments(raw);
+    expect((out.subtitles as Array<{ atSec: number }>).map((s) => s.atSec)).toEqual([8, 12, 99]);
+    expect(filterNativeDeepReadSubtitlesToKeyMoments({ subtitles: raw.subtitles })).toEqual({ subtitles: raw.subtitles });
   });
 });

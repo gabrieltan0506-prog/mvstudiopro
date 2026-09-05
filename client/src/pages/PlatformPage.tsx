@@ -112,6 +112,10 @@ import {
   NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS,
   MANHUA_NATIVE_DEEP_READ_MODEL,
   MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS,
+  MANHUA_NATIVE_STRUCTURING_MODEL,
+  MANHUA_NATIVE_STRUCTURING_MODEL_LABELS,
+  MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS,
+  type ManhuaNativeStructuringModelId,
   MANHUA_NATIVE_DEEP_READ_MODEL_LABELS,
   type ManhuaNativeDeepReadModelId,
   NATIVE_DEEP_READ_JOB_MAX_CALLS,
@@ -167,6 +171,10 @@ import {
   readManhuaLearnMissingDismissedKeys,
   readManhuaLearnResult,
   readManhuaLearnSegmentSeconds,
+  readManhuaLearnReadModel,
+  writeManhuaLearnReadModel,
+  readManhuaLearnStructuringModel,
+  writeManhuaLearnStructuringModel,
   hasStoredManhuaLearnSegmentSeconds,
   hasStoredManhuaLearnVideoFps,
   mergeManhuaLearnSnapshotDigests,
@@ -2565,6 +2573,8 @@ export default function PlatformPage() {
   }, [manhuaPasteTitle]);
   /** 0903 双模型：读片主模型面板可选；默认 3.1 Pro 质量基线，3.8 Flash 为低成本对照档。 */
   const [manhuaLearnReadModel, setManhuaLearnReadModel] = useState<ManhuaNativeDeepReadModelId>(MANHUA_NATIVE_DEEP_READ_MODEL);
+  /** 0905 整形开关：GLM-5.3 / Qwen3.8-Max 首发，另一家兜底 */
+  const [manhuaLearnStructuringModel, setManhuaLearnStructuringModel] = useState<ManhuaNativeStructuringModelId>(MANHUA_NATIVE_STRUCTURING_MODEL);
   const retireLearnEpisodeMutation =
     trpc.manhuaViralTemplate.retireLearnSourceEpisode.useMutation();
   const renameLearnSeriesMutation =
@@ -2673,6 +2683,8 @@ export default function PlatformPage() {
     setManhuaLearnSegmentSecondsError("");
     setManhuaLearnVideoFpsInput(String(readManhuaLearnVideoFps(manhuaLearnUserKey)));
     setManhuaLearnVideoFpsError("");
+    setManhuaLearnReadModel(readManhuaLearnReadModel(manhuaLearnUserKey));
+    setManhuaLearnStructuringModel(readManhuaLearnStructuringModel(manhuaLearnUserKey));
     setManhuaLearnServerJobs([]);
     setManhuaLearnServerJobsHydrated(false);
     setManhuaLearnControlBusy(null);
@@ -3272,7 +3284,18 @@ export default function PlatformPage() {
       // 同步预开空白页，异步拿到 URL 再跳转，避免浏览器拦截弹窗
       const reportTab = window.open("", "_blank");
       try {
-        const report = await renderEpisodeReportMutation.mutateAsync({ seriesKey, episodeIndex });
+        // 0905 用户实测：入库写卡的同一时刻点导出会撞到对象刚换代而失败——等 3 秒自动重试一次
+        let report: Awaited<ReturnType<typeof renderEpisodeReportMutation.mutateAsync>>;
+        try {
+          report = await renderEpisodeReportMutation.mutateAsync({ seriesKey, episodeIndex });
+        } catch (firstError) {
+          await new Promise((resolve) => setTimeout(resolve, 3_000));
+          try {
+            report = await renderEpisodeReportMutation.mutateAsync({ seriesKey, episodeIndex });
+          } catch {
+            throw firstError;
+          }
+        }
         if (reportTab) reportTab.location.href = report.reportUrl;
         toast.success(`第 ${episodeIndex} 集学习报告已生成（${report.shots} 镜 · ${report.frames} 帧）`, {
           action: reportTab
@@ -3469,8 +3492,9 @@ export default function PlatformPage() {
       staleTime: 30_000,
       retry: false,
       // 0905 用户令「中途过门禁也要更新」：有任务在跑就定时重拉，待审卡的 k/M 段进度不再停在开页那一刻
+      // 0905 夜实测：30 秒重拉 68 张大卡（约 20MB）会把页面卡死，导出点不动；放宽到 2 分钟，分片进度靠签名触发即时重拉
       refetchInterval: manhuaLearnServerJobs.some((job) => job.status === "running" || job.status === "queued")
-        ? 30_000
+        ? 120_000
         : false,
     },
   );
@@ -3492,12 +3516,32 @@ export default function PlatformPage() {
     nativeProposalRefreshSignatureRef.current = "";
   }, [manhuaLearnUserKey]);
   const [selectedManhuaProposalId, setSelectedManhuaProposalId] = useState("");
-  const selectedManhuaProposal = useMemo(
+  const selectedManhuaProposalRow = useMemo(
     () => pendingManhuaViralProposals.find((item) => item.id === selectedManhuaProposalId)
       || pendingManhuaViralProposals[0]
       || null,
     [pendingManhuaViralProposals, selectedManhuaProposalId],
   );
+  // 0905：列表只回轻量行，重字段（节拍/字幕/音轨/骨架）选中时单独取，页面不再每次重拉 20MB
+  const manhuaProposalDetailQuery = trpc.manhuaViralTemplate.getProposalDetail.useQuery(
+    { id: selectedManhuaProposalRow?.id || "tpl_placeholder" },
+    {
+      enabled: Boolean(selectedManhuaProposalRow?.id)
+        && trendInsightTab === "ai_manhua"
+        && (hasSupervisorOpsAccess || ownerTemplateOptimizeAllowed),
+      staleTime: 30_000,
+      retry: false,
+    },
+  );
+  const selectedManhuaProposal = useMemo(() => {
+    if (!selectedManhuaProposalRow) return null;
+    const detail = manhuaProposalDetailQuery.data?.item;
+    type ProposalDetail = NonNullable<typeof detail>;
+    const merged: typeof selectedManhuaProposalRow & Partial<ProposalDetail> = detail && detail.id === selectedManhuaProposalRow.id
+      ? { ...selectedManhuaProposalRow, ...detail }
+      : { ...selectedManhuaProposalRow };
+    return merged;
+  }, [selectedManhuaProposalRow, manhuaProposalDetailQuery.data?.item]);
   useEffect(() => {
     if (!pendingManhuaViralProposals.length) {
       setSelectedManhuaProposalId("");
@@ -5936,6 +5980,7 @@ export default function PlatformPage() {
           nativeVideoFps,
           nativeStandaloneSource: manhuaLearnStandaloneSource,
           nativeReadModel: manhuaLearnReadModel,
+          nativeStructuringModel: manhuaLearnStructuringModel,
         };
       }
       const continuation: ManhuaLearnContinuation = {
@@ -6130,6 +6175,10 @@ export default function PlatformPage() {
       manhuaLearnBatchSize,
       manhuaLearnSegmentSecondsInput,
       manhuaLearnVideoFpsInput,
+      // 0905 实证：这里漏了读片模型，重选 Flash 后建单闭包仍拿默认 Pro
+      manhuaLearnReadModel,
+      manhuaLearnStructuringModel,
+      manhuaLearnStandaloneSource,
       manhuaLearnBasket,
       manhuaLearnResult,
       manhuaLearnUserKey,
@@ -12917,13 +12966,35 @@ export default function PlatformPage() {
                           id="manhua-learn-read-model"
                           value={manhuaLearnReadModel}
                           disabled={Boolean(manhuaLearnBusyKey)}
-                          onChange={(event) => setManhuaLearnReadModel(event.target.value as ManhuaNativeDeepReadModelId)}
+                          onChange={(event) => {
+                            const next = event.target.value as ManhuaNativeDeepReadModelId;
+                            setManhuaLearnReadModel(next);
+                            writeManhuaLearnReadModel(manhuaLearnUserKey, next);
+                          }}
                           className="rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] text-white disabled:opacity-45"
                         >
                           {MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS.map((model) => (
                             <option key={model} value={model}>
                               {MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[model]}{model === MANHUA_NATIVE_DEEP_READ_MODEL ? "（质量基线）" : "（低成本对照）"}
                             </option>
+                          ))}
+                        </select>
+                        <label htmlFor="manhua-learn-structuring-model" className="text-[11px] font-semibold text-[#c9c0e6]/90">
+                          整形模型
+                        </label>
+                        <select
+                          id="manhua-learn-structuring-model"
+                          value={manhuaLearnStructuringModel}
+                          disabled={Boolean(manhuaLearnBusyKey)}
+                          onChange={(event) => {
+                            const next = event.target.value as ManhuaNativeStructuringModelId;
+                            setManhuaLearnStructuringModel(next);
+                            writeManhuaLearnStructuringModel(manhuaLearnUserKey, next);
+                          }}
+                          className="rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] text-white disabled:opacity-45"
+                        >
+                          {MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS.map((model) => (
+                            <option key={model} value={model}>{MANHUA_NATIVE_STRUCTURING_MODEL_LABELS[model]}</option>
                           ))}
                         </select>
                         <span className="rounded-md border border-[#8cefff]/20 bg-black/25 px-2 py-1 text-[10px] font-semibold text-[#8cefff]">
@@ -14242,6 +14313,12 @@ export default function PlatformPage() {
                           detail={ownerTemplateDetailQuery.data?.card || null}
                           evidenceFrames={ownerTemplateDetailQuery.data?.evidenceFrames || []}
                           detailLoading={ownerTemplateDetailQuery.isLoading}
+                          detailError={ownerTemplateDetailQuery.error?.message || null}
+                          reportEpisodeIndex={parseNativeProposalEpisodeRef({ id: ownerTemplateDetailId })?.episodeIndex ?? null}
+                          onOpenReport={() => {
+                            const ref = parseNativeProposalEpisodeRef({ id: ownerTemplateDetailId });
+                            if (ref) void exportManhuaEpisodeReport(ref.seriesKey, ref.episodeIndex);
+                          }}
                           models={ownerTemplateOptimizeModels}
                           selectedModel={ownerTemplateOptimizeModel}
                           promptZh={ownerTemplateOptimizePrompt}

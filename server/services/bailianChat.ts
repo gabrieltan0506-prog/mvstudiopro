@@ -104,6 +104,13 @@ export const OPENROUTER_QWEN_MODEL = "qwen/qwen3.8-max";
 export const STRUCTURING_CHAIN_GATEWAYS: readonly GlmGatewayName[] = [
   "evolink_glm", "openrouter", "plan_bj_qwen", "plan_sg_qwen", "openrouter_qwen",
 ];
+/** 0905 用户令：整形开关选 Qwen 时的链序——北京/新加坡套餐首发（并发批次轮流分流），两档败回 GLM，末档 OpenRouter Qwen。 */
+/** 整形链首发两档的轮数与轮间隔（0905 用户令：两档都败隔 20 秒再试，共重试两轮）。 */
+export const STRUCTURING_PRIMARY_ROUNDS = 3;
+export const STRUCTURING_PRIMARY_RETRY_DELAY_MS = 20_000;
+export const STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS: readonly GlmGatewayName[] = [
+  "plan_bj_qwen", "plan_sg_qwen", "evolink_glm", "openrouter", "openrouter_qwen",
+];
 
 export type BailianChatResponse = {
   choices?: Array<{ message?: { content?: unknown }; finish_reason?: string | null }>;
@@ -199,12 +206,12 @@ export type GlmParams = {
    * 只在 GLM-5.3 的两档之间降级，绝不静默换成 Qwen（换模型＝换产出口径）。
    * `openrouter_only` 是 0829 改线前的旧名，语义等同 `glm_only`，保留给存量调用方。
    */
-  gatewayPolicy?: "fallback" | "glm_only" | "openrouter_only" | "qwen_only" | "structuring_chain";
+  gatewayPolicy?: "fallback" | "glm_only" | "openrouter_only" | "qwen_only" | "structuring_chain" | "structuring_chain_qwen_first";
   /**
    * 正式多 JSON 整形的首选 GLM 通道。只改变两档的首发顺序；首选档失败后仍会
    * 自动切到另一条 GLM 通道，绝不因为这个字段换成 Qwen。
    */
-  preferredGlmGateway?: Extract<GlmGatewayName, "evolink_glm" | "openrouter">;
+  preferredGlmGateway?: GlmGatewayName;
   /** 调用方墙钟；默认 240 秒，长结构任务可显式放宽。**这是每一档的上限**。 */
   timeoutMs?: number;
   /**
@@ -357,25 +364,72 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
   const glmOnly = params.gatewayPolicy === "glm_only"
     || params.gatewayPolicy === "openrouter_only";
   const qwenOnly = params.gatewayPolicy === "qwen_only";
-  const structuringChain = params.gatewayPolicy === "structuring_chain";
+  const structuringChain = params.gatewayPolicy === "structuring_chain"
+    || params.gatewayPolicy === "structuring_chain_qwen_first";
+  const structuringChainOrder = params.gatewayPolicy === "structuring_chain_qwen_first"
+    ? STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS
+    : STRUCTURING_CHAIN_GATEWAYS;
   // 两个整形专用档只在 structuring_chain 里出现，其他策略的链序与历史逐字相同
   const generalGateways = configuredGateways.filter((g) => !g.structuringOnly);
   const eligibleGateways = structuringChain
-    ? STRUCTURING_CHAIN_GATEWAYS.flatMap((name) => configuredGateways.filter((g) => g.name === name))
+    ? structuringChainOrder.flatMap((name) => configuredGateways.filter((g) => g.name === name))
     : glmOnly
       ? generalGateways.filter((g) => GLM_MODEL_GATEWAYS.has(g.name))
       : qwenOnly
         ? generalGateways.filter((g) => !GLM_MODEL_GATEWAYS.has(g.name))
         : generalGateways;
-  // structuring_chain 的顺序是用户拍板的固定链，不受首选档重排
-  const preferred = structuringChain ? undefined : params.preferredGlmGateway;
+  // 0905 用户令：并发批次必须分流到不同通道真并行（同通道有租约会排队＝串行），
+  // 首发档由调度器按批次轮流指定；失败仍按链序逐档往下切。
+  const preferred = params.preferredGlmGateway;
   const gateways = preferred
     ? [
         ...eligibleGateways.filter((gateway) => gateway.name === preferred),
         ...eligibleGateways.filter((gateway) => gateway.name !== preferred),
       ]
     : eligibleGateways;
-  for (const g of gateways) {
+  // 0905 用户令：整形链首发两档都失败 → 隔 20 秒再来一轮，共重试两轮；三轮都败才落到兜底模型那几档。
+  const plan: Array<{ gateway: (typeof gateways)[number]; delayBeforeMs: number }> = structuringChain
+    ? (() => {
+        // 未配置的首发档只 trace 一次、不进重试轮，免得白等 20 秒×2
+        const primaryAll = gateways.slice(0, 2);
+        const primary = primaryAll.filter((gateway) => gateway.ready);
+        const unconfiguredPrimary = primaryAll.filter((gateway) => !gateway.ready);
+        const rest = gateways.slice(2);
+        const rounds: typeof plan = [];
+        for (let round = 0; round < (primary.length ? STRUCTURING_PRIMARY_ROUNDS : 0); round += 1) {
+          primary.forEach((gateway, index) => {
+            rounds.push({ gateway, delayBeforeMs: round > 0 && index === 0 ? STRUCTURING_PRIMARY_RETRY_DELAY_MS : 0 });
+          });
+        }
+        return [
+          ...unconfiguredPrimary.map((gateway) => ({ gateway, delayBeforeMs: 0 })),
+          ...rounds,
+          ...rest.map((gateway) => ({ gateway, delayBeforeMs: 0 })),
+        ];
+      })()
+    : gateways.map((gateway) => ({ gateway, delayBeforeMs: 0 }));
+  for (const step of plan) {
+    const g = step.gateway;
+    if (step.delayBeforeMs > 0) {
+      if (params.abortSignal?.aborted) {
+        throw new GlmGatewayError("GLM 调用已被硬截止取消", trace, accumulatedUsage);
+      }
+      // 预算已不够再跑一档就别等了，直接进下一步的「预算耗尽跳过」
+      if (Number.isFinite(Number(params.deadlineAtMs))
+        && Number(params.deadlineAtMs) - Date.now() < GLM_CHAIN_MIN_GATEWAY_MS + step.delayBeforeMs) {
+        trace.push({ gateway: g.name, model: g.model, outcome: "skipped_budget_exhausted" });
+        continue;
+      }
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(done, step.delayBeforeMs);
+        function done() {
+          clearTimeout(timer);
+          params.abortSignal?.removeEventListener("abort", done);
+          resolve();
+        }
+        params.abortSignal?.addEventListener("abort", done, { once: true });
+      });
+    }
     if (!g.ready) {
       trace.push({ gateway: g.name, model: g.model, outcome: "skipped_not_configured" });
       continue;
@@ -639,8 +693,9 @@ async function invokeOneGlmGateway(
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const signal = params.abortSignal ? AbortSignal.any([params.abortSignal, timeoutSignal]) : timeoutSignal;
   // 输出上限按网关夹紧（0905 用户令整形链 262K；超发会被供应商按参数越界拒掉，白跳一档）
-  // GLM 两档都发 262,144（用户令：EvoLink 没写死上限，能通就赚，不通落下一档）；Qwen 三档按公开上限 131,072
-  const gatewayMaxOutput = GLM_MODEL_GATEWAYS.has(gateway) ? 262_144 : 131_072;
+  // 0905 实弹：EvoLink 400「max_tokens 限制 [1,131072]」、OpenRouter 钉死 Z.AI 档 262K 直接 404 无端点；
+  // 五档统一夹在 131,072，GLM 才真能接单。
+  const gatewayMaxOutput = 131_072;
   const budget = Math.max(8_192, Math.min(gatewayMaxOutput, Math.floor(Number(params.maxTokens) || 65_536)));
   const body: Record<string, unknown> = {
     model,

@@ -22,10 +22,16 @@ import {
   type ManhuaNativeProviderErrorReceipt,
 } from "@shared/manhuaNativeModelReceipt";
 import {
+  MANHUA_NATIVE_DEEP_READ_MODEL,
+  MANHUA_NATIVE_STRUCTURING_MODEL,
+  parseNativeStructuringModel,
+  type ManhuaNativeStructuringModelId,
   NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS,
   NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS,
+  parseNativeDeepReadModel,
   parseNativeDeepReadSegmentSeconds,
   parseNativeDeepReadVideoFps,
+  type ManhuaNativeDeepReadModelId,
 } from "@shared/manhuaNativeDeepReadJob";
 
 export const LS_MANHUA_LEARN_SERIES_KEY = "mv-manhua-learn-focus-series-v1";
@@ -35,6 +41,8 @@ const LS_MANHUA_LEARN_BASKET_PREFIX = "mvs-manhua-learn-basket-v1";
 const LS_MANHUA_LEARN_MISSING_DISMISSED = "mvs-manhua-learn-missing-dismissed-v1";
 const LS_MANHUA_LEARN_SEGMENT_SECONDS = "mvs-manhua-learn-segment-seconds-v1";
 const LS_MANHUA_LEARN_VIDEO_FPS = "mvs-manhua-learn-video-fps-v1";
+const LS_MANHUA_LEARN_READ_MODEL = "mvs-manhua-learn-read-model-v1";
+const LS_MANHUA_LEARN_STRUCTURING_MODEL = "mvs-manhua-learn-structuring-model-v1";
 const LS_MANHUA_LEARN_STANDALONE = "mvs-manhua-learn-standalone-v1";
 
 function manhuaLearnUserStorageKey(baseKey: string, userKey: string): string {
@@ -154,6 +162,49 @@ export function writeManhuaLearnVideoFps(userKey: string, value: number): void {
     localStorage.setItem(key, JSON.stringify(fps));
   } catch {
     // 偏好写入失败不影响随后真实任务持久化的采样参数。
+  }
+}
+
+/**
+ * 读片模型下拉持久化（0905 用户实测：选了 3.8 Flash，刷新后 useState 默认值悄悄回到 3.1 Pro，
+ * 下一单就按 Pro 建单——建单参数没丢，是面板忘了）。坏值/未存回默认。
+ */
+export function readManhuaLearnReadModel(userKey: string): ManhuaNativeDeepReadModelId {
+  const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_READ_MODEL, userKey);
+  try {
+    return parseNativeDeepReadModel(key ? JSON.parse(localStorage.getItem(key) || "null") : undefined);
+  } catch {
+    return MANHUA_NATIVE_DEEP_READ_MODEL;
+  }
+}
+
+export function writeManhuaLearnReadModel(userKey: string, value: ManhuaNativeDeepReadModelId): void {
+  const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_READ_MODEL, userKey);
+  if (!key) return;
+  try {
+    localStorage.setItem(key, JSON.stringify(parseNativeDeepReadModel(value)));
+  } catch {
+    // 本地存储不可用时仍用当前选择，真实参数随任务提交
+  }
+}
+
+/** 0905 整形开关持久化：GLM-5.3 / Qwen3.8-Max，只改首发链序。 */
+export function readManhuaLearnStructuringModel(userKey: string): ManhuaNativeStructuringModelId {
+  const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_STRUCTURING_MODEL, userKey);
+  try {
+    return parseNativeStructuringModel(key ? JSON.parse(localStorage.getItem(key) || "null") : undefined);
+  } catch {
+    return MANHUA_NATIVE_STRUCTURING_MODEL;
+  }
+}
+
+export function writeManhuaLearnStructuringModel(userKey: string, value: ManhuaNativeStructuringModelId): void {
+  const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_STRUCTURING_MODEL, userKey);
+  if (!key) return;
+  try {
+    localStorage.setItem(key, JSON.stringify(parseNativeStructuringModel(value)));
+  } catch {
+    /* 本地存储不可用时仍用当前选择 */
   }
 }
 
@@ -617,8 +668,35 @@ export function mergeManhuaLearnLiveProgress(
       0,
       Math.floor(Number(out.missingEpisodeCount) || livePaywallEpisodeIndexes?.length || 0),
     ),
-    digestsPreview: liveDigests.length ? liveDigests : base.digestsPreview,
+    // 0905 用户实测：新任务的摘要直接盖掉旧的，已入库那集的导出按钮跟着消失——改按集号并集，完整落盘优先
+    digestsPreview: unionManhuaLearnDigests(base.digestsPreview, liveDigests),
+    // 同一部剧新任务跑起来，旧任务的失败原因不能再挂在头上（面板才会从「学习未完成」变回「学习进行中」）
+    errorZh: tick.status === "queued" || tick.status === "running" || tick.status === "succeeded"
+      ? undefined
+      : base.errorZh,
   };
+}
+
+/** 分集摘要按集号并集：完整落盘优先，其次取学得更远的检查点；顺序按集号升序。 */
+export function unionManhuaLearnDigests(
+  previous: ManhuaLearnResultUi["digestsPreview"] | undefined,
+  incoming: ManhuaLearnResultUi["digestsPreview"] | undefined,
+): ManhuaLearnResultUi["digestsPreview"] {
+  type Digest = ManhuaLearnResultUi["digestsPreview"][number];
+  const byIndex = new Map<number, Digest>();
+  const better = (candidate: Digest, current: Digest | undefined): boolean => {
+    if (!current) return true;
+    if (candidate.complete === true && current.complete !== true) return true;
+    if (candidate.complete !== true && current.complete === true) return false;
+    return (Number(candidate.learnedThroughSec) || 0) >= (Number(current.learnedThroughSec) || 0);
+  };
+  for (const digest of previous || []) {
+    if (better(digest, byIndex.get(digest.episodeIndex))) byIndex.set(digest.episodeIndex, digest);
+  }
+  for (const digest of incoming || []) {
+    if (better(digest, byIndex.get(digest.episodeIndex))) byIndex.set(digest.episodeIndex, digest);
+  }
+  return Array.from(byIndex.values()).sort((a, b) => a.episodeIndex - b.episodeIndex);
 }
 
 /** 失败也落面板，避免只 toast / 复制本机命令却看不见原因 */

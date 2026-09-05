@@ -610,6 +610,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
     const nativeConfirmed = params.nativeDeepReadConfirmed === true;
     try {
       let nativeReadModel: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeDeepReadModelId | undefined;
+      let nativeStructuringModel: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeStructuringModelId | undefined;
       let nativePlanPreview: Awaited<ReturnType<
         typeof import("../services/manhuaNativeDeepReadPlanRuntime.js")["buildNativeDeepReadPlanPreviewFromServices"]
       >> | undefined;
@@ -618,6 +619,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
           extraSourceHosts: readManhuaLearnExtraSourceHosts(),
         });
         nativeReadModel = confirmation.readModel;
+        nativeStructuringModel = confirmation.structuringModel;
         const { buildNativeDeepReadPlanPreviewFromServices } = await import(
           "../services/manhuaNativeDeepReadPlanRuntime.js"
         );
@@ -681,6 +683,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         params.learnLlm === "claude" || params.learnLlm === "deepseek" ? params.learnLlm : undefined,
       nativeDeepReadConfirmed: nativeConfirmed,
       nativeReadModel,
+      nativeStructuringModel,
       nativePlanPreview,
       nativeStandaloneSource: params.nativeStandaloneSource === true
         || params.nativeStandaloneSource === "true",

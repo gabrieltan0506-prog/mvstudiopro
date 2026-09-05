@@ -844,6 +844,8 @@ export async function runNativeDeepReadBatch(input: {
   seriesKey: string;
   /** 0903 双模型：读片主模型；缺省＝3.1 Pro。 */
   readModel?: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeDeepReadModelId;
+  /** 0905 整形开关 */
+  structuringModel?: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeStructuringModelId;
   episodes: readonly NativeDeepReadBatchEpisode[];
   segmentSeconds?: number;
   abortSignal?: AbortSignal;
@@ -1003,6 +1005,7 @@ export async function runNativeDeepReadBatch(input: {
         }],
         segmentCacheSeriesKey: input.seriesKey,
         readModel: input.readModel,
+        structuringModel: input.structuringModel,
         abortSignal: input.abortSignal,
         onSegmentSnapshotCommitted: async (snapshot) => {
           // 0902 自愈心跳：每落一段给占位盖时间戳，证明持锁进程仍活着。

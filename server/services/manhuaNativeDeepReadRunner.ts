@@ -20,6 +20,7 @@ import {
   type NativeDeepReadOutput,
 } from "../../shared/manhuaNativeDeepRead.js";
 import {
+  type ManhuaNativeStructuringModelId,
   MANHUA_NATIVE_DEEP_READ_MODEL,
   MANHUA_NATIVE_DEEP_READ_MODEL_LABELS,
   MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS,
@@ -64,6 +65,7 @@ import {
   GlmGatewayError,
   OPENROUTER_GLM_MODEL,
   STRUCTURING_CHAIN_GATEWAYS,
+  STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS,
   invokeGlmJsonChatWithGatewayFallback,
 } from "./bailianChat.js";
 import type { GlmGatewayName } from "./bailianChat.js";
@@ -908,7 +910,7 @@ export const NATIVE_DEEP_READ_TARGET_FRAMES = 1_800;
  * 精确切片与独立采样配置改变请求语义；旧流复制切片的缓存与确认码不得复用。
  * 本版验证首发0.65与历史两次重试温度，保留既有时间解释；实测过关前不宣称冻结。
  */
-export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-custom-20260901-shot-observation-v2" as const;
+export const NATIVE_DEEP_READ_VISUAL_PLAN_VERSION = "time-custom-20260905-key-shot-tiers-v3" as const;
 
 /** 分片时长和采样率独立配置；默认值来自共享配置，不按长短片自动降档。 */
 export function resolveNativeDeepReadRequestFps(totalDurationSec: number, requestedFps?: number): number {
@@ -1171,7 +1173,10 @@ ${buildNativeDeepReadObservationPlanBlock(lenSec)}
 
 【正向要求一：逐镜分析 shots】
 
-每条 story 镜头按以下顺序填写18字段：先记录本镜时间与分类，再生成本镜观察 hintZh，随后依据本镜画面填写详细分析。hintZh 是本次输出的逐镜观察，和调用前的补充信息各自独立。
+story 镜头分两档（0905 用户令，省 token）：
+- **重点镜**：起止秒与任一 keyMoments.atSec 前后 ${NATIVE_DEEP_READ_KEY_SHOT_WINDOW_SEC} 秒有交集的镜头，按以下顺序完整填写 18 字段——先记录本镜时间与分类，再生成本镜观察 hintZh，随后依据本镜画面填写详细分析。
+- **简写镜**：其余镜头只填 startSec、endSec、evidenceRole、hintZh（≤40字）、actionZh（≤40字），**其它字段一律省略不写**；唯一例外：长镜拆分的续段仍要写 transitionInZh 的规定续接标记。镜头切分、时间覆盖与数量要求两档相同，简写不是少记镜头，只是少写字段。
+先定 keyMoments 再决定各镜档位；hintZh 是本次输出的逐镜观察，和调用前的补充信息各自独立。
 - startSec / endSec：本镜实际起止秒位。单条最长 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒；真实短镜按实际时长保留，超过上限的长镜按硬约束 2 拆成每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。
 - evidenceRole：按统一分类规则填写。
 - hintZh：${NATIVE_DEEP_READ_SHOT_OBSERVATION_ZH.hintZh}≤80字。
@@ -1346,7 +1351,7 @@ export function buildNativeDeepReadResponseSchema(context: NativeDeepReadSegment
   const shot = props.shots!.items!;
   props.shots!.description = buildNativeDeepReadDensityContract(lenSec)
     + "story与non_story_ad分别按条目分类要求填写。";
-  shot.description = `story条目按顺序完整填写以下18字段：${Object.keys(shot.properties!).join("、")}。`
+  shot.description = `story条目分两档：重点镜（起止与任一 keyMoments.atSec 前后 ${NATIVE_DEEP_READ_KEY_SHOT_WINDOW_SEC} 秒有交集）按顺序完整填写以下18字段：${Object.keys(shot.properties!).join("、")}；其余简写镜只填 startSec、endSec、evidenceRole、hintZh、actionZh，其它字段省略。`
     + "先写本镜hintZh观察，再写详细分析。non_story_ad仅保留startSec、endSec、evidenceRole三个有内容的字段，hintZh固定为null空占位。";
   // 官方结构化输出支持propertyOrdering；仅约束逐镜生成顺序，与正文逐项顺序一致。
   shot.propertyOrdering = Object.keys(shot.properties!);
@@ -1423,9 +1428,12 @@ export function nativeDeepReadFrozenContractSha256(): string {
 }
 
 /** 修改冻结项必须由用户在当前任务重新授权；禁止只更新这个摘要让测试变绿。
- * 0903 更新授权：用户拍板读片双模型（3.1 Pro / 3.8 Flash 面板可选），冻结集合随之换代。 */
+ * 0903 更新授权：用户拍板读片双模型（3.1 Pro / 3.8 Flash 面板可选），冻结集合随之换代。
+ * 0905 更新授权：用户解冻逐镜字段契约——18 字段只写重点镜（keyMoment ±6 秒），其余简写镜；
+ * 改毕即**重新冻结**（`NATIVE_DEEP_READ_KEY_SHOT_WINDOW_SEC`、两档必填字段表、提示词两档说明与本摘要一起冻结，再改需用户授权）。
+ * 同时整形 maxTokens 退回 131,072、链序 structuring_chain（用户 0905 拍板）。 */
 /** 0905 用户重新授权：整形链改五档逐档 30 分钟切换 + maxTokens 262K，冻结集合随之换代（只作废整形批次缓存，不动读片分片缓存）。 */
-export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "b05ae90e4c8535ec9f06359fb1c11bbe11b17651e3aad00d9ad39066faff641d" as const;
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "f935285f528d48a50b948545a1c5ce7cd0986a184e3f5873c10837a7f09fb527" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
   const actual = nativeDeepReadFrozenContractSha256();
@@ -2541,6 +2549,30 @@ export function measureNativeDeepReadSegmentCoverage(input: {
   return { coveredSec, durationSec, coverageRatio: durationSec > 0 ? coveredSec / durationSec : 0 };
 }
 
+/**
+ * 0905 用户解冻：逐镜 18 字段只写在 keyMoment 前后 ±6 秒的「重点镜」；其余镜头只写
+ * 起止秒 / evidenceRole / hintZh / actionZh（简写镜）。用户原话「我从没这样要求过」——
+ * 18 字段全写是 PR #1324（0828）把 0827 探针字段全量推上生产并设为必填所致，第 5 集 379 镜
+ * 每镜约 450 字节，是读片输出 token 的大头。
+ */
+export const NATIVE_DEEP_READ_KEY_SHOT_WINDOW_SEC = 6;
+const NATIVE_DEEP_READ_REQUIRED_BRIEF_SHOT_FIELDS = [
+  "startSec", "endSec", "evidenceRole", "actionZh",
+] as const; // hintZh 由 assertNativeDeepReadShotObservations 单独把关
+export function isNativeDeepReadKeyShot(
+  shot: { startSec?: unknown; endSec?: unknown },
+  keyMomentSecs: readonly number[],
+  windowSec = NATIVE_DEEP_READ_KEY_SHOT_WINDOW_SEC,
+): boolean {
+  const start = Number(shot.startSec); const end = Number(shot.endSec);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+  return keyMomentSecs.some((at) => at + windowSec >= start && at - windowSec <= end);
+}
+export function nativeDeepReadKeyMomentSecs(raw: Record<string, unknown>): number[] {
+  return Array.isArray(raw.keyMoments)
+    ? (raw.keyMoments as Array<{ atSec?: unknown }>).map((row) => Number(row?.atSec)).filter(Number.isFinite)
+    : [];
+}
 const NATIVE_DEEP_READ_REQUIRED_SHOT_FIELDS = [
   "startSec",
   "endSec",
@@ -2621,6 +2653,7 @@ export function assertNativeDeepReadShotObservationsPreserved(
 
 function assertRawShotFieldPresence(raw: Record<string, unknown>, labelZh: string): void {
   const rawShots = Array.isArray(raw.shots) ? raw.shots : [];
+  const keyMomentSecs = nativeDeepReadKeyMomentSecs(raw);
   for (let index = 0; index < rawShots.length; index += 1) {
     const shot = rawShots[index];
     if (!shot || typeof shot !== "object" || Array.isArray(shot)) continue;
@@ -2635,16 +2668,18 @@ function assertRawShotFieldPresence(raw: Record<string, unknown>, labelZh: strin
      * · non_story_ad —— 只保存时间轴与分类标记，仅需 startSec/endSec/evidenceRole。
      * 不得靠全局取消必填来放宽 story 的完整性要求。
      */
+    // 0905 解冻：只有重点镜（keyMoment ±6 秒）要求 18 字段齐全，其余镜按简写镜校验
+    const keyShot = role === "story" && isNativeDeepReadKeyShot(row, keyMomentSecs);
     const requiredFields: ReadonlyArray<string> = role === "non_story_ad"
       ? NATIVE_DEEP_READ_REQUIRED_AD_SHOT_FIELDS
-      : NATIVE_DEEP_READ_REQUIRED_SHOT_FIELDS;
+      : keyShot ? NATIVE_DEEP_READ_REQUIRED_SHOT_FIELDS : NATIVE_DEEP_READ_REQUIRED_BRIEF_SHOT_FIELDS;
     const missingFields = requiredFields.filter(
       (field) => !Object.prototype.hasOwnProperty.call(row, field),
     );
     if (missingFields.length > 0) {
       throw gateError(`${labelZh}第${index + 1}镜字段不完整：缺 ${missingFields.join("、")}`);
     }
-    if (role === "story") {
+    if (role === "story" && keyShot) {
       const unitTypeZh = row.unitTypeZh;
       if (unitTypeZh !== "剪辑镜头" && unitTypeZh !== "拆分镜证据段") {
         throw gateError(`${labelZh}第${index + 1}镜 unitTypeZh 缺失或无效`);
@@ -3697,7 +3732,7 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 EvoLink �
 /** 完成回执按实际网关写人话名，面板一眼看出这一发走的是哪家。 */
 /** 整形链可接受的网关集合（缓存校验与通道锁共用）。 */
 export const STRUCTURING_GATEWAYS: ReadonlySet<string> = new Set<string>([
-  ...Array.from(GLM_MODEL_GATEWAYS), ...STRUCTURING_CHAIN_GATEWAYS,
+  ...Array.from(GLM_MODEL_GATEWAYS), ...STRUCTURING_CHAIN_GATEWAYS, ...STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS,
 ]);
 export function glmGatewayDisplayLabel(gateway: string): string {
   switch (gateway) {
@@ -3710,8 +3745,11 @@ export function glmGatewayDisplayLabel(gateway: string): string {
     default: return gateway || "未知网关";
   }
 }
-/** 0905 用户令：全部 262K（OpenRouter Z.AI 原生档实测上限 262,144；EvoLink 若不吃会 4xx 落到下一档）。 */
-const GLM_STRUCTURING_MAX_TOKENS = 262_144;
+/**
+ * 0905 实弹推翻 262K：EvoLink 400（范围 [1,131072]）、OpenRouter Z.AI 档 404 无端点，两档 GLM 秒败全落 Qwen。
+ * 官方表（百炼 GLM-5.3）最大输出 131,072，按此定死。
+ */
+const GLM_STRUCTURING_MAX_TOKENS = 131_072;
 /**
  * 🔒 整形链采样温度（0829 晚用户拍板 0.8）。
  * 不传＝EvoLink 默认 1.0（太飘）；0.2 又太死板，会变成照抄不敢取舍——
@@ -3752,12 +3790,20 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG = deepFreezeNativeContract(
 } as const);
 
 /**
- * 0902 用户点名纠偏：旧的「两通道轮流首发」违背 0829 拍板的
- * 「主档 EvoLink glm-5.3，兜底才是 OpenRouter」。恒定 EvoLink 首发；
- * 单档失败仍由网关层跨通道兜底，OpenRouter 只在兜底时出场。
+ * 0905 用户令（推翻 0902「恒定 EvoLink 首发」）：并发批次必须分到不同通道真并行——
+ * 同通道有租约，两批都首发 EvoLink 就是排队＝串行（0904 夜实测第二批 21 分钟即此）。
+ * 按整形开关取链首两档轮流首发；失败仍由网关层按链序逐档切换，GLM 两档败即到 Qwen（反之亦然）。
  */
-export function nextNativeDeepReadGlmPreferredGateway(): "evolink_glm" | "openrouter" {
-  return "evolink_glm";
+const structuringRoundRobin = new Map<string, number>();
+export function nextNativeDeepReadGlmPreferredGateway(
+  policy: "structuring_chain" | "structuring_chain_qwen_first" = "structuring_chain",
+): GlmGatewayName {
+  const pair = (policy === "structuring_chain_qwen_first"
+    ? STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS
+    : STRUCTURING_CHAIN_GATEWAYS).slice(0, 2);
+  const next = (structuringRoundRobin.get(policy) ?? 0) % pair.length;
+  structuringRoundRobin.set(policy, next + 1);
+  return pair[next]!;
 }
 
 /**
@@ -3796,7 +3842,7 @@ export function buildNativeDeepReadGlmStructuringPrompt(input: {
 · 秒位不重叠的两条镜头各自保留——哪怕表演连续、同场景同机位。
 · 真实剪辑镜头按输入边界保留，短于 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒或相邻时长相同也各自保留；${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC} 秒下限仅适用于同一长镜的拆分证据段。
 · 单次合并跨度 ≤ ${NATIVE_DEEP_READ_MERGE_SPAN_HARD_MAX_SEC} 秒；单条记录跨度 ≤ ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒。更长的长镜按镜内真实变化切成首尾相接的证据段，每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}–${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，unitTypeZh 写「拆分镜证据段」，第二段起 transitionInZh 写「${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MARKER_ZH}」。
-· 唯一合法手段是**调整切分**。hintZh/unitTypeZh/shotSizeZh/angleZh/compositionZh/cameraMoveZh/blockingZh/bodyActionZh/limbPropActionZh/microExpressionZh/gazeBreathZh/relationshipReactionZh/lightingZh/actionZh/transitionInZh 逐项随记录保留。
+· 唯一合法手段是**调整切分**。hintZh/unitTypeZh/shotSizeZh/angleZh/compositionZh/cameraMoveZh/blockingZh/bodyActionZh/limbPropActionZh/microExpressionZh/gazeBreathZh/relationshipReactionZh/lightingZh/actionZh/transitionInZh 逐项随记录保留；**输入里没有的字段不要补写**（简写镜只有 startSec/endSec/evidenceRole/hintZh/actionZh，保持原样）。
 
 **二、多版本裁决**
 同段可能同时喂来通过版与被标记版，通过的未必更好。**记录去重、信息取并集**：同一物理镜头只留一条，但吸收所有版本对它的观察。
@@ -3844,6 +3890,25 @@ ${input.rejectedReasonZh ? `【上一轮门禁被拒原因】${String(input.reje
 }
 
 /** 两条GLM通道都不可用时的零模型兜底；只做排序、同键去重和字段并集，不创作内容。 */
+/** 字幕只保留落在任一 keyMoment.atSec ±windowSec 内的条目；没有 keyMoments 时原样返回（不敢清空）。 */
+export function filterNativeDeepReadSubtitlesToKeyMoments(
+  raw: Record<string, unknown>,
+  windowSec = 2,
+): Record<string, unknown> {
+  const keyMoments = Array.isArray(raw.keyMoments)
+    ? (raw.keyMoments as unknown[])
+        .map((row) => Number((row as { atSec?: unknown })?.atSec))
+        .filter((value) => Number.isFinite(value))
+    : [];
+  if (!keyMoments.length || !Array.isArray(raw.subtitles)) return raw;
+  const subtitles = (raw.subtitles as unknown[]).filter((row) => {
+    const atSec = Number((row as { atSec?: unknown })?.atSec);
+    return Number.isFinite(atSec) && keyMoments.some((moment) => Math.abs(moment - atSec) <= windowSec);
+  });
+  if (subtitles.length === (raw.subtitles as unknown[]).length) return raw;
+  return { ...raw, subtitles };
+}
+
 export function deterministicallyMergeNativeDeepReadRawSegments(
   rawSegments: ReadonlyArray<Record<string, unknown>>,
 ): Record<string, unknown> {
@@ -3928,7 +3993,7 @@ export function buildNativeDeepReadGlmSegmentRepairPrompt(input: {
   return {
     system: `你是影视模板卡的「JSON 语法修复师」。只修语法不创作：
 1. 输入是一份 JSON 语法损坏的分段卡原文；你的唯一任务是恢复成合法 JSON。
-2. 禁止虚构原文里没有的镜头、字幕、声音或描述；禁止删减原文已有的内容。shots 内 hintZh/unitTypeZh/shotSizeZh/angleZh/compositionZh/cameraMoveZh/blockingZh/bodyActionZh/limbPropActionZh/microExpressionZh/gazeBreathZh/relationshipReactionZh/lightingZh/actionZh/transitionInZh 必须逐项原样恢复，不能压回 actionZh。
+2. 禁止虚构原文里没有的镜头、字幕、声音或描述；禁止删减原文已有的内容。shots 内 hintZh/unitTypeZh/shotSizeZh/angleZh/compositionZh/cameraMoveZh/blockingZh/bodyActionZh/limbPropActionZh/microExpressionZh/gazeBreathZh/relationshipReactionZh/lightingZh/actionZh/transitionInZh 必须逐项原样恢复，不能压回 actionZh；**原文没有的字段不要补写**（简写镜本就只有 startSec/endSec/evidenceRole/hintZh/actionZh）。
 3. 原文若被截断，保留能恢复的完整条目，丢弃最后一条残缺条目，不要补写。
 4. shots 中的 evidenceRole 只能原样恢复为 story 或 non_story_ad，禁止猜测、改写或把 non_story_ad 混入 story；原文缺失该字段则修复失败。
 5. 所有中文描述文本【禁止】出现钟表式秒位（如 01:23）或「在第X秒」定位——秒位只进数字字段。
@@ -4152,6 +4217,8 @@ export async function invokeNativeDeepReadGlmStructuring(
     system: prompt.system,
     user: prompt.user,
     ...NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG,
+    // 整形开关只改链序（首发哪家），其余冻结参数原样
+    gatewayPolicy: context?.gatewayPolicy ?? NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG.gatewayPolicy,
   };
   if (context?.recoverExisting) {
     const recovered = await readNativeDeepReadGlmRecoveredEvidence({
@@ -4177,7 +4244,8 @@ export async function invokeNativeDeepReadGlmStructuring(
       };
     }
   }
-  const preferredGlmGateway = context?.preferredGlmGateway || nextNativeDeepReadGlmPreferredGateway();
+  const preferredGlmGateway = (context?.preferredGlmGateway
+    || nextNativeDeepReadGlmPreferredGateway(context?.gatewayPolicy)) as GlmGatewayName;
   const store = createNativeDeepReadGlmEvidenceStore({ ...context, preferredGlmGateway }, deps?.evidence);
   let raw: Record<string, unknown> | undefined;
   const request = { ...requestWithoutPreferredGateway, preferredGlmGateway };
@@ -4423,6 +4491,8 @@ export type NativeDeepReadBatchRunParams = {
   ) => void | Promise<void>;
   /** 媒体备料（整片拉取）进度中文行，旁路写面板；不影响模型链。 */
   onMediaProgressZh?: (zh: string) => void | Promise<void>;
+  /** 0905 整形开关：glm-5.3（默认）或 qwen3.8-max，只改首发链序。 */
+  structuringModel?: ManhuaNativeStructuringModelId;
 };
 
 type NativeDeepReadBatchExecutionResult = {
@@ -4780,8 +4850,14 @@ async function executeNativeDeepReadBatch(
       let stopSchedulingSegments = false;
       const commitSegmentToProposal = async (
         segmentIndex: number,
-        entry: NativeDeepReadSegmentCacheEntry,
+        committedEntry: NativeDeepReadSegmentCacheEntry,
       ): Promise<void> => {
+        // 0905 用户令：字幕只取 keyMoments 前后 2 秒（读片提示词第 1214 行本就这么写，模型不听、整形又照单全收）——
+        // 代码在入卡前硬过滤；段缓存/证据对象仍是原样，不影响付费证据。
+        const entry: NativeDeepReadSegmentCacheEntry = {
+          ...committedEntry,
+          raw: filterNativeDeepReadSubtitlesToKeyMoments(committedEntry.raw),
+        };
         committedEntries.set(segmentIndex, entry);
         proposalCommitChain = proposalCommitChain.then(async () => {
           while (committedIndexes.length < segmentCount) {
@@ -5767,6 +5843,9 @@ async function executeNativeDeepReadBatch(
       let glmEvidence: NativeDeepReadGlmEvidence | undefined;
       const glmEvidenceCallIds: string[] = [];
       const canCacheStructuring = Boolean(params.segmentCacheSeriesKey && episode.cacheSourceDigest);
+      const structuringGatewayPolicy = params.structuringModel === "qwen3.8-max"
+        ? "structuring_chain_qwen_first" as const
+        : "structuring_chain" as const;
       const glmStructure = async (input: {
         prompt: ReturnType<typeof buildNativeDeepReadGlmStructuringPrompt>;
         videoCount: number;
@@ -5808,7 +5887,8 @@ async function executeNativeDeepReadBatch(
             params.abortSignal,
             { seriesKey: params.segmentCacheSeriesKey, sourceDigest: episode.cacheSourceDigest,
               episodeIndex: episode.episodeIndex, batchRequestId: episodeRequestId, callId,
-              recoverExisting: canCacheStructuring, onBeforePaidCall: emitPaidCallStarted },
+              recoverExisting: canCacheStructuring, onBeforePaidCall: emitPaidCallStarted,
+              gatewayPolicy: structuringGatewayPolicy },
           );
           glmEvidence = structured.evidence;
           if (structured.evidence?.callId && !glmEvidenceCallIds.includes(structured.evidence.callId)) {

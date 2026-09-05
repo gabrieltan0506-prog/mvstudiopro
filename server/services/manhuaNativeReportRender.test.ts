@@ -188,14 +188,15 @@ describe("精确证据名路径：三段卡渲染成功且无删节", () => {
     expect(html).toContain("UNTRUNCATED_ACTION_END");
     expect(html).toContain("UNTRUNCATED_CUE_END");
     // 摘要 fallback 合并全段（按段号标注拼接），不再只取第一段
-    expect(html).toContain("【第1段】第1段节拍原文");
-    expect(html).toContain("【第3段】第3段节拍原文");
+    // 0905：分段摘要压成前/中/后，不再逐段铺
+    expect(html).toContain("【前段】第1段节拍原文");
+    expect(html).toContain("【后段】第3段节拍原文");
     // 分类标签跨段并集去重
     expect(html).toContain("情绪标签0");
     expect(html).toContain("情绪标签2");
     expect((html.match(/共有标签/g) ?? []).length).toBe(1);
-    // 「17 字段」硬编码已改 FIELDS.length 动态
-    expect(html).toContain("× 14 字段");
+    // 0905 用户令：镜头表只列重点镜（剧情亮点/转折 + 运镜/剪辑技巧），不再全镜
+    expect(html).toContain("重点镜头表 · ");
     expect(html).toContain("观察尾部保留&lt;script&gt;");
     expect(html).toContain("本镜观察");
     expect(html).not.toContain("× 17 字段");
@@ -488,5 +489,23 @@ describe("HTML 严格转义", () => {
     const html = state.uploads[0]!.html;
     expect(html).toContain("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;");
     expect(html).not.toContain('<script>alert("x")</script>');
+  });
+});
+
+describe("0905 · 分段摘要压成前/中/后", () => {
+  it("九段摘要按前/中/后重新分组，内容一字不删", async () => {
+    const { condenseSegmentedSummaryZh } = await import("./manhuaNativeReportRender");
+    const nine = Array.from({ length: 9 }, (_, i) => `【第${i + 1}段】甲${i + 1}句。乙${i + 1}句。`).join("");
+    const out = condenseSegmentedSummaryZh(nine);
+    expect(out.split("\n")).toHaveLength(3);
+    expect(out).toMatch(/^【前段】/);
+    expect(out).toContain("【中段】");
+    expect(out).toContain("【后段】");
+    expect(out).not.toContain("第4段");
+    // 内容一字不删：只重新分组
+    expect(out.split("\n")[0]).toBe("【前段】甲1句。乙1句。甲2句。乙2句。甲3句。乙3句。");
+    expect(out).toContain("甲9句。乙9句。");
+    expect(condenseSegmentedSummaryZh("一句。二句。三句。四句。五句。六句。七句。")).toBe("一句。二句。三句。四句。五句。六句。七句。");
+    expect(condenseSegmentedSummaryZh("")).toBe("");
   });
 });
