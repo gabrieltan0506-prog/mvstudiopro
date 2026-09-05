@@ -112,6 +112,10 @@ import {
   NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS,
   MANHUA_NATIVE_DEEP_READ_MODEL,
   MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS,
+  MANHUA_NATIVE_STRUCTURING_MODEL,
+  MANHUA_NATIVE_STRUCTURING_MODEL_LABELS,
+  MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS,
+  type ManhuaNativeStructuringModelId,
   MANHUA_NATIVE_DEEP_READ_MODEL_LABELS,
   type ManhuaNativeDeepReadModelId,
   NATIVE_DEEP_READ_JOB_MAX_CALLS,
@@ -169,6 +173,8 @@ import {
   readManhuaLearnSegmentSeconds,
   readManhuaLearnReadModel,
   writeManhuaLearnReadModel,
+  readManhuaLearnStructuringModel,
+  writeManhuaLearnStructuringModel,
   hasStoredManhuaLearnSegmentSeconds,
   hasStoredManhuaLearnVideoFps,
   mergeManhuaLearnSnapshotDigests,
@@ -2567,6 +2573,8 @@ export default function PlatformPage() {
   }, [manhuaPasteTitle]);
   /** 0903 双模型：读片主模型面板可选；默认 3.1 Pro 质量基线，3.8 Flash 为低成本对照档。 */
   const [manhuaLearnReadModel, setManhuaLearnReadModel] = useState<ManhuaNativeDeepReadModelId>(MANHUA_NATIVE_DEEP_READ_MODEL);
+  /** 0905 整形开关：GLM-5.3 / Qwen3.8-Max 首发，另一家兜底 */
+  const [manhuaLearnStructuringModel, setManhuaLearnStructuringModel] = useState<ManhuaNativeStructuringModelId>(MANHUA_NATIVE_STRUCTURING_MODEL);
   const retireLearnEpisodeMutation =
     trpc.manhuaViralTemplate.retireLearnSourceEpisode.useMutation();
   const renameLearnSeriesMutation =
@@ -2676,6 +2684,7 @@ export default function PlatformPage() {
     setManhuaLearnVideoFpsInput(String(readManhuaLearnVideoFps(manhuaLearnUserKey)));
     setManhuaLearnVideoFpsError("");
     setManhuaLearnReadModel(readManhuaLearnReadModel(manhuaLearnUserKey));
+    setManhuaLearnStructuringModel(readManhuaLearnStructuringModel(manhuaLearnUserKey));
     setManhuaLearnServerJobs([]);
     setManhuaLearnServerJobsHydrated(false);
     setManhuaLearnControlBusy(null);
@@ -5950,6 +5959,7 @@ export default function PlatformPage() {
           nativeVideoFps,
           nativeStandaloneSource: manhuaLearnStandaloneSource,
           nativeReadModel: manhuaLearnReadModel,
+          nativeStructuringModel: manhuaLearnStructuringModel,
         };
       }
       const continuation: ManhuaLearnContinuation = {
@@ -6146,6 +6156,7 @@ export default function PlatformPage() {
       manhuaLearnVideoFpsInput,
       // 0905 实证：这里漏了读片模型，重选 Flash 后建单闭包仍拿默认 Pro
       manhuaLearnReadModel,
+      manhuaLearnStructuringModel,
       manhuaLearnStandaloneSource,
       manhuaLearnBasket,
       manhuaLearnResult,
@@ -12945,6 +12956,24 @@ export default function PlatformPage() {
                             <option key={model} value={model}>
                               {MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[model]}{model === MANHUA_NATIVE_DEEP_READ_MODEL ? "（质量基线）" : "（低成本对照）"}
                             </option>
+                          ))}
+                        </select>
+                        <label htmlFor="manhua-learn-structuring-model" className="text-[11px] font-semibold text-[#c9c0e6]/90">
+                          整形模型
+                        </label>
+                        <select
+                          id="manhua-learn-structuring-model"
+                          value={manhuaLearnStructuringModel}
+                          disabled={Boolean(manhuaLearnBusyKey)}
+                          onChange={(event) => {
+                            const next = event.target.value as ManhuaNativeStructuringModelId;
+                            setManhuaLearnStructuringModel(next);
+                            writeManhuaLearnStructuringModel(manhuaLearnUserKey, next);
+                          }}
+                          className="rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] text-white disabled:opacity-45"
+                        >
+                          {MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS.map((model) => (
+                            <option key={model} value={model}>{MANHUA_NATIVE_STRUCTURING_MODEL_LABELS[model]}</option>
                           ))}
                         </select>
                         <span className="rounded-md border border-[#8cefff]/20 bg-black/25 px-2 py-1 text-[10px] font-semibold text-[#8cefff]">

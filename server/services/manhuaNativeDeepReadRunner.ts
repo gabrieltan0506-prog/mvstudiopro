@@ -20,6 +20,7 @@ import {
   type NativeDeepReadOutput,
 } from "../../shared/manhuaNativeDeepRead.js";
 import {
+  type ManhuaNativeStructuringModelId,
   MANHUA_NATIVE_DEEP_READ_MODEL,
   MANHUA_NATIVE_DEEP_READ_MODEL_LABELS,
   MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS,
@@ -64,6 +65,7 @@ import {
   GlmGatewayError,
   OPENROUTER_GLM_MODEL,
   STRUCTURING_CHAIN_GATEWAYS,
+  STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS,
   invokeGlmJsonChatWithGatewayFallback,
 } from "./bailianChat.js";
 import type { GlmGatewayName } from "./bailianChat.js";
@@ -3697,7 +3699,7 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 EvoLink �
 /** 完成回执按实际网关写人话名，面板一眼看出这一发走的是哪家。 */
 /** 整形链可接受的网关集合（缓存校验与通道锁共用）。 */
 export const STRUCTURING_GATEWAYS: ReadonlySet<string> = new Set<string>([
-  ...Array.from(GLM_MODEL_GATEWAYS), ...STRUCTURING_CHAIN_GATEWAYS,
+  ...Array.from(GLM_MODEL_GATEWAYS), ...STRUCTURING_CHAIN_GATEWAYS, ...STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS,
 ]);
 export function glmGatewayDisplayLabel(gateway: string): string {
   switch (gateway) {
@@ -3755,12 +3757,20 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG = deepFreezeNativeContract(
 } as const);
 
 /**
- * 0902 用户点名纠偏：旧的「两通道轮流首发」违背 0829 拍板的
- * 「主档 EvoLink glm-5.3，兜底才是 OpenRouter」。恒定 EvoLink 首发；
- * 单档失败仍由网关层跨通道兜底，OpenRouter 只在兜底时出场。
+ * 0905 用户令（推翻 0902「恒定 EvoLink 首发」）：并发批次必须分到不同通道真并行——
+ * 同通道有租约，两批都首发 EvoLink 就是排队＝串行（0904 夜实测第二批 21 分钟即此）。
+ * 按整形开关取链首两档轮流首发；失败仍由网关层按链序逐档切换，GLM 两档败即到 Qwen（反之亦然）。
  */
-export function nextNativeDeepReadGlmPreferredGateway(): "evolink_glm" | "openrouter" {
-  return "evolink_glm";
+const structuringRoundRobin = new Map<string, number>();
+export function nextNativeDeepReadGlmPreferredGateway(
+  policy: "structuring_chain" | "structuring_chain_qwen_first" = "structuring_chain",
+): GlmGatewayName {
+  const pair = (policy === "structuring_chain_qwen_first"
+    ? STRUCTURING_CHAIN_QWEN_FIRST_GATEWAYS
+    : STRUCTURING_CHAIN_GATEWAYS).slice(0, 2);
+  const next = (structuringRoundRobin.get(policy) ?? 0) % pair.length;
+  structuringRoundRobin.set(policy, next + 1);
+  return pair[next]!;
 }
 
 /**
@@ -4155,6 +4165,8 @@ export async function invokeNativeDeepReadGlmStructuring(
     system: prompt.system,
     user: prompt.user,
     ...NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG,
+    // 整形开关只改链序（首发哪家），其余冻结参数原样
+    gatewayPolicy: context?.gatewayPolicy ?? NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG.gatewayPolicy,
   };
   if (context?.recoverExisting) {
     const recovered = await readNativeDeepReadGlmRecoveredEvidence({
@@ -4180,7 +4192,8 @@ export async function invokeNativeDeepReadGlmStructuring(
       };
     }
   }
-  const preferredGlmGateway = context?.preferredGlmGateway || nextNativeDeepReadGlmPreferredGateway();
+  const preferredGlmGateway = (context?.preferredGlmGateway
+    || nextNativeDeepReadGlmPreferredGateway(context?.gatewayPolicy)) as GlmGatewayName;
   const store = createNativeDeepReadGlmEvidenceStore({ ...context, preferredGlmGateway }, deps?.evidence);
   let raw: Record<string, unknown> | undefined;
   const request = { ...requestWithoutPreferredGateway, preferredGlmGateway };
@@ -4426,6 +4439,8 @@ export type NativeDeepReadBatchRunParams = {
   ) => void | Promise<void>;
   /** 媒体备料（整片拉取）进度中文行，旁路写面板；不影响模型链。 */
   onMediaProgressZh?: (zh: string) => void | Promise<void>;
+  /** 0905 整形开关：glm-5.3（默认）或 qwen3.8-max，只改首发链序。 */
+  structuringModel?: ManhuaNativeStructuringModelId;
 };
 
 type NativeDeepReadBatchExecutionResult = {
@@ -5770,6 +5785,9 @@ async function executeNativeDeepReadBatch(
       let glmEvidence: NativeDeepReadGlmEvidence | undefined;
       const glmEvidenceCallIds: string[] = [];
       const canCacheStructuring = Boolean(params.segmentCacheSeriesKey && episode.cacheSourceDigest);
+      const structuringGatewayPolicy = params.structuringModel === "qwen3.8-max"
+        ? "structuring_chain_qwen_first" as const
+        : "structuring_chain" as const;
       const glmStructure = async (input: {
         prompt: ReturnType<typeof buildNativeDeepReadGlmStructuringPrompt>;
         videoCount: number;
@@ -5811,7 +5829,8 @@ async function executeNativeDeepReadBatch(
             params.abortSignal,
             { seriesKey: params.segmentCacheSeriesKey, sourceDigest: episode.cacheSourceDigest,
               episodeIndex: episode.episodeIndex, batchRequestId: episodeRequestId, callId,
-              recoverExisting: canCacheStructuring, onBeforePaidCall: emitPaidCallStarted },
+              recoverExisting: canCacheStructuring, onBeforePaidCall: emitPaidCallStarted,
+              gatewayPolicy: structuringGatewayPolicy },
           );
           glmEvidence = structured.evidence;
           if (structured.evidence?.callId && !glmEvidenceCallIds.includes(structured.evidence.callId)) {

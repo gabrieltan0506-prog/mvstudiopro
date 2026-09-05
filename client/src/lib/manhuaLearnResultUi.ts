@@ -23,6 +23,9 @@ import {
 } from "@shared/manhuaNativeModelReceipt";
 import {
   MANHUA_NATIVE_DEEP_READ_MODEL,
+  MANHUA_NATIVE_STRUCTURING_MODEL,
+  parseNativeStructuringModel,
+  type ManhuaNativeStructuringModelId,
   NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS,
   NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS,
   parseNativeDeepReadModel,
@@ -39,6 +42,7 @@ const LS_MANHUA_LEARN_MISSING_DISMISSED = "mvs-manhua-learn-missing-dismissed-v1
 const LS_MANHUA_LEARN_SEGMENT_SECONDS = "mvs-manhua-learn-segment-seconds-v1";
 const LS_MANHUA_LEARN_VIDEO_FPS = "mvs-manhua-learn-video-fps-v1";
 const LS_MANHUA_LEARN_READ_MODEL = "mvs-manhua-learn-read-model-v1";
+const LS_MANHUA_LEARN_STRUCTURING_MODEL = "mvs-manhua-learn-structuring-model-v1";
 const LS_MANHUA_LEARN_STANDALONE = "mvs-manhua-learn-standalone-v1";
 
 function manhuaLearnUserStorageKey(baseKey: string, userKey: string): string {
@@ -181,6 +185,26 @@ export function writeManhuaLearnReadModel(userKey: string, value: ManhuaNativeDe
     localStorage.setItem(key, JSON.stringify(parseNativeDeepReadModel(value)));
   } catch {
     // 本地存储不可用时仍用当前选择，真实参数随任务提交
+  }
+}
+
+/** 0905 整形开关持久化：GLM-5.3 / Qwen3.8-Max，只改首发链序。 */
+export function readManhuaLearnStructuringModel(userKey: string): ManhuaNativeStructuringModelId {
+  const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_STRUCTURING_MODEL, userKey);
+  try {
+    return parseNativeStructuringModel(key ? JSON.parse(localStorage.getItem(key) || "null") : undefined);
+  } catch {
+    return MANHUA_NATIVE_STRUCTURING_MODEL;
+  }
+}
+
+export function writeManhuaLearnStructuringModel(userKey: string, value: ManhuaNativeStructuringModelId): void {
+  const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_STRUCTURING_MODEL, userKey);
+  if (!key) return;
+  try {
+    localStorage.setItem(key, JSON.stringify(parseNativeStructuringModel(value)));
+  } catch {
+    /* 本地存储不可用时仍用当前选择 */
   }
 }
 

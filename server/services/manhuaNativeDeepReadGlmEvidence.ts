@@ -17,8 +17,10 @@ export type NativeDeepReadGlmEvidenceContext = {
   episodeIndex?: number;
   batchRequestId?: string;
   callId?: string;
-  /** 正式整形调度器分配的首选通道；失败时仍自动切到另一条GLM通道。 */
-  preferredGlmGateway?: "evolink_glm" | "openrouter";
+  /** 正式整形调度器分配的首选通道；失败时仍按链序自动切到下一档。 */
+  preferredGlmGateway?: string;
+  /** 0905 整形开关：GLM 首发链或 Qwen 首发链。 */
+  gatewayPolicy?: "structuring_chain" | "structuring_chain_qwen_first";
   /** 稳定调用身份下先回读已付费证据；仅正式可恢复整形使用。 */
   recoverExisting?: boolean;
   /** 请求证据落盘后、真正调用上游前发运行回执；恢复命中时不会调用。 */
@@ -77,7 +79,7 @@ export type NativeDeepReadGlmRecoveredEvidence = {
   parsed: Record<string, unknown>;
   response: NativeDeepReadGlmStoredResponse;
   evidence: NativeDeepReadGlmEvidence;
-  preferredGlmGateway: "evolink_glm" | "openrouter";
+  preferredGlmGateway: string;
 };
 
 function evidencePrefix(callId: string): string {
