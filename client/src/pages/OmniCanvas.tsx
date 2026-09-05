@@ -4553,6 +4553,8 @@ export default function OmniCanvas() {
       // 只有新稿真实返回后才切换状态；失败路径必须继续保留旧剧本、资产与导演板。
       setWriterConfirmed(false);
       setDirectorUnlocked(false);
+      setAssetsSkipped(false);
+      setWorkflowPhase("outline");
       setProjectBible(null);
       setCustomAssetRefs(nextCustomAssetRefs);
       if (clearSeriesAssetsAfterBackup) {
@@ -4848,6 +4850,10 @@ export default function OmniCanvas() {
         }),
       );
       setWriterConfirmed(false);
+      // 新正文必须重新确认；无旧节点可清理时，也不能继承上一稿的解锁与跳过状态。
+      setDirectorUnlocked(false);
+      setAssetsSkipped(false);
+      setWorkflowPhase("outline");
       setManhuaUiMode("workbench");
       setImmersiveWorkspaceView("topic");
       setProjectBible(null);
