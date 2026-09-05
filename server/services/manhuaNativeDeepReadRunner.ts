@@ -6117,12 +6117,16 @@ async function executeNativeDeepReadBatch(
           return result.raw;
         }
 
+        // 0905 用户令：批次要均分，不是「前面塞满、尾巴一小撮」——8 片＝4+4、9 片＝5+4、29 片＝5×5+4，
+        // 两路并发才真正对半分担；批次数仍按每批上限（5）决定。
+        const groupCount = Math.ceil(segmentCount / maxRawSegmentsPerBatch);
+        const baseSize = Math.floor(segmentCount / groupCount);
+        const extra = segmentCount % groupCount;
         const groups: number[][] = [];
-        for (let start = 0; start < segmentCount; start += maxRawSegmentsPerBatch) {
-          groups.push(Array.from(
-            { length: Math.min(maxRawSegmentsPerBatch, segmentCount - start) },
-            (_, offset) => start + offset,
-          ));
+        for (let g = 0, start = 0; g < groupCount; g += 1) {
+          const size = baseSize + (g < extra ? 1 : 0);
+          groups.push(Array.from({ length: size }, (_, offset) => start + offset));
+          start += size;
         }
         const groupRows = await Promise.all(groups.map(async (segmentIndexes) => {
           // 单片无需再做一次中间GLM；直接作为一张已结构化分段卡进入确定性拼接。

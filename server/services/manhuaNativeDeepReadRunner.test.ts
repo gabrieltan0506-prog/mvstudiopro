@@ -2646,7 +2646,7 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
     expectNoAssemblyOrMediaMutation(deps);
   });
 
-  it("音频事件越出声明区间属于门禁失败，下一发降到0.65", async () => {
+  it("0905：音频事件越出声明区间不再判门禁失败——越界事件丢弃，单发即过", async () => {
     const span = fullSegments[3]!;
     const invalid = makeSegmentPayload({ segmentIndex: 3, ...span });
     const firstTrack = (invalid.audioResolution as Array<{
@@ -2663,15 +2663,10 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
       ...selectedParams([3]),
       onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
     }, deps);
-    expect(postVertex.mock.calls.map(([body]) => body.generationConfig.temperature)).toEqual([0.7, 0.65]);
-    expect(deps.waitForRetry).toHaveBeenCalledTimes(1);
+    expect(postVertex.mock.calls.map(([body]) => body.generationConfig.temperature)).toEqual([0.7]);
+    expect(deps.waitForRetry).not.toHaveBeenCalled();
     expect(deps.selectAttemptWithQwen).not.toHaveBeenCalled();
     expect(result.segments[0]!.raw.shots).toEqual(healthy.shots);
-    expect(receipts).toEqual(expect.arrayContaining([
-      expect.objectContaining({ route: "local_schema_gate", status: "failed", attemptNumber: 1, temperature: 0.7 }),
-      expect.objectContaining({ route: "gate_retry_pending", attemptNumber: 2, temperature: 0.65 }),
-      expect.objectContaining({ route: "local_schema_gate", status: "completed", attemptNumber: 2 }),
-    ]));
   });
 
   it("503 只等待60秒并保持0.7同温重跑，不消耗门禁降档", async () => {
