@@ -21,6 +21,7 @@ describe("manhuaFinalAssemble", () => {
     ]);
     expect(plan.sceneVideos[0].stillImageUrl).toBe("https://x/k1.jpg");
     expect(plan.sceneVideos[1].stillImageUrl).toBe("https://x/k2.jpg");
+    expect(plan.sceneVideos[2].stillImageUrl).toBeUndefined();
     expect(plan.skippedEpisodes).toEqual([]);
   });
 
@@ -52,6 +53,51 @@ describe("manhuaFinalAssemble", () => {
     expect(plan.sceneVideos[2]?.url).toBe("https://x/ep1-s2.mp4");
     expect(plan.sceneVideos[2]?.trimInSec).toBe(1);
     expect(plan.sceneVideos[2]?.duration).toBe("8s");
+    expect(plan.sceneVideos.every((scene) => !scene.stillImageUrl)).toBe(true);
+  });
+
+  it("places one still only on the last scene at a real episode boundary", () => {
+    const plan = buildManhuaAssemblePlan([
+      {
+        episodeIndex: 1,
+        segmentIndex: 1,
+        clipUrl: "https://x/e1-s1.mp4",
+        keyartUrl: "https://x/k1.jpg",
+        shotPieces: [
+          { shotIndex: 1, trimInSec: 0, trimOutSec: 2 },
+          { shotIndex: 2, trimInSec: 2, trimOutSec: 4 },
+        ],
+      },
+      { episodeIndex: 1, segmentIndex: 2, clipUrl: "https://x/e1-s2.mp4" },
+      {
+        episodeIndex: 2,
+        segmentIndex: 1,
+        clipUrl: "https://x/e2-s1.mp4",
+        keyartUrl: "https://x/k2.jpg",
+      },
+    ]);
+
+    expect(plan.sceneVideos).toHaveLength(4);
+    expect(plan.sceneVideos.map((scene) => scene.stillImageUrl)).toEqual([
+      undefined,
+      undefined,
+      "https://x/k1.jpg",
+      undefined,
+    ]);
+  });
+
+  it("does not create a still for a missing episode or after the last real episode", () => {
+    const plan = buildManhuaAssemblePlan([
+      { episodeIndex: 1, keyartUrl: "https://x/k1.jpg", episodeTitle: "缺片" },
+      { episodeIndex: 2, clipUrl: "https://x/e2.mp4", keyartUrl: "https://x/k2.jpg" },
+    ]);
+
+    expect(plan.episodeIndexes).toEqual([2]);
+    expect(plan.sceneVideos).toHaveLength(1);
+    expect(plan.sceneVideos[0]?.stillImageUrl).toBeUndefined();
+    expect(plan.skippedEpisodes).toEqual([
+      { episodeIndex: 1, title: "缺片", reason: "缺成片" },
+    ]);
   });
 
   it("filters by episodeIndexes and records skip when clip missing", () => {

@@ -424,6 +424,7 @@ export async function runManhuaAssembleFinal(
     : 2;
 
   const finalVideoUrl = await renderWorkflowFinalVideo({
+    preserveSourceAudio: true,
     sceneVideos: sceneVideos.map((sv) => ({
       sceneIndex: sv.sceneIndex,
       url: sv.url,

@@ -11,12 +11,14 @@ import {
 } from "@shared/manhuaWriterRoom";
 import type { CanvasBlock } from "./canvasTypes";
 import {
+  isManhuaFactoryArtifactBlock,
+  isManhuaFinalVideoBlockId,
   isManhuaSeriesAssetBlockId,
   manhuaBlockHasPaidOutput,
 } from "./canvasDramaStudio";
 import {
   collectManhuaClipDockItems,
-  downloadManhuaProjectZip,
+  exportManhuaProjectZip,
   selectExportableDockIds,
   type ExportManhuaProjectZipOpts,
 } from "./manhuaProjectExport";
@@ -148,6 +150,7 @@ export function inspectManhuaSeriesSwitchRisk(input: {
   ).length;
   const paidFactoryOutputCount = blocks.filter(
     (b) =>
+      isManhuaFactoryArtifactBlock(b) &&
       !isManhuaSeriesAssetBlockId(b.id) &&
       !b.archivedFromPreviousScript &&
       manhuaBlockHasPaidOutput(b),
@@ -261,13 +264,20 @@ export async function downloadManhuaSeriesSwitchBackup(
   const writerMd = formatManhuaWriterPackMarkdown(opts.writerPack);
   const dockItems = collectManhuaClipDockItems(opts.blocks, { includePendingStory: false });
   const exportableIds = selectExportableDockIds(dockItems);
+  const finalVideoBlocks = opts.blocks.filter(
+    (block) =>
+      isManhuaFinalVideoBlockId(block.id) &&
+      !block.archivedFromPreviousScript &&
+      manhuaBlockHasPaidOutput(block),
+  );
 
   let dockOk = 0;
-  let dockFail = 0;
-  if (exportableIds.length > 0) {
+  let dockBackup: Awaited<ReturnType<typeof exportManhuaProjectZip>> | null = null;
+  if (exportableIds.length > 0 || finalVideoBlocks.length > 0) {
     const dockOpts: ExportManhuaProjectZipOpts = {
       items: dockItems,
       selectedIds: exportableIds,
+      finalVideoBlocks,
       topic: opts.topic,
       // 坞工程包文件名也跟先前专案名，避免被新剧名盖掉
       seriesTitle,
@@ -276,15 +286,13 @@ export async function downloadManhuaSeriesSwitchBackup(
       sceneId: opts.sceneId,
       demoAssetIds: opts.demoAssetIds,
       writerPackMarkdown: writerMd || undefined,
+      // 换剧专用资产包在下方逐个硬校验；工程包不再重复走“库图缺失可跳过”的软路径。
+      includeLibraryRefs: false,
     };
-    try {
-      const dock = await downloadManhuaProjectZip(dockOpts);
-      dockOk = dock.okCount;
-      dockFail = dock.failCount;
-    } catch {
-      // 坞导出失败时仍打专案资产包，避免整段中断
-      dockOk = 0;
-      dockFail = exportableIds.length;
+    dockBackup = await exportManhuaProjectZip(dockOpts);
+    dockOk = dockBackup.okCount;
+    if (dockBackup.failCount > 0) {
+      throw new Error(`工程包有 ${dockBackup.failCount} 项未能备份，旧专案保持不变`);
     }
   }
 
@@ -359,6 +367,10 @@ export async function downloadManhuaSeriesSwitchBackup(
     }
   }
 
+  if (failCount > 0) {
+    throw new Error(`人物、场景或上传参考有 ${failCount} 项未能备份，旧专案保持不变`);
+  }
+
   zip.file(
     "manifest.json",
     JSON.stringify(
@@ -374,7 +386,7 @@ export async function downloadManhuaSeriesSwitchBackup(
         seriesAssetIds: seriesBlocks.map((b) => b.id),
         customRefIds: refs.map((r) => r.id),
         directorBoardState: hasDirectorBoardState,
-        dockExportableCount: exportableIds.length,
+        dockExportableCount: exportableIds.length + finalVideoBlocks.length,
       },
       null,
       2,
@@ -382,7 +394,7 @@ export async function downloadManhuaSeriesSwitchBackup(
   );
 
   if (
-    okCount === 0 &&
+    okCount + dockOk === 0 &&
     !writerMd.trim() &&
     seriesBlocks.length === 0 &&
     refs.length === 0 &&
@@ -393,11 +405,14 @@ export async function downloadManhuaSeriesSwitchBackup(
 
   const blob = await zip.generateAsync({ type: "blob" });
   const filename = `mv-manhua-backup-${slugPart(seriesTitle) || "先前专案"}-${stampBackupSuffix()}.zip`;
+  if (dockBackup) {
+    triggerDownload(dockBackup.blob, dockBackup.filename);
+  }
   triggerDownload(blob, filename);
   return {
     filename,
     okCount: okCount + dockOk,
-    failCount: failCount + dockFail,
+    failCount: 0,
   };
 }
 
@@ -419,6 +434,9 @@ export async function confirmManhuaSeriesSwitchWithBackup(input: {
   if (!askBackup(manhuaSeriesSwitchBackupConfirmZh(input.risk))) return false;
   try {
     const result = await input.download();
+    if (result.failCount > 0) {
+      throw new Error(`备份有 ${result.failCount} 项失败，旧专案保持不变`);
+    }
     input.onBackupOk?.(result);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "备份失败";

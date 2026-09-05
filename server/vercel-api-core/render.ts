@@ -2,6 +2,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 import { put } from "@vercel/blob";
 import type { RenderWorkflowInput } from "./renderTypes.js";
+import { renderSourceAudioFinal } from "./renderSourceAudio.js";
 import {
   downloadFileToPath,
   makeTempDir,
@@ -26,6 +27,17 @@ export async function renderWorkflowFinalVideo(input: RenderWorkflowInput) {
   const tmpDir = await makeTempDir();
   const transition = String(input.transition || "cut").trim().toLowerCase();
   const size = resolutionToSize(input.resolution);
+  if (input.preserveSourceAudio) {
+    try {
+      const finalPath = await renderSourceAudioFinal(input, size, tmpDir);
+      return await uploadFileToPublicBlob(finalPath, "rendered-video.mp4", "video/mp4");
+    } finally {
+      // 此目录由本次合成独占，只含临时媒体；任务回执及模型 JSON 不在此目录。
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {
+        console.warn("[manhua-render] 本次临时媒体清理失败");
+      });
+    }
+  }
   const sceneFiles: string[] = [];
   const durations: number[] = [];
 

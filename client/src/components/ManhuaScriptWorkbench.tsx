@@ -140,6 +140,7 @@ import {
   MANHUA_KEYARTS_PER_SEGMENT_MIN,
   manhuaSegmentCountBounds,
   pinnedManhuaSegmentCount,
+  parseManhuaClipTargetDurationSec,
   parseWorkbenchShotsFromText,
   resolveClipLocalSegmentIndex,
   resolveClipSegmentIndex,
@@ -221,6 +222,10 @@ import {
 import { suggestManhuaClipCuts } from "@/lib/manhuaEditAutoCutApi";
 import { parseFineCutByShot } from "@shared/manhuaEditFineCut";
 import {
+  buildManhuaManualClipEditTrim,
+  restoreManhuaFineCutsFromShotPieces,
+} from "@shared/manhuaEditAutoCut";
+import {
   isManhuaAssetCardExpanded,
   shouldShowManhuaAssetFoldToggle,
   shouldShowManhuaAssetRoleChip,
@@ -297,6 +302,9 @@ type Props = {
   onBurnSubtitle?: (subtitleSrt: string) => void | Promise<void>;
   burnSubtitleBusy?: boolean;
   burnSubtitleResultUrl?: string | null;
+  burnSubtitleRecoveryError?: string | null;
+  finalVideoVersions?: { activeUrl?: string; urls: string[] };
+  onSelectFinalVideoVersion?: (url: string) => void;
   factoryBusy?: boolean;
   /** 工厂进度一行（如「第2集 · 静帧」） */
   factoryProgress?: string;
@@ -765,6 +773,9 @@ export default function ManhuaScriptWorkbench({
   onBurnSubtitle,
   burnSubtitleBusy,
   burnSubtitleResultUrl,
+  burnSubtitleRecoveryError,
+  finalVideoVersions,
+  onSelectFinalVideoVersion,
   factoryBusy,
   factoryProgress,
   onStopFactory,
@@ -1011,30 +1022,8 @@ export default function ManhuaScriptWorkbench({
   /** 剪辑台字幕轨：开则生成轨数据，默认不烧字 */
   const [editSubtitleEnabled, setEditSubtitleEnabled] = useState(false);
   const bPersistKey = manhuaWorkbenchBPersistKey(topic || seriesTitle || "manhua", focusEpisode);
-  useEffect(() => {
-    const hit = loadManhuaWorkbenchBPersist(bPersistKey);
-    if (!hit) return;
-    if (Object.keys(hit.shotAngleByIndex).length) setShotAngleByIndex(hit.shotAngleByIndex);
-    if (hit.roughShotOrder.length) setRoughShotOrder(hit.roughShotOrder);
-    if (hit.fineCutByShot && Object.keys(hit.fineCutByShot).length) {
-      setFineCutByShot(hit.fineCutByShot);
-    }
-    setEditSubtitleEnabled(Boolean(hit.subtitleEnabled));
-  }, [bPersistKey]);
-  useEffect(() => {
-    saveManhuaWorkbenchBPersist(bPersistKey, {
-      shotAngleByIndex,
-      roughShotOrder,
-      fineCutByShot,
-      subtitleEnabled: editSubtitleEnabled,
-    });
-  }, [
-    bPersistKey,
-    shotAngleByIndex,
-    roughShotOrder,
-    fineCutByShot,
-    editSubtitleEnabled,
-  ]);
+  /** 只允许把已经完成当前集加载的状态写回该集，避免切集首帧把上一集状态写进新 key。 */
+  const [hydratedBPersistKey, setHydratedBPersistKey] = useState<string | null>(null);
   /** 右栏本集画布：阿硕 C2 分镜有静帧时强制常开；其余阶段仍可随成片收合 */
   const [canvasDockOpen, setCanvasDockOpen] = useState(true);
   /** 胶片多选：生成所选 */
@@ -1250,6 +1239,146 @@ export default function ManhuaScriptWorkbench({
     });
   }, [roughClips, episodeClips, episodeKeyarts, legacyClip, keyart]);
 
+  useEffect(() => {
+    setHydratedBPersistKey(null);
+    const hit = loadManhuaWorkbenchBPersist(bPersistKey);
+    // 按集加载只依赖 key；媒体或粗剪变化不得重新加载 localStorage 覆盖用户刚改的值。
+    setShotAngleByIndex(hit?.shotAngleByIndex || {});
+    setRoughShotOrder(hit?.roughShotOrder || []);
+    setFineCutByShot(hit?.fineCutByShot || {});
+    setEditSubtitleEnabled(Boolean(hit?.subtitleEnabled));
+    setHydratedBPersistKey(bPersistKey);
+  }, [bPersistKey]);
+
+  useEffect(() => {
+    if (hydratedBPersistKey !== bPersistKey) return;
+    const restoredFromBlocks: ManhuaFineCutByShot = {};
+    for (const clipBlock of [...episodeClips, ...(legacyClip ? [legacyClip] : [])]) {
+      const pieces = clipBlock.manhuaEditTrim?.shotPieces || [];
+      if (!pieces.length) continue;
+      const localSegment = resolveClipLocalSegmentIndex(
+        clipBlock.id,
+        clipBlock.prompt,
+        focusEpisode,
+      );
+      const group = shots.filter(
+        (shot) => resolveSegmentIndexFromShotIndex(shot.index) === localSegment,
+      );
+      if (!group.length) continue;
+      const persistedDurationSec = Number(clipBlock.manhuaEditTrim?.sourceDurationSec) || 0;
+      const videoDurationSec =
+        persistedDurationSec > 0
+          ? persistedDurationSec
+          : parseManhuaClipTargetDurationSec(clipBlock.prompt) ||
+            Number(segments[localSegment - 1]?.durationSec) ||
+            group.reduce((sum, shot) => sum + shot.durationSec, 0);
+      Object.assign(
+        restoredFromBlocks,
+        restoreManhuaFineCutsFromShotPieces({
+          videoDurationSec,
+          directorPrompt: clipBlock.prompt,
+          shots: group.map((shot) => ({
+            shotIndex: shot.index,
+            durationSec: shot.durationSec,
+          })),
+          shotPieces: pieces,
+        }),
+      );
+    }
+    if (!Object.keys(restoredFromBlocks).length) return;
+    // 画布是可恢复真源，只覆盖确实落盘的镜号；其余镜保留当前集本地状态。
+    setFineCutByShot((previous) => {
+      let changed = false;
+      const next = { ...previous };
+      for (const [rawShotIndex, trim] of Object.entries(restoredFromBlocks)) {
+        const shotIndex = Number(rawShotIndex);
+        const before = previous[shotIndex];
+        if (before?.inSec === trim.inSec && before?.outSec === trim.outSec) continue;
+        next[shotIndex] = trim;
+        changed = true;
+      }
+      return changed ? next : previous;
+    });
+  }, [
+    bPersistKey,
+    episodeClips,
+    focusEpisode,
+    hydratedBPersistKey,
+    legacyClip,
+    segments,
+    shots,
+  ]);
+
+  useEffect(() => {
+    if (hydratedBPersistKey !== bPersistKey) return;
+    saveManhuaWorkbenchBPersist(bPersistKey, {
+      shotAngleByIndex,
+      roughShotOrder,
+      fineCutByShot,
+      subtitleEnabled: editSubtitleEnabled,
+    });
+  }, [
+    bPersistKey,
+    hydratedBPersistKey,
+    shotAngleByIndex,
+    roughShotOrder,
+    fineCutByShot,
+    editSubtitleEnabled,
+  ]);
+
+  const handleFineCutChange = useCallback(
+    (shotIndex: number, trim: ManhuaFineCutTrim) => {
+      const nextFineCutByShot = { ...fineCutByShot, [shotIndex]: trim };
+      setFineCutByShot(nextFineCutByShot);
+      const media = editShotMedia.find((row) => row.shotIndex === shotIndex);
+      const clipBlock = [...episodeClips, ...(legacyClip ? [legacyClip] : [])].find(
+        (block) => block.id === media?.clipBlockId,
+      );
+      if (!clipBlock || !onApplyClipEditTrim) return;
+      const group = roughClips.filter((rough) =>
+        editShotMedia.some(
+          (row) => row.shotIndex === rough.shotIndex && row.clipBlockId === clipBlock.id,
+        ),
+      );
+      if (!group.length) return;
+      const localSegment = resolveClipLocalSegmentIndex(
+        clipBlock.id,
+        clipBlock.prompt,
+        focusEpisode,
+      );
+      const persistedDurationSec = Number(clipBlock.manhuaEditTrim?.sourceDurationSec) || 0;
+      // 首段试片会把 prompt 真实裁成 10 秒，不能再被原 15/30 秒段规划抬高。
+      const videoDurationSec =
+        persistedDurationSec > 0
+          ? persistedDurationSec
+          : parseManhuaClipTargetDurationSec(clipBlock.prompt) ||
+            Number(segments[localSegment - 1]?.durationSec) ||
+            group.reduce((sum, rough) => sum + rough.durationSec, 0);
+      onApplyClipEditTrim(clipBlock.id, {
+        ...buildManhuaManualClipEditTrim({
+          videoDurationSec,
+          directorPrompt: clipBlock.prompt,
+          shots: group.map((rough) => ({
+            shotIndex: rough.shotIndex,
+            durationSec: rough.durationSec,
+          })),
+          fineCutByShot: nextFineCutByShot,
+        }),
+        updatedAt: Date.now(),
+      });
+    },
+    [
+      editShotMedia,
+      episodeClips,
+      fineCutByShot,
+      focusEpisode,
+      legacyClip,
+      onApplyClipEditTrim,
+      roughClips,
+      segments,
+    ],
+  );
+
   const handleSuggestAutoCuts = useCallback(async () => {
     if (suggestAutoCutsBusy || factoryBusy) return;
     type CutGroup = {
@@ -1300,6 +1429,7 @@ export default function ManhuaScriptWorkbench({
         }
         if (out.segmentLabelZh) labels.push(out.segmentLabelZh);
         onApplyClipEditTrim?.(g.clipBlockId, {
+          sourceDurationSec: out.durationSec,
           inSec: out.segmentTrim.inSec,
           outSec: out.segmentTrim.outSec,
           shotPieces: out.shotPieces,
@@ -6398,15 +6528,16 @@ export default function ManhuaScriptWorkbench({
             clipIndexes={clipIndexSet}
             activeShotIndex={activeShotNo}
             fineCutByShot={fineCutByShot}
-            onFineCutChange={(shotIndex: number, trim: ManhuaFineCutTrim) => {
-              setFineCutByShot((prev) => ({ ...prev, [shotIndex]: trim }));
-            }}
+            onFineCutChange={handleFineCutChange}
             onSuggestAutoCuts={() => void handleSuggestAutoCuts()}
             suggestAutoCutsBusy={suggestAutoCutsBusy}
             subtitleEnabled={editSubtitleEnabled}
             onBurnSubtitle={finalVideoUrl ? onBurnSubtitle : undefined}
             burnSubtitleBusy={burnSubtitleBusy}
             burnSubtitleResultUrl={burnSubtitleResultUrl}
+            burnSubtitleRecoveryError={burnSubtitleRecoveryError}
+            finalVideoVersions={finalVideoVersions}
+            onSelectFinalVideoVersion={onSelectFinalVideoVersion}
             onSubtitleEnabledChange={(next) => {
               setEditSubtitleEnabled(next);
               if (deliveryPackage && onDeliveryPackageChange) {

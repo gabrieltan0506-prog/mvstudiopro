@@ -15,6 +15,8 @@ export interface SceneVideoInput {
 
 export interface RenderWorkflowInput {
   sceneVideos: SceneVideoInput[];
+  /** 漫剧合成保留片内对白、音效和环境声；旧独立配音工作流不改变。 */
+  preserveSourceAudio?: boolean;
   musicUrl?: string;
   voiceUrl?: string;
   musicStartSec?: number;

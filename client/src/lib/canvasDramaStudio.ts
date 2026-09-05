@@ -565,10 +565,16 @@ export function isManhuaSeriesAssetBlockId(id: string): boolean {
   return /^(charsheet|sceneplate|propsheet|propplate)-/.test(String(id || ""));
 }
 
+/** 整集后期成片节点；它是工厂产物，但不是可自动运行的第六阶段。 */
+export function isManhuaFinalVideoBlockId(id: string): boolean {
+  return /^final-e\d+$/i.test(String(id || "").trim());
+}
+
 /** 漫剧工厂产物（含角色/场景/道具设定图、宣发封面）；自由画布节点不在此列 */
 export function isManhuaFactoryArtifactBlock(block: Pick<CanvasBlock, "id">): boolean {
   const id = String(block.id || "");
   if (!id) return false;
+  if (isManhuaFinalVideoBlockId(id)) return true;
   if (stageKeyFromBlockId(id)) return true;
   if (id.startsWith("promo_cover-")) return true;
   if (isManhuaSeriesAssetBlockId(id)) return true;
@@ -658,11 +664,41 @@ export function stripManhuaFactoryCanvasArtifacts(
   if (!removedIds.size && !archiveIds.size) {
     return { blocks, edges, removedCount: 0, archivedCount: 0, keptCount };
   }
+  // final-eXX 是当前剧的确定性活动槽。旧成片若仍用同一 id 归档，下一次合成会
+  // 命中旧块并覆盖历史；因此只给整集成片换唯一归档 id，其余阶段保持旧行为。
+  const usedIds = new Set(blocks.map((b) => b.id));
+  const archivedFinalIdByOriginal = new Map<string, string>();
+  for (const b of stale) {
+    if (!archiveIds.has(b.id) || !isManhuaFinalVideoBlockId(b.id)) continue;
+    const base = `${b.id}-archived`;
+    let candidate = base;
+    let suffix = 2;
+    while (usedIds.has(candidate)) {
+      candidate = `${base}-${suffix}`;
+      suffix += 1;
+    }
+    usedIds.add(candidate);
+    archivedFinalIdByOriginal.set(b.id, candidate);
+  }
+  const remapId = (id: string): string => archivedFinalIdByOriginal.get(id) || id;
   return {
     blocks: blocks
       .filter((b) => !removedIds.has(b.id))
-      .map((b) => (archiveIds.has(b.id) ? { ...b, archivedFromPreviousScript: true } : b)),
-    edges: edges.filter((e) => !removedIds.has(e.fromId) && !removedIds.has(e.toId)),
+      .map((b) =>
+        archiveIds.has(b.id)
+          ? {
+              ...b,
+              id: remapId(b.id),
+              parentId: b.parentId ? remapId(b.parentId) : b.parentId,
+              archivedFromPreviousScript: true,
+            }
+          : b.parentId && archivedFinalIdByOriginal.has(b.parentId)
+            ? { ...b, parentId: remapId(b.parentId) }
+            : b,
+      ),
+    edges: edges
+      .filter((e) => !removedIds.has(e.fromId) && !removedIds.has(e.toId))
+      .map((e) => ({ ...e, fromId: remapId(e.fromId), toId: remapId(e.toId) })),
     removedCount: removedIds.size,
     archivedCount: archiveIds.size,
     keptCount,

@@ -39,8 +39,8 @@ export async function makeTempDir(prefix = "mvsp-render-") {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
 }
 
-export async function downloadFileToPath(url: string, outPath: string) {
-  const resp = await fetch(url, { headers: { "User-Agent": "mvstudiopro-render" } });
+export async function downloadFileToPath(url: string, outPath: string, signal?: AbortSignal) {
+  const resp = await fetch(url, { headers: { "User-Agent": "mvstudiopro-render" }, signal });
   if (!resp.ok) throw new Error(`download_failed:${resp.status}:${url}`);
   const buf = Buffer.from(await resp.arrayBuffer());
   await fs.writeFile(outPath, buf);

@@ -35,6 +35,14 @@ export type ManhuaAssembleShotPiece = {
   durationSec: number;
 };
 
+export type ManhuaClipEditTrim = {
+  /** 源视频真实总长；不能用裁切后的 outSec 反推，否则再次编辑会缩短镜窗。 */
+  sourceDurationSec: number;
+  inSec: number;
+  outSec: number;
+  shotPieces: ManhuaAssembleShotPiece[];
+};
+
 const DEFAULT_PAD_SEC = 0.25;
 
 function round2(n: number): number {
@@ -275,6 +283,69 @@ export function buildManhuaAssembleShotPieces(params: {
       trimInSec,
       trimOutSec,
       durationSec: round2(trimOutSec - trimInSec),
+    });
+  }
+  return out;
+}
+
+/**
+ * 手动细剪与自动建议共用同一条落盘合同。
+ *
+ * UI 的细剪秒位是“镜内相对秒”，合成器需要“段成片绝对秒”。这里用与自动
+ * 建议相同的导戏窗解析与比例映射，避免手动按钮只改预览而没有改变最终合成。
+ */
+export function buildManhuaManualClipEditTrim(params: {
+  videoDurationSec: number;
+  fineCutByShot: ManhuaFineCutByShot;
+  shots: Array<{ shotIndex: number; durationSec: number }>;
+  directorPrompt?: string | null;
+}): ManhuaClipEditTrim {
+  const videoDurationSec = Math.max(0.5, Number(params.videoDurationSec) || 0.5);
+  const windows = resolveManhuaShotWindowsForSegment({
+    directorPrompt: params.directorPrompt,
+    videoDurationSec,
+    shots: params.shots,
+  });
+  return {
+    sourceDurationSec: round2(videoDurationSec),
+    inSec: 0,
+    outSec: round2(videoDurationSec),
+    shotPieces: buildManhuaAssembleShotPieces({
+      videoDurationSec,
+      fineCutByShot: params.fineCutByShot,
+      windows,
+      shots: params.shots,
+    }),
+  };
+}
+
+/**
+ * 画布恢复时，把已落盘的绝对秒片还原成 UI 的镜内相对细剪。
+ * `sourceVersion` 不参与换算；同一段的签名 URL 续签不会把切点误当成新版本。
+ */
+export function restoreManhuaFineCutsFromShotPieces(params: {
+  videoDurationSec: number;
+  shotPieces: readonly ManhuaAssembleShotPiece[];
+  shots: Array<{ shotIndex: number; durationSec: number }>;
+  directorPrompt?: string | null;
+}): ManhuaFineCutByShot {
+  const videoDurationSec = Math.max(0.5, Number(params.videoDurationSec) || 0.5);
+  const windows = resolveManhuaShotWindowsForSegment({
+    directorPrompt: params.directorPrompt,
+    videoDurationSec,
+    shots: params.shots,
+  });
+  const pieceByShot = new Map(params.shotPieces.map((piece) => [piece.shotIndex, piece] as const));
+  const out: ManhuaFineCutByShot = {};
+  for (const shot of params.shots) {
+    const piece = pieceByShot.get(shot.shotIndex);
+    const win = windows.find((row) => row.shotIndex === shot.shotIndex);
+    if (!piece || !win) continue;
+    const shotDurationSec = Math.max(0.5, Number(shot.durationSec) || 0.5);
+    const windowDurationSec = Math.max(0.5, win.winEnd - win.winStart);
+    out[shot.shotIndex] = clampFineCut(shotDurationSec, {
+      inSec: ((piece.trimInSec - win.winStart) / windowDurationSec) * shotDurationSec,
+      outSec: ((piece.trimOutSec - win.winStart) / windowDurationSec) * shotDurationSec,
     });
   }
   return out;

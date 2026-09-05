@@ -75,6 +75,9 @@ type Props = {
   burnSubtitleBusy?: boolean;
   /** 最近一次烧字成片读链(父级从任务产出回填);有值即展示新视频入口 */
   burnSubtitleResultUrl?: string | null;
+  burnSubtitleRecoveryError?: string | null;
+  finalVideoVersions?: { activeUrl?: string; urls: string[] };
+  onSelectFinalVideoVersion?: (url: string) => void;
   /** 本集各镜成片/静帧质检原料 */
   shotMedia: ManhuaEditShotMedia[];
   factoryBusy?: boolean;
@@ -165,6 +168,9 @@ export default function ManhuaEditMultitrackPanel({
   onBurnSubtitle,
   burnSubtitleBusy = false,
   burnSubtitleResultUrl,
+  burnSubtitleRecoveryError,
+  finalVideoVersions,
+  onSelectFinalVideoVersion,
   shotMedia,
   factoryBusy,
   dockSelectedIds,
@@ -516,6 +522,35 @@ export default function ManhuaEditMultitrackPanel({
               >
                 查看烧字成片（新视频）
               </a>
+            ) : null}
+            {burnSubtitleRecoveryError ? (
+              <p className="mt-1.5 text-[9px] text-amber-100/80">
+                {burnSubtitleRecoveryError}
+              </p>
+            ) : null}
+            {finalVideoVersions && finalVideoVersions.urls.length > 1 ? (
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <span className="text-[8px] text-white/35">整集成片版本</span>
+                {finalVideoVersions.urls.map((url, index) => (
+                  <button
+                    key={url}
+                    type="button"
+                    disabled={factoryBusy || burnSubtitleBusy || !onSelectFinalVideoVersion}
+                    onClick={() => onSelectFinalVideoVersion?.(url)}
+                    className={`rounded border px-1.5 py-0.5 text-[8px] ${
+                      finalVideoVersions.activeUrl === url
+                        ? "border-emerald-300/40 bg-emerald-500/20 text-emerald-50"
+                        : "border-white/12 bg-white/[0.04] text-white/55"
+                    }`}
+                  >
+                    {finalVideoVersions.activeUrl === url
+                      ? "当前下载版"
+                      : index === 0
+                        ? "字幕版"
+                        : `保留版 ${index}`}
+                  </button>
+                ))}
+              </div>
             ) : null}
           </div>
         </div>

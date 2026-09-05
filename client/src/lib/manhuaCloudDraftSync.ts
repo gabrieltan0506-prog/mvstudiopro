@@ -5,6 +5,7 @@
 
 import {
   buildManhuaCloudDraftPayload,
+  isManhuaCloudDraftFinalVideoBlock,
   isManhuaCloudDraftNewer,
   isManhuaCloudDraftVideoBlock,
   manhuaCloudDraftPayloadSizeOk,
@@ -123,10 +124,33 @@ function persistableLocalUrl(u: unknown): string | undefined {
   return undefined;
 }
 
-/** 本机落盘瘦身：去视频产物与 blob；已缓存图改写为 local-media: 指针 */
+/** 本机保存当前及明确归档的整集版本；归档规则不用于扩大云同步范围。 */
+function isLocalFinalVideoBlock(block: CanvasBlock): boolean {
+  return isManhuaCloudDraftFinalVideoBlock(block) || (
+    block.kind === "video" && block.archivedFromPreviousScript === true &&
+    /^final-e\d+-archived(?:-\d+)?$/i.test(block.id)
+  );
+}
+
+/** 本机落盘瘦身：整集版本保留，其余视频按旧规则；已缓存图改为本机指针。 */
 export function slimBlocksForLocalPersist(blocks: CanvasBlock[]): CanvasBlock[] {
   const pointed = applyLocalMediaPointersToBlocks(blocks);
   return pointed.map((b) => {
+    if (isLocalFinalVideoBlock(b)) {
+      const outputUrls = (b.outputUrls || [])
+        .map((u) => persistableLocalUrl(u))
+        .filter((u): u is string => Boolean(u));
+      const outputUrl = persistableLocalUrl(b.outputUrl) || outputUrls[0];
+      return {
+        ...b,
+        outputUrl,
+        outputUrls:
+          outputUrl && !outputUrls.includes(outputUrl) ? [outputUrl, ...outputUrls] : outputUrls,
+        uploadedAssets: [],
+        uploadFailures: undefined,
+        status: outputUrl ? "done" : b.status,
+      };
+    }
     if (isManhuaCloudDraftVideoBlock(b)) {
       return {
         ...b,
@@ -197,6 +221,21 @@ function localFirstThenCloud(u: unknown): string | undefined {
 /** 云同步前：blob:/local-media: → 溯源 https（有则带上；无则留给本机库）;GCS 签名链一律换永久链 */
 export function blocksForCloudDraftSync(blocks: CanvasBlock[]): CanvasBlock[] {
   return blocks.map((b) => {
+    if (isManhuaCloudDraftFinalVideoBlock(b)) {
+      const outputUrls = (b.outputUrls || [])
+        .map((u) => stableOrUndefined(resolveUrlForCloudSync(u)))
+        .filter((u): u is string => Boolean(u));
+      const outputUrl = stableOrUndefined(resolveUrlForCloudSync(b.outputUrl)) || outputUrls[0];
+      return {
+        ...b,
+        outputUrl,
+        outputUrls:
+          outputUrl && !outputUrls.includes(outputUrl) ? [outputUrl, ...outputUrls] : outputUrls,
+        uploadedAssets: [],
+        uploadFailures: undefined,
+        status: outputUrl ? "done" : b.status,
+      };
+    }
     if (isManhuaCloudDraftVideoBlock(b)) {
       return {
         ...b,
@@ -237,16 +276,17 @@ export function trySaveLocalCanvas(
     storage.setItem(CANVAS_LS_KEY, JSON.stringify({ blocks: slim, edges }));
     return true;
   } catch {
-    // 配额仍满：优先保住关键静帧成图与垫图；砍视频壳字段与超长文本
+    // 配额仍满：可裁长文本，但 final 已登记版本不能被降级写成空壳。
     try {
       const shell = slim.map((b) => {
         const isKeyart = String(b.id || "").startsWith("keyart-");
-        if (isKeyart) {
+        const isFinalVideo = isLocalFinalVideoBlock(b);
+        if (isKeyart || isFinalVideo) {
           return {
             ...b,
             outputText: undefined,
             uploadedAssets: [],
-            // 保留 outputUrl / refImageUrl / editFusionUrls，避免刷新后全空再触发改图失败
+            // 保留关键静帧以及整集成片全部版本；若仍超额，下层 catch 明确返回 false。
           };
         }
         return {
@@ -379,6 +419,10 @@ export function cloudDraftBlocksToCanvas(
       videoTaskId: (raw as { videoTaskId?: string }).videoTaskId,
       videoTaskEngine: (raw as { videoTaskEngine?: string }).videoTaskEngine,
       videoTaskStatus: (raw as { videoTaskStatus?: CanvasBlock["videoTaskStatus"] }).videoTaskStatus,
+      manhuaEditTrim: (raw as { manhuaEditTrim?: CanvasBlock["manhuaEditTrim"] }).manhuaEditTrim,
+      manhuaFinalPostProd: (
+        raw as { manhuaFinalPostProd?: CanvasBlock["manhuaFinalPostProd"] }
+      ).manhuaFinalPostProd,
       // 手动划线标注已废除，历史草稿字段读取处兼容忽略，不再还原进画布节点。
       textModel: "kimi-k3",
       imageModel: "gpt-image-2",
