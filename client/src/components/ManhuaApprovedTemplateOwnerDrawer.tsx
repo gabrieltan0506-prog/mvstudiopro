@@ -7,6 +7,7 @@ import type {
 } from "@shared/manhuaViralTemplateBank";
 import { formatManhuaTemplateNativeBeatZh } from "@/lib/manhuaTemplateNativeBeat";
 import { X } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   changedManhuaTemplateBeatIndexes,
   isManhuaTemplateFieldChanged,
@@ -52,6 +53,51 @@ function TextValue({ value, changed }: { value: string; changed: boolean }) {
   return (
     <div className={`whitespace-pre-line rounded-lg border px-2.5 py-2 leading-5 ${valueClass(changed)}`}>
       {value || "—"}
+    </div>
+  );
+}
+
+/**
+ * 渐进渲染列表（0905 用户令「虚拟列表与 HTML 报告并存」）：
+ * 一张正式卡几百拍节拍/几十张证据帧一次全画会把页面卡死几秒到十几秒；
+ * 这里先画前 CHUNK 条，滚到底部哨兵再续画 CHUNK 条，行高不固定也不用测量。
+ */
+const PROGRESSIVE_CHUNK = 40;
+function ProgressiveList<T>({
+  items,
+  renderItem,
+  chunk = PROGRESSIVE_CHUNK,
+  className,
+}: {
+  items: readonly T[];
+  renderItem: (item: T, index: number) => ReactNode;
+  chunk?: number;
+  className?: string;
+}) {
+  const [visible, setVisible] = useState(Math.min(chunk, items.length));
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    setVisible(Math.min(chunk, items.length));
+  }, [items, chunk]);
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || visible >= items.length || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setVisible((current) => Math.min(items.length, current + chunk));
+      }
+    }, { rootMargin: "400px 0px" });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [visible, items.length, chunk]);
+  return (
+    <div className={className}>
+      {items.slice(0, visible).map((item, index) => renderItem(item, index))}
+      {visible < items.length ? (
+        <div ref={sentinelRef} className="py-2 text-center text-[10px] text-white/40">
+          已显示 {visible}/{items.length} · 继续下滑加载
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -123,23 +169,26 @@ function TemplateColumn({
       <div>
         <div className="mb-1 text-[10px] text-white/40">节拍格</div>
         <div className="space-y-1.5">
-          {card.beatGrid.map((beat, index) => {
-            const beatChanged = optimized && changedBeatIndexes.has(index);
-            return (
-              <div
-                key={`${beat.atSec}-${index}`}
-                className={`rounded-lg border px-2.5 py-2 ${valueClass(beatChanged)}`}
-              >
-                <div className="font-semibold">{beat.atSec}s · {beat.conflictZh}</div>
-                <div className="mt-0.5 opacity-80">{beat.visualZh}</div>
-                {formatManhuaTemplateNativeBeatZh(beat) ? (
-                  <div className="mt-1 text-[10px] leading-relaxed opacity-60">
-                    {formatManhuaTemplateNativeBeatZh(beat)}
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
+          <ProgressiveList
+            items={card.beatGrid}
+            className="space-y-1.5"
+            renderItem={(beat, index) => {
+              const beatChanged = optimized && changedBeatIndexes.has(index);
+              const nativeZh = formatManhuaTemplateNativeBeatZh(beat);
+              return (
+                <div
+                  key={`${beat.atSec}-${index}`}
+                  className={`rounded-lg border px-2.5 py-2 ${valueClass(beatChanged)}`}
+                >
+                  <div className="font-semibold">{beat.atSec}s · {beat.conflictZh}</div>
+                  <div className="mt-0.5 opacity-80">{beat.visualZh}</div>
+                  {nativeZh ? (
+                    <div className="mt-1 text-[10px] leading-relaxed opacity-60">{nativeZh}</div>
+                  ) : null}
+                </div>
+              );
+            }}
+          />
           {optimized && original && original.beatGrid.length > card.beatGrid.length
             ? original.beatGrid.slice(card.beatGrid.length).map((beat, offset) => (
                 <div
@@ -281,8 +330,11 @@ export function ManhuaApprovedTemplateOwnerDrawer(props: {
               <div className="mb-2 text-xs font-semibold text-cyan-50">
                 关键时刻原帧 · {props.evidenceFrames.length} 张
               </div>
-              <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-                {props.evidenceFrames.map((frame) => (
+              <ProgressiveList
+                items={props.evidenceFrames}
+                chunk={16}
+                className="grid grid-cols-2 gap-2 md:grid-cols-4"
+                renderItem={(frame) => (
                   <figure
                     key={`${frame.atSec}-${frame.sha256}`}
                     className="overflow-hidden rounded-lg border border-white/10 bg-black/30"
@@ -298,8 +350,8 @@ export function ManhuaApprovedTemplateOwnerDrawer(props: {
                       <div>{frame.noteZh}</div>
                     </figcaption>
                   </figure>
-                ))}
-              </div>
+                )}
+              />
             </section>
           ) : null}
           {!props.detailLoading && !original && props.detailError ? (
