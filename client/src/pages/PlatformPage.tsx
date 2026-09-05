@@ -3281,8 +3281,8 @@ export default function PlatformPage() {
   const exportManhuaEpisodeReport = useCallback(
     async (seriesKey: string, episodeIndex: number) => {
       setManhuaEpisodeExportPending(episodeIndex);
-      // 同步预开空白页，异步拿到 URL 再跳转，避免浏览器拦截弹窗
-      const reportTab = window.open("", "_blank");
+      // 0905 用户令：不再预开空白分页。签名网址带 attachment，当前页直接 assign 即触发下载、页面不跳走，
+      // 也不依赖弹窗许可（用户 0905 实测：空白页弹出但下载没有发生）。
       try {
         // 0905 用户实测：入库写卡的同一时刻点导出会撞到对象刚换代而失败——等 3 秒自动重试一次
         let report: Awaited<ReturnType<typeof renderEpisodeReportMutation.mutateAsync>>;
@@ -3296,14 +3296,11 @@ export default function PlatformPage() {
             throw firstError;
           }
         }
-        if (reportTab) reportTab.location.href = report.reportUrl;
-        toast.success(`第 ${episodeIndex} 集学习报告已生成（${report.shots} 镜 · ${report.frames} 帧）`, {
-          action: reportTab
-            ? undefined
-            : { label: "打开报告", onClick: () => window.open(report.reportUrl, "_blank", "noopener") },
+        window.location.assign(report.reportUrl);
+        toast.success(`第 ${episodeIndex} 集学习报告已生成（${report.shots} 镜 · ${report.frames} 帧），已开始下载`, {
+          action: { label: "重新下载", onClick: () => window.location.assign(report.reportUrl) },
         });
       } catch (e) {
-        reportTab?.close();
         toast.error(`第 ${episodeIndex} 集报告生成失败：${e instanceof Error ? e.message : String(e)}`);
       } finally {
         // 并发点了另一集时，先完成的这集不能把后点那集的 pending 清掉
