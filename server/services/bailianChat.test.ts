@@ -382,48 +382,24 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
       .toEqual(["http_error", "skipped_budget_exhausted"]);
   });
 
-  it("🔒 等待同通道租约跨过 deadline 后跳过且绝不外呼", async () => {
+  it("0905 拆租约：同通道两份请求同时外呼，不排队", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "");
-    const realNow = Date.now();
-    let clock = realNow;
-    vi.spyOn(Date, "now").mockImplementation(() => clock);
-
-    let markFetchEntered!: () => void;
+    let inFlight = 0; let peak = 0;
     let releaseFetch!: () => void;
-    const fetchEntered = new Promise<void>((resolve) => { markFetchEntered = resolve; });
     const fetchReleased = new Promise<void>((resolve) => { releaseFetch = resolve; });
     const fetchSpy = vi.fn(async () => {
-      markFetchEntered();
+      inFlight += 1; peak = Math.max(peak, inFlight);
       await fetchReleased;
+      inFlight -= 1;
       return { ok: true, status: 200, text: async () => meteredBody() };
     });
     vi.stubGlobal("fetch", fetchSpy);
-
-    const leaseHolder = invokeGlmJsonChatWithGatewayFallback({
-      system: "holder",
-      user: "holder",
-      gatewayPolicy: "glm_only",
-    });
-    await fetchEntered;
-
-    const queued = invokeGlmJsonChatWithGatewayFallback({
-      system: "queued",
-      user: "queued",
-      gatewayPolicy: "glm_only",
-      deadlineAtMs: realNow + 120_000,
-    }).catch((error) => error);
-    await Promise.resolve();
-    clock += 60_001;
+    const a = invokeGlmJsonChatWithGatewayFallback({ system: "a", user: "a", gatewayPolicy: "glm_only" });
+    const b = invokeGlmJsonChatWithGatewayFallback({ system: "b", user: "b", gatewayPolicy: "glm_only" });
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
+    expect(peak).toBe(2);
     releaseFetch();
-
-    await leaseHolder;
-    const err = await queued;
-    expect(err).toBeInstanceOf(GlmGatewayError);
-    expect(err.gatewayTrace).toEqual([
-      expect.objectContaining({ gateway: "evolink_glm", outcome: "skipped_budget_exhausted" }),
-      expect.objectContaining({ gateway: "openrouter", outcome: "skipped_not_configured" }),
-    ]);
-    expect(fetchSpy).toHaveBeenCalledOnce();
+    await Promise.all([a, b]);
   });
 
   it("🔒 SSE 流式：分帧正文拼接、usage 与 finish_reason 从末帧取（0830 EvoLink 524 / undici 300s 修复）", async () => {

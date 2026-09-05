@@ -345,29 +345,7 @@ function addGlmGatewayUsage(
 
 type GlmGatewayAttemptError = Error & { glmGatewayUsage?: GlmGatewayUsage };
 
-/**
- * 单进程供应商租约：同一 GLM 通道同一时刻只承接一份正式整形请求。
- * 两份 JSON 会由调用方分配到不同首选通道；某档失败需要跨通道 fallback 时，
- * 先等对方释放，避免两份同时压到同一个供应商。多 Fly 实例仍依赖上层任务锁。
- */
-const glmGatewayLeaseTails = new Map<"evolink_glm" | "openrouter", Promise<void>>();
-
-async function acquireGlmGatewayLease(
-  gateway: "evolink_glm" | "openrouter",
-): Promise<() => void> {
-  const previous = glmGatewayLeaseTails.get(gateway) || Promise.resolve();
-  let releaseCurrent!: () => void;
-  const current = new Promise<void>((resolve) => { releaseCurrent = resolve; });
-  glmGatewayLeaseTails.set(gateway, current);
-  await previous;
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    releaseCurrent();
-    if (glmGatewayLeaseTails.get(gateway) === current) glmGatewayLeaseTails.delete(gateway);
-  };
-}
+// 0905 用户令：拆掉 GLM 同通道租约。并发批次各自直连供应商，同一档同时多份请求由供应商自己限流，不在本进程排队。
 
 export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): Promise<GlmChatSuccess> {
   const trace: GlmGatewayTraceEntry[] = [];
@@ -519,19 +497,10 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
     if (params.abortSignal?.aborted) {
       throw new GlmGatewayError("GLM 调用已被硬截止取消", trace, accumulatedUsage);
     }
-    const releaseGateway = GLM_MODEL_GATEWAYS.has(g.name)
-      ? await acquireGlmGatewayLease(g.name as "evolink_glm" | "openrouter")
-      : () => undefined;
-    if (params.abortSignal?.aborted) {
-      releaseGateway();
-      throw new GlmGatewayError("GLM 调用已被硬截止取消", trace, accumulatedUsage);
-    }
-    // 同通道请求可能在租约队列中等待很久；取得租约后必须按当前墙钟重新验预算。
-    // 若已不足以完成一档，先释放租约再跳过，绝不让 invokeOneGlmGateway 的 1 秒下限强发外呼。
+    // 逐档切换前按当前墙钟重新验预算；不足以完成一档就跳过，绝不让 invokeOneGlmGateway 的 1 秒下限强发外呼。
     if (Number.isFinite(Number(params.deadlineAtMs))) {
       const remainMs = Number(params.deadlineAtMs) - Date.now();
       if (remainMs < GLM_CHAIN_MIN_GATEWAY_MS) {
-        releaseGateway();
         trace.push({ gateway: g.name, model: g.model, outcome: "skipped_budget_exhausted" });
         continue;
       }
@@ -599,8 +568,6 @@ export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): P
       if (providerError) trace[trace.length - 1]!.providerError = providerError;
       console.warn(`[glmGatewayFallback] ${g.name}: ${msg.slice(0, 200)}`);
       try { await params.onGatewayFallback?.({ gateway: g.name, outcome, detail: msg.slice(0, 120) }); } catch { /* 旁路 */ }
-    } finally {
-      releaseGateway();
     }
   }
   const glmOrderZh = gateways
