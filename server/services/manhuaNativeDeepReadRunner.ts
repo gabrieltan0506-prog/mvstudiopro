@@ -6102,8 +6102,9 @@ async function executeNativeDeepReadBatch(
         });
       };
       const structuredEpisodeRaw = async (): Promise<Record<string, unknown>> => {
-        // 0905 用户拍板 5：29 片＝6 组 6 次 GLM；5 片一批实测输出 120K，131K 内也安全，不依赖 262K 是否真生效
-        const maxRawSegmentsPerBatch = 5;
+        // 0905 用户改回 4：5 片一批单次输出 120K 贴 131K 上限、几万字 JSON 更容易丢符号；
+        // 4 片一批输出 ≈90K 更稳。批次数＝片数÷4 向上取整后均分：8→4+4、9→3+3+3、29→8 组（5 个 4 + 3 个 3）
+        const maxRawSegmentsPerBatch = 4;
         const allSegmentIndexes = episode.segments.map((_, index) => index);
         if (segmentCount <= maxRawSegmentsPerBatch) {
           const cached = await readCachedStructuring(allSegmentIndexes, glmStructuringInputs, "最终整形");

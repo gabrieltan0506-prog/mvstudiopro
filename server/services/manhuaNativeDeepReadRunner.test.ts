@@ -3057,17 +3057,17 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentCacheSeriesKey: "hierarchy_9_segments",
     }, deps);
 
-    // 0905 用户令「不归并、每批 5 片」：9 片＝5/4 两批各整形一次，整集由代码确定性拼接
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    // 0905 用户令「不归并、每批 4 片、批次均分」：9 片＝3+3+3 三批各整形一次，整集由代码确定性拼接
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(3);
     const sent = invokeGlmStructuring.mock.calls.map(([prompt]) =>
       readRawSegmentsFromGlmPrompt((prompt as { user: string }).user));
-    expect(sent.map((rows) => rows.length)).toEqual([5, 4]);
+    expect(sent.map((rows) => rows.length)).toEqual([3, 3, 3]);
     expect((invokeGlmStructuring.mock.calls[0]![0] as { user: string }).user)
       .toContain('"segments":[{"segmentIndex":0');
     expect((invokeGlmStructuring.mock.calls[1]![0] as { user: string }).user)
-      .toContain('"segments":[{"segmentIndex":5');
-    expect(deps.readStructuredBatchCache).toHaveBeenCalledTimes(2);
-    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
+      .toContain('"segments":[{"segmentIndex":3');
+    expect(deps.readStructuredBatchCache).toHaveBeenCalledTimes(3);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(3);
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
     expect(result.episodes[0]!.result.attemptedSegments).toBe(9);
   });
@@ -3080,7 +3080,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     const readStructuredBatchCache = vi.fn(async (input: {
       segmentIndexes: readonly number[];
       rawSegments: ReadonlyArray<Record<string, unknown>>;
-    }) => JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2, 3, 4]) ? {
+    }) => JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2]) ? {
       schemaVersion: 1 as const,
       frozenContractSha256: "f".repeat(64),
       seriesKey: "legacy_answer_envelope",
@@ -3128,16 +3128,16 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       onModelReceipt: (receipt) => { receipts.push(receipt); },
     }, deps);
 
-    // 0905：每批 5 片，5 片＝一批 [0..4]；命中缓存则零模型调用，整集由代码拼出
-    expect(readStructuredBatchCache).toHaveBeenCalledTimes(1);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(0);
-    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(0);
+    // 0905：每批 4 片均分，5 片＝[0..2]+[3,4]；前批命中缓存，后批跑一次
+    expect(readStructuredBatchCache).toHaveBeenCalledTimes(2);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(1);
     expect(receipts.filter((row) => row.route === NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE)).toEqual([]);
     expect(result.episodes[0]!.result.beatGrid).toHaveLength(60);
     expect(result.episodes[0]!.result.segmentCount).toBe(5);
   });
 
-  it("九片4+4+1的每层GLM都返回answer外壳时仍生成完整整集卡", async () => {
+  it("九片3+3+3的每层GLM都返回answer外壳时仍生成完整整集卡", async () => {
     const segments = Array.from({ length: 9 }, (_, index) => ({
       startSec: index * 60,
       endSec: (index + 1) * 60,
@@ -3164,8 +3164,9 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     }, deps);
 
     // 0905：不再有第三次归并，5 片＝两个批次，各整形一次；整集由代码确定性拼接
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
-    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
+    // 0905：每批 4 片均分 → 9 片＝3+3+3 三批
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(3);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(3);
     expect(result.episodes[0]!.result.beatGrid).toHaveLength(108);
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
   });
@@ -3179,7 +3180,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentIndexes: readonly number[];
       rawSegments: ReadonlyArray<Record<string, unknown>>;
     }) => (
-      JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2, 3, 4])
+      JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2])
       || JSON.stringify(input.segmentIndexes) === JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8])
     ) ? {
           schemaVersion: 1 as const,
@@ -3224,12 +3225,12 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentCacheSeriesKey: "hierarchy_cache_hit",
     }, deps);
 
-    // 0905：没有最终归并；9 片＝[0..4]+[5..8]，只有 [0..4] 命中缓存，[5..8] 跑一次
-    expect(readStructuredBatchCache).toHaveBeenCalledTimes(2);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    // 0905：没有最终归并；9 片＝[0..2]+[3..5]+[6..8]，只有 [0..2] 命中缓存，另两批各跑一次
+    expect(readStructuredBatchCache).toHaveBeenCalledTimes(3);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
     expect(invokeGlmStructuring.mock.calls.map(([prompt]) =>
-      readRawSegmentsFromGlmPrompt((prompt as { user: string }).user).length)).toEqual([4]);
-    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(1);
+      readRawSegmentsFromGlmPrompt((prompt as { user: string }).user).length)).toEqual([3, 3]);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
     // 没有整集级 GLM 证据：报告导出必须走分段卡拼装，不许指向某一半批次卡
     expect(result.episodes[0]!.result.glmEvidence).toBeUndefined();
   });
