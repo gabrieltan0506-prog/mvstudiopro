@@ -16,7 +16,11 @@ import {
 } from "./canvasTypes";
 import { loadCanvasDocumentTexts } from "./canvasDocumentText";
 import { reviewManhuaClipQuality } from "./manhuaClipQuality";
-import { isManhuaClipQualityInfraFailure } from "@shared/manhuaClipQuality";
+import {
+  emptyManhuaClipQualityChecks,
+  isManhuaClipQualityInfraFailure,
+  type ManhuaClipQualityReport,
+} from "@shared/manhuaClipQuality";
 import {
   assignManhuaCanvasAssetAtTags,
   buildManhuaAssetLockRegistry,
@@ -3553,6 +3557,49 @@ export type ManhuaFactoryPipelineResult = {
   errors: Array<{ id: string; message: string }>;
 };
 
+/** 仅当前集当前段、明确单目标的已准备编辑免走生成准备；不借另一节点绕过。 */
+export function isPreparedManhuaVideoEditRun(input: {
+  episodeIndex: number;
+  fragmentShotIndex?: number;
+  targetBlockIds?: readonly string[];
+  preparedTargetBlocks?: readonly CanvasBlock[];
+  preservePreparedTargetBlocks?: boolean;
+}): boolean {
+  if (!input.preservePreparedTargetBlocks || input.targetBlockIds?.length !== 1) return false;
+  const targets = input.preparedTargetBlocks?.filter(
+    (block) => block.id === input.targetBlockIds![0],
+  );
+  if (targets?.length !== 1) return false;
+  const target = targets[0]!;
+  if (!isManhuaVideoEditBlock(target)) return false;
+  if ((getBlockEpisodeIndex(target) ?? 1) !== input.episodeIndex) return false;
+  if (
+    resolveClipLocalSegmentIndex(target.id, target.prompt, input.episodeIndex) !==
+    input.fragmentShotIndex
+  ) return false;
+  const source = String(target.seedance25RefVideoUrls?.[0] || target.refVideoUrl || "").trim();
+  try {
+    const url = new URL(source);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+/** 未得到新版本的真实审片结论时，不继承旧版通过标记，也不伪造内容失败。 */
+function unverifiedEditedClipQuality(summary: string): ManhuaClipQualityReport {
+  return {
+    status: "unverified",
+    checks: emptyManhuaClipQualityChecks(),
+    failedKeys: [],
+    summary,
+    raw: "",
+    attempts: 0,
+    reviewedAt: new Date().toISOString(),
+    userAcceptedDespiteQc: false,
+  };
+}
+
 /**
  * 顺序自动跑漫剧工厂：每步用最新 working snapshot 收集上游。
  * skipDone=true 时跳过已完成节点，便于中断后续跑。
@@ -3602,6 +3649,35 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   const stopOnError = opts.stopOnError === true;
   const skipDone = opts.skipDone !== false;
   const defaultMaxRetries = Math.max(0, Math.min(4, opts.maxRetries ?? 2));
+  const requestedTargets = opts.blocks.filter((block) => opts.targetBlockIds?.includes(block.id));
+  const claimsPreparedEdit = Boolean(
+    opts.preservePreparedTargetBlocks &&
+      requestedTargets.some((block) => block.seedance25WorkMode === "video_edit"),
+  );
+  const selectedTarget = requestedTargets[0];
+  // 指定节点的旧调用可以不带段号；只从该节点推导，不再按同段另找第一个节点。
+  const editEpisode = opts.episodeIndex ?? (selectedTarget ? getBlockEpisodeIndex(selectedTarget) : null) ?? 1;
+  const preparedVideoEdit = claimsPreparedEdit && (opts.untilStage ?? "clip") === "clip" &&
+    isPreparedManhuaVideoEditRun({
+      episodeIndex: editEpisode,
+      fragmentShotIndex: opts.fragmentShotIndex ?? (selectedTarget
+        ? resolveClipLocalSegmentIndex(selectedTarget.id, selectedTarget.prompt, editEpisode)
+        : undefined),
+      targetBlockIds: opts.targetBlockIds,
+      preparedTargetBlocks: requestedTargets,
+      preservePreparedTargetBlocks: opts.preservePreparedTargetBlocks,
+    });
+  if (claimsPreparedEdit && !preparedVideoEdit) {
+    return {
+      blocks: opts.blocks,
+      completedIds: [],
+      skippedIds: [],
+      errors: [{
+        id: opts.targetBlockIds?.[0] || "clip-",
+        message: "视频编辑目标、集段或原片不匹配，请重新选择一个已有片段；本次未提交",
+      }],
+    };
+  }
   /** 工厂内 ensure/反推展开必须吃同一张导演板表，禁止只靠工作台审阅路径传参 */
   const directorBoardUrlByEpisode = opts.deps.manhuaDirectorBoardUrlByEpisode ?? null;
   const directorBoardUrlByEpisodeSegment = opts.deps.manhuaDirectorBoardUrlByEpisodeSegment ?? null;
@@ -3623,10 +3699,9 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   const hadPoisonedRecapLink = opts.blocks.some(
     (b) => b.id.startsWith("story-") && Boolean(b.parentId?.startsWith("recap_card-")),
   );
-  const sanitized = sanitizeManhuaRecapUpstreamLinks(
-    opts.blocks.map((b) => ({ ...b })),
-    opts.edges,
-  );
+  const sanitized = preparedVideoEdit
+    ? { blocks: opts.blocks.map((b) => ({ ...b })), edges: opts.edges }
+    : sanitizeManhuaRecapUpstreamLinks(opts.blocks.map((b) => ({ ...b })), opts.edges);
   let working = sanitized.blocks;
   let edges = sanitized.edges;
   const preparedTargetById = opts.preservePreparedTargetBlocks
@@ -3639,7 +3714,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
           .filter((entry): entry is readonly [string, CanvasBlock] => Boolean(entry)),
       )
     : null;
-  if (hadPoisonedRecapLink) {
+  if (hadPoisonedRecapLink && !preparedVideoEdit) {
     // 旧画布误挂 recap→story 时，写回清理后的 parentId，避免手点节点仍吃到提要图
     opts.onBlocksChange?.(working);
   }
@@ -3652,7 +3727,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
         (getBlockEpisodeIndex(b) ?? 1) === opts.episodeIndex) &&
       Boolean(b.outputText?.trim()),
   );
-  if (reverseReady) {
+  if (!preparedVideoEdit && reverseReady) {
     const expanded = expandManhuaShotKeyartsAfterReverse(working, edges, reverseReady.id, {
       ...ensureOptions,
     });
@@ -3660,6 +3735,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
     edges = expanded.edges;
     opts.onBlocksChange?.(working);
   } else if (
+    !preparedVideoEdit &&
     typeof opts.episodeIndex === "number" &&
     opts.episodeIndex >= 1 &&
     (opts.fragmentShotIndex != null || (opts.untilStage ?? "clip") === "clip")
@@ -3677,6 +3753,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   let resolvedTargetIds = opts.targetBlockIds;
   let resolvedForceFromStage = opts.forceFromStage;
   if (
+    !preparedVideoEdit &&
     typeof opts.fragmentShotIndex === "number" &&
     opts.fragmentShotIndex >= 1 &&
     typeof opts.episodeIndex === "number" &&
@@ -3707,12 +3784,14 @@ export async function runManhuaDramaFactoryPipeline(opts: {
     }
   }
 
-  let orderedIds = resolveManhuaFactoryOrderedIds(
-    working,
-    opts.untilStage ?? "clip",
-    opts.episodeIndex,
-    ensureOptions.videoModel,
-  );
+  let orderedIds = preparedVideoEdit
+    ? [...opts.targetBlockIds!]
+    : resolveManhuaFactoryOrderedIds(
+        working,
+        opts.untilStage ?? "clip",
+        opts.episodeIndex,
+        ensureOptions.videoModel,
+      );
   orderedIds = filterManhuaFactoryTargetIds(orderedIds, resolvedTargetIds);
   const forceIdx = resolvedForceFromStage
     ? MANHUA_FACTORY_STAGE_ORDER.indexOf(resolvedForceFromStage)
@@ -3985,7 +4064,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       continue;
     }
 
-    if (skipDone && !mustRerun && blockLooksDone(block)) {
+    if (!preparedVideoEdit && skipDone && !mustRerun && blockLooksDone(block)) {
       skippedIds.push(blockId);
       opts.onStageSkip?.(blockId, label);
       i += 1;
@@ -4019,9 +4098,9 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       }
       try {
         const current = working.find((b) => b.id === blockId) || block;
-        const visionImages = collectVisionImages(blockId, working, edges);
+        const visionImages = preparedVideoEdit ? [] : collectVisionImages(blockId, working, edges);
         const nearestRef =
-          current.kind === "image" || current.kind === "video"
+          !preparedVideoEdit && (current.kind === "image" || current.kind === "video")
             ? current.refImageUrl || resolveNearestUpstreamImageUrl(blockId, working, edges)
             : current.refImageUrl;
         let runBlockPayload =
@@ -4033,7 +4112,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
         // 静帧硬接力已在上方 keyart 并行批次处理；此处串行路径不会再出现 keyart
 
         // 段成片 ← 上一段成片（末帧/视频参考，全集连续编号：g07←g06）
-        if (stage === "clip") {
+        if (stage === "clip" && !preparedVideoEdit) {
           const epForSeg = getBlockEpisodeIndex(runBlockPayload) ?? opts.episodeIndex ?? 1;
           const rawSeg = resolveClipSegmentIndex(blockId, runBlockPayload.prompt);
           const localSeg = resolveClipLocalSegmentIndex(blockId, runBlockPayload.prompt, epForSeg);
@@ -4078,7 +4157,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
           current.kind === "text" || current.kind === "copy_organize"
             ? await loadCanvasDocumentTexts(collectDocumentAssets(blockId, working, edges))
             : [];
-        const texts = [...collectUpstreamTexts(blockId, working, edges), ...docTexts];
+        const texts = preparedVideoEdit ? [] : [...collectUpstreamTexts(blockId, working, edges), ...docTexts];
         const out = await runCanvasBlock(
           opts.deps,
           runBlockPayload,
@@ -4088,19 +4167,27 @@ export async function runManhuaDramaFactoryPipeline(opts: {
           },
           { videoSubmissionKey },
         );
+        if (preparedVideoEdit && !String(out.outputUrl || out.outputUrls?.[0] || "").trim()) {
+          throw new Error("未取得视频编辑结果，原片已保留；请先核对任务记录，不要重复提交");
+        }
         let next = working.map((b) =>
           b.id === blockId
             ? {
                 ...b,
                 status: "done" as const,
                 outputText: out.outputText,
-                outputUrl: out.outputUrl,
+                outputUrl: out.outputUrl || (preparedVideoEdit ? out.outputUrls?.[0] : undefined),
                 outputUrls: mergeManhuaMediaVersions(
                   [...(out.outputUrls || []), out.outputUrl],
                   [b.outputUrl, ...(b.outputUrls || [])],
                 ),
                 // 无条件写入：本次没抽到尾帧就清旧值，绝不让上一版尾帧顶给下一段当起幅
                 lastFrameUrl: out.lastFrameUrl,
+                ...(preparedVideoEdit ? {
+                  manhuaClipQuality: unverifiedEditedClipQuality(
+                    "编辑结果尚未质检，请审阅新版本后再决定是否采用",
+                  ),
+                } : {}),
                 ...(out.seedance25ThreadId ? { seedance25ThreadId: out.seedance25ThreadId } : {}),
                 ...(out.seedance25WebThreadLink
                   ? { seedance25WebThreadLink: out.seedance25WebThreadLink }
@@ -4188,7 +4275,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
     untilIdx >= clipStageIdx &&
     (opts.episodeIndex == null || opts.episodeIndex >= 1)
   ) {
-    const ep = opts.episodeIndex ?? 1;
+    const ep = preparedVideoEdit ? editEpisode : (opts.episodeIndex ?? 1);
     const episodeClips = working
       .filter((b) => b.id.startsWith("clip-") && (getBlockEpisodeIndex(b) ?? 1) === ep)
       .sort(
@@ -4222,6 +4309,15 @@ export async function runManhuaDramaFactoryPipeline(opts: {
         )
         .sort(sortKeyartBlocks)[0];
       const refUrl = mediaUrlOf(refKey);
+      if (targetUrl && !refUrl && isManhuaVideoEditBlock(target)) {
+        publish(working.map((block) => block.id === target.id ? {
+          ...block,
+          manhuaClipQuality: unverifiedEditedClipQuality(
+            "缺少可用的审片参考，编辑版未质检；请先查看结果，确认后可选择「未质检放行」",
+          ),
+          error: "编辑版未质检，请先查看结果后决定是否采用",
+        } : block));
+      }
       if (targetUrl && refUrl) {
         try {
           const shots = resolveShotsForEpisodeKeyarts(working, ep);

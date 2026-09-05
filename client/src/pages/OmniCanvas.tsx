@@ -267,7 +267,11 @@ import {
   clearManhuaVideoEditOperation,
   mergeManhuaMediaVersions,
 } from "@/lib/manhuaMediaVersions";
-import { isPreparedManhuaVideoEditRun } from "@/lib/manhuaFactoryRunIntent";
+import {
+  hasFailedManhuaVideoEdit,
+  isPreparedManhuaVideoEditRun,
+  MANHUA_EDIT_RESUME_HINT_ZH,
+} from "@/lib/manhuaFactoryRunIntent";
 import {
   loadManhuaPilotGateStore,
   saveManhuaPilotGateStore,
@@ -7365,23 +7369,44 @@ export default function OmniCanvas() {
         saveCanvasState(workingBlocks, workingEdges);
       };
       try {
-        const spawned = ensureStudioSpawned(factoryTopic);
-        const cleanedGraph = sanitizeManhuaRecapUpstreamLinks(spawned.blocks, spawned.edges);
+        // 已有原片编辑不需要铺故事/资产，也不能改动其他节点或补生成静帧。
+        const preparedEditOnly = untilStage === "clip" &&
+          opts?.episodeIndexes?.length === 1 && uniqueFragmentIndexes.length === 1 &&
+          isPreparedManhuaVideoEditRun({
+            episodeIndex: opts.episodeIndexes[0]!,
+            fragmentShotIndex: uniqueFragmentIndexes[0],
+            targetBlockIds: opts.targetBlockIds,
+            preparedTargetBlocks: opts.preparedTargetBlocks,
+            preservePreparedTargetBlocks: opts.preservePreparedTargetBlocks,
+          }) && blocks.filter((block) => block.id === opts.targetBlockIds?.[0]).length === 1;
+        if (
+          opts?.preservePreparedTargetBlocks &&
+          opts.preparedTargetBlocks?.some((block) => block.seedance25WorkMode === "video_edit") &&
+          !preparedEditOnly
+        ) {
+          throw new Error("视频编辑目标或集段不匹配，请重新选择一个已有片段；本次未提交");
+        }
+        const spawned = preparedEditOnly ? { blocks, edges } : ensureStudioSpawned(factoryTopic);
+        const cleanedGraph = preparedEditOnly
+          ? spawned
+          : sanitizeManhuaRecapUpstreamLinks(spawned.blocks, spawned.edges);
         workingBlocks = cleanedGraph.blocks;
         workingEdges = cleanedGraph.edges;
         if (opts?.preparedTargetBlocks?.length) {
           const preparedById = new Map(
-            opts.preparedTargetBlocks.map((block) => [block.id, block] as const),
+            opts.preparedTargetBlocks
+              .filter((block) => !preparedEditOnly || block.id === opts.targetBlockIds?.[0])
+              .map((block) => [block.id, block] as const),
           );
           workingBlocks = workingBlocks.map((block) => preparedById.get(block.id) || block);
           setBlocks(workingBlocks);
           saveCanvasState(workingBlocks, workingEdges);
         }
         if (
-          cleanedGraph.edges.length !== spawned.edges.length ||
+          !preparedEditOnly && (cleanedGraph.edges.length !== spawned.edges.length ||
           spawned.blocks.some(
             (b) => b.id.startsWith("story-") && Boolean(b.parentId?.startsWith("recap_card-")),
-          )
+          ))
         ) {
           setBlocks(workingBlocks);
           setEdges(workingEdges);
@@ -7415,7 +7440,7 @@ export default function OmniCanvas() {
         });
 
         /** A：出静帧/成片前强制资产门禁 + 注入人物/场景/画风（含重出） */
-        const needsAssetLock = untilStage === "keyart" || untilStage === "clip";
+        const needsAssetLock = !preparedEditOnly && (untilStage === "keyart" || untilStage === "clip");
         if (needsAssetLock) {
           const sceneId =
             projectBible?.assetCanon?.episodeMainSceneId[writerFocusEpisode] ||
@@ -7477,7 +7502,9 @@ export default function OmniCanvas() {
           ? uniqueFragmentIndexes.map((n) => String(n).padStart(2, "0")).join("、")
           : "";
         toast.message(
-          fragmentLabel
+          preparedEditOnly
+            ? `编辑片段 ${fragmentLabel}（第 ${episodeIndexes.join("、")} 集）`
+            : fragmentLabel
             ? `生成片段 ${fragmentLabel}（第 ${episodeIndexes.join("、")} 集）`
             : untilStage === "reverse"
               ? `漫剧工厂：故事→角色→节拍→反推（第 ${episodeIndexes.join("、")} 集）`
@@ -8100,13 +8127,11 @@ export default function OmniCanvas() {
         seedance25RefVideoUrls: [sourceUrl],
         status: "idle",
         error: undefined,
-        manhuaClipQuality: undefined,
-        outputUrl: undefined,
+        // 新编辑成功前保留当前原片、质检和尾帧；预检失败也不能先清掉成品。
         outputUrls: mergeManhuaMediaVersions(
           [],
           [sourceUrl, ...(hit.outputUrls || [])],
         ),
-        lastFrameUrl: undefined,
       };
       setBlocks((previous) => {
         const next = previous.map((block) =>
@@ -8122,7 +8147,6 @@ export default function OmniCanvas() {
         description: "原片保留在版本历史；编辑结果回来后会重新质检。",
       });
       setFactoryRunScope("focus");
-      ensureStudioSpawned(factoryTopic);
       void runFactory("clip", {
         forceFromStage: "clip",
         episodeIndexes: [episodeIndex],
@@ -8137,8 +8161,6 @@ export default function OmniCanvas() {
       factoryBusy,
       blocks,
       writerFocusEpisode,
-      factoryTopic,
-      ensureStudioSpawned,
       runFactory,
       canUseSeedance25,
     ],
@@ -8236,6 +8258,10 @@ export default function OmniCanvas() {
 
   const resumeFromFailure = useCallback(() => {
     const episodeIndexes = resolveRunEpisodeIndexes();
+    if (hasFailedManhuaVideoEdit(blocks, episodeIndexes)) {
+      toast.message(MANHUA_EDIT_RESUME_HINT_ZH);
+      return;
+    }
     const forceFromStageByEpisode: Partial<Record<number, ManhuaFactoryStageKey>> = {};
     const toRun: number[] = [];
     for (const ep of episodeIndexes) {
@@ -9464,10 +9490,15 @@ export default function OmniCanvas() {
                           .filter((n): n is number => n != null),
                       ),
                     ).sort((a, b) => a - b);
+                    const resumeEpisodes = onCanvas.length ? onCanvas : [writerFocusEpisode];
+                    if (hasFailedManhuaVideoEdit(blocks, resumeEpisodes)) {
+                      toast.message(MANHUA_EDIT_RESUME_HINT_ZH);
+                      return;
+                    }
                     const forceFromStageByEpisode: Partial<Record<number, ManhuaFactoryStageKey>> =
                       {};
                     const toRun: number[] = [];
-                    for (const ep of onCanvas.length ? onCanvas : [writerFocusEpisode]) {
+                    for (const ep of resumeEpisodes) {
                       const stage = resolveFactoryResumeStage(blocks, ep);
                       if (!stage) continue;
                       forceFromStageByEpisode[ep] = stage;

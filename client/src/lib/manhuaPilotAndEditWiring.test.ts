@@ -60,6 +60,30 @@ describe("漫剧首10秒质检与视频编辑接线", () => {
     expect(freeformSource).toContain("...compiled.videoRunPatch");
   });
 
+  it("已有原片编辑绕开生成铺板与资产门禁，失败前不清旧版成品", () => {
+    expect(omniSource).toContain("preparedEditOnly ? { blocks, edges } : ensureStudioSpawned(factoryTopic)");
+    expect(omniSource).toContain('!preparedEditOnly && (untilStage === "keyart" || untilStage === "clip")');
+    expect(omniSource).toContain("block.id === opts.targetBlockIds?.[0]");
+    const handler = omniSource.split("const handleVideoEditClip = useCallback(")[1]!
+      .split("const handleReviewPilot")[0]!;
+    expect(handler).not.toContain("ensureStudioSpawned(factoryTopic)");
+    expect(handler).not.toContain("outputUrl: undefined");
+    expect(handler).not.toContain("lastFrameUrl: undefined");
+    expect(handler).not.toContain("manhuaClipQuality: undefined");
+    expect(handler).toContain("...hit,");
+  });
+
+  it("两个通用续跑入口都先拦住失败编辑，不能误转整集生成", () => {
+    const handlers = [
+      omniSource.split("const resumeFromFailure = useCallback(() => {")[1]!.split("}, [blocks, runFactory")[0]!,
+      omniSource.split("onResumeFromFailure={() => {")[1]!.split("onRerunKeyartsFromReverse")[0]!,
+    ];
+    for (const handler of handlers) {
+      expect(handler).toMatch(/if \(hasFailedManhuaVideoEdit\(blocks, \w+\)\) \{\s*toast.message\(MANHUA_EDIT_RESUME_HINT_ZH\);\s*return;/);
+      expect(handler.indexOf("hasFailedManhuaVideoEdit")).toBeLessThan(handler.indexOf("resolveFactoryResumeStage"));
+    }
+  });
+
   it("loads workbench edit state only on episode key changes and guards writes until hydrated", () => {
     expect(workbenchSource).toContain("if (hydratedBPersistKey !== bPersistKey) return;");
     expect(workbenchSource).toContain("setHydratedBPersistKey(bPersistKey);");

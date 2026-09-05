@@ -23,7 +23,7 @@ vi.mock("./longJobsFlyOrigin", () => ({
 import { defaultCanvasBlock } from "./canvasTypes";
 import { runCanvasBlock } from "./canvasRunBlock";
 import { applyManhuaVideoEditInstruction } from "./manhuaMediaVersions";
-import { applyFactoryPrefsToBlocks } from "./canvasDramaStudio";
+import { applyFactoryPrefsToBlocks, runManhuaDramaFactoryPipeline } from "./canvasDramaStudio";
 
 const RESULT = "https://test.invalid/edited.mp4";
 const instruction = "只在第 2 至 4 秒移除画面右侧路人，补全其后墙面";
@@ -71,6 +71,40 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("已有成片编辑的真实出站请求（无网络）", () => {
+  it("无资产无静帧的已有原片经实际编排核，只到达一次视频编辑提交", async () => {
+    const source = "https://test.invalid/wan-original.mp4";
+    const block = {
+      ...editBlock(source),
+      status: "done" as const,
+      outputUrl: source,
+      outputUrls: [source],
+      lastFrameUrl: "https://test.invalid/old-tail.png",
+    };
+    const result = await runManhuaDramaFactoryPipeline({
+      deps, blocks: [block], edges: [], episodeIndex: 1,
+      untilStage: "clip", fragmentShotIndex: 2,
+      targetBlockIds: [block.id], preservePreparedTargetBlocks: true,
+      ensureOptions: { videoModel: "wan-3.0" },
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.completedIds).toEqual([block.id]);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      version: "2.5", workMode: "video_edit", videoUrls: [source],
+      duration: 10, editSourceDurationSec: 10,
+    });
+    expect(requests[0]?.prompt).toContain(instruction);
+    expect(requests[0]?.prompt).not.toMatch(/旧剧情|旧对白|旧末帧/);
+    expect(requests[0]?.imageUrls).toBeUndefined();
+    expect(result.blocks).toHaveLength(1);
+    expect(result.blocks[0]).toMatchObject({
+      outputUrl: RESULT,
+      outputUrls: [RESULT, source],
+      manhuaClipQuality: { status: "unverified", failedKeys: [], userAcceptedDespiteQc: false },
+    });
+    expect(result.blocks[0]?.lastFrameUrl).toBeUndefined();
+  });
+
   it.each(["seedance-2.0", "seedance-2.5", "wan-3.0", "minimax-hailuo-3"])(
     "%s 原片编辑只提交本次修改，不重新演出旧生成剧情",
     async sourceEngine => {

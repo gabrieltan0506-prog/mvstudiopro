@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { defaultCanvasBlock } from "./canvasTypes";
-import { isPreparedManhuaVideoEditRun } from "./manhuaFactoryRunIntent";
+import { hasFailedManhuaVideoEdit, isPreparedManhuaVideoEditRun } from "./manhuaFactoryRunIntent";
 
 const target = {
   ...defaultCanvasBlock("video", 0, 0),
@@ -20,6 +20,18 @@ const input = {
 };
 
 describe("编辑和续拍的入口分流", () => {
+  it("失败编辑不能由通用续跑清成生成任务；其他集与普通生成失败不受影响", () => {
+    const failedEdit = { ...target, status: "error" as const };
+    const doneClip = {
+      ...target, id: "clip-e01-g01", status: "done" as const,
+      seedance25WorkMode: undefined, videoModel: "wan-3.0" as const,
+      outputUrl: "https://test.invalid/done.mp4",
+    };
+    expect(hasFailedManhuaVideoEdit([doneClip, failedEdit], [1])).toBe(true);
+    expect(hasFailedManhuaVideoEdit([doneClip, failedEdit], [2])).toBe(false);
+    expect(hasFailedManhuaVideoEdit([doneClip, { ...doneClip, status: "error" }], [1])).toBe(false);
+    expect(hasFailedManhuaVideoEdit([doneClip, { ...failedEdit, status: "done" }], [1])).toBe(false);
+  });
   it("第2段的已准备编辑有自己的原片，无须第1段或其他尾帧", () => {
     expect(isPreparedManhuaVideoEditRun(input)).toBe(true);
   });
