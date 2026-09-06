@@ -1385,7 +1385,7 @@ export const NATIVE_DEEP_READ_STRUCTURING_JSON_SCHEMA_NAME = "native_structuring
  * 0905 用户拍板的整形分流链（按批次序号，0 起；单批＝第 1 批）：
  * Qwen 首发：第 1 批 北京 → EvoLink → OpenRouter；第 2 批 新加坡 → OpenRouter → EvoLink（两路都挂时 OpenRouter/EvoLink 各接一批真并发）。
  * GLM 首发：各批一律 OpenRouter → EvoLink → Qwen（第 1 批 北京→新加坡，第 2 批 新加坡→北京）；用户 0905「并行走 OpenRouter」。
- * 任一档 25 分钟（Qwen）/15 分钟（GLM）不回即切下一档，不做 20 秒重试轮。
+ * 任一档 25 分钟（Qwen）/20 分钟（GLM）不回即切下一档，不做 20 秒重试轮。
  */
 export function nativeDeepReadStructuringGatewayOrder(
   policy: "structuring_chain" | "structuring_chain_qwen_first",
@@ -1573,7 +1573,7 @@ export function nativeDeepReadFrozenContractSha256(): string {
 // 0906 用户明确授权三分支required与类型标记；生成时约束结构，返回后由代码验证实际类型和非空内容。
 // 0906 追加授权：普通镜可以额外填写重点细节；只放宽返回后该方向的检查。
 // 0906 当前用户授权：撤销额外内容强迫、完整音画生成与缺口反馈；采样及输出参数保持不变。
-export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "307063333ba70d11e413b96d9b3e3023045b0dbab6ee1fff9e2ffb0bf1241248" as const;
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "6906e43a433714d605567780a94f9cc4155ad17af5ab23afcb5e831e9ef063f8" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
   const actual = nativeDeepReadFrozenContractSha256();
@@ -3930,8 +3930,8 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE = "openrouter_glm_structurin
  */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`;
 /** 开始/失败回执的人话链路标签（0905：用户看了几百次「z-ai/glm-5.3」以为一直走 OpenRouter）。 */
-export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 各批并行首发 OpenRouter（Z.AI）→ EvoLink，不切 Qwen（单档 15 分钟）";
-export const NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL = "Qwen3.8-Max 严格 schema · 第1批 北京→EvoLink→OpenRouter · 第2批 新加坡→OpenRouter→EvoLink（Qwen 单档 25 分钟 · GLM 15 分钟）";
+export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 各批并行首发 OpenRouter（Z.AI）→ EvoLink，不切 Qwen（单档 20 分钟）";
+export const NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL = "Qwen3.8-Max 严格 schema · 第1批 北京→EvoLink→OpenRouter · 第2批 新加坡→OpenRouter→EvoLink（Qwen 单档 25 分钟 · GLM 20 分钟）";
 /** 面板与缺省调用统一默认 GLM；明确选 Qwen 才走 Qwen 首发链。 */
 export function nativeDeepReadStructuringPolicyForModel(
   model: ManhuaNativeStructuringModelId | undefined,
@@ -4003,8 +4003,8 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG = deepFreezeNativeContract(
   // 0905 用户拍板：每批 4 片，Qwen 两档单档 25 分钟不回就切下一档（实弹 4 片 15 分钟）；GLM 档仍 timeoutMs
   gatewayTimeoutMsOverrides: {
     plan_bj_qwen: 25 * 60_000, plan_sg_qwen: 25 * 60_000,
-    // 0905 用户令：GLM 两档作兜底只给 15 分钟（实弹 4 片 7–9 分钟）
-    evolink_glm: 15 * 60_000, openrouter: 15 * 60_000,
+    // 0907 用户令：GLM 两档单档 20 分钟（0905 曾定 15 分钟；实弹 4 片 6–9 分钟）
+    evolink_glm: 20 * 60_000, openrouter: 20 * 60_000,
   } as const,
   requireParameters: true,
   requireFinishReasonStop: true,

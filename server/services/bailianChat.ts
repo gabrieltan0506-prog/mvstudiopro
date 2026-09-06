@@ -347,6 +347,9 @@ type GlmGatewayAttemptError = Error & { glmGatewayUsage?: GlmGatewayUsage };
 
 // 0905 用户令：拆掉 GLM 同通道租约。并发批次各自直连供应商，同一档同时多份请求由供应商自己限流，不在本进程排队。
 
+/** 0907 用户令：流式心跳回执每 10 分钟一条（0905 曾 30 秒；面板刷屏）。空闲超时另算（GLM_STREAM_IDLE_TIMEOUT_MS）。 */
+export const GLM_STREAM_PROGRESS_INTERVAL_MS = 10 * 60_000;
+
 export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): Promise<GlmChatSuccess> {
   const trace: GlmGatewayTraceEntry[] = [];
   let accumulatedUsage = emptyGlmGatewayUsage();
@@ -609,7 +612,7 @@ async function readGlmRawResponseWithEvidence(
         chunks.push(Buffer.from(value));
         receivedBytes += value.byteLength;
         if (receivedBytes > rawCap) throw new Error("GLM 链响应超过处理上限");
-        if (onProgress && Date.now() - lastProgressAt >= 30_000) {
+        if (onProgress && Date.now() - lastProgressAt >= GLM_STREAM_PROGRESS_INTERVAL_MS) {
           lastProgressAt = Date.now();
           try { onProgress(receivedBytes); } catch { /* 心跳是旁路 */ }
         }
