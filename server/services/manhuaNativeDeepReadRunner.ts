@@ -1392,7 +1392,8 @@ export function nativeDeepReadStructuringGatewayOrder(
     return odd ? ["plan_sg_qwen", "openrouter", "evolink_glm"] : ["plan_bj_qwen", "evolink_glm", "openrouter"];
   }
   // 0905 用户拍板「并行走 OpenRouter」：GLM 模式所有批次首发 OpenRouter（Z.AI 官方，并发稳），EvoLink 兜底，两档败切 Qwen
-  return odd ? ["openrouter", "evolink_glm", "plan_sg_qwen", "plan_bj_qwen"] : ["openrouter", "evolink_glm", "plan_bj_qwen", "plan_sg_qwen"];
+  // 0906 用户令「不走 Qwen」：GLM 链只剩 OpenRouter（钉 Z.AI）→ EvoLink 两档，不再切 Qwen；判坏重试仍按每档两次
+  return ["openrouter", "evolink_glm"];
 }
 
 /** 实际出站Schema：重点、简写、广告各自必填；时间与内容有效性仍由程序验收。 */
@@ -3925,7 +3926,7 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE = "openrouter_glm_structurin
  */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`;
 /** 开始/失败回执的人话链路标签（0905：用户看了几百次「z-ai/glm-5.3」以为一直走 OpenRouter）。 */
-export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 各批并行首发 OpenRouter → EvoLink → Qwen 北京 / 新加坡（GLM 单档 15 分钟 · Qwen 25 分钟）";
+export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 各批并行首发 OpenRouter（Z.AI）→ EvoLink，不切 Qwen（单档 15 分钟）";
 export const NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL = "Qwen3.8-Max 严格 schema · 第1批 北京→EvoLink→OpenRouter · 第2批 新加坡→OpenRouter→EvoLink（Qwen 单档 25 分钟 · GLM 15 分钟）";
 /** 面板与缺省调用统一默认 GLM；明确选 Qwen 才走 Qwen 首发链。 */
 export function nativeDeepReadStructuringPolicyForModel(
@@ -4556,8 +4557,16 @@ export async function invokeNativeDeepReadGlmStructuring(
       if (!/已停止以避免重复付费/.test(message)) throw error;
       console.warn(`[nativeDeepRead] 旧整形证据不可复用，改为新发整形：${message}`);
     }
+    if (recovered && contract) {
+      // 旧证据过不了冲突契约校验 → 当作不可复用，改为新发（审查 0906 ②）
+      try {
+        contract.validate(recovered.parsed);
+      } catch (error) {
+        console.warn(`[nativeDeepRead] 旧整形证据不符合冲突契约，改为新发整形：${error instanceof Error ? error.message : String(error)}`);
+        recovered = null;
+      }
+    }
     if (recovered) {
-      contract?.validate(recovered.parsed);
       const usage = recovered.response.usage;
       return {
         raw: recovered.parsed,

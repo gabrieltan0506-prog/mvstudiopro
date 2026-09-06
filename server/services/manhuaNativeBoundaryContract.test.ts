@@ -193,6 +193,7 @@ describe("多稿冲突schema与返回强校验", () => {
   it("OpenRouter发包使用json_schema，不支持的fallback不能降级", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
     vi.stubEnv("EVOLINK_API_KEY", "test-key");
+    vi.stubEnv("WAN_PLAN_API_KEY", "test-key");
     const calls: any[] = [];
     vi.stubGlobal(
       "fetch",
@@ -222,7 +223,7 @@ describe("多稿冲突schema与返回强校验", () => {
     await invokeGlmJsonChatWithGatewayFallback({
       system: "test",
       user: "test",
-      gatewayOrder: ["openrouter"],
+      gatewayOrder: ["plan_bj_qwen"],
       responseJsonSchema: schema,
       requireResponseJsonSchema: true,
     });
@@ -230,13 +231,13 @@ describe("多稿冲突schema与返回强校验", () => {
       type: "json_schema",
       json_schema: { ...schema, strict: true },
     });
-    expect(calls[0].provider.require_parameters).toBe(true);
     calls.length = 0;
+    // 0906：GLM 两档（OpenRouter/EvoLink）不接强制 schema，发包前拒绝
     await expect(
       invokeGlmJsonChatWithGatewayFallback({
         system: "test",
         user: "test",
-        gatewayOrder: ["evolink_glm"],
+        gatewayOrder: ["openrouter"],
         responseJsonSchema: schema,
         requireResponseJsonSchema: true,
       })

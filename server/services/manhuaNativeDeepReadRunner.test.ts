@@ -4944,8 +4944,9 @@ describe("0905 · 整形按批次序号分流链", () => {
     expect(m.nativeDeepReadStructuringStartedLabel("structuring_chain_qwen_first")).toMatch(/^Qwen3\.8-Max/);
     expect(m.nativeDeepReadStructuringStartedLabel("structuring_chain")).not.toMatch(/^Qwen3\.8-Max/);
     // GLM 链的兜底档必须含 Qwen 两档，Qwen 链的兜底档必须含 GLM 两档（两档败切对方）
-    expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain", 0)).toEqual(["openrouter", "evolink_glm", "plan_bj_qwen", "plan_sg_qwen"]);
-    expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain", 1)).toEqual(["openrouter", "evolink_glm", "plan_sg_qwen", "plan_bj_qwen"]);
+    // 0906 用户令「不走 Qwen」：GLM 链只有 OpenRouter → EvoLink
+    expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain", 0)).toEqual(["openrouter", "evolink_glm"]);
+    expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain", 1)).toEqual(["openrouter", "evolink_glm"]);
     expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain_qwen_first", 0).slice(1)).toEqual(["evolink_glm", "openrouter"]);
   });
 

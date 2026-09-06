@@ -798,7 +798,9 @@ async function invokeOneGlmGateway(
     ],
   };
   if (params.requireResponseJsonSchema) {
-    if (!params.responseJsonSchema || !["openrouter", "openrouter_qwen", "plan_sg_qwen", "plan_bj_qwen"].includes(gateway))
+    // 0905 实弹：OpenRouter Z.AI 档 json_schema strict → 404、EvoLink 无视 schema；只有 Qwen 套餐档真约束。
+    // 0906 用户令：GLM 不用 strict schema。强制契约只允许发往北京/新加坡套餐档。
+    if (!params.responseJsonSchema || !["plan_sg_qwen", "plan_bj_qwen"].includes(gateway))
       throw new Error("当前通道不支持本次强制JSON Schema契约");
     body.response_format = { type: "json_schema", json_schema: { ...params.responseJsonSchema, strict: true } };
   }
