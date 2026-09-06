@@ -1,3 +1,5 @@
+import { mergeNativeProposalListAndDetail } from "@/lib/manhuaLearnResultUi";
+import { NATIVE_REPORT_THEME_OPTIONS, type NativeReportThemeChoice } from "../../../shared/manhuaNativeReportThemeChoice";
 import { ManhuaRestructureControl } from "@/components/ManhuaRestructureControl";
 import { buildManhuaRestructureParams } from "@/lib/manhuaRestructure";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -3288,8 +3290,13 @@ export default function PlatformPage() {
     manhuaReportDownloadUntilRef.current = Date.now() + 8_000;
     window.location.assign(url);
   }, []);
-  const exportManhuaEpisodeReport = useCallback(
-    async (seriesKey: string, episodeIndex: number) => {
+  const [manhuaReportTarget, setManhuaReportTarget] = useState<{ seriesKey: string; episodeIndex: number } | null>(null);
+  const [manhuaReportTheme, setManhuaReportTheme] = useState<NativeReportThemeChoice>("auto");
+  const exportManhuaEpisodeReport = useCallback((seriesKey: string, episodeIndex: number) => {
+    setManhuaReportTarget({ seriesKey, episodeIndex });
+  }, []);
+  const downloadManhuaEpisodeReport = useCallback(
+    async (seriesKey: string, episodeIndex: number, themeChoice: NativeReportThemeChoice) => {
       setManhuaEpisodeExportPending(episodeIndex);
       // 0905 用户令：不再预开空白分页。签名网址带 attachment，当前页直接 assign 即触发下载、页面不跳走，
       // 也不依赖弹窗许可（用户 0905 实测：空白页弹出但下载没有发生）。
@@ -3297,11 +3304,11 @@ export default function PlatformPage() {
         // 0905 用户实测：入库写卡的同一时刻点导出会撞到对象刚换代而失败——等 3 秒自动重试一次
         let report: Awaited<ReturnType<typeof renderEpisodeReportMutation.mutateAsync>>;
         try {
-          report = await renderEpisodeReportMutation.mutateAsync({ seriesKey, episodeIndex });
+          report = await renderEpisodeReportMutation.mutateAsync({ seriesKey, episodeIndex, themeChoice });
         } catch (firstError) {
           await new Promise((resolve) => setTimeout(resolve, 3_000));
           try {
-            report = await renderEpisodeReportMutation.mutateAsync({ seriesKey, episodeIndex });
+            report = await renderEpisodeReportMutation.mutateAsync({ seriesKey, episodeIndex, themeChoice });
           } catch {
             throw firstError;
           }
@@ -3540,14 +3547,19 @@ export default function PlatformPage() {
       retry: false,
     },
   );
+  // 同一卡的分片进度/整形结果更新后，仅刷新当前详情，避免轮询所有大卡。
+  const selectedProposalVersion = selectedManhuaProposalRow
+    ? JSON.stringify([selectedManhuaProposalRow.id, selectedManhuaProposalRow.updatedAt, selectedManhuaProposalRow.nativeProgress])
+    : "";
+  useEffect(() => {
+    if (!selectedManhuaProposalRow?.id || trendInsightTab !== "ai_manhua"
+      || !(hasSupervisorOpsAccess || ownerTemplateOptimizeAllowed)) return;
+    void trpcUtils.manhuaViralTemplate.getProposalDetail.invalidate({ id: selectedManhuaProposalRow.id });
+  }, [selectedProposalVersion, selectedManhuaProposalRow?.id, trendInsightTab, hasSupervisorOpsAccess, ownerTemplateOptimizeAllowed, trpcUtils]);
   const selectedManhuaProposal = useMemo(() => {
     if (!selectedManhuaProposalRow) return null;
     const detail = manhuaProposalDetailQuery.data?.item;
-    type ProposalDetail = NonNullable<typeof detail>;
-    const merged: typeof selectedManhuaProposalRow & Partial<ProposalDetail> = detail && detail.id === selectedManhuaProposalRow.id
-      ? { ...selectedManhuaProposalRow, ...detail }
-      : { ...selectedManhuaProposalRow };
-    return merged;
+    return mergeNativeProposalListAndDetail(selectedManhuaProposalRow, detail);
   }, [selectedManhuaProposalRow, manhuaProposalDetailQuery.data?.item]);
   useEffect(() => {
     if (!pendingManhuaViralProposals.length) {
@@ -12176,6 +12188,31 @@ export default function PlatformPage() {
   return (
     <div className="min-h-screen bg-transparent text-[#f7f2ff]">
       <style>{`@keyframes pulseHighlight{0%,95%,100%{box-shadow:none}96%{box-shadow:0 0 0 2px rgba(73,230,255,0.7),0 0 24px rgba(73,230,255,0.3)}98%{box-shadow:0 0 0 3px rgba(127,103,255,0.8),0 0 32px rgba(127,103,255,0.4)}}@keyframes mvspPlatformOrb{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(12px,-10px) scale(1.07)}}@keyframes coverGenWaitCarouselProgress{from{transform:scaleX(0)}to{transform:scaleX(1)}}@keyframes platformCarouselProg{from{transform:scaleX(0)}to{transform:scaleX(1)}}@keyframes platformCarouselGlow{0%,100%{opacity:0.4}50%{opacity:0.92}}`}</style>
+
+      <Dialog open={Boolean(manhuaReportTarget)} onOpenChange={(open) => { if (!open) setManhuaReportTarget(null); }}>
+        <DialogContent className="max-w-md border-white/15 bg-[#10121c] text-white">
+          <DialogHeader>
+            <DialogTitle>选择报告模板</DialogTitle>
+            <DialogDescription className="text-white/60">第 {manhuaReportTarget?.episodeIndex} 集 · 选择本次下载的版式配色</DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-2" role="group" aria-label="报告模板">
+            {NATIVE_REPORT_THEME_OPTIONS.map((theme) => (
+              <button key={theme.id} type="button" aria-pressed={manhuaReportTheme === theme.id}
+                onClick={() => setManhuaReportTheme(theme.id)}
+                className={`flex items-center gap-3 rounded-xl border p-3 text-left text-sm transition ${manhuaReportTheme === theme.id ? "border-cyan-300 bg-cyan-300/10" : "border-white/15 hover:border-white/40"}`}>
+                <span className="h-8 w-8 rounded-lg border border-white/20" style={{ backgroundColor: theme.color }} />
+                {theme.name}
+              </button>
+            ))}
+          </div>
+          <button type="button" className="rounded-lg bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-200" onClick={() => {
+            if (!manhuaReportTarget) return;
+            const target = manhuaReportTarget;
+            setManhuaReportTarget(null);
+            void downloadManhuaEpisodeReport(target.seriesKey, target.episodeIndex, manhuaReportTheme);
+          }}>生成并下载 HTML</button>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={fullAnalysisConfirmOpen} onOpenChange={setFullAnalysisConfirmOpen}>
         <DialogContent className="max-w-lg border border-[#49e6ff]/25 bg-[#0a0618] text-white sm:max-w-lg">

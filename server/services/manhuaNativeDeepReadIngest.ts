@@ -1,3 +1,4 @@
+import { isNativeStructuredCardObjectName } from "../../shared/manhuaNativeStructuredCard.js";
 import { isCompleteNativeEpisodeRelearn } from "../../shared/manhuaNativeEpisodeVersion.js";
 /**
  * 原生视频精读 → 待审模板卡入库。
@@ -55,6 +56,7 @@ export type NativeDeepReadIngestSource = NativeDeepReadOutput & {
   sourceDigest?: string;
   segmentSnapshotSha256?: string;
   segmentEvidenceObjectNames?: string[];
+  structuredCardObjectName?: string;
   glmEvidence?: { parsed?: { objectName?: string } };
   assemblyComplete?: boolean;
 };
@@ -458,6 +460,7 @@ export function buildNativeDeepReadProposalCard(
               complete: progress.complete,
             })
           : undefined,
+        structuredCardObjectName: progress.complete && isNativeStructuredCardObjectName(r.structuredCardObjectName) ? r.structuredCardObjectName : undefined,
         glmParsedObjectName: progress.complete
           && /^manhua-template-learn\/episode-glm-evidence\/[0-9A-Za-z_-]{16,180}\/parsed\.json$/.test(glmParsedObjectName)
           ? glmParsedObjectName

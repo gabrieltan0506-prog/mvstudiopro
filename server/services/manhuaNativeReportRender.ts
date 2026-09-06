@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { isNativeStructuredCardObjectName } from "../../shared/manhuaNativeStructuredCard.js";
+import { hasNativeAttemptSelection, type NativeDeepReadAttemptSelection } from "./manhuaNativeDeepReadAttemptSelection.js";
+import type { NativeReportThemeChoice } from "../../shared/manhuaNativeReportThemeChoice.js";
 import { nativeReportThemePresentation, type NativeReportThemeMetadata } from "./manhuaNativeReportTheme.js";
 /**
  * 原生精读证据 → 报告 HTML 渲染服务（¥0，零模型调用）。
@@ -325,6 +329,7 @@ function assembleCardFromSegments(
 
 type RenderCoreInput = {
   themeMetadata?: NativeReportThemeMetadata;
+  themeChoice?: NativeReportThemeChoice;
   episodeIndex?: number;
   labelZh: string;
   card: Record<string, unknown>;
@@ -346,7 +351,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const card = input.card;
   assertNativeRequiredSummary(card);
   const presentation = await nativeReportThemePresentation({
-    metadata: input.themeMetadata, card,
+    metadata: input.themeMetadata, card, themeChoice: input.themeChoice,
     episodeIndex: input.episodeIndex ?? Number(/第\s*(\d+)\s*集/.exec(input.labelZh)?.[1]),
   });
 
@@ -1002,6 +1007,7 @@ ${section("🎧 声音节点区域", audioSections)}
 
 export type NativeReportFromObjectNamesInput = {
   themeMetadata?: NativeReportThemeMetadata;
+  themeChoice?: NativeReportThemeChoice;
   labelZh: string;
   /** provenance.nativeVideoDeepRead.segmentEvidenceObjectNames 的精确对象名，禁止列目录推断。 */
   evidenceObjectNames: string[];
@@ -1015,7 +1021,9 @@ export type NativeReportFromObjectNamesInput = {
   expectSegmentCount?: number;
   /** 首次学习时保存的真实分片边界；音轨局部秒只能用它换算，禁止回退固定 300 秒。 */
   segmentSpans?: NativeReportSegmentSpan[];
-  /** GLM 整集卡对象名（provenance 明示时传入；传了就必须能读到，fail closed）。 */
+  /** 三档候选对应的最终整形消费证据；禁止回落候选原稿。 */
+  structuredCardObjectName?: string;
+  /** GLM 整集卡对象名（provenance 明示时传入；传了就必须能读到）。 */
   glmCardObjectName?: string;
   /** 完整卡入库时按 keyMoments 抽取的正式帧证据；优先于旧探针帧包。 */
   evidenceFrames?: ManhuaViralTemplateEvidenceFrame[];
@@ -1052,6 +1060,7 @@ export async function renderNativeEvidenceReportFromObjectNames(
   const segments: Array<SegmentRaw & {
     objectName: string; episodeIndex: number; seriesKey: string; sourceDigest: string;
   }> = [];
+  let requiresStructuredCard = false;
   for (const objectName of names) {
     const entry = await mustJson(bucket, objectName);
     const raw = entry.raw;
@@ -1071,6 +1080,8 @@ export async function renderNativeEvidenceReportFromObjectNames(
     if (!/^[a-f0-9]{64}$/i.test(sourceDigest)) {
       throw new Error(`证据对象 sourceDigest 非法：${objectName}`);
     }
+    const pending = hasNativeAttemptSelection({ raw: raw as Record<string, unknown>, sourceDigest, attemptSelection: entry.attemptSelection as NativeDeepReadAttemptSelection | undefined });
+    requiresStructuredCard = requiresStructuredCard || pending;
     segments.push({ objectName, episodeIndex, seriesKey, segmentIndex, sourceDigest, raw: raw as Record<string, unknown> });
   }
 
@@ -1110,7 +1121,7 @@ export async function renderNativeEvidenceReportFromObjectNames(
   const assembledSegments = assembleCardFromSegments(segments, input.segmentSpans);
   let reportCard = assembledSegments;
   let sourceLabelZh = `parsed 段卡拼接 · ${segments.length} 段（provenance 精确寻址）`;
-  if (input.glmCardObjectName) {
+  if (input.glmCardObjectName && !input.structuredCardObjectName) {
     const glmEvidence = await mustJson(bucket, input.glmCardObjectName);
     reportCard = {
       ...restoreNativeRequiredSummary(unwrapGlmReportCard(glmEvidence), segments.map((segment) => segment.raw)),
@@ -1126,13 +1137,29 @@ export async function renderNativeEvidenceReportFromObjectNames(
     sourceLabelZh = "GLM 整集卡（provenance 精确寻址）";
   }
 
-  if (!input.glmCardObjectName) {
+  if (input.structuredCardObjectName) {
+    if (!isNativeStructuredCardObjectName(input.structuredCardObjectName)) throw new Error("整形消费证据路径非法");
+    const stored = await mustJson(bucket, input.structuredCardObjectName);
+    const sha = createHash("sha256").update(JSON.stringify(stored)).digest("hex");
+    if (!input.structuredCardObjectName.endsWith(`/${sha}.json`) || stored.schemaVersion !== 1
+      || stored.sourceDigest !== segments[0]!.sourceDigest || stored.seriesKey !== segments[0]!.seriesKey
+      || stored.episodeIndex !== segments[0]!.episodeIndex
+      || JSON.stringify(stored.segmentEvidenceObjectNames) !== JSON.stringify(segments.map(row => row.objectName))
+      || !stored.raw || typeof stored.raw !== "object" || Array.isArray(stored.raw)) throw new Error("整形消费证据与来源段卡不一致");
+    reportCard = stored.raw as Record<string, unknown>;
+    if (!Array.isArray(reportCard.shots) || !reportCard.shots.length) throw new Error("整形消费证据镜头为空");
+    sourceLabelZh = "最终整形卡（provenance 精确寻址）";
+  } else if (requiresStructuredCard) {
+    throw new Error("候选原稿尚无已验证整形消费证据，不能导出为完整报告");
+  }
+  if (!input.glmCardObjectName && !input.structuredCardObjectName) {
     for (const segment of segments) assertNativeRequiredSummary(segment.raw);
   }
   return renderCardToReport({
     labelZh: input.labelZh,
     card: reportCard,
     themeMetadata: input.themeMetadata,
+    themeChoice: input.themeChoice,
     episodeIndex: segments[0]!.episodeIndex,
     sourceLabelZh,
     evidenceFrames: input.evidenceFrames,

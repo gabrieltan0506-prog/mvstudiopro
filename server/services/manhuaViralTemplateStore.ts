@@ -1340,7 +1340,9 @@ async function approveManhuaViralTemplateLocked(input: {
     const next = card.provenance?.nativeVideoDeepRead;
     // 正式提交后响应丢失或审计同步失败：同一输出重试不重复归档，也不拒绝已成功操作。
     if (previous?.batchRequestId && previous.batchRequestId === next?.batchRequestId
-      && previous.glmParsedObjectName && previous.glmParsedObjectName === next.glmParsedObjectName
+      && previous.structuredCardObjectName === next.structuredCardObjectName
+      && ((previous.structuredCardObjectName && previous.structuredCardObjectName === next.structuredCardObjectName)
+        || (previous.glmParsedObjectName && previous.glmParsedObjectName === next.glmParsedObjectName))
       && previous.snapshotSha256 === next.snapshotSha256
       && previous.sourceDigest === next.sourceDigest
       && JSON.stringify(previous.segmentEvidenceObjectNames) === JSON.stringify(next.segmentEvidenceObjectNames)) {

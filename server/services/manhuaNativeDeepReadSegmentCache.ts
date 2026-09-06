@@ -1,3 +1,4 @@
+import { hasNativeAttemptSelection, type NativeDeepReadAttemptSelection } from "./manhuaNativeDeepReadAttemptSelection.js";
 /**
  * 原生精读段级产物缓存。
  *
@@ -57,7 +58,8 @@ export type NativeDeepReadSegmentCacheEntry = {
   requestedFps: number;
   visualRoute: NativeDeepReadSegmentCacheVisualRoute;
   degraded: boolean;
-  /** 已通过段门禁的段卡原文。 */
+  /** 已通过门禁或明确待整形的原稿。 */
+  attemptSelection?: NativeDeepReadAttemptSelection;
   raw: Record<string, unknown>;
   /** 生成本段卡的那次上游完整响应；与解析后段卡分对象保存。 */
   rawAttemptEvidenceObjectName?: string;
@@ -561,6 +563,7 @@ function parseCacheEntry(
   ) {
     throw new Error("段缓存字段或对象身份不完整");
   }
+  hasNativeAttemptSelection(entry);
   return entry;
 }
 

@@ -1716,3 +1716,12 @@ export function parseNativeProposalEpisodeRef(
   if (!Number.isInteger(episodeIndex) || episodeIndex < 1) return null;
   return { seriesKey: match[1], episodeIndex };
 }
+
+
+/** 详情补充重字段；进度等列表字段始终以最新列表为准，旧详情不得覆盖新分片状态。 */
+export function mergeNativeProposalListAndDetail<Row extends { id: string }, Detail extends { id: string }>(
+  row: Row,
+  detail: Detail | null | undefined,
+): Row & Partial<Detail> {
+  return detail?.id === row.id ? { ...detail, ...row } : { ...row } as Row & Partial<Detail>;
+}

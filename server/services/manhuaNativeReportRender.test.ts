@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { nativeAttemptRawSha256 } from "./manhuaNativeDeepReadAttemptSelection.js";
 /**
  * 报告渲染服务测试（PR1325 第三、五节）：
  * 精确证据名寻址 fail closed + 无删节渲染 + 帧可选 + HTML 严格转义。
@@ -212,6 +214,25 @@ describe("精确证据名路径：三段卡渲染成功且无删节", () => {
     expect(html).not.toContain("密集台词0_UNTRUNCATED_SUB_END");
     expect(html).not.toContain("字幕原始证据");
     expect(html).not.toContain("剧情节点表");
+  });
+
+  it("待整形候选只能导出来源绑定的最终产物，不能回落原稿或另一份GLM", async () => {
+    seedThreeSegments();
+    const first = state.objects.get(NAMES[0]!) as ReturnType<typeof segmentEntry> & { attemptSelection?: unknown };
+    first.attemptSelection = { status: "selected_for_structuring_after_three_attempts", policyVersion: 1, attemptedCount: 3,
+      selectedAttemptNumber: 2, sourceDigest: DIGEST_A, rawSha256: nativeAttemptRawSha256(first.raw),
+      candidates: [{ attemptNumber: 2, reasonZh: "未过门禁", score: [1, 1, -1, 20] }] };
+    await expect(renderNativeEvidenceReportFromObjectNames(baseInput())).rejects.toThrow("整形消费证据");
+    expect(state.uploads).toHaveLength(0);
+    const final = { schemaVersion: 1, sourceDigest: DIGEST_A, seriesKey: "seriesabc", episodeIndex: 1,
+      segmentEvidenceObjectNames: NAMES, raw: { ...first.raw, beatStructureZh: "真正整形消费结果_FINAL_SELECTED", shots: [first.raw.shots[0]] } };
+    const name = "manhua-template-learn/structured-card/" + createHash("sha256").update(JSON.stringify(final)).digest("hex") + ".json";
+    state.objects.set(name, final);
+    await renderNativeEvidenceReportFromObjectNames({ ...baseInput(), structuredCardObjectName: name,
+      glmCardObjectName: "不能读取的旧GLM路径" });
+    expect(state.uploads[0]!.html).toContain("真正整形消费结果_FINAL_SELECTED");
+    final.raw.beatStructureZh = "篡改";
+    await expect(renderNativeEvidenceReportFromObjectNames({ ...baseInput(), structuredCardObjectName: name })).rejects.toThrow("来源段卡不一致");
   });
 
   it("优先渲染最终 GLM 整集 parsed 证据，并用真实分片计划换算音轨秒位", async () => {
@@ -621,6 +642,16 @@ describe("保留 PR1397 无括号分段兼容", () => {
 });
 
 describe("自动主题接入真实渲染入口", () => {
+  it.each(["celadon", "amber", "rose", "moon", "apricot"] as const)("手选%s沿证据入口生成对应HTML且保留正文", async (themeChoice) => {
+    seedThreeSegments();
+    await renderNativeEvidenceReportFromObjectNames({ ...baseInput(), themeChoice, themeMetadata: { nameZh: "修仙" } });
+    const html = state.uploads[0]!.html;
+    expect(html).toContain(`data-report-theme="${themeChoice}"`);
+    expect(html).toContain("UNTRUNCATED_ACTION_END");
+    expect(html).toContain("反打延迟半拍");
+    expect(html).toContain("data:image/png;base64,iVBOR");
+  });
+
   it.each([
     ["修仙", "celadon"], ["古装权谋", "amber"], ["都市情感", "rose"],
     ["谍战悬疑", "moon"], ["喜剧市井", "apricot"],

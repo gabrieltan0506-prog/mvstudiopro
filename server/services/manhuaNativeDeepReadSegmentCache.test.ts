@@ -1,3 +1,4 @@
+import { nativeAttemptRawSha256 } from "./manhuaNativeDeepReadAttemptSelection.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 
@@ -704,5 +705,20 @@ describe("仅重新整形回读永久段证据", () => {
     gcs.list.mockResolvedValue([nativeDeepReadSegmentEvidenceObjectName(entry)]);
     gcs.downloadVersioned.mockResolvedValue({ buffer: Buffer.from(JSON.stringify({ ...entry, raw: { changed: true } })), generation: "7" });
     await expect(readNativeDeepReadPermanentSegmentEntry({ ...entry, fingerprints: [entry.fingerprint] })).rejects.toThrow("指纹不一致");
+  });
+});
+
+
+describe("待整形选择信封恢复", () => {
+  it("有效状态可读，原稿发生变化后明确报错而不是当缓存miss重买", async () => {
+    const entry = entryOf();
+    entry.attemptSelection = { status: "selected_for_structuring_after_three_attempts", policyVersion: 1, attemptedCount: 3,
+      selectedAttemptNumber: 1, sourceDigest: entry.sourceDigest, rawSha256: nativeAttemptRawSha256(entry.raw),
+      candidates: [{ attemptNumber: 1, reasonZh: "覆盖不足", score: [0.2, 0.2, 0, 1] }] };
+    gcs.downloadVersioned.mockResolvedValue({ buffer: Buffer.from(JSON.stringify(entry)), generation: "1" });
+    expect((await readNativeDeepReadSegmentCacheEntry(entry))?.entry.attemptSelection).toEqual(entry.attemptSelection);
+    entry.raw = { shots: [] };
+    gcs.downloadVersioned.mockResolvedValue({ buffer: Buffer.from(JSON.stringify(entry)), generation: "1" });
+    await expect(readNativeDeepReadSegmentCacheEntry(entry)).rejects.toThrow("不一致");
   });
 });

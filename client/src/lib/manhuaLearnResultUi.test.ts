@@ -1,3 +1,4 @@
+import { mergeNativeProposalListAndDetail } from "./manhuaLearnResultUi";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   clearLegacyManhuaLearnStorage,
@@ -1196,5 +1197,22 @@ describe("0905 · 同剧新任务接管旧失败结果", () => {
     expect(live.errorZh).toBeUndefined();
     expect(live.digestsPreview.map((d) => `${d.episodeIndex}:${d.complete ? "C" : "p"}`)).toEqual(["4:C", "5:p"]);
     expect(listExportableEpisodes(live.digestsPreview).map((e) => e.episodeIndex)).toEqual([4]);
+  });
+});
+
+
+describe("待审卡与学习分片同步", () => {
+  it("旧详情不能把新列表的分片进度和可导出状态覆盖回去", () => {
+    const row = { id: "tpl_a", updatedAt: "new", nativeProgress: { successSegments: 3, assemblyComplete: true } };
+    const detail = { id: "tpl_a", updatedAt: "old", nativeProgress: { successSegments: 1, assemblyComplete: false }, beatGrid: ["已保存内容"] };
+    expect(mergeNativeProposalListAndDetail(row, detail)).toEqual({ ...detail, ...row });
+    expect(mergeNativeProposalListAndDetail(row, { ...detail, id: "tpl_b" })).toEqual(row);
+  });
+  it("运行中每个分片检查点改变都触发刷新，不等待整集终态", () => {
+    const base = { jobId: "native-running", status: "running" as const, input: { params: { nativeDeepReadConfirmed: true } } };
+    const one = { ...base, output: { nativePartialProposalCheckpoint: { episodeIndex: 1, completedSegments: 1, totalSegments: 4 } } };
+    const two = { ...base, output: { nativePartialProposalCheckpoint: { episodeIndex: 1, completedSegments: 2, totalSegments: 4 } } };
+    expect(nativeLearnTerminalProposalRefreshSignature([one])).not.toBe(nativeLearnTerminalProposalRefreshSignature([two]));
+    expect(nativeLearnTerminalProposalRefreshSignature([two])).toContain("partial:1:2/4");
   });
 });
