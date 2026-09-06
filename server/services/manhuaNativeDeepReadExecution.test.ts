@@ -203,7 +203,7 @@ describe("段缓存来源身份", () => {
   it.each([
     { coveredSec: 10, truncated: false, migrate: true },
     { coveredSec: 2, truncated: false, migrate: false },
-    { coveredSec: 2, truncated: true, migrate: true },
+    { coveredSec: 2, truncated: true, migrate: false },
   ])("同源alias覆盖$coveredSec/10秒 truncated=$truncated，按生产判据决定迁移", async ({ coveredSec, truncated, migrate }) => {
     const sourceDigest = "d".repeat(64);
     const segments = [{ startSec: 0, endSec: 10 }];
