@@ -471,8 +471,8 @@ export function adjustManhuaBoardOverlayPoint(
     return parsed;
   }
   const point = normalizeManhuaBoardPoint(nextPoint);
-  const pointChanged = (previous: ManhuaBoardNormalizedPoint) =>
-    previous.x !== point.x || previous.y !== point.y;
+  const pointChanged = (previous: ManhuaBoardNormalizedPoint | undefined) =>
+    !previous || previous.x !== point.x || previous.y !== point.y;
   let changed = false;
   const actorRoutes = parsed.actorRoutes.map(route => {
     if (target.kind !== "actor_route" || route.routeId !== target.routeId)

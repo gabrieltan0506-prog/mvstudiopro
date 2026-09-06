@@ -32,6 +32,8 @@ function makeResult(over: Record<string, unknown> = {}) {
     beatGrid,
     subtitleTrack: [],
     resolvedAudioChunks: [],
+    reusableZh: "反应镜头逐步揭示冲突",
+    genPromptHintZh: "近景与侧逆光强化对峙",
     classification: {
       emotionTagsZh: ["压迫渐强"],
       narrativeFeatureTagsZh: ["信息递进"],

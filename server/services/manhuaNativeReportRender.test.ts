@@ -509,3 +509,66 @@ describe("0905 · 分段摘要压成前/中/后", () => {
     expect(condenseSegmentedSummaryZh("")).toBe("");
   });
 });
+
+
+describe("0906 HTML 摘要必交", () => {
+  it("整形漏掉两栏时从已核对身份的全部分片恢复，保留整形镜头", async () => {
+    seedThreeSegments();
+    const glmObjectName = "manhua-template-learn/episode-glm-evidence/summary-test/parsed.json";
+    const raw = { ...segmentEntry(0).raw, reusableZh: undefined, genPromptHintZh: " ", beatStructureZh: "整形节奏保留" };
+    state.objects.set(glmObjectName, { parsed: raw });
+    await renderNativeEvidenceReportFromObjectNames({ ...baseInput(), glmCardObjectName: glmObjectName });
+    const html = state.uploads[0]!.html;
+    expect(html).toContain("反打延迟半拍");
+    expect(html).toContain("雨夜巷战");
+    expect(html).toContain("整形节奏保留");
+    expect(html).not.toContain("本集未整理出该项");
+    expect(raw.reusableZh).toBeUndefined();
+  });
+  it("原稿某片缺栏时不给出貌似完整的商品报告，也不上传空报告", async () => {
+    seedThreeSegments();
+    state.objects.set(NAMES[1]!, segmentEntry(1, { reusableZh: " " }));
+    await expect(renderNativeEvidenceReportFromObjectNames(baseInput())).rejects.toThrow("可复用手法");
+    expect(state.uploads).toHaveLength(0);
+  });
+});
+
+describe("保留 PR1397 无括号分段兼容", () => {
+  it("0906：无方括号的「第1段：…第2段：…」同样按前/中/后分组（单批 Qwen 实弹格式）", async () => {
+    const { condenseSegmentedSummaryZh } = await import("./manhuaNativeReportRender");
+    const raw = "第1段：出使受命→云端惊变。第2段：谋划机缘→突遭反水。第3段：对质揭密→反杀筑基。";
+    const out = condenseSegmentedSummaryZh(raw);
+    expect(out.split("\n")).toEqual(["【前段】出使受命→云端惊变。", "【中段】谋划机缘→突遭反水。", "【后段】对质揭密→反杀筑基。"]);
+    expect(condenseSegmentedSummaryZh("第1段：只有一段。")).toBe("第1段：只有一段。");
+  });
+});
+
+describe("自动主题接入真实渲染入口", () => {
+  it.each([
+    ["修仙", "celadon"], ["古装权谋", "amber"], ["都市情感", "rose"],
+    ["谍战悬疑", "moon"], ["喜剧市井", "apricot"],
+  ])("读取存储卡标签%s，正文与两栏仍在，输出%s内嵌插画", async (tag, theme) => {
+    seedThreeSegments();
+    const input = { ...baseInput(), themeMetadata: { nameZh: "模板标题", classification: { narrativeFeatureTagsZh: [tag] } } };
+    const result = await renderNativeEvidenceReportFromObjectNames(input);
+    const html = state.uploads[0]!.html;
+    expect(html).toContain(`data-report-theme="${theme}"`);
+    expect(html).toMatch(/class="header-art" alt="" src="data:image\/png;base64,iVBOR/);
+    expect(html).toContain('class="prose"');
+    expect(html).toContain("反打延迟半拍");
+    expect(html).toContain("UNTRUNCATED_ACTION_END");
+    expect(html).not.toContain('<script>');
+    expect(result.bytes).toBe(Buffer.byteLength(html, "utf8"));
+    expect(result.shots).toBe(3);
+    await renderNativeEvidenceReportFromObjectNames(input);
+    expect(state.uploads[1]!.html).toBe(html);
+  });
+  it("旧CLI入口也接入主题，不另开无样式导出旁路", async () => {
+    seedThreeSegments();
+    state.listNames = [...NAMES];
+    const { renderNativeEvidenceReport } = await import("./manhuaNativeReportRender");
+    await renderNativeEvidenceReport({ labelZh: "第 4 集", evidencePrefix: "test-prefix", reportObjectName: "test-report.html" });
+    expect(state.uploads[0]!.html).toContain('data-report-theme="moon"');
+    expect(state.uploads[0]!.html).toContain("UNTRUNCATED_ACTION_END");
+  });
+});

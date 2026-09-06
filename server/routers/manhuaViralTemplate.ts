@@ -243,6 +243,7 @@ export const manhuaViralTemplateRouter = router({
         return await renderNativeEvidenceReportFromObjectNames({
           labelZh: `${input.seriesKey} 第 ${input.episodeIndex} 集${previewSuffixZh}`,
           evidenceObjectNames,
+          themeMetadata: { nameZh: card.nameZh, classification: card.classification },
           expectEpisodeIndex: input.episodeIndex,
           expectSeriesKey: input.seriesKey,
           expectSourceDigest: sourceDigest,
