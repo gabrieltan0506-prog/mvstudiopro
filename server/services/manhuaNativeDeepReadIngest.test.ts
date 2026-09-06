@@ -338,6 +338,14 @@ describe("装卡", () => {
     expect(card.provenance?.nativeVideoDeepRead?.glmParsedObjectName).toBe(objectName);
   });
 
+  it("最终消费证据字段经过入库标准化仍保留，非法路径不得带入", () => {
+    const name = "manhua-template-learn/structured-card/" + "e".repeat(64) + ".json";
+    const card = buildNativeDeepReadProposalCard({ ...baseInput, result: makeResult({ structuredCardObjectName: name }) })!;
+    expect(card.provenance?.nativeVideoDeepRead?.structuredCardObjectName).toBe(name);
+    const invalid = buildNativeDeepReadProposalCard({ ...baseInput, result: makeResult({ structuredCardObjectName: "https://invalid.test/private" }) })!;
+    expect(invalid.provenance?.nativeVideoDeepRead?.structuredCardObjectName).toBeUndefined();
+  });
+
   it("provenance 证据名必须按段排序、无重复、数量==attemptedSegments，否则抛错拒写", () => {
     const fingerprint = "a".repeat(64);
     const sourceDigest = "b".repeat(64);

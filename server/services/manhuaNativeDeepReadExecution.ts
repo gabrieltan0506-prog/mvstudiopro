@@ -1,3 +1,4 @@
+import { hasNativeAttemptSelection } from "./manhuaNativeDeepReadAttemptSelection.js";
 /**
  * 原生精读的**生产协调器**：runner 与入库之间那段接线。
  *
@@ -90,6 +91,7 @@ export type NativeDeepReadEpisodeExecution = {
    * 主链会先把 `gs://` 换成 7 天签名 HTTPS —— 那种短链带 Signature/Expires，
    * 写进永久卡就是一条几天后必然失效、还泄露签名的溯源记录。
    */
+  retainedEvidenceFrames?: import("../../shared/manhuaViralTemplateBank.js").ManhuaViralTemplateEvidenceFrame[];
   sourceUrl: string;
   /**
    * 落进卡片 `sourceRefs` 的**永久**来源标识。
@@ -314,7 +316,7 @@ export async function migrateMisplacedNativeDeepReadSegmentCaches(input: {
     const alias = validAliases[0]?.entry;
     if (!alias) continue;
     const reusableQwenSelection = readCurrentQwenAttemptSelection(alias.raw);
-    if (!reusableQwenSelection && !nativeDeepReadSegmentMeetsThreeItemLine({
+    if (!hasNativeAttemptSelection(alias) && !reusableQwenSelection && !nativeDeepReadSegmentMeetsThreeItemLine({
       episodeIndex: input.episodeIndex,
       segmentIndex,
       startSec: segment.startSec,
@@ -754,11 +756,7 @@ export function validateNativeDeepReadBatchPlan(
       },
     },
     audio: { mode: "gemini_native_video_direct_v1" },
-    seriesAggregation: {
-      model: MANHUA_NATIVE_SERIES_AGGREGATION_MODEL,
-      route: MANHUA_NATIVE_SERIES_AGGREGATION_ROUTE,
-      schemaVersion: MANHUA_NATIVE_SERIES_AGGREGATION_SCHEMA_VERSION,
-    },
+    seriesAggregation: { mode: "disabled" },
     // 只编码真实发车契约。媒体节点、来源标记与恢复过程标记属于运行态；
     // 任意 spread 会让同一份已确认分片计划在执行时产生另一枚 hash。
     // 剧集顺序必须保留：执行器按输入顺序运行且失败即停，换序就是另一份付费计划。
@@ -794,8 +792,8 @@ export function validateNativeDeepReadBatchPlan(
     totalSegments,
     totalVisualCalls,
     totalAudioChunks: 0,
-    // 只要本批有分集卡，落盘后再做一次系列全量聚合（纯文本）；快照相同会直接复用。
-    totalModelCalls: totalVisualCalls + 1,
+    // 首发估算：每段一次原生读片；每集每最多4段一次整形，不包含门禁重试。
+    totalModelCalls: totalVisualCalls + episodes.reduce((sum, episode) => sum + Math.ceil(episode.segments.length / 4), 0),
     totalDurationSec,
     planHash: crypto.createHash("sha256").update(canonical).digest("hex").slice(0, 16),
   };
@@ -846,6 +844,7 @@ export type NativeDeepReadBatchResult = {
  */
 export async function runNativeDeepReadBatch(input: {
   seriesKey: string;
+  structuringOnly?: boolean;
   /** 0903 双模型：读片主模型；缺省＝3.1 Pro。 */
   readModel?: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeDeepReadModelId;
   /** 0905 整形开关 */
@@ -858,6 +857,7 @@ export async function runNativeDeepReadBatch(input: {
   /** 整片拉取等媒体备料进度中文行。 */
   onMediaProgressZh?: (zh: string) => void | Promise<void>;
 }, deps: NativeDeepReadExecutionDeps = defaultDeps): Promise<NativeDeepReadBatchResult> {
+  if (input.structuringOnly && input.episodes.length !== 1) throw new Error("仅重新整形只允许单集");
   if (!deps.isEnabled()) throw new Error("原生精读开关未开启");
 
   // 预检在 GCS 列举与任何模型动作之前：清单里写两次第 1 集会真的跑两次模型
@@ -882,7 +882,7 @@ export async function runNativeDeepReadBatch(input: {
   };
   const pending: NativeDeepReadBatchEpisode[] = [];
   for (const episode of input.episodes) {
-    if (alreadyIngested.has(episode.episodeIndex)) {
+    if (!input.structuringOnly && alreadyIngested.has(episode.episodeIndex)) {
       const skipped: NativeDeepReadBatchOutcome = {
         episodeIndex: episode.episodeIndex,
         status: "skipped",
@@ -1010,8 +1010,11 @@ export async function runNativeDeepReadBatch(input: {
         segmentCacheSeriesKey: input.seriesKey,
         readModel: input.readModel,
         structuringModel: input.structuringModel,
+        structuringOnly: input.structuringOnly,
         abortSignal: input.abortSignal,
         onSegmentSnapshotCommitted: async (snapshot) => {
+          input.abortSignal?.throwIfAborted();
+          if (input.structuringOnly) return;
           // 0902 自愈心跳：每落一段给占位盖时间戳，证明持锁进程仍活着。
           // 心跳是旁路自愈证据、绝不打断学习——任何失败（含方法缺失）吞掉；
           // 被杀后心跳停摆，20 分钟后 isNativeDeepReadClaimReclaimable 判死自动让位。
@@ -1038,7 +1041,9 @@ export async function runNativeDeepReadBatch(input: {
               `第${episode.episodeIndex}集${snapshot.completedSegmentIndexes.length}/${episode.segments.length}段快照未通过入库门禁：${gate.reasonZh}`,
             );
           }
+          input.abortSignal?.throwIfAborted();
           const stored = await deps.ingest({
+            abortSignal: input.abortSignal,
             seriesKey: input.seriesKey,
             episodeIndex: episode.episodeIndex,
             sourceUrl: episode.provenanceSourceRef || episode.sourceUrl,
@@ -1076,6 +1081,7 @@ export async function runNativeDeepReadBatch(input: {
       const visualResult = visualBatch.episodes[0]?.result;
       if (!visualResult) throw new Error(`第${episode.episodeIndex}集批次结果缺失，停止入库`);
       paidUsage = combinedUsageFromVisual(visualResult);
+      input.abortSignal?.throwIfAborted();
       const audioAnalysis = buildNativeDeepReadDirectAudioAnalysis({
         durationSec: episode.durationSec,
         segments: episode.segments,
@@ -1088,12 +1094,14 @@ export async function runNativeDeepReadBatch(input: {
       if (!gate.ok) {
         throw new Error(`第${episode.episodeIndex}集未通过入库门禁：${gate.reasonZh}`);
       }
-      const evidenceFrames = await extractFullResultEvidenceFrames({
+      const evidenceFrames = input.structuringOnly ? episode.retainedEvidenceFrames : await extractFullResultEvidenceFrames({
         episode: { ...episode, seriesKey: input.seriesKey },
         result,
         deps,
       });
+      input.abortSignal?.throwIfAborted();
       const stored = await deps.ingest({
+        abortSignal: input.abortSignal,
         seriesKey: input.seriesKey,
         episodeIndex: episode.episodeIndex,
         sourceUrl: episode.provenanceSourceRef || episode.sourceUrl,
@@ -1108,7 +1116,7 @@ export async function runNativeDeepReadBatch(input: {
       // 先在 claim 锁内清缓存，再释放 claim；否则等待中的旧计划可抢到 claim 并写新缓存，
       // 随后被本轮无条件清理误删。清理失败仅告警，不能推翻已成功入库的真源卡。
       try {
-        await deps.clearSegmentCache({
+        if (!input.structuringOnly) await deps.clearSegmentCache({
           seriesKey: input.seriesKey,
           episodeIndex: episode.episodeIndex,
           segmentCount: episode.segments.length,
@@ -1177,24 +1185,8 @@ export async function runNativeDeepReadBatch(input: {
   let seriesAggregation: NativeSeriesAggregationResult | undefined;
   let seriesAggregationUsage: NativeSeriesAggregationUsage | undefined;
   let seriesAggregationErrorZh: string | undefined;
-  if (outcomes.length > 0 && !aborted && failedCount === 0) {
-    try {
-      seriesAggregation = await deps.aggregateSeries({
-        seriesKey: input.seriesKey,
-        abortSignal: input.abortSignal,
-        onModelReceipt: async (receipt) => input.onModelCheckpoint?.({
-          ...receipt,
-          episodeIndexes: outcomes
-            .filter((outcome) => outcome.status === "ingested")
-            .map((outcome) => outcome.episodeIndex),
-        }),
-      });
-    } catch (error) {
-      seriesAggregationUsage = (error as NativeSeriesAggregationError).nativeSeriesAggregationUsage;
-      seriesAggregationErrorZh = (error instanceof Error ? error.message : String(error)).slice(0, 200);
-      console.warn(`[nativeDeepRead] 分集卡已保留，系列结构整理待重试：${seriesAggregationErrorZh}`);
-    }
-  }
+  // 用户选择：分集待审卡生成即结束，不再额外生成系列模板。
+
   return {
     outcomes,
     ingestedCount,

@@ -1,3 +1,4 @@
+import { NATIVE_REPORT_THEME_CHOICES } from "../../shared/manhuaNativeReportThemeChoice.js";
 /**
  * 漫剧节奏模板：动态提案 / 批准进库 / 合并列表（GCS ∪ 种子库）。
  */
@@ -179,6 +180,7 @@ export const manhuaViralTemplateRouter = router({
     .input(z.object({
       seriesKey: z.string().regex(/^[0-9A-Za-z_-]{1,40}$/),
       episodeIndex: z.number().int().min(1).max(999),
+      themeChoice: z.enum(NATIVE_REPORT_THEME_CHOICES).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       assertSiteOwner(ctx.user);
@@ -239,10 +241,12 @@ export const manhuaViralTemplateRouter = router({
       const previewSuffixZh = complete
         ? ""
         : `（分段预览 · 已含 ${previewSegments}/${attemptedSegments} 段 · 整形未完成）`;
+      const themeSuffix = input.themeChoice && input.themeChoice !== "auto" ? `-${input.themeChoice}` : "";
       try {
         return await renderNativeEvidenceReportFromObjectNames({
           labelZh: `${input.seriesKey} 第 ${input.episodeIndex} 集${previewSuffixZh}`,
           evidenceObjectNames,
+          themeChoice: input.themeChoice,
           themeMetadata: { nameZh: card.nameZh, classification: card.classification },
           expectEpisodeIndex: input.episodeIndex,
           expectSeriesKey: input.seriesKey,
@@ -251,13 +255,14 @@ export const manhuaViralTemplateRouter = router({
           segmentSpans: complete
             ? native?.segmentSpans
             : (native?.segmentSpans || []).slice(0, previewSegments),
+          structuredCardObjectName: complete ? native?.structuredCardObjectName : undefined,
           glmCardObjectName: complete ? native?.glmParsedObjectName : undefined,
           evidenceFrames: complete ? card.evidenceFrames : undefined,
           framesV2SummaryObjectName: `manhua-template-learn/probes/${cardKey}/frames-v2-summary.json`,
           framesPrefix: `manhua-template-learn/probes/${cardKey}/frames/`,
           reportObjectName: complete
-            ? `manhua-template-learn/reports/${cardKey}.html`
-            : `manhua-template-learn/reports/${cardKey}-preview-${previewSegments}of${attemptedSegments}.html`,
+            ? `manhua-template-learn/reports/${cardKey}${themeSuffix}.html`
+            : `manhua-template-learn/reports/${cardKey}-preview-${previewSegments}of${attemptedSegments}${themeSuffix}.html`,
         });
       } catch (e) {
         throw new TRPCError({
@@ -551,7 +556,7 @@ export const manhuaViralTemplateRouter = router({
       }
     }),
 
-  /** 0903：删除待审卡（入库前的删除；入库后的对应操作是下架）。只删 proposals/ 对象。 */
+  /** 删除原生逐集卡时同步归档移除正式模板（仅 owner）；其他待审卡保持原删除权限。 */
   discardProposal: protectedProcedure
     .input(
       z.object({
@@ -562,6 +567,7 @@ export const manhuaViralTemplateRouter = router({
     .mutation(async ({ ctx, input }) => {
       const ownerAllowed = resolveSiteOwnerOnlyAllowed(ctx.user);
       if (!ownerAllowed) assertSupervisorOps(ctx.user, ctx.supervisorSession);
+      if (/^tpl_native_[A-Za-z0-9_-]+_ep\d{3}$/.test(input.id.trim())) assertSiteOwner(ctx.user);
       try {
         const { discardGcsManhuaViralProposal } = await import(
           "../services/manhuaViralTemplateStore"
@@ -620,7 +626,7 @@ export const manhuaViralTemplateRouter = router({
       return await renameManhuaLearnSeriesTitle(input);
     }),
 
-  /** 0902 放行重学：旧代学习卡退位存档、集位让出；重学照常计费（owner 限定） */
+  /** 0902 放行重学：学习卡及对应正式模板归档后移除、集位让出；原始证据保留，重学照常计费（owner 限定） */
   retireLearnSourceEpisode: protectedProcedure
     .input(
       z.object({

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { nativeAttemptRawSha256 } from "./manhuaNativeDeepReadAttemptSelection.js";
 /**
  * 报告渲染服务测试（PR1325 第三、五节）：
  * 精确证据名寻址 fail closed + 无删节渲染 + 帧可选 + HTML 严格转义。
@@ -42,6 +44,7 @@ vi.mock("@google-cloud/storage", () => ({
   },
 }));
 
+import { stripNonStoryAdShotsForEpisodeCard } from "../../shared/manhuaNativeAdRanges.js";
 import { renderNativeEvidenceReportFromObjectNames } from "./manhuaNativeReportRender";
 
 const DIGEST_A = "a".repeat(64);
@@ -213,6 +216,25 @@ describe("精确证据名路径：三段卡渲染成功且无删节", () => {
     expect(html).not.toContain("剧情节点表");
   });
 
+  it("待整形候选只能导出来源绑定的最终产物，不能回落原稿或另一份GLM", async () => {
+    seedThreeSegments();
+    const first = state.objects.get(NAMES[0]!) as ReturnType<typeof segmentEntry> & { attemptSelection?: unknown };
+    first.attemptSelection = { status: "selected_for_structuring_after_three_attempts", policyVersion: 1, attemptedCount: 3,
+      selectedAttemptNumber: 2, sourceDigest: DIGEST_A, rawSha256: nativeAttemptRawSha256(first.raw),
+      candidates: [{ attemptNumber: 2, reasonZh: "未过门禁", score: [1, 1, -1, 20] }] };
+    await expect(renderNativeEvidenceReportFromObjectNames(baseInput())).rejects.toThrow("整形消费证据");
+    expect(state.uploads).toHaveLength(0);
+    const final = { schemaVersion: 1, sourceDigest: DIGEST_A, seriesKey: "seriesabc", episodeIndex: 1,
+      segmentEvidenceObjectNames: NAMES, raw: { ...first.raw, beatStructureZh: "真正整形消费结果_FINAL_SELECTED", shots: [first.raw.shots[0]] } };
+    const name = "manhua-template-learn/structured-card/" + createHash("sha256").update(JSON.stringify(final)).digest("hex") + ".json";
+    state.objects.set(name, final);
+    await renderNativeEvidenceReportFromObjectNames({ ...baseInput(), structuredCardObjectName: name,
+      glmCardObjectName: "不能读取的旧GLM路径" });
+    expect(state.uploads[0]!.html).toContain("真正整形消费结果_FINAL_SELECTED");
+    final.raw.beatStructureZh = "篡改";
+    await expect(renderNativeEvidenceReportFromObjectNames({ ...baseInput(), structuredCardObjectName: name })).rejects.toThrow("来源段卡不一致");
+  });
+
   it("优先渲染最终 GLM 整集 parsed 证据，并用真实分片计划换算音轨秒位", async () => {
     seedThreeSegments();
     const glmObjectName = "manhua-template-learn/episode-glm-evidence/native-structuring-test1234567890/parsed.json";
@@ -268,6 +290,70 @@ describe("fail closed：缺段/段号重复/digest 混杂/集号不符各抛错�
     expect(html).toMatch(/>1<\/b><span[^>]*>广告区间/);
   });
 
+  it("整集报告从原始广告镜头恢复区间，合并重叠并拒绝模型虚构区间", async () => {
+    seedThreeSegments();
+    const first = state.objects.get(NAMES[0]!) as { raw: Record<string, unknown> };
+    const second = state.objects.get(NAMES[1]!) as { raw: Record<string, unknown> };
+    (first.raw.shots as unknown[]).push(
+      { startSec: 950.5, endSec: 951.1, evidenceRole: "non_story_ad" },
+      { startSec: 100, endSec: 102, evidenceRole: "non_story_ad" },
+    );
+    (second.raw.shots as unknown[]).push(
+      { startSec: 101, endSec: 103, evidenceRole: "non_story_ad" },
+    );
+    second.raw.excludedAdRanges = [{ startSec: 103.4, endSec: 105 }];
+    const originalSources = JSON.stringify(NAMES.map((name) => state.objects.get(name)));
+    const glmObjectName = "test/episode-glm-ad-account.json";
+    state.objects.set(glmObjectName, { parsed: {
+      ...first.raw,
+      shots: (first.raw.shots as Array<Record<string, unknown>>).filter((shot) => shot.evidenceRole !== "non_story_ad"),
+      excludedAdRanges: [{ startSec: 10, endSec: 20 }],
+    } });
+    await renderNativeEvidenceReportFromObjectNames({ ...baseInput(), glmCardObjectName: glmObjectName });
+    const html = state.uploads[0]!.html;
+    expect(html).toMatch(/>2<\/b><span[^>]*>广告区间/);
+    expect(stripNonStoryAdShotsForEpisodeCard([{ shots: [
+      ...(first.raw.shots as unknown[]),
+      ...(second.raw.shots as unknown[]),
+      { startSec: 103.4, endSec: 105, evidenceRole: "non_story_ad" },
+    ] }]).excludedAdRanges).toEqual([
+      { startSec: 100, endSec: 105 },
+      { startSec: 950.5, endSec: 951.1 },
+    ]);
+    expect(JSON.stringify(NAMES.map((name) => state.objects.get(name)))).toBe(originalSources);
+  });
+
+  it("旧卡缺五维判词时展示全部原始标签，不伪造分析套句", async () => {
+    seedThreeSegments();
+    const raw = state.objects.get(NAMES[0]!) as { raw: Record<string, unknown> };
+    raw.raw.classification = {
+      emotionTagsZh: Array.from({ length: 10 }, (_, index) => `真实情绪标签${index}`),
+      audienceExperienceTagsZh: ["引人入胜", "期待感"],
+    };
+    await renderNativeEvidenceReportFromObjectNames(baseInput());
+    const html = state.uploads[0]!.html;
+    expect(html).toContain("原始分类标签");
+    expect(html).toContain("真实情绪标签9");
+    expect(html).toContain("引人入胜");
+    expect(html).not.toContain("是主菜");
+    expect(html).not.toContain("几乎不给观众留喘息");
+    expect(html).not.toContain("把人引向下一集");
+  });
+
+  it("已有真实五维判词保持原文，不回退到标签说明", async () => {
+    seedThreeSegments();
+    const raw = state.objects.get(NAMES[0]!) as { raw: Record<string, unknown> };
+    const glmObjectName = "test/prose.json";
+    state.objects.set(glmObjectName, { parsed: {
+      ...raw.raw,
+      classification: { emotionTagsZh: ["警惕"] },
+      classificationProseZh: { emotionZh: "酒肆控诉后转为愤怒，斩杀后留下死寂。" },
+    } });
+    await renderNativeEvidenceReportFromObjectNames({ ...baseInput(), glmCardObjectName: glmObjectName });
+    expect(state.uploads[0]!.html).toContain("酒肆控诉后转为愤怒，斩杀后留下死寂。");
+    expect(state.uploads[0]!.html).not.toContain("原始分类标签");
+  });
+
   it("🔒 广告镜数从未过滤的原始 shots 上数（P0：此前恒为 0 的空改）", async () => {
     seedThreeSegments();
     const raw = state.objects.get(NAMES[1]!) as { raw: Record<string, unknown> };
@@ -278,6 +364,7 @@ describe("fail closed：缺段/段号重复/digest 混杂/集号不符各抛错�
     await renderNativeEvidenceReportFromObjectNames(baseInput());
     const html = state.uploads[0]!.html;
     expect(html).toContain("已剔除 1 广告镜");
+    expect(html).toMatch(/>1<\/b><span[^>]*>广告区间/);
     expect(html).not.toContain("已剔除 0 广告镜");
   });
 
@@ -525,6 +612,17 @@ describe("0906 HTML 摘要必交", () => {
     expect(html).not.toContain("本集未整理出该项");
     expect(raw.reusableZh).toBeUndefined();
   });
+  it("单字整形不能成为成品，两栏恢复全部三段正文", async () => {
+    seedThreeSegments();
+    const name = "manhua-template-learn/episode-glm-evidence/single-letter/parsed.json";
+    state.objects.set(name, { parsed: { ...segmentEntry(0).raw, reusableZh: "第", genPromptHintZh: "国" } });
+    await renderNativeEvidenceReportFromObjectNames({ ...baseInput(), glmCardObjectName: name });
+    const html = state.uploads[0]!.html;
+    for (const key of ["reusableZh", "genPromptHintZh"] as const) {
+      for (let index = 0; index < 3; index++) expect(html).toContain(String(segmentEntry(index).raw[key]));
+    }
+    expect(html).not.toMatch(/>第<\/div>|>国<\/div>/);
+  });
   it("原稿某片缺栏时不给出貌似完整的商品报告，也不上传空报告", async () => {
     seedThreeSegments();
     state.objects.set(NAMES[1]!, segmentEntry(1, { reusableZh: " " }));
@@ -544,6 +642,16 @@ describe("保留 PR1397 无括号分段兼容", () => {
 });
 
 describe("自动主题接入真实渲染入口", () => {
+  it.each(["celadon", "amber", "rose", "moon", "apricot"] as const)("手选%s沿证据入口生成对应HTML且保留正文", async (themeChoice) => {
+    seedThreeSegments();
+    await renderNativeEvidenceReportFromObjectNames({ ...baseInput(), themeChoice, themeMetadata: { nameZh: "修仙" } });
+    const html = state.uploads[0]!.html;
+    expect(html).toContain(`data-report-theme="${themeChoice}"`);
+    expect(html).toContain("UNTRUNCATED_ACTION_END");
+    expect(html).toContain("反打延迟半拍");
+    expect(html).toContain("data:image/png;base64,iVBOR");
+  });
+
   it.each([
     ["修仙", "celadon"], ["古装权谋", "amber"], ["都市情感", "rose"],
     ["谍战悬疑", "moon"], ["喜剧市井", "apricot"],

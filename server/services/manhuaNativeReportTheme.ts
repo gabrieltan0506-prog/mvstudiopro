@@ -1,3 +1,4 @@
+import type { NativeReportThemeChoice } from "../../shared/manhuaNativeReportThemeChoice.js";
 import { readFile } from "node:fs/promises";
 
 /** 只读展示元数据，不进入模型请求、模板持久化或付费缓存身份。 */
@@ -151,10 +152,16 @@ function choose(classification: string, title: string) {
     : undefined;
 }
 export function selectNativeReportTheme(input: {
+  themeChoice?: NativeReportThemeChoice;
   metadata?: NativeReportThemeMetadata;
   card?: Record<string, unknown>;
   episodeIndex?: number;
 }) {
+  if (input.themeChoice && input.themeChoice !== "auto") {
+    const selected = themes.find(theme => theme.id === input.themeChoice);
+    if (!selected) throw new Error("无效的报告主题");
+    return selected;
+  }
   const primary = choose(
     tags(input.metadata?.classification),
     text(input.metadata?.nameZh)

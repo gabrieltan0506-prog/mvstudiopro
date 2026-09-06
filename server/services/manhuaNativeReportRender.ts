@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { isNativeStructuredCardObjectName } from "../../shared/manhuaNativeStructuredCard.js";
+import { hasNativeAttemptSelection, type NativeDeepReadAttemptSelection } from "./manhuaNativeDeepReadAttemptSelection.js";
+import type { NativeReportThemeChoice } from "../../shared/manhuaNativeReportThemeChoice.js";
 import { nativeReportThemePresentation, type NativeReportThemeMetadata } from "./manhuaNativeReportTheme.js";
 /**
  * 原生精读证据 → 报告 HTML 渲染服务（¥0，零模型调用）。
@@ -12,6 +16,7 @@ import { nativeReportThemePresentation, type NativeReportThemeMetadata } from ".
  */
 import { assertNativeRequiredSummary, restoreNativeRequiredSummary } from "../../shared/manhuaNativeRequiredSummary.js";
 import { Storage } from "@google-cloud/storage";
+import { stripNonStoryAdShotsForEpisodeCard } from "../../shared/manhuaNativeAdRanges.js";
 import type { ManhuaViralTemplateEvidenceFrame } from "../../shared/manhuaViralTemplateBank.js";
 import {
   downloadGcsObjectVersioned,
@@ -307,12 +312,24 @@ function assembleCardFromSegments(
       })
       .sort((a, b) => Number(a.atSec) - Number(b.atSec));
   }
-  if (excludedAdRanges.length > 0) merged.excludedAdRanges = excludedAdRanges;
+  // 段卡广告通常只有 non_story_ad 镜头；整集已删除广告镜头时才使用显式区间。
+  // 统一使用生产整集的确定性区间合并规则，只读取源证据，不采纳模型新增区间。
+  const sourceAdShots = segments.flatMap(({ raw }) =>
+    (Array.isArray(raw.shots) ? raw.shots as Array<Record<string, unknown>> : [])
+      .filter((shot) => shot?.evidenceRole === "non_story_ad"));
+  const sourceAdRanges = stripNonStoryAdShotsForEpisodeCard([{
+    shots: [
+      ...sourceAdShots,
+      ...excludedAdRanges.map((range) => ({ ...range, evidenceRole: "non_story_ad" })),
+    ],
+  }]).excludedAdRanges;
+  if (sourceAdRanges.length > 0) merged.excludedAdRanges = sourceAdRanges;
   return merged;
 }
 
 type RenderCoreInput = {
   themeMetadata?: NativeReportThemeMetadata;
+  themeChoice?: NativeReportThemeChoice;
   episodeIndex?: number;
   labelZh: string;
   card: Record<string, unknown>;
@@ -334,7 +351,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const card = input.card;
   assertNativeRequiredSummary(card);
   const presentation = await nativeReportThemePresentation({
-    metadata: input.themeMetadata, card,
+    metadata: input.themeMetadata, card, themeChoice: input.themeChoice,
     episodeIndex: input.episodeIndex ?? Number(/第\s*(\d+)\s*集/.exec(input.labelZh)?.[1]),
   });
 
@@ -434,11 +451,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   }
 
   const cl = (card.classification ?? {}) as Record<string, unknown>;
-  /**
-   * 0902 九审拍板：标签词云太零散（任何剧都有这些词），每维改织成一两句
-   * 连贯判词，标签词句中高亮保扫读。近义标签先合并（互为子串，或字集互含
-   * 且长度差 ≤2：特写镜头/特写镜头强调、爽感/爽快感），每维最多取 7 词。
-   */
+  /** 真实判词中的标签高亮最多取 7 个近义去重词；原始标签展示不受该限制。 */
   const isTagDup = (a: string, b: string): boolean => {
     if (a.includes(b) || b.includes(a)) return true;
     if (Math.abs(a.length - b.length) > 2) return false;
@@ -458,38 +471,14 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const hiTag = (t: string): string =>
     `<b style="color:#8a5a1f;background:#f9edd2;border-radius:6px;padding:0 5px">${esc(t)}</b>`;
   const joinTags = (list: string[]): string => list.map(hiTag).join("、");
-  const weaveDimension = (key: string): string => {
-    const kept = tagListOf(key);
-    if (!kept.length) return "";
-    if (key === "audienceExperienceTagsZh") {
-      // 钩子类体验（悬念/期待/好奇）挪到句尾，收在「引向下一集」才通顺
-      kept.sort((x, y) => Number(/悬念|期待|好奇/.test(x)) - Number(/悬念|期待|好奇/.test(y)));
-    }
-    const a = kept.slice(0, 2);
-    const b = kept.slice(2, 5);
-    const c = kept.slice(5, 7);
-    switch (key) {
-      case "emotionTagsZh": {
-        const calm = kept.find((t) => /平静|冷静|淡然/.test(t));
-        const coda = calm
-          ? `——偶有${hiTag(calm)}片刻，反而衬得压迫更沉`
-          : "——极性切换密，几乎不给观众留喘息";
-        return `情绪线以${joinTags(a)}打底${b.length ? `，中段翻出${joinTags(b)}` : ""}${c.length ? `，尾程在${joinTags(c)}里收拢` : ""}${coda}。`;
-      }
-      case "narrativeFeatureTagsZh":
-        return `叙事骨架立在${joinTags(a)}上${b.length ? `，靠${joinTags(b)}推着冲突走` : ""}${c.length ? `，并用${joinTags(c)}埋下后续的钩子` : ""}。`;
-      case "performanceTagsZh":
-        return `表演上${joinTags(a)}撑住大场面${b.length ? `，细处靠${joinTags(b)}见真章` : ""}${c.length ? `，${joinTags(c)}补足层次` : ""}。`;
-      case "audiovisualTagsZh":
-        return `视听语言用${joinTags(a)}造势${b.length ? `，以${joinTags(b)}强化关键瞬间` : ""}${c.length ? `，${joinTags(c)}收束整体质感` : ""}。`;
-      case "audienceExperienceTagsZh":
-        return `落到观感，${joinTags(a)}是主菜${b.length ? `，${joinTags(b)}穿插其间` : ""}${c.length ? `，再用${joinTags(c)}把人引向下一集` : ""}。`;
-      default:
-        return `${joinTags(kept)}。`;
-    }
+  const originalDimension = (key: string): string => {
+    const original = Array.isArray(cl[key]) ? cl[key] as unknown[] : [];
+    const tags = Array.from(new Set(original
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim()).filter(Boolean)));
+    return tags.length ? `原始分类标签：${joinTags(tags)}` : "";
   };
-  // GLM 整形已产出五维判词（0902 起 classificationProseZh）就用模型原句——
-  // 标签词在句中高亮；旧卡没有该字段才退回上面的模板织句。
+  // 有真实判词就原文展示；旧卡缺失时只呈现原始标签，不用固定套句冒充分析。
   const prose = (card.classificationProseZh ?? {}) as Record<string, unknown>;
   const PROSE_KEY_OF: Record<string, string> = {
     emotionTagsZh: "emotionZh",
@@ -509,8 +498,9 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const tags = ["emotionTagsZh", "narrativeFeatureTagsZh", "performanceTagsZh", "audiovisualTagsZh", "audienceExperienceTagsZh"]
     .concat(Object.keys(cl).filter((k) => Array.isArray(cl[k]) && !FIELD_LABELS[k]))
     .map((key) => {
-      const modelSentence = String(prose[PROSE_KEY_OF[key] ?? ""] ?? "").trim();
-      const sentence = modelSentence ? highlightTagsInProse(modelSentence, key) : weaveDimension(key);
+      const modelValue = prose[PROSE_KEY_OF[key] ?? ""];
+      const modelSentence = typeof modelValue === "string" ? modelValue.trim() : "";
+      const sentence = modelSentence ? highlightTagsInProse(modelSentence, key) : originalDimension(key);
       return sentence
         ? `<div style="margin:7px 0;line-height:1.85;color:#6b5b4a"><b style="color:#8a6a1f">${esc(fieldLabel(key))}</b>：${sentence}</div>`
         : "";
@@ -1017,6 +1007,7 @@ ${section("🎧 声音节点区域", audioSections)}
 
 export type NativeReportFromObjectNamesInput = {
   themeMetadata?: NativeReportThemeMetadata;
+  themeChoice?: NativeReportThemeChoice;
   labelZh: string;
   /** provenance.nativeVideoDeepRead.segmentEvidenceObjectNames 的精确对象名，禁止列目录推断。 */
   evidenceObjectNames: string[];
@@ -1030,7 +1021,9 @@ export type NativeReportFromObjectNamesInput = {
   expectSegmentCount?: number;
   /** 首次学习时保存的真实分片边界；音轨局部秒只能用它换算，禁止回退固定 300 秒。 */
   segmentSpans?: NativeReportSegmentSpan[];
-  /** GLM 整集卡对象名（provenance 明示时传入；传了就必须能读到，fail closed）。 */
+  /** 三档候选对应的最终整形消费证据；禁止回落候选原稿。 */
+  structuredCardObjectName?: string;
+  /** GLM 整集卡对象名（provenance 明示时传入；传了就必须能读到）。 */
   glmCardObjectName?: string;
   /** 完整卡入库时按 keyMoments 抽取的正式帧证据；优先于旧探针帧包。 */
   evidenceFrames?: ManhuaViralTemplateEvidenceFrame[];
@@ -1067,6 +1060,7 @@ export async function renderNativeEvidenceReportFromObjectNames(
   const segments: Array<SegmentRaw & {
     objectName: string; episodeIndex: number; seriesKey: string; sourceDigest: string;
   }> = [];
+  let requiresStructuredCard = false;
   for (const objectName of names) {
     const entry = await mustJson(bucket, objectName);
     const raw = entry.raw;
@@ -1086,6 +1080,8 @@ export async function renderNativeEvidenceReportFromObjectNames(
     if (!/^[a-f0-9]{64}$/i.test(sourceDigest)) {
       throw new Error(`证据对象 sourceDigest 非法：${objectName}`);
     }
+    const pending = hasNativeAttemptSelection({ raw: raw as Record<string, unknown>, sourceDigest, attemptSelection: entry.attemptSelection as NativeDeepReadAttemptSelection | undefined });
+    requiresStructuredCard = requiresStructuredCard || pending;
     segments.push({ objectName, episodeIndex, seriesKey, segmentIndex, sourceDigest, raw: raw as Record<string, unknown> });
   }
 
@@ -1125,7 +1121,7 @@ export async function renderNativeEvidenceReportFromObjectNames(
   const assembledSegments = assembleCardFromSegments(segments, input.segmentSpans);
   let reportCard = assembledSegments;
   let sourceLabelZh = `parsed 段卡拼接 · ${segments.length} 段（provenance 精确寻址）`;
-  if (input.glmCardObjectName) {
+  if (input.glmCardObjectName && !input.structuredCardObjectName) {
     const glmEvidence = await mustJson(bucket, input.glmCardObjectName);
     reportCard = {
       ...restoreNativeRequiredSummary(unwrapGlmReportCard(glmEvidence), segments.map((segment) => segment.raw)),
@@ -1141,13 +1137,29 @@ export async function renderNativeEvidenceReportFromObjectNames(
     sourceLabelZh = "GLM 整集卡（provenance 精确寻址）";
   }
 
-  if (!input.glmCardObjectName) {
+  if (input.structuredCardObjectName) {
+    if (!isNativeStructuredCardObjectName(input.structuredCardObjectName)) throw new Error("整形消费证据路径非法");
+    const stored = await mustJson(bucket, input.structuredCardObjectName);
+    const sha = createHash("sha256").update(JSON.stringify(stored)).digest("hex");
+    if (!input.structuredCardObjectName.endsWith(`/${sha}.json`) || stored.schemaVersion !== 1
+      || stored.sourceDigest !== segments[0]!.sourceDigest || stored.seriesKey !== segments[0]!.seriesKey
+      || stored.episodeIndex !== segments[0]!.episodeIndex
+      || JSON.stringify(stored.segmentEvidenceObjectNames) !== JSON.stringify(segments.map(row => row.objectName))
+      || !stored.raw || typeof stored.raw !== "object" || Array.isArray(stored.raw)) throw new Error("整形消费证据与来源段卡不一致");
+    reportCard = stored.raw as Record<string, unknown>;
+    if (!Array.isArray(reportCard.shots) || !reportCard.shots.length) throw new Error("整形消费证据镜头为空");
+    sourceLabelZh = "最终整形卡（provenance 精确寻址）";
+  } else if (requiresStructuredCard) {
+    throw new Error("候选原稿尚无已验证整形消费证据，不能导出为完整报告");
+  }
+  if (!input.glmCardObjectName && !input.structuredCardObjectName) {
     for (const segment of segments) assertNativeRequiredSummary(segment.raw);
   }
   return renderCardToReport({
     labelZh: input.labelZh,
     card: reportCard,
     themeMetadata: input.themeMetadata,
+    themeChoice: input.themeChoice,
     episodeIndex: segments[0]!.episodeIndex,
     sourceLabelZh,
     evidenceFrames: input.evidenceFrames,

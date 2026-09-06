@@ -33,7 +33,7 @@ const shotSchema = z
     endSec: z.number().min(0),
     /** 本镜环境与道具观察；旧证据可缺省，广告使用null空占位。 */
     hintZh: z.string().trim().nullable().optional(),
-    /** 新产出由 runner 门禁强制必填；optional 仅用于读取历史原始证据。 */
+    /** 记录类型可缺省；提供时必须符合枚举，拆分规则仍由runner检查。 */
     unitTypeZh: z.enum(["剪辑镜头", "拆分镜证据段"]).optional(),
     shotSizeZh: z.string().trim().optional(),
     angleZh: z.string().trim().optional(),

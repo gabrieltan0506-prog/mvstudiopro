@@ -1,3 +1,5 @@
+import { isNativeStructuredCardObjectName } from "../../shared/manhuaNativeStructuredCard.js";
+import { isCompleteNativeEpisodeRelearn } from "../../shared/manhuaNativeEpisodeVersion.js";
 /**
  * 原生视频精读 → 待审模板卡入库。
  *
@@ -54,11 +56,13 @@ export type NativeDeepReadIngestSource = NativeDeepReadOutput & {
   sourceDigest?: string;
   segmentSnapshotSha256?: string;
   segmentEvidenceObjectNames?: string[];
+  structuredCardObjectName?: string;
   glmEvidence?: { parsed?: { objectName?: string } };
   assemblyComplete?: boolean;
 };
 
 export type NativeDeepReadIngestInput = {
+  abortSignal?: AbortSignal;
   /** 合集标识，同一合集的各集共用 */
   seriesKey: string;
   /** 集序号，1-based */
@@ -338,6 +342,7 @@ const cut = (v: unknown, max: number): string => String(v || "").trim().slice(0,
 export function buildNativeDeepReadProposalCard(
   input: NativeDeepReadIngestInput,
 ): ManhuaViralTemplateCard | null {
+  input.abortSignal?.throwIfAborted();
   const gate = checkNativeDeepReadIngestable(input.result);
   if (!gate.ok) return null;
   // 没有来源地址的卡无法溯源，等于学到的东西说不清出处
@@ -455,6 +460,7 @@ export function buildNativeDeepReadProposalCard(
               complete: progress.complete,
             })
           : undefined,
+        structuredCardObjectName: progress.complete && isNativeStructuredCardObjectName(r.structuredCardObjectName) ? r.structuredCardObjectName : undefined,
         glmParsedObjectName: progress.complete
           && /^manhua-template-learn\/episode-glm-evidence\/[0-9A-Za-z_-]{16,180}\/parsed\.json$/.test(glmParsedObjectName)
           ? glmParsedObjectName
@@ -696,6 +702,7 @@ export async function ingestNativeDeepReadEpisode(
   const gcsUri = `gs://${bucket}/${objectName}`;
   const body = Buffer.from(`${JSON.stringify(card, null, 2)}\n`, "utf8");
   // 首次写入走 ifGenerationMatch=0；竞争失败后进入下面的单调 CAS 更新。
+  input.abortSignal?.throwIfAborted();
   const uploaded = await uploadBufferToGcsIfAbsent({
     bucket,
     objectName,
@@ -729,8 +736,10 @@ export async function ingestNativeDeepReadEpisode(
     }
     const previous = cardProgress(existing);
     const next = cardProgress(card);
+    const completeRelearn = isCompleteNativeEpisodeRelearn(existing, card);
     if (
-      previous.snapshotSha256
+      !completeRelearn
+      && previous.snapshotSha256
       && next.snapshotSha256
       && previous.snapshotSha256 === next.snapshotSha256
     ) {
@@ -750,10 +759,10 @@ export async function ingestNativeDeepReadEpisode(
     // 提交 1/5、2/5、3/5，再补到 4/5。较短前缀不含新信息，保留现有对象即可；
     // 不能把这种幂等重放当成倒退并中断后续 4/5、5/5。这里只允许真子集，
     // 同长度不同快照与互有不同分片的真分叉仍由下面的门禁关闭式拒绝。
-    if (isStrictProgressSubset(next.completed, previous.completed)) {
+    if (!completeRelearn && isStrictProgressSubset(next.completed, previous.completed)) {
       return { card: existing, gcsUri, objectName, created: false };
     }
-    if (!isStrictProgressSuperset(next.completed, previous.completed)) {
+    if (!completeRelearn && !isStrictProgressSuperset(next.completed, previous.completed)) {
       const relation = sameNumbers(next.completed, previous.completed) ? "未增加" : "发生倒退或分叉";
       throw new Error(`第${input.episodeIndex}集分片进度${relation}，拒绝覆盖既有学习卡`);
     }
@@ -765,6 +774,7 @@ export async function ingestNativeDeepReadEpisode(
     });
     if (!replacement) throw new Error(`第${input.episodeIndex}集补全提案校验失败`);
     try {
+      input.abortSignal?.throwIfAborted();
       await uploadBufferToGcs({
         bucket,
         objectName,

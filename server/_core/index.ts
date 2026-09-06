@@ -353,6 +353,7 @@ async function startServer() {
         }
         resolvedUserId = String(ctx.user.id);
         const learnParams = (input as any)?.params || {};
+        if (learnParams.operation === "aggregate_series") return res.status(400).json({ error: "学习只生成分集结果，不再生成额外系列模板" });
         const importedGcsUri = String(learnParams.gcsUri || "").trim();
         const {
           hasNativeDeepReadJobFields,
@@ -367,9 +368,15 @@ async function startServer() {
             const { readManhuaLearnExtraSourceHosts } = await import(
               "../services/manhuaLearn0996Source.js"
             );
-            parseNativeDeepReadJobConfirmation(learnParams, {
+            const confirmation = parseNativeDeepReadJobConfirmation(learnParams, {
               extraSourceHosts: readManhuaLearnExtraSourceHosts(),
             });
+            if (confirmation.structuringOnly) {
+              const { getJobByIdStrict } = await import("../jobs/repository.js");
+              const { assertNativeStructuringPreviousJob } = await import("../../shared/manhuaNativeStructuringOnly.js");
+              assertNativeStructuringPreviousJob({ confirmation, userId: resolvedUserId,
+                previousJob: await getJobByIdStrict(confirmation.structuringPreviousJobId!), extraSourceHosts: readManhuaLearnExtraSourceHosts() });
+            }
           } catch {
             return res.status(400).json({ error: "原生精读确认参数不完整或相互冲突" });
           }

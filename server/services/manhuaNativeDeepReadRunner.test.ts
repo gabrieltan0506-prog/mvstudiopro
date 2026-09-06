@@ -44,6 +44,8 @@ import {
   NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
   assertNativeDeepReadEpisodeEvidence,
   assertNativeDeepReadShotObservations,
+  assertNativeDeepReadShotDetailLevels,
+  buildNativeDeepReadPrimaryRepairFeedback,
   assertNativeDeepReadShotObservationsPreserved,
   assertNativeDeepReadPreparedMedia,
   assertNativeDeepReadSegmentDensity,
@@ -629,10 +631,10 @@ describe("每段提示词硬约束", () => {
   it("音轨硬红线（亲耳所听/局部秒例外）与软边界建议齐全（0826 二次拍板）", () => {
     expect(prompt).toContain(`"chunkIndex":1`);
     expect(prompt).toContain("亲耳所听");
-    // 0831：禁令搬到【不得出现】区，正面区只留格式规定
+    // 0831：禁令搬到【禁止事项】区，正面区只留格式规定
     expect(prompt).toContain("· 凭画面推测声音。");
-    expect(prompt.slice(0, prompt.indexOf("【不得出现】"))).toContain("音轨内容来自你亲耳所听");
-    expect(prompt.slice(0, prompt.indexOf("【不得出现】"))).not.toContain("禁止凭画面编造声音");
+    expect(prompt.slice(0, prompt.indexOf("【禁止事项】"))).toContain("音轨内容来自你亲耳所听");
+    expect(prompt.slice(0, prompt.indexOf("【禁止事项】"))).not.toContain("禁止凭画面编造声音");
     // 不再给「至少 N 段 / 至少 N 条 cue」这类数字目标（0829：数字目标会逼出编造）
     expect(prompt).not.toMatch(/至少 \d+ 段/);
     expect(prompt).not.toMatch(/(?:cue|声音事件|音轨)[^\n]*至少 \d+ 条/);
@@ -658,7 +660,7 @@ describe("每段提示词硬约束", () => {
    * 现在密度改为纯正向引导，拒不拒收由门禁 advisory 管，提示词不替门禁免责。
    */
   it("正面区只讲该做什么：无免责句、无禁令措辞", () => {
-    const positive = prompt.slice(0, prompt.indexOf("【不得出现】"));
+    const positive = prompt.slice(0, prompt.indexOf("【禁止事项】"));
     expect(positive).not.toContain("不作为拒收依据");
     expect(positive).not.toContain("禁止");
     expect(positive).toContain("如实记录全部可见、可听的证据");
@@ -669,10 +671,10 @@ describe("每段提示词硬约束", () => {
   });
 
   it("禁止区只讲不许做什么：不夹带任何正面要求", () => {
-    const start = prompt.indexOf("【不得出现】");
+    const start = prompt.indexOf("【禁止事项】");
     const block = prompt.slice(start);
-    expect(block).toContain("判定产出无效");
-    expect(block).toContain("不得为之");
+    expect(block).toContain("【禁止事项】");
+    expect(block.slice("【禁止事项】".length)).not.toMatch(/禁止|不得|不要|严禁|一概不收|只增不减/);
     // 夹带过的三句已搬回正向区，禁止区不得再出现
     expect(block).not.toContain("同等重要");
     expect(block).not.toContain("主产物");
@@ -686,7 +688,7 @@ describe("每段提示词硬约束", () => {
    */
   it("生成顺序先确定边界，不要求修改已经输出的JSON", () => {
     const block = prompt.slice(prompt.indexOf("【观察与输出顺序】"), prompt.indexOf("【正向要求一"));
-    expect(block).toContain("先确定每条记录的起止秒位，再输出该条字段");
+    expect(block).toContain("确定每条记录的起止秒位，依据已输出 keyMoments");
     expect(block).toContain("定位每次真实剪辑切换及镜内变化");
     expect(prompt).not.toMatch(/输出前自检|回去按硬约束|检查与修正/);
     expect(block).not.toMatch(/禁止|不得|不要/);
@@ -729,10 +731,10 @@ describe("每段提示词硬约束", () => {
     expect(retry).toContain("【上一轮未通过的检查】音轨仅 1 段");
     // 0831 加固：原来只有一句软性「尽量不要降低密度」，实测模型把「修正」做成砍条数＋
     // 通用词填充（35 条降 15 条、12 条描述逐字相同）。四条禁令必须逐条在场。
-    expect(retry).toContain("镜头表条数只增不减");
+    expect(retry).toContain("重试时减少镜头表条数");
     expect(retry).toContain("拆成多条");
-    expect(retry).toContain("各条不得雷同");
-    expect(retry).toContain("不要为了\"补足\"而增加不存在的声音事件");
+    expect(retry).not.toContain("给不同镜头填写雷同描述");
+    expect(retry).toContain("重试时为了\"补足\"而增加不存在的声音事件");
   });
 
   it("无音轨片重试时不得追加第 4 条声音要求，否则与硬约束 6 自相矛盾", () => {
@@ -742,11 +744,11 @@ describe("每段提示词硬约束", () => {
     });
     // 硬约束 6 已写死「禁止凭画面编造声音」，重做要求再提「按听到的写」就是开口子。
     expect(retry).toContain("本段素材没有音轨，audioResolution 返回空数组 []");
-    expect(retry).not.toContain("不要为了\"补足\"而增加不存在的声音事件");
+    expect(retry).not.toContain("重试时为了\"补足\"而增加不存在的声音事件");
     expect(retry).not.toContain("声音部分按实际听到的写");
     // 前三条与有音轨时一致，不因无音轨而削弱。
-    expect(retry).toContain("镜头表条数只增不减");
-    expect(retry).toContain("各条不得雷同");
+    expect(retry).toContain("重试时减少镜头表条数");
+    expect(retry).not.toContain("给不同镜头填写雷同描述");
   });
 });
 
@@ -792,7 +794,7 @@ describe("时间坐标桥单变量候选", () => {
       episodeDurationSec: 1600, startSec: 200, endSec: 519.04,
       segmentIndex: 1, segmentCount: 5, hasAudio: true, videoFps: 12,
     });
-    const [positive, negative] = prompt.split("【不得出现】");
+    const [positive, negative] = prompt.split("【禁止事项】");
     expect(positive).toContain("文件内 05:13 的本段累计秒 t = 5×60+13 = 313");
     expect(positive).toContain("对应全片绝对秒 = 本段起点 + 313，即 200 + 313 = 513");
     expect(positive).toContain("此示范只说明换算方法，实际秒位范围仍按本段起止确定");
@@ -800,7 +802,7 @@ describe("时间坐标桥单变量候选", () => {
     expect(positive).toContain("audioTrack 与 cues 内时间用**本段局部秒**（0..319）");
     expect(positive).toContain("shots.startSec/endSec、keyMoments.atSec 使用全片绝对秒，可保留一位小数");
     expect(positive).not.toContain("去掉冒号");
-    expect(negative).toContain("判定产出无效：\n· 将 MM:SS 或 HH:MM:SS 去掉冒号后直接当作累计秒");
+    expect(negative).toContain("· 将 MM:SS 或 HH:MM:SS 去掉冒号后直接当作累计秒");
     expect(negative).toContain("文件内 05:13 的本段累计秒误写为 513");
   });
 
@@ -815,15 +817,15 @@ describe("时间坐标桥单变量候选", () => {
      * 后缀是纯字面量，**必须全等，不许放松成 startsWith/toContain**。
      * 审查实测：放松后有两类回归能全绿逃逸——(1) 在四条规则后再追加
      * 「镜头表压缩到 10 条以内」之类的降密度指令；(2) 把规则 1 反转成
-     * 「其余可酌情精简…但不强求」而仍含子串「镜头表条数只增不减」。
+     * 「其余可酌情精简…但不强求」而仍含子串「重试时减少镜头表条数」。
      * 这两类正是本轮生产改动要根除的那个 bug，绝不能从测试里漏过去。
      */
-    const [firstPositive, firstProhibitions] = first.split("【不得出现】");
-    const [retryPositive, retryProhibitions] = retry.split("【不得出现】");
+    const [firstPositive, firstProhibitions] = first.split("【禁止事项】");
+    const [retryPositive, retryProhibitions] = retry.split("【禁止事项】");
     const expectedPositiveSuffix = `
 【上一轮未通过的检查】镜头证据段超过30秒输出上限
 
-本轮重做要求（0831 实测加固：上一轮模型把「修正」做成了砍条数＋通用词填充，35 条降到 15 条、12 条描述逐字相同）：
+本轮重做要求：
 1. 只修正上面点名的问题，其余一律照常完整观察。
 2. 证据段过长时的唯一正确做法是**按前文长镜拆分规则拆成多条**（每段 ${NATIVE_DEEP_READ_LONG_TAKE_EVIDENCE_SPLIT_MIN_SEC}—${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒，
    后续段 transitionInZh 写固定标记）。
@@ -831,23 +833,25 @@ describe("时间坐标桥单变量候选", () => {
 4. 声音部分按实际听到的写，安静段落本来就少。`;
     const expectedProhibitionSuffix = `
 
-重试禁止事项：
-· 镜头表条数只增不减。
-· 修正过长证据段时，不得删掉、不得合并、不得拉长单条覆盖。
-· 禁止用「剧情推进」「人物交替出现」「交谈与动作」「表情自然」这类通用词填充字段；各条不得雷同。
-· 不要为了"补足"而增加不存在的声音事件。`;
+· 重试时减少镜头表条数。
+· 修正过长证据段时删掉、合并记录，或拉长单条覆盖。
+· 重试时用「剧情推进」「人物交替出现」「交谈与动作」「表情自然」这类通用词填充字段。
+· 重试时为了"补足"而增加不存在的声音事件。`;
     expect(retryPositive!.trimEnd()).toBe(`${firstPositive!.trimEnd()}\n${expectedPositiveSuffix}`);
     expect(retryProhibitions).toBe(`${firstProhibitions}${expectedProhibitionSuffix}`);
   });
 });
 
 describe("Gemini 请求体（Google 原生格式，Vertex/EvoLink 同构）", () => {
-  it("探针依赖是生产依赖副本，不会改写生产默认通道", () => {
+  it("探针依赖是生产依赖副本，不会改写生产默认通道", async () => {
     const original = createNativeDeepReadRunnerDeps();
     const custom = createNativeDeepReadRunnerDeps({ postVertex: vi.fn() });
     expect(custom.postVertex).not.toBe(original.postVertex);
     expect(createNativeDeepReadRunnerDeps().postVertex).toBe(original.postVertex);
     expect(custom.prepareVideos).toBe(original.prepareVideos);
+    // 0907 用户拍板：重试稿合并接成生产默认
+    const { mergeNativeDeepReadRetryDrafts } = await import("./manhuaNativeDeepReadRetryDraftMerge");
+    expect(original.mergeRetryDrafts).toBe(mergeNativeDeepReadRetryDrafts);
   });
   it("实际序列化后不再发送 mediaResolution，视频fps与Schema保持原值", () => {
     const serialized = JSON.parse(JSON.stringify(buildGeminiNativeDeepReadSegmentRequest({
@@ -1079,14 +1083,9 @@ describe("v11 · 截断段豁免（classification 在 responseSchema 最末，�
     return raw;
   };
 
-  it("截断段缺 classification 照常入库，并记 advisory", () => {
-    const gated = assertNativeDeepReadSegmentDensity({
-      ...base,
-      raw: withoutClassification(),
-      truncated: true,
-    });
-    expect(gated.advisories.map((row) => row.code))
-      .toContain("truncated_classification_missing");
+  it("截断段缺 classification 也拒收", () => {
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw: withoutClassification(), truncated: true }))
+      .toThrow("classification 缺失");
   });
 
   it("非截断段缺 classification 仍硬拒（豁免只对截断段生效）", () => {
@@ -1096,29 +1095,13 @@ describe("v11 · 截断段豁免（classification 在 responseSchema 最末，�
     })).toThrow("classification 缺失");
   });
 
-  it("🔒 截断段照样守长镜拒收线（30 秒＋10% 容差＝33 秒）", () => {
-    const raw = withoutClassification();
-    // 用户 0830 晚定线：上限 30 秒、容差 10% ⇒ 拒收线 33 秒。
-    // 先证 32 秒放行（在 33 秒拒收线内）。
-    const passing = withoutClassification();
-    passing.shots = [{
-      ...(passing.shots as Array<Record<string, unknown>>)[0]!,
-      startSec: 0, endSec: 32,
-    }];
-    expect(() => assertNativeDeepReadSegmentDensity({
-      ...base, raw: passing, truncated: true,
-    })).not.toThrow();
-    // 再证 34 秒仍拒（超过 33 秒拒收线）
-    raw.shots = [{
-      ...(raw.shots as Array<Record<string, unknown>>)[0]!,
-      startSec: 0,
-      endSec: 34,
-    }];
-    expect(() => assertNativeDeepReadSegmentDensity({
-      ...base,
-      raw,
-      truncated: true,
-    })).toThrow(/33 秒/);
+  it("截断段守相同长镜边界：34秒合格，35秒拒收（0907 容差 15% → 34.5 秒线）", () => {
+    const raw = makeSegmentPayload({ ...base });
+    const shot = (raw.shots as Array<Record<string, unknown>>)[0]!;
+    raw.shots = [{ ...shot, startSec: 0, endSec: 34 }, { ...shot, startSec: 34, endSec: 60 }];
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw, truncated: true })).not.toThrow();
+    raw.shots = [{ ...shot, startSec: 0, endSec: 35 }, { ...shot, startSec: 35, endSec: 60 }];
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw, truncated: true })).toThrow(/34\.5 秒/);
   });
 
   it("🔒 截断段照样守逐镜 17 字段：缺字段仍拒收", () => {
@@ -1154,7 +1137,8 @@ describe("覆盖率与缓存复验回归", () => {
   });
 
   it("90% 边界不误重试", () => {
-    const input = { ...base, raw: withSpans([[0, 270]]) };
+    const raw = makeSegmentPayload({ ...base, endSec: 270 });
+    const input = { ...base, raw };
     expect(() => assertNativeDeepReadSegmentDensity(input)).not.toThrow();
     expect(nativeDeepReadSegmentMeetsThreeItemLine(input)).toBe(true);
   });
@@ -1172,18 +1156,30 @@ describe("覆盖率与缓存复验回归", () => {
     expect(nativeDeepReadSegmentMeetsThreeItemLine({ ...base, raw })).toBe(false);
   });
 
-  it("MAX_TOKENS 可解析前缀豁免覆盖，缓存复验不重买", () => {
+  it("MAX_TOKENS 低覆盖前缀也拒收，缓存复验不豁免", () => {
     const input = { ...base, raw: withSpans([[0, 20]]), truncated: true };
-    expect(() => assertNativeDeepReadSegmentDensity(input)).not.toThrow();
-    expect(nativeDeepReadSegmentMeetsThreeItemLine(input)).toBe(true);
+    expect(() => assertNativeDeepReadSegmentDensity(input)).toThrow("覆盖率");
+    expect(nativeDeepReadSegmentMeetsThreeItemLine(input)).toBe(false);
   });
 
-  it("缓存按家族计数，结构的两条提示不能重复算两项", () => {
+  it("合法广告省略动作字段不会被当作剧情镜缺字段拒收", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60, hasAudio: false });
+    (raw.shots as Array<Record<string, unknown>>)[0] = { startSec: 0, endSec: 5, evidenceRole: "non_story_ad", hintZh: null };
+    expect(nativeDeepReadSegmentMeetsThreeItemLine({ episodeIndex: 1, segmentIndex: 0, startSec: 0, endSec: 60, hasAudio: false, raw })).toBe(true);
+  });
+
+  it("后段越界不能用全片绝对秒作分母稀释成小于10%的偏差", () => {
+    const raw = makeSegmentPayload({ segmentIndex: 3, startSec: 900, endSec: 960, hasAudio: false });
+    (raw.shots as Array<Record<string, unknown>>).at(-1)!.endSec = 962;
+    expect(nativeDeepReadSegmentMeetsThreeItemLine({ episodeIndex: 1, segmentIndex: 3, startSec: 900, endSec: 960, hasAudio: false, raw })).toBe(false);
+  });
+
+  it("必填正文为空不能按问题家族数量放行", () => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60, hasAudio: false });
     raw.beatStructureZh = "";
     raw.classification = { emotionTagsZh: ["紧绷"], narrativeFeatureTagsZh: [], performanceTagsZh: [], audiovisualTagsZh: [], audienceExperienceTagsZh: [] };
     (raw.shots as Array<Record<string, unknown>>)[0]!.actionZh = "";
-    expect(nativeDeepReadSegmentMeetsThreeItemLine({ ...base, endSec: 60, raw })).toBe(true);
+    expect(nativeDeepReadSegmentMeetsThreeItemLine({ ...base, endSec: 60, raw })).toBe(false);
   });
 
   /**
@@ -1198,10 +1194,12 @@ describe("覆盖率与缓存复验回归", () => {
    * 注意这不是放宽判据：结构类缺失照样算一家族，可执行项照样触发；
    * 音轨类也照样记进 advisory 与段卡，只是不再拿它拒收。
    */
-  it("音轨段数不足不再拖垮缓存复验（只剩结构一家族，不到重试线）", () => {
+  it("一段真实连续音轨合格；另有空结构时拒收", () => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60, audioTrackOverride: 1 });
-    raw.beatStructureZh = "";
+
     expect(nativeDeepReadSegmentMeetsThreeItemLine({ ...base, endSec: 60, hasAudio: true, raw })).toBe(true);
+    raw.beatStructureZh = "";
+    expect(nativeDeepReadSegmentMeetsThreeItemLine({ ...base, endSec: 60, hasAudio: true, raw })).toBe(false);
   });
 
   it("音轨结构性错误（有音轨素材却零段）仍然算数，不在豁免之列", () => {
@@ -1217,11 +1215,11 @@ describe("覆盖率与缓存复验回归", () => {
   });
 
   /**
-   * 只测 33 秒长镜边界，故意把镜数补到地板之上（60 秒段地板 ceil(60/10)=6 镜）——
+   * 只测 34.5 秒长镜边界（0907 容差 15%），故意把镜数补到地板之上（60 秒段地板 ceil(60/10)=6 镜）——
    * 0831 加回 shot_density_low 之后，原来的 2 镜 fixture 会被密度判据带偏，
    * 测出来的就不再是「长镜边界」这一件事了。
    */
-  it.each([[30, true], [33, true], [33.1, false]] as const)("长镜边界%s秒，缓存可用=%s", (firstEnd, accepted) => {
+  it.each([[30, true], [34.5, true], [34.6, false]] as const)("长镜边界%s秒，缓存可用=%s", (firstEnd, accepted) => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60, hasAudio: false });
     const shot = (raw.shots as Array<Record<string, unknown>>)[0]!;
     const rest = 60 - firstEnd;
@@ -1368,13 +1366,14 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
       .toThrow(/evidenceRole 缺失或无效/);
   });
 
-  it("新模型产出缺独立角色站位字段时关闭式拒收，不再用 actionZh 掩盖", () => {
+  it("重点镜缺可选站位字段不拒收，也不在程序中补写", () => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
-    // 0905 两档契约：只有 keyMoment ±6 秒内的重点镜才要求 18 字段齐全
+    // 0906 用户撤销额外内容强迫；观察与动作仍由原稿提供。
     raw.keyMoments = [{ atSec: Number((raw.shots as Array<Record<string, unknown>>)[0]!.startSec), kindZh: "剧情", noteZh: "重点镜" }];
     delete (raw.shots as Array<Record<string, unknown>>)[0]!.blockingZh;
     expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw }))
-      .toThrow("缺 blockingZh");
+      .not.toThrow();
+    expect((raw.shots as Array<Record<string, unknown>>)[0]!.blockingZh).toBeUndefined();
   });
 
   it("unitTypeZh 只能使用批准的 enum 值", () => {
@@ -1453,8 +1452,7 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
   it("audioResolution 留空转 advisory：只记 audio_chunk_shape，不再拒收", () => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
     raw.audioResolution = [];
-    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw })).not.toThrow();
-    expect(advisoryCodesOf({ ...base, raw })).toContain("audio_chunk_shape");
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw })).toThrow("音频分析必须提供");
   });
 
   it("音轨段数低于地板线转 advisory：安静段落合法，只记 audio_track_thin", () => {
@@ -1480,11 +1478,7 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
     const analysis = (raw.audioResolution as Array<{ analysis: { audioTrack: Array<Record<string, unknown>> } }>)[0]!.analysis;
     delete analysis.audioTrack[0]!.cues;
-    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw })).not.toThrow();
-    const advisories = assertNativeDeepReadSegmentDensity({ ...base, raw }).advisories;
-    expect(advisories.map((row) => row.code)).toContain("audio_field_missing");
-    expect(advisories.find((row) => row.code === "audio_field_missing")!.detailZh)
-      .toContain("音轨字段不完整：缺 cues");
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw })).toThrow("缺 cues");
   });
 
   it("min(1) 必填字段 genAudioHintZh 缺失仍硬拒收：zod schema 解析失败＝数据不可用", () => {
@@ -1512,10 +1506,7 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
     const analysis = (raw.audioResolution as Array<{ analysis: Record<string, unknown> }>)[0]!.analysis;
     delete analysis.mixNotesZh;
-    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw })).not.toThrow();
-    const advisories = assertNativeDeepReadSegmentDensity({ ...base, raw }).advisories;
-    expect(advisories.find((row) => row.code === "audio_field_missing")!.detailZh)
-      .toContain("音轨汇总字段不完整：缺 mixNotesZh");
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw })).toThrow("缺 mixNotesZh");
   });
 
   it("素材无音轨却返回 audioResolution 转 advisory：只记 audio_unexpected", () => {
@@ -1568,7 +1559,7 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
     })).not.toThrow();
   });
 
-  it("🔒 保留的两条硬约束仍在：覆盖率与 30 秒上限（含 10% 容差）", () => {
+  it("🔒 保留的两条硬约束仍在：覆盖率与 30 秒上限（含 15% 容差）", () => {
     // 覆盖率：300 秒的片只回 3 秒 → 拒（这是 0830 实弹买到的洞）
     const blank = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 300, shotCountOverride: 2 });
     (blank.shots as Array<Record<string, unknown>>).forEach((shot, i) => {
@@ -1576,7 +1567,7 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
     });
     expect(() => assertNativeDeepReadSegmentDensity({
       ...base, startSec: 0, endSec: 300, raw: blank,
-    })).toThrow("整片没读完");
+    })).toThrow("低于 90% 即不合格");
   });
 
   it("描述文本秒位门禁不误伤动作时长与文本栏字段", () => {
@@ -1637,23 +1628,14 @@ describe("整集证据门禁（段卡合并后再跑一遍，GLM 之后同样要
     })).toThrow("音轨分段不完整");
   });
 
-  it("整集镜头未覆盖完整片长只记 advisory 不拒收（0830：GLM 是整形层，不该被拒）", () => {
+  it("整集原始音轨覆盖不足也拒收", () => {
     expect(() => assertNativeDeepReadEpisodeEvidence({
       episodeIndex: 1,
       durationSec: 180,
       segments: [{ startSec: 0, endSec: 180 }],
       hasAudio: true,
       rawSegments: [rawSegments[0]!],
-    })).not.toThrow();
-    // 缺口只记 advisory，写明缺哪几秒，交给人看
-    const codes = assertNativeDeepReadEpisodeEvidence({
-      episodeIndex: 1,
-      durationSec: 180,
-      segments: [{ startSec: 0, endSec: 180 }],
-      hasAudio: true,
-      rawSegments: [rawSegments[0]!],
-    }).map((row) => row.code);
-    expect(codes).toContain("episode_coverage_gap");
+    })).toThrow("覆盖率");
   });
 
 });
@@ -1680,7 +1662,7 @@ describe("整集卡广告剔除（段卡→整集卡合并层，原始分段卡�
     expect((raw.subtitles as unknown[])).toHaveLength(2);
   });
 
-  it("整集门禁把 excludedAdRanges 视为合法缺口；无账目缺口只记 advisory；残留广告行照拒；非法区间照拒", () => {
+  it("整集门禁认可广告账目，原始覆盖不足90%或非法广告区间拒收", () => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60, shotCountOverride: 12 });
     (raw.shots as Array<Record<string, unknown>>)[2]!.evidenceRole = "non_story_ad";
     (raw.shots as Array<Record<string, unknown>>)[3]!.evidenceRole = "non_story_ad";
@@ -1702,7 +1684,7 @@ describe("整集卡广告剔除（段卡→整集卡合并层，原始分段卡�
     delete noLedger.excludedAdRanges;
     // 0829 晚：空档与重叠已拆成两条明确报错（修法相反，报同一句会让修复轮乱猜）
     // 0830：无账目的缺口只记 advisory 不拒收（GLM 是整形层）；广告残留行仍硬拒
-    expect(gate([noLedger])).not.toThrow();
+    expect(gate([noLedger])).toThrow(/低于 90%/);
     // end<=start 属非法区间账目，整集拒收
     const badLedger: Record<string, unknown> = {
       ...rows[0]!,
@@ -2393,6 +2375,17 @@ function geminiResponse(payload: unknown, over: {
   candidatesTokenCount?: number;
   audioTokenCount?: number;
 } = {}) {
+  // 测试模型按新请求生成分支标记；显式提供的错误值原样保留以检验拒收。
+  const raw = payload as Record<string, any>;
+  if (raw && Array.isArray(raw.shots)) {
+    for (const shot of raw.shots) {
+      if (shot && typeof shot === "object" && shot.detailLevel === undefined) {
+        shot.detailLevel = shot.evidenceRole === "non_story_ad" ? "ad"
+          : (Array.isArray(raw.keyMoments) ? raw.keyMoments : []).some((point: any) =>
+            Number(point.atSec) + 6 >= Number(shot.startSec) && Number(point.atSec) - 6 <= Number(shot.endSec)) ? "key" : "brief";
+      }
+    }
+  }
   return {
     status: 200,
     text: JSON.stringify({
@@ -2436,19 +2429,21 @@ function readRawSegmentsFromGlmPrompt(user: string): Array<Record<string, unknow
   return JSON.parse(user.slice(at + marker.length)) as Array<Record<string, unknown>>;
 }
 
+const validGeneratedAnalysisFixture = { templateTitleZh: "测试剧情推进·情绪递进型", classificationProseZh: { emotionZh: "压迫渐强", narrativeZh: "信息递进", performanceZh: "克制爆发", audiovisualZh: "冷暖对撞", audienceZh: "持续紧张" } };
+
 function makeGlmStructuringStub() {
   return vi.fn(async (prompt: { system: string; user: string }) => {
-    // 真 GLM 的首要职责是去重（同段可能被喂进通过版 + 被标记版）。
-    // 桩件按同样口径先剔掉被标记版，否则同秒位区间会重叠。
+    // 正式输入每段只有选中的一份原稿，失败标记不能导致整形丢掉来源。
     const rows = readRawSegmentsFromGlmPrompt(prompt.user)
-      .map(unwrapNativeDeepReadStructuredAnswerEnvelope)
-      .filter((row) => row.gateMarked !== true);
+      .map(unwrapNativeDeepReadStructuredAnswerEnvelope);
     const pick = <T>(key: string) => rows.flatMap((row) => (row[key] as T[]) || []);
     const joinText = (key: string) =>
       rows.map((row) => String(row[key] || "").trim()).filter(Boolean).join("；");
     const allShots = pick<Record<string, unknown>>("shots");
     const adShots = allShots.filter((shot) => shot.evidenceRole === "non_story_ad");
     const merged: Record<string, unknown> = {
+      templateTitleZh: "测试剧情推进·情绪递进型",
+      classificationProseZh: { emotionZh: "压迫渐强", narrativeZh: "信息递进", performanceZh: "克制爆发", audiovisualZh: "冷暖对撞", audienceZh: "持续紧张" },
       shots: allShots.filter((shot) => shot.evidenceRole !== "non_story_ad"),
       subtitles: pick("subtitles"),
       audioResolution: pick("audioResolution"),
@@ -2530,6 +2525,7 @@ function makeRunnerDeps(over: Partial<NativeDeepReadBatchRunnerDeps> = {}): Nati
       bytes: Buffer.byteLength(JSON.stringify(input.parsed)),
       sha256: "b".repeat(64),
     })) as never,
+    writeStructuredCard: vi.fn(async () => "manhua-template-learn/structured-card/" + "e".repeat(64) + ".json"),
     readStructuredBatchCache: vi.fn(async () => null) as never,
     writeStructuredBatchCache: vi.fn(async (entry) => entry) as never,
     waitForRetry: vi.fn(async () => undefined),
@@ -2590,6 +2586,14 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
     expect(deps.remove).not.toHaveBeenCalled();
   }
 
+  it("选段诊断沿用调用方已选择的Flash模型，不静默切到默认Pro", async () => {
+    const deps = makeRunnerDeps({ postVertex: makeSuccessfulEpisodePostVertex(fullSegments) });
+    await runManhuaNativeDeepReadSelectedSegments({ ...selectedParams([3]), readModel: "gemini-3.8-flash" }, deps);
+    expect(deps.postVertex).toHaveBeenCalledTimes(1);
+    expect((deps.postVertex as ReturnType<typeof vi.fn>).mock.calls[0]![3]).toBe("gemini-3.8-flash");
+    expectNoAssemblyOrMediaMutation(deps);
+  });
+
   it.each([[3], [4, 1], [4, 1, 3]])("只调用原索引%s，保留全1594秒/5片/12fps身份", async (...indexes) => {
     const selected = indexes as number[];
     const params = selectedParams(selected);
@@ -2609,7 +2613,7 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
     for (const row of result.segments) {
       const span = fullSegments[row.segmentIndex]!;
       expect(row).toMatchObject({ ...span, hasAudio: true });
-      expect(row.raw.shots).toEqual(makeSegmentPayload({ segmentIndex: row.segmentIndex, ...span }).shots);
+      expect(row.raw.shots).toEqual((makeSegmentPayload({ segmentIndex: row.segmentIndex, ...span }).shots as Array<Record<string, unknown>>).map(shot => ({ ...shot, detailLevel: "brief" })));
       const expectedFingerprint = nativeDeepReadSegmentCacheFingerprint({
         sourceDigest: params.sourceDigest, episodeIndex: 1, episodeDurationSec: 1594,
         segment: span, segmentIndex: row.segmentIndex, segmentCount: 5, hasAudio: true, videoFps: 12,
@@ -2655,7 +2659,52 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
     }
   });
 
-  it("两次门禁失败后第三次通过，仍由 Qwen 对三份完整数据三选一", async () => {
+  it("覆盖缺口超过300字仍完整传到真实下一发，保留每发证据", async () => {
+    const span = fullSegments[0]!;
+    const healthy = makeSegmentPayload({ segmentIndex: 0, ...span, shotCountOverride: 80 });
+    healthy.keyMoments = Array.from({ length: 20 }, (_, index) => ({ atSec: 5 + index * 16, kindZh: "剧情", noteZh: "测试关键动作" }));
+    const bad = structuredClone(healthy);
+    for (const shot of bad.shots as Array<Record<string, unknown>>) shot.endSec = Number(shot.startSec) + 1;
+    const feedback = buildNativeDeepReadPrimaryRepairFeedback({ raw: bad, ...span })!;
+    expect(feedback.length).toBeGreaterThan(300);
+    const postVertex = vi.fn().mockResolvedValueOnce(geminiResponse(bad)).mockResolvedValueOnce(geminiResponse(healthy));
+    const deps = makeRunnerDeps({ postVertex });
+    await runManhuaNativeDeepReadSelectedSegments(selectedParams([0]), deps);
+    const retryText = postVertex.mock.calls[1]![0].contents[0].parts[1].text;
+    expect(retryText).toContain(feedback);
+    expect(retryText).not.toMatch(/允许.{0,8}[5五]|容差|容忍/);
+    expect(postVertex).toHaveBeenCalledTimes(2);
+    expect(deps.writeRawAttemptEvidence).toHaveBeenCalledTimes(2);
+    expect(deps.writeParsedAttemptEvidence).toHaveBeenCalledTimes(2);
+  });
+
+  it("只有音轨缺尾时按局部秒补读，第二发使用原冻结温度且不重买画面两次以外的调用", async () => {
+    const span = fullSegments[1]!;
+    const healthy = makeSegmentPayload({ segmentIndex: 1, ...span });
+    const bad = structuredClone(healthy);
+    const audio = (bad.audioResolution as any[])[0].analysis;
+    const track = audio.audioTrack[0];
+    audio.audioTrack = [{ ...track, fromSec: 0, toSec: 10, cues: [] }];
+    const feedback = buildNativeDeepReadPrimaryRepairFeedback({ raw: bad, ...span, hasAudio: true, segmentIndex: 1 })!;
+    expect(feedback).toContain(`音轨时间轴未记录10–${span.endSec - span.startSec}秒`);
+    expect(feedback).toContain(`0秒对应全片${span.startSec}秒`);
+    expect(feedback).not.toContain("画面时间轴未记录");
+    const postVertex = vi.fn().mockResolvedValueOnce(geminiResponse(bad)).mockResolvedValueOnce(geminiResponse(healthy));
+    const deps = makeRunnerDeps({ postVertex });
+    await runManhuaNativeDeepReadSelectedSegments(selectedParams([1]), deps);
+    expect(postVertex).toHaveBeenCalledTimes(2);
+    expect(postVertex.mock.calls[1]![0].contents[0].parts[1].text).toContain(feedback);
+    expect(postVertex.mock.calls.map(([body]) => body.generationConfig.temperature)).toEqual([0.7, 0.65]);
+    for (const [body] of postVertex.mock.calls) {
+      expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: "MEDIUM", includeThoughts: false });
+      expect(body.generationConfig.maxOutputTokens).toBe(65536);
+    }
+    expect(deps.writeRawAttemptEvidence).toHaveBeenCalledTimes(2);
+    expect(deps.writeParsedAttemptEvidence).toHaveBeenCalledTimes(2);
+    expectNoAssemblyOrMediaMutation(deps);
+  });
+
+  it("两次门禁失败后第三次通过，直接消费第三发，不调用选择器", async () => {
     const span = fullSegments[3]!;
     const short = makeSegmentPayload({ segmentIndex: 3, startSec: span.startSec, endSec: span.startSec + 20 });
     const healthy = makeSegmentPayload({ segmentIndex: 3, ...span });
@@ -2665,26 +2714,21 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
     const result = await runManhuaNativeDeepReadSelectedSegments(selectedParams([3]), deps);
     expect(postVertex).toHaveBeenCalledTimes(3);
     expect(postVertex.mock.calls.map(([body]) => body.generationConfig.temperature)).toEqual([0.7, 0.65, 0.6]);
-    expect(postVertex.mock.calls[1]![0].contents[0].parts[1].text).toContain("6.3%");
+    expect(postVertex.mock.calls[1]![0].contents[0].parts[1].text).toContain("画面时间轴未记录977–1276秒");
     expect(deps.waitForRetry).toHaveBeenCalledTimes(2);
     expect(deps.waitForRetry).toHaveBeenNthCalledWith(1, NATIVE_DEEP_READ_RETRY_INTERVAL_MS, undefined);
     expect(deps.writeRawAttemptEvidence).toHaveBeenCalledTimes(3);
     expect(deps.writeParsedAttemptEvidence).toHaveBeenCalledTimes(3);
-    expect(deps.selectAttemptWithQwen).toHaveBeenCalledTimes(1);
+    expect(deps.selectAttemptWithQwen).not.toHaveBeenCalled();
     expect(result.rawAttemptEvidenceObjectNames).toHaveLength(3);
     expect(result.segments[0]!.raw.shots).toEqual(healthy.shots);
-    expect(result.segments[0]!.raw.attemptSelection).toMatchObject({
-      status: "qwen_selected_after_three_attempts",
-      selectedAttemptNumber: 3,
-      selectedTemperature: 0.6,
-      selectedPassedGate: true,
-    });
-    expect(result.segments[0]!.paidUsage).toMatchObject({ inputTokens: 300_010, outputTokens: 7_502 });
-    expect(result.usage).toMatchObject({ inputTokens: 300_010, outputTokens: 7_502 });
+    expect(result.segments[0]!.raw.attemptSelection).toBeUndefined();
+    expect(result.segments[0]!.paidUsage).toMatchObject({ inputTokens: 300_000, outputTokens: 7_500 });
+    expect(result.usage).toMatchObject({ inputTokens: 300_000, outputTokens: 7_500 });
     expectNoAssemblyOrMediaMutation(deps);
   });
 
-  it("0905：音频事件越出声明区间不再判门禁失败——越界事件丢弃，单发即过", async () => {
+  it("声音事件越界拒收，下一档修正后才通过", async () => {
     const span = fullSegments[3]!;
     const invalid = makeSegmentPayload({ segmentIndex: 3, ...span });
     const firstTrack = (invalid.audioResolution as Array<{
@@ -2701,10 +2745,31 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
       ...selectedParams([3]),
       onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
     }, deps);
-    expect(postVertex.mock.calls.map(([body]) => body.generationConfig.temperature)).toEqual([0.7]);
-    expect(deps.waitForRetry).not.toHaveBeenCalled();
+    expect(postVertex.mock.calls.map(([body]) => body.generationConfig.temperature)).toEqual([0.7, 0.65]);
+    expect(deps.waitForRetry).toHaveBeenCalledTimes(1);
     expect(deps.selectAttemptWithQwen).not.toHaveBeenCalled();
     expect(result.segments[0]!.raw.shots).toEqual(healthy.shots);
+  });
+
+  it("0906 重试稿合并：接了 mergeRetryDrafts 时，第 2 发过门禁 → 与第 1 发合并后进缓存并留 advisory；不接则行为不变", async () => {
+    const { mergeNativeDeepReadRetryDrafts } = await import("./manhuaNativeDeepReadRetryDraftMerge");
+    const span = fullSegments[3]!;
+    // 第 1 发只覆盖前 20 秒 → 覆盖门禁必拒；它的第一镜观察独有
+    const invalid = makeSegmentPayload({ segmentIndex: 3, startSec: span.startSec, endSec: span.startSec + 20 });
+    (invalid.shots as Array<Record<string, unknown>>)[0]!.hintZh = "第一发独有镜";
+    // 第 2 发覆盖全段但开头 6 秒没镜 → 合并应把第 1 发开头那镜补进来
+    const healthy = makeSegmentPayload({ segmentIndex: 3, ...span });
+    healthy.shots = (healthy.shots as Array<Record<string, unknown>>).filter((s) => Number(s.startSec) >= span.startSec + 6);
+    const postVertex = vi.fn().mockResolvedValueOnce(geminiResponse(invalid)).mockResolvedValueOnce(geminiResponse(healthy));
+    const deps = makeRunnerDeps({ postVertex, mergeRetryDrafts: mergeNativeDeepReadRetryDrafts });
+    const result = await runManhuaNativeDeepReadSelectedSegments(selectedParams([3]), deps);
+    const hints = (result.segments[0]!.raw.shots as Array<{ hintZh: string }>).map((s) => s.hintZh);
+    expect(hints).toContain("第一发独有镜");
+    expect(result.segments[0]!.advisories.some((a) => a.code === "retry_drafts_merged")).toBe(true);
+    // 不接函数：第 2 发原样
+    const postVertex2 = vi.fn().mockResolvedValueOnce(geminiResponse(invalid)).mockResolvedValueOnce(geminiResponse(healthy));
+    const plain = await runManhuaNativeDeepReadSelectedSegments(selectedParams([3]), makeRunnerDeps({ postVertex: postVertex2 }));
+    expect((plain.segments[0]!.raw.shots as Array<{ hintZh: string }>).map((s) => s.hintZh)).not.toContain("第一发独有镜");
   });
 
   it("503 只等待60秒并保持0.7同温重跑，不消耗门禁降档", async () => {
@@ -2822,50 +2887,37 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
     expect(NATIVE_DEEP_READ_RESOURCE_FALLBACK_AFTER).toBe(2);
   });
 
-  it("最后一分片与其他分片一视同仁，三次门禁失败后由 Qwen 三选一", async () => {
+  it("第5片三次均不合格：保留三稿及用量，三选一不得越过硬门", async () => {
     const span = fullSegments[4]!;
     const postVertex = vi.fn().mockResolvedValue(geminiResponse(makeSegmentPayload({
       segmentIndex: 4, startSec: span.startSec, endSec: span.startSec + 20,
     })));
     const deps = makeRunnerDeps({ postVertex });
-    const result = await runManhuaNativeDeepReadSelectedSegments(selectedParams([4]), deps);
+    const error = await runManhuaNativeDeepReadSelectedSegments(selectedParams([4]), deps).catch(error => error);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain("覆盖率");
+    expect(error.nativeDeepReadUsage).toMatchObject({ inputTokens: 300_000, outputTokens: 7_500 });
     expect(postVertex).toHaveBeenCalledTimes(3);
-    expect(deps.waitForRetry).toHaveBeenCalledTimes(2);
     expect(deps.writeRawAttemptEvidence).toHaveBeenCalledTimes(3);
     expect(deps.writeParsedAttemptEvidence).toHaveBeenCalledTimes(3);
-    expect(deps.selectAttemptWithQwen).toHaveBeenCalledTimes(1);
-    expect(result.segments[0]!.raw.attemptSelection).toMatchObject({
-      status: "qwen_selected_after_three_attempts",
-      selectedAttemptNumber: 1,
-      selectedPassedGate: false,
-    });
-    expect(result.segments[0]!.advisories).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: "qwen_three_attempts_pick_one" }),
-    ]));
+    expect(deps.selectAttemptWithQwen).not.toHaveBeenCalled();
     expectNoAssemblyOrMediaMutation(deps);
   });
 
-  it("三次均拒收时由 Qwen 三选一，不发第四次，仍保留三份解析稿和用量", async () => {
+  it("第4片三次均不合格：保留三稿及用量，三选一不得越过硬门", async () => {
     const span = fullSegments[3]!;
     const postVertex = vi.fn().mockResolvedValue(geminiResponse(makeSegmentPayload({
       segmentIndex: 3, startSec: span.startSec, endSec: span.startSec + 20,
     })));
     const deps = makeRunnerDeps({ postVertex });
-    const result = await runManhuaNativeDeepReadSelectedSegments(selectedParams([3]), deps);
-    expect(result.usage).toMatchObject({ inputTokens: 300_010, outputTokens: 7_502 });
-    expect(result.segments[0]!.raw.attemptSelection).toMatchObject({
-      status: "qwen_selected_after_three_attempts",
-      selectedAttemptNumber: 1,
-      selectedTemperature: 0.7,
-      selectedPassedGate: false,
-    });
-    expect(result.segments[0]!.advisories).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: "qwen_three_attempts_pick_one" }),
-    ]));
+    const error = await runManhuaNativeDeepReadSelectedSegments(selectedParams([3]), deps).catch(error => error);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain("覆盖率");
+    expect(error.nativeDeepReadUsage).toMatchObject({ inputTokens: 300_000, outputTokens: 7_500 });
     expect(postVertex).toHaveBeenCalledTimes(3);
     expect(deps.writeRawAttemptEvidence).toHaveBeenCalledTimes(3);
     expect(deps.writeParsedAttemptEvidence).toHaveBeenCalledTimes(3);
-    expect(deps.selectAttemptWithQwen).toHaveBeenCalledTimes(1);
+    expect(deps.selectAttemptWithQwen).not.toHaveBeenCalled();
     expectNoAssemblyOrMediaMutation(deps);
   });
 
@@ -2896,24 +2948,18 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
     }
   });
 
-  it("schema 门禁失败跑满三档后仍必须由 Qwen 选一份，MAX_TOKENS 可消费前缀仍只一发", async () => {
-    const raw = makeSegmentPayload({ segmentIndex: 3, startSec: 957, endSec: 977 });
+  it("坏结构和低覆盖截断稿跑满三档仍拒收；完整截断JSON可通过", async () => {
+    const raw = makeSegmentPayload({ segmentIndex: 3, ...fullSegments[3]! });
     const invalidDeps = makeRunnerDeps({ postVertex: vi.fn().mockResolvedValue(geminiResponse({ ...raw, shots: "坏结构" })) });
-    const invalidResult = await runManhuaNativeDeepReadSelectedSegments(selectedParams([3]), invalidDeps);
+    await expect(runManhuaNativeDeepReadSelectedSegments(selectedParams([3]), invalidDeps)).rejects.toThrow("schema");
     expect(invalidDeps.postVertex).toHaveBeenCalledTimes(3);
-    expect(invalidDeps.waitForRetry).toHaveBeenCalledTimes(2);
-    expect(invalidDeps.selectAttemptWithQwen).toHaveBeenCalledTimes(1);
-    expect(invalidResult.segments[0]!.raw).toMatchObject({
-      shots: "坏结构",
-      attemptSelection: { status: "qwen_selected_after_three_attempts", selectedAttemptNumber: 1 },
-    });
+    expect(invalidDeps.selectAttemptWithQwen).not.toHaveBeenCalled();
     expectNoAssemblyOrMediaMutation(invalidDeps);
     const truncatedDeps = makeRunnerDeps({ postVertex: vi.fn().mockResolvedValue(geminiResponse(raw, { finishReason: "MAX_TOKENS" })) });
     const result = await runManhuaNativeDeepReadSelectedSegments(selectedParams([3]), truncatedDeps);
     expect(result.segments[0]!.truncated).toBe(true);
     expect(result.segments[0]!.raw.shots).toEqual(raw.shots);
     expect(truncatedDeps.postVertex).toHaveBeenCalledTimes(1);
-    expect(truncatedDeps.waitForRetry).not.toHaveBeenCalled();
     expectNoAssemblyOrMediaMutation(truncatedDeps);
   });
 
@@ -3198,7 +3244,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentIndexes: [...input.segmentIndexes],
       inputDigest: "a".repeat(64),
       raw: {
-        answer: JSON.stringify(deterministicallyMergeNativeDeepReadRawSegments(input.rawSegments)),
+        answer: JSON.stringify({ ...deterministicallyMergeNativeDeepReadRawSegments(input.rawSegments), ...validGeneratedAnalysisFixture }),
       },
       gateway: "openrouter" as const,
       model: "z-ai/glm-5.3",
@@ -3376,7 +3422,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
           episodeIndex: 1,
           segmentIndexes: [...input.segmentIndexes],
           inputDigest: "a".repeat(64),
-          raw: deterministicallyMergeNativeDeepReadRawSegments(input.rawSegments),
+          raw: { ...deterministicallyMergeNativeDeepReadRawSegments(input.rawSegments), ...validGeneratedAnalysisFixture },
           gateway: "openrouter" as const,
           model: "z-ai/glm-5.3",
           inputTokens: 1,
@@ -3529,7 +3575,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
    * 声音事件仅 3 条，低于建议地板 14」被拒，烧掉 ¥9.75，而音轨本来就只有一段。
    * 「三项线」本身没有放宽，变的是哪些项有资格计入。
    */
-  it("🔒 音轨类不计入家族：原三项 payload 只剩两家族，不重试（三项线未放宽）", async () => {
+  it("声音数量不凑数，但缺必填正文仍重试", async () => {
     const postVertex = vi.fn()
       .mockResolvedValueOnce(geminiResponse(makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 })))
       .mockResolvedValueOnce(geminiResponse(makeThreeFailurePayload({ segmentIndex: 1, startSec: 60, endSec: 120 })))
@@ -3544,7 +3590,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     try {
       await runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps);
       // 镜头＋结构＝2 家族 < 3 项线 → 不重试（2 段各一次）
-      expect(postVertex).toHaveBeenCalledTimes(2);
+      expect(postVertex).toHaveBeenCalledTimes(3);
       const sent = readRawSegmentsFromGlmPrompt(
         (invokeGlmStructuring.mock.calls[0]![0] as { user: string }).user,
       );
@@ -3557,7 +3603,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     }
   });
 
-  it("🔒 截断段豁免三项线：不重试，保留可解析前缀入库（0829 决定不得被推翻）", async () => {
+  it("截断段缺必填正文同样重试，完整下一发才消费", async () => {
     // 截断段必然同时命中 classification_thin + empty_beat_structure + empty_action 类
     // ＝恰好 3 项；不豁免就会重试，而重试大概率仍截断 → 梯度耗尽 → 整集抛错。
     const postVertex = vi.fn()
@@ -3577,19 +3623,19 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     try {
       await runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps);
       // 🔴 关键断言：截断段不重买，只打 2 发
-      expect(postVertex).toHaveBeenCalledTimes(2);
+      expect(postVertex).toHaveBeenCalledTimes(3);
       const sent = readRawSegmentsFromGlmPrompt(
         (invokeGlmStructuring.mock.calls[0]![0] as { user: string }).user,
       );
       expect(sent).toHaveLength(2);
-      expect(sent[1]!.truncated).toBe(true);
+      expect(sent[1]!.truncated).not.toBe(true);
     } finally {
       warn.mockRestore();
       info.mockRestore();
     }
   });
 
-  it("🔒 2 项不合标准但偏差超 20% → 照样重跑（0830 晚：容差已放宽，超出就是真不合格）", async () => {
+  it("必填证据不合格即重跑，数值容差固定15%（0907）", async () => {
     // 造 2 项：音轨 1 段（地板 5，偏差 80%）+ 声音事件 1 条（地板 5，偏差 80%）
     // 60 秒段的地板：音轨 max(1,ceil(60/60))=1 ⇒ 需要更长的段才能压出偏差，
     // 故直接用 audioTrackOverride 制造，并断言「重跑发生」这一行为本身。
@@ -3612,7 +3658,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     try {
       await runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps);
       // 常量本身是看守重点：改动它即改变重买行为
-      expect(NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO).toBe(0.20);
+      expect(NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO).toBe(0.15);
       // 🔒 白名单看守（用户 0830 晚圈定）：音轨段数与镜头覆盖进 20% 判据，
       // 声音事件条数（≈音轨长度密度）不进——安静段落天然少，不该为此重买。
       expect(NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES.has("audio_track_thin")).toBe(true);
@@ -3624,7 +3670,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     }
   });
 
-  it("最后一片超过30秒证据段也跑满三档并由 Qwen 三选一", async () => {
+  it("最后一片超过30秒证据段跑满三档后选择原稿整形", async () => {
     const segments = twoSegmentEpisode.segments;
     // 第2段首发把整 60 秒当成一个镜头——撞 30 秒硬上限（探针实弹里段5 就是 45 秒长镜）。
     // 覆盖仍然完整，但尾片不再享受任何特例。
@@ -3644,19 +3690,10 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     try {
       await runManhuaNativeDeepReadBatch({ episodes: [{ ...twoSegmentEpisode, segments }] }, deps);
       expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+      expect(readRawSegmentsFromGlmPrompt(invokeGlmStructuring.mock.calls[0]![0].user)[1]!.shots).toEqual(markedFirst.shots);
       expect(postVertex).toHaveBeenCalledTimes(4);
       expect(deps.waitForRetry).toHaveBeenCalledTimes(2);
-      expect(deps.selectAttemptWithQwen).toHaveBeenCalledTimes(1);
-      const prompt = invokeGlmStructuring.mock.calls[0]![0] as { system: string; user: string };
-      const sent = readRawSegmentsFromGlmPrompt(prompt.user);
-      expect(sent).toHaveLength(2);
-      const marked = sent.filter((row) => row.gateMarked === true);
-      expect(marked).toHaveLength(1);
-      expect(String(marked[0]!.gateMarkedZh || "")).toContain("Qwen 3.8 Max 三选一");
-      expect(marked[0]!.attemptSelection).toMatchObject({ selectedAttemptNumber: 1, selectedPassedGate: false });
-      expect(marked[0]!.advisories).toEqual(expect.arrayContaining([
-        expect.objectContaining({ code: "qwen_three_attempts_pick_one" }),
-      ]));
+      expect(deps.selectAttemptWithQwen).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
       info.mockRestore();
@@ -3675,30 +3712,26 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(postVertex).toHaveBeenCalledTimes(2);
     expect(deps.waitForRetry).toHaveBeenCalledTimes(1);
     const retryBody = postVertex.mock.calls[1]![0] as { contents: Array<{ parts: Array<{ text?: string }> }> };
-    expect(retryBody.contents[0]!.parts[1]!.text).toContain("6.7%");
+    expect(retryBody.contents[0]!.parts[1]!.text).toContain("画面时间轴未记录20–300秒");
     const sent = readRawSegmentsFromGlmPrompt(invokeGlmStructuring.mock.calls[0]![0].user);
     expect(sent).toHaveLength(1);
     expect(sent[0]!.shots).toEqual(healthy.shots);
   });
 
-  it("MAX_TOKENS覆盖不足仍只买一发，结构坏数据不因截断豁免", async () => {
-    const episode = { ...twoSegmentEpisode, segments: [{ startSec: 0, endSec: 60 }], sourceDurationSec: 60 };
+  it("MAX_TOKENS非空原稿进入整形，完全无镜头结构仍停止", async () => {
+    const episode = { ...twoSegmentEpisode, cacheSourceDigest: "a".repeat(64), segments: [{ startSec: 0, endSec: 60 }], sourceDurationSec: 60 };
     const incomplete = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 20 });
-    const postVertex = vi.fn().mockResolvedValue(geminiResponse(incomplete, { finishReason: "MAX_TOKENS" }));
-    const deps = makeRunnerDeps({ postVertex: postVertex as never });
-    const result = await runManhuaNativeDeepReadBatch({ episodes: [episode] }, deps);
-    expect(postVertex).toHaveBeenCalledTimes(1);
-    expect(deps.waitForRetry).not.toHaveBeenCalled();
-    expect(result.episodes[0]!.result.truncated).toBe(true);
-
-    const invalid = { ...incomplete, shots: "不是数组" };
-    const badPost = vi.fn().mockResolvedValue(geminiResponse(invalid, { finishReason: "MAX_TOKENS" }));
-    const badDeps = makeRunnerDeps({ postVertex: badPost as never });
-    await runManhuaNativeDeepReadBatch({ episodes: [episode] }, badDeps);
-    expect(badPost).toHaveBeenCalledTimes(3);
-    expect(badDeps.waitForRetry).toHaveBeenCalledTimes(2);
-    expect(badDeps.selectAttemptWithQwen).toHaveBeenCalledTimes(1);
-    expect(badDeps.invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    for (const raw of [incomplete, { ...incomplete, shots: "不是数组" }]) {
+      const deps = makeRunnerDeps({ postVertex: vi.fn().mockResolvedValue(geminiResponse(raw, { finishReason: "MAX_TOKENS" })) });
+      const run = runManhuaNativeDeepReadBatch({ episodes: [episode], segmentCacheSeriesKey: "strict-regression" }, deps);
+      if (Array.isArray(raw.shots)) await run;
+      else await expect(run).rejects.toThrow();
+      expect(deps.postVertex).toHaveBeenCalledTimes(3);
+      expect(deps.waitForRetry).toHaveBeenCalledTimes(2);
+      expect(deps.selectAttemptWithQwen).not.toHaveBeenCalled();
+      expect(deps.invokeGlmStructuring).toHaveBeenCalledTimes(Array.isArray(raw.shots) ? 1 : 0);
+      expect(deps.writeParsedAttemptEvidence).toHaveBeenCalledTimes(3);
+    }
   });
 
   it("带 truncated 标记的分段卡照样进 GLM 输入，不在装配前被丢弃", async () => {
@@ -3944,17 +3977,96 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     };
   }
 
+  it.each(["qwen3.8-max", "glm-5.3"] as const)("仅重新整形使用完整永久JSON进入%s，原生模型与视频准备均为零", async structuringModel => {
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
+    const entry = makeCacheEntry({ episode, segmentIndex: 0 });
+    const deps = makeRunnerDeps({ readPermanentSegment: vi.fn(async () => ({ entry, generation: "1" })) as never });
+    const result = await runManhuaNativeDeepReadBatch({ episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey, structuringOnly: true, structuringModel }, deps);
+    expect(deps.prepareVideos).not.toHaveBeenCalled();
+    expect(deps.postVertex).not.toHaveBeenCalled();
+    expect(deps.postEvolink).not.toHaveBeenCalled();
+    expect(deps.postGeminiApi).not.toHaveBeenCalled();
+    expect(deps.invokeGlmStructuring).toHaveBeenCalled();
+    expect((result.episodes[0]!.result.reusableZh ?? "").length).toBeGreaterThan(1);
+  });
+
+  it.each(["长标题", "缺分析"])("模型%s必须在原链有限重试，保留原输入后通过", async kind => {
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
+    const entry = makeCacheEntry({ episode, segmentIndex: 0 });
+    const base = makeGlmStructuringStub();
+    let attempts = 0;
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
+      const response = await base(prompt);
+      response.raw.templateTitleZh = kind === "长标题" && attempts === 0 ? "长".repeat(61) : "短标题";
+      delete response.raw.classificationProseZh;
+      if (kind !== "缺分析" || attempts > 0) response.raw.classificationProseZh = {
+        emotionZh: "情绪分析", narrativeZh: "叙事分析", performanceZh: "表演分析", audiovisualZh: "视听分析", audienceZh: "观众分析",
+      };
+      attempts += 1;
+      return response;
+    });
+    const deps = makeRunnerDeps({ readSegmentCache: vi.fn(async () => ({ entry, generation: "1" })) as never, invokeGlmStructuring: invokeGlmStructuring as never });
+    const original = JSON.stringify(entry.raw);
+    await runManhuaNativeDeepReadBatch({ episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey, structuringOnly: true }, deps);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(entry.raw)).toBe(original);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(deps.writeStructuredBatchCache).mock.calls[0]![0].raw).toMatchObject({ templateTitleZh: "短标题" });
+  });
+
+  it("旧缓存分析不完整时保留缓存证据，重整形且不覆盖坏缓存", async () => {
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
+    const entry = makeCacheEntry({ episode, segmentIndex: 0 });
+    const badRaw = { ...entry.raw, templateTitleZh: "正文混入标题".repeat(20) };
+    const original = JSON.stringify(badRaw);
+    const deps = makeRunnerDeps({ readSegmentCache: vi.fn(async () => ({ entry, generation: "1" })) as never,
+      readStructuredBatchCache: vi.fn(async () => ({ raw: badRaw })) as never });
+    await runManhuaNativeDeepReadBatch({ episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey, structuringOnly: true }, deps);
+    expect(deps.invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(deps.remove).not.toHaveBeenCalled();
+    expect(deps.writeStructuredBatchCache).not.toHaveBeenCalled();
+    expect(JSON.stringify(badRaw)).toBe(original);
+  });
+
+  it("仅重新整形收到取消后立即终止，不走本地fallback或下一轮付费", async () => {
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
+    const entry = makeCacheEntry({ episode, segmentIndex: 0 });
+    const controller = new AbortController();
+    const deps = makeRunnerDeps({ readSegmentCache: vi.fn(async () => ({ entry, generation: "1" })) as never,
+      invokeGlmStructuring: vi.fn(async () => {
+        controller.abort(new Error("用户取消"));
+        throw new GlmGatewayError("两档失败", [{ gateway: "openrouter", model: "z-ai/glm-5.3", outcome: "network_error" }]);
+      }) as never });
+    await expect(runManhuaNativeDeepReadBatch({ episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey,
+      structuringOnly: true, abortSignal: controller.signal }, deps)).rejects.toThrow("用户取消");
+    expect(deps.invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(deps.writeStructuredBatchCache).not.toHaveBeenCalled();
+    expect(deps.postVertex).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("仅重新整形遇到缺失或错指纹JSON立即失败，不补读（错指纹=%s）", async mismatch => {
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
+    const entry = makeCacheEntry({ episode, segmentIndex: 0 });
+    entry.fingerprint = "f".repeat(64);
+    const deps = makeRunnerDeps({ readSegmentCache: vi.fn(async () => mismatch ? { entry, generation: "1" } : null) as never });
+    await expect(runManhuaNativeDeepReadBatch({ episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey, structuringOnly: true }, deps)).rejects.toThrow("禁止重新读视频");
+    expect(deps.prepareVideos).not.toHaveBeenCalled();
+    expect(deps.postVertex).not.toHaveBeenCalled();
+    expect(deps.postEvolink).not.toHaveBeenCalled();
+    expect(deps.invokeGlmStructuring).not.toHaveBeenCalled();
+  });
+
   it("固定旧指纹的双缓存恢复缺栏，不重读、不重整形、不重复计费", async () => {
     const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
     const entry = makeCacheEntry({ episode, segmentIndex: 0 });
     // 固定值来自 PR 原提交，不能用当前实现动态生成来掩盖身份变化。
     const oldFingerprint = "80ff654102a94fa9e3aad3c2a0af748b1ec52ecab86644725396d43a16b0d7ef";
-    expect(entry.fingerprint).toBe(oldFingerprint);
+    expect(entry.fingerprint).not.toBe(oldFingerprint);
     entry.fingerprint = oldFingerprint;
     const deps = makeRunnerDeps({
       readSegmentCache: vi.fn(async () => ({ entry, generation: "7" })) as never,
       readStructuredBatchCache: vi.fn(async () => ({
-        raw: { answer: JSON.stringify({ ...entry.raw, reusableZh: undefined, genPromptHintZh: " " }) },
+        raw: { answer: JSON.stringify({ ...entry.raw, ...validGeneratedAnalysisFixture, reusableZh: undefined, genPromptHintZh: " " }) },
       })) as never,
     });
     const result = await runManhuaNativeDeepReadBatch({
@@ -3970,12 +4082,12 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     expect(result.usage.costCny).toBe(0);
   });
 
-  it("整形调用身份与旧提交一致", async () => {
+  it("整形提示词撤销措辞强迫后使用新身份，旧缓存通过兼容读取保留", async () => {
     const { nativeDeepReadStructuredBatchCallId } = await import("./manhuaNativeDeepReadRunner");
     expect(nativeDeepReadStructuredBatchCallId({
       seriesKey: cacheSeriesKey, sourceDigest, episodeIndex: 3, segmentIndexes: [0],
       rawSegments: [{ reusableZh: "真实手法", genPromptHintZh: "真实要素" }],
-    })).toBe("native-structuring-99efa2146186f84346c411a6b7e2d3c8ee020c7bc4de125e6f2830bf154da3b9");
+    })).not.toBe("native-structuring-99efa2146186f84346c411a6b7e2d3c8ee020c7bc4de125e6f2830bf154da3b9");
   });
 
   it("指纹包含真实来源、hint、段参数和 fps，任一变化均失效", () => {
@@ -4061,7 +4173,7 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     const deps = makeRunnerDeps({
       readSegmentCache: vi.fn(async () => ({ entry, generation: "7" })) as never,
       invokeGlmStructuring: vi.fn(async () => ({
-        raw: entry.raw, inputTokens: 11, outputTokens: 2, reasoningTokens: 1,
+        raw: { ...entry.raw, ...validGeneratedAnalysisFixture }, inputTokens: 11, outputTokens: 2, reasoningTokens: 1,
         costUsd: 0.01, finishReason: "stop",
         gateway: "openrouter" as const, model: "z-ai/glm-5.3",
       })) as never,
@@ -4133,8 +4245,8 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
       postVertex: postVertex as never,
     });
     await runManhuaNativeDeepReadBatch({ episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey }, deps);
-    expect(postVertex).toHaveBeenCalledTimes(truncated ? 0 : 1);
-    expect(deps.prepareVideos).toHaveBeenCalledTimes(truncated ? 0 : 1);
+    expect(postVertex).toHaveBeenCalledTimes(1);
+    expect(deps.prepareVideos).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(entry.raw)).toBe(before);
   });
 
@@ -4303,7 +4415,7 @@ describe("门禁前解析稿持久化接线", () => {
   };
   const params = { episodes: [episode], segmentCacheSeriesKey: "test_parsed_attempt" };
 
-  it("三次拒收仍先永久保存三份解析稿，再由 Qwen 三选一", async () => {
+  it("三次拒收先永久保存三份解析稿，再将选中原稿整形", async () => {
     const events: string[] = [];
     const saved: NativeDeepReadParsedAttemptEvidenceInput[] = [];
     const response = geminiResponse(makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 4 }));
@@ -4320,38 +4432,141 @@ describe("门禁前解析稿持久化接线", () => {
         return defaults.writeParsedAttemptEvidence(input);
       }),
     });
-    const result = await runManhuaNativeDeepReadBatch(params, deps);
+    await runManhuaNativeDeepReadBatch(params, deps);
     expect(events).toEqual(["model", "raw", "parsed", "model", "raw", "parsed", "model", "raw", "parsed"]);
     expect(saved.map((row) => row.attemptNumber)).toEqual([1, 2, 3]);
     expect(new Set(saved.map((row) => row.callId)).size).toBe(3);
     expect(saved.every((row) => row.parsed.gateMarked === undefined)).toBe(true);
     expect(saved.every((row) => row.rawAttemptEvidenceObjectName.includes(`attempt${row.attemptNumber}`))).toBe(true);
     expect(deps.writeSegmentCache).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(deps.writeSegmentCache).mock.calls[0]![0].attemptSelection?.selectedAttemptNumber).toBe(1);
     expect(deps.invokeGlmStructuring).toHaveBeenCalledTimes(1);
-    expect(deps.selectAttemptWithQwen).toHaveBeenCalledTimes(1);
-    expect(result.episodes[0]!.result.advisories).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: "qwen_three_attempts_pick_one" }),
-    ]));
-    const cachedRaw = vi.mocked(deps.writeSegmentCache).mock.calls[0]![0].raw;
-    expect(cachedRaw.attemptSelection).toMatchObject({
-      status: "qwen_selected_after_three_attempts",
-      selectedAttemptNumber: 1,
-      selectedTemperature: 0.7,
-      selectedPassedGate: false,
+    expect(deps.selectAttemptWithQwen).not.toHaveBeenCalled();
+  });
+
+  it("三档选覆盖最好的一稿；落盘、最终快照和只重整形恢复不再重读视频", async () => {
+    const raws = [20, 40, 30].map(endSec => makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec }));
+    const deps = makeRunnerDeps({ postVertex: vi.fn()
+      .mockResolvedValueOnce(geminiResponse(raws[0]!))
+      .mockResolvedValueOnce(geminiResponse(raws[1]!))
+      .mockResolvedValueOnce(geminiResponse(raws[2]!)) });
+    const result = await runManhuaNativeDeepReadBatch(params, deps);
+    const entry = vi.mocked(deps.writeSegmentCache).mock.calls[0]![0];
+    expect(entry.attemptSelection).toMatchObject({ attemptedCount: 3, selectedAttemptNumber: 2 });
+    expect(entry.raw.shots).toEqual(raws[1]!.shots);
+    expect(entry.paidUsage.inputTokens).toBe(300_000);
+    expect(deps.postVertex).toHaveBeenCalledTimes(3);
+    expect(deps.selectAttemptWithQwen).not.toHaveBeenCalled();
+    expect(deps.invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    const sent = readRawSegmentsFromGlmPrompt(vi.mocked(deps.invokeGlmStructuring).mock.calls[0]![0].user);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.shots).toEqual(raws[1]!.shots);
+    expect(result.episodes[0]!.result.shotCount).toBeGreaterThan(0);
+    expect(result.episodes[0]!.result.structuredCardObjectName).toMatch(/structured-card/);
+    expect(deps.writeStructuredCard).toHaveBeenCalledTimes(1);
+    const saved = vi.mocked(deps.writeStructuredCard!).mock.calls[0]![0];
+    expect(saved.raw.shots).toEqual(raws[1]!.shots);
+    expect(saved.segmentEvidenceObjectNames).toEqual(result.episodes[0]!.result.segmentEvidenceObjectNames);
+
+    const resumed = makeRunnerDeps({ readSegmentCache: vi.fn(async () => ({ entry, generation: "1" })) });
+    const again = await runManhuaNativeDeepReadBatch({ ...params, structuringOnly: true }, resumed);
+    expect(resumed.postVertex).not.toHaveBeenCalled();
+    expect(resumed.prepareVideos).not.toHaveBeenCalled();
+    expect(resumed.invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(again.usage).toMatchObject({ inputTokens: 0, outputTokens: 0, costCny: 0 });
+    expect(again.episodes[0]!.result.shotCount).toBe(result.episodes[0]!.result.shotCount);
+  });
+
+  it("并发写回返回另一份合格canonical证据时，整形和provenance都采用存储真值", async () => {
+    const healthy = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    const deps = makeRunnerDeps({
+      postVertex: vi.fn(async () => geminiResponse(makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 20 }))),
+      writeSegmentCache: vi.fn(async entry => writeResultOf({ ...entry, raw: healthy, attemptSelection: undefined,
+        rawAttemptEvidenceObjectName: "manhua-template-learn/segment-evidence-raw/canonical/seg0-attempt1.json" })),
     });
+    const result = await runManhuaNativeDeepReadBatch(params, deps);
+    const sent = readRawSegmentsFromGlmPrompt(vi.mocked(deps.invokeGlmStructuring).mock.calls[0]![0].user);
+    expect(sent[0]!.shots).toEqual(healthy.shots);
+    expect(result.episodes[0]!.result.shotCount).toBe(12);
+    expect(deps.postVertex).toHaveBeenCalledTimes(3);
+    expect(deps.writeStructuredCard).not.toHaveBeenCalled();
+  });
+
+  it("原稿音轨段号有错时交整形修复，最终快照不得重新解析坏原稿", async () => {
+    const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 });
+    (raw.audioResolution as Array<{ chunkIndex: number }>)[0]!.chunkIndex = 99;
+    const base = makeGlmStructuringStub();
+    const deps = makeRunnerDeps({ postVertex: vi.fn(async () => geminiResponse(raw)),
+      invokeGlmStructuring: vi.fn(async (prompt) => {
+        const result = await base(prompt);
+        (result.raw.audioResolution as Array<{ chunkIndex: number }>)[0]!.chunkIndex = 0;
+        return result;
+      }) });
+    const result = await runManhuaNativeDeepReadBatch(params, deps);
+    expect(deps.postVertex).toHaveBeenCalledTimes(3);
+    expect(deps.invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(result.episodes[0]!.result.shotCount).toBe(12);
+    const saved = vi.mocked(deps.writeStructuredCard!).mock.calls[0]![0];
+    expect((saved.raw.audioResolution as Array<{ chunkIndex: number }>)[0]!.chunkIndex).toBe(0);
+    expect((vi.mocked(deps.writeSegmentCache).mock.calls[0]![0].raw.audioResolution as Array<{ chunkIndex: number }>)[0]!.chunkIndex).toBe(99);
+  });
+
+  it("多批整形使用真实最终产物落盘，候选期间不发空中间快照", async () => {
+    const segments = Array.from({ length: 6 }, (_, i) => ({ startSec: i * 60, endSec: (i + 1) * 60 }));
+    const snapshot = vi.fn();
+    const deps = makeRunnerDeps({ postVertex: vi.fn(async (body) => {
+      const request = body as { contents: Array<{ parts: Array<{ fileData?: { fileUri: string } }> }> };
+      const index = Number(/seg-(\d+)/.exec(request.contents[0]!.parts[0]!.fileData!.fileUri)?.[1]);
+      const segment = segments[index]!;
+      return geminiResponse(makeSegmentPayload({ segmentIndex: index, startSec: segment.startSec, endSec: index === 0 ? 20 : segment.endSec }));
+    }) });
+    const result = await runManhuaNativeDeepReadBatch({ ...params, episodes: [{ ...episode, segments, sourceDurationSec: 360 }],
+      onSegmentSnapshotCommitted: snapshot }, deps);
+    expect(deps.postVertex).toHaveBeenCalledTimes(8);
+    expect(deps.invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    expect(snapshot).not.toHaveBeenCalled();
+    expect(result.episodes[0]!.result.glmEvidence).toBeUndefined();
+    const final = vi.mocked(deps.writeStructuredCard!).mock.calls[0]![0];
+    expect(final.segmentEvidenceObjectNames).toHaveLength(6);
+    expect(final.raw.shots).toHaveLength(result.episodes[0]!.result.shotCount);
+    expect((final.raw.audioResolution as unknown[])).toHaveLength(6);
+    expect(result.episodes[0]!.result.structuredCardObjectName).toContain("structured-card");
+  });
+
+  it("选中原稿后整形丢光镜头仍拒收，保留缓存和三次读片用量", async () => {
+    const stub = makeGlmStructuringStub();
+    const deps = makeRunnerDeps({ postVertex: vi.fn(async () => geminiResponse(makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 20 }))),
+      invokeGlmStructuring: vi.fn(async (prompt) => {
+        const value = await stub(prompt); value.raw.shots = []; return value;
+      }) });
+    const error = await runManhuaNativeDeepReadBatch(params, deps).catch(error => error);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain("镜头留存率仅 0.0%");
+    expect(error.nativeDeepReadUsage.inputTokens).toBe(300_000);
+    expect(deps.writeSegmentCache).toHaveBeenCalledTimes(1);
+    expect(deps.postVertex).toHaveBeenCalledTimes(3);
+    expect(deps.writeStructuredCard).not.toHaveBeenCalled();
+  });
+
+  it("最终消费证据落盘失败直接停止，不重买读片或整形", async () => {
+    const deps = makeRunnerDeps({ postVertex: vi.fn(async () => geminiResponse(makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 20 }))),
+      writeStructuredCard: vi.fn(async () => { throw new Error("test final persistence failure"); }) });
+    await expect(runManhuaNativeDeepReadBatch(params, deps)).rejects.toThrow("test final persistence failure");
+    expect(deps.postVertex).toHaveBeenCalledTimes(3);
+    expect(deps.invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(deps.writeSegmentCache).toHaveBeenCalledTimes(1);
   });
 
   it("schema拒收前已保存解析稿且三发后仍必须选一份，语法坏JSON保留原始响应", async () => {
     const invalid = { ...makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 }), shots: "错误类型" };
     const deps = makeRunnerDeps({ postVertex: vi.fn(async () => geminiResponse(invalid)) as never });
-    await runManhuaNativeDeepReadBatch(params, deps);
+    await expect(runManhuaNativeDeepReadBatch(params, deps)).rejects.toThrow("schema");
     expect(deps.writeParsedAttemptEvidence).toHaveBeenCalledTimes(3);
     expect(deps.postVertex).toHaveBeenCalledTimes(3);
     expect(deps.waitForRetry).toHaveBeenCalledTimes(2);
-    expect(deps.selectAttemptWithQwen).toHaveBeenCalledTimes(1);
-    expect(deps.invokeGlmStructuring).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(deps.writeSegmentCache).mock.calls[0]![0].raw.attemptSelection)
-      .toMatchObject({ selectedAttemptNumber: 1 });
+    expect(deps.selectAttemptWithQwen).not.toHaveBeenCalled();
+    expect(deps.invokeGlmStructuring).not.toHaveBeenCalled();
+    expect(deps.writeSegmentCache).not.toHaveBeenCalled();
     const badJson = { status: 200, text: JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "{bad" }] } }] }) };
     const badDeps = makeRunnerDeps({ postVertex: vi.fn(async () => badJson) as never });
     await expect(runManhuaNativeDeepReadBatch(params, badDeps)).rejects.toThrow("没有返回可解析的 JSON");
@@ -4406,7 +4621,7 @@ describe("门禁前解析稿持久化接线", () => {
     expect(receipts.filter((row) => row.stage === "visual_model")).toEqual([]);
   });
 
-  it("MAX_TOKENS前缀单独存档并记录真实截断状态，不为证据补存重买", async () => {
+  it("MAX_TOKENS低覆盖原稿逐发存档，三次后交整形并保留截断状态", async () => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 20 });
     const saved: NativeDeepReadParsedAttemptEvidenceInput[] = [];
     const defaults = makeRunnerDeps();
@@ -4417,11 +4632,13 @@ describe("门禁前解析稿持久化接线", () => {
         return defaults.writeParsedAttemptEvidence(input);
       }),
     });
-    await runManhuaNativeDeepReadBatch(params, deps);
-    expect(saved).toHaveLength(1);
+    const result = await runManhuaNativeDeepReadBatch(params, deps);
+    expect(result.episodes[0]!.result.truncated).toBe(true);
+    expect(saved).toHaveLength(3);
     expect(saved[0]).toMatchObject({ finishReason: "MAX_TOKENS", truncated: true, parsed: raw });
     expect(saved[0]!.parsed).not.toHaveProperty("truncated");
-    expect(deps.postVertex).toHaveBeenCalledTimes(1);
+    expect(deps.postVertex).toHaveBeenCalledTimes(3);
+    expect(deps.invokeGlmStructuring).toHaveBeenCalledTimes(1);
   });
 
   it("GLM原文保存失败时不把已知Gemini用量冒充完整账单", async () => {
@@ -4505,23 +4722,26 @@ describe("参数契约冻结 0901：0.70→0.65→0.60 + thinkingLevel MEDIUM", 
 
 
 describe("生成前契约与实际门禁同源", () => {
-  it.each([1, 31, 120, 300, 319])("%s秒前置镜数保留20%%容差，区别参考值与硬线", lenSec => {
+  it.each([1, 31, 120, 300, 319])("%s秒前置镜数提示词参考值仍按10%%（进缓存指纹，不随门禁 15%% 变），区别参考值与硬线", lenSec => {
     const rule = resolveNativeDeepReadDensityContract(lenSec);
     expect(rule.referenceShots).toBe(Math.ceil(lenSec / 10));
-    expect(rule.minStoryShots).toBe(Math.ceil(Math.ceil(lenSec / 10) * 0.8));
-    expect(rule.maxAverageSec).toBe(12);
+    expect(rule.minStoryShots).toBe(Math.ceil(Math.ceil(lenSec / 10) * 0.9));
+    expect(rule.maxAverageSec).toBe(11);
     const prompt = buildGeminiNativeDeepReadSegmentPrompt({ episodeDurationSec: 1594,
       startSec: 319, endSec: 319 + lenSec, segmentIndex: 1, segmentCount: 5, hasAudio: true });
     const schema = buildNativeDeepReadResponseSchema({ startSec: 319, endSec: 319 + lenSec, segmentIndex: 1, hasAudio: true }) as any;
     expect(prompt).toContain(`story 至少 ${rule.minStoryShots} 条`);
     expect(schema.properties.shots.description).toContain(`story 至少 ${rule.minStoryShots} 条`);
-    expect(schema.properties.shots).toMatchObject({ type: "ARRAY", items: { type: "OBJECT" } });
-    expect(Object.keys(schema.properties.shots.items.properties)).toHaveLength(18);
-    expect(schema.properties.shots.items.description).toContain("重点镜（起止与任一 keyMoments.atSec 前后 6 秒有交集）按顺序完整填写以下18字段");
-    expect(schema.properties.shots.items.description).toContain("non_story_ad仅保留startSec、endSec、evidenceRole三个有内容的字段");
-    expect(schema.properties.shots.items.required).toEqual(["startSec", "endSec", "evidenceRole", "hintZh"]);
-    expect(schema.properties.shots.items.properties.evidenceRole.enum).toEqual(["story", "non_story_ad"]);
-    expect(schema.properties.shots.items.properties.startSec.description).toContain(`范围 319 至 ${319 + lenSec} 秒`);
+    expect(schema.properties.shots.type).toBe("ARRAY");
+    expect(schema.properties.shots.items.anyOf).toHaveLength(3);
+    const keyBranch = schema.properties.shots.items.anyOf[0];
+    expect(keyBranch.required).toHaveLength(6);
+    expect(Object.keys(keyBranch.properties)).toHaveLength(19);
+    expect(keyBranch.description).toContain("依据实际画面详写相关字段");
+    expect(schema.properties.shots.items.anyOf[2].properties.hintZh.type).toBe("NULL");
+    expect(schema.properties.shots.items.anyOf[1].required).toEqual(["startSec", "endSec", "evidenceRole", "detailLevel", "hintZh", "actionZh"]);
+    expect(keyBranch.properties.evidenceRole.enum).toEqual(["story"]);
+    expect(keyBranch.properties.startSec.description).toContain(`范围 319 至 ${319 + lenSec} 秒`);
     expect(schema.properties.keyMoments.items.properties.atSec.description).toContain(`范围 319 至 ${318.9 + lenSec} 秒`);
     expect(schema.properties.audioResolution.items.properties.chunkIndex.description).toContain("原分片序号 1");
     expect(schema.properties.audioResolution.items.properties.analysis.properties.audioTrack.items.properties.toSec.description).toContain(`本段局部整数秒，范围 0 至 ${lenSec} 秒`);
@@ -4571,11 +4791,12 @@ it.each([319.066667, 313.04])("实际%s秒素材的出站schema仅保留精简�
     fileUri: "gs://test-bucket/segment.mp4", fps: 12, prompt: "离线检查，不调用模型", segmentContext: context,
   }) as any;
   // 这是本次选择的精简请求契约，不是供应商支持字段的完整清单。
-  const allowed = new Set(["type", "format", "description", "nullable", "enum", "properties", "required", "items", "propertyOrdering"]);
+  const allowed = new Set(["type", "format", "description", "nullable", "enum", "properties", "required", "items", "propertyOrdering", "anyOf"]);
   const walk = (node: Record<string, any>) => {
     for (const key of Object.keys(node)) expect(allowed.has(key), `出站schema多出${key}`).toBe(true);
     for (const child of Object.values(node.properties || {})) walk(child as Record<string, any>);
     if (node.items) walk(node.items);
+    if (node.anyOf) node.anyOf.forEach(walk);
   };
   walk(request.generationConfig.responseSchema);
   expect(request.generationConfig.responseSchema.properties.audioResolution.description).toContain("包含且仅包含1个分析对象");
@@ -4595,7 +4816,7 @@ describe("逐镜动态观察的生产与消费", () => {
     const context = { episodeIndex: 1, segmentIndex: 0, startSec: 0, endSec: 60, hasAudio: false, raw };
     expect(() => evaluateNativeDeepReadSegmentAcceptance(context)).not.toThrow();
     expect(() => evaluateNativeDeepReadSegmentAcceptance({ ...context, requireShotObservations: true }))
-      .toThrow("hintZh应填写本镜非空观察");
+      .toThrow("hintZh应填写本镜实际观察");
     expect(nativeDeepReadSegmentMeetsThreeItemLine({ ...context, requireShotObservations: true })).toBe(false);
     expect(() => assertNativeDeepReadShotObservations({ shots: [
       { startSec: 0, endSec: 3, evidenceRole: "non_story_ad", hintZh: null },
@@ -4647,7 +4868,7 @@ describe("逐镜动态观察的生产与消费", () => {
     });
     const deps = makeRunnerDeps({ postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
       invokeGlmStructuring: invokeGlmStructuring as never });
-    await expect(runManhuaNativeDeepReadBatch({ segmentCacheSeriesKey: "hint-test",
+    await expect(runManhuaNativeDeepReadBatch({ segmentCacheSeriesKey: "hint-test", structuringModel: "qwen3.8-max",
       episodes: [{ episodeIndex: 1, segments, cacheSourceDigest: "a".repeat(64),
       sourceDurationSec: 60, resolveNodes: async () => [] }] }, deps)).rejects.toThrow("hintZh丢失");
     expect(deps.postVertex).toHaveBeenCalledTimes(1);
@@ -4709,7 +4930,8 @@ describe("0905 · 整形 JSON Schema（Qwen strict）", () => {
     expect(schema.required).toContain("shots");
     for (const key of ["reusableZh", "genPromptHintZh"]) {
       expect(schema.required).toContain(key);
-      expect(schema.properties[key]).toMatchObject({ type: "string", minLength: 1, pattern: "\\S" });
+      expect(schema.properties[key]).toMatchObject({ type: "string", minLength: 2 });
+      expect(schema.properties[key]).not.toHaveProperty("pattern");
     }
     expect(JSON.stringify(schema)).not.toMatch(/"type":"(OBJECT|ARRAY|STRING|NUMBER|INTEGER)"/);
   });
@@ -4738,16 +4960,17 @@ describe("0905 · 整形按批次序号分流链", () => {
     expect(nativeDeepReadStructuringGatewayOrder("structuring_chain", 1)[0]).toBe("openrouter");
   });
 
-  it("整形模型开关：qwen3.8-max / 缺省 → Qwen 首发链；glm-5.3 → GLM 首发链；started 标签跟着开关走", async () => {
+  it("整形模型开关：qwen3.8-max → Qwen 首发链；glm-5.3 / 缺省 → GLM 首发链；started 标签跟着开关走", async () => {
     const m = await import("./manhuaNativeDeepReadRunner");
     expect(m.nativeDeepReadStructuringPolicyForModel("qwen3.8-max")).toBe("structuring_chain_qwen_first");
-    expect(m.nativeDeepReadStructuringPolicyForModel(undefined)).toBe("structuring_chain_qwen_first");
+    expect(m.nativeDeepReadStructuringPolicyForModel(undefined)).toBe("structuring_chain");
     expect(m.nativeDeepReadStructuringPolicyForModel("glm-5.3")).toBe("structuring_chain");
     expect(m.nativeDeepReadStructuringStartedLabel("structuring_chain_qwen_first")).toMatch(/^Qwen3\.8-Max/);
     expect(m.nativeDeepReadStructuringStartedLabel("structuring_chain")).not.toMatch(/^Qwen3\.8-Max/);
     // GLM 链的兜底档必须含 Qwen 两档，Qwen 链的兜底档必须含 GLM 两档（两档败切对方）
-    expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain", 0)).toEqual(["openrouter", "evolink_glm", "plan_bj_qwen", "plan_sg_qwen"]);
-    expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain", 1)).toEqual(["openrouter", "evolink_glm", "plan_sg_qwen", "plan_bj_qwen"]);
+    // 0906 用户令「不走 Qwen」：GLM 链只有 OpenRouter → EvoLink
+    expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain", 0)).toEqual(["openrouter", "evolink_glm"]);
+    expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain", 1)).toEqual(["openrouter", "evolink_glm"]);
     expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain_qwen_first", 0).slice(1)).toEqual(["evolink_glm", "openrouter"]);
   });
 
@@ -4864,7 +5087,7 @@ describe("0906 摘要必填跨路径回归", () => {
   });
   it("缺栏整形缓存直接从对应原稿恢复，不删除缓存、不重整形", async () => {
     const readStructuredBatchCache = vi.fn(async (input: { rawSegments: Array<Record<string, unknown>> }) => ({
-      raw: { answer: JSON.stringify({ ...deterministicallyMergeNativeDeepReadRawSegments(input.rawSegments), reusableZh: undefined, genPromptHintZh: " " }) },
+      raw: { answer: JSON.stringify({ ...deterministicallyMergeNativeDeepReadRawSegments(input.rawSegments), ...validGeneratedAnalysisFixture, reusableZh: undefined, genPromptHintZh: " " }) },
     }));
     const deps = makeRunnerDeps({ postVertex: makeSuccessfulEpisodePostVertex(twoSegmentEpisode.segments) as never, readStructuredBatchCache: readStructuredBatchCache as never });
     const result = await runManhuaNativeDeepReadBatch({ episodes: [{ ...twoSegmentEpisode, cacheSourceDigest: "a".repeat(64) }], segmentCacheSeriesKey: "summary_cache_test" }, deps);
@@ -4872,5 +5095,152 @@ describe("0906 摘要必填跨路径回归", () => {
     expect(result.episodes[0]!.result.genPromptHintZh).toContain("景别递进+顶光");
     expect(deps.invokeGlmStructuring).not.toHaveBeenCalled();
     expect(deps.remove).not.toHaveBeenCalledWith(expect.objectContaining({ objectName: expect.stringContaining("structured") }));
+  });
+});
+
+describe("三分支必填结构与实际时间类型", () => {
+  const context = { episodeIndex: 1, segmentIndex: 0, startSec: 0, endSec: 6, hasAudio: false, requireShotObservations: true, requireShotDetailLevels: true };
+  const full = () => {
+    const raw = makeSegmentPayload({ ...context });
+    raw.keyMoments = [{ atSec: 3, kindZh: "剧情", noteZh: "测试关键动作" }];
+    for (const shot of raw.shots as Array<Record<string, unknown>>) shot.detailLevel = "key";
+    return raw;
+  };
+  it("先记录时间与实际内容，保留详简分支但不强迫18项全写", () => {
+    const schema = buildNativeDeepReadResponseSchema(context) as any;
+    for (const branch of schema.properties.shots.items.anyOf) {
+      expect(branch.propertyOrdering.slice(0, 4)).toEqual(["startSec", "endSec", "evidenceRole", "detailLevel"]);
+    }
+    const prompt = buildGeminiNativeDeepReadSegmentPrompt({ episodeDurationSec: 6, ...context, segmentCount: 1 });
+    expect(prompt).toContain("实际相同的呈现方式可以重复");
+    expect(prompt).toContain("覆盖100%");
+    expect(prompt).not.toMatch(/完整生成本镜18项|所有必填描述非空|看不清时|至少覆盖.*90%/);
+    expect(prompt).not.toContain("每条shots先输出detailLevel");
+    expect(prompt).not.toMatch(/允许.{0,8}[5五]|容差|容忍/);
+  });
+  it("重试反馈列出画面缺口，不再把可选字段缺失当作补读要求", () => {
+    const feedback = buildNativeDeepReadPrimaryRepairFeedback({ startSec: 0, endSec: 60, raw: {
+      keyMoments: [{ atSec: 47.5 }], shots: [{ startSec: 0, endSec: 41.5, evidenceRole: "story", hintZh: "观察", actionZh: "动作" },
+        { startSec: 42.6, endSec: 44.8, evidenceRole: "story", hintZh: "观察", actionZh: "动作" }],
+    } })!;
+    expect(feedback).toContain("画面时间轴未记录41.5–42.6秒，44.8–60秒");
+    expect(feedback).toContain("全片绝对秒");
+    expect(feedback).not.toContain("lightingZh");
+    expect(feedback).not.toMatch(/允许|容差|90%|不合格/);
+  });
+  it("剧情保留五项基础内容与标记，详简都允许可选细节，广告保持占位", () => {
+    const schema = buildNativeDeepReadResponseSchema(context) as any;
+    const branches = schema.properties.shots.items.anyOf;
+    expect(branches.map((branch: any) => branch.properties.detailLevel.enum)).toEqual([["key"], ["brief"], ["ad"]]);
+    expect(branches.map((branch: any) => branch.required.length)).toEqual([6, 6, 5]);
+    for (const branch of branches.slice(0, 2)) {
+      expect(branch.required).toEqual(["startSec", "endSec", "evidenceRole", "detailLevel", "hintZh", "actionZh"]);
+      expect(Object.keys(branch.properties)).toHaveLength(19);
+    }
+    expect(branches[2].required).toEqual(Object.keys(branches[2].properties));
+    expect(branches[0].properties.hintZh.nullable).toBe(false);
+    expect(branches[2].properties.hintZh.type).toBe("NULL");
+  });
+  it("基础字段缺失拒收，可选描述缺省或为空均不强迫补写", () => {
+    const good = full();
+    expect(evaluateNativeDeepReadSegmentAcceptance({ ...context, raw: good }).retry).toBe(false);
+    for (const field of Object.keys(NATIVE_DEEP_READ_RESPONSE_SCHEMA.properties.shots.items.properties)) {
+      const raw = structuredClone(good);
+      delete (raw.shots as Array<Record<string, unknown>>)[0]![field];
+      if (["startSec", "endSec", "evidenceRole", "hintZh", "actionZh"].includes(field)) {
+        expect(() => evaluateNativeDeepReadSegmentAcceptance({ ...context, raw }), field).toThrow();
+      } else {
+        expect(evaluateNativeDeepReadSegmentAcceptance({ ...context, raw }).retry, field).toBe(false);
+        expect((raw.shots as Array<Record<string, unknown>>)[0]![field]).toBeUndefined();
+        if (field !== "unitTypeZh") {
+          (raw.shots as Array<Record<string, unknown>>)[0]![field] = "";
+          expect(evaluateNativeDeepReadSegmentAcceptance({ ...context, raw }).retry, field).toBe(false);
+        }
+      }
+    }
+  });
+  it("详简不增加字段非空要求，广告不能标为剧情分支", () => {
+    const wrongKey = full();
+    (wrongKey.shots as any[])[0].detailLevel = "brief";
+    expect(evaluateNativeDeepReadSegmentAcceptance({ ...context, raw: wrongKey }).retry).toBe(false);
+    delete (wrongKey.shots as any[])[0].lightingZh;
+    expect(evaluateNativeDeepReadSegmentAcceptance({ ...context, raw: wrongKey }).retry).toBe(false);
+    expect(() => assertNativeDeepReadShotDetailLevels({ shots: [{ startSec: 0, endSec: 6, evidenceRole: "non_story_ad", detailLevel: "key", hintZh: null }] })).toThrow("应为ad");
+  });
+  it("普通镜额外写重点细节在新响应和缓存复验均通过，保留原文", () => {
+    const detailedBrief = full(); detailedBrief.keyMoments = [];
+    const original = structuredClone(detailedBrief);
+    expect(evaluateNativeDeepReadSegmentAcceptance({ ...context, raw: detailedBrief }).retry).toBe(false);
+    expect(nativeDeepReadSegmentMeetsThreeItemLine({ ...context, requireShotDetailLevels: false, raw: detailedBrief })).toBe(true);
+    expect(detailedBrief).toEqual(original);
+  });
+  it("新响应缺标记拒绝；历史无标记或缺可选描述可复用", () => {
+    const raw = full();
+    for (const shot of raw.shots as any[]) delete shot.detailLevel;
+    expect(() => evaluateNativeDeepReadSegmentAcceptance({ ...context, raw })).toThrow("detailLevel 缺失");
+    expect(evaluateNativeDeepReadSegmentAcceptance({ ...context, requireShotDetailLevels: false, raw }).retry).toBe(false);
+    delete (raw.shots as any[])[0].lightingZh;
+    expect(evaluateNativeDeepReadSegmentAcceptance({ ...context, requireShotDetailLevels: false, raw }).retry).toBe(false);
+  });
+  it("简写镜仅5项内容、广告仅分类时间和null观察可通过", () => {
+    const brief = makeSegmentPayload(context);
+    brief.shots = (brief.shots as any[]).map(shot => ({ detailLevel: "brief", startSec: shot.startSec, endSec: shot.endSec, evidenceRole: "story", hintZh: shot.hintZh, actionZh: shot.actionZh }));
+    expect(evaluateNativeDeepReadSegmentAcceptance({ ...context, raw: brief }).retry).toBe(false);
+    const briefShots = brief.shots as Array<Record<string, unknown>>;
+    const ad = { ...brief, shots: [{ detailLevel: "ad", startSec: 0, endSec: 1, evidenceRole: "non_story_ad", hintZh: null }, { ...briefShots[0], startSec: 1 }, ...briefShots.slice(1)] };
+    expect(evaluateNativeDeepReadSegmentAcceptance({ ...context, raw: ad }).retry).toBe(false);
+  });
+  it("全部历史指纹和整形Schema保持字节身份，新请求使用新指纹", async () => {
+    const input = { sourceDigest: "a".repeat(64), episodeIndex: 1, episodeDurationSec: 1122, segment: { startSec: 281, endSec: 562 }, segmentIndex: 1, segmentCount: 4, hasAudio: true, videoFps: 10 };
+    expect(nativeDeepReadSegmentCacheFingerprint({ ...input, legacyBeforeCoverage0906: true })).toBe("f3872c24c83082deae199217143260d47944cb496224f89afa60af382b666ea3");
+    expect(nativeDeepReadSegmentCacheFingerprint({ ...input, legacyBeforeExplicitShotWindows0906: true })).toBe("6f637b3628b5b7e919456911caa9789fd5b5e55e3d539458990e3d42a6be6bb6");
+    expect(nativeDeepReadSegmentCacheFingerprint({ ...input, legacyBeforeRequiredBranches0906: true })).toBe("ce7d5593718e491e66b24c4b9389f8719006557e376a0071c76b10a1a52d6434");
+    expect(nativeDeepReadSegmentCacheFingerprint({ ...input, legacyBeforeStrict0906: true })).toBe("7e41253732e877823905f0d834f8eacd9c83e8c663cd0623bb3716a9230ee47f");
+    expect(nativeDeepReadSegmentCacheFingerprint(input)).not.toBe("ce7d5593718e491e66b24c4b9389f8719006557e376a0071c76b10a1a52d6434");
+    const { nativeDeepReadStructuringJsonSchema } = await import("./manhuaNativeDeepReadRunner");
+    expect(createHash("sha256").update(JSON.stringify(nativeDeepReadStructuringJsonSchema())).digest("hex")).toBe("c343b78c17e87ecd0679cac4fa93a9a9dee5f6a339d6e65fa4a48819a7ab7ed0");
+  });
+});
+
+
+describe("音画覆盖补读与实测字数上限", () => {
+  it("局部声音与绝对画面缺口分别标注，重叠和越界不能增加覆盖", () => {
+    const raw = { shots: [{ startSec: 250, endSec: 305 }, { startSec: 300, endSec: 305 }, { startSec: 310, endSec: 330 }],
+      audioResolution: [{ chunkIndex: 3, analysis: { audioTrack: [{ fromSec: -5, toSec: 10 }, { fromSec: 0, toSec: 10 }] } }] };
+    const feedback = buildNativeDeepReadPrimaryRepairFeedback({ raw, startSec: 300, endSec: 320, hasAudio: true, segmentIndex: 3 });
+    expect(feedback).toContain("画面时间轴未记录305–310秒（全片绝对秒）");
+    expect(feedback).toContain("音轨时间轴未记录10–20秒（本段局部秒，0秒对应全片300秒）");
+    expect(feedback).not.toMatch(/90%|18项|缺字段|lightingZh/);
+  });
+  it("空响应仍能反馈整段音画缺口，无音轨素材不产生声音补读", () => {
+    const input = { raw: {}, startSec: 281, endSec: 562 };
+    expect(buildNativeDeepReadPrimaryRepairFeedback({ ...input, hasAudio: true })).toContain("音轨时间轴未记录0–281秒");
+    expect(buildNativeDeepReadPrimaryRepairFeedback({ ...input, hasAudio: false })).not.toContain("音轨时间轴未记录");
+  });
+  it("错误音轨分片身份不冒充当前分片已听完", () => {
+    const raw = { shots: [{ startSec: 281, endSec: 562 }], audioResolution: [{ chunkIndex: 0, analysis: { audioTrack: [{ fromSec: 0, toSec: 281 }] } }] };
+    expect(buildNativeDeepReadPrimaryRepairFeedback({ raw, startSec: 281, endSec: 562, hasAudio: true, segmentIndex: 1 }))
+      .toContain("音轨时间轴未记录0–281秒");
+  });
+  it("可选描述缺省不制造补读请求，不填充原始证据", () => {
+    const raw = { keyMoments: [{ atSec: 3 }], shots: [{ startSec: 0, endSec: 6, evidenceRole: "story", hintZh: "男子站在门边", actionZh: "男子保持站立" }] };
+    const before = structuredClone(raw);
+    expect(buildNativeDeepReadPrimaryRepairFeedback({ raw, startSec: 0, endSec: 6, hasAudio: false })).toBeUndefined();
+    expect(raw).toEqual(before);
+  });
+  it("原有14项字数上限逐项保留，首发重试都不带内容非空和差异化强迫", () => {
+    const caps = { hintZh: 80, compositionZh: 80, cameraMoveZh: 80, blockingZh: 70, bodyActionZh: 70, limbPropActionZh: 70,
+      relationshipReactionZh: 60, actionZh: 60, microExpressionZh: 58, gazeBreathZh: 58, lightingZh: 58, transitionInZh: 50, shotSizeZh: 28, angleZh: 28 };
+    const context = { startSec: 0, endSec: 60, segmentIndex: 0, hasAudio: true };
+    const schema = buildNativeDeepReadResponseSchema(context) as any;
+    for (const branch of schema.properties.shots.items.anyOf.slice(0, 2)) {
+      for (const [field, cap] of Object.entries(caps)) expect(branch.properties[field].description, field).toContain(`≤${cap}字`);
+    }
+    for (const rejectedReasonZh of [undefined, "音轨时间轴未记录45–60秒"]) {
+      const prompt = buildGeminiNativeDeepReadSegmentPrompt({ ...context, episodeDurationSec: 60, segmentCount: 1, rejectedReasonZh });
+      expect(prompt).toContain("覆盖100%");
+      expect(prompt).not.toMatch(/18字段|18 字段|18项|看不清时|未入画时明确|无法辨认时明确|逐字相同|雷同描述|至少覆盖.*90%/);
+      expect(JSON.stringify(schema)).not.toMatch(/18项内容|18字段逐项非空|至少覆盖.*90%/);
+    }
   });
 });

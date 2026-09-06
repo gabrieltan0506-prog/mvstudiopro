@@ -1,3 +1,7 @@
+import { mergeNativeProposalListAndDetail } from "@/lib/manhuaLearnResultUi";
+import { NATIVE_REPORT_THEME_OPTIONS, type NativeReportThemeChoice } from "../../../shared/manhuaNativeReportThemeChoice";
+import { ManhuaRestructureControl } from "@/components/ManhuaRestructureControl";
+import { buildManhuaRestructureParams } from "@/lib/manhuaRestructure";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
@@ -2575,6 +2579,8 @@ export default function PlatformPage() {
   const [manhuaLearnReadModel, setManhuaLearnReadModel] = useState<ManhuaNativeDeepReadModelId>(MANHUA_NATIVE_DEEP_READ_MODEL);
   /** 0905 整形开关：GLM-5.3 / Qwen3.8-Max 首发，另一家兜底 */
   const [manhuaLearnStructuringModel, setManhuaLearnStructuringModel] = useState<ManhuaNativeStructuringModelId>(MANHUA_NATIVE_STRUCTURING_MODEL);
+  const [manhuaRestructureBusy, setManhuaRestructureBusy] = useState(false);
+  const manhuaRestructureBusyRef = useRef(false);
   const retireLearnEpisodeMutation =
     trpc.manhuaViralTemplate.retireLearnSourceEpisode.useMutation();
   const renameLearnSeriesMutation =
@@ -3284,8 +3290,13 @@ export default function PlatformPage() {
     manhuaReportDownloadUntilRef.current = Date.now() + 8_000;
     window.location.assign(url);
   }, []);
-  const exportManhuaEpisodeReport = useCallback(
-    async (seriesKey: string, episodeIndex: number) => {
+  const [manhuaReportTarget, setManhuaReportTarget] = useState<{ seriesKey: string; episodeIndex: number } | null>(null);
+  const [manhuaReportTheme, setManhuaReportTheme] = useState<NativeReportThemeChoice>("auto");
+  const exportManhuaEpisodeReport = useCallback((seriesKey: string, episodeIndex: number) => {
+    setManhuaReportTarget({ seriesKey, episodeIndex });
+  }, []);
+  const downloadManhuaEpisodeReport = useCallback(
+    async (seriesKey: string, episodeIndex: number, themeChoice: NativeReportThemeChoice) => {
       setManhuaEpisodeExportPending(episodeIndex);
       // 0905 用户令：不再预开空白分页。签名网址带 attachment，当前页直接 assign 即触发下载、页面不跳走，
       // 也不依赖弹窗许可（用户 0905 实测：空白页弹出但下载没有发生）。
@@ -3293,11 +3304,11 @@ export default function PlatformPage() {
         // 0905 用户实测：入库写卡的同一时刻点导出会撞到对象刚换代而失败——等 3 秒自动重试一次
         let report: Awaited<ReturnType<typeof renderEpisodeReportMutation.mutateAsync>>;
         try {
-          report = await renderEpisodeReportMutation.mutateAsync({ seriesKey, episodeIndex });
+          report = await renderEpisodeReportMutation.mutateAsync({ seriesKey, episodeIndex, themeChoice });
         } catch (firstError) {
           await new Promise((resolve) => setTimeout(resolve, 3_000));
           try {
-            report = await renderEpisodeReportMutation.mutateAsync({ seriesKey, episodeIndex });
+            report = await renderEpisodeReportMutation.mutateAsync({ seriesKey, episodeIndex, themeChoice });
           } catch {
             throw firstError;
           }
@@ -3536,14 +3547,19 @@ export default function PlatformPage() {
       retry: false,
     },
   );
+  // 同一卡的分片进度/整形结果更新后，仅刷新当前详情，避免轮询所有大卡。
+  const selectedProposalVersion = selectedManhuaProposalRow
+    ? JSON.stringify([selectedManhuaProposalRow.id, selectedManhuaProposalRow.updatedAt, selectedManhuaProposalRow.nativeProgress])
+    : "";
+  useEffect(() => {
+    if (!selectedManhuaProposalRow?.id || trendInsightTab !== "ai_manhua"
+      || !(hasSupervisorOpsAccess || ownerTemplateOptimizeAllowed)) return;
+    void trpcUtils.manhuaViralTemplate.getProposalDetail.invalidate({ id: selectedManhuaProposalRow.id });
+  }, [selectedProposalVersion, selectedManhuaProposalRow?.id, trendInsightTab, hasSupervisorOpsAccess, ownerTemplateOptimizeAllowed, trpcUtils]);
   const selectedManhuaProposal = useMemo(() => {
     if (!selectedManhuaProposalRow) return null;
     const detail = manhuaProposalDetailQuery.data?.item;
-    type ProposalDetail = NonNullable<typeof detail>;
-    const merged: typeof selectedManhuaProposalRow & Partial<ProposalDetail> = detail && detail.id === selectedManhuaProposalRow.id
-      ? { ...selectedManhuaProposalRow, ...detail }
-      : { ...selectedManhuaProposalRow };
-    return merged;
+    return mergeNativeProposalListAndDetail(selectedManhuaProposalRow, detail);
   }, [selectedManhuaProposalRow, manhuaProposalDetailQuery.data?.item]);
   useEffect(() => {
     if (!pendingManhuaViralProposals.length) {
@@ -3651,6 +3667,40 @@ export default function PlatformPage() {
       setManhuaLearnControlBusy(null);
     }
   }, [manhuaLearnControlBusy, refreshManhuaLearnServerJobs]);
+
+  const restructureManhuaEpisode = useCallback(async (job: ManhuaLearnServerJob, episodeIndex: number, model: ManhuaNativeStructuringModelId) => {
+    if (manhuaRestructureBusyRef.current || !ownerTemplateOptimizeAllowed || !user?.id) return;
+    const label = model === "glm-5.3" ? "GLM 5.3" : "Qwen 3.8 Max";
+    if (!window.confirm(`使用 ${label} 重新整形第 ${episodeIndex} 集？先停止原任务，只复用已保存的读片 JSON；缺片会停止，不重新读视频。新整形单独计费，旧调用可能已有费用，结果仍需批准入库。`)) return;
+    const ownerKey = manhuaLearnUserKey;
+    manhuaRestructureBusyRef.current = true;
+    setManhuaRestructureBusy(true);
+    try {
+      const params = buildManhuaRestructureParams(job, episodeIndex, model);
+      if (job.status === "running" || job.status === "queued") {
+        await cancelManhuaLearnServerJob(job.jobId);
+        await pollJobUntilTerminal(job.jobId, { maxWaitMs: 60_000, intervalMs: 2500 });
+      }
+      if (manhuaLearnUserKeyRef.current !== ownerKey) return;
+      await createJob({ type: "video", userId: String(user.id), input: { action: "manhua_template_learn", params } });
+      if (manhuaLearnUserKeyRef.current !== ownerKey) return;
+      setManhuaLearnStructuringModel(model);
+      writeManhuaLearnStructuringModel(ownerKey, model);
+      toast.success(`第 ${episodeIndex} 集仅重新整形已入队`, { description: "只使用已保存的 JSON，进度在实时任务中查看。" });
+      try {
+        await refreshManhuaLearnServerJobs();
+      } catch (error) {
+        console.warn("[manhua-learn] 已入队，任务列表暂未刷新", error);
+        if (manhuaLearnUserKeyRef.current === ownerKey) toast.info("任务已入队，列表暂未刷新，请稍后查看");
+      }
+    } catch (error) {
+      if (manhuaLearnUserKeyRef.current !== ownerKey) return;
+      toast.error("未能开始重新整形", { description: sanitizePlatformUserMessage(error instanceof Error ? error.message : String(error)) });
+    } finally {
+      manhuaRestructureBusyRef.current = false;
+      setManhuaRestructureBusy(false);
+    }
+  }, [manhuaRestructureBusy, ownerTemplateOptimizeAllowed, user?.id, manhuaLearnUserKey, refreshManhuaLearnServerJobs]);
 
   const stopFocusedManhuaLearnJob = useCallback(async () => {
     const jobId = focusedManhuaLearnServerJob?.jobId || focusedManhuaLearnBasketItem?.jobId;
@@ -12126,6 +12176,7 @@ export default function PlatformPage() {
                       {manhuaLearnBusyKey ? "处理中…" : "继续学这部 · 从断点续跑"}
                     </button>
                   ) : null}
+                  {ownerTemplateOptimizeAllowed && <ManhuaRestructureControl job={job} disabled={manhuaRestructureBusy || Boolean(manhuaLearnControlBusy)} onRestructure={(target, episode, model) => void restructureManhuaEpisode(target, episode, model)} />}
                   <span className="text-[10px] text-white/45">已落盘内容与静帧不会删除</span>
                 </div>
               </div>
@@ -12137,6 +12188,31 @@ export default function PlatformPage() {
   return (
     <div className="min-h-screen bg-transparent text-[#f7f2ff]">
       <style>{`@keyframes pulseHighlight{0%,95%,100%{box-shadow:none}96%{box-shadow:0 0 0 2px rgba(73,230,255,0.7),0 0 24px rgba(73,230,255,0.3)}98%{box-shadow:0 0 0 3px rgba(127,103,255,0.8),0 0 32px rgba(127,103,255,0.4)}}@keyframes mvspPlatformOrb{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(12px,-10px) scale(1.07)}}@keyframes coverGenWaitCarouselProgress{from{transform:scaleX(0)}to{transform:scaleX(1)}}@keyframes platformCarouselProg{from{transform:scaleX(0)}to{transform:scaleX(1)}}@keyframes platformCarouselGlow{0%,100%{opacity:0.4}50%{opacity:0.92}}`}</style>
+
+      <Dialog open={Boolean(manhuaReportTarget)} onOpenChange={(open) => { if (!open) setManhuaReportTarget(null); }}>
+        <DialogContent className="max-w-md border-white/15 bg-[#10121c] text-white">
+          <DialogHeader>
+            <DialogTitle>选择报告模板</DialogTitle>
+            <DialogDescription className="text-white/60">第 {manhuaReportTarget?.episodeIndex} 集 · 选择本次下载的版式配色</DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-2" role="group" aria-label="报告模板">
+            {NATIVE_REPORT_THEME_OPTIONS.map((theme) => (
+              <button key={theme.id} type="button" aria-pressed={manhuaReportTheme === theme.id}
+                onClick={() => setManhuaReportTheme(theme.id)}
+                className={`flex items-center gap-3 rounded-xl border p-3 text-left text-sm transition ${manhuaReportTheme === theme.id ? "border-cyan-300 bg-cyan-300/10" : "border-white/15 hover:border-white/40"}`}>
+                <span className="h-8 w-8 rounded-lg border border-white/20" style={{ backgroundColor: theme.color }} />
+                {theme.name}
+              </button>
+            ))}
+          </div>
+          <button type="button" className="rounded-lg bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-200" onClick={() => {
+            if (!manhuaReportTarget) return;
+            const target = manhuaReportTarget;
+            setManhuaReportTarget(null);
+            void downloadManhuaEpisodeReport(target.seriesKey, target.episodeIndex, manhuaReportTheme);
+          }}>生成并下载 HTML</button>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={fullAnalysisConfirmOpen} onOpenChange={setFullAnalysisConfirmOpen}>
         <DialogContent className="max-w-lg border border-[#49e6ff]/25 bg-[#0a0618] text-white sm:max-w-lg">
@@ -13049,7 +13125,7 @@ export default function PlatformPage() {
                                     onClick={async () => {
                                       if (
                                         !window.confirm(
-                                          `放行重学第${row.episodeIndex}集？旧学习卡将退位存档（可审计不丢失），重学会重新计费。`,
+                                          `放行重学第${row.episodeIndex}集？旧学习卡及对应已入库模板将一并移除并归档；原始学习证据保留。重学会重新计费。`,
                                         )
                                       )
                                         return;
@@ -13059,7 +13135,7 @@ export default function PlatformPage() {
                                           url: manhuaPasteUrlDebounced,
                                           episodeIndex: row.episodeIndex,
                                         });
-                                        await manhuaLearnDupQuery.refetch();
+                                        await Promise.all([manhuaLearnDupQuery.refetch(), manhuaViralProposalsQuery.refetch(), manhuaViralApprovedQuery.refetch()]);
                                         toast.success(
                                           `第${row.episodeIndex}集已放行，现在可以重新学习`,
                                         );
@@ -13079,7 +13155,7 @@ export default function PlatformPage() {
                                 ? ` · 另有抽帧（一代）产物 ${manhuaLearnDupQuery.data.framesDigestCount} 条`
                                 : ""}
                               <div className="mt-0.5 text-[10px] text-amber-100/70">
-                                三代=当前链路一般无需重学；旧代想重学点「放行重学」——旧卡退位存档、集位让出、重学重新计费。抽帧（一代）产物不占集位，无需放行。
+                                三代=当前链路一般无需重学；旧代想重学点「放行重学」——旧学习卡和对应已入库模板一并移除并归档，原始学习证据保留；重学重新计费。抽帧（一代）产物不占集位，无需放行。
                               </div>
                             </div>
                           ) : null}
@@ -13199,6 +13275,7 @@ export default function PlatformPage() {
                                 );
                               })}
                             </select>
+
                             <button
                               type="button"
                               disabled={!manhuaLearnFocusSeriesKey || Boolean(manhuaLearnControlBusy)}
@@ -13500,6 +13577,7 @@ export default function PlatformPage() {
                                 : "本轮学习未完成，已保留成功进度；请稍后重试。"}
                             </p>
                           ) : null}
+                          {ownerTemplateOptimizeAllowed && focusedManhuaLearnServerJob && <ManhuaRestructureControl key={focusedManhuaLearnServerJob.jobId} job={focusedManhuaLearnServerJob} disabled={manhuaRestructureBusy || Boolean(manhuaLearnControlBusy)} onRestructure={(target, episode, model) => void restructureManhuaEpisode(target, episode, model)} />}
                           <div className="flex flex-wrap gap-2 text-[10px]">
                             <button
                               type="button"
@@ -14414,13 +14492,16 @@ export default function PlatformPage() {
                               onClick={() => {
                                 const target = selectedManhuaProposal;
                                 if (!target) return;
-                                if (!window.confirm(`删除待审卡「${target.nameZh}」？只删这张未入库的卡，已入库模板与学习产物不动。`)) return;
+                                const nativeEpisode = /^tpl_native_[A-Za-z0-9_-]+_ep\d{3}$/.test(target.id);
+                                if (!window.confirm(nativeEpisode
+                                  ? `删除学习卡「${target.nameZh}」及对应已入库模板？删除前会归档，原始学习证据与模型回执保留。`
+                                  : `删除待审卡「${target.nameZh}」？只删这张未入库的卡，已入库模板与学习产物不动。`)) return;
                                 void discardManhuaViralProposalMutation
                                   .mutateAsync({ id: target.id, confirmDiscard: true })
                                   .then(async (res) => {
-                                    toast.success(`已删除待审卡：${res.removed.nameZh}`);
+                                    toast.success(`已删除${nativeEpisode ? "学习卡及对应模板" : "待审卡"}：${res.removed.nameZh}`);
                                     setSelectedManhuaProposalId("");
-                                    await manhuaViralProposalsQuery.refetch();
+                                    await Promise.all([manhuaViralProposalsQuery.refetch(), manhuaViralApprovedQuery.refetch(), manhuaLearnDupQuery.refetch()]);
                                   })
                                   .catch((error) => {
                                     toast.error(sanitizePlatformUserMessage(error instanceof Error ? error.message : String(error)));

@@ -1,3 +1,4 @@
+import { hasNativeAttemptSelection, nativeAttemptRawSha256 } from "./manhuaNativeDeepReadAttemptSelection.js";
 /**
  * 协调器行为。全部注入假实现，**不调用任何付费接口**。
  *
@@ -203,8 +204,9 @@ describe("段缓存来源身份", () => {
   it.each([
     { coveredSec: 10, truncated: false, migrate: true },
     { coveredSec: 2, truncated: false, migrate: false },
-    { coveredSec: 2, truncated: true, migrate: true },
-  ])("同源alias覆盖$coveredSec/10秒 truncated=$truncated，按生产判据决定迁移", async ({ coveredSec, truncated, migrate }) => {
+    { coveredSec: 2, truncated: true, migrate: false },
+    { coveredSec: 2, truncated: false, migrate: true, selected: true },
+  ])("同源alias覆盖$coveredSec/10秒 truncated=$truncated，按生产判据决定迁移", async ({ coveredSec, truncated, migrate, selected }) => {
     const sourceDigest = "d".repeat(64);
     const segments = [{ startSec: 0, endSec: 10 }];
     const raw = makeMigrationRaw({ startSec: 0, coveredEndSec: coveredSec, truncated });
@@ -239,6 +241,11 @@ describe("段缓存来源身份", () => {
       },
       savedAtIso: "2026-08-27T00:00:00.000Z",
     };
+    if (selected) alias.attemptSelection = {
+      status: "selected_for_structuring_after_three_attempts", policyVersion: 1, attemptedCount: 3,
+      selectedAttemptNumber: 1, sourceDigest, rawSha256: nativeAttemptRawSha256(raw),
+      candidates: [{ attemptNumber: 1, reasonZh: "覆盖不足", score: [0.2, 0.2, 0, 1] }],
+    };
     const createTarget = vi.fn(async (_entry: NativeDeepReadSegmentCacheEntry) => "created" as const);
 
     const result = await migrateMisplacedNativeDeepReadSegmentCaches({
@@ -262,6 +269,7 @@ describe("段缓存来源身份", () => {
     }
     const migrated = createTarget.mock.calls[0]![0];
     expect(migrated.episodeIndex).toBe(1);
+    if (selected) expect(hasNativeAttemptSelection(migrated)).toBe(true);
     expect(migrated.raw).toEqual(raw);
     expect(migrated.paidUsage).toEqual(alias.paidUsage);
     expect(migrated.fingerprint).not.toBe(alias.fingerprint);
@@ -503,7 +511,7 @@ describe("批次预检：在任何模型动作之前", () => {
     expect(plan.totalSegments).toBe(120);
     expect(plan.totalVisualCalls).toBe(120);
     expect(plan.totalAudioChunks).toBe(0);
-    expect(plan.totalModelCalls).toBe(plan.totalVisualCalls + 1);
+    expect(plan.totalModelCalls).toBe(160); // 120段原生读片 + 20集各两批整形
   });
 
   it("上限由调用方指定，不写死 20", () => {
@@ -827,7 +835,7 @@ describe("单集执行", () => {
 describe("批量发车", () => {
   const three = [1, 2, 3].map((i) => ({ ...episode, episodeIndex: i }));
 
-  it("每次模型调用都逐笔回传 started/completed（视觉 + 系列整理；无独立音频阶段）", async () => {
+  it("分集调用逐笔回传回执，结束不自动发系列整理", async () => {
     const checkpoints: Array<{ stage: string; status: string }> = [];
     const baseRunBatch = deps.runBatch;
     deps.runBatch = vi.fn(async (input) => {
@@ -880,8 +888,6 @@ describe("批量发车", () => {
     expect(checkpoints.map(({ stage, status }) => `${stage}:${status}`)).toEqual([
       "visual_model:started",
       "visual_model:completed",
-      "series_aggregation_model:started",
-      "series_aggregation_model:completed",
     ]);
   });
 
@@ -998,6 +1004,28 @@ describe("批量发车", () => {
     }));
   });
 
+  it("取消后模型迟到返回不入库，已发生用量仍保留", async () => {
+    const controller = new AbortController();
+    const run = deps.runBatch;
+    deps.runBatch = vi.fn(async (...args: Parameters<typeof run>) => { const value = await run(...args); controller.abort(); return value; }) as never;
+    const result = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [three[0]!], abortSignal: controller.signal }, deps);
+    expect(result.aborted).toBe(true);
+    expect(result.ingestedCount).toBe(0);
+    expect(result.outcomes[0]?.status).toBe("aborted");
+    expect(deps.ingest).not.toHaveBeenCalled();
+  });
+
+  it("仅重新整形已入库集仍生成待审卡并保留缓存，普通已入库跳过语义不变", async () => {
+    deps.listIngested = vi.fn(async () => new Set([1]));
+    const result = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [three[0]!], structuringOnly: true }, deps);
+    expect(result.skippedCount).toBe(0);
+    expect(result.ingestedCount).toBe(1);
+    expect(deps.runBatch).toHaveBeenCalledWith(expect.objectContaining({ structuringOnly: true }));
+    expect(deps.clearSegmentCache).not.toHaveBeenCalled();
+    expect(deps.extractKeyMomentFrames).not.toHaveBeenCalled();
+    expect(deps.ingest).toHaveBeenCalledTimes(1);
+  });
+
   it("已入库的集直接跳过，不调 runner —— 重跑不重烧", async () => {
     deps.listIngested = vi.fn(async () => new Set([1, 2]));
     const r = await runNativeDeepReadBatch({ seriesKey: "s", episodes: three }, deps);
@@ -1016,50 +1044,14 @@ describe("批量发车", () => {
     expect(deps.runBatch).not.toHaveBeenCalled();
   });
 
-  it("系列整理失败不推翻已入库分集，重跑全 skipped 时仍可恢复整理", async () => {
-    const aggregationError = Object.assign(new Error("系列结构整理暂时未完成"), {
-      nativeSeriesAggregationUsage: {
-        model: "z-ai/glm-5.3",
-        route: "openrouter_text",
-        inputTokens: 40,
-        outputTokens: 6,
-        costUsd: 0.002,
-        priceEquivalentCny: 0.0144,
-        usingPlanQuota: false,
-        receiptComplete: true,
-      },
-    });
-    deps.aggregateSeries = vi.fn()
-      .mockRejectedValueOnce(aggregationError)
-      .mockResolvedValueOnce({
-        card: { id: "tpl_series_s" },
-        gcsUri: "gs://b/tpl_series_s.json",
-        sourceEpisodeCount: 3,
-        usage: {
-          model: "z-ai/glm-5.3",
-          route: "openrouter_text",
-          inputTokens: 20,
-          outputTokens: 5,
-          costUsd: 0.001,
-          priceEquivalentCny: 0.0072,
-          usingPlanQuota: false,
-          receiptComplete: true,
-        },
-      }) as never;
-
+  it("完成与全部跳过的批量学习均不自动整理系列", async () => {
     const first = await runNativeDeepReadBatch({ seriesKey: "s", episodes: three }, deps);
     expect(first.ingestedCount).toBe(3);
-    expect(first.failedCount).toBe(0);
-    expect(first.seriesAggregationErrorZh).toContain("暂时未完成");
-    expect(first.seriesAggregationUsage).toMatchObject({ inputTokens: 40, costUsd: 0.002 });
-
+    expect(first.seriesAggregation).toBeUndefined();
     deps.listIngested = vi.fn(async () => new Set([1, 2, 3]));
-    (deps.runBatch as ReturnType<typeof vi.fn>).mockClear();
     const second = await runNativeDeepReadBatch({ seriesKey: "s", episodes: three }, deps);
     expect(second.skippedCount).toBe(3);
-    expect(second.seriesAggregation?.gcsUri).toBe("gs://b/tpl_series_s.json");
-    expect(deps.runBatch).not.toHaveBeenCalled();
-    expect(deps.aggregateSeries).toHaveBeenCalledTimes(2);
+    expect(deps.aggregateSeries).not.toHaveBeenCalled();
   });
 
   it("进度写入失败只告警，不把已入库结果重复改成失败", async () => {
@@ -1097,7 +1089,7 @@ describe("批量发车", () => {
     expect(deps.runBatch).toHaveBeenCalledTimes(2);
   });
 
-  it("首集模型返回后收到中止：已付费结构照常入库，后续集停跑且不做系列聚合", async () => {
+  it("首集模型返回后收到中止：仅保留已付费证据和费用，不入库迟到结果", async () => {
     const c = new AbortController();
     const original = deps.runBatch;
     deps.runBatch = vi.fn(async (input) => {
@@ -1110,7 +1102,8 @@ describe("批量发车", () => {
     );
     expect(r.aborted).toBe(true);
     expect(r.failedCount).toBe(0);
-    expect(r.ingestedCount).toBe(1);
+    expect(r.ingestedCount).toBe(0);
+    expect(deps.ingest).not.toHaveBeenCalled();
     expect(r.totalCostCny).toBeCloseTo(0.5);
     expect(deps.runBatch).toHaveBeenCalledTimes(1);
     expect(deps.aggregateSeries).not.toHaveBeenCalled();

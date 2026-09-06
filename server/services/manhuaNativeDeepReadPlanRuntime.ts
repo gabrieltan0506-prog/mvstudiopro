@@ -34,6 +34,7 @@ import { isManhua0996SourceUrl } from "../../shared/manhuaLearn0996Source.js";
 export type NativeDeepReadPlanRuntimeInput = {
   url: string;
   limit: number;
+  structuringEpisodeIndex?: number;
   segmentSeconds?: number;
   /** 整支即全集：跳过合集展开，按独立长视频单集学习 */
   treatAsStandalone?: boolean;

@@ -573,6 +573,7 @@ const nativeCardWithEvidence = {
       sourceDigest: FULL_SOURCE_DIGEST,
       segmentEvidenceObjectNames: EVIDENCE_NAMES,
       glmParsedObjectName: GLM_PARSED_OBJECT_NAME,
+      structuredCardObjectName: "manhua-template-learn/structured-card/" + "e".repeat(64) + ".json",
     },
   },
 } as unknown as ManhuaViralTemplateCard;
@@ -594,6 +595,22 @@ describe("renderEpisodeReport：canonical 寻址（禁列目录猜证据）", ()
     vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
     return (await loadRouter()).createCaller(makeCtx("user", undefined, "owner-open-id"));
   }
+
+  it.each(["celadon", "amber", "rose", "moon", "apricot", "auto"] as const)("手动主题%s传给渲染且不覆盖其他主题对象", async (themeChoice) => {
+    proposalForRouter = nativeCardWithEvidence;
+    const caller = await ownerCaller();
+    await caller.renderEpisodeReport({ seriesKey: "seriesabc", episodeIndex: 1, themeChoice });
+    const render = await import("../services/manhuaNativeReportRender");
+    expect(render.renderNativeEvidenceReportFromObjectNames).toHaveBeenLastCalledWith(expect.objectContaining({
+      themeChoice,
+      reportObjectName: `manhua-template-learn/reports/tpl_native_seriesabc_ep001${themeChoice === "auto" ? "" : `-${themeChoice}`}.html`,
+      evidenceObjectNames: EVIDENCE_NAMES,
+    }));
+  });
+  it("非法主题在渲染前拒绝", async () => {
+    const caller = await ownerCaller();
+    await expect(caller.renderEpisodeReport({ seriesKey: "seriesabc", episodeIndex: 1, themeChoice: "../../secret" as never })).rejects.toThrow();
+  });
 
   it("proposals/ 卡命中：用 canonical id 取卡，把 provenance 精确证据名直传渲染服务", async () => {
     proposalForRouter = nativeCardWithEvidence;
@@ -623,6 +640,7 @@ describe("renderEpisodeReport：canonical 寻址（禁列目录猜证据）", ()
       { startSec: 300, endSec: 600 },
     ]);
     expect(input.glmCardObjectName).toBe(GLM_PARSED_OBJECT_NAME);
+    expect(input.structuredCardObjectName).toBe("manhua-template-learn/structured-card/" + "e".repeat(64) + ".json");
     expect(input.evidenceFrames).toEqual(nativeCardWithEvidence.evidenceFrames);
     expect(input.themeMetadata).toEqual({ nameZh: nativeCardWithEvidence.nameZh, classification: nativeCardWithEvidence.classification });
     expect(input.reportObjectName).toBe(
