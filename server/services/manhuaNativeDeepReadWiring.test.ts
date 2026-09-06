@@ -501,12 +501,12 @@ describe("native 模式的学习结果：没有系列卡这回事（终审方案
     paywallFields: {},
   };
 
-  it("🔴 proposal / proposalGcsUri 恒为 null，analysisReady 恒为 false", () => {
+  it("🔴 分集已可用但不自动生成系列提案", () => {
     const r = buildNativeDeepReadLearnResult({ ...base, nativeCardCount: 5, batchLearned: 2 });
     expect(r.proposal).toBeNull();
     expect(r.proposalGcsUri).toBeNull();
-    expect(r.analysisReady).toBe(false);
-    expect(r.visionFilled).toBe(false);
+    expect(r.analysisReady).toBe(true);
+    expect(r.visionFilled).toBe(true);
   });
 
   it("🔴 不拿旧 digest 充数：digestsPreview 为空", () => {

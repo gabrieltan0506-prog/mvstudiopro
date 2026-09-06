@@ -28,6 +28,7 @@ import {
   listNativeDeepReadSegmentCacheEntriesBySourceDigest,
   readNativeDeepReadRawAttemptEvidence,
   readNativeDeepReadSegmentCacheEntry,
+  readNativeDeepReadPermanentSegmentEntry,
   nativeDeepReadSegmentEvidenceObjectName,
   nativeDeepReadSegmentEvidenceResponseFingerprint,
   nativeDeepReadRawAttemptEvidenceObjectName,
@@ -684,5 +685,24 @@ describe("段缓存清理", () => {
     expect(gcs.deleteObject.mock.calls.some(
       ([call]) => String(call.objectName).startsWith(NATIVE_DEEP_READ_SEGMENT_EVIDENCE_PREFIX),
     )).toBe(false);
+  });
+});
+
+
+describe("仅重新整形回读永久段证据", () => {
+  it("缓存清理后仍从同源同指纹永久JSON恢复，内容指纹完整对账", async () => {
+    const entry = entryOf();
+    const name = nativeDeepReadSegmentEvidenceObjectName(entry);
+    gcs.list.mockResolvedValue([name]);
+    gcs.downloadVersioned.mockResolvedValue({ buffer: Buffer.from(JSON.stringify(entry)), generation: "7" });
+    await expect(readNativeDeepReadPermanentSegmentEntry({ ...entry, fingerprints: [entry.fingerprint] })).resolves.toEqual({ entry, generation: "7" });
+    expect(gcs.upload).not.toHaveBeenCalled();
+    expect(gcs.deleteObject).not.toHaveBeenCalled();
+  });
+  it("对象名与原文不一致必须失败，不能消费被改动证据", async () => {
+    const entry = entryOf();
+    gcs.list.mockResolvedValue([nativeDeepReadSegmentEvidenceObjectName(entry)]);
+    gcs.downloadVersioned.mockResolvedValue({ buffer: Buffer.from(JSON.stringify({ ...entry, raw: { changed: true } })), generation: "7" });
+    await expect(readNativeDeepReadPermanentSegmentEntry({ ...entry, fingerprints: [entry.fingerprint] })).rejects.toThrow("指纹不一致");
   });
 });

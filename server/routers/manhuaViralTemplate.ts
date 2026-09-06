@@ -551,7 +551,7 @@ export const manhuaViralTemplateRouter = router({
       }
     }),
 
-  /** 0903：删除待审卡（入库前的删除；入库后的对应操作是下架）。只删 proposals/ 对象。 */
+  /** 删除原生逐集卡时同步归档移除正式模板（仅 owner）；其他待审卡保持原删除权限。 */
   discardProposal: protectedProcedure
     .input(
       z.object({
@@ -562,6 +562,7 @@ export const manhuaViralTemplateRouter = router({
     .mutation(async ({ ctx, input }) => {
       const ownerAllowed = resolveSiteOwnerOnlyAllowed(ctx.user);
       if (!ownerAllowed) assertSupervisorOps(ctx.user, ctx.supervisorSession);
+      if (/^tpl_native_[A-Za-z0-9_-]+_ep\d{3}$/.test(input.id.trim())) assertSiteOwner(ctx.user);
       try {
         const { discardGcsManhuaViralProposal } = await import(
           "../services/manhuaViralTemplateStore"
@@ -620,7 +621,7 @@ export const manhuaViralTemplateRouter = router({
       return await renameManhuaLearnSeriesTitle(input);
     }),
 
-  /** 0902 放行重学：旧代学习卡退位存档、集位让出；重学照常计费（owner 限定） */
+  /** 0902 放行重学：学习卡及对应正式模板归档后移除、集位让出；原始证据保留，重学照常计费（owner 限定） */
   retireLearnSourceEpisode: protectedProcedure
     .input(
       z.object({

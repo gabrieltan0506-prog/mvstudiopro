@@ -4,7 +4,7 @@ import { z } from "zod";
 const summaryText = z
   .string()
   .trim()
-  .min(1)
+  .min(2)
   .refine(value => value !== "本集未整理出该项");
 export const nativeRequiredSummarySchema = z.object({
   reusableZh: summaryText,

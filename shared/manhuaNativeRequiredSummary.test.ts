@@ -12,6 +12,8 @@ const complete = {
 describe("学习必交两栏", () => {
   for (const key of ["reusableZh", "genPromptHintZh"] as const) {
     for (const value of [
+      "第",
+      "国",
       undefined,
       null,
       "",
@@ -54,3 +56,10 @@ describe("学习必交两栏", () => {
     );
   });
 });
+
+ it("单字整形结果恢复所有原稿正文", () => {
+   expect(restoreNativeRequiredSummary({ reusableZh: "第", genPromptHintZh: "国" }, [complete, complete])).toEqual({
+     reusableZh: "【第1段】反应镜延迟揭示威胁\n【第2段】反应镜延迟揭示威胁",
+     genPromptHintZh: "【第1段】门框压缩人物活动空间\n【第2段】门框压缩人物活动空间",
+   });
+ });

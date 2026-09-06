@@ -42,7 +42,7 @@ const LS_MANHUA_LEARN_MISSING_DISMISSED = "mvs-manhua-learn-missing-dismissed-v1
 const LS_MANHUA_LEARN_SEGMENT_SECONDS = "mvs-manhua-learn-segment-seconds-v1";
 const LS_MANHUA_LEARN_VIDEO_FPS = "mvs-manhua-learn-video-fps-v1";
 const LS_MANHUA_LEARN_READ_MODEL = "mvs-manhua-learn-read-model-v1";
-const LS_MANHUA_LEARN_STRUCTURING_MODEL = "mvs-manhua-learn-structuring-model-v1";
+const LS_MANHUA_LEARN_STRUCTURING_MODEL = "mvs-manhua-learn-structuring-model-v2-glm-default";
 const LS_MANHUA_LEARN_STANDALONE = "mvs-manhua-learn-standalone-v1";
 
 function manhuaLearnUserStorageKey(baseKey: string, userKey: string): string {

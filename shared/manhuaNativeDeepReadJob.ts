@@ -43,10 +43,10 @@ export function parseNativeDeepReadModel(value: unknown): ManhuaNativeDeepReadMo
 }
 
 /** 0905 用户令：整形模型可选 GLM-5.3（默认）或 Qwen3.8-Max；两者互为兜底，只改首发链序。 */
-export const MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS = ["qwen3.8-max", "glm-5.3"] as const;
+export const MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS = ["glm-5.3", "qwen3.8-max"] as const;
 export type ManhuaNativeStructuringModelId = (typeof MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS)[number];
-/** 0905 用户拍板：默认 Qwen3.8-Max（套餐档 strict schema 真约束），GLM 为兜底。 */
-export const MANHUA_NATIVE_STRUCTURING_MODEL = "qwen3.8-max" as const;
+/** 0906 用户拍板：默认 GLM-5.3，保留 Qwen3.8-Max 手动选择和备用。 */
+export const MANHUA_NATIVE_STRUCTURING_MODEL = "glm-5.3" as const;
 export const MANHUA_NATIVE_STRUCTURING_MODEL_LABELS: Record<ManhuaNativeStructuringModelId, string> = {
   "qwen3.8-max": "Qwen3.8-Max（北京 / 新加坡套餐分流·严格 schema，两档败回 GLM）",
   "glm-5.3": "GLM-5.3（各批并行首发 OpenRouter，EvoLink 兜底，两档败切 Qwen）",
@@ -129,6 +129,9 @@ export const NATIVE_DEEP_READ_JOB_FIELDS = [
   "nativeStandaloneSource",
   "nativeReadModel",
   "nativeStructuringModel",
+  "nativeStructuringOnly",
+  "nativeStructuringEpisodeIndex",
+  "nativeStructuringPreviousJobId",
 ] as const;
 
 export type NativeDeepReadJobConfirmation = {
@@ -148,6 +151,9 @@ export type NativeDeepReadJobConfirmation = {
   readModel: ManhuaNativeDeepReadModelId;
   /** 0905：整形首发模型；缺省 GLM-5.3。 */
   structuringModel: ManhuaNativeStructuringModelId;
+  structuringOnly?: boolean;
+  structuringEpisodeIndex?: number;
+  structuringPreviousJobId?: string;
   /** 与 planHash 成对出现，仅用于兼容已经入队的旧任务。 */
   seriesKey?: string;
   learnLlm: "gpt" | "claude" | "deepseek";
@@ -166,6 +172,9 @@ export function sameNativeDeepReadJobConfirmation(
     && left.videoFps === right.videoFps
     && left.standaloneSource === right.standaloneSource
     && left.readModel === right.readModel
+    && left.structuringOnly === right.structuringOnly
+    && left.structuringEpisodeIndex === right.structuringEpisodeIndex
+    && left.structuringPreviousJobId === right.structuringPreviousJobId
     && left.structuringModel === right.structuringModel
     && left.seriesKey === right.seriesKey
     && left.learnLlm === right.learnLlm;
@@ -197,6 +206,15 @@ export function parseNativeDeepReadJobConfirmation(
   const standaloneSource = standaloneRaw === true || standaloneRaw === "true";
   const readModel = parseNativeDeepReadModel(params.nativeReadModel);
   const structuringModel = parseNativeStructuringModel(params.nativeStructuringModel);
+  const structuringOnly = params.nativeStructuringOnly === true;
+  const structuringEpisodeIndex = Number(params.nativeStructuringEpisodeIndex);
+  const structuringPreviousJobId = String(params.nativeStructuringPreviousJobId || "").trim();
+  if ((params.nativeStructuringOnly !== undefined && typeof params.nativeStructuringOnly !== "boolean")
+    || (structuringOnly && (!Number.isInteger(structuringEpisodeIndex) || structuringEpisodeIndex < 1 || structuringEpisodeIndex > 999
+      || !/^[a-z0-9-]{1,128}$/i.test(structuringPreviousJobId) || planLimit !== 1 || !params.nativeStructuringModel))
+    || (!structuringOnly && (params.nativeStructuringEpisodeIndex !== undefined || params.nativeStructuringPreviousJobId !== undefined))) {
+    throw new Error("仅重新整形必须指定原任务和唯一集号，并明确选择整形模型");
+  }
   const hasLegacyPlanConfirmation = Boolean(planHash || seriesKey);
   let parsedUrl: URL;
   try {
@@ -238,6 +256,7 @@ export function parseNativeDeepReadJobConfirmation(
     standaloneSource,
     readModel,
     structuringModel,
+    ...(structuringOnly ? { structuringOnly: true, structuringEpisodeIndex, structuringPreviousJobId } : {}),
     seriesKey: seriesKey || undefined,
     learnLlm:
       params.learnLlm === "claude" || params.learnLlm === "deepseek"

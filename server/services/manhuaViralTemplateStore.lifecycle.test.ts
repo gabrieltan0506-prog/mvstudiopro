@@ -112,7 +112,8 @@ beforeEach(() => {
   manhuaTemplateLifecycleLockTimers.sleep = async () => {};
   lockState.held = false;
   lockState.generation = "1";
-  gcs.upload.mockClear();
+  gcs.upload.mockReset();
+  gcs.upload.mockResolvedValue({});
   gcs.list.mockReset();
   gcs.download.mockReset();
   gcs.downloadVersioned.mockReset();
@@ -939,6 +940,23 @@ describe("原生分集部分卡的滚动批准", () => {
       .toMatchObject({ ifGenerationMatch: "7" });
   });
 
+  it("长摘要入库保留前后全文，不受600字截断", async () => {
+    const { approveManhuaViralTemplate } = await import("./manhuaViralTemplateStore");
+    const old = partialEpisodeCard({ status: "approved", successSegments: 1, publicCode: "EPKEEP", snapshot: "b".repeat(64) });
+    const next = partialEpisodeCard({ status: "proposed", successSegments: 2, snapshot: "c".repeat(64) });
+    const reusableZh = "长手法正文".repeat(200) + "手法末段不可丢";
+    const genPromptHintZh = "长要素正文".repeat(200) + "要素末段不可丢";
+    Object.assign(next, { reusableZh, genPromptHintZh });
+    seedRollingEpisodeApprove(old, next);
+    const result = await approveManhuaViralTemplate({ id: nativeEpisodeId });
+    expect(result.reusableZh).toContain(reusableZh);
+    expect(result.genPromptHintZh).toContain(genPromptHintZh);
+    const write = gcs.upload.mock.calls.find(([p]) => p.objectName.includes("/approved/"))![0];
+    const stored = JSON.parse(write.buffer.toString());
+    expect(stored.reusableZh).toContain(reusableZh);
+    expect(stored.genPromptHintZh).toContain(genPromptHintZh);
+  });
+
   it("同剧同集补全只更新同拍描述，并保留先前精华与新增亮点", async () => {
     const { approveManhuaViralTemplate } = await import("./manhuaViralTemplateStore");
     const oldApproved = partialEpisodeCard({
@@ -1186,6 +1204,73 @@ describe("原生分集部分卡的滚动批准", () => {
       .toThrow(/本轮音轨短于已批准进度/);
   });
 
+  it("历史单字提案批准前自动恢复同源四段，缺段与身份错配均拒绝", async () => {
+    const { restoreStoredNativeEpisodeSummary } = await import("./manhuaViralTemplateStore");
+    const card = partialEpisodeCard({ status: "proposed", successSegments: 4, snapshot: "c".repeat(64) }) as unknown as ManhuaViralTemplateCard;
+    card.reusableZh = "第"; card.genPromptHintZh = "国";
+    const names = [0, 1, 2, 3].map(i => `manhua-template-learn/segment-evidence/${nativeEpisodeId}/${sourceDigest}/seg${i}-${"d".repeat(64)}.json`);
+    card.provenance!.nativeVideoDeepRead!.segmentEvidenceObjectNames = names;
+    const evidence = names.map((name, index) => ({ seriesKey: "wanyao", episodeIndex: 1, sourceDigest,
+      segmentIndex: index, raw: { reusableZh: `第${index}份原稿的完整手法`, genPromptHintZh: `第${index}份原稿的完整要素` } }));
+    gcs.download.mockImplementation(async ({ gcsUri }: { gcsUri: string }) => ({ buffer: Buffer.from(JSON.stringify(evidence[names.findIndex(name => gcsUri.endsWith(name))])) }));
+    const restored = await restoreStoredNativeEpisodeSummary(card);
+    for (const row of evidence) {
+      expect(restored.reusableZh).toContain(row.raw.reusableZh);
+      expect(restored.genPromptHintZh).toContain(row.raw.genPromptHintZh);
+    }
+    expect(card.reusableZh).toBe("第");
+    expect(gcs.upload).not.toHaveBeenCalled();
+    evidence[3]!.raw.reusableZh = "";
+    await expect(restoreStoredNativeEpisodeSummary(card)).rejects.toThrow("必须有非空内容");
+    evidence[3]!.sourceDigest = "f".repeat(64);
+    await expect(restoreStoredNativeEpisodeSummary(card)).rejects.toThrow("原稿身份");
+  });
+
+  it.each(["有效新批次", "同输入新批次", "状态同步失败", "提交后重试", "相同批次", "旧提案", "不同来源", "缺少证据", "未完成"])("4/4重新学习批准：%s", async (kind) => {
+    const { approveManhuaViralTemplate } = await import("./manhuaViralTemplateStore");
+    const old = partialEpisodeCard({ status: "approved", successSegments: 4, publicCode: "EPKEEP", snapshot: "b".repeat(64) }) as unknown as ManhuaViralTemplateCard;
+    const next = partialEpisodeCard({ status: "proposed", successSegments: 4, snapshot: "c".repeat(64) }) as unknown as ManhuaViralTemplateCard;
+    Object.assign(old.provenance!.nativeVideoDeepRead!, { batchRequestId: "11111111-1111-4111-8111-111111111111" });
+    Object.assign(next.provenance!.nativeVideoDeepRead!, {
+      batchRequestId: "22222222-2222-4222-8222-222222222222",
+      segmentEvidenceObjectNames: [0, 1, 2, 3].map(i => `manhua-template-learn/segment-evidence/${nativeEpisodeId}/${sourceDigest}/seg${i}-${"d".repeat(64)}.json`),
+      glmParsedObjectName: "manhua-template-learn/episode-glm-evidence/native-structuring-new-test/parsed.json",
+    });
+    next.updatedAt = "2026-09-06T02:29:29.932Z";
+    old.beatGrid = [{ atSec: 900, conflictZh: "旧批次独有", visualZh: "旧镜头" }];
+    next.beatGrid = [{ atSec: 0, conflictZh: "新批次证据", visualZh: "新镜头" }];
+    seedRollingEpisodeApprove(old as unknown as Record<string, unknown>, next as unknown as Record<string, unknown>);
+    if (kind === "同输入新批次") next.provenance!.nativeVideoDeepRead!.snapshotSha256 = old.provenance!.nativeVideoDeepRead!.snapshotSha256;
+    if (kind === "状态同步失败") gcs.upload.mockImplementation(async (p) => {
+      if (p.objectName.includes("/proposals/")) throw new Error("gcs_upload_failed:503");
+      return {};
+    });
+    if (kind === "提交后重试") {
+      Object.assign(old, next, { status: "approved", publicCode: "EPKEEP" });
+      const result = await approveManhuaViralTemplate({ id: nativeEpisodeId });
+      expect(result.status).toBe("approved");
+      expect(gcs.upload.mock.calls.every(([p]) => p.objectName.includes("/proposals/"))).toBe(true);
+      return;
+    }
+    if (kind === "相同批次") next.provenance!.nativeVideoDeepRead!.batchRequestId = old.provenance!.nativeVideoDeepRead!.batchRequestId;
+    if (kind === "旧提案") next.updatedAt = "2026-08-19T00:00:00Z";
+    if (kind === "不同来源") next.provenance!.nativeVideoDeepRead!.sourceDigest = "e".repeat(64);
+    if (kind === "缺少证据") next.provenance!.nativeVideoDeepRead!.segmentEvidenceObjectNames = [];
+    if (kind === "未完成") next.provenance!.nativeVideoDeepRead!.assemblyComplete = false;
+    if (!["有效新批次", "同输入新批次", "状态同步失败"].includes(kind)) {
+      await expect(approveManhuaViralTemplate({ id: nativeEpisodeId })).rejects.toThrow("严格进度升级");
+      expect(gcs.upload).not.toHaveBeenCalled();
+      return;
+    }
+    const result = await approveManhuaViralTemplate({ id: nativeEpisodeId });
+    expect(result.publicCode).toBe("EPKEEP");
+    expect(result.beatGrid).toEqual(next.beatGrid);
+    const writes = gcs.upload.mock.calls.map(([row]) => row);
+    expect(writes[0]!.objectName).toContain("/archive/");
+    expect(JSON.parse(writes[0]!.buffer.toString()).beatGrid).toEqual(old.beatGrid);
+    expect(result.provenance?.nativeVideoDeepRead?.batchRequestId).toBe("22222222-2222-4222-8222-222222222222");
+  });
+
   it("正式卡已有 2/4 时拒绝批准 1/4 倒退提案", async () => {
     const { approveManhuaViralTemplate } = await import("./manhuaViralTemplateStore");
     seedRollingEpisodeApprove(
@@ -1216,7 +1301,7 @@ describe("原生分集部分卡的滚动批准", () => {
       .resolves.toMatchObject({ status: "approved", publicCode: "EPKEEP" });
   });
 
-  it("proposal 状态同步遇到非 412 错误必须上抛，不冒充新版并发", async () => {
+  it("正式卡提交成功后状态同步503不误报失败", async () => {
     const { approveManhuaViralTemplate } = await import("./manhuaViralTemplateStore");
     seedRollingEpisodeApprove(
       partialEpisodeCard({
@@ -1230,7 +1315,7 @@ describe("原生分集部分卡的滚动批准", () => {
       .mockRejectedValueOnce(new Error("gcs_upload_failed:503"));
 
     await expect(approveManhuaViralTemplate({ id: nativeEpisodeId }))
-      .rejects.toThrow("gcs_upload_failed:503");
+      .resolves.toMatchObject({ status: "approved", publicCode: "EPKEEP" });
   });
 });
 

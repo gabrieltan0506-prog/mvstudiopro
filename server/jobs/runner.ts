@@ -618,6 +618,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
     try {
       let nativeReadModel: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeDeepReadModelId | undefined;
       let nativeStructuringModel: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeStructuringModelId | undefined;
+      let nativeStructuringSource: import("../services/manhuaNativeStructuringOnly.js").NativeStructuringStoredSource | undefined;
       let nativePlanPreview: Awaited<ReturnType<
         typeof import("../services/manhuaNativeDeepReadPlanRuntime.js")["buildNativeDeepReadPlanPreviewFromServices"]
       >> | undefined;
@@ -625,8 +626,30 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         const confirmation = parseNativeDeepReadJobConfirmation(params, {
           extraSourceHosts: readManhuaLearnExtraSourceHosts(),
         });
+        if (confirmation.structuringOnly) {
+          const { assertNativeStructuringPreviousJob } = await import("../../shared/manhuaNativeStructuringOnly.js");
+          const { resolveSiteOwnerOnlyAllowed } = await import("../services/access-policy.js");
+          if (!resolveSiteOwnerOnlyAllowed(await resolveUserForJob(String(userId || "")))) throw new Error("仅重新整形仅限站点拥有者");
+          const previousJob = await getJobByIdStrict(confirmation.structuringPreviousJobId!);
+          assertNativeStructuringPreviousJob({ confirmation, userId: String(userId || ""), previousJob, extraSourceHosts: readManhuaLearnExtraSourceHosts() });
+          const previousOutput = previousJob?.output as Record<string, unknown> | undefined;
+          const inheritedSource = previousOutput?.nativeStructuringSource as typeof nativeStructuringSource;
+          const previousReceipts = Array.isArray(previousOutput?.nativeModelReceipts) ? previousOutput.nativeModelReceipts as Array<{ episodeIndexes?: number[]; segmentCount?: number }> : [];
+          const segmentCounts = previousReceipts.filter(row => row.episodeIndexes?.includes(confirmation.structuringEpisodeIndex!) && Number(row.segmentCount) > 0).map(row => Number(row.segmentCount));
+          if (new Set(segmentCounts).size > 1) throw new Error("原任务同集回执的分片数冲突，不能仅重新整形");
+          nativeStructuringSource = { seriesKey: String(previousOutput?.nativeSeriesKey || previousOutput?.seriesKey || ""),
+            episodeIndex: confirmation.structuringEpisodeIndex!, segmentSeconds: confirmation.segmentSeconds, videoFps: confirmation.videoFps,
+            sourceUrl: inheritedSource?.sourceUrl || confirmation.url, storedPlan: previousOutput?.nativeStoredPlan || inheritedSource?.storedPlan,
+            expectedSegmentCount: segmentCounts.length ? Math.max(...segmentCounts) : inheritedSource?.expectedSegmentCount };
+          if (jobId) await patchJobRunningProgressStrict(jobId, { nativeSeriesKey: nativeStructuringSource.seriesKey, nativeStructuringSource });
+          const { waitForManhuaLearnWorkerSettlement } = await import("./manhuaLearnSettlement.js");
+          await waitForManhuaLearnWorkerSettlement({ isActive: () => manhuaLearnAbortControllers.has(confirmation.structuringPreviousJobId!), signal: abortController.signal });
+        }
+        if (jobId && await isManhuaTemplateLearnJobCancelRequested(jobId)) abortController.abort();
+        abortController.signal.throwIfAborted();
         nativeReadModel = confirmation.readModel;
         nativeStructuringModel = confirmation.structuringModel;
+        if (!confirmation.structuringOnly) {
         const { buildNativeDeepReadPlanPreviewFromServices } = await import(
           "../services/manhuaNativeDeepReadPlanRuntime.js"
         );
@@ -639,6 +662,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         nativePlanPreview = await buildNativeDeepReadPlanPreviewFromServices({
           url: confirmation.url,
           limit: confirmation.planLimit,
+          structuringEpisodeIndex: confirmation.structuringEpisodeIndex,
           segmentSeconds: confirmation.segmentSeconds,
           videoFps: confirmation.videoFps,
           readModel: confirmation.readModel,
@@ -661,7 +685,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         const planSeriesKey = nativePlanPreview.seriesKey;
         if (jobId) {
           await enqueueManhuaProgressWrite(() =>
-            patchJobRunningProgress(jobId, { nativeSeriesKey: planSeriesKey }));
+            patchJobRunningProgress(jobId, { nativeSeriesKey: planSeriesKey, nativeStoredPlan: nativePlanPreview }));
         }
         // 发车前亮明本次要买的集号（0826 病历单问题四）：失败集留占位后，
         // 下次点学习会自动跳去买下一集——集号必须在第一行就让用户看见。
@@ -671,8 +695,9 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         const segmentPlanZh = describeNativeDeepReadSegmentPlanZh(nativePlanPreview);
         await reportLearnProgress(
           MANHUA_LEARN_STAGE.list,
-          `执行计划复核通过：${plannedEpisodesZh}${segmentPlanZh} · 共 ${nativePlanPreview.executableEpisodeCount} 集 · ${nativePlanPreview.totalModelCalls} 次模型请求（画面 ${nativePlanPreview.totalSegments} 个视频分片每段一次调用共 ${nativePlanPreview.totalVisualCalls} 次、音轨随调直出 + 系列整理 1 次） · 确认码 ${nativePlanPreview.planHash}${reclaimZh}${quarantinedClaims}`,
+          confirmation.structuringOnly ? `仅重新整形第${confirmation.structuringEpisodeIndex}集：复用已保存完整JSON，缺失即停止，不重新读片；新结果生成待审卡。` : `执行计划复核通过：${plannedEpisodesZh}${segmentPlanZh} · 共 ${nativePlanPreview.executableEpisodeCount} 集 · ${nativePlanPreview.totalModelCalls} 次模型请求（画面 ${nativePlanPreview.totalSegments} 个视频分片每段一次调用共 ${nativePlanPreview.totalVisualCalls} 次、音轨随调直出 + 整形） · 确认码 ${nativePlanPreview.planHash}${reclaimZh}${quarantinedClaims}`,
         );
+        }
       } else if (hasNativeDeepReadJobFields(params)) {
         throw new Error("原生精读计划未获明确确认，未发出模型请求");
       }
@@ -691,6 +716,8 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       nativeDeepReadConfirmed: nativeConfirmed,
       nativeReadModel,
       nativeStructuringModel,
+      nativeStructuringOnly: params.nativeStructuringOnly === true,
+      nativeStructuringSource,
       nativePlanPreview,
       nativeStandaloneSource: params.nativeStandaloneSource === true
         || params.nativeStandaloneSource === "true",

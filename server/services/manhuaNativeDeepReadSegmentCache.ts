@@ -564,6 +564,29 @@ function parseCacheEntry(
   return entry;
 }
 
+/** 缓存被成功入库清理后，仅按同源、同段、同请求契约回读永久 JSON。 */
+export async function readNativeDeepReadPermanentSegmentEntry(input: {
+  seriesKey: string; episodeIndex: number; segmentIndex: number;
+  sourceDigest: string; fingerprints: readonly string[];
+}, deps = { list: listGcsObjectNamesByPrefix, download: downloadGcsObjectVersioned, getBucket: getGcsBucketName }): Promise<NativeDeepReadSegmentCacheRead | null> {
+  if (!/^[a-f0-9]{64}$/.test(input.sourceDigest) || !input.fingerprints.length
+    || input.fingerprints.some(value => !/^[a-f0-9]{64}$/.test(value))) throw new Error("永久段证据身份无效");
+  const prefix = `${NATIVE_DEEP_READ_SEGMENT_EVIDENCE_PREFIX}${nativeDeepReadProposalId(input.seriesKey, input.episodeIndex)}/${input.sourceDigest}/seg${input.segmentIndex}-`;
+  const names = await deps.list({ prefix, maxResults: 1000 });
+  if (names.length >= 1000) throw new Error("永久段证据超过完整扫描上限，未调用模型");
+  const candidates: NativeDeepReadSegmentCacheRead[] = [];
+  for (const name of names.filter(name => input.fingerprints.some(fingerprint => name.startsWith(`${prefix}${fingerprint}-`)))) {
+    const downloaded = await deps.download({ gcsUri: `gs://${deps.getBucket()}/${name}` });
+    const entry = parseCacheEntry(JSON.parse(downloaded.buffer.toString("utf8")), input);
+    if (entry.sourceDigest !== input.sourceDigest || !input.fingerprints.includes(entry.fingerprint)
+      || nativeDeepReadSegmentEvidenceObjectName(entry) !== name) throw new Error("永久段证据内容与对象指纹不一致，未调用模型");
+    candidates.push({ entry, generation: downloaded.generation });
+  }
+  candidates.sort((left, right) => Date.parse(right.entry.savedAtIso) - Date.parse(left.entry.savedAtIso));
+  if (candidates.length > 1) throw new Error("永久段证据存在多份同契约响应，原任务缺少精确清单，禁止跨批次选择；未调用模型");
+  return candidates[0] ?? null;
+}
+
 /** 只有 404 是缓存未命中；网络、权限、解析错误关闭式停止，避免把已付费段重买。 */
 export async function readNativeDeepReadSegmentCacheEntry(input: {
   seriesKey: string;
