@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
+import { importManhuaWriterPackFromText } from "@shared/manhuaWriterRoom";
 import {
   buildManhuaWriterSession,
   parseManhuaWriterSession,
@@ -46,6 +47,7 @@ function harness(
     invalid?: boolean;
     newSeries?: boolean;
     allowBackup?: boolean;
+    realImport?: boolean;
   } = {}
 ) {
   const refs = [
@@ -94,7 +96,7 @@ function harness(
   const context = {
     ...setters,
     factoryTopic: "墨菁传",
-    writerEpisodeCount: 1,
+    writerEpisodeCount: options.realImport ? 2 : 1,
     writerPack: pack,
     projectBible: null,
     writerLayoutProfile: {},
@@ -111,10 +113,13 @@ function harness(
     materializedBoardIdsRef: { current: new Set() },
     toast: { error: vi.fn(), success: vi.fn(), message: vi.fn() },
     pushDebug: vi.fn(),
-    importManhuaWriterPackFromText: vi.fn(() =>
-      options.invalid
-        ? { ok: false, error: "缺少分集正文" }
-        : { ok: true, pack, via: "text" }
+    importManhuaWriterPackFromText: vi.fn(
+      (raw: string, opts?: { topic?: string; episodeCount?: number }) =>
+        options.realImport
+          ? importManhuaWriterPackFromText(raw, opts)
+          : options.invalid
+            ? { ok: false, error: "缺少分集正文" }
+            : { ok: true, pack, via: "text" }
     ),
     inspectManhuaSeriesSwitchRisk: () => ({
       needsBackup: Boolean(options.newSeries),
@@ -161,6 +166,59 @@ function harness(
 }
 
 describe("真实剧本导入回调的确认状态", () => {
+  it("实际三集导入覆盖两集扩写选项，刷新及云恢复保留第三集", async () => {
+    const h = harness({ realImport: true });
+    const raw =
+      "# 墨菁传\n" +
+      Array.from(
+        { length: 3 },
+        (_, i) =>
+          `## 第${i + 1}集\n阿菁在坊市寻找药草，黑奇跟着她向东走去，母亲坐在药摊旁等他们，第${i + 1}集的最后一句仍在。`
+      ).join("\n\n");
+    expect(await h.run(raw)).toBe(true);
+    expect(h.context.importManhuaWriterPackFromText).toHaveBeenCalledWith(raw, {
+      topic: "墨菁传",
+      episodeCount: 2,
+    });
+    expect(h.state.writerEpisodeCount).toBe(3);
+    const restored = parseManhuaWriterSession(
+      serializeManhuaWriterSession(buildManhuaWriterSession(h.state))
+    )!;
+    expect(restored.writerPack?.episodes).toHaveLength(3);
+    expect(restored.writerPack?.episodes[2].body).toContain(
+      "第3集的最后一句仍在"
+    );
+    const cloud = parseManhuaCloudDraftPayload(
+      buildManhuaCloudDraftPayload({
+        writerSession: restored,
+        blocks: [],
+        edges: [],
+      })
+    )!;
+    expect(cloud.writerSession?.writerPack).toEqual(restored.writerPack);
+    expect(h.state.customAssetRefs).toBe(h.refs);
+    expect(h.state.writerConfirmed).toBe(false);
+  });
+
+  it("实际七集超限在任何状态变更与备份之前拒绝，旧稿旧图仍在", async () => {
+    const h = harness({ realImport: true });
+    const before = { ...h.state };
+    const raw =
+      "# 墨菁传\n" +
+      Array.from(
+        { length: 7 },
+        (_, i) =>
+          `## 第${i + 1}集\n阿菁在坊市寻找药草，黑奇跟着她向东走去，母亲坐在药摊旁等他们。`
+      ).join("\n\n");
+    expect(await h.run(raw)).toBe(false);
+    expect(h.state).toEqual(before);
+    expect(
+      h.context.confirmManhuaSeriesSwitchWithBackup
+    ).not.toHaveBeenCalled();
+    expect(h.context.saveCanvasState).not.toHaveBeenCalled();
+    for (const setter of Object.values(h.setters))
+      expect(setter).not.toHaveBeenCalled();
+  });
   it("没有旧工厂节点时，同剧改稿也撤销旧解锁和跳过状态，保留已选图片", async () => {
     const h = harness();
     expect(await h.run("新正文")).toBe(true);

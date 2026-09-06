@@ -13,6 +13,7 @@ import {
   parseManhuaEpisodeSegmentPlanFromMarkdown,
 } from "./manhuaEpisodeSegmentPlan.js";
 import { normalizeForManhuaNameMatch } from "./manhuaScriptTextNormalize.js";
+import { readManhuaTimedStoryboard } from "./manhuaTimedStoryboard.js";
 
 export type ManhuaWriterAssetRole = "character" | "prop" | "scene";
 
@@ -549,7 +550,16 @@ export function evaluateWriterPackAssetAndDensity(input: {
       Math.floor(input.segmentMax ?? MANHUA_EPISODE_SEGMENT_COUNT_MAX),
     );
     for (const ep of input.episodes || []) {
+      const timed = readManhuaTimedStoryboard(String(ep.body || ""));
       const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(String(ep.body || ""));
+      if (input.segmentCountMode !== "layout" && timed.recognized) {
+        // 下游优先读取段表；混放两种稿会让门禁与实际生产选中不同正文。
+        if (plan.segments.length) {
+          errors.push(`第${ep.index}集同时含秒位分镜表与段表，请先确认保留哪份分镜`);
+        }
+        errors.push(...timed.errors.map(error => `第${ep.index}集：${error}`));
+        continue;
+      }
       const q = evaluateManhuaEpisodeSegmentPlanQuality(plan, {
         mode: input.segmentCountMode ?? "actual",
         min: segMin,

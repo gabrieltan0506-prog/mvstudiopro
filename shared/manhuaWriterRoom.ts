@@ -501,14 +501,18 @@ function extractFreeformSeriesTitle(md: string, topic?: string): string {
 type MarkedEpisode = { index: number; title: string; body: string };
 
 function splitByEpisodeMarkers(md: string): MarkedEpisode[] {
-  const re = /(?:^|\n)(?:#{1,3}\s*)?第\s*(\d+)\s*集\s*[：:\-—–]?\s*([^\n]*)/g;
+  // 标题只占本行；\s 会越过空行，把下一集标题或首段正文吞进本集标题。
+  const re = /(?:^|\n)(?:#{1,3}[ \t]*)?第[ \t]*(\d+)[ \t]*集[ \t]*[：:\-—–]?[ \t]*([^\n]*)/g;
   const hits: Array<{ index: number; title: string; start: number; headerEnd: number }> = [];
+  const titleField = new RegExp(`(?:^|\\n)###[ \\t]*(?:${WRITER_EPISODE_TITLE_HEADING_RE})[ \\t]*$`);
   let m: RegExpExecArray | null;
   while ((m = re.exec(md)) !== null) {
     const index = Math.floor(Number(m[1]));
     if (!Number.isFinite(index) || index < 1) continue;
     const header = m[0];
     const start = m.index + (header.startsWith("\n") ? 1 : 0);
+    // 「### 标题」字段里的“第01集 血落残玉”不是另一集，不能重复计数或切断正文。
+    if (titleField.test(md.slice(0, start).trimEnd())) continue;
     const headerEnd = m.index + header.length;
     hits.push({
       index,
@@ -524,7 +528,6 @@ function splitByEpisodeMarkers(md: string): MarkedEpisode[] {
     const cur = hits[i]!;
     const nextStart = hits[i + 1]?.start ?? md.length;
     const body = md.slice(cur.headerEnd, nextStart).trim();
-    if (body.length < 8) continue;
     out.push({ index: cur.index, title: cur.title, body });
   }
   return out;
@@ -567,6 +570,17 @@ export function importManhuaWriterPackFromText(
   }
 
   const topic = String(opts?.topic || "").trim();
+  const marked = splitByEpisodeMarkers(text);
+  if (marked.length > MANHUA_WRITER_EPISODE_MAX) {
+    return { ok: false, error: `检测到 ${marked.length} 集；当前每次最多导入 ${MANHUA_WRITER_EPISODE_MAX} 集，请拆分后再导入，原稿尚未替换` };
+  }
+  const missingBody = marked.find(ep => {
+    const explicitBody = ep.body.match(/###[ \t]*本集剧情[ \t]*\n([\s\S]*?)(?=\n###[ \t]*片尾钩子|$)/);
+    return (explicitBody ? explicitBody[1].trim() : ep.body).length < 8;
+  });
+  if (missingBody) {
+    return { ok: false, error: `第${missingBody.index}集正文缺失或过短，请补全后再导入，原稿尚未替换` };
+  }
   const looksStructured =
     /##\s*系列标题/.test(text) || (/###\s*本集剧情/.test(text) && /##\s*第\s*\d+\s*集/.test(text));
 
@@ -600,7 +614,6 @@ export function importManhuaWriterPackFromText(
     }
   }
 
-  const marked = splitByEpisodeMarkers(text);
   if (marked.length < MANHUA_WRITER_EPISODE_MIN) {
     return {
       ok: false,
@@ -608,13 +621,10 @@ export function importManhuaWriterPackFromText(
     };
   }
 
-  const n = clampWriterEpisodeCount(
-    Math.min(marked.length, opts?.episodeCount || marked.length, MANHUA_WRITER_EPISODE_MAX),
-  );
+  // 扩写集数不是导入裁切指令；只消费文件真实分集，超出既有容量已在上方明确拒绝。
   const picked = marked
     .slice()
-    .sort((a, b) => a.index - b.index)
-    .slice(0, n);
+    .sort((a, b) => a.index - b.index);
   const episodes: ManhuaWriterEpisode[] = picked.map((ep, i) => {
     const split = extractHookFromEpisodeBody(ep.body);
     return {

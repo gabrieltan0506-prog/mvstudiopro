@@ -177,6 +177,41 @@ describe("manhuaWriterRoom", () => {
     expect(writerPackLooksReady(res.pack)).toBe(true);
   });
 
+  it("导入三集不受界面原有两集扩写设置裁切", () => {
+    const text = Array.from({ length: 3 }, (_, i) => `## 第${i + 1}集\n阿菁在坊市寻找药草，黑奇跟着她向东走去，母亲坐在药摊旁等他们，第${i + 1}集的最后一句仍在。`).join("\n\n");
+    const result = importManhuaWriterPackFromText(text, { episodeCount: 2 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.pack.episodes).toHaveLength(3);
+    expect(result.pack.episodes[2].body).toContain("第3集的最后一句仍在");
+    expect(result.pack.episodeCount).toBe(3);
+  });
+
+  it.each([false, true])("超过六集明确拒绝，不静默截成六集（平台格式=%s）", structured => {
+    const text = `${structured ? "## 系列标题\n阿菁救母\n" : "# 阿菁救母\n"}${Array.from({ length: 7 }, (_, i) => `## 第${i + 1}集\n${structured ? "### 本集剧情\n" : ""}阿菁在坊市寻找药草，黑奇跟着她向东走去，第${i + 1}集的最后一句仍在。`).join("\n\n")}`;
+    const result = importManhuaWriterPackFromText(text, { episodeCount: 2 });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain("7 集");
+    expect(result.error).toContain("6 集");
+  });
+
+  it("中间一集没有正文不能被过滤后把其余集重新编号为完整剧本", () => {
+    const text = "# 阿菁救母\n## 第1集\n阿菁在坊市寻找药草，黑奇跟着她向东走去。".padEnd(100, "正文") + "\n## 第2集\n\n## 第3集\n母亲坐在门口等她，黑奇把药筐放在门边，阿菁开始煎药。";
+    const result = importManhuaWriterPackFromText(text);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain("第2集");
+    expect(result.error).toContain("正文");
+  });
+
+  it("平台格式的空本集剧情不能靠标题和片尾钩子冒充有效分集", () => {
+    const result = importManhuaWriterPackFromText(SAMPLE.replace("她当众揭伪证，朝堂哗然。", ""));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain("第3集正文");
+  });
+
   it("rejects import without episode markers", () => {
     const res = importManhuaWriterPackFromText(
       "这是一段没有分集标记的长文。".repeat(20),
