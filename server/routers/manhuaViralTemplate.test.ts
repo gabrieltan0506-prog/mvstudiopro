@@ -573,6 +573,7 @@ const nativeCardWithEvidence = {
       sourceDigest: FULL_SOURCE_DIGEST,
       segmentEvidenceObjectNames: EVIDENCE_NAMES,
       glmParsedObjectName: GLM_PARSED_OBJECT_NAME,
+      structuredCardObjectName: "manhua-template-learn/structured-card/" + "e".repeat(64) + ".json",
     },
   },
 } as unknown as ManhuaViralTemplateCard;
@@ -639,6 +640,7 @@ describe("renderEpisodeReport：canonical 寻址（禁列目录猜证据）", ()
       { startSec: 300, endSec: 600 },
     ]);
     expect(input.glmCardObjectName).toBe(GLM_PARSED_OBJECT_NAME);
+    expect(input.structuredCardObjectName).toBe("manhua-template-learn/structured-card/" + "e".repeat(64) + ".json");
     expect(input.evidenceFrames).toEqual(nativeCardWithEvidence.evidenceFrames);
     expect(input.themeMetadata).toEqual({ nameZh: nativeCardWithEvidence.nameZh, classification: nativeCardWithEvidence.classification });
     expect(input.reportObjectName).toBe(

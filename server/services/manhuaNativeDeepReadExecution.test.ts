@@ -1,3 +1,4 @@
+import { hasNativeAttemptSelection, nativeAttemptRawSha256 } from "./manhuaNativeDeepReadAttemptSelection.js";
 /**
  * 协调器行为。全部注入假实现，**不调用任何付费接口**。
  *
@@ -204,7 +205,8 @@ describe("段缓存来源身份", () => {
     { coveredSec: 10, truncated: false, migrate: true },
     { coveredSec: 2, truncated: false, migrate: false },
     { coveredSec: 2, truncated: true, migrate: false },
-  ])("同源alias覆盖$coveredSec/10秒 truncated=$truncated，按生产判据决定迁移", async ({ coveredSec, truncated, migrate }) => {
+    { coveredSec: 2, truncated: false, migrate: true, selected: true },
+  ])("同源alias覆盖$coveredSec/10秒 truncated=$truncated，按生产判据决定迁移", async ({ coveredSec, truncated, migrate, selected }) => {
     const sourceDigest = "d".repeat(64);
     const segments = [{ startSec: 0, endSec: 10 }];
     const raw = makeMigrationRaw({ startSec: 0, coveredEndSec: coveredSec, truncated });
@@ -239,6 +241,11 @@ describe("段缓存来源身份", () => {
       },
       savedAtIso: "2026-08-27T00:00:00.000Z",
     };
+    if (selected) alias.attemptSelection = {
+      status: "selected_for_structuring_after_three_attempts", policyVersion: 1, attemptedCount: 3,
+      selectedAttemptNumber: 1, sourceDigest, rawSha256: nativeAttemptRawSha256(raw),
+      candidates: [{ attemptNumber: 1, reasonZh: "覆盖不足", score: [0.2, 0.2, 0, 1] }],
+    };
     const createTarget = vi.fn(async (_entry: NativeDeepReadSegmentCacheEntry) => "created" as const);
 
     const result = await migrateMisplacedNativeDeepReadSegmentCaches({
@@ -262,6 +269,7 @@ describe("段缓存来源身份", () => {
     }
     const migrated = createTarget.mock.calls[0]![0];
     expect(migrated.episodeIndex).toBe(1);
+    if (selected) expect(hasNativeAttemptSelection(migrated)).toBe(true);
     expect(migrated.raw).toEqual(raw);
     expect(migrated.paidUsage).toEqual(alias.paidUsage);
     expect(migrated.fingerprint).not.toBe(alias.fingerprint);

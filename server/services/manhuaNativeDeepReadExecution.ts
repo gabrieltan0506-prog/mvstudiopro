@@ -1,3 +1,4 @@
+import { hasNativeAttemptSelection } from "./manhuaNativeDeepReadAttemptSelection.js";
 /**
  * 原生精读的**生产协调器**：runner 与入库之间那段接线。
  *
@@ -315,7 +316,7 @@ export async function migrateMisplacedNativeDeepReadSegmentCaches(input: {
     const alias = validAliases[0]?.entry;
     if (!alias) continue;
     const reusableQwenSelection = readCurrentQwenAttemptSelection(alias.raw);
-    if (!reusableQwenSelection && !nativeDeepReadSegmentMeetsThreeItemLine({
+    if (!hasNativeAttemptSelection(alias) && !reusableQwenSelection && !nativeDeepReadSegmentMeetsThreeItemLine({
       episodeIndex: input.episodeIndex,
       segmentIndex,
       startSec: segment.startSec,

@@ -1226,7 +1226,7 @@ describe("原生分集部分卡的滚动批准", () => {
     await expect(restoreStoredNativeEpisodeSummary(card)).rejects.toThrow("原稿身份");
   });
 
-  it.each(["有效新批次", "同输入新批次", "状态同步失败", "提交后重试", "相同批次", "旧提案", "不同来源", "缺少证据", "未完成"])("4/4重新学习批准：%s", async (kind) => {
+  it.each(["有效新批次", "同输入新批次", "状态同步失败", "提交后重试", "最终消费提交后重试", "相同批次", "旧提案", "不同来源", "缺少证据", "未完成"])("4/4重新学习批准：%s", async (kind) => {
     const { approveManhuaViralTemplate } = await import("./manhuaViralTemplateStore");
     const old = partialEpisodeCard({ status: "approved", successSegments: 4, publicCode: "EPKEEP", snapshot: "b".repeat(64) }) as unknown as ManhuaViralTemplateCard;
     const next = partialEpisodeCard({ status: "proposed", successSegments: 4, snapshot: "c".repeat(64) }) as unknown as ManhuaViralTemplateCard;
@@ -1245,7 +1245,11 @@ describe("原生分集部分卡的滚动批准", () => {
       if (p.objectName.includes("/proposals/")) throw new Error("gcs_upload_failed:503");
       return {};
     });
-    if (kind === "提交后重试") {
+    if (kind === "提交后重试" || kind === "最终消费提交后重试") {
+      if (kind === "最终消费提交后重试") {
+        delete next.provenance!.nativeVideoDeepRead!.glmParsedObjectName;
+        next.provenance!.nativeVideoDeepRead!.structuredCardObjectName = "manhua-template-learn/structured-card/" + "f".repeat(64) + ".json";
+      }
       Object.assign(old, next, { status: "approved", publicCode: "EPKEEP" });
       const result = await approveManhuaViralTemplate({ id: nativeEpisodeId });
       expect(result.status).toBe("approved");

@@ -1,3 +1,5 @@
+import { writeNativeStructuredCard } from "./manhuaNativeDeepReadStructuredCard.js";
+import { hasNativeAttemptSelection, nativeAttemptRawSha256, scoreNativeAttempt, type NativeDeepReadAttemptSelection } from "./manhuaNativeDeepReadAttemptSelection.js";
 import { assertNativeStructuringAnalysis, NativeStructuringAnalysisError } from "../../shared/manhuaNativeStructuringAnalysis.js";
 import { NATIVE_DEEP_READ_TIMELINE_TOLERANCE_SEC, type NativeDeepReadExcludedAdRange, mergeAdjacentAdRanges, stripNonStoryAdShotsForEpisodeCard } from "../../shared/manhuaNativeAdRanges.js";
 export { NATIVE_DEEP_READ_TIMELINE_TOLERANCE_SEC, type NativeDeepReadExcludedAdRange, mergeAdjacentAdRanges, stripNonStoryAdShotsForEpisodeCard } from "../../shared/manhuaNativeAdRanges.js";
@@ -745,6 +747,7 @@ export type NativeDeepReadRunResult = NativeDeepReadOutput & {
   rawAttemptEvidenceObjectNames?: string[];
   /** 整集GLM请求、每档原始响应与消费前解析JSON的永久取证回执。 */
   glmEvidence?: NativeDeepReadGlmEvidence;
+  structuredCardObjectName?: string;
   /** true 只表示全部计划段已成；完整集卡仍需通过整集门禁。 */
   assemblyComplete?: boolean;
 };
@@ -4650,6 +4653,7 @@ export type NativeDeepReadBatchRunnerDeps = {
   signReadUrl: typeof signGsUriV4ReadUrl;
   invokeGlmStructuring: typeof invokeNativeDeepReadGlmStructuring;
   selectAttemptWithQwen: typeof selectNativeDeepReadAttemptWithQwen;
+  writeStructuredCard?: typeof writeNativeStructuredCard;
   readSegmentCache: typeof readNativeDeepReadSegmentCacheEntry;
   readPermanentSegment?: typeof readNativeDeepReadPermanentSegmentEntry;
   writeSegmentCache: typeof writeNativeDeepReadSegmentCacheEntry;
@@ -4672,6 +4676,7 @@ const defaultBatchRunnerDeps: NativeDeepReadBatchRunnerDeps = {
   signReadUrl: signGsUriV4ReadUrl,
   invokeGlmStructuring: invokeNativeDeepReadGlmStructuring,
   selectAttemptWithQwen: selectNativeDeepReadAttemptWithQwen,
+  writeStructuredCard: writeNativeStructuredCard,
   readSegmentCache: readNativeDeepReadSegmentCacheEntry,
   readPermanentSegment: readNativeDeepReadPermanentSegmentEntry,
   writeSegmentCache: writeNativeDeepReadSegmentCacheEntry,
@@ -4734,6 +4739,7 @@ function readSegmentAdvisories(
 export const NATIVE_DEEP_READ_QWEN_SELECTION_CODE = "qwen_three_attempts_pick_one";
 
 type SegmentAttemptResult = {
+  attemptSelection?: NativeDeepReadAttemptSelection;
   raw: Record<string, unknown>;
   /** 段门禁收集到的改进建议（0829 起只贴标记，不丢内容）。 */
   advisories: NativeDeepReadAdvisory[];
@@ -4961,7 +4967,7 @@ async function executeNativeDeepReadBatch(
           }
           // 门禁代码收紧时，即使指纹未变，旧段也必须按当前标准复验；未过即 miss。
           // 判据与入库口共用同一个函数——两把尺子会导致「放行入库→复验拒绝→重读」死循环。
-          if (!nativeDeepReadSegmentMeetsThreeItemLine({
+          if (!hasNativeAttemptSelection(entry) && !nativeDeepReadSegmentMeetsThreeItemLine({
             episodeIndex: episode.episodeIndex,
             segmentIndex,
             startSec: segment.startSec,
@@ -5107,34 +5113,22 @@ async function executeNativeDeepReadBatch(
         target.costCny += usage.costCny;
       };
 
-      const buildCommittedSnapshot = (): NativeDeepReadSegmentSnapshot => {
+      const buildCommittedSnapshot = (mappedOverride?: ReturnType<typeof mapNativeDeepReadSegments>): NativeDeepReadSegmentSnapshot => {
         const sortedIndexes = [...committedIndexes].sort((a, b) => a - b);
         // 当前执行严格按段号推进；出现空洞说明缓存或调用顺序已损坏，不能拿它装部分卡。
         if (sortedIndexes.some((value, index) => value !== index)) {
           throw new Error(`第${episode.episodeIndex}集已成段不是连续前缀，拒绝生成部分提案`);
         }
-        // 快照行注入各 chunk 真实段界，音频广告过滤只认真实段界换算。
-        const snapshotRows = attachAudioChunkSpans(
-          sortedIndexes.map((index) => rawSegments[index]!),
-          episode.segments,
-          episode.episodeIndex,
-        );
         const requiresWholeEpisodeStructuring = sortedIndexes.some((index) => {
-          const marker = readCurrentQwenAttemptSelection(committedEntries.get(index)!.raw);
-          return marker?.selectedPassedGate === false;
+          const entry = committedEntries.get(index)!;
+          return hasNativeAttemptSelection(entry) || readCurrentQwenAttemptSelection(entry.raw)?.selectedPassedGate === false;
         });
-        // Qwen 已在三份未过 schema/内容门禁的原稿中必选一份时，
-        // 该原稿的可消费结构由后续整集 GLM 负责修复；这里只构建证据身份，
-        // 不得用部分快照 mapper 提前拒绝并迫使用户再烧一轮视频。
-        const mapped = requiresWholeEpisodeStructuring
-          ? { ...mapNativeDeepReadSegments([]), segmentCount: sortedIndexes.length }
-          : mapNativeDeepReadSegments(snapshotRows.map((raw) => ({
-              startSec: 0,
-              endSec: episode.sourceDurationSec,
-              finish: "stop",
-              text: JSON.stringify(raw),
-            })));
-        if (!requiresWholeEpisodeStructuring && mapped.segmentCount !== sortedIndexes.length) {
+        // 待整形原稿不得生成中间卡；最终快照直接使用已验证的真实整形产物。
+        if (requiresWholeEpisodeStructuring && !mappedOverride) throw new Error("待整形原稿不能生成中间提案");
+        const mapped = mappedOverride ?? mapNativeDeepReadSegments(attachAudioChunkSpans(
+          sortedIndexes.map((index) => rawSegments[index]!), episode.segments, episode.episodeIndex,
+        ).map((raw) => ({ startSec: 0, endSec: episode.sourceDurationSec, finish: "stop", text: JSON.stringify(raw) })));
+        if (!mappedOverride && mapped.segmentCount !== sortedIndexes.length) {
           throw new Error(`第${episode.episodeIndex}集已成段无法确定性装配，拒绝生成部分提案`);
         }
         const entries = sortedIndexes.map((index) => committedEntries.get(index)!);
@@ -5231,17 +5225,17 @@ async function executeNativeDeepReadBatch(
             rawSegments[nextIndex] = filterNativeDeepReadSubtitlesToKeyMoments(nextEntry.raw);
             committedIndexes.push(nextIndex);
             // 末片由后面的整集门禁写入；这里只生成中间快照。
-            // Qwen 在三份未过门禁数据中选出的结果只是该分片的终态，
+            // 三档失败选出的原稿只是待整形证据，
             // 必须等全部分片齐备后交整集 GLM 处理，不能让部分入库门禁提前终止其他分片。
-            const hasQwenSelectedGateFailure = committedIndexes.some((index) => {
+            const hasPendingStructuringCandidate = committedIndexes.some((index) => {
               const marker = readCurrentQwenAttemptSelection(committedEntries.get(index)!.raw);
-              return marker?.selectedPassedGate === false;
+              return hasNativeAttemptSelection(committedEntries.get(index)!) || marker?.selectedPassedGate === false;
             });
             if (
               params.onSegmentSnapshotCommitted
               && committedIndexes.length < segmentCount
               && !proposalCommitFailure
-              && !hasQwenSelectedGateFailure
+              && !hasPendingStructuringCandidate
             ) {
               try {
                 await params.onSegmentSnapshotCommitted(buildCommittedSnapshot());
@@ -5257,6 +5251,8 @@ async function executeNativeDeepReadBatch(
       };
 
       /** 单次通道尝试：发请求→解 envelope→段门禁；用量在门禁之前入账（钱已花）。 */
+      const rejectedAttempts = new Map<number, Array<{ result: SegmentAttemptResult; attemptNumber: number; reasonZh: string; score: number[] }>>();
+      const selectedSegmentCandidates = new Set<number>();
       const attemptSegment = async (input: {
         route: NativeDeepReadVisualRoute;
         fileUri: string;
@@ -5635,6 +5631,18 @@ async function executeNativeDeepReadBatch(
               raw.attemptNumber = input.attemptNumber;
               raw.advisories = [{ code: gateFailure.code, detailZh, segmentIndex: input.segmentIndex }];
             }
+            if (truncated) raw.truncated = true;
+            const score = scoreNativeAttempt(raw, segment.startSec, segment.endSec, hasAudio);
+            if (score && (!hasAudio || attemptAudioInput > 0)) {
+              const candidates = rejectedAttempts.get(input.segmentIndex) ?? [];
+              candidates.push({ attemptNumber: input.attemptNumber, score,
+                reasonZh: gateFailure instanceof Error ? gateFailure.message : String(gateFailure),
+                result: { raw, advisories: dedupeNativeDeepReadAdvisories([...readSegmentAdvisories(raw, input.segmentIndex), ...(truncated ? [{ code: "truncated", detailZh: "原始读片输出截断，保留已取得证据进入整形", segmentIndex: input.segmentIndex }] : [])]), truncated,
+                  inputTokens: attemptInput, outputTokens: attemptOutput, audioInputTokens: attemptAudioInput,
+                  reasoningTokens: attemptReasoning, visualRoute: input.route, finishReason: candidate?.finishReason,
+                  providerRequestId: response.requestId, rawAttemptEvidenceObjectName, requestFingerprint } });
+              rejectedAttempts.set(input.segmentIndex, candidates);
+            }
             throw gateFailure;
           }
           // 截断标记必须落进段卡本体：只留在外层信封里，缓存命中/断点恢复后就没了。
@@ -5770,7 +5778,7 @@ async function executeNativeDeepReadBatch(
         );
       };
 
-      /** 单片最多0.7→0.65→0.6三档；通过即返回，三档拒收即停止。 */
+      /** 通过即停；三档未过则零调用选择最佳原稿进入整形。 */
       const attemptWithSegmentRetry = async (input: {
         route: NativeDeepReadVisualRoute;
         fileUri: string;
@@ -5951,7 +5959,25 @@ async function executeNativeDeepReadBatch(
         }
 
         const retryError = lastError || new Error("分片三次尝试均未完成");
-        // 三次 Vertex 尝试就是付费上限；坏 JSON 也不得自动切到 GLM 形成第四次调用。
+        const candidates = rejectedAttempts.get(input.segmentIndex) ?? [];
+        candidates.sort((a, b) => {
+          for (let i = 0; i < a.score.length; i++) if (a.score[i] !== b.score[i]) return b.score[i]! - a.score[i]!;
+          return a.attemptNumber - b.attemptNumber;
+        });
+        const best = candidates[0];
+        if (best && !selectedSegmentIndexes) {
+          selectedSegmentCandidates.add(input.segmentIndex);
+          best.result.attemptSelection = {
+            status: "selected_for_structuring_after_three_attempts", policyVersion: 1, attemptedCount: 3,
+            selectedAttemptNumber: best.attemptNumber, sourceDigest: episode.cacheSourceDigest ?? "",
+            rawSha256: nativeAttemptRawSha256(best.result.raw),
+            candidates: candidates.map(row => ({ attemptNumber: row.attemptNumber, score: row.score,
+              reasonZh: row.reasonZh, rawAttemptEvidenceObjectName: row.result.rawAttemptEvidenceObjectName })),
+          };
+          console.info(`[nativeDeepRead] 第${input.segmentIndex + 1}段三档未过，选择第${best.attemptNumber}份原稿进入整形`);
+          return best.result;
+        }
+        // 三份均无可解析的非空证据时，不能制造空稿。
         logFinalGateFailure(input.segmentIndex, retryError);
         throw retryError;
       };
@@ -5971,7 +5997,7 @@ async function executeNativeDeepReadBatch(
         */
         if (cachedEntry) {
           // 与入库口共用当前字段、覆盖与数值偏差判据。
-          if (!nativeDeepReadSegmentMeetsThreeItemLine({
+          if (!hasNativeAttemptSelection(cachedEntry) && !nativeDeepReadSegmentMeetsThreeItemLine({
             episodeIndex: episode.episodeIndex,
             segmentIndex,
             startSec: segment.startSec,
@@ -5993,12 +6019,15 @@ async function executeNativeDeepReadBatch(
           // 写入返回的 canonical entry 是唯一真值；此后不再引用闭包里的预读变量。
           const written = await deps.writeSegmentCache(cachedEntry);
           const canonicalEntry = written.entry;
-          const canonicalDecision = evaluateNativeDeepReadSegmentAcceptance({
-            episodeIndex: episode.episodeIndex, segmentIndex,
-            startSec: segment.startSec, endSec: segment.endSec, hasAudio, raw: canonicalEntry.raw,
-            requireShotObservations: true,
-          });
-          if (canonicalDecision.retry) throw gateError(`已持久化分片未通过当前门禁：${canonicalDecision.advisories.map(row => row.detailZh).join("；")}`);
+          if (hasNativeAttemptSelection(canonicalEntry)) selectedSegmentCandidates.add(segmentIndex);
+          if (!hasNativeAttemptSelection(canonicalEntry)) {
+            const decision = evaluateNativeDeepReadSegmentAcceptance({
+              episodeIndex: episode.episodeIndex, segmentIndex,
+              startSec: segment.startSec, endSec: segment.endSec, hasAudio, raw: canonicalEntry.raw,
+              requireShotObservations: true,
+            });
+            if (decision.retry) throw gateError(`已持久化分片未通过当前门禁：${decision.advisories.map(row => row.detailZh).join("；")}`);
+          }
           if (canonicalEntry.rawAttemptEvidenceObjectName) {
             rawAttemptEvidenceObjectNames.add(canonicalEntry.rawAttemptEvidenceObjectName);
           }
@@ -6067,6 +6096,7 @@ async function executeNativeDeepReadBatch(
             visualRoute: result.visualRoute,
             degraded: result.visualRoute === NATIVE_DEEP_READ_ROUTE_EVOLINK,
             raw: result.raw,
+            attemptSelection: result.attemptSelection,
             rawAttemptEvidenceObjectName: result.rawAttemptEvidenceObjectName,
             paidUsage: { ...paidUsageBySegment[segmentIndex]! },
             savedAtIso: new Date().toISOString(),
@@ -6074,12 +6104,16 @@ async function executeNativeDeepReadBatch(
           // “段过门禁即入账”：并发请求已在途，缓存写入仍是该段成功的强步骤。
           // 装提案/rawSegments 一律用返回的 canonical entry，杜绝缓存 A / 提案 B。
           const written = await deps.writeSegmentCache(entry);
-          const canonicalDecision = evaluateNativeDeepReadSegmentAcceptance({
-            episodeIndex: episode.episodeIndex, segmentIndex,
-            startSec: segment.startSec, endSec: segment.endSec, hasAudio, raw: written.entry.raw,
-            requireShotObservations: true,
-          });
-          if (canonicalDecision.retry) throw gateError(`已持久化分片未通过当前门禁：${canonicalDecision.advisories.map(row => row.detailZh).join("；")}`);
+          if (!hasNativeAttemptSelection(written.entry)) {
+            const decision = evaluateNativeDeepReadSegmentAcceptance({
+              episodeIndex: episode.episodeIndex, segmentIndex,
+              startSec: segment.startSec, endSec: segment.endSec, hasAudio, raw: written.entry.raw,
+              requireShotObservations: true,
+            });
+            if (decision.retry) throw gateError(`已持久化分片未通过当前门禁：${decision.advisories.map(row => row.detailZh).join("；")}`);
+          }
+          if (hasNativeAttemptSelection(written.entry)) selectedSegmentCandidates.add(segmentIndex);
+          else selectedSegmentCandidates.delete(segmentIndex);
           rawSegments[segmentIndex] = written.entry.raw;
           await commitSegmentToProposal(segmentIndex, written.entry);
           return;
@@ -6147,9 +6181,9 @@ async function executeNativeDeepReadBatch(
       const glmStructuringInputs = completeRawSegments;
 
       // 段卡合并成集卡：0829 起**每集一律走 GLM 5.3 结构化整形**（去重 + 结构化），
-      // 每片只输入最终采用的一份；三档跑满时由 Qwen 先完成三选一，另外两份留在永久证据区。
+      // 每片只输入最终采用的一份；三档失败按数据质量选稿，全部尝试留在永久证据区。
       // 确定性拼接降为交叉校验用（只取 excludedAdRanges 对账，不入库）。
-      // 门禁仍在 GLM 之后跑一遍——GLM 只管结构干净与去重，结论仍由门禁/advisory 层给。
+      // 整形沿用观察锁、分析、镜头留存和mapper校验，不恢复已撤销的全面集级门禁。
       let glmEvidence: NativeDeepReadGlmEvidence | undefined;
       const glmEvidenceCallIds: string[] = [];
       const canCacheStructuring = Boolean(params.segmentCacheSeriesKey && episode.cacheSourceDigest);
@@ -6430,7 +6464,7 @@ async function executeNativeDeepReadBatch(
             assertNativeStructuringAnalysis(result.raw, { requireGeneratedAnalysis: true });
             // 0906 用户令「镜数不合」也算坏：批次留存率低于拒收线，同样降温重试再换路由
             const keptShots = Array.isArray(result.raw.shots) ? (result.raw.shots as unknown[]).length : 0;
-            if (inputShotCount > 0 && keptShots > 0 && keptShots / inputShotCount < NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT) {
+            if (inputShotCount > 0 && keptShots / inputShotCount < NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT) {
               const error = new Error(`批次镜头留存率仅 ${((keptShots / inputShotCount) * 100).toFixed(1)}%（输入 ${inputShotCount} 镜 → 整形后 ${keptShots} 镜，低于拒收线 ${(NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT * 100).toFixed(0)}%）`);
               error.name = NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
               throw error;
@@ -6485,9 +6519,9 @@ async function executeNativeDeepReadBatch(
             assertNativeDeepReadShotObservationsPreserved(rows, cached.raw);
             assertNativeStructuringAnalysis(unwrapNativeDeepReadStructuredAnswerEnvelope(cached.raw), { requireGeneratedAnalysis: true });
           } catch (error) {
-            if (error instanceof NativeStructuringAnalysisError) {
+            if (error instanceof NativeStructuringAnalysisError || (isNativeDeepReadObservationLockError(error) && segmentIndexes.some(index => selectedSegmentCandidates.has(index)))) {
               badCacheUndeletable.add(segmentIndexes.join("-"));
-              console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${labelZh}缓存分析不完整，保留原证据并重新整形：${error.message}`);
+              console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${labelZh}缓存未通过内容校验，保留原证据并重新整形：${error instanceof Error ? error.message : String(error)}`);
               return null;
             }
             if (!isNativeDeepReadObservationLockError(error)) throw error;
@@ -6586,7 +6620,7 @@ async function executeNativeDeepReadBatch(
         }
         const groupRows = await Promise.all(groups.map(async (segmentIndexes, batchOrdinal) => {
           // 单片无需再做一次中间GLM；直接作为一张已结构化分段卡进入确定性拼接。
-          if (segmentIndexes.length === 1) return completeRawSegments[segmentIndexes[0]!]!;
+          if (segmentIndexes.length === 1 && !selectedSegmentCandidates.has(segmentIndexes[0]!)) return completeRawSegments[segmentIndexes[0]!]!;
           const groupInputs = segmentIndexes.map((index) => completeRawSegments[index]!);
           const annotatedRows = annotateSegmentRows();
           const groupCanonicalRows = segmentIndexes.map((index) => annotatedRows[index]!);
@@ -6683,7 +6717,7 @@ async function executeNativeDeepReadBatch(
           const keptShots = Array.isArray(structuredRaw.shots)
             ? (structuredRaw.shots as unknown[]).length
             : 0;
-          if (preStructuringShotCount > 0 && keptShots > 0) {
+          if (preStructuringShotCount > 0) {
             const keepRate = keptShots / preStructuringShotCount;
             if (keepRate < NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT) {
               throw gateError(
@@ -6759,8 +6793,18 @@ async function executeNativeDeepReadBatch(
           throw new Error(`第${episode.episodeIndex}集结构解析失败，整集拒绝入库`);
         }
         const committedSnapshot = committedIndexes.length === segmentCount
-          ? buildCommittedSnapshot()
+          ? buildCommittedSnapshot(mapped)
           : undefined;
+        let structuredCardObjectName: string | undefined;
+        if (selectedSegmentCandidates.size && committedSnapshot) {
+          if (!deps.writeStructuredCard) throw new Error("待整形候选的最终消费证据存储不可用");
+          structuredCardObjectName = await deps.writeStructuredCard({
+            schemaVersion: 1, sourceDigest: episode.cacheSourceDigest!, seriesKey: params.segmentCacheSeriesKey!,
+            episodeIndex: episode.episodeIndex,
+            segmentEvidenceObjectNames: committedSnapshot.result.segmentEvidenceObjectNames!,
+            raw: { ...structuredRaw, chunkSpans: episode.segments.map((segment, chunkIndex) => ({ chunkIndex, ...segment })) },
+          });
+        }
         const episodeAdvisories = dedupeNativeDeepReadAdvisories([
           ...collectAdvisories(),
           ...episodeGateAdvisories,
@@ -6800,6 +6844,7 @@ async function executeNativeDeepReadBatch(
             segmentEvidenceObjectNames: committedSnapshot?.result.segmentEvidenceObjectNames,
             rawAttemptEvidenceObjectNames: Array.from(rawAttemptEvidenceObjectNames),
             glmEvidence,
+            structuredCardObjectName,
             assemblyComplete: true,
             usage: {
               inputTokens: episodeInput,

@@ -255,6 +255,7 @@ export const manhuaViralTemplateRouter = router({
           segmentSpans: complete
             ? native?.segmentSpans
             : (native?.segmentSpans || []).slice(0, previewSegments),
+          structuredCardObjectName: complete ? native?.structuredCardObjectName : undefined,
           glmCardObjectName: complete ? native?.glmParsedObjectName : undefined,
           evidenceFrames: complete ? card.evidenceFrames : undefined,
           framesV2SummaryObjectName: `manhua-template-learn/probes/${cardKey}/frames-v2-summary.json`,

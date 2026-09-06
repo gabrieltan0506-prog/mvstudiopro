@@ -1,3 +1,4 @@
+import { isNativeStructuredCardObjectName } from "./manhuaNativeStructuredCard.js";
 /**
  * 漫剧节奏模板库（产品只消费 status=approved）。
  * 出厂种子已于 2026-08-10 全部下架——那批是手写硬编码货，没经过真实爆款学习，
@@ -371,6 +372,8 @@ export type ManhuaViralTemplateProvenance = {
     segmentEvidenceObjectNames?: string[];
     /** 私有 GCS 对象名；最终 GLM 整集整形的消费前 parsed JSON，供报告精确还原整形结果。 */
     glmParsedObjectName?: string;
+    /** 私有最终消费证据，保留三档候选经整形后的实际内容。 */
+    structuredCardObjectName?: string;
   };
   nativeAudioDeepRead?: {
     model: string;
@@ -862,6 +865,7 @@ function parseManhuaViralTemplateProvenance(
       segmentEvidenceObjectNames: segmentEvidenceObjectNames.length
         ? segmentEvidenceObjectNames
         : undefined,
+      structuredCardObjectName: isNativeStructuredCardObjectName(n.structuredCardObjectName) ? n.structuredCardObjectName : undefined,
       glmParsedObjectName: /^manhua-template-learn\/episode-glm-evidence\/[0-9A-Za-z_-]{16,180}\/parsed\.json$/.test(glmParsedObjectName)
         ? glmParsedObjectName
         : undefined,
