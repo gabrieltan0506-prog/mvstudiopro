@@ -27,15 +27,25 @@ export async function loadNativeStructuringOnlyEpisode(input: NativeStructuringS
   const approved = await read("approved");
   const card = proposal ?? approved;
   const native = card?.provenance?.nativeVideoDeepRead;
-  if (!card) {
-    const plan = input.storedPlan as { seriesKey?: string; episodes?: Array<{ episodeIndex: number; sourceUrl: string; durationSec: number; videoFps: number; segmentSeconds?: number; segments: Array<{ startSec: number; endSec: number }> }> } | undefined;
+  // 原任务的持久计划优先；旧正式卡可能属于不同分片长度的上一轮学习。
+  if (input.storedPlan !== undefined && input.storedPlan !== null) {
+    const plan = input.storedPlan as { seriesKey?: string; episodes?: Array<{ episodeIndex: number; sourceUrl: string; durationSec: number; videoFps: number; segmentSeconds?: number; segments: Array<{ startSec: number; endSec: number }> }> };
     const storedEpisode = plan?.seriesKey === input.seriesKey && Array.isArray(plan.episodes)
       ? plan.episodes.find(row => row.episodeIndex === input.episodeIndex) : undefined;
-    if (storedEpisode && storedEpisode.videoFps === input.videoFps && Array.isArray(storedEpisode.segments) && storedEpisode.segments.length > 0
-      && typeof storedEpisode.sourceUrl === "string" && storedEpisode.sourceUrl.startsWith("https://") && storedEpisode.durationSec > 0) {
-      return { ...storedEpisode, seriesKey: input.seriesKey, segmentSeconds: input.segmentSeconds,
-        resolveNodes: async () => { throw new Error("仅重新整形禁止读取源视频"); } };
+    if (!storedEpisode || storedEpisode.videoFps !== input.videoFps || !Array.isArray(storedEpisode.segments) || !storedEpisode.segments.length
+      || typeof storedEpisode.sourceUrl !== "string" || !storedEpisode.sourceUrl.startsWith("https://") || !(storedEpisode.durationSec > 0)) {
+      throw new Error("原任务持久计划身份或分片不完整，未读取视频");
     }
+    const sourceDigest = await resolveNativeDeepReadCacheSourceDigest({ sourceRef: storedEpisode.sourceUrl,
+      statSourceVersion: async () => { throw new Error("仅重新整形不访问媒体来源"); } });
+    const matchingCard = [proposal, approved].find(row => row?.provenance?.nativeVideoDeepRead?.sourceDigest === sourceDigest
+      && row.provenance.nativeVideoDeepRead.videoFps === input.videoFps
+      && row.provenance.nativeVideoDeepRead.sourceDurationSec === storedEpisode.durationSec && row.evidenceFrames?.length);
+    return { ...storedEpisode, seriesKey: input.seriesKey, segmentSeconds: input.segmentSeconds,
+      retainedEvidenceFrames: matchingCard?.evidenceFrames,
+      resolveNodes: async () => { throw new Error("仅重新整形禁止读取源视频"); } };
+  }
+  if (!card) {
     // 历史单集任务尚未落卡：用原回执声明段数读取完整缓存信封，再按稳定来源摘要核验。
     if (input.sourceUrl && Number.isInteger(input.expectedSegmentCount) && Number(input.expectedSegmentCount) > 0 && Number(input.expectedSegmentCount) <= 32 && deps.readCache) {
       const sourceUrl = /(^|\.)douyin\.com$/i.test(new URL(input.sourceUrl).hostname) ? normalizeDouyinVideoUrl(input.sourceUrl) : input.sourceUrl;

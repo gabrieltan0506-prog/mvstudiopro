@@ -6433,7 +6433,7 @@ async function executeNativeDeepReadBatch(
           if ("localFallback" in result) return restoreNativeRequiredSummary(result.raw, input.rows);
           try {
             assertNativeDeepReadShotObservationsPreserved(input.rows, result.raw);
-            assertNativeStructuringAnalysis(result.raw);
+            assertNativeStructuringAnalysis(result.raw, { requireGeneratedAnalysis: true });
             // 0906 用户令「镜数不合」也算坏：批次留存率低于拒收线，同样降温重试再换路由
             const keptShots = Array.isArray(result.raw.shots) ? (result.raw.shots as unknown[]).length : 0;
             if (inputShotCount > 0 && keptShots > 0 && keptShots / inputShotCount < NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT) {
@@ -6489,7 +6489,7 @@ async function executeNativeDeepReadBatch(
         if (cached) {
           try {
             assertNativeDeepReadShotObservationsPreserved(rows, cached.raw);
-            assertNativeStructuringAnalysis(unwrapNativeDeepReadStructuredAnswerEnvelope(cached.raw));
+            assertNativeStructuringAnalysis(unwrapNativeDeepReadStructuredAnswerEnvelope(cached.raw), { requireGeneratedAnalysis: true });
           } catch (error) {
             if (error instanceof NativeStructuringAnalysisError) {
               badCacheUndeletable.add(segmentIndexes.join("-"));

@@ -18,13 +18,14 @@ export class NativeStructuringAnalysisError extends Error {
   }
 }
 
-export function assertNativeStructuringAnalysis(value: unknown): void {
+export function assertNativeStructuringAnalysis(value: unknown, options: { requireGeneratedAnalysis?: boolean } = {}): void {
   const reject = (detail: string): never => {
     throw new NativeStructuringAnalysisError(detail);
   };
   if (!isRecord(value)) reject("整形结果必须为对象");
   const card = value as Record<string, unknown>;
   const hasTitle = Object.prototype.hasOwnProperty.call(card, "templateTitleZh");
+  if (options.requireGeneratedAnalysis && !hasTitle) reject("新整形结果必须包含 templateTitleZh");
   if (hasTitle) {
     const title = card.templateTitleZh;
     if (typeof title !== "string" || !title.trim() || Array.from(title.trim()).length > 60) {
@@ -32,6 +33,7 @@ export function assertNativeStructuringAnalysis(value: unknown): void {
     }
   }
   const hasProse = Object.prototype.hasOwnProperty.call(card, "classificationProseZh");
+  if (options.requireGeneratedAnalysis && !hasProse) reject("新整形结果必须包含 classificationProseZh");
   const prose = isRecord(card.classificationProseZh) ? card.classificationProseZh : {};
   if (hasProse && (!isRecord(card.classificationProseZh)
     || Object.values(dimensions).some((key) => typeof prose[key] !== "string"))) {

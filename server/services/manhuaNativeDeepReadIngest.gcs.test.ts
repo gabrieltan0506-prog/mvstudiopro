@@ -521,6 +521,21 @@ describe("仅重新整形原计划回读", () => {
     await expect(episode.resolveNodes()).rejects.toThrow("禁止读取源视频");
   });
 
+  it("旧卡计划不能覆盖新任务计划，且异源旧帧不得复用", async () => {
+    const { loadNativeStructuringOnlyEpisode } = await import("./manhuaNativeStructuringOnly.js");
+    const card = JSON.parse(storedCardBuffer().toString("utf8"));
+    const download = vi.fn(async () => ({ buffer: Buffer.from(JSON.stringify(card)), generation: "7", bucket: "bucket-a", objectName: "card.json" }));
+    const episode = await loadNativeStructuringOnlyEpisode({ seriesKey: "abc123", episodeIndex: 1, segmentSeconds: 120, videoFps: 12,
+      storedPlan: { seriesKey: "abc123", episodes: [{ episodeIndex: 1, sourceUrl: "https://example.com/new-ep1", durationSec: 120,
+        videoFps: 12, segments: [{ startSec: 0, endSec: 120 }] }] } }, { download, getBucket: () => "bucket-a" });
+    expect(episode.segments).toEqual([{ startSec: 0, endSec: 120 }]);
+    expect(episode.sourceUrl).toBe("https://example.com/new-ep1");
+    expect(episode.retainedEvidenceFrames).toBeUndefined();
+    await expect(episode.resolveNodes()).rejects.toThrow("禁止读取源视频");
+    await expect(loadNativeStructuringOnlyEpisode({ seriesKey: "abc123", episodeIndex: 1, segmentSeconds: 120, videoFps: 12,
+      storedPlan: { seriesKey: "other", episodes: [] } }, { download, getBucket: () => "bucket-a" })).rejects.toThrow("持久计划身份");
+  });
+
   it("历史首次无卡无计划，只用完整段信封且验证URL来源摘要", async () => {
     const { loadNativeStructuringOnlyEpisode } = await import("./manhuaNativeStructuringOnly.js");
     const { resolveNativeDeepReadCacheSourceDigest } = await import("./manhuaNativeDeepReadExecution.js");

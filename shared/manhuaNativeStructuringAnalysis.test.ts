@@ -236,3 +236,10 @@ describe("整形分析消费契约", () => {
     expect(() => assertNativeStructuringAnalysis({ ...glmAnalysis, classification: {}, classificationProseZh: Object.fromEntries(Object.keys(glmAnalysis.classificationProseZh).map((key) => [key, ""])) })).not.toThrow();
   });
 });
+
+ it("新模型结果不能借旧卡兼容规则省略标题和五维分析", () => {
+   const strict = { requireGeneratedAnalysis: true };
+   expect(() => assertNativeStructuringAnalysis({ classification: glmAnalysis.classification }, strict)).toThrow(/templateTitleZh/);
+   expect(() => assertNativeStructuringAnalysis({ templateTitleZh: "剧情标题", classification: glmAnalysis.classification }, strict)).toThrow(/classificationProseZh/);
+   expect(() => assertNativeStructuringAnalysis(glmAnalysis, strict)).not.toThrow();
+ });

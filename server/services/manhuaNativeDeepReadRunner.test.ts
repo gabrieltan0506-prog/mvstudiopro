@@ -2436,6 +2436,8 @@ function readRawSegmentsFromGlmPrompt(user: string): Array<Record<string, unknow
   return JSON.parse(user.slice(at + marker.length)) as Array<Record<string, unknown>>;
 }
 
+const validGeneratedAnalysisFixture = { templateTitleZh: "测试剧情推进·情绪递进型", classificationProseZh: { emotionZh: "压迫渐强", narrativeZh: "信息递进", performanceZh: "克制爆发", audiovisualZh: "冷暖对撞", audienceZh: "持续紧张" } };
+
 function makeGlmStructuringStub() {
   return vi.fn(async (prompt: { system: string; user: string }) => {
     // 真 GLM 的首要职责是去重（同段可能被喂进通过版 + 被标记版）。
@@ -2449,6 +2451,8 @@ function makeGlmStructuringStub() {
     const allShots = pick<Record<string, unknown>>("shots");
     const adShots = allShots.filter((shot) => shot.evidenceRole === "non_story_ad");
     const merged: Record<string, unknown> = {
+      templateTitleZh: "测试剧情推进·情绪递进型",
+      classificationProseZh: { emotionZh: "压迫渐强", narrativeZh: "信息递进", performanceZh: "克制爆发", audiovisualZh: "冷暖对撞", audienceZh: "持续紧张" },
       shots: allShots.filter((shot) => shot.evidenceRole !== "non_story_ad"),
       subtitles: pick("subtitles"),
       audioResolution: pick("audioResolution"),
@@ -3198,7 +3202,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentIndexes: [...input.segmentIndexes],
       inputDigest: "a".repeat(64),
       raw: {
-        answer: JSON.stringify(deterministicallyMergeNativeDeepReadRawSegments(input.rawSegments)),
+        answer: JSON.stringify({ ...deterministicallyMergeNativeDeepReadRawSegments(input.rawSegments), ...validGeneratedAnalysisFixture }),
       },
       gateway: "openrouter" as const,
       model: "z-ai/glm-5.3",
@@ -3376,7 +3380,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
           episodeIndex: 1,
           segmentIndexes: [...input.segmentIndexes],
           inputDigest: "a".repeat(64),
-          raw: deterministicallyMergeNativeDeepReadRawSegments(input.rawSegments),
+          raw: { ...deterministicallyMergeNativeDeepReadRawSegments(input.rawSegments), ...validGeneratedAnalysisFixture },
           gateway: "openrouter" as const,
           model: "z-ai/glm-5.3",
           inputTokens: 1,
@@ -3965,6 +3969,7 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
       const response = await base(prompt);
       response.raw.templateTitleZh = kind === "长标题" && attempts === 0 ? "长".repeat(61) : "短标题";
+      delete response.raw.classificationProseZh;
       if (kind !== "缺分析" || attempts > 0) response.raw.classificationProseZh = {
         emotionZh: "情绪分析", narrativeZh: "叙事分析", performanceZh: "表演分析", audiovisualZh: "视听分析", audienceZh: "观众分析",
       };
@@ -4032,7 +4037,7 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     const deps = makeRunnerDeps({
       readSegmentCache: vi.fn(async () => ({ entry, generation: "7" })) as never,
       readStructuredBatchCache: vi.fn(async () => ({
-        raw: { answer: JSON.stringify({ ...entry.raw, reusableZh: undefined, genPromptHintZh: " " }) },
+        raw: { answer: JSON.stringify({ ...entry.raw, ...validGeneratedAnalysisFixture, reusableZh: undefined, genPromptHintZh: " " }) },
       })) as never,
     });
     const result = await runManhuaNativeDeepReadBatch({
@@ -4139,7 +4144,7 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     const deps = makeRunnerDeps({
       readSegmentCache: vi.fn(async () => ({ entry, generation: "7" })) as never,
       invokeGlmStructuring: vi.fn(async () => ({
-        raw: entry.raw, inputTokens: 11, outputTokens: 2, reasoningTokens: 1,
+        raw: { ...entry.raw, ...validGeneratedAnalysisFixture }, inputTokens: 11, outputTokens: 2, reasoningTokens: 1,
         costUsd: 0.01, finishReason: "stop",
         gateway: "openrouter" as const, model: "z-ai/glm-5.3",
       })) as never,
@@ -4943,7 +4948,7 @@ describe("0906 摘要必填跨路径回归", () => {
   });
   it("缺栏整形缓存直接从对应原稿恢复，不删除缓存、不重整形", async () => {
     const readStructuredBatchCache = vi.fn(async (input: { rawSegments: Array<Record<string, unknown>> }) => ({
-      raw: { answer: JSON.stringify({ ...deterministicallyMergeNativeDeepReadRawSegments(input.rawSegments), reusableZh: undefined, genPromptHintZh: " " }) },
+      raw: { answer: JSON.stringify({ ...deterministicallyMergeNativeDeepReadRawSegments(input.rawSegments), ...validGeneratedAnalysisFixture, reusableZh: undefined, genPromptHintZh: " " }) },
     }));
     const deps = makeRunnerDeps({ postVertex: makeSuccessfulEpisodePostVertex(twoSegmentEpisode.segments) as never, readStructuredBatchCache: readStructuredBatchCache as never });
     const result = await runManhuaNativeDeepReadBatch({ episodes: [{ ...twoSegmentEpisode, cacheSourceDigest: "a".repeat(64) }], segmentCacheSeriesKey: "summary_cache_test" }, deps);
