@@ -8,6 +8,7 @@ import {
   parseManhuaBoardMotionOverlay,
   rebindManhuaBoardOverlayBase,
   type ManhuaBoardMotionOverlay,
+  type ManhuaBoardOverlayPointTarget,
 } from "./manhuaDirectorBoardOverlay";
 
 function overlay(
@@ -149,6 +150,47 @@ describe("manhuaDirectorBoardOverlay contract", () => {
       { x: Number.NaN, y: 0.4 }
     );
     expect(adjusted).toEqual(original);
+  });
+
+  it.each<ManhuaBoardOverlayPointTarget>([
+    { kind: "actor_route", routeId: "route-1", pointIndex: 0 },
+    { kind: "camera_path", pointIndex: 0 },
+    { kind: "axis_entrance" },
+    { kind: "axis_exit" },
+    { kind: "axis_anchor", entityId: "沈策" },
+    { kind: "landing", landingId: "landing-1" },
+  ])("已确认的 $kind 点位实际变化后，重新确认之前禁止进入生成指令", target => {
+    const original = overlay({ needsReview: false });
+    const adjusted = adjustManhuaBoardOverlayPoint(original, target, { x: 0.95, y: 0.9 });
+    expect(adjusted?.needsReview).toBe(true);
+    expect(adjusted?.userAdjusted).toBe(true);
+    expect(formatManhuaBoardMotionOverlayPromptZh(adjusted)).toBe("");
+    expect(parseManhuaBoardMotionOverlay(JSON.parse(JSON.stringify(adjusted)))?.needsReview).toBe(true);
+    expect(formatManhuaBoardMotionOverlayPromptZh(confirmManhuaBoardOverlayReview(adjusted))).toContain("【空间调度】");
+    expect(original.needsReview).toBe(false);
+  });
+
+  it("不变、无效目标和非有限坐标不撤销确认；方向变更确认后才进入成片", () => {
+    const original = overlay({ needsReview: false });
+    const unchangedTargets: Array<[ManhuaBoardOverlayPointTarget, { x: number; y: number }]> = [
+      [{ kind: "actor_route", routeId: "route-1", pointIndex: 0 }, { x: 0.1, y: 0.6 }],
+      [{ kind: "camera_path", pointIndex: 0 }, { x: 0.08, y: 0.5 }],
+      [{ kind: "axis_entrance" }, { x: 0.1, y: 0.6 }],
+      [{ kind: "axis_exit" }, { x: 0.8, y: 0.6 }],
+      [{ kind: "axis_anchor", entityId: "沈策" }, { x: 0.1, y: 0.6 }],
+      [{ kind: "landing", landingId: "landing-1" }, { x: 0.8, y: 0.6 }],
+      [{ kind: "actor_route", routeId: "route-1", pointIndex: Number.NaN }, { x: 0.9, y: 0.6 }],
+      [{ kind: "camera_path", pointIndex: 0.5 }, { x: 0.9, y: 0.6 }],
+      [{ kind: "landing", landingId: "missing" }, { x: 0.9, y: 0.6 }],
+      [{ kind: "camera_path", pointIndex: 0 }, { x: Number.NaN, y: 0.6 }],
+    ];
+    for (const [target, point] of unchangedTargets) {
+      expect(adjustManhuaBoardOverlayPoint(original, target, point)).toEqual(original);
+    }
+    const adjusted = adjustManhuaBoardOverlayPoint(original, { kind: "camera_path", pointIndex: 0 }, { x: 0.95, y: 0.5 });
+    expect(formatManhuaBoardMotionOverlayPromptZh(original)).toContain("摄影机跟移自画面左向右");
+    expect(formatManhuaBoardMotionOverlayPromptZh(adjusted)).toBe("");
+    expect(formatManhuaBoardMotionOverlayPromptZh(confirmManhuaBoardOverlayReview(adjusted))).toContain("摄影机跟移自画面右向左");
   });
 
   it("复核确认与换底图分工：确认可清标，修订变化只重新挂待复核", () => {

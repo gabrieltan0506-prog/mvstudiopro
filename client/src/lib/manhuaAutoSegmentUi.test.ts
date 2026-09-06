@@ -9,7 +9,9 @@ import {
   isManhuaWorkbenchKeyartCurrent,
   resolveManhuaSourcePlanBeat,
 } from "../components/ManhuaScriptWorkbench.js";
-import { resolveShotsForEpisodeKeyarts } from "./canvasDramaStudio";
+import { resolveShotsForEpisodeKeyarts, ensureManhuaFragmentClips, expandManhuaShotKeyartsAfterReverse, spawnManhuaDramaStudio, queuedManhuaClipBlocks } from "./canvasDramaStudio";
+import type { ManhuaWriterAssetCanon } from "@shared/manhuaWriterAssetCanon";
+import { confirmManhuaBoardOverlayReview } from "@shared/manhuaDirectorBoardOverlay";
 import { canvasVideoClipCredits } from "@shared/canvasGenerationPricing";
 import { buildWorkbenchShotsFromSegmentPlan } from "@shared/manhuaStoryDistill";
 import { compileManhuaSegmentDirectorBoardOverlay } from "@shared/manhuaDirectorBoardOverlayCompile";
@@ -66,10 +68,40 @@ describe("漫剧自动分段 UI 消费", () => {
       activeSegNo: 2, segments, shots, shootablePlan, buildWorkbenchShotsFromSegmentPlan, resolveManhuaSourcePlanBeat,
       focusEpisode: 1, directorBoardSegUrls: common.segmentBoardUrls, segmentFirstShotKeyart: undefined,
       mediaUrl: () => undefined, directorBoardMotionOverlays: {}, compileManhuaSegmentDirectorBoardOverlay,
+      assetCanon: undefined,
     });
     expect(result).toEqual(compileManhuaSegmentDirectorBoardOverlay(common));
     expect(JSON.stringify(result)).not.toContain("旧角色");
     expect(result.cameraPath).not.toBeNull();
+  });
+  it("原稿人物路线经真实工作台确认后进入同源工厂成片提示词", () => {
+    const assetCanon: ManhuaWriterAssetCanon = {
+      characters: [{ id: "wa_char_heiqi", role: "character", nameZh: "黑奇", lookZh: "灰黑马", promptZh: "灰黑马" }],
+      props: [], locations: [], episodeMainSceneId: {},
+    };
+    const spawned = spawnManhuaDramaStudio({ topic: "墨菁传", episodeIndex: 1, videoModel: "seedance-2.0" });
+    const reverse = spawned.blocks.find((block) => block.id.startsWith("reverse-"))!;
+    const blocks = spawned.blocks.map((block) => block.id === reverse.id ? {
+      ...block, status: "done" as const,
+      outputText: "1. 镜头向右横移跟拍：黑奇从画面左侧向画面右侧走\n2. 固定机位：黑奇停下",
+    } : block);
+    const shots = resolveShotsForEpisodeKeyarts(blocks, 1);
+    const segments = groupShotsIntoSegments(shots, { videoModel: "seedance-2.0" });
+    const board = "https://example.test/board.png";
+    const overlay = productionMemo("activeDirectorBoardMotionOverlay", {
+      activeBoardBaseUrl: board, activeBoardImageGeometry: { baseAspectRatio: "16:9" },
+      activeSegNo: 1, segments, shots, shootablePlan: { segments: [] }, resolveManhuaSourcePlanBeat,
+      focusEpisode: 1, directorBoardSegUrls: { 1: board }, segmentFirstShotKeyart: undefined,
+      mediaUrl: () => undefined, directorBoardMotionOverlays: {}, compileManhuaSegmentDirectorBoardOverlay, assetCanon,
+    });
+    expect(overlay.actorRoutes).toMatchObject([{ entityId: "黑奇", entityKind: "character" }]);
+    const expanded = expandManhuaShotKeyartsAfterReverse(blocks, spawned.edges, reverse.id, { videoModel: "seedance-2.0" });
+    const ready = expanded.blocks.map((block) => block.id.startsWith("keyart-") ? { ...block, outputUrl: `https://example.test/${block.id}.png`, status: "done" as const } : block);
+    const options = { videoModel: "seedance-2.0", assetCanon, characterSheetUrlById: { wa_char_heiqi: "https://example.test/heiqi.png" }, directorBoardUrlByEpisodeSegment: { 1: { 1: board } } };
+    const unconfirmed = ensureManhuaFragmentClips(ready, expanded.edges, 1, { ...options, directorBoardMotionOverlayByEpisodeSegment: { 1: { 1: overlay } } });
+    expect(queuedManhuaClipBlocks(unconfirmed.blocks, 1, "seedance-2.0")[0]!.prompt).not.toContain("【空间调度】");
+    const confirmed = ensureManhuaFragmentClips(ready, expanded.edges, 1, { ...options, directorBoardMotionOverlayByEpisodeSegment: { 1: { 1: confirmManhuaBoardOverlayReview(overlay)! } } });
+    expect(queuedManhuaClipBlocks(confirmed.blocks, 1, "seedance-2.0")[0]!.prompt).toContain("【空间调度】人物黑奇自画面左向右");
   });
   it("相同原稿的新数组和节点进度不清空选择，原稿、集或引擎变更才清空", () => {
     const segments = groupShotsIntoSegments([shot(1, 20)], { videoModel: "seedance-2.0" });

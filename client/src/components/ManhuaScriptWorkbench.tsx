@@ -1738,6 +1738,7 @@ export default function ManhuaScriptWorkbench({
       segmentFirstShotStillUrl: mediaUrl(segmentFirstShotKeyart),
       beat,
       shots: segment?.shots,
+      assetCanon,
       existingOverlay: directorBoardMotionOverlays?.[activeSegNo],
     });
   }, [
@@ -1750,6 +1751,7 @@ export default function ManhuaScriptWorkbench({
     segmentFirstShotKeyart,
     segments,
     shots,
+    assetCanon,
     shootablePlan.segments,
   ]);
   const activeMotionPanelStatus = resolveManhuaMotionPanelStatus({

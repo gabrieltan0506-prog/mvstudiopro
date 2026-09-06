@@ -471,12 +471,15 @@ export function adjustManhuaBoardOverlayPoint(
     return parsed;
   }
   const point = normalizeManhuaBoardPoint(nextPoint);
+  const pointChanged = (previous: ManhuaBoardNormalizedPoint) =>
+    previous.x !== point.x || previous.y !== point.y;
   let changed = false;
   const actorRoutes = parsed.actorRoutes.map(route => {
     if (target.kind !== "actor_route" || route.routeId !== target.routeId)
       return route;
-    const pointIndex = Math.floor(target.pointIndex);
-    if (pointIndex < 0 || pointIndex >= route.points.length) return route;
+    const pointIndex = target.pointIndex;
+    if (!Number.isInteger(pointIndex) || pointIndex < 0 || pointIndex >= route.points.length ||
+        !pointChanged(route.points[pointIndex]!)) return route;
     const points = route.points.map((entry, index) =>
       index === pointIndex ? point : entry
     );
@@ -490,8 +493,9 @@ export function adjustManhuaBoardOverlayPoint(
   });
   let cameraPath = parsed.cameraPath;
   if (target.kind === "camera_path" && cameraPath) {
-    const pointIndex = Math.floor(target.pointIndex);
-    if (pointIndex >= 0 && pointIndex < cameraPath.points.length) {
+    const pointIndex = target.pointIndex;
+    if (Number.isInteger(pointIndex) && pointIndex >= 0 && pointIndex < cameraPath.points.length &&
+        pointChanged(cameraPath.points[pointIndex]!)) {
       cameraPath = {
         ...cameraPath,
         points: cameraPath.points.map((entry, index) =>
@@ -504,22 +508,22 @@ export function adjustManhuaBoardOverlayPoint(
     }
   }
   let axis = parsed.axis;
-  if (axis && target.kind === "axis_entrance") {
+  if (axis && target.kind === "axis_entrance" && pointChanged(axis.entrance)) {
     axis = { ...axis, entrance: point };
     changed = true;
-  } else if (axis && target.kind === "axis_exit") {
+  } else if (axis && target.kind === "axis_exit" && pointChanged(axis.exit)) {
     axis = { ...axis, exit: point };
     changed = true;
   } else if (axis && target.kind === "axis_anchor") {
     const subjectAnchors = axis.subjectAnchors.map(anchor => {
-      if (anchor.entityId !== target.entityId) return anchor;
+      if (anchor.entityId !== target.entityId || !pointChanged(anchor.at)) return anchor;
       changed = true;
       return { ...anchor, at: point };
     });
     axis = { ...axis, subjectAnchors };
   }
   const landingPoints = parsed.landingPoints.map(landing => {
-    if (target.kind !== "landing" || landing.landingId !== target.landingId)
+    if (target.kind !== "landing" || landing.landingId !== target.landingId || !pointChanged(landing.at))
       return landing;
     changed = true;
     return { ...landing, at: point };
@@ -532,6 +536,8 @@ export function adjustManhuaBoardOverlayPoint(
         axis,
         landingPoints,
         userAdjusted: true,
+        // 任何实际点位变化都产生新版本，必须再次确认才可消费为生成指令。
+        needsReview: true,
       }
     : parsed;
 }

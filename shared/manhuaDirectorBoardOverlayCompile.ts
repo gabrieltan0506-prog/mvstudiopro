@@ -8,6 +8,7 @@
 import { splitManhuaCastZhNames } from "./manhuaAssetLockRegistry.js";
 import type { ManhuaEpisodeSegmentBeat } from "./manhuaEpisodeSegmentPlan.js";
 import type { ManhuaWorkbenchShot } from "./manhuaScriptWorkbench.js";
+import type { ManhuaWriterAssetCanon } from "./manhuaWriterAssetCanon.js";
 import {
   MANHUA_BOARD_MOTION_OVERLAY_FORMAT,
   MANHUA_BOARD_MOTION_OVERLAY_LIMITS,
@@ -42,6 +43,25 @@ type ShotMotionFields = Partial<
   Pick<ManhuaWorkbenchShot, "index" | "actionZh" | "cameraZh" | "durationSec" | "sourceOffsetSec" | "sourceDurationSec" | "continuation">
 >;
 
+type RegisteredMotionSubject = {
+  id: string;
+  nameZh: string;
+  role: "character" | "prop";
+};
+
+/** 只消费本段动作中点名的剧本资产；不从动作句猜造新角色或道具。 */
+function registeredMotionSubjects(
+  canon: ManhuaWriterAssetCanon | null | undefined,
+  shots: ReadonlyArray<ShotMotionFields>,
+): RegisteredMotionSubject[] {
+  const action = shots.map((shot) => String(shot.actionZh || "")).join("；");
+  const subjects = [...(canon?.characters || []), ...(canon?.props || [])]
+    .filter((anchor) => (anchor.role === "character" || anchor.role === "prop") && anchor.id && anchor.nameZh.trim() && action.includes(anchor.nameZh.trim()))
+    .map((anchor) => ({ id: anchor.id, nameZh: anchor.nameZh.trim(), role: anchor.role as "character" | "prop" }));
+  // 资产表排序变化不改变已确认的轨迹身份。
+  return subjects.sort((a, b) => a.id.localeCompare(b.id));
+}
+
 export type ManhuaBoardStructuredMotionInput = {
   actorRoutes?: Array<{
     entityId: string;
@@ -73,6 +93,8 @@ export type CompileManhuaDirectorBoardOverlayInput = {
   sourceRevision?: string;
   beat?: SegmentMotionFields | null;
   shot?: ShotMotionFields | null;
+  /** 来自已登记资产且被本段点名的主体；没有匹配时不能用唯一角色猜代词主体。 */
+  registeredSubjects?: RegisteredMotionSubject[];
   /** 新分镜可在既有请求中直接带明确坐标；不会新增模型调用。 */
   structuredMotion?: ManhuaBoardStructuredMotionInput | null;
   /** 人工调过的同镜 overlay 不被自动重编译覆盖。 */
@@ -90,6 +112,8 @@ export type CompileManhuaSegmentDirectorBoardOverlayInput = {
   beat?: SegmentMotionFields | null;
   /** 必须传整段镜头，revision 同时覆盖全部动作与运镜变化。 */
   shots?: ReadonlyArray<ShotMotionFields> | null;
+  /** 与工作台、生成编排同源的剧本资产锚点，不接收模型猜测名单。 */
+  assetCanon?: ManhuaWriterAssetCanon | null;
   existingOverlay?: unknown;
 };
 
@@ -228,7 +252,8 @@ function propNamesFromWardrobe(raw: string): string[] {
 function chooseEntityForClause(
   clause: string,
   castNames: string[],
-  propNames: string[]
+  propNames: string[],
+  requireNamedSubject = false,
 ): { entityId: string; entityKind: "character" | "prop" } | null {
   const namedProps = propNames.filter(name => clause.includes(name));
   if (namedProps.length === 1 && PROP_MOTION_RE.test(clause)) {
@@ -246,7 +271,7 @@ function chooseEntityForClause(
   if (namedProps.length === 1 && !namedCast.length) {
     return { entityId: namedProps[0]!, entityKind: "prop" };
   }
-  if (castNames.length === 1 && !namedProps.length) {
+  if (!requireNamedSubject && castNames.length === 1 && !namedProps.length) {
     return { entityId: castNames[0]!, entityKind: "character" };
   }
   return null;
@@ -263,10 +288,12 @@ function compileLegacyActorRoutes(input: {
   actionText: string;
   castNames: string[];
   propNames: string[];
+  requireNamedSubject?: boolean;
 }): ManhuaBoardActorRoute[] {
   const clauses = cleanText(input.actionText)
     .split(/[。；;！!？?\n]+/)
-    .map(clause => clause.trim())
+    // 旧逐镜格式会保留“镜头…：人物动作”；只去明确机位前缀，不丢冒号后的真动作。
+    .map(clause => clause.trim().replace(/^(?:镜头|机位|摄影机|摄像机|运镜)[^：:]{0,80}[：:]/, ""))
     .filter(Boolean);
   const routes: ManhuaBoardActorRoute[] = [];
   const seen = new Set<string>();
@@ -277,7 +304,8 @@ function compileLegacyActorRoutes(input: {
     const entity = chooseEntityForClause(
       clause,
       input.castNames,
-      input.propNames
+      input.propNames,
+      input.requireNamedSubject,
     );
     if (!entity || seen.has(entity.entityId)) continue;
     seen.add(entity.entityId);
@@ -598,6 +626,7 @@ export function compileManhuaSegmentDirectorBoardOverlay(
   if (!baseAspectRatio) return null;
 
   const shots = input.shots || [];
+  const subjects = registeredMotionSubjects(input.assetCanon, shots);
   const firstShot = shots[0];
   return compileManhuaDirectorBoardOverlay({
     episodeIndex,
@@ -608,8 +637,10 @@ export function compileManhuaSegmentDirectorBoardOverlay(
     // 同一长镜拆为不同时间窗口时，文字可能相同，确认身份仍须随实际窗口失效。
     sourceRevision: stableRevision(JSON.stringify({
       shots, beat: input.beat || null, baseMediaIdentity: stableMediaIdentity(baseMediaIdentity),
+      ...(input.assetCanon ? { registeredSubjects: subjects } : {}),
     })),
     beat: input.beat,
+    registeredSubjects: input.assetCanon ? subjects : undefined,
     shot: shots.length
       ? {
           index: firstShot?.index,
@@ -656,6 +687,7 @@ export function compileManhuaDirectorBoardOverlay(
     cleanText(beat.sceneZh),
     stableMediaIdentity(input.baseMediaIdentity),
     JSON.stringify(input.structuredMotion || null),
+    JSON.stringify(input.registeredSubjects || null),
   ].join("\n");
   const sourceRevision =
     cleanText(input.sourceRevision).slice(
@@ -695,12 +727,18 @@ export function compileManhuaDirectorBoardOverlay(
   if (!hasTextSource && !hasStructuredSource(input.structuredMotion))
     return null;
 
-  const castNames = splitManhuaCastZhNames(cleanText(beat.castZh));
-  const propNames = propNamesFromWardrobe(cleanText(beat.wardrobePropZh));
+  const castNames = Array.from(new Set([
+    ...splitManhuaCastZhNames(cleanText(beat.castZh)),
+    ...(input.registeredSubjects || []).filter((subject) => subject.role === "character").map((subject) => subject.nameZh),
+  ]));
+  const propNames = Array.from(new Set([
+    ...propNamesFromWardrobe(cleanText(beat.wardrobePropZh)),
+    ...(input.registeredSubjects || []).filter((subject) => subject.role === "prop").map((subject) => subject.nameZh),
+  ]));
   const structuredRoutes = compileStructuredRoutes(input.structuredMotion);
   const actorRoutes = structuredRoutes.length
     ? structuredRoutes
-    : compileLegacyActorRoutes({ actionText, castNames, propNames });
+    : compileLegacyActorRoutes({ actionText, castNames, propNames, requireNamedSubject: input.registeredSubjects !== undefined });
   const cameraPath =
     input.structuredMotion?.cameraPath !== undefined
       ? compileStructuredCamera(input.structuredMotion)

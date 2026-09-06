@@ -2243,6 +2243,7 @@ export function ensureManhuaFragmentClips(
       segmentFirstShotStillUrl: mediaUrlOf(primary),
       beat: planBeat,
       shots: seg.shots,
+      assetCanon: opts?.assetCanon,
       // 成片消费没有重新量图；必须复用 UI 已保存的真实比例，不能猜 16:9。
       existingOverlay: savedDirectorBoardMotionOverlay,
     });
