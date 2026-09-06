@@ -333,7 +333,7 @@ type FreeformCanvasProps = {
    * 返回 patch 则写入节点后再跑；返回 null 则沿用旧 prompt（自由画布非漫剧节点）。
    */
   compileManhuaRerun?: (block: CanvasBlock) => Promise<{
-    imageRunPatch?: Pick<CanvasBlock, "imageMode" | "refImageUrl" | "editFusionUrls" | "manhuaKeyartLookState">;
+    imageRunPatch?: Pick<CanvasBlock, "imageMode" | "refImageUrl" | "editFusionUrls" | "manhuaKeyartLookState" | "manhuaKeyartSourceState">;
     videoRunPatch?: Pick<
       CanvasBlock,
       "videoModel" | "seedance25WorkMode" | "seedance25RefVideoUrls" | "refVideoUrl"
@@ -1770,11 +1770,13 @@ export default function FreeformCanvas({
         nearestRef && nearestRef !== workingBlock.refImageUrl
           ? { ...workingBlock, refImageUrl: nearestRef }
           : workingBlock;
-      // 手点 clip：上一段成片（全集连续编号 g07←g06）供末帧/视频参考
+      // 手点 clip：自动分段使用集内编号，旧草稿仍兼容全集连续编号。
       if (workingBlock.id.startsWith("clip-") && !runBlockPayload.refVideoUrl) {
         const ep = getBlockEpisodeIndex(runBlockPayload) ?? 1;
         const seg = resolveClipSegmentIndex(runBlockPayload.id, runBlockPayload.prompt);
-        const prevClipUrl = resolvePreviousSegmentClipUrl(safeBlocks, ep, seg);
+        const prevClipUrl = resolvePreviousSegmentClipUrl(safeBlocks, ep, seg, {
+          segmentIndexIsLocal: /-g\d+-auto(?:-|$)/i.test(runBlockPayload.id),
+        });
         if (prevClipUrl) {
           const basePrompt = String(runBlockPayload.prompt || "");
           runBlockPayload = {
@@ -1817,7 +1819,12 @@ export default function FreeformCanvas({
           lastFrameUrl: out.lastFrameUrl,
           // 重跑出了新片：旧质检报告（连同旧的「仍采用」授权）作废，按未质检状态重新走
           ...(blockId.startsWith("clip-") ? { manhuaClipQuality: undefined } : {}),
-          ...(blockId.startsWith("keyart-") ? { manhuaKeyartLookState: recordManhuaKeyartLookOutput(runBlockPayload, out.outputUrl) } : {}),
+          ...(blockId.startsWith("keyart-") ? {
+            manhuaKeyartLookState: recordManhuaKeyartLookOutput(runBlockPayload, out.outputUrl),
+            manhuaKeyartSourceState: recordManhuaKeyartLookOutput({
+              manhuaKeyartLookState: runBlockPayload.manhuaKeyartSourceState,
+            }, out.outputUrl),
+          } : {}),
           ...(out.seedance25ThreadId ? { seedance25ThreadId: out.seedance25ThreadId } : {}),
           ...(out.seedance25WebThreadLink
             ? { seedance25WebThreadLink: out.seedance25WebThreadLink }

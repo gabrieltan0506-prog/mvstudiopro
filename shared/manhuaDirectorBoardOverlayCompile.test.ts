@@ -260,6 +260,21 @@ describe("compileManhuaDirectorBoardOverlay", () => {
     expect(changedAction?.needsReview).toBe(true);
   });
 
+  it("同镜动作不变但连续窗口变化，旧轨迹确认也失效", () => {
+    const input = {
+      episodeIndex: 1, segmentIndex: 2, baseAspectRatio: "16:9" as const,
+      segmentFirstShotStillUrl: "https://cdn.example/long-shot.png",
+      shots: [{ index: 1, actionZh: "人物从左向右走", cameraZh: "固定机位", durationSec: 10, sourceOffsetSec: 10, sourceDurationSec: 30, continuation: true }],
+    };
+    const compiled = compileManhuaSegmentDirectorBoardOverlay(input)!;
+    const confirmed = { ...compiled, needsReview: false };
+    const unchanged = compileManhuaSegmentDirectorBoardOverlay({ ...input, existingOverlay: confirmed });
+    expect(unchanged?.needsReview).toBe(false);
+    const changed = compileManhuaSegmentDirectorBoardOverlay({ ...input, shots: [{ ...input.shots[0]!, sourceOffsetSec: 12 }], existingOverlay: confirmed });
+    expect(changed?.sourceRevision).not.toBe(confirmed.sourceRevision);
+    expect(changed?.needsReview).toBe(true);
+  });
+
   it("消费端旧草稿没有 overlay 或同段底图时保持空值惰性", () => {
     expect(
       compileManhuaSegmentDirectorBoardOverlay({

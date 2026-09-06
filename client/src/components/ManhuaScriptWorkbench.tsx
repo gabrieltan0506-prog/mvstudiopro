@@ -1,10 +1,11 @@
 /**
  * 剧本工作台：左=本集资产 · 中=一集剧本+按段静帧 · 右=预览 · 底=集/段时间线
- * 一集：5–6 段 × 每段 3–4 关键静帧；每段一条成片（Seedance ≤15s，按时长合计钳制）。
+ * 原稿按真实秒位与引擎单段上限自动分段；每段一条成片，关键静帧按原镜一镜一张。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
 import { isManhuaKeyartLookCurrent } from "@shared/manhuaKeyartLookState";
+import { buildWorkbenchShotsFromSegmentPlan } from "@shared/manhuaStoryDistill";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -30,6 +31,7 @@ import {
   getBlockEpisodeIndex,
   hasExplicitManhuaShotStructure,
   MANHUA_FACTORY_STAGE_LABEL_ZH,
+  queuedManhuaClipBlocks,
   queuedManhuaKeyartBlocks,
   resolveShotsForEpisodeKeyarts,
   stageKeyFromBlockId,
@@ -123,8 +125,10 @@ import {
   resolveManhuaSegmentClipAllowedAssets,
 } from "@shared/manhuaAssetLockRegistry";
 import {
+  confirmManhuaSegmentLookBindingSource,
   ensureDefaultLookSetsForCharacters,
   getManhuaSegmentLookBinding,
+  getManhuaSegmentLookSourceRevision,
   listManhuaLookSetsForCharacter,
   listManhuaLookReferenceCandidates,
   MANHUA_LOOK_SETS_PER_CHARACTER_MAX,
@@ -132,6 +136,7 @@ import {
   upsertManhuaCharacterLookSet,
   type ManhuaCharacterLookSet,
 } from "@shared/manhuaCharacterLookSets";
+import { buildManhuaAutoSegmentBinding } from "@shared/manhuaAutoSegment";
 import {
   collectManhuaCharacterTagsFromPrompt,
   evaluateManhuaCrossSegmentVoiceGate,
@@ -143,19 +148,18 @@ import type { ManhuaDirectorStrategyContract } from "@shared/manhuaDirectorStrat
 import {
   groupShotsIntoSegments,
   MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
-  MANHUA_KEYARTS_PER_SEGMENT_MIN,
-  manhuaSegmentCountBounds,
-  pinnedManhuaSegmentCount,
   parseManhuaClipTargetDurationSec,
   resolveClipLocalSegmentIndex,
   resolveClipSegmentIndex,
   resolveKeyartShotIndex,
   resolveSegmentIndexFromShotIndex,
+  resolveSegmentIndexesFromShotIndex,
   resolveWorkbenchShotAssetMount,
   workbenchShotTotalSec,
   type ManhuaWorkbenchSegment,
   type ManhuaWorkbenchShot,
 } from "@shared/manhuaScriptWorkbench";
+import { canvasVideoClipCredits } from "@shared/canvasGenerationPricing";
 import {
   canManhuaBurnVideo,
   type ManhuaProductionProgress,
@@ -172,6 +176,7 @@ import {
 import {
   inferManhuaCastZhFromDialogue,
   parseManhuaEpisodeSegmentPlanFromMarkdown,
+  type ManhuaEpisodeSegmentPlan,
 } from "@shared/manhuaEpisodeSegmentPlan";
 import { MANHUA_DIALOGUE_SILENCE_TOKEN } from "@shared/manhuaShotDialoguePersist";
 import {
@@ -496,7 +501,7 @@ type Props = {
     clipId?: string;
   }) => void;
   /** 本集缺成片/质检失败的段号依次生成 */
-  onGenerateMissingFragments?: (segmentIndexes: number[]) => void;
+  onGenerateMissingFragments?: (segmentIndexes: number[], sourceIdentity: string) => void;
   /** 首段 10 秒质检门；未通过时只开放第 1 段试片。 */
   pilotGate?: ManhuaPilotPanelState & {
     videoModel: string;
@@ -775,6 +780,9 @@ export function shouldShowManhuaAsset3dRow(input: {
 export function resolveManhuaAdvisorSelection(input: {
   episodeIndex: number;
   shot: ManhuaWorkbenchShot | null | undefined;
+  /** 长镜跨段时由真实工作台选择提供；旧调用省略仍保留首匹配语义。 */
+  segmentIndex?: number;
+  segments?: ManhuaWorkbenchSegment[];
 }): {
   episodeIndex: number;
   segmentIndex: number;
@@ -783,8 +791,70 @@ export function resolveManhuaAdvisorSelection(input: {
   if (!input.shot) return null;
   return {
     episodeIndex: Math.max(1, Math.floor(input.episodeIndex || 1)),
-    segmentIndex: resolveSegmentIndexFromShotIndex(input.shot.index),
+    segmentIndex: input.segmentIndex ?? resolveSegmentIndexFromShotIndex(input.shot.index, input.segments),
     shot: input.shot,
+  };
+}
+
+/** 长镜跨段时优先保留用户点中的段；普通镜返回唯一真实段。 */
+export function resolveManhuaActiveSegmentIndex(input: {
+  shotIndex: number;
+  segments: ManhuaWorkbenchSegment[];
+  preferredSegmentIndex?: number | null;
+}): number {
+  const matches = resolveSegmentIndexesFromShotIndex(input.shotIndex, input.segments);
+  return input.preferredSegmentIndex != null && matches.includes(input.preferredSegmentIndex)
+    ? input.preferredSegmentIndex
+    : matches[0] ?? 1;
+}
+
+/** 节点进度或图片回填不改变选段；只有原稿、生成档或集号改变才失效。 */
+export function manhuaSegmentSelectionIdentity(
+  episodeIndex: number,
+  videoModel: string,
+  segments: ManhuaWorkbenchSegment[],
+): string {
+  return JSON.stringify({ episodeIndex, videoModel, segments });
+}
+
+/** 原稿与计划逐镜完全一致且本段只归属一个旧段时，才读取该段补充信息。 */
+export function resolveManhuaSourcePlanBeat(
+  plan: ManhuaEpisodeSegmentPlan,
+  shots: ManhuaWorkbenchShot[],
+  segment: ManhuaWorkbenchSegment | undefined,
+) {
+  const originalPlanIndexes = new Set((segment?.shots || []).map((shot) => Math.floor((shot.index - 1) / 3)));
+  return JSON.stringify(buildWorkbenchShotsFromSegmentPlan(plan)) === JSON.stringify(shots) && originalPlanIndexes.size === 1
+    ? [...plan.segments].sort((a, b) => a.index - b.index)[Array.from(originalPlanIndexes)[0]!]
+    : undefined;
+}
+
+/** 造型相同但原镜已改稿的旧图，也不能成为新段的生成凭据。 */
+export function isManhuaWorkbenchKeyartCurrent(block: Pick<CanvasBlock,
+  "manhuaKeyartLookState" | "manhuaKeyartSourceState" | "outputUrl"
+>): boolean {
+  return isManhuaKeyartLookCurrent(block) && isManhuaKeyartLookCurrent({
+    ...block,
+    manhuaKeyartLookState: block.manhuaKeyartSourceState,
+  });
+}
+
+/** 批量按钮只认当前真实段号，并按现行单段价显示提交总额。 */
+export function resolveManhuaSegmentBatchCharge(input: {
+  requestedSegmentIndexes: number[];
+  segments: ManhuaWorkbenchSegment[];
+  videoModel?: string | null;
+}): { segmentIndexes: number[]; credits: number } {
+  const available = new Set(input.segments.map((segment) => segment.index));
+  const segmentIndexes = Array.from(new Set(input.requestedSegmentIndexes))
+    .filter((index) => available.has(index))
+    .sort((a, b) => a - b);
+  return {
+    segmentIndexes,
+    credits: segmentIndexes.length * canvasVideoClipCredits({
+      isEpisodeSegment: true,
+      videoModel: input.videoModel,
+    }),
   };
 }
 
@@ -1097,8 +1167,10 @@ export default function ManhuaScriptWorkbench({
   const [hydratedBPersistKey, setHydratedBPersistKey] = useState<string | null>(null);
   /** 右栏本集画布：阿硕 C2 分镜有静帧时强制常开；其余阶段仍可随成片收合 */
   const [canvasDockOpen, setCanvasDockOpen] = useState(true);
-  /** 胶片多选：生成所选 */
-  const [selectedShotIndexes, setSelectedShotIndexes] = useState<number[]>([]);
+  /** 胶片多选：直接保存段号；长镜跨段时不能再用重复的原镜号代替段身份。 */
+  const [selectedSegmentIndexes, setSelectedSegmentIndexes] = useState<number[]>([]);
+  /** 同一原镜跨多个生成段时，保留用户点中的具体段，不强制跳回首段。 */
+  const [activeSegmentOverride, setActiveSegmentOverride] = useState<number | null>(null);
   const [activePhaseLocal, setActivePhaseLocal] = useState<WorkflowPhaseId>(() =>
     canRun ? "storyboard" : "outline",
   );
@@ -1122,17 +1194,16 @@ export default function ManhuaScriptWorkbench({
   const reverse = blockByStage(blocks, focusEpisode, "reverse");
   const episodeClips = useMemo(
     () =>
-      blocks
-        .filter((b) => b.id.startsWith("clip-") && (getBlockEpisodeIndex(b) ?? 1) === focusEpisode)
+      queuedManhuaClipBlocks(blocks, focusEpisode, videoModel)
         .sort(
           (a, b) =>
             resolveClipLocalSegmentIndex(a.id, a.prompt, focusEpisode) -
               resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) ||
             a.id.localeCompare(b.id),
         ),
-    [blocks, focusEpisode],
+    [blocks, focusEpisode, videoModel],
   );
-  const legacyClip = blockByStage(blocks, focusEpisode, "clip");
+  const legacyClip = blockByStage(episodeClips, focusEpisode, "clip");
   const editClipBlocks = useMemo(() => Array.from(new Map(
     [...episodeClips, ...(legacyClip ? [legacyClip] : [])].map((block) => [block.id, block]),
   ).values()), [episodeClips, legacyClip]);
@@ -1179,21 +1250,22 @@ export default function ManhuaScriptWorkbench({
     }
   }, [blocks, focusEpisode, episodeVideoModel, assetCanon, customAssetRefs, characterLookSets, segmentLookBindings]);
   const episodeKeyarts = episodeKeyartReview.blocks;
-  const staleLookStillCount = episodeKeyarts.filter((block) => !isManhuaKeyartLookCurrent(block)).length;
+  const staleLookStillCount = episodeKeyarts.filter((block) => !isManhuaWorkbenchKeyartCurrent(block)).length;
   const keyart = episodeKeyarts[0];
-  const episodeSegmentBounds = manhuaSegmentCountBounds(episodeVideoModel);
   const episodeVideoLabelZh =
     VIDEO_MODEL_OPTIONS.find((m) => m.id === episodeVideoModel)?.label || "成片";
   const segments = useMemo(
     () =>
       groupShotsIntoSegments(shots, {
-        // 只有段表固定的引擎才钉段；2.0 / 2.0-fast 的段数随长档变，钉死会把 12 段压回 6 段，
-        // 而工厂那边对它们不钉段，界面段数与实收段数会再次脱节
         videoModel: episodeVideoModel,
-        segmentCount: pinnedManhuaSegmentCount(episodeVideoModel),
       }),
     [shots, episodeVideoModel],
   );
+  const segmentSelectionIdentity = manhuaSegmentSelectionIdentity(focusEpisode, episodeVideoModel, segments);
+  useEffect(() => {
+    setSelectedSegmentIndexes([]);
+    setActiveSegmentOverride(null);
+  }, [segmentSelectionIdentity]);
   /** 导演板上传作用范围：0=本集共用；>0=只作用该段（段级为主、集级兜底） */
   const [boardSegChoice, setBoardSegChoice] = useState(0);
   const shootablePlan = useMemo(
@@ -1243,7 +1315,7 @@ export default function ManhuaScriptWorkbench({
   const keyartsPixelLocked = areManhuaKeyartsPixelLocked(episodeKeyarts, {
     minCount: expectedStillCount > 0 ? expectedStillCount : 1,
   });
-  const stillsReadyEnough = stillsCountReady && keyartsPixelLocked;
+  const stillsReadyEnough = stillsCountReady && keyartsPixelLocked && staleLookStillCount === 0;
 
   const totalSec = workbenchShotTotalSec(shots, episodeVideoModel);
 
@@ -1290,8 +1362,8 @@ export default function ManhuaScriptWorkbench({
         episodeClips.find(
           (b) =>
             resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) ===
-            resolveSegmentIndexFromShotIndex(c.shotIndex),
-        ) || (resolveSegmentIndexFromShotIndex(c.shotIndex) === 1 ? legacyClip : undefined);
+            resolveSegmentIndexFromShotIndex(c.shotIndex, segments),
+        ) || (resolveSegmentIndexFromShotIndex(c.shotIndex, segments) === 1 ? legacyClip : undefined);
       const shotKeyart =
         episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === c.shotIndex) ||
         (c.shotIndex === 1 ? keyart : undefined);
@@ -1303,7 +1375,7 @@ export default function ManhuaScriptWorkbench({
         quality: shotClip?.manhuaClipQuality ?? null,
       };
     });
-  }, [roughClips, episodeClips, episodeKeyarts, legacyClip, keyart]);
+  }, [roughClips, episodeClips, episodeKeyarts, legacyClip, keyart, segments]);
 
   useEffect(() => {
     setHydratedBPersistKey(null);
@@ -1335,9 +1407,7 @@ export default function ManhuaScriptWorkbench({
         clipBlock.prompt,
         focusEpisode,
       );
-      const group = shots.filter(
-        (shot) => resolveSegmentIndexFromShotIndex(shot.index) === localSegment,
-      );
+      const group = segments.find((segment) => segment.index === localSegment)?.shots || [];
       if (!group.length) continue;
       const persistedDurationSec = Number(clipBlock.manhuaEditTrim?.sourceDurationSec) || 0;
       const videoDurationSec =
@@ -1564,8 +1634,27 @@ export default function ManhuaScriptWorkbench({
 
   const activeShot = shots[Math.min(shotIndex, Math.max(0, shots.length - 1))] || shots[0];
   const activeShotNo = activeShot?.index ?? 1;
-  const activeSegNo = resolveSegmentIndexFromShotIndex(activeShotNo);
+  const activeSegNo = resolveManhuaActiveSegmentIndex({
+    shotIndex: activeShotNo,
+    segments,
+    preferredSegmentIndex: activeSegmentOverride,
+  });
   const activeSegment = segments.find((s) => s.index === activeSegNo) || segments[0];
+  const activeSourceBeat = resolveManhuaSourcePlanBeat(shootablePlan, shots, activeSegment);
+  const activeSegmentSourceRevision = activeSegment
+    ? buildManhuaAutoSegmentBinding(focusEpisode, activeSegment, episodeVideoModel).revision
+    : "";
+  const activeSegmentLookBinding = getManhuaSegmentLookBinding(
+    segmentLookBindings,
+    focusEpisode,
+    activeSegNo,
+  );
+  const activeSegmentLookNeedsReview = Boolean(
+    activeSegmentSourceRevision &&
+      Object.keys(activeSegmentLookBinding).length > 0 &&
+      getManhuaSegmentLookSourceRevision(segmentLookBindings, focusEpisode, activeSegNo) !==
+        activeSegmentSourceRevision,
+  );
   const advisorShots = useMemo(
     () => resolveManhuaAdvisorShotsFromBlocks({ beats, reverse, story, productionShots: shots }),
     [beats, reverse, story, shots],
@@ -1575,9 +1664,14 @@ export default function ManhuaScriptWorkbench({
     : null;
   useEffect(() => {
     onAdvisorSelectionChange?.(
-      resolveManhuaAdvisorSelection({ episodeIndex: focusEpisode, shot: advisorActiveShot }),
+      resolveManhuaAdvisorSelection({
+        episodeIndex: focusEpisode,
+        shot: advisorActiveShot,
+        segmentIndex: activeSegNo,
+        segments,
+      }),
     );
-  }, [advisorActiveShot, focusEpisode, onAdvisorSelectionChange]);
+  }, [activeSegNo, advisorActiveShot, focusEpisode, onAdvisorSelectionChange, segments]);
   useEffect(
     () => () => {
       onAdvisorSelectionChange?.(null);
@@ -1634,8 +1728,8 @@ export default function ManhuaScriptWorkbench({
   );
   const activeDirectorBoardMotionOverlay = useMemo(() => {
     if (!activeBoardBaseUrl || !activeBoardImageGeometry) return null;
-    const beat = shootablePlan.segments.find((entry) => entry.index === activeSegNo);
     const segment = segments.find((entry) => entry.index === activeSegNo);
+    const beat = resolveManhuaSourcePlanBeat(shootablePlan, shots, segment);
     return compileManhuaSegmentDirectorBoardOverlay({
       episodeIndex: focusEpisode,
       segmentIndex: activeSegNo,
@@ -1655,6 +1749,7 @@ export default function ManhuaScriptWorkbench({
     focusEpisode,
     segmentFirstShotKeyart,
     segments,
+    shots,
     shootablePlan.segments,
   ]);
   const activeMotionPanelStatus = resolveManhuaMotionPanelStatus({
@@ -1704,7 +1799,7 @@ export default function ManhuaScriptWorkbench({
     onFocusBlock?.(blockId);
   };
   /** 胶片 / 分镜列表：切镜后立刻把对应静帧或段成片滚入画布并高亮 */
-  const selectShotAndFocusCanvas = (shotListIndex: number) => {
+  const selectShotAndFocusCanvas = (shotListIndex: number, preferredSegmentIndex?: number) => {
     const i = Math.max(0, Math.min(shotListIndex, Math.max(shots.length, 1) - 1));
     setShotIndex(i);
     const shot = shots[i];
@@ -1715,7 +1810,11 @@ export default function ManhuaScriptWorkbench({
     const keyart = episodeKeyarts.find(
       (b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index,
     );
-    const segNo = resolveSegmentIndexFromShotIndex(shot.index);
+    const shotSegments = resolveSegmentIndexesFromShotIndex(shot.index, segments);
+    const segNo = preferredSegmentIndex != null && shotSegments.includes(preferredSegmentIndex)
+      ? preferredSegmentIndex
+      : shotSegments[0] ?? 1;
+    setActiveSegmentOverride(segNo);
     const clipBlock =
       episodeClips.find(
         (b) => resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) === segNo,
@@ -1798,8 +1897,8 @@ export default function ManhuaScriptWorkbench({
     });
   }, [segments, episodeClips, legacyClip, focusEpisode]);
   const selectedSorted = useMemo(
-    () => [...selectedShotIndexes].sort((a, b) => a - b),
-    [selectedShotIndexes],
+    () => [...selectedSegmentIndexes].sort((a, b) => a - b),
+    [selectedSegmentIndexes],
   );
   /**
    * 底胶片按「段」列：一格 = 一次成片调用。镜留在中栏段内列表。
@@ -1819,15 +1918,18 @@ export default function ManhuaScriptWorkbench({
         episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === s.index),
       );
       const withImage = keyarts.filter((b) => Boolean(mediaUrl(b)));
-      const beat = shootablePlan.segments.find((s) => s.index === seg.index);
+      const beat = resolveManhuaSourcePlanBeat(shootablePlan, shots, seg);
       return {
         index: seg.index,
         durationSec: seg.durationSec,
         shotIndexes: seg.shots.map((s) => s.index),
         shotCount: seg.shots.length,
+        continuation: seg.shots.some((shot) => shot.continuation),
+        sourceStartSec: seg.sourceStartSec,
+        sourceEndSec: seg.sourceEndSec,
         stillReady: withImage.length,
         // 有图但没走垫图改图 → 不能出成片，需重出该镜静帧
-        unlockedCount: withImage.filter((b) => b && !isManhuaKeyartPixelLocked(b)).length,
+        unlockedCount: withImage.filter((b) => b && (!isManhuaKeyartPixelLocked(b) || !isManhuaWorkbenchKeyartCurrent(b))).length,
         clip: segClip,
         // 段封面用段内首张已出静帧；缺图留占位，不挂假图
         thumb: withImage.length ? mediaUrl(withImage[0]) : "",
@@ -1835,27 +1937,23 @@ export default function ManhuaScriptWorkbench({
         sceneZh: String(beat?.sceneZh || "").trim(),
       };
     });
-  }, [segments, episodeClips, episodeKeyarts, legacyClip, focusEpisode, shootablePlan]);
+  }, [segments, shots, episodeClips, episodeKeyarts, legacyClip, focusEpisode, shootablePlan]);
   /** 勾选数按「段」报，避免显示成镜数（13）让人以为要出 13 条片 */
-  const selectedSegmentCount = useMemo(
-    () => new Set(selectedShotIndexes.map((n) => resolveSegmentIndexFromShotIndex(n))).size,
-    [selectedShotIndexes],
-  );
-  /** 段级勾选：整段的镜一起进出选区，与「生成所选成片」的段级语义对齐 */
-  const toggleSegmentSelected = (shotIndexes: number[]) => {
-    setSelectedShotIndexes((prev) => {
-      const allIn = shotIndexes.length > 0 && shotIndexes.every((n) => prev.includes(n));
-      return allIn
-        ? prev.filter((n) => !shotIndexes.includes(n))
-        : [...prev, ...shotIndexes.filter((n) => !prev.includes(n))];
-    });
+  const selectedSegmentCount = selectedSegmentIndexes.length;
+  /** 段级勾选直接保存段号；同一长镜可连续占两段，不能再用重复镜号折叠。 */
+  const toggleSegmentSelected = (segmentIndex: number) => {
+    setSelectedSegmentIndexes((prev) =>
+      prev.includes(segmentIndex)
+        ? prev.filter((index) => index !== segmentIndex)
+        : [...prev, segmentIndex],
+    );
   };
   /** 点段卡：选中段首镜并把该段成片（或首张静帧）滚进画布 */
-  const selectSegmentAndFocusCanvas = (shotIndexes: number[]) => {
+  const selectSegmentAndFocusCanvas = (segmentIndex: number, shotIndexes: number[]) => {
     const first = shotIndexes[0];
     if (typeof first !== "number") return;
     const listIndex = shots.findIndex((s) => s.index === first);
-    selectShotAndFocusCanvas(listIndex >= 0 ? listIndex : 0);
+    selectShotAndFocusCanvas(listIndex >= 0 ? listIndex : 0, segmentIndex);
   };
   const consumableCustomAssetRefs = useMemo(
     () => consumableManhuaCustomAssetRefsForCanon(customAssetRefs, assetCanon),
@@ -2184,22 +2282,20 @@ export default function ManhuaScriptWorkbench({
   );
   const outlineComplete = Boolean(canRun);
   const activeLookCharacterIds = useMemo(() => {
-    const beat = shootablePlan.segments.find((s) => s.index === activeSegNo);
+    const beat = activeSourceBeat;
     return resolveManhuaSegmentClipAllowedAssets({
       haystack: (activeSegment?.shots || []).flatMap((shot) => [shot.actionZh, shot.dialogueZh]).filter(Boolean).join("\n"),
       castZh: beat?.castZh || inferManhuaCastZhFromDialogue("", beat?.dialogueZh || ""),
       registry: assetLockRegistry,
       assetCanon,
     }).characterIds;
-  }, [activeSegNo, activeSegment, shootablePlan, assetLockRegistry, assetCanon]);
+  }, [activeSourceBeat, activeSegment, assetLockRegistry, assetCanon]);
   /** 方案 B：剧本确认 + 角色/场景锁定 + 角色图/场景图齐，才可进分镜出片 */
   const assetsComplete = assetGate.ready && !assetScriptStaleHintZh;
   const productionProgress = useMemo((): ManhuaProductionProgress => {
     const segmentCount = segments.length;
-    // 2.0：默认 5–6 段；2.5：4 段即可。静帧已按现有段出齐时，不得再卡「至少 10 段」拦审阅/出片
-    const segmentPlanReady =
-      segmentCount >= episodeSegmentBounds.min ||
-      (segmentCount >= 1 && stillsReadyEnough);
+    // 原稿自动分段只要求存在真实段；新写作目标段数不能再作为已有稿的硬门禁。
+    const segmentPlanReady = segmentCount >= 1;
     const keyartsReady = stillsReadyEnough;
     const cueSheets = segments.map((seg) => ({
       segmentIndex: seg.index,
@@ -2243,13 +2339,12 @@ export default function ManhuaScriptWorkbench({
     outlineComplete,
     assetsComplete,
     episodeClips,
-    episodeSegmentBounds.min,
   ]);
   const videoBurnUnlocked = canManhuaBurnVideo(productionProgress);
   const videoBurnHint = videoBurnUnlocked
     ? null
     : !stillsCountReady
-      ? `请先出齐关键静帧（每段至少 ${MANHUA_KEYARTS_PER_SEGMENT_MIN} 张）`
+      ? "请先出齐本段所需关键静帧（按原镜一镜一张，尾段可少于 3 张）"
       : !keyartsPixelLocked
         ? episodeKeyartReview.error || (staleLookStillCount
           ? "本段造型已变更，请重出对应关键静帧；旧图仍保留，不会自动生成。"
@@ -2802,7 +2897,7 @@ export default function ManhuaScriptWorkbench({
         missingFragmentIndexes.length > 0
           ? missingFragmentIndexes
           : segments.map((s) => s.index);
-      if (idxs.length) onGenerateMissingFragments?.(idxs);
+      if (idxs.length) onGenerateMissingFragments?.(idxs, segmentSelectionIdentity);
       return;
     }
     if (nextCta.kind === "generate_clip") {
@@ -3156,7 +3251,7 @@ export default function ManhuaScriptWorkbench({
               >
                 {pilotLocked && activeSegNo === 1
                   ? "生成首段 10 秒试片"
-                  : `生成第 ${String(activeSegNo).padStart(2, "0")} 段成片`}
+                  : `生成第 ${String(activeSegNo).padStart(2, "0")} 段成片 · ${canvasVideoClipCredits({ isEpisodeSegment: true, videoModel: episodeVideoModel })} 积分`}
               </button>
           {onLayoutReadableChain ? (
             <button
@@ -3169,7 +3264,7 @@ export default function ManhuaScriptWorkbench({
                 onLayoutReadableChain();
               }}
               className="rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[10px] font-semibold text-white/70 hover:bg-white/[0.08] disabled:opacity-45"
-              title="画布竖排：角色墙→场景墙→静帧列→段成片（每段约15s卡面读秒轴）"
+              title="画布竖排：角色墙→场景墙→静帧列→按原稿秒位自动分段的成片"
             >
               对齐画布竖排
             </button>
@@ -3183,23 +3278,25 @@ export default function ManhuaScriptWorkbench({
               onClick={() => {
                 if (refuseIfBlocked(clipGateHint)) return;
                 setActivePhase("storyboard");
-                onGenerateMissingFragments(
-                  Array.from(
-                    new Set(selectedSorted.map((n) => resolveSegmentIndexFromShotIndex(n))),
-                  ),
-                );
+                const batch = resolveManhuaSegmentBatchCharge({
+                  requestedSegmentIndexes: selectedSorted,
+                  segments,
+                  videoModel: episodeVideoModel,
+                });
+                if (batch.segmentIndexes.length !== selectedSorted.length) {
+                  toast.message("分段计划已变化，请重新勾选后确认费用");
+                  setSelectedSegmentIndexes([]);
+                  return;
+                }
+                onGenerateMissingFragments(batch.segmentIndexes, segmentSelectionIdentity);
               }}
               className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-45"
-              title={`依次生成已勾选段：${Array.from(
-                  new Set(
-                    selectedSorted.map((n) =>
-                      String(resolveSegmentIndexFromShotIndex(n)).padStart(2, "0"),
-                    ),
-                  ),
-                ).join("、")}`
-              }
+              title={`依次生成已勾选段：${selectedSorted.map((n) => String(n).padStart(2, "0")).join("、")}`}
             >
-              生成所选成片 {selectedSegmentCount} 段
+              生成所选成片 {selectedSegmentCount} 段 · {canvasVideoClipCredits({
+                isEpisodeSegment: true,
+                videoModel: episodeVideoModel,
+              }) * selectedSegmentCount} 积分
             </button>
           ) : null}
           {onGenerateMissingFragments && (missingFragmentIndexes.length > 0 || stillsReadyEnough) ? (
@@ -3207,7 +3304,7 @@ export default function ManhuaScriptWorkbench({
               type="button"
               data-manhua-action="generate-missing-fragments"
                   data-manhua-action-cost={manhuaToolbarActionCost("generate-missing-fragments")}
-              disabled={Boolean(factoryBusy)}
+              disabled={Boolean(factoryBusy) || pilotLocked}
               onClick={() => {
                 if (refuseIfBlocked(clipGateHint)) return;
                 if (!stillsReadyEnough) {
@@ -3221,19 +3318,20 @@ export default function ManhuaScriptWorkbench({
                   missingFragmentIndexes.length > 0
                     ? missingFragmentIndexes
                     : segments.map((s) => s.index);
-                if (
-                  !window.confirm(
-                    `确认静帧后将生成全部段成片（${idxs.map((n) => String(n).padStart(2, "0")).join("、")}）。继续？`,
-                  )
-                ) {
-                  return;
-                }
-                onGenerateMissingFragments(idxs);
+                const batch = resolveManhuaSegmentBatchCharge({
+                  requestedSegmentIndexes: idxs,
+                  segments,
+                  videoModel: episodeVideoModel,
+                });
+                onGenerateMissingFragments(batch.segmentIndexes, segmentSelectionIdentity);
               }}
               className="rounded-lg border border-fuchsia-300/35 bg-fuchsia-500/15 px-2.5 py-1.5 text-[10px] font-semibold text-fuchsia-50 hover:bg-fuchsia-500/25 disabled:opacity-45"
               title={"静帧与导戏单锁定后批量出片"}
             >
-              确认静帧，生成全部成片
+              确认静帧，生成 {missingFragmentIndexes.length || segments.length} 段成片 · {canvasVideoClipCredits({
+                isEpisodeSegment: true,
+                videoModel: episodeVideoModel,
+              }) * (missingFragmentIndexes.length || segments.length)} 积分
             </button>
           ) : null}
           {onRerunKeyartsFromReverse ? (
@@ -3304,7 +3402,7 @@ export default function ManhuaScriptWorkbench({
                     ? "border border-emerald-400/40 bg-emerald-500/20 text-emerald-50"
                     : "border border-white/10 text-white/40"
                 }`}
-                title="B：下一段成片以上一段末 3–5 秒画面为起幅参考（约 15s 一镜衔接）"
+                title="B：下一段成片以上一段末 3–5 秒画面为起幅参考（按当前段实际时长衔接）"
               >
                 成片←上段末帧
               </button>
@@ -6684,15 +6782,19 @@ export default function ManhuaScriptWorkbench({
               onDockSelectedIdsChange(next);
             }}
             onReworkClip={(shotIndex) => {
-              onGenerateFragment?.({
-                shotIndex: resolveSegmentIndexFromShotIndex(shotIndex),
-              });
+              const segmentIndexes = resolveSegmentIndexesFromShotIndex(shotIndex, segments);
+              if (segmentIndexes.length === 1) {
+                onGenerateFragment?.({ shotIndex: segmentIndexes[0]! });
+              } else if (segmentIndexes.length > 1) {
+                onGenerateMissingFragments?.(segmentIndexes, segmentSelectionIdentity);
+              }
             }}
             onReworkFailedClips={(indexes) => {
               onGenerateMissingFragments?.(
                 Array.from(
-                  new Set(indexes.map((n) => resolveSegmentIndexFromShotIndex(n))),
+                  new Set(indexes.flatMap((n) => resolveSegmentIndexesFromShotIndex(n, segments))),
                 ),
+                segmentSelectionIdentity,
               );
             }}
             onReworkStill={(shotIndex) => {
@@ -7059,7 +7161,7 @@ export default function ManhuaScriptWorkbench({
               </div>
               {episodeStillCount === 0 ? (
                 <div className="mt-1.5 flex max-w-xl flex-col gap-1.5">
-                  {onSegmentIntentChange ? (
+                  {onSegmentIntentChange && activeSourceBeat ? (
                     <label className="flex flex-col gap-0.5">
                       <span className="text-[9px] font-medium text-cyan-100/70">
                         本段意图（观众应感到什么）
@@ -7069,17 +7171,16 @@ export default function ManhuaScriptWorkbench({
                         value={String(
                           activeSegment?.shots.find((s) => s.intentZh)?.intentZh ||
                             activeShot?.intentZh ||
-                            shootablePlan.segments.find((s) => s.index === activeSegNo)
-                              ?.intentZh ||
+                            activeSourceBeat.intentZh ||
                             "",
                         )}
-                        onChange={(e) => onSegmentIntentChange(activeSegNo, e.target.value)}
+                        onChange={(e) => onSegmentIntentChange(activeSourceBeat.index, e.target.value)}
                         placeholder="例：压迫感逼近，旧盟从硬撑到松口"
                         className="w-full rounded-md border border-cyan-400/25 bg-black/40 px-2 py-1 text-[11px] text-white/85 placeholder:text-white/30"
                       />
                     </label>
                   ) : null}
-                  {onSegmentCastChange ? (
+                  {onSegmentCastChange && activeSourceBeat ? (
                     <label className="flex flex-col gap-0.5">
                       <span className="text-[9px] font-medium text-cyan-100/70">
                         本段出场（写真名，用顿号分开）
@@ -7087,15 +7188,14 @@ export default function ManhuaScriptWorkbench({
                       <input
                         data-manhua-segment-cast={activeSegNo}
                         value={String(
-                          shootablePlan.segments.find((s) => s.index === activeSegNo)?.castZh ||
+                          activeSourceBeat.castZh ||
                             inferManhuaCastZhFromDialogue(
                               "",
-                              shootablePlan.segments.find((s) => s.index === activeSegNo)
-                                ?.dialogueZh || "",
+                              activeSourceBeat.dialogueZh || "",
                             ) ||
                             "",
                         )}
-                        onChange={(e) => onSegmentCastChange(activeSegNo, e.target.value)}
+                        onChange={(e) => onSegmentCastChange(activeSourceBeat.index, e.target.value)}
                         placeholder="例：苏文谦、苏照雪"
                         className="w-full rounded-md border border-cyan-400/25 bg-black/40 px-2 py-1 text-[11px] text-white/85 placeholder:text-white/30"
                       />
@@ -7110,11 +7210,32 @@ export default function ManhuaScriptWorkbench({
             {onSegmentLookBindingsChange && activeLookCharacterIds.length > 0 ? (
               <details className="my-2 rounded-lg border border-cyan-400/20 bg-cyan-500/[0.04] p-2" data-manhua-segment-looks>
                 <summary className="cursor-pointer text-[11px] font-medium text-cyan-50">本段造型 · 保持角色身份</summary>
+                {activeSegmentLookNeedsReview ? (
+                  <div className="mt-2 rounded-md border border-amber-300/30 bg-amber-500/10 p-2 text-[10px] leading-4 text-amber-50">
+                    <p>分段已变化，请核对本段造型；旧选择已保留，但确认前不会用于生成。</p>
+                    <button
+                      type="button"
+                      data-manhua-confirm-segment-look-source={activeSegNo}
+                      disabled={Boolean(factoryBusy) || !activeSegmentSourceRevision}
+                      onClick={() => onSegmentLookBindingsChange(
+                        confirmManhuaSegmentLookBindingSource(
+                          segmentLookBindings,
+                          focusEpisode,
+                          activeSegNo,
+                          activeSegmentSourceRevision,
+                        ),
+                      )}
+                      className="mt-1 rounded border border-amber-200/35 bg-amber-400/15 px-2 py-1 font-semibold text-amber-50 disabled:opacity-40"
+                    >
+                      确认当前段造型
+                    </button>
+                  </div>
+                ) : null}
                 <div className="mt-2 grid gap-2">
                   {activeLookCharacterIds.map((characterId) => {
                     const character = assetLockRegistry.byRole.character.find((row) => row.id === characterId);
                     const sets = listManhuaLookSetsForCharacter(resolvedLookSets, characterId);
-                    const selected = getManhuaSegmentLookBinding(segmentLookBindings, focusEpisode, activeSegNo)[characterId] || "";
+                    const selected = activeSegmentLookBinding[characterId] || "";
                     const selectableRefs = listManhuaLookReferenceCandidates(customAssetRefs, characterId);
                     return <label key={characterId} className="grid gap-1 text-[10px] text-white/65">
                       <span>{character?.labelZh || "角色"}</span>
@@ -7122,7 +7243,14 @@ export default function ManhuaScriptWorkbench({
                         aria-label={`${character?.labelZh || "角色"}本段造型`}
                         value={selected}
                         disabled={Boolean(factoryBusy)}
-                        onChange={(event) => onSegmentLookBindingsChange(setManhuaSegmentLookBinding({ bindings: segmentLookBindings, episodeIndex: focusEpisode, segmentIndex: activeSegNo, characterId, lookSetId: event.target.value }))}
+                        onChange={(event) => onSegmentLookBindingsChange(setManhuaSegmentLookBinding({
+                          bindings: segmentLookBindings,
+                          episodeIndex: focusEpisode,
+                          segmentIndex: activeSegNo,
+                          characterId,
+                          lookSetId: event.target.value,
+                          sourceRevision: activeSegmentSourceRevision,
+                        }))}
                         className="rounded-md border border-white/15 bg-black/40 px-2 py-1.5 text-[11px] text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-400"
                       >
                         <option value="">默认造型</option>
@@ -7139,7 +7267,7 @@ export default function ManhuaScriptWorkbench({
             ) : null}
             {episodeKeyartReview.error || staleLookStillCount ? (
               <p role="status" className="rounded-lg border border-amber-300/25 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-100">
-                {episodeKeyartReview.error || `${staleLookStillCount} 张静帧尚未按当前造型生成，请重出对应镜头；旧图保留，不会自动生成。`}
+                {episodeKeyartReview.error || `${staleLookStillCount} 张静帧尚未按当前原稿或造型生成，请重出对应镜头；旧图保留，不会自动生成。`}
               </p>
             ) : null}
             <div className="flex flex-wrap gap-1 rounded-lg border border-white/10 bg-black/30 p-0.5">
@@ -7731,7 +7859,7 @@ export default function ManhuaScriptWorkbench({
                         onClick={() => {
                           if (refuseIfBlocked(clipGateHint)) return;
                           setClipPromptReviewOpen(false);
-                          onGenerateMissingFragments(missingFragmentIndexes);
+                          onGenerateMissingFragments(missingFragmentIndexes, segmentSelectionIdentity);
                         }}
                         className="rounded-md border border-white/15 bg-white/[0.06] px-2 py-1 text-[10px] font-semibold text-white/75 disabled:opacity-40"
                       >
@@ -7951,7 +8079,7 @@ export default function ManhuaScriptWorkbench({
                   轨迹导演板 · 段{String(activeSegNo).padStart(2, "0")}
                 </div>
                 <div className="text-[9px] text-white/40">
-                  红线是人物／道具路线，青色虚线是摄影机路线；轨迹与底图分开保存
+                  按分镜自动生成轨迹，拖动关键点微调后确认，无需手画。红色实线是人物／道具，青色虚线是摄影机；轨迹与底图分开保存。
                 </div>
               </div>
               {activeMotionPanelStatus.state === "needs-review" &&
@@ -8344,13 +8472,7 @@ export default function ManhuaScriptWorkbench({
                   type="button"
                   data-manhua-action="select-missing-fragments"
                   disabled={!missingFragmentIndexes.length}
-                  onClick={() =>
-                    setSelectedShotIndexes(
-                      segments
-                        .filter((seg) => missingFragmentIndexes.includes(seg.index))
-                        .flatMap((seg) => seg.shots.map((s) => s.index)),
-                    )
-                  }
+                  onClick={() => setSelectedSegmentIndexes([...missingFragmentIndexes])}
                   className="rounded border border-white/12 px-1.5 py-0.5 text-[9px] text-white/55 hover:bg-white/[0.06] disabled:opacity-35"
                 >
                   勾选缺段
@@ -8359,7 +8481,7 @@ export default function ManhuaScriptWorkbench({
                   type="button"
                   data-manhua-action="clear-fragment-selection"
                   disabled={!selectedSorted.length}
-                  onClick={() => setSelectedShotIndexes([])}
+                  onClick={() => setSelectedSegmentIndexes([])}
                   className="rounded border border-white/12 px-1.5 py-0.5 text-[9px] text-white/55 hover:bg-white/[0.06] disabled:opacity-35"
                 >
                   清空勾选
@@ -8415,9 +8537,7 @@ export default function ManhuaScriptWorkbench({
             // 有图但未垫图改图 → 出片会跑偏，先重出该段静帧
             const hasUnlocked = seg.unlockedCount > 0;
             const on = seg.index === activeSegNo;
-            const checked =
-              seg.shotIndexes.length > 0 &&
-              seg.shotIndexes.every((n) => selectedShotIndexes.includes(n));
+            const checked = selectedSegmentIndexes.includes(seg.index);
             const statusLabel = clipPassed
               ? "片✓"
               : clipAccepted
@@ -8487,14 +8607,14 @@ export default function ManhuaScriptWorkbench({
                     type="checkbox"
                     data-manhua-fragment-check={seg.index}
                     checked={checked}
-                    onChange={() => toggleSegmentSelected(seg.shotIndexes)}
+                    onChange={() => toggleSegmentSelected(seg.index)}
                     className="h-3 w-3 accent-cyan-400"
                   />
                 </label>
                 <button
                   type="button"
                   data-manhua-keyart-url={seg.thumb || ""}
-                  onClick={() => selectSegmentAndFocusCanvas(seg.shotIndexes)}
+                  onClick={() => selectSegmentAndFocusCanvas(seg.index, seg.shotIndexes)}
                   className="block w-full text-left"
                   title={
                     hasUnlocked
@@ -8527,7 +8647,7 @@ export default function ManhuaScriptWorkbench({
                   </div>
                   <div className="flex items-center justify-between px-1 py-0.5 text-[9px] text-white/70">
                     <span className="font-semibold">
-                      第{String(seg.index).padStart(2, "0")}段
+                      第{String(seg.index).padStart(2, "0")}段{seg.continuation ? " · 长镜续段" : ""}
                     </span>
                     <span className="text-white/45">{seg.durationSec}s</span>
                   </div>
@@ -8542,6 +8662,9 @@ export default function ManhuaScriptWorkbench({
                   <div className="border-t border-white/8 px-1 py-0.5 text-[8px] text-white/45">
                     静帧 {seg.stillReady}/{Math.max(seg.shotCount, 1)}
                     {hasUnlocked ? ` · ${seg.unlockedCount} 未锁` : ""}
+                    {Number.isFinite(seg.sourceStartSec) && Number.isFinite(seg.sourceEndSec)
+                      ? ` · 原稿 ${seg.sourceStartSec}–${seg.sourceEndSec}s`
+                      : ""}
                   </div>
                 </button>
                 {!clipPassed && onGenerateFragment ? (
@@ -8557,7 +8680,7 @@ export default function ManhuaScriptWorkbench({
                     onClick={() => {
                       if (refuseIfBlocked(clipGateHint)) return;
                       setActivePhase("storyboard");
-                      selectSegmentAndFocusCanvas(seg.shotIndexes);
+                      selectSegmentAndFocusCanvas(seg.index, seg.shotIndexes);
                       onGenerateFragment({
                         shotIndex: seg.index,
                         keyartId: seg.firstKeyartId || undefined,

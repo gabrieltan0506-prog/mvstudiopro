@@ -7,6 +7,7 @@ import { normalizeManhuaSubtitleSource, type ManhuaRenderedSubtitle } from "../.
 import {
   MANHUA_ASSEMBLE_INVALID_TIMELINE_ORDER_CODE,
   buildManhuaAssemblePlan,
+  normalizeManhuaAssembleTrimPair,
   type ManhuaAssembleClipInput,
   type ManhuaAssembleSceneVideo,
 } from "../../shared/manhuaFinalAssemble.js";
@@ -70,10 +71,7 @@ export async function runManhuaAssembleFinal(
   if (Array.isArray(raw.sceneVideos) && raw.sceneVideos.length) {
     sceneVideos = raw.sceneVideos
       .map((row, i) => {
-        const trimIn = Number((row as { trimInSec?: number })?.trimInSec);
-        const trimOut = Number((row as { trimOutSec?: number })?.trimOutSec);
-        const hasTrim =
-          Number.isFinite(trimIn) && Number.isFinite(trimOut) && trimOut - trimIn >= 0.5;
+        const trim = normalizeManhuaAssembleTrimPair(row?.trimInSec, row?.trimOutSec, 15);
         return {
           subtitleSource: normalizeManhuaSubtitleSource(row.subtitleSource),
           subtitleShotIndex: row.subtitleShotIndex,
@@ -82,8 +80,8 @@ export async function runManhuaAssembleFinal(
           duration: s(row?.duration).trim() || "15s",
           stillImageUrl: s(row?.stillImageUrl).trim() || undefined,
           stillDuration: s(row?.stillDuration).trim() || undefined,
-          trimInSec: hasTrim ? trimIn : undefined,
-          trimOutSec: hasTrim ? trimOut : undefined,
+          trimInSec: trim.trimInSec,
+          trimOutSec: trim.trimOutSec,
         };
       })
       .filter((row) => Boolean(row.url));
@@ -114,10 +112,11 @@ export async function runManhuaAssembleFinal(
           const hasTimelineOrder = Object.prototype.hasOwnProperty.call(o, "timelineOrder");
           const timelineOrder = o?.timelineOrder;
           const shotIndex = Math.floor(Number(o?.shotIndex) || 0);
-          const trimInSec = Number(o?.trimInSec);
-          const trimOutSec = Number(o?.trimOutSec);
-          const validPiece = shotIndex >= 1 && Number.isFinite(trimInSec) &&
-            Number.isFinite(trimOutSec) && trimOutSec - trimInSec >= 0.5;
+          const trimInSec = o?.trimInSec;
+          const trimOutSec = o?.trimOutSec;
+          const validPiece = shotIndex >= 1 && typeof trimInSec === "number" &&
+            typeof trimOutSec === "number" && Number.isFinite(trimInSec) &&
+            Number.isFinite(trimOutSec) && trimInSec >= 0 && trimOutSec - trimInSec >= 0.5;
           if (
             (hasTimelineOrder &&
               (typeof timelineOrder !== "number" ||
@@ -127,6 +126,11 @@ export async function runManhuaAssembleFinal(
           ) {
             throw invalidTimelineOrderError();
           }
+          if (!validPiece) {
+            const error = new Error("裁切范围无效，请重新确认剪辑点；每段至少保留 0.5 秒") as Error & { code: string };
+            error.code = "manhua_assemble_invalid_trim";
+            throw error;
+          }
           return {
             shotIndex,
             ...(hasTimelineOrder ? { timelineOrder } : {}),
@@ -134,16 +138,8 @@ export async function runManhuaAssembleFinal(
             trimOutSec,
             durationSec: Number(o?.durationSec) || undefined,
           };
-        })
-        .filter(
-          (p) =>
-            p.shotIndex >= 1 &&
-            Number.isFinite(p.trimInSec) &&
-            Number.isFinite(p.trimOutSec) &&
-            p.trimOutSec - p.trimInSec >= 0.5,
-        );
-      const trimIn = Number((row as { trimInSec?: number }).trimInSec);
-      const trimOut = Number((row as { trimOutSec?: number }).trimOutSec);
+        });
+      const trim = normalizeManhuaAssembleTrimPair(row.trimInSec, row.trimOutSec, 15);
       return {
         subtitleSource: normalizeManhuaSubtitleSource(row.subtitleSource),
         episodeIndex: Math.floor(Number(row?.episodeIndex) || 0),
@@ -154,14 +150,8 @@ export async function runManhuaAssembleFinal(
           undefined,
         durationSec: Number(row?.durationSec) || undefined,
         segmentIndex: Math.floor(Number((row as { segmentIndex?: number }).segmentIndex) || 0) || undefined,
-        trimInSec:
-          Number.isFinite(trimIn) && Number.isFinite(trimOut) && trimOut - trimIn >= 0.5
-            ? trimIn
-            : undefined,
-        trimOutSec:
-          Number.isFinite(trimIn) && Number.isFinite(trimOut) && trimOut - trimIn >= 0.5
-            ? trimOut
-            : undefined,
+        trimInSec: trim.trimInSec,
+        trimOutSec: trim.trimOutSec,
         shotPieces: shotPieces.length ? shotPieces : undefined,
       };
     });

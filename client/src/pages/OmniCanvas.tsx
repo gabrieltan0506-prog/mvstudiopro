@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { isManhuaKeyartLookCurrent } from "@shared/manhuaKeyartLookState";
 import Navbar from "@/components/Navbar";
 import FreeformCanvas from "@/components/canvas/FreeformCanvas";
 import ManhuaClipDock from "@/components/canvas/ManhuaClipDock";
@@ -153,6 +152,7 @@ import {
   countExpectedManhuaKeyartShots,
   queuedManhuaKeyartBlocks,
   queuedManhuaClipBlocks,
+  resolveShotsForEpisodeKeyarts,
   resolveManhuaCanvasClipVideoModel,
   resolveManhuaEpisodeClipVideoModel,
   resolveManhuaClipRelatedAssetNodeIds,
@@ -179,11 +179,13 @@ import {
 } from "@/lib/manhuaSeriesSwitchGate";
 import { shouldAttachManhuaPreviouslyOn } from "@shared/manhuaEpisodeRecap";
 import {
+  groupShotsIntoSegments,
   resolveClipLocalSegmentIndex,
   resolveClipSegmentIndex,
   resolveKeyartShotIndex,
   resolveSegmentIndexFromShotIndex,
 } from "@shared/manhuaScriptWorkbench";
+import { normalizeManhuaAutoSegmentBinding } from "@shared/manhuaAutoSegment";
 import { extractManhuaSceneHintFromPrompt } from "@shared/manhuaClipDialogueTimeline";
 import { upsertShotAngleSection } from "@shared/manhuaShotAnglePersist";
 import { patchShotDialogueSection } from "@shared/manhuaShotDialoguePersist";
@@ -324,7 +326,7 @@ import ManhuaCharacterGallery from "@/components/ManhuaCharacterGallery";
 import ManhuaGuidedPathRail from "@/components/ManhuaGuidedPathRail";
 import ManhuaCastStrip from "@/components/ManhuaCastStrip";
 import ManhuaLiveProgressBoard from "@/components/ManhuaLiveProgressBoard";
-import ManhuaScriptWorkbench from "@/components/ManhuaScriptWorkbench";
+import ManhuaScriptWorkbench, { isManhuaWorkbenchKeyartCurrent, manhuaSegmentSelectionIdentity } from "@/components/ManhuaScriptWorkbench";
 import ManhuaAssetWall from "@/components/ManhuaAssetWall";
 import { anchoredPanelStyle, getLastPointerAnchor } from "@/lib/anchoredPanel";
 import {
@@ -415,6 +417,7 @@ import {
   hasManhuaSeedanceLayoutChoice,
   MANHUA_SEEDANCE_LAYOUT_CHOICES,
   migrateRetiredManhuaLayoutVideoModel,
+  manhuaClipMaxDurationSecForVideoModel,
   manhuaSeedanceLayoutPinsSegmentTable,
   resolveManhuaFactoryDefaultVideoModel,
   resolveManhuaSeedanceLayoutProfile,
@@ -433,7 +436,6 @@ import {
 } from "@shared/manhuaWriterExpandPricing";
 import {
   canvasVideoClipCredits,
-  manhuaEpisodeTotalCredits,
 } from "@shared/canvasGenerationPricing";
 import { trpc } from "@/lib/trpc";
 import { Clapperboard, FileUp, LayoutTemplate, Loader2, Play, Sparkles, Square, X } from "lucide-react";
@@ -4013,14 +4015,22 @@ export default function OmniCanvas() {
         });
         const fresh = ensured.blocks.find((b) => b.id === block.id);
         if (isManhuaClipBlockId(block.id)) {
+          if (!fresh || fresh.archivedFromPreviousScript || !queuedManhuaClipBlocks(
+            ensured.blocks, ep, explicitWriterVideoModel || undefined,
+          ).some((candidate) => candidate.id === fresh.id)) {
+            throw new Error("原稿分段已变化，旧片已保留；请从当前分段列表重新选择，不会重跑历史片段。");
+          }
           const segment = resolveClipLocalSegmentIndex(block.id, block.prompt, ep);
+          const autoSegment = normalizeManhuaAutoSegmentBinding(fresh?.manhuaAutoSegment);
           const staleKeyarts = ensured.blocks.filter((candidate) =>
             candidate.id.startsWith("keyart-") && !candidate.archivedFromPreviousScript &&
             (getBlockEpisodeIndex(candidate) ?? 1) === ep &&
-            resolveSegmentIndexFromShotIndex(resolveKeyartShotIndex(candidate.id, candidate.prompt)) === segment &&
-            !isManhuaKeyartLookCurrent(candidate),
+            (autoSegment
+              ? autoSegment.shotIndexes.includes(resolveKeyartShotIndex(candidate.id, candidate.prompt))
+              : resolveSegmentIndexFromShotIndex(resolveKeyartShotIndex(candidate.id, candidate.prompt)) === segment) &&
+            !isManhuaWorkbenchKeyartCurrent(candidate),
           );
-          if (staleKeyarts.length) throw new Error("本段造型已变更，请先重出对应关键静帧；原图已保留，本次未提交视频。");
+          if (staleKeyarts.length) throw new Error("本段原稿或造型已变更，请先重出对应关键静帧；原图已保留，本次未提交视频。");
         }
         if (!fresh?.prompt?.trim()) {
           throw new Error("无法重算本段成片提示词，请先「审阅成片提示词」铺段");
@@ -4049,6 +4059,7 @@ export default function OmniCanvas() {
               refImageUrl: fresh.refImageUrl,
               editFusionUrls: fresh.editFusionUrls,
               manhuaKeyartLookState: fresh.manhuaKeyartLookState,
+              manhuaKeyartSourceState: fresh.manhuaKeyartSourceState,
             },
           } : {}),
           // 与新生成稿同批透传；只改 prompt 会留下上一轮 video_edit 模式和原片绑定。
@@ -4725,7 +4736,7 @@ export default function OmniCanvas() {
       });
       const layoutHint =
         res.layout?.labelZh && res.layout?.segmentCount
-          ? `（${res.layout.labelZh} · ${res.layout.segmentCount}×${res.layout.durationSecPerSegment}s）`
+          ? `（新写作参考：${res.layout.labelZh} · ${res.layout.segmentCount}×${res.layout.durationSecPerSegment}s；实际出片按秒位分段）`
           : "";
       const costHint = `本次扣 ${res.creditsCost} 积分`;
       const templateHint = res.appliedTemplate?.publicId || res.appliedTemplate?.nameZh
@@ -5543,7 +5554,7 @@ export default function OmniCanvas() {
     );
     setFactoryRunScope("dock");
     toast.success(
-      `已按集铺板 ${spawned.episodeCount} 行链（${writerLayoutProfile.labelZh} · ${writerLayoutProfile.segmentCount}×${writerLayoutProfile.durationSecPerSegment}s；旧成品已转存档；坞已预勾选可跑）`,
+      `已按集铺板 ${spawned.episodeCount} 行链（${writerLayoutProfile.labelZh}；实际段数已按原稿秒位计算；旧成品已转存档；坞已预勾选可跑）`,
     );
   }, [
     writerPack,
@@ -7673,16 +7684,20 @@ export default function OmniCanvas() {
                 formatManhuaChainReanchorHintZh,
                 normalizeManhuaChainSceneKey,
               } = await import("@shared/manhuaDirectingWorkflow");
-              const priorDone = workingBlocks
+              const currentClips = queuedManhuaClipBlocks(workingBlocks, episodeIndex, explicitWriterVideoModel || undefined);
+              const priorDone = currentClips
                 .filter(
                   (b) =>
                     b.id.startsWith("clip-") &&
                     (getBlockEpisodeIndex(b) ?? 1) === episodeIndex &&
+                    resolveClipLocalSegmentIndex(b.id, b.prompt, episodeIndex) < fragmentShotIndex &&
                     b.status === "done" &&
                     Boolean(b.outputUrl || b.outputUrls?.[0]),
                 )
-                .sort((a, b) => a.id.localeCompare(b.id));
-              const lastAccepted = priorDone[priorDone.length - 1];
+                .sort((a, b) => resolveClipLocalSegmentIndex(a.id, a.prompt, episodeIndex) - resolveClipLocalSegmentIndex(b.id, b.prompt, episodeIndex));
+              const lastAccepted = priorDone.find((candidate) =>
+                resolveClipLocalSegmentIndex(candidate.id, candidate.prompt, episodeIndex) === fragmentShotIndex - 1,
+              );
               const cont = manhuaContinuationRequiresLastFrame({
                 acceptedClipUrl: lastAccepted?.outputUrl || lastAccepted?.outputUrls?.[0],
                 lastFrameUrl: lastAccepted?.lastFrameUrl,
@@ -7700,12 +7715,21 @@ export default function OmniCanvas() {
                   extractManhuaSceneHintFromPrompt(b.prompt) ||
                   `第${episodeIndex}集`,
               );
+              const targetClip = currentClips.find(
+                (b) =>
+                  b.id.startsWith("clip-") &&
+                  (getBlockEpisodeIndex(b) ?? 1) === episodeIndex &&
+                  resolveClipLocalSegmentIndex(b.id, b.prompt, episodeIndex) === fragmentShotIndex,
+              );
+              const autoSegment = normalizeManhuaAutoSegmentBinding(targetClip?.manhuaAutoSegment);
               const nextKeyart = workingBlocks.find(
                 (b) =>
                   b.id.startsWith("keyart-") &&
                   (getBlockEpisodeIndex(b) ?? 1) === episodeIndex &&
-                  resolveSegmentIndexFromShotIndex(resolveKeyartShotIndex(b.id, b.prompt)) ===
-                    fragmentShotIndex,
+                  (autoSegment
+                    ? autoSegment.shotIndexes.includes(resolveKeyartShotIndex(b.id, b.prompt))
+                    : resolveSegmentIndexFromShotIndex(resolveKeyartShotIndex(b.id, b.prompt)) ===
+                      fragmentShotIndex),
               );
               const nextSceneRaw =
                 extractManhuaSceneHintFromPrompt(nextKeyart?.prompt) ||
@@ -9247,7 +9271,7 @@ export default function OmniCanvas() {
                     toast.message(pilotLocked ? "生成首段 10 秒试片" : `生成第 ${pad} 段成片`, {
                       description: pilotLocked
                         ? "本次只提交一次，不自动重试；质量达标后再解锁全片。"
-                        : "缺段内静帧时只补本段，不整集重跑。",
+                        : `本次 1 段 ${canvasVideoClipCredits({ isEpisodeSegment: true, videoModel: activePilotVideoModel })} 积分；缺静帧时只补本段。`,
                     });
                     setFactoryRunScope("focus");
                     ensureStudioSpawned(factoryTopic);
@@ -9502,16 +9526,29 @@ export default function OmniCanvas() {
                       }
                     });
                   }}
-                  onGenerateMissingFragments={(segmentIndexes) => {
-                    if (!segmentIndexes.length) {
+                  onGenerateMissingFragments={(segmentIndexes, sourceIdentity) => {
+                    const currentSegments = groupShotsIntoSegments(resolveShotsForEpisodeKeyarts(blocks, writerFocusEpisode), {
+                      videoModel: activePilotVideoModel,
+                    });
+                    const currentIdentity = manhuaSegmentSelectionIdentity(writerFocusEpisode, activePilotVideoModel, currentSegments);
+                    if (sourceIdentity !== currentIdentity || segmentIndexes.some((index) => !currentSegments.some((segment) => segment.index === index))) {
+                      toast.message("原稿分段已变化，请重新选择并确认费用；本次未提交生成。");
+                      return;
+                    }
+                    const plannedSegments = Array.from(new Set(segmentIndexes)).sort((a, b) => a - b);
+                    if (!plannedSegments.length) {
                       toast.message("本集段成片已齐，无需补跑");
                       return;
                     }
+                    const credits = canvasVideoClipCredits({
+                      isEpisodeSegment: true,
+                      videoModel: activePilotVideoModel,
+                    }) * plannedSegments.length;
                     if (
                       !window.confirm(
-                        `将依次生成第${writerFocusEpisode}集缺段：${segmentIndexes
+                        `将依次生成第${writerFocusEpisode}集 ${plannedSegments.length} 段：${plannedSegments
                           .map((n) => String(n).padStart(2, "0"))
-                          .join("、")}。继续？`,
+                          .join("、")}，共 ${credits} 积分。继续？`,
                       )
                     ) {
                       return;
@@ -9520,7 +9557,7 @@ export default function OmniCanvas() {
                     ensureStudioSpawned(factoryTopic);
                     void runFactory("clip", {
                       episodeIndexes: [writerFocusEpisode],
-                      fragmentShotIndexes: segmentIndexes,
+                      fragmentShotIndexes: plannedSegments,
                     });
                   }}
                   onVideoEditClip={handleVideoEditClip}
@@ -9827,7 +9864,7 @@ export default function OmniCanvas() {
               <div className="mt-3" data-manhua-seedance-layout>
                 <label className="block text-[11px] text-white/45">成片引擎（必选）</label>
                 <p className="mt-0.5 text-[10px] leading-4 text-white/35">
-                  先选再扩写：决定一集几段、每段几秒，并写入后续铺板。
+                  先选再扩写：新写作按参考目标组织；已有原稿按秒位自动分段，不裁尾、不补假镜。
                 </p>
                 <div className="mt-2">
                   {/* 下拉式选单(用户 0820 拍板):替换旧卡片按钮组,选项一眼看全 */}
@@ -9851,22 +9888,14 @@ export default function OmniCanvas() {
                       请选择成片引擎…
                     </option>
                     {writerLayoutChoices.map((c) => {
-                      const cardSegmentCount = resolveManhuaSeedanceLayoutProfile(
-                        c.videoModel,
-                        writerLengthTierId,
-                      ).segmentCount;
                       return (
                         <option key={c.videoModel} value={c.videoModel}>
-                          {c.labelZh} · {c.layoutHintZh} ·{" "}
+                          {c.labelZh} · 单段最多 {manhuaClipMaxDurationSecForVideoModel(c.videoModel)} 秒 ·{" "}
                           {canvasVideoClipCredits({
                             isEpisodeSegment: true,
                             videoModel: c.videoModel,
                           })}
-                          积分/段 · 整集约{" "}
-                          {manhuaEpisodeTotalCredits({
-                            videoModel: c.videoModel,
-                            segmentCount: cardSegmentCount,
-                          })}
+                          积分/段 · 解析后显示实际段数与总价
                         </option>
                       );
                     })}
@@ -9874,7 +9903,7 @@ export default function OmniCanvas() {
                 </div>
                 {hasManhuaSeedanceLayoutChoice(writerVideoModel) ? (
                   <p className="mt-1.5 text-[10px] text-cyan-100/70">
-                    已选「{writerLayoutProfile.labelZh}」· {writerLayoutProfile.layoutHintZh}
+                    已选「{writerLayoutProfile.labelZh}」· 新写作参考目标 {writerLayoutProfile.layoutHintZh}；已有稿按实际秒位分段
                   </p>
                 ) : (
                   <p className="mt-1.5 text-[10px] text-amber-100/70">
@@ -10037,14 +10066,14 @@ export default function OmniCanvas() {
                 </div>
                 {manhuaSeedanceLayoutPinsSegmentTable(writerVideoModel) ? (
                   <div>
-                    <label className="block text-[11px] text-white/45">段落布局</label>
+                    <label className="block text-[11px] text-white/45">新写作参考目标</label>
                     <div className="mt-1 rounded-lg border border-cyan-300/25 bg-cyan-500/10 px-2.5 py-2 text-xs text-cyan-50/90">
-                      {writerLayoutProfile.layoutHintZh}
+                      {writerLayoutProfile.layoutHintZh}；实际出片按原稿秒位自动分段
                     </div>
                   </div>
                 ) : (
                   <div>
-                    <label className="block text-[11px] text-white/45">单集时长</label>
+                    <label className="block text-[11px] text-white/45">新写作参考时长</label>
                     <select
                       value={writerLengthTierId}
                       onChange={(e) =>
@@ -10055,7 +10084,7 @@ export default function OmniCanvas() {
                     >
                       {MANHUA_EPISODE_LENGTH_TIERS.map((t) => (
                         <option key={t.id} value={t.id}>
-                          {t.labelZh}（{t.segmentMin}–{t.segmentMax} 段）
+                          {t.labelZh}（参考 {t.segmentMin}–{t.segmentMax} 段）
                         </option>
                       ))}
                     </select>

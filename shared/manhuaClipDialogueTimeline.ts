@@ -64,7 +64,7 @@ export function extractManhuaSceneHintFromPrompt(prompt?: string | null): string
   return (m?.[1] || "").trim().replace(/[：:].*$/, "").slice(0, 80);
 }
 
-/** 按段时长均分镜位 */
+/** 有完整原镜时长时保持原秒轴；旧稿缺时长或试片窗口不足时保留原有均分兼容。 */
 export function buildManhuaDialogueTimelineBeats(
   shots: ManhuaWorkbenchShot[],
   durationSec: number,
@@ -72,15 +72,21 @@ export function buildManhuaDialogueTimelineBeats(
   const list = Array.isArray(shots) ? shots.filter(Boolean) : [];
   if (!list.length) return [];
   const dur =
-    typeof durationSec === "number" && durationSec > 0
-      ? Math.round(durationSec * 10) / 10
+    typeof durationSec === "number" && Number.isFinite(durationSec) && durationSec > 0
+      ? durationSec
       : 15;
   const n = list.length;
   const slot = dur / n;
+  const sourceDuration = list.reduce((sum, shot) => sum + shot.durationSec, 0);
+  const preserveSourceTiming = list.every(shot =>
+    typeof shot.durationSec === "number" && Number.isFinite(shot.durationSec) && shot.durationSec > 0
+  ) && sourceDuration <= dur + Number.EPSILON * Math.max(1, dur) * n;
+  let cursor = 0;
   const beats = list.map((s, i) => {
-    const startSec = Math.round(i * slot * 10) / 10;
-    const endSec = Math.round(Math.min(dur, (i + 1) * slot) * 10) / 10;
-    const durationBeat = Math.round((endSec - startSec) * 10) / 10;
+    const startSec = preserveSourceTiming ? cursor : Math.round(i * slot * 10) / 10;
+    const endSec = preserveSourceTiming ? Math.min(dur, cursor + s.durationSec) : Math.round(Math.min(dur, (i + 1) * slot) * 10) / 10;
+    const durationBeat = preserveSourceTiming ? s.durationSec : Math.round((endSec - startSec) * 10) / 10;
+    cursor = endSec;
     const fromAction = extractManhuaPerformanceCue(s.actionZh);
     const dialogueZh = resolveShotDialogue(s);
     return {
@@ -373,13 +379,14 @@ export function formatManhuaDialogueTimelineBlock(
 
     // 视觉镜位数与对白句数是两条轴：长段可能只有三张静帧、却有四句以上真对白。
     // 在同一镜位时间窗内均分对白 cue，保留全部原句与先后，不伪造额外切镜。
-    const slot = Math.max(0.1, (b.endSec - b.startSec) / cues.length);
+    // 此分支至少两条 cue；按真实镜窗划分，不用0.1秒舍入把对白推到邻镜或裁尾区。
+    const slot = (b.endSec - b.startSec) / cues.length;
     return cues.map((cue, cueIndex) => {
-      const cueStart = Math.round((b.startSec + cueIndex * slot) * 10) / 10;
+      const cueStart = Math.min(b.endSec, b.startSec + cueIndex * slot);
       const cueEnd =
         cueIndex === cues.length - 1
           ? b.endSec
-          : Math.round(Math.min(b.endSec, b.startSec + (cueIndex + 1) * slot) * 10) / 10;
+          : Math.min(b.endSec, b.startSec + (cueIndex + 1) * slot);
       const cueHead = `${cueStart}–${cueEnd}s：〔${fn}〕`;
       const speech = `${cue.speakerAtTag ? trimTrailPunct(cue.speakerAtTag) : ""}${
         tone ? `以${trimTrailPunct(tone)}` : ""

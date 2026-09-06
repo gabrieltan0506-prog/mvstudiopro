@@ -56,6 +56,8 @@ export const MANHUA_SCENE_DYNAMICS_BLOCK = `【场面变化·同场多事件】
 
 /** 拼进故事/节拍/反推的总块 */
 export function composeManhuaEpisodeQualityBlock(opts?: {
+  /** 新写作保留预算模板；原稿不被固定段数和对白配额改写。 */
+  sourceMode?: "original" | "new-writing";
   includeDialogue?: boolean;
   includeProp?: boolean;
   includeCamera?: boolean;
@@ -73,9 +75,18 @@ export function composeManhuaEpisodeQualityBlock(opts?: {
     ...opts,
   };
   return [
-    o.includeDialogue ? MANHUA_DIALOGUE_DENSITY_BLOCK : "",
-    o.includeProp ? MANHUA_PROP_IN_FRAME_BLOCK : "",
-    o.includeCamera ? MANHUA_CAMERA_TRAJECTORY_BLOCK : "",
+    o.includeDialogue ? (o.sourceMode === "new-writing" ? MANHUA_DIALOGUE_DENSITY_BLOCK : `【对白密度·原稿】
+- 完整保留原稿对白，按实际分段表分配到说话人及时间窗；不为凑句数新增、删减或重复台词。
+- 对白推动关系或信息；长对白超出单次时长时连续拆段，保留原文和说话顺序。
+- 台词只驱动口型、气口与微表情；画面零字幕、零气泡。`) : "",
+    o.includeProp ? (o.sourceMode === "new-writing" ? MANHUA_PROP_IN_FRAME_BLOCK : MANHUA_PROP_IN_FRAME_BLOCK.replace(
+      "本集点选/编剧包道具必须在至少 2 个段的关键静帧与成片中可读入画",
+      "原稿中实际出现的道具须在对应段的关键静帧与成片中可读入画",
+    )) : "",
+    o.includeCamera ? (o.sourceMode === "new-writing" ? MANHUA_CAMERA_TRAJECTORY_BLOCK : MANHUA_CAMERA_TRAJECTORY_BLOCK.replace(
+      "段内约 4 张静帧：景别递进（如全景建立→中景关系→近景压力→特写兑现），禁止四镜同一机位摆拍。",
+      "静帧按实际原镜规划，保留原稿有依据的景别递进与固定长镜，不为凑静帧数量伪造切镜。",
+    )) : "",
     o.includeAction ? MANHUA_ACTION_TRAJECTORY_BLOCK : "",
     o.includeScene ? MANHUA_SCENE_RENDER_BLOCK : "",
     o.includeDynamics ? MANHUA_SCENE_DYNAMICS_BLOCK : "",

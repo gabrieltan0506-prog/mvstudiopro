@@ -11,6 +11,57 @@ import {
 import { formatWorkbenchSegmentClipInjectBlock } from "./manhuaScriptWorkbench";
 
 describe("manhuaClipDialogueTimeline", () => {
+  it("原镜 2/5/3 秒在请求15秒中仍按0–2、2–7、7–10排列，不把动作推入裁尾区", () => {
+    const shots = [2, 5, 3].map((durationSec, i) => ({
+      index: i + 1, durationSec, cameraZh: "近景固定", actionZh: `动作${i + 1}`,
+      dialogueZh: `@角色1 原句${i + 1}`, emotionZh: "克制", microExpressionZh: "抿唇", voiceToneZh: "轻声",
+    }));
+    const original = JSON.stringify(shots);
+    const beats = buildManhuaDialogueTimelineBeats(shots, 15);
+    expect(beats.map(beat => [beat.startSec, beat.endSec, beat.durationSec])).toEqual([[0, 2, 2], [2, 7, 5], [7, 10, 3]]);
+    expect(beats.map(beat => [beat.actionZh, beat.dialogueZh, beat.speakerAtTag, beat.emotionZh, beat.microExpressionZh, beat.voiceToneZh])).toEqual(
+      shots.map(shot => [shot.actionZh, shot.dialogueZh, "@角色1", shot.emotionZh, shot.microExpressionZh, shot.voiceToneZh])
+    );
+    expect(formatManhuaDialogueTimelineBlock(shots, 15)).toContain("7–10s：");
+    expect(formatManhuaDialogueTimelineBlock(shots, 15)).not.toContain("10–15s：");
+    expect(JSON.stringify(shots)).toBe(original);
+  });
+
+  it("长镜自动分片的10.333333秒窗口不被拉伸为11秒，也不舍入为10.3秒", () => {
+    const shot = { index: 8, durationSec: 10.333333, cameraZh: "固定", actionZh: "连续推进本窗口", sourceOffsetSec: 10.333333, sourceDurationSec: 31, continuation: true, dialogueSuppressed: true };
+    expect(buildManhuaDialogueTimelineBeats([shot], 11)[0]).toMatchObject({ shotIndex: 8, startSec: 0, endSec: 10.333333, durationSec: 10.333333, dialogueZh: "" });
+    expect(formatManhuaDialogueTimelineBlock([shot], 11)).toContain("0–10.333333s：");
+  });
+
+  it("缺失真镜长的旧稿继续均分，超出10秒试片窗口不擅自延长请求", () => {
+    const shots = [8, 6].map((durationSec, i) => ({ index: i + 1, durationSec, cameraZh: "固定", actionZh: `动作${i + 1}` }));
+    expect(buildManhuaDialogueTimelineBeats(shots, 10).map(beat => [beat.startSec, beat.endSec])).toEqual([[0, 5], [5, 10]]);
+    expect(buildManhuaDialogueTimelineBeats([{ ...shots[0]!, durationSec: 0 }, shots[1]!], 15).map(beat => [beat.startSec, beat.endSec])).toEqual([[0, 7.5], [7.5, 15]]);
+  });
+
+  it("浮点原镜长之和等于请求长时不误判为超长，后镜对白 cue 不越真实镜窗", () => {
+    const fractional = buildManhuaDialogueTimelineBeats([
+      { index: 1, durationSec: 0.1, cameraZh: "固定", actionZh: "抬眼" },
+      { index: 2, durationSec: 0.2, cameraZh: "固定", actionZh: "点头" },
+    ], 0.3);
+    expect(fractional.map(beat => [beat.startSec, beat.endSec])).toEqual([[0, 0.1], [0.1, 0.3]]);
+    const block = formatManhuaDialogueTimelineBlock([
+      { index: 1, durationSec: 10.333333, cameraZh: "固定", actionZh: "望向门口" },
+      { index: 2, durationSec: 0.15, cameraZh: "固定", actionZh: "接续", dialogueZh: "@角色1 甲", additionalDialogueCues: [{ dialogueZh: "乙", speakerAtTag: "@角色1" }, { dialogueZh: "丙", speakerAtTag: "@角色1" }] },
+    ], 11);
+    const windows = Array.from(block.matchAll(/([\d.]+)–([\d.]+)s：/g)).map(match => [Number(match[1]), Number(match[2])]);
+    expect(windows).toHaveLength(4);
+    expect(windows[1]?.[0]).toBe(10.333333);
+    windows.forEach((window, index) => {
+      expect(window[1]).toBeGreaterThan(window[0]!);
+      if (index) expect(window[0]).toBeCloseTo(windows[index - 1]![1]!, 12);
+    });
+    expect(windows.at(-1)?.[1]).toBeCloseTo(10.483333, 12);
+    expect(block).toContain("说「甲」");
+    expect(block).toContain("说「乙」");
+    expect(block).toContain("说「丙」");
+  });
+
   it("assigns second ranges and emotion fields per shot", () => {
     const beats = buildManhuaDialogueTimelineBeats(
       [

@@ -8,6 +8,7 @@ import {
   setManhuaSegmentLookBinding,
   upsertManhuaCharacterLookSet,
 } from "@shared/manhuaCharacterLookSets";
+import { buildManhuaAutoSegmentBinding } from "@shared/manhuaAutoSegment";
 
 const source = readFileSync(
   new URL("../components/ManhuaScriptWorkbench.tsx", import.meta.url),
@@ -87,6 +88,10 @@ describe("造型控件的真实事件及渲染", () => {
 
   it("本段选择只改当前集段，缺参考选项禁用，运行中禁用控件", () => {
     const changed = vi.fn();
+    const sourceRevision = buildManhuaAutoSegmentBinding(1, {
+      index: 2, durationSec: 10, sourceStartSec: 15, sourceEndSec: 25,
+      shots: [{ index: 4, durationSec: 10, cameraZh: "缓推", actionZh: "黑奇从左侧进入" }],
+    }, "seedance-2.0").revision;
     const bindings = {
       "e1:s1": { heiqi: "before" },
       "e2:s1": { heiqi: "before" },
@@ -104,6 +109,7 @@ describe("造型控件的真实事件及渲染", () => {
       segmentLookBindings: bindings,
       focusEpisode: 1,
       activeSegNo: 2,
+      activeSegmentSourceRevision: sourceRevision,
       onSegmentLookBindingsChange: changed,
       setManhuaSegmentLookBinding,
     };
@@ -114,7 +120,7 @@ describe("造型控件的真实事件及渲染", () => {
     element.props.onChange({ target: { value: "after" } });
     expect(changed.mock.calls[0]?.[0]).toEqual({
       ...bindings,
-      "e1:s2": { heiqi: "after" },
+      "e1:s2": { heiqi: "after", __sourceRevision: sourceRevision },
     });
     expect(
       control("本段造型", { ...scope, factoryBusy: true }).props.disabled

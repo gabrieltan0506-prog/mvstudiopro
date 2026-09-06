@@ -34,7 +34,8 @@ describe("manhuaEpisodeQualityPrompt", () => {
 
   it("narrative engine includes episode quality by default", () => {
     const block = composeManhuaNarrativeEngineBlock();
-    expect(block).toMatch(/预算期|75–90/);
+    expect(block).toContain("原稿叙事弧");
+    expect(block).not.toMatch(/75–90|5–6 段/);
     expect(block).toContain("对白密度");
     expect(block).toContain("场景渲染");
     expect(block).toContain("场面变化");

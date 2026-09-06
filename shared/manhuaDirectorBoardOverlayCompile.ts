@@ -39,7 +39,7 @@ type SegmentMotionFields = Partial<
 >;
 
 type ShotMotionFields = Partial<
-  Pick<ManhuaWorkbenchShot, "index" | "actionZh" | "cameraZh">
+  Pick<ManhuaWorkbenchShot, "index" | "actionZh" | "cameraZh" | "durationSec" | "sourceOffsetSec" | "sourceDurationSec" | "continuation">
 >;
 
 export type ManhuaBoardStructuredMotionInput = {
@@ -605,6 +605,10 @@ export function compileManhuaSegmentDirectorBoardOverlay(
     shotIndex: firstShot?.index,
     baseAspectRatio,
     baseMediaIdentity,
+    // 同一长镜拆为不同时间窗口时，文字可能相同，确认身份仍须随实际窗口失效。
+    sourceRevision: stableRevision(JSON.stringify({
+      shots, beat: input.beat || null, baseMediaIdentity: stableMediaIdentity(baseMediaIdentity),
+    })),
     beat: input.beat,
     shot: shots.length
       ? {

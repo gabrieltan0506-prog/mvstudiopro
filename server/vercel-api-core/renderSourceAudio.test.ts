@@ -259,6 +259,27 @@ describe.skipIf(!available)(
         media.sources.set(`https://test.invalid/${key}`, value);
     }, 30_000);
 
+    it("31 秒长镜自动三分后不因 0.1 秒舍入丢失尾帧，原声总长仍对齐", async () => {
+      const source = path.join(fixtureDir, "fractional-tail.mp4");
+      await exec("ffmpeg", ["-y", "-v", "error", "-f", "lavfi", "-i", "color=red:s=160x90:r=30:d=11",
+        "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=11",
+        "-vf", "drawbox=color=blue:t=fill:enable='gte(t,10.3)'", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", source]);
+      media.sources.set("https://test.invalid/fractional-tail", source);
+      const durations = [10.333333, 10.333334, 10.333333];
+      const plan = buildManhuaAssemblePlan(durations.map((duration, i) => ({
+        episodeIndex: 1, segmentIndex: i + 1, clipUrl: "https://test.invalid/fractional-tail",
+        durationSec: 11, trimInSec: 0, trimOutSec: duration,
+      })));
+      const result = await renderSourceAudioFinal({ sceneVideos: plan.sceneVideos, transition: "cut" }, { width: 160, height: 90 }, await workDir());
+      const actual = await inspect(result);
+      expect(Math.abs(actual.video - 31)).toBeLessThan(0.04);
+      expect(Math.abs(actual.audio - 31)).toBeLessThan(0.05);
+      const { stdout } = await exec("ffmpeg", ["-v", "error", "-ss", "30.966", "-i", result, "-frames:v", "1", "-vf", "scale=1:1", "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"], { encoding: "buffer" });
+      expect(stdout.length).toBe(3);
+      expect(stdout[2]!).toBeGreaterThan(stdout[0]! * 3);
+      expect((await audioWindow(result, 30.8)).magnitude(880)).toBeGreaterThan(0.03);
+    }, 30_000);
+
     it("粗剪跨段重排同时改变真实画面和原声，不仅是请求数组变了", async () => {
       const plan = buildManhuaAssemblePlan([
         { episodeIndex: 1, segmentIndex: 1, clipUrl: "https://test.invalid/first", shotPieces: [

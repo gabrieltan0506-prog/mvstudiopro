@@ -8,6 +8,7 @@ import {
   manhuaGlobalSegmentIndex,
   manhuaLocalSegmentIndex,
   resolveClipSegmentIndex,
+  resolveClipLocalSegmentIndex,
 } from "./manhuaScriptWorkbench.js";
 
 /** 从片尾窗口均匀抽帧张数（送 Seedance 多图参考，配额内） */
@@ -33,6 +34,7 @@ export type ContinuityClipLike = {
   prompt?: string | null;
   outputUrl?: string | null;
   status?: string;
+  archivedFromPreviousScript?: boolean;
 };
 
 function episodeOf(block: ContinuityClipLike): number | null {
@@ -54,6 +56,7 @@ export function resolveClipGlobalSegmentIndex(block: ContinuityClipLike): number
 }
 
 function httpsDoneUrl(block: ContinuityClipLike): string | undefined {
+  if (block.archivedFromPreviousScript) return undefined;
   const url = String(block.outputUrl || "").trim();
   if (!url || !/^https?:\/\//i.test(url)) return undefined;
   if (block.status && block.status !== "done") return undefined;
@@ -72,23 +75,21 @@ export function resolvePreviousSegmentClipUrl(
   blocks: ContinuityClipLike[],
   episodeIndex: number,
   segmentIndex: number,
+  opts?: { segmentIndexIsLocal?: boolean },
 ): string | undefined {
   const ep = Math.max(1, Math.floor(episodeIndex));
-  const local = manhuaLocalSegmentIndex(segmentIndex, ep);
-  const global = manhuaGlobalSegmentIndex(ep, local);
-  if (global <= 1) return undefined;
+  const local = opts?.segmentIndexIsLocal ? Math.max(1, Math.floor(segmentIndex)) : manhuaLocalSegmentIndex(segmentIndex, ep);
+  if (ep === 1 && local <= 1) return undefined;
   if (local <= 1) return resolvePreviousEpisodeClipUrl(blocks, ep);
-  const prevGlobal = global - 1;
-  let best: { url: string; ep: number } | undefined;
   for (const b of blocks) {
     if (!String(b.id || "").startsWith("clip-")) continue;
     const url = httpsDoneUrl(b);
     if (!url) continue;
-    if (resolveClipGlobalSegmentIndex(b) !== prevGlobal) continue;
     const be = episodeOf(b) ?? 1;
-    if (!best || be > best.ep) best = { url, ep: be };
+    if (be !== ep) continue;
+    if (resolveClipLocalSegmentIndex(b.id, b.prompt, be) === local - 1) return url;
   }
-  return best?.url;
+  return undefined;
 }
 
 /**
@@ -108,7 +109,7 @@ export function resolvePreviousEpisodeClipUrl(
     if (!url) continue;
     const be = episodeOf(b);
     if (be == null || be >= ep || be < 1) continue;
-    const globalSeg = resolveClipGlobalSegmentIndex(b);
+    const globalSeg = resolveClipLocalSegmentIndex(b.id, b.prompt, be);
     if (
       !best ||
       be > best.ep ||

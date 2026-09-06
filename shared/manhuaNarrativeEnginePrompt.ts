@@ -53,11 +53,13 @@ export const MANHUA_CLIP_PREFLIGHT_BLOCK = `【成片预演硬锁】
 2. 场景连续：地点材质与光色对齐静帧；段间接戏禁止无中介跳棚。
 3. 先静帧后成片：无静帧勿空想整段视频。
 4. 运镜一次一事：本段主运镜 1 种，写清起幅→落幅；运镜画线是调度，不能牺牲脸与服装。
-5. 时长对齐本段秒数（约 15 秒/段）；对白按时间轴秒位演口型气口。
+5. 时长对齐实际分段表指定的本段秒数；对白按时间轴秒位演口型气口，遵守当前引擎单次时长上限。
 6. 台词只驱动口型气口，画面无字幕；情绪/微表情须有可见变化。
 7. 落实段内多拍动作链、人物互动与道具交互；天气/戏种突变须有可见过渡。`;
 
 export function composeManhuaNarrativeEngineBlock(opts?: {
+  /** 原稿不套新写作的固定时长和段数模板。 */
+  sourceMode?: "original" | "new-writing";
   includePlotEngine?: boolean;
   includeHook3s?: boolean;
   includeInfoIncrement?: boolean;
@@ -85,8 +87,10 @@ export function composeManhuaNarrativeEngineBlock(opts?: {
     o.includeInfoIncrement ? MANHUA_INFO_INCREMENT_BLOCK : "",
     o.includeSceneFields ? MANHUA_SCENE_SCRIPT_FIELDS_BLOCK : "",
     o.includeVisibleAction ? MANHUA_VISIBLE_ACTION_BLOCK : "",
-    o.includeShortArc ? MANHUA_SHORT_DRAMA_ARC_BLOCK : "",
-    o.includeEpisodeQuality ? composeManhuaEpisodeQualityBlock() : "",
+    o.includeShortArc ? (o.sourceMode === "new-writing"
+      ? MANHUA_SHORT_DRAMA_ARC_BLOCK
+      : "【原稿叙事弧】\n按已确认原稿推进开场、中段、转折与收束，完整保留原有剧情、对白和动作。整集时长与段数以原稿实际分段表为准；不得压缩、删段或补假镜去套固定预算模板。场面变化须有原稿依据，动作和运镜须有起落。") : "",
+    o.includeEpisodeQuality ? composeManhuaEpisodeQualityBlock({ sourceMode: o.sourceMode }) : "",
     MANHUA_CAMERA_ZH_ONLY_LOCK,
     o.includeClipPreflight ? MANHUA_CLIP_PREFLIGHT_BLOCK : "",
   ]

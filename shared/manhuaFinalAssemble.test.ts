@@ -7,6 +7,28 @@ import {
 } from "./manhuaFinalAssemble";
 
 describe("manhuaFinalAssemble", () => {
+  it("31 秒长镜的三个生成片段按真实窗口裁切，保留全部小数而不是丢为 30.9 秒", () => {
+    const durations = [10.333333, 10.333334, 10.333333];
+    const plan = buildManhuaAssemblePlan(durations.map((duration, i) => ({
+      episodeIndex: 1, segmentIndex: i + 1, clipUrl: `https://test.invalid/${i}.mp4`,
+      durationSec: 11, trimInSec: 0, trimOutSec: duration,
+    })));
+    expect(plan.sceneVideos.map(scene => scene.trimOutSec)).toEqual(durations);
+    expect(plan.sceneVideos.map(scene => parseFloat(scene.duration)).reduce((a, b) => a + b, 0)).toBe(31);
+    const shotPlan = buildManhuaAssemblePlan([{ episodeIndex: 1, clipUrl: "https://test.invalid/shot.mp4",
+      shotPieces: [{ shotIndex: 1, trimInSec: 0.123456, trimOutSec: 1.234567 }],
+    }]);
+    expect(shotPlan.sceneVideos[0]).toMatchObject({ trimInSec: 0.123456, trimOutSec: 1.234567 });
+  });
+
+  it.each([
+    { trimInSec: 0 }, { trimOutSec: 1 }, { trimInSec: -0.1, trimOutSec: 1 },
+    { trimInSec: 0, trimOutSec: 0.49 }, { trimInSec: 1, trimOutSec: 0 },
+    { trimInSec: 0, trimOutSec: NaN }, { trimInSec: null, trimOutSec: 1 },
+  ])("显式非法裁切 %j 不会回退播放全片", trim => {
+    expect(() => buildManhuaAssemblePlan([{ episodeIndex: 1, clipUrl: "https://test.invalid/clip.mp4", ...trim } as ManhuaAssembleClipInput])).toThrow("裁切范围无效");
+  });
+
   it("orders clips by episode and skips missing clip", () => {
     const plan = buildManhuaAssemblePlan([
       { episodeIndex: 3, clipUrl: "https://x/e3.mp4", episodeTitle: "三" },

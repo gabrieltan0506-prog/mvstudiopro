@@ -4,6 +4,7 @@
 
 import { normalizeManhuaTimelineOrder } from "./manhuaEditOrder.js";
 import { normalizeManhuaKeyartLookState } from "./manhuaKeyartLookState";
+import { normalizeManhuaAutoSegmentBinding, type ManhuaAutoSegmentBinding } from "./manhuaAutoSegment";
 import {
   buildManhuaWriterSession,
   migrateManhuaWriterTemplateId,
@@ -97,10 +98,12 @@ export type ManhuaCloudDraftCanvasBlock = {
   /** final-eXX 的烧字任务身份与 GCS 长期身份。 */
   manhuaFinalPostProd?: ManhuaFinalPostProdBinding;
   manhuaFinalVersions?: ManhuaFinalVersionIdentity[];
+  manhuaAutoSegment?: ManhuaAutoSegmentBinding;
   archivedFromPreviousScript?: boolean;
   /** 必须与当前视频一起保存，否则失败片恢复后会落入无报告历史放行分支。 */
   manhuaClipQuality?: ManhuaClipQualityReport;
   manhuaKeyartLookState?: import("./manhuaKeyartLookState").ManhuaKeyartLookState;
+  manhuaKeyartSourceState?: import("./manhuaKeyartLookState").ManhuaKeyartLookState;
   error?: string;
   refVideoUrl?: string;
   seedance25WorkMode?: SeedanceEvolinkMode;
@@ -258,16 +261,20 @@ export function isManhuaCloudDraftFinalVideoBlock(block: {
 }
 
 function sanitizeManhuaEditTrim(
-  raw: unknown
+  raw: unknown,
+  autoSegment?: unknown,
 ): ManhuaCloudDraftCanvasBlock["manhuaEditTrim"] {
   if (!raw || typeof raw !== "object") return undefined;
   const row = raw as Record<string, unknown>;
   const inSec = Number(row.inSec);
   const outSec = Number(row.outSec);
+  const automatic = normalizeManhuaAutoSegmentBinding(autoSegment);
+  const exactSourceWindow = automatic && inSec === 0 &&
+    Math.abs(outSec - (automatic.sourceEndSec - automatic.sourceStartSec)) < 0.000001;
   if (
     !Number.isFinite(inSec) ||
     !Number.isFinite(outSec) ||
-    outSec - inSec < 0.5
+    outSec <= inSec || (!exactSourceWindow && outSec - inSec < 0.5)
   ) {
     return undefined;
   }
@@ -344,6 +351,8 @@ export function sanitizeManhuaCloudDraftBlock(
       b.episodeTitle != null ? String(b.episodeTitle).slice(0, 120) : undefined,
     status: b.status != null ? String(b.status).slice(0, 24) : undefined,
     manhuaKeyartLookState: normalizeManhuaKeyartLookState(b.manhuaKeyartLookState),
+    manhuaKeyartSourceState: normalizeManhuaKeyartLookState(b.manhuaKeyartSourceState),
+    manhuaAutoSegment: normalizeManhuaAutoSegmentBinding(b.manhuaAutoSegment),
     imageMode:
       b.imageMode != null ? String(b.imageMode).slice(0, 24) : undefined,
     aspectRatio:
@@ -367,7 +376,7 @@ export function sanitizeManhuaCloudDraftBlock(
       b.videoTaskStatus != null
         ? String(b.videoTaskStatus).slice(0, 40)
         : undefined,
-    manhuaEditTrim: sanitizeManhuaEditTrim(b.manhuaEditTrim),
+    manhuaEditTrim: sanitizeManhuaEditTrim(b.manhuaEditTrim, b.manhuaAutoSegment),
     manhuaFinalPostProd: normalizeManhuaFinalPostProdBinding(
       b.manhuaFinalPostProd
     ),

@@ -167,6 +167,7 @@ export function slimBlocksForLocalPersist(
       ...b,
       outputUrl,
       manhuaKeyartLookState: remapManhuaKeyartLookOutput(b, persistableLocalUrl(b.outputUrl)),
+      manhuaKeyartSourceState: remapManhuaKeyartLookOutput({ ...b, manhuaKeyartLookState: b.manhuaKeyartSourceState }, persistableLocalUrl(b.outputUrl)),
       outputUrls:
         outputUrl && !outputUrls.includes(outputUrl)
           ? [outputUrl, ...outputUrls]
@@ -259,6 +260,7 @@ export function blocksForCloudDraftSync(blocks: CanvasBlock[]): CanvasBlock[] {
       ...b,
       outputUrl,
       manhuaKeyartLookState: remapManhuaKeyartLookOutput(b, stableOrUndefined(resolveUrlForCloudSync(b.outputUrl))),
+      manhuaKeyartSourceState: remapManhuaKeyartLookOutput({ ...b, manhuaKeyartLookState: b.manhuaKeyartSourceState }, stableOrUndefined(resolveUrlForCloudSync(b.outputUrl))),
       outputUrls:
         outputUrl && !outputUrls.includes(outputUrl)
           ? [outputUrl, ...outputUrls]
@@ -454,6 +456,7 @@ export function cloudDraftBlocksToCanvas(
       error: raw.error,
       outputUrl: localFirstThenCloud(raw.outputUrl),
       manhuaKeyartLookState: remapManhuaKeyartLookOutput(raw, localFirstThenCloud(raw.outputUrl)),
+      manhuaKeyartSourceState: remapManhuaKeyartLookOutput({ ...raw, manhuaKeyartLookState: raw.manhuaKeyartSourceState }, localFirstThenCloud(raw.outputUrl)),
       outputUrls: (raw.outputUrls || [])
         .map(u => localFirstThenCloud(u))
         .filter((u): u is string => Boolean(u)),
@@ -477,6 +480,7 @@ export function cloudDraftBlocksToCanvas(
         raw as { manhuaFinalPostProd?: CanvasBlock["manhuaFinalPostProd"] }
       ).manhuaFinalPostProd,
       manhuaFinalVersions: raw.manhuaFinalVersions,
+      manhuaAutoSegment: raw.manhuaAutoSegment,
       manhuaRetake: raw.manhuaRetake,
       videoResolution: raw.videoResolution,
       manhuaClipQuality: raw.manhuaClipQuality,

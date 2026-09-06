@@ -17,6 +17,8 @@ import { defaultCanvasBlock, type CanvasBlock } from "./canvasTypes";
 import { runCanvasBlock } from "./canvasRunBlock";
 import { runManhuaDramaFactoryPipeline, spawnManhuaDramaStudio, expandManhuaShotKeyartsAfterReverse, ensureManhuaFragmentClips, resolveManhuaFragmentRunTargets } from "./canvasDramaStudio";
 import { buildManhuaAssetLockRegistry, buildManhuaAssetPathById } from "@shared/manhuaAssetLockRegistry";
+import { confirmManhuaSegmentLookBindingSource } from "@shared/manhuaCharacterLookSets";
+import { recordManhuaKeyartLookOutput } from "@shared/manhuaKeyartLookState";
 
 const originalPrompt = [
   "【第1段·30s】雨夜仓库",
@@ -46,6 +48,24 @@ function pilotBlock(videoModel: CanvasBlock["videoModel"]): CanvasBlock {
   };
 }
 
+/** 真实原稿编排后，明确声明夹具图片按当前原镜成功生成，不借旧图空状态绕过门禁。 */
+function preparedPipelineFixture(storyboard: string) {
+  const spawned = spawnManhuaDramaStudio({ topic: "雨夜仓库", episodeIndex: 1 });
+  const reverse = spawned.blocks.find(b => b.id.startsWith("reverse-"))!;
+  const source = spawned.blocks.map(b => b.id === reverse.id ? {
+    ...b, status: "done" as const,
+    outputText: "| 镜号 | 时长 | 运镜 | 画面 | 对白 | 情绪 |\n|---|---|---|---|---|---|\n|1|10秒|固定|人物走进仓库||警觉|\n|2|10秒|推近|人物抬头||警觉|\n|3|10秒|跟随|人物离开仓库||警觉|",
+  } : b);
+  const expanded = expandManhuaShotKeyartsAfterReverse(source, spawned.edges, reverse.id, { videoModel: "seedance-2.5" });
+  const ready = expanded.blocks.map(b => b.id.startsWith("keyart-") ? {
+    ...b, status: "done" as const, outputUrl: `https://test.invalid/${b.id}.png`,
+    manhuaKeyartSourceState: recordManhuaKeyartLookOutput({ manhuaKeyartLookState: b.manhuaKeyartSourceState }, `https://test.invalid/${b.id}.png`),
+  } : b);
+  const clip = ready.find(b => b.manhuaAutoSegment?.segmentIndex === 1)!;
+  const block = { ...clip, prompt: pilotBlock("seedance-2.5").prompt, seedance25TimestampStoryboard: storyboard };
+  return { block, blocks: ready.map(b => b.id === block.id ? block : b), edges: expanded.edges };
+}
+
 describe("首段试片的实际出站载荷（仅虚构网络边界）", () => {
   it("本段选择的同角色形态图穿过编排及执行器进入最终 POST，缺路径时零提交", async () => {
     const spawned = spawnManhuaDramaStudio({ topic: "黑奇保护阿菁", episodeIndex: 1 });
@@ -57,7 +77,9 @@ describe("首段试片的实际出站载荷（仅虚构网络边界）", () => {
     const lookRefs = [{ id: "after-image", role: "character" as const, claimedAnchorIds: ["heiqi"], url: "https://test.invalid/after.png", labelZh: "变身后" }];
     const characterLookSets = [{ id: "look-after", characterId: "heiqi", index: 1, labelZh: "变身后", lookRefId: "after-image" }];
     const registry = buildManhuaAssetLockRegistry({ customRefs, lookRefs, characterLookSets });
-    const ensured = ensureManhuaFragmentClips(ready, expanded.edges, 1, { customRefs, lookRefs, characterLookSets, segmentLookBindings: { "e1:s1": { heiqi: "look-after" } } });
+    const revision = ensureManhuaFragmentClips(ready, expanded.edges, 1).blocks.find(b => b.manhuaAutoSegment?.segmentIndex === 1)!.manhuaAutoSegment!.revision;
+    const segmentLookBindings = confirmManhuaSegmentLookBindingSource({ "e1:s1": { heiqi: "look-after" } }, 1, 1, revision);
+    const ensured = ensureManhuaFragmentClips(ready, expanded.edges, 1, { customRefs, lookRefs, characterLookSets, segmentLookBindings });
     const clip = ensured.blocks.find(b => b.id === resolveManhuaFragmentRunTargets(ensured.blocks, 1, 1).clipId)!;
     const deps = { userRole: "admin", userId: "test-user", optimizeCopy: async () => "", manhuaAssetPathById: buildManhuaAssetPathById(registry), authorizeManhuaClip: async () => ({ projectVersion: "a".repeat(64), episodeIndex: 1, segmentIndex: 1, intent: "pilot" as const }) };
     await runCanvasBlock(deps, clip, undefined, { pilotRun: true });
@@ -98,16 +120,11 @@ describe("首段试片的实际出站载荷（仅虚构网络边界）", () => {
   });
 
   it("编排入口同样不能绕过审核，失败不提交和不删除独立分镜", async () => {
-    const block = { ...pilotBlock("seedance-2.5"), seedance25TimestampStoryboard: "0–30s：原稿保留。" };
-    const keys = [1, 2, 3].map((shot) => ({
-      ...defaultCanvasBlock("image", 0, shot * 100),
-      id: `keyart-e01-s0${shot}-test`, episodeIndex: 1, status: "done" as const,
-      prompt: `第${shot}镜`, outputUrl: `https://test.invalid/still${shot}.png`,
-    }));
+    const { block, blocks, edges } = preparedPipelineFixture("0–30s：原稿保留。");
     const authorize = vi.fn(async () => { throw new Error("请先审阅并批准试片"); });
     const result = await runManhuaDramaFactoryPipeline({
       deps: { userRole: "admin", optimizeCopy: async () => "", authorizeManhuaClip: authorize },
-      blocks: [...keys, block], edges: [], episodeIndex: 1, untilStage: "clip", forceFromStage: "clip",
+      blocks, edges, episodeIndex: 1, untilStage: "clip", forceFromStage: "clip",
       fragmentShotIndex: 1, targetBlockIds: [block.id], preservePreparedTargetBlocks: true, maxRetries: 0,
       ensureOptions: { videoModel: "seedance-2.5" },
     });
@@ -175,19 +192,10 @@ describe("首段试片的实际出站载荷（仅虚构网络边界）", () => {
   });
 
   it("实际编排核把试片约束传到最终请求，但保留节点中的独立分镜原稿", async () => {
-    const block = {
-      ...pilotBlock("seedance-2.5"),
-      seedance25TimestampStoryboard: "0–6s：灯笼亮起。\n6–12s：人物停步。\n12–30s：后段石桥断裂。",
-    };
-    const keys = [1, 2, 3].map((shot) => ({
-      ...defaultCanvasBlock("image", 0, shot * 100),
-      id: `keyart-e01-s0${shot}-test`, episodeIndex: 1,
-      status: "done" as const, prompt: `第${shot}镜`,
-      outputUrl: `https://test.invalid/still${shot}.png`,
-    }));
+    const { block, blocks, edges } = preparedPipelineFixture("0–6s：灯笼亮起。\n6–12s：人物停步。\n12–30s：后段石桥断裂。");
     const result = await runManhuaDramaFactoryPipeline({
       deps: { userRole: "admin", optimizeCopy: async () => "" },
-      blocks: [...keys, block], edges: [], episodeIndex: 1,
+      blocks, edges, episodeIndex: 1,
       untilStage: "clip", forceFromStage: "clip", fragmentShotIndex: 1,
       targetBlockIds: [block.id], preservePreparedTargetBlocks: true,
       pilotRun: true, maxRetries: 0, ensureOptions: { videoModel: "seedance-2.5" },

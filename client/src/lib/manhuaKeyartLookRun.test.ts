@@ -10,6 +10,7 @@ import {
   runManhuaDramaFactoryPipeline,
   getBlockEpisodeIndex,
   queuedManhuaKeyartBlocks,
+  queuedManhuaClipBlocks,
 } from "./canvasDramaStudio";
 import { consumableManhuaCustomAssetRefsForCanon } from "@shared/manhuaAssetScriptSync";
 import * as rerun from "@shared/manhuaCanvasRerunCompile";
@@ -28,6 +29,9 @@ import {
   resolveSegmentIndexFromShotIndex,
 } from "@shared/manhuaScriptWorkbench";
 import { mergeManhuaMediaVersions } from "./manhuaMediaVersions";
+import { confirmManhuaSegmentLookBindingSource } from "@shared/manhuaCharacterLookSets";
+import { normalizeManhuaAutoSegmentBinding } from "@shared/manhuaAutoSegment";
+import { isManhuaWorkbenchKeyartCurrent } from "../components/ManhuaScriptWorkbench";
 
 vi.mock("./flyHealthGate", () => ({
   withFlyHealthGate: async (_origin: string, run: () => Promise<unknown>) =>
@@ -66,7 +70,7 @@ const characterLookSets = [
     lookRefId: "after",
   },
 ];
-const segmentLookBindings = { "e1:s1": { heiqi: "look-after" } };
+const segmentLookBindings: Record<string, Record<string, string>> = { "e1:s1": { heiqi: "look-after" } };
 const options = {
   customRefs,
   lookRefs,
@@ -134,9 +138,14 @@ function fixture() {
           refImageUrl: "https://test.invalid/old-reference.png",
           outputUrl: `https://test.invalid/${b.id}.png`,
           outputUrls: ["https://test.invalid/older-output.png"],
+          // 本夹具明确表示按当前原镜生成的旧产物；造型尚未按本次选择重出。
+          manhuaKeyartSourceState: recordManhuaKeyartLookOutput({ manhuaKeyartLookState: b.manhuaKeyartSourceState }, `https://test.invalid/${b.id}.png`),
         }
       : b
   );
+  const plan = ensureManhuaFragmentClips(blocks, expanded.edges, 1);
+  const revision = plan.blocks.find(b => b.manhuaAutoSegment?.segmentIndex === 1)!.manhuaAutoSegment!.revision;
+  Object.assign(segmentLookBindings, confirmManhuaSegmentLookBindingSource({ "e1:s1": { heiqi: "look-after" } }, 1, 1, revision));
   return {
     blocks,
     edges: expanded.edges,
@@ -180,6 +189,9 @@ function actualRerun(scope: Record<string, unknown>) {
       collectManhuaCharacterSheetUrlById,
       collectManhuaPropImageUrlById,
       ensureManhuaFragmentClips,
+      queuedManhuaClipBlocks,
+      normalizeManhuaAutoSegmentBinding,
+      isManhuaWorkbenchKeyartCurrent,
       isManhuaKeyartLookCurrent,
       resolveClipLocalSegmentIndex,
       resolveKeyartShotIndex,
@@ -299,6 +311,30 @@ function actualWorkbenchReview(scope: Record<string, unknown>) {
 }
 
 describe("静帧造型的真实编排、节点重跑与请求边界", () => {
+  it("只有造型回执、没有原镜生成身份证据的旧图不得提交视频，旧图和任务保留", async () => {
+    const data = fixture();
+    const prepared = ensureManhuaFragmentClips(data.blocks, data.edges, 1, options);
+    const clip = queuedManhuaClipBlocks(prepared.blocks, 1)[0]!;
+    const blocks = prepared.blocks.map(b => b.id.startsWith("keyart-") ? {
+      ...b,
+      videoTaskId: "test-prior-task",
+      manhuaKeyartLookState: recordManhuaKeyartLookOutput(b, b.outputUrl),
+      manhuaKeyartSourceState: undefined,
+    } : b);
+    const authorize = vi.fn(async () => ({ projectVersion: "a".repeat(64), episodeIndex: 1, segmentIndex: 1, intent: "pilot" as const }));
+    const result = await runManhuaDramaFactoryPipeline({
+      blocks, edges: prepared.edges, episodeIndex: 1, untilStage: "clip", forceFromStage: "clip",
+      targetBlockIds: [clip.id], ensureOptions: options, maxRetries: 0,
+      deps: { optimizeCopy: async () => "", userRole: "admin", authorizeManhuaClip: authorize },
+    });
+    expect(result.errors.some(e => /原稿分镜|原镜身份/.test(e.message))).toBe(true);
+    expect(authorize).not.toHaveBeenCalled();
+    expect(submitted).toHaveLength(0);
+    const preserved = result.blocks.find(b => b.id === data.keyarts[0].id)!;
+    expect(preserved.outputUrl).toBe(data.keyarts[0].outputUrl);
+    expect(preserved.outputUrls).toContain("https://test.invalid/older-output.png");
+    expect(preserved.videoTaskId).toBe("test-prior-task");
+  });
   it("工作台选择后即时撤销旧图锁定，重出后恢复；无写入、无请求，缺图就地报错", () => {
     const data = fixture();
     const before = JSON.stringify(data.blocks);
@@ -416,6 +452,10 @@ describe("静帧造型的真实编排、节点重跑与请求边界", () => {
       "https://test.invalid/older-output.png",
     ]);
     expect(isManhuaKeyartLookCurrent(outputPatch)).toBe(true);
+    expect(runBlockPayload.manhuaKeyartSourceState.required).toContain("黑奇抬头");
+    expect(outputPatch.manhuaKeyartSourceState.generatedUrl).toBe("https://test.invalid/new-output.png");
+    expect(outputPatch.manhuaKeyartSourceState).toEqual(recordManhuaKeyartLookOutput({ manhuaKeyartLookState: runBlockPayload.manhuaKeyartSourceState }, out.outputUrl));
+    expect(isManhuaKeyartLookCurrent({ ...outputPatch, manhuaKeyartLookState: outputPatch.manhuaKeyartSourceState })).toBe(true);
   });
   it.each([false, true])(
     "单张接力生成 failed=%s：保留选定形态和历史，不被上一镜底图覆盖",
