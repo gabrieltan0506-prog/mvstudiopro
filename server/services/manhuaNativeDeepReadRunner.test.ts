@@ -1095,13 +1095,13 @@ describe("v11 · 截断段豁免（classification 在 responseSchema 最末，�
     })).toThrow("classification 缺失");
   });
 
-  it("截断段守相同长镜边界：32秒合格，34秒拒收", () => {
+  it("截断段守相同长镜边界：34秒合格，35秒拒收（0907 容差 15% → 34.5 秒线）", () => {
     const raw = makeSegmentPayload({ ...base });
     const shot = (raw.shots as Array<Record<string, unknown>>)[0]!;
-    raw.shots = [{ ...shot, startSec: 0, endSec: 32 }, { ...shot, startSec: 32, endSec: 60 }];
-    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw, truncated: true })).not.toThrow();
     raw.shots = [{ ...shot, startSec: 0, endSec: 34 }, { ...shot, startSec: 34, endSec: 60 }];
-    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw, truncated: true })).toThrow(/33 秒/);
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw, truncated: true })).not.toThrow();
+    raw.shots = [{ ...shot, startSec: 0, endSec: 35 }, { ...shot, startSec: 35, endSec: 60 }];
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw, truncated: true })).toThrow(/34\.5 秒/);
   });
 
   it("🔒 截断段照样守逐镜 17 字段：缺字段仍拒收", () => {
@@ -1215,11 +1215,11 @@ describe("覆盖率与缓存复验回归", () => {
   });
 
   /**
-   * 只测 33 秒长镜边界，故意把镜数补到地板之上（60 秒段地板 ceil(60/10)=6 镜）——
+   * 只测 34.5 秒长镜边界（0907 容差 15%），故意把镜数补到地板之上（60 秒段地板 ceil(60/10)=6 镜）——
    * 0831 加回 shot_density_low 之后，原来的 2 镜 fixture 会被密度判据带偏，
    * 测出来的就不再是「长镜边界」这一件事了。
    */
-  it.each([[30, true], [33, true], [33.1, false]] as const)("长镜边界%s秒，缓存可用=%s", (firstEnd, accepted) => {
+  it.each([[30, true], [34.5, true], [34.6, false]] as const)("长镜边界%s秒，缓存可用=%s", (firstEnd, accepted) => {
     const raw = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60, hasAudio: false });
     const shot = (raw.shots as Array<Record<string, unknown>>)[0]!;
     const rest = 60 - firstEnd;
@@ -1559,7 +1559,7 @@ describe("段级门禁（0829：硬拒收只剩字段/分类/schema/离谱地板
     })).not.toThrow();
   });
 
-  it("🔒 保留的两条硬约束仍在：覆盖率与 30 秒上限（含 10% 容差）", () => {
+  it("🔒 保留的两条硬约束仍在：覆盖率与 30 秒上限（含 15% 容差）", () => {
     // 覆盖率：300 秒的片只回 3 秒 → 拒（这是 0830 实弹买到的洞）
     const blank = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 300, shotCountOverride: 2 });
     (blank.shots as Array<Record<string, unknown>>).forEach((shot, i) => {
@@ -3635,7 +3635,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     }
   });
 
-  it("必填证据不合格即重跑，数值容差固定10%", async () => {
+  it("必填证据不合格即重跑，数值容差固定15%（0907）", async () => {
     // 造 2 项：音轨 1 段（地板 5，偏差 80%）+ 声音事件 1 条（地板 5，偏差 80%）
     // 60 秒段的地板：音轨 max(1,ceil(60/60))=1 ⇒ 需要更长的段才能压出偏差，
     // 故直接用 audioTrackOverride 制造，并断言「重跑发生」这一行为本身。
@@ -3658,7 +3658,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     try {
       await runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps);
       // 常量本身是看守重点：改动它即改变重买行为
-      expect(NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO).toBe(0.10);
+      expect(NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO).toBe(0.15);
       // 🔒 白名单看守（用户 0830 晚圈定）：音轨段数与镜头覆盖进 20% 判据，
       // 声音事件条数（≈音轨长度密度）不进——安静段落天然少，不该为此重买。
       expect(NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_CODES.has("audio_track_thin")).toBe(true);
@@ -4722,7 +4722,7 @@ describe("参数契约冻结 0901：0.70→0.65→0.60 + thinkingLevel MEDIUM", 
 
 
 describe("生成前契约与实际门禁同源", () => {
-  it.each([1, 31, 120, 300, 319])("%s秒前置镜数保留10%%容差，区别参考值与硬线", lenSec => {
+  it.each([1, 31, 120, 300, 319])("%s秒前置镜数提示词参考值仍按10%%（进缓存指纹，不随门禁 15%% 变），区别参考值与硬线", lenSec => {
     const rule = resolveNativeDeepReadDensityContract(lenSec);
     expect(rule.referenceShots).toBe(Math.ceil(lenSec / 10));
     expect(rule.minStoryShots).toBe(Math.ceil(Math.ceil(lenSec / 10) * 0.9));

@@ -441,8 +441,13 @@ export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = deepFreezeNativeContract([0.7
 
 /** 兼容旧诊断导出；0906 起任一必需证据缺陷即拒收，不再凑满三项。 */
 export const NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES = 1;
-/** 0906 用户重定容错：数值偏差最多 10%，不再叠加旧 20% 放行线。 */
-export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO = 0.10;
+/** 0907 用户令「门禁放宽到 15%」：数值偏差最多 15%（0906 曾定 10%，0830 前为 20%）。只进门禁判定，不进提示词。 */
+export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO = 0.15;
+/**
+ * 提示词/schema 里「story 至少 N 条」「平均镜长 ≤ M 秒」的参考值仍按 10% 算：这段文字进段缓存指纹，
+ * 改它＝全部已付费分片失配重买。门禁放宽只改判定线（15%），提示词照旧。
+ */
+export const NATIVE_DEEP_READ_PROMPT_SHOT_FLOOR_RATIO = 0.10;
 /** 原始镜头区间并集至少覆盖 90%；截断稿与缓存同样适用。 */
 export const NATIVE_DEEP_READ_SEGMENT_COVERAGE_RETRY_RATIO = 0.90;
 /** 家族仅用于合并诊断文案，不参与验收豁免。 */
@@ -1008,10 +1013,10 @@ export const NATIVE_DEEP_READ_SEGMENT_COVERAGE_FLOOR_RATIO = 0.5;
  * 为了「30.4 秒 vs 30 秒」这种擦边去重买一整片，换回来的产出并不更对。
  * 只对**数值**门禁生效；字段齐全 / 五维五键 / zod 这类二值判定没有 10% 可言，不受影响。
  */
-/** 0831 用户当面确认保留 10% 容差（实际拒收线 33 秒），不回退到 v11 的零容差。 */
-export const NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO = 0.10;
+/** 0907 用户令「门禁放宽到 15%」（实际单镜拒收线 34.5 秒）；0831 曾定 10%，不回退到 v11 的零容差。 */
+export const NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO = 0.15;
 /**
- * 单镜拒收线 = 硬上限 × (1 + 10% 容差) = 33 秒（0830 晚用户拍板）。
+ * 单镜拒收线 = 硬上限 × (1 + 容差) = 34.5 秒（0907 用户放宽到 15%）。
  * 🔴 软上限整条删除：用户原话「軟上限就是有偷懒的空間」——
  * 40–60 秒的镜头此前既不触发 advisory 也不拒收，模型自然往粗里切。
  * v28 实证：上限放到 60 后，六片镜头数在 18–72 之间摆动 4 倍，三片命中 long_take_count。
@@ -1298,8 +1303,8 @@ export function resolveNativeDeepReadDensityContract(lenSec: number) {
   const referenceShots = Math.ceil(Math.max(1, Math.round(lenSec)) / NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC);
   return {
     referenceShots,
-    minStoryShots: Math.ceil(referenceShots * (1 - NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO)),
-    maxAverageSec: NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC * (1 + NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO),
+    minStoryShots: Math.ceil(referenceShots * (1 - NATIVE_DEEP_READ_PROMPT_SHOT_FLOOR_RATIO)),
+    maxAverageSec: NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC * (1 + NATIVE_DEEP_READ_PROMPT_SHOT_FLOOR_RATIO),
   };
 }
 
@@ -1568,7 +1573,7 @@ export function nativeDeepReadFrozenContractSha256(): string {
 // 0906 用户明确授权三分支required与类型标记；生成时约束结构，返回后由代码验证实际类型和非空内容。
 // 0906 追加授权：普通镜可以额外填写重点细节；只放宽返回后该方向的检查。
 // 0906 当前用户授权：撤销额外内容强迫、完整音画生成与缺口反馈；采样及输出参数保持不变。
-export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "b814fcd289d8f6a24b83bad1d125a0c7edc9f4755fa97e8997688280bd168aba" as const;
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "307063333ba70d11e413b96d9b3e3023045b0dbab6ee1fff9e2ffb0bf1241248" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
   const actual = nativeDeepReadFrozenContractSha256();
@@ -3042,7 +3047,7 @@ function collectLongTakeAdvisories(input: {
     // 硬门禁（0829 用户令：超过 30 秒必须拆）：单条证据段不得超过硬上限。
     throw new NativeDeepReadRequiredEvidenceError("shot_evidence_too_long",
       `${input.labelZh}有 ${overlongShots.length} 个超过 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_REJECT_SEC} 秒的镜头证据段`
-      + `（要求 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒 + 10% 容差）：${detail}${more}；`
+      + `（要求 ${NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC} 秒 + ${Math.round(NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO * 100)}% 容差）：${detail}${more}；`
       + `这几条必须按镜内变化拆成连续证据段，禁止截断尾部`,
     );
   }
@@ -3738,7 +3743,7 @@ export function assertNativeDeepReadEpisodeEvidence(input: {
         `第${input.episodeIndex}集镜头留存率仅 ${(keepRate * 100).toFixed(1)}%`
         + `（输入 ${inputShots} 镜 → 输出 ${episodeShots.length} 镜，`
         + `低于拒收线 ${(NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT * 100).toFixed(0)}%`
-        + `＝地板 ${(NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_FLOOR * 100).toFixed(0)}% 减 10% 容差）：`
+        + `＝地板 ${(NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_FLOOR * 100).toFixed(0)}% 减 ${Math.round(NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO * 100)}% 容差）：`
         + `相邻但秒位不重叠的镜头不许合并，只有同一物理镜头的重复记录才能合并`,
       );
     }
