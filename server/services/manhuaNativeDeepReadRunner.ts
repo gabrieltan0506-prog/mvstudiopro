@@ -2577,7 +2577,7 @@ function gateError(detailZh: string, modelReasonZh?: string): Error {
 /** 必需证据缺陷不得被「硬门单项放行」吞掉；不要通过中文错误文案识别。 */
 export class NativeDeepReadRequiredEvidenceError extends Error {
   constructor(
-    readonly code: "coverage_below_90" | "shot_evidence_too_long" | "shot_observation_missing",
+    readonly code: "coverage_below_90" | "shot_evidence_too_long" | "shot_observation_missing" | "required_summary_missing",
     detailZh: string,
   ) {
     super(`${NATIVE_DEEP_READ_GATE_PREFIX}：${detailZh}`);
@@ -3370,7 +3370,7 @@ export function assertNativeDeepReadSegmentDensity(input: {
   truncated?: boolean;
 }): { raw: Record<string, unknown>; advisories: NativeDeepReadAdvisory[] } {
   try { assertNativeRequiredSummary(input.raw); } catch (error) {
-    throw gateError(error instanceof Error ? error.message : String(error));
+    throw new NativeDeepReadRequiredEvidenceError("required_summary_missing", error instanceof Error ? error.message : String(error));
   }
   const lenSec = Math.max(1, Math.round(input.endSec - input.startSec));
   const labelZh = `第${input.segmentIndex + 1}段`;

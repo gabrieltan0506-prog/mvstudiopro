@@ -4791,6 +4791,34 @@ describe("0906 学习两栏必填与整形漏栏恢复", () => {
       });
     }
   }
+  it.each(["reusableZh", "genPromptHintZh"])("实际门禁不把 %s 缺失与低覆盖组合降成放行警告", async (key) => {
+    const { NativeDeepReadRequiredEvidenceError } = await import("./manhuaNativeDeepReadRunner");
+    const input = { episodeIndex: 1, segmentIndex: 0, startSec: 0, endSec: 60, hasAudio: true, requireShotObservations: true };
+    const raw = { ...makeSegmentPayload({ ...input, endSec: 1 }), [key]: undefined };
+    expect(() => evaluateNativeDeepReadSegmentAcceptance({ ...input, raw }))
+      .toThrow(NativeDeepReadRequiredEvidenceError);
+    try { evaluateNativeDeepReadSegmentAcceptance({ ...input, raw }); } catch (error) {
+      expect(error).toMatchObject({ code: "required_summary_missing" });
+    }
+    // 补齐摘要以后，原有覆盖率硬门依然拒绝这份仅覆盖1秒的原稿。
+    expect(() => evaluateNativeDeepReadSegmentAcceptance({ ...input, raw: {
+      ...raw, reusableZh: "真实手法", genPromptHintZh: "真实要素",
+    } })).toThrow("覆盖率");
+  });
+  it("实际runner缺栏首发不放行，下一发正文齐全后才进入整形", async () => {
+    const segment = { segmentIndex: 0, startSec: 0, endSec: 60, hasAudio: true };
+    const postVertex = vi.fn()
+      .mockResolvedValueOnce(geminiResponse({ ...makeSegmentPayload(segment), reusableZh: undefined }))
+      .mockResolvedValueOnce(geminiResponse(makeSegmentPayload(segment)));
+    const deps = makeRunnerDeps({ postVertex: postVertex as never });
+    const result = await runManhuaNativeDeepReadBatch({ episodes: [{
+      ...twoSegmentEpisode, segments: [{ startSec: 0, endSec: 60 }], sourceDurationSec: 60,
+    }] }, deps);
+    expect(postVertex).toHaveBeenCalledTimes(2);
+    expect(deps.invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(result.episodes[0]!.result.reusableZh).toContain("开场即冲突的通用做法");
+    expect(result.episodes[0]!.result.genPromptHintZh).toContain("景别递进+顶光");
+  });
   it("单批整形漏掉两栏，从原始证据恢复且不追加模型调用", async () => {
     const base = makeGlmStructuringStub();
     const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
