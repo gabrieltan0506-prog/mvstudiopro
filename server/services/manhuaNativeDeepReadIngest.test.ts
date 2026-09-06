@@ -422,3 +422,16 @@ describe("装卡", () => {
       .not.toContain("example.com");
   });
 });
+
+
+describe("0906 空摘要不可入库", () => {
+  for (const key of ["reusableZh", "genPromptHintZh"] as const) {
+    for (const value of [undefined, "", " \n "]) {
+      it(`${key}=${JSON.stringify(value)} 拒绝写成模板`, () => {
+        const result = makeResult({ [key]: value });
+        expect(checkNativeDeepReadIngestable(result)).toMatchObject({ ok: false, reasonZh: expect.stringContaining("必须有非空内容") });
+        expect(buildNativeDeepReadProposalCard({ ...baseInput, result })).toBeNull();
+      });
+    }
+  }
+});

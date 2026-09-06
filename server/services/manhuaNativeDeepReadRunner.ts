@@ -8,6 +8,7 @@
  *
  * ⚠️ 默认关闭（MANHUA_NATIVE_DEEP_READ=1 才启用）。
  */
+import { assertNativeRequiredSummary, restoreNativeRequiredSummary } from "../../shared/manhuaNativeRequiredSummary.js";
 import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { readFile, stat, statfs, unlink } from "node:fs/promises";
@@ -1384,7 +1385,14 @@ export function nativeDeepReadStructuringJsonSchema(): Record<string, unknown> {
     properties: Object.fromEntries(["emotionZh", "narrativeZh", "performanceZh", "audiovisualZh", "audienceZh"].map((k) => [k, { type: "STRING", maxLength: 200 }])),
   } as NativeResponseSchemaNode;
   base.properties!.templateTitleZh = { type: "STRING", maxLength: 60 };
-  return geminiSchemaToJsonSchema(base);
+  const schema = geminiSchemaToJsonSchema(base);
+  schema.required = Array.from(new Set([...(schema.required as string[]), "moodArcZh", "reusableZh", "genPromptHintZh"]));
+  for (const key of ["reusableZh", "genPromptHintZh"]) {
+    const property = (schema.properties as Record<string, Record<string, unknown>>)[key]!;
+    property.minLength = 1;
+    property.pattern = "\\S";
+  }
+  return schema;
 }
 
 export const NATIVE_DEEP_READ_STRUCTURING_JSON_SCHEMA_NAME = "native_structuring_card";
@@ -1502,6 +1510,7 @@ export function nativeDeepReadFrozenContractSha256(): string {
  * 改毕即**重新冻结**（`NATIVE_DEEP_READ_KEY_SHOT_WINDOW_SEC`、两档必填字段表、提示词两档说明与本摘要一起冻结，再改需用户授权）。
  * 同时整形 maxTokens 退回 131,072、链序 structuring_chain（用户 0905 拍板）。 */
 /** 0905 用户重新授权：整形链改五档逐档 30 分钟切换 + maxTokens 262K，冻结集合随之换代（只作废整形批次缓存，不动读片分片缓存）。 */
+/** 0906 两栏必填落在独立整形schema和服务端检查；保留读片契约与旧付费证据身份。 */
 export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "3642723bbe094d97333bb0e890223f1ed7b9cfe464823094de6c05604d0c9eac" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
@@ -2568,7 +2577,7 @@ function gateError(detailZh: string, modelReasonZh?: string): Error {
 /** 必需证据缺陷不得被「硬门单项放行」吞掉；不要通过中文错误文案识别。 */
 export class NativeDeepReadRequiredEvidenceError extends Error {
   constructor(
-    readonly code: "coverage_below_90" | "shot_evidence_too_long" | "shot_observation_missing",
+    readonly code: "coverage_below_90" | "shot_evidence_too_long" | "shot_observation_missing" | "required_summary_missing",
     detailZh: string,
   ) {
     super(`${NATIVE_DEEP_READ_GATE_PREFIX}：${detailZh}`);
@@ -3360,6 +3369,9 @@ export function assertNativeDeepReadSegmentDensity(input: {
    */
   truncated?: boolean;
 }): { raw: Record<string, unknown>; advisories: NativeDeepReadAdvisory[] } {
+  try { assertNativeRequiredSummary(input.raw); } catch (error) {
+    throw new NativeDeepReadRequiredEvidenceError("required_summary_missing", error instanceof Error ? error.message : String(error));
+  }
   const lenSec = Math.max(1, Math.round(input.endSec - input.startSec));
   const labelZh = `第${input.segmentIndex + 1}段`;
   const segmentIndex = input.segmentIndex;
@@ -6458,7 +6470,7 @@ async function executeNativeDeepReadBatch(
             .filter(([, n]) => n >= NATIVE_DEEP_READ_LOCK_TRIES_PER_GATEWAY).map(([g]) => g);
           const result = await runStructuringOrLocalFallback({ ...input, lockRetry: attempt || undefined, badGateways, temperature: nextTemperature });
           result.raw = unwrapNativeDeepReadStructuredAnswerEnvelope(result.raw);
-          if ("localFallback" in result) return result.raw;
+          if ("localFallback" in result) return restoreNativeRequiredSummary(result.raw, input.rows);
           try {
             assertNativeDeepReadShotObservationsPreserved(input.rows, result.raw);
             // 0906 用户令「镜数不合」也算坏：批次留存率低于拒收线，同样降温重试再换路由
@@ -6494,7 +6506,7 @@ async function executeNativeDeepReadBatch(
             continue;
           }
           await writeCachedStructuring(input.segmentIndexes, input.rows, result);
-          return result.raw;
+          return restoreNativeRequiredSummary(result.raw, input.rows);
         }
       };
       const badCacheUndeletable = new Set<string>();
@@ -6539,7 +6551,7 @@ async function executeNativeDeepReadBatch(
             glmEvidenceCallIds.push(cached.evidence.callId);
           }
         }
-        return cached.raw;
+        return restoreNativeRequiredSummary(unwrapNativeDeepReadStructuredAnswerEnvelope(cached.raw), rows);
       };
       const writeCachedStructuring = async (
         segmentIndexes: readonly number[],
@@ -6692,7 +6704,10 @@ async function executeNativeDeepReadBatch(
         // 确定性拼接只算一次，取 excludedAdRanges 给 GLM 产物对账（防 GLM 私吞/改写广告区间）。
         const deterministicAdRanges =
           stripNonStoryAdShotsForEpisodeCard(annotateSegmentRows()).excludedAdRanges;
-        const structuredRaw = unwrapNativeDeepReadStructuredAnswerEnvelope(await structuredEpisodeRaw());
+        const structuredRaw = restoreNativeRequiredSummary(
+          unwrapNativeDeepReadStructuredAnswerEnvelope(await structuredEpisodeRaw()),
+          completeRawSegments,
+        );
         applyDeterministicAdRanges(structuredRaw, deterministicAdRanges);
         /**
          * 🔒 集级**镜头留存率闸**——0830 晚用户拍板「加回」的唯一一条集级判定。

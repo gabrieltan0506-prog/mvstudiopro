@@ -624,6 +624,7 @@ describe("renderEpisodeReport：canonical 寻址（禁列目录猜证据）", ()
     ]);
     expect(input.glmCardObjectName).toBe(GLM_PARSED_OBJECT_NAME);
     expect(input.evidenceFrames).toEqual(nativeCardWithEvidence.evidenceFrames);
+    expect(input.themeMetadata).toEqual({ nameZh: nativeCardWithEvidence.nameZh, classification: nativeCardWithEvidence.classification });
     expect(input.reportObjectName).toBe(
       "manhua-template-learn/reports/tpl_native_seriesabc_ep001.html",
     );
