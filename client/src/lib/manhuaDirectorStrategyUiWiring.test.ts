@@ -8,6 +8,9 @@ import {
   resolveManhuaDirectorOverlayBaseUrl,
   shouldShowManhuaAsset3dRow,
 } from "../components/ManhuaScriptWorkbench.js";
+import { resolveShotsForEpisodeKeyarts } from "./canvasDramaStudio.js";
+import type { CanvasBlock } from "./canvasTypes.js";
+import { buildManhuaEpisodeSegmentPlanFixtureMarkdown } from "@shared/manhuaEpisodeSegmentPlan";
 
 const workbenchSource = readFileSync(
   new URL("../components/ManhuaScriptWorkbench.tsx", import.meta.url),
@@ -17,6 +20,17 @@ const omniSource = readFileSync(
   new URL("../pages/OmniCanvas.tsx", import.meta.url),
   "utf8",
 );
+
+const sixColumnShots = [
+  "| # | 秒位 | 景别·运镜 | 画面 | 台词/字幕 | 音效·配乐 |",
+  "|---|---|---|---|---|---|",
+  "| 1 | 0-5 | 缓推 | 黑奇抬头 | 黑奇：「别怕」 | 风声 |",
+  "| 2 | 5-10 | 特写固定 | 阿菁回望 | 阿菁：「走」 | 鼓点 |",
+].join("\n");
+
+function outputBlock(id: string, outputText: string, prompt = "待运行模板"): CanvasBlock {
+  return { id, kind: "text", outputText, prompt, status: "done" } as CanvasBlock;
+}
 
 describe("漫剧导演策略前台接线", () => {
   it("顾问只接收工作台真实选中镜，无镜头时不制造兜底镜", () => {
@@ -56,6 +70,36 @@ describe("漫剧导演策略前台接线", () => {
       "阿菁停步回望",
       "雨巷尽头亮起灯火",
     ]);
+  });
+
+  it.each(["reverse-e01", "story-e01"])(
+    "现行六列表 %s 的选中镜与生产真源完全相同",
+    (id) => {
+      const block = outputBlock(id, sixColumnShots);
+      expect(
+        resolveManhuaAdvisorShotsFromBlocks({
+          reverse: id.startsWith("reverse-") ? block : null,
+          story: id.startsWith("story-") ? block : null,
+        }),
+      ).toEqual(resolveShotsForEpisodeKeyarts([block], 1));
+    },
+  );
+
+  it("单行旧 beats 不会遮盖当前 reverse 六列表", () => {
+    const beats = outputBlock("beats-e01", "1. 旧版摘要只有一行");
+    const reverse = outputBlock("reverse-e01", sixColumnShots);
+    expect(resolveManhuaAdvisorShotsFromBlocks({ beats, reverse })).toEqual(
+      resolveShotsForEpisodeKeyarts([beats, reverse], 1),
+    );
+  });
+
+  it.each([5, 6])("保留 story-only 的 %s 段计划兼容", (count) => {
+    const fixture = buildManhuaEpisodeSegmentPlanFixtureMarkdown();
+    const outputText = count === 5 ? fixture.split("#### 段06")[0]! : fixture;
+    const story = outputBlock("story-e01", outputText);
+    expect(resolveManhuaAdvisorShotsFromBlocks({ story })).toEqual(
+      resolveShotsForEpisodeKeyarts([story], 1),
+    );
   });
 
   it("展示去名冻结状态，但不新增工作流阶段", () => {

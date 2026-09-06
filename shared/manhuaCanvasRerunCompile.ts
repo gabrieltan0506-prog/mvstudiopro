@@ -42,9 +42,9 @@ export function isManhuaKeyartBlockId(blockId: string): boolean {
   return KEYART_RE.test(String(blockId || ""));
 }
 
-/** 设定图 + 段成片必须重编译；关键静帧请走工作台重出（ensure 不刷新 keyart prompt） */
+/** 设定图、关键静帧和段成片都必须读取当前资产与段选择。 */
 export function shouldRecompileManhuaBlockOnRerun(blockId: string): boolean {
-  return isManhuaAssetSheetBlockId(blockId) || isManhuaClipBlockId(blockId);
+  return isManhuaAssetSheetBlockId(blockId) || isManhuaClipBlockId(blockId) || isManhuaKeyartBlockId(blockId);
 }
 
 export function collectManhuaBlockOutputStash(block: {

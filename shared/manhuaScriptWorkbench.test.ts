@@ -29,6 +29,39 @@ import {
 } from "./manhuaScriptWorkbench";
 
 describe("manhuaScriptWorkbench", () => {
+  it("六列生产表保留秒位，动作对白和声音不串列", () => {
+    const shots = parseWorkbenchShotsFromText([
+      "| # | 秒位 | 景别·运镜 | 画面 | 台词/字幕 | 音效·配乐 |",
+      "|---|---|---|---|---|---|",
+      "| 17 | 68-72 | 近景 | 驮兽缓缓抬头，吐出鞭子，开口——人言 | 黑奇：「打她之前，问过我吗？」 | 全场倒吸凉气 |",
+      "| 19 | 76-81 | 中景·环绕 | 灰皮寸寸剥落，金鳞自蹄踝爬满全身，瘸腿挺直 | —— | 鳞片铮鸣如刀出鞘 |",
+      "| 20 | 81-86 | 大远景·仰拍 | 兽躯暴涨三丈，独角撑破雾层，日光倾泻 | 字幕：上古凶兽·墨屠 | BGM爆开 |",
+    ].join("\n"));
+    expect(shots).toHaveLength(3);
+    expect(shots.map(shot => shot.durationSec)).toEqual([4, 5, 5]);
+    expect(shots[0]?.cameraZh).toContain("近景");
+    expect(shots[0]?.actionZh).toContain("吐出鞭子");
+    expect(shots[0]?.dialogueZh).toContain("打她之前，问过我吗");
+    expect(shots[1]?.actionZh).toContain("瘸腿挺直");
+    expect(shots[1]?.dialogueZh).toBeUndefined();
+    expect(shots[2]?.actionZh).toContain("独角撑破雾层");
+    expect(shots[2]?.dialogueZh).toBeUndefined();
+    expect(shots.every(shot => !/BGM|铮鸣|倒吸凉气/.test(shot.emotionZh || ""))).toBe(true);
+  });
+
+  it("引擎重切前保留原稿全部29镜", () => {
+    const shots = parseWorkbenchShotsFromText([
+      "| # | 秒位 | 景别·运镜 | 画面 | 台词/字幕 | 音效·配乐 |",
+      "|---|---|---|---|---|---|",
+      ...Array.from({ length: 29 }, (_, i) =>
+        `| ${i + 1} | ${i * 5}-${(i + 1) * 5} | 中景 | 剧情动作${i + 1} | 黑奇：对白${i + 1} | 环境音 |`),
+    ].join("\n"));
+    expect(shots).toHaveLength(29);
+    expect(shots.reduce((sum, shot) => sum + shot.durationSec, 0)).toBe(145);
+    expect(shots[28]?.actionZh).toBe("剧情动作29");
+    expect(shots[28]?.dialogueZh).toBe("黑奇：对白29");
+  });
+
   it("parses numbered beat lines into shots", () => {
     const shots = parseWorkbenchShotsFromText(
       ["1. 女主推门进厅", "2. 对视沉默三秒", "3. 男主递玉佩", "4. 特写玉佩裂纹"].join("\n"),
@@ -85,33 +118,26 @@ describe("manhuaScriptWorkbench", () => {
         "\n",
       ),
     );
-    // 有分镜表：按每段 3 镜切，不注水到默认 6 段；显式传 2.0-fast 不受默认常量影响。
-    // 5 镜补齐到 6 镜两段满编：尾段留 2 镜会让镜号→段号映射（按 3 镜/段）错位，
-    // 而且那条尾段成片本来就按整段跑、按整段收 172 积分，标 10s 是假的。
+    // 原稿不足三镜的尾段照实保留，实际时长和静帧映射一致。
     const segsFast = groupShotsIntoSegments(shots, {
       videoModel: "seedance-2.0-fast",
     });
     expect(segsFast.length).toBe(2);
     expect(segsFast[0]?.durationSec).toBe(15);
-    expect(segsFast[1]?.durationSec).toBe(15);
+    expect(segsFast[1]?.durationSec).toBe(10);
+    expect(segsFast[1]?.shots.map(shot => shot.index)).toEqual([4, 5]);
     expect(MANHUA_FACTORY_DEFAULT_VIDEO_MODEL).toBe("seedance-2.0-mini");
     expect(manhuaSegmentDurationSec("seedance-2.0-fast")).toBe(15);
     expect(manhuaSegmentDurationSec("gemini-omni-flash")).toBe(10);
-    // 尾段补满后一集就是 2 段 ×15s；这也是实际会烧出来的秒数
-    expect(workbenchShotTotalSec(shots, "seedance-2.0-fast")).toBe(30);
-    expect(workbenchShotTotalSec(shots, "gemini-omni-flash")).toBe(20);
-    // 默认骨架：6 段 ×（3 镜×5s 钳 15）= 90s
-    expect(workbenchShotTotalSec([], "seedance-2.0-fast")).toBe(90);
+    expect(workbenchShotTotalSec(shots, "seedance-2.0-fast")).toBe(25);
+    expect(workbenchShotTotalSec(shots, "gemini-omni-flash")).toBe(25);
+    expect(workbenchShotTotalSec([], "seedance-2.0-fast")).toBe(0);
     expect(
       groupShotsIntoSegments([], { videoModel: "seedance-2.0-fast" }).length,
-    ).toBe(MANHUA_SEGMENT_DEFAULT);
+    ).toBe(0);
   });
 
-  /**
-   * 段数决定实际铺几条成片、也决定实收几段积分，不能由反推这次吐了几镜来定。
-   * 旧行为固定按 3 镜切段，18 镜就切 6 段，2.5（段表 4 段）会多收两段。
-   */
-  it("pins segment count and duration to the engine table, not the shot count", () => {
+  it("整集段数不再钉死；原镜数量决定计划，单次引擎上限不变", () => {
     const shots = (n: number) =>
       Array.from({ length: n }, (_, i) => ({
         index: i + 1,
@@ -125,28 +151,21 @@ describe("manhuaScriptWorkbench", () => {
         videoModel: "seedance-2.5",
         segmentCount: manhuaSegmentCountBounds("seedance-2.5").default,
       });
-      expect(s25.length).toBe(4);
-      expect(s25.every((x) => x.durationSec === 30)).toBe(true);
-      // 每段恰好 3 镜：全仓的镜↔段映射都按这个不变量算，超出的镜截掉而不是塞进段内
-      expect(s25.every((x) => x.shots.length === MANHUA_KEYARTS_PER_SEGMENT_MIN)).toBe(true);
-      expect(s25.reduce((sum, x) => sum + x.shots.length, 0)).toBe(12);
+      expect(s25.length).toBe(Math.ceil(n / 3));
+      expect(s25.every((x) => x.durationSec <= 30)).toBe(true);
+      expect(s25.flatMap(x => x.shots).map(shot => shot.index)).toEqual(shots(n).map(shot => shot.index));
 
       const sMini = groupShotsIntoSegments(shots(n), {
         videoModel: "seedance-2.0-mini",
         segmentCount: manhuaSegmentCountBounds("seedance-2.0-mini").default,
       });
-      expect(sMini.length).toBe(6);
-      expect(sMini.every((x) => x.durationSec === 15)).toBe(true);
-      expect(sMini.every((x) => x.shots.length === MANHUA_KEYARTS_PER_SEGMENT_MIN)).toBe(true);
+      expect(sMini.length).toBe(Math.ceil(n / 3));
+      expect(sMini.every((x) => x.durationSec <= 15)).toBe(true);
+      expect(sMini.flatMap(x => x.shots).length).toBe(n);
     }
   });
 
-  /**
-   * 非钉段（2.0 / 2.0-fast）不该被 24 镜的固定上限卡住：长档一集 12 段要 36 镜，
-   * 卡在 24 镜只能出 8 段。镜数不是 3 的倍数时也要补齐，否则尾段不足 3 镜，
-   * 镜号→段号映射（按 3 镜/段）会把镜绑到隔壁段。
-   */
-  it("非钉段按长档上限收镜，并补齐到 3 的倍数", () => {
+  it("长稿不截镜，尾部不补占位镜", () => {
     const shots = (n: number) =>
       Array.from({ length: n }, (_, i) => ({
         index: i + 1,
@@ -160,10 +179,10 @@ describe("manhuaScriptWorkbench", () => {
         segmentCount: pinnedManhuaSegmentCount("seedance-2.0-fast"),
       });
 
-    // 13 镜 → 补到 15 镜 5 段，尾段不再是孤零零 1 镜
+    // 13 镜的尾段只保留第 13 镜。
     const s13 = group(13);
     expect(s13.length).toBe(5);
-    expect(s13.every((x) => x.shots.length === MANHUA_KEYARTS_PER_SEGMENT_MIN)).toBe(true);
+    expect(s13.at(-1)?.shots.map(shot => shot.index)).toEqual([13]);
 
     // 24 镜 → 8 段，正好整除不补不截
     const s24 = group(24);
@@ -175,8 +194,8 @@ describe("manhuaScriptWorkbench", () => {
     expect(s36.length).toBe(12);
     expect(s36.every((x) => x.shots.length === MANHUA_KEYARTS_PER_SEGMENT_MIN)).toBe(true);
 
-    // 超过长档上限才截：40 镜仍是 12 段
-    expect(group(40).length).toBe(12);
+    expect(group(40).length).toBe(14);
+    expect(group(40).flatMap(x => x.shots)).toHaveLength(40);
   });
 
   it("钉段后镜→段映射与 groupShotsIntoSegments 一致", () => {
@@ -194,9 +213,9 @@ describe("manhuaScriptWorkbench", () => {
       });
       for (const seg of segs) {
         for (const shot of seg.shots) {
-          expect(resolveSegmentIndexFromShotIndex(shot.index)).toBe(seg.index);
+          expect(resolveSegmentIndexFromShotIndex(shot.index, segs)).toBe(seg.index);
         }
-        expect(shotIndexesForSegment(seg.index)).toEqual(seg.shots.map((s) => s.index));
+        expect(shotIndexesForSegment(seg.index, segs)).toEqual(seg.shots.map((s) => s.index));
       }
     }
   });
@@ -212,9 +231,9 @@ describe("manhuaScriptWorkbench", () => {
       videoModel: "seedance-2.5",
       segmentCount: 4,
     });
-    expect(segs.length).toBe(4);
-    // 每段 3 镜 ×12s = 36 → 钳到 2.5 上限 30，而不是回落到标称值
-    expect(segs[0]?.durationSec).toBe(30);
+    expect(segs.length).toBe(2);
+    expect(segs.map(segment => segment.durationSec)).toEqual([24, 24]);
+    expect(segs.at(-1)?.sourceEndSec).toBe(48);
   });
 
   it("parses clip target duration from inject prompt", () => {
@@ -407,7 +426,7 @@ describe("recutWorkbenchShotsTo：换引擎重切", () => {
     expect(recutWorkbenchShotsTo(src, 12).shots.length).toBe(12);
   });
 
-  it("thin 会通过 captureRecut 传出去，前端才能引导付费扩写", () => {
+  it("自动分段不再用预算不足诱导付费扩写", () => {
     const capture: Parameters<typeof groupShotsIntoSegments>[1] extends
       | { captureRecut?: infer C }
       | undefined
@@ -418,7 +437,7 @@ describe("recutWorkbenchShotsTo：换引擎重切", () => {
       segmentCount: 4,
       captureRecut: capture,
     });
-    expect(capture.mode).toBe("thin");
-    expect(capture.paddedCount).toBeGreaterThan(0);
+    expect(capture.mode).toBe("exact");
+    expect(capture.paddedCount).toBe(0);
   });
 });

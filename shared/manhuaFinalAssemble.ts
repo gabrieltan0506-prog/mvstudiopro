@@ -157,23 +157,23 @@ function buildEpisodeTimelineEntries(
   );
 }
 
-function normalizeTrimPair(
+/** 显式裁切不得失效后回退全片；保留自动分段的原始精度，手工最短镜片仍为 0.5 秒。 */
+export function normalizeManhuaAssembleTrimPair(
   inSec: unknown,
   outSec: unknown,
   fallbackDur: number,
 ): { trimInSec?: number; trimOutSec?: number; durationSec: number } {
-  const tin = Number(inSec);
-  const tout = Number(outSec);
-  if (Number.isFinite(tin) && Number.isFinite(tout) && tout - tin >= 0.5) {
-    const trimInSec = Math.max(0, Math.round(tin * 10) / 10);
-    const trimOutSec = Math.max(trimInSec + 0.5, Math.round(tout * 10) / 10);
-    return {
-      trimInSec,
-      trimOutSec,
-      durationSec: Math.round((trimOutSec - trimInSec) * 10) / 10,
-    };
+  if (inSec === undefined && outSec === undefined) {
+    return { durationSec: fallbackDur };
   }
-  return { durationSec: fallbackDur };
+  if (typeof inSec !== "number" || typeof outSec !== "number" ||
+      !Number.isFinite(inSec) || !Number.isFinite(outSec) ||
+      inSec < 0 || outSec - inSec < 0.5) {
+    const error = new Error("裁切范围无效，请重新确认剪辑点；每段至少保留 0.5 秒") as Error & { code: string };
+    error.code = "manhua_assemble_invalid_trim";
+    throw error;
+  }
+  return { trimInSec: inSec, trimOutSec: outSec, durationSec: outSec - inSec };
 }
 
 /**
@@ -256,7 +256,7 @@ export function buildManhuaAssemblePlan(
         if (entry.piece) {
           const p = entry.piece;
           const fb = Math.max(0.5, Number(p.durationSec) || defaultDur);
-          const trim = normalizeTrimPair(p.trimInSec, p.trimOutSec, fb);
+          const trim = normalizeManhuaAssembleTrimPair(p.trimInSec, p.trimOutSec, fb);
           sceneNo += 1;
           sceneVideos.push({
             subtitleSource: row.subtitleSource,
@@ -270,7 +270,7 @@ export function buildManhuaAssemblePlan(
           lastScenePositionByEpisode.set(row.episodeIndex, sceneVideos.length - 1);
         } else {
           const fb = Math.max(5, Math.min(30, Math.floor(Number(row.durationSec) || defaultDur)));
-          const trim = normalizeTrimPair(row.trimInSec, row.trimOutSec, fb);
+          const trim = normalizeManhuaAssembleTrimPair(row.trimInSec, row.trimOutSec, fb);
           sceneNo += 1;
           sceneVideos.push({
             subtitleSource: row.subtitleSource,
@@ -351,7 +351,7 @@ export function buildManhuaAssemblePlan(
       for (const entry of entries) {
         const p = entry.piece!;
         const fb = Math.max(0.5, Number(p.durationSec) || defaultDur);
-        const trim = normalizeTrimPair(p.trimInSec, p.trimOutSec, fb);
+        const trim = normalizeManhuaAssembleTrimPair(p.trimInSec, p.trimOutSec, fb);
         sceneVideos.push({
           subtitleSource: row.subtitleSource,
           subtitleShotIndex: p.shotIndex,
@@ -365,7 +365,7 @@ export function buildManhuaAssemblePlan(
       }
     } else {
       const fb = Math.max(5, Math.min(30, Math.floor(Number(row.durationSec) || defaultDur)));
-      const trim = normalizeTrimPair(row.trimInSec, row.trimOutSec, fb);
+      const trim = normalizeManhuaAssembleTrimPair(row.trimInSec, row.trimOutSec, fb);
       sceneVideos.push({
         subtitleSource: row.subtitleSource,
         sceneIndex: ep,

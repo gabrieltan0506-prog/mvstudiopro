@@ -381,7 +381,7 @@ export type ExportManhuaProjectZipOpts = {
   assetBaseUrl?: string;
   /** 编剧室已确认剧情包 Markdown（整包进 zip 根目录） */
   writerPackMarkdown?: string;
-  /** 成色/字幕/配音交付包 Markdown（剪辑台编辑后） */
+  /** 成色/字幕/配音交付说明 Markdown，不等同相应媒体已产出。 */
   deliveryPackageMarkdown?: string;
   /** 多语言可拍词表对照表 */
   cineVocabTableMarkdown?: string;
@@ -646,7 +646,7 @@ export async function exportManhuaProjectZip(
     exportedAt: new Date().toISOString(),
     note: finalVideoUrl
       ? "本包含分集素材；长片合成链接见 README「合成长片」。library/ 为站点复用资产（人物设定卡/场景道具示范）。"
-      : "本包为素材工程包。有成片后可在成片坞一键合成长片（含配乐）；亦可本地按 epXX/clip-s*.mp4 顺序拼接。library/ 为站点复用资产。",
+      : "本包为素材工程包。有成片后可在成片坞保留原声合成长片，配乐另行确认；亦可本地按 epXX/clip-s*.mp4 顺序拼接。library/ 为站点复用资产。",
     characters: opts.characterIds,
     artStyleId: opts.artStyleId,
     sceneId: opts.sceneId,
@@ -685,7 +685,7 @@ export async function exportManhuaProjectZip(
     `画风：${opts.artStyleId || "（默认）"}`,
     `主场景：${opts.sceneId || "（未选）"}`,
     writerMd ? "编剧包：`writer-pack.md`" : "编剧包：（未附）",
-    deliveryMd ? "交付包：`交付包.md`" : "交付包：（未附）",
+    deliveryMd ? "交付说明：`交付包.md`（仅要求文档，不包含视频、字幕文件或音频分轨；不是验收回执）" : "交付说明：（未附）",
     vocabMd ? "可拍词表：`可拍词表-多语言.md`" : "",
     "",
     "## 分集清单",
@@ -719,8 +719,8 @@ export async function exportManhuaProjectZip(
     "",
     "## 合成长片",
     finalVideoUrl
-      ? [`- 长片（含配乐）：\`${finalVideoUrl}\``, "- 亦可按 epXX/clip-s*.mp4 顺序本地再拼接。"].join("\n")
-      : "> 尚未合成长片时，可在成片坞点「合成长片（含配乐）」；或按 epXX/clip-s*.mp4 顺序本地拼接。",
+      ? [`- 长片链接：\`${finalVideoUrl}\``, "- 亦可按 epXX/clip-s*.mp4 顺序本地再拼接。"].join("\n")
+      : "> 尚未合成长片时，可在成片坞点「合成长片（保留原声）」；配乐另行确认，也可按 epXX/clip-s*.mp4 顺序本地拼接。",
   ];
   zip.file("README.md", playlistLines.join("\n"));
   zip.file(

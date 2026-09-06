@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ManhuaWriterAssetCanon } from "./manhuaWriterAssetCanon";
 import {
   compileManhuaDirectorBoardOverlay,
   compileManhuaSegmentDirectorBoardOverlay,
@@ -23,6 +24,39 @@ function base(
 }
 
 describe("compileManhuaDirectorBoardOverlay", () => {
+  const assetCanon: ManhuaWriterAssetCanon = {
+    characters: [{ id: "heiqi", role: "character", nameZh: "黑奇", lookZh: "灰黑马", promptZh: "灰黑马" }],
+    props: [{ id: "token", role: "prop", nameZh: "令牌", lookZh: "铜令牌", promptZh: "铜令牌" }],
+    locations: [], episodeMainSceneId: {},
+  };
+
+  it("逐镜原稿没有旧段表时，从登记资产及明确方向生成人物和道具路线", () => {
+    const input = {
+      episodeIndex: 1, segmentIndex: 1, baseAspectRatio: "16:9" as const,
+      segmentFirstShotStillUrl: "https://example.test/still.png", assetCanon,
+      shots: [{ index: 1, actionZh: "黑奇从画面左侧向画面右侧走；令牌从画面右侧向画面左侧飞", cameraZh: "镜头向右横移跟拍" }],
+    };
+    const actual = compileManhuaSegmentDirectorBoardOverlay(input)!;
+    expect(actual.actorRoutes.map((route) => [route.entityId, route.entityKind, route.points])).toEqual([
+      ["黑奇", "character", [{ x: 0.16, y: 0.66 }, { x: 0.82, y: 0.66 }]],
+      ["令牌", "prop", [{ x: 0.84, y: 0.66 }, { x: 0.18, y: 0.66 }]],
+    ]);
+    const confirmed = { ...actual, needsReview: false };
+    expect(compileManhuaSegmentDirectorBoardOverlay({ ...input, existingOverlay: confirmed })).toEqual(confirmed);
+    const renamed = { ...assetCanon, characters: [{ ...assetCanon.characters[0]!, id: "another-heiqi" }] };
+    expect(compileManhuaSegmentDirectorBoardOverlay({ ...input, assetCanon: renamed, existingOverlay: confirmed })?.needsReview).toBe(true);
+  });
+
+  it("无登记匹配、未指明主体或只有情绪变化时不猜人物轨迹", () => {
+    for (const actionZh of ["路人从画面左侧向右走", "黑奇停下；有人从画面左侧向右走", "黑奇很生气"]) {
+      const actual = compileManhuaSegmentDirectorBoardOverlay({
+        episodeIndex: 1, segmentIndex: 1, baseAspectRatio: "16:9",
+        segmentFirstShotStillUrl: "https://example.test/still.png", assetCanon,
+        shots: [{ index: 1, actionZh, cameraZh: "固定机位" }],
+      });
+      expect(actual?.actorRoutes).toEqual([]);
+    }
+  });
   it("空输入惰性返回 null，不凭默认值造路线", () => {
     expect(
       compileManhuaDirectorBoardOverlay({ episodeIndex: 1, segmentIndex: 1 })
@@ -258,6 +292,21 @@ describe("compileManhuaDirectorBoardOverlay", () => {
     });
     expect(changedAction?.sourceRevision).not.toBe(confirmed.sourceRevision);
     expect(changedAction?.needsReview).toBe(true);
+  });
+
+  it("同镜动作不变但连续窗口变化，旧轨迹确认也失效", () => {
+    const input = {
+      episodeIndex: 1, segmentIndex: 2, baseAspectRatio: "16:9" as const,
+      segmentFirstShotStillUrl: "https://cdn.example/long-shot.png",
+      shots: [{ index: 1, actionZh: "人物从左向右走", cameraZh: "固定机位", durationSec: 10, sourceOffsetSec: 10, sourceDurationSec: 30, continuation: true }],
+    };
+    const compiled = compileManhuaSegmentDirectorBoardOverlay(input)!;
+    const confirmed = { ...compiled, needsReview: false };
+    const unchanged = compileManhuaSegmentDirectorBoardOverlay({ ...input, existingOverlay: confirmed });
+    expect(unchanged?.needsReview).toBe(false);
+    const changed = compileManhuaSegmentDirectorBoardOverlay({ ...input, shots: [{ ...input.shots[0]!, sourceOffsetSec: 12 }], existingOverlay: confirmed });
+    expect(changed?.sourceRevision).not.toBe(confirmed.sourceRevision);
+    expect(changed?.needsReview).toBe(true);
   });
 
   it("消费端旧草稿没有 overlay 或同段底图时保持空值惰性", () => {

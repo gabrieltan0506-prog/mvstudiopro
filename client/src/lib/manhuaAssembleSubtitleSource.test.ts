@@ -28,4 +28,37 @@ describe("合成字幕真实生产者", () => {
     beats.outputText = upsertShotDialogueSection("1. 新稿", { 1: "不覆盖已经冻结的旧稿" });
     expect(input.params.clips[0].subtitleSource.shots[0].textZh).toBe("不许走");
   });
+
+  it("尾段按真实一镜取字幕，长镜续段不重复首段对白", () => {
+    const table = [
+      "| # | 秒位 | 景别·运镜 | 画面 | 台词字幕 | 音效配乐 |",
+      "|---|---|---|---|---|---|",
+      "| 1 | 0-20 | 固定机位 | 长镜动作 | 首句 | 环境声 |",
+      "| 2 | 20-25 | 近景 | 回望 | 尾句 | 环境声 |",
+    ].join("\n");
+    const beats = {
+      ...defaultCanvasBlock("text", 0, 0),
+      id: "beats-e01-auto",
+      episodeIndex: 1,
+      outputText: table,
+    };
+    const video = {
+      ...defaultCanvasBlock("video", 0, 0),
+      id: "clip-e01-g01-auto-test",
+      episodeIndex: 1,
+      videoModel: "seedance-2.0" as const,
+      prompt: "已编译运镜",
+      outputUrl: "https://test.invalid/source.mp4",
+    };
+
+    expect(buildManhuaAssembleSubtitleSource([beats, video], 1, 1)?.shots).toEqual([
+      expect.objectContaining({ shotIndex: 1, durationSec: 10, textZh: "首句" }),
+    ]);
+    expect(buildManhuaAssembleSubtitleSource([beats, video], 1, 2)?.shots).toEqual([
+      expect.objectContaining({ shotIndex: 1, durationSec: 10, textZh: "" }),
+    ]);
+    expect(buildManhuaAssembleSubtitleSource([beats, video], 1, 3)?.shots).toEqual([
+      expect.objectContaining({ shotIndex: 2, durationSec: 5, textZh: "尾句" }),
+    ]);
+  });
 });

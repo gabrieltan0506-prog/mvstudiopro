@@ -38,19 +38,18 @@ import {
 } from "./xyqSeedanceModels.js";
 import {
   CANVAS_VIDEO_MODEL_HAILUO_H3,
-  clampHailuoOpenRouterDuration,
   HAILUO_OPENROUTER_DURATION,
   isCanvasHailuoH3VideoModel,
 } from "./hailuoOpenRouterModels.js";
 import {
   CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1,
-  clampHappyHorseCanvasDuration,
   isCanvasHappyHorseVideoModel,
 } from "./happyHorseOpenRouterModels.js";
 import {
-  manhuaSeedanceLayoutPinsSegmentTable,
+  manhuaClipMaxDurationSecForVideoModel,
   resolveManhuaSeedanceLayoutProfile,
 } from "./manhuaSeedanceLayout.js";
+import { clampWan30Duration } from "./wanWavespeedModels.js";
 
 export { isManhuaClipPromptLegacyFat, stripManhuaClipForbiddenBoards };
 
@@ -86,6 +85,12 @@ export type ManhuaWorkbenchShot = {
   cameraAngleId?: string;
   /** 段内戏剧角色：起幅 / 戏核 / 落幅 / 桥接（蒸馏自分镜 Skill） */
   keyframeRole?: "start" | "key_action" | "edit_out" | "bridge";
+  /** 自动分段内的原镜局部起点；原镜 index 和全部观察字段保持不变。 */
+  sourceOffsetSec?: number;
+  /** 拆分前原镜全长，供连续段提示和来源核对。 */
+  sourceDurationSec?: number;
+  /** 同一长镜的后续生成片段，不是原片剪辑切换。 */
+  continuation?: boolean;
 };
 
 const DEFAULT_CAMERAS = [
@@ -171,9 +176,9 @@ export function manhuaSegmentCountBounds(videoModel?: string | null): {
  * 2.0 / 2.0-fast 的段数会随长档从 6 变 12，这里不能一刀钉成短档的 6。
  */
 export function pinnedManhuaSegmentCount(videoModel?: string | null): number | undefined {
-  return manhuaSeedanceLayoutPinsSegmentTable(videoModel)
-    ? manhuaSegmentCountBounds(videoModel).default
-    : undefined;
+  // 0906 用户选择原稿自动分段；保留旧签名，固定段数不再限制实际原稿。
+  void videoModel;
+  return undefined;
 }
 
 export function manhuaSegmentDurationSec(videoModel?: string | null): number {
@@ -203,7 +208,7 @@ export function resolveSegmentClipDurationSec(
   shots: Array<{ durationSec?: number | null }>,
   videoModel?: string | null,
 ): number {
-  const sum = Math.round(
+  const sum = Math.ceil(
     shots.reduce((n, s) => n + resolveShotDurationSecForSegment(s), 0),
   );
   const m = String(videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL).trim();
@@ -212,20 +217,15 @@ export function resolveSegmentClipDurationSec(
     return Math.min(MANHUA_OMNI_SEGMENT_DURATION_SEC, Math.max(4, raw));
   }
   if (isCanvasHailuoH3VideoModel(m) || m === CANVAS_VIDEO_MODEL_HAILUO_H3) {
-    return clampHailuoOpenRouterDuration(
-      sum > 0 ? sum : HAILUO_OPENROUTER_DURATION.default,
-    );
+    return [5, 10, 15].find(value => value >= sum) ?? 15;
   }
   if (isCanvasHappyHorseVideoModel(m) || m === CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1) {
-    return clampHappyHorseCanvasDuration(sum > 0 ? sum : 15);
+    return [5, 10, 15].find(value => value >= sum) ?? 15;
   }
   if (isManhuaSeedance25VideoModel(m)) {
-    // 2.5 产品档：一集 4×30s；3×5s 骨架合计≤15 时抬到 30，不误用 XYQ 默认 15
-    if (sum <= 0 || sum <= MANHUA_SEEDANCE_SEGMENT_DURATION_SEC) {
-      return clampXyqSeedanceDuration(MANHUA_SEEDANCE_25_SEGMENT_DURATION_SEC);
-    }
     return clampXyqSeedanceDuration(sum);
   }
+  if (m === "wan-3.0") return clampWan30Duration(sum);
   return clampSeedanceOpenRouterDuration(
     sum > 0 ? sum : SEEDANCE_OPENROUTER_DURATION.default,
   );
@@ -251,6 +251,9 @@ export type ManhuaWorkbenchSegment = {
   durationSec: number;
   /** 段内静帧（全局镜号 1..n） */
   shots: ManhuaWorkbenchShot[];
+  /** 原稿绝对秒窗；生成时长可能为引擎档位上取整，成片裁掉多出的尾部留白。 */
+  sourceStartSec?: number;
+  sourceEndSec?: number;
 };
 
 /** 补足占位镜到 total 张（起幅/戏核/落幅骨架之外的段内补镜） */
@@ -383,23 +386,6 @@ export function recutWorkbenchShotsTo(
   };
 }
 
-function padWorkbenchShotsTo(
-  shots: ManhuaWorkbenchShot[],
-  total: number,
-): ManhuaWorkbenchShot[] {
-  const list = [...shots];
-  while (list.length < total) {
-    const i = list.length;
-    list.push({
-      index: i + 1,
-      durationSec: 0,
-      cameraZh: DEFAULT_CAMERAS[i % DEFAULT_CAMERAS.length]!,
-      actionZh: `段内补镜：承接上镜情绪与空间，推进可读动作 ${i + 1}`,
-    });
-  }
-  return list;
-}
-
 /**
  * 该引擎在所有长档下最多需要多少张按镜静帧。
  *
@@ -416,19 +402,9 @@ export function maxManhuaShotsForVideoModel(videoModel?: string | null): number 
 }
 
 /**
- * 将分镜列表收成段：无分镜时默认 6 段 × 3 静帧；有分镜表则按每段下限切，不强行注水。
- *
- * 传了 `segmentCount` 就**钉死**成那么多段：段数决定实际铺几条成片、也决定实收
- * 多少积分，不能由反推这次吐了几镜来定。
- *
- * 钉段时把镜列表**补齐并截到恰好 `段数 × 3` 镜**，而不是把多出来的镜均摊进各段。
- * 「每段恰好 3 镜」是全仓共用的不变量：`resolveSegmentIndexFromShotIndex`（镜→段）、
- * `manhuaSegmentShotIndexes`（段→镜）、画布铺 keyart 的起始镜号都按它算。一旦某段
- * 装了 4 镜，这些映射会各算各的，镜就绑到错误的段成片与可拍表上。超出的镜宁可截掉，
- * 也不能让映射对不上——真要留住它们，得让上游按引擎段数生成 3N 张静帧。
- *
- * 不钉段（2.0 / 2.0-fast 吃长档）时同样要守住 3 镜/段：按该引擎长档段数取镜数上限，
- * 尾段不足 3 镜就补齐。
+ * 按原稿顺序和引擎单次时长自动分段，不合并原镜、不补占位镜、不以整集预算裁正文。
+ * 每段最多三张原镜参考；不足三镜照实保留。超长单镜只拆连续生成窗口，复用原镜静帧。
+ * 旧 segmentCount/padToDefaultEpisode 仅兼容入参，不再改变原稿条数。
  */
 export function groupShotsIntoSegments(
   shots: ManhuaWorkbenchShot[],
@@ -436,133 +412,76 @@ export function groupShotsIntoSegments(
     videoModel?: string | null;
     segmentCount?: number;
     padToDefaultEpisode?: boolean;
-    /**
-     * 出参：把重切结果回填给调用方（沿用本仓 `captureError` 的出参惯例，
-     * 不破坏既有调用签名）。
-     *
-     * - `mode: "thin"` 表示剧情撑不满目标段数，已用补镜凑数 —— 前端**必须**据此
-     *   提示并引导付费扩写，而不是让用户拿一集空壳去出片；
-     * - `seamShotIndexes` 是重切造出来的接缝，供「智能改写衔接」只润这几处。
-     *
-     * 不回填的话这两个信号会被整条吞掉，等于白算——那正是本仓反复出现的空壳模式。
-     */
-    captureRecut?: {
-      mode?: ManhuaShotRecutResult["mode"];
-      seamShotIndexes?: number[];
-      paddedCount?: number;
-    };
+    captureRecut?: { mode?: ManhuaShotRecutResult["mode"]; seamShotIndexes?: number[]; paddedCount?: number };
   },
 ): ManhuaWorkbenchSegment[] {
-  const per = MANHUA_KEYARTS_PER_SEGMENT_MIN;
-  const explicit = shots.length >= 2;
-  const padToDefault =
-    opts?.padToDefaultEpisode === true || (!explicit && opts?.segmentCount == null);
-  let list = (explicit ? shots : defaultWorkbenchShots()).map((s, i) => ({
-    ...s,
-    index: i + 1,
-  }));
-  let pinnedSegs = 0;
-  if (padToDefault || opts?.segmentCount != null) {
-    const bounds = manhuaSegmentCountBounds(opts?.videoModel);
-    const targetSegs = Math.max(
-      1,
-      Math.min(16, Math.floor(opts?.segmentCount ?? bounds.default)),
-    );
-    const total = targetSegs * per;
-    /**
-     * 换引擎按内容重切：镜多合并、镜少拆分，不再 `pad + slice` 一头补空一头截尾。
-     * 只有原本就没镜（走 defaultWorkbenchShots 兜底）才仍用补齐——那时没有内容可切。
-     */
-    if (explicit) {
-      const recut = recutWorkbenchShotsTo(list, total);
-      // 拆不动（内容太薄）时仍要凑够钉死的段数，否则段数与实收积分对不上；
-      // 但必须把 thin 回填出去，让前端引导付费扩写，而不是让用户拿一集空壳
-      const padded = Math.max(0, total - recut.shots.length);
-      list = padded > 0 ? padWorkbenchShotsTo(recut.shots, total) : recut.shots;
-      list = list.slice(0, total);
-      if (opts?.captureRecut) {
-        opts.captureRecut.mode = recut.mode;
-        opts.captureRecut.seamShotIndexes = recut.seamShotIndexes;
-        opts.captureRecut.paddedCount = padded;
+  const model = opts?.videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
+  const maxSec = model === "gemini-omni-flash" ? 10 : manhuaClipMaxDurationSecForVideoModel(model);
+  const round = (n: number) => Math.round(n * 1_000_000) / 1_000_000;
+  const segments: ManhuaWorkbenchSegment[] = [];
+  let chunk: ManhuaWorkbenchShot[] = [];
+  let chunkStart = 0;
+  let cursor = 0;
+  let chunkDuration = 0;
+  const flush = () => {
+    if (!chunk.length) return;
+    segments.push({
+      index: segments.length + 1,
+      shots: chunk,
+      sourceStartSec: chunkStart,
+      sourceEndSec: round(chunkStart + chunkDuration),
+      durationSec: resolveSegmentClipDurationSec(chunk, model),
+    });
+    chunk = [];
+    chunkDuration = 0;
+  };
+  for (const shot of shots) {
+    const duration = resolveShotDurationSecForSegment(shot);
+    if (duration > maxSec) {
+      flush();
+      const count = Math.ceil(duration / maxSec);
+      for (let part = 0; part < count; part++) {
+        const offset = round(duration * part / count);
+        const end = round(duration * (part + 1) / count);
+        chunkStart = round(cursor + offset);
+        chunkDuration = round(end - offset);
+        chunk = [{
+          ...shot, durationSec: chunkDuration, sourceOffsetSec: offset,
+          sourceDurationSec: duration, continuation: part > 0,
+          ...(part > 0 ? {
+            dialogueZh: "", dialogueSuppressed: true,
+            additionalDialogueCues: undefined,
+          } : {}),
+        }];
+        flush();
       }
     } else {
-      list = padWorkbenchShotsTo(list, total).slice(0, total);
+      if (chunk.length >= MANHUA_KEYARTS_PER_SEGMENT_MIN || chunkDuration + duration > maxSec) flush();
+      if (!chunk.length) chunkStart = cursor;
+      chunk.push({ ...shot, durationSec: duration });
+      chunkDuration = round(chunkDuration + duration);
     }
-    pinnedSegs = targetSegs;
-  } else {
-    /**
-     * 非钉段（2.0 / 2.0-fast）的镜数上限得按该引擎**长档**的段数算。
-     * 用固定的 MANHUA_SHOT_KEYART_MAX=24 会把长档 12 段（需 36 镜）截到 8 段，
-     * 用户选了长档却只拿到三分之二集。
-     */
-    const cap = maxManhuaShotsForVideoModel(opts?.videoModel);
-    /**
-     * 超上限时按内容合并，不再 `.slice()` 截尾——截尾会把后面几段剧情静默丢掉。
-     * 上限本身按引擎长档段数算（固定 24 会把 12 段长档截成 8 段）。
-     */
-    if (list.length > cap) {
-      const capped = recutWorkbenchShotsTo(list, cap);
-      list = capped.shots;
-      if (opts?.captureRecut) {
-        opts.captureRecut.mode = capped.mode;
-        opts.captureRecut.seamShotIndexes = capped.seamShotIndexes;
-      }
-    }
-    /**
-     * 再补齐到 3 的倍数：镜号→段号映射（resolveSegmentIndexFromShotIndex）按每段 3 镜算，
-     * 尾段只有 1、2 镜时映射就会错位，镜绑到隔壁段的成片上。
-     */
-    const remainder = list.length % per;
-    if (remainder) {
-      const target = list.length + (per - remainder);
-      const recut = recutWorkbenchShotsTo(list, target);
-      const short = recut.shots.length !== target;
-      list = short ? padWorkbenchShotsTo(list, target) : recut.shots;
-      if (opts?.captureRecut && short) {
-        opts.captureRecut.mode = "thin";
-        opts.captureRecut.paddedCount = target - recut.shots.length;
-      }
-    }
+    cursor = round(cursor + duration);
   }
-  list = list.map((s, i) => ({ ...s, index: i + 1 }));
-
-  const segs: ManhuaWorkbenchSegment[] = [];
-  for (let i = 0; i < list.length; i += per) {
-    const chunk = list.slice(i, i + per);
-    if (!chunk.length) break;
-    /**
-     * 钉段且剧本没标镜长时，段时长取引擎段表标称值，别拿「镜数 × 5 秒兜底」去推——
-     * 那样 2.5 的段会算成 3×5=15 秒而不是段表的 30 秒，一集凑不满目标秒数。
-     * 剧本标了真实镜长则照旧按和取，短段仍可短于上限。
-     */
-    const hasRealDuration = chunk.some((s) => {
-      const d = Number(s.durationSec);
-      return Number.isFinite(d) && d > 0;
-    });
-    segs.push({
-      index: segs.length + 1,
-      durationSec:
-        pinnedSegs > 0 && !hasRealDuration
-          ? manhuaSegmentDurationSec(opts?.videoModel)
-          : resolveSegmentClipDurationSec(chunk, opts?.videoModel),
-      shots: chunk,
-    });
+  flush();
+  if (opts?.captureRecut) {
+    opts.captureRecut.mode = "exact";
+    opts.captureRecut.seamShotIndexes = [];
+    opts.captureRecut.paddedCount = 0;
   }
-  return segs.length
-    ? segs
-    : [
-        {
-          index: 1,
-          durationSec: resolveSegmentClipDurationSec(list.slice(0, per), opts?.videoModel),
-          shots: list.slice(0, per),
-        },
-      ];
+  return segments;
 }
 
 /** 全局镜号 → 段号（1-based）；与 groupShotsIntoSegments 的每段静帧下限对齐 */
-export function resolveSegmentIndexFromShotIndex(shotIndex: number): number {
+export function resolveSegmentIndexFromShotIndex(shotIndex: number, segments?: ManhuaWorkbenchSegment[]): number {
+  if (segments) return segments.find(segment => segment.shots.some(shot => shot.index === shotIndex))?.index ?? 1;
   const s = Math.max(1, Math.floor(shotIndex));
   return Math.floor((s - 1) / MANHUA_KEYARTS_PER_SEGMENT_MIN) + 1;
+}
+
+/** 一个原镜可因超长跨多个连续生成段；批量与预览必须保留所有匹配段。 */
+export function resolveSegmentIndexesFromShotIndex(shotIndex: number, segments: ManhuaWorkbenchSegment[]): number[] {
+  return segments.filter(segment => segment.shots.some(shot => shot.index === shotIndex)).map(segment => segment.index);
 }
 
 /**
@@ -608,7 +527,8 @@ export function manhuaLocalSegmentIndex(
 }
 
 /** 段号 → 该段全局镜号列表（默认每段 3 镜） */
-export function shotIndexesForSegment(segmentIndex: number): number[] {
+export function shotIndexesForSegment(segmentIndex: number, segments?: ManhuaWorkbenchSegment[]): number[] {
+  if (segments) return Array.from(new Set(segments.find(segment => segment.index === segmentIndex)?.shots.map(shot => shot.index) || []));
   const g = Math.max(1, Math.floor(segmentIndex));
   const start = (g - 1) * MANHUA_KEYARTS_PER_SEGMENT_MIN + 1;
   return Array.from({ length: MANHUA_KEYARTS_PER_SEGMENT_MIN }, (_, i) => start + i);
@@ -650,6 +570,8 @@ type ParsedShotRow = {
   index: number;
   cameraZh: string;
   actionZh: string;
+  /** 原稿明确给出秒位时保留实长；无时间的旧表仍由段编排决定。 */
+  durationSec?: number;
 } & Partial<ManhuaPerformanceCue>;
 
 function enrichRowWithPerformance(row: ParsedShotRow): ParsedShotRow {
@@ -680,9 +602,46 @@ function parseShotRowsFromText(raw: string): ParsedShotRow[] {
     .filter(Boolean);
 
   const byIndex = new Map<number, ParsedShotRow>();
+  let timedColumns: { index: number; time: number; camera: number; action: number; dialogue: number } | null = null;
 
   for (const line of lines) {
     if (/^\|?\s*[-:| ]+\s*\|?\s*$/.test(line)) continue;
+    const cells = line.startsWith("|")
+      ? line.replace(/^\|/, "").replace(/\|\s*$/, "").split("|").map(cell => cell.trim())
+      : [];
+    const headings = cells.map(cell => cell.replace(/\*\*/g, ""));
+    const timeColumn = headings.findIndex(cell => /^(?:秒位|时间|时间轴|起止秒位)$/.test(cell));
+    if (timeColumn >= 0) {
+      const columns = {
+        index: headings.findIndex(cell => /^(?:#|镜号|序号|镜头)$/.test(cell)),
+        time: timeColumn,
+        camera: headings.findIndex(cell => /景别|运镜|机位/.test(cell)),
+        action: headings.findIndex(cell => /^(?:画面|内容|动作)$/.test(cell)),
+        dialogue: headings.findIndex(cell => /台词|对白/.test(cell)),
+      };
+      timedColumns = columns.index >= 0 && columns.camera >= 0 && columns.action >= 0
+        ? columns : null;
+      continue;
+    }
+    // 六列生产表按表头取值，不能沿旧三列表的位置把秒位当运镜、画面当对白。
+    if (timedColumns && cells.length && /^\d+$/.test(cells[timedColumns.index] || "")) {
+      const time = (cells[timedColumns.time] || "").match(/^(\d+(?:\.\d+)?)\s*(?:-|–|—|~|～|至)\s*(\d+(?:\.\d+)?)\s*(?:s|秒)?$/i);
+      const duration = time ? Number(time[2]) - Number(time[1]) : 0;
+      const dialogue = cells[timedColumns.dialogue] || "";
+      byIndex.set(Number(cells[timedColumns.index]), enrichRowWithPerformance({
+        index: Number(cells[timedColumns.index]),
+        cameraZh: cells[timedColumns.camera] || "",
+        actionZh: cells[timedColumns.action] || "",
+        durationSec: duration > 0 && Number.isFinite(duration) ? duration : undefined,
+        // 屏幕字幕和无对白标记不是角色口播；音效列也不借用情绪字段。
+        dialogueZh: !dialogue || /^(?:[-—–]+|无|无对白)$/.test(dialogue) || /^(?:闪回)?字幕\s*[:：]/.test(dialogue)
+          ? undefined : dialogue,
+      }));
+      continue;
+    }
+    if (/^#{1,6}\s/.test(line) || (cells.length && /镜号|景别|内容|镜头/.test(line))) {
+      timedColumns = null;
+    }
     if (/镜号|景别|内容|镜头/.test(line) && /\|\s*镜|\|\s*景|\|\s*内/.test(line)) continue;
 
     // Markdown 表：| 1 | 近景 | 女主推门 | 或加台词/情绪列
@@ -733,8 +692,7 @@ function parseShotRowsFromText(raw: string): ParsedShotRow[] {
   }
 
   return Array.from(byIndex.values())
-    .sort((a, b) => a.index - b.index)
-    .slice(0, MANHUA_SHOT_KEYART_MAX);
+    .sort((a, b) => a.index - b.index);
 }
 
 /** 从节拍 / 反推正文拆出多镜；失败则回落为「6 段 × 3 静帧」骨架 */
@@ -745,10 +703,10 @@ export function parseWorkbenchShotsFromText(raw: string | undefined | null): Man
   const rows = parseShotRowsFromText(text);
   if (rows.length < 2) return defaultWorkbenchShots(text.slice(0, 180));
 
-  // 重新编号为 1..n；单镜秒数仅作占位，成片时长按段模型
-  return rows.slice(0, MANHUA_SHOT_KEYART_MAX).map((row, i) => ({
+  // 重新编号为 1..n；有原稿秒位则保留，无秒位的旧表仍使用 0 占位。
+  return rows.map((row, i) => ({
     index: i + 1,
-    durationSec: 0,
+    durationSec: row.durationSec || 0,
     cameraZh: row.cameraZh || DEFAULT_CAMERAS[i % DEFAULT_CAMERAS.length]!,
     actionZh: row.actionZh.slice(0, 280),
     dialogueZh: row.dialogueZh || undefined,
@@ -1215,15 +1173,26 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
     lightingCameraZh: lighting,
     paletteZh: palette,
   });
+  const continuation = shots
+    .filter((shot) => typeof shot.sourceDurationSec === "number")
+    .map((shot) => {
+      const start = shot.sourceOffsetSec ?? 0;
+      const end = Math.round((start + shot.durationSec) * 1e6) / 1e6;
+      return `原镜${shot.index}连续窗口：原镜内${start}–${end}秒／总长${shot.sourceDurationSec}秒。同一长镜连续生成，非剪辑切镜；只推进本窗口，承接上一窗口末态，不重复已完成动作；原镜动作描述仅作为全程上下文。${shot.continuation ? "前段已说对白不重复。" : ""}`;
+    }).join("\n");
+  const sourceDuration = Math.round(shots.reduce((sum, shot) => sum + shot.durationSec, 0) * 1e6) / 1e6;
+  const tailHold = sourceDuration > 0 && sourceDuration < dur
+    ? `原稿动作与对白在${sourceDuration}秒结束；${sourceDuration}–${dur}秒仅保持末态留白，不增加动作或台词，此尾部将按原稿时长裁去。`
+    : "";
   // 段头场景锁 + 光影氛围 + 秒轴（动作/运镜轨迹/景别）；资产/@Image 由 ensure 挂
   return stripManhuaClipForbiddenBoards(
-    stripManhuaPromptSlop([headBoard, timeline].join("\n")),
+    stripManhuaPromptSlop([headBoard, continuation, timeline, tailHold].filter(Boolean).join("\n")),
   );
 }
 
 /** 从 keyart / clip 节点 id 或静帧 prompt 解析分镜号（默认 1） */
 export function resolveKeyartShotIndex(blockId: string, prompt?: string | null): number {
-  const fromId = String(blockId || "").match(/-s(\d{2})(?:-|$)/);
+  const fromId = String(blockId || "").match(/-s(\d{2,})(?:-|$)/);
   if (fromId?.[1]) return Math.max(1, parseInt(fromId[1], 10));
   const fromPrompt = String(prompt || "").match(/【分镜\s*(\d+)/);
   if (fromPrompt?.[1]) return Math.max(1, parseInt(fromPrompt[1], 10));
@@ -1254,6 +1223,7 @@ export function resolveClipLocalSegmentIndex(
   episodeIndex: number,
   segmentsPerEpisode: number = MANHUA_SEGMENT_DEFAULT,
 ): number {
+  if (/-g\d+-auto(?:-|$)/i.test(blockId)) return resolveClipSegmentIndex(blockId, prompt);
   return manhuaLocalSegmentIndex(
     resolveClipSegmentIndex(blockId, prompt),
     episodeIndex,

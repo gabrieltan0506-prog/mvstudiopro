@@ -1,8 +1,9 @@
 /**
- * 剪辑台 · 交付包编辑（成色 / 字幕 / 配音），与成片坞同源 state。
+ * 剪辑台 · 交付要求编辑，与成片坞同源，不表示媒体已经生成或通过验收。
  */
 import {
   MANHUA_DELIVERY_LOCALE_LABEL_ZH,
+  MANHUA_DELIVERY_REQUIREMENTS_HINT_ZH,
   type ManhuaDeliveryLocale,
   type ManhuaDeliveryPackage,
   summarizeManhuaDeliveryPackageProgress,
@@ -45,7 +46,7 @@ export default function ManhuaDeliveryEditSection({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 text-[10px] font-semibold text-white/80">
           <Palette className="h-3.5 w-3.5 text-violet-200/90" />
-          交付包 · 成色 / 字幕 / 配音
+          成色 / 字幕 / 配音
           <span className="font-normal text-white/40">{progress.labelZh}</span>
         </div>
         {onCineVocabLocaleChange ? (
@@ -70,6 +71,9 @@ export default function ManhuaDeliveryEditSection({
         ) : null}
       </div>
 
+      <p className="mt-1.5 text-[10px] leading-relaxed text-white/55">
+        {MANHUA_DELIVERY_REQUIREMENTS_HINT_ZH}
+      </p>
       <div className="mt-2 grid gap-2 md:grid-cols-3">
         <label className="block space-y-1">
           <span className="text-[9px] text-white/45">成色意图</span>
@@ -140,7 +144,7 @@ export default function ManhuaDeliveryEditSection({
               })
             }
           />
-          禁止烧进成片
+          交付要求：不烧进成片
         </label>
         <label className="flex items-center gap-1 text-[9px] text-white/45">
           语言

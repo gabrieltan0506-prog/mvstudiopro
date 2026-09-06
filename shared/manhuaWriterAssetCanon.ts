@@ -514,7 +514,9 @@ export function evaluateWriterPackAssetAndDensity(input: {
   /** 真实成片布局（如 Seedance 2.5 = 4 段×30s），透传给对白密度门槛 */
   segmentCount?: number;
   durationSecPerSegment?: number;
-  /** 可拍表段数门禁；不传则回落 4–6（2.0 预算期） */
+  /** 原稿默认验实际全表；只有新写作验收显式选择布局目标。 */
+  segmentCountMode?: "actual" | "layout";
+  /** 仅 layout 模式使用新写作的段数目标。 */
   segmentMin?: number;
   segmentMax?: number;
 }): WriterDensityGateResult & { canon: ManhuaWriterAssetCanon } {
@@ -536,10 +538,8 @@ export function evaluateWriterPackAssetAndDensity(input: {
   if (canon.props.length < 1) {
     errors.push("道具表至少需要 1 件关键道具");
   }
-  // 预算期：额外要求可拍表（对白+表演/场景配色/角色/服化道/光影运镜），禁灌水。
-  // 这道闸此前挂在 >=150 上，若只把 targetSec 改成 90 会被整个关掉，故改挂最短成片秒数。
-  // 段数上下限跟成片引擎走：2.0→5–6、2.5→4、高清→7–8。
-  if ((input.targetSec ?? MANHUA_EPISODE_SEGMENT_TARGET_SEC) >= MANHUA_EPISODE_SEGMENT_TARGET_MIN_SEC) {
+  // 原稿所有实际段均须验收；新写作显式 layout 模式保留原预算门槛。
+  if (input.segmentCountMode !== "layout" || (input.targetSec ?? MANHUA_EPISODE_SEGMENT_TARGET_SEC) >= MANHUA_EPISODE_SEGMENT_TARGET_MIN_SEC) {
     const segMin = Math.max(
       1,
       Math.floor(input.segmentMin ?? MANHUA_EPISODE_SEGMENT_COUNT_MIN),
@@ -551,6 +551,7 @@ export function evaluateWriterPackAssetAndDensity(input: {
     for (const ep of input.episodes || []) {
       const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(String(ep.body || ""));
       const q = evaluateManhuaEpisodeSegmentPlanQuality(plan, {
+        mode: input.segmentCountMode ?? "actual",
         min: segMin,
         max: segMax,
       });
@@ -560,7 +561,7 @@ export function evaluateWriterPackAssetAndDensity(input: {
             q.issues[0] || "缺表或缺字段"
           }`,
         );
-        for (const iss of q.issues.slice(1, 3)) {
+        for (const iss of q.issues.slice(1)) {
           errors.push(`第${ep.index}集：${iss}`);
         }
       }

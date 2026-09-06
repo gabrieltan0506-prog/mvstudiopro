@@ -5,6 +5,7 @@
  * 编号：有垫图/融图进表；特写格逻辑号也可进表（logical://）。
  */
 import { getManhuaCharacterDisplayName, getManhuaCharacterPreviewUrl } from "./manhuaCharacterAssetLibrary.js";
+import { isManhuaKeyartLookCurrent } from "./manhuaKeyartLookState";
 import {
   getManhuaDemoAsset,
   getManhuaDemoAssetPublicUrl,
@@ -118,6 +119,8 @@ export function buildManhuaAssetLockRegistry(opts?: {
   propImageUrlById?: Record<string, string> | null;
   /** 人物造型套（服装子类） */
   characterLookSets?: ManhuaCharacterLookSet[] | null;
+  /** 仅供显式造型绑定取图，不参与全局角色主图选择。 */
+  lookRefs?: ManhuaCustomAssetRef[] | null;
 }): ManhuaAssetLockRegistry {
   const draft: ManhuaAssetLockSlot[] = [];
   const consumableRefs = (opts?.customRefs || []).filter((r) => r.reviewStatus !== "needs_review");
@@ -333,7 +336,7 @@ export function buildManhuaAssetLockRegistry(opts?: {
   for (const ch of byRole.character) nameById[ch.id] = ch.labelZh;
   let wardrobeSlots = buildManhuaWardrobeSubSlotsFromLookSets({
     lookSets,
-    customRefs: opts?.customRefs,
+    customRefs: opts?.lookRefs ?? consumableRefs,
     characterTagById: finalCharTagByIdForLooks,
     characterNameById: nameById,
   });
@@ -342,7 +345,7 @@ export function buildManhuaAssetLockRegistry(opts?: {
       .filter((ws) => isBindableAssetPath(ws.path))
       .filter(
         (ws) =>
-          !slots.some((s) => s.id === ws.wardrobeId || s.path === ws.path),
+          !slots.some((s) => s.id === ws.wardrobeId),
       )
       .map((ws, i) => ({
         tag: ws.wardrobeTag,
@@ -360,11 +363,10 @@ export function buildManhuaAssetLockRegistry(opts?: {
     if (s.role !== "wardrobe") return s;
     const wardrobes = arr.filter((x) => x.role === "wardrobe");
     const idx = wardrobes.findIndex((x) => x.id === s.id && x.path === s.path) + 1;
-    const tagFromSlot = wardrobeSlots.find((w) => w.wardrobeId === s.id)?.wardrobeTag;
     return {
       ...s,
       index: idx > 0 ? idx : s.index,
-      tag: tagFromSlot || `@服装${idx > 0 ? idx : s.index}`,
+      tag: `@服装${idx > 0 ? idx : s.index}`,
     };
   });
   const byRoleFinal: Record<ManhuaCustomAssetRole, ManhuaAssetLockSlot[]> = {
@@ -499,10 +501,16 @@ export function formatManhuaAssetImageBindBlock(
   const rows = (registry?.slots || [])
     .filter((s) => isBindableAssetPath(s.path))
     .filter((s) => {
-      if (hasAllowFilter && !allowed.has(String(s.id || "").trim())) return false;
+      if (hasAllowFilter && !allowed.has(String(s.id || "").trim())) {
+        // 造型沿已出演角色进入白名单；不能把全剧服装混入当前段。
+        const owner = s.role === "wardrobe"
+          ? registry?.wardrobeSlots.find((w) => w.wardrobeId === s.id)?.characterId
+          : undefined;
+        if (!owner || !allowed.has(owner)) return false;
+      }
       if (s.role !== "wardrobe") return true;
-      // 有本段造型手选时：只带启用套；否则带全部已挂图服装
-      if (!activeLooks.size) return true;
+      // 未传选择保留旧调用语义；显式空数组表示本段没有启用造型。
+      if (!Array.isArray(opts?.activeLookSetIds)) return true;
       return activeLooks.has(s.id);
     })
     .slice(0, Math.max(1, maxSlots));
@@ -1482,8 +1490,10 @@ export function isManhuaKeyartPixelLocked(block: {
   refImageUrl?: string | null;
   outputUrl?: string | null;
   outputUrls?: string[] | null;
+  manhuaKeyartLookState?: unknown;
 }): boolean {
   if (!String(block.id || "").startsWith("keyart-")) return false;
+  if (!isManhuaKeyartLookCurrent(block)) return false;
   const hasOut = Boolean(
     String(block.outputUrl || "").trim() ||
       (Array.isArray(block.outputUrls) && block.outputUrls.some((u) => String(u || "").trim())),
@@ -1501,6 +1511,7 @@ export function areManhuaKeyartsPixelLocked(
     refImageUrl?: string | null;
     outputUrl?: string | null;
     outputUrls?: string[] | null;
+    manhuaKeyartLookState?: unknown;
   }> | null | undefined,
   opts?: { minCount?: number },
 ): boolean {

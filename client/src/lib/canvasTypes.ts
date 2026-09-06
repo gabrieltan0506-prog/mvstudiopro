@@ -2,6 +2,8 @@ import type { LucideIcon } from "lucide-react";
 import { normalizeManhuaTimelineOrder } from "@shared/manhuaEditOrder";
 import { Clapperboard, FileText, Image as ImageIcon, LayoutTemplate, Video } from "lucide-react";
 import type { ManhuaClipQualityReport } from "@shared/manhuaClipQuality";
+import { normalizeManhuaKeyartLookState } from "@shared/manhuaKeyartLookState";
+import { normalizeManhuaAutoSegmentBinding, type ManhuaAutoSegmentBinding } from "@shared/manhuaAutoSegment";
 import {
   normalizeManhuaFinalPostProdBinding,
   normalizeManhuaFinalVersionIdentities,
@@ -226,6 +228,9 @@ export type CanvasBlock = {
    * 用户「仍采用」后 quality.userAcceptedDespiteQc=true 才可合成。
    */
   manhuaClipQuality?: ManhuaClipQualityReport;
+  manhuaKeyartLookState?: import("@shared/manhuaKeyartLookState").ManhuaKeyartLookState;
+  /** 原镜身份回执：旧图保留，但不能因同镜号而自动确认。 */
+  manhuaKeyartSourceState?: import("@shared/manhuaKeyartLookState").ManhuaKeyartLookState;
   /** 本段成片抽取的尾帧 HTTPS（续拍硬锚） */
   lastFrameUrl?: string;
   /**
@@ -269,8 +274,9 @@ export type CanvasBlock = {
   };
   /** 整集后期任务身份；final-eXX 专用，job/GCS 为长期身份，HTTPS 仅当前读链。 */
   manhuaFinalPostProd?: ManhuaFinalPostProdBinding;
-  /** 整集每个版本的任务/GCS 长期身份；只跟随本机画布，不扩大云同步范围。 */
+  /** 整集每个版本的任务/GCS 长期身份；本机与云草稿同批保存，不包含视频字节。 */
   manhuaFinalVersions?: ManhuaFinalVersionIdentity[];
+  manhuaAutoSegment?: ManhuaAutoSegmentBinding;
 };
 
 export type CanvasEdge = { fromId: string; toId: string };
@@ -501,6 +507,8 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
 
   return {
     ...withVideo,
+    manhuaKeyartLookState: normalizeManhuaKeyartLookState(block.manhuaKeyartLookState),
+    manhuaKeyartSourceState: normalizeManhuaKeyartLookState(block.manhuaKeyartSourceState),
     textModel: normalizeCanvasTextModel(block.textModel),
     imageModel: normalizeCanvasImageModel(block.imageModel),
     videoModel: withVideo.videoModel,
@@ -557,7 +565,10 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
       if (!t || typeof t !== "object") return undefined;
       const inSec = Number(t.inSec);
       const outSec = Number(t.outSec);
-      if (!Number.isFinite(inSec) || !Number.isFinite(outSec) || outSec - inSec < 0.5) {
+      const automatic = normalizeManhuaAutoSegmentBinding(block.manhuaAutoSegment);
+      const exactSourceWindow = automatic && inSec === 0 &&
+        Math.abs(outSec - (automatic.sourceEndSec - automatic.sourceStartSec)) < 0.000001;
+      if (!Number.isFinite(inSec) || !Number.isFinite(outSec) || outSec <= inSec || (!exactSourceWindow && outSec - inSec < 0.5)) {
         return undefined;
       }
       const shotPieces = Array.isArray(t.shotPieces)
@@ -597,6 +608,7 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
     })(),
     manhuaFinalPostProd: normalizeManhuaFinalPostProdBinding(block.manhuaFinalPostProd),
     manhuaFinalVersions: normalizeManhuaFinalVersionIdentities(block.manhuaFinalVersions),
+    manhuaAutoSegment: normalizeManhuaAutoSegmentBinding(block.manhuaAutoSegment),
   };
 }
 

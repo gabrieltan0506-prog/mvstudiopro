@@ -102,6 +102,11 @@ export function normalizeManhuaSegmentLookBindings(
     if (!key || !bind || typeof bind !== "object") continue;
     const row: Record<string, string> = {};
     for (const [cid, ls] of Object.entries(bind as Record<string, unknown>)) {
+      // 段位复核身份保留完整规范串；不是角色 ID，也不能按造型 ID 截到 80 字。
+      if (cid === "__sourceRevision") {
+        if (typeof ls === "string" && ls) row[cid] = ls;
+        continue;
+      }
       const characterId = String(cid || "").trim().slice(0, 64);
       const lookSetId = String(ls || "").trim().slice(0, 80);
       if (characterId && lookSetId) row[characterId] = lookSetId;
@@ -181,15 +186,17 @@ export function setManhuaSegmentLookBinding(opts: {
   segmentIndex: number;
   characterId: string;
   lookSetId: string;
+  sourceRevision?: string;
 }): Record<string, Record<string, string>> {
   const key = segmentLookBindingKey(opts.episodeIndex, opts.segmentIndex);
   const next = normalizeManhuaSegmentLookBindings(opts.bindings);
   const row = { ...(next[key] || {}) };
   const cid = String(opts.characterId || "").trim();
   const ls = String(opts.lookSetId || "").trim();
-  if (!cid) return next;
+  if (!cid || cid === "__sourceRevision") return next;
   if (!ls) delete row[cid];
   else row[cid] = ls;
+  if (opts.sourceRevision) row.__sourceRevision = opts.sourceRevision;
   if (Object.keys(row).length) next[key] = row;
   else delete next[key];
   return next;
@@ -201,7 +208,45 @@ export function getManhuaSegmentLookBinding(
   segmentIndex: number,
 ): Record<string, string> {
   const key = segmentLookBindingKey(episodeIndex, segmentIndex);
-  return { ...(normalizeManhuaSegmentLookBindings(bindings)[key] || {}) };
+  const row = { ...(normalizeManhuaSegmentLookBindings(bindings)[key] || {}) };
+  delete row.__sourceRevision;
+  return row;
+}
+
+/** 只在用户核对当前分段后写入；旧草稿无值，必须重新确认。 */
+export function getManhuaSegmentLookSourceRevision(
+  bindings: Record<string, Record<string, string>> | null | undefined,
+  episodeIndex: number,
+  segmentIndex: number,
+): string | undefined {
+  return normalizeManhuaSegmentLookBindings(bindings)[segmentLookBindingKey(episodeIndex, segmentIndex)]?.__sourceRevision;
+}
+
+export function confirmManhuaSegmentLookBindingSource(
+  bindings: Record<string, Record<string, string>> | null | undefined,
+  episodeIndex: number,
+  segmentIndex: number,
+  revision: string,
+): Record<string, Record<string, string>> {
+  const next = normalizeManhuaSegmentLookBindings(bindings);
+  const key = segmentLookBindingKey(episodeIndex, segmentIndex);
+  if (revision && next[key]) next[key] = { ...next[key], __sourceRevision: revision };
+  return next;
+}
+
+/** 造型可选同角色参考或服装图；候选与全局当前脸选择分离，待复核图片不可用。 */
+export function listManhuaLookReferenceCandidates(
+  refs: ManhuaCustomAssetRef[] | null | undefined,
+  characterId: string,
+): ManhuaCustomAssetRef[] {
+  return (refs || []).filter((ref) => {
+    if (ref.reviewStatus === "needs_review") return false;
+    if (ref.role === "wardrobe") {
+      return !ref.claimedAnchorIds?.length || ref.claimedAnchorIds.includes(characterId);
+    }
+    return ref.role === "character" &&
+      (ref.id === characterId || Boolean(ref.claimedAnchorIds?.includes(characterId)));
+  });
 }
 
 function refUrlById(
@@ -227,7 +272,6 @@ export function buildManhuaWardrobeSubSlotsFromLookSets(opts: {
   if (!sets.length) return [];
   const tagById = opts.characterTagById || {};
   const nameById = opts.characterNameById || {};
-  const refs = opts.customRefs || [];
 
   type Draft = {
     lookSet: ManhuaCharacterLookSet;
@@ -236,6 +280,7 @@ export function buildManhuaWardrobeSubSlotsFromLookSets(opts: {
   };
   const drafts: Draft[] = [];
   for (const ls of sets) {
+    const refs = listManhuaLookReferenceCandidates(opts.customRefs, ls.characterId);
     const path =
       refUrlById(refs, ls.wardrobeRefId) ||
       refUrlById(refs, ls.lookRefId) ||
@@ -313,19 +358,21 @@ export function resolveActiveLookSetIdsForSegment(opts: {
   const bind = opts.binding || {};
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const lsId of Object.values(bind)) {
-    const id = String(lsId || "").trim();
-    if (!id || seen.has(id)) continue;
-    if (!sets.some((s) => s.id === id)) continue;
-    seen.add(id);
-    out.push(id);
-  }
-  if (out.length) return out;
-  for (const cid of opts.fallbackCharacterIds || []) {
-    const first = listManhuaLookSetsForCharacter(sets, cid)[0];
-    if (first && !seen.has(first.id)) {
-      seen.add(first.id);
-      out.push(first.id);
+  // 显式出演范围即白名单；一人的手选不能取消其他出演角色的默认造型。
+  const characterIds = Array.isArray(opts.fallbackCharacterIds)
+    ? opts.fallbackCharacterIds
+    : Object.keys(bind);
+  for (const cid of characterIds) {
+    const selectedId = String(bind[cid] || "").trim();
+    const selected = selectedId
+      ? sets.find((s) => s.id === selectedId && s.characterId === cid)
+      : listManhuaLookSetsForCharacter(sets, cid)[0];
+    if (selectedId && !selected) {
+      throw new Error("本段造型绑定已失效，请重新选择对应角色的造型。");
+    }
+    if (selected && !seen.has(selected.id)) {
+      seen.add(selected.id);
+      out.push(selected.id);
     }
   }
   return out;

@@ -387,11 +387,11 @@ export function deriveManhuaSegmentIntentFallbackZh(
 export function parseManhuaEpisodeSegmentPlanFromMarkdown(md: string): ManhuaEpisodeSegmentPlan {
   const text = String(md || "");
   const segments: ManhuaEpisodeSegmentBeat[] = [];
-  const re = /(?:^|\n)#{2,4}\s*段\s*0*(\d{1,2})\s*\n([\s\S]*?)(?=\n#{2,4}\s*段\s*0*\d|\n#{2,3}\s*片尾钩子|\n##\s*第\d+集|\n##\s[^#]|$)/gi;
+  const re = /(?:^|\n)#{2,4}\s*段\s*0*(\d+)\s*\n([\s\S]*?)(?=\n#{2,4}\s*段\s*0*\d|\n#{2,3}\s*片尾钩子|\n##\s*第\d+集|\n##\s[^#]|$)/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     const index = Math.floor(Number(m[1]));
-    if (!Number.isFinite(index) || index < 1 || index > 24) continue;
+    if (!Number.isSafeInteger(index) || index < 1) continue;
     const block = m[2] || "";
     const beat = emptyBeat(index);
     for (const field of FIELD_KEYS) {
@@ -426,9 +426,9 @@ export function parseManhuaEpisodeSegmentPlanFromMarkdown(md: string): ManhuaEpi
   }
   const ordered = Array.from(byIndex.values()).sort((a, b) => a.index - b.index);
   return {
-    segmentCount: MANHUA_EPISODE_SEGMENT_COUNT,
+    segmentCount: ordered.length,
     durationSecPerSegment: MANHUA_EPISODE_SEGMENT_DURATION_SEC,
-    targetSec: MANHUA_EPISODE_SEGMENT_TARGET_SEC,
+    targetSec: ordered.length * MANHUA_EPISODE_SEGMENT_DURATION_SEC,
     segments: ordered,
   };
 }
@@ -454,15 +454,17 @@ export function evaluateManhuaEpisodeSegmentPlanQuality(
   plan: ManhuaEpisodeSegmentPlan | null | undefined,
   requiredCount:
     | number
-    | { min?: number; max?: number } = {
+    | { mode?: "actual" | "layout"; min?: number; max?: number } = {
       min: MANHUA_EPISODE_SEGMENT_COUNT_MIN,
       max: MANHUA_EPISODE_SEGMENT_COUNT_MAX,
     },
 ): ManhuaEpisodeSegmentPlanQuality {
   const issues: string[] = [];
   const segments = plan?.segments || [];
+  // 原稿验收覆盖实际全表；新写作可显式使用原有布局目标。
+  const actual = typeof requiredCount !== "number" && requiredCount.mode === "actual";
   const minRequired =
-    typeof requiredCount === "number"
+    actual ? Math.max(1, segments.length) : typeof requiredCount === "number"
       ? Math.max(1, Math.min(24, requiredCount))
       : Math.max(
           1,
@@ -472,7 +474,7 @@ export function evaluateManhuaEpisodeSegmentPlanQuality(
           ),
         );
   const maxRequired =
-    typeof requiredCount === "number"
+    actual ? minRequired : typeof requiredCount === "number"
       ? minRequired
       : Math.max(
           minRequired,
@@ -484,23 +486,34 @@ export function evaluateManhuaEpisodeSegmentPlanQuality(
 
   let readyCount = 0;
   const seenDialogue: string[] = [];
+  if (actual && new Set(segments.map((s) => s.index)).size !== segments.length) {
+    issues.push("可拍表存在重复段号，请先确认原稿段顺序");
+  }
 
-  // 从段 1 连续验收到 max；允许在 [min,max] 提前收束
-  for (let i = 1; i <= maxRequired; i++) {
-    const beat = segments.find((s) => s.index === i);
+  const orderedSegments = [...segments].sort((a, b) => a.index - b.index);
+  // 原稿逐条验完，段号断档也不能让后段字段逃过检查。
+  for (let position = 0; position < maxRequired; position++) {
+    const i = actual ? (orderedSegments[position]?.index ?? position + 1) : position + 1;
+    const beat = actual ? orderedSegments[position] : segments.find((s) => s.index === i);
+    if (actual && beat && i !== position + 1) {
+      issues.push(`段号不连续：期望段 ${String(position + 1).padStart(2, "0")}，实际段 ${i}`);
+    }
     if (!beat) {
       if (readyCount < minRequired) {
         issues.push(`缺段 ${String(i).padStart(2, "0")}`);
       }
+      if (actual) continue;
       break;
     }
     const missing = FIELD_KEYS.filter((f) => !String(beat[f.key] || "").trim()).map((f) => f.aliases[0]);
     if (missing.length) {
       issues.push(`段${String(i).padStart(2, "0")} 缺字段：${missing.join("、")}`);
+      if (actual) continue;
       break;
     }
     if (isFillerDialogue(beat.dialogueZh)) {
       issues.push(`段${String(i).padStart(2, "0")} 对白灌水或过短`);
+      if (actual) continue;
       break;
     }
     const quotes = countManhuaSegmentDialogueQuotes(beat.dialogueZh);
@@ -508,11 +521,13 @@ export function evaluateManhuaEpisodeSegmentPlanQuality(
       issues.push(
         `段${String(i).padStart(2, "0")} 对白仅 ${quotes} 句「」，约15秒段至少 ${MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES} 句（推荐3–4句）`,
       );
+      if (actual) continue;
       break;
     }
     const intent = String(beat.intentZh || "").trim();
     if (intent.length < 4) {
       issues.push(`段${String(i).padStart(2, "0")} 缺本段意图：须写清观众应感到什么`);
+      if (actual) continue;
       break;
     }
     const perf = String(beat.performanceZh || "").trim();
@@ -520,10 +535,12 @@ export function evaluateManhuaEpisodeSegmentPlanQuality(
       issues.push(
         `段${String(i).padStart(2, "0")} 表演过薄：须写清表情/肢体/情绪起伏（可拍）`,
       );
+      if (actual) continue;
       break;
     }
     if (seenDialogue.some((d) => nearDuplicate(d, beat.dialogueZh))) {
       issues.push(`段${String(i).padStart(2, "0")} 对白与他段重复`);
+      if (actual) continue;
       break;
     }
     seenDialogue.push(beat.dialogueZh);
@@ -532,7 +549,7 @@ export function evaluateManhuaEpisodeSegmentPlanQuality(
 
   if (readyCount < minRequired) {
     issues.unshift(
-      `可拍段不足：需要 ${minRequired}–${maxRequired} 段，当前连续合格 ${readyCount} 段`,
+      `可拍段不足：需要 ${minRequired}–${maxRequired} 段，当前${actual ? "" : "连续"}合格 ${readyCount} 段`,
     );
   }
 
@@ -543,7 +560,7 @@ export function evaluateManhuaEpisodeSegmentPlanQuality(
     .map((s) => String(s.sceneZh || "").replace(/\s+/g, ""))
     .filter(Boolean);
   const uniqueScenes = new Set(allScenes).size;
-  if (readyCount >= minRequired && uniqueScenes < 2) {
+  if (readyCount >= minRequired && (!actual || segments.length > 1) && uniqueScenes < 2) {
     issues.push(
       `场景几乎不换场：整集所有段都在同一场景复读，须有空间/氛围递进`,
     );
@@ -553,7 +570,7 @@ export function evaluateManhuaEpisodeSegmentPlanQuality(
     ok: readyCount >= minRequired && readyCount <= maxRequired && issues.length === 0,
     readyCount,
     requiredCount: minRequired,
-    issues: issues.slice(0, 16),
+    issues: actual ? issues : issues.slice(0, 16),
   };
 }
 
@@ -730,7 +747,7 @@ export function formatManhuaEpisodeSegmentPlanBeatsBlock(
       ].join("\n"),
     );
     return [
-      `【段${String(s.index).padStart(2, "0")}·${MANHUA_EPISODE_SEGMENT_DURATION_SEC}s】`,
+      `【段${String(s.index).padStart(2, "0")}·原稿】`,
       compileManhuaDirectedSegmentPrompt({
         segmentIndex: s.index,
         intentZh: s.intentZh,
@@ -740,5 +757,5 @@ export function formatManhuaEpisodeSegmentPlanBeatsBlock(
       }),
     ].join("\n");
   });
-  return `【已确认五至六段可拍表·禁止改写成灌水】\n${lines.join("\n\n")}`;
+  return `【已确认原稿可拍表·共${segs.length}段·保留完整内容】\n${lines.join("\n\n")}`;
 }

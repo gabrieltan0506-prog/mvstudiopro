@@ -94,7 +94,8 @@ describe("jsonDirectorMiddleware", () => {
     expect(motion).toContain("【第1段·12s】边关烽火台");
     // 断言秒轴的稳定内容（时间码、动作、说话人、台词、景别），不锁整行拼法。
     // 原先锁死的是更早的紧凑格式，字段一调整这条就变成假红灯。
-    expect(motion).toContain("0–12s：");
+    expect(motion).toContain("0–4s：");
+    expect(motion).toContain("4–12秒仅保持末态留白");
     expect(motion).toContain("亮火信");
     expect(motion).toContain("@角色5");
     expect(motion).toContain("说「拿着。」");

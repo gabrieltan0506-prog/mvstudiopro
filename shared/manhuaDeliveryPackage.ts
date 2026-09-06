@@ -1,9 +1,12 @@
 /**
- * 漫剧交付包：成色交接 / 字幕 / 配音检查项与可导出摘要。
+ * 漫剧交付要求：成色交接 / 字幕 / 配音说明，不是媒体产物或验收回执。
  * 成色字段对齐行业 ACES 交接习惯，前台对创作者用「成色交接」中性说法。
  */
 
 export type ManhuaDeliveryLocale = "zh" | "en" | "ja" | "ko" | "es" | "ru";
+
+export const MANHUA_DELIVERY_REQUIREMENTS_HINT_ZH =
+  "这里只记录交付要求，不代表成品已验收，也不会自动生成配音、分轨或完成质检。";
 
 export const MANHUA_DELIVERY_LOCALE_LABEL_ZH: Record<ManhuaDeliveryLocale, string> = {
   zh: "中文",
@@ -184,7 +187,10 @@ export function formatManhuaDeliveryPackageMarkdown(pkg: ManhuaDeliveryPackage):
   const dub = pkg.dubbing;
   const color = pkg.color;
   return [
-    `# 交付包 · ${pkg.seriesTitle}`,
+    `# 交付说明 · ${pkg.seriesTitle}`,
+    "",
+    MANHUA_DELIVERY_REQUIREMENTS_HINT_ZH,
+    "本说明不包含视频、字幕文件或音频分轨；媒体文件须单独生成、验收并下载。",
     "",
     `覆盖：${eps}`,
     `更新：${pkg.updatedAtIso}`,
@@ -218,6 +224,7 @@ export function formatManhuaDeliveryPackageMarkdown(pkg: ManhuaDeliveryPackage):
 }
 
 export type ManhuaDeliveryPackageProgress = {
+  /** 历史接口保留：只统计说明字段，禁止用作媒体就绪或验收依据。 */
   total: number;
   done: number;
   labelZh: string;
@@ -239,6 +246,6 @@ export function summarizeManhuaDeliveryPackageProgress(
   return {
     total: flags.length,
     done,
-    labelZh: `交付包 ${done}/${flags.length} 项已就绪`,
+    labelZh: "交付要求 · 不代表成品已验收",
   };
 }

@@ -179,6 +179,34 @@ describe("canvasVideoTask 超时对账 + 幂等", () => {
     return taskId;
   }
 
+  it("试片预留 taskId 与项目身份原样落盘，旧任务仍可不带该字段", async () => {
+    const m = await mod();
+    const taskId = "cv_pilot_test_reserved_01";
+    const manhuaPilot = {
+      projectVersion: "a".repeat(64),
+      episodeIndex: 2,
+      segmentIndex: 1,
+      intent: "pilot" as const,
+      videoModel: "seedance-2.5",
+    };
+    const task = await m.createCanvasVideoTask({
+      taskId,
+      userId: 7,
+      creditsCharged: 10,
+      idempotencyKey: "pilot-test-key",
+      engine: "seedance25-evolink",
+      label: "试片",
+      prompt: "虚构测试提示词",
+      aspectRatio: "9:16",
+      duration: 10,
+      generateAudio: true,
+      manhuaPilot,
+    });
+    expect(task.taskId).toBe(taskId);
+    await until(async () => Boolean((await readTaskFile(taskId)).manhuaPilot));
+    expect(await readTaskFile(taskId)).toMatchObject({ taskId, manhuaPilot });
+  });
+
   it("968s 后成功：新默认线内不误杀，正常入账", async () => {
     const m = await mod();
     // 创建时间回拨 968s（< 1500s 上限）——4K 实测耗时，旧默认 900s 会在这里误杀

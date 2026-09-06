@@ -177,6 +177,7 @@ describe("ManhuaDirectorBoardOverlay UI", () => {
 
     expect(next).not.toBe(overlay);
     expect(next.userAdjusted).toBe(true);
+    expect(next.needsReview).toBe(true);
     expect(next.actorRoutes[0].source).toBe("user_adjusted");
     expect(next.actorRoutes[0].confidence).toBe(1);
     expect(next.actorRoutes[0].points).toEqual([

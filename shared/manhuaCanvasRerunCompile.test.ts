@@ -38,7 +38,7 @@ describe("manhuaCanvasRerunCompile", () => {
     expect(shouldRecompileManhuaBlockOnRerun("clip-e01-g02")).toBe(true);
     expect(isManhuaClipBlockId("clip-e01-g02")).toBe(true);
     expect(isManhuaKeyartBlockId("keyart-e01-s03")).toBe(true);
-    expect(shouldRecompileManhuaBlockOnRerun("keyart-e01-s03")).toBe(false);
+    expect(shouldRecompileManhuaBlockOnRerun("keyart-e01-s03")).toBe(true);
     expect(shouldRecompileManhuaBlockOnRerun("block-abc")).toBe(false);
   });
 
