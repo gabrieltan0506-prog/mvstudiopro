@@ -5795,7 +5795,7 @@ async function executeNativeDeepReadBatch(
 
       /** 通过即停；三档未过则零调用选择最佳原稿进入整形。 */
       /** 重试稿合并：把该段被拒的各稿与最终采用稿交给函数，返回一份 JSON；合并统计写进 advisory。 */
-      const applyRetryDraftMerge = (segmentIndex: number, finalAttemptNumber: number, finalResult: SegmentAttemptResult, finalPassedGate: boolean): SegmentAttemptResult => {
+      const applyRetryDraftMerge = async (segmentIndex: number, finalAttemptNumber: number, finalResult: SegmentAttemptResult, finalPassedGate: boolean): Promise<SegmentAttemptResult> => {
         if (!deps.mergeRetryDrafts) return finalResult;
         const rejected = (rejectedAttempts.get(segmentIndex) ?? []).filter((row) => row.attemptNumber !== finalAttemptNumber);
         if (!rejected.length) return finalResult;
@@ -5806,6 +5806,20 @@ async function executeNativeDeepReadBatch(
         ];
         const merged = deps.mergeRetryDrafts({ segmentIndex, startSec: segment.startSec, endSec: segment.endSec, drafts, baseAttemptNumber: finalAttemptNumber });
         console.info(`[nativeDeepRead] 第${episode.episodeIndex}集${merged.summaryZh}`);
+        // 0907 用户令：合并统计也打进面板进度行，不只挂在改进建议里
+        await emitVisualModelReceipt({
+          callId: `${episodeRequestId}:segment-${segmentIndex}:retry-drafts-merged`,
+          model: merged.summaryZh,
+          route: "retry_drafts_merged",
+          stage: "visual_parse",
+          status: "completed",
+          batchRequestId: episodeRequestId,
+          episodeIndexes: [episode.episodeIndex],
+          chunkIndex: segmentIndex,
+          segmentCount,
+          videoCount: 1,
+          attemptNumber: finalAttemptNumber,
+        }, params.onModelReceipt);
         return {
           ...finalResult,
           raw: merged.raw,
@@ -5871,7 +5885,7 @@ async function executeNativeDeepReadBatch(
                 temperature,
                 rejectedReasonZh,
               });
-              return attemptIndex > 0 ? applyRetryDraftMerge(input.segmentIndex, attemptIndex + 1, accepted, true) : accepted;
+              return attemptIndex > 0 ? await applyRetryDraftMerge(input.segmentIndex, attemptIndex + 1, accepted, true) : accepted;
             } catch (error) {
               if (params.abortSignal?.aborted) throw error;
               if (error instanceof Error && error.name === "NativeDeepReadEvidencePersistenceError") throw error;
@@ -6011,7 +6025,7 @@ async function executeNativeDeepReadBatch(
               reasonZh: row.reasonZh, rawAttemptEvidenceObjectName: row.result.rawAttemptEvidenceObjectName })),
           };
           console.info(`[nativeDeepRead] 第${input.segmentIndex + 1}段三档未过，选择第${best.attemptNumber}份原稿进入整形`);
-          return applyRetryDraftMerge(input.segmentIndex, best.attemptNumber, best.result, false);
+          return await applyRetryDraftMerge(input.segmentIndex, best.attemptNumber, best.result, false);
         }
         // 三份均无可解析的非空证据时，不能制造空稿。
         logFinalGateFailure(input.segmentIndex, retryError);

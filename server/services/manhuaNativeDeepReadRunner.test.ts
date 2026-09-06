@@ -2762,10 +2762,19 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
     healthy.shots = (healthy.shots as Array<Record<string, unknown>>).filter((s) => Number(s.startSec) >= span.startSec + 6);
     const postVertex = vi.fn().mockResolvedValueOnce(geminiResponse(invalid)).mockResolvedValueOnce(geminiResponse(healthy));
     const deps = makeRunnerDeps({ postVertex, mergeRetryDrafts: mergeNativeDeepReadRetryDrafts });
-    const result = await runManhuaNativeDeepReadSelectedSegments(selectedParams([3]), deps);
+    const receipts: Array<Record<string, unknown>> = [];
+    const result = await runManhuaNativeDeepReadSelectedSegments({
+      ...selectedParams([3]),
+      onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
+    }, deps);
     const hints = (result.segments[0]!.raw.shots as Array<{ hintZh: string }>).map((s) => s.hintZh);
     expect(hints).toContain("第一发独有镜");
     expect(result.segments[0]!.advisories.some((a) => a.code === "retry_drafts_merged")).toBe(true);
+    // 0907：合并统计也作为进度回执发出（面板进度行）
+    const mergedReceipt = receipts.find((row) => row.route === "retry_drafts_merged");
+    expect(mergedReceipt).toBeDefined();
+    expect(String(mergedReceipt!.model)).toMatch(/^第4段 2 稿合并：以第2稿为底/);
+    expect(mergedReceipt!.chunkIndex).toBe(3);
     // 不接函数：第 2 发原样
     const postVertex2 = vi.fn().mockResolvedValueOnce(geminiResponse(invalid)).mockResolvedValueOnce(geminiResponse(healthy));
     const plain = await runManhuaNativeDeepReadSelectedSegments(selectedParams([3]), makeRunnerDeps({ postVertex: postVertex2 }));
