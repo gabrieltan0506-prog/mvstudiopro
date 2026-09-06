@@ -411,7 +411,7 @@ describe("模型与通道收口", () => {
     expect(positive).not.toContain("不作为拒收依据");
     // 只更新证据段及环境/道具/动作说明，其他字段结构保持。
     expect(createHash("sha256").update(JSON.stringify(NATIVE_DEEP_READ_RESPONSE_SCHEMA)).digest("hex"))
-      .toBe("0da51b7b8660e0e4d293da6909243ffec3dc46c49bef7c4fa9d7c96d88003d75");
+      .toBe("188453ff58a8cd15464da434a0664f15bde6e57602ca9f4cd9d05b65e1b0be75");
   });
 
   it("请求组装层拒绝非法尝试序号绕过冻结三档", () => {
@@ -428,7 +428,6 @@ describe("模型与通道收口", () => {
     // 0830 用户拍板：keyMoments 进 required，逼模型在输出预算紧张时也必须吐。
     expect(NATIVE_DEEP_READ_RESPONSE_SCHEMA.required).toEqual([
       "shots", "keyMoments", "subtitles", "audioResolution", "beatStructureZh", "classification",
-      "reusableZh", "genPromptHintZh",
     ]);
     // v12：keyMoments 刻意排在 shots 之后、其余字段之前——responseSchema 越靠后
     // 越先被 MAX_TOKENS 截断（classification 排末位就是因此长期被截）。
@@ -3945,6 +3944,40 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     };
   }
 
+  it("固定旧指纹的双缓存恢复缺栏，不重读、不重整形、不重复计费", async () => {
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
+    const entry = makeCacheEntry({ episode, segmentIndex: 0 });
+    // 固定值来自 PR 原提交，不能用当前实现动态生成来掩盖身份变化。
+    const oldFingerprint = "80ff654102a94fa9e3aad3c2a0af748b1ec52ecab86644725396d43a16b0d7ef";
+    expect(entry.fingerprint).toBe(oldFingerprint);
+    entry.fingerprint = oldFingerprint;
+    const deps = makeRunnerDeps({
+      readSegmentCache: vi.fn(async () => ({ entry, generation: "7" })) as never,
+      readStructuredBatchCache: vi.fn(async () => ({
+        raw: { answer: JSON.stringify({ ...entry.raw, reusableZh: undefined, genPromptHintZh: " " }) },
+      })) as never,
+    });
+    const result = await runManhuaNativeDeepReadBatch({
+      episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey,
+    }, deps);
+    expect(deps.prepareVideos).not.toHaveBeenCalled();
+    expect(deps.postVertex).not.toHaveBeenCalled();
+    expect(deps.postEvolink).not.toHaveBeenCalled();
+    expect(deps.postGeminiApi).not.toHaveBeenCalled();
+    expect(deps.invokeGlmStructuring).not.toHaveBeenCalled();
+    expect(result.episodes[0]!.result.reusableZh).toContain("开场即冲突的通用做法");
+    expect(result.episodes[0]!.result.genPromptHintZh).toContain("景别递进+顶光");
+    expect(result.usage.costCny).toBe(0);
+  });
+
+  it("整形调用身份与旧提交一致", async () => {
+    const { nativeDeepReadStructuredBatchCallId } = await import("./manhuaNativeDeepReadRunner");
+    expect(nativeDeepReadStructuredBatchCallId({
+      seriesKey: cacheSeriesKey, sourceDigest, episodeIndex: 3, segmentIndexes: [0],
+      rawSegments: [{ reusableZh: "真实手法", genPromptHintZh: "真实要素" }],
+    })).toBe("native-structuring-99efa2146186f84346c411a6b7e2d3c8ee020c7bc4de125e6f2830bf154da3b9");
+  });
+
   it("指纹包含真实来源、hint、段参数和 fps，任一变化均失效", () => {
     const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
     const base = nativeDeepReadSegmentCacheFingerprint({
@@ -4780,11 +4813,8 @@ describe("0906 学习两栏必填与整形漏栏恢复", () => {
 
 
 describe("0906 摘要必填跨路径回归", () => {
-  it("冻结读片 schema 仅新增两栏必填和它们的说明", () => {
+  it("两栏非空检查不改变原始读片 schema，历史请求指纹保持", () => {
     const previous = JSON.parse(JSON.stringify(NATIVE_DEEP_READ_RESPONSE_SCHEMA));
-    previous.required = previous.required.filter((key: string) => !["reusableZh", "genPromptHintZh"].includes(key));
-    delete previous.properties.reusableZh.description;
-    delete previous.properties.genPromptHintZh.description;
     expect(createHash("sha256").update(JSON.stringify(previous)).digest("hex"))
       .toBe("188453ff58a8cd15464da434a0664f15bde6e57602ca9f4cd9d05b65e1b0be75");
   });

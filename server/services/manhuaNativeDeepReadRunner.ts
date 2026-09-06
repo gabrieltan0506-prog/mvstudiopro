@@ -360,8 +360,8 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = deepFreezeNativeContract({
     },
     beatStructureZh: { type: "STRING", maxLength: 90 },
     moodArcZh: { type: "STRING", maxLength: 70 },
-    reusableZh: { type: "STRING", description: "必填非空文本：依据本段剧情提炼可复用手法。" },
-    genPromptHintZh: { type: "STRING", description: "必填非空文本：依据本段剧情提炼构图、运镜、调度、表演与光影要素。" },
+    reusableZh: { type: "STRING" },
+    genPromptHintZh: { type: "STRING" },
     classification: {
       type: "OBJECT",
       properties: {
@@ -388,7 +388,6 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = deepFreezeNativeContract({
    */
   required: [
     "shots", "keyMoments", "subtitles", "audioResolution", "beatStructureZh", "classification",
-    "reusableZh", "genPromptHintZh",
   ],
 } as const);
 
@@ -1387,7 +1386,7 @@ export function nativeDeepReadStructuringJsonSchema(): Record<string, unknown> {
   } as NativeResponseSchemaNode;
   base.properties!.templateTitleZh = { type: "STRING", maxLength: 60 };
   const schema = geminiSchemaToJsonSchema(base);
-  schema.required = Array.from(new Set([...(schema.required as string[]), "moodArcZh"]));
+  schema.required = Array.from(new Set([...(schema.required as string[]), "moodArcZh", "reusableZh", "genPromptHintZh"]));
   for (const key of ["reusableZh", "genPromptHintZh"]) {
     const property = (schema.properties as Record<string, Record<string, unknown>>)[key]!;
     property.minLength = 1;
@@ -1511,8 +1510,8 @@ export function nativeDeepReadFrozenContractSha256(): string {
  * 改毕即**重新冻结**（`NATIVE_DEEP_READ_KEY_SHOT_WINDOW_SEC`、两档必填字段表、提示词两档说明与本摘要一起冻结，再改需用户授权）。
  * 同时整形 maxTokens 退回 131,072、链序 structuring_chain（用户 0905 拍板）。 */
 /** 0905 用户重新授权：整形链改五档逐档 30 分钟切换 + maxTokens 262K，冻结集合随之换代（只作废整形批次缓存，不动读片分片缓存）。 */
-/** 0906 当前用户明确授权仅将 reusableZh / genPromptHintZh 改为必填非空；其他冻结项不变。 */
-export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "accdcb01c3d2cef0d7ee5db9ef6d2516facc57b3e10fdb6771b053b69f482289" as const;
+/** 0906 两栏必填落在独立整形schema和服务端检查；保留读片契约与旧付费证据身份。 */
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "3642723bbe094d97333bb0e890223f1ed7b9cfe464823094de6c05604d0c9eac" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
   const actual = nativeDeepReadFrozenContractSha256();
