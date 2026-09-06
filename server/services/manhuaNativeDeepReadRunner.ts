@@ -1389,8 +1389,9 @@ export function nativeDeepReadStructuringJsonSchema(): Record<string, unknown> {
   schema.required = Array.from(new Set([...(schema.required as string[]), "moodArcZh", "reusableZh", "genPromptHintZh"]));
   for (const key of ["reusableZh", "genPromptHintZh"]) {
     const property = (schema.properties as Record<string, Record<string, unknown>>)[key]!;
-    property.minLength = 1;
-    property.pattern = "\\S";
+    property.minLength = 2;
+    // 不使用单字符 pattern：避免全文匹配式约束解码把摘要限制为一个字符。
+    // 空白与内容有效性由本地共享校验兜底，失败时仅恢复同源原稿。
   }
   return schema;
 }

@@ -525,6 +525,17 @@ describe("0906 HTML 摘要必交", () => {
     expect(html).not.toContain("本集未整理出该项");
     expect(raw.reusableZh).toBeUndefined();
   });
+  it("单字整形不能成为成品，两栏恢复全部三段正文", async () => {
+    seedThreeSegments();
+    const name = "manhua-template-learn/episode-glm-evidence/single-letter/parsed.json";
+    state.objects.set(name, { parsed: { ...segmentEntry(0).raw, reusableZh: "第", genPromptHintZh: "国" } });
+    await renderNativeEvidenceReportFromObjectNames({ ...baseInput(), glmCardObjectName: name });
+    const html = state.uploads[0]!.html;
+    for (const key of ["reusableZh", "genPromptHintZh"] as const) {
+      for (let index = 0; index < 3; index++) expect(html).toContain(String(segmentEntry(index).raw[key]));
+    }
+    expect(html).not.toMatch(/>第<\/div>|>国<\/div>/);
+  });
   it("原稿某片缺栏时不给出貌似完整的商品报告，也不上传空报告", async () => {
     seedThreeSegments();
     state.objects.set(NAMES[1]!, segmentEntry(1, { reusableZh: " " }));

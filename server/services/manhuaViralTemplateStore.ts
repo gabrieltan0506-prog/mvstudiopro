@@ -3,7 +3,7 @@
  * proposals/ = 待审；approved/ = 人审通过。产品列表 = GCS approved
  * （出厂种子 2026-08-10 已清空，shared 库只剩合并逻辑，见 manhuaViralTemplateBank.ts 文件头）。
  */
-import { assertNativeRequiredSummary } from "../../shared/manhuaNativeRequiredSummary.js";
+import { assertNativeRequiredSummary, nativeRequiredSummarySchema, restoreNativeRequiredSummary } from "../../shared/manhuaNativeRequiredSummary.js";
 import { randomBytes } from "node:crypto";
 import {
   describeManhuaTemplateLearnSourceZh,
@@ -1149,6 +1149,38 @@ export async function approveManhuaViralTemplate(input: {
   }
 }
 
+/** 旧提案的坏摘要只从其 provenance 精确指向的全部同源原稿恢复，不重新读片。 */
+export async function restoreStoredNativeEpisodeSummary(card: ManhuaViralTemplateCard): Promise<ManhuaViralTemplateCard> {
+  const native = card.provenance?.nativeVideoDeepRead;
+  if (!native || nativeRequiredSummarySchema.safeParse(card).success) return card;
+  const match = /^tpl_native_([0-9a-z_-]{1,40})_ep(\d{3})$/i.exec(card.id);
+  const names = native.segmentEvidenceObjectNames ?? [];
+  const indexes = [...(native.completedSegmentIndexes ?? [])].sort((a, b) => a - b);
+  if (!match || !native.sourceDigest || !names.length || names.length !== indexes.length
+    || names.length !== native.successSegments || indexes.some((value, index) => value !== index)
+    || new Set(names).size !== names.length) {
+    assertNativeRequiredSummary(card);
+    return card;
+  }
+  const rows: Array<{ index: number; raw: Record<string, unknown> }> = [];
+  for (const name of names) {
+    if (!name.startsWith(`manhua-template-learn/segment-evidence/${card.id}/${native.sourceDigest}/`)) {
+      throw new Error("学习摘要恢复失败：原稿路径与当前卡片不一致");
+    }
+    const { buffer } = await downloadGcsObjectVersioned({ gcsUri: `gs://${getGcsBucketName()}/${name}` });
+    const evidence = JSON.parse(buffer.toString("utf8"));
+    if (evidence.seriesKey !== match[1] || evidence.episodeIndex !== Number(match[2])
+      || evidence.sourceDigest !== native.sourceDigest || !indexes.includes(evidence.segmentIndex)
+      || !evidence.raw || typeof evidence.raw !== "object" || Array.isArray(evidence.raw)) {
+      throw new Error("学习摘要恢复失败：原稿身份与当前卡片不一致");
+    }
+    rows.push({ index: evidence.segmentIndex, raw: evidence.raw });
+  }
+  rows.sort((a, b) => a.index - b.index);
+  if (rows.some((row, index) => row.index !== index)) throw new Error("学习摘要恢复失败：原稿分片不完整");
+  return restoreNativeRequiredSummary(card, rows.map(row => row.raw));
+}
+
 async function approveManhuaViralTemplateLocked(input: {
   id?: string;
   card?: unknown;
@@ -1159,7 +1191,7 @@ async function approveManhuaViralTemplateLocked(input: {
   if (!id) throw new Error("找不到可批准的提案（请提供提案 id）");
   // 只信落盘：防止凭内存/客户端构造一份从未真实学成的卡片直接入库
   const proposalVersioned = await getGcsManhuaViralProposalVersioned(id);
-  const card = proposalVersioned.card;
+  const card = await restoreStoredNativeEpisodeSummary(proposalVersioned.card);
   if (card.status !== "proposed") {
     throw new Error("该提案不是待审状态（可能已批准入库），无需重复批准");
   }
@@ -1258,19 +1290,37 @@ async function approveManhuaViralTemplateLocked(input: {
     const previousIndexes = [...(previous?.completedSegmentIndexes || [])].sort((a, b) => a - b);
     const nextIndexes = [...(next?.completedSegmentIndexes || [])].sort((a, b) => a - b);
     const nextSet = new Set(nextIndexes);
+    // 完整重新学习有独立批次与新快照；不能套用增量补全的分片数严格增加条件。
+    const isCompleteRelearn = Boolean(previous && next
+      && next.assemblyComplete && !next.truncated
+      && next.attemptedSegments > 0 && next.successSegments === next.attemptedSegments
+      && nextIndexes.length === next.attemptedSegments
+      && nextIndexes.every((value, index) => value === index)
+      && next.batchRequestId && previous.batchRequestId && next.batchRequestId !== previous.batchRequestId
+      && next.snapshotSha256 && next.snapshotSha256 !== previous.snapshotSha256
+      && Date.parse(card.updatedAt ?? "") > Date.parse(existingApproved.updatedAt ?? "")
+      && (next.sourceDurationSec ?? 0) >= (previous.sourceDurationSec ?? 0)
+      && next.segmentEvidenceObjectNames?.length === next.attemptedSegments
+      && new Set(next.segmentEvidenceObjectNames).size === next.attemptedSegments
+      && next.glmParsedObjectName);
     if (
       !previous
       || !next
       || !previous.sourceDigest
       || previous.sourceDigest !== next.sourceDigest
-      || nextIndexes.length <= previousIndexes.length
-      || !previousIndexes.every((index) => nextSet.has(index))
+      || (!isCompleteRelearn && (nextIndexes.length <= previousIndexes.length
+        || !previousIndexes.every((index) => nextSet.has(index))))
     ) {
       throw new Error("原生分集补全不是同一来源的严格进度升级，拒绝替换正式卡");
     }
+    if (isCompleteRelearn && existingApproved.audioStory?.hasAudio
+      && (!card.audioStory?.hasAudio || card.audioStory.durationSec < existingApproved.audioStory.durationSec)) {
+      throw new Error("重新学习结果缺少完整音轨，已保留正式卡");
+    }
     const now = new Date().toISOString();
     const replacement = parseManhuaViralTemplateCard({
-      ...mergeNativeEpisodeTemplateLearning(existingApproved, card),
+      // 重新学习使用本批次整卡，旧版已归档；不能把两次分镜和费用混成一份证据。
+      ...(isCompleteRelearn ? card : mergeNativeEpisodeTemplateLearning(existingApproved, card)),
       status: "approved",
       publicCode: existingApproved.publicCode,
       approvedAt: existingApproved.approvedAt || now,
