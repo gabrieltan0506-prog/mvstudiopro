@@ -1384,7 +1384,25 @@ export function nativeDeepReadStructuringJsonSchema(): Record<string, unknown> {
     properties: Object.fromEntries(["emotionZh", "narrativeZh", "performanceZh", "audiovisualZh", "audienceZh"].map((k) => [k, { type: "STRING", maxLength: 200 }])),
   } as NativeResponseSchemaNode;
   base.properties!.templateTitleZh = { type: "STRING", maxLength: 60 };
-  return geminiSchemaToJsonSchema(base);
+  const schema = geminiSchemaToJsonSchema(base) as { required?: string[] };
+  // 0906 实弹：≤4 片单批整形时 Qwen 严格 schema 把非必填的 reusableZh/genPromptHintZh 直接省掉，报告「本集未整理出该项」。
+  // 四段总结是这张卡最值钱的部分，整形输出一律必填（读片侧契约不动，只改整形 schema）。
+  schema.required = Array.from(new Set([...(schema.required ?? []), ...NATIVE_DEEP_READ_STRUCTURING_REQUIRED_PROSE_FIELDS]));
+  return schema as Record<string, unknown>;
+}
+
+/** 整形输出必填的四段总结；缺任一项＝坏输出，走判坏重试（同档降温→换路由）。 */
+export const NATIVE_DEEP_READ_STRUCTURING_REQUIRED_PROSE_FIELDS = ["beatStructureZh", "moodArcZh", "reusableZh", "genPromptHintZh"] as const;
+/** 只对输入分段里本来就有内容的总结字段要求输出非空；分段都没写的字段不苛求（历史证据/测试桩）。 */
+export function missingNativeDeepReadStructuringProse(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  output: Record<string, unknown>,
+): string[] {
+  // 只看通过版分段（gateMarked 的是被拒版，其总结不作要求来源）
+  const sources = rows.map(unwrapNativeDeepReadStructuredAnswerEnvelope).filter((row) => row.gateMarked !== true);
+  return NATIVE_DEEP_READ_STRUCTURING_REQUIRED_PROSE_FIELDS.filter((key) =>
+    sources.some((row) => String(row[key] ?? "").trim())
+    && !String(output[key] ?? "").trim());
 }
 
 export const NATIVE_DEEP_READ_STRUCTURING_JSON_SCHEMA_NAME = "native_structuring_card";
@@ -6461,6 +6479,13 @@ async function executeNativeDeepReadBatch(
           if ("localFallback" in result) return result.raw;
           try {
             assertNativeDeepReadShotObservationsPreserved(input.rows, result.raw);
+            // 0906 实弹：四段总结缺项也算坏（单批 Qwen 曾整段省掉 reusableZh/genPromptHintZh）
+            const missingProse = missingNativeDeepReadStructuringProse(input.rows, result.raw);
+            if (missingProse.length) {
+              const error = new Error(`整形输出缺少总结字段 ${missingProse.join("、")}`);
+              error.name = NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
+              throw error;
+            }
             // 0906 用户令「镜数不合」也算坏：批次留存率低于拒收线，同样降温重试再换路由
             const keptShots = Array.isArray(result.raw.shots) ? (result.raw.shots as unknown[]).length : 0;
             if (inputShotCount > 0 && keptShots > 0 && keptShots / inputShotCount < NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT) {
@@ -6516,6 +6541,12 @@ async function executeNativeDeepReadBatch(
         if (cached) {
           try {
             assertNativeDeepReadShotObservationsPreserved(rows, cached.raw);
+            const missingProse = missingNativeDeepReadStructuringProse(rows, unwrapNativeDeepReadStructuredAnswerEnvelope(cached.raw));
+            if (missingProse.length) {
+              const error = new Error(`缓存整形输出缺少总结字段 ${missingProse.join("、")}`);
+              error.name = NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
+              throw error;
+            }
           } catch (error) {
             if (!isNativeDeepReadObservationLockError(error)) throw error;
             const objectName = nativeDeepReadStructuredBatchObjectName({

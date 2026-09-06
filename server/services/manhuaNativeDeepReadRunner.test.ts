@@ -4677,6 +4677,34 @@ describe("0905 · 整形 JSON Schema（Qwen strict）", () => {
   });
 });
 
+describe("0906 · 整形四段总结必填", () => {
+  it("严格 schema required 含四段总结；读片侧冻结 schema 不动", async () => {
+    const m = await import("./manhuaNativeDeepReadRunner");
+    const schema = m.nativeDeepReadStructuringJsonSchema() as { required: string[] };
+    for (const key of ["beatStructureZh", "moodArcZh", "reusableZh", "genPromptHintZh"]) expect(schema.required).toContain(key);
+    expect((m.NATIVE_DEEP_READ_RESPONSE_SCHEMA as { required: readonly string[] }).required).not.toContain("reusableZh");
+  });
+
+  it("整形输出省掉 reusableZh → 判坏走同档降温重试，第二发补齐即入库", async () => {
+    const segments = Array.from({ length: 3 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
+    const base = makeGlmStructuringStub();
+    let calls = 0;
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }, _s: unknown, context: { temperature?: number }) => {
+      const result = await base(prompt); calls += 1;
+      if (calls === 1) { const { reusableZh: _r, genPromptHintZh: _g, ...rest } = result.raw as Record<string, unknown>; return { ...result, gateway: "plan_bj_qwen", raw: rest }; }
+      expect(context.temperature).toBe(0.75);
+      return { ...result, gateway: "plan_bj_qwen" };
+    });
+    const deps = makeRunnerDeps({ postVertex: makeSuccessfulEpisodePostVertex(segments) as never, invokeGlmStructuring: invokeGlmStructuring as never });
+    const result = await runManhuaNativeDeepReadBatch({
+      episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 180, cacheSourceDigest: "9".repeat(64) }],
+      segmentCacheSeriesKey: "prose_required",
+    }, deps);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    expect(String(result.episodes[0]!.result.reusableZh || "")).not.toBe("");
+  });
+});
+
 describe("0906 · 整形缓存与证据按整形模型分命名空间", () => {
   it("GLM 链的 callId 与 Qwen 链不同；Qwen 链与历史（无策略）callId 逐字相同，已付费缓存不失配", async () => {
     const { nativeDeepReadStructuredBatchCallId } = await import("./manhuaNativeDeepReadRunner");

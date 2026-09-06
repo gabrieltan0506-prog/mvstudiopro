@@ -508,4 +508,12 @@ describe("0905 · 分段摘要压成前/中/后", () => {
     expect(condenseSegmentedSummaryZh("一句。二句。三句。四句。五句。六句。七句。")).toBe("一句。二句。三句。四句。五句。六句。七句。");
     expect(condenseSegmentedSummaryZh("")).toBe("");
   });
+
+  it("0906：无方括号的「第1段：…第2段：…」同样按前/中/后分组（单批 Qwen 实弹格式）", async () => {
+    const { condenseSegmentedSummaryZh } = await import("./manhuaNativeReportRender");
+    const raw = "第1段：出使受命→云端惊变。第2段：谋划机缘→突遭反水。第3段：对质揭密→反杀筑基。";
+    const out = condenseSegmentedSummaryZh(raw);
+    expect(out.split("\n")).toEqual(["【前段】出使受命→云端惊变。", "【中段】谋划机缘→突遭反水。", "【后段】对质揭密→反杀筑基。"]);
+    expect(condenseSegmentedSummaryZh("第1段：只有一段。")).toBe("第1段：只有一段。");
+  });
 });

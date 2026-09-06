@@ -105,7 +105,8 @@ const mmss = (s: number): string => `${String(Math.floor(s / 60)).padStart(2, "0
 export function condenseSegmentedSummaryZh(text: string): string {
   const clean = String(text || "").trim();
   if (!clean) return "";
-  const parts = clean.split(/【第\d+段】/).map((t) => t.trim()).filter(Boolean);
+  // 0906：整形输出可能写成「第1段：…第2段：…」（无方括号，句中或换行），与「【第1段】」同样按段切
+  const parts = clean.split(/【第\d+段】|(?:^|\n|(?<=[。；;！!？?]))第\d+段[：:]/).map((t) => t.trim()).filter(Boolean);
   // 0905 用户令：只按前/中/后重新分组，内容一字不删——要压缩内容由用户另行指定
   if (parts.length < 2) return clean;
   const third = Math.ceil(parts.length / 3);
