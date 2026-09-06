@@ -542,3 +542,33 @@ describe("保留 PR1397 无括号分段兼容", () => {
     expect(condenseSegmentedSummaryZh("第1段：只有一段。")).toBe("第1段：只有一段。");
   });
 });
+
+describe("自动主题接入真实渲染入口", () => {
+  it.each([
+    ["修仙", "celadon"], ["古装权谋", "amber"], ["都市情感", "rose"],
+    ["谍战悬疑", "moon"], ["喜剧市井", "apricot"],
+  ])("读取存储卡标签%s，正文与两栏仍在，输出%s内嵌插画", async (tag, theme) => {
+    seedThreeSegments();
+    const input = { ...baseInput(), themeMetadata: { nameZh: "模板标题", classification: { narrativeFeatureTagsZh: [tag] } } };
+    const result = await renderNativeEvidenceReportFromObjectNames(input);
+    const html = state.uploads[0]!.html;
+    expect(html).toContain(`data-report-theme="${theme}"`);
+    expect(html).toMatch(/class="header-art" alt="" src="data:image\/png;base64,iVBOR/);
+    expect(html).toContain('class="prose"');
+    expect(html).toContain("反打延迟半拍");
+    expect(html).toContain("UNTRUNCATED_ACTION_END");
+    expect(html).not.toContain('<script>');
+    expect(result.bytes).toBe(Buffer.byteLength(html, "utf8"));
+    expect(result.shots).toBe(3);
+    await renderNativeEvidenceReportFromObjectNames(input);
+    expect(state.uploads[1]!.html).toBe(html);
+  });
+  it("旧CLI入口也接入主题，不另开无样式导出旁路", async () => {
+    seedThreeSegments();
+    state.listNames = [...NAMES];
+    const { renderNativeEvidenceReport } = await import("./manhuaNativeReportRender");
+    await renderNativeEvidenceReport({ labelZh: "第 4 集", evidencePrefix: "test-prefix", reportObjectName: "test-report.html" });
+    expect(state.uploads[0]!.html).toContain('data-report-theme="moon"');
+    expect(state.uploads[0]!.html).toContain("UNTRUNCATED_ACTION_END");
+  });
+});
