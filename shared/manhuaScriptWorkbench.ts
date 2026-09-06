@@ -50,6 +50,7 @@ import {
   resolveManhuaSeedanceLayoutProfile,
 } from "./manhuaSeedanceLayout.js";
 import { clampWan30Duration } from "./wanWavespeedModels.js";
+import { extractManhuaStoryboardSection, readManhuaTimedStoryboard } from "./manhuaTimedStoryboard.js";
 
 export { isManhuaClipPromptLegacyFat, stripManhuaClipForbiddenBoards };
 
@@ -558,14 +559,6 @@ function splitCameraAndAction(rawBody: string): { cameraZh: string; actionZh: st
   return { cameraZh: "", actionZh: body };
 }
 
-function extractStoryboardSection(text: string): string {
-  const board = text.match(/##\s*分镜表\s*\n+([\s\S]*?)(?=\n##\s|\n*$)/i);
-  if (board?.[1]?.trim()) return board[1].trim();
-  const beats = text.match(/##\s*(?:镜头节拍|节拍表|分镜)\s*\n+([\s\S]*?)(?=\n##\s|\n*$)/i);
-  if (beats?.[1]?.trim()) return beats[1].trim();
-  return text;
-}
-
 type ParsedShotRow = {
   index: number;
   cameraZh: string;
@@ -593,8 +586,25 @@ function enrichRowWithPerformance(row: ParsedShotRow): ParsedShotRow {
 }
 
 function parseShotRowsFromText(raw: string): ParsedShotRow[] {
-  const section = extractStoryboardSection(String(raw || "").trim());
+  const section = extractManhuaStoryboardSection(String(raw || "").trim());
   if (!section) return [];
+
+  const timed = readManhuaTimedStoryboard(section);
+  if (timed.recognized) {
+    // 与确认门禁读取同一份原始行；局部镜头预览仍可读取节选，整集确认另验完整性。
+    return timed.rows.map(row => enrichRowWithPerformance({
+      index: row.index,
+      cameraZh: row.cameraZh,
+      actionZh: row.actionZh,
+      durationSec:
+        Number.isFinite(row.endSec - row.startSec) && row.endSec > row.startSec
+          ? row.endSec - row.startSec : undefined,
+      dialogueZh:
+        /^(?:[-—–]+|无|无对白)$/.test(row.dialogueZh) ||
+        /^(?:闪回)?字幕\s*[:：]/.test(row.dialogueZh)
+          ? undefined : row.dialogueZh,
+    }));
+  }
 
   const lines = section
     .split(/\r?\n/)
@@ -602,46 +612,9 @@ function parseShotRowsFromText(raw: string): ParsedShotRow[] {
     .filter(Boolean);
 
   const byIndex = new Map<number, ParsedShotRow>();
-  let timedColumns: { index: number; time: number; camera: number; action: number; dialogue: number } | null = null;
 
   for (const line of lines) {
     if (/^\|?\s*[-:| ]+\s*\|?\s*$/.test(line)) continue;
-    const cells = line.startsWith("|")
-      ? line.replace(/^\|/, "").replace(/\|\s*$/, "").split("|").map(cell => cell.trim())
-      : [];
-    const headings = cells.map(cell => cell.replace(/\*\*/g, ""));
-    const timeColumn = headings.findIndex(cell => /^(?:秒位|时间|时间轴|起止秒位)$/.test(cell));
-    if (timeColumn >= 0) {
-      const columns = {
-        index: headings.findIndex(cell => /^(?:#|镜号|序号|镜头)$/.test(cell)),
-        time: timeColumn,
-        camera: headings.findIndex(cell => /景别|运镜|机位/.test(cell)),
-        action: headings.findIndex(cell => /^(?:画面|内容|动作)$/.test(cell)),
-        dialogue: headings.findIndex(cell => /台词|对白/.test(cell)),
-      };
-      timedColumns = columns.index >= 0 && columns.camera >= 0 && columns.action >= 0
-        ? columns : null;
-      continue;
-    }
-    // 六列生产表按表头取值，不能沿旧三列表的位置把秒位当运镜、画面当对白。
-    if (timedColumns && cells.length && /^\d+$/.test(cells[timedColumns.index] || "")) {
-      const time = (cells[timedColumns.time] || "").match(/^(\d+(?:\.\d+)?)\s*(?:-|–|—|~|～|至)\s*(\d+(?:\.\d+)?)\s*(?:s|秒)?$/i);
-      const duration = time ? Number(time[2]) - Number(time[1]) : 0;
-      const dialogue = cells[timedColumns.dialogue] || "";
-      byIndex.set(Number(cells[timedColumns.index]), enrichRowWithPerformance({
-        index: Number(cells[timedColumns.index]),
-        cameraZh: cells[timedColumns.camera] || "",
-        actionZh: cells[timedColumns.action] || "",
-        durationSec: duration > 0 && Number.isFinite(duration) ? duration : undefined,
-        // 屏幕字幕和无对白标记不是角色口播；音效列也不借用情绪字段。
-        dialogueZh: !dialogue || /^(?:[-—–]+|无|无对白)$/.test(dialogue) || /^(?:闪回)?字幕\s*[:：]/.test(dialogue)
-          ? undefined : dialogue,
-      }));
-      continue;
-    }
-    if (/^#{1,6}\s/.test(line) || (cells.length && /镜号|景别|内容|镜头/.test(line))) {
-      timedColumns = null;
-    }
     if (/镜号|景别|内容|镜头/.test(line) && /\|\s*镜|\|\s*景|\|\s*内/.test(line)) continue;
 
     // Markdown 表：| 1 | 近景 | 女主推门 | 或加台词/情绪列
@@ -708,7 +681,8 @@ export function parseWorkbenchShotsFromText(raw: string | undefined | null): Man
     index: i + 1,
     durationSec: row.durationSec || 0,
     cameraZh: row.cameraZh || DEFAULT_CAMERAS[i % DEFAULT_CAMERAS.length]!,
-    actionZh: row.actionZh.slice(0, 280),
+    // 动作参与静帧、角色匹配、成片和修订身份；展示长度不能静默裁掉生产正文。
+    actionZh: row.actionZh,
     dialogueZh: row.dialogueZh || undefined,
     emotionZh: row.emotionZh || undefined,
     voiceToneZh: row.voiceToneZh || undefined,
