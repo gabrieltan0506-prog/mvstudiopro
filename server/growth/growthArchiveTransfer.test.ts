@@ -210,13 +210,15 @@ async function workflowDownload(name: string, mode: string) {
   await Promise.all([fs.mkdir(archive), fs.mkdir(backup), fs.mkdir(bin)]);
   await fs.writeFile(path.join(archive, "batch-id.txt"), "test-batch");
   await fs.writeFile(
-    path.join(archive, "snapshot.tsv"),
+    path.join(archive, "selected.tsv"),
     `2026-09-01-00\t${"a".repeat(64)}\t100\n2026-09-01-01\t${"b".repeat(64)}\t100\n`
   );
   await executable(
     path.join(bin, "flyctl"),
     `const fs=require('node:fs');fs.appendFileSync(${JSON.stringify(path.join(dir, "calls"))},'x');
 if(${JSON.stringify(mode)}==='hang'){process.stdout.write('partial');setInterval(()=>{},50);}
+else if(${JSON.stringify(mode)}==='partial-busy' && process.argv.join(' ').includes('2026-09-01-01')){process.stderr.write('GROWTH_ARCHIVE_BUSY\\n');process.exit(42);}
+else if(${JSON.stringify(mode)}==='busy'){process.stderr.write('GROWTH_ARCHIVE_BUSY\\n');process.exit(42);}
 else if(${JSON.stringify(mode)}==='fail'){process.stderr.write('connection failed');process.exit(1);}
 else if(${JSON.stringify(mode)}==='corrupt'){process.stdout.write('not gzip');}
 else {const cp=require('node:child_process');const command=process.argv[process.argv.indexOf('-C')+1];const archiveDir=command.match(/'([^']+)'$/)[1];process.stdout.write(require('node:zlib').gzipSync(cp.execFileSync('tar',['-cf','-', '-C', ${JSON.stringify(dir)}, archiveDir],{stdio:['ignore','pipe',2]}))); }`
@@ -251,11 +253,12 @@ else {const cp=require('node:child_process');const command=process.argv[process.
       "sha256sum ",
       `${process.execPath} ${path.join(bin, "sha256sum")} `
     )
+    .replaceAll("$(seq 1 20)", "$(seq 1 2)")
     .replaceAll("sleep ", `${process.execPath} ${path.join(bin, "sleep")} `)
     .replaceAll("/tmp/growth-archive-offload", archive)
     .replaceAll("/tmp/growth-backup", backup)
     .replaceAll(
-      "node scripts/growth-archive-transfer.mjs --",
+      'node scripts/growth-archive-transfer.mjs --max-ms "$transfer_budget" --',
       `node scripts/growth-archive-transfer.mjs --idle-ms 400 --max-ms 3000 --grace-ms 80 --`
     );
   const result = await run("bash", ["-eo", "pipefail", "-c", script], {
@@ -291,6 +294,30 @@ describe.each(workflows)("%s 真实步骤离线回归", name => {
       if (mode === "hang") expect(result.stderr).toContain("无数据进度时限");
     }
   );
+  it("持续繁忙明确延期，不生成发布凭证或丢源数据", async () => {
+    const result = await workflowDownload(name, "busy");
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout.toString()).toContain("其余归档延期");
+    expect(await fs.readFile(path.join(result.dir, "calls"), "utf8")).toBe(
+      "xx"
+    );
+    await fs.stat(path.join(result.archive, "EMPTY"));
+    await fs.stat(path.join(result.archive, "DEFERRED"));
+    await expect(
+      fs.stat(path.join(result.archive, "DELETE_READY"))
+    ).rejects.toThrow();
+  });
+  it("中途繁忙保留已校验子集供发布，不从头作废", async () => {
+    const result = await workflowDownload(name, "partial-busy");
+    expect(result.code, result.stderr).toBe(0);
+    expect(
+      (await fs.readFile(path.join(result.archive, "archives.tsv"), "utf8"))
+        .trim()
+        .split("\n")
+    ).toHaveLength(1);
+    await fs.stat(path.join(result.archive, "DEFERRED"));
+    await expect(fs.stat(path.join(result.archive, "EMPTY"))).rejects.toThrow();
+  });
   it("两目录真实gzip/tar/SHA成功后清单完整，不被stdin吞掉下一目录", async () => {
     const result = await workflowDownload(name, "success");
     expect(result.code, result.stderr + result.stdout.toString()).toBe(0);
@@ -317,4 +344,72 @@ describe.each(workflows)("%s 真实步骤离线回归", name => {
       ).toBe(true);
     }
   });
+});
+
+// 用真实发布步骤回读到独立目录，检验下轮规划所消费的凭证确实由成功链产生。
+describe.each(workflows)("%s 发布凭证闭环", name => {
+  it("真实打包→发布回读→每目录源指纹→下一轮跳过", async () => {
+    const result = await workflowDownload(name, "success");
+    expect(result.code).toBe(0);
+    const bin = path.join(result.dir, "bin"),
+      release = path.join(result.dir, "release");
+    await fs.mkdir(release);
+    await executable(
+      path.join(bin, "gh"),
+      `const fs=require('node:fs'),path=require('node:path');const args=process.argv.slice(2),root=${JSON.stringify(release)};
+if(args[1]==='upload'){const [file,name]=args[3].split('#');fs.copyFileSync(file,path.join(root,name));}
+else if(args[1]==='download'){fs.copyFileSync(path.join(root,args[args.indexOf('-p')+1]),path.join(args[args.indexOf('-D')+1],args[args.indexOf('-p')+1]));}
+else if(args[1]!=='view'){process.exit(1);}`
+    );
+    const text = await fs.readFile(
+      path.resolve(".github/workflows", name),
+      "utf8"
+    );
+    const script = step(text, "Publish and read back archive bundles")
+      .replaceAll(
+        "gh release ",
+        `${process.execPath} ${path.join(bin, "gh")} release `
+      )
+      .replaceAll("stat -c", `${process.execPath} ${path.join(bin, "stat")} -c`)
+      .replaceAll(
+        "sha256sum ",
+        `${process.execPath} ${path.join(bin, "sha256sum")} `
+      )
+      .replaceAll("sleep ", `${process.execPath} ${path.join(bin, "sleep")} `)
+      .replaceAll("/tmp/growth-archive-offload", result.archive)
+      .replaceAll("/tmp/growth-backup", path.join(result.dir, "backup"));
+    const published = await run("bash", ["-eo", "pipefail", "-c", script]);
+    expect(published.code, published.stderr + published.stdout.toString()).toBe(
+      0
+    );
+    await fs.stat(path.join(result.archive, "DELETE_READY"));
+    const { planArchiveBatch } = await import(
+      "../../scripts/growth-archive-plan.mjs"
+    );
+    const assets = [],
+      manifests = new Map();
+    for (const name of await fs.readdir(release)) {
+      const raw = await fs.readFile(path.join(release, name));
+      assets.push({
+        name,
+        size: raw.length,
+        digest: `sha256:${createHash("sha256").update(raw).digest("hex")}`,
+        state: "uploaded",
+      });
+      if (name.endsWith(".manifest.json")) {
+        const manifest = JSON.parse(raw.toString());
+        const { parseGrowthArchiveColdManifest } = await import("./trendStore");
+        expect(
+          parseGrowthArchiveColdManifest(manifest, manifest.dir).archive.sha256
+        ).toBe(manifest.archive.sha256);
+        manifests.set(name, raw.toString());
+      }
+    }
+    const plan = planArchiveBatch(
+      await fs.readFile(path.join(result.archive, "selected.tsv"), "utf8"),
+      assets,
+      manifests
+    );
+    expect(plan).toMatchObject({ reused: 2, pending: 0, selected: [] });
+  }, 15000);
 });

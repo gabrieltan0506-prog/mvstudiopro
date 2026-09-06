@@ -36,7 +36,7 @@ describe("归档阶段有界执行", () => {
       .split("\n      - name:")[0];
     expect(download).toContain("timeout-minutes: 30");
     expect(download).toContain(
-      "node scripts/growth-archive-transfer.mjs -- flyctl"
+      'node scripts/growth-archive-transfer.mjs --max-ms "$transfer_budget" -- flyctl'
     );
     expect(download).toContain('if [ "$transfer_status" -ne 75 ]');
     const cleanup = text.split(
