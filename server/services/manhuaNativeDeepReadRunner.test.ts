@@ -2748,6 +2748,27 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
     expect(result.segments[0]!.raw.shots).toEqual(healthy.shots);
   });
 
+  it("0906 重试稿合并：接了 mergeRetryDrafts 时，第 2 发过门禁 → 与第 1 发合并后进缓存并留 advisory；不接则行为不变", async () => {
+    const { mergeNativeDeepReadRetryDrafts } = await import("./manhuaNativeDeepReadRetryDraftMerge");
+    const span = fullSegments[3]!;
+    // 第 1 发只覆盖前 20 秒 → 覆盖门禁必拒；它的第一镜观察独有
+    const invalid = makeSegmentPayload({ segmentIndex: 3, startSec: span.startSec, endSec: span.startSec + 20 });
+    (invalid.shots as Array<Record<string, unknown>>)[0]!.hintZh = "第一发独有镜";
+    // 第 2 发覆盖全段但开头 6 秒没镜 → 合并应把第 1 发开头那镜补进来
+    const healthy = makeSegmentPayload({ segmentIndex: 3, ...span });
+    healthy.shots = (healthy.shots as Array<Record<string, unknown>>).filter((s) => Number(s.startSec) >= span.startSec + 6);
+    const postVertex = vi.fn().mockResolvedValueOnce(geminiResponse(invalid)).mockResolvedValueOnce(geminiResponse(healthy));
+    const deps = makeRunnerDeps({ postVertex, mergeRetryDrafts: mergeNativeDeepReadRetryDrafts });
+    const result = await runManhuaNativeDeepReadSelectedSegments(selectedParams([3]), deps);
+    const hints = (result.segments[0]!.raw.shots as Array<{ hintZh: string }>).map((s) => s.hintZh);
+    expect(hints).toContain("第一发独有镜");
+    expect(result.segments[0]!.advisories.some((a) => a.code === "retry_drafts_merged")).toBe(true);
+    // 不接函数：第 2 发原样
+    const postVertex2 = vi.fn().mockResolvedValueOnce(geminiResponse(invalid)).mockResolvedValueOnce(geminiResponse(healthy));
+    const plain = await runManhuaNativeDeepReadSelectedSegments(selectedParams([3]), makeRunnerDeps({ postVertex: postVertex2 }));
+    expect((plain.segments[0]!.raw.shots as Array<{ hintZh: string }>).map((s) => s.hintZh)).not.toContain("第一发独有镜");
+  });
+
   it("503 只等待60秒并保持0.7同温重跑，不消耗门禁降档", async () => {
     const span = fullSegments[3]!;
     const overloaded = Object.assign(new Error("RESOURCE_EXHAUSTED"), { nativeDeepReadHttpStatus: 503 });

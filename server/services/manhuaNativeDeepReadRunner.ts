@@ -1,6 +1,7 @@
 import { buildBoundaryStructuringContract } from "./manhuaNativeBoundaryContract.js";
 import type { buildBoundaryEvidenceBundle } from "./manhuaNativeBoundaryExperiment.js";
 import { writeNativeStructuredCard } from "./manhuaNativeDeepReadStructuredCard.js";
+import { mergeNativeDeepReadRetryDrafts, type NativeDeepReadRetryDraft } from "./manhuaNativeDeepReadRetryDraftMerge.js";
 import { hasNativeAttemptSelection, nativeAttemptRawSha256, scoreNativeAttempt, type NativeDeepReadAttemptSelection } from "./manhuaNativeDeepReadAttemptSelection.js";
 import { assertNativeStructuringAnalysis, NativeStructuringAnalysisError } from "../../shared/manhuaNativeStructuringAnalysis.js";
 import { NATIVE_DEEP_READ_TIMELINE_TOLERANCE_SEC, type NativeDeepReadExcludedAdRange, mergeAdjacentAdRanges, stripNonStoryAdShotsForEpisodeCard } from "../../shared/manhuaNativeAdRanges.js";
@@ -4680,6 +4681,11 @@ export type NativeDeepReadBatchRunnerDeps = {
   readStructuredBatchCache: typeof readNativeDeepReadStructuredBatchCache;
   writeStructuredBatchCache: typeof writeNativeDeepReadStructuredBatchCache;
   waitForRetry: typeof waitForNativeDeepReadRetry;
+  /**
+   * 0906 用户令「只有重试的部分才走函数去重」：分片重试过（≥2 稿）时把各稿交给合并函数出一份 JSON 再进整形。
+   * 缺省不接（生产按钮行为不变）；探针显式传 mergeNativeDeepReadRetryDrafts 验实用性后再决定接正式入口。
+   */
+  mergeRetryDrafts?: typeof mergeNativeDeepReadRetryDrafts;
 };
 
 const defaultBatchRunnerDeps: NativeDeepReadBatchRunnerDeps = {
@@ -5796,6 +5802,27 @@ async function executeNativeDeepReadBatch(
       };
 
       /** 通过即停；三档未过则零调用选择最佳原稿进入整形。 */
+      /** 重试稿合并：把该段被拒的各稿与最终采用稿交给函数，返回一份 JSON；合并统计写进 advisory。 */
+      const applyRetryDraftMerge = (segmentIndex: number, finalAttemptNumber: number, finalResult: SegmentAttemptResult, finalPassedGate: boolean): SegmentAttemptResult => {
+        if (!deps.mergeRetryDrafts) return finalResult;
+        const rejected = (rejectedAttempts.get(segmentIndex) ?? []).filter((row) => row.attemptNumber !== finalAttemptNumber);
+        if (!rejected.length) return finalResult;
+        const segment = episode.segments[segmentIndex]!;
+        const drafts: NativeDeepReadRetryDraft[] = [
+          { attemptNumber: finalAttemptNumber, raw: finalResult.raw, passedGate: finalPassedGate },
+          ...rejected.map((row) => ({ attemptNumber: row.attemptNumber, raw: row.result.raw, passedGate: false })),
+        ];
+        const merged = deps.mergeRetryDrafts({ segmentIndex, startSec: segment.startSec, endSec: segment.endSec, drafts, baseAttemptNumber: finalAttemptNumber });
+        console.info(`[nativeDeepRead] 第${episode.episodeIndex}集${merged.summaryZh}`);
+        return {
+          ...finalResult,
+          raw: merged.raw,
+          advisories: dedupeNativeDeepReadAdvisories([
+            ...finalResult.advisories,
+            { code: "retry_drafts_merged", detailZh: merged.summaryZh, segmentIndex },
+          ]),
+        };
+      };
       const attemptWithSegmentRetry = async (input: {
         route: NativeDeepReadVisualRoute;
         fileUri: string;
@@ -5852,7 +5879,7 @@ async function executeNativeDeepReadBatch(
                 temperature,
                 rejectedReasonZh,
               });
-              return accepted;
+              return attemptIndex > 0 ? applyRetryDraftMerge(input.segmentIndex, attemptIndex + 1, accepted, true) : accepted;
             } catch (error) {
               if (params.abortSignal?.aborted) throw error;
               if (error instanceof Error && error.name === "NativeDeepReadEvidencePersistenceError") throw error;
@@ -5992,7 +6019,7 @@ async function executeNativeDeepReadBatch(
               reasonZh: row.reasonZh, rawAttemptEvidenceObjectName: row.result.rawAttemptEvidenceObjectName })),
           };
           console.info(`[nativeDeepRead] 第${input.segmentIndex + 1}段三档未过，选择第${best.attemptNumber}份原稿进入整形`);
-          return best.result;
+          return applyRetryDraftMerge(input.segmentIndex, best.attemptNumber, best.result, false);
         }
         // 三份均无可解析的非空证据时，不能制造空稿。
         logFinalGateFailure(input.segmentIndex, retryError);
