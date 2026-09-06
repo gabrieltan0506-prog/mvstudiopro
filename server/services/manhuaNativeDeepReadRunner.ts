@@ -1,3 +1,5 @@
+import { buildBoundaryStructuringContract } from "./manhuaNativeBoundaryContract.js";
+import type { buildBoundaryEvidenceBundle } from "./manhuaNativeBoundaryExperiment.js";
 import { writeNativeStructuredCard } from "./manhuaNativeDeepReadStructuredCard.js";
 import { hasNativeAttemptSelection, nativeAttemptRawSha256, scoreNativeAttempt, type NativeDeepReadAttemptSelection } from "./manhuaNativeDeepReadAttemptSelection.js";
 import { assertNativeStructuringAnalysis, NativeStructuringAnalysisError } from "../../shared/manhuaNativeStructuringAnalysis.js";
@@ -4519,17 +4521,21 @@ export async function writeNativeDeepReadStructuredBatchCache(
 }
 
 export async function invokeNativeDeepReadGlmStructuring(
-  prompt: { system: string; user: string },
+  prompt: { system: string; user: string; boundaryEvidence?: ReturnType<typeof buildBoundaryEvidenceBundle> },
   abortSignal?: AbortSignal,
   context?: NativeDeepReadGlmEvidenceContext,
   deps?: { invoke?: typeof invokeGlmJsonChatWithGatewayFallback; evidence?: NativeDeepReadGlmEvidenceDeps },
 ): Promise<NativeDeepReadGlmStructuringResult> {
+  const contract = prompt.boundaryEvidence
+    ? buildBoundaryStructuringContract(nativeDeepReadStructuringJsonSchema(), prompt.boundaryEvidence)
+    : undefined;
   const requestWithoutPreferredGateway = {
-    system: prompt.system,
+    system: prompt.system + (contract?.instruction || ""),
     user: prompt.user,
     ...NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG,
-    // 只在 Qwen 套餐档生效（bailianChat 按网关决定），GLM 档照旧 json_object
-    responseJsonSchema: { name: NATIVE_DEEP_READ_STRUCTURING_JSON_SCHEMA_NAME, schema: nativeDeepReadStructuringJsonSchema() },
+    // 实验冲突契约显式启用严格schema；其余入口保持原有网关行为。
+    responseJsonSchema: { name: NATIVE_DEEP_READ_STRUCTURING_JSON_SCHEMA_NAME, schema: contract?.schema ?? nativeDeepReadStructuringJsonSchema() },
+    ...(contract ? { requireResponseJsonSchema: true } : {}),
     // 整形开关只改链序（首发哪家），其余冻结参数原样
     gatewayPolicy: context?.gatewayPolicy ?? NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG.gatewayPolicy,
     // 0906 用户令：判坏后同档降温重试；只在重试时覆盖，首发仍是冻结值
@@ -4551,6 +4557,7 @@ export async function invokeNativeDeepReadGlmStructuring(
       console.warn(`[nativeDeepRead] 旧整形证据不可复用，改为新发整形：${message}`);
     }
     if (recovered) {
+      contract?.validate(recovered.parsed);
       const usage = recovered.response.usage;
       return {
         raw: recovered.parsed,
@@ -4594,6 +4601,7 @@ export async function invokeNativeDeepReadGlmStructuring(
     validateContent: (content) => {
       store.assertRawResponseSaved();
       raw = parseJsonObject(content);
+      contract?.validate(raw);
     },
     onGatewayFallback: context?.onGatewayFallback,
     onStreamProgress: context?.onStreamProgress,
