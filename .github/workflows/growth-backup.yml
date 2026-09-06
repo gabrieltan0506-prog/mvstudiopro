@@ -132,16 +132,8 @@ jobs:
           test "$PRIORITY_READY" = "true"
 
           for attempt in 1 2 3 4 5; do
-            if wait_for_started_vm && flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -lc '
-              current=$(stat -c%s /data/growth/current.json 2>/dev/null || echo 0)
-              platforms=$(du -sb /data/growth/platforms 2>/dev/null | awk \"{print \\$1}\" || echo 0)
-              platform_current=$(du -sb /data/growth/platform-current 2>/dev/null | awk \"{print \\$1}\" || echo 0)
-              archive=$(du -sb /data/growth/archive 2>/dev/null | awk \"{print \\$1}\" || echo 0)
-              largest=$(find /data/growth -maxdepth 2 -type f -printf \"%s\n\" 2>/dev/null | sort -nr | head -n 1)
-              total=$(df -B1 /data | awk \"NR==2{print \\$2}\")
-              avail=$(df -B1 /data | awk \"NR==2{print \\$4}\")
-              printf \"CURRENT_BYTES=%s\nPLATFORMS_BYTES=%s\nPLATFORM_CURRENT_BYTES=%s\nARCHIVE_BYTES=%s\nLARGEST_FILE_BYTES=%s\nTOTAL_BYTES=%s\nAVAILABLE_BYTES=%s\n\" \"$current\" \"$platforms\" \"$platform_current\" \"$archive\" \"${largest:-0}\" \"$total\" \"$avail\"
-            '" > /tmp/growth-backup/storage.env; then
+            if wait_for_started_vm && node scripts/growth-archive-transfer.mjs --max-ms 60000 -- flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+              -C "sh -s" < scripts/growth-storage-pressure-remote.sh > /tmp/growth-backup/storage.env; then
               break
             fi
             echo "Assess storage retry in 20s (attempt $attempt/5)"
@@ -154,9 +146,9 @@ jobs:
           # 报 `No: command not found` 退出码 127，连败 8 班次才被发现。
           # 只接受 KEY=值 的行；出现任何其他内容就当场失败并把内容打出来，
           # 而不是丢给 shell 去执行——这是通用防护，不只针对 flyctl 那一行。
-          if grep -qvE '^[A-Z_][A-Z0-9_]*=[0-9]*$' /tmp/growth-backup/storage.env; then
+          if grep -qvE '^[A-Z_][A-Z0-9_]*=[0-9]+$' /tmp/growth-backup/storage.env; then
             echo "storage.env 含非法行（应全部为 KEY=数字），拒绝 source：" >&2
-            grep -nvE '^[A-Z_][A-Z0-9_]*=[0-9]*$' /tmp/growth-backup/storage.env >&2
+            grep -nvE '^[A-Z_][A-Z0-9_]*=[0-9]+$' /tmp/growth-backup/storage.env >&2
             exit 1
           fi
           . /tmp/growth-backup/storage.env
@@ -680,6 +672,13 @@ jobs:
           if [ ! -s /tmp/growth-archive-offload/dirs.txt ]; then
             touch /tmp/growth-archive-offload/EMPTY
           fi
+      - name: Plan bounded incremental archive batch
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f /tmp/growth-backup/OFFLOAD_SKIP ] || [ -f /tmp/growth-archive-offload/EMPTY ]; then exit 0; fi
+          node scripts/growth-archive-plan.mjs /tmp/growth-archive-offload
       - name: Download and verify archive bundles locally
         timeout-minutes: 30
         env:
@@ -689,20 +688,29 @@ jobs:
             echo "No archive shards to offload"
             exit 0
           fi
-          test -s /tmp/growth-archive-offload/snapshot.tsv
+          test -s /tmp/growth-archive-offload/selected.tsv
           BATCH_ID=$(cat /tmp/growth-archive-offload/batch-id.txt)
           mkdir -p /tmp/growth-archive-offload/assets
           : > /tmp/growth-archive-offload/assets.tsv.next
           : > /tmp/growth-archive-offload/archives.tsv.next
+          DOWNLOAD_DEADLINE=$((SECONDS + 1200))
+          DEFERRED=false
           while IFS=$'\t' read -r dir source_fingerprint source_bytes; do
             [ -n "$dir" ] || continue
             case "$dir" in ""|.|..|*[!0-9A-Za-z._-]*) echo "非法目录名: $dir"; exit 1 ;; esac
             output="/tmp/growth-archive-offload/assets/archive-$dir.tar.gz"
             BUNDLE_READY=false
             for attempt in $(seq 1 20); do
+              if [ "$SECONDS" -ge "$DOWNLOAD_DEADLINE" ]; then
+                DEFERRED=true
+                break
+              fi
               rm -f "$output.next"
               echo "开始下载归档：${dir}（${attempt}/20）"
-              if node scripts/growth-archive-transfer.mjs -- flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+              transfer_budget=$(((DOWNLOAD_DEADLINE - SECONDS) * 1000))
+              if [ "$transfer_budget" -gt 900000 ]; then transfer_budget=900000; fi
+              if [ "$transfer_budget" -le 0 ]; then DEFERRED=true; break; fi
+              if node scripts/growth-archive-transfer.mjs --max-ms "$transfer_budget" -- flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
                 -C "sh -s -- bundle '$BATCH_ID' '$dir'" \
                 < scripts/growth-archive-offload-remote.sh \
                 > "$output.next"; then
@@ -720,13 +728,9 @@ jobs:
               sleep 30
             done
             if [ "$BUNDLE_READY" != "true" ]; then
-              # 0902 用户拍板对齐 offload 哲学：让行不是失败。连续学习整天时
-              # 让满 20 次是常态，判红等于「学习日=备份日报警」。挂 OFFLOAD_SKIP
-              # 旗（下游发布/删除步骤都认它），archive 交给学习结束后的下一班次；
-              # 主备份流在前面的步骤已完成，不受影响。
-              echo "::warning::前台任务持续繁忙，本轮 archive 让行至下一班次（$dir 未打包）"
-              touch /tmp/growth-backup/OFFLOAD_SKIP
-              exit 0
+              DEFERRED=true
+              rm -f "$output.next"
+              break
             fi
             gzip -t "$output"
             tar -tzf "$output" > "$output.list"
@@ -760,10 +764,19 @@ jobs:
             rm -f "$output.list"
             if [ "$asset_bytes" -ge 2000000000 ]; then rm -f "$output"; fi
             sleep 5
-          done < /tmp/growth-archive-offload/snapshot.tsv
+          done < /tmp/growth-archive-offload/selected.tsv
           mv /tmp/growth-archive-offload/assets.tsv.next /tmp/growth-archive-offload/assets.tsv
           mv /tmp/growth-archive-offload/archives.tsv.next /tmp/growth-archive-offload/archives.tsv
-          test "$(wc -l < /tmp/growth-archive-offload/archives.tsv)" -eq "$(wc -l < /tmp/growth-archive-offload/snapshot.tsv)"
+          completed=$(wc -l < /tmp/growth-archive-offload/archives.tsv)
+          planned=$(wc -l < /tmp/growth-archive-offload/selected.tsv)
+          if [ "$DEFERRED" = "true" ]; then
+            echo "::warning::前台繁忙或本批时间预算用尽：已下载验真 ${completed}/${planned} 个；其余归档延期，源数据保留。"
+            printf '归档延期：本批下载验真 %s/%s 个，尚未发布的目录下轮续传。\n' "$completed" "$planned" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            touch /tmp/growth-archive-offload/DEFERRED
+            if [ "$completed" -eq 0 ]; then touch /tmp/growth-archive-offload/EMPTY; fi
+          else
+            test "$completed" -eq "$planned"
+          fi
       - name: Publish and read back archive bundles
         timeout-minutes: 30
         env:
@@ -828,6 +841,7 @@ jobs:
             const perDir = {
               schemaVersion: 1,
               dir: entry.dir,
+              sourceFingerprint: entry.sourceFingerprint,
               archive: { assetName: entry.asset, bytes: entry.bytes, sha256: entry.sha256 },
               parts: entry.parts.map((part) => ({ assetName: part.asset, bytes: part.bytes, sha256: part.sha256, index: part.partIndex })),
             };
@@ -855,6 +869,7 @@ jobs:
           done < /tmp/growth-archive-offload/manifest-assets.tsv
           upload_and_readback_asset /tmp/growth-archive-offload/offload-manifest.json
           sha256sum /tmp/growth-archive-offload/offload-manifest.json > /tmp/growth-archive-offload/DELETE_READY
+          printf '本批实际已上传并回读验证归档：%s 个。源数据保留；剩余数量见规划与延期记录。\n' "$(wc -l < /tmp/growth-archive-offload/archives.tsv)" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
       - name: Delete only release-verified unchanged archive shards from Fly
         # 0901 用户冻结：当前冷备只上传/验真，不自动删除任何平台源数据。
         # 后续释放空间必须另走“仅 B站 + 冻结抓取 + 显式授权”的专用流程。

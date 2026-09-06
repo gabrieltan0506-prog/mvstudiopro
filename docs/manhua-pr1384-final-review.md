@@ -50,3 +50,9 @@
 - `pnpm exec vite build`：退出0，1分22秒；已有大包警告保留，日志 `/private/tmp/manhua-pr1384-ready-vite.log`。
 - `git diff --check` 退出0；与 `origin/main=ee42931` 合并树无冲突。最终测试代码提交 `fffe06b`，后续仅追加本记录。
 - 未做干净Docker构建、线上Chrome新版本验收、生产模型调用或真实扣退。用户保留合并权；本任务未执行合并、部署或重跑流水线。
+
+## #1398 合并后的文档冲突修复
+
+主线更新至 `f9eb7a5` 后，与本 PR 再次冲突的唯一文件是 `.cursor/knowledge/PROGRESS.md`。已保留原有全部记录并加入主线 Growth 归档记录，不修改双方业务实现。新增主线工作流/归档脚本及测试与 `origin/main` 逐文件 diff 为空。
+
+同步后运行 `pnpm exec vitest run --maxWorkers=2 --minWorkers=1`，覆盖 growthArchivePlan、growthArchiveTransfer、growthArchiveWorkflowSafety、共享轨迹、轨迹UI 五文件，58项通过，17.12秒；日志 `/private/tmp/manhua-pr1384-doc-conflict-tests.log`。diff-check通过、无未解决文件。本次人工改动仅文档冲突与本记录，不重复声称已在新快照跑过全仓或类型检查；前述最终类型/全仓数字仍对应原代码快照。

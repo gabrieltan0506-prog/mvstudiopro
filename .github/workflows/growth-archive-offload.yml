@@ -83,6 +83,13 @@ jobs:
             echo "No archive shards to offload"
             touch /tmp/growth-archive-offload/EMPTY
           fi
+      - name: Plan bounded incremental archive batch
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f /tmp/growth-backup/OFFLOAD_SKIP ] || [ -f /tmp/growth-archive-offload/EMPTY ]; then exit 0; fi
+          node scripts/growth-archive-plan.mjs /tmp/growth-archive-offload
       - name: Download and verify archive bundles locally
         timeout-minutes: 30
         env:
@@ -96,15 +103,24 @@ jobs:
           mkdir -p /tmp/growth-archive-offload/assets
           : > /tmp/growth-archive-offload/assets.tsv.next
           : > /tmp/growth-archive-offload/archives.tsv.next
+          DOWNLOAD_DEADLINE=$((SECONDS + 1200))
+          DEFERRED=false
           while IFS=$'\t' read -r dir source_fingerprint source_bytes; do
             [ -n "$dir" ] || continue
             case "$dir" in ""|.|..|*[!0-9A-Za-z._-]*) echo "非法目录名: $dir"; exit 1 ;; esac
             output="/tmp/growth-archive-offload/assets/archive-$dir.tar.gz"
             BUNDLE_READY=false
             for attempt in $(seq 1 20); do
+              if [ "$SECONDS" -ge "$DOWNLOAD_DEADLINE" ]; then
+                DEFERRED=true
+                break
+              fi
               rm -f "$output.next"
               echo "开始下载归档：${dir}（${attempt}/20）"
-              if node scripts/growth-archive-transfer.mjs -- flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+              transfer_budget=$(((DOWNLOAD_DEADLINE - SECONDS) * 1000))
+              if [ "$transfer_budget" -gt 900000 ]; then transfer_budget=900000; fi
+              if [ "$transfer_budget" -le 0 ]; then DEFERRED=true; break; fi
+              if node scripts/growth-archive-transfer.mjs --max-ms "$transfer_budget" -- flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
                 -C "sh -s -- bundle '$BATCH_ID' '$dir'" \
                 < scripts/growth-archive-offload-remote.sh \
                 > "$output.next"; then
@@ -121,7 +137,11 @@ jobs:
               echo "前台任务繁忙，archive bundle 让行 30 秒：$dir（${attempt}/20）"
               sleep 30
             done
-            test "$BUNDLE_READY" = "true"
+            if [ "$BUNDLE_READY" != "true" ]; then
+              DEFERRED=true
+              rm -f "$output.next"
+              break
+            fi
             gzip -t "$output"
             tar -tzf "$output" > "$output.list"
             awk -v root="$dir" '$0 != root && index($0, root "/") != 1 { exit 1 }' "$output.list"
@@ -154,10 +174,19 @@ jobs:
             rm -f "$output.list"
             if [ "$asset_bytes" -ge 2000000000 ]; then rm -f "$output"; fi
             sleep 5
-          done < /tmp/growth-archive-offload/snapshot.tsv
+          done < /tmp/growth-archive-offload/selected.tsv
           mv /tmp/growth-archive-offload/assets.tsv.next /tmp/growth-archive-offload/assets.tsv
           mv /tmp/growth-archive-offload/archives.tsv.next /tmp/growth-archive-offload/archives.tsv
-          test "$(wc -l < /tmp/growth-archive-offload/archives.tsv)" -eq "$(wc -l < /tmp/growth-archive-offload/snapshot.tsv)"
+          completed=$(wc -l < /tmp/growth-archive-offload/archives.tsv)
+          planned=$(wc -l < /tmp/growth-archive-offload/selected.tsv)
+          if [ "$DEFERRED" = "true" ]; then
+            echo "::warning::前台繁忙或本批时间预算用尽：已下载验真 ${completed}/${planned} 个；其余归档延期，源数据保留。"
+            printf '归档延期：本批下载验真 %s/%s 个，尚未发布的目录下轮续传。\n' "$completed" "$planned" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            touch /tmp/growth-archive-offload/DEFERRED
+            if [ "$completed" -eq 0 ]; then touch /tmp/growth-archive-offload/EMPTY; fi
+          else
+            test "$completed" -eq "$planned"
+          fi
       - name: Prune superseded batch snapshot assets from cold-store release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -228,6 +257,7 @@ jobs:
             const perDir = {
               schemaVersion: 1,
               dir: entry.dir,
+              sourceFingerprint: entry.sourceFingerprint,
               archive: { assetName: entry.asset, bytes: entry.bytes, sha256: entry.sha256 },
               parts: entry.parts.map((part) => ({ assetName: part.asset, bytes: part.bytes, sha256: part.sha256, index: part.partIndex })),
             };
@@ -255,6 +285,7 @@ jobs:
           done < /tmp/growth-archive-offload/manifest-assets.tsv
           upload_and_readback_asset /tmp/growth-archive-offload/offload-manifest.json
           sha256sum /tmp/growth-archive-offload/offload-manifest.json > /tmp/growth-archive-offload/DELETE_READY
+          printf '本批实际已上传并回读验证归档：%s 个。源数据保留；剩余数量见规划与延期记录。\n' "$(wc -l < /tmp/growth-archive-offload/archives.tsv)" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
       - name: Upload GitHub archive offload artifact
         if: always()
         uses: actions/upload-artifact@v4
