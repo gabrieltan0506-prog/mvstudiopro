@@ -595,6 +595,22 @@ describe("renderEpisodeReport：canonical 寻址（禁列目录猜证据）", ()
     return (await loadRouter()).createCaller(makeCtx("user", undefined, "owner-open-id"));
   }
 
+  it.each(["celadon", "amber", "rose", "moon", "apricot", "auto"] as const)("手动主题%s传给渲染且不覆盖其他主题对象", async (themeChoice) => {
+    proposalForRouter = nativeCardWithEvidence;
+    const caller = await ownerCaller();
+    await caller.renderEpisodeReport({ seriesKey: "seriesabc", episodeIndex: 1, themeChoice });
+    const render = await import("../services/manhuaNativeReportRender");
+    expect(render.renderNativeEvidenceReportFromObjectNames).toHaveBeenLastCalledWith(expect.objectContaining({
+      themeChoice,
+      reportObjectName: `manhua-template-learn/reports/tpl_native_seriesabc_ep001${themeChoice === "auto" ? "" : `-${themeChoice}`}.html`,
+      evidenceObjectNames: EVIDENCE_NAMES,
+    }));
+  });
+  it("非法主题在渲染前拒绝", async () => {
+    const caller = await ownerCaller();
+    await expect(caller.renderEpisodeReport({ seriesKey: "seriesabc", episodeIndex: 1, themeChoice: "../../secret" as never })).rejects.toThrow();
+  });
+
   it("proposals/ 卡命中：用 canonical id 取卡，把 provenance 精确证据名直传渲染服务", async () => {
     proposalForRouter = nativeCardWithEvidence;
     const caller = await ownerCaller();

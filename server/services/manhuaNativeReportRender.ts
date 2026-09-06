@@ -1,3 +1,4 @@
+import type { NativeReportThemeChoice } from "../../shared/manhuaNativeReportThemeChoice.js";
 import { nativeReportThemePresentation, type NativeReportThemeMetadata } from "./manhuaNativeReportTheme.js";
 /**
  * 原生精读证据 → 报告 HTML 渲染服务（¥0，零模型调用）。
@@ -325,6 +326,7 @@ function assembleCardFromSegments(
 
 type RenderCoreInput = {
   themeMetadata?: NativeReportThemeMetadata;
+  themeChoice?: NativeReportThemeChoice;
   episodeIndex?: number;
   labelZh: string;
   card: Record<string, unknown>;
@@ -346,7 +348,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const card = input.card;
   assertNativeRequiredSummary(card);
   const presentation = await nativeReportThemePresentation({
-    metadata: input.themeMetadata, card,
+    metadata: input.themeMetadata, card, themeChoice: input.themeChoice,
     episodeIndex: input.episodeIndex ?? Number(/第\s*(\d+)\s*集/.exec(input.labelZh)?.[1]),
   });
 
@@ -1002,6 +1004,7 @@ ${section("🎧 声音节点区域", audioSections)}
 
 export type NativeReportFromObjectNamesInput = {
   themeMetadata?: NativeReportThemeMetadata;
+  themeChoice?: NativeReportThemeChoice;
   labelZh: string;
   /** provenance.nativeVideoDeepRead.segmentEvidenceObjectNames 的精确对象名，禁止列目录推断。 */
   evidenceObjectNames: string[];
@@ -1133,6 +1136,7 @@ export async function renderNativeEvidenceReportFromObjectNames(
     labelZh: input.labelZh,
     card: reportCard,
     themeMetadata: input.themeMetadata,
+    themeChoice: input.themeChoice,
     episodeIndex: segments[0]!.episodeIndex,
     sourceLabelZh,
     evidenceFrames: input.evidenceFrames,

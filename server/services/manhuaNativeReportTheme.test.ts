@@ -40,3 +40,14 @@ describe("报告自动主题：已有分类优先、稳定轮换、离线插画"
     }
   });
 });
+
+
+describe("报告手动主题", () => {
+  it.each(["celadon", "amber", "rose", "moon", "apricot"] as const)("手动%s优先于分类和集号", (themeChoice) => {
+    expect(selectNativeReportTheme({ themeChoice, metadata: { nameZh: "玄幻修仙" }, episodeIndex: 99 }).id).toBe(themeChoice);
+  });
+  it("自动选择与旧调用一致", () => {
+    const input = { metadata: { nameZh: "都市情感" }, episodeIndex: 2 };
+    expect(selectNativeReportTheme({ ...input, themeChoice: "auto" })).toEqual(selectNativeReportTheme(input));
+  });
+});

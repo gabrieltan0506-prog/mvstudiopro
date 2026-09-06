@@ -621,6 +621,16 @@ describe("保留 PR1397 无括号分段兼容", () => {
 });
 
 describe("自动主题接入真实渲染入口", () => {
+  it.each(["celadon", "amber", "rose", "moon", "apricot"] as const)("手选%s沿证据入口生成对应HTML且保留正文", async (themeChoice) => {
+    seedThreeSegments();
+    await renderNativeEvidenceReportFromObjectNames({ ...baseInput(), themeChoice, themeMetadata: { nameZh: "修仙" } });
+    const html = state.uploads[0]!.html;
+    expect(html).toContain(`data-report-theme="${themeChoice}"`);
+    expect(html).toContain("UNTRUNCATED_ACTION_END");
+    expect(html).toContain("反打延迟半拍");
+    expect(html).toContain("data:image/png;base64,iVBOR");
+  });
+
   it.each([
     ["修仙", "celadon"], ["古装权谋", "amber"], ["都市情感", "rose"],
     ["谍战悬疑", "moon"], ["喜剧市井", "apricot"],
