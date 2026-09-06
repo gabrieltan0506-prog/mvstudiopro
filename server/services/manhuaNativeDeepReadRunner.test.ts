@@ -843,12 +843,15 @@ describe("时间坐标桥单变量候选", () => {
 });
 
 describe("Gemini 请求体（Google 原生格式，Vertex/EvoLink 同构）", () => {
-  it("探针依赖是生产依赖副本，不会改写生产默认通道", () => {
+  it("探针依赖是生产依赖副本，不会改写生产默认通道", async () => {
     const original = createNativeDeepReadRunnerDeps();
     const custom = createNativeDeepReadRunnerDeps({ postVertex: vi.fn() });
     expect(custom.postVertex).not.toBe(original.postVertex);
     expect(createNativeDeepReadRunnerDeps().postVertex).toBe(original.postVertex);
     expect(custom.prepareVideos).toBe(original.prepareVideos);
+    // 0907 用户拍板：重试稿合并接成生产默认
+    const { mergeNativeDeepReadRetryDrafts } = await import("./manhuaNativeDeepReadRetryDraftMerge");
+    expect(original.mergeRetryDrafts).toBe(mergeNativeDeepReadRetryDrafts);
   });
   it("实际序列化后不再发送 mediaResolution，视频fps与Schema保持原值", () => {
     const serialized = JSON.parse(JSON.stringify(buildGeminiNativeDeepReadSegmentRequest({

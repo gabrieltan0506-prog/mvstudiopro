@@ -1,5 +1,3 @@
-import { buildBoundaryStructuringContract } from "./manhuaNativeBoundaryContract.js";
-import type { buildBoundaryEvidenceBundle } from "./manhuaNativeBoundaryExperiment.js";
 import { writeNativeStructuredCard } from "./manhuaNativeDeepReadStructuredCard.js";
 import { mergeNativeDeepReadRetryDrafts, type NativeDeepReadRetryDraft } from "./manhuaNativeDeepReadRetryDraftMerge.js";
 import { hasNativeAttemptSelection, nativeAttemptRawSha256, scoreNativeAttempt, type NativeDeepReadAttemptSelection } from "./manhuaNativeDeepReadAttemptSelection.js";
@@ -4523,21 +4521,17 @@ export async function writeNativeDeepReadStructuredBatchCache(
 }
 
 export async function invokeNativeDeepReadGlmStructuring(
-  prompt: { system: string; user: string; boundaryEvidence?: ReturnType<typeof buildBoundaryEvidenceBundle> },
+  prompt: { system: string; user: string },
   abortSignal?: AbortSignal,
   context?: NativeDeepReadGlmEvidenceContext,
   deps?: { invoke?: typeof invokeGlmJsonChatWithGatewayFallback; evidence?: NativeDeepReadGlmEvidenceDeps },
 ): Promise<NativeDeepReadGlmStructuringResult> {
-  const contract = prompt.boundaryEvidence
-    ? buildBoundaryStructuringContract(nativeDeepReadStructuringJsonSchema(), prompt.boundaryEvidence)
-    : undefined;
   const requestWithoutPreferredGateway = {
-    system: prompt.system + (contract?.instruction || ""),
+    system: prompt.system,
     user: prompt.user,
     ...NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG,
-    // 实验冲突契约显式启用严格schema；其余入口保持原有网关行为。
-    responseJsonSchema: { name: NATIVE_DEEP_READ_STRUCTURING_JSON_SCHEMA_NAME, schema: contract?.schema ?? nativeDeepReadStructuringJsonSchema() },
-    ...(contract ? { requireResponseJsonSchema: true } : {}),
+    // 只在 Qwen 套餐档生效（bailianChat 按网关决定），GLM 档照旧 json_object
+    responseJsonSchema: { name: NATIVE_DEEP_READ_STRUCTURING_JSON_SCHEMA_NAME, schema: nativeDeepReadStructuringJsonSchema() },
     // 整形开关只改链序（首发哪家），其余冻结参数原样
     gatewayPolicy: context?.gatewayPolicy ?? NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG.gatewayPolicy,
     // 0906 用户令：判坏后同档降温重试；只在重试时覆盖，首发仍是冻结值
@@ -4557,15 +4551,6 @@ export async function invokeNativeDeepReadGlmStructuring(
       const message = error instanceof Error ? error.message : String(error);
       if (!/已停止以避免重复付费/.test(message)) throw error;
       console.warn(`[nativeDeepRead] 旧整形证据不可复用，改为新发整形：${message}`);
-    }
-    if (recovered && contract) {
-      // 旧证据过不了冲突契约校验 → 当作不可复用，改为新发（审查 0906 ②）
-      try {
-        contract.validate(recovered.parsed);
-      } catch (error) {
-        console.warn(`[nativeDeepRead] 旧整形证据不符合冲突契约，改为新发整形：${error instanceof Error ? error.message : String(error)}`);
-        recovered = null;
-      }
     }
     if (recovered) {
       const usage = recovered.response.usage;
@@ -4613,7 +4598,6 @@ export async function invokeNativeDeepReadGlmStructuring(
     validateContent: (content) => {
       store.assertRawResponseSaved();
       raw = parseJsonObject(content);
-      contract?.validate(raw);
     },
     onGatewayFallback: context?.onGatewayFallback,
     onStreamProgress: context?.onStreamProgress,
@@ -4685,7 +4669,7 @@ export type NativeDeepReadBatchRunnerDeps = {
   waitForRetry: typeof waitForNativeDeepReadRetry;
   /**
    * 0906 用户令「只有重试的部分才走函数去重」：分片重试过（≥2 稿）时把各稿交给合并函数出一份 JSON 再进整形。
-   * 缺省不接（生产按钮行为不变）；探针显式传 mergeNativeDeepReadRetryDrafts 验实用性后再决定接正式入口。
+   * 0907 用户拍板接成生产默认（007 实弹：降温重试稿漏字幕三分之二，函数补回 57 条字幕 / 13 条声音事件）。
    */
   mergeRetryDrafts?: typeof mergeNativeDeepReadRetryDrafts;
 };
@@ -4711,6 +4695,7 @@ const defaultBatchRunnerDeps: NativeDeepReadBatchRunnerDeps = {
   readStructuredBatchCache: readNativeDeepReadStructuredBatchCache,
   writeStructuredBatchCache: writeNativeDeepReadStructuredBatchCache,
   waitForRetry: waitForNativeDeepReadRetry,
+  mergeRetryDrafts: mergeNativeDeepReadRetryDrafts,
 };
 
 /** 探针复用生产通道；返回副本，注入审计或已有分片时不污染生产默认依赖。 */

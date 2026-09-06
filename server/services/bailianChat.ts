@@ -260,8 +260,6 @@ export type GlmParams = {
   thinkingBudget?: number;
   /** 0905：标准 JSON Schema；只有支持 strict 的网关（Qwen 套餐两档）会以 json_schema strict 发出，其余仍 json_object。 */
   responseJsonSchema?: { name: string; schema: Record<string, unknown> };
-  /** 显式启用强制schema；不支持的通道拒绝发包，不降为json_object。 */
-  requireResponseJsonSchema?: boolean;
   /** 0905：每次换档时回调（面板要看得见「首发档失败、正在第二档重跑」），失败不影响链路。 */
   onGatewayFallback?: (info: { gateway: string; outcome: string; detail?: string }) => void | Promise<void>;
 };
@@ -797,13 +795,6 @@ async function invokeOneGlmGateway(
       { role: "user", content: params.user },
     ],
   };
-  if (params.requireResponseJsonSchema) {
-    // 0905 实弹：OpenRouter Z.AI 档 json_schema strict → 404、EvoLink 无视 schema；只有 Qwen 套餐档真约束。
-    // 0906 用户令：GLM 不用 strict schema。强制契约只允许发往北京/新加坡套餐档。
-    if (!params.responseJsonSchema || !["plan_sg_qwen", "plan_bj_qwen"].includes(gateway))
-      throw new Error("当前通道不支持本次强制JSON Schema契约");
-    body.response_format = { type: "json_schema", json_schema: { ...params.responseJsonSchema, strict: true } };
-  }
   if (gateway === "evolink_glm") {
     // EvoLink GLM-5.3 走 OpenAI 兼容端点 POST /v1/chat/completions（官方文档 0829 核实）。
     // 不选 /v1/messages 的三条理由：①它没有 response_format，本链产物必须是 JSON；
@@ -859,7 +850,7 @@ async function invokeOneGlmGateway(
     body.provider = {
       order: [OPENROUTER_GLM_PROVIDER_SLUG],
       allow_fallbacks: false,
-      ...((params.requireParameters || params.requireResponseJsonSchema) ? { require_parameters: true } : {}),
+      ...(params.requireParameters ? { require_parameters: true } : {}),
     };
     // 🔒 OpenRouter 私有的成本核算开关（0830 文档核实）：它的流式末帧文档只承诺
     // token usage，**没承诺 usage.cost**。而 cost 是 OpenRouter 独有字段，
