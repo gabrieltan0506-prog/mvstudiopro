@@ -3,8 +3,10 @@
  *
  * 规则（确定性、零模型、不改底稿一个字）：
  * - 底稿 = 过门禁的那一稿（三稿都没过时由调用方按既有评分挑的最佳稿）。底稿的每一行原样保留。
- * - 其他稿只往底稿里**补缺**：镜头按时间区间不与底稿任何镜头重叠才补；重点时刻按 atSec ±2 秒 + 同类别不存在才补；
- *   字幕按 atSec ±1 秒 + 同文本不存在才补；声音事件按 atSec ±1 秒 + 同 kind 不存在才补（挂到底稿覆盖该秒的音轨段上）。
+ * - 其他稿只往底稿里**补缺**：镜头按时间区间不与底稿任何镜头重叠才补；字幕按「归一化文本相同」或「±3 秒且字重合 ≥60%」判重，
+ *   不重才补；声音事件按 atSec ±3 秒（不分 kind）判重，不重才补（挂到底稿覆盖该秒的音轨段上）。
+ * - 重点时刻是「选哪些时刻算重点」的判断，不是事实，**以底稿为准不叠加**（0906 实弹：两稿各挑 8—9 个几乎不重合，叠加成 17 个把重点稀释）；
+ *   只有底稿少于 3 个时才从其他稿按 ≥10 秒间隔补到 3 个。
  * - 位置撞上的一律以底稿为准，丢弃；不做「同位置不同观察」的裁决，不留未解决清单，所以 GLM 不需要冲突 schema。
  * - 四段总结（beatStructureZh 等）以底稿为准；底稿为空才取其他稿的。
  * - 输出与普通分片同形，可直接进现有整形提示词与观察锁；合并统计写进 advisory，不加新字段。
@@ -37,9 +39,11 @@ export type NativeDeepReadRetryDraftMergeResult = {
 };
 
 const SHOT_MIN_ADD_SEC = 0.5;
-const KEY_MOMENT_WINDOW_SEC = 2;
-const SUBTITLE_WINDOW_SEC = 1;
-const AUDIO_CUE_WINDOW_SEC = 1;
+const KEY_MOMENT_FLOOR = 3;
+const KEY_MOMENT_TOPUP_GAP_SEC = 10;
+const SUBTITLE_WINDOW_SEC = 3;
+const SUBTITLE_SIMILARITY = 0.6;
+const AUDIO_CUE_WINDOW_SEC = 3;
 const PROSE_FIELDS = ["beatStructureZh", "moodArcZh", "reusableZh", "genPromptHintZh"] as const;
 
 const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -47,6 +51,15 @@ const rows = (raw: Row, key: string): Row[] => (Array.isArray(raw[key]) ? (raw[k
 const num = (value: unknown): number => Number(value);
 const finite = (value: unknown): boolean => Number.isFinite(Number(value));
 const text = (value: unknown): string => String(value ?? "").trim();
+/** 字幕归一：去空白与标点，只比字 */
+const normText = (value: unknown): string => text(value).replace(/[\s，。！？、,.!?…“”"'「」『』:：;；—\-~·]/g, "");
+/** 两句字幕的字重合率（按较短一句算） */
+function textSimilarity(a: string, b: string): number {
+  if (!a || !b) return 0;
+  const set = new Set(Array.from(b));
+  const common = Array.from(a).filter((ch) => set.has(ch)).length;
+  return common / Math.max(1, Math.min(a.length, b.length));
+}
 
 /** 只补落在本段区间内、且不与底稿任何镜头重叠的镜头。 */
 function addShots(base: Row[], candidates: Row[], span: { startSec: number; endSec: number }): { added: Row[]; dropped: number } {
@@ -70,6 +83,7 @@ function addPoints(
   candidates: Row[],
   windowSec: number,
   sameKind: (a: Row, b: Row) => boolean,
+  dupAnyTime?: (a: Row, b: Row) => boolean,
 ): { added: Row[]; dropped: number } {
   const added: Row[] = [];
   let dropped = 0;
@@ -77,7 +91,7 @@ function addPoints(
   for (const row of candidates) {
     const at = num(row.atSec);
     if (!finite(at)) { dropped += 1; continue; }
-    const dup = seen.some((s) => finite(s.atSec) && Math.abs(num(s.atSec) - at) <= windowSec && sameKind(s, row));
+    const dup = seen.some((s) => (finite(s.atSec) && Math.abs(num(s.atSec) - at) <= windowSec && sameKind(s, row)) || (dupAnyTime?.(s, row) ?? false));
     if (dup) { dropped += 1; continue; }
     added.push(copy(row));
     seen.push(row);
@@ -103,7 +117,7 @@ function addAudioCues(base: Row, candidates: Row[]): { added: number; dropped: n
       for (const cue of Array.isArray(track.cues) ? (track.cues as Row[]) : []) {
         const at = num(cue.atSec);
         if (!finite(at)) { dropped += 1; continue; }
-        const dup = existing.some((c) => finite(c.atSec) && Math.abs(num(c.atSec) - at) <= AUDIO_CUE_WINDOW_SEC && text(c.kind) === text(cue.kind));
+        const dup = existing.some((c) => finite(c.atSec) && Math.abs(num(c.atSec) - at) <= AUDIO_CUE_WINDOW_SEC);
         if (dup) { dropped += 1; continue; }
         const host = tracks.find((t) => finite(t.fromSec) && finite(t.toSec) && num(t.fromSec) <= at && at <= num(t.toSec));
         if (!host) { dropped += 1; continue; }
@@ -145,11 +159,26 @@ export function mergeNativeDeepReadRetryDrafts(input: {
   if (shotAdd.added.length) {
     merged.shots = [...baseShots, ...shotAdd.added].sort((a, b) => num(a.startSec) - num(b.startSec) || num(a.endSec) - num(b.endSec));
   }
-  const kmAdd = addPoints(rows(merged, "keyMoments"), others.flatMap((d) => rows(d.raw, "keyMoments")), KEY_MOMENT_WINDOW_SEC,
-    (a, b) => text(a.kindZh) === text(b.kindZh));
-  if (kmAdd.added.length) merged.keyMoments = [...rows(merged, "keyMoments"), ...kmAdd.added].sort((a, b) => num(a.atSec) - num(b.atSec));
+  const baseKm = rows(merged, "keyMoments");
+  const kmAdd: { added: Row[]; dropped: number } = { added: [], dropped: 0 };
+  const otherKm = others.flatMap((d) => rows(d.raw, "keyMoments")).filter((r) => finite(r.atSec)).sort((a, b) => num(a.atSec) - num(b.atSec));
+  if (baseKm.length >= KEY_MOMENT_FLOOR) {
+    kmAdd.dropped = otherKm.length;
+  } else {
+    const kept = [...baseKm];
+    for (const row of otherKm) {
+      if (kept.length >= KEY_MOMENT_FLOOR) { kmAdd.dropped += 1; continue; }
+      const at = num(row.atSec);
+      if (kept.some((k) => finite(k.atSec) && Math.abs(num(k.atSec) - at) < KEY_MOMENT_TOPUP_GAP_SEC)) { kmAdd.dropped += 1; continue; }
+      kept.push(copy(row)); kmAdd.added.push(row);
+    }
+    if (kmAdd.added.length) merged.keyMoments = kept.sort((a, b) => num(a.atSec) - num(b.atSec));
+  }
   const subAdd = addPoints(rows(merged, "subtitles"), others.flatMap((d) => rows(d.raw, "subtitles")), SUBTITLE_WINDOW_SEC,
-    (a, b) => text(a.textZh) === text(b.textZh));
+    (a, b) => {
+      const x = normText(a.textZh), y = normText(b.textZh);
+      return x === y || textSimilarity(x, y) >= SUBTITLE_SIMILARITY;
+    }, /* sameTextAnyTime */ (a, b) => normText(a.textZh) === normText(b.textZh) && normText(a.textZh).length >= 6);
   if (subAdd.added.length) merged.subtitles = [...rows(merged, "subtitles"), ...subAdd.added].sort((a, b) => num(a.atSec) - num(b.atSec));
   const cueAdd = addAudioCues(merged, others.map((d) => d.raw));
 

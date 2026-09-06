@@ -33,11 +33,11 @@ describe("0906 · 重试稿合并（底稿一字不改，其他稿只补缺）",
     // 镜头：丙补入；「甲改写」与「撞乙」撞位置丢弃（撞乙还越界）
     expect((merged.raw.shots as Array<{ hintZh: string }>).map((s) => s.hintZh)).toEqual(["甲", "丙", "乙"]);
     expect(merged.stats.addedShots).toBe(1);
-    // 重点时刻：6 秒与 5 秒同类在 ±2 秒内丢弃；15 秒补入
+    // 重点时刻：底稿只有 1 个（少于地板 3）→ 从他稿按 ≥10 秒间隔补：6 秒离 5 秒太近丢弃，15 秒补入
     expect((merged.raw.keyMoments as Array<{ atSec: number }>).map((r) => r.atSec)).toEqual([5, 15]);
-    // 字幕：3.5「你好」重复丢弃；12「再见」补入
+    // 字幕：3.5「你好」归一文本相同丢弃；12「再见」补入
     expect((merged.raw.subtitles as Array<{ atSec: number }>).map((r) => r.atSec)).toEqual([3, 12]);
-    // 声音事件：4.5 sfx 重复丢弃；18 bgm 补进底稿音轨段
+    // 声音事件：4.5 在 4 秒 ±3 秒内丢弃；18 bgm 补进底稿音轨段
     const cues = (merged.raw.audioResolution as Array<{ analysis: { audioTrack: Array<{ cues: Array<{ atSec: number }> }> } }>)[0]!.analysis.audioTrack[0]!.cues;
     expect(cues.map((c) => c.atSec)).toEqual([4, 18]);
     expect(merged.stats.addedAudioCues).toBe(1);
@@ -48,6 +48,17 @@ describe("0906 · 重试稿合并（底稿一字不改，其他稿只补缺）",
     expect(merged.raw.gateMarked).toBeUndefined();
     expect(merged.summaryZh).toContain("以第2稿为底");
     expect(merged.stats.droppedRecords).toBe(5);
+  });
+
+  it("底稿重点时刻已够 3 个：他稿的重点时刻一律不叠加；字幕相似句与 ±3 秒近邻丢弃", () => {
+    const base = { shots: [shot(0, 30, "底")], keyMoments: [km(3), km(12), km(25)], subtitles: [sub(10, "这四道纹是什么"), sub(20, "不疼了")] };
+    const other = { shots: [], keyMoments: [km(50), km(60), km(70)], subtitles: [sub(10.5, "这四道纹是什么？"), sub(21, "不疼了不疼了"), sub(40, "满盆清水变满盆绿水"), sub(22.5, "是")] };
+    const merged = mergeNativeDeepReadRetryDrafts({ segmentIndex: 0, startSec: 0, endSec: 100,
+      drafts: [{ attemptNumber: 1, raw: other, passedGate: false }, { attemptNumber: 2, raw: base, passedGate: true }] });
+    expect((merged.raw.keyMoments as Array<{ atSec: number }>).map((r) => r.atSec)).toEqual([3, 12, 25]);
+    expect(merged.stats.addedKeyMoments).toBe(0);
+    // 「这四道纹是什么？」归一后相同 → 丢；「不疼了不疼了」与 20 秒「不疼了」±3 秒且字重合 100% → 丢；「是」在 22.5 秒与 20 秒的「不疼了」重合率 0 → 补；40 秒「满盆清水…」补
+    expect((merged.raw.subtitles as Array<{ atSec: number }>).map((r) => r.atSec)).toEqual([10, 20, 22.5, 40]);
   });
 
   it("三稿都没过：调用方指定底稿；少于两稿报错", () => {

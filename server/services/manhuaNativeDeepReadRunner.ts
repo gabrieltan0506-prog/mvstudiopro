@@ -4585,7 +4585,9 @@ export async function invokeNativeDeepReadGlmStructuring(
       };
     }
   }
+  // 0906 实弹：给了显式链序时首选档必须是链序第一档，否则 bailianChat 会按旧轮询把首选档提前（007 探针本该 OpenRouter 首发却走了 EvoLink）
   const preferredGlmGateway = (context?.preferredGlmGateway
+    || context?.gatewayOrder?.[0]
     || nextNativeDeepReadGlmPreferredGateway(context?.gatewayPolicy)) as GlmGatewayName;
   let raw: Record<string, unknown> | undefined;
   const request = { ...requestWithoutPreferredGateway, preferredGlmGateway };
