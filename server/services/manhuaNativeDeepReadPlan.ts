@@ -581,6 +581,7 @@ export async function buildNativeDeepReadPlanPreview(
   input: {
     url: string;
     limit: number;
+    structuringEpisodeIndex?: number;
     segmentSeconds?: number;
     videoFps?: number;
     /**
@@ -814,7 +815,10 @@ export async function buildNativeDeepReadPlanPreview(
   if (sourceEpisodeIndex && !sourceScopedFree.some((episode) => episode.index === sourceEpisodeIndex)) {
     throw new Error(`解析到第${sourceEpisodeIndex}集，但该集不在可学习免费段内，已停止`);
   }
-  const notIngested = sourceScopedFree.filter((e) => !ingested.has(e.index));
+  const notIngested = input.structuringEpisodeIndex
+    ? free.filter((episode) => episode.index === input.structuringEpisodeIndex)
+    : sourceScopedFree.filter((e) => !ingested.has(e.index));
+  if (input.structuringEpisodeIndex && notIngested.length !== 1) throw new Error("指定整形集不在同源可用列表，未调用模型");
   /**
    * 0826 用户拍板「失败占位不许永远挡路」：带失败病历的占位自动让位、
    * 本轮直接纳入重跑（执行时原子接管，段缓存让已成段零费）；
@@ -849,6 +853,7 @@ export async function buildNativeDeepReadPlanPreview(
       .filter((e) => !blockedSet.has(e.index))
       .slice(0, limit);
   }
+  if (input.structuringEpisodeIndex && executable.length !== 1) throw new Error("指定整形集仍有运行占位，请等待旧任务停止");
   const episodes: NativeDeepReadPlanEpisode[] = [];
   for (const e of executable) {
     throwIfNativePlanAborted(input.abortSignal);

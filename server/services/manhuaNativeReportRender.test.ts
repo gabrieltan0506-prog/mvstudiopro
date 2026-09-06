@@ -42,6 +42,7 @@ vi.mock("@google-cloud/storage", () => ({
   },
 }));
 
+import { stripNonStoryAdShotsForEpisodeCard } from "../../shared/manhuaNativeAdRanges.js";
 import { renderNativeEvidenceReportFromObjectNames } from "./manhuaNativeReportRender";
 
 const DIGEST_A = "a".repeat(64);
@@ -268,6 +269,70 @@ describe("fail closed：缺段/段号重复/digest 混杂/集号不符各抛错�
     expect(html).toMatch(/>1<\/b><span[^>]*>广告区间/);
   });
 
+  it("整集报告从原始广告镜头恢复区间，合并重叠并拒绝模型虚构区间", async () => {
+    seedThreeSegments();
+    const first = state.objects.get(NAMES[0]!) as { raw: Record<string, unknown> };
+    const second = state.objects.get(NAMES[1]!) as { raw: Record<string, unknown> };
+    (first.raw.shots as unknown[]).push(
+      { startSec: 950.5, endSec: 951.1, evidenceRole: "non_story_ad" },
+      { startSec: 100, endSec: 102, evidenceRole: "non_story_ad" },
+    );
+    (second.raw.shots as unknown[]).push(
+      { startSec: 101, endSec: 103, evidenceRole: "non_story_ad" },
+    );
+    second.raw.excludedAdRanges = [{ startSec: 103.4, endSec: 105 }];
+    const originalSources = JSON.stringify(NAMES.map((name) => state.objects.get(name)));
+    const glmObjectName = "test/episode-glm-ad-account.json";
+    state.objects.set(glmObjectName, { parsed: {
+      ...first.raw,
+      shots: (first.raw.shots as Array<Record<string, unknown>>).filter((shot) => shot.evidenceRole !== "non_story_ad"),
+      excludedAdRanges: [{ startSec: 10, endSec: 20 }],
+    } });
+    await renderNativeEvidenceReportFromObjectNames({ ...baseInput(), glmCardObjectName: glmObjectName });
+    const html = state.uploads[0]!.html;
+    expect(html).toMatch(/>2<\/b><span[^>]*>广告区间/);
+    expect(stripNonStoryAdShotsForEpisodeCard([{ shots: [
+      ...(first.raw.shots as unknown[]),
+      ...(second.raw.shots as unknown[]),
+      { startSec: 103.4, endSec: 105, evidenceRole: "non_story_ad" },
+    ] }]).excludedAdRanges).toEqual([
+      { startSec: 100, endSec: 105 },
+      { startSec: 950.5, endSec: 951.1 },
+    ]);
+    expect(JSON.stringify(NAMES.map((name) => state.objects.get(name)))).toBe(originalSources);
+  });
+
+  it("旧卡缺五维判词时展示全部原始标签，不伪造分析套句", async () => {
+    seedThreeSegments();
+    const raw = state.objects.get(NAMES[0]!) as { raw: Record<string, unknown> };
+    raw.raw.classification = {
+      emotionTagsZh: Array.from({ length: 10 }, (_, index) => `真实情绪标签${index}`),
+      audienceExperienceTagsZh: ["引人入胜", "期待感"],
+    };
+    await renderNativeEvidenceReportFromObjectNames(baseInput());
+    const html = state.uploads[0]!.html;
+    expect(html).toContain("原始分类标签");
+    expect(html).toContain("真实情绪标签9");
+    expect(html).toContain("引人入胜");
+    expect(html).not.toContain("是主菜");
+    expect(html).not.toContain("几乎不给观众留喘息");
+    expect(html).not.toContain("把人引向下一集");
+  });
+
+  it("已有真实五维判词保持原文，不回退到标签说明", async () => {
+    seedThreeSegments();
+    const raw = state.objects.get(NAMES[0]!) as { raw: Record<string, unknown> };
+    const glmObjectName = "test/prose.json";
+    state.objects.set(glmObjectName, { parsed: {
+      ...raw.raw,
+      classification: { emotionTagsZh: ["警惕"] },
+      classificationProseZh: { emotionZh: "酒肆控诉后转为愤怒，斩杀后留下死寂。" },
+    } });
+    await renderNativeEvidenceReportFromObjectNames({ ...baseInput(), glmCardObjectName: glmObjectName });
+    expect(state.uploads[0]!.html).toContain("酒肆控诉后转为愤怒，斩杀后留下死寂。");
+    expect(state.uploads[0]!.html).not.toContain("原始分类标签");
+  });
+
   it("🔒 广告镜数从未过滤的原始 shots 上数（P0：此前恒为 0 的空改）", async () => {
     seedThreeSegments();
     const raw = state.objects.get(NAMES[1]!) as { raw: Record<string, unknown> };
@@ -278,6 +343,7 @@ describe("fail closed：缺段/段号重复/digest 混杂/集号不符各抛错�
     await renderNativeEvidenceReportFromObjectNames(baseInput());
     const html = state.uploads[0]!.html;
     expect(html).toContain("已剔除 1 广告镜");
+    expect(html).toMatch(/>1<\/b><span[^>]*>广告区间/);
     expect(html).not.toContain("已剔除 0 广告镜");
   });
 

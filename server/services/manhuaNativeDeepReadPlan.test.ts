@@ -48,6 +48,12 @@ function deps(overrides: Partial<NativeDeepReadPlanDeps> = {}): NativeDeepReadPl
 }
 
 describe("原生精读计划", () => {
+  it("仅重新整形精确选中已入库目标集，不跳到下一集", async () => {
+    const plan = await buildNativeDeepReadPlanPreview({ url: "https://www.douyin.com/collection/123456", limit: 1, structuringEpisodeIndex: 2 }, deps({ listIngestedEpisodes: vi.fn(async () => new Set([1, 2])) }));
+    expect(plan.episodes.map(row => row.episodeIndex)).toEqual([2]);
+    await expect(buildNativeDeepReadPlanPreview({ url: "https://www.douyin.com/collection/123456", limit: 1, structuringEpisodeIndex: 9 }, deps())).rejects.toThrow("指定整形集");
+  });
+
   it("1593.586 秒按 319 秒切成完整五片；317 秒仍保留第六片尾部", () => {
     expect(splitNativeDeepReadSegments(1593.586, 319)).toEqual([
       { startSec: 0, endSec: 319 },
@@ -77,7 +83,7 @@ describe("原生精读计划", () => {
     expect(plan.segmentSeconds).toBe(319);
     expect(plan.episodes[0]?.segments).toEqual(splitNativeDeepReadSegments(1593.586, 319));
     expect(plan.totalVisualCalls).toBe(5);
-    expect(plan.totalModelCalls).toBe(6);
+    expect(plan.totalModelCalls).toBe(7); // 五片需两批整形
     expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 200, segmentSeconds: 319 }, plan))
       .not.toThrow();
     expect(() => assertNativeDeepReadPlanConfirmation({ maxCalls: 200 }, plan))
@@ -593,7 +599,7 @@ describe("原生精读计划", () => {
     expect(plan.freeEpisodeCount).toBe(1);
     expect(plan.executableEpisodeCount).toBe(1);
     expect(plan.totalVisualCalls).toBe(8);
-    expect(plan.totalModelCalls).toBe(9);
+    expect(plan.totalModelCalls).toBe(10); // 八片需两批整形
   });
 
   it("无 mix_info 的可读视频与合集一样尊重已入库状态，不重复付费", async () => {

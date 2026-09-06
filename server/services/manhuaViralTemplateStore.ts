@@ -1,3 +1,4 @@
+import { isCompleteNativeEpisodeRelearn } from "../../shared/manhuaNativeEpisodeVersion.js";
 /**
  * 漫剧节奏模板动态库（GCS）。
  * proposals/ = 待审；approved/ = 人审通过。产品列表 = GCS approved
@@ -224,8 +225,8 @@ export function mergeNativeEpisodeTemplateLearning(
     beatGrid,
     subtitleTrack,
     evidenceFrames: evidenceFrames.length ? evidenceFrames : undefined,
-    reusableZh: mergeLearnedText(previous.reusableZh, next.reusableZh, 600),
-    genPromptHintZh: mergeLearnedText(previous.genPromptHintZh, next.genPromptHintZh, 600),
+    reusableZh: mergeLearnedText(previous.reusableZh, next.reusableZh, Number.POSITIVE_INFINITY),
+    genPromptHintZh: mergeLearnedText(previous.genPromptHintZh, next.genPromptHintZh, Number.POSITIVE_INFINITY),
     audioStory,
     scenePoolHints: mergeTags(previous.scenePoolHints, next.scenePoolHints),
     castShape: {
@@ -714,13 +715,19 @@ async function getGcsManhuaViralProposalVersioned(id: string): Promise<{
 
 /**
  * 0903 用户令：双模型对照学后只挑一版入库，另一版待审卡可直接删除。
- * 只删 proposals/ 待审对象——已批准模板、分集学习产物与回执全部不动；
+ * 原生逐集卡删除同时归档移除对应正式模板；其他待审卡仅删除 proposals。
+ * 分集原始证据与模型回执永久保留；
  * generation 匹配防止并发批准与删除互踩。
  */
 export async function discardGcsManhuaViralProposal(
   id: string,
 ): Promise<{ id: string; nameZh: string }> {
-  const { card, generation } = await getGcsManhuaViralProposalVersioned(id);
+  const key = String(id || "").trim();
+  if (/^tpl_native_[A-Za-z0-9_-]+_ep\d{3}$/.test(key)) {
+    const retired = await retireNativeEpisodeTemplatesForRelearn(key);
+    return { id: key, nameZh: retired.nameZh || key };
+  }
+  const { card, generation } = await getGcsManhuaViralProposalVersioned(key);
   const objectName = `${MANHUA_VIRAL_PROPOSALS_PREFIX}${card.id}.json`;
   await deleteGcsObject({ objectName, ifGenerationMatch: generation });
   return { id: card.id, nameZh: card.nameZh };
@@ -737,7 +744,7 @@ export async function getGcsManhuaViralApproved(
 /**
  * 只给「读给人看」的路径（owner 详情、报告渲染）用的短缓存：0905 实测一张 300KB 正式卡
  * 单次 GCS 读要 5–14 秒，用户重复打开同一张卡不该每次都等。生命周期判断（批准/下架/恢复）
- * 走 strict 读取，不经这里；写路径不清缓存，靠 60 秒 TTL 自然过期。
+ * 走 strict 读取，不经这里；删除学习集会主动清理对应缓存，其余写路径靠 60 秒 TTL 过期。
  */
 const APPROVED_CARD_READ_CACHE_TTL_MS = 60_000;
 const approvedCardReadCache = new Map<string, { at: number; card: ManhuaViralTemplateCard | null }>();
@@ -859,6 +866,50 @@ export async function resolveViralTemplateForExpand(requestedTemplateId: string)
       nameZh: makeAnonymousTemplateNameZh(card.laneZh, code),
     },
   };
+}
+
+/** 删除学习集时同步退位正式模板；两份原稿全部可靠归档后才删除活动对象。 */
+export async function retireNativeEpisodeTemplatesForRelearn(key: string): Promise<{
+  retiredObjectName: string;
+  archivedObjectNames: string[];
+  nameZh?: string;
+}> {
+  if (!/^tpl_native_[A-Za-z0-9_-]+_ep\d{3}$/.test(key)) throw new Error("原生学习集标识无效");
+  const release = await acquireManhuaTemplateLifecycleLock();
+  try {
+    const bucket = getGcsBucketName();
+    const sources: Array<{ objectName: string; archive: string; buffer: Buffer; generation: string; nameZh?: string }> = [];
+    // 先正式、后待审：部分删除失败时仍留着待审入口，允许再次操作完成清理。
+    for (const prefix of [MANHUA_VIRAL_APPROVED_PREFIX, MANHUA_VIRAL_PROPOSALS_PREFIX]) {
+      const objectName = `${prefix}${key}.json`;
+      let versioned;
+      try {
+        versioned = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` });
+      } catch (error) {
+        if (error instanceof Error && /^gcs_stat_failed:404(?:\b|:)/.test(error.message)) continue;
+        throw error;
+      }
+      const raw = JSON.parse(versioned.buffer.toString("utf8"));
+      if (raw?.id !== key) throw new Error("学习模板身份不一致，已停止删除");
+      const archive = prefix === MANHUA_VIRAL_APPROVED_PREFIX
+        ? `${MANHUA_VIRAL_ARCHIVE_PREFIX}${key}/${versioned.generation}.json`
+        : `manhua-template-learn/proposals-retired/${key}.${versioned.generation}.json`;
+      sources.push({ objectName, archive, buffer: versioned.buffer, generation: versioned.generation, nameZh: raw.nameZh });
+    }
+    for (const source of sources) {
+      await uploadBufferToGcsIfAbsent({ bucket, objectName: source.archive, buffer: source.buffer, contentType: "application/json" });
+      const archived = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${source.archive}` });
+      if (!archived.buffer.equals(source.buffer)) throw new Error("归档内容校验失败，已停止删除学习模板");
+    }
+    for (const source of sources) {
+      await deleteGcsObject({ objectName: source.objectName, ifGenerationMatch: source.generation });
+      approvedCardReadCache.delete(key);
+    }
+    return { retiredObjectName: sources.find((source) => source.objectName.startsWith(MANHUA_VIRAL_PROPOSALS_PREFIX))?.archive ?? sources[0]?.archive ?? "",
+      archivedObjectNames: sources.map((source) => source.archive), nameZh: sources[0]?.nameZh };
+  } finally {
+    await release().catch((error) => console.error("[manhuaTemplateLifecycle] release lock failed", error));
+  }
 }
 
 /**
@@ -1287,22 +1338,26 @@ async function approveManhuaViralTemplateLocked(input: {
   if (existingApproved && isNativeEpisodeProposal) {
     const previous = existingApproved.provenance?.nativeVideoDeepRead;
     const next = card.provenance?.nativeVideoDeepRead;
+    // 正式提交后响应丢失或审计同步失败：同一输出重试不重复归档，也不拒绝已成功操作。
+    if (previous?.batchRequestId && previous.batchRequestId === next?.batchRequestId
+      && previous.glmParsedObjectName && previous.glmParsedObjectName === next.glmParsedObjectName
+      && previous.snapshotSha256 === next.snapshotSha256
+      && previous.sourceDigest === next.sourceDigest
+      && JSON.stringify(previous.segmentEvidenceObjectNames) === JSON.stringify(next.segmentEvidenceObjectNames)) {
+      try {
+        await uploadBufferToGcs({ objectName: `${MANHUA_VIRAL_PROPOSALS_PREFIX}${card.id}.json`,
+          buffer: Buffer.from(`${JSON.stringify(existingApproved, null, 2)}\n`, "utf8"), contentType: "application/json",
+          ifGenerationMatch: proposalVersioned.generation });
+      } catch (error) {
+        console.warn("[manhuaViralTemplateStore] 正式卡已存在，待审状态同步待重试:", error instanceof Error ? error.message : error);
+      }
+      return existingApproved;
+    }
     const previousIndexes = [...(previous?.completedSegmentIndexes || [])].sort((a, b) => a - b);
     const nextIndexes = [...(next?.completedSegmentIndexes || [])].sort((a, b) => a - b);
     const nextSet = new Set(nextIndexes);
     // 完整重新学习有独立批次与新快照；不能套用增量补全的分片数严格增加条件。
-    const isCompleteRelearn = Boolean(previous && next
-      && next.assemblyComplete && !next.truncated
-      && next.attemptedSegments > 0 && next.successSegments === next.attemptedSegments
-      && nextIndexes.length === next.attemptedSegments
-      && nextIndexes.every((value, index) => value === index)
-      && next.batchRequestId && previous.batchRequestId && next.batchRequestId !== previous.batchRequestId
-      && next.snapshotSha256 && next.snapshotSha256 !== previous.snapshotSha256
-      && Date.parse(card.updatedAt ?? "") > Date.parse(existingApproved.updatedAt ?? "")
-      && (next.sourceDurationSec ?? 0) >= (previous.sourceDurationSec ?? 0)
-      && next.segmentEvidenceObjectNames?.length === next.attemptedSegments
-      && new Set(next.segmentEvidenceObjectNames).size === next.attemptedSegments
-      && next.glmParsedObjectName);
+    const isCompleteRelearn = isCompleteNativeEpisodeRelearn(existingApproved, card);
     if (
       !previous
       || !next
@@ -1350,9 +1405,8 @@ async function approveManhuaViralTemplateLocked(input: {
       });
     } catch (error) {
       // 学习链可能已把 2/4 推进成 3/4；批准 2/4 成功，但绝不能把新版 proposal 压回旧版。
-      if (!isGcsGenerationConflict(error)) throw error;
       console.warn(
-        "[manhuaViralTemplateStore] 分集补全已批准，proposal 已有更新，保留新版待审:",
+        "[manhuaViralTemplateStore] 正式卡已提交，待审状态同步未完成，保留提案供重试:",
         error instanceof Error ? error.message : error,
       );
     }

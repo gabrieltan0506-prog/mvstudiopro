@@ -178,6 +178,8 @@ export type ManhuaTemplateLearnInput = {
   /** 0903 双模型：读片主模型；缺省＝3.1 Pro。 */
   nativeReadModel?: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeDeepReadModelId;
   /** 0905 整形开关 */
+  nativeStructuringOnly?: boolean;
+  nativeStructuringSource?: import("./manhuaNativeStructuringOnly.js").NativeStructuringStoredSource;
   nativeStructuringModel?: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeStructuringModelId;
   /** 0901「整支即全集」：与计划层同一声明——忽略 mixId，按独立长视频单源学习 */
   nativeStandaloneSource?: boolean;
@@ -1619,7 +1621,7 @@ export function buildNativeDeepReadLearnResult(input: {
   const tail = input.skippedHintZh || "";
   return {
     seriesKey: input.seriesKey,
-    analysisReady: Boolean(input.seriesAggregation?.card),
+    analysisReady: input.nativeCardCount > 0,
     learnedCount: input.nativeCardCount,
     analysisMin: MANHUA_LEARN_ANALYSIS_MIN,
     analysisTarget: MANHUA_LEARN_ANALYSIS_TARGET,
@@ -1636,15 +1638,15 @@ export function buildNativeDeepReadLearnResult(input: {
     tagLabelsZh: input.tagLabelsZh,
     proposal: input.seriesAggregation?.card || null,
     proposalGcsUri: input.seriesAggregation?.gcsUri || null,
-    visionFilled: Boolean(input.seriesAggregation?.card),
+    visionFilled: input.nativeCardCount > 0,
     messageZh: input.batchLearned
       ? input.seriesAggregation
         ? `本轮新增 ${input.batchLearned} 集原生精读证据，已用累计 ${input.seriesAggregation.sourceEpisodeCount} 集重新生成系列待审模板。${tail}`
-        : `本轮生成 ${input.batchLearned} 张原生精读证据卡，当前累计 ${input.nativeCardCount} 张；系列聚合尚未完成。${tail}`
+        : `本轮生成 ${input.batchLearned} 张原生精读证据卡，当前累计 ${input.nativeCardCount} 张；可查看、导出或批准分集卡。${tail}`
       : input.seriesAggregation
         ? `本轮没有重烧分集，已用累计 ${input.seriesAggregation.sourceEpisodeCount} 集重新生成系列待审模板。${tail}`
         : input.nativeCardCount
-          ? `当前已有 ${input.nativeCardCount} 张原生精读待审卡，本轮没有新增；系列聚合尚未完成。${tail}`
+          ? `当前已有 ${input.nativeCardCount} 张原生精读待审卡，本轮没有新增；可查看、导出或批准分集卡。${tail}`
         : `当前没有可处理的原生精读集，尚未生成待审卡。${tail}`,
     workId: input.workId,
     pipelineMode: "native_deep_read",
@@ -2063,6 +2065,31 @@ export function resolveManhuaLearnSeriesIdentityTitle(input: {
 export async function runManhuaTemplateLearn(
   input: ManhuaTemplateLearnInput,
 ): Promise<ManhuaTemplateLearnResult> {
+  if (input.nativeStructuringOnly) {
+    if (!input.nativeDeepReadConfirmed || !input.nativeStructuringSource) throw new Error("仅重新整形缺少原任务服务端身份");
+    const { loadNativeStructuringOnlyEpisode } = await import("./manhuaNativeStructuringOnly.js");
+    const source = input.nativeStructuringSource;
+    const episode = await loadNativeStructuringOnlyEpisode(source);
+    await input.onProgress?.(MANHUA_LEARN_STAGE.vision, "正在复用已保存JSON重新整形，不读取源视频…");
+    let nativeUsage: ManhuaNativeDeepReadUsageReceipt | undefined;
+    const batch = await runNativeDeepReadBatch({ seriesKey: source.seriesKey, structuringOnly: true,
+      readModel: input.nativeReadModel, structuringModel: input.nativeStructuringModel,
+      segmentSeconds: source.segmentSeconds, episodes: [episode], abortSignal: input.abortSignal,
+      onModelCheckpoint: input.onNativeModelReceipt,
+      onProgress: async outcome => {
+        if (outcome.usage) {
+          nativeUsage = mergeManhuaNativeDeepReadUsage(nativeUsage, { ...outcome.usage, elapsedMs: outcome.elapsedMs });
+          if (nativeUsage) await input.onNativeUsage?.(nativeUsage);
+        }
+      } });
+    const outcome = batch.outcomes[0];
+    if (batch.aborted) throw Object.assign(new Error("重新整形已停止，原JSON保留"), { name: "ManhuaLearnCancelledError" });
+    if (!batch.ingestedCount) throw new Error(outcome?.errorZh || "重新整形未生成待审卡，原JSON保留");
+    return buildNativeDeepReadLearnResult({ seriesKey: source.seriesKey, workId: `reshape-${source.episodeIndex}`,
+      nativeCardCount: (await listIngestedNativeDeepReadEpisodeRecords(source.seriesKey)).length,
+      batchLearned: 1, batchIndexes: [source.episodeIndex], listedEpisodeCount: 1, paywallFields: {}, nativeUsage,
+      skippedHintZh: "仅重新整形，原始JSON与原帧保留；新结果需批准后才替换正式模板。" });
+  }
   const title = stripBookTitleMarks(cleanManhuaLearnTitle(input.title));
   const normalizedSource = normalizeManhuaTemplateLearnSourceInput(input);
   const sourceGcsUri = normalizedSource.sourceGcsUri;
@@ -2645,12 +2672,13 @@ export async function runManhuaTemplateLearn(
       }
       await progress(
         MANHUA_LEARN_STAGE.vision,
-        `正在逐段精读 ${executionPlans.length} 集（共 ${executionPlans.reduce((sum, plan) => sum + plan.segments.length, 0)} 个视频分片，每段一次调用，音轨同调直出）…`,
+        input.nativeStructuringOnly ? "正在复用已保存JSON重新整形，不重新读片…" : `正在逐段精读 ${executionPlans.length} 集（共 ${executionPlans.reduce((sum, plan) => sum + plan.segments.length, 0)} 个视频分片，每段一次调用，音轨同调直出）…`,
       );
       const batchResult = await runNativeDeepReadBatch({
         seriesKey,
         readModel: input.nativeReadModel,
         structuringModel: input.nativeStructuringModel,
+        structuringOnly: input.nativeStructuringOnly,
         segmentSeconds: confirmedNativePlan?.segmentSeconds,
         episodes: executionPlans.map(({ seriesKey: _seriesKey, abortSignal: _abortSignal, ...plan }) => plan),
         abortSignal: input.abortSignal,
@@ -3444,7 +3472,7 @@ export async function checkManhuaLearnSourceLearned(
  *
  * 查重的唯一依据是 proposals/tpl_native_<key>_ep*.json；模板库「下架」只动
  * approved 正本，proposals 副本还在 → 下架**不能**放行。这里把 proposals 卡
- * 退位到 proposals-retired/（copy → 条件删除，保留审计），集位即让出，
+ * 与对应 approved 正本一起先归档、回读核验再条件删除，集位即让出，
  * 下次学习照常排片、照常计费。抽帧一代 digest 本来就不挡原生学习，无需放行。
  */
 export async function retireNativeLearnEpisodeForRelearn(input: {
@@ -3462,38 +3490,12 @@ export async function retireNativeLearnEpisodeForRelearn(input: {
     }),
     input.readModel,
   );
-  const [{ nativeDeepReadProposalObjectName, nativeDeepReadProposalId }, gcs] =
-    await Promise.all([
-      import("./manhuaNativeDeepReadIngest.js"),
-      import("./gcs.js"),
-    ]);
-  const objectName = nativeDeepReadProposalObjectName(seriesKey, input.episodeIndex);
-  let versioned: { buffer: Buffer; bucket: string; generation: string };
-  try {
-    versioned = await gcs.downloadGcsObjectVersioned({
-      gcsUri: `gs://${gcs.getGcsBucketName()}/${objectName}`,
-    });
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    if (/404/.test(message)) {
-      throw new Error("该集学习卡不存在或已放行，无需重复操作");
-    }
-    throw e;
-  }
-  const cardId = nativeDeepReadProposalId(seriesKey, input.episodeIndex);
-  const retiredObjectName =
-    `manhua-template-learn/proposals-retired/${cardId}.${versioned.generation}.json`;
-  // 先落存档再删原件；generation 命名幂等，条件删除防覆盖并发新写
-  await gcs.uploadBufferToGcsIfAbsent({
-    objectName: retiredObjectName,
-    buffer: versioned.buffer,
-    contentType: "application/json",
-  });
-  await gcs.deleteGcsObject({
-    objectName,
-    ifGenerationMatch: versioned.generation,
-  });
-  return { seriesKey, retiredObjectName };
+  const [{ nativeDeepReadProposalId }, { retireNativeEpisodeTemplatesForRelearn }] = await Promise.all([
+    import("./manhuaNativeDeepReadIngest.js"),
+    import("./manhuaViralTemplateStore.js"),
+  ]);
+  const retired = await retireNativeEpisodeTemplatesForRelearn(nativeDeepReadProposalId(seriesKey, input.episodeIndex));
+  return { seriesKey, ...retired };
 }
 
 /**

@@ -3944,6 +3944,84 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     };
   }
 
+  it.each(["qwen3.8-max", "glm-5.3"] as const)("仅重新整形使用完整永久JSON进入%s，原生模型与视频准备均为零", async structuringModel => {
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
+    const entry = makeCacheEntry({ episode, segmentIndex: 0 });
+    const deps = makeRunnerDeps({ readPermanentSegment: vi.fn(async () => ({ entry, generation: "1" })) as never });
+    const result = await runManhuaNativeDeepReadBatch({ episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey, structuringOnly: true, structuringModel }, deps);
+    expect(deps.prepareVideos).not.toHaveBeenCalled();
+    expect(deps.postVertex).not.toHaveBeenCalled();
+    expect(deps.postEvolink).not.toHaveBeenCalled();
+    expect(deps.postGeminiApi).not.toHaveBeenCalled();
+    expect(deps.invokeGlmStructuring).toHaveBeenCalled();
+    expect((result.episodes[0]!.result.reusableZh ?? "").length).toBeGreaterThan(1);
+  });
+
+  it.each(["长标题", "缺分析"])("模型%s必须在原链有限重试，保留原输入后通过", async kind => {
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
+    const entry = makeCacheEntry({ episode, segmentIndex: 0 });
+    const base = makeGlmStructuringStub();
+    let attempts = 0;
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
+      const response = await base(prompt);
+      response.raw.templateTitleZh = kind === "长标题" && attempts === 0 ? "长".repeat(61) : "短标题";
+      if (kind !== "缺分析" || attempts > 0) response.raw.classificationProseZh = {
+        emotionZh: "情绪分析", narrativeZh: "叙事分析", performanceZh: "表演分析", audiovisualZh: "视听分析", audienceZh: "观众分析",
+      };
+      attempts += 1;
+      return response;
+    });
+    const deps = makeRunnerDeps({ readSegmentCache: vi.fn(async () => ({ entry, generation: "1" })) as never, invokeGlmStructuring: invokeGlmStructuring as never });
+    const original = JSON.stringify(entry.raw);
+    await runManhuaNativeDeepReadBatch({ episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey, structuringOnly: true }, deps);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(entry.raw)).toBe(original);
+    expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(deps.writeStructuredBatchCache).mock.calls[0]![0].raw).toMatchObject({ templateTitleZh: "短标题" });
+  });
+
+  it("旧缓存分析不完整时保留缓存证据，重整形且不覆盖坏缓存", async () => {
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
+    const entry = makeCacheEntry({ episode, segmentIndex: 0 });
+    const badRaw = { ...entry.raw, templateTitleZh: "正文混入标题".repeat(20) };
+    const original = JSON.stringify(badRaw);
+    const deps = makeRunnerDeps({ readSegmentCache: vi.fn(async () => ({ entry, generation: "1" })) as never,
+      readStructuredBatchCache: vi.fn(async () => ({ raw: badRaw })) as never });
+    await runManhuaNativeDeepReadBatch({ episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey, structuringOnly: true }, deps);
+    expect(deps.invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(deps.remove).not.toHaveBeenCalled();
+    expect(deps.writeStructuredBatchCache).not.toHaveBeenCalled();
+    expect(JSON.stringify(badRaw)).toBe(original);
+  });
+
+  it("仅重新整形收到取消后立即终止，不走本地fallback或下一轮付费", async () => {
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
+    const entry = makeCacheEntry({ episode, segmentIndex: 0 });
+    const controller = new AbortController();
+    const deps = makeRunnerDeps({ readSegmentCache: vi.fn(async () => ({ entry, generation: "1" })) as never,
+      invokeGlmStructuring: vi.fn(async () => {
+        controller.abort(new Error("用户取消"));
+        throw new GlmGatewayError("两档失败", [{ gateway: "openrouter", model: "z-ai/glm-5.3", outcome: "network_error" }]);
+      }) as never });
+    await expect(runManhuaNativeDeepReadBatch({ episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey,
+      structuringOnly: true, abortSignal: controller.signal }, deps)).rejects.toThrow("用户取消");
+    expect(deps.invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(deps.writeStructuredBatchCache).not.toHaveBeenCalled();
+    expect(deps.postVertex).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("仅重新整形遇到缺失或错指纹JSON立即失败，不补读（错指纹=%s）", async mismatch => {
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
+    const entry = makeCacheEntry({ episode, segmentIndex: 0 });
+    entry.fingerprint = "f".repeat(64);
+    const deps = makeRunnerDeps({ readSegmentCache: vi.fn(async () => mismatch ? { entry, generation: "1" } : null) as never });
+    await expect(runManhuaNativeDeepReadBatch({ episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey, structuringOnly: true }, deps)).rejects.toThrow("禁止重新读视频");
+    expect(deps.prepareVideos).not.toHaveBeenCalled();
+    expect(deps.postVertex).not.toHaveBeenCalled();
+    expect(deps.postEvolink).not.toHaveBeenCalled();
+    expect(deps.invokeGlmStructuring).not.toHaveBeenCalled();
+  });
+
   it("固定旧指纹的双缓存恢复缺栏，不重读、不重整形、不重复计费", async () => {
     const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
     const entry = makeCacheEntry({ episode, segmentIndex: 0 });
@@ -4647,7 +4725,7 @@ describe("逐镜动态观察的生产与消费", () => {
     });
     const deps = makeRunnerDeps({ postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
       invokeGlmStructuring: invokeGlmStructuring as never });
-    await expect(runManhuaNativeDeepReadBatch({ segmentCacheSeriesKey: "hint-test",
+    await expect(runManhuaNativeDeepReadBatch({ segmentCacheSeriesKey: "hint-test", structuringModel: "qwen3.8-max",
       episodes: [{ episodeIndex: 1, segments, cacheSourceDigest: "a".repeat(64),
       sourceDurationSec: 60, resolveNodes: async () => [] }] }, deps)).rejects.toThrow("hintZh丢失");
     expect(deps.postVertex).toHaveBeenCalledTimes(1);
@@ -4739,10 +4817,10 @@ describe("0905 · 整形按批次序号分流链", () => {
     expect(nativeDeepReadStructuringGatewayOrder("structuring_chain", 1)[0]).toBe("openrouter");
   });
 
-  it("整形模型开关：qwen3.8-max / 缺省 → Qwen 首发链；glm-5.3 → GLM 首发链；started 标签跟着开关走", async () => {
+  it("整形模型开关：qwen3.8-max → Qwen 首发链；glm-5.3 / 缺省 → GLM 首发链；started 标签跟着开关走", async () => {
     const m = await import("./manhuaNativeDeepReadRunner");
     expect(m.nativeDeepReadStructuringPolicyForModel("qwen3.8-max")).toBe("structuring_chain_qwen_first");
-    expect(m.nativeDeepReadStructuringPolicyForModel(undefined)).toBe("structuring_chain_qwen_first");
+    expect(m.nativeDeepReadStructuringPolicyForModel(undefined)).toBe("structuring_chain");
     expect(m.nativeDeepReadStructuringPolicyForModel("glm-5.3")).toBe("structuring_chain");
     expect(m.nativeDeepReadStructuringStartedLabel("structuring_chain_qwen_first")).toMatch(/^Qwen3\.8-Max/);
     expect(m.nativeDeepReadStructuringStartedLabel("structuring_chain")).not.toMatch(/^Qwen3\.8-Max/);

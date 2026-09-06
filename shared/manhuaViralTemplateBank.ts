@@ -540,8 +540,8 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
       }))
       .filter((row) => row.textZh),
     evidenceFrames: evidenceFrames.length ? evidenceFrames : undefined,
-    reusableZh: String(o.reusableZh || "").trim().slice(0, 600) || undefined,
-    genPromptHintZh: String(o.genPromptHintZh || "").trim().slice(0, 600) || undefined,
+    reusableZh: String(o.reusableZh || "").trim() || undefined,
+    genPromptHintZh: String(o.genPromptHintZh || "").trim() || undefined,
     audioStory: parseManhuaNativeAudioAnalysis(o.audioStory),
     scenePoolHints: (Array.isArray(o.scenePoolHints) ? o.scenePoolHints : [])
       .map((s) => String(s || "").trim())

@@ -12,6 +12,7 @@ import { nativeReportThemePresentation, type NativeReportThemeMetadata } from ".
  */
 import { assertNativeRequiredSummary, restoreNativeRequiredSummary } from "../../shared/manhuaNativeRequiredSummary.js";
 import { Storage } from "@google-cloud/storage";
+import { stripNonStoryAdShotsForEpisodeCard } from "../../shared/manhuaNativeAdRanges.js";
 import type { ManhuaViralTemplateEvidenceFrame } from "../../shared/manhuaViralTemplateBank.js";
 import {
   downloadGcsObjectVersioned,
@@ -307,7 +308,18 @@ function assembleCardFromSegments(
       })
       .sort((a, b) => Number(a.atSec) - Number(b.atSec));
   }
-  if (excludedAdRanges.length > 0) merged.excludedAdRanges = excludedAdRanges;
+  // 段卡广告通常只有 non_story_ad 镜头；整集已删除广告镜头时才使用显式区间。
+  // 统一使用生产整集的确定性区间合并规则，只读取源证据，不采纳模型新增区间。
+  const sourceAdShots = segments.flatMap(({ raw }) =>
+    (Array.isArray(raw.shots) ? raw.shots as Array<Record<string, unknown>> : [])
+      .filter((shot) => shot?.evidenceRole === "non_story_ad"));
+  const sourceAdRanges = stripNonStoryAdShotsForEpisodeCard([{
+    shots: [
+      ...sourceAdShots,
+      ...excludedAdRanges.map((range) => ({ ...range, evidenceRole: "non_story_ad" })),
+    ],
+  }]).excludedAdRanges;
+  if (sourceAdRanges.length > 0) merged.excludedAdRanges = sourceAdRanges;
   return merged;
 }
 
@@ -434,11 +446,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   }
 
   const cl = (card.classification ?? {}) as Record<string, unknown>;
-  /**
-   * 0902 九审拍板：标签词云太零散（任何剧都有这些词），每维改织成一两句
-   * 连贯判词，标签词句中高亮保扫读。近义标签先合并（互为子串，或字集互含
-   * 且长度差 ≤2：特写镜头/特写镜头强调、爽感/爽快感），每维最多取 7 词。
-   */
+  /** 真实判词中的标签高亮最多取 7 个近义去重词；原始标签展示不受该限制。 */
   const isTagDup = (a: string, b: string): boolean => {
     if (a.includes(b) || b.includes(a)) return true;
     if (Math.abs(a.length - b.length) > 2) return false;
@@ -458,38 +466,14 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const hiTag = (t: string): string =>
     `<b style="color:#8a5a1f;background:#f9edd2;border-radius:6px;padding:0 5px">${esc(t)}</b>`;
   const joinTags = (list: string[]): string => list.map(hiTag).join("、");
-  const weaveDimension = (key: string): string => {
-    const kept = tagListOf(key);
-    if (!kept.length) return "";
-    if (key === "audienceExperienceTagsZh") {
-      // 钩子类体验（悬念/期待/好奇）挪到句尾，收在「引向下一集」才通顺
-      kept.sort((x, y) => Number(/悬念|期待|好奇/.test(x)) - Number(/悬念|期待|好奇/.test(y)));
-    }
-    const a = kept.slice(0, 2);
-    const b = kept.slice(2, 5);
-    const c = kept.slice(5, 7);
-    switch (key) {
-      case "emotionTagsZh": {
-        const calm = kept.find((t) => /平静|冷静|淡然/.test(t));
-        const coda = calm
-          ? `——偶有${hiTag(calm)}片刻，反而衬得压迫更沉`
-          : "——极性切换密，几乎不给观众留喘息";
-        return `情绪线以${joinTags(a)}打底${b.length ? `，中段翻出${joinTags(b)}` : ""}${c.length ? `，尾程在${joinTags(c)}里收拢` : ""}${coda}。`;
-      }
-      case "narrativeFeatureTagsZh":
-        return `叙事骨架立在${joinTags(a)}上${b.length ? `，靠${joinTags(b)}推着冲突走` : ""}${c.length ? `，并用${joinTags(c)}埋下后续的钩子` : ""}。`;
-      case "performanceTagsZh":
-        return `表演上${joinTags(a)}撑住大场面${b.length ? `，细处靠${joinTags(b)}见真章` : ""}${c.length ? `，${joinTags(c)}补足层次` : ""}。`;
-      case "audiovisualTagsZh":
-        return `视听语言用${joinTags(a)}造势${b.length ? `，以${joinTags(b)}强化关键瞬间` : ""}${c.length ? `，${joinTags(c)}收束整体质感` : ""}。`;
-      case "audienceExperienceTagsZh":
-        return `落到观感，${joinTags(a)}是主菜${b.length ? `，${joinTags(b)}穿插其间` : ""}${c.length ? `，再用${joinTags(c)}把人引向下一集` : ""}。`;
-      default:
-        return `${joinTags(kept)}。`;
-    }
+  const originalDimension = (key: string): string => {
+    const original = Array.isArray(cl[key]) ? cl[key] as unknown[] : [];
+    const tags = Array.from(new Set(original
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim()).filter(Boolean)));
+    return tags.length ? `原始分类标签：${joinTags(tags)}` : "";
   };
-  // GLM 整形已产出五维判词（0902 起 classificationProseZh）就用模型原句——
-  // 标签词在句中高亮；旧卡没有该字段才退回上面的模板织句。
+  // 有真实判词就原文展示；旧卡缺失时只呈现原始标签，不用固定套句冒充分析。
   const prose = (card.classificationProseZh ?? {}) as Record<string, unknown>;
   const PROSE_KEY_OF: Record<string, string> = {
     emotionTagsZh: "emotionZh",
@@ -509,8 +493,9 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const tags = ["emotionTagsZh", "narrativeFeatureTagsZh", "performanceTagsZh", "audiovisualTagsZh", "audienceExperienceTagsZh"]
     .concat(Object.keys(cl).filter((k) => Array.isArray(cl[k]) && !FIELD_LABELS[k]))
     .map((key) => {
-      const modelSentence = String(prose[PROSE_KEY_OF[key] ?? ""] ?? "").trim();
-      const sentence = modelSentence ? highlightTagsInProse(modelSentence, key) : weaveDimension(key);
+      const modelValue = prose[PROSE_KEY_OF[key] ?? ""];
+      const modelSentence = typeof modelValue === "string" ? modelValue.trim() : "";
+      const sentence = modelSentence ? highlightTagsInProse(modelSentence, key) : originalDimension(key);
       return sentence
         ? `<div style="margin:7px 0;line-height:1.85;color:#6b5b4a"><b style="color:#8a6a1f">${esc(fieldLabel(key))}</b>：${sentence}</div>`
         : "";
