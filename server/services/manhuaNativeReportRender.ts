@@ -9,6 +9,7 @@
  *   绝不列目录猜证据、绝不上传半成品报告。帧包例外：帧缺失只降级为「未抽帧」。
  * - renderNativeEvidenceReport：旧列目录入口，仅供 CLI 探针脚本兼容使用。
  */
+import { assertNativeRequiredSummary, restoreNativeRequiredSummary } from "../../shared/manhuaNativeRequiredSummary.js";
 import { Storage } from "@google-cloud/storage";
 import type { ManhuaViralTemplateEvidenceFrame } from "../../shared/manhuaViralTemplateBank.js";
 import {
@@ -105,7 +106,7 @@ const mmss = (s: number): string => `${String(Math.floor(s / 60)).padStart(2, "0
 export function condenseSegmentedSummaryZh(text: string): string {
   const clean = String(text || "").trim();
   if (!clean) return "";
-  // 0906：整形输出可能写成「第1段：…第2段：…」（无方括号，句中或换行），与「【第1段】」同样按段切
+  // 0906：兼容整形输出的无括号段号，保持前、中、后分组与全文保留。
   const parts = clean.split(/【第\d+段】|(?:^|\n|(?<=[。；;！!？?]))第\d+段[：:]/).map((t) => t.trim()).filter(Boolean);
   // 0905 用户令：只按前/中/后重新分组，内容一字不删——要压缩内容由用户另行指定
   if (parts.length < 2) return clean;
@@ -328,6 +329,7 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const bucket = getGcsBucketName();
   const sign = makeSigner();
   const card = input.card;
+  assertNativeRequiredSummary(card);
 
   const shots = ((Array.isArray(card.shots) ? card.shots : []) as Array<Record<string, unknown>>)
     .filter((shot) => shot.evidenceRole !== "non_story_ad");
@@ -1117,7 +1119,7 @@ export async function renderNativeEvidenceReportFromObjectNames(
   if (input.glmCardObjectName) {
     const glmEvidence = await mustJson(bucket, input.glmCardObjectName);
     reportCard = {
-      ...unwrapGlmReportCard(glmEvidence),
+      ...restoreNativeRequiredSummary(unwrapGlmReportCard(glmEvidence), segments.map((segment) => segment.raw)),
       // GLM 不负责复述真实分片边界；报告音轨秒位只认首次学习计划。
       ...(assembledSegments.chunkSpans ? { chunkSpans: assembledSegments.chunkSpans } : {}),
     };
@@ -1130,6 +1132,9 @@ export async function renderNativeEvidenceReportFromObjectNames(
     sourceLabelZh = "GLM 整集卡（provenance 精确寻址）";
   }
 
+  if (!input.glmCardObjectName) {
+    for (const segment of segments) assertNativeRequiredSummary(segment.raw);
+  }
   return renderCardToReport({
     labelZh: input.labelZh,
     card: reportCard,

@@ -16,6 +16,7 @@
  * 3. **门禁在写之前**。空卡、全段失败的卡不许进库——审批人点开一张没有镜头的卡，
  *    比根本没有这张卡更浪费时间，而且会掩盖「这集其实没学到」的事实。
  */
+import { assertNativeRequiredSummary } from "../../shared/manhuaNativeRequiredSummary.js";
 import {
   downloadGcsObject,
   downloadGcsObjectVersioned,
@@ -316,6 +317,10 @@ export function checkNativeDeepReadIngestable(
       reasonZh: `仅解析到 ${usableShotCount} 个有效镜头（低于 ${NATIVE_DEEP_READ_MIN_SHOTS} 镜下限），判为没学到`,
     };
   }
+  try { assertNativeRequiredSummary(result); } catch (error) {
+    return { ok: false, reasonZh: error instanceof Error ? error.message : String(error) };
+  }
+
   return { ok: true };
 }
 

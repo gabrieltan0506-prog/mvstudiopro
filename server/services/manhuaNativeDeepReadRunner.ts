@@ -8,6 +8,7 @@
  *
  * ⚠️ 默认关闭（MANHUA_NATIVE_DEEP_READ=1 才启用）。
  */
+import { assertNativeRequiredSummary, restoreNativeRequiredSummary } from "../../shared/manhuaNativeRequiredSummary.js";
 import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { readFile, stat, statfs, unlink } from "node:fs/promises";
@@ -359,8 +360,8 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = deepFreezeNativeContract({
     },
     beatStructureZh: { type: "STRING", maxLength: 90 },
     moodArcZh: { type: "STRING", maxLength: 70 },
-    reusableZh: { type: "STRING" },
-    genPromptHintZh: { type: "STRING" },
+    reusableZh: { type: "STRING", description: "必填非空文本：依据本段剧情提炼可复用手法。" },
+    genPromptHintZh: { type: "STRING", description: "必填非空文本：依据本段剧情提炼构图、运镜、调度、表演与光影要素。" },
     classification: {
       type: "OBJECT",
       properties: {
@@ -387,6 +388,7 @@ export const NATIVE_DEEP_READ_RESPONSE_SCHEMA = deepFreezeNativeContract({
    */
   required: [
     "shots", "keyMoments", "subtitles", "audioResolution", "beatStructureZh", "classification",
+    "reusableZh", "genPromptHintZh",
   ],
 } as const);
 
@@ -1384,25 +1386,14 @@ export function nativeDeepReadStructuringJsonSchema(): Record<string, unknown> {
     properties: Object.fromEntries(["emotionZh", "narrativeZh", "performanceZh", "audiovisualZh", "audienceZh"].map((k) => [k, { type: "STRING", maxLength: 200 }])),
   } as NativeResponseSchemaNode;
   base.properties!.templateTitleZh = { type: "STRING", maxLength: 60 };
-  const schema = geminiSchemaToJsonSchema(base) as { required?: string[] };
-  // 0906 实弹：≤4 片单批整形时 Qwen 严格 schema 把非必填的 reusableZh/genPromptHintZh 直接省掉，报告「本集未整理出该项」。
-  // 四段总结是这张卡最值钱的部分，整形输出一律必填（读片侧契约不动，只改整形 schema）。
-  schema.required = Array.from(new Set([...(schema.required ?? []), ...NATIVE_DEEP_READ_STRUCTURING_REQUIRED_PROSE_FIELDS]));
-  return schema as Record<string, unknown>;
-}
-
-/** 整形输出必填的四段总结；缺任一项＝坏输出，走判坏重试（同档降温→换路由）。 */
-export const NATIVE_DEEP_READ_STRUCTURING_REQUIRED_PROSE_FIELDS = ["beatStructureZh", "moodArcZh", "reusableZh", "genPromptHintZh"] as const;
-/** 只对输入分段里本来就有内容的总结字段要求输出非空；分段都没写的字段不苛求（历史证据/测试桩）。 */
-export function missingNativeDeepReadStructuringProse(
-  rows: ReadonlyArray<Record<string, unknown>>,
-  output: Record<string, unknown>,
-): string[] {
-  // 只看通过版分段（gateMarked 的是被拒版，其总结不作要求来源）
-  const sources = rows.map(unwrapNativeDeepReadStructuredAnswerEnvelope).filter((row) => row.gateMarked !== true);
-  return NATIVE_DEEP_READ_STRUCTURING_REQUIRED_PROSE_FIELDS.filter((key) =>
-    sources.some((row) => String(row[key] ?? "").trim())
-    && !String(output[key] ?? "").trim());
+  const schema = geminiSchemaToJsonSchema(base);
+  schema.required = Array.from(new Set([...(schema.required as string[]), "moodArcZh"]));
+  for (const key of ["reusableZh", "genPromptHintZh"]) {
+    const property = (schema.properties as Record<string, Record<string, unknown>>)[key]!;
+    property.minLength = 1;
+    property.pattern = "\\S";
+  }
+  return schema;
 }
 
 export const NATIVE_DEEP_READ_STRUCTURING_JSON_SCHEMA_NAME = "native_structuring_card";
@@ -1520,7 +1511,8 @@ export function nativeDeepReadFrozenContractSha256(): string {
  * 改毕即**重新冻结**（`NATIVE_DEEP_READ_KEY_SHOT_WINDOW_SEC`、两档必填字段表、提示词两档说明与本摘要一起冻结，再改需用户授权）。
  * 同时整形 maxTokens 退回 131,072、链序 structuring_chain（用户 0905 拍板）。 */
 /** 0905 用户重新授权：整形链改五档逐档 30 分钟切换 + maxTokens 262K，冻结集合随之换代（只作废整形批次缓存，不动读片分片缓存）。 */
-export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "3642723bbe094d97333bb0e890223f1ed7b9cfe464823094de6c05604d0c9eac" as const;
+/** 0906 当前用户明确授权仅将 reusableZh / genPromptHintZh 改为必填非空；其他冻结项不变。 */
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "accdcb01c3d2cef0d7ee5db9ef6d2516facc57b3e10fdb6771b053b69f482289" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
   const actual = nativeDeepReadFrozenContractSha256();
@@ -3378,6 +3370,9 @@ export function assertNativeDeepReadSegmentDensity(input: {
    */
   truncated?: boolean;
 }): { raw: Record<string, unknown>; advisories: NativeDeepReadAdvisory[] } {
+  try { assertNativeRequiredSummary(input.raw); } catch (error) {
+    throw gateError(error instanceof Error ? error.message : String(error));
+  }
   const lenSec = Math.max(1, Math.round(input.endSec - input.startSec));
   const labelZh = `第${input.segmentIndex + 1}段`;
   const segmentIndex = input.segmentIndex;
@@ -6476,16 +6471,9 @@ async function executeNativeDeepReadBatch(
             .filter(([, n]) => n >= NATIVE_DEEP_READ_LOCK_TRIES_PER_GATEWAY).map(([g]) => g);
           const result = await runStructuringOrLocalFallback({ ...input, lockRetry: attempt || undefined, badGateways, temperature: nextTemperature });
           result.raw = unwrapNativeDeepReadStructuredAnswerEnvelope(result.raw);
-          if ("localFallback" in result) return result.raw;
+          if ("localFallback" in result) return restoreNativeRequiredSummary(result.raw, input.rows);
           try {
             assertNativeDeepReadShotObservationsPreserved(input.rows, result.raw);
-            // 0906 实弹：四段总结缺项也算坏（单批 Qwen 曾整段省掉 reusableZh/genPromptHintZh）
-            const missingProse = missingNativeDeepReadStructuringProse(input.rows, result.raw);
-            if (missingProse.length) {
-              const error = new Error(`整形输出缺少总结字段 ${missingProse.join("、")}`);
-              error.name = NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
-              throw error;
-            }
             // 0906 用户令「镜数不合」也算坏：批次留存率低于拒收线，同样降温重试再换路由
             const keptShots = Array.isArray(result.raw.shots) ? (result.raw.shots as unknown[]).length : 0;
             if (inputShotCount > 0 && keptShots > 0 && keptShots / inputShotCount < NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT) {
@@ -6519,7 +6507,7 @@ async function executeNativeDeepReadBatch(
             continue;
           }
           await writeCachedStructuring(input.segmentIndexes, input.rows, result);
-          return result.raw;
+          return restoreNativeRequiredSummary(result.raw, input.rows);
         }
       };
       const badCacheUndeletable = new Set<string>();
@@ -6541,12 +6529,6 @@ async function executeNativeDeepReadBatch(
         if (cached) {
           try {
             assertNativeDeepReadShotObservationsPreserved(rows, cached.raw);
-            const missingProse = missingNativeDeepReadStructuringProse(rows, unwrapNativeDeepReadStructuredAnswerEnvelope(cached.raw));
-            if (missingProse.length) {
-              const error = new Error(`缓存整形输出缺少总结字段 ${missingProse.join("、")}`);
-              error.name = NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
-              throw error;
-            }
           } catch (error) {
             if (!isNativeDeepReadObservationLockError(error)) throw error;
             const objectName = nativeDeepReadStructuredBatchObjectName({
@@ -6570,7 +6552,7 @@ async function executeNativeDeepReadBatch(
             glmEvidenceCallIds.push(cached.evidence.callId);
           }
         }
-        return cached.raw;
+        return restoreNativeRequiredSummary(unwrapNativeDeepReadStructuredAnswerEnvelope(cached.raw), rows);
       };
       const writeCachedStructuring = async (
         segmentIndexes: readonly number[],
@@ -6723,7 +6705,10 @@ async function executeNativeDeepReadBatch(
         // 确定性拼接只算一次，取 excludedAdRanges 给 GLM 产物对账（防 GLM 私吞/改写广告区间）。
         const deterministicAdRanges =
           stripNonStoryAdShotsForEpisodeCard(annotateSegmentRows()).excludedAdRanges;
-        const structuredRaw = unwrapNativeDeepReadStructuredAnswerEnvelope(await structuredEpisodeRaw());
+        const structuredRaw = restoreNativeRequiredSummary(
+          unwrapNativeDeepReadStructuredAnswerEnvelope(await structuredEpisodeRaw()),
+          completeRawSegments,
+        );
         applyDeterministicAdRanges(structuredRaw, deterministicAdRanges);
         /**
          * 🔒 集级**镜头留存率闸**——0830 晚用户拍板「加回」的唯一一条集级判定。

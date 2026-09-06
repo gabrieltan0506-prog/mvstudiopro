@@ -411,7 +411,7 @@ describe("模型与通道收口", () => {
     expect(positive).not.toContain("不作为拒收依据");
     // 只更新证据段及环境/道具/动作说明，其他字段结构保持。
     expect(createHash("sha256").update(JSON.stringify(NATIVE_DEEP_READ_RESPONSE_SCHEMA)).digest("hex"))
-      .toBe("188453ff58a8cd15464da434a0664f15bde6e57602ca9f4cd9d05b65e1b0be75");
+      .toBe("0da51b7b8660e0e4d293da6909243ffec3dc46c49bef7c4fa9d7c96d88003d75");
   });
 
   it("请求组装层拒绝非法尝试序号绕过冻结三档", () => {
@@ -428,6 +428,7 @@ describe("模型与通道收口", () => {
     // 0830 用户拍板：keyMoments 进 required，逼模型在输出预算紧张时也必须吐。
     expect(NATIVE_DEEP_READ_RESPONSE_SCHEMA.required).toEqual([
       "shots", "keyMoments", "subtitles", "audioResolution", "beatStructureZh", "classification",
+      "reusableZh", "genPromptHintZh",
     ]);
     // v12：keyMoments 刻意排在 shots 之后、其余字段之前——responseSchema 越靠后
     // 越先被 MAX_TOKENS 截断（classification 排末位就是因此长期被截）。
@@ -4673,35 +4674,11 @@ describe("0905 · 整形 JSON Schema（Qwen strict）", () => {
     expect(schema.properties.templateTitleZh.type).toBe("string");
     expect(schema.properties.shots.items?.properties).toHaveProperty("craftReadZh");
     expect(schema.required).toContain("shots");
+    for (const key of ["reusableZh", "genPromptHintZh"]) {
+      expect(schema.required).toContain(key);
+      expect(schema.properties[key]).toMatchObject({ type: "string", minLength: 1, pattern: "\\S" });
+    }
     expect(JSON.stringify(schema)).not.toMatch(/"type":"(OBJECT|ARRAY|STRING|NUMBER|INTEGER)"/);
-  });
-});
-
-describe("0906 · 整形四段总结必填", () => {
-  it("严格 schema required 含四段总结；读片侧冻结 schema 不动", async () => {
-    const m = await import("./manhuaNativeDeepReadRunner");
-    const schema = m.nativeDeepReadStructuringJsonSchema() as { required: string[] };
-    for (const key of ["beatStructureZh", "moodArcZh", "reusableZh", "genPromptHintZh"]) expect(schema.required).toContain(key);
-    expect((m.NATIVE_DEEP_READ_RESPONSE_SCHEMA as { required: readonly string[] }).required).not.toContain("reusableZh");
-  });
-
-  it("整形输出省掉 reusableZh → 判坏走同档降温重试，第二发补齐即入库", async () => {
-    const segments = Array.from({ length: 3 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
-    const base = makeGlmStructuringStub();
-    let calls = 0;
-    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }, _s: unknown, context: { temperature?: number }) => {
-      const result = await base(prompt); calls += 1;
-      if (calls === 1) { const { reusableZh: _r, genPromptHintZh: _g, ...rest } = result.raw as Record<string, unknown>; return { ...result, gateway: "plan_bj_qwen", raw: rest }; }
-      expect(context.temperature).toBe(0.75);
-      return { ...result, gateway: "plan_bj_qwen" };
-    });
-    const deps = makeRunnerDeps({ postVertex: makeSuccessfulEpisodePostVertex(segments) as never, invokeGlmStructuring: invokeGlmStructuring as never });
-    const result = await runManhuaNativeDeepReadBatch({
-      episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 180, cacheSourceDigest: "9".repeat(64) }],
-      segmentCacheSeriesKey: "prose_required",
-    }, deps);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
-    expect(String(result.episodes[0]!.result.reusableZh || "")).not.toBe("");
   });
 });
 
@@ -4766,5 +4743,76 @@ describe("0905 · 整形按批次序号分流链", () => {
       expect(p.thinkingBudget).toBe(32_768);
       expect(p.gatewayTimeoutMsOverrides).toMatchObject({ plan_bj_qwen: 25 * 60_000, evolink_glm: 15 * 60_000 });
     }
+  });
+});
+
+
+describe("0906 学习两栏必填与整形漏栏恢复", () => {
+  for (const key of ["reusableZh", "genPromptHintZh"]) {
+    for (const value of [undefined, "", " \n "]) {
+      it(`${key} 缺省或空白不通过新分片检查`, () => {
+        const input = { episodeIndex: 1, segmentIndex: 0, startSec: 0, endSec: 60, hasAudio: true };
+        expect(() => assertNativeDeepReadSegmentDensity({ ...input,
+          raw: { ...makeSegmentPayload(input), [key]: value },
+        })).toThrow("必须有非空内容");
+      });
+    }
+  }
+  it("单批整形漏掉两栏，从原始证据恢复且不追加模型调用", async () => {
+    const base = makeGlmStructuringStub();
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
+      const result = await base(prompt);
+      delete result.raw.reusableZh;
+      result.raw.genPromptHintZh = " ";
+      return result;
+    });
+    const deps = makeRunnerDeps({
+      postVertex: makeSuccessfulEpisodePostVertex(twoSegmentEpisode.segments) as never,
+      invokeGlmStructuring: invokeGlmStructuring as never,
+    });
+    const result = await runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps);
+    expect(result.episodes[0]!.result.reusableZh).toContain("开场即冲突的通用做法");
+    expect(result.episodes[0]!.result.genPromptHintZh).toContain("景别递进+顶光");
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(deps.postVertex).toHaveBeenCalledTimes(2);
+  });
+});
+
+
+describe("0906 摘要必填跨路径回归", () => {
+  it("冻结读片 schema 仅新增两栏必填和它们的说明", () => {
+    const previous = JSON.parse(JSON.stringify(NATIVE_DEEP_READ_RESPONSE_SCHEMA));
+    previous.required = previous.required.filter((key: string) => !["reusableZh", "genPromptHintZh"].includes(key));
+    delete previous.properties.reusableZh.description;
+    delete previous.properties.genPromptHintZh.description;
+    expect(createHash("sha256").update(JSON.stringify(previous)).digest("hex"))
+      .toBe("188453ff58a8cd15464da434a0664f15bde6e57602ca9f4cd9d05b65e1b0be75");
+  });
+  it("九片分批整形各自漏栏，逐批恢复完整两栏且只有原定三次整形", async () => {
+    const segments = Array.from({ length: 9 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
+    const base = makeGlmStructuringStub();
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
+      const result = await base(prompt);
+      delete result.raw.reusableZh;
+      delete result.raw.genPromptHintZh;
+      return result;
+    });
+    const deps = makeRunnerDeps({ postVertex: makeSuccessfulEpisodePostVertex(segments) as never, invokeGlmStructuring: invokeGlmStructuring as never });
+    const result = await runManhuaNativeDeepReadBatch({ episodes: [{ ...twoSegmentEpisode, segments, sourceDurationSec: 540 }] }, deps);
+    expect(result.episodes[0]!.result.reusableZh).toContain("开场即冲突的通用做法");
+    expect(result.episodes[0]!.result.genPromptHintZh).toContain("景别递进+顶光");
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(3);
+    expect(deps.postVertex).toHaveBeenCalledTimes(9);
+  });
+  it("缺栏整形缓存直接从对应原稿恢复，不删除缓存、不重整形", async () => {
+    const readStructuredBatchCache = vi.fn(async (input: { rawSegments: Array<Record<string, unknown>> }) => ({
+      raw: { answer: JSON.stringify({ ...deterministicallyMergeNativeDeepReadRawSegments(input.rawSegments), reusableZh: undefined, genPromptHintZh: " " }) },
+    }));
+    const deps = makeRunnerDeps({ postVertex: makeSuccessfulEpisodePostVertex(twoSegmentEpisode.segments) as never, readStructuredBatchCache: readStructuredBatchCache as never });
+    const result = await runManhuaNativeDeepReadBatch({ episodes: [{ ...twoSegmentEpisode, cacheSourceDigest: "a".repeat(64) }], segmentCacheSeriesKey: "summary_cache_test" }, deps);
+    expect(result.episodes[0]!.result.reusableZh).toContain("开场即冲突的通用做法");
+    expect(result.episodes[0]!.result.genPromptHintZh).toContain("景别递进+顶光");
+    expect(deps.invokeGlmStructuring).not.toHaveBeenCalled();
+    expect(deps.remove).not.toHaveBeenCalledWith(expect.objectContaining({ objectName: expect.stringContaining("structured") }));
   });
 });

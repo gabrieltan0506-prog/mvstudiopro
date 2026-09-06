@@ -3,6 +3,7 @@
  * proposals/ = 待审；approved/ = 人审通过。产品列表 = GCS approved
  * （出厂种子 2026-08-10 已清空，shared 库只剩合并逻辑，见 manhuaViralTemplateBank.ts 文件头）。
  */
+import { assertNativeRequiredSummary } from "../../shared/manhuaNativeRequiredSummary.js";
 import { randomBytes } from "node:crypto";
 import {
   describeManhuaTemplateLearnSourceZh,
@@ -763,6 +764,7 @@ export async function saveManhuaViralTemplateRevisionProposal(
   if (!validated || validated.status !== "proposed" || !validated.revision) {
     throw new Error("待审模板修订校验失败");
   }
+  if (validated.provenance?.nativeVideoDeepRead) assertNativeRequiredSummary(validated);
   const body = `${JSON.stringify(validated, null, 2)}\n`;
   await uploadBufferToGcs({
     objectName: `${MANHUA_VIRAL_PROPOSALS_PREFIX}${validated.id}.json`,
@@ -1095,6 +1097,7 @@ async function restoreArchivedManhuaViralTemplateLocked(input: {
     throw new Error("恢复后的模板校验失败");
   }
 
+  if (restored.provenance?.nativeVideoDeepRead) assertNativeRequiredSummary(restored);
   const created = await uploadBufferToGcsIfAbsent({
     bucket,
     objectName: `${MANHUA_VIRAL_APPROVED_PREFIX}${id}.json`,
@@ -1171,6 +1174,8 @@ async function approveManhuaViralTemplateLocked(input: {
     throw new Error("原生精读提案至少需要两个有效分类维度，已停止批准");
   }
 
+  // 历史空卡可以读取和查看证据，但不能再次批准为可交付模板。
+  if (card.provenance?.nativeVideoDeepRead) assertNativeRequiredSummary(card);
   const isNativeSeriesProposal = /^tpl_native_series_[0-9a-z_-]{1,40}$/i.test(card.id)
     && Boolean(card.provenance?.nativeSeriesAggregation)
     && Boolean(card.storyStructure);

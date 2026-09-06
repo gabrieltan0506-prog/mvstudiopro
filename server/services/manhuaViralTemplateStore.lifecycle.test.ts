@@ -840,6 +840,8 @@ describe("原生分集部分卡的滚动批准", () => {
     snapshot: string;
   }) => cardOf({
     id: nativeEpisodeId,
+    reusableZh: "通过反应镜头延迟揭示冲突",
+    genPromptHintZh: "近景对峙与侧逆光",
     nameZh: "多维标签·原生第1集节奏",
     laneZh: "多维标签",
     status: input.status,
@@ -892,6 +894,15 @@ describe("原生分集部分卡的滚动批准", () => {
       ), "utf8"),
     }));
   };
+
+  it("新批准的原生模板缺少两栏时不写正式库，保留旧版", async () => {
+    const { approveManhuaViralTemplate } = await import("./manhuaViralTemplateStore");
+    const oldApproved = partialEpisodeCard({ status: "approved", successSegments: 1, publicCode: "EPKEEP", snapshot: "b".repeat(64) });
+    const next = { ...partialEpisodeCard({ status: "proposed", successSegments: 2, snapshot: "c".repeat(64) }), reusableZh: " ", genPromptHintZh: undefined };
+    seedRollingEpisodeApprove(oldApproved, next);
+    await expect(approveManhuaViralTemplate({ id: nativeEpisodeId })).rejects.toThrow("必须有非空内容");
+    expect(gcs.upload).not.toHaveBeenCalled();
+  });
 
   it("已批准 1/4 后批准 2/4：保留公开码、归档旧卡并单调替换正式卡", async () => {
     const { approveManhuaViralTemplate } = await import("./manhuaViralTemplateStore");

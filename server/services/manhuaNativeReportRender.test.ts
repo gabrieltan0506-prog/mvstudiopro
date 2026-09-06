@@ -508,7 +508,32 @@ describe("0905 · 分段摘要压成前/中/后", () => {
     expect(condenseSegmentedSummaryZh("一句。二句。三句。四句。五句。六句。七句。")).toBe("一句。二句。三句。四句。五句。六句。七句。");
     expect(condenseSegmentedSummaryZh("")).toBe("");
   });
+});
 
+
+describe("0906 HTML 摘要必交", () => {
+  it("整形漏掉两栏时从已核对身份的全部分片恢复，保留整形镜头", async () => {
+    seedThreeSegments();
+    const glmObjectName = "manhua-template-learn/episode-glm-evidence/summary-test/parsed.json";
+    const raw = { ...segmentEntry(0).raw, reusableZh: undefined, genPromptHintZh: " ", beatStructureZh: "整形节奏保留" };
+    state.objects.set(glmObjectName, { parsed: raw });
+    await renderNativeEvidenceReportFromObjectNames({ ...baseInput(), glmCardObjectName: glmObjectName });
+    const html = state.uploads[0]!.html;
+    expect(html).toContain("反打延迟半拍");
+    expect(html).toContain("雨夜巷战");
+    expect(html).toContain("整形节奏保留");
+    expect(html).not.toContain("本集未整理出该项");
+    expect(raw.reusableZh).toBeUndefined();
+  });
+  it("原稿某片缺栏时不给出貌似完整的商品报告，也不上传空报告", async () => {
+    seedThreeSegments();
+    state.objects.set(NAMES[1]!, segmentEntry(1, { reusableZh: " " }));
+    await expect(renderNativeEvidenceReportFromObjectNames(baseInput())).rejects.toThrow("可复用手法");
+    expect(state.uploads).toHaveLength(0);
+  });
+});
+
+describe("保留 PR1397 无括号分段兼容", () => {
   it("0906：无方括号的「第1段：…第2段：…」同样按前/中/后分组（单批 Qwen 实弹格式）", async () => {
     const { condenseSegmentedSummaryZh } = await import("./manhuaNativeReportRender");
     const raw = "第1段：出使受命→云端惊变。第2段：谋划机缘→突遭反水。第3段：对质揭密→反杀筑基。";
