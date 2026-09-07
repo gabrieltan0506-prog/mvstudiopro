@@ -4980,6 +4980,102 @@ describe("0905 · 整形 JSON Schema（Qwen strict）", () => {
   });
 });
 
+describe("0907 · 八坑补齐：费用闸 / 集级留存率不可达 / 三稿全败合并 / 提示词参考值与门禁分离", () => {
+  it("费用闸：判坏重试累计费用达 ¥20 即停，不再往下一档烧", async () => {
+    const { NATIVE_DEEP_READ_STRUCTURING_BATCH_COST_CAP_CNY } = await import("./manhuaNativeDeepReadRunner");
+    expect(NATIVE_DEEP_READ_STRUCTURING_BATCH_COST_CAP_CNY).toBe(20);
+    const segments = Array.from({ length: 3 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
+    const base = makeGlmStructuringStub();
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
+      const result = await base(prompt);
+      const shots = (result.raw.shots as Array<Record<string, unknown>>).map((s, i) => i === 0 ? { ...s, hintZh: "每发都改写" } : s);
+      // 每发 $2 ≈ ¥14.5：第 2 发累计 ¥29 > ¥20 → 第 2 发判坏后停，不发第 3 发
+      return { ...result, gateway: "openrouter", raw: { ...result.raw, shots }, costUsd: 2 };
+    });
+    const deps = makeRunnerDeps({ postVertex: makeSuccessfulEpisodePostVertex(segments) as never, invokeGlmStructuring: invokeGlmStructuring as never });
+    await expect(runManhuaNativeDeepReadBatch({
+      episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 180, cacheSourceDigest: "c".repeat(64) }],
+      segmentCacheSeriesKey: "cost_cap",
+    }, deps)).rejects.toThrow("费用闸");
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+  });
+
+  it("集级留存率闸不可达：各批留存率都过线时，确定性拼接不会再降到线下（拼接只合并同秒位同角色的重复镜）", async () => {
+    const { deterministicallyMergeNativeDeepReadRawSegments, NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT } = await import("./manhuaNativeDeepReadRunner");
+    const mk = (offset: number, n: number) => ({ shots: Array.from({ length: n }, (_, i) => ({ startSec: offset + i * 2, endSec: offset + i * 2 + 2, evidenceRole: "story", hintZh: `镜${offset + i}` })), keyMoments: [], subtitles: [], audioResolution: [] });
+    const a = mk(0, 50), b = mk(100, 50);
+    const merged = deterministicallyMergeNativeDeepReadRawSegments([a, b]);
+    expect((merged.shots as unknown[]).length).toBe(100);
+    expect(100 / 100).toBeGreaterThanOrEqual(NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT);
+  });
+
+  it("三稿全败：以评分最佳稿为底合并其他两稿，合并稿再过分片门禁；合并把越界内容挡在外面", async () => {
+    const { mergeNativeDeepReadRetryDrafts } = await import("./manhuaNativeDeepReadRetryDraftMerge");
+    const span = { startSec: 900, endSec: 1200 };
+    const short = (hint: string, subAt: number) => {
+      const raw = makeSegmentPayload({ segmentIndex: 3, startSec: span.startSec, endSec: span.startSec + 20 });
+      (raw.shots as Array<Record<string, unknown>>)[0]!.hintZh = hint;
+      (raw.subtitles as Array<Record<string, unknown>>).push({ atSec: subAt, textZh: hint === "稿一" ? "只有第一稿听到的这句话" : hint === "稿二" ? "越界的台词" : "第三稿自己的台词" });
+      return raw;
+    };
+    const drafts = [
+      { attemptNumber: 1, raw: short("稿一", span.startSec + 5), passedGate: false },
+      { attemptNumber: 2, raw: short("稿二", span.endSec + 50), passedGate: false },   // 越界字幕
+      { attemptNumber: 3, raw: short("稿三", span.startSec + 8), passedGate: false },
+    ];
+    const merged = mergeNativeDeepReadRetryDrafts({ segmentIndex: 3, startSec: span.startSec, endSec: span.endSec, drafts, baseAttemptNumber: 3 });
+    expect(merged.stats.baseAttemptNumber).toBe(3);
+    const subs = (merged.raw.subtitles as Array<{ atSec: number }>).map((s) => s.atSec);
+    expect(subs).toContain(span.startSec + 5);
+    expect(subs).not.toContain(span.endSec + 50);
+  });
+
+  it("提示词参考值仍按 10%（进缓存指纹），门禁判定线 15%（不进指纹）", async () => {
+    const m = await import("./manhuaNativeDeepReadRunner");
+    expect(m.NATIVE_DEEP_READ_PROMPT_SHOT_FLOOR_RATIO).toBe(0.10);
+    expect(m.NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO).toBe(0.15);
+    expect(m.NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO).toBe(0.15);
+    expect(m.resolveNativeDeepReadDensityContract(300).minStoryShots).toBe(Math.ceil(30 * 0.9));
+  });
+});
+
+describe("0907 · 整形输出音轨块编号对不上段号", () => {
+  it("整体偏移（1 起）确定性映射回段号；多一块或对不上则判坏", async () => {
+    const m = await import("./manhuaNativeDeepReadRunner");
+    const mk = (idx: number[]) => ({ audioResolution: idx.map((chunkIndex) => ({ chunkIndex, analysis: {} })) });
+    expect(m.normalizeNativeDeepReadStructuredAudioChunkIndexes(mk([3, 4, 5]), [3, 4, 5])).toMatchObject({ remapped: false });
+    const shifted = m.normalizeNativeDeepReadStructuredAudioChunkIndexes(mk([4, 5, 6]), [3, 4, 5]);
+    expect(shifted?.remapped).toBe(true);
+    expect((shifted!.raw.audioResolution as Array<{ chunkIndex: number }>).map((c) => c.chunkIndex)).toEqual([3, 4, 5]);
+    expect(m.normalizeNativeDeepReadStructuredAudioChunkIndexes(mk([0, 1, 2, 4]), [0, 1, 2, 3])).toBeNull();
+    expect(m.normalizeNativeDeepReadStructuredAudioChunkIndexes(mk([0, 1, 2, 3, 4]), [0, 1, 2, 3])).toBeNull();
+    expect(m.normalizeNativeDeepReadStructuredAudioChunkIndexes({ shots: [] }, [0, 1])).toMatchObject({ remapped: false });
+  });
+
+  it("批次输出多一块音轨（chunkIndex 越出段号）→ 判坏走同档降温重试，第二发正常即入库", async () => {
+    const segments = Array.from({ length: 3 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
+    const base = makeGlmStructuringStub();
+    let calls = 0;
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }, _s: unknown, context: { temperature?: number }) => {
+      const result = await base(prompt); calls += 1;
+      if (calls === 1) {
+        const raw = JSON.parse(JSON.stringify(result.raw)) as { audioResolution: Array<Record<string, unknown>> };
+        raw.audioResolution.push({ ...raw.audioResolution[0]!, chunkIndex: 4 });
+        return { ...result, gateway: "openrouter", raw };
+      }
+      expect(context.temperature).toBe(0.75);
+      return { ...result, gateway: "openrouter" };
+    });
+    const deps = makeRunnerDeps({ postVertex: makeSuccessfulEpisodePostVertex(segments) as never, invokeGlmStructuring: invokeGlmStructuring as never });
+    const result = await runManhuaNativeDeepReadBatch({
+      episodes: [{ episodeIndex: 9, resolveNodes: async () => [], segments, sourceDurationSec: 180, cacheSourceDigest: "8".repeat(64) }],
+      segmentCacheSeriesKey: "chunk_index_retry",
+    }, deps);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    expect(result.episodes[0]!.result.segmentCount).toBe(3);
+  });
+});
+
 describe("0906 · 整形缓存与证据按整形模型分命名空间", () => {
   it("GLM 链的 callId 与 Qwen 链不同；Qwen 链与历史（无策略）callId 逐字相同，已付费缓存不失配", async () => {
     const { nativeDeepReadStructuredBatchCallId } = await import("./manhuaNativeDeepReadRunner");

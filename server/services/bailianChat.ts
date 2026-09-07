@@ -350,15 +350,16 @@ type GlmGatewayAttemptError = Error & { glmGatewayUsage?: GlmGatewayUsage };
 /** 0907 用户令：流式心跳回执每 10 分钟一条（0905 曾 30 秒；面板刷屏）。空闲超时另算（GLM_STREAM_IDLE_TIMEOUT_MS）。 */
 export const GLM_STREAM_PROGRESS_INTERVAL_MS = 10 * 60_000;
 /**
- * 0907 用户令「有心跳就延长十五分钟一次，不掐断」：单档墙钟只是首个期限；只要还在收字节（每次心跳），
- * 期限就推到「现在 + 15 分钟」。真正会掐断的只剩空闲超时（10 分钟无字节）与调用方的 abortSignal。
+ * 0907 用户令「十分钟还有心跳，延长一次十五分钟」：单档墙钟（GLM 20 分钟）到点时若仍在收字节，
+ * **只延长一次** 15 分钟（上限 20 + 15 = 35 分钟），之后到点就掐。空闲超时（10 分钟无字节）与调用方 abortSignal 照旧。
  */
 export const GLM_HEARTBEAT_EXTEND_MS = 15 * 60_000;
 
-/** 可延期的单档期限：首期用 AbortSignal.timeout（测试可观测），心跳后改由本地计时器接管。 */
+/** 可延期一次的单档期限：首期用 AbortSignal.timeout（测试可观测）；有心跳则把期限延到「首期 + 15 分钟」，只延一次。 */
 export function createGlmGatewayDeadline(timeoutMs: number, parent?: AbortSignal): { signal: AbortSignal; extend: () => void; dispose: () => void } {
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const controller = new AbortController();
+  const firstDeadlineAt = Date.now() + timeoutMs;
   let extendedUntil = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const abortNow = () => { if (!controller.signal.aborted) controller.abort(new DOMException("GLM 单档超时", "TimeoutError")); };
@@ -366,13 +367,14 @@ export function createGlmGatewayDeadline(timeoutMs: number, parent?: AbortSignal
     if (timer) clearTimeout(timer);
     const remain = extendedUntil - Date.now();
     if (remain <= 0) { abortNow(); return; }
-    timer = setTimeout(() => { if (extendedUntil > Date.now()) arm(); else abortNow(); }, remain);
+    timer = setTimeout(abortNow, remain);
   };
   timeoutSignal.addEventListener("abort", () => { if (extendedUntil > Date.now()) arm(); else abortNow(); }, { once: true });
   const signal = parent ? AbortSignal.any([parent, controller.signal]) : controller.signal;
   return {
     signal,
-    extend: () => { extendedUntil = Math.max(extendedUntil, Date.now() + GLM_HEARTBEAT_EXTEND_MS); },
+    // 只延一次：期限固定为「首期 + 15 分钟」，再多心跳也不再推
+    extend: () => { if (!extendedUntil) extendedUntil = firstDeadlineAt + GLM_HEARTBEAT_EXTEND_MS; },
     dispose: () => { if (timer) clearTimeout(timer); },
   };
 }
