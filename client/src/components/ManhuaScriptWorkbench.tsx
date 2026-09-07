@@ -34,6 +34,7 @@ import {
   queuedManhuaClipBlocks,
   queuedManhuaKeyartBlocks,
   resolveShotsForEpisodeKeyarts,
+  resolveShotsForEpisodeKeyartsResult,
   stageKeyFromBlockId,
 } from "@/lib/canvasDramaStudio";
 import {
@@ -46,6 +47,7 @@ import {
   type ManhuaAssetsGapAnchor,
 } from "@/lib/manhuaPhaseGapText";
 import { ManhuaAssetImage } from "@/components/ManhuaAssetImage";
+import { ManhuaAssetEditInput } from "@/components/ManhuaAssetEditInput";
 import {
   getManhuaCharacterById,
   getManhuaCharacterDisplayName,
@@ -270,6 +272,15 @@ type ManhuaPendingSheetAnchor = {
   lookZh: string;
 };
 
+/** 来源说明不改变镜数、预算、生成权限或旧稿内容。 */
+export function ManhuaShotSourceLabel({ isFallback }: { isFallback: boolean }) {
+  return (
+    <span data-manhua-shot-source={isFallback ? "fallback" : "parsed"} className="ml-2 text-[10px] font-normal text-amber-100/70">
+      {isFallback ? "占位规划·未解析原稿" : "画布分镜规划"}
+    </span>
+  );
+}
+
 type Props = {
   blocks: CanvasBlock[];
   /** 顶部当前真选的成片引擎；优先于尚未重铺的旧 clip 盖章。 */
@@ -319,6 +330,8 @@ type Props = {
   /** 生成中随时中断（测试不必跑完整条链） */
   onStopFactory?: () => void;
   canRun?: boolean;
+  /** 当前剧本的真实确认状态；编导解锁不等于确认，不能用于生成权限。 */
+  outlineConfirmed: boolean;
   /** 剧情包已出、尚未确认编剧 */
   writerPackReady?: boolean;
   onConfirmOutline?: () => void;
@@ -395,7 +408,7 @@ type Props = {
   /** AI 去字（3 分）：物理擦除画面文字 */
   onDetextCustomAsset?: (id: string) => void | Promise<void>;
   /** 按用户指令编辑图片；原图保留，新图作为同类参考入库。 */
-  onEditCustomAsset?: (id: string, instructionZh: string) => void | Promise<void>;
+  onEditCustomAsset?: (id: string, instructionZh: string) => void | boolean | Promise<void | boolean>;
   /** 免费裁字：按保留区比例裁剪后入库为新参考图 */
   onCropCustomAsset?: (id: string, crop: { x: number; y: number; w: number; h: number }) => void | Promise<void>;
   /** 明确认领稳定锚点；场景允许一图多选，替代用显示名猜主键。 */
@@ -919,6 +932,7 @@ export default function ManhuaScriptWorkbench({
   factoryProgress,
   onStopFactory,
   canRun,
+  outlineConfirmed,
   writerPackReady,
   onConfirmOutline,
   onOpenWriterEditor,
@@ -1212,6 +1226,10 @@ export default function ManhuaScriptWorkbench({
   // 与静帧展开、成片编排共用真实来源，不能拿待运行模板生成另一套界面骨架。
   const shots: ManhuaWorkbenchShot[] = useMemo(
     () => resolveShotsForEpisodeKeyarts(blocks, focusEpisode),
+    [blocks, focusEpisode],
+  );
+  const shotSourceIsFallback = useMemo(
+    () => resolveShotsForEpisodeKeyartsResult(blocks, focusEpisode).isFallback,
     [blocks, focusEpisode],
   );
 
@@ -2282,6 +2300,7 @@ export default function ManhuaScriptWorkbench({
       customAssetRefs,
     ],
   );
+  // 保留既有显式解锁能力；阶段完成展示只读独立的剧本确认状态。
   const outlineComplete = Boolean(canRun);
   const activeLookCharacterIds = useMemo(() => {
     const beat = activeSourceBeat;
@@ -2588,8 +2607,8 @@ export default function ManhuaScriptWorkbench({
       {
         id: "outline",
         label: "剧本大纲",
-        complete: outlineComplete,
-        gapZh: outlineComplete ? "" : "请先确认剧本大纲",
+        complete: outlineConfirmed,
+        gapZh: outlineConfirmed ? "" : "请先确认剧本大纲",
       },
       {
         id: "assets",
@@ -2650,7 +2669,7 @@ export default function ManhuaScriptWorkbench({
     }));
   }, [
     stageStrip,
-    outlineComplete,
+    outlineConfirmed,
     assetsComplete,
     activePhase,
     episodeStillCount,
@@ -2929,9 +2948,10 @@ export default function ManhuaScriptWorkbench({
             <div className="truncate text-[13px] font-semibold text-white/95">
               {seriesTitle || topic || "剧本工作室"}
               <span className="ml-2 text-[11px] font-normal text-white/40">
-                第{focusEpisode}集 · {segments.length} 段 · 约 {totalSec}s · {episodeVideoLabelZh}
+                第{focusEpisode}集 · {segments.length} 段 · 规划约 {totalSec}s · {episodeVideoLabelZh}
                 {artStyleLabelZh ? ` · ${artStyleLabelZh}` : ""}
               </span>
+              <ManhuaShotSourceLabel isFallback={shotSourceIsFallback} />
             </div>
             {directorStrategyContract ? (
               <div
@@ -2950,7 +2970,7 @@ export default function ManhuaScriptWorkbench({
                 </span>
                 <span className="text-emerald-200/70">已锁定</span>
               </div>
-            ) : outlineComplete ? (
+            ) : outlineConfirmed ? (
               <div
                 data-manhua-director-strategy-status
                 data-status="upgrade-required"
@@ -3733,7 +3753,7 @@ export default function ManhuaScriptWorkbench({
               </div>
             ) : null}
             <div className="mt-5 flex flex-wrap items-center gap-2">
-              {!outlineComplete && writerPackReady && onConfirmOutline ? (
+              {!outlineConfirmed && writerPackReady && onConfirmOutline ? (
                 <button
                   type="button"
                   data-manhua-action="confirm-outline"
@@ -3753,7 +3773,7 @@ export default function ManhuaScriptWorkbench({
                   先导入参考图
                 </button>
               ) : null}
-              {!outlineComplete && !writerPackReady ? (
+              {!outlineConfirmed && !writerPackReady ? (
                 <p className="text-[11px] text-amber-100/80">
                   请先在上方「改题材」扩写或导入剧本，再回来确认大纲。
                 </p>
@@ -3780,6 +3800,11 @@ export default function ManhuaScriptWorkbench({
           className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6"
         >
           <div className="mx-auto max-w-4xl">
+            {outlineComplete && !outlineConfirmed ? (
+              <p data-manhua-outline-unconfirmed className="mb-3 text-[11px] text-amber-100/80">
+                编导区已解锁，当前剧本尚未确认；已有参考图不代表剧本资产已齐备。
+              </p>
+            ) : null}
             {onUploadCustomAssets ? (
               <div
                 data-manhua-quick-asset-upload
@@ -5161,7 +5186,7 @@ export default function ManhuaScriptWorkbench({
                                   .slice(0, 4)
                                   .map((s) => s.labelZh || s.tag)
                                   .join("、")}${missing.length > 4 ? "…" : ""}`
-                              : " · 全部就位"}
+                              : " · 已有引用均已挂图"}
                             （点顶栏「显示说明」看全表）
                           </p>
                         );
@@ -5903,23 +5928,13 @@ export default function ManhuaScriptWorkbench({
                                     </button>
                                   ) : null}
                                   {onEditCustomAsset ? (
-                                    <button
-                                      type="button"
+                                    <ManhuaAssetEditInput
+                                      key={ref.id}
+                                      labelZh={ref.labelZh || "参考图"}
                                       disabled={!outlineComplete || assetStandardizeBusyId != null}
-                                      onClick={() => {
-                                        const instructionZh = window.prompt(
-                                          "写清楚这张图要改什么。未提到的部分会尽量保持原样：",
-                                          "",
-                                        );
-                                        if (instructionZh?.trim()) {
-                                          void onEditCustomAsset(ref.id, instructionZh);
-                                        }
-                                      }}
-                                      title="输入修改要求后编辑这张图；原图保留，新图进入同一资产栏"
-                                      className="rounded border border-violet-300/40 bg-violet-500/10 px-1.5 py-0.5 text-[9px] font-medium text-violet-100 hover:bg-violet-500/25 disabled:opacity-40"
-                                    >
-                                      {assetStandardizeBusyId === ref.id ? "编辑中…" : "编辑图片·3分"}
-                                    </button>
+                                      busy={assetStandardizeBusyId === ref.id}
+                                      onSubmit={(instructionZh) => onEditCustomAsset(ref.id, instructionZh)}
+                                    />
                                   ) : null}
                                 </div>
                               ) : null}
@@ -7160,6 +7175,7 @@ export default function ManhuaScriptWorkbench({
                   {activeSegment?.durationSec ?? 15}s · 静帧 {activeShot?.index ?? "—"}/
                   {shots.length || 1} · {episodeVideoLabelZh}
                 </span>
+                <ManhuaShotSourceLabel isFallback={shotSourceIsFallback} />
               </div>
               {episodeStillCount === 0 ? (
                 <div className="mt-1.5 flex max-w-xl flex-col gap-1.5">
@@ -7391,6 +7407,7 @@ export default function ManhuaScriptWorkbench({
               )}
               <div className="mt-2 shrink-0 text-[11px] font-semibold text-white/70">
                 分镜（{shots.length}）· 当前第 {activeShot?.index ?? "—"} 镜
+                <ManhuaShotSourceLabel isFallback={shotSourceIsFallback} />
               </div>
               <div className="mt-1.5 min-h-0 flex-1 space-y-2 overflow-y-auto pr-0.5">
                 {shots.map((shot, i) => {
@@ -8443,8 +8460,9 @@ export default function ManhuaScriptWorkbench({
             <div className="text-[11px] font-semibold text-white/75">
               成片段
               <span className="ml-1 text-[9px] font-normal text-white/40">
-                {filmstripSegments.length} 段 · 共 {totalSec}s · 一格一次出片
+                {filmstripSegments.length} 段 · 规划共 {totalSec}s · 一格一次出片
               </span>
+              <ManhuaShotSourceLabel isFallback={shotSourceIsFallback} />
               {missingFragmentIndexes.length ? (
                 <span className="ml-1.5 text-[9px] font-normal text-amber-100/70">
                   缺 {missingFragmentIndexes.length} 段

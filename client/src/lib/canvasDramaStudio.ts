@@ -164,7 +164,7 @@ import {
   MANHUA_KEYART_NO_TEXT_LOCK,
   MANHUA_KEYARTS_PER_SEGMENT_MIN,
   MANHUA_SEGMENT_DEFAULT,
-  parseWorkbenchShotsFromText,
+  parseWorkbenchShotsFromTextResult,
   parseManhuaClipTargetDurationSec,
   resolveClipLocalSegmentIndex,
   resolveClipSegmentIndex,
@@ -1755,10 +1755,8 @@ export function countExpectedManhuaKeyartShots(
  */
 export function hasExplicitManhuaShotStructure(text: string): boolean {
   if (parseManhuaEpisodeSegmentPlanFromMarkdown(text).segments.length > 0) return true;
-  const numberedRows = String(text || "").match(
-    /^(?:\|?\s*)(?:分镜|镜头|节拍|Shot)?\s*\d{1,2}\s*(?:[.、:：)\]】]|\|)/gim,
-  );
-  return (numberedRows?.length || 0) >= 2;
+  // 对白覆盖表也有编号；只有实际可解析的分镜才能抢占下一份成稿。
+  return !parseWorkbenchShotsFromTextResult(text).isFallback;
 }
 
 /** 工作台、静帧和成片共同读取的分镜真源；模板不能覆盖已返回的结构正文。 */
@@ -1766,6 +1764,14 @@ export function resolveShotsForEpisodeKeyarts(
   blocks: CanvasBlock[],
   episodeIndex: number | null | undefined,
 ): ManhuaWorkbenchShot[] {
+  return resolveShotsForEpisodeKeyartsResult(blocks, episodeIndex).shots;
+}
+
+/** 与生产数组同次解析的来源事实；有解析行不等于已确认原稿，仅区分默认占位。 */
+export function resolveShotsForEpisodeKeyartsResult(
+  blocks: CanvasBlock[],
+  episodeIndex: number | null | undefined,
+): { shots: ManhuaWorkbenchShot[]; isFallback: boolean } {
   const sameEpisode = (b: CanvasBlock) => {
     if (episodeIndex == null) return true;
     const be = getBlockEpisodeIndex(b);
@@ -1789,10 +1795,10 @@ export function resolveShotsForEpisodeKeyarts(
   // 三类节点遵循同一成稿优先顺序；旧段表必须先编译，不能误落逐镜解析骨架。
   const selectedText = shotSource || reverseText || beatsText || storyText;
   const selectedPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(selectedText);
-  const shots = selectedPlan.segments.length
-    ? buildWorkbenchShotsFromSegmentPlan(selectedPlan)
-    : parseWorkbenchShotsFromText(selectedText);
-  const withAngles = applyShotAnglesFromText(shots, `${reverseText}\n${beatsText}`);
+  const result = selectedPlan.segments.length
+    ? { shots: buildWorkbenchShotsFromSegmentPlan(selectedPlan), isFallback: false }
+    : parseWorkbenchShotsFromTextResult(selectedText);
+  const withAngles = applyShotAnglesFromText(result.shots, `${reverseText}\n${beatsText}`);
   // 工作台的「成片台词」会把覆盖表同时写回 reverse / beats。这里是静帧与段成片
   // 共用的真实分镜生产者，必须在分段、说话人绑定和提示词编译之前消费覆盖表。
   // 顺序与工作台一致：先 reverse、后 beats；两边都有时以 beats 的较新值为准。
@@ -1800,7 +1806,7 @@ export function resolveShotsForEpisodeKeyarts(
   const withDialogues = applyShotDialoguesFromText(withReverseDialogues, beatsText);
   // 返回分镜列表本身；成段/注水在 ensureManhuaFragmentClips / 工作台侧做
   // 保留完整正文；引擎容量由后续统一重切处理，不能在解析后先丢掉尾部剧情。
-  return withDialogues;
+  return { shots: withDialogues, isFallback: result.isFallback };
 }
 
 function makeShotBlockId(

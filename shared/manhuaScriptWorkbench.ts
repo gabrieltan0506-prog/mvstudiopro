@@ -670,14 +670,22 @@ function parseShotRowsFromText(raw: string): ParsedShotRow[] {
 
 /** 从节拍 / 反推正文拆出多镜；失败则回落为「6 段 × 3 静帧」骨架 */
 export function parseWorkbenchShotsFromText(raw: string | undefined | null): ManhuaWorkbenchShot[] {
+  return parseWorkbenchShotsFromTextResult(raw).shots;
+}
+
+/** 仅附加来源标识；占位判据与镜头内容仍沿用原解析流程。 */
+export function parseWorkbenchShotsFromTextResult(raw: string | undefined | null): {
+  shots: ManhuaWorkbenchShot[];
+  isFallback: boolean;
+} {
   const text = String(raw || "").trim();
-  if (!text) return defaultWorkbenchShots();
+  if (!text) return { shots: defaultWorkbenchShots(), isFallback: true };
 
   const rows = parseShotRowsFromText(text);
-  if (rows.length < 2) return defaultWorkbenchShots(text.slice(0, 180));
+  if (rows.length < 2) return { shots: defaultWorkbenchShots(text.slice(0, 180)), isFallback: true };
 
   // 重新编号为 1..n；有原稿秒位则保留，无秒位的旧表仍使用 0 占位。
-  return rows.map((row, i) => ({
+  const shots = rows.map((row, i) => ({
     index: i + 1,
     durationSec: row.durationSec || 0,
     cameraZh: row.cameraZh || DEFAULT_CAMERAS[i % DEFAULT_CAMERAS.length]!,
@@ -688,6 +696,7 @@ export function parseWorkbenchShotsFromText(raw: string | undefined | null): Man
     voiceToneZh: row.voiceToneZh || undefined,
     microExpressionZh: row.microExpressionZh || undefined,
   }));
+  return { shots, isFallback: false };
 }
 
 export function defaultWorkbenchShots(seedAction?: string): ManhuaWorkbenchShot[] {

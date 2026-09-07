@@ -5883,13 +5883,13 @@ export default function OmniCanvas() {
    */
   const editCustomAsset = useCallback(
     async (id: string, instructionZh: string) => {
-      if (assetStandardizeBusyId) return;
+      if (assetStandardizeBusyId) return false;
       const ref = customAssetRefs.find((item) => item.id === id);
-      if (!ref) return;
+      if (!ref) return false;
       const prompt = buildManhuaAssetImageEditPrompt(instructionZh);
       if (!prompt) {
         toast.error("请先写清楚要修改的内容");
-        return;
+        return false;
       }
       const cost = manhuaAssetStandardizeCredits("medium");
       if (
@@ -5897,7 +5897,7 @@ export default function OmniCanvas() {
           `将按你的要求编辑这张图片。\n\n${cost} 积分/张；失败自动退回。原图会保留，新图进入同一资产栏。\n处理约需 1–2 分钟，期间请不要关闭页面。继续？`,
         )
       )
-        return;
+        return false;
       setAssetStandardizeBusyId(id);
       try {
         const source = await prepareAssetImageEdit(ref);
@@ -5946,10 +5946,12 @@ export default function OmniCanvas() {
         toast.success(`图片编辑完成 · 已扣 ${cost} 积分`, {
           description: "原图仍保留，可对比后再决定是否删除。",
         });
+        return true;
       } catch (error) {
         toast.error("图片编辑失败", {
           description: error instanceof Error ? error.message : "已进入失败退分流程",
         });
+        return false;
       } finally {
         setAssetStandardizeBusyId(null);
       }
@@ -8841,6 +8843,7 @@ export default function OmniCanvas() {
                   }
                   onStopFactory={factoryBusy ? stopFactory : undefined}
                   canRun={Boolean(directorUnlocked || writerConfirmed)}
+                  outlineConfirmed={writerConfirmed}
                   writerPackReady={Boolean(writerPack && writerPackLooksReady(writerPack))}
                   onConfirmOutline={() => {
                     confirmWriterToDirector();

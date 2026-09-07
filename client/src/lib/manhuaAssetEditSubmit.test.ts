@@ -104,6 +104,24 @@ function setup(failure = false) {
 }
 
 describe("真实资产按钮到队列与新图回写", () => {
+  it("真实编辑回调取消或失败返回 false，成功追加才返回 true", async () => {
+    const cancelled = setup();
+    cancelled.deps.window.confirm = () => false;
+    expect(
+      await callback("editCustomAsset", cancelled.deps)("original", "保留黑翼")
+    ).toBe(false);
+    expect(cancelled.queue).not.toHaveBeenCalled();
+    const failed = setup(true);
+    expect(
+      await callback("editCustomAsset", failed.deps)("original", "保留黑翼")
+    ).toBe(false);
+    expect(failed.queue).not.toHaveBeenCalled();
+    const succeeded = setup();
+    expect(
+      await callback("editCustomAsset", succeeded.deps)("original", "保留黑翼")
+    ).toBe(true);
+    expect(succeeded.getRefs()).toHaveLength(2);
+  });
   it.each(["editCustomAsset", "detextCustomAsset", "standardizeCustomAsset"])(
     "%s 消费续签原图；普通编辑横版，标准化人物仍竖版",
     async name => {
