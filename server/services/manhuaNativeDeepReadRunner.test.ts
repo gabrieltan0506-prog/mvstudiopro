@@ -6,6 +6,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { nativeDeepReadSegmentSchema } from "../../shared/manhuaNativeDeepRead.js";
 import {
   NATIVE_DEEP_READ_SHOT_SANITY_FLOOR_INTERVAL_SEC,
   NATIVE_DEEP_READ_PROHIBITION_BLOCK,
@@ -67,6 +68,9 @@ import {
   resolveNativeDeepReadInputFps,
   resolveNativeDeepReadSegmentFloors,
   runManhuaNativeDeepReadBatch,
+  isNativeDeepReadKeyShot,
+  nativeDeepReadKeyMomentSecs,
+  repairNativeDeepReadStructuredKeyMoments,
   runManhuaNativeDeepRead,
   runManhuaNativeDeepReadSelectedSegments,
   createNativeDeepReadRunnerDeps,
@@ -899,6 +903,8 @@ function makeSegmentPayload(input: {
   hasAudio?: boolean;
   shotCountOverride?: number;
   audioTrackOverride?: number;
+  /** 0907：读片门禁拒收 0 条重点时刻；夹具默认给两条（全片绝对秒），要测零条时显式传 [] */
+  keyMomentsOverride?: Array<{ atSec: number; kindZh: string; noteZh: string }>;
 }): Record<string, unknown> {
   const lenSec = input.endSec - input.startSec;
   const floors = resolveNativeDeepReadSegmentFloors(lenSec);
@@ -950,6 +956,10 @@ function makeSegmentPayload(input: {
   });
   return {
     shots,
+    keyMoments: input.keyMomentsOverride ?? [
+      { atSec: Math.round((input.startSec + lenSec * 0.2) * 10) / 10, kindZh: "剧情", noteZh: `第${input.segmentIndex + 1}段冲突升级` },
+      { atSec: Math.round((input.startSec + lenSec * 0.7) * 10) / 10, kindZh: "情绪", noteZh: `第${input.segmentIndex + 1}段情绪峰值` },
+    ],
     subtitles: [{ atSec: input.startSec, textZh: "字幕原文" }],
     audioResolution: input.hasAudio === false ? [] : [{
       chunkIndex: input.segmentIndex,
@@ -1116,6 +1126,23 @@ describe("v11 · 截断段豁免（classification 在 responseSchema 最末，�
       raw,
       truncated: true,
     })).toThrow();
+  });
+});
+
+describe("0907 读片门禁：重点时刻 0 条当场拒收重读", () => {
+  const base = { episodeIndex: 1, segmentIndex: 2, startSec: 600, endSec: 900, hasAudio: true };
+  it("剧情段 0 条重点时刻 → 拒收（走降温重读），不再留到入库才发现没画面", () => {
+    const raw = makeSegmentPayload({ ...base, keyMomentsOverride: [] });
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw })).toThrow("重点时刻 0 条");
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw: makeSegmentPayload(base) })).not.toThrow();
+  });
+  it("截断段、整段广告不因 0 条重点时刻拒收（截断走豁免通道；广告零帧）", () => {
+    const truncated = makeSegmentPayload({ ...base, keyMomentsOverride: [] });
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw: truncated, truncated: true })).not.toThrow("重点时刻 0 条");
+    // 0907 审查：段缓存复验与缓存命中复验不传 truncated，只认段卡本体的 truncated 标记，也得豁免，否则写完缓存再复验整集死
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw: { ...truncated, truncated: true } })).not.toThrow("重点时刻 0 条");
+    const adOnly = { ...makeSegmentPayload({ ...base, keyMomentsOverride: [] }), shots: [{ startSec: 600, endSec: 900, evidenceRole: "non_story_ad" }] };
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw: adOnly })).not.toThrow("重点时刻 0 条");
   });
 });
 
@@ -2445,6 +2472,7 @@ function makeGlmStructuringStub() {
       templateTitleZh: "测试剧情推进·情绪递进型",
       classificationProseZh: { emotionZh: "压迫渐强", narrativeZh: "信息递进", performanceZh: "克制爆发", audiovisualZh: "冷暖对撞", audienceZh: "持续紧张" },
       shots: allShots.filter((shot) => shot.evidenceRole !== "non_story_ad"),
+      keyMoments: pick("keyMoments"),
       subtitles: pick("subtitles"),
       audioResolution: pick("audioResolution"),
       beatStructureZh: joinText("beatStructureZh"),
@@ -2613,7 +2641,9 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
     for (const row of result.segments) {
       const span = fullSegments[row.segmentIndex]!;
       expect(row).toMatchObject({ ...span, hasAudio: true });
-      expect(row.raw.shots).toEqual((makeSegmentPayload({ segmentIndex: row.segmentIndex, ...span }).shots as Array<Record<string, unknown>>).map(shot => ({ ...shot, detailLevel: "brief" })));
+      const expectedPayload = makeSegmentPayload({ segmentIndex: row.segmentIndex, ...span });
+      const keySecs = nativeDeepReadKeyMomentSecs(expectedPayload);
+      expect(row.raw.shots).toEqual((expectedPayload.shots as Array<Record<string, unknown>>).map(shot => ({ ...shot, detailLevel: isNativeDeepReadKeyShot(shot as never, keySecs) ? "key" : "brief" })));
       const expectedFingerprint = nativeDeepReadSegmentCacheFingerprint({
         sourceDigest: params.sourceDigest, episodeIndex: 1, episodeDurationSec: 1594,
         segment: span, segmentIndex: row.segmentIndex, segmentCount: 5, hasAudio: true, videoFps: 12,
@@ -3410,6 +3440,85 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
     expect(receipts.some((row) => row.route === "structuring_retry_pending" && String(row.model).includes("不符合集卡 schema"))).toBe(true);
     expect(result.episodes[0]!.result.segmentCount).toBe(3);
+  });
+
+  it("0907 整形输出整份漏掉 keyMoments（b28ec016fa44 第 1 集实弹）→ 从读片稿确定性补回，不重整形，回执打进进度行", async () => {
+    const segments = Array.from({ length: 3 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
+    const postVertex = vi.fn(async (body: unknown) => {
+      const fileUri = (body as { contents: Array<{ parts: Array<{ fileData?: { fileUri: string } }> }> }).contents[0]!.parts[0]!.fileData!.fileUri;
+      const segmentIndex = Number(/seg-(\d+)/.exec(fileUri)?.[1]);
+      const segment = segments[segmentIndex]!;
+      const payload = makeSegmentPayload({ segmentIndex, startSec: segment.startSec, endSec: segment.endSec });
+      // 每段两条重点时刻，全片绝对秒（与镜头同一坐标系；生产证据 seg2 给的就是 583.4 这种绝对秒）
+      payload.keyMoments = [
+        { atSec: segment.startSec + 10.5, kindZh: "剧情", noteZh: `第${segmentIndex + 1}段冲突升级` },
+        { atSec: segment.startSec + 40, kindZh: "情绪", noteZh: `第${segmentIndex + 1}段情绪峰值` },
+      ];
+      return geminiResponse(payload);
+    });
+    const base = makeGlmStructuringStub();
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
+      const result = await base(prompt);
+      const raw = JSON.parse(JSON.stringify(result.raw)) as Record<string, unknown>;
+      delete raw.keyMoments;
+      return { ...result, gateway: "openrouter", raw };
+    });
+    const receipts: Array<Record<string, unknown>> = [];
+    const deps = makeRunnerDeps({ postVertex: postVertex as never, invokeGlmStructuring: invokeGlmStructuring as never });
+    const result = await runManhuaNativeDeepReadBatch({
+      episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 180, cacheSourceDigest: "b".repeat(64) }],
+      segmentCacheSeriesKey: "keymoments_backfill",
+      onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
+    }, deps);
+    // 漏键不算坏输出：一次整形就过，不烧第二发
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(receipts.some((row) => row.route === "structuring_retry_pending")).toBe(false);
+    const backfill = receipts.find((row) => row.route === "structuring_keymoments_backfilled");
+    expect(String(backfill?.model)).toContain("从读片稿补回 6 条");
+    const episode = result.episodes[0]!.result;
+    expect(episode.segmentCount).toBe(3);
+    expect((episode.keyMoments ?? []).map((row) => row.atSec)).toEqual([10.5, 40, 70.5, 100, 130.5, 160]);
+  });
+
+  it("0907 审查：整形输出里格式坏的重点时刻（atSec 字符串 / 缺 noteZh）当缺，用输入稿同键顶上，免得集卡 schema 把整批 catch 成空", () => {
+    const rows = [{ keyMoments: [{ atSec: 12.5, kindZh: "剧情", noteZh: "输入稿" }, { atSec: 30, kindZh: "情绪", noteZh: "输入稿 2" }] }];
+    const structured = { shots: [], keyMoments: [{ atSec: "12.5", kindZh: "剧情", noteZh: "字符串秒位" }, { atSec: 30, kindZh: "情绪" }] };
+    const fixed = repairNativeDeepReadStructuredKeyMoments(structured, rows);
+    expect(fixed.backfilled).toBe(2);
+    expect(fixed.raw.keyMoments).toEqual([{ atSec: 12.5, kindZh: "剧情", noteZh: "输入稿" }, { atSec: 30, kindZh: "情绪", noteZh: "输入稿 2" }]);
+    expect(nativeDeepReadSegmentSchema.safeParse({ ...makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 }), keyMoments: fixed.raw.keyMoments }).success).toBe(true);
+  });
+
+  it("0907 审查：整形输出与读片稿都没有重点时刻（单段集三档全空）→ 按剧情镜中点造兜底，不让整集烧完再死", () => {
+    const payload = makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 300, keyMomentsOverride: [] });
+    const structured = { ...payload, shots: [{ startSec: 0, endSec: 5, evidenceRole: "non_story_ad" }, ...(payload.shots as Array<Record<string, unknown>>)] };
+    const fixed = repairNativeDeepReadStructuredKeyMoments(structured, [payload]);
+    expect(fixed.synthesized).toBeGreaterThan(0);
+    expect(fixed.synthesized).toBeLessThanOrEqual(12);
+    expect(fixed.total).toBe(fixed.synthesized);
+    for (const moment of fixed.raw.keyMoments as Array<{ atSec: number; kindZh: string; noteZh: string }>) {
+      expect(moment.kindZh).toBe("剧情");
+      expect(moment.atSec).toBeGreaterThanOrEqual(5); // 广告镜不取
+      expect(moment.atSec).toBeLessThan(300);
+      expect(moment.noteZh.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("0907 整形输出只保留部分 keyMoments → 缺的补回、已有的原样保留（按 0.1 秒 + 类型去重）", () => {
+    const rows = [
+      { keyMoments: [{ atSec: 3.2, kindZh: "切镜", noteZh: "输入稿 A" }, { atSec: 15.6, kindZh: "剧情", noteZh: "输入稿 B" }] },
+      { keyMoments: [{ atSec: 291.5, kindZh: "剧情", noteZh: "输入稿 C" }, { atSec: "bad", kindZh: "剧情", noteZh: "非法秒位不补" }] },
+    ];
+    const structured = { shots: [], keyMoments: [{ atSec: 15.6, kindZh: "剧情", noteZh: "整形保留的 B（说明改写过）" }] };
+    const fixed = repairNativeDeepReadStructuredKeyMoments(structured, rows);
+    expect(fixed.backfilled).toBe(2);
+    expect(fixed.total).toBe(3);
+    expect((fixed.raw.keyMoments as Array<{ atSec: number; noteZh: string }>).map((row) => `${row.atSec}:${row.noteZh}`))
+      .toEqual(["3.2:输入稿 A", "15.6:整形保留的 B（说明改写过）", "291.5:输入稿 C"]);
+    // 输出齐全时原样返回同一个对象
+    const intact = repairNativeDeepReadStructuredKeyMoments(fixed.raw, rows);
+    expect(intact.backfilled).toBe(0);
+    expect(intact.raw).toBe(fixed.raw);
   });
 
   it("0906 坏缓存直接砍：缓存输出过不了锁 → 删掉该对象、重整形、结果写回同名", async () => {
@@ -5332,7 +5441,9 @@ describe("三分支必填结构与实际时间类型", () => {
     expect(() => assertNativeDeepReadShotDetailLevels({ shots: [{ startSec: 0, endSec: 6, evidenceRole: "non_story_ad", detailLevel: "key", hintZh: null }] })).toThrow("应为ad");
   });
   it("普通镜额外写重点细节在新响应和缓存复验均通过，保留原文", () => {
-    const detailedBrief = full(); detailedBrief.keyMoments = [];
+    // 0907 起读片门禁拒收 0 条重点时刻，改为保留重点时刻、把所有镜标成简写镜（简写镜多写了重点细节照样放行）
+    const detailedBrief = full();
+    for (const shot of detailedBrief.shots as Array<Record<string, unknown>>) shot.detailLevel = "brief";
     const original = structuredClone(detailedBrief);
     expect(evaluateNativeDeepReadSegmentAcceptance({ ...context, raw: detailedBrief }).retry).toBe(false);
     expect(nativeDeepReadSegmentMeetsThreeItemLine({ ...context, requireShotDetailLevels: false, raw: detailedBrief })).toBe(true);

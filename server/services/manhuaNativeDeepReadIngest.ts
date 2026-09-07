@@ -324,6 +324,11 @@ export function checkNativeDeepReadIngestable(
   try { assertNativeRequiredSummary(result); } catch (error) {
     return { ok: false, reasonZh: error instanceof Error ? error.message : String(error) };
   }
+  // 0907 用户问「没有 keyMoments 为何还能放行」：抽帧全靠重点时刻，零条 = 报告没有画面，不许入库
+  // 中间快照（segmentCount < attemptedSegments）只含已完成前缀，首段整段广告时合法为空，不在这里判
+  if (segmentCount >= attemptedSegments && (!Array.isArray(result.keyMoments) || result.keyMoments.length === 0)) {
+    return { ok: false, reasonZh: "重点时刻为零，抽不出任何画面，拒绝入库（整形输出漏掉 keyMoments 且读片稿也没有）" };
+  }
 
   return { ok: true };
 }
