@@ -192,8 +192,10 @@ describe("精确证据名路径：三段卡渲染成功且无删节", () => {
     expect(html).toContain("UNTRUNCATED_CUE_END");
     // 摘要 fallback 合并全段（按段号标注拼接），不再只取第一段
     // 0905：分段摘要压成前/中/后，不再逐段铺
-    expect(html).toContain("【前段】第1段节拍原文");
-    expect(html).toContain("【后段】第3段节拍原文");
+    // 0908 用户令：前/中/后段标签包一层与正文不同色的样式，标签文字本身不变
+    expect(html).toMatch(/<span style="color:#1f6f8b[^"]*">前段<\/span>第1段节拍原文/);
+    expect(html).toMatch(/<span style="color:#1f6f8b[^"]*">后段<\/span>第3段节拍原文/);
+    expect(html).not.toContain("【前段】第1段节拍原文");
     // 分类标签跨段并集去重
     expect(html).toContain("情绪标签0");
     expect(html).toContain("情绪标签2");
