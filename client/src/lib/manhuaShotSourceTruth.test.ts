@@ -272,7 +272,7 @@ describe("来源事实从真实选源到工作台标签保持一致", () => {
     expect(sourceLabel(false)).not.toContain("原稿");
   });
 
-  it("旧选源误选仅对白覆盖表时如实标占位，不把两个编号冒充已解析", () => {
+  it("仅对白覆盖表不抢占真实成稿，覆盖对白后仍保留原镜数与动作", () => {
     const beatsText = upsertShotDialogueSection("当前集编辑", {
       1: "节拍最新对白",
       2: MANHUA_DIALOGUE_SILENCE_TOKEN,
@@ -282,9 +282,8 @@ describe("来源事实从真实选源到工作台标签保持一致", () => {
         ? { ...block, outputText: beatsText }
         : block
     );
-    // 保留已存在的选源行为；本刀只揭示回落事实，不以测试暗改生产优先级。
-    const shots = assertSameSource(blocks, 1, true);
-    expect(shots).toHaveLength(18);
+    const shots = assertSameSource(blocks, 1, false);
+    expect(shots).toHaveLength(3);
     expect(shots[0]).toMatchObject({
       dialogueZh: "节拍最新对白",
       dialogueSuppressed: false,
@@ -293,7 +292,7 @@ describe("来源事实从真实选源到工作台标签保持一致", () => {
       dialogueZh: undefined,
       dialogueSuppressed: true,
     });
-    expect(shots[0]?.actionZh).not.toBe("原稿动作1");
+    expect(shots[0]?.actionZh).toBe("原稿动作1");
   });
 
   it("四个真实标签入口均消费同一个来源派生值", () => {

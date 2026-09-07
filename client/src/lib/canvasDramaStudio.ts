@@ -1755,10 +1755,8 @@ export function countExpectedManhuaKeyartShots(
  */
 export function hasExplicitManhuaShotStructure(text: string): boolean {
   if (parseManhuaEpisodeSegmentPlanFromMarkdown(text).segments.length > 0) return true;
-  const numberedRows = String(text || "").match(
-    /^(?:\|?\s*)(?:分镜|镜头|节拍|Shot)?\s*\d{1,2}\s*(?:[.、:：)\]】]|\|)/gim,
-  );
-  return (numberedRows?.length || 0) >= 2;
+  // 对白覆盖表也有编号；只有实际可解析的分镜才能抢占下一份成稿。
+  return !parseWorkbenchShotsFromTextResult(text).isFallback;
 }
 
 /** 工作台、静帧和成片共同读取的分镜真源；模板不能覆盖已返回的结构正文。 */

@@ -90,7 +90,28 @@ Duration 148.72s，退出1，仍为两个原有7201 CLI断言
 
 22:42:21 合并检查：唯一运行机器 d892541f602228；全表非终态 jobs 仅1个，为学习 MDCxPDkfrzwlv0qM（running，最近更新22:37:20）。两个画布任务目录非终态0、独立学习／探针进程0、读取错误0；Fly主线无冲突部署。故不合并／部署，不取消学习；此为瞬时回执，后续合并前必须重查。
 
-## 本轮实际命令
+## 对白覆盖表抢占成稿：改前证据表
+
+| 层 | 证据与边界 |
+| --- | --- |
+| 结果／范围 | 修正仅含对白编号的 beats 抢占 reverse 真实分镜；不改选源优先顺序、对白覆盖顺序、学习契约、API、定价或存储 schema。 |
+| 入口／生产 | hasExplicitManhuaShotStructure 的两个编号正则不等于 parseWorkbenchShotsFromTextResult 能解析；三处调用分别为统一选源、顾问非空门禁、合成字幕门禁。 |
+| 转换／消费 | 统一 shots 进入工作台、关键帧、成片分段、字幕和批量身份。保留旧段表优先，逐镜改用真实解析结果；reverse 后 beats 的对白与静音覆盖保持。 |
+| 旧稿／恢复 | 工作台打开分镜页的 effect 会调用真实审阅回调并保存，不是只读显示。ensure 保留旧媒体及在途任务，旧修订归档；测试必须涵盖当前图片、历史图片、任务 ID 和保存恢复。 |
+| 费用／失败 | 镜数和分段可能从错误占位恢复到原稿，必须验证旧批量身份拒绝且零费用确认；无新增 API 调用，重编译失败返回原 blocks 且不保存。 |
+| 验证断点 | 独立真实回调测试已复现4红1绿：三镜误成18、顾问把纯对白当分镜、旧批量身份未失效、保存18镜；错误回滚通过。尚未修改谓词、未线上实跑。 |
+
+## 本轮实际命令（续）
+
+对白选源修正的双向追链：beats/reverse/story 当前集正文 → 真实解析资格 → 同源 shots（动作、秒位、对白覆盖）→ 分段/静帧 required/成片 revision/顾问/字幕；反向从字幕三条5秒、画布三镜和保存恢复后的同 ID 媒体字段回到 reverse 三条真实画面，覆盖对白仍来自 beats。另一批量入口 sourceIdentity 变化在确认费用前返回；静帧源改变只更新 required，不伪造 generatedFor；节点重跑通过当前队列与静帧源检查后才可提交。原 API、worker、幂等键、退款、费率与权限未修改。
+
+本增量分层状态：需求、入口、生产、转换、服务静态边界、离线保存恢复、消费均已通过本地证据验证；静态与完整回归结果补于下方。真实链路层为“未做线上实跑”，整体只报部分验证。自动预览测试执行真实 handler/ensure/layout，保存后以 JSON 反序列化检查原 keyart/clip ID 的 status、outputUrl、outputUrls、videoTaskId、videoTaskStatus，不能当成真实云恢复或在途轮询验收。
+
+截至本地初验：改前5项4红1绿，改后两文件24项通过（4.71秒）；共享消费者10文件185项通过（14.46秒），独立审查5文件43项通过且无可证实P0–P2。Vite3557模块31.56秒退出0，既有混合导入和大包警告保留。费用、旧媒体与当前源身份回归未发网络／付费任务。
+
+最终命令结果：`pnpm check`、`pnpm exec tsc --noEmit --incremental false`、`pnpm exec tsc --incremental false`均退出0。首轮全仓5186通过／4跳过／3失败（227.38秒），除两个旧CLI断言外有原声合成30秒超时；该文件10项独立复跑通过（16.93秒），未改测试。第二轮全仓538文件通过／2失败／2跳过，5187项通过／2失败／4跳过（160.42秒、退出1），仍只有7201旧断言；相关CLI与原声代码/测试均无对主线diff。新测试及来源测试Prettier检查通过，完整diff与三调用方再次检查，无新增依赖、空生产者或接口变更。
+
+22:59:04实时检查：jobs非终态0、两个画布目录非终态0、独立学习/探针进程0、读取错误0；此时Fly无在途部署，Growth Backup仍运行。仅为瞬时证据，不据此直接合并；完成当前提交后紧邻合并再查。当前真实页面仍是旧版本，第一集正文29镜130秒，三份资产表为空且稿件待确认，不能把本修正声称为已自动导入该剧本。
 
 ```text
 pnpm exec vitest run client/src/lib/manhuaAssetUploadWiring.test.ts client/src/lib/manhuaAssetEditSubmit.test.ts client/src/lib/manhuaAssetImageSource.test.ts shared/manhuaAssetImageEdit.test.ts server/services/canvasAssetEditReference.test.ts server/jobs/runner.canvasAssetEdit.test.ts
