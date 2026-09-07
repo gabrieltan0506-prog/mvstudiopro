@@ -9177,6 +9177,7 @@ export default function OmniCanvas() {
                   previewCanvas={
                     <div className="absolute inset-0 overflow-hidden">
                       <FreeformCanvas
+                        projectAssetRefs={customAssetRefs}
                         fillContainer
                         blocks={blocks}
                         edges={edges}
@@ -10621,6 +10622,7 @@ export default function OmniCanvas() {
                     </div>
                     <div className="min-h-[360px] md:min-h-[480px]">
                       <FreeformCanvas
+                        projectAssetRefs={customAssetRefs}
                         blocks={blocks}
                         edges={edges}
                         onBlocksChange={handleBlocksChange}
@@ -11252,6 +11254,7 @@ export default function OmniCanvas() {
               </span>
             </div>
           <FreeformCanvas
+            projectAssetRefs={customAssetRefs}
             blocks={blocks}
             edges={edges}
             onBlocksChange={handleBlocksChange}
