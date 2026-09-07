@@ -1,11 +1,13 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createManhuaAssetImageFallback,
   ManhuaAssetImage,
   readManhuaAssetImageBlob,
+  renewManhuaAssetImageDisplayUrl,
 } from "@/components/ManhuaAssetImage";
+import * as canvasApi from "./omniCanvasApi";
 import {
   __resetManhuaLocalMediaStoreForTests,
   getLocalMediaRecordBySource,
@@ -188,4 +190,169 @@ describe("工作台资产图片本机回退", () => {
       expect(html).not.toContain(source);
     }
   );
+});
+
+describe("工作台资产图片有界续签", () => {
+  const source =
+    "https://storage.googleapis.com/test-bucket/image.png?X-Goog-Signature=expired";
+  const renewed =
+    "https://storage.googleapis.com/test-bucket/image.png?X-Goog-Signature=renewed";
+  const signer = vi.spyOn(canvasApi, "resolveCanvasMaterialUrl");
+  beforeEach(() => {
+    signer.mockReset();
+  });
+  afterAll(() => {
+    signer.mockRestore();
+  });
+
+  it("同一对象不同签名只合并在途请求，完成后允许重新续签", async () => {
+    let resolve!: (url: string) => void;
+    signer.mockImplementationOnce(
+      () =>
+        new Promise(done => {
+          resolve = done;
+        })
+    );
+    const first = renewManhuaAssetImageDisplayUrl(source);
+    const second = renewManhuaAssetImageDisplayUrl(
+      "gs://test-bucket/image.png"
+    );
+    await Promise.resolve();
+    expect(signer).toHaveBeenCalledTimes(1);
+    expect(signer).toHaveBeenCalledWith("gs://test-bucket/image.png");
+    resolve(renewed);
+    expect(await Promise.all([first, second])).toEqual([renewed, renewed]);
+    signer.mockResolvedValueOnce(renewed);
+    await renewManhuaAssetImageDisplayUrl(source);
+    expect(signer).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    "local-media:v1/abc",
+    "https://example.test/a.png",
+    "blob:test",
+    "gs://bucket/../x",
+    "gs://bucket/%2e%2e/x",
+    "gs://bucket/a?key=x",
+  ])("不支持或不安全来源 %s 不发请求", async value => {
+    expect(await renewManhuaAssetImageDisplayUrl(value)).toBeNull();
+    expect(signer).not.toHaveBeenCalled();
+  });
+
+  it("拒绝空地址、换对象地址；请求失败不永久占用在途槽位", async () => {
+    signer.mockRejectedValueOnce(new Error("offline"));
+    await expect(renewManhuaAssetImageDisplayUrl(source)).rejects.toThrow(
+      "offline"
+    );
+    signer.mockResolvedValueOnce("");
+    await expect(renewManhuaAssetImageDisplayUrl(source)).rejects.toThrow();
+    signer.mockResolvedValueOnce(
+      "https://storage.googleapis.com/test-bucket/other.png"
+    );
+    await expect(renewManhuaAssetImageDisplayUrl(source)).rejects.toThrow();
+    signer.mockResolvedValueOnce(renewed);
+    expect(await renewManhuaAssetImageDisplayUrl(source)).toBe(renewed);
+    expect(signer).toHaveBeenCalledTimes(4);
+  });
+
+  function setupRenew(blob: Blob | null) {
+    const display = vi.fn();
+    const finalError = vi.fn();
+    const readBlob = vi.fn(async () => blob);
+    const renewUrl = vi.fn(async () => renewed);
+    const revokeUrl = vi.fn();
+    const controller = createManhuaAssetImageFallback({
+      source,
+      readBlob,
+      renewUrl,
+      display,
+      finalError,
+      createUrl: () => "blob:local",
+      revokeUrl,
+    });
+    return { controller, display, finalError, readBlob, renewUrl, revokeUrl };
+  }
+
+  it("无缓存续签一次，续签地址仍坏时最终错误只通知一次", async () => {
+    const f = setupRenew(null);
+    await f.controller.fail("original");
+    expect(f.display).toHaveBeenCalledWith(renewed);
+    expect(f.renewUrl).toHaveBeenCalledTimes(1);
+    expect(f.finalError).not.toHaveBeenCalled();
+    await f.controller.fail("renewed-broken");
+    await f.controller.fail("duplicate");
+    expect(f.finalError).toHaveBeenCalledTimes(1);
+    expect(f.finalError).toHaveBeenCalledWith("renewed-broken");
+    expect(f.renewUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it("本机字节优先；只有本机解码失败后续签，不重读缓存", async () => {
+    const f = setupRenew(new Blob(["broken"]));
+    await f.controller.fail("original");
+    expect(f.display).toHaveBeenCalledWith("blob:local");
+    expect(f.renewUrl).not.toHaveBeenCalled();
+    await f.controller.fail("local-broken");
+    expect(f.display).toHaveBeenLastCalledWith(renewed);
+    expect(f.readBlob).toHaveBeenCalledTimes(1);
+    expect(f.renewUrl).toHaveBeenCalledTimes(1);
+    expect(f.revokeUrl).toHaveBeenCalledTimes(1);
+    expect(f.revokeUrl).toHaveBeenCalledWith("blob:local");
+    expect(f.finalError).not.toHaveBeenCalled();
+  });
+
+  it("续签期间重复错误不重签，退役后的迟到结果不显示不误报", async () => {
+    const f = setupRenew(null);
+    let resolve!: (url: string) => void;
+    f.renewUrl.mockImplementationOnce(
+      () =>
+        new Promise(done => {
+          resolve = done;
+        })
+    );
+    const pending = f.controller.fail("original");
+    await Promise.resolve();
+    await f.controller.fail("duplicate");
+    expect(f.renewUrl).toHaveBeenCalledTimes(1);
+    f.controller.dispose();
+    resolve(renewed);
+    await pending;
+    expect(f.display).not.toHaveBeenCalled();
+    expect(f.finalError).not.toHaveBeenCalled();
+  });
+
+  it("网络挂起15秒后有界结束，后续可再请求且旧返回不占槽", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolve!: (url: string) => void;
+      signer.mockImplementationOnce(
+        () =>
+          new Promise(done => {
+            resolve = done;
+          })
+      );
+      const pending = renewManhuaAssetImageDisplayUrl(source);
+      const rejected = expect(pending).rejects.toThrow("图片地址刷新超时");
+      await vi.advanceTimersByTimeAsync(15_000);
+      await rejected;
+      signer.mockResolvedValueOnce(renewed);
+      expect(await renewManhuaAssetImageDisplayUrl(source)).toBe(renewed);
+      resolve(renewed);
+      await Promise.resolve();
+      expect(signer).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("本机存储读取异常仍可续签，续签拒绝只通知一次", async () => {
+    const f = setupRenew(null);
+    f.readBlob.mockRejectedValueOnce(new Error("IDB denied"));
+    f.renewUrl.mockRejectedValueOnce(new Error("sign denied"));
+    await f.controller.fail("original");
+    await f.controller.fail("duplicate");
+    expect(f.renewUrl).toHaveBeenCalledTimes(1);
+    expect(f.finalError).toHaveBeenCalledTimes(1);
+    expect(f.finalError).toHaveBeenCalledWith("original");
+    expect(f.display).not.toHaveBeenCalled();
+  });
 });
