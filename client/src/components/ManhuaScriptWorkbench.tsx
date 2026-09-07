@@ -47,6 +47,7 @@ import {
   type ManhuaAssetsGapAnchor,
 } from "@/lib/manhuaPhaseGapText";
 import { ManhuaAssetImage } from "@/components/ManhuaAssetImage";
+import { resolveAssetImagePreviewUrl } from "@/lib/manhuaAssetImageSource";
 import { ManhuaAssetEditInput } from "@/components/ManhuaAssetEditInput";
 import {
   getManhuaCharacterById,
@@ -2791,6 +2792,7 @@ export default function ManhuaScriptWorkbench({
   /** 点缩略图先放大看清，再决定定位画布还是重出（缩略图 88px 看不出形制对不对） */
   const [sheetPreview, setSheetPreview] = useState<{
     id: string;
+    assetRefId?: string;
     url: string;
     labelZh: string;
   } | null>(null);
@@ -4126,7 +4128,7 @@ export default function ManhuaScriptWorkbench({
                     }}
                   >
                     <ManhuaAssetImage
-                      src={cropTarget.url}
+                      src={resolveAssetImagePreviewUrl({ url: cropTarget.url, assetRefId: cropTarget.id }, customAssetRefs)}
                       alt={cropTarget.labelZh}
                       draggable={false}
                       className="max-h-[70vh] max-w-full rounded-lg border border-white/15 object-contain"
@@ -4212,7 +4214,7 @@ export default function ManhuaScriptWorkbench({
                   }}
                 >
                   <ManhuaAssetImage
-                    src={sheetPreview.url}
+                    src={resolveAssetImagePreviewUrl(sheetPreview, customAssetRefs)}
                     alt={sheetPreview.labelZh}
                     onClick={(e) => e.stopPropagation()}
                     className="max-h-[78vh] max-w-full rounded-xl border border-white/15 object-contain"
@@ -5724,6 +5726,7 @@ export default function ManhuaScriptWorkbench({
                               onClick={() =>
                                 setSheetPreview({
                                   id: "",
+                                  assetRefId: ref.id,
                                   url: ref.url,
                                   labelZh: ref.labelZh || "参考图",
                                 })
@@ -6245,6 +6248,7 @@ export default function ManhuaScriptWorkbench({
                             onClick={() =>
                               setSheetPreview({
                                 id: "",
+                                assetRefId: ref.id,
                                 url: ref.url,
                                 labelZh: ref.labelZh || "参考图",
                               })

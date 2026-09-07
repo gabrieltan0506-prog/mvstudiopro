@@ -84,13 +84,40 @@ afterAll(async () => {
   await browser?.close();
 });
 
-async function openFixture(): Promise<{ page: Page; context: BrowserContext }> {
+async function openFixture(
+  renewImages = false
+): Promise<{ page: Page; context: BrowserContext; signRequests: string[] }> {
   const context = await browser.createBrowserContext();
   const page = await context.newPage();
+  const signRequests: string[] = [];
   await page.setRequestInterception(true);
   page.on("request", request => {
     const url = request.url();
-    if (url.startsWith("blob:") || url.startsWith("data:")) {
+    if (renewImages && url.includes("op=materialReadUrl")) {
+      const uri = new URL(url).searchParams.get("gcsUri")!;
+      signRequests.push(uri);
+      void request.respond({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          url: `https://storage.googleapis.com/${uri.slice(5)}?renewed=yes`,
+        }),
+      });
+    } else if (
+      renewImages &&
+      url.startsWith("https://storage.googleapis.com/")
+    ) {
+      void request.respond(
+        url.includes("renewed=yes")
+          ? {
+              status: 200,
+              contentType: "image/png",
+              body: Buffer.from(PNG_BASE64, "base64"),
+            }
+          : { status: 403, body: "expired" }
+      );
+    } else if (url.startsWith("blob:") || url.startsWith("data:")) {
       void request.continue();
     } else if (new URL(url).origin === ORIGIN) {
       void request.respond({
@@ -104,10 +131,43 @@ async function openFixture(): Promise<{ page: Page; context: BrowserContext }> {
   });
   await page.goto(`${ORIGIN}/backup-test`, { waitUntil: "domcontentloaded" });
   await page.addScriptTag({ content: fixture });
-  return { page, context };
+  return { page, context, signRequests };
 }
 
 describe("工作区备份真实浏览器恢复（完全离线）", () => {
+  it.each([false, true])(
+    "过期图片本机坏字节=%s时续签后真实解码，原引用与IDB不改写",
+    async brokenLocal => {
+      const { page, context, signRequests } = await openFixture(true);
+      try {
+        const source =
+          "https://storage.googleapis.com/test-bucket/renewal.png?X-Goog-Signature=expired";
+        await page.evaluate(`fixture.read(${JSON.stringify(source)})`);
+        if (brokenLocal) {
+          await page.evaluate(`fixture.importRecords([{ sourceUrl:${JSON.stringify(source)},
+          blob:new Blob(['not-png'], {type:'image/png'}), mime:'image/png' }])`);
+        }
+        const before = await page.evaluate("fixture.readAll()");
+        await page.evaluate(`fixture.renderSource(${JSON.stringify(source)})`);
+        await page.waitForFunction("fixture.loads.length === 1", {
+          timeout: 5000,
+        });
+        expect(await page.evaluate("fixture.loads[0]")).toMatchObject({
+          width: 1,
+          height: 1,
+          src: "https://storage.googleapis.com/test-bucket/renewal.png?renewed=yes",
+        });
+        expect(signRequests).toEqual(["gs://test-bucket/renewal.png"]);
+        expect(await page.evaluate("fixture.reference.url")).toBe(source);
+        expect(await page.evaluate("fixture.errors")).toEqual([]);
+        expect(await page.evaluate("fixture.readAll()")).toEqual(before);
+      } finally {
+        await context.close();
+      }
+    },
+    20000
+  );
+
   it("真实IDB写入及同源刷新后，新签名和gs来源均显示原PNG，canonical引用不变", async () => {
     const { page, context } = await openFixture();
     try {

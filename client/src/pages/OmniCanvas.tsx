@@ -128,7 +128,7 @@ import { uploadCanvasFilesParallel } from "@/lib/canvasUpload";
 import { collectManhuaBackupImageSources } from "@/lib/manhuaBackupImageSources";
 import { prepareManhuaBackupRestore } from "@/lib/manhuaBackupRestorePreflight";
 import { assertManhuaBackupImage } from "@/lib/manhuaBackupImageValidation";
-import { assetImageGcsUri, prepareAssetImageEdit, readAssetImageDimensions, refreshAssetImageUrl } from "@/lib/manhuaAssetImageSource";
+import { assetImageGcsUri, canKeepAssetImageDisplayUrl, prepareAssetImageEdit, readAssetImageDimensions, refreshAssetImageUrl } from "@/lib/manhuaAssetImageSource";
 import {
   resolveCanvasMaterialUrl,
   uploadFileToSignedUrl,
@@ -1007,13 +1007,14 @@ export default function OmniCanvas() {
   );
   /**
    * 长期资产的签名 url 会过期（如道具拼板切图，7 天）。有 gcsUri 的条目，
-   * 每次这份草稿加载/变动时现签一次刷新 url——不在这里刷，等到真正点「生成」
-   * 时才发现 403 就晚了。按 gcsUri 去重，避免刚刷完又把自己刷一遍死循环。
+   * 草稿加载/变动时只刷新无有效签名的地址，不能把新产物的七天签名降为一小时。
+   * 同页后续过期由图片的有界显示回退处理；生成预检仍独立鉴权续签。
+   * 按 gcsUri 去重，避免刚刷完又把自己刷一遍死循环。
    */
   const resignedPropGcsUriRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const stale = customAssetRefs.filter(
-      (r) => r.gcsUri && !resignedPropGcsUriRef.current.has(r.gcsUri),
+      (r) => r.gcsUri && !resignedPropGcsUriRef.current.has(r.gcsUri) && !canKeepAssetImageDisplayUrl(r),
     );
     if (!stale.length) return;
     let cancelled = false;

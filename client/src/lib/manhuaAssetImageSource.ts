@@ -23,6 +23,56 @@ export function assetImageGcsUri(url: string): string | undefined {
   }
 }
 
+/** 仅供展示初始化：保留同对象且还可用的签名，生成预检仍每次鉴权续签。 */
+export function canKeepAssetImageDisplayUrl(
+  ref: { url: string; gcsUri?: string },
+  nowMs = Date.now()
+): boolean {
+  if (!ref.gcsUri || assetImageGcsUri(ref.url) !== ref.gcsUri) return false;
+  try {
+    const params = new URL(ref.url).searchParams;
+    const date = params.get("X-Goog-Date") || "";
+    const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(date);
+    const expires = params.get("X-Goog-Expires") || "";
+    if (!match || !/^\d+$/.test(expires) || !params.get("X-Goog-Signature"))
+      return false;
+    const seconds = Number(expires);
+    const start = Date.UTC(
+      Number(match[1]),
+      Number(match[2]) - 1,
+      Number(match[3]),
+      Number(match[4]),
+      Number(match[5]),
+      Number(match[6])
+    );
+    if (!Number.isFinite(start) || seconds <= 0 || seconds > 604800)
+      return false;
+    if (
+      new Date(start).toISOString().replace(/[-:]/g, "").replace(".000", "") !==
+      date
+    )
+      return false;
+    const marginMs = 5 * 60_000;
+    return (
+      start <= nowMs + marginMs && start + seconds * 1000 > nowMs + marginMs
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** 放大/裁剪只按稳定资产 ID 跟随现址；节点预览仍使用其原输出。 */
+export function resolveAssetImagePreviewUrl(
+  preview: { url: string; assetRefId?: string },
+  refs: ReadonlyArray<{ id: string; url: string }>
+): string {
+  return (
+    (preview.assetRefId &&
+      refs.find(ref => ref.id === preview.assetRefId)?.url) ||
+    preview.url
+  );
+}
+
 export async function readAssetImageDimensions(
   url: string
 ): Promise<{ sourceWidth: number; sourceHeight: number }> {
