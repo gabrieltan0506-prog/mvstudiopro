@@ -67,6 +67,8 @@ import {
   resolveNativeDeepReadInputFps,
   resolveNativeDeepReadSegmentFloors,
   runManhuaNativeDeepReadBatch,
+  isNativeDeepReadKeyShot,
+  nativeDeepReadKeyMomentSecs,
   repairNativeDeepReadStructuredKeyMoments,
   runManhuaNativeDeepRead,
   runManhuaNativeDeepReadSelectedSegments,
@@ -900,6 +902,8 @@ function makeSegmentPayload(input: {
   hasAudio?: boolean;
   shotCountOverride?: number;
   audioTrackOverride?: number;
+  /** 0907：读片门禁拒收 0 条重点时刻；夹具默认给两条（全片绝对秒），要测零条时显式传 [] */
+  keyMomentsOverride?: Array<{ atSec: number; kindZh: string; noteZh: string }>;
 }): Record<string, unknown> {
   const lenSec = input.endSec - input.startSec;
   const floors = resolveNativeDeepReadSegmentFloors(lenSec);
@@ -951,6 +955,10 @@ function makeSegmentPayload(input: {
   });
   return {
     shots,
+    keyMoments: input.keyMomentsOverride ?? [
+      { atSec: Math.round((input.startSec + lenSec * 0.2) * 10) / 10, kindZh: "剧情", noteZh: `第${input.segmentIndex + 1}段冲突升级` },
+      { atSec: Math.round((input.startSec + lenSec * 0.7) * 10) / 10, kindZh: "情绪", noteZh: `第${input.segmentIndex + 1}段情绪峰值` },
+    ],
     subtitles: [{ atSec: input.startSec, textZh: "字幕原文" }],
     audioResolution: input.hasAudio === false ? [] : [{
       chunkIndex: input.segmentIndex,
@@ -1117,6 +1125,21 @@ describe("v11 · 截断段豁免（classification 在 responseSchema 最末，�
       raw,
       truncated: true,
     })).toThrow();
+  });
+});
+
+describe("0907 读片门禁：重点时刻 0 条当场拒收重读", () => {
+  const base = { episodeIndex: 1, segmentIndex: 2, startSec: 600, endSec: 900, hasAudio: true };
+  it("剧情段 0 条重点时刻 → 拒收（走降温重读），不再留到入库才发现没画面", () => {
+    const raw = makeSegmentPayload({ ...base, keyMomentsOverride: [] });
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw })).toThrow("重点时刻 0 条");
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw: makeSegmentPayload(base) })).not.toThrow();
+  });
+  it("截断段、整段广告不因 0 条重点时刻拒收（截断走豁免通道；广告零帧）", () => {
+    const truncated = makeSegmentPayload({ ...base, keyMomentsOverride: [] });
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw: truncated, truncated: true })).not.toThrow("重点时刻 0 条");
+    const adOnly = { ...makeSegmentPayload({ ...base, keyMomentsOverride: [] }), shots: [{ startSec: 600, endSec: 900, evidenceRole: "non_story_ad" }] };
+    expect(() => assertNativeDeepReadSegmentDensity({ ...base, raw: adOnly })).not.toThrow("重点时刻 0 条");
   });
 });
 
@@ -2615,7 +2638,9 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
     for (const row of result.segments) {
       const span = fullSegments[row.segmentIndex]!;
       expect(row).toMatchObject({ ...span, hasAudio: true });
-      expect(row.raw.shots).toEqual((makeSegmentPayload({ segmentIndex: row.segmentIndex, ...span }).shots as Array<Record<string, unknown>>).map(shot => ({ ...shot, detailLevel: "brief" })));
+      const expectedPayload = makeSegmentPayload({ segmentIndex: row.segmentIndex, ...span });
+      const keySecs = nativeDeepReadKeyMomentSecs(expectedPayload);
+      expect(row.raw.shots).toEqual((expectedPayload.shots as Array<Record<string, unknown>>).map(shot => ({ ...shot, detailLevel: isNativeDeepReadKeyShot(shot as never, keySecs) ? "key" : "brief" })));
       const expectedFingerprint = nativeDeepReadSegmentCacheFingerprint({
         sourceDigest: params.sourceDigest, episodeIndex: 1, episodeDurationSec: 1594,
         segment: span, segmentIndex: row.segmentIndex, segmentCount: 5, hasAudio: true, videoFps: 12,
@@ -5389,7 +5414,9 @@ describe("三分支必填结构与实际时间类型", () => {
     expect(() => assertNativeDeepReadShotDetailLevels({ shots: [{ startSec: 0, endSec: 6, evidenceRole: "non_story_ad", detailLevel: "key", hintZh: null }] })).toThrow("应为ad");
   });
   it("普通镜额外写重点细节在新响应和缓存复验均通过，保留原文", () => {
-    const detailedBrief = full(); detailedBrief.keyMoments = [];
+    // 0907 起读片门禁拒收 0 条重点时刻，改为保留重点时刻、把所有镜标成简写镜（简写镜多写了重点细节照样放行）
+    const detailedBrief = full();
+    for (const shot of detailedBrief.shots as Array<Record<string, unknown>>) shot.detailLevel = "brief";
     const original = structuredClone(detailedBrief);
     expect(evaluateNativeDeepReadSegmentAcceptance({ ...context, raw: detailedBrief }).retry).toBe(false);
     expect(nativeDeepReadSegmentMeetsThreeItemLine({ ...context, requireShotDetailLevels: false, raw: detailedBrief })).toBe(true);

@@ -157,6 +157,7 @@ describe("段缓存来源身份", () => {
       actionZh: "人物抬眼回应", transitionInZh: "硬切",
       evidenceRole: "story",
     }],
+    keyMoments: [{ atSec: input.startSec + 0.5, kindZh: "剧情", noteZh: "人物抬眼回应" }],
     subtitles: [],
     audioResolution: [],
     beatStructureZh: "压迫后回应",

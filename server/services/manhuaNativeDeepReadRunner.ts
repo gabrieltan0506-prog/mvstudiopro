@@ -3555,6 +3555,14 @@ export function assertNativeDeepReadSegmentDensity(input: {
       throw gateError(`${labelZh} keyMoments.atSec=${moment.atSec} 不在本片可抓帧范围内`);
     }
   }
+  // 0907 用户令：重点时刻 0 条的段当场拒收，走降温重读（抽帧全靠它，零条＝这一段没有画面）。
+  // 豁免：截断段（走豁免通道）、微尾段（没有可表示的 0.1 秒位，提示词本就要它回空数组）、整段广告（广告零帧）。
+  const firstFrameSec = Math.ceil(input.startSec * 10) / 10;
+  const lastFrameSec = Math.ceil(input.endSec * 10) / 10 - 0.1;
+  const storyShotCount = shots.filter((shot) => shot.evidenceRole !== "non_story_ad").length;
+  if (!truncated && firstFrameSec <= lastFrameSec + 1e-9 && storyShotCount > 0 && (parsed.keyMoments ?? []).length === 0) {
+    throw gateError(`${labelZh} 重点时刻 0 条（${storyShotCount} 个剧情镜却没有一处可抓帧的精华秒位），拒收重读`);
+  }
   for (const subtitle of parsed.subtitles) {
     if (subtitle.atSec < input.startSec - 0.5 || subtitle.atSec > input.endSec + 0.5) {
       throw gateError(`${labelZh} subtitles.atSec=${subtitle.atSec} 不在本片时间范围内`);
