@@ -5000,7 +5000,7 @@ describe("0905 · 整形按批次序号分流链", () => {
     expect(nativeDeepReadStructuringGatewayOrder("structuring_chain_qwen_first", 1)).toEqual(["plan_sg_qwen", "openrouter", "evolink_glm"]);
     expect(nativeDeepReadStructuringGatewayOrder("structuring_chain_qwen_first", 2)).toEqual(["plan_bj_qwen", "evolink_glm", "openrouter"]);
     expect(nativeDeepReadStructuringGatewayOrder("structuring_chain", 0)[0]).toBe("openrouter");
-    expect(nativeDeepReadStructuringGatewayOrder("structuring_chain", 1)[0]).toBe("openrouter");
+    expect(nativeDeepReadStructuringGatewayOrder("structuring_chain", 1)[0]).toBe("evolink_glm");
   });
 
   it("整形模型开关：qwen3.8-max → Qwen 首发链；glm-5.3 / 缺省 → GLM 首发链；started 标签跟着开关走", async () => {
@@ -5011,9 +5011,9 @@ describe("0905 · 整形按批次序号分流链", () => {
     expect(m.nativeDeepReadStructuringStartedLabel("structuring_chain_qwen_first")).toMatch(/^Qwen3\.8-Max/);
     expect(m.nativeDeepReadStructuringStartedLabel("structuring_chain")).not.toMatch(/^Qwen3\.8-Max/);
     // GLM 链的兜底档必须含 Qwen 两档，Qwen 链的兜底档必须含 GLM 两档（两档败切对方）
-    // 0906 用户令「不走 Qwen」：GLM 链只有 OpenRouter → EvoLink
+    // 0907 用户令：GLM 并发批次分流首发，第 1 批 OpenRouter→EvoLink，第 2 批 EvoLink→OpenRouter；不切 Qwen
     expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain", 0)).toEqual(["openrouter", "evolink_glm"]);
-    expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain", 1)).toEqual(["openrouter", "evolink_glm"]);
+    expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain", 1)).toEqual(["evolink_glm", "openrouter"]);
     expect(m.nativeDeepReadStructuringGatewayOrder("structuring_chain_qwen_first", 0).slice(1)).toEqual(["evolink_glm", "openrouter"]);
   });
 
