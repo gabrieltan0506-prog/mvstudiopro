@@ -1396,8 +1396,9 @@ export function nativeDeepReadStructuringGatewayOrder(
     return odd ? ["plan_sg_qwen", "openrouter", "evolink_glm"] : ["plan_bj_qwen", "evolink_glm", "openrouter"];
   }
   // 0905 用户拍板「并行走 OpenRouter」：GLM 模式所有批次首发 OpenRouter（Z.AI 官方，并发稳），EvoLink 兜底，两档败切 Qwen
-  // 0906 用户令「不走 Qwen」：GLM 链只剩 OpenRouter（钉 Z.AI）→ EvoLink 两档，不再切 Qwen；判坏重试仍按每档两次
-  return ["openrouter", "evolink_glm"];
+  // 0906 用户令「不走 Qwen」：GLM 链只剩 OpenRouter（钉 Z.AI）与 EvoLink 两档，不再切 Qwen；判坏重试仍按每档两次
+  // 0907 用户令「一路走 OpenRouter 一路走 EvoLink」：并发批次分流首发，第 1 批 OpenRouter→EvoLink，第 2 批 EvoLink→OpenRouter
+  return odd ? ["evolink_glm", "openrouter"] : ["openrouter", "evolink_glm"];
 }
 
 /** 实际出站Schema：重点、简写、广告各自必填；时间与内容有效性仍由程序验收。 */
@@ -3943,7 +3944,7 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE = "openrouter_glm_structurin
  */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`;
 /** 开始/失败回执的人话链路标签（0905：用户看了几百次「z-ai/glm-5.3」以为一直走 OpenRouter）。 */
-export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 各批并行首发 OpenRouter（Z.AI）→ EvoLink，不切 Qwen（单档 20 分钟）";
+export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 · 第1批 OpenRouter（Z.AI）→EvoLink · 第2批 EvoLink→OpenRouter，不切 Qwen（单档 20 分钟，有心跳即延长）";
 export const NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL = "Qwen3.8-Max 严格 schema · 第1批 北京→EvoLink→OpenRouter · 第2批 新加坡→OpenRouter→EvoLink（Qwen 单档 25 分钟 · GLM 20 分钟）";
 /** 面板与缺省调用统一默认 GLM；明确选 Qwen 才走 Qwen 首发链。 */
 export function nativeDeepReadStructuringPolicyForModel(
@@ -6684,8 +6685,8 @@ async function executeNativeDeepReadBatch(
           });
         }
 
-        // 0905 用户令：批次要均分，不是「前面塞满、尾巴一小撮」——8 片＝4+4、9 片＝5+4、29 片＝5×5+4，
-        // 两路并发才真正对半分担；批次数仍按每批上限（5）决定。
+        // 0905 用户令：批次要均分，不是「前面塞满、尾巴一小撮」——8 片＝4+4、9 片＝3+3+3、29 片＝5×4+3×3，
+        // 各批并发才真正分担；批次数按每批上限（4）向上取整决定。
         const groupCount = Math.ceil(segmentCount / maxRawSegmentsPerBatch);
         const baseSize = Math.floor(segmentCount / groupCount);
         const extra = segmentCount % groupCount;
