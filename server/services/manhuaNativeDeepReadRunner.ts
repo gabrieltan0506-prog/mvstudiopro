@@ -1385,7 +1385,7 @@ export const NATIVE_DEEP_READ_STRUCTURING_JSON_SCHEMA_NAME = "native_structuring
  * 0905 用户拍板的整形分流链（按批次序号，0 起；单批＝第 1 批）：
  * Qwen 首发：第 1 批 北京 → EvoLink → OpenRouter；第 2 批 新加坡 → OpenRouter → EvoLink（两路都挂时 OpenRouter/EvoLink 各接一批真并发）。
  * GLM 首发：各批一律 OpenRouter → EvoLink → Qwen（第 1 批 北京→新加坡，第 2 批 新加坡→北京）；用户 0905「并行走 OpenRouter」。
- * 任一档 25 分钟（Qwen）/15 分钟（GLM）不回即切下一档，不做 20 秒重试轮。
+ * 任一档 25 分钟（Qwen）/20 分钟（GLM）不回即切下一档，不做 20 秒重试轮。
  */
 export function nativeDeepReadStructuringGatewayOrder(
   policy: "structuring_chain" | "structuring_chain_qwen_first",
@@ -1573,7 +1573,7 @@ export function nativeDeepReadFrozenContractSha256(): string {
 // 0906 用户明确授权三分支required与类型标记；生成时约束结构，返回后由代码验证实际类型和非空内容。
 // 0906 追加授权：普通镜可以额外填写重点细节；只放宽返回后该方向的检查。
 // 0906 当前用户授权：撤销额外内容强迫、完整音画生成与缺口反馈；采样及输出参数保持不变。
-export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "307063333ba70d11e413b96d9b3e3023045b0dbab6ee1fff9e2ffb0bf1241248" as const;
+export const NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256 = "6906e43a433714d605567780a94f9cc4155ad17af5ab23afcb5e831e9ef063f8" as const;
 
 export function assertNativeDeepReadFrozenContract(): void {
   const actual = nativeDeepReadFrozenContractSha256();
@@ -2882,6 +2882,19 @@ export const NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME = "NativeDeepReadObser
 export function isNativeDeepReadObservationLockError(error: unknown): boolean {
   return error instanceof Error && error.name === NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
 }
+/**
+ * 观察文本归一：只抹平引号（直/弯/单/双）、空白与破折号写法差异，不动任何字。
+ * 0907 实弹：来源写 '投其所好'（直引号），GLM 回 ‘投其所好’（弯引号），其余一字不差，却被锁连判两次「改写」。
+ */
+export function normalizeNativeDeepReadObservationText(value: unknown): string {
+  return String(value ?? "")
+    // 单/双、直/弯、中/英引号一律视为同一个引号（模型常把 '…' 回成 ‘…’ 或 “…”）
+    .replace(/[\u2018\u2019\u201A\u201B\u2032\u2035\u201C\u201D\u201E\u201F\u2033\u2036"\u300C\u300D\u300E\u300F]/g, "'")
+    .replace(/[\u2013\u2014\u2015\u2212]/g, "-")
+    .replace(/\s+/g, "")
+    .trim();
+}
+
 /** GLM只能保留来源镜头的观察；跨镜挪用、改写或丢字段均停止消费，原稿仍永久保存。 */
 export function assertNativeDeepReadShotObservationsPreserved(
   sourceRows: ReadonlyArray<Record<string, unknown>>,
@@ -2899,8 +2912,8 @@ export function assertNativeDeepReadShotObservationsPreserved(
   for (let index = 0; index < shots.length; index += 1) {
     const row = shots[index];
     if (row?.evidenceRole === "non_story_ad") continue;
-    const hint = typeof row?.hintZh === "string" ? row.hintZh.trim() : "";
-    const spans = sources.filter(source => String(source.hintZh).trim() === hint).map(source => ({
+    const hint = typeof row?.hintZh === "string" ? normalizeNativeDeepReadObservationText(row.hintZh) : "";
+    const spans = sources.filter(source => normalizeNativeDeepReadObservationText(source.hintZh) === hint).map(source => ({
       startSec: Number(source.startSec) - NATIVE_DEEP_READ_TIMELINE_TOLERANCE_SEC,
       endSec: Number(source.endSec) + NATIVE_DEEP_READ_TIMELINE_TOLERANCE_SEC,
     }));
@@ -3930,8 +3943,8 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE = "openrouter_glm_structurin
  */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_MODEL = `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`;
 /** 开始/失败回执的人话链路标签（0905：用户看了几百次「z-ai/glm-5.3」以为一直走 OpenRouter）。 */
-export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 各批并行首发 OpenRouter（Z.AI）→ EvoLink，不切 Qwen（单档 15 分钟）";
-export const NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL = "Qwen3.8-Max 严格 schema · 第1批 北京→EvoLink→OpenRouter · 第2批 新加坡→OpenRouter→EvoLink（Qwen 单档 25 分钟 · GLM 15 分钟）";
+export const NATIVE_DEEP_READ_GLM_STRUCTURING_STARTED_LABEL = "GLM-5.3 各批并行首发 OpenRouter（Z.AI）→ EvoLink，不切 Qwen（单档 20 分钟）";
+export const NATIVE_DEEP_READ_QWEN_STRUCTURING_STARTED_LABEL = "Qwen3.8-Max 严格 schema · 第1批 北京→EvoLink→OpenRouter · 第2批 新加坡→OpenRouter→EvoLink（Qwen 单档 25 分钟 · GLM 20 分钟）";
 /** 面板与缺省调用统一默认 GLM；明确选 Qwen 才走 Qwen 首发链。 */
 export function nativeDeepReadStructuringPolicyForModel(
   model: ManhuaNativeStructuringModelId | undefined,
@@ -4003,8 +4016,8 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG = deepFreezeNativeContract(
   // 0905 用户拍板：每批 4 片，Qwen 两档单档 25 分钟不回就切下一档（实弹 4 片 15 分钟）；GLM 档仍 timeoutMs
   gatewayTimeoutMsOverrides: {
     plan_bj_qwen: 25 * 60_000, plan_sg_qwen: 25 * 60_000,
-    // 0905 用户令：GLM 两档作兜底只给 15 分钟（实弹 4 片 7–9 分钟）
-    evolink_glm: 15 * 60_000, openrouter: 15 * 60_000,
+    // 0907 用户令：GLM 两档单档 20 分钟（0905 曾定 15 分钟；实弹 4 片 6–9 分钟）
+    evolink_glm: 20 * 60_000, openrouter: 20 * 60_000,
   } as const,
   requireParameters: true,
   requireFinishReasonStop: true,
@@ -5795,7 +5808,7 @@ async function executeNativeDeepReadBatch(
 
       /** 通过即停；三档未过则零调用选择最佳原稿进入整形。 */
       /** 重试稿合并：把该段被拒的各稿与最终采用稿交给函数，返回一份 JSON；合并统计写进 advisory。 */
-      const applyRetryDraftMerge = (segmentIndex: number, finalAttemptNumber: number, finalResult: SegmentAttemptResult, finalPassedGate: boolean): SegmentAttemptResult => {
+      const applyRetryDraftMerge = async (segmentIndex: number, finalAttemptNumber: number, finalResult: SegmentAttemptResult, finalPassedGate: boolean): Promise<SegmentAttemptResult> => {
         if (!deps.mergeRetryDrafts) return finalResult;
         const rejected = (rejectedAttempts.get(segmentIndex) ?? []).filter((row) => row.attemptNumber !== finalAttemptNumber);
         if (!rejected.length) return finalResult;
@@ -5806,6 +5819,20 @@ async function executeNativeDeepReadBatch(
         ];
         const merged = deps.mergeRetryDrafts({ segmentIndex, startSec: segment.startSec, endSec: segment.endSec, drafts, baseAttemptNumber: finalAttemptNumber });
         console.info(`[nativeDeepRead] 第${episode.episodeIndex}集${merged.summaryZh}`);
+        // 0907 用户令：合并统计也打进面板进度行，不只挂在改进建议里
+        await emitVisualModelReceipt({
+          callId: `${episodeRequestId}:segment-${segmentIndex}:retry-drafts-merged`,
+          model: merged.summaryZh,
+          route: "retry_drafts_merged",
+          stage: "visual_parse",
+          status: "completed",
+          batchRequestId: episodeRequestId,
+          episodeIndexes: [episode.episodeIndex],
+          chunkIndex: segmentIndex,
+          segmentCount,
+          videoCount: 1,
+          attemptNumber: finalAttemptNumber,
+        }, params.onModelReceipt);
         return {
           ...finalResult,
           raw: merged.raw,
@@ -5871,7 +5898,7 @@ async function executeNativeDeepReadBatch(
                 temperature,
                 rejectedReasonZh,
               });
-              return attemptIndex > 0 ? applyRetryDraftMerge(input.segmentIndex, attemptIndex + 1, accepted, true) : accepted;
+              return attemptIndex > 0 ? await applyRetryDraftMerge(input.segmentIndex, attemptIndex + 1, accepted, true) : accepted;
             } catch (error) {
               if (params.abortSignal?.aborted) throw error;
               if (error instanceof Error && error.name === "NativeDeepReadEvidencePersistenceError") throw error;
@@ -6011,7 +6038,7 @@ async function executeNativeDeepReadBatch(
               reasonZh: row.reasonZh, rawAttemptEvidenceObjectName: row.result.rawAttemptEvidenceObjectName })),
           };
           console.info(`[nativeDeepRead] 第${input.segmentIndex + 1}段三档未过，选择第${best.attemptNumber}份原稿进入整形`);
-          return applyRetryDraftMerge(input.segmentIndex, best.attemptNumber, best.result, false);
+          return await applyRetryDraftMerge(input.segmentIndex, best.attemptNumber, best.result, false);
         }
         // 三份均无可解析的非空证据时，不能制造空稿。
         logFinalGateFailure(input.segmentIndex, retryError);
@@ -6498,6 +6525,14 @@ async function executeNativeDeepReadBatch(
           try {
             assertNativeDeepReadShotObservationsPreserved(input.rows, result.raw);
             assertNativeStructuringAnalysis(result.raw, { requireGeneratedAnalysis: true });
+            // 0907 实弹：第三发过了锁却在入库前被集卡 schema 拒（音轨分析三段总结整段省掉）→ 也算坏输出，走同一套重试
+            const schemaCheck = nativeDeepReadSegmentSchema.safeParse(result.raw);
+            if (!schemaCheck.success) {
+              const issues = schemaCheck.error.issues.slice(0, 3).map((i) => `${i.path.join(".")}：${i.message}`).join("；");
+              const error = new Error(`整形输出不符合集卡 schema（${issues}）`);
+              error.name = NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
+              throw error;
+            }
             // 0906 用户令「镜数不合」也算坏：批次留存率低于拒收线，同样降温重试再换路由
             const keptShots = Array.isArray(result.raw.shots) ? (result.raw.shots as unknown[]).length : 0;
             if (inputShotCount > 0 && keptShots / inputShotCount < NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT) {
@@ -6554,6 +6589,12 @@ async function executeNativeDeepReadBatch(
           try {
             assertNativeDeepReadShotObservationsPreserved(rows, cached.raw);
             assertNativeStructuringAnalysis(unwrapNativeDeepReadStructuredAnswerEnvelope(cached.raw), { requireGeneratedAnalysis: true });
+            const cachedSchema = nativeDeepReadSegmentSchema.safeParse(unwrapNativeDeepReadStructuredAnswerEnvelope(cached.raw));
+            if (!cachedSchema.success) {
+              const error = new Error(`缓存整形输出不符合集卡 schema（${cachedSchema.error.issues.slice(0, 3).map((i) => `${i.path.join(".")}：${i.message}`).join("；")}）`);
+              error.name = NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
+              throw error;
+            }
           } catch (error) {
             if (error instanceof NativeStructuringAnalysisError || (isNativeDeepReadObservationLockError(error) && segmentIndexes.some(index => selectedSegmentCandidates.has(index)))) {
               badCacheUndeletable.add(segmentIndexes.join("-"));

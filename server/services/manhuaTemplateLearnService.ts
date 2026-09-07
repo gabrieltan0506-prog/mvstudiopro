@@ -2709,6 +2709,11 @@ export async function runManhuaTemplateLearn(
                   : `全系列结构整理未完成：${checkpoint.errorZh || "上游未返回完整回执"}`,
             );
           } else {
+            if (checkpoint.route === "retry_drafts_merged") {
+              // 0907 用户令：「第N段 2 稿合并：补入字幕 x…」打进进度行
+              await progress(MANHUA_LEARN_STAGE.vision, `${episodeLabel} · ${checkpoint.model}`);
+              return;
+            }
             if (checkpoint.route === "structuring_retry_pending") {
               await progress(
                 MANHUA_LEARN_STAGE.vision,

@@ -151,7 +151,9 @@ describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链 · 0825 去百炼后)
 
     expect(timeoutSpy).toHaveBeenCalledOnce();
     expect(timeoutSpy).toHaveBeenCalledWith(720_000);
-    expect(calls[0].init.signal).toBe(timeoutSignal);
+    // 0907：首期仍由 AbortSignal.timeout 给出，但发给 fetch 的是可延期的组合信号
+    expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
+    expect(calls[0].init.signal.aborted).toBe(false);
     const evoBody = JSON.parse(String(calls[0].init.body));
     // EvoLink 用**顶层字符串** reasoning_effort，不是 OpenRouter 的嵌套 reasoning:{effort}
     expect(evoBody).toMatchObject({ model: "glm-5.3", reasoning_effort: "max" });
@@ -772,5 +774,39 @@ describe("0905 · gatewayOrder 显式链序", () => {
     expect(urls[1]).toContain("api.evolink.ai");
     expect(r.gateway).toBe("evolink_glm");
     expect(r.gatewayTrace.map((t) => t.gateway)).toEqual(["plan_bj_qwen", "evolink_glm"]);
+  });
+});
+
+describe("0907 · 单档期限有心跳就延长 15 分钟，不掐断", () => {
+  it("未延期：首期到点即中止；延期后：首期到点不中止，改到心跳后 15 分钟", async () => {
+    const { createGlmGatewayDeadline, GLM_HEARTBEAT_EXTEND_MS } = await import("./bailianChat");
+    vi.useFakeTimers();
+    try {
+      const first = new AbortController();
+      vi.spyOn(AbortSignal, "timeout").mockReturnValue(first.signal);
+      const plain = createGlmGatewayDeadline(60_000);
+      first.abort();
+      expect(plain.signal.aborted).toBe(true);
+      plain.dispose();
+
+      const second = new AbortController();
+      vi.spyOn(AbortSignal, "timeout").mockReturnValue(second.signal);
+      const extended = createGlmGatewayDeadline(60_000);
+      extended.extend();
+      second.abort();
+      expect(extended.signal.aborted).toBe(false);
+      vi.advanceTimersByTime(GLM_HEARTBEAT_EXTEND_MS - 1_000);
+      expect(extended.signal.aborted).toBe(false);
+      // 再来一次心跳 → 再推 15 分钟
+      extended.extend();
+      vi.advanceTimersByTime(10_000);
+      expect(extended.signal.aborted).toBe(false);
+      vi.advanceTimersByTime(GLM_HEARTBEAT_EXTEND_MS);
+      expect(extended.signal.aborted).toBe(true);
+      extended.dispose();
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
   });
 });
