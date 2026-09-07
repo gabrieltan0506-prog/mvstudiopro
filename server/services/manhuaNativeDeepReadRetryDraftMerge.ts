@@ -39,6 +39,8 @@ export type NativeDeepReadRetryDraftMergeResult = {
 };
 
 const SHOT_MIN_ADD_SEC = 0.5;
+/** 点状记录允许的越界容差（与时间轴容差同量级）；超出本片范围的记录不补 */
+const RANGE_TOLERANCE_SEC = 0.5;
 const KEY_MOMENT_FLOOR = 3;
 const KEY_MOMENT_TOPUP_GAP_SEC = 10;
 const SUBTITLE_WINDOW_SEC = 3;
@@ -83,6 +85,7 @@ function addPoints(
   candidates: Row[],
   windowSec: number,
   sameKind: (a: Row, b: Row) => boolean,
+  span: { startSec: number; endSec: number },
   dupAnyTime?: (a: Row, b: Row) => boolean,
 ): { added: Row[]; dropped: number } {
   const added: Row[] = [];
@@ -90,7 +93,8 @@ function addPoints(
   const seen = [...base];
   for (const row of candidates) {
     const at = num(row.atSec);
-    if (!finite(at)) { dropped += 1; continue; }
+    // 0907 实弹：第 2 稿一条 atSec=297 的字幕越出本片 0–293 秒，补进去后整集门禁判死——越界一律不补
+    if (!finite(at) || at < span.startSec - RANGE_TOLERANCE_SEC || at > span.endSec + RANGE_TOLERANCE_SEC) { dropped += 1; continue; }
     const dup = seen.some((s) => (finite(s.atSec) && Math.abs(num(s.atSec) - at) <= windowSec && sameKind(s, row)) || (dupAnyTime?.(s, row) ?? false));
     if (dup) { dropped += 1; continue; }
     added.push(copy(row));
@@ -107,7 +111,7 @@ function audioTracks(raw: Row): Row[] {
 }
 
 /** 把其他稿的声音事件补进底稿覆盖该秒的音轨段；底稿没有覆盖该秒的音轨段则丢弃（不扩音轨）。 */
-function addAudioCues(base: Row, candidates: Row[]): { added: number; dropped: number } {
+function addAudioCues(base: Row, candidates: Row[], span: { startSec: number; endSec: number }): { added: number; dropped: number } {
   const tracks = audioTracks(base);
   const existing = tracks.flatMap((t) => (Array.isArray(t.cues) ? (t.cues as Row[]) : []));
   let added = 0;
@@ -116,7 +120,7 @@ function addAudioCues(base: Row, candidates: Row[]): { added: number; dropped: n
     for (const track of audioTracks(other)) {
       for (const cue of Array.isArray(track.cues) ? (track.cues as Row[]) : []) {
         const at = num(cue.atSec);
-        if (!finite(at)) { dropped += 1; continue; }
+        if (!finite(at) || at < span.startSec - RANGE_TOLERANCE_SEC || at > span.endSec + RANGE_TOLERANCE_SEC) { dropped += 1; continue; }
         const dup = existing.some((c) => finite(c.atSec) && Math.abs(num(c.atSec) - at) <= AUDIO_CUE_WINDOW_SEC);
         if (dup) { dropped += 1; continue; }
         const host = tracks.find((t) => finite(t.fromSec) && finite(t.toSec) && num(t.fromSec) <= at && at <= num(t.toSec));
@@ -169,6 +173,7 @@ export function mergeNativeDeepReadRetryDrafts(input: {
     for (const row of otherKm) {
       if (kept.length >= KEY_MOMENT_FLOOR) { kmAdd.dropped += 1; continue; }
       const at = num(row.atSec);
+      if (at < span.startSec - RANGE_TOLERANCE_SEC || at > span.endSec + RANGE_TOLERANCE_SEC) { kmAdd.dropped += 1; continue; }
       if (kept.some((k) => finite(k.atSec) && Math.abs(num(k.atSec) - at) < KEY_MOMENT_TOPUP_GAP_SEC)) { kmAdd.dropped += 1; continue; }
       kept.push(copy(row)); kmAdd.added.push(row);
     }
@@ -178,9 +183,9 @@ export function mergeNativeDeepReadRetryDrafts(input: {
     (a, b) => {
       const x = normText(a.textZh), y = normText(b.textZh);
       return x === y || textSimilarity(x, y) >= SUBTITLE_SIMILARITY;
-    }, /* sameTextAnyTime */ (a, b) => normText(a.textZh) === normText(b.textZh) && normText(a.textZh).length >= 6);
+    }, span, /* sameTextAnyTime */ (a, b) => normText(a.textZh) === normText(b.textZh) && normText(a.textZh).length >= 6);
   if (subAdd.added.length) merged.subtitles = [...rows(merged, "subtitles"), ...subAdd.added].sort((a, b) => num(a.atSec) - num(b.atSec));
-  const cueAdd = addAudioCues(merged, others.map((d) => d.raw));
+  const cueAdd = addAudioCues(merged, others.map((d) => d.raw), span);
 
   const filledProseFields: string[] = [];
   for (const key of PROSE_FIELDS) {

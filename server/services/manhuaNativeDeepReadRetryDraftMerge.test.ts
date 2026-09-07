@@ -61,6 +61,17 @@ describe("0906 · 重试稿合并（底稿一字不改，其他稿只补缺）",
     expect((merged.raw.subtitles as Array<{ atSec: number }>).map((r) => r.atSec)).toEqual([10, 20, 22.5, 40]);
   });
 
+  it("0907：越出本片范围的字幕/重点时刻/声音事件一律不补（第 10 集实弹：atSec=297 越出 0–293 秒被整集判死）", () => {
+    const base = { shots: [shot(0, 30, "底")], keyMoments: [], subtitles: [sub(10, "在片内")], audioResolution: audio([{ fromSec: 0, toSec: 30, cues: [] }]) };
+    const other = { shots: [], keyMoments: [km(50)], subtitles: [sub(31.6, "越界字幕"), sub(20, "片内补入")], audioResolution: audio([{ fromSec: 0, toSec: 40, cues: [{ atSec: 35, kind: "sfx", detailZh: "越界事件" }, { atSec: 25, kind: "sfx", detailZh: "片内事件" }] }]) };
+    const merged = mergeNativeDeepReadRetryDrafts({ segmentIndex: 0, startSec: 0, endSec: 30,
+      drafts: [{ attemptNumber: 1, raw: other, passedGate: false }, { attemptNumber: 2, raw: base, passedGate: true }] });
+    expect((merged.raw.subtitles as Array<{ atSec: number }>).map((r) => r.atSec)).toEqual([10, 20]);
+    expect((merged.raw.keyMoments as Array<{ atSec: number }>)).toEqual([]);
+    const cues = (merged.raw.audioResolution as Array<{ analysis: { audioTrack: Array<{ cues: Array<{ atSec: number }> }> } }>)[0]!.analysis.audioTrack[0]!.cues;
+    expect(cues.map((c) => c.atSec)).toEqual([25]);
+  });
+
   it("三稿都没过：调用方指定底稿；少于两稿报错", () => {
     const a = { shots: [shot(0, 5, "a")] }; const b = { shots: [shot(5, 10, "b")] }; const c = { shots: [shot(10, 15, "c")] };
     const merged = mergeNativeDeepReadRetryDrafts({ segmentIndex: 2, startSec: 0, endSec: 15, baseAttemptNumber: 3,

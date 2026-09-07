@@ -5819,6 +5819,22 @@ async function executeNativeDeepReadBatch(
           ...rejected.map((row) => ({ attemptNumber: row.attemptNumber, raw: row.result.raw, passedGate: false })),
         ];
         const merged = deps.mergeRetryDrafts({ segmentIndex, startSec: segment.startSec, endSec: segment.endSec, drafts, baseAttemptNumber: finalAttemptNumber });
+        // 0907 实弹：合并稿必须再过一遍分片门禁；不过就退回底稿不合并，绝不让合并把过了门禁的稿弄成整集判死
+        try {
+          assertNativeDeepReadSegmentDensity({
+            episodeIndex: episode.episodeIndex, segmentIndex, startSec: segment.startSec, endSec: segment.endSec, hasAudio, raw: merged.raw,
+          });
+        } catch (error) {
+          const reasonZh = (error instanceof Error ? error.message : String(error)).slice(0, 200);
+          console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集第${segmentIndex + 1}段合并稿过不了分片门禁，退回底稿不合并：${reasonZh}`);
+          return {
+            ...finalResult,
+            advisories: dedupeNativeDeepReadAdvisories([
+              ...finalResult.advisories,
+              { code: "retry_drafts_merge_rejected", detailZh: `第${segmentIndex + 1}段合并稿过不了分片门禁，已退回底稿：${reasonZh}`, segmentIndex },
+            ]),
+          };
+        }
         console.info(`[nativeDeepRead] 第${episode.episodeIndex}集${merged.summaryZh}`);
         // 0907 用户令：合并统计也打进面板进度行，不只挂在改进建议里
         await emitVisualModelReceipt({
