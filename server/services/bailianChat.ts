@@ -937,7 +937,7 @@ async function invokeOneGlmGateway(
     const bytes = await readGlmRawResponseWithEvidence(res, {
       gateway, model, httpStatus: res.status, providerRequestId, contentType,
     }, rawCap, params.onRawResponse, (receivedBytes) => {
-      // 0907：有心跳就把单档期限推到「现在 + 15 分钟」，不掐断
+      // 0907：有心跳则把单档期限延到「首期 + 15 分钟」，只延一次
       deadline.extend();
       void params.onStreamProgress?.({ gateway, receivedBytes, elapsedMs: Date.now() - streamStartedAt });
     });

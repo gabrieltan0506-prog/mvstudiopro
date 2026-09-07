@@ -5050,6 +5050,31 @@ describe("0907 · 整形输出音轨块编号对不上段号", () => {
     expect(m.normalizeNativeDeepReadStructuredAudioChunkIndexes(mk([0, 1, 2, 4]), [0, 1, 2, 3])).toBeNull();
     expect(m.normalizeNativeDeepReadStructuredAudioChunkIndexes(mk([0, 1, 2, 3, 4]), [0, 1, 2, 3])).toBeNull();
     expect(m.normalizeNativeDeepReadStructuredAudioChunkIndexes({ shots: [] }, [0, 1])).toMatchObject({ remapped: false });
+    // 块数少于段数不判坏（0830 用户拍板丢一段音轨照常入库，覆盖修补兜住）；编号越界修不了才判坏
+    expect(m.repairNativeDeepReadStructuredAudioChunks(mk([0, 1]), [0, 1, 2], true)).toMatchObject({ remapped: false });
+    expect(m.repairNativeDeepReadStructuredAudioChunks(mk([1, 2, 3]), [0, 1, 2], true)?.remapped).toBe(true);
+    expect(m.repairNativeDeepReadStructuredAudioChunks(mk([0, 1, 2, 4]), [0, 1, 2], true)).toBeNull();
+  });
+
+  it("审查①：缓存里的坏音轨块（chunkIndex 越出段号）→ 当坏缓存删掉重整形，不再拼接后整集死", async () => {
+    const segments = Array.from({ length: 3 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
+    const base = makeGlmStructuringStub();
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => ({ ...(await base(prompt)), gateway: "openrouter" }));
+    const readStructuredBatchCache = vi.fn(async (input: { rawSegments: ReadonlyArray<Record<string, unknown>> }) => {
+      const good = await base({ system: "", user: `分段卡 JSON：${JSON.stringify(input.rawSegments)}` });
+      const raw = JSON.parse(JSON.stringify(good.raw)) as { audioResolution: Array<Record<string, unknown>> };
+      raw.audioResolution.push({ ...raw.audioResolution[0]!, chunkIndex: 4 });
+      return { schemaVersion: 1 as const, frozenContractSha256: "x", seriesKey: "s", sourceDigest: "7".repeat(64), episodeIndex: 9, segmentIndexes: [0, 1, 2],
+        inputDigest: "d", raw, gateway: "openrouter", model: "glm-5.3", inputTokens: 1, outputTokens: 1, reasoningTokens: 0, costUsd: 0, savedAtIso: new Date().toISOString(), source: "formal" as const };
+    });
+    const deps = makeRunnerDeps({ postVertex: makeSuccessfulEpisodePostVertex(segments) as never, invokeGlmStructuring: invokeGlmStructuring as never, readStructuredBatchCache: readStructuredBatchCache as never });
+    const result = await runManhuaNativeDeepReadBatch({
+      episodes: [{ episodeIndex: 9, resolveNodes: async () => [], segments, sourceDurationSec: 180, cacheSourceDigest: "7".repeat(64) }],
+      segmentCacheSeriesKey: "bad_cache_chunk",
+    }, deps);
+    expect(vi.mocked(deps.remove)).toHaveBeenCalled();
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(result.episodes[0]!.result.segmentCount).toBe(3);
   });
 
   it("批次输出多一块音轨（chunkIndex 越出段号）→ 判坏走同档降温重试，第二发正常即入库", async () => {
