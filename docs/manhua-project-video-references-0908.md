@@ -52,4 +52,16 @@
 
 ## 残余范围
 
+### 发布前末审：运行失败恢复
+
+末审发现预检上下文检查误覆盖运行阶段：节点已经 running、尚无任务 ID 时，如果资产列表或连线变化，再遇提交失败，原 catch 会直接返回并留下 running。现按 `generationStarted` 分期：预检仍按完整快照取消；运行后同账号、同挂载、同节点必须记录错误，素材／连线变化不吞错。切换账号、卸载或节点删除不回写，旧视频与图片不覆盖，不增加生成请求、重试、扣费或退款行为。
+
+正向：runBlock → prepare → running → 实际 runner 异步提交失败 → 阶段判断 → 原节点 error、旧片保留。反向：error 字段来自同次 runner 的原错误，同账号与节点存在性校验后写入；预检取消及账号变化不制造新节点。新增七例覆盖上述路径。
+
+- 子代理 `pnpm check` 退出 0；目标三文件 20 tests passed（18.89s）。
+- 主代理复跑 `pnpm exec vitest run client/src/lib/canvasProjectVideoReferences.test.ts client/src/lib/canvasProjectVideoReferences.browser.test.ts client/src/lib/canvasProjectVideoReferenceFailure.test.ts --maxWorkers=1 --minWorkers=1`：3 files / 20 tests passed，7.61s，退出 0。
+- 初次只传 `--maxWorkers=1` 与仓库默认最小 worker 数冲突：`RangeError: options.minThreads and options.maxThreads must not conflict`，没有运行测试；补齐命令参数后通过，没有修改测试超时或项目配置。
+- `pnpm exec vite build`：退出 0，built in 24.36s；保留大 chunk 警告。`git diff --check`：退出 0；主代理逐行复核源码和七项测试。
+- 本补丁没有线上失败实跑，仍不能据此声称完整线上验收。
+
 现有 materialReadUrl 只有登录与桶白名单，不是逐对象所有权校验，本次没有扩改权限模型。文件选择器本身未改；新增入口复用已有项目图片。本次接线施工没有新增生产付费调用；此前的已成功图片任务保留。尚未验收真实三段视频和后期成片。正式发布、原页面与账本回执在后续追加，不以本文代替验真。

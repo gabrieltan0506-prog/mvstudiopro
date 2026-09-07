@@ -136,3 +136,24 @@ export async function prepareProjectVideoReferences(
     editFusionUrls: prepared.slice(1),
   };
 }
+
+/** 预检允许随素材变化取消；运行开始后仍须结清同账号、同节点的失败状态。 */
+export function projectVideoReferenceFailurePatch(input: {
+  guarded: boolean;
+  generationStarted: boolean;
+  contextCurrent: boolean;
+  targetCurrent: boolean;
+  error: unknown;
+}): Pick<CanvasBlock, "status" | "error"> | null {
+  if (
+    input.guarded &&
+    (!input.targetCurrent ||
+      (!input.generationStarted && !input.contextCurrent))
+  ) {
+    return null;
+  }
+  return {
+    status: "error",
+    error: input.error instanceof Error ? input.error.message : "生成失败",
+  };
+}

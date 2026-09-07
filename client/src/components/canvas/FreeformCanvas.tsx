@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ManhuaCustomAssetRef } from "@shared/manhuaCustomAssetRefs";
 import { CanvasProjectVideoReferencePicker } from "./CanvasProjectVideoReferencePicker";
-import { canSelectProjectVideoReferences, prepareProjectVideoReferences, toggleProjectVideoReference } from "@/lib/canvasProjectVideoReferences";
+import { canSelectProjectVideoReferences, prepareProjectVideoReferences, projectVideoReferenceFailurePatch, toggleProjectVideoReference } from "@/lib/canvasProjectVideoReferences";
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 import { mergeManhuaMediaVersions } from "@/lib/manhuaMediaVersions";
 import { recordManhuaKeyartLookOutput } from "@shared/manhuaKeyartLookState";
@@ -1828,6 +1828,7 @@ export default function FreeformCanvas({
       if (referencePreparationRef.current.has(blockId)) return;
       referencePreparationRef.current.add(blockId);
       setPreparingReferenceIds(new Set(referencePreparationRef.current));
+      let generationStarted = false;
       try {
         const prepared = await prepareProjectVideoReferences(runBlockPayload, projectAssetRefs, undefined, contextStillCurrent);
         // 只对本次新接入的异步参考预检检查快照，既有工厂编译器仍自行管理状态。
@@ -1841,6 +1842,7 @@ export default function FreeformCanvas({
         }
         runBlockPayload = prepared;
         patchOne(blockId, { status: "running", error: undefined });
+        generationStarted = true;
         const docTexts =
           workingBlock.kind === "text" || workingBlock.kind === "copy_organize"
             ? await loadCanvasDocumentTexts(collectDocumentAssets(blockId, safeBlocks, safeEdges))
@@ -1877,10 +1879,18 @@ export default function FreeformCanvas({
         });
         toast.success("生成完成");
       } catch (e: unknown) {
-        if (guardProjectReferences && !contextStillCurrent()) return;
-        const msg = e instanceof Error ? e.message : "生成失败";
-        patchOne(blockId, { status: "error", error: msg });
-        toast.error(msg);
+        const failure = projectVideoReferenceFailurePatch({
+          guarded: guardProjectReferences,
+          generationStarted,
+          contextCurrent: contextStillCurrent(),
+          targetCurrent: referenceMountedRef.current &&
+            projectReferenceContextRef.current.userId === referenceContext.userId &&
+            blocksRef.current.some(item => item.id === blockId),
+          error: e,
+        });
+        if (!failure) return;
+        patchOne(blockId, failure);
+        toast.error(failure.error || "生成失败");
       } finally {
         referencePreparationRef.current.delete(blockId);
         if (referenceMountedRef.current) setPreparingReferenceIds(new Set(referencePreparationRef.current));
