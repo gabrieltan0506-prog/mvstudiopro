@@ -45,7 +45,7 @@ import {
   buildManhuaAssetsGapZh,
   type ManhuaAssetsGapAnchor,
 } from "@/lib/manhuaPhaseGapText";
-import { tryLocalMediaDisplayForBlock } from "@/lib/manhuaLocalMediaStore";
+import { ManhuaAssetImage } from "@/components/ManhuaAssetImage";
 import {
   getManhuaCharacterById,
   getManhuaCharacterDisplayName,
@@ -4100,7 +4100,7 @@ export default function ManhuaScriptWorkbench({
                       cropDragRef.current = null;
                     }}
                   >
-                    <img
+                    <ManhuaAssetImage
                       src={cropTarget.url}
                       alt={cropTarget.labelZh}
                       draggable={false}
@@ -4186,7 +4186,7 @@ export default function ManhuaScriptWorkbench({
                     setSheetPreview(null);
                   }}
                 >
-                  <img
+                  <ManhuaAssetImage
                     src={sheetPreview.url}
                     alt={sheetPreview.labelZh}
                     onClick={(e) => e.stopPropagation()}
@@ -4701,7 +4701,7 @@ export default function ManhuaScriptWorkbench({
                                         : `放大看「${item.labelZh}」`
                                     }
                                   >
-                                    <img
+                                    <ManhuaAssetImage
                                       src={item.url}
                                       alt=""
                                       className="aspect-[3/4] w-full object-cover object-top"
@@ -5706,7 +5706,7 @@ export default function ManhuaScriptWorkbench({
                               aria-label={`放大查看${displayNameZh || "参考图"}`}
                               className="block w-full cursor-zoom-in focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300"
                             >
-                              <img
+                              <ManhuaAssetImage
                                 src={ref.url}
                                 alt={displayNameZh || "漫剧资产参考图"}
                                 className="aspect-[3/4] w-full object-cover object-top"
@@ -6224,7 +6224,7 @@ export default function ManhuaScriptWorkbench({
                           data-manhua-custom-ref-id={ref.id}
                           className="overflow-hidden rounded-lg border border-white/12 bg-black/35"
                         >
-                          <img
+                          <ManhuaAssetImage
                             src={ref.url}
                             alt=""
                             onClick={() =>
@@ -6318,7 +6318,7 @@ export default function ManhuaScriptWorkbench({
                                 className="min-w-[9rem] flex-1 rounded border border-rose-300/25 bg-rose-500/10 px-1.5 py-1"
                               >
                                 {lookRefs.find((r) => r.id === (ls.wardrobeRefId || ls.lookRefId)) ? (
-                                  <img
+                                  <ManhuaAssetImage
                                     src={lookRefs.find((r) => r.id === (ls.wardrobeRefId || ls.lookRefId))!.url}
                                     alt={`${ch.labelZh} · ${ls.labelZh}`}
                                     loading="lazy"
@@ -6914,7 +6914,7 @@ export default function ManhuaScriptWorkbench({
                           className="overflow-hidden rounded-lg border border-emerald-300/40 bg-black/40 text-left hover:border-emerald-200/70"
                           title={`定位：${item.labelZh}`}
                         >
-                          <img
+                          <ManhuaAssetImage
                             src={item.url}
                             alt=""
                             className="aspect-square w-full object-cover object-top"
@@ -7449,22 +7449,12 @@ export default function ManhuaScriptWorkbench({
                         >
                           {thumb ? (
                             <>
-                              <img
+                              <ManhuaAssetImage
                                 key={thumb}
                                 src={thumb}
+                                localMediaBlockId={shotKey?.id}
                                 alt=""
                                 className="h-full w-full object-cover"
-                                onError={(e) => {
-                                  const el = e.currentTarget;
-                                  const failedSrc = el.getAttribute("src");
-                                  if (el.dataset.localRetry === "1") return;
-                                  el.dataset.localRetry = "1";
-                                  const id = shotKey?.id;
-                                  if (!id) return;
-                                  void tryLocalMediaDisplayForBlock(id, "output", thumb).then((local) => {
-                                    if (local && el.getAttribute("src") === failedSrc) el.src = local;
-                                  });
-                                }}
                               />
                               {keyartUnlocked ? (
                                 <span className="absolute inset-x-0 bottom-0 bg-red-900/80 px-1 py-0.5 text-center text-[9px] font-semibold text-red-50">
@@ -8132,7 +8122,7 @@ export default function ManhuaScriptWorkbench({
                       : "100%",
                   }}
                 >
-                  <img
+                  <ManhuaAssetImage
                     src={activeBoardBaseUrl}
                     alt={`第${activeSegNo}段导演板轨迹预览`}
                     className="absolute inset-0 h-full w-full object-contain"
@@ -8228,7 +8218,7 @@ export default function ManhuaScriptWorkbench({
             >
               {annotateStillUrl && (playableClipUrl || finalVideoUrl) ? (
                 <div className="flex max-h-[28%] shrink-0 items-center gap-2 border-b border-white/10 bg-black/80 px-2 py-1.5">
-                  <img
+                  <ManhuaAssetImage
                     src={annotateStillUrl}
                     alt=""
                     className="h-16 w-12 shrink-0 rounded object-cover object-top"
@@ -8248,7 +8238,7 @@ export default function ManhuaScriptWorkbench({
                   previewIsVideo ? (
                     <video src={previewUrl} controls className="h-full max-h-full w-full object-contain" />
                   ) : (
-                    <img src={previewUrl} alt="" className="h-full max-h-full w-full object-contain" />
+                    <ManhuaAssetImage src={previewUrl} alt="" className="h-full max-h-full w-full object-contain" />
                   )
                 ) : (
                   <div className="px-4 text-center text-[11px] leading-relaxed text-white/40">
@@ -8632,7 +8622,7 @@ export default function ManhuaScriptWorkbench({
                     }`}
                   >
                     {seg.thumb ? (
-                      <img src={seg.thumb} alt="" className="h-full w-full object-cover" />
+                      <ManhuaAssetImage src={seg.thumb} alt="" className="h-full w-full object-cover" />
                     ) : (
                       <div className="flex h-full flex-col items-center justify-center gap-0.5 text-amber-100/85">
                         <span className="text-[11px] font-semibold">
@@ -8746,7 +8736,7 @@ export default function ManhuaScriptWorkbench({
               >
                 <div className="relative aspect-[9/12] bg-black/60">
                   {thumb ? (
-                    <img src={thumb} alt="" className="h-full w-full object-cover" loading="lazy" />
+                    <ManhuaAssetImage src={thumb} alt="" className="h-full w-full object-cover" loading="lazy" />
                   ) : (
                     <div className="flex h-full items-center justify-center text-[10px] text-white/30">
                       待生成

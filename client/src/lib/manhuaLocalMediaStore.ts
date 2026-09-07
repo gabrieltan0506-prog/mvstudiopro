@@ -31,6 +31,7 @@ export type ManhuaLocalMediaRecord = {
 type MemoryBackend = {
   kind: "memory";
   map: Map<string, ManhuaLocalMediaRecord>;
+  testOnly?: boolean;
 };
 
 type IdbBackend = {
@@ -158,7 +159,7 @@ export async function __resetManhuaLocalMediaStoreForTests(options?: { keepRecor
   displayToSourceUrl.clear();
   displayToPointer.clear();
   sourceToPointer.clear();
-  if (!options?.keepRecords) backendPromise = Promise.resolve({ kind: "memory", map: new Map() });
+  if (!options?.keepRecords) backendPromise = Promise.resolve({ kind: "memory", map: new Map(), testOnly: true });
   cacheQueue = Promise.resolve();
 }
 
@@ -199,6 +200,88 @@ export async function getLocalMediaRecord(recordId: string): Promise<ManhuaLocal
   const backend = await getBackend();
   if (backend.kind === "memory") return backend.map.get(id) || null;
   return idbGet(backend.db, id);
+}
+
+/** 导出可直接取已缓存字节；页面刷新丢失内存映射后仍按原来源查找。 */
+export async function getLocalMediaRecordBySource(sourceUrl: string): Promise<ManhuaLocalMediaRecord | null> {
+  const source = String(sourceUrl || "").trim();
+  if (!source) return null;
+  if (isLocalMediaPointer(source)) return getLocalMediaRecord(localMediaPointerId(source));
+  const remembered = sourceToPointer.get(source) || displayToPointer.get(source);
+  if (remembered) {
+    const record = await getLocalMediaRecord(localMediaPointerId(remembered));
+    if (record?.blob?.size && (record.sourceUrl === source || displayToSourceUrl.get(source) === record.sourceUrl)) return record;
+  }
+  const record = await getLocalMediaRecord(await sourceRecordId(source));
+  return record?.blob?.size && record.sourceUrl === source ? record : null;
+}
+
+export type ManhuaBackupMediaInput = { sourceUrl: string; blob: Blob; mime: string; gcsUri?: string };
+
+async function mediaBytesHash(blob: Blob): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+  return Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+/** 确认后一次性导入；来源可重建、同源不同字节拒绝，事务失败不留下半包新记录。 */
+export async function importLocalMediaRecords(inputs: ManhuaBackupMediaInput[]): Promise<number> {
+  if (!inputs.length) return 0;
+  const backend = await getBackend();
+  if (backend.kind === "memory" && !backend.testOnly) {
+    throw new Error("浏览器本机存储不可用，尚未恢复工作区，请保留备份文件");
+  }
+  const records = new Map<string, { record: ManhuaLocalMediaRecord; hash: string }>();
+  const originalSources = new Set<string>();
+  for (const input of inputs) {
+    const originalSource = String(input.sourceUrl || "").trim();
+    if (!originalSource || !input.blob?.size) throw new Error("备份图片缺少来源或内容，尚未恢复工作区");
+    originalSources.add(originalSource);
+    const hash = await mediaBytesHash(input.blob);
+    // 长期身份也在同一事务中保存；签名刷新后仍可读同一图片，不改草稿地址。
+    const sources = new Set([originalSource]);
+    if (input.gcsUri?.startsWith("gs://")) sources.add(input.gcsUri.trim());
+    for (const sourceUrl of Array.from(sources)) {
+      const id = await sourceRecordId(sourceUrl);
+      const previous = records.get(id);
+      if (previous && previous.hash !== hash) throw new Error("备份中同一图片来源对应不同内容，尚未恢复工作区");
+      records.set(id, { hash, record: { id, blockId: "backup-import", slot: "output", blob: input.blob, mime: input.mime || input.blob.type || "image/png", sourceUrl, updatedAt: Date.now() } });
+    }
+  }
+  const additions: ManhuaLocalMediaRecord[] = [];
+  for (const { record, hash } of Array.from(records.values())) {
+    const existing = await getLocalMediaRecord(record.id);
+    if (existing) {
+      if (existing.sourceUrl !== record.sourceUrl || await mediaBytesHash(existing.blob) !== hash) {
+        throw new Error("本机已有同一来源的不同图片，已保留原记录，尚未恢复工作区");
+      }
+    } else additions.push(record);
+  }
+  if (backend.kind === "memory") {
+    // 测试后端与事务的新增语义一致，不覆盖已存在的记录。
+    if (additions.some((record) => backend.map.has(record.id))) throw new Error("本机图片缓存已变化，请重新导入");
+    for (const record of additions) backend.map.set(record.id, record);
+  } else if (additions.length) {
+    await new Promise<void>((resolve, reject) => {
+      const tx = backend.db.transaction(MANHUA_LOCAL_MEDIA_STORE, "readwrite");
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(new Error("备份图片写入失败，尚未恢复工作区"));
+      tx.onabort = () => reject(new Error("备份图片写入已撤销，尚未恢复工作区"));
+      try {
+        const store = tx.objectStore(MANHUA_LOCAL_MEDIA_STORE);
+        for (const record of additions) store.add(record);
+      } catch (error) {
+        tx.abort();
+        reject(error);
+      }
+    });
+  }
+  // 只有持久事务成功后才发布内存映射，失败不宣称可以恢复。
+  for (const { record } of Array.from(records.values())) {
+    const pointer = makeLocalMediaPointer(record.id);
+    sourceToPointer.set(record.sourceUrl, pointer);
+    displayToSourceUrl.set(pointer, record.sourceUrl);
+  }
+  return originalSources.size;
 }
 
 async function fetchUrlAsBlob(url: string): Promise<Blob | null> {

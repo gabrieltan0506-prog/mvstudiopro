@@ -59,7 +59,8 @@ function generateModelViewerHTML(props: {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src https: data:; connect-src https:;">
+  <!-- GLB 内嵌贴图由加载器转为 blob，图片与 ImageBitmap 读取均须允许；模型入口仍仅接受 HTTPS。 -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src https: data: blob:; connect-src https: blob:;">
   <title>3D Model Viewer</title>
   <script>
     window.ModelViewerElement = {

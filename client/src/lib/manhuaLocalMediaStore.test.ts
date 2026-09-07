@@ -4,12 +4,14 @@ import {
   applyLocalMediaPointersToBlocks,
   cacheCanvasMediaToLocalStore,
   getLocalMediaRecord,
+  getLocalMediaRecordBySource,
   localMediaPointerId,
   tryLocalMediaDisplayForBlock,
   isLocalMediaPointer,
   makeLocalMediaPointer,
   makeLocalMediaRecordId,
   putLocalMediaRecord,
+  importLocalMediaRecords,
   rehydrateBlocksFromLocalMedia,
   rememberLocalMediaDisplay,
   resolveUrlForCloudSync,
@@ -46,6 +48,55 @@ function baseBlock(over: Partial<CanvasBlock> & { id: string }): CanvasBlock {
 describe("manhuaLocalMediaStore", () => {
   beforeEach(async () => {
     await __resetManhuaLocalMediaStoreForTests();
+  });
+
+  it("备份图确认写入后刷新仍按原来源找到同字节，不靠内存映射", async () => {
+    const sourceUrl = "https://test.invalid/backup-original.png";
+    expect(await importLocalMediaRecords([{ sourceUrl, blob: new Blob(["original-image"]), mime: "image/png" }])).toBe(1);
+    const pointer = resolveUrlForLocalPersist(sourceUrl)!;
+    expect(pointer).toContain("source-sha256-");
+    await __resetManhuaLocalMediaStoreForTests({ keepRecords: true });
+    const display = await tryLocalMediaDisplayForBlock("custom-new-id", "output", sourceUrl);
+    expect(display).toMatch(/^blob:/);
+    expect(resolveUrlForCloudSync(display)).toBe(sourceUrl);
+    expect(await (await getLocalMediaRecord(localMediaPointerId(pointer)))!.blob.text()).toBe("original-image");
+  });
+
+  it("同一来源不同字节整批拒绝，不盖旧图、不留下半包新记录", async () => {
+    const sourceUrl = "https://test.invalid/backup-conflict.png";
+    const newSource = "https://test.invalid/backup-new.png";
+    await importLocalMediaRecords([{ sourceUrl, blob: new Blob(["old"]), mime: "image/png" }]);
+    const pointer = resolveUrlForLocalPersist(sourceUrl)!;
+    await expect(importLocalMediaRecords([
+      { sourceUrl: newSource, blob: new Blob(["new"]), mime: "image/png" },
+      { sourceUrl, blob: new Blob(["different"]), mime: "image/png" },
+    ])).rejects.toThrow("同一来源的不同图片");
+    expect(await (await getLocalMediaRecord(localMediaPointerId(pointer)))!.blob.text()).toBe("old");
+    expect(await tryLocalMediaDisplayForBlock("new", "output", newSource)).toBeNull();
+    expect(await importLocalMediaRecords([{ sourceUrl, blob: new Blob(["old"]), mime: "image/png" }])).toBe(1);
+  });
+
+  it("包内同源冲突和空内容在写入前拒绝", async () => {
+    const sourceUrl = "https://test.invalid/invalid-pack.png";
+    await expect(importLocalMediaRecords([
+      { sourceUrl, blob: new Blob(["a"]), mime: "image/png" },
+      { sourceUrl, blob: new Blob(["b"]), mime: "image/png" },
+    ])).rejects.toThrow("同一图片来源对应不同内容");
+    await expect(importLocalMediaRecords([{ sourceUrl, blob: new Blob([]), mime: "image/png" }])).rejects.toThrow("缺少来源或内容");
+    expect(await tryLocalMediaDisplayForBlock("x", "output", sourceUrl)).toBeNull();
+  });
+
+  it("原签名和长期身份同事务保存，刷新后按长期身份恢复且收据不重复计图", async () => {
+    const sourceUrl = "https://storage.googleapis.com/test-bucket/board.png?signature=old";
+    const gcsUri = "gs://test-bucket/board.png";
+    expect(await importLocalMediaRecords([{ sourceUrl, gcsUri, blob: new Blob(["same-image"]), mime: "image/png" }])).toBe(1);
+    await __resetManhuaLocalMediaStoreForTests({ keepRecords: true });
+    expect(await (await getLocalMediaRecordBySource(gcsUri))!.blob.text()).toBe("same-image");
+    expect(await (await getLocalMediaRecordBySource(sourceUrl))!.blob.text()).toBe("same-image");
+    const changed = "https://storage.googleapis.com/test-bucket/board.png?signature=new";
+    await expect(importLocalMediaRecords([{ sourceUrl: changed, gcsUri, blob: new Blob(["different-image"]), mime: "image/png" }])).rejects.toThrow("同一来源的不同图片");
+    expect(await getLocalMediaRecordBySource(changed)).toBeNull();
+    expect(await (await getLocalMediaRecordBySource(gcsUri))!.blob.text()).toBe("same-image");
   });
 
   it("recognizes local-media pointers", () => {
