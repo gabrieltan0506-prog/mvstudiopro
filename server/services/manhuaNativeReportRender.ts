@@ -975,9 +975,13 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
       + `${esc(titleZh)}</h2>${body}</section>`
     );
   };
+  /** 0908 用户令：前/中/后段标签颜色与正文区分开，便于扫读；标签本身仍是原文，只包一层样式 */
+  const SEGMENT_LABEL_STYLE = "color:#1f6f8b;background:#e4f1f6;border:1px solid #bcd9e5;border-radius:6px;padding:0 6px;margin-right:4px;font-weight:700";
+  const colorSegmentLabels = (html: string): string =>
+    html.replace(/【(前段|中段|后段|全集)】/g, `<span style="${SEGMENT_LABEL_STYLE}">$1</span>`);
   const panel = (text: unknown) => (
     `<div class="prose" style="background:#fffbf0;border:1px dashed #d9c48e;border-radius:10px;`
-    + `padding:14px 18px;margin-top:6px;white-space:pre-wrap;line-height:1.75">${emphasize(text)}</div>`
+    + `padding:14px 18px;margin-top:6px;white-space:pre-wrap;line-height:1.75">${colorSegmentLabels(emphasize(text))}</div>`
   );
   const tableOf = (headers: string[], rows: string) => (
     `<div class="table-scroll" style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.85em;margin-top:8px">`
