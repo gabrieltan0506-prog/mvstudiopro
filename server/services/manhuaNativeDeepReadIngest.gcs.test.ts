@@ -46,6 +46,7 @@ function makeInput(over: Partial<NativeDeepReadIngestInput> = {}): NativeDeepRea
   }));
   const result: NativeDeepReadIngestSource = {
     beatGrid,
+    keyMoments: [{ atSec: 5, kindZh: "剧情", noteZh: "测试重点时刻" }],
     subtitleTrack: [],
     resolvedAudioChunks: [],
     classification: {

@@ -2714,6 +2714,11 @@ export async function runManhuaTemplateLearn(
               await progress(MANHUA_LEARN_STAGE.vision, `${episodeLabel} · ${checkpoint.model}`);
               return;
             }
+            if (checkpoint.route === "structuring_keymoments_backfilled") {
+              // 0907：整形漏掉重点时刻由读片稿补回，进度行要看得见
+              await progress(MANHUA_LEARN_STAGE.vision, `${episodeLabel} · ${checkpoint.model}`);
+              return;
+            }
             if (checkpoint.route === "structuring_retry_pending") {
               await progress(
                 MANHUA_LEARN_STAGE.vision,

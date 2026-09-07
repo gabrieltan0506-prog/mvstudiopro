@@ -25,6 +25,7 @@ function makeResult(over: Partial<NativeDeepReadIngestSource> = {}): NativeDeepR
   return {
     beatGrid,
     subtitleTrack: [],
+    keyMoments: [{ atSec: 17, kindZh: "剧情", noteZh: "闪白爆点" }],
     resolvedAudioChunks: [],
     classification: {
       emotionTagsZh: ["压迫渐强"],
@@ -64,6 +65,17 @@ const baseInput = {
   videoFps: 12,
   laneHintZh: "逆袭 打脸",
 };
+
+describe("0907 重点时刻门禁", () => {
+  it("重点时刻为零（整形漏掉 keyMoments 且读片稿也没有）→ 拒绝入库，不再放行成没有画面的报告", () => {
+    const gate = checkNativeDeepReadIngestable(makeResult({ keyMoments: [] }));
+    expect(gate.ok).toBe(false);
+    expect((gate as { reasonZh?: string }).reasonZh).toContain("重点时刻为零");
+    const missing = checkNativeDeepReadIngestable(makeResult({ keyMoments: undefined }));
+    expect(missing.ok).toBe(false);
+    expect(checkNativeDeepReadIngestable(makeResult()).ok).toBe(true);
+  });
+});
 
 describe("入库对象名与 id", () => {
   it("id 与对象名同源，集号补零到三位", () => {

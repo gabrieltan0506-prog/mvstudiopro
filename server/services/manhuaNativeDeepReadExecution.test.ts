@@ -31,6 +31,7 @@ function makeResult(over: Record<string, unknown> = {}) {
   }));
   return {
     beatGrid,
+    keyMoments: [{ atSec: 5, kindZh: "剧情", noteZh: "测试重点时刻" }],
     subtitleTrack: [],
     resolvedAudioChunks: [],
     reusableZh: "反应镜头逐步揭示冲突",

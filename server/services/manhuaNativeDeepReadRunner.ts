@@ -2921,6 +2921,38 @@ export function repairNativeDeepReadStructuredAudioChunks(
   return normalizeNativeDeepReadStructuredAudioChunkIndexes(raw, segmentIndexes);
 }
 
+/**
+ * 0907 实弹（b28ec016fa44 第 1 集）：GLM 不带严格 schema 后整份回复把 keyMoments 键漏掉，
+ * 四段读片稿共 30 条重点时刻入库变 0 条、抽帧 0 张、报告没有画面，而入库门禁一路放行。
+ * 整形提示词写明「keyMoments 原样保留，atSec 只来自输入」，所以缺的可以从输入稿确定性补回，
+ * 不必花钱重整形：输出里没有的（按 atSec 0.1 秒 + kindZh）从输入稿补入，输出里已有的原样保留。
+ */
+export function repairNativeDeepReadStructuredKeyMoments(
+  raw: Record<string, unknown>,
+  rows: ReadonlyArray<Record<string, unknown>>,
+): { raw: Record<string, unknown>; backfilled: number; total: number } {
+  const valid = (list: unknown): Record<string, unknown>[] => Array.isArray(list)
+    ? list.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row)
+      && Number.isFinite(Number((row as Record<string, unknown>).atSec))
+      && String((row as Record<string, unknown>).kindZh || "").trim().length > 0)
+    : [];
+  const keyOf = (row: Record<string, unknown>) => `${Math.round(Number(row.atSec) * 10)}|${String(row.kindZh).trim()}`;
+  const kept = valid(raw.keyMoments);
+  const seen = new Set(kept.map(keyOf));
+  const added: Record<string, unknown>[] = [];
+  for (const row of rows) {
+    for (const moment of valid(row.keyMoments)) {
+      const key = keyOf(moment);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      added.push(moment);
+    }
+  }
+  if (!added.length) return { raw, backfilled: 0, total: kept.length };
+  const merged = [...kept, ...added].sort((a, b) => Number(a.atSec) - Number(b.atSec));
+  return { raw: { ...raw, keyMoments: merged }, backfilled: added.length, total: merged.length };
+}
+
 /** 观察锁错误名：整形输出改写/挪用/丢失来源镜观察。0906 用户令：判坏就换下一档只重整形这一批，不整集死。 */
 export const NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME = "NativeDeepReadObservationLockError" as const;
 export function isNativeDeepReadObservationLockError(error: unknown): boolean {
@@ -6612,6 +6644,23 @@ async function executeNativeDeepReadBatch(
               console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${input.labelZh}：audioResolution.chunkIndex 整体偏移，已确定性映射回段号 ${input.segmentIndexes.join(",")}`);
               result.raw = chunkFix.raw;
             }
+            // 0907 实弹：GLM 整份漏掉 keyMoments → 入库 0 条、抽帧 0 张。提示词要求原样保留，缺的从读片稿确定性补回，不花钱重整形
+            const keyFix = repairNativeDeepReadStructuredKeyMoments(result.raw, input.rows);
+            if (keyFix.backfilled > 0) {
+              console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${input.labelZh}：${glmGatewayDisplayLabel(result.gateway)} 整形输出漏掉重点时刻 ${keyFix.backfilled} 条，已从读片稿补回（现 ${keyFix.total} 条）`);
+              result.raw = keyFix.raw;
+              await emitVisualModelReceipt({
+                callId: `${episodeRequestId}:structuring-keymoments-backfilled:${input.segmentIndexes.join("-")}:${attempt + 1}`,
+                model: `${input.labelZh}整形漏掉重点时刻 ${keyFix.backfilled} 条，已从读片稿补回（现 ${keyFix.total} 条）`,
+                route: "structuring_keymoments_backfilled",
+                stage: "visual_parse",
+                status: "completed",
+                batchRequestId: episodeRequestId,
+                episodeIndexes: [episode.episodeIndex],
+                videoCount: input.videoCount,
+                labelZh: input.labelZh,
+              }, params.onModelReceipt);
+            }
             // 0906 用户令「镜数不合」也算坏：批次留存率低于拒收线，同样降温重试再换路由
             const keptShots = Array.isArray(result.raw.shots) ? (result.raw.shots as unknown[]).length : 0;
             if (inputShotCount > 0 && keptShots / inputShotCount < NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT) {
@@ -6685,6 +6734,12 @@ async function executeNativeDeepReadBatch(
               throw error;
             }
             if (cachedChunkFix.remapped) cached = { ...cached, raw: cachedChunkFix.raw };
+            // 0907：缓存里的整形输出同样可能漏 keyMoments，读缓存时一样从读片稿补回
+            const cachedKeyFix = repairNativeDeepReadStructuredKeyMoments(unwrapNativeDeepReadStructuredAnswerEnvelope(cached.raw), rows);
+            if (cachedKeyFix.backfilled > 0) {
+              console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${labelZh}缓存整形输出漏掉重点时刻 ${cachedKeyFix.backfilled} 条，已从读片稿补回（现 ${cachedKeyFix.total} 条）`);
+              cached = { ...cached, raw: cachedKeyFix.raw };
+            }
           } catch (error) {
             if (error instanceof NativeStructuringAnalysisError || (isNativeDeepReadObservationLockError(error) && segmentIndexes.some(index => selectedSegmentCandidates.has(index)))) {
               badCacheUndeletable.add(segmentIndexes.join("-"));

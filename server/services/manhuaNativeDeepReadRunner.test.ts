@@ -67,6 +67,7 @@ import {
   resolveNativeDeepReadInputFps,
   resolveNativeDeepReadSegmentFloors,
   runManhuaNativeDeepReadBatch,
+  repairNativeDeepReadStructuredKeyMoments,
   runManhuaNativeDeepRead,
   runManhuaNativeDeepReadSelectedSegments,
   createNativeDeepReadRunnerDeps,
@@ -2445,6 +2446,7 @@ function makeGlmStructuringStub() {
       templateTitleZh: "测试剧情推进·情绪递进型",
       classificationProseZh: { emotionZh: "压迫渐强", narrativeZh: "信息递进", performanceZh: "克制爆发", audiovisualZh: "冷暖对撞", audienceZh: "持续紧张" },
       shots: allShots.filter((shot) => shot.evidenceRole !== "non_story_ad"),
+      keyMoments: pick("keyMoments"),
       subtitles: pick("subtitles"),
       audioResolution: pick("audioResolution"),
       beatStructureZh: joinText("beatStructureZh"),
@@ -3410,6 +3412,61 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
     expect(receipts.some((row) => row.route === "structuring_retry_pending" && String(row.model).includes("不符合集卡 schema"))).toBe(true);
     expect(result.episodes[0]!.result.segmentCount).toBe(3);
+  });
+
+  it("0907 整形输出整份漏掉 keyMoments（b28ec016fa44 第 1 集实弹）→ 从读片稿确定性补回，不重整形，回执打进进度行", async () => {
+    const segments = Array.from({ length: 3 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
+    const postVertex = vi.fn(async (body: unknown) => {
+      const fileUri = (body as { contents: Array<{ parts: Array<{ fileData?: { fileUri: string } }> }> }).contents[0]!.parts[0]!.fileData!.fileUri;
+      const segmentIndex = Number(/seg-(\d+)/.exec(fileUri)?.[1]);
+      const segment = segments[segmentIndex]!;
+      const payload = makeSegmentPayload({ segmentIndex, startSec: segment.startSec, endSec: segment.endSec });
+      // 每段两条重点时刻，全片绝对秒（与镜头同一坐标系；生产证据 seg2 给的就是 583.4 这种绝对秒）
+      payload.keyMoments = [
+        { atSec: segment.startSec + 10.5, kindZh: "剧情", noteZh: `第${segmentIndex + 1}段冲突升级` },
+        { atSec: segment.startSec + 40, kindZh: "情绪", noteZh: `第${segmentIndex + 1}段情绪峰值` },
+      ];
+      return geminiResponse(payload);
+    });
+    const base = makeGlmStructuringStub();
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
+      const result = await base(prompt);
+      const raw = JSON.parse(JSON.stringify(result.raw)) as Record<string, unknown>;
+      delete raw.keyMoments;
+      return { ...result, gateway: "openrouter", raw };
+    });
+    const receipts: Array<Record<string, unknown>> = [];
+    const deps = makeRunnerDeps({ postVertex: postVertex as never, invokeGlmStructuring: invokeGlmStructuring as never });
+    const result = await runManhuaNativeDeepReadBatch({
+      episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 180, cacheSourceDigest: "b".repeat(64) }],
+      segmentCacheSeriesKey: "keymoments_backfill",
+      onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
+    }, deps);
+    // 漏键不算坏输出：一次整形就过，不烧第二发
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(receipts.some((row) => row.route === "structuring_retry_pending")).toBe(false);
+    const backfill = receipts.find((row) => row.route === "structuring_keymoments_backfilled");
+    expect(String(backfill?.model)).toContain("漏掉重点时刻 6 条");
+    const episode = result.episodes[0]!.result;
+    expect(episode.segmentCount).toBe(3);
+    expect((episode.keyMoments ?? []).map((row) => row.atSec)).toEqual([10.5, 40, 70.5, 100, 130.5, 160]);
+  });
+
+  it("0907 整形输出只保留部分 keyMoments → 缺的补回、已有的原样保留（按 0.1 秒 + 类型去重）", () => {
+    const rows = [
+      { keyMoments: [{ atSec: 3.2, kindZh: "切镜", noteZh: "输入稿 A" }, { atSec: 15.6, kindZh: "剧情", noteZh: "输入稿 B" }] },
+      { keyMoments: [{ atSec: 291.5, kindZh: "剧情", noteZh: "输入稿 C" }, { atSec: "bad", kindZh: "剧情", noteZh: "非法秒位不补" }] },
+    ];
+    const structured = { shots: [], keyMoments: [{ atSec: 15.6, kindZh: "剧情", noteZh: "整形保留的 B（说明改写过）" }] };
+    const fixed = repairNativeDeepReadStructuredKeyMoments(structured, rows);
+    expect(fixed.backfilled).toBe(2);
+    expect(fixed.total).toBe(3);
+    expect((fixed.raw.keyMoments as Array<{ atSec: number; noteZh: string }>).map((row) => `${row.atSec}:${row.noteZh}`))
+      .toEqual(["3.2:输入稿 A", "15.6:整形保留的 B（说明改写过）", "291.5:输入稿 C"]);
+    // 输出齐全时原样返回同一个对象
+    const intact = repairNativeDeepReadStructuredKeyMoments(fixed.raw, rows);
+    expect(intact.backfilled).toBe(0);
+    expect(intact.raw).toBe(fixed.raw);
   });
 
   it("0906 坏缓存直接砍：缓存输出过不了锁 → 删掉该对象、重整形、结果写回同名", async () => {
