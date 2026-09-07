@@ -34,6 +34,7 @@ import {
   queuedManhuaClipBlocks,
   queuedManhuaKeyartBlocks,
   resolveShotsForEpisodeKeyarts,
+  resolveShotsForEpisodeKeyartsResult,
   stageKeyFromBlockId,
 } from "@/lib/canvasDramaStudio";
 import {
@@ -270,6 +271,15 @@ type ManhuaPendingSheetAnchor = {
   nameZh: string;
   lookZh: string;
 };
+
+/** 来源说明不改变镜数、预算、生成权限或旧稿内容。 */
+export function ManhuaShotSourceLabel({ isFallback }: { isFallback: boolean }) {
+  return (
+    <span data-manhua-shot-source={isFallback ? "fallback" : "parsed"} className="ml-2 text-[10px] font-normal text-amber-100/70">
+      {isFallback ? "占位规划·未解析原稿" : "画布分镜规划"}
+    </span>
+  );
+}
 
 type Props = {
   blocks: CanvasBlock[];
@@ -1216,6 +1226,10 @@ export default function ManhuaScriptWorkbench({
   // 与静帧展开、成片编排共用真实来源，不能拿待运行模板生成另一套界面骨架。
   const shots: ManhuaWorkbenchShot[] = useMemo(
     () => resolveShotsForEpisodeKeyarts(blocks, focusEpisode),
+    [blocks, focusEpisode],
+  );
+  const shotSourceIsFallback = useMemo(
+    () => resolveShotsForEpisodeKeyartsResult(blocks, focusEpisode).isFallback,
     [blocks, focusEpisode],
   );
 
@@ -2934,9 +2948,10 @@ export default function ManhuaScriptWorkbench({
             <div className="truncate text-[13px] font-semibold text-white/95">
               {seriesTitle || topic || "剧本工作室"}
               <span className="ml-2 text-[11px] font-normal text-white/40">
-                第{focusEpisode}集 · {segments.length} 段 · 约 {totalSec}s · {episodeVideoLabelZh}
+                第{focusEpisode}集 · {segments.length} 段 · 规划约 {totalSec}s · {episodeVideoLabelZh}
                 {artStyleLabelZh ? ` · ${artStyleLabelZh}` : ""}
               </span>
+              <ManhuaShotSourceLabel isFallback={shotSourceIsFallback} />
             </div>
             {directorStrategyContract ? (
               <div
@@ -7160,6 +7175,7 @@ export default function ManhuaScriptWorkbench({
                   {activeSegment?.durationSec ?? 15}s · 静帧 {activeShot?.index ?? "—"}/
                   {shots.length || 1} · {episodeVideoLabelZh}
                 </span>
+                <ManhuaShotSourceLabel isFallback={shotSourceIsFallback} />
               </div>
               {episodeStillCount === 0 ? (
                 <div className="mt-1.5 flex max-w-xl flex-col gap-1.5">
@@ -7391,6 +7407,7 @@ export default function ManhuaScriptWorkbench({
               )}
               <div className="mt-2 shrink-0 text-[11px] font-semibold text-white/70">
                 分镜（{shots.length}）· 当前第 {activeShot?.index ?? "—"} 镜
+                <ManhuaShotSourceLabel isFallback={shotSourceIsFallback} />
               </div>
               <div className="mt-1.5 min-h-0 flex-1 space-y-2 overflow-y-auto pr-0.5">
                 {shots.map((shot, i) => {
@@ -8443,8 +8460,9 @@ export default function ManhuaScriptWorkbench({
             <div className="text-[11px] font-semibold text-white/75">
               成片段
               <span className="ml-1 text-[9px] font-normal text-white/40">
-                {filmstripSegments.length} 段 · 共 {totalSec}s · 一格一次出片
+                {filmstripSegments.length} 段 · 规划共 {totalSec}s · 一格一次出片
               </span>
+              <ManhuaShotSourceLabel isFallback={shotSourceIsFallback} />
               {missingFragmentIndexes.length ? (
                 <span className="ml-1.5 text-[9px] font-normal text-amber-100/70">
                   缺 {missingFragmentIndexes.length} 段
