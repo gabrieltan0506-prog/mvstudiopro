@@ -3386,6 +3386,32 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
   });
 
+  it("0907 整形输出不符合集卡 schema（音轨分析总结省掉）→ 判坏走同档降温重试，第二发补齐即入库", async () => {
+    const segments = Array.from({ length: 3 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
+    const base = makeGlmStructuringStub();
+    let calls = 0;
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }, _s: unknown, context: { temperature?: number }) => {
+      const result = await base(prompt); calls += 1;
+      if (calls === 1) {
+        const raw = JSON.parse(JSON.stringify(result.raw)) as Record<string, unknown>;
+        for (const chunk of raw.audioResolution as Array<{ analysis: Record<string, unknown> }>) { delete chunk.analysis.reusableAudioZh; delete chunk.analysis.genAudioHintZh; }
+        return { ...result, gateway: "openrouter", raw };
+      }
+      expect(context.temperature).toBe(0.75);
+      return { ...result, gateway: "openrouter" };
+    });
+    const receipts: Array<Record<string, unknown>> = [];
+    const deps = makeRunnerDeps({ postVertex: makeSuccessfulEpisodePostVertex(segments) as never, invokeGlmStructuring: invokeGlmStructuring as never });
+    const result = await runManhuaNativeDeepReadBatch({
+      episodes: [{ episodeIndex: 9, resolveNodes: async () => [], segments, sourceDurationSec: 180, cacheSourceDigest: "9".repeat(64) }],
+      segmentCacheSeriesKey: "schema_retry",
+      onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
+    }, deps);
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    expect(receipts.some((row) => row.route === "structuring_retry_pending" && String(row.model).includes("不符合集卡 schema"))).toBe(true);
+    expect(result.episodes[0]!.result.segmentCount).toBe(3);
+  });
+
   it("0906 坏缓存直接砍：缓存输出过不了锁 → 删掉该对象、重整形、结果写回同名", async () => {
     const segments = Array.from({ length: 3 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
     const base = makeGlmStructuringStub();
@@ -4853,6 +4879,14 @@ describe("逐镜动态观察的生产与消费", () => {
     expect(() => assertNativeDeepReadShotObservationsPreserved(sources, { shots: [
       { ...first, hintZh: "有一把未见的长剑" },
     ] })).toThrow("hintZh丢失、改写");
+  });
+
+  it("0907 观察锁只抹平引号/空白差异：直引号来源 vs 弯引号输出通过，改字仍判改写", () => {
+    const src = { startSec: 504.8, endSec: 510.5, evidenceRole: "story", hintZh: "谢小姐胸有成竹提出'投其所好'攻心之策特写。" };
+    const sources = [{ shots: [src] }];
+    expect(() => assertNativeDeepReadShotObservationsPreserved(sources, { shots: [{ ...src, hintZh: "谢小姐胸有成竹提出‘投其所好’攻心之策特写。" }] })).not.toThrow();
+    expect(() => assertNativeDeepReadShotObservationsPreserved(sources, { shots: [{ ...src, hintZh: "谢小姐 胸有成竹提出“投其所好”攻心之策特写。" }] })).not.toThrow();
+    expect(() => assertNativeDeepReadShotObservationsPreserved(sources, { shots: [{ ...src, hintZh: "谢小姐胸有成竹提出‘投其所恶’攻心之策特写。" }] })).toThrow("hintZh丢失、改写");
   });
 
   it("GLM来源与输出可展开answer字符串外壳", () => {
