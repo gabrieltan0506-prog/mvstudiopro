@@ -46,6 +46,7 @@ import {
   type ManhuaAssetsGapAnchor,
 } from "@/lib/manhuaPhaseGapText";
 import { ManhuaAssetImage } from "@/components/ManhuaAssetImage";
+import { ManhuaAssetEditInput } from "@/components/ManhuaAssetEditInput";
 import {
   getManhuaCharacterById,
   getManhuaCharacterDisplayName,
@@ -5903,23 +5904,13 @@ export default function ManhuaScriptWorkbench({
                                     </button>
                                   ) : null}
                                   {onEditCustomAsset ? (
-                                    <button
-                                      type="button"
+                                    <ManhuaAssetEditInput
+                                      key={ref.id}
+                                      labelZh={ref.labelZh || "参考图"}
                                       disabled={!outlineComplete || assetStandardizeBusyId != null}
-                                      onClick={() => {
-                                        const instructionZh = window.prompt(
-                                          "写清楚这张图要改什么。未提到的部分会尽量保持原样：",
-                                          "",
-                                        );
-                                        if (instructionZh?.trim()) {
-                                          void onEditCustomAsset(ref.id, instructionZh);
-                                        }
-                                      }}
-                                      title="输入修改要求后编辑这张图；原图保留，新图进入同一资产栏"
-                                      className="rounded border border-violet-300/40 bg-violet-500/10 px-1.5 py-0.5 text-[9px] font-medium text-violet-100 hover:bg-violet-500/25 disabled:opacity-40"
-                                    >
-                                      {assetStandardizeBusyId === ref.id ? "编辑中…" : "编辑图片·3分"}
-                                    </button>
+                                      busy={assetStandardizeBusyId === ref.id}
+                                      onSubmit={(instructionZh) => onEditCustomAsset(ref.id, instructionZh)}
+                                    />
                                   ) : null}
                                 </div>
                               ) : null}

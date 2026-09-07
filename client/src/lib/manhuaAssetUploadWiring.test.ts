@@ -44,8 +44,9 @@ describe("漫剧参考图导入接线", () => {
   });
 
   it("自定义编辑从资产卡进入同一条服务端长任务，保留原图并追加新图", () => {
-    expect(WORKBENCH).toContain("编辑图片·3分");
-    expect(WORKBENCH).toContain("void onEditCustomAsset(ref.id, instructionZh)");
+    expect(WORKBENCH).toContain("<ManhuaAssetEditInput");
+    expect(WORKBENCH).toContain("onSubmit={(instructionZh) => onEditCustomAsset(ref.id, instructionZh)}");
+    expect(WORKBENCH).not.toContain("window.prompt(");
     const start = CANVAS.indexOf("const editCustomAsset = useCallback");
     const end = CANVAS.indexOf("const cropCustomAssetToFile = useCallback", start);
     const editFlow = CANVAS.slice(start, end);
