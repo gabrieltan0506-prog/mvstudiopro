@@ -161,6 +161,21 @@ async function embedFrameImage(bucket: string, objectName: string): Promise<stri
   }
 }
 
+/** 有上限的并发 map：结果按输入顺序返回，单项抛错由调用方的 worker 自己兜（这里的 worker 都不抛）。 */
+async function mapWithConcurrency<T, R>(items: readonly T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const runners = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await worker(items[index]!);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
 async function tryJson(bucket: string, objectName: string): Promise<Record<string, unknown> | null> {
   try {
     const { buffer } = await downloadGcsObjectVersioned({ gcsUri: `gs://${bucket}/${objectName}` });
@@ -437,9 +452,13 @@ async function renderCardToReport(input: RenderCoreInput): Promise<NativeReportR
   const tiles: string[] = [];
   /** 帧编号锚点表：重点时刻表用「（图N）」跳转对照（0902 用户拍板） */
   const frameAnchors: Array<{ no: number; atSec: number }> = [];
-  for (const frame of frameList) {
+  // 0908 实弹：《归墟》75 分钟 15 片 115 帧，逐帧串行下载渲染要 140 秒，Vercel 反代等不到。
+  // 帧图先按 8 路并发预取，顺序不变；单帧失败仍只跳过那一帧。
+  const embedded = await mapWithConcurrency(frameList, 8, (frame) => embedFrameImage(bucket, String(frame.objectName)));
+  for (let index = 0; index < frameList.length; index += 1) {
+    const frame = frameList[index]!;
     // 0902：帧图内嵌进 HTML，报告发出去不带任何仓储线索；单帧失败跳过不毁整页
-    const dataUri = await embedFrameImage(bucket, String(frame.objectName));
+    const dataUri = embedded[index];
     if (!dataUri) continue;
     const frameNo = tiles.length + 1;
     frameAnchors.push({ no: frameNo, atSec: Number(frame.atSec) });
@@ -1061,8 +1080,11 @@ export async function renderNativeEvidenceReportFromObjectNames(
     objectName: string; episodeIndex: number; seriesKey: string; sourceDigest: string;
   }> = [];
   let requiresStructuredCard = false;
-  for (const objectName of names) {
-    const entry = await mustJson(bucket, objectName);
+  // 0908：15 份段证据并行取（各几十 KB），校验仍按原顺序逐份做
+  const entries = await mapWithConcurrency(names, 8, (objectName) => mustJson(bucket, objectName));
+  for (let nameIndex = 0; nameIndex < names.length; nameIndex += 1) {
+    const objectName = names[nameIndex]!;
+    const entry = entries[nameIndex]!;
     const raw = entry.raw;
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
       throw new Error(`证据对象缺少 raw 段卡本体：${objectName}`);

@@ -96,6 +96,8 @@ const TRPC_LONG_HTTP_LINK_PATHS = new Set([
   "mvAnalysis.chatPlatformProAgent",
   "mvAnalysis.confirmPlatformSkillQaImage",
   "mvAnalysis.getVideoUploadSignedUrl",
+  /** 0908 实弹：75 分钟 15 片报告渲染要一两分钟，走 Vercel 反代必超时；直连 Fly */
+  "manhuaViralTemplate.renderEpisodeReport",
   /** 图片编辑 / 专用超分均可能运行数分钟，必须绕过 Vercel 同步请求时限。 */
   "homePhotoTools.restoreOldPhoto",
   "vertexImage.upscale",
