@@ -1823,6 +1823,10 @@ export async function runCanvasBlock(
       const rawPool = bindPlan?.imageUrls?.length
         ? bindPlan.imageUrls
         : [...tailFrames, ...absStills];
+      // 普通视频的显式参考不能被接力尾帧挤掉；在付费请求前拒绝，不静默换角色。
+      if (!isClip && absStills.some(url => !rawPool.slice(0, maxVideoImageRefs).includes(url))) {
+        throw new Error("参考图片与接力尾帧合计超过上限，请减少参考后再生成；本次未提交");
+      }
       if (requiredLookRows.some((row) => {
         const path = assetRows.find((resolved) => resolved.id === row.id)?.path;
         return !path || !rawPool.includes(path);

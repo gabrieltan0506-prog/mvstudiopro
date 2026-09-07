@@ -1,4 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { ManhuaCustomAssetRef } from "@shared/manhuaCustomAssetRefs";
+import { CanvasProjectVideoReferencePicker } from "./CanvasProjectVideoReferencePicker";
+import { canSelectProjectVideoReferences, prepareProjectVideoReferences, projectVideoReferenceFailurePatch, toggleProjectVideoReference } from "@/lib/canvasProjectVideoReferences";
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 import { mergeManhuaMediaVersions } from "@/lib/manhuaMediaVersions";
 import { recordManhuaKeyartLookOutput } from "@shared/manhuaKeyartLookState";
@@ -292,6 +295,8 @@ function isCanvasAssetSheetId(id: string): boolean {
 type BlocksUpdater = CanvasBlock[] | ((prev: CanvasBlock[]) => CanvasBlock[]);
 
 type FreeformCanvasProps = {
+  /** 本项目已保存图片，仅供普通视频节点显式引用，不代替工厂资产认领。 */
+  projectAssetRefs?: readonly ManhuaCustomAssetRef[];
   blocks: CanvasBlock[];
   edges: CanvasEdge[];
   onBlocksChange: (blocks: BlocksUpdater) => void;
@@ -768,6 +773,7 @@ function CanvasAssetVisualBody({
 }
 
 export default function FreeformCanvas({
+  projectAssetRefs = [],
   blocks,
   edges,
   onBlocksChange,
@@ -860,6 +866,15 @@ export default function FreeformCanvas({
   });
   const userPlan = (subQuery.data?.plan || "free") as string;
   const { user: authUser, loading: authLoading } = useAuth();
+  const projectReferenceContextRef = useRef({ userId: authUser?.id, refs: projectAssetRefs, edges });
+  projectReferenceContextRef.current = { userId: authUser?.id, refs: projectAssetRefs, edges };
+  const referencePreparationRef = useRef(new Set<string>());
+  const [preparingReferenceIds, setPreparingReferenceIds] = useState(new Set<string>());
+  const referenceMountedRef = useRef(true);
+  useEffect(() => {
+    referenceMountedRef.current = true;
+    return () => { referenceMountedRef.current = false; };
+  }, []);
   const userRole = (authUser as { role?: string } | null)?.role ?? null;
   /**
    * 与服务端 `assertSeedance25PaidAccess` 同一套 `resolveSeedance25Access`（到点 + 会员 + 内部
@@ -1705,6 +1720,7 @@ export default function FreeformCanvas({
 
   const runBlock = useCallback(
     async (blockId: string) => {
+      if (referencePreparationRef.current.has(blockId)) return;
       const block = blocks.find((b) => b.id === blockId);
       if (!block) return;
       // 与工厂管线对齐：切断 recap→story 误连，避免手点节点吃到前情提要图
@@ -1794,8 +1810,39 @@ export default function FreeformCanvas({
           };
         }
       }
-      patchOne(blockId, { status: "running", error: undefined });
+      const referenceContext = projectReferenceContextRef.current;
+      const guardProjectReferences = projectAssetRefs.length > 0 && canSelectProjectVideoReferences(runBlockPayload);
+      const inputFingerprint = (item: CanvasBlock) => JSON.stringify([
+        item.id, item.prompt, item.refImageUrl, item.editFusionUrls, item.videoModel,
+        item.aspectRatio, item.videoResolution, item.refVideoUrl, item.uploadedAssets,
+        item.seedance25WorkMode, item.seedance25RefVideoUrls, item.seedance25RefAudioUrls,
+        item.seedance25TimestampStoryboard, item.seedance25ReshootFromSec, item.seedance25ReshootToSec,
+        item.pathCameraRecipeId, item.parentId, item.manhuaRetake,
+      ]);
+      const originalInput = inputFingerprint(block);
+      const contextStillCurrent = () => referenceMountedRef.current &&
+        projectReferenceContextRef.current.userId === referenceContext.userId &&
+        projectReferenceContextRef.current.refs === referenceContext.refs &&
+        projectReferenceContextRef.current.edges === referenceContext.edges;
+      // 编译器可能异步返回；再次检查并同步占锁，不能让同帧双击各自发一单。
+      if (referencePreparationRef.current.has(blockId)) return;
+      referencePreparationRef.current.add(blockId);
+      setPreparingReferenceIds(new Set(referencePreparationRef.current));
+      let generationStarted = false;
       try {
+        const prepared = await prepareProjectVideoReferences(runBlockPayload, projectAssetRefs, undefined, contextStillCurrent);
+        // 只对本次新接入的异步参考预检检查快照，既有工厂编译器仍自行管理状态。
+        if (prepared !== runBlockPayload) {
+          const current = blocksRef.current.find(item => item.id === blockId);
+          if (!contextStillCurrent()) return;
+          if (!current || inputFingerprint(current) !== originalInput) {
+            toast.message("节点输入已变化，未提交生成，请检查当前参考后再运行");
+            return;
+          }
+        }
+        runBlockPayload = prepared;
+        patchOne(blockId, { status: "running", error: undefined });
+        generationStarted = true;
         const docTexts =
           workingBlock.kind === "text" || workingBlock.kind === "copy_organize"
             ? await loadCanvasDocumentTexts(collectDocumentAssets(blockId, safeBlocks, safeEdges))
@@ -1832,9 +1879,21 @@ export default function FreeformCanvas({
         });
         toast.success("生成完成");
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : "生成失败";
-        patchOne(blockId, { status: "error", error: msg });
-        toast.error(msg);
+        const failure = projectVideoReferenceFailurePatch({
+          guarded: guardProjectReferences,
+          generationStarted,
+          contextCurrent: contextStillCurrent(),
+          targetCurrent: referenceMountedRef.current &&
+            projectReferenceContextRef.current.userId === referenceContext.userId &&
+            blocksRef.current.some(item => item.id === blockId),
+          error: e,
+        });
+        if (!failure) return;
+        patchOne(blockId, failure);
+        toast.error(failure.error || "生成失败");
+      } finally {
+        referencePreparationRef.current.delete(blockId);
+        if (referenceMountedRef.current) setPreparingReferenceIds(new Set(referencePreparationRef.current));
       }
     },
     [
@@ -1845,6 +1904,7 @@ export default function FreeformCanvas({
       patchOne,
       runDepsWithPlan,
       compileManhuaRerun,
+      projectAssetRefs,
     ],
   );
 
@@ -2372,11 +2432,11 @@ export default function FreeformCanvas({
                   </select>
                   <button
                     type="button"
-                    disabled={block.status === "running"}
+                    disabled={block.status === "running" || preparingReferenceIds.has(block.id)}
                     onClick={() => void runBlock(block.id)}
                     className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary/90 px-2.5 py-1 text-[11px] font-semibold text-white disabled:opacity-50"
                   >
-                    {block.status === "running" ? (
+                    {block.status === "running" || preparingReferenceIds.has(block.id) ? (
                       <LoaderCircle className="h-3 w-3 animate-spin" />
                     ) : (
                       <Sparkles className="h-3 w-3" />
@@ -3621,11 +3681,26 @@ export default function FreeformCanvas({
                       accept={CANVAS_UPLOAD_ACCEPT}
                       multiple
                       className="sr-only"
-                      disabled={isUploading}
+                      disabled={isUploading || preparingReferenceIds.has(block.id)}
                       onClick={(e) => e.stopPropagation()}
                       onChange={(e) => {
                         const picked = takeFilesFromInput(e.target);
                         if (picked.length) void uploadFilesForBlock(block.id, picked);
+                      }}
+                    />
+                    <CanvasProjectVideoReferencePicker
+                      block={block}
+                      refs={projectAssetRefs}
+                      disabled={isUploading || block.status === "running" || preparingReferenceIds.has(block.id)}
+                      onToggle={(ref) => {
+                        const current = blocksRef.current.find(item => item.id === block.id);
+                        if (!current || current.status === "running" || referencePreparationRef.current.has(block.id)) return;
+                        try {
+                          const next = toggleProjectVideoReference(current, ref);
+                          patchOne(current.id, { refImageUrl: next.refImageUrl, editFusionUrls: next.editFusionUrls });
+                        } catch (error) {
+                          toast.error(error instanceof Error ? error.message : "参考图选择失败");
+                        }
                       }}
                     />
                     <CanvasBlockPreviewPanel
