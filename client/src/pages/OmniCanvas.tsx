@@ -125,6 +125,9 @@ import {
   type ManhuaAssetStashRole,
 } from "@shared/manhuaAssetStash";
 import { uploadCanvasFilesParallel } from "@/lib/canvasUpload";
+import { collectManhuaBackupImageSources } from "@/lib/manhuaBackupImageSources";
+import { prepareManhuaBackupRestore } from "@/lib/manhuaBackupRestorePreflight";
+import { assertManhuaBackupImage } from "@/lib/manhuaBackupImageValidation";
 import { assetImageGcsUri, prepareAssetImageEdit, readAssetImageDimensions, refreshAssetImageUrl } from "@/lib/manhuaAssetImageSource";
 import {
   resolveCanvasMaterialUrl,
@@ -300,9 +303,10 @@ import {
 import {
   cacheCanvasMediaToLocalStore,
   getLocalMediaRecord,
+  getLocalMediaRecordBySource,
   isLocalMediaPointer,
   localMediaPointerId,
-  putLocalMediaRecord,
+  importLocalMediaRecords,
   rehydrateBlocksFromLocalMedia,
   resolveUrlForLocalPersist,
   scheduleCacheCanvasMediaToLocalStore,
@@ -2400,17 +2404,18 @@ export default function OmniCanvas() {
     }
     // 云恢复整体替换画布：清「已落块」记忆，避免旧快照无 board 卡被误判用户删卡而清真源
     materializedBoardIdsRef.current.clear();
-    if (prefs.directorBoardMainByEpisode) {
-      setDirectorBoardMainByEpisode(
-        normalizeDirectorBoardMainByEpisode(prefs.directorBoardMainByEpisode),
-      );
-    }
-    if (prefs.directorBoardBySegment) {
-      setDirectorBoardBySegment(normalizeDirectorBoardBySegment(prefs.directorBoardBySegment));
-    }
-    setDirectorBoardMotionOverlayBySegment(
-      normalizeDirectorBoardOverlayBySegment(prefs.directorBoardMotionOverlayBySegment),
-    );
+    resignedPropGcsUriRef.current.clear();
+    resignedBoardGcsUriRef.current.clear();
+    // 恢复是整体替换：旧稿缺字段也清空前一工作区板图，并同步独立存储防刷新复活。
+    const restoredBoardMain = normalizeDirectorBoardMainByEpisode(prefs.directorBoardMainByEpisode);
+    const restoredBoardSegments = normalizeDirectorBoardBySegment(prefs.directorBoardBySegment);
+    const restoredBoardOverlays = normalizeDirectorBoardOverlayBySegment(prefs.directorBoardMotionOverlayBySegment);
+    setDirectorBoardMainByEpisode(restoredBoardMain);
+    setDirectorBoardBySegment(restoredBoardSegments);
+    setDirectorBoardMotionOverlayBySegment(restoredBoardOverlays);
+    saveManhuaDirectorBoardMainByEpisode(restoredBoardMain);
+    saveManhuaDirectorBoardBySegment(restoredBoardSegments);
+    saveManhuaDirectorBoardOverlayBySegment(restoredBoardOverlays);
     // 跨专案幽灵防线（用户实测「清都清不掉」的根）：恢复数据里旧都市专案的
     // 库选角/道具/manual 标志，会在每次登录云同步时无条件写回，把种子库 CP
     //（沈清辞/傅临渊）与都市演示道具复活到古风专案。守卫口径：会话 cast 已是
@@ -2498,24 +2503,14 @@ export default function OmniCanvas() {
   /** 快照体检:节点数/图片数,备份收据与回填对比都用它(0820 用户拍板:凭证防争执) */
   const countDraftPayloadStats = useCallback((payload: { canvas?: { blocks?: unknown[] } }) => {
     const blocks = (payload?.canvas?.blocks || []) as Array<Record<string, unknown>>;
-    let images = 0;
-    for (const b of blocks) {
-      // final 节点现在保留视频版本 URL 供恢复；工作区图片备份不可顺手拉整集视频。
-      if (String(b.kind || "") === "video") continue;
-      const urls = new Set<string>();
-      for (const u of [b.outputUrl, b.refImageUrl, b.editMaskUrl, b.lastFrameUrl, ...(Array.isArray(b.outputUrls) ? b.outputUrls : []), ...(Array.isArray(b.editFusionUrls) ? b.editFusionUrls : [])]) {
-        const v = String(u || "").trim();
-        if (v) urls.add(v);
-      }
-      images += urls.size;
-    }
+    const images = collectManhuaBackupImageSources(payload as Parameters<typeof collectManhuaBackupImageSources>[0]).length;
     return { nodes: blocks.length, images };
   }, []);
   /**
    * 倒出(0820 用户拍板:必须连图片二进制一起打包):
    * zip = snapshot.json + assets/*.png + assets-manifest.json。
    * 图优先取本机媒体库(零网络零过期),没有再拉线上;打包失败的逐张记进收据,不静默。
-   * 云端全灭时,凭这一个文件即可一键满血回灌。
+   * 包含图片字节及工作区引用；视频、音轨、3D 文件仍需单独备份。
    */
   const exportBackupFile = useCallback(async () => {
     const snap = latestDraftSnapshotRef.current;
@@ -2529,18 +2524,12 @@ export default function OmniCanvas() {
       const { default: JSZip } = await import("jszip");
       const zip = new JSZip();
       zip.file("snapshot.json", JSON.stringify(payload));
-      const urls = new Set<string>();
-      for (const b of (payload.canvas?.blocks || []) as Array<Record<string, unknown>>) {
-        if (String(b.kind || "") === "video") continue;
-        for (const u of [b.outputUrl, b.refImageUrl, b.editMaskUrl, b.lastFrameUrl, ...(Array.isArray(b.outputUrls) ? b.outputUrls : []), ...(Array.isArray(b.editFusionUrls) ? b.editFusionUrls : [])]) {
-          const v = String(u || "").trim();
-          if (v) urls.add(v);
-        }
-      }
+      const imageSources = collectManhuaBackupImageSources(payload);
+      const urls = new Set(imageSources.map((item) => item.sourceUrl));
       const manifest: Array<{ file: string; sourceUrl: string; mime: string }> = [];
       const failed: string[] = [];
       let idx = 0;
-      for (const url of Array.from(urls)) {
+      for (const { sourceUrl: url, gcsUri } of imageSources) {
         let blob: Blob | null = null;
         let mime = "image/png";
         // 本机媒体库优先
@@ -2553,8 +2542,18 @@ export default function OmniCanvas() {
           }
         }
         if (!blob) {
+          const storageUri = gcsUri || assetImageGcsUri(url);
+          const rec = await getLocalMediaRecordBySource(url) || (storageUri ? await getLocalMediaRecordBySource(storageUri) : null);
+          if (rec?.blob?.size) {
+            blob = rec.blob;
+            mime = rec.mime || mime;
+          }
+        }
+        if (!blob) {
           try {
-            const res = await fetch(url, { credentials: "include" });
+            const storageUri = gcsUri || assetImageGcsUri(url);
+            const readUrl = storageUri ? await resolveCanvasMaterialUrl(storageUri) : url;
+            const res = await fetch(readUrl, { credentials: readUrl.startsWith("/") ? "include" : "omit", signal: AbortSignal.timeout(30_000) });
             if (res.ok) {
               const b = await res.blob();
               if (b.size > 0) {
@@ -2567,6 +2566,12 @@ export default function OmniCanvas() {
           }
         }
         if (!blob) {
+          failed.push(url.slice(0, 120));
+          continue;
+        }
+        try {
+          await assertManhuaBackupImage(blob, mime);
+        } catch {
           failed.push(url.slice(0, 120));
           continue;
         }
@@ -2584,9 +2589,9 @@ export default function OmniCanvas() {
       a.click();
       URL.revokeObjectURL(a.href);
       if (failed.length) {
-        toast.warning(`备份包已导出:节点 ${stats.nodes}、图打包 ${manifest.length}/${urls.size} 张;${failed.length} 张未取到字节(链接失效),快照仍保留其地址`);
+        toast.warning(`备份包已导出:节点 ${stats.nodes}、图打包 ${manifest.length}/${urls.size} 张;${failed.length} 张未取得可用图片（链接失效或内容损坏），快照仍保留其地址；请勿作为完整图片备份`);
       } else {
-        toast.success(`备份包已导出:节点 ${stats.nodes} 个、图片 ${manifest.length} 张全量随包`);
+        toast.success(`备份包已导出:节点 ${stats.nodes} 个、图片 ${manifest.length} 张随包；视频、音轨及 3D 文件请另行备份`);
       }
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "导出失败");
@@ -2597,6 +2602,7 @@ export default function OmniCanvas() {
     try {
       let draft: Record<string, unknown> & { canvas?: { blocks?: unknown[] }; clientUpdatedAt?: string };
       let restoredImages = 0;
+      const pendingImages: Array<{ sourceUrl: string; blob: Blob; mime: string }> = [];
       if (/\.zip$/i.test(file.name)) {
         const { default: JSZip } = await import("jszip");
         const zip = await JSZip.loadAsync(file);
@@ -2605,39 +2611,39 @@ export default function OmniCanvas() {
         draft = JSON.parse(snapRaw);
         const maniRaw = await zip.file("assets-manifest.json")?.async("string");
         const manifest: Array<{ file: string; sourceUrl: string; mime: string }> = maniRaw ? JSON.parse(maniRaw) : [];
+        if (!Array.isArray(manifest)) throw new Error("备份图片清单格式不对");
         for (const m of manifest) {
+          if (!m || typeof m.file !== "string" || !m.file.trim() || m.file.startsWith("/") || m.file.includes("\\") || m.file.split("/").some((part) => part === "..") || typeof m.sourceUrl !== "string" || !m.sourceUrl.trim() || (m.mime !== undefined && typeof m.mime !== "string")) {
+            throw new Error("备份图片清单缺少有效来源或文件");
+          }
           const entry = zip.file(m.file);
-          if (!entry) continue;
+          if (!entry) throw new Error("备份包缺少清单中的图片，尚未恢复工作区");
           const blob = await entry.async("blob");
-          if (!blob.size) continue;
-          // 记录 ID 用内容 SHA-256:不同备份的同名同大小图不再互相覆盖(审查 P2)
-          const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
-          const hash = Array.from(new Uint8Array(digest).slice(0, 16))
-            .map((x) => x.toString(16).padStart(2, "0"))
-            .join("");
-          // 回灌本机媒体库:恢复通道按 sourceUrl 命中指针,图即刻可用,不再依赖任何线上链接
-          await putLocalMediaRecord({
-            id: `import-${hash}`,
-            blockId: "backup-import",
-            slot: "output",
+          if (!blob.size) throw new Error("备份包包含空图片，尚未恢复工作区");
+          await assertManhuaBackupImage(blob, m.mime);
+          // 这里只解析到内存，用户确认之前不写本机缓存或当前工作区。
+          pendingImages.push({
             blob: new Blob([blob], { type: m.mime || "image/png" }),
             mime: m.mime || "image/png",
             sourceUrl: m.sourceUrl,
-            updatedAt: Date.now(),
           });
-          restoredImages += 1;
         }
       } else {
         draft = JSON.parse(await file.text());
       }
-      if (!draft?.canvas?.blocks) throw new Error("备份文件格式不对");
+      // 先预跑真实同步恢复转换；坏快照不能在落图片后才抛错并留下半恢复状态。
+      draft = prepareManhuaBackupRestore(draft) as unknown as typeof draft;
       const stats = countDraftPayloadStats(draft as { canvas?: { blocks?: unknown[] } });
       const at = String(draft.clientUpdatedAt || "").slice(0, 16) || "未知时间";
       const cur = latestDraftSnapshotRef.current;
       const curStats = cur ? countDraftPayloadStats(buildLocalCloudDraftSnapshot(cur)) : null;
       const curLine = curStats ? `;当前工作区:节点 ${curStats.nodes}、图 ${curStats.images}` : "";
-      const imgLine = restoredImages ? `,随包图片 ${restoredImages} 张已回灌本机` : "";
+      const imgLine = pendingImages.length ? `,随包图片 ${pendingImages.length} 张待恢复` : "";
       if (!window.confirm(`将用备份(${at},节点 ${stats.nodes}、图 ${stats.images}${imgLine}${curLine})覆盖当前工作区。确定导入?`)) return;
+      if (pendingImages.length) {
+        const backupSources = new Map(collectManhuaBackupImageSources(draft as Parameters<typeof collectManhuaBackupImageSources>[0]).map((source) => [source.sourceUrl, source.gcsUri]));
+        restoredImages = await importLocalMediaRecords(pendingImages.map((item) => ({ ...item, gcsUri: backupSources.get(item.sourceUrl) || assetImageGcsUri(item.sourceUrl) })));
+      }
       applyCloudDraftToUi(draft as Parameters<typeof applyCloudDraftToUi>[0]);
       toast.success(restoredImages ? `已回填:${restoredImages} 张图从备份包本机回灌` : "已从备份文件回填");
     } catch (e: unknown) {
