@@ -660,6 +660,11 @@ export const NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS = 30_000;
 export const NATIVE_DEEP_READ_RESOURCE_RETRY_MAX = 4;
 /** 0906 用户令：整形判坏（镜数不合/过不了观察锁）同档降温重试用的温度（首发 0.8 → 重试 0.75），再坏才换路由。 */
 export const NATIVE_DEEP_READ_STRUCTURING_RETRY_TEMPERATURE = 0.75;
+/**
+ * 0907 费用闸：一批整形的判坏重试累计费用（含首发）超过此线就停，不再往下一档烧。
+ * GLM 一批 4 片约 ¥3–4，按最坏两档各两次算上限 ¥16；闸设 ¥20 留余量。触发即整集停并写明累计费用。
+ */
+export const NATIVE_DEEP_READ_STRUCTURING_BATCH_COST_CAP_CNY = 20;
 /** 0905 用户拍板：Vertex 重试 2 次仍 503 就切 AI Studio 兜底（第 3 次资源错误触发）。 */
 export const NATIVE_DEEP_READ_RESOURCE_FALLBACK_AFTER = 2;
 export const NATIVE_DEEP_READ_TEMPERATURE_MIN = 0.6;
@@ -2876,6 +2881,32 @@ export function assertNativeDeepReadShotObservations(raw: Record<string, unknown
     }
     previousStart = start;
   }
+}
+
+/**
+ * 0907 第 9 集实弹：整形输出的 audioResolution.chunkIndex 对不上批次段号（`chunkIndex=4 没有对应段规格`），
+ * 拼接后才抛、不在批次重试范围，整集直接死。
+ * 这里先做确定性修：块数与段数相同、且全部差同一个常数（GLM 常把 0 起改成 1 起）→ 原地映射回段号；
+ * 修不了 → 判坏走重试。返回 null 表示无法修复。
+ */
+export function normalizeNativeDeepReadStructuredAudioChunkIndexes(
+  raw: Record<string, unknown>,
+  segmentIndexes: readonly number[],
+): { raw: Record<string, unknown>; remapped: boolean } | null {
+  const chunks = Array.isArray(raw.audioResolution) ? (raw.audioResolution as Array<Record<string, unknown>>) : [];
+  if (!chunks.length) return { raw, remapped: false };
+  const allowed = new Set(segmentIndexes);
+  const indexes = chunks.map((c) => Number(c?.chunkIndex));
+  if (indexes.every((i) => Number.isInteger(i) && allowed.has(i)) && new Set(indexes).size === indexes.length) return { raw, remapped: false };
+  if (indexes.length !== segmentIndexes.length || indexes.some((i) => !Number.isInteger(i))) return null;
+  const sortedSeg = [...segmentIndexes].sort((a, b) => a - b);
+  const sortedIdx = [...indexes].sort((a, b) => a - b);
+  const offset = sortedIdx[0]! - sortedSeg[0]!;
+  if (!sortedIdx.every((i, k) => i - sortedSeg[k]! === offset) || new Set(sortedIdx).size !== sortedIdx.length) return null;
+  return {
+    raw: { ...raw, audioResolution: chunks.map((c) => ({ ...c, chunkIndex: Number(c.chunkIndex) - offset })) },
+    remapped: true,
+  };
 }
 
 /** 观察锁错误名：整形输出改写/挪用/丢失来源镜观察。0906 用户令：判坏就换下一档只重整形这一批，不整集死。 */
@@ -6533,10 +6564,12 @@ async function executeNativeDeepReadBatch(
         const inputShotCount = stripNonStoryAdShotsForEpisodeCard(input.rows)
           .rows.reduce((sum, raw) => sum + (Array.isArray(raw.shots) ? raw.shots.length : 0), 0);
         let nextTemperature: number | undefined; // 同档第 2 次降到 0.75；换档后回到冻结首发温度
+        let batchCostCny = 0; // 0907 费用闸：本批累计整形费用（含首发与每次判坏重试）
         for (let attempt = 0; ; attempt += 1) {
           const badGateways = Array.from(badCountByGateway.entries())
             .filter(([, n]) => n >= NATIVE_DEEP_READ_LOCK_TRIES_PER_GATEWAY).map(([g]) => g);
           const result = await runStructuringOrLocalFallback({ ...input, lockRetry: attempt || undefined, badGateways, temperature: nextTemperature });
+          if (!("localFallback" in result)) batchCostCny += (Number(result.costUsd) || 0) * OPENROUTER_USD_TO_CNY_EQUIVALENT;
           result.raw = unwrapNativeDeepReadStructuredAnswerEnvelope(result.raw);
           if ("localFallback" in result) return restoreNativeRequiredSummary(result.raw, input.rows);
           try {
@@ -6550,6 +6583,17 @@ async function executeNativeDeepReadBatch(
               error.name = NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
               throw error;
             }
+            // 0907：音轨块编号对不上批次段号 → 能确定性映射就映射，不能就判坏重试（拼接后才抛会整集死）
+            const chunkFix = normalizeNativeDeepReadStructuredAudioChunkIndexes(result.raw, input.segmentIndexes);
+            if (!chunkFix) {
+              const error = new Error(`整形输出 audioResolution.chunkIndex 对不上批次段号 ${input.segmentIndexes.join(",")}`);
+              error.name = NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
+              throw error;
+            }
+            if (chunkFix.remapped) {
+              console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${input.labelZh}：audioResolution.chunkIndex 整体偏移，已确定性映射回段号 ${input.segmentIndexes.join(",")}`);
+              result.raw = chunkFix.raw;
+            }
             // 0906 用户令「镜数不合」也算坏：批次留存率低于拒收线，同样降温重试再换路由
             const keptShots = Array.isArray(result.raw.shots) ? (result.raw.shots as unknown[]).length : 0;
             if (inputShotCount > 0 && keptShots / inputShotCount < NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT) {
@@ -6559,6 +6603,9 @@ async function executeNativeDeepReadBatch(
             }
           } catch (error) {
             if ((!isNativeDeepReadObservationLockError(error) && !(error instanceof NativeStructuringAnalysisError)) || attempt + 1 >= maxAttempts) throw error;
+            if (batchCostCny >= NATIVE_DEEP_READ_STRUCTURING_BATCH_COST_CAP_CNY) {
+              throw new Error(`${input.labelZh}判坏重试累计费用 ¥${batchCostCny.toFixed(2)} 已达费用闸 ¥${NATIVE_DEEP_READ_STRUCTURING_BATCH_COST_CAP_CNY}，停止重试：${(error instanceof Error ? error.message : String(error)).slice(0, 160)}`);
+            }
             const n = (badCountByGateway.get(result.gateway) ?? 0) + 1;
             badCountByGateway.set(result.gateway, n);
             const reasonZh = (error instanceof Error ? error.message : String(error)).slice(0, 200);

@@ -777,8 +777,8 @@ describe("0905 · gatewayOrder 显式链序", () => {
   });
 });
 
-describe("0907 · 单档期限有心跳就延长 15 分钟，不掐断", () => {
-  it("未延期：首期到点即中止；延期后：首期到点不中止，改到心跳后 15 分钟", async () => {
+describe("0907 · 单档期限有心跳只延长一次 15 分钟", () => {
+  it("未延期：首期到点即中止；有心跳：首期到点不中止，延到首期 + 15 分钟；再多心跳不再延", async () => {
     const { createGlmGatewayDeadline, GLM_HEARTBEAT_EXTEND_MS } = await import("./bailianChat");
     vi.useFakeTimers();
     try {
@@ -792,16 +792,15 @@ describe("0907 · 单档期限有心跳就延长 15 分钟，不掐断", () => {
       const second = new AbortController();
       vi.spyOn(AbortSignal, "timeout").mockReturnValue(second.signal);
       const extended = createGlmGatewayDeadline(60_000);
-      extended.extend();
-      second.abort();
+      vi.advanceTimersByTime(30_000);
+      extended.extend();              // 首期未到、有心跳 → 期限延到首期 + 15 分钟
+      vi.advanceTimersByTime(30_000);
+      second.abort();                 // 首期到点
       expect(extended.signal.aborted).toBe(false);
       vi.advanceTimersByTime(GLM_HEARTBEAT_EXTEND_MS - 1_000);
       expect(extended.signal.aborted).toBe(false);
-      // 再来一次心跳 → 再推 15 分钟
-      extended.extend();
-      vi.advanceTimersByTime(10_000);
-      expect(extended.signal.aborted).toBe(false);
-      vi.advanceTimersByTime(GLM_HEARTBEAT_EXTEND_MS);
+      extended.extend();              // 再多心跳也不再延
+      vi.advanceTimersByTime(1_000);
       expect(extended.signal.aborted).toBe(true);
       extended.dispose();
     } finally {
