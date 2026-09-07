@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import Navbar from "@/components/Navbar";
+import { useManhuaAssetConfirmation } from "@/components/useManhuaAssetConfirmation";
 import FreeformCanvas from "@/components/canvas/FreeformCanvas";
 import ManhuaClipDock from "@/components/canvas/ManhuaClipDock";
 import ManhuaTemplateTrialCompare, {
@@ -3261,6 +3262,13 @@ export default function OmniCanvas() {
     trpc.mvAnalysis.buildManhuaDirectorBoardPrompt.useMutation();
   const [assetZipBusy, setAssetZipBusy] = useState(false);
   const [assetStandardizeBusyId, setAssetStandardizeBusyId] = useState<string | null>(null);
+  // 覆盖费用确认等待期和整个任务期，阻止另一入口同帧创建第二张付费订单。
+  const assetActionLocked = useRef(false);
+  const assetConfirmationScope = useMemo(
+    () => ({ customAssetRefs, projectBible, userId: user?.id }),
+    [customAssetRefs, projectBible, user?.id],
+  );
+  const { confirmAssetAction, assetConfirmationDialog } = useManhuaAssetConfirmation(assetConfirmationScope);
 
   const pathTrackLabelZh = useMemo(() => {
     const path = getPathCameraRecipeById(selectedPathRecipeIds[0]);
@@ -5813,18 +5821,18 @@ export default function OmniCanvas() {
   /** AI 去字（3 分）：物理擦除画面文字，其余像素保真——同标准化计费链 */
   const detextCustomAsset = useCallback(
     async (id: string) => {
-      if (assetStandardizeBusyId) return;
+      if (assetStandardizeBusyId || assetActionLocked.current) return;
       const ref = customAssetRefs.find((item) => item.id === id);
       if (!ref) return;
       const cost = manhuaAssetStandardizeCredits("medium");
-      if (
-        !window.confirm(
-          `将调用 AI 图片编辑，精确擦除这张图画面上的所有文字/水印/标牌字样，其余画面保持原样。\n\n${cost} 积分/张；失败自动退回。原图会保留。\n处理约需 1–2 分钟，期间请不要关闭页面。继续？`,
-        )
-      )
-        return;
-      setAssetStandardizeBusyId(id);
+      assetActionLocked.current = true;
       try {
+        if (!(await confirmAssetAction({
+          title: "确认去字费用",
+          description: `将调用 AI 图片编辑，精确擦除这张图画面上的所有文字/水印/标牌字样，其余画面保持原样。\n\n${cost} 积分/张；失败自动退回。原图会保留。\n处理约需 1–2 分钟，期间请不要关闭页面。`,
+          details: `参考图：${ref.labelZh || "资产"}`,
+        }))) return;
+        setAssetStandardizeBusyId(id);
         const source = await prepareAssetImageEdit(ref);
         const { jobId } = await createJobSameOrigin({
           type: "image",
@@ -5872,10 +5880,11 @@ export default function OmniCanvas() {
           description: error instanceof Error ? error.message : "已进入失败退分流程",
         });
       } finally {
+        assetActionLocked.current = false;
         setAssetStandardizeBusyId(null);
       }
     },
-    [assetStandardizeBusyId, customAssetRefs, user?.id],
+    [assetStandardizeBusyId, customAssetRefs, user?.id, confirmAssetAction],
   );
 
   /**
@@ -5884,7 +5893,7 @@ export default function OmniCanvas() {
    */
   const editCustomAsset = useCallback(
     async (id: string, instructionZh: string) => {
-      if (assetStandardizeBusyId) return false;
+      if (assetStandardizeBusyId || assetActionLocked.current) return false;
       const ref = customAssetRefs.find((item) => item.id === id);
       if (!ref) return false;
       const prompt = buildManhuaAssetImageEditPrompt(instructionZh);
@@ -5893,14 +5902,14 @@ export default function OmniCanvas() {
         return false;
       }
       const cost = manhuaAssetStandardizeCredits("medium");
-      if (
-        !window.confirm(
-          `将按你的要求编辑这张图片。\n\n${cost} 积分/张；失败自动退回。原图会保留，新图进入同一资产栏。\n处理约需 1–2 分钟，期间请不要关闭页面。继续？`,
-        )
-      )
-        return false;
-      setAssetStandardizeBusyId(id);
+      assetActionLocked.current = true;
       try {
+        if (!(await confirmAssetAction({
+          title: "确认图片编辑费用",
+          description: `将按你的要求编辑这张图片。\n\n${cost} 积分/张；失败自动退回。原图会保留，新图进入同一资产栏。\n处理约需 1–2 分钟，期间请不要关闭页面。`,
+          details: `参考图：${ref.labelZh || "资产"}\n修改要求：${instructionZh.trim()}`,
+        }))) return false;
+        setAssetStandardizeBusyId(id);
         const source = await prepareAssetImageEdit(ref);
         const { jobId } = await createJobSameOrigin({
           type: "image",
@@ -5954,10 +5963,11 @@ export default function OmniCanvas() {
         });
         return false;
       } finally {
+        assetActionLocked.current = false;
         setAssetStandardizeBusyId(null);
       }
     },
-    [assetStandardizeBusyId, customAssetRefs, user?.id],
+    [assetStandardizeBusyId, customAssetRefs, user?.id, confirmAssetAction],
   );
 
   /** 免费裁字：客户端裁剪后作为新参考图入库（零调用零扣费），旧图保留待删 */
@@ -5996,13 +6006,18 @@ export default function OmniCanvas() {
 
   const standardizeCustomAsset = useCallback(
     async (id: string, quality: ManhuaAssetStandardizeQuality) => {
-      if (assetStandardizeBusyId) return;
+      if (assetStandardizeBusyId || assetActionLocked.current) return;
       const ref = customAssetRefs.find((item) => item.id === id);
       if (!ref) return;
       const cost = manhuaAssetStandardizeCredits(quality);
-      if (!window.confirm(`将调用 AI 图片编辑，把这张图标准化为工作流可用资产。\n\n${quality === "high" ? "高质" : "标准"}：${cost} 积分/张；失败自动退回。原图会保留。\n处理约需 1–2 分钟，期间请不要关闭页面，否则新图无法进入资产库。继续？`)) return;
-      setAssetStandardizeBusyId(id);
+      assetActionLocked.current = true;
       try {
+        if (!(await confirmAssetAction({
+          title: "确认资产标准化费用",
+          description: `将调用 AI 图片编辑，把这张图标准化为工作流可用资产。\n\n${quality === "high" ? "高质" : "标准"}：${cost} 积分/张；失败自动退回。原图会保留。\n处理约需 1–2 分钟，期间请不要关闭页面，否则新图无法进入资产库。`,
+          details: `参考图：${ref.labelZh || "资产"}`,
+        }))) return;
+        setAssetStandardizeBusyId(id);
         const source = await prepareAssetImageEdit(ref);
         const claimedNames = (ref.claimedAnchorNamesZh || []).filter(Boolean).slice(0, 8);
         const multiPropSheet = ref.role === "prop" && claimedNames.length > 1;
@@ -6060,10 +6075,11 @@ export default function OmniCanvas() {
           description: error instanceof Error ? error.message : "已进入失败退分流程",
         });
       } finally {
+        assetActionLocked.current = false;
         setAssetStandardizeBusyId(null);
       }
     },
-    [assetStandardizeBusyId, customAssetRefs, user?.id],
+    [assetStandardizeBusyId, customAssetRefs, user?.id, confirmAssetAction],
   );
 
   const handleSegmentIntentChange = useCallback(
@@ -8400,6 +8416,7 @@ export default function OmniCanvas() {
       }
     >
       <Navbar />
+      {assetConfirmationDialog}
       <main
         className={
           immersiveWorkbench
