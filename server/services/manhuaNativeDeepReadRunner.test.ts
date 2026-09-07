@@ -5006,7 +5006,7 @@ describe("0905 · 整形按批次序号分流链", () => {
     for (const p of seen) {
       expect(p.responseJsonSchema).toMatchObject({ name: expect.any(String) });
       expect(p.thinkingBudget).toBe(32_768);
-      expect(p.gatewayTimeoutMsOverrides).toMatchObject({ plan_bj_qwen: 25 * 60_000, evolink_glm: 15 * 60_000 });
+      expect(p.gatewayTimeoutMsOverrides).toMatchObject({ plan_bj_qwen: 25 * 60_000, evolink_glm: 20 * 60_000 });
     }
   });
 });

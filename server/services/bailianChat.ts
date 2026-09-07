@@ -347,6 +347,36 @@ type GlmGatewayAttemptError = Error & { glmGatewayUsage?: GlmGatewayUsage };
 
 // 0905 用户令：拆掉 GLM 同通道租约。并发批次各自直连供应商，同一档同时多份请求由供应商自己限流，不在本进程排队。
 
+/** 0907 用户令：流式心跳回执每 10 分钟一条（0905 曾 30 秒；面板刷屏）。空闲超时另算（GLM_STREAM_IDLE_TIMEOUT_MS）。 */
+export const GLM_STREAM_PROGRESS_INTERVAL_MS = 10 * 60_000;
+/**
+ * 0907 用户令「有心跳就延长十五分钟一次，不掐断」：单档墙钟只是首个期限；只要还在收字节（每次心跳），
+ * 期限就推到「现在 + 15 分钟」。真正会掐断的只剩空闲超时（10 分钟无字节）与调用方的 abortSignal。
+ */
+export const GLM_HEARTBEAT_EXTEND_MS = 15 * 60_000;
+
+/** 可延期的单档期限：首期用 AbortSignal.timeout（测试可观测），心跳后改由本地计时器接管。 */
+export function createGlmGatewayDeadline(timeoutMs: number, parent?: AbortSignal): { signal: AbortSignal; extend: () => void; dispose: () => void } {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const controller = new AbortController();
+  let extendedUntil = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const abortNow = () => { if (!controller.signal.aborted) controller.abort(new DOMException("GLM 单档超时", "TimeoutError")); };
+  const arm = () => {
+    if (timer) clearTimeout(timer);
+    const remain = extendedUntil - Date.now();
+    if (remain <= 0) { abortNow(); return; }
+    timer = setTimeout(() => { if (extendedUntil > Date.now()) arm(); else abortNow(); }, remain);
+  };
+  timeoutSignal.addEventListener("abort", () => { if (extendedUntil > Date.now()) arm(); else abortNow(); }, { once: true });
+  const signal = parent ? AbortSignal.any([parent, controller.signal]) : controller.signal;
+  return {
+    signal,
+    extend: () => { extendedUntil = Math.max(extendedUntil, Date.now() + GLM_HEARTBEAT_EXTEND_MS); },
+    dispose: () => { if (timer) clearTimeout(timer); },
+  };
+}
+
 export async function invokeGlmJsonChatWithGatewayFallback(params: GlmParams): Promise<GlmChatSuccess> {
   const trace: GlmGatewayTraceEntry[] = [];
   let accumulatedUsage = emptyGlmGatewayUsage();
@@ -609,7 +639,7 @@ async function readGlmRawResponseWithEvidence(
         chunks.push(Buffer.from(value));
         receivedBytes += value.byteLength;
         if (receivedBytes > rawCap) throw new Error("GLM 链响应超过处理上限");
-        if (onProgress && Date.now() - lastProgressAt >= 30_000) {
+        if (onProgress && Date.now() - lastProgressAt >= GLM_STREAM_PROGRESS_INTERVAL_MS) {
           lastProgressAt = Date.now();
           try { onProgress(receivedBytes); } catch { /* 心跳是旁路 */ }
         }
@@ -776,8 +806,8 @@ async function invokeOneGlmGateway(
     ? Number(params.deadlineAtMs) - Date.now()
     : Number.POSITIVE_INFINITY;
   const timeoutMs = Math.max(1_000, Math.min(perGatewayMs, remainMs));
-  const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  const signal = params.abortSignal ? AbortSignal.any([params.abortSignal, timeoutSignal]) : timeoutSignal;
+  const deadline = createGlmGatewayDeadline(timeoutMs, params.abortSignal);
+  const signal = deadline.signal;
   // 输出上限按网关夹紧（0905 用户令整形链 262K；超发会被供应商按参数越界拒掉，白跳一档）
   // 0905 实弹：EvoLink 400「max_tokens 限制 [1,131072]」、OpenRouter 钉死 Z.AI 档 262K 直接 404 无端点；
   // 五档统一夹在 131,072，GLM 才真能接单。
@@ -873,6 +903,7 @@ async function invokeOneGlmGateway(
   // 这个键对它是冗余但无害，对 DashScope / EvoLink 则是标准写法。
   body.stream = true;
   body.stream_options = { include_usage: true };
+  try {
   const res = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
@@ -904,6 +935,8 @@ async function invokeOneGlmGateway(
     const bytes = await readGlmRawResponseWithEvidence(res, {
       gateway, model, httpStatus: res.status, providerRequestId, contentType,
     }, rawCap, params.onRawResponse, (receivedBytes) => {
+      // 0907：有心跳就把单档期限推到「现在 + 15 分钟」，不掐断
+      deadline.extend();
       void params.onStreamProgress?.({ gateway, receivedBytes, elapsedMs: Date.now() - streamStartedAt });
     });
     raw = streamSse
@@ -950,4 +983,7 @@ async function invokeOneGlmGateway(
     ...json,
     requestId: providerRequestId,
   };
+  } finally {
+    deadline.dispose();
+  }
 }
