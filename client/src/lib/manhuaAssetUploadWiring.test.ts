@@ -50,7 +50,8 @@ describe("漫剧参考图导入接线", () => {
     const end = CANVAS.indexOf("const cropCustomAssetToFile = useCallback", start);
     const editFlow = CANVAS.slice(start, end);
     expect(editFlow).toContain("buildManhuaAssetImageEditPrompt(instructionZh)");
-    expect(editFlow).toContain("referenceImageUrls: [ref.url]");
+    expect(editFlow).toContain("referenceImageUrls: [source.url]");
+    expect(editFlow).toContain("const source = await prepareAssetImageEdit(ref)");
     expect(editFlow).toContain('gcsSubdir: "manhua-asset-edited"');
     expect(editFlow).toContain('assetStandardizeQuality: "medium"');
     expect(editFlow).toContain("normalizeManhuaCustomAssetRefs([\n            ...prev,");

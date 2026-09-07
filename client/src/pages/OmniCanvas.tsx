@@ -125,6 +125,7 @@ import {
   type ManhuaAssetStashRole,
 } from "@shared/manhuaAssetStash";
 import { uploadCanvasFilesParallel } from "@/lib/canvasUpload";
+import { assetImageGcsUri, prepareAssetImageEdit, readAssetImageDimensions, refreshAssetImageUrl } from "@/lib/manhuaAssetImageSource";
 import {
   resolveCanvasMaterialUrl,
   uploadFileToSignedUrl,
@@ -5612,16 +5613,18 @@ export default function OmniCanvas() {
           files: list,
           getSignedUploadUrl: (input) => getSignedUrlMutation.mutateAsync(input),
         });
-        const added: ManhuaCustomAssetRef[] = assets
+        const added: ManhuaCustomAssetRef[] = await Promise.all(assets
           .filter((a) => a.kind === "image" && /^https:\/\//i.test(a.url))
-          .map((a) => ({
+          .map(async (a) => ({
             id: makeManhuaCustomAssetId(),
             url: a.url,
             gcsUri: a.gcsUri,
+            // 上传成功项仍保留；浏览器无法解码时，编辑预检会明确阻止付费。
+            ...await readAssetImageDimensions(a.previewUrl || a.url).catch(() => ({})),
             role: resolvedRole,
             labelZh: a.fileName?.replace(/\.[^.]+$/, "").slice(0, 40) || "上传参考",
             source: "upload" as const,
-          }));
+          })));
         if (added.length) {
           setCustomAssetRefs((prev) =>
             normalizeManhuaCustomAssetRefs([...prev, ...added]),
@@ -5815,14 +5818,15 @@ export default function OmniCanvas() {
         return;
       setAssetStandardizeBusyId(id);
       try {
+        const source = await prepareAssetImageEdit(ref);
         const { jobId } = await createJobSameOrigin({
           type: "image",
           userId: String(user?.id || ""),
           input: buildCanvasGptImage2JobInput({
             prompt:
               "精确擦除画面中出现的所有文字、字样、水印、标牌与印章文字，用周围的材质、光影自然补全被擦除区域；构图、人物、陈设、色调与其余像素保持原样。禁止新增任何元素。",
-            aspectRatio: (ref.sourceWidth || 0) >= (ref.sourceHeight || 1) ? "16:9" : "9:16",
-            referenceImageUrls: [ref.url],
+            aspectRatio: source.aspectRatio,
+            referenceImageUrls: [source.url],
             generalImageEdit: true,
             providerOverride: "openai",
             imageLane: "asset",
@@ -5843,7 +5847,9 @@ export default function OmniCanvas() {
               ...ref,
               id: makeManhuaCustomAssetId(),
               url: imageUrl,
-              gcsUri: undefined,
+              gcsUri: assetImageGcsUri(imageUrl),
+              sourceWidth: undefined,
+              sourceHeight: undefined,
               labelZh: `${ref.labelZh || "资产"}·去字`,
               reviewStatus: "converted",
               qualityIssues: [],
@@ -5888,13 +5894,14 @@ export default function OmniCanvas() {
         return;
       setAssetStandardizeBusyId(id);
       try {
+        const source = await prepareAssetImageEdit(ref);
         const { jobId } = await createJobSameOrigin({
           type: "image",
           userId: String(user?.id || ""),
           input: buildCanvasGptImage2JobInput({
             prompt,
-            aspectRatio: (ref.sourceWidth || 0) >= (ref.sourceHeight || 1) ? "16:9" : "9:16",
-            referenceImageUrls: [ref.url],
+            aspectRatio: source.aspectRatio,
+            referenceImageUrls: [source.url],
             generalImageEdit: true,
             providerOverride: "openai",
             imageLane: "asset",
@@ -5918,7 +5925,9 @@ export default function OmniCanvas() {
               ...ref,
               id: makeManhuaCustomAssetId(),
               url: imageUrl,
-              gcsUri: undefined,
+              gcsUri: assetImageGcsUri(imageUrl),
+              sourceWidth: undefined,
+              sourceHeight: undefined,
               labelZh: `${ref.labelZh || "资产"}·编辑`,
               reviewStatus: "converted",
               qualityIssues: [],
@@ -5952,7 +5961,7 @@ export default function OmniCanvas() {
       await new Promise<void>((resolve, reject) => {
         img.onload = () => resolve();
         img.onerror = () => reject(new Error("图片加载失败"));
-        img.src = ref.url;
+        void refreshAssetImageUrl(ref).then((url) => { img.src = url; }, reject);
       });
       const sx = Math.round(img.naturalWidth * crop.x);
       const sy = Math.round(img.naturalHeight * crop.y);
@@ -5985,6 +5994,7 @@ export default function OmniCanvas() {
       if (!window.confirm(`将调用 AI 图片编辑，把这张图标准化为工作流可用资产。\n\n${quality === "high" ? "高质" : "标准"}：${cost} 积分/张；失败自动退回。原图会保留。\n处理约需 1–2 分钟，期间请不要关闭页面，否则新图无法进入资产库。继续？`)) return;
       setAssetStandardizeBusyId(id);
       try {
+        const source = await prepareAssetImageEdit(ref);
         const claimedNames = (ref.claimedAnchorNamesZh || []).filter(Boolean).slice(0, 8);
         const multiPropSheet = ref.role === "prop" && claimedNames.length > 1;
         const rolePrompt =
@@ -6002,7 +6012,7 @@ export default function OmniCanvas() {
           input: buildCanvasGptImage2JobInput({
             prompt: `${rolePrompt}\n禁止文字、标签、边框、水印、拼图和多宫格。`,
             aspectRatio,
-            referenceImageUrls: [ref.url],
+            referenceImageUrls: [source.url],
             generalImageEdit: true,
             providerOverride: "openai",
             imageLane: "asset",
@@ -6023,7 +6033,9 @@ export default function OmniCanvas() {
               ...ref,
               id: makeManhuaCustomAssetId(),
               url: imageUrl,
-              gcsUri: undefined,
+              gcsUri: assetImageGcsUri(imageUrl),
+              sourceWidth: undefined,
+              sourceHeight: undefined,
               labelZh: `${ref.labelZh || "资产"}·标准化`,
               reviewStatus: "converted",
               qualityIssues: [],
