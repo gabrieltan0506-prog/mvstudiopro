@@ -320,6 +320,8 @@ type Props = {
   /** 生成中随时中断（测试不必跑完整条链） */
   onStopFactory?: () => void;
   canRun?: boolean;
+  /** 当前剧本的真实确认状态；编导解锁不等于确认，不能用于生成权限。 */
+  outlineConfirmed: boolean;
   /** 剧情包已出、尚未确认编剧 */
   writerPackReady?: boolean;
   onConfirmOutline?: () => void;
@@ -396,7 +398,7 @@ type Props = {
   /** AI 去字（3 分）：物理擦除画面文字 */
   onDetextCustomAsset?: (id: string) => void | Promise<void>;
   /** 按用户指令编辑图片；原图保留，新图作为同类参考入库。 */
-  onEditCustomAsset?: (id: string, instructionZh: string) => void | Promise<void>;
+  onEditCustomAsset?: (id: string, instructionZh: string) => void | boolean | Promise<void | boolean>;
   /** 免费裁字：按保留区比例裁剪后入库为新参考图 */
   onCropCustomAsset?: (id: string, crop: { x: number; y: number; w: number; h: number }) => void | Promise<void>;
   /** 明确认领稳定锚点；场景允许一图多选，替代用显示名猜主键。 */
@@ -920,6 +922,7 @@ export default function ManhuaScriptWorkbench({
   factoryProgress,
   onStopFactory,
   canRun,
+  outlineConfirmed,
   writerPackReady,
   onConfirmOutline,
   onOpenWriterEditor,
@@ -2283,6 +2286,7 @@ export default function ManhuaScriptWorkbench({
       customAssetRefs,
     ],
   );
+  // 保留既有显式解锁能力；阶段完成展示只读独立的剧本确认状态。
   const outlineComplete = Boolean(canRun);
   const activeLookCharacterIds = useMemo(() => {
     const beat = activeSourceBeat;
@@ -2589,8 +2593,8 @@ export default function ManhuaScriptWorkbench({
       {
         id: "outline",
         label: "剧本大纲",
-        complete: outlineComplete,
-        gapZh: outlineComplete ? "" : "请先确认剧本大纲",
+        complete: outlineConfirmed,
+        gapZh: outlineConfirmed ? "" : "请先确认剧本大纲",
       },
       {
         id: "assets",
@@ -2651,7 +2655,7 @@ export default function ManhuaScriptWorkbench({
     }));
   }, [
     stageStrip,
-    outlineComplete,
+    outlineConfirmed,
     assetsComplete,
     activePhase,
     episodeStillCount,
@@ -2951,7 +2955,7 @@ export default function ManhuaScriptWorkbench({
                 </span>
                 <span className="text-emerald-200/70">已锁定</span>
               </div>
-            ) : outlineComplete ? (
+            ) : outlineConfirmed ? (
               <div
                 data-manhua-director-strategy-status
                 data-status="upgrade-required"
@@ -3734,7 +3738,7 @@ export default function ManhuaScriptWorkbench({
               </div>
             ) : null}
             <div className="mt-5 flex flex-wrap items-center gap-2">
-              {!outlineComplete && writerPackReady && onConfirmOutline ? (
+              {!outlineConfirmed && writerPackReady && onConfirmOutline ? (
                 <button
                   type="button"
                   data-manhua-action="confirm-outline"
@@ -3754,7 +3758,7 @@ export default function ManhuaScriptWorkbench({
                   先导入参考图
                 </button>
               ) : null}
-              {!outlineComplete && !writerPackReady ? (
+              {!outlineConfirmed && !writerPackReady ? (
                 <p className="text-[11px] text-amber-100/80">
                   请先在上方「改题材」扩写或导入剧本，再回来确认大纲。
                 </p>
@@ -3781,6 +3785,11 @@ export default function ManhuaScriptWorkbench({
           className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6"
         >
           <div className="mx-auto max-w-4xl">
+            {outlineComplete && !outlineConfirmed ? (
+              <p data-manhua-outline-unconfirmed className="mb-3 text-[11px] text-amber-100/80">
+                编导区已解锁，当前剧本尚未确认；已有参考图不代表剧本资产已齐备。
+              </p>
+            ) : null}
             {onUploadCustomAssets ? (
               <div
                 data-manhua-quick-asset-upload
@@ -5162,7 +5171,7 @@ export default function ManhuaScriptWorkbench({
                                   .slice(0, 4)
                                   .map((s) => s.labelZh || s.tag)
                                   .join("、")}${missing.length > 4 ? "…" : ""}`
-                              : " · 全部就位"}
+                              : " · 已有引用均已挂图"}
                             （点顶栏「显示说明」看全表）
                           </p>
                         );

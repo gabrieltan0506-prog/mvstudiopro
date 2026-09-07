@@ -16,7 +16,7 @@ export function ManhuaAssetEditInput({
   labelZh: string;
   disabled: boolean;
   busy: boolean;
-  onSubmit: (instructionZh: string) => void | Promise<void>;
+  onSubmit: (instructionZh: string) => void | boolean | Promise<void | boolean>;
 }) {
   const [open, setOpen] = useState(false);
   const [instruction, setInstruction] = useState("");
@@ -87,8 +87,9 @@ export function ManhuaAssetEditInput({
                 locked.current = true;
                 setSubmitting(true);
                 try {
-                  await onSubmit(instruction.trim());
-                  setOpen(false);
+                  const accepted = await onSubmit(instruction.trim());
+                  // 父层已提示取消／失败时保留文字，不把正常返回误认成成功。
+                  if (accepted !== false) setOpen(false);
                 } catch (failure) {
                   setError(
                     failure instanceof Error

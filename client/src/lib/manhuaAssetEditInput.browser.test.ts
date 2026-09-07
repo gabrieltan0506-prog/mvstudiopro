@@ -82,6 +82,26 @@ async function clickAction(page: Page, text: string) {
 }
 
 describe("资产编辑输入真实浏览器（离线）", () => {
+  it("父回调取消或已处理失败返回 false 时保留文字，不自动重提", async () => {
+    const { page, context } = await fixture();
+    try {
+      await open(page);
+      const text = "保留黑翼和四条尾巴";
+      await page.type("textarea", text);
+      await clickAction(page, "继续确认费用");
+      await page.waitForFunction("fixture.calls.length === 1");
+      await page.evaluate("fixture.resolve(false)");
+      await page.waitForFunction(
+        "!document.querySelector('[role=dialog] textarea').disabled"
+      );
+      expect(
+        await page.$eval("textarea", el => (el as HTMLTextAreaElement).value)
+      ).toBe(text);
+      expect(await page.evaluate("fixture.calls")).toEqual([text]);
+    } finally {
+      await context.close();
+    }
+  }, 20_000);
   it("空白禁用，取消零提交，不调用原生 prompt", async () => {
     const { page, context } = await fixture();
     try {
