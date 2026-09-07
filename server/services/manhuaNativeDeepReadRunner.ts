@@ -2882,6 +2882,19 @@ export const NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME = "NativeDeepReadObser
 export function isNativeDeepReadObservationLockError(error: unknown): boolean {
   return error instanceof Error && error.name === NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
 }
+/**
+ * 观察文本归一：只抹平引号（直/弯/单/双）、空白与破折号写法差异，不动任何字。
+ * 0907 实弹：来源写 '投其所好'（直引号），GLM 回 ‘投其所好’（弯引号），其余一字不差，却被锁连判两次「改写」。
+ */
+export function normalizeNativeDeepReadObservationText(value: unknown): string {
+  return String(value ?? "")
+    // 单/双、直/弯、中/英引号一律视为同一个引号（模型常把 '…' 回成 ‘…’ 或 “…”）
+    .replace(/[\u2018\u2019\u201A\u201B\u2032\u2035\u201C\u201D\u201E\u201F\u2033\u2036"\u300C\u300D\u300E\u300F]/g, "'")
+    .replace(/[\u2013\u2014\u2015\u2212]/g, "-")
+    .replace(/\s+/g, "")
+    .trim();
+}
+
 /** GLM只能保留来源镜头的观察；跨镜挪用、改写或丢字段均停止消费，原稿仍永久保存。 */
 export function assertNativeDeepReadShotObservationsPreserved(
   sourceRows: ReadonlyArray<Record<string, unknown>>,
@@ -2899,8 +2912,8 @@ export function assertNativeDeepReadShotObservationsPreserved(
   for (let index = 0; index < shots.length; index += 1) {
     const row = shots[index];
     if (row?.evidenceRole === "non_story_ad") continue;
-    const hint = typeof row?.hintZh === "string" ? row.hintZh.trim() : "";
-    const spans = sources.filter(source => String(source.hintZh).trim() === hint).map(source => ({
+    const hint = typeof row?.hintZh === "string" ? normalizeNativeDeepReadObservationText(row.hintZh) : "";
+    const spans = sources.filter(source => normalizeNativeDeepReadObservationText(source.hintZh) === hint).map(source => ({
       startSec: Number(source.startSec) - NATIVE_DEEP_READ_TIMELINE_TOLERANCE_SEC,
       endSec: Number(source.endSec) + NATIVE_DEEP_READ_TIMELINE_TOLERANCE_SEC,
     }));
@@ -6498,6 +6511,14 @@ async function executeNativeDeepReadBatch(
           try {
             assertNativeDeepReadShotObservationsPreserved(input.rows, result.raw);
             assertNativeStructuringAnalysis(result.raw, { requireGeneratedAnalysis: true });
+            // 0907 实弹：第三发过了锁却在入库前被集卡 schema 拒（音轨分析三段总结整段省掉）→ 也算坏输出，走同一套重试
+            const schemaCheck = nativeDeepReadSegmentSchema.safeParse(result.raw);
+            if (!schemaCheck.success) {
+              const issues = schemaCheck.error.issues.slice(0, 3).map((i) => `${i.path.join(".")}：${i.message}`).join("；");
+              const error = new Error(`整形输出不符合集卡 schema（${issues}）`);
+              error.name = NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
+              throw error;
+            }
             // 0906 用户令「镜数不合」也算坏：批次留存率低于拒收线，同样降温重试再换路由
             const keptShots = Array.isArray(result.raw.shots) ? (result.raw.shots as unknown[]).length : 0;
             if (inputShotCount > 0 && keptShots / inputShotCount < NATIVE_DEEP_READ_EPISODE_SHOT_KEEP_RATE_REJECT) {
@@ -6554,6 +6575,12 @@ async function executeNativeDeepReadBatch(
           try {
             assertNativeDeepReadShotObservationsPreserved(rows, cached.raw);
             assertNativeStructuringAnalysis(unwrapNativeDeepReadStructuredAnswerEnvelope(cached.raw), { requireGeneratedAnalysis: true });
+            const cachedSchema = nativeDeepReadSegmentSchema.safeParse(unwrapNativeDeepReadStructuredAnswerEnvelope(cached.raw));
+            if (!cachedSchema.success) {
+              const error = new Error(`缓存整形输出不符合集卡 schema（${cachedSchema.error.issues.slice(0, 3).map((i) => `${i.path.join(".")}：${i.message}`).join("；")}）`);
+              error.name = NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
+              throw error;
+            }
           } catch (error) {
             if (error instanceof NativeStructuringAnalysisError || (isNativeDeepReadObservationLockError(error) && segmentIndexes.some(index => selectedSegmentCandidates.has(index)))) {
               badCacheUndeletable.add(segmentIndexes.join("-"));
