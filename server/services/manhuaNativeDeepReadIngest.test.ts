@@ -74,6 +74,9 @@ describe("0907 重点时刻门禁", () => {
     const missing = checkNativeDeepReadIngestable(makeResult({ keyMoments: undefined }));
     expect(missing.ok).toBe(false);
     expect(checkNativeDeepReadIngestable(makeResult()).ok).toBe(true);
+    // 中间快照（已完成 1/6）只含前缀，首段整段广告时合法为空，不在快照阶段判
+    const partial = checkNativeDeepReadIngestable(makeResult({ keyMoments: [], segmentCount: 1, completedSegmentIndexes: [0], sourceDigest: "a".repeat(64), segmentSnapshotSha256: "b".repeat(64), assemblyComplete: false }));
+    expect((partial as { reasonZh?: string }).reasonZh ?? "").not.toContain("重点时刻为零");
   });
 });
 
