@@ -1484,6 +1484,11 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
     if (!jobId) {
       throw new Error("canvas_gpt_image2 缺少 jobId，无法建立幂等计费");
     }
+    if (assetStandardizeQuality) {
+      // 只续签已有本人参考，不新建任务；预检失败发生在扣费之前。
+      const { refreshCanvasAssetEditReference } = await import("../services/canvasAssetEditReference.js");
+      referenceImageUrls[0] = await refreshCanvasAssetEditReference(referenceImageUrls[0]!, jobUserId);
+    }
     const { canvasImageCredits } = await import("../../shared/canvasGenerationPricing.js");
     const { manhuaAssetStandardizeCredits } = await import("../../shared/manhuaAssetStandardize.js");
     const cost = assetStandardizeQuality
