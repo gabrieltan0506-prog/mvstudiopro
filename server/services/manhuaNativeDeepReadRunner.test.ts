@@ -3474,7 +3474,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
     expect(receipts.some((row) => row.route === "structuring_retry_pending")).toBe(false);
     const backfill = receipts.find((row) => row.route === "structuring_keymoments_backfilled");
-    expect(String(backfill?.model)).toContain("漏掉重点时刻 6 条");
+    expect(String(backfill?.model)).toContain("从读片稿补回 6 条");
     const episode = result.episodes[0]!.result;
     expect(episode.segmentCount).toBe(3);
     expect((episode.keyMoments ?? []).map((row) => row.atSec)).toEqual([10.5, 40, 70.5, 100, 130.5, 160]);

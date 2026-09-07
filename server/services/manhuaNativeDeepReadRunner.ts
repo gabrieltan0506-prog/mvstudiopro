@@ -2930,7 +2930,7 @@ export function repairNativeDeepReadStructuredAudioChunks(
 export function repairNativeDeepReadStructuredKeyMoments(
   raw: Record<string, unknown>,
   rows: ReadonlyArray<Record<string, unknown>>,
-): { raw: Record<string, unknown>; backfilled: number; synthesized: number; total: number } {
+): { raw: Record<string, unknown>; backfilled: number; synthesized: number; droppedInvalid: number; total: number } {
   // 与集卡 schema 的 keyMoments 条目同口径：atSec 必须是有限非负数字（字符串 "12.5" 不算）、kindZh 非空、noteZh 字符串。
   // schema 对整个数组是 .catch([])——混进一条坏的会把整批清空，所以坏条目在这里就当「缺」，由输入稿同键顶上。
   const valid = (list: unknown): Record<string, unknown>[] => Array.isArray(list)
@@ -2976,9 +2976,18 @@ export function repairNativeDeepReadStructuredKeyMoments(
     });
     synthesized = merged.length;
   }
-  if (!added.length && !synthesized && droppedInvalid === 0) return { raw, backfilled: 0, synthesized: 0, total: kept.length };
+  if (!added.length && !synthesized && droppedInvalid === 0) return { raw, backfilled: 0, synthesized: 0, droppedInvalid: 0, total: kept.length };
   merged.sort((a, b) => Number(a.atSec) - Number(b.atSec));
-  return { raw: { ...raw, keyMoments: merged }, backfilled: added.length, synthesized, total: merged.length };
+  return { raw: { ...raw, keyMoments: merged }, backfilled: added.length, synthesized, droppedInvalid, total: merged.length };
+}
+
+/** 补回/兜底/丢坏条目三种动作的中文描述，日志与面板进度行共用 */
+export function describeNativeDeepReadKeyMomentFix(fix: { backfilled: number; synthesized: number; droppedInvalid: number; total: number }): string {
+  if (fix.synthesized > 0) return `整形输出与读片稿都没有重点时刻，已按剧情镜中点造 ${fix.synthesized} 条兜底`;
+  const parts: string[] = [];
+  if (fix.droppedInvalid > 0) parts.push(`丢掉格式坏的重点时刻 ${fix.droppedInvalid} 条`);
+  if (fix.backfilled > 0) parts.push(`从读片稿补回 ${fix.backfilled} 条`);
+  return `整形输出重点时刻已修：${parts.join("、")}（现 ${fix.total} 条）`;
 }
 
 /** 观察锁错误名：整形输出改写/挪用/丢失来源镜观察。0906 用户令：判坏就换下一档只重整形这一批，不整集死。 */
@@ -6658,7 +6667,15 @@ async function executeNativeDeepReadBatch(
             batchCostCny += costUsd * OPENROUTER_USD_TO_CNY_EQUIVALENT;
           }
           result.raw = unwrapNativeDeepReadStructuredAnswerEnvelope(result.raw);
-          if ("localFallback" in result) return restoreNativeRequiredSummary(result.raw, input.rows);
+          if ("localFallback" in result) {
+            // 0907 复审：本地拼接的 keyMoments 只来自输入稿，单段集三档全空时同样要造兜底，否则终审拒收整集死
+            const fallbackKeyFix = repairNativeDeepReadStructuredKeyMoments(result.raw, input.rows);
+            if (fallbackKeyFix.raw !== result.raw) {
+              console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${input.labelZh}：本地拼接${describeNativeDeepReadKeyMomentFix(fallbackKeyFix)}`);
+              result.raw = fallbackKeyFix.raw;
+            }
+            return restoreNativeRequiredSummary(result.raw, input.rows);
+          }
           try {
             assertNativeDeepReadShotObservationsPreserved(input.rows, result.raw);
             assertNativeStructuringAnalysis(result.raw, { requireGeneratedAnalysis: true });
@@ -6684,9 +6701,7 @@ async function executeNativeDeepReadBatch(
             // 0907 实弹：GLM 整份漏掉 keyMoments → 入库 0 条、抽帧 0 张。提示词要求原样保留，缺的从读片稿确定性补回，不花钱重整形
             const keyFix = repairNativeDeepReadStructuredKeyMoments(result.raw, input.rows);
             if (keyFix.raw !== result.raw) {
-              const keyFixZh = keyFix.synthesized > 0
-                ? `整形输出与读片稿都没有重点时刻，已按剧情镜中点造 ${keyFix.synthesized} 条兜底`
-                : `整形输出漏掉重点时刻 ${keyFix.backfilled} 条，已从读片稿补回（现 ${keyFix.total} 条）`;
+              const keyFixZh = describeNativeDeepReadKeyMomentFix(keyFix);
               console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${input.labelZh}：${glmGatewayDisplayLabel(result.gateway)} ${keyFixZh}`);
               result.raw = keyFix.raw;
               await emitVisualModelReceipt({
