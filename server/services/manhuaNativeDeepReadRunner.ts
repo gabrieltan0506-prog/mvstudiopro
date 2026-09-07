@@ -6684,8 +6684,8 @@ async function executeNativeDeepReadBatch(
           });
         }
 
-        // 0905 用户令：批次要均分，不是「前面塞满、尾巴一小撮」——8 片＝4+4、9 片＝5+4、29 片＝5×5+4，
-        // 两路并发才真正对半分担；批次数仍按每批上限（5）决定。
+        // 0905 用户令：批次要均分，不是「前面塞满、尾巴一小撮」——8 片＝4+4、9 片＝3+3+3、29 片＝5×4+3×3，
+        // 各批并发才真正分担；批次数按每批上限（4）向上取整决定。
         const groupCount = Math.ceil(segmentCount / maxRawSegmentsPerBatch);
         const baseSize = Math.floor(segmentCount / groupCount);
         const extra = segmentCount % groupCount;
