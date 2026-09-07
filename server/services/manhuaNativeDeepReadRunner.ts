@@ -2909,6 +2909,18 @@ export function normalizeNativeDeepReadStructuredAudioChunkIndexes(
   };
 }
 
+/**
+ * 批次整形输出的音轨块编号：能确定性映射就映射；编号越出段号且修不了 → null（调用方判坏重试）。
+ * 块数少于段数**不判坏**：0830 用户拍板「GLM 弄丢一段音轨照常入库」，由音轨覆盖修补兜住，这里不推翻。
+ */
+export function repairNativeDeepReadStructuredAudioChunks(
+  raw: Record<string, unknown>,
+  segmentIndexes: readonly number[],
+  _hasAudio: boolean,
+): { raw: Record<string, unknown>; remapped: boolean } | null {
+  return normalizeNativeDeepReadStructuredAudioChunkIndexes(raw, segmentIndexes);
+}
+
 /** 观察锁错误名：整形输出改写/挪用/丢失来源镜观察。0906 用户令：判坏就换下一档只重整形这一批，不整集死。 */
 export const NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME = "NativeDeepReadObservationLockError" as const;
 export function isNativeDeepReadObservationLockError(error: unknown): boolean {
@@ -6569,7 +6581,13 @@ async function executeNativeDeepReadBatch(
           const badGateways = Array.from(badCountByGateway.entries())
             .filter(([, n]) => n >= NATIVE_DEEP_READ_LOCK_TRIES_PER_GATEWAY).map(([g]) => g);
           const result = await runStructuringOrLocalFallback({ ...input, lockRetry: attempt || undefined, badGateways, temperature: nextTemperature });
-          if (!("localFallback" in result)) batchCostCny += (Number(result.costUsd) || 0) * OPENROUTER_USD_TO_CNY_EQUIVALENT;
+          if (!("localFallback" in result)) {
+            // OpenRouter 回 usage.cost；EvoLink / DashScope 不回 → 按 GLM 目录价（$1.4/$4.4 per M）估，闸对每一档都生效
+            const costUsd = Number(result.costUsd) > 0
+              ? Number(result.costUsd)
+              : ((Number(result.inputTokens) || 0) * 1.4 + (Number(result.outputTokens) || 0) * 4.4) / 1e6;
+            batchCostCny += costUsd * OPENROUTER_USD_TO_CNY_EQUIVALENT;
+          }
           result.raw = unwrapNativeDeepReadStructuredAnswerEnvelope(result.raw);
           if ("localFallback" in result) return restoreNativeRequiredSummary(result.raw, input.rows);
           try {
@@ -6584,9 +6602,9 @@ async function executeNativeDeepReadBatch(
               throw error;
             }
             // 0907：音轨块编号对不上批次段号 → 能确定性映射就映射，不能就判坏重试（拼接后才抛会整集死）
-            const chunkFix = normalizeNativeDeepReadStructuredAudioChunkIndexes(result.raw, input.segmentIndexes);
+            const chunkFix = repairNativeDeepReadStructuredAudioChunks(result.raw, input.segmentIndexes, hasAudio);
             if (!chunkFix) {
-              const error = new Error(`整形输出 audioResolution.chunkIndex 对不上批次段号 ${input.segmentIndexes.join(",")}`);
+              const error = new Error(`整形输出音轨块与批次段号 ${input.segmentIndexes.join(",")} 对不上（块数或编号）`);
               error.name = NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
               throw error;
             }
@@ -6659,6 +6677,14 @@ async function executeNativeDeepReadBatch(
               error.name = NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
               throw error;
             }
+            // 0907 审查①：第 9 集那批 chunkIndex=4 的坏输出已在缓存里，缓存路径同样查音轨块；修不了当坏缓存删掉重整形
+            const cachedChunkFix = repairNativeDeepReadStructuredAudioChunks(unwrapNativeDeepReadStructuredAnswerEnvelope(cached.raw), segmentIndexes, hasAudio);
+            if (!cachedChunkFix) {
+              const error = new Error(`缓存整形输出音轨块与批次段号 ${segmentIndexes.join(",")} 对不上（块数或编号）`);
+              error.name = NATIVE_DEEP_READ_OBSERVATION_LOCK_ERROR_NAME;
+              throw error;
+            }
+            if (cachedChunkFix.remapped) cached = { ...cached, raw: cachedChunkFix.raw };
           } catch (error) {
             if (error instanceof NativeStructuringAnalysisError || (isNativeDeepReadObservationLockError(error) && segmentIndexes.some(index => selectedSegmentCandidates.has(index)))) {
               badCacheUndeletable.add(segmentIndexes.join("-"));
