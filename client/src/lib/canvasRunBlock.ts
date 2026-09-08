@@ -1986,7 +1986,9 @@ export async function runCanvasBlock(
           userSelectedVideoRaw &&
           (looksLikeVideo(userSelectedVideoRaw) ||
             block.uploadedAssets?.some(
-              (a) => a.kind === "video" && a.url === userSelectedVideoRaw,
+              (a) =>
+                a.url === userSelectedVideoRaw &&
+                (a.kind === "video" || looksLikeVideo(a.fileName || "")),
             ))
             ? userSelectedVideoRaw
             : undefined;
