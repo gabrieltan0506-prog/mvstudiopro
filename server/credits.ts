@@ -295,6 +295,15 @@ async function findChargeByKey(
   return { cost: Math.max(0, Number(row.creditsCost) || 0), source: "personal" };
 }
 
+/** 只读恢复既有扣费；余额不足时也能读取原账，不发起扣款或退款。 */
+export async function readCreditsChargeByKey(userId: number, chargeKey: string) {
+  if (!Number.isSafeInteger(userId) || userId <= 0 || !chargeKey || chargeKey.length > 120)
+    throw new Error("扣费查询身份无效");
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return findChargeByKey(db, userId, chargeKey);
+}
+
 /**
  * 按固定数额扣费（用于放大等 = 基准单价 × 倍率的场景）。
  * opts.chargeKey：幂等扣费键——写进 stripe_usage_logs 唯一索引列，与余额 UPDATE

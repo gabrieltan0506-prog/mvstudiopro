@@ -109,14 +109,28 @@ export async function reapStaleJobsOnce(
       }
     }
 
+    // 全页阅读依赖逐批原始回执恢复：失活只改终态，永久保留任务input/output。
+    // 运行中按真实心跳判断；串行全书可能耗时数小时，排队至少保留12小时。
+    await db.update(jobs).set({
+      status: "failed",
+      error: "文档阅读已停止或排队超时，原页证据与任务记录保留；请核对原任务，未自动重复购买",
+      updatedAt: new Date(),
+    }).where(and(
+      eq(jobs.type, "platform"), sql`${jobs.input}::jsonb->>'action' in ('knowledge_card_reading', 'knowledge_card_edition')`,
+      or(
+        and(eq(jobs.status, "running"), lt(jobs.updatedAt, runCutoff)),
+        and(eq(jobs.status, "queued"), lt(jobs.createdAt, wallCutoffSql(Math.max(qMin, 12 * 60)))),
+      ),
+    ));
+
     // 漫剧学习与配乐都有持久检查点/上游 taskId 恢复。创作顾问 running 行还承担
     // 成功结果与退款 CAS 证据，必须交给 paidJobLedger 的专用回收器，不能先删。
     const nonRecoverableRunningJob = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
-      'manhua_template_learn', 'manhua_bgm_v55', 'manhua_advisor_qa', 'manhua_assemble_final', 'canvas_dialogue_line'
+      'manhua_template_learn', 'manhua_bgm_v55', 'manhua_advisor_qa', 'manhua_assemble_final', 'canvas_dialogue_line', 'knowledge_card_reading', 'knowledge_card_edition'
     )`;
     // 尚未付费确认的顾问 queued 占位没有扣分；过期后仍按通用规则清理，避免永久堆积。
     const nonRecoverableQueuedJob = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
-      'manhua_template_learn', 'manhua_bgm_v55', 'manhua_assemble_final'
+      'manhua_template_learn', 'manhua_bgm_v55', 'manhua_assemble_final', 'knowledge_card_reading', 'knowledge_card_edition'
     )`;
     const runningRows = await db
       .delete(jobs)

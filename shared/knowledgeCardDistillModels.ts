@@ -1,8 +1,6 @@
 /**
- * 图文卡提炼/OCR 模型（四选一，无主备层级）。
- * - Anthropic Claude Opus 5（档名「超凡」，前台不露模型名）
+ * 图文卡提炼/OCR 仅保留精细、轻量两档；历史模型与价格继续用于账本识别。
  * - Evolink GPT-5.6 Sol
- * - OpenRouter Kimi K3
  * - Evolink Qwen3.8 Max
  *
  * 页费含提炼/OCR+出图；按模型上游成本差异定档（成本约 ×1.65，相对旧 25 不涨太多）。
@@ -41,8 +39,8 @@ export const KNOWLEDGE_CARD_PAGE_CREDITS_BY_MODEL = {
  * 提炼费（一次性，与页费分开收）。
  *
  * 只在**纯文本且超过 `KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS`** 时向用户明示并收取：
- * 这种情形下提炼是「花小钱省大钱」——1 万字直接出图要 9 页 264 积分且整套降到 2K，
- * 提炼后落到 4 页 120 积分且保住 4K，付 50 仍净省近百。上传文档的路径不收，
+ * 这种情形下提炼是「花小钱省大钱」——1 万字直接出图要 9 页 264 积分，
+ * 提炼后落到 4 页 120 积分，两种方式都输出4K，付 50 仍净省近百。上传文档的路径不收，
  * 那里提炼是抽文的必要环节、成本已含在页费里。
  *
  * 三档价差对齐页费的档位语言（轻量最便宜、精细最贵），与上游成本方向一致。
@@ -60,19 +58,9 @@ export function knowledgeCardDistillFeeForModel(raw?: string | null): number {
 
 export const KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS = [
   {
-    id: KNOWLEDGE_CARD_DISTILL_MODEL_CLAUDE,
-    labelZh: "提炼·超凡",
-    creditsFull: KNOWLEDGE_CARD_PAGE_CREDITS_BY_MODEL[KNOWLEDGE_CARD_DISTILL_MODEL_CLAUDE].full,
-  },
-  {
     id: KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
     labelZh: "提炼·精细",
     creditsFull: KNOWLEDGE_CARD_PAGE_CREDITS_BY_MODEL[KNOWLEDGE_CARD_DISTILL_MODEL_SOL].full,
-  },
-  {
-    id: KNOWLEDGE_CARD_DISTILL_MODEL_KIMI,
-    labelZh: "提炼·均衡",
-    creditsFull: KNOWLEDGE_CARD_PAGE_CREDITS_BY_MODEL[KNOWLEDGE_CARD_DISTILL_MODEL_KIMI].full,
   },
   {
     id: KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
@@ -81,7 +69,21 @@ export const KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS = [
   },
 ] as const;
 
-export type KnowledgeCardDistillModelId = (typeof KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS)[number]["id"];
+/** 历史模型身份供回执和积分计算使用，不代表允许新请求。 */
+export type KnowledgeCardDistillModelId = keyof typeof KNOWLEDGE_CARD_PAGE_CREDITS_BY_MODEL;
+export const KNOWLEDGE_CARD_ACTIVE_DISTILL_MODELS = [
+  KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
+  KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
+] as const;
+export type ActiveKnowledgeCardDistillModelId = (typeof KNOWLEDGE_CARD_ACTIVE_DISTILL_MODELS)[number];
+
+/** 将界面偏好归一到现行两档；旧下架档位任务由prepare入口拒绝，不改写历史账本。 */
+export function resolveActiveKnowledgeCardDistillModel(raw?: string | null): ActiveKnowledgeCardDistillModelId {
+  const historical = resolveKnowledgeCardDistillModel(raw);
+  return historical === KNOWLEDGE_CARD_DISTILL_MODEL_QWEN
+    ? KNOWLEDGE_CARD_DISTILL_MODEL_QWEN
+    : KNOWLEDGE_CARD_DISTILL_MODEL_SOL;
+}
 
 export function isKnowledgeCardDistillEvolinkModel(modelId?: string | null): boolean {
   const v = String(modelId || "").trim();
