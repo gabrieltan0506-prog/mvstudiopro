@@ -511,6 +511,35 @@ export function splitKnowledgeCardMarkdown(scriptContext: string): { upper: stri
 }
 
 /**
+ * 本页正文切片的唯一真源：出图提示词与路由侧「参考原页」解析都从这里取，保证同一页同一切片。
+ */
+export function resolveKnowledgeCardPageSource(
+  scriptContext: string,
+  opts: { notePart?: KnowledgeCardNotePart; notePageIndex?: number; notePageTotal?: number },
+):
+  | { mode: "page"; source: string; idx: number; total: number; isLast: boolean }
+  | { mode: "part"; source: string }
+  | { mode: "single"; source: string }
+  | { mode: "whole"; source: string } {
+  const plan = planKnowledgeCardPages(scriptContext);
+  // 未分页的兜底路径同样要剥内部约束，否则整页会画成手法卡说明书
+  const whole = stripKnowledgeCardInternalDirectives(String(scriptContext || ""));
+  const pageIndex = Number(opts.notePageIndex);
+  if (Number.isFinite(pageIndex) && pageIndex >= 1 && plan.pages.length > 0) {
+    const total = Math.max(1, Number(opts.notePageTotal) || plan.pageCount || plan.pages.length);
+    const idx = Math.min(plan.pages.length, Math.max(1, Math.floor(pageIndex)));
+    return { mode: "page", source: plan.pages[idx - 1] || whole, idx, total, isLast: idx >= total || idx >= plan.pages.length };
+  }
+  if (opts.notePart === "upper" || opts.notePart === "lower") {
+    // 旧客户端：映射到第 1 / 2 页语义
+    const split = splitKnowledgeCardMarkdown(scriptContext);
+    return { mode: "part", source: opts.notePart === "upper" ? split.upper : split.lower };
+  }
+  if (plan.pages.length === 1) return { mode: "single", source: plan.pages[0]! };
+  return { mode: "whole", source: whole };
+}
+
+/**
  * **单页连贯图文知识卡片**：中文 directive + 分页指令 + Markdown 切片 + 英文渲染外壳。
  * 出图走 OpenRouter GPT-Image-2（调用方强制），不经英文翻译。
  */
@@ -521,34 +550,23 @@ export function buildSinglePageKnowledgeCardImagePrompt(
   const opts: KnowledgeCardPromptPaging =
     paging === "upper" || paging === "lower" ? { notePart: paging } : paging && typeof paging === "object" ? paging : {};
 
-  const plan = planKnowledgeCardPages(scriptContext);
-
-  // 未分页的兜底路径同样要剥内部约束，否则整页会画成手法卡说明书
-  let source = stripKnowledgeCardInternalDirectives(String(scriptContext || ""));
+  const resolved = resolveKnowledgeCardPageSource(scriptContext, opts);
+  const source = resolved.source;
   let partDirective = `\n【收尾】本页不生成诗词、金句或书法点睛横幅；版面全部用于知识点模块。`;
 
-  const pageIndex = Number(opts.notePageIndex);
-  if (Number.isFinite(pageIndex) && pageIndex >= 1 && plan.pages.length > 0) {
-    const total = Math.max(1, Number(opts.notePageTotal) || plan.pageCount || plan.pages.length);
-    const idx = Math.min(plan.pages.length, Math.max(1, Math.floor(pageIndex)));
-    source = plan.pages[idx - 1] || source;
-    const isLast = idx >= total || idx >= plan.pages.length;
+  if (resolved.mode === "page") {
+    const { idx, total, isLast } = resolved;
     partDirective = `\n【分页】本页是该主题图文笔记的第 ${idx}/${total} 页。请在文档大标题末尾追加「（第 ${idx}/${total} 页）」；**只**呈现下方本页切片，把切片里的每个小节都做成版面上的一个模块（分栏铺排、信息密度高、不要画其他页内容）。\n${
       isLast
         ? "【收尾·末页】可选生成 **一句** 短诗词或书法点睛横幅收束全文（不要长诗占版）；也可不写诗词。"
         : "【收尾】本页不要生成诗词或书法点睛横幅；底部版面留给知识点模块。"
     }`;
-  } else if (opts.notePart === "upper" || opts.notePart === "lower") {
-    // 旧客户端：映射到第 1 / 2 页语义
-    const split = splitKnowledgeCardMarkdown(scriptContext);
-    source = opts.notePart === "upper" ? split.upper : split.lower;
+  } else if (resolved.mode === "part") {
     const label = opts.notePart === "upper" ? "上篇" : "下篇";
     partDirective =
       opts.notePart === "upper"
         ? `\n【分页·兼容】本页标注「（${label}）」。只呈现下方切片；分栏铺排、模块整齐；不要诗词横幅。`
         : `\n【分页·兼容】本页标注「（${label}）」。只呈现下方切片；分栏铺排、模块整齐。\n【收尾】可选一句短诗词点睛，勿占满版。`;
-  } else if (plan.pages.length === 1) {
-    source = plan.pages[0];
   }
 
   // 「〔参考原页 …〕」标记只供服务端定位参考图，不得印到卡片上
