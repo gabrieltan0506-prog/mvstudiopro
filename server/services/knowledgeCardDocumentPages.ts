@@ -230,8 +230,8 @@ export async function prepareKnowledgeCardDocumentPages(params: {
   });
 }
 
-/** 「参考原页」标记：`〔参考原页 {docKey}:p41,p161〕`，模型在小节末尾写，出图时解析。 */
-export const KNOWLEDGE_CARD_PAGE_REF_PATTERN = /〔参考原页\s+([0-9a-f]{16}):((?:p\d+)(?:\s*[,，、]\s*p\d+)*)〕/g;
+import { KNOWLEDGE_CARD_PAGE_REF_PATTERN, stripKnowledgeCardPageRefs } from "../../shared/knowledgeCardPageRefs.js";
+export { KNOWLEDGE_CARD_PAGE_REF_PATTERN, stripKnowledgeCardPageRefs };
 
 export type KnowledgeCardPageRef = { docKey: string; pageNumber: number };
 
@@ -250,15 +250,6 @@ export function parseKnowledgeCardPageRefs(text: string): KnowledgeCardPageRef[]
     }
   }
   return out;
-}
-
-/** 去掉标记，正文不带它印到图上。 */
-export function stripKnowledgeCardPageRefs(text: string): string {
-  return String(text || "")
-    .replace(KNOWLEDGE_CARD_PAGE_REF_PATTERN, "")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
 }
 
 export function formatKnowledgeCardPageRef(docKey: string, pageNumbers: number[]): string {
