@@ -7903,7 +7903,6 @@ export default function PlatformPage() {
   /** 自定義文案生成圖文筆記 — 獨立 mutation；回呼留空，全部流程在 handler 以 mutateAsync 串接控制。 */
   const generateCustomNoteMutation = trpc.mvAnalysis.generatePlatformCompositeSheet.useMutation();
   const prepareKnowledgeCardCopyMutation = trpc.mvAnalysis.prepareKnowledgeCardCopy.useMutation();
-  const extractPlatformDocumentTextMutation = trpc.mvAnalysis.extractPlatformDocumentText.useMutation();
   const optimizeCustomCopyMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
   const customOptimizeCopyCost = CREDIT_COSTS.platformOptimizeCustomCopy;
   const customNoteKnowledgePlan = useMemo(
@@ -7925,7 +7924,7 @@ export default function PlatformPage() {
     /** 纯文本长文里用户主动买的提炼，服务端据此收提炼费 */
     chargeDistillFee?: boolean;
   }): Promise<string> => {
-    setCustomNoteProgress({ status: "running", percent: 1, label: "提交提炼任务…" });
+    setCustomNoteProgress((prev) => ({ status: "running", percent: Math.max(prev.status === "running" ? prev.percent : 0, 1), label: "提交提炼任务…" }));
     const queued = await prepareKnowledgeCardCopyMutation.mutateAsync({
       sourceText: args.sourceText,
       files: args.files?.length ? args.files : undefined,
@@ -8152,9 +8151,10 @@ export default function PlatformPage() {
           setCustomNoteUploadStatus(null);
           setCustomNoteDistillPhase("ready");
           await new Promise<void>((r) => requestAnimationFrame(() => r()));
-        } else if (distilled.length > KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS) {
+        } else if (customNoteDistillPhase !== "ready" && distilled.length > KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS) {
           /**
-           * 纯文本长文：先把「提炼 vs 直接出图」的账摆给用户看。
+           * 纯文本长文（本轮尚未提炼过；上传路径已提炼的稿子直接进出图确认，不二次提炼、不二次收费、不丢〔参考原页〕标记）：
+           * 先把「提炼 vs 直接出图」的账摆给用户看。
            * 一万字直接出图要 9 页 264 积分；花提炼费换成 4 页 120 积分。默认劝提炼，但省不回本时不打扰。
            */
           const tradeoff = estimateKnowledgeCardDistillTradeoff(
@@ -15080,6 +15080,7 @@ export default function PlatformPage() {
                           try {
                             const encoded: KnowledgeCardPendingFile[] = [];
                             for (const file of list) {
+                              const doneFiles = encoded.length;
                               const mimeType = file.type || (/\.epub$/i.test(file.name) ? "application/epub+zip" : "application/octet-stream");
                               // 不论大小一律 GCS 直传（0908 用户令；媒体传输铁律禁止 base64 塞请求体）
                               {
@@ -15092,7 +15093,8 @@ export default function PlatformPage() {
                                     setCustomNoteUploadStatus(text);
                                     const pct = Number(/(\d{1,3})%/.exec(text)?.[1]);
                                     // 上传占总进度 0–5%（提炼任务 5–60，出图 60–100）
-                                    if (Number.isFinite(pct)) setCustomNoteProgress({ status: "running", percent: Math.round(pct * 0.05), label: `上传 ${file.name} ${pct}%` });
+                                    // 多文件按 (已传完数 + 本文件进度) / 总数 折算到 0–5%，不倒退
+                                    if (Number.isFinite(pct)) setCustomNoteProgress({ status: "running", percent: Math.round(((doneFiles + pct / 100) / list.length) * 5), label: `上传 ${file.name}（${doneFiles + 1}/${list.length}）${pct}%` });
                                   },
                                   label: `${file.name}（${mb}MB）`,
                                 });

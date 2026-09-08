@@ -291,18 +291,17 @@ export async function resolveKnowledgeCardReferencePageUrls(params: {
       const url = signGsUriV4ReadUrl(`gs://${getGcsBucketName()}/${objectName}`, 3600);
       try {
         // V4 签名绑定 GET 动词，HEAD 会 SignatureDoesNotMatch；用 GET + Range 只取 1 字节判存在
-        const res = await fetch(url, { method: "GET", headers: { Range: "bytes=0-0" }, signal: AbortSignal.timeout(15_000) });
+        const res = await fetch(url, { method: "GET", headers: { Range: "bytes=0-0" }, signal: AbortSignal.timeout(5_000) });
         await res.arrayBuffer().catch(() => undefined);
         return res.status === 200 || res.status === 206 ? url : null;
       } catch {
         return null;
       }
     });
+  // 并行探测（同步 HTTP 段内调用，最坏一次 5s）
+  const signed = await Promise.all(refs.map((ref) => signIfExists(knowledgeCardPageObjectName(params.userId, ref.docKey, ref.pageNumber))));
   const out: Array<{ docKey: string; pageNumber: number; url: string }> = [];
-  for (const ref of refs) {
-    const url = await signIfExists(knowledgeCardPageObjectName(params.userId, ref.docKey, ref.pageNumber));
-    if (url) out.push({ ...ref, url });
-  }
+  refs.forEach((ref, i) => { if (signed[i]) out.push({ ...ref, url: signed[i]! }); });
   return out;
 }
 
