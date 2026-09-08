@@ -307,6 +307,12 @@ async function mapWithPool<T, R>(items: T[], pool: number, fn: (item: T, index: 
 /** 平台批量/单帧封面参考：写入 user_creations，供免扣补发时 failedJobId 校验 */
 const PLATFORM_TOPIC_FRAME_TYPE = "platform_topic_frame";
 
+/**
+ * 知识卡导出 PDF 的每用户节流台账（进程内；单实例足够挡住误点/脚本连打）。
+ * 判定逻辑在 services/knowledgeCardPdfExport.ts 的 checkKnowledgeCardExportRate（纯函数，可单测）。
+ */
+const knowledgeCardPdfExportHits = new Map<number, number[]>();
+
 function parseUserCreationMetadata(raw: string | null | undefined): Record<string, unknown> {
   if (!raw) return {};
   try {
@@ -8124,14 +8130,23 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         };
       }),
 
-    /** 知识卡整套导出 PDF：本桶成品图归一 3840×2160 拼 PDF 落 GCS，返回签名链（不扣积分）。 */
+    /**
+     * 知识卡整套导出 PDF：本桶**本人**成品图归一 3840×2160 拼 PDF 落 GCS，返回签名链（不扣积分）。
+     * 无积分闸门 + 单次最多 200 张 4K sharp 重编码 → 每用户每分钟 2 次进程内节流。
+     */
     exportKnowledgeCardPdf: protectedProcedure
       .input(z.object({
         imageUrls: z.array(z.string().min(1).max(4096)).min(1).max(200),
         title: z.string().max(200).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const { exportKnowledgeCardPdfToGcs } = await import("./services/knowledgeCardPdfExport.js");
+        const { exportKnowledgeCardPdfToGcs, checkKnowledgeCardExportRate, KNOWLEDGE_CARD_EXPORT_RATE_MESSAGE } =
+          await import("./services/knowledgeCardPdfExport.js");
+        const gate = checkKnowledgeCardExportRate(knowledgeCardPdfExportHits.get(ctx.user.id), Date.now());
+        knowledgeCardPdfExportHits.set(ctx.user.id, gate.history);
+        if (!gate.allowed) {
+          throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: KNOWLEDGE_CARD_EXPORT_RATE_MESSAGE });
+        }
         const result = await exportKnowledgeCardPdfToGcs({ userId: ctx.user.id, imageUrls: input.imageUrls, title: input.title });
         return { success: true as const, ...result };
       }),
@@ -8762,6 +8777,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 kind: input.kind,
                 title: input.title,
                 scriptContext: enrichedCompositeScriptContext,
+                userId,
                 isTrial,
                 executionDetails: input.executionDetails,
                 shootingTechniqueBrief: input.shootingTechniqueBrief,
@@ -8849,6 +8865,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             kind: input.kind,
             title: input.title,
             scriptContext: enrichedCompositeScriptContext,
+            userId,
             isTrial,
             executionDetails: input.executionDetails,
             shootingTechniqueBrief: input.shootingTechniqueBrief,

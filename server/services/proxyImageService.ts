@@ -1505,6 +1505,11 @@ export async function generatePlatformCompositeSheetImage(options: {
   kind: PlatformCompositeSheetKind;
   title: string;
   scriptContext: string;
+  /**
+   * 下单用户 id：仅用于成品落盘分目录（知识卡 → `generated/platform_knowledge_card/u{userId}/`），
+   * 供导出 PDF 时按对象名前缀校验归属；不参与任何出图请求体。
+   */
+  userId?: number;
   isTrial?: boolean;
   executionDetails?: string;
   /** 上传素材拍摄手法摘要（景别/布光/走位等），并入中文脚本约束 */
@@ -1582,10 +1587,14 @@ export async function generatePlatformCompositeSheetImage(options: {
   if (!isStoryboard && !isXhs && !isKnowledgeCard) {
     throw new Error(`Unsupported sheet kind: ${String(k)}`);
   }
+  // 知识卡成品按用户分目录落盘：导出 PDF 只放行 `u{userId}/` 前缀，杜绝猜到对象名换他人签名链
+  const knowledgeCardOwnerId = Number.isSafeInteger(options.userId) && Number(options.userId) > 0
+    ? Number(options.userId)
+    : null;
   const subdir = isStoryboard
     ? "platform_storyboard_sheet"
     : isKnowledgeCard
-      ? "platform_knowledge_card"
+      ? (knowledgeCardOwnerId ? `platform_knowledge_card/u${knowledgeCardOwnerId}` : "platform_knowledge_card")
       : "platform_xhs_dual";
   const referencePhotoUrlEarly = String(options.referencePhotoUrl || "").trim() || undefined;
   // 知识卡原稿参考页：只借版式结构，不走人像换脸指令
