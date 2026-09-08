@@ -131,7 +131,10 @@ export async function invokeKnowledgeReadingJson(input: KnowledgeReadingCall): P
   // 官方失败回执不短路，主通道恢复健康后仍可用。
   if (canFallback) {
     const official = await readKnowledgeReadingJson<ReadingReply>(`${input.objectPrefix}/official-fallback/raw.json`);
-    if (official && official.status >= 200 && official.status < 300) return officialFallback();
+    // 只有能解析的官方回执才短路；截断/空内容/HTML 等不可用回执不锁死主通道。
+    if (official && official.status >= 200 && official.status < 300) {
+      try { return parseReadingReply(official, input.model); } catch { /* 官方回执不可用，继续走主通道 */ }
+    }
   }
   let reply: ReadingReply;
   try {
@@ -167,5 +170,12 @@ export async function invokeKnowledgeReadingJson(input: KnowledgeReadingCall): P
     markEvolinkUnavailable(input.channelScope);
     return officialFallback();
   }
-  return parseReadingReply(reply, input.model);
+  try {
+    return parseReadingReply(reply, input.model);
+  } catch (error) {
+    // 主通道 2xx 但截断/空内容/档位不符：坏回执已永久保留，不再打同一通道；Sol 改走官方同模型一次，
+    // 否则该批在确定性前缀下永远读不完。这不是通道故障，不进入避让。
+    if (canFallback && reply.status >= 200 && reply.status < 300) return officialFallback();
+    throw error;
+  }
 }

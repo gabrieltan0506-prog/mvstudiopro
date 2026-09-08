@@ -7,7 +7,7 @@ import { invokeKnowledgeReadingJson, knowledgeReadingModelMatches, resetKnowledg
 const input = { objectPrefix: "test/reading", model: "gpt-5.6-sol" as const, system: "测试阅读", text: "测试原页" };
 const envelope = (finish = "stop", content = '{"ok":true}') => JSON.stringify({ model: input.model, choices: [{ finish_reason: finish, message: { content } }] });
 describe("阅读网关不可重复购买与完整性", () => {
-  beforeEach(() => { vi.resetAllMocks(); resetKnowledgeReadingChannelMemory(); mocks.official.mockReturnValue({ gateway: "openai_official", apiUrl: "https://api.openai.com/v1/chat/completions", apiKey: "test-official-key", modelName: input.model }); mocks.read.mockResolvedValue(null); mocks.save.mockResolvedValue({}); mocks.claim.mockResolvedValue(true); mocks.key.mockReturnValue("test-key"); vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(envelope()))); });
+  beforeEach(() => { vi.resetAllMocks(); resetKnowledgeReadingChannelMemory(); mocks.official.mockReturnValue({ gateway: "openai_official", apiUrl: "https://api.openai.com/v1/chat/completions", apiKey: "test-official-key", modelName: input.model }); mocks.read.mockResolvedValue(null); mocks.save.mockResolvedValue({}); mocks.claim.mockResolvedValue(true); mocks.key.mockReturnValue("test-key"); vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => new Response(envelope()))); });
   afterEach(() => vi.unstubAllGlobals());
   it("保存原始响应后才解析，并保留超过40张的全部输入图片", async () => {
     const images = Array.from({ length: 45 }, (_, i) => ({ pageId: `p${i + 1}`, url: `https://example.invalid/${i + 1}.png` }));
@@ -237,5 +237,27 @@ describe("阅读网关不可重复购买与完整性", () => {
     expect(store.objects.get(`${input.objectPrefix}/official-fallback/raw.json`).status).toBe(429);
     await invokeKnowledgeReadingJson({ ...input, model: "qwen3.8-max" }).catch(() => {});
     expect(mocks.official).not.toHaveBeenCalled();
+  });
+  it("官方回执 2xx 但截断时不短路主通道；主通道 2xx 截断时 Sol 改走官方一次，Qwen 保留坏回执不重买", async () => {
+    const store = persistent();
+    store.objects.set(`${input.objectPrefix}/official-fallback/raw.json`, { status: 200, body: envelope("length"), receivedAt: "早先" });
+    expect(await invokeKnowledgeReadingJson(input)).toEqual({ ok: true });
+    expect(vi.mocked(fetch).mock.calls.map(call => call[0])).toEqual(["https://direct.evolink.ai/v1/chat/completions"]);
+    const truncated = persistent();
+    vi.mocked(fetch).mockClear();
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(envelope("length"))).mockImplementation(async () => new Response(envelope()));
+    expect(await invokeKnowledgeReadingJson({ ...input, objectPrefix: "test/trunc" })).toEqual({ ok: true });
+    expect(vi.mocked(fetch).mock.calls.map(call => call[0])).toEqual(["https://direct.evolink.ai/v1/chat/completions", "https://api.openai.com/v1/chat/completions"]);
+    expect(JSON.parse(truncated.objects.get("test/trunc/raw.json").body).choices[0].finish_reason).toBe("length");
+    expect(truncated.objects.has("test/trunc/transport-error.json")).toBe(false);
+    vi.mocked(fetch).mockClear();
+    expect(await invokeKnowledgeReadingJson({ ...input, objectPrefix: "test/trunc" })).toEqual({ ok: true });
+    expect(fetch).not.toHaveBeenCalled();
+    const officialCalls = mocks.official.mock.calls.length;
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(envelope("length").replace(input.model, "qwen3.8-max")));
+    await expect(invokeKnowledgeReadingJson({ ...input, objectPrefix: "test/trunc-qwen", model: "qwen3.8-max" })).rejects.toThrow("未完整返回");
+    expect(mocks.official).toHaveBeenCalledTimes(officialCalls);
+    await expect(invokeKnowledgeReadingJson({ ...input, objectPrefix: "test/trunc-qwen", model: "qwen3.8-max" })).rejects.toThrow("未完整返回");
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
