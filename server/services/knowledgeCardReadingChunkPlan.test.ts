@@ -130,6 +130,8 @@ describe("全书证据分批规划协调器", () => {
     expect(allocateCondenseTargets([10, 10], 4)).toEqual([2, 2]);
     expect(allocateCondenseTargets([9, 1, 30], 5)).toEqual([1, 1, 3]);
     expect(allocateCondenseTargets([3, 3, 3], 8)).toEqual([3, 3, 2]);
+    expect(allocateCondenseTargets([1, 1, 100], 4)).toEqual([1, 1, 2]);
+    expect(allocateCondenseTargets([50, 1, 1, 1], 5)).toEqual([2, 1, 1, 1]);
     expect(() => allocateCondenseTargets([5, 5, 5, 5, 5], 4)).toThrow("提高预算或目标页数");
     expect(() => allocateCondenseTargets([2, 2], 4)).toThrow("无需合并");
   });
@@ -138,6 +140,8 @@ describe("全书证据分批规划协调器", () => {
       (raw: any) => { raw.pages[0].mergedFrom.pop(); },
       (raw: any) => { raw.pages[1].mergedFrom.push(raw.pages[0].mergedFrom[0]); },
       (raw: any) => { raw.pages.pop(); },
+      (raw: any) => { raw.pages[0].mergedFrom.push("other-group-page"); },
+      (raw: any) => { raw.pages[0].mergedFrom.push(raw.pages[0].mergedFrom[0]); },
     ]) {
       const f = fixture(); const original = f.invoke.getMockImplementation()!;
       await planKnowledgeCardReadingChunks(f.input);
@@ -174,5 +178,11 @@ describe("全书证据分批规划协调器", () => {
     await expect(planKnowledgeCardReadingChunks({ ...f.input, storage: { ...f.input.storage, read: async () => { throw new Error("读取失败"); } } })).rejects.toThrow("读取失败");
     expect(f.invoke).not.toHaveBeenCalled();
     await expect(planKnowledgeCardReadingChunks({ ...f.input, storage: { ...f.input.storage, write: async () => { throw new Error("保存失败"); } } })).rejects.toThrow("保存失败");
+  });
+  it("组数多于目标页数时放弃合并交给报价，不让整次规划失败；规划调用透传避让范围", async () => {
+    const f = fixture(evidence(400));
+    const plan = await planKnowledgeCardReadingChunks({ ...f.input, channelScope: "scope-1", constraints: { targetPages: 4 } });
+    expect(plan.options.find(option => option.mode === "concise")!.pages.length).toBeGreaterThan(4);
+    expect(f.invoke.mock.calls.every(([call]) => JSON.parse(call.text).targetPages === undefined && (call as any).channelScope === "scope-1")).toBe(true);
   });
 });

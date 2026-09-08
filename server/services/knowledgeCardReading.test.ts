@@ -93,6 +93,30 @@ describe("全页精读到报价的实际服务链", () => {
     expect(Array.from(mocks.objects.keys()).some(key => key.endsWith("/analysis.json"))).toBe(false);
     delete process.env.KNOWLEDGE_CARD_READING_BATCH_CONCURRENCY;
   });
+  it("中途中止或超限页时先等在途批收尾并落回执，不留脱管写入；规划调用带同一避让范围", async () => {
+    mocks.count = 40; process.env.KNOWLEDGE_CARD_READING_BATCH_CONCURRENCY = "4";
+    const original = mocks.invoke.getMockImplementation()!;
+    let settled = 0;
+    const controller = new AbortController();
+    mocks.invoke.mockImplementation(async (call: any) => {
+      const data = JSON.parse(call.text);
+      if (!Array.isArray(data)) return original(call);
+      try {
+        if (data[0].pageNumber === 9) controller.abort(new Error("用户停止"));
+        await new Promise(resolve => setTimeout(resolve, 10));
+        if (call.signal?.aborted) throw call.signal.reason;
+        return original(call);
+      } finally { settled++; }
+    });
+    await expect(analyzeKnowledgeCardDocuments(input, undefined, controller.signal)).rejects.toThrow("用户停止");
+    const launched = mocks.invoke.mock.calls.length;
+    expect(settled).toBe(launched);
+    expect(launched).toBeLessThanOrEqual(5);
+    mocks.objects.clear(); mocks.invoke.mockClear(); mocks.invoke.mockImplementation(original); mocks.count = 9;
+    await analyzeKnowledgeCardDocuments(input);
+    expect(mocks.invoke.mock.calls.every(([call]) => typeof call.channelScope === "string" && call.channelScope.includes("/visual-reading-v1/"))).toBe(true);
+    delete process.env.KNOWLEDGE_CARD_READING_BATCH_CONCURRENCY;
+  });
   it("超过五万字的真实文字原件完整进入阅读段并可恢复，不当单张物理页拒绝", async () => {
     mocks.usePhysical = true;
     const text = "a".repeat(11999) + "😀条件与机制\n" + "原文尾段 ".repeat(14000);

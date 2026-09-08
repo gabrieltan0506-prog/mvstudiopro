@@ -4,7 +4,7 @@ import { KNOWLEDGE_CARD_DISTILL_MODEL_QWEN, KNOWLEDGE_CARD_DISTILL_MODEL_SOL, ty
 import { claimKnowledgeReadingCall, readKnowledgeReadingJson, saveKnowledgeReadingObject } from "./knowledgeCardReadingStore.js";
 
 type ReadingReply = { status: number; body: string; receivedAt: string };
-type ReadingTransportReceipt = { retryable: boolean; receivedAt: string; outcome: "unknown" };
+type ReadingTransportReceipt = { retryable: boolean; receivedAt: string; outcome: "unknown" | "avoided" };
 export type KnowledgeReadingCall = {
   objectPrefix: string;
   model: ActiveKnowledgeCardDistillModelId;
@@ -53,9 +53,13 @@ async function requestReadingChannelOnce(input: KnowledgeReadingCall, prefix: st
   const cached = await readKnowledgeReadingJson<ReadingReply>(`${prefix}/raw.json`);
   if (cached) return cached;
   const transport = await readKnowledgeReadingJson<ReadingTransportReceipt>(`${prefix}/transport-error.json`);
-  if (transport) throw new ReadingTransportError(transport.outcome === "unknown" && transport.retryable === true);
-  // 已有回执优先复用；只有真要发新请求时才因避让改走备用通道，不写占用、不写传输回执。
-  if (avoid) throw new ReadingChannelAvoidedError();
+  if (transport) throw new ReadingTransportError((transport.outcome === "unknown" && transport.retryable === true) || transport.outcome === "avoided");
+  // 已有回执优先复用；只有真要发新请求时才因避让改走备用通道。落一份「已避让」记号（不写占用），
+  // 进程重启或换实例恢复同任务时仍复用官方结果，不再回头购买主通道。
+  if (avoid) {
+    await saveKnowledgeReadingObject(`${prefix}/transport-error.json`, Buffer.from(JSON.stringify({ outcome: "avoided", retryable: true, receivedAt: new Date().toISOString() })));
+    throw new ReadingChannelAvoidedError();
+  }
   const target = resolveTarget();
   if (target.modelName !== input.model) throw new Error("备用通道模型与所选档位不一致，未提交请求");
   input.signal?.throwIfAborted();
@@ -70,8 +74,9 @@ async function requestReadingChannelOnce(input: KnowledgeReadingCall, prefix: st
     });
     reply = { status: response.status, body: await response.text(), receivedAt: new Date().toISOString() };
   } catch (error) {
-    const retryable = !input.signal?.aborted && isRetryableOpenAiGatewayError(error);
-    // 这是传输结果未知的本地回执，不伪造供应商 raw；不保存可能含凭证的异常详情。
+    // 中止属于我们这边切断传输，结果同样未知：本通道已占用不重发，但允许改走备用通道，
+    // 否则恢复同任务时该批永久卡在待对账。这是传输结果未知的本地回执，不伪造供应商 raw；不保存可能含凭证的异常详情。
+    const retryable = input.signal?.aborted ? true : isRetryableOpenAiGatewayError(error);
     await saveKnowledgeReadingObject(`${prefix}/transport-error.json`, Buffer.from(JSON.stringify({ outcome: "unknown", retryable, receivedAt: new Date().toISOString() })));
     if (input.signal?.aborted) throw error;
     throw new ReadingTransportError(retryable);

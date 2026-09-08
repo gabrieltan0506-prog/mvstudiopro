@@ -36,7 +36,9 @@ export type KnowledgeCardReadingChunkPlanInput = {
   model: KnowledgeCardReadingPlan["model"];
   constraints?: KnowledgeCardReadingConstraints;
   objectPrefix: string;
-  invoke: (input: { objectPrefix: string; text: string; system: string; model: KnowledgeCardReadingPlan["model"]; signal?: AbortSignal }) => Promise<unknown>;
+  invoke: (input: { objectPrefix: string; text: string; system: string; model: KnowledgeCardReadingPlan["model"]; signal?: AbortSignal; channelScope?: string }) => Promise<unknown>;
+  /** 通道避让范围，透传给invoke；规划段与阅读段共用同一记忆。 */
+  channelScope?: string;
   storage: { read: (path: string) => Promise<unknown | null>; write: (path: string, value: unknown) => Promise<unknown> };
   signal?: AbortSignal;
   /** 单次上下文预算，可用于测试；不是全书内容或页数上限。 */
@@ -118,22 +120,22 @@ export function resolveWholeBookCondenseTarget(
   return pageCounts.concise > desired ? desired : null;
 }
 
-/** 把全书目标页数按各组页数比例分配（最大余数法），每组至少1页、不超过该组现有页数。 */
+/** 把全书目标页数按各组页数比例分配：每组先保1页，余量按「配额−已分配」最大者逐页发放；每组不超过现有页数。 */
 export function allocateCondenseTargets(groupSizes: number[], target: number): number[] {
   const total = groupSizes.reduce((sum, size) => sum + size, 0);
   if (!groupSizes.length || groupSizes.some(size => !Number.isSafeInteger(size) || size < 1)) throw new Error("合并分组为空");
   if (!Number.isSafeInteger(target) || target < groupSizes.length) throw new Error("目标页数少于必要的合并分组数，无法在单次规划容量内合并；请提高预算或目标页数");
   if (target >= total) throw new Error("目标页数不少于现有页数，无需合并");
   const quotas = groupSizes.map(size => target * size / total);
-  const result = quotas.map(quota => Math.max(1, Math.floor(quota)));
-  let remaining = target - result.reduce((sum, value) => sum + value, 0);
-  if (remaining < 0) throw new Error("目标页数无法同时满足每组至少一页");
-  const order = quotas.map((quota, index) => ({ index, fraction: quota - Math.floor(quota) }))
-    .sort((a, b) => b.fraction - a.fraction || a.index - b.index);
-  for (let round = 0; remaining > 0; round++) {
-    const candidate = order[round % order.length]!;
-    if (result[candidate.index]! < groupSizes[candidate.index]!) { result[candidate.index]!++; remaining--; }
-    if (round > order.length * target) throw new Error("目标页数分配未收敛");
+  const result = groupSizes.map(() => 1);
+  for (let remaining = target - groupSizes.length; remaining > 0; remaining--) {
+    let best = -1;
+    for (let index = 0; index < groupSizes.length; index++) {
+      if (result[index]! >= groupSizes[index]!) continue;
+      if (best < 0 || quotas[index]! - result[index]! > quotas[best]! - result[best]!) best = index;
+    }
+    if (best < 0) throw new Error("目标页数分配未收敛");
+    result[best]!++;
   }
   return result;
 }
@@ -178,7 +180,7 @@ export async function planKnowledgeCardReadingChunks(input: KnowledgeCardReading
   async function request(path: string, text: string, system: string): Promise<unknown> {
     input.signal?.throwIfAborted();
     if (text.length > max) throw new Error("内部规划批次超过单次容量，未截断证据");
-    return input.invoke({ objectPrefix: path, text, system, model: input.model, signal: input.signal });
+    return input.invoke({ objectPrefix: path, text, system, model: input.model, signal: input.signal, channelScope: input.channelScope });
   }
   /** 验证通过才写checkpoint；写入的是可重新验证的原始结构，不是派生结果。 */
   async function checkpoint<T>(path: string, produce: () => Promise<unknown>, validate: (raw: unknown) => T, persist: (raw: unknown) => unknown): Promise<T> {
@@ -259,8 +261,9 @@ export async function planKnowledgeCardReadingChunks(input: KnowledgeCardReading
     const target = resolveWholeBookCondenseTarget(constraints, input.model, {
       concise: concise.pages.length, balanced: count("balanced"), complete: count("complete"),
     });
-    if (target !== null) {
-      const groups = groupBySize(concise.pages, max);
+    // 组数多于目标页数时单次容量内无法合并：放弃合并，交给报价如实显示差异，不让整次规划失败。
+    const groups = target === null ? [] : groupBySize(concise.pages, max);
+    if (target !== null && groups.length <= target) {
       const targets = allocateCondenseTargets(groups.map(group => group.length), target);
       const merged: Array<Omit<KnowledgeCardReadingPlanPage, "pageId">> = [];
       const omitted: string[] = [];
@@ -276,7 +279,7 @@ export async function planKnowledgeCardReadingChunks(input: KnowledgeCardReading
         await input.onProgress?.(batches.length + index + 1, batches.length + groups.length);
       }
       concise.pages = merged.map((page, index) => ({ ...page, pageId: `concise-p${index + 1}` }));
-      concise.reason = `${concise.reason}；已按全书${constraints.targetPages !== undefined ? "目标页数" : "预算"}合并为${target}页`;
+      concise.reason = `${concise.reason}；已按全书${constraints.targetPages !== undefined ? "目标页数" : "预算"}合并为${target}页，kept为合并前保留清单，实际取舍以omitted为准`;
       concise.omitted = await compactStatements([...concise.omitted, ...omitted], "omitted", "concise");
     }
   }

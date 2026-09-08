@@ -135,12 +135,12 @@ describe("阅读网关不可重复购买与完整性", () => {
     await expect(invokeKnowledgeReadingJson({ ...input, model: "qwen3.8-max" })).rejects.toThrow("未自动重复购买");
     expect(fetch).not.toHaveBeenCalled(); expect(mocks.official).not.toHaveBeenCalled();
   });
-  it("调用方主动中止不触发官方回退", async () => {
+  it("调用方主动中止时不立即触发官方回退，但回执标为可改走备用通道", async () => {
     const store = persistent(); const controller = new AbortController();
     vi.mocked(fetch).mockImplementationOnce(async () => { controller.abort(); throw new DOMException("test cancelled", "AbortError"); });
     await expect(invokeKnowledgeReadingJson({ ...input, signal: controller.signal })).rejects.toThrow();
     expect(fetch).toHaveBeenCalledTimes(1); expect(mocks.official).not.toHaveBeenCalled();
-    expect(store.objects.get(`${input.objectPrefix}/transport-error.json`).retryable).toBe(false);
+    expect(store.objects.get(`${input.objectPrefix}/transport-error.json`)).toMatchObject({ outcome: "unknown", retryable: true });
   });
   it("存524或未知传输回执失败时不越过证据门禁购买官方", async () => {
     persistent(); mocks.save.mockRejectedValue(new Error("测试持久化失败"));
@@ -163,7 +163,7 @@ describe("阅读网关不可重复购买与完整性", () => {
     expect(await invokeKnowledgeReadingJson({ ...input, channelScope: scope })).toEqual({ ok: true });
     expect(await invokeKnowledgeReadingJson({ ...input, objectPrefix: "test/reading-2", channelScope: scope })).toEqual({ ok: true });
     expect(vi.mocked(fetch).mock.calls.map(call => call[0])).toEqual(["https://api.evolink.ai/v1/chat/completions".replace("api.", "direct."), "https://api.openai.com/v1/chat/completions", "https://api.openai.com/v1/chat/completions"]);
-    expect(store.objects.has("test/reading-2/raw.json")).toBe(false); expect(store.objects.has("test/reading-2/transport-error.json")).toBe(false);
+    expect(store.objects.has("test/reading-2/raw.json")).toBe(false); expect(store.objects.get("test/reading-2/transport-error.json")).toMatchObject({ outcome: "avoided" });
     expect(store.claims.has("test/reading-2/claim.json")).toBe(false); expect(store.claims.has("test/reading-2/official-fallback/claim.json")).toBe(true);
     store.objects.set("test/reading-3/raw.json", { status: 200, body: envelope() });
     expect(await invokeKnowledgeReadingJson({ ...input, objectPrefix: "test/reading-3", channelScope: scope })).toEqual({ ok: true });
@@ -173,5 +173,31 @@ describe("阅读网关不可重复购买与完整性", () => {
     expect(vi.mocked(fetch).mock.calls[0]![0]).toBe("https://direct.evolink.ai/v1/chat/completions");
     await expect(invokeKnowledgeReadingJson({ ...input, objectPrefix: "test/reading-5", channelScope: scope, model: "qwen3.8-max" })).rejects.toThrow();
     expect(vi.mocked(fetch).mock.calls.at(-1)![0]).toBe("https://direct.evolink.ai/v1/chat/completions");
+  });
+  it("避让走官方后主通道前缀落「已避让」记号；清空进程记忆恢复同任务仍复用官方结果，不回头购买主通道", async () => {
+    const store = persistent();
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("测试524", { status: 524 })).mockImplementation(async () => new Response(envelope()));
+    const scope = "test/analysis";
+    await invokeKnowledgeReadingJson({ ...input, channelScope: scope });
+    await invokeKnowledgeReadingJson({ ...input, objectPrefix: "test/reading-2", channelScope: scope });
+    expect(store.objects.get("test/reading-2/transport-error.json")).toMatchObject({ outcome: "avoided", retryable: true });
+    resetKnowledgeReadingChannelMemory(); vi.mocked(fetch).mockClear();
+    expect(await invokeKnowledgeReadingJson({ ...input, objectPrefix: "test/reading-2", channelScope: scope })).toEqual({ ok: true });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(store.claims.has("test/reading-2/claim.json")).toBe(false);
+  });
+  it("调用方中止切断主通道请求：本通道占用不重发，但恢复时允许改走官方，不永久卡待对账", async () => {
+    const store = persistent();
+    const controller = new AbortController();
+    vi.mocked(fetch).mockImplementationOnce(async (_url, init) => new Promise((_resolve, reject) => { (init!.signal as AbortSignal).addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))); controller.abort(); }));
+    await expect(invokeKnowledgeReadingJson({ ...input, signal: controller.signal })).rejects.toThrow();
+    expect(store.objects.get(`${input.objectPrefix}/transport-error.json`)).toMatchObject({ outcome: "unknown", retryable: true });
+    vi.mocked(fetch).mockClear(); vi.mocked(fetch).mockImplementation(async () => new Response(envelope()));
+    expect(await invokeKnowledgeReadingJson(input)).toEqual({ ok: true });
+    expect(vi.mocked(fetch).mock.calls.map(call => call[0])).toEqual(["https://api.openai.com/v1/chat/completions"]);
+    expect(store.claims.has(`${input.objectPrefix}/official-fallback/claim.json`)).toBe(true);
+  });
+  it("快照名对 null/对象/含点号模型名都不误判", () => {
+    for (const bad of [null, {}, "gpt-5x6-sol-2026-07-09", "gpt-5.6-sol-2026-07-09x"]) expect(knowledgeReadingModelMatches(bad, "gpt-5.6-sol")).toBe(false);
   });
 });
