@@ -617,9 +617,9 @@ async function invokeDistillViaGateway(params: {
     key = getEvolinkApiKey();
     url = hasImages ? EVOLINK_CHAT_URL : EVOLINK_DIRECT_CHAT_URL;
     if (params.modelName === KNOWLEDGE_CARD_DISTILL_MODEL_QWEN) {
-      // Evolink Qwen：档位 low|medium|xhigh（无 max）；勿与 thinking_budget 同传
+      // Evolink Qwen：档位只认 low|medium|xhigh（无 high/max）；用户令不上 xhigh，high 映射为 medium
       body.enable_thinking = true;
-      body.reasoning_effort = params.effort;
+      body.reasoning_effort = params.effort === "high" || params.effort === "max" ? "medium" : params.effort;
       body.max_completion_tokens = DISTILL_MAX_TOKENS;
     } else {
       body.reasoning_effort = params.effort;

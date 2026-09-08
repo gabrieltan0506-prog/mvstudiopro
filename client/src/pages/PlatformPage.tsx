@@ -7907,14 +7907,17 @@ export default function PlatformPage() {
   const generateCustomNoteMutation = trpc.mvAnalysis.generatePlatformCompositeSheet.useMutation();
   const exportKnowledgeCardPdfMutation = trpc.mvAnalysis.exportKnowledgeCardPdf.useMutation();
   const [knowledgeCardPdfBusy, setKnowledgeCardPdfBusy] = useState(false);
+  const [knowledgeCardPdfUrl, setKnowledgeCardPdfUrl] = useState<string | null>(null);
   /** 整套导出 PDF：服务端归一尺寸拼页落 GCS，这里只拿签名链打开 */
   const downloadKnowledgeCardPdf = async (urls: string[]) => {
     if (!urls.length || knowledgeCardPdfBusy) return;
     setKnowledgeCardPdfBusy(true);
     try {
       const res = await exportKnowledgeCardPdfMutation.mutateAsync({ imageUrls: urls, title: extractInfographicSubjectFromUserCopy(customNoteText) });
-      window.open(res.url, "_blank", "noopener,noreferrer");
-      toast.success(`PDF 已生成（${res.pageCount} 页），已在新窗口打开`);
+      // 弹窗可能被浏览器拦截：同时把链接留在页面上可点
+      setKnowledgeCardPdfUrl(res.url);
+      const opened = window.open(res.url, "_blank", "noopener,noreferrer");
+      toast.success(opened ? `PDF 已生成（${res.pageCount} 页），已在新窗口打开` : `PDF 已生成（${res.pageCount} 页），点下方链接下载`);
     } catch (e) {
       toast.error(`PDF 导出失败：${String((e as { message?: string })?.message || "").slice(0, 120)}`);
     } finally {
@@ -15360,6 +15363,7 @@ export default function PlatformPage() {
                       setCustomNoteInfographicTemplateId(null);
                       setCustomNoteInfographicLabelZh(null);
                       setCustomNoteProgress({ status: "idle", percent: 0 });
+                      setKnowledgeCardPdfUrl(null);
                       customNotePendingFilesRef.current = [];
                       setCustomNotePendingMeta([]);
                       setCustomNoteUploadStatus(null);
@@ -15475,6 +15479,9 @@ export default function PlatformPage() {
                         <Download className="h-3.5 w-3.5" />
                         {knowledgeCardPdfBusy ? "正在合成 PDF…" : `整套下载 PDF（${customNoteImages.length} 页 · 统一 3840×2160）`}
                       </button>
+                      {knowledgeCardPdfUrl ? (
+                        <a href={knowledgeCardPdfUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-[#8cefff] underline">打开 / 下载 PDF</a>
+                      ) : null}
                       <span className="text-[11px] text-[#c9c0e6]/45">单张下载见各页右下角</span>
                     </div>
                   )}

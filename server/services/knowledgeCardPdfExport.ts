@@ -52,8 +52,9 @@ export async function normalizeKnowledgeCardPage(input: Buffer): Promise<Buffer>
     .toBuffer();
 }
 
-export async function buildKnowledgeCardPdf(pages: Buffer[]): Promise<Buffer> {
-  if (!pages.length) throw new Error("没有可导出的页面");
+/** 逐页取图→归一→写入 PDF，同一时刻内存里只有一页原图（19 页 4K 在 2 核机上不整批驻留） */
+export async function buildKnowledgeCardPdf(loadPage: Array<() => Promise<Buffer>>): Promise<Buffer> {
+  if (!loadPage.length) throw new Error("没有可导出的页面");
   const { width, height } = KNOWLEDGE_CARD_PDF_PAGE;
   const doc = new PDFDocument({ autoFirstPage: false, size: [width, height], margin: 0 });
   const chunks: Buffer[] = [];
@@ -62,8 +63,8 @@ export async function buildKnowledgeCardPdf(pages: Buffer[]): Promise<Buffer> {
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
   });
-  for (const page of pages) {
-    const jpeg = await normalizeKnowledgeCardPage(page);
+  for (const load of loadPage) {
+    const jpeg = await normalizeKnowledgeCardPage(await load());
     doc.addPage({ size: [width, height], margin: 0 });
     doc.image(jpeg, 0, 0, { width, height });
   }
@@ -81,15 +82,14 @@ export async function exportKnowledgeCardPdfToGcs(params: {
   const bucket = getGcsBucketName();
   const objectNames = params.imageUrls.map((u) => resolveKnowledgeCardImageObjectName(u, bucket));
   if (objectNames.some((n) => !n)) throw new Error("只能导出本平台生成的知识卡成品图");
-  const buffers: Buffer[] = [];
-  for (const objectName of objectNames as string[]) {
+  const loaders = (objectNames as string[]).map((objectName) => async () => {
     const res = await fetch(signGsUriV4ReadUrl(`gs://${bucket}/${objectName}`, 600), { signal: AbortSignal.timeout(120_000) });
     if (!res.ok) throw new Error(`读取成品图失败（${res.status}）`);
-    buffers.push(Buffer.from(await res.arrayBuffer()));
-  }
-  const pdf = await buildKnowledgeCardPdf(buffers);
+    return Buffer.from(await res.arrayBuffer());
+  });
+  const pdf = await buildKnowledgeCardPdf(loaders);
   const safeTitle = String(params.title || "知识卡").replace(/[^\w一-鿿-]+/g, "_").slice(0, 60);
   const objectName = `${KNOWLEDGE_CARD_IMAGE_PREFIX}pdf/u${params.userId}/${Date.now()}-${safeTitle}.pdf`;
   const uploaded = await uploadBufferToGcs({ objectName, buffer: pdf, contentType: "application/pdf" });
-  return { gcsUri: uploaded.gcsUri, url: signGsUriV4ReadUrl(uploaded.gcsUri, 7 * 24 * 3600), pageCount: buffers.length };
+  return { gcsUri: uploaded.gcsUri, url: signGsUriV4ReadUrl(uploaded.gcsUri, 7 * 24 * 3600), pageCount: loaders.length };
 }

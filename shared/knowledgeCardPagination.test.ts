@@ -74,6 +74,18 @@ describe("单页硬顶 1200 字（0908：超过会乱码/字糊）", () => {
   });
 });
 
+describe("分页不把 ## 标题与其「图：」行切开", () => {
+  it("heading is never the last line of a page", () => {
+    const secs = Array.from({ length: 12 }, (_, i) => `## 第${i + 1}节结论\n\n图：流程链 A→B→C\n\n- ${repeatBlock("要点", 330)}`);
+    const plan = planKnowledgeCardPages(secs.join("\n\n"));
+    for (const page of plan.pages) {
+      const lines = page.trim().split(/\n/).filter((l) => l.trim());
+      expect(/^##\s/.test(lines[lines.length - 1]!)).toBe(false);
+      expect(page.length).toBeLessThanOrEqual(KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE);
+    }
+  });
+});
+
 describe("〔参考原页〕标记不计入分页与页费", () => {
   it("strips markers before pagination so credits do not grow with reference markers", () => {
     const body = Array.from({ length: 6 }, (_, i) => `## 第${i + 1}节\n${repeatBlock("要点", 700)}`).join("\n\n");

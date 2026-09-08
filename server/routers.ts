@@ -8127,7 +8127,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
     /** 知识卡整套导出 PDF：本桶成品图归一 3840×2160 拼 PDF 落 GCS，返回签名链（不扣积分）。 */
     exportKnowledgeCardPdf: protectedProcedure
       .input(z.object({
-        imageUrls: z.array(z.string().min(1).max(4096)).min(1),
+        imageUrls: z.array(z.string().min(1).max(4096)).min(1).max(200),
         title: z.string().max(200).optional(),
       }))
       .mutation(async ({ input, ctx }) => {

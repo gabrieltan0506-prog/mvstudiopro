@@ -30,7 +30,7 @@ describe("knowledgeCardPdfExport", () => {
   it("builds a multi-page PDF", async () => {
     const a = await sharp({ create: { width: 3840, height: 2160, channels: 3, background: "#ffffff" } }).png().toBuffer();
     const b = await sharp({ create: { width: 1536, height: 1024, channels: 3, background: "#cccccc" } }).png().toBuffer();
-    const pdf = await buildKnowledgeCardPdf([a, b]);
+    const pdf = await buildKnowledgeCardPdf([async () => a, async () => b]);
     expect(pdf.subarray(0, 4).toString()).toBe("%PDF");
     expect((pdf.toString("latin1").match(/\/Type\s*\/Page[^s]/g) || []).length).toBe(2);
   }, 60_000);
