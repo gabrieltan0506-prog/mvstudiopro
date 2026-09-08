@@ -247,6 +247,7 @@ import {
 import {
   estimateKnowledgeCardDistillTradeoff,
   KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS,
+  knowledgeCardCreditsForPageIndex,
   knowledgeCardCreditsForPages,
   planKnowledgeCardPages,
 } from "@shared/knowledgeCardPagination";
@@ -7908,6 +7909,44 @@ export default function PlatformPage() {
   const exportKnowledgeCardPdfMutation = trpc.mvAnalysis.exportKnowledgeCardPdf.useMutation();
   const [knowledgeCardPdfBusy, setKnowledgeCardPdfBusy] = useState(false);
   const [knowledgeCardPdfUrl, setKnowledgeCardPdfUrl] = useState<string | null>(null);
+  /** 正在生成中的页序（0-based）：占位块显示「生成中」，补出按钮对在途页禁用，避免同一页重复扣费 */
+  const [knowledgeCardInflight, setKnowledgeCardInflight] = useState<number[]>([]);
+  const markInflight = (idx: number, on: boolean) => setKnowledgeCardInflight((cur) => (on ? (cur.includes(idx) ? cur : [...cur, idx]) : cur.filter((i) => i !== idx)));
+  /** 单页补出：只重出失败/缺失的那一页，按该页页费确认后扣费；不动其它页 */
+  const retryKnowledgeCardPage = async (idx: number) => {
+    if (customNoteBusy) { toast.info("上一个生成任务还在进行中，请稍候"); return; }
+    const total = customNoteImages.length;
+    const text = customNoteText.trim();
+    if (!text || idx < 0 || idx >= total) return;
+    if (knowledgeCardInflight.includes(idx)) { toast.info(`第 ${idx + 1} 页仍在生成中，请稍候`); return; }
+    const price = knowledgeCardCreditsForPageIndex(idx + 1, customNoteDistillModel);
+    if (!window.confirm(`补出第 ${idx + 1}/${total} 页，${price} 积分，是否继续？`)) return;
+    setCustomNoteBusy(true);
+    setCustomNoteError(null);
+    setKnowledgeCardPdfUrl(null);
+    setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(customNoteImages.filter(Boolean).length, total), label: `补出第 ${idx + 1}/${total} 页` });
+    markInflight(idx, true);
+    try {
+      const url = await generateCustomNoteOne(text, "single_page_knowledge_card", undefined, { index: idx + 1, total }, idx % 2 === 0 ? "evolink" : "openai");
+      setCustomNoteImages((current) => {
+        const next = current.slice();
+        next[idx] = url;
+        const ready = next.filter(Boolean).length;
+        setCustomNoteProgress(ready >= total ? { status: "succeeded", percent: 100 } : { status: "running", percent: knowledgeCardProgressFromRender(ready, total), label: `出图 ${ready}/${total} 页` });
+        return next;
+      });
+      toast.success(`第 ${idx + 1} 页已补出`);
+    } catch (e) {
+      const msg = mapCustomNoteError(e);
+      setCustomNoteError(msg);
+      setCustomNoteProgress((prev) => ({ status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
+      toast.error(`补出失败：${msg.slice(0, 120)}`);
+    } finally {
+      markInflight(idx, false);
+      setCustomNoteBusy(false);
+    }
+  };
+
   /** 整套导出 PDF：服务端归一尺寸拼页落 GCS，这里只拿签名链打开 */
   const downloadKnowledgeCardPdf = async (urls: string[]) => {
     if (!urls.length || knowledgeCardPdfBusy) return;
@@ -8262,8 +8301,13 @@ export default function PlatformPage() {
             try {
             setCustomNotePageProgress({ i: Math.min(total, done + 1), n: total });
             const provider = i % 2 === 0 ? "evolink" : "openai";
-            const url = await generateCustomNoteOne(distilled, "single_page_knowledge_card", undefined, { index: i + 1, total }, provider);
-            urls[i] = url;
+            markInflight(i, true);
+            try {
+              const url = await generateCustomNoteOne(distilled, "single_page_knowledge_card", undefined, { index: i + 1, total }, provider);
+              urls[i] = url;
+            } finally {
+              markInflight(i, false);
+            }
             done += 1;
             publish();
             } catch (e) {
@@ -9092,7 +9136,7 @@ export default function PlatformPage() {
       optimizeSummary: customOptimizeSummary,
       imageUpperUrl: customNoteImageUpper,
       imageLowerUrl: customNoteImageLower,
-      imageUrls: customNoteImages.length ? customNoteImages : undefined,
+      imageUrls: customNoteImages.some(Boolean) ? customNoteImages.filter(Boolean) : undefined,
     }),
     [
       customNoteKind,
@@ -15383,6 +15427,7 @@ export default function PlatformPage() {
                       setCustomNoteInfographicLabelZh(null);
                       setCustomNoteProgress({ status: "idle", percent: 0 });
                       setKnowledgeCardPdfUrl(null);
+                      setKnowledgeCardInflight([]);
                       customNotePendingFilesRef.current = [];
                       setCustomNotePendingMeta([]);
                       setCustomNoteUploadStatus(null);
@@ -15531,9 +15576,21 @@ export default function PlatformPage() {
                         </a>
                       </div>
                     </div>
+                  ) : (customNoteBusy || knowledgeCardInflight.includes(idx)) ? (
+                    <div key={`kc-pending-${idx}`} className="flex items-center gap-2 rounded-2xl border border-dashed border-white/15 px-4 py-4 text-sm text-[#c9c0e6]/70">
+                      <Loader2 className="h-4 w-4 animate-spin" />第 {idx + 1}/{arr.length} 页生成中…
+                    </div>
                   ) : (
-                    <div key={`kc-missing-${idx}`} className="rounded-2xl border border-dashed border-red-400/40 px-4 py-6 text-sm text-red-300/85">
-                      第 {idx + 1}/{arr.length} 页未生成（本页未扣费）。可点「重新生成」补出；整套 PDF 只含已生成页。
+                    <div key={`kc-missing-${idx}`} className="flex flex-wrap items-center gap-3 rounded-2xl border border-dashed border-red-400/40 px-4 py-4 text-sm text-red-300/85">
+                      <span>第 {idx + 1}/{arr.length} 页未生成（本页未扣费）；整套 PDF 只含已生成页。</span>
+                      <button
+                        type="button"
+                        disabled={customNoteBusy || knowledgeCardInflight.includes(idx)}
+                        onClick={() => void retryKnowledgeCardPage(idx)}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-[#ff4fb8]/30 bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                      >
+                        补出本页（{knowledgeCardCreditsForPageIndex(idx + 1, customNoteDistillModel)} 积分）
+                      </button>
                     </div>
                   ))}
                   {customNoteKind !== "single_page_knowledge_card" && customNoteImageUpper && (
