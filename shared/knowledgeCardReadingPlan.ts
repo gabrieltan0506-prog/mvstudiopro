@@ -3,8 +3,6 @@ import { KNOWLEDGE_CARD_ACTIVE_DISTILL_MODELS, knowledgeCardPageCreditsForModel 
 import { KNOWLEDGE_CARD_FULL_PRICE_PAGES, knowledgeCardCreditsForPages } from "./knowledgeCardPagination";
 
 export const KNOWLEDGE_CARD_READING_MIN_PAGES = 4;
-/** 当前生成接口单次方案容量；超出时明确拒绝，绝不截取模型方案。 */
-export const KNOWLEDGE_CARD_READING_MAX_PAGES = 80;
 export const KNOWLEDGE_CARD_READING_MODES = ["concise", "balanced", "complete"] as const;
 const id = z.string().trim().min(1).max(128);
 const statement = z.string().trim().min(1).max(4_000);
@@ -57,7 +55,6 @@ export const knowledgeCardReadingPlanOptionSchema = z.object({
     .refine(items => unique(items.map(item => item.sourcePageId)), "排除的原页编号不能重复").optional(),
   pages: z.array(knowledgeCardReadingPlanPageSchema)
     .min(KNOWLEDGE_CARD_READING_MIN_PAGES, "知识卡最少4页，不能通过减页满足预算")
-    .max(KNOWLEDGE_CARD_READING_MAX_PAGES, "方案超过当前80页请求容量，请重新规划或明确拆分；不得截断内容")
     .refine(pages => unique(pages.map(page => page.pageId)), "方案内页编号不能重复"),
 }).strict();
 
@@ -90,7 +87,7 @@ export const knowledgeCardReadingConstraintsSchema = z.object({
   budgetCredits: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
   targetPages: z.number().int()
     .min(KNOWLEDGE_CARD_READING_MIN_PAGES, "知识卡最少4页")
-    .max(KNOWLEDGE_CARD_READING_MAX_PAGES, "目标超过当前80页请求容量，不能截断内容满足请求").optional(),
+    .safe("目标页数须为安全整数").optional(),
 }).strict();
 
 export type KnowledgeCardReadingEvidencePage = z.infer<typeof knowledgeCardReadingEvidencePageSchema>;

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-  KNOWLEDGE_CARD_READING_MODES, KNOWLEDGE_CARD_READING_MIN_PAGES, KNOWLEDGE_CARD_READING_MAX_PAGES,
+  KNOWLEDGE_CARD_READING_MODES, KNOWLEDGE_CARD_READING_MIN_PAGES,
   knowledgeCardReadingPlanSchema, knowledgeCardReadingConstraintsSchema,
   quoteKnowledgeCardReadingPlan, validateKnowledgeCardReadingPlanSources,
   type KnowledgeCardReadingMode, type KnowledgeCardReadingPlanPage,
@@ -24,7 +24,7 @@ const pageReplySchema = z.object({
   referencePageIds: sourceIds,
 }).strict();
 const editionPageSchema = pageReplySchema.extend({
-  ordinal: z.number().int().min(1).max(KNOWLEDGE_CARD_READING_MAX_PAGES),
+  ordinal: z.number().int().min(1).safe(),
   title: z.string().min(1).max(240),
   sourcePageIds: z.array(z.string().min(1).max(128)).min(1).refine(unique, "知识来源原页编号不能重复"),
   imageGsUris: z.array(z.string().min(1).max(2048)).max(16).refine(unique, "原页图片引用不能重复"),
@@ -32,7 +32,7 @@ const editionPageSchema = pageReplySchema.extend({
 const editionSchema = z.object({
   editionId: digestSchema, planId: planIdSchema, mode: modeSchema,
   model: z.enum(KNOWLEDGE_CARD_ACTIVE_DISTILL_MODELS),
-  pages: z.array(editionPageSchema).min(KNOWLEDGE_CARD_READING_MIN_PAGES).max(KNOWLEDGE_CARD_READING_MAX_PAGES),
+  pages: z.array(editionPageSchema).min(KNOWLEDGE_CARD_READING_MIN_PAGES),
   credits: z.number().int().nonnegative(),
 }).strict();
 
