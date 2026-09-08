@@ -1,11 +1,3 @@
-import { KnowledgeCardReadingPlans } from "@/components/platform/KnowledgeCardReadingPlans";
-import { listReadingSessions, loadReadingSession, saveReadingSession, readingEditionImages, type KnowledgeCardReadingSession } from "@/lib/knowledgeCardReadingSession";
-import type { KnowledgeCardReadingConstraints } from "@shared/knowledgeCardReadingPlan";
-import { resolveKnowledgeCardSubjectPosition, type KnowledgeCardSubjectPosition } from "@shared/knowledgeCardSubjectPosition";
-import { KnowledgeCardMaterialBatches } from "@/components/platform/KnowledgeCardMaterialBatches";
-import { KnowledgeCardTextReviewPanel } from "@/components/platform/KnowledgeCardTextReviewPanel";
-import { EpubToPdfPanel } from "@/components/platform/EpubToPdfPanel";
-import { KNOWLEDGE_CARD_MATERIAL_LIMIT } from "@/lib/knowledgeCardMaterialBatches";
 import { mergeNativeProposalListAndDetail } from "@/lib/manhuaLearnResultUi";
 import { NATIVE_REPORT_THEME_OPTIONS, type NativeReportThemeChoice } from "../../../shared/manhuaNativeReportThemeChoice";
 import { ManhuaRestructureControl } from "@/components/ManhuaRestructureControl";
@@ -252,13 +244,20 @@ import {
   buildCustomCopyPdfHtml,
   hasCustomCopyPdfContent,
 } from "@/lib/customCopyPdfExport";
-import { knowledgeCardCreditsForPageIndex, KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS } from "@shared/knowledgeCardPagination";
+import {
+  estimateKnowledgeCardDistillTradeoff,
+  KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS,
+  knowledgeCardCreditsForPages,
+  knowledgeCardImageQuality,
+  planKnowledgeCardPages,
+} from "@shared/knowledgeCardPagination";
+import { suggestKnowledgeCardMinSections } from "@shared/knowledgeCardDistillSections";
 import {
   KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS,
   KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
   knowledgeCardDistillFeeForModel,
-  resolveActiveKnowledgeCardDistillModel,
-  type ActiveKnowledgeCardDistillModelId,
+  resolveKnowledgeCardDistillModel,
+  type KnowledgeCardDistillModelId,
 } from "@shared/knowledgeCardDistillModels";
 import {
   injectPlatformPdfSnapshotSanitizeIntoHead,
@@ -2323,6 +2322,15 @@ function writeManhuaLearnContinuation(
 }
 
 /**
+ * 超过这个体积就直传 GCS。
+ *
+ * base64 会把体积撑大约三分之一，请求体上限 18MB 折回原文件约 13.5MB；再大连接会在
+ * 读 body 阶段被掐断，前端只看到含糊的「算力紧张」（用户 2026-08-06 的 42MB PDF）。
+ * 阈值留到 8MB，是让常见的几百 KB 文档继续走内联，少一次签名往返。
+ */
+const KNOWLEDGE_CARD_DIRECT_UPLOAD_MIN_BYTES = 8 * 1024 * 1024;
+
+/**
  * 大文档直传 GCS：一次 PUT，断了就重签名重传（签名地址 15 分钟过期，重试必须重新取）。
  *
  * 单次 PUT 不是分片续传，断线时会从头再传一遍；对几十 MB 的 PDF 够用，
@@ -2395,6 +2403,23 @@ function buildShortlistBlueOceanInput(lexicon: BlueOceanLexicon): {
     ...(words.length ? { blueOceanWords: words } : {}),
     ...(groups.length ? { blueOceanGroups: groups } : {}),
   };
+}
+
+/**
+ * 上传文件时决定文本框既有文案要不要一并提炼。
+ *
+ * 提炼稿会写回文本框，所以下次上传若默认合并，就会把上一次的稿子混进这本新书
+ * （用户 2026-08-05：整本书的知识卡第 1 页出的是上一次残留的内容）。
+ */
+function resolveKnowledgeCardSourceText(existing: string, fileCount: number): string | undefined {
+  const text = String(existing || "").trim();
+  if (!text || fileCount <= 0) return text || undefined;
+  const merge = window.confirm(
+    `上方文本框已有约 ${text.length} 字文案。\n\n` +
+      `「确定」＝ 连同这段文案一起提炼\n` +
+      `「取消」＝ 只提炼新上传的 ${fileCount} 个文件（上方文案会被新的提炼稿替换）`,
+  );
+  return merge ? text : undefined;
 }
 
 export default function PlatformPage() {
@@ -2474,7 +2499,7 @@ export default function PlatformPage() {
   });
 
   /**
-   * 图文知识卡提炼两档（精细 / 轻量）：用户 2026-08-05 明文开放给所有登录用户自选，
+   * 图文知识卡提炼三档（精细 / 均衡 / 轻量）：用户 2026-08-05 明文开放给所有登录用户自选，
    * 不再只对 supervisor 可见（页费按档位不同，见 KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS）。
    */
   const canChooseKnowledgeCardDistillModel = Boolean(isAuthenticated);
@@ -2956,33 +2981,6 @@ export default function PlatformPage() {
   const [platformXhsNoteMap, setPlatformXhsNoteMap] = useState<Record<string, string>>({});
   /** 自定義文案生成圖文筆記（獨立功能，不依賴 Stage 1/2） */
   const [customNoteText, setCustomNoteText] = useState("");
-  const [customNoteSourceFromDocument, setCustomNoteSourceFromDocument] = useState(false);
-  const [customNoteMaterialSeed, setCustomNoteMaterialSeed] = useState<{
-    id: string; source: string; fromDocument: boolean; previousImages?: string[]; subjectPosition?: KnowledgeCardSubjectPosition;
-  } | null>(null);
-  const [materialSeedHistory, setMaterialSeedHistory] = useState<Array<{ id: string; label: string }>>([]);
-  const materialSeedKey = user?.id ? `mvs-knowledge-card-material-seed/u${user.id}` : null;
-  useEffect(() => {
-    setCustomNoteMaterialSeed(null);
-    setMaterialSeedHistory([]);
-    if (!materialSeedKey) return;
-    try {
-      const history = JSON.parse(localStorage.getItem(`${materialSeedKey}/history`) || "[]");
-      if (!Array.isArray(history) || history.some(item => typeof item.id !== "string" || typeof item.label !== "string")) throw new Error("历史材料索引损坏");
-      setMaterialSeedHistory(history);
-      const raw = localStorage.getItem(materialSeedKey);
-      if (!raw) return;
-      const saved = JSON.parse(raw);
-      if (typeof saved.id === "string" && typeof saved.source === "string" && typeof saved.fromDocument === "boolean") {
-        setCustomNoteMaterialSeed({ ...saved, subjectPosition: resolveKnowledgeCardSubjectPosition(saved.subjectPosition) });
-        setCustomNoteText(saved.source);
-        setCustomNoteSourceFromDocument(saved.fromDocument);
-        setCustomNoteKind("single_page_knowledge_card");
-        setOutputType("single_page");
-      }
-    } catch { toast.error("分框材料恢复失败，请检查本机保存空间；未重新提交任务"); }
-  }, [materialSeedKey]);
-
   /** 知識卡片：上篇圖（分鏡圖也用此槽，單張）。 */
   const [customNoteImageUpper, setCustomNoteImageUpper] = useState<string | null>(null);
   /** 知識卡片：下篇圖（分鏡圖不使用）。 */
@@ -2997,11 +2995,11 @@ export default function PlatformPage() {
   /** 多页进度：第 i/N 页；null=非知识卡多页。 */
   const [customNotePageProgress, setCustomNotePageProgress] = useState<{ i: number; n: number } | null>(null);
   const [customNoteUploadBusy, setCustomNoteUploadBusy] = useState(false);
-  const [customNoteDistillModel, setCustomNoteDistillModel] = useState<ActiveKnowledgeCardDistillModelId>(() => {
+  const [customNoteDistillModel, setCustomNoteDistillModel] = useState<KnowledgeCardDistillModelId>(() => {
     try {
       const raw = localStorage.getItem("mvs-knowledge-card-distill-model");
-      // 旧超凡/均衡选项迁到精细；旧Qwen别名保留轻量。
-      return resolveActiveKnowledgeCardDistillModel(raw);
+      // 旧 terra / OR-qwen slug 由 resolve 迁到 Sol / Evolink Qwen
+      return resolveKnowledgeCardDistillModel(raw);
     } catch {
       return KNOWLEDGE_CARD_DISTILL_MODEL_SOL;
     }
@@ -3022,15 +3020,6 @@ export default function PlatformPage() {
     null,
   );
   const [customNoteInfographicLabelZh, setCustomNoteInfographicLabelZh] = useState<string | null>(null);
-  const [customNoteSubjectPosition, setCustomNoteSubjectPosition] = useState<KnowledgeCardSubjectPosition | null>("left");
-  const subjectPositionStorageKey = user?.id ? `mvs-knowledge-card-subject-position/u${user.id}` : null;
-  useEffect(() => {
-    try {
-      const saved = subjectPositionStorageKey ? localStorage.getItem(subjectPositionStorageKey) : null;
-      setCustomNoteSubjectPosition(resolveKnowledgeCardSubjectPosition(saved === null ? undefined : saved));
-    } catch { setCustomNoteSubjectPosition(null); }
-  }, [subjectPositionStorageKey]);
-
   /** 深度优化：用户额外要求（封面/分镜/平台等） */
   const [customOptimizeBrief, setCustomOptimizeBrief] = useState("");
   /** 深度优化结果（Markdown） */
@@ -7885,282 +7874,66 @@ export default function PlatformPage() {
 
   /** 自定義文案生成圖文筆記 — 獨立 mutation；回呼留空，全部流程在 handler 以 mutateAsync 串接控制。 */
   const generateCustomNoteMutation = trpc.mvAnalysis.generatePlatformCompositeSheet.useMutation();
-  const prepareReadingMutation = trpc.mvAnalysis.prepareKnowledgeCardReading.useMutation();
-  const prepareReadingEditionMutation = trpc.mvAnalysis.prepareKnowledgeCardReadingEdition.useMutation();
-  const resumeReadingMutation = trpc.mvAnalysis.resumeKnowledgeCardReadingJob.useMutation();
-  const readingLock = useRef(false);
-  const [readingSession, setReadingSession] = useState<KnowledgeCardReadingSession | null>(null);
-  const readingSessionRef = useRef<KnowledgeCardReadingSession | null>(null);
-  const [readingHistory, setReadingHistory] = useState<KnowledgeCardReadingSession[]>([]);
-  const readingAccountRef = useRef(user?.id);
-  readingAccountRef.current = user?.id;
-  const saveReading = (value: KnowledgeCardReadingSession) => {
-    if (readingAccountRef.current !== value.userId) throw new Error("账号已变化，已停止当前操作");
-    const saved = saveReadingSession(localStorage, value);
-    readingSessionRef.current = saved;
-    setReadingSession(saved);
-    setCustomNoteMaterialSeed(null);
-    setReadingHistory(listReadingSessions(localStorage, saved.userId));
-    setCustomNoteImages(saved.edition ? readingEditionImages(saved) : []);
-    setCustomNoteImageUpper(null);
-    setCustomNoteImageLower(null);
-    return saved;
-  };
-  const refreshReadingSuccessPages = async (value: KnowledgeCardReadingSession) => {
-    for (const page of value.edition?.pages ?? []) {
-      const before = readingSessionRef.current;
-      if (!before || before.id !== value.id || before.userId !== readingAccountRef.current) return before ?? value;
-      const task = before.pageTasks[page.pageId];
-      if (task?.status !== "succeeded") continue;
-      const status = await trpcUtils.mvAnalysis.getKnowledgeCardReadingPageStatus.fetch({
-        editionId: value.edition!.editionId, pageId: page.pageId, attempt: task.attempt,
-        subjectPosition: task.subjectPosition, ...(task.infographicTemplateId ? { infographicTemplateId: task.infographicTemplateId } : {}),
-      });
-      const latest = readingSessionRef.current;
-      if (!latest || latest.id !== value.id || latest.userId !== readingAccountRef.current) return latest ?? value;
-      const currentTask = latest.pageTasks[page.pageId];
-      if (currentTask?.status !== "succeeded" || currentTask.attempt !== task.attempt) continue;
-      if (status.status !== "succeeded" || !status.imageUrl?.trim()) throw new Error(`第${page.ordinal}页的已保存图片暂时无法刷新链接，请查询原任务；不会重新生成或扣费`);
-      saveReading({ ...latest, pageTasks: { ...latest.pageTasks, [page.pageId]: { ...currentTask, imageUrl: status.imageUrl, progressJobId: status.progressJobId } } });
-    }
-    return readingSessionRef.current ?? value;
-  };
-  useEffect(() => {
-    readingSessionRef.current = null;
-    setReadingSession(null);
-    setReadingHistory([]);
-    if (!user?.id) return;
-    try {
-      setReadingHistory(listReadingSessions(localStorage, user.id));
-      const saved = loadReadingSession(localStorage, user.id);
-      if (saved) {
-        readingSessionRef.current = saved;
-        setReadingSession(saved);
-        if (saved.edition) {
-          setCustomNoteImages(readingEditionImages(saved));
-          void refreshReadingSuccessPages(saved).catch(() => {
-            if (readingSessionRef.current?.id === saved.id) toast.error("已保存图片链接暂未刷新，请查询原任务；不会重新生成");
-          });
-        }
-      }
-    } catch { toast.error("阅读材料恢复失败，未重新提交任何任务"); }
-  }, [user?.id]);
-  const pollReadingJob = async (id: string, value: KnowledgeCardReadingSession) => {
-    const job = await pollJobUntilTerminal(id, {
-      intervalMs: 3000, maxWaitMs: 45 * 60_000, adaptiveBackoffAfterAttempts: 40, maxIntervalMs: 8000,
-      onPoll: ({ output }) => {
-        const out = output as { readingDonePages?: number; readingTotalPages?: number; readingPhase?: string } | undefined;
-        if (out?.readingTotalPages) saveReading({ ...(readingSessionRef.current ?? value), ...(out.readingPhase === "planning" ? { phase: "planning" as const } : {}), progress: { done: out.readingDonePages ?? 0, total: out.readingTotalPages } });
-      },
-    });
-    if (job.status === "failed") throw Object.assign(new Error(job.error || "任务已失败"), { terminal: true });
-    return job.output;
-  };
-  const finishReadingPlan = async (value: KnowledgeCardReadingSession) => {
-    let current = value;
-    if (!current.readingJobId) {
-      const queued = await prepareReadingMutation.mutateAsync({ model: current.model, files: current.files, constraints: current.constraints, ...(current.chargeDistillFee ? { chargeDistillFee: true } : {}) });
-      current = saveReading({ ...current, readingJobId: queued.progressJobId });
-    }
-    const output = await pollReadingJob(current.readingJobId!, current) as { planId?: string; distillFeeCharged?: number };
-    if (!output?.planId) throw new Error("全文阅读尚未返回有效方案，材料已保留");
-    const result = await trpcUtils.mvAnalysis.getKnowledgeCardReadingPlan.fetch({ planId: output.planId });
-    return saveReading({ ...current, planId: result.planId, plan: result.plan, constraints: result.constraints, pending: undefined, phase: "ready", progress: undefined, error: undefined, selectedMode: result.plan.presentation === "single" ? "complete" : "concise", distillFeeCharged: output.distillFeeCharged ?? current.distillFeeCharged });
-  };
-  const withReadingOperation = async (action: () => Promise<void>) => {
-    if (readingLock.current) throw new Error("当前阅读任务仍在处理中");
-    readingLock.current = true;
-    setCustomNoteBusy(true);
-    try { await action(); }
-    catch (error) {
-      const current = readingSessionRef.current;
-      const terminal = Boolean((error as { terminal?: boolean })?.terminal);
-      if (current) saveReading({ ...current, phase: "failed", pending: terminal ? undefined : current.pending, error: error instanceof Error ? error.message : "操作未完成，请查询已有任务" });
-      toast.error(error instanceof Error ? error.message : "操作未完成，请查询已有任务");
-      throw error;
-    } finally { readingLock.current = false; setCustomNoteBusy(false); }
-  };
-  const startKnowledgeReadingFiles = async (files: File[], constraints: KnowledgeCardReadingConstraints = {}, chargeDistillFee = false) => {
-    await withReadingOperation(async () => {
-      if (!user?.id) throw new Error("请先登录");
-      if (readingSessionRef.current?.pending) throw new Error("请先查询当前任务，再更换材料");
-      if (!files.length || files.length > 40) throw new Error("请选择1至40份材料");
-      if (files.some(file => file.size === 0)) throw new Error("材料为空，请先输入正文或选择非空文件");
-      if (files.some(file => !/\.(pdf|png|jpe?g|webp|txt|md)$/i.test(file.name))) throw new Error("请上传PDF、图片、TXT或Markdown；DOCX和PPTX请先导出PDF以保留原页图文");
-      setCustomNoteUploadBusy(true);
-      try {
-        const uploaded: KnowledgeCardReadingSession["files"] = [];
-        for (const file of files) {
-          const ext = file.name.split(".").pop()!.toLowerCase();
-          const mimeType = ({ pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", txt: "text/plain", md: "text/markdown" } as Record<string, string>)[ext];
-          const gcsUri = await uploadKnowledgeCardFileToGcs({ file, mimeType, label: file.name, getSignedUrl: input => getUploadUrlMutation.mutateAsync(input), onStatus: setCustomNoteUploadStatus });
-          uploaded.push({ gcsUri, mimeType, fileName: file.name });
-        }
-        const previous = readingSessionRef.current;
-        if (previous) saveReadingSession(localStorage, previous);
-        const session = saveReading({ version: 1, id: crypto.randomUUID(), userId: user.id, model: customNoteDistillModel, files: uploaded, constraints, chargeDistillFee, phase: "reading", selectedMode: "concise", pending: "reading", pageTasks: {}, previousImages: previous ? readingEditionImages(previous) : [...customNoteImages, customNoteImageUpper, customNoteImageLower].filter((value): value is string => Boolean(value)) });
-        setCustomNoteKind("single_page_knowledge_card");
-        setOutputType("single_page");
-        setCustomNoteUploadStatus("材料已保存，正在完整阅读图文…");
-        await finishReadingPlan(session);
-        setCustomNoteUploadStatus("全文阅读完成，请查看方案并确认后生成图片");
-      } finally { setCustomNoteUploadBusy(false); }
-    });
-  };
-  const startKnowledgeReadingText = (text: string, options: { constraints?: KnowledgeCardReadingConstraints; fromDocument?: boolean } = {}) => {
-    if (!text.trim()) { toast.error("请先输入正文或上传材料"); return Promise.reject(new Error("请先输入正文或上传材料")); }
-    if (readingLock.current || readingSessionRef.current?.pending) { toast.error("请先查询当前任务"); return Promise.reject(new Error("请先查询当前任务")); }
-    const chargeDistillFee = !options.fromDocument && text.trim().length > KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS;
-    if (chargeDistillFee && !window.confirm(`正文超过${KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS}字，完整阅读提炼需${knowledgeCardDistillFeeForModel(customNoteDistillModel)}积分，沿用原提炼费。后续生图单独报价；调整本次材料的预算方案不会重复收取提炼费。确认开始？`)) return Promise.resolve();
-    return startKnowledgeReadingFiles([new File([text], "知识卡正文.txt", { type: "text/plain" })], options.constraints, chargeDistillFee);
-  };
-  const renderReadingEdition = async (value: KnowledgeCardReadingSession) => {
-    let current = value;
-    if (!current.edition) {
-      if (!current.planId) throw new Error("尚未取得阅读方案");
-      current = saveReading({ ...current, pending: "edition", phase: "generating" });
-      if (!current.editionJobId) {
-        const queued = await prepareReadingEditionMutation.mutateAsync({ planId: current.planId!, mode: current.selectedMode });
-        current = saveReading({ ...current, editionJobId: queued.progressJobId });
-      }
-      const output = await pollReadingJob(current.editionJobId!, current) as { edition?: KnowledgeCardReadingSession["edition"] };
-      if (!output?.edition?.pages.length) throw new Error("尚未返回完整逐页稿，请查询原任务");
-      current = saveReading({ ...current, edition: output.edition, pending: undefined });
-    }
-    for (const page of [...current.edition!.pages].sort((a, b) => a.ordinal - b.ordinal)) {
-      const existing = current.pageTasks[page.pageId];
-      if (existing?.status === "succeeded") continue;
-      setCustomNotePageProgress({ i: page.ordinal, n: current.edition!.pages.length });
-      if (existing?.status === "failed") throw Object.assign(new Error(`第${page.ordinal}页已失败，请确认重试费用后重试`), { terminal: true });
-      const task = existing ?? { attempt: 0, status: "pending" as const, subjectPosition: resolveKnowledgeCardSubjectPosition(customNoteSubjectPosition), ...(customNoteInfographicTemplateId ? { infographicTemplateId: customNoteInfographicTemplateId } : {}) };
-      current = saveReading({ ...current, pending: "page", phase: "generating", pageTasks: { ...current.pageTasks, [page.pageId]: task } });
-      const readingPage = { editionId: current.edition!.editionId, pageId: page.pageId, attempt: task.attempt };
-      const configuration = { ...(task.infographicTemplateId ? { infographicTemplateId: task.infographicTemplateId } : {}), subjectPosition: task.subjectPosition };
-      const status = await trpcUtils.mvAnalysis.getKnowledgeCardReadingPageStatus.fetch({ ...readingPage, ...configuration });
-      let imageUrl = status.status === "succeeded" ? status.imageUrl : undefined;
-      let jobId = status.progressJobId;
-      if (status.status === "reconcile") throw new Error(`第${page.ordinal}页正在核对原任务与费用，请保留记录并查询原任务，不可重新购买`);
-      if (status.status === "failed") {
-        current = saveReading({ ...current, pending: undefined, pageTasks: { ...current.pageTasks, [page.pageId]: { ...task, status: "failed", error: status.error || "本页生成失败" } } });
-        throw Object.assign(new Error(`第${page.ordinal}页生成失败，已保留此前图片`), { terminal: true });
-      }
-      if (status.status === "not_started") {
-        const result = await generateCustomNoteMutation.mutateAsync({ sceneId: `reading-${page.pageId}`, title: page.title, scriptContext: page.contentMarkdown, kind: "single_page_knowledge_card", readingPage, ...configuration, distillModel: current.model, imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR, enabledSkillIds: Array.from(enabledPlatformSkillIds), allowBloggerTitle });
-        imageUrl = result.imageUrl ?? undefined;
-        jobId = ("progressJobId" in result ? result.progressJobId : undefined) || jobId;
-      }
-      if (!imageUrl && jobId) {
-        current = saveReading({ ...current, pageTasks: { ...current.pageTasks, [page.pageId]: { ...task, progressJobId: jobId } } });
-        try {
-          const output = await pollReadingJob(jobId, current) as { compositeImageUrl?: string; imageUrl?: string };
-          imageUrl = output?.compositeImageUrl || output?.imageUrl;
-        } catch (error) {
-          if (!(error as { terminal?: boolean }).terminal) throw error;
-          const business = await trpcUtils.mvAnalysis.getKnowledgeCardReadingPageStatus.fetch({ ...readingPage, ...configuration });
-          if (business.status === "succeeded" && business.imageUrl?.trim()) {
-            imageUrl = business.imageUrl;
-          } else if (business.status === "failed") {
-            current = saveReading({ ...current, pending: undefined, pageTasks: { ...current.pageTasks, [page.pageId]: { ...task, status: "failed", error: business.error || "本页失败" } } });
-            throw error;
-          } else {
-            throw new Error(`第${page.ordinal}页的原任务与费用尚待核对，请继续查询原任务；不能重新购买`);
-          }
-        }
-      }
-      if (!imageUrl?.trim()) throw new Error(`第${page.ordinal}页尚未返回图片，请查询已有任务`);
-      current = saveReading({ ...current, pending: undefined, pageTasks: { ...current.pageTasks, [page.pageId]: { ...task, progressJobId: jobId, status: "succeeded", imageUrl } } });
-      setCustomNotePageProgress({ i: page.ordinal, n: current.edition!.pages.length });
-    }
-    saveReading({ ...current, phase: "ready", pending: undefined, error: undefined });
-    setCustomNotePageProgress(null);
-  };
-  const retryKnowledgeReadingPage = () => withReadingOperation(async () => {
-    const current = readingSessionRef.current;
-    if (!current?.edition || current.pending) throw new Error("请先查询原任务，再确认重试");
-    const failed = current.edition.pages.find(page => current.pageTasks[page.pageId]?.status === "failed");
-    if (!failed) return;
-    const task = current.pageTasks[failed.pageId];
-    const business = await trpcUtils.mvAnalysis.getKnowledgeCardReadingPageStatus.fetch({
-      editionId: current.edition.editionId, pageId: failed.pageId, attempt: task.attempt,
-      subjectPosition: task.subjectPosition, ...(task.infographicTemplateId ? { infographicTemplateId: task.infographicTemplateId } : {}),
-    });
-    if (business.status === "succeeded" && business.imageUrl?.trim()) {
-      const restored = saveReading({ ...current, pageTasks: { ...current.pageTasks, [failed.pageId]: { ...task, status: "succeeded", imageUrl: business.imageUrl, progressJobId: business.progressJobId, error: undefined } }, error: undefined });
-      await renderReadingEdition(restored);
-      return;
-    }
-    if (business.status !== "failed") {
-      saveReading({ ...current, pending: "page", pageTasks: { ...current.pageTasks, [failed.pageId]: { ...task, status: "pending" } } });
-      throw new Error("原任务与费用尚待核对，已保留原尝试记录，请查询原任务；不能重新购买");
-    }
-    const pagePrice = knowledgeCardCreditsForPageIndex(failed.ordinal, current.model);
-    if (!window.confirm(`第${failed.ordinal}页已确认失败。重新生成本页需${pagePrice}积分，其他成功图片保留。确认重试？`)) return;
-    if (task.attempt >= 100) throw new Error("本页已达到重试次数上限，请保留任务记录核对");
-    const next = saveReading({ ...current, pageTasks: { ...current.pageTasks, [failed.pageId]: { ...task, attempt: task.attempt + 1, status: "pending", progressJobId: undefined, error: undefined } }, pending: "page", phase: "generating" });
-    await renderReadingEdition(next);
-  });
-  const resumeKnowledgeReading = () => withReadingOperation(async () => {
-    let current = readingSessionRef.current;
-    if (!current) throw new Error("没有已保存的阅读任务");
-    if (current.edition) current = await refreshReadingSuccessPages(current);
-    const failedStage = current.phase === "failed" && !current.edition
-      ? current.editionJobId ? "edition" : current.readingJobId && !current.plan ? "reading" : undefined
-      : undefined;
-    if (failedStage) {
-      const jobId = failedStage === "edition" ? current.editionJobId! : current.readingJobId!;
-      const next = saveReading({ ...current, pending: failedStage, phase: failedStage === "edition" ? "generating" : "reading", error: undefined });
-      await resumeReadingMutation.mutateAsync({ progressJobId: jobId });
-      if (failedStage === "reading") await finishReadingPlan(next);
-      else await renderReadingEdition(next);
-      return;
-    }
-    if (current.pending === "reading") await finishReadingPlan(current);
-    else if (current.pending === "edition" || current.pending === "page" || current.edition) await renderReadingEdition(current);
-    else if (current.planId) {
-      const loaded = await trpcUtils.mvAnalysis.getKnowledgeCardReadingPlan.fetch({ planId: current.planId });
-      saveReading({ ...current, plan: loaded.plan, constraints: loaded.constraints, phase: "ready", error: undefined });
-    } else throw new Error("上次阅读已失败，请重新规划");
-  });
-
+  const prepareKnowledgeCardCopyMutation = trpc.mvAnalysis.prepareKnowledgeCardCopy.useMutation();
+  const extractPlatformDocumentTextMutation = trpc.mvAnalysis.extractPlatformDocumentText.useMutation();
   const optimizeCustomCopyMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
   const customOptimizeCopyCost = CREDIT_COSTS.platformOptimizeCustomCopy;
-  const ensureMaterialCanSwitch = () => {
-    if (!materialSeedKey) throw new Error("请先登录，再保存和处理分框材料");
-    if (customNoteBusy) throw new Error("当前材料任务仍在处理，请先等待任务结果");
-    if (customNoteMaterialSeed) {
-      const saved = localStorage.getItem(`${materialSeedKey}/${customNoteMaterialSeed.id}`);
-      if (saved) {
-        const state = JSON.parse(saved);
-        if (!Array.isArray(state.batches)) throw new Error("当前材料保存记录无法读取，请先恢复原材料");
-        if (state.batches.some((batch: { pending?: unknown }) => batch.pending)) throw new Error("当前材料仍有待核对任务，请先恢复任务结果再切换材料");
-      }
-    }
-  };
+  const customNoteKnowledgePlan = useMemo(
+    () => planKnowledgeCardPages(customNoteText, customNoteDistillModel),
+    [customNoteText, customNoteDistillModel],
+  );
+  const customNoteKnowledgeCredits =
+    customNoteKnowledgePlan.credits ||
+    knowledgeCardCreditsForPages(customNoteKnowledgePlan.pageCount || 0, customNoteDistillModel);
 
-  const restoreKnowledgeCardMaterial = (id: string) => {
-    try {
-      if (readingSessionRef.current?.pending) throw new Error("请先查询当前阅读任务，再恢复其他材料");
-      ensureMaterialCanSwitch();
-      const raw = localStorage.getItem(`${materialSeedKey}/seed/${id}`);
-      if (!raw) throw new Error("历史材料记录不存在，请保留当前内容");
-      const seed = JSON.parse(raw);
-      if (seed.id !== id || typeof seed.source !== "string" || typeof seed.fromDocument !== "boolean" || (seed.previousImages !== undefined && (!Array.isArray(seed.previousImages) || seed.previousImages.some((url: unknown) => typeof url !== "string")))) throw new Error("历史材料记录损坏，未替换当前材料");
-      seed.subjectPosition = resolveKnowledgeCardSubjectPosition(seed.subjectPosition);
-      if (customNoteMaterialSeed) localStorage.setItem(`${materialSeedKey}/seed/${customNoteMaterialSeed.id}`, JSON.stringify(customNoteMaterialSeed));
-      localStorage.setItem(materialSeedKey!, raw);
-      readingSessionRef.current = null;
-      setReadingSession(null);
-      setCustomNoteMaterialSeed(seed);
-      setCustomNoteText(seed.source);
-      setCustomNoteSourceFromDocument(seed.fromDocument);
-      setCustomNoteKind("single_page_knowledge_card");
-      setOutputType("single_page");
-      setCustomNoteImages([]);
-      setCustomNoteImageUpper(null);
-      setCustomNoteImageLower(null);
-      setCustomNoteDistillPhase("idle");
-      toast.success("已恢复历史材料，原任务与图片记录保留");
-    } catch (error) { toast.error(error instanceof Error ? error.message : "恢复失败，当前材料保持不变"); }
+  /**
+   * 提炼：短文同步直出；长书由服务端转后台任务，这里轮询进度直到拿到稿子。
+   * 上传后与「点生成时仍有待处理文件」两条路径共用，避免逻辑分叉。
+   */
+  const runKnowledgeCardDistill = async (args: {
+    sourceText?: string;
+    files?: KnowledgeCardPendingFile[];
+    onStatus?: (text: string) => void;
+    /** 纯文本长文里用户主动买的提炼，服务端据此收提炼费 */
+    chargeDistillFee?: boolean;
+  }): Promise<string> => {
+    const queued = await prepareKnowledgeCardCopyMutation.mutateAsync({
+      sourceText: args.sourceText,
+      files: args.files?.length ? args.files : undefined,
+      forceDistill: true,
+      distillModel: customNoteDistillModel,
+      ...(args.chargeDistillFee ? { chargeDistillFee: true } : {}),
+    });
+
+    if (!queued.isAsync || !queued.progressJobId) {
+      return String(queued.distilledMarkdown || "").trim();
+    }
+
+    const totalHint = Math.max(1, queued.estimatedChunks || 1);
+    args.onStatus?.(`已读出约 ${queued.sourceChars.toLocaleString()} 字，正在分 ${totalHint} 段提炼…`);
+    const job = await pollJobUntilTerminal(queued.progressJobId, {
+      intervalMs: 3000,
+      maxWaitMs: 45 * 60_000,
+      adaptiveBackoffAfterAttempts: 40,
+      maxIntervalMs: 8000,
+      onPoll: ({ output }) => {
+        const out = (output || {}) as {
+          distillPhase?: string;
+          distillDoneChunks?: number;
+          distillTotalChunks?: number;
+        };
+        const total = Number(out.distillTotalChunks) || totalHint;
+        const done = Number(out.distillDoneChunks) || 0;
+        args.onStatus?.(
+          out.distillPhase === "refining"
+            ? `已提炼 ${total} 段，正在统稿合并…`
+            : `正在分段提炼…已完成 ${done}/${total} 段`,
+        );
+      },
+    });
+    if (job.status === "failed") throw new Error(job.error || "提炼失败，请稍后重试");
+    const out = (job.output || {}) as { distilledMarkdown?: string };
+    return String(out.distilledMarkdown || "").trim();
   };
 
   /**
@@ -8172,11 +7945,7 @@ export default function PlatformPage() {
     kind: "single_page_knowledge_card" | "storyboard_sheet_landscape",
     notePart?: "upper" | "lower",
     notePage?: { index: number; total: number },
-    batch?: { model: ActiveKnowledgeCardDistillModelId; onJob: (id: string) => void; subjectPosition?: KnowledgeCardSubjectPosition },
   ): Promise<string> => {
-    const subjectPosition = kind === "single_page_knowledge_card"
-      ? resolveKnowledgeCardSubjectPosition(batch ? batch.subjectPosition : customNoteSubjectPosition)
-      : undefined;
     const sceneId = `custom-note-${notePage?.index ?? notePart ?? "single"}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const progressJobId = newPlatformCompositeProgressJobId();
     const title = extractInfographicSubjectFromUserCopy(trimmed);
@@ -8188,7 +7957,6 @@ export default function PlatformPage() {
      * 版式意图只能走出图约束，不能当内容。
      */
     const scriptContext = trimmed;
-    batch?.onJob(progressJobId);
     const res = await generateCustomNoteMutation.mutateAsync({
       sceneId,
       title,
@@ -8201,8 +7969,7 @@ export default function PlatformPage() {
           : {}),
       ...(kind === "single_page_knowledge_card"
         ? {
-            distillModel: batch?.model ?? customNoteDistillModel,
-            subjectPosition,
+            distillModel: customNoteDistillModel,
             // 版式走独立字段进出图指令；拼进 scriptContext 会被当正文印出来
             ...(customNoteInfographicTemplateId
               ? { infographicTemplateId: customNoteInfographicTemplateId }
@@ -8220,7 +7987,7 @@ export default function PlatformPage() {
     if ((res as { isAsync?: boolean }).isAsync && (res as { progressJobId?: string }).progressJobId) {
       const pid = (res as { progressJobId?: string }).progressJobId!;
       // 入队即落库：刷新/换页后开页可自动续轮询，不再丢单（2026-08-12 实证三连丢后加）
-      if (!batch) writePosterResumeRecord({ jobId: pid, kind, titleHead: title, firedAt: Date.now() });
+      writePosterResumeRecord({ jobId: pid, kind, titleHead: title, firedAt: Date.now() });
       try {
         const j = await pollJobUntilTerminal(pid, {
           intervalMs: 1500,
@@ -8228,14 +7995,14 @@ export default function PlatformPage() {
           adaptiveBackoffAfterAttempts: 20,
           maxIntervalMs: 5000,
         });
-        if (j.status === "failed") throw Object.assign(new Error(j.error || "生成失败，请重试"), { terminal: true });
+        if (j.status === "failed") throw new Error(j.error || "生成失敗，請重試");
         const out = j.output as { compositeImageUrl?: string; imageUrl?: string } | null;
         const url = out?.compositeImageUrl || out?.imageUrl || "";
         if (!url) throw new Error("未取得圖片 URL，請重試");
         return url;
       } finally {
         // 只清自己的挂账：无条件清会把并发新任务的记录误删（审查抓的竞态）
-        if (!batch && readPosterResumeRecord()?.jobId === pid) writePosterResumeRecord(null);
+        if (readPosterResumeRecord()?.jobId === pid) writePosterResumeRecord(null);
       }
     }
     throw new Error("生成失敗，請重試");
@@ -8277,10 +8044,6 @@ export default function PlatformPage() {
     }
     const kind = overrides?.kind ?? customNoteKind;
     const trimmed = (overrides?.text ?? customNoteText).trim();
-    if (kind === "single_page_knowledge_card") {
-      await startKnowledgeReadingText(trimmed).catch(() => {});
-      return;
-    }
     const pendingAhead = customNotePendingFilesRef.current.length;
     if (!trimmed && !(customNoteKind === "single_page_knowledge_card" && pendingAhead > 0)) {
       toast.error(pendingAhead > 0 ? "请等待文件读取完成，或重新上传" : "请先输入中文文案或上传文件");
@@ -8314,12 +8077,110 @@ export default function PlatformPage() {
         toast.success(`深度优化完成${res.cost > 0 ? `（已扣 ${res.cost} 积分）` : ""}`);
         return;
       }
-      setCustomNotePartInFlight(null);
-      setCustomNotePageProgress(null);
-      const img = await generateCustomNoteOne(trimmed, "storyboard_sheet_landscape", undefined);
-      setCustomNoteImageUpper(img);
-      setCustomNoteImages([img]);
-      toast.success("分鏡圖已生成");
+      if (kind === "single_page_knowledge_card") {
+        setCustomNoteImages([]);
+        setCustomNoteImageUpper(null);
+        setCustomNoteImageLower(null);
+        const pendingFiles = customNotePendingFilesRef.current.slice();
+        let distilled = trimmed;
+        // 上传路径已提炼进文本框时，生成只出图；仅当仍有待处理文件或无文案时再提炼
+        if (pendingFiles.length > 0 || !distilled) {
+          setCustomNoteDistillPhase("distilling");
+          distilled = await runKnowledgeCardDistill({
+            sourceText: resolveKnowledgeCardSourceText(trimmed, pendingFiles.length),
+            files: pendingFiles,
+            onStatus: setCustomNoteUploadStatus,
+          });
+          if (!distilled) throw new Error("提炼结果为空，请调整文案后重试");
+          setCustomNoteText(distilled);
+          customNotePendingFilesRef.current = [];
+          setCustomNotePendingMeta([]);
+          setCustomNoteUploadStatus(null);
+          setCustomNoteDistillPhase("ready");
+          await new Promise<void>((r) => requestAnimationFrame(() => r()));
+        } else if (distilled.length > KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS) {
+          /**
+           * 纯文本长文：先把「提炼 vs 直接出图」的账摆给用户看。
+           * 一万字直接出图要 9 页 264 积分，而且超过 6 页整套降到 2K；
+           * 花提炼费换成 4 页 120 积分还能保住 4K。默认劝提炼，但省不回本时不打扰。
+           */
+          const tradeoff = estimateKnowledgeCardDistillTradeoff(
+            distilled,
+            customNoteDistillModel,
+            suggestKnowledgeCardMinSections,
+            knowledgeCardDistillFeeForModel(customNoteDistillModel),
+          );
+          if (tradeoff.saved > 0) {
+            setCustomNoteBusy(false);
+            const wantDistill = window.confirm(
+              [
+                `这段文字约 ${distilled.length.toLocaleString()} 字。`,
+                "",
+                `直接出图：约 ${tradeoff.full.pages} 页 · ${tradeoff.full.credits} 积分 · 画质 ${tradeoff.full.is4k ? "4K" : "2K"}`,
+                `先做提炼：约 ${tradeoff.distilled.pages} 页 · ${tradeoff.distilled.credits} 积分 + 提炼费 ${tradeoff.distilled.distillFee} · 画质 ${tradeoff.distilled.is4k ? "4K" : "2K"}`,
+                "",
+                `提炼可省约 ${tradeoff.saved} 积分${tradeoff.distilled.is4k && !tradeoff.full.is4k ? "，画质还更高（超过 6 页会整套降到 2K）" : ""}。`,
+                "",
+                "点「确定」先提炼（推荐），点「取消」按原文全量出图。",
+              ].join("\n"),
+            );
+            setCustomNoteBusy(true);
+            if (wantDistill) {
+              setCustomNoteDistillPhase("distilling");
+              const refined = await runKnowledgeCardDistill({
+                sourceText: distilled,
+                onStatus: setCustomNoteUploadStatus,
+                chargeDistillFee: true,
+              });
+              if (!refined) throw new Error("提炼结果为空，请调整文案后重试");
+              distilled = refined;
+              setCustomNoteText(refined);
+              setCustomNoteUploadStatus(null);
+              setCustomNoteDistillPhase("ready");
+              await new Promise<void>((r) => requestAnimationFrame(() => r()));
+            }
+          }
+        }
+        const plan = planKnowledgeCardPages(distilled, customNoteDistillModel);
+        const pages = plan.pages.length ? plan.pages : [distilled];
+        const total = pages.length;
+        const q = knowledgeCardImageQuality(total);
+        const qLabel = q === "high" ? "4K" : "2K";
+        const credits = plan.credits || knowledgeCardCreditsForPages(total, customNoteDistillModel);
+        setCustomNoteBusy(false);
+        const continueGen = window.confirm(
+          `约 ${total} 页图文笔记（出图 ${qLabel}，约 ${credits} 积分）。\n\n是否继续出图？\n选「取消」将保留上方提炼稿，不出图。`,
+        );
+        if (!continueGen) {
+          toast.success(`已保留提炼稿（约 ${total} 页），未出图`);
+          setCustomNoteDistillPhase("idle");
+          return;
+        }
+        setCustomNoteBusy(true);
+        toast.success(`开始出图 · ${total} 页 · ${qLabel}`);
+        const urls: string[] = [];
+        for (let i = 0; i < total; i++) {
+          setCustomNotePageProgress({ i: i + 1, n: total });
+          setCustomNotePartInFlight(i === 0 ? "upper" : "lower");
+          const url = await generateCustomNoteOne(distilled, "single_page_knowledge_card", undefined, {
+            index: i + 1,
+            total,
+          });
+          urls.push(url);
+          setCustomNoteImages([...urls]);
+          setCustomNoteImageUpper(urls[0] ?? null);
+          setCustomNoteImageLower(urls[1] ?? null);
+        }
+        toast.success(`已生成 ${total} 页图文笔记（${qLabel} · 约 ${credits} 积分）`);
+        setCustomNoteDistillPhase("idle");
+      } else {
+        setCustomNotePartInFlight(null);
+        setCustomNotePageProgress(null);
+        const img = await generateCustomNoteOne(trimmed, "storyboard_sheet_landscape", undefined);
+        setCustomNoteImageUpper(img);
+        setCustomNoteImages([img]);
+        toast.success("分鏡圖已生成");
+      }
     } catch (e) {
       const msg = mapCustomNoteError(e);
       setCustomNoteError(msg);
@@ -8360,10 +8221,6 @@ export default function PlatformPage() {
 
   const handleAssetGenerateFromText = useCallback(
     async (text: string, kind: "storyboard_sheet_landscape" | "single_page_knowledge_card") => {
-      if (kind === "single_page_knowledge_card") {
-        await startKnowledgeReadingText(text, { fromDocument: true });
-        return;
-      }
       setCustomNoteImageUpper(null);
       setCustomNoteImageLower(null);
       setCustomNoteError(null);
@@ -8373,9 +8230,18 @@ export default function PlatformPage() {
         const scriptWithShoot = shoot
           ? `${text.trim()}\n\n【上传素材拍摄技法】\n${shoot}`.slice(0, 12000)
           : text;
+        if (kind === "single_page_knowledge_card") {
+          setCustomNotePartInFlight("upper");
+          const upper = await generateCustomNoteOne(scriptWithShoot, "single_page_knowledge_card", "upper");
+          setCustomNoteImageUpper(upper);
+          setCustomNotePartInFlight("lower");
+          const lower = await generateCustomNoteOne(scriptWithShoot, "single_page_knowledge_card", "lower");
+          setCustomNoteImageLower(lower);
+        } else {
           setCustomNotePartInFlight(null);
           const img = await generateCustomNoteOne(scriptWithShoot, "storyboard_sheet_landscape", undefined);
           setCustomNoteImageUpper(img);
+        }
       } catch (e) {
         const msg = mapCustomNoteError(e);
         setCustomNoteError(msg);
@@ -9106,13 +8972,13 @@ export default function PlatformPage() {
   const customCopyPdfPayload = useMemo(
     () => ({
       kind: customNoteKind,
-      sourceText: customNoteKind === "single_page_knowledge_card" && readingSession?.edition ? [...readingSession.edition.pages].sort((a, b) => a.ordinal - b.ordinal).map(page => page.contentMarkdown).join("\n\n") : customNoteText,
+      sourceText: customNoteText,
       optimizeBrief: customOptimizeBrief,
       optimizeResult: customOptimizeResult,
       optimizeSummary: customOptimizeSummary,
-      imageUpperUrl: customNoteKind === "single_page_knowledge_card" && readingSession ? null : customNoteImageUpper,
-      imageLowerUrl: customNoteKind === "single_page_knowledge_card" && readingSession ? null : customNoteImageLower,
-      imageUrls: customNoteKind === "single_page_knowledge_card" && readingSession ? readingEditionImages(readingSession) : customNoteImages.length ? customNoteImages : undefined,
+      imageUpperUrl: customNoteImageUpper,
+      imageLowerUrl: customNoteImageLower,
+      imageUrls: customNoteImages.length ? customNoteImages : undefined,
     }),
     [
       customNoteKind,
@@ -9123,7 +8989,6 @@ export default function PlatformPage() {
       customNoteImageUpper,
       customNoteImageLower,
       customNoteImages,
-      readingSession,
     ],
   );
 
@@ -15121,85 +14986,19 @@ export default function PlatformPage() {
                 ) : null}
               </div>
 
-              {materialSeedHistory.length > 0 && <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-slate-400">
-                <label htmlFor="knowledge-material-history">恢复历史材料</label>
-                <select id="knowledge-material-history" className="max-w-full rounded-lg border border-white/15 bg-slate-900 px-2 py-1.5 text-slate-200" value={customNoteMaterialSeed?.id || ""} disabled={customNoteBusy || customNoteUploadBusy} onChange={event => { if (event.target.value) restoreKnowledgeCardMaterial(event.target.value); }}>
-                  <option value="">选择已保存的材料</option>
-                  {materialSeedHistory.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
-                </select>
-              </div>}
-
-              {customNoteKind === "single_page_knowledge_card" && !customNoteMaterialSeed && (
-                <label className="mb-3 flex items-center gap-2 text-xs text-slate-300">主体位置（固定横版16:9）
-                  <select aria-label="知识卡主体位置" className="rounded-lg border border-white/15 bg-slate-900 p-2" disabled={customNoteBusy} value={customNoteSubjectPosition ?? ""} onChange={event => {
-                    try {
-                      const next = resolveKnowledgeCardSubjectPosition(event.target.value);
-                      if (subjectPositionStorageKey) localStorage.setItem(subjectPositionStorageKey, next);
-                      setCustomNoteSubjectPosition(next);
-                    } catch { toast.error("主体位置未能保存，请重新选择后再生成"); }
-                  }}>
-                    {customNoteSubjectPosition === null && <option value="" disabled>原记录无效，请重新选择</option>}
-                    <option value="left">左侧</option><option value="center">居中</option>
-                  </select>
-                </label>
-              )}
-
-              {customNoteKind === "single_page_knowledge_card" && customNoteMaterialSeed && <details className="my-3 text-sm text-slate-400">
-                <summary>原分框材料（已保留）</summary>
-                <p>旧稿与任务记录仍保留，使用全文阅读重新规划后再生成。</p>
-                {materialSeedKey && <KnowledgeCardMaterialBatches
-                  key={`${materialSeedKey}/${customNoteMaterialSeed.id}`}
-                  storageKey={`${materialSeedKey}/${customNoteMaterialSeed.id}`}
-                  initialSource={customNoteMaterialSeed.source}
-                  initialSubjectPosition={customNoteMaterialSeed.subjectPosition}
-                  fromDocument={customNoteMaterialSeed.fromDocument}
-                  model={customNoteDistillModel}
-                  disabled={customNoteBusy || customNoteUploadBusy}
-                  readOnly
-                  onBusyChange={setCustomNoteBusy}
-                  onDistill={async () => { throw new Error("请使用全文阅读入口"); }}
-                  onGenerate={async () => { throw new Error("请使用全文阅读入口"); }}
-                  onResume={async (jobId, kind) => {
-                    const job = await pollJobUntilTerminal(jobId, { intervalMs: 3000, maxWaitMs: 45 * 60_000, adaptiveBackoffAfterAttempts: 40, maxIntervalMs: 8000 });
-                    if (job.status === "failed") throw Object.assign(new Error(job.error || "历史任务已失败"), { terminal: true });
-                    const output = job.output as { distilledMarkdown?: string; imageUrl?: string; compositeImageUrl?: string };
-                    const value = kind === "distill" ? output?.distilledMarkdown : output?.compositeImageUrl || output?.imageUrl;
-                    if (!value?.trim()) throw new Error("原任务尚未返回可用结果，请保留记录继续查询");
-                    return value;
-                  }}
-                  onImagesChange={() => {}}
-                />}
-                <button type="button" disabled={customNoteBusy || Boolean(readingSession?.pending)} onClick={() => void startKnowledgeReadingText(customNoteMaterialSeed.source, { fromDocument: customNoteMaterialSeed.fromDocument }).catch(() => {})}>用此材料完整阅读并规划</button>
-              </details>}
               <textarea
                 className="w-full min-h-[140px] resize-y rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#ff4fb8]/60 focus:outline-none focus:ring-1 focus:ring-[#ff4fb8]/30 transition"
                 placeholder={
                   customNoteKind === "optimize_custom_copy"
                     ? "粘贴待优化的封面文案、分镜描述或完整 Markdown…（建议 100–3000 字）"
                     : customNoteKind === "single_page_knowledge_card"
-                      ? "粘贴完整中文正文 / Markdown，或上传 PDF / 图片。完整阅读后选择方案，最少4页。"
+                      ? "粘贴中文正文 / Markdown，或上传文档/图片后自动提炼…约 4–8 页图文笔记（页数随内容，第 9 页起八折）"
                       : "输入中文文案或分镜脚本，系统自动翻译并生成 2×4 编导分镜图…（建议 100–800 字）"
                 }
                 value={customNoteText}
-                onChange={(e) => {
-                  const text = e.target.value;
-                  setCustomNoteSourceFromDocument(false);
-                  setCustomNoteText(text);
-                }}
+                onChange={(e) => setCustomNoteText(e.target.value)}
                 disabled={customNoteBusy}
               />
-              {customNoteKind === "single_page_knowledge_card" && customNoteText.trim().length > KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS && <p className="mt-2 text-xs text-amber-200">手输长正文完整阅读提炼：{knowledgeCardDistillFeeForModel(customNoteDistillModel)}积分，开始前须确认；后续生图单独报价。上传文档不另收此费。</p>}
-              {customNoteKind === "single_page_knowledge_card" && !customNoteMaterialSeed && materialSeedKey ? (
-                <KnowledgeCardTextReviewPanel
-                  sourceText={customNoteText}
-                  storageKey={`${materialSeedKey}/text-review/single`}
-                  disabled={customNoteBusy || customNoteUploadBusy}
-                  onBusyChange={setCustomNoteBusy}
-                  onApply={(text) => {
-                    setCustomNoteText(text);
-                  }}
-                />
-              ) : null}
               {customNoteKind === "single_page_knowledge_card" ? (
                 <div className="mt-3 flex flex-wrap items-center gap-3">
                   <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-white/15 bg-black/30 px-3 py-1.5 text-xs font-semibold text-[#c9c0e6] transition hover:border-[#ff4fb8]/40 hover:text-white ${customNoteBusy || customNoteUploadBusy ? "opacity-50 pointer-events-none" : ""}`}>
@@ -15209,17 +15008,124 @@ export default function PlatformPage() {
                       type="file"
                       className="hidden"
                       multiple
-                      accept=".md,.txt,.pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp"
+                      accept=".pptx,.docx,.pdf,.png,.jpg,.jpeg,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/png,image/jpeg,image/webp"
                       disabled={customNoteBusy || customNoteUploadBusy}
                       onChange={(e) => {
-                        const files = Array.from(e.target.files || []);
+                        const list = Array.from(e.target.files || []);
                         e.target.value = "";
-                        if (files.length) void startKnowledgeReadingFiles(files).catch(() => {});
+                        if (!list.length) return;
+                        void (async () => {
+                          setCustomNoteUploadBusy(true);
+                          let completedDirectUploads = 0;
+                          try {
+                            const encoded: KnowledgeCardPendingFile[] = [];
+                            for (const file of list) {
+                              const mimeType = file.type || "application/octet-stream";
+                              /**
+                               * 超过阈值改走 GCS 直传：base64 会把体积撑大三分之一，
+                               * 请求体上限约 13.5MB 原文件，再大连接会在读 body 阶段被掐断
+                               * （2026-08-06：42MB 的 PDF 传不上去，却报「算力紧张」）。
+                               * 直传还顺带绕开了那台 2 核机器，机器忙也不影响上传。
+                               */
+                              if (file.size > KNOWLEDGE_CARD_DIRECT_UPLOAD_MIN_BYTES) {
+                                const mb = (file.size / 1024 / 1024).toFixed(1);
+                                const gcsUri = await uploadKnowledgeCardFileToGcs({
+                                  file,
+                                  mimeType,
+                                  getSignedUrl: (input) => getUploadUrlMutation.mutateAsync(input),
+                                  onStatus: (text) => setCustomNoteUploadStatus(text),
+                                  label: `${file.name}（${mb}MB）`,
+                                });
+                                encoded.push({ gcsUri, mimeType, fileName: file.name });
+                                completedDirectUploads += 1;
+                                continue;
+                              }
+                              const buf = await file.arrayBuffer();
+                              const bytes = new Uint8Array(buf);
+                              let binary = "";
+                              const chunk = 0x8000;
+                              for (let i = 0; i < bytes.length; i += chunk) {
+                                binary += String.fromCharCode(...Array.from(bytes.subarray(i, i + chunk)));
+                              }
+                              encoded.push({
+                                fileBase64: btoa(binary),
+                                mimeType,
+                                fileName: file.name,
+                              });
+                            }
+                            setCustomNoteUploadStatus(null);
+                            // 生成按钮依赖文本框非空：上传后立刻 OCR+提炼写入文本框，否则无法点生成
+                            const allPending = [...customNotePendingFilesRef.current, ...encoded];
+                            customNotePendingFilesRef.current = allPending;
+                            const docs = allPending.filter(
+                              (f) =>
+                                !String(f.mimeType).startsWith("image/") &&
+                                !/\.(png|jpe?g|webp)$/i.test(f.fileName || ""),
+                            );
+                            const imgEncoded = allPending.filter((f) => !docs.includes(f));
+                            setCustomNotePendingMeta(
+                              allPending.map((f) => ({
+                                fileName: f.fileName || (String(f.mimeType).startsWith("image/") ? "图片" : "文档"),
+                                kind:
+                                  String(f.mimeType).startsWith("image/") ||
+                                  /\.(png|jpe?g|webp)$/i.test(f.fileName || "")
+                                    ? ("image" as const)
+                                    : ("doc" as const),
+                              })),
+                            );
+                            setCustomNoteDistillPhase("distilling");
+                            setCustomNoteUploadStatus(
+                              "上传成功，正在读文/读图并提炼写入文本框（长文档会自动分段，可能需数分钟）…",
+                            );
+                            toast.message("正在提炼（长文档较久），完成后会写入上方文本框…");
+                            const distilled = await runKnowledgeCardDistill({
+                              sourceText: resolveKnowledgeCardSourceText(
+                                customNoteText,
+                                allPending.length,
+                              ),
+                              files: allPending,
+                              onStatus: setCustomNoteUploadStatus,
+                            });
+                            if (!distilled) {
+                              throw new Error("提炼结果为空，请换文件或改用可选中文字的 PDF / 关键页图片");
+                            }
+                            setCustomNoteText(distilled);
+                            customNotePendingFilesRef.current = [];
+                            setCustomNotePendingMeta([]);
+                            setCustomNoteDistillPhase("ready");
+                            const plan = planKnowledgeCardPages(distilled, customNoteDistillModel);
+                            const pages = Math.max(1, plan.pageCount || 1);
+                            const credits =
+                              plan.credits || knowledgeCardCreditsForPages(pages, customNoteDistillModel);
+                            const okMsg = `提炼完成：已写入文本框 · 约 ${pages} 页 · 约 ${credits} 积分（可点生成出图）`;
+                            setCustomNoteUploadStatus(okMsg);
+                            toast.success(okMsg);
+                          } catch (err) {
+                            setCustomNoteDistillPhase("idle");
+                            // 失败必须清掉待处理文件：否则用户再传一次会把同一本书叠上去（曾出现 9.5 万 → 28 万字）
+                            customNotePendingFilesRef.current = [];
+                            setCustomNotePendingMeta([]);
+                            const rawFail = String((err as { message?: string })?.message || "读取/提炼失败");
+                            const failMsg = sanitizePlatformUserMessage(
+                              mapCustomNoteError(err),
+                              /超时|较长/.test(rawFail)
+                                ? "文档较长，提炼超时，请稍后重试"
+                                : "算力紧张或请求超时，请稍后重试",
+                            );
+                            const failedStage = completedDirectUploads > 0
+                              ? `${completedDirectUploads} 个大文件已上传到云端，但读取或提炼失败`
+                              : "文件读取或提炼失败";
+                            setCustomNoteUploadStatus(`${failedStage}：${failMsg}（请重新选择文件重试，勿在失败态叠加）`);
+                            toast.error(failMsg);
+                          } finally {
+                            setCustomNoteUploadBusy(false);
+                          }
+                        })();
                       }}
                     />
                   </label>
                   <span className="text-[11px] text-[#c9c0e6]/45">
-                    上传后按页／文字段完整阅读图文，再选择方案与报价，确认后逐页出图
+                    上传后自动读文/读图提炼并写入上方文本框；确认后点生成出图
                   </span>
                   {customNoteUploadStatus ? (
                     <span className={`w-full text-[11px] leading-5 ${/失败|不足|未探测|未抽出/.test(customNoteUploadStatus) ? "text-rose-300/90" : "text-emerald-300/85"}`}>
@@ -15241,7 +15147,7 @@ export default function PlatformPage() {
                   ) : null}
                   {canChooseKnowledgeCardDistillModel ? (
                     <label className="inline-flex items-center gap-1.5 text-[11px] text-[#c9c0e6]/70">
-                      <span className="shrink-0">阅读档位</span>
+                      <span className="shrink-0">提炼档位</span>
                       <select
                         className="rounded-md border border-white/15 bg-black/50 px-2 py-1 text-[11px] font-semibold text-white focus:border-[#ff4fb8]/50 focus:outline-none"
                         value={customNoteDistillModel}
@@ -15249,7 +15155,6 @@ export default function PlatformPage() {
                           customNoteBusy
                           || customNoteUploadBusy
                           || customNoteDistillPhase !== "idle"
-                          || Boolean(readingSession?.pending)
                         }
                         title={
                           customNoteDistillPhase !== "idle"
@@ -15257,7 +15162,7 @@ export default function PlatformPage() {
                             : undefined
                         }
                         onChange={(e) => {
-                          const next = resolveActiveKnowledgeCardDistillModel(e.target.value);
+                          const next = e.target.value as KnowledgeCardDistillModelId;
                           setCustomNoteDistillModel(next);
                           try {
                             localStorage.setItem("mvs-knowledge-card-distill-model", next);
@@ -15275,54 +15180,10 @@ export default function PlatformPage() {
                     </label>
                   ) : null}
                   <span className="text-[11px] text-[#c9c0e6]/45">
-                    支持 PDF / MD / TXT / PNG / JPG / WebP；DOCX 和 PPTX 请先导出 PDF，以保留原页图文。
+                    支持 pptx / docx / pdf / png / jpg；上传文档的提炼含在页费中，超长纯文本主动提炼另收一次性提炼费
                   </span>
                 </div>
               ) : null}
-              {customNoteKind === "single_page_knowledge_card" && readingHistory.length > 0 && <label className="my-3 block text-sm text-slate-400">恢复阅读材料与结果
-                <select aria-label="恢复阅读材料与结果" className="ml-2 max-w-full rounded bg-slate-900 p-2" value={readingSession?.id ?? ""} disabled={customNoteBusy || Boolean(readingSession?.pending)} onChange={event => {
-                  const selected = readingHistory.find(item => item.id === event.target.value);
-                  if (!selected) return;
-                  try {
-                    const restored = saveReading(selected);
-                    void refreshReadingSuccessPages(restored).catch(error => toast.error(error instanceof Error ? error.message : "图片链接暂未刷新，请查询原任务"));
-                  } catch (error) { toast.error(error instanceof Error ? error.message : "恢复失败，当前材料保持不变"); }
-                }}>
-                  {readingHistory.map(item => <option key={item.id} value={item.id}>{item.files.map(file => file.fileName).join("、")} · {item.edition ? `${readingEditionImages(item).length}/${item.edition.pages.length}页图片` : item.plan ? "已阅读并规划" : "阅读材料"} · {item.id.slice(0, 6)}</option>)}
-                </select>
-              </label>}
-              {customNoteKind === "single_page_knowledge_card" && <KnowledgeCardReadingPlans
-                key={readingSession?.id ?? "new-reading"}
-                plan={readingSession?.plan}
-                constraints={readingSession?.constraints}
-                phase={readingSession?.phase ?? "idle"}
-                progress={readingSession?.progress}
-                error={readingSession?.error}
-                readingFeeCharged={readingSession?.distillFeeCharged}
-                selectedMode={readingSession?.selectedMode}
-                onAnalyze={async constraints => {
-                  const current = readingSessionRef.current;
-                  if (!current) { await startKnowledgeReadingText(customNoteText, { constraints }); return; }
-                  await withReadingOperation(async () => {
-                    if (current.pending) throw new Error("请先查询已有任务，不能重复规划");
-                    const next = saveReading({ ...current, id: crypto.randomUUID(), constraints, plan: undefined, planId: undefined, readingJobId: undefined, edition: undefined, editionJobId: undefined, pageTasks: {}, pending: "reading", phase: "reading", error: undefined });
-                    await finishReadingPlan(next);
-                  });
-                }}
-                onSelect={mode => {
-                  const current = readingSessionRef.current;
-                  if (!current || current.pending) throw new Error("请先查询已有任务");
-                  if (current.selectedMode !== mode) saveReading({ ...current, id: crypto.randomUUID(), selectedMode: mode, edition: undefined, editionJobId: undefined, pageTasks: {} });
-                }}
-                onGenerate={mode => withReadingOperation(async () => {
-                  const current = readingSessionRef.current;
-                  if (!current || current.pending || current.selectedMode !== mode) throw new Error("请先查询已有任务并核对方案");
-                  await renderReadingEdition(current);
-                })}
-                onResume={readingSession ? resumeKnowledgeReading : undefined}
-              />}
-              {readingSession?.previousImages?.length ? <details className="my-3 text-sm text-slate-400"><summary>此前图片（已保留）</summary>{readingSession.previousImages.map((url, index) => <a className="mr-3" key={`${index}-${url}`} href={url} target="_blank" rel="noreferrer">查看原第{index + 1}张</a>)}</details> : null}
-              {readingSession?.edition && Object.entries(readingSession.pageTasks).some(([, task]) => task.status === "failed") && <button type="button" disabled={customNoteBusy} onClick={() => void retryKnowledgeReadingPage().catch(() => {})}>确认费用后重试失败页</button>}
               {customNoteKind === "optimize_custom_copy" ? (
                 <textarea
                   className="mt-3 w-full min-h-[96px] resize-y rounded-2xl border border-[#fbbf24]/20 bg-[rgba(251,191,36,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#fbbf24]/50 focus:outline-none focus:ring-1 focus:ring-[#fbbf24]/30 transition"
@@ -15355,7 +15216,7 @@ export default function PlatformPage() {
                   ) : customNoteKind === "optimize_custom_copy" ? (
                     <><Sparkles className="h-4 w-4" />深度优化文案（{customOptimizeCopyCost} 积分）</>
                   ) : customNoteKind === "single_page_knowledge_card" ? (
-                    <><Sparkles className="h-4 w-4" />完整阅读正文并规划</>
+                    <><Sparkles className="h-4 w-4" />生成图文笔记（约 {Math.max(1, customNoteKnowledgePlan.pageCount || 1)} 页 · {knowledgeCardImageQuality(Math.max(1, customNoteKnowledgePlan.pageCount || 1)) === "high" ? "4K" : "2K"} · {customNoteKnowledgeCredits || 30} 积分）</>
                   ) : (
                     <><Film className="h-4 w-4" />生成编导分镜图</>
                   )}
@@ -15387,23 +15248,6 @@ export default function PlatformPage() {
                 )}
               </div>
 
-              {customNoteKind === "single_page_knowledge_card" ? (
-                <EpubToPdfPanel
-                  disabled={customNoteBusy || customNoteUploadBusy}
-                  onImportText={(text) => {
-                    void startKnowledgeReadingText(text, { fromDocument: true }).catch(() => {});
-                  }}
-                />
-              ) : null}
-              {customNoteMaterialSeed?.previousImages?.length ? (
-                <details className="mt-3 text-xs text-slate-400">
-                  <summary>此前生成的图片（已保留）</summary>
-                  <div className="flex flex-wrap gap-2">
-                    {customNoteMaterialSeed.previousImages.map((url, index) => <a key={url} href={url} target="_blank" rel="noreferrer">查看第{index + 1}张</a>)}
-                  </div>
-                </details>
-              ) : null}
-
               {!customOptimizeResult && visibleExecutionCards.some((c) => c.publishingAdvice?.trim()) ? (
                 <div className="mt-5 rounded-xl border border-[#fbbf24]/25 bg-[rgba(251,191,36,0.06)] px-4 py-3">
                   <div className="text-[10px] font-semibold uppercase tracking-wide text-[#fcd34d]/90">
@@ -15432,9 +15276,9 @@ export default function PlatformPage() {
                     ? "正在深度优化文案，约需 30–90 秒…"
                     : customNotePageProgress
                       ? `正在生成第 ${customNotePageProgress.i}/${customNotePageProgress.n} 页，请勿关闭页面…`
-                      : readingSession?.phase === "reading"
-                        ? "正在完整阅读原页图文，可稍后查询已有任务…"
-                        : "正在整理方案或生成图片，可稍后查询已有任务…"}
+                      : prepareKnowledgeCardCopyMutation.isPending
+                        ? "正在提炼文案与读图要点…"
+                        : "正在生成图片，约需数分钟，请勿关闭页面…"}
                 </div>
               )}
 

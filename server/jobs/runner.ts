@@ -58,7 +58,6 @@ import { normalizePlatforms } from "../growth/growthSchema";
 import { readTrendStore, readTrendStoreForPlatforms } from "../growth/trendStore";
 import {
   claimNextGrowthCampAnalyzeJob,
-  claimNextKnowledgeCardReadingJob,
   claimNextManhuaTemplateLearnJob,
   claimNextQueuedJob,
   claimNextPdfExportJob,
@@ -175,7 +174,7 @@ export function canvasGptImage2RefundKey(jobId: string | undefined): string {
 /**
  * 七审 P0-2:失败任务处置纯函数。canvas_gpt_image2 绝不整单重排——
  * 重排=第二次调用付费图片上游(chargeKey 只能防第二次扣积分,防不了第二次烧上游),
- * 直接退款+终态失败；全页阅读保留证据并终止，其他任务维持 attempts<2 重排策略。
+ * 直接退款+终态失败;其余任务维持 attempts<2 重排的旧策略。
  */
 export function resolveFailedJobDisposition(job: {
   type: string;
@@ -184,10 +183,6 @@ export function resolveFailedJobDisposition(job: {
 }): "refund_and_fail_paid_image" | "requeue" | "fail" {
   if (job.type === "image" && paidImageLedgerTaskType(job.input)) {
     return "refund_and_fail_paid_image";
-  }
-  if (job.type === "platform" && isRecord(job.input) && (job.input.action === "knowledge_card_reading" || job.input.action === "knowledge_card_edition")) {
-    // 逐页上游回执已持久化；失败只保留原任务待恢复，不整单自动重买。
-    return "fail";
   }
   return (job.attempts ?? 0) < 2 ? "requeue" : "fail";
 }
@@ -199,9 +194,6 @@ let klingInitialized = false;
 let workerStarted = false;
 let processing = false;
 let timer: NodeJS.Timeout | null = null;
-/** 全页阅读与详细稿共用独立单并发；不改变普通任务或其他专用池的并发。 */
-let knowledgeReadingProcessing = false;
-let knowledgeReadingTimer: NodeJS.Timeout | null = null;
 let pdfProcessing = false;
 let pdfTimer: NodeJS.Timeout | null = null;
 let postProdProcessing = false;
@@ -1677,12 +1669,6 @@ export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
   if (type === "platform") {
     try {
       const input = asEnvelope(inputRaw);
-      if (input.action === "knowledge_card_reading" || input.action === "knowledge_card_edition") {
-        const raw = Number(process.env.KNOWLEDGE_CARD_READING_JOB_TIMEOUT_MS);
-        if (Number.isFinite(raw) && raw >= 300_000) return Math.floor(raw);
-        // 全页视觉精读可能包含数十批请求；这是执行墙钟，超时明确失败而非裁页。
-        return 6 * 60 * 60_000;
-      }
       if (input.action === "platform_build_content") {
         const raw = Number(process.env.PLATFORM_BUILD_CONTENT_JOB_TIMEOUT_MS);
         if (Number.isFinite(raw) && raw >= 120_000) return raw;
@@ -2085,7 +2071,6 @@ async function processPlatformJob(
   input: JobEnvelope,
   platformJobId?: string,
   jobUserId?: string,
-  signal?: AbortSignal,
 ): Promise<{ output: unknown; provider?: string }> {
   const params = input.params ?? {};
   try {
@@ -3133,66 +3118,6 @@ async function processPlatformJob(
       };
     }
 
-    // ── 原页精读与确认方案详细稿 ───────────────────────────────────────────────
-    if (input.action === "knowledge_card_reading" || input.action === "knowledge_card_edition") {
-      const userId = Number(jobUserId);
-      if (!platformJobId || !Number.isSafeInteger(userId) || userId <= 0)
-        throw new Error("文档阅读任务缺少可信的账号或任务编号");
-      signal?.throwIfAborted();
-      const { z } = await import("zod");
-      const { KNOWLEDGE_CARD_ACTIVE_DISTILL_MODELS } = await import("../../shared/knowledgeCardDistillModels.js");
-      const { knowledgeCardReadingConstraintsSchema, KNOWLEDGE_CARD_READING_MODES } = await import("../../shared/knowledgeCardReadingPlan.js");
-      // 只取队列允许的业务字段，params.userId等客户端身份不得覆盖jobs.userId。
-      const editionRequest = input.action === "knowledge_card_edition" ? z.object({
-        planId: z.string().regex(/^[a-f0-9]{64}-[a-f0-9]{64}$/), mode: z.enum(KNOWLEDGE_CARD_READING_MODES),
-      }).parse(params) : null;
-      const reading = editionRequest ? null : z.object({
-        model: z.enum(KNOWLEDGE_CARD_ACTIVE_DISTILL_MODELS),
-        files: z.array(z.object({
-          gcsUri: z.string().min(1).max(1024), generation: z.string().min(1).max(128),
-          mimeType: z.string().min(1).max(120), fileName: z.string().min(1).max(240),
-        }).strict()).min(1).max(40),
-        constraints: knowledgeCardReadingConstraintsSchema.optional(),
-        chargeDistillFee: z.boolean().optional(),
-      }).parse(params);
-      const progressController = new AbortController();
-      const readingSignal = signal ? AbortSignal.any([signal, progressController.signal]) : progressController.signal;
-      let progress = { readingDonePages: 0, readingTotalPages: 0, readingPhase: "starting" };
-      await patchJobRunningProgressStrict(platformJobId, progress);
-      let heartbeatPending = false;
-      const heartbeat = setInterval(() => {
-        if (readingSignal.aborted || heartbeatPending) return;
-        heartbeatPending = true;
-        void patchJobRunningProgressStrict(platformJobId, progress)
-          .catch(error => progressController.abort(error))
-          .finally(() => { heartbeatPending = false; });
-      }, 30_000);
-      heartbeat.unref?.();
-      try {
-        const onProgress = async (done: number, total: number, phase: string) => {
-          readingSignal.throwIfAborted();
-          progress = { readingDonePages: done, readingTotalPages: total, readingPhase: phase };
-          await patchJobRunningProgressStrict(platformJobId, progress);
-        };
-        if (editionRequest) {
-          const { prepareKnowledgeCardReadingEdition } = await import("../services/knowledgeCardReadingEdition.js");
-          const edition = await prepareKnowledgeCardReadingEdition({ ...editionRequest, userId }, onProgress, readingSignal);
-          readingSignal.throwIfAborted();
-          return { provider: "evolink", output: { success: true, edition, readingDonePages: edition.pages.length, readingTotalPages: edition.pages.length, readingPhase: "done" } };
-        }
-        const { analyzeKnowledgeCardDocuments } = await import("../services/knowledgeCardReading.js");
-        const result = await analyzeKnowledgeCardDocuments({ ...reading!, userId }, onProgress, readingSignal);
-        readingSignal.throwIfAborted();
-        const { settleKnowledgeCardReadingFee } = await import("../services/knowledgeCardReadingFee.js");
-        const distillFeeCharged = reading!.chargeDistillFee === true
-          ? await settleKnowledgeCardReadingFee({ userId, analysisId: result.analysisId, model: reading!.model, chargeDistillFee: true }) : 0;
-        // 保留原手输提炼费用，上传不加费；同一阅读换预算方案不再扣费。
-        return { provider: "evolink", output: { success: true, ...result, distillFeeCharged, readingDonePages: result.sourcePages, readingTotalPages: result.sourcePages, readingPhase: "done" } };
-      } finally {
-        clearInterval(heartbeat);
-      }
-    }
-
     // ── knowledge_card_distill ───────────────────────────────────────────────
     // 长书提炼：整本 10 万字要分十几段跑数分钟，放同步 HTTP 会被网关掐断且拖死健康检查。
     if (input.action === "knowledge_card_distill") {
@@ -3330,13 +3255,12 @@ async function executeJob(
   inputRaw: unknown,
   timeoutMs: number,
   userId: string,
-  jobId?: string,
-  signal?: AbortSignal,
+  jobId?: string
 ): Promise<{ output: unknown; provider?: string }> {
   const input = asEnvelope(inputRaw);
   if (type === "video") return processVideoJob(input, timeoutMs, userId, jobId);
   if (type === "image") return processImageJob(input, timeoutMs, userId, jobId);
-  if (type === "platform") return processPlatformJob(input, jobId, userId, signal);
+  if (type === "platform") return processPlatformJob(input, jobId, userId);
   if (type === "pdf_export")
     return processPdfExportJob(inputRaw, userId, jobId);
   if (type === "post_prod") {
@@ -3400,10 +3324,8 @@ async function runClaimedJob(
       jobType === "audio" &&
       isRecord(job.input) &&
       job.input.action === MANHUA_BGM_ACTION;
-    const knowledgeReadingJob = jobType === "platform" && isRecord(job.input) && (job.input.action === "knowledge_card_reading" || job.input.action === "knowledge_card_edition");
-    const readingController = knowledgeReadingJob ? new AbortController() : undefined;
     const { output, provider } = await withTimeout(
-      executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id, readingController?.signal),
+      executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id),
       timeoutMs,
       `${job.type} job timed out after ${timeoutMs}ms`,
       manhuaLearnJob
@@ -3413,19 +3335,13 @@ async function runClaimedJob(
             },
             cleanupGraceMs: 30_000,
           }
-        : readingController
-          ? { onTimeout: () => readingController.abort(new Error("文档阅读超时，已停止后续请求并保留已有证据")), cleanupGraceMs: 30_000 }
-          : undefined
+        : undefined
     );
     const succeededPersisted = manhuaLearnJob
       ? await markManhuaLearnJobSucceededWithRetry(job.id, output, provider)
-      : manhuaBgmJob || manhuaAssembleJob || knowledgeReadingJob
+      : manhuaBgmJob || manhuaAssembleJob
         ? await markJobSucceededWithRetry(job.id, output, provider)
         : await markJobSucceeded(job.id, output, provider);
-    if (knowledgeReadingJob && !succeededPersisted) {
-      // 服务已永久保存analysis/plan；只报告终态登记断点，不再次调用阅读模型。
-      throw new Error("文档阅读产物已保存，但任务终态登记失败；请核对原任务，未自动重读");
-    }
     if (manhuaAssembleJob) {
       const { refundCreditsOnFailure, unregisterActiveJob, markSettlementPending } = await import("../services/paidJobLedger.js");
       if (!succeededPersisted) {
@@ -3764,7 +3680,7 @@ async function runClaimedJob(
         console.error("[Jobs] paid image refund pending:", refundError),
       );
       await markJobFailed(job.id, message);
-    } else if (resolveFailedJobDisposition(job) === "requeue") {
+    } else if ((job.attempts ?? 0) < 2) {
       await requeueJob(job.id, message);
     } else {
       await markJobFailed(job.id, message);
@@ -3932,27 +3848,11 @@ export async function processJobsOnce() {
   }
 }
 
-/** 先占本进程槽再等待数据库领取，避免慢查询期间多个timer同时启动阅读。 */
-export async function processKnowledgeCardReadingJobsOnce() {
-  if (knowledgeReadingProcessing) return;
-  knowledgeReadingProcessing = true;
-  try {
-    while (true) {
-      const job = await claimNextKnowledgeCardReadingJob();
-      if (!job) break;
-      await runClaimedJob(job);
-    }
-  } finally {
-    knowledgeReadingProcessing = false;
-  }
-}
-
 export function startJobWorker() {
   if (workerStarted) return;
   workerStarted = true;
 
   void processJobsOnce();
-  void processKnowledgeCardReadingJobsOnce().catch(error => console.error("[Jobs] reading worker failed:", error));
   void processPdfJobsOnce();
   void processPostProdJobsOnce();
   void processGrowthAnalyzeJobsOnce();
@@ -3960,10 +3860,6 @@ export function startJobWorker() {
   timer = setInterval(() => {
     void processJobsOnce();
   }, 1_000);
-  knowledgeReadingTimer = setInterval(() => {
-    void processKnowledgeCardReadingJobsOnce().catch(error => console.error("[Jobs] reading worker failed:", error));
-  }, 1_000);
-  knowledgeReadingTimer.unref?.();
   growthAnalyzeTimer = setInterval(() => {
     void processGrowthAnalyzeJobsOnce();
   }, 1_000);
@@ -3997,8 +3893,6 @@ export function startJobWorker() {
 export function stopJobWorker() {
   if (timer) clearInterval(timer);
   timer = null;
-  if (knowledgeReadingTimer) clearInterval(knowledgeReadingTimer);
-  knowledgeReadingTimer = null;
   if (growthAnalyzeTimer) clearInterval(growthAnalyzeTimer);
   growthAnalyzeTimer = null;
   if (manhuaLearnTimer) clearInterval(manhuaLearnTimer);

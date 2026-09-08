@@ -107,8 +107,7 @@ describe("reapStaleJobsOnce 与 post_prod 记录保留", () => {
     getDb.mockResolvedValue(fakeDb(calls, [{ id: "asm-7", userId: "7", status: "running", updatedAt: new Date(0) }]));
     ledger.readActiveJob.mockResolvedValue({ userId: 7, status: "active", lastHeartbeatAt: new Date().toISOString() } as never);
     await reapStaleJobsOnce({ bypassDisable: true });
-    expect(calls.filter(call => call.kind === "update")).toHaveLength(2);
-    expect(calls.filter(call => call.kind === "update").every(call => !String(call.payload?.error).includes("合成"))).toBe(true);
+    expect(calls.filter(call => call.kind === "update")).toHaveLength(1);
     expect(ledger.refundCreditsOnFailure).not.toHaveBeenCalled();
   });
 
@@ -126,24 +125,5 @@ describe("reapStaleJobsOnce 与 post_prod 记录保留", () => {
       runningCleared: 0,
       queuedCleared: 0,
     });
-  });
-
-  it("阅读失活仅改失败且保留所有证据，运行按心跳、排队至少12小时，通用删除排除阅读", async () => {
-    const calls: Call[] = [];
-    getDb.mockResolvedValue(fakeDb(calls));
-    await reapStaleJobsOnce({ bypassDisable: true });
-    const update = calls.find(call => call.kind === "update" && sqlStringValues(call.condition).join("\n").includes("knowledge_card_reading"));
-    expect(update?.payload).toEqual({ status: "failed", error: expect.stringContaining("原页证据与任务记录保留"), updatedAt: expect.any(Date) });
-    expect(update?.payload).not.toHaveProperty("input");
-    expect(update?.payload).not.toHaveProperty("output");
-    expect(sqlStringValues(update?.condition).join("\n")).toContain("720 minutes");
-    expect(sqlStringValues(update?.condition).join("\n")).toContain("knowledge_card_edition");
-    const deletes = calls.filter(call => call.kind === "delete");
-    expect(deletes).toHaveLength(2);
-    for (const deletion of deletes) {
-      expect(sqlStringValues(deletion.condition).join("\n")).toContain("knowledge_card_reading");
-      expect(sqlStringValues(deletion.condition).join("\n")).toContain("knowledge_card_edition");
-    }
-    expect(ledger.refundCreditsOnFailure).not.toHaveBeenCalled();
   });
 });

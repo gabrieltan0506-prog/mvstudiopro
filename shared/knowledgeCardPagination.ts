@@ -15,8 +15,8 @@ export const KNOWLEDGE_CARD_TARGET_MAX_PAGES = 8;
  * 每页合理字数上限（超出则增页；页数不封顶）。
  *
  * 用户 2026-08-05 给了两张验收样张（16:9 横版，一页承载 4–6 个模块 + 表格 + 指标条），
- * 每页约 1000–1200 字，取其上界；页数只影响分页与费用，所有页统一4K。
- * 旧值 850 是按「一页一节」的疏朗竖版设的，
+ * 实测每页约 1000–1200 字，取其上界：9.5 万字的书（成稿约 6800 字）因此落在 6 页，
+ * 仍在 4K 门槛（`KNOWLEDGE_CARD_4K_MAX_PAGES`）内。旧值 850 是按「一页一节」的疏朗竖版设的，
  * 在横版下每页只填约 220 字，白白多出好几倍页数。
  */
 export const KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE = 1200;
@@ -32,12 +32,13 @@ export const KNOWLEDGE_CARD_CREDITS_FULL = 30;
 /** @deprecated 默认精细档折扣；请用 knowledgeCardPageCreditsForModel */
 export const KNOWLEDGE_CARD_CREDITS_DISCOUNT = 24;
 export const KNOWLEDGE_CARD_FULL_PRICE_PAGES = 8;
-/** 图文知识卡统一原生4K；分辨率必须独立于quality传入供应商。 */
-export const KNOWLEDGE_CARD_IMAGE_RESOLUTION = "4K" as const;
+/** ≤ 此页数出图 4K（gpt-image-2 quality=high）；超过则整套一律 2K（medium） */
+export const KNOWLEDGE_CARD_4K_MAX_PAGES = 6;
 
-/** 保留页数入参兼容旧调用，新增页和旧任务续跑均不降档。 */
-export function knowledgeCardImageQuality(_pageTotal: number): "high" | "medium" {
-  return "high";
+/** 知识卡出图像素质：总页数 ≤6 → high≈4K；>6 → medium≈2K。 */
+export function knowledgeCardImageQuality(pageTotal: number): "high" | "medium" {
+  const n = Math.max(0, Math.floor(Number(pageTotal) || 0));
+  return n > 0 && n <= KNOWLEDGE_CARD_4K_MAX_PAGES ? "high" : "medium";
 }
 
 export type KnowledgeCardPagePlan = {
