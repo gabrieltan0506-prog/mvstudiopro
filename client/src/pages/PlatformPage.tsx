@@ -247,13 +247,34 @@ import {
 import {
   estimateKnowledgeCardDistillTradeoff,
   KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS,
+  knowledgeCardCreditsForPageIndex,
   knowledgeCardCreditsForPages,
-  knowledgeCardImageQuality,
   planKnowledgeCardPages,
 } from "@shared/knowledgeCardPagination";
 import { suggestKnowledgeCardMinSections } from "@shared/knowledgeCardDistillSections";
 import {
   KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS,
+} from "@shared/knowledgeCardDistillModels";
+import {
+  KNOWLEDGE_CARD_DEFAULT_DETAIL_LEVEL,
+  KNOWLEDGE_CARD_DETAIL_LEVEL_LABEL_ZH,
+  KNOWLEDGE_CARD_DETAIL_LEVELS,
+  resolveKnowledgeCardDetailLevel,
+  type KnowledgeCardDetailLevel,
+} from "@shared/knowledgeCardDistillSections";
+import {
+  KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH,
+  KNOWLEDGE_CARD_SUBJECT_POSITIONS,
+  resolveKnowledgeCardSubjectPosition,
+  type KnowledgeCardSubjectPosition,
+} from "@shared/knowledgeCardSubjectPosition";
+import {
+  KnowledgeCardProgress,
+  knowledgeCardProgressFromDistill,
+  knowledgeCardProgressFromRender,
+  type KnowledgeCardProgressState,
+} from "@/components/platform/KnowledgeCardProgress";
+import {
   KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
   knowledgeCardDistillFeeForModel,
   resolveKnowledgeCardDistillModel,
@@ -2131,10 +2152,12 @@ function PlatformIpDimensionGuide() {
   );
 }
 
-/** 待提炼的上传文件：小文件走 base64 内联，大文件走 GCS 直传只带回 gs:// 地址 */
+/** 知识卡出图并发路数（0908 用户令）：EvoLink 与 OpenAI 官方各 2 路同时打 */
+const KNOWLEDGE_CARD_RENDER_CONCURRENCY = 4;
+
+/** 待提炼的上传文件：不论大小一律 GCS 直传，只带回 gs:// 地址（媒体传输铁律：不走 base64） */
 type KnowledgeCardPendingFile = {
-  fileBase64?: string;
-  gcsUri?: string;
+  gcsUri: string;
   mimeType: string;
   fileName?: string;
 };
@@ -2320,15 +2343,6 @@ function writeManhuaLearnContinuation(
     // localStorage 禁用时仍保留当前会话内的 ref，不阻断学习主链。
   }
 }
-
-/**
- * 超过这个体积就直传 GCS。
- *
- * base64 会把体积撑大约三分之一，请求体上限 18MB 折回原文件约 13.5MB；再大连接会在
- * 读 body 阶段被掐断，前端只看到含糊的「算力紧张」（用户 2026-08-06 的 42MB PDF）。
- * 阈值留到 8MB，是让常见的几百 KB 文档继续走内联，少一次签名往返。
- */
-const KNOWLEDGE_CARD_DIRECT_UPLOAD_MIN_BYTES = 8 * 1024 * 1024;
 
 /**
  * 大文档直传 GCS：一次 PUT，断了就重签名重传（签名地址 15 分钟过期，重试必须重新取）。
@@ -3004,6 +3018,24 @@ export default function PlatformPage() {
       return KNOWLEDGE_CARD_DISTILL_MODEL_SOL;
     }
   });
+  /** 成稿档：精华版（提炼主要重点）/ 高级版（主要+次要重点，不限页数）；0908 用户拍板 */
+  const [customNoteDetailLevel, setCustomNoteDetailLevel] = useState<KnowledgeCardDetailLevel>(() => {
+    try {
+      return resolveKnowledgeCardDetailLevel(localStorage.getItem("mvs-knowledge-card-detail-level") || KNOWLEDGE_CARD_DEFAULT_DETAIL_LEVEL);
+    } catch {
+      return KNOWLEDGE_CARD_DEFAULT_DETAIL_LEVEL;
+    }
+  });
+  /** 主体偏左 / 居中（横版 16:9 固定）；0908 用户拍板 */
+  const [customNoteSubjectPosition, setCustomNoteSubjectPosition] = useState<KnowledgeCardSubjectPosition>(() => {
+    try {
+      return resolveKnowledgeCardSubjectPosition(localStorage.getItem("mvs-knowledge-card-subject-position"));
+    } catch {
+      return "left";
+    }
+  });
+  /** 一条进度条贯穿上传→转换→读原稿→提炼→出图；终态成功/失败 */
+  const [customNoteProgress, setCustomNoteProgress] = useState<KnowledgeCardProgressState>({ status: "idle", percent: 0 });
   /** 待随「生成」一并提炼的上传文件（含图片 OCR）。 */
   const customNotePendingFilesRef = useRef<KnowledgeCardPendingFile[]>([]);
   /** 上传区可见状态（成功/失败），避免只靠 toast */
@@ -7874,8 +7906,78 @@ export default function PlatformPage() {
 
   /** 自定義文案生成圖文筆記 — 獨立 mutation；回呼留空，全部流程在 handler 以 mutateAsync 串接控制。 */
   const generateCustomNoteMutation = trpc.mvAnalysis.generatePlatformCompositeSheet.useMutation();
+  const exportKnowledgeCardPdfMutation = trpc.mvAnalysis.exportKnowledgeCardPdf.useMutation();
+  const [knowledgeCardPdfBusy, setKnowledgeCardPdfBusy] = useState(false);
+  const [knowledgeCardPdfUrl, setKnowledgeCardPdfUrl] = useState<string | null>(null);
+  /** 正在生成中的页序（0-based）：占位块显示「生成中」，补出按钮对在途页禁用，避免同一页重复扣费 */
+  const [knowledgeCardInflight, setKnowledgeCardInflight] = useState<number[]>([]);
+  /** 当前出图批次号：旧批次的在途页返回后不得覆盖新批次的结果/在途标记 */
+  const renderRunIdRef = useRef(0);
+  /** 本套卡出图时用的提炼稿快照：补出单页必须用它，不用文本框里可能已改过的内容 */
+  const renderedDraftRef = useRef<string>("");
+  /** customNoteImages 的同步镜像：计数用，不在 state updater 里做副作用 */
+  const customNoteImagesRef = useRef<string[]>([]);
+  const markInflight = (runId: number, idx: number, on: boolean) => {
+    if (runId !== renderRunIdRef.current) return;
+    setKnowledgeCardInflight((cur) => (on ? (cur.includes(idx) ? cur : [...cur, idx]) : cur.filter((i) => i !== idx)));
+  };
+  const knowledgeCardDraftChanged = () => Boolean(renderedDraftRef.current) && customNoteText.trim() !== renderedDraftRef.current;
+  /** 单页补出：只重出失败/缺失的那一页，按该页页费确认后扣费；不动其它页 */
+  const retryKnowledgeCardPage = async (idx: number) => {
+    if (customNoteBusy) { toast.info("上一个生成任务还在进行中，请稍候"); return; }
+    const total = customNoteImagesRef.current.length;
+    // 必须用出图时的提炼稿快照：文本框改过再按新文本出第 N 页，会拿到另一份稿的页还照旧计费
+    const text = renderedDraftRef.current;
+    if (!text || idx < 0 || idx >= total) return;
+    if (knowledgeCardDraftChanged()) { toast.error("文案已改动，补出会对不上这套卡；请重新整套生成"); return; }
+    if (knowledgeCardInflight.includes(idx)) { toast.info(`第 ${idx + 1} 页仍在生成中，请稍候`); return; }
+    const price = knowledgeCardCreditsForPageIndex(idx + 1, customNoteDistillModel);
+    if (!window.confirm(`补出第 ${idx + 1}/${total} 页，${price} 积分，是否继续？`)) return;
+    const runId = renderRunIdRef.current;
+    setCustomNoteBusy(true);
+    setCustomNoteError(null);
+    setKnowledgeCardPdfUrl(null);
+    setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(customNoteImagesRef.current.filter(Boolean).length, total), label: `补出第 ${idx + 1}/${total} 页` });
+    markInflight(runId, idx, true);
+    try {
+      const url = await generateCustomNoteOne(text, "single_page_knowledge_card", undefined, { index: idx + 1, total }, idx % 2 === 0 ? "evolink" : "openai");
+      if (runId !== renderRunIdRef.current) return; // 期间已重新整套生成，旧结果丢弃
+      const next = customNoteImagesRef.current.slice();
+      next[idx] = url;
+      customNoteImagesRef.current = next;
+      setCustomNoteImages(next);
+      const ready = next.filter(Boolean).length;
+      setCustomNoteProgress(ready >= total ? { status: "succeeded", percent: 100 } : { status: "running", percent: knowledgeCardProgressFromRender(ready, total), label: `出图 ${ready}/${total} 页` });
+      toast.success(`第 ${idx + 1} 页已补出`);
+    } catch (e) {
+      const msg = mapCustomNoteError(e);
+      setCustomNoteError(msg);
+      setCustomNoteProgress((prev) => ({ status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
+      toast.error(`补出失败：${msg.slice(0, 120)}`);
+    } finally {
+      markInflight(runId, idx, false);
+      setCustomNoteBusy(false);
+    }
+  };
+
+  /** 整套导出 PDF：服务端归一尺寸拼页落 GCS，这里只拿签名链打开 */
+  const downloadKnowledgeCardPdf = async (urls: string[]) => {
+    if (!urls.length || knowledgeCardPdfBusy) return;
+    setKnowledgeCardPdfBusy(true);
+    try {
+      const res = await exportKnowledgeCardPdfMutation.mutateAsync({ imageUrls: urls, title: extractInfographicSubjectFromUserCopy(customNoteText) });
+      // 弹窗可能被浏览器拦截：同时把链接留在页面上可点
+      setKnowledgeCardPdfUrl(res.url);
+      // 带 noopener 的 window.open 规范上恒返回 null，不据此判断是否打开成功；链接始终留在页面上
+      window.open(res.url, "_blank", "noopener,noreferrer");
+      toast.success(`PDF 已生成（${res.pageCount} 页），可点「打开 / 下载 PDF」`);
+    } catch (e) {
+      toast.error(`PDF 导出失败：${String((e as { message?: string })?.message || "").slice(0, 120)}`);
+    } finally {
+      setKnowledgeCardPdfBusy(false);
+    }
+  };
   const prepareKnowledgeCardCopyMutation = trpc.mvAnalysis.prepareKnowledgeCardCopy.useMutation();
-  const extractPlatformDocumentTextMutation = trpc.mvAnalysis.extractPlatformDocumentText.useMutation();
   const optimizeCustomCopyMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
   const customOptimizeCopyCost = CREDIT_COSTS.platformOptimizeCustomCopy;
   const customNoteKnowledgePlan = useMemo(
@@ -7897,41 +7999,66 @@ export default function PlatformPage() {
     /** 纯文本长文里用户主动买的提炼，服务端据此收提炼费 */
     chargeDistillFee?: boolean;
   }): Promise<string> => {
+    setCustomNoteProgress((prev) => ({ status: "running", percent: Math.max(prev.status === "running" ? prev.percent : 0, 1), label: "提交提炼任务…" }));
     const queued = await prepareKnowledgeCardCopyMutation.mutateAsync({
       sourceText: args.sourceText,
       files: args.files?.length ? args.files : undefined,
       forceDistill: true,
       distillModel: customNoteDistillModel,
+      detailLevel: customNoteDetailLevel,
       ...(args.chargeDistillFee ? { chargeDistillFee: true } : {}),
     });
 
     if (!queued.isAsync || !queued.progressJobId) {
+      setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromDistill(98), label: "提炼完成" });
       return String(queued.distilledMarkdown || "").trim();
     }
 
     const totalHint = Math.max(1, queued.estimatedChunks || 1);
-    args.onStatus?.(`已读出约 ${queued.sourceChars.toLocaleString()} 字，正在分 ${totalHint} 段提炼…`);
+    args.onStatus?.(
+      queued.sourceChars > 0
+        ? `已读出约 ${queued.sourceChars.toLocaleString()} 字，正在分 ${totalHint} 段提炼…`
+        : "文件已交后台：转换 / 读原稿 / 挑参考页 / 提炼…",
+    );
+    const stageLabel = (out: {
+      distillStage?: string; distillStageDone?: number; distillStageTotal?: number; distillFileName?: string;
+      distillPhase?: string; distillDoneChunks?: number; distillTotalChunks?: number;
+    }): string => {
+      const stage = out.distillStage || out.distillPhase || "";
+      const done = Number(out.distillStageDone) || 0;
+      const total = Number(out.distillStageTotal) || 0;
+      if (stage === "converting") return `EPUB 转 PDF · ${out.distillFileName || ""}`;
+      if (stage === "reading") return total ? `读原稿 ${done}/${total} 页` : "读原稿…";
+      if (stage === "selecting") return "挑选值得参考的原稿页…";
+      if (stage === "rendering") return total ? `渲染参考页 ${done}/${total}` : "渲染参考页…";
+      if (stage === "refining") return "统稿合并…";
+      if (stage === "finishing") return "写入结果…";
+      const dc = Number(out.distillDoneChunks) || 0;
+      const tc = Number(out.distillTotalChunks) || totalHint;
+      return `分段提炼 ${dc}/${tc} 段`;
+    };
     const job = await pollJobUntilTerminal(queued.progressJobId, {
       intervalMs: 3000,
-      maxWaitMs: 45 * 60_000,
+      maxWaitMs: 90 * 60_000,
       adaptiveBackoffAfterAttempts: 40,
       maxIntervalMs: 8000,
       onPoll: ({ output }) => {
         const out = (output || {}) as {
-          distillPhase?: string;
-          distillDoneChunks?: number;
-          distillTotalChunks?: number;
+          distillPercent?: number;
+          distillStage?: string; distillStageDone?: number; distillStageTotal?: number; distillFileName?: string;
+          distillPhase?: string; distillDoneChunks?: number; distillTotalChunks?: number;
         };
-        const total = Number(out.distillTotalChunks) || totalHint;
-        const done = Number(out.distillDoneChunks) || 0;
-        args.onStatus?.(
-          out.distillPhase === "refining"
-            ? `已提炼 ${total} 段，正在统稿合并…`
-            : `正在分段提炼…已完成 ${done}/${total} 段`,
-        );
+        const label = stageLabel(out);
+        args.onStatus?.(label);
+        setCustomNoteProgress({
+          status: "running",
+          percent: knowledgeCardProgressFromDistill(Number(out.distillPercent) || 2),
+          label,
+        });
       },
     });
     if (job.status === "failed") throw new Error(job.error || "提炼失败，请稍后重试");
+    setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromDistill(98), label: "提炼完成" });
     const out = (job.output || {}) as { distilledMarkdown?: string };
     return String(out.distilledMarkdown || "").trim();
   };
@@ -7945,6 +8072,7 @@ export default function PlatformPage() {
     kind: "single_page_knowledge_card" | "storyboard_sheet_landscape",
     notePart?: "upper" | "lower",
     notePage?: { index: number; total: number },
+    imageProvider?: "evolink" | "openai",
   ): Promise<string> => {
     const sceneId = `custom-note-${notePage?.index ?? notePart ?? "single"}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const progressJobId = newPlatformCompositeProgressJobId();
@@ -7970,6 +8098,8 @@ export default function PlatformPage() {
       ...(kind === "single_page_knowledge_card"
         ? {
             distillModel: customNoteDistillModel,
+            subjectPosition: customNoteSubjectPosition,
+            ...(imageProvider ? { imageProvider } : {}),
             // 版式走独立字段进出图指令；拼进 scriptContext 会被当正文印出来
             ...(customNoteInfographicTemplateId
               ? { infographicTemplateId: customNoteInfographicTemplateId }
@@ -8042,6 +8172,10 @@ export default function PlatformPage() {
       toast.info("上一个生成任务还在进行中，请稍候");
       return;
     }
+    if (knowledgeCardInflight.length > 0) {
+      toast.info(`还有 ${knowledgeCardInflight.length} 页在生成中，等它们结束再重新生成`);
+      return;
+    }
     const kind = overrides?.kind ?? customNoteKind;
     const trimmed = (overrides?.text ?? customNoteText).trim();
     const pendingAhead = customNotePendingFilesRef.current.length;
@@ -8081,6 +8215,7 @@ export default function PlatformPage() {
         setCustomNoteImages([]);
         setCustomNoteImageUpper(null);
         setCustomNoteImageLower(null);
+        setKnowledgeCardPdfUrl(null);
         const pendingFiles = customNotePendingFilesRef.current.slice();
         let distilled = trimmed;
         // 上传路径已提炼进文本框时，生成只出图；仅当仍有待处理文件或无文案时再提炼
@@ -8098,16 +8233,16 @@ export default function PlatformPage() {
           setCustomNoteUploadStatus(null);
           setCustomNoteDistillPhase("ready");
           await new Promise<void>((r) => requestAnimationFrame(() => r()));
-        } else if (distilled.length > KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS) {
+        } else if (customNoteDistillPhase !== "ready" && distilled.length > KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS) {
           /**
-           * 纯文本长文：先把「提炼 vs 直接出图」的账摆给用户看。
-           * 一万字直接出图要 9 页 264 积分，而且超过 6 页整套降到 2K；
-           * 花提炼费换成 4 页 120 积分还能保住 4K。默认劝提炼，但省不回本时不打扰。
+           * 纯文本长文（本轮尚未提炼过；上传路径已提炼的稿子直接进出图确认，不二次提炼、不二次收费、不丢〔参考原页〕标记）：
+           * 先把「提炼 vs 直接出图」的账摆给用户看。
+           * 一万字直接出图要 9 页 264 积分；花提炼费换成 4 页 120 积分。默认劝提炼，但省不回本时不打扰。
            */
           const tradeoff = estimateKnowledgeCardDistillTradeoff(
             distilled,
             customNoteDistillModel,
-            suggestKnowledgeCardMinSections,
+            (chars) => suggestKnowledgeCardMinSections(chars, customNoteDetailLevel),
             knowledgeCardDistillFeeForModel(customNoteDistillModel),
           );
           if (tradeoff.saved > 0) {
@@ -8116,10 +8251,10 @@ export default function PlatformPage() {
               [
                 `这段文字约 ${distilled.length.toLocaleString()} 字。`,
                 "",
-                `直接出图：约 ${tradeoff.full.pages} 页 · ${tradeoff.full.credits} 积分 · 画质 ${tradeoff.full.is4k ? "4K" : "2K"}`,
-                `先做提炼：约 ${tradeoff.distilled.pages} 页 · ${tradeoff.distilled.credits} 积分 + 提炼费 ${tradeoff.distilled.distillFee} · 画质 ${tradeoff.distilled.is4k ? "4K" : "2K"}`,
+                `直接出图：约 ${tradeoff.full.pages} 页 · ${tradeoff.full.credits} 积分 · 4K`,
+                `先做提炼：约 ${tradeoff.distilled.pages} 页 · ${tradeoff.distilled.credits} 积分 + 提炼费 ${tradeoff.distilled.distillFee} · 4K`,
                 "",
-                `提炼可省约 ${tradeoff.saved} 积分${tradeoff.distilled.is4k && !tradeoff.full.is4k ? "，画质还更高（超过 6 页会整套降到 2K）" : ""}。`,
+                `提炼可省约 ${tradeoff.saved} 积分。`,
                 "",
                 "点「确定」先提炼（推荐），点「取消」按原文全量出图。",
               ].join("\n"),
@@ -8144,8 +8279,7 @@ export default function PlatformPage() {
         const plan = planKnowledgeCardPages(distilled, customNoteDistillModel);
         const pages = plan.pages.length ? plan.pages : [distilled];
         const total = pages.length;
-        const q = knowledgeCardImageQuality(total);
-        const qLabel = q === "high" ? "4K" : "2K";
+        const qLabel = "4K";
         const credits = plan.credits || knowledgeCardCreditsForPages(total, customNoteDistillModel);
         setCustomNoteBusy(false);
         const continueGen = window.confirm(
@@ -8154,23 +8288,61 @@ export default function PlatformPage() {
         if (!continueGen) {
           toast.success(`已保留提炼稿（约 ${total} 页），未出图`);
           setCustomNoteDistillPhase("idle");
+          setCustomNoteProgress({ status: "idle", percent: 0 });
           return;
         }
         setCustomNoteBusy(true);
-        toast.success(`开始出图 · ${total} 页 · ${qLabel}`);
-        const urls: string[] = [];
-        for (let i = 0; i < total; i++) {
-          setCustomNotePageProgress({ i: i + 1, n: total });
-          setCustomNotePartInFlight(i === 0 ? "upper" : "lower");
-          const url = await generateCustomNoteOne(distilled, "single_page_knowledge_card", undefined, {
-            index: i + 1,
-            total,
-          });
-          urls.push(url);
-          setCustomNoteImages([...urls]);
+        toast.success(`开始出图 · ${total} 页 · ${qLabel} · ${KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH[customNoteSubjectPosition]}`);
+        /**
+         * 0908 用户令：多页并发出图。页按序轮流分给 EvoLink（奇数页）与 OpenAI 官方（偶数页）同时打，
+         * 每家 2 路，共 4 路；某页首发失败由服务端自动换另一家。结果按页序回填，任一页失败整体报失败（已成功页保留展示）。
+         */
+        const urls: (string | null)[] = Array.from({ length: total }, () => null);
+        let done = 0;
+        // 新批次：旧批次在途页返回后不得覆盖；补出单页用这份稿的快照
+        const runId = ++renderRunIdRef.current;
+        renderedDraftRef.current = distilled;
+        customNoteImagesRef.current = Array.from({ length: total }, () => "");
+        setKnowledgeCardInflight([]);
+        const publish = () => {
+          if (runId !== renderRunIdRef.current) return;
+          const ready = urls.filter((u): u is string => Boolean(u));
+          // 保留页序空洞（缺页显示占位），页码/下载名/PDF 页数都按真实页序，不前移
+          const snapshot = urls.map((u) => u || "");
+          customNoteImagesRef.current = snapshot;
+          setCustomNoteImages(snapshot);
           setCustomNoteImageUpper(urls[0] ?? null);
           setCustomNoteImageLower(urls[1] ?? null);
-        }
+          // 已判失败的终态不被在途页的回填覆盖回「运行中」
+          setCustomNoteProgress((prev) => prev.status === "failed" ? prev : { status: "running", percent: knowledgeCardProgressFromRender(ready.length, total), label: `出图 ${ready.length}/${total} 页（并发 ${KNOWLEDGE_CARD_RENDER_CONCURRENCY}）` });
+        };
+        setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(0, total), label: `出图 0/${total} 页（并发 ${KNOWLEDGE_CARD_RENDER_CONCURRENCY}）` });
+        let next = 0;
+        // 某页失败即停发新页（在途的跑完），不让其它 worker 继续扣费出图
+        let aborted = false;
+        const worker = async () => {
+          while (next < total && !aborted) {
+            const i = next++;
+            try {
+            setCustomNotePageProgress({ i: Math.min(total, done + 1), n: total });
+            const provider = i % 2 === 0 ? "evolink" : "openai";
+            markInflight(runId, i, true);
+            try {
+              const url = await generateCustomNoteOne(distilled, "single_page_knowledge_card", undefined, { index: i + 1, total }, provider);
+              urls[i] = url;
+            } finally {
+              markInflight(runId, i, false);
+            }
+            done += 1;
+            publish();
+            } catch (e) {
+              aborted = true;
+              throw e;
+            }
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(KNOWLEDGE_CARD_RENDER_CONCURRENCY, total) }, () => worker()));
+        setCustomNoteProgress({ status: "succeeded", percent: 100 });
         toast.success(`已生成 ${total} 页图文笔记（${qLabel} · 约 ${credits} 积分）`);
         setCustomNoteDistillPhase("idle");
       } else {
@@ -8184,7 +8356,16 @@ export default function PlatformPage() {
     } catch (e) {
       const msg = mapCustomNoteError(e);
       setCustomNoteError(msg);
-      toast.error(`生成失敗：${msg.slice(0, 120)}`);
+      if (kind === "single_page_knowledge_card") {
+        setCustomNoteProgress((prev) => ({ status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
+        // 在途页会继续出图并回填，这里如实告知已完成页数与对应页费（读同步镜像，不在 updater 里做副作用）
+        const doneCount = customNoteImagesRef.current.filter(Boolean).length;
+        toast.error(doneCount > 0
+          ? `生成失败：${msg.slice(0, 100)}（已完成 ${doneCount} 页，按已成功页计费，失败页不扣费）`
+          : `生成失败：${msg.slice(0, 120)}`);
+      } else {
+        toast.error(`生成失敗：${msg.slice(0, 120)}`);
+      }
     } finally {
       setCustomNoteBusy(false);
       setCustomNotePartInFlight(null);
@@ -8978,7 +9159,7 @@ export default function PlatformPage() {
       optimizeSummary: customOptimizeSummary,
       imageUpperUrl: customNoteImageUpper,
       imageLowerUrl: customNoteImageLower,
-      imageUrls: customNoteImages.length ? customNoteImages : undefined,
+      imageUrls: customNoteImages.some(Boolean) ? customNoteImages.filter(Boolean) : undefined,
     }),
     [
       customNoteKind,
@@ -15008,7 +15189,7 @@ export default function PlatformPage() {
                       type="file"
                       className="hidden"
                       multiple
-                      accept=".pptx,.docx,.pdf,.png,.jpg,.jpeg,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/png,image/jpeg,image/webp"
+                      accept=".pptx,.docx,.pdf,.epub,.png,.jpg,.jpeg,.webp,application/pdf,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/png,image/jpeg,image/webp"
                       disabled={customNoteBusy || customNoteUploadBusy}
                       onChange={(e) => {
                         const list = Array.from(e.target.files || []);
@@ -15017,41 +15198,31 @@ export default function PlatformPage() {
                         void (async () => {
                           setCustomNoteUploadBusy(true);
                           let completedDirectUploads = 0;
+                          setCustomNoteProgress({ status: "running", percent: 0, label: "上传文件…" });
                           try {
                             const encoded: KnowledgeCardPendingFile[] = [];
                             for (const file of list) {
-                              const mimeType = file.type || "application/octet-stream";
-                              /**
-                               * 超过阈值改走 GCS 直传：base64 会把体积撑大三分之一，
-                               * 请求体上限约 13.5MB 原文件，再大连接会在读 body 阶段被掐断
-                               * （2026-08-06：42MB 的 PDF 传不上去，却报「算力紧张」）。
-                               * 直传还顺带绕开了那台 2 核机器，机器忙也不影响上传。
-                               */
-                              if (file.size > KNOWLEDGE_CARD_DIRECT_UPLOAD_MIN_BYTES) {
+                              const doneFiles = encoded.length;
+                              const mimeType = file.type || (/\.epub$/i.test(file.name) ? "application/epub+zip" : "application/octet-stream");
+                              // 不论大小一律 GCS 直传（0908 用户令；媒体传输铁律禁止 base64 塞请求体）
+                              {
                                 const mb = (file.size / 1024 / 1024).toFixed(1);
                                 const gcsUri = await uploadKnowledgeCardFileToGcs({
                                   file,
                                   mimeType,
                                   getSignedUrl: (input) => getUploadUrlMutation.mutateAsync(input),
-                                  onStatus: (text) => setCustomNoteUploadStatus(text),
+                                  onStatus: (text) => {
+                                    setCustomNoteUploadStatus(text);
+                                    const pct = Number(/(\d{1,3})%/.exec(text)?.[1]);
+                                    // 上传占总进度 0–5%（提炼任务 5–60，出图 60–100）
+                                    // 多文件按 (已传完数 + 本文件进度) / 总数 折算到 0–5%，不倒退
+                                    if (Number.isFinite(pct)) setCustomNoteProgress({ status: "running", percent: Math.round(((doneFiles + pct / 100) / list.length) * 5), label: `上传 ${file.name}（${doneFiles + 1}/${list.length}）${pct}%` });
+                                  },
                                   label: `${file.name}（${mb}MB）`,
                                 });
                                 encoded.push({ gcsUri, mimeType, fileName: file.name });
                                 completedDirectUploads += 1;
-                                continue;
                               }
-                              const buf = await file.arrayBuffer();
-                              const bytes = new Uint8Array(buf);
-                              let binary = "";
-                              const chunk = 0x8000;
-                              for (let i = 0; i < bytes.length; i += chunk) {
-                                binary += String.fromCharCode(...Array.from(bytes.subarray(i, i + chunk)));
-                              }
-                              encoded.push({
-                                fileBase64: btoa(binary),
-                                mimeType,
-                                fileName: file.name,
-                              });
                             }
                             setCustomNoteUploadStatus(null);
                             // 生成按钮依赖文本框非空：上传后立刻 OCR+提炼写入文本框，否则无法点生成
@@ -15097,6 +15268,7 @@ export default function PlatformPage() {
                             const pages = Math.max(1, plan.pageCount || 1);
                             const credits =
                               plan.credits || knowledgeCardCreditsForPages(pages, customNoteDistillModel);
+                            setCustomNoteProgress({ status: "running", percent: 60, label: `提炼完成 · 约 ${pages} 页，等待出图` });
                             const okMsg = `提炼完成：已写入文本框 · 约 ${pages} 页 · 约 ${credits} 积分（可点生成出图）`;
                             setCustomNoteUploadStatus(okMsg);
                             toast.success(okMsg);
@@ -15116,6 +15288,7 @@ export default function PlatformPage() {
                               ? `${completedDirectUploads} 个大文件已上传到云端，但读取或提炼失败`
                               : "文件读取或提炼失败";
                             setCustomNoteUploadStatus(`${failedStage}：${failMsg}（请重新选择文件重试，勿在失败态叠加）`);
+                            setCustomNoteProgress((prev) => ({ status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: failMsg }));
                             toast.error(failMsg);
                           } finally {
                             setCustomNoteUploadBusy(false);
@@ -15179,9 +15352,48 @@ export default function PlatformPage() {
                       </select>
                     </label>
                   ) : null}
+                  <label className="inline-flex items-center gap-1.5 text-[11px] text-[#c9c0e6]/70">
+                    <span className="shrink-0">成稿</span>
+                    <select
+                      aria-label="成稿档"
+                      className="rounded-md border border-white/15 bg-black/50 px-2 py-1 text-[11px] font-semibold text-white focus:border-[#ff4fb8]/50 focus:outline-none"
+                      value={customNoteDetailLevel}
+                      disabled={customNoteBusy || customNoteUploadBusy || customNoteDistillPhase !== "idle"}
+                      title="精华版：提炼主要重点，页数少；高级版：主要与次要重点都包含，表格化压实，不限页数、按页计费"
+                      onChange={(e) => {
+                        const next = resolveKnowledgeCardDetailLevel(e.target.value);
+                        setCustomNoteDetailLevel(next);
+                        try { localStorage.setItem("mvs-knowledge-card-detail-level", next); } catch { /* ignore */ }
+                      }}
+                    >
+                      {KNOWLEDGE_CARD_DETAIL_LEVELS.map((level) => (
+                        <option key={level} value={level}>{KNOWLEDGE_CARD_DETAIL_LEVEL_LABEL_ZH[level]}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="inline-flex items-center gap-1.5 text-[11px] text-[#c9c0e6]/70">
+                    <span className="shrink-0">主体位置</span>
+                    <select
+                      aria-label="主体位置"
+                      className="rounded-md border border-white/15 bg-black/50 px-2 py-1 text-[11px] font-semibold text-white focus:border-[#49e6ff]/50 focus:outline-none"
+                      value={customNoteSubjectPosition}
+                      disabled={customNoteBusy}
+                      title="横版 16:9 固定；只改主体视觉在画面中的位置"
+                      onChange={(e) => {
+                        const next = resolveKnowledgeCardSubjectPosition(e.target.value);
+                        setCustomNoteSubjectPosition(next);
+                        try { localStorage.setItem("mvs-knowledge-card-subject-position", next); } catch { /* ignore */ }
+                      }}
+                    >
+                      {KNOWLEDGE_CARD_SUBJECT_POSITIONS.map((position) => (
+                        <option key={position} value={position}>{KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH[position]}</option>
+                      ))}
+                    </select>
+                  </label>
                   <span className="text-[11px] text-[#c9c0e6]/45">
-                    支持 pptx / docx / pdf / png / jpg；上传文档的提炼含在页费中，超长纯文本主动提炼另收一次性提炼费
+                    支持 pdf / epub / pptx / docx / png / jpg，不限页数与大小；EPUB 后台自动转 PDF；上传文档的提炼含在页费中，超长纯文本主动提炼另收一次性提炼费
                   </span>
+                  <KnowledgeCardProgress state={customNoteProgress} />
                 </div>
               ) : null}
               {customNoteKind === "optimize_custom_copy" ? (
@@ -15216,7 +15428,7 @@ export default function PlatformPage() {
                   ) : customNoteKind === "optimize_custom_copy" ? (
                     <><Sparkles className="h-4 w-4" />深度优化文案（{customOptimizeCopyCost} 积分）</>
                   ) : customNoteKind === "single_page_knowledge_card" ? (
-                    <><Sparkles className="h-4 w-4" />生成图文笔记（约 {Math.max(1, customNoteKnowledgePlan.pageCount || 1)} 页 · {knowledgeCardImageQuality(Math.max(1, customNoteKnowledgePlan.pageCount || 1)) === "high" ? "4K" : "2K"} · {customNoteKnowledgeCredits || 30} 积分）</>
+                    <><Sparkles className="h-4 w-4" />生成图文笔记（约 {Math.max(1, customNoteKnowledgePlan.pageCount || 1)} 页 · 4K · {customNoteKnowledgeCredits || 30} 积分）</>
                   ) : (
                     <><Film className="h-4 w-4" />生成编导分镜图</>
                   )}
@@ -15236,6 +15448,12 @@ export default function PlatformPage() {
                       setCustomOptimizeBrief("");
                       setCustomNoteInfographicTemplateId(null);
                       setCustomNoteInfographicLabelZh(null);
+                      setCustomNoteProgress({ status: "idle", percent: 0 });
+                      setKnowledgeCardPdfUrl(null);
+                      setKnowledgeCardInflight([]);
+                      renderRunIdRef.current += 1;
+                      renderedDraftRef.current = "";
+                      customNoteImagesRef.current = [];
                       customNotePendingFilesRef.current = [];
                       setCustomNotePendingMeta([]);
                       setCustomNoteUploadStatus(null);
@@ -15339,7 +15557,25 @@ export default function PlatformPage() {
 
               {(customNoteImages.length > 0 || customNoteImageUpper || customNoteImageLower) && (
                 <div className="mt-5 space-y-6">
-                  {customNoteKind === "single_page_knowledge_card" && (customNoteImages.length > 0 ? customNoteImages : [customNoteImageUpper, customNoteImageLower].filter(Boolean) as string[]).map((url, idx, arr) => (
+                  {customNoteKind === "single_page_knowledge_card" && customNoteImages.some(Boolean) && !customNoteBusy && (
+                    <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[#49e6ff]/20 bg-[rgba(73,230,255,0.05)] px-4 py-3 text-sm">
+                      <span className="text-[#c9c0e6]/80">已生成 {customNoteImages.filter(Boolean).length}/{customNoteImages.length} 页</span>
+                      <button
+                        type="button"
+                        disabled={knowledgeCardPdfBusy}
+                        onClick={() => void downloadKnowledgeCardPdf(customNoteImages.filter(Boolean))}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/30 bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                        {knowledgeCardPdfBusy ? "正在合成 PDF…" : `整套下载 PDF（${customNoteImages.filter(Boolean).length} 页 · 统一 3840×2160）`}
+                      </button>
+                      {knowledgeCardPdfUrl ? (
+                        <a href={knowledgeCardPdfUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-[#8cefff] underline">打开 / 下载 PDF</a>
+                      ) : null}
+                      <span className="text-[11px] text-[#c9c0e6]/45">单张下载见各页右下角</span>
+                    </div>
+                  )}
+                  {customNoteKind === "single_page_knowledge_card" && (customNoteImages.length > 0 ? customNoteImages : [customNoteImageUpper, customNoteImageLower].filter(Boolean) as string[]).map((url, idx, arr) => url ? (
                     <div key={`kc-${idx}-${url.slice(-24)}`} className="space-y-3">
                       <div className="text-xs font-semibold uppercase tracking-wide text-[#ff9fe0]/70">
                         图文卡片 · 第 {idx + 1}/{arr.length} 页
@@ -15365,6 +15601,23 @@ export default function PlatformPage() {
                           下载第 {idx + 1} 页
                         </a>
                       </div>
+                    </div>
+                  ) : knowledgeCardInflight.includes(idx) ? (
+                    <div key={`kc-pending-${idx}`} className="flex items-center gap-2 rounded-2xl border border-dashed border-white/15 px-4 py-4 text-sm text-[#c9c0e6]/70">
+                      <Loader2 className="h-4 w-4 animate-spin" />第 {idx + 1}/{arr.length} 页生成中…
+                    </div>
+                  ) : (
+                    <div key={`kc-missing-${idx}`} className="flex flex-wrap items-center gap-3 rounded-2xl border border-dashed border-red-400/40 px-4 py-4 text-sm text-red-300/85">
+                      <span>第 {idx + 1}/{arr.length} 页未生成（本页未扣费）；整套 PDF 只含已生成页。</span>
+                      <button
+                        type="button"
+                        disabled={customNoteBusy || knowledgeCardInflight.includes(idx) || knowledgeCardDraftChanged()}
+                        title={knowledgeCardDraftChanged() ? "文案已改动，请重新整套生成" : undefined}
+                        onClick={() => void retryKnowledgeCardPage(idx)}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-[#ff4fb8]/30 bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                      >
+                        补出本页（{knowledgeCardCreditsForPageIndex(idx + 1, customNoteDistillModel)} 积分）
+                      </button>
                     </div>
                   ))}
                   {customNoteKind !== "single_page_knowledge_card" && customNoteImageUpper && (

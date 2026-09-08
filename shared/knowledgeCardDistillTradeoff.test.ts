@@ -28,9 +28,10 @@ describe("estimateKnowledgeCardDistillTradeoff", () => {
     expect(t.saved).toBe(94);
   });
 
-  it("超过 6 页会被降到 2K，提炼后能保住 4K", () => {
+  it("页数不影响清晰度：直接出图与提炼后都是 4K（0908 拍板取消 >6 页降 2K）", () => {
     const t = tradeoffFor(10_000, KNOWLEDGE_CARD_DISTILL_MODEL_SOL);
-    expect(t.full.is4k).toBe(false);
+    expect(t.full.pages).toBeGreaterThan(6);
+    expect(t.full.is4k).toBe(true);
     expect(t.distilled.is4k).toBe(true);
   });
 

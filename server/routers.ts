@@ -307,6 +307,12 @@ async function mapWithPool<T, R>(items: T[], pool: number, fn: (item: T, index: 
 /** 平台批量/单帧封面参考：写入 user_creations，供免扣补发时 failedJobId 校验 */
 const PLATFORM_TOPIC_FRAME_TYPE = "platform_topic_frame";
 
+/**
+ * 知识卡导出 PDF 的每用户节流台账（进程内；单实例足够挡住误点/脚本连打）。
+ * 判定逻辑在 services/knowledgeCardPdfExport.ts 的 checkKnowledgeCardExportRate（纯函数，可单测）。
+ */
+const knowledgeCardPdfExportHits = new Map<number, number[]>();
+
 function parseUserCreationMetadata(raw: string | null | undefined): Record<string, unknown> {
   if (!raw) return {};
   try {
@@ -8097,24 +8103,57 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           files: z
             .array(
               z.object({
-                fileBase64: z.string().min(1).max(18_000_000),
+                /** 一律前端直传 GCS（不接受 base64） */
+                gcsUri: z.string().min(1).max(1024),
                 mimeType: z.string().min(1).max(120),
                 fileName: z.string().max(240).optional(),
               }),
             )
             .min(1)
+            // 旧同步端点（前端已不调用）：保留文件数上限，重活走 prepareKnowledgeCardCopy 的后台任务
             .max(40),
         }),
       )
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        const { getGcsBucketName } = await import("./services/gcs.js");
+        const allowedPrefix = `gs://${getGcsBucketName()}/uploads/u${ctx.user.id}/`;
+        for (const f of input.files) {
+          if (!String(f.gcsUri).startsWith(allowedPrefix)) throw new Error("直传文件校验失败，请重新上传后再试");
+        }
         const { extractKnowledgeCardUploads } = await import("./services/knowledgeCardDistill.js");
         const extracted = await extractKnowledgeCardUploads(input.files);
         return {
           success: true as const,
           text: extracted.documentText,
-          imageCount: extracted.imageDataUrls.length,
+          imageCount: extracted.imageUrls.length,
           methods: extracted.methods,
         };
+      }),
+
+    /**
+     * 知识卡整套导出 PDF：本桶**本人**成品图归一 3840×2160 拼 PDF 落 GCS，返回签名链（不扣积分）。
+     * 无积分闸门 + 单次最多 200 张 4K sharp 重编码 → 每用户每分钟 2 次进程内节流。
+     */
+    exportKnowledgeCardPdf: protectedProcedure
+      .input(z.object({
+        imageUrls: z.array(z.string().min(1).max(4096)).min(1).max(200),
+        title: z.string().max(200).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { exportKnowledgeCardPdfToGcs, checkKnowledgeCardExportRate, KNOWLEDGE_CARD_EXPORT_RATE_MESSAGE } =
+          await import("./services/knowledgeCardPdfExport.js");
+        const gate = checkKnowledgeCardExportRate(knowledgeCardPdfExportHits.get(ctx.user.id), Date.now());
+        // 顺手清掉窗口外的空条目，Map 不随用户数无限增长
+        for (const [uid, hist] of Array.from(knowledgeCardPdfExportHits.entries())) {
+          if (!hist.some((t) => Date.now() - t < 60_000)) knowledgeCardPdfExportHits.delete(uid);
+        }
+        if (!gate.allowed) {
+          throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: KNOWLEDGE_CARD_EXPORT_RATE_MESSAGE });
+        }
+        const result = await exportKnowledgeCardPdfToGcs({ userId: ctx.user.id, imageUrls: input.imageUrls, title: input.title });
+        // 只有导出成功才计入配额，失败不吃掉重试机会
+        knowledgeCardPdfExportHits.set(ctx.user.id, gate.history);
+        return { success: true as const, ...result };
       }),
 
     /** 平台图文卡：OCR + Qwen3.8 Max 提炼精华（费用含在后续页费；本接口不扣积分）。 */
@@ -8129,37 +8168,25 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
            * 提炼后 4 页 120 积分保住 4K）。上传文档的提炼是抽文的必要环节，成本已含页费，不另收。
            */
           chargeDistillFee: z.boolean().optional(),
-          /** 默认 Evolink gpt-5.6-sol；备用 OR kimi-k3；备选 Evolink qwen3.8-max（旧 terra/OR-qwen 服务端迁） */
-          distillModel: z
-            .enum(["claude-opus-5", "gpt-5.6-sol", "moonshotai/kimi-k3", "qwen3.8-max", "gpt-5.6-terra", "qwen/qwen3.8-max"])
-            .optional(),
+          /** 两档：gpt-5.6-sol / qwen3.8-max；旧值（terra / OR-qwen / claude / kimi）服务端迁到两档 */
+          distillModel: z.string().max(64).optional(),
+          /** 成稿档：精华版（主要重点）/ 高级版（主要+次要重点） */
+          detailLevel: z.enum(["concise", "full"]).optional(),
           files: z
             .array(
-              z
-                .object({
-                  /**
-                   * 小文件可直接塞请求体，但上限约 13.5MB 原文件；
-                   * 再大必须用 `gcsUri` 直传，否则连接会在读请求体阶段被掐断
-                   * （2026-08-06：42MB 的 PDF base64 后 56MB，传不完却报「算力紧张」）。
-                   */
-                  fileBase64: z.string().min(1).max(18_000_000).optional(),
-                  /** 前端直传 GCS 后的对象地址；与 fileBase64 二选一 */
-                  gcsUri: z.string().min(1).max(1024).optional(),
-                  mimeType: z.string().min(1).max(120),
-                  fileName: z.string().max(240).optional(),
-                })
-                .refine((f) => Boolean(f.fileBase64 || f.gcsUri), {
-                  message: "每个文件需要 fileBase64 或 gcsUri 其一",
-                }),
+              z.object({
+                /** 前端直传 GCS 后的对象地址；不论大小一律直传，不接受 base64（媒体传输铁律） */
+                gcsUri: z.string().min(1).max(1024),
+                mimeType: z.string().min(1).max(120),
+                fileName: z.string().max(240).optional(),
+              }),
             )
-            .max(40)
             .optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
         const {
           prepareKnowledgeCardCopy,
-          extractKnowledgeCardUploads,
           shouldRunKnowledgeCardDistillAsync,
           estimateKnowledgeCardDistillChunks,
         } = await import("./services/knowledgeCardDistill.js");
@@ -8183,18 +8210,55 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
         const modelName = resolveKnowledgeCardDistillModel(input.distillModel);
 
-        // 抽文很快（本机 105 页 PDF 约数秒），先做掉：既能判断是否够长要走后台，
-        // 也避免把几 MB 的 PDF base64 塞进 jobs.input。
-        const extracted = files.length
-          ? await extractKnowledgeCardUploads(files)
-          : { documentText: "", imageDataUrls: [] as string[], methods: [] as string[] };
         const pasted = String(input.sourceText || "").trim();
-        const mergedRaw = files.length
-          ? [extracted.documentText, pasted.length <= 3200 ? pasted : ""].filter(Boolean).join("\n\n").trim() ||
-            extracted.documentText ||
-            pasted
-          : pasted;
+        const detailLevel = String(input.detailLevel || "concise");
 
+        /**
+         * 有文件一律走后台任务（0908）：PDF/EPUB 要逐页备料 + 目录页扫读挑页 + 选中页渲染，
+         * 不再在同步 HTTP 里抽文。文件不论大小都由前端直传 GCS，任务只带 gcsUri。
+         */
+        if (files.length > 0) {
+          const userId = ctx.user?.id;
+          if (!userId) throw new Error("请先登录后再上传文件");
+          const stored = files
+            .map((f) => ({ gcsUri: String(f.gcsUri || "").trim(), mimeType: f.mimeType, fileName: f.fileName }))
+            .filter((f) => f.gcsUri);
+          if (!stored.length) throw new Error("上传文件为空，请重新选择文件");
+          const jobId = nanoid(16);
+          await createJobRecord({
+            id: jobId,
+            userId: String(userId),
+            type: "platform",
+            provider: "evolink",
+            input: {
+              action: "knowledge_card_distill",
+              params: {
+                sourceText: pasted.length <= 3200 ? pasted : "",
+                distillModel: modelName,
+                detailLevel,
+                files: stored,
+                chargeDistillFee: false,
+              },
+            },
+          });
+          return {
+            success: true as const,
+            isAsync: true as const,
+            progressJobId: jobId,
+            distillFeeCharged: 0,
+            sourceChars: 0,
+            distillModel: modelName,
+            estimatedChunks: 0,
+            distilledMarkdown: "",
+            skippedDistill: false,
+            extractionMethods: [] as string[],
+            pageCount: 0,
+            credits: 0,
+            pages: [] as ReturnType<typeof planKnowledgeCardPages>["pages"],
+          };
+        }
+
+        const mergedRaw = pasted;
         if (shouldRunKnowledgeCardDistillAsync(mergedRaw.length)) {
           const userId = ctx.user?.id;
           if (!userId) throw new Error("请先登录后再上传长文档");
@@ -8203,14 +8267,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             id: jobId,
             userId: String(userId),
             type: "platform",
-            provider: modelName === "claude-opus-5" ? "anthropic" : "evolink",
+            provider: "evolink",
             input: {
               action: "knowledge_card_distill",
               params: {
                 sourceText: mergedRaw,
                 distillModel: modelName,
-                imageDataUrls: extracted.imageDataUrls,
-                extractionMethods: extracted.methods,
+                detailLevel,
+                imageDataUrls: [] as string[],
+                extractionMethods: [] as string[],
                 chargeDistillFee: input.chargeDistillFee === true,
               },
             },
@@ -8226,7 +8291,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             estimatedChunks: estimateKnowledgeCardDistillChunks(modelName, mergedRaw.length),
             distilledMarkdown: "",
             skippedDistill: false,
-            extractionMethods: extracted.methods,
+            extractionMethods: [] as string[],
             pageCount: 0,
             credits: 0,
             pages: [] as ReturnType<typeof planKnowledgeCardPages>["pages"],
@@ -8235,9 +8300,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
         const prepared = await prepareKnowledgeCardCopy({
           sourceText: input.sourceText,
-          files: input.files,
           forceDistill: input.forceDistill,
           distillModel: input.distillModel,
+          detailLevel,
+          userId: ctx.user?.id,
         });
         const plan = planKnowledgeCardPages(prepared.distilledMarkdown, prepared.distillModel);
 
@@ -8325,12 +8391,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             /** 仅 single_page_knowledge_card：旧上/下篇（兼容）。 */
             notePart: z.enum(["upper", "lower"]).optional(),
             /** 仅 single_page_knowledge_card：页码（优先于 notePart）；第 9 页起折扣，页数不封顶。 */
-            notePageIndex: z.number().int().min(1).max(80).optional(),
-            notePageTotal: z.number().int().min(1).max(80).optional(),
-            /** 仅 single_page_knowledge_card：提炼模型（决定页费档位） */
-            distillModel: z
-              .enum(["claude-opus-5", "gpt-5.6-sol", "moonshotai/kimi-k3", "qwen3.8-max", "gpt-5.6-terra", "qwen/qwen3.8-max"])
-              .optional(),
+            notePageIndex: z.number().int().min(1).max(100_000).optional(),
+            notePageTotal: z.number().int().min(1).max(100_000).optional(),
+            /** 仅 single_page_knowledge_card：提炼模型（决定页费档位）；两档，旧值服务端迁 */
+            distillModel: z.string().max(64).optional(),
+            /** 仅 single_page_knowledge_card：主体偏左 / 居中（横版 16:9 固定） */
+            subjectPosition: z.enum(["left", "center"]).optional(),
+            /** 仅 single_page_knowledge_card：本页首发供应商（多页并发时页轮流分给两家；另一家自动兜底） */
+            imageProvider: z.enum(["evolink", "openai"]).optional(),
             /**
              * 仅 single_page_knowledge_card：图文可视化版式 id（`shared/infographicNoteTemplates`）。
              *
@@ -8474,6 +8542,24 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             compositeDeductionNote + bulkTag,
             { chargeKey: `platformCompositeSheet/${userId}/${compositeOpId}` },
           );
+        }
+
+        // 知识卡（0908）：从本页正文的「参考原页」标记取原稿页图当出图参考（只认本人前缀下存在的页图）
+        let knowledgeCardReferencePageUrls: string[] | undefined;
+        if (input.kind === "single_page_knowledge_card") {
+          try {
+            const { resolveKnowledgeCardPageSource } = await import("./services/geminiPlatformCompositeTranslation.js");
+            const { resolveKnowledgeCardReferencePageUrls } = await import("./services/knowledgeCardDocumentPages.js");
+            // 与出图提示词同一切片函数；按小节归属找参考页，分页硬切也不会挂错页
+            const slice = resolveKnowledgeCardPageSource(String(input.scriptContext || ""), {
+              notePart: input.notePart, notePageIndex: input.notePageIndex, notePageTotal: input.notePageTotal,
+            }).source;
+            knowledgeCardReferencePageUrls = (await resolveKnowledgeCardReferencePageUrls({
+              userId, pageText: slice, fullMarkdown: String(input.scriptContext || ""),
+            })).map((r) => r.url);
+          } catch (e) {
+            console.warn("[knowledgeCard] 参考原页解析失败，本页不带参考图：", e instanceof Error ? e.message : e);
+          }
         }
 
         if (input.jobId) {
@@ -8696,6 +8782,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 kind: input.kind,
                 title: input.title,
                 scriptContext: enrichedCompositeScriptContext,
+                userId,
                 isTrial,
                 executionDetails: input.executionDetails,
                 shootingTechniqueBrief: input.shootingTechniqueBrief,
@@ -8710,6 +8797,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 notePageIndex: input.notePageIndex,
                 notePageTotal: input.notePageTotal,
                 infographicTemplateId: input.infographicTemplateId,
+                subjectPosition: input.subjectPosition,
+                knowledgeCardReferencePageUrls,
+                knowledgeCardImageProvider: input.imageProvider,
               });
 
               // 第五轮复审 P0·1：空产物不许标成功——扣了费没有图，必须走统一失败退款
@@ -8780,6 +8870,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             kind: input.kind,
             title: input.title,
             scriptContext: enrichedCompositeScriptContext,
+            userId,
             isTrial,
             executionDetails: input.executionDetails,
             shootingTechniqueBrief: input.shootingTechniqueBrief,
@@ -8794,6 +8885,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             notePageIndex: input.notePageIndex,
             notePageTotal: input.notePageTotal,
             infographicTemplateId: input.infographicTemplateId,
+            subjectPosition: input.subjectPosition,
+            knowledgeCardReferencePageUrls,
+            knowledgeCardImageProvider: input.imageProvider,
           });
         } catch (error: any) {
           stopSyncHeartbeat();
