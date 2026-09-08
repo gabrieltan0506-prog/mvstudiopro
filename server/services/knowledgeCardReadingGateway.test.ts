@@ -89,7 +89,7 @@ describe("阅读网关不可重复购买与完整性", () => {
     expect(bodies[1].messages[1].content.filter((item: any) => item.type === "image_url")).toHaveLength(45);
     expect(store.objects.get(`${input.objectPrefix}/raw.json`).body).toBe("测试524超时");
     expect(store.objects.get(`${input.objectPrefix}/official-fallback/raw.json`).body).toBe(envelope());
-    expect([...store.claims]).toEqual([`${input.objectPrefix}/claim.json`, `${input.objectPrefix}/official-fallback/claim.json`]);
+    expect(Array.from(store.claims)).toEqual([`${input.objectPrefix}/claim.json`, `${input.objectPrefix}/official-fallback/claim.json`]);
   });
   it("已存524可直接官方回退，成功缓存后两条通道都不重买且不再需要key", async () => {
     const store = persistent();
