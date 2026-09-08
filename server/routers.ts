@@ -8097,22 +8097,27 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           files: z
             .array(
               z.object({
-                fileBase64: z.string().min(1).max(18_000_000),
+                /** 一律前端直传 GCS（不接受 base64） */
+                gcsUri: z.string().min(1).max(1024),
                 mimeType: z.string().min(1).max(120),
                 fileName: z.string().max(240).optional(),
               }),
             )
-            .min(1)
-            .max(40),
+            .min(1),
         }),
       )
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        const { getGcsBucketName } = await import("./services/gcs.js");
+        const allowedPrefix = `gs://${getGcsBucketName()}/uploads/u${ctx.user.id}/`;
+        for (const f of input.files) {
+          if (!String(f.gcsUri).startsWith(allowedPrefix)) throw new Error("直传文件校验失败，请重新上传后再试");
+        }
         const { extractKnowledgeCardUploads } = await import("./services/knowledgeCardDistill.js");
         const extracted = await extractKnowledgeCardUploads(input.files);
         return {
           success: true as const,
           text: extracted.documentText,
-          imageCount: extracted.imageDataUrls.length,
+          imageCount: extracted.imageUrls.length,
           methods: extracted.methods,
         };
       }),
@@ -8135,22 +8140,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           detailLevel: z.enum(["concise", "full"]).optional(),
           files: z
             .array(
-              z
-                .object({
-                  /**
-                   * 小文件可直接塞请求体，但上限约 13.5MB 原文件；
-                   * 再大必须用 `gcsUri` 直传，否则连接会在读请求体阶段被掐断
-                   * （2026-08-06：42MB 的 PDF base64 后 56MB，传不完却报「算力紧张」）。
-                   */
-                  fileBase64: z.string().min(1).max(18_000_000).optional(),
-                  /** 前端直传 GCS 后的对象地址；与 fileBase64 二选一 */
-                  gcsUri: z.string().min(1).max(1024).optional(),
-                  mimeType: z.string().min(1).max(120),
-                  fileName: z.string().max(240).optional(),
-                })
-                .refine((f) => Boolean(f.fileBase64 || f.gcsUri), {
-                  message: "每个文件需要 fileBase64 或 gcsUri 其一",
-                }),
+              z.object({
+                /** 前端直传 GCS 后的对象地址；不论大小一律直传，不接受 base64（媒体传输铁律） */
+                gcsUri: z.string().min(1).max(1024),
+                mimeType: z.string().min(1).max(120),
+                fileName: z.string().max(240).optional(),
+              }),
             )
             .optional(),
         }),
@@ -8186,28 +8181,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
         /**
          * 有文件一律走后台任务（0908）：PDF/EPUB 要逐页备料 + 目录页扫读挑页 + 选中页渲染，
-         * 不再在同步 HTTP 里抽文。小文件的 base64 先落 GCS，任务只带 gcsUri，不把文件塞进 jobs.input。
+         * 不再在同步 HTTP 里抽文。文件不论大小都由前端直传 GCS，任务只带 gcsUri。
          */
         if (files.length > 0) {
           const userId = ctx.user?.id;
           if (!userId) throw new Error("请先登录后再上传文件");
-          const { uploadBufferToGcs } = await import("./services/gcs.js");
-          const stored: Array<{ gcsUri: string; mimeType: string; fileName?: string }> = [];
-          for (const f of files) {
-            if (f.gcsUri) {
-              stored.push({ gcsUri: f.gcsUri, mimeType: f.mimeType, fileName: f.fileName });
-              continue;
-            }
-            const buffer = Buffer.from(String(f.fileBase64 || "").replace(/^data:[^;]+;base64,/, ""), "base64");
-            if (!buffer.length) continue;
-            const safeName = String(f.fileName || "upload").replace(/[^\w.\-\u4e00-\u9fff]+/g, "_").slice(0, 120);
-            const uploaded = await uploadBufferToGcs({
-              objectName: `uploads/u${userId}/knowledge-card/${nanoid(10)}-${safeName}`,
-              buffer,
-              contentType: f.mimeType,
-            });
-            stored.push({ gcsUri: uploaded.gcsUri, mimeType: f.mimeType, fileName: f.fileName });
-          }
+          const stored = files
+            .map((f) => ({ gcsUri: String(f.gcsUri || "").trim(), mimeType: f.mimeType, fileName: f.fileName }))
+            .filter((f) => f.gcsUri);
           if (!stored.length) throw new Error("上传文件为空，请重新选择文件");
           const jobId = nanoid(16);
           await createJobRecord({

@@ -39,8 +39,8 @@ export type KnowledgeCardDocumentPage = {
   /** 1-based PDF 页码 */
   pageNumber: number;
   text: string;
-  /** 只有被选为「值得参考」的页才有图 */
-  imageDataUrl?: string;
+  /** 只有被选为「值得参考」的页才有图：GCS 对象 + 签名 https（喂模型/出图参考），不走 base64 */
+  imageUrl?: string;
   imageGcsUri?: string;
   /** 目录页扫读给出的选中理由 */
   reason?: string;
@@ -56,11 +56,12 @@ export type KnowledgeCardDocumentPageSet = {
   selectedPages: number[];
 };
 
-/** 一张目录页：12 格缩略图，格内左上角印页码 */
+/** 一张目录页：12 格缩略图，格内左上角印页码；已上传 GCS，模型读签名 https */
 export type KnowledgeCardContactSheet = {
   index: number;
   pageNumbers: number[];
-  imageDataUrl: string;
+  imageUrl: string;
+  gcsUri: string;
 };
 
 export type KnowledgeCardPageSelection = { pageNumber: number; reason?: string };
@@ -72,6 +73,11 @@ export function knowledgeCardDocumentKey(buffer: Buffer): string {
 export function knowledgeCardPageObjectName(userId: number, docKey: string, pageNumber: number): string {
   return `knowledge-card-distill/pages/u${userId}/${docKey}/p-${String(pageNumber).padStart(3, "0")}.jpg`;
 }
+export function knowledgeCardSheetObjectName(userId: number, docKey: string, sheetIndex: number): string {
+  return `knowledge-card-distill/sheets/u${userId}/${docKey}/s-${String(sheetIndex).padStart(3, "0")}.jpg`;
+}
+/** 签名读链有效期：目录页扫读 + 分段提炼 + 统稿可能跑一两小时 */
+const PAGE_URL_TTL_SECONDS = 4 * 3600;
 
 /** `pdftotext` 输出按 \f 分页；末尾多一个 \f 需去掉。 */
 export function splitPdfTextByPage(raw: string): string[] {
@@ -113,10 +119,10 @@ async function renderPdfPagesToJpeg(pdfPath: string, outDir: string, prefix: str
 }
 
 /** 把缩略图按 4×3 拼成目录页，每格左上角印页码，供模型扫读挑页。 */
-export async function buildContactSheets(thumbs: Map<number, Buffer>, indexOffset = 0): Promise<KnowledgeCardContactSheet[]> {
+export async function buildContactSheets(thumbs: Map<number, Buffer>, indexOffset = 0): Promise<Array<{ index: number; pageNumbers: number[]; jpeg: Buffer }>> {
   const sharp = (await import("sharp")).default;
   const numbers = Array.from(thumbs.keys()).sort((a, b) => a - b);
-  const sheets: KnowledgeCardContactSheet[] = [];
+  const sheets: Array<{ index: number; pageNumbers: number[]; jpeg: Buffer }> = [];
   const cellW = THUMB_WIDTH;
   for (let i = 0; i < numbers.length; i += KNOWLEDGE_CARD_SHEET_CELLS) {
     const group = numbers.slice(i, i + KNOWLEDGE_CARD_SHEET_CELLS);
@@ -141,7 +147,7 @@ export async function buildContactSheets(thumbs: Map<number, Buffer>, indexOffse
       .composite(composites)
       .jpeg({ quality: 80 })
       .toBuffer();
-    sheets.push({ index: indexOffset + sheets.length + 1, pageNumbers: group, imageDataUrl: `data:image/jpeg;base64,${jpeg.toString("base64")}` });
+    sheets.push({ index: indexOffset + sheets.length + 1, pageNumbers: group, jpeg });
   }
   return sheets;
 }
@@ -159,17 +165,18 @@ export async function prepareKnowledgeCardDocumentPages(params: {
   userId: number;
   selectPages: (sheets: KnowledgeCardContactSheet[], pageCount: number) => Promise<KnowledgeCardPageSelection[]>;
   onProgress?: (stage: "text" | "thumbs" | "select" | "render", done: number, total: number) => void | Promise<void>;
-  /** 测试注入：不传则真实上传 GCS */
-  uploadPage?: (objectName: string, jpeg: Buffer) => Promise<string>;
+  /** 测试注入：不传则真实上传 GCS 并返回 { gcsUri, url(签名 https) } */
+  uploadPage?: (objectName: string, jpeg: Buffer) => Promise<{ gcsUri: string; url: string }>;
 }): Promise<KnowledgeCardDocumentPageSet> {
   const docKey = knowledgeCardDocumentKey(params.buffer);
   const uploadPage =
     params.uploadPage ||
     (async (objectName: string, jpeg: Buffer) => {
-      const { uploadBufferToGcsIfAbsent, getGcsBucketName } = await import("./gcs.js");
+      const { uploadBufferToGcsIfAbsent, getGcsBucketName, signGsUriV4ReadUrl } = await import("./gcs.js");
       // 同一原件重复上传时对象已存在（ifGenerationMatch=0 冲突），按已存在处理
       await uploadBufferToGcsIfAbsent({ objectName, buffer: jpeg, contentType: "image/jpeg" });
-      return `gs://${getGcsBucketName()}/${objectName}`;
+      const gcsUri = `gs://${getGcsBucketName()}/${objectName}`;
+      return { gcsUri, url: signGsUriV4ReadUrl(gcsUri, PAGE_URL_TTL_SECONDS) };
     });
 
   return withTempDir(async (dir) => {
@@ -192,7 +199,10 @@ export async function prepareKnowledgeCardDocumentPages(params: {
       const last = Math.min(total, first + THUMB_BATCH_PAGES - 1);
       const thumbs = await renderPdfPagesToJpeg(pdfPath, dir, `t${first}`, THUMB_WIDTH, { first, last });
       if (thumbs.size !== last - first + 1) throw new Error(`原稿缩略图页数不符：第 ${first}–${last} 页应 ${last - first + 1} 页，实得 ${thumbs.size} 页`);
-      for (const sheet of await buildContactSheets(thumbs, sheets.length)) sheets.push(sheet);
+      for (const sheet of await buildContactSheets(thumbs, sheets.length)) {
+        const uploaded = await uploadPage(knowledgeCardSheetObjectName(params.userId, docKey, sheet.index), sheet.jpeg);
+        sheets.push({ index: sheet.index, pageNumbers: sheet.pageNumbers, imageUrl: uploaded.url, gcsUri: uploaded.gcsUri });
+      }
       thumbsDone += thumbs.size;
       await params.onProgress?.("thumbs", thumbsDone, total);
     }
@@ -216,10 +226,10 @@ export async function prepareKnowledgeCardDocumentPages(params: {
           const rendered = await renderPdfPagesToJpeg(pdfPath, dir, `r${pageNumber}`, PAGE_RENDER_WIDTH, { first: pageNumber, last: pageNumber });
           const jpeg = rendered.get(pageNumber) ?? Array.from(rendered.values())[0];
           if (!jpeg) throw new Error(`原稿第 ${pageNumber} 页渲染失败`);
-          const imageGcsUri = await uploadPage(knowledgeCardPageObjectName(params.userId, docKey, pageNumber), jpeg);
+          const uploaded = await uploadPage(knowledgeCardPageObjectName(params.userId, docKey, pageNumber), jpeg);
           const page = pages[pageNumber - 1]!;
-          page.imageDataUrl = `data:image/jpeg;base64,${jpeg.toString("base64")}`;
-          page.imageGcsUri = imageGcsUri;
+          page.imageUrl = uploaded.url;
+          page.imageGcsUri = uploaded.gcsUri;
           page.reason = selectedMap.get(pageNumber);
           done += 1;
         }),
