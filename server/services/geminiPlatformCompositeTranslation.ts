@@ -558,7 +558,7 @@ export function buildSinglePageKnowledgeCardImagePrompt(
 
   if (resolved.mode === "page") {
     const { idx, total, isLast } = resolved;
-    partDirective = `\n【分页】本页是该主题图文笔记的第 ${idx}/${total} 页。请在文档大标题末尾追加「（第 ${idx}/${total} 页）」；**只**呈现下方本页切片，把切片里的每个小节都做成版面上的一个模块（分栏铺排、信息密度高、不要画其他页内容）。\n${
+    partDirective = `\n【分页】本页是该主题图文笔记的第 ${idx}/${total} 页。请在文档大标题末尾追加「（第 ${idx}/${total} 页）」；**只**呈现下方本页切片，把切片里的每个小节都做成版面上的一个模块（分栏铺排、图重于文、每节一个图解模块、不要画其他页内容）。\n${
       isLast
         ? "【收尾·末页】可选生成 **一句** 短诗词或书法点睛横幅收束全文（不要长诗占版）；也可不写诗词。"
         : "【收尾】本页不要生成诗词或书法点睛横幅；底部版面留给知识点模块。"

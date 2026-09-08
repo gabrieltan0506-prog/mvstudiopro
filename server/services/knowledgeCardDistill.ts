@@ -102,8 +102,8 @@ type KnowledgeCardDistillProfile = {
    * 每个 `##` 小节要写多少条要点。
    *
    * 三档拿的是同一个目标节数，丰度差别全在节内：实测同一份 25k 源文，
-   * Kimi 每节约 191 字、Sol 约 158 字，而 Qwen 只有约 118 字（3904 字 / 33 节），
-   * 同样的「5–9 条」它总往下限压。轻量档单价最低，用户 2026-08-05 明文「便宜可以放宽点」，
+   * Sol 约 158 字、Qwen 只有约 118 字（3904 字 / 33 节），同样的条数区间 Qwen 总往下限压。
+   * 0908 先图后文后条数收成 2–4（Qwen 3–5），信息靠「图：」行与表格承载。轻量档单价最低，用户 2026-08-05 明文「便宜可以放宽点」，
    * 因此给 Qwen 抬高条数区间，把节内写满，而不是靠多切节来凑字数。
    */
   bulletsPerSection: { min: number; max: number };
@@ -147,7 +147,7 @@ const DISTILL_PROFILES: Record<KnowledgeCardDistillModelId, KnowledgeCardDistill
     chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_CHUNK_RETRIES", 2, 0, 4),
     minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_MIN_SECTIONS", 5, 2, 24),
     refineMaxChars: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_REFINE_MAX_CHARS", 14_000, 0, 120_000),
-    // 轻量档便宜，放宽写满：节内条数比另两档各抬 2 条，别把一节压成三条干标题
+    // 轻量档便宜，放宽写满：节内条数比 Sol 抬 1 条，别把一节压成两条干标题
     bulletsPerSection: { min: 3, max: 5 },
   },
 };
@@ -220,22 +220,21 @@ function distillSectionShape(bullets: { min: number; max: number }): string {
    - 小节标题本身就是这一节的结论（≤14 字）。**不要把原文句子换个说法铺开**；多维内容直接写成 Markdown 表格（表头清楚、每格一句短语）。`;
 }
 
-function resolveDistillBullets(modelName?: string | null, detailLevel?: KnowledgeCardDetailLevel): { min: number; max: number } {
+function resolveDistillBullets(modelName?: string | null): { min: number; max: number } {
   const profile = modelName
     ? DISTILL_PROFILES[modelName as KnowledgeCardDistillModelId]
     : undefined;
-  const base = profile?.bulletsPerSection ?? DISTILL_DEFAULT_BULLETS;
-  // 高级版：内容靠表格/图表压实，要点条数与精简版同档（多出来的信息进表格，不进长列表）
-  return base;
+  // 高级版：内容靠表格/图表压实，要点条数与精华版同档（多出来的信息进表格，不进长列表）
+  return profile?.bulletsPerSection ?? DISTILL_DEFAULT_BULLETS;
 }
 
 /** 模型旁白禁令：0908 探针里「第 17 页配对与前文冲突」「材料认为」这类审稿口吻被印上了卡片 */
 const DISTILL_NO_META_ZH = `**不要写审稿旁白**：不得出现「材料认为 / 原文提到 / 第 N 页 / 与前文冲突 / 以前文为准 / 本段 / 以上」这类指向原稿或提炼过程的话；直接陈述知识本身。`;
 
 function buildDistillSystem(minSections: number, modelName?: string | null, docKeys?: string[], detailLevel?: KnowledgeCardDetailLevel): string {
-  const bullets = resolveDistillBullets(modelName, detailLevel);
+  const bullets = resolveDistillBullets(modelName);
   const levelRule = detailLevel === "full"
-    ? `\n0. **成稿档：高级版（主要重点 + 次要重点都包含）**：本材料的每个章节、方法、表格/清单都要落进成稿，主要重点和次要重点一并保留，不因「取重点」舍弃次要内容；数字、步骤、条件全部保留。**能表格化的一律表格化**：分类/对比/参数/时辰-经脉-做法这类多维内容写成 Markdown 表格（表头清楚、每格一句短语，不超过 6 列）；步骤/流程写成「A → B → C」一行流程链；同类清单合并成一张表而不是散成多节。表格承载信息量，小节数量不要为了铺开而增加。`
+    ? `\n0. **成稿档：高级版（主要重点 + 次要重点都包含）**：本材料的每个章节、方法、表格/清单都要落进成稿，主要重点和次要重点一并保留，不因「取重点」舍弃次要内容；数字、步骤、条件全部保留。**优先级**：要点条数仍按第 3 条（每条 ≤16 字、条数不超上限），装不下的信息**一律进 Markdown 表格或「图：」行**，不靠加长列表。**能表格化的一律表格化**：分类/对比/参数/时辰-经脉-做法这类多维内容写成 Markdown 表格（表头清楚、每格一句短语，不超过 6 列）；步骤/流程写成「A → B → C」一行流程链；同类清单合并成一张表而不是散成多节。表格承载信息量，小节数量不要为了铺开而增加。`
     : "";
   const refRule = docKeys?.length
     ? `\n7. **参考原页标记**：用户会附上原稿中版式有特色的页（表格、思维导图、分式图解、左右对比），每张图前都标了「原稿 docKey 第 N 页」。某小节的内容对应这些页时，在该小节末尾单独一行写标记，格式 \`${docKeys.map((k) => formatKnowledgeCardPageRef(k, [1])).join("\` 或 \`")}\`（docKey 照抄该图前标注的那个，页码写该图标注的真实页码，多页用逗号）。只能引用本次附带的图；没有对应参考页的小节不写标记；不得编造 docKey 或页码。`
@@ -823,7 +822,7 @@ function buildRefineSystem(
   modelName?: string | null,
   detailLevel?: KnowledgeCardDetailLevel,
 ): string {
-  const bullets = resolveDistillBullets(modelName, detailLevel);
+  const bullets = resolveDistillBullets(modelName);
   if (detailLevel === "full" && stage !== "tighten") {
     // 高级版：只去重、理主线，不压缩（0908 探针 79 节被压到 60 节、字数少四成，用户判「比纯文字还少」）
     return `你是知识卡片内容主编。下面这份 Markdown 由同一份长文档**分段提炼后机械拼接**而成，段与段之间可能重复、粒度不齐、缺少全局主线。请把它整理成一份连贯的**完整版**知识卡片 Markdown。

@@ -8245,10 +8245,12 @@ export default function PlatformPage() {
         let done = 0;
         const publish = () => {
           const ready = urls.filter((u): u is string => Boolean(u));
-          setCustomNoteImages(urls.map((u) => u || "").filter(Boolean));
+          // 保留页序空洞（缺页显示占位），页码/下载名/PDF 页数都按真实页序，不前移
+          setCustomNoteImages(urls.map((u) => u || ""));
           setCustomNoteImageUpper(urls[0] ?? null);
           setCustomNoteImageLower(urls[1] ?? null);
-          setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(ready.length, total), label: `出图 ${ready.length}/${total} 页（并发 ${KNOWLEDGE_CARD_RENDER_CONCURRENCY}）` });
+          // 已判失败的终态不被在途页的回填覆盖回「运行中」
+          setCustomNoteProgress((prev) => prev.status === "failed" ? prev : { status: "running", percent: knowledgeCardProgressFromRender(ready.length, total), label: `出图 ${ready.length}/${total} 页（并发 ${KNOWLEDGE_CARD_RENDER_CONCURRENCY}）` });
         };
         setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(0, total), label: `出图 0/${total} 页（并发 ${KNOWLEDGE_CARD_RENDER_CONCURRENCY}）` });
         let next = 0;
@@ -8287,8 +8289,16 @@ export default function PlatformPage() {
       setCustomNoteError(msg);
       if (kind === "single_page_knowledge_card") {
         setCustomNoteProgress((prev) => ({ status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
+        // 在途页会继续出图并回填，这里如实告知已完成页数（含在途）与对应页费
+        setCustomNoteImages((current) => {
+          const doneCount = current.filter(Boolean).length;
+          if (doneCount > 0) toast.error(`生成失败：${msg.slice(0, 100)}（已完成 ${doneCount} 页，按已成功页计费，失败页不扣费）`);
+          else toast.error(`生成失败：${msg.slice(0, 120)}`);
+          return current;
+        });
+      } else {
+        toast.error(`生成失敗：${msg.slice(0, 120)}`);
       }
-      toast.error(`生成失敗：${msg.slice(0, 120)}`);
     } finally {
       setCustomNoteBusy(false);
       setCustomNotePartInFlight(null);
@@ -15476,17 +15486,17 @@ export default function PlatformPage() {
 
               {(customNoteImages.length > 0 || customNoteImageUpper || customNoteImageLower) && (
                 <div className="mt-5 space-y-6">
-                  {customNoteKind === "single_page_knowledge_card" && customNoteImages.length > 0 && !customNoteBusy && (
+                  {customNoteKind === "single_page_knowledge_card" && customNoteImages.some(Boolean) && !customNoteBusy && (
                     <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[#49e6ff]/20 bg-[rgba(73,230,255,0.05)] px-4 py-3 text-sm">
-                      <span className="text-[#c9c0e6]/80">已生成 {customNoteImages.length} 页</span>
+                      <span className="text-[#c9c0e6]/80">已生成 {customNoteImages.filter(Boolean).length}/{customNoteImages.length} 页</span>
                       <button
                         type="button"
                         disabled={knowledgeCardPdfBusy}
-                        onClick={() => void downloadKnowledgeCardPdf(customNoteImages)}
+                        onClick={() => void downloadKnowledgeCardPdf(customNoteImages.filter(Boolean))}
                         className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/30 bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
                       >
                         <Download className="h-3.5 w-3.5" />
-                        {knowledgeCardPdfBusy ? "正在合成 PDF…" : `整套下载 PDF（${customNoteImages.length} 页 · 统一 3840×2160）`}
+                        {knowledgeCardPdfBusy ? "正在合成 PDF…" : `整套下载 PDF（${customNoteImages.filter(Boolean).length} 页 · 统一 3840×2160）`}
                       </button>
                       {knowledgeCardPdfUrl ? (
                         <a href={knowledgeCardPdfUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-[#8cefff] underline">打开 / 下载 PDF</a>
@@ -15494,7 +15504,7 @@ export default function PlatformPage() {
                       <span className="text-[11px] text-[#c9c0e6]/45">单张下载见各页右下角</span>
                     </div>
                   )}
-                  {customNoteKind === "single_page_knowledge_card" && (customNoteImages.length > 0 ? customNoteImages : [customNoteImageUpper, customNoteImageLower].filter(Boolean) as string[]).map((url, idx, arr) => (
+                  {customNoteKind === "single_page_knowledge_card" && (customNoteImages.length > 0 ? customNoteImages : [customNoteImageUpper, customNoteImageLower].filter(Boolean) as string[]).map((url, idx, arr) => url ? (
                     <div key={`kc-${idx}-${url.slice(-24)}`} className="space-y-3">
                       <div className="text-xs font-semibold uppercase tracking-wide text-[#ff9fe0]/70">
                         图文卡片 · 第 {idx + 1}/{arr.length} 页
@@ -15520,6 +15530,10 @@ export default function PlatformPage() {
                           下载第 {idx + 1} 页
                         </a>
                       </div>
+                    </div>
+                  ) : (
+                    <div key={`kc-missing-${idx}`} className="rounded-2xl border border-dashed border-red-400/40 px-4 py-6 text-sm text-red-300/85">
+                      第 {idx + 1}/{arr.length} 页未生成（本页未扣费）。可点「重新生成」补出；整套 PDF 只含已生成页。
                     </div>
                   ))}
                   {customNoteKind !== "single_page_knowledge_card" && customNoteImageUpper && (
