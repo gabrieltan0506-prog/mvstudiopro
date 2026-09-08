@@ -3017,7 +3017,7 @@ export default function PlatformPage() {
       return KNOWLEDGE_CARD_DISTILL_MODEL_SOL;
     }
   });
-  /** 成稿档：精简版（浓缩）/ 高级版（内容完整）；0908 用户拍板 */
+  /** 成稿档：精华版（提炼主要重点）/ 高级版（主要+次要重点，不限页数）；0908 用户拍板 */
   const [customNoteDetailLevel, setCustomNoteDetailLevel] = useState<KnowledgeCardDetailLevel>(() => {
     try {
       return resolveKnowledgeCardDetailLevel(localStorage.getItem("mvs-knowledge-card-detail-level") || KNOWLEDGE_CARD_DEFAULT_DETAIL_LEVEL);
@@ -15255,7 +15255,7 @@ export default function PlatformPage() {
                         type="button"
                         aria-pressed={customNoteDetailLevel === level}
                         disabled={customNoteBusy || customNoteUploadBusy || customNoteDistillPhase !== "idle"}
-                        title={level === "concise" ? "浓缩取重点，页数少" : "内容完整不舍章节，页数多、按页计费"}
+                        title={level === "concise" ? "提炼主要重点，页数少" : "主要与次要重点都包含，表格化压实，不限页数、按页计费"}
                         onClick={() => {
                           setCustomNoteDetailLevel(level);
                           try { localStorage.setItem("mvs-knowledge-card-detail-level", level); } catch { /* ignore */ }

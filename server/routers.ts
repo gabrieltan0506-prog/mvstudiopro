@@ -8138,7 +8138,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           chargeDistillFee: z.boolean().optional(),
           /** 两档：gpt-5.6-sol / qwen3.8-max；旧值（terra / OR-qwen / claude / kimi）服务端迁到两档 */
           distillModel: z.string().max(64).optional(),
-          /** 成稿档：精简版（浓缩）/ 高级版（内容完整） */
+          /** 成稿档：精华版（主要重点）/ 高级版（主要+次要重点） */
           detailLevel: z.enum(["concise", "full"]).optional(),
           files: z
             .array(
