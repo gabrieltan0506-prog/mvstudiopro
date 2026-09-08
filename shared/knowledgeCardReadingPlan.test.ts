@@ -1,10 +1,5 @@
-import { readFileSync } from "node:fs";
-import ts from "typescript";
-import { z } from "zod";
-import { KNOWLEDGE_CARD_ACTIVE_DISTILL_MODELS } from "./knowledgeCardDistillModels";
 import { describe, expect, it } from "vitest";
 import {
-  KNOWLEDGE_CARD_READING_MIN_PAGES, KNOWLEDGE_CARD_READING_MODES,
   knowledgeCardReadingAffordablePages,
   knowledgeCardReadingConstraintsSchema,
   knowledgeCardReadingEvidencePageSchema,
@@ -16,7 +11,7 @@ import {
   type KnowledgeCardReadingPlan,
   type KnowledgeCardReadingPlanOption,
 } from "./knowledgeCardReadingPlan";
-import { knowledgeCardCreditsForPages, knowledgeCardCreditsForPageIndex } from "./knowledgeCardPagination";
+import { knowledgeCardCreditsForPages } from "./knowledgeCardPagination";
 
 function option(mode: KnowledgeCardReadingMode, count: number): KnowledgeCardReadingPlanOption {
   return {
@@ -73,18 +68,12 @@ describe("原页精读证据与方案契约", () => {
     expect(knowledgeCardReadingPlanSchema.safeParse({ ...plan(), model: "moonshotai/kimi-k3" }).success).toBe(false);
     expect(knowledgeCardReadingPlanSchema.safeParse({ ...plan(), model: "balanced" }).success).toBe(false);
   });
-  it.each([81, 300])("%s页完整计划通过、可报价且保持所有来源覆盖", count => {
-    const value = { ...plan(), options: [option("concise", 4), option("balanced", 6), option("complete", count)] };
-    const sources = Array.from({ length: count }, (_, index) => ({ ...evidence, id: `source-${index + 1}`, pageNumber: index + 1 }));
-    for (const candidate of value.options) candidate.pages.forEach((page, index) => { page.sourcePageIds = [sources[index]!.id]; });
-    expect(knowledgeCardReadingPlanSchema.parse(value).options[2]!.pages).toHaveLength(count);
-    expect(() => validateKnowledgeCardReadingPlanSources(value, sources)).not.toThrow();
-    const total = knowledgeCardCreditsForPages(count, value.model);
-    expect(quoteKnowledgeCardReadingPlan(value, { targetPages: count, budgetCredits: total }).options[2]).toMatchObject({ pageCount: count, credits: total, selectable: true });
-    expect(quoteKnowledgeCardReadingPlan(value, { targetPages: count, budgetCredits: total - 1 }).options[2]!.selectable).toBe(false);
-    expect(value.options[2]!.pages.at(-1)!.pageId).toBe(`complete-${count}`);
-    value.options[2]!.pages.pop();
-    expect(() => validateKnowledgeCardReadingPlanSources(value, sources)).toThrow("未引用且未说明排除理由");
+  it("80页明确作为输入容量，81页拒绝且不截断原对象", () => {
+    const value = { ...plan(), options: [option("concise", 4), option("balanced", 6), option("complete", 80)] };
+    expect(knowledgeCardReadingPlanSchema.parse(value).options[2]!.pages).toHaveLength(80);
+    value.options[2] = option("complete", 81);
+    expect(knowledgeCardReadingPlanSchema.safeParse(value).success).toBe(false);
+    expect(value.options[2]!.pages).toHaveLength(81);
   });
   it("拒绝重复成品页编号、重复来源与无来源页", () => {
     for (const patch of [{ pageId: "concise-2" }, { sourcePageIds: [] }, { sourcePageIds: ["p1", "p1"] }]) {
@@ -142,20 +131,6 @@ describe("原页精读证据与方案契约", () => {
 });
 
 describe("三方案报价保持现有价格和最少四页", () => {
-  it.each(["gpt-5.6-sol", "qwen3.8-max"] as const)("%s 分片后300页仍按整书连续页序计价，第81页不重新满价", model => {
-    const pageNumbers = Array.from({ length: 300 }, (_, index) => index + 1);
-    const chunks = [pageNumbers.slice(0, 80), pageNumbers.slice(80, 160), pageNumbers.slice(160)];
-    const perPage = chunks.flatMap(chunk => chunk.map(index => knowledgeCardCreditsForPageIndex(index, model)));
-    const fullPrice = model === "gpt-5.6-sol" ? 30 : 24;
-    const discountPrice = model === "gpt-5.6-sol" ? 24 : 19;
-    expect(perPage.slice(0, 8)).toEqual(new Array(8).fill(fullPrice));
-    expect(perPage.slice(8)).toEqual(new Array(292).fill(discountPrice));
-    expect(perPage[80]).toBe(discountPrice); expect(perPage[299]).toBe(discountPrice);
-    const expected = 8 * fullPrice + 292 * discountPrice;
-    expect(perPage.reduce((sum, price) => sum + price, 0)).toBe(expected);
-    const value = { ...plan(), model, options: [option("concise", 4), option("balanced", 81), option("complete", 300)] };
-    expect(quoteKnowledgeCardReadingPlan(value).options[2]!.credits).toBe(expected);
-  });
   it.each(["gpt-5.6-sol", "qwen3.8-max"] as const)("%s 在第8/9页价格边界反解预算与原函数闭合", model => {
     for (const count of [0, 1, 3, 4, 8, 9, 80, 81, 300]) {
       const credits = knowledgeCardCreditsForPages(count, model);
@@ -183,47 +158,11 @@ describe("三方案报价保持现有价格和最少四页", () => {
     expect(quote.options.map(item => item.pageCount)).toEqual([4, 6, 9]);
     expect(quoteKnowledgeCardReadingPlan(plan(), { targetPages: 7 }).reason).toContain("重新规划");
   });
-  it("拒绝非法预算、少于4页和不安全整数目标，不设置业务页数上限", () => {
-    for (const targetPages of [-1, 0, 3, 4.5, Infinity, NaN, Number.MAX_SAFE_INTEGER + 1])
+  it("拒绝非法预算、少于4页和超过80页的目标", () => {
+    for (const targetPages of [0, 3, 4.5, 81, Infinity])
       expect(knowledgeCardReadingConstraintsSchema.safeParse({ targetPages }).success).toBe(false);
     for (const budgetCredits of [-1, 0.5, Infinity, NaN, Number.MAX_SAFE_INTEGER + 1])
       expect(() => knowledgeCardReadingAffordablePages(budgetCredits, "gpt-5.6-sol")).toThrow();
     expect(knowledgeCardReadingConstraintsSchema.parse({ budgetCredits: 0, targetPages: 4 })).toEqual({ budgetCredits: 0, targetPages: 4 });
-    for (const targetPages of [81, 300, Number.MAX_SAFE_INTEGER])
-      expect(knowledgeCardReadingConstraintsSchema.parse({ targetPages }).targetPages).toBe(targetPages);
-  });
-});
-
-
-describe("真实路由与冻结版次schema允许整书连续页序", () => {
-  const editionSource = ts.createSourceFile("edition.ts", readFileSync(new URL("../server/services/knowledgeCardReadingEdition.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
-  const schemaNames = new Set(["digestSchema", "planIdSchema", "modeSchema", "unique", "sourceIds", "pageReplySchema", "editionPageSchema", "editionSchema"]);
-  const statements = editionSource.statements.filter(statement => ts.isVariableStatement(statement) && statement.declarationList.declarations.some(declaration => schemaNames.has(declaration.name.getText(editionSource))));
-  const code = ts.transpileModule(statements.map(statement => statement.getText(editionSource)).join("\n"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
-  const schemas = new Function("z", "KNOWLEDGE_CARD_READING_MIN_PAGES", "KNOWLEDGE_CARD_READING_MODES", "KNOWLEDGE_CARD_ACTIVE_DISTILL_MODELS", `${code}; return { editionPageSchema, editionSchema };`)(z, KNOWLEDGE_CARD_READING_MIN_PAGES, KNOWLEDGE_CARD_READING_MODES, KNOWLEDGE_CARD_ACTIVE_DISTILL_MODELS) as { editionPageSchema: z.ZodObject<any>; editionSchema: z.ZodObject<any> };
-  const routerSource = ts.createSourceFile("routers.ts", readFileSync(new URL("../server/routers.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
-  const fields = new Map<string, z.ZodTypeAny>();
-  function visit(node: ts.Node) {
-    if (ts.isPropertyAssignment(node) && ["notePageIndex", "notePageTotal"].includes(node.name.getText(routerSource)) && node.initializer.getText(routerSource).startsWith("z.number()"))
-      fields.set(node.name.getText(routerSource), new Function("z", `return ${node.initializer.getText(routerSource)};`)(z));
-    ts.forEachChild(node, visit);
-  }
-  visit(routerSource);
-  it.each([81, 300])("%s页版次和生图页码通过实际schema，完整页序不归零", count => {
-    expect(fields.size).toBe(2);
-    for (const schema of Array.from(fields.values())) expect(schema.parse(count)).toBe(count);
-    const pages = option("complete", count).pages.map((page, index) => ({ pageId: page.pageId, ordinal: index + 1, title: page.title,
-      contentMarkdown: "机制、条件与数字均来自原页", visualDirections: page.visualDirections,
-      sourcePageIds: page.sourcePageIds, referencePageIds: [], imageGsUris: [] }));
-    const edition = schemas.editionSchema.parse({ editionId: "b".repeat(64), planId: `${"a".repeat(64)}-${"c".repeat(64)}`, mode: "complete", model: "gpt-5.6-sol", pages, credits: knowledgeCardCreditsForPages(count, "gpt-5.6-sol") }) as { pages: Array<{ ordinal: number }> };
-    expect(edition.pages.map((page: { ordinal: number }) => page.ordinal)).toEqual(Array.from({ length: count }, (_, index) => index + 1));
-  });
-  it("路由页码和版次ordinal拒绝零、负数、小数与非安全整数", () => {
-    const ordinal = schemas.editionPageSchema.shape.ordinal as z.ZodTypeAny;
-    for (const schema of [...Array.from(fields.values()), ordinal]) {
-      for (const value of [0, -1, 0.5, Infinity, NaN, Number.MAX_SAFE_INTEGER + 1])
-        expect(schema.safeParse(value).success).toBe(false);
-      expect(schema.parse(Number.MAX_SAFE_INTEGER)).toBe(Number.MAX_SAFE_INTEGER);
-    }
   });
 });

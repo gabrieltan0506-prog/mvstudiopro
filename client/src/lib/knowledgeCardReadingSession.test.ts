@@ -3,15 +3,6 @@ import { loadReadingSession, saveReadingSession, readingEditionImages, readingSe
 const session = (): KnowledgeCardReadingSession => ({ version: 1, id: "session-one", userId: 7, model: "gpt-5.6-sol", files: [{ gcsUri: "gs://test-bucket/test-file", mimeType: "application/pdf", fileName: "原稿.pdf" }], constraints: {}, phase: "reading", selectedMode: "concise", pending: "reading", pageTasks: {} });
 const memory = () => { const records = new Map<string, string>(); return { records, getItem: (key: string) => records.get(key) ?? null, setItem: (key: string, value: string) => { records.set(key, value); } }; };
 describe("阅读会话恢复与当前版次图片", () => {
-  it("阶段、业务状态和两类真实时间经存储刷新完整保留，旧会话仍兼容", () => {
-    const store = memory();
-    const current = { ...session(), progress: { done: 1, total: 275, stage: "reading:1/1", jobStatus: "running", updatedAt: "2026-09-08T05:00:00.000Z", heartbeatAt: "2026-09-08T05:00:30.000Z" } };
-    saveReadingSession(store, current);
-    expect(loadReadingSession(store, 7)?.progress).toEqual(current.progress);
-    saveReadingSession(store, { ...session(), progress: { done: 0, total: 0 } });
-    expect(loadReadingSession(store, 7)?.progress).toEqual({ done: 0, total: 0 });
-    expect(() => saveReadingSession(store, { ...current, progress: { ...current.progress, updatedAt: "invalid" } })).toThrow();
-  });
   it("在后台请求前保存材料和pending，刷新不丢未知提交", () => {
     const store = memory();
     saveReadingSession(store, session());

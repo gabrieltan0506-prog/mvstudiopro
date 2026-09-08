@@ -82,8 +82,8 @@ describe("知识卡精读路由实际procedure", () => {
     }
     expect(mocks.create).toHaveBeenCalledTimes(1);
   });
-  it("禁止低于四页、非法页数、退休模型或客户端夹带身份", async () => {
-    for (const targetPages of [3, -1, 4.5]) await expect(caller().prepareKnowledgeCardReading({ ...input(), constraints: { targetPages } })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  it("禁止低于四页、超过80页、退休模型或客户端夹带身份", async () => {
+    for (const targetPages of [3, 81]) await expect(caller().prepareKnowledgeCardReading({ ...input(), constraints: { targetPages } })).rejects.toMatchObject({ code: "BAD_REQUEST" });
     await expect(caller().prepareKnowledgeCardReading({ ...input(), model: "claude-opus-5" } as never)).rejects.toMatchObject({ code: "BAD_REQUEST" });
     await expect(caller().prepareKnowledgeCardReading({ ...input(), userId: 8 } as never)).rejects.toMatchObject({ code: "BAD_REQUEST" });
     expect(mocks.create).not.toHaveBeenCalled();
@@ -117,11 +117,4 @@ describe("知识卡精读路由实际procedure", () => {
     await expect(anon.prepareKnowledgeCardReading(input())).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     await expect(anon.getKnowledgeCardReadingPageStatus(request)).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   });
-  it("大书准备的PDF超过40份仍完整入队，目标81页不被拒绝", async () => {
-    const files = Array.from({length:41}, (_, i) => ({...input().files[0]!, gcsUri:`gs://test-bucket/uploads/u7/part-${i+1}.pdf`}));
-    await caller().prepareKnowledgeCardReading({...input(), files, constraints:{targetPages:81}});
-    expect(mocks.create.mock.calls[0]![0].input.params.files).toHaveLength(41);
-    expect(mocks.create.mock.calls[0]![0].input.params.files[40].gcsUri).toContain("part-41.pdf");
-  });
-
 });

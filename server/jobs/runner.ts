@@ -3151,27 +3151,19 @@ async function processPlatformJob(
         files: z.array(z.object({
           gcsUri: z.string().min(1).max(1024), generation: z.string().min(1).max(128),
           mimeType: z.string().min(1).max(120), fileName: z.string().min(1).max(240),
-        }).strict()).min(1),
+        }).strict()).min(1).max(40),
         constraints: knowledgeCardReadingConstraintsSchema.optional(),
         chargeDistillFee: z.boolean().optional(),
       }).parse(params);
       const progressController = new AbortController();
       const readingSignal = signal ? AbortSignal.any([signal, progressController.signal]) : progressController.signal;
-      const startedAt = new Date().toISOString();
-      let progress = { readingDonePages: 0, readingTotalPages: 0, readingPhase: "starting", readingProgressUpdatedAt: startedAt, readingHeartbeatAt: startedAt };
-      // 同一任务串行保存，避免心跳读取旧输出后覆盖刚写入的内容进度。
-      let progressWrite = Promise.resolve();
-      const persistProgress = (snapshot: typeof progress) => {
-        progressWrite = progressWrite.then(() => patchJobRunningProgressStrict(platformJobId, snapshot));
-        return progressWrite;
-      };
-      await persistProgress(progress);
+      let progress = { readingDonePages: 0, readingTotalPages: 0, readingPhase: "starting" };
+      await patchJobRunningProgressStrict(platformJobId, progress);
       let heartbeatPending = false;
       const heartbeat = setInterval(() => {
         if (readingSignal.aborted || heartbeatPending) return;
         heartbeatPending = true;
-        progress = { ...progress, readingHeartbeatAt: new Date().toISOString() };
-        void persistProgress(progress)
+        void patchJobRunningProgressStrict(platformJobId, progress)
           .catch(error => progressController.abort(error))
           .finally(() => { heartbeatPending = false; });
       }, 30_000);
@@ -3179,18 +3171,14 @@ async function processPlatformJob(
       try {
         const onProgress = async (done: number, total: number, phase: string) => {
           readingSignal.throwIfAborted();
-          const now = new Date().toISOString();
-          const advanced = done !== progress.readingDonePages || total !== progress.readingTotalPages || phase !== progress.readingPhase;
-          progress = { readingDonePages: done, readingTotalPages: total, readingPhase: phase,
-            readingProgressUpdatedAt: advanced ? now : progress.readingProgressUpdatedAt, readingHeartbeatAt: now };
-          await persistProgress(progress);
+          progress = { readingDonePages: done, readingTotalPages: total, readingPhase: phase };
+          await patchJobRunningProgressStrict(platformJobId, progress);
         };
         if (editionRequest) {
           const { prepareKnowledgeCardReadingEdition } = await import("../services/knowledgeCardReadingEdition.js");
           const edition = await prepareKnowledgeCardReadingEdition({ ...editionRequest, userId }, onProgress, readingSignal);
           readingSignal.throwIfAborted();
-          await onProgress(edition.pages.length, edition.pages.length, "done");
-          return { provider: "evolink", output: { success: true, edition, ...progress } };
+          return { provider: "evolink", output: { success: true, edition, readingDonePages: edition.pages.length, readingTotalPages: edition.pages.length, readingPhase: "done" } };
         }
         const { analyzeKnowledgeCardDocuments } = await import("../services/knowledgeCardReading.js");
         const result = await analyzeKnowledgeCardDocuments({ ...reading!, userId }, onProgress, readingSignal);
@@ -3199,8 +3187,7 @@ async function processPlatformJob(
         const distillFeeCharged = reading!.chargeDistillFee === true
           ? await settleKnowledgeCardReadingFee({ userId, analysisId: result.analysisId, model: reading!.model, chargeDistillFee: true }) : 0;
         // 保留原手输提炼费用，上传不加费；同一阅读换预算方案不再扣费。
-        await onProgress(result.sourcePages, result.sourcePages, "done");
-        return { provider: "evolink", output: { success: true, ...result, distillFeeCharged, ...progress } };
+        return { provider: "evolink", output: { success: true, ...result, distillFeeCharged, readingDonePages: result.sourcePages, readingTotalPages: result.sourcePages, readingPhase: "done" } };
       } finally {
         clearInterval(heartbeat);
       }

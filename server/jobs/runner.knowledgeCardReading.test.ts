@@ -31,7 +31,7 @@ function fixture(analyze = vi.fn(async (_input: unknown, progress: (done: number
   await progress(4, 275, "reading:1/1");
   return { analysisId: "analysis", planId: "plan", plan: { allPages: Array.from({ length: 275 }, (_, i) => i + 1) }, quote: { credits: 120 }, constraints: { targetPages: 4 }, sourcePages: 275 };
 })) {
-  const patch = vi.fn(async (_jobId: string, _progress: Record<string, unknown>) => undefined);
+  const patch = vi.fn(async () => undefined);
   const fee = vi.fn(async (_input: unknown) => 50);
   const unexpected = vi.fn(async (name: string) => { throw new Error(`禁止调用未授权边界：${name}`); });
   const importModule = async (name: string) => {
@@ -48,30 +48,6 @@ function fixture(analyze = vi.fn(async (_input: unknown, progress: (done: number
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
 describe("全页阅读平台任务真实分支", () => {
-  it("心跳和重复回调不伪造内容进展，真实推进及终态带ISO时间", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-09-08T05:00:00Z"));
-    let report!: (done: number, total: number, phase: string) => Promise<void>;
-    let finish!: (value: any) => void;
-    const { run, patch } = fixture(vi.fn(async (_input: unknown, progress: typeof report) => {
-      report = progress;
-      return await new Promise<any>(resolve => { finish = resolve; });
-    }));
-    const running = run(input(), "7", "job");
-    await vi.advanceTimersByTimeAsync(30_000);
-    const heartbeat = patch.mock.calls.at(-1)![1];
-    expect(heartbeat).toMatchObject({ readingDonePages: 0, readingProgressUpdatedAt: "2026-09-08T05:00:00.000Z", readingHeartbeatAt: "2026-09-08T05:00:30.000Z" });
-    await report(1, 275, "reading:1/1");
-    await vi.advanceTimersByTimeAsync(10_000);
-    await report(1, 275, "reading:1/1");
-    expect(patch.mock.calls.at(-1)![1]).toMatchObject({ readingProgressUpdatedAt: "2026-09-08T05:00:30.000Z", readingHeartbeatAt: "2026-09-08T05:00:40.000Z" });
-    await report(2, 275, "reading:1/1");
-    expect(patch.mock.calls.at(-1)![1].readingProgressUpdatedAt).toBe("2026-09-08T05:00:40.000Z");
-    finish({ sourcePages: 275 });
-    const output = (await running).output;
-    expect(output).toMatchObject({ readingPhase: "done", readingProgressUpdatedAt: "2026-09-08T05:00:40.000Z", readingHeartbeatAt: "2026-09-08T05:00:40.000Z" });
-    expect(vi.getTimerCount()).toBe(0);
-  });
   it.each([undefined, false, true])("只有明确chargeDistillFee=%s才调用原主动提炼费，读取失败不扣费", async chargeDistillFee => {
     const { run, fee } = fixture();
     const out = await run({ ...input(), params: { ...input().params, chargeDistillFee } }, "7", "reading-job");
@@ -90,9 +66,9 @@ describe("全页阅读平台任务真实分支", () => {
     const out = await run(value, "7", "reading-job", signal);
     expect(analyze.mock.calls[0]![0]).toEqual({ ...value.params, userId: 7 });
     expect(analyze.mock.calls[0]![2]).toBeInstanceOf(AbortSignal);
-    expect(out).toMatchObject({ provider: "evolink", output: { success: true, analysisId: "analysis", planId: "plan", sourcePages: 275, quote: { credits: 120 }, constraints: { targetPages: 4 }, readingPhase: "done", readingProgressUpdatedAt: expect.any(String), readingHeartbeatAt: expect.any(String) } });
+    expect(out).toMatchObject({ provider: "evolink", output: { success: true, analysisId: "analysis", planId: "plan", sourcePages: 275, quote: { credits: 120 }, constraints: { targetPages: 4 }, readingPhase: "done" } });
     expect(out.output.plan.allPages).toHaveLength(275);
-    expect(patch).toHaveBeenCalledWith("reading-job", { readingDonePages: 4, readingTotalPages: 275, readingPhase: "reading:1/1", readingProgressUpdatedAt: expect.any(String), readingHeartbeatAt: expect.any(String) });
+    expect(patch).toHaveBeenCalledWith("reading-job", { readingDonePages: 4, readingTotalPages: 275, readingPhase: "reading:1/1" });
     expect(unexpected).not.toHaveBeenCalled();
     expect(JSON.stringify(value)).toBe(snapshot);
   });
@@ -122,7 +98,7 @@ describe("全页阅读平台任务真实分支", () => {
     const value = input();
     const original = JSON.stringify(value);
     await expect(run(value, "7", "job")).rejects.toBe(failure);
-    expect(patch.mock.calls.at(-1)).toEqual(["job", { readingDonePages: 272, readingTotalPages: 275, readingPhase: "reading:1/1", readingProgressUpdatedAt: expect.any(String), readingHeartbeatAt: expect.any(String) }]);
+    expect(patch.mock.calls.at(-1)).toEqual(["job", { readingDonePages: 272, readingTotalPages: 275, readingPhase: "reading:1/1" }]);
     expect(JSON.stringify(value)).toBe(original);
     expect(vi.getTimerCount()).toBe(0);
     expect(unexpected).not.toHaveBeenCalled();

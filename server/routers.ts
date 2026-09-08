@@ -8340,8 +8340,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             /** 仅 single_page_knowledge_card：旧上/下篇（兼容）。 */
             notePart: z.enum(["upper", "lower"]).optional(),
             /** 仅 single_page_knowledge_card：页码（优先于 notePart）；第 9 页起折扣，页数不封顶。 */
-            notePageIndex: z.number().int().min(1).safe().optional(),
-            notePageTotal: z.number().int().min(1).safe().optional(),
+            notePageIndex: z.number().int().min(1).max(80).optional(),
+            notePageTotal: z.number().int().min(1).max(80).optional(),
             /** 仅 single_page_knowledge_card：提炼模型（决定页费档位） */
             distillModel: z
               .enum(["claude-opus-5", "gpt-5.6-sol", "moonshotai/kimi-k3", "qwen3.8-max", "gpt-5.6-terra", "qwen/qwen3.8-max"])

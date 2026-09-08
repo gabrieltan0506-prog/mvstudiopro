@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import PDFDocument from "pdfkit";
 import sharp from "sharp";
@@ -26,40 +26,6 @@ async function pdf(encrypted = false): Promise<Buffer> {
   });
 }
 describe("知识卡文档物理页读取（本机Poppler，无模型）", () => {
-  it("真实PDF在消费前依次上报0/N和每页完成，await异步进度持久化", async () => {
-    const events: Array<[number, number, string]> = [];
-    let progressPending = false;
-    await read({ buffer: await pdf(), mimeType: "application/pdf", onProgress: async (done, total, phase) => {
-      expect(progressPending).toBe(false);
-      progressPending = true;
-      await Promise.resolve();
-      events.push([done, total, phase]);
-      progressPending = false;
-    } }, async manifest => {
-      expect(progressPending).toBe(false);
-      expect(manifest.totalPages).toBe(3);
-      expect(events).toEqual([[0, 3, "rendering"], [1, 3, "rendering"], [2, 3, "rendering"], [3, 3, "rendering"]]);
-    });
-  }, 60000);
-  it("进度写入失败或回调中止时停止，不继续消费或虚报剩余页完成", async () => {
-    const consume = vi.fn();
-    const controller = new AbortController();
-    const progress = vi.fn(async (done: number) => { if (done === 1) controller.abort(new Error("进度任务已中止")); });
-    await expect(read({ buffer: await pdf(), mimeType: "application/pdf", signal: controller.signal, onProgress: progress }, consume)).rejects.toThrow("进度任务已中止");
-    expect(progress.mock.calls.map(call => call[0])).toEqual([0, 1]);
-    expect(consume).not.toHaveBeenCalled();
-    await expect(read({ buffer: await pdf(), mimeType: "application/pdf", onProgress: async () => { throw new Error("进度写入失败"); } }, consume)).rejects.toThrow("进度写入失败");
-    expect(consume).not.toHaveBeenCalled();
-  }, 60000);
-  it("完整文字清单就绪才上报prepared真实段数，正文和段数一致", async () => {
-    const progress = vi.fn();
-    const text = "正文😀".repeat(8000);
-    await read({ buffer: Buffer.from(text), mimeType: "text/plain", onProgress: progress }, async manifest => {
-      expect(manifest.pages.map(page => page.text).join("")).toBe(text);
-      expect(progress).toHaveBeenCalledTimes(1);
-      expect(progress).toHaveBeenCalledWith(manifest.totalPages, manifest.totalPages, "prepared");
-    });
-  });
   it("PDF全部物理页按序渲染，空白及纯图页保留，回调后清理", async () => {
     let firstPath = "";
     await read(

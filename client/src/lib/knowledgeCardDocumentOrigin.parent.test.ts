@@ -52,28 +52,9 @@ describe("父页真实知识卡入口统一全文阅读", () => {
     await asset(text, "single_page_knowledge_card");
     expect(start.mock.calls).toEqual([["完整正文"], [text, { fromDocument: true }]]);
   });
-  it("EPUB自动准备完整PDF后走同一上传与阅读入口，不要求用户下载重传", async () => {
-    const pdfFiles = [new File(["离线测试PDF1"], "第一部分.pdf"), new File(["离线测试PDF2"], "第二部分.pdf")];
-    const prepare = vi.fn(async () => pdfFiles);
-    const upload = vi.fn(async ({file}: {file: File}) => `gs://test-bucket/uploads/u7/${file.name}`);
-    const finish = vi.fn(async () => {});
-    const noop = () => {};
-    const start = execute(declared("startKnowledgeReadingFiles"), {
-      withReadingOperation: (action: () => Promise<void>) => action(), user: {id: 7},
-      readingSessionRef: {current: null}, readingAccountRef: {current: 7},
-      setCustomNoteUploadBusy: noop, setCustomNoteUploadStatus: noop, prepareKnowledgeCardEpubFiles: prepare,
-      prepareEpubPdfMutation: {mutateAsync: vi.fn()}, uploadKnowledgeCardFileToGcs: upload,
-      getUploadUrlMutation: {mutateAsync: vi.fn()}, saveReading: (value: unknown) => value,
-      customNoteDistillModel: "gpt-5.6-sol", customNoteImages: [], customNoteImageUpper: null, customNoteImageLower: null,
-      setCustomNoteKind: noop, setOutputType: noop, finishReadingPlan: finish,
-    });
-    const epub = new File(["离线EPUB"], "电子书.epub");
-    await start([epub]);
-    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({file: epub, userId: 7}));
-    expect(upload.mock.calls.map(([value]) => value.file)).toEqual(pdfFiles);
-    expect(finish).toHaveBeenCalledWith(expect.objectContaining({files: [
-      {gcsUri: "gs://test-bucket/uploads/u7/第一部分.pdf", mimeType: "application/pdf", fileName: "第一部分.pdf"},
-      {gcsUri: "gs://test-bucket/uploads/u7/第二部分.pdf", mimeType: "application/pdf", fileName: "第二部分.pdf"},
-    ], pending: "reading"}));
+  it("EPUB转出的完整正文进入同一阅读入口", async () => {
+    const start = vi.fn(async (..._args: any[]) => {});
+    execute(handler("EpubToPdfPanel", "onImportText", "onImportText"), { startKnowledgeReadingText: start })("完整EPUB正文");
+    expect(start).toHaveBeenCalledWith("完整EPUB正文", { fromDocument: true });
   });
 });

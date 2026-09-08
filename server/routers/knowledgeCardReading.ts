@@ -29,7 +29,7 @@ export const knowledgeCardReadingProcedures = {
   getKnowledgeCardReadingPageStatus: protectedProcedure.input(knowledgeCardReadingRenderRequestSchema).query(({ctx,input}) => getKnowledgeCardReadingRenderStatus(ctx.user.id,input)),
   prepareKnowledgeCardReading: protectedProcedure.input(z.object({
     model: z.enum(KNOWLEDGE_CARD_ACTIVE_DISTILL_MODELS),
-    files: z.array(z.object({ gcsUri: z.string().min(1).max(2048), mimeType: z.string().min(1).max(120), fileName: z.string().max(240).optional() }).strict()).min(1),
+    files: z.array(z.object({ gcsUri: z.string().min(1).max(2048), mimeType: z.string().min(1).max(120), fileName: z.string().max(240).optional() }).strict()).min(1).max(40),
     constraints: knowledgeCardReadingConstraintsSchema.optional(),
     chargeDistillFee: z.boolean().optional(),
   }).strict()).mutation(async ({ ctx, input }) => {
