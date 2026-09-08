@@ -61,6 +61,7 @@ import {
 } from "./bailianHappyHorseVideo.js";
 import { getGcsBucketName, signGcsObjectPathV4ReadUrl } from "./gcs.js";
 import { verifyCanvasMediaOwnership } from "./canvasMediaOwnership.js";
+import { resolveCanvasVideoAudioUrls } from "./canvasVideoAudioReference.js";
 import {
   SEEDANCE_EVOLINK_CONTENT_FILTER,
   type SeedanceEvolinkMode,
@@ -406,7 +407,10 @@ function seedance25RunInput(task: CanvasVideoTaskRecord): EvolinkSeedanceRunInpu
 }
 
 async function submitSeedance25Evolink(task: CanvasVideoTaskRecord): Promise<void> {
-  const submitted = await submitEvolinkSeedanceVideo(seedance25RunInput(task));
+  const submitted = await submitEvolinkSeedanceVideo({
+    ...seedance25RunInput(task),
+    audioUrls: await resolveCanvasVideoAudioUrls(task.audioUrls, task.userId),
+  });
   task.engine = "seedance25-evolink";
   task.evolinkTaskId = submitted.evolinkTaskId;
   task.model = submitted.model;
@@ -468,13 +472,15 @@ async function submitSeedanceEvolinkVersioned(
 }
 
 async function submitSeedance25Byteplus(task: CanvasVideoTaskRecord): Promise<void> {
+  // 素材归属失败不是供应商失败，必须在回落捕获范围之外拒绝。
+  const audioUrls = await resolveCanvasVideoAudioUrls(task.audioUrls, task.userId);
   try {
     const submitted = await submitByteplusSeedance25Video({
       prompt: task.prompt,
       imageUrl: task.imageUrl,
       imageUrls: task.imageUrls,
       videoUrls: task.videoUrls,
-      audioUrls: task.audioUrls,
+      audioUrls,
       aspectRatio: task.aspectRatio,
       duration: task.duration,
       resolution: task.resolution,
@@ -639,7 +645,9 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
       prompt: task.prompt,
       imageUrl: task.imageUrl,
       imageUrls: task.imageUrls,
-      audioUrls: task.audioUrls,
+      audioUrls: task.seedanceVersion === "2.5"
+        ? await resolveCanvasVideoAudioUrls(task.audioUrls, task.userId)
+        : task.audioUrls,
       aspectRatio: task.aspectRatio,
       duration: task.duration,
       quality: task.resolution,

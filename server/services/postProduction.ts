@@ -1,7 +1,7 @@
 /**
- * 后期工坊核心(蓝图二①):拼接 / BGM 贴装 / 响度验收 / 字幕烧录。
+ * 媒体工坊核心:拼接 / BGM 贴装 / 音频裁段与秒锁试听 / 响度验收 / 字幕烧录。
  * 纯 ffmpeg + 规则引擎,零大模型 token;配方来自《雷击》《天雷劫》实弹工艺:
- * - BGM 永远后期贴(0.48 规):侧链压对白、入场淡入、按完整时间线淡出;
+ * - 既有后期贴乐保留侧链压对白；生成前可另裁独立音乐片段与秒锁试听轨;
  * - 响度验收 = ebur128 整体 + 分窗 RMS,媒体命令未完成一律抛错结束本次任务。
  *
  * 工程约束(0821 审阅清单一/二审):
@@ -24,6 +24,10 @@ import { promisify } from "node:util";
 import { z } from "zod";
 import { signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs.js";
 import {
+  audioTrimParamsSchema,
+  audioTimelineParamsSchema,
+  type RawAudioTrimParams,
+  type RawAudioTimelineParams,
   bgmMountParamsSchema,
   burnSubtitleParamsSchema,
   isSafePostProdVolumeExpr,
@@ -33,6 +37,7 @@ import {
   type ConcatParams,
   type LoudnessParams,
 } from "../jobs/postProdInput";
+import { AUDIO_SAMPLE_RATE, audioSamples, buildAudioTrimArgs, buildAudioTimelineArgs } from "./audioTimelineRender";
 // 契约已并轨到 jobs 层；这里保留再导出，测试与旧调用方免改路径
 export { burnSubtitleParamsSchema, burnSubtitleStyleOverrideSchema } from "../jobs/postProdInput";
 
@@ -221,6 +226,105 @@ async function probe(
 }
 
 export type PostProdRunOptions = { signal?: AbortSignal };
+
+/** 对白交接用完整解码的PCM与真实时长，门禁舍入值仅用于验声展示。 */
+export async function normalizeDialogueAudio(audio: Buffer, signal: AbortSignal) {
+  signal.throwIfAborted();
+  const tmpDir = await mkdtemp(path.join(tmpdir(), "pp-dialogue-pcm-"));
+  try {
+    const source = path.join(tmpDir, "source.audio");
+    const output = path.join(tmpDir, "dialogue.wav");
+    await writeFile(source, audio, { signal });
+    await runMediaTool("ffmpeg", ["-y", "-nostdin", "-protocol_whitelist", "file", "-i", source,
+      "-map", "0:a:0", "-vn", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", "-t", "3601", output], signal);
+    const durationSec = await probeAudio(output, signal);
+    const size = (await stat(output)).size;
+    if (durationSec > 3600 || size <= 44 || size > MAX_RESULT_BYTES) throw new Error("配音真实时长或体积超出处理范围");
+    return { buffer: await readFile(output, { signal }), durationSec };
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
+/** 只认真实音频轨；视频容器的总时长不能替代音频时长。 */
+export async function probeAudio(filePath: string, signal: AbortSignal): Promise<number> {
+  const { stdout } = await runMediaTool("ffprobe", ["-v", "quiet", "-protocol_whitelist", "file", "-print_format", "json", "-show_format", "-show_streams", filePath], signal);
+  const info = JSON.parse(stdout) as { format?: { duration?: string }; streams?: Array<{ codec_type?: string; duration?: string }> };
+  const audio = info.streams?.find((stream) => stream.codec_type === "audio");
+  const duration = Number(audio?.duration ?? info.format?.duration);
+  if (!audio || !Number.isFinite(duration) || duration <= 0) throw new Error("素材没有可用音频或时长为空");
+  return duration;
+}
+
+async function verifyAudioDuration(filePath: string, expectedSec: number, signal: AbortSignal): Promise<number> {
+  const duration = await probeAudio(filePath, signal);
+  if (Math.abs(duration - expectedSec) > 1 / AUDIO_SAMPLE_RATE + 1e-6) {
+    throw new Error("音频实际时长与所选区间不一致，无法完整保留，请重新选择区间");
+  }
+  if ((await stat(filePath)).size <= 44) throw new Error("音频产物为空");
+  return duration;
+}
+
+async function prepareAudioClip(clip: ReturnType<typeof audioTrimParamsSchema.parse>, sourcePath: string, outPath: string, signal: AbortSignal) {
+  const sourceDurationSec = await probeAudio(sourcePath, signal);
+  if (clip.sourceEndSec > sourceDurationSec + 1e-6) throw new Error("裁段终点超出原音频，请缩短所选区间");
+  await runMediaTool("ffmpeg", buildAudioTrimArgs(clip, sourcePath, outPath), signal);
+  const durationSec = await verifyAudioDuration(outPath, (audioSamples(clip.sourceEndSec) - audioSamples(clip.sourceStartSec)) / AUDIO_SAMPLE_RATE, signal);
+  return { ...clip, sourceDurationSec, durationSec, sourceStartSample: audioSamples(clip.sourceStartSec), sourceEndSample: audioSamples(clip.sourceEndSec) };
+}
+
+/** 独立裁段：每次只生成请求中的一个片段，原素材与旧结果不覆盖。 */
+export async function trimAudio(input: RawAudioTrimParams, userId: string, options?: PostProdRunOptions) {
+  const clip = audioTrimParamsSchema.parse(input);
+  const signal = options?.signal ?? NEVER_ABORT;
+  signal.throwIfAborted();
+  const tmpDir = await mkdtemp(path.join(tmpdir(), "pp-audio-trim-"));
+  try {
+    const sourcePath = path.join(tmpDir, "source.audio");
+    const outPath = path.join(tmpDir, "trim.wav");
+    await fetchPostProdSourceToFile(clip.audioUri, sourcePath, { signal });
+    const metadata = await prepareAudioClip(clip, sourcePath, outPath, signal);
+    const uploaded = await uploadResult({ filePath: outPath, userId, kind: "audio-trim", ext: "wav", contentType: "audio/wav", signal });
+    return { ...uploaded, ...metadata, sampleRate: AUDIO_SAMPLE_RATE, channels: 2, mediaType: "audio" as const };
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
+/** 物理秒锁试听轨，不触发视频生成或替代逐句角色/口型绑定。 */
+export async function renderAudioTimeline(input: RawAudioTimelineParams, userId: string, options?: PostProdRunOptions) {
+  const timeline = audioTimelineParamsSchema.parse(input);
+  const signal = options?.signal ?? NEVER_ABORT;
+  signal.throwIfAborted();
+  const tmpDir = await mkdtemp(path.join(tmpdir(), "pp-audio-timeline-"));
+  try {
+    const budget: DownloadBudget = { remainingBytes: MAX_CONCAT_TOTAL_BYTES };
+    const sourcePaths = new Map<string, string>();
+    const clipPaths: string[] = [];
+    const clips = [];
+    for (let index = 0; index < timeline.clips.length; index++) {
+      const clip = timeline.clips[index];
+      let sourcePath = sourcePaths.get(clip.audioUri);
+      if (!sourcePath) {
+        sourcePath = path.join(tmpDir, `source-${index}.audio`);
+        await fetchPostProdSourceToFile(clip.audioUri, sourcePath, { signal, budget });
+        sourcePaths.set(clip.audioUri, sourcePath);
+      }
+      const clipPath = path.join(tmpDir, `clip-${index}.wav`);
+      const { startSec, ...trimInput } = clip;
+      const metadata = await prepareAudioClip(trimInput, sourcePath, clipPath, signal);
+      clips.push({ ...metadata, startSec, startSample: audioSamples(startSec), endSec: (audioSamples(startSec) + audioSamples(metadata.durationSec)) / AUDIO_SAMPLE_RATE });
+      clipPaths.push(clipPath);
+    }
+    const outPath = path.join(tmpDir, "timeline.wav");
+    await runMediaTool("ffmpeg", buildAudioTimelineArgs(timeline, clipPaths, outPath), signal);
+    const durationSec = await verifyAudioDuration(outPath, audioSamples(timeline.durationSec) / AUDIO_SAMPLE_RATE, signal);
+    const uploaded = await uploadResult({ filePath: outPath, userId, kind: "audio-timeline", ext: "wav", contentType: "audio/wav", signal });
+    return { ...uploaded, durationSec, clips, sampleRate: AUDIO_SAMPLE_RATE, channels: 2, mediaType: "audio" as const, purpose: "timeline_preview" as const };
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
+}
 
 // ---------------------------------------------------------------- 拼接
 

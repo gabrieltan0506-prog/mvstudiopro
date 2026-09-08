@@ -83,6 +83,7 @@ describe("reapStaleJobsOnce 与 post_prod 记录保留", () => {
     expect(sqlStringValues(deletes[0]?.condition).join("\n")).toContain(
       "manhua_advisor_qa",
     );
+    expect(sqlStringValues(deletes[0]?.condition).join("\n")).toContain("canvas_dialogue_line");
     expect(sqlStringValues(deletes[1]?.condition).join("\n")).not.toContain(
       "manhua_advisor_qa",
     );

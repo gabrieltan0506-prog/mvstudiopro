@@ -23,6 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { VIDEO_MODEL_OPTIONS, type CanvasBlock } from "@/lib/canvasTypes";
+import { CanvasAudioStudio } from "@/components/canvas/CanvasAudioStudio";
 import {
   collectManhuaCharacterSheetUrlById,
   collectManhuaEpisodeSegmentPromptsForVoiceGate,
@@ -558,6 +559,8 @@ type Props = {
   onReviewClipPromptsOnCanvas?: (opts?: { segmentIndex?: number }) => void;
   /** 写回段成片节点 prompt（审阅编辑） */
   onUpdateClipPrompt?: (clipId: string, prompt: string) => void;
+  /** 在工厂内按当前段保存声音，不跳转到自由画布。 */
+  onUpdateClipAudioStudio?: (clipId: string, studio: NonNullable<CanvasBlock["audioStudio"]>) => void;
   onResumeFromFailure?: () => void;
   /** 从编导反推强制重跑本集静帧（覆盖旧图；工作台主路径入口） */
   onRerunKeyartsFromReverse?: () => void;
@@ -1028,6 +1031,7 @@ export default function ManhuaScriptWorkbench({
   assetZipBusy = false,
   onReviewClipPromptsOnCanvas,
   onUpdateClipPrompt,
+  onUpdateClipAudioStudio,
   onResumeFromFailure,
   onRerunKeyartsFromReverse,
   onRerunKeyartShot,
@@ -1055,6 +1059,7 @@ export default function ManhuaScriptWorkbench({
   const activeArtStyleId: ManhuaArtStyleId = normalizeManhuaArtStyleId(artStyleId);
   const [shotIndex, setShotIndex] = useState(0);
   const [clipPromptReviewOpen, setClipPromptReviewOpen] = useState(false);
+  const [audioStudioOpen, setAudioStudioOpen] = useState(false);
   /** 免费裁字弹层：拖框选保留区，框外（含烧字边缘）裁掉 */
   const [cropTarget, setCropTarget] = useState<{ id: string; url: string; labelZh: string } | null>(null);
   const [cropRect, setCropRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -3089,6 +3094,31 @@ export default function ManhuaScriptWorkbench({
               </button>
             </>
           )}
+          {onUpdateClipAudioStudio ? (
+            <button type="button" data-manhua-action="open-audio-studio"
+              disabled={Boolean(factoryBusy)}
+              className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
+              onClick={() => { setAudioStudioOpen(value => !value); if (!activeClip) onEnsureSegmentClips?.(); }}>
+              本段对白与配乐
+            </button>
+          ) : null}
+          {audioStudioOpen && onUpdateClipAudioStudio ? (
+            <section className="w-full rounded-xl border border-cyan-300/25 bg-[#0c121d] p-3" data-manhua-audio-studio>
+              <div className="mb-2 flex items-center justify-between text-sm text-cyan-50">
+                <span>第 {focusEpisode} 集 · 第 {activeSegNo} 段 · 对白与配乐</span>
+                <select aria-label="音轨工作台当前段" value={activeSegNo} disabled={Boolean(factoryBusy)} className="rounded border border-white/20 bg-[#0c121d] p-1 text-xs"
+                  onChange={event => { const next = Number(event.target.value); setActiveSegmentOverride(next); const firstShot = segments.find(segment => segment.index === next)?.shots[0]; if (firstShot) { const index = shots.findIndex(shot => shot.index === firstShot.index); if (index >= 0) setShotIndex(index); } }}>
+                  {segments.map(segment => <option key={segment.index} value={segment.index}>第 {segment.index} 段</option>)}
+                </select>
+                <button type="button" onClick={() => setAudioStudioOpen(false)}>收起</button>
+              </div>
+              {activeClip ? <CanvasAudioStudio key={activeClip.id} block={activeClip}
+                disabled={Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
+                onChange={studio => onUpdateClipAudioStudio(activeClip.id, studio)} /> : (
+                <p className="text-xs text-amber-100">当前段尚未建立成片节点。请先确认分段剧本；本入口不生成视频、不扣费，也不切换工作区。</p>
+              )}
+            </section>
+          ) : null}
           {factoryBusy && onStopFactory ? null : (
             <Popover>
               <PopoverTrigger asChild>

@@ -21,6 +21,20 @@ import {
 
 const BUCKET = "bucket-a";
 
+describe("新音频动作与旧素材登记同权", () => {
+  it("裁段规范化本人上传来源", async () => {
+    const output = await resolvePostProdInputSources({ userId: "7", input: { action: "audio_trim", params: {
+      audioUri: "/api/canvas-media/uploads/u7/music.wav", sourceStartSec: 1, sourceEndSec: 3,
+    } } }, deps());
+    expect(output.params).toMatchObject({ audioUri: "gs://bucket-a/uploads/u7/music.wav", volume: 1 });
+  });
+  it("时间轴任何一段不是本人登记素材则整项拒绝", async () => {
+    await expect(resolvePostProdInputSources({ userId: "7", input: { action: "audio_timeline", params: {
+      durationSec: 4, clips: [7, 8].map((uid) => ({ audioUri: `gs://bucket-a/uploads/u${uid}/a.wav`, sourceStartSec: 0, sourceEndSec: 1, startSec: 0 })),
+    } } }, deps())).rejects.toThrow("素材尚未登记");
+  });
+});
+
 function deps(overrides?: Partial<PostProdMediaDeps>): PostProdMediaDeps {
   return {
     getBucket: () => BUCKET,

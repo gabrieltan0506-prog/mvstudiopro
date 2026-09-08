@@ -257,7 +257,7 @@ export async function resolveRegisteredPostProdMediaSource(
   throw new Error(UNREGISTERED_HINT);
 }
 
-/** 三种 action 的素材字段走同一个解析函数;每次请求只读取一次 jobs 记录 */
+/** 所有 action 的素材字段走同一个解析函数;每次请求只读取一次 jobs 记录 */
 export async function resolvePostProdInputSources(
   input: { userId: string; input: RawPostProdJobInput },
   deps: PostProdMediaDeps = realDeps,
@@ -271,6 +271,18 @@ export async function resolvePostProdInputSources(
     resolveRegisteredPostProdMediaSource({ userId, source }, deps, context);
 
   const job = input.input;
+  if (job.action === "audio_trim") {
+    return postProdJobInputSchema.parse({
+      ...job, params: { ...job.params, audioUri: await resolve(job.params.audioUri) },
+    });
+  }
+  if (job.action === "audio_timeline") {
+    return postProdJobInputSchema.parse({
+      ...job, params: { ...job.params, clips: await Promise.all(job.params.clips.map(async (clip) => ({
+        ...clip, audioUri: await resolve(clip.audioUri),
+      }))) },
+    });
+  }
   if (job.action === "concat") {
     return postProdJobInputSchema.parse({
       ...job,

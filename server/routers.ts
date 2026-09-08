@@ -99,6 +99,7 @@ import { showcaseRouter } from "./routers/showcase";
 import { klingRouter } from "./routers/kling";
 import { hunyuan3dRouter } from "./routers/hunyuan3d";
 import { sunoRouter } from "./routers/suno";
+import { canvasAudioRouter } from "./routers/canvasAudio";
 import { enterpriseAgentsRouter } from "./routers/enterpriseAgents";
 import { buildAuthorAnalysis, buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, buildPlatformSupportActivities, normalizePlatforms } from "./growth/growthSchema";
 import { analyzeDocument } from "./growth/analyzeDocument";
@@ -3007,6 +3008,7 @@ export const appRouter = router({
   kling: klingRouter,
   hunyuan3d: hunyuan3dRouter,
   suno: sunoRouter,
+  canvasAudio: canvasAudioRouter,
   creations: creationsRouter,
   enterpriseAgents: enterpriseAgentsRouter,
   workflow: workflowRouter,

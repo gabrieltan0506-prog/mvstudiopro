@@ -90,12 +90,10 @@ import {
 import type { ManhuaWriterAssetCanon } from "@shared/manhuaWriterAssetCanon";
 import ManhuaPromptMentionEditor from "@/components/ManhuaPromptMentionEditor";
 import {
-  collectManhuaCharacterTagsFromPrompt,
   evaluateManhuaCrossSegmentVoiceGate,
   type ManhuaCharacterVoiceLock,
 } from "@shared/manhuaCharacterVoiceLock";
-import { compileManhuaDialogueTtsPlan } from "@shared/manhuaDialogueTtsCompile";
-import { CANVAS_TTS_CREDITS_PER_LINE } from "@shared/canvasGenerationPricing";
+import { CanvasAudioStudio } from "@/components/canvas/CanvasAudioStudio";
 import { resolveClipLocalSegmentIndex } from "@shared/manhuaScriptWorkbench";
 import {
   parseManhuaClipDirectorCardSummary,
@@ -137,17 +135,6 @@ import {
   readPromptEnhancePendingRequest,
   writePromptEnhancePendingRequest,
 } from "@/lib/promptEnhanceRequestState";
-import {
-  buildQwenTtsVoiceId,
-  QWEN_TTS_VOICE_CATALOG,
-} from "@shared/qwenTtsVoiceCatalog";
-  const MANHUA_DIALOGUE_TTS_UI_VOICES = QWEN_TTS_VOICE_CATALOG.filter(voice =>
-  voice.lang.includes("中文"))
-  .slice(0, 24)
-  .map(voice => ({
-    id: buildQwenTtsVoiceId("plus", voice.suffix),
-    label: `${voice.nameZh} · ${voice.gender} · ${voice.traitZh}`,
-  }));
 
 /** 各引擎真实参考视频上限；UI 与出站编译器共用共享常量，避免显示配额漂移。 */
 export function resolveCanvasVideoReferencePickerLimit(videoModel: unknown): number | null {
@@ -844,17 +831,6 @@ export default function FreeformCanvas({
     trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const enhancePromptMutation =
     trpc.mvAnalysis.enhanceCanvasPrompt.useMutation();
-  const dialogueTtsMutation =
-    trpc.mvAnalysis.manhuaDialogueTtsPreview.useMutation();
-  const dialogueMasterTrackMutation =
-    trpc.mvAnalysis.manhuaDialogueMasterTrackRun.useMutation();
-  const [dialogueTtsDrafts, setDialogueTtsDrafts] = useState<
-    Record<string, { input: string; voice: string }>
-  >({});
-  /** 每个 block 的「写回声线锁」目标 @角色；未选时提示词里恰好一个 @角色则自动选它 */
-  const [dialogueTtsLockTags, setDialogueTtsLockTags] = useState<
-    Record<string, string>
-  >({});
   // 每个 block 暂存尚未取得明确终态的增强请求编号:结果未知时复用同一编号,
   // 服务端按 jobs 记录恢复结果,不重复调用模型不重复扣分。
   // ref 是热缓存;sessionStorage 是刷新后的恢复源,两处同写同清。
@@ -1344,138 +1320,6 @@ export default function FreeformCanvas({
   );
   patchOneRef.current = patchOne;
 
-  const generateDialogueReferenceAudio = useCallback(
-    async (blockId: string) => {
-      const block = blocks.find(item => item.id === blockId);
-      if (!block) return;
-      const draft = dialogueTtsDrafts[blockId] || {
-        input: "",
-        voice: MANHUA_DIALOGUE_TTS_UI_VOICES[0]?.id || "",
-      };
-      if (!draft.input.trim() || !draft.voice) {
-        toast.error("先填写带情绪标签的对白并选择音色");
-        return;
-      }
-      try {
-        const result = await dialogueTtsMutation.mutateAsync({
-          input: draft.input.trim(),
-          voice: draft.voice,
-          billingRequestId: crypto.randomUUID(),
-        });
-        const assetId = `dialogue-${Date.now()}`;
-        const asset: CanvasUploadedAsset = {
-          id: assetId,
-          url: result.audioUrl,
-          previewUrl: result.audioUrl,
-          gcsUri: result.gcsUri,
-          fileName: `对白参考-${assetId}.mp3`,
-          kind: "audio",
-          mimeType: "audio/mpeg",
-        };
-        const selected = Array.from(
-          new Set([...(block.seedance25RefAudioUrls || []), result.gcsUri])
-        ).slice(0, 10);
-        patchOne(blockId, {
-          uploadedAssets: [...(block.uploadedAssets || []), asset],
-          seedance25RefAudioUrls: selected,
-          seedance25WorkMode: "reference_to_video",
-        });
-        // 声线锁闭环：这句配音绑定了 @角色 时，直接写回跨段声线锁，后续段自动挂参考音
-        const promptTags = collectManhuaCharacterTagsFromPrompt(block.prompt);
-        const lockTag =
-          dialogueTtsLockTags[blockId] ??
-          (promptTags.length === 1 ? promptTags[0]! : "");
-        if (lockTag && onReplaceCharacterVoiceAudio) {
-          onReplaceCharacterVoiceAudio({
-            characterTag: lockTag,
-            audioUrl: result.audioUrl,
-          });
-        }
-        toast.success("对白已通过人声门禁并写入参考音频", {
-          description: `${result.voiceGate.durationSeconds.toFixed(1)} 秒 · 有效人声 ${result.voiceGate.voicedSeconds.toFixed(1)} 秒${
-            lockTag && onReplaceCharacterVoiceAudio
-              ? ` · 已写回 ${lockTag} 声线锁`
-              : ""
-          }`,
-        });
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : "对白配音未完成");
-      }
-    },
-    [
-      blocks,
-      dialogueTtsDrafts,
-      dialogueTtsLockTags,
-      dialogueTtsMutation,
-      onReplaceCharacterVoiceAudio,
-      patchOne,
-    ]
-  );
-
-  /**
-   * 0902 P0 闭环：整段配音一键出母轨——秒轴逐句 TTS → 单条母轨 → 自动挂参考音。
-   * 用户不需要懂 TTS：引擎跑道、段时长、音色都从块上自动推。
-   */
-  const generateDialogueMasterTrack = useCallback(
-    async (blockId: string) => {
-      const block = blocks.find(item => item.id === blockId);
-      if (!block) return;
-      const masterLines = compileManhuaDialogueTtsPlan(block.prompt);
-      if (!masterLines.length) {
-        toast.error("本段秒轴没有可合成的对白行");
-        return;
-      }
-      const model = String(block.videoModel || "");
-      const engine = model.startsWith("wan")
-        ? ("wan30" as const)
-        : model === "seedance-2.0-mini"
-          ? ("evolink" as const)
-          : ("byteplus" as const);
-      const cardDurationSec =
-        parseManhuaClipDirectorCardSummary(block.prompt).durationSec ?? 15;
-      const windowDurationSec = Math.min(60, Math.max(1, cardDurationSec));
-      try {
-        const result = await dialogueMasterTrackMutation.mutateAsync({
-          prompt: block.prompt,
-          engine,
-          windowDurationSec,
-          billingRequestId: crypto.randomUUID(),
-        });
-        const assetId = `mastertrack-${Date.now()}`;
-        const asset: CanvasUploadedAsset = {
-          id: assetId,
-          url: result.audioUrl,
-          previewUrl: result.audioUrl,
-          gcsUri: result.audioGcsUri,
-          fileName: `对白母轨-${result.lineCount}句.mp3`,
-          kind: "audio",
-          mimeType: "audio/mpeg",
-        };
-        const selected = Array.from(
-          new Set([...(block.seedance25RefAudioUrls || []), result.audioGcsUri])
-        ).slice(0, 10);
-        patchOne(blockId, {
-          uploadedAssets: [...(block.uploadedAssets || []), asset],
-          seedance25RefAudioUrls: selected,
-          seedance25WorkMode: "reference_to_video",
-        });
-        toast.success(
-          `母轨已出并挂进参考音：${result.lineCount} 句 · ${result.totalDurationSec.toFixed(1)} 秒 · ${result.creditsCost} 积分`,
-          {
-            description: result.hardCapApplied
-              ? "对白总长顶到引擎上限，已按纪律截断"
-              : "句间为真静音底，可直接送成片",
-          }
-        );
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : "整段配音未完成，本次未扣费"
-        );
-      }
-    },
-    [blocks, dialogueMasterTrackMutation, patchOne]
-  );
-
   const removeBlock = useCallback(
     (id: string) => {
       onBlocksChange(blocks.filter(b => b.id !== id));
@@ -1815,7 +1659,7 @@ export default function FreeformCanvas({
       const inputFingerprint = (item: CanvasBlock) => JSON.stringify([
         item.id, item.prompt, item.refImageUrl, item.editFusionUrls, item.videoModel,
         item.aspectRatio, item.videoResolution, item.refVideoUrl, item.uploadedAssets,
-        item.seedance25WorkMode, item.seedance25RefVideoUrls, item.seedance25RefAudioUrls,
+        item.seedance25WorkMode, item.seedance25RefVideoUrls, item.seedance25RefAudioUrls, item.audioStudio,
         item.seedance25TimestampStoryboard, item.seedance25ReshootFromSec, item.seedance25ReshootToSec,
         item.pathCameraRecipeId, item.parentId, item.manhuaRetake,
       ]);
@@ -3172,180 +3016,7 @@ export default function FreeformCanvas({
                                                       MP4
                                                     </div>
                                                   )}
-                                                  {/* 0902 解锁给创作者：路由已 protected + 按句计费（admin 免扣） */}
-                                                  {(
-                                                    <div className="space-y-1.5 rounded-lg border border-emerald-300/20 bg-emerald-500/[0.06] p-2">
-                                                      <div className="text-[10px] font-semibold text-emerald-100/85">
-                                                        对白配音 ·
-                                                        通过有效人声门禁后自动写入参考音频
-                                                      </div>
-                                                      <textarea
-                                                        rows={2}
-                                                        value={
-                                                          dialogueTtsDrafts[
-                                                            block.id
-                                                          ]?.input || ""
-                                                        }
-                                                        onChange={event =>
-                                                          setDialogueTtsDrafts(
-                                                            current => ({
-                                                              ...current,
-                                                              [block.id]: {
-                                                                input:
-                                                                  event.target
-                                                                    .value,
-                                                                voice:
-                                                                  current[
-                                                                    block.id
-                                                                  ]?.voice ||
-                                                                  MANHUA_DIALOGUE_TTS_UI_VOICES[0]
-                                                                    ?.id ||
-                                                                  "",
-                                                              },
-                                                            })
-                                                          )
-                                                        }
-                                                        placeholder="[whispers][trembling]门后……醒了。"
-                                                        className="w-full resize-y rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-[11px] leading-5 text-white placeholder:text-white/30"
-                                                      />
-                                                      <div className="flex gap-1.5">
-                                                        <select
-                                                          value={
-                                                            dialogueTtsDrafts[
-                                                              block.id
-                                                            ]?.voice ||
-                                                            MANHUA_DIALOGUE_TTS_UI_VOICES[0]
-                                                              ?.id ||
-                                                            ""
-                                                          }
-                                                          onChange={event =>
-                                                            setDialogueTtsDrafts(
-                                                              current => ({
-                                                                ...current,
-                                                                [block.id]: {
-                                                                  input:
-                                                                    current[
-                                                                      block.id
-                                                                    ]?.input ||
-                                                                    "",
-                                                                  voice:
-                                                                    event.target
-                                                                      .value,
-                                                                },
-                                                              })
-                                                            )
-                                                          }
-                                                          className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[10px] text-white"
-                                                        >
-                                                          {MANHUA_DIALOGUE_TTS_UI_VOICES.map(
-                                                            voice => (
-                                                              <option
-                                                                key={voice.id}
-                                                                value={voice.id}
-                                                              >
-                                                                {voice.label}
-                                                              </option>
-                                                            )
-                                                          )}
-                                                        </select>
-                                                        {(() => {
-                                                          const promptTags =
-                                                            collectManhuaCharacterTagsFromPrompt(
-                                                              block.prompt
-                                                            );
-                                                          if (
-                                                            !promptTags.length ||
-                                                            !onReplaceCharacterVoiceAudio
-                                                          )
-                                                            return null;
-                                                          const current =
-                                                            dialogueTtsLockTags[
-                                                              block.id
-                                                            ] ??
-                                                            (promptTags.length ===
-                                                            1
-                                                              ? promptTags[0]!
-                                                              : "");
-                                                          return (
-                                                            <select
-                                                              value={current}
-                                                              onChange={event =>
-                                                                setDialogueTtsLockTags(
-                                                                  map => ({
-                                                                    ...map,
-                                                                    [block.id]:
-                                                                      event
-                                                                        .target
-                                                                        .value,
-                                                                  })
-                                                                )
-                                                              }
-                                                              title="生成成功后把这条配音写回该角色的跨段声线锁"
-                                                              className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[10px] text-white"
-                                                            >
-                                                              <option value="">
-                                                                不写回声线锁
-                                                              </option>
-                                                              {promptTags.map(
-                                                                tag => (
-                                                                  <option
-                                                                    key={tag}
-                                                                    value={tag}
-                                                                  >
-                                                                    写回 {tag}
-                                                                  </option>
-                                                                )
-                                                              )}
-                                                            </select>
-                                                          );
-                                                        })()}
-                                                        <button
-                                                          type="button"
-                                                          disabled={
-                                                            dialogueTtsMutation.isPending
-                                                          }
-                                                          onClick={() =>
-                                                            void generateDialogueReferenceAudio(
-                                                              block.id
-                                                            )
-                                                          }
-                                                          className="rounded-lg border border-emerald-300/35 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-50 hover:bg-emerald-500/15 disabled:opacity-45"
-                                                        >
-                                                          {dialogueTtsMutation.isPending
-                                                            ? "生成中…"
-                                                            : "生成并选用"}
-                                                        </button>
-                                                      </div>
-                                                      {(() => {
-                                                        // 0902 P0 闭环：秒轴有对白行就给「整段出母轨」一键
-                                                        const masterLines =
-                                                          compileManhuaDialogueTtsPlan(
-                                                            block.prompt
-                                                          );
-                                                        if (!masterLines.length)
-                                                          return null;
-                                                        return (
-                                                          <button
-                                                            type="button"
-                                                            disabled={
-                                                              dialogueMasterTrackMutation.isPending
-                                                            }
-                                                            onClick={() =>
-                                                              void generateDialogueMasterTrack(
-                                                                block.id
-                                                              )
-                                                            }
-                                                            title="按秒轴逐句配音并拼成单条母轨（句间真静音），自动挂进本段参考音频"
-                                                            className="w-full rounded-lg border border-emerald-300/45 bg-emerald-500/15 px-2 py-1.5 text-[11px] font-semibold text-emerald-50 hover:bg-emerald-500/25 disabled:opacity-45"
-                                                          >
-                                                            {dialogueMasterTrackMutation.isPending
-                                                              ? "母轨合成中…"
-                                                              : `整段配音出母轨（${masterLines.length} 句 · ${masterLines.length * CANVAS_TTS_CREDITS_PER_LINE} 积分）`}
-                                                          </button>
-                                                        );
-                                                      })()}
-                                                    </div>
-                                                  )}
+                                                  {block.videoModel === "seedance-2.5" && <details><summary className="text-xs text-sky-100">可选：逐句配音与分段配乐</summary><CanvasAudioStudio block={block} disabled={block.status === "running"} onChange={audioStudio => patchOne(block.id, { audioStudio })} /></details>}
                                                   <div className="text-[10px] text-white/45">
                                                     参考音频（最多 10）· 上传
                                                     MP3/WAV 后勾选

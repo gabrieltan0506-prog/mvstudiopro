@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPostProdClipOptions,
+  isPostProdAudioAction,
   jobsStorageKey,
   loadStoredJobs,
   mergeClipOptions,
@@ -34,6 +35,20 @@ const job = (over: Partial<TrackedJob>): TrackedJob => ({
   output: null,
   error: null,
   ...over,
+});
+
+describe("音频任务恢复与媒体职责", () => {
+  it("裁段与秒锁任务可从服务端恢复且不混入视频工序", () => {
+    const restored = mergeRemoteJobs([], [
+      { jobId: "trim", action: "audio_trim", status: "succeeded", output: { gcsUri: "gs://b/post-prod/7/trim.wav", durationSec: 5 } },
+      { jobId: "timeline", action: "audio_timeline", status: "succeeded", output: { gcsUri: "gs://b/post-prod/7/timeline.wav", durationSec: 30 } },
+    ]);
+    expect(restored.map((item) => item.label)).toEqual(["音频单段裁切", "秒锁音频试听"]);
+    expect(normalizeStoredJobs(restored)).toHaveLength(2);
+    expect(restored.every((item) => isPostProdAudioAction(item.action))).toBe(true);
+    expect(buildPostProdClipOptions(restored)).toEqual([]);
+    expect(isPostProdAudioAction("bgm_mount")).toBe(false);
+  });
 });
 
 describe("用户级缓存 key", () => {

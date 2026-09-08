@@ -8,13 +8,24 @@ import {
   trySaveLocalCanvas,
   uploadManhuaCloudDraftViaGcsDirect,
 } from "./manhuaCloudDraftSync";
-import { buildManhuaCloudDraftPayload } from "@shared/manhuaCloudDraft";
+import { buildManhuaCloudDraftPayload, parseManhuaCloudDraftPayload } from "@shared/manhuaCloudDraft";
+import { canvasAudioCueInputKey, createCanvasAudioCue, emptyCanvasAudioStudio, compileCanvasAudioBindings } from "@shared/canvasAudioStudio";
 import { buildManhuaWriterSession } from "@shared/manhuaWriterSession";
 import { MANHUA_FACTORY_DEFAULT_VIDEO_MODEL } from "@shared/manhuaScriptWorkbench";
 import { defaultCanvasBlock, type CanvasBlock } from "@/lib/canvasTypes";
 import { stripManhuaFactoryCanvasArtifacts } from "./canvasDramaStudio";
 
 describe("manhuaCloudDraftSync dual-path", () => {
+  it("声音候选和原请求穿过完整云往返，恢复后相同GCS身份进入最终声音表", () => {
+    const cue = { ...createCanvasAudioCue("dialogue", "line-1"), speakerZh: "墨屠", shotZh: "抬头", textZh: "跟紧我。", voice: "Dylan", approved: true, selectedTakeId: "take-1" };
+    cue.takes.push({ id: "take-1", gcsUri: "gs://test-bucket/post-prod/1/line.wav", previewUrl: "https://test.invalid/expired.wav", durationSec: 2, createdAt: "2026-09-08", inputKey: canvasAudioCueInputKey(cue) });
+    const audioStudio = { ...emptyCanvasAudioStudio(), cues: [cue], pendingOperations: [{ id: "original-request", kind: "dialogue" as const, cueId: "line-1", inputKey: "previous-input" }] };
+    const block = { ...defaultCanvasBlock("video", 0, 0), id: "clip-e01-g01", audioStudio };
+    const snapshot = buildLocalCloudDraftSnapshot({ writerSession: {}, blocks: slimBlocksForLocalPersist([block]), edges: [] });
+    const restored = cloudDraftBlocksToCanvas(parseManhuaCloudDraftPayload(serializeCloudDraftForUpload(snapshot))!.canvas.blocks);
+    expect(restored[0]!.audioStudio).toEqual(audioStudio);
+    expect(compileCanvasAudioBindings({ studio: restored[0]!.audioStudio, existingAudioUrls: [], durationSec: 10 }).audioUrls).toEqual([cue.takes[0]!.gcsUri]);
+  });
   it("换剧归档的整集引用经本机、配额降级和云同步仍保留", () => {
     const source = {
       ...defaultCanvasBlock("video", 0, 0), id: "final-e01",

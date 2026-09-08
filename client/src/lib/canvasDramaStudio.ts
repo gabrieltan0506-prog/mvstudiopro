@@ -555,12 +555,25 @@ export function replaceManhuaEpisodeChain(
   const removedIds = new Set(
     existingBlocks.filter((b) => blockBelongsToManhuaEpisode(b, ep)).map((b) => b.id),
   );
+  // 整集重铺也是音频恢复边界：旧音轨原样归档，不挂入新链，也不克隆到新节点。
+  const occupiedIds = new Set([...existingBlocks, ...spawned.blocks].map(b => b.id));
+  const spawnedIds = new Set(spawned.blocks.map(b => b.id));
+  const archivedAudioBlocks = existingBlocks.filter(b => removedIds.has(b.id) && hasManhuaAudioWork(b)).map(b => {
+    let archivedId = b.id;
+    if (spawnedIds.has(archivedId)) {
+      archivedId = `${b.id}-audio-archived`;
+      let suffix = 2;
+      while (occupiedIds.has(archivedId)) archivedId = `${b.id}-audio-archived-${suffix++}`;
+      occupiedIds.add(archivedId);
+    }
+    return { ...b, id: archivedId, parentId: undefined, archivedFromPreviousScript: true };
+  });
   const keepBlocks = existingBlocks.filter((b) => !removedIds.has(b.id));
   const keepEdges = existingEdges.filter(
     (e) => !removedIds.has(e.fromId) && !removedIds.has(e.toId),
   );
   return {
-    blocks: [...keepBlocks, ...spawned.blocks],
+    blocks: [...keepBlocks, ...archivedAudioBlocks, ...spawned.blocks],
     edges: [...keepEdges, ...spawned.edges],
     resolvedGenreId: spawned.resolvedGenreId,
     genreInferred: spawned.genreInferred,
@@ -599,6 +612,14 @@ export function isManhuaFactoryArtifactBlock(block: Pick<CanvasBlock, "id">): bo
 export function manhuaBlockHasPaidOutput(block: CanvasBlock): boolean {
   if (String(block.outputUrl || "").trim()) return true;
   return (block.outputUrls || []).some((u) => String(u || "").trim());
+}
+
+/** 音频工作不是空壳：旧候选、用户逐句编辑与在途单均须保留，不能随重分段删除。 */
+export function hasManhuaAudioWork(block: CanvasBlock): boolean {
+  const studio = block.audioStudio;
+  return Boolean(studio && (studio.cues.length || studio.musicJobIds.length || studio.pendingOperations.length || studio.previewTake))
+    || Boolean(block.seedance25RefAudioUrls?.length)
+    || Boolean(block.uploadedAssets?.some(asset => asset.kind === "audio"));
 }
 
 /**
@@ -671,7 +692,7 @@ export function stripManhuaFactoryCanvasArtifacts(
   const stale = blocks.filter(
     (b) => isManhuaFactoryArtifactBlock(b) && !b.archivedFromPreviousScript && inScope(b),
   );
-  const archiveIds = new Set(stale.filter(manhuaBlockHasPaidOutput).map((b) => b.id));
+  const archiveIds = new Set(stale.filter(b => manhuaBlockHasPaidOutput(b) || hasManhuaAudioWork(b)).map((b) => b.id));
   const removedIds = new Set(stale.filter((b) => !archiveIds.has(b.id)).map((b) => b.id));
   if (!removedIds.size && !archiveIds.size) {
     return { blocks, edges, removedCount: 0, archivedCount: 0, keptCount };
@@ -2122,7 +2143,11 @@ export function ensureManhuaFragmentClips(
     }
     const candidate = clipBySeg.get(globalSeg);
     const candidateBinding = normalizeManhuaAutoSegmentBinding(candidate?.manhuaAutoSegment);
-    const existing = candidateBinding?.revision === binding.revision ? candidate : undefined;
+    const existing = candidateBinding?.revision === binding.revision
+      && candidateBinding.episodeIndex === binding.episodeIndex
+      && candidateBinding.segmentIndex === binding.segmentIndex
+      && candidateBinding.sourceStartSec === binding.sourceStartSec
+      && candidateBinding.sourceEndSec === binding.sourceEndSec ? candidate : undefined;
     const continuityAddon = ep > 1 || seg.index > 1 ? "【连续】承上段末帧脸服场，勿跳棚。" : "";
     const intentZh = String(seg.shots.find((s) => s.intentZh)?.intentZh || "").trim();
     // 只有同源计划可补充原段语义；自动段号不是旧计划段号。
@@ -2515,6 +2540,8 @@ export function ensureManhuaFragmentClips(
       refVideoUrl: undefined,
       seedance25RefVideoUrls: undefined,
       seedance25RefAudioUrls: undefined,
+      // 模板只借布局与引擎；新段/新原稿不能继承另一段的对白、配乐或在途单。
+      audioStudio: undefined,
       seedance25TimestampStoryboard: undefined,
       seedance25ReshootFromSec: undefined,
       seedance25ReshootToSec: undefined,
@@ -2536,10 +2563,10 @@ export function ensureManhuaFragmentClips(
   /** 新计划只清无媒体且无任务的空壳；付费结果和待核对任务全部保留归档。 */
   const staleClipIds = new Set([
     ...existingSegClips
-      .filter((c) => !keepSegClipIds.has(c.id) && !hasRenderedOutput(c) && !c.videoTaskId)
+      .filter((c) => !keepSegClipIds.has(c.id) && !hasRenderedOutput(c) && !c.videoTaskId && !hasManhuaAudioWork(c))
       .map((c) => c.id),
     // 已铺段级成片后，丢掉无 -g/-s 的旧整集 clip；但它若已出过整集成片，同样只停放不删
-    ...(legacyClip && keepSegClipIds.size && !hasRenderedOutput(legacyClip) && !legacyClip.videoTaskId ? [legacyClip.id] : []),
+    ...(legacyClip && keepSegClipIds.size && !hasRenderedOutput(legacyClip) && !legacyClip.videoTaskId && !hasManhuaAudioWork(legacyClip) ? [legacyClip.id] : []),
   ]);
 
   const refreshedById = new Map(Array.from(clipBySeg.values()).map((c) => [c.id, c] as const));
@@ -3546,7 +3573,7 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
         ? [...(segmentPlan?.segments || [])].sort((a, b) => a.index - b.index)[Array.from(planIndexes)[0]!]
         : undefined;
       const expectedBinding = buildManhuaAutoSegmentBinding(epClip, sourceSegment, model);
-      if ((hasRenderedOutput(b) || b.videoTaskId) && b.manhuaAutoSegment?.revision !== expectedBinding.revision) return b;
+      if ((hasRenderedOutput(b) || b.videoTaskId || hasManhuaAudioWork(b)) && b.manhuaAutoSegment?.revision !== expectedBinding.revision) return b;
       const segShots = sourceSegment.shots;
       const sceneFromKeyart =
         segShots

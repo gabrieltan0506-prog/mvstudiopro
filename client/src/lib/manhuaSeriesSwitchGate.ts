@@ -15,6 +15,7 @@ import {
   isManhuaFinalVideoBlockId,
   isManhuaSeriesAssetBlockId,
   manhuaBlockHasPaidOutput,
+  hasManhuaAudioWork,
 } from "./canvasDramaStudio";
 import {
   collectManhuaClipDockItems,
@@ -152,8 +153,7 @@ export function inspectManhuaSeriesSwitchRisk(input: {
     (b) =>
       isManhuaFactoryArtifactBlock(b) &&
       !isManhuaSeriesAssetBlockId(b.id) &&
-      !b.archivedFromPreviousScript &&
-      manhuaBlockHasPaidOutput(b),
+      ((!b.archivedFromPreviousScript && manhuaBlockHasPaidOutput(b)) || hasManhuaAudioWork(b)),
   ).length;
   const customRefCount = refs.filter((r) => String(r.url || "").trim()).length;
   const directorBoardCount =
@@ -305,6 +305,12 @@ export async function downloadManhuaSeriesSwitchBackup(
     motionOverlayBySegment: opts.directorBoardMotionOverlayBySegment,
   });
   const hasDirectorBoardState = hasManhuaDirectorBoardBackupContent(directorBoardState);
+  const audioBlocks = opts.blocks.filter(hasManhuaAudioWork);
+  if (audioBlocks.length) {
+    // 长期身份与逐句状态完整保留，不把将过期的试听地址当成唯一备份。
+    zip.file("audio/state.json", JSON.stringify({ schemaVersion: 1, blocks: audioBlocks }, null, 2));
+    okCount += 1;
+  }
   if (writerMd.trim()) {
     zip.file("writer-pack.md", writerMd.trim());
     okCount += 1;
@@ -321,6 +327,7 @@ export async function downloadManhuaSeriesSwitchBackup(
         : "",
       "",
       "本包含：剧本（writer-pack.md）、人物/场景/道具设定图（series-assets/）、上传参考（custom-refs/）。",
+      audioBlocks.length ? "声音工作与原节点完整索引位于 audio/state.json；包含长期 GCS 身份和在途任务编号，不内嵌音频文件。云草稿恢复后可重新签发试听地址。" : "",
       hasDirectorBoardState
         ? "导演板底图索引与手调轨迹位于 director_boards/state.json；恢复时会重新签发 GCS 预览地址。"
         : "",
@@ -386,6 +393,7 @@ export async function downloadManhuaSeriesSwitchBackup(
         seriesAssetIds: seriesBlocks.map((b) => b.id),
         customRefIds: refs.map((r) => r.id),
         directorBoardState: hasDirectorBoardState,
+        audioBlockIds: audioBlocks.map(block => block.id),
         dockExportableCount: exportableIds.length + finalVideoBlocks.length,
       },
       null,

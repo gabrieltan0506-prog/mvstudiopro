@@ -32,6 +32,8 @@ export type QwenDialogueTtsInput = {
   voice: string;
   /** 固定则可复现 */
   seed?: number;
+  /** 合成操作时限，不能进入上游请求正文。 */
+  signal?: AbortSignal;
 };
 
 export type QwenDialogueTtsResult = {
@@ -78,6 +80,7 @@ export async function synthesizeQwenDialogue(
   if (!apiKey) throw new Error("OPENROUTER_API_KEY 未配置");
   const body = buildQwenDialogueTtsRequestBody(params);
   const voice = body.voice;
+  const signal = params.signal ?? AbortSignal.timeout(180_000);
 
   const response = await fetch(OPENROUTER_TTS_ENDPOINT, {
     method: "POST",
@@ -88,6 +91,7 @@ export async function synthesizeQwenDialogue(
       "X-OpenRouter-Title": "MVStudioPro",
     },
     body: JSON.stringify(body),
+    signal,
   });
 
   if (!response.ok) {
@@ -96,7 +100,8 @@ export async function synthesizeQwenDialogue(
   }
 
   const generationId = response.headers.get("x-generation-id") || "";
-  const audio = Buffer.from(await response.arrayBuffer());
+  const { readBgmAudioWithLimit } = await import("./manhuaScoringRoom.js");
+  const audio = await readBgmAudioWithLimit(response, { maxBytes: 32 * 1024 * 1024, abortSignal: signal });
   if (!audio.length) throw new Error("对白配音上游返回空音频");
 
   // 0902：与 token-plan 版同规矩——ffprobe 可读 + silencedetect 有足量人声才进素材库
@@ -111,6 +116,7 @@ export async function synthesizeQwenDialogue(
     objectName: `manhua-dialogue-tts/${stamp}/${voice}-${rand}.mp3`,
     buffer: audio,
     contentType: "audio/mpeg",
+    signal,
   });
   const audioUrl = signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
 

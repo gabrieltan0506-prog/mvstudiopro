@@ -49,6 +49,7 @@ import {
 import { canMountBgmNow, canUpscaleNow } from "@/lib/manhuaDeliveryOrder";
 import {
   ACTION_LABEL,
+  isPostProdAudioAction,
   buildPostProdClipOptions,
   jobsStorageKey,
   loadStoredJobs,
@@ -996,6 +997,16 @@ export default function PostProdWorkshopCard({
     const url = String((job.output as { url?: unknown }).url || "");
     const gcsUri = String((job.output as { gcsUri?: unknown }).gcsUri || "");
     if (!url) return null;
+    if (isPostProdAudioAction(job.action)) {
+      const duration = Number(job.output.durationSec);
+      return (
+        <span className="inline-flex flex-wrap items-center gap-2">
+          <audio controls preload="none" src={url} aria-label={ACTION_LABEL[job.action]} className="h-8 max-w-full" />
+          {Number.isFinite(duration) ? <span className="text-[11px] text-white/60">{duration.toFixed(3)} 秒</span> : null}
+          <a href={url} target="_blank" rel="noreferrer" className="text-[11px] text-cyan-200 underline">打开音频</a>
+        </span>
+      );
+    }
     return (
       <span className="inline-flex items-center gap-2">
         <a

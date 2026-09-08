@@ -3,6 +3,7 @@
  */
 
 import { normalizeManhuaTimelineOrder } from "./manhuaEditOrder.js";
+import { canvasAudioStudioSchema } from "./canvasAudioStudio.js";
 import { normalizeManhuaKeyartLookState } from "./manhuaKeyartLookState";
 import { normalizeManhuaAutoSegmentBinding, type ManhuaAutoSegmentBinding } from "./manhuaAutoSegment";
 import {
@@ -109,6 +110,7 @@ export type ManhuaCloudDraftCanvasBlock = {
   seedance25WorkMode?: SeedanceEvolinkMode;
   seedance25RefVideoUrls?: string[];
   seedance25RefAudioUrls?: string[];
+  audioStudio?: import("./canvasAudioStudio").CanvasAudioStudio;
   seedance25TimestampStoryboard?: string;
   seedance25ReshootFromSec?: number;
   seedance25ReshootToSec?: number;
@@ -435,6 +437,7 @@ export function sanitizeManhuaCloudDraftBlock(
         : undefined,
       seedance25RefVideoUrls: keepHttpUrls(b.seedance25RefVideoUrls),
       seedance25RefAudioUrls: keepHttpUrls(b.seedance25RefAudioUrls),
+      audioStudio: b.audioStudio == null ? undefined : canvasAudioStudioSchema.parse(b.audioStudio),
       seedance25TimestampStoryboard:
         typeof b.seedance25TimestampStoryboard === "string"
           ? b.seedance25TimestampStoryboard

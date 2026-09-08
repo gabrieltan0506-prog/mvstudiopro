@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { defaultCanvasBlock } from "./canvasTypes";
+import { createCanvasAudioCue, emptyCanvasAudioStudio } from "@shared/canvasAudioStudio";
 import {
   confirmManhuaSeriesSwitchWithBackup,
   downloadManhuaSeriesSwitchBackup,
@@ -9,6 +10,12 @@ import {
 } from "./manhuaSeriesSwitchGate";
 
 describe("manhuaSeriesSwitchGate", () => {
+  it("只有归档声音草稿或在途音频也必须先备份", () => {
+    const block = { ...defaultCanvasBlock("video", 0, 0), id: "clip-e01-g01", archivedFromPreviousScript: true, audioStudio: { ...emptyCanvasAudioStudio(), cues: [createCanvasAudioCue("dialogue", "line-1")] } };
+    const risk = inspectManhuaSeriesSwitchRisk({ blocks: [block] });
+    expect(risk.needsBackup).toBe(true);
+    expect(risk.paidFactoryOutputCount).toBe(1);
+  });
   it("flags writer pack and paid series assets as needing backup", () => {
     const sheet = defaultCanvasBlock("image", 0, 0);
     sheet.id = "charsheet-hero";
