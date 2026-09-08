@@ -32,58 +32,50 @@ async function open(props: unknown) {
   await page.evaluate(props => (globalThis as any).mount(props), props);
   await page.waitForSelector('[role="progressbar"]'); return page;
 }
-describe("知识卡真实进展展示", () => {
-  it("原页整理100%只表示本阶段，不宣称全文读完", async () => {
-    const page = await open({ progress: { done: 276, total: 276, stage: "prepared" }, phase: "reading" });
+describe("简洁进度与真实终态", () => {
+  it("运行中只显示状态与真实百分比，不展示后台技术信息", async () => {
+    const page = await open({ progress: { done: 100, total: 275, stage: "reading", updatedAt: "2026-09-08T04:59:59Z", heartbeatAt: "2026-09-08T05:00:00Z" }, phase: "reading" });
     try {
-      const text = await page.$eval("body", el => el.textContent);
-      expect(text).toContain("原页整理完成"); expect(text).toContain("本阶段进度 100%");
-      expect(text).not.toContain("读取单元已读完"); expect(text).not.toContain("材料读取 100%");
+      expect(await page.$eval('[role="status"]', el => el.textContent)).toBe("处理中 · 36%（100/275）");
+      expect(await page.$eval('[role="progressbar"]', el => el.getAttribute("aria-valuenow"))).toBe("36");
+      expect(await page.$("details")).toBeNull();
+      expect(await page.$eval("body", el => el.innerText)).not.toMatch(/心跳|原页|转换|分片|最后内容进展/);
     } finally { await page.close(); }
   });
-  it("按读取计数显示百分比与阶段，不因时间推移增加进度", async () => {
-    const page = await open({ progress: { done: 1, total: 3, stage: "reading:1/2" }, phase: "reading" });
+  it("失败优先于旧阶段和成功状态，停在真实36%并显示原因", async () => {
+    const page = await open({ progress: { done: 100, total: 275, stage: "reading" }, phase: "failed", jobStatus: "succeeded", error: "阅读服务超时" });
     try {
-      expect(await page.$eval('[role="progressbar"]', el => el.getAttribute("aria-valuenow"))).toBe("33");
-      expect(await page.$eval("body", el => el.textContent)).toContain("阅读图文（第1/2份材料）");
-      await page.evaluate(() => { (globalThis as any).testNow += 600_000; (globalThis as any).mount({ progress: { done: 1, total: 3 }, phase: "reading" }); });
-      expect(await page.$eval('[role="progressbar"]', el => el.getAttribute("aria-valuenow"))).toBe("33");
+      expect(await page.$eval('[role="alert"]', el => el.textContent)).toBe("处理失败 · 停在36%（100/275）");
+      expect(await page.$eval('[role="alert"]', el => el.getAttribute("title"))).toBe("阅读服务超时");
+      expect(await page.$eval('[role="progressbar"]', el => el.getAttribute("aria-valuenow"))).toBe("36");
+      expect(await page.$eval("body", el => el.innerText)).not.toContain("100%");
     } finally { await page.close(); }
   });
-  it("总量未知时没有伪造百分比，无心跳不声称运行", async () => {
+  it("成功终态显示100%，方案就绪与全部生成成功分开", async () => {
+    const page = await open({ progress: { done: 0, total: 0 }, phase: "ready" });
+    try {
+      expect(await page.$eval('[role="status"]', el => el.textContent)).toBe("读取成功 · 100%");
+      await page.evaluate(() => (globalThis as any).mount({ progress: { done: 4, total: 4 }, phase: "ready", successLabel: "生成完成" }));
+      await page.waitForFunction(() => document.body.innerText.includes("生成完成 · 100%（4/4）"));
+    } finally { await page.close(); }
+  });
+  it("分阶段100%仍在整理方案，不冒充终态成功", async () => {
+    const page = await open({ progress: { done: 276, total: 276, stage: "planning" }, phase: "planning", jobStatus: "running" });
+    try {
+      const text = await page.$eval('[role="status"]', el => el.textContent);
+      expect(text).toBe("处理中 · 100%（276/276）");
+      expect(text).not.toMatch(/成功|就绪|已完成|生成完成/);
+    } finally { await page.close(); }
+  });
+  it("总量未知不捏造百分比，失败仍明确显示", async () => {
     const page = await open({ progress: { done: 0, total: 0 }, phase: "reading" });
     try {
       expect(await page.$eval('[role="progressbar"]', el => el.getAttribute("aria-valuenow"))).toBeNull();
-      const text = await page.$eval("body", el => el.textContent);
-      expect(text).toContain("确认总量中"); expect(text).toContain("最近后端心跳：未提供");
-      expect(text).not.toMatch(/仍在运行|0%|卡死/);
-    } finally { await page.close(); }
-  });
-  it("读取100%时保留规划阶段，不能冒充整个任务完成", async () => {
-    const page = await open({ progress: { done: 276, total: 276, stage: "planning" }, phase: "reading" });
-    try {
-      const text = await page.$eval("body", el => el.textContent);
-      expect(text).toContain("材料读取 100%"); expect(text).toContain("当前阶段：整理方案");
-      expect(text).toContain("方案整理与正文编写进度以当前阶段为准"); expect(text).not.toContain("任务已完成");
-    } finally { await page.close(); }
-  });
-  it("分别展示真实内容时间与心跳，心跳更新不掩盖内容久无进展", async () => {
-    const page = await open({ progress: { done: 12, total: 276, stage: "reading", updatedAt: "2026-09-08T04:57:00Z", heartbeatAt: "2026-09-08T04:59:59Z" }, phase: "reading" });
-    try {
-      const times = await page.$$eval("[data-progress-time]", els => els.map(el => el.textContent?.split("：").slice(1).join("：")));
-      expect(times[0]).not.toBe(times[1]); expect(times.every(time => time && !time.includes("未提供"))).toBe(true);
-      expect(await page.$eval('[role="status"]', el => el.textContent)).toBe("暂未收到新进展，可查询原任务。");
-      expect(await page.$eval("body", el => el.textContent)).toContain("心跳仅表示后端活动");
-    } finally { await page.close(); }
-  });
-  it("无效时间安全显示缺失，终态不显示停滞提示", async () => {
-    const page = await open({ progress: { done: 1, total: 2, updatedAt: "bad-date", heartbeatAt: "" }, phase: "reading" });
-    try {
-      expect(await page.$$eval("[data-progress-time]", els => els.every(el => el.textContent?.includes("未提供")))).toBe(true);
-      expect(await page.$('[role="status"]')).toBeNull();
-      await page.evaluate(() => (globalThis as any).mount({ progress: { done: 1, total: 2, updatedAt: "2026-09-08T04:00:00Z" }, jobStatus: "failed" }));
-      await page.waitForFunction(() => !document.querySelector('[data-progress-time="content"]')?.textContent?.includes("未提供"));
-      expect(await page.$('[role="status"]')).toBeNull();
+      expect(await page.$eval("body", el => el.innerText)).not.toContain("0%");
+      expect(await page.$("details")).toBeNull();
+      await page.evaluate(() => (globalThis as any).mount({ progress: { done: 0, total: 0 }, phase: "failed", error: "文件读取失败" }));
+      await page.waitForSelector('[role="alert"]');
+      expect(await page.$eval('[role="alert"]', el => el.getAttribute("title"))).toBe("文件读取失败");
     } finally { await page.close(); }
   });
 });

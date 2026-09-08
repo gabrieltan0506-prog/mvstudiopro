@@ -6,7 +6,7 @@ const pageSchema = z.object({ pageId: z.string().min(1), ordinal: z.number().int
 export const readingSessionSchema = z.object({
   version: z.literal(1), id: z.string().min(1), userId: z.number().int().positive(),
   model: z.enum(KNOWLEDGE_CARD_ACTIVE_DISTILL_MODELS),
-  files: z.array(z.object({ gcsUri: z.string().min(1), mimeType: z.string().min(1), fileName: z.string() })).min(1).max(40),
+  files: z.array(z.object({ gcsUri: z.string().min(1), mimeType: z.string().min(1), fileName: z.string() })).min(1),
   constraints: knowledgeCardReadingConstraintsSchema,
   chargeDistillFee: z.boolean().optional(), distillFeeCharged: z.number().int().nonnegative().optional(),
   phase: z.enum(["idle", "reading", "planning", "ready", "generating", "failed"]),

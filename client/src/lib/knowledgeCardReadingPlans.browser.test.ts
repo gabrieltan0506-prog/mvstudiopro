@@ -48,123 +48,71 @@ async function click(page: Page, text: string) {
 async function input(page: Page, label: string, value: string) {
   await page.evaluate(({ label, value }) => { const el = document.querySelector(`input[aria-label="${label}"]`)!; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, value); el.dispatchEvent(new Event("input", { bubbles: true })); }, { label, value });
 }
-describe("知识卡方案真实离线浏览器事件", () => {
-  it("提交结果未知时阻止重复生成，查询成功后才恢复操作", async () => {
-    const page = await open({ plan: plan(), phase: "ready" });
+describe("最终简洁知识卡面板", () => {
+  it("只展示真实进度和三档页数，不显示输入框或技术说明", async () => {
+    const page = await open({plan:plan(),phase:"ready"});
     try {
-      await page.evaluate(plan => (globalThis as any).mount({ plan, phase: "ready", onGenerate: () => { (globalThis as any).calls.generate.push("concise"); throw Error("测试断线"); } }), plan());
-      await click(page, "生成此方案"); await page.waitForSelector('[aria-label="确认生成方案"]');
-      await click(page, "确认生成 ·");
-      await page.waitForFunction(() => document.body.textContent?.includes("不要重复提交生成"));
-      expect(await page.$eval("article button", b => b.disabled)).toBe(true);
-      expect(await page.$eval('[aria-label="选择方案"] button', b => b.disabled)).toBe(true);
-      expect(await page.evaluate(() => (globalThis as any).calls.generate)).toEqual(["concise"]);
-      await click(page, "查询已有任务");
-      await page.waitForFunction(() => !(document.querySelector("article button") as HTMLButtonElement).disabled);
-      expect(await page.evaluate(() => (globalThis as any).calls.resume)).toBe(1);
-    } finally { await page.close(); }
+      expect(await page.$$eval('[aria-label="选择方案"] button', es => es.map(e=>e.textContent?.trim()))).toEqual(["精简 4页","均衡 6页","完整 8页"]);
+      expect(await page.$$("input,textarea,details")).toHaveLength(0);
+      const text=await page.$eval("section", e=>e.textContent);
+      expect(text).not.toMatch(/读取单元|原页|分片|转换|心跳|保留：|省略：|暂无页数/);
+      expect(text).toContain("读取成功 · 100%");
+      expect(await page.evaluate(()=>(globalThis as any).calls.generate)).toEqual([]);
+    } finally {await page.close();}
   });
-  it("切换方案撤销旧确认且不生成，报价不一致阻止提交", async () => {
-    const page = await open({ plan: plan(), phase: "ready" });
+  it("切换页数不购买，确认价格后只生成选中方案", async () => {
+    const page=await open({plan:plan(),phase:"ready"});
     try {
-      await click(page, "生成此方案"); await page.waitForSelector('[aria-label="确认生成方案"]');
-      await click(page, "均衡 ·");
-      await page.waitForFunction(() => document.querySelector("h3")?.textContent?.includes("均衡方案"));
-      expect(await page.$('[aria-label="确认生成方案"]')).toBeNull();
-      expect(await page.evaluate(() => (globalThis as any).calls.select)).toEqual(["balanced"]);
-      expect(await page.evaluate(() => (globalThis as any).calls.generate)).toEqual([]);
-      await page.evaluate(plan => (globalThis as any).mount({ plan, phase: "ready", quote: { options: [] } }), plan());
-      await page.waitForFunction(() => document.body.textContent?.includes("方案或报价无法核对"));
-      expect(await page.$("article")).toBeNull();
-    } finally { await page.close(); }
+      await click(page,"均衡 6页"); await click(page,"生成 ·");
+      await page.waitForSelector('[aria-label="确认生成方案"]');
+      expect(await page.$eval('[aria-label="确认生成方案"]', e=>e.textContent)).toContain("全部6页");
+      expect(await page.evaluate(()=>(globalThis as any).calls.generate)).toEqual([]);
+      await click(page,"确认生成 ·");
+      await page.waitForFunction(()=>(globalThis as any).calls.generate.length===1);
+      expect(await page.evaluate(()=>(globalThis as any).calls.generate)).toEqual(["balanced"]);
+    } finally {await page.close();}
   });
-  it("三方案按精简优先，来源内容可展开，必须明确二次确认", async () => {
-    const page = await open({ plan: plan(), phase: "ready" });
+  it("切换方案撤销旧确认，完整四页只显示真实的一档", async()=>{
+    const page=await open({plan:plan(),phase:"ready"});
     try {
-      expect(await page.$eval('[aria-label="选择方案"] button', b => b.textContent)).toContain("精简");
-      expect(await page.$eval("h3", b => b.textContent)).toContain("精简方案 · 4页");
-      await page.click("article details summary");
-      expect(await page.$eval("article", b => b.textContent)).toContain("原页-9：重复目录");
-      expect(await page.$eval("article", b => b.textContent)).toContain("左侧定位图与右侧编号说明对应");
-      await click(page, "生成此方案"); await page.waitForSelector('[aria-label="确认生成方案"]');
-      expect(await page.evaluate(() => (globalThis as any).calls.generate)).toEqual([]);
-      await click(page, "确认生成 ·");
-      await page.waitForFunction(() => (globalThis as any).calls.generate.length === 1);
-      expect(await page.evaluate(() => (globalThis as any).calls.generate)).toEqual(["concise"]);
-      expect(await page.$eval("section", b => b.textContent)).not.toMatch(/gpt|qwen|供应商/i);
-    } finally { await page.close(); }
+      await click(page,"生成 ·"); await page.waitForSelector('[aria-label="确认生成方案"]');
+      await click(page,"完整 8页"); await page.waitForFunction(()=>!document.querySelector('[aria-label="确认生成方案"]'));
+      await page.evaluate(p=>(globalThis as any).mount({plan:p,phase:"ready"}),plan(true));
+      await page.waitForFunction(()=>document.querySelectorAll('[aria-label="选择方案"] button').length===1);
+      expect(await page.$eval('[aria-label="选择方案"] button',e=>e.textContent?.trim())).toBe("完整 4页");
+    } finally {await page.close();}
   });
-  it("完整四页只显示一个方案，选择不触发购买", async () => {
-    const page = await open({ plan: plan(true), phase: "ready" });
+  it("失败只显示一次失败状态与保留的百分比，可查询原任务",async()=>{
+    const page=await open({phase:"failed",error:"阅读超时",progress:{done:100,total:275}});
     try {
-      expect(await page.$('[aria-label="选择方案"]')).toBeNull();
-      expect(await page.$eval("h3", b => b.textContent)).toContain("完整四页方案");
-      await click(page, "生成此方案"); await page.waitForSelector('[aria-label="确认生成方案"]');
-      await click(page, "取消");
-      expect(await page.evaluate(() => (globalThis as any).calls.generate)).toEqual([]);
-    } finally { await page.close(); }
+      expect(await page.$$('[role="alert"]')).toHaveLength(1);
+      expect(await page.$eval('[role="alert"]',e=>e.textContent)).toContain("停在36%");
+      await click(page,"查询已有任务");
+      expect(await page.evaluate(()=>(globalThis as any).calls.resume)).toBe(1);
+      expect(await page.evaluate(()=>(globalThis as any).calls.generate)).toEqual([]);
+    } finally {await page.close();}
   });
-  it("最低预算不可达时标明真实最低价，不能减成三页", async () => {
-    const page = await open({ plan: plan(), phase: "ready", constraints: { budgetCredits: 1 } });
+  it("提交结果未知时锁住生成，查询后才允许操作",async()=>{
+    const page=await open({plan:plan(),phase:"ready"});
     try {
-      expect(await page.$eval("section", b => b.textContent)).toContain("预算不足以生成最少4页");
-      expect(await page.$eval("article button", b => b.disabled)).toBe(true);
-      await input(page, "目标页数", "3"); await click(page, "按要求重新规划");
-      await page.waitForFunction(() => document.body.textContent?.includes("不少于4的安全整数"));
-      expect(await page.evaluate(() => (globalThis as any).calls.analyze)).toEqual([]);
-    } finally { await page.close(); }
+      await page.evaluate(p=>(globalThis as any).mount({plan:p,phase:"ready",onGenerate:()=>{throw Error("测试断线")}}),plan());
+      await click(page,"生成 ·"); await page.waitForSelector('[aria-label="确认生成方案"]');await click(page,"确认生成 ·");
+      await page.waitForFunction(()=>document.body.textContent?.includes("不要重复提交"));
+      expect(await page.$eval("article button",b=>b.disabled)).toBe(true);
+      await click(page,"查询已有任务");await page.waitForFunction(()=>!(document.querySelector("article button") as HTMLButtonElement).disabled);
+    }finally{await page.close();}
   });
-  it("输入变化撤销旧确认，重新规划透传约束，读中恢复不购买", async () => {
-    const page = await open({ plan: plan(), phase: "ready" });
-    try {
-      await click(page, "生成此方案"); await page.waitForSelector('[aria-label="确认生成方案"]');
-      await input(page, "预算上限", "300"); await input(page, "目标页数", "6");
-      expect(await page.$('[aria-label="确认生成方案"]')).toBeNull();
-      await click(page, "按要求重新规划");
-      await page.waitForFunction(() => (globalThis as any).calls.analyze.length === 1);
-      expect(await page.evaluate(() => (globalThis as any).calls.analyze)).toEqual([{ budgetCredits: 300, targetPages: 6 }]);
-      await page.evaluate(() => (globalThis as any).mount({ phase: "reading", progress: { done: 17, total: 276 } }));
-      await page.waitForFunction(() => document.body.textContent?.includes("17/276个读取单元"));
-      expect(await page.$eval("section", element => element.textContent)).toContain("纯文字按段");
-      await click(page, "查询已有任务");
-      expect(await page.evaluate(() => (globalThis as any).calls.generate)).toEqual([]);
-      expect(await page.$("article")).toBeNull();
-      await page.evaluate(() => (globalThis as any).mount({ phase: "generating", readingFeeCharged: 50 }));
-      await page.waitForFunction(() => document.body.textContent?.includes("已收50积分"));
-      await click(page, "查询已有任务");
-      expect(await page.evaluate(() => (globalThis as any).calls.resume)).toBe(2);
-      expect(await page.evaluate(() => (globalThis as any).calls.generate)).toEqual([]);
-    } finally { await page.close(); }
+  it("300页保持整套报价，旧预算不符可重新获取方案",async()=>{
+    const p={...plan(),options:[option("concise",4),option("balanced",81),option("complete",300)]};
+    const page=await open({plan:p,phase:"ready",selectedMode:"complete"});
+    try{
+      expect(await page.$eval('[aria-label="选择方案"] button:last-child',e=>e.textContent)).toContain("完整 300页");
+      expect(await page.$eval("article button",e=>e.textContent)).toContain("7248积分");
+      await page.evaluate(p=>(globalThis as any).mount({plan:p,phase:"ready",constraints:{budgetCredits:1}}),p);
+      await page.waitForSelector('[role="alert"]');
+      expect(await page.$eval("article button",b=>b.disabled)).toBe(true);
+      await click(page,"重新获取方案");
+      expect(await page.evaluate(()=>(globalThis as any).calls.analyze)).toEqual([{}]);
+    }finally{await page.close();}
   });
-  it.each([81, 300])("目标%s页可提交，无80上限；非法目标仍拒绝", async count => {
-    const page = await open({ plan: plan(), phase: "ready" });
-    try {
-      expect(await page.$eval('[aria-label="目标页数"]', element => element.getAttribute("max"))).toBeNull();
-      for (const value of ["3", "4.5", "9007199254740992"]) {
-        await input(page, "目标页数", value); await click(page, "按要求重新规划");
-        await page.waitForFunction(() => document.body.textContent?.includes("不少于4的安全整数"));
-        expect(await page.evaluate(() => (globalThis as any).calls.analyze)).toEqual([]);
-      }
-      await input(page, "目标页数", String(count)); await click(page, "按要求重新规划");
-      await page.waitForFunction(() => (globalThis as any).calls.analyze.length === 1);
-      expect(await page.evaluate(() => (globalThis as any).calls.analyze)).toEqual([{ targetPages: count }]);
-    } finally { await page.close(); }
-  });
-  it("完整300页方案展示头尾与全部300页，按整书阶梯价确认而不截断", async () => {
-    const value = { ...plan(), options: [option("concise", 4), option("balanced", 81), option("complete", 300)] };
-    const page = await open({ plan: value, phase: "ready", selectedMode: "complete", constraints: { targetPages: 300, budgetCredits: 7248 } });
-    try {
-      expect(await page.$eval("h3", element => element.textContent)).toContain("完整方案 · 300页 · 7248积分");
-      const summaries = await page.$$eval("article > details > summary", elements => elements.map(element => element.textContent || "").filter(text => /^第\d+页/.test(text)));
-      expect(summaries).toHaveLength(300);
-      expect(summaries[0]).toContain("第1页 · 主题1");
-      expect(summaries.at(-1)).toContain("第300页 · 主题300");
-      await click(page, "生成此方案"); await page.waitForSelector('[aria-label="确认生成方案"]');
-      expect(await page.$eval('[aria-label="确认生成方案"]', element => element.textContent)).toContain("全部300页4K知识卡，报价共7248积分");
-      await click(page, "确认生成 ·");
-      await page.waitForFunction(() => (globalThis as any).calls.generate.length === 1);
-      expect(await page.evaluate(() => (globalThis as any).calls.generate)).toEqual(["complete"]);
-    } finally { await page.close(); }
-  });
-
 });

@@ -3151,7 +3151,7 @@ async function processPlatformJob(
         files: z.array(z.object({
           gcsUri: z.string().min(1).max(1024), generation: z.string().min(1).max(128),
           mimeType: z.string().min(1).max(120), fileName: z.string().min(1).max(240),
-        }).strict()).min(1).max(40),
+        }).strict()).min(1),
         constraints: knowledgeCardReadingConstraintsSchema.optional(),
         chargeDistillFee: z.boolean().optional(),
       }).parse(params);

@@ -4,7 +4,7 @@ import type { KnowledgeCardReadingConstraints } from "@shared/knowledgeCardReadi
 import { resolveKnowledgeCardSubjectPosition, type KnowledgeCardSubjectPosition } from "@shared/knowledgeCardSubjectPosition";
 import { KnowledgeCardMaterialBatches } from "@/components/platform/KnowledgeCardMaterialBatches";
 import { KnowledgeCardTextReviewPanel } from "@/components/platform/KnowledgeCardTextReviewPanel";
-import { EpubToPdfPanel } from "@/components/platform/EpubToPdfPanel";
+import { prepareKnowledgeCardEpubFiles } from "@/lib/knowledgeCardEpubSource";
 import { KNOWLEDGE_CARD_MATERIAL_LIMIT } from "@/lib/knowledgeCardMaterialBatches";
 import { mergeNativeProposalListAndDetail } from "@/lib/manhuaLearnResultUi";
 import { NATIVE_REPORT_THEME_OPTIONS, type NativeReportThemeChoice } from "../../../shared/manhuaNativeReportThemeChoice";
@@ -7885,6 +7885,7 @@ export default function PlatformPage() {
 
   /** 自定義文案生成圖文筆記 — 獨立 mutation；回呼留空，全部流程在 handler 以 mutateAsync 串接控制。 */
   const generateCustomNoteMutation = trpc.mvAnalysis.generatePlatformCompositeSheet.useMutation();
+  const prepareEpubPdfMutation = trpc.mvAnalysis.downloadPlatformPdf.useMutation();
   const prepareReadingMutation = trpc.mvAnalysis.prepareKnowledgeCardReading.useMutation();
   const prepareReadingEditionMutation = trpc.mvAnalysis.prepareKnowledgeCardReadingEdition.useMutation();
   const resumeReadingMutation = trpc.mvAnalysis.resumeKnowledgeCardReadingJob.useMutation();
@@ -7999,16 +8000,17 @@ export default function PlatformPage() {
     const result = await trpcUtils.mvAnalysis.getKnowledgeCardReadingPlan.fetch({ planId: output.planId });
     return saveReading({ ...current, planId: result.planId, plan: result.plan, constraints: result.constraints, pending: undefined, phase: "ready", progress: undefined, error: undefined, selectedMode: result.plan.presentation === "single" ? "complete" : "concise", distillFeeCharged: output.distillFeeCharged ?? current.distillFeeCharged });
   };
-  const withReadingOperation = async (action: () => Promise<void>) => {
+  const withReadingOperation = async (action: () => Promise<void>, preserveExistingSession = false) => {
     if (readingLock.current) throw new Error("当前阅读任务仍在处理中");
     readingLock.current = true;
     const operationUserId = readingAccountRef.current;
+    const initialSessionId = readingSessionRef.current?.id;
     setCustomNoteBusy(true);
     try { await action(); }
     catch (error) {
       const current = readingSessionRef.current;
       const terminal = Boolean((error as { terminal?: boolean })?.terminal);
-      if (current && current.userId === operationUserId && readingAccountRef.current === operationUserId) saveReading({ ...current, phase: "failed", pending: terminal ? undefined : current.pending, error: error instanceof Error ? error.message : "操作未完成，请查询已有任务" });
+      if (current && (!preserveExistingSession || current.id !== initialSessionId) && current.userId === operationUserId && readingAccountRef.current === operationUserId) saveReading({ ...current, phase: "failed", pending: terminal ? undefined : current.pending, error: error instanceof Error ? error.message : "操作未完成，请查询已有任务" });
       toast.error(error instanceof Error ? error.message : "操作未完成，请查询已有任务");
       throw error;
     } finally { readingLock.current = false; setCustomNoteBusy(false); }
@@ -8017,13 +8019,26 @@ export default function PlatformPage() {
     await withReadingOperation(async () => {
       if (!user?.id) throw new Error("请先登录");
       if (readingSessionRef.current?.pending) throw new Error("请先查询当前任务，再更换材料");
-      if (!files.length || files.length > 40) throw new Error("请选择1至40份材料");
+      if (!files.length) throw new Error("请选择材料");
       if (files.some(file => file.size === 0)) throw new Error("材料为空，请先输入正文或选择非空文件");
-      if (files.some(file => !/\.(pdf|png|jpe?g|webp|txt|md)$/i.test(file.name))) throw new Error("请上传PDF、图片、TXT或Markdown；DOCX和PPTX请先导出PDF以保留原页图文");
+      if (files.some(file => !/\.(epub|pdf|png|jpe?g|webp|txt|md)$/i.test(file.name))) throw new Error("请上传PDF、图片、TXT或Markdown；DOCX和PPTX请先导出PDF以保留原页图文");
       setCustomNoteUploadBusy(true);
       try {
         const uploaded: KnowledgeCardReadingSession["files"] = [];
+        const preparedFiles: File[] = [];
         for (const file of files) {
+          if (/\.epub$/i.test(file.name)) {
+            setCustomNoteUploadStatus("处理中…");
+            preparedFiles.push(...await prepareKnowledgeCardEpubFiles({ file, userId: user.id,
+              renderPart: async html => {
+                if (readingAccountRef.current !== user.id) throw new Error("账号已变化，已停止处理");
+                return (await prepareEpubPdfMutation.mutateAsync({ html, token: "epub-convert" })).pdfBase64;
+              },
+            }));
+          } else preparedFiles.push(file);
+        }
+        for (const file of preparedFiles) {
+          if (readingAccountRef.current !== user.id) throw new Error("账号已变化，已停止处理");
           const ext = file.name.split(".").pop()!.toLowerCase();
           const mimeType = ({ pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", txt: "text/plain", md: "text/markdown" } as Record<string, string>)[ext];
           const gcsUri = await uploadKnowledgeCardFileToGcs({ file, mimeType, label: file.name, getSignedUrl: input => getUploadUrlMutation.mutateAsync(input), onStatus: setCustomNoteUploadStatus });
@@ -8037,8 +8052,11 @@ export default function PlatformPage() {
         setCustomNoteUploadStatus("材料已保存，正在完整阅读图文…");
         await finishReadingPlan(session);
         setCustomNoteUploadStatus("全文阅读完成，请查看方案并确认后生成图片");
+      } catch (error) {
+        setCustomNoteUploadStatus(`处理失败：${error instanceof Error ? error.message : "请查询原任务"}`);
+        throw error;
       } finally { setCustomNoteUploadBusy(false); }
-    });
+    }, true);
   };
   const startKnowledgeReadingText = (text: string, options: { constraints?: KnowledgeCardReadingConstraints; fromDocument?: boolean } = {}) => {
     if (!text.trim()) { toast.error("请先输入正文或上传材料"); return Promise.reject(new Error("请先输入正文或上传材料")); }
@@ -15242,7 +15260,7 @@ export default function PlatformPage() {
                       type="file"
                       className="hidden"
                       multiple
-                      accept=".md,.txt,.pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp"
+                      accept=".md,.txt,.pdf,.epub,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp"
                       disabled={customNoteBusy || customNoteUploadBusy}
                       onChange={(e) => {
                         const files = Array.from(e.target.files || []);
@@ -15252,7 +15270,7 @@ export default function PlatformPage() {
                     />
                   </label>
                   <span className="text-[11px] text-[#c9c0e6]/45">
-                    上传后按页／文字段完整阅读图文，再选择方案与报价，确认后逐页出图
+                    上传后查看方案与报价，确认后生成
                   </span>
                   {customNoteUploadStatus ? (
                     <span className={`w-full text-[11px] leading-5 ${/失败|不足|未探测|未抽出/.test(customNoteUploadStatus) ? "text-rose-300/90" : "text-emerald-300/85"}`}>
@@ -15308,7 +15326,7 @@ export default function PlatformPage() {
                     </label>
                   ) : null}
                   <span className="text-[11px] text-[#c9c0e6]/45">
-                    支持 PDF / MD / TXT / PNG / JPG / WebP；DOCX 和 PPTX 请先导出 PDF，以保留原页图文。
+                    支持 EPUB / PDF / MD / TXT / PNG / JPG / WebP；DOCX 和 PPTX 请先导出 PDF，以保留原页图文。
                   </span>
                 </div>
               ) : null}
@@ -15329,7 +15347,11 @@ export default function PlatformPage() {
                 plan={readingSession?.plan}
                 constraints={readingSession?.constraints}
                 phase={readingSession?.phase ?? "idle"}
-                progress={readingSession?.progress}
+                progress={readingSession?.pending === "page" && readingSession.edition ? {
+                  done: readingSession.edition.pages.filter(page => readingSession.pageTasks[page.pageId]?.status === "succeeded" && readingSession.pageTasks[page.pageId]?.imageUrl?.trim()).length,
+                  total: readingSession.edition.pages.length, stage: "generating",
+                } : readingSession?.progress}
+                generationComplete={Boolean(readingSession?.edition?.pages.length && !readingSession.pending && readingSession.edition.pages.every(page => readingSession.pageTasks[page.pageId]?.status === "succeeded" && readingSession.pageTasks[page.pageId]?.imageUrl?.trim()))}
                 error={readingSession?.error}
                 readingFeeCharged={readingSession?.distillFeeCharged}
                 selectedMode={readingSession?.selectedMode}
@@ -15420,15 +15442,6 @@ export default function PlatformPage() {
                 )}
               </div>
 
-              {customNoteKind === "single_page_knowledge_card" ? (
-                <EpubToPdfPanel
-                  userId={user?.id}
-                  disabled={customNoteBusy || customNoteUploadBusy}
-                  onImportText={(text) => {
-                    return startKnowledgeReadingText(text, { fromDocument: true });
-                  }}
-                />
-              ) : null}
               {customNoteMaterialSeed?.previousImages?.length ? (
                 <details className="mt-3 text-xs text-slate-400">
                   <summary>此前生成的图片（已保留）</summary>
