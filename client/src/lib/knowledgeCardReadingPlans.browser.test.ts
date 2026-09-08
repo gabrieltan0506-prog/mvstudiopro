@@ -110,7 +110,7 @@ describe("知识卡方案真实离线浏览器事件", () => {
       expect(await page.$eval("section", b => b.textContent)).toContain("预算不足以生成最少4页");
       expect(await page.$eval("article button", b => b.disabled)).toBe(true);
       await input(page, "目标页数", "3"); await click(page, "按要求重新规划");
-      await page.waitForFunction(() => document.body.textContent?.includes("4至80"));
+      await page.waitForFunction(() => document.body.textContent?.includes("不少于4的安全整数"));
       expect(await page.evaluate(() => (globalThis as any).calls.analyze)).toEqual([]);
     } finally { await page.close(); }
   });
@@ -136,4 +136,35 @@ describe("知识卡方案真实离线浏览器事件", () => {
       expect(await page.evaluate(() => (globalThis as any).calls.generate)).toEqual([]);
     } finally { await page.close(); }
   });
+  it.each([81, 300])("目标%s页可提交，无80上限；非法目标仍拒绝", async count => {
+    const page = await open({ plan: plan(), phase: "ready" });
+    try {
+      expect(await page.$eval('[aria-label="目标页数"]', element => element.getAttribute("max"))).toBeNull();
+      for (const value of ["3", "4.5", "9007199254740992"]) {
+        await input(page, "目标页数", value); await click(page, "按要求重新规划");
+        await page.waitForFunction(() => document.body.textContent?.includes("不少于4的安全整数"));
+        expect(await page.evaluate(() => (globalThis as any).calls.analyze)).toEqual([]);
+      }
+      await input(page, "目标页数", String(count)); await click(page, "按要求重新规划");
+      await page.waitForFunction(() => (globalThis as any).calls.analyze.length === 1);
+      expect(await page.evaluate(() => (globalThis as any).calls.analyze)).toEqual([{ targetPages: count }]);
+    } finally { await page.close(); }
+  });
+  it("完整300页方案展示头尾与全部300页，按整书阶梯价确认而不截断", async () => {
+    const value = { ...plan(), options: [option("concise", 4), option("balanced", 81), option("complete", 300)] };
+    const page = await open({ plan: value, phase: "ready", selectedMode: "complete", constraints: { targetPages: 300, budgetCredits: 7248 } });
+    try {
+      expect(await page.$eval("h3", element => element.textContent)).toContain("完整方案 · 300页 · 7248积分");
+      const summaries = await page.$$eval("article > details > summary", elements => elements.map(element => element.textContent || "").filter(text => /^第\d+页/.test(text)));
+      expect(summaries).toHaveLength(300);
+      expect(summaries[0]).toContain("第1页 · 主题1");
+      expect(summaries.at(-1)).toContain("第300页 · 主题300");
+      await click(page, "生成此方案"); await page.waitForSelector('[aria-label="确认生成方案"]');
+      expect(await page.$eval('[aria-label="确认生成方案"]', element => element.textContent)).toContain("全部300页4K知识卡，报价共7248积分");
+      await click(page, "确认生成 ·");
+      await page.waitForFunction(() => (globalThis as any).calls.generate.length === 1);
+      expect(await page.evaluate(() => (globalThis as any).calls.generate)).toEqual(["complete"]);
+    } finally { await page.close(); }
+  });
+
 });

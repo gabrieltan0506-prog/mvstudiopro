@@ -7948,14 +7948,46 @@ export default function PlatformPage() {
   const pollReadingJob = async (id: string, value: KnowledgeCardReadingSession) => {
     const job = await pollJobUntilTerminal(id, {
       intervalMs: 3000, maxWaitMs: 45 * 60_000, adaptiveBackoffAfterAttempts: 40, maxIntervalMs: 8000,
-      onPoll: ({ output }) => {
-        const out = output as { readingDonePages?: number; readingTotalPages?: number; readingPhase?: string } | undefined;
-        if (out?.readingTotalPages) saveReading({ ...(readingSessionRef.current ?? value), ...(out.readingPhase === "planning" ? { phase: "planning" as const } : {}), progress: { done: out.readingDonePages ?? 0, total: out.readingTotalPages } });
+      onPoll: ({ output, status }) => {
+        const current = readingSessionRef.current;
+        if (!current || current.id !== value.id || current.userId !== value.userId || readingAccountRef.current !== value.userId) return;
+        const out = output as { readingDonePages?: number; readingTotalPages?: number; readingPhase?: string; readingProgressUpdatedAt?: string; readingHeartbeatAt?: string } | undefined;
+        if (out) saveReading({ ...current, ...(status === "failed" ? { phase: "failed" as const } : out.readingPhase === "planning" ? { phase: "planning" as const } : {}), progress: { done: out.readingDonePages ?? 0, total: out.readingTotalPages ?? 0, stage: out.readingPhase, updatedAt: out.readingProgressUpdatedAt, heartbeatAt: out.readingHeartbeatAt, jobStatus: status } });
       },
     });
     if (job.status === "failed") throw Object.assign(new Error(job.error || "任务已失败"), { terminal: true });
     return job.output;
   };
+  useEffect(() => {
+    const initial = readingSessionRef.current;
+    if (!initial || !["reading", "planning", "generating"].includes(initial.phase)) return;
+    const jobId = initial.pending === "edition" ? initial.editionJobId : initial.pending === "reading" ? initial.readingJobId : undefined;
+    if (!jobId) return;
+    let cancelled = false;
+    const check = async () => {
+      if (readingLock.current || cancelled) return;
+      try {
+        const job = await getJob(jobId);
+        const current = readingSessionRef.current;
+        if (cancelled || !current || current.id !== initial.id || current.userId !== readingAccountRef.current) return;
+        if (job.status === "succeeded") {
+          cancelled = true;
+          clearInterval(timer);
+          if (initial.pending === "reading") await finishReadingPlan(current);
+          else {
+            const output = job.output as { edition?: KnowledgeCardReadingSession["edition"] };
+            if (output.edition) saveReading({ ...current, edition: output.edition, pending: undefined, phase: "ready", progress: undefined, error: undefined });
+          }
+          return;
+        }
+        const out = job.output as { readingDonePages?: number; readingTotalPages?: number; readingPhase?: string; readingProgressUpdatedAt?: string; readingHeartbeatAt?: string } | undefined;
+        saveReading({ ...current, ...(job.status === "failed" ? { phase: "failed" as const, error: job.error || "读取任务已失败，请查询原任务查看原因" } : {}), ...(out ? { progress: { done: out.readingDonePages ?? 0, total: out.readingTotalPages ?? 0, stage: out.readingPhase, updatedAt: out.readingProgressUpdatedAt, heartbeatAt: out.readingHeartbeatAt, jobStatus: job.status } } : {}) });
+      } catch { /* 查询失败时保留原任务，等待下次只读查询。 */ }
+    };
+    void check();
+    const timer = setInterval(() => void check(), 8000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [readingSession?.id, readingSession?.readingJobId, readingSession?.editionJobId, readingSession?.phase]);
   const finishReadingPlan = async (value: KnowledgeCardReadingSession) => {
     let current = value;
     if (!current.readingJobId) {
@@ -7970,12 +8002,13 @@ export default function PlatformPage() {
   const withReadingOperation = async (action: () => Promise<void>) => {
     if (readingLock.current) throw new Error("当前阅读任务仍在处理中");
     readingLock.current = true;
+    const operationUserId = readingAccountRef.current;
     setCustomNoteBusy(true);
     try { await action(); }
     catch (error) {
       const current = readingSessionRef.current;
       const terminal = Boolean((error as { terminal?: boolean })?.terminal);
-      if (current) saveReading({ ...current, phase: "failed", pending: terminal ? undefined : current.pending, error: error instanceof Error ? error.message : "操作未完成，请查询已有任务" });
+      if (current && current.userId === operationUserId && readingAccountRef.current === operationUserId) saveReading({ ...current, phase: "failed", pending: terminal ? undefined : current.pending, error: error instanceof Error ? error.message : "操作未完成，请查询已有任务" });
       toast.error(error instanceof Error ? error.message : "操作未完成，请查询已有任务");
       throw error;
     } finally { readingLock.current = false; setCustomNoteBusy(false); }
@@ -15389,9 +15422,10 @@ export default function PlatformPage() {
 
               {customNoteKind === "single_page_knowledge_card" ? (
                 <EpubToPdfPanel
+                  userId={user?.id}
                   disabled={customNoteBusy || customNoteUploadBusy}
                   onImportText={(text) => {
-                    void startKnowledgeReadingText(text, { fromDocument: true }).catch(() => {});
+                    return startKnowledgeReadingText(text, { fromDocument: true });
                   }}
                 />
               ) : null}

@@ -32,6 +32,7 @@ export type KnowledgeCardDocumentPagesInput = {
   mimeType: string;
   fileName?: string;
   signal?: AbortSignal;
+  onProgress?: (done: number, total: number, phase: "rendering" | "prepared") => void | Promise<void>;
 };
 const digest = (buffer: Buffer) =>
   createHash("sha256").update(buffer).digest("hex");
@@ -84,6 +85,11 @@ export async function withKnowledgeCardDocumentPages<T>(
     path.join(os.tmpdir(), "knowledge-document-pages-")
   );
   try {
+    const reportProgress = async (done: number, total: number, phase: "rendering" | "prepared") => {
+      input.signal?.throwIfAborted();
+      await input.onProgress?.(done, total, phase);
+      input.signal?.throwIfAborted();
+    };
     let manifest: KnowledgeCardDocumentPagesManifest;
     if (mime === "application/pdf" || name.endsWith(".pdf")) {
       if (input.buffer.subarray(0, 5).toString("ascii") !== "%PDF-")
@@ -98,6 +104,7 @@ export async function withKnowledgeCardDocumentPages<T>(
       const totalPages = Number(info.match(/^Pages:\s+(\d+)/m)?.[1]);
       if (!Number.isSafeInteger(totalPages) || totalPages < 1)
         throw new Error("无法确认PDF真实页数，已停止读取");
+      await reportProgress(0, totalPages, "rendering");
       const text = (
         await command(
           "pdftotext",
@@ -165,6 +172,7 @@ export async function withKnowledgeCardDocumentPages<T>(
           width: metadata.width,
           height: metadata.height,
         });
+        await reportProgress(pageNumber, totalPages, "rendering");
       }
       manifest = { sourceDigest, sourceFormat: "pdf", totalPages, pages };
     } else if (
@@ -232,6 +240,7 @@ export async function withKnowledgeCardDocumentPages<T>(
         offset = end;
       } while (offset < text.length);
       manifest = { sourceDigest, sourceFormat: "text", totalPages: pages.length, pages };
+      await reportProgress(pages.length, pages.length, "prepared");
     } else
       throw new Error(
         "暂不支持此文件格式，请提供PDF、PNG、JPG、WebP、TXT或Markdown"

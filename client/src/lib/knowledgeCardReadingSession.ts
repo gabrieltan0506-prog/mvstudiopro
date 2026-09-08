@@ -17,7 +17,9 @@ export const readingSessionSchema = z.object({
   edition: z.object({ editionId: z.string(), planId: z.string(), mode: z.enum(["concise", "balanced", "complete"]), model: z.enum(KNOWLEDGE_CARD_ACTIVE_DISTILL_MODELS), pages: z.array(pageSchema).min(4), credits: z.number().int().nonnegative() }).optional(),
   pageTasks: z.record(z.string(), z.object({ attempt: z.number().int().min(0).max(100), status: z.enum(["pending", "succeeded", "failed"]), progressJobId: z.string().optional(), imageUrl: z.string().trim().min(1).optional(), error: z.string().optional(), infographicTemplateId: z.string().optional(), subjectPosition: z.enum(["left", "center"]) })),
   previousImages: z.array(z.string()).optional(),
-  progress: z.object({ done: z.number(), total: z.number() }).optional(), error: z.string().optional(),
+  progress: z.object({ done: z.number(), total: z.number(), stage: z.string().optional(), jobStatus: z.string().optional(),
+    updatedAt: z.string().datetime({ offset: true }).optional(), heartbeatAt: z.string().datetime({ offset: true }).optional() }).optional(),
+  jobStatus: z.string().optional(), error: z.string().optional(),
 }).superRefine((session, ctx) => {
   for (const [pageId, task] of Object.entries(session.pageTasks)) {
     if (task.status === "succeeded" && !task.imageUrl) ctx.addIssue({ code: "custom", path: ["pageTasks", pageId], message: "成功页面缺少图片，不能跳过生成" });

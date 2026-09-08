@@ -1,3 +1,4 @@
+import { KnowledgeCardReadingProgress } from "./KnowledgeCardReadingProgress";
 import { useEffect, useRef, useState } from "react";
 import {
   knowledgeCardReadingConstraintsSchema, quoteKnowledgeCardReadingPlan,
@@ -9,7 +10,7 @@ export type KnowledgeCardReadingPlansProps = {
   constraints?: KnowledgeCardReadingConstraints;
   quote?: ReturnType<typeof quoteKnowledgeCardReadingPlan>;
   phase: "idle" | "reading" | "planning" | "ready" | "generating" | "failed";
-  progress?: { done: number; total: number };
+  progress?: { done: number; total: number; stage?: string; updatedAt?: string; heartbeatAt?: string; jobStatus?: string };
   error?: string;
   readingFeeCharged?: number;
   selectedMode?: KnowledgeCardReadingMode;
@@ -65,7 +66,7 @@ export function KnowledgeCardReadingPlans(props: KnowledgeCardReadingPlansProps)
       ...(budget.trim() ? { budgetCredits: Number(budget) } : {}),
       ...(target.trim() ? { targetPages: Number(target) } : {}),
     });
-    if (!parsed.success) { setLocalError("请填写非负整数预算；目标页数须为4至80之间的整数。"); return; }
+    if (!parsed.success) { setLocalError("请填写非负安全整数预算；目标页数须为不少于4的安全整数。"); return; }
     setConfirmation(null);
     void run(() => props.onAnalyze(parsed.data));
   };
@@ -74,13 +75,12 @@ export function KnowledgeCardReadingPlans(props: KnowledgeCardReadingPlansProps)
     {props.readingFeeCharged !== undefined && <p className="text-sm">本次阅读提炼已收{props.readingFeeCharged}积分；下方预算与报价仅计算后续生图费用。</p>}
     <div className="flex flex-wrap gap-3">
       <label className="text-sm">生图预算上限（积分，可选）<input aria-label="预算上限" type="number" min="0" step="1" value={budget} disabled={busy} onChange={e => { setBudget(e.target.value); setConfirmation(null); }} className="ml-2 w-28 rounded bg-slate-900 p-2" /></label>
-      <label className="text-sm">目标页数（可选）<input aria-label="目标页数" type="number" min="4" max="80" step="1" value={target} disabled={busy} onChange={e => { setTarget(e.target.value); setConfirmation(null); }} className="ml-2 w-24 rounded bg-slate-900 p-2" /></label>
+      <label className="text-sm">目标页数（可选）<input aria-label="目标页数" type="number" min="4" step="1" value={target} disabled={busy} onChange={e => { setTarget(e.target.value); setConfirmation(null); }} className="ml-2 w-24 rounded bg-slate-900 p-2" /></label>
       <button type="button" className={button} disabled={busy} onClick={analyze}>{props.plan ? "按要求重新规划" : "完整阅读并规划"}</button>
     </div>
-    <div role="status" className="text-sm">
-      {props.phase === "reading" ? `正在完整阅读图文${props.progress ? `：${props.progress.done}/${props.progress.total}个读取单元` : "…"}` : props.phase === "planning" ? "全文阅读后正在整理方案…" : props.phase === "generating" ? "正在生成已确认的方案…" : !props.plan ? "尚未生成方案，暂无页数与报价。" : null}
-    </div>
-    {(props.phase === "failed" || props.error) && <p role="alert">本次处理未成功。已有材料和结果请保留；可查询原任务后继续。</p>}
+    {props.progress && <KnowledgeCardReadingProgress progress={props.progress} phase={props.phase} jobStatus={props.progress.jobStatus} />}
+    {!props.progress && <p role="status">{props.phase === "reading" ? "正在准备原始材料，确认总页数…" : props.phase === "planning" ? "正在整理方案…" : props.phase === "generating" ? "正在生成已确认的方案…" : !props.plan ? "尚未生成方案，暂无页数与报价。" : null}</p>}
+    {(props.phase === "failed" || props.error) && <p role="alert">本次处理未成功。{props.error || "已有材料和结果已保留，可查询原任务。"}</p>}
     {props.onResume && <button type="button" className={button} disabled={working} onClick={() => void run(async () => { await props.onResume!(); setSubmissionUncertain(false); })}>查询已有任务</button>}
     {localError && <p role="alert">{localError}</p>}
     {invalid && <p role="alert">方案或报价无法核对，请重新获取方案，当前不能生成。</p>}
