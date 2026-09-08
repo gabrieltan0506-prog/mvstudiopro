@@ -51,6 +51,11 @@ describe("knowledgeCardCreditsForPageIndex", () => {
     expect(knowledgeCardCreditsForPageIndex(20)).toBe(24);
   });
 
+  it("retired tiers keep their historical page rates for old receipts", () => {
+    expect(knowledgeCardCreditsForPageIndex(1, "claude-opus-5")).toBe(36);
+    expect(knowledgeCardCreditsForPageIndex(9, "moonshotai/kimi-k3")).toBe(22);
+  });
+
   it("uses Qwen page rates", () => {
     expect(knowledgeCardCreditsForPageIndex(1, KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toBe(24);
     expect(knowledgeCardCreditsForPageIndex(9, KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toBe(19);

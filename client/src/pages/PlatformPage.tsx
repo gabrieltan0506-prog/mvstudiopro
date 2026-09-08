@@ -15106,7 +15106,8 @@ export default function PlatformPage() {
                                   onStatus: (text) => {
                                     setCustomNoteUploadStatus(text);
                                     const pct = Number(/(\d{1,3})%/.exec(text)?.[1]);
-                                    if (Number.isFinite(pct)) setCustomNoteProgress({ status: "running", percent: Math.round(pct * 0.01), label: `上传 ${file.name} ${pct}%` });
+                                    // 上传占总进度 0–5%（提炼任务 5–60，出图 60–100）
+                                    if (Number.isFinite(pct)) setCustomNoteProgress({ status: "running", percent: Math.round(pct * 0.05), label: `上传 ${file.name} ${pct}%` });
                                   },
                                   label: `${file.name}（${mb}MB）`,
                                 });

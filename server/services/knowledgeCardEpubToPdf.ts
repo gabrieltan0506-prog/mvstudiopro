@@ -93,15 +93,17 @@ export async function parseEpub(buffer: Buffer): Promise<ParsedEpub> {
     }
     for (const m of raw.match(/<style\b[^>]*>[\s\S]*?<\/style>/gi) || []) styles.push(m.replace(/<\/?style[^>]*>/gi, ""));
     // 图片 src / xlink:href → data URL
-    const srcRe = /(<(?:img|image|source)\b[^>]*?\b(?:src|xlink:href|href)\s*=\s*")([^"]+)(")/gi;
-    const replacements: Array<[string, string]> = [];
+    const srcRe = /(<(?:img|image|source)\b[^>]*?\b(?:src|xlink:href|href)\s*=\s*)(["'])([^"']+)\2/gi;
+    const replacements = new Map<string, string>();
     for (const m of Array.from(body.matchAll(srcRe))) {
-      const ref = m[2]!;
-      if (/^(data:|https?:)/i.test(ref)) continue;
+      const ref = m[3]!;
+      if (/^(data:|https?:)/i.test(ref) || replacements.has(ref)) continue;
       const url = await inlineAsset(resolveZipPath(dir, ref));
-      if (url) replacements.push([ref, url]);
+      if (url) replacements.set(ref, url);
     }
-    for (const [ref, url] of replacements) body = body.split(`"${ref}"`).join(`"${url}"`);
+    for (const [ref, url] of Array.from(replacements.entries())) {
+      body = body.split(`"${ref}"`).join(`"${url}"`).split(`'${ref}'`).join(`'${url}'`);
+    }
     // 去掉脚本，避免打印时执行
     body = body.replace(/<script\b[\s\S]*?<\/script>/gi, "");
     chapters.push(`<section class="kc-chapter">${styles.length ? `<style>${styles.join("\n")}</style>` : ""}${body}</section>`);

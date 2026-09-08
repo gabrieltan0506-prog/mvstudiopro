@@ -311,10 +311,15 @@ export type KnowledgeCardExtractProgress = {
   done: number;
   total: number;
   fileName: string;
+  /** 第几个文件 / 共几个（0-based），进度折算用，避免多文件时百分比倒退 */
+  fileIndex: number;
+  fileTotal: number;
 };
 
 export type KnowledgeCardExtractResult = {
   documentText: string;
+  /** 只含没有逐页备料的文档（docx/pptx/无 userId 的 pdf）；分段时作为「补充文字」，避免与逐页正文重复提炼 */
+  nonPageDocumentText: string;
   imageDataUrls: string[];
   methods: string[];
   /** PDF / EPUB 逐页备料（含选中页图）；docx/pptx 只有文字 */
@@ -342,13 +347,18 @@ export async function extractKnowledgeCardUploads(
   } = {},
 ): Promise<KnowledgeCardExtractResult> {
   const docParts: string[] = [];
+  const nonPageParts: string[] = [];
   const imageDataUrls: string[] = [];
   const methods: string[] = [];
   const documents: KnowledgeCardDocumentPageSet[] = [];
   const pagesEnabled = Boolean(options.selectPages && options.userId && options.userId > 0);
+  const fileTotal = files.length;
 
-  for (const file of files) {
+  for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+    const file = files[fileIndex]!;
     const name = String(file.fileName || "upload");
+    const report = (stage: KnowledgeCardExtractProgress["stage"], done: number, total: number) =>
+      options.onProgress?.({ stage, done, total, fileName: name, fileIndex, fileTotal });
     const gcsUri = String(file.gcsUri || "").trim();
 
     if (isImageFile(file.mimeType, file.fileName)) {
@@ -394,12 +404,12 @@ export async function extractKnowledgeCardUploads(
     let pdfBuffer: Buffer | null = null;
     let mimeType = file.mimeType;
     if (isEpubFile(file.mimeType, file.fileName)) {
-      await options.onProgress?.({ stage: "converting", done: 0, total: 1, fileName: name });
+      await report("converting", 0, 1);
       const converted = await convertEpubToPdf(buffer);
       pdfBuffer = converted.pdf;
       mimeType = "application/pdf";
       methods.push(`${name}:epub_to_pdf(${converted.chapterCount} chapters)`);
-      await options.onProgress?.({ stage: "converting", done: 1, total: 1, fileName: name });
+      await report("converting", 1, 1);
     } else if (isPdfFile(file.mimeType, file.fileName)) {
       pdfBuffer = buffer;
     }
@@ -412,7 +422,7 @@ export async function extractKnowledgeCardUploads(
         selectPages: options.selectPages!,
         onProgress: async (stage, done, total) => {
           const mapped = stage === "text" ? "reading" : stage === "thumbs" ? "reading" : stage === "select" ? "selecting" : "rendering";
-          await options.onProgress?.({ stage: mapped, done, total, fileName: name });
+          await report(mapped, done, total);
         },
       });
       documents.push(set);
@@ -432,7 +442,9 @@ export async function extractKnowledgeCardUploads(
       fileName: pdfBuffer ? `${name}.pdf` : file.fileName,
     });
     if (extracted.text.trim()) {
-      docParts.push(`【文件·${name}】\n${extracted.text.trim()}`);
+      const part = `【文件·${name}】\n${extracted.text.trim()}`;
+      docParts.push(part);
+      nonPageParts.push(part);
       methods.push(`${name}:${extracted.method}`);
     } else {
       methods.push(`${name}:none`);
@@ -441,6 +453,7 @@ export async function extractKnowledgeCardUploads(
 
   return {
     documentText: docParts.join("\n\n").trim(),
+    nonPageDocumentText: nonPageParts.join("\n\n").trim(),
     imageDataUrls,
     methods,
     documents,
@@ -1054,10 +1067,17 @@ type DistillChunk = { text: string; pageImages: DistillPageImage[]; label: strin
  * 按页对齐分段：同一段里的文字与被选中的参考页图来自同一段页码，
  * 模型看得到图的同时也看得到该页文字，才能写出准确的「参考原页」标记。
  */
+/** 单个请求最多挂几张参考页图（避免图多字少的书把整本 base64 塞进一个请求撞 413/超时） */
+export const DISTILL_MAX_PAGE_IMAGES_PER_CALL = Math.min(
+  Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_MAX_PAGE_IMAGES) || 8, 2),
+  24,
+);
+
 export function buildPageAlignedChunks(
   documents: KnowledgeCardDocumentPageSet[],
   extraText: string,
   chunkChars: number,
+  maxImagesPerChunk: number = DISTILL_MAX_PAGE_IMAGES_PER_CALL,
 ): DistillChunk[] {
   const chunks: DistillChunk[] = [];
   let current: { parts: string[]; chars: number; images: DistillPageImage[]; from: string } | null = null;
@@ -1070,7 +1090,9 @@ export function buildPageAlignedChunks(
   for (const doc of documents) {
     for (const page of doc.pages) {
       const text = page.text ? `【${doc.fileName} 第 ${page.pageNumber} 页】\n${page.text}` : "";
-      if (current && current.chars + text.length > chunkChars && (current.chars > 0 || current.images.length)) flush();
+      const overflowByChars = current && current.chars + text.length > chunkChars && (current.chars > 0 || current.images.length);
+      const overflowByImages = current && page.imageDataUrl && current.images.length >= maxImagesPerChunk;
+      if (overflowByChars || overflowByImages) flush();
       if (!current) current = { parts: [], chars: 0, images: [], from: `${doc.fileName} p${page.pageNumber}` };
       if (text) {
         current.parts.push(text);
@@ -1092,6 +1114,8 @@ export function buildPageAlignedChunks(
 /** 短文一次直出（顶档）；长文按模型 profile 分段（中档）→ 合并 → 顶档统稿。 */
 async function invokeDistillLlmPossiblyChunked(params: {
   sourceText: string;
+  /** 逐页文档之外的文字（docx/pptx 抽字 + 用户贴的文本）；有逐页文档时只把它当补充段，不与逐页正文重复 */
+  extraText: string;
   imageDataUrls: string[];
   documents: KnowledgeCardDocumentPageSet[];
   modelName: KnowledgeCardDistillModelId;
@@ -1107,7 +1131,8 @@ async function invokeDistillLlmPossiblyChunked(params: {
     d.pages.filter((p) => p.imageDataUrl).map((p) => ({ docKey: d.docKey, pageNumber: p.pageNumber, dataUrl: p.imageDataUrl!, reason: p.reason })),
   );
 
-  if (!text || text.length <= profile.chunkThreshold) {
+  // 短文单发；但参考页图超过单请求上限时仍走分段，避免整本页图塞进一个请求
+  if ((!text || text.length <= profile.chunkThreshold) && allPageImages.length <= DISTILL_MAX_PAGE_IMAGES_PER_CALL) {
     return invokeDistillLlm({
       sourceText: text,
       imageDataUrls: urls,
@@ -1119,11 +1144,10 @@ async function invokeDistillLlmPossiblyChunked(params: {
     });
   }
 
-  // 有逐页备料的文档按页对齐分段；其余按字数切
+  // 有逐页备料的文档按页对齐分段（补充文字单独成段，不与逐页正文重复）；否则按字数切
   const pageDocs = params.documents.filter((d) => d.pages.length);
-  const pageDocsText = pageDocs.map((d) => d.pages.map((p) => p.text).filter(Boolean).join("\n\n")).join("\n\n");
   const chunks: DistillChunk[] = pageDocs.length
-    ? buildPageAlignedChunks(pageDocs, text.replace(pageDocsText, "").replace(/【文件·[^】]+】/g, "").trim(), profile.chunkChars)
+    ? buildPageAlignedChunks(pageDocs, params.extraText, profile.chunkChars)
     : splitSourceTextForDistill(text, profile.chunkChars).map((piece, i) => ({ text: piece, pageImages: [], label: `第 ${i + 1} 段` }));
   console.info(
     `[knowledgeCardDistill] long doc ${text.length} chars → ${chunks.length} chunks ` +
@@ -1232,7 +1256,7 @@ export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillMod
           imageDataUrls: group.map((sheet) => sheet.imageDataUrl),
           modelName,
           minSections: 1,
-          effort: "low",
+          effort: envStr("KNOWLEDGE_CARD_PAGE_TRIAGE_EFFORT", "low"),
           systemOverride: buildPageTriageSystem(),
           timeoutMs: 180_000,
         });
@@ -1275,7 +1299,7 @@ export async function prepareKnowledgeCardCopy(input: {
           selectPages: input.userId ? makeKnowledgeCardPageSelector(modelName) : undefined,
           onProgress: input.onExtractProgress,
         })
-      : { documentText: "", imageDataUrls: [], methods: [], documents: [] });
+      : { documentText: "", nonPageDocumentText: "", imageDataUrls: [], methods: [], documents: [] });
 
   const pasted = String(input.sourceText || "").trim();
   // 有上传时：以本次抽文+附图为准；文本框旧「生 OCR」不重复灌入（避免 100+ 页原文假分页）
@@ -1318,6 +1342,7 @@ export async function prepareKnowledgeCardCopy(input: {
   try {
     const distilled = await invokeDistillLlmPossiblyChunked({
       sourceText: mergedRaw,
+      extraText: [extracted.nonPageDocumentText, pasted.length <= 3200 ? pasted : ""].filter(Boolean).join("\n\n").trim(),
       imageDataUrls: urls,
       documents: extracted.documents,
       modelName,
