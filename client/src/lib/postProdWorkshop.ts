@@ -6,7 +6,7 @@
  * - 异常缓存结构清理、终态只提示一次的判定。
  */
 
-export type PostProdAction = "concat" | "bgm_mount" | "burn_subtitle" | "loudness_check";
+export type PostProdAction = "concat" | "bgm_mount" | "burn_subtitle" | "loudness_check" | "audio_trim" | "audio_timeline";
 export type PostProdJobStatus = "queued" | "running" | "succeeded" | "failed";
 
 export type TrackedJob = {
@@ -20,6 +20,8 @@ export type TrackedJob = {
 };
 
 export const ACTION_LABEL: Record<PostProdAction, string> = {
+  audio_trim: "音频单段裁切",
+  audio_timeline: "秒锁音频试听",
   concat: "拼接成片",
   bgm_mount: "BGM 贴装",
   burn_subtitle: "字幕烧录",
@@ -27,12 +29,18 @@ export const ACTION_LABEL: Record<PostProdAction, string> = {
 };
 
 const ACTIONS: readonly string[] = [
+  "audio_trim",
+  "audio_timeline",
   "concat",
   "bgm_mount",
   "burn_subtitle",
   "loudness_check",
 ];
 const STATUSES: readonly string[] = ["queued", "running", "succeeded", "failed"];
+
+export function isPostProdAudioAction(action: PostProdAction): boolean {
+  return action === "audio_trim" || action === "audio_timeline";
+}
 
 /** localStorage 键按用户分隔:换账号不串单 */
 export function jobsStorageKey(userId: string): string {

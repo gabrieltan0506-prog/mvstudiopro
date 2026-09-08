@@ -1,4 +1,5 @@
 import { DEFAULT_CANVAS_VIDEO_MODEL, isCanvasWan30VideoModel, normalizeCanvasVideoModel, type CanvasBlock } from "./canvasTypes";
+import { compileCanvasAudioBindings } from "@shared/canvasAudioStudio";
 import { isLocalMediaPointer, resolveUrlForCloudSync } from "./manhuaLocalMediaStore";
 import { withFlyHealthGate } from "./flyHealthGate";
 import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "./longJobsFlyOrigin";
@@ -1683,6 +1684,9 @@ export async function runCanvasBlock(
     if (useHappyHorse && manhuaPilot) throw new Error("当前生成档未接入试片审核，请先选择受支持的漫剧成片引擎");
     const useWan30 = isCanvasWan30VideoModel(videoModel);
     const useSeedance25 = videoModel === "seedance-2.5";
+    if (block.audioStudio?.cues.some(cue => cue.enabled !== false) && (!useSeedance25 || (block.seedance25WorkMode && block.seedance25WorkMode !== "reference_to_video"))) {
+      throw new Error("已配置逐段音轨，请使用支持声音参考的多模态参考模式；不会静默忽略这些音轨");
+    }
     const maxVideoImageRefs = resolveManhuaCanvasVideoImageReferenceMax(videoModel);
     if (useSeedance25) {
       // 与服务端 assertSeedance25PaidAccess 同一套判定（到点 + 会员 + 内部角色），
@@ -1986,7 +1990,12 @@ export async function runCanvasBlock(
               : []),
           ]),
         );
-        const candidateAudioUrls = Array.from(new Set([...userRefAudios, ...seedanceAudioUrls]));
+        const audioBindings = compileCanvasAudioBindings({
+          studio: block.audioStudio,
+          existingAudioUrls: [...userRefAudios, ...seedanceAudioUrls],
+          durationSec: clipDuration,
+        });
+        const candidateAudioUrls = audioBindings.audioUrls;
         const workMode = useSeedance25
           ? normalizeSeedance25EvolinkMode(block.seedance25WorkMode, {
               imageUrls: httpsImages,
@@ -1999,7 +2008,9 @@ export async function runCanvasBlock(
           ? `${seedancePrompt}\n\n【秒级分镜】\n${storyboard}`
           : seedancePrompt;
         let editSourceDurationSec: number | undefined;
-        let finalPrompt = promptWithStoryboard;
+        let finalPrompt = audioBindings.promptAppendix
+          ? `${promptWithStoryboard}\n\n${audioBindings.promptAppendix}`
+          : promptWithStoryboard;
         let outImages = httpsImages;
         let outVideos = candidateVideoUrls;
         let outAudios = candidateAudioUrls;

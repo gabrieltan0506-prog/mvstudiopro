@@ -11,9 +11,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const concatClips = vi.fn(async (..._args: unknown[]) => ({ kind: "concat" }));
 const mountBgm = vi.fn(async (..._args: unknown[]) => ({ kind: "bgm" }));
 const loudnessCheck = vi.fn(async (..._args: unknown[]) => ({ kind: "loudness" }));
+const trimAudio = vi.fn(async (..._args: unknown[]) => ({ kind: "audio_trim" }));
+const renderAudioTimeline = vi.fn(async (..._args: unknown[]) => ({ kind: "audio_timeline" }));
 const resolvePostProdInputSources = vi.fn(async ({ input }: { input: unknown }) => input);
 
 vi.mock("../services/postProduction", () => ({
+  trimAudio: (a: unknown, b: unknown, c: unknown) => trimAudio(a, b, c),
+  renderAudioTimeline: (a: unknown, b: unknown, c: unknown) => renderAudioTimeline(a, b, c),
   concatClips: (a: unknown, b: unknown, c: unknown) => concatClips(a, b, c),
   mountBgm: (a: unknown, b: unknown, c: unknown) => mountBgm(a, b, c),
   loudnessCheck: (a: unknown, b: unknown) => loudnessCheck(a, b),
@@ -26,6 +30,14 @@ vi.mock("../services/postProdMediaSource", () => ({
 import { processPostProdJob, runWithTaskLimit } from "./postProdJob";
 
 describe("processPostProdJob 强 Schema 分派", () => {
+  it("音频单段与秒锁分派保留用户、区间及终止信号", async () => {
+    const signal = new AbortController().signal;
+    const clip = { audioUri: "gs://b/a.wav", sourceStartSec: 1, sourceEndSec: 3 };
+    await processPostProdJob({ action: "audio_trim", params: clip }, "7", { signal });
+    expect(trimAudio).toHaveBeenCalledWith({ ...clip, volume: 1, fadeInSec: 0, fadeOutSec: 0 }, "7", { signal });
+    await processPostProdJob({ action: "audio_timeline", params: { durationSec: 4, clips: [{ ...clip, startSec: 1 }] } }, "7", { signal });
+    expect(renderAudioTimeline).toHaveBeenCalledWith({ durationSec: 4, clips: [{ ...clip, startSec: 1, volume: 1, fadeInSec: 0, fadeOutSec: 0 }] }, "7", { signal });
+  });
   beforeEach(() => {
     concatClips.mockClear();
     mountBgm.mockClear();

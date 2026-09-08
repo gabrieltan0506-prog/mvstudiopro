@@ -127,6 +127,7 @@ export async function synthesizeManhuaDialoguePreferred(
     input: input.input,
     voice: input.voice,
     seed: input.seed,
+    signal: input.signal,
   });
   return {
     audioUrl: orResult.audioUrl,

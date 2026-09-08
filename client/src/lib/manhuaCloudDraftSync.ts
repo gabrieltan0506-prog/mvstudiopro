@@ -489,6 +489,7 @@ export function cloudDraftBlocksToCanvas(
       seedance25WorkMode: raw.seedance25WorkMode,
       seedance25RefVideoUrls: raw.seedance25RefVideoUrls,
       seedance25RefAudioUrls: raw.seedance25RefAudioUrls,
+      audioStudio: raw.audioStudio,
       seedance25TimestampStoryboard: raw.seedance25TimestampStoryboard,
       seedance25ReshootFromSec: raw.seedance25ReshootFromSec,
       seedance25ReshootToSec: raw.seedance25ReshootToSec,

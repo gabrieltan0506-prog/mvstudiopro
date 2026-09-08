@@ -4383,9 +4383,7 @@ export default function OmniCanvas() {
         const ep = getBlockEpisodeIndex(b);
         return ep != null && ep !== continuity.episodeIndex;
       });
-      const next = hasOtherEpisodes
-        ? replaceManhuaEpisodeChain(blocks, edges, spawned, continuity.episodeIndex)
-        : spawned;
+      const next = replaceManhuaEpisodeChain(blocks, edges, spawned, continuity.episodeIndex);
       setBlocks(next.blocks);
       setEdges(next.edges);
       saveCanvasState(next.blocks, next.edges);
@@ -9513,6 +9511,15 @@ export default function OmniCanvas() {
                       return next;
                     });
                   }}
+                  onUpdateClipAudioStudio={(clipId, audioStudio) => {
+                    setBlocks(prev => {
+                      const target = prev.find(block => block.id === clipId);
+                      if (!target || target.status === "running" || target.videoTaskStatus === "queued") return prev;
+                      const next = prev.map(block => block.id === clipId ? { ...block, audioStudio, error: undefined } : block);
+                      saveCanvasState(next, edges);
+                      return next;
+                    });
+                  }}
                   onLayoutReadableChain={() => {
                     setBlocks((prev) => {
                       try {
@@ -11082,10 +11089,11 @@ export default function OmniCanvas() {
                       remapDockSelectionAfterSpawn(merged.blocks, continuity.episodeIndex);
                       toast.success(`已重铺第${continuity.episodeIndex}集节点（其它集保留）`);
                     } else {
-                      setBlocks(spawned.blocks);
-                      setEdges(spawned.edges);
-                      saveCanvasState(spawned.blocks, spawned.edges);
-                      remapDockSelectionAfterSpawn(spawned.blocks, continuity.episodeIndex);
+                      const merged = replaceManhuaEpisodeChain(blocks, edges, spawned, continuity.episodeIndex);
+                      setBlocks(merged.blocks);
+                      setEdges(merged.edges);
+                      saveCanvasState(merged.blocks, merged.edges);
+                      remapDockSelectionAfterSpawn(merged.blocks, continuity.episodeIndex);
                       toast.success("已铺好编导节点（含视频改写）");
                     }
                   }}

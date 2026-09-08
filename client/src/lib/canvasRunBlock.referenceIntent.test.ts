@@ -5,6 +5,7 @@ import { renderManhuaClipPromptForSeedance } from "@shared/manhuaClipPromptSanit
 import { defaultCanvasBlock, type CanvasVideoModel } from "./canvasTypes";
 import { runCanvasBlock } from "./canvasRunBlock";
 import { extractVideoTailFramesFromUrl } from "./extractVideoFrames";
+import { canvasAudioCueInputKey, createCanvasAudioCue, emptyCanvasAudioStudio } from "@shared/canvasAudioStudio";
 
 vi.mock("./flyHealthGate", () => ({
   withFlyHealthGate: async (_origin: string, run: () => Promise<unknown>) =>
@@ -64,6 +65,18 @@ function offlineRequests(op: string) {
 }
 
 describe("普通视频参考职责不被自动改写", () => {
+  it("逐句声音从真实节点进入视频请求，不要求普通画布具备关键帧", async () => {
+    const requests = offlineRequests("seedanceI2V");
+    const cue = { ...createCanvasAudioCue("dialogue", "line-1"), speakerZh: "墨屠", voiceStateZh: "变身后", voice: "Dylan", textZh: "跟紧我。", shotZh: "抬头", approved: true, selectedTakeId: "take-1" };
+    cue.takes.push({ id: "take-1", gcsUri: "gs://test-bucket/post-prod/1/line.wav", previewUrl: "", durationSec: 2, createdAt: "2026-09-08", inputKey: canvasAudioCueInputKey(cue) });
+    const block = { ...defaultCanvasBlock("video", 0, 0), id: "video-audio-reference", videoModel: "seedance-2.5" as const, prompt: "【第1段·10s】墨屠抬头说话。", audioStudio: { ...emptyCanvasAudioStudio(), cues: [cue] } };
+    await runCanvasBlock({ userRole: "admin", optimizeCopy: async () => "" }, block);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].audioUrls).toEqual([cue.takes[0]!.gcsUri]);
+    expect(requests[0].workMode).toBe("reference_to_video");
+    expect(requests[0].prompt).toContain("@audio1仅对应墨屠（变身后）的对白{跟紧我。}");
+    expect(requests[0].imageUrls).toBeUndefined();
+  });
   it.each(engines)(
     "%s 的身份参考保持动作正文与图片顺序，不注入场景静帧或微动",
     async (videoModel, op) => {

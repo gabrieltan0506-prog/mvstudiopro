@@ -107,7 +107,48 @@ export const burnSubtitleParamsSchema = z
   })
   .strict();
 
+const audioClipShape = {
+  audioUri: mediaSourceSchema,
+  sourceStartSec: z.number().finite().min(0).max(3600),
+  sourceEndSec: z.number().finite().positive().max(3600),
+  volume: z.number().finite().min(0).max(1).default(1),
+  fadeInSec: z.number().finite().min(0).max(30).default(0),
+  fadeOutSec: z.number().finite().min(0).max(30).default(0),
+};
+
+function checkAudioClip(clip: { sourceStartSec: number; sourceEndSec: number; fadeInSec: number; fadeOutSec: number }, ctx: z.RefinementCtx) {
+  const duration = clip.sourceEndSec - clip.sourceStartSec;
+  if (duration < 1 / 48000 || duration > 30) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "裁段时长须大于零且不超过 30 秒", path: ["sourceEndSec"] });
+  }
+  if (clip.fadeInSec + clip.fadeOutSec > duration) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "淡入淡出总时长不能超过片段", path: ["fadeOutSec"] });
+  }
+}
+
+export const audioTrimParamsSchema = z.object(audioClipShape).strict().superRefine(checkAudioClip);
+export const audioTimelineParamsSchema = z.object({
+  durationSec: z.number().finite().min(1 / 48000).max(30),
+  clips: z.array(z.object({
+    ...audioClipShape,
+    startSec: z.number().finite().min(0).max(30),
+  }).strict().superRefine(checkAudioClip)).min(1).max(12),
+}).strict().superRefine((input, ctx) => {
+  input.clips.forEach((clip, index) => {
+    if (clip.startSec + clip.sourceEndSec - clip.sourceStartSec > input.durationSec + 1e-9) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "片段超出秒锁时间轴，请调整入场或完整区间", path: ["clips", index, "startSec"] });
+    }
+  });
+});
+
+export type AudioTrimParams = z.infer<typeof audioTrimParamsSchema>;
+export type RawAudioTrimParams = z.input<typeof audioTrimParamsSchema>;
+export type AudioTimelineParams = z.infer<typeof audioTimelineParamsSchema>;
+export type RawAudioTimelineParams = z.input<typeof audioTimelineParamsSchema>;
+
 export const postProdJobInputSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("audio_trim"), params: audioTrimParamsSchema }).strict(),
+  z.object({ action: z.literal("audio_timeline"), params: audioTimelineParamsSchema }).strict(),
   z.object({ action: z.literal("concat"), params: concatParamsSchema }).strict(),
   z.object({ action: z.literal("bgm_mount"), params: bgmMountParamsSchema }).strict(),
   z.object({ action: z.literal("loudness_check"), params: loudnessParamsSchema }).strict(),

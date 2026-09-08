@@ -73,6 +73,92 @@ import {
   formatManhuaDirectorStrategyStage,
 } from "@shared/manhuaDirectorStrategy";
 import { getManhuaDirectorStrategyV1Snapshot } from "@shared/manhuaDirectorStrategyV1Snapshot";
+import { emptyCanvasAudioStudio, createCanvasAudioCue } from "@shared/canvasAudioStudio";
+
+describe("分段音轨身份与改稿恢复", () => {
+  const audioWork = () => ({
+    ...emptyCanvasAudioStudio(),
+    cues: [{ ...createCanvasAudioCue("dialogue", "line-1"), speakerZh: "墨屠", textZh: "别怕，站我身后。", takes: [{
+      id: "take-1", gcsUri: "gs://test-bucket/voice/paid.wav", previewUrl: "", durationSec: 2,
+      createdAt: "2026-09-08", inputKey: "previous-voice-input",
+    }], selectedTakeId: "take-1" }],
+  });
+  function prepare() {
+    const spawned = spawnManhuaDramaStudio({ topic: "雨夜守护", episodeIndex: 1, videoModel: "seedance-2.0-mini" });
+    const reverse = spawned.blocks.find(b => b.id.startsWith("reverse-"))!;
+    const outputText = Array.from({ length: 18 }, (_, i) => `${i + 1}. 第 ${i + 1} 镜：墨屠护住阿菁`).join("\n");
+    const expanded = expandManhuaShotKeyartsAfterReverse(spawned.blocks.map(b => b.id === reverse.id ? { ...b, status: "done" as const, outputText } : b), spawned.edges, reverse.id);
+    const ready = expanded.blocks.map(b => b.id.startsWith("keyart-") ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` } : b);
+    const result = ensureManhuaFragmentClips(ready, expanded.edges, 1, { videoModel: "seedance-2.0-mini" });
+    return { ...result, reverseId: reverse.id, clipIds: queuedManhuaClipBlocks(result.blocks, 1, "seedance-2.0-mini").map(b => b.id) };
+  }
+  it("同段同修订保留候选；新铺另一段不克隆模板音轨", () => {
+    const initial = prepare();
+    expect(initial.clipIds).toHaveLength(6);
+    const [firstId, missingId] = initial.clipIds;
+    const work = audioWork();
+    const blocks = initial.blocks.filter(b => b.id !== missingId).map(b => b.id === firstId ? { ...b, audioStudio: work } : b);
+    const next = ensureManhuaFragmentClips(blocks, initial.edges, 1, { videoModel: "seedance-2.0-mini" });
+    expect(next.blocks.find(b => b.id === firstId)?.audioStudio).toEqual(work);
+    const current = queuedManhuaClipBlocks(next.blocks, 1, "seedance-2.0-mini");
+    expect(current).toHaveLength(6);
+    expect(current.filter(b => b.id !== firstId).every(b => !b.audioStudio)).toBe(true);
+  });
+  it("改档归档音频候选和在途单，新的分段绝不继承旧声音", () => {
+    const initial = prepare();
+    const states = [audioWork(), { ...emptyCanvasAudioStudio(), pendingOperations: [{ id: "pending-tts", kind: "dialogue" as const, inputKey: "old", cueId: "line-1" }] },
+      { ...emptyCanvasAudioStudio(), musicJobIds: ["pending-music"] }];
+    const staged = initial.blocks.map(b => {
+      const index = initial.clipIds.indexOf(b.id);
+      return index >= 0 && index < states.length ? { ...b, audioStudio: states[index] } : b;
+    });
+    const legacy = { ...defaultCanvasBlock("video", 0, 0), id: "clip-e01-legacy-audio", episodeIndex: 1, audioStudio: audioWork() };
+    const next = ensureManhuaFragmentClips([...staged, legacy], initial.edges, 1, { videoModel: "seedance-2.5" });
+    states.forEach((state, i) => expect(next.blocks.find(b => b.id === initial.clipIds[i])).toMatchObject({ archivedFromPreviousScript: true, audioStudio: state }));
+    expect(next.blocks.find(b => b.id === legacy.id)).toMatchObject({ archivedFromPreviousScript: true, audioStudio: legacy.audioStudio });
+    expect(queuedManhuaClipBlocks(next.blocks, 1, "seedance-2.5").every(b => !b.audioStudio && !b.seedance25RefAudioUrls)).toBe(true);
+    expect(next.blocks.some(b => b.id === initial.clipIds[5])).toBe(false);
+  });
+  it("同引擎改原稿产生新revision，旧对白保留归档而非附到新剧情", () => {
+    const initial = prepare();
+    const firstId = initial.clipIds[0];
+    const work = audioWork();
+    const staged = initial.blocks.map(b => b.id === firstId ? { ...b, audioStudio: work } : b.id === initial.reverseId ? { ...b, outputText: b.outputText!.replace("墨屠护住阿菁", "墨屠转身走进雨里") } : b);
+    const next = ensureManhuaFragmentClips(staged, initial.edges, 1, { videoModel: "seedance-2.0-mini" });
+    expect(next.blocks.find(b => b.id === firstId)).toMatchObject({ archivedFromPreviousScript: true, audioStudio: work });
+    expect(queuedManhuaClipBlocks(next.blocks, 1, "seedance-2.0-mini").some(b => b.id === firstId)).toBe(false);
+    expect(queuedManhuaClipBlocks(next.blocks, 1, "seedance-2.0-mini").every(b => !b.audioStudio)).toBe(true);
+  });
+  it("换稿清链旁路同样保留未出视频的音轨及旧手选音频", () => {
+    const blocks = [
+      { ...defaultCanvasBlock("video", 0, 0), id: "clip-e01-g01-audio", episodeIndex: 1, audioStudio: audioWork() },
+      { ...defaultCanvasBlock("video", 0, 0), id: "clip-e01-g02-ref", episodeIndex: 1, seedance25RefAudioUrls: ["https://example.com/owned.wav"] },
+      { ...defaultCanvasBlock("video", 0, 0), id: "clip-e01-g03-empty", episodeIndex: 1, audioStudio: emptyCanvasAudioStudio() },
+    ];
+    const next = stripManhuaFactoryCanvasArtifacts(blocks, []);
+    expect(next.archivedCount).toBe(2);
+    expect(next.removedCount).toBe(1);
+    expect(next.blocks.find(b => b.id === blocks[0].id)?.audioStudio).toEqual(blocks[0].audioStudio);
+    expect(next.blocks.every(b => b.archivedFromPreviousScript)).toBe(true);
+  });
+  it("整集重铺保留旧音轨归档；同名新节点不覆盖，旧连线不进入新链", () => {
+    const initial = prepare();
+    const oldId = initial.clipIds[0];
+    const work = audioWork();
+    const staged = initial.blocks.map(b => b.id === oldId ? { ...b, audioStudio: work } : b);
+    const spawned = spawnManhuaDramaStudio({ topic: "新的故事", episodeIndex: 1 });
+    const replacement = { ...defaultCanvasBlock("video", 0, 0), id: oldId, episodeIndex: 1 };
+    const result = replaceManhuaEpisodeChain(staged, initial.edges, { ...spawned, blocks: [...spawned.blocks, replacement] }, 1);
+    const archived = result.blocks.find(b => b.audioStudio?.cues[0]?.id === "line-1");
+    expect(archived).toMatchObject({ archivedFromPreviousScript: true, audioStudio: work });
+    expect(archived?.id).not.toBe(oldId);
+    expect(archived?.parentId).toBeUndefined();
+    expect(new Set(result.blocks.map(b => b.id)).size).toBe(result.blocks.length);
+    expect(result.blocks.find(b => b.id === oldId)?.audioStudio).toBeUndefined();
+    expect(result.edges.some(e => e.fromId === archived?.id || e.toId === archived?.id)).toBe(false);
+    expect(queuedManhuaClipBlocks(result.blocks, 1).some(b => b.id === archived?.id)).toBe(false);
+  });
+});
 
 describe("canvasDramaStudio factory", () => {
   it("29镜原稿的结尾进入关键帧编排，不被容量截尾", () => {

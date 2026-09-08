@@ -1580,16 +1580,19 @@ async function runSeedance25EvolinkJob(
     ? body.audioUrls.map((url: unknown) => s(url).trim()).filter(Boolean)
     : [];
   let audioUrls: string[];
+  let audioReferences: string[];
   try {
-    const { resolveTokenPlanDialogueAudioReference } = await import(
-      "../server/services/tokenPlanDialogueTts.js"
+    const { resolveCanvasVideoAudioReference } = await import(
+      "../server/services/canvasVideoAudioReference.js"
     );
-    audioUrls = rawAudioUrls.map((reference: string) =>
-      resolveTokenPlanDialogueAudioReference({
+    const resolvedAudio = await Promise.all(rawAudioUrls.map((reference: string) =>
+      resolveCanvasVideoAudioReference({
         reference,
         ownerUserId: access.userId,
       }),
-    );
+    ));
+    audioUrls = resolvedAudio.map(audio => audio.url);
+    audioReferences = resolvedAudio.map(audio => audio.storedReference);
   } catch {
     return { ok: false, status: 403, error: "参考音频不可用，请重新选择本人素材" };
   }
@@ -1814,7 +1817,8 @@ async function runSeedance25EvolinkJob(
         imageUrl,
         imageUrls,
         videoUrls,
-        audioUrls,
+        // 上方扣费前契约校验用已签地址；任务保存长期身份，恢复/回落时再验权现签。
+        audioUrls: audioReferences,
         aspectRatio,
         duration: providerDuration,
         resolution,
