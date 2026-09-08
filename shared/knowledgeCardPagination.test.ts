@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  KNOWLEDGE_CARD_DISTILL_MODEL_KIMI,
   KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
   KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
 } from "./knowledgeCardDistillModels";
@@ -35,7 +34,6 @@ describe("knowledgeCardCreditsForPages", () => {
 
   it("tiers by distill model", () => {
     expect(knowledgeCardCreditsForPages(4, KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toBe(96);
-    expect(knowledgeCardCreditsForPages(4, KNOWLEDGE_CARD_DISTILL_MODEL_KIMI)).toBe(108);
     expect(knowledgeCardCreditsForPages(4, KNOWLEDGE_CARD_DISTILL_MODEL_SOL)).toBe(120);
   });
 
@@ -53,20 +51,19 @@ describe("knowledgeCardCreditsForPageIndex", () => {
     expect(knowledgeCardCreditsForPageIndex(20)).toBe(24);
   });
 
-  it("uses Qwen/Kimi page rates", () => {
+  it("uses Qwen page rates", () => {
     expect(knowledgeCardCreditsForPageIndex(1, KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toBe(24);
     expect(knowledgeCardCreditsForPageIndex(9, KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toBe(19);
-    expect(knowledgeCardCreditsForPageIndex(1, KNOWLEDGE_CARD_DISTILL_MODEL_KIMI)).toBe(27);
-    expect(knowledgeCardCreditsForPageIndex(9, KNOWLEDGE_CARD_DISTILL_MODEL_KIMI)).toBe(22);
   });
 });
 
 describe("knowledgeCardImageQuality", () => {
-  it("uses 4K (high) for 1–6 pages and 2K (medium) for every page when total > 6", () => {
+  it("always high (4K) regardless of page count (0908 拍板：超过 6 页不再降 2K)", () => {
     expect(knowledgeCardImageQuality(1)).toBe("high");
     expect(knowledgeCardImageQuality(6)).toBe("high");
-    expect(knowledgeCardImageQuality(7)).toBe("medium");
-    expect(knowledgeCardImageQuality(20)).toBe("medium");
+    expect(knowledgeCardImageQuality(7)).toBe("high");
+    expect(knowledgeCardImageQuality(20)).toBe("high");
+    expect(knowledgeCardImageQuality(300)).toBe("high");
   });
 });
 

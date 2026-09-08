@@ -32,6 +32,8 @@ import {
   planKnowledgeCardPages,
   stripKnowledgeCardInternalDirectives,
 } from "../../shared/knowledgeCardPagination.js";
+import { buildKnowledgeCardSubjectPositionPrompt } from "../../shared/knowledgeCardSubjectPosition.js";
+import { stripKnowledgeCardPageRefs } from "./knowledgeCardDocumentPages.js";
 import {
   getInfographicNoteTemplate,
   getInfographicRenderDepthLockEn,
@@ -462,7 +464,18 @@ export type KnowledgeCardPromptPaging = {
    * （用户 2026-08-05 用轻量档复现；同样的版式在精细/均衡档因正文更长而只当版式生效）。
    */
   infographicTemplateId?: string;
+  /** 主体偏左 / 居中（0908 用户拍板可选；横版 16:9 固定） */
+  subjectPosition?: string;
+  /** 本页附带的原稿参考页数量（>0 时加入「参考原稿版式重画」指令） */
+  referencePageCount?: number;
 };
+
+/** 原稿参考页指令：只借结构，不复制截图。 */
+function buildKnowledgeCardReferencePagesDirective(count?: number): string {
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  if (!n) return "";
+  return `\n【原稿参考页·仅借版式结构】随本次请求附带 ${n} 张原书页面图，它们是这页知识点在原书里的版式（表格行列、导图分支、分式图解、左右对比）。请把这种**结构关系**用本卡的风格重新绘制进对应模块：表格保留表头与行列对应，导图保留层级分支，步骤图保留顺序与编号。**不要**整页复制截图、不要沿用原书配色字体、不要把原书页码或水印画进来；人物只作示意，不锁定身份。`;
+}
 
 /**
  * 版式指令段：中文说清「这是排版要求，不是内容」，英文段给绘图模型看构图。
@@ -538,15 +551,18 @@ export function buildSinglePageKnowledgeCardImagePrompt(
     source = plan.pages[0];
   }
 
-  const slice = toSimplifiedChinese(source.slice(0, SCRIPT_SLICE));
+  // 「〔参考原页 …〕」标记只供服务端定位参考图，不得印到卡片上
+  const slice = toSimplifiedChinese(stripKnowledgeCardPageRefs(source).slice(0, SCRIPT_SLICE));
   const layoutDirective = buildKnowledgeCardLayoutDirective(opts.infographicTemplateId);
+  const referenceDirective = buildKnowledgeCardReferencePagesDirective(opts.referencePageCount);
 
-  return `${SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH}${partDirective}${layoutDirective}
+  return `${SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH}${partDirective}${layoutDirective}${referenceDirective}
 
 【以下为 Markdown 文稿内容，请按上述要求生成单页连贯图文知识卡片（而非 2×4 八格）】：
 ${slice}
 
-${SINGLE_PAGE_KNOWLEDGE_CARD_TEXT_RENDER_WRAPPER_EN}`.trim();
+${SINGLE_PAGE_KNOWLEDGE_CARD_TEXT_RENDER_WRAPPER_EN}
+${buildKnowledgeCardSubjectPositionPrompt(opts.subjectPosition)}`.trim();
 }
 
 /**
