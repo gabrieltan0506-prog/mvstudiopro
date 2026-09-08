@@ -125,6 +125,8 @@ const GPT_IMAGE2_PORTRAIT_SIZES = ["1024x1536"] as const;
 
 /** 橫幅 / 2×4 主表：僅 **1536×1024**（與 OpenAI 白名單一致，3:2） */
 const GPT_IMAGE2_LANDSCAPE_SIZES = ["1536x1024"] as const;
+/** 知识卡 OpenAI 官方出图尺寸（0908 用户：官方也能出 3840x2160）；可用 KNOWLEDGE_CARD_OPENAI_SIZE 覆写 */
+const KNOWLEDGE_CARD_OPENAI_SIZE = /^\d+x\d+$/.test(String(process.env.KNOWLEDGE_CARD_OPENAI_SIZE || "")) ? String(process.env.KNOWLEDGE_CARD_OPENAI_SIZE) : "3840x2160";
 
 /**
  * 白名單中第一個非 `auto` 的 `WxH`（現行白名單已無 `auto`，預期直接取唯一檔；fal 需明確寬高）。
@@ -1180,6 +1182,8 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   qualityOverride?: GptImage2ApiQuality;
   /** EvoLink 比例模式分辨率覆写（知识卡传 4K；未传按 EVOLINK_GPT_IMAGE2_RESOLUTION 默认 2K） */
   evolinkResolution?: "1K" | "2K" | "4K";
+  /** OpenAI 官方显式像素尺寸（知识卡传 3840x2160，与 EvoLink 4K 同尺寸；未传按比例默认 1536x1024） */
+  openaiSize?: string;
   /**
    * 出参：失败时回填供上层做「快速失败 / 用户提示」。
    * `moderationBlocked` 为 true 表示内容审核拦截（换脸时即「参考人像被拦截」），属用户可纠正错误，**不应**继续重试。
@@ -1311,6 +1315,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
       provider === "openai"
         ? postOpenAiGptImage2AndUpload(finalPrompt, options.gcsSubdir, {
             aspectRatio: options.aspectRatio,
+            size: options.openaiSize,
             flowLog: L,
             quality: qualityForCall,
             imageUrls: hasRef ? refImageUrls : undefined,
@@ -1861,7 +1866,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
       appendImageFlowLog(
         L,
         isKnowledgeCard
-          ? `[图文笔记·步骤2] GPT-IMAGE-2 · 16:9 · quality=high · EvoLink 4K（OpenAI 官方兜底为 1536x1024）· total=${options.notePageTotal ?? "?"} · 参考原页=${refImageUrls.length}张 · gcsSubdir=${subdir}`
+          ? `[图文笔记·步骤2] GPT-IMAGE-2 · 16:9 · quality=high · EvoLink 4K / OpenAI 官方 ${KNOWLEDGE_CARD_OPENAI_SIZE} · total=${options.notePageTotal ?? "?"} · 参考原页=${refImageUrls.length}张 · gcsSubdir=${subdir}`
           : `[2×4·步骤2] GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY} · gcsSubdir=${subdir} · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]} · ${
               hasSheetRefs ? "换脸·仅 OpenAI/OpenRouter（无 NB2）" : "仅 OpenAI/OpenRouter（无 NB2）"
             }`,
@@ -1891,7 +1896,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         appendImageFlowLog(
           L,
           isKnowledgeCard
-            ? `[图文笔记·主路径] ${options.knowledgeCardImageProvider === "openai" ? "OpenAI 官方（1536x1024）→ EvoLink（4K）" : "EvoLink（4K）→ OpenAI 官方（1536x1024）"} · quality=high · 16:9`
+            ? `[图文笔记·主路径] ${options.knowledgeCardImageProvider === "openai" ? `OpenAI 官方（${KNOWLEDGE_CARD_OPENAI_SIZE}）→ EvoLink（4K）` : `EvoLink（4K）→ OpenAI 官方（${KNOWLEDGE_CARD_OPENAI_SIZE}）`} · quality=high · 16:9`
             : `[2×4·主路径] OpenAI/OpenRouter GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
         );
       }
@@ -1915,6 +1920,8 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         imageLane: isKnowledgeCard ? "asset" : undefined,
         qualityOverride: knowledgeCardQuality,
         evolinkResolution: isKnowledgeCard ? "4K" : undefined,
+        // 0908 用户：官方也出 3840x2160，与 EvoLink 同尺寸，PDF 合成不用补边
+        openaiSize: isKnowledgeCard ? KNOWLEDGE_CARD_OPENAI_SIZE : undefined,
         captureError: gptCapture,
       });
 
@@ -1937,6 +1944,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           imageLane: isKnowledgeCard ? "asset" : undefined,
           qualityOverride: knowledgeCardQuality,
           evolinkResolution: isKnowledgeCard ? "4K" : undefined,
+          openaiSize: isKnowledgeCard ? KNOWLEDGE_CARD_OPENAI_SIZE : undefined,
           captureError: retryCapture,
         });
         if (!fromGpt && (retryCapture.moderationBlocked || isEvolinkModerationFailure(retryCapture.message))) {
