@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import { resolveCanvasMaterialUrl } from "@/lib/omniCanvasApi";
-import { compileCanvasDialogueInput } from "@shared/canvasDialogueControls";
+import { compileCanvasDialogueInput, CANVAS_DIALOGUE_CONTROL_GROUPS, CANVAS_DIALOGUE_EMOTION_LABELS, toggleCanvasDialogueControl } from "@shared/canvasDialogueControls";
 import { canvasAudioPreviewKey, loadCanvasMusicHistory } from "@/lib/canvasAudioStudioRecovery";
 import { parseManhuaClipTargetDurationSec } from "@shared/manhuaScriptWorkbench";
 import { clampManhuaClipDurationSecForVideoModel } from "@shared/manhuaSeedanceLayout";
@@ -837,8 +837,42 @@ export function CanvasAudioStudioView({
                     ))}
                   </select>
                 </label>
-                <label className="block text-xs">
-                  语气标签
+                <div className="space-y-2">
+                  {CANVAS_DIALOGUE_CONTROL_GROUPS.map(group => (
+                    <fieldset key={group.labelZh} className="space-y-1">
+                      <legend className="text-xs">{group.labelZh}（可组合选择）</legend>
+                      <div className="flex flex-wrap gap-1">
+                        {group.tags.map(tag => {
+                          const selected = cue.emotion.includes(`[${tag}]`);
+                          return (
+                            <label
+                              key={tag}
+                              className={`${buttonClass} inline-flex items-center gap-1.5 ${disabled ? "opacity-40" : "cursor-pointer"} ${selected ? "border-sky-300/60 bg-sky-500/20 text-sky-100" : ""}`}
+                            >
+                              <input
+                                type="checkbox"
+                                aria-label={`${index + 1} ${group.labelZh} ${CANVAS_DIALOGUE_EMOTION_LABELS[tag]}`}
+                                checked={selected}
+                                disabled={disabled}
+                                onChange={() => patchCue(cue.id, { emotion: toggleCanvasDialogueControl(cue.emotion, tag) })}
+                              />
+                              {CANVAS_DIALOGUE_EMOTION_LABELS[tag]}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </fieldset>
+                  ))}
+                  <button type="button" className={buttonClass} disabled={disabled || !cue.emotion}
+                    onClick={() => patchCue(cue.id, { emotion: "" })}>
+                    恢复自然表达
+                  </button>
+                  <p className="text-[11px] text-white/60">不勾选时自然表达。勾选只改变本句情绪，不改变音色、不自动生成。实际效果请逐句试听。</p>
+                </div>
+                <details>
+                  <summary className="text-xs text-white/60">高级：语气标签</summary>
+                  <label className="block text-xs">
+                    语气标签（保留旧设置）
                   <input
                     aria-label={`${index + 1} 语气标签`}
                     maxLength={80}
@@ -850,7 +884,8 @@ export function CanvasAudioStudioView({
                       patchCue(cue.id, { emotion: event.target.value })
                     }
                   />
-                </label>
+                  </label>
+                </details>
                 <button
                   className={buttonClass}
                   disabled={locked}

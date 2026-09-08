@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { build } from "esbuild";
 import puppeteer, { type Browser } from "puppeteer";
 import path from "node:path";
+import type { CanvasAudioCue } from "../../../shared/canvasAudioStudio";
 
 let browser: Browser;
 let bundle: string;
@@ -103,6 +104,59 @@ async function open() {
   return { context, page, click, fill };
 }
 describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
+  it("中文情绪点选进入实际请求，切换保留旧音轨并取消采用和旧确认", async () => {
+    const { context, page, click, fill } = await open();
+    try {
+      await click("添加一句对白");
+      await fill("1 镜头与动作", "护翼下安抚阿菁");
+      await fill("1 说话角色", "墨屠");
+      await fill("1 本句台词", "别怕，站我身后。");
+      const originalVoice = await page.$eval('[aria-label="1 音色"]', el => (el as HTMLSelectElement).value);
+      await page.click('[aria-label="1 情绪 坚定严肃"]');
+      await page.click('[aria-label="1 情绪 关切安抚"]');
+      expect(await page.evaluate(() => (window as any).fixture.calls)).toEqual([]);
+      await click("生成本句");
+      await page.waitForSelector('[role="dialog"]');
+      await click("确认生成");
+      await page.waitForFunction(() => (window as any).fixture.state.cues[0].takes.length === 1);
+      expect(await page.evaluate(() => (window as any).fixture.calls[0].input)).toBe("[serious][empathetic]别怕，站我身后。");
+      await click("试听后确认本段");
+      await page.waitForFunction(() => (window as any).fixture.state.cues[0].approved);
+      await click("生成本句");
+      await page.waitForSelector('[role="dialog"]');
+      await page.click('[aria-label="1 情绪 关切安抚"]');
+      expect(await page.$('[role="dialog"]')).toBeNull();
+      const changed = await page.evaluate(() => (window as any).fixture.state.cues[0]);
+      expect(changed.emotion).toBe("[serious]");
+      expect(changed.voice).toBe(originalVoice);
+      expect(changed.approved).toBe(false);
+      expect(changed.takes).toHaveLength(1);
+      expect(await page.evaluate(() => (window as any).fixture.calls.length)).toBe(1);
+      // 模拟持久化往返再挂载，选中态来自保存字段，不靠局部UI状态。
+      await page.evaluate(() => { const f = (window as any).fixture; f.configure(JSON.parse(JSON.stringify(f.state))); f.show(false); });
+      await page.waitForFunction(() => !document.querySelector("section"));
+      await page.evaluate(() => (window as any).fixture.show(true));
+      await page.waitForSelector('[aria-label="1 情绪 坚定严肃"]:checked');
+      await click("恢复自然表达");
+      expect(await page.evaluate(() => (window as any).fixture.state.cues[0].emotion)).toBe("");
+      expect(await page.$eval('[aria-label="1 情绪 坚定严肃"]', el => (el as HTMLInputElement).checked)).toBe(false);
+    } finally { await context.close(); }
+  }, 20_000);
+  it("旧未知情绪不被点选洗掉，超80字符保留原设置且不发请求", async () => {
+    const { context, page, click } = await open();
+    try {
+      await click("添加一句对白");
+      await page.evaluate(() => { const f = (window as any).fixture; f.configure({...f.state, cues: f.state.cues.map((c: CanvasAudioCue) => ({...c, emotion: "[unknown]"}))}); });
+      await page.click('[aria-label="1 情绪 坚定严肃"]');
+      expect(await page.evaluate(() => (window as any).fixture.state.cues[0].emotion)).toBe("[unknown][serious]");
+      const full = "[empathetic]".repeat(6);
+      await page.evaluate(value => { const f = (window as any).fixture; f.configure({...f.state, cues: f.state.cues.map((c: CanvasAudioCue) => ({...c, emotion: value}))}); }, full);
+      await page.click('[aria-label="1 情绪 坚定严肃"]');
+      await page.waitForSelector('[role="alert"]');
+      expect(await page.evaluate(() => (window as any).fixture.state.cues[0].emotion)).toBe(full);
+      expect(await page.evaluate(() => (window as any).fixture.calls)).toEqual([]);
+    } finally { await context.close(); }
+  }, 20_000);
   it("旧配乐不在最近页仍按持久任务取回并选择", async () => {
     const { context, page, click } = await open();
     try {
@@ -180,6 +234,7 @@ describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
       await fill("1 镜头与动作", "墨屠护翼");
       await fill("1 说话角色", "墨屠");
       await fill("1 本句台词", "别怕。");
+      await page.click("article details summary");
       await fill("1 语气标签", "[unknown_magic_voice]");
       await click("生成本句");
       await page.waitForSelector('[role="alert"]');

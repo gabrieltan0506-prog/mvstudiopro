@@ -25,6 +25,17 @@ describe("逐句音轨的持久化与消费闭环", () => {
     expect(() => compileCanvasAudioBindings({ studio: { ...emptyCanvasAudioStudio(), cues: [cue] }, existingAudioUrls: [], durationSec: 10 })).toThrow("不一致");
     expect(cue.takes).toHaveLength(1);
   });
+  it("情绪组合云往返不丢失，换情绪不能把旧音轨当新效果送去出片", () => {
+    const cue = readyCue();
+    cue.emotion = "[serious][empathetic]";
+    cue.takes[0]!.inputKey = canvasAudioCueInputKey(cue);
+    const block = sanitizeManhuaCloudDraftBlock({ id: "clip-emotion", kind: "video", x: 0, y: 0, width: 420, height: 360, prompt: "护翼", audioStudio: { ...emptyCanvasAudioStudio(), cues: [cue] } });
+    expect(block!.audioStudio!.cues[0]!.emotion).toBe("[serious][empathetic]");
+    expect(compileCanvasAudioBindings({ studio: block!.audioStudio, existingAudioUrls: [], durationSec: 10 }).audioUrls).toEqual([cue.takes[0]!.gcsUri]);
+    block!.audioStudio!.cues[0]!.emotion = "[angry]";
+    expect(() => compileCanvasAudioBindings({ studio: block!.audioStudio, existingAudioUrls: [], durationSec: 10 })).toThrow("不一致");
+    expect(block!.audioStudio!.cues[0]!.takes).toHaveLength(1);
+  });
   it("显式本次不用才排除草稿，资产不丢失", () => {
     const cue = { ...readyCue(), enabled: false, approved: false };
     expect(compileCanvasAudioBindings({ studio: { ...emptyCanvasAudioStudio(), cues: [cue] }, existingAudioUrls: [], durationSec: 10 })).toEqual({ audioUrls: [], promptAppendix: "" });
