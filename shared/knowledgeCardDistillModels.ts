@@ -102,7 +102,15 @@ export function resolveKnowledgeCardDistillModel(raw?: string | null): Knowledge
   return mapKnownModelId(envDefault) || KNOWLEDGE_CARD_DISTILL_MODEL_SOL;
 }
 
+/** 已下架档位的历史页价：旧 receipt 出图仍按原档结算，不因下架改价 */
+const RETIRED_PAGE_CREDITS: Record<string, { full: number; discount: number }> = {
+  [KNOWLEDGE_CARD_DISTILL_MODEL_CLAUDE_RETIRED]: { full: 36, discount: 29 },
+  [KNOWLEDGE_CARD_DISTILL_MODEL_KIMI_RETIRED]: { full: 27, discount: 22 },
+};
+
 export function knowledgeCardPageCreditsForModel(raw?: string | null): { full: number; discount: number } {
+  const retired = RETIRED_PAGE_CREDITS[String(raw || "").trim()];
+  if (retired) return retired;
   const id = resolveKnowledgeCardDistillModel(raw);
   return KNOWLEDGE_CARD_PAGE_CREDITS_BY_MODEL[id];
 }

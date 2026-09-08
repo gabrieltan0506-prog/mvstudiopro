@@ -1704,8 +1704,11 @@ export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
       if (input.action === "knowledge_card_distill") {
         const raw = Number(process.env.KNOWLEDGE_CARD_DISTILL_JOB_TIMEOUT_MS);
         if (Number.isFinite(raw) && raw >= 300_000) return raw;
-        // 整本约 10 万字：十余段 × 中档推理 + 段级重试 + 顶档统稿，默认 40min
-        return 40 * 60_000;
+        // 纯文本：整本约 10 万字十余段，默认 40min；
+        // 带文件（0908）：任务里还有 EPUB 转换、缩略目录页扫读、选中页渲染，默认 120min
+        const hasFiles = Array.isArray((input.params as Record<string, unknown>)?.files)
+          && ((input.params as Record<string, unknown>).files as unknown[]).length > 0;
+        return (hasFiles ? 120 : 40) * 60_000;
       }
       if (input.action === "platform_topic_expand") {
         const raw = Number(process.env.PLATFORM_TOPIC_EXPAND_JOB_TIMEOUT_MS);
@@ -3161,12 +3164,15 @@ async function processPlatformJob(
           const base = p.stage === "converting" ? 0 : p.stage === "reading" ? 5 : p.stage === "selecting" ? 20 : 30;
           const span = p.stage === "converting" ? 5 : p.stage === "reading" ? 15 : 10;
           const frac = p.total > 0 ? Math.min(1, p.done / p.total) : 0;
+          // 多文件：每个文件占 0–40 的一等份，第 2 个文件从第 1 个的终点起算，不倒退
+          const fileTotal = Math.max(1, p.fileTotal || 1);
+          const within = base + span * frac;
           await patchProgress({
             distillStage: p.stage,
             distillStageDone: p.done,
             distillStageTotal: p.total,
             distillFileName: p.fileName,
-            distillPercent: Math.round(base + span * frac),
+            distillPercent: Math.round(((p.fileIndex || 0) * 40 + within) / fileTotal),
           });
         },
         onProgress: async (p) => {

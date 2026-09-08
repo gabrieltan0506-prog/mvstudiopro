@@ -31,6 +31,8 @@ const THUMB_WIDTH = 360;
 const SHEET_COLS = 4;
 const SHEET_ROWS = 3;
 export const KNOWLEDGE_CARD_SHEET_CELLS = SHEET_COLS * SHEET_ROWS;
+/** 缩略图分批渲染页数（4 张目录页一批） */
+const THUMB_BATCH_PAGES = KNOWLEDGE_CARD_SHEET_CELLS * 4;
 const PAGE_UPLOAD_CONCURRENCY = 6;
 
 export type KnowledgeCardDocumentPage = {
@@ -111,7 +113,7 @@ async function renderPdfPagesToJpeg(pdfPath: string, outDir: string, prefix: str
 }
 
 /** 把缩略图按 4×3 拼成目录页，每格左上角印页码，供模型扫读挑页。 */
-export async function buildContactSheets(thumbs: Map<number, Buffer>): Promise<KnowledgeCardContactSheet[]> {
+export async function buildContactSheets(thumbs: Map<number, Buffer>, indexOffset = 0): Promise<KnowledgeCardContactSheet[]> {
   const sharp = (await import("sharp")).default;
   const numbers = Array.from(thumbs.keys()).sort((a, b) => a - b);
   const sheets: KnowledgeCardContactSheet[] = [];
@@ -139,7 +141,7 @@ export async function buildContactSheets(thumbs: Map<number, Buffer>): Promise<K
       .composite(composites)
       .jpeg({ quality: 80 })
       .toBuffer();
-    sheets.push({ index: sheets.length + 1, pageNumbers: group, imageDataUrl: `data:image/jpeg;base64,${jpeg.toString("base64")}` });
+    sheets.push({ index: indexOffset + sheets.length + 1, pageNumbers: group, imageDataUrl: `data:image/jpeg;base64,${jpeg.toString("base64")}` });
   }
   return sheets;
 }
@@ -183,10 +185,17 @@ export async function prepareKnowledgeCardDocumentPages(params: {
     const pages: KnowledgeCardDocumentPage[] = Array.from({ length: total }, (_, i) => ({ pageNumber: i + 1, text: texts[i] || "" }));
 
     await params.onProgress?.("thumbs", 0, total);
-    const thumbs = await renderPdfPagesToJpeg(pdfPath, dir, "t", THUMB_WIDTH);
-    if (thumbs.size !== total) throw new Error(`原稿缩略图页数不符：应 ${total} 页，实得 ${thumbs.size} 页`);
-    const sheets = await buildContactSheets(thumbs);
-    await params.onProgress?.("thumbs", total, total);
+    // 分批渲染缩略图并即拼即弃，千页书也不把整本缩略图驻留内存
+    const sheets: KnowledgeCardContactSheet[] = [];
+    let thumbsDone = 0;
+    for (let first = 1; first <= total; first += THUMB_BATCH_PAGES) {
+      const last = Math.min(total, first + THUMB_BATCH_PAGES - 1);
+      const thumbs = await renderPdfPagesToJpeg(pdfPath, dir, `t${first}`, THUMB_WIDTH, { first, last });
+      if (thumbs.size !== last - first + 1) throw new Error(`原稿缩略图页数不符：第 ${first}–${last} 页应 ${last - first + 1} 页，实得 ${thumbs.size} 页`);
+      for (const sheet of await buildContactSheets(thumbs, sheets.length)) sheets.push(sheet);
+      thumbsDone += thumbs.size;
+      await params.onProgress?.("thumbs", thumbsDone, total);
+    }
 
     await params.onProgress?.("select", 0, sheets.length);
     const picked = await params.selectPages(sheets, total);
@@ -276,8 +285,10 @@ export async function resolveKnowledgeCardReferencePageUrls(params: {
       const { getGcsBucketName, signGsUriV4ReadUrl } = await import("./gcs.js");
       const url = signGsUriV4ReadUrl(`gs://${getGcsBucketName()}/${objectName}`, 3600);
       try {
-        const res = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(15_000) });
-        return res.ok ? url : null;
+        // V4 签名绑定 GET 动词，HEAD 会 SignatureDoesNotMatch；用 GET + Range 只取 1 字节判存在
+        const res = await fetch(url, { method: "GET", headers: { Range: "bytes=0-0" }, signal: AbortSignal.timeout(15_000) });
+        await res.arrayBuffer().catch(() => undefined);
+        return res.status === 200 || res.status === 206 ? url : null;
       } catch {
         return null;
       }

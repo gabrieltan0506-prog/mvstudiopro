@@ -83,4 +83,23 @@ describe("buildPageAlignedChunks", () => {
     expect(chunks[chunks.length - 1]!.label).toBe("补充文字");
     expect(chunks.flatMap((c) => c.pageImages).length).toBe(2);
   });
+
+  it("caps reference page images per chunk so image-heavy books do not build one giant request", () => {
+    const pages = Array.from({ length: 30 }, (_, i) => ({ n: i + 1, text: "短", img: true }));
+    const chunks = buildPageAlignedChunks([doc(pages)], "", 100_000, 8);
+    expect(chunks.length).toBe(4);
+    expect(Math.max(...chunks.map((c) => c.pageImages.length))).toBe(8);
+    expect(chunks.flatMap((c) => c.pageImages).length).toBe(30);
+  });
+
+  it("two page documents are chunked once each (no double distill of the same text)", () => {
+    const a = doc(Array.from({ length: 3 }, (_, i) => ({ n: i + 1, text: `A${i}`.repeat(50) })));
+    const b = { ...doc(Array.from({ length: 3 }, (_, i) => ({ n: i + 1, text: `B${i}`.repeat(50) }))), docKey: "fedcba9876543210", fileName: "b.pdf" };
+    const chunks = buildPageAlignedChunks([a, b], "", 100_000);
+    const all = chunks.map((c) => c.text).join("\n");
+    expect(all.split("【book.pdf 第 1 页】").length - 1).toBe(1);
+    expect(all.split("【b.pdf 第 1 页】").length - 1).toBe(1);
+    expect(all.split("【b.pdf 第 3 页】").length - 1).toBe(1);
+    expect(chunks.every((c) => c.label !== "补充文字")).toBe(true);
+  });
 });
