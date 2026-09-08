@@ -243,3 +243,50 @@ describe("普通视频参考职责不被自动改写", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("Seedance 2.5 多模态参考：勾选视频是站位参考，不是上一段成片", () => {
+  it("不抽尾帧、不追加镜头连续性提示，视频原样进 videoUrls", async () => {
+    const requests = offlineRequests("seedanceI2V");
+    const previs = "https://test.invalid/previs-blocking.mp4";
+    const result = await runCanvasBlock(
+      { userRole: "admin", optimizeCopy: async () => "" },
+      {
+        ...defaultCanvasBlock("video", 0, 0),
+        id: "video-seedance25-reference",
+        videoModel: "seedance-2.5",
+        seedance25WorkMode: "reference_to_video",
+        prompt: `【第1段·10s】${action}`,
+        refImageUrl: images[0],
+        refVideoUrl: previs,
+      }
+    );
+    expect(result.outputUrl).toBe("https://test.invalid/result.mp4");
+    expect(requests).toHaveLength(1);
+    expect(requests[0].version).toBe("2.5");
+    expect(requests[0].videoUrls).toEqual([previs]);
+    expect(requests[0].imageUrls).toEqual([images[0]]);
+    expect(requests[0].prompt).not.toContain("镜头连续性");
+    expect(requests[0].prompt).not.toContain("上一段成片");
+    expect(extractVideoTailFramesFromUrl).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("2.0 档勾选视频仍按上一段成片接力（行为不变）", async () => {
+    const requests = offlineRequests("seedanceI2V");
+    const previous = "https://test.invalid/previous.mp4";
+    await runCanvasBlock(
+      { userRole: "admin", optimizeCopy: async () => "" },
+      {
+        ...defaultCanvasBlock("video", 0, 0),
+        id: "video-seedance20-continuity",
+        videoModel: "seedance-2.0-mini",
+        prompt: `【第1段·10s】${action}`,
+        refImageUrl: images[0],
+        refVideoUrl: previous,
+      }
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0].prompt).toContain("镜头连续性");
+    expect(extractVideoTailFramesFromUrl).toHaveBeenCalledTimes(1);
+  });
+});

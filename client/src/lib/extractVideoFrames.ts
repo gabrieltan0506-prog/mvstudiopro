@@ -8,9 +8,49 @@ export type ExtractedVideoFrame = {
   mimeType: "image/jpeg";
 };
 
-function loadVideo(url: string): Promise<HTMLVideoElement> {
-  return new Promise((resolve, reject) => {
-    const video = document.createElement("video");
+/** 浏览器解码/定位的硬超时：签名视频链接跨域拿不到元数据时 video 元素可能永不回调，
+ *  不设超时会把整条出片链路挂死在抽帧这一步（0908 白模站位参考实测）。*/
+export const VIDEO_FRAME_LOAD_TIMEOUT_MS = 20_000;
+export const VIDEO_FRAME_SEEK_TIMEOUT_MS = 10_000;
+
+function withTimeout<T>(
+  run: Promise<T>,
+  ms: number,
+  label: string
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label}_timeout_${ms}ms`)),
+      ms
+    );
+    run.then(
+      value => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      error => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
+function releaseVideo(video: HTMLVideoElement): void {
+  try {
+    video.removeAttribute("src");
+    video.load();
+  } catch {
+    /* 释放失败不影响调用方 */
+  }
+}
+
+function loadVideo(
+  url: string,
+  timeoutMs = VIDEO_FRAME_LOAD_TIMEOUT_MS
+): Promise<HTMLVideoElement> {
+  const video = document.createElement("video");
+  const loaded = new Promise<HTMLVideoElement>((resolve, reject) => {
     video.crossOrigin = "anonymous";
     video.muted = true;
     video.playsInline = true;
@@ -23,14 +63,22 @@ function loadVideo(url: string): Promise<HTMLVideoElement> {
         video.removeEventListener("error", onError);
         resolve(video);
       },
-      { once: true },
+      { once: true }
     );
     video.src = url;
   });
+  return withTimeout(loaded, timeoutMs, "video_load").catch(error => {
+    releaseVideo(video);
+    throw error;
+  });
 }
 
-function seek(video: HTMLVideoElement, t: number): Promise<void> {
-  return new Promise((resolve, reject) => {
+function seek(
+  video: HTMLVideoElement,
+  t: number,
+  timeoutMs = VIDEO_FRAME_SEEK_TIMEOUT_MS
+): Promise<void> {
+  const seeked = new Promise<void>((resolve, reject) => {
     const onSeeked = () => {
       video.removeEventListener("seeked", onSeeked);
       resolve();
@@ -39,11 +87,15 @@ function seek(video: HTMLVideoElement, t: number): Promise<void> {
     video.addEventListener("seeked", onSeeked, { once: true });
     video.addEventListener("error", onError, { once: true });
     try {
-      video.currentTime = Math.min(Math.max(0, t), Math.max(0, video.duration - 0.05));
+      video.currentTime = Math.min(
+        Math.max(0, t),
+        Math.max(0, video.duration - 0.05)
+      );
     } catch (e) {
       reject(e);
     }
   });
+  return withTimeout(seeked, timeoutMs, "video_seek");
 }
 
 export async function extractVideoFramesFromUrl(
@@ -54,7 +106,7 @@ export async function extractVideoFramesFromUrl(
     maxDurationSec?: number;
     maxWidth?: number;
     jpegQuality?: number;
-  },
+  }
 ): Promise<{ frames: ExtractedVideoFrame[]; durationSec: number }> {
   const maxFrames = Math.max(4, Math.min(32, opts?.maxFrames ?? 16));
   const intervalSec = Math.max(0.5, opts?.intervalSec ?? 2);
@@ -67,10 +119,17 @@ export async function extractVideoFramesFromUrl(
   if (!(durationSec > 0.2)) throw new Error("video_duration_invalid");
 
   const times: number[] = [];
-  for (let t = 0; t < durationSec && times.length < maxFrames; t += intervalSec) {
+  for (
+    let t = 0;
+    t < durationSec && times.length < maxFrames;
+    t += intervalSec
+  ) {
     times.push(Number(t.toFixed(2)));
   }
-  if (times[times.length - 1] < durationSec - 0.15 && times.length < maxFrames) {
+  if (
+    times[times.length - 1] < durationSec - 0.15 &&
+    times.length < maxFrames
+  ) {
     times.push(Number((durationSec - 0.05).toFixed(2)));
   }
 
@@ -80,7 +139,12 @@ export async function extractVideoFramesFromUrl(
 
   const frames: ExtractedVideoFrame[] = [];
   for (const t of times) {
-    await seek(video, t);
+    try {
+      await seek(video, t);
+    } catch (error) {
+      releaseVideo(video);
+      throw error;
+    }
     const vw = video.videoWidth || 720;
     const vh = video.videoHeight || 1280;
     const scale = Math.min(1, maxWidth / vw);
@@ -105,7 +169,7 @@ export async function extractVideoTailFramesFromUrl(
     tailWindowSec?: number;
     maxWidth?: number;
     jpegQuality?: number;
-  },
+  }
 ): Promise<{ frames: ExtractedVideoFrame[]; durationSec: number }> {
   const frameCount = Math.max(1, Math.min(6, opts?.frameCount ?? 4));
   const tailWindowSec = Math.max(0.35, Math.min(8, opts?.tailWindowSec ?? 4));
@@ -123,7 +187,9 @@ export async function extractVideoTailFramesFromUrl(
   } else {
     for (let i = 0; i < frameCount; i++) {
       const t = start + ((durationSec - 0.05 - start) * i) / (frameCount - 1);
-      times.push(Number(Math.min(durationSec - 0.05, Math.max(0, t)).toFixed(2)));
+      times.push(
+        Number(Math.min(durationSec - 0.05, Math.max(0, t)).toFixed(2))
+      );
     }
   }
 
@@ -133,14 +199,23 @@ export async function extractVideoTailFramesFromUrl(
 
   const frames: ExtractedVideoFrame[] = [];
   for (const t of times) {
-    await seek(video, t);
+    try {
+      await seek(video, t);
+    } catch (error) {
+      releaseVideo(video);
+      throw error;
+    }
     const vw = video.videoWidth || 720;
     const vh = video.videoHeight || 1280;
     const scale = Math.min(1, maxWidth / vw);
     canvas.width = Math.max(1, Math.round(vw * scale));
     canvas.height = Math.max(1, Math.round(vh * scale));
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    frames.push({ tSec: t, dataUrl: canvas.toDataURL("image/jpeg", quality), mimeType: "image/jpeg" });
+    frames.push({
+      tSec: t,
+      dataUrl: canvas.toDataURL("image/jpeg", quality),
+      mimeType: "image/jpeg",
+    });
   }
 
   video.removeAttribute("src");
