@@ -7905,6 +7905,22 @@ export default function PlatformPage() {
 
   /** 自定義文案生成圖文筆記 — 獨立 mutation；回呼留空，全部流程在 handler 以 mutateAsync 串接控制。 */
   const generateCustomNoteMutation = trpc.mvAnalysis.generatePlatformCompositeSheet.useMutation();
+  const exportKnowledgeCardPdfMutation = trpc.mvAnalysis.exportKnowledgeCardPdf.useMutation();
+  const [knowledgeCardPdfBusy, setKnowledgeCardPdfBusy] = useState(false);
+  /** 整套导出 PDF：服务端归一尺寸拼页落 GCS，这里只拿签名链打开 */
+  const downloadKnowledgeCardPdf = async (urls: string[]) => {
+    if (!urls.length || knowledgeCardPdfBusy) return;
+    setKnowledgeCardPdfBusy(true);
+    try {
+      const res = await exportKnowledgeCardPdfMutation.mutateAsync({ imageUrls: urls, title: extractInfographicSubjectFromUserCopy(customNoteText) });
+      window.open(res.url, "_blank", "noopener,noreferrer");
+      toast.success(`PDF 已生成（${res.pageCount} 页），已在新窗口打开`);
+    } catch (e) {
+      toast.error(`PDF 导出失败：${String((e as { message?: string })?.message || "").slice(0, 120)}`);
+    } finally {
+      setKnowledgeCardPdfBusy(false);
+    }
+  };
   const prepareKnowledgeCardCopyMutation = trpc.mvAnalysis.prepareKnowledgeCardCopy.useMutation();
   const optimizeCustomCopyMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
   const customOptimizeCopyCost = CREDIT_COSTS.platformOptimizeCustomCopy;
@@ -15447,6 +15463,21 @@ export default function PlatformPage() {
 
               {(customNoteImages.length > 0 || customNoteImageUpper || customNoteImageLower) && (
                 <div className="mt-5 space-y-6">
+                  {customNoteKind === "single_page_knowledge_card" && customNoteImages.length > 0 && !customNoteBusy && (
+                    <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[#49e6ff]/20 bg-[rgba(73,230,255,0.05)] px-4 py-3 text-sm">
+                      <span className="text-[#c9c0e6]/80">已生成 {customNoteImages.length} 页</span>
+                      <button
+                        type="button"
+                        disabled={knowledgeCardPdfBusy}
+                        onClick={() => void downloadKnowledgeCardPdf(customNoteImages)}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/30 bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                        {knowledgeCardPdfBusy ? "正在合成 PDF…" : `整套下载 PDF（${customNoteImages.length} 页 · 统一 3840×2160）`}
+                      </button>
+                      <span className="text-[11px] text-[#c9c0e6]/45">单张下载见各页右下角</span>
+                    </div>
+                  )}
                   {customNoteKind === "single_page_knowledge_card" && (customNoteImages.length > 0 ? customNoteImages : [customNoteImageUpper, customNoteImageLower].filter(Boolean) as string[]).map((url, idx, arr) => (
                     <div key={`kc-${idx}-${url.slice(-24)}`} className="space-y-3">
                       <div className="text-xs font-semibold uppercase tracking-wide text-[#ff9fe0]/70">
