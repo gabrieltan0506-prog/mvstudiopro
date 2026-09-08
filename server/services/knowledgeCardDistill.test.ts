@@ -104,11 +104,11 @@ describe("per-model distill profiles", () => {
     expect(sol.chunkChars).toBeGreaterThan(qwen.chunkChars);
     expect(qwen.minSectionsPerChunk).toBeGreaterThan(sol.minSectionsPerChunk);
 
-    // 0908 用户令：Sol 只开 medium（high/xhigh 太慢）；Qwen 统稿仍 xhigh
+    // 0908/0909 用户令：Sol 只开 medium；Qwen 用 high，不上 xhigh
     expect(sol.effortChunk).toBe("medium");
     expect(sol.effortFinal).toBe("medium");
-    expect(qwen.effortChunk).toBe("medium");
-    expect(qwen.effortFinal).toBe("xhigh");
+    expect(qwen.effortChunk).toBe("high");
+    expect(qwen.effortFinal).toBe("high");
 
     for (const p of [sol, qwen]) {
       expect(p.chunkRetries).toBeGreaterThanOrEqual(1);

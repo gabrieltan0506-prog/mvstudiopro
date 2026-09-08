@@ -14,12 +14,12 @@ afterEach(() => {
 });
 
 describe("distillGatewayChain（0908：EvoLink 主通道，各档官方兜底）", () => {
-  it("Sol: EvoLink → OpenAI 官方；Qwen: EvoLink → 百炼新加坡", () => {
+  it("Sol: EvoLink → OpenAI 官方；Qwen: 百炼新加坡 token plan → EvoLink（0909 拍板）", () => {
     vi.stubEnv("EVOLINK_API_KEY", "ev-key");
     vi.stubEnv("OPENAI_API_KEY", "sk-official123");
     vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "sg-key");
     expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_SOL)).toEqual(["evolink", "openai_official"]);
-    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual(["evolink", "dashscope_sg"]);
+    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual(["dashscope_sg", "evolink"]);
   });
 
   it("missing keys shrink the chain instead of pointing at an unconfigured channel", () => {
@@ -29,6 +29,8 @@ describe("distillGatewayChain（0908：EvoLink 主通道，各档官方兜底）
     vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "");
     expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_SOL)).toEqual(["openai_official"]);
     expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual([]);
+    vi.stubEnv("EVOLINK_API_KEY", "ev-key");
+    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual(["evolink"]);
   });
 });
 

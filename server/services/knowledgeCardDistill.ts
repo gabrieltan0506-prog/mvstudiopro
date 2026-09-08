@@ -140,8 +140,9 @@ const DISTILL_PROFILES: Record<KnowledgeCardDistillModelId, KnowledgeCardDistill
     chunkThreshold: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_CHUNK_THRESHOLD", 9_000, 4_000, 40_000),
     chunkChars: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_CHUNK_CHARS", 8_000, 3_000, 20_000),
     concurrency: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_CONCURRENCY", 2, 1, 4),
-    effortChunk: envStr("KNOWLEDGE_CARD_DISTILL_QWEN_EFFORT_CHUNK", "medium"),
-    effortFinal: envStr("KNOWLEDGE_CARD_DISTILL_QWEN_EFFORT_FINAL", "xhigh"),
+    // 0909 用户令：Qwen 用 high，不上 xhigh（sg 套餐走 enable_thinking，档位只对 EvoLink 兜底生效）
+    effortChunk: envStr("KNOWLEDGE_CARD_DISTILL_QWEN_EFFORT_CHUNK", "high"),
+    effortFinal: envStr("KNOWLEDGE_CARD_DISTILL_QWEN_EFFORT_FINAL", "high"),
     requestTimeoutMs: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_TIMEOUT_MS", 240_000, 60_000, 480_000),
     chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_CHUNK_RETRIES", 2, 0, 4),
     minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_MIN_SECTIONS", 5, 2, 24),
@@ -674,15 +675,20 @@ async function invokeDistillViaGateway(params: {
   return out;
 }
 
-/** 各档通道顺序：主通道 EvoLink，失败改走该档官方（0908 用户拍板）。 */
+/**
+ * 各档通道顺序（0909 用户拍板）：
+ * - Sol：EvoLink 主 → OpenAI 官方兜底
+ * - Qwen3.8 Max：百炼新加坡 token plan 主 → EvoLink 兜底
+ */
 export function distillGatewayChain(modelName: KnowledgeCardDistillModelId): DistillGateway[] {
   const chain: DistillGateway[] = [];
-  if (getEvolinkApiKey()) chain.push("evolink");
   if (modelName === KNOWLEDGE_CARD_DISTILL_MODEL_QWEN) {
     if (getDashscopeSgPlanKey()) chain.push("dashscope_sg");
-  } else if (getOfficialOpenAiApiKey()) {
-    chain.push("openai_official");
+    if (getEvolinkApiKey()) chain.push("evolink");
+    return chain;
   }
+  if (getEvolinkApiKey()) chain.push("evolink");
+  if (getOfficialOpenAiApiKey()) chain.push("openai_official");
   return chain;
 }
 

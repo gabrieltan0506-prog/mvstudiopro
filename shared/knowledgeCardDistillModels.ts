@@ -1,7 +1,7 @@
 /**
  * 图文卡提炼/读图模型（两档，2026-09-08 用户拍板：四档改两档）。
  * - Evolink GPT-5.6 Sol（档名「精细」）；EvoLink 失败→OpenAI 官方同模型兜底
- * - Evolink Qwen3.8 Max（档名「轻量」）；EvoLink 失败→百炼新加坡套餐同模型兜底
+ * - Qwen3.8 Max（档名「轻量」）；百炼新加坡 token plan 主通道，失败→EvoLink 同模型兜底（0909 用户拍板）
  *
  * 页费含提炼/读图+出图；旧「超凡」（Claude）与「均衡」（Kimi）两档已下架，
  * 旧值仍可解析（历史 receipt / localStorage），一律迁到本档位表。
