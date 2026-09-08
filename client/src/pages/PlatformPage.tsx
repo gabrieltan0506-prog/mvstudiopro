@@ -7911,30 +7911,43 @@ export default function PlatformPage() {
   const [knowledgeCardPdfUrl, setKnowledgeCardPdfUrl] = useState<string | null>(null);
   /** 正在生成中的页序（0-based）：占位块显示「生成中」，补出按钮对在途页禁用，避免同一页重复扣费 */
   const [knowledgeCardInflight, setKnowledgeCardInflight] = useState<number[]>([]);
-  const markInflight = (idx: number, on: boolean) => setKnowledgeCardInflight((cur) => (on ? (cur.includes(idx) ? cur : [...cur, idx]) : cur.filter((i) => i !== idx)));
+  /** 当前出图批次号：旧批次的在途页返回后不得覆盖新批次的结果/在途标记 */
+  const renderRunIdRef = useRef(0);
+  /** 本套卡出图时用的提炼稿快照：补出单页必须用它，不用文本框里可能已改过的内容 */
+  const renderedDraftRef = useRef<string>("");
+  /** customNoteImages 的同步镜像：计数用，不在 state updater 里做副作用 */
+  const customNoteImagesRef = useRef<string[]>([]);
+  const markInflight = (runId: number, idx: number, on: boolean) => {
+    if (runId !== renderRunIdRef.current) return;
+    setKnowledgeCardInflight((cur) => (on ? (cur.includes(idx) ? cur : [...cur, idx]) : cur.filter((i) => i !== idx)));
+  };
+  const knowledgeCardDraftChanged = () => Boolean(renderedDraftRef.current) && customNoteText.trim() !== renderedDraftRef.current;
   /** 单页补出：只重出失败/缺失的那一页，按该页页费确认后扣费；不动其它页 */
   const retryKnowledgeCardPage = async (idx: number) => {
     if (customNoteBusy) { toast.info("上一个生成任务还在进行中，请稍候"); return; }
-    const total = customNoteImages.length;
-    const text = customNoteText.trim();
+    const total = customNoteImagesRef.current.length;
+    // 必须用出图时的提炼稿快照：文本框改过再按新文本出第 N 页，会拿到另一份稿的页还照旧计费
+    const text = renderedDraftRef.current;
     if (!text || idx < 0 || idx >= total) return;
+    if (knowledgeCardDraftChanged()) { toast.error("文案已改动，补出会对不上这套卡；请重新整套生成"); return; }
     if (knowledgeCardInflight.includes(idx)) { toast.info(`第 ${idx + 1} 页仍在生成中，请稍候`); return; }
     const price = knowledgeCardCreditsForPageIndex(idx + 1, customNoteDistillModel);
     if (!window.confirm(`补出第 ${idx + 1}/${total} 页，${price} 积分，是否继续？`)) return;
+    const runId = renderRunIdRef.current;
     setCustomNoteBusy(true);
     setCustomNoteError(null);
     setKnowledgeCardPdfUrl(null);
-    setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(customNoteImages.filter(Boolean).length, total), label: `补出第 ${idx + 1}/${total} 页` });
-    markInflight(idx, true);
+    setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(customNoteImagesRef.current.filter(Boolean).length, total), label: `补出第 ${idx + 1}/${total} 页` });
+    markInflight(runId, idx, true);
     try {
       const url = await generateCustomNoteOne(text, "single_page_knowledge_card", undefined, { index: idx + 1, total }, idx % 2 === 0 ? "evolink" : "openai");
-      setCustomNoteImages((current) => {
-        const next = current.slice();
-        next[idx] = url;
-        const ready = next.filter(Boolean).length;
-        setCustomNoteProgress(ready >= total ? { status: "succeeded", percent: 100 } : { status: "running", percent: knowledgeCardProgressFromRender(ready, total), label: `出图 ${ready}/${total} 页` });
-        return next;
-      });
+      if (runId !== renderRunIdRef.current) return; // 期间已重新整套生成，旧结果丢弃
+      const next = customNoteImagesRef.current.slice();
+      next[idx] = url;
+      customNoteImagesRef.current = next;
+      setCustomNoteImages(next);
+      const ready = next.filter(Boolean).length;
+      setCustomNoteProgress(ready >= total ? { status: "succeeded", percent: 100 } : { status: "running", percent: knowledgeCardProgressFromRender(ready, total), label: `出图 ${ready}/${total} 页` });
       toast.success(`第 ${idx + 1} 页已补出`);
     } catch (e) {
       const msg = mapCustomNoteError(e);
@@ -7942,7 +7955,7 @@ export default function PlatformPage() {
       setCustomNoteProgress((prev) => ({ status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
       toast.error(`补出失败：${msg.slice(0, 120)}`);
     } finally {
-      markInflight(idx, false);
+      markInflight(runId, idx, false);
       setCustomNoteBusy(false);
     }
   };
@@ -8159,6 +8172,10 @@ export default function PlatformPage() {
       toast.info("上一个生成任务还在进行中，请稍候");
       return;
     }
+    if (knowledgeCardInflight.length > 0) {
+      toast.info(`还有 ${knowledgeCardInflight.length} 页在生成中，等它们结束再重新生成`);
+      return;
+    }
     const kind = overrides?.kind ?? customNoteKind;
     const trimmed = (overrides?.text ?? customNoteText).trim();
     const pendingAhead = customNotePendingFilesRef.current.length;
@@ -8282,10 +8299,18 @@ export default function PlatformPage() {
          */
         const urls: (string | null)[] = Array.from({ length: total }, () => null);
         let done = 0;
+        // 新批次：旧批次在途页返回后不得覆盖；补出单页用这份稿的快照
+        const runId = ++renderRunIdRef.current;
+        renderedDraftRef.current = distilled;
+        customNoteImagesRef.current = Array.from({ length: total }, () => "");
+        setKnowledgeCardInflight([]);
         const publish = () => {
+          if (runId !== renderRunIdRef.current) return;
           const ready = urls.filter((u): u is string => Boolean(u));
           // 保留页序空洞（缺页显示占位），页码/下载名/PDF 页数都按真实页序，不前移
-          setCustomNoteImages(urls.map((u) => u || ""));
+          const snapshot = urls.map((u) => u || "");
+          customNoteImagesRef.current = snapshot;
+          setCustomNoteImages(snapshot);
           setCustomNoteImageUpper(urls[0] ?? null);
           setCustomNoteImageLower(urls[1] ?? null);
           // 已判失败的终态不被在途页的回填覆盖回「运行中」
@@ -8301,12 +8326,12 @@ export default function PlatformPage() {
             try {
             setCustomNotePageProgress({ i: Math.min(total, done + 1), n: total });
             const provider = i % 2 === 0 ? "evolink" : "openai";
-            markInflight(i, true);
+            markInflight(runId, i, true);
             try {
               const url = await generateCustomNoteOne(distilled, "single_page_knowledge_card", undefined, { index: i + 1, total }, provider);
               urls[i] = url;
             } finally {
-              markInflight(i, false);
+              markInflight(runId, i, false);
             }
             done += 1;
             publish();
@@ -8333,13 +8358,11 @@ export default function PlatformPage() {
       setCustomNoteError(msg);
       if (kind === "single_page_knowledge_card") {
         setCustomNoteProgress((prev) => ({ status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
-        // 在途页会继续出图并回填，这里如实告知已完成页数（含在途）与对应页费
-        setCustomNoteImages((current) => {
-          const doneCount = current.filter(Boolean).length;
-          if (doneCount > 0) toast.error(`生成失败：${msg.slice(0, 100)}（已完成 ${doneCount} 页，按已成功页计费，失败页不扣费）`);
-          else toast.error(`生成失败：${msg.slice(0, 120)}`);
-          return current;
-        });
+        // 在途页会继续出图并回填，这里如实告知已完成页数与对应页费（读同步镜像，不在 updater 里做副作用）
+        const doneCount = customNoteImagesRef.current.filter(Boolean).length;
+        toast.error(doneCount > 0
+          ? `生成失败：${msg.slice(0, 100)}（已完成 ${doneCount} 页，按已成功页计费，失败页不扣费）`
+          : `生成失败：${msg.slice(0, 120)}`);
       } else {
         toast.error(`生成失敗：${msg.slice(0, 120)}`);
       }
@@ -15428,6 +15451,9 @@ export default function PlatformPage() {
                       setCustomNoteProgress({ status: "idle", percent: 0 });
                       setKnowledgeCardPdfUrl(null);
                       setKnowledgeCardInflight([]);
+                      renderRunIdRef.current += 1;
+                      renderedDraftRef.current = "";
+                      customNoteImagesRef.current = [];
                       customNotePendingFilesRef.current = [];
                       setCustomNotePendingMeta([]);
                       setCustomNoteUploadStatus(null);
@@ -15576,7 +15602,7 @@ export default function PlatformPage() {
                         </a>
                       </div>
                     </div>
-                  ) : (customNoteBusy || knowledgeCardInflight.includes(idx)) ? (
+                  ) : knowledgeCardInflight.includes(idx) ? (
                     <div key={`kc-pending-${idx}`} className="flex items-center gap-2 rounded-2xl border border-dashed border-white/15 px-4 py-4 text-sm text-[#c9c0e6]/70">
                       <Loader2 className="h-4 w-4 animate-spin" />第 {idx + 1}/{arr.length} 页生成中…
                     </div>
@@ -15585,7 +15611,8 @@ export default function PlatformPage() {
                       <span>第 {idx + 1}/{arr.length} 页未生成（本页未扣费）；整套 PDF 只含已生成页。</span>
                       <button
                         type="button"
-                        disabled={customNoteBusy || knowledgeCardInflight.includes(idx)}
+                        disabled={customNoteBusy || knowledgeCardInflight.includes(idx) || knowledgeCardDraftChanged()}
+                        title={knowledgeCardDraftChanged() ? "文案已改动，请重新整套生成" : undefined}
                         onClick={() => void retryKnowledgeCardPage(idx)}
                         className="inline-flex items-center gap-1.5 rounded-full border border-[#ff4fb8]/30 bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                       >

@@ -8143,8 +8143,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const { exportKnowledgeCardPdfToGcs, checkKnowledgeCardExportRate, KNOWLEDGE_CARD_EXPORT_RATE_MESSAGE } =
           await import("./services/knowledgeCardPdfExport.js");
         const gate = checkKnowledgeCardExportRate(knowledgeCardPdfExportHits.get(ctx.user.id), Date.now());
-        if (gate.history.length) knowledgeCardPdfExportHits.set(ctx.user.id, gate.history);
-        else knowledgeCardPdfExportHits.delete(ctx.user.id);
         // 顺手清掉窗口外的空条目，Map 不随用户数无限增长
         for (const [uid, hist] of Array.from(knowledgeCardPdfExportHits.entries())) {
           if (!hist.some((t) => Date.now() - t < 60_000)) knowledgeCardPdfExportHits.delete(uid);
@@ -8153,6 +8151,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: KNOWLEDGE_CARD_EXPORT_RATE_MESSAGE });
         }
         const result = await exportKnowledgeCardPdfToGcs({ userId: ctx.user.id, imageUrls: input.imageUrls, title: input.title });
+        // 只有导出成功才计入配额，失败不吃掉重试机会
+        knowledgeCardPdfExportHits.set(ctx.user.id, gate.history);
         return { success: true as const, ...result };
       }),
 
