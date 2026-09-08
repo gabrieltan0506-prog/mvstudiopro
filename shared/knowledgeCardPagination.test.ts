@@ -68,6 +68,9 @@ describe("单页硬顶 1200 字（0908：超过会乱码/字糊）", () => {
     const plan = planKnowledgeCardPages(body);
     expect(plan.pages.length).toBeGreaterThan(0);
     for (const page of plan.pages) expect(page.length).toBeLessThanOrEqual(KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE);
+    // 贴着上限分：段落 700 字一个装不下两个，页数≈段数；不碎成小页
+    expect(plan.pages.length).toBeLessThanOrEqual(31);
+    expect(Math.min(...plan.pages.map((p) => p.length))).toBeGreaterThan(200);
   });
 });
 

@@ -224,8 +224,8 @@ function resolveDistillBullets(modelName?: string | null, detailLevel?: Knowledg
     ? DISTILL_PROFILES[modelName as KnowledgeCardDistillModelId]
     : undefined;
   const base = profile?.bulletsPerSection ?? DISTILL_DEFAULT_BULLETS;
-  // 高级版：每节写满，不许压成三五条干标题
-  return detailLevel === "full" ? { min: Math.max(base.min, 7), max: Math.max(base.max, 11) } : base;
+  // 高级版：内容靠表格/图表压实，要点条数与精简版同档（多出来的信息进表格，不进长列表）
+  return base;
 }
 
 /** 模型旁白禁令：0908 探针里「第 17 页配对与前文冲突」「材料认为」这类审稿口吻被印上了卡片 */
@@ -234,7 +234,7 @@ const DISTILL_NO_META_ZH = `**不要写审稿旁白**：不得出现「材料认
 function buildDistillSystem(minSections: number, modelName?: string | null, docKeys?: string[], detailLevel?: KnowledgeCardDetailLevel): string {
   const bullets = resolveDistillBullets(modelName, detailLevel);
   const levelRule = detailLevel === "full"
-    ? `\n0. **成稿档：高级版（内容完整）**：本材料的每个章节、每个方法、每个表格/清单都要落成小节或要点，不因「取重点」舍弃次要章节；数字、步骤、条件全部保留。`
+    ? `\n0. **成稿档：高级版（内容完整、表格化）**：本材料的每个章节、方法、表格/清单都要落进成稿，不因「取重点」舍弃次要章节；数字、步骤、条件全部保留。**能表格化的一律表格化**：分类/对比/参数/时辰-经脉-做法这类多维内容写成 Markdown 表格（表头清楚、每格一句短语，不超过 6 列）；步骤/流程写成「A → B → C」一行流程链；同类清单合并成一张表而不是散成多节。表格承载信息量，小节数量不要为了铺开而增加。`
     : "";
   const refRule = docKeys?.length
     ? `\n7. **参考原页标记**：用户会附上原稿中版式有特色的页（表格、思维导图、分式图解、左右对比），每张图前都标了「原稿 docKey 第 N 页」。某小节的内容对应这些页时，在该小节末尾单独一行写标记，格式 \`${docKeys.map((k) => formatKnowledgeCardPageRef(k, [1])).join("\` 或 \`")}\`（docKey 照抄该图前标注的那个，页码写该图标注的真实页码，多页用逗号）。只能引用本次附带的图；没有对应参考页的小节不写标记；不得编造 docKey 或页码。`
@@ -824,7 +824,7 @@ function buildRefineSystem(
 
 硬性要求：
 1. **不压缩**：这是高级版，内容要完整。只合并**讲同一件事**的重复小节，其余小节全部保留；合并后总节数不少于 ${Math.max(2, Math.floor((currentSections || minSections) * 0.9))} 个 \`## 小节\`（当前 ${currentSections || "?"} 个）。
-2. **不删要点**：每节的要点、数字、步骤、条件、例子一条不少；合并小节时把两边要点合在一起，不挑选。
+2. **不删要点，但要压实**：每节的要点、数字、步骤、条件、例子一条不少；合并小节时把两边要点合在一起，不挑选。能表格化的一律改成 Markdown 表格（分类/对比/参数/时辰-经脉-做法等多维内容），步骤写成「A → B → C」流程链，同类清单并成一张表；用表格承载而不是拉长列表。
 3. **理主线**：\`# 总标题\` 点出主旨，小节按「是什么 → 为什么 → 怎么做 → 边界与例外」之类的自然顺序重排，读下来是一条线。
 4. ${distillSectionShape(bullets)}
 5. 去掉分段痕迹：「本段 / 以上 / 续上」这类过渡语、重复标题、空节。${DISTILL_NO_META_ZH}

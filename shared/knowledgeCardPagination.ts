@@ -221,24 +221,40 @@ function packSectionsIntoPages(
     .filter(Boolean);
 }
 
-/** 超长页按行（其次按句）硬切，保证每页 ≤ maxChars */
-function hardSplitPage(page: string, maxChars: number): string[] {
-  const text = page.trim();
-  if (text.length <= maxChars) return text ? [text] : [];
-  const out: string[] = [];
-  let current = "";
-  for (const line of text.split(/\r?\n/)) {
-    const piece = line.length > maxChars ? line.match(new RegExp(`[\\s\\S]{1,${maxChars}}`, "g")) || [] : [line];
-    for (const part of piece) {
-      if (current.length + part.length + 1 > maxChars && current.trim()) {
-        out.push(current.trim());
-        current = "";
+/**
+ * 按段落贪心装页：每页 ≤ cap（含补上的 # 总标题），装不下才开新页；超长段落按句再切。
+ * 结果页数最少、每页贴着上限，不会出现几十字的碎页。
+ */
+function packByCap(full: string, h1: string, cap: number): string[] {
+  const head = h1 ? `${h1}\n\n` : "";
+  const room = Math.max(200, cap - head.length);
+  const units: string[] = [];
+  for (const para of full.split(/\n\s*\n/)) {
+    const t = para.trim();
+    if (!t || t === h1) continue;
+    if (t.length <= room) { units.push(t); continue; }
+    // 超长段：按行，再按句切
+    let buf = "";
+    for (const line of t.split(/\r?\n/)) {
+      const pieces = line.length <= room ? [line] : (line.match(/[^。！？；\n]+[。！？；]?/g) || [line]);
+      for (const piece of pieces) {
+        const chunk = piece.length > room ? (piece.match(new RegExp(`[\\s\\S]{1,${room}}`, "g")) || []) : [piece];
+        for (const c of chunk) {
+          if (buf.length + c.length + 1 > room && buf) { units.push(buf.trim()); buf = ""; }
+          buf += (buf ? "\n" : "") + c;
+        }
       }
-      current += (current ? "\n" : "") + part;
     }
+    if (buf.trim()) units.push(buf.trim());
   }
-  if (current.trim()) out.push(current.trim());
-  return out;
+  const pages: string[] = [];
+  let current = "";
+  for (const unit of units) {
+    if (current && current.length + 2 + unit.length > room) { pages.push(current); current = ""; }
+    current += (current ? "\n\n" : "") + unit;
+  }
+  if (current) pages.push(current);
+  return pages.map((p, i) => (i === 0 || !h1 ? (i === 0 && h1 && !p.startsWith(h1) ? `${head}${p}` : p) : `${head}${p}`));
 }
 
 function resolveDesiredPageCount(charCount: number, sectionCount: number): number {
@@ -431,14 +447,10 @@ export function planKnowledgeCardPages(
     pages = splitByChars(full, pageCount);
   }
 
-  // 0908 用户令：单页超过 1200 字会出乱码/字糊，硬顶 1200，超了宁可多分页
-  let guard = 0;
-  while (pages.some((p) => p.length > KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE) && guard < 12) {
-    pages = splitByChars(full, Math.max(pages.length + 1, neededByCap + guard));
-    guard += 1;
+  // 0908 用户令：单页超过 1200 字会出乱码/字糊，硬顶 1200；按段落贪心装页，贴着上限分，不碎成小页
+  if (pages.some((p) => p.length > KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE)) {
+    pages = packByCap(full, parsed.h1, KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE);
   }
-  // 仍有超长页（句子边界让均分略溢出）：按行硬切到 1200 以内
-  pages = pages.flatMap((page) => hardSplitPage(page, KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE));
 
   const finalPages = pages.filter(Boolean);
   return {
