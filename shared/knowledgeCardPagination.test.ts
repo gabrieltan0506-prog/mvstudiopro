@@ -62,6 +62,15 @@ describe("knowledgeCardCreditsForPageIndex", () => {
   });
 });
 
+describe("单页硬顶 1200 字（0908：超过会乱码/字糊）", () => {
+  it("never leaves a page above KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE", () => {
+    const body = Array.from({ length: 30 }, (_, i) => `## 第${i + 1}节\n${repeatBlock("要点", 700)}`).join("\n\n");
+    const plan = planKnowledgeCardPages(body);
+    expect(plan.pages.length).toBeGreaterThan(0);
+    for (const page of plan.pages) expect(page.length).toBeLessThanOrEqual(KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE);
+  });
+});
+
 describe("〔参考原页〕标记不计入分页与页费", () => {
   it("strips markers before pagination so credits do not grow with reference markers", () => {
     const body = Array.from({ length: 6 }, (_, i) => `## 第${i + 1}节\n${repeatBlock("要点", 700)}`).join("\n\n");
