@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSinglePageKnowledgeCardImagePrompt } from "./geminiPlatformCompositeTranslation";
+import { buildSinglePageKnowledgeCardImagePrompt, resolveKnowledgeCardPageSource } from "./geminiPlatformCompositeTranslation";
 
 /**
  * 版式必须走出图指令，不能进正文。
@@ -111,5 +111,20 @@ describe("buildSinglePageKnowledgeCardImagePrompt · 主体位置与参考原页
     expect(prompt).toContain("4–6 个模块");
     expect(prompt).toContain("（第 1/5 页）");
     expect(prompt).toContain("Wide 16:9 landscape");
+  });
+});
+
+describe("resolveKnowledgeCardPageSource · 路由与出图共用切片", () => {
+  const md = Array.from({ length: 8 }, (_, i) => `## 第${i + 1}节\n${"要点内容。".repeat(40)}`).join("\n\n");
+  it("page mode slice equals what the prompt prints; upper/lower compat maps to halves", () => {
+    const p2 = resolveKnowledgeCardPageSource(md, { notePageIndex: 2, notePageTotal: 4 });
+    expect(p2.mode).toBe("page");
+    const prompt = buildSinglePageKnowledgeCardImagePrompt(md, { notePageIndex: 2, notePageTotal: 4 });
+    expect(prompt).toContain(p2.source.slice(0, 60));
+    const upper = resolveKnowledgeCardPageSource(md, { notePart: "upper" });
+    const lower = resolveKnowledgeCardPageSource(md, { notePart: "lower" });
+    expect(upper.mode).toBe("part");
+    expect(upper.source).not.toBe(lower.source);
+    expect(buildSinglePageKnowledgeCardImagePrompt(md, { notePart: "lower" })).toContain(lower.source.slice(0, 60));
   });
 });

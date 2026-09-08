@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import JSZip from "jszip";
 import {
   buildContactSheets,
+  collectKnowledgeCardPageRefsForSlice,
   formatKnowledgeCardPageRef,
   knowledgeCardPageObjectName,
   parseKnowledgeCardPageRefs,
@@ -140,5 +141,29 @@ describe("buildContactSheets", () => {
     expect(sheets[1]!.pageNumbers).toEqual([13, 14]);
     const meta = await sharp(Buffer.from(sheets[0]!.imageDataUrl.split(",")[1]!, "base64")).metadata();
     expect(meta.width).toBeGreaterThan(1000);
+  });
+});
+
+describe("按小节归属收集参考页（抗分页硬切）", () => {
+  it("attributes refs to the page that carries the section body even when the marker line was cut to the next page", () => {
+    const sec1 = `## 扶阳操五式\n- 第一式站桩，身体直立两手扶腰\n- 第二式抱球，两手缓缓上提抱于胸前\n〔参考原页 ${DOC_KEY}:p41〕`;
+    const sec2 = `## 不同人群的营养早餐\n- 幼儿以牛奶鸡蛋小面包为主\n- 老年人需易消化含钙食物\n〔参考原页 ${DOC_KEY}:p161〕`;
+    const full = `# 中医养生\n\n${sec1}\n\n${sec2}`;
+    // 模拟 splitByChars：第 1 页只含第一节正文，标记被切到第 2 页开头
+    const page1 = `# 中医养生\n\n## 扶阳操五式\n- 第一式站桩，身体直立两手扶腰\n- 第二式抱球，两手缓缓上提抱于胸前`;
+    const page2 = `〔参考原页 ${DOC_KEY}:p41〕\n\n${sec2}`;
+    expect(collectKnowledgeCardPageRefsForSlice(full, page1).map((r) => r.pageNumber)).toEqual([41]);
+    expect(collectKnowledgeCardPageRefsForSlice(full, page2).map((r) => r.pageNumber)).toEqual([161]);
+  });
+
+  it("resolveKnowledgeCardReferencePageUrls uses section attribution when fullMarkdown is given", async () => {
+    const full = `## A 节\n- 这是 A 节的一条足够长的正文要点\n〔参考原页 ${DOC_KEY}:p3〕\n\n## B 节\n- 这是 B 节的一条足够长的正文要点\n〔参考原页 ${DOC_KEY}:p5〕`;
+    const urls = await resolveKnowledgeCardReferencePageUrls({
+      userId: 1,
+      pageText: `## B 节\n- 这是 B 节的一条足够长的正文要点`,
+      fullMarkdown: full,
+      signIfExists: async (o) => `https://signed/${o}`,
+    });
+    expect(urls.map((u) => u.pageNumber)).toEqual([5]);
   });
 });

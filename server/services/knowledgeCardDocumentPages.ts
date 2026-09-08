@@ -271,13 +271,17 @@ export function formatKnowledgeCardPageRef(docKey: string, pageNumbers: number[]
  */
 export async function resolveKnowledgeCardReferencePageUrls(params: {
   userId: number;
+  /** 本页切片（只用它解析标记）；传了 fullMarkdown 则改按小节归属收集，抗分页切断 */
   pageText: string;
+  fullMarkdown?: string;
   limit?: number;
   /** 测试注入：返回签名 URL 或 null（对象不存在） */
   signIfExists?: (objectName: string) => Promise<string | null>;
 }): Promise<Array<{ docKey: string; pageNumber: number; url: string }>> {
   const limit = Math.max(0, Math.min(16, Math.floor(params.limit ?? 4)));
-  const refs = parseKnowledgeCardPageRefs(params.pageText).slice(0, limit);
+  const refs = (params.fullMarkdown
+    ? collectKnowledgeCardPageRefsForSlice(params.fullMarkdown, params.pageText)
+    : parseKnowledgeCardPageRefs(params.pageText)).slice(0, limit);
   if (!refs.length) return [];
   const signIfExists =
     params.signIfExists ||
@@ -297,6 +301,46 @@ export async function resolveKnowledgeCardReferencePageUrls(params: {
   for (const ref of refs) {
     const url = await signIfExists(knowledgeCardPageObjectName(params.userId, ref.docKey, ref.pageNumber));
     if (url) out.push({ ...ref, url });
+  }
+  return out;
+}
+
+/**
+ * 按**小节归属**收集本页切片的参考页：标记写在小节末尾，但分页回退（按字数硬切）可能把标记
+ * 切到相邻页，所以不看标记落在哪页，而看「这一节的正文有没有出现在本页切片里」。
+ * 判定：小节标题行出现在切片，或该节任一 ≥12 字的正文行出现在切片。
+ */
+export function collectKnowledgeCardPageRefsForSlice(fullMarkdown: string, slice: string): KnowledgeCardPageRef[] {
+  const full = String(fullMarkdown || "");
+  const target = String(slice || "");
+  if (!full.trim() || !target.trim()) return [];
+  const lines = full.split(/\r?\n/);
+  const starts: number[] = [];
+  lines.forEach((l, i) => { if (/^##\s+\S/.test(l.trim())) starts.push(i); });
+  const blocks: string[] = [];
+  if (starts.length === 0) blocks.push(full);
+  else {
+    if (lines.slice(0, starts[0]).join("\n").trim()) blocks.push(lines.slice(0, starts[0]).join("\n"));
+    starts.forEach((start, idx) => blocks.push(lines.slice(start, idx + 1 < starts.length ? starts[idx + 1] : lines.length).join("\n")));
+  }
+  const normalize = (v: string) => v.replace(/\s+/g, "");
+  const targetNorm = normalize(target);
+  const out: KnowledgeCardPageRef[] = [];
+  const seen = new Set<string>();
+  for (const block of blocks) {
+    const refs = parseKnowledgeCardPageRefs(block);
+    if (!refs.length) continue;
+    const bodyLines = stripKnowledgeCardPageRefs(block).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const heading = bodyLines.find((l) => /^##\s+\S/.test(l));
+    const probes = [heading, ...bodyLines.filter((l) => !/^#/.test(l) && l.length >= 12)].filter((v): v is string => Boolean(v));
+    const hit = probes.some((line) => targetNorm.includes(normalize(line)));
+    if (!hit) continue;
+    for (const ref of refs) {
+      const key = `${ref.docKey}:${ref.pageNumber}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(ref);
+    }
   }
   return out;
 }

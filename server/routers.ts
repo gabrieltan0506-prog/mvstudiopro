@@ -8531,12 +8531,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         let knowledgeCardReferencePageUrls: string[] | undefined;
         if (input.kind === "single_page_knowledge_card") {
           try {
-            const { planKnowledgeCardPages } = await import("../shared/knowledgeCardPagination.js");
+            const { resolveKnowledgeCardPageSource } = await import("./services/geminiPlatformCompositeTranslation.js");
             const { resolveKnowledgeCardReferencePageUrls } = await import("./services/knowledgeCardDocumentPages.js");
-            const plan = planKnowledgeCardPages(String(input.scriptContext || ""), effectiveDistillModel);
-            const pageIndex = input.notePageIndex ?? (input.notePart === "lower" ? 2 : 1);
-            const slice = plan.pages[Math.min(plan.pages.length, Math.max(1, pageIndex)) - 1] || String(input.scriptContext || "");
-            knowledgeCardReferencePageUrls = (await resolveKnowledgeCardReferencePageUrls({ userId, pageText: slice })).map((r) => r.url);
+            // 与出图提示词同一切片函数；按小节归属找参考页，分页硬切也不会挂错页
+            const slice = resolveKnowledgeCardPageSource(String(input.scriptContext || ""), {
+              notePart: input.notePart, notePageIndex: input.notePageIndex, notePageTotal: input.notePageTotal,
+            }).source;
+            knowledgeCardReferencePageUrls = (await resolveKnowledgeCardReferencePageUrls({
+              userId, pageText: slice, fullMarkdown: String(input.scriptContext || ""),
+            })).map((r) => r.url);
           } catch (e) {
             console.warn("[knowledgeCard] 参考原页解析失败，本页不带参考图：", e instanceof Error ? e.message : e);
           }
