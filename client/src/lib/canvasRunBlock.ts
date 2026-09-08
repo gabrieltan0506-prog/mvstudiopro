@@ -1981,6 +1981,15 @@ export async function runCanvasBlock(
           onTaskId: (taskId) => deps.onVideoTaskCreated?.(block.id, { taskId, engine: videoModel }),
         });
       } else {
+        const userSelectedVideoRaw = String(block.refVideoUrl || uploadedVideoUrl || "").trim();
+        const userSelectedVideoUrl =
+          userSelectedVideoRaw &&
+          (looksLikeVideo(userSelectedVideoRaw) ||
+            block.uploadedAssets?.some(
+              (a) => a.kind === "video" && a.url === userSelectedVideoRaw,
+            ))
+            ? userSelectedVideoRaw
+            : undefined;
         const userRefVideos = (block.seedance25RefVideoUrls || [])
           .map((u) => String(u || "").trim())
           .filter((u) => /^https?:\/\//i.test(u));
@@ -1990,15 +1999,9 @@ export async function runCanvasBlock(
         const candidateVideoUrls = Array.from(
           new Set([
             ...userRefVideos,
-            // 用户勾选/上传的参考视频排在接力成片之前：正文里的 @视频1 按数组顺序绑定
-            ...(useSeedance25 &&
-            block.refVideoUrl &&
-            (looksLikeVideo(block.refVideoUrl) ||
-              block.uploadedAssets?.some(
-                (a) => a.kind === "video" && a.url === block.refVideoUrl,
-              ))
-              ? [block.refVideoUrl]
-              : []),
+            // 用户勾选/上传的参考视频排在接力成片之前：正文里的 @视频1 按数组顺序绑定。
+            // refVideoUrl 为空时兜底到上传记录里的首个视频（uploadedVideoUrl），不静默丢失。
+            ...(useSeedance25 && userSelectedVideoUrl ? [userSelectedVideoUrl] : []),
             ...(continuityVideoUrl ? [continuityVideoUrl] : []),
             ...(useSeedance25 && block.outputUrl && looksLikeVideo(block.outputUrl)
               ? [block.outputUrl]

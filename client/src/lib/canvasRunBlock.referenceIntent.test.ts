@@ -362,3 +362,28 @@ describe("Seedance 2.5：用户参考视频与上游接力成片并存时，用�
     expect(extractVideoTailFramesFromUrl).toHaveBeenCalledWith(previous, { frameCount: 4, tailWindowSec: 4 });
   });
 });
+
+describe("Seedance 2.5：refVideoUrl 为空但上传记录里有视频时，视频仍进 videoUrls", () => {
+  it("uploadedAssets 兜底不静默丢视频", async () => {
+    const requests = offlineRequests("seedanceI2V");
+    const uploaded = "https://test.invalid/canvas/video/previs.mp4";
+    await runCanvasBlock(
+      { userRole: "admin", optimizeCopy: async () => "" },
+      {
+        ...defaultCanvasBlock("video", 0, 0),
+        id: "video-seedance25-uploaded-only",
+        videoModel: "seedance-2.5",
+        seedance25WorkMode: "reference_to_video",
+        prompt: `【第1段·10s】${action}`,
+        refImageUrl: images[0],
+        uploadedAssets: [
+          { id: "a1", url: uploaded, previewUrl: uploaded, fileName: "previs.mp4", kind: "video", mimeType: "video/mp4" },
+        ],
+      }
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0].videoUrls).toEqual([uploaded]);
+    expect(requests[0].prompt).not.toContain("镜头连续性");
+    expect(extractVideoTailFramesFromUrl).not.toHaveBeenCalled();
+  });
+});
