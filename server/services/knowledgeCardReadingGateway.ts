@@ -12,7 +12,34 @@ export type KnowledgeReadingCall = {
   text: string;
   images?: Array<{ pageId: string; url: string }>;
   signal?: AbortSignal;
+  /** 同一阅读任务的通道避让范围（如分析前缀）；不传则每次独立判定。 */
+  channelScope?: string;
 };
+
+const EVOLINK_AVOID_MS = 10 * 60_000;
+const evolinkAvoidUntil = new Map<string, number>();
+function markEvolinkUnavailable(scope?: string) { if (scope) evolinkAvoidUntil.set(scope, Date.now() + EVOLINK_AVOID_MS); }
+function evolinkAvoided(scope?: string): boolean {
+  if (!scope) return false;
+  const until = evolinkAvoidUntil.get(scope);
+  if (until === undefined) return false;
+  if (until > Date.now()) return true;
+  evolinkAvoidUntil.delete(scope);
+  return false;
+}
+/** 仅测试用：清空同进程内的通道避让记忆。 */
+export function resetKnowledgeReadingChannelMemory() { evolinkAvoidUntil.clear(); }
+
+/** 官方回执可能带快照日期；只放行「所选模型-YYYY-MM-DD」这一种形状，其他一律不接受。 */
+export function knowledgeReadingModelMatches(reported: unknown, model: ActiveKnowledgeCardDistillModelId): boolean {
+  if (typeof reported !== "string") return false;
+  if (reported === model) return true;
+  return reported.startsWith(`${model}-`) && /^\d{4}-\d{2}-\d{2}$/.test(reported.slice(model.length + 1));
+}
+
+class ReadingChannelAvoidedError extends Error {
+  constructor() { super("主通道近期超时，本批直接使用官方备用通道"); }
+}
 
 class ReadingTransportError extends Error {
   constructor(readonly retryable: boolean) {
@@ -21,12 +48,14 @@ class ReadingTransportError extends Error {
 }
 
 /** 每条通道独立占用、保留原始回执；缓存及未知结果均不再次调用该通道。 */
-async function requestReadingChannelOnce(input: KnowledgeReadingCall, prefix: string, body: Record<string, unknown>, resolveTarget: () => Gpt56CopywritingTarget): Promise<ReadingReply> {
+async function requestReadingChannelOnce(input: KnowledgeReadingCall, prefix: string, body: Record<string, unknown>, resolveTarget: () => Gpt56CopywritingTarget, avoid = false): Promise<ReadingReply> {
   input.signal?.throwIfAborted();
   const cached = await readKnowledgeReadingJson<ReadingReply>(`${prefix}/raw.json`);
   if (cached) return cached;
   const transport = await readKnowledgeReadingJson<ReadingTransportReceipt>(`${prefix}/transport-error.json`);
   if (transport) throw new ReadingTransportError(transport.outcome === "unknown" && transport.retryable === true);
+  // 已有回执优先复用；只有真要发新请求时才因避让改走备用通道，不写占用、不写传输回执。
+  if (avoid) throw new ReadingChannelAvoidedError();
   const target = resolveTarget();
   if (target.modelName !== input.model) throw new Error("备用通道模型与所选档位不一致，未提交请求");
   input.signal?.throwIfAborted();
@@ -55,7 +84,7 @@ async function requestReadingChannelOnce(input: KnowledgeReadingCall, prefix: st
 function parseReadingReply(reply: ReadingReply, model: ActiveKnowledgeCardDistillModelId): unknown {
   if (reply.status < 200 || reply.status >= 300) throw new Error("文档阅读未成功，原始回执已保留，未自动重复购买同一通道");
   const envelope = JSON.parse(reply.body);
-  if (envelope.model !== model) throw new Error("阅读回执与所选档位不一致，已保留原始响应，未接受结果");
+  if (!knowledgeReadingModelMatches(envelope.model, model)) throw new Error("阅读回执与所选档位不一致，已保留原始响应，未接受结果");
   if (envelope.choices?.[0]?.finish_reason !== "stop") throw new Error("阅读结果未完整返回，已保留原始结果，不能作为完整方案使用");
   const plain = extractFirstChoicePlainText(envelope).trim();
   if (!plain) throw new Error("阅读结果为空，未进入方案或生图");
@@ -92,6 +121,7 @@ export async function invokeKnowledgeReadingJson(input: KnowledgeReadingCall): P
     });
     return parseReadingReply(reply, input.model);
   };
+  const canFallback = input.model === KNOWLEDGE_CARD_DISTILL_MODEL_SOL;
   let reply: ReadingReply;
   try {
     reply = await requestReadingChannelOnce(input, input.objectPrefix, body, () => {
@@ -101,14 +131,19 @@ export async function invokeKnowledgeReadingJson(input: KnowledgeReadingCall): P
         ? String(process.env.EVOLINK_CHAT_COMPLETIONS_URL || "https://api.evolink.ai/v1/chat/completions")
         : String(process.env.EVOLINK_DIRECT_CHAT_COMPLETIONS_URL || "https://direct.evolink.ai/v1/chat/completions");
       return { gateway: "evolink", apiUrl, apiKey, modelName: input.model };
-    });
+    }, canFallback && evolinkAvoided(input.channelScope));
   } catch (error) {
-    if (input.model === KNOWLEDGE_CARD_DISTILL_MODEL_SOL && error instanceof ReadingTransportError && error.retryable && !input.signal?.aborted)
+    if (canFallback && error instanceof ReadingChannelAvoidedError) return officialFallback();
+    if (canFallback && error instanceof ReadingTransportError && error.retryable && !input.signal?.aborted) {
+      markEvolinkUnavailable(input.channelScope);
       return officialFallback();
+    }
     throw error;
   }
   const timeoutHtml = reply.status >= 200 && reply.status < 300 && /^\s*(?:<!doctype\s+html|<html)/i.test(reply.body) && /524|time[ -]?out|cloudflare/i.test(reply.body);
-  if (input.model === KNOWLEDGE_CARD_DISTILL_MODEL_SOL && (isRetryableOpenAiGatewayError({ status: reply.status }) || timeoutHtml))
+  if (canFallback && (isRetryableOpenAiGatewayError({ status: reply.status }) || timeoutHtml)) {
+    markEvolinkUnavailable(input.channelScope);
     return officialFallback();
+  }
   return parseReadingReply(reply, input.model);
 }

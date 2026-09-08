@@ -69,6 +69,30 @@ describe("全页精读到报价的实际服务链", () => {
     const inventory = JSON.parse(calls[69].text).evidence;
     expect(inventory).toHaveLength(276); expect(inventory.at(-1).pageNumber).toBe(276);
   });
+  it("批次有上限并发：同时在读不超过上限，结果按原页顺序回填，一批失败后不再发新批", async () => {
+    mocks.count = 40; process.env.KNOWLEDGE_CARD_READING_BATCH_CONCURRENCY = "3";
+    let active = 0, peak = 0;
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation(async (call: any) => {
+      const data = JSON.parse(call.text);
+      if (!Array.isArray(data)) return original(call);
+      active++; peak = Math.max(peak, active);
+      await new Promise(resolve => setTimeout(resolve, data[0].pageNumber % 3 * 5));
+      active--;
+      return original(call);
+    });
+    const progress: number[] = [];
+    const result = await analyzeKnowledgeCardDocuments(input, async done => { progress.push(done); });
+    expect(result.sourcePages).toBe(40); expect(peak).toBe(3);
+    expect(JSON.parse(mocks.invoke.mock.calls.at(-1)![0].text).evidence.map((page: any) => page.pageNumber)).toEqual(Array.from({ length: 40 }, (_, i) => i + 1));
+    expect(progress).toEqual([...progress].sort((a, b) => a - b));
+    mocks.objects.clear(); mocks.invoke.mockClear();
+    mocks.invoke.mockImplementation(async (call: any) => { const data = JSON.parse(call.text); if (Array.isArray(data) && data[0].pageNumber === 5) throw new Error("测试第二批失败"); return original(call); });
+    await expect(analyzeKnowledgeCardDocuments(input)).rejects.toThrow("测试第二批失败");
+    expect(mocks.invoke.mock.calls.length).toBeLessThan(10);
+    expect(Array.from(mocks.objects.keys()).some(key => key.endsWith("/analysis.json"))).toBe(false);
+    delete process.env.KNOWLEDGE_CARD_READING_BATCH_CONCURRENCY;
+  });
   it("超过五万字的真实文字原件完整进入阅读段并可恢复，不当单张物理页拒绝", async () => {
     mocks.usePhysical = true;
     const text = "a".repeat(11999) + "😀条件与机制\n" + "原文尾段 ".repeat(14000);

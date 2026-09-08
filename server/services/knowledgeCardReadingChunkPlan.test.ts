@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { planKnowledgeCardReadingChunks, type KnowledgeCardReadingChunkPlanInput } from "./knowledgeCardReadingChunkPlan";
+import { allocateCondenseTargets, planKnowledgeCardReadingChunks, resolveWholeBookCondenseTarget, type KnowledgeCardReadingChunkPlanInput } from "./knowledgeCardReadingChunkPlan";
 import type { KnowledgeCardReadingEvidencePage } from "../../shared/knowledgeCardReadingPlan";
 const evidence = (n: number, chars = 300): KnowledgeCardReadingEvidencePage[] => Array.from({ length: n }, (_, i) => ({ id: `source-${i + 1}`, documentId: "book", pageNumber: i + 1, status: "read", summary: `第${i + 1}页机制`, contentMarkdown: `原文${i + 1}：${"正文机制数字条件".repeat(chars)}`, visuals: [], uncertainties: [] }));
 function fixture(pages = evidence(12)) {
@@ -7,6 +7,11 @@ function fixture(pages = evidence(12)) {
   const invoke = vi.fn(async (call: { text: string }) => {
     const data = JSON.parse(call.text);
     if (data.statements) return { statements: [data.statements.join("；")] };
+    if (data.targetPages !== undefined) {
+      const ids: string[] = data.pages.map((page: { pageId: string }) => page.pageId);
+      const size = Math.ceil(ids.length / data.targetPages);
+      return { pages: Array.from({ length: data.targetPages }, (_, i) => ({ pageId: `m${i + 1}`, title: `合并主题${i + 1}`, brief: "合并后的真实内容", visualDirections: "合并后的图文对照", mergedFrom: ids.slice(i * size, (i + 1) * size) })), omitted: [`第${data.groupIndex}组因合并压缩的次要案例`] };
+    }
     return { options: ["concise", "balanced", "complete"].map(mode => ({
       mode, reason: `${mode}按真实知识规划`, kept: ["关键机制与数字"], omitted: mode === "complete" ? [] : ["省略次要案例及重复解释"], sourceExclusions: [],
       pages: Array.from({ length: Math.max(1, data.minimumPagesByMode[mode] || 0) }, (_, i) => ({ pageId: `local-${i + 1}`, title: `机制${i + 1}`, brief: `第${i + 1}项实际知识`, sourcePageIds: data.evidenceUnits.map((unit: { id: string }) => unit.id), visualDirections: "以条件和机制的图文对照表示" })),
@@ -84,13 +89,63 @@ describe("全书证据分批规划协调器", () => {
     expect(JSON.parse(f.invoke.mock.calls[1]![0].text).minimumPagesByMode).toEqual({ concise: 4, balanced: 4, complete: 4 });
     expect(plan.presentation).toBe("single"); expect(plan.options).toHaveLength(1); expect(plan.options[0]!.pages).toHaveLength(4);
   });
-  it("单批全书约束只传一次全书语义，多批未接通的目标分配明确拒绝而非每批重复预算", async () => {
+  it("单批全书约束只传一次全书语义；多批时约束不进每批，而是合并后对精简方案统一分配", async () => {
     const f = fixture(evidence(1, 1));
     await planKnowledgeCardReadingChunks({ ...f.input, constraints: { targetPages: 4, budgetCredits: 120 } });
     expect(JSON.parse(f.invoke.mock.calls[0]![0].text).wholeBookConstraints).toEqual({ targetPages: 4, budgetCredits: 120 });
     const big = fixture();
-    await expect(planKnowledgeCardReadingChunks({ ...big.input, constraints: { budgetCredits: 120 } })).rejects.toThrow("跨批分配");
-    expect(big.invoke).not.toHaveBeenCalled();
+    const natural = await planKnowledgeCardReadingChunks(big.input);
+    const naturalConcise = natural.options.find(option => option.mode === "concise")!;
+    expect(naturalConcise.pages.length).toBeGreaterThan(4);
+    const batchCalls = big.invoke.mock.calls.length;
+    const plan = await planKnowledgeCardReadingChunks({ ...big.input, constraints: { targetPages: 4 } });
+    const condenseCalls = big.invoke.mock.calls.slice(batchCalls).map(([call]) => JSON.parse(call.text));
+    expect(condenseCalls.length).toBeGreaterThan(0);
+    expect(condenseCalls.every(call => call.targetPages !== undefined && call.evidenceUnits === undefined)).toBe(true);
+    expect(condenseCalls.reduce((sum, call) => sum + call.targetPages, 0)).toBe(4);
+    const concise = plan.options.find(option => option.mode === "concise")!;
+    expect(concise.pages).toHaveLength(4);
+    expect(concise.pages.map(page => page.pageId)).toEqual(["concise-p1", "concise-p2", "concise-p3", "concise-p4"]);
+    expect(new Set(concise.pages.flatMap(page => page.sourcePageIds))).toEqual(new Set(naturalConcise.pages.flatMap(page => page.sourcePageIds)));
+    expect(concise.reason).toContain("合并为4页");
+    expect(concise.omitted.some(item => item.includes("因合并压缩"))).toBe(true);
+    expect(plan.options.find(option => option.mode === "complete")!.pages).toEqual(natural.options.find(option => option.mode === "complete")!.pages);
+    const rerun = big.invoke.mock.calls.length;
+    await planKnowledgeCardReadingChunks({ ...big.input, constraints: { budgetCredits: 120 } });
+    expect(big.invoke.mock.calls.length).toBe(rerun);
+  });
+  it("预算不足4页、已有方案可选或目标超过预算时不合并，交给报价如实显示", async () => {
+    const counts = { concise: 6, balanced: 9, complete: 12 };
+    expect(resolveWholeBookCondenseTarget({ budgetCredits: 30 }, "gpt-5.6-sol", counts)).toBeNull();
+    expect(resolveWholeBookCondenseTarget({ targetPages: 6 }, "gpt-5.6-sol", counts)).toBeNull();
+    expect(resolveWholeBookCondenseTarget({ targetPages: 20 }, "gpt-5.6-sol", counts)).toBeNull();
+    expect(resolveWholeBookCondenseTarget({ targetPages: 5, budgetCredits: 120 }, "gpt-5.6-sol", counts)).toBeNull();
+    expect(resolveWholeBookCondenseTarget({ targetPages: 5 }, "gpt-5.6-sol", counts)).toBe(5);
+    expect(resolveWholeBookCondenseTarget({ budgetCredits: 120 }, "gpt-5.6-sol", counts)).toBe(4);
+    const f = fixture();
+    await planKnowledgeCardReadingChunks({ ...f.input, constraints: { budgetCredits: 30 } });
+    expect(f.invoke.mock.calls.every(([call]) => JSON.parse(call.text).targetPages === undefined)).toBe(true);
+  });
+  it("目标页数按各组页数比例分配，每组至少1页且不超过现有页数", () => {
+    expect(allocateCondenseTargets([10, 10], 4)).toEqual([2, 2]);
+    expect(allocateCondenseTargets([9, 1, 30], 5)).toEqual([1, 1, 3]);
+    expect(allocateCondenseTargets([3, 3, 3], 8)).toEqual([3, 3, 2]);
+    expect(() => allocateCondenseTargets([5, 5, 5, 5, 5], 4)).toThrow("提高预算或目标页数");
+    expect(() => allocateCondenseTargets([2, 2], 4)).toThrow("无需合并");
+  });
+  it("合并结果丢页、重复归并或页数不符时拒绝，不写checkpoint", async () => {
+    for (const change of [
+      (raw: any) => { raw.pages[0].mergedFrom.pop(); },
+      (raw: any) => { raw.pages[1].mergedFrom.push(raw.pages[0].mergedFrom[0]); },
+      (raw: any) => { raw.pages.pop(); },
+    ]) {
+      const f = fixture(); const original = f.invoke.getMockImplementation()!;
+      await planKnowledgeCardReadingChunks(f.input);
+      const before = f.saved.size;
+      f.invoke.mockImplementation(async call => { const raw = await original(call); if (JSON.parse(call.text).targetPages !== undefined) change(raw); return raw; });
+      await expect(planKnowledgeCardReadingChunks({ ...f.input, constraints: { targetPages: 4 } })).rejects.toThrow();
+      expect(f.saved.size).toBe(before);
+    }
   });
   it("异来源引用、漏证据、重复档位、空规划都在写checkpoint之前拒绝", async () => {
     for (const change of [
