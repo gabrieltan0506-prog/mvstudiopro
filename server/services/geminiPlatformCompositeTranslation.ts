@@ -32,6 +32,8 @@ import {
   planKnowledgeCardPages,
   stripKnowledgeCardInternalDirectives,
 } from "../../shared/knowledgeCardPagination.js";
+import { buildKnowledgeCardSubjectPositionPrompt } from "../../shared/knowledgeCardSubjectPosition.js";
+import { stripKnowledgeCardPageRefs } from "./knowledgeCardDocumentPages.js";
 import {
   getInfographicNoteTemplate,
   getInfographicRenderDepthLockEn,
@@ -406,43 +408,45 @@ export async function extractChineseVisualBrief(rawContext: string, flowLog?: st
  * 以保留书法标题 / 大师写实摄影 + 文艺复兴手绘 / 山茶花蝴蝶洋牡丹装饰 / 宣纸暖色底等细腻美学
  * （中文直送 GPT-IMAGE-2，不经英文翻译）。与 2×4 八格路径互不影响。
  */
-export const SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH = `你是一位顶尖的归纳知识内容、规划整理的知识卡片设计师（Knowledge Card Visual Designer），精通解读 Markdown 文档，擅长把"文档内容"画成知识分解图。请把下方 Markdown 切片做成**一整页连贯的单页图文知识卡片**（务必是"单页连贯"，而非 2×4 八格网格、也不是分镜表）。
+export const SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH = `你是一位顶尖的图文知识卡片设计师（Knowledge Card Visual Designer），擅长把知识画成**图解**。请把下方 Markdown 切片做成**一整页连贯的单页图文知识卡片**（"单页连贯"，不是 2×4 八格、不是分镜表）。
+
+【第一原则：先图后文、图重于文】（2026-09-08 用户定案）
+- 读者要**看图一两句就懂重点**。每个模块以**一张图**为主体（分式图解 / 流程链 / 对比表 / 思维导图 / 指标图标组 / 结构示意），图占该模块 **六成以上**面积；文字只做小标题 + 2–4 句短语。
+- 正文里以「图：」开头的行是**绘图指令**（要画什么、元素之间什么关系），必须画出来，**不得当作文字印上去**。
+- 文字短：小标题一句（≤12 字）；要点每条 ≤16 字，是结论不是解释；例子一句。**不要把书的句子换个说法铺满版面。**
+- 数字、步骤、条件保留，但放进图里（表格格子、流程节点、图标标注），不堆成段落。
 
 【任务目标】
-- 内容详尽充实、覆盖本页每个子标题的全部关键点，措辞通畅易懂；用简体中文解说。
-- 标题：采用书法楷书字体、金橙色字体并以淡蓝紫色描边包裹每个标题字，字体用渐变色，呈现优雅飘逸的美感。
-- 内文：印刷清晰、绝不可模糊；字号比小标题小一级但仍足够大，兼顾信息量与可读性。
+- 覆盖本页每个小节，每节一个模块；用简体中文。
+- 标题：书法楷书字体、金橙色、淡蓝紫色描边，渐变色，优雅飘逸。
+- 内文：印刷清晰、绝不可模糊；字号足够大。
 
-【信息密度·版式（关键）】
-- **信息密度优先、宁详勿略**：对标排版成熟、字数密集的高质量图文笔记（密度只能更高、不能更少）。每个子标题展开成 **5–9 条要点**，每条是信息完整的短句（约 12–30 字，含定义 / 数字 / 方法 / 示例）。**不要为了简洁或留白而删减内容。**
-- 一页要**装得下本页全部小节**：顶部全宽标题带 + 下方 **4–6 个模块**，用**分栏**（左右 2–3 栏）承载，每模块一个小标题 + 上述要点。
-- 模块形态按内容选：**编号卡片**（①②③ 或 1–6 圆形徽章）、**小表格**（3–5 列，表头浅色底）、**指标条**（图标 + 阈值数字）、**流程环**、**清单勾选条**。同类模块外形统一。
-- **把版面填满而不挤**：模块间用细留白带和圆角卡分隔即可，不必大片空白；但严禁文字贴边、模块重叠、要点被裁切。若排不下，改用更小的卡片与更紧的行距，而不是省略小节。
-- 关键数据 / 百分比 / 方法步骤 / 示例都要完整渲染出来。
-- 密度上来后仍要**字迹清晰**：字号足够大，每个汉字笔画清晰、不粘连、不变形、不缺笔；严禁生造字、错字、半个字或火星文。装饰花卉/蝴蝶不得压住文字。
+【版式】
+- 顶部全宽标题带 + 下方 **4–6 个模块**，2–3 栏分栏；每个模块 = 一张图 + 小标题 + 2–4 条短语。
+- 模块图形态按内容选：**分式图解**（人物动作/步骤配小图）、**流程链**（A→B→C 节点）、**对比表 / 速查表**（3–5 列，表头浅色底）、**思维导图**（中心+分支）、**指标图标组**（图标 + 数字）、**结构示意**（带标注线）。同类模块外形统一。
+- 留白适度、分区整齐；严禁文字贴边、模块重叠、要点被裁切。图与字不重叠。
+- 字迹清晰：每个汉字笔画清晰、不粘连、不变形、不缺笔；严禁生造字、错字、半个字。
 
 【视觉规范】
-- 主体构图：在左侧或某一栏放置本页核心视觉意象（人物摄影或建筑/器物插画，约占 1/4–1/3 画面）；摄影写实 + 透视学审美 + 艺术手稿素描结合。
-- 其余版面按栏铺排知识模块，阅读动线明确（左→右、上→下）；同栏模块左右对齐、宽度一致。
-- 图标：每个模块小标题旁配立体透视素描图标；色彩鲜明、对比清晰、尺寸统一。
-- 连接结构：素描线稿与花卉/蝴蝶等点缀作视觉链接与留白填充；**卡片可用圆角浅底色块，最外层保留立体透视素描边框**；避免箭头重叠压字。
+- 主体构图：按本次主体位置约束放置本页核心视觉意象（人物摄影或建筑/器物插画，约占 1/4–1/3 画面）；摄影写实 + 透视学审美 + 艺术手稿素描结合。
+- 图标：每个模块小标题旁配立体透视素描图标；色彩鲜明、尺寸统一。
+- 连接结构：素描线稿与花卉/蝴蝶点缀作视觉链接；卡片圆角浅底色块，最外层立体透视素描边框；箭头不压字。
 
 【内容拆解】
-- 本页切片的每个小节都要成为版面上的一个可读模块，按小节顺序均匀分配；说明详细、文字印刷正确。
-- 每个模块先给**一句大纲式小标题**，再用条列式要点展开，需要举例处直接写出例子。
+- 本页切片的每个小节都要成为版面上的一个模块，按小节顺序分配。
 - **是否在结尾生成诗词 / 书法点睛，以下方【收尾】指令为准**（默认多数页不写诗词）。
 
 【核心要求】
-- 风格混合：文艺复兴手绘插画（透视学素描）+ 绝美写实摄影立体图标；元素细腻有质感。
-- 构图：清晰有逻辑，引导视线；信息量大但分区整齐，像一张精编的杂志跨页信息图。
-- 颜色：暖色调为主；背景可用爱马仕橙到浅紫渐变或宣纸/绢本底色；图标彩色；注释用橙色书法楷书、浅蓝描边。
+- 风格：文艺复兴手绘插画（透视学素描）+ 写实摄影立体图标；元素细腻有质感。
+- 构图：清晰有逻辑，引导视线；像一张精编的杂志跨页信息图，但**图多字少**。
+- 颜色：暖色调为主；背景宣纸/绢本或爱马仕橙到浅紫渐变；图标彩色；注释用橙色书法楷书、浅蓝描边。
 
-【输出格式】高密度精编信息图、简体中文印刷清晰 / 高清 / 横向 16:9。`;
+【输出格式】图重于文的精编信息图、简体中文印刷清晰 / 高清 / 横向 16:9。`;
 
 /**
- * 英文「渲染外壳」：高密度信息板 + 简体中文清晰渲染。
+ * 英文「渲染外壳」：图重于文 + 简体中文清晰渲染。
  */
-export const SINGLE_PAGE_KNOWLEDGE_CARD_TEXT_RENDER_WRAPPER_EN = `TEXT RENDERING (CRITICAL): All on-image text is **Simplified Chinese**. The card must be **content-rich and information-dense** — include detailed bullet points (5–9 per section), key data/percentages, methods and concrete examples for EVERY section; do NOT thin out or omit content for the sake of brevity or whitespace. Layout is a **high-density editorial infographic**: full-width title band on top, then 4–6 content modules arranged in 2–3 columns — numbered cards, compact tables, metric chips with icons, checklists. Fill the canvas with well-organized information rather than large empty areas, but never let text touch edges, overlap, or get clipped. Render every Chinese glyph **crisp, print-clear and correctly-formed** — no garbled, duplicated, missing/broken strokes; legibility outranks decoration, and floral accents must not cover text. Wide 16:9 landscape, ultra high-resolution. Do NOT add any English sentences onto the card except tiny optional accent keywords.`;
+export const SINGLE_PAGE_KNOWLEDGE_CARD_TEXT_RENDER_WRAPPER_EN = `VISUAL-FIRST (CRITICAL): This is an illustrated knowledge card, not a text poster. Every module is anchored by ONE visual — a step-by-step illustration, flow chain, comparison table, mind map, icon-metric set, or annotated diagram — that fills at least 60% of the module; text is only a short headline plus 2–4 takeaways (each ≤16 Chinese characters). Lines beginning with 「图：」 are drawing instructions: render them as visuals, never print them as text. Keep numbers, steps and conditions but place them inside the visuals (table cells, flow nodes, icon labels), not in paragraphs. Layout: full-width title band on top, then 4–6 modules in 2–3 columns. All on-image text is **Simplified Chinese**, rendered **crisp, print-clear and correctly-formed** — no garbled, duplicated, missing/broken strokes; legibility outranks decoration; visuals must not overlap text. Wide 16:9 landscape, ultra high-resolution. Do NOT add any English sentences onto the card except tiny optional accent keywords.`;
 
 /** @deprecated 旧客户端上/下篇；新路径用 notePageIndex 1..12 */
 export type KnowledgeCardNotePart = "upper" | "lower";
@@ -462,7 +466,18 @@ export type KnowledgeCardPromptPaging = {
    * （用户 2026-08-05 用轻量档复现；同样的版式在精细/均衡档因正文更长而只当版式生效）。
    */
   infographicTemplateId?: string;
+  /** 主体偏左 / 居中（0908 用户拍板可选；横版 16:9 固定） */
+  subjectPosition?: string;
+  /** 本页附带的原稿参考页数量（>0 时加入「参考原稿版式重画」指令） */
+  referencePageCount?: number;
 };
+
+/** 原稿参考页指令：只借结构，不复制截图。 */
+function buildKnowledgeCardReferencePagesDirective(count?: number): string {
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  if (!n) return "";
+  return `\n【原稿参考页·仅借版式结构】随本次请求附带 ${n} 张原书页面图，它们是这页知识点在原书里的版式（表格行列、导图分支、分式图解、左右对比）。请把这种**结构关系**用本卡的风格重新绘制进对应模块：表格保留表头与行列对应，导图保留层级分支，步骤图保留顺序与编号。**不要**整页复制截图、不要沿用原书配色字体、不要把原书页码或水印画进来；人物只作示意，不锁定身份。`;
+}
 
 /**
  * 版式指令段：中文说清「这是排版要求，不是内容」，英文段给绘图模型看构图。
@@ -498,6 +513,35 @@ export function splitKnowledgeCardMarkdown(scriptContext: string): { upper: stri
 }
 
 /**
+ * 本页正文切片的唯一真源：出图提示词与路由侧「参考原页」解析都从这里取，保证同一页同一切片。
+ */
+export function resolveKnowledgeCardPageSource(
+  scriptContext: string,
+  opts: { notePart?: KnowledgeCardNotePart; notePageIndex?: number; notePageTotal?: number },
+):
+  | { mode: "page"; source: string; idx: number; total: number; isLast: boolean }
+  | { mode: "part"; source: string }
+  | { mode: "single"; source: string }
+  | { mode: "whole"; source: string } {
+  const plan = planKnowledgeCardPages(scriptContext);
+  // 未分页的兜底路径同样要剥内部约束，否则整页会画成手法卡说明书
+  const whole = stripKnowledgeCardInternalDirectives(String(scriptContext || ""));
+  const pageIndex = Number(opts.notePageIndex);
+  if (Number.isFinite(pageIndex) && pageIndex >= 1 && plan.pages.length > 0) {
+    const total = Math.max(1, Number(opts.notePageTotal) || plan.pageCount || plan.pages.length);
+    const idx = Math.min(plan.pages.length, Math.max(1, Math.floor(pageIndex)));
+    return { mode: "page", source: plan.pages[idx - 1] || whole, idx, total, isLast: idx >= total || idx >= plan.pages.length };
+  }
+  if (opts.notePart === "upper" || opts.notePart === "lower") {
+    // 旧客户端：映射到第 1 / 2 页语义
+    const split = splitKnowledgeCardMarkdown(scriptContext);
+    return { mode: "part", source: opts.notePart === "upper" ? split.upper : split.lower };
+  }
+  if (plan.pages.length === 1) return { mode: "single", source: plan.pages[0]! };
+  return { mode: "whole", source: whole };
+}
+
+/**
  * **单页连贯图文知识卡片**：中文 directive + 分页指令 + Markdown 切片 + 英文渲染外壳。
  * 出图走 OpenRouter GPT-Image-2（调用方强制），不经英文翻译。
  */
@@ -508,45 +552,37 @@ export function buildSinglePageKnowledgeCardImagePrompt(
   const opts: KnowledgeCardPromptPaging =
     paging === "upper" || paging === "lower" ? { notePart: paging } : paging && typeof paging === "object" ? paging : {};
 
-  const plan = planKnowledgeCardPages(scriptContext);
-
-  // 未分页的兜底路径同样要剥内部约束，否则整页会画成手法卡说明书
-  let source = stripKnowledgeCardInternalDirectives(String(scriptContext || ""));
+  const resolved = resolveKnowledgeCardPageSource(scriptContext, opts);
+  const source = resolved.source;
   let partDirective = `\n【收尾】本页不生成诗词、金句或书法点睛横幅；版面全部用于知识点模块。`;
 
-  const pageIndex = Number(opts.notePageIndex);
-  if (Number.isFinite(pageIndex) && pageIndex >= 1 && plan.pages.length > 0) {
-    const total = Math.max(1, Number(opts.notePageTotal) || plan.pageCount || plan.pages.length);
-    const idx = Math.min(plan.pages.length, Math.max(1, Math.floor(pageIndex)));
-    source = plan.pages[idx - 1] || source;
-    const isLast = idx >= total || idx >= plan.pages.length;
+  if (resolved.mode === "page") {
+    const { idx, total, isLast } = resolved;
     partDirective = `\n【分页】本页是该主题图文笔记的第 ${idx}/${total} 页。请在文档大标题末尾追加「（第 ${idx}/${total} 页）」；**只**呈现下方本页切片，把切片里的每个小节都做成版面上的一个模块（分栏铺排、信息密度高、不要画其他页内容）。\n${
       isLast
         ? "【收尾·末页】可选生成 **一句** 短诗词或书法点睛横幅收束全文（不要长诗占版）；也可不写诗词。"
         : "【收尾】本页不要生成诗词或书法点睛横幅；底部版面留给知识点模块。"
     }`;
-  } else if (opts.notePart === "upper" || opts.notePart === "lower") {
-    // 旧客户端：映射到第 1 / 2 页语义
-    const split = splitKnowledgeCardMarkdown(scriptContext);
-    source = opts.notePart === "upper" ? split.upper : split.lower;
+  } else if (resolved.mode === "part") {
     const label = opts.notePart === "upper" ? "上篇" : "下篇";
     partDirective =
       opts.notePart === "upper"
         ? `\n【分页·兼容】本页标注「（${label}）」。只呈现下方切片；分栏铺排、模块整齐；不要诗词横幅。`
         : `\n【分页·兼容】本页标注「（${label}）」。只呈现下方切片；分栏铺排、模块整齐。\n【收尾】可选一句短诗词点睛，勿占满版。`;
-  } else if (plan.pages.length === 1) {
-    source = plan.pages[0];
   }
 
-  const slice = toSimplifiedChinese(source.slice(0, SCRIPT_SLICE));
+  // 「〔参考原页 …〕」标记只供服务端定位参考图，不得印到卡片上
+  const slice = toSimplifiedChinese(stripKnowledgeCardPageRefs(source).slice(0, SCRIPT_SLICE));
   const layoutDirective = buildKnowledgeCardLayoutDirective(opts.infographicTemplateId);
+  const referenceDirective = buildKnowledgeCardReferencePagesDirective(opts.referencePageCount);
 
-  return `${SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH}${partDirective}${layoutDirective}
+  return `${SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH}${partDirective}${layoutDirective}${referenceDirective}
 
 【以下为 Markdown 文稿内容，请按上述要求生成单页连贯图文知识卡片（而非 2×4 八格）】：
 ${slice}
 
-${SINGLE_PAGE_KNOWLEDGE_CARD_TEXT_RENDER_WRAPPER_EN}`.trim();
+${SINGLE_PAGE_KNOWLEDGE_CARD_TEXT_RENDER_WRAPPER_EN}
+${buildKnowledgeCardSubjectPositionPrompt(opts.subjectPosition)}`.trim();
 }
 
 /**

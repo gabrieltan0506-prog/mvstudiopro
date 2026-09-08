@@ -8,6 +8,7 @@ import {
   resolveKnowledgeCardDistillModel,
   type KnowledgeCardDistillModelId,
 } from "./knowledgeCardDistillModels.js";
+import { stripKnowledgeCardPageRefs } from "./knowledgeCardPageRefs.js";
 
 export const KNOWLEDGE_CARD_TARGET_MIN_PAGES = 4;
 export const KNOWLEDGE_CARD_TARGET_MAX_PAGES = 8;
@@ -15,8 +16,8 @@ export const KNOWLEDGE_CARD_TARGET_MAX_PAGES = 8;
  * 每页合理字数上限（超出则增页；页数不封顶）。
  *
  * 用户 2026-08-05 给了两张验收样张（16:9 横版，一页承载 4–6 个模块 + 表格 + 指标条），
- * 实测每页约 1000–1200 字，取其上界：9.5 万字的书（成稿约 6800 字）因此落在 6 页，
- * 仍在 4K 门槛（`KNOWLEDGE_CARD_4K_MAX_PAGES`）内。旧值 850 是按「一页一节」的疏朗竖版设的，
+ * 实测每页约 1000–1200 字，取其上界：9.5 万字的书（成稿约 6800 字）因此落在 6 页。
+ * 旧值 850 是按「一页一节」的疏朗竖版设的，
  * 在横版下每页只填约 220 字，白白多出好几倍页数。
  */
 export const KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE = 1200;
@@ -32,13 +33,12 @@ export const KNOWLEDGE_CARD_CREDITS_FULL = 30;
 /** @deprecated 默认精细档折扣；请用 knowledgeCardPageCreditsForModel */
 export const KNOWLEDGE_CARD_CREDITS_DISCOUNT = 24;
 export const KNOWLEDGE_CARD_FULL_PRICE_PAGES = 8;
-/** ≤ 此页数出图 4K（gpt-image-2 quality=high）；超过则整套一律 2K（medium） */
-export const KNOWLEDGE_CARD_4K_MAX_PAGES = 6;
-
-/** 知识卡出图像素质：总页数 ≤6 → high≈4K；>6 → medium≈2K。 */
-export function knowledgeCardImageQuality(pageTotal: number): "high" | "medium" {
-  const n = Math.max(0, Math.floor(Number(pageTotal) || 0));
-  return n > 0 && n <= KNOWLEDGE_CARD_4K_MAX_PAGES ? "high" : "medium";
+/**
+ * 知识卡出图像素质：一律 high（4K）。
+ * 旧规「超过 6 页整套降 2K」已按 2026-09-08 用户拍板取消，页数不影响清晰度。
+ */
+export function knowledgeCardImageQuality(_pageTotal?: number): "high" {
+  return "high";
 }
 
 export type KnowledgeCardPagePlan = {
@@ -82,7 +82,7 @@ export function knowledgeCardCreditsForPageIndex(
  * （9.5 万字 → 28 节 → 约 5000 字 → 5 页）。
  */
 export type KnowledgeCardDistillTradeoff = {
-  /** 直接出图：页数、总积分、是否会被降到 2K */
+  /** 直接出图：页数、总积分；is4k 恒为 true（页数不再影响清晰度） */
   full: { pages: number; credits: number; is4k: boolean };
   /** 提炼后出图：同上，另含一次性提炼费 */
   distilled: { pages: number; credits: number; is4k: boolean; distillFee: number };
@@ -219,6 +219,42 @@ function packSectionsIntoPages(
       return [head, ...secs].filter(Boolean).join("\n\n").trim();
     })
     .filter(Boolean);
+}
+
+/**
+ * 按段落贪心装页：每页 ≤ cap（含补上的 # 总标题），装不下才开新页；超长段落按句再切。
+ * 结果页数最少、每页贴着上限，不会出现几十字的碎页。
+ */
+function packByCap(full: string, h1: string, cap: number): string[] {
+  const head = h1 ? `${h1}\n\n` : "";
+  const room = Math.max(200, cap - head.length);
+  const units: string[] = [];
+  for (const para of full.split(/\n\s*\n/)) {
+    const t = para.trim();
+    if (!t || t === h1) continue;
+    if (t.length <= room) { units.push(t); continue; }
+    // 超长段：按行，再按句切
+    let buf = "";
+    for (const line of t.split(/\r?\n/)) {
+      const pieces = line.length <= room ? [line] : (line.match(/[^。！？；\n]+[。！？；]?/g) || [line]);
+      for (const piece of pieces) {
+        const chunk = piece.length > room ? (piece.match(new RegExp(`[\\s\\S]{1,${room}}`, "g")) || []) : [piece];
+        for (const c of chunk) {
+          if (buf.length + c.length + 1 > room && buf) { units.push(buf.trim()); buf = ""; }
+          buf += (buf ? "\n" : "") + c;
+        }
+      }
+    }
+    if (buf.trim()) units.push(buf.trim());
+  }
+  const pages: string[] = [];
+  let current = "";
+  for (const unit of units) {
+    if (current && current.length + 2 + unit.length > room) { pages.push(current); current = ""; }
+    current += (current ? "\n\n" : "") + unit;
+  }
+  if (current) pages.push(current);
+  return pages.map((p, i) => (i === 0 || !h1 ? (i === 0 && h1 && !p.startsWith(h1) ? `${head}${p}` : p) : `${head}${p}`));
 }
 
 function resolveDesiredPageCount(charCount: number, sectionCount: number): number {
@@ -388,7 +424,8 @@ export function planKnowledgeCardPages(
   distillModel?: string | null,
 ): KnowledgeCardPagePlan {
   const model = resolveKnowledgeCardDistillModel(distillModel);
-  const full = stripKnowledgeCardInternalDirectives(String(text || "")).trim();
+  // 〔参考原页〕标记只供服务端定位页图，不计入页数与页费
+  const full = stripKnowledgeCardInternalDirectives(stripKnowledgeCardPageRefs(String(text || ""))).trim();
   if (!full) {
     return { pages: [], pageCount: 0, credits: 0, roundText: "", distillModel: model };
   }
@@ -410,8 +447,9 @@ export function planKnowledgeCardPages(
     pages = splitByChars(full, pageCount);
   }
 
-  if (pages.some((p) => p.length > KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE * 1.35)) {
-    pages = splitByChars(full, Math.max(pages.length + 1, neededByCap));
+  // 0908 用户令：单页超过 1200 字会出乱码/字糊，硬顶 1200；按段落贪心装页，贴着上限分，不碎成小页
+  if (pages.some((p) => p.length > KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE)) {
+    pages = packByCap(full, parsed.h1, KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE);
   }
 
   const finalPages = pages.filter(Boolean);

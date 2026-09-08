@@ -9,7 +9,9 @@ import {
   suggestKnowledgeCardMinSections,
 } from "./knowledgeCardDistill";
 import {
-  KNOWLEDGE_CARD_DISTILL_MODEL_KIMI,
+  KNOWLEDGE_CARD_DISTILL_MODEL_CLAUDE_RETIRED,
+  KNOWLEDGE_CARD_DISTILL_MODEL_KIMI_RETIRED,
+  KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS,
   KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
   KNOWLEDGE_CARD_DISTILL_MODEL_QWEN_OR,
   KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
@@ -23,9 +25,19 @@ describe("knowledgeCardDistill model", () => {
     expect(KNOWLEDGE_CARD_DISTILL_MODEL).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_SOL);
   });
 
-  it("accepts Kimi OR + Evolink Qwen; migrates legacy terra / OR-qwen", () => {
-    expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_KIMI)).toBe(
-      KNOWLEDGE_CARD_DISTILL_MODEL_KIMI,
+  it("only two tiers remain: Sol and Qwen (0908 拍板)", () => {
+    expect(KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS.map((o) => o.id)).toEqual([
+      KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
+      KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
+    ]);
+  });
+
+  it("migrates retired Claude / Kimi tiers to Sol; legacy terra / OR-qwen kept", () => {
+    expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_CLAUDE_RETIRED)).toBe(
+      KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
+    );
+    expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_KIMI_RETIRED)).toBe(
+      KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
     );
     expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toBe(
       KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
@@ -86,24 +98,19 @@ describe("splitSourceTextForDistill", () => {
 describe("per-model distill profiles", () => {
   it("gives each model its own chunking + effort tuning", () => {
     const sol = knowledgeCardDistillProfile(KNOWLEDGE_CARD_DISTILL_MODEL_SOL);
-    const kimi = knowledgeCardDistillProfile(KNOWLEDGE_CARD_DISTILL_MODEL_KIMI);
     const qwen = knowledgeCardDistillProfile(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN);
 
-    // Kimi 实测最快 → 段最大、并发最高；Qwen 最慢且压缩过度 → 段最小、最少小节最高
-    expect(kimi.chunkChars).toBeGreaterThan(sol.chunkChars);
+    // Qwen 最慢且压缩过度 → 段最小、最少小节最高
     expect(sol.chunkChars).toBeGreaterThan(qwen.chunkChars);
-    expect(kimi.concurrency).toBeGreaterThanOrEqual(sol.concurrency);
     expect(qwen.minSectionsPerChunk).toBeGreaterThan(sol.minSectionsPerChunk);
 
-    // 分段抽要点用中档，统稿抬档（各家枚举不同：Evolink 顶档 xhigh，OpenRouter 是 high|max）
+    // 0908 用户令：Sol 只开 medium（high/xhigh 太慢）；Qwen 统稿仍 xhigh
     expect(sol.effortChunk).toBe("medium");
-    expect(sol.effortFinal).toBe("xhigh");
+    expect(sol.effortFinal).toBe("medium");
     expect(qwen.effortChunk).toBe("medium");
     expect(qwen.effortFinal).toBe("xhigh");
-    // Kimi 顶档 max 配长合并稿的统稿必超时（探针实测）→ 统稿用 high
-    expect(kimi.effortFinal).toBe("high");
 
-    for (const p of [sol, kimi, qwen]) {
+    for (const p of [sol, qwen]) {
       expect(p.chunkRetries).toBeGreaterThanOrEqual(1);
       expect(p.requestTimeoutMs).toBeGreaterThanOrEqual(60_000);
     }
@@ -118,9 +125,7 @@ describe("per-model distill profiles", () => {
   it("estimates chunk count per model", () => {
     expect(estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_SOL, 3_000)).toBe(1);
     const solChunks = estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_SOL, 95_000);
-    const kimiChunks = estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_KIMI, 95_000);
     const qwenChunks = estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN, 95_000);
-    expect(kimiChunks).toBeLessThan(solChunks);
     expect(qwenChunks).toBeGreaterThan(solChunks);
   });
 });
