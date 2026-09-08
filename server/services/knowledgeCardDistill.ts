@@ -245,10 +245,8 @@ function buildDistillSystem(minSections: number, modelName?: string | null, docK
 }
 
 export type KnowledgeCardUploadFile = {
-  /** 小文件走请求体；大文件请改用 `gcsUri` 直传 */
-  fileBase64?: string;
-  /** 前端直传 GCS 后的对象地址（`gs://bucket/object`），不受请求体大小限制 */
-  gcsUri?: string;
+  /** 前端直传 GCS 后的对象地址（`gs://bucket/object`）；不论大小一律直传，不走 base64（媒体传输铁律） */
+  gcsUri: string;
   mimeType: string;
   fileName?: string;
 };
@@ -261,20 +259,6 @@ function hasDistillGateway(modelName: KnowledgeCardDistillModelId): boolean {
 
 function officialFallbackKey(modelName: KnowledgeCardDistillModelId): string {
   return modelName === KNOWLEDGE_CARD_DISTILL_MODEL_QWEN ? getDashscopeSgPlanKey() : getOfficialOpenAiApiKey();
-}
-
-function normalizeImageDataUrl(fileBase64: string | undefined, mimeType: string): string | null {
-  const raw = String(fileBase64 || "").trim();
-  if (!raw) return null;
-  if (raw.startsWith("data:image/")) return raw;
-  const mime = mimeType.toLowerCase().includes("png")
-    ? "image/png"
-    : mimeType.toLowerCase().includes("webp")
-      ? "image/webp"
-      : "image/jpeg";
-  const b64 = raw.replace(/^data:[^;]+;base64,/, "");
-  if (b64.length < 32) return null;
-  return `data:${mime};base64,${b64}`;
 }
 
 function isImageFile(mimeType: string, fileName?: string): boolean {
@@ -291,12 +275,8 @@ function isImageFile(mimeType: string, fileName?: string): boolean {
 
 /** 抽文档文本；图片留给视觉 OCR，不在此解码为文字。 */
 /**
- * 从 GCS 取回直传的文件。
- *
- * 大文档必须走这条：base64 塞进请求体最多约 13.5MB 原文件（`fileBase64` 限 18MB），
- * 再大就传不完——用户 2026-08-06 传 42MB 的 PDF，base64 后 56MB，
- * 连接在读请求体阶段就被掐断，报错却显示「算力紧张」，误导他换了三个模型。
- * 直传还有两个附带好处：文件不经过这台 2 核机器，以及 GCS 原生支持断点续传。
+ * 从 GCS 取回直传的文件（文档抽字用；图片不下载，直接签名给模型）。
+ * 所有上传不论大小一律前端直传 GCS（0908 用户令；媒体传输铁律禁止 base64 塞请求体）。
  */
 async function readGcsUploadBuffer(gcsUri: string): Promise<Buffer> {
   const { signGsUriV4ReadUrl } = await import("./gcs.js");
@@ -320,7 +300,8 @@ export type KnowledgeCardExtractResult = {
   documentText: string;
   /** 只含没有逐页备料的文档（docx/pptx/无 userId 的 pdf）；分段时作为「补充文字」，避免与逐页正文重复提炼 */
   nonPageDocumentText: string;
-  imageDataUrls: string[];
+  /** 用户上传图片的签名 https（GCS），喂模型读图 */
+  imageUrls: string[];
   methods: string[];
   /** PDF / EPUB 逐页备料（含选中页图）；docx/pptx 只有文字 */
   documents: KnowledgeCardDocumentPageSet[];
@@ -348,7 +329,7 @@ export async function extractKnowledgeCardUploads(
 ): Promise<KnowledgeCardExtractResult> {
   const docParts: string[] = [];
   const nonPageParts: string[] = [];
-  const imageDataUrls: string[] = [];
+  const imageUrls: string[] = [];
   const methods: string[] = [];
   const documents: KnowledgeCardDocumentPageSet[] = [];
   const pagesEnabled = Boolean(options.selectPages && options.userId && options.userId > 0);
@@ -361,40 +342,26 @@ export async function extractKnowledgeCardUploads(
       options.onProgress?.({ stage, done, total, fileName: name, fileIndex, fileTotal });
     const gcsUri = String(file.gcsUri || "").trim();
 
+    if (!gcsUri) {
+      methods.push(`${name}:missing_gcs_uri`);
+      continue;
+    }
     if (isImageFile(file.mimeType, file.fileName)) {
-      // 图片走视觉读图，需要 data URL；直传的先取回再转
-      let url = normalizeImageDataUrl(file.fileBase64, file.mimeType);
-      if (!url && gcsUri) {
-        try {
-          const buf = await readGcsUploadBuffer(gcsUri);
-          url = `data:${file.mimeType};base64,${buf.toString("base64")}`;
-        } catch (e) {
-          methods.push(`${name}:gcs_read_failed`);
-          console.warn(`[knowledgeCardDistill] 取回图片失败 ${gcsUri}:`, e);
-        }
-      }
-      if (url) {
-        imageDataUrls.push(url);
-        methods.push(`${name}:image_ocr_pending`);
-      }
+      // 图片走视觉读图：签名 https 直接给模型，不下载不转 base64
+      const { signGsUriV4ReadUrl } = await import("./gcs.js");
+      imageUrls.push(signGsUriV4ReadUrl(gcsUri, 4 * 3600));
+      methods.push(`${name}:image_vision_url`);
       continue;
     }
 
     let buffer: Buffer;
-    if (gcsUri) {
-      try {
-        buffer = await readGcsUploadBuffer(gcsUri);
-        methods.push(`${name}:gcs_direct`);
-      } catch (e) {
-        methods.push(`${name}:gcs_read_failed`);
-        console.warn(`[knowledgeCardDistill] 取回文档失败 ${gcsUri}:`, e);
-        continue;
-      }
-    } else {
-      buffer = Buffer.from(
-        String(file.fileBase64 || "").replace(/^data:[^;]+;base64,/, ""),
-        "base64",
-      );
+    try {
+      buffer = await readGcsUploadBuffer(gcsUri);
+      methods.push(`${name}:gcs_direct`);
+    } catch (e) {
+      methods.push(`${name}:gcs_read_failed`);
+      console.warn(`[knowledgeCardDistill] 取回文档失败 ${gcsUri}:`, e);
+      continue;
     }
     if (!buffer.length) {
       methods.push(`${name}:empty`);
@@ -454,7 +421,7 @@ export async function extractKnowledgeCardUploads(
   return {
     documentText: docParts.join("\n\n").trim(),
     nonPageDocumentText: nonPageParts.join("\n\n").trim(),
-    imageDataUrls,
+    imageUrls,
     methods,
     documents,
   };
@@ -559,11 +526,11 @@ function mapFetchAbortError(err: unknown): Error {
   return err instanceof Error ? err : new Error(msg);
 }
 
-export type DistillPageImage = { docKey: string; pageNumber: number; dataUrl: string; reason?: string };
+export type DistillPageImage = { docKey: string; pageNumber: number; url: string; reason?: string };
 
 function buildDistillUserContent(params: {
   sourceText: string;
-  imageDataUrls: string[];
+  imageUrls: string[];
   pageImages?: DistillPageImage[];
   minSections: number;
   /** 本次只提炼整本中的一段（分段模式） */
@@ -575,8 +542,8 @@ function buildDistillUserContent(params: {
       ? `本次只处理长文档的${params.chunkLabel}。只就本段内容**挑出最值得记住的重点**（约 ${params.minSections} 个 ## 小节），次要枝节可以整段舍弃；不要复述其它章节、不要写「本段/以上」这类过渡语，不要输出未经提炼的长原文：`
       : `请一次性完成：读文/读图 + 提炼。输出疏朗知识卡片 Markdown，约 ${params.minSections} 个 ## 小节，取重点、不要输出未经提炼的长原文：`,
     params.sourceText.trim() || "（无纯文本，请主要依据附图提炼）",
-    params.imageDataUrls.length
-      ? `\n附图 ${params.imageDataUrls.length} 张：请提取文字与图表要点，并入精华，去掉重复。`
+    params.imageUrls.length
+      ? `\n附图 ${params.imageUrls.length} 张：请提取文字与图表要点，并入精华，去掉重复。`
       : "",
     pageImages.length
       ? `\n原稿参考页 ${pageImages.length} 张（已标页码）：这些页的版式结构有特色（表格/导图/分式图解/对比）。提炼对应知识点时保留其结构关系（表头与行列、导图分支、步骤顺序、对比两侧），并在对应小节末尾单独一行写 ${formatKnowledgeCardPageRef(pageImages[0]!.docKey, [pageImages[0]!.pageNumber])} 这种标记（页码写真实参考页，可写多页）。`
@@ -586,12 +553,12 @@ function buildDistillUserContent(params: {
     .join("\n");
 
   const userContent: Array<Record<string, unknown>> = [{ type: "text", text: textBlock }];
-  for (const url of params.imageDataUrls) {
+  for (const url of params.imageUrls) {
     userContent.push({ type: "image_url", image_url: { url, detail: "high" } });
   }
   for (const page of pageImages) {
     userContent.push({ type: "text", text: `【原稿 ${page.docKey} 第 ${page.pageNumber} 页${page.reason ? `：${page.reason}` : ""}】` });
-    userContent.push({ type: "image_url", image_url: { url: page.dataUrl, detail: "high" } });
+    userContent.push({ type: "image_url", image_url: { url: page.url, detail: "high" } });
   }
   return userContent;
 }
@@ -611,7 +578,7 @@ function gatewayLabel(g: DistillGateway): string {
 async function invokeDistillViaGateway(params: {
   gateway: DistillGateway;
   sourceText: string;
-  imageDataUrls: string[];
+  imageUrls: string[];
   pageImages?: DistillPageImage[];
   modelName: typeof KNOWLEDGE_CARD_DISTILL_MODEL_SOL | typeof KNOWLEDGE_CARD_DISTILL_MODEL_QWEN;
   minSections: number;
@@ -622,7 +589,7 @@ async function invokeDistillViaGateway(params: {
   docKeys?: string[];
 }): Promise<string> {
   const userContent = buildDistillUserContent(params);
-  const hasImages = params.imageDataUrls.length > 0 || (params.pageImages?.length ?? 0) > 0;
+  const hasImages = params.imageUrls.length > 0 || (params.pageImages?.length ?? 0) > 0;
   const body: Record<string, unknown> = {
     model: params.modelName,
     messages: [
@@ -719,7 +686,7 @@ export function __setKnowledgeCardDistillGatewayInvokerForTest(
 
 async function invokeDistillLlm(params: {
   sourceText: string;
-  imageDataUrls: string[];
+  imageUrls: string[];
   pageImages?: DistillPageImage[];
   modelName: KnowledgeCardDistillModelId;
   minSections: number;
@@ -764,7 +731,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  */
 async function distillOneChunkWithRetry(params: {
   chunk: string;
-  imageDataUrls: string[];
+  imageUrls: string[];
   pageImages?: DistillPageImage[];
   modelName: KnowledgeCardDistillModelId;
   minSections: number;
@@ -778,7 +745,7 @@ async function distillOneChunkWithRetry(params: {
     try {
       return await invokeDistillLlm({
         sourceText: params.chunk,
-        imageDataUrls: params.imageDataUrls,
+        imageUrls: params.imageUrls,
         pageImages: params.pageImages,
         modelName: params.modelName,
         minSections: params.minSections,
@@ -808,7 +775,7 @@ async function distillOneChunkWithRetry(params: {
         finer.push(
           await distillOneChunkWithRetry({
             chunk: halves[i]!,
-            imageDataUrls: i === 0 ? params.imageDataUrls : [],
+            imageUrls: i === 0 ? params.imageUrls : [],
             pageImages: i === 0 ? params.pageImages : [],
             modelName: params.modelName,
             minSections: Math.max(2, Math.ceil(params.minSections / halves.length)),
@@ -922,7 +889,7 @@ async function refineOnce(params: {
   try {
     const refined = await invokeDistillLlm({
       sourceText: params.body,
-      imageDataUrls: [],
+      imageUrls: [],
       modelName: params.modelName,
       minSections: params.minSections,
       // 只有定全局主线的 final 值得顶档；分组压缩与收紧节数用分段档，否则又撞超时
@@ -1067,7 +1034,7 @@ type DistillChunk = { text: string; pageImages: DistillPageImage[]; label: strin
  * 按页对齐分段：同一段里的文字与被选中的参考页图来自同一段页码，
  * 模型看得到图的同时也看得到该页文字，才能写出准确的「参考原页」标记。
  */
-/** 单个请求最多挂几张参考页图（避免图多字少的书把整本 base64 塞进一个请求撞 413/超时） */
+/** 单个请求最多挂几张参考页图（图多字少的书不把整本页图塞进一个请求） */
 export const DISTILL_MAX_PAGE_IMAGES_PER_CALL = Math.min(
   Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_MAX_PAGE_IMAGES) || 8, 2),
   24,
@@ -1091,15 +1058,15 @@ export function buildPageAlignedChunks(
     for (const page of doc.pages) {
       const text = page.text ? `【${doc.fileName} 第 ${page.pageNumber} 页】\n${page.text}` : "";
       const overflowByChars = current && current.chars + text.length > chunkChars && (current.chars > 0 || current.images.length);
-      const overflowByImages = current && page.imageDataUrl && current.images.length >= maxImagesPerChunk;
+      const overflowByImages = current && page.imageUrl && current.images.length >= maxImagesPerChunk;
       if (overflowByChars || overflowByImages) flush();
       if (!current) current = { parts: [], chars: 0, images: [], from: `${doc.fileName} p${page.pageNumber}` };
       if (text) {
         current.parts.push(text);
         current.chars += text.length;
       }
-      if (page.imageDataUrl) {
-        current.images.push({ docKey: doc.docKey, pageNumber: page.pageNumber, dataUrl: page.imageDataUrl, reason: page.reason });
+      if (page.imageUrl) {
+        current.images.push({ docKey: doc.docKey, pageNumber: page.pageNumber, url: page.imageUrl, reason: page.reason });
       }
     }
     flush();
@@ -1116,7 +1083,7 @@ async function invokeDistillLlmPossiblyChunked(params: {
   sourceText: string;
   /** 逐页文档之外的文字（docx/pptx 抽字 + 用户贴的文本）；有逐页文档时只把它当补充段，不与逐页正文重复 */
   extraText: string;
-  imageDataUrls: string[];
+  imageUrls: string[];
   documents: KnowledgeCardDocumentPageSet[];
   modelName: KnowledgeCardDistillModelId;
   minSectionsTotal: number;
@@ -1125,16 +1092,16 @@ async function invokeDistillLlmPossiblyChunked(params: {
 }): Promise<string> {
   const profile = DISTILL_PROFILES[params.modelName];
   const text = String(params.sourceText || "").trim();
-  const urls = params.imageDataUrls;
+  const urls = params.imageUrls;
   const allPageImages: DistillPageImage[] = params.documents.flatMap((d) =>
-    d.pages.filter((p) => p.imageDataUrl).map((p) => ({ docKey: d.docKey, pageNumber: p.pageNumber, dataUrl: p.imageDataUrl!, reason: p.reason })),
+    d.pages.filter((p) => p.imageUrl).map((p) => ({ docKey: d.docKey, pageNumber: p.pageNumber, url: p.imageUrl!, reason: p.reason })),
   );
 
   // 短文单发；但参考页图超过单请求上限时仍走分段，避免整本页图塞进一个请求
   if ((!text || text.length <= profile.chunkThreshold) && allPageImages.length <= DISTILL_MAX_PAGE_IMAGES_PER_CALL) {
     return invokeDistillLlm({
       sourceText: text,
-      imageDataUrls: urls,
+      imageUrls: urls,
       pageImages: allPageImages,
       modelName: params.modelName,
       minSections: params.minSectionsTotal,
@@ -1170,7 +1137,7 @@ async function invokeDistillLlmPossiblyChunked(params: {
         outputs[idx] = await distillOneChunkWithRetry({
           chunk: chunk.text,
           // 用户附图只挂第一段；原稿参考页跟随所在段
-          imageDataUrls: idx === 0 ? urls : [],
+          imageUrls: idx === 0 ? urls : [],
           pageImages: chunk.pageImages,
           modelName: params.modelName,
           minSections: minSectionsPerChunk,
@@ -1253,7 +1220,7 @@ export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillMod
       try {
         const raw = await invokeDistillLlm({
           sourceText: `全书共 ${pageCount} 页；本次目录页覆盖第 ${pageNumbers[0]}–${pageNumbers[pageNumbers.length - 1]} 页（共 ${group.length} 张目录页）。`,
-          imageDataUrls: group.map((sheet) => sheet.imageDataUrl),
+          imageUrls: group.map((sheet) => sheet.imageUrl),
           modelName,
           minSections: 1,
           effort: envStr("KNOWLEDGE_CARD_PAGE_TRIAGE_EFFORT", "low"),
@@ -1299,11 +1266,11 @@ export async function prepareKnowledgeCardCopy(input: {
           selectPages: input.userId ? makeKnowledgeCardPageSelector(modelName) : undefined,
           onProgress: input.onExtractProgress,
         })
-      : { documentText: "", nonPageDocumentText: "", imageDataUrls: [], methods: [], documents: [] });
+      : { documentText: "", nonPageDocumentText: "", imageUrls: [], methods: [], documents: [] });
 
   const pasted = String(input.sourceText || "").trim();
   // 有上传时：以本次抽文+附图为准；文本框旧「生 OCR」不重复灌入（避免 100+ 页原文假分页）
-  const hasUploads = files.length > 0 || extracted.documents.length > 0 || extracted.imageDataUrls.length > 0 || Boolean(extracted.documentText);
+  const hasUploads = files.length > 0 || extracted.documents.length > 0 || extracted.imageUrls.length > 0 || Boolean(extracted.documentText);
   const mergedRaw = hasUploads
     ? [extracted.documentText, pasted.length <= 3200 ? pasted : ""].filter(Boolean).join("\n\n").trim() ||
       extracted.documentText ||
@@ -1312,7 +1279,7 @@ export async function prepareKnowledgeCardCopy(input: {
   const skip =
     !input.forceDistill &&
     shouldSkipKnowledgeCardDistill(mergedRaw, hasUploads) &&
-    extracted.imageDataUrls.length === 0;
+    extracted.imageUrls.length === 0;
   const documentsSummary = extracted.documents.map((d) => ({ docKey: d.docKey, fileName: d.fileName, pageCount: d.pageCount, selectedPages: d.selectedPages }));
 
   if (skip) {
@@ -1327,15 +1294,15 @@ export async function prepareKnowledgeCardCopy(input: {
     };
   }
 
-  if (!mergedRaw && extracted.imageDataUrls.length === 0) {
+  if (!mergedRaw && extracted.imageUrls.length === 0) {
     throw new Error("请先输入文案或上传文件/图片");
   }
 
-  if (hasUploads && !mergedRaw && extracted.imageDataUrls.length === 0) {
+  if (hasUploads && !mergedRaw && extracted.imageUrls.length === 0) {
     throw new Error("未能从文件抽出文字（扫描版 PDF 请改传可选中文字的 PDF，或上传关键页图片）");
   }
 
-  const urls = extracted.imageDataUrls;
+  const urls = extracted.imageUrls;
   const sourceChars = mergedRaw.length + urls.length * 500;
   const minSectionsTotal = suggestKnowledgeCardMinSections(Math.max(mergedRaw.length, sourceChars), detailLevel);
 
@@ -1343,7 +1310,7 @@ export async function prepareKnowledgeCardCopy(input: {
     const distilled = await invokeDistillLlmPossiblyChunked({
       sourceText: mergedRaw,
       extraText: [extracted.nonPageDocumentText, pasted.length <= 3200 ? pasted : ""].filter(Boolean).join("\n\n").trim(),
-      imageDataUrls: urls,
+      imageUrls: urls,
       documents: extracted.documents,
       modelName,
       minSectionsTotal,

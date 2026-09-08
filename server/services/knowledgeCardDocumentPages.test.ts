@@ -103,21 +103,24 @@ describe("EPUB → PDF → 逐页备料（真实 Chromium + poppler）", () => {
         sheetsSeen = sheets.length;
         expect(pageCount).toBeGreaterThanOrEqual(4);
         expect(sheets[0]!.pageNumbers[0]).toBe(1);
-        expect(sheets[0]!.imageDataUrl.startsWith("data:image/jpeg;base64,")).toBe(true);
+        expect(sheets[0]!.imageUrl.startsWith("https://signed/")).toBe(true);
+        expect(sheets[0]!.gcsUri).toContain("/sheets/u42/");
         return [{ pageNumber: 2, reason: "章节标题版式" }, { pageNumber: 2 }, { pageNumber: 9999 }];
       },
       onProgress: async (stage) => { stages.push(stage); },
-      uploadPage: async (objectName) => { uploads.push(objectName); return `gs://bucket/${objectName}`; },
+      uploadPage: async (objectName) => { uploads.push(objectName); return { gcsUri: `gs://bucket/${objectName}`, url: `https://signed/${objectName}` }; },
     });
     expect(set.docKey).toMatch(/^[0-9a-f]{16}$/);
     expect(set.pageCount).toBe(set.pages.length);
     expect(set.pages[0]!.text).toContain("第1章");
     expect(set.selectedPages).toEqual([2]);
-    expect(uploads).toEqual([knowledgeCardPageObjectName(42, set.docKey, 2)]);
-    expect(set.pages[1]!.imageDataUrl?.startsWith("data:image/jpeg;base64,")).toBe(true);
+    expect(uploads.filter((u) => u.includes("/pages/"))).toEqual([knowledgeCardPageObjectName(42, set.docKey, 2)]);
+    expect(uploads.some((u) => u.includes("/sheets/u42/"))).toBe(true);
+    expect(uploads.join("\n")).not.toContain("base64");
+    expect(set.pages[1]!.imageUrl).toBe(`https://signed/${knowledgeCardPageObjectName(42, set.docKey, 2)}`);
     expect(set.pages[1]!.imageGcsUri).toContain("/p-002.jpg");
     expect(set.pages[1]!.reason).toBe("章节标题版式");
-    expect(set.pages[0]!.imageDataUrl).toBeUndefined();
+    expect(set.pages[0]!.imageUrl).toBeUndefined();
     expect(sheetsSeen).toBe(Math.ceil(set.pageCount / KNOWLEDGE_CARD_SHEET_CELLS));
     expect(stages).toEqual(expect.arrayContaining(["text", "thumbs", "select", "render"]));
   }, 120_000);
@@ -139,7 +142,7 @@ describe("buildContactSheets", () => {
     expect(sheets).toHaveLength(2);
     expect(sheets[0]!.pageNumbers).toHaveLength(12);
     expect(sheets[1]!.pageNumbers).toEqual([13, 14]);
-    const meta = await sharp(Buffer.from(sheets[0]!.imageDataUrl.split(",")[1]!, "base64")).metadata();
+    const meta = await sharp(sheets[0]!.jpeg).metadata();
     expect(meta.width).toBeGreaterThan(1000);
   });
 });

@@ -43,7 +43,7 @@ describe("目录页扫读挑页（makeKnowledgeCardPageSelector）", () => {
       return `选好了：{"pages":[{"page":41,"reason":"分式图解"},{"page":999,"reason":"不存在"},{"page":2}]}`;
     });
     const select = makeKnowledgeCardPageSelector(KNOWLEDGE_CARD_DISTILL_MODEL_SOL);
-    const picked = await select([{ index: 1, pageNumbers: Array.from({ length: 48 }, (_, i) => i + 1), imageDataUrl: "data:image/jpeg;base64,AAA" }], 48);
+    const picked = await select([{ index: 1, pageNumbers: Array.from({ length: 48 }, (_, i) => i + 1), imageUrl: "https://signed/sheet-1.jpg", gcsUri: "gs://b/sheet-1.jpg" }], 48);
     expect(calls).toEqual(["evolink", "openai_official"]);
     expect(picked).toEqual([{ pageNumber: 41, reason: "分式图解" }, { pageNumber: 2, reason: undefined }]);
   });
@@ -57,7 +57,7 @@ describe("目录页扫读挑页（makeKnowledgeCardPageSelector）", () => {
       throw new Error("提炼账户额度不足，请稍后重试或联系管理员");
     });
     const select = makeKnowledgeCardPageSelector(KNOWLEDGE_CARD_DISTILL_MODEL_SOL);
-    const picked = await select([{ index: 1, pageNumbers: [1, 2, 3], imageDataUrl: "data:image/jpeg;base64,AAA" }], 3);
+    const picked = await select([{ index: 1, pageNumbers: [1, 2, 3], imageUrl: "https://signed/sheet-1.jpg", gcsUri: "gs://b/sheet-1.jpg" }], 3);
     expect(calls).toEqual(["evolink"]);
     expect(picked).toEqual([]);
   });
@@ -69,7 +69,7 @@ describe("buildPageAlignedChunks", () => {
     fileName: "book.pdf",
     pageCount: pages.length,
     selectedPages: pages.filter((p) => p.img).map((p) => p.n),
-    pages: pages.map((p) => ({ pageNumber: p.n, text: p.text, ...(p.img ? { imageDataUrl: `data:image/jpeg;base64,p${p.n}`, imageGcsUri: `gs://b/p${p.n}` } : {}) })),
+    pages: pages.map((p) => ({ pageNumber: p.n, text: p.text, ...(p.img ? { imageUrl: `https://signed/p${p.n}.jpg`, imageGcsUri: `gs://b/p${p.n}` } : {}) })),
   });
 
   it("keeps a selected page's image in the same chunk as its text; extra text goes last", () => {

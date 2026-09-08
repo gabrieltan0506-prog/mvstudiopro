@@ -3130,9 +3130,6 @@ async function processPlatformJob(
       const sourceText = String(params.sourceText || "");
       const distillModel = typeof params.distillModel === "string" ? params.distillModel : undefined;
       const detailLevel = typeof params.detailLevel === "string" ? params.detailLevel : undefined;
-      const imageDataUrls = Array.isArray(params.imageDataUrls)
-        ? (params.imageDataUrls as unknown[]).filter((u): u is string => typeof u === "string")
-        : [];
       const jobFiles = Array.isArray(params.files)
         ? (params.files as unknown[])
             .filter((f): f is { gcsUri: string; mimeType: string; fileName?: string } =>
@@ -3152,10 +3149,7 @@ async function processPlatformJob(
       };
       const prepared = await prepareKnowledgeCardCopy({
         sourceText,
-        files: [
-          ...jobFiles,
-          ...imageDataUrls.map((url) => ({ fileBase64: url, mimeType: "image/jpeg" })),
-        ],
+        files: jobFiles,
         forceDistill: true,
         distillModel,
         detailLevel,

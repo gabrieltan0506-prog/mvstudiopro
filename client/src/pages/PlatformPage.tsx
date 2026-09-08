@@ -2151,10 +2151,9 @@ function PlatformIpDimensionGuide() {
   );
 }
 
-/** 待提炼的上传文件：小文件走 base64 内联，大文件走 GCS 直传只带回 gs:// 地址 */
+/** 待提炼的上传文件：不论大小一律 GCS 直传，只带回 gs:// 地址（媒体传输铁律：不走 base64） */
 type KnowledgeCardPendingFile = {
-  fileBase64?: string;
-  gcsUri?: string;
+  gcsUri: string;
   mimeType: string;
   fileName?: string;
 };
@@ -2340,15 +2339,6 @@ function writeManhuaLearnContinuation(
     // localStorage 禁用时仍保留当前会话内的 ref，不阻断学习主链。
   }
 }
-
-/**
- * 超过这个体积就直传 GCS。
- *
- * base64 会把体积撑大约三分之一，请求体上限 18MB 折回原文件约 13.5MB；再大连接会在
- * 读 body 阶段被掐断，前端只看到含糊的「算力紧张」（用户 2026-08-06 的 42MB PDF）。
- * 阈值留到 8MB，是让常见的几百 KB 文档继续走内联，少一次签名往返。
- */
-const KNOWLEDGE_CARD_DIRECT_UPLOAD_MIN_BYTES = 8 * 1024 * 1024;
 
 /**
  * 大文档直传 GCS：一次 PUT，断了就重签名重传（签名地址 15 分钟过期，重试必须重新取）。
@@ -15091,13 +15081,8 @@ export default function PlatformPage() {
                             const encoded: KnowledgeCardPendingFile[] = [];
                             for (const file of list) {
                               const mimeType = file.type || (/\.epub$/i.test(file.name) ? "application/epub+zip" : "application/octet-stream");
-                              /**
-                               * 超过阈值改走 GCS 直传：base64 会把体积撑大三分之一，
-                               * 请求体上限约 13.5MB 原文件，再大连接会在读 body 阶段被掐断
-                               * （2026-08-06：42MB 的 PDF 传不上去，却报「算力紧张」）。
-                               * 直传还顺带绕开了那台 2 核机器，机器忙也不影响上传。
-                               */
-                              if (file.size > KNOWLEDGE_CARD_DIRECT_UPLOAD_MIN_BYTES) {
+                              // 不论大小一律 GCS 直传（0908 用户令；媒体传输铁律禁止 base64 塞请求体）
+                              {
                                 const mb = (file.size / 1024 / 1024).toFixed(1);
                                 const gcsUri = await uploadKnowledgeCardFileToGcs({
                                   file,
@@ -15113,20 +15098,7 @@ export default function PlatformPage() {
                                 });
                                 encoded.push({ gcsUri, mimeType, fileName: file.name });
                                 completedDirectUploads += 1;
-                                continue;
                               }
-                              const buf = await file.arrayBuffer();
-                              const bytes = new Uint8Array(buf);
-                              let binary = "";
-                              const chunk = 0x8000;
-                              for (let i = 0; i < bytes.length; i += chunk) {
-                                binary += String.fromCharCode(...Array.from(bytes.subarray(i, i + chunk)));
-                              }
-                              encoded.push({
-                                fileBase64: btoa(binary),
-                                mimeType,
-                                fileName: file.name,
-                              });
                             }
                             setCustomNoteUploadStatus(null);
                             // 生成按钮依赖文本框非空：上传后立刻 OCR+提炼写入文本框，否则无法点生成
