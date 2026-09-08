@@ -229,4 +229,13 @@ describe("阅读网关不可重复购买与完整性", () => {
     expect(await invokeKnowledgeReadingJson({ ...input, objectPrefix: "test/reading-2", channelScope: scope })).toEqual({ ok: true });
     expect(fetch).not.toHaveBeenCalled(); expect(store.claims.has("test/reading-2/claim.json")).toBe(false);
   });
+  it("官方失败回执不短路主通道：主通道恢复后仍可购买一次，官方失败 raw 保留", async () => {
+    const store = persistent();
+    store.objects.set(`${input.objectPrefix}/official-fallback/raw.json`, { status: 429, body: "官方限流", receivedAt: "早先" });
+    expect(await invokeKnowledgeReadingJson(input)).toEqual({ ok: true });
+    expect(vi.mocked(fetch).mock.calls.map(call => call[0])).toEqual(["https://direct.evolink.ai/v1/chat/completions"]);
+    expect(store.objects.get(`${input.objectPrefix}/official-fallback/raw.json`).status).toBe(429);
+    await invokeKnowledgeReadingJson({ ...input, model: "qwen3.8-max" }).catch(() => {});
+    expect(mocks.official).not.toHaveBeenCalled();
+  });
 });

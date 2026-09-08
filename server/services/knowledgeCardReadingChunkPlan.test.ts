@@ -115,7 +115,9 @@ describe("全书证据分批规划协调器", () => {
     expect(big.invoke.mock.calls.length).toBe(rerun);
     // 换一种约束（预算折算同样4页）：自然批checkpoint复用，只重做合并调用，缓存身份与提示词入参一致。
     await planKnowledgeCardReadingChunks({ ...big.input, constraints: { budgetCredits: 120 } });
-    expect(big.invoke.mock.calls.slice(rerun).every(([call]) => JSON.parse(call.text).targetPages !== undefined)).toBe(true);
+    const budgetCalls = big.invoke.mock.calls.slice(rerun);
+    expect(budgetCalls.length).toBeGreaterThan(0);
+    expect(budgetCalls.every(([call]) => JSON.parse(call.text).targetPages !== undefined)).toBe(true);
   });
   it("预算不足4页、已有方案可选或目标超过预算时不合并，交给报价如实显示", async () => {
     const counts = { concise: 6, balanced: 9, complete: 12 };
@@ -187,5 +189,23 @@ describe("全书证据分批规划协调器", () => {
     const plan = await planKnowledgeCardReadingChunks({ ...f.input, channelScope: "scope-1", constraints: { targetPages: 4 } });
     expect(plan.options.find(option => option.mode === "concise")!.pages.length).toBeGreaterThan(4);
     expect(f.invoke.mock.calls.every(([call]) => JSON.parse(call.text).targetPages === undefined && (call as any).channelScope === "scope-1")).toBe(true);
+  });
+  it("合并后省略摘要的checkpoint按输入指纹隔离，不复用合并前同名摘要", async () => {
+    const f = fixture(); const original = f.invoke.getMockImplementation()!;
+    f.invoke.mockImplementation(async call => {
+      const data = JSON.parse(call.text);
+      if (data.statements) return { statements: [data.statements.join("；")] };
+      const raw = await original(call);
+      if (data.targetPages !== undefined) { raw.omitted = Array.from({ length: 198 }, (_, i) => `合并省略${i}`); return raw; }
+      for (const option of raw.options!) { option.kept = [`第${data.batchIndex}部分机制`]; if (option.mode !== "complete") option.omitted = Array.from({ length: 30 }, (_, i) => `第${data.batchIndex}部分次要案例${i}`); }
+      return raw;
+    });
+    const plan = await planKnowledgeCardReadingChunks({ ...f.input, constraints: { targetPages: 4 } });
+    const calls = f.invoke.mock.calls.map(([call]) => JSON.parse(call.text));
+    const condenseAt = calls.findIndex(call => call.targetPages !== undefined);
+    expect(condenseAt).toBeGreaterThan(0);
+    // 合并后 3 条旧摘要 + 198 条新省略 = 201 条，分 3 组重新汇总；旧命名只会新发 1 组。
+    expect(calls.slice(condenseAt + 1).filter(call => call.statements).length).toBe(3);
+    expect(plan.options.find(option => option.mode === "concise")!.omitted.join("")).toContain("合并省略");
   });
 });

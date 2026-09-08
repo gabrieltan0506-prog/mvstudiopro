@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
 const mocks = vi.hoisted(() => ({ objects: new Map<string, any>(), invoke: vi.fn(), inspect: vi.fn(), stat: vi.fn(), count: 9, withPages: vi.fn(), usePhysical: false }));
 vi.mock("./gcs.js", () => ({
@@ -31,6 +31,7 @@ function makePlan(request: any) {
   return { version: 1, sourceDigest: request.sourceDigest, model: request.model, presentation: "single", reason: "四页足以讲清机制", options: [{ mode: "complete", reason: "覆盖全书知识", kept: ["完整主线"], omitted: [], pages: Array.from({ length: 4 }, (_, i) => ({ pageId: `card-${i + 1}`, title: `知识卡${i + 1}`, brief: "机制与条件", sourcePageIds: request.evidence.filter((page: any) => page.status === "read").map((page: any) => page.id), visualDirections: "重绘因果箭头与条件注释" })) }] };
 }
 describe("全页精读到报价的实际服务链", () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
   beforeEach(() => {
     vi.clearAllMocks(); mocks.objects.clear(); mocks.count = 9; mocks.usePhysical = false;
     mocks.inspect.mockImplementation(async ({ onChunk }) => onChunk(Buffer.from("测试原件")));
@@ -70,7 +71,7 @@ describe("全页精读到报价的实际服务链", () => {
     expect(inventory).toHaveLength(276); expect(inventory.at(-1).pageNumber).toBe(276);
   });
   it("批次有上限并发：同时在读不超过上限，结果按原页顺序回填，一批失败后不再发新批", async () => {
-    mocks.count = 40; process.env.KNOWLEDGE_CARD_READING_BATCH_CONCURRENCY = "3";
+    mocks.count = 40; vi.stubEnv("KNOWLEDGE_CARD_READING_BATCH_CONCURRENCY", "3");
     let active = 0, peak = 0;
     const original = mocks.invoke.getMockImplementation()!;
     mocks.invoke.mockImplementation(async (call: any) => {
@@ -91,10 +92,9 @@ describe("全页精读到报价的实际服务链", () => {
     await expect(analyzeKnowledgeCardDocuments(input)).rejects.toThrow("测试第二批失败");
     expect(mocks.invoke.mock.calls.length).toBeLessThan(10);
     expect(Array.from(mocks.objects.keys()).some(key => key.endsWith("/analysis.json"))).toBe(false);
-    delete process.env.KNOWLEDGE_CARD_READING_BATCH_CONCURRENCY;
   });
   it("中途中止或超限页时先等在途批收尾并落回执，不留脱管写入；规划调用带同一避让范围", async () => {
-    mocks.count = 40; process.env.KNOWLEDGE_CARD_READING_BATCH_CONCURRENCY = "4";
+    mocks.count = 40; vi.stubEnv("KNOWLEDGE_CARD_READING_BATCH_CONCURRENCY", "4");
     const original = mocks.invoke.getMockImplementation()!;
     let settled = 0;
     const controller = new AbortController();
@@ -115,7 +115,6 @@ describe("全页精读到报价的实际服务链", () => {
     mocks.objects.clear(); mocks.invoke.mockClear(); mocks.invoke.mockImplementation(original); mocks.count = 9;
     await analyzeKnowledgeCardDocuments(input);
     expect(mocks.invoke.mock.calls.every(([call]) => typeof call.channelScope === "string" && call.channelScope.includes("/visual-reading-v1/"))).toBe(true);
-    delete process.env.KNOWLEDGE_CARD_READING_BATCH_CONCURRENCY;
   });
   it("超过五万字的真实文字原件完整进入阅读段并可恢复，不当单张物理页拒绝", async () => {
     mocks.usePhysical = true;

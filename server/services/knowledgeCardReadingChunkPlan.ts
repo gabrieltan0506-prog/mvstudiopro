@@ -228,7 +228,7 @@ export async function planKnowledgeCardReadingChunks(input: KnowledgeCardReading
       if (group.length) groups.push(group);
       const next: string[] = [];
       for (let index = 0; index < groups.length; index++) {
-        const path = `${root}/metadata-${mode}-${kind}-${level}-${index}`;
+        const path = `${root}/metadata-${mode}-${kind}-${level}-${index}-${sha(JSON.stringify(groups[index])).slice(0, 16)}`;
         const result = await checkpoint(path,
           () => request(path, JSON.stringify({ statements: groups[index] }), `合并同类的${kind === "kept" ? "保留内容" : "省略内容"}说明，保留所有主题和真实取舍，不增加事实。只输出{"statements":[...]}，最多10条，每条不超过4000字。`),
           raw => z.object({ statements: z.array(statement).min(1).max(10) }).strict().parse(raw), raw => raw);

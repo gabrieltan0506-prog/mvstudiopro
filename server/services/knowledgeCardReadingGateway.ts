@@ -127,8 +127,12 @@ export async function invokeKnowledgeReadingJson(input: KnowledgeReadingCall): P
     return parseReadingReply(reply, input.model);
   };
   const canFallback = input.model === KNOWLEDGE_CARD_DISTILL_MODEL_SOL;
-  // 官方通道已有付费回执（避让后记号未落盘、进程重启等）时直接复用，主通道不再下单。
-  if (canFallback && await readKnowledgeReadingJson<ReadingReply>(`${input.objectPrefix}/official-fallback/raw.json`)) return officialFallback();
+  // 官方通道已有成功回执（避让后记号未落盘、进程重启等）时直接复用，主通道不再下单；
+  // 官方失败回执不短路，主通道恢复健康后仍可用。
+  if (canFallback) {
+    const official = await readKnowledgeReadingJson<ReadingReply>(`${input.objectPrefix}/official-fallback/raw.json`);
+    if (official && official.status >= 200 && official.status < 300) return officialFallback();
+  }
   let reply: ReadingReply;
   try {
     reply = await requestReadingChannelOnce(input, input.objectPrefix, body, () => {
