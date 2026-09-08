@@ -3126,27 +3126,61 @@ async function processPlatformJob(
 
       const sourceText = String(params.sourceText || "");
       const distillModel = typeof params.distillModel === "string" ? params.distillModel : undefined;
+      const detailLevel = typeof params.detailLevel === "string" ? params.detailLevel : undefined;
       const imageDataUrls = Array.isArray(params.imageDataUrls)
         ? (params.imageDataUrls as unknown[]).filter((u): u is string => typeof u === "string")
+        : [];
+      const jobFiles = Array.isArray(params.files)
+        ? (params.files as unknown[])
+            .filter((f): f is { gcsUri: string; mimeType: string; fileName?: string } =>
+              Boolean(f && typeof f === "object" && typeof (f as { gcsUri?: unknown }).gcsUri === "string" && typeof (f as { mimeType?: unknown }).mimeType === "string"))
         : [];
       const extractionMethods = Array.isArray(params.extractionMethods)
         ? (params.extractionMethods as unknown[]).filter((m): m is string => typeof m === "string")
         : [];
 
+      /**
+       * 进度百分比（0908 用户要求）：转换 0–5 → 读页/目录 5–20 → 挑页 20–30 → 渲染选中页 30–40 →
+       * 分段提炼 40–90 → 统稿 90–98；终态由 job 状态给出成功/失败。
+       */
+      const patchProgress = async (patch: Record<string, unknown>) => {
+        if (!platformJobId) return;
+        await patchJobRunningProgress(platformJobId, patch).catch(() => {});
+      };
       const prepared = await prepareKnowledgeCardCopy({
         sourceText,
-        files: imageDataUrls.map((url) => ({ fileBase64: url, mimeType: "image/jpeg" })),
+        files: [
+          ...jobFiles,
+          ...imageDataUrls.map((url) => ({ fileBase64: url, mimeType: "image/jpeg" })),
+        ],
         forceDistill: true,
         distillModel,
+        detailLevel,
+        userId: Number(jobUserId),
+        onExtractProgress: async (p) => {
+          const base = p.stage === "converting" ? 0 : p.stage === "reading" ? 5 : p.stage === "selecting" ? 20 : 30;
+          const span = p.stage === "converting" ? 5 : p.stage === "reading" ? 15 : 10;
+          const frac = p.total > 0 ? Math.min(1, p.done / p.total) : 0;
+          await patchProgress({
+            distillStage: p.stage,
+            distillStageDone: p.done,
+            distillStageTotal: p.total,
+            distillFileName: p.fileName,
+            distillPercent: Math.round(base + span * frac),
+          });
+        },
         onProgress: async (p) => {
-          if (!platformJobId) return;
-          await patchJobRunningProgress(platformJobId, {
+          const frac = p.totalChunks > 0 ? Math.min(1, p.doneChunks / p.totalChunks) : 0;
+          await patchProgress({
             distillPhase: p.phase,
+            distillStage: p.phase,
             distillDoneChunks: p.doneChunks,
             distillTotalChunks: p.totalChunks,
-          }).catch(() => {});
+            distillPercent: p.phase === "refining" ? 90 : Math.round(40 + 50 * frac),
+          });
         },
       });
+      await patchProgress({ distillStage: "finishing", distillPercent: 98 });
       const plan = planKnowledgeCardPages(prepared.distilledMarkdown, prepared.distillModel);
 
       // 服务端账本（审查必须修 P0·6）：真实提炼产出的稿子绑档位，出图页费按此结算
@@ -3225,10 +3259,12 @@ async function processPlatformJob(
       }
 
       return {
-        provider: prepared.distillModel === "claude-opus-5" ? "anthropic" : "evolink",
+        provider: "evolink",
         output: {
           success: true,
           distillFeeCharged,
+          detailLevel: prepared.detailLevel,
+          documents: prepared.documents,
           distilledMarkdown: prepared.distilledMarkdown,
           skippedDistill: prepared.skippedDistill,
           extractionMethods: extractionMethods.length ? extractionMethods : prepared.extractionMethods,

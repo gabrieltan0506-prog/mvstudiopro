@@ -248,12 +248,32 @@ import {
   estimateKnowledgeCardDistillTradeoff,
   KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS,
   knowledgeCardCreditsForPages,
-  knowledgeCardImageQuality,
   planKnowledgeCardPages,
 } from "@shared/knowledgeCardPagination";
 import { suggestKnowledgeCardMinSections } from "@shared/knowledgeCardDistillSections";
 import {
   KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS,
+} from "@shared/knowledgeCardDistillModels";
+import {
+  KNOWLEDGE_CARD_DEFAULT_DETAIL_LEVEL,
+  KNOWLEDGE_CARD_DETAIL_LEVEL_LABEL_ZH,
+  KNOWLEDGE_CARD_DETAIL_LEVELS,
+  resolveKnowledgeCardDetailLevel,
+  type KnowledgeCardDetailLevel,
+} from "@shared/knowledgeCardDistillSections";
+import {
+  KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH,
+  KNOWLEDGE_CARD_SUBJECT_POSITIONS,
+  resolveKnowledgeCardSubjectPosition,
+  type KnowledgeCardSubjectPosition,
+} from "@shared/knowledgeCardSubjectPosition";
+import {
+  KnowledgeCardProgress,
+  knowledgeCardProgressFromDistill,
+  knowledgeCardProgressFromRender,
+  type KnowledgeCardProgressState,
+} from "@/components/platform/KnowledgeCardProgress";
+import {
   KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
   knowledgeCardDistillFeeForModel,
   resolveKnowledgeCardDistillModel,
@@ -3004,6 +3024,24 @@ export default function PlatformPage() {
       return KNOWLEDGE_CARD_DISTILL_MODEL_SOL;
     }
   });
+  /** 成稿档：精简版（浓缩）/ 高级版（内容完整）；0908 用户拍板 */
+  const [customNoteDetailLevel, setCustomNoteDetailLevel] = useState<KnowledgeCardDetailLevel>(() => {
+    try {
+      return resolveKnowledgeCardDetailLevel(localStorage.getItem("mvs-knowledge-card-detail-level") || KNOWLEDGE_CARD_DEFAULT_DETAIL_LEVEL);
+    } catch {
+      return KNOWLEDGE_CARD_DEFAULT_DETAIL_LEVEL;
+    }
+  });
+  /** 主体偏左 / 居中（横版 16:9 固定）；0908 用户拍板 */
+  const [customNoteSubjectPosition, setCustomNoteSubjectPosition] = useState<KnowledgeCardSubjectPosition>(() => {
+    try {
+      return resolveKnowledgeCardSubjectPosition(localStorage.getItem("mvs-knowledge-card-subject-position"));
+    } catch {
+      return "left";
+    }
+  });
+  /** 一条进度条贯穿上传→转换→读原稿→提炼→出图；终态成功/失败 */
+  const [customNoteProgress, setCustomNoteProgress] = useState<KnowledgeCardProgressState>({ status: "idle", percent: 0 });
   /** 待随「生成」一并提炼的上传文件（含图片 OCR）。 */
   const customNotePendingFilesRef = useRef<KnowledgeCardPendingFile[]>([]);
   /** 上传区可见状态（成功/失败），避免只靠 toast */
@@ -7897,41 +7935,66 @@ export default function PlatformPage() {
     /** 纯文本长文里用户主动买的提炼，服务端据此收提炼费 */
     chargeDistillFee?: boolean;
   }): Promise<string> => {
+    setCustomNoteProgress({ status: "running", percent: 1, label: "提交提炼任务…" });
     const queued = await prepareKnowledgeCardCopyMutation.mutateAsync({
       sourceText: args.sourceText,
       files: args.files?.length ? args.files : undefined,
       forceDistill: true,
       distillModel: customNoteDistillModel,
+      detailLevel: customNoteDetailLevel,
       ...(args.chargeDistillFee ? { chargeDistillFee: true } : {}),
     });
 
     if (!queued.isAsync || !queued.progressJobId) {
+      setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromDistill(98), label: "提炼完成" });
       return String(queued.distilledMarkdown || "").trim();
     }
 
     const totalHint = Math.max(1, queued.estimatedChunks || 1);
-    args.onStatus?.(`已读出约 ${queued.sourceChars.toLocaleString()} 字，正在分 ${totalHint} 段提炼…`);
+    args.onStatus?.(
+      queued.sourceChars > 0
+        ? `已读出约 ${queued.sourceChars.toLocaleString()} 字，正在分 ${totalHint} 段提炼…`
+        : "文件已交后台：转换 / 读原稿 / 挑参考页 / 提炼…",
+    );
+    const stageLabel = (out: {
+      distillStage?: string; distillStageDone?: number; distillStageTotal?: number; distillFileName?: string;
+      distillPhase?: string; distillDoneChunks?: number; distillTotalChunks?: number;
+    }): string => {
+      const stage = out.distillStage || out.distillPhase || "";
+      const done = Number(out.distillStageDone) || 0;
+      const total = Number(out.distillStageTotal) || 0;
+      if (stage === "converting") return `EPUB 转 PDF · ${out.distillFileName || ""}`;
+      if (stage === "reading") return total ? `读原稿 ${done}/${total} 页` : "读原稿…";
+      if (stage === "selecting") return "挑选值得参考的原稿页…";
+      if (stage === "rendering") return total ? `渲染参考页 ${done}/${total}` : "渲染参考页…";
+      if (stage === "refining") return "统稿合并…";
+      if (stage === "finishing") return "写入结果…";
+      const dc = Number(out.distillDoneChunks) || 0;
+      const tc = Number(out.distillTotalChunks) || totalHint;
+      return `分段提炼 ${dc}/${tc} 段`;
+    };
     const job = await pollJobUntilTerminal(queued.progressJobId, {
       intervalMs: 3000,
-      maxWaitMs: 45 * 60_000,
+      maxWaitMs: 90 * 60_000,
       adaptiveBackoffAfterAttempts: 40,
       maxIntervalMs: 8000,
       onPoll: ({ output }) => {
         const out = (output || {}) as {
-          distillPhase?: string;
-          distillDoneChunks?: number;
-          distillTotalChunks?: number;
+          distillPercent?: number;
+          distillStage?: string; distillStageDone?: number; distillStageTotal?: number; distillFileName?: string;
+          distillPhase?: string; distillDoneChunks?: number; distillTotalChunks?: number;
         };
-        const total = Number(out.distillTotalChunks) || totalHint;
-        const done = Number(out.distillDoneChunks) || 0;
-        args.onStatus?.(
-          out.distillPhase === "refining"
-            ? `已提炼 ${total} 段，正在统稿合并…`
-            : `正在分段提炼…已完成 ${done}/${total} 段`,
-        );
+        const label = stageLabel(out);
+        args.onStatus?.(label);
+        setCustomNoteProgress({
+          status: "running",
+          percent: knowledgeCardProgressFromDistill(Number(out.distillPercent) || 2),
+          label,
+        });
       },
     });
     if (job.status === "failed") throw new Error(job.error || "提炼失败，请稍后重试");
+    setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromDistill(98), label: "提炼完成" });
     const out = (job.output || {}) as { distilledMarkdown?: string };
     return String(out.distilledMarkdown || "").trim();
   };
@@ -7970,6 +8033,7 @@ export default function PlatformPage() {
       ...(kind === "single_page_knowledge_card"
         ? {
             distillModel: customNoteDistillModel,
+            subjectPosition: customNoteSubjectPosition,
             // 版式走独立字段进出图指令；拼进 scriptContext 会被当正文印出来
             ...(customNoteInfographicTemplateId
               ? { infographicTemplateId: customNoteInfographicTemplateId }
@@ -8101,13 +8165,12 @@ export default function PlatformPage() {
         } else if (distilled.length > KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS) {
           /**
            * 纯文本长文：先把「提炼 vs 直接出图」的账摆给用户看。
-           * 一万字直接出图要 9 页 264 积分，而且超过 6 页整套降到 2K；
-           * 花提炼费换成 4 页 120 积分还能保住 4K。默认劝提炼，但省不回本时不打扰。
+           * 一万字直接出图要 9 页 264 积分；花提炼费换成 4 页 120 积分。默认劝提炼，但省不回本时不打扰。
            */
           const tradeoff = estimateKnowledgeCardDistillTradeoff(
             distilled,
             customNoteDistillModel,
-            suggestKnowledgeCardMinSections,
+            (chars) => suggestKnowledgeCardMinSections(chars, customNoteDetailLevel),
             knowledgeCardDistillFeeForModel(customNoteDistillModel),
           );
           if (tradeoff.saved > 0) {
@@ -8116,10 +8179,10 @@ export default function PlatformPage() {
               [
                 `这段文字约 ${distilled.length.toLocaleString()} 字。`,
                 "",
-                `直接出图：约 ${tradeoff.full.pages} 页 · ${tradeoff.full.credits} 积分 · 画质 ${tradeoff.full.is4k ? "4K" : "2K"}`,
-                `先做提炼：约 ${tradeoff.distilled.pages} 页 · ${tradeoff.distilled.credits} 积分 + 提炼费 ${tradeoff.distilled.distillFee} · 画质 ${tradeoff.distilled.is4k ? "4K" : "2K"}`,
+                `直接出图：约 ${tradeoff.full.pages} 页 · ${tradeoff.full.credits} 积分 · 4K`,
+                `先做提炼：约 ${tradeoff.distilled.pages} 页 · ${tradeoff.distilled.credits} 积分 + 提炼费 ${tradeoff.distilled.distillFee} · 4K`,
                 "",
-                `提炼可省约 ${tradeoff.saved} 积分${tradeoff.distilled.is4k && !tradeoff.full.is4k ? "，画质还更高（超过 6 页会整套降到 2K）" : ""}。`,
+                `提炼可省约 ${tradeoff.saved} 积分。`,
                 "",
                 "点「确定」先提炼（推荐），点「取消」按原文全量出图。",
               ].join("\n"),
@@ -8144,8 +8207,7 @@ export default function PlatformPage() {
         const plan = planKnowledgeCardPages(distilled, customNoteDistillModel);
         const pages = plan.pages.length ? plan.pages : [distilled];
         const total = pages.length;
-        const q = knowledgeCardImageQuality(total);
-        const qLabel = q === "high" ? "4K" : "2K";
+        const qLabel = "4K";
         const credits = plan.credits || knowledgeCardCreditsForPages(total, customNoteDistillModel);
         setCustomNoteBusy(false);
         const continueGen = window.confirm(
@@ -8154,11 +8216,13 @@ export default function PlatformPage() {
         if (!continueGen) {
           toast.success(`已保留提炼稿（约 ${total} 页），未出图`);
           setCustomNoteDistillPhase("idle");
+          setCustomNoteProgress({ status: "idle", percent: 0 });
           return;
         }
         setCustomNoteBusy(true);
-        toast.success(`开始出图 · ${total} 页 · ${qLabel}`);
+        toast.success(`开始出图 · ${total} 页 · ${qLabel} · ${KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH[customNoteSubjectPosition]}`);
         const urls: string[] = [];
+        setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(0, total), label: `出图 0/${total} 页` });
         for (let i = 0; i < total; i++) {
           setCustomNotePageProgress({ i: i + 1, n: total });
           setCustomNotePartInFlight(i === 0 ? "upper" : "lower");
@@ -8170,7 +8234,9 @@ export default function PlatformPage() {
           setCustomNoteImages([...urls]);
           setCustomNoteImageUpper(urls[0] ?? null);
           setCustomNoteImageLower(urls[1] ?? null);
+          setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(urls.length, total), label: `出图 ${urls.length}/${total} 页` });
         }
+        setCustomNoteProgress({ status: "succeeded", percent: 100 });
         toast.success(`已生成 ${total} 页图文笔记（${qLabel} · 约 ${credits} 积分）`);
         setCustomNoteDistillPhase("idle");
       } else {
@@ -8184,6 +8250,9 @@ export default function PlatformPage() {
     } catch (e) {
       const msg = mapCustomNoteError(e);
       setCustomNoteError(msg);
+      if (kind === "single_page_knowledge_card") {
+        setCustomNoteProgress((prev) => ({ status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
+      }
       toast.error(`生成失敗：${msg.slice(0, 120)}`);
     } finally {
       setCustomNoteBusy(false);
@@ -15008,7 +15077,7 @@ export default function PlatformPage() {
                       type="file"
                       className="hidden"
                       multiple
-                      accept=".pptx,.docx,.pdf,.png,.jpg,.jpeg,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/png,image/jpeg,image/webp"
+                      accept=".pptx,.docx,.pdf,.epub,.png,.jpg,.jpeg,.webp,application/pdf,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/png,image/jpeg,image/webp"
                       disabled={customNoteBusy || customNoteUploadBusy}
                       onChange={(e) => {
                         const list = Array.from(e.target.files || []);
@@ -15017,10 +15086,11 @@ export default function PlatformPage() {
                         void (async () => {
                           setCustomNoteUploadBusy(true);
                           let completedDirectUploads = 0;
+                          setCustomNoteProgress({ status: "running", percent: 0, label: "上传文件…" });
                           try {
                             const encoded: KnowledgeCardPendingFile[] = [];
                             for (const file of list) {
-                              const mimeType = file.type || "application/octet-stream";
+                              const mimeType = file.type || (/\.epub$/i.test(file.name) ? "application/epub+zip" : "application/octet-stream");
                               /**
                                * 超过阈值改走 GCS 直传：base64 会把体积撑大三分之一，
                                * 请求体上限约 13.5MB 原文件，再大连接会在读 body 阶段被掐断
@@ -15033,7 +15103,11 @@ export default function PlatformPage() {
                                   file,
                                   mimeType,
                                   getSignedUrl: (input) => getUploadUrlMutation.mutateAsync(input),
-                                  onStatus: (text) => setCustomNoteUploadStatus(text),
+                                  onStatus: (text) => {
+                                    setCustomNoteUploadStatus(text);
+                                    const pct = Number(/(\d{1,3})%/.exec(text)?.[1]);
+                                    if (Number.isFinite(pct)) setCustomNoteProgress({ status: "running", percent: Math.round(pct * 0.01), label: `上传 ${file.name} ${pct}%` });
+                                  },
                                   label: `${file.name}（${mb}MB）`,
                                 });
                                 encoded.push({ gcsUri, mimeType, fileName: file.name });
@@ -15097,6 +15171,7 @@ export default function PlatformPage() {
                             const pages = Math.max(1, plan.pageCount || 1);
                             const credits =
                               plan.credits || knowledgeCardCreditsForPages(pages, customNoteDistillModel);
+                            setCustomNoteProgress({ status: "running", percent: 60, label: `提炼完成 · 约 ${pages} 页，等待出图` });
                             const okMsg = `提炼完成：已写入文本框 · 约 ${pages} 页 · 约 ${credits} 积分（可点生成出图）`;
                             setCustomNoteUploadStatus(okMsg);
                             toast.success(okMsg);
@@ -15116,6 +15191,7 @@ export default function PlatformPage() {
                               ? `${completedDirectUploads} 个大文件已上传到云端，但读取或提炼失败`
                               : "文件读取或提炼失败";
                             setCustomNoteUploadStatus(`${failedStage}：${failMsg}（请重新选择文件重试，勿在失败态叠加）`);
+                            setCustomNoteProgress((prev) => ({ status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: failMsg }));
                             toast.error(failMsg);
                           } finally {
                             setCustomNoteUploadBusy(false);
@@ -15179,9 +15255,48 @@ export default function PlatformPage() {
                       </select>
                     </label>
                   ) : null}
+                  <div className="inline-flex items-center gap-1.5 text-[11px] text-[#c9c0e6]/70" role="group" aria-label="成稿档">
+                    <span className="shrink-0">成稿</span>
+                    {KNOWLEDGE_CARD_DETAIL_LEVELS.map((level) => (
+                      <button
+                        key={level}
+                        type="button"
+                        aria-pressed={customNoteDetailLevel === level}
+                        disabled={customNoteBusy || customNoteUploadBusy || customNoteDistillPhase !== "idle"}
+                        title={level === "concise" ? "浓缩取重点，页数少" : "内容完整不舍章节，页数多、按页计费"}
+                        onClick={() => {
+                          setCustomNoteDetailLevel(level);
+                          try { localStorage.setItem("mvs-knowledge-card-detail-level", level); } catch { /* ignore */ }
+                        }}
+                        className={`rounded-md border px-2 py-1 text-[11px] font-semibold transition disabled:opacity-40 ${customNoteDetailLevel === level ? "border-[#ff4fb8]/60 bg-[#ff4fb8]/20 text-white" : "border-white/15 bg-black/40 text-[#c9c0e6]/80 hover:text-white"}`}
+                      >
+                        {KNOWLEDGE_CARD_DETAIL_LEVEL_LABEL_ZH[level]}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="inline-flex items-center gap-1.5 text-[11px] text-[#c9c0e6]/70" role="group" aria-label="主体位置">
+                    <span className="shrink-0">主体</span>
+                    {KNOWLEDGE_CARD_SUBJECT_POSITIONS.map((position) => (
+                      <button
+                        key={position}
+                        type="button"
+                        aria-pressed={customNoteSubjectPosition === position}
+                        disabled={customNoteBusy}
+                        title="横版 16:9 固定；只改主体视觉在画面中的位置"
+                        onClick={() => {
+                          setCustomNoteSubjectPosition(position);
+                          try { localStorage.setItem("mvs-knowledge-card-subject-position", position); } catch { /* ignore */ }
+                        }}
+                        className={`rounded-md border px-2 py-1 text-[11px] font-semibold transition disabled:opacity-40 ${customNoteSubjectPosition === position ? "border-[#49e6ff]/60 bg-[#49e6ff]/20 text-white" : "border-white/15 bg-black/40 text-[#c9c0e6]/80 hover:text-white"}`}
+                      >
+                        {KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH[position]}
+                      </button>
+                    ))}
+                  </div>
                   <span className="text-[11px] text-[#c9c0e6]/45">
-                    支持 pptx / docx / pdf / png / jpg；上传文档的提炼含在页费中，超长纯文本主动提炼另收一次性提炼费
+                    支持 pdf / epub / pptx / docx / png / jpg，不限页数与大小；EPUB 后台自动转 PDF；上传文档的提炼含在页费中，超长纯文本主动提炼另收一次性提炼费
                   </span>
+                  <KnowledgeCardProgress state={customNoteProgress} />
                 </div>
               ) : null}
               {customNoteKind === "optimize_custom_copy" ? (
@@ -15216,7 +15331,7 @@ export default function PlatformPage() {
                   ) : customNoteKind === "optimize_custom_copy" ? (
                     <><Sparkles className="h-4 w-4" />深度优化文案（{customOptimizeCopyCost} 积分）</>
                   ) : customNoteKind === "single_page_knowledge_card" ? (
-                    <><Sparkles className="h-4 w-4" />生成图文笔记（约 {Math.max(1, customNoteKnowledgePlan.pageCount || 1)} 页 · {knowledgeCardImageQuality(Math.max(1, customNoteKnowledgePlan.pageCount || 1)) === "high" ? "4K" : "2K"} · {customNoteKnowledgeCredits || 30} 积分）</>
+                    <><Sparkles className="h-4 w-4" />生成图文笔记（约 {Math.max(1, customNoteKnowledgePlan.pageCount || 1)} 页 · 4K · {customNoteKnowledgeCredits || 30} 积分）</>
                   ) : (
                     <><Film className="h-4 w-4" />生成编导分镜图</>
                   )}
@@ -15236,6 +15351,7 @@ export default function PlatformPage() {
                       setCustomOptimizeBrief("");
                       setCustomNoteInfographicTemplateId(null);
                       setCustomNoteInfographicLabelZh(null);
+                      setCustomNoteProgress({ status: "idle", percent: 0 });
                       customNotePendingFilesRef.current = [];
                       setCustomNotePendingMeta([]);
                       setCustomNoteUploadStatus(null);

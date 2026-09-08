@@ -8129,10 +8129,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
            * 提炼后 4 页 120 积分保住 4K）。上传文档的提炼是抽文的必要环节，成本已含页费，不另收。
            */
           chargeDistillFee: z.boolean().optional(),
-          /** 默认 Evolink gpt-5.6-sol；备用 OR kimi-k3；备选 Evolink qwen3.8-max（旧 terra/OR-qwen 服务端迁） */
-          distillModel: z
-            .enum(["claude-opus-5", "gpt-5.6-sol", "moonshotai/kimi-k3", "qwen3.8-max", "gpt-5.6-terra", "qwen/qwen3.8-max"])
-            .optional(),
+          /** 两档：gpt-5.6-sol / qwen3.8-max；旧值（terra / OR-qwen / claude / kimi）服务端迁到两档 */
+          distillModel: z.string().max(64).optional(),
+          /** 成稿档：精简版（浓缩）/ 高级版（内容完整） */
+          detailLevel: z.enum(["concise", "full"]).optional(),
           files: z
             .array(
               z
@@ -8152,14 +8152,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                   message: "每个文件需要 fileBase64 或 gcsUri 其一",
                 }),
             )
-            .max(40)
             .optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
         const {
           prepareKnowledgeCardCopy,
-          extractKnowledgeCardUploads,
           shouldRunKnowledgeCardDistillAsync,
           estimateKnowledgeCardDistillChunks,
         } = await import("./services/knowledgeCardDistill.js");
@@ -8183,18 +8181,69 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
         const modelName = resolveKnowledgeCardDistillModel(input.distillModel);
 
-        // 抽文很快（本机 105 页 PDF 约数秒），先做掉：既能判断是否够长要走后台，
-        // 也避免把几 MB 的 PDF base64 塞进 jobs.input。
-        const extracted = files.length
-          ? await extractKnowledgeCardUploads(files)
-          : { documentText: "", imageDataUrls: [] as string[], methods: [] as string[] };
         const pasted = String(input.sourceText || "").trim();
-        const mergedRaw = files.length
-          ? [extracted.documentText, pasted.length <= 3200 ? pasted : ""].filter(Boolean).join("\n\n").trim() ||
-            extracted.documentText ||
-            pasted
-          : pasted;
+        const detailLevel = String(input.detailLevel || "concise");
 
+        /**
+         * 有文件一律走后台任务（0908）：PDF/EPUB 要逐页备料 + 目录页扫读挑页 + 选中页渲染，
+         * 不再在同步 HTTP 里抽文。小文件的 base64 先落 GCS，任务只带 gcsUri，不把文件塞进 jobs.input。
+         */
+        if (files.length > 0) {
+          const userId = ctx.user?.id;
+          if (!userId) throw new Error("请先登录后再上传文件");
+          const { uploadBufferToGcs } = await import("./services/gcs.js");
+          const stored: Array<{ gcsUri: string; mimeType: string; fileName?: string }> = [];
+          for (const f of files) {
+            if (f.gcsUri) {
+              stored.push({ gcsUri: f.gcsUri, mimeType: f.mimeType, fileName: f.fileName });
+              continue;
+            }
+            const buffer = Buffer.from(String(f.fileBase64 || "").replace(/^data:[^;]+;base64,/, ""), "base64");
+            if (!buffer.length) continue;
+            const safeName = String(f.fileName || "upload").replace(/[^\w.\-\u4e00-\u9fff]+/g, "_").slice(0, 120);
+            const uploaded = await uploadBufferToGcs({
+              objectName: `uploads/u${userId}/knowledge-card/${nanoid(10)}-${safeName}`,
+              buffer,
+              contentType: f.mimeType,
+            });
+            stored.push({ gcsUri: uploaded.gcsUri, mimeType: f.mimeType, fileName: f.fileName });
+          }
+          if (!stored.length) throw new Error("上传文件为空，请重新选择文件");
+          const jobId = nanoid(16);
+          await createJobRecord({
+            id: jobId,
+            userId: String(userId),
+            type: "platform",
+            provider: "evolink",
+            input: {
+              action: "knowledge_card_distill",
+              params: {
+                sourceText: pasted.length <= 3200 ? pasted : "",
+                distillModel: modelName,
+                detailLevel,
+                files: stored,
+                chargeDistillFee: false,
+              },
+            },
+          });
+          return {
+            success: true as const,
+            isAsync: true as const,
+            progressJobId: jobId,
+            distillFeeCharged: 0,
+            sourceChars: 0,
+            distillModel: modelName,
+            estimatedChunks: 0,
+            distilledMarkdown: "",
+            skippedDistill: false,
+            extractionMethods: [] as string[],
+            pageCount: 0,
+            credits: 0,
+            pages: [] as ReturnType<typeof planKnowledgeCardPages>["pages"],
+          };
+        }
+
+        const mergedRaw = pasted;
         if (shouldRunKnowledgeCardDistillAsync(mergedRaw.length)) {
           const userId = ctx.user?.id;
           if (!userId) throw new Error("请先登录后再上传长文档");
@@ -8203,14 +8252,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             id: jobId,
             userId: String(userId),
             type: "platform",
-            provider: modelName === "claude-opus-5" ? "anthropic" : "evolink",
+            provider: "evolink",
             input: {
               action: "knowledge_card_distill",
               params: {
                 sourceText: mergedRaw,
                 distillModel: modelName,
-                imageDataUrls: extracted.imageDataUrls,
-                extractionMethods: extracted.methods,
+                detailLevel,
+                imageDataUrls: [] as string[],
+                extractionMethods: [] as string[],
                 chargeDistillFee: input.chargeDistillFee === true,
               },
             },
@@ -8226,7 +8276,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             estimatedChunks: estimateKnowledgeCardDistillChunks(modelName, mergedRaw.length),
             distilledMarkdown: "",
             skippedDistill: false,
-            extractionMethods: extracted.methods,
+            extractionMethods: [] as string[],
             pageCount: 0,
             credits: 0,
             pages: [] as ReturnType<typeof planKnowledgeCardPages>["pages"],
@@ -8235,9 +8285,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
         const prepared = await prepareKnowledgeCardCopy({
           sourceText: input.sourceText,
-          files: input.files,
           forceDistill: input.forceDistill,
           distillModel: input.distillModel,
+          detailLevel,
+          userId: ctx.user?.id,
         });
         const plan = planKnowledgeCardPages(prepared.distilledMarkdown, prepared.distillModel);
 
@@ -8325,12 +8376,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             /** 仅 single_page_knowledge_card：旧上/下篇（兼容）。 */
             notePart: z.enum(["upper", "lower"]).optional(),
             /** 仅 single_page_knowledge_card：页码（优先于 notePart）；第 9 页起折扣，页数不封顶。 */
-            notePageIndex: z.number().int().min(1).max(80).optional(),
-            notePageTotal: z.number().int().min(1).max(80).optional(),
-            /** 仅 single_page_knowledge_card：提炼模型（决定页费档位） */
-            distillModel: z
-              .enum(["claude-opus-5", "gpt-5.6-sol", "moonshotai/kimi-k3", "qwen3.8-max", "gpt-5.6-terra", "qwen/qwen3.8-max"])
-              .optional(),
+            notePageIndex: z.number().int().min(1).max(100_000).optional(),
+            notePageTotal: z.number().int().min(1).max(100_000).optional(),
+            /** 仅 single_page_knowledge_card：提炼模型（决定页费档位）；两档，旧值服务端迁 */
+            distillModel: z.string().max(64).optional(),
+            /** 仅 single_page_knowledge_card：主体偏左 / 居中（横版 16:9 固定） */
+            subjectPosition: z.enum(["left", "center"]).optional(),
             /**
              * 仅 single_page_knowledge_card：图文可视化版式 id（`shared/infographicNoteTemplates`）。
              *
@@ -8474,6 +8525,21 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             compositeDeductionNote + bulkTag,
             { chargeKey: `platformCompositeSheet/${userId}/${compositeOpId}` },
           );
+        }
+
+        // 知识卡（0908）：从本页正文的「参考原页」标记取原稿页图当出图参考（只认本人前缀下存在的页图）
+        let knowledgeCardReferencePageUrls: string[] | undefined;
+        if (input.kind === "single_page_knowledge_card") {
+          try {
+            const { planKnowledgeCardPages } = await import("../shared/knowledgeCardPagination.js");
+            const { resolveKnowledgeCardReferencePageUrls } = await import("./services/knowledgeCardDocumentPages.js");
+            const plan = planKnowledgeCardPages(String(input.scriptContext || ""), effectiveDistillModel);
+            const pageIndex = input.notePageIndex ?? (input.notePart === "lower" ? 2 : 1);
+            const slice = plan.pages[Math.min(plan.pages.length, Math.max(1, pageIndex)) - 1] || String(input.scriptContext || "");
+            knowledgeCardReferencePageUrls = (await resolveKnowledgeCardReferencePageUrls({ userId, pageText: slice })).map((r) => r.url);
+          } catch (e) {
+            console.warn("[knowledgeCard] 参考原页解析失败，本页不带参考图：", e instanceof Error ? e.message : e);
+          }
         }
 
         if (input.jobId) {
@@ -8710,6 +8776,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 notePageIndex: input.notePageIndex,
                 notePageTotal: input.notePageTotal,
                 infographicTemplateId: input.infographicTemplateId,
+                subjectPosition: input.subjectPosition,
+                knowledgeCardReferencePageUrls,
               });
 
               // 第五轮复审 P0·1：空产物不许标成功——扣了费没有图，必须走统一失败退款
@@ -8794,6 +8862,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             notePageIndex: input.notePageIndex,
             notePageTotal: input.notePageTotal,
             infographicTemplateId: input.infographicTemplateId,
+            subjectPosition: input.subjectPosition,
+            knowledgeCardReferencePageUrls,
           });
         } catch (error: any) {
           stopSyncHeartbeat();
