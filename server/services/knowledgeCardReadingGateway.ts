@@ -54,10 +54,10 @@ async function requestReadingChannelOnce(input: KnowledgeReadingCall, prefix: st
   if (cached) return cached;
   const transport = await readKnowledgeReadingJson<ReadingTransportReceipt>(`${prefix}/transport-error.json`);
   if (transport) throw new ReadingTransportError((transport.outcome === "unknown" && transport.retryable === true) || transport.outcome === "avoided");
-  // 已有回执优先复用；只有真要发新请求时才因避让改走备用通道。落一份「已避让」记号（不写占用），
-  // 进程重启或换实例恢复同任务时仍复用官方结果，不再回头购买主通道。
+  // 已有回执优先复用；只有真要发新请求时才因避让改走备用通道。仍尊重本通道占用：
+  // 另一进程已在途时不越过它去买备用通道。「已避让」记号由调用方在备用通道成功后再落。
   if (avoid) {
-    await saveKnowledgeReadingObject(`${prefix}/transport-error.json`, Buffer.from(JSON.stringify({ outcome: "avoided", retryable: true, receivedAt: new Date().toISOString() })));
+    if (await readKnowledgeReadingJson<unknown>(`${prefix}/claim.json`)) throw new Error("已有阅读请求正在处理或等待对账，未重复提交；请保留任务记录");
     throw new ReadingChannelAvoidedError();
   }
   const target = resolveTarget();
@@ -138,7 +138,13 @@ export async function invokeKnowledgeReadingJson(input: KnowledgeReadingCall): P
       return { gateway: "evolink", apiUrl, apiKey, modelName: input.model };
     }, canFallback && evolinkAvoided(input.channelScope));
   } catch (error) {
-    if (canFallback && error instanceof ReadingChannelAvoidedError) return officialFallback();
+    if (canFallback && error instanceof ReadingChannelAvoidedError) {
+      const result = await officialFallback();
+      // 备用通道确认成功后才把主通道记为「已避让」：进程重启恢复同任务仍复用官方结果，不回头购买主通道；
+      // 备用通道失败则不留记号，主通道恢复健康后仍可用。
+      await saveKnowledgeReadingObject(`${input.objectPrefix}/transport-error.json`, Buffer.from(JSON.stringify({ outcome: "avoided", retryable: true, receivedAt: new Date().toISOString() })));
+      return result;
+    }
     if (canFallback && error instanceof ReadingTransportError && error.retryable && !input.signal?.aborted) {
       markEvolinkUnavailable(input.channelScope);
       return officialFallback();

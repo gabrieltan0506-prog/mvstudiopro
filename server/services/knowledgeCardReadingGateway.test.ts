@@ -174,11 +174,17 @@ describe("阅读网关不可重复购买与完整性", () => {
     await expect(invokeKnowledgeReadingJson({ ...input, objectPrefix: "test/reading-5", channelScope: scope, model: "qwen3.8-max" })).rejects.toThrow();
     expect(vi.mocked(fetch).mock.calls.at(-1)![0]).toBe("https://direct.evolink.ai/v1/chat/completions");
   });
-  it("避让走官方后主通道前缀落「已避让」记号；清空进程记忆恢复同任务仍复用官方结果，不回头购买主通道", async () => {
+  it("避让走官方成功后主通道前缀才落「已避让」记号；官方失败不留记号；主通道有占用时不越过它买官方", async () => {
     const store = persistent();
-    vi.mocked(fetch).mockResolvedValueOnce(new Response("测试524", { status: 524 })).mockImplementation(async () => new Response(envelope()));
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("测试524", { status: 524 })).mockResolvedValueOnce(new Response(envelope())).mockResolvedValueOnce(new Response("官方故障", { status: 500 })).mockImplementation(async () => new Response(envelope()));
     const scope = "test/analysis";
     await invokeKnowledgeReadingJson({ ...input, channelScope: scope });
+    await expect(invokeKnowledgeReadingJson({ ...input, objectPrefix: "test/reading-x", channelScope: scope })).rejects.toThrow("未自动重复购买");
+    expect(store.objects.has("test/reading-x/transport-error.json")).toBe(false);
+    expect(store.objects.get("test/reading-x/official-fallback/raw.json").status).toBe(500);
+    store.claims.add("test/reading-y/claim.json"); store.objects.set("test/reading-y/claim.json", { startedAt: "占用中" });
+    await expect(invokeKnowledgeReadingJson({ ...input, objectPrefix: "test/reading-y", channelScope: scope })).rejects.toThrow("未重复提交");
+    expect(store.claims.has("test/reading-y/official-fallback/claim.json")).toBe(false);
     await invokeKnowledgeReadingJson({ ...input, objectPrefix: "test/reading-2", channelScope: scope });
     expect(store.objects.get("test/reading-2/transport-error.json")).toMatchObject({ outcome: "avoided", retryable: true });
     resetKnowledgeReadingChannelMemory(); vi.mocked(fetch).mockClear();
@@ -199,5 +205,12 @@ describe("阅读网关不可重复购买与完整性", () => {
   });
   it("快照名对 null/对象/含点号模型名都不误判", () => {
     for (const bad of [null, {}, "gpt-5x6-sol-2026-07-09", "gpt-5.6-sol-2026-07-09x"]) expect(knowledgeReadingModelMatches(bad, "gpt-5.6-sol")).toBe(false);
+  });
+  it("两条通道都留未知回执后恢复只抛错，不重复购买任一通道（需人工对账，已知限制）", async () => {
+    const store = persistent();
+    store.objects.set(`${input.objectPrefix}/transport-error.json`, { outcome: "unknown", retryable: true });
+    store.objects.set(`${input.objectPrefix}/official-fallback/transport-error.json`, { outcome: "unknown", retryable: true });
+    await expect(invokeKnowledgeReadingJson(input)).rejects.toThrow("结果待对账");
+    expect(fetch).not.toHaveBeenCalled(); expect(store.claims.size).toBe(0);
   });
 });

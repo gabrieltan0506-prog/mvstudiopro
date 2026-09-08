@@ -168,7 +168,7 @@ export async function prepareKnowledgeCardReadingEdition(input: KnowledgeCardRea
         }),
       });
       if (text.length > 500_000) throw new Error("本页完整证据超过详细稿输入容量，已保留原方案，不能截断资料");
-      raw = await invokeKnowledgeReadingJson({ objectPrefix: pagePrefix, model: loaded.plan.model, system: DETAIL_SYSTEM, text, signal });
+      raw = await invokeKnowledgeReadingJson({ objectPrefix: pagePrefix, channelScope: `${knowledgeReadingPrefix(input.userId)}${KNOWLEDGE_CARD_READING_CONTRACT}/${planId.split("-")[0]}`, model: loaded.plan.model, system: DETAIL_SYSTEM, text, signal });
     }
     // 中止前已返回的原始结果由网关永久保存；不能把晚到结果继续冻结为可购买版本。
     signal?.throwIfAborted();

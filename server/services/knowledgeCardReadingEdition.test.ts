@@ -81,6 +81,7 @@ describe("确认方案到冻结详细页稿", () => {
       expect(data.sources).toHaveLength(3);
       expect(data.planDirectory).toHaveLength(4);
       expect(call.model).toBe("gpt-5.6-sol");
+      expect(call.channelScope).toMatch(/^knowledge-card-reading\/u\d+\/visual-reading-v1\/[a-f0-9]{64}$/);
       expect(call.system).toContain("不绑定人物脸部");
       expect(call.system).toContain("如果原稿");
     }
