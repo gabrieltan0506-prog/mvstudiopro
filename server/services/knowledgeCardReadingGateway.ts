@@ -127,6 +127,8 @@ export async function invokeKnowledgeReadingJson(input: KnowledgeReadingCall): P
     return parseReadingReply(reply, input.model);
   };
   const canFallback = input.model === KNOWLEDGE_CARD_DISTILL_MODEL_SOL;
+  // 官方通道已有付费回执（避让后记号未落盘、进程重启等）时直接复用，主通道不再下单。
+  if (canFallback && await readKnowledgeReadingJson<ReadingReply>(`${input.objectPrefix}/official-fallback/raw.json`)) return officialFallback();
   let reply: ReadingReply;
   try {
     reply = await requestReadingChannelOnce(input, input.objectPrefix, body, () => {
@@ -139,10 +141,15 @@ export async function invokeKnowledgeReadingJson(input: KnowledgeReadingCall): P
     }, canFallback && evolinkAvoided(input.channelScope));
   } catch (error) {
     if (canFallback && error instanceof ReadingChannelAvoidedError) {
+      markEvolinkUnavailable(input.channelScope);
       const result = await officialFallback();
       // 备用通道确认成功后才把主通道记为「已避让」：进程重启恢复同任务仍复用官方结果，不回头购买主通道；
-      // 备用通道失败则不留记号，主通道恢复健康后仍可用。
-      await saveKnowledgeReadingObject(`${input.objectPrefix}/transport-error.json`, Buffer.from(JSON.stringify({ outcome: "avoided", retryable: true, receivedAt: new Date().toISOString() })));
+      // 备用通道失败则不留记号。记号写失败不能吞掉已付费结果：官方 raw 已落盘，下次入口会先复用它。
+      try {
+        await saveKnowledgeReadingObject(`${input.objectPrefix}/transport-error.json`, Buffer.from(JSON.stringify({ outcome: "avoided", retryable: true, receivedAt: new Date().toISOString() })));
+      } catch (markError) {
+        console.warn("[knowledgeCardReading] 已避让记号写入失败，官方结果已保留：", markError instanceof Error ? markError.message : markError);
+      }
       return result;
     }
     if (canFallback && error instanceof ReadingTransportError && error.retryable && !input.signal?.aborted) {

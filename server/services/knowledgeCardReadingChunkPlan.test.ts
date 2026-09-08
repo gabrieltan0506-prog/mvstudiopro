@@ -111,8 +111,11 @@ describe("全书证据分批规划协调器", () => {
     expect(concise.omitted.some(item => item.includes("因合并压缩"))).toBe(true);
     expect(plan.options.find(option => option.mode === "complete")!.pages).toEqual(natural.options.find(option => option.mode === "complete")!.pages);
     const rerun = big.invoke.mock.calls.length;
-    await planKnowledgeCardReadingChunks({ ...big.input, constraints: { budgetCredits: 120 } });
+    await planKnowledgeCardReadingChunks({ ...big.input, constraints: { targetPages: 4 } });
     expect(big.invoke.mock.calls.length).toBe(rerun);
+    // 换一种约束（预算折算同样4页）：自然批checkpoint复用，只重做合并调用，缓存身份与提示词入参一致。
+    await planKnowledgeCardReadingChunks({ ...big.input, constraints: { budgetCredits: 120 } });
+    expect(big.invoke.mock.calls.slice(rerun).every(([call]) => JSON.parse(call.text).targetPages !== undefined)).toBe(true);
   });
   it("预算不足4页、已有方案可选或目标超过预算时不合并，交给报价如实显示", async () => {
     const counts = { concise: 6, balanced: 9, complete: 12 };

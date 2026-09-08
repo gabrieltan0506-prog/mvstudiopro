@@ -213,4 +213,20 @@ describe("阅读网关不可重复购买与完整性", () => {
     await expect(invokeKnowledgeReadingJson(input)).rejects.toThrow("结果待对账");
     expect(fetch).not.toHaveBeenCalled(); expect(store.claims.size).toBe(0);
   });
+  it("已避让记号写失败不吞掉官方已购结果；官方 raw 已存在时主通道不再下单，即使避让记忆丢失", async () => {
+    const store = persistent();
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("测试524", { status: 524 })).mockImplementation(async () => new Response(envelope()));
+    const scope = "test/analysis";
+    await invokeKnowledgeReadingJson({ ...input, channelScope: scope });
+    const realSave = mocks.save.getMockImplementation()!;
+    mocks.save.mockImplementation(async (name: string, buffer: Buffer) => { if (name === "test/reading-2/transport-error.json") throw new Error("测试记号写失败"); return realSave(name, buffer); });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(await invokeKnowledgeReadingJson({ ...input, objectPrefix: "test/reading-2", channelScope: scope })).toEqual({ ok: true });
+    warn.mockRestore();
+    expect(store.objects.has("test/reading-2/transport-error.json")).toBe(false);
+    expect(store.objects.get("test/reading-2/official-fallback/raw.json").body).toBe(envelope());
+    resetKnowledgeReadingChannelMemory(); vi.mocked(fetch).mockClear(); mocks.save.mockImplementation(realSave);
+    expect(await invokeKnowledgeReadingJson({ ...input, objectPrefix: "test/reading-2", channelScope: scope })).toEqual({ ok: true });
+    expect(fetch).not.toHaveBeenCalled(); expect(store.claims.has("test/reading-2/claim.json")).toBe(false);
+  });
 });

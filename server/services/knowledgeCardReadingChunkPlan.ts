@@ -270,7 +270,7 @@ export async function planKnowledgeCardReadingChunks(input: KnowledgeCardReading
       for (let index = 0; index < groups.length; index++) {
         const group = groups[index]!;
         if (targets[index] === group.length) { merged.push(...group.map(({ pageId: _pageId, ...page }) => page)); continue; }
-        const path = `${root}/condense-concise-${target}-g${index + 1}`;
+        const path = `${root}/condense-concise-${target}-${sha(JSON.stringify(constraints)).slice(0, 16)}-g${index + 1}`;
         const result = await checkpoint(path,
           () => request(path, JSON.stringify({ sourceDigest: input.sourceDigest, model: input.model, wholeBookConstraints: constraints, targetPages: targets[index], groupIndex: index + 1, groupCount: groups.length, pages: group }), CONDENSE_SYSTEM),
           raw => validateCondense(raw, group, targets[index]!), raw => condenseSchema.parse(raw));
