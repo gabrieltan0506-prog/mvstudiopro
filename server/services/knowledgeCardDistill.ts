@@ -219,29 +219,38 @@ function distillSectionShape(bullets: { min: number; max: number }): string {
    - 要点之间语意连贯，读完这一节就掌握一个完整概念；**不要为了简洁而删减关键信息**`;
 }
 
-function resolveDistillBullets(modelName?: string | null): { min: number; max: number } {
+function resolveDistillBullets(modelName?: string | null, detailLevel?: KnowledgeCardDetailLevel): { min: number; max: number } {
   const profile = modelName
     ? DISTILL_PROFILES[modelName as KnowledgeCardDistillModelId]
     : undefined;
-  return profile?.bulletsPerSection ?? DISTILL_DEFAULT_BULLETS;
+  const base = profile?.bulletsPerSection ?? DISTILL_DEFAULT_BULLETS;
+  // 高级版：每节写满，不许压成三五条干标题
+  return detailLevel === "full" ? { min: Math.max(base.min, 7), max: Math.max(base.max, 11) } : base;
 }
 
-function buildDistillSystem(minSections: number, modelName?: string | null, docKeys?: string[]): string {
-  const bullets = resolveDistillBullets(modelName);
+/** 模型旁白禁令：0908 探针里「第 17 页配对与前文冲突」「材料认为」这类审稿口吻被印上了卡片 */
+const DISTILL_NO_META_ZH = `**不要写审稿旁白**：不得出现「材料认为 / 原文提到 / 第 N 页 / 与前文冲突 / 以前文为准 / 本段 / 以上」这类指向原稿或提炼过程的话；直接陈述知识本身。`;
+
+function buildDistillSystem(minSections: number, modelName?: string | null, docKeys?: string[], detailLevel?: KnowledgeCardDetailLevel): string {
+  const bullets = resolveDistillBullets(modelName, detailLevel);
+  const levelRule = detailLevel === "full"
+    ? `\n0. **成稿档：高级版（内容完整）**：本材料的每个章节、每个方法、每个表格/清单都要落成小节或要点，不因「取重点」舍弃次要章节；数字、步骤、条件全部保留。`
+    : "";
   const refRule = docKeys?.length
     ? `\n7. **参考原页标记**：用户会附上原稿中版式有特色的页（表格、思维导图、分式图解、左右对比），每张图前都标了「原稿 docKey 第 N 页」。某小节的内容对应这些页时，在该小节末尾单独一行写标记，格式 \`${docKeys.map((k) => formatKnowledgeCardPageRef(k, [1])).join("\` 或 \`")}\`（docKey 照抄该图前标注的那个，页码写该图标注的真实页码，多页用逗号）。只能引用本次附带的图；没有对应参考页的小节不写标记；不得编造 docKey 或页码。`
     : "";
   return `你是知识卡片内容主编。任务：把用户提供的文稿/幻灯片抽字/图片 OCR 结果，提炼成可直接做「疏朗图文知识卡片」的简体中文 Markdown（读图 OCR 与提炼同时完成，不要只吐生文本）。
 
-**目标**：让没读过原文的人在几分钟内读懂这份材料**讲了什么、关键结论是什么、怎么用**。是**精选重点**，不是逐段搬运。
+**目标**：让没读过原文的人在几分钟内读懂这份材料**讲了什么、关键结论是什么、怎么用**。${detailLevel === "full" ? "是**完整覆盖**：宁多勿漏。" : "是**精选重点**，不是逐段搬运。"}
 
-硬性要求：
+硬性要求：${levelRule}
 1. **抓主干**：优先保留核心论点、关键结论、可操作方法、决定性数据与对比、反直觉洞察。删掉铺垫、重复、寒暄、案例复述、广告水词、与主题无关的枝节。
 2. 结构：以 \`# 总标题\` 开头（总标题要点出全文主旨，不是书名照抄），下文用 \`## 小节\` 承载重点；小节标题本身就是一句有信息量的判断，不用「概述 / 背景介绍」这类空标题。
 3. ${distillSectionShape(bullets)}
 4. **篇幅**：约 **${minSections}** 个 \`## 小节\`（可上下浮动 2 个）。宁可少而精，**禁止**为凑数把同一论点拆成多节，也禁止把整本压成两三节总括。
 5. **不要**把原文长段落原样倒进输出；**不要**注水扩写；**不要**「首先其次综上所述」公文腔。
-6. 只输出 Markdown 正文，不要 JSON、不要前言后记、不要解释你做了什么。${refRule}`;
+6. 只输出 Markdown 正文，不要 JSON、不要前言后记、不要解释你做了什么。
+7. ${DISTILL_NO_META_ZH}${refRule.replace("\n7. ", "\n8. ")}`;
 }
 
 export type KnowledgeCardUploadFile = {
@@ -587,6 +596,7 @@ async function invokeDistillViaGateway(params: {
   systemOverride?: string;
   timeoutMs?: number;
   docKeys?: string[];
+  detailLevel?: KnowledgeCardDetailLevel;
 }): Promise<string> {
   const userContent = buildDistillUserContent(params);
   const hasImages = params.imageUrls.length > 0 || (params.pageImages?.length ?? 0) > 0;
@@ -595,7 +605,7 @@ async function invokeDistillViaGateway(params: {
     messages: [
       {
         role: "system",
-        content: params.systemOverride || buildDistillSystem(params.minSections, params.modelName, params.docKeys),
+        content: params.systemOverride || buildDistillSystem(params.minSections, params.modelName, params.docKeys, params.detailLevel),
       },
       { role: "user", content: userContent },
     ],
@@ -695,6 +705,7 @@ async function invokeDistillLlm(params: {
   systemOverride?: string;
   timeoutMs?: number;
   docKeys?: string[];
+  detailLevel?: KnowledgeCardDetailLevel;
 }): Promise<string> {
   const chain = distillGatewayChain(params.modelName);
   if (!chain.length) throw new Error("提炼通道未配置，请稍后重试");
@@ -739,6 +750,7 @@ async function distillOneChunkWithRetry(params: {
   retries: number;
   effort: string;
   docKeys?: string[];
+  detailLevel?: KnowledgeCardDetailLevel;
 }): Promise<string> {
   let lastError: Error | null = null;
   for (let attempt = 0; attempt <= params.retries; attempt++) {
@@ -752,6 +764,7 @@ async function distillOneChunkWithRetry(params: {
         effort: params.effort,
         chunkLabel: params.chunkLabel,
         docKeys: params.docKeys,
+        detailLevel: params.detailLevel,
       });
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
@@ -784,6 +797,7 @@ async function distillOneChunkWithRetry(params: {
             effort: params.effort,
             // 只有带图的那一半才给标记规则
             docKeys: i === 0 && params.pageImages?.length ? params.docKeys : [],
+            detailLevel: params.detailLevel,
           }),
         );
       }
@@ -801,8 +815,22 @@ function buildRefineSystem(
   stage: RefineStage,
   currentSections?: number,
   modelName?: string | null,
+  detailLevel?: KnowledgeCardDetailLevel,
 ): string {
-  const bullets = resolveDistillBullets(modelName);
+  const bullets = resolveDistillBullets(modelName, detailLevel);
+  if (detailLevel === "full" && stage !== "tighten") {
+    // 高级版：只去重、理主线，不压缩（0908 探针 79 节被压到 60 节、字数少四成，用户判「比纯文字还少」）
+    return `你是知识卡片内容主编。下面这份 Markdown 由同一份长文档**分段提炼后机械拼接**而成，段与段之间可能重复、粒度不齐、缺少全局主线。请把它整理成一份连贯的**完整版**知识卡片 Markdown。
+
+硬性要求：
+1. **不压缩**：这是高级版，内容要完整。只合并**讲同一件事**的重复小节，其余小节全部保留；合并后总节数不少于 ${Math.max(2, Math.floor((currentSections || minSections) * 0.9))} 个 \`## 小节\`（当前 ${currentSections || "?"} 个）。
+2. **不删要点**：每节的要点、数字、步骤、条件、例子一条不少；合并小节时把两边要点合在一起，不挑选。
+3. **理主线**：\`# 总标题\` 点出主旨，小节按「是什么 → 为什么 → 怎么做 → 边界与例外」之类的自然顺序重排，读下来是一条线。
+4. ${distillSectionShape(bullets)}
+5. 去掉分段痕迹：「本段 / 以上 / 续上」这类过渡语、重复标题、空节。${DISTILL_NO_META_ZH}
+6. 已有的「〔参考原页 …〕」标记随所属小节保留（合并小节时把页码合到一行），不要新造、不要丢。
+7. 只输出 Markdown 正文，不要前言后记、不要解释取舍过程。`;
+  }
   if (stage === "tighten") {
     return `你是知识卡片内容主编。下面这份知识卡片 Markdown **小节太多了**${
       currentSections ? `（当前 ${currentSections} 个 \`##\` 小节）` : ""
@@ -838,7 +866,7 @@ ${mainline}
 2. **精选到 ${minSections} 个 \`## 小节\`**（硬指标，最多 ${minSections + 2} 个）：合并同义小节，删掉枝节、重复举例、只在原文局部成立的细节。**删内容是本步的职责**，不要为了「不丢东西」而堆节。
 3. ${distillSectionShape(bullets)}
 4. 小节标题写成有信息量的一句判断，不要「概述 / 其他 / 补充」这类空标题。
-5. 去掉分段痕迹：「本段 / 以上 / 续上」这类过渡语、重复标题、空节。
+5. 去掉分段痕迹：「本段 / 以上 / 续上」这类过渡语、重复标题、空节。${DISTILL_NO_META_ZH}
 6. 已有的「〔参考原页 …〕」标记随所属小节保留（合并小节时把页码合到一行），不要新造、不要丢。
 7. 只输出 Markdown 正文，不要前言后记、不要解释取舍过程。`;
 }
@@ -888,6 +916,7 @@ async function refineOnce(params: {
   modelName: KnowledgeCardDistillModelId;
   minSections: number;
   stage: RefineStage;
+  detailLevel?: KnowledgeCardDetailLevel;
 }): Promise<string> {
   const profile = DISTILL_PROFILES[params.modelName];
   try {
@@ -903,6 +932,7 @@ async function refineOnce(params: {
         params.stage,
         countMarkdownSections(params.body),
         params.modelName,
+        params.detailLevel,
       ),
       timeoutMs: distillRefineTimeoutMs(params.modelName),
     });
@@ -976,6 +1006,7 @@ async function refineMergedDistill(params: {
             modelName: params.modelName,
             minSections: perGroupTarget,
             stage: "group",
+            detailLevel: params.detailLevel,
           });
         }),
       );
@@ -995,9 +1026,16 @@ async function refineMergedDistill(params: {
   let final = await refineOnce({
     body: current,
     modelName: params.modelName,
-    minSections: params.minSections,
+    // 高级版：目标节数不低于合并稿节数（统稿不压缩）
+    minSections: params.detailLevel === "full" ? Math.max(params.minSections, countMarkdownSections(current)) : params.minSections,
     stage: "final",
+    detailLevel: params.detailLevel,
   });
+  // 高级版统稿如果反而变短了四成以上，视为过度压缩，退回合并稿（宁多勿漏）
+  if (params.detailLevel === "full" && final.length < current.length * 0.6) {
+    console.warn(`[knowledgeCardDistill] full-level refine shrank ${current.length} → ${final.length} chars, keep merged`);
+    final = current;
+  }
 
   // 有些模型一次统稿只肯降一点（探针：Kimi 36 → 41 节）。超标就再压，压不动即停，不空烧。
   // 高级版要的是完整覆盖，不做收紧轮（统稿只负责去重复、理主线）
@@ -1013,6 +1051,7 @@ async function refineMergedDistill(params: {
       modelName: params.modelName,
       minSections: params.minSections,
       stage: "tighten",
+      detailLevel: params.detailLevel,
     });
     if (countMarkdownSections(tightened) >= before) break;
     final = tightened;
@@ -1111,6 +1150,7 @@ async function invokeDistillLlmPossiblyChunked(params: {
       minSections: params.minSectionsTotal,
       effort: profile.effortFinal,
       docKeys: allPageImages.length ? Array.from(new Set(allPageImages.map((p) => p.docKey))) : [],
+      detailLevel: params.detailLevel,
     });
   }
 
@@ -1150,6 +1190,7 @@ async function invokeDistillLlmPossiblyChunked(params: {
           effort: profile.effortChunk,
           // 只有带参考页图的段才下发标记规则，没图的段不给模型编标记的口子
           docKeys: chunk.pageImages.length ? Array.from(new Set(chunk.pageImages.map((p) => p.docKey))) : [],
+          detailLevel: params.detailLevel,
         });
         done += 1;
       }),
