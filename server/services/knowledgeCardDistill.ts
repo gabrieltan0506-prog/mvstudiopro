@@ -229,7 +229,7 @@ function resolveDistillBullets(modelName?: string | null): { min: number; max: n
 function buildDistillSystem(minSections: number, modelName?: string | null, docKeys?: string[]): string {
   const bullets = resolveDistillBullets(modelName);
   const refRule = docKeys?.length
-    ? `\n7. **参考原页标记**：用户会附上原稿中版式有特色的页（表格、思维导图、分式图解、左右对比）。某小节的内容对应这些页时，在该小节末尾单独一行写 \`${formatKnowledgeCardPageRef(docKeys[0]!, [1])}\` 形式的标记（docKey 原样照抄，页码写真实参考页，多页用逗号），要点里保留该页的结构关系（表头与行列、分支层级、步骤顺序）。没有对应参考页的小节不写标记；不得编造页码。`
+    ? `\n7. **参考原页标记**：用户会附上原稿中版式有特色的页（表格、思维导图、分式图解、左右对比），每张图前都标了「原稿 docKey 第 N 页」。某小节的内容对应这些页时，在该小节末尾单独一行写标记，格式 \`${docKeys.map((k) => formatKnowledgeCardPageRef(k, [1])).join("\` 或 \`")}\`（docKey 照抄该图前标注的那个，页码写该图标注的真实页码，多页用逗号）。只能引用本次附带的图；没有对应参考页的小节不写标记；不得编造 docKey 或页码。`
     : "";
   return `你是知识卡片内容主编。任务：把用户提供的文稿/幻灯片抽字/图片 OCR 结果，提炼成可直接做「疏朗图文知识卡片」的简体中文 Markdown（读图 OCR 与提炼同时完成，不要只吐生文本）。
 
@@ -1126,7 +1126,6 @@ async function invokeDistillLlmPossiblyChunked(params: {
   const profile = DISTILL_PROFILES[params.modelName];
   const text = String(params.sourceText || "").trim();
   const urls = params.imageDataUrls;
-  const docKeys = params.documents.map((d) => d.docKey);
   const allPageImages: DistillPageImage[] = params.documents.flatMap((d) =>
     d.pages.filter((p) => p.imageDataUrl).map((p) => ({ docKey: d.docKey, pageNumber: p.pageNumber, dataUrl: p.imageDataUrl!, reason: p.reason })),
   );
@@ -1140,7 +1139,7 @@ async function invokeDistillLlmPossiblyChunked(params: {
       modelName: params.modelName,
       minSections: params.minSectionsTotal,
       effort: profile.effortFinal,
-      docKeys,
+      docKeys: allPageImages.length ? Array.from(new Set(allPageImages.map((p) => p.docKey))) : [],
     });
   }
 
@@ -1151,7 +1150,7 @@ async function invokeDistillLlmPossiblyChunked(params: {
     : splitSourceTextForDistill(text, profile.chunkChars).map((piece, i) => ({ text: piece, pageImages: [], label: `第 ${i + 1} 段` }));
   console.info(
     `[knowledgeCardDistill] long doc ${text.length} chars → ${chunks.length} chunks ` +
-      `(model=${params.modelName} chunkChars=${profile.chunkChars} concurrency=${profile.concurrency} effort=${profile.effortChunk} level=${params.detailLevel} refPages=${allPageImages.length})`,
+      `(model=${params.modelName} chunkChars=${profile.chunkChars} concurrency=${profile.concurrency} effort=${profile.effortChunk} level=${params.detailLevel} refPages=${allPageImages.length} docs=${params.documents.length})`,
   );
 
   const outputs: string[] = new Array(chunks.length);
@@ -1178,7 +1177,8 @@ async function invokeDistillLlmPossiblyChunked(params: {
           chunkLabel: `第 ${idx + 1}/${chunks.length} 段（${chunk.label}）`,
           retries: profile.chunkRetries,
           effort: profile.effortChunk,
-          docKeys,
+          // 只有带参考页图的段才下发标记规则，没图的段不给模型编标记的口子
+          docKeys: chunk.pageImages.length ? Array.from(new Set(chunk.pageImages.map((p) => p.docKey))) : [],
         });
         done += 1;
       }),

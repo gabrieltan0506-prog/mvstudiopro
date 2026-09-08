@@ -62,6 +62,18 @@ describe("knowledgeCardCreditsForPageIndex", () => {
   });
 });
 
+describe("〔参考原页〕标记不计入分页与页费", () => {
+  it("strips markers before pagination so credits do not grow with reference markers", () => {
+    const body = Array.from({ length: 6 }, (_, i) => `## 第${i + 1}节\n${repeatBlock("要点", 700)}`).join("\n\n");
+    const withMarkers = body.replace(/(## 第\d+节\n[^\n]+)/g, (m) => `${m}\n〔参考原页 0123456789abcdef:p${Math.floor(Math.random() * 90) + 1}〕`);
+    const plain = planKnowledgeCardPages(body);
+    const marked = planKnowledgeCardPages(withMarkers);
+    expect(marked.pageCount).toBe(plain.pageCount);
+    expect(marked.credits).toBe(plain.credits);
+    expect(marked.pages.join("\n")).not.toContain("参考原页");
+  });
+});
+
 describe("knowledgeCardImageQuality", () => {
   it("always high (4K) regardless of page count (0908 拍板：超过 6 页不再降 2K)", () => {
     expect(knowledgeCardImageQuality(1)).toBe("high");
