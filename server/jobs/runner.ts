@@ -3130,6 +3130,10 @@ async function processPlatformJob(
       const sourceText = String(params.sourceText || "");
       const distillModel = typeof params.distillModel === "string" ? params.distillModel : undefined;
       const detailLevel = typeof params.detailLevel === "string" ? params.detailLevel : undefined;
+      // 旧版任务（部署前入队）带 base64 图片：不再走 base64 喂模型，明确报错让用户重新上传
+      if (Array.isArray(params.imageDataUrls) && (params.imageDataUrls as unknown[]).length > 0 && !(Array.isArray(params.files) && (params.files as unknown[]).length > 0)) {
+        throw new Error("旧版任务的图片需重新上传（现在一律走云端直传），请重新提交");
+      }
       const jobFiles = Array.isArray(params.files)
         ? (params.files as unknown[])
             .filter((f): f is { gcsUri: string; mimeType: string; fileName?: string } =>

@@ -7916,8 +7916,9 @@ export default function PlatformPage() {
       const res = await exportKnowledgeCardPdfMutation.mutateAsync({ imageUrls: urls, title: extractInfographicSubjectFromUserCopy(customNoteText) });
       // 弹窗可能被浏览器拦截：同时把链接留在页面上可点
       setKnowledgeCardPdfUrl(res.url);
-      const opened = window.open(res.url, "_blank", "noopener,noreferrer");
-      toast.success(opened ? `PDF 已生成（${res.pageCount} 页），已在新窗口打开` : `PDF 已生成（${res.pageCount} 页），点下方链接下载`);
+      // 带 noopener 的 window.open 规范上恒返回 null，不据此判断是否打开成功；链接始终留在页面上
+      window.open(res.url, "_blank", "noopener,noreferrer");
+      toast.success(`PDF 已生成（${res.pageCount} 页），可点「打开 / 下载 PDF」`);
     } catch (e) {
       toast.error(`PDF 导出失败：${String((e as { message?: string })?.message || "").slice(0, 120)}`);
     } finally {
@@ -8158,6 +8159,7 @@ export default function PlatformPage() {
         setCustomNoteImages([]);
         setCustomNoteImageUpper(null);
         setCustomNoteImageLower(null);
+        setKnowledgeCardPdfUrl(null);
         const pendingFiles = customNotePendingFilesRef.current.slice();
         let distilled = trimmed;
         // 上传路径已提炼进文本框时，生成只出图；仅当仍有待处理文件或无文案时再提炼
@@ -8250,15 +8252,22 @@ export default function PlatformPage() {
         };
         setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(0, total), label: `出图 0/${total} 页（并发 ${KNOWLEDGE_CARD_RENDER_CONCURRENCY}）` });
         let next = 0;
+        // 某页失败即停发新页（在途的跑完），不让其它 worker 继续扣费出图
+        let aborted = false;
         const worker = async () => {
-          while (next < total) {
+          while (next < total && !aborted) {
             const i = next++;
+            try {
             setCustomNotePageProgress({ i: Math.min(total, done + 1), n: total });
             const provider = i % 2 === 0 ? "evolink" : "openai";
             const url = await generateCustomNoteOne(distilled, "single_page_knowledge_card", undefined, { index: i + 1, total }, provider);
             urls[i] = url;
             done += 1;
             publish();
+            } catch (e) {
+              aborted = true;
+              throw e;
+            }
           }
         };
         await Promise.all(Array.from({ length: Math.min(KNOWLEDGE_CARD_RENDER_CONCURRENCY, total) }, () => worker()));

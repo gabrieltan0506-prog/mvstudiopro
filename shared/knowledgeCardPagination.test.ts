@@ -74,13 +74,31 @@ describe("单页硬顶 1200 字（0908：超过会乱码/字糊）", () => {
   });
 });
 
-describe("分页不把 ## 标题与其「图：」行切开", () => {
-  it("heading is never the last line of a page", () => {
-    const secs = Array.from({ length: 12 }, (_, i) => `## 第${i + 1}节结论\n\n图：流程链 A→B→C\n\n- ${repeatBlock("要点", 330)}`);
-    const plan = planKnowledgeCardPages(secs.join("\n\n"));
-    for (const page of plan.pages) {
+describe("分页不把 ## 标题与其「图：」行切开，也不造只剩标题的空页", () => {
+  const noHeadingOnlyPages = (pages: string[]) => {
+    for (const page of pages) {
       const lines = page.trim().split(/\n/).filter((l) => l.trim());
       expect(/^##\s/.test(lines[lines.length - 1]!)).toBe(false);
+      expect(lines.filter((l) => !/^#/.test(l)).length).toBeGreaterThan(0);
+      expect(page.length).toBeLessThanOrEqual(KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE);
+    }
+  };
+  it("forces the page boundary right before a heading and keeps the heading with its 图： line", () => {
+    // 第 1 节正文 ~1150 字把第 1 页几乎填满，第 2 节标题若留在页尾就孤悬
+    const sec1 = `## 第一节结论\n\n图：流程链 A→B→C\n\n- ${repeatBlock("要点", 1100)}`;
+    const sec2 = `## 第二节结论\n\n图：对比表 左右两栏\n\n- ${repeatBlock("要点", 300)}`;
+    const plan = planKnowledgeCardPages(`${sec1}\n\n${sec2}`);
+    expect(plan.pages.length).toBeGreaterThanOrEqual(2);
+    noHeadingOnlyPages(plan.pages);
+    const p2 = plan.pages.find((p) => p.includes("## 第二节结论"))!;
+    expect(p2).toContain("图：对比表");
+  });
+  it("does not create a heading-only page when the next unit alone nearly fills a page", () => {
+    const units = [`- ${repeatBlock("前文", 600)}`, "## 标题一", `- ${repeatBlock("长段", 1150)}`, `- ${repeatBlock("尾段", 500)}`, "## 尾标题"];
+    const plan = planKnowledgeCardPages(units.join("\n\n"));
+    for (const page of plan.pages) {
+      const lines = page.trim().split(/\n/).filter((l) => l.trim());
+      expect(lines.filter((l) => !/^#/.test(l)).length).toBeGreaterThan(0);
       expect(page.length).toBeLessThanOrEqual(KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE);
     }
   });

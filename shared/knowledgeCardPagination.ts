@@ -253,7 +253,9 @@ function packByCap(full: string, h1: string, cap: number): string[] {
     const unit = units[i]!;
     // `##` 标题不孤悬页尾：装它时连同下一单元（通常是「图：」行/首段）一起算，装不下就整体换页
     const isHeading = /^##\s+\S/.test(unit);
-    const glued = isHeading && i + 1 < units.length ? unit.length + 2 + units[i + 1]!.length : unit.length;
+    // 只在「标题+下一单元」装得进一页时才粘连；下一单元本身接近整页时不粘，避免造出只剩标题的空页
+    const gluedLen = i + 1 < units.length ? unit.length + 2 + units[i + 1]!.length : unit.length;
+    const glued = isHeading && gluedLen <= room ? gluedLen : unit.length;
     if (current && current.length + 2 + glued > room) { pages.push(current); current = ""; }
     current += (current ? "\n\n" : "") + unit;
   }
