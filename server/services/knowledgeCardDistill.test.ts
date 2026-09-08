@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   KNOWLEDGE_CARD_DISTILL_MODEL,
-  extractKnowledgeCardUploads,
   estimateKnowledgeCardDistillChunks,
   knowledgeCardDistillProfile,
   mergeDistilledMarkdownChunks,
@@ -90,10 +89,10 @@ describe("per-model distill profiles", () => {
     const kimi = knowledgeCardDistillProfile(KNOWLEDGE_CARD_DISTILL_MODEL_KIMI);
     const qwen = knowledgeCardDistillProfile(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN);
 
-    // 历史均衡档迁到精细；轻量保留独立的分段参数。
-    expect(kimi).toEqual(sol);
+    // Kimi 实测最快 → 段最大、并发最高；Qwen 最慢且压缩过度 → 段最小、最少小节最高
+    expect(kimi.chunkChars).toBeGreaterThan(sol.chunkChars);
     expect(sol.chunkChars).toBeGreaterThan(qwen.chunkChars);
-
+    expect(kimi.concurrency).toBeGreaterThanOrEqual(sol.concurrency);
     expect(qwen.minSectionsPerChunk).toBeGreaterThan(sol.minSectionsPerChunk);
 
     // 分段抽要点用中档，统稿抬档（各家枚举不同：Evolink 顶档 xhigh，OpenRouter 是 high|max）
@@ -101,8 +100,8 @@ describe("per-model distill profiles", () => {
     expect(sol.effortFinal).toBe("xhigh");
     expect(qwen.effortChunk).toBe("medium");
     expect(qwen.effortFinal).toBe("xhigh");
-    // 旧档任务同样使用精细档现行参数。
-    expect(kimi.effortFinal).toBe("xhigh");
+    // Kimi 顶档 max 配长合并稿的统稿必超时（探针实测）→ 统稿用 high
+    expect(kimi.effortFinal).toBe("high");
 
     for (const p of [sol, kimi, qwen]) {
       expect(p.chunkRetries).toBeGreaterThanOrEqual(1);
@@ -121,7 +120,7 @@ describe("per-model distill profiles", () => {
     const solChunks = estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_SOL, 95_000);
     const kimiChunks = estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_KIMI, 95_000);
     const qwenChunks = estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN, 95_000);
-    expect(kimiChunks).toBe(solChunks);
+    expect(kimiChunks).toBeLessThan(solChunks);
     expect(qwenChunks).toBeGreaterThan(solChunks);
   });
 });
@@ -138,16 +137,5 @@ describe("mergeDistilledMarkdownChunks", () => {
     expect(merged).toContain("## B");
     expect(merged).toContain("## C");
     expect(merged.match(/^# /gm)?.length).toBe(1);
-  });
-});
-
-
-describe("MD和TXT原文读取", () => {
-  it.each(["book.md", "book.txt"])("%s不截断超五万字符正文", async (fileName) => {
-    const text = "第一章\n原文段落。\n\n".repeat(8000);
-    const result = await extractKnowledgeCardUploads([{ fileName, mimeType: "application/octet-stream", fileBase64: Buffer.from(text).toString("base64") }]);
-    expect(result.documentText).toBe(text.trim());
-    expect(result.methods).toEqual([`${fileName}:text_utf8`]);
-    expect(result.imageDataUrls).toEqual([]);
   });
 });

@@ -876,48 +876,6 @@ export async function reapStuckPaidJobs(opts?: {
       const lag = now - lastBeat;
       const force = opts?.forceAll === true;
 
-      // 新阅读页在调用生图前即把服务端页面身份写入 hold。即使成品后的所有
-      // 写入同时失败，旧 active 也不能被当作“未生成”退款；缺证据必须等待对账。
-      if (hold.taskType === "platformCompositeSheet" && hold.metadata?.knowledgeCardReadingRender && hold.status !== "settlement_pending") {
-        const identity = hold.metadata.knowledgeCardReadingRender as { prefix?: unknown; progressJobId?: unknown };
-        const { knowledgeReadingPrefix, readKnowledgeReadingJson } = await import("./knowledgeCardReadingStore.js");
-        const expectedPrefix = `${knowledgeReadingPrefix(Number(hold.userId))}renders/`;
-        if (typeof identity.prefix !== "string" || !identity.prefix.startsWith(expectedPrefix) ||
-            !/^[a-f0-9]{64}$/.test(identity.prefix.slice(expectedPrefix.length)) ||
-            identity.progressJobId !== `kcp_${identity.prefix.slice(expectedPrefix.length, expectedPrefix.length + 48)}`) {
-          throw new Error(`knowledge_reading_hold_identity_invalid:${hold.jobId}`);
-        }
-        const result = await readKnowledgeReadingJson<{ progressJobId: string; status: string; imageUrl?: string }>(`${identity.prefix}/result.json`);
-        const { getJobByIdStrict } = await import("../jobs/repository.js");
-        // GCS 成品证据在案即可结算；DB 暂不可读不应阻止已有可靠成品的对账。
-        let succeeded = result?.progressJobId === identity.progressJobId && result.status === "succeeded" && typeof result.imageUrl === "string" && !!result.imageUrl.trim();
-        if (result && !succeeded) throw new Error(`knowledge_reading_result_invalid:${hold.jobId}`);
-        if (!succeeded) {
-          const job = await getJobByIdStrict(identity.progressJobId as string);
-          if (job && job.userId !== String(hold.userId)) throw new Error(`knowledge_reading_job_owner_invalid:${hold.jobId}`);
-          const output = job?.output as { compositeImageUrl?: string; imageUrl?: string } | null;
-          const imageUrl = output?.compositeImageUrl || output?.imageUrl;
-          succeeded = job?.status === "succeeded" && typeof imageUrl === "string" && !!imageUrl.trim();
-        }
-        if (succeeded) {
-          hold.status = "settled";
-          hold.settledAt = new Date().toISOString();
-          const dir = await getLedgerDir();
-          await writeHoldFile(holdFilePath(dir, hold.taskType, hold.jobId), hold);
-          continue;
-        }
-        // refund_pending 只能来自业务确认失败后已发起的退款，仍需补偿；active
-        // 只有明确失败回执才能交给超时回收，不能凭 jobs 被清理成 failed 推断无成品。
-        const failure = await readKnowledgeReadingJson<{ progressJobId: string; status: string }>(`${identity.prefix}/failure.json`);
-        if (failure && (failure.progressJobId !== identity.progressJobId || !["failed", "reconcile"].includes(failure.status))) {
-          throw new Error(`knowledge_reading_failure_invalid:${hold.jobId}`);
-        }
-        if (hold.status !== "refund_pending" && failure?.status !== "failed") {
-          console.warn(`[paidJobLedger] knowledgeReading 等待成品/费用对账，禁止自动退款 jobId=${hold.jobId}`);
-          continue;
-        }
-      }
-
       // promptEnhance 成功证据检查:jobs=succeeded 时无论 hold 处于
       // active/refund_pending/settlement_pending 都只补 settled,绝不退分;
       // 证据查询失败(DB 不可用)时跳过本轮,不许在证据缺席下走退分。

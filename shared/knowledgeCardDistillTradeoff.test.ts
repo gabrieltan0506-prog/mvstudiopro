@@ -28,9 +28,9 @@ describe("estimateKnowledgeCardDistillTradeoff", () => {
     expect(t.saved).toBe(94);
   });
 
-  it("直接出图与提炼后出图均为4K，价差只来自页数与提炼费", () => {
+  it("超过 6 页会被降到 2K，提炼后能保住 4K", () => {
     const t = tradeoffFor(10_000, KNOWLEDGE_CARD_DISTILL_MODEL_SOL);
-    expect(t.full.is4k).toBe(true);
+    expect(t.full.is4k).toBe(false);
     expect(t.distilled.is4k).toBe(true);
   });
 

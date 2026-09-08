@@ -1,4 +1,3 @@
-import { buildKnowledgeCardSubjectPositionPrompt, knowledgeCardLandscapeTemplatePrompt, type KnowledgeCardSubjectPosition } from "../../shared/knowledgeCardSubjectPosition.js";
 import { z } from "zod";
 import { extractJsonString, invokeLLM } from "../_core/llm.js";
 import {
@@ -308,8 +307,6 @@ export const zPlatformImagePromptTranslatorInput = z
  */
 
 const SCRIPT_SLICE = 3500;
-/** 与已确认知识卡版本的正文schema一致；冻结正文不复用旧分页切片上限。 */
-const KNOWLEDGE_CARD_FROZEN_PAGE_MAX_CHARS = 8000;
 /** 中文视觉骨架：允许充分保留剧本信息。 */
 const CHINESE_VISUAL_BRIEF_MAX_CHARS = SCRIPT_SLICE;
 
@@ -425,7 +422,7 @@ export const SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH = `你是一位顶尖的归
 - 密度上来后仍要**字迹清晰**：字号足够大，每个汉字笔画清晰、不粘连、不变形、不缺笔；严禁生造字、错字、半个字或火星文。装饰花卉/蝴蝶不得压住文字。
 
 【视觉规范】
-- 主体构图：按本次主体位置约束放置本页核心视觉意象（人物摄影或建筑/器物插画，约占 1/4–1/3 画面）；摄影写实 + 透视学审美 + 艺术手稿素描结合。
+- 主体构图：在左侧或某一栏放置本页核心视觉意象（人物摄影或建筑/器物插画，约占 1/4–1/3 画面）；摄影写实 + 透视学审美 + 艺术手稿素描结合。
 - 其余版面按栏铺排知识模块，阅读动线明确（左→右、上→下）；同栏模块左右对齐、宽度一致。
 - 图标：每个模块小标题旁配立体透视素描图标；色彩鲜明、对比清晰、尺寸统一。
 - 连接结构：素描线稿与花卉/蝴蝶等点缀作视觉链接与留白填充；**卡片可用圆角浅底色块，最外层保留立体透视素描边框**；避免箭头重叠压字。
@@ -450,14 +447,6 @@ export const SINGLE_PAGE_KNOWLEDGE_CARD_TEXT_RENDER_WRAPPER_EN = `TEXT RENDERING
 /** @deprecated 旧客户端上/下篇；新路径用 notePageIndex 1..12 */
 export type KnowledgeCardNotePart = "upper" | "lower";
 
-/** 服务端已验收并冻结的单页，来源编号仅供追溯，不能作为画内文字。 */
-export type KnowledgeCardFrozenPromptPage = {
-  pageId: string;
-  contentMarkdown: string;
-  visualDirections: string;
-  sourcePageIds: string[];
-};
-
 export type KnowledgeCardPromptPaging = {
   notePart?: KnowledgeCardNotePart;
   /** 1-based 页码 */
@@ -473,8 +462,6 @@ export type KnowledgeCardPromptPaging = {
    * （用户 2026-08-05 用轻量档复现；同样的版式在精细/均衡档因正文更长而只当版式生效）。
    */
   infographicTemplateId?: string;
-  subjectPosition?: KnowledgeCardSubjectPosition;
-  frozenPage?: KnowledgeCardFrozenPromptPage;
 };
 
 /**
@@ -489,7 +476,7 @@ function buildKnowledgeCardLayoutDirective(templateId?: string | null): string {
   return `\n【版式·仅排版参考·不是内容】本页按「${t.labelZh}」的构图铺排：${t.blurbZh.replace(/（版式）$/, "")}。
 - 这段只描述**怎么排**，不是要画的内容；**严禁**把版式名称、模板说明、SECTION 编号、英文构图指令印到图上。
 - 屏内文字只能来自下方 Markdown 切片；画幅仍以本卡的横版 16:9 为准（忽略版式自带的竖版比例）。
-- Composition reference (layout only, never render these words): ${knowledgeCardLandscapeTemplatePrompt(t.layoutPromptEn)
+- Composition reference (layout only, never render these words): ${t.layoutPromptEn
     .replace(/^LAYOUT ONLY\s*—\s*/i, "")
     .replace(/\s*--ar\s+\d+:\d+\s*$/i, "")
     .trim()}
@@ -520,37 +507,6 @@ export function buildSinglePageKnowledgeCardImagePrompt(
 ): string {
   const opts: KnowledgeCardPromptPaging =
     paging === "upper" || paging === "lower" ? { notePart: paging } : paging && typeof paging === "object" ? paging : {};
-
-  if (opts.frozenPage) {
-    const page = opts.frozenPage;
-    const index = Number(opts.notePageIndex);
-    const total = Number(opts.notePageTotal);
-    if (!Number.isSafeInteger(index) || !Number.isSafeInteger(total) || index < 1 || total < index)
-      throw new Error("冻结知识卡页码无效，不能重新分页替代已确认方案");
-    if (typeof page.contentMarkdown !== "string" || !page.contentMarkdown.trim()
-      || typeof page.visualDirections !== "string" || !page.visualDirections.trim()
-      || typeof page.pageId !== "string" || !page.pageId.trim()
-      || !Array.isArray(page.sourcePageIds) || !page.sourcePageIds.length
-      || page.sourcePageIds.some(id => typeof id !== "string" || !id.trim())
-      || new Set(page.sourcePageIds).size !== page.sourcePageIds.length)
-      throw new Error("冻结知识卡正文、视觉方向或来源身份不完整");
-    if (page.contentMarkdown.length > KNOWLEDGE_CARD_FROZEN_PAGE_MAX_CHARS)
-      throw new Error(`冻结知识卡正文超过单页${KNOWLEDGE_CARD_FROZEN_PAGE_MAX_CHARS}字容量，未截断，需重新编辑并确认`);
-    const layout = buildKnowledgeCardLayoutDirective(opts.infographicTemplateId);
-    return `【任务】根据已确认的单页正文与视觉方向，绘制一张连贯、高密度、易读的知识信息图。采用顶部标题与清晰分栏，模块数量、要点数量和表格结构依本页真实内容决定，不套用固定数量模板，不新增正文没有的知识或诗词。图文相互解释，数字、单位、箭头方向、步骤顺序和适用条件准确对应。具体风格与构图采用用户选定的版式，并保持清晰的阅读顺序。
-【冻结分页】本页是已确认方案的第 ${index}/${total} 页。大标题末尾追加「（第 ${index}/${total} 页）」。下方是本页完整正文，禁止重新分页、借用其他页、删改数字与条件或增写原稿没有的知识。原页编号和成品页内部编号不得印到图上。
-${layout}
-【视觉重组·仅排版与重绘指令·不是正文】
-${page.visualDirections}
-重绘原稿图文对应、表格行列、机制箭头与流程关系；参考图帮助理解知识和有效构图，不复制整页截图，不锁定原页画风或人物身份。本段只指导怎么画，不作为文字印到图上；用户选择的主体位置与横版16:9优先。
-
-【以下为冻结 Markdown 正文·逐字保留知识与限定条件】：
-${page.contentMarkdown}
-【冻结正文结束】
-
-画内知识文字仅取自上述冻结正文，以简体中文清晰排版。保留所有小节、数字、单位与限定条件，模块数量依正文决定，不凭空增写例子或要点。高密度信息图，横版16:9，文字不重叠、不裁切；布局指令、内部编号和来源编号不得印到图上。
-${buildKnowledgeCardSubjectPositionPrompt(opts.subjectPosition)}`.trim();
-  }
 
   const plan = planKnowledgeCardPages(scriptContext);
 
@@ -590,8 +546,7 @@ ${buildKnowledgeCardSubjectPositionPrompt(opts.subjectPosition)}`.trim();
 【以下为 Markdown 文稿内容，请按上述要求生成单页连贯图文知识卡片（而非 2×4 八格）】：
 ${slice}
 
-${SINGLE_PAGE_KNOWLEDGE_CARD_TEXT_RENDER_WRAPPER_EN}
-${buildKnowledgeCardSubjectPositionPrompt(opts.subjectPosition)}`.trim();
+${SINGLE_PAGE_KNOWLEDGE_CARD_TEXT_RENDER_WRAPPER_EN}`.trim();
 }
 
 /**
