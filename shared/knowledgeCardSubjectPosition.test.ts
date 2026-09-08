@@ -45,7 +45,7 @@ describe("knowledgeCard detail level (精简版 / 高级版)", () => {
     const full = suggestKnowledgeCardMinSections(95_000, "full");
     expect(concise).toBeLessThanOrEqual(30);
     expect(full).toBeGreaterThanOrEqual(concise * 2);
-    expect(full).toBeLessThanOrEqual(120);
+    expect(full).toBeLessThanOrEqual(96);
     // 单参数调用等价精简版（旧调用方不变）
     expect(suggestKnowledgeCardMinSections(95_000)).toBe(concise);
   });
