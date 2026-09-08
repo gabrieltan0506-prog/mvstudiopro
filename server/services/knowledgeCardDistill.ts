@@ -782,7 +782,8 @@ async function distillOneChunkWithRetry(params: {
             chunkLabel: `${params.chunkLabel}-${i + 1}`,
             retries: 1,
             effort: params.effort,
-            docKeys: params.docKeys,
+            // 只有带图的那一半才给标记规则
+            docKeys: i === 0 && params.pageImages?.length ? params.docKeys : [],
           }),
         );
       }
@@ -843,11 +844,14 @@ ${mainline}
 }
 
 /** 统稿要求大幅精选，只在「结构崩塌」时才回退输入稿。 */
-function refinedOutputLooksBroken(refined: string, minSections: number): boolean {
+function refinedOutputLooksBroken(refined: string, minSections: number, inputSections?: number): boolean {
   const body = refined.trim();
   if (body.length < 400) return true;
   const sections = (body.match(/^##\s+\S/gm) || []).length;
-  return sections < Math.max(2, Math.floor(minSections / 2));
+  // 高级版目标节数大（68–96），阈值同时受输入稿节数约束，正常压缩不会被误判为崩塌
+  const byTarget = Math.floor(minSections / 2);
+  const byInput = Number.isFinite(inputSections) && (inputSections as number) > 0 ? Math.floor((inputSections as number) * 0.3) : byTarget;
+  return sections < Math.max(2, Math.min(byTarget, byInput));
 }
 
 function countMarkdownSections(md: string): number {
@@ -902,7 +906,7 @@ async function refineOnce(params: {
       ),
       timeoutMs: distillRefineTimeoutMs(params.modelName),
     });
-    if (refinedOutputLooksBroken(refined, params.minSections)) {
+    if (refinedOutputLooksBroken(refined, params.minSections, countMarkdownSections(params.body))) {
       console.warn(
         `[knowledgeCardDistill] refine(${params.stage}) output broken (${params.body.length} → ${refined.length} chars), keep input`,
       );

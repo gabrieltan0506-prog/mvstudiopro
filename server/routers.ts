@@ -8103,7 +8103,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 fileName: z.string().max(240).optional(),
               }),
             )
-            .min(1),
+            .min(1)
+            // 旧同步端点（前端已不调用）：保留文件数上限，重活走 prepareKnowledgeCardCopy 的后台任务
+            .max(40),
         }),
       )
       .mutation(async ({ input, ctx }) => {

@@ -1856,7 +1856,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
       appendImageFlowLog(
         L,
         isKnowledgeCard
-          ? `[图文笔记·步骤2] GPT-IMAGE-2 · 16:9 · quality=high · 4K · total=${options.notePageTotal ?? "?"} · 参考原页=${refImageUrls.length}张 · gcsSubdir=${subdir} · EvoLink 优先 → OpenAI 官方兜底`
+          ? `[图文笔记·步骤2] GPT-IMAGE-2 · 16:9 · quality=high · EvoLink 4K（OpenAI 官方兜底为 1536x1024）· total=${options.notePageTotal ?? "?"} · 参考原页=${refImageUrls.length}张 · gcsSubdir=${subdir}`
           : `[2×4·步骤2] GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY} · gcsSubdir=${subdir} · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]} · ${
               hasSheetRefs ? "换脸·仅 OpenAI/OpenRouter（无 NB2）" : "仅 OpenAI/OpenRouter（无 NB2）"
             }`,
@@ -1886,7 +1886,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         appendImageFlowLog(
           L,
           isKnowledgeCard
-            ? `[图文笔记·主路径] EvoLink → OpenAI 官方 · quality=high · 4K · 16:9`
+            ? `[图文笔记·主路径] EvoLink（4K）→ OpenAI 官方（1536x1024）· quality=high · 16:9`
             : `[2×4·主路径] OpenAI/OpenRouter GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
         );
       }
