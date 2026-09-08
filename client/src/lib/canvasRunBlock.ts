@@ -1994,7 +1994,13 @@ export async function runCanvasBlock(
             ...(useSeedance25 && block.outputUrl && looksLikeVideo(block.outputUrl)
               ? [block.outputUrl]
               : []),
-            ...(useSeedance25 && block.refVideoUrl && looksLikeVideo(block.refVideoUrl)
+            // 勾选/上传的参考视频：按扩展名或上传记录的 kind 判定，无扩展名的上传视频也不丢
+            ...(useSeedance25 &&
+            block.refVideoUrl &&
+            (looksLikeVideo(block.refVideoUrl) ||
+              block.uploadedAssets?.some(
+                (a) => a.kind === "video" && a.url === block.refVideoUrl,
+              ))
               ? [block.refVideoUrl]
               : []),
           ]),

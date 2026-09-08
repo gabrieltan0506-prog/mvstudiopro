@@ -314,3 +314,28 @@ describe("Seedance 2.5 多模态参考：勾选视频是站位参考，不是上
     expect(extractVideoTailFramesFromUrl).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("Seedance 2.5：无扩展名的上传视频按上传记录 kind 进 videoUrls", () => {
+  it("refVideoUrl 无 .mp4 后缀但 uploadedAssets 标记为 video 时不丢", async () => {
+    const requests = offlineRequests("seedanceI2V");
+    const noExt = "https://test.invalid/canvas/video/previs-no-extension";
+    await runCanvasBlock(
+      { userRole: "admin", optimizeCopy: async () => "" },
+      {
+        ...defaultCanvasBlock("video", 0, 0),
+        id: "video-seedance25-noext",
+        videoModel: "seedance-2.5",
+        seedance25WorkMode: "reference_to_video",
+        prompt: `【第1段·10s】${action}`,
+        refImageUrl: images[0],
+        refVideoUrl: noExt,
+        uploadedAssets: [
+          { id: "a1", url: noExt, previewUrl: noExt, fileName: "previs-no-extension", kind: "video", mimeType: "video/mp4" },
+        ],
+      }
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0].videoUrls).toEqual([noExt]);
+    expect(extractVideoTailFramesFromUrl).not.toHaveBeenCalled();
+  });
+});

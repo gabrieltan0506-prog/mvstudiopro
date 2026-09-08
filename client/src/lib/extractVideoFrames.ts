@@ -115,49 +115,47 @@ export async function extractVideoFramesFromUrl(
   const quality = opts?.jpegQuality ?? 0.82;
 
   const video = await loadVideo(videoUrl);
-  const durationSec = Math.min(Number(video.duration) || 0, maxDurationSec);
-  if (!(durationSec > 0.2)) throw new Error("video_duration_invalid");
+  try {
+    const durationSec = Math.min(Number(video.duration) || 0, maxDurationSec);
+    if (!(durationSec > 0.2)) throw new Error("video_duration_invalid");
 
-  const times: number[] = [];
-  for (
-    let t = 0;
-    t < durationSec && times.length < maxFrames;
-    t += intervalSec
-  ) {
-    times.push(Number(t.toFixed(2)));
-  }
-  if (
-    times[times.length - 1] < durationSec - 0.15 &&
-    times.length < maxFrames
-  ) {
-    times.push(Number((durationSec - 0.05).toFixed(2)));
-  }
-
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("canvas_2d_unavailable");
-
-  const frames: ExtractedVideoFrame[] = [];
-  for (const t of times) {
-    try {
-      await seek(video, t);
-    } catch (error) {
-      releaseVideo(video);
-      throw error;
+    const times: number[] = [];
+    for (
+      let t = 0;
+      t < durationSec && times.length < maxFrames;
+      t += intervalSec
+    ) {
+      times.push(Number(t.toFixed(2)));
     }
-    const vw = video.videoWidth || 720;
-    const vh = video.videoHeight || 1280;
-    const scale = Math.min(1, maxWidth / vw);
-    canvas.width = Math.max(1, Math.round(vw * scale));
-    canvas.height = Math.max(1, Math.round(vh * scale));
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL("image/jpeg", quality);
-    frames.push({ tSec: t, dataUrl, mimeType: "image/jpeg" });
-  }
+    if (
+      times[times.length - 1] < durationSec - 0.15 &&
+      times.length < maxFrames
+    ) {
+      times.push(Number((durationSec - 0.05).toFixed(2)));
+    }
 
-  video.removeAttribute("src");
-  video.load();
-  return { frames, durationSec };
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("canvas_2d_unavailable");
+
+    const frames: ExtractedVideoFrame[] = [];
+    for (const t of times) {
+      await seek(video, t);
+      const vw = video.videoWidth || 720;
+      const vh = video.videoHeight || 1280;
+      const scale = Math.min(1, maxWidth / vw);
+      canvas.width = Math.max(1, Math.round(vw * scale));
+      canvas.height = Math.max(1, Math.round(vh * scale));
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL("image/jpeg", quality);
+      frames.push({ tSec: t, dataUrl, mimeType: "image/jpeg" });
+    }
+
+    return { frames, durationSec };
+  } finally {
+    // 任何失败（时长非法/无 2D 上下文/跨域绘制被拒/定位超时）都释放已加载的视频资源
+    releaseVideo(video);
+  }
 }
 
 /** 抽取成片末段均匀 N 帧（短剧段间接力 / Seedance 参考；默认片尾约 4s ≈ 3–5s） */
@@ -177,48 +175,46 @@ export async function extractVideoTailFramesFromUrl(
   const quality = opts?.jpegQuality ?? 0.82;
 
   const video = await loadVideo(videoUrl);
-  const durationSec = Number(video.duration) || 0;
-  if (!(durationSec > 0.2)) throw new Error("video_duration_invalid");
+  try {
+    const durationSec = Number(video.duration) || 0;
+    if (!(durationSec > 0.2)) throw new Error("video_duration_invalid");
 
-  const start = Math.max(0, durationSec - tailWindowSec);
-  const times: number[] = [];
-  if (frameCount === 1) {
-    times.push(Number((durationSec - 0.05).toFixed(2)));
-  } else {
-    for (let i = 0; i < frameCount; i++) {
-      const t = start + ((durationSec - 0.05 - start) * i) / (frameCount - 1);
-      times.push(
-        Number(Math.min(durationSec - 0.05, Math.max(0, t)).toFixed(2))
-      );
+    const start = Math.max(0, durationSec - tailWindowSec);
+    const times: number[] = [];
+    if (frameCount === 1) {
+      times.push(Number((durationSec - 0.05).toFixed(2)));
+    } else {
+      for (let i = 0; i < frameCount; i++) {
+        const t = start + ((durationSec - 0.05 - start) * i) / (frameCount - 1);
+        times.push(
+          Number(Math.min(durationSec - 0.05, Math.max(0, t)).toFixed(2))
+        );
+      }
     }
-  }
 
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("canvas_2d_unavailable");
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("canvas_2d_unavailable");
 
-  const frames: ExtractedVideoFrame[] = [];
-  for (const t of times) {
-    try {
+    const frames: ExtractedVideoFrame[] = [];
+    for (const t of times) {
       await seek(video, t);
-    } catch (error) {
-      releaseVideo(video);
-      throw error;
+      const vw = video.videoWidth || 720;
+      const vh = video.videoHeight || 1280;
+      const scale = Math.min(1, maxWidth / vw);
+      canvas.width = Math.max(1, Math.round(vw * scale));
+      canvas.height = Math.max(1, Math.round(vh * scale));
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      frames.push({
+        tSec: t,
+        dataUrl: canvas.toDataURL("image/jpeg", quality),
+        mimeType: "image/jpeg",
+      });
     }
-    const vw = video.videoWidth || 720;
-    const vh = video.videoHeight || 1280;
-    const scale = Math.min(1, maxWidth / vw);
-    canvas.width = Math.max(1, Math.round(vw * scale));
-    canvas.height = Math.max(1, Math.round(vh * scale));
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    frames.push({
-      tSec: t,
-      dataUrl: canvas.toDataURL("image/jpeg", quality),
-      mimeType: "image/jpeg",
-    });
-  }
 
-  video.removeAttribute("src");
-  video.load();
-  return { frames, durationSec };
+    return { frames, durationSec };
+  } finally {
+    // 任何失败（时长非法/无 2D 上下文/跨域绘制被拒/定位超时）都释放已加载的视频资源
+    releaseVideo(video);
+  }
 }
