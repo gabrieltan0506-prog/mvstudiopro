@@ -1,3 +1,4 @@
+import { resolveKnowledgeCardSubjectPosition, type KnowledgeCardSubjectPosition } from "../../shared/knowledgeCardSubjectPosition.js";
 import { and, asc, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { jobs, type Job, type InsertJob } from "../../drizzle/schema";
 import { getDb } from "../db";
@@ -49,6 +50,11 @@ function isGrowthCampAnalyzeJob(job: Job): boolean {
 
 function isManhuaTemplateLearnJob(job: Pick<Job, "type" | "input">): boolean {
   return job.type === "video" && getVideoJobAction(job.input) === "manhua_template_learn";
+}
+
+function isKnowledgeCardReadingJob(job: Pick<Job, "type" | "input">): boolean {
+  const action = getPlatformJobAction(job.input);
+  return job.type === "platform" && (action === "knowledge_card_reading" || action === "knowledge_card_edition");
 }
 
 /** 供 API 轮询唤醒漫剧学习专用 worker。 */
@@ -120,6 +126,25 @@ export async function claimNextGrowthCampAnalyzeJob(): Promise<NormalizedJob | n
   if (!next || !isGrowthCampAnalyzeJob(next)) return null;
 
   return claimQueuedJobById(db, next, "claimNextGrowthCampAnalyzeJob");
+}
+
+/** 全书阅读与逐页详细稿独立领取，不占用普通平台/图片/视频任务的串行槽。 */
+export async function claimNextKnowledgeCardReadingJob(): Promise<NormalizedJob | null> {
+  const db = await getDb();
+  if (!db) return null;
+  let rows: Job[];
+  try {
+    rows = await db.select().from(jobs).where(and(
+      eq(jobs.status, "queued"), eq(jobs.type, "platform"),
+      sql`(${jobs.input}::jsonb->>'action') in ('knowledge_card_reading', 'knowledge_card_edition')`,
+    )).orderBy(asc(jobs.createdAt)).limit(1);
+  } catch (error) {
+    console.error("[JobsRepo] claimNextKnowledgeCardReadingJob select failed:", error);
+    return null;
+  }
+  const next = rows[0];
+  if (!next || !isKnowledgeCardReadingJob(next)) return null;
+  return claimQueuedJobById(db, next, "claimNextKnowledgeCardReadingJob");
 }
 
 /** 漫剧学习专用持久队列；由独立双并发 worker 领取，关页后仍继续。 */
@@ -618,6 +643,7 @@ export async function insertRunningCompositeSheetProgressJob(data: {
   sceneId: string;
   kind: string;
   titleSlice: string;
+  subjectPosition?: KnowledgeCardSubjectPosition;
 }): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("Database unavailable — cannot create job");
@@ -630,7 +656,7 @@ export async function insertRunningCompositeSheetProgressJob(data: {
     status: "running",
     input: {
       action: "platform_composite_sheet_progress",
-      params: { sceneId: data.sceneId, kind: data.kind },
+      params: { sceneId: data.sceneId, kind: data.kind, ...(data.kind === "single_page_knowledge_card" ? { subjectPosition: resolveKnowledgeCardSubjectPosition(data.subjectPosition) } : {}) },
     } as InsertJob["input"],
     output: {
       imageGenFlowLog: [] as string[],
@@ -734,7 +760,7 @@ export async function claimNextQueuedJobExcluding(excludeTypes: string[]): Promi
   try {
     const actionCondition = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
       'growth_analyze_video', 'growth_analyze_images', 'manhua_template_learn',
-      'manhua_advisor_qa'
+      'manhua_advisor_qa', 'knowledge_card_reading', 'knowledge_card_edition'
     )`;
     const condition =
       excludeTypes.length > 0
@@ -865,7 +891,7 @@ export async function claimNextQueuedJob(): Promise<NormalizedJob | null> {
   try {
     const actionCondition = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
       'growth_analyze_video', 'growth_analyze_images', 'manhua_template_learn',
-      'manhua_advisor_qa'
+      'manhua_advisor_qa', 'knowledge_card_reading', 'knowledge_card_edition'
     )`;
     const condition =
       excludeTypes.length > 0
@@ -885,7 +911,7 @@ export async function claimNextQueuedJob(): Promise<NormalizedJob | null> {
   if (rows.length === 0) return null;
 
   const nonGrowthRows = rows.filter(
-    (j) => !isGrowthCampAnalyzeJob(j) && !isManhuaTemplateLearnJob(j),
+    (j) => !isGrowthCampAnalyzeJob(j) && !isManhuaTemplateLearnJob(j) && !isKnowledgeCardReadingJob(j),
   );
   const preferred =
     nonGrowthRows.find(

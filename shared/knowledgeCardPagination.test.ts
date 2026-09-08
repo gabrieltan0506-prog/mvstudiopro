@@ -62,11 +62,11 @@ describe("knowledgeCardCreditsForPageIndex", () => {
 });
 
 describe("knowledgeCardImageQuality", () => {
-  it("uses 4K (high) for 1–6 pages and 2K (medium) for every page when total > 6", () => {
+  it("任意页数均使用high，超过6页不降档", () => {
     expect(knowledgeCardImageQuality(1)).toBe("high");
     expect(knowledgeCardImageQuality(6)).toBe("high");
-    expect(knowledgeCardImageQuality(7)).toBe("medium");
-    expect(knowledgeCardImageQuality(20)).toBe("medium");
+    expect(knowledgeCardImageQuality(7)).toBe("high");
+    expect(knowledgeCardImageQuality(20)).toBe("high");
   });
 });
 

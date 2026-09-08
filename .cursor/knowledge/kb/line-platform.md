@@ -1,5 +1,8 @@
 # line-platform · /platform 内容创作线（动态层，每班收班更新）
 
+- **知识卡全稿图文阅读（2026-09-08，部分验证）**：新上传与正文入口进入 `knowledge_card_reading` 专用持久队列，PDF保留真实页图和图文关系，长文字按完整连续段读取；模型方案至少四页，完整四页可讲清时只有单方案。确认后 `knowledge_card_edition` 冻结每页正文与来源，`readingPage` 在生图服务端覆盖客户端正文/序号/模型/价费，独立原页参考重绘，不做换脸。原始回执先保存再解析；全源覆盖、版本/owner校验；同页配置固定claim，成功复用，未知结果只对账，明确未收费/已退款失败才能重试。上传不新增提炼费，手输长文原50/30积分；4K、横版和主体左/中选择保留。旧材料只读保留。最终命令与限制见 `docs/2026Sep08/knowledge-card-full-reading-audit.md`，线上质量与账单尚未实跑。
+
+
 - **0901现行真值（覆盖下方所有候选参数）**：Gemini 3.1 Pro 为 `0.7→0.65→0.6`、MEDIUM、无 thinkingBudget/mediaResolution；只有门禁失败才降档。503/429/RESOURCE_EXHAUSTED 每60秒同温重试，每个当前温度档最多3次。三档完成后无论schema门禁是否通过，Qwen 3.8 Max必须按结构、时间轴、画面、逐镜、字幕/重点时刻与声音的综合可用性三选一；禁止拒绝全部候选、改写、合并或本地数值择优，只有选中稿进入整集GLM。模型分片并发硬上限5，尾片无特例。真源在 `AGENTS.md`、`server/services/manhuaNativeDeepReadRunner.ts` 与选择器；下方旧梯度、尾片放行和数值择优全部仅为历史。
 
 > 更新：2026-08-17。本线已交接给 UI/功能线 agent，此处存事实供跨线查阅。

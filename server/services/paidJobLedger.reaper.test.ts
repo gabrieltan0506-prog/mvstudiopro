@@ -23,6 +23,11 @@ vi.mock("../db", () => ({
   },
 }));
 
+const readKnowledgeReadingJson = vi.fn();
+vi.mock("./knowledgeCardReadingStore.js", () => ({
+  knowledgeReadingPrefix: (userId: number) => `knowledge-card-reading/u${userId}/`,
+  readKnowledgeReadingJson: (...args: unknown[]) => readKnowledgeReadingJson(...args),
+}));
 const getJobByIdStrict = vi.fn();
 vi.mock("../jobs/repository.js", () => ({
   getJobByIdStrict: (...a: unknown[]) => getJobByIdStrict(...a),
@@ -118,6 +123,7 @@ describe("promptEnhance 任务记录与账本双向对账", () => {
     refundCreditsForDeductAmount.mockClear();
     refundChargeByKey.mockClear();
     getJobByIdStrict.mockReset();
+    readKnowledgeReadingJson.mockReset().mockResolvedValue(null);
     claimPromptEnhanceFailed.mockReset();
     claimPromptEnhanceFailed.mockResolvedValue("failed");
     claimPromptEnhanceRefundPending.mockReset();
@@ -438,4 +444,89 @@ describe("promptEnhance 任务记录与账本双向对账", () => {
     expect(claimManhuaAdvisorFailed).not.toHaveBeenCalled();
     expect(refundChargeByKey).not.toHaveBeenCalled();
   });
+  describe("知识卡成品持久化故障对账", () => {
+    const renderId = "a".repeat(64);
+    const progressJobId = `kcp_${renderId.slice(0, 48)}`;
+    const holdId = `cs_u7_${renderId}`;
+    const prefix = `knowledge-card-reading/u7/renders/${renderId}`;
+    async function readingHold(status = "active", override: Record<string, unknown> = {}) {
+      const { registerActiveJob } = await ledger();
+      await registerActiveJob({ jobId: holdId, taskType: "platformCompositeSheet", userId: 7, creditsBilled: 28,
+        action: "platformCompositeSheet", metadata: { knowledgeCardReadingRender: { prefix, progressJobId } } });
+      const file = path.join(tempDir, "platformCompositeSheet", `${holdId}.json`);
+      const current = JSON.parse(await fs.readFile(file, "utf8"));
+      await fs.writeFile(file, JSON.stringify({ ...current, status, lastHeartbeatAt: new Date(0).toISOString(), ...override }));
+      return async () => JSON.parse(await fs.readFile(file, "utf8"));
+    }
+    async function reap() { return (await ledger()).reapStuckPaidJobs({ forceAll: true }); }
+    function noRefund() {
+      expect(refundCredits).not.toHaveBeenCalled();
+      expect(refundCreditsForDeductAmount).not.toHaveBeenCalled();
+      expect(refundChargeByKey).not.toHaveBeenCalled();
+    }
+    it.each(["active", "refund_pending"])("GCS 成品在案、DB 不可用、hold=%s 只补结算", async status => {
+      const read = await readingHold(status);
+      readKnowledgeReadingJson.mockResolvedValue({ progressJobId, status: "succeeded", imageUrl: "https://test.invalid/image.png" });
+      getJobByIdStrict.mockRejectedValue(new Error("测试数据库不可用"));
+      expect((await reap()).refunded).toBe(0);
+      expect((await read()).status).toBe("settled"); noRefund();
+      expect(getJobByIdStrict).not.toHaveBeenCalled();
+    });
+    it("GCS 成品登记缺失但 jobs 有真实 URL，补结算", async () => {
+      const read = await readingHold();
+      getJobByIdStrict.mockResolvedValue({ userId: "7", status: "succeeded", output: { compositeImageUrl: "https://test.invalid/image.png" } });
+      await reap(); expect((await read()).status).toBe("settled"); noRefund();
+    });
+    it.each(["running", "failed", "succeeded"])("所有成品证据缺失、jobs=%s 不因部署清理退款", async status => {
+      const read = await readingHold();
+      getJobByIdStrict.mockResolvedValue({ userId: "7", status, output: {} });
+      await reap(); expect((await read()).status).toBe("active"); noRefund();
+    });
+    it.each(["gcs", "db"])("%s 证据查询失败明确报对账错误，不退款", async target => {
+      const read = await readingHold();
+      if (target === "gcs") readKnowledgeReadingJson.mockRejectedValue(new Error("测试对象存储不可用"));
+      else getJobByIdStrict.mockRejectedValue(new Error("测试数据库不可用"));
+      expect((await reap()).errors).toBe(1); expect((await read()).status).toBe("active"); noRefund();
+    });
+    it("reconcile 回执即使 jobs 被清成 failed 也不退款", async () => {
+      const read = await readingHold();
+      getJobByIdStrict.mockResolvedValue({ userId: "7", status: "failed" });
+      readKnowledgeReadingJson.mockImplementation(async name => name.endsWith("failure.json") ? { progressJobId, status: "reconcile" } : null);
+      await reap(); expect((await read()).status).toBe("active"); noRefund();
+    });
+    it("身份跨账号被拒绝，不能靠其他人的成品结算", async () => {
+      const read = await readingHold("active", { metadata: { knowledgeCardReadingRender: { prefix: prefix.replace("u7", "u8"), progressJobId } } });
+      expect((await reap()).errors).toBe(1); expect((await read()).status).toBe("active"); noRefund();
+      expect(readKnowledgeReadingJson).not.toHaveBeenCalled();
+    });
+    it("补结算卷写入失败保持不退款，存储恢复后下轮收口", async () => {
+      const read = await readingHold();
+      readKnowledgeReadingJson.mockResolvedValue({ progressJobId, status: "succeeded", imageUrl: "https://test.invalid/image.png" });
+      const rename = vi.spyOn(fs, "rename").mockRejectedValueOnce(new Error("测试卷写入失败"));
+      try {
+        expect((await reap()).errors).toBe(1); expect((await read()).status).toBe("active"); noRefund();
+      } finally { rename.mockRestore(); }
+      await reap(); expect((await read()).status).toBe("settled"); noRefund();
+    });
+    it("已有 settlement_pending 时不依赖 GCS 或 DB 即可补结算", async () => {
+      const read = await readingHold("settlement_pending");
+      readKnowledgeReadingJson.mockRejectedValue(new Error("测试不可用"));
+      await reap(); expect((await read()).status).toBe("settled"); noRefund();
+    });
+    it("已确认失败的 refund_pending 即使前端等待对账仍补退款，避免漏退", async () => {
+      const read = await readingHold("refund_pending", { refundReason: "task_failed" });
+      getJobByIdStrict.mockResolvedValue({ userId: "7", status: "failed" });
+      readKnowledgeReadingJson.mockImplementation(async name => name.endsWith("failure.json") ? { progressJobId, status: "reconcile" } : null);
+      expect((await reap()).refunded).toBe(1); expect((await read()).status).toBe("refunded");
+      expect(refundCredits).toHaveBeenCalledTimes(1);
+    });
+    it("明确失败回执保留原退款补偿路径", async () => {
+      const read = await readingHold();
+      getJobByIdStrict.mockResolvedValue({ userId: "7", status: "failed" });
+      readKnowledgeReadingJson.mockImplementation(async name => name.endsWith("failure.json") ? { progressJobId, status: "failed" } : null);
+      expect((await reap()).refunded).toBe(1); expect((await read()).status).toBe("refunded");
+      expect(refundCredits).toHaveBeenCalledTimes(1);
+    });
+  });
+
 });

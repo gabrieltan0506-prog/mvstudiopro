@@ -1,3 +1,6 @@
+import { knowledgeCardReadingPageReferenceSchema, resolveKnowledgeCardReadingRender, getKnowledgeCardReadingRenderStatus, claimKnowledgeCardReadingRender, knowledgeCardFrozenPageForRender, saveKnowledgeCardReadingRenderResult, saveKnowledgeCardReadingRenderFailure } from "./services/knowledgeCardReadingRender.js";
+import { knowledgeCardReadingProcedures } from "./routers/knowledgeCardReading.js";
+import { KNOWLEDGE_CARD_SUBJECT_POSITIONS, resolveKnowledgeCardSubjectPosition } from "../shared/knowledgeCardSubjectPosition.js";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -213,6 +216,7 @@ import {
   isHomePhotoResultBrowserReadable,
 } from "../shared/homePhotoTools.js";
 import { knowledgeCardCreditsForPageIndex } from "../shared/knowledgeCardPagination";
+import { KNOWLEDGE_CARD_ACTIVE_DISTILL_MODELS, resolveActiveKnowledgeCardDistillModel } from "../shared/knowledgeCardDistillModels.js";
 import { extractDocumentText } from "./growth/documentExtract";
 import { generateVideo, isVeoAvailable } from "./veo";
 import { isGeminiAudioAvailable, analyzeAudioWithGemini } from "./gemini-audio";
@@ -3186,6 +3190,7 @@ export const appRouter = router({
 
   // Video PK Rating - upload video frame and get AI analysis
   mvAnalysis: router({
+    ...knowledgeCardReadingProcedures,
     getWeixinChannelsCollectorStatus: adminProcedure.query(async () => {
       const store = await import("./growth/weixinChannelsMinerStore.js");
       const state = await store.getWeixinChannelsMinerState();
@@ -8097,18 +8102,30 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           files: z
             .array(
               z.object({
-                fileBase64: z.string().min(1).max(18_000_000),
+                fileBase64: z.string().min(1).max(18_000_000).optional(),
+                gcsUri: z.string().min(1).max(1024).optional(),
                 mimeType: z.string().min(1).max(120),
                 fileName: z.string().max(240).optional(),
-              }),
+              }).refine((file) => Boolean(file.fileBase64 || file.gcsUri), { message: "文件内容不能为空" }),
             )
             .min(1)
             .max(40),
         }),
       )
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        if (input.files.some((file) => file.gcsUri)) {
+          const { getGcsBucketName } = await import("./services/gcs.js");
+          const allowedPrefix = `gs://${getGcsBucketName()}/uploads/u${ctx.user.id}/`;
+          if (input.files.some((file) => file.gcsUri && !file.gcsUri.startsWith(allowedPrefix))) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "文件不属于当前账号，请重新上传" });
+          }
+        }
         const { extractKnowledgeCardUploads } = await import("./services/knowledgeCardDistill.js");
         const extracted = await extractKnowledgeCardUploads(input.files);
+        const unreadable = extracted.methods.filter((method) => /:(?:none|empty|gcs_read_failed|pdf_strings)$/.test(method));
+        if (unreadable.length) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "部分文件无法可靠读取文字，请使用可选中文字的PDF、Word或清晰图片，未开始提炼" });
+        }
         return {
           success: true as const,
           text: extracted.documentText,
@@ -8125,13 +8142,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           forceDistill: z.boolean().optional(),
           /**
            * 收提炼费。只有「纯文本长文 + 用户在弹窗里选了先提炼」才带 true：
-           * 那条路提炼是**用户为省页费买的服务**（1 万字直接出图 9 页 264 积分且降 2K，
-           * 提炼后 4 页 120 积分保住 4K）。上传文档的提炼是抽文的必要环节，成本已含页费，不另收。
+           * 那条路提炼是**用户为省页费买的服务**（1 万字直接出图 9 页 264 积分，
+           * 提炼后 4 页 120 积分，两种方式均输出4K）。上传文档的提炼是抽文的必要环节，成本已含页费，不另收。
            */
           chargeDistillFee: z.boolean().optional(),
-          /** 默认 Evolink gpt-5.6-sol；备用 OR kimi-k3；备选 Evolink qwen3.8-max（旧 terra/OR-qwen 服务端迁） */
+          /** 新提炼只开放精细与轻量，已移除的模型不得从旧客户端重新提交。 */
           distillModel: z
-            .enum(["claude-opus-5", "gpt-5.6-sol", "moonshotai/kimi-k3", "qwen3.8-max", "gpt-5.6-terra", "qwen/qwen3.8-max"])
+            .enum(KNOWLEDGE_CARD_ACTIVE_DISTILL_MODELS)
             .optional(),
           files: z
             .array(
@@ -8164,9 +8181,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           estimateKnowledgeCardDistillChunks,
         } = await import("./services/knowledgeCardDistill.js");
         const { planKnowledgeCardPages } = await import("../shared/knowledgeCardPagination.js");
-        const { resolveKnowledgeCardDistillModel } = await import(
-          "../shared/knowledgeCardDistillModels.js"
-        );
 
         const files = input.files ?? [];
         // 审查必须修：gcsUri 只认本人上传前缀，堵「提交任意 gs:// 让服务账号代读」的跨租户洞
@@ -8181,7 +8195,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             }
           }
         }
-        const modelName = resolveKnowledgeCardDistillModel(input.distillModel);
+        const modelName = resolveActiveKnowledgeCardDistillModel(input.distillModel);
 
         // 抽文很快（本机 105 页 PDF 约数秒），先做掉：既能判断是否够长要走后台，
         // 也避免把几 MB 的 PDF base64 塞进 jobs.input。
@@ -8203,7 +8217,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             id: jobId,
             userId: String(userId),
             type: "platform",
-            provider: modelName === "claude-opus-5" ? "anthropic" : "evolink",
+            provider: "evolink",
             input: {
               action: "knowledge_card_distill",
               params: {
@@ -8237,7 +8251,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           sourceText: input.sourceText,
           files: input.files,
           forceDistill: input.forceDistill,
-          distillModel: input.distillModel,
+          distillModel: modelName,
         });
         const plan = planKnowledgeCardPages(prepared.distilledMarkdown, prepared.distillModel);
 
@@ -8274,7 +8288,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           const inputDigest = createHash("sha256");
           inputDigest.update(String(input.sourceText || ""));
           for (const f of input.files || []) {
-            inputDigest.update(" ");
+            inputDigest.update("\0");
             inputDigest.update(String((f as { fileBase64?: string }).fileBase64 || ""));
             inputDigest.update(String((f as { gcsUri?: string }).gcsUri || ""));
           }
@@ -8313,6 +8327,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         z
           .object({
             jobId: z.string().max(128).optional(),
+            readingPage: knowledgeCardReadingPageReferenceSchema.optional(),
             sceneId: z.string().min(1),
             title: z.string().min(1).max(220),
             scriptContext: z.string().min(1).max(50000),
@@ -8339,6 +8354,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
              * （用户 2026-08-05 随机选版式跑轻量档，第 1 页即是）。
              */
             infographicTemplateId: z.string().max(64).optional(),
+            subjectPosition: z.enum(KNOWLEDGE_CARD_SUBJECT_POSITIONS).optional(),
             /** 仅 storyboard_sheet_landscape / xiaohongshu_dual_note：2×4(默认) 或 3×4 十二格（后端分 2 段生成再 sharp 拼成一张长图，降低糊字）。 */
             gridVariant: z.enum(["2x4", "3x4"]).optional(),
             /** 可選：客戶端生成並輪詢 GET /api/jobs/:id，實時顯示 imageGenFlowLog */
@@ -8401,6 +8417,35 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       )
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
+        // 新阅读页只接收方案身份；正文、计价页序和模型均从服务端冻结版次恢复。
+        const readingRender = input.readingPage ? await resolveKnowledgeCardReadingRender(userId, {
+          ...input.readingPage, infographicTemplateId: input.infographicTemplateId, subjectPosition: input.subjectPosition,
+        }) : null;
+        const existingReadingResponse = (status: Awaited<ReturnType<typeof getKnowledgeCardReadingRenderStatus>>) => ({
+          success: true as const, imageUrl: status.imageUrl || null, totalCost: 0, kind: input.kind,
+          imageGenFlowLog: [] as string[], isAsync: status.status !== "succeeded", progressJobId: status.progressJobId,
+        });
+        if (readingRender) {
+          if (input.kind !== "single_page_knowledge_card" || input.bulkCompositePack || input.referencePhotoUrl || input.gridVariant) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "阅读方案只能按已确认的知识卡页面生成" });
+          }
+          input.title = readingRender.page.title;
+          input.scriptContext = readingRender.page.contentMarkdown;
+          input.sceneId = readingRender.progressJobId;
+          input.progressJobId = readingRender.progressJobId;
+          input.notePageIndex = readingRender.page.ordinal;
+          input.notePageTotal = readingRender.edition.pages.length;
+          input.distillModel = readingRender.edition.model;
+          input.notePart = undefined;
+          const status = await getKnowledgeCardReadingRenderStatus(userId, { ...readingRender.configuration });
+          if (status.status === "failed") throw new TRPCError({ code: "BAD_REQUEST", message: status.error || "该页上次生成已失败，请核对退款后明确重试" });
+          if (status.status !== "not_started") return existingReadingResponse(status);
+        }
+
+        let readingRenderClaimed = false;
+        let readingCanRetry = true;
+        let readingDeductionAttempted = false;
+        try {
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession);
         const enableCompositeDeepResearchProAdmin =
@@ -8417,7 +8462,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         // 客户端在提炼后换低档（取消出图→切轻量）不再改变计费；查无 receipt
         // （手写文本/未走提炼）才按客户端声明档
         let effectiveDistillModel = input.distillModel;
-        if (input.kind === "single_page_knowledge_card") {
+        if (input.kind === "single_page_knowledge_card" && !readingRender) {
           const { lookupKnowledgeCardDistillReceiptModel } = await import(
             "./services/knowledgeCardDistillReceipt.js"
           );
@@ -8447,7 +8492,17 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
         // 服务端操作号（第七轮 P0·5）：扣费 chargeKey 与 hold 编号共用，
         // 扣费-账本-退款三者绑死；DB 唯一键防并发重复扣
-        const compositeOpId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+        const compositeOpId = readingRender?.renderId || `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+        if (readingRender) {
+          if (!isAdminUser) {
+            const balance = await getCredits(userId);
+            if (balance.totalAvailable < cost) throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `积分不足，本页需要${cost}积分` });
+          }
+          if (!(await claimKnowledgeCardReadingRender(userId, readingRender))) {
+            return existingReadingResponse(await getKnowledgeCardReadingRenderStatus(userId, readingRender.configuration));
+          }
+          readingRenderClaimed = true;
+        }
         // 审查必须修：留扣款来源快照——退款按同源退回（团队不退个人、admin 零扣不退）
         let compositeChargeReceipt: Awaited<ReturnType<typeof deductCreditsAmount>> | null = null;
         if (!isAdminUser) {
@@ -8467,6 +8522,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           const bulkTag = compositePack
             ? ` · 编导分镜套装（九折）第${compositePack.sequentialSlot + 1}/${compositePack.packSceneIds.length}笔`
             : "";
+          if (readingRender) { readingCanRetry = false; readingDeductionAttempted = true; }
           compositeChargeReceipt = await deductCreditsAmount(
             userId,
             cost,
@@ -8474,6 +8530,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             compositeDeductionNote + bulkTag,
             { chargeKey: `platformCompositeSheet/${userId}/${compositeOpId}` },
           );
+          if (readingRender && compositeChargeReceipt.cost <= 0) readingCanRetry = true;
         }
 
         if (input.jobId) {
@@ -8506,6 +8563,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               userId,
               creditsBilled: compositeChargeReceipt.cost,
               action: "platformCompositeSheet",
+              metadata: readingRender ? {
+                knowledgeCardReadingRender: { prefix: readingRender.prefix, progressJobId: readingRender.progressJobId },
+              } : undefined,
               deduct: {
                 source: compositeChargeReceipt.source as "personal" | "team",
                 teamId:
@@ -8526,6 +8586,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               compositeChargeReceipt,
               "platformCompositeSheet",
             );
+            if (readingRender) readingCanRetry = true;
             throw new TRPCError({
               code: "INTERNAL_SERVER_ERROR",
               message: "任务账本暂不可用，费用已退回，请稍后重试",
@@ -8534,7 +8595,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
         /** 失败分支统一退款入口；返回是否确认退回（不许谎报「已退回」） */
         const refundCompositeCharge = async (why: string): Promise<boolean> => {
-          if (!compositeChargeReceipt || compositeChargeReceipt.cost <= 0) return true;
+          if (!compositeChargeReceipt || compositeChargeReceipt.cost <= 0) return readingRender && readingDeductionAttempted ? readingCanRetry : true;
           try {
             if (compositeHoldRegistered) {
               const { refundCreditsOnFailure } = await import("./services/paidJobLedger.js");
@@ -8544,7 +8605,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 "task_failed",
                 why,
               );
-              return out.refunded || out.status === "refunded" || out.status === "settled";
+              const resolved = out.refunded || out.status === "refunded" || out.status === "settled";
+              if (readingRender && resolved) readingCanRetry = true;
+              return resolved;
             }
             const { refundCreditsForDeductAmount } = await import("./credits.js");
             await refundCreditsForDeductAmount(
@@ -8553,6 +8616,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               compositeChargeReceipt,
               "platformCompositeSheet",
             );
+            if (readingRender) readingCanRetry = true;
             return true;
           } catch (re) {
             console.error(
@@ -8570,7 +8634,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           let lastErr: unknown;
           for (let attempt = 0; attempt < 3; attempt++) {
             try {
-              await unregisterActiveJob(compositeHoldJobId, "platformCompositeSheet", "settled");
+              const settled = await unregisterActiveJob(compositeHoldJobId, "platformCompositeSheet", "settled");
+              if (readingRender && !settled.ok) throw new Error("成品结算账本缺失，等待对账");
               return;
             } catch (e) {
               lastErr = e;
@@ -8580,7 +8645,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           // 三连败：落 settlement_pending 持久态——reaper 扫到只补结算不退款；
           // 连这个态都写不进才是真危险（函数内部已打 CRITICAL）
           const { markSettlementPending } = await import("./services/paidJobLedger.js");
-          await markSettlementPending(compositeHoldJobId, "platformCompositeSheet");
+          const pendingSaved = await markSettlementPending(compositeHoldJobId, "platformCompositeSheet");
+          if (!pendingSaved) {
+            console.error(`[CRITICAL][compositeSheet] 结算回执未保存，等待对账 hold=${compositeHoldJobId}`, lastErr);
+            if (readingRender) throw new Error("成品已生成，结算状态未能持久化，等待对账；不得重新生图或退款");
+            return;
+          }
           console.error(
             `[compositeSheet] hold 结算三次失败，已转 settlement_pending 等 reaper 补结算 hold=${compositeHoldJobId}`,
             lastErr,
@@ -8659,6 +8729,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               sceneId: input.sceneId,
               kind: input.kind,
               titleSlice: input.title.slice(0, 80),
+              subjectPosition: input.kind === "single_page_knowledge_card" ? resolveKnowledgeCardSubjectPosition(input.subjectPosition) : undefined,
             });
           } catch (pe) {
             console.warn("[mvAnalysis.generatePlatformCompositeSheet] progress job insert failed:", pe);
@@ -8710,6 +8781,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 notePageIndex: input.notePageIndex,
                 notePageTotal: input.notePageTotal,
                 infographicTemplateId: input.infographicTemplateId,
+                subjectPosition: resolveKnowledgeCardSubjectPosition(input.subjectPosition),
+                knowledgeCardFrozenPage: readingRender ? knowledgeCardFrozenPageForRender(readingRender) : undefined,
               });
 
               // 第五轮复审 P0·1：空产物不许标成功——扣了费没有图，必须走统一失败退款
@@ -8717,21 +8790,50 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 throw new Error("生成服务未返回图片（imageUrl 为空）");
               }
               appendImageFlowLog(imageGenFlowLog, "✓ generatePlatformCompositeSheet 完成");
-              await markJobSucceeded(progressJobId, {
+              if (readingRender) await saveKnowledgeCardReadingRenderResult(readingRender, imageUrl);
+              const savedJob = await markJobSucceeded(progressJobId, {
                 imageGenFlowLog,
                 compositeSheetProgress: true,
                 compositeImageUrl: imageUrl,
                 done: true,
               });
+              if (readingRender && savedJob === false) throw new Error("图片已生成，但任务结果登记失败，等待恢复");
               await settleCompositeHold();
             } catch (error: any) {
               const rawMessage = error instanceof Error ? error.message : String(error);
               console.error("\n[生图致命错误 (Async Background)]:", rawMessage);
 
+              // 新阅读页已有真实成品时只补存储/结算，不退款、不标可重生，避免白送成品及重复购买。
+              if (readingRender && imageUrl) {
+                let resultSaved = false;
+                let jobSaved = false;
+                let settlementSaved = !compositeHoldRegistered;
+                try { await saveKnowledgeCardReadingRenderResult(readingRender, imageUrl); resultSaved = true; } catch (persistError) { console.error("[knowledgeReading] 成品待补存", persistError); }
+                try {
+                  const { markJobSucceededWithRetry } = await import("./jobs/repository.js");
+                  jobSaved = await markJobSucceededWithRetry(progressJobId, { compositeImageUrl: imageUrl, done: true, settlementPending: true, imageGenFlowLog });
+                } catch (persistError) { console.error("[knowledgeReading] 任务结果待补登记", persistError); }
+                if (compositeHoldRegistered) {
+                  try {
+                    const { markSettlementPending } = await import("./services/paidJobLedger.js");
+                    settlementSaved = await markSettlementPending(compositeHoldJobId, "platformCompositeSheet");
+                  } catch (persistError) { console.error("[knowledgeReading] 结算待对账", persistError); }
+                }
+                if (!resultSaved && !jobSaved) {
+                  try { await saveKnowledgeCardReadingRenderFailure(readingRender, "成品已生成，结果登记等待对账", false); }
+                  catch (persistError) { console.error("[CRITICAL][knowledgeReading] 对账回执待补存，原页面占用和付费账本保留，禁止再次生图", persistError); }
+                }
+                if (!resultSaved || !jobSaved || !settlementSaved) {
+                  console.error("[CRITICAL][knowledgeReading] 成品持久化/结算等待对账，禁止自动退款或重新生图", { progressJobId, resultSaved, jobSaved, settlementSaved });
+                }
+                return;
+              }
+
               // 先退款再落 job 终态文案：不许把「没退成」写成「已退回」
               const refunded = await refundCompositeCharge(
                 "platformCompositeSheet 生图致命错误退还",
               );
+              if (readingRender) await saveKnowledgeCardReadingRenderFailure(readingRender, error, readingCanRetry);
               const refundNote =
                 !compositeChargeReceipt || compositeChargeReceipt.cost <= 0
                   ? ""
@@ -8794,6 +8896,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             notePageIndex: input.notePageIndex,
             notePageTotal: input.notePageTotal,
             infographicTemplateId: input.infographicTemplateId,
+            subjectPosition: resolveKnowledgeCardSubjectPosition(input.subjectPosition),
+                knowledgeCardFrozenPage: readingRender ? knowledgeCardFrozenPageForRender(readingRender) : undefined,
           });
         } catch (error: any) {
           stopSyncHeartbeat();
@@ -8910,6 +9014,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           kind: input.kind,
           imageGenFlowLog,
         };
+        } catch (error) {
+          if (readingRender && readingRenderClaimed) await saveKnowledgeCardReadingRenderFailure(readingRender, error, readingCanRetry);
+          throw error;
+        }
       }),
 
     /**
