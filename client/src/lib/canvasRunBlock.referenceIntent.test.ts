@@ -339,3 +339,26 @@ describe("Seedance 2.5：无扩展名的上传视频按上传记录 kind 进 vid
     expect(extractVideoTailFramesFromUrl).not.toHaveBeenCalled();
   });
 });
+
+describe("Seedance 2.5：用户参考视频与上游接力成片并存时，用户视频是 @视频1", () => {
+  it("videoUrls 顺序为 [用户勾选视频, 上游接力视频]", async () => {
+    const requests = offlineRequests("seedanceI2V");
+    const previous = "https://test.invalid/previous.mp4";
+    const previs = "https://test.invalid/previs-blocking.mp4";
+    await runCanvasBlock(
+      { userRole: "admin", optimizeCopy: async () => "" },
+      {
+        ...defaultCanvasBlock("video", 0, 0),
+        id: "video-seedance25-both",
+        videoModel: "seedance-2.5",
+        seedance25WorkMode: "reference_to_video",
+        prompt: `【第1段·10s】${action}`,
+        refImageUrl: previous,
+        refVideoUrl: previs,
+      }
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0].videoUrls).toEqual([previs, previous]);
+    expect(extractVideoTailFramesFromUrl).toHaveBeenCalledWith(previous, { frameCount: 4, tailWindowSec: 4 });
+  });
+});

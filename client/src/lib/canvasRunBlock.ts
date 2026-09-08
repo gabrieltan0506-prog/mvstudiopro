@@ -1990,11 +1990,7 @@ export async function runCanvasBlock(
         const candidateVideoUrls = Array.from(
           new Set([
             ...userRefVideos,
-            ...(continuityVideoUrl ? [continuityVideoUrl] : []),
-            ...(useSeedance25 && block.outputUrl && looksLikeVideo(block.outputUrl)
-              ? [block.outputUrl]
-              : []),
-            // 勾选/上传的参考视频：按扩展名或上传记录的 kind 判定，无扩展名的上传视频也不丢
+            // 用户勾选/上传的参考视频排在接力成片之前：正文里的 @视频1 按数组顺序绑定
             ...(useSeedance25 &&
             block.refVideoUrl &&
             (looksLikeVideo(block.refVideoUrl) ||
@@ -2002,6 +1998,10 @@ export async function runCanvasBlock(
                 (a) => a.kind === "video" && a.url === block.refVideoUrl,
               ))
               ? [block.refVideoUrl]
+              : []),
+            ...(continuityVideoUrl ? [continuityVideoUrl] : []),
+            ...(useSeedance25 && block.outputUrl && looksLikeVideo(block.outputUrl)
+              ? [block.outputUrl]
               : []),
           ]),
         );
