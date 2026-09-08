@@ -271,6 +271,30 @@ describe("Seedance 2.5 多模态参考：勾选视频是站位参考，不是上
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it("2.5 上游连线的上一段成片仍按接力：抽尾帧、加连续性提示、视频进 videoUrls", async () => {
+    const requests = offlineRequests("seedanceI2V");
+    const previous = "https://test.invalid/previous.mp4";
+    await runCanvasBlock(
+      { userRole: "admin", optimizeCopy: async () => "" },
+      {
+        ...defaultCanvasBlock("video", 0, 0),
+        id: "video-seedance25-linked-continuity",
+        videoModel: "seedance-2.5",
+        seedance25WorkMode: "reference_to_video",
+        prompt: `【第1段·10s】${action}`,
+        // 自由画布连线：上游成片节点的 mp4 作为最近参考落在 refImageUrl（非用户勾选）
+        refImageUrl: previous,
+      }
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0].version).toBe("2.5");
+    expect(requests[0].videoUrls).toEqual([previous]);
+    expect(requests[0].imageUrls).toEqual(["https://test.invalid/continuity-tail.png"]);
+    expect(requests[0].prompt).toContain("镜头连续性");
+    expect(extractVideoTailFramesFromUrl).toHaveBeenCalledTimes(1);
+    expect(extractVideoTailFramesFromUrl).toHaveBeenCalledWith(previous, { frameCount: 4, tailWindowSec: 4 });
+  });
+
   it("2.0 档勾选视频仍按上一段成片接力（行为不变）", async () => {
     const requests = offlineRequests("seedanceI2V");
     const previous = "https://test.invalid/previous.mp4";

@@ -1639,12 +1639,13 @@ export async function runCanvasBlock(
       !block.id.startsWith("clip-") &&
       normalizeCanvasVideoModel(block.videoModel || DEFAULT_CANVAS_VIDEO_MODEL) === "seedance-2.5" &&
       (block.seedance25WorkMode ?? "reference_to_video") === "reference_to_video";
+    // 上游连线来的上一段成片（refUrl / upstream.visionImages）仍按接力处理，两档一致。
+    const linkedContinuityVideoUrl =
+      (looksLikeVideo(refUrl) ? refUrl : undefined) ||
+      upstream.visionImages.find((i) => looksLikeVideo(i.url))?.url;
     const continuityVideoUrl = seedance25ReferenceOnly
-      ? undefined
-      : block.refVideoUrl ||
-        uploadedVideoUrl ||
-        (looksLikeVideo(refUrl) ? refUrl : undefined) ||
-        upstream.visionImages.find((i) => looksLikeVideo(i.url))?.url;
+      ? linkedContinuityVideoUrl
+      : block.refVideoUrl || uploadedVideoUrl || linkedContinuityVideoUrl;
     const stillRef =
       refUrl && !looksLikeVideo(refUrl)
         ? refUrl
