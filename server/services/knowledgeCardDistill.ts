@@ -234,14 +234,14 @@ const DISTILL_NO_META_ZH = `**不要写审稿旁白**：不得出现「材料认
 function buildDistillSystem(minSections: number, modelName?: string | null, docKeys?: string[], detailLevel?: KnowledgeCardDetailLevel): string {
   const bullets = resolveDistillBullets(modelName, detailLevel);
   const levelRule = detailLevel === "full"
-    ? `\n0. **成稿档：高级版（内容完整、表格化）**：本材料的每个章节、方法、表格/清单都要落进成稿，不因「取重点」舍弃次要章节；数字、步骤、条件全部保留。**能表格化的一律表格化**：分类/对比/参数/时辰-经脉-做法这类多维内容写成 Markdown 表格（表头清楚、每格一句短语，不超过 6 列）；步骤/流程写成「A → B → C」一行流程链；同类清单合并成一张表而不是散成多节。表格承载信息量，小节数量不要为了铺开而增加。`
+    ? `\n0. **成稿档：高级版（主要重点 + 次要重点都包含）**：本材料的每个章节、方法、表格/清单都要落进成稿，主要重点和次要重点一并保留，不因「取重点」舍弃次要内容；数字、步骤、条件全部保留。**能表格化的一律表格化**：分类/对比/参数/时辰-经脉-做法这类多维内容写成 Markdown 表格（表头清楚、每格一句短语，不超过 6 列）；步骤/流程写成「A → B → C」一行流程链；同类清单合并成一张表而不是散成多节。表格承载信息量，小节数量不要为了铺开而增加。`
     : "";
   const refRule = docKeys?.length
     ? `\n7. **参考原页标记**：用户会附上原稿中版式有特色的页（表格、思维导图、分式图解、左右对比），每张图前都标了「原稿 docKey 第 N 页」。某小节的内容对应这些页时，在该小节末尾单独一行写标记，格式 \`${docKeys.map((k) => formatKnowledgeCardPageRef(k, [1])).join("\` 或 \`")}\`（docKey 照抄该图前标注的那个，页码写该图标注的真实页码，多页用逗号）。只能引用本次附带的图；没有对应参考页的小节不写标记；不得编造 docKey 或页码。`
     : "";
   return `你是知识卡片内容主编。任务：把用户提供的文稿/幻灯片抽字/图片 OCR 结果，提炼成可直接做「疏朗图文知识卡片」的简体中文 Markdown（读图 OCR 与提炼同时完成，不要只吐生文本）。
 
-**目标**：让没读过原文的人在几分钟内读懂这份材料**讲了什么、关键结论是什么、怎么用**。${detailLevel === "full" ? "是**完整覆盖**：宁多勿漏。" : "是**精选重点**，不是逐段搬运。"}
+**目标**：让没读过原文的人在几分钟内读懂这份材料**讲了什么、关键结论是什么、怎么用**。${detailLevel === "full" ? "是**主要与次要重点全收**：宁多勿漏，用表格压实。" : "是**精华版：只提炼主要重点**，不是逐段搬运。"}
 
 硬性要求：${levelRule}
 1. **抓主干**：优先保留核心论点、关键结论、可操作方法、决定性数据与对比、反直觉洞察。删掉铺垫、重复、寒暄、案例复述、广告水词、与主题无关的枝节。
@@ -1031,12 +1031,6 @@ async function refineMergedDistill(params: {
     stage: "final",
     detailLevel: params.detailLevel,
   });
-  // 高级版统稿如果反而变短了四成以上，视为过度压缩，退回合并稿（宁多勿漏）
-  if (params.detailLevel === "full" && final.length < current.length * 0.6) {
-    console.warn(`[knowledgeCardDistill] full-level refine shrank ${current.length} → ${final.length} chars, keep merged`);
-    final = current;
-  }
-
   // 有些模型一次统稿只肯降一点（探针：Kimi 36 → 41 节）。超标就再压，压不动即停，不空烧。
   // 高级版要的是完整覆盖，不做收紧轮（统稿只负责去重复、理主线）
   const hardCap = params.detailLevel === "full" ? Number.MAX_SAFE_INTEGER : Math.ceil(params.minSections * 1.35);
