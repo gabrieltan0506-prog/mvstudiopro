@@ -243,3 +243,147 @@ describe("普通视频参考职责不被自动改写", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("Seedance 2.5 多模态参考：勾选视频是站位参考，不是上一段成片", () => {
+  it("不抽尾帧、不追加镜头连续性提示，视频原样进 videoUrls", async () => {
+    const requests = offlineRequests("seedanceI2V");
+    const previs = "https://test.invalid/previs-blocking.mp4";
+    const result = await runCanvasBlock(
+      { userRole: "admin", optimizeCopy: async () => "" },
+      {
+        ...defaultCanvasBlock("video", 0, 0),
+        id: "video-seedance25-reference",
+        videoModel: "seedance-2.5",
+        seedance25WorkMode: "reference_to_video",
+        prompt: `【第1段·10s】${action}`,
+        refImageUrl: images[0],
+        refVideoUrl: previs,
+      }
+    );
+    expect(result.outputUrl).toBe("https://test.invalid/result.mp4");
+    expect(requests).toHaveLength(1);
+    expect(requests[0].version).toBe("2.5");
+    expect(requests[0].videoUrls).toEqual([previs]);
+    expect(requests[0].imageUrls).toEqual([images[0]]);
+    expect(requests[0].prompt).not.toContain("镜头连续性");
+    expect(requests[0].prompt).not.toContain("上一段成片");
+    expect(extractVideoTailFramesFromUrl).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("2.5 上游连线的上一段成片仍按接力：抽尾帧、加连续性提示、视频进 videoUrls", async () => {
+    const requests = offlineRequests("seedanceI2V");
+    const previous = "https://test.invalid/previous.mp4";
+    await runCanvasBlock(
+      { userRole: "admin", optimizeCopy: async () => "" },
+      {
+        ...defaultCanvasBlock("video", 0, 0),
+        id: "video-seedance25-linked-continuity",
+        videoModel: "seedance-2.5",
+        seedance25WorkMode: "reference_to_video",
+        prompt: `【第1段·10s】${action}`,
+        // 自由画布连线：上游成片节点的 mp4 作为最近参考落在 refImageUrl（非用户勾选）
+        refImageUrl: previous,
+      }
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0].version).toBe("2.5");
+    expect(requests[0].videoUrls).toEqual([previous]);
+    expect(requests[0].imageUrls).toEqual(["https://test.invalid/continuity-tail.png"]);
+    expect(requests[0].prompt).toContain("镜头连续性");
+    expect(extractVideoTailFramesFromUrl).toHaveBeenCalledTimes(1);
+    expect(extractVideoTailFramesFromUrl).toHaveBeenCalledWith(previous, { frameCount: 4, tailWindowSec: 4 });
+  });
+
+  it("2.0 档勾选视频仍按上一段成片接力（行为不变）", async () => {
+    const requests = offlineRequests("seedanceI2V");
+    const previous = "https://test.invalid/previous.mp4";
+    await runCanvasBlock(
+      { userRole: "admin", optimizeCopy: async () => "" },
+      {
+        ...defaultCanvasBlock("video", 0, 0),
+        id: "video-seedance20-continuity",
+        videoModel: "seedance-2.0-mini",
+        prompt: `【第1段·10s】${action}`,
+        refImageUrl: images[0],
+        refVideoUrl: previous,
+      }
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0].prompt).toContain("镜头连续性");
+    expect(extractVideoTailFramesFromUrl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Seedance 2.5：无扩展名的上传视频按上传记录 kind 进 videoUrls", () => {
+  it("refVideoUrl 无 .mp4 后缀但 uploadedAssets 标记为 video 时不丢", async () => {
+    const requests = offlineRequests("seedanceI2V");
+    const noExt = "https://test.invalid/canvas/video/previs-no-extension";
+    await runCanvasBlock(
+      { userRole: "admin", optimizeCopy: async () => "" },
+      {
+        ...defaultCanvasBlock("video", 0, 0),
+        id: "video-seedance25-noext",
+        videoModel: "seedance-2.5",
+        seedance25WorkMode: "reference_to_video",
+        prompt: `【第1段·10s】${action}`,
+        refImageUrl: images[0],
+        refVideoUrl: noExt,
+        uploadedAssets: [
+          { id: "a1", url: noExt, previewUrl: noExt, fileName: "previs-no-extension", kind: "video", mimeType: "video/mp4" },
+        ],
+      }
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0].videoUrls).toEqual([noExt]);
+    expect(extractVideoTailFramesFromUrl).not.toHaveBeenCalled();
+  });
+});
+
+describe("Seedance 2.5：用户参考视频与上游接力成片并存时，用户视频是 @视频1", () => {
+  it("videoUrls 顺序为 [用户勾选视频, 上游接力视频]", async () => {
+    const requests = offlineRequests("seedanceI2V");
+    const previous = "https://test.invalid/previous.mp4";
+    const previs = "https://test.invalid/previs-blocking.mp4";
+    await runCanvasBlock(
+      { userRole: "admin", optimizeCopy: async () => "" },
+      {
+        ...defaultCanvasBlock("video", 0, 0),
+        id: "video-seedance25-both",
+        videoModel: "seedance-2.5",
+        seedance25WorkMode: "reference_to_video",
+        prompt: `【第1段·10s】${action}`,
+        refImageUrl: previous,
+        refVideoUrl: previs,
+      }
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0].videoUrls).toEqual([previs, previous]);
+    expect(extractVideoTailFramesFromUrl).toHaveBeenCalledWith(previous, { frameCount: 4, tailWindowSec: 4 });
+  });
+});
+
+describe("Seedance 2.5：refVideoUrl 为空但上传记录里有视频时，视频仍进 videoUrls", () => {
+  it("uploadedAssets 兜底不静默丢视频", async () => {
+    const requests = offlineRequests("seedanceI2V");
+    const uploaded = "https://test.invalid/canvas/video/previs.mp4";
+    await runCanvasBlock(
+      { userRole: "admin", optimizeCopy: async () => "" },
+      {
+        ...defaultCanvasBlock("video", 0, 0),
+        id: "video-seedance25-uploaded-only",
+        videoModel: "seedance-2.5",
+        seedance25WorkMode: "reference_to_video",
+        prompt: `【第1段·10s】${action}`,
+        refImageUrl: images[0],
+        uploadedAssets: [
+          { id: "a1", url: uploaded, previewUrl: uploaded, fileName: "previs.mp4", kind: "video", mimeType: "video/mp4" },
+        ],
+      }
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0].videoUrls).toEqual([uploaded]);
+    expect(requests[0].prompt).not.toContain("镜头连续性");
+    expect(extractVideoTailFramesFromUrl).not.toHaveBeenCalled();
+  });
+});

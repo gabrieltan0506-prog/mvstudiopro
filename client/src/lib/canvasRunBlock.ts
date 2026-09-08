@@ -1632,11 +1632,20 @@ export async function runCanvasBlock(
       };
     }
     const looksLikeVideo = (u?: string) => Boolean(u && /\.(mp4|mov|webm)(\?|$)/i.test(u));
-    const continuityVideoUrl =
-      block.refVideoUrl ||
-      uploadedVideoUrl ||
+    // Seedance 2.5 多模态参考：节点上勾选/上传的视频是「站位/运镜参考」，原样走 videoUrls，
+    // 不是上一段成片——不抽尾帧当起幅、不追加【镜头连续性】（0908 白模站位参考实测：
+    // 跨域签名视频抽帧挂死整条链路，且接力提示会让模型去学白模的脸和服装）。
+    const seedance25ReferenceOnly =
+      !block.id.startsWith("clip-") &&
+      normalizeCanvasVideoModel(block.videoModel || DEFAULT_CANVAS_VIDEO_MODEL) === "seedance-2.5" &&
+      (block.seedance25WorkMode ?? "reference_to_video") === "reference_to_video";
+    // 上游连线来的上一段成片（refUrl / upstream.visionImages）仍按接力处理，两档一致。
+    const linkedContinuityVideoUrl =
       (looksLikeVideo(refUrl) ? refUrl : undefined) ||
       upstream.visionImages.find((i) => looksLikeVideo(i.url))?.url;
+    const continuityVideoUrl = seedance25ReferenceOnly
+      ? linkedContinuityVideoUrl
+      : block.refVideoUrl || uploadedVideoUrl || linkedContinuityVideoUrl;
     const stillRef =
       refUrl && !looksLikeVideo(refUrl)
         ? refUrl
@@ -1972,6 +1981,17 @@ export async function runCanvasBlock(
           onTaskId: (taskId) => deps.onVideoTaskCreated?.(block.id, { taskId, engine: videoModel }),
         });
       } else {
+        const userSelectedVideoRaw = String(block.refVideoUrl || uploadedVideoUrl || "").trim();
+        const userSelectedVideoUrl =
+          userSelectedVideoRaw &&
+          (looksLikeVideo(userSelectedVideoRaw) ||
+            block.uploadedAssets?.some(
+              (a) =>
+                a.url === userSelectedVideoRaw &&
+                (a.kind === "video" || looksLikeVideo(a.fileName || "")),
+            ))
+            ? userSelectedVideoRaw
+            : undefined;
         const userRefVideos = (block.seedance25RefVideoUrls || [])
           .map((u) => String(u || "").trim())
           .filter((u) => /^https?:\/\//i.test(u));
@@ -1981,12 +2001,12 @@ export async function runCanvasBlock(
         const candidateVideoUrls = Array.from(
           new Set([
             ...userRefVideos,
+            // 用户勾选/上传的参考视频排在接力成片之前：正文里的 @视频1 按数组顺序绑定。
+            // refVideoUrl 为空时兜底到上传记录里的首个视频（uploadedVideoUrl），不静默丢失。
+            ...(useSeedance25 && userSelectedVideoUrl ? [userSelectedVideoUrl] : []),
             ...(continuityVideoUrl ? [continuityVideoUrl] : []),
             ...(useSeedance25 && block.outputUrl && looksLikeVideo(block.outputUrl)
               ? [block.outputUrl]
-              : []),
-            ...(useSeedance25 && block.refVideoUrl && looksLikeVideo(block.refVideoUrl)
-              ? [block.refVideoUrl]
               : []),
           ]),
         );
