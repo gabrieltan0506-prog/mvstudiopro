@@ -141,7 +141,8 @@ export async function buildContactSheets(thumbs: Map<number, Buffer>, indexOffse
       const label = Buffer.from(
         `<svg width="96" height="34"><rect width="96" height="34" rx="6" fill="#d7263d"/><text x="48" y="24" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" fill="#ffffff" text-anchor="middle">p${n}</text></svg>`,
       );
-      composites.push({ input: label, left: left + 6, top: top + 6 });
+      // 页码标签放左下角，不压住页眉标题
+      composites.push({ input: label, left: left + 6, top: top + cellH - 34 - 6 });
     }
     const jpeg = await sharp({ create: { width, height, channels: 3, background: "#e9e9e9" } })
       .composite(composites)
