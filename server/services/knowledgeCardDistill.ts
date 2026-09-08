@@ -133,7 +133,7 @@ const DISTILL_PROFILES: Record<KnowledgeCardDistillModelId, KnowledgeCardDistill
     chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_SOL_CHUNK_RETRIES", 2, 0, 4),
     minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_SOL_MIN_SECTIONS", 3, 2, 24),
     refineMaxChars: envNum("KNOWLEDGE_CARD_DISTILL_SOL_REFINE_MAX_CHARS", 24_000, 0, 120_000),
-    bulletsPerSection: { min: 5, max: 9 },
+    bulletsPerSection: { min: 2, max: 4 },
   },
   // 轻量：单价最低，压缩倾向最强 → 段切小到 8k、抬每段节数下限与节内条数，单次统稿输入压到最小
   [KNOWLEDGE_CARD_DISTILL_MODEL_QWEN]: {
@@ -147,7 +147,7 @@ const DISTILL_PROFILES: Record<KnowledgeCardDistillModelId, KnowledgeCardDistill
     minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_MIN_SECTIONS", 5, 2, 24),
     refineMaxChars: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_REFINE_MAX_CHARS", 14_000, 0, 120_000),
     // 轻量档便宜，放宽写满：节内条数比另两档各抬 2 条，别把一节压成三条干标题
-    bulletsPerSection: { min: 7, max: 11 },
+    bulletsPerSection: { min: 3, max: 5 },
   },
 };
 
@@ -202,7 +202,7 @@ const EVOLINK_DIRECT_CHAT_URL = String(
 export { suggestKnowledgeCardMinSections };
 
 /** 三档默认的节内条数（Qwen 会按 profile 抬高，见 `bulletsPerSection`） */
-const DISTILL_DEFAULT_BULLETS = { min: 5, max: 9 } as const;
+const DISTILL_DEFAULT_BULLETS = { min: 2, max: 4 } as const;
 
 /**
  * 每小节要点条数与举例要求。
@@ -212,11 +212,11 @@ const DISTILL_DEFAULT_BULLETS = { min: 5, max: 9 } as const;
  * 区间按提炼档位取（轻量档抬高，避免它把每节压成三条干标题）。
  */
 function distillSectionShape(bullets: { min: number; max: number }): string {
-  return `每个 \`## 小节\` 内：
-   - **${bullets.min}–${bullets.max} 条**要点短句（每条约 12–30 字，信息完整、一条只讲一件事，能独立读懂）
-   - 每条尽量带上**定义 / 数字 / 方法步骤 / 示例**之一，不要写成空泛的概念名词
-   - 该小节涉及方法/流程/判断标准时，**必须**至少一条以「例：」开头的具体例子（引用原文里的真实案例、数字、场景，不许编造）
-   - 要点之间语意连贯，读完这一节就掌握一个完整概念；**不要为了简洁而删减关键信息**`;
+  return `每个 \`## 小节\` 内（**先图后文、图重于文**，2026-09-08 用户定案）：
+   - 第一行写 \`图：<要画什么>\`——从「分式图解 / 流程链（A→B→C）/ 对比表 / 思维导图 / 指标图标组 / 结构示意」里选一种，写清画面元素与它们的关系（例：\`图：扶阳操五式分式图解，五个人物小图按站桩→抱球→和合→归真→打圈排成一行，各配一句动作要领\`）。这一行是给绘图模型的指令，不是正文。
+   - 然后 **${bullets.min}–${bullets.max} 条**要点，**每条 ≤16 字**，是结论不是解释，读一句就懂；数字、步骤、条件放进要点或图里。
+   - 该小节涉及方法/流程/判断标准时，其中一条以「例：」开头，≤16 字，引用原文真实例子，不许编造。
+   - 小节标题本身就是这一节的结论（≤14 字）。**不要把原文句子换个说法铺开**；多维内容直接写成 Markdown 表格（表头清楚、每格一句短语）。`;
 }
 
 function resolveDistillBullets(modelName?: string | null, detailLevel?: KnowledgeCardDetailLevel): { min: number; max: number } {
