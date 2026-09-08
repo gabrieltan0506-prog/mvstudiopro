@@ -1544,6 +1544,11 @@ export async function generatePlatformCompositeSheetImage(options: {
   /** 仅 single_page_knowledge_card：本页「参考原页」已签名 URL（只借版式结构重画） */
   knowledgeCardReferencePageUrls?: string[];
   /**
+   * 仅 single_page_knowledge_card：本页首发供应商（0908 用户令：多页并发，页轮流分给 EvoLink 与 OpenAI 官方同时打）。
+   * 未传默认 EvoLink 先、官方兜底；传 "openai" 则官方先、EvoLink 兜底。
+   */
+  knowledgeCardImageProvider?: "evolink" | "openai";
+  /**
    * 仅 3×4 分段拼接：本次生成是「长图」的第 index/total 段（storyboard/xhs）。
    * 注入连贯/同风格指令，确保各段拼接后接缝处风格一致；第 2 段起不再重复顶部总标题栏。
    */
@@ -1886,7 +1891,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         appendImageFlowLog(
           L,
           isKnowledgeCard
-            ? `[图文笔记·主路径] EvoLink（4K）→ OpenAI 官方（1536x1024）· quality=high · 16:9`
+            ? `[图文笔记·主路径] ${options.knowledgeCardImageProvider === "openai" ? "OpenAI 官方（1536x1024）→ EvoLink（4K）" : "EvoLink（4K）→ OpenAI 官方（1536x1024）"} · quality=high · 16:9`
             : `[2×4·主路径] OpenAI/OpenRouter GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
         );
       }
@@ -1906,7 +1911,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         // 分镜/图文锁脸指令已写入 promptForPixel；勿再叠封面换人 directive
         generalImageEdit: true,
         // 知识卡（0908 拍板）：EvoLink gpt-image-2 优先，官方 OpenAI 兜底；一律 high + 4K，不按页数降档
-        providerOverride: isKnowledgeCard ? "evolink" : undefined,
+        providerOverride: isKnowledgeCard ? (options.knowledgeCardImageProvider || "evolink") : undefined,
         imageLane: isKnowledgeCard ? "asset" : undefined,
         qualityOverride: knowledgeCardQuality,
         evolinkResolution: isKnowledgeCard ? "4K" : undefined,
@@ -1928,7 +1933,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           flowLog: L,
           referenceImageUrls: refImageUrls,
           generalImageEdit: true,
-          providerOverride: isKnowledgeCard ? "evolink" : undefined,
+          providerOverride: isKnowledgeCard ? (options.knowledgeCardImageProvider || "evolink") : undefined,
           imageLane: isKnowledgeCard ? "asset" : undefined,
           qualityOverride: knowledgeCardQuality,
           evolinkResolution: isKnowledgeCard ? "4K" : undefined,

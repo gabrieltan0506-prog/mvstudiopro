@@ -2151,6 +2151,9 @@ function PlatformIpDimensionGuide() {
   );
 }
 
+/** 知识卡出图并发路数（0908 用户令）：EvoLink 与 OpenAI 官方各 2 路同时打 */
+const KNOWLEDGE_CARD_RENDER_CONCURRENCY = 4;
+
 /** 待提炼的上传文件：不论大小一律 GCS 直传，只带回 gs:// 地址（媒体传输铁律：不走 base64） */
 type KnowledgeCardPendingFile = {
   gcsUri: string;
@@ -7997,6 +8000,7 @@ export default function PlatformPage() {
     kind: "single_page_knowledge_card" | "storyboard_sheet_landscape",
     notePart?: "upper" | "lower",
     notePage?: { index: number; total: number },
+    imageProvider?: "evolink" | "openai",
   ): Promise<string> => {
     const sceneId = `custom-note-${notePage?.index ?? notePart ?? "single"}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const progressJobId = newPlatformCompositeProgressJobId();
@@ -8023,6 +8027,7 @@ export default function PlatformPage() {
         ? {
             distillModel: customNoteDistillModel,
             subjectPosition: customNoteSubjectPosition,
+            ...(imageProvider ? { imageProvider } : {}),
             // 版式走独立字段进出图指令；拼进 scriptContext 会被当正文印出来
             ...(customNoteInfographicTemplateId
               ? { infographicTemplateId: customNoteInfographicTemplateId }
@@ -8211,21 +8216,33 @@ export default function PlatformPage() {
         }
         setCustomNoteBusy(true);
         toast.success(`开始出图 · ${total} 页 · ${qLabel} · ${KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH[customNoteSubjectPosition]}`);
-        const urls: string[] = [];
-        setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(0, total), label: `出图 0/${total} 页` });
-        for (let i = 0; i < total; i++) {
-          setCustomNotePageProgress({ i: i + 1, n: total });
-          setCustomNotePartInFlight(i === 0 ? "upper" : "lower");
-          const url = await generateCustomNoteOne(distilled, "single_page_knowledge_card", undefined, {
-            index: i + 1,
-            total,
-          });
-          urls.push(url);
-          setCustomNoteImages([...urls]);
+        /**
+         * 0908 用户令：多页并发出图。页按序轮流分给 EvoLink（奇数页）与 OpenAI 官方（偶数页）同时打，
+         * 每家 2 路，共 4 路；某页首发失败由服务端自动换另一家。结果按页序回填，任一页失败整体报失败（已成功页保留展示）。
+         */
+        const urls: (string | null)[] = Array.from({ length: total }, () => null);
+        let done = 0;
+        const publish = () => {
+          const ready = urls.filter((u): u is string => Boolean(u));
+          setCustomNoteImages(urls.map((u) => u || "").filter(Boolean));
           setCustomNoteImageUpper(urls[0] ?? null);
           setCustomNoteImageLower(urls[1] ?? null);
-          setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(urls.length, total), label: `出图 ${urls.length}/${total} 页` });
-        }
+          setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(ready.length, total), label: `出图 ${ready.length}/${total} 页（并发 ${KNOWLEDGE_CARD_RENDER_CONCURRENCY}）` });
+        };
+        setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(0, total), label: `出图 0/${total} 页（并发 ${KNOWLEDGE_CARD_RENDER_CONCURRENCY}）` });
+        let next = 0;
+        const worker = async () => {
+          while (next < total) {
+            const i = next++;
+            setCustomNotePageProgress({ i: Math.min(total, done + 1), n: total });
+            const provider = i % 2 === 0 ? "evolink" : "openai";
+            const url = await generateCustomNoteOne(distilled, "single_page_knowledge_card", undefined, { index: i + 1, total }, provider);
+            urls[i] = url;
+            done += 1;
+            publish();
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(KNOWLEDGE_CARD_RENDER_CONCURRENCY, total) }, () => worker()));
         setCustomNoteProgress({ status: "succeeded", percent: 100 });
         toast.success(`已生成 ${total} 页图文笔记（${qLabel} · 约 ${credits} 积分）`);
         setCustomNoteDistillPhase("idle");

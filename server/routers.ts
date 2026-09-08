@@ -8365,6 +8365,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             distillModel: z.string().max(64).optional(),
             /** 仅 single_page_knowledge_card：主体偏左 / 居中（横版 16:9 固定） */
             subjectPosition: z.enum(["left", "center"]).optional(),
+            /** 仅 single_page_knowledge_card：本页首发供应商（多页并发时页轮流分给两家；另一家自动兜底） */
+            imageProvider: z.enum(["evolink", "openai"]).optional(),
             /**
              * 仅 single_page_knowledge_card：图文可视化版式 id（`shared/infographicNoteTemplates`）。
              *
@@ -8764,6 +8766,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 infographicTemplateId: input.infographicTemplateId,
                 subjectPosition: input.subjectPosition,
                 knowledgeCardReferencePageUrls,
+                knowledgeCardImageProvider: input.imageProvider,
               });
 
               // 第五轮复审 P0·1：空产物不许标成功——扣了费没有图，必须走统一失败退款
@@ -8850,6 +8853,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             infographicTemplateId: input.infographicTemplateId,
             subjectPosition: input.subjectPosition,
             knowledgeCardReferencePageUrls,
+            knowledgeCardImageProvider: input.imageProvider,
           });
         } catch (error: any) {
           stopSyncHeartbeat();
