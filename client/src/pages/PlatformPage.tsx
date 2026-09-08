@@ -15247,44 +15247,44 @@ export default function PlatformPage() {
                       </select>
                     </label>
                   ) : null}
-                  <div className="inline-flex items-center gap-1.5 text-[11px] text-[#c9c0e6]/70" role="group" aria-label="成稿档">
+                  <label className="inline-flex items-center gap-1.5 text-[11px] text-[#c9c0e6]/70">
                     <span className="shrink-0">成稿</span>
-                    {KNOWLEDGE_CARD_DETAIL_LEVELS.map((level) => (
-                      <button
-                        key={level}
-                        type="button"
-                        aria-pressed={customNoteDetailLevel === level}
-                        disabled={customNoteBusy || customNoteUploadBusy || customNoteDistillPhase !== "idle"}
-                        title={level === "concise" ? "提炼主要重点，页数少" : "主要与次要重点都包含，表格化压实，不限页数、按页计费"}
-                        onClick={() => {
-                          setCustomNoteDetailLevel(level);
-                          try { localStorage.setItem("mvs-knowledge-card-detail-level", level); } catch { /* ignore */ }
-                        }}
-                        className={`rounded-md border px-2 py-1 text-[11px] font-semibold transition disabled:opacity-40 ${customNoteDetailLevel === level ? "border-[#ff4fb8]/60 bg-[#ff4fb8]/20 text-white" : "border-white/15 bg-black/40 text-[#c9c0e6]/80 hover:text-white"}`}
-                      >
-                        {KNOWLEDGE_CARD_DETAIL_LEVEL_LABEL_ZH[level]}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="inline-flex items-center gap-1.5 text-[11px] text-[#c9c0e6]/70" role="group" aria-label="主体位置">
-                    <span className="shrink-0">主体</span>
-                    {KNOWLEDGE_CARD_SUBJECT_POSITIONS.map((position) => (
-                      <button
-                        key={position}
-                        type="button"
-                        aria-pressed={customNoteSubjectPosition === position}
-                        disabled={customNoteBusy}
-                        title="横版 16:9 固定；只改主体视觉在画面中的位置"
-                        onClick={() => {
-                          setCustomNoteSubjectPosition(position);
-                          try { localStorage.setItem("mvs-knowledge-card-subject-position", position); } catch { /* ignore */ }
-                        }}
-                        className={`rounded-md border px-2 py-1 text-[11px] font-semibold transition disabled:opacity-40 ${customNoteSubjectPosition === position ? "border-[#49e6ff]/60 bg-[#49e6ff]/20 text-white" : "border-white/15 bg-black/40 text-[#c9c0e6]/80 hover:text-white"}`}
-                      >
-                        {KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH[position]}
-                      </button>
-                    ))}
-                  </div>
+                    <select
+                      aria-label="成稿档"
+                      className="rounded-md border border-white/15 bg-black/50 px-2 py-1 text-[11px] font-semibold text-white focus:border-[#ff4fb8]/50 focus:outline-none"
+                      value={customNoteDetailLevel}
+                      disabled={customNoteBusy || customNoteUploadBusy || customNoteDistillPhase !== "idle"}
+                      title="精华版：提炼主要重点，页数少；高级版：主要与次要重点都包含，表格化压实，不限页数、按页计费"
+                      onChange={(e) => {
+                        const next = resolveKnowledgeCardDetailLevel(e.target.value);
+                        setCustomNoteDetailLevel(next);
+                        try { localStorage.setItem("mvs-knowledge-card-detail-level", next); } catch { /* ignore */ }
+                      }}
+                    >
+                      {KNOWLEDGE_CARD_DETAIL_LEVELS.map((level) => (
+                        <option key={level} value={level}>{KNOWLEDGE_CARD_DETAIL_LEVEL_LABEL_ZH[level]}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="inline-flex items-center gap-1.5 text-[11px] text-[#c9c0e6]/70">
+                    <span className="shrink-0">主体位置</span>
+                    <select
+                      aria-label="主体位置"
+                      className="rounded-md border border-white/15 bg-black/50 px-2 py-1 text-[11px] font-semibold text-white focus:border-[#49e6ff]/50 focus:outline-none"
+                      value={customNoteSubjectPosition}
+                      disabled={customNoteBusy}
+                      title="横版 16:9 固定；只改主体视觉在画面中的位置"
+                      onChange={(e) => {
+                        const next = resolveKnowledgeCardSubjectPosition(e.target.value);
+                        setCustomNoteSubjectPosition(next);
+                        try { localStorage.setItem("mvs-knowledge-card-subject-position", next); } catch { /* ignore */ }
+                      }}
+                    >
+                      {KNOWLEDGE_CARD_SUBJECT_POSITIONS.map((position) => (
+                        <option key={position} value={position}>{KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH[position]}</option>
+                      ))}
+                    </select>
+                  </label>
                   <span className="text-[11px] text-[#c9c0e6]/45">
                     支持 pdf / epub / pptx / docx / png / jpg，不限页数与大小；EPUB 后台自动转 PDF；上传文档的提炼含在页费中，超长纯文本主动提炼另收一次性提炼费
                   </span>
