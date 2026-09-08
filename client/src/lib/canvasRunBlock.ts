@@ -1257,10 +1257,6 @@ async function runHappyHorse(
   throw new Error(json.error || json.message || "成片生成失败");
 }
 
-/** 成片跟静帧：正向约束，不堆「禁止真人」以免上游拒答 */
-const MANHUA_VIDEO_FOLLOW_STILL_ZH =
-  "【参考静帧】成片画面风格、人物造型、服装与场景材质请直接对齐本段参考静帧；以参考图为准做微动演绎。";
-
 /** 只抽新产物的尾帧供后续工序使用；不把编辑原片的结尾误当成新片首帧。 */
 async function captureManhuaClipResultTail(deps: CanvasRunDeps, blockId: string, url: string) {
   if (!/^https?:\/\//i.test(url) || !blockId.startsWith("clip-")) return undefined;
@@ -1650,15 +1646,11 @@ export async function runCanvasBlock(
     // 段成片：禁止再叠「参考静帧/连续性」聊天墙；身份靠 @Image + 秒轴短指令
     // 声线/配乐不硬锁：缺参考音不挡出片（初登场无音、后期可改）
     const isClip = block.id.startsWith("clip-");
-    const seedanceDirectorSource = isClip
-      ? mergedPrompt
-      : String(mergedPrompt || "").includes("参考静帧")
-        ? mergedPrompt
-        : `${mergedPrompt}\n\n${MANHUA_VIDEO_FOLLOW_STILL_ZH}`;
+    // 普通视频按用户正文规定参考职责与动作，不把身份图自动解释为场景静帧。
     const withContinuity =
       !isClip && continuityVideoUrl
-        ? `${seedanceDirectorSource}\n\n${MANHUA_CLIP_CONTINUITY_HINT_ZH}`
-        : seedanceDirectorSource;
+        ? `${mergedPrompt}\n\n${MANHUA_CLIP_CONTINUITY_HINT_ZH}`
+        : mergedPrompt;
     // 导戏单原样进 Seedance（已废除微动三件套）；clip 的路径配方以
     // 附加约束合成——不覆盖含秒轴/对白锁的正文（审计 P1 闭环）
     const compiledMotion = stripManhuaPromptSlop(
