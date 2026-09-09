@@ -3,7 +3,7 @@
  * - flare：快、日常出图默认；
  * - sunburst：改图精度优先（官方措辞「Sunburst for workflows where editing precision matters most」）。
  * 文档：https://developers.openai.com/api/docs/guides/image-generation
- * 开关随 job payload 走，服务端据此选模型；WaveSpeed / EvoLink 兜底通道与此无关（它们仍是 gpt-image-2）。
+ * 开关随 job payload 走，服务端据此选模型；EvoLink 随档位同样走 gpt-image-2.5，WaveSpeed 兜底仍是 gpt-image-2。
  */
 export type OpenAiImageVariant = "flare" | "sunburst";
 

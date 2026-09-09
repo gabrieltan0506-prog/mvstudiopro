@@ -1,5 +1,5 @@
 /**
- * WaveSpeed `openai/gpt-image-2`（0909 用户拍板：OpenAI 官方 → WaveSpeed → EvoLink 兜底）。
+ * WaveSpeed `openai/gpt-image-2`（0910 用户拍板：OpenAI 官方 → EvoLink 2.5 → WaveSpeed 兜底，本模块是第三顺位）。
  *
  * 文档：https://wavespeed.ai/docs/docs-api/openai/openai-gpt-image-2-text-to-image
  *       https://wavespeed.ai/docs/docs-api/openai/openai-gpt-image-2-edit

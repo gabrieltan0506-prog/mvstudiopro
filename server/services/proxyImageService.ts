@@ -1463,7 +1463,7 @@ export type PlatformCompositeSheetKind =
 
 /**
  * 2×4/知识卡整链墙钟硬上限。0910 起默认 25min，与画布出图 runner 对齐：
- * 官方（≤6min，不竞速）→ WaveSpeed（提交 1 + 轮询 5 + 下载 2）→ EvoLink（≤10min）串行最坏约 23min，
+ * 官方（≤6min，不竞速）→ EvoLink 2.5（≤10min）→ WaveSpeed（提交 1 + 轮询 5 + 下载 2）串行最坏约 23min，
  * 墙钟必须盖过它，否则外层先退款、上游照跑照扣。`PLATFORM_COMPOSITE_SHEET_JOB_TIMEOUT_MS` 可覆写，至少 60000ms。
  */
 function resolvePlatformCompositeSheetTotalTimeoutMs(): number {
@@ -1595,7 +1595,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   knowledgeCardReferencePageUrls?: string[];
   /**
    * 仅 single_page_knowledge_card：本页首发供应商（0908 用户令：多页并发，页轮流分给 EvoLink 与 OpenAI 官方同时打）。
-   * 未传默认 EvoLink 先、官方兜底；传 "openai" 则官方先、EvoLink 兜底。
+   * 未传默认官方先（0910）、官方兜底；传 "openai" 则官方先、EvoLink 兜底。
    */
   knowledgeCardImageProvider?: "evolink" | "openai" | "wavespeed";
   /** OpenAI 官方模型档位（flare/sunburst），画布与知识卡共用开关 */
@@ -1966,7 +1966,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         referenceImageUrls: refImageUrls.length ? refImageUrls : undefined,
         // 分镜/图文锁脸指令已写入 promptForPixel；勿再叠封面换人 directive
         generalImageEdit: true,
-        // 知识卡（0909 拍板，覆盖 0908）：OpenAI 官方优先 → WaveSpeed → EvoLink；一律 high + 4K，不按页数降档
+        // 知识卡（0910 拍板，覆盖 0908/0909）：OpenAI 官方优先 → EvoLink 2.5 → WaveSpeed；一律 high + 4K，不按页数降档
         providerOverride: isKnowledgeCard ? (options.knowledgeCardImageProvider || "openai") : undefined,
         imageLane: isKnowledgeCard ? "asset" : undefined,
         openaiImageVariant: options.openaiImageVariant ?? null,
