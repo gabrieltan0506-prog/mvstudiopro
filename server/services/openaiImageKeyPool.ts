@@ -79,9 +79,13 @@ const KEY_FATAL_RE =
   /moderation|content[_ -]?polic|safety system|prompt too long|invalid[_ -]?prompt|image_generation_user_error/i;
 
 /** 这把钥打不通、换另一把还有戏吗？审核 / 提示词类错误换钥无用。 */
+const KEY_TIMEOUT_RE = /aborted due to timeout|TimeoutError|operation was aborted|timed out|超时/i;
+
+/** 这把钥打不通、换另一把还有戏吗？审核 / 提示词类错误换钥无用；超时类是上游慢不是钥匙坏，换钥=再等 5 分钟且可能双跑。 */
 export function shouldRetryOpenAiImageWithOtherKey(message: string): boolean {
   const msg = String(message || "");
   if (!msg) return false;
   if (KEY_FATAL_RE.test(msg)) return false;
+  if (KEY_TIMEOUT_RE.test(msg)) return false;
   return true;
 }

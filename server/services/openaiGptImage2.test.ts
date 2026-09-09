@@ -25,21 +25,22 @@ describe("openaiGptImage2 config", () => {
     }
   });
 
-  it("defaults generations/edits model to gpt-image-2-2026-04-21 snapshot", () => {
-    expect(resolveOpenAiGptImage2Model()).toBe(OPENAI_GPT_IMAGE2_SNAPSHOT_DEFAULT);
-    expect(resolveOpenAiGptImage2Model()).toBe("gpt-image-2-2026-04-21");
+  it("defaults generations/edits model to gpt-image-2.5-flare (0909)", () => {
+    // 0909：默认已是 gpt-image-2.5-flare；OPENAI_GPT_IMAGE2_SNAPSHOT_DEFAULT 只作旧别名保留
+    expect(OPENAI_GPT_IMAGE2_SNAPSHOT_DEFAULT).toBe("gpt-image-2-2026-04-21");
+    expect(resolveOpenAiGptImage2Model()).toBe("gpt-image-2.5-flare");
   });
 
   it("OPENAI_GPT_IMAGE2_MODEL can pin alias or snapshot", () => {
     process.env.OPENAI_GPT_IMAGE2_MODEL = "gpt-image-2";
     expect(resolveOpenAiGptImage2Model()).toBe("gpt-image-2");
-    process.env.OPENAI_GPT_IMAGE2_MODEL = "gpt-image-2-2026-04-21";
-    expect(resolveOpenAiGptImage2Model()).toBe("gpt-image-2-2026-04-21");
+    process.env.OPENAI_GPT_IMAGE2_MODEL = "gpt-image-2.5-flare";
+    expect(resolveOpenAiGptImage2Model()).toBe("gpt-image-2.5-flare");
   });
 
-  it("ignores invalid OPENAI_GPT_IMAGE2_MODEL and falls back to snapshot", () => {
+  it("ignores invalid OPENAI_GPT_IMAGE2_MODEL and falls back to flare", () => {
     process.env.OPENAI_GPT_IMAGE2_MODEL = "not-a-real-model";
-    expect(resolveOpenAiGptImage2Model()).toBe("gpt-image-2-2026-04-21");
+    expect(resolveOpenAiGptImage2Model()).toBe("gpt-image-2.5-flare");
   });
 
   it("reads OPENAI_IMAGE_API_KEY first", () => {

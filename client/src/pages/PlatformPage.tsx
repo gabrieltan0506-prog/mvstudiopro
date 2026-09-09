@@ -1,4 +1,6 @@
 import { mergeNativeProposalListAndDetail } from "@/lib/manhuaLearnResultUi";
+import { readOpenAiImageVariantPref } from "@/lib/openaiImageVariantPref";
+import OpenAiImageVariantSwitch from "@/components/OpenAiImageVariantSwitch";
 import { NATIVE_REPORT_THEME_OPTIONS, type NativeReportThemeChoice } from "../../../shared/manhuaNativeReportThemeChoice";
 import { ManhuaRestructureControl } from "@/components/ManhuaRestructureControl";
 import { buildManhuaRestructureParams } from "@/lib/manhuaRestructure";
@@ -7940,7 +7942,7 @@ export default function PlatformPage() {
     setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(customNoteImagesRef.current.filter(Boolean).length, total), label: `补出第 ${idx + 1}/${total} 页` });
     markInflight(runId, idx, true);
     try {
-      const url = await generateCustomNoteOne(text, "single_page_knowledge_card", undefined, { index: idx + 1, total }, idx % 2 === 0 ? "evolink" : "openai");
+      const url = await generateCustomNoteOne(text, "single_page_knowledge_card", undefined, { index: idx + 1, total });
       if (runId !== renderRunIdRef.current) return; // 期间已重新整套生成，旧结果丢弃
       const next = customNoteImagesRef.current.slice();
       next[idx] = url;
@@ -8100,6 +8102,8 @@ export default function PlatformPage() {
             distillModel: customNoteDistillModel,
             subjectPosition: customNoteSubjectPosition,
             ...(imageProvider ? { imageProvider } : {}),
+            // 0909：OpenAI 官方优先，档位随开关；WaveSpeed / EvoLink 由服务端按固定序兜底
+            openaiImageVariant: readOpenAiImageVariantPref(),
             // 版式走独立字段进出图指令；拼进 scriptContext 会被当正文印出来
             ...(customNoteInfographicTemplateId
               ? { infographicTemplateId: customNoteInfographicTemplateId }
@@ -8121,7 +8125,8 @@ export default function PlatformPage() {
       try {
         const j = await pollJobUntilTerminal(pid, {
           intervalMs: 1500,
-          maxWaitMs: 10 * 60_000,
+          // 0910：服务端整链墙钟 25min（官方→WaveSpeed→EvoLink 串行），客户端要等得更久，否则图在出、费已扣、前台却报失败
+          maxWaitMs: 28 * 60_000,
           adaptiveBackoffAfterAttempts: 20,
           maxIntervalMs: 5000,
         });
@@ -8325,10 +8330,9 @@ export default function PlatformPage() {
             const i = next++;
             try {
             setCustomNotePageProgress({ i: Math.min(total, done + 1), n: total });
-            const provider = i % 2 === 0 ? "evolink" : "openai";
             markInflight(runId, i, true);
             try {
-              const url = await generateCustomNoteOne(distilled, "single_page_knowledge_card", undefined, { index: i + 1, total }, provider);
+              const url = await generateCustomNoteOne(distilled, "single_page_knowledge_card", undefined, { index: i + 1, total });
               urls[i] = url;
             } finally {
               markInflight(runId, i, false);
@@ -15341,6 +15345,7 @@ export default function PlatformPage() {
                           </option>
                         ))}
                       </select>
+                      <OpenAiImageVariantSwitch compact />
                     </label>
                   ) : null}
                   <label className="inline-flex items-center gap-1.5 text-[11px] text-[#c9c0e6]/70">

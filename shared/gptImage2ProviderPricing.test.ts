@@ -6,16 +6,17 @@ import {
 import { isTimeoutLikeError, racePrimaryTimeout } from "./providerPrimaryTimeout.js";
 
 describe("gptImage2ProviderPricing", () => {
-  it("EvoLink image-output 更便宜 → auto 主路径 evolink", () => {
+  it("顺序不按牌价：0910 拍板 官方 → EvoLink → WaveSpeed", () => {
     const c = compareGptImage2ProviderCost();
     expect(c.cheaper).toBe("evolink");
-    expect(c.dearer).toBe("openai");
-    expect(c.evolinkImageOutput).toBeLessThan(c.openaiImageOutput);
-    expect(resolveGptImage2ProviderOrder("auto")).toEqual(["evolink", "openai"]);
+    expect(resolveGptImage2ProviderOrder("auto")).toEqual(["openai", "evolink", "wavespeed"]);
+    expect(resolveGptImage2ProviderOrder(undefined)).toEqual(["openai", "evolink", "wavespeed"]);
   });
 
-  it("显式 openai 仍把 evolink 留作 fallback 序", () => {
-    expect(resolveGptImage2ProviderOrder("openai")).toEqual(["openai", "evolink"]);
+  it("显式主路径只换头，其余两家按固定序兜底", () => {
+    expect(resolveGptImage2ProviderOrder("openai")).toEqual(["openai", "evolink", "wavespeed"]);
+    expect(resolveGptImage2ProviderOrder("wavespeed")).toEqual(["wavespeed", "openai", "evolink"]);
+    expect(resolveGptImage2ProviderOrder("evolink")).toEqual(["evolink", "openai", "wavespeed"]);
   });
 });
 

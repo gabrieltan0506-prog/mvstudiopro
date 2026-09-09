@@ -25,6 +25,8 @@ import {
   prepareJsonDirectorImageJob,
   type AspectRatio169Or916,
 } from "@shared/jsonDirectorMiddleware";
+import { readOpenAiImageVariantMode, readOpenAiImageVariantPref } from "@/lib/openaiImageVariantPref";
+import type { OpenAiImageVariant } from "@shared/openaiImageVariant";
 import { buildCanvasGptImage2JobInput } from "@shared/canvasGptImage2JobInput";
 import {
   resolveOpenAiImageLaneForBlockId,
@@ -154,8 +156,8 @@ function resolveCanvasTextPrimaryModel(textModel: string | undefined): string {
   return CANVAS_KIMI_PRIMARY_MODEL;
 }
 
-/** 客户端轮询上限：须略大于 worker CANVAS_GPT_IMAGE2_JOB_TIMEOUT_MS（默认 10min） */
-const CANVAS_GPT_IMAGE2_POLL_MAX_MS = 12 * 60_000;
+/** 客户端轮询上限：两轮合计须盖过 worker CANVAS_GPT_IMAGE2_DEFAULT_TIMEOUT_MS（0910 起 25min） */
+const CANVAS_GPT_IMAGE2_POLL_MAX_MS = 13 * 60_000;
 
 export type CanvasRunDeps = {
   /** 所有工厂/画布 clip 共用的服务端审核预检；返回元数据仍由服务端再次验证。 */
@@ -336,6 +338,8 @@ export async function runGptImage2(
     imageLane?: OpenAiImageLane;
     /** 批量里的第几张（0-based）：第 2 张起走批量价 */
     batchIndex?: number;
+    /** 官方模型档位；不传按开关（「双档」在单张入口按 flare） */
+    openaiImageVariant?: OpenAiImageVariant;
   },
 ): Promise<string> {
   const refImageUrl = String(opts?.refImageUrl || "").trim();
@@ -360,6 +364,7 @@ export async function runGptImage2(
       generalImageEdit: referenceImageUrls.length > 0,
       providerOverride: openaiOnly ? "openai" : undefined,
       imageLane: opts?.imageLane,
+            openaiImageVariant: opts?.openaiImageVariant ?? readOpenAiImageVariantPref(),
       batchIndex: opts?.batchIndex,
     }),
   });
@@ -403,9 +408,15 @@ async function runGptImage2Batch(
   count: number,
 ): Promise<string[]> {
   // 批次号随请求带上，让服务端把第 2 张起算批量价
-  const tasks = Array.from({ length: count }, (_unused, batchIndex) =>
-    runGptImage2(prompt, aspectRatio, { ...opts, batchIndex }),
-  );
+  // 开关「双档各一张」：每张各出 flare 与 sunburst 两个版本（扣两张费），顺序 flare 在前便于对比
+  const variants: OpenAiImageVariant[] =
+    readOpenAiImageVariantMode() === "both" ? ["flare", "sunburst"] : [readOpenAiImageVariantPref()];
+  // 双档的两张各按本张的批次号计费（都算「第 i 张」），不让 sunburst 那张滑到批量价
+  const tasks = Array.from({ length: count }, (_unused, i) =>
+    variants.map((openaiImageVariant) =>
+      runGptImage2(prompt, aspectRatio, { ...opts, batchIndex: i, openaiImageVariant }),
+    ),
+  ).flat();
   return Promise.all(tasks);
 }
 

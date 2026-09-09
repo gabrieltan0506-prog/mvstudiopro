@@ -14,6 +14,7 @@ import {
   prepareJsonDirectorImageJob,
   type AspectRatio169Or916,
 } from "@shared/jsonDirectorMiddleware";
+import { readOpenAiImageVariantPref } from "@/lib/openaiImageVariantPref";
 import { buildCanvasGptImage2JobInput } from "@shared/canvasGptImage2JobInput";
 import { buildCreativeNanoImageJobInput } from "@shared/creativeNanoImageJobInput";
 import { HAILUO_OPENROUTER_FIXED_DURATION_SEC } from "@shared/hailuoOpenRouterModels";
@@ -114,10 +115,12 @@ export default function CreativePage() {
           input: buildCanvasGptImage2JobInput({
             prompt: imagePrompt,
             aspectRatio,
+            openaiImageVariant: readOpenAiImageVariantPref(),
           }),
         });
         const job = await pollJobUntilTerminal(jobId, {
           maxWaitMs: 12 * 60_000,
+
           intervalMs: 2500,
         });
         if (job.status !== "succeeded") {

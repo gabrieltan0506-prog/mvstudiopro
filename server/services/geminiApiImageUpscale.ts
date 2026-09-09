@@ -637,7 +637,7 @@ export async function runImageUpscaleWithFallback(input: {
         `[imageUpscale] provider failed factor=${route.factor} provider=${provider} model=${model}`,
         message,
       );
-      if (isAmbiguousImageUpscaleError(message)) {
+      if (isAmbiguousImageUpscaleError(message) || (error as { kind?: string } | null)?.kind === "unknown") {
         return {
           ok: false,
           inputWidth,

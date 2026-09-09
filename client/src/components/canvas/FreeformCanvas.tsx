@@ -1,5 +1,6 @@
 import { capManhuaMediaHistory } from "@shared/manhuaMediaHistoryCap";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { readOpenAiImageVariantMode } from "@/lib/openaiImageVariantPref";
 import type { ManhuaCustomAssetRef } from "@shared/manhuaCustomAssetRefs";
 import { CanvasProjectVideoReferencePicker } from "./CanvasProjectVideoReferencePicker";
 import { canSelectProjectVideoReferences, prepareProjectVideoReferences, projectVideoReferenceFailurePatch, toggleProjectVideoReference } from "@/lib/canvasProjectVideoReferences";
@@ -2526,6 +2527,14 @@ export default function FreeformCanvas({
                                 </option>
                               ))}
                             </select>
+                            {readOpenAiImageVariantMode() === "both" ? (
+                              <span
+                                className="shrink-0 rounded border border-amber-400/40 bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-50"
+                                title="出图开关在「双档各一张」：每张各出 Flare 与 Sunburst 两个版本，实际出图与扣费为张数 ×2"
+                              >
+                                ×2 双档
+                              </span>
+                            ) : null}
                           </label>
                           {block.imageMode === "edit" ? (
                             <div className="space-y-2">

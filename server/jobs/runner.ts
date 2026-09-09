@@ -28,6 +28,7 @@ import {
 } from "../kling/fal-proxy";
 import { generateGeminiImage, isGeminiImageAvailable, type ImageQuality } from "../gemini-image";
 import { normalizeOpenAiImageLane } from "../../shared/openaiImageLane.js";
+import { normalizeOpenAiImageVariant } from "../../shared/openaiImageVariant.js";
 import { normalizePlatformTopicExpandEngine } from "../../shared/platformTopicShortlist.js";
 import { appRouter, buildPlatformContent, slimBuildPlatformContentDiagnosticsForJob } from "../routers";
 import { invokeLLM, extractJsonString, type FileContent } from "../_core/llm";
@@ -136,8 +137,10 @@ const JOB_TIMEOUT_MS: Record<JobType, number> = {
 
 
 /** 八审 P1-6:canvas 出图墙钟安全下限/默认值(env 只能上调,不可降到下限以下) */
-export const CANVAS_GPT_IMAGE2_MIN_TIMEOUT_MS = 12 * 60_000;
-export const CANVAS_GPT_IMAGE2_DEFAULT_TIMEOUT_MS = 15 * 60_000;
+// 0910：出图链改成官方（≤5 min，不竞速）→ EvoLink 2.5（≤10 min）→ WaveSpeed（提交 1 + 轮询 5 + 下载 2）
+// 串行最长约 23 min；墙钟必须盖过它，否则外层先退款、上游照跑照扣。
+export const CANVAS_GPT_IMAGE2_MIN_TIMEOUT_MS = 20 * 60_000;
+export const CANVAS_GPT_IMAGE2_DEFAULT_TIMEOUT_MS = 25 * 60_000;
 export const CREATIVE_NANO_IMAGE_TIMEOUT_MS = 8 * 60_000;
 
 /** 七审 P0-2:判定 canvas 出图任务(付费上游,专属超时/不重排/幂等退款) */
@@ -1467,6 +1470,7 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
         : "canvas-gpt-image2";
     // 设定图 / 静帧分走两把官方密钥（画布出图都从这条长任务走，勿只接同步 op）
     const imageLane = normalizeOpenAiImageLane(params.imageLane) ?? undefined;
+    const openaiImageVariant = normalizeOpenAiImageVariant(params.openaiImageVariant) ?? undefined;
 
     /**
      * 画布出图收费 v3(六审第2条):**全部调用方统一由 worker 服务端计费**——
@@ -1579,10 +1583,27 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
         onImageText: "forbid",
         providerOverride,
         imageLane,
+        openaiImageVariant,
         qualityOverride: assetStandardizeQuality || undefined,
         captureError,
       });
     } catch (err) {
+      // unknown = 异步供应商可能已建单照扣（WaveSpeed 提交超时/轮询到点）：按仓库对账铁律
+      // 不退款、不回落，账本转 settlement_pending 交对账；退了款用户再点一次就是平台付两份。
+      if ((err as { kind?: string } | null)?.kind === "unknown") {
+        if (creditDeducted > 0) {
+          const { markSettlementPending } = await import("../services/paidJobLedger.js");
+          await markSettlementPending(
+            jobId,
+            assetStandardizeQuality ? "manhuaAssetStandardize" : "canvasGptImage2",
+          ).catch(() => false);
+        }
+        throw new Error(
+          `出图结果无法确认（供应商可能已建单），为避免重复扣费已停止重试并转人工对账：${
+            err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200)
+          }`,
+        );
+      }
       await refundCanvasImage("画布出图·生成失败·退回已扣积分");
       throw err;
     }

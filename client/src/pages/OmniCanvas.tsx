@@ -1,5 +1,6 @@
 import { capManhuaMediaHistory } from "@shared/manhuaMediaHistoryCap";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import OpenAiImageVariantSwitch from "@/components/OpenAiImageVariantSwitch";
 import { flushSync } from "react-dom";
 import Navbar from "@/components/Navbar";
 import { useManhuaAssetConfirmation } from "@/components/useManhuaAssetConfirmation";
@@ -361,6 +362,7 @@ import {
 } from "@shared/manhuaWriterPackDiff";
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 import { createJobSameOrigin, pollJobUntilTerminal } from "@/lib/jobs";
+import { readOpenAiImageVariantPref } from "@/lib/openaiImageVariantPref";
 import { buildCanvasGptImage2JobInput } from "@shared/canvasGptImage2JobInput";
 import {
   manhuaAssetStandardizeCredits,
@@ -5893,6 +5895,7 @@ export default function OmniCanvas() {
             generalImageEdit: true,
             providerOverride: "openai",
             imageLane: "asset",
+            openaiImageVariant: readOpenAiImageVariantPref(),
             gcsSubdir: "manhua-asset-detext",
             assetStandardizeQuality: "medium",
             assetRefId: ref.id,
@@ -5969,6 +5972,7 @@ export default function OmniCanvas() {
             generalImageEdit: true,
             providerOverride: "openai",
             imageLane: "asset",
+            openaiImageVariant: readOpenAiImageVariantPref(),
             gcsSubdir: "manhua-asset-edited",
             assetStandardizeQuality: "medium",
             assetRefId: ref.id,
@@ -6088,6 +6092,7 @@ export default function OmniCanvas() {
             generalImageEdit: true,
             providerOverride: "openai",
             imageLane: "asset",
+            openaiImageVariant: readOpenAiImageVariantPref(),
             gcsSubdir: "manhua-asset-standardized",
             assetStandardizeQuality: quality,
             assetRefId: ref.id,
@@ -8757,6 +8762,7 @@ export default function OmniCanvas() {
                     </select>
                   </div>
                 ) : null}
+                <OpenAiImageVariantSwitch compact />
                 {canShowCanvasDebug ? (
                   <button
                     type="button"

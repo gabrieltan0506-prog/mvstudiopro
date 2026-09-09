@@ -12,11 +12,11 @@
  * - Image input  $0.0072 / 1K
  * - Text input   $0.0045 / 1K
  *
- * 结论：EvoLink 全项更低 → 默认主路径 EvoLink，OpenAI 作 fallback。
- * 可用 GPT_IMAGE2_PROVIDER=openai|evolink|auto 强制；auto 按本表。
+ * 牌价对照仅供成本核算；主路径顺序由 0909 用户拍板固定（见 GPT_IMAGE2_PROVIDER_ORDER_DEFAULT），
+ * `GPT_IMAGE2_PROVIDER=openai|wavespeed|evolink` 只改主路径。
  */
 
-export type GptImage2UpstreamProvider = "evolink" | "openai";
+export type GptImage2UpstreamProvider = "openai" | "wavespeed" | "evolink";
 
 export type GptImage2TokenRatesUsdPer1k = {
   imageOutput: number;
@@ -53,14 +53,22 @@ export function compareGptImage2ProviderCost(): {
 }
 
 /**
- * auto：便宜优先；显式 openai/evolink 则固定主路径（仍可走另一家 fallback，除非对方未配置）。
+ * 0910 用户拍板（覆盖 0909）：固定 **OpenAI 官方（gpt-image-2.5）→ EvoLink（gpt-image-2.5 已接通）→ WaveSpeed（gpt-image-2）兜底**，
+ * 画布、资产、知识卡全站一致。显式 openai/wavespeed/evolink 只改主路径，其余两家按此序兜底；
+ * `auto` 与未设都等于官方优先。WaveSpeed 牌价（2026-09 查实）：medium+2k $0.10/张，high+4k $0.72/张。
  */
+export const GPT_IMAGE2_PROVIDER_ORDER_DEFAULT: readonly GptImage2UpstreamProvider[] = [
+  "openai",
+  "evolink",
+  "wavespeed",
+];
+
 export function resolveGptImage2ProviderOrder(
   providerMode: string | null | undefined = "auto",
 ): GptImage2UpstreamProvider[] {
   const mode = String(providerMode || "auto").trim().toLowerCase();
-  const { cheaper, dearer } = compareGptImage2ProviderCost();
-  if (mode === "openai") return ["openai", "evolink"];
-  if (mode === "evolink") return ["evolink", "openai"];
-  return [cheaper, dearer];
+  const rest = (first: GptImage2UpstreamProvider) =>
+    [first, ...GPT_IMAGE2_PROVIDER_ORDER_DEFAULT.filter((p) => p !== first)];
+  if (mode === "openai" || mode === "wavespeed" || mode === "evolink") return rest(mode);
+  return [...GPT_IMAGE2_PROVIDER_ORDER_DEFAULT];
 }
