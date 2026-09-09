@@ -1459,11 +1459,15 @@ export type PlatformCompositeSheetKind =
   | "xiaohongshu_dual_note"
   | "single_page_knowledge_card";
 
-/** 2×4 整链墙钟硬上限（默认 10min，与 platform_topic_image 一致）；`PLATFORM_COMPOSITE_SHEET_JOB_TIMEOUT_MS` 可覆寫，至少 60000ms */
+/**
+ * 2×4/知识卡整链墙钟硬上限。0910 起默认 25min，与画布出图 runner 对齐：
+ * 官方（≤6min，不竞速）→ WaveSpeed（提交 1 + 轮询 5 + 下载 2）→ EvoLink（≤10min）串行最坏约 23min，
+ * 墙钟必须盖过它，否则外层先退款、上游照跑照扣。`PLATFORM_COMPOSITE_SHEET_JOB_TIMEOUT_MS` 可覆写，至少 60000ms。
+ */
 function resolvePlatformCompositeSheetTotalTimeoutMs(): number {
   const raw = Number(process.env.PLATFORM_COMPOSITE_SHEET_JOB_TIMEOUT_MS);
   if (Number.isFinite(raw) && raw >= 60_000) return raw;
-  return 10 * 60_000;
+  return 25 * 60_000;
 }
 
 /**

@@ -43,4 +43,11 @@ describe("gpt-image-2 供应商顺序接线（0909：OpenAI 官方 → WaveSpeed
     expect((routers.match(/holdCompositeForReconcile\(error\)/g) || []).length).toBe(2);
     expect(routers).toContain('markSettlementPending(compositeHoldJobId, "platformCompositeSheet")');
   });
+  it("知识卡/2×4 整链墙钟 25 分钟；客户端两轮轮询盖过 worker；EvoLink 轮询到点也是 unknown", () => {
+    expect(src).toContain("return 25 * 60_000;");
+    const crb = readFileSync(new URL("../../client/src/lib/canvasRunBlock.ts", import.meta.url), "utf8");
+    expect(crb).toContain("CANVAS_GPT_IMAGE2_POLL_MAX_MS = 13 * 60_000");
+    const evo = readFileSync(new URL("./evolinkGptImage2.ts", import.meta.url), "utf8");
+    expect(evo).toContain("throw new SubmitUnknownError(`EvoLink task poll timeout");
+  });
 });

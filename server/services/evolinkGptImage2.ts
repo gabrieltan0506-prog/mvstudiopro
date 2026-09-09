@@ -1,6 +1,7 @@
 import { resolvePlatformImageStorageDriver } from "../config/platformSwitches.js";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs.js";
 import { enforceSimplifiedChineseImagePrompt } from "./simplifiedChinese.js";
+import { SubmitUnknownError } from "./submitOutcomeErrors.js";
 
 function appendImageFlowLog(log: string[] | undefined, message: string): void {
   if (!log) return;
@@ -176,7 +177,8 @@ async function pollEvolinkTask(
 
     await sleepMs(POLL_INTERVAL_MS, abortSignal);
   }
-  throw new Error(`EvoLink task poll timeout after ${MAX_POLL_MS}ms · taskId=${taskId}`);
+  // 轮询到点任务仍可能在跑并照扣：与 WaveSpeed 同口径按 unknown 上抛，上层不回落、不退款、转对账
+  throw new SubmitUnknownError(`EvoLink task poll timeout after ${MAX_POLL_MS}ms · taskId=${taskId}（任务可能仍在跑，转对账，不回落）`);
 }
 
 async function downloadEvolinkImage(url: string, abortSignal?: AbortSignal): Promise<Buffer> {

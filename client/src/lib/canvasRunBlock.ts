@@ -149,8 +149,8 @@ function resolveCanvasTextPrimaryModel(textModel: string | undefined): string {
   return CANVAS_KIMI_PRIMARY_MODEL;
 }
 
-/** 客户端轮询上限：须略大于 worker CANVAS_GPT_IMAGE2_JOB_TIMEOUT_MS（默认 10min） */
-const CANVAS_GPT_IMAGE2_POLL_MAX_MS = 12 * 60_000;
+/** 客户端轮询上限：两轮合计须盖过 worker CANVAS_GPT_IMAGE2_DEFAULT_TIMEOUT_MS（0910 起 25min） */
+const CANVAS_GPT_IMAGE2_POLL_MAX_MS = 13 * 60_000;
 
 export type CanvasRunDeps = {
   /** 所有工厂/画布 clip 共用的服务端审核预检；返回元数据仍由服务端再次验证。 */
