@@ -5,6 +5,7 @@
 import JSZip from "jszip";
 import { buildManhuaAssembleSubtitleSource } from "./manhuaAssembleSubtitleSource";
 import type { ManhuaSubtitleSource } from "@shared/manhuaRenderedSubtitle";
+import { formatManhuaSubtitleSrt } from "@shared/manhuaEditSubtitle";
 import {
   getManhuaDemoAssetPublicUrl,
   listManhuaDemoAssetsForSceneTemplate,
@@ -454,6 +455,8 @@ export type ManhuaProjectExportManifest = {
     path?: string;
     source?: ManhuaDockHistorySource;
   }>;
+  /** 交付包写入记录（成片/字幕/音轨/清单） */
+  delivery?: Array<{ episodeIndex: number; kind: "srt" | "audio" | "doc"; path: string }>;
   failed: Array<{ blockId: string; url?: string; error: string }>;
 };
 
@@ -484,6 +487,13 @@ export type ExportManhuaProjectZipOpts = {
   finalVideoBlocks?: CanvasBlock[];
   /** 画布全部块：读各节点 outputUrls 历史（含历史版本导出用） */
   blocks?: CanvasBlock[];
+  /**
+   * 交付包（0910）：为 true 时把每集整集成片的当前版整理进 交付/epXX/：
+   * 成片.mp4 + 字幕.srt（合成时冻结的真实时间轴）+ 音轨.m4a（deliveryAudioByFinalUrl 给到时）+ 交付清单.md
+   */
+  includeDelivery?: boolean;
+  /** 整集成片 URL → 已抽出的音轨（由成片坞先跑 audio_extract 后期任务得到） */
+  deliveryAudioByFinalUrl?: Record<string, { url: string; ext: "m4a" | "wav" }>;
   /** 默认 false：为 true 时把每个节点的历史版本写进 epXX/历史/ 并附 版本清单.md */
   includeHistory?: boolean;
 };
@@ -496,6 +506,8 @@ export type ExportManhuaProjectZipResult = {
   failCount: number;
   /** 本次写入的历史版本文件数（开关关闭时为 0） */
   historyCount: number;
+  /** 交付包写入的集数（未开交付包时为 0） */
+  deliveryCount: number;
 };
 
 async function fetchAsArrayBuffer(url: string): Promise<ArrayBuffer> {
@@ -573,7 +585,8 @@ export async function exportManhuaProjectZip(
   const selected = opts.items.filter(
     (it) => selectedSet.has(it.blockId) && manhuaClipDockItemHasExportableOutput(it),
   );
-  const finalVideoBlocks = (opts.finalVideoBlocks || []).filter(
+  // 成片坞只传 blocks：整集成片块从 blocks 里自己找，不再要求调用方另传（此前坞内导出一直漏掉整集成片）
+  const finalVideoBlocks = (opts.finalVideoBlocks || opts.blocks || []).filter(
     (block) =>
       isManhuaFinalVideoBlockId(block.id) &&
       !block.archivedFromPreviousScript &&
@@ -711,6 +724,8 @@ export async function exportManhuaProjectZip(
   }
 
   const finalVideos: NonNullable<ManhuaProjectExportManifest["finalVideos"]> = [];
+  const deliveryMeta: NonNullable<ManhuaProjectExportManifest["delivery"]> = [];
+  let deliveryCount = 0;
   for (const block of finalVideoBlocks) {
     const episodeIndex = getBlockEpisodeIndex(block) ?? 1;
     const epFolder = `ep${String(episodeIndex).padStart(2, "0")}`;
@@ -754,6 +769,49 @@ export async function exportManhuaProjectZip(
           error: e instanceof Error ? e.message : "下载失败",
         });
         versions.push(version);
+      }
+    }
+    if (opts.includeDelivery) {
+      const active = versions.find((v) => v.active) || versions[0];
+      if (active?.path) {
+        const deliveryFolder = `交付/${epFolder}`;
+        const lines: string[] = [
+          `# 第${episodeIndex}集 交付包${block.episodeTitle ? ` · ${block.episodeTitle}` : ""}`,
+          "",
+          `- 成片：\`${active.path}\`（${active.origin === "burn_subtitle" ? "已烧字幕" : "合成版，未烧字"}）`,
+        ];
+        const cues = active.subtitleTimeline?.cues || [];
+        if (cues.length) {
+          const srtPath = uniqueZipPath(deliveryFolder, "字幕", undefined, "srt");
+          zip.file(srtPath, formatManhuaSubtitleSrt(cues));
+          lines.push(`- 字幕：\`${srtPath}\`（${cues.length} 条，合成时按真实裁切/淡变冻结的时间轴，${active.subtitleTimeline!.durationSec.toFixed(1)} 秒）`);
+          deliveryMeta.push({ episodeIndex, kind: "srt", path: srtPath });
+        } else {
+          lines.push("- 字幕：无（本版成片没有冻结字幕时间轴；请在剪辑台合成后再导）");
+        }
+        const audio = opts.deliveryAudioByFinalUrl?.[active.url];
+        if (audio?.url) {
+          try {
+            const buf = await fetchAsArrayBuffer(audio.url);
+            const audioPath = uniqueZipPath(deliveryFolder, "音轨", undefined, audio.ext);
+            zip.file(audioPath, buf);
+            lines.push(`- 音轨：\`${audioPath}\`（从成片抽出，未重混）`);
+            deliveryMeta.push({ episodeIndex, kind: "audio", path: audioPath });
+            okCount += 1;
+          } catch (e: unknown) {
+            failed.push({ blockId: `${block.id}#audio`, url: audio.url, error: e instanceof Error ? e.message : "下载失败" });
+            lines.push("- 音轨：下载失败（见 manifest.failed）");
+          }
+        } else {
+          lines.push("- 音轨：未抽取（成片坞「生成交付包」会先抽音轨；直接导出则不含）");
+        }
+        if (opts.deliveryPackageMarkdown) {
+          lines.push("", "## 交付要求（与剪辑台同源）", "", opts.deliveryPackageMarkdown.trim());
+        }
+        const docPath = uniqueZipPath(deliveryFolder, "交付清单", undefined, "md");
+        zip.file(docPath, lines.join("\n"));
+        deliveryMeta.push({ episodeIndex, kind: "doc", path: docPath });
+        deliveryCount += 1;
       }
     }
     finalVideos.push({
@@ -804,6 +862,7 @@ export async function exportManhuaProjectZip(
     selected: selectedMeta,
     history: opts.includeHistory ? historyMeta : undefined,
     failed,
+    ...(deliveryMeta.length ? { delivery: deliveryMeta } : {}),
   };
   zip.file("manifest.json", JSON.stringify(manifest, null, 2));
   if (opts.includeHistory) {
@@ -925,6 +984,7 @@ export async function exportManhuaProjectZip(
     okCount,
     failCount: failed.length,
     historyCount: historyMeta.filter((h) => h.path).length,
+    deliveryCount,
   };
 }
 

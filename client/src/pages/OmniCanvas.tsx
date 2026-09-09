@@ -11426,6 +11426,33 @@ export default function OmniCanvas() {
                 onRetakeClip={handleRetakeClip}
                 segmentRefBusyId={segmentRefBusyId}
                 segmentRefProgress={segmentRefProgress}
+                onPrepareDeliveryAudio={async (finals) => {
+                  // 交付包：每集整集成片先跑 audio_extract（免费）；单集失败不拦整包，清单里写明
+                  const out: Record<string, { url: string; ext: "m4a" | "wav" }> = {};
+                  for (const f of finals) {
+                    try {
+                      const { jobId } = await queueBurnSubtitleMutation.mutateAsync({
+                        action: "audio_extract",
+                        params: { videoUri: f.gcsUri || f.url, format: "m4a" },
+                      });
+                      const deadline = Date.now() + 10 * 60_000;
+                      while (Date.now() < deadline) {
+                        await new Promise((r) => setTimeout(r, 4000));
+                        const job = await trpcUtils.mvAnalysis.getPostProdJob.fetch({ jobId });
+                        if (job?.status === "succeeded") {
+                          const output = (job.output ?? {}) as { url?: unknown; format?: unknown };
+                          const url = String(output.url || "").trim();
+                          if (/^https:\/\//i.test(url)) out[f.url] = { url, ext: output.format === "wav" ? "wav" : "m4a" };
+                          break;
+                        }
+                        if (job?.status === "failed") break;
+                      }
+                    } catch (error) {
+                      console.warn(`[交付包] 第${f.episodeIndex}集抽音轨失败`, error);
+                    }
+                  }
+                  return out;
+                }}
                 onSegmentReferenceUpload={handleSegmentReferenceUpload}
                 onSegmentReferenceClear={handleSegmentReferenceClear}
                 onAcceptClipDespiteQc={(clipBlockId) => {

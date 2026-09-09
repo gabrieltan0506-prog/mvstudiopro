@@ -235,6 +235,82 @@ describe("manhuaProjectExport", () => {
     }
   });
 
+  it("交付包：当前版整集成片配 字幕.srt（冻结时间轴）+ 音轨 + 交付清单；无字幕时清单写明", async () => {
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return new Response(new Uint8Array([1, 2, 3, url.length]), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const current = "https://cdn.example/ep03-final.mp4";
+      const final = {
+        ...defaultCanvasBlock("video", 0, 0),
+        id: "final-e03",
+        episodeIndex: 3,
+        status: "done" as const,
+        outputUrl: current,
+        outputUrls: [current],
+        manhuaFinalVersions: [
+          {
+            origin: "assemble" as const,
+            url: current,
+            jobId: "assemble-3",
+            gcsUri: "gs://bucket/ep03-final.mp4",
+            createdAt: 3,
+            subtitleTimeline: {
+              version: 1 as const,
+              textSource: "assembly_script_snapshot" as const,
+              timing: "rendered_shot_windows" as const,
+              durationSec: 29.72,
+              cues: [
+                { shotIndex: 1, order: 1, startSec: 1.5, endSec: 4.2, textZh: "别怕，站我身后。" },
+                { shotIndex: 2, order: 2, startSec: 13.1, endSec: 16.8, textZh: "你们这两个孽障。" },
+              ],
+            },
+          },
+        ],
+      };
+      const result = await exportManhuaProjectZip({
+        items: [],
+        selectedIds: [],
+        seriesTitle: "交付包",
+        blocks: [final],
+        includeLibraryRefs: false,
+        includeDelivery: true,
+        deliveryPackageMarkdown: "- 交付容器：SDR Rec.709",
+        deliveryAudioByFinalUrl: { [current]: { url: "https://cdn.example/ep03-audio.m4a", ext: "m4a" } },
+      });
+      expect(result.deliveryCount).toBe(1);
+      const JSZip = (await import("jszip")).default;
+      const zip = await JSZip.loadAsync(await result.blob.arrayBuffer());
+      expect(zip.file("ep03/final-v01.mp4")).toBeTruthy();
+      const srt = await zip.file("交付/ep03/字幕.srt")!.async("string");
+      expect(srt).toContain("00:00:01,500 --> 00:00:04,200");
+      expect(srt).toContain("你们这两个孽障。");
+      expect(zip.file("交付/ep03/音轨.m4a")).toBeTruthy();
+      const doc = await zip.file("交付/ep03/交付清单.md")!.async("string");
+      expect(doc).toContain("ep03/final-v01.mp4");
+      expect(doc).toContain("2 条");
+      expect(doc).toContain("SDR Rec.709");
+      expect(result.manifest.delivery?.map((d) => d.kind).sort()).toEqual(["audio", "doc", "srt"]);
+
+      const noSub = await exportManhuaProjectZip({
+        items: [],
+        selectedIds: [],
+        seriesTitle: "无字幕",
+        blocks: [{ ...final, manhuaFinalVersions: undefined }],
+        includeLibraryRefs: false,
+        includeDelivery: true,
+      });
+      const zip2 = await JSZip.loadAsync(await noSub.blob.arrayBuffer());
+      expect(zip2.file("交付/ep03/字幕.srt")).toBeNull();
+      expect(await zip2.file("交付/ep03/交付清单.md")!.async("string")).toContain("字幕：无");
+      expect(await zip2.file("交付/ep03/交付清单.md")!.async("string")).toContain("音轨：未抽取");
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
+  });
+
   it("整集历史版本下载失败会进入 failed，不能被当成完整备份", async () => {
     const prevFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string | URL | Request) =>

@@ -4,7 +4,7 @@
  * 任务时限用 AbortSignal 贯通到下载与 ffmpeg/ffprobe 子进程,
  * 即使 operation 不读取 signal,等待也会在时限附近结束;不自动重做。
  */
-import { burnSubtitle, concatClips, loudnessCheck, mountBgm, trimAudio, renderAudioTimeline } from "../services/postProduction";
+import { burnSubtitle, concatClips, extractAudio, loudnessCheck, mountBgm, trimAudio, renderAudioTimeline } from "../services/postProduction";
 import { resolvePostProdInputSources } from "../services/postProdMediaSource";
 import { postProdJobInputSchema } from "./postProdInput";
 
@@ -22,6 +22,10 @@ export async function processPostProdJob(
   switch (input.action) {
     case "audio_trim": {
       const output = await trimAudio(input.params, userId, runOptions);
+      return { output, provider: "ffmpeg-post-prod" };
+    }
+    case "audio_extract": {
+      const output = await extractAudio(input.params, userId, runOptions);
       return { output, provider: "ffmpeg-post-prod" };
     }
     case "audio_timeline": {
