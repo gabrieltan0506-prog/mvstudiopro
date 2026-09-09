@@ -151,8 +151,10 @@ describe("manhuaScriptWorkbench", () => {
         videoModel: "seedance-2.5",
         segmentCount: manhuaSegmentCountBounds("seedance-2.5").default,
       });
-      expect(s25.length).toBe(Math.ceil(n / 3));
+      // 0909：2.5 每段 6 镜（默认 5 s/镜，6 镜 = 30 s 正好用满单段）
+      expect(s25.length).toBe(Math.ceil(n / 6));
       expect(s25.every((x) => x.durationSec <= 30)).toBe(true);
+      expect(s25.every((x) => x.shots.length <= 6)).toBe(true);
       expect(s25.flatMap(x => x.shots).map(shot => shot.index)).toEqual(shots(n).map(shot => shot.index));
 
       const sMini = groupShotsIntoSegments(shots(n), {

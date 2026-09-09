@@ -80,7 +80,8 @@ describe("manhuaSegmentCapacity · 29 镜 / 130 秒 原稿", () => {
     expect(plan.segments).toEqual([]);
     expect(plan.capacitySegmentCount).toBe(4);
     expect(plan.capacitySec).toBe(120);
-    expect(plan.capacityShotCount).toBe(12);
+    // 0909：2.5 每段 6 镜，4 段容量 24 镜（29 镜仍超）
+    expect(plan.capacityShotCount).toBe(24);
     expect(plan.errorZh).toContain("第2集");
     expect(plan.errorZh).toContain("29 镜");
     expect(plan.errorZh).toContain("130 秒");
@@ -116,6 +117,12 @@ describe("manhuaSegmentCapacity · 29 镜 / 130 秒 原稿", () => {
     expect(plan.summaryZh).toContain("未超");
   });
 
+  it("auto_by_source（Seedance 2.5）：29 镜 130 秒按 6 镜/30 秒一段排成 5 段，不是 10 段", () => {
+    const plan = planManhuaSegmentCapacity({ shots: build29Shots130Sec(), mode: "auto_by_source", videoModel: "seedance-2.5" });
+    expect(plan.segments.length).toBe(5);
+    expect(plan.segments.every((seg) => seg.shots.length <= 6 && seg.durationSec <= 30)).toBe(true);
+    expect(plan.segments.flatMap((seg) => seg.shots).length).toBe(29);
+  });
   it("空分镜不报错也不分段", () => {
     const plan = planManhuaSegmentCapacity({ shots: [], mode: "block_when_over" });
     expect(plan.ok).toBe(true);

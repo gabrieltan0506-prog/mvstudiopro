@@ -172,6 +172,7 @@ import {
   resolveSegmentClipDurationSec,
   stripManhuaClipForbiddenBoards,
   type ManhuaWorkbenchShot,
+
 } from "@shared/manhuaScriptWorkbench";
 import {
   planManhuaSegmentCapacity,
@@ -1910,6 +1911,8 @@ function resolveEpisodeClipVideoModel(
       b.kind === "video" &&
       b.id.startsWith("clip-") &&
       !b.archivedFromPreviousScript &&
+      // 局部编辑一律临时盖成 2.5，不代表本集引擎；铺段/容量/每段镜数都得跟用户选定的引擎走
+      !isManhuaVideoEditBlock(b) &&
       isCanvasProductVideoModel(b.videoModel),
   );
   const stampedIn = (ep: number) =>
@@ -1960,6 +1963,40 @@ function episodeSegmentContainsShot(blocks: CanvasBlock[], episodeIndex: number,
   return Boolean(groupShotsIntoSegments(resolveShotsForEpisodeKeyarts(blocks, episodeIndex), {
     videoModel: resolveEpisodeClipVideoModel(blocks, episodeIndex, videoModel),
   }).find(segment => segment.index === segmentIndex)?.shots.some(shot => shot.index === shotIndex));
+}
+
+
+/**
+ * 一段成片可能横跨可拍表里多个计划节拍（计划按 3 镜一拍，2.5 铺段是 6 镜一段）。
+ * 同源计划时把跨到的节拍按序合并；对白按行接、场景/角色/意图取首个非空，不再因跨拍而整段丢掉。
+ */
+function mergeManhuaPlanBeatsForSegment(
+  segmentPlan: ManhuaEpisodeSegmentPlan | null | undefined,
+  shots: ManhuaWorkbenchShot[],
+  segShots: ManhuaWorkbenchShot[],
+): ManhuaEpisodeSegmentPlan["segments"][number] | undefined {
+  if (!segmentPlan?.segments?.length) return undefined;
+  if (JSON.stringify(buildWorkbenchShotsFromSegmentPlan(segmentPlan)) !== JSON.stringify(shots)) return undefined;
+  const sorted = [...segmentPlan.segments].sort((a, b) => a.index - b.index);
+  const planIndexes = Array.from(
+    new Set(segShots.map((s) => Math.floor((s.index - 1) / MANHUA_KEYARTS_PER_SEGMENT_MIN))),
+  ).sort((a, b) => a - b);
+  const beats = planIndexes.map((i) => sorted[i]).filter((b): b is NonNullable<typeof b> => Boolean(b));
+  if (!beats.length) return undefined;
+  if (beats.length === 1) return beats[0];
+  const first = (key: "castZh" | "wardrobePropZh" | "sceneZh" | "intentZh" | "performanceZh") =>
+    beats.map((b) => String((b as Record<string, unknown>)[key] || "").trim()).find(Boolean) || "";
+  const joinUnique = (key: "castZh" | "wardrobePropZh") =>
+    Array.from(new Set(beats.map((b) => String((b as Record<string, unknown>)[key] || "").trim()).filter(Boolean))).join("；");
+  return {
+    ...beats[0]!,
+    castZh: joinUnique("castZh"),
+    wardrobePropZh: joinUnique("wardrobePropZh"),
+    sceneZh: first("sceneZh"),
+    intentZh: first("intentZh"),
+    performanceZh: first("performanceZh"),
+    dialogueZh: beats.map((b) => String(b.dialogueZh || "").trim()).filter(Boolean).join("\n"),
+  };
 }
 
 /**
@@ -2169,11 +2206,7 @@ export function ensureManhuaFragmentClips(
     const continuityAddon = ep > 1 || seg.index > 1 ? "【连续】承上段末帧脸服场，勿跳棚。" : "";
     const intentZh = String(seg.shots.find((s) => s.intentZh)?.intentZh || "").trim();
     // 只有同源计划可补充原段语义；自动段号不是旧计划段号。
-    const planShots = buildWorkbenchShotsFromSegmentPlan(segmentPlan);
-    const originalPlanIndexes = new Set(seg.shots.map(s => Math.floor((s.index - 1) / MANHUA_KEYARTS_PER_SEGMENT_MIN)));
-    const planBeat = JSON.stringify(planShots) === JSON.stringify(shots) && originalPlanIndexes.size === 1
-      ? [...(segmentPlan?.segments || [])].sort((a, b) => a.index - b.index)[Array.from(originalPlanIndexes)[0]!]
-      : undefined;
+    const planBeat = mergeManhuaPlanBeatsForSegment(segmentPlan, shots, seg.shots);
     const dialogueLines = planBeat ? extractManhuaSegmentDialogueQuotes(planBeat.dialogueZh) : [];
     const sceneFromKeyart = extractManhuaSceneHintFromPrompt(primary.prompt);
     const sceneFromPlan = String(planBeat?.sceneZh || "").trim();
@@ -3583,13 +3616,13 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
       const epClip = getBlockEpisodeIndex(b) ?? ep ?? 1;
       const localSeg = resolveClipLocalSegmentIndex(b.id, b.prompt, epClip);
       if (b.archivedFromPreviousScript) return b;
-      const model = b.videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
+      // 编辑块的 videoModel 是临时的 2.5，段表仍按本集引擎排（2.5 六镜、2.0 系三镜不同）
+      const model = (isManhuaVideoEditBlock(b)
+        ? resolveEpisodeClipVideoModel(working, epClip)
+        : b.videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL) as NonNullable<CanvasBlock["videoModel"]>;
       const sourceSegment = groupShotsIntoSegments(shots, { videoModel: model }).find(segment => segment.index === localSeg);
       if (!sourceSegment) return b;
-      const planIndexes = new Set(sourceSegment.shots.map(s => Math.floor((s.index - 1) / MANHUA_KEYARTS_PER_SEGMENT_MIN)));
-      const planBeat = JSON.stringify(buildWorkbenchShotsFromSegmentPlan(segmentPlan)) === JSON.stringify(shots) && planIndexes.size === 1
-        ? [...(segmentPlan?.segments || [])].sort((a, b) => a.index - b.index)[Array.from(planIndexes)[0]!]
-        : undefined;
+      const planBeat = mergeManhuaPlanBeatsForSegment(segmentPlan, shots, sourceSegment.shots);
       const expectedBinding = buildManhuaAutoSegmentBinding(epClip, sourceSegment, model);
       if ((hasRenderedOutput(b) || b.videoTaskId || hasManhuaAudioWork(b)) && b.manhuaAutoSegment?.revision !== expectedBinding.revision) return b;
       const segShots = sourceSegment.shots;
@@ -4435,12 +4468,17 @@ export async function runManhuaDramaFactoryPipeline(opts: {
     for (const target of qualityTargets) {
       const targetUrl = mediaUrlOf(target);
       const localSegmentIndex = resolveClipLocalSegmentIndex(target.id, target.prompt, ep);
+      // 质检按段收敛用的段表也要按本集引擎排，编辑目标临时的 2.5 不算
+      const targetLayoutModel =
+        target.seedance25WorkMode === "video_edit"
+          ? resolveEpisodeClipVideoModel(working, ep)
+          : target.videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
       const refKey = working
         .filter(
           (b) =>
             b.id.startsWith("keyart-") &&
             (getBlockEpisodeIndex(b) ?? 1) === ep &&
-            episodeSegmentContainsShot(working, ep, localSegmentIndex, resolveKeyartShotIndex(b.id, b.prompt), target.videoModel),
+            episodeSegmentContainsShot(working, ep, localSegmentIndex, resolveKeyartShotIndex(b.id, b.prompt), targetLayoutModel),
         )
         .sort(sortKeyartBlocks)[0];
       const refUrl = mediaUrlOf(refKey);
@@ -4456,7 +4494,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       if (targetUrl && refUrl) {
         try {
           const shots = resolveShotsForEpisodeKeyarts(working, ep);
-          const qcVideoModel = target.videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
+          const qcVideoModel = targetLayoutModel;
           // 与铺链同源自动分段，不能把整集原稿作为单段质检目标。
           const segs = groupShotsIntoSegments(shots, {
             videoModel: qcVideoModel,

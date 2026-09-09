@@ -138,6 +138,17 @@ export const MANHUA_EPISODE_TARGET_DEFAULT_SEC = 90;
 export const MANHUA_KEYARTS_PER_SEGMENT_MAX = 4;
 /** 每段关键静帧下限（默认骨架：起幅/戏核/落幅） */
 export const MANHUA_KEYARTS_PER_SEGMENT_MIN = 3;
+/**
+ * Seedance 2.5 每段可绑原镜数。2.0 系图片上限 9 张，3 镜 + 定妆 + 末帧刚好装满；
+ * 2.5 上限 30 张，3 镜会把 30 s 段切成 13 s 一段（29 镜排 10 段），放到 6 镜才用得上 30 s。
+ * 0909 用户拍板：2.5 每段 6 镜，2.0 系维持 3。
+ */
+export const MANHUA_KEYARTS_PER_SEGMENT_SEEDANCE25 = 6;
+/** 按引擎取每段最多绑几张原镜静帧（铺段与容量共用同一口径） */
+export function manhuaKeyartsPerSegmentForVideoModel(videoModel?: string | null): number {
+  const model = String(videoModel || "").trim();
+  return model === "seedance-2.5" ? MANHUA_KEYARTS_PER_SEGMENT_SEEDANCE25 : MANHUA_KEYARTS_PER_SEGMENT_MIN;
+}
 /** 成片前按镜静帧上限 = 段数 × 每段上限 */
 export const MANHUA_SHOT_KEYART_MAX =
   MANHUA_SEGMENT_DEFAULT * MANHUA_KEYARTS_PER_SEGMENT_MAX;
@@ -399,12 +410,12 @@ export function maxManhuaShotsForVideoModel(videoModel?: string | null): number 
     resolveManhuaSeedanceLayoutProfile(videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL, "long")
       .segmentMax,
   );
-  return Math.max(1, maxSegs) * MANHUA_KEYARTS_PER_SEGMENT_MIN;
+  return Math.max(1, maxSegs) * manhuaKeyartsPerSegmentForVideoModel(videoModel);
 }
 
 /**
  * 按原稿顺序和引擎单次时长自动分段，不合并原镜、不补占位镜、不以整集预算裁正文。
- * 每段最多三张原镜参考；不足三镜照实保留。超长单镜只拆连续生成窗口，复用原镜静帧。
+ * 每段最多绑 manhuaKeyartsPerSegmentForVideoModel 张原镜参考（2.5 六张、2.0 系三张）；不足照实保留。超长单镜只拆连续生成窗口，复用原镜静帧。
  * 旧 segmentCount/padToDefaultEpisode 仅兼容入参，不再改变原稿条数。
  */
 export function groupShotsIntoSegments(
@@ -418,6 +429,7 @@ export function groupShotsIntoSegments(
 ): ManhuaWorkbenchSegment[] {
   const model = opts?.videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
   const maxSec = model === "gemini-omni-flash" ? 10 : manhuaClipMaxDurationSecForVideoModel(model);
+  const maxShotsPerSegment = manhuaKeyartsPerSegmentForVideoModel(model);
   const round = (n: number) => Math.round(n * 1_000_000) / 1_000_000;
   const segments: ManhuaWorkbenchSegment[] = [];
   let chunk: ManhuaWorkbenchShot[] = [];
@@ -457,7 +469,7 @@ export function groupShotsIntoSegments(
         flush();
       }
     } else {
-      if (chunk.length >= MANHUA_KEYARTS_PER_SEGMENT_MIN || chunkDuration + duration > maxSec) flush();
+      if (chunk.length >= maxShotsPerSegment || chunkDuration + duration > maxSec) flush();
       if (!chunk.length) chunkStart = cursor;
       chunk.push({ ...shot, durationSec: duration });
       chunkDuration = round(chunkDuration + duration);

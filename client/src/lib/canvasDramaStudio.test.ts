@@ -1389,8 +1389,9 @@ describe("canvasDramaStudio factory", () => {
     };
 
     const clips25 = buildEpisode("seedance-2.5");
-    expect(clips25.length).toBe(6);
-    expect(clips25.every((c) => /【第\d+段·15(\.0)?s】/.test(c.prompt || ""))).toBe(true);
+    // 0909：2.5 每段 6 镜（默认 5 s/镜 → 30 s 一段），18 镜排 3 段
+    expect(clips25.length).toBe(3);
+    expect(clips25.every((c) => /【第\d+段·30(\.0)?s】/.test(c.prompt || ""))).toBe(true);
 
     const clipsMini = buildEpisode("seedance-2.0-mini");
     expect(clipsMini.length).toBe(6);
@@ -1445,7 +1446,8 @@ describe("canvasDramaStudio factory", () => {
     const keptClips = kept.blocks.filter(
       (b) => b.id.startsWith("clip-") && /-g\d{2,}/i.test(b.id),
     );
-    expect(keptClips.length).toBe(6);
+    // 0909：2.5 每段 6 镜，18 镜排 3 段
+    expect(keptClips.length).toBe(3);
     expect(keptClips.every((c) => c.videoModel === "seedance-2.5")).toBe(true);
     expect(keptClips.at(-1)!.manhuaAutoSegment!.sourceEndSec).toBe(90);
   });
@@ -1572,7 +1574,8 @@ describe("canvasDramaStudio factory", () => {
     const queuedIds = queuedManhuaClipBlocks(narrowed.blocks, 1, "seedance-2.5").map((b) => b.id);
     expect(queuedIds).not.toContain(renderedSeg5);
     expect(queuedIds).not.toContain(legacyClipId);
-    expect(queuedIds.length).toBe(6);
+    // 0909：改到 2.5 后每段 6 镜，18 镜重铺成 3 段
+    expect(queuedIds.length).toBe(3);
     expect(narrowed.blocks.find(b => b.id === renderedSeg5)).toMatchObject({ outputUrl: "https://cdn.example/g05.mp4", videoModel: "seedance-2.0-mini", archivedFromPreviousScript: true });
     expect(narrowed.blocks.find(b => b.id === legacyClipId)!.outputUrl).toBe("https://cdn.example/whole-episode.mp4");
     expect(queuedManhuaClipBlocks(narrowed.blocks, 1, "seedance-2.5").every(b => b.videoModel === "seedance-2.5" && !b.outputUrl && !!b.manhuaAutoSegment)).toBe(true);

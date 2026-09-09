@@ -13,7 +13,7 @@
 import { resolveManhuaSeedanceLayoutProfile } from "./manhuaSeedanceLayout.js";
 import {
   MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
-  MANHUA_KEYARTS_PER_SEGMENT_MIN,
+  manhuaKeyartsPerSegmentForVideoModel,
   groupShotsIntoSegments,
   resolveShotDurationSecForSegment,
   type ManhuaWorkbenchSegment,
@@ -107,7 +107,7 @@ export function planManhuaSegmentCapacity(input: {
   const perSeg = Math.max(1, Math.floor(layout.durationSecPerSegment));
   const capacitySegmentCount = Math.max(1, Math.floor(layout.segmentCount));
   const capacitySec = capacitySegmentCount * perSeg;
-  const capacityShotCount = capacitySegmentCount * MANHUA_KEYARTS_PER_SEGMENT_MIN;
+  const capacityShotCount = capacitySegmentCount * manhuaKeyartsPerSegmentForVideoModel(model);
   const shots = Array.isArray(input.shots) ? input.shots : [];
   const plannedShotCount = shots.length;
   const plannedSec = round1(
