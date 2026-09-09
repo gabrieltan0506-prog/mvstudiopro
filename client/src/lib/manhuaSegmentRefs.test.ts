@@ -16,7 +16,7 @@ describe("registerManhuaExistingClip · 外部成片登记为本段版本", () =
       lastFrameUrl: "https://x.test/old-tail.png",
       videoTaskId: "cv_old",
       videoTaskEngine: "wan-3.0",
-      videoTaskStatus: "running",
+      videoTaskStatus: "running" as const,
       manhuaRetake: { variable: "camera" as const, attempt: 2, maxAttempts: 3 },
     };
     const out = registerManhuaExistingClip(block, entry);
