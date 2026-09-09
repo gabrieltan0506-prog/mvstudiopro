@@ -10,6 +10,7 @@ import {
   isManhuaVideoEditBlock,
 } from "./manhuaMediaVersions";
 import { runGeminiScript } from "./omniCanvasApi";
+import { createCanvasAssetResigner, resignCanvasBlockUploadedReferences } from "./canvasAssetResign";
 import {
   compileI2VMotionPrompt,
   isManhuaSeedanceDirectorPrompt,
@@ -1335,6 +1336,12 @@ export async function runCanvasBlock(
       } : {}),
     };
   }
+  // 出片前统一重签上传件签名链（0908 EvoLink「input media could not be downloaded」：
+  // 60 分钟签名在上传与提交之间过期）。同一 gcsUri 只签一次；失败退回原链不挡提交。
+  const assetResigner = createCanvasAssetResigner(block.uploadedAssets);
+  if (block.kind === "video" || block.kind === "image") {
+    block = await resignCanvasBlockUploadedReferences(block, assetResigner);
+  }
   const refTexts = upstream.texts.filter(Boolean);
   const prompt = block.prompt.trim();
   const refUrl = block.refImageUrl || upstream.visionImages[0]?.url;
@@ -1347,10 +1354,11 @@ export async function runCanvasBlock(
     if (i.mimeType && !i.mimeType.startsWith("image/")) return false;
     return true;
   });
-  const uploadedVideoUrl =
+  const uploadedVideoUrl = await assetResigner.one(
     block.refVideoUrl ||
-    block.uploadedAssets?.find((a) => a.kind === "video" || /\.(mp4|mov|webm)(\?|$)/i.test(a.fileName || a.url))
-      ?.url;
+      block.uploadedAssets?.find((a) => a.kind === "video" || /\.(mp4|mov|webm)(\?|$)/i.test(a.fileName || a.url))
+        ?.url,
+  );
 
   if (block.kind === "video_reverse") {
     const hint = formatCanvasUpstreamPrompt(
@@ -1492,8 +1500,10 @@ export async function runCanvasBlock(
     const absRef = (u?: string | null) => absolutizeManhuaAssetUrl(u) || String(u || "").trim();
     const editRefRaw =
       refUrl ||
-      block.uploadedAssets?.find((a) => a.kind === "image" || /\.(png|jpe?g|webp)(\?|$)/i.test(a.fileName || a.url))
-        ?.url ||
+      (await assetResigner.one(
+        block.uploadedAssets?.find((a) => a.kind === "image" || /\.(png|jpe?g|webp)(\?|$)/i.test(a.fileName || a.url))
+          ?.url,
+      )) ||
       block.outputUrl ||
       block.outputUrls?.[0];
     let editRef = absRef(editRefRaw);
@@ -1998,16 +2008,13 @@ export async function runCanvasBlock(
         const userRefAudios = (block.seedance25RefAudioUrls || [])
           .map((u) => String(u || "").trim())
           .filter((u) => /^(?:https:\/\/|gs:\/\/)/i.test(u));
-        const candidateVideoUrls = Array.from(
+        const userVideoUrls = Array.from(
           new Set([
             ...userRefVideos,
             // 用户勾选/上传的参考视频排在接力成片之前：正文里的 @视频1 按数组顺序绑定。
             // refVideoUrl 为空时兜底到上传记录里的首个视频（uploadedVideoUrl），不静默丢失。
             ...(useSeedance25 && userSelectedVideoUrl ? [userSelectedVideoUrl] : []),
             ...(continuityVideoUrl ? [continuityVideoUrl] : []),
-            ...(useSeedance25 && block.outputUrl && looksLikeVideo(block.outputUrl)
-              ? [block.outputUrl]
-              : []),
           ]),
         );
         const audioBindings = compileCanvasAudioBindings({
@@ -2016,13 +2023,25 @@ export async function runCanvasBlock(
           durationSec: clipDuration,
         });
         const candidateAudioUrls = audioBindings.audioUrls;
+        // 模式按用户显式参考推断，本节点旧成片不参与推断。
         const workMode = useSeedance25
           ? normalizeSeedance25EvolinkMode(block.seedance25WorkMode, {
               imageUrls: httpsImages,
-              videoUrls: candidateVideoUrls,
+              videoUrls: userVideoUrls,
               audioUrls: candidateAudioUrls,
             })
           : undefined;
+        // 本节点旧成片只在「编辑/延长」才是源片。reference_to_video 重跑不得把上一条成片
+        // 静默追加进参考视频（0908 BytePlus 拒单：index 1 的 30.08s 旧片超过参考时长上限；
+        // 重跑本来就不该继承上一条）。
+        const ownOutputAsSource =
+          useSeedance25 &&
+          (workMode === "video_edit" || workMode === "video_extend") &&
+          block.outputUrl &&
+          looksLikeVideo(block.outputUrl)
+            ? [block.outputUrl]
+            : [];
+        const candidateVideoUrls = Array.from(new Set([...userVideoUrls, ...ownOutputAsSource]));
         const storyboard = String(block.seedance25TimestampStoryboard || "").trim();
         const promptWithStoryboard = storyboard
           ? `${seedancePrompt}\n\n【秒级分镜】\n${storyboard}`
