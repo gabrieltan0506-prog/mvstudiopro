@@ -375,18 +375,20 @@ export function formatWriterAssetCanonIdentityLock(
   const ep = opts?.episodeIndex;
   const main =
     typeof ep === "number" ? resolveEpisodeMainScene(canon, ep) : null;
+  // 「待补」占位不进提示词：只留名字，不把占位句当外形
+  const clean = (t: string | null | undefined) => (isManhuaAssetLookPending(t) ? "" : String(t || "").trim());
   const charLines = canon.characters
     .slice(0, 8)
     .map(
       (c) =>
-        `- ${c.nameZh}${c.aliasZh ? `/${c.aliasZh}` : ""}：${c.lookZh}${c.motiveZh ? `｜${c.motiveZh}` : ""}`,
+        `- ${c.nameZh}${c.aliasZh ? `/${c.aliasZh}` : ""}：${clean(c.lookZh)}${clean(c.motiveZh) ? `｜${clean(c.motiveZh)}` : ""}`,
     );
   const propLines = canon.props
     .slice(0, 10)
-    .map((p) => `- ${p.nameZh}：${p.lookZh || p.motiveZh || ""}`);
+    .map((p) => `- ${p.nameZh}：${clean(p.lookZh) || clean(p.motiveZh)}`);
   const locLines = canon.locations
     .slice(0, 10)
-    .map((l) => `- ${l.nameZh}：${l.motiveZh || ""} ${l.lookZh || ""}`.trim());
+    .map((l) => `- ${l.nameZh}：${clean(l.motiveZh)} ${clean(l.lookZh)}`.trim());
   return [
     "【编剧表·资产真源硬锁】",
     "以下人物/道具/场景以剧本表为准，贯穿全系列；禁止换成库内无关脸与棚景。",
@@ -540,6 +542,12 @@ export type WriterAssetTableThresholdResult = {
  *     一人独角戏、没有关键道具的戏，不再被「≥2 人 / ≥1 场景 / ≥1 道具」硬门槛卡死。
  * 不放松锁脸：出场角色没定妆仍走 ensureManhuaFragmentClips 的【待锁·未锁脸】拦截。
  */
+/** 一键提取写入的占位句：门禁要拦、出图提示词要剔，不能当真外形烧积分 */
+export const MANHUA_ASSET_PENDING_RE = /待补/;
+export function isManhuaAssetLookPending(text: string | null | undefined): boolean {
+  return MANHUA_ASSET_PENDING_RE.test(String(text || ""));
+}
+
 export function evaluateWriterAssetTableThresholds(input: {
   canon: Pick<ManhuaWriterAssetCanon, "characters" | "props" | "locations">;
   episodes: Array<{ index: number; body?: string; endHook?: string }>;
@@ -567,6 +575,14 @@ export function evaluateWriterAssetTableThresholds(input: {
         .slice(0, 4)
         .map((c) => c.nameZh)
         .join("、")}）都未在剧本正文出场：请把名字改成与正文一致，或点「从剧本提取资产表」按正文重建`,
+    );
+  }
+  const pendingLooks = input.canon.characters
+    .filter((c) => charactersInScript.includes(c.nameZh) && isManhuaAssetLookPending(c.lookZh))
+    .map((c) => c.nameZh);
+  if (pendingLooks.length) {
+    errors.push(
+      `${pendingLooks.slice(0, 4).join("、")} 的外形还是「待补」占位：每人补一句年龄外形再确认（占位句不会进定妆提示词，不补就出不了定妆）`,
     );
   }
   if (writerTableMdHasListedEntries(input.locationsMd) && input.canon.locations.length < 1) {

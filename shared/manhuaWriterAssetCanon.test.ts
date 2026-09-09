@@ -6,6 +6,7 @@ import {
   detectManhuaCanonWriterDrift,
   evaluateWriterPackAssetAndDensity,
   evaluateWriterAssetTableThresholds,
+  formatWriterAssetCanonFactoryAddon,
   deriveWriterAssetTablesFromScript,
   formatWriterAssetCanonIdentityLock,
   isMarkdownTableSeparatorLine,
@@ -329,5 +330,16 @@ describe("资产表门槛按剧本实际实体计（0909）", () => {
     expect(canon.characters.map((c) => c.nameZh)).toEqual(["裴玄策", "苏照雪"]);
     expect(canon.locations.map((c) => c.nameZh)).toEqual(["山神破庙"]);
     expect(canon.props.map((c) => c.nameZh)).toEqual(["双鹤玉扣"]);
+  });
+
+  it("一键提取的「待补」占位：门禁拦下、出图提示词只留名字", () => {
+    const episodes = [{ index: 1, body: "苏照雪：「拿去。」\n裴玄策：「好。」" }];
+    const out = deriveWriterAssetTablesFromScript({ episodes, charactersMd: "" });
+    const canon = buildManhuaWriterAssetCanon({ ...out, episodes });
+    const r = evaluateWriterAssetTableThresholds({ canon, episodes, charactersMd: out.charactersMd, propsMd: "", locationsMd: "" });
+    expect(r.errors.join("\n")).toMatch(/待补/);
+    const addon = formatWriterAssetCanonFactoryAddon(canon, 1);
+    expect(addon).not.toContain("待补");
+    expect(addon).toContain("- 苏照雪：");
   });
 });

@@ -1984,7 +1984,7 @@ function mergeManhuaPlanBeatsForSegment(
   const beats = planIndexes.map((i) => sorted[i]).filter((b): b is NonNullable<typeof b> => Boolean(b));
   if (!beats.length) return undefined;
   if (beats.length === 1) return beats[0];
-  const first = (key: "castZh" | "wardrobePropZh" | "sceneZh" | "intentZh" | "performanceZh") =>
+  const first = (key: "castZh" | "wardrobePropZh" | "sceneZh" | "intentZh" | "performanceZh" | "lightingCameraZh" | "paletteZh") =>
     beats.map((b) => String((b as Record<string, unknown>)[key] || "").trim()).find(Boolean) || "";
   const joinUnique = (key: "castZh" | "wardrobePropZh") =>
     Array.from(new Set(beats.map((b) => String((b as Record<string, unknown>)[key] || "").trim()).filter(Boolean))).join("；");
@@ -1995,6 +1995,8 @@ function mergeManhuaPlanBeatsForSegment(
     sceneZh: first("sceneZh"),
     intentZh: first("intentZh"),
     performanceZh: first("performanceZh"),
+    lightingCameraZh: first("lightingCameraZh"),
+    paletteZh: first("paletteZh"),
     dialogueZh: beats.map((b) => String(b.dialogueZh || "").trim()).filter(Boolean).join("\n"),
   };
 }
@@ -2035,7 +2037,39 @@ export type ManhuaFragmentClipEnsureOptions = {
    * （错误文案写清镜数/秒数 vs 容量），绝不静默丢镜；不传则沿用按原稿分段（不丢镜）。
    */
   segmentCapacityMode?: ManhuaSegmentCapacityMode | null;
+  /** 编剧室时长档（短/长）：容量对照按档取段数，不传就按短档误拦长档剧本 */
+  lengthTierId?: string | null;
 };
+
+/**
+ * 段表重排会把哪些「已出片」的段停放到历史（改引擎、改每段镜数、改原稿都会让 revision 不等）。
+ * 只算数不动块：调用方在扣费前弹确认，用户点头才铺段。
+ */
+export function countManhuaRenderedClipsToArchiveOnResegment(
+  blocks: CanvasBlock[],
+  episodeIndex: number,
+  explicitVideoModel?: string | null,
+): number {
+  const ep = Math.max(1, Math.floor(episodeIndex));
+  const model = resolveEpisodeClipVideoModel(blocks, ep, explicitVideoModel);
+  const shots = resolveShotsForEpisodeKeyarts(blocks, ep);
+  if (!shots.length) return 0;
+  const expected = new Set(
+    groupShotsIntoSegments(shots, { videoModel: model }).map(
+      (segment) => buildManhuaAutoSegmentBinding(ep, segment, model).revision,
+    ),
+  );
+  return blocks.filter(
+    (b) =>
+      b.kind === "video" &&
+      b.id.startsWith("clip-") &&
+      !b.archivedFromPreviousScript &&
+      (getBlockEpisodeIndex(b) ?? 1) === ep &&
+      Boolean(b.outputUrl) &&
+      Boolean(b.manhuaAutoSegment?.revision) &&
+      !expected.has(String(b.manhuaAutoSegment!.revision)),
+  ).length;
+}
 
 export function ensureManhuaFragmentClips(
   blocks: CanvasBlock[],
@@ -2077,6 +2111,7 @@ export function ensureManhuaFragmentClips(
       shots,
       mode: opts.segmentCapacityMode,
       videoModel: clipVideoModel,
+      lengthTierId: opts.lengthTierId,
       episodeIndex: ep,
     });
     if (!capacityPlan.ok) throw new Error(capacityPlan.errorZh);

@@ -123,6 +123,13 @@ describe("manhuaSegmentCapacity · 29 镜 / 130 秒 原稿", () => {
     expect(plan.segments.every((seg) => seg.shots.length <= 6 && seg.durationSec <= 30)).toBe(true);
     expect(plan.segments.flatMap((seg) => seg.shots).length).toBe(29);
   });
+  it("长档剧本按长档容量对照：2.0-fast 长档 36 镜/180 秒不该被短档拦下", () => {
+    const shots = Array.from({ length: 36 }, (_, i) => ({ index: i + 1, durationSec: 5, cameraZh: "中景", actionZh: `动作 ${i + 1}` }));
+    const blocked = planManhuaSegmentCapacity({ shots, mode: "block_when_over", videoModel: "seedance-2.0-fast" });
+    expect(blocked.ok).toBe(false);
+    const long = planManhuaSegmentCapacity({ shots, mode: "block_when_over", videoModel: "seedance-2.0-fast", lengthTierId: "long" });
+    expect(long.ok).toBe(true);
+  });
   it("空分镜不报错也不分段", () => {
     const plan = planManhuaSegmentCapacity({ shots: [], mode: "block_when_over" });
     expect(plan.ok).toBe(true);

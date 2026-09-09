@@ -82,4 +82,14 @@ describe("漫剧分镜容量模式接线（manhuaSegmentCapacityMode）", () => 
     expect(omniSource).toContain("deriveWriterAssetTablesFromScript({");
     expect(omniSource.match(/setWriterConfirmAssetTablesEmpty\(densityGate\.assetTablesEmpty\);/g)).toHaveLength(2);
   });
+
+  it("容量对照带时长档；补跑/重拍的 ensure 也传容量模式；段表重排前弹确认", () => {
+    const omni = readFileSync(new URL("../pages/OmniCanvas.tsx", import.meta.url), "utf8");
+    expect(omni).toContain("lengthTierId: writerLengthTierId,");
+    expect((omni.match(/segmentCapacityMode: getManhuaSegmentCapacityMode\(/g) || []).length).toBeGreaterThanOrEqual(5);
+    expect(omni).toContain("countManhuaRenderedClipsToArchiveOnResegment(");
+    expect(omni).toContain("段表重排未确认，未扣费");
+    const wb = readFileSync(new URL("../components/ManhuaScriptWorkbench.tsx", import.meta.url), "utf8");
+    expect(wb).toContain("lengthTierId: episodeLengthTierId,");
+  });
 });

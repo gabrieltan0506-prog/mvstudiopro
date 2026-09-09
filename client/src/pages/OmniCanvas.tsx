@@ -172,6 +172,7 @@ import {
   stripManhuaSeriesAssetsForNewProject,
   syncManhuaClipAssetEdges,
   type ManhuaFactoryStageKey,
+  countManhuaRenderedClipsToArchiveOnResegment,
 } from "@/lib/canvasDramaStudio";
 import { MANHUA_CANVAS_LAYOUT } from "@/lib/manhuaCanvasLayout";
 import {
@@ -4045,6 +4046,8 @@ export default function OmniCanvas() {
           writerPack?.episodes.find((e) => e.index === ep)?.body || "";
         const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
         const ensured = ensureManhuaFragmentClips(blocks, edges, ep, {
+          segmentCapacityMode: getManhuaSegmentCapacityMode(segmentCapacityModeByEpisode, ep),
+          lengthTierId: writerLengthTierId,
           assetCanon: projectBible?.assetCanon,
           characterSheetUrlById: sheetUrls,
           propImageUrlById: collectManhuaPropImageUrlById(
@@ -7697,7 +7700,23 @@ export default function OmniCanvas() {
                 segmentCapacityModeByEpisode,
                 episodeIndex,
               ),
+              lengthTierId: writerLengthTierId,
             };
+            // 改引擎/改每段镜数/改原稿后段表重排：已出片的段会被停放并按新段表重出重扣费，
+            // 必须在扣费前让用户点头，不能静默烧一遍。
+            const archiveOnResegment = countManhuaRenderedClipsToArchiveOnResegment(
+              workingBlocks,
+              episodeIndex,
+              explicitWriterVideoModel || undefined,
+            );
+            if (
+              archiveOnResegment > 0 &&
+              !window.confirm(
+                `第${episodeIndex}集有 ${archiveOnResegment} 段已出片的成片与当前分段不一致（改引擎/改镜后段表重排）。继续会把它们停放到历史，并按新段表重新出片、重新扣费；取消则本次不生成。继续？`,
+              )
+            ) {
+              throw new Error(`已取消：第${episodeIndex}集段表重排未确认，未扣费`);
+            }
             if (opts?.pilotRun) {
               const prepared = ensureManhuaFragmentClips(
                 workingBlocks,
@@ -8993,6 +9012,7 @@ export default function OmniCanvas() {
                   onSegmentLookBindingsChange={setSegmentLookBindings}
                   segmentCapacityModeByEpisode={segmentCapacityModeByEpisode}
                   onSegmentCapacityModeChange={setSegmentCapacityModeForEpisode}
+                  episodeLengthTierId={writerLengthTierId}
                   characterVoiceLocks={characterVoiceLocks}
                   audioReferenceLock={audioReferenceLock}
                   onAudioReferenceLockChange={(next) =>
@@ -9439,6 +9459,11 @@ export default function OmniCanvas() {
                         directorBoardMotionOverlayByEpisodeSegment:
                           directorBoardMotionOverlayBySegment,
                         videoModel: explicitWriterVideoModel || undefined,
+                        segmentCapacityMode: getManhuaSegmentCapacityMode(
+                          segmentCapacityModeByEpisode,
+                          writerFocusEpisode,
+                        ),
+                        lengthTierId: writerLengthTierId,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
@@ -9495,6 +9520,11 @@ export default function OmniCanvas() {
                         directorBoardMotionOverlayByEpisodeSegment:
                           directorBoardMotionOverlayBySegment,
                         videoModel: explicitWriterVideoModel || undefined,
+                        segmentCapacityMode: getManhuaSegmentCapacityMode(
+                          segmentCapacityModeByEpisode,
+                          writerFocusEpisode,
+                        ),
+                        lengthTierId: writerLengthTierId,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
@@ -9594,6 +9624,11 @@ export default function OmniCanvas() {
                         directorBoardMotionOverlayByEpisodeSegment:
                           directorBoardMotionOverlayBySegment,
                         videoModel: explicitWriterVideoModel || undefined,
+                        segmentCapacityMode: getManhuaSegmentCapacityMode(
+                          segmentCapacityModeByEpisode,
+                          writerFocusEpisode,
+                        ),
+                        lengthTierId: writerLengthTierId,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,

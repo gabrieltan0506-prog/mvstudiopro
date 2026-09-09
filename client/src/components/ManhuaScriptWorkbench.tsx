@@ -391,6 +391,8 @@ type Props = {
   /** 每集「分镜→成片容量」模式（集号 → auto_by_source / block_when_over） */
   segmentCapacityModeByEpisode?: Record<string, ManhuaSegmentCapacityMode>;
   onSegmentCapacityModeChange?: (episodeIndex: number, mode: ManhuaSegmentCapacityMode) => void;
+  /** 编剧室时长档：容量对照按档取段数 */
+  episodeLengthTierId?: string | null;
   /** 从有声成片抠出的角色声线参考 */
   characterVoiceLocks?: ManhuaCharacterVoiceLock[];
   /** 参考音频·全集参考（软·可选）：BGM/对白口音基准；不硬锁、不挡出片 */
@@ -972,6 +974,7 @@ export default function ManhuaScriptWorkbench({
   onSegmentLookBindingsChange,
   segmentCapacityModeByEpisode,
   onSegmentCapacityModeChange,
+  episodeLengthTierId,
   characterVoiceLocks = [],
   audioReferenceLock = null,
   onAudioReferenceLockChange,
@@ -1362,9 +1365,10 @@ export default function ManhuaScriptWorkbench({
         shots,
         mode: segmentCapacityMode,
         videoModel: episodeVideoModel,
+        lengthTierId: episodeLengthTierId,
         episodeIndex: focusEpisode,
       }),
-    [shots, segmentCapacityMode, episodeVideoModel, focusEpisode],
+    [shots, segmentCapacityMode, episodeVideoModel, episodeLengthTierId, focusEpisode],
   );
 
 
