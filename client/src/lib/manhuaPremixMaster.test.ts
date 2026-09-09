@@ -51,6 +51,7 @@ describe("一键预混母轨 · 时间轴片段", () => {
     expect(studio).toContain("buildPremixTimelineClips({");
     expect(studio).toContain("isPremixPendingKey(pending.inputKey)");
     expect(studio).toContain("if (!onMasterTrackReady) continue;");
+    expect(studio).toContain('row.kind === "post_prod" && !isPremixPendingKey(row.inputKey)');
     expect(studio).toContain("onMasterTrackReady({");
     const wb = readFileSync(new URL("../components/ManhuaScriptWorkbench.tsx", import.meta.url), "utf8");
     expect(wb).toContain('onSetClipSegmentReference(activeClip.id, "master", entry)');

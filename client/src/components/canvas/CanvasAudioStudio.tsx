@@ -1288,14 +1288,18 @@ export function CanvasAudioStudioView({
           disabled={
             disabled ||
             busy ||
+            // 预混母轨的 pending 不占合听的位：自由画布里没有回调、预混 pending 会留着等回工厂
             state.pendingOperations.some(
-              row => !row.cueId && row.kind === "post_prod"
+              row => !row.cueId && row.kind === "post_prod" && !isPremixPendingKey(row.inputKey)
             )
           }
           onClick={() => void createPreview()}
         >
           合听已确认秒窗 · 免费
         </button>
+        {!onMasterTrackReady && state.pendingOperations.some(row => !row.cueId && isPremixPendingKey(row.inputKey)) ? (
+          <span className="self-center text-xs text-amber-100">预混母轨已在排队：回漫剧工厂的配音间即可自动挂到本段。</span>
+        ) : null}
         {onMasterTrackReady ? (
           <button
             className={buttonClass}
