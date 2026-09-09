@@ -12,4 +12,7 @@ describe("合成镜长绑真实裁切（0910）", () => {
     // 窗口不足 0.5 s 视为无裁切
     expect(resolveSceneClipDurationSec({ trimInSec: 3, trimOutSec: 3.2, declaredDurationSec: 8, probedDurationSec: 7.9 }).hasTrim).toBe(false);
   });
+  it("裁切起点在真实片尾之外：退回整段（探测值），不出空文件", () => {
+    expect(resolveSceneClipDurationSec({ trimInSec: 31, trimOutSec: 35, declaredDurationSec: 30, probedDurationSec: 29.5 })).toEqual({ clipDur: 29.5, hasTrim: false, trimIn: 0 });
+  });
 });

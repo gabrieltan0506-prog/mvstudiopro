@@ -11438,7 +11438,13 @@ export default function OmniCanvas() {
                       const deadline = Date.now() + 10 * 60_000;
                       while (Date.now() < deadline) {
                         await new Promise((r) => setTimeout(r, 4000));
-                        const job = await trpcUtils.mvAnalysis.getPostProdJob.fetch({ jobId });
+                        // 单次查询抖动不放弃本集：继续轮到期限
+                        let job: Awaited<ReturnType<typeof trpcUtils.mvAnalysis.getPostProdJob.fetch>> | null = null;
+                        try {
+                          job = await trpcUtils.mvAnalysis.getPostProdJob.fetch({ jobId });
+                        } catch {
+                          continue;
+                        }
                         if (job?.status === "succeeded") {
                           const output = (job.output ?? {}) as { url?: unknown; format?: unknown };
                           const url = String(output.url || "").trim();

@@ -5,7 +5,7 @@
 import JSZip from "jszip";
 import { buildManhuaAssembleSubtitleSource } from "./manhuaAssembleSubtitleSource";
 import type { ManhuaSubtitleSource } from "@shared/manhuaRenderedSubtitle";
-import { formatManhuaSubtitleSrt } from "@shared/manhuaEditSubtitle";
+import { formatManhuaSubtitleSrt, sanitizeBurnSubtitleText } from "@shared/manhuaEditSubtitle";
 import {
   getManhuaDemoAssetPublicUrl,
   listManhuaDemoAssetsForSceneTemplate,
@@ -780,7 +780,10 @@ export async function exportManhuaProjectZip(
           "",
           `- 成片：\`${active.path}\`（${active.origin === "burn_subtitle" ? "已烧字幕" : "合成版，未烧字"}）`,
         ];
-        const cues = active.subtitleTimeline?.cues || [];
+        // 与片内烧字同一套清洗：去 \r、{}、-->、行内空行，防台词伪造 cue/时间码
+        const cues = (active.subtitleTimeline?.cues || [])
+          .map((c) => ({ ...c, textZh: sanitizeBurnSubtitleText(c.textZh) }))
+          .filter((c) => c.textZh);
         if (cues.length) {
           const srtPath = uniqueZipPath(deliveryFolder, "字幕", undefined, "srt");
           zip.file(srtPath, formatManhuaSubtitleSrt(cues));

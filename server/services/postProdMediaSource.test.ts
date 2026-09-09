@@ -323,4 +323,13 @@ describe("本人上传前缀(第四类放行)", () => {
       ),
     ).rejects.toThrow(/尚未登记/);
   });
+  it("本人 succeeded 任务的 https 产物直链（合成版成片）全等命中才放行；不在集合里的外链仍拒", async () => {
+    const d = deps({
+      loadSucceededJobOutputObjects: vi.fn(async () => new Set<string>()),
+      loadSucceededJobOutputUrls: vi.fn(async () => new Set(["https://blob.vercel-storage.com/renders/ep01-final.mp4"])),
+    });
+    await expect(resolveRegisteredPostProdMediaSource({ userId: "7", source: "https://blob.vercel-storage.com/renders/ep01-final.mp4" }, d)).resolves.toBe("https://blob.vercel-storage.com/renders/ep01-final.mp4");
+    await expect(resolveRegisteredPostProdMediaSource({ userId: "7", source: "https://blob.vercel-storage.com/renders/ep01-final.mp4.backup" }, d)).rejects.toThrow(/尚未登记/);
+    await expect(resolveRegisteredPostProdMediaSource({ userId: "7", source: "https://evil.example/x.mp4" }, d)).rejects.toThrow(/尚未登记/);
+  });
 });

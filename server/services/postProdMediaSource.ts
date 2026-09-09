@@ -176,21 +176,44 @@ export async function loadSucceededJobOutputObjects(
   return objects;
 }
 
+/**
+ * 本人 succeeded 任务产物里的 https 直链集合（整集合成落在 Vercel Blob 的 renders/…，不在系统桶）。
+ * 交付包抽音轨要能读到合成版成片：只按全等匹配放行，仍不收任意外链。
+ */
+export async function loadSucceededJobOutputUrls(userId: string): Promise<ReadonlySet<string>> {
+  const db = await getDb();
+  if (!db) throw new Error("数据库暂时不可用,请稍后再试");
+  const rows = await db
+    .select({ output: jobs.output })
+    .from(jobs)
+    .where(and(eq(jobs.userId, userId), eq(jobs.status, "succeeded")));
+  const urls = new Set<string>();
+  for (const row of rows) {
+    for (const source of collectDeclaredMediaSources(row.output)) {
+      if (/^https:\/\//i.test(source)) urls.add(source);
+    }
+  }
+  return urls;
+}
+
 export type PostProdMediaDeps = {
   getBucket: () => string;
   verifyOwnership: (userId: number, objectPath: string) => Promise<boolean>;
   loadSucceededJobOutputObjects: (userId: string, bucket: string) => Promise<ReadonlySet<string>>;
+  /** 可选：本人 succeeded 任务产物的 https 直链（合成版成片）；缺省不放行任何外链 */
+  loadSucceededJobOutputUrls?: (userId: string) => Promise<ReadonlySet<string>>;
 };
 
 const realDeps: PostProdMediaDeps = {
   getBucket: () => getGcsBucketName(),
   verifyOwnership: (uid, p) => verifyCanvasMediaOwnership(uid, p),
   loadSucceededJobOutputObjects: (uid, bucket) => loadSucceededJobOutputObjects(uid, bucket),
+  loadSucceededJobOutputUrls: (uid) => loadSucceededJobOutputUrls(uid),
 };
 
 const UNREGISTERED_HINT = "素材尚未登记,请从画布/成片里重新选择站内素材";
 
-export type PostProdMediaContext = { jobObjects: ReadonlySet<string> };
+export type PostProdMediaContext = { jobObjects: ReadonlySet<string>; jobUrls?: ReadonlySet<string> };
 
 async function assertObjectAllowed(
   userId: string,
@@ -222,7 +245,10 @@ export async function resolveRegisteredPostProdMediaSource(
   const userId = String(input.userId);
   const bucket = deps.getBucket();
   const ctx: PostProdMediaContext =
-    context ?? { jobObjects: await deps.loadSucceededJobOutputObjects(userId, bucket) };
+    context ?? {
+      jobObjects: await deps.loadSucceededJobOutputObjects(userId, bucket),
+      jobUrls: deps.loadSucceededJobOutputUrls ? await deps.loadSucceededJobOutputUrls(userId) : undefined,
+    };
 
   if (source.startsWith("gs://")) {
     const parsed = parseGsUri(source);
@@ -254,6 +280,9 @@ export async function resolveRegisteredPostProdMediaSource(
     return `gs://${bucket}/${objectName}`;
   }
 
+  // 本人 succeeded 任务的明确产物直链（整集合成落 Vercel Blob）：全等命中才放行，不做前缀/子串匹配
+  if (/^https:\/\//i.test(source) && ctx.jobUrls?.has(source)) return source;
+
   throw new Error(UNREGISTERED_HINT);
 }
 
@@ -266,6 +295,7 @@ export async function resolvePostProdInputSources(
   const bucket = deps.getBucket();
   const context: PostProdMediaContext = {
     jobObjects: await deps.loadSucceededJobOutputObjects(userId, bucket),
+    jobUrls: deps.loadSucceededJobOutputUrls ? await deps.loadSucceededJobOutputUrls(userId) : undefined,
   };
   const resolve = (source: string) =>
     resolveRegisteredPostProdMediaSource({ userId, source }, deps, context);

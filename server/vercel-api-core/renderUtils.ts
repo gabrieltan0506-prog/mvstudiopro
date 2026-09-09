@@ -69,7 +69,8 @@ export function resolveSceneClipDurationSec(input: {
   const trimOut = Number(input.trimOutSec);
   const hasTrim = Number.isFinite(trimIn) && Number.isFinite(trimOut) && trimOut - trimIn >= 0.5;
   const probed = input.probedDurationSec;
-  if (hasTrim) {
+  // 裁切起点已在真实片尾之外：-ss 会出空文件、xfade 直接炸，退回整段按探测值走
+  if (hasTrim && !(probed != null && Math.max(0, trimIn) >= probed - 0.5)) {
     const start = Math.max(0, trimIn);
     const wanted = Math.round((trimOut - trimIn) * 10) / 10;
     const available = probed != null ? Math.max(0.5, probed - start) : wanted;
