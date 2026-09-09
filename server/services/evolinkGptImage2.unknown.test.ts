@@ -42,3 +42,19 @@ describe("EvoLink gpt-image-2 · 轮询到点按 unknown 上抛，不吞成 null
     expect(err.message).toMatch(/poll timeout/);
   });
 });
+
+describe("EvoLink 模型档位（0910）", () => {
+  it("默认 gpt-image-2.5-flare，开关 sunburst；env 全名整体覆盖；2.5 也走 n=1 + 比例 resolution", async () => {
+    vi.stubEnv("EVOLINK_GPT_IMAGE2_MODEL", "");
+    const { resolveEvolinkGptImageModel, buildEvolinkRequestBody, isEvolinkGptImageFamily } = await import("./evolinkGptImage2");
+    expect(resolveEvolinkGptImageModel()).toBe("gpt-image-2.5-flare");
+    expect(resolveEvolinkGptImageModel("sunburst")).toBe("gpt-image-2.5-sunburst");
+    expect(isEvolinkGptImageFamily("gpt-image-2.5-sunburst")).toBe(true);
+    const body = buildEvolinkRequestBody("gpt-image-2.5-flare", "p", "16:9", "xhigh", undefined, undefined, "4K");
+    expect(body).toMatchObject({ model: "gpt-image-2.5-flare", n: 1, size: "16:9", resolution: "4K", quality: "xhigh" });
+    vi.stubEnv("EVOLINK_GPT_IMAGE2_MODEL", "gpt-image-2");
+    vi.resetModules();
+    const again = await import("./evolinkGptImage2");
+    expect(again.resolveEvolinkGptImageModel("sunburst")).toBe("gpt-image-2");
+  });
+});

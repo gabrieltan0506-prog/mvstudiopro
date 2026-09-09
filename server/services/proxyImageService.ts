@@ -1257,7 +1257,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
         openrouterReady &&
         openrouterFallbackAllowed;
 
-  /** 0909 拍板：OpenAI 官方 → WaveSpeed → EvoLink 兜底；显式 providerOverride 只换主路径。 */
+  /** 0910 拍板：OpenAI 官方 → EvoLink → WaveSpeed 兜底；显式 providerOverride 只换主路径。 */
   const priceOrder = resolveGptImage2ProviderOrder(providerMode);
   const providersInOrder = priceOrder.filter((p) => {
     if (providerMode === "openrouter") return false;
@@ -1295,7 +1295,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     appendImageFlowLog(L, `[单帧·遮罩] mask_url 已附带 · ${maskUrl.slice(0, 96)}`);
   }
 
-  // xhigh/max 只有 OpenAI gpt-image-2.5 收；WaveSpeed/EvoLink 折回 high
+  // xhigh/max 只有 gpt-image-2.5（官方与 EvoLink）收；WaveSpeed 仍是 gpt-image-2，折回 high
   const qualityRaw = String(options.qualityOverride || "").trim().toLowerCase();
   const openaiQuality = qualityRaw === "xhigh" || qualityRaw === "max" ? qualityRaw : undefined;
   const qualityForCall: GptImage2ApiQuality =
@@ -1353,7 +1353,9 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
         : postEvolinkGptImage2AndUpload(finalPrompt, options.gcsSubdir, {
             aspectRatio: options.aspectRatio,
             flowLog: L,
-            quality: qualityForCall,
+            // EvoLink gpt-image-2.5 与官方同档位、同 quality 口径（xhigh/max 也收）
+            variant: options.openaiImageVariant ?? null,
+            quality: openaiQuality ?? qualityForCall,
             resolution: options.evolinkResolution,
             imageUrls: hasRef ? refImageUrls : undefined,
             maskUrl: hasRef ? maskUrl : undefined,
@@ -1420,7 +1422,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     }
   }
 
-  appendImageFlowLog(L, "[单帧] OpenAI/WaveSpeed/EvoLink GPT-IMAGE-2 均无图 · 本条失败");
+  appendImageFlowLog(L, "[单帧] OpenAI/EvoLink/WaveSpeed GPT-IMAGE 均无图 · 本条失败");
   return null;
 }
 
@@ -1945,7 +1947,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         appendImageFlowLog(
           L,
           isKnowledgeCard
-            ? `[图文笔记·主路径] ${options.knowledgeCardImageProvider === "evolink" ? "EvoLink（4K）→ OpenAI 官方 → WaveSpeed" : options.knowledgeCardImageProvider === "wavespeed" ? "WaveSpeed（4K）→ OpenAI 官方 → EvoLink" : `OpenAI 官方 ${options.openaiImageVariant || "flare"}（${KNOWLEDGE_CARD_OPENAI_SIZE}）→ WaveSpeed（4K）→ EvoLink（4K）`} · quality=high · 16:9`
+            ? `[图文笔记·主路径] ${options.knowledgeCardImageProvider === "evolink" ? "EvoLink 2.5（4K）→ OpenAI 官方 → WaveSpeed" : options.knowledgeCardImageProvider === "wavespeed" ? "WaveSpeed（4K）→ OpenAI 官方 → EvoLink" : `OpenAI 官方 ${options.openaiImageVariant || "flare"}（${KNOWLEDGE_CARD_OPENAI_SIZE}）→ EvoLink 2.5（4K）→ WaveSpeed（4K）`} · quality=high · 16:9`
             : `[2×4·主路径] OpenAI/OpenRouter GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
         );
       }

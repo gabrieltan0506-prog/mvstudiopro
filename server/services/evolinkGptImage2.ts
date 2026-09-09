@@ -1,6 +1,12 @@
 import { resolvePlatformImageStorageDriver } from "../config/platformSwitches.js";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs.js";
 import { enforceSimplifiedChineseImagePrompt } from "./simplifiedChinese.js";
+import {
+  OPENAI_IMAGE_MODEL_BY_VARIANT,
+  OPENAI_IMAGE_VARIANT_DEFAULT,
+  normalizeOpenAiImageVariant,
+  type OpenAiImageVariant,
+} from "../../shared/openaiImageVariant.js";
 import { SubmitUnknownError } from "./submitOutcomeErrors.js";
 
 function appendImageFlowLog(log: string[] | undefined, message: string): void {
@@ -9,7 +15,17 @@ function appendImageFlowLog(log: string[] | undefined, message: string): void {
 }
 
 const EVOLINK_BASE = String(process.env.EVOLINK_API_BASE || "https://api.evolink.ai").replace(/\/$/, "");
+/** 旧模型名（兜底/兼容）；0910 起默认走 gpt-image-2.5（flare/sunburst 与官方同名，EvoLink 文档已接通） */
 const EVOLINK_MODEL = "gpt-image-2" as const;
+export function resolveEvolinkGptImageModel(variant?: OpenAiImageVariant | null): string {
+  const raw = String(process.env.EVOLINK_GPT_IMAGE2_MODEL || "").trim();
+  if (/^gpt-image-2(?:\.5)?(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?$/i.test(raw)) return raw;
+  return OPENAI_IMAGE_MODEL_BY_VARIANT[normalizeOpenAiImageVariant(variant) ?? OPENAI_IMAGE_VARIANT_DEFAULT];
+}
+/** gpt-image-2 / 2.5 全系共用 n=1 与比例+resolution 口径 */
+export function isEvolinkGptImageFamily(model: string): boolean {
+  return /^gpt-image-2/i.test(String(model || ""));
+}
 export const EVOLINK_NANO_BANANA_PRO_MODEL = "gemini-3-pro-image-preview" as const;
 /** EvoLink 默认 quality；请求方可传 `quality` 覆写（如 2×4 宽幅固定 low）。 */
 /** 默认 high：对标文档 text_to_image_hd / 可发笔记清晰度；可用 EVOLINK_GPT_IMAGE2_QUALITY 下调。 */
@@ -111,10 +127,10 @@ export function buildEvolinkRequestBody(
     size,
     quality,
   };
-  if (model === EVOLINK_MODEL) {
+  if (isEvolinkGptImageFamily(model)) {
     body.n = 1;
   }
-  if (isRatio && model === EVOLINK_MODEL) {
+  if (isRatio && isEvolinkGptImageFamily(model)) {
     body.resolution = normalizeEvolinkResolution(resolution || EVOLINK_RESOLUTION_DEFAULT);
   }
   // image-to-image / edit：附参考图（1~16 张，URL 须服务器可直接抓取）。
@@ -227,6 +243,8 @@ export async function postEvolinkGptImage2AndUpload(
   prompt: string,
   gcsSubdir: string,
   opts: {
+    /** gpt-image-2.5 档位（flare 默认 / sunburst）；显式 model 优先 */
+    variant?: OpenAiImageVariant | null;
     aspectRatio?: EvolinkImageAspectRatio;
     size?: string;
     flowLog?: string[];
@@ -261,7 +279,7 @@ export async function postEvolinkGptImage2AndUpload(
 
   const aspectRatio = opts.aspectRatio ?? "9:16";
   const size = resolveEvolinkSize(aspectRatio, opts.size);
-  const model = opts.model || EVOLINK_MODEL;
+  const model = opts.model || resolveEvolinkGptImageModel(opts.variant);
   const quality = String(
     opts.quality ||
       (model === EVOLINK_NANO_BANANA_PRO_MODEL
@@ -279,7 +297,7 @@ export async function postEvolinkGptImage2AndUpload(
   const refImageUrls = (opts.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean).slice(0, 16);
   appendImageFlowLog(
     L,
-    `[Image·EvoLink] POST ${EVOLINK_BASE}/v1/images/generations · model=${model} · size=${size} · quality=${quality}${model === EVOLINK_MODEL && size.includes(":") ? ` · resolution=${resolution}` : ""}${refImageUrls.length ? ` · edit模式·参考图=${refImageUrls.length}张` : ""}`,
+    `[Image·EvoLink] POST ${EVOLINK_BASE}/v1/images/generations · model=${model} · size=${size} · quality=${quality}${isEvolinkGptImageFamily(model) && size.includes(":") ? ` · resolution=${resolution}` : ""}${refImageUrls.length ? ` · edit模式·参考图=${refImageUrls.length}张` : ""}`,
   );
 
   try {

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 const src = readFileSync(new URL("./proxyImageService.ts", import.meta.url), "utf8");
 const platform = readFileSync(new URL("../../client/src/pages/PlatformPage.tsx", import.meta.url), "utf8");
 
-describe("gpt-image-2 供应商顺序接线（0909：OpenAI 官方 → WaveSpeed → EvoLink）", () => {
+describe("gpt-image 供应商顺序接线（0910：OpenAI 官方 → EvoLink 2.5 → WaveSpeed）", () => {
   it("三家都进候选，主路径日志写官方优先，知识卡默认 openai", () => {
     expect(src).toContain('if (p === "wavespeed") return wavespeedReady;');
     expect(src).toContain("主路径(官方优先)");
@@ -24,7 +24,9 @@ describe("gpt-image-2 供应商顺序接线（0909：OpenAI 官方 → WaveSpeed
   it("改图带 input_fidelity；xhigh/max 只给官方，其余家折回 high", () => {
     const openai = readFileSync(new URL("./openaiGptImage2.ts", import.meta.url), "utf8");
     expect(openai).toContain('addField("input_fidelity", inputFidelity)');
-    expect(src).toContain("quality: openaiQuality ?? qualityForCall");
+    expect((src.match(/quality: openaiQuality \?\? qualityForCall/g) || []).length).toBe(2);
+    const evo = readFileSync(new URL("./evolinkGptImage2.ts", import.meta.url), "utf8");
+    expect(evo).toContain("resolveEvolinkGptImageModel(opts.variant)");
     expect(src).toContain('qualityRaw === "xhigh" || qualityRaw === "max"');
   });
   it("结果未知：runner 不退款转对账；整链重试不再烧；超时不换钥", () => {

@@ -53,14 +53,14 @@ export function compareGptImage2ProviderCost(): {
 }
 
 /**
- * 0909 用户拍板：不再按牌价挑，固定 **OpenAI 官方（gpt-image-2.5）→ WaveSpeed → EvoLink 兜底**，
+ * 0910 用户拍板（覆盖 0909）：固定 **OpenAI 官方（gpt-image-2.5）→ EvoLink（gpt-image-2.5 已接通）→ WaveSpeed（gpt-image-2）兜底**，
  * 画布、资产、知识卡全站一致。显式 openai/wavespeed/evolink 只改主路径，其余两家按此序兜底；
  * `auto` 与未设都等于官方优先。WaveSpeed 牌价（2026-09 查实）：medium+2k $0.10/张，high+4k $0.72/张。
  */
 export const GPT_IMAGE2_PROVIDER_ORDER_DEFAULT: readonly GptImage2UpstreamProvider[] = [
   "openai",
-  "wavespeed",
   "evolink",
+  "wavespeed",
 ];
 
 export function resolveGptImage2ProviderOrder(
