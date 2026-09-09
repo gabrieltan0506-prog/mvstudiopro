@@ -18,6 +18,7 @@ import {
   prepareJsonDirectorImageJob,
   type AspectRatio169Or916,
 } from "@shared/jsonDirectorMiddleware";
+import { readOpenAiImageVariantPref } from "@/lib/openaiImageVariantPref";
 import { buildCanvasGptImage2JobInput } from "@shared/canvasGptImage2JobInput";
 import {
   resolveOpenAiImageLaneForBlockId,
@@ -353,6 +354,7 @@ export async function runGptImage2(
       generalImageEdit: referenceImageUrls.length > 0,
       providerOverride: openaiOnly ? "openai" : undefined,
       imageLane: opts?.imageLane,
+            openaiImageVariant: readOpenAiImageVariantPref(),
       batchIndex: opts?.batchIndex,
     }),
   });

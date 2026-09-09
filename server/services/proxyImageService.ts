@@ -42,6 +42,8 @@ import {
 } from "./openrouterGptImage2.js";
 import { knowledgeCardImageQuality } from "../../shared/knowledgeCardPagination.js";
 import { resolveGptImage2ProviderOrder } from "../../shared/gptImage2ProviderPricing.js";
+import { isWavespeedGptImage2Configured, postWavespeedGptImage2AndUpload } from "./wavespeedGptImage2.js";
+import type { OpenAiImageVariant } from "../../shared/openaiImageVariant.js";
 import {
   getGptImage2PrimaryTimeoutMs,
   isTimeoutLikeError,
@@ -1173,11 +1175,13 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
    * 单次请求覆盖供应商：`openai` | `openrouter` | `auto`。
    * 不设则读 env `GPT_IMAGE2_PROVIDER`（默认 auto）。
    */
-  providerOverride?: "openai" | "openrouter" | "evolink" | "auto";
+  providerOverride?: "openai" | "openrouter" | "evolink" | "wavespeed" | "auto";
   /**
    * 生图分道：`asset` 走设定图专钥，`keyart` 走静帧专钥；本道打不通自动借另一把。
    */
   imageLane?: OpenAiImageLane | null;
+  /** OpenAI 官方模型档位：flare（默认）/ sunburst；只影响官方通道 */
+  openaiImageVariant?: OpenAiImageVariant | null;
   /** 覆盖默认 quality。 */
   qualityOverride?: GptImage2ApiQuality;
   /** EvoLink 比例模式分辨率覆写（知识卡传 4K；未传按 EVOLINK_GPT_IMAGE2_RESOLUTION 默认 2K） */
@@ -1235,6 +1239,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   const openaiReady = isOpenAiGptImage2Configured(options.imageLane ?? null);
   const openrouterReady = isOpenRouterGptImage2Configured();
   const evolinkReady = isEvolinkGptImage2Configured();
+  const wavespeedReady = isWavespeedGptImage2Configured();
   /**
    * OpenRouter 暂时摘出回落链（对本账号易 403 TOS）。
    * 解封后设 `GPT_IMAGE2_ALLOW_OPENROUTER_FALLBACK=1`；显式 providerOverride=openrouter 仍放行。
@@ -1246,15 +1251,17 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
       ? openrouterReady
       : providerMode !== "openai" &&
         providerMode !== "evolink" &&
+        providerMode !== "wavespeed" &&
         openrouterReady &&
         openrouterFallbackAllowed;
 
-  /** 牌价：EvoLink image-output 更低 → auto 主 EvoLink，OpenAI 备胎；超时切备胎。 */
+  /** 0909 拍板：OpenAI 官方 → WaveSpeed → EvoLink 兜底；显式 providerOverride 只换主路径。 */
   const priceOrder = resolveGptImage2ProviderOrder(providerMode);
   const providersInOrder = priceOrder.filter((p) => {
-    if (providerMode === "openai" && p !== "openai" && p !== "evolink") return false;
-    if (p === "openai") return openaiReady && providerMode !== "openrouter";
-    if (p === "evolink") return evolinkReady && providerMode !== "openrouter";
+    if (providerMode === "openrouter") return false;
+    if (p === "openai") return openaiReady;
+    if (p === "wavespeed") return wavespeedReady;
+    if (p === "evolink") return evolinkReady;
     return false;
   });
 
@@ -1271,11 +1278,11 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   if (!providersInOrder.length && !tryOpenRouter) {
     appendImageFlowLog(
       L,
-      `[单帧] 无可走供应商 · mode=${providerMode || "auto"} · openai=${openaiReady} · evolink=${evolinkReady} · openrouter=${openrouterReady}`,
+      `[单帧] 无可走供应商 · mode=${providerMode || "auto"} · openai=${openaiReady} · wavespeed=${wavespeedReady} · evolink=${evolinkReady} · openrouter=${openrouterReady}`,
     );
     if (options.captureError) {
       options.captureError.message =
-        "Neither OPENAI_API_KEY nor EVOLINK_API_KEY is configured for gpt-image-2";
+        "None of OPENAI_API_KEY / WAVESPEED_API_KEY / EVOLINK_API_KEY is configured for gpt-image-2";
     }
     return null;
   }
@@ -1299,14 +1306,14 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     const provider = providersInOrder[i]!;
     const isPrimary = i === 0;
     const isLast = i === providersInOrder.length - 1 && !tryOpenRouter;
-    const tag = provider === "openai" ? "OpenAI" : "EvoLink";
+    const tag = provider === "openai" ? "OpenAI" : provider === "wavespeed" ? "WaveSpeed" : "EvoLink";
     appendImageFlowLog(
       L,
       `[单帧·${tag}] GPT-IMAGE-2${hasRef ? " edit" : ""} · ${options.aspectRatio} · quality=${qualityForCall}${
         options.imageLane && provider === "openai" ? ` · lane=${options.imageLane}` : ""
       }${hasRef ? ` · 参考=${refImageUrls.length}张` : ""}${
         isPrimary
-          ? ` · 主路径(价低优先)·超时${Math.round(primaryTimeoutMs / 1000)}s切备胎`
+          ? ` · 主路径(官方优先)·超时${Math.round(primaryTimeoutMs / 1000)}s切备胎`
           : " · 备胎"
       }`,
     );
@@ -1322,7 +1329,19 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
             maskUrl: hasRef ? maskUrl : undefined,
             captureError: err,
             lane: options.imageLane ?? null,
+            variant: options.openaiImageVariant ?? null,
           })
+        : provider === "wavespeed"
+          ? postWavespeedGptImage2AndUpload(finalPrompt, options.gcsSubdir, {
+              aspectRatio: options.aspectRatio,
+              flowLog: L,
+              quality: qualityForCall,
+              // 与 EvoLink 同一口径：知识卡 4K，其余默认 2K
+              resolution: String(options.evolinkResolution || "2K").toLowerCase(),
+              imageUrls: hasRef ? refImageUrls : undefined,
+              maskUrl: hasRef ? maskUrl : undefined,
+              captureError: err,
+            })
         : postEvolinkGptImage2AndUpload(finalPrompt, options.gcsSubdir, {
             aspectRatio: options.aspectRatio,
             flowLog: L,
@@ -1386,7 +1405,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     }
   }
 
-  appendImageFlowLog(L, "[单帧] OpenAI/OpenRouter GPT-IMAGE-2 均无图 · 本条失败");
+  appendImageFlowLog(L, "[单帧] OpenAI/WaveSpeed/EvoLink GPT-IMAGE-2 均无图 · 本条失败");
   return null;
 }
 
@@ -1557,7 +1576,9 @@ export async function generatePlatformCompositeSheetImage(options: {
    * 仅 single_page_knowledge_card：本页首发供应商（0908 用户令：多页并发，页轮流分给 EvoLink 与 OpenAI 官方同时打）。
    * 未传默认 EvoLink 先、官方兜底；传 "openai" 则官方先、EvoLink 兜底。
    */
-  knowledgeCardImageProvider?: "evolink" | "openai";
+  knowledgeCardImageProvider?: "evolink" | "openai" | "wavespeed";
+  /** OpenAI 官方模型档位（flare/sunburst），画布与知识卡共用开关 */
+  openaiImageVariant?: OpenAiImageVariant | null;
   /**
    * 仅 3×4 分段拼接：本次生成是「长图」的第 index/total 段（storyboard/xhs）。
    * 注入连贯/同风格指令，确保各段拼接后接缝处风格一致；第 2 段起不再重复顶部总标题栏。
@@ -1905,7 +1926,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         appendImageFlowLog(
           L,
           isKnowledgeCard
-            ? `[图文笔记·主路径] ${options.knowledgeCardImageProvider === "openai" ? `OpenAI 官方（${KNOWLEDGE_CARD_OPENAI_SIZE}）→ EvoLink（4K）` : `EvoLink（4K）→ OpenAI 官方（${KNOWLEDGE_CARD_OPENAI_SIZE}）`} · quality=high · 16:9`
+            ? `[图文笔记·主路径] ${options.knowledgeCardImageProvider === "evolink" ? "EvoLink（4K）→ OpenAI 官方 → WaveSpeed" : options.knowledgeCardImageProvider === "wavespeed" ? "WaveSpeed（4K）→ OpenAI 官方 → EvoLink" : `OpenAI 官方 ${options.openaiImageVariant || "flare"}（${KNOWLEDGE_CARD_OPENAI_SIZE}）→ WaveSpeed（4K）→ EvoLink（4K）`} · quality=high · 16:9`
             : `[2×4·主路径] OpenAI/OpenRouter GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
         );
       }
@@ -1924,9 +1945,10 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         referenceImageUrls: refImageUrls.length ? refImageUrls : undefined,
         // 分镜/图文锁脸指令已写入 promptForPixel；勿再叠封面换人 directive
         generalImageEdit: true,
-        // 知识卡（0908 拍板）：EvoLink gpt-image-2 优先，官方 OpenAI 兜底；一律 high + 4K，不按页数降档
-        providerOverride: isKnowledgeCard ? (options.knowledgeCardImageProvider || "evolink") : undefined,
+        // 知识卡（0909 拍板，覆盖 0908）：OpenAI 官方优先 → WaveSpeed → EvoLink；一律 high + 4K，不按页数降档
+        providerOverride: isKnowledgeCard ? (options.knowledgeCardImageProvider || "openai") : undefined,
         imageLane: isKnowledgeCard ? "asset" : undefined,
+        openaiImageVariant: options.openaiImageVariant ?? null,
         qualityOverride: knowledgeCardQuality,
         evolinkResolution: isKnowledgeCard ? "4K" : undefined,
         // 0908 用户：官方也出 3840x2160，与 EvoLink 同尺寸，PDF 合成不用补边
@@ -1949,8 +1971,9 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           flowLog: L,
           referenceImageUrls: refImageUrls,
           generalImageEdit: true,
-          providerOverride: isKnowledgeCard ? (options.knowledgeCardImageProvider || "evolink") : undefined,
+          providerOverride: isKnowledgeCard ? (options.knowledgeCardImageProvider || "openai") : undefined,
           imageLane: isKnowledgeCard ? "asset" : undefined,
+          openaiImageVariant: options.openaiImageVariant ?? null,
           qualityOverride: knowledgeCardQuality,
           evolinkResolution: isKnowledgeCard ? "4K" : undefined,
           openaiSize: isKnowledgeCard ? KNOWLEDGE_CARD_OPENAI_SIZE : undefined,

@@ -8398,7 +8398,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             /** 仅 single_page_knowledge_card：主体偏左 / 居中（横版 16:9 固定） */
             subjectPosition: z.enum(["left", "center"]).optional(),
             /** 仅 single_page_knowledge_card：本页首发供应商（多页并发时页轮流分给两家；另一家自动兜底） */
-            imageProvider: z.enum(["evolink", "openai"]).optional(),
+            imageProvider: z.enum(["evolink", "openai", "wavespeed"]).optional(),
+            /** OpenAI 官方模型档位（flare 默认 / sunburst），与画布共用开关 */
+            openaiImageVariant: z.enum(["flare", "sunburst"]).optional(),
             /**
              * 仅 single_page_knowledge_card：图文可视化版式 id（`shared/infographicNoteTemplates`）。
              *
@@ -8800,6 +8802,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 subjectPosition: input.subjectPosition,
                 knowledgeCardReferencePageUrls,
                 knowledgeCardImageProvider: input.imageProvider,
+            openaiImageVariant: input.openaiImageVariant,
               });
 
               // 第五轮复审 P0·1：空产物不许标成功——扣了费没有图，必须走统一失败退款
@@ -8888,6 +8891,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             subjectPosition: input.subjectPosition,
             knowledgeCardReferencePageUrls,
             knowledgeCardImageProvider: input.imageProvider,
+            openaiImageVariant: input.openaiImageVariant,
           });
         } catch (error: any) {
           stopSyncHeartbeat();

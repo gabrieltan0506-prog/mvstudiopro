@@ -28,6 +28,7 @@ import {
 } from "../kling/fal-proxy";
 import { generateGeminiImage, isGeminiImageAvailable, type ImageQuality } from "../gemini-image";
 import { normalizeOpenAiImageLane } from "../../shared/openaiImageLane.js";
+import { normalizeOpenAiImageVariant } from "../../shared/openaiImageVariant.js";
 import { normalizePlatformTopicExpandEngine } from "../../shared/platformTopicShortlist.js";
 import { appRouter, buildPlatformContent, slimBuildPlatformContentDiagnosticsForJob } from "../routers";
 import { invokeLLM, extractJsonString, type FileContent } from "../_core/llm";
@@ -1467,6 +1468,7 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
         : "canvas-gpt-image2";
     // 设定图 / 静帧分走两把官方密钥（画布出图都从这条长任务走，勿只接同步 op）
     const imageLane = normalizeOpenAiImageLane(params.imageLane) ?? undefined;
+    const openaiImageVariant = normalizeOpenAiImageVariant(params.openaiImageVariant) ?? undefined;
 
     /**
      * 画布出图收费 v3(六审第2条):**全部调用方统一由 worker 服务端计费**——
@@ -1579,6 +1581,7 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
         onImageText: "forbid",
         providerOverride,
         imageLane,
+        openaiImageVariant,
         qualityOverride: assetStandardizeQuality || undefined,
         captureError,
       });

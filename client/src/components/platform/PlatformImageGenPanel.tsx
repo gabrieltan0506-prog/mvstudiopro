@@ -16,6 +16,7 @@ import {
 import { useAuth } from "@/_core/hooks/useAuth";
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
 import { createJobSameOrigin, pollJobUntilTerminal } from "@/lib/jobs";
+import { readOpenAiImageVariantPref } from "@/lib/openaiImageVariantPref";
 import { buildCanvasGptImage2JobInput } from "@shared/canvasGptImage2JobInput";
 import { trpc } from "@/lib/trpc";
 
@@ -165,6 +166,7 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
           aspectRatio: apiAspect,
           referenceImageUrls: refs.length ? refs : undefined,
           generalImageEdit: refs.length > 0,
+            openaiImageVariant: readOpenAiImageVariantPref(),
         }),
       });
       const job = await pollJobUntilTerminal(jobId, {

@@ -10,6 +10,12 @@
 import { OPENAI_IMAGE_PROMPT_HARD_MAX } from "../../shared/manhuaKeyartPromptCompact.js";
 import type { OpenAiImageLane } from "../../shared/openaiImageLane.js";
 import { enforceSimplifiedChineseImagePrompt } from "./simplifiedChinese.js";
+import {
+  OPENAI_IMAGE_MODEL_BY_VARIANT,
+  OPENAI_IMAGE_VARIANT_DEFAULT,
+  normalizeOpenAiImageVariant,
+  type OpenAiImageVariant,
+} from "../../shared/openaiImageVariant.js";
 import { uploadBufferToPlatformStorage } from "./evolinkGptImage2.js";
 import {
   resolveOpenAiImageKeyChain,
@@ -18,16 +24,17 @@ import {
 
 const OPENAI_BASE = String(process.env.OPENAI_API_BASE || "https://api.openai.com").replace(/\/$/, "");
 
-/** 文档 snapshot：https://developers.openai.com/api/docs/models/gpt-image-2 */
+/** 旧 snapshot（gpt-image-2 时代）；仅作 env 回退别名保留 */
 export const OPENAI_GPT_IMAGE2_SNAPSHOT_DEFAULT = "gpt-image-2-2026-04-21" as const;
 
 /**
- * 生图 / 改图共用。默认钉 snapshot；可用 OPENAI_GPT_IMAGE2_MODEL 覆盖（如回退别名 gpt-image-2）。
+ * 生图 / 改图共用。0909 起默认 OpenAI 官方 gpt-image-2.5（flare 快 / sunburst 改图精度），
+ * 档位由前台开关随 job 带来；`OPENAI_GPT_IMAGE2_MODEL` 显式设置仍可整体覆盖（接受 gpt-image-2 / 2.5 全名）。
  */
-export function resolveOpenAiGptImage2Model(): string {
+export function resolveOpenAiGptImage2Model(variant?: OpenAiImageVariant | null): string {
   const raw = String(process.env.OPENAI_GPT_IMAGE2_MODEL || "").trim();
-  if (raw === "gpt-image-2" || /^gpt-image-2-\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-  return OPENAI_GPT_IMAGE2_SNAPSHOT_DEFAULT;
+  if (/^gpt-image-2(?:\.5)?(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?$/i.test(raw)) return raw;
+  return OPENAI_IMAGE_MODEL_BY_VARIANT[normalizeOpenAiImageVariant(variant) ?? OPENAI_IMAGE_VARIANT_DEFAULT];
 }
 
 /**
@@ -226,6 +233,8 @@ export async function postOpenAiGptImage2AndUpload(
     captureError?: { message?: string };
     /** 设定图与静帧分走两把密钥；本道打不通即换另一把 */
     lane?: OpenAiImageLane | null;
+    /** 官方模型档位：flare（默认）/ sunburst */
+    variant?: OpenAiImageVariant | null;
   } = {},
 ): Promise<string | null> {
   const L = opts.flowLog;
@@ -253,7 +262,7 @@ export async function postOpenAiGptImage2AndUpload(
 
   const refs = (opts.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean).slice(0, 16);
   const maskUrl = String(opts.maskUrl || "").trim() || undefined;
-  const model = resolveOpenAiGptImage2Model();
+  const model = resolveOpenAiGptImage2Model(opts.variant);
 
   appendImageFlowLog(
     L,

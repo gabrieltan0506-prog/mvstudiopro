@@ -1,0 +1,20 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { resolveOpenAiGptImage2Model } from "./openaiGptImage2";
+
+afterEach(() => vi.unstubAllEnvs());
+
+describe("resolveOpenAiGptImage2Model", () => {
+  it("默认 flare；开关 sunburst 换模型", () => {
+    vi.stubEnv("OPENAI_GPT_IMAGE2_MODEL", "");
+    expect(resolveOpenAiGptImage2Model()).toBe("gpt-image-2.5-flare");
+    expect(resolveOpenAiGptImage2Model("sunburst")).toBe("gpt-image-2.5-sunburst");
+  });
+  it("env 显式全名整体覆盖（gpt-image-2 旧名 / 2.5 全名都收），乱值忽略", () => {
+    vi.stubEnv("OPENAI_GPT_IMAGE2_MODEL", "gpt-image-2-2026-04-21");
+    expect(resolveOpenAiGptImage2Model("sunburst")).toBe("gpt-image-2-2026-04-21");
+    vi.stubEnv("OPENAI_GPT_IMAGE2_MODEL", "gpt-image-2.5-sunburst");
+    expect(resolveOpenAiGptImage2Model("flare")).toBe("gpt-image-2.5-sunburst");
+    vi.stubEnv("OPENAI_GPT_IMAGE2_MODEL", "dall-e-9");
+    expect(resolveOpenAiGptImage2Model("flare")).toBe("gpt-image-2.5-flare");
+  });
+});
