@@ -12,6 +12,8 @@ import {
 import { resolveCanvasMaterialUrl, runGeminiScript } from "./omniCanvasApi";
 import {
   formatManhuaSegmentReferenceGuideZh,
+  manhuaSegmentReferenceFitsCap,
+  MANHUA_SEGMENT_REFERENCE_CAP_SEC,
   type ManhuaSegmentReferenceEntry,
 } from "@shared/manhuaSegmentReference";
 import {
@@ -1005,14 +1007,17 @@ export function resolveWan30CanvasVideoUrls(input: {
 /** 与 videoUrls 数组同序生成唯一职责，保证 Reference video N 不悬空、不串位。 */
 export function buildWanVideoReferenceRoleBlock(
   videoUrls: string[],
-  opts?: { continuityVideoUrl?: string },
+  opts?: { continuityVideoUrl?: string; previsVideoUrl?: string },
 ): string {
   if (!videoUrls.length) return "";
   const continuity = String(opts?.continuityVideoUrl || "").trim();
+  const previs = String(opts?.previsVideoUrl || "").trim();
   const lines = videoUrls.map((url, index) =>
-    url === continuity
-      ? `Reference video ${index + 1}:上一段成片，仅用于承接起幅、人物状态与空间连续性`
-      : `Reference video ${index + 1}:用户选定的视频参考，仅继承明确相关的动作、节奏或镜头信息`,
+    previs && url === previs
+      ? `Reference video ${index + 1}:本段站位白模，严格按它的秒位复刻人物走位、景别切换与机位运动；灰色人偶、空白场景与网格不进画面，外观只按参考图与正文`
+      : url === continuity
+        ? `Reference video ${index + 1}:上一段成片，仅用于承接起幅、人物状态与空间连续性`
+        : `Reference video ${index + 1}:用户选定的视频参考，仅继承明确相关的动作、节奏或镜头信息`,
   );
   return `【参考视频职责】\n${lines.join("\n")}\n每条参考视频只承担上述职责，禁止把无关人物、服装、文字或背景迁移到本段。`;
 }
@@ -1021,11 +1026,15 @@ export function buildWanVideoReferenceRoleBlock(
 export function buildWanAudioReferenceRoleBlock(
   audioUrls: string[],
   attached: ManhuaVoicePickPlan["attached"],
-  opts?: { accentFallbackUrl?: string },
+  opts?: { accentFallbackUrl?: string; masterAudioUrl?: string },
 ): string {
   if (!audioUrls.length) return "";
   const accentFallbackUrl = String(opts?.accentFallbackUrl || "").trim();
+  const masterAudioUrl = String(opts?.masterAudioUrl || "").trim();
   const lines = audioUrls.map((url, index) => {
+    if (masterAudioUrl && url === masterAudioUrl) {
+      return `Reference audio ${index + 1}:本片最终音轨，对白与配乐已预混；口型与动作逐秒同步，不再另配对白、配乐或旁白`;
+    }
     const speakers = attached
       .filter((item) => item.audioUrl === url)
       .map((item) => String(item.labelZh || item.characterTag || "").trim())
@@ -1921,26 +1930,61 @@ export async function runCanvasBlock(
         parseManhuaClipTargetDurationSec(block.prompt) ??
         undefined;
       const clipDuration = clampManhuaClipDurationSecForVideoModel(videoModel, clipDurationRaw);
+      // 漫剧工厂段级参考：只在多模态参考出片、非局部编辑、非 10 秒试片时注入
+      // （试片 10 s 配 30 s 白模/母轨会让模型在两个时长之间二选一）。
+      // 各引擎按自己的时长上限取舍：Seedance 2.x ≤30 s，Wan 3.0 视频/音频各 ≤15 s；
+      // 白模一旦送出就不再送上段接力片与旧成片（三条 30 s 叠到 90 s 会被拒，且接力片无序号说明）。
+      const segmentRefs =
+        isClip && !isManhuaVideoEditBlock(block) && !runOptions?.pilotRun
+          ? block.manhuaSegmentRefs
+          : undefined;
+      const segmentCapSec = useWan30
+        ? MANHUA_SEGMENT_REFERENCE_CAP_SEC.wan30
+        : MANHUA_SEGMENT_REFERENCE_CAP_SEC.seedance;
+      const segmentPrevisUrl = manhuaSegmentReferenceFitsCap(segmentRefs?.previs, segmentCapSec)
+        ? await freshManhuaSegmentReferenceUrl(segmentRefs.previs)
+        : undefined;
+      const segmentMasterEntry = manhuaSegmentReferenceFitsCap(segmentRefs?.master, segmentCapSec)
+        ? segmentRefs.master
+        : undefined;
+      if (segmentRefs?.previs && !segmentPrevisUrl) {
+        console.warn(`[canvasRunBlock] 段白模超出 ${videoModel} 参考上限 ${segmentCapSec}s 或时长未知，本次不送`);
+      }
+      if (segmentRefs?.master && !segmentMasterEntry) {
+        console.warn(`[canvasRunBlock] 段母轨超出 ${videoModel} 参考上限 ${segmentCapSec}s 或时长未知，本次不送`);
+      }
       if (useWan30) {
         // Wan 3.0 公测:多图参考 + 可选对白参考音;30s 直出;排队时间较长。
         // 提示词按 Wan 口径编译:不用 Seedance 的 @图片N 绑定,改为按数组顺序的参考职责表(审查 P1)
         const wanImages = httpsImages.length ? httpsImages : ([seedStill].filter(Boolean) as string[]);
+        const wanContinuityVideoUrl = segmentPrevisUrl ? undefined : continuityVideoUrl;
         const wanVideoUrls = resolveWan30CanvasVideoUrls({
-          selectedVideoUrls: block.seedance25RefVideoUrls,
-          continuityVideoUrl,
+          selectedVideoUrls: [
+            ...(segmentPrevisUrl ? [segmentPrevisUrl] : []),
+            ...(block.seedance25RefVideoUrls || []),
+          ],
+          continuityVideoUrl: wanContinuityVideoUrl,
         });
+        // Wan 的音频只收 https：母轨按 gcsUri 现签；母轨存在时就是唯一音轨
+        const wanMasterUrl = segmentMasterEntry
+          ? await freshManhuaSegmentReferenceUrl(segmentMasterEntry)
+          : undefined;
         const wanAudioUrls = Array.from(
           new Set(
-            seedanceAudioUrls
+            (wanMasterUrl ? [wanMasterUrl] : seedanceAudioUrls)
               .map((audioUrl) => String(audioUrl || "").trim())
               .filter((audioUrl) => /^https?:\/\//i.test(audioUrl)),
           ),
         );
         const wanPrompt = [
           buildWanReferenceRoleBlock(wanImages, keptEntries),
-          buildWanVideoReferenceRoleBlock(wanVideoUrls, { continuityVideoUrl }),
+          buildWanVideoReferenceRoleBlock(wanVideoUrls, {
+            continuityVideoUrl: wanContinuityVideoUrl,
+            previsVideoUrl: segmentPrevisUrl,
+          }),
           buildWanAudioReferenceRoleBlock(wanAudioUrls, voicePlan.attached, {
             accentFallbackUrl,
+            masterAudioUrl: wanMasterUrl,
           }),
           isClip ? stripManhuaStaleAssetBindForModel(motionPrompt) : motionPrompt,
           voiceOneLine ? `【声线】${voiceOneLine}` : "",
@@ -2007,17 +2051,8 @@ export async function runCanvasBlock(
           .filter((u) => /^(?:https:\/\/|gs:\/\/)/i.test(u));
         // 漫剧工厂段级参考：白模只在多模态参考模式注入（局部编辑时 @视频1 必须是原片）；
         // 母轨一旦存在就是唯一音轨，逐句配音不再并列送（多轨相加会超供应商 30 s 上限）。
-        // 只在 2.5 多模态参考、非局部编辑、非 10 秒试片时注入：2.0 的 video_url 不是站位语义，
-        // 试片 10 s 配 30 s 白模/母轨会让模型在两个时长之间二选一。
-        const segmentRefs =
-          isClip && useSeedance25 && !isManhuaVideoEditBlock(block) && !runOptions?.pilotRun
-            ? block.manhuaSegmentRefs
-            : undefined;
-        const segmentPrevisUrl = segmentRefs?.previs
-          ? await freshManhuaSegmentReferenceUrl(segmentRefs.previs)
-          : undefined;
-        const segmentMasterUrl = segmentRefs?.master
-          ? String(segmentRefs.master.gcsUri || segmentRefs.master.url || "").trim() || undefined
+        const segmentMasterUrl = segmentMasterEntry
+          ? String(segmentMasterEntry.gcsUri || segmentMasterEntry.url || "").trim() || undefined
           : undefined;
         const candidateVideoUrls = await refreshManhuaRegisteredClipUrls(
           block.manhuaSegmentRefs?.registered,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatManhuaSegmentReferenceGuideZh,
+  manhuaSegmentReferenceFitsCap,
   normalizeManhuaSegmentReferences,
   setManhuaSegmentReference,
 } from "./manhuaSegmentReference";
@@ -37,5 +38,16 @@ describe("manhuaSegmentReference · 段级白模/母轨/登记成片", () => {
     expect(guide).toContain("@音频2就是本片最终音轨");
     expect(guide).toContain("灰色人偶");
     expect(formatManhuaSegmentReferenceGuideZh({ previsVideoIndex: 0, masterAudioIndex: 1 })).not.toContain("@视频");
+  });
+  it("时长上限：未知时长只放行 30 s 档，Wan 15 s 档要探到且 ≤15", () => {
+    const unknown = { url: "https://x.test/a.mp4", updatedAt: "2026-09-09T00:00:00Z" };
+    expect(manhuaSegmentReferenceFitsCap(unknown, 30)).toBe(true);
+    expect(manhuaSegmentReferenceFitsCap(unknown, 15)).toBe(false);
+    expect(manhuaSegmentReferenceFitsCap({ ...unknown, durationSec: 15.04 }, 15)).toBe(true);
+    expect(manhuaSegmentReferenceFitsCap({ ...unknown, durationSec: 15.2 }, 15)).toBe(false);
+    expect(manhuaSegmentReferenceFitsCap({ ...unknown, durationSec: 30 }, 30)).toBe(true);
+    expect(manhuaSegmentReferenceFitsCap(undefined, 30)).toBe(false);
+    expect(normalizeManhuaSegmentReferences({ previs: { ...unknown, durationSec: 29.7004 } })?.previs?.durationSec).toBe(29.7);
+    expect(normalizeManhuaSegmentReferences({ previs: { ...unknown, durationSec: -1 } })?.previs?.durationSec).toBeUndefined();
   });
 });

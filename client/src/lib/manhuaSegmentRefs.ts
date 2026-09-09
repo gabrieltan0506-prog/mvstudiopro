@@ -73,3 +73,38 @@ export function manhuaSegmentReferenceSummary(block: Pick<CanvasBlock, "manhuaSe
     registered: block.manhuaSegmentRefs?.registered,
   };
 }
+
+/** 浏览器里探媒体时长（音视频都走 HTMLMediaElement）；探不到返回 undefined，不挡上传。 */
+export function probeMediaFileDurationSec(file: File, timeoutMs = 8000): Promise<number | undefined> {
+  return new Promise((resolve) => {
+    if (typeof document === "undefined" || typeof URL?.createObjectURL !== "function") {
+      resolve(undefined);
+      return;
+    }
+    const isAudio = String(file.type || "").startsWith("audio/") || /\.(wav|mp3|m4a|aac)$/i.test(file.name);
+    const el = document.createElement(isAudio ? "audio" : "video");
+    const objectUrl = URL.createObjectURL(file);
+    let settled = false;
+    const finish = (value: number | undefined) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      el.removeAttribute("src");
+      try {
+        el.load();
+      } catch {
+        // 释放失败不影响结果
+      }
+      URL.revokeObjectURL(objectUrl);
+      resolve(value);
+    };
+    const timer = window.setTimeout(() => finish(undefined), timeoutMs);
+    el.preload = "metadata";
+    el.onloadedmetadata = () => {
+      const d = Number(el.duration);
+      finish(Number.isFinite(d) && d > 0 ? Math.round(d * 1000) / 1000 : undefined);
+    };
+    el.onerror = () => finish(undefined);
+    el.src = objectUrl;
+  });
+}

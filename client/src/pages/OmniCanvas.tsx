@@ -129,6 +129,7 @@ import { inferCanvasAssetKind, uploadCanvasFilesParallel } from "@/lib/canvasUpl
 import {
   MANHUA_REGISTERED_CLIP_SUMMARY_ZH,
   manhuaSegmentReferenceKindError,
+  probeMediaFileDurationSec,
   registerManhuaExistingClip,
 } from "@/lib/manhuaSegmentRefs";
 import {
@@ -8307,10 +8308,12 @@ export default function OmniCanvas() {
           index: Date.now() % 1000,
           getSignedUploadUrl: (input) => getSignedUrlMutation.mutateAsync(input),
         });
+        const durationSec = await probeMediaFileDurationSec(file);
         const entry: ManhuaSegmentReferenceEntry = {
           url: asset.url,
           gcsUri: asset.gcsUri,
           fileName: file.name,
+          durationSec,
           updatedAt: new Date().toISOString(),
         };
         if (slot === "registered") {
@@ -8323,11 +8326,12 @@ export default function OmniCanvas() {
           toast.message("已登记为本段成片", { description: MANHUA_REGISTERED_CLIP_SUMMARY_ZH });
         } else {
           patchClipBlockPersist(clipBlockId, (b) => setManhuaSegmentReference(b, slot, entry));
+          const lenZh = durationSec != null ? `${durationSec.toFixed(1)} 秒，` : "时长未探到，";
           toast.message(`${MANHUA_SEGMENT_REFERENCE_LABEL_ZH[slot]}已挂到本段`, {
             description:
               slot === "previs"
-                ? "下次出片作为 @视频1：只锁走位、景别与机位，不进画面。"
-                : "下次出片作为唯一音轨 @音频1：逐句配音不再并列送，避免超 30 秒上限。",
+                ? `${lenZh}下次出片作为 @视频1：只锁走位、景别与机位，不进画面。Seedance ≤30 秒；Wan 3.0 ≤15 秒才送。`
+                : `${lenZh}下次出片作为唯一音轨 @音频1：逐句配音不再并列送。Seedance ≤30 秒；Wan 3.0 ≤15 秒才送。`,
           });
         }
       } catch (error) {

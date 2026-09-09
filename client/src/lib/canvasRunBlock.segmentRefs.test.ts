@@ -116,11 +116,57 @@ describe("漫剧工厂段级参考进出片请求（无网络）", () => {
     expect(requests[0]!.audioUrls ?? []).not.toContain(MASTER_GCS);
     expect(String(requests[0]!.prompt)).not.toContain("站位白模");
   });
-  it("Seedance 2.0 不注入白模（video_url 不是站位语义）", async () => {
+  it("Seedance 2.0 系同样注入（OpenRouter 视频/音频各 ≤3 条）", async () => {
     const block = { ...segmentBlock(), videoModel: "seedance-2.0" as const, refVideoUrl: undefined };
     await runCanvasBlock({ ...deps, characterVoiceLocks: [] }, block);
-    expect(requests[0]!.videoUrls ?? []).not.toContain(PREVIS_FRESH);
-    expect(signRequests).toEqual([]);
+    expect((requests[0]!.videoUrls as string[])[0]).toBe(PREVIS_FRESH);
+    expect(requests[0]!.audioUrls).toEqual([MASTER_GCS]);
+  });
+  it("Wan 3.0：≤15 s 的白模/母轨才送，白模排 Reference video 1、母轨现签作唯一音频", async () => {
+    const MASTER_FRESH = "https://test.invalid/master-fresh.wav?sig=new";
+    let wanRequests: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.startsWith("/api/google?op=materialReadUrl&gcsUri=")) {
+          const gcsUri = decodeURIComponent(url.split("gcsUri=")[1]!);
+          return new Response(JSON.stringify({ ok: true, url: gcsUri === PREVIS_GCS ? PREVIS_FRESH : MASTER_FRESH }));
+        }
+        if (url !== "/api/jobs?op=wan30Video") throw new Error(`未声明请求：${url}`);
+        wanRequests.push(JSON.parse(String(init?.body)));
+        return new Response(JSON.stringify({ ok: true, videoUrl: RESULT }));
+      }),
+    );
+    const base = segmentBlock();
+    const short = {
+      ...base,
+      videoModel: "wan-3.0" as const,
+      manhuaSegmentRefs: {
+        previs: { ...base.manhuaSegmentRefs.previs, durationSec: 12 },
+        master: { ...base.manhuaSegmentRefs.master, durationSec: 14.9 },
+      },
+    };
+    await runCanvasBlock({ ...deps, characterVoiceLocks: [] }, short);
+    expect(wanRequests).toHaveLength(1);
+    expect(wanRequests[0]!.videoUrls).toEqual([PREVIS_FRESH]);
+    expect(wanRequests[0]!.audioUrls).toEqual([MASTER_FRESH]);
+    const prompt = String(wanRequests[0]!.prompt);
+    expect(prompt).toContain("Reference video 1:本段站位白模");
+    expect(prompt).toContain("Reference audio 1:本片最终音轨");
+
+    wanRequests = [];
+    const long = {
+      ...short,
+      manhuaSegmentRefs: {
+        previs: { ...base.manhuaSegmentRefs.previs, durationSec: 30 },
+        master: { ...base.manhuaSegmentRefs.master },
+      },
+    };
+    await runCanvasBlock({ ...deps, characterVoiceLocks: [] }, long);
+    expect(wanRequests[0]!.videoUrls ?? []).not.toContain(PREVIS_FRESH);
+    // 超上限时接力片照旧送
+    expect(wanRequests[0]!.videoUrls).toEqual([PREV_TAIL]);
+    expect(wanRequests[0]!.audioUrls ?? []).not.toContain(MASTER_FRESH);
   });
   it("局部编辑模式不注入白模：@视频1 必须是原片", async () => {
     const source = "https://test.invalid/segment-c.mp4";

@@ -24,6 +24,8 @@ export type ManhuaSegmentReferenceEntry = {
   /** 系统桶对象地址（gs://…/uploads/u<id>/…），有它才能过期后重签 */
   gcsUri?: string;
   fileName?: string;
+  /** 上传时探到的媒体时长；各引擎按它做上限判断（2.5 ≤30 s，Wan 3.0 ≤15 s） */
+  durationSec?: number;
   updatedAt: string;
 };
 
@@ -74,6 +76,10 @@ export function normalizeManhuaSegmentReferenceEntry(
     url: isHttpsUrl(url) ? url : "",
     gcsUri,
     fileName: r.fileName != null ? String(r.fileName).slice(0, 200) : undefined,
+    durationSec:
+      typeof r.durationSec === "number" && Number.isFinite(r.durationSec) && r.durationSec > 0
+        ? Math.round(r.durationSec * 1000) / 1000
+        : undefined,
     updatedAt: updatedAt || new Date(0).toISOString(),
   };
 }
@@ -124,4 +130,24 @@ export function formatManhuaSegmentReferenceGuideZh(input: {
     );
   }
   return lines.join("\n");
+}
+
+/**
+ * 引擎参考时长上限（知识库《引擎调用参数对照》《WaveSpeed》）：
+ * Seedance 2.5 单条/总长 ≤30 s；Wan 3.0 参考视频、参考音频各总长 ≤15 s；
+ * Seedance 2.0 系走 OpenRouter，视频/音频各 ≤3 条，按 30 s 计。
+ */
+export const MANHUA_SEGMENT_REFERENCE_CAP_SEC = { seedance: 30, wan30: 15 } as const;
+
+/**
+ * 时长未知时只在上限 ≥30 s 的引擎放行（2.5 实测能吃 30 s 白模）；
+ * Wan 3.0 这类 15 s 上限的，未探到时长一律不送，避免整单被拒。
+ */
+export function manhuaSegmentReferenceFitsCap(
+  entry: ManhuaSegmentReferenceEntry | undefined,
+  capSec: number,
+): entry is ManhuaSegmentReferenceEntry {
+  if (!entry) return false;
+  if (entry.durationSec == null) return capSec >= MANHUA_SEGMENT_REFERENCE_CAP_SEC.seedance;
+  return entry.durationSec <= capSec + 0.05;
 }

@@ -29,7 +29,8 @@ describe("漫剧工厂段级参考接线", () => {
     expect(existing).not.toContain("manhuaSegmentRefs");
   });
   it("出片只在非编辑模式注入白模，母轨存在时不再并列逐句配音", () => {
-    expect(runBlockSource).toContain("isClip && useSeedance25 && !isManhuaVideoEditBlock(block) && !runOptions?.pilotRun");
+    expect(runBlockSource).toContain("isClip && !isManhuaVideoEditBlock(block) && !runOptions?.pilotRun");
+    expect(runBlockSource).toContain("MANHUA_SEGMENT_REFERENCE_CAP_SEC.wan30");
     expect(runBlockSource).toContain("studio: segmentMasterUrl ? undefined : block.audioStudio");
     expect(runBlockSource).toMatch(/existingAudioUrls: segmentMasterUrl\s*\?\s*\[segmentMasterUrl\]/);
   });
