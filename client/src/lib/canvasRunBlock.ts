@@ -18,7 +18,8 @@ import {
   prepareJsonDirectorImageJob,
   type AspectRatio169Or916,
 } from "@shared/jsonDirectorMiddleware";
-import { readOpenAiImageVariantPref } from "@/lib/openaiImageVariantPref";
+import { readOpenAiImageVariantMode, readOpenAiImageVariantPref } from "@/lib/openaiImageVariantPref";
+import type { OpenAiImageVariant } from "@shared/openaiImageVariant";
 import { buildCanvasGptImage2JobInput } from "@shared/canvasGptImage2JobInput";
 import {
   resolveOpenAiImageLaneForBlockId,
@@ -330,6 +331,8 @@ export async function runGptImage2(
     imageLane?: OpenAiImageLane;
     /** 批量里的第几张（0-based）：第 2 张起走批量价 */
     batchIndex?: number;
+    /** 官方模型档位；不传按开关（「双档」在单张入口按 flare） */
+    openaiImageVariant?: OpenAiImageVariant;
   },
 ): Promise<string> {
   const refImageUrl = String(opts?.refImageUrl || "").trim();
@@ -354,7 +357,7 @@ export async function runGptImage2(
       generalImageEdit: referenceImageUrls.length > 0,
       providerOverride: openaiOnly ? "openai" : undefined,
       imageLane: opts?.imageLane,
-            openaiImageVariant: readOpenAiImageVariantPref(),
+            openaiImageVariant: opts?.openaiImageVariant ?? readOpenAiImageVariantPref(),
       batchIndex: opts?.batchIndex,
     }),
   });
@@ -398,9 +401,14 @@ async function runGptImage2Batch(
   count: number,
 ): Promise<string[]> {
   // 批次号随请求带上，让服务端把第 2 张起算批量价
-  const tasks = Array.from({ length: count }, (_unused, batchIndex) =>
-    runGptImage2(prompt, aspectRatio, { ...opts, batchIndex }),
-  );
+  // 开关「双档各一张」：每张各出 flare 与 sunburst 两个版本（扣两张费），顺序 flare 在前便于对比
+  const variants: OpenAiImageVariant[] =
+    readOpenAiImageVariantMode() === "both" ? ["flare", "sunburst"] : [readOpenAiImageVariantPref()];
+  const tasks = Array.from({ length: count }, (_unused, i) =>
+    variants.map((openaiImageVariant, vi) =>
+      runGptImage2(prompt, aspectRatio, { ...opts, batchIndex: i * variants.length + vi, openaiImageVariant }),
+    ),
+  ).flat();
   return Promise.all(tasks);
 }
 

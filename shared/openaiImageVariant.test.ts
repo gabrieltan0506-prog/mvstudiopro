@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeOpenAiImageVariant, OPENAI_IMAGE_MODEL_BY_VARIANT } from "./openaiImageVariant";
+import { normalizeOpenAiImageVariant, normalizeOpenAiImageVariantMode, OPENAI_IMAGE_MODEL_BY_VARIANT } from "./openaiImageVariant";
 import { buildCanvasGptImage2JobInput } from "./canvasGptImage2JobInput";
 
 describe("openaiImageVariant", () => {
@@ -12,5 +12,10 @@ describe("openaiImageVariant", () => {
   it("job payload 带档位；非法值不带", () => {
     expect(buildCanvasGptImage2JobInput({ prompt: "p", openaiImageVariant: "sunburst" }).params.openaiImageVariant).toBe("sunburst");
     expect("openaiImageVariant" in buildCanvasGptImage2JobInput({ prompt: "p", openaiImageVariant: "x" }).params).toBe(false);
+  });
+  it("开关三档：both 只在前台展开成两张，不进 job payload", () => {
+    expect(normalizeOpenAiImageVariantMode("both")).toBe("both");
+    expect(normalizeOpenAiImageVariant("both")).toBeNull();
+    expect("openaiImageVariant" in buildCanvasGptImage2JobInput({ prompt: "p", openaiImageVariant: "both" }).params).toBe(false);
   });
 });

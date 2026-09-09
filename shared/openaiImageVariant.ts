@@ -26,3 +26,15 @@ export function normalizeOpenAiImageVariant(raw: unknown): OpenAiImageVariant | 
   const v = String(raw || "").trim().toLowerCase();
   return v === "flare" || v === "sunburst" ? v : null;
 }
+
+/** 前台开关三档：flare / sunburst / both（两档各出一张，便于对比；扣两张的费） */
+export type OpenAiImageVariantMode = OpenAiImageVariant | "both";
+export const OPENAI_IMAGE_VARIANT_MODE_LABEL_ZH: Record<OpenAiImageVariantMode, string> = {
+  flare: "Flare · 快",
+  sunburst: "Sunburst · 改图精度",
+  both: "双档各一张",
+};
+export function normalizeOpenAiImageVariantMode(raw: unknown): OpenAiImageVariantMode | null {
+  const v = String(raw || "").trim().toLowerCase();
+  return v === "flare" || v === "sunburst" || v === "both" ? v : null;
+}

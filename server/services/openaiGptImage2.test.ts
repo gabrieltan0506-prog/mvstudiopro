@@ -26,7 +26,8 @@ describe("openaiGptImage2 config", () => {
   });
 
   it("defaults generations/edits model to gpt-image-2.5-flare (0909)", () => {
-    expect(resolveOpenAiGptImage2Model()).toBe(OPENAI_GPT_IMAGE2_SNAPSHOT_DEFAULT);
+    // 0909：默认已是 gpt-image-2.5-flare；OPENAI_GPT_IMAGE2_SNAPSHOT_DEFAULT 只作旧别名保留
+    expect(OPENAI_GPT_IMAGE2_SNAPSHOT_DEFAULT).toBe("gpt-image-2-2026-04-21");
     expect(resolveOpenAiGptImage2Model()).toBe("gpt-image-2.5-flare");
   });
 
