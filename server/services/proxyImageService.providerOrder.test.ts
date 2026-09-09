@@ -52,4 +52,10 @@ describe("gpt-image 供应商顺序接线（0910：OpenAI 官方 → EvoLink 2.5
     const evo = readFileSync(new URL("./evolinkGptImage2.ts", import.meta.url), "utf8");
     expect(evo).toContain("throw new SubmitUnknownError(`EvoLink task poll timeout");
   });
+  it("抠像槽位 unknown 不吞掉其它已出图；超分链按 kind 判未知", () => {
+    const matting = readFileSync(new URL("./platformCustomMatting.ts", import.meta.url), "utf8");
+    expect(matting).toContain('(e as { kind?: string } | null)?.kind === "unknown"');
+    const upscale = readFileSync(new URL("./geminiApiImageUpscale.ts", import.meta.url), "utf8");
+    expect(upscale).toContain('(error as { kind?: string } | null)?.kind === "unknown"');
+  });
 });

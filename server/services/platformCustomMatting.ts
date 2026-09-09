@@ -76,12 +76,22 @@ async function generateOneMattingImage(
 ): Promise<string | null> {
   const gcsSubdir = `platform-custom-matting/${aspectRatio.replace(":", "x")}`;
   const evoErr: { message?: string } = {};
-  const imageUrl = await postEvolinkGptImage2AndUpload(englishPrompt, gcsSubdir, {
-    size: aspectRatio,
-    flowLog,
-    quality: "medium",
-    captureError: evoErr,
-  });
+  let imageUrl: string | null;
+  try {
+    imageUrl = await postEvolinkGptImage2AndUpload(englishPrompt, gcsSubdir, {
+      size: aspectRatio,
+      flowLog,
+      quality: "medium",
+      captureError: evoErr,
+    });
+  } catch (e) {
+    // 结果未知（任务可能仍在跑）：本槽位不重试、不换家，其余槽位照跑、已出的图照交付，不让整批付了钱丢图
+    if ((e as { kind?: string } | null)?.kind === "unknown") {
+      appendImageFlowLog(flowLog, `[自定义抠像] 第 ${slotIndex + 1} 张结果未知（任务可能仍在跑）· ${String(evoErr.message || (e instanceof Error ? e.message : e)).slice(0, 160)}`);
+      return null;
+    }
+    throw e;
+  }
   if (!imageUrl) {
     appendImageFlowLog(flowLog, `[自定义抠像] 第 ${slotIndex + 1} 张生图失败：${String(evoErr.message || "未知").slice(0, 160)}`);
     return null;
