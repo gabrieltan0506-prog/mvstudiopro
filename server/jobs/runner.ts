@@ -137,8 +137,10 @@ const JOB_TIMEOUT_MS: Record<JobType, number> = {
 
 
 /** 八审 P1-6:canvas 出图墙钟安全下限/默认值(env 只能上调,不可降到下限以下) */
-export const CANVAS_GPT_IMAGE2_MIN_TIMEOUT_MS = 12 * 60_000;
-export const CANVAS_GPT_IMAGE2_DEFAULT_TIMEOUT_MS = 15 * 60_000;
+// 0910：出图链改成官方（≤5 min，不竞速）→ WaveSpeed（提交 1 + 轮询 5 + 下载 2）→ EvoLink（≤10 min）
+// 串行最长约 23 min；墙钟必须盖过它，否则外层先退款、上游照跑照扣。
+export const CANVAS_GPT_IMAGE2_MIN_TIMEOUT_MS = 20 * 60_000;
+export const CANVAS_GPT_IMAGE2_DEFAULT_TIMEOUT_MS = 25 * 60_000;
 export const CREATIVE_NANO_IMAGE_TIMEOUT_MS = 8 * 60_000;
 
 /** 七审 P0-2:判定 canvas 出图任务(付费上游,专属超时/不重排/幂等退款) */

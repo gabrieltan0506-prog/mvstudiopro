@@ -8621,6 +8621,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           }
         }
         /** 失败分支统一退款入口；返回是否确认退回（不许谎报「已退回」） */
+        /** 结果未知（异步供应商可能已建单照扣）：不退款，账本转 settlement_pending 交对账 */
+        const holdCompositeForReconcile = async (error: unknown): Promise<boolean> => {
+          if ((error as { kind?: string } | null)?.kind !== "unknown") return false;
+          if (compositeChargeReceipt && compositeChargeReceipt.cost > 0 && compositeHoldRegistered) {
+            const { markSettlementPending } = await import("./services/paidJobLedger.js");
+            await markSettlementPending(compositeHoldJobId, "platformCompositeSheet").catch(() => false);
+          }
+          return true;
+        };
         const refundCompositeCharge = async (why: string): Promise<boolean> => {
           if (!compositeChargeReceipt || compositeChargeReceipt.cost <= 0) return true;
           try {
@@ -8822,11 +8831,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               console.error("\n[生图致命错误 (Async Background)]:", rawMessage);
 
               // 先退款再落 job 终态文案：不许把「没退成」写成「已退回」
-              const refunded = await refundCompositeCharge(
-                "platformCompositeSheet 生图致命错误退还",
-              );
-              const refundNote =
-                !compositeChargeReceipt || compositeChargeReceipt.cost <= 0
+              const reconcile = await holdCompositeForReconcile(error);
+              const refunded = reconcile
+                ? false
+                : await refundCompositeCharge("platformCompositeSheet 生图致命错误退还");
+              const refundNote = reconcile
+                ? "\n（出图结果无法确认，供应商可能已建单：为避免重复扣费未退款，已转人工对账，请勿重试）"
+                : !compositeChargeReceipt || compositeChargeReceipt.cost <= 0
                   ? ""
                   : refunded
                     ? "\n（积分已退回）"
@@ -8908,10 +8919,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
           console.error("\n[生图致命错误 (Global Node)]:", rawMessage);
 
-          const refunded = await refundCompositeCharge(
-            "platformCompositeSheet Global Node 生图致命错误退还",
-          );
-          const refundLabel = refunded ? "积分已退回" : "退款受阻已记录，账本会自动补退";
+          const reconcile = await holdCompositeForReconcile(error);
+          const refunded = reconcile
+            ? false
+            : await refundCompositeCharge("platformCompositeSheet Global Node 生图致命错误退还");
+          const refundLabel = reconcile
+            ? "结果无法确认、供应商可能已建单：未退款，已转人工对账，请勿重试"
+            : refunded
+              ? "积分已退回"
+              : "退款受阻已记录，账本会自动补退";
 
           const hasFullLogInMessage =
             rawMessage.includes("执行日志:") || rawMessage.includes("—— imageGenFlowLog ——");

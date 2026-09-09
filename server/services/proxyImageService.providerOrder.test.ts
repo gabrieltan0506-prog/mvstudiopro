@@ -35,4 +35,12 @@ describe("gpt-image-2 供应商顺序接线（0909：OpenAI 官方 → WaveSpeed
     const pool = readFileSync(new URL("./openaiImageKeyPool.ts", import.meta.url), "utf8");
     expect(pool).toContain("KEY_TIMEOUT_RE.test(msg)");
   });
+  it("三家串行墙钟 ≥20 分钟；知识卡/2×4 路径 unknown 不退款转对账", () => {
+    const runner = readFileSync(new URL("../jobs/runner.ts", import.meta.url), "utf8");
+    expect(runner).toContain("CANVAS_GPT_IMAGE2_MIN_TIMEOUT_MS = 20 * 60_000");
+    expect(runner).toContain("CANVAS_GPT_IMAGE2_DEFAULT_TIMEOUT_MS = 25 * 60_000");
+    const routers = readFileSync(new URL("../routers.ts", import.meta.url), "utf8");
+    expect((routers.match(/holdCompositeForReconcile\(error\)/g) || []).length).toBe(2);
+    expect(routers).toContain('markSettlementPending(compositeHoldJobId, "platformCompositeSheet")');
+  });
 });
