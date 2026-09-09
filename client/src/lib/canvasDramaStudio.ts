@@ -2540,6 +2540,8 @@ export function ensureManhuaFragmentClips(
       refVideoUrl: undefined,
       seedance25RefVideoUrls: undefined,
       seedance25RefAudioUrls: undefined,
+      // 段级白模/母轨/登记成片属于某一段，新段不能借模板的。已有段走上面 existing 分支原样保留。
+      manhuaSegmentRefs: undefined,
       // 模板只借布局与引擎；新段/新原稿不能继承另一段的对白、配乐或在途单。
       audioStudio: undefined,
       seedance25TimestampStoryboard: undefined,

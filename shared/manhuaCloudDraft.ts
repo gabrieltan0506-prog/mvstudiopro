@@ -23,6 +23,7 @@ import {
   emptyManhuaClipQualityChecks,
   type ManhuaClipQualityReport,
 } from "./manhuaClipQuality.js";
+import { normalizeManhuaSegmentReferences } from "./manhuaSegmentReference.js";
 import {
   isSeedance25EvolinkMode,
   type SeedanceEvolinkMode,
@@ -110,6 +111,7 @@ export type ManhuaCloudDraftCanvasBlock = {
   seedance25WorkMode?: SeedanceEvolinkMode;
   seedance25RefVideoUrls?: string[];
   seedance25RefAudioUrls?: string[];
+  manhuaSegmentRefs?: import("./manhuaSegmentReference").ManhuaSegmentReferences;
   audioStudio?: import("./canvasAudioStudio").CanvasAudioStudio;
   seedance25TimestampStoryboard?: string;
   seedance25ReshootFromSec?: number;
@@ -437,6 +439,8 @@ export function sanitizeManhuaCloudDraftBlock(
         : undefined,
       seedance25RefVideoUrls: keepHttpUrls(b.seedance25RefVideoUrls),
       seedance25RefAudioUrls: keepHttpUrls(b.seedance25RefAudioUrls),
+      // 段级白模/母轨/登记成片：与付费成片同级，云备份丢了就要重传重签
+      manhuaSegmentRefs: normalizeManhuaSegmentReferences(b.manhuaSegmentRefs),
       audioStudio: b.audioStudio == null ? undefined : canvasAudioStudioSchema.parse(b.audioStudio),
       seedance25TimestampStoryboard:
         typeof b.seedance25TimestampStoryboard === "string"

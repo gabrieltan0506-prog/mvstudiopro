@@ -9,8 +9,14 @@ import {
   compileManhuaVideoEditPrompt,
   isManhuaVideoEditBlock,
 } from "./manhuaMediaVersions";
-import { runGeminiScript } from "./omniCanvasApi";
+import { resolveCanvasMaterialUrl, runGeminiScript } from "./omniCanvasApi";
 import { createCanvasAssetResigner, resignCanvasBlockUploadedReferences } from "./canvasAssetResign";
+import {
+  formatManhuaSegmentReferenceGuideZh,
+  manhuaSegmentReferenceFitsCap,
+  MANHUA_SEGMENT_REFERENCE_CAP_SEC,
+  type ManhuaSegmentReferenceEntry,
+} from "@shared/manhuaSegmentReference";
 import {
   compileI2VMotionPrompt,
   isManhuaSeedanceDirectorPrompt,
@@ -1002,14 +1008,17 @@ export function resolveWan30CanvasVideoUrls(input: {
 /** 与 videoUrls 数组同序生成唯一职责，保证 Reference video N 不悬空、不串位。 */
 export function buildWanVideoReferenceRoleBlock(
   videoUrls: string[],
-  opts?: { continuityVideoUrl?: string },
+  opts?: { continuityVideoUrl?: string; previsVideoUrl?: string },
 ): string {
   if (!videoUrls.length) return "";
   const continuity = String(opts?.continuityVideoUrl || "").trim();
+  const previs = String(opts?.previsVideoUrl || "").trim();
   const lines = videoUrls.map((url, index) =>
-    url === continuity
-      ? `Reference video ${index + 1}:上一段成片，仅用于承接起幅、人物状态与空间连续性`
-      : `Reference video ${index + 1}:用户选定的视频参考，仅继承明确相关的动作、节奏或镜头信息`,
+    previs && url === previs
+      ? `Reference video ${index + 1}:本段站位白模，严格按它的秒位复刻人物走位、景别切换与机位运动；灰色人偶、空白场景与网格不进画面，外观只按参考图与正文`
+      : url === continuity
+        ? `Reference video ${index + 1}:上一段成片，仅用于承接起幅、人物状态与空间连续性`
+        : `Reference video ${index + 1}:用户选定的视频参考，仅继承明确相关的动作、节奏或镜头信息`,
   );
   return `【参考视频职责】\n${lines.join("\n")}\n每条参考视频只承担上述职责，禁止把无关人物、服装、文字或背景迁移到本段。`;
 }
@@ -1018,11 +1027,15 @@ export function buildWanVideoReferenceRoleBlock(
 export function buildWanAudioReferenceRoleBlock(
   audioUrls: string[],
   attached: ManhuaVoicePickPlan["attached"],
-  opts?: { accentFallbackUrl?: string },
+  opts?: { accentFallbackUrl?: string; masterAudioUrl?: string },
 ): string {
   if (!audioUrls.length) return "";
   const accentFallbackUrl = String(opts?.accentFallbackUrl || "").trim();
+  const masterAudioUrl = String(opts?.masterAudioUrl || "").trim();
   const lines = audioUrls.map((url, index) => {
+    if (masterAudioUrl && url === masterAudioUrl) {
+      return `Reference audio ${index + 1}:本片最终音轨，对白与配乐已预混；口型与动作逐秒同步，不再另配对白、配乐或旁白`;
+    }
     const speakers = attached
       .filter((item) => item.audioUrl === url)
       .map((item) => String(item.labelZh || item.characterTag || "").trim())
@@ -1621,8 +1634,11 @@ export async function runCanvasBlock(
       const access = resolveSeedance25Access({ plan: deps.userPlan, role: deps.userRole });
       if (!access.allowed) throw new Error(access.message || "当前账号未开放高级视频编辑");
       // 工厂编辑入口只选择一条原片；旧上游片、静帧、导演板与声线不能自动混入。
-      const source = String(block.seedance25RefVideoUrls?.[0] || block.refVideoUrl || "").trim();
-      if (!/^https?:\/\//i.test(source)) throw new Error("请先选择本次要修改的原片");
+      const sourceRaw = String(block.seedance25RefVideoUrls?.[0] || block.refVideoUrl || "").trim();
+      if (!/^https?:\/\//i.test(sourceRaw)) throw new Error("请先选择本次要修改的原片");
+      // 登记进来的外部成片是 60 分钟签名链：编辑前按 gcsUri 现签，过期不挡编辑。
+      const [source] = await refreshManhuaRegisteredClipUrls(block.manhuaSegmentRefs?.registered, [sourceRaw]);
+      if (!source) throw new Error("请先选择本次要修改的原片");
       const editPrompt = compileManhuaVideoEditPrompt(block.prompt);
       const editSourceDurationSec = (await probeVideoDurationSec(source)) || undefined;
       const edited = await runSeedanceProductVideo(editPrompt, undefined, ar, {
@@ -1924,26 +1940,61 @@ export async function runCanvasBlock(
         parseManhuaClipTargetDurationSec(block.prompt) ??
         undefined;
       const clipDuration = clampManhuaClipDurationSecForVideoModel(videoModel, clipDurationRaw);
+      // 漫剧工厂段级参考：只在多模态参考出片、非局部编辑、非 10 秒试片时注入
+      // （试片 10 s 配 30 s 白模/母轨会让模型在两个时长之间二选一）。
+      // 各引擎按自己的时长上限取舍：Seedance 2.x ≤30 s，Wan 3.0 视频/音频各 ≤15 s；
+      // 白模一旦送出就不再送上段接力片与旧成片（三条 30 s 叠到 90 s 会被拒，且接力片无序号说明）。
+      const segmentRefs =
+        isClip && !isManhuaVideoEditBlock(block) && !runOptions?.pilotRun
+          ? block.manhuaSegmentRefs
+          : undefined;
+      const segmentCapSec = useWan30
+        ? MANHUA_SEGMENT_REFERENCE_CAP_SEC.wan30
+        : MANHUA_SEGMENT_REFERENCE_CAP_SEC.seedance;
+      const segmentPrevisUrl = manhuaSegmentReferenceFitsCap(segmentRefs?.previs, segmentCapSec)
+        ? await freshManhuaSegmentReferenceUrl(segmentRefs.previs)
+        : undefined;
+      const segmentMasterEntry = manhuaSegmentReferenceFitsCap(segmentRefs?.master, segmentCapSec)
+        ? segmentRefs.master
+        : undefined;
+      if (segmentRefs?.previs && !segmentPrevisUrl) {
+        console.warn(`[canvasRunBlock] 段白模超出 ${videoModel} 参考上限 ${segmentCapSec}s 或时长未知，本次不送`);
+      }
+      if (segmentRefs?.master && !segmentMasterEntry) {
+        console.warn(`[canvasRunBlock] 段母轨超出 ${videoModel} 参考上限 ${segmentCapSec}s 或时长未知，本次不送`);
+      }
       if (useWan30) {
         // Wan 3.0 公测:多图参考 + 可选对白参考音;30s 直出;排队时间较长。
         // 提示词按 Wan 口径编译:不用 Seedance 的 @图片N 绑定,改为按数组顺序的参考职责表(审查 P1)
         const wanImages = httpsImages.length ? httpsImages : ([seedStill].filter(Boolean) as string[]);
+        const wanContinuityVideoUrl = segmentPrevisUrl ? undefined : continuityVideoUrl;
         const wanVideoUrls = resolveWan30CanvasVideoUrls({
-          selectedVideoUrls: block.seedance25RefVideoUrls,
-          continuityVideoUrl,
+          selectedVideoUrls: [
+            ...(segmentPrevisUrl ? [segmentPrevisUrl] : []),
+            ...(block.seedance25RefVideoUrls || []),
+          ],
+          continuityVideoUrl: wanContinuityVideoUrl,
         });
+        // Wan 的音频只收 https：母轨按 gcsUri 现签；母轨存在时就是唯一音轨
+        const wanMasterUrl = segmentMasterEntry
+          ? await freshManhuaSegmentReferenceUrl(segmentMasterEntry)
+          : undefined;
         const wanAudioUrls = Array.from(
           new Set(
-            seedanceAudioUrls
+            (wanMasterUrl ? [wanMasterUrl] : seedanceAudioUrls)
               .map((audioUrl) => String(audioUrl || "").trim())
               .filter((audioUrl) => /^https?:\/\//i.test(audioUrl)),
           ),
         );
         const wanPrompt = [
           buildWanReferenceRoleBlock(wanImages, keptEntries),
-          buildWanVideoReferenceRoleBlock(wanVideoUrls, { continuityVideoUrl }),
+          buildWanVideoReferenceRoleBlock(wanVideoUrls, {
+            continuityVideoUrl: wanContinuityVideoUrl,
+            previsVideoUrl: segmentPrevisUrl,
+          }),
           buildWanAudioReferenceRoleBlock(wanAudioUrls, voicePlan.attached, {
             accentFallbackUrl,
+            masterAudioUrl: wanMasterUrl,
           }),
           isClip ? stripManhuaStaleAssetBindForModel(motionPrompt) : motionPrompt,
           voiceOneLine ? `【声线】${voiceOneLine}` : "",
@@ -2008,18 +2059,36 @@ export async function runCanvasBlock(
         const userRefAudios = (block.seedance25RefAudioUrls || [])
           .map((u) => String(u || "").trim())
           .filter((u) => /^(?:https:\/\/|gs:\/\/)/i.test(u));
-        const userVideoUrls = Array.from(
-          new Set([
-            ...userRefVideos,
-            // 用户勾选/上传的参考视频排在接力成片之前：正文里的 @视频1 按数组顺序绑定。
-            // refVideoUrl 为空时兜底到上传记录里的首个视频（uploadedVideoUrl），不静默丢失。
-            ...(useSeedance25 && userSelectedVideoUrl ? [userSelectedVideoUrl] : []),
-            ...(continuityVideoUrl ? [continuityVideoUrl] : []),
-          ]),
+        // 漫剧工厂段级参考：白模只在多模态参考模式注入（局部编辑时 @视频1 必须是原片）；
+        // 母轨一旦存在就是唯一音轨，逐句配音不再并列送（多轨相加会超供应商 30 s 上限）。
+        const segmentMasterUrl = segmentMasterEntry
+          ? String(segmentMasterEntry.gcsUri || segmentMasterEntry.url || "").trim() || undefined
+          : undefined;
+        // 用户显式参考（白模 / 勾选 / 上传 / 上游接力）；本节点旧成片不在其中，见 ownOutputAsSource。
+        const userVideoUrls = await refreshManhuaRegisteredClipUrls(
+          block.manhuaSegmentRefs?.registered,
+          Array.from(
+            new Set([
+              ...(segmentPrevisUrl ? [segmentPrevisUrl] : []),
+              ...userRefVideos,
+              // 用户勾选/上传的参考视频排在接力成片之前：正文里的 @视频1 按数组顺序绑定。
+              // refVideoUrl 为空时兜底到上传记录里的首个视频（uploadedVideoUrl），不静默丢失。
+              // clip 段的 refVideoUrl 就是上段接力片（非用户勾选），有白模时同样不送
+              ...(useSeedance25 && userSelectedVideoUrl && !(isClip && segmentPrevisUrl)
+                ? [userSelectedVideoUrl]
+                : []),
+              // 有白模时不再送上段接力片：三条 30 s 叠到 90 s 会被拒，
+              // 且接力片没有序号说明，模型会把它也当站位参考。承接靠尾帧图（imageUrls）。
+              ...(continuityVideoUrl && !segmentPrevisUrl ? [continuityVideoUrl] : []),
+            ]),
+          ),
         );
         const audioBindings = compileCanvasAudioBindings({
-          studio: block.audioStudio,
-          existingAudioUrls: [...userRefAudios, ...seedanceAudioUrls],
+          // 母轨就是唯一音轨：已采用的逐句配音也不并列（两套对白打架、总时长超 30 s）
+          studio: segmentMasterUrl ? undefined : block.audioStudio,
+          existingAudioUrls: segmentMasterUrl
+            ? [segmentMasterUrl]
+            : [...userRefAudios, ...seedanceAudioUrls],
           durationSec: clipDuration,
         });
         const candidateAudioUrls = audioBindings.audioUrls;
@@ -2042,10 +2111,18 @@ export async function runCanvasBlock(
             ? [block.outputUrl]
             : [];
         const candidateVideoUrls = Array.from(new Set([...userVideoUrls, ...ownOutputAsSource]));
+        const segmentGuide = formatManhuaSegmentReferenceGuideZh({
+          previsVideoIndex: segmentPrevisUrl ? candidateVideoUrls.indexOf(segmentPrevisUrl) + 1 : 0,
+          masterAudioIndex: segmentMasterUrl ? candidateAudioUrls.indexOf(segmentMasterUrl) + 1 : 0,
+        });
         const storyboard = String(block.seedance25TimestampStoryboard || "").trim();
-        const promptWithStoryboard = storyboard
-          ? `${seedancePrompt}\n\n【秒级分镜】\n${storyboard}`
-          : seedancePrompt;
+        const promptWithStoryboard = [
+          seedancePrompt,
+          segmentGuide,
+          storyboard ? `【秒级分镜】\n${storyboard}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n");
         let editSourceDurationSec: number | undefined;
         let finalPrompt = audioBindings.promptAppendix
           ? `${promptWithStoryboard}\n\n${audioBindings.promptAppendix}`
@@ -2144,6 +2221,39 @@ export async function runCanvasBlock(
   }
 
   throw new Error("未知方块类型");
+}
+
+/**
+ * 上传件签名链 60 分钟过期（0908 实录：EvoLink「输入媒体下载不了」）。
+ * 提交前按 gcsUri 现签；签不到就退回原链，不在这里挡出片。
+ */
+async function freshManhuaSegmentReferenceUrl(
+  entry: ManhuaSegmentReferenceEntry,
+): Promise<string | undefined> {
+  if (entry.gcsUri) {
+    try {
+      const fresh = String(await resolveCanvasMaterialUrl(entry.gcsUri) || "").trim();
+      if (/^https:\/\//i.test(fresh)) return fresh;
+    } catch {
+      // 退回已存链
+    }
+  }
+  const stored = String(entry.url || "").trim();
+  return /^https?:\/\//i.test(stored) ? stored : undefined;
+}
+
+/** 登记成片被拿去局部编辑/接力时，把过期的登记链换成现签链，其余候选原样。 */
+async function refreshManhuaRegisteredClipUrls(
+  registered: ManhuaSegmentReferenceEntry | undefined,
+  urls: string[],
+): Promise<string[]> {
+  if (!registered?.gcsUri) return urls;
+  // 云草稿回读后 url 可能被清成空串（只剩 gcsUri）：此时按“最后一个候选是登记片”无法判定，
+  // 只在候选里确实有登记链时替换；url 为空则不动，出片仍走现有候选。
+  if (!registered.url || !urls.includes(registered.url)) return urls;
+  const fresh = await freshManhuaSegmentReferenceUrl(registered);
+  if (!fresh || fresh === registered.url) return urls;
+  return Array.from(new Set(urls.map((u) => (u === registered.url ? fresh : u))));
 }
 
 export { uploadFileToSignedUrl, resolveCanvasMaterialUrl } from "./omniCanvasApi";
