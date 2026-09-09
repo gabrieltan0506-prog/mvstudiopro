@@ -41,6 +41,10 @@ import {
   parseManhuaDirectorStrategyContract,
   type ManhuaDirectorStrategyContract,
 } from "./manhuaDirectorStrategy.js";
+import {
+  normalizeManhuaSegmentCapacityModeByEpisode,
+  type ManhuaSegmentCapacityMode,
+} from "./manhuaSegmentCapacity.js";
 
 export const MANHUA_WRITER_SESSION_FORMAT = "mv-manhua-writer-session-v1" as const;
 export const MANHUA_WRITER_SESSION_LS_KEY = "mv-manhua-writer-session-v1";
@@ -92,6 +96,11 @@ export type ManhuaWriterSession = {
   characterLookSets: ManhuaCharacterLookSet[];
   /** 段手选造型：`e{集}:s{段}` → characterId → lookSetId */
   segmentLookBindings: Record<string, Record<string, string>>;
+  /**
+   * 每集「分镜→成片容量」模式：集号 → auto_by_source / block_when_over。
+   * 缺省 block_when_over（超容量拦下、不静默丢镜）。
+   */
+  segmentCapacityModeByEpisode: Record<string, ManhuaSegmentCapacityMode>;
 };
 
 export type ManhuaWriterSessionPartial = Partial<Omit<ManhuaWriterSession, "format">> & {
@@ -235,6 +244,9 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
     })(),
     characterLookSets: normalizeManhuaCharacterLookSets(input.characterLookSets),
     segmentLookBindings: normalizeManhuaSegmentLookBindings(input.segmentLookBindings),
+    segmentCapacityModeByEpisode: normalizeManhuaSegmentCapacityModeByEpisode(
+      input.segmentCapacityModeByEpisode,
+    ),
   };
 }
 

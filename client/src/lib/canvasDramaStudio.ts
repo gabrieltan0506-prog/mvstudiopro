@@ -173,6 +173,10 @@ import {
   stripManhuaClipForbiddenBoards,
   type ManhuaWorkbenchShot,
 } from "@shared/manhuaScriptWorkbench";
+import {
+  planManhuaSegmentCapacity,
+  type ManhuaSegmentCapacityMode,
+} from "@shared/manhuaSegmentCapacity";
 import { applyShotAnglesFromText } from "@shared/manhuaShotAnglePersist";
 import { applyShotDialoguesFromText } from "@shared/manhuaShotDialoguePersist";
 import { mergeManhuaDerivedClipPrompt } from "@shared/manhuaClipUserSupplement";
@@ -1989,6 +1993,11 @@ export type ManhuaFragmentClipEnsureOptions = {
   > | null;
   /** 用户选定的成片引擎。 */
   videoModel?: string | null;
+  /**
+   * 本集「分镜→成片容量」模式。传 block_when_over 且原稿超出引擎固定段表时抛错拒绝铺段
+   * （错误文案写清镜数/秒数 vs 容量），绝不静默丢镜；不传则沿用按原稿分段（不丢镜）。
+   */
+  segmentCapacityMode?: ManhuaSegmentCapacityMode | null;
 };
 
 export function ensureManhuaFragmentClips(
@@ -2026,6 +2035,15 @@ export function ensureManhuaFragmentClips(
    * > 兜底默认。引擎限制每段容量，原稿决定段数与源时长。
    */
   const clipVideoModel = resolveEpisodeClipVideoModel(blocks, ep, opts?.videoModel);
+  if (opts?.segmentCapacityMode && shots.length) {
+    const capacityPlan = planManhuaSegmentCapacity({
+      shots,
+      mode: opts.segmentCapacityMode,
+      videoModel: clipVideoModel,
+      episodeIndex: ep,
+    });
+    if (!capacityPlan.ok) throw new Error(capacityPlan.errorZh);
+  }
   const segments = groupShotsIntoSegments(
     shots.length
       ? shots

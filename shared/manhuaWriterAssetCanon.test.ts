@@ -5,6 +5,8 @@ import {
   countDialogueLines,
   detectManhuaCanonWriterDrift,
   evaluateWriterPackAssetAndDensity,
+  evaluateWriterAssetTableThresholds,
+  deriveWriterAssetTablesFromScript,
   formatWriterAssetCanonIdentityLock,
   isMarkdownTableSeparatorLine,
   parseWriterTableLine,
@@ -241,5 +243,91 @@ describe("detectManhuaCanonWriterDrift · 旧 bible 与现剧本换角检测", (
     expect(names).toContain("沈砚舟");
     expect(names).toContain("沈少主");
     expect(names).toContain("云疏冷");
+  });
+});
+
+describe("资产表门槛按剧本实际实体计（0909）", () => {
+  const soloEpisodes = [
+    {
+      index: 1,
+      body: "苏照雪独自守在破庙。\n苏照雪：「今夜不会有人来了。」\n她攥紧了手里的火折子。",
+      endHook: "庙门吱呀一声开了。",
+    },
+  ];
+
+  it("空表：报人物表为空并标 assetTablesEmpty（给一键提取出路）", () => {
+    const canon = buildManhuaWriterAssetCanon({ charactersMd: "", propsMd: "", locationsMd: "", episodes: soloEpisodes });
+    const r = evaluateWriterAssetTableThresholds({ canon, episodes: soloEpisodes, charactersMd: "", propsMd: "", locationsMd: "" });
+    expect(r.assetTablesEmpty).toBe(true);
+    expect(r.errors.some((e) => /人物表为空/.test(e))).toBe(true);
+    expect(r.errors.some((e) => /场景表|道具表/.test(e))).toBe(false);
+  });
+
+  it("独角戏：1 名出场角色、无场景表无道具表 → 放行", () => {
+    const charactersMd = "- 苏照雪｜二十岁·素衣束发｜等一个人｜独自守庙";
+    const canon = buildManhuaWriterAssetCanon({ charactersMd, propsMd: "", locationsMd: "", episodes: soloEpisodes });
+    const r = evaluateWriterAssetTableThresholds({ canon, episodes: soloEpisodes, charactersMd, propsMd: "", locationsMd: "" });
+    expect(r.errors).toEqual([]);
+    expect(r.assetTablesEmpty).toBe(false);
+    expect(r.charactersInScript).toEqual(["苏照雪"]);
+  });
+
+  it("人物表角色全不在正文出场 → 拦下并提示改名/重提取", () => {
+    const charactersMd = "- 裴玄策｜三十岁·黑衣｜寻仇｜独行";
+    const canon = buildManhuaWriterAssetCanon({ charactersMd, propsMd: "", locationsMd: "", episodes: soloEpisodes });
+    const r = evaluateWriterAssetTableThresholds({ canon, episodes: soloEpisodes, charactersMd, propsMd: "", locationsMd: "" });
+    expect(r.errors.some((e) => /未在剧本正文出场/.test(e))).toBe(true);
+  });
+
+  it("场景/道具只在剧本真列了却解析不出时才要求", () => {
+    const charactersMd = "- 苏照雪｜二十岁·素衣束发｜等一个人｜独自守庙";
+    const propsMd = "- 火折子";
+    const canon = buildManhuaWriterAssetCanon({ charactersMd, propsMd, locationsMd: "", episodes: soloEpisodes });
+    expect(canon.props.length).toBe(0);
+    const r = evaluateWriterAssetTableThresholds({ canon, episodes: soloEpisodes, charactersMd, propsMd, locationsMd: "" });
+    expect(r.errors).toEqual(["道具表有条目但一条都解析不出（每行写成「- 道具名｜功能｜外形」）"]);
+  });
+
+  it("整包门禁：单主角无道具的戏不再被「≥2 人 / ≥1 道具」卡死", () => {
+    const charactersMd = "- 苏照雪｜二十岁·素衣束发｜等一个人｜独自守庙";
+    const r = evaluateWriterPackAssetAndDensity({
+      charactersMd,
+      propsMd: "",
+      locationsMd: "",
+      episodes: soloEpisodes,
+      targetSec: 90,
+    });
+    expect(r.errors.some((e) => /至少需要 2 名|道具表至少|场景表至少/.test(e))).toBe(false);
+    expect(r.assetTablesEmpty).toBe(false);
+  });
+
+  it("从剧本一键提取：按说话人/场景行/道具行补表，不动已有行", () => {
+    const episodes = [
+      {
+        index: 1,
+        body: [
+          "#### 段01",
+          "- 场景：山神破庙",
+          "- 角色：苏照雪；裴玄策",
+          "- 对白：苏照雪：「你来了。」裴玄策：「我来取玉扣。」",
+          "- 道具：双鹤玉扣",
+          "旁白：「夜雨未停。」",
+          "苏照雪：「拿去。」",
+        ].join("\n"),
+      },
+    ];
+    const out = deriveWriterAssetTablesFromScript({
+      episodes,
+      charactersMd: "- 裴玄策｜三十岁·黑衣｜寻仇｜独行",
+    });
+    expect(out.added.characters).toEqual(["苏照雪"]);
+    expect(out.added.characters).not.toContain("旁白");
+    expect(out.added.locations).toEqual(["山神破庙"]);
+    expect(out.added.props).toEqual(["双鹤玉扣"]);
+    expect(out.charactersMd.startsWith("- 裴玄策｜三十岁·黑衣｜寻仇｜独行\n- 苏照雪｜")).toBe(true);
+    const canon = buildManhuaWriterAssetCanon({ ...out, episodes });
+    expect(canon.characters.map((c) => c.nameZh)).toEqual(["裴玄策", "苏照雪"]);
+    expect(canon.locations.map((c) => c.nameZh)).toEqual(["山神破庙"]);
+    expect(canon.props.map((c) => c.nameZh)).toEqual(["双鹤玉扣"]);
   });
 });

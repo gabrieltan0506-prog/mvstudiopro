@@ -9,6 +9,8 @@ import {
   MANHUA_EPISODE_SEGMENT_TARGET_MIN_SEC,
   MANHUA_EPISODE_SEGMENT_TARGET_SEC,
   evaluateManhuaEpisodeSegmentPlanQuality,
+  extractManhuaDialogueSpeakerName,
+  extractManhuaSegmentDialogueQuotes,
   manhuaEpisodeDensityFloors,
   parseManhuaEpisodeSegmentPlanFromMarkdown,
 } from "./manhuaEpisodeSegmentPlan.js";
@@ -506,6 +508,170 @@ export function evaluateWriterEpisodeDensity(input: {
   return { ok: errors.length === 0, errors, stats };
 }
 
+/** 表 md 里是否至少写了一条像资产的行（不管能不能解析出外形/功能） */
+export function writerTableMdHasListedEntries(md: string | null | undefined): boolean {
+  const lines = stripMarkdownTableHeaderLines(
+    String(md || "")
+      .split(/\n/)
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+  return lines.some((line) => parseWriterTableLine(line) !== null);
+}
+
+function bodyMentionsName(bodies: string[], name: string): boolean {
+  const n = normName(name);
+  if (!n || n.length < 1) return false;
+  return bodies.some((b) => b.includes(n));
+}
+
+export type WriterAssetTableThresholdResult = {
+  errors: string[];
+  /** 人物表一条都没有（含解析不出）：给一键提取入口 */
+  assetTablesEmpty: boolean;
+  /** 人物表里在剧本正文出场的角色名 */
+  charactersInScript: string[];
+};
+
+/**
+ * 资产表门槛按剧本实际实体计（0909）：
+ *   - 人物：至少 1 名**在正文出场**的角色。空表直接给「提取」出路；有表但全不出场则提示改名。
+ *   - 场景 / 道具：只有剧本真的列了条目（表里有行）才要求能解析出 ≥1 条；
+ *     一人独角戏、没有关键道具的戏，不再被「≥2 人 / ≥1 场景 / ≥1 道具」硬门槛卡死。
+ * 不放松锁脸：出场角色没定妆仍走 ensureManhuaFragmentClips 的【待锁·未锁脸】拦截。
+ */
+export function evaluateWriterAssetTableThresholds(input: {
+  canon: Pick<ManhuaWriterAssetCanon, "characters" | "props" | "locations">;
+  episodes: Array<{ index: number; body?: string; endHook?: string }>;
+  charactersMd?: string | null;
+  propsMd?: string | null;
+  locationsMd?: string | null;
+}): WriterAssetTableThresholdResult {
+  const errors: string[] = [];
+  const bodies = (input.episodes || []).map((ep) =>
+    normName(`${String(ep.body || "")}\n${String(ep.endHook || "")}`),
+  );
+  const charactersInScript = input.canon.characters
+    .filter((c) => bodyMentionsName(bodies, c.nameZh) || (c.aliasZh ? bodyMentionsName(bodies, c.aliasZh) : false))
+    .map((c) => c.nameZh);
+  const assetTablesEmpty = input.canon.characters.length === 0;
+  if (assetTablesEmpty) {
+    errors.push(
+      writerTableMdHasListedEntries(input.charactersMd)
+        ? "人物表有内容但一条都解析不出（每行写成「- 姓名｜年龄外形｜动机｜关系」）；也可点「从剧本提取资产表」按对白说话人重建"
+        : "人物表为空：至少需要 1 名在本集出场的角色。点「从剧本提取资产表」可按对白说话人／场景行自动补表，再确认",
+    );
+  } else if (!charactersInScript.length) {
+    errors.push(
+      `人物表里的角色（${input.canon.characters
+        .slice(0, 4)
+        .map((c) => c.nameZh)
+        .join("、")}）都未在剧本正文出场：请把名字改成与正文一致，或点「从剧本提取资产表」按正文重建`,
+    );
+  }
+  if (writerTableMdHasListedEntries(input.locationsMd) && input.canon.locations.length < 1) {
+    errors.push("场景表有条目但一条都解析不出（每行写成「- 场景名｜氛围｜关键元素」）");
+  }
+  if (writerTableMdHasListedEntries(input.propsMd) && input.canon.props.length < 1) {
+    errors.push("道具表有条目但一条都解析不出（每行写成「- 道具名｜功能｜外形」）");
+  }
+  return { errors, assetTablesEmpty, charactersInScript };
+}
+
+/** 对白说话人里的非角色词：旁白/画外音/众人不是可定妆的人 */
+const NON_CHARACTER_SPEAKER_RE =
+  /^(旁白|画外音|字幕|众人|群众|路人|所有人|全体|系统|OS|os|镜头|画面|音效|BGM)$/;
+
+export type WriterAssetTablesDerived = {
+  charactersMd: string;
+  propsMd: string;
+  locationsMd: string;
+  added: { characters: string[]; locations: string[]; props: string[] };
+};
+
+/**
+ * 从剧本正文一键（重）提取资产表：只补表里没有的名字，不改用户已写的行。
+ *   - 人物：对白说话人「苏照雪：「…」」与可拍表「角色：」行；@角色N 占位不算
+ *   - 场景：可拍表「场景：」行与正文「场景/地点：」行
+ *   - 道具：可拍表「道具：」行与正文「道具：」行
+ * 外形/功能句留「待补」占位，出定妆图前用户仍需补一句；这里只解决「空表卡死」。
+ */
+export function deriveWriterAssetTablesFromScript(input: {
+  episodes: Array<{ index: number; body?: string }>;
+  charactersMd?: string | null;
+  propsMd?: string | null;
+  locationsMd?: string | null;
+}): WriterAssetTablesDerived {
+  const existing = {
+    characters: new Set(collectWriterCharacterNames(input.charactersMd).map(normName)),
+    locations: new Set(parseTableMd(String(input.locationsMd || ""), "scene").map((a) => normName(a.nameZh))),
+    props: new Set(parseTableMd(String(input.propsMd || ""), "prop").map((a) => normName(a.nameZh))),
+  };
+  const charHits = new Map<string, number>();
+  const sceneNames: string[] = [];
+  const propNames: string[] = [];
+  const pushUnique = (list: string[], name: string) => {
+    const n = String(name || "").trim().replace(/[。；;，,]+$/, "").slice(0, 24);
+    if (!n || n.length < 2) return;
+    if (/^@?角色\d+$/.test(n) || /^（|^无$|^待补/.test(n)) return;
+    if (!list.some((x) => normName(x) === normName(n))) list.push(n);
+  };
+  const splitList = (raw: string): string[] =>
+    String(raw || "")
+      .split(/[；;、，,／/|｜]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  const bumpChar = (name: string) => {
+    const n = String(name || "").trim().slice(0, 12);
+    if (n.length < 2 || NON_CHARACTER_SPEAKER_RE.test(n) || /^@?角色\d+$/.test(n)) return;
+    charHits.set(n, (charHits.get(n) || 0) + 1);
+  };
+  for (const ep of input.episodes || []) {
+    const body = String(ep.body || "");
+    const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(body);
+    for (const seg of plan.segments) {
+      splitList(seg.castZh).forEach(bumpChar);
+      splitList(seg.sceneZh).forEach((n) => pushUnique(sceneNames, n));
+      for (const q of extractManhuaSegmentDialogueQuotes(seg.dialogueZh)) {
+        bumpChar(extractManhuaDialogueSpeakerName(q));
+      }
+    }
+    for (const rawLine of body.split(/\n/)) {
+      const line = rawLine.trim().replace(/^[-*•]\s*/, "");
+      if (!line) continue;
+      bumpChar(extractManhuaDialogueSpeakerName(line));
+      const scene = line.match(/^(?:场景|地点|场次)\s*[:：]\s*(.+)$/);
+      if (scene) splitList(scene[1]!).forEach((n) => pushUnique(sceneNames, n));
+      const prop = line.match(/^(?:道具|关键道具|信物)\s*[:：]\s*(.+)$/);
+      if (prop) splitList(prop[1]!).forEach((n) => pushUnique(propNames, n));
+    }
+  }
+  const characters = Array.from(charHits.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh"))
+    .map(([n]) => n)
+    .filter((n) => !existing.characters.has(normName(n)))
+    .slice(0, 12);
+  const locations = sceneNames.filter((n) => !existing.locations.has(normName(n))).slice(0, 16);
+  const props = propNames.filter((n) => !existing.props.has(normName(n))).slice(0, 16);
+  const join = (prev: string | null | undefined, lines: string[]) =>
+    [String(prev || "").trim(), ...lines].filter(Boolean).join("\n");
+  return {
+    charactersMd: join(
+      input.charactersMd,
+      characters.map((n) => `- ${n}｜外形待补（从剧本自动提取，请补一句年龄外形）｜动机待补｜关系待补`),
+    ),
+    locationsMd: join(
+      input.locationsMd,
+      locations.map((n) => `- ${n}｜氛围待补（从剧本自动提取）｜关键元素待补`),
+    ),
+    propsMd: join(
+      input.propsMd,
+      props.map((n) => `- ${n}｜功能待补（从剧本自动提取）｜外形待补`),
+    ),
+    added: { characters, locations, props },
+  };
+}
+
 export function evaluateWriterPackAssetAndDensity(input: {
   charactersMd?: string | null;
   propsMd?: string | null;
@@ -520,7 +686,11 @@ export function evaluateWriterPackAssetAndDensity(input: {
   /** 仅 layout 模式使用新写作的段数目标。 */
   segmentMin?: number;
   segmentMax?: number;
-}): WriterDensityGateResult & { canon: ManhuaWriterAssetCanon } {
+}): WriterDensityGateResult & {
+  canon: ManhuaWriterAssetCanon;
+  /** 人物表一条都没解析出来：UI 应给「从剧本提取资产表」而不是死路 */
+  assetTablesEmpty: boolean;
+} {
   const canon = buildManhuaWriterAssetCanon(input);
   const density = evaluateWriterEpisodeDensity({
     episodes: input.episodes,
@@ -530,15 +700,15 @@ export function evaluateWriterPackAssetAndDensity(input: {
     durationSecPerSegment: input.durationSecPerSegment,
   });
   const errors = [...density.errors];
-  if (canon.characters.length < 2) {
-    errors.push("人物表至少需要 2 名可锁定角色（含外形句）");
-  }
-  if (canon.locations.length < 1) {
-    errors.push("场景表至少需要 1 个系列场景");
-  }
-  if (canon.props.length < 1) {
-    errors.push("道具表至少需要 1 件关键道具");
-  }
+  // 资产表门槛按剧本实际实体计：空表/单主角/无道具的戏不该卡死在资产页
+  const thresholds = evaluateWriterAssetTableThresholds({
+    canon,
+    episodes: input.episodes,
+    charactersMd: input.charactersMd,
+    propsMd: input.propsMd,
+    locationsMd: input.locationsMd,
+  });
+  errors.push(...thresholds.errors);
   // 原稿所有实际段均须验收；新写作显式 layout 模式保留原预算门槛。
   if (input.segmentCountMode !== "layout" || (input.targetSec ?? MANHUA_EPISODE_SEGMENT_TARGET_SEC) >= MANHUA_EPISODE_SEGMENT_TARGET_MIN_SEC) {
     const segMin = Math.max(
@@ -582,5 +752,6 @@ export function evaluateWriterPackAssetAndDensity(input: {
     errors,
     stats: density.stats,
     canon,
+    assetTablesEmpty: thresholds.assetTablesEmpty,
   };
 }

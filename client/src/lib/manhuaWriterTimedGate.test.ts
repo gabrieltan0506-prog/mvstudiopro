@@ -478,6 +478,7 @@ describe("原稿导入至确认门禁", () => {
       visit(tree);
       expect(callback).not.toBe("");
       const blockers = vi.fn();
+      const tablesEmpty = vi.fn();
       const confirmed = vi.fn();
       const action = runInNewContext(
         ts.transpileModule(`(${callback})`, {
@@ -491,6 +492,7 @@ describe("原稿导入至确认门禁", () => {
           writerLayoutProfile: {},
           evaluateWriterPackAssetAndDensity,
           setWriterConfirmBlockers: blockers,
+          setWriterConfirmAssetTablesEmpty: tablesEmpty,
           setWriterConfirmed: confirmed,
           setImmersiveWorkspaceView: vi.fn(),
           toast: { error: vi.fn() },
@@ -499,11 +501,11 @@ describe("原稿导入至确认门禁", () => {
         }
       );
       action();
+      // 0909：门槛按剧本实际实体计——空表只报「人物表为空」并给提取出路；场景/道具没列就不要求
       expect(blockers.mock.calls[0][0]).toEqual([
-        "人物表至少需要 2 名可锁定角色（含外形句）",
-        "场景表至少需要 1 个系列场景",
-        "道具表至少需要 1 件关键道具",
+        "人物表为空：至少需要 1 名在本集出场的角色。点「从剧本提取资产表」可按对白说话人／场景行自动补表，再确认",
       ]);
+      expect(tablesEmpty).toHaveBeenCalledWith(true);
       expect(confirmed).not.toHaveBeenCalled();
     }
   );
