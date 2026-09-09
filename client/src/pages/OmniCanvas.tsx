@@ -8295,6 +8295,10 @@ export default function OmniCanvas() {
         toast.error(kindError);
         return;
       }
+      if (segmentRefBusyId) {
+        toast.message("上一段参考还在上传，稍等再传");
+        return;
+      }
       setSegmentRefBusyId(clipBlockId);
       try {
         const { uploadOneCanvasAsset } = await import("@/lib/canvasUpload");
@@ -8332,7 +8336,7 @@ export default function OmniCanvas() {
         setSegmentRefBusyId(null);
       }
     },
-    [factoryBusy, blocks, getSignedUrlMutation, patchClipBlockPersist],
+    [factoryBusy, blocks, getSignedUrlMutation, patchClipBlockPersist, segmentRefBusyId],
   );
   const handleSegmentReferenceClear = useCallback(
     (clipBlockId: string, slot: ManhuaSegmentReferenceSlot) => {

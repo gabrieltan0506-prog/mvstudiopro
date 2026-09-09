@@ -85,11 +85,15 @@ function pickSegmentReferenceFile(accept: string, onPick: (file: File) => void) 
   const input = document.createElement("input");
   input.type = "file";
   input.accept = accept;
+  // WebKit 对未挂载的 input 可能在弹窗返回前回收、change 不触发：挂到 body，选完再摘
+  input.style.display = "none";
   input.onchange = () => {
     const file = input.files?.[0];
     input.value = "";
+    input.remove();
     if (file) onPick(file);
   };
+  document.body.appendChild(input);
   input.click();
 }
 
@@ -691,7 +695,7 @@ export default function ManhuaClipDock({
                     return (
                       <li
                         key={it.blockId}
-                        className={`flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-white/[0.04] ${
+                        className={`flex flex-wrap items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-white/[0.04] ${
                           clipPendingDecision
                             ? "bg-amber-500/[0.07]"
                             : clipSoftAccepted
@@ -775,6 +779,7 @@ export default function ManhuaClipDock({
                           <span
                             className="inline-flex items-center gap-0.5"
                             data-testid={`manhua-segment-refs-${it.blockId}`}
+                            aria-busy={segmentRefBusyId === it.blockId}
                           >
                             {(["previs", "master"] as const).map((slot) => {
                               const entry = blockById.get(it.blockId)?.manhuaSegmentRefs?.[slot];
@@ -842,7 +847,7 @@ export default function ManhuaClipDock({
                               登记成片
                             </button>
                             {segmentRefBusyId === it.blockId ? (
-                              <Loader2 className="h-3 w-3 animate-spin text-cyan-200" />
+                              <Loader2 className="h-3 w-3 animate-spin text-cyan-200" aria-label="上传中" />
                             ) : null}
                           </span>
                         ) : null}

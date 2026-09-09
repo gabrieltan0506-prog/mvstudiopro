@@ -20,6 +20,7 @@ vi.mock("./longJobsFlyOrigin", () => ({
 import { defaultCanvasBlock } from "./canvasTypes";
 import { runCanvasBlock } from "./canvasRunBlock";
 import { applyManhuaVideoEditInstruction } from "./manhuaMediaVersions";
+import { canvasAudioCueInputKey, createCanvasAudioCue, emptyCanvasAudioStudio } from "@shared/canvasAudioStudio";
 
 const RESULT = "https://test.invalid/segment-result.mp4";
 const PREVIS_STORED = "https://test.invalid/previs-expired.mp4?sig=old";
@@ -78,7 +79,8 @@ describe("漫剧工厂段级参考进出片请求（无网络）", () => {
     expect(req.workMode).toBe("reference_to_video");
     expect((req.videoUrls as string[])[0]).toBe(PREVIS_FRESH);
     expect(req.videoUrls).not.toContain(PREVIS_STORED);
-    expect(req.videoUrls).toContain(PREV_TAIL);
+    // 有白模就不再送上段接力片：三条 30 s 叠到 90 s 会被拒
+    expect(req.videoUrls).toEqual([PREVIS_FRESH]);
     expect(req.audioUrls).toEqual([MASTER_GCS]);
     expect(signRequests).toEqual([PREVIS_GCS]);
     const prompt = String(req.prompt);
@@ -97,6 +99,28 @@ describe("漫剧工厂段级参考进出片请求（无网络）", () => {
     );
     await runCanvasBlock({ ...deps, characterVoiceLocks: [] }, segmentBlock());
     expect((requests[0]!.videoUrls as string[])[0]).toBe(PREVIS_STORED);
+  });
+  it("已采用逐句配音的段挂了母轨后，只送母轨一条音频", async () => {
+    const cue = { ...createCanvasAudioCue("dialogue", "line-1"), speakerZh: "阿菁", voiceStateZh: "常态", voice: "Dylan", textZh: "别怕。", shotZh: "近景", approved: true, selectedTakeId: "take-1" };
+    cue.takes.push({ id: "take-1", gcsUri: "gs://test-bucket/post-prod/1/line.wav", previewUrl: "", durationSec: 2, createdAt: "2026-09-08", inputKey: canvasAudioCueInputKey(cue) });
+    const block = { ...segmentBlock(), audioStudio: { ...emptyCanvasAudioStudio(), cues: [cue] } };
+    await runCanvasBlock({ ...deps, characterVoiceLocks: [] }, block);
+    expect(requests[0]!.audioUrls).toEqual([MASTER_GCS]);
+    expect(String(requests[0]!.prompt)).not.toContain("@audio2");
+  });
+  it("10 秒试片不注入白模与母轨", async () => {
+    const block = { ...segmentBlock(), refVideoUrl: undefined };
+    await runCanvasBlock({ ...deps, characterVoiceLocks: [] }, block, undefined, { pilotRun: true });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.videoUrls ?? []).not.toContain(PREVIS_FRESH);
+    expect(requests[0]!.audioUrls ?? []).not.toContain(MASTER_GCS);
+    expect(String(requests[0]!.prompt)).not.toContain("站位白模");
+  });
+  it("Seedance 2.0 不注入白模（video_url 不是站位语义）", async () => {
+    const block = { ...segmentBlock(), videoModel: "seedance-2.0" as const, refVideoUrl: undefined };
+    await runCanvasBlock({ ...deps, characterVoiceLocks: [] }, block);
+    expect(requests[0]!.videoUrls ?? []).not.toContain(PREVIS_FRESH);
+    expect(signRequests).toEqual([]);
   });
   it("局部编辑模式不注入白模：@视频1 必须是原片", async () => {
     const source = "https://test.invalid/segment-c.mp4";

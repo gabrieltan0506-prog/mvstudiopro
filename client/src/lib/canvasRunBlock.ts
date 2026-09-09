@@ -2007,7 +2007,12 @@ export async function runCanvasBlock(
           .filter((u) => /^(?:https:\/\/|gs:\/\/)/i.test(u));
         // 漫剧工厂段级参考：白模只在多模态参考模式注入（局部编辑时 @视频1 必须是原片）；
         // 母轨一旦存在就是唯一音轨，逐句配音不再并列送（多轨相加会超供应商 30 s 上限）。
-        const segmentRefs = isClip && !isManhuaVideoEditBlock(block) ? block.manhuaSegmentRefs : undefined;
+        // 只在 2.5 多模态参考、非局部编辑、非 10 秒试片时注入：2.0 的 video_url 不是站位语义，
+        // 试片 10 s 配 30 s 白模/母轨会让模型在两个时长之间二选一。
+        const segmentRefs =
+          isClip && useSeedance25 && !isManhuaVideoEditBlock(block) && !runOptions?.pilotRun
+            ? block.manhuaSegmentRefs
+            : undefined;
         const segmentPrevisUrl = segmentRefs?.previs
           ? await freshManhuaSegmentReferenceUrl(segmentRefs.previs)
           : undefined;
@@ -2022,16 +2027,22 @@ export async function runCanvasBlock(
             ...userRefVideos,
             // 用户勾选/上传的参考视频排在接力成片之前：正文里的 @视频1 按数组顺序绑定。
             // refVideoUrl 为空时兜底到上传记录里的首个视频（uploadedVideoUrl），不静默丢失。
-            ...(useSeedance25 && userSelectedVideoUrl ? [userSelectedVideoUrl] : []),
-            ...(continuityVideoUrl ? [continuityVideoUrl] : []),
-            ...(useSeedance25 && block.outputUrl && looksLikeVideo(block.outputUrl)
+            // clip 段的 refVideoUrl 就是上段接力片（非用户勾选），有白模时同样不送
+            ...(useSeedance25 && userSelectedVideoUrl && !(isClip && segmentPrevisUrl)
+              ? [userSelectedVideoUrl]
+              : []),
+            // 有白模时不再送上段接力片与本段旧成片：三条 30 s 叠到 90 s 会被拒，
+            // 且接力片没有序号说明，模型会把它也当站位参考。承接靠尾帧图（imageUrls）。
+            ...(continuityVideoUrl && !segmentPrevisUrl ? [continuityVideoUrl] : []),
+            ...(useSeedance25 && !segmentPrevisUrl && block.outputUrl && looksLikeVideo(block.outputUrl)
               ? [block.outputUrl]
               : []),
           ]),
           ),
         );
         const audioBindings = compileCanvasAudioBindings({
-          studio: block.audioStudio,
+          // 母轨就是唯一音轨：已采用的逐句配音也不并列（两套对白打架、总时长超 30 s）
+          studio: segmentMasterUrl ? undefined : block.audioStudio,
           existingAudioUrls: segmentMasterUrl
             ? [segmentMasterUrl]
             : [...userRefAudios, ...seedanceAudioUrls],
@@ -2181,7 +2192,10 @@ async function refreshManhuaRegisteredClipUrls(
   registered: ManhuaSegmentReferenceEntry | undefined,
   urls: string[],
 ): Promise<string[]> {
-  if (!registered?.gcsUri || !registered.url || !urls.includes(registered.url)) return urls;
+  if (!registered?.gcsUri) return urls;
+  // 云草稿回读后 url 可能被清成空串（只剩 gcsUri）：此时按“最后一个候选是登记片”无法判定，
+  // 只在候选里确实有登记链时替换；url 为空则不动，出片仍走现有候选。
+  if (!registered.url || !urls.includes(registered.url)) return urls;
   const fresh = await freshManhuaSegmentReferenceUrl(registered);
   if (!fresh || fresh === registered.url) return urls;
   return Array.from(new Set(urls.map((u) => (u === registered.url ? fresh : u))));

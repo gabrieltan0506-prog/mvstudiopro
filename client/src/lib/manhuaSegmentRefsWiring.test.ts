@@ -29,11 +29,14 @@ describe("漫剧工厂段级参考接线", () => {
     expect(existing).not.toContain("manhuaSegmentRefs");
   });
   it("出片只在非编辑模式注入白模，母轨存在时不再并列逐句配音", () => {
-    expect(runBlockSource).toContain("isClip && !isManhuaVideoEditBlock(block) ? block.manhuaSegmentRefs : undefined");
+    expect(runBlockSource).toContain("isClip && useSeedance25 && !isManhuaVideoEditBlock(block) && !runOptions?.pilotRun");
+    expect(runBlockSource).toContain("studio: segmentMasterUrl ? undefined : block.audioStudio");
     expect(runBlockSource).toMatch(/existingAudioUrls: segmentMasterUrl\s*\?\s*\[segmentMasterUrl\]/);
   });
-  it("云草稿白名单与本地落盘都保留段参考（新字段必须扫全部白名单）", () => {
+  it("云草稿白名单、回读白名单与本地落盘都保留段参考（新字段必须扫全部白名单）", () => {
     expect(cloudDraftSource).toContain("manhuaSegmentRefs: normalizeManhuaSegmentReferences(b.manhuaSegmentRefs)");
+    const readBack = localPersistSource.split("function cloudDraftBlocksToCanvas")[1]!.split("\n}\n")[0]!;
+    expect(readBack).toContain("manhuaSegmentRefs: normalizeManhuaSegmentReferences(raw.manhuaSegmentRefs)");
     // 本地落盘走 ...b 展开，只要没有显式抹掉即可
     const slim = localPersistSource.split("export function slimBlocksForLocalPersist(")[1]!.split("\n}\n")[0]!;
     expect(slim).not.toContain("manhuaSegmentRefs");
