@@ -207,6 +207,10 @@ function actualRerun(scope: Record<string, unknown>) {
       directorBoardUrlByEpisodeSegment: {},
       directorBoardMotionOverlayBySegment: {},
       explicitWriterVideoModel: null,
+      // 0909：回调里新增了容量模式与时长档取值
+      getManhuaSegmentCapacityMode: () => "block_when_over",
+      segmentCapacityModeByEpisode: {},
+      writerLengthTierId: "short",
       ...scope,
     }
   );
