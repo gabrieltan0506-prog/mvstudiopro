@@ -790,7 +790,11 @@ export async function exportManhuaProjectZip(
           lines.push(`- 字幕：\`${srtPath}\`（${cues.length} 条，合成时按真实裁切/淡变冻结的时间轴，${active.subtitleTimeline!.durationSec.toFixed(1)} 秒）`);
           deliveryMeta.push({ episodeIndex, kind: "srt", path: srtPath });
         } else {
-          lines.push("- 字幕：无（本版成片没有冻结字幕时间轴；请在剪辑台合成后再导）");
+          lines.push(
+            active.subtitleTimeline?.cues?.length
+              ? "- 字幕：无（本版成片的字幕时间轴台词清洗后为空）"
+              : "- 字幕：无（本版成片没有冻结字幕时间轴；请在剪辑台合成后再导）",
+          );
         }
         const audio = opts.deliveryAudioByFinalUrl?.[active.url];
         if (audio?.url) {
