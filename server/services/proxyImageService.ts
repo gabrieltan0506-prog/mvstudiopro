@@ -2050,6 +2050,11 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         L,
         `[2×4·整链] 第 ${attempt}/${compositeMaxAttempts} 次失败 · ${msg.replace(/\s+/g, " ").slice(0, 480)}`,
       );
+      // 结果未知（异步供应商可能已建单照扣）：整链重来就是再烧一遍三家，按对账铁律原样上抛
+      if ((e as { kind?: string } | null)?.kind === "unknown") {
+        appendImageFlowLog(L, "[2×4·整链] 结果未知（可能已建单）→ 不重试，原样上抛转对账");
+        throw e;
+      }
       // 快速失败：内容审核拦截属用户可纠正错误，重试只会被同样内容再次拦截，立即停手省时省钱。
       if (moderationBlocked || isEvolinkModerationFailure(msg)) {
         moderationBlocked = true;

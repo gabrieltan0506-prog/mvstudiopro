@@ -27,4 +27,12 @@ describe("gpt-image-2 供应商顺序接线（0909：OpenAI 官方 → WaveSpeed
     expect(src).toContain("quality: openaiQuality ?? qualityForCall");
     expect(src).toContain('qualityRaw === "xhigh" || qualityRaw === "max"');
   });
+  it("结果未知：runner 不退款转对账；整链重试不再烧；超时不换钥", () => {
+    const runner = readFileSync(new URL("../jobs/runner.ts", import.meta.url), "utf8");
+    expect(runner).toContain('(err as { kind?: string } | null)?.kind === "unknown"');
+    expect(runner).toContain("markSettlementPending(");
+    expect(src).toContain("不重试，原样上抛转对账");
+    const pool = readFileSync(new URL("./openaiImageKeyPool.ts", import.meta.url), "utf8");
+    expect(pool).toContain("KEY_TIMEOUT_RE.test(msg)");
+  });
 });

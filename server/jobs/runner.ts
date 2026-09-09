@@ -1586,6 +1586,22 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
         captureError,
       });
     } catch (err) {
+      // unknown = 异步供应商可能已建单照扣（WaveSpeed 提交超时/轮询到点）：按仓库对账铁律
+      // 不退款、不回落，账本转 settlement_pending 交对账；退了款用户再点一次就是平台付两份。
+      if ((err as { kind?: string } | null)?.kind === "unknown") {
+        if (creditDeducted > 0) {
+          const { markSettlementPending } = await import("../services/paidJobLedger.js");
+          await markSettlementPending(
+            jobId,
+            assetStandardizeQuality ? "manhuaAssetStandardize" : "canvasGptImage2",
+          ).catch(() => false);
+        }
+        throw new Error(
+          `出图结果无法确认（供应商可能已建单），为避免重复扣费已停止重试并转人工对账：${
+            err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200)
+          }`,
+        );
+      }
       await refundCanvasImage("画布出图·生成失败·退回已扣积分");
       throw err;
     }
