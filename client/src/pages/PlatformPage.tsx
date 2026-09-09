@@ -8125,7 +8125,8 @@ export default function PlatformPage() {
       try {
         const j = await pollJobUntilTerminal(pid, {
           intervalMs: 1500,
-          maxWaitMs: 10 * 60_000,
+          // 0910：服务端整链墙钟 25min（官方→WaveSpeed→EvoLink 串行），客户端要等得更久，否则图在出、费已扣、前台却报失败
+          maxWaitMs: 28 * 60_000,
           adaptiveBackoffAfterAttempts: 20,
           maxIntervalMs: 5000,
         });

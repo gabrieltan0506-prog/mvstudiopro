@@ -321,9 +321,14 @@ export async function postEvolinkGptImage2AndUpload(
     return publicUrl;
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
+    if (opts.captureError) opts.captureError.message = msg;
+    // unknown（轮询到点任务仍在跑）：上游照扣，必须原样上抛让上层不回落、不退款、转对账；吞成 null 就是双花
+    if ((e as { kind?: string } | null)?.kind === "unknown") {
+      appendImageFlowLog(L, `[GPT-IMAGE-2·EvoLink] 结果未知（任务可能仍在跑）· 不回落 · ${msg}`);
+      throw e;
+    }
     appendImageFlowLog(L, `[GPT-IMAGE-2·EvoLink] 异常 · ${msg}`);
     console.warn("[evolinkGptImage2] exception:", msg);
-    if (opts.captureError) opts.captureError.message = msg;
     return null;
   }
 }
