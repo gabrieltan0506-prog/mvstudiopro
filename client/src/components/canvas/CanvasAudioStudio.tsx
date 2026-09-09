@@ -374,8 +374,10 @@ export function CanvasAudioStudioView({
                 continue;
               }
               if (!pending.cueId && isPremixPendingKey(pending.inputKey)) {
-                // 预混母轨：不当合听预览，直接挂到本段 master
-                onMasterTrackReady?.({
+                // 预混母轨只能由工厂配音间（带 onMasterTrackReady）收：自由画布同一节点也挂了本面板，
+                // 没有回调就保留 pending，回到工厂再挂，不能 settle 掉让 master 永远挂不上
+                if (!onMasterTrackReady) continue;
+                onMasterTrackReady({
                   url: take.previewUrl,
                   gcsUri: take.gcsUri,
                   fileName: `预混母轨-${block.id}.wav`,
@@ -670,6 +672,7 @@ export function CanvasAudioStudioView({
         durationSec,
         getSelectedTake: getSelectedAudioTake,
         inputKeyOf: canvasAudioCueInputKey,
+        videoModel: block.videoModel,
       });
       const premixKey = `${PREMIX_PENDING_PREFIX}${await canvasAudioPreviewKey(selectedSource)}`;
       canvasAudioStudioSchema.parse({ ...current.current.state, pendingOperations: [

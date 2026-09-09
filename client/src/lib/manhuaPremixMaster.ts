@@ -5,6 +5,10 @@
  * 走现成的 audio_timeline 后期任务（ffmpeg：adelay + volume + afade + amix + alimiter），免费。
  */
 import type { CanvasAudioCue, CanvasAudioTake } from "@shared/canvasAudioStudio";
+import { MANHUA_SEGMENT_REFERENCE_CAP_SEC } from "@shared/manhuaSegmentReference";
+
+/** 服务端 audio_timeline 一次最多 12 条片段（postProdInput clips.max(12)） */
+export const PREMIX_MAX_CLIPS = 12;
 
 export const PREMIX_BGM_VOLUME = 0.25;
 export const PREMIX_BGM_FADE_IN_SEC = 0.7;
@@ -35,10 +39,18 @@ export function buildPremixTimelineClips(input: {
   durationSec: number;
   getSelectedTake: (cue: CanvasAudioCue) => CanvasAudioTake | undefined;
   inputKeyOf: (cue: CanvasAudioCue) => string;
+  /** 本段引擎：Wan 3.0 参考音频上限 15 s，超过出片时会被丢弃，这里先拦 */
+  videoModel?: string | null;
 }): PremixTimelineClip[] {
   const cues = input.cues.filter((cue) => cue.approved && cue.enabled !== false);
   if (!cues.some((cue) => cue.kind === "dialogue")) {
     throw new Error("先试听并确认至少一句对白，再预混母轨。");
+  }
+  if (cues.length > PREMIX_MAX_CLIPS) {
+    throw new Error(`一次最多预混 ${PREMIX_MAX_CLIPS} 条音频，请先停用或合并部分对白/配乐（当前 ${cues.length} 条）。`);
+  }
+  if (String(input.videoModel || "") === "wan-3.0" && input.durationSec > MANHUA_SEGMENT_REFERENCE_CAP_SEC.wan30) {
+    throw new Error(`Wan 3.0 参考音频上限 ${MANHUA_SEGMENT_REFERENCE_CAP_SEC.wan30} 秒，本段 ${input.durationSec} 秒的母轨出片时会被丢弃；请把本段切到 ≤15 秒或换 Seedance 2.5。`);
   }
   return cues.map((cue) => {
     if (!(cue.startSec >= 0 && cue.endSec > cue.startSec && cue.endSec <= input.durationSec)) {

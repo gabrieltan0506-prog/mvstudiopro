@@ -36,6 +36,12 @@ describe("一键预混母轨 · 时间轴片段", () => {
     expect(() => buildPremixTimelineClips({ cues: [edited], durationSec: 30, getSelectedTake, inputKeyOf: canvasAudioCueInputKey })).toThrow(/重新试听/);
     expect(() => buildPremixTimelineClips({ cues: [cueWithTake("dialogue", "d", 0, 1, 2)], durationSec: 30, getSelectedTake, inputKeyOf: canvasAudioCueInputKey })).toThrow(/长于秒窗/);
   });
+  it("超过 12 条与 Wan 3.0 段 >15 秒都先拦下", () => {
+    const many = Array.from({ length: 13 }, (_, i) => cueWithTake("dialogue", `d${i}`, i * 2, i * 2 + 1.5, 1));
+    expect(() => buildPremixTimelineClips({ cues: many, durationSec: 30, getSelectedTake, inputKeyOf: canvasAudioCueInputKey })).toThrow(/最多预混 12 条/);
+    expect(() => buildPremixTimelineClips({ cues: [cueWithTake("dialogue", "d", 0, 3, 2)], durationSec: 20, videoModel: "wan-3.0", getSelectedTake, inputKeyOf: canvasAudioCueInputKey })).toThrow(/Wan 3.0 参考音频上限 15 秒/);
+    expect(buildPremixTimelineClips({ cues: [cueWithTake("dialogue", "d", 0, 3, 2)], durationSec: 15, videoModel: "wan-3.0", getSelectedTake, inputKeyOf: canvasAudioCueInputKey })).toHaveLength(1);
+  });
   it("预混任务用 premix: 前缀区分，不当合听预览", () => {
     expect(isPremixPendingKey("premix:sha256:abc")).toBe(true);
     expect(isPremixPendingKey("sha256:abc")).toBe(false);
@@ -44,7 +50,8 @@ describe("一键预混母轨 · 时间轴片段", () => {
     const studio = readFileSync(new URL("../components/canvas/CanvasAudioStudio.tsx", import.meta.url), "utf8");
     expect(studio).toContain("buildPremixTimelineClips({");
     expect(studio).toContain("isPremixPendingKey(pending.inputKey)");
-    expect(studio).toContain("onMasterTrackReady?.({");
+    expect(studio).toContain("if (!onMasterTrackReady) continue;");
+    expect(studio).toContain("onMasterTrackReady({");
     const wb = readFileSync(new URL("../components/ManhuaScriptWorkbench.tsx", import.meta.url), "utf8");
     expect(wb).toContain('onSetClipSegmentReference(activeClip.id, "master", entry)');
     const omni = readFileSync(new URL("../pages/OmniCanvas.tsx", import.meta.url), "utf8");
