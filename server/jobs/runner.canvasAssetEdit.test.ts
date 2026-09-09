@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 import { normalizeOpenAiImageLane } from "../../shared/openaiImageLane";
+import { normalizeOpenAiImageVariant } from "../../shared/openaiImageVariant";
 import { manhuaAssetStandardizeCredits } from "../../shared/manhuaAssetStandardize";
 import { canvasImageCredits } from "../../shared/canvasGenerationPricing";
 
@@ -79,9 +80,10 @@ function setup() {
   const run = new Function(
     "importModule",
     "normalizeOpenAiImageLane",
+    "normalizeOpenAiImageVariant",
     "deductCreditsAmount",
     `${code}\nreturn run;`
-  )(importModule, normalizeOpenAiImageLane, deduct);
+  )(importModule, normalizeOpenAiImageLane, normalizeOpenAiImageVariant, deduct);
   const input = {
     action: "canvas_gpt_image2",
     params: {

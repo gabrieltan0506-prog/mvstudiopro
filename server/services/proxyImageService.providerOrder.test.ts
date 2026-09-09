@@ -17,4 +17,8 @@ describe("gpt-image-2 供应商顺序接线（0909：OpenAI 官方 → WaveSpeed
     expect(platform).not.toContain('i % 2 === 0 ? "evolink" : "openai"');
     expect(platform).toContain("openaiImageVariant: readOpenAiImageVariantPref()");
   });
+  it("主路径为官方时不竞速；unknown 结果停止回落", () => {
+    expect(src).toContain('provider !== "openai"');
+    expect(src).toContain("停止回落");
+  });
 });

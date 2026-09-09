@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { SubmitUnknownError } from "./submitOutcomeErrors";
 import {
   WAVESPEED_GPT_IMAGE2_EDIT_PATH,
   WAVESPEED_GPT_IMAGE2_T2I_PATH,
@@ -40,5 +41,17 @@ describe("wavespeedGptImage2", () => {
   it("未配置密钥直接跳过", async () => {
     vi.stubEnv("WAVESPEED_API_KEY", "");
     expect(await postWavespeedGptImage2AndUpload("p", "sub", {})).toBeNull();
+  });
+  it("提交结果未知（POST 超时/5xx）时上抛 unknown，不回 null 让上层回落双花", async () => {
+    vi.stubEnv("WAVESPEED_API_KEY", "k");
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("socket hang up"); }));
+    await expect(postWavespeedGptImage2AndUpload("p", "sub", {})).rejects.toBeInstanceOf(SubmitUnknownError);
+  });
+  it("明确 4xx 拒绝回 null（可换下一家）", async () => {
+    vi.stubEnv("WAVESPEED_API_KEY", "k");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ message: "bad prompt" }), { status: 422 })));
+    const err: { message?: string } = {};
+    expect(await postWavespeedGptImage2AndUpload("p", "sub", { captureError: err })).toBeNull();
+    expect(err.message).toMatch(/bad prompt/);
   });
 });

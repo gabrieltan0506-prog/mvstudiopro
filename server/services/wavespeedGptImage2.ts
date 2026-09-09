@@ -10,6 +10,7 @@
 import { uploadBufferToPlatformStorage } from "./evolinkGptImage2.js";
 import { getWavespeedApiKey } from "./wavespeedVideoUpscale.js";
 import { submitWavespeedPredictionRequest } from "./wavespeedWanVideo.js";
+import { SubmitUnknownError } from "./submitOutcomeErrors.js";
 import { enforceSimplifiedChineseImagePrompt } from "./simplifiedChinese.js";
 
 export type WavespeedGptImage2Resolution = "1k" | "2k" | "4k";
@@ -111,7 +112,8 @@ async function pollWavespeedGptImage2(predictionId: string, flowLog?: string[]):
     }
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
-  throw new Error(`WaveSpeed gpt-image-2 poll timeout after ${MAX_POLL_MS}ms · id=${predictionId}`);
+  // 轮询到点任务仍可能在跑并照扣：按 unknown 上抛，禁止上层再烧下一家
+  throw new SubmitUnknownError(`WaveSpeed gpt-image-2 poll timeout after ${MAX_POLL_MS}ms · id=${predictionId}（任务可能仍在跑，转对账，不回落）`);
 }
 
 /**
@@ -165,8 +167,13 @@ export async function postWavespeedGptImage2AndUpload(
     return await uploadBufferToPlatformStorage(buffer, gcsSubdir, L);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    appendImageFlowLog(L, `[GPT-IMAGE-2·WaveSpeed] 失败 · ${msg.slice(0, 200)}`);
     if (opts.captureError) opts.captureError.message = msg;
+    // unknown（提交超时/5xx/缺 id/轮询到点）= 单可能已建、上游照扣：上抛让 runner 走退款对账，不许回落到 EvoLink 付第二份
+    if ((e as { kind?: string })?.kind === "unknown") {
+      appendImageFlowLog(L, `[GPT-IMAGE-2·WaveSpeed] 结果未知（可能已建单）· 不回落 · ${msg.slice(0, 200)}`);
+      throw e;
+    }
+    appendImageFlowLog(L, `[GPT-IMAGE-2·WaveSpeed] 失败 · ${msg.slice(0, 200)}`);
     return null;
   }
 }

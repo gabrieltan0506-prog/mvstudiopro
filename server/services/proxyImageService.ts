@@ -1313,7 +1313,9 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
         options.imageLane && provider === "openai" ? ` · lane=${options.imageLane}` : ""
       }${hasRef ? ` · 参考=${refImageUrls.length}张` : ""}${
         isPrimary
-          ? ` · 主路径(官方优先)·超时${Math.round(primaryTimeoutMs / 1000)}s切备胎`
+          ? provider === "openai"
+            ? " · 主路径(官方优先)·轮询到底不竞速"
+            : ` · 主路径·超时${Math.round(primaryTimeoutMs / 1000)}s切备胎`
           : " · 备胎"
       }`,
     );
@@ -1359,7 +1361,9 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
        * 交互 lane（封面等）保留原 90s 竞速换体验。
        */
       const batchLane = options.imageLane === "asset" || options.imageLane === "keyart";
-      const url = isPrimary && !isLast && !batchLane
+      // 0909：主路径是 OpenAI 官方（最贵一家）时不竞速——弃赛不取消上游，照扣照跑，再烧备胎=双花
+      const raceAllowed = isPrimary && !isLast && !batchLane && provider !== "openai";
+      const url = raceAllowed
         ? await racePrimaryTimeout(run, primaryTimeoutMs, `GPT-image-2·${tag}`)
         : await run;
       if (url) {
@@ -1376,6 +1380,11 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
       if (options.captureError) {
         if (provider === "openai") options.captureError.openaiError = msg;
         options.captureError.message = msg;
+      }
+      if ((e as { kind?: string })?.kind === "unknown") {
+        // 异步供应商「可能已建单」：不换下一家，直接上抛走退款/对账
+        appendImageFlowLog(L, `[单帧·${tag}] 结果未知（可能已建单）· 停止回落 · ${msg.slice(0, 160)}`);
+        throw e;
       }
       appendImageFlowLog(L, `[单帧·${tag}] ${isTimeoutLikeError(e) ? "超时/中断" : "异常"} · ${msg.slice(0, 160)}`);
     }

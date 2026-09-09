@@ -404,9 +404,10 @@ async function runGptImage2Batch(
   // 开关「双档各一张」：每张各出 flare 与 sunburst 两个版本（扣两张费），顺序 flare 在前便于对比
   const variants: OpenAiImageVariant[] =
     readOpenAiImageVariantMode() === "both" ? ["flare", "sunburst"] : [readOpenAiImageVariantPref()];
+  // 双档的两张各按本张的批次号计费（都算「第 i 张」），不让 sunburst 那张滑到批量价
   const tasks = Array.from({ length: count }, (_unused, i) =>
-    variants.map((openaiImageVariant, vi) =>
-      runGptImage2(prompt, aspectRatio, { ...opts, batchIndex: i * variants.length + vi, openaiImageVariant }),
+    variants.map((openaiImageVariant) =>
+      runGptImage2(prompt, aspectRatio, { ...opts, batchIndex: i, openaiImageVariant }),
     ),
   ).flat();
   return Promise.all(tasks);
