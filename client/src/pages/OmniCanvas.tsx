@@ -125,7 +125,19 @@ import {
   type ManhuaAssetStashEntry,
   type ManhuaAssetStashRole,
 } from "@shared/manhuaAssetStash";
-import { uploadCanvasFilesParallel } from "@/lib/canvasUpload";
+import { inferCanvasAssetKind, uploadCanvasFilesParallel } from "@/lib/canvasUpload";
+import {
+  MANHUA_REGISTERED_CLIP_SUMMARY_ZH,
+  manhuaSegmentReferenceKindError,
+  probeMediaFileDurationSec,
+  registerManhuaExistingClip,
+} from "@/lib/manhuaSegmentRefs";
+import {
+  MANHUA_SEGMENT_REFERENCE_LABEL_ZH,
+  setManhuaSegmentReference,
+  type ManhuaSegmentReferenceEntry,
+  type ManhuaSegmentReferenceSlot,
+} from "@shared/manhuaSegmentReference";
 import { collectManhuaBackupImageSources } from "@/lib/manhuaBackupImageSources";
 import { prepareManhuaBackupRestore } from "@/lib/manhuaBackupRestorePreflight";
 import { assertManhuaBackupImage } from "@/lib/manhuaBackupImageValidation";
@@ -8254,6 +8266,91 @@ export default function OmniCanvas() {
     ],
   );
 
+  // ── 段级参考（白模站位 / 预混母轨）与外部成片登记：0908 自由画布验证过的工艺接进工厂 ──
+  const [segmentRefBusyId, setSegmentRefBusyId] = useState<string | null>(null);
+  const patchClipBlockPersist = useCallback(
+    (clipBlockId: string, patch: (block: CanvasBlock) => CanvasBlock) => {
+      setBlocks((prev) => {
+        const next = prev.map((b) => (b.id === clipBlockId ? patch(b) : b));
+        setEdges((eds) => {
+          saveCanvasState(next, eds);
+          return eds;
+        });
+        return next;
+      });
+    },
+    [],
+  );
+  const handleSegmentReferenceUpload = useCallback(
+    async (clipBlockId: string, slot: ManhuaSegmentReferenceSlot, file: File) => {
+      if (factoryBusy) {
+        toast.message("请等待当前生成结束");
+        return;
+      }
+      if (!blocks.some((b) => b.id === clipBlockId)) {
+        toast.message("找不到成片节点");
+        return;
+      }
+      const kindError = manhuaSegmentReferenceKindError(slot, inferCanvasAssetKind(file));
+      if (kindError) {
+        toast.error(kindError);
+        return;
+      }
+      if (segmentRefBusyId) {
+        toast.message("上一段参考还在上传，稍等再传");
+        return;
+      }
+      setSegmentRefBusyId(clipBlockId);
+      try {
+        const { uploadOneCanvasAsset } = await import("@/lib/canvasUpload");
+        const asset = await uploadOneCanvasAsset({
+          file,
+          index: Date.now() % 1000,
+          getSignedUploadUrl: (input) => getSignedUrlMutation.mutateAsync(input),
+        });
+        const durationSec = await probeMediaFileDurationSec(file);
+        const entry: ManhuaSegmentReferenceEntry = {
+          url: asset.url,
+          gcsUri: asset.gcsUri,
+          fileName: file.name,
+          durationSec,
+          updatedAt: new Date().toISOString(),
+        };
+        if (slot === "registered") {
+          patchClipBlockPersist(clipBlockId, (b) => registerManhuaExistingClip(b, entry));
+          setDockSelectedIds((prev) => {
+            const next = new Set(prev);
+            next.delete(clipBlockId);
+            return next;
+          });
+          toast.message("已登记为本段成片", { description: MANHUA_REGISTERED_CLIP_SUMMARY_ZH });
+        } else {
+          patchClipBlockPersist(clipBlockId, (b) => setManhuaSegmentReference(b, slot, entry));
+          const lenZh = durationSec != null ? `${durationSec.toFixed(1)} 秒，` : "时长未探到，";
+          toast.message(`${MANHUA_SEGMENT_REFERENCE_LABEL_ZH[slot]}已挂到本段`, {
+            description:
+              slot === "previs"
+                ? `${lenZh}下次出片作为 @视频1：只锁走位、景别与机位，不进画面。Seedance ≤30 秒；Wan 3.0 ≤15 秒才送。`
+                : `${lenZh}下次出片作为唯一音轨 @音频1：逐句配音不再并列送。Seedance ≤30 秒；Wan 3.0 ≤15 秒才送。`,
+          });
+        }
+      } catch (error) {
+        toast.error(`上传失败：${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        setSegmentRefBusyId(null);
+      }
+    },
+    [factoryBusy, blocks, getSignedUrlMutation, patchClipBlockPersist, segmentRefBusyId],
+  );
+  const handleSegmentReferenceClear = useCallback(
+    (clipBlockId: string, slot: ManhuaSegmentReferenceSlot) => {
+      patchClipBlockPersist(clipBlockId, (b) => setManhuaSegmentReference(b, slot, null));
+      toast.message(`已移除本段${MANHUA_SEGMENT_REFERENCE_LABEL_ZH[slot]}`);
+    },
+    [patchClipBlockPersist],
+  );
+
+
   const handleReviewPilot = useCallback(
     async (decision: "approve" | "reject", taskId: string) => {
       await pilotReview.decide(decision, taskId);
@@ -11176,6 +11273,9 @@ export default function OmniCanvas() {
                 cineVocabIds={selectedCineVocabIds}
                 factoryBusy={factoryBusy}
                 onRetakeClip={handleRetakeClip}
+                segmentRefBusyId={segmentRefBusyId}
+                onSegmentReferenceUpload={handleSegmentReferenceUpload}
+                onSegmentReferenceClear={handleSegmentReferenceClear}
                 onAcceptClipDespiteQc={(clipBlockId) => {
                   setBlocks((prev) => {
                     const next = prev.map((b) => {

@@ -387,3 +387,71 @@ describe("Seedance 2.5：refVideoUrl 为空但上传记录里有视频时，视�
     expect(extractVideoTailFramesFromUrl).not.toHaveBeenCalled();
   });
 });
+
+describe("Seedance 2.5：重跑不继承本节点旧成片", () => {
+  const stale = "https://test.invalid/canvas/video/old-take-30s.mp4";
+  const previs = "https://test.invalid/previs-blocking.mp4";
+
+  it("reference_to_video 重跑不带旧成片", async () => {
+    const requests = offlineRequests("seedanceI2V");
+    await runCanvasBlock(
+      { userRole: "admin", optimizeCopy: async () => "" },
+      {
+        ...defaultCanvasBlock("video", 0, 0),
+        id: "video-seedance25-rerun",
+        videoModel: "seedance-2.5",
+        seedance25WorkMode: "reference_to_video",
+        prompt: `【第1段·10s】${action}`,
+        refImageUrl: images[0],
+        refVideoUrl: previs,
+        status: "done",
+        outputUrl: stale,
+        outputUrls: [stale],
+      }
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0].workMode).toBe("reference_to_video");
+    // 0908 BytePlus 拒单：旧 30s 成片被静默追加到 index 1；重跑只带用户自己的参考。
+    expect(requests[0].videoUrls).toEqual([previs]);
+    expect(extractVideoTailFramesFromUrl).not.toHaveBeenCalledWith(stale, expect.anything());
+  });
+
+  it("未显式选模式时，旧成片也不参与模式推断（只按用户参考推断）", async () => {
+    const requests = offlineRequests("seedanceI2V");
+    await runCanvasBlock(
+      { userRole: "admin", optimizeCopy: async () => "" },
+      {
+        ...defaultCanvasBlock("video", 0, 0),
+        id: "video-seedance25-rerun-infer",
+        videoModel: "seedance-2.5",
+        seedance25WorkMode: undefined,
+        prompt: `【第1段·10s】${action}`,
+        refImageUrl: images[0],
+        status: "done",
+        outputUrl: stale,
+      }
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0].workMode).toBe("image_to_video");
+    expect(requests[0].videoUrls).toBeUndefined();
+  });
+
+  it("video_extend 仍以本节点旧成片为源片（延长依赖它）", async () => {
+    const requests = offlineRequests("seedanceI2V");
+    await runCanvasBlock(
+      { userRole: "admin", optimizeCopy: async () => "" },
+      {
+        ...defaultCanvasBlock("video", 0, 0),
+        id: "video-seedance25-extend",
+        videoModel: "seedance-2.5",
+        seedance25WorkMode: "video_extend",
+        prompt: `【第1段·10s】${action}`,
+        status: "done",
+        outputUrl: stale,
+      }
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0].workMode).toBe("video_extend");
+    expect(requests[0].videoUrls).toEqual([stale]);
+  });
+});
