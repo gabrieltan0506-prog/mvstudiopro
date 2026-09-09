@@ -9,7 +9,15 @@ import {
   Loader2,
   Music2,
   ShieldCheck,
+  Upload,
+  Video,
+  X,
 } from "lucide-react";
+import {
+  MANHUA_SEGMENT_REFERENCE_ACCEPT,
+  MANHUA_SEGMENT_REFERENCE_LABEL_ZH,
+  type ManhuaSegmentReferenceSlot,
+} from "@shared/manhuaSegmentReference";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import {
   collectManhuaAssembleClipsFromDock,
@@ -65,7 +73,25 @@ type Props = {
   onAcceptClipDespiteQc?: (clipBlockId: string) => void;
   onRetakeClip?: (clipBlockId: string, variable: ManhuaRetakeVariable) => void;
   factoryBusy?: boolean;
+  /** 段级参考：白模站位视频 / 预混母轨 / 外部成片登记（上传件直传 GCS） */
+  onSegmentReferenceUpload?: (clipBlockId: string, slot: ManhuaSegmentReferenceSlot, file: File) => void;
+  onSegmentReferenceClear?: (clipBlockId: string, slot: ManhuaSegmentReferenceSlot) => void;
+  /** 正在上传段参考的成片节点 id */
+  segmentRefBusyId?: string | null;
 };
+
+/** 一步达：点即选文件，不另开面板；同一 input 复用会被浏览器缓存 FileList，故每次新建 */
+function pickSegmentReferenceFile(accept: string, onPick: (file: File) => void) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = accept;
+  input.onchange = () => {
+    const file = input.files?.[0];
+    input.value = "";
+    if (file) onPick(file);
+  };
+  input.click();
+}
 
 function episodeClipReady(list: ManhuaClipDockItem[]): boolean {
   return list.some((it) => it.stage === "clip" && manhuaClipDockItemAllowsAssemble(it));
@@ -99,9 +125,13 @@ export default function ManhuaClipDock({
   onAcceptClipDespiteQc,
   onRetakeClip,
   factoryBusy,
+  onSegmentReferenceUpload,
+  onSegmentReferenceClear,
+  segmentRefBusyId,
 }: Props) {
   const [exportBusy, setExportBusy] = useState(false);
   const items = useMemo(() => collectManhuaClipDockItems(blocks), [blocks]);
+  const blockById = useMemo(() => new Map(blocks.map((b) => [b.id, b] as const)), [blocks]);
   const summary = useMemo(() => summarizeManhuaDockExport(items), [items]);
   const assembleClips = useMemo(() => {
     const fromSelected = collectManhuaAssembleClipsFromDock(items, {
@@ -649,14 +679,15 @@ export default function ManhuaClipDock({
                   {list.map((it) => {
                     const checked = selectedIds.has(it.blockId);
                     const readyItem = manhuaClipDockItemHasExportableOutput(it);
+                    // failed=检了没过；unverified=没检成/外部登记——都要用户点头才进合成
+                    const clipNeedsDecision =
+                      it.stage === "clip" &&
+                      (it.clipQuality?.status === "failed" || it.clipQuality?.status === "unverified");
+                    const clipUnverified = it.clipQuality?.status === "unverified";
                     const clipPendingDecision =
-                      it.stage === "clip" &&
-                      it.clipQuality?.status === "failed" &&
-                      !it.clipQuality.userAcceptedDespiteQc;
+                      clipNeedsDecision && !it.clipQuality?.userAcceptedDespiteQc;
                     const clipSoftAccepted =
-                      it.stage === "clip" &&
-                      it.clipQuality?.status === "failed" &&
-                      Boolean(it.clipQuality.userAcceptedDespiteQc);
+                      clipNeedsDecision && Boolean(it.clipQuality?.userAcceptedDespiteQc);
                     return (
                       <li
                         key={it.blockId}
@@ -669,9 +700,11 @@ export default function ManhuaClipDock({
                         }`}
                         title={
                           clipPendingDecision
-                            ? `${it.clipQuality?.summary || "质检未过"} · 可仍采用或按建议重拍`
+                            ? clipUnverified
+                              ? `${it.clipQuality?.summary || "未质检"} · 看过无误可「未质检放行」`
+                              : `${it.clipQuality?.summary || "质检未过"} · 可仍采用或按建议重拍`
                             : clipSoftAccepted
-                              ? `质检未过·已采用：${it.clipQuality?.summary || ""}`
+                              ? `${clipUnverified ? "未质检·已放行" : "质检未过·已采用"}：${it.clipQuality?.summary || ""}`
                               : undefined
                         }
                       >
@@ -730,7 +763,7 @@ export default function ManhuaClipDock({
                         ) : clipSoftAccepted ? (
                           <span className="inline-flex items-center gap-0.5 rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] text-amber-50">
                             <AlertTriangle className="h-2.5 w-2.5" />
-                            质检未过·已采用
+                            {clipUnverified ? "未质检·已放行" : "质检未过·已采用"}
                           </span>
                         ) : clipPendingDecision ? (
                           <span className="inline-flex items-center gap-0.5 rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] text-amber-50">
@@ -738,7 +771,82 @@ export default function ManhuaClipDock({
                             待决定
                           </span>
                         ) : null}
-                        {clipPendingDecision && onRetakeClip && it.clipQuality?.summary ? (
+                        {it.stage === "clip" && onSegmentReferenceUpload ? (
+                          <span
+                            className="inline-flex items-center gap-0.5"
+                            data-testid={`manhua-segment-refs-${it.blockId}`}
+                          >
+                            {(["previs", "master"] as const).map((slot) => {
+                              const entry = blockById.get(it.blockId)?.manhuaSegmentRefs?.[slot];
+                              const label = MANHUA_SEGMENT_REFERENCE_LABEL_ZH[slot];
+                              const busy = segmentRefBusyId === it.blockId;
+                              return (
+                                <span key={slot} className="inline-flex items-center">
+                                  <button
+                                    type="button"
+                                    disabled={busy || factoryBusy}
+                                    title={
+                                      entry
+                                        ? `${label}：${entry.fileName || entry.url}（点击换文件）`
+                                        : slot === "previs"
+                                          ? "上传本段白模站位视频（≤30 s）：出片时作 @视频1，只锁走位/景别/机位"
+                                          : "上传本段预混母轨（对白+BGM 一条，≤30 s）：出片时作唯一音轨 @音频1"
+                                    }
+                                    onClick={() =>
+                                      pickSegmentReferenceFile(
+                                        MANHUA_SEGMENT_REFERENCE_ACCEPT[slot],
+                                        (file) => onSegmentReferenceUpload(it.blockId, slot, file),
+                                      )
+                                    }
+                                    className={`inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5 text-[9px] disabled:opacity-40 ${
+                                      entry
+                                        ? "border-cyan-400/45 bg-cyan-500/15 text-cyan-50"
+                                        : "border-white/12 text-white/50 hover:bg-white/8 hover:text-white/80"
+                                    }`}
+                                  >
+                                    {slot === "previs" ? (
+                                      <Video className="h-2.5 w-2.5" />
+                                    ) : (
+                                      <Music2 className="h-2.5 w-2.5" />
+                                    )}
+                                    {label}
+                                    {entry ? "✓" : "＋"}
+                                  </button>
+                                  {entry && onSegmentReferenceClear ? (
+                                    <button
+                                      type="button"
+                                      disabled={busy || factoryBusy}
+                                      title={`移除本段${label}（可再上传）`}
+                                      onClick={() => onSegmentReferenceClear(it.blockId, slot)}
+                                      className="ml-0.5 rounded border border-white/12 p-0.5 text-white/45 hover:bg-white/8 hover:text-white/80 disabled:opacity-40"
+                                    >
+                                      <X className="h-2.5 w-2.5" />
+                                    </button>
+                                  ) : null}
+                                </span>
+                              );
+                            })}
+                            <button
+                              type="button"
+                              disabled={segmentRefBusyId === it.blockId || factoryBusy}
+                              title="把外部已出好的本段成片登记进来：旧版本留在历史，登记后需「未质检放行」再进合成"
+                              onClick={() =>
+                                pickSegmentReferenceFile(
+                                  MANHUA_SEGMENT_REFERENCE_ACCEPT.registered,
+                                  (file) => onSegmentReferenceUpload(it.blockId, "registered", file),
+                                )
+                              }
+                              className="inline-flex items-center gap-0.5 rounded border border-fuchsia-400/35 px-1.5 py-0.5 text-[9px] text-fuchsia-100/80 hover:bg-fuchsia-500/15 disabled:opacity-40"
+                            >
+                              <Upload className="h-2.5 w-2.5" />
+                              登记成片
+                            </button>
+                            {segmentRefBusyId === it.blockId ? (
+                              <Loader2 className="h-3 w-3 animate-spin text-cyan-200" />
+                            ) : null}
+                          </span>
+                        ) : null}
+                        {clipPendingDecision && !clipUnverified && onRetakeClip && it.clipQuality?.summary ? (
                           <button
                             type="button"
                             disabled={factoryBusy}
@@ -770,7 +878,7 @@ export default function ManhuaClipDock({
                             onClick={() => onAcceptClipDespiteQc(it.blockId)}
                             className="rounded border border-amber-400/45 bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-semibold text-amber-50"
                           >
-                            仍采用
+                            {clipUnverified ? "未质检放行" : "仍采用"}
                           </button>
                         ) : null}
                         {onFocusBlock ? (

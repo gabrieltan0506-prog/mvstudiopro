@@ -209,6 +209,11 @@ export type CanvasBlock = {
   seedance25RefVideoUrls?: string[];
   /** Seedance 2.5：勾选的参考音频 URL（EvoLink ≤10） */
   seedance25RefAudioUrls?: string[];
+  /**
+   * 漫剧工厂段级参考：白模站位视频 / 预混母轨 / 登记的已有成片。
+   * 与 seedance25Ref* 分开存：局部编辑会清空后者，段参考必须扛过编辑。
+   */
+  manhuaSegmentRefs?: import("@shared/manhuaSegmentReference").ManhuaSegmentReferences;
   /** 逐句对白、原曲/裁片候选与显式采用状态；不依赖临时上传列表。 */
   audioStudio?: CanvasAudioStudio;
   /** Seedance 2.5 官方五模式；兼容历史 XYQ 草稿值 */

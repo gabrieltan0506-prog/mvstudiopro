@@ -9,7 +9,11 @@ import {
   compileManhuaVideoEditPrompt,
   isManhuaVideoEditBlock,
 } from "./manhuaMediaVersions";
-import { runGeminiScript } from "./omniCanvasApi";
+import { resolveCanvasMaterialUrl, runGeminiScript } from "./omniCanvasApi";
+import {
+  formatManhuaSegmentReferenceGuideZh,
+  type ManhuaSegmentReferenceEntry,
+} from "@shared/manhuaSegmentReference";
 import {
   compileI2VMotionPrompt,
   isManhuaSeedanceDirectorPrompt,
@@ -1611,8 +1615,11 @@ export async function runCanvasBlock(
       const access = resolveSeedance25Access({ plan: deps.userPlan, role: deps.userRole });
       if (!access.allowed) throw new Error(access.message || "当前账号未开放高级视频编辑");
       // 工厂编辑入口只选择一条原片；旧上游片、静帧、导演板与声线不能自动混入。
-      const source = String(block.seedance25RefVideoUrls?.[0] || block.refVideoUrl || "").trim();
-      if (!/^https?:\/\//i.test(source)) throw new Error("请先选择本次要修改的原片");
+      const sourceRaw = String(block.seedance25RefVideoUrls?.[0] || block.refVideoUrl || "").trim();
+      if (!/^https?:\/\//i.test(sourceRaw)) throw new Error("请先选择本次要修改的原片");
+      // 登记进来的外部成片是 60 分钟签名链：编辑前按 gcsUri 现签，过期不挡编辑。
+      const [source] = await refreshManhuaRegisteredClipUrls(block.manhuaSegmentRefs?.registered, [sourceRaw]);
+      if (!source) throw new Error("请先选择本次要修改的原片");
       const editPrompt = compileManhuaVideoEditPrompt(block.prompt);
       const editSourceDurationSec = (await probeVideoDurationSec(source)) || undefined;
       const edited = await runSeedanceProductVideo(editPrompt, undefined, ar, {
@@ -1998,8 +2005,20 @@ export async function runCanvasBlock(
         const userRefAudios = (block.seedance25RefAudioUrls || [])
           .map((u) => String(u || "").trim())
           .filter((u) => /^(?:https:\/\/|gs:\/\/)/i.test(u));
-        const candidateVideoUrls = Array.from(
+        // 漫剧工厂段级参考：白模只在多模态参考模式注入（局部编辑时 @视频1 必须是原片）；
+        // 母轨一旦存在就是唯一音轨，逐句配音不再并列送（多轨相加会超供应商 30 s 上限）。
+        const segmentRefs = isClip && !isManhuaVideoEditBlock(block) ? block.manhuaSegmentRefs : undefined;
+        const segmentPrevisUrl = segmentRefs?.previs
+          ? await freshManhuaSegmentReferenceUrl(segmentRefs.previs)
+          : undefined;
+        const segmentMasterUrl = segmentRefs?.master
+          ? String(segmentRefs.master.gcsUri || segmentRefs.master.url || "").trim() || undefined
+          : undefined;
+        const candidateVideoUrls = await refreshManhuaRegisteredClipUrls(
+          block.manhuaSegmentRefs?.registered,
+          Array.from(
           new Set([
+            ...(segmentPrevisUrl ? [segmentPrevisUrl] : []),
             ...userRefVideos,
             // 用户勾选/上传的参考视频排在接力成片之前：正文里的 @视频1 按数组顺序绑定。
             // refVideoUrl 为空时兜底到上传记录里的首个视频（uploadedVideoUrl），不静默丢失。
@@ -2009,13 +2028,20 @@ export async function runCanvasBlock(
               ? [block.outputUrl]
               : []),
           ]),
+          ),
         );
         const audioBindings = compileCanvasAudioBindings({
           studio: block.audioStudio,
-          existingAudioUrls: [...userRefAudios, ...seedanceAudioUrls],
+          existingAudioUrls: segmentMasterUrl
+            ? [segmentMasterUrl]
+            : [...userRefAudios, ...seedanceAudioUrls],
           durationSec: clipDuration,
         });
         const candidateAudioUrls = audioBindings.audioUrls;
+        const segmentGuide = formatManhuaSegmentReferenceGuideZh({
+          previsVideoIndex: segmentPrevisUrl ? candidateVideoUrls.indexOf(segmentPrevisUrl) + 1 : 0,
+          masterAudioIndex: segmentMasterUrl ? candidateAudioUrls.indexOf(segmentMasterUrl) + 1 : 0,
+        });
         const workMode = useSeedance25
           ? normalizeSeedance25EvolinkMode(block.seedance25WorkMode, {
               imageUrls: httpsImages,
@@ -2024,9 +2050,13 @@ export async function runCanvasBlock(
             })
           : undefined;
         const storyboard = String(block.seedance25TimestampStoryboard || "").trim();
-        const promptWithStoryboard = storyboard
-          ? `${seedancePrompt}\n\n【秒级分镜】\n${storyboard}`
-          : seedancePrompt;
+        const promptWithStoryboard = [
+          seedancePrompt,
+          segmentGuide,
+          storyboard ? `【秒级分镜】\n${storyboard}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n");
         let editSourceDurationSec: number | undefined;
         let finalPrompt = audioBindings.promptAppendix
           ? `${promptWithStoryboard}\n\n${audioBindings.promptAppendix}`
@@ -2125,6 +2155,36 @@ export async function runCanvasBlock(
   }
 
   throw new Error("未知方块类型");
+}
+
+/**
+ * 上传件签名链 60 分钟过期（0908 实录：EvoLink「输入媒体下载不了」）。
+ * 提交前按 gcsUri 现签；签不到就退回原链，不在这里挡出片。
+ */
+async function freshManhuaSegmentReferenceUrl(
+  entry: ManhuaSegmentReferenceEntry,
+): Promise<string | undefined> {
+  if (entry.gcsUri) {
+    try {
+      const fresh = String(await resolveCanvasMaterialUrl(entry.gcsUri) || "").trim();
+      if (/^https:\/\//i.test(fresh)) return fresh;
+    } catch {
+      // 退回已存链
+    }
+  }
+  const stored = String(entry.url || "").trim();
+  return /^https?:\/\//i.test(stored) ? stored : undefined;
+}
+
+/** 登记成片被拿去局部编辑/接力时，把过期的登记链换成现签链，其余候选原样。 */
+async function refreshManhuaRegisteredClipUrls(
+  registered: ManhuaSegmentReferenceEntry | undefined,
+  urls: string[],
+): Promise<string[]> {
+  if (!registered?.gcsUri || !registered.url || !urls.includes(registered.url)) return urls;
+  const fresh = await freshManhuaSegmentReferenceUrl(registered);
+  if (!fresh || fresh === registered.url) return urls;
+  return Array.from(new Set(urls.map((u) => (u === registered.url ? fresh : u))));
 }
 
 export { uploadFileToSignedUrl, resolveCanvasMaterialUrl } from "./omniCanvasApi";
