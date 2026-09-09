@@ -1944,8 +1944,12 @@ export async function runCanvasBlock(
       // （试片 10 s 配 30 s 白模/母轨会让模型在两个时长之间二选一）。
       // 各引擎按自己的时长上限取舍：Seedance 2.x ≤30 s，Wan 3.0 视频/音频各 ≤15 s；
       // 白模一旦送出就不再送上段接力片与旧成片（三条 30 s 叠到 90 s 会被拒，且接力片无序号说明）。
+      // 局部编辑与视频延长的 @视频1 都必须是本段成片本身，白模/母轨不得插队
       const segmentRefs =
-        isClip && !isManhuaVideoEditBlock(block) && !runOptions?.pilotRun
+        isClip &&
+        !isManhuaVideoEditBlock(block) &&
+        block.seedance25WorkMode !== "video_extend" &&
+        !runOptions?.pilotRun
           ? block.manhuaSegmentRefs
           : undefined;
       const segmentCapSec = useWan30

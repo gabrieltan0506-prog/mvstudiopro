@@ -4225,9 +4225,30 @@ export async function runManhuaDramaFactoryPipeline(opts: {
           if (prevClipUrl) {
             const basePrompt = String(runBlockPayload.prompt || "");
             const needCont = !/【连续】|镜头连续性/.test(basePrompt);
+            // 上段若是登记进来的外部成片（60 分钟签名链），把它的 gcsUri 一并挂到本段上传记录，
+            // 出片前统一重签才盖得到接力片；否则一小时后供应商拉不到媒体。
+            const prevRegistered = working.find(
+              (b) =>
+                b.id.startsWith("clip-") &&
+                b.outputUrl === prevClipUrl &&
+                b.manhuaSegmentRefs?.registered?.gcsUri &&
+                b.manhuaSegmentRefs.registered.url === prevClipUrl,
+            )?.manhuaSegmentRefs?.registered;
+            const prevAsset = prevRegistered?.gcsUri && !(runBlockPayload.uploadedAssets || []).some((a) => a.url === prevClipUrl)
+              ? [{
+                  id: `continuity-registered-${localSeg}`,
+                  url: prevClipUrl,
+                  previewUrl: prevClipUrl,
+                  fileName: prevRegistered.fileName || "prev-registered-clip.mp4",
+                  gcsUri: prevRegistered.gcsUri,
+                  kind: "video" as const,
+                  mimeType: "video/mp4",
+                }]
+              : [];
             runBlockPayload = {
               ...runBlockPayload,
               refVideoUrl: prevClipUrl,
+              ...(prevAsset.length ? { uploadedAssets: [...(runBlockPayload.uploadedAssets || []), ...prevAsset] } : {}),
               prompt: stripManhuaPromptSlop(
                 [basePrompt, needCont ? "【连续】承上段末帧脸服场，勿跳棚。" : ""]
                   .filter(Boolean)

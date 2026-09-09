@@ -33,6 +33,10 @@ describe("registerManhuaExistingClip · 外部成片登记为本段版本", () =
       manhuaSegmentRefs: { registered: entry },
     });
     expect(out.manhuaClipQuality).toMatchObject({ status: "unverified", failedKeys: [], userAcceptedDespiteQc: false, attempts: 0 });
+    // 登记链同步进上传记录（带 gcsUri），统一重签才盖得到
+    expect(out.uploadedAssets?.some((a) => a.url === entry.url && a.gcsUri === entry.gcsUri && a.kind === "video")).toBe(true);
+    const again = registerManhuaExistingClip(out, { ...entry, url: "https://x.test/mojing-c.mp4?sig=2" });
+    expect(again.uploadedAssets?.filter((a) => a.gcsUri === entry.gcsUri)).toHaveLength(1);
     expect(manhuaClipQualityAllowsAssemble({ outputUrl: out.outputUrl, quality: out.manhuaClipQuality })).toBe(false);
     expect(
       manhuaClipQualityAllowsAssemble({

@@ -168,6 +168,23 @@ describe("漫剧工厂段级参考进出片请求（无网络）", () => {
     expect(wanRequests[0]!.videoUrls).toEqual([PREV_TAIL]);
     expect(wanRequests[0]!.audioUrls ?? []).not.toContain(MASTER_FRESH);
   });
+  it("视频延长模式同样不注入白模/母轨：延长的必须是本段成片", async () => {
+    const source = "https://test.invalid/segment-c.mp4";
+    const block = {
+      ...segmentBlock(),
+      status: "done" as const,
+      outputUrl: source,
+      outputUrls: [source],
+      seedance25WorkMode: "video_extend" as const,
+      refVideoUrl: undefined,
+    };
+    await runCanvasBlock({ ...deps, characterVoiceLocks: [] }, block);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.videoUrls ?? []).not.toContain(PREVIS_FRESH);
+    expect(requests[0]!.audioUrls ?? []).not.toContain(MASTER_GCS);
+    expect(String(requests[0]!.prompt)).not.toContain("站位白模");
+    expect(signRequests).toEqual([]);
+  });
   it("局部编辑模式不注入白模：@视频1 必须是原片", async () => {
     const source = "https://test.invalid/segment-c.mp4";
     const block = {

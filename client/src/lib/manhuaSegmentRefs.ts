@@ -38,8 +38,29 @@ export function registerManhuaExistingClip(
     throw new Error("登记成片需要可播放的 https 地址");
   }
   const withRef = setManhuaSegmentReference(block, "registered", entry);
+  // 同步进上传记录（带 gcsUri）：出片前的统一重签只认 uploadedAssets，
+  // 否则登记链 60 分钟过期后本段重跑/接力都拿不到新链。
+  const registeredAsset = {
+    id: `registered-clip-${Date.now()}`,
+    url,
+    previewUrl: url,
+    fileName: entry.fileName || "registered-clip.mp4",
+    gcsUri: entry.gcsUri,
+    kind: "video" as const,
+    mimeType: "video/mp4",
+  };
+  const uploadedAssets = [
+    ...(block.uploadedAssets || []).filter(
+      (asset) =>
+        !asset.id.startsWith("registered-clip-") &&
+        (!entry.gcsUri || asset.gcsUri !== entry.gcsUri) &&
+        asset.url !== url,
+    ),
+    registeredAsset,
+  ];
   return {
     ...withRef,
+    uploadedAssets,
     status: "done",
     error: undefined,
     outputUrl: url,
