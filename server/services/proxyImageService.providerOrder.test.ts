@@ -21,4 +21,10 @@ describe("gpt-image-2 供应商顺序接线（0909：OpenAI 官方 → WaveSpeed
     expect(src).toContain('provider !== "openai"');
     expect(src).toContain("停止回落");
   });
+  it("改图带 input_fidelity；xhigh/max 只给官方，其余家折回 high", () => {
+    const openai = readFileSync(new URL("./openaiGptImage2.ts", import.meta.url), "utf8");
+    expect(openai).toContain('addField("input_fidelity", inputFidelity)');
+    expect(src).toContain("quality: openaiQuality ?? qualityForCall");
+    expect(src).toContain('qualityRaw === "xhigh" || qualityRaw === "max"');
+  });
 });

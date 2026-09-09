@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolveOpenAiGptImage2Model } from "./openaiGptImage2";
+import { resolveOpenAiGptImage2Model, resolveOpenAiInputFidelity } from "./openaiGptImage2";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -16,5 +16,14 @@ describe("resolveOpenAiGptImage2Model", () => {
     expect(resolveOpenAiGptImage2Model("flare")).toBe("gpt-image-2.5-sunburst");
     vi.stubEnv("OPENAI_GPT_IMAGE2_MODEL", "dall-e-9");
     expect(resolveOpenAiGptImage2Model("flare")).toBe("gpt-image-2.5-flare");
+  });
+  it("2026-09-08 快照全名可用 env 钉死；input_fidelity 默认 high、env 可放宽", () => {
+    vi.stubEnv("OPENAI_GPT_IMAGE2_MODEL", "gpt-image-2.5-sunburst-2026-09-08");
+    expect(resolveOpenAiGptImage2Model("flare")).toBe("gpt-image-2.5-sunburst-2026-09-08");
+    vi.stubEnv("OPENAI_GPT_IMAGE2_INPUT_FIDELITY", "");
+    expect(resolveOpenAiInputFidelity()).toBe("high");
+    expect(resolveOpenAiInputFidelity("low")).toBe("low");
+    vi.stubEnv("OPENAI_GPT_IMAGE2_INPUT_FIDELITY", "low");
+    expect(resolveOpenAiInputFidelity()).toBe("low");
   });
 });

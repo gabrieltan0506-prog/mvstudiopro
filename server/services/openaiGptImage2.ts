@@ -66,12 +66,28 @@ function resolveOpenAiSize(aspectRatio: "9:16" | "16:9", explicitSize?: string):
   return aspectRatio === "16:9" ? "1536x1024" : "1024x1536";
 }
 
-function resolveQuality(raw?: string): "low" | "medium" | "high" {
+export type OpenAiImageQuality = "low" | "medium" | "high" | "xhigh" | "max";
+/**
+ * 官方 quality：low/medium/high 全系支持；xhigh/max 只有 gpt-image-2.5（含 2026-09-08 快照）收。
+ * 非 2.5 模型收到 xhigh/max 一律折回 high，避免 400。
+ */
+function resolveQuality(raw?: string, model?: string): OpenAiImageQuality {
   const q = String(raw || process.env.GPT_IMAGE2_QUALITY || "high")
     .trim()
     .toLowerCase();
+  const is25 = /^gpt-image-2\.5/i.test(String(model || ""));
+  if (q === "xhigh" || q === "max") return is25 ? q : "high";
   if (q === "low" || q === "medium" || q === "high") return q;
   return "high";
+}
+
+/**
+ * 改图对原图的忠实度（官方 `input_fidelity`：high/low）。有参考图的改图默认 high——
+ * 定妆/换装/局部重绘都要保脸保服；`OPENAI_GPT_IMAGE2_INPUT_FIDELITY=low` 可整体放宽。
+ */
+export function resolveOpenAiInputFidelity(raw?: string | null): "high" | "low" {
+  const v = String(raw || process.env.OPENAI_GPT_IMAGE2_INPUT_FIDELITY || "high").trim().toLowerCase();
+  return v === "low" ? "low" : "high";
 }
 
 async function downloadUrl(url: string): Promise<Buffer> {
@@ -107,7 +123,7 @@ async function postGenerations(
   apiKey: string,
   prompt: string,
   size: string,
-  quality: "low" | "medium" | "high",
+  quality: OpenAiImageQuality,
   model: string,
 ): Promise<Buffer> {
   const body = {
@@ -140,11 +156,12 @@ async function postEdits(
   apiKey: string,
   prompt: string,
   size: string,
-  quality: "low" | "medium" | "high",
+  quality: OpenAiImageQuality,
   imageUrls: string[],
   maskUrl: string | undefined,
   model: string,
   flowLog?: string[],
+  inputFidelity: "high" | "low" = "high",
 ): Promise<Buffer> {
   const rawBuffers = await Promise.all(imageUrls.slice(0, 16).map((u) => downloadUrl(u)));
   const { padImageBufferToSize } = await import("./manhuaKeyartPadReference.js");
@@ -175,6 +192,8 @@ async function postEdits(
   addField("size", size);
   addField("quality", quality);
   addField("output_format", "png");
+  // 官方参考页（0910 核实）：input_fidelity 控制对原图的忠实度；改图保脸保服默认 high
+  addField("input_fidelity", inputFidelity);
 
   for (let i = 0; i < buffers.length; i++) {
     const buf = buffers[i]!;
@@ -235,6 +254,8 @@ export async function postOpenAiGptImage2AndUpload(
     lane?: OpenAiImageLane | null;
     /** 官方模型档位：flare（默认）/ sunburst */
     variant?: OpenAiImageVariant | null;
+    /** 改图对原图忠实度；默认 high */
+    inputFidelity?: "high" | "low" | null;
   } = {},
 ): Promise<string | null> {
   const L = opts.flowLog;
@@ -246,7 +267,9 @@ export async function postOpenAiGptImage2AndUpload(
 
   const aspectRatio = opts.aspectRatio ?? "9:16";
   const size = resolveOpenAiSize(aspectRatio, opts.size);
-  const quality = resolveQuality(opts.quality);
+  const model = resolveOpenAiGptImage2Model(opts.variant);
+  const quality = resolveQuality(opts.quality, model);
+  const inputFidelity = resolveOpenAiInputFidelity(opts.inputFidelity);
   const promptTrimmed = enforceSimplifiedChineseImagePrompt(String(prompt || "").trim());
   if (!promptTrimmed) {
     appendImageFlowLog(L, "[GPT-IMAGE-2·OpenAI] prompt 为空，跳过");
@@ -262,11 +285,10 @@ export async function postOpenAiGptImage2AndUpload(
 
   const refs = (opts.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean).slice(0, 16);
   const maskUrl = String(opts.maskUrl || "").trim() || undefined;
-  const model = resolveOpenAiGptImage2Model(opts.variant);
 
   appendImageFlowLog(
     L,
-    `[GPT-IMAGE-2·OpenAI] ${refs.length ? "edits" : "generations"} · model=${model} · size=${size} · quality=${quality}${refs.length ? ` · refs=${refs.length}` : ""} · lane=${opts.lane || "keyart"} · 可用钥=${keyChain.length}`,
+    `[GPT-IMAGE-2·OpenAI] ${refs.length ? "edits" : "generations"} · model=${model} · size=${size} · quality=${quality}${refs.length ? ` · refs=${refs.length} · input_fidelity=${inputFidelity}` : ""} · lane=${opts.lane || "keyart"} · 可用钥=${keyChain.length}`,
   );
 
   let lastMessage = "";
@@ -274,7 +296,7 @@ export async function postOpenAiGptImage2AndUpload(
     const slot = keyChain[i]!;
     try {
       const buffer = refs.length
-        ? await postEdits(slot.key, promptTrimmed, size, quality, refs, maskUrl, model, L)
+        ? await postEdits(slot.key, promptTrimmed, size, quality, refs, maskUrl, model, L, inputFidelity)
         : await postGenerations(slot.key, promptTrimmed, size, quality, model);
       const publicUrl = await uploadBufferToPlatformStorage(buffer, gcsSubdir, L);
       appendImageFlowLog(

@@ -1182,8 +1182,10 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   imageLane?: OpenAiImageLane | null;
   /** OpenAI 官方模型档位：flare（默认）/ sunburst；只影响官方通道 */
   openaiImageVariant?: OpenAiImageVariant | null;
-  /** 覆盖默认 quality。 */
-  qualityOverride?: GptImage2ApiQuality;
+  /** 覆盖默认 quality；xhigh/max 只对 OpenAI gpt-image-2.5 生效，其余家折回 high */
+  qualityOverride?: GptImage2ApiQuality | "xhigh" | "max";
+  /** OpenAI 改图对原图忠实度（有参考图才有意义）；默认 high */
+  openaiInputFidelity?: "high" | "low" | null;
   /** EvoLink 比例模式分辨率覆写（知识卡传 4K；未传按 EVOLINK_GPT_IMAGE2_RESOLUTION 默认 2K） */
   evolinkResolution?: "1K" | "2K" | "4K";
   /** OpenAI 官方显式像素尺寸（知识卡传 3840x2160，与 EvoLink 4K 同尺寸；未传按比例默认 1536x1024） */
@@ -1293,12 +1295,15 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     appendImageFlowLog(L, `[单帧·遮罩] mask_url 已附带 · ${maskUrl.slice(0, 96)}`);
   }
 
+  // xhigh/max 只有 OpenAI gpt-image-2.5 收；WaveSpeed/EvoLink 折回 high
+  const qualityRaw = String(options.qualityOverride || "").trim().toLowerCase();
+  const openaiQuality = qualityRaw === "xhigh" || qualityRaw === "max" ? qualityRaw : undefined;
   const qualityForCall: GptImage2ApiQuality =
-    options.qualityOverride === "low" ||
-    options.qualityOverride === "medium" ||
-    options.qualityOverride === "high"
-      ? options.qualityOverride
-      : GPT_IMAGE2_PORTRAIT_API_QUALITY;
+    qualityRaw === "low" || qualityRaw === "medium" || qualityRaw === "high"
+      ? (qualityRaw as GptImage2ApiQuality)
+      : openaiQuality
+        ? "high"
+        : GPT_IMAGE2_PORTRAIT_API_QUALITY;
 
   const primaryTimeoutMs = getGptImage2PrimaryTimeoutMs();
 
@@ -1326,12 +1331,13 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
             aspectRatio: options.aspectRatio,
             size: options.openaiSize,
             flowLog: L,
-            quality: qualityForCall,
+            quality: openaiQuality ?? qualityForCall,
             imageUrls: hasRef ? refImageUrls : undefined,
             maskUrl: hasRef ? maskUrl : undefined,
             captureError: err,
             lane: options.imageLane ?? null,
             variant: options.openaiImageVariant ?? null,
+            inputFidelity: options.openaiInputFidelity ?? null,
           })
         : provider === "wavespeed"
           ? postWavespeedGptImage2AndUpload(finalPrompt, options.gcsSubdir, {
