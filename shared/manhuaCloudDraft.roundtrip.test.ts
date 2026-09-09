@@ -79,6 +79,25 @@ describe("manhuaCloudDraft · 稳定图链与任务字段往返", () => {
     expect(out?.lastFrameUrl).toBe(stableUrl);
   });
 
+  it("视频段的段级白模/母轨/登记成片扛过 sanitize，坏项丢弃", () => {
+    const out = sanitizeManhuaCloudDraftBlock({
+      id: "clip-e01-g02",
+      kind: "video",
+      x: 0, y: 0, width: 420, height: 360,
+      prompt: "【第2段·30s】",
+      outputUrl: "https://storage.googleapis.com/b/uploads/u1/c.mp4",
+      manhuaSegmentRefs: {
+        previs: { url: "https://x.test/previs.mp4?sig=1", gcsUri: "gs://b/uploads/u1/previs.mp4", fileName: "白模.mp4", updatedAt: "2026-09-09T00:00:00Z" },
+        master: { url: "expired", gcsUri: "gs://b/uploads/u1/master.wav", updatedAt: "2026-09-09T00:00:00Z" },
+        registered: { url: "blob:local" },
+      },
+    });
+    expect(out?.manhuaSegmentRefs?.previs).toMatchObject({ gcsUri: "gs://b/uploads/u1/previs.mp4", fileName: "白模.mp4" });
+    expect(out?.manhuaSegmentRefs?.master).toMatchObject({ url: "", gcsUri: "gs://b/uploads/u1/master.wav" });
+    expect(out?.manhuaSegmentRefs?.registered).toBeUndefined();
+    expect(sanitizeManhuaCloudDraftBlock({ id: "clip-e01-g03", kind: "video", prompt: "p" })?.manhuaSegmentRefs).toBeUndefined();
+  });
+
   it("serialize → parse 全程往返不丢字段", () => {
     const payload = {
       format: "mv-manhua-cloud-draft-v1",

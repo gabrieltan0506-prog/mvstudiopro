@@ -22,6 +22,7 @@ import {
   type ManhuaWriterSessionPartial,
 } from "@shared/manhuaWriterSession";
 import { MANHUA_FACTORY_DEFAULT_VIDEO_MODEL } from "@shared/manhuaScriptWorkbench";
+import { normalizeManhuaSegmentReferences } from "@shared/manhuaSegmentReference";
 import {
   normalizeCanvasBlock,
   normalizeCanvasVideoModel,
@@ -495,6 +496,8 @@ export function cloudDraftBlocksToCanvas(
       seedance25WorkMode: raw.seedance25WorkMode,
       seedance25RefVideoUrls: raw.seedance25RefVideoUrls,
       seedance25RefAudioUrls: raw.seedance25RefAudioUrls,
+      // 段级白模/母轨/登记成片：回读漏掉就是刷新即丢、登记片过期后无 gcsUri 可重签
+      manhuaSegmentRefs: normalizeManhuaSegmentReferences(raw.manhuaSegmentRefs),
       audioStudio: raw.audioStudio,
       seedance25TimestampStoryboard: raw.seedance25TimestampStoryboard,
       seedance25ReshootFromSec: raw.seedance25ReshootFromSec,
