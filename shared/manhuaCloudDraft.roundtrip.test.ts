@@ -5,6 +5,7 @@ import {
   serializeManhuaCloudDraftPayload,
   type ManhuaCloudDraftPayload,
 } from "./manhuaCloudDraft";
+import { MANHUA_MEDIA_HISTORY_MAX, capManhuaMediaHistory } from "./manhuaMediaHistoryCap";
 
 /**
  * 复审 P0-1 / P1-3 回归:永久图链与长排队任务字段必须扛过
@@ -12,6 +13,47 @@ import {
  */
 describe("manhuaCloudDraft · 稳定图链与任务字段往返", () => {
   const stableUrl = "/api/canvas-media/generated/canvas-gpt-image2/173_ab.png";
+
+  it("图片节点 12 条历史经 sanitize → serialize → parse 全保留（不再截到 8）", () => {
+    const urls = Array.from({ length: 12 }, (_, i) => `/api/canvas-media/generated/x/${i}.png`);
+    const out = sanitizeManhuaCloudDraftBlock({
+      id: "keyart-e01-01",
+      kind: "image",
+      x: 0, y: 0, width: 420, height: 360,
+      prompt: "p",
+      outputUrl: urls[0],
+      outputUrls: urls,
+    });
+    expect(out?.outputUrls).toEqual(urls);
+    const payload = {
+      format: "mv-manhua-cloud-draft-v1",
+      clientUpdatedAt: new Date(1).toISOString(),
+      writerSession: {},
+      canvas: { blocks: [out!], edges: [] },
+    } as unknown as ManhuaCloudDraftPayload;
+    const parsed = parseManhuaCloudDraftPayload(serializeManhuaCloudDraftPayload(payload));
+    expect(parsed?.canvas.blocks[0]?.outputUrls).toHaveLength(12);
+  });
+
+  it("历史超过上限时截到常量 30 且保住当前选中图", () => {
+    expect(MANHUA_MEDIA_HISTORY_MAX).toBe(30);
+    const urls = Array.from({ length: 40 }, (_, i) => `/api/canvas-media/generated/x/${i}.png`);
+    const selected = urls[35]!;
+    const out = sanitizeManhuaCloudDraftBlock({
+      id: "keyart-e01-02",
+      kind: "image",
+      x: 0, y: 0, width: 420, height: 360,
+      prompt: "p",
+      outputUrl: selected,
+      outputUrls: urls,
+    });
+    expect(out?.outputUrls).toHaveLength(30);
+    expect(out?.outputUrls?.[0]).toBe(urls[0]);
+    expect(out?.outputUrls).toContain(selected);
+    expect(out?.outputUrl).toBe(selected);
+    expect(capManhuaMediaHistory(urls, selected)).toHaveLength(30);
+    expect(capManhuaMediaHistory(["a", "a", "b"], "b")).toEqual(["a", "b"]);
+  });
 
   it("sanitize 保留 /api/canvas-media/ 产物与 videoTask 三字段", () => {
     const out = sanitizeManhuaCloudDraftBlock({

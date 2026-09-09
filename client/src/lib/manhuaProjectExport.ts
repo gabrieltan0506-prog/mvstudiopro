@@ -152,6 +152,75 @@ export function selectExportableDockIds(items: ManhuaClipDockItem[]): string[] {
   return items.filter(manhuaClipDockItemHasExportableOutput).map((i) => i.blockId);
 }
 
+/** 成片坞「含历史版本」开关的 localStorage 键；默认关，只在用户打开后记住 */
+export const MANHUA_DOCK_EXPORT_HISTORY_STORAGE_KEY = "mv.manhuaDock.exportIncludeHistory";
+
+export type ManhuaDockHistorySource = "生成" | "编辑" | "登记" | "合成" | "烧字幕";
+
+export type ManhuaDockHistoryVersion = {
+  url: string;
+  /** v1 = 当前版；v2… = 历史版（数组前部更新） */
+  versionIndex: number;
+  active: boolean;
+  source?: ManhuaDockHistorySource;
+};
+
+function deriveDockHistorySource(
+  block: CanvasBlock | undefined,
+  url: string,
+): ManhuaDockHistorySource | undefined {
+  if (!block) return undefined;
+  const finalIdentity = findManhuaFinalVideoVersionIdentity(block, url);
+  if (finalIdentity?.origin === "assemble") return "合成";
+  if (finalIdentity?.origin === "burn_subtitle") return "烧字幕";
+  if (block.refVideoUrl && block.refVideoUrl === url) return "登记";
+  if (block.refImageUrl && block.refImageUrl === url) return "登记";
+  if (block.kind === "image") return block.imageMode === "edit" ? "编辑" : "生成";
+  if (block.kind === "video") return "生成";
+  return undefined;
+}
+
+/**
+ * 一个坞项的全部版本（当前版 + outputUrls 历史），去重、当前版永远排 v1。
+ * 文本阶段无历史，返回空；无 block 时只有当前版。
+ */
+export function listManhuaDockItemVersions(
+  item: ManhuaClipDockItem,
+  block?: CanvasBlock,
+): ManhuaDockHistoryVersion[] {
+  if (TEXT_EXPORT_STAGES.has(item.stage)) return [];
+  const current = String(item.outputUrl || "").trim();
+  if (!current) return [];
+  const seen = new Set<string>([current]);
+  const out: ManhuaDockHistoryVersion[] = [
+    { url: current, versionIndex: 1, active: true, source: deriveDockHistorySource(block, current) },
+  ];
+  for (const raw of block?.outputUrls || []) {
+    const u = String(raw || "").trim();
+    if (!u || seen.has(u)) continue;
+    seen.add(u);
+    out.push({
+      url: u,
+      versionIndex: out.length + 1,
+      active: false,
+      source: deriveDockHistorySource(block, u),
+    });
+  }
+  return out;
+}
+
+/** 历史文件名主干：`第2段·成片` / `关键静帧` / `前情提要片头`… */
+function dockHistoryFileBase(item: ManhuaClipDockItem): string {
+  const stageZh: Partial<Record<ManhuaFactoryStageKey, string>> = {
+    clip: "成片",
+    keyart: "关键静帧",
+    recap_card: "前情提要片头",
+    omni_edit: "视频改写",
+  };
+  const base = stageZh[item.stage] || item.stage;
+  return item.stage === "clip" && item.segIndex ? `第${item.segIndex}段·${base}` : base;
+}
+
 export type ManhuaDockAssembleClip = {
   subtitleSource?: ManhuaSubtitleSource;
   episodeIndex: number;
@@ -272,26 +341,40 @@ export function collectManhuaAssembleClipsFromDock(
   );
 }
 
-export function summarizeManhuaDockExport(items: ManhuaClipDockItem[]): {
+export function summarizeManhuaDockExport(
+  items: ManhuaClipDockItem[],
+  opts?: { blocks?: CanvasBlock[] },
+): {
   episodeCount: number;
   exportableCount: number;
   pendingCount: number;
-  byEpisode: Array<{ episodeIndex: number; exportable: number; pending: number }>;
+  /** 可导出项之外的历史版本数（不含当前版） */
+  historyCount: number;
+  /** 打开「含历史版本」后的文件总数 = exportableCount + historyCount */
+  exportableWithHistoryCount: number;
+  byEpisode: Array<{ episodeIndex: number; exportable: number; pending: number; history: number }>;
 } {
-  const epMap = new Map<number, { exportable: number; pending: number }>();
+  const blockById = new Map((opts?.blocks || []).map((b) => [b.id, b] as const));
+  const epMap = new Map<number, { exportable: number; pending: number; history: number }>();
   for (const it of items) {
-    const cur = epMap.get(it.episodeIndex) || { exportable: 0, pending: 0 };
-    if (manhuaClipDockItemHasExportableOutput(it)) cur.exportable += 1;
-    else cur.pending += 1;
+    const cur = epMap.get(it.episodeIndex) || { exportable: 0, pending: 0, history: 0 };
+    if (manhuaClipDockItemHasExportableOutput(it)) {
+      cur.exportable += 1;
+      cur.history += Math.max(0, listManhuaDockItemVersions(it, blockById.get(it.blockId)).length - 1);
+    } else cur.pending += 1;
     epMap.set(it.episodeIndex, cur);
   }
   const byEpisode = Array.from(epMap.entries())
     .sort((a, b) => a[0] - b[0])
     .map(([episodeIndex, v]) => ({ episodeIndex, ...v }));
+  const exportableCount = byEpisode.reduce((n, e) => n + e.exportable, 0);
+  const historyCount = byEpisode.reduce((n, e) => n + e.history, 0);
   return {
     episodeCount: byEpisode.length,
-    exportableCount: byEpisode.reduce((n, e) => n + e.exportable, 0),
+    exportableCount,
     pendingCount: byEpisode.reduce((n, e) => n + e.pending, 0),
+    historyCount,
+    exportableWithHistoryCount: exportableCount + historyCount,
     byEpisode,
   };
 }
@@ -361,6 +444,16 @@ export type ManhuaProjectExportManifest = {
     stage: string;
     path?: string;
   }>;
+  /** 「含历史版本」打开时：每个节点的历史版（v2…）落盘记录 */
+  history?: Array<{
+    blockId: string;
+    episodeIndex: number;
+    stage: string;
+    versionIndex: number;
+    url: string;
+    path?: string;
+    source?: ManhuaDockHistorySource;
+  }>;
   failed: Array<{ blockId: string; url?: string; error: string }>;
 };
 
@@ -389,6 +482,10 @@ export type ExportManhuaProjectZipOpts = {
   finalVideoUrl?: string | null;
   /** final-eXX 画布块；不进入自动阶段，只供工程包备份。 */
   finalVideoBlocks?: CanvasBlock[];
+  /** 画布全部块：读各节点 outputUrls 历史（含历史版本导出用） */
+  blocks?: CanvasBlock[];
+  /** 默认 false：为 true 时把每个节点的历史版本写进 epXX/历史/ 并附 版本清单.md */
+  includeHistory?: boolean;
 };
 
 export type ExportManhuaProjectZipResult = {
@@ -397,6 +494,8 @@ export type ExportManhuaProjectZipResult = {
   manifest: ManhuaProjectExportManifest;
   okCount: number;
   failCount: number;
+  /** 本次写入的历史版本文件数（开关关闭时为 0） */
+  historyCount: number;
 };
 
 async function fetchAsArrayBuffer(url: string): Promise<ArrayBuffer> {
@@ -562,6 +661,55 @@ export async function exportManhuaProjectZip(
     }
   }
 
+  // 含历史版本：每个节点的 v2… 写进 epXX/历史/，文件名带版本序号；默认关闭时完全不触碰
+  const historyMeta: NonNullable<ManhuaProjectExportManifest["history"]> = [];
+  const historyDoc: string[] = [];
+  const blockById = new Map((opts.blocks || []).map((b) => [b.id, b] as const));
+  if (opts.includeHistory) {
+    for (const it of selected) {
+      const fileMeta = STAGE_FILE[it.stage];
+      if (!fileMeta || TEXT_EXPORT_STAGES.has(it.stage)) continue;
+      const versions = listManhuaDockItemVersions(it, blockById.get(it.blockId));
+      if (versions.length <= 1) continue;
+      const epFolder = `ep${String(it.episodeIndex).padStart(2, "0")}`;
+      const base = dockHistoryFileBase(it);
+      const lines: string[] = [];
+      for (const v of versions) {
+        if (v.active) {
+          const cur = selectedMeta.find((s) => s.blockId === it.blockId);
+          lines.push(`- v1（当前版）${v.source ? ` · ${v.source}` : ""}：\`${cur?.path || v.url}\``);
+          continue;
+        }
+        const ext = guessExt(v.url, fileMeta.extHint);
+        const entry: NonNullable<ManhuaProjectExportManifest["history"]>[number] = {
+          blockId: it.blockId,
+          episodeIndex: it.episodeIndex,
+          stage: it.stage,
+          versionIndex: v.versionIndex,
+          url: v.url,
+          source: v.source,
+        };
+        try {
+          const buf = await fetchAsArrayBuffer(v.url);
+          const path = uniqueZipPath(`${epFolder}/历史`, `${base}-v${v.versionIndex}`, undefined, ext);
+          zip.file(path, buf);
+          entry.path = path;
+          okCount += 1;
+          lines.push(`- v${v.versionIndex}${v.source ? ` · ${v.source}` : ""}：\`${path}\``);
+        } catch (e: unknown) {
+          failed.push({
+            blockId: `${it.blockId}#v${v.versionIndex}`,
+            url: v.url,
+            error: e instanceof Error ? e.message : "下载失败",
+          });
+          lines.push(`- v${v.versionIndex}${v.source ? ` · ${v.source}` : ""}：下载失败（${v.url}）`);
+        }
+        historyMeta.push(entry);
+      }
+      historyDoc.push(`### 第${it.episodeIndex}集 · ${it.label}（${it.blockId}）`, ...lines, "");
+    }
+  }
+
   const finalVideos: NonNullable<ManhuaProjectExportManifest["finalVideos"]> = [];
   for (const block of finalVideoBlocks) {
     const episodeIndex = getBlockEpisodeIndex(block) ?? 1;
@@ -654,9 +802,23 @@ export async function exportManhuaProjectZip(
     finalVideos: finalVideos.length ? finalVideos : undefined,
     libraryRefs,
     selected: selectedMeta,
+    history: opts.includeHistory ? historyMeta : undefined,
     failed,
   };
   zip.file("manifest.json", JSON.stringify(manifest, null, 2));
+  if (opts.includeHistory) {
+    zip.file(
+      "版本清单.md",
+      [
+        "# 版本清单",
+        "",
+        `导出时间：${manifest.exportedAt}`,
+        "说明：v1 为节点当前版（在 epXX/ 根目录），v2 起为历史版（在 epXX/历史/，数字越小越新）。来源：生成 / 编辑 / 登记 / 合成 / 烧字幕。",
+        "",
+        ...(historyDoc.length ? historyDoc : ["（勾选节点均只有当前版，无历史版本）"]),
+      ].join("\n"),
+    );
+  }
   const writerMd = String(opts.writerPackMarkdown || "").trim();
   if (writerMd) {
     zip.file("writer-pack.md", writerMd);
@@ -756,7 +918,14 @@ export async function exportManhuaProjectZip(
     ? `mv-manhua-series${seriesSlug ? `-${seriesSlug}` : ""}.zip`
     : `mv-manhua-ep${String(firstEp).padStart(2, "0")}${seriesSlug ? `-${seriesSlug}` : ""}.zip`;
 
-  return { blob, filename, manifest, okCount, failCount: failed.length };
+  return {
+    blob,
+    filename,
+    manifest,
+    okCount,
+    failCount: failed.length,
+    historyCount: historyMeta.filter((h) => h.path).length,
+  };
 }
 
 export async function downloadManhuaProjectZip(opts: ExportManhuaProjectZipOpts): Promise<ExportManhuaProjectZipResult> {

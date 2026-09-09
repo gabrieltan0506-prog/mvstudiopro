@@ -2,6 +2,7 @@
  * 漫剧云端草稿：剧本、静帧与已有视频的恢复元数据；不存视频字节。
  */
 
+import { capManhuaMediaHistory } from "./manhuaMediaHistoryCap";
 import { normalizeManhuaTimelineOrder } from "./manhuaEditOrder.js";
 import { canvasAudioStudioSchema } from "./canvasAudioStudio.js";
 import { normalizeManhuaKeyartLookState } from "./manhuaKeyartLookState";
@@ -454,10 +455,15 @@ export function sanitizeManhuaCloudDraftBlock(
     };
   }
 
-  const outputUrls = keepImageUrls(b.outputUrls);
-  const outputUrl = isPersistableAssetUrl(b.outputUrl)
+  const selectedOutputUrl = isPersistableAssetUrl(b.outputUrl)
     ? String(b.outputUrl).trim()
-    : outputUrls[0];
+    : undefined;
+  // 历史上限走全链常量（30），且永远保住当前选中图；不得再回落到旧的 8
+  const outputUrls = capManhuaMediaHistory(
+    keepImageUrls(b.outputUrls),
+    selectedOutputUrl,
+  );
+  const outputUrl = selectedOutputUrl || outputUrls[0];
   const refImageUrl = isPersistableAssetUrl(b.refImageUrl)
     ? String(b.refImageUrl).trim()
     : undefined;

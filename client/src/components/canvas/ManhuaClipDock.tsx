@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -15,6 +15,7 @@ import {
   collectManhuaAssembleClipsFromDock,
   collectManhuaClipDockItems,
   downloadManhuaProjectZip,
+  MANHUA_DOCK_EXPORT_HISTORY_STORAGE_KEY,
   manhuaClipDockItemAllowsAssemble,
   manhuaClipDockItemHasExportableOutput,
   selectExportableDockIds,
@@ -101,8 +102,23 @@ export default function ManhuaClipDock({
   factoryBusy,
 }: Props) {
   const [exportBusy, setExportBusy] = useState(false);
+  // 「含历史版本」默认关；用户打开过就记在本机（只影响 zip 内容，不影响合成）
+  const [includeHistory, setIncludeHistory] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem(MANHUA_DOCK_EXPORT_HISTORY_STORAGE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(MANHUA_DOCK_EXPORT_HISTORY_STORAGE_KEY, includeHistory ? "1" : "0");
+    } catch {
+      /* 隐私模式等无本机存储时忽略 */
+    }
+  }, [includeHistory]);
   const items = useMemo(() => collectManhuaClipDockItems(blocks), [blocks]);
-  const summary = useMemo(() => summarizeManhuaDockExport(items), [items]);
+  const summary = useMemo(() => summarizeManhuaDockExport(items, { blocks }), [items, blocks]);
   const assembleClips = useMemo(() => {
     const fromSelected = collectManhuaAssembleClipsFromDock(items, {
       selectedIds,
@@ -240,6 +256,8 @@ export default function ManhuaClipDock({
           cineVocabIds.length ? cineVocabIds : undefined,
         ),
         finalVideoUrl: finalVideoUrl || undefined,
+        blocks,
+        includeHistory,
       });
       if (result.failCount > 0) {
         window.alert(
@@ -277,9 +295,13 @@ export default function ManhuaClipDock({
           cineVocabIds.length ? cineVocabIds : undefined,
         ),
         finalVideoUrl: finalVideoUrl || undefined,
+        blocks,
+        includeHistory,
       });
       window.alert(
         `已导出多集工程包 ${result.filename}（${result.okCount} 项${
+          result.historyCount ? `，含历史版本 ${result.historyCount} 个` : ""
+        }${
           result.failCount ? `，失败 ${result.failCount}` : ""
         }）`,
       );
@@ -564,6 +586,29 @@ export default function ManhuaClipDock({
         >
           清空勾选
         </button>
+        <label
+          className="inline-flex cursor-pointer select-none items-center gap-1 rounded-lg border border-white/12 px-2 py-1 text-[10px] text-white/55 hover:bg-white/8"
+          title={
+            summary.historyCount
+              ? `打开后把每个节点的历史版本（${summary.historyCount} 个）一并写进 epXX/历史/，并附 版本清单.md；默认只导当前版`
+              : "勾选节点暂无历史版本；打开后导出会附 版本清单.md"
+          }
+        >
+          <input
+            type="checkbox"
+            className="h-3 w-3 accent-sky-400"
+            checked={includeHistory}
+            disabled={exportBusy}
+            onChange={(e) => setIncludeHistory(e.target.checked)}
+          />
+          含历史版本
+          {summary.historyCount ? (
+            <span className="text-white/40">
+              ({summary.exportableCount}
+              {includeHistory ? `+${summary.historyCount}` : ""})
+            </span>
+          ) : null}
+        </label>
         <button
           type="button"
           disabled={exportBusy || !summary.exportableCount}

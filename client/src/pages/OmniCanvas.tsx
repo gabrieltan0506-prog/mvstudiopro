@@ -1,3 +1,4 @@
+import { capManhuaMediaHistory } from "@shared/manhuaMediaHistoryCap";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import Navbar from "@/components/Navbar";
@@ -9144,12 +9145,15 @@ export default function OmniCanvas() {
                               ...b,
                               outputUrl: url,
                               // 审查修5：显式把被编辑的旧 outputUrl 押进历史位，不依赖它已在 outputUrls 的隐含前提
-                              outputUrls: [
+                              outputUrls: capManhuaMediaHistory(
+                                [
+                                  url,
+                                  ...[b.outputUrl, ...(b.outputUrls || [])].filter(
+                                    (u): u is string => Boolean(u) && u !== url,
+                                  ),
+                                ],
                                 url,
-                                ...[b.outputUrl, ...(b.outputUrls || [])].filter(
-                                  (u): u is string => Boolean(u) && u !== url,
-                                ),
-                              ].filter((u, i, arr) => arr.indexOf(u) === i).slice(0, 8),
+                              ),
                               status: "done" as const,
                             }
                           : b,
