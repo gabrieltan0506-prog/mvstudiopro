@@ -79,6 +79,8 @@ type Props = {
   onSegmentReferenceClear?: (clipBlockId: string, slot: ManhuaSegmentReferenceSlot) => void;
   /** 正在上传段参考的成片节点 id */
   segmentRefBusyId?: string | null;
+  /** 上传进度 0–1；null/undefined = 未知 */
+  segmentRefProgress?: number | null;
 };
 
 /** 一步达：点即选文件，不另开面板；同一 input 复用会被浏览器缓存 FileList，故每次新建 */
@@ -133,6 +135,7 @@ export default function ManhuaClipDock({
   onSegmentReferenceUpload,
   onSegmentReferenceClear,
   segmentRefBusyId,
+  segmentRefProgress,
 }: Props) {
   const [exportBusy, setExportBusy] = useState(false);
   // 「含历史版本」默认关；用户打开过就记在本机（只影响 zip 内容，不影响合成）
@@ -892,7 +895,14 @@ export default function ManhuaClipDock({
                               登记成片
                             </button>
                             {segmentRefBusyId === it.blockId ? (
-                              <Loader2 className="h-3 w-3 animate-spin text-cyan-200" aria-label="上传中" />
+                              <span className="inline-flex items-center gap-1 text-[10px] text-cyan-100" role="status">
+                                <Loader2 className="h-3 w-3 animate-spin text-cyan-200" aria-label="上传中" />
+                                {typeof segmentRefProgress === "number"
+                                  ? segmentRefProgress >= 1
+                                    ? "签名中…"
+                                    : `上传 ${Math.round(segmentRefProgress * 100)}%`
+                                  : null}
+                              </span>
                             ) : null}
                           </span>
                         ) : null}

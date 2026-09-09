@@ -142,10 +142,19 @@ export async function uploadFileToSignedUrl(params: {
   /** 必须与申请签名时的 MIME 相同；未指定时保留浏览器文件类型。 */
   contentType?: string;
   headers?: Record<string, string>;
+  /** 上传进度 0–1（XHR upload.progress；浏览器给不出 total 时不回调） */
+  onProgress?: (fraction: number) => void;
 }) {
   return new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", params.uploadUrl, true);
+    if (params.onProgress) {
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && event.total > 0) {
+          params.onProgress?.(Math.max(0, Math.min(1, event.loaded / event.total)));
+        }
+      };
+    }
     xhr.onerror = () => reject(new Error("上传失败，请检查网络"));
     xhr.onload = () => {
       if (xhr.status < 200 || xhr.status >= 300) {

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import type { CanvasBlock } from "@/lib/canvasTypes";
+import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference";
+import { buildPremixTimelineClips, isPremixPendingKey, PREMIX_PENDING_PREFIX } from "@/lib/manhuaPremixMaster";
 import { resolveCanvasMaterialUrl } from "@/lib/omniCanvasApi";
 import { compileCanvasDialogueInput } from "@shared/canvasDialogueControls";
 import { canvasAudioPreviewKey, loadCanvasMusicHistory } from "@/lib/canvasAudioStudioRecovery";
@@ -125,7 +127,13 @@ type Props = {
   block: CanvasBlock;
   disabled?: boolean;
   onChange: (next: CanvasAudioStudioState) => void;
+  /**
+   * 一键预混母轨出好后回调：对白原音量 + BGM 压 12 dB 带淡入淡出，合成一条 ≤30 s 单轨，
+   * 由上层挂到本段 manhuaSegmentRefs.master（出片时作唯一 @音频1）。不传则不显示按钮。
+   */
+  onMasterTrackReady?: (entry: ManhuaSegmentReferenceEntry) => void;
 };
+
 
 /** 生产适配器与视图分开；离线测试运行真实视图，不能触发真实付费。 */
 export function CanvasAudioStudio(props: Props) {
@@ -153,6 +161,7 @@ export function CanvasAudioStudioView({
   block,
   disabled = false,
   onChange,
+  onMasterTrackReady,
   services,
 }: Props & { services: CanvasAudioStudioServices }) {
   const state = block.audioStudio || emptyCanvasAudioStudio();
@@ -364,8 +373,18 @@ export function CanvasAudioStudioView({
                 );
                 continue;
               }
-              if (!pending.cueId)
+              if (!pending.cueId && isPremixPendingKey(pending.inputKey)) {
+                // 预混母轨：不当合听预览，直接挂到本段 master
+                onMasterTrackReady?.({
+                  url: take.previewUrl,
+                  gcsUri: take.gcsUri,
+                  fileName: `预混母轨-${block.id}.wav`,
+                  durationSec: take.durationSec,
+                  updatedAt: new Date().toISOString(),
+                });
+              } else if (!pending.cueId) {
                 update(previous => ({ ...previous, previewTake: take }));
+              }
               settle(pending.id, take);
             }
           }
@@ -635,6 +654,36 @@ export function CanvasAudioStudioView({
         pendingOperations: [
           ...previous.pendingOperations,
           { id: result.jobId, kind: "post_prod", inputKey: previewKey },
+        ],
+      }));
+    });
+  /**
+   * 一键预混母轨：已确认的对白按秒窗原音量落位；已确认的配乐压到 PREMIX_BGM_VOLUME 并带淡入淡出，
+   * 合成一条本段时长的单轨。走同一个 audio_timeline 后期任务（免费），结果不进合听预览，直接挂 master。
+   */
+  const createPremix = () =>
+    action(async () => {
+      if (current.current.state.pendingOperations.length >= 100)
+        throw new Error("待处理任务已达 100 条，请先处理原任务。");
+      const clips = buildPremixTimelineClips({
+        cues: current.current.state.cues,
+        durationSec,
+        getSelectedTake: getSelectedAudioTake,
+        inputKeyOf: canvasAudioCueInputKey,
+      });
+      const premixKey = `${PREMIX_PENDING_PREFIX}${await canvasAudioPreviewKey(selectedSource)}`;
+      canvasAudioStudioSchema.parse({ ...current.current.state, pendingOperations: [
+        ...current.current.state.pendingOperations, { id: "preflight-premix", kind: "post_prod", inputKey: premixKey },
+      ] });
+      const result = await services.queuePost({
+        action: "audio_timeline",
+        params: { durationSec, clips },
+      });
+      update(previous => ({
+        ...previous,
+        pendingOperations: [
+          ...previous.pendingOperations,
+          { id: result.jobId, kind: "post_prod", inputKey: premixKey },
         ],
       }));
     });
@@ -1244,6 +1293,22 @@ export function CanvasAudioStudioView({
         >
           合听已确认秒窗 · 免费
         </button>
+        {onMasterTrackReady ? (
+          <button
+            className={buttonClass}
+            disabled={
+              disabled ||
+              busy ||
+              state.pendingOperations.some(
+                row => !row.cueId && row.kind === "post_prod"
+              )
+            }
+            title="对白原音量、配乐压 12 dB 带淡入淡出，合成一条本段单轨并挂为本段母轨（出片时作唯一 @音频1）。免费。"
+            onClick={() => void createPremix()}
+          >
+            {block.manhuaSegmentRefs?.master ? "重新预混母轨 · 免费" : "一键预混母轨 · 免费"}
+          </button>
+        ) : null}
         <button
           className={buttonClass}
           disabled={disabled || busy}

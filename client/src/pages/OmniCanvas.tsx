@@ -8328,6 +8328,8 @@ export default function OmniCanvas() {
 
   // ── 段级参考（白模站位 / 预混母轨）与外部成片登记：0908 自由画布验证过的工艺接进工厂 ──
   const [segmentRefBusyId, setSegmentRefBusyId] = useState<string | null>(null);
+  /** 段参考上传进度 0–1；null = 不在传 */
+  const [segmentRefProgress, setSegmentRefProgress] = useState<number | null>(null);
   const patchClipBlockPersist = useCallback(
     (clipBlockId: string, patch: (block: CanvasBlock) => CanvasBlock) => {
       setBlocks((prev) => {
@@ -8361,12 +8363,14 @@ export default function OmniCanvas() {
         return;
       }
       setSegmentRefBusyId(clipBlockId);
+      setSegmentRefProgress(0);
       try {
         const { uploadOneCanvasAsset } = await import("@/lib/canvasUpload");
         const asset = await uploadOneCanvasAsset({
           file,
           index: Date.now() % 1000,
           getSignedUploadUrl: (input) => getSignedUrlMutation.mutateAsync(input),
+          onProgress: (fraction) => setSegmentRefProgress(fraction),
         });
         const durationSec = await probeMediaFileDurationSec(file);
         const entry: ManhuaSegmentReferenceEntry = {
@@ -8397,6 +8401,7 @@ export default function OmniCanvas() {
       } catch (error) {
         toast.error(`上传失败：${error instanceof Error ? error.message : String(error)}`);
       } finally {
+        setSegmentRefProgress(null);
         setSegmentRefBusyId(null);
       }
     },
@@ -9682,6 +9687,12 @@ export default function OmniCanvas() {
                         return synced;
                       });
                       return next;
+                    });
+                  }}
+                  onSetClipSegmentReference={(clipId, slot, entry) => {
+                    patchClipBlockPersist(clipId, (b) => setManhuaSegmentReference(b, slot, entry));
+                    toast.message("预混母轨已挂到本段", {
+                      description: `${entry.durationSec ? `${entry.durationSec.toFixed(1)} 秒，` : ""}下次出片作为唯一音轨 @音频1；逐句配音不再并列送。`,
                     });
                   }}
                   onUpdateClipAudioStudio={(clipId, audioStudio) => {
@@ -11408,6 +11419,7 @@ export default function OmniCanvas() {
                 factoryBusy={factoryBusy}
                 onRetakeClip={handleRetakeClip}
                 segmentRefBusyId={segmentRefBusyId}
+                segmentRefProgress={segmentRefProgress}
                 onSegmentReferenceUpload={handleSegmentReferenceUpload}
                 onSegmentReferenceClear={handleSegmentReferenceClear}
                 onAcceptClipDespiteQc={(clipBlockId) => {
