@@ -7136,59 +7136,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
     /**
      * 管理者 Pro Agent 多轮对话（Responses Pro）；不计用户免费额度、不扣点。
      */
-    chatPlatformProAgent: protectedProcedure
-      .input(
-        z.object({
-          messages: z
-            .array(
-              z.object({
-                role: z.enum(["user", "assistant"]),
-                content: z.string().max(8000),
-              }),
-            )
-            .max(24),
-          /** 本轮附件：PDF/Office/文本 → input_file；图片 → input_image（视频不支持） */
-          attachments: z
-            .array(
-              z.object({
-                name: z.string().min(1).max(200),
-                mimeType: z.string().min(1).max(120),
-                dataBase64: z.string().min(8).max(30_000_000),
-                byteLength: z.number().int().positive().max(25_000_000).optional(),
-              }),
-            )
-            .max(4)
-            .optional(),
-        }),
-      )
-      .mutation(async ({ input, ctx }) => {
-        const allowed = resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession);
-        if (!allowed) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "仅管理者可使用 Pro Agent" });
-        }
-        const hasMsg = (input.messages || []).some((m) => String(m.content || "").trim());
-        const hasAtt = Array.isArray(input.attachments) && input.attachments.length > 0;
-        if (!hasMsg && !hasAtt) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "请先输入消息或上传附件" });
-        }
-        const { chatPlatformProAgent } = await import("./services/platformProAgentChat.js");
-        try {
-          const result = await chatPlatformProAgent({
-            messages: input.messages,
-            attachments: input.attachments,
-          });
-          return { success: true as const, ...result };
-        } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : "Pro Agent 失败";
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: /Unexpected token|timeout|超时|鉴权/i.test(msg)
-              ? "算力紧张或鉴权失败，请稍后重试"
-              : msg.slice(0, 280),
-          });
-        }
-      }),
-
     /**
      * Skill 问答·确认单页生图：生涯首张封面九折，其后封面原价；可挂载当前勾选 Skill。
      */

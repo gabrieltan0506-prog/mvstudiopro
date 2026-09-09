@@ -12489,15 +12489,6 @@ export default function PlatformPage() {
           <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
             <button
               type="button"
-              onClick={() => {
-                void import("@/components/PlatformProAgentDock").then((m) => m.requestOpenProAgent());
-              }}
-              className="rounded-full border border-violet-400/40 bg-violet-500/15 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-violet-100 transition hover:bg-violet-500/25"
-            >
-              Pro Agent
-            </button>
-            <button
-              type="button"
               onClick={() => setDebugMode((value) => !value)}
               className={`rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition ${
                 debugMode
