@@ -267,6 +267,25 @@ describe("manhuaCloudDraftSync dual-path", () => {
     expect(slim[2]?.outputUrls).toHaveLength(2);
   });
 
+  it("图片节点 12 条历史经本机落盘 round trip 仍是 12 条", () => {
+    const urls = Array.from({ length: 12 }, (_, i) => `https://cdn.example/k${i}.jpg`);
+    const block = {
+      ...defaultCanvasBlock("image", 0, 0),
+      id: "keyart-e01-s01",
+      outputUrl: urls[0],
+      outputUrls: urls,
+      status: "done",
+    } as CanvasBlock;
+    const slim = slimBlocksForLocalPersist([block]);
+    expect(slim[0]?.outputUrls).toEqual(urls);
+    const snapshot = buildLocalCloudDraftSnapshot({ writerSession: {}, blocks: slim, edges: [] });
+    const restored = cloudDraftBlocksToCanvas(
+      parseManhuaCloudDraftPayload(serializeCloudDraftForUpload(snapshot))!.canvas.blocks,
+    );
+    expect(restored[0]?.outputUrls).toHaveLength(12);
+    expect(restored[0]?.outputUrl).toBe(urls[0]);
+  });
+
   it("restores final video and clip trim from a cloud canvas snapshot", () => {
     const restored = cloudDraftBlocksToCanvas([
       {

@@ -348,6 +348,7 @@ describe("漫剧工厂创作顾问上下文", () => {
     expect(source).not.toMatch(
       /创作顾问问答失败退还[\s\S]{0,120}\.catch\(\(\) => undefined\)/,
     );
-    expect(source).toMatch(/chatPlatformProAgent:\s*protectedProcedure/);
+    // 0909 用户拍板：管理者 Pro Agent 整体下线，路由不再存在
+    expect(source).not.toContain("chatPlatformProAgent");
   });
 });

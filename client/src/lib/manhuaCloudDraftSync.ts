@@ -3,6 +3,7 @@
  * 任一侧失败都不放弃另一侧；恢复时用较新副本补写较弱一侧。
  */
 
+import { capManhuaMediaHistory } from "@shared/manhuaMediaHistoryCap";
 import { remapManhuaKeyartLookOutput } from "@shared/manhuaKeyartLookState";
 import {
   buildManhuaCloudDraftPayload,
@@ -160,10 +161,15 @@ export function slimBlocksForLocalPersist(
         status: b.status === "done" && !outputUrl ? "idle" : b.status,
       };
     }
-    const outputUrls = (b.outputUrls || [])
-      .map(u => persistableLocalUrl(u))
-      .filter((u): u is string => Boolean(u));
-    const outputUrl = persistableLocalUrl(b.outputUrl) || outputUrls[0];
+    const selectedOutputUrl = persistableLocalUrl(b.outputUrl);
+    // 本机落盘同样按全链常量截历史（30）并保住当前选中图，不再是 8
+    const outputUrls = capManhuaMediaHistory(
+      (b.outputUrls || [])
+        .map(u => persistableLocalUrl(u))
+        .filter((u): u is string => Boolean(u)),
+      selectedOutputUrl,
+    );
+    const outputUrl = selectedOutputUrl || outputUrls[0];
     return {
       ...b,
       outputUrl,

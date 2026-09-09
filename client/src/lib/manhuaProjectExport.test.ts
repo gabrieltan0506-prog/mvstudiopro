@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import JSZip from "jszip";
 import { MANHUA_CLIP_QUALITY_KEYS } from "@shared/manhuaClipQuality";
 import { defaultCanvasBlock } from "./canvasTypes";
 import {
@@ -6,6 +7,7 @@ import {
   collectManhuaClipDockItems,
   episodeIndexesFromDockSelection,
   exportManhuaProjectZip,
+  listManhuaDockItemVersions,
   listManhuaExportLibraryRefPaths,
   selectExportableDockIds,
   summarizeManhuaDockExport,
@@ -262,6 +264,82 @@ describe("manhuaProjectExport", () => {
         expect.objectContaining({ blockId: "final-e01#v2", url: "https://cdn.example/old.mp4" }),
       );
       expect(result.manifest.finalVideos?.[0]?.versions[1]?.path).toBeUndefined();
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
+  });
+
+  it("含历史版本开关：关=只导当前版；开=历史写进 epXX/历史/ 并附 版本清单.md", async () => {
+    const prevFetch = globalThis.fetch;
+    const fetched: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      fetched.push(String(input));
+      return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const clip = {
+        ...defaultCanvasBlock("video", 0, 0),
+        id: "clip-e01-g02",
+        episodeIndex: 1,
+        outputUrl: "https://cdn.example/v3.mp4",
+        outputUrls: ["https://cdn.example/v3.mp4", "https://cdn.example/v2.mp4", "https://cdn.example/v1.mp4"],
+        status: "done" as const,
+        manhuaClipQuality: passedQuality,
+      };
+      const keyart = {
+        ...defaultCanvasBlock("image", 0, 0),
+        id: "keyart-e01-x",
+        episodeIndex: 1,
+        outputUrl: "https://cdn.example/k2.jpg",
+        outputUrls: ["https://cdn.example/k2.jpg", "https://cdn.example/k1.jpg"],
+        status: "done" as const,
+      };
+      const blocks = [clip, keyart];
+      const items = collectManhuaClipDockItems(blocks);
+      expect(listManhuaDockItemVersions(items.find((i) => i.blockId === clip.id)!, clip)).toHaveLength(3);
+
+      const summary = summarizeManhuaDockExport(items, { blocks });
+      expect(summary.exportableCount).toBe(2);
+      expect(summary.historyCount).toBe(3);
+      expect(summary.exportableWithHistoryCount).toBe(5);
+      // 不传 blocks（旧调用方）历史计数为 0，口径不变
+      expect(summarizeManhuaDockExport(items).historyCount).toBe(0);
+
+      const off = await exportManhuaProjectZip({ items, selectedIds: items.map((i) => i.blockId), topic: "t", blocks });
+      expect(off.okCount).toBe(2);
+      expect(off.historyCount).toBe(0);
+      expect(off.manifest.history).toBeUndefined();
+      expect(fetched).toHaveLength(2);
+      const offZip = await JSZip.loadAsync(await off.blob.arrayBuffer());
+      expect(Object.keys(offZip.files).some((f) => f.includes("历史/"))).toBe(false);
+      expect(offZip.file("版本清单.md")).toBeNull();
+
+      fetched.length = 0;
+      const on = await exportManhuaProjectZip({
+        items,
+        selectedIds: items.map((i) => i.blockId),
+        topic: "t",
+        blocks,
+        includeHistory: true,
+      });
+      expect(on.okCount).toBe(5);
+      expect(on.historyCount).toBe(3);
+      expect(on.manifest.failed).toHaveLength(0);
+      expect(fetched).toHaveLength(5);
+      const paths = (on.manifest.history || []).map((h) => h.path);
+      expect(paths).toEqual([
+        "ep01/历史/第2段·成片-v2.mp4",
+        "ep01/历史/第2段·成片-v3.mp4",
+        "ep01/历史/关键静帧-v2.jpg",
+      ]);
+      expect((on.manifest.history || []).map((h) => h.source)).toEqual(["生成", "生成", "生成"]);
+      const onZip = await JSZip.loadAsync(await on.blob.arrayBuffer());
+      expect(onZip.file("ep01/历史/第2段·成片-v2.mp4")).not.toBeNull();
+      expect(onZip.file("ep01/clip-s02.mp4")).not.toBeNull();
+      const doc = await onZip.file("版本清单.md")!.async("string");
+      expect(doc).toContain("第2段·成片-v3.mp4");
+      expect(doc).toContain("v1（当前版）");
+      expect(doc).toContain("keyart-e01-x");
     } finally {
       globalThis.fetch = prevFetch;
     }

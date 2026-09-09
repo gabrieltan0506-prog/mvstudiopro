@@ -18,7 +18,6 @@ describe("监管密钥传输收口", () => {
       "client/src/pages/PlatformPage.tsx",
       "client/src/pages/OmniCanvas.tsx",
       "client/src/lib/jobs.ts",
-      "client/src/components/PlatformProAgentDock.tsx",
     ]) {
       expect(await fs.readFile(path.join(root, relative), "utf8"), relative)
         .not.toContain("supervisorToken");

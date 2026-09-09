@@ -1,3 +1,4 @@
+import { capManhuaMediaHistory } from "@shared/manhuaMediaHistoryCap";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import Navbar from "@/components/Navbar";
@@ -183,6 +184,7 @@ import {
   stripManhuaSeriesAssetsForNewProject,
   syncManhuaClipAssetEdges,
   type ManhuaFactoryStageKey,
+  countManhuaRenderedClipsToArchiveOnResegment,
 } from "@/lib/canvasDramaStudio";
 import { MANHUA_CANVAS_LAYOUT } from "@/lib/manhuaCanvasLayout";
 import {
@@ -237,6 +239,7 @@ import {
   evaluateWriterPackAssetAndDensity,
   formatWriterAssetCanonFactoryAddon,
   formatWriterAssetCanonIdentityLock,
+  deriveWriterAssetTablesFromScript,
 } from "@shared/manhuaWriterAssetCanon";
 import {
   phaseAfterLeavingClipDock,
@@ -274,6 +277,11 @@ import {
   saveManhuaWriterSessionToStorage,
   type ManhuaWorkflowPhase,
 } from "@shared/manhuaWriterSession";
+import {
+  getManhuaSegmentCapacityMode,
+  normalizeManhuaSegmentCapacityModeByEpisode,
+  type ManhuaSegmentCapacityMode,
+} from "@shared/manhuaSegmentCapacity";
 import {
   makeManhuaCharacterVoiceLockId,
   normalizeManhuaCharacterVoiceLocks,
@@ -959,6 +967,8 @@ export default function OmniCanvas() {
   const [writerBusy, setWriterBusy] = useState(false);
   /** 确认编剧失败时的门禁原因（页面常驻，不只 toast） */
   const [writerConfirmBlockers, setWriterConfirmBlockers] = useState<string[]>([]);
+  /** 门禁失败且人物表为空：横幅给「从剧本提取资产表」而不是死路 */
+  const [writerConfirmAssetTablesEmpty, setWriterConfirmAssetTablesEmpty] = useState(false);
   /** 门禁一键补密度：扩写成功落盘后自动重跑一次「编剧确认」（A2 闭环） */
   const gateRecheckPendingRef = useRef(false);
   /**
@@ -1159,6 +1169,23 @@ export default function OmniCanvas() {
   );
   const [segmentLookBindings, setSegmentLookBindings] = useState(() =>
     normalizeManhuaSegmentLookBindings(initialWriterSession?.segmentLookBindings),
+  );
+  /** 每集「分镜→成片容量」模式；缺省 block_when_over（超容量拦下、不静默丢镜） */
+  const [segmentCapacityModeByEpisode, setSegmentCapacityModeByEpisode] = useState(() =>
+    normalizeManhuaSegmentCapacityModeByEpisode(
+      initialWriterSession?.segmentCapacityModeByEpisode,
+    ),
+  );
+  const setSegmentCapacityModeForEpisode = useCallback(
+    (episodeIndex: number, mode: ManhuaSegmentCapacityMode) => {
+      setSegmentCapacityModeByEpisode((prev) =>
+        normalizeManhuaSegmentCapacityModeByEpisode({
+          ...prev,
+          [String(Math.max(1, Math.floor(episodeIndex)))]: mode,
+        }),
+      );
+    },
+    [],
   );
   const [stylePack, setStylePack] = useState(() => initialWriterSession?.stylePack ?? null);
   const [shareAssetToLibrary, setShareAssetToLibrary] = useState(
@@ -2290,6 +2317,7 @@ export default function OmniCanvas() {
         audioReferenceLock,
         characterLookSets,
         segmentLookBindings,
+        segmentCapacityModeByEpisode,
         shareAssetToLibrary,
         publicTemplateId,
         stylePack,
@@ -2315,6 +2343,7 @@ export default function OmniCanvas() {
     audioReferenceLock,
     characterLookSets,
     segmentLookBindings,
+    segmentCapacityModeByEpisode,
     shareAssetToLibrary,
     publicTemplateId,
     stylePack,
@@ -2375,6 +2404,9 @@ export default function OmniCanvas() {
     setCharacterLookSets(normalizeManhuaCharacterLookSets(session.characterLookSets));
     setSegmentLookBindings(
       normalizeManhuaSegmentLookBindings(session.segmentLookBindings),
+    );
+    setSegmentCapacityModeByEpisode(
+      normalizeManhuaSegmentCapacityModeByEpisode(session.segmentCapacityModeByEpisode),
     );
     setStylePack(session.stylePack ?? null);
     setShareAssetToLibrary(Boolean(session.shareAssetToLibrary));
@@ -2856,6 +2888,7 @@ export default function OmniCanvas() {
       audioReferenceLock,
       characterLookSets,
       segmentLookBindings,
+      segmentCapacityModeByEpisode,
       stylePack,
       shareAssetToLibrary,
       publicTemplateId,
@@ -2902,6 +2935,7 @@ export default function OmniCanvas() {
     audioReferenceLock,
     characterLookSets,
     segmentLookBindings,
+    segmentCapacityModeByEpisode,
     stylePack,
     shareAssetToLibrary,
     directorBoardMainByEpisode,
@@ -4024,6 +4058,8 @@ export default function OmniCanvas() {
           writerPack?.episodes.find((e) => e.index === ep)?.body || "";
         const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
         const ensured = ensureManhuaFragmentClips(blocks, edges, ep, {
+          segmentCapacityMode: getManhuaSegmentCapacityMode(segmentCapacityModeByEpisode, ep),
+          lengthTierId: writerLengthTierId,
           assetCanon: projectBible?.assetCanon,
           characterSheetUrlById: sheetUrls,
           propImageUrlById: collectManhuaPropImageUrlById(
@@ -5223,6 +5259,7 @@ export default function OmniCanvas() {
     });
     if (!densityGate.ok) {
       setWriterConfirmBlockers(densityGate.errors.slice(0, 6));
+      setWriterConfirmAssetTablesEmpty(densityGate.assetTablesEmpty);
       // 红字横幅渲染在题材/编剧视图；沉浸工作台下若不切开，用户只能看到截断的
       // toast，门禁就成了「看不见原因的死路」。切开并滚到横幅。
       setImmersiveWorkspaceView("topic");
@@ -5444,6 +5481,7 @@ export default function OmniCanvas() {
     });
     if (!densityGate.ok) {
       setWriterConfirmBlockers(densityGate.errors.slice(0, 6));
+      setWriterConfirmAssetTablesEmpty(densityGate.assetTablesEmpty);
       // 同 confirmWriterToDirector：沉浸态下切到编剧视图，让门禁原因可见
       setImmersiveWorkspaceView("topic");
       window.setTimeout(() => {
@@ -7669,7 +7707,28 @@ export default function OmniCanvas() {
                 directorBoardMotionOverlayBySegment,
               videoModel:
                 explicitWriterVideoModel || undefined,
+              // 本集容量模式：block_when_over 超容量时 ensure 抛错，整次生成在扣费前停下
+              segmentCapacityMode: getManhuaSegmentCapacityMode(
+                segmentCapacityModeByEpisode,
+                episodeIndex,
+              ),
+              lengthTierId: writerLengthTierId,
             };
+            // 改引擎/改每段镜数/改原稿后段表重排：已出片的段会被停放并按新段表重出重扣费，
+            // 必须在扣费前让用户点头，不能静默烧一遍。
+            const archiveOnResegment = countManhuaRenderedClipsToArchiveOnResegment(
+              workingBlocks,
+              episodeIndex,
+              explicitWriterVideoModel || undefined,
+            );
+            if (
+              archiveOnResegment > 0 &&
+              !window.confirm(
+                `第${episodeIndex}集有 ${archiveOnResegment} 段已出片的成片与当前分段不一致（改引擎/改镜后段表重排）。继续会把它们停放到历史，并按新段表重新出片、重新扣费；取消则本次不生成。继续？`,
+              )
+            ) {
+              throw new Error(`已取消：第${episodeIndex}集段表重排未确认，未扣费`);
+            }
             if (opts?.pilotRun) {
               const prepared = ensureManhuaFragmentClips(
                 workingBlocks,
@@ -8117,6 +8176,7 @@ export default function OmniCanvas() {
       directorBoardMotionOverlayBySegment,
       explicitWriterVideoModel,
       writerVideoModel,
+      segmentCapacityModeByEpisode,
     ],
   );
 
@@ -9047,6 +9107,9 @@ export default function OmniCanvas() {
                   onCharacterLookSetsChange={setCharacterLookSets}
                   segmentLookBindings={segmentLookBindings}
                   onSegmentLookBindingsChange={setSegmentLookBindings}
+                  segmentCapacityModeByEpisode={segmentCapacityModeByEpisode}
+                  onSegmentCapacityModeChange={setSegmentCapacityModeForEpisode}
+                  episodeLengthTierId={writerLengthTierId}
                   characterVoiceLocks={characterVoiceLocks}
                   audioReferenceLock={audioReferenceLock}
                   onAudioReferenceLockChange={(next) =>
@@ -9241,12 +9304,15 @@ export default function OmniCanvas() {
                               ...b,
                               outputUrl: url,
                               // 审查修5：显式把被编辑的旧 outputUrl 押进历史位，不依赖它已在 outputUrls 的隐含前提
-                              outputUrls: [
+                              outputUrls: capManhuaMediaHistory(
+                                [
+                                  url,
+                                  ...[b.outputUrl, ...(b.outputUrls || [])].filter(
+                                    (u): u is string => Boolean(u) && u !== url,
+                                  ),
+                                ],
                                 url,
-                                ...[b.outputUrl, ...(b.outputUrls || [])].filter(
-                                  (u): u is string => Boolean(u) && u !== url,
-                                ),
-                              ].filter((u, i, arr) => arr.indexOf(u) === i).slice(0, 8),
+                              ),
                               status: "done" as const,
                             }
                           : b,
@@ -9490,6 +9556,11 @@ export default function OmniCanvas() {
                         directorBoardMotionOverlayByEpisodeSegment:
                           directorBoardMotionOverlayBySegment,
                         videoModel: explicitWriterVideoModel || undefined,
+                        segmentCapacityMode: getManhuaSegmentCapacityMode(
+                          segmentCapacityModeByEpisode,
+                          writerFocusEpisode,
+                        ),
+                        lengthTierId: writerLengthTierId,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
@@ -9546,6 +9617,11 @@ export default function OmniCanvas() {
                         directorBoardMotionOverlayByEpisodeSegment:
                           directorBoardMotionOverlayBySegment,
                         videoModel: explicitWriterVideoModel || undefined,
+                        segmentCapacityMode: getManhuaSegmentCapacityMode(
+                          segmentCapacityModeByEpisode,
+                          writerFocusEpisode,
+                        ),
+                        lengthTierId: writerLengthTierId,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
@@ -9645,6 +9721,11 @@ export default function OmniCanvas() {
                         directorBoardMotionOverlayByEpisodeSegment:
                           directorBoardMotionOverlayBySegment,
                         videoModel: explicitWriterVideoModel || undefined,
+                        segmentCapacityMode: getManhuaSegmentCapacityMode(
+                          segmentCapacityModeByEpisode,
+                          writerFocusEpisode,
+                        ),
+                        lengthTierId: writerLengthTierId,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
@@ -10389,6 +10470,59 @@ export default function OmniCanvas() {
                     <p className="mt-1.5 text-[10px] text-amber-100/55">
                       常见原因：对白未用直角引号「」或可拍表缺「对白」行。可点「重新扩写」后再确认。
                     </p>
+                    {writerConfirmAssetTablesEmpty && writerPack ? (
+                      <div
+                        data-manhua-asset-tables-empty
+                        className="mt-2 flex flex-wrap items-center gap-2 border-t border-amber-400/20 pt-2"
+                      >
+                        <span className="text-[10px] text-amber-50/85">
+                          人物表为空，门禁不会自己放行：可按对白说话人／场景行／道具行从剧本一键提取资产表
+                          （外形句留「待补」，出定妆图前请补一句；不花积分）。
+                        </span>
+                        <button
+                          type="button"
+                          data-manhua-action="extract-asset-tables"
+                          disabled={writerBusy || factoryBusy}
+                          onClick={() => {
+                            const derived = deriveWriterAssetTablesFromScript({
+                              episodes: writerPack.episodes,
+                              charactersMd: writerPack.charactersMd,
+                              propsMd: writerPack.propsMd,
+                              locationsMd: writerPack.locationsMd,
+                            });
+                            const n = derived.added.characters.length;
+                            if (!n) {
+                              toast.error("剧本正文里没找到可识别的说话人", {
+                                description:
+                                  "请把对白写成「姓名：「台词」」，或在人物表手填至少 1 名出场角色（- 姓名｜外形｜动机）。",
+                              });
+                              return;
+                            }
+                            setWriterPack({
+                              ...writerPack,
+                              charactersMd: derived.charactersMd,
+                              propsMd: derived.propsMd,
+                              locationsMd: derived.locationsMd,
+                            });
+                            setWriterConfirmAssetTablesEmpty(false);
+                            toast.success(`已从剧本提取 ${n} 名角色`, {
+                              description: `${derived.added.characters.slice(0, 6).join("、")}${
+                                derived.added.locations.length
+                                  ? `；场景 ${derived.added.locations.length} 个`
+                                  : ""
+                              }${
+                                derived.added.props.length
+                                  ? `；道具 ${derived.added.props.length} 件`
+                                  : ""
+                              }。请再点「确认并进入资产设定」。`,
+                            });
+                          }}
+                          className="rounded-lg border border-amber-300/45 bg-amber-400/15 px-2.5 py-1 text-[11px] font-semibold text-amber-50 hover:bg-amber-400/25 disabled:opacity-45"
+                        >
+                          从剧本提取资产表
+                        </button>
+                      </div>
+                    ) : null}
                     {writerGateFailEpisodes.length > 0 && writerPack ? (() => {
                       const minFailing = writerGateFailEpisodes[0];
                       const rewriteCount = Math.max(

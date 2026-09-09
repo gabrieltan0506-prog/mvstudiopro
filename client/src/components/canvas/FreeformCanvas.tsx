@@ -1,3 +1,4 @@
+import { capManhuaMediaHistory } from "@shared/manhuaMediaHistoryCap";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ManhuaCustomAssetRef } from "@shared/manhuaCustomAssetRefs";
 import { CanvasProjectVideoReferencePicker } from "./CanvasProjectVideoReferencePicker";
@@ -1350,9 +1351,10 @@ export default function FreeformCanvas({
           : [];
         patchOne(blockId, {
           outputUrl: out.videoUrl,
-          outputUrls: Array.from(
-            new Set([out.videoUrl, ...prevUrls, src])
-          ).slice(0, 8),
+          outputUrls: capManhuaMediaHistory(
+            [out.videoUrl, ...prevUrls, src],
+            out.videoUrl,
+          ),
           status: "done",
           error: undefined,
         });
@@ -1702,7 +1704,7 @@ export default function FreeformCanvas({
             ? mergeManhuaMediaVersions([...(out.outputUrls || []), out.outputUrl], stashUrls)
             : out.outputUrls ??
               (out.outputUrl
-                ? Array.from(new Set([out.outputUrl, ...stashUrls])).slice(0, 8)
+                ? capManhuaMediaHistory([out.outputUrl, ...stashUrls], out.outputUrl)
                 : stashUrls),
           // 手点重跑也要写回尾帧锚点（否则下一段续拍拿不到起幅）。
           // 无条件写入：本次没抽到尾帧时必须清掉旧值——残留 v1 的尾帧会让

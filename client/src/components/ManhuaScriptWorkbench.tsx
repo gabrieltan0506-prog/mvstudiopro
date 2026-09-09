@@ -163,6 +163,13 @@ import {
   type ManhuaWorkbenchSegment,
   type ManhuaWorkbenchShot,
 } from "@shared/manhuaScriptWorkbench";
+import {
+  MANHUA_SEGMENT_CAPACITY_MODES,
+  MANHUA_SEGMENT_CAPACITY_MODE_LABEL_ZH,
+  getManhuaSegmentCapacityMode,
+  planManhuaSegmentCapacity,
+  type ManhuaSegmentCapacityMode,
+} from "@shared/manhuaSegmentCapacity";
 import { canvasVideoClipCredits } from "@shared/canvasGenerationPricing";
 import {
   canManhuaBurnVideo,
@@ -381,6 +388,11 @@ type Props = {
   /** 段手选造型绑定 */
   segmentLookBindings?: Record<string, Record<string, string>>;
   onSegmentLookBindingsChange?: (next: Record<string, Record<string, string>>) => void;
+  /** 每集「分镜→成片容量」模式（集号 → auto_by_source / block_when_over） */
+  segmentCapacityModeByEpisode?: Record<string, ManhuaSegmentCapacityMode>;
+  onSegmentCapacityModeChange?: (episodeIndex: number, mode: ManhuaSegmentCapacityMode) => void;
+  /** 编剧室时长档：容量对照按档取段数 */
+  episodeLengthTierId?: string | null;
   /** 从有声成片抠出的角色声线参考 */
   characterVoiceLocks?: ManhuaCharacterVoiceLock[];
   /** 参考音频·全集参考（软·可选）：BGM/对白口音基准；不硬锁、不挡出片 */
@@ -960,6 +972,9 @@ export default function ManhuaScriptWorkbench({
   onCharacterLookSetsChange,
   segmentLookBindings = {},
   onSegmentLookBindingsChange,
+  segmentCapacityModeByEpisode,
+  onSegmentCapacityModeChange,
+  episodeLengthTierId,
   characterVoiceLocks = [],
   audioReferenceLock = null,
   onAudioReferenceLockChange,
@@ -1342,6 +1357,19 @@ export default function ManhuaScriptWorkbench({
   const stillsReadyEnough = stillsCountReady && keyartsPixelLocked && staleLookStillCount === 0;
 
   const totalSec = workbenchShotTotalSec(shots, episodeVideoModel);
+  /** 本集容量模式与对照：超容量且为 block 模式时，生成入口会在扣费前被拦（runFactory 同源） */
+  const segmentCapacityMode = getManhuaSegmentCapacityMode(segmentCapacityModeByEpisode, focusEpisode);
+  const segmentCapacityPlan = useMemo(
+    () =>
+      planManhuaSegmentCapacity({
+        shots,
+        mode: segmentCapacityMode,
+        videoModel: episodeVideoModel,
+        lengthTierId: episodeLengthTierId,
+        episodeIndex: focusEpisode,
+      }),
+    [shots, segmentCapacityMode, episodeVideoModel, episodeLengthTierId, focusEpisode],
+  );
 
 
   const stillIndexSet = useMemo(() => {
@@ -2959,6 +2987,41 @@ export default function ManhuaScriptWorkbench({
                 {artStyleLabelZh ? ` · ${artStyleLabelZh}` : ""}
               </span>
               <ManhuaShotSourceLabel isFallback={shotSourceIsFallback} />
+            </div>
+            <div
+              data-manhua-segment-capacity
+              className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-[10px] text-white/55"
+            >
+              <label className="flex items-center gap-1">
+                <span>分镜容量</span>
+                <select
+                  data-manhua-segment-capacity-mode
+                  aria-label="本集分镜容量模式"
+                  value={segmentCapacityMode}
+                  disabled={Boolean(factoryBusy) || !onSegmentCapacityModeChange}
+                  onChange={(e) =>
+                    onSegmentCapacityModeChange?.(
+                      focusEpisode,
+                      e.target.value as ManhuaSegmentCapacityMode,
+                    )
+                  }
+                  title="按原稿分段：段数随原稿秒数走、一镜不丢；超容量阻止：原稿超出引擎固定段表就拒绝生成、不扣费"
+                  className="rounded border border-white/15 bg-black/45 px-1 py-px text-[10px] text-white/80"
+                >
+                  {MANHUA_SEGMENT_CAPACITY_MODES.map((m) => (
+                    <option key={m} value={m}>
+                      {MANHUA_SEGMENT_CAPACITY_MODE_LABEL_ZH[m]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <span
+                data-manhua-segment-capacity-summary
+                className={segmentCapacityPlan.ok ? "text-white/45" : "font-semibold text-rose-200"}
+                title={segmentCapacityPlan.ok ? undefined : segmentCapacityPlan.errorZh}
+              >
+                {segmentCapacityPlan.ok ? segmentCapacityPlan.summaryZh : segmentCapacityPlan.errorZh}
+              </span>
             </div>
             {directorStrategyContract ? (
               <div
