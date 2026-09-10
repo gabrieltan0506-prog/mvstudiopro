@@ -384,7 +384,9 @@ export async function extractKnowledgeCardUploads(
       const converted = await convertEpubToPdf(buffer);
       pdfBuffer = converted.pdf;
       mimeType = "application/pdf";
-      methods.push(`${name}:epub_to_pdf(${converted.chapterCount} chapters)`);
+      methods.push(
+        `${name}:epub_to_pdf(${converted.chapterCount} chapters, images ${converted.images.total}/downscaled ${converted.images.downscaled}${converted.mode === "stripped" ? `/stripped ${converted.images.stripped} after chromium crash` : ""})`,
+      );
       await report("converting", 1, 1);
     } else if (isPdfFile(file.mimeType, file.fileName)) {
       pdfBuffer = buffer;
