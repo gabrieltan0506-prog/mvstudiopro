@@ -33,7 +33,7 @@ export function resolveSunoBridgeChirpModel(model: SunoBridgeModel): string {
 
 export type SunoBridgeCustomRequest = {
   model: SunoBridgeModel;
-  /** custom_mode 下的歌词；纯 BGM 传空串 */
+  /** custom_mode 下的歌词或段落结构；纯器乐由 instrumental 独立约束，不清空用户要求。 */
   prompt: string;
   /** 风格标签（Suno 的 tags） */
   style: string;
@@ -52,39 +52,75 @@ export type SunoBridgeClip = {
   error_message?: string;
 };
 
+/** 不把桥的响应正文或底层异常放入错误；它们可能含登录凭证。 */
+export class SunoBridgeRequestError extends Error {
+  constructor(
+    public readonly code: "not_configured" | "rejected" | "unconfirmed" | "invalid_response",
+    public readonly submissionUnknown: boolean,
+    public readonly httpStatus?: number,
+  ) {
+    const message = submissionUnknown
+      ? "配乐提交结果待核对，未自动重提，请保留本次任务"
+      : httpStatus === 401 || httpStatus === 403
+        ? "配乐服务认证未通过，请检查服务端登录配置"
+        : code === "not_configured"
+          ? "配乐直连尚未配置"
+          : "配乐服务返回异常，请检查本次任务状态";
+    super(message);
+    this.name = "SunoBridgeRequestError";
+  }
+}
+
+export function isSunoBridgeSubmissionUnknown(error: unknown): boolean {
+  return error instanceof SunoBridgeRequestError && error.submissionUnknown;
+}
+
 /** 桥的任务号：两条 clip id 用逗号拼，前缀区分来源，与 EvoLink 的 task id 不混 */
 export const SUNO_BRIDGE_TASK_PREFIX = "sunobridge:";
 
 export function encodeSunoBridgeTaskId(clipIds: string[]): string {
+  if (!clipIds.length || clipIds.some(id => !/^[0-9a-f-]{8,64}$/i.test(id)) || new Set(clipIds).size !== clipIds.length) {
+    throw new SunoBridgeRequestError("invalid_response", true);
+  }
   return `${SUNO_BRIDGE_TASK_PREFIX}${clipIds.join(",")}`;
 }
 
 export function decodeSunoBridgeTaskId(taskId: string): string[] | null {
   const raw = String(taskId || "");
   if (!raw.startsWith(SUNO_BRIDGE_TASK_PREFIX)) return null;
-  const ids = raw.slice(SUNO_BRIDGE_TASK_PREFIX.length).split(",").map((s) => s.trim()).filter((s) => /^[0-9a-f-]{8,64}$/i.test(s));
-  return ids.length ? ids : null;
+  const ids = raw.slice(SUNO_BRIDGE_TASK_PREFIX.length).split(",");
+  // 一项不合法就拒绝整个句柄，不能悄悄丢掉其中一首再按完成结算。
+  return ids.length && ids.every(s => /^[0-9a-f-]{8,64}$/i.test(s)) && new Set(ids).size === ids.length ? ids : null;
 }
 
 async function bridgeFetch(path: string, init: RequestInit & { abortSignal?: AbortSignal }): Promise<unknown> {
   const base = sunoBridgeBaseUrl();
-  if (!base) throw new Error("配乐直连未配置：缺 SUNO_BRIDGE_URL");
-  const res = await fetch(`${base}${path}`, {
-    method: init.method || "GET",
-    headers: { "Content-Type": "application/json", ...(init.headers || {}) },
-    body: init.body,
-    signal: init.abortSignal,
-  });
-  const text = await res.text();
+  if (!isSunoBridgeReady()) throw new SunoBridgeRequestError("not_configured", false);
+  const submitting = init.method === "POST";
+  if (init.abortSignal?.aborted) throw new SunoBridgeRequestError("rejected", false);
+  let res: Response;
+  let text: string;
+  try {
+    res = await fetch(`${base}${path}`, {
+      method: init.method || "GET",
+      headers: { "Content-Type": "application/json", ...(init.headers || {}) },
+      body: init.body,
+      signal: init.abortSignal,
+      redirect: "error",
+    });
+    text = await res.text();
+  } catch {
+    // POST 可能已被上游接受，断线/读取响应失败不能解释为没有建单。
+    throw new SunoBridgeRequestError("unconfirmed", submitting);
+  }
   if (!res.ok) {
-    // cookie 过期/被封在桥里表现为 401/403/5xx；文案让运维知道去换 cookie
-    const hint = res.status === 401 || res.status === 403 ? "（多半是 Suno cookie 过期或账号受限，换 cookie 后重设 secret）" : "";
-    throw new Error(`suno_bridge_failed:${res.status}:${text.slice(0, 300)}${hint}`);
+    // 网关超时/服务端错误可能发生在上游建单之后，保守转对账。
+    throw new SunoBridgeRequestError("rejected", submitting && (res.status >= 500 || res.status === 408), res.status);
   }
   try {
     return JSON.parse(text);
   } catch {
-    throw new Error(`suno_bridge_bad_json:${text.slice(0, 200)}`);
+    throw new SunoBridgeRequestError("invalid_response", submitting, res.status);
   }
 }
 
@@ -114,7 +150,7 @@ export async function createSunoBridgeTask(
   const raw = await bridgeFetch("/api/custom_generate", {
     method: "POST",
     body: JSON.stringify({
-      prompt: req.instrumental ? "" : req.prompt,
+      prompt: req.prompt,
       tags: req.style,
       title: req.title.slice(0, 80),
       make_instrumental: Boolean(req.instrumental),
@@ -125,7 +161,10 @@ export async function createSunoBridgeTask(
     abortSignal: opts.abortSignal,
   });
   const clips = pickClips(raw);
-  if (!clips.length) throw new Error("配乐直连建单成功但桥没有返回 clip");
+  const returned = Array.isArray(raw) ? raw : (raw as { clips?: unknown } | null)?.clips;
+  if (!Array.isArray(returned) || !clips.length || clips.length !== returned.length) {
+    throw new SunoBridgeRequestError("invalid_response", true);
+  }
   const clipIds = clips.map((c) => c.id);
   return { taskId: encodeSunoBridgeTaskId(clipIds), clipIds, chirpModel };
 }
@@ -152,8 +191,7 @@ export async function getSunoBridgeTask(taskId: string, opts: { abortSignal?: Ab
   }
   const done = ids.map((id) => byId.get(id)!).filter((c) => c.status === "complete" && c.audio_url);
   if (!done.length) {
-    const first = clips.find((c) => c.status === "error");
-    return { status: "failed", clips, reason: first?.error_message || "Suno 返回 error" };
+    return { status: "failed", clips, reason: "配乐生成未成功，请保留原任务供服务端核对" };
   }
   return { status: "completed", clips, audioUrls: done.map((c) => c.audio_url!), missing: ids.length - done.length };
 }

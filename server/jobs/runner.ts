@@ -91,6 +91,7 @@ import {
   createManhuaBgmTask,
   resumeManhuaBgmTask,
 } from "../services/manhuaScoringRoom.js";
+import { isSunoBridgeSubmissionUnknown } from "../services/sunoBridgeMusic.js";
 import { processPdfExportJob } from "./pdfExportJob";
 import {
   invokePlatformAnalysisChat,
@@ -1917,10 +1918,31 @@ async function processManhuaBgmJob(params: {
     }
     let created: Awaited<ReturnType<typeof createManhuaBgmTask>>;
     try {
+      if (parsed.params.brief.model.startsWith("suno-bridge-")) {
+        // 发请求之前留存意图：即使实例在拿到句柄前退出，恢复也只对账，不重复 POST。
+        await persistManhuaBgmCheckpointWithRetry(() =>
+          patchJobRunningProgressStrict(params.jobId, {
+            bgmStage: "submitting",
+            briefDigest: parsed.params.briefDigest,
+            startedAtMs,
+          }),
+        );
+      }
       created = await createManhuaBgmTask(parsed.params.brief, {
         abortSignal: controller.signal,
       });
     } catch (createError) {
+      if (isSunoBridgeSubmissionUnknown(createError)) {
+        await persistManhuaBgmCheckpointWithRetry(() =>
+          patchJobRunningProgressStrict(params.jobId, {
+            bgmStage: "reconcile_manual",
+            briefDigest: parsed.params.briefDigest,
+            startedAtMs,
+          }),
+        );
+        // 请求已发出而回执不明：不退款、不自动重提，避免把真实消耗当成未发生。
+        throw createError;
+      }
       // 上游没建成单＝钱没烧出去，退回；建成单之后失败按「已烧对账」不退（与视频任务同口径）。
       // 按实际扣费结果退：admin/none 没扣过就不退，否则桥来源失败一次白给 20 分
       if (bgmDeduct && Number.isFinite(numericUserId)) {

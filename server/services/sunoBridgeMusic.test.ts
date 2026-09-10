@@ -5,6 +5,7 @@ import {
   encodeSunoBridgeTaskId,
   getSunoBridgeTask,
   isSunoBridgeReady,
+  isSunoBridgeSubmissionUnknown,
   resolveSunoBridgeChirpModel,
 } from "./sunoBridgeMusic";
 
@@ -51,7 +52,7 @@ describe("sunoBridgeMusic（内部专用 cookie 桥客户端）", () => {
     expect(resolveSunoBridgeChirpModel("suno-bridge-v6")).toBe("chirp-fenix");
   });
 
-  it("建单：走 /api/custom_generate，纯 BGM 不送歌词，wait_audio=false，返回两条 clip 编成一个 task id", async () => {
+  it("建单：纯 BGM 保留段落结构且强制器乐，wait_audio=false，返回两条 clip 编成一个 task id", async () => {
     reply = () => ({ status: 200, body: [{ id: A, status: "submitted" }, { id: B, status: "submitted" }] });
     const out = await createSunoBridgeTask({
       model: "suno-bridge-v6-mini",
@@ -63,7 +64,7 @@ describe("sunoBridgeMusic（内部专用 cookie 桥客户端）", () => {
     });
     expect(calls[0]!.url).toBe("http://mvstudiopro-suno-bridge.internal:3000/api/custom_generate");
     const body = JSON.parse(String(calls[0]!.init?.body));
-    expect(body).toMatchObject({ prompt: "", tags: "国风弦乐，战鼓，纯器乐", title: "剧情配乐", make_instrumental: true, model: "chirp-goose", wait_audio: false, negative_tags: "vocals" });
+    expect(body).toMatchObject({ prompt: "[Intro] 蓄力 [Build] 冲突", tags: "国风弦乐，战鼓，纯器乐", title: "剧情配乐", make_instrumental: true, model: "chirp-goose", wait_audio: false, negative_tags: "vocals" });
     expect(out.clipIds).toEqual([A, B]);
     expect(out.taskId).toBe(`sunobridge:${A},${B}`);
     expect(out.chirpModel).toBe("chirp-goose");
@@ -80,15 +81,62 @@ describe("sunoBridgeMusic（内部专用 cookie 桥客户端）", () => {
     reply = () => ({ status: 200, body: [{ id: A, status: "error", error_message: "moderation" }, { id: B, status: "complete", audio_url: "https://cdn/b.mp3" }] });
     expect(await getSunoBridgeTask(id)).toMatchObject({ status: "completed", audioUrls: ["https://cdn/b.mp3"], missing: 1 });
     reply = () => ({ status: 200, body: [{ id: A, status: "error", error_message: "moderation" }, { id: B, status: "error" }] });
-    expect(await getSunoBridgeTask(id)).toMatchObject({ status: "failed", reason: "moderation" });
+    expect(await getSunoBridgeTask(id)).toMatchObject({ status: "failed", reason: "配乐生成未成功，请保留原任务供服务端核对" });
     reply = () => ({ status: 200, body: [{ id: A, status: "complete", audio_url: "https://cdn/a.mp3" }] });
     expect((await getSunoBridgeTask(id)).status).toBe("pending");
   });
 
   it("桥 401/403 提示换 cookie；非 JSON 明确报错", async () => {
     reply = () => ({ status: 401, body: "unauthorized" });
-    await expect(getSunoBridgeTask(encodeSunoBridgeTaskId([A]))).rejects.toThrow(/suno_bridge_failed:401.*cookie/);
+    await expect(getSunoBridgeTask(encodeSunoBridgeTaskId([A]))).rejects.toMatchObject({ code: "rejected", httpStatus: 401, submissionUnknown: false });
     reply = () => ({ status: 200, body: "<html>oops</html>" });
-    await expect(getSunoBridgeTask(encodeSunoBridgeTaskId([A]))).rejects.toThrow(/suno_bridge_bad_json/);
+    await expect(getSunoBridgeTask(encodeSunoBridgeTaskId([A]))).rejects.toMatchObject({ code: "invalid_response", submissionUnknown: false });
+  });
+
+  const request = { model: "suno-bridge-v6" as const, prompt: "结构要求", style: "弦乐", title: "测试", instrumental: true };
+
+  it("带人声请求不被桥客户端改成纯器乐，中文歌名与歌词保持原样", async () => {
+    reply = () => ({ status: 200, body: [{ id: A, status: "submitted" }, { id: B, status: "submitted" }] });
+    const style = "王力宏30%與汪蘇瀧70% 風格的中式流行情歌，65 BPM，男声，传统乐器与当代管弦乐";
+    await createSunoBridgeTask({ ...request, instrumental: false, title: "别爱我又不想说", prompt: "[Verse]\n你把晚风留在窗外", style });
+    expect(JSON.parse(String(calls[0]!.init?.body))).toMatchObject({ make_instrumental: false, title: "别爱我又不想说", prompt: "[Verse]\n你把晚风留在窗外", tags: style, model: "chirp-hawk" });
+  });
+
+  it("混入坏ID或重复ID时拒绝整个句柄，不静默丢掉其中一首", async () => {
+    expect(decodeSunoBridgeTaskId(`sunobridge:${A},bad id`)).toBeNull();
+    expect(decodeSunoBridgeTaskId(`sunobridge:${A},${A}`)).toBeNull();
+    reply = () => ({ status: 200, body: [{ id: A }, { status: "submitted" }] });
+    await expect(createSunoBridgeTask(request)).rejects.toMatchObject({ submissionUnknown: true });
+    reply = () => ({ status: 200, body: [{ id: A }, { id: A }] });
+    await expect(createSunoBridgeTask(request)).rejects.toMatchObject({ submissionUnknown: true });
+  });
+
+  it("POST断线、5xx、坏JSON和缺回执均保留未知状态，且绝不自动重试", async () => {
+    for (const response of [{ status: 502, body: "upstream lost" }, { status: 200, body: "not json" }, { status: 200, body: [] }]) {
+      calls.length = 0;
+      reply = () => response;
+      const error = await createSunoBridgeTask(request).catch(e => e);
+      expect(isSunoBridgeSubmissionUnknown(error)).toBe(true);
+      expect(calls).toHaveLength(1);
+    }
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("test-key transport")));
+    await expect(createSunoBridgeTask(request)).rejects.toMatchObject({ submissionUnknown: true });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("明确拒绝与尚未发出的请求不标未知；错误中不夹带桥正文或底层凭证", async () => {
+    reply = () => ({ status: 403, body: "Authorization: Bearer test-key; Cookie: test-cookie" });
+    const error = await createSunoBridgeTask(request).catch(e => e);
+    expect(error).toMatchObject({ httpStatus: 403, submissionUnknown: false });
+    expect(error.message).not.toMatch(/test-key|test-cookie|Authorization|Bearer/);
+    const controller = new AbortController();
+    controller.abort(new Error("test-key"));
+    calls.length = 0;
+    await expect(createSunoBridgeTask(request, { abortSignal: controller.signal })).rejects.toMatchObject({ submissionUnknown: false });
+    expect(calls).toHaveLength(0);
+    reply = () => ({ status: 200, body: [{ id: A, status: "error", error_message: "Cookie: test-cookie" }] });
+    const failed = await getSunoBridgeTask(encodeSunoBridgeTaskId([A]));
+    expect(failed.status).toBe("failed");
+    if (failed.status === "failed") expect(failed.reason).not.toContain("test-cookie");
   });
 });

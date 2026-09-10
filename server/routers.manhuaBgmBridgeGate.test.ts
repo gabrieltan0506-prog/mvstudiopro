@@ -28,6 +28,24 @@ describe("配乐直连桥 · 路由把关", () => {
     process.env.SUNO_BRIDGE_URL = "http://mvstudiopro-suno-bridge.internal:3000";
   });
 
+  it.each([
+    [{ missingVariants: 1 }, 1],
+    [{ terminalOutput: { missingVariants: 2 } }, 2],
+    [{}, 0],
+    [{ missingVariants: -1 }, 0],
+    [{ missingVariants: 1.5 }, 0],
+    [{ missingVariants: "2" }, 0],
+  ])("查询配乐保留缺失版本数，兼容旧记录及脏值 %j", async (output, expected) => {
+    repo.getJobByIdStrict.mockResolvedValue({
+      id: "bgm-test", userId: "7", type: "audio", status: "succeeded",
+      input: { action: "manhua_bgm_v55", params: {} }, output,
+      error: null, createdAt: new Date(), updatedAt: new Date(),
+    });
+    const result = await caller("admin").mvAnalysis.getManhuaBgmJob({ jobId: "bgm-test" });
+    expect(result.missingVariants).toBe(expected);
+    expect(repo.createJob).not.toHaveBeenCalled();
+  });
+
   it("普通用户起草时传桥模型 → 回落网关 v5.5；admin 传 → 真带桥模型", async () => {
     const user = await caller("user").mvAnalysis.draftManhuaBgmBrief({ ...draftInput, model: "suno-bridge-v6" });
     expect(user.brief.model).toBe("suno-v5.5-beta");

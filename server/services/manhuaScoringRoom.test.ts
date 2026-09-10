@@ -140,6 +140,20 @@ describe("漫剧配乐建单与恢复", () => {
     expect(bridge.create).toHaveBeenCalledTimes(1);
   });
 
+  it("桥保留艺人和百分比，不套旧网关名单；旧网关限制保持原状", async () => {
+    bridge.create.mockReset();
+    bridge.ready.mockReturnValue(true);
+    bridge.create.mockResolvedValue({ taskId: "sunobridge:aaaaaaaa-0000-4000-8000-000000000001" });
+    for (const style of ["王力宏30%與汪蘇瀧70%", "Hans Zimmer 30%，传统弦乐70%"]) {
+      await createManhuaBgmTask({ ...brief, model: "suno-bridge-v6", style });
+      expect(bridge.create).toHaveBeenLastCalledWith(expect.objectContaining({ style }), expect.anything());
+    }
+    expect(bridge.create).toHaveBeenCalledTimes(2);
+    expect(upstream.create).not.toHaveBeenCalled();
+    await expect(createManhuaBgmTask({ ...brief, style: "Hans Zimmer 30%" })).rejects.toThrow("可听特征");
+    expect(upstream.create).not.toHaveBeenCalled();
+  });
+
   it("桥来源：恢复按桥任务号轮询到两条 complete，不碰网关，变体照常转存本人前缀", async () => {
     bridge.get.mockReset();
     bridge.get

@@ -223,8 +223,6 @@ export async function createManhuaBgmTask(
 ): Promise<{ taskId: string; briefDigest: string }> {
   assertNotAborted(opts.abortSignal);
   const brief = manhuaBgmBriefSchema.parse(briefInput) as BgmBrief;
-  // 在付费 POST 之前拦住上游会静默拒绝的音乐家姓名。
-  assertBgmStyleSubmittable(brief);
   if (isBgmBridgeModel(brief.model)) {
     // Suno 直连桥（内部专用）：无 duration 参数，整曲生成后仍按段表裁
     if (!isSunoBridgeReady()) throw new Error("配乐直连未配置（SUNO_BRIDGE_URL），请改用网关来源");
@@ -234,6 +232,8 @@ export async function createManhuaBgmTask(
     );
     return { taskId: created.taskId, briefDigest: digestManhuaBgmBrief(brief) };
   }
+  // 旧网关的本地限制不套用到独立桥；桥保留用户风格描述，由上游返回实际结果。
+  assertBgmStyleSubmittable(brief);
   const task = await createEvolinkSunoTask({ ...brief, model: "suno-v5.5-beta" }, {
     abortSignal: opts.abortSignal,
   });

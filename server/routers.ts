@@ -2986,6 +2986,9 @@ function buildManhuaBgmJobResponse(
     titleZh: brief.success ? brief.data.title : "漫剧配乐",
     durationSec: brief.success ? brief.data.duration : 0,
     briefDigest: String(params.briefDigest || terminal.briefDigest || ""),
+    missingVariants: Number.isSafeInteger(terminal.missingVariants) && Number(terminal.missingVariants) > 0
+      ? Number(terminal.missingVariants)
+      : 0,
     variants,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,

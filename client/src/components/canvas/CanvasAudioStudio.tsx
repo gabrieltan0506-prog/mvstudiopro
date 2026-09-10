@@ -70,6 +70,8 @@ type MusicJob = {
   titleZh: string;
   status: string;
   durationSec: number;
+  /** 旧任务没有此字段；只提示未交付数量，不触发重新生成。 */
+  missingVariants?: number;
   variants: Array<{
     index: number;
     gcsUri: string;
@@ -1151,6 +1153,11 @@ export function CanvasAudioStudioView({
           </article>
         );
       })}
+      {musicJobs.filter(job => Number.isSafeInteger(job.missingVariants) && Number(job.missingVariants) > 0).map(job => (
+        <p key={job.jobId} role="status" className="text-xs text-amber-200">
+          {job.titleZh}：已保留 {job.variants.length} 个版本，另有 {job.missingVariants} 个版本未交付。请保留原任务等待核对，不要重复生成。
+        </p>
+      ))}
       <details className="border-t border-white/15 pt-2">
         <summary className="text-xs font-semibold">
           生成配乐原曲 · 保留所有版本
