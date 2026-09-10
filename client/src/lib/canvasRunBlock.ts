@@ -1974,7 +1974,11 @@ export async function runCanvasBlock(
       // 母轨本次会送 → 它就是唯一音轨（下方 studio: segmentMasterUrl ? undefined : audioStudio 同口径），
       // 预混母轨来自这些 cue，cue 仍启用不算「逐段音轨」；否则维持原拦截
       if (cuesNeedReferenceMode && !segmentMasterEntry) {
-        throw new Error("已配置逐段音轨，请使用支持声音参考的多模态参考模式；不会静默忽略这些音轨");
+        throw new Error(
+          runOptions?.pilotRun
+            ? "10 秒试片不送母轨，逐段音轨也不会并入；请先停用本段配音再试片，或直接出正片"
+            : "已配置逐段音轨，请使用支持声音参考的多模态参考模式；不会静默忽略这些音轨",
+        );
       }
       if (useWan30) {
         // Wan 3.0 公测:多图参考 + 可选对白参考音;30s 直出;排队时间较长。
