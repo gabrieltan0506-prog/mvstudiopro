@@ -899,7 +899,7 @@ export default function ManhuaClipDock({
                                 <Loader2 className="h-3 w-3 animate-spin text-cyan-200" aria-label="上传中" />
                                 {typeof segmentRefProgress === "number"
                                   ? segmentRefProgress >= 1
-                                    ? "签名中…"
+                                    ? "已上传，读取时长中…"
                                     : `上传 ${Math.round(segmentRefProgress * 100)}%`
                                   : null}
                               </span>

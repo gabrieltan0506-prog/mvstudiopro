@@ -377,6 +377,12 @@ export function CanvasAudioStudioView({
                 // 预混母轨只能由工厂配音间（带 onMasterTrackReady）收：自由画布同一节点也挂了本面板，
                 // 没有回调就保留 pending，回到工厂再挂，不能 settle 掉让 master 永远挂不上
                 if (!onMasterTrackReady) continue;
+                // 出片排队中 audioStudio 不落盘（onUpdateClipAudioStudio 对 running/queued 直接返回），
+                // pending 会在下一轮再次命中同一 job：母轨已挂上就不再重复挂、重复弹提示
+                if (block.manhuaSegmentRefs?.master?.gcsUri && block.manhuaSegmentRefs.master.gcsUri === take.gcsUri) {
+                  settle(pending.id, take);
+                  continue;
+                }
                 onMasterTrackReady({
                   url: take.previewUrl,
                   gcsUri: take.gcsUri,

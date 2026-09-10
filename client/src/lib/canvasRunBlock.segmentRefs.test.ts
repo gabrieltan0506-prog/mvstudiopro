@@ -108,6 +108,41 @@ describe("漫剧工厂段级参考进出片请求（无网络）", () => {
     expect(requests[0]!.audioUrls).toEqual([MASTER_GCS]);
     expect(String(requests[0]!.prompt)).not.toContain("@audio2");
   });
+  it("Wan 3.0 段预混母轨挂上后（cue 仍启用）出片不再被「逐段音轨」拦死，母轨现签作唯一音频", async () => {
+    const MASTER_FRESH = "https://test.invalid/master-fresh.wav?sig=new";
+    const wanRequests: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.startsWith("/api/google?op=materialReadUrl&gcsUri=")) {
+          const gcsUri = decodeURIComponent(url.split("gcsUri=")[1]!);
+          return new Response(JSON.stringify({ ok: true, url: gcsUri === PREVIS_GCS ? PREVIS_FRESH : MASTER_FRESH }));
+        }
+        if (url !== "/api/jobs?op=wan30Video") throw new Error(`未声明请求：${url}`);
+        wanRequests.push(JSON.parse(String(init?.body)));
+        return new Response(JSON.stringify({ ok: true, videoUrl: RESULT }));
+      }),
+    );
+    const cue = { ...createCanvasAudioCue("dialogue", "line-1"), speakerZh: "阿菁", voiceStateZh: "常态", voice: "Dylan", textZh: "别怕。", shotZh: "近景", approved: true, selectedTakeId: "take-1" };
+    cue.takes.push({ id: "take-1", gcsUri: "gs://test-bucket/post-prod/1/line.wav", previewUrl: "", durationSec: 2, createdAt: "2026-09-08", inputKey: canvasAudioCueInputKey(cue) });
+    const base = segmentBlock();
+    const block = {
+      ...base,
+      videoModel: "wan-3.0" as const,
+      audioStudio: { ...emptyCanvasAudioStudio(), cues: [cue] },
+      manhuaSegmentRefs: {
+        previs: { ...base.manhuaSegmentRefs.previs, durationSec: 12 },
+        master: { ...base.manhuaSegmentRefs.master, durationSec: 14.9 },
+      },
+    };
+    await runCanvasBlock({ ...deps, characterVoiceLocks: [] }, block);
+    expect(wanRequests).toHaveLength(1);
+    expect(wanRequests[0]!.audioUrls).toEqual([MASTER_FRESH]);
+
+    // 没挂母轨时逐段音轨照旧拦（Wan 不支持逐句音轨并列）
+    const noMaster = { ...block, manhuaSegmentRefs: { previs: block.manhuaSegmentRefs.previs } };
+    await expect(runCanvasBlock({ ...deps, characterVoiceLocks: [] }, noMaster)).rejects.toThrow(/已配置逐段音轨/);
+  });
   it("10 秒试片不注入白模与母轨", async () => {
     const block = { ...segmentBlock(), refVideoUrl: undefined };
     await runCanvasBlock({ ...deps, characterVoiceLocks: [] }, block, undefined, { pilotRun: true });

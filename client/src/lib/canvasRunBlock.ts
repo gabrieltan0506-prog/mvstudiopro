@@ -1719,7 +1719,10 @@ export async function runCanvasBlock(
     if (useHappyHorse && manhuaPilot) throw new Error("当前生成档未接入试片审核，请先选择受支持的漫剧成片引擎");
     const useWan30 = isCanvasWan30VideoModel(videoModel);
     const useSeedance25 = videoModel === "seedance-2.5";
-    if (block.audioStudio?.cues.some(cue => cue.enabled !== false) && (!useSeedance25 || (block.seedance25WorkMode && block.seedance25WorkMode !== "reference_to_video"))) {
+    // 段母轨存在时它就是唯一音轨（下方 studio: segmentMasterUrl ? undefined : audioStudio 同口径）：
+    // 预混母轨来自这些 cue，母轨挂上后 cue 仍保持启用，不能再按「逐段音轨」把 Wan 3.0 拦死
+    const hasSegmentMaster = Boolean(block.manhuaSegmentRefs?.master?.gcsUri);
+    if (!hasSegmentMaster && block.audioStudio?.cues.some(cue => cue.enabled !== false) && (!useSeedance25 || (block.seedance25WorkMode && block.seedance25WorkMode !== "reference_to_video"))) {
       throw new Error("已配置逐段音轨，请使用支持声音参考的多模态参考模式；不会静默忽略这些音轨");
     }
     const maxVideoImageRefs = resolveManhuaCanvasVideoImageReferenceMax(videoModel);

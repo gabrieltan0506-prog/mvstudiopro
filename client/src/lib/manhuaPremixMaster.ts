@@ -6,6 +6,7 @@
  */
 import type { CanvasAudioCue, CanvasAudioTake } from "@shared/canvasAudioStudio";
 import { MANHUA_SEGMENT_REFERENCE_CAP_SEC } from "@shared/manhuaSegmentReference";
+import { DEFAULT_CANVAS_VIDEO_MODEL, isCanvasWan30VideoModel, normalizeCanvasVideoModel } from "./canvasTypes";
 
 /** 服务端 audio_timeline 一次最多 12 条片段（postProdInput clips.max(12)） */
 export const PREMIX_MAX_CLIPS = 12;
@@ -49,7 +50,7 @@ export function buildPremixTimelineClips(input: {
   if (cues.length > PREMIX_MAX_CLIPS) {
     throw new Error(`一次最多预混 ${PREMIX_MAX_CLIPS} 条音频，请先停用或合并部分对白/配乐（当前 ${cues.length} 条）。`);
   }
-  if (String(input.videoModel || "") === "wan-3.0" && input.durationSec > MANHUA_SEGMENT_REFERENCE_CAP_SEC.wan30) {
+  if (isCanvasWan30VideoModel(normalizeCanvasVideoModel(input.videoModel || DEFAULT_CANVAS_VIDEO_MODEL)) && input.durationSec > MANHUA_SEGMENT_REFERENCE_CAP_SEC.wan30) {
     throw new Error(`Wan 3.0 参考音频上限 ${MANHUA_SEGMENT_REFERENCE_CAP_SEC.wan30} 秒，本段 ${input.durationSec} 秒的母轨出片时会被丢弃；请把本段切到 ≤15 秒或换 Seedance 2.5。`);
   }
   return cues.map((cue) => {

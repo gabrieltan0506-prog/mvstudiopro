@@ -41,6 +41,8 @@ describe("一键预混母轨 · 时间轴片段", () => {
     expect(() => buildPremixTimelineClips({ cues: many, durationSec: 30, getSelectedTake, inputKeyOf: canvasAudioCueInputKey })).toThrow(/最多预混 12 条/);
     expect(() => buildPremixTimelineClips({ cues: [cueWithTake("dialogue", "d", 0, 3, 2)], durationSec: 20, videoModel: "wan-3.0", getSelectedTake, inputKeyOf: canvasAudioCueInputKey })).toThrow(/Wan 3.0 参考音频上限 15 秒/);
     expect(buildPremixTimelineClips({ cues: [cueWithTake("dialogue", "d", 0, 3, 2)], durationSec: 15, videoModel: "wan-3.0", getSelectedTake, inputKeyOf: canvasAudioCueInputKey })).toHaveLength(1);
+    // 引擎别名与出片侧同一套判定（normalizeCanvasVideoModel + isCanvasWan30VideoModel）
+    expect(() => buildPremixTimelineClips({ cues: [cueWithTake("dialogue", "d", 0, 3, 2)], durationSec: 20, videoModel: "alibaba/wan-3.0", getSelectedTake, inputKeyOf: canvasAudioCueInputKey })).toThrow(/Wan 3.0 参考音频上限 15 秒/);
   });
   it("预混任务用 premix: 前缀区分，不当合听预览", () => {
     expect(isPremixPendingKey("premix:sha256:abc")).toBe(true);
