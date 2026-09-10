@@ -11426,7 +11426,6 @@ export default function OmniCanvas() {
                 onRetakeClip={handleRetakeClip}
                 segmentRefBusyId={segmentRefBusyId}
                 segmentRefProgress={segmentRefProgress}
-                onPrepareDeliveryAudio={async (finals) => {
                 onPrepareDeliveryAudio={async (finals, onProgress) => {
                   // 交付包：每集整集成片先跑 audio_extract（免费）；单集失败不拦整包，清单里写明
                   const out: Record<string, { url: string; ext: "m4a" | "wav" }> & { __timedOutEpisodes?: number[] } = {};
