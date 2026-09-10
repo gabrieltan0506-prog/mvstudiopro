@@ -8978,15 +8978,11 @@ export default function OmniCanvas() {
                   blocks={blocks}
                   videoModel={activePilotVideoModel}
                   directorStrategyContract={directorStrategyContract}
-                  bgmModels={
-                    user?.role === "admin" || user?.role === "supervisor"
-                      ? [
-                          { model: "suno-bridge-v6", labelZh: "Suno v6（直连·默认）" },
-                          { model: "suno-bridge-v6-wild", labelZh: "Suno v6-wild（直连·实验）" },
-                          { model: "suno-bridge-v6-mini", labelZh: "Suno v6-mini（直连·免费档）" },
-                        ]
-                      : undefined
-                  }
+                  bgmModels={[
+                    { model: "suno-v6", labelZh: "Suno v6（TTAPI·默认）" },
+                    { model: "suno-v6-wild", labelZh: "Suno v6-wild（TTAPI·实验）" },
+                    { model: "suno-v6-mini", labelZh: "Suno v6-mini（TTAPI·快）" },
+                  ]}
                   topic={factoryTopic}
                   shotContinuity={shotContinuity}
                   onShotContinuityChange={(next) => {

@@ -28,17 +28,17 @@ import { processJobsOnce } from "./runner";
 import { buildManhuaBgmJobInput } from "./manhuaBgmJobInput";
 import { buildManhuaBgmBrief } from "../../shared/manhuaBgmBrief";
 
-describe("配乐桥真实 worker 控制流：未知建单不退不重发", () => {
+describe("配乐 v6（TTAPI）真实 worker 控制流：未知建单不退不重发", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.stubEnv("SUNO_BRIDGE_URL", "http://test-bridge.invalid");
+    vi.stubEnv("TTAPI_KEY", "test-key");
     vi.stubGlobal("fetch", state.fetch);
     state.job = {
       id: "bgm-test", userId: "7", type: "audio", status: "running", attempts: 1,
       output: null,
       input: buildManhuaBgmJobInput({
         billingRequestId: "11111111-2222-4333-8444-555555555555",
-        brief: buildManhuaBgmBrief({ model: "suno-bridge-v6", laneZh: "测试", durationSec: 30, moods: ["蓄力"] }),
+        brief: buildManhuaBgmBrief({ model: "suno-v6", laneZh: "测试", durationSec: 30, moods: ["蓄力"] }),
       }),
     };
     state.claim.mockResolvedValueOnce(state.job).mockResolvedValue(null);
@@ -49,13 +49,13 @@ describe("配乐桥真实 worker 控制流：未知建单不退不重发", () =>
   });
   afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
-  it.each(["network", "502", "invalid_json", "no_clips"])("%s 结果不明：只POST一次，保留对账且不退款", async kind => {
+  it.each(["network", "502", "invalid_json", "no_job_id"])("%s 结果不明：只POST一次，保留对账且不退款", async kind => {
     state.fetch.mockImplementation(async () => {
       expect(state.job.output.bgmStage).toBe("submitting");
       if (kind === "network") throw new Error("test-secret-do-not-leak");
       if (kind === "502") return new Response("test-secret-do-not-leak", { status: 502 });
       if (kind === "invalid_json") return new Response("test-secret-do-not-leak", { status: 200 });
-      return new Response("[]", { status: 200 });
+      return new Response(JSON.stringify({ status: "SUCCESS", data: {} }), { status: 200 });
     });
     await processJobsOnce();
     expect(state.fetch).toHaveBeenCalledTimes(1);

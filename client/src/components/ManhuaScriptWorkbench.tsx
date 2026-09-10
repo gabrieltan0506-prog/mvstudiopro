@@ -297,8 +297,8 @@ type Props = {
   videoModel?: string | null;
   /** 已冻结的去名导演策略；前台只展示中性策略名与批准修订。 */
   directorStrategyContract?: ManhuaDirectorStrategyContract | null;
-  /** 配乐来源可选项（内部账号才有：Suno 直连桥） */
-  bgmModels?: Array<{ model: "suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6" | "suno-bridge-v6-wild"; labelZh: string }>;
+  /** 配乐来源可选项（Suno v6 三档，走 TTAPI 网关） */
+  bgmModels?: Array<{ model: "suno-v5.5-beta" | "suno-v6-mini" | "suno-v6" | "suno-v6-wild"; labelZh: string }>;
   topic: string;
   seriesTitle?: string;
   logline?: string;

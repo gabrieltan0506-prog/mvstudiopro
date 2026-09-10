@@ -1,5 +1,5 @@
-import { isBgmBridgeModel } from "../shared/manhuaBgmBrief.js";
-import { isSunoBridgeReady } from "./services/sunoBridgeMusic.js";
+import { isBgmV6Model } from "../shared/manhuaBgmBrief.js";
+import { isTtapiSunoReady } from "./services/ttapiSunoMusic.js";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -4448,13 +4448,12 @@ export const appRouter = router({
           styleAnchorZh: z.string().trim().max(300).optional(),
           titleZh: z.string().trim().max(80).optional(),
           hasSilenceBreak: z.boolean().optional(),
-          /** 桥模型只对 admin/supervisor 生效；普通账号传了也回落网关 */
-          model: z.enum(["suno-v5.5-beta", "suno-bridge-v6-mini", "suno-bridge-v6", "suno-bridge-v6-wild"]).optional(),
+          /** v6 三档走 TTAPI 网关，全员可选；未配 TTAPI_KEY 时回落 EvoLink v5.5 */
+          model: z.enum(["suno-v5.5-beta", "suno-v6-mini", "suno-v6", "suno-v6-wild"]).optional(),
         }),
       )
-      .mutation(({ ctx, input }) => {
-        const internalRole = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-        const model = internalRole && input.model ? input.model : "suno-v5.5-beta";
+      .mutation(({ input }) => {
+        const model = input.model && isBgmV6Model(input.model) && !isTtapiSunoReady() ? "suno-v5.5-beta" : input.model || "suno-v5.5-beta";
         return { brief: buildScoringRoomBrief({ ...input, model }) };
       }),
 
@@ -4467,15 +4466,9 @@ export const appRouter = router({
         }),
       )
       .mutation(async ({ ctx, input }) => {
-        const bridgeModel = isBgmBridgeModel(input.brief.model);
-        if (bridgeModel) {
-          // Suno 直连桥违反 Suno 条款、会封号：只给内部账号，且必须已配置桥
-          if (ctx.user.role !== "admin" && ctx.user.role !== "supervisor") {
-            throw new TRPCError({ code: "FORBIDDEN", message: "Suno 直连只对内部账号开放，请选网关来源" });
-          }
-          if (!isSunoBridgeReady()) {
-            throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Suno 直连未配置（SUNO_BRIDGE_URL）" });
-          }
+        const v6Model = isBgmV6Model(input.brief.model);
+        if (v6Model && !isTtapiSunoReady()) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Suno v6 通道未配置（TTAPI_KEY），请改选 v5.5" });
         }
         const jobInput = buildManhuaBgmJobInput(input);
         const jobId = `bgm_${input.billingRequestId.replace(/-/g, "")}`;
@@ -4484,7 +4477,7 @@ export const appRouter = router({
             id: jobId,
             userId: String(ctx.user.id),
             type: "audio",
-            provider: bridgeModel ? `suno-bridge:${input.brief.model}` : "evolink-suno-v55",
+            provider: v6Model ? `ttapi:${input.brief.model}` : "evolink-suno-v55",
             input: jobInput,
           });
         } catch (error) {

@@ -9,9 +9,9 @@ const storage = vi.hoisted(() => ({ upload: vi.fn(), sign: vi.fn() }));
 const levels = vi.hoisted(() => ({ probe: vi.fn() }));
 
 const bridge = vi.hoisted(() => ({ create: vi.fn(), get: vi.fn(), ready: vi.fn(() => true) }));
-vi.mock("./sunoBridgeMusic.js", async (loadOriginal) => {
-  const actual = await loadOriginal<typeof import("./sunoBridgeMusic.js")>();
-  return { ...actual, createSunoBridgeTask: bridge.create, getSunoBridgeTask: bridge.get, isSunoBridgeReady: bridge.ready };
+vi.mock("./ttapiSunoMusic.js", async (loadOriginal) => {
+  const actual = await loadOriginal<typeof import("./ttapiSunoMusic.js")>();
+  return { ...actual, createTtapiSunoTask: bridge.create, getTtapiSunoTask: bridge.get, isTtapiSunoReady: bridge.ready };
 });
 vi.mock("./evolinkSunoMusic.js", () => ({
   createEvolinkSunoTask: upstream.create,
@@ -126,26 +126,26 @@ describe("漫剧配乐建单与恢复", () => {
     );
   });
 
-  it("桥来源：建单走 Suno 直连桥、不碰网关；桥未配置直接拦", async () => {
+  it("v6 来源：建单走 TTAPI、不碰 EvoLink；TTAPI 未配置直接拦", async () => {
     bridge.create.mockReset();
     bridge.ready.mockReturnValue(true);
-    bridge.create.mockResolvedValue({ taskId: "sunobridge:aaaaaaaa-0000-4000-8000-000000000001,aaaaaaaa-0000-4000-8000-000000000002", clipIds: [], chirpModel: "chirp-goose" });
-    const result = await createManhuaBgmTask({ ...brief, model: "suno-bridge-v6-mini" });
-    expect(result.taskId.startsWith("sunobridge:")).toBe(true);
+    bridge.create.mockResolvedValue({ taskId: "ttapi:job0001", jobId: "job0001", mv: "chirp-v6-mini" });
+    const result = await createManhuaBgmTask({ ...brief, model: "suno-v6-mini" });
+    expect(result.taskId.startsWith("ttapi:")).toBe(true);
     expect(bridge.create).toHaveBeenCalledTimes(1);
-    expect(bridge.create.mock.calls[0]![0]).toMatchObject({ model: "suno-bridge-v6-mini", instrumental: true, style: brief.style, title: brief.title });
+    expect(bridge.create.mock.calls[0]![0]).toMatchObject({ model: "suno-v6-mini", instrumental: true, style: brief.style, title: brief.title });
     expect(upstream.create).not.toHaveBeenCalled();
     bridge.ready.mockReturnValue(false);
-    await expect(createManhuaBgmTask({ ...brief, model: "suno-bridge-v6" })).rejects.toThrow(/SUNO_BRIDGE_URL/);
+    await expect(createManhuaBgmTask({ ...brief, model: "suno-v6" })).rejects.toThrow(/TTAPI_KEY/);
     expect(bridge.create).toHaveBeenCalledTimes(1);
   });
 
-  it("桥保留艺人和百分比，不套旧网关名单；旧网关限制保持原状", async () => {
+  it("v6 保留艺人和百分比，不套旧网关名单；旧网关限制保持原状", async () => {
     bridge.create.mockReset();
     bridge.ready.mockReturnValue(true);
-    bridge.create.mockResolvedValue({ taskId: "sunobridge:aaaaaaaa-0000-4000-8000-000000000001" });
+    bridge.create.mockResolvedValue({ taskId: "ttapi:job0002", jobId: "job0002", mv: "chirp-v6" });
     for (const style of ["王力宏30%與汪蘇瀧70%", "Hans Zimmer 30%，传统弦乐70%"]) {
-      await createManhuaBgmTask({ ...brief, model: "suno-bridge-v6", style });
+      await createManhuaBgmTask({ ...brief, model: "suno-v6", style });
       expect(bridge.create).toHaveBeenLastCalledWith(expect.objectContaining({ style }), expect.anything());
     }
     expect(bridge.create).toHaveBeenCalledTimes(2);
@@ -154,29 +154,33 @@ describe("漫剧配乐建单与恢复", () => {
     expect(upstream.create).not.toHaveBeenCalled();
   });
 
-  it("桥来源：恢复按桥任务号轮询到两条 complete，不碰网关，变体照常转存本人前缀", async () => {
+  it("v6 来源：恢复按 TTAPI 任务号轮询到 SUCCESS，不碰 EvoLink，变体照常转存本人前缀", async () => {
     bridge.get.mockReset();
     bridge.get
-      .mockResolvedValueOnce({ status: "pending", clips: [], readyUrls: [] })
-      .mockResolvedValueOnce({ status: "completed", clips: [], audioUrls: ["https://cdn.example/a.mp3", "https://cdn.example/b.mp3"], missing: 0 });
-    const taskId = "sunobridge:aaaaaaaa-0000-4000-8000-000000000001,aaaaaaaa-0000-4000-8000-000000000002";
-    const out = await resumeManhuaBgmTask({ taskId, userId: "42", brief: { ...brief, model: "suno-bridge-v6-mini" }, pollIntervalMs: 1 });
+      .mockResolvedValueOnce({ status: "pending", progress: 40, musics: [] })
+      .mockResolvedValueOnce({ status: "completed", musics: [], audioUrls: ["https://cdn.example/a.mp3", "https://cdn.example/b.mp3"], missing: 0 });
+    const taskId = "ttapi:job0003";
+    const out = await resumeManhuaBgmTask({ taskId, userId: "42", brief: { ...brief, model: "suno-v6-mini" }, pollIntervalMs: 1 });
     expect(bridge.get).toHaveBeenCalledTimes(2);
     expect(upstream.get).not.toHaveBeenCalled();
     expect(upstream.pick).not.toHaveBeenCalled();
     expect(out.variants).toHaveLength(2);
     expect(storage.upload).toHaveBeenCalledTimes(2);
     expect(out.missingVariants).toBe(0);
-    // 轮询到点但一条早已 complete：按已出的收，missingVariants=1
+    // 上游只回一首：按已出的收，missingVariants=1
     bridge.get.mockReset();
-    bridge.get.mockResolvedValue({ status: "pending", clips: [], readyUrls: ["https://cdn.example/a.mp3"] });
+    bridge.get.mockResolvedValue({ status: "completed", musics: [], audioUrls: ["https://cdn.example/a.mp3"], missing: 1 });
     storage.upload.mockClear();
-    const partial = await resumeManhuaBgmTask({ taskId, userId: "42", brief: { ...brief, model: "suno-bridge-v6-mini" }, pollIntervalMs: 1, pollTimeoutMs: 5 });
+    const partial = await resumeManhuaBgmTask({ taskId, userId: "42", brief: { ...brief, model: "suno-v6-mini" }, pollIntervalMs: 1 });
     expect(partial.variants).toHaveLength(1);
     expect(partial.missingVariants).toBe(1);
+    // 一直 ON_QUEUE 到点：超时报错，不结算
     bridge.get.mockReset();
-    bridge.get.mockResolvedValue({ status: "failed", clips: [], reason: "moderation" });
-    await expect(resumeManhuaBgmTask({ taskId, userId: "42", brief: { ...brief, model: "suno-bridge-v6-mini" }, pollIntervalMs: 1 })).rejects.toThrow(/failed：moderation/);
+    bridge.get.mockResolvedValue({ status: "pending", progress: 10, musics: [] });
+    await expect(resumeManhuaBgmTask({ taskId, userId: "42", brief: { ...brief, model: "suno-v6-mini" }, pollIntervalMs: 1, pollTimeoutMs: 5 })).rejects.toThrow(/未完成/);
+    bridge.get.mockReset();
+    bridge.get.mockResolvedValue({ status: "failed", musics: [], reason: "moderation" });
+    await expect(resumeManhuaBgmTask({ taskId, userId: "42", brief: { ...brief, model: "suno-v6-mini" }, pollIntervalMs: 1 })).rejects.toThrow(/failed：moderation/);
   });
 
   it("恢复只轮询既有 task，绝不再次建单", async () => {

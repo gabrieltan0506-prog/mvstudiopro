@@ -147,17 +147,18 @@ export type BgmBriefInput = {
   hasSilenceBreak?: boolean;
 };
 
-/** 配乐来源：EvoLink 网关 v5.5（默认，全员）；Suno 直连桥 v6-mini / v6（内部账号专用，见 server/services/sunoBridgeMusic.ts） */
-export type BgmBriefModel = "suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6" | "suno-bridge-v6-wild";
-export const BGM_BRIEF_MODELS: readonly BgmBriefModel[] = ["suno-v5.5-beta", "suno-bridge-v6-mini", "suno-bridge-v6", "suno-bridge-v6-wild"];
+/** 配乐来源：EvoLink 网关 v5.5（带精确时长）；Suno v6 三档走 TTAPI 网关（0910 用户拍板，见 server/services/ttapiSunoMusic.ts），全员可选 */
+export type BgmBriefModel = "suno-v5.5-beta" | "suno-v6-mini" | "suno-v6" | "suno-v6-wild";
+export const BGM_BRIEF_MODELS: readonly BgmBriefModel[] = ["suno-v5.5-beta", "suno-v6", "suno-v6-wild", "suno-v6-mini"];
 export const BGM_BRIEF_MODEL_LABEL_ZH: Record<BgmBriefModel, string> = {
-  "suno-v5.5-beta": "Suno v5.5（网关）",
-  "suno-bridge-v6-mini": "Suno v6-mini（直连·内部）",
-  "suno-bridge-v6": "Suno v6（直连·内部）",
-  "suno-bridge-v6-wild": "Suno v6-wild（直连·内部·实验）",
+  "suno-v5.5-beta": "Suno v5.5（EvoLink·精确时长）",
+  "suno-v6": "Suno v6（TTAPI·默认）",
+  "suno-v6-wild": "Suno v6-wild（TTAPI·实验）",
+  "suno-v6-mini": "Suno v6-mini（TTAPI·快）",
 };
-export function isBgmBridgeModel(model: unknown): model is "suno-bridge-v6-mini" | "suno-bridge-v6" | "suno-bridge-v6-wild" {
-  return model === "suno-bridge-v6-mini" || model === "suno-bridge-v6" || model === "suno-bridge-v6-wild";
+export type BgmV6Model = "suno-v6-mini" | "suno-v6" | "suno-v6-wild";
+export function isBgmV6Model(model: unknown): model is BgmV6Model {
+  return model === "suno-v6-mini" || model === "suno-v6" || model === "suno-v6-wild";
 }
 
 export type BgmBrief = {

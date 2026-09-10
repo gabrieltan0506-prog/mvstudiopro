@@ -40,7 +40,7 @@ const buttonClass =
   "rounded border border-white/20 px-2 py-1.5 text-xs text-white hover:bg-white/10 disabled:opacity-40";
 
 type MusicBrief = {
-  model: "suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6" | "suno-bridge-v6-wild";
+  model: "suno-v5.5-beta" | "suno-v6-mini" | "suno-v6" | "suno-v6-wild";
   custom_mode: true;
   instrumental: true;
   style: string;
@@ -109,7 +109,7 @@ export type CanvasAudioStudioServices = {
   }): Promise<JobResult>;
   getDialogue(input: { jobId: string }): Promise<JobResult | null>;
   draftMusic(input: {
-    model?: "suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6" | "suno-bridge-v6-wild";
+    model?: "suno-v5.5-beta" | "suno-v6-mini" | "suno-v6" | "suno-v6-wild";
     laneZh: string;
     durationSec: number;
     moods: Array<"蓄力" | "冲突" | "反转" | "收束">;
@@ -139,7 +139,7 @@ type Props = {
    * 配乐来源可选项（内部账号才传）：Suno 直连桥 v6-mini / v6。不传只有网关 v5.5。
    * 桥违反 Suno 条款、会封号，只给 admin/supervisor；服务端同样把关。
    */
-  bgmModels?: Array<{ model: "suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6" | "suno-bridge-v6-wild"; labelZh: string }>;
+  bgmModels?: Array<{ model: "suno-v5.5-beta" | "suno-v6-mini" | "suno-v6" | "suno-v6-wild"; labelZh: string }>;
 };
 
 
@@ -190,8 +190,8 @@ export function CanvasAudioStudioView({
   const [musicDuration, setMusicDuration] = useState(30);
   const [brief, setBrief] = useState<MusicBrief | null>(null);
   // 内部账号（有桥）默认直出 Suno v6（用户 0910 已升 Pro，不用 mini）；普通账号只有网关 v5.5
-  const [bgmModel, setBgmModel] = useState<"suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6" | "suno-bridge-v6-wild">(
-    bgmModels?.some(item => item.model === "suno-bridge-v6") ? "suno-bridge-v6" : "suno-v5.5-beta",
+  const [bgmModel, setBgmModel] = useState<"suno-v5.5-beta" | "suno-v6-mini" | "suno-v6" | "suno-v6-wild">(
+    bgmModels?.some(item => item.model === "suno-v6") ? "suno-v6" : "suno-v5.5-beta",
   );
   const [resumable, setResumable] = useState<Record<string, JobResult>>({});
   const [confirmation, setConfirmation] = useState<
@@ -1208,7 +1208,7 @@ export function CanvasAudioStudioView({
                   setConfirmation(null);
                 }}
               >
-                <option value="suno-v5.5-beta">Suno v5.5（网关）</option>
+                <option value="suno-v5.5-beta">Suno v5.5（EvoLink·精确时长）</option>
                 {bgmModels.map(item => (
                   <option key={item.model} value={item.model}>
                     {item.labelZh}
@@ -1217,8 +1217,7 @@ export function CanvasAudioStudioView({
               </select>
               {bgmModel !== "suno-v5.5-beta" ? (
                 <span className="mt-1 block text-[10px] text-amber-200/80">
-                  直连走你自己的 Suno 账号 cookie，仅内部使用；不支持精确时长，整曲出来后按段表裁。
-                  {bgmModel === "suno-bridge-v6" ? "免费号用 v6 只出 1 分钟预览，整曲需 Pro。" : ""}
+                  v6 走 TTAPI 网关，不支持精确时长，整曲出来后按段表裁；上游未配置时自动回落 v5.5。
                 </span>
               ) : null}
             </label>
@@ -1246,7 +1245,7 @@ export function CanvasAudioStudioView({
             <>
               {brief.model !== "suno-v5.5-beta" ? (
                 <p className="text-[10px] text-amber-200/80">
-                  来源：{brief.model === "suno-bridge-v6" ? "Suno v6（直连·内部）" : brief.model === "suno-bridge-v6-wild" ? "Suno v6-wild（直连·内部·实验）" : "Suno v6-mini（直连·内部）"}
+                  来源：{brief.model === "suno-v6" ? "Suno v6（TTAPI）" : brief.model === "suno-v6-wild" ? "Suno v6-wild（TTAPI·实验）" : "Suno v6-mini（TTAPI）"}
                 </p>
               ) : null}
               <label className="block text-xs">

@@ -91,7 +91,7 @@ import {
   createManhuaBgmTask,
   resumeManhuaBgmTask,
 } from "../services/manhuaScoringRoom.js";
-import { isSunoBridgeSubmissionUnknown } from "../services/sunoBridgeMusic.js";
+import { isTtapiSunoSubmissionUnknown } from "../services/ttapiSunoMusic.js";
 import { processPdfExportJob } from "./pdfExportJob";
 import {
   invokePlatformAnalysisChat,
@@ -1833,7 +1833,7 @@ async function processManhuaBgmJob(params: {
   jobId: string;
 }): Promise<{ output: ManhuaBgmJobOutput; provider: string }> {
   const parsed = manhuaBgmJobInputSchema.parse(params.input);
-  const manhuaBgmProviderLabel = (model: string) => (model.startsWith("suno-bridge-") ? `suno-bridge:${model}` : "evolink:suno-v5.5");
+  const manhuaBgmProviderLabel = (model: string) => (model.startsWith("suno-v6") ? `ttapi:${model}` : "evolink:suno-v5.5");
   const job = await getJobByIdStrict(params.jobId);
   if (
     !job ||
@@ -1918,7 +1918,7 @@ async function processManhuaBgmJob(params: {
     }
     let created: Awaited<ReturnType<typeof createManhuaBgmTask>>;
     try {
-      if (parsed.params.brief.model.startsWith("suno-bridge-")) {
+      if (parsed.params.brief.model.startsWith("suno-v6")) {
         // 发请求之前留存意图：即使实例在拿到句柄前退出，恢复也只对账，不重复 POST。
         await persistManhuaBgmCheckpointWithRetry(() =>
           patchJobRunningProgressStrict(params.jobId, {
@@ -1932,7 +1932,7 @@ async function processManhuaBgmJob(params: {
         abortSignal: controller.signal,
       });
     } catch (createError) {
-      if (isSunoBridgeSubmissionUnknown(createError)) {
+      if (isTtapiSunoSubmissionUnknown(createError)) {
         await persistManhuaBgmCheckpointWithRetry(() =>
           patchJobRunningProgressStrict(params.jobId, {
             bgmStage: "reconcile_manual",

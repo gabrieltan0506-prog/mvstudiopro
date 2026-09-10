@@ -33,8 +33,8 @@ import {
   getEvolinkSunoTask,
   pickEvolinkSunoAudioUrls,
 } from "./evolinkSunoMusic.js";
-import { createSunoBridgeTask, decodeSunoBridgeTaskId, getSunoBridgeTask, isSunoBridgeReady } from "./sunoBridgeMusic.js";
-import { isBgmBridgeModel, type BgmBriefModel } from "../../shared/manhuaBgmBrief.js";
+import { createTtapiSunoTask, decodeTtapiSunoTaskId, getTtapiSunoTask, isTtapiSunoReady } from "./ttapiSunoMusic.js";
+import { isBgmV6Model, type BgmBriefModel } from "../../shared/manhuaBgmBrief.js";
 import { signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs.js";
 import { probeBgmLevels } from "./manhuaBgmLevelProbe.js";
 import { postProdOutputPrefix } from "./postProdMediaSource.js";
@@ -223,16 +223,16 @@ export async function createManhuaBgmTask(
 ): Promise<{ taskId: string; briefDigest: string }> {
   assertNotAborted(opts.abortSignal);
   const brief = manhuaBgmBriefSchema.parse(briefInput) as BgmBrief;
-  if (isBgmBridgeModel(brief.model)) {
-    // Suno 直连桥（内部专用）：无 duration 参数，整曲生成后仍按段表裁
-    if (!isSunoBridgeReady()) throw new Error("配乐直连未配置（SUNO_BRIDGE_URL），请改用网关来源");
-    const created = await createSunoBridgeTask(
+  if (isBgmV6Model(brief.model)) {
+    // Suno v6 走 TTAPI：无 duration 参数，整曲生成后仍按段表裁
+    if (!isTtapiSunoReady()) throw new Error("配乐 v6 通道未配置（TTAPI_KEY），请改选 v5.5");
+    const created = await createTtapiSunoTask(
       { model: brief.model, prompt: brief.prompt, style: brief.style, title: brief.title, instrumental: brief.instrumental, negative_tags: brief.negative_tags },
       { abortSignal: opts.abortSignal },
     );
     return { taskId: created.taskId, briefDigest: digestManhuaBgmBrief(brief) };
   }
-  // 旧网关的本地限制不套用到独立桥；桥保留用户风格描述，由上游返回实际结果。
+  // 旧网关的本地限制不套用到 TTAPI；v6 保留用户风格描述，由上游返回实际结果。
   assertBgmStyleSubmittable(brief);
   const task = await createEvolinkSunoTask({ ...brief, model: "suno-v5.5-beta" }, {
     abortSignal: opts.abortSignal,
@@ -272,34 +272,26 @@ export async function resumeManhuaBgmTask(input: {
   );
   const deadlineMs = Date.now() + pollTimeoutMs;
 
-  const isBridgeTask = Boolean(decodeSunoBridgeTaskId(taskId));
+  const isV6Task = Boolean(decodeTtapiSunoTaskId(taskId));
   let raw: unknown;
-  let bridgeUrls: string[] = [];
-  let bridgeMissing = 0;
-  let bridgeReadyUrls: string[] = [];
+  let v6Urls: string[] = [];
+  let v6Missing = 0;
   for (;;) {
     assertNotAborted(input.abortSignal);
     if (Date.now() > deadlineMs) {
-      if (isBridgeTask && bridgeReadyUrls.length) {
-        // 桥少回一条、另一条早就 complete：到点就按已出的收，不让已占额度的那首作废
-        bridgeUrls = bridgeReadyUrls;
-        bridgeMissing = Math.max(0, (decodeSunoBridgeTaskId(taskId)?.length ?? 0) - bridgeReadyUrls.length);
-        break;
-      }
       throw new Error(
         `配乐任务 ${taskId} 超过 ${Math.ceil(pollTimeoutMs / 60_000)} 分钟未完成`
       );
     }
-    if (isBridgeTask) {
-      // 桥的 task id 编码了两条 clip；两条都 complete 才算完成，任一 error 即失败
-      const state = await getSunoBridgeTask(taskId, { abortSignal: input.abortSignal });
+    if (isV6Task) {
+      // TTAPI 整单 SUCCESS 才结算；少于两首记 missing，不把已出的丢掉
+      const state = await getTtapiSunoTask(taskId, { abortSignal: input.abortSignal });
       if (state.status === "completed") {
-        bridgeUrls = state.audioUrls;
-        bridgeMissing = state.missing;
+        v6Urls = state.audioUrls;
+        v6Missing = state.missing;
         break;
       }
       if (state.status === "failed") throw new Error(`配乐任务 ${taskId} failed：${state.reason}`);
-      bridgeReadyUrls = state.readyUrls;
     } else {
       const polled = await getEvolinkSunoTask(taskId, {
         abortSignal: input.abortSignal,
@@ -318,7 +310,7 @@ export async function resumeManhuaBgmTask(input: {
     );
   }
 
-  const urls = isBridgeTask ? bridgeUrls : pickEvolinkSunoAudioUrls(raw);
+  const urls = isV6Task ? v6Urls : pickEvolinkSunoAudioUrls(raw);
   if (!urls.length) throw new Error(`配乐任务 ${taskId} 完成但没有音频地址`);
 
   /**
@@ -391,7 +383,7 @@ export async function resumeManhuaBgmTask(input: {
     variants,
     elapsedMs: Math.max(0, Date.now() - startedAtMs),
     brief,
-    missingVariants: isBridgeTask ? bridgeMissing : 0,
+    missingVariants: isV6Task ? v6Missing : 0,
   };
 }
 
