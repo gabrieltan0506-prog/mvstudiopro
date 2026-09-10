@@ -1995,7 +1995,7 @@ async function processManhuaBgmJob(params: {
         );
         const { refundCreditsForDeductAmount } = await import("../credits");
         try {
-          await refundCreditsForDeductAmount(numericUserId, "配乐建单失败退回", bgmDeduct!, "manhuaBgm", {
+          await refundCreditsForDeductAmount(numericUserId, "配乐建单失败退回", refundDeduct, "manhuaBgm", {
             refundKey: bgmRefundKey,
           });
           await persistManhuaBgmCheckpointWithRetry(() =>
