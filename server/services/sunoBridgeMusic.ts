@@ -132,20 +132,25 @@ export async function createSunoBridgeTask(
 
 export type SunoBridgeTaskState =
   | { status: "pending"; clips: SunoBridgeClip[] }
-  | { status: "completed"; clips: SunoBridgeClip[]; audioUrls: string[] }
+  | { status: "completed"; clips: SunoBridgeClip[]; audioUrls: string[]; missing: number }
   | { status: "failed"; clips: SunoBridgeClip[]; reason: string };
 
-/** 两条 clip 全 complete 才算完成；任一 error 即失败（不半成品入库） */
+/**
+ * 全部 clip 到终态才结算：≥1 条 complete 就算完成（另一条 error 只记 missing，不把已出的那首丢掉——
+ * 桥每单占的是用户 Suno 账号额度，丢了不退）；全部 error 才 failed；桥回的 clip 少于 ids 的照 pending 等到轮询上限。
+ */
 export async function getSunoBridgeTask(taskId: string, opts: { abortSignal?: AbortSignal } = {}): Promise<SunoBridgeTaskState> {
   const ids = decodeSunoBridgeTaskId(taskId);
   if (!ids) throw new Error("不是配乐直连的任务号");
   const raw = await bridgeFetch(`/api/get?ids=${encodeURIComponent(ids.join(","))}`, { abortSignal: opts.abortSignal });
   const clips = pickClips(raw).filter((c) => ids.includes(c.id));
-  const failed = clips.find((c) => c.status === "error");
-  if (failed) return { status: "failed", clips, reason: failed.error_message || "Suno 返回 error" };
-  const done = clips.filter((c) => c.status === "complete" && c.audio_url);
-  if (clips.length === ids.length && done.length === ids.length) {
-    return { status: "completed", clips, audioUrls: ids.map((id) => done.find((c) => c.id === id)!.audio_url!) };
+  const byId = new Map(clips.map((c) => [c.id, c] as const));
+  const terminal = (c: SunoBridgeClip | undefined) => Boolean(c && (c.status === "error" || (c.status === "complete" && c.audio_url)));
+  if (!ids.every((id) => terminal(byId.get(id)))) return { status: "pending", clips };
+  const done = ids.map((id) => byId.get(id)!).filter((c) => c.status === "complete" && c.audio_url);
+  if (!done.length) {
+    const first = clips.find((c) => c.status === "error");
+    return { status: "failed", clips, reason: first?.error_message || "Suno 返回 error" };
   }
-  return { status: "pending", clips };
+  return { status: "completed", clips, audioUrls: done.map((c) => c.audio_url!), missing: ids.length - done.length };
 }

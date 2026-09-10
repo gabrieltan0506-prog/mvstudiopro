@@ -1898,6 +1898,7 @@ async function processManhuaBgmJob(params: {
     // 0902 解锁计费：此前配乐零积分白烧上游。fresh 提交前按发扣费，
     // chargeKey=jobId 幂等（重试/恢复不重复扣）；admin 由 deductCreditsAmount 内部免扣。
     const numericUserId = Number(params.userId);
+    let bgmDeduct: Awaited<ReturnType<typeof deductCreditsAmount>> | null = null;
     if (Number.isFinite(numericUserId) && CANVAS_BGM_CREDITS_PER_RUN > 0) {
       const credits = await getCredits(numericUserId);
       if (credits.totalAvailable < CANVAS_BGM_CREDITS_PER_RUN) {
@@ -1905,7 +1906,7 @@ async function processManhuaBgmJob(params: {
           `积分不足，本次配乐需要 ${CANVAS_BGM_CREDITS_PER_RUN} 积分（当前余额 ${credits.totalAvailable}）`,
         );
       }
-      await deductCreditsAmount(
+      bgmDeduct = await deductCreditsAmount(
         numericUserId,
         CANVAS_BGM_CREDITS_PER_RUN,
         "manhuaBgm",
@@ -1919,10 +1920,11 @@ async function processManhuaBgmJob(params: {
         abortSignal: controller.signal,
       });
     } catch (createError) {
-      // 上游没建成单＝钱没烧出去，退回；建成单之后失败按「已烧对账」不退（与视频任务同口径）
-      if (Number.isFinite(numericUserId) && CANVAS_BGM_CREDITS_PER_RUN > 0) {
-        const { refundCredits } = await import("../credits");
-        await refundCredits(numericUserId, CANVAS_BGM_CREDITS_PER_RUN, "配乐建单失败退回", {
+      // 上游没建成单＝钱没烧出去，退回；建成单之后失败按「已烧对账」不退（与视频任务同口径）。
+      // 按实际扣费结果退：admin/none 没扣过就不退，否则桥来源失败一次白给 20 分
+      if (bgmDeduct && Number.isFinite(numericUserId)) {
+        const { refundCreditsForDeductAmount } = await import("../credits");
+        await refundCreditsForDeductAmount(numericUserId, "配乐建单失败退回", bgmDeduct, "manhuaBgm", {
           refundKey: `manhua-bgm-refund:${params.jobId}`,
         }).catch((refundError) => console.warn(
           "[manhua-bgm] 建单失败退款未完成（幂等键在，可补退）:",

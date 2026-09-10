@@ -144,7 +144,7 @@ describe("漫剧配乐建单与恢复", () => {
     bridge.get.mockReset();
     bridge.get
       .mockResolvedValueOnce({ status: "pending", clips: [] })
-      .mockResolvedValueOnce({ status: "completed", clips: [], audioUrls: ["https://cdn.example/a.mp3", "https://cdn.example/b.mp3"] });
+      .mockResolvedValueOnce({ status: "completed", clips: [], audioUrls: ["https://cdn.example/a.mp3", "https://cdn.example/b.mp3"], missing: 0 });
     const taskId = "sunobridge:aaaaaaaa-0000-4000-8000-000000000001,aaaaaaaa-0000-4000-8000-000000000002";
     const out = await resumeManhuaBgmTask({ taskId, userId: "42", brief: { ...brief, model: "suno-bridge-v6-mini" }, pollIntervalMs: 1 });
     expect(bridge.get).toHaveBeenCalledTimes(2);

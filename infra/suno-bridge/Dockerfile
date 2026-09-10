@@ -28,6 +28,9 @@ COPY --from=build /src/node_modules ./node_modules
 COPY --from=build /src/.next ./.next
 COPY --from=build /src/public ./public
 COPY --from=build /src/next.config.* ./
-RUN npx playwright install chromium
+# Chromium 由 build 阶段 npm ci 的 @playwright/browser-chromium postinstall 装好（版本与 lock 里的 playwright-core 一致）；
+# 直接拷过来，不在 runtime 再 `npx playwright install`（那会拉最新 playwright 装另一版 chromium，rebrowser-playwright-core 找不到可执行文件）
+COPY --from=build /root/.cache/ms-playwright /root/.cache/ms-playwright
+ENV PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
 EXPOSE 3000
 CMD ["npm", "run", "start"]

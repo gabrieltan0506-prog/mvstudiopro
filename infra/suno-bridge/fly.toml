@@ -18,12 +18,11 @@ primary_region = 'sin'
   size = 'shared-cpu-2x'
   memory = '2gb'
 
+# 健康检查只探进程活着，不打 Suno（/api/get_limit 会带 cookie 请求 Suno，30 秒一次没必要给账号加曝光）
 [checks]
-  [checks.http]
+  [checks.tcp]
     port = 3000
-    type = 'http'
-    interval = '30s'
+    type = 'tcp'
+    interval = '60s'
     timeout = '5s'
     grace_period = '60s'
-    method = 'GET'
-    path = '/api/get_limit'
