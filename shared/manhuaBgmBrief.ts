@@ -121,6 +121,8 @@ export function deriveManhuaBgmBriefSeed(input: {
 }
 
 export type BgmBriefInput = {
+  /** 缺省 suno-v6；v5.5 已下架，传了也落到 v6 */
+  model?: BgmBriefModel;
   laneZh: string;
   /** 画面时长（秒）。BGM 会在此基础上加余量 */
   durationSec: number;
@@ -145,8 +147,28 @@ export type BgmBriefInput = {
   hasSilenceBreak?: boolean;
 };
 
+/**
+ * 配乐来源：Suno v6 三档走 TTAPI 网关（0910 用户拍板，见 server/services/ttapiSunoMusic.ts），全员可选。
+ * `suno-v5.5-beta`（EvoLink）0910 晚下架：不再建单、不做兜底（用户：「有好的不用好的用次货」），
+ * 类型里保留只为旧任务能解析/恢复/回放。
+ */
+export type BgmBriefModel = "suno-v5.5-beta" | "suno-v6-mini" | "suno-v6" | "suno-v6-wild";
+/** 可选（可建单）的档；不含已下架的 v5.5 */
+export const BGM_BRIEF_MODELS: readonly BgmBriefModel[] = ["suno-v6", "suno-v6-wild", "suno-v6-mini"];
+export const BGM_BRIEF_DEFAULT_MODEL: BgmBriefModel = "suno-v6";
+export const BGM_BRIEF_MODEL_LABEL_ZH: Record<BgmBriefModel, string> = {
+  "suno-v5.5-beta": "Suno v5.5（已下架）",
+  "suno-v6": "Suno v6（TTAPI·默认）",
+  "suno-v6-wild": "Suno v6-wild（TTAPI·实验）",
+  "suno-v6-mini": "Suno v6-mini（TTAPI·快）",
+};
+export type BgmV6Model = "suno-v6-mini" | "suno-v6" | "suno-v6-wild";
+export function isBgmV6Model(model: unknown): model is BgmV6Model {
+  return model === "suno-v6-mini" || model === "suno-v6" || model === "suno-v6-wild";
+}
+
 export type BgmBrief = {
-  model: "suno-v5.5-beta";
+  model: BgmBriefModel;
   custom_mode: true;
   instrumental: true;
   style: string;
@@ -186,47 +208,7 @@ export function countBgmStyleDescriptors(style: string): number {
     .filter(Boolean).length;
 }
 
-/**
- * 在世音乐家点名检测。
- *
- * Suno **主动拦艺人名**，写了会静默失败。作品名可以用
- * （「Mission Impossible 风格」「十面埋伏拨弦」实测有效），人名不行。
- * 这里只能做提示，不做黑名单——名单永远不全。
- */
-/**
- * 明确点名在世音乐家 → Suno 会拦，写了静默失败。
- *
- * ⚠️ 上一版带了 `/(风格|style)\s*$/` 这种泛化规则，把「悬疑电影风格」也误判了 ——
- * **作品名是允许且有效的**（「Mission Impossible 风格」「十面埋伏拨弦」实测通过），
- * 只有人名不行。所以这里只查名单，不猜句式。
- */
-const ARTIST_NAME_PATTERNS = [
-  /Yo\s*Yo\s*Ma/i,
-  /Hans\s*Zimmer/i,
-  /Ennio\s*Morricone/i,
-  /John\s*Williams/i,
-  /久石让/,
-  /坂本龍一|坂本龙一/,
-  /谭盾/,
-];
 
-export function looksLikeArtistName(text: string): boolean {
-  const t = String(text || "");
-  return ARTIST_NAME_PATTERNS.some((re) => re.test(t));
-}
-
-/**
- * 提交前的最终 style 校验。**必须在 createJob 之前调用** ——
- * 上一版这个函数只有定义没人调，styleOverrideZh 可以原样绕过。
- */
-export function assertBgmStyleSubmittable(brief: Pick<BgmBrief, "style">): void {
-  if (looksLikeArtistName(brief.style)) {
-    throw new Error(
-      "配乐风格里出现了在世音乐家姓名，Suno 会拦。请改成可听特征描述："
-      + "乐器与演奏法、速度、节奏走向、氛围（例：大提琴音色温暖醇厚、弓法绵长如歌唱）",
-    );
-  }
-}
 
 /** 结构标签：段落数是时长的主要杠杆，`[End]` 强制终止 */
 export function buildBgmStructurePrompt(input: {
@@ -288,7 +270,7 @@ export function buildManhuaBgmBrief(input: BgmBriefInput): BgmBrief {
       );
 
   return {
-    model: "suno-v5.5-beta",
+    model: (BGM_BRIEF_MODELS as readonly string[]).includes(String(input.model || "")) ? (input.model as BgmBriefModel) : BGM_BRIEF_DEFAULT_MODEL,
     custom_mode: true,
     instrumental: true,
     style,

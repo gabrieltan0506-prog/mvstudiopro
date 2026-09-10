@@ -20,7 +20,7 @@ beforeAll(async () => {
       const services={
         generateDialogue:async input=>{f.calls.push(input);return {jobId:'test-job',status:'succeeded',result:{gcsUri:'gs://test-bucket/generated/test.mp3',audioUrl:'https://audio.test/test.mp3',bytes:12000,voiceGate:{durationSeconds:2.25}}};},
         getDialogue:async input=>{f.queries.push(input);return f.result;},
-        draftMusic:async()=>({brief:{model:'suno-v5.5-beta',custom_mode:true,instrumental:true,style:'恢宏',prompt:'展翼时释放气势',title:'守护',duration:30,negative_tags:'',style_weight:0.5,weirdness_constraint:0.5}}),
+        draftMusic:async()=>({brief:{model:'suno-v6',custom_mode:true,instrumental:true,style:'恢宏',prompt:'展翼时释放气势',title:'守护',duration:30,negative_tags:'',style_weight:0.5,weirdness_constraint:0.5}}),
         generateMusic:async input=>{f.calls.push(input);return {jobId:'bgm-test',status:'queued'};},
         getMusic:async input=>{f.musicQueries.push(input.jobId);return f.history[input.jobId]||{jobId:input.jobId,status:'running',variants:[],titleZh:'守护',durationSec:30};},
         listMusic:async()=>[],
@@ -107,6 +107,29 @@ async function open() {
   return { context, page, click, fill };
 }
 describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
+  it("部分配乐通过旧任务恢复及重新挂载仍提示缺失版本，不重新生成", async () => {
+    const { context, page, click } = await open();
+    try {
+      await page.evaluate(() => {
+        const f = (window as any).fixture;
+        f.history.partial = { jobId: "partial", status: "succeeded", titleZh: "部分原曲", durationSec: 30, missingVariants: 1, variants: [{ index: 0, gcsUri: "gs://test-bucket/post-prod/7/partial.wav", previewUrl: "https://audio.test/partial.wav" }] };
+        f.history.legacy = { jobId: "legacy", status: "succeeded", titleZh: "旧原曲", durationSec: 30, variants: [] };
+        f.configure({ ...f.state, musicJobIds: ["partial", "legacy"] });
+      });
+      // 等待 React 真正提交旧任务编号，再点击刷新，避免仍读取上一帧的空列表。
+      await page.waitForFunction(() => (window as any).fixture.state.musicJobIds.includes("partial"), { timeout: 10_000 });
+      await click("刷新配乐素材");
+      const hasWarning = () => Array.from(document.querySelectorAll('[role="status"]')).some(el => el.getClientRects().length > 0 && el.textContent?.includes("部分原曲：已保留 1 个版本，另有 1 个版本未交付"));
+      await page.waitForFunction(hasWarning, { timeout: 10_000 });
+      expect(await page.evaluate(() => Array.from(document.querySelectorAll('[role="status"]')).some(el => el.textContent?.includes("旧原曲")))).toBe(false);
+      await page.evaluate(() => (window as any).fixture.show(false));
+      await page.waitForFunction(() => !document.querySelector('section[aria-label="逐句配音与分段配乐"]'), { timeout: 10_000 });
+      await page.evaluate(() => (window as any).fixture.show(true));
+      await page.waitForFunction(hasWarning, { timeout: 10_000 });
+      expect(await page.evaluate(() => (window as any).fixture.calls)).toEqual([]);
+      expect(await page.evaluate(() => (window as any).fixture.musicQueries)).toContain("partial");
+    } finally { await context.close(); }
+  }, 20_000);
   it("旧配乐不在最近页仍按持久任务取回并选择", async () => {
     const { context, page, click } = await open();
     try {

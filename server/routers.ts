@@ -5,6 +5,8 @@ import path from "node:path";
 import { z } from "zod";
 import { manhuaDirectionSelectionInputSchema } from "./manhuaDirectionSelectionSchema.js";
 import { WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT } from "../shared/weixinChannelsRules.js";
+import { isBgmV6Model } from "../shared/manhuaBgmBrief.js";
+import { isTtapiSunoReady } from "./services/ttapiSunoMusic.js";
 import {
   MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS,
   manhuaCreativeAdvisorContextSchema,
@@ -2986,6 +2988,9 @@ function buildManhuaBgmJobResponse(
     titleZh: brief.success ? brief.data.title : "漫剧配乐",
     durationSec: brief.success ? brief.data.duration : 0,
     briefDigest: String(params.briefDigest || terminal.briefDigest || ""),
+    missingVariants: Number.isSafeInteger(terminal.missingVariants) && Number(terminal.missingVariants) > 0
+      ? Number(terminal.missingVariants)
+      : 0,
     variants,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
@@ -4445,9 +4450,14 @@ export const appRouter = router({
           styleAnchorZh: z.string().trim().max(300).optional(),
           titleZh: z.string().trim().max(80).optional(),
           hasSilenceBreak: z.boolean().optional(),
+          /** v6 三档走 TTAPI 网关，全员可选；v5.5 已下架，旧客户端传了也落到 v6 */
+          model: z.enum(["suno-v5.5-beta", "suno-v6-mini", "suno-v6", "suno-v6-wild"]).optional(),
         }),
       )
-      .mutation(({ input }) => ({ brief: buildScoringRoomBrief(input) })),
+      .mutation(({ input }) => {
+        const model = input.model && isBgmV6Model(input.model) ? input.model : "suno-v6";
+        return { brief: buildScoringRoomBrief({ ...input, model }) };
+      }),
 
     /** 同一次确认只建一条任务；相同编号只有内容摘要一致时才能恢复。 */
     queueManhuaBgm: protectedProcedure
@@ -4458,6 +4468,14 @@ export const appRouter = router({
         }),
       )
       .mutation(async ({ ctx, input }) => {
+        const v6Model = isBgmV6Model(input.brief.model);
+        if (!v6Model) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Suno v5.5 已下架，请改选 v6" });
+        }
+        if (!isTtapiSunoReady()) {
+          // 没有兜底：用户拍板不拿 v5.5 当次货兜底，通道没配就明说
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Suno v6 通道未配置（TTAPI_KEY），请联系管理员" });
+        }
         const jobInput = buildManhuaBgmJobInput(input);
         const jobId = `bgm_${input.billingRequestId.replace(/-/g, "")}`;
         try {
@@ -4465,7 +4483,7 @@ export const appRouter = router({
             id: jobId,
             userId: String(ctx.user.id),
             type: "audio",
-            provider: "evolink-suno-v55",
+            provider: `ttapi:${input.brief.model}`,
             input: jobInput,
           });
         } catch (error) {

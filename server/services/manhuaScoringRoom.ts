@@ -1,5 +1,5 @@
 /**
- * 漫剧配乐异步核心：brief → EvoLink Suno V5.5 task → 全变体即时转存 GCS。
+ * 漫剧配乐异步核心：brief → TTAPI Suno v6 task（v5.5/EvoLink 已下架，只剩旧任务恢复）→ 全变体即时转存 GCS。
  *
  * 建单和收单刻意分开。建单成功后调用方必须先把 task ID 写进 jobs.output，随后
  * 才能轮询；部署重启只带原 task ID 进入 `resumeManhuaBgmTask`，绝不再次 POST。
@@ -11,7 +11,6 @@ import { tmpdir } from "node:os";
 import nodePath from "node:path";
 import { promisify } from "node:util";
 import {
-  assertBgmStyleSubmittable,
   buildManhuaBgmBrief,
   type BgmBeatMood,
   type BgmBrief,
@@ -29,10 +28,11 @@ import {
   type ManhuaBgmStructure,
 } from "../jobs/manhuaBgmJobInput.js";
 import {
-  createEvolinkSunoTask,
   getEvolinkSunoTask,
   pickEvolinkSunoAudioUrls,
 } from "./evolinkSunoMusic.js";
+import { TtapiSunoRequestError, createTtapiSunoTask, decodeTtapiSunoTaskId, getTtapiSunoTask, isTtapiSunoReady } from "./ttapiSunoMusic.js";
+import { isBgmV6Model, type BgmBriefModel } from "../../shared/manhuaBgmBrief.js";
 import { signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs.js";
 import { probeBgmLevels } from "./manhuaBgmLevelProbe.js";
 import { postProdOutputPrefix } from "./postProdMediaSource.js";
@@ -44,6 +44,7 @@ export const MANHUA_BGM_POLL_TIMEOUT_MS = 6 * 60_000;
 export const MANHUA_BGM_POLL_INTERVAL_MS = 5_000;
 
 export type ScoringRoomRequest = {
+  model?: BgmBriefModel;
   laneZh: string;
   durationSec: number;
   moods: readonly BgmBeatMood[];
@@ -72,6 +73,8 @@ export type ScoringRoomResult = {
   variants: ScoringRoomVariant[];
   elapsedMs: number;
   brief: BgmBrief;
+  /** v6（TTAPI）：上游少出了几首（惯例两首）；旧 v5.5 任务恒为 0 */
+  missingVariants: number;
 };
 
 function abortError(signal?: AbortSignal): Error {
@@ -218,14 +221,16 @@ export async function createManhuaBgmTask(
 ): Promise<{ taskId: string; briefDigest: string }> {
   assertNotAborted(opts.abortSignal);
   const brief = manhuaBgmBriefSchema.parse(briefInput) as BgmBrief;
-  // 在付费 POST 之前拦住上游会静默拒绝的音乐家姓名。
-  assertBgmStyleSubmittable(brief);
-  const task = await createEvolinkSunoTask(brief, {
-    abortSignal: opts.abortSignal,
-  });
-  const taskId = String(task.id || "").trim();
-  if (!taskId) throw new Error("配乐建单成功但未返回 task id");
-  return { taskId, briefDigest: digestManhuaBgmBrief(brief) };
+  // v5.5（EvoLink）0910 下架：不再建单、不做兜底；旧任务只走下面的恢复轮询
+  if (!isBgmV6Model(brief.model)) throw new Error("Suno v5.5 已下架，配乐只走 v6");
+  // Suno v6 走 TTAPI：duration 同样 10–360，段表时长直接传；成品仍按段表裁。
+  // 旧网关的风格名单不套用：v6 保留用户风格描述（含艺人名与百分比），由上游返回实际结果。
+  if (!isTtapiSunoReady()) throw new Error("配乐 v6 通道未配置（TTAPI_KEY）");
+  const created = await createTtapiSunoTask(
+    { model: brief.model, prompt: brief.prompt, style: brief.style, title: brief.title, instrumental: brief.instrumental, negative_tags: brief.negative_tags, duration: brief.duration },
+    { abortSignal: opts.abortSignal },
+  );
+  return { taskId: created.taskId, briefDigest: digestManhuaBgmBrief(brief) };
 }
 
 /**
@@ -258,7 +263,10 @@ export async function resumeManhuaBgmTask(input: {
   );
   const deadlineMs = Date.now() + pollTimeoutMs;
 
+  const isV6Task = Boolean(decodeTtapiSunoTaskId(taskId));
   let raw: unknown;
+  let v6Urls: string[] = [];
+  let v6Missing = 0;
   for (;;) {
     assertNotAborted(input.abortSignal);
     if (Date.now() > deadlineMs) {
@@ -266,15 +274,36 @@ export async function resumeManhuaBgmTask(input: {
         `配乐任务 ${taskId} 超过 ${Math.ceil(pollTimeoutMs / 60_000)} 分钟未完成`
       );
     }
-    const polled = await getEvolinkSunoTask(taskId, {
-      abortSignal: input.abortSignal,
-    });
-    if (polled.task.status === "completed") {
-      raw = polled.raw;
-      break;
-    }
-    if (polled.task.status === "failed" || polled.task.status === "cancelled") {
-      throw new Error(`配乐任务 ${taskId} ${polled.task.status}`);
+    if (isV6Task) {
+      // TTAPI 整单 SUCCESS 才结算；少于两首记 missing，不把已出的丢掉。
+      // 轮询遇 429（限流）不算失败：等一个间隔再问（deadline 照旧生效），别把一次限流烧成整单 requeue。
+      let state: Awaited<ReturnType<typeof getTtapiSunoTask>>;
+      try {
+        state = await getTtapiSunoTask(taskId, { abortSignal: input.abortSignal });
+      } catch (error) {
+        if (error instanceof TtapiSunoRequestError && error.httpStatus === 429) {
+          await sleep(input.pollIntervalMs ?? MANHUA_BGM_POLL_INTERVAL_MS, input.abortSignal);
+          continue;
+        }
+        throw error;
+      }
+      if (state.status === "completed") {
+        v6Urls = state.audioUrls;
+        v6Missing = state.missing;
+        break;
+      }
+      if (state.status === "failed") throw new Error(`配乐任务 ${taskId} failed：${state.reason}`);
+    } else {
+      const polled = await getEvolinkSunoTask(taskId, {
+        abortSignal: input.abortSignal,
+      });
+      if (polled.task.status === "completed") {
+        raw = polled.raw;
+        break;
+      }
+      if (polled.task.status === "failed" || polled.task.status === "cancelled") {
+        throw new Error(`配乐任务 ${taskId} ${polled.task.status}`);
+      }
     }
     await sleep(
       input.pollIntervalMs ?? MANHUA_BGM_POLL_INTERVAL_MS,
@@ -282,7 +311,7 @@ export async function resumeManhuaBgmTask(input: {
     );
   }
 
-  const urls = pickEvolinkSunoAudioUrls(raw);
+  const urls = isV6Task ? v6Urls : pickEvolinkSunoAudioUrls(raw);
   if (!urls.length) throw new Error(`配乐任务 ${taskId} 完成但没有音频地址`);
 
   /**
@@ -355,6 +384,7 @@ export async function resumeManhuaBgmTask(input: {
     variants,
     elapsedMs: Math.max(0, Date.now() - startedAtMs),
     brief,
+    missingVariants: isV6Task ? v6Missing : 0,
   };
 }
 

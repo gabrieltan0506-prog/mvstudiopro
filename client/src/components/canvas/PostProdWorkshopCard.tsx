@@ -26,6 +26,7 @@ import {
   videoUpscaleStatusLabel,
 } from "@/lib/videoUpscaleApi";
 import { canvasVideoUpscaleCredits } from "@shared/canvasGenerationPricing";
+import type { BgmBriefModel } from "@shared/manhuaBgmBrief";
 import {
   beatTableToVolumeExpr,
   buildBeatTable,
@@ -112,7 +113,7 @@ type PostProdWorkshopCardProps = {
 };
 
 type EditableBgmBrief = {
-  model: "suno-v5.5-beta";
+  model: BgmBriefModel;
   custom_mode: true;
   instrumental: true;
   style: string;

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference";
+import { BGM_BRIEF_MODEL_LABEL_ZH, type BgmBriefModel } from "@shared/manhuaBgmBrief";
 import { buildPremixTimelineClips, isPremixPendingKey, PREMIX_PENDING_PREFIX } from "@/lib/manhuaPremixMaster";
 import { resolveCanvasMaterialUrl } from "@/lib/omniCanvasApi";
 import { compileCanvasDialogueInput } from "@shared/canvasDialogueControls";
@@ -40,7 +41,7 @@ const buttonClass =
   "rounded border border-white/20 px-2 py-1.5 text-xs text-white hover:bg-white/10 disabled:opacity-40";
 
 type MusicBrief = {
-  model: "suno-v5.5-beta";
+  model: BgmBriefModel;
   custom_mode: true;
   instrumental: true;
   style: string;
@@ -70,6 +71,8 @@ type MusicJob = {
   titleZh: string;
   status: string;
   durationSec: number;
+  /** 旧任务没有此字段；只提示未交付数量，不触发重新生成。 */
+  missingVariants?: number;
   variants: Array<{
     index: number;
     gcsUri: string;
@@ -107,6 +110,7 @@ export type CanvasAudioStudioServices = {
   }): Promise<JobResult>;
   getDialogue(input: { jobId: string }): Promise<JobResult | null>;
   draftMusic(input: {
+    model?: BgmBriefModel;
     laneZh: string;
     durationSec: number;
     moods: Array<"蓄力" | "冲突" | "反转" | "收束">;
@@ -132,6 +136,8 @@ type Props = {
    * 由上层挂到本段 manhuaSegmentRefs.master（出片时作唯一 @音频1）。不传则不显示按钮。
    */
   onMasterTrackReady?: (entry: ManhuaSegmentReferenceEntry) => void;
+  /** 配乐来源可选项：Suno v6 / v6-wild / v6-mini（TTAPI 网关，全员可选）。不传则缺省 v6，不显示下拉。 */
+  bgmModels?: Array<{ model: BgmBriefModel; labelZh: string }>;
 };
 
 
@@ -162,6 +168,7 @@ export function CanvasAudioStudioView({
   disabled = false,
   onChange,
   onMasterTrackReady,
+  bgmModels,
   services,
 }: Props & { services: CanvasAudioStudioServices }) {
   const state = block.audioStudio || emptyCanvasAudioStudio();
@@ -180,6 +187,10 @@ export function CanvasAudioStudioView({
   const [musicPrompt, setMusicPrompt] = useState("");
   const [musicDuration, setMusicDuration] = useState(30);
   const [brief, setBrief] = useState<MusicBrief | null>(null);
+  // 缺省 Suno v6（v5.5 0910 已下架）；有下拉时取第一项
+  const [bgmModel, setBgmModel] = useState<BgmBriefModel>(
+    bgmModels?.[0]?.model ?? "suno-v6",
+  );
   const [resumable, setResumable] = useState<Record<string, JobResult>>({});
   const [confirmation, setConfirmation] = useState<
     | { kind: "dialogue"; cueId: string; inputKey: string }
@@ -1140,6 +1151,11 @@ export function CanvasAudioStudioView({
           </article>
         );
       })}
+      {musicJobs.filter(job => Number.isSafeInteger(job.missingVariants) && Number(job.missingVariants) > 0).map(job => (
+        <p key={job.jobId} role="status" className="text-xs text-amber-200">
+          {job.titleZh}：已保留 {job.variants.length} 个版本，另有 {job.missingVariants} 个版本未交付。请保留原任务等待核对，不要重复生成。
+        </p>
+      ))}
       <details className="border-t border-white/15 pt-2">
         <summary className="text-xs font-semibold">
           生成配乐原曲 · 保留所有版本
@@ -1176,6 +1192,31 @@ export function CanvasAudioStudioView({
               }}
             />
           </label>
+          {bgmModels?.length ? (
+            <label className="block text-xs">
+              配乐来源
+              <select
+                aria-label="配乐来源"
+                className={fieldClass}
+                value={bgmModel}
+                disabled={disabled || busy}
+                onChange={event => {
+                  setBgmModel(event.target.value as typeof bgmModel);
+                  setBrief(null);
+                  setConfirmation(null);
+                }}
+              >
+                {bgmModels.map(item => (
+                  <option key={item.model} value={item.model}>
+                    {item.labelZh}
+                  </option>
+                ))}
+              </select>
+              <span className="mt-1 block text-[10px] text-amber-200/80">
+                v6 走 TTAPI 网关，按段表时长出整曲，成品再按段表裁。
+              </span>
+            </label>
+          ) : null}
           <button
             className={buttonClass}
             disabled={disabled || busy || !musicPrompt.trim()}
@@ -1187,6 +1228,7 @@ export function CanvasAudioStudioView({
                   moods: ["蓄力", "冲突", "反转", "收束"],
                   moodArcZh: musicPrompt,
                   titleZh: "剧情配乐",
+                  model: bgmModel,
                 });
                 setBrief(result.brief);
               })
@@ -1196,6 +1238,11 @@ export function CanvasAudioStudioView({
           </button>
           {brief && (
             <>
+              {brief.model !== "suno-v5.5-beta" ? (
+                <p className="text-[10px] text-amber-200/80">
+                  来源：{BGM_BRIEF_MODEL_LABEL_ZH[brief.model]}
+                </p>
+              ) : null}
               <label className="block text-xs">
                 配乐要求
                 <textarea

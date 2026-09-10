@@ -15,7 +15,7 @@ export const MANHUA_BGM_BRIEF_DIGEST_RE = /^[a-f0-9]{64}$/;
 
 export const manhuaBgmBriefSchema = z
   .object({
-    model: z.literal("suno-v5.5-beta"),
+    model: z.enum(["suno-v5.5-beta", "suno-v6-mini", "suno-v6", "suno-v6-wild"]),
     custom_mode: z.literal(true),
     instrumental: z.literal(true),
     style: z.string().trim().min(1).max(1000),
@@ -159,4 +159,6 @@ export type ManhuaBgmJobOutput = {
   }>;
   elapsedMs: number;
   providerCost: { unit: "per_call"; calls: 1 };
+  /** v6（TTAPI）：上游少出了几首变体（惯例两首）；旧 v5.5 任务为 0 或不带 */
+  missingVariants?: number;
 };

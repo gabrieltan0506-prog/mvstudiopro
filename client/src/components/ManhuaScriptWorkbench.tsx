@@ -7,6 +7,7 @@ import type { ManhuaDirectionCanon, ManhuaDirectionSceneType } from "@shared/man
 import { listManhuaDirectionCards, MANHUA_DIRECTION_SCENE_TYPES, MANHUA_DIRECTION_SCENE_TYPE_LABEL_ZH } from "@shared/manhuaDirectionCanonLibrary";
 import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
+import type { BgmBriefModel } from "@shared/manhuaBgmBrief";
 import { isManhuaKeyartLookCurrent } from "@shared/manhuaKeyartLookState";
 import { buildWorkbenchShotsFromSegmentPlan } from "@shared/manhuaStoryDistill";
 import {
@@ -309,6 +310,8 @@ type Props = {
   topic: string;
   seriesTitle?: string;
   logline?: string;
+  /** 配乐来源可选项（Suno v6 三档，走 TTAPI 网关） */
+  bgmModels?: Array<{ model: BgmBriefModel; labelZh: string }>;
   /** 大纲页分集列表（标题即可） */
   outlineEpisodes?: Array<{ index: number; title: string }>;
   episodeCount: number;
@@ -934,6 +937,7 @@ export default function ManhuaScriptWorkbench({
   topic,
   seriesTitle,
   logline,
+  bgmModels,
   outlineEpisodes = [],
   episodeCount,
   focusEpisode,
@@ -3246,7 +3250,8 @@ export default function ManhuaScriptWorkbench({
               {activeClip ? <CanvasAudioStudio key={activeClip.id} block={activeClip}
                 disabled={Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
                 onChange={studio => onUpdateClipAudioStudio(activeClip.id, studio)}
-                onMasterTrackReady={onSetClipSegmentReference ? (entry) => onSetClipSegmentReference(activeClip.id, "master", entry) : undefined} /> : (
+                onMasterTrackReady={onSetClipSegmentReference ? (entry) => onSetClipSegmentReference(activeClip.id, "master", entry) : undefined}
+                bgmModels={bgmModels} /> : (
                 <p className="text-xs text-amber-100">当前段尚未建立成片节点。请先确认分段剧本；本入口不生成视频、不扣费，也不切换工作区。</p>
               )}
             </section>

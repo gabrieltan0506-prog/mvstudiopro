@@ -1,4 +1,5 @@
 import { capManhuaMediaHistory } from "@shared/manhuaMediaHistoryCap";
+import { BGM_BRIEF_MODELS, BGM_BRIEF_MODEL_LABEL_ZH } from "@shared/manhuaBgmBrief";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import OpenAiImageVariantSwitch from "@/components/OpenAiImageVariantSwitch";
 import { flushSync } from "react-dom";
@@ -9039,6 +9040,7 @@ export default function OmniCanvas() {
                     })
                   }
                   topic={factoryTopic}
+                  bgmModels={BGM_BRIEF_MODELS.map(model => ({ model, labelZh: BGM_BRIEF_MODEL_LABEL_ZH[model] }))}
                   shotContinuity={shotContinuity}
                   onShotContinuityChange={(next) => {
                     const saved = saveManhuaShotContinuityPrefs(next);

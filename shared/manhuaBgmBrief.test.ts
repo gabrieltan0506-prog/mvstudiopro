@@ -11,8 +11,6 @@ import {
   clampBgmDurationSec,
   deriveManhuaBgmBriefSeed,
   countBgmStyleDescriptors,
-  assertBgmStyleSubmittable,
-  looksLikeArtistName,
   resolveBgmDurationSec,
 } from "./manhuaBgmBrief";
 
@@ -107,9 +105,11 @@ describe("生成参数", () => {
     expect(b.weirdness_constraint).toBeLessThanOrEqual(0.3);
   });
 
-  it("duration 只在 v5.5 + custom_mode 生效，故两者写死", () => {
+  it("缺省档 v6（v5.5 已下架，传了也落 v6）；custom_mode 写死", () => {
     const b = buildManhuaBgmBrief(base);
-    expect(b.model).toBe("suno-v5.5-beta");
+    expect(b.model).toBe("suno-v6");
+    expect(buildManhuaBgmBrief({ ...base, model: "suno-v5.5-beta" }).model).toBe("suno-v6");
+    expect(buildManhuaBgmBrief({ ...base, model: "suno-v6-wild" }).model).toBe("suno-v6-wild");
     expect(b.custom_mode).toBe(true);
   });
 });
@@ -126,30 +126,10 @@ describe("时长", () => {
   });
 });
 
-describe("艺人名检测与提交前校验", () => {
-  it("在世音乐家点名会被 Suno 拦，要提示转译成可听特征", () => {
-    expect(looksLikeArtistName("cello是Yo Yo Ma的悠扬风格")).toBe(true);
-    expect(looksLikeArtistName("久石让 风格")).toBe(true);
-  });
-
-  it("普通电影风格不误判 —— 上一版的泛化正则把「悬疑电影风格」也拦了", () => {
-    expect(looksLikeArtistName("悬疑电影风格，低音弦乐铺底")).toBe(false);
-    expect(looksLikeArtistName("仙侠电影风格")).toBe(false);
-  });
-
-  it("作品名可以用（Mission Impossible / 十面埋伏 实测有效）", () => {
-    expect(looksLikeArtistName("Mission Impossible 风格，节奏高燃")).toBe(false);
-    expect(looksLikeArtistName("琵琶十面埋伏拨弦三次")).toBe(false);
-  });
-
-  it("提交前校验：人名拒、普通风格过", () => {
-    expect(() => assertBgmStyleSubmittable({ style: "Hans Zimmer 风格" })).toThrow("可听特征");
-    expect(() => assertBgmStyleSubmittable({ style: "悬疑电影风格" })).not.toThrow();
-  });
-
-  it("styleOverrideZh 绕不过校验 —— 上一版这个函数没人调", () => {
-    const b = buildManhuaBgmBrief({ ...base, styleOverrideZh: "cello 是 Yo Yo Ma 的悠扬" });
-    expect(() => assertBgmStyleSubmittable(b)).toThrow();
+describe("风格描述（v6 不拦艺人名）", () => {
+  it("v6 不再拦艺人名（0910：Suno 不挡人名，混合风格算二次创作），styleOverrideZh 原样进 brief", () => {
+    const b = buildManhuaBgmBrief({ ...base, styleOverrideZh: "王力宏30%與汪蘇瀧70% 風格" });
+    expect(b.style).toContain("王力宏30%");
   });
 });
 
