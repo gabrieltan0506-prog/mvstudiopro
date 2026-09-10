@@ -22,6 +22,7 @@ for (const slug of readdirSync(root).sort()) {
   if (!existsSync(file)) continue;
   const md = readFileSync(file, "utf8");
   const { card, skipped } = parseManhuaDirectionSkillMarkdown(md, { slug });
+  card.rules = card.rules.filter((r) => r.stages.length > 0 || r.status === "research_only");
   if (!manhuaDirectionCardIsProductionReady(card)) {
     rejected.push(`${slug}（${card.id}）：正式规律不足 2 条，research_only`);
     continue;
@@ -52,7 +53,8 @@ for (const slug of readdirSync(root).sort()) {
   const { internal: _internal, ...rest } = card;
   // 仅研究的规律不进代码快照：它们永远不进生产，也是来源名最容易残留的地方
   // 导演名/作品名/目录 slug 一律不进代码快照；溯源只留在蒸馏目录
-  cards.push({ ...rest, rules: card.rules.filter((r) => r.status !== "research_only") });
+  // 仅研究的规律、以及不投影到任何阶段的片场流程规律，都不进代码快照（不占体积、UI 不误列、不计准入门数）
+  cards.push({ ...rest, rules: card.rules.filter((r) => r.status !== "research_only" && r.stages.length > 0) });
 }
 const body = [
   "// 由 scripts/gen-manhua-direction-canon-library.mts 生成，勿手改。",

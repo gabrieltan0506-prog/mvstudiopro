@@ -64,19 +64,25 @@ export type ManhuaDirectionCanon = {
 export function classifyManhuaDirectionSceneType(text: string): ManhuaDirectionSceneType {
   const t = String(text || "");
   if (!t.trim()) return "default";
-  const action = (t.match(/打|追|逃|爆|撞|冲|挥|刀|剑|拳|枪|砍|扑|摔|跃|搏|厮杀|交手|翻滚|拔|射|闪避/g) || []).length;
-  const reveal = (t.match(/揭|真相|原来|发现|认出|露出|识破|竟是|身份/g) || []).length;
-  const emotion = (t.match(/哭|泪|拥抱|告白|颤抖|沉默|哽咽|凝视|心碎|告别|跪/g) || []).length;
-  const dialogue = (t.match(/说|问|答|道：|「|」|“|”|对白|回应|低声|喊/g) || []).length;
-  const transition = (t.match(/转场|过场|赶路|奔赴|次日|清晨|夜幕|远景空镜|时间流逝/g) || []).length;
-  const best = [
-    ["action", action * 2],
-    ["reveal", reveal * 2],
-    ["emotion", emotion * 2],
-    ["transition", transition * 2],
+  // 只认双字以上的动作词组，单字「拔」「冲」「追」会把「拔腿」「冲泡」「追问」误判成打戏
+  const count = (re: RegExp) => (t.match(re) || []).length;
+  const action = count(/拔刀|挥拳|挥刀|砍来|砍去|劈下|扑上|扑来|翻滚|闪避|交手|厮杀|搏斗|打斗|开枪|射出|射向|撞开|撞飞|踢飞|摔倒|摔出|跃起|跃下|追击|追杀|逃命|逃跑|爆炸|爆开|格挡|反击|出招|拼杀|缠斗|近身|刺来|刺向|拳脚/g);
+  const reveal = count(/真相|原来是|原来他|原来她|认出|露出真|识破|竟是|身份暴露|揭开|揭穿|真面目/g);
+  const emotion = count(/哭泣|落泪|泪落|泪水|拥抱|告白|颤抖|哽咽|心碎|告别|跪下|抱住|泣不成声|凝视着|沉默不语/g);
+  const dialogue = count(/低声问|问道|答道|说道|回答|反问|「|」|“|”|对白|喊道|开口/g);
+  const transition = count(/转场|过场|赶路|奔赴|次日|清晨|夜幕|空镜|时间流逝|数日后|天亮/g);
+  const scored: Array<[ManhuaDirectionSceneType, number]> = [
+    ["action", action],
+    ["reveal", reveal],
+    ["emotion", emotion],
+    ["transition", transition],
     ["dialogue", dialogue],
-  ].sort((a, b) => (b[1] as number) - (a[1] as number))[0]!;
-  return (best[1] as number) >= 2 ? (best[0] as ManhuaDirectionSceneType) : "default";
+  ];
+  scored.sort((a, b) => b[1] - a[1]);
+  const [best, second] = scored;
+  // 命中 ≥2 且严格压过第二名才定类；平手或只有零星命中一律走主卡
+  if (best![1] >= 2 && best![1] > (second?.[1] ?? 0)) return best![0];
+  return "default";
 }
 
 export const MANHUA_DIRECTION_STAGES: ManhuaDirectorStrategyStage[] = ["story", "assets", "storyboard", "keyframe", "clip", "review"];

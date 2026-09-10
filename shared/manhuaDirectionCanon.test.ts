@@ -244,11 +244,16 @@ describe("classifyManhuaDirectionSceneType", () => {
   it("按动词判场景；判不出走 default", async () => {
     const { classifyManhuaDirectionSceneType } = await import("./manhuaDirectionCanon");
     expect(classifyManhuaDirectionSceneType("家丁拔刀砍来，墨屠挥拳击退")).toBe("action");
-    expect(classifyManhuaDirectionSceneType("阿菁低声问「你是谁」，墨屠答「护你的人」")).toBe("dialogue");
-    expect(classifyManhuaDirectionSceneType("面具落地，原来他就是失踪的兄长，众人认出")).toBe("reveal");
-    expect(classifyManhuaDirectionSceneType("她哽咽着拥抱他，泪落")).toBe("emotion");
+    expect(classifyManhuaDirectionSceneType("阿菁低声问「你是谁」，墨屠答道「护你的人」")).toBe("dialogue");
+    expect(classifyManhuaDirectionSceneType("面具落地，原来他就是失踪的兄长，众人认出了真面目")).toBe("reveal");
+    expect(classifyManhuaDirectionSceneType("她哽咽着抱住他，泪水落下")).toBe("emotion");
     expect(classifyManhuaDirectionSceneType("次日清晨，二人赶路")).toBe("transition");
     expect(classifyManhuaDirectionSceneType("墨屠护住阿菁")).toBe("default");
+    // 反例：单字动词不算
+    expect(classifyManhuaDirectionSceneType("阿菁拔腿就往巷口跑")).toBe("default");
+    expect(classifyManhuaDirectionSceneType("墨屠冲泡一壶茶，递给她")).toBe("default");
+    expect(classifyManhuaDirectionSceneType("她追问他为何撒谎，他沉默不语")).toBe("default");
+    expect(classifyManhuaDirectionSceneType("她发现钥匙不见了")).toBe("default");
     expect(classifyManhuaDirectionSceneType("")).toBe("default");
   });
 });
