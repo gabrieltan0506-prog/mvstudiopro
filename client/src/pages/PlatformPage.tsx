@@ -8107,6 +8107,12 @@ export default function PlatformPage() {
       toast.info("精华版还在派生中，等它结束再切档");
       return;
     }
+    // 提炼/上传/出图在途也不许切档（handler 级，与按钮 disabled 同口径）：
+    // 否则下拉显示精华版、文本框还是完整版、报价按完整版算
+    if (customNoteBusy || customNoteUploadBusy || customNoteDistillPhase === "distilling") {
+      toast.info("提炼或生成还在进行中，等它结束再切档");
+      return;
+    }
     // 文本框被手改过：切档会覆盖，先问一句
     const currentView = customNoteDetailLevel === "concise" ? customNoteCompactMarkdown : customNoteFullMarkdown;
     if (customNoteFullMarkdown && currentView && customNoteText.trim() !== currentView.trim()) {

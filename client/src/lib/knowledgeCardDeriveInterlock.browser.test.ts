@@ -224,6 +224,42 @@ describe("知识卡精华版派生（真实 PlatformPage）", () => {
     expect(await taValue()).toBe("");
   }, 180_000);
 
+  it("提炼在途：摘掉 disabled 强行切档，handler 也拒绝——档位不变、不派生", async () => {
+    page = await mount();
+    // 让提炼慢下来，制造「提炼中」窗口
+    await page.evaluate(() => ((globalThis as never as { fixture: { prepareDelayMs: number } }).fixture.prepareDelayMs = 2500));
+    await page.evaluate(
+      (sel, v) => {
+        const el = document.querySelector(sel) as HTMLTextAreaElement;
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      },
+      TA,
+      SOURCE_TEXT,
+    );
+    await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll("button")).find((x) => /生成图文笔记/.test(x.textContent || ""));
+      (b as HTMLButtonElement | undefined)?.click();
+    });
+    await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some((b) => /提炼中/.test(b.textContent || "")), { timeout: 15_000 });
+    await page.evaluate((lv) => {
+      const el = document.querySelector(lv) as HTMLSelectElement;
+      el.disabled = false;
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+      setter.call(el, "concise");
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    }, LEVEL);
+    await page.waitForFunction((sel) => (document.querySelector(sel) as HTMLTextAreaElement | null)?.value?.startsWith("# 财务自由完整版"), { timeout: 30_000 }, TA);
+    await new Promise((r) => setTimeout(r, 600));
+    const after = await page.evaluate(
+      (lv) => ({ level: (document.querySelector(lv) as HTMLSelectElement | null)?.value, enqueues: (globalThis as never as { fixture: { deriveCalls: number } }).fixture.deriveCalls }),
+      LEVEL,
+    );
+    expect(after.level).toBe("full");
+    expect(after.enqueues).toBe(0);
+  }, 180_000);
+
   it("派生失败：档位退回高级版，完整版留在文本框，不留半截状态", async () => {
     page = await mount();
     await distillOnly();

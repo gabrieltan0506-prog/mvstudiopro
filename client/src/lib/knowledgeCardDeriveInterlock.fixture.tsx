@@ -18,6 +18,7 @@ const COMPACT = ["# 财务自由精华版", ...Array.from({ length: 7 }, (_, i) 
 const f = ((globalThis as any).fixture = {
   FULL, COMPACT,
   acceptImageGen: false,
+  prepareDelayMs: 0,
   deriveStatus: "running" as "running" | "succeeded" | "failed",
   deriveCalls: 0,
   jobPolls: 0,
@@ -42,7 +43,10 @@ window.confirm = (msg?: string) => {
 };
 window.fetch = (async (input: any, init?: any) => {
   const url = String(typeof input === "string" ? input : input?.url || "");
-  if (/prepareKnowledgeCardCopy/.test(url)) return ok({ isAsync: false, distilledMarkdown: FULL });
+  if (/prepareKnowledgeCardCopy/.test(url)) {
+    if (f.prepareDelayMs > 0) await new Promise((r) => setTimeout(r, f.prepareDelayMs));
+    return ok({ isAsync: false, distilledMarkdown: FULL });
+  }
   // 出图建单一律失败：把页面推进「有错误」状态，清除按钮才会出现
   if (/\/api\/jobs(\?|$)/.test(url)) return new Response(JSON.stringify({ message: "出图建单失败（测试桩）" }), { status: 500, headers: { "content-type": "application/json" } });
   if (/enqueueKnowledgeCardLevelDerive/.test(url)) { f.deriveCalls++; return ok({ progressJobId: "derive-1" }); }
