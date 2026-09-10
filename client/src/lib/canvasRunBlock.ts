@@ -1719,12 +1719,10 @@ export async function runCanvasBlock(
     if (useHappyHorse && manhuaPilot) throw new Error("当前生成档未接入试片审核，请先选择受支持的漫剧成片引擎");
     const useWan30 = isCanvasWan30VideoModel(videoModel);
     const useSeedance25 = videoModel === "seedance-2.5";
-    // 段母轨存在时它就是唯一音轨（下方 studio: segmentMasterUrl ? undefined : audioStudio 同口径）：
-    // 预混母轨来自这些 cue，母轨挂上后 cue 仍保持启用，不能再按「逐段音轨」把 Wan 3.0 拦死
-    const hasSegmentMaster = Boolean(block.manhuaSegmentRefs?.master?.gcsUri);
-    if (!hasSegmentMaster && block.audioStudio?.cues.some(cue => cue.enabled !== false) && (!useSeedance25 || (block.seedance25WorkMode && block.seedance25WorkMode !== "reference_to_video"))) {
-      throw new Error("已配置逐段音轨，请使用支持声音参考的多模态参考模式；不会静默忽略这些音轨");
-    }
+    // 逐段音轨守卫挪到段参考取舍之后：只有「本次真的会送母轨」才放行（见下方 segmentMasterEntry），
+    // 母轨存在但超容量/编辑/延长/试片不送时仍按原规则拦，不让 cue 与母轨都静默丢掉
+    const hasEnabledCues = Boolean(block.audioStudio?.cues.some(cue => cue.enabled !== false));
+    const cuesNeedReferenceMode = hasEnabledCues && (!useSeedance25 || (block.seedance25WorkMode && block.seedance25WorkMode !== "reference_to_video"));
     const maxVideoImageRefs = resolveManhuaCanvasVideoImageReferenceMax(videoModel);
     if (useSeedance25) {
       // 与服务端 assertSeedance25PaidAccess 同一套判定（到点 + 会员 + 内部角色），
@@ -1968,7 +1966,15 @@ export async function runCanvasBlock(
         console.warn(`[canvasRunBlock] 段白模超出 ${videoModel} 参考上限 ${segmentCapSec}s 或时长未知，本次不送`);
       }
       if (segmentRefs?.master && !segmentMasterEntry) {
-        console.warn(`[canvasRunBlock] 段母轨超出 ${videoModel} 参考上限 ${segmentCapSec}s 或时长未知，本次不送`);
+        // 母轨是用户明确挂的最终音轨，超容量不能静默丢：抛错让他换引擎或重新预混
+        throw new Error(
+          `本段母轨${segmentRefs.master.durationSec ? ` ${segmentRefs.master.durationSec.toFixed(1)} 秒` : "时长未知"}，超出 ${videoModel} 参考音频上限 ${segmentCapSec} 秒；请换 Seedance 2.5 或把本段切短后重新预混`,
+        );
+      }
+      // 母轨本次会送 → 它就是唯一音轨（下方 studio: segmentMasterUrl ? undefined : audioStudio 同口径），
+      // 预混母轨来自这些 cue，cue 仍启用不算「逐段音轨」；否则维持原拦截
+      if (cuesNeedReferenceMode && !segmentMasterEntry) {
+        throw new Error("已配置逐段音轨，请使用支持声音参考的多模态参考模式；不会静默忽略这些音轨");
       }
       if (useWan30) {
         // Wan 3.0 公测:多图参考 + 可选对白参考音;30s 直出;排队时间较长。

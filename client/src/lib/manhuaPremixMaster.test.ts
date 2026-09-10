@@ -58,9 +58,9 @@ describe("一键预混母轨 · 时间轴片段", () => {
     const studio = readFileSync(new URL("../components/canvas/CanvasAudioStudio.tsx", import.meta.url), "utf8");
     expect(studio).toContain("buildPremixTimelineClips({");
     expect(studio).toContain("isPremixPendingKey(pending.inputKey)");
-    expect(studio).toContain("if (!onMasterTrackReady) continue;");
+    // 回调有无/去重/挂 master 的真实行为在 canvasAudioStudio.browser.test.ts 里测；这里只钉接线点存在
     expect(studio).toContain('row.kind === "post_prod" && !isPremixPendingKey(row.inputKey)');
-    expect(studio).toContain("onMasterTrackReady({");
+    expect(studio).toContain("current.current.onMasterTrackReady");
     const wb = readFileSync(new URL("../components/ManhuaScriptWorkbench.tsx", import.meta.url), "utf8");
     expect(wb).toContain('onSetClipSegmentReference(activeClip.id, "master", entry)');
     const omni = readFileSync(new URL("../pages/OmniCanvas.tsx", import.meta.url), "utf8");
