@@ -232,6 +232,10 @@ import {
   type ManhuaProjectBible,
 } from "@shared/manhuaProjectBible";
 import {
+  buildManhuaDirectionCanonFromSelection,
+  type ManhuaDirectionSelection,
+} from "@shared/manhuaDirectionCanonLibrary";
+import {
   resolveManhuaDirectorStrategyContract,
   type ManhuaDirectorStrategyContract,
 } from "@shared/manhuaDirectorStrategy";
@@ -748,6 +752,16 @@ export default function OmniCanvas() {
           ? bootBible.directorStrategyContract ?? null
           : initialWriterSession?.directorStrategyContract || null,
     );
+  /** 导演包选卡：确认后以 Bible.directionCanon 为真源，确认前存会话草稿 */
+  const [directionSelection, setDirectionSelection] = useState<ManhuaDirectionSelection | null>(() =>
+    bootBible?.directionCanon
+      ? { mainCardId: bootBible.directionCanon.mainCardId, sceneOverrides: bootBible.directionCanon.sceneOverrides }
+      : initialWriterSession?.directionSelection || null,
+  );
+  const activeDirectionCanon = useMemo(
+    () => projectBible?.directionCanon ?? buildManhuaDirectionCanonFromSelection(directionSelection),
+    [projectBible?.directionCanon, directionSelection],
+  );
   /** 集号 → 导演板裁后主画面（长期 gcsUri + 现签 url） */
   const [directorBoardMainByEpisode, setDirectorBoardMainByEpisode] =
     useState<ManhuaDirectorBoardMainByEpisode>(loadManhuaDirectorBoardMainByEpisode);
@@ -2324,6 +2338,7 @@ export default function OmniCanvas() {
         publicTemplateId,
         stylePack,
         directorStrategyContract,
+        directionSelection,
       });
     } catch {
       /* 本机权限/配额失败：不阻断云端通路 */
@@ -2350,6 +2365,8 @@ export default function OmniCanvas() {
     publicTemplateId,
     stylePack,
     directorStrategyContract,
+    // 审查 P2：只改导演卡时也要重存，否则刷新后选择丢失
+    directionSelection,
   ]);
 
   const applyCloudDraftToUi = useCallback((draft: ManhuaCloudDraftPayload) => {
@@ -2385,6 +2402,11 @@ export default function OmniCanvas() {
       session.projectBible
         ? session.projectBible.directorStrategyContract ?? null
         : session.directorStrategyContract || null,
+    );
+    setDirectionSelection(
+      session.projectBible?.directionCanon
+        ? { mainCardId: session.projectBible.directionCanon.mainCardId, sceneOverrides: session.projectBible.directionCanon.sceneOverrides }
+        : session.directionSelection || null,
     );
     // 已确认项目刷新后必须回到主工作台；旧云草稿里的 form 只能作为未确认剧本的编辑选择，
     // 不能覆盖启动规则并把整套分镜／轨迹／3D 界面静默藏掉。
@@ -2895,6 +2917,7 @@ export default function OmniCanvas() {
       shareAssetToLibrary,
       publicTemplateId,
       directorStrategyContract,
+      directionSelection,
       // 只存真选过的档。存自动预选值会让下次打开时把它当显式选型，
       // 一张历史 2.5 画布重开两次就被静默改成 mini
       videoModel: explicitWriterVideoModel,
@@ -2957,7 +2980,8 @@ export default function OmniCanvas() {
     femaleLeadManual,
     maleLeadManual,
     artStyleManual,
-    directorStrategyContract,
+    // 审查 P2：本机双写快照里已经带 directionSelection，依赖也要带，否则只改导演卡不落盘
+    directionSelection,
     syncCloudDraftPayload,
   ]);
 
@@ -3143,6 +3167,7 @@ export default function OmniCanvas() {
     const timer = window.setTimeout(() => {
       setBlocks((prev) => {
         const next = applyFactoryPrefsToBlocks(prev, {
+          directionCanon: activeDirectionCanon,
           craftShotIds: selectedCraftShotIds,          pathCameraRecipeIds: selectedPathRecipeIds,
           narrativeLightingIds: selectedNarrativeLightingIds,
           maleHairstyleIds: selectedMaleHairstyleIds,
@@ -3209,6 +3234,8 @@ export default function OmniCanvas() {
     selectedCineVocabIds,
     selectedWardrobeIds,
     selectedCharacterIds,
+    // 审查 P2：换导演卡后「已铺节点同步设置」要真的跑一次，否则提示说会同步、实际不动
+    activeDirectionCanon,
   ]);
   const craftShotGrouped = useMemo(() => {
     const cats: CraftShotCategory[] = ["lighting", "camera", "emotion", "transition"];
@@ -4397,6 +4424,7 @@ export default function OmniCanvas() {
         writerContext: focusCtx,
         includeDirectorCraft: Boolean(focusCtx) || directorUnlocked,
         directorStrategyContract,
+        directionCanon: activeDirectionCanon,
         episodeIndex: continuity.episodeIndex,
         episodeTitle: continuity.episodeTitle,
         previousEndingHook: continuity.previousEndingHook,
@@ -4477,6 +4505,8 @@ export default function OmniCanvas() {
       explicitWriterVideoModel,
       projectBible?.assetCanon,
       remapDockSelectionAfterSpawn,
+      // 审查 P1：初铺/补铺必须用界面当前选的导演卡
+      activeDirectionCanon,
     ],
   );
 
@@ -4609,6 +4639,9 @@ export default function OmniCanvas() {
               ? writerPack?.episodes.find((e) => e.index === fromEpisode)?.body ||
                 undefined
               : undefined,
+          directionSelection: directionSelection
+            ? { mainCardId: directionSelection.mainCardId, sceneOverrides: directionSelection.sceneOverrides }
+            : undefined,
         }),
         new Promise<never>((_, reject) => {
           window.setTimeout(() => {
@@ -4868,6 +4901,8 @@ export default function OmniCanvas() {
     directorBoardBySegment,
     directorBoardMotionOverlayBySegment,
     syncCloudDraftPayload,
+    // 审查 P1：扩写请求要带界面当前选的副卡/主卡
+    directionSelection,
   ]);
 
   const importWriterRoomFromText = useCallback(
@@ -5240,6 +5275,8 @@ export default function OmniCanvas() {
 
   // 返回是否确认成功：调用方据此决定是否切视图（失败时 extras 已被切开展示门禁红字，勿再关）
   const confirmWriterToDirector = useCallback((): boolean => {
+    // 审查 P1：确认这一下用同一份法典快照——冻结进 Bible 的和初铺进节点的必须是同一张卡
+    const confirmedDirectionCanon = activeDirectionCanon;
     if (!writerPack || !writerPackLooksReady(writerPack)) {
       toast.error("请先扩写或导入剧本，并检查剧情包是否完整");
       return false;
@@ -5318,6 +5355,7 @@ export default function OmniCanvas() {
       },
       focusEpisode: continuity.episodeIndex,
       directorStrategyContract,
+      directionCanon: confirmedDirectionCanon,
       assetCanon: canon,
       manualOverrides: {
         femaleLead: femaleLeadManual,
@@ -5362,6 +5400,7 @@ export default function OmniCanvas() {
       }),
       includeDirectorCraft: true,
       directorStrategyContract,
+      directionCanon: confirmedDirectionCanon,
       episodeIndex: continuity.episodeIndex,
       episodeTitle: continuity.episodeTitle,
       endingHook: continuity.endingHook,
@@ -5445,6 +5484,9 @@ export default function OmniCanvas() {
     customAssetRefs,
     remapDockSelectionAfterSpawn,
     pushDebug,
+    // 审查 P1：确认时必须用界面上当前选的导演卡冻结进 Bible / 初铺节点，
+    // 少了这条依赖，回调会捕获旧的（甚至 null）法典，界面选了新卡也白选
+    activeDirectionCanon,
   ]);
 
   // A2 闭环收尾：门禁「补密度」扩写成功、新稿落盘后自动重跑一次编剧确认；
@@ -5548,6 +5590,7 @@ export default function OmniCanvas() {
         },
         focusEpisode: writerFocusEpisode,
         directorStrategyContract,
+        directionCanon: buildManhuaDirectionCanonFromSelection(directionSelection),
         assetCanon: canon,
         manualOverrides: {
           femaleLead: femaleLeadManual,
@@ -5652,6 +5695,8 @@ export default function OmniCanvas() {
     directorStrategyContract,
     blocks,
     edges,
+    // 审查 P1：按集铺板同样要用当前选的导演卡
+    directionSelection,
   ]);
 
   const stopFactory = useCallback(() => {
@@ -7623,6 +7668,7 @@ export default function OmniCanvas() {
             return;
           }
           workingBlocks = applyFactoryPrefsToBlocks(workingBlocks, {
+            directionCanon: activeDirectionCanon,
             craftShotIds: selectedCraftShotIds,            pathCameraRecipeIds: selectedPathRecipeIds,
             narrativeLightingIds: selectedNarrativeLightingIds,
             maleHairstyleIds: selectedMaleHairstyleIds,
@@ -8182,6 +8228,8 @@ export default function OmniCanvas() {
       explicitWriterVideoModel,
       writerVideoModel,
       segmentCapacityModeByEpisode,
+      // 审查 P1：整板跑之前的同步设置要用当前选的导演卡
+      activeDirectionCanon,
     ],
   );
 
@@ -8978,6 +9026,18 @@ export default function OmniCanvas() {
                   blocks={blocks}
                   videoModel={activePilotVideoModel}
                   directorStrategyContract={directorStrategyContract}
+                  directionCanon={activeDirectionCanon}
+                  directionLocked={Boolean(projectBible)}
+                  onSelectDirectionCard={(mainCardId) => setDirectionSelection(mainCardId ? { mainCardId } : null)}
+                  onSelectDirectionSceneCard={(scene, cardId) =>
+                    setDirectionSelection((prev) => {
+                      if (!prev?.mainCardId) return prev;
+                      const overrides = { ...(prev.sceneOverrides || {}) };
+                      if (cardId && cardId !== prev.mainCardId) overrides[scene] = { cardId };
+                      else delete overrides[scene];
+                      return { mainCardId: prev.mainCardId, ...(Object.keys(overrides).length ? { sceneOverrides: overrides } : {}) };
+                    })
+                  }
                   topic={factoryTopic}
                   shotContinuity={shotContinuity}
                   onShotContinuityChange={(next) => {
@@ -9408,6 +9468,7 @@ export default function OmniCanvas() {
                     // 出图前把角色/场景/服装/运镜锁进每镜静帧提示词
                     setBlocks((prev) => {
                       const next = applyFactoryPrefsToBlocks(prev, {
+          directionCanon: activeDirectionCanon,
                         craftShotIds: selectedCraftShotIds,                        pathCameraRecipeIds: selectedPathRecipeIds,
                         narrativeLightingIds: selectedNarrativeLightingIds,
                         maleHairstyleIds: selectedMaleHairstyleIds,
@@ -11308,6 +11369,7 @@ export default function OmniCanvas() {
                       assetCanon: projectBible?.assetCanon,
                       writerContext: focusCtx,
                       includeDirectorCraft: true,
+                      directionCanon: activeDirectionCanon,
                       episodeIndex: continuity.episodeIndex,
                       episodeTitle: continuity.episodeTitle,
                       endingHook: continuity.endingHook,

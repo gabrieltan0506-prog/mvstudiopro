@@ -3,6 +3,12 @@
  * 目标：阿硕级「脚本进、成片出」分步编排核（按阶段跑；不引导一键全自动）。
  */
 
+import { classifyManhuaDirectionSceneType, resolveDirectorStyleBlocks, type ManhuaDirectionCanon } from "@shared/manhuaDirectionCanon";
+import {
+  formatManhuaDirectionSelectionMarker,
+  readManhuaDirectionCanonFromBlocks,
+  stripManhuaDirectionStyleBlocks,
+} from "@shared/manhuaDirectionCanonLibrary";
 import { buildWorkbenchShotsFromSegmentPlan } from "@shared/manhuaStoryDistill";
 import { buildManhuaAutoSegmentBinding, normalizeManhuaAutoSegmentBinding } from "@shared/manhuaAutoSegment";
 import {
@@ -410,6 +416,8 @@ export type SpawnManhuaDramaStudioOpts = {
   includeDirectorCraft?: boolean;
   /** 编剧扩写冻结的同一份策略；旧调用缺失时才按题材稳定补一份。 */
   directorStrategyContract?: ManhuaDirectorStrategyContract | null;
+  /** 导演法典（导演包）：Bible.directionCanon；缺省 = 没选，不注入任何风格 */
+  directionCanon?: ManhuaDirectionCanon | null;
   /** 连载集号；有值时 id 带 eXX，并写入 block.episodeIndex */
   episodeIndex?: number;
   /** 本集标题 */
@@ -911,6 +919,9 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     includeDirectorCraft && directorStrategyContract
       ? formatManhuaDirectorStrategyStage(directorStrategyContract, "keyframe")
       : "";
+  // 导演法典：与创作策略并列投影；选卡标记写进 story 与 beats，下游从已铺节点回读
+  const direction = resolveDirectorStyleBlocks(opts.directionCanon || null);
+  const directionMarker = opts.directionCanon && direction.audit.cardId ? formatManhuaDirectionSelectionMarker(opts.directionCanon) : "";
   const episodeIndex =
     typeof opts.episodeIndex === "number" && opts.episodeIndex >= 1
       ? Math.floor(opts.episodeIndex)
@@ -974,7 +985,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   if (episodeHeader) {
     storyPrompt = `${episodeHeader}\n\n${storyPrompt}`;
   }
-  story.prompt = [storyPrompt, narrativeEngineBlock, directorStoryBlock]
+  story.prompt = [storyPrompt, narrativeEngineBlock, directorStoryBlock, direction.story, directionMarker]
     .filter(Boolean)
     .join("\n\n");
   story.width = 400;
@@ -1021,6 +1032,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     maleMicroBlock,
     propAnchorBlock,
     directorStoryboardBlock,
+    direction.storyboard,
+    directionMarker,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -1042,6 +1055,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     cineVocabBlock,
     narrativeLightingBlock,
     directorStoryboardBlock,
+    direction.storyboard,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -1075,6 +1089,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
       editPlan: keyartEditPlan,
     }),
     directorKeyframeBlock,
+    direction.keyframe,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -1283,6 +1298,8 @@ export function applyFactoryPrefsToBlocks(
     videoReverseOutputMode?: "zh" | "en" | "compact";
     customRefs?: ManhuaCustomAssetRef[];
     assetCanon?: ManhuaWriterAssetCanon | null;
+    /** 导演法典：显式传入优先（换卡后「同步设置」要用新卡）；不传才从已铺节点的选卡标记回读 */
+    directionCanon?: ManhuaDirectionCanon | null;
   },
 ): CanvasBlock[] {
   const directorStrategyContract = blocks
@@ -1300,6 +1317,10 @@ export function applyFactoryPrefsToBlocks(
   const directorKeyframeBlock = directorStrategyContract
     ? formatManhuaDirectorStrategyStage(directorStrategyContract, "keyframe")
     : "";
+  // 导演法典：显式入参优先（审查 P1：换卡后同步设置必须用新卡），缺省才从已铺节点回读选卡标记；重写先剥旧投影再加，幂等
+  const prefsDirectionCanon = opts.directionCanon !== undefined ? opts.directionCanon : readManhuaDirectionCanonFromBlocks(blocks);
+  const prefsDirection = resolveDirectorStyleBlocks(prefsDirectionCanon);
+  const prefsDirectionMarker = prefsDirectionCanon ? formatManhuaDirectionSelectionMarker(prefsDirectionCanon) : "";
   const craftBlock = buildCraftShotInjectBlock(opts.craftShotIds || []);
   const pathCameraBlock = buildPathCameraInjectBlock(opts.pathCameraRecipeIds || []);
   const narrativeLightingBlock = buildNarrativeLightingInjectBlock(opts.narrativeLightingIds || []);
@@ -1398,7 +1419,7 @@ export function applyFactoryPrefsToBlocks(
         customRefs: opts.customRefs,
         editPlan,
       });
-      const keyframeCore = [slimCore, directorKeyframeBlock].filter(Boolean).join("\n\n");
+      const keyframeCore = [stripManhuaDirectionStyleBlocks(slimCore), directorKeyframeBlock, prefsDirection.keyframe].filter(Boolean).join("\n\n");
       const nextPrompt = keptShot
         ? `${keyframeCore}\n\n${keptShot}`
         : shotStub
@@ -1410,7 +1431,7 @@ export function applyFactoryPrefsToBlocks(
     }
 
     if (b.id.startsWith("beats-") || b.id.startsWith("reverse-")) {
-      let base = stripManhuaDirectorStrategyStage(b.prompt);
+      let base = stripManhuaDirectionStyleBlocks(stripManhuaDirectorStrategyStage(b.prompt));
       base = stripInjectBlock(base, "【手法条目库·原子镜头】");
       base = stripMarkedSection(base, "【路径运镜配方】");
       base = stripMarkedSection(base, "【动作运镜配方】");
@@ -1440,6 +1461,8 @@ export function applyFactoryPrefsToBlocks(
           : "",
         b.id.startsWith("beats-") && propAnchorBlock ? propAnchorBlock : "",
         directorStoryboardBlock,
+        prefsDirection.storyboard,
+        b.id.startsWith("beats-") ? prefsDirectionMarker : "",
       ].filter(Boolean);
       return {
         ...b,
@@ -1448,7 +1471,7 @@ export function applyFactoryPrefsToBlocks(
       };
     }
     if (b.id.startsWith("story-") || b.id.startsWith("bible-")) {
-      let base = stripManhuaDirectorStrategyStage(b.prompt);
+      let base = stripManhuaDirectionStyleBlocks(stripManhuaDirectorStrategyStage(b.prompt));
       if (syncGenre) base = stripMarkedSection(base, "【编剧剧种模板");
       if (b.id.startsWith("story-")) {
         base = stripMarkedSection(base, "【漫剧场景资产库");
@@ -1476,6 +1499,8 @@ export function applyFactoryPrefsToBlocks(
         b.id.startsWith("bible-") && wardrobeBlock ? wardrobeBlock : "",
         b.id.startsWith("bible-") && propAnchorBlock ? propAnchorBlock : "",
         b.id.startsWith("story-") ? directorStoryBlock : directorAssetsBlock,
+        b.id.startsWith("story-") ? prefsDirection.story : "",
+        b.id.startsWith("story-") ? prefsDirectionMarker : "",
       ].filter(Boolean);
       return { ...b, prompt: parts.join("\n\n") };
     }
@@ -2100,6 +2125,8 @@ export function ensureManhuaFragmentClips(
   const directorStrategyClipLine = directorStrategyContract
     ? formatManhuaDirectorStrategyClipLine(directorStrategyContract)
     : "";
+  // 导演法典：每段按自己的动作/对白文本判场景类型，副卡（如动作场）只盖它声明的阶段
+  const directionCanon = readManhuaDirectionCanonFromBlocks(blocks.filter(sameEpisode));
   const shots = resolveShotsForEpisodeKeyarts(blocks, ep);
   /**
    * 引擎优先级：显式入参 > 本集已有 clip 节点上盖的引擎（spawn 时按用户选择写入）
@@ -2336,6 +2363,17 @@ export function ensureManhuaFragmentClips(
         ? sceneSlot.tag
         : "";
     // 审阅可见：场景锁 + 光影景别氛围 + 秒轴轨迹；身份锁写本段 Image 对照
+    // 表格/秒表格式的台词单元格常无引号（解析时被剥掉）：这里补成「」再判，不然对白副卡永远触发不了
+    const directionSceneType = classifyManhuaDirectionSceneType(
+      hydratedShots
+        .map((sh) => {
+          const d = String(sh.dialogueZh || "").trim();
+          const quoted = d && !/[「」“”"『』]/.test(d) ? `「${d}」` : d;
+          return `${sh.actionZh || ""} ${quoted} ${sh.intentZh || ""}`;
+        })
+        .join("\n"),
+    );
+    const directionClipLine = directionCanon ? resolveDirectorStyleBlocks(directionCanon, directionSceneType).clip : "";
     const timelineBlock = formatWorkbenchSegmentClipInjectBlock({
       segmentIndex: seg.index,
       totalSegments: segments.length,
@@ -2560,6 +2598,7 @@ export function ensureManhuaFragmentClips(
           [
             timelineBlock,
             directorStrategyClipLine,
+            directionClipLine,
             directorBoardMotionLine,
             craftLine,
             padLockBlock,
@@ -3586,13 +3625,14 @@ function extractShotInjectSection(prompt: string): string {
     .slice(0, 1200);
 }
 
-function buildEpisodeQualityExpectedContext(opts: {
+export function buildEpisodeQualityExpectedContext(opts: {
   shots?: ManhuaWorkbenchShot[];
   keyartPrompt?: string;
   clipPrompt?: string;
   segmentCount?: number;
   durationSec?: number;
   directorStrategyContract?: ManhuaDirectorStrategyContract | null;
+  directionCanon?: ManhuaDirectionCanon | null;
 }): string {
   const shotBlock = opts.shots?.length
     ? opts.shots
@@ -3607,9 +3647,11 @@ function buildEpisodeQualityExpectedContext(opts: {
   const directorReviewBlock = opts.directorStrategyContract
     ? formatManhuaDirectorStrategyStage(opts.directorStrategyContract, "review")
     : "";
+  const directionReviewBlock = resolveDirectorStyleBlocks(opts.directionCanon || null).review;
   return [
     shotBlock,
     directorReviewBlock,
+    directionReviewBlock,
     `质检范围：当前上传样片覆盖 ${segs} 段、合计约 ${dur} 秒；只评价这次上传的片段，不外推整集结论。核对画风与参考静帧一致、人物服装连续、无新增可读字幕即可。`,
   ]
     .filter(Boolean)
@@ -4579,6 +4621,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
               segmentCount: 1,
               durationSec: expectedDurationSec,
               directorStrategyContract,
+              directionCanon: readManhuaDirectionCanonFromBlocks(working.filter((b) => (getBlockEpisodeIndex(b) ?? 1) === ep)),
             }),
             attempts: 1,
             sourceKeyartId: refKey?.id,
