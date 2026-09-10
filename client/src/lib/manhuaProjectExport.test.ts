@@ -292,7 +292,7 @@ describe("manhuaProjectExport", () => {
       expect(doc).toContain("ep03/final-v01.mp4");
       expect(doc).toContain("2 条");
       expect(doc).toContain("SDR Rec.709");
-      expect(result.manifest.delivery?.map((d) => d.kind).sort()).toEqual(["audio", "doc", "srt"]);
+      expect(result.manifest.delivery?.map((d) => d.kind).sort()).toEqual(["audio", "doc", "srt", "video"]);
 
       const noSub = await exportManhuaProjectZip({
         items: [],

@@ -456,7 +456,7 @@ export type ManhuaProjectExportManifest = {
     source?: ManhuaDockHistorySource;
   }>;
   /** 交付包写入记录（成片/字幕/音轨/清单） */
-  delivery?: Array<{ episodeIndex: number; kind: "srt" | "audio" | "doc"; path: string }>;
+  delivery?: Array<{ episodeIndex: number; kind: "video" | "srt" | "audio" | "doc"; path: string }>;
   failed: Array<{ blockId: string; url?: string; error: string }>;
 };
 
@@ -805,6 +805,7 @@ export async function exportManhuaProjectZip(
         deliveryMeta.push({ episodeIndex, kind: "doc", path: docPath });
       }
       if (active?.path) {
+        deliveryMeta.push({ episodeIndex, kind: "video", path: active.path });
         const lines: string[] = [
           `# 第${episodeIndex}集 交付包${block.episodeTitle ? ` · ${block.episodeTitle}` : ""}`,
           "",
@@ -825,7 +826,7 @@ export async function exportManhuaProjectZip(
           lines.push(
             active.subtitleTimeline?.cues?.length
               ? "- 字幕：无（本版成片的字幕时间轴台词清洗后为空）"
-              : "- 字幕：无（本版成片没有冻结字幕时间轴；请在剪辑台合成后再导）",
+              : "- 字幕：无（该集有分段缺分镜台词结构，合成时没能冻结字幕时间轴；重新合成不会补上，需先在分镜把该段台词补齐再合成）",
           );
         }
         const audio = opts.deliveryAudioByFinalUrl?.[active.url];

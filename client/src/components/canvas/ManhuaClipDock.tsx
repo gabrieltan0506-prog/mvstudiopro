@@ -90,7 +90,7 @@ type Props = {
   onPrepareDeliveryAudio?: (
     finals: Array<{ blockId: string; episodeIndex: number; url: string; gcsUri?: string }>,
     onProgress?: (done: number, total: number, episodeIndex: number) => void,
-  ) => Promise<Record<string, { url: string; ext: "m4a" | "wav" }>>;
+  ) => Promise<Record<string, { url: string; ext: "m4a" | "wav" }> & { __timedOutEpisodes?: number[] }>;
 };
 
 /** 一步达：点即选文件，不另开面板；同一 input 复用会被浏览器缓存 FileList，故每次新建 */
@@ -324,17 +324,19 @@ export default function ManhuaClipDock({
         blocks,
         includeHistory,
         includeDelivery: true,
-        deliveryAudioByFinalUrl: audioMap,
+        deliveryAudioByFinalUrl: Object.fromEntries(Object.entries(audioMap).filter(([k]) => k !== "__timedOutEpisodes")) as Record<string, { url: string; ext: "m4a" | "wav" }>,
       });
       const missingAudio = finals.filter((f) => !audioMap[f.url]).length;
-      const delivered = new Set(result.manifest.delivery?.map((d) => d.episodeIndex) || []);
+      // 只有成片真进了 zip 的集才算「交付」；下载失败的集只有一份清单，要单独报「缺成片」
+      const delivered = new Set(result.manifest.delivery?.filter((d) => d.kind === "video").map((d) => d.episodeIndex) || []);
       const withSrt = new Set(result.manifest.delivery?.filter((d) => d.kind === "srt").map((d) => d.episodeIndex) || []);
       const missingSrt = Array.from(delivered).filter((ep) => !withSrt.has(ep)).length;
       const missingVideo = finals.filter((f) => !delivered.has(f.episodeIndex)).length;
+      const timedOut = audioMap.__timedOutEpisodes?.length || 0;
       window.alert(
         `已导出交付包 ${result.filename}：${result.deliveryCount} 集（成片 + 字幕 + 音轨 + 清单）${
           missingSrt ? `，其中 ${missingSrt} 集无字幕` : ""
-        }${missingAudio ? `，${missingAudio} 集音轨未抽出` : ""}${
+        }${missingAudio ? `，${missingAudio} 集音轨未抽出${timedOut ? `（其中 ${timedOut} 集是抽音轨超时）` : ""}` : ""}${
           missingVideo ? `，${missingVideo} 集成片下载失败` : ""
         }${missingSrt || missingAudio || missingVideo ? "（详见各集 交付清单.md）" : ""}${
           result.failCount ? `，失败 ${result.failCount}` : ""

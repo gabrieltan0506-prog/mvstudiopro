@@ -11429,16 +11429,25 @@ export default function OmniCanvas() {
                 onPrepareDeliveryAudio={async (finals) => {
                 onPrepareDeliveryAudio={async (finals, onProgress) => {
                   // 交付包：每集整集成片先跑 audio_extract（免费）；单集失败不拦整包，清单里写明
-                  const out: Record<string, { url: string; ext: "m4a" | "wav" }> = {};
+                  const out: Record<string, { url: string; ext: "m4a" | "wav" }> & { __timedOutEpisodes?: number[] } = {};
+                  const timedOutEpisodes: number[] = [];
+                  // 整包总时限 15 分钟：worker 停摆时不让按钮转半小时；到点的集记成超时进弹窗
+                  const packDeadline = Date.now() + 15 * 60_000;
                   let done = 0;
                   for (const f of finals) {
                     onProgress?.(done, finals.length, f.episodeIndex);
+                    if (Date.now() >= packDeadline) {
+                      timedOutEpisodes.push(f.episodeIndex);
+                      done += 1;
+                      continue;
+                    }
                     try {
                       const { jobId } = await queueBurnSubtitleMutation.mutateAsync({
                         action: "audio_extract",
                         params: { videoUri: f.gcsUri || f.url, format: "m4a" },
                       });
-                      const deadline = Date.now() + 10 * 60_000;
+                      const deadline = Math.min(Date.now() + 10 * 60_000, packDeadline);
+                      let settled = false;
                       while (Date.now() < deadline) {
                         await new Promise((r) => setTimeout(r, 4000));
                         // 单次查询抖动不放弃本集：继续轮到期限
@@ -11452,15 +11461,21 @@ export default function OmniCanvas() {
                           const output = (job.output ?? {}) as { url?: unknown; format?: unknown };
                           const url = String(output.url || "").trim();
                           if (/^https:\/\//i.test(url)) out[f.url] = { url, ext: output.format === "wav" ? "wav" : "m4a" };
+                          settled = true;
                           break;
                         }
-                        if (job?.status === "failed") break;
+                        if (job?.status === "failed") {
+                          settled = true;
+                          break;
+                        }
                       }
+                      if (!settled) timedOutEpisodes.push(f.episodeIndex);
                     } catch (error) {
                       console.warn(`[交付包] 第${f.episodeIndex}集抽音轨失败`, error);
                     }
                     done += 1;
                   }
+                  if (timedOutEpisodes.length) out.__timedOutEpisodes = timedOutEpisodes;
                   return out;
                 }}
                 onSegmentReferenceUpload={handleSegmentReferenceUpload}
