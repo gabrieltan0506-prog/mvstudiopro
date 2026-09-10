@@ -6,17 +6,10 @@ ARG SUNO_API_COMMIT=a2e6a823428903af715d3835d1cb44ffa336021d
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 RUN git clone https://github.com/gcui-art/suno-api.git . && git checkout ${SUNO_API_COMMIT}
-# 0910 实测：Suno v6 改版后 create 页输入框没有 .custom-textarea 类名、Create 按钮无障碍名改为 "Create song"，
-# 上游 3 月的选择器找不到元素 → 验证码流程 30 秒超时；点 Create 后页面发的是 /api/generate/v2-web/，
-# 上游只拦 /v2/ 永远等不到验证码令牌。构建时打三处补丁（选择器保留旧值兼容，拦截路径改 v2*）。
-RUN sed -i \
-  -e "s|page.locator('.custom-textarea')|page.locator('.custom-textarea, textarea').first()|" \
-  -e "s|page.locator('button\[aria-label=\"Create\"\]').locator('div.flex')|page.locator('button[aria-label=\"Create song\"], button[aria-label=\"Create\"]').first()|" \
-  -e "s|page.route('\*\*/api/generate/v2/\*\*'|page.route('**/api/generate/v2*/**'|" \
-  src/lib/SunoApi.ts \
- && grep -q "custom-textarea, textarea" src/lib/SunoApi.ts \
- && grep -q "Create song" src/lib/SunoApi.ts \
- && grep -q "api/generate/v2\*/" src/lib/SunoApi.ts
+# 保留 v6 选择器兼容；监听先于点击，错误参与等待，所有退出路径关闭本请求创建的浏览器。
+# 不修改既有验证方式，不增加直接换取验证令牌的路径；每个锚点必须准确命中一次。
+COPY patch-upstream.mjs /opt/patch-upstream.mjs
+RUN node /opt/patch-upstream.mjs src/lib/SunoApi.ts
 RUN npm ci
 RUN npm run build
 

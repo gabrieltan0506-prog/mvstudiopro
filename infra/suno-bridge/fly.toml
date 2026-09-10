@@ -1,7 +1,7 @@
 # 内部专用 Suno cookie 桥。没有 [[services]] / [http_service]：不分配公网地址，
 # 主站经 6PN 访问 http://mvstudiopro-suno-bridge.internal:3000 。
 # 部署：cd infra/suno-bridge && fly deploy -a mvstudiopro-suno-bridge
-# 密钥（用户亲手）：fly secrets set -a mvstudiopro-suno-bridge SUNO_COOKIE=… TWOCAPTCHA_KEY=…
+# 密钥由用户直接填入 Fly Dashboard 的 Secrets，不写进本机终端或文件。
 app = 'mvstudiopro-suno-bridge'
 primary_region = 'sin'
 
