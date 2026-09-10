@@ -16,7 +16,7 @@ beforeAll(async () => {
       import {CanvasAudioStudioView} from './client/src/components/canvas/CanvasAudioStudio';
       import {defaultCanvasBlock} from './client/src/lib/canvasTypes';
       import {emptyCanvasAudioStudio,createCanvasAudioCue,canvasAudioCueInputKey} from './shared/canvasAudioStudio';
-      const f=globalThis.fixture={calls:[],queries:[],musicQueries:[],history:{},posts:[],state:null,result:null};
+      const f=globalThis.fixture={calls:[],queries:[],musicQueries:[],history:{},posts:[],postQueries:[],postResult:null,masterEntries:[],dropSettle:false,state:null,result:null};
       const services={
         generateDialogue:async input=>{f.calls.push(input);return {jobId:'test-job',status:'succeeded',result:{gcsUri:'gs://test-bucket/generated/test.mp3',audioUrl:'https://audio.test/test.mp3',bytes:12000,voiceGate:{durationSeconds:2.25}}};},
         getDialogue:async input=>{f.queries.push(input);return f.result;},
@@ -25,15 +25,19 @@ beforeAll(async () => {
         getMusic:async input=>{f.musicQueries.push(input.jobId);return f.history[input.jobId]||{jobId:input.jobId,status:'running',variants:[],titleZh:'守护',durationSec:30};},
         listMusic:async()=>[],
         queuePost:async input=>{f.posts.push(input);return {jobId:'post-'+f.posts.length,status:'queued'};},
-        getPost:async()=>null,
+        getPost:async input=>{f.postQueries.push(input.jobId);return f.postResult;},
       };
       function App(){
         const [block,setBlock]=useState({...defaultCanvasBlock('video',0,0),id:'audio-test',videoModel:'seedance-2.5',prompt:'目标时长：30秒。阿菁先护住受伤的墨屠。墨屠变身，展翼保护阿菁。',audioStudio:emptyCanvasAudioStudio()});
         const [visible,setVisible]=useState(true);
-        f.state=block.audioStudio;f.configure=audioStudio=>setBlock(b=>({...b,audioStudio}));f.show=setVisible;f.short=()=>setBlock(b=>({...b,prompt:'目标时长：5秒'}));
+        const [withMasterCb,setWithMasterCb]=useState(false);
+        f.state=block.audioStudio;f.block=block;f.configure=audioStudio=>setBlock(b=>({...b,audioStudio}));f.show=setVisible;f.short=()=>setBlock(b=>({...b,prompt:'目标时长：5秒'}));
+        f.setMasterCb=setWithMasterCb;f.setMaster=entry=>setBlock(b=>({...b,manhuaSegmentRefs:{...(b.manhuaSegmentRefs||{}),master:entry}}));
+        const onMasterTrackReady=withMasterCb?entry=>{f.masterEntries.push(entry);f.setMaster(entry);}:undefined;
         f.longCues=()=>{const cues=Array.from({length:6},(_,i)=>{const cue={...createCanvasAudioCue('dialogue','long-'+i),speakerZh:'角色',voice:'longanlufeng',textZh:'长台词'.repeat(1000),shotZh:'镜头',startSec:i*4,endSec:i*4+3,approved:true,selectedTakeId:'take-'+i};cue.takes=[{id:'take-'+i,gcsUri:'gs://test-bucket/post-prod/7/'+i+'.wav',previewUrl:'https://audio.test/'+i+'.wav',durationSec:2,createdAt:'2026-09-08',inputKey:canvasAudioCueInputKey(cue)}];return cue;});setBlock(b=>({...b,audioStudio:{...b.audioStudio,cues}}));};
         f.addBgm=()=>{const cue=createCanvasAudioCue('bgm','bgm-a');cue.shotZh='变身展翼';cue.startSec=13;cue.endSec=21;cue.source={gcsUri:'gs://test-bucket/generated/source.mp3',previewUrl:'https://audio.test/source.mp3',durationSec:27.77,labelZh:'27秒原曲'};cue.sourceStartSec=13;cue.sourceEndSec=21;setBlock(b=>({...b,audioStudio:{...b.audioStudio,cues:[...b.audioStudio.cues,cue]}}));};
-        return visible&&<CanvasAudioStudioView block={block} services={services} onChange={audioStudio=>setBlock(b=>({...b,audioStudio}))}/>;
+        const onChange=audioStudio=>setBlock(b=>f.dropSettle&&audioStudio.pendingOperations.length<b.audioStudio.pendingOperations.length?b:({...b,audioStudio}));
+        return visible&&<CanvasAudioStudioView block={block} services={services} onChange={onChange} onMasterTrackReady={onMasterTrackReady}/>;
       }
       createRoot(document.getElementById('root')).render(<App/>);
     `,
@@ -431,6 +435,109 @@ describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
         { jobId: "11111111-1111-4111-8111-111111111111" },
       ]);
       expect(result.state.pendingOperations).toHaveLength(1);
+    } finally {
+      await context.close();
+    }
+  }, 20_000);
+
+  const PREMIX_PENDING = {
+    id: "22222222-2222-4222-8222-222222222222",
+    kind: "post_prod",
+    inputKey: "premix:sha256:abc",
+  };
+  const PREMIX_RESULT = {
+    jobId: "22222222-2222-4222-8222-222222222222",
+    status: "succeeded",
+    output: { gcsUri: "gs://test-bucket/post-prod/7/premix.wav", url: "https://audio.test/premix.wav", durationSec: 12.5 },
+  };
+
+  it("预混母轨回来：有回调则挂 master 一次并 settle；无回调保留 pending 不 settle", async () => {
+    const { context, page } = await open();
+    try {
+      // 无回调（自由画布同一节点）：pending 留着，master 不挂
+      await page.evaluate((pending, result) => {
+        const f = (window as any).fixture;
+        f.postResult = result;
+        f.configure({ ...f.state, pendingOperations: [pending] });
+        f.show(false);
+      }, PREMIX_PENDING, PREMIX_RESULT);
+      await page.waitForFunction(() => !document.querySelector("section"));
+      await page.evaluate(() => (window as any).fixture.show(true));
+      await page.waitForFunction(() => (window as any).fixture.postQueries.length >= 1);
+      let snap = await page.evaluate(() => ({
+        pending: (window as any).fixture.state.pendingOperations.length,
+        masters: (window as any).fixture.masterEntries.length,
+      }));
+      expect(snap).toEqual({ pending: 1, masters: 0 });
+
+      // 回到工厂（带回调）：挂一次、settle 掉
+      await page.evaluate(() => {
+        const f = (window as any).fixture;
+        f.setMasterCb(true);
+        f.show(false);
+      });
+      await page.waitForFunction(() => !document.querySelector("section"));
+      await page.evaluate(() => (window as any).fixture.show(true));
+      await page.waitForFunction(() => (window as any).fixture.state.pendingOperations.length === 0);
+      snap = await page.evaluate(() => ({
+        pending: (window as any).fixture.state.pendingOperations.length,
+        masters: (window as any).fixture.masterEntries.length,
+        gcsUri: (window as any).fixture.block.manhuaSegmentRefs?.master?.gcsUri,
+        durationSec: (window as any).fixture.block.manhuaSegmentRefs?.master?.durationSec,
+      }));
+      expect(snap).toEqual({ pending: 0, masters: 1, gcsUri: "gs://test-bucket/post-prod/7/premix.wav", durationSec: 12.5 });
+    } finally {
+      await context.close();
+    }
+  }, 20_000);
+
+  it("真实触发路径：出片中 settle 被丢弃、pending 留着，下一轮轮询读到最新 master 不再重复挂", async () => {
+    const { context, page } = await open();
+    try {
+      await page.evaluate((pending, result) => {
+        const f = (window as any).fixture;
+        f.postResult = result;
+        f.dropSettle = true; // 模拟 OmniCanvas 对 running 段丢掉 audioStudio 更新
+        f.setMasterCb(true);
+        f.configure({ ...f.state, pendingOperations: [pending] });
+        f.show(false);
+      }, PREMIX_PENDING, PREMIX_RESULT);
+      await page.waitForFunction(() => !document.querySelector("section"));
+      await page.evaluate(() => (window as any).fixture.show(true));
+      // 等两轮以上轮询（间隔 5 s）
+      await page.waitForFunction(() => (window as any).fixture.masterEntries.length >= 1, { timeout: 10_000 });
+      await new Promise((r) => setTimeout(r, 11_000));
+      const snap = await page.evaluate(() => ({
+        queries: (window as any).fixture.postQueries.length,
+        masters: (window as any).fixture.masterEntries.length,
+        pending: (window as any).fixture.state.pendingOperations.length,
+        gcsUri: (window as any).fixture.block.manhuaSegmentRefs?.master?.gcsUri,
+      }));
+      expect(snap.queries, JSON.stringify(snap)).toBeGreaterThanOrEqual(2);
+      expect(snap.masters).toBe(1);
+      expect(snap.pending).toBe(1);
+      expect(snap.gcsUri).toBe("gs://test-bucket/post-prod/7/premix.wav");
+    } finally {
+      await context.close();
+    }
+  }, 45_000);
+
+  it("母轨已是同一份产物时再次命中不重复挂、不重复提示，只 settle", async () => {
+    const { context, page } = await open();
+    try {
+      await page.evaluate((pending, result) => {
+        const f = (window as any).fixture;
+        f.postResult = result;
+        f.setMasterCb(true);
+        f.setMaster({ url: result.output.url, gcsUri: result.output.gcsUri, fileName: "x.wav", durationSec: 12.5, updatedAt: "2026-09-10" });
+        f.configure({ ...f.state, pendingOperations: [pending] });
+        f.show(false);
+      }, PREMIX_PENDING, PREMIX_RESULT);
+      await page.waitForFunction(() => !document.querySelector("section"));
+      await page.evaluate(() => (window as any).fixture.show(true));
+      await page.waitForFunction(() => (window as any).fixture.state.pendingOperations.length === 0);
+      const snap = await page.evaluate(() => ({ masters: (window as any).fixture.masterEntries.length }));
+      expect(snap).toEqual({ masters: 0 });
     } finally {
       await context.close();
     }

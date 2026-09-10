@@ -2,6 +2,7 @@
  * 剧本工作台：左=本集资产 · 中=一集剧本+按段静帧 · 右=预览 · 底=集/段时间线
  * 原稿按真实秒位与引擎单段上限自动分段；每段一条成片，关键静帧按原镜一镜一张。
  */
+import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference";
 import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
 import { isManhuaKeyartLookCurrent } from "@shared/manhuaKeyartLookState";
@@ -573,6 +574,8 @@ type Props = {
   onUpdateClipPrompt?: (clipId: string, prompt: string) => void;
   /** 在工厂内按当前段保存声音，不跳转到自由画布。 */
   onUpdateClipAudioStudio?: (clipId: string, studio: NonNullable<CanvasBlock["audioStudio"]>) => void;
+  /** 配音间「一键预混母轨」出好后挂到本段 manhuaSegmentRefs（slot 固定 master） */
+  onSetClipSegmentReference?: (clipId: string, slot: "master", entry: ManhuaSegmentReferenceEntry) => void;
   onResumeFromFailure?: () => void;
   /** 从编导反推强制重跑本集静帧（覆盖旧图；工作台主路径入口） */
   onRerunKeyartsFromReverse?: () => void;
@@ -1047,6 +1050,7 @@ export default function ManhuaScriptWorkbench({
   onReviewClipPromptsOnCanvas,
   onUpdateClipPrompt,
   onUpdateClipAudioStudio,
+  onSetClipSegmentReference,
   onResumeFromFailure,
   onRerunKeyartsFromReverse,
   onRerunKeyartShot,
@@ -3177,7 +3181,8 @@ export default function ManhuaScriptWorkbench({
               </div>
               {activeClip ? <CanvasAudioStudio key={activeClip.id} block={activeClip}
                 disabled={Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
-                onChange={studio => onUpdateClipAudioStudio(activeClip.id, studio)} /> : (
+                onChange={studio => onUpdateClipAudioStudio(activeClip.id, studio)}
+                onMasterTrackReady={onSetClipSegmentReference ? (entry) => onSetClipSegmentReference(activeClip.id, "master", entry) : undefined} /> : (
                 <p className="text-xs text-amber-100">当前段尚未建立成片节点。请先确认分段剧本；本入口不生成视频、不扣费，也不切换工作区。</p>
               )}
             </section>

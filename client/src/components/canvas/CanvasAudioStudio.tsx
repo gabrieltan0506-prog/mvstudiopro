@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import type { CanvasBlock } from "@/lib/canvasTypes";
+import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference";
+import { buildPremixTimelineClips, isPremixPendingKey, PREMIX_PENDING_PREFIX } from "@/lib/manhuaPremixMaster";
 import { resolveCanvasMaterialUrl } from "@/lib/omniCanvasApi";
 import { compileCanvasDialogueInput } from "@shared/canvasDialogueControls";
 import { canvasAudioPreviewKey, loadCanvasMusicHistory } from "@/lib/canvasAudioStudioRecovery";
@@ -125,7 +127,13 @@ type Props = {
   block: CanvasBlock;
   disabled?: boolean;
   onChange: (next: CanvasAudioStudioState) => void;
+  /**
+   * 一键预混母轨出好后回调：对白原音量 + BGM 压 12 dB 带淡入淡出，合成一条 ≤30 s 单轨，
+   * 由上层挂到本段 manhuaSegmentRefs.master（出片时作唯一 @音频1）。不传则不显示按钮。
+   */
+  onMasterTrackReady?: (entry: ManhuaSegmentReferenceEntry) => void;
 };
+
 
 /** 生产适配器与视图分开；离线测试运行真实视图，不能触发真实付费。 */
 export function CanvasAudioStudio(props: Props) {
@@ -153,6 +161,7 @@ export function CanvasAudioStudioView({
   block,
   disabled = false,
   onChange,
+  onMasterTrackReady,
   services,
 }: Props & { services: CanvasAudioStudioServices }) {
   const state = block.audioStudio || emptyCanvasAudioStudio();
@@ -161,8 +170,8 @@ export function CanvasAudioStudioView({
     block.manhuaAutoSegment?.durationSec ??
       parseManhuaClipTargetDurationSec(block.prompt)
   );
-  const current = useRef({ state, onChange, services, block });
-  current.current = { state, onChange, services, block };
+  const current = useRef({ state, onChange, services, block, onMasterTrackReady });
+  current.current = { state, onChange, services, block, onMasterTrackReady };
   const mounted = useRef(true);
   const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -364,8 +373,29 @@ export function CanvasAudioStudioView({
                 );
                 continue;
               }
-              if (!pending.cueId)
+              if (!pending.cueId && isPremixPendingKey(pending.inputKey)) {
+                // 预混母轨只能由工厂配音间（带 onMasterTrackReady）收：自由画布同一节点也挂了本面板，
+                // 没有回调就保留 pending，回到工厂再挂，不能 settle 掉让 master 永远挂不上
+                // 轮询 effect 只依赖 block.id：回调与 master 都必须从 current ref 读最新值，闭包里的是挂载时的旧 props
+                const masterReady = current.current.onMasterTrackReady;
+                if (!masterReady) continue;
+                // 出片排队中 audioStudio 不落盘（onUpdateClipAudioStudio 对 running/queued 直接返回），
+                // pending 会在下一轮再次命中同一 job：母轨已挂上就不再重复挂、重复弹提示
+                const liveMaster = current.current.block.manhuaSegmentRefs?.master?.gcsUri;
+                if (liveMaster && liveMaster === take.gcsUri) {
+                  settle(pending.id, take);
+                  continue;
+                }
+                masterReady({
+                  url: take.previewUrl,
+                  gcsUri: take.gcsUri,
+                  fileName: `预混母轨-${block.id}.wav`,
+                  durationSec: take.durationSec,
+                  updatedAt: new Date().toISOString(),
+                });
+              } else if (!pending.cueId) {
                 update(previous => ({ ...previous, previewTake: take }));
+              }
               settle(pending.id, take);
             }
           }
@@ -635,6 +665,37 @@ export function CanvasAudioStudioView({
         pendingOperations: [
           ...previous.pendingOperations,
           { id: result.jobId, kind: "post_prod", inputKey: previewKey },
+        ],
+      }));
+    });
+  /**
+   * 一键预混母轨：已确认的对白按秒窗原音量落位；已确认的配乐压到 PREMIX_BGM_VOLUME 并带淡入淡出，
+   * 合成一条本段时长的单轨。走同一个 audio_timeline 后期任务（免费），结果不进合听预览，直接挂 master。
+   */
+  const createPremix = () =>
+    action(async () => {
+      if (current.current.state.pendingOperations.length >= 100)
+        throw new Error("待处理任务已达 100 条，请先处理原任务。");
+      const clips = buildPremixTimelineClips({
+        cues: current.current.state.cues,
+        durationSec,
+        getSelectedTake: getSelectedAudioTake,
+        inputKeyOf: canvasAudioCueInputKey,
+        videoModel: block.videoModel,
+      });
+      const premixKey = `${PREMIX_PENDING_PREFIX}${await canvasAudioPreviewKey(selectedSource)}`;
+      canvasAudioStudioSchema.parse({ ...current.current.state, pendingOperations: [
+        ...current.current.state.pendingOperations, { id: "preflight-premix", kind: "post_prod", inputKey: premixKey },
+      ] });
+      const result = await services.queuePost({
+        action: "audio_timeline",
+        params: { durationSec, clips },
+      });
+      update(previous => ({
+        ...previous,
+        pendingOperations: [
+          ...previous.pendingOperations,
+          { id: result.jobId, kind: "post_prod", inputKey: premixKey },
         ],
       }));
     });
@@ -1236,14 +1297,34 @@ export function CanvasAudioStudioView({
           disabled={
             disabled ||
             busy ||
+            // 预混母轨的 pending 不占合听的位：自由画布里没有回调、预混 pending 会留着等回工厂
             state.pendingOperations.some(
-              row => !row.cueId && row.kind === "post_prod"
+              row => !row.cueId && row.kind === "post_prod" && !isPremixPendingKey(row.inputKey)
             )
           }
           onClick={() => void createPreview()}
         >
           合听已确认秒窗 · 免费
         </button>
+        {!onMasterTrackReady && state.pendingOperations.some(row => !row.cueId && isPremixPendingKey(row.inputKey)) ? (
+          <span className="self-center text-xs text-amber-100">预混母轨已在排队：回漫剧工厂的配音间即可自动挂到本段。</span>
+        ) : null}
+        {onMasterTrackReady ? (
+          <button
+            className={buttonClass}
+            disabled={
+              disabled ||
+              busy ||
+              state.pendingOperations.some(
+                row => !row.cueId && row.kind === "post_prod"
+              )
+            }
+            title="对白原音量、配乐压 12 dB 带淡入淡出，合成一条本段单轨并挂为本段母轨（出片时作唯一 @音频1）。免费。"
+            onClick={() => void createPremix()}
+          >
+            {block.manhuaSegmentRefs?.master ? "重新预混母轨 · 免费" : "一键预混母轨 · 免费"}
+          </button>
+        ) : null}
         <button
           className={buttonClass}
           disabled={disabled || busy}

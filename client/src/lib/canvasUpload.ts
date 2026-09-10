@@ -84,6 +84,8 @@ export async function uploadOneCanvasAsset(params: {
   file: File;
   index: number;
   getSignedUploadUrl: SignedUrlMutation;
+  /** 上传进度 0–1 */
+  onProgress?: (fraction: number) => void;
 }): Promise<CanvasUploadedAsset> {
   const { file, index, getSignedUploadUrl } = params;
   const kind = inferCanvasAssetKind(file);
@@ -110,6 +112,7 @@ export async function uploadOneCanvasAsset(params: {
     uploadUrl: signed.uploadUrl,
     contentType: mimeType,
     headers: signed.requiredHeaders,
+    onProgress: params.onProgress,
   });
 
   if (!signed.gcsUri) throw new Error(`上传失败：${file.name}`);
