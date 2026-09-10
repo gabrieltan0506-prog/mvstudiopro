@@ -1,6 +1,6 @@
 /**
  * 挑参考页（目录页缩略图 → JSON 页码表）的模型链（用户 0910 拍板）：
- * 读图 + 出 JSON 的活，主力 DeepSeek V4 Flash Vision（EvoLink direct 优先、OpenRouter 兜底），
+ * 读图 + 出 JSON 的活，主力 DeepSeek V4 Flash Vision（EvoLink api 优先、OpenRouter 兜底），
  * 兜底新加坡 Qwen3.8-Max（能读图）；不再用 GPT-5.6 Sol（太贵）。
  * 每次网关尝试前 touch 活动心跳；输出不是合法 JSON 视为坏输出换下一家。
  */
@@ -9,7 +9,8 @@ import { touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivit
 
 export const PAGE_TRIAGE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_TRIAGE_MODEL_EVOLINK || "deepseek-v4-flash-vision-exp").trim();
 export const PAGE_TRIAGE_MODEL_OPENROUTER = String(process.env.KNOWLEDGE_CARD_TRIAGE_MODEL_OPENROUTER || "deepseek/deepseek-v4-flash-vision-exp").trim();
-const EVOLINK_DIRECT_CHAT_URL = String(process.env.EVOLINK_DIRECT_CHAT_URL || "https://direct.evolink.ai/v1/chat/completions").trim();
+// 带图的请求走 api.evolink.ai（direct 只给纯文本，仓库既有约定见 knowledgeCardDistill.ts）
+const EVOLINK_VISION_CHAT_URL = String(process.env.EVOLINK_CHAT_URL || "https://api.evolink.ai/v1/chat/completions").trim();
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 const TRIAGE_TIMEOUT_MS = Math.max(60_000, Number(process.env.KNOWLEDGE_CARD_TRIAGE_TIMEOUT_MS) || 180_000);
 
@@ -17,7 +18,7 @@ type TriageGateway = { name: "evolink" | "openrouter"; url: string; key: string;
 function visionGateways(): TriageGateway[] {
   const out: TriageGateway[] = [];
   const evo = String(process.env.EVOLINK_API_KEY || "").trim();
-  if (evo) out.push({ name: "evolink", url: EVOLINK_DIRECT_CHAT_URL, key: evo, model: PAGE_TRIAGE_MODEL_EVOLINK });
+  if (evo) out.push({ name: "evolink", url: EVOLINK_VISION_CHAT_URL, key: evo, model: PAGE_TRIAGE_MODEL_EVOLINK });
   const or = String(process.env.OPENROUTER_API_KEY || "").trim();
   if (or) out.push({ name: "openrouter", url: OPENROUTER_CHAT_URL, key: or, model: PAGE_TRIAGE_MODEL_OPENROUTER });
   return out;
