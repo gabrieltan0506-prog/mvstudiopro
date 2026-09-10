@@ -244,9 +244,13 @@ export type ConvertEpubToPdfResult = {
 
 /** 片内首章的标题文本（h1/h2/title），给标签用；spine 序号不等于目录章号，所以要带标题 */
 export function epubChapterHeading(html: string): string {
-  const m = /<(?:h1|h2|title)\b[^>]*>([\s\S]*?)<\/(?:h1|h2|title)>/i.exec(html);
-  const text = String(m?.[1] || "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
-  return text.slice(0, 40);
+  for (const m of Array.from(String(html || "").matchAll(/<(?:h1|h2|title)\b[^>]*>([\s\S]*?)<\/(?:h1|h2|title)>/gi))) {
+    const text = decodeEntities(String(m[1] || "").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " "))
+      .replace(/\s+/g, " ")
+      .trim();
+    if (text) return text.length > 40 ? `${text.slice(0, 40)}…` : text;
+  }
+  return "";
 }
 
 export function formatEpubShardLabel(index: number, total: number, spineRange: number[], firstChapterHtml: string): string {
@@ -351,20 +355,20 @@ export async function convertEpubToPdf(
       pdf = await render(shardHtml);
     } catch (error) {
       if (!(error instanceof EpubChromiumCrashError)) throw error;
-      console.warn(`[knowledgeCardEpubToPdf] ${label}打印崩溃，剥图重打：${error.message}`);
+      console.warn(`[knowledgeCardEpubToPdf] ${label}：打印崩溃，剥图重打：${error.message}`);
       const stripped = stripInlineImagesFromHtml(shardHtml);
       try {
         pdf = await render(stripped.html);
       } catch (again) {
         if (!(again instanceof EpubChromiumCrashError)) throw again;
         throw new Error(
-          `这本 EPUB ${label}转 PDF 时浏览器崩溃两次（已试过只保文字）。请先用 Calibre 等工具转成 PDF，或把这几节拆出来单独上传。`,
+          `这本 EPUB ${label}：转 PDF 时浏览器崩溃两次（已试过只保文字）。请先用 Calibre 等工具转成 PDF，或把这几节拆出来单独上传。`,
         );
       }
       strippedShards.push(i + 1);
       strippedImages += stripped.stripped;
     }
-    if (!pdf.length) throw new Error(`EPUB ${label}转 PDF 结果为空`);
+    if (!pdf.length) throw new Error(`EPUB ${label}：转 PDF 结果为空`);
     pdfs.push(pdf);
   }
   const pdf = await merge(pdfs);

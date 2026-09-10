@@ -106,9 +106,11 @@ describe("EPUB 大图与 Chromium 崩溃兜底", () => {
 
     const alwaysCrash = async () => { throw new EpubChromiumCrashError("Target closed"); };
     expect(out.shardLabels[1]).toMatch(/^第 2\/3 片 · 第 2 节 · 从「章」起$/);
-    await expect(convertEpubToPdf(buffer, { render: alwaysCrash, parse: parse3 as never, shardMaxBytes: 1 })).rejects.toThrow(/第 1\/3 片 · 第 1 节 · 从「章」起.*崩溃两次.*Calibre/);
+    await expect(convertEpubToPdf(buffer, { render: alwaysCrash, parse: parse3 as never, shardMaxBytes: 1 })).rejects.toThrow(/第 1\/3 片 · 第 1 节 · 从「章」起：转 PDF 时浏览器崩溃两次.*Calibre/);
     expect(formatEpubShardLabel(0, 2, [11, 17], "<h1>第三章 <em>夜行</em></h1>")).toBe("第 1/2 片 · 第 12–18 节 · 从「第三章 夜行」起");
     expect(formatEpubShardLabel(1, 2, [3], "<p>无标题</p>")).toBe("第 2/2 片 · 第 4 节");
+    expect(formatEpubShardLabel(0, 1, [0], "<h1></h1><h2>后备 &amp; 实体&nbsp;X</h2>")).toBe("第 1/1 片 · 第 1 节 · 从「后备 & 实体 X」起");
+    expect(formatEpubShardLabel(0, 1, [0], `<h1>${"长".repeat(60)}</h1>`)).toBe(`第 1/1 片 · 第 1 节 · 从「${"长".repeat(40)}…」起`);
 
     // 非崩溃错误不重试，原样抛
     const other = async () => { throw new Error("磁盘满"); };
