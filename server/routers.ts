@@ -4448,12 +4448,12 @@ export const appRouter = router({
           styleAnchorZh: z.string().trim().max(300).optional(),
           titleZh: z.string().trim().max(80).optional(),
           hasSilenceBreak: z.boolean().optional(),
-          /** v6 三档走 TTAPI 网关，全员可选；未配 TTAPI_KEY 时回落 EvoLink v5.5 */
+          /** v6 三档走 TTAPI 网关，全员可选；v5.5 已下架，旧客户端传了也落到 v6 */
           model: z.enum(["suno-v5.5-beta", "suno-v6-mini", "suno-v6", "suno-v6-wild"]).optional(),
         }),
       )
       .mutation(({ input }) => {
-        const model = input.model && isBgmV6Model(input.model) && !isTtapiSunoReady() ? "suno-v5.5-beta" : input.model || "suno-v5.5-beta";
+        const model = input.model && isBgmV6Model(input.model) ? input.model : "suno-v6";
         return { brief: buildScoringRoomBrief({ ...input, model }) };
       }),
 
@@ -4467,8 +4467,12 @@ export const appRouter = router({
       )
       .mutation(async ({ ctx, input }) => {
         const v6Model = isBgmV6Model(input.brief.model);
-        if (v6Model && !isTtapiSunoReady()) {
-          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Suno v6 通道未配置（TTAPI_KEY），请改选 v5.5" });
+        if (!v6Model) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Suno v5.5 已下架，请改选 v6" });
+        }
+        if (!isTtapiSunoReady()) {
+          // 没有兜底：用户拍板不拿 v5.5 当次货兜底，通道没配就明说
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Suno v6 通道未配置（TTAPI_KEY），请联系管理员" });
         }
         const jobInput = buildManhuaBgmJobInput(input);
         const jobId = `bgm_${input.billingRequestId.replace(/-/g, "")}`;
@@ -4477,7 +4481,7 @@ export const appRouter = router({
             id: jobId,
             userId: String(ctx.user.id),
             type: "audio",
-            provider: v6Model ? `ttapi:${input.brief.model}` : "evolink-suno-v55",
+            provider: `ttapi:${input.brief.model}`,
             input: jobInput,
           });
         } catch (error) {

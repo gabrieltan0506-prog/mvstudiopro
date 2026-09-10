@@ -46,17 +46,20 @@ describe("配乐 v6（TTAPI） · 路由把关", () => {
     expect(repo.createJob).not.toHaveBeenCalled();
   });
 
-  it("普通用户起草 v6 → 真带 v6；未配 TTAPI_KEY → 回落 v5.5", async () => {
-    const user = await caller("user").mvAnalysis.draftManhuaBgmBrief({ ...draftInput, model: "suno-v6" });
-    expect(user.brief.model).toBe("suno-v6");
+  it("起草：v6 原样；不传或传已下架的 v5.5 → 一律 v6，不回落", async () => {
+    const user = await caller("user").mvAnalysis.draftManhuaBgmBrief({ ...draftInput, model: "suno-v6-wild" });
+    expect(user.brief.model).toBe("suno-v6-wild");
+    expect((await caller("user").mvAnalysis.draftManhuaBgmBrief(draftInput)).brief.model).toBe("suno-v6");
+    expect((await caller("user").mvAnalysis.draftManhuaBgmBrief({ ...draftInput, model: "suno-v5.5-beta" })).brief.model).toBe("suno-v6");
     delete process.env.TTAPI_KEY;
-    const fallback = await caller("user").mvAnalysis.draftManhuaBgmBrief({ ...draftInput, model: "suno-v6" });
-    expect(fallback.brief.model).toBe("suno-v5.5-beta");
+    expect((await caller("user").mvAnalysis.draftManhuaBgmBrief({ ...draftInput, model: "suno-v6" })).brief.model).toBe("suno-v6");
   });
 
-  it("未配 TTAPI_KEY 直接 queue v6 → PRECONDITION_FAILED，不建任务", async () => {
-    const brief = buildScoringRoomBrief({ ...draftInput, model: "suno-v6-mini" });
+  it("queue：v5.5 → PRECONDITION_FAILED（已下架）；未配 TTAPI_KEY → PRECONDITION_FAILED；都不建任务", async () => {
     const billingRequestId = "11111111-2222-4333-8444-555555555555";
+    const legacy = { ...buildScoringRoomBrief({ ...draftInput, model: "suno-v6" }), model: "suno-v5.5-beta" as const };
+    await expect(caller("user").mvAnalysis.queueManhuaBgm({ billingRequestId, brief: legacy })).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+    const brief = buildScoringRoomBrief({ ...draftInput, model: "suno-v6-mini" });
     delete process.env.TTAPI_KEY;
     await expect(caller("user").mvAnalysis.queueManhuaBgm({ billingRequestId, brief })).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
     expect(repo.createJob).not.toHaveBeenCalled();

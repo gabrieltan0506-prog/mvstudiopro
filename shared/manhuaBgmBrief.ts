@@ -121,7 +121,7 @@ export function deriveManhuaBgmBriefSeed(input: {
 }
 
 export type BgmBriefInput = {
-  /** 缺省 suno-v5.5-beta；桥模型只有内部账号能选（路由层把关） */
+  /** 缺省 suno-v6；v5.5 已下架，传了也落到 v6 */
   model?: BgmBriefModel;
   laneZh: string;
   /** 画面时长（秒）。BGM 会在此基础上加余量 */
@@ -147,11 +147,17 @@ export type BgmBriefInput = {
   hasSilenceBreak?: boolean;
 };
 
-/** 配乐来源：EvoLink 网关 v5.5（带精确时长）；Suno v6 三档走 TTAPI 网关（0910 用户拍板，见 server/services/ttapiSunoMusic.ts），全员可选 */
+/**
+ * 配乐来源：Suno v6 三档走 TTAPI 网关（0910 用户拍板，见 server/services/ttapiSunoMusic.ts），全员可选。
+ * `suno-v5.5-beta`（EvoLink）0910 晚下架：不再建单、不做兜底（用户：「有好的不用好的用次货」），
+ * 类型里保留只为旧任务能解析/恢复/回放。
+ */
 export type BgmBriefModel = "suno-v5.5-beta" | "suno-v6-mini" | "suno-v6" | "suno-v6-wild";
-export const BGM_BRIEF_MODELS: readonly BgmBriefModel[] = ["suno-v5.5-beta", "suno-v6", "suno-v6-wild", "suno-v6-mini"];
+/** 可选（可建单）的档；不含已下架的 v5.5 */
+export const BGM_BRIEF_MODELS: readonly BgmBriefModel[] = ["suno-v6", "suno-v6-wild", "suno-v6-mini"];
+export const BGM_BRIEF_DEFAULT_MODEL: BgmBriefModel = "suno-v6";
 export const BGM_BRIEF_MODEL_LABEL_ZH: Record<BgmBriefModel, string> = {
-  "suno-v5.5-beta": "Suno v5.5（EvoLink·精确时长）",
+  "suno-v5.5-beta": "Suno v5.5（已下架）",
   "suno-v6": "Suno v6（TTAPI·默认）",
   "suno-v6-wild": "Suno v6-wild（TTAPI·实验）",
   "suno-v6-mini": "Suno v6-mini（TTAPI·快）",
@@ -304,7 +310,7 @@ export function buildManhuaBgmBrief(input: BgmBriefInput): BgmBrief {
       );
 
   return {
-    model: (BGM_BRIEF_MODELS as readonly string[]).includes(String(input.model || "")) ? (input.model as BgmBriefModel) : "suno-v5.5-beta",
+    model: (BGM_BRIEF_MODELS as readonly string[]).includes(String(input.model || "")) ? (input.model as BgmBriefModel) : BGM_BRIEF_DEFAULT_MODEL,
     custom_mode: true,
     instrumental: true,
     style,

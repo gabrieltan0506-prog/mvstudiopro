@@ -191,7 +191,7 @@ export function CanvasAudioStudioView({
   const [brief, setBrief] = useState<MusicBrief | null>(null);
   // 内部账号（有桥）默认直出 Suno v6（用户 0910 已升 Pro，不用 mini）；普通账号只有网关 v5.5
   const [bgmModel, setBgmModel] = useState<"suno-v5.5-beta" | "suno-v6-mini" | "suno-v6" | "suno-v6-wild">(
-    bgmModels?.some(item => item.model === "suno-v6") ? "suno-v6" : "suno-v5.5-beta",
+    bgmModels?.[0]?.model ?? "suno-v6",
   );
   const [resumable, setResumable] = useState<Record<string, JobResult>>({});
   const [confirmation, setConfirmation] = useState<
@@ -1208,18 +1208,15 @@ export function CanvasAudioStudioView({
                   setConfirmation(null);
                 }}
               >
-                <option value="suno-v5.5-beta">Suno v5.5（EvoLink·精确时长）</option>
                 {bgmModels.map(item => (
                   <option key={item.model} value={item.model}>
                     {item.labelZh}
                   </option>
                 ))}
               </select>
-              {bgmModel !== "suno-v5.5-beta" ? (
-                <span className="mt-1 block text-[10px] text-amber-200/80">
-                  v6 走 TTAPI 网关，不支持精确时长，整曲出来后按段表裁；上游未配置时自动回落 v5.5。
-                </span>
-              ) : null}
+              <span className="mt-1 block text-[10px] text-amber-200/80">
+                v6 走 TTAPI 网关，按段表时长出整曲，成品再按段表裁。
+              </span>
             </label>
           ) : null}
           <button
@@ -1233,7 +1230,7 @@ export function CanvasAudioStudioView({
                   moods: ["蓄力", "冲突", "反转", "收束"],
                   moodArcZh: musicPrompt,
                   titleZh: "剧情配乐",
-                  ...(bgmModels?.length && bgmModel !== "suno-v5.5-beta" ? { model: bgmModel } : {}),
+                  model: bgmModel,
                 });
                 setBrief(result.brief);
               })

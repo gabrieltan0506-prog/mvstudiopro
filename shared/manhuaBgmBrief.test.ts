@@ -107,9 +107,11 @@ describe("生成参数", () => {
     expect(b.weirdness_constraint).toBeLessThanOrEqual(0.3);
   });
 
-  it("duration 只在 v5.5 + custom_mode 生效，故两者写死", () => {
+  it("缺省档 v6（v5.5 已下架，传了也落 v6）；custom_mode 写死", () => {
     const b = buildManhuaBgmBrief(base);
-    expect(b.model).toBe("suno-v5.5-beta");
+    expect(b.model).toBe("suno-v6");
+    expect(buildManhuaBgmBrief({ ...base, model: "suno-v5.5-beta" }).model).toBe("suno-v6");
+    expect(buildManhuaBgmBrief({ ...base, model: "suno-v6-wild" }).model).toBe("suno-v6-wild");
     expect(b.custom_mode).toBe(true);
   });
 });

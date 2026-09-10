@@ -112,18 +112,19 @@ beforeEach(() => {
 });
 
 describe("漫剧配乐建单与恢复", () => {
-  it("建单只发一次 POST，返回 task ID 与内容摘要供严格持久化", async () => {
-    upstream.create.mockResolvedValue({ id: "task-1" });
+  it("v5.5 已下架：建单直接拒，不碰 EvoLink；建单只发一次 POST，返回 task ID 与内容摘要供严格持久化", async () => {
+    await expect(createManhuaBgmTask(brief)).rejects.toThrow(/v5\.5 已下架/);
+    expect(upstream.create).not.toHaveBeenCalled();
+    bridge.create.mockReset();
+    bridge.ready.mockReturnValue(true);
+    bridge.create.mockResolvedValue({ taskId: "ttapi:task0001", jobId: "task0001", mv: "chirp-v6" });
     const controller = new AbortController();
-    const result = await createManhuaBgmTask(brief, {
-      abortSignal: controller.signal,
-    });
-    expect(result.taskId).toBe("task-1");
+    const result = await createManhuaBgmTask({ ...brief, model: "suno-v6" }, { abortSignal: controller.signal });
+    expect(result.taskId).toBe("ttapi:task0001");
     expect(result.briefDigest).toMatch(/^[a-f0-9]{64}$/);
-    expect(upstream.create).toHaveBeenCalledTimes(1);
-    expect(upstream.create.mock.calls[0]![1].abortSignal).toBe(
-      controller.signal
-    );
+    expect(bridge.create).toHaveBeenCalledTimes(1);
+    expect(bridge.create.mock.calls[0]![0]).toMatchObject({ duration: brief.duration });
+    expect(bridge.create.mock.calls[0]![1].abortSignal).toBe(controller.signal);
   });
 
   it("v6 来源：建单走 TTAPI、不碰 EvoLink；TTAPI 未配置直接拦", async () => {
@@ -140,7 +141,7 @@ describe("漫剧配乐建单与恢复", () => {
     expect(bridge.create).toHaveBeenCalledTimes(1);
   });
 
-  it("v6 保留艺人和百分比，不套旧网关名单；旧网关限制保持原状", async () => {
+  it("v6 保留艺人和百分比，不套旧网关名单", async () => {
     bridge.create.mockReset();
     bridge.ready.mockReturnValue(true);
     bridge.create.mockResolvedValue({ taskId: "ttapi:job0002", jobId: "job0002", mv: "chirp-v6" });
@@ -149,8 +150,6 @@ describe("漫剧配乐建单与恢复", () => {
       expect(bridge.create).toHaveBeenLastCalledWith(expect.objectContaining({ style }), expect.anything());
     }
     expect(bridge.create).toHaveBeenCalledTimes(2);
-    expect(upstream.create).not.toHaveBeenCalled();
-    await expect(createManhuaBgmTask({ ...brief, style: "Hans Zimmer 30%" })).rejects.toThrow("可听特征");
     expect(upstream.create).not.toHaveBeenCalled();
   });
 

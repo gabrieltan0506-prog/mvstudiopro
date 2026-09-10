@@ -11,7 +11,6 @@ import { tmpdir } from "node:os";
 import nodePath from "node:path";
 import { promisify } from "node:util";
 import {
-  assertBgmStyleSubmittable,
   buildManhuaBgmBrief,
   type BgmBeatMood,
   type BgmBrief,
@@ -29,7 +28,6 @@ import {
   type ManhuaBgmStructure,
 } from "../jobs/manhuaBgmJobInput.js";
 import {
-  createEvolinkSunoTask,
   getEvolinkSunoTask,
   pickEvolinkSunoAudioUrls,
 } from "./evolinkSunoMusic.js";
@@ -223,23 +221,16 @@ export async function createManhuaBgmTask(
 ): Promise<{ taskId: string; briefDigest: string }> {
   assertNotAborted(opts.abortSignal);
   const brief = manhuaBgmBriefSchema.parse(briefInput) as BgmBrief;
-  if (isBgmV6Model(brief.model)) {
-    // Suno v6 走 TTAPI：duration 同样 10–360，段表时长直接传；成品仍按段表裁
-    if (!isTtapiSunoReady()) throw new Error("配乐 v6 通道未配置（TTAPI_KEY），请改选 v5.5");
-    const created = await createTtapiSunoTask(
-      { model: brief.model, prompt: brief.prompt, style: brief.style, title: brief.title, instrumental: brief.instrumental, negative_tags: brief.negative_tags, duration: brief.duration },
-      { abortSignal: opts.abortSignal },
-    );
-    return { taskId: created.taskId, briefDigest: digestManhuaBgmBrief(brief) };
-  }
-  // 旧网关的本地限制不套用到 TTAPI；v6 保留用户风格描述，由上游返回实际结果。
-  assertBgmStyleSubmittable(brief);
-  const task = await createEvolinkSunoTask({ ...brief, model: "suno-v5.5-beta" }, {
-    abortSignal: opts.abortSignal,
-  });
-  const taskId = String(task.id || "").trim();
-  if (!taskId) throw new Error("配乐建单成功但未返回 task id");
-  return { taskId, briefDigest: digestManhuaBgmBrief(brief) };
+  // v5.5（EvoLink）0910 下架：不再建单、不做兜底；旧任务只走下面的恢复轮询
+  if (!isBgmV6Model(brief.model)) throw new Error("Suno v5.5 已下架，配乐只走 v6");
+  // Suno v6 走 TTAPI：duration 同样 10–360，段表时长直接传；成品仍按段表裁。
+  // 旧网关的风格名单不套用：v6 保留用户风格描述（含艺人名与百分比），由上游返回实际结果。
+  if (!isTtapiSunoReady()) throw new Error("配乐 v6 通道未配置（TTAPI_KEY）");
+  const created = await createTtapiSunoTask(
+    { model: brief.model, prompt: brief.prompt, style: brief.style, title: brief.title, instrumental: brief.instrumental, negative_tags: brief.negative_tags, duration: brief.duration },
+    { abortSignal: opts.abortSignal },
+  );
+  return { taskId: created.taskId, briefDigest: digestManhuaBgmBrief(brief) };
 }
 
 /**
