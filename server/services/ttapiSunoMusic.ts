@@ -2,7 +2,7 @@
  * TTAPI · Suno v6 音乐生成适配器（配乐间第二来源，0910 用户拍板）。
  *
  * 背景：Suno v6 于 2026-09-09 发布，EvoLink 还没上 v6，Suno 官方没有 API，
- * 自建 cookie 桥卡在验证码（本 agent 不写那段）。TTAPI 是先上 v6 的第三方网关，
+ * 自建 cookie 桥卡在验证码。TTAPI 是先上 v6 的第三方网关，
  * 与 EvoLink Suno 同属一类，用户全程不出工作流。EvoLink 上了 v6 再切回去只改模型 id。
  *
  * 端点与字段照文档 https://docs.ttapi.io/api/en/suno ：
@@ -100,6 +100,8 @@ export function isTtapiSunoSubmissionUnknown(error: unknown): boolean {
 export const TTAPI_SUNO_TASK_PREFIX = "ttapi:";
 
 const JOB_ID_RE = /^[0-9A-Za-z_-]{6,128}$/;
+/** 上游明确终态失败的 status 值（fetch 与 submit 都用） */
+const TERMINAL_FAILED = new Set(["FAILED", "FAIL", "ERROR", "CANCELLED", "CANCELED", "TIMEOUT"]);
 
 export function encodeTtapiSunoTaskId(jobId: string): string {
   const id = String(jobId || "").trim();
@@ -200,8 +202,12 @@ export async function createTtapiSunoTask(
   const root = asRecord(raw);
   const jobId = String(asRecord(root?.data)?.jobId || "").trim();
   const status = String(root?.status || "").toUpperCase();
+  if (TERMINAL_FAILED.has(status) && !jobId) {
+    // 200 + FAILED 且没有 jobId：上游明确拒单（配额不足/参数拒绝），没建单 → 明确拒绝，可退款
+    throw new TtapiSunoRequestError("rejected", false, 200);
+  }
   if (status !== "SUCCESS" || !JOB_ID_RE.test(jobId)) {
-    // 200 但没给 jobId：上游可能已建单也可能没有，按未知对账
+    // 200 但状态不明或 jobId 缺/坏：上游可能已建单也可能没有，按未知对账
     throw new TtapiSunoRequestError("invalid_response", true);
   }
   return { taskId: encodeTtapiSunoTaskId(jobId), jobId, mv };
@@ -214,8 +220,6 @@ export type TtapiSunoTaskState =
 
 /** Suno 一次生成惯例出两首；TTAPI 文档示例只列一首，少于两首记 missing，不把已出的丢掉 */
 export const TTAPI_SUNO_EXPECTED_VARIANTS = 2;
-
-const TERMINAL_FAILED = new Set(["FAILED", "FAIL", "ERROR", "CANCELLED", "CANCELED", "TIMEOUT"]);
 
 export async function getTtapiSunoTask(taskId: string, opts: { abortSignal?: AbortSignal } = {}): Promise<TtapiSunoTaskState> {
   const jobId = decodeTtapiSunoTaskId(taskId);

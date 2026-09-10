@@ -208,34 +208,6 @@ export function countBgmStyleDescriptors(style: string): number {
     .filter(Boolean).length;
 }
 
-/**
- * 在世音乐家点名检测。
- *
- * Suno **主动拦艺人名**，写了会静默失败。作品名可以用
- * （「Mission Impossible 风格」「十面埋伏拨弦」实测有效），人名不行。
- * 这里只能做提示，不做黑名单——名单永远不全。
- */
-/**
- * 明确点名在世音乐家 → Suno 会拦，写了静默失败。
- *
- * ⚠️ 上一版带了 `/(风格|style)\s*$/` 这种泛化规则，把「悬疑电影风格」也误判了 ——
- * **作品名是允许且有效的**（「Mission Impossible 风格」「十面埋伏拨弦」实测通过），
- * 只有人名不行。所以这里只查名单，不猜句式。
- */
-const ARTIST_NAME_PATTERNS = [
-  /Yo\s*Yo\s*Ma/i,
-  /Hans\s*Zimmer/i,
-  /Ennio\s*Morricone/i,
-  /John\s*Williams/i,
-  /久石让/,
-  /坂本龍一|坂本龙一/,
-  /谭盾/,
-];
-
-export function looksLikeArtistName(text: string): boolean {
-  const t = String(text || "");
-  return ARTIST_NAME_PATTERNS.some((re) => re.test(t));
-}
 
 
 /** 结构标签：段落数是时长的主要杠杆，`[End]` 强制终止 */

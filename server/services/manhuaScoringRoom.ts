@@ -276,7 +276,7 @@ export async function resumeManhuaBgmTask(input: {
     }
     if (isV6Task) {
       // TTAPI 整单 SUCCESS 才结算；少于两首记 missing，不把已出的丢掉。
-      // 轮询遇 429（限流）不算失败：多等一个间隔再问，别把一次限流烧成整单 requeue。
+      // 轮询遇 429（限流）不算失败：等一个间隔再问（deadline 照旧生效），别把一次限流烧成整单 requeue。
       let state: Awaited<ReturnType<typeof getTtapiSunoTask>>;
       try {
         state = await getTtapiSunoTask(taskId, { abortSignal: input.abortSignal });

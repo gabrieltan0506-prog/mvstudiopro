@@ -121,6 +121,7 @@ describe("ttapiSunoMusic（Suno v6 · TTAPI 网关客户端）", () => {
       { status: 200, body: "not json" },
       { status: 200, body: { status: "SUCCESS", data: {} } },
       { status: 200, body: { status: "FAILED", data: { jobId: JOB } } },
+      { status: 200, body: { status: "PROCESSING", data: {} } },
     ]) {
       calls.length = 0;
       reply = () => response;
@@ -131,6 +132,13 @@ describe("ttapiSunoMusic（Suno v6 · TTAPI 网关客户端）", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("test-key transport")));
     await expect(createTtapiSunoTask(request)).rejects.toMatchObject({ submissionUnknown: true });
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("200 + FAILED 且无 jobId＝上游明确拒单（没建单），标明确拒绝可退款", async () => {
+    reply = () => ({ status: 200, body: { status: "FAILED", message: "quota not enough" } });
+    const error = await createTtapiSunoTask(request).catch((e) => e);
+    expect(error).toMatchObject({ code: "rejected", submissionUnknown: false });
+    expect(isTtapiSunoSubmissionUnknown(error)).toBe(false);
   });
 
   it("明确拒绝（403/429）与尚未发出的请求不标未知；错误中不夹带上游正文或鉴权", async () => {

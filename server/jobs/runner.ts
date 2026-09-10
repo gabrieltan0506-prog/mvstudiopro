@@ -1944,7 +1944,9 @@ async function processManhuaBgmJob(params: {
         throw createError;
       }
       // 上游没建成单＝钱没烧出去，退回；建成单之后失败按「已烧对账」不退（与视频任务同口径）。
-      // 按实际扣费结果退：admin/none 没扣过就不退，否则桥来源失败一次白给 20 分
+      // 先把阶段改成「已拒单」，别让 output 停在 submitting 误导人工对账
+      await patchJobRunningProgressStrict(params.jobId, { bgmStage: "submit_rejected" }).catch(() => {});
+      // 按实际扣费结果退：admin/none 没扣过就不退，否则 v6 来源失败一次白给 20 分
       if (bgmDeduct && Number.isFinite(numericUserId)) {
         const { refundCreditsForDeductAmount } = await import("../credits");
         await refundCreditsForDeductAmount(numericUserId, "配乐建单失败退回", bgmDeduct, "manhuaBgm", {
@@ -3619,6 +3621,7 @@ async function runClaimedJob(
       const hasUpstreamTaskId = Boolean(
         String(output?.upstreamTaskId || "").trim()
       );
+      const submitRejected = output?.bgmStage === "submit_rejected";
       const explicitTerminalFailure = /\b(failed|cancelled)\b/.test(
         error instanceof Error ? error.message : String(error)
       );
@@ -3634,7 +3637,9 @@ async function runClaimedJob(
           job.id,
           hasUpstreamTaskId
             ? `${message}；原配乐任务号已保留，可人工核对`
-            : `${message}；建单结果待核对，未自动重新提交`
+            : submitRejected
+              ? `${message}；上游明确拒单，已按实扣退回`
+              : `${message}；建单结果待核对，未自动重新提交`
         );
       }
     } else if (nativeManhuaLearnJob) {

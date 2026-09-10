@@ -11,7 +11,6 @@ import {
   clampBgmDurationSec,
   deriveManhuaBgmBriefSeed,
   countBgmStyleDescriptors,
-  looksLikeArtistName,
   resolveBgmDurationSec,
 } from "./manhuaBgmBrief";
 
@@ -127,22 +126,7 @@ describe("时长", () => {
   });
 });
 
-describe("艺人名检测与提交前校验", () => {
-  it("在世音乐家点名会被 Suno 拦，要提示转译成可听特征", () => {
-    expect(looksLikeArtistName("cello是Yo Yo Ma的悠扬风格")).toBe(true);
-    expect(looksLikeArtistName("久石让 风格")).toBe(true);
-  });
-
-  it("普通电影风格不误判 —— 上一版的泛化正则把「悬疑电影风格」也拦了", () => {
-    expect(looksLikeArtistName("悬疑电影风格，低音弦乐铺底")).toBe(false);
-    expect(looksLikeArtistName("仙侠电影风格")).toBe(false);
-  });
-
-  it("作品名可以用（Mission Impossible / 十面埋伏 实测有效）", () => {
-    expect(looksLikeArtistName("Mission Impossible 风格，节奏高燃")).toBe(false);
-    expect(looksLikeArtistName("琵琶十面埋伏拨弦三次")).toBe(false);
-  });
-
+describe("风格描述（v6 不拦艺人名）", () => {
   it("v6 不再拦艺人名（0910：Suno 不挡人名，混合风格算二次创作），styleOverrideZh 原样进 brief", () => {
     const b = buildManhuaBgmBrief({ ...base, styleOverrideZh: "王力宏30%與汪蘇瀧70% 風格" });
     expect(b.style).toContain("王力宏30%");

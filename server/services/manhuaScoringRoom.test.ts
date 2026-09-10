@@ -153,6 +153,27 @@ describe("漫剧配乐建单与恢复", () => {
     expect(upstream.create).not.toHaveBeenCalled();
   });
 
+  it("v6 轮询遇 429：等一个间隔再问仍能结算；持续 429 到点抛超时，只 GET 不 POST", async () => {
+    const { TtapiSunoRequestError } = await import("./ttapiSunoMusic.js");
+    bridge.create.mockClear();
+    bridge.get.mockReset();
+    bridge.get
+      .mockRejectedValueOnce(new TtapiSunoRequestError("rejected", false, 429))
+      .mockResolvedValueOnce({ status: "completed", musics: [], audioUrls: ["https://cdn.example/a.mp3", "https://cdn.example/b.mp3"], missing: 0 });
+    const out = await resumeManhuaBgmTask({ taskId: "ttapi:job0429", userId: "42", brief: { ...brief, model: "suno-v6" }, pollIntervalMs: 1 });
+    expect(out.variants).toHaveLength(2);
+    expect(bridge.get).toHaveBeenCalledTimes(2);
+    expect(bridge.create).not.toHaveBeenCalled();
+    bridge.get.mockReset();
+    bridge.get.mockRejectedValue(new TtapiSunoRequestError("rejected", false, 429));
+    await expect(resumeManhuaBgmTask({ taskId: "ttapi:job0429", userId: "42", brief: { ...brief, model: "suno-v6" }, pollIntervalMs: 1, pollTimeoutMs: 5 })).rejects.toThrow(/未完成/);
+    expect(bridge.create).not.toHaveBeenCalled();
+    // 非 429 的拒绝照常抛
+    bridge.get.mockReset();
+    bridge.get.mockRejectedValue(new TtapiSunoRequestError("rejected", false, 401));
+    await expect(resumeManhuaBgmTask({ taskId: "ttapi:job0429", userId: "42", brief: { ...brief, model: "suno-v6" }, pollIntervalMs: 1 })).rejects.toThrow(/认证/);
+  });
+
   it("v6 来源：恢复按 TTAPI 任务号轮询到 SUCCESS，不碰 EvoLink，变体照常转存本人前缀", async () => {
     bridge.get.mockReset();
     bridge.get

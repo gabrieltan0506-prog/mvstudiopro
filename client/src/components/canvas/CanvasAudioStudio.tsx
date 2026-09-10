@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference";
-import type { BgmBriefModel } from "@shared/manhuaBgmBrief";
+import { BGM_BRIEF_MODEL_LABEL_ZH, type BgmBriefModel } from "@shared/manhuaBgmBrief";
 import { buildPremixTimelineClips, isPremixPendingKey, PREMIX_PENDING_PREFIX } from "@/lib/manhuaPremixMaster";
 import { resolveCanvasMaterialUrl } from "@/lib/omniCanvasApi";
 import { compileCanvasDialogueInput } from "@shared/canvasDialogueControls";
@@ -1240,7 +1240,7 @@ export function CanvasAudioStudioView({
             <>
               {brief.model !== "suno-v5.5-beta" ? (
                 <p className="text-[10px] text-amber-200/80">
-                  来源：{brief.model === "suno-v6" ? "Suno v6（TTAPI）" : brief.model === "suno-v6-wild" ? "Suno v6-wild（TTAPI·实验）" : "Suno v6-mini（TTAPI）"}
+                  来源：{BGM_BRIEF_MODEL_LABEL_ZH[brief.model]}
                 </p>
               ) : null}
               <label className="block text-xs">
