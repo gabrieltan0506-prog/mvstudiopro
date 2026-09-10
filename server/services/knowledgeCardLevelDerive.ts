@@ -86,7 +86,10 @@ async function chatOnce(gw: DeriveGateway, params: { system: string; user: strin
       ],
       temperature: 0.2,
       max_tokens: params.maxTokens,
-      ...(gw.name === "evolink" ? { thinking: { type: "disabled" } } : {}),
+      // 0910 用户令：思考一律打开、不准关闭，档位 high
+      ...(gw.name === "evolink"
+        ? { thinking: { type: "enabled", reasoning_effort: "high" } }
+        : { reasoning: { effort: "high" } }),
     }),
     signal: params.abortSignal ?? AbortSignal.timeout(DERIVE_TIMEOUT_MS),
   });

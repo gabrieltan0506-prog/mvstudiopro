@@ -14,44 +14,48 @@ import {
   KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS,
   KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
   KNOWLEDGE_CARD_DISTILL_MODEL_QWEN_OR,
+  KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
   KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
   KNOWLEDGE_CARD_DISTILL_MODEL_TERRA,
   resolveKnowledgeCardDistillModel,
 } from "../../shared/knowledgeCardDistillModels";
 
 describe("knowledgeCardDistill model", () => {
-  it("defaults to Evolink GPT-5.6 Sol", () => {
-    expect(resolveKnowledgeCardDistillModel(undefined)).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_SOL);
-    expect(KNOWLEDGE_CARD_DISTILL_MODEL).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_SOL);
+  it("defaults to DeepSeek V4 Flash (0910 拍板：不用 Sol)", () => {
+    expect(resolveKnowledgeCardDistillModel(undefined)).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
+    expect(KNOWLEDGE_CARD_DISTILL_MODEL).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
   });
 
-  it("only two tiers remain: Sol and Qwen (0908 拍板)", () => {
+  it("only two tiers remain: DeepSeek and Qwen", () => {
     expect(KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS.map((o) => o.id)).toEqual([
-      KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
+      KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
       KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
     ]);
   });
 
-  it("migrates retired Claude / Kimi tiers to Sol; legacy terra / OR-qwen kept", () => {
+  it("migrates retired Sol / Claude / Kimi tiers to DeepSeek; legacy terra / OR-qwen kept", () => {
+    expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_SOL)).toBe(
+      KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
+    );
     expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_CLAUDE_RETIRED)).toBe(
-      KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
+      KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
     );
     expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_KIMI_RETIRED)).toBe(
-      KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
+      KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
     );
     expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toBe(
       KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
     );
     expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_TERRA)).toBe(
-      KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
+      KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
     );
     expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN_OR)).toBe(
       KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
     );
   });
 
-  it("falls back on unknown id to Sol", () => {
-    expect(resolveKnowledgeCardDistillModel("not-a-model")).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_SOL);
+  it("falls back on unknown id to DeepSeek", () => {
+    expect(resolveKnowledgeCardDistillModel("not-a-model")).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
   });
 });
 
@@ -97,20 +101,21 @@ describe("splitSourceTextForDistill", () => {
 
 describe("per-model distill profiles", () => {
   it("gives each model its own chunking + effort tuning", () => {
-    const sol = knowledgeCardDistillProfile(KNOWLEDGE_CARD_DISTILL_MODEL_SOL);
+    const deepseek = knowledgeCardDistillProfile(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
     const qwen = knowledgeCardDistillProfile(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN);
 
-    // Qwen 最慢且压缩过度 → 段最小、最少小节最高
-    expect(sol.chunkChars).toBeGreaterThan(qwen.chunkChars);
-    expect(qwen.minSectionsPerChunk).toBeGreaterThan(sol.minSectionsPerChunk);
+    // Qwen 最慢且压缩过度 → 段最小、最少小节最高；DeepSeek 便宜且 1M 上下文 → 段大、并发高
+    expect(deepseek.chunkChars).toBeGreaterThan(qwen.chunkChars);
+    expect(deepseek.concurrency).toBeGreaterThanOrEqual(qwen.concurrency);
+    expect(qwen.minSectionsPerChunk).toBeGreaterThan(deepseek.minSectionsPerChunk);
 
-    // 0908/0909 用户令：Sol 只开 medium；Qwen 用 high，不上 xhigh
-    expect(sol.effortChunk).toBe("medium");
-    expect(sol.effortFinal).toBe("medium");
+    // 0910 用户令：DeepSeek 思考 high（不用 low）；0909：Qwen 用 high，不上 xhigh
+    expect(deepseek.effortChunk).toBe("high");
+    expect(deepseek.effortFinal).toBe("high");
     expect(qwen.effortChunk).toBe("high");
     expect(qwen.effortFinal).toBe("high");
 
-    for (const p of [sol, qwen]) {
+    for (const p of [deepseek, qwen]) {
       expect(p.chunkRetries).toBeGreaterThanOrEqual(1);
       expect(p.requestTimeoutMs).toBeGreaterThanOrEqual(60_000);
     }
@@ -123,10 +128,10 @@ describe("per-model distill profiles", () => {
   });
 
   it("estimates chunk count per model", () => {
-    expect(estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_SOL, 3_000)).toBe(1);
-    const solChunks = estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_SOL, 95_000);
+    expect(estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK, 3_000)).toBe(1);
+    const deepseekChunks = estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK, 95_000);
     const qwenChunks = estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN, 95_000);
-    expect(qwenChunks).toBeGreaterThan(solChunks);
+    expect(qwenChunks).toBeGreaterThan(deepseekChunks);
   });
 });
 

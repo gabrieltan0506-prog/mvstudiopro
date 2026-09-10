@@ -5,29 +5,33 @@ import {
   distillGatewayChain,
   makeKnowledgeCardPageSelector,
 } from "./knowledgeCardDistill";
-import { KNOWLEDGE_CARD_DISTILL_MODEL_QWEN, KNOWLEDGE_CARD_DISTILL_MODEL_SOL } from "../../shared/knowledgeCardDistillModels";
+import { KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK, KNOWLEDGE_CARD_DISTILL_MODEL_QWEN } from "../../shared/knowledgeCardDistillModels";
+import { pageTriageTestHooks } from "./knowledgeCardPageTriage";
 import type { KnowledgeCardDocumentPageSet } from "./knowledgeCardDocumentPages";
+
+/** 让 DeepSeek 视觉档两家网关都失败，逼挑页走 Qwen 兜底链 */
+const triageVisionDown = <T,>(fn: () => Promise<T>) =>
+  pageTriageTestHooks.run({ chat: (async () => { throw new Error("vision down"); }) as never }, fn);
 
 afterEach(() => {
   vi.unstubAllEnvs();
   __setKnowledgeCardDistillGatewayInvokerForTest(null);
 });
 
-describe("distillGatewayChain（0908：EvoLink 主通道，各档官方兜底）", () => {
-  it("Sol: EvoLink → OpenAI 官方；Qwen: 百炼新加坡 token plan → EvoLink（0909 拍板）", () => {
+describe("distillGatewayChain（EvoLink 主通道，各档自带兜底）", () => {
+  it("DeepSeek: EvoLink → OpenRouter（0910 拍板）；Qwen: 百炼新加坡 token plan → EvoLink（0909 拍板）", () => {
     vi.stubEnv("EVOLINK_API_KEY", "ev-key");
-    vi.stubEnv("OPENAI_API_KEY", "sk-official123");
+    vi.stubEnv("OPENROUTER_API_KEY", "sk-or-123");
     vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "sg-key");
-    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_SOL)).toEqual(["evolink", "openai_official"]);
+    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK)).toEqual(["evolink", "openrouter"]);
     expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual(["dashscope_sg", "evolink"]);
   });
 
   it("missing keys shrink the chain instead of pointing at an unconfigured channel", () => {
     vi.stubEnv("EVOLINK_API_KEY", "");
-    vi.stubEnv("OPENAI_API_KEY", "sk-official123");
-    vi.stubEnv("OPENAI_CHAT_API_KEY", "");
+    vi.stubEnv("OPENROUTER_API_KEY", "sk-or-123");
     vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "");
-    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_SOL)).toEqual(["openai_official"]);
+    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK)).toEqual(["openrouter"]);
     expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual([]);
     vi.stubEnv("EVOLINK_API_KEY", "ev-key");
     expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual(["evolink"]);
@@ -35,32 +39,38 @@ describe("distillGatewayChain（0908：EvoLink 主通道，各档官方兜底）
 });
 
 describe("目录页扫读挑页（makeKnowledgeCardPageSelector）", () => {
-  it("falls over to the official channel when EvoLink fails, keeps only pages present on the sheets", async () => {
+  it("vision tiers down → Qwen fallback chain (新加坡 → EvoLink), keeps only pages present on the sheets", async () => {
     vi.stubEnv("EVOLINK_API_KEY", "ev-key");
-    vi.stubEnv("OPENAI_API_KEY", "sk-official123");
+    vi.stubEnv("OPENROUTER_API_KEY", "sk-or-123");
+    vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "sg-key");
     const calls: string[] = [];
     __setKnowledgeCardDistillGatewayInvokerForTest(async (p) => {
-      calls.push(p.gateway);
-      if (p.gateway === "evolink") throw new Error("算力紧张，请稍后再试");
+      calls.push(`${p.gateway}:${p.modelName}`);
+      if (p.gateway === "dashscope_sg") throw new Error("算力紧张，请稍后再试");
       return `选好了：{"pages":[{"page":41,"reason":"分式图解"},{"page":999,"reason":"不存在"},{"page":2}]}`;
     });
-    const select = makeKnowledgeCardPageSelector(KNOWLEDGE_CARD_DISTILL_MODEL_SOL);
-    const picked = await select([{ index: 1, pageNumbers: Array.from({ length: 48 }, (_, i) => i + 1), imageUrl: "https://signed/sheet-1.jpg", gcsUri: "gs://b/sheet-1.jpg" }], 48);
-    expect(calls).toEqual(["evolink", "openai_official"]);
+    const select = makeKnowledgeCardPageSelector(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
+    const picked = await triageVisionDown(() =>
+      select([{ index: 1, pageNumbers: Array.from({ length: 48 }, (_, i) => i + 1), imageUrl: "https://signed/sheet-1.jpg", gcsUri: "gs://b/sheet-1.jpg" }], 48),
+    );
+    expect(calls).toEqual([`dashscope_sg:${KNOWLEDGE_CARD_DISTILL_MODEL_QWEN}`, `evolink:${KNOWLEDGE_CARD_DISTILL_MODEL_QWEN}`]);
     expect(picked).toEqual([{ pageNumber: 41, reason: "分式图解" }, { pageNumber: 2, reason: undefined }]);
   });
 
   it("fatal quota errors do not fall over; triage failure yields no pages instead of breaking distill", async () => {
     vi.stubEnv("EVOLINK_API_KEY", "ev-key");
-    vi.stubEnv("OPENAI_API_KEY", "sk-official123");
+    vi.stubEnv("OPENROUTER_API_KEY", "sk-or-123");
+    vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "sg-key");
     const calls: string[] = [];
     __setKnowledgeCardDistillGatewayInvokerForTest(async (p) => {
       calls.push(p.gateway);
       throw new Error("提炼账户额度不足，请稍后重试或联系管理员");
     });
-    const select = makeKnowledgeCardPageSelector(KNOWLEDGE_CARD_DISTILL_MODEL_SOL);
-    const picked = await select([{ index: 1, pageNumbers: [1, 2, 3], imageUrl: "https://signed/sheet-1.jpg", gcsUri: "gs://b/sheet-1.jpg" }], 3);
-    expect(calls).toEqual(["evolink"]);
+    const select = makeKnowledgeCardPageSelector(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
+    const picked = await triageVisionDown(() =>
+      select([{ index: 1, pageNumbers: [1, 2, 3], imageUrl: "https://signed/sheet-1.jpg", gcsUri: "gs://b/sheet-1.jpg" }], 3),
+    );
+    expect(calls).toEqual(["dashscope_sg"]);
     expect(picked).toEqual([]);
   });
 });

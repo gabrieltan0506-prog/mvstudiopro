@@ -277,7 +277,7 @@ import {
   type KnowledgeCardProgressState,
 } from "@/components/platform/KnowledgeCardProgress";
 import {
-  KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
+  KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
   knowledgeCardDistillFeeForModel,
   resolveKnowledgeCardDistillModel,
   type KnowledgeCardDistillModelId,
@@ -3014,10 +3014,10 @@ export default function PlatformPage() {
   const [customNoteDistillModel, setCustomNoteDistillModel] = useState<KnowledgeCardDistillModelId>(() => {
     try {
       const raw = localStorage.getItem("mvs-knowledge-card-distill-model");
-      // 旧 terra / OR-qwen slug 由 resolve 迁到 Sol / Evolink Qwen
+      // 旧 Sol / terra / OR-qwen 由 resolve 迁到 DeepSeek / Evolink Qwen
       return resolveKnowledgeCardDistillModel(raw);
     } catch {
-      return KNOWLEDGE_CARD_DISTILL_MODEL_SOL;
+      return KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK;
     }
   });
   /** 成稿档：精华版（提炼主要重点）/ 高级版（主要+次要重点，不限页数）；0908 用户拍板 */
