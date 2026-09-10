@@ -292,6 +292,26 @@ function sleep(ms: number): Promise<void> {
 
 type JobTimeoutErrorWithPartial<T> = Error & { partialResult?: T };
 
+/**
+ * 任务心跳：长任务（如上千页的知识卡提炼）每推进一步就 touch 一次。
+ * 有心跳的任务不按总时长判死，只在「连续 stallMs 没有任何进度」时才判卡死——
+ * 文件多大、多少页都不用猜一个墙钟数字。
+ */
+const jobHeartbeats = new Map<string, number>();
+export function touchJobHeartbeat(jobId: string | null | undefined): void {
+  if (jobId) jobHeartbeats.set(jobId, Date.now());
+}
+function clearJobHeartbeat(jobId: string | null | undefined): void {
+  if (jobId) jobHeartbeats.delete(jobId);
+}
+const STALL_CHECK_INTERVAL_MS = 15_000;
+
+/** 连续多久没有进度算卡死；LLM 单次最长 8 分钟、目录页扫读 3 分钟，默认 20 分钟留足余量 */
+function resolveKnowledgeCardDistillStallMs(): number {
+  const raw = Number(process.env.KNOWLEDGE_CARD_DISTILL_STALL_MS);
+  return Number.isFinite(raw) && raw >= 60_000 ? raw : 20 * 60_000;
+}
+
 export async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -299,6 +319,8 @@ export async function withTimeout<T>(
   opts: {
     onTimeout?: () => void | Promise<void>;
     cleanupGraceMs?: number;
+    /** 传了就按心跳判卡死：连续 stallMs 无 touch 才超时；timeoutMs 不再生效（不设总时长上限） */
+    heartbeat?: { jobId: string; stallMs: number };
   } = {},
 ): Promise<T> {
   let timeoutHandle: NodeJS.Timeout | null = null;
@@ -308,22 +330,40 @@ export async function withTimeout<T>(
     (value) => ({ status: "fulfilled" as const, value }),
     (reason) => ({ status: "rejected" as const, reason }),
   );
+  const heartbeat = opts.heartbeat;
+  if (heartbeat) touchJobHeartbeat(heartbeat.jobId);
+  const startedAt = Date.now();
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutHandle = setTimeout(() => {
+    const fire = (reason: string) => {
       timeoutTriggered = true;
       // 先把墙钟结果锁成失败，再通知底层中止。若 onTimeout 同步令原任务
       // resolve，而这里后 reject，Promise.race 会把已超时任务误报为成功。
-      reject(new Error(message));
+      reject(new Error(reason));
       try {
         timeoutHook = Promise.resolve(opts.onTimeout?.()).then(() => undefined);
       } catch (error) {
         timeoutHook = Promise.reject(error);
       }
-    }, timeoutMs);
+    };
+    if (heartbeat) {
+      const tick = () => {
+        const idleMs = Date.now() - (jobHeartbeats.get(heartbeat.jobId) ?? startedAt);
+        if (idleMs >= heartbeat.stallMs) {
+          fire(`${message}（连续 ${Math.round(idleMs / 60_000)} 分钟没有任何进度，判为卡死）`);
+          return;
+        }
+        // 有心跳的任务不设总时长上限：文件不限大小，时间就不能限（用户 0910 拍板）
+        timeoutHandle = setTimeout(tick, STALL_CHECK_INTERVAL_MS);
+      };
+      timeoutHandle = setTimeout(tick, STALL_CHECK_INTERVAL_MS);
+    } else {
+      timeoutHandle = setTimeout(() => fire(message), timeoutMs);
+    }
   });
   try {
     return await Promise.race([promise, timeoutPromise]);
   } catch (error) {
+    if (heartbeat) clearJobHeartbeat(heartbeat.jobId);
     if (!timeoutTriggered) throw error;
     await timeoutHook.catch(() => undefined);
     const cleanupGraceMs = Math.max(0, opts.cleanupGraceMs ?? 30_000);
@@ -1725,12 +1765,9 @@ export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
       if (input.action === "knowledge_card_distill") {
         const raw = Number(process.env.KNOWLEDGE_CARD_DISTILL_JOB_TIMEOUT_MS);
         if (Number.isFinite(raw) && raw >= 300_000) return raw;
-        // 纯文本：整本约 10 万字十余段，默认 40min；
-        // 带文件：任务里还有 EPUB 转换、逐页抽字缩略、目录页扫读、选中页渲染、上百段提炼。
-        // 0910 一本 1957 页的 EPUB 光读页就要约 50 分钟，120min 会把它杀在半路 → 默认放到 300min（不限页数是产品口径）
-        const hasFiles = Array.isArray((input.params as Record<string, unknown>)?.files)
-          && ((input.params as Record<string, unknown>).files as unknown[]).length > 0;
-        return (hasFiles ? 300 : 40) * 60_000;
+        // 知识卡提炼没有总时长上限：只按心跳判卡死（见 withTimeout heartbeat，连续无进度才判死）。
+        // 「不限页数与大小」是产品口径，时间也不能限；这个返回值对有心跳的任务不生效。
+        return Number.MAX_SAFE_INTEGER;
       }
       if (input.action === "platform_topic_expand") {
         const raw = Number(process.env.PLATFORM_TOPIC_EXPAND_JOB_TIMEOUT_MS);
@@ -3170,6 +3207,7 @@ async function processPlatformJob(
        * 分段提炼 40–90 → 统稿 90–98；终态由 job 状态给出成功/失败。
        */
       const patchProgress = async (patch: Record<string, unknown>) => {
+        touchJobHeartbeat(platformJobId);
         if (!platformJobId) return;
         await patchJobRunningProgress(platformJobId, patch).catch(() => {});
       };
@@ -3386,6 +3424,11 @@ async function runClaimedJob(
       jobType === "audio" &&
       isRecord(job.input) &&
       job.input.action === MANHUA_BGM_ACTION;
+    // 知识卡提炼：按心跳判卡死（每读一页/每提一段都 touch），不按总时长；timeoutMs 只是硬上限兜底
+    const distillHeartbeat =
+      isRecord(job.input) && job.input.action === "knowledge_card_distill"
+        ? { jobId: job.id, stallMs: resolveKnowledgeCardDistillStallMs() }
+        : undefined;
     const { output, provider } = await withTimeout(
       executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id),
       timeoutMs,
@@ -3397,7 +3440,9 @@ async function runClaimedJob(
             },
             cleanupGraceMs: 30_000,
           }
-        : undefined
+        : distillHeartbeat
+          ? { heartbeat: distillHeartbeat }
+          : undefined
     );
     const succeededPersisted = manhuaLearnJob
       ? await markManhuaLearnJobSucceededWithRetry(job.id, output, provider)

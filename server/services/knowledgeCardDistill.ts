@@ -62,6 +62,15 @@ const DISTILL_MAX_TOKENS = Math.min(
   Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_MAX_TOKENS) || 32_768, 4096),
   65_536,
 );
+/** 最终统稿一次要吐出整份成稿（高级版 96 节约 4–6 万 token）：输出上限给到模型允许的高位，超时放到 15 分钟 */
+const DISTILL_FINAL_MAX_TOKENS = Math.min(
+  Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_FINAL_MAX_TOKENS) || 65_536, DISTILL_MAX_TOKENS),
+  120_000,
+);
+const DISTILL_FINAL_REFINE_TIMEOUT_MS = Math.min(
+  Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_FINAL_TIMEOUT_MS) || 15 * 60_000, 480_000),
+  60 * 60_000,
+);
 
 /**
  * 两档分别调参（2026-08-05 实测 FDE PDF 前 25k 字 / 3 段；Kimi 档已下架，数据留作对照）：
@@ -521,7 +530,8 @@ function distillFetchTimeoutMs(
   const override = Number(process.env.KNOWLEDGE_CARD_DISTILL_TIMEOUT_MS);
   if (Number.isFinite(override) && override >= 60_000) return Math.min(override, 480_000);
   if (Number.isFinite(timeoutOverrideMs) && Number(timeoutOverrideMs) > 0) {
-    return Math.min(Number(timeoutOverrideMs), 480_000);
+    // 调用方显式给的超时（最终统稿 15 分钟）允许超过默认 8 分钟上限
+    return Math.min(Number(timeoutOverrideMs), 60 * 60_000);
   }
   return DISTILL_PROFILES[modelName].requestTimeoutMs;
 }
@@ -605,6 +615,8 @@ async function invokeDistillViaGateway(params: {
   timeoutMs?: number;
   docKeys?: string[];
   detailLevel?: KnowledgeCardDetailLevel;
+  /** 覆盖默认输出上限（最终统稿用） */
+  maxTokens?: number;
 }): Promise<string> {
   const userContent = buildDistillUserContent(params);
   const hasImages = params.imageUrls.length > 0 || (params.pageImages?.length ?? 0) > 0;
@@ -627,21 +639,21 @@ async function invokeDistillViaGateway(params: {
       // Evolink Qwen：档位只认 low|medium|xhigh（无 high/max）；用户令不上 xhigh，high 映射为 medium
       body.enable_thinking = true;
       body.reasoning_effort = params.effort === "high" || params.effort === "max" ? "medium" : params.effort;
-      body.max_completion_tokens = DISTILL_MAX_TOKENS;
+      body.max_completion_tokens = params.maxTokens ?? DISTILL_MAX_TOKENS;
     } else {
       body.reasoning_effort = params.effort;
-      body.max_tokens = DISTILL_MAX_TOKENS;
+      body.max_tokens = params.maxTokens ?? DISTILL_MAX_TOKENS;
     }
   } else if (params.gateway === "openai_official") {
     key = getOfficialOpenAiApiKey();
     url = OPENAI_OFFICIAL_CHAT_COMPLETIONS_URL;
     body.reasoning_effort = params.effort;
-    body.max_completion_tokens = DISTILL_MAX_TOKENS;
+    body.max_completion_tokens = params.maxTokens ?? DISTILL_MAX_TOKENS;
   } else {
     key = getDashscopeSgPlanKey();
     url = DASHSCOPE_SG_PLAN_CHAT_URL;
     body.enable_thinking = true;
-    body.max_tokens = DISTILL_MAX_TOKENS;
+    body.max_tokens = params.maxTokens ?? DISTILL_MAX_TOKENS;
   }
   if (!key) throw new Error(`提炼通道未配置（${gatewayLabel(params.gateway)}），请稍后重试`);
 
@@ -719,6 +731,13 @@ async function invokeDistillLlm(params: {
   timeoutMs?: number;
   docKeys?: string[];
   detailLevel?: KnowledgeCardDetailLevel;
+  /**
+   * 内容校验：返回非空字符串＝这家网关回的是坏内容（比如 233 万字稿子只回 103 字），
+   * 按失败处理换下一家。0910 事故：EvoLink 回坏内容算「成功」，OpenAI 官方根本没被试到。
+   */
+  validate?: (text: string) => string | null;
+  /** 覆盖默认输出上限（最终统稿用） */
+  maxTokens?: number;
 }): Promise<string> {
   const chain = distillGatewayChain(params.modelName);
   if (!chain.length) throw new Error("提炼通道未配置，请稍后重试");
@@ -726,7 +745,10 @@ async function invokeDistillLlm(params: {
   for (let i = 0; i < chain.length; i++) {
     const gateway = chain[i]!;
     try {
-      return await distillGatewayInvoker({ ...params, gateway, modelName: params.modelName });
+      const out = await distillGatewayInvoker({ ...params, gateway, modelName: params.modelName });
+      const problem = params.validate?.(out);
+      if (problem) throw new Error(`坏输出：${problem}`);
+      return out;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       // 额度/配置/安全拒答等确定性失败不换通道（换了也一样，还可能双花）
@@ -971,14 +993,14 @@ async function refineOnce(params: {
         params.modelName,
         params.detailLevel,
       ),
-      timeoutMs: distillRefineTimeoutMs(params.modelName),
+      timeoutMs: params.stage === "final" ? DISTILL_FINAL_REFINE_TIMEOUT_MS : distillRefineTimeoutMs(params.modelName),
+      maxTokens: params.stage === "final" ? DISTILL_FINAL_MAX_TOKENS : undefined,
+      // 坏内容当失败换下一家网关，而不是在这里默默保留原稿
+      validate: (text) =>
+        refinedOutputLooksBroken(text, params.minSections, countMarkdownSections(params.body))
+          ? `${params.body.length} 字只回 ${text.trim().length} 字 / ${countMarkdownSections(text)} 节`
+          : null,
     });
-    if (refinedOutputLooksBroken(refined, params.minSections, countMarkdownSections(params.body))) {
-      console.warn(
-        `[knowledgeCardDistill] refine(${params.stage}) output broken (${params.body.length} → ${refined.length} chars), keep input`,
-      );
-      return params.body;
-    }
     return refined;
   } catch (err) {
     console.warn(
@@ -1058,6 +1080,40 @@ async function refineMergedDistill(params: {
       );
       break;
     }
+  }
+
+  // 归并停滞但稿子仍远超一次能喂的长度（0910：23 万字 / 581 节）：不整段硬送，
+  // 按目标节数强制分组收紧，每组只留自己该占的份额，直到能一次喂下或分组无效
+  for (let round = 0; round < DISTILL_REDUCE_MAX_DEPTH && !fitsOnePass(); round += 1) {
+    const sectionsBefore = countMarkdownSections(current);
+    const groups = groupMarkdownSections(current, Math.max(2, Math.ceil(current.length / Math.max(1, profile.refineMaxChars))));
+    if (groups.length < 2) break;
+    const perGroupTarget = Math.max(2, Math.ceil(params.minSections / groups.length));
+    console.info(
+      `[knowledgeCardDistill] forced tighten round=${round} ${sectionsBefore} sections / ${current.length} chars → ${groups.length} groups × ${perGroupTarget} sections`,
+    );
+    const tightened: string[] = new Array(groups.length);
+    for (let i = 0; i < groups.length; i += profile.concurrency) {
+      const idxs = groups.slice(i, i + profile.concurrency).map((_, j) => i + j);
+      await Promise.all(
+        idxs.map(async (idx) => {
+          tightened[idx] = await refineOnce({
+            body: groups[idx]!,
+            modelName: params.modelName,
+            minSections: perGroupTarget,
+            stage: "tighten",
+            detailLevel: params.detailLevel,
+          });
+        }),
+      );
+    }
+    const next = mergeDistilledMarkdownChunks(tightened);
+    if (next.length >= current.length * 0.95) {
+      console.info(`[knowledgeCardDistill] forced tighten stalled (${current.length} → ${next.length} chars), stop`);
+      current = next.length < current.length ? next : current;
+      break;
+    }
+    current = next;
   }
 
   let final = await refineOnce({
@@ -1290,9 +1346,14 @@ const TRIAGE_SHEETS_PER_CALL = 8;
  * 扫读失败不阻断整体提炼（退回无参考页）。
  */
 export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillModelId) {
-  return async (sheets: KnowledgeCardContactSheet[], pageCount: number): Promise<KnowledgeCardPageSelection[]> => {
+  return async (
+    sheets: KnowledgeCardContactSheet[],
+    pageCount: number,
+    onProgress?: (doneSheets: number, totalSheets: number) => void | Promise<void>,
+  ): Promise<KnowledgeCardPageSelection[]> => {
     const picked: KnowledgeCardPageSelection[] = [];
     for (let i = 0; i < sheets.length; i += TRIAGE_SHEETS_PER_CALL) {
+      if (i > 0) await onProgress?.(i, sheets.length);
       const group = sheets.slice(i, i + TRIAGE_SHEETS_PER_CALL);
       const pageNumbers = group.flatMap((sheet) => sheet.pageNumbers);
       try {
@@ -1308,7 +1369,7 @@ export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillMod
         const allowed = new Set(pageNumbers);
         for (const item of parsePageTriage(raw)) if (allowed.has(item.pageNumber)) picked.push(item);
       } catch (err) {
-        console.warn(`[knowledgeCardDistill] 目录页扫读失败（第 ${i + 1} 组），本组不选参考页：${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`);
+        console.warn(`[knowledgeCardDistill] 目录页扫读失败（第 ${Math.floor(i / TRIAGE_SHEETS_PER_CALL) + 1}/${Math.ceil(sheets.length / TRIAGE_SHEETS_PER_CALL)} 组，目录页 ${i + 1}–${Math.min(sheets.length, i + TRIAGE_SHEETS_PER_CALL)}），本组不选参考页：${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`);
       }
     }
     return picked;
