@@ -144,3 +144,23 @@ describe("mergeDistilledMarkdownChunks", () => {
     expect(merged.match(/^# /gm)?.length).toBe(1);
   });
 });
+
+describe("长书单段失败不拖垮整本（0910）", () => {
+  it("非致命错误：占位说明进正文 + 提醒；致命错误（额度/通道）照旧整本抛", async () => {
+    const { distillOneChunkOrSkip } = await import("./knowledgeCardDistill");
+    const notices: string[] = [];
+    const out = await distillOneChunkOrSkip(n => notices.push(n), 120, 11, "第12章", async () => {
+      throw new Error("模型返回格式异常：Unexpected token <");
+    });
+    expect(out).toContain("## 第 12/120 段（第12章）未能提炼");
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("第 12/120 段（第12章）提炼失败已跳过");
+    await expect(
+      distillOneChunkOrSkip(n => notices.push(n), 120, 0, "x", async () => {
+        throw new Error("额度不足");
+      }),
+    ).rejects.toThrow("额度不足");
+    expect(notices).toHaveLength(1);
+    expect(await distillOneChunkOrSkip(undefined, 3, 0, "x", async () => "## 正常")).toBe("## 正常");
+  });
+});

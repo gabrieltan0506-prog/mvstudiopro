@@ -1726,10 +1726,11 @@ export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
         const raw = Number(process.env.KNOWLEDGE_CARD_DISTILL_JOB_TIMEOUT_MS);
         if (Number.isFinite(raw) && raw >= 300_000) return raw;
         // 纯文本：整本约 10 万字十余段，默认 40min；
-        // 带文件（0908）：任务里还有 EPUB 转换、缩略目录页扫读、选中页渲染，默认 120min
+        // 带文件：任务里还有 EPUB 转换、逐页抽字缩略、目录页扫读、选中页渲染、上百段提炼。
+        // 0910 一本 1957 页的 EPUB 光读页就要约 50 分钟，120min 会把它杀在半路 → 默认放到 300min（不限页数是产品口径）
         const hasFiles = Array.isArray((input.params as Record<string, unknown>)?.files)
           && ((input.params as Record<string, unknown>).files as unknown[]).length > 0;
-        return (hasFiles ? 120 : 40) * 60_000;
+        return (hasFiles ? 300 : 40) * 60_000;
       }
       if (input.action === "platform_topic_expand") {
         const raw = Number(process.env.PLATFORM_TOPIC_EXPAND_JOB_TIMEOUT_MS);

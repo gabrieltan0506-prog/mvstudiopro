@@ -200,7 +200,7 @@ const EVOLINK_DIRECT_CHAT_URL = String(
  * 目标 `##` 小节数。实现已挪到 shared，前端要用同一份来预估提炼后的页数
  * （「要不要提炼」的弹窗靠它算账），两边算法必须一致。
  */
-export { suggestKnowledgeCardMinSections };
+export { suggestKnowledgeCardMinSections, distillOneChunkOrSkip };
 
 /** 三档默认的节内条数（Qwen 会按 profile 抬高，见 `bulletsPerSection`） */
 const DISTILL_DEFAULT_BULLETS = { min: 2, max: 4 } as const;
@@ -821,6 +821,30 @@ async function distillOneChunkWithRetry(params: {
   throw lastError || new Error(KNOWLEDGE_CARD_DISTILL_TIMEOUT_MESSAGE);
 }
 
+/**
+ * 单段重试 + 细切都失败后不再拖垮整本：该段落成一段占位说明进正文，并发提醒让用户知道哪段没提到。
+ * 致命错误（额度/通道/拒答）照旧整本失败——那不是「一段抽风」而是全书都过不去。
+ * 0910 一本 1957 页的书上百段，任何一段模型返回垃圾就整本作废，用户只看到「算力紧张」。
+ */
+async function distillOneChunkOrSkip(
+  onNotice: ((noticeZh: string) => void) | undefined,
+  totalChunks: number,
+  idx: number,
+  label: string,
+  run: () => Promise<string>,
+): Promise<string> {
+  try {
+    return await run();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (isFatalDistillError(message)) throw err;
+    const where = `第 ${idx + 1}/${totalChunks} 段（${label}）`;
+    console.warn(`[knowledgeCardDistill] ${where} 重试与细切后仍失败，跳过该段：${message.slice(0, 160)}`);
+    onNotice?.(`${where}提炼失败已跳过（${message.slice(0, 60)}），这一段内容不在本次知识卡里`);
+    return `## ${where}未能提炼\n\n（模型对这一段连续返回异常，已跳过；可只把这一段文字重新上传补提。）`;
+  }
+}
+
 type RefineStage = "group" | "final" | "tighten";
 
 function buildRefineSystem(
@@ -1139,6 +1163,8 @@ async function invokeDistillLlmPossiblyChunked(params: {
   minSectionsTotal: number;
   detailLevel: KnowledgeCardDetailLevel;
   onProgress?: (p: KnowledgeCardDistillProgress) => void | Promise<void>;
+  /** 单段提炼跳过等非致命情况的提醒；上层写进 extractionMethods 的 `:notice:`，前端会弹 */
+  onNotice?: (noticeZh: string) => void;
 }): Promise<string> {
   const profile = DISTILL_PROFILES[params.modelName];
   const text = String(params.sourceText || "").trim();
@@ -1185,7 +1211,7 @@ async function invokeDistillLlmPossiblyChunked(params: {
     await Promise.all(
       batchIdx.map(async (idx) => {
         const chunk = chunks[idx]!;
-        outputs[idx] = await distillOneChunkWithRetry({
+        outputs[idx] = await distillOneChunkOrSkip(params.onNotice, chunks.length, idx, chunk.label, () => distillOneChunkWithRetry({
           chunk: chunk.text,
           // 用户附图只挂第一段；原稿参考页跟随所在段
           imageUrls: idx === 0 ? urls : [],
@@ -1198,7 +1224,7 @@ async function invokeDistillLlmPossiblyChunked(params: {
           // 只有带参考页图的段才下发标记规则，没图的段不给模型编标记的口子
           docKeys: chunk.pageImages.length ? Array.from(new Set(chunk.pageImages.map((p) => p.docKey))) : [],
           detailLevel: params.detailLevel,
-        });
+        }));
         done += 1;
       }),
     );
@@ -1368,6 +1394,7 @@ export async function prepareKnowledgeCardCopy(input: {
       minSectionsTotal,
       detailLevel,
       onProgress: input.onProgress,
+      onNotice: (noticeZh) => extracted.methods.push(`长书:notice:${noticeZh}`),
     });
     if (mergedRaw.length >= 8000 && distilled.length < Math.min(800, mergedRaw.length * 0.02)) {
       throw new Error("提炼结果过短，疑似过度压缩，请重试");
