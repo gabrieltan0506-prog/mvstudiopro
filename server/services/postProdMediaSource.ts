@@ -9,9 +9,10 @@
  * 4. gs://<系统桶>/<其他对象>                 —— 必须出现在该用户 succeeded 任务
  *    output 的**明确产物字段**里(逐字段收集→解析成完整对象名→全等比较;
  *    prompt/outputText 等普通文本字段不计入)。
- * HTTPS 只接受系统生成地址:站内 /api/canvas-media/ 稳定链、或系统桶的
- * storage.googleapis.com 链;核对通过后统一写回规范化 gs:// 地址,
- * 不把 24 小时签名链写入 jobs.input(下载时由服务层现签)。
+ * HTTPS 接受两类:站内 /api/canvas-media/ 稳定链、系统桶的 storage.googleapis.com 链
+ * (核对通过后统一写回规范化 gs:// 地址,不把 24 小时签名链写入 jobs.input);
+ * 以及本人 succeeded 任务 output 明确产物字段里逐字全等的 https 直链
+ * (整集合成落 Vercel Blob、第三方引擎 CDN 产物都在此列;仍限本人产物,下载禁跳转、有体积上限)。
  */
 import { and, eq } from "drizzle-orm";
 import { jobs } from "../../drizzle/schema";
@@ -203,7 +204,7 @@ export async function loadSucceededJobOutputSources(
   return { objects, urls };
 }
 
-/** 兼容旧调用：只要对象名集合 */
+/** 只要 https 直链集合（对象名走 loadSucceededJobOutputSources().objects） */
 export async function loadSucceededJobOutputUrls(userId: string, bucket: string): Promise<ReadonlySet<string>> {
   return (await loadSucceededJobOutputSources(userId, bucket)).urls;
 }
@@ -215,7 +216,7 @@ export type PostProdMediaDeps = {
   /** 可选：一次遍历同时给对象名与 https 直链；给了就不再调 loadSucceededJobOutputObjects */
   loadSucceededJobOutputSources?: (userId: string, bucket: string) => Promise<{ objects: ReadonlySet<string>; urls: ReadonlySet<string> }>;
   /** 可选（测试注入用）：只给 https 直链；缺省不放行任何外链 */
-  loadSucceededJobOutputUrls?: (userId: string) => Promise<ReadonlySet<string>>;
+  loadSucceededJobOutputUrls?: (userId: string, bucket: string) => Promise<ReadonlySet<string>>;
 };
 
 const realDeps: PostProdMediaDeps = {
@@ -241,7 +242,7 @@ async function buildPostProdMediaContext(
   }
   return {
     jobObjects: await deps.loadSucceededJobOutputObjects(userId, bucket),
-    jobUrls: deps.loadSucceededJobOutputUrls ? await deps.loadSucceededJobOutputUrls(userId) : undefined,
+    jobUrls: deps.loadSucceededJobOutputUrls ? await deps.loadSucceededJobOutputUrls(userId, deps.getBucket()) : undefined,
   };
 }
 

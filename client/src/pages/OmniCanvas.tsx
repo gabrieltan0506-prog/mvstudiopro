@@ -11427,9 +11427,12 @@ export default function OmniCanvas() {
                 segmentRefBusyId={segmentRefBusyId}
                 segmentRefProgress={segmentRefProgress}
                 onPrepareDeliveryAudio={async (finals) => {
+                onPrepareDeliveryAudio={async (finals, onProgress) => {
                   // 交付包：每集整集成片先跑 audio_extract（免费）；单集失败不拦整包，清单里写明
                   const out: Record<string, { url: string; ext: "m4a" | "wav" }> = {};
+                  let done = 0;
                   for (const f of finals) {
+                    onProgress?.(done, finals.length, f.episodeIndex);
                     try {
                       const { jobId } = await queueBurnSubtitleMutation.mutateAsync({
                         action: "audio_extract",
@@ -11456,6 +11459,7 @@ export default function OmniCanvas() {
                     } catch (error) {
                       console.warn(`[交付包] 第${f.episodeIndex}集抽音轨失败`, error);
                     }
+                    done += 1;
                   }
                   return out;
                 }}

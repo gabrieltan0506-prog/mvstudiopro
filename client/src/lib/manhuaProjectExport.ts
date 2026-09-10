@@ -577,6 +577,21 @@ function triggerDownload(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(href), 30_000);
 }
 
+/**
+ * 交付 SRT 用：淡变转场时上段末 cue 终点可能压过下段首 cue 起点（最多 1 秒，与烧字行为一致）。
+ * 烧字滤镜能叠显，但外部剪辑软件导入重叠 cue 会报错，交付前把前一条终点压到后一条起点。
+ */
+export function clampManhuaSubtitleCueOverlap<T extends { startSec: number; endSec: number }>(cues: T[]): T[] {
+  const sorted = [...cues].sort((a, b) => a.startSec - b.startSec || a.endSec - b.endSec);
+  return sorted
+    .map((cue, i) => {
+      const next = sorted[i + 1];
+      const endSec = next && cue.endSec > next.startSec ? next.startSec : cue.endSec;
+      return { ...cue, endSec };
+    })
+    .filter((cue) => cue.endSec > cue.startSec);
+}
+
 /** 勾选产物 → zip（manifest + epXX/…）；失败项写入 manifest.failed */
 export async function exportManhuaProjectZip(
   opts: ExportManhuaProjectZipOpts,
@@ -773,17 +788,34 @@ export async function exportManhuaProjectZip(
     }
     if (opts.includeDelivery) {
       const active = versions.find((v) => v.active) || versions[0];
+      const deliveryFolder = `交付/${epFolder}`;
+      if (active && !active.path) {
+        // 当前版 mp4 没下下来（常见：过期签名链）：清单照写，用户在 zip 里能看到是哪一集缺成片，
+        // 而不是整个 交付/epXX/ 目录凭空消失
+        const docPath = uniqueZipPath(deliveryFolder, "交付清单", undefined, "md");
+        zip.file(
+          docPath,
+          [
+            `# 第${episodeIndex}集 交付包${block.episodeTitle ? ` · ${block.episodeTitle}` : ""}`,
+            "",
+            "- 成片：下载失败（见 manifest.failed；成片链接可能已过期，回成片坞重新打开本集后再导）",
+            "- 字幕 / 音轨：随成片一起跳过",
+          ].join("\n"),
+        );
+        deliveryMeta.push({ episodeIndex, kind: "doc", path: docPath });
+      }
       if (active?.path) {
-        const deliveryFolder = `交付/${epFolder}`;
         const lines: string[] = [
           `# 第${episodeIndex}集 交付包${block.episodeTitle ? ` · ${block.episodeTitle}` : ""}`,
           "",
           `- 成片：\`${active.path}\`（${active.origin === "burn_subtitle" ? "已烧字幕" : "合成版，未烧字"}）`,
         ];
         // 与片内烧字同一套清洗：去 \r、{}、-->、行内空行，防台词伪造 cue/时间码
-        const cues = (active.subtitleTimeline?.cues || [])
-          .map((c) => ({ ...c, textZh: sanitizeBurnSubtitleText(c.textZh) }))
-          .filter((c) => c.textZh);
+        const cues = clampManhuaSubtitleCueOverlap(
+          (active.subtitleTimeline?.cues || [])
+            .map((c) => ({ ...c, textZh: sanitizeBurnSubtitleText(c.textZh) }))
+            .filter((c) => c.textZh),
+        );
         if (cues.length) {
           const srtPath = uniqueZipPath(deliveryFolder, "字幕", undefined, "srt");
           zip.file(srtPath, formatManhuaSubtitleSrt(cues));

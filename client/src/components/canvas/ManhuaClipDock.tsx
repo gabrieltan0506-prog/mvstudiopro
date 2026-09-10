@@ -89,6 +89,7 @@ type Props = {
    */
   onPrepareDeliveryAudio?: (
     finals: Array<{ blockId: string; episodeIndex: number; url: string; gcsUri?: string }>,
+    onProgress?: (done: number, total: number, episodeIndex: number) => void,
   ) => Promise<Record<string, { url: string; ext: "m4a" | "wav" }>>;
 };
 
@@ -300,7 +301,11 @@ export default function ManhuaClipDock({
     setExportBusy(true);
     setDeliveryBusy("抽音轨中…");
     try {
-      const audioMap = onPrepareDeliveryAudio ? await onPrepareDeliveryAudio(finals) : {};
+      const audioMap = onPrepareDeliveryAudio
+        ? await onPrepareDeliveryAudio(finals, (done, total, episodeIndex) =>
+            setDeliveryBusy(`抽音轨 第${episodeIndex}集（${done}/${total}）…`),
+          )
+        : {};
       setDeliveryBusy("打包中…");
       const ids = selectExportableDockIds(items);
       const result = await downloadManhuaProjectZip({
@@ -322,10 +327,18 @@ export default function ManhuaClipDock({
         deliveryAudioByFinalUrl: audioMap,
       });
       const missingAudio = finals.filter((f) => !audioMap[f.url]).length;
+      const delivered = new Set(result.manifest.delivery?.map((d) => d.episodeIndex) || []);
+      const withSrt = new Set(result.manifest.delivery?.filter((d) => d.kind === "srt").map((d) => d.episodeIndex) || []);
+      const missingSrt = Array.from(delivered).filter((ep) => !withSrt.has(ep)).length;
+      const missingVideo = finals.filter((f) => !delivered.has(f.episodeIndex)).length;
       window.alert(
         `已导出交付包 ${result.filename}：${result.deliveryCount} 集（成片 + 字幕 + 音轨 + 清单）${
-          missingAudio ? `，其中 ${missingAudio} 集音轨未抽出（见 交付清单.md）` : ""
-        }${result.failCount ? `，失败 ${result.failCount}` : ""}`,
+          missingSrt ? `，其中 ${missingSrt} 集无字幕` : ""
+        }${missingAudio ? `，${missingAudio} 集音轨未抽出` : ""}${
+          missingVideo ? `，${missingVideo} 集成片下载失败` : ""
+        }${missingSrt || missingAudio || missingVideo ? "（详见各集 交付清单.md）" : ""}${
+          result.failCount ? `，失败 ${result.failCount}` : ""
+        }`,
       );
     } catch (e: unknown) {
       window.alert(e instanceof Error ? e.message : "交付包导出失败");
