@@ -41,7 +41,7 @@ const buttonClass =
   "rounded border border-white/20 px-2 py-1.5 text-xs text-white hover:bg-white/10 disabled:opacity-40";
 
 type MusicBrief = {
-  model: "suno-v5.5-beta" | "suno-v6-mini" | "suno-v6" | "suno-v6-wild";
+  model: BgmBriefModel;
   custom_mode: true;
   instrumental: true;
   style: string;
@@ -110,7 +110,7 @@ export type CanvasAudioStudioServices = {
   }): Promise<JobResult>;
   getDialogue(input: { jobId: string }): Promise<JobResult | null>;
   draftMusic(input: {
-    model?: "suno-v5.5-beta" | "suno-v6-mini" | "suno-v6" | "suno-v6-wild";
+    model?: BgmBriefModel;
     laneZh: string;
     durationSec: number;
     moods: Array<"蓄力" | "冲突" | "反转" | "收束">;
@@ -188,7 +188,7 @@ export function CanvasAudioStudioView({
   const [musicDuration, setMusicDuration] = useState(30);
   const [brief, setBrief] = useState<MusicBrief | null>(null);
   // 缺省 Suno v6（v5.5 0910 已下架）；有下拉时取第一项
-  const [bgmModel, setBgmModel] = useState<"suno-v5.5-beta" | "suno-v6-mini" | "suno-v6" | "suno-v6-wild">(
+  const [bgmModel, setBgmModel] = useState<BgmBriefModel>(
     bgmModels?.[0]?.model ?? "suno-v6",
   );
   const [resumable, setResumable] = useState<Record<string, JobResult>>({});
