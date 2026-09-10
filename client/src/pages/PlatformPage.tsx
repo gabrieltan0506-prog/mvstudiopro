@@ -8046,6 +8046,28 @@ export default function PlatformPage() {
     }
   };
 
+  /**
+   * 提炼产出的完整版长稿落为真源，按当前档决定文本框显示哪一档（精华版即派生一次）。
+   * 审查 P1：三条提炼路径（上传、点生成时仍有待处理文件、粘贴长文先提炼）必须走同一个入口，
+   * 否则选精华版却拿到完整版、按更多页计费；旧书的真源也必须在这里被替换。
+   */
+  const adoptDistilledFullMarkdown = async (distilled: string): Promise<string> => {
+    setCustomNoteFullMarkdown(distilled);
+    setCustomNoteCompactMarkdown(null);
+    if (customNoteDetailLevel !== "concise") return distilled;
+    // 派生失败不连累已到手的完整版：写入完整版、切档回高级版，稍后可再切
+    setCustomNoteUploadStatus("完整版已提炼，正在派生精华版…");
+    try {
+      return await deriveCompactFromFull(distilled);
+    } catch (deriveErr) {
+      const msg = String((deriveErr as { message?: string })?.message || "精华版派生失败");
+      setCustomNoteDetailLevel("full");
+      try { localStorage.setItem("mvs-knowledge-card-detail-level", "full"); } catch { /* ignore */ }
+      toast.warning(`精华版派生失败（${msg.slice(0, 60)}），已先写入完整版；稍后可再切精华版`, { duration: 10_000 });
+      return distilled;
+    }
+  };
+
   /** 成稿档切换：有完整版真源时直接换视图（精华版首次切需派生一次） */
   const switchKnowledgeCardLevel = async (next: KnowledgeCardDetailLevel) => {
     // 文本框被手改过：切档会覆盖，先问一句
@@ -8086,6 +8108,9 @@ export default function PlatformPage() {
     chargeDistillFee?: boolean;
   }): Promise<string> => {
     setCustomNoteProgress((prev) => ({ status: "running", percent: Math.max(prev.status === "running" ? prev.percent : 0, 1), label: "提交提炼任务…" }));
+    // 新一轮提炼开始：旧书的真源作废，避免切档把上一本写回来
+    setCustomNoteFullMarkdown(null);
+    setCustomNoteCompactMarkdown(null);
     const queued = await prepareKnowledgeCardCopyMutation.mutateAsync({
       sourceText: args.sourceText,
       files: args.files?.length ? args.files : undefined,
@@ -8321,6 +8346,7 @@ export default function PlatformPage() {
             onStatus: setCustomNoteUploadStatus,
           });
           if (!distilled) throw new Error("提炼结果为空，请调整文案后重试");
+          distilled = await adoptDistilledFullMarkdown(distilled);
           setCustomNoteText(distilled);
           customNotePendingFilesRef.current = [];
           setCustomNotePendingMeta([]);
@@ -8362,8 +8388,8 @@ export default function PlatformPage() {
                 chargeDistillFee: true,
               });
               if (!refined) throw new Error("提炼结果为空，请调整文案后重试");
-              distilled = refined;
-              setCustomNoteText(refined);
+              distilled = await adoptDistilledFullMarkdown(refined);
+              setCustomNoteText(distilled);
               setCustomNoteUploadStatus(null);
               setCustomNoteDistillPhase("ready");
               await new Promise<void>((r) => requestAnimationFrame(() => r()));
@@ -15344,22 +15370,7 @@ export default function PlatformPage() {
                             if (!distilled) {
                               throw new Error("提炼结果为空，请换文件或改用可选中文字的 PDF / 关键页图片");
                             }
-                            // 完整版长稿是真源；用户选的是精华版就再派生一次（几美分，不扣积分）
-                            setCustomNoteFullMarkdown(distilled);
-                            setCustomNoteCompactMarkdown(null);
-                            let shown = distilled;
-                            if (customNoteDetailLevel === "concise") {
-                              // 派生失败不连累已到手的完整版：写入完整版、切档回高级版，稍后可再切
-                              setCustomNoteUploadStatus("完整版已提炼，正在派生精华版…");
-                              try {
-                                shown = await deriveCompactFromFull(distilled);
-                              } catch (deriveErr) {
-                                const msg = String((deriveErr as { message?: string })?.message || "精华版派生失败");
-                                setCustomNoteDetailLevel("full");
-                                try { localStorage.setItem("mvs-knowledge-card-detail-level", "full"); } catch { /* ignore */ }
-                                toast.warning(`精华版派生失败（${msg.slice(0, 60)}），已先写入完整版；稍后可再切精华版`, { duration: 10_000 });
-                              }
-                            }
+                            const shown = await adoptDistilledFullMarkdown(distilled);
                             setCustomNoteText(shown);
                             customNotePendingFilesRef.current = [];
                             setCustomNotePendingMeta([]);
@@ -15545,6 +15556,8 @@ export default function PlatformPage() {
                       setCustomOptimizeResult(null);
                       setCustomOptimizeSummary(null);
                       setCustomNoteText("");
+                      setCustomNoteFullMarkdown(null);
+                      setCustomNoteCompactMarkdown(null);
                       setCustomOptimizeBrief("");
                       setCustomNoteInfographicTemplateId(null);
                       setCustomNoteInfographicLabelZh(null);

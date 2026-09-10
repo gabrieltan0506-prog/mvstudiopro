@@ -75,6 +75,16 @@ function buildDeriveSystem(keep: number, given: number): string {
 }
 
 async function chatOnce(gw: DeriveGateway, params: { system: string; user: string; maxTokens: number; abortSignal?: AbortSignal }): Promise<string> {
+  // 一批可达 15 分钟，超过卡死阈值：在途也按分钟 touch 心跳
+  const inflightBeat = setInterval(() => touchKnowledgeCardDistillActivity(), 60_000);
+  try {
+    return await chatOnceInner(gw, params);
+  } finally {
+    clearInterval(inflightBeat);
+  }
+}
+
+async function chatOnceInner(gw: DeriveGateway, params: { system: string; user: string; maxTokens: number; abortSignal?: AbortSignal }): Promise<string> {
   const res = await fetch(gw.url, {
     method: "POST",
     headers: {
@@ -89,7 +99,8 @@ async function chatOnce(gw: DeriveGateway, params: { system: string; user: strin
         { role: "user", content: params.user },
       ],
       temperature: 0.2,
-      max_tokens: params.maxTokens,
+      // DeepSeek 思考 high 的推理 token 也计入 max_tokens：翻倍留给思维链；新加坡 Qwen 输出上限按 32k 收
+      max_tokens: gw.name === "dashscope_sg" ? Math.min(params.maxTokens, 32_768) : Math.min(params.maxTokens * 2, 384_000),
       // 0910 用户令：思考一律打开、不准关闭，档位 high（新加坡 compatible-mode 只认 enable_thinking）
       ...(gw.name === "evolink"
         ? { thinking: { type: "enabled" }, reasoning_effort: "high" }

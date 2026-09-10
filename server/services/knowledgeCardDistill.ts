@@ -714,6 +714,9 @@ async function invokeDistillViaGateway(params: {
   if (!key) throw new Error(`提炼通道未配置（${gatewayLabel(params.gateway)}），请稍后重试`);
 
   let res: Response;
+  // 单次统稿可达 15 分钟，超过卡死阈值：请求在途也按分钟 touch 心跳，别把自己判死
+  const inflightBeat = setInterval(() => touchKnowledgeCardDistillActivity(), 60_000);
+  let raw: string;
   try {
     res = await fetch(url, {
       method: "POST",
@@ -721,10 +724,12 @@ async function invokeDistillViaGateway(params: {
       signal: AbortSignal.timeout(distillFetchTimeoutMs(params.modelName, params.timeoutMs)),
       body: JSON.stringify(body),
     });
+    raw = await res.text();
   } catch (err) {
     throw mapFetchAbortError(err);
+  } finally {
+    clearInterval(inflightBeat);
   }
-  const raw = await res.text();
   if (!res.ok) {
     console.warn(
       `[knowledgeCardDistill] ${gatewayLabel(params.gateway)} ${params.modelName} HTTP ${res.status}: ${raw.slice(0, 400)}`,

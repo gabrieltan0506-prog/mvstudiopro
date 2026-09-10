@@ -1782,10 +1782,8 @@ export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
         return 22 * 60_000;
       }
       if (input.action === "knowledge_card_distill" || input.action === "knowledge_card_derive_level") {
-        const raw = Number(process.env.KNOWLEDGE_CARD_DISTILL_JOB_TIMEOUT_MS);
-        if (Number.isFinite(raw) && raw >= 300_000) return raw;
-        // 知识卡提炼没有总时长上限：只按心跳判卡死（见 withTimeout heartbeat，连续无进度才判死）。
-        // 「不限页数与大小」是产品口径，时间也不能限；这个返回值对有心跳的任务不生效。
+        // 知识卡提炼/派生没有总时长上限：只按心跳判卡死（withTimeout heartbeat，连续无进度才判死）。
+        // 「不限页数与大小」是产品口径，时间也不能限；这里不读任何超时环境变量。
         return Number.MAX_SAFE_INTEGER;
       }
       if (input.action === "platform_topic_expand") {

@@ -4446,6 +4446,12 @@ export const appRouter = router({
         if (!isKnowledgeCardDeriveReady()) {
           throw new TRPCError({ code: "PRECONDITION_FAILED", message: "精华版派生未配置（EVOLINK_API_KEY / OPENROUTER_API_KEY）" });
         }
+        // 入队前就查 receipt：查不到直接拒，别把几百万字先写进 jobs.input 再在 worker 里失败
+        const { lookupKnowledgeCardDistillReceiptModel } = await import("./services/knowledgeCardDistillReceipt.js");
+        const receiptModel = await lookupKnowledgeCardDistillReceiptModel(Number(ctx.user.id), input.fullMarkdown);
+        if (!receiptModel) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "找不到这份完整版的提炼记录，无法派生精华版；请重新提炼后再切档" });
+        }
         const jobId = nanoid(16);
         await createJobRecord({
           id: jobId,
