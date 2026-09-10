@@ -209,7 +209,7 @@ const EVOLINK_DIRECT_CHAT_URL = String(
  * 目标 `##` 小节数。实现已挪到 shared，前端要用同一份来预估提炼后的页数
  * （「要不要提炼」的弹窗靠它算账），两边算法必须一致。
  */
-export { suggestKnowledgeCardMinSections, distillOneChunkOrSkip };
+export { suggestKnowledgeCardMinSections, distillOneChunkOrSkip, countMarkdownSections };
 
 /** 三档默认的节内条数（Qwen 会按 profile 抬高，见 `bulletsPerSection`） */
 const DISTILL_DEFAULT_BULLETS = { min: 2, max: 4 } as const;

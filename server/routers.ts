@@ -4428,6 +4428,41 @@ export const appRouter = router({
         return rows.map((row) => buildPostProdJobResponse(row)).filter(Boolean);
       }),
 
+    /**
+     * 知识卡成稿档切换（用户 0910）：完整版长稿是真源，精华版按需派生（DeepSeek V4，几美分），
+     * 两档到最后阶段仍可切，不设页数上限。不收积分：出图时按页计费已够。
+     */
+    enqueueKnowledgeCardLevelDerive: protectedProcedure
+      .input(
+        z.object({
+          fullMarkdown: z.string().min(200).max(600_000),
+          distillModel: z.string().max(64).optional(),
+          targetSections: z.number().int().min(3).max(300).optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const { isKnowledgeCardDeriveReady } = await import("./services/knowledgeCardLevelDerive.js");
+        if (!isKnowledgeCardDeriveReady()) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "精华版派生未配置（EVOLINK_API_KEY / OPENROUTER_API_KEY）" });
+        }
+        const jobId = nanoid(16);
+        await createJobRecord({
+          id: jobId,
+          userId: String(ctx.user.id),
+          type: "platform",
+          provider: "evolink",
+          input: {
+            action: "knowledge_card_derive_level",
+            params: {
+              fullMarkdown: input.fullMarkdown,
+              distillModel: input.distillModel || "",
+              targetSections: input.targetSections ?? null,
+            },
+          },
+        });
+        return { success: true as const, progressJobId: jobId };
+      }),
+
     /** 配乐 brief 为纯确定性编译，零上游调用；计费口径拍板前仅内部账号可见。 */
     // 0902 补解锁：queueManhuaBgm 已降 protected，起草是纯函数零成本，同步放开。
     draftManhuaBgmBrief: protectedProcedure

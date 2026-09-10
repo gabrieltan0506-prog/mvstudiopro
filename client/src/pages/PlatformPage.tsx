@@ -3045,6 +3045,13 @@ export default function PlatformPage() {
   const [customNotePendingMeta, setCustomNotePendingMeta] = useState<Array<{ fileName: string; kind: "doc" | "image" }>>([]);
   /** 提炼完成后先展示再出图 */
   const [customNoteDistillPhase, setCustomNoteDistillPhase] = useState<"idle" | "distilling" | "ready">("idle");
+  /**
+   * 成稿档两视图（用户 0910）：提炼只做一次、以完整版长稿为真源；精华版按需从长稿派生并缓存。
+   * 两档到最后阶段仍可切，不设页数上限，页数与积分随当前视图重算。
+   */
+  const [customNoteFullMarkdown, setCustomNoteFullMarkdown] = useState<string | null>(null);
+  const [customNoteCompactMarkdown, setCustomNoteCompactMarkdown] = useState<string | null>(null);
+  const [customNoteLevelSwitching, setCustomNoteLevelSwitching] = useState(false);
   /** 用戶自選生成類型：單頁連貫圖文知識卡片 or 2×4 分鏡圖 or 深度优化文案（自定義文案專用） */
   const [customNoteKind, setCustomNoteKind] = useState<
     "single_page_knowledge_card" | "storyboard_sheet_landscape" | "optimize_custom_copy"
@@ -7980,6 +7987,7 @@ export default function PlatformPage() {
     }
   };
   const prepareKnowledgeCardCopyMutation = trpc.mvAnalysis.prepareKnowledgeCardCopy.useMutation();
+  const enqueueKnowledgeCardLevelDeriveMutation = trpc.mvAnalysis.enqueueKnowledgeCardLevelDerive.useMutation();
   const optimizeCustomCopyMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
   const customOptimizeCopyCost = CREDIT_COSTS.platformOptimizeCustomCopy;
   const customNoteKnowledgePlan = useMemo(
@@ -7994,6 +8002,62 @@ export default function PlatformPage() {
    * 提炼：短文同步直出；长书由服务端转后台任务，这里轮询进度直到拿到稿子。
    * 上传后与「点生成时仍有待处理文件」两条路径共用，避免逻辑分叉。
    */
+  /** 完整版长稿 → 精华版：后台任务（DeepSeek，几美分，不扣积分），带进度；结果缓存，切回完整版不再重算 */
+  const deriveCompactFromFull = async (full: string): Promise<string> => {
+    if (customNoteCompactMarkdown) return customNoteCompactMarkdown;
+    setCustomNoteLevelSwitching(true);
+    setCustomNoteProgress({ status: "running", percent: 1, label: "派生精华版…" });
+    try {
+      const queued = await enqueueKnowledgeCardLevelDeriveMutation.mutateAsync({
+        fullMarkdown: full,
+        distillModel: customNoteDistillModel,
+      });
+      const job = await pollJobUntilTerminal(queued.progressJobId, {
+        intervalMs: 3000,
+        maxWaitMs: 60 * 60_000,
+        onPoll: ({ output }) => {
+          const out = (output || {}) as { distillPercent?: number; distillStageDone?: number; distillStageTotal?: number };
+          const total = Number(out.distillStageTotal) || 0;
+          setCustomNoteProgress({
+            status: "running",
+            percent: Math.max(1, Math.min(97, Number(out.distillPercent) || 1)),
+            label: total ? `派生精华版 ${Number(out.distillStageDone) || 0}/${total} 批` : "派生精华版…",
+          });
+        },
+      });
+      if (job.status === "failed") throw new Error(job.error || "精华版派生失败，请稍后重试");
+      const out = (job.output || {}) as { distilledMarkdown?: string };
+      const compact = String(out.distilledMarkdown || "").trim();
+      if (!compact) throw new Error("精华版派生结果为空");
+      setCustomNoteCompactMarkdown(compact);
+      setCustomNoteProgress({ status: "running", percent: 60, label: "精华版已就绪，等待出图" });
+      return compact;
+    } finally {
+      setCustomNoteLevelSwitching(false);
+    }
+  };
+
+  /** 成稿档切换：有完整版真源时直接换视图（精华版首次切需派生一次） */
+  const switchKnowledgeCardLevel = async (next: KnowledgeCardDetailLevel) => {
+    setCustomNoteDetailLevel(next);
+    try { localStorage.setItem("mvs-knowledge-card-detail-level", next); } catch { /* ignore */ }
+    if (!customNoteFullMarkdown) return;
+    if (next === "full") {
+      setCustomNoteText(customNoteFullMarkdown);
+      return;
+    }
+    try {
+      const compact = await deriveCompactFromFull(customNoteFullMarkdown);
+      setCustomNoteText(compact);
+      const plan = planKnowledgeCardPages(compact, customNoteDistillModel);
+      toast.success(`精华版已写入文本框 · 约 ${Math.max(1, plan.pageCount || 1)} 页 · 约 ${plan.credits || knowledgeCardCreditsForPages(plan.pageCount || 0, customNoteDistillModel)} 积分`);
+    } catch (err) {
+      const msg = String((err as { message?: string })?.message || "精华版派生失败");
+      toast.error(msg);
+      setCustomNoteProgress((prev) => ({ status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
+    }
+  };
+
   const runKnowledgeCardDistill = async (args: {
     sourceText?: string;
     files?: KnowledgeCardPendingFile[];
@@ -8007,7 +8071,8 @@ export default function PlatformPage() {
       files: args.files?.length ? args.files : undefined,
       forceDistill: true,
       distillModel: customNoteDistillModel,
-      detailLevel: customNoteDetailLevel,
+      // 提炼一律出完整版长稿当真源；精华版之后从长稿派生，两档随时切
+      detailLevel: "full",
       ...(args.chargeDistillFee ? { chargeDistillFee: true } : {}),
     });
 
@@ -15258,11 +15323,19 @@ export default function PlatformPage() {
                             if (!distilled) {
                               throw new Error("提炼结果为空，请换文件或改用可选中文字的 PDF / 关键页图片");
                             }
-                            setCustomNoteText(distilled);
+                            // 完整版长稿是真源；用户选的是精华版就再派生一次（几美分，不扣积分）
+                            setCustomNoteFullMarkdown(distilled);
+                            setCustomNoteCompactMarkdown(null);
+                            let shown = distilled;
+                            if (customNoteDetailLevel === "concise") {
+                              setCustomNoteUploadStatus("完整版已提炼，正在派生精华版…");
+                              shown = await deriveCompactFromFull(distilled);
+                            }
+                            setCustomNoteText(shown);
                             customNotePendingFilesRef.current = [];
                             setCustomNotePendingMeta([]);
                             setCustomNoteDistillPhase("ready");
-                            const plan = planKnowledgeCardPages(distilled, customNoteDistillModel);
+                            const plan = planKnowledgeCardPages(shown, customNoteDistillModel);
                             const pages = Math.max(1, plan.pageCount || 1);
                             const credits =
                               plan.credits || knowledgeCardCreditsForPages(pages, customNoteDistillModel);
@@ -15357,12 +15430,11 @@ export default function PlatformPage() {
                       aria-label="成稿档"
                       className="rounded-md border border-white/15 bg-black/50 px-2 py-1 text-[11px] font-semibold text-white focus:border-[#ff4fb8]/50 focus:outline-none"
                       value={customNoteDetailLevel}
-                      disabled={customNoteBusy || customNoteUploadBusy || customNoteDistillPhase !== "idle"}
-                      title="精华版：提炼主要重点，页数少；高级版：主要与次要重点都包含，表格化压实，不限页数、按页计费"
+                      disabled={customNoteBusy || customNoteUploadBusy || customNoteLevelSwitching || customNoteDistillPhase === "distilling"}
+                      title="精华版：从完整版长稿派生主要重点，页数少；高级版：主要与次要重点都包含，不限页数、按页计费。提炼完成后仍可随时切换，页数与积分随当前档重算"
                       onChange={(e) => {
                         const next = resolveKnowledgeCardDetailLevel(e.target.value);
-                        setCustomNoteDetailLevel(next);
-                        try { localStorage.setItem("mvs-knowledge-card-detail-level", next); } catch { /* ignore */ }
+                        void switchKnowledgeCardLevel(next);
                       }}
                     >
                       {KNOWLEDGE_CARD_DETAIL_LEVELS.map((level) => (

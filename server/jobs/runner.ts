@@ -1762,7 +1762,7 @@ export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
         // 13 页双段 Sol（含 reasoning 重试）默认 22min，避免墙钟砍半稿
         return 22 * 60_000;
       }
-      if (input.action === "knowledge_card_distill") {
+      if (input.action === "knowledge_card_distill" || input.action === "knowledge_card_derive_level") {
         const raw = Number(process.env.KNOWLEDGE_CARD_DISTILL_JOB_TIMEOUT_MS);
         if (Number.isFinite(raw) && raw >= 300_000) return raw;
         // 知识卡提炼没有总时长上限：只按心跳判卡死（见 withTimeout heartbeat，连续无进度才判死）。
@@ -3180,6 +3180,50 @@ async function processPlatformJob(
       };
     }
 
+    // ── knowledge_card_derive_level：完整版长稿 → 精华版（DeepSeek，按批挑节压缩） ──
+    if (input.action === "knowledge_card_derive_level") {
+      const { deriveKnowledgeCardCompact } = await import("../services/knowledgeCardLevelDerive.js");
+      const { planKnowledgeCardPages } = await import("../../shared/knowledgeCardPagination.js");
+      const fullMarkdown = String(params.fullMarkdown || "");
+      if (fullMarkdown.trim().length < 200) throw new Error("完整版稿子太短，无需派生精华版");
+      const distillModel = typeof params.distillModel === "string" && params.distillModel ? params.distillModel : undefined;
+      const targetSections = Number.isFinite(Number(params.targetSections)) && Number(params.targetSections) > 0 ? Number(params.targetSections) : undefined;
+      const patchProgress = async (patch: Record<string, unknown>) => {
+        touchJobHeartbeat(platformJobId);
+        if (!platformJobId) return;
+        await patchJobRunningProgress(platformJobId, patch).catch(() => {});
+      };
+      await patchProgress({ distillStage: "deriving", distillPercent: 1 });
+      const derived = await deriveKnowledgeCardCompact({
+        fullMarkdown,
+        targetSections,
+        onProgress: async (p) => {
+          const frac = p.totalBatches > 0 ? Math.min(1, p.doneBatches / p.totalBatches) : 0;
+          await patchProgress({
+            distillStage: "deriving",
+            distillStageDone: p.doneBatches,
+            distillStageTotal: p.totalBatches,
+            distillPercent: Math.round(5 + 90 * frac),
+          });
+        },
+      });
+      await patchProgress({ distillStage: "finishing", distillPercent: 98 });
+      const plan = planKnowledgeCardPages(derived.markdown, distillModel);
+      return {
+        provider: "evolink",
+        output: {
+          success: true,
+          distilledMarkdown: derived.markdown,
+          detailLevel: "concise",
+          sections: derived.sections,
+          targetSections: derived.targetSections,
+          passes: derived.passes,
+          pageCount: plan.pageCount,
+          credits: plan.credits,
+        },
+      };
+    }
+
     // ── knowledge_card_distill ───────────────────────────────────────────────
     // 长书提炼：整本 10 万字要分十几段跑数分钟，放同步 HTTP 会被网关掐断且拖死健康检查。
     if (input.action === "knowledge_card_distill") {
@@ -3426,7 +3470,7 @@ async function runClaimedJob(
       job.input.action === MANHUA_BGM_ACTION;
     // 知识卡提炼：按心跳判卡死（每读一页/每提一段都 touch），不按总时长；timeoutMs 只是硬上限兜底
     const distillHeartbeat =
-      isRecord(job.input) && job.input.action === "knowledge_card_distill"
+      isRecord(job.input) && (job.input.action === "knowledge_card_distill" || job.input.action === "knowledge_card_derive_level")
         ? { jobId: job.id, stallMs: resolveKnowledgeCardDistillStallMs() }
         : undefined;
     const { output, provider } = await withTimeout(
