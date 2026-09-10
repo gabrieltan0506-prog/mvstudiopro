@@ -1,7 +1,7 @@
 /**
  * 挑参考页（目录页缩略图 → JSON 页码表）的模型链（用户 0910 拍板）：
- * 读图 + 出 JSON 的活，主力 DeepSeek V4 Flash Vision（EvoLink api 优先、OpenRouter 兜底），
- * 兜底新加坡 Qwen3.8-Max（能读图）；不再用 GPT-5.6 Sol（太贵）。
+ * 读图 + 出 JSON 的活（0910 用户令）：主力 DeepSeek V4 Flash Vision（EvoLink api）
+ * → 新加坡 Qwen3.8-Max token plan（能读图）→ 最后 OpenRouter 同款 DeepSeek Vision 兜底；不用 GPT-5.6 Sol（太贵）。
  * 每次网关尝试前 touch 活动心跳；输出不是合法 JSON 视为坏输出换下一家。
  */
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -9,19 +9,19 @@ import { touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivit
 
 export const PAGE_TRIAGE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_TRIAGE_MODEL_EVOLINK || "deepseek-v4-flash-vision-exp").trim();
 export const PAGE_TRIAGE_MODEL_OPENROUTER = String(process.env.KNOWLEDGE_CARD_TRIAGE_MODEL_OPENROUTER || "deepseek/deepseek-v4-flash-vision-exp").trim();
+const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 // 带图的请求走 api.evolink.ai（direct 只给纯文本，仓库既有约定见 knowledgeCardDistill.ts）
 const EVOLINK_VISION_CHAT_URL = String(process.env.EVOLINK_CHAT_URL || "https://api.evolink.ai/v1/chat/completions").trim();
-const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 const TRIAGE_TIMEOUT_MS = Math.max(60_000, Number(process.env.KNOWLEDGE_CARD_TRIAGE_TIMEOUT_MS) || 180_000);
 
 type TriageGateway = { name: "evolink" | "openrouter"; url: string; key: string; model: string };
-function visionGateways(): TriageGateway[] {
-  const out: TriageGateway[] = [];
+function evolinkVisionGateway(): TriageGateway | null {
   const evo = String(process.env.EVOLINK_API_KEY || "").trim();
-  if (evo) out.push({ name: "evolink", url: EVOLINK_VISION_CHAT_URL, key: evo, model: PAGE_TRIAGE_MODEL_EVOLINK });
+  return evo ? { name: "evolink", url: EVOLINK_VISION_CHAT_URL, key: evo, model: PAGE_TRIAGE_MODEL_EVOLINK } : null;
+}
+function openRouterVisionGateway(): TriageGateway | null {
   const or = String(process.env.OPENROUTER_API_KEY || "").trim();
-  if (or) out.push({ name: "openrouter", url: OPENROUTER_CHAT_URL, key: or, model: PAGE_TRIAGE_MODEL_OPENROUTER });
-  return out;
+  return or ? { name: "openrouter", url: OPENROUTER_CHAT_URL, key: or, model: PAGE_TRIAGE_MODEL_OPENROUTER } : null;
 }
 
 export function looksLikeTriageJson(raw: string): boolean {
@@ -96,23 +96,34 @@ export async function invokePageTriageJson(params: {
   abortSignal?: AbortSignal;
 }): Promise<string> {
   const chat = pageTriageTestHooks.getStore()?.chat || visionChatOnce;
-  const gateways = visionGateways();
+  // 顺序：EvoLink DeepSeek Vision → 新加坡 Qwen（调用方传入）→ OpenRouter DeepSeek Vision
+  const attempts: Array<{ label: string; run: () => Promise<string> }> = [];
+  const evo = evolinkVisionGateway();
+  if (evo) attempts.push({ label: `${evo.name}/${evo.model}`, run: () => chat(evo, params) });
+  if (params.fallback) {
+    const fallback = params.fallback;
+    attempts.push({
+      label: "dashscope_sg/qwen3.8-max",
+      run: async () => {
+        const out = await fallback();
+        if (!looksLikeTriageJson(out)) throw new Error(`triage_bad_output:qwen:${out.slice(0, 80)}`);
+        return out;
+      },
+    });
+  }
+  const or = openRouterVisionGateway();
+  if (or) attempts.push({ label: `${or.name}/${or.model}`, run: () => chat(or, params) });
   let lastError: Error | null = null;
-  for (let i = 0; i < gateways.length; i++) {
-    const gw = gateways[i]!;
+  for (let i = 0; i < attempts.length; i++) {
+    const attempt = attempts[i]!;
     touchKnowledgeCardDistillActivity();
     try {
-      return await chat(gw, params);
+      return await attempt.run();
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      console.warn(`[knowledgeCardPageTriage] ${gw.name}/${gw.model} 失败 → ${i < gateways.length - 1 ? `改走 ${gateways[i + 1]!.name}` : "改走 Qwen3.8-Max 兜底"}：${lastError.message.slice(0, 160)}`);
+      const next = attempts[i + 1];
+      console.warn(`[knowledgeCardPageTriage] ${attempt.label} 失败 → ${next ? `改走 ${next.label}` : "无兜底"}：${lastError.message.slice(0, 160)}`);
     }
-  }
-  if (params.fallback) {
-    touchKnowledgeCardDistillActivity();
-    const out = await params.fallback();
-    if (!looksLikeTriageJson(out)) throw new Error(`triage_bad_output:qwen:${out.slice(0, 80)}`);
-    return out;
   }
   throw lastError || new Error("挑参考页：没有可用的视觉模型网关");
 }

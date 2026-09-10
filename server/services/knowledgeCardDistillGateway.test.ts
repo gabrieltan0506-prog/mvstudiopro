@@ -19,12 +19,12 @@ afterEach(() => {
 });
 
 describe("distillGatewayChain（EvoLink 主通道，各档自带兜底）", () => {
-  it("DeepSeek: EvoLink → OpenRouter（0910 拍板）；Qwen: 百炼新加坡 token plan → EvoLink（0909 拍板）", () => {
+  it("DeepSeek: EvoLink → 新加坡 Qwen → OpenRouter；Qwen: 新加坡 → EvoLink → OpenRouter（0910 拍板）", () => {
     vi.stubEnv("EVOLINK_API_KEY", "ev-key");
     vi.stubEnv("OPENROUTER_API_KEY", "sk-or-123");
     vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "sg-key");
-    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK)).toEqual(["evolink", "openrouter"]);
-    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual(["dashscope_sg", "evolink"]);
+    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK)).toEqual(["evolink", "dashscope_sg", "openrouter"]);
+    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual(["dashscope_sg", "evolink", "openrouter"]);
   });
 
   it("missing keys shrink the chain instead of pointing at an unconfigured channel", () => {
@@ -32,6 +32,9 @@ describe("distillGatewayChain（EvoLink 主通道，各档自带兜底）", () =
     vi.stubEnv("OPENROUTER_API_KEY", "sk-or-123");
     vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "");
     expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK)).toEqual(["openrouter"]);
+    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual(["openrouter"]);
+    vi.stubEnv("OPENROUTER_API_KEY", "");
+    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK)).toEqual([]);
     expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual([]);
     vi.stubEnv("EVOLINK_API_KEY", "ev-key");
     expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual(["evolink"]);
@@ -41,7 +44,7 @@ describe("distillGatewayChain（EvoLink 主通道，各档自带兜底）", () =
 describe("目录页扫读挑页（makeKnowledgeCardPageSelector）", () => {
   it("vision tiers down → Qwen fallback chain (新加坡 → EvoLink), keeps only pages present on the sheets", async () => {
     vi.stubEnv("EVOLINK_API_KEY", "ev-key");
-    vi.stubEnv("OPENROUTER_API_KEY", "sk-or-123");
+    vi.stubEnv("OPENROUTER_API_KEY", "");
     vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "sg-key");
     const calls: string[] = [];
     __setKnowledgeCardDistillGatewayInvokerForTest(async (p) => {
@@ -59,7 +62,7 @@ describe("目录页扫读挑页（makeKnowledgeCardPageSelector）", () => {
 
   it("fatal quota errors do not fall over; triage failure yields no pages instead of breaking distill", async () => {
     vi.stubEnv("EVOLINK_API_KEY", "ev-key");
-    vi.stubEnv("OPENROUTER_API_KEY", "sk-or-123");
+    vi.stubEnv("OPENROUTER_API_KEY", "");
     vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "sg-key");
     const calls: string[] = [];
     __setKnowledgeCardDistillGatewayInvokerForTest(async (p) => {

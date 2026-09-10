@@ -25,6 +25,7 @@ import {
 import {
   KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
   KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
+  KNOWLEDGE_CARD_DISTILL_MODEL_QWEN_OR,
   resolveKnowledgeCardDistillModel,
   type KnowledgeCardDistillModelId,
 } from "../../shared/knowledgeCardDistillModels.js";
@@ -278,20 +279,24 @@ function hasDistillGateway(modelName: KnowledgeCardDistillModelId): boolean {
   return Boolean(officialFallbackKey(modelName));
 }
 
-function officialFallbackKey(modelName: KnowledgeCardDistillModelId): string {
-  return modelName === KNOWLEDGE_CARD_DISTILL_MODEL_QWEN ? getDashscopeSgPlanKey() : getOpenRouterApiKey();
+/** 主通道之外任一兜底可用即可发起：新加坡 Qwen token plan 或 OpenRouter */
+function officialFallbackKey(_modelName: KnowledgeCardDistillModelId): string {
+  return getDashscopeSgPlanKey() || getOpenRouterApiKey();
 }
 
+/**
+ * DeepSeek 在 EvoLink 的真实 id。读档案优先走 Vision 版（用户 0910 令）：带图段一定走 Vision；
+ * 纯文字段默认也走 Vision（同一家、同价位，一条链路少一个变量），可用环境变量切回纯文本版。
+ */
+const DEEPSEEK_EVOLINK_VISION_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_EVOLINK_VISION_MODEL", "deepseek-v4-flash-vision-exp");
+const DEEPSEEK_EVOLINK_TEXT_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_EVOLINK_MODEL", DEEPSEEK_EVOLINK_VISION_MODEL);
+/** OpenRouter 末位兜底（EvoLink 与新加坡都失效时）：DeepSeek 档同款 Vision；Qwen 档用 OpenRouter 的 Qwen3.8-Max */
+const DEEPSEEK_OPENROUTER_VISION_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_OPENROUTER_VISION_MODEL", "deepseek/deepseek-v4-flash-vision-exp");
+const QWEN_OPENROUTER_MODEL = envStr("KNOWLEDGE_CARD_QWEN_OPENROUTER_MODEL", KNOWLEDGE_CARD_DISTILL_MODEL_QWEN_OR);
+const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 function getOpenRouterApiKey(): string {
   return String(process.env.OPENROUTER_API_KEY || "").trim();
 }
-
-/** DeepSeek 在各网关的真实 id：EvoLink 纯文本 / 带图；OpenRouter 纯文本 / 带图 */
-const DEEPSEEK_EVOLINK_TEXT_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_EVOLINK_MODEL", "deepseek-v4-flash");
-const DEEPSEEK_EVOLINK_VISION_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_EVOLINK_VISION_MODEL", "deepseek-v4-flash-vision-exp");
-const DEEPSEEK_OPENROUTER_TEXT_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_OPENROUTER_MODEL", "deepseek/deepseek-v4-flash-0731");
-const DEEPSEEK_OPENROUTER_VISION_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_OPENROUTER_VISION_MODEL", "deepseek/deepseek-v4-flash-vision-exp");
-const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 /**
  * DeepSeek 输出上限：思考 high 的推理 token 也计入 max_tokens（官方上限 384k），
@@ -631,9 +636,10 @@ function gatewayLabel(g: DistillGateway): string {
 
 /**
  * 单通道一次请求（OpenAI 兼容 chat/completions）。
- * - EvoLink：有图走 api、纯文本走 direct（降 524）；DeepSeek 按有图/无图换真实 id，`thinking` 开 + 档位；
- * - OpenRouter：DeepSeek 兜底，`reasoning.effort`；
- * - OpenAI 官方：仅历史 Sol 路径保留，档位表里已无 Sol；
+ * - EvoLink：有图走 api、纯文本走 direct（降 524）；DeepSeek 走 Vision 版真实 id，`thinking` 开 + 档位 high；
+ * - 百炼新加坡 Token Plan：模型固定 Qwen3.8-Max，`enable_thinking` + `max_tokens`；
+ * - OpenRouter：末位兜底，`reasoning.effort`，DeepSeek 档同款 Vision / Qwen 档 Qwen3.8-Max；
+ * - OpenAI 官方：仅历史 Sol 路径保留，档位表里已无 Sol。
  * - 百炼新加坡 Token Plan：Qwen 兜底，`enable_thinking` + `max_tokens`（compatible-mode 不认 reasoning_effort）。
  */
 async function invokeDistillViaGateway(params: {
@@ -676,6 +682,8 @@ async function invokeDistillViaGateway(params: {
       body.max_completion_tokens = params.maxTokens ?? DISTILL_MAX_TOKENS;
     } else if (params.modelName === KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK) {
       body.model = hasImages ? DEEPSEEK_EVOLINK_VISION_MODEL : DEEPSEEK_EVOLINK_TEXT_MODEL;
+      // Vision 版走 api.evolink.ai（direct 只给纯文本模型）
+      if (body.model === DEEPSEEK_EVOLINK_VISION_MODEL) url = EVOLINK_CHAT_URL;
       body.thinking = { type: "enabled", reasoning_effort: deepseekReasoningEffort(params.effort) };
       body.max_tokens = deepseekMaxTokens(params.maxTokens ?? DISTILL_MAX_TOKENS);
     } else {
@@ -690,12 +698,14 @@ async function invokeDistillViaGateway(params: {
   } else if (params.gateway === "openrouter") {
     key = getOpenRouterApiKey();
     url = OPENROUTER_CHAT_URL;
-    body.model = hasImages ? DEEPSEEK_OPENROUTER_VISION_MODEL : DEEPSEEK_OPENROUTER_TEXT_MODEL;
+    body.model = params.modelName === KNOWLEDGE_CARD_DISTILL_MODEL_QWEN ? QWEN_OPENROUTER_MODEL : DEEPSEEK_OPENROUTER_VISION_MODEL;
     body.reasoning = { effort: deepseekReasoningEffort(params.effort) };
     body.max_tokens = deepseekMaxTokens(params.maxTokens ?? DISTILL_MAX_TOKENS);
   } else {
     key = getDashscopeSgPlanKey();
     url = DASHSCOPE_SG_PLAN_CHAT_URL;
+    // 新加坡通道只有 Qwen；DeepSeek 档兜底到这里时模型也要换成 Qwen
+    body.model = KNOWLEDGE_CARD_DISTILL_MODEL_QWEN;
     body.enable_thinking = true;
     body.max_tokens = params.maxTokens ?? DISTILL_MAX_TOKENS;
   }
@@ -739,18 +749,19 @@ async function invokeDistillViaGateway(params: {
 }
 
 /**
- * 各档通道顺序：
- * - DeepSeek V4 Flash（0910 拍板）：EvoLink 主 → OpenRouter 兜底
- * - Qwen3.8 Max（0909 拍板）：百炼新加坡 token plan 主 → EvoLink 兜底
+ * 各档通道顺序（0910 用户拍板：EvoLink 与新加坡任一失效都可落到 OpenRouter）：
+ * - DeepSeek V4 Flash Vision（精细）：EvoLink 主 → 百炼新加坡 Qwen3.8-Max → OpenRouter
+ * - Qwen3.8 Max（轻量，0909 拍板）：百炼新加坡 token plan 主 → EvoLink → OpenRouter
  */
 export function distillGatewayChain(modelName: KnowledgeCardDistillModelId): DistillGateway[] {
   const chain: DistillGateway[] = [];
   if (modelName === KNOWLEDGE_CARD_DISTILL_MODEL_QWEN) {
     if (getDashscopeSgPlanKey()) chain.push("dashscope_sg");
     if (getEvolinkApiKey()) chain.push("evolink");
-    return chain;
+  } else {
+    if (getEvolinkApiKey()) chain.push("evolink");
+    if (getDashscopeSgPlanKey()) chain.push("dashscope_sg");
   }
-  if (getEvolinkApiKey()) chain.push("evolink");
   if (getOpenRouterApiKey()) chain.push("openrouter");
   return chain;
 }
