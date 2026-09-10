@@ -248,7 +248,8 @@ export function epubChapterHeading(html: string): string {
     const text = decodeEntities(String(m[1] || "").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " "))
       .replace(/\s+/g, " ")
       .trim();
-    if (text) return text.length > 40 ? `${text.slice(0, 40)}…` : text;
+    const chars = Array.from(text.replace(/[「」]/g, ""));
+    if (chars.length) return chars.length > 40 ? `${chars.slice(0, 40).join("")}…` : chars.join("");
   }
   return "";
 }
@@ -341,6 +342,7 @@ export async function convertEpubToPdf(
   const merge = deps.merge || mergePdfShards;
   const parsed = await parse(buffer);
   const shards = splitEpubChaptersIntoShards(parsed.chapters, deps.shardMaxBytes);
+  if (!shards.length) throw new Error("EPUB 章节内容为空");
   const pdfs: Buffer[] = [];
   const strippedShards: number[] = [];
   const shardLabels: string[] = [];
@@ -365,8 +367,11 @@ export async function convertEpubToPdf(
           `这本 EPUB ${label}：转 PDF 时浏览器崩溃两次（已试过只保文字）。请先用 Calibre 等工具转成 PDF，或把这几节拆出来单独上传。`,
         );
       }
-      strippedShards.push(i + 1);
-      strippedImages += stripped.stripped;
+      // 片内本来没图、只是瞬时崩了一次又成功：不算「剥图」，不给用户报插图丢失
+      if (stripped.stripped > 0) {
+        strippedShards.push(i + 1);
+        strippedImages += stripped.stripped;
+      }
     }
     if (!pdf.length) throw new Error(`EPUB ${label}：转 PDF 结果为空`);
     pdfs.push(pdf);
