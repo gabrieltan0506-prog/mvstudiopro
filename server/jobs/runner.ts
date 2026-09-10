@@ -361,7 +361,9 @@ export async function withTimeout<T>(
     }
   });
   try {
-    return await Promise.race([promise, timeoutPromise]);
+    const value = await Promise.race([promise, timeoutPromise]);
+    if (heartbeat) clearJobHeartbeat(heartbeat.jobId);
+    return value;
   } catch (error) {
     if (heartbeat) clearJobHeartbeat(heartbeat.jobId);
     if (!timeoutTriggered) throw error;
@@ -3194,7 +3196,8 @@ async function processPlatformJob(
         await patchJobRunningProgress(platformJobId, patch).catch(() => {});
       };
       await patchProgress({ distillStage: "deriving", distillPercent: 1 });
-      const derived = await deriveKnowledgeCardCompact({
+      const { knowledgeCardDistillActivity } = await import("../services/knowledgeCardDistillActivity.js");
+      const derived = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), () => deriveKnowledgeCardCompact({
         fullMarkdown,
         targetSections,
         onProgress: async (p) => {
@@ -3206,7 +3209,7 @@ async function processPlatformJob(
             distillPercent: Math.round(5 + 90 * frac),
           });
         },
-      });
+      }));
       await patchProgress({ distillStage: "finishing", distillPercent: 98 });
       const plan = planKnowledgeCardPages(derived.markdown, distillModel);
       return {
@@ -3255,7 +3258,8 @@ async function processPlatformJob(
         if (!platformJobId) return;
         await patchJobRunningProgress(platformJobId, patch).catch(() => {});
       };
-      const prepared = await prepareKnowledgeCardCopy({
+      const { knowledgeCardDistillActivity } = await import("../services/knowledgeCardDistillActivity.js");
+      const prepared = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), () => prepareKnowledgeCardCopy({
         sourceText,
         files: jobFiles,
         forceDistill: true,
@@ -3287,7 +3291,7 @@ async function processPlatformJob(
             distillPercent: p.phase === "refining" ? 90 : Math.round(40 + 50 * frac),
           });
         },
-      });
+      }));
       await patchProgress({ distillStage: "finishing", distillPercent: 98 });
       const plan = planKnowledgeCardPages(prepared.distilledMarkdown, prepared.distillModel);
 

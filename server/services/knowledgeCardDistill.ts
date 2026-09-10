@@ -14,6 +14,8 @@
  * @see https://evolink.ai/docs/cn/api-manual/language-series/qwen3.8-max/qwen3.8-max-chat
  */
 import { extractFirstChoicePlainText } from "../_core/llm.js";
+export { knowledgeCardDistillActivity, touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivity.js";
+import { touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivity.js";
 import { shouldSkipKnowledgeCardDistill } from "../../shared/knowledgeCardPagination.js";
 import {
   resolveKnowledgeCardDetailLevel,
@@ -40,6 +42,7 @@ import {
   type KnowledgeCardPageSelection,
 } from "./knowledgeCardDocumentPages.js";
 import { convertEpubToPdf, isEpubFile } from "./knowledgeCardEpubToPdf.js";
+import { invokePageTriageJson } from "./knowledgeCardPageTriage.js";
 
 /** 百炼新加坡 Token Plan（Qwen 官方兜底）；与整形链 `plan_sg_qwen` 同一端点与密钥 */
 const DASHSCOPE_SG_PLAN_CHAT_URL =
@@ -744,6 +747,7 @@ async function invokeDistillLlm(params: {
   let lastError: Error | null = null;
   for (let i = 0; i < chain.length; i++) {
     const gateway = chain[i]!;
+    touchKnowledgeCardDistillActivity();
     try {
       const out = await distillGatewayInvoker({ ...params, gateway, modelName: params.modelName });
       const problem = params.validate?.(out);
@@ -1084,7 +1088,8 @@ async function refineMergedDistill(params: {
 
   // 归并停滞但稿子仍远超一次能喂的长度（0910：23 万字 / 581 节）：不整段硬送，
   // 按目标节数强制分组收紧，每组只留自己该占的份额，直到能一次喂下或分组无效
-  for (let round = 0; round < DISTILL_REDUCE_MAX_DEPTH && !fitsOnePass(); round += 1) {
+  // 完整版是真源，不做「按份额砍节」的强制收紧（那是精华版派生的活）；只对精华版做
+  for (let round = 0; params.detailLevel !== "full" && round < DISTILL_REDUCE_MAX_DEPTH && !fitsOnePass(); round += 1) {
     const sectionsBefore = countMarkdownSections(current);
     const groups = groupMarkdownSections(current, Math.max(2, Math.ceil(current.length / Math.max(1, profile.refineMaxChars))));
     if (groups.length < 2) break;
@@ -1116,7 +1121,10 @@ async function refineMergedDistill(params: {
     current = next;
   }
 
-  let final = await refineOnce({
+  // 完整版且仍喂不下：不整段硬送去改写（改写只会削真源），直接保留归并结果
+  let final = params.detailLevel === "full" && !fitsOnePass()
+    ? current
+    : await refineOnce({
     body: current,
     modelName: params.modelName,
     // 高级版：目标节数不低于合并稿节数（统稿不压缩）
@@ -1345,7 +1353,7 @@ const TRIAGE_SHEETS_PER_CALL = 8;
  * 目录页扫读挑页：用所选档位模型看缩略图目录，返回值得参考的页码。
  * 扫读失败不阻断整体提炼（退回无参考页）。
  */
-export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillModelId) {
+export function makeKnowledgeCardPageSelector(_modelName: KnowledgeCardDistillModelId) {
   return async (
     sheets: KnowledgeCardContactSheet[],
     pageCount: number,
@@ -1357,14 +1365,23 @@ export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillMod
       const group = sheets.slice(i, i + TRIAGE_SHEETS_PER_CALL);
       const pageNumbers = group.flatMap((sheet) => sheet.pageNumbers);
       try {
-        const raw = await invokeDistillLlm({
-          sourceText: `全书共 ${pageCount} 页；本次目录页覆盖第 ${pageNumbers[0]}–${pageNumbers[pageNumbers.length - 1]} 页（共 ${group.length} 张目录页）。`,
-          imageUrls: group.map((sheet) => sheet.imageUrl),
-          modelName,
-          minSections: 1,
-          effort: envStr("KNOWLEDGE_CARD_PAGE_TRIAGE_EFFORT", "low"),
-          systemOverride: buildPageTriageSystem(),
-          timeoutMs: 180_000,
+        const userText = `全书共 ${pageCount} 页；本次目录页覆盖第 ${pageNumbers[0]}–${pageNumbers[pageNumbers.length - 1]} 页（共 ${group.length} 张目录页）。`;
+        const imageUrls = group.map((sheet) => sheet.imageUrl);
+        // 主力 DeepSeek 视觉档（JSON 模式），兜底新加坡 Qwen3.8-Max；不用 Sol（用户 0910：太贵）
+        const raw = await invokePageTriageJson({
+          system: buildPageTriageSystem(),
+          userText,
+          imageUrls,
+          fallback: () =>
+            invokeDistillLlm({
+              sourceText: userText,
+              imageUrls,
+              modelName: KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
+              minSections: 1,
+              effort: envStr("KNOWLEDGE_CARD_PAGE_TRIAGE_EFFORT", "low"),
+              systemOverride: buildPageTriageSystem(),
+              timeoutMs: 180_000,
+            }),
         });
         const allowed = new Set(pageNumbers);
         for (const item of parsePageTriage(raw)) if (allowed.has(item.pageNumber)) picked.push(item);

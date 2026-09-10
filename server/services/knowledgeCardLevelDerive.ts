@@ -1,14 +1,15 @@
 /**
  * 知识卡成稿档派生（用户 0910 拍板）：
  * 提炼只做一次、以「完整版」长稿为真源；「精华版」从长稿按需派生，两档到最后阶段仍可切换，不设页数上限。
- * 派生是纯文本压缩，交给便宜的大模型（DeepSeek V4 Flash：EvoLink 优先、OpenRouter 兜底；约 $0.09/M 进、$0.18/M 出），
+ * 派生是纯文本压缩，交给便宜的大模型（DeepSeek V4 Flash：EvoLink `deepseek-v4-flash` 优先、OpenRouter `deepseek/deepseek-v4-flash-0731` 兜底；约 $0.09/M 进、$0.18/M 出），
  * 23 万字长稿派生一次约 3 美分；Sol 只管首轮提炼。
  */
 import { countMarkdownSections, mergeDistilledMarkdownChunks } from "./knowledgeCardDistill.js";
+import { touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivity.js";
 
 /** 网关顺序：EvoLink（现成钥匙，direct.evolink.ai）→ OpenRouter 兜底；两家都是 DeepSeek V4 Flash */
 export const KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK || "deepseek-v4-flash").trim();
-export const KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER || "deepseek/deepseek-v4-flash").trim();
+export const KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER || "deepseek/deepseek-v4-flash-0731").trim();
 const EVOLINK_DIRECT_CHAT_URL = String(process.env.EVOLINK_DIRECT_CHAT_URL || "https://direct.evolink.ai/v1/chat/completions").trim();
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 /** 每批最多喂多少字（DeepSeek 上下文 100 万 token，8 万字一批留足输出与推理余量） */
@@ -111,6 +112,7 @@ async function deriveChat(params: { system: string; user: string; model?: string
   let lastError: Error | null = null;
   for (let i = 0; i < gateways.length; i++) {
     const gw = gateways[i]!;
+    touchKnowledgeCardDistillActivity();
     try {
       return await chatOnce(gw, params);
     } catch (err) {

@@ -8039,6 +8039,12 @@ export default function PlatformPage() {
 
   /** 成稿档切换：有完整版真源时直接换视图（精华版首次切需派生一次） */
   const switchKnowledgeCardLevel = async (next: KnowledgeCardDetailLevel) => {
+    // 文本框被手改过：切档会覆盖，先问一句
+    const currentView = customNoteDetailLevel === "concise" ? customNoteCompactMarkdown : customNoteFullMarkdown;
+    if (customNoteFullMarkdown && currentView && customNoteText.trim() !== currentView.trim()) {
+      const ok = window.confirm("文本框里有你手改的内容，切换成稿档会用另一档的稿子覆盖它。继续吗？");
+      if (!ok) return;
+    }
     setCustomNoteDetailLevel(next);
     try { localStorage.setItem("mvs-knowledge-card-detail-level", next); } catch { /* ignore */ }
     if (!customNoteFullMarkdown) return;
@@ -15328,8 +15334,16 @@ export default function PlatformPage() {
                             setCustomNoteCompactMarkdown(null);
                             let shown = distilled;
                             if (customNoteDetailLevel === "concise") {
+                              // 派生失败不连累已到手的完整版：写入完整版、切档回高级版，稍后可再切
                               setCustomNoteUploadStatus("完整版已提炼，正在派生精华版…");
-                              shown = await deriveCompactFromFull(distilled);
+                              try {
+                                shown = await deriveCompactFromFull(distilled);
+                              } catch (deriveErr) {
+                                const msg = String((deriveErr as { message?: string })?.message || "精华版派生失败");
+                                setCustomNoteDetailLevel("full");
+                                try { localStorage.setItem("mvs-knowledge-card-detail-level", "full"); } catch { /* ignore */ }
+                                toast.warning(`精华版派生失败（${msg.slice(0, 60)}），已先写入完整版；稍后可再切精华版`, { duration: 10_000 });
+                              }
                             }
                             setCustomNoteText(shown);
                             customNotePendingFilesRef.current = [];
