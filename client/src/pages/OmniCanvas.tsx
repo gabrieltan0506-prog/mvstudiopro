@@ -2365,6 +2365,8 @@ export default function OmniCanvas() {
     publicTemplateId,
     stylePack,
     directorStrategyContract,
+    // 审查 P2：只改导演卡时也要重存，否则刷新后选择丢失
+    directionSelection,
   ]);
 
   const applyCloudDraftToUi = useCallback((draft: ManhuaCloudDraftPayload) => {
@@ -2978,7 +2980,8 @@ export default function OmniCanvas() {
     femaleLeadManual,
     maleLeadManual,
     artStyleManual,
-    directorStrategyContract,
+    // 审查 P2：本机双写快照里已经带 directionSelection，依赖也要带，否则只改导演卡不落盘
+    directionSelection,
     syncCloudDraftPayload,
   ]);
 
@@ -3231,6 +3234,8 @@ export default function OmniCanvas() {
     selectedCineVocabIds,
     selectedWardrobeIds,
     selectedCharacterIds,
+    // 审查 P2：换导演卡后「已铺节点同步设置」要真的跑一次，否则提示说会同步、实际不动
+    activeDirectionCanon,
   ]);
   const craftShotGrouped = useMemo(() => {
     const cats: CraftShotCategory[] = ["lighting", "camera", "emotion", "transition"];
@@ -4500,6 +4505,8 @@ export default function OmniCanvas() {
       explicitWriterVideoModel,
       projectBible?.assetCanon,
       remapDockSelectionAfterSpawn,
+      // 审查 P1：初铺/补铺必须用界面当前选的导演卡
+      activeDirectionCanon,
     ],
   );
 
@@ -4894,6 +4901,8 @@ export default function OmniCanvas() {
     directorBoardBySegment,
     directorBoardMotionOverlayBySegment,
     syncCloudDraftPayload,
+    // 审查 P1：扩写请求要带界面当前选的副卡/主卡
+    directionSelection,
   ]);
 
   const importWriterRoomFromText = useCallback(
@@ -5266,6 +5275,8 @@ export default function OmniCanvas() {
 
   // 返回是否确认成功：调用方据此决定是否切视图（失败时 extras 已被切开展示门禁红字，勿再关）
   const confirmWriterToDirector = useCallback((): boolean => {
+    // 审查 P1：确认这一下用同一份法典快照——冻结进 Bible 的和初铺进节点的必须是同一张卡
+    const confirmedDirectionCanon = activeDirectionCanon;
     if (!writerPack || !writerPackLooksReady(writerPack)) {
       toast.error("请先扩写或导入剧本，并检查剧情包是否完整");
       return false;
@@ -5344,7 +5355,7 @@ export default function OmniCanvas() {
       },
       focusEpisode: continuity.episodeIndex,
       directorStrategyContract,
-      directionCanon: activeDirectionCanon,
+      directionCanon: confirmedDirectionCanon,
       assetCanon: canon,
       manualOverrides: {
         femaleLead: femaleLeadManual,
@@ -5389,7 +5400,7 @@ export default function OmniCanvas() {
       }),
       includeDirectorCraft: true,
       directorStrategyContract,
-      directionCanon: activeDirectionCanon,
+      directionCanon: confirmedDirectionCanon,
       episodeIndex: continuity.episodeIndex,
       episodeTitle: continuity.episodeTitle,
       endingHook: continuity.endingHook,
@@ -5473,6 +5484,9 @@ export default function OmniCanvas() {
     customAssetRefs,
     remapDockSelectionAfterSpawn,
     pushDebug,
+    // 审查 P1：确认时必须用界面上当前选的导演卡冻结进 Bible / 初铺节点，
+    // 少了这条依赖，回调会捕获旧的（甚至 null）法典，界面选了新卡也白选
+    activeDirectionCanon,
   ]);
 
   // A2 闭环收尾：门禁「补密度」扩写成功、新稿落盘后自动重跑一次编剧确认；
@@ -5681,6 +5695,8 @@ export default function OmniCanvas() {
     directorStrategyContract,
     blocks,
     edges,
+    // 审查 P1：按集铺板同样要用当前选的导演卡
+    directionSelection,
   ]);
 
   const stopFactory = useCallback(() => {
@@ -8212,6 +8228,8 @@ export default function OmniCanvas() {
       explicitWriterVideoModel,
       writerVideoModel,
       segmentCapacityModeByEpisode,
+      // 审查 P1：整板跑之前的同步设置要用当前选的导演卡
+      activeDirectionCanon,
     ],
   );
 
