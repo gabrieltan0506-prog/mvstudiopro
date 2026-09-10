@@ -8979,8 +8979,8 @@ export default function OmniCanvas() {
                   blocks={blocks}
                   videoModel={activePilotVideoModel}
                   directorStrategyContract={directorStrategyContract}
-                  bgmModels={BGM_BRIEF_MODELS.map(model => ({ model, labelZh: BGM_BRIEF_MODEL_LABEL_ZH[model] }))}
                   topic={factoryTopic}
+                  bgmModels={BGM_BRIEF_MODELS.map(model => ({ model, labelZh: BGM_BRIEF_MODEL_LABEL_ZH[model] }))}
                   shotContinuity={shotContinuity}
                   onShotContinuityChange={(next) => {
                     const saved = saveManhuaShotContinuityPrefs(next);

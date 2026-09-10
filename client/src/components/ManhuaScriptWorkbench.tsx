@@ -3,9 +3,9 @@
  * 原稿按真实秒位与引擎单段上限自动分段；每段一条成片，关键静帧按原镜一镜一张。
  */
 import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference";
-import type { BgmBriefModel } from "@shared/manhuaBgmBrief";
 import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
+import type { BgmBriefModel } from "@shared/manhuaBgmBrief";
 import { isManhuaKeyartLookCurrent } from "@shared/manhuaKeyartLookState";
 import { buildWorkbenchShotsFromSegmentPlan } from "@shared/manhuaStoryDistill";
 import {
@@ -298,11 +298,11 @@ type Props = {
   videoModel?: string | null;
   /** 已冻结的去名导演策略；前台只展示中性策略名与批准修订。 */
   directorStrategyContract?: ManhuaDirectorStrategyContract | null;
-  /** 配乐来源可选项（Suno v6 三档，走 TTAPI 网关） */
-  bgmModels?: Array<{ model: BgmBriefModel; labelZh: string }>;
   topic: string;
   seriesTitle?: string;
   logline?: string;
+  /** 配乐来源可选项（Suno v6 三档，走 TTAPI 网关） */
+  bgmModels?: Array<{ model: BgmBriefModel; labelZh: string }>;
   /** 大纲页分集列表（标题即可） */
   outlineEpisodes?: Array<{ index: number; title: string }>;
   episodeCount: number;
@@ -921,10 +921,10 @@ export default function ManhuaScriptWorkbench({
   blocks,
   videoModel,
   directorStrategyContract,
-  bgmModels,
   topic,
   seriesTitle,
   logline,
+  bgmModels,
   outlineEpisodes = [],
   episodeCount,
   focusEpisode,
