@@ -232,6 +232,10 @@ import {
   type ManhuaProjectBible,
 } from "@shared/manhuaProjectBible";
 import {
+  buildManhuaDirectionCanonFromSelection,
+  type ManhuaDirectionSelection,
+} from "@shared/manhuaDirectionCanonLibrary";
+import {
   resolveManhuaDirectorStrategyContract,
   type ManhuaDirectorStrategyContract,
 } from "@shared/manhuaDirectorStrategy";
@@ -748,6 +752,16 @@ export default function OmniCanvas() {
           ? bootBible.directorStrategyContract ?? null
           : initialWriterSession?.directorStrategyContract || null,
     );
+  /** 导演包选卡：确认后以 Bible.directionCanon 为真源，确认前存会话草稿 */
+  const [directionSelection, setDirectionSelection] = useState<ManhuaDirectionSelection | null>(() =>
+    bootBible?.directionCanon
+      ? { mainCardId: bootBible.directionCanon.mainCardId, sceneOverrides: bootBible.directionCanon.sceneOverrides }
+      : initialWriterSession?.directionSelection || null,
+  );
+  const activeDirectionCanon = useMemo(
+    () => projectBible?.directionCanon ?? buildManhuaDirectionCanonFromSelection(directionSelection),
+    [projectBible?.directionCanon, directionSelection],
+  );
   /** 集号 → 导演板裁后主画面（长期 gcsUri + 现签 url） */
   const [directorBoardMainByEpisode, setDirectorBoardMainByEpisode] =
     useState<ManhuaDirectorBoardMainByEpisode>(loadManhuaDirectorBoardMainByEpisode);
@@ -2324,6 +2338,7 @@ export default function OmniCanvas() {
         publicTemplateId,
         stylePack,
         directorStrategyContract,
+        directionSelection,
       });
     } catch {
       /* 本机权限/配额失败：不阻断云端通路 */
@@ -2385,6 +2400,11 @@ export default function OmniCanvas() {
       session.projectBible
         ? session.projectBible.directorStrategyContract ?? null
         : session.directorStrategyContract || null,
+    );
+    setDirectionSelection(
+      session.projectBible?.directionCanon
+        ? { mainCardId: session.projectBible.directionCanon.mainCardId, sceneOverrides: session.projectBible.directionCanon.sceneOverrides }
+        : session.directionSelection || null,
     );
     // 已确认项目刷新后必须回到主工作台；旧云草稿里的 form 只能作为未确认剧本的编辑选择，
     // 不能覆盖启动规则并把整套分镜／轨迹／3D 界面静默藏掉。
@@ -2895,6 +2915,7 @@ export default function OmniCanvas() {
       shareAssetToLibrary,
       publicTemplateId,
       directorStrategyContract,
+      directionSelection,
       // 只存真选过的档。存自动预选值会让下次打开时把它当显式选型，
       // 一张历史 2.5 画布重开两次就被静默改成 mini
       videoModel: explicitWriterVideoModel,
@@ -4397,6 +4418,7 @@ export default function OmniCanvas() {
         writerContext: focusCtx,
         includeDirectorCraft: Boolean(focusCtx) || directorUnlocked,
         directorStrategyContract,
+        directionCanon: activeDirectionCanon,
         episodeIndex: continuity.episodeIndex,
         episodeTitle: continuity.episodeTitle,
         previousEndingHook: continuity.previousEndingHook,
@@ -4609,6 +4631,9 @@ export default function OmniCanvas() {
               ? writerPack?.episodes.find((e) => e.index === fromEpisode)?.body ||
                 undefined
               : undefined,
+          directionSelection: directionSelection
+            ? { mainCardId: directionSelection.mainCardId, sceneOverrides: directionSelection.sceneOverrides as Record<string, never> | undefined }
+            : undefined,
         }),
         new Promise<never>((_, reject) => {
           window.setTimeout(() => {
@@ -5318,6 +5343,7 @@ export default function OmniCanvas() {
       },
       focusEpisode: continuity.episodeIndex,
       directorStrategyContract,
+      directionCanon: activeDirectionCanon,
       assetCanon: canon,
       manualOverrides: {
         femaleLead: femaleLeadManual,
@@ -5362,6 +5388,7 @@ export default function OmniCanvas() {
       }),
       includeDirectorCraft: true,
       directorStrategyContract,
+      directionCanon: activeDirectionCanon,
       episodeIndex: continuity.episodeIndex,
       episodeTitle: continuity.episodeTitle,
       endingHook: continuity.endingHook,
@@ -5548,6 +5575,7 @@ export default function OmniCanvas() {
         },
         focusEpisode: writerFocusEpisode,
         directorStrategyContract,
+        directionCanon: buildManhuaDirectionCanonFromSelection(directionSelection),
         assetCanon: canon,
         manualOverrides: {
           femaleLead: femaleLeadManual,
@@ -8978,6 +9006,9 @@ export default function OmniCanvas() {
                   blocks={blocks}
                   videoModel={activePilotVideoModel}
                   directorStrategyContract={directorStrategyContract}
+                  directionCanon={activeDirectionCanon}
+                  directionLocked={Boolean(projectBible?.directionCanon)}
+                  onSelectDirectionCard={(mainCardId) => setDirectionSelection(mainCardId ? { mainCardId } : null)}
                   topic={factoryTopic}
                   shotContinuity={shotContinuity}
                   onShotContinuityChange={(next) => {
@@ -11308,6 +11339,7 @@ export default function OmniCanvas() {
                       assetCanon: projectBible?.assetCanon,
                       writerContext: focusCtx,
                       includeDirectorCraft: true,
+                      directionCanon: activeDirectionCanon,
                       episodeIndex: continuity.episodeIndex,
                       episodeTitle: continuity.episodeTitle,
                       endingHook: continuity.endingHook,

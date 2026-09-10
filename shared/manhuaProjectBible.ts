@@ -13,6 +13,10 @@ import {
   parseManhuaDirectorStrategyContract,
   type ManhuaDirectorStrategyContract,
 } from "./manhuaDirectorStrategy.js";
+import {
+  normalizeManhuaDirectionCanon,
+  type ManhuaDirectionCanon,
+} from "./manhuaDirectionCanon.js";
 
 export const MANHUA_PROJECT_BIBLE_FORMAT = "mv-manhua-project-bible-v1" as const;
 
@@ -49,6 +53,11 @@ export type ManhuaProjectBible = {
    * 优先于库 ID；库仅为可选参考。
    */
   assetCanon?: ManhuaWriterAssetCanon;
+  /**
+   * 导演法典（导演包）：系列主卡 + 场次副卡，去名后的手法参数。
+   * 缺省 undefined = 没选导演包，所有阶段保持原提示词，不注入默认风格。
+   */
+  directionCanon?: ManhuaDirectionCanon;
   /** 手选覆盖自动推荐（冲突规则：人工优先） */
   manualOverrides?: {
     femaleLead?: boolean;
@@ -75,6 +84,7 @@ export type BuildManhuaProjectBibleInput = {
   assetCanon?: ManhuaWriterAssetCanon | null;
   manualOverrides?: ManhuaProjectBible["manualOverrides"];
   directorStrategyContract?: ManhuaDirectorStrategyContract | null;
+  directionCanon?: ManhuaDirectionCanon | null;
 };
 
 /** 从编剧确认瞬间的状态生成专案 Bible */
@@ -137,6 +147,7 @@ export function buildManhuaProjectBible(input: BuildManhuaProjectBibleInput): Ma
     focusEpisode,
     directorStrategyContract: parseManhuaDirectorStrategyContract(input.directorStrategyContract),
     assetCanon,
+    directionCanon: normalizeManhuaDirectionCanon(input.directionCanon),
     manualOverrides: input.manualOverrides,
   };
 }
@@ -184,6 +195,7 @@ export function parseManhuaProjectBible(raw: unknown): ManhuaProjectBible | null
       directorStrategyContract: o.directorStrategyContract,
       confirmedAt: o.confirmedAt,
       assetCanon: (o as { assetCanon?: ManhuaWriterAssetCanon }).assetCanon,
+      directionCanon: (o as { directionCanon?: unknown }).directionCanon as ManhuaDirectionCanon | null | undefined,
       manualOverrides: o.manualOverrides,
     });
   } catch {
@@ -211,5 +223,7 @@ export function summarizeManhuaProjectBible(bible: ManhuaProjectBible | null | u
     : `场景·${bible.cast.sceneId ? "已选" : "—"}`;
   const eps = bible.cast.boundEpisodeIndexes.join(",");
   const styleZh = getManhuaArtStylePreset(bible.cast.artStyleId).labelZh;
-  return `${bible.seriesTitle || bible.topic || "未命名"} · ${laneBits} · ${castBits} · ${sceneBits} · 画风 ${styleZh} · 绑定集 ${eps}`;
+  const mainCard = bible.directionCanon?.cards.find((c) => c.id === bible.directionCanon?.mainCardId);
+  const directionBits = mainCard ? ` · 导演包 ${mainCard.labelZh}` : "";
+  return `${bible.seriesTitle || bible.topic || "未命名"} · ${laneBits} · ${castBits} · ${sceneBits} · 画风 ${styleZh} · 绑定集 ${eps}${directionBits}`;
 }

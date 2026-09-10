@@ -1,3 +1,4 @@
+import { buildManhuaDirectionCanonFromSelection } from "../shared/manhuaDirectionCanonLibrary.js";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -9874,6 +9875,18 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           fromSegment: z.number().int().min(1).max(24).optional(),
           /** 起点那一集的旧正文，供锁稿比对 */
           lockedEpisodeBody: z.string().max(6000).optional(),
+          /** 导演包选卡：主卡 + 场次副卡；服务端按内置卡库校验，未知卡 = 没选 */
+          directionSelection: z
+            .object({
+              mainCardId: z.string().max(80),
+              sceneOverrides: z
+                .record(
+                  z.enum(["action", "dialogue", "reveal", "emotion", "transition"]),
+                  z.object({ cardId: z.string().max(80), stages: z.array(z.enum(["story", "assets", "storyboard", "keyframe", "clip", "review"])).max(6).optional() }),
+                )
+                .optional(),
+            })
+            .optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -9997,6 +10010,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           lockedEpisodeBody: input.lockedEpisodeBody,
           viralTemplateId: appliedInternalTemplateId,
           viralTemplateAddon,
+          directionCanon: buildManhuaDirectionCanonFromSelection(input.directionSelection),
         });
         // 与 buildManhuaWriterExpandPrompt 使用同一纯函数输入；返回的是去名、白名单化合同，
         // 不含完整商业模板，也不让客户端自造来源或规则。

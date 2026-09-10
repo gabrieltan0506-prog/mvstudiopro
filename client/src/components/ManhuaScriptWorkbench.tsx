@@ -3,6 +3,8 @@
  * 原稿按真实秒位与引擎单段上限自动分段；每段一条成片，关键静帧按原镜一镜一张。
  */
 import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference";
+import type { ManhuaDirectionCanon } from "@shared/manhuaDirectionCanon";
+import { listManhuaDirectionCards } from "@shared/manhuaDirectionCanonLibrary";
 import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
 import { isManhuaKeyartLookCurrent } from "@shared/manhuaKeyartLookState";
@@ -297,6 +299,11 @@ type Props = {
   videoModel?: string | null;
   /** 已冻结的去名导演策略；前台只展示中性策略名与批准修订。 */
   directorStrategyContract?: ManhuaDirectorStrategyContract | null;
+  /** 导演法典（导演包）：Bible 冻结值或确认前草稿 */
+  directionCanon?: ManhuaDirectionCanon | null;
+  /** 编剧确认后随 Bible 冻结，不再改卡（改卡等于换整套手法，需重铺） */
+  directionLocked?: boolean;
+  onSelectDirectionCard?: (mainCardId: string | null) => void;
   topic: string;
   seriesTitle?: string;
   logline?: string;
@@ -918,6 +925,9 @@ export default function ManhuaScriptWorkbench({
   blocks,
   videoModel,
   directorStrategyContract,
+  directionCanon,
+  directionLocked,
+  onSelectDirectionCard,
   topic,
   seriesTitle,
   logline,
@@ -3027,6 +3037,27 @@ export default function ManhuaScriptWorkbench({
                 {segmentCapacityPlan.ok ? segmentCapacityPlan.summaryZh : segmentCapacityPlan.errorZh}
               </span>
             </div>
+            {onSelectDirectionCard ? (
+              <div data-manhua-direction-canon className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1 text-[9px] text-violet-100/80">
+                <span className="font-semibold">导演包</span>
+                <select
+                  aria-label="导演包主卡"
+                  value={directionCanon?.mainCardId || ""}
+                  disabled={Boolean(directionLocked)}
+                  onChange={(e) => onSelectDirectionCard(e.target.value || null)}
+                  className="max-w-[220px] rounded border border-violet-300/25 bg-violet-500/10 px-1 py-px text-[9px] text-violet-50 disabled:opacity-70"
+                  title={directionLocked ? "已随项目 Bible 冻结；换卡需新开项目" : "只借手法不借外观：剧本、分镜、关键帧、成片、审查五处按同一张卡投影"}
+                >
+                  <option value="">不用导演包</option>
+                  {listManhuaDirectionCards().map((card) => (
+                    <option key={card.id} value={card.id}>
+                      {card.labelZh}（{card.rules.length} 条手法）
+                    </option>
+                  ))}
+                </select>
+                {directionCanon ? <span className="text-emerald-200/70">{directionLocked ? "已锁定" : "确认剧本后锁定"}</span> : null}
+              </div>
+            ) : null}
             {directorStrategyContract ? (
               <div
                 data-manhua-director-strategy-status

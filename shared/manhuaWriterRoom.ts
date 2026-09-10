@@ -3,6 +3,7 @@
  * 前台文案禁止出现模型名 / 供应商 / 「仿写某某」等后台话术。
  */
 
+import { resolveDirectorStyleBlocks, type ManhuaDirectionCanon } from "./manhuaDirectionCanon.js";
 import {
   composeManhuaPropDemoPromptBlock,
   recommendManhuaContentLanesFromTopic,
@@ -127,6 +128,8 @@ export function buildManhuaWriterExpandPrompt(opts: {
   fromSegment?: number | null;
   /** 起点那一集的旧正文；配合 fromSegment 锁住前几段 */
   lockedEpisodeBody?: string | null;
+  /** 导演法典（导演包）：只拿 story 投影；缺省不注入 */
+  directionCanon?: ManhuaDirectionCanon | null;
 }): string {
   const topic = String(opts.topic || "").trim().slice(0, 500);
   const brief = String(opts.brief || "").trim().slice(0, 2000);
@@ -212,6 +215,7 @@ export function buildManhuaWriterExpandPrompt(opts: {
     pacing ? formatScenePacingBlock(pacing) : "",
     // 一次编译一份全局策略；编剧阶段只拿 story 投影，不把整张导演卡灌进 prompt
     directorStoryBlock,
+    resolveDirectorStyleBlocks(opts.directionCanon || null).story,
     // 手法条目库同时供段成片兜底补条：两端取同一套词，成片才不会各说各话
     formatCraftShotWriterVocabBlock(),
     partialBlock,
