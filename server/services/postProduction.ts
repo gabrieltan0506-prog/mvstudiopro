@@ -36,7 +36,9 @@ import {
   type RawBurnSubtitleParams,
   type ConcatParams,
   type LoudnessParams,
-} from "../jobs/postProdInput";
+  audioExtractParamsSchema,
+  type RawAudioExtractParams,
+} from "../jobs/postProdInput.js";
 import { AUDIO_SAMPLE_RATE, audioSamples, buildAudioTrimArgs, buildAudioTimelineArgs } from "./audioTimelineRender";
 // 契约已并轨到 jobs 层；这里保留再导出，测试与旧调用方免改路径
 export { burnSubtitleParamsSchema, burnSubtitleStyleOverrideSchema } from "../jobs/postProdInput";
@@ -481,6 +483,41 @@ export function buildBgmFilterPlan(input: RawBgmMountParams, video: {
     seekSec,
     fadeOutStartSec,
   };
+}
+
+/**
+ * 交付包抽音轨：整集成片 → 纯音频（m4a 256k 交付 / wav 48k 母带）。
+ * 不重混、不改电平；无音轨的成片直接报错，不给一条空音轨冒充交付。
+ */
+export async function extractAudio(
+  input: RawAudioExtractParams,
+  userId: string,
+  options?: PostProdRunOptions,
+): Promise<{ gcsUri: string; url: string; bytes: number; durationSec: number; format: "m4a" | "wav"; mediaType: "audio" }> {
+  const signal = options?.signal ?? NEVER_ABORT;
+  const params = audioExtractParamsSchema.parse(input);
+  const tmpDir = await mkdtemp(path.join(tmpdir(), "pp-audio-extract-"));
+  try {
+    const vPath = path.join(tmpDir, "video.mp4");
+    await fetchPostProdSourceToFile(params.videoUri, vPath, { signal });
+    const meta = await probe(vPath, signal);
+    if (!meta.hasAudio) throw new Error("成片没有音轨，无法抽出音频交付");
+    const outPath = path.join(tmpDir, `audio.${params.format}`);
+    const codec = params.format === "wav" ? ["-c:a", "pcm_s16le", "-ar", "48000"] : ["-c:a", "aac", "-b:a", "256k"];
+    await runMediaTool("ffmpeg", ["-y", "-i", vPath, "-vn", ...codec, "-ac", "2", outPath], signal);
+    const durationSec = await probeAudio(outPath, signal);
+    const up = await uploadResult({
+      filePath: outPath,
+      userId,
+      kind: "audio-extract",
+      ext: params.format,
+      contentType: params.format === "wav" ? "audio/wav" : "audio/mp4",
+      signal,
+    });
+    return { ...up, durationSec, format: params.format, mediaType: "audio" as const };
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
 }
 
 export async function mountBgm(

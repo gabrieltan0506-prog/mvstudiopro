@@ -19,6 +19,8 @@ import {
   type ManhuaSegmentReferenceSlot,
 } from "@shared/manhuaSegmentReference";
 import type { CanvasBlock } from "@/lib/canvasTypes";
+import { findManhuaFinalVideoVersionIdentity } from "@shared/manhuaFinalPostProd";
+import { getBlockEpisodeIndex, isManhuaFinalVideoBlockId } from "@/lib/canvasDramaStudio";
 import {
   collectManhuaAssembleClipsFromDock,
   collectManhuaClipDockItems,
@@ -81,6 +83,14 @@ type Props = {
   segmentRefBusyId?: string | null;
   /** 上传进度 0–1；null/undefined = 未知 */
   segmentRefProgress?: number | null;
+  /**
+   * 交付包：先把各集整集成片的当前版抽出音轨（后期 audio_extract，免费），回 成片 URL → 音轨 映射；
+   * 拿到后再走导出，交付/epXX/ 里带 成片 + 字幕.srt + 音轨.m4a + 交付清单.md。
+   */
+  onPrepareDeliveryAudio?: (
+    finals: Array<{ blockId: string; episodeIndex: number; url: string; gcsUri?: string }>,
+    onProgress?: (done: number, total: number, episodeIndex: number) => void,
+  ) => Promise<Record<string, { url: string; ext: "m4a" | "wav" }> & { __timedOutEpisodes?: number[] }>;
 };
 
 /** 一步达：点即选文件，不另开面板；同一 input 复用会被浏览器缓存 FileList，故每次新建 */
@@ -136,7 +146,9 @@ export default function ManhuaClipDock({
   onSegmentReferenceClear,
   segmentRefBusyId,
   segmentRefProgress,
+  onPrepareDeliveryAudio,
 }: Props) {
+  const [deliveryBusy, setDeliveryBusy] = useState<string | null>(null);
   const [exportBusy, setExportBusy] = useState(false);
   // 「含历史版本」默认关；用户打开过就记在本机（只影响 zip 内容，不影响合成）
   const [includeHistory, setIncludeHistory] = useState<boolean>(() => {
@@ -272,6 +284,70 @@ export default function ManhuaClipDock({
       else next.add(it.blockId);
     }
     onSelectedIdsChange(next);
+  };
+
+  /** 生成交付包：整集成片当前版 → 抽音轨 → zip（成片 + 字幕.srt + 音轨 + 交付清单） */
+  const handleDeliveryPack = async () => {
+    const finals = blocks
+      .filter((b) => isManhuaFinalVideoBlockId(b.id) && !b.archivedFromPreviousScript && /^https?:\/\//i.test(String(b.outputUrl || "")))
+      .map((b) => {
+        const identity = findManhuaFinalVideoVersionIdentity(b, String(b.outputUrl));
+        return { blockId: b.id, episodeIndex: getBlockEpisodeIndex(b) ?? 1, url: String(b.outputUrl), gcsUri: identity?.gcsUri };
+      });
+    if (!finals.length) {
+      window.alert("还没有整集成片：先在成片坞合成长片，再生成交付包。");
+      return;
+    }
+    setExportBusy(true);
+    setDeliveryBusy("抽音轨中…");
+    try {
+      const audioMap = onPrepareDeliveryAudio
+        ? await onPrepareDeliveryAudio(finals, (done, total, episodeIndex) =>
+            setDeliveryBusy(`抽音轨 第${episodeIndex}集（${done}/${total}）…`),
+          )
+        : {};
+      setDeliveryBusy("打包中…");
+      const ids = selectExportableDockIds(items);
+      const result = await downloadManhuaProjectZip({
+        items,
+        selectedIds: ids,
+        topic,
+        seriesTitle,
+        characterIds,
+        artStyleId,
+        sceneId,
+        demoAssetIds,
+        writerPackMarkdown,
+        deliveryPackageMarkdown: formatManhuaDeliveryPackageMarkdown(deliveryPkg),
+        cineVocabTableMarkdown: formatCineVocabMultilingualTable(cineVocabIds.length ? cineVocabIds : undefined),
+        finalVideoUrl: finalVideoUrl || undefined,
+        blocks,
+        includeHistory,
+        includeDelivery: true,
+        deliveryAudioByFinalUrl: Object.fromEntries(Object.entries(audioMap).filter(([k]) => k !== "__timedOutEpisodes")) as Record<string, { url: string; ext: "m4a" | "wav" }>,
+      });
+      const missingAudio = finals.filter((f) => !audioMap[f.url]).length;
+      // 只有成片真进了 zip 的集才算「交付」；下载失败的集只有一份清单，要单独报「缺成片」
+      const delivered = new Set(result.manifest.delivery?.filter((d) => d.kind === "video").map((d) => d.episodeIndex) || []);
+      const withSrt = new Set(result.manifest.delivery?.filter((d) => d.kind === "srt").map((d) => d.episodeIndex) || []);
+      const missingSrt = Array.from(delivered).filter((ep) => !withSrt.has(ep)).length;
+      const missingVideo = finals.filter((f) => !delivered.has(f.episodeIndex)).length;
+      const timedOut = audioMap.__timedOutEpisodes?.length || 0;
+      window.alert(
+        `已导出交付包 ${result.filename}：${result.deliveryCount} 集（成片 + 字幕 + 音轨 + 清单）${
+          missingSrt ? `，其中 ${missingSrt} 集无字幕` : ""
+        }${missingAudio ? `，${missingAudio} 集音轨未抽出${timedOut ? `（${timedOut} 集为超时）` : ""}` : ""}${
+          missingVideo ? `，${missingVideo} 集成片下载失败` : ""
+        }${missingSrt || missingAudio || missingVideo ? "（详见各集 交付清单.md）" : ""}${
+          result.failCount ? `，失败 ${result.failCount}` : ""
+        }`,
+      );
+    } catch (e: unknown) {
+      window.alert(e instanceof Error ? e.message : "交付包导出失败");
+    } finally {
+      setDeliveryBusy(null);
+      setExportBusy(false);
+    }
   };
 
   const handleExport = async () => {
@@ -654,6 +730,16 @@ export default function ManhuaClipDock({
         >
           {exportBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
           导出全部有产物
+        </button>
+        <button
+          type="button"
+          disabled={exportBusy}
+          onClick={() => void handleDeliveryPack()}
+          title="整集成片当前版 → 先抽音轨（免费）→ 打包：交付/epXX/ 成片.mp4 + 字幕.srt（合成时冻结的真实时间轴）+ 音轨.m4a + 交付清单.md"
+          className="inline-flex items-center gap-1 rounded-lg border border-emerald-400/35 bg-emerald-500/12 px-2.5 py-1 text-[10px] font-semibold text-emerald-50 hover:bg-emerald-500/20 disabled:opacity-40"
+        >
+          {deliveryBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+          {deliveryBusy || "生成交付包"}
         </button>
         <button
           type="button"

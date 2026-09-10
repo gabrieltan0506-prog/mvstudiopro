@@ -146,7 +146,18 @@ export type RawAudioTrimParams = z.input<typeof audioTrimParamsSchema>;
 export type AudioTimelineParams = z.infer<typeof audioTimelineParamsSchema>;
 export type RawAudioTimelineParams = z.input<typeof audioTimelineParamsSchema>;
 
+/** 交付包：从整集成片抽出音轨（不重混、不改电平），m4a 交付 / wav 母带二选一 */
+export const audioExtractParamsSchema = z
+  .object({
+    videoUri: mediaSourceSchema,
+    format: z.enum(["m4a", "wav"]).default("m4a"),
+  })
+  .strict();
+export type AudioExtractParams = z.infer<typeof audioExtractParamsSchema>;
+export type RawAudioExtractParams = z.input<typeof audioExtractParamsSchema>;
+
 export const postProdJobInputSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("audio_extract"), params: audioExtractParamsSchema }).strict(),
   z.object({ action: z.literal("audio_trim"), params: audioTrimParamsSchema }).strict(),
   z.object({ action: z.literal("audio_timeline"), params: audioTimelineParamsSchema }).strict(),
   z.object({ action: z.literal("concat"), params: concatParamsSchema }).strict(),

@@ -9,6 +9,8 @@ import {
   parseDurationSeconds,
   resolutionToSize,
   runFfmpeg,
+  probeMediaDurationSec,
+  resolveSceneClipDurationSec,
 } from "./renderUtils.js";
 
 async function uploadFileToPublicBlob(filePath: string, fileName: string, contentType: string) {
@@ -49,18 +51,19 @@ export async function renderWorkflowFinalVideo(input: RenderWorkflowInput) {
     const filePath = path.join(tmpDir, `scene-${String(i + 1).padStart(2, "0")}.mp4`);
     await downloadFileToPath(url, rawPath);
 
-    const trimIn = Number(scene.trimInSec);
-    const trimOut = Number(scene.trimOutSec);
-    const hasTrim =
-      Number.isFinite(trimIn) && Number.isFinite(trimOut) && trimOut - trimIn >= 0.5;
-    const clipDur = hasTrim
-      ? Math.round((trimOut - trimIn) * 10) / 10
-      : parseDurationSeconds(scene.duration, 8);
+    // 0910：镜长以探测为准，字幕/淡变/BGM 淡出跟真实裁切走，不再按计划秒数累计
+    const probedDurationSec = await probeMediaDurationSec(rawPath);
+    const { clipDur, hasTrim, trimIn } = resolveSceneClipDurationSec({
+      trimInSec: scene.trimInSec,
+      trimOutSec: scene.trimOutSec,
+      declaredDurationSec: parseDurationSeconds(scene.duration, 8),
+      probedDurationSec,
+    });
     if (hasTrim) {
       await runFfmpeg([
         "-y",
         "-ss",
-        String(Math.max(0, trimIn)),
+        String(trimIn),
         "-i",
         rawPath,
         "-t",

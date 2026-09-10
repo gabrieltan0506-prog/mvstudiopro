@@ -9,9 +9,10 @@
  * 4. gs://<系统桶>/<其他对象>                 —— 必须出现在该用户 succeeded 任务
  *    output 的**明确产物字段**里(逐字段收集→解析成完整对象名→全等比较;
  *    prompt/outputText 等普通文本字段不计入)。
- * HTTPS 只接受系统生成地址:站内 /api/canvas-media/ 稳定链、或系统桶的
- * storage.googleapis.com 链;核对通过后统一写回规范化 gs:// 地址,
- * 不把 24 小时签名链写入 jobs.input(下载时由服务层现签)。
+ * HTTPS 接受两类:站内 /api/canvas-media/ 稳定链、系统桶的 storage.googleapis.com 链
+ * (核对通过后统一写回规范化 gs:// 地址,不把 24 小时签名链写入 jobs.input);
+ * 以及本人 succeeded 任务 output 明确产物字段里逐字全等的 https 直链
+ * (整集合成落 Vercel Blob、第三方引擎 CDN 产物都在此列;仍限本人产物,下载禁跳转、有体积上限)。
  */
 import { and, eq } from "drizzle-orm";
 import { jobs } from "../../drizzle/schema";
@@ -176,21 +177,74 @@ export async function loadSucceededJobOutputObjects(
   return objects;
 }
 
+/**
+ * 一次遍历同时喂两个集合：系统桶对象名 + 本人 succeeded 任务产物里的 https 直链
+ * （整集合成落在 Vercel Blob 的 renders/…，不在系统桶；交付包抽音轨要能读到，只按全等匹配放行）。
+ * 入队与 worker 各调一次解析，这里不再各扫一遍库。
+ */
+export async function loadSucceededJobOutputSources(
+  userId: string,
+  bucket: string,
+): Promise<{ objects: ReadonlySet<string>; urls: ReadonlySet<string> }> {
+  const db = await getDb();
+  if (!db) throw new Error("数据库暂时不可用,请稍后再试");
+  const rows = await db
+    .select({ output: jobs.output })
+    .from(jobs)
+    .where(and(eq(jobs.userId, userId), eq(jobs.status, "succeeded")));
+  const objects = new Set<string>();
+  const urls = new Set<string>();
+  for (const row of rows) {
+    for (const source of collectDeclaredMediaSources(row.output)) {
+      const objectName = extractSystemObjectName(source, bucket);
+      if (objectName) objects.add(objectName);
+      else if (/^https:\/\//i.test(source)) urls.add(source);
+    }
+  }
+  return { objects, urls };
+}
+
+/** 只要 https 直链集合（对象名走 loadSucceededJobOutputSources().objects） */
+export async function loadSucceededJobOutputUrls(userId: string, bucket: string): Promise<ReadonlySet<string>> {
+  return (await loadSucceededJobOutputSources(userId, bucket)).urls;
+}
+
 export type PostProdMediaDeps = {
   getBucket: () => string;
   verifyOwnership: (userId: number, objectPath: string) => Promise<boolean>;
   loadSucceededJobOutputObjects: (userId: string, bucket: string) => Promise<ReadonlySet<string>>;
+  /** 可选：一次遍历同时给对象名与 https 直链；给了就不再调 loadSucceededJobOutputObjects */
+  loadSucceededJobOutputSources?: (userId: string, bucket: string) => Promise<{ objects: ReadonlySet<string>; urls: ReadonlySet<string> }>;
+  /** 可选（测试注入用）：只给 https 直链；缺省不放行任何外链 */
+  loadSucceededJobOutputUrls?: (userId: string, bucket: string) => Promise<ReadonlySet<string>>;
 };
 
 const realDeps: PostProdMediaDeps = {
   getBucket: () => getGcsBucketName(),
   verifyOwnership: (uid, p) => verifyCanvasMediaOwnership(uid, p),
   loadSucceededJobOutputObjects: (uid, bucket) => loadSucceededJobOutputObjects(uid, bucket),
+  loadSucceededJobOutputSources: (uid, bucket) => loadSucceededJobOutputSources(uid, bucket),
 };
 
 const UNREGISTERED_HINT = "素材尚未登记,请从画布/成片里重新选择站内素材";
 
-export type PostProdMediaContext = { jobObjects: ReadonlySet<string> };
+export type PostProdMediaContext = { jobObjects: ReadonlySet<string>; jobUrls?: ReadonlySet<string> };
+
+/** 每次请求只读一次 jobs：优先一次遍历拿两个集合；旧式 deps 退回两段式（测试注入） */
+async function buildPostProdMediaContext(
+  userId: string,
+  bucket: string,
+  deps: PostProdMediaDeps,
+): Promise<PostProdMediaContext> {
+  if (deps.loadSucceededJobOutputSources) {
+    const both = await deps.loadSucceededJobOutputSources(userId, bucket);
+    return { jobObjects: both.objects, jobUrls: both.urls };
+  }
+  return {
+    jobObjects: await deps.loadSucceededJobOutputObjects(userId, bucket),
+    jobUrls: deps.loadSucceededJobOutputUrls ? await deps.loadSucceededJobOutputUrls(userId, deps.getBucket()) : undefined,
+  };
+}
 
 async function assertObjectAllowed(
   userId: string,
@@ -222,7 +276,7 @@ export async function resolveRegisteredPostProdMediaSource(
   const userId = String(input.userId);
   const bucket = deps.getBucket();
   const ctx: PostProdMediaContext =
-    context ?? { jobObjects: await deps.loadSucceededJobOutputObjects(userId, bucket) };
+    context ?? (await buildPostProdMediaContext(userId, bucket, deps));
 
   if (source.startsWith("gs://")) {
     const parsed = parseGsUri(source);
@@ -254,6 +308,9 @@ export async function resolveRegisteredPostProdMediaSource(
     return `gs://${bucket}/${objectName}`;
   }
 
+  // 本人 succeeded 任务的明确产物直链（整集合成落 Vercel Blob）：全等命中才放行，不做前缀/子串匹配
+  if (/^https:\/\//i.test(source) && ctx.jobUrls?.has(source)) return source;
+
   throw new Error(UNREGISTERED_HINT);
 }
 
@@ -264,9 +321,7 @@ export async function resolvePostProdInputSources(
 ): Promise<PostProdJobInput> {
   const userId = String(input.userId);
   const bucket = deps.getBucket();
-  const context: PostProdMediaContext = {
-    jobObjects: await deps.loadSucceededJobOutputObjects(userId, bucket),
-  };
+  const context: PostProdMediaContext = await buildPostProdMediaContext(userId, bucket, deps);
   const resolve = (source: string) =>
     resolveRegisteredPostProdMediaSource({ userId, source }, deps, context);
 

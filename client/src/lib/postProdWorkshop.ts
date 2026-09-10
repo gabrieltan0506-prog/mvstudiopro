@@ -6,7 +6,7 @@
  * - 异常缓存结构清理、终态只提示一次的判定。
  */
 
-export type PostProdAction = "concat" | "bgm_mount" | "burn_subtitle" | "loudness_check" | "audio_trim" | "audio_timeline";
+export type PostProdAction = "concat" | "bgm_mount" | "burn_subtitle" | "loudness_check" | "audio_trim" | "audio_timeline" | "audio_extract";
 export type PostProdJobStatus = "queued" | "running" | "succeeded" | "failed";
 
 export type TrackedJob = {
@@ -22,6 +22,7 @@ export type TrackedJob = {
 export const ACTION_LABEL: Record<PostProdAction, string> = {
   audio_trim: "音频单段裁切",
   audio_timeline: "秒锁音频试听",
+  audio_extract: "成片抽音轨",
   concat: "拼接成片",
   bgm_mount: "BGM 贴装",
   burn_subtitle: "字幕烧录",
@@ -31,6 +32,7 @@ export const ACTION_LABEL: Record<PostProdAction, string> = {
 const ACTIONS: readonly string[] = [
   "audio_trim",
   "audio_timeline",
+  "audio_extract",
   "concat",
   "bgm_mount",
   "burn_subtitle",
@@ -39,7 +41,7 @@ const ACTIONS: readonly string[] = [
 const STATUSES: readonly string[] = ["queued", "running", "succeeded", "failed"];
 
 export function isPostProdAudioAction(action: PostProdAction): boolean {
-  return action === "audio_trim" || action === "audio_timeline";
+  return action === "audio_trim" || action === "audio_timeline" || action === "audio_extract";
 }
 
 /** localStorage 键按用户分隔:换账号不串单 */

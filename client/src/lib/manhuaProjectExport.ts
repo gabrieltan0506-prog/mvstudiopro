@@ -5,6 +5,7 @@
 import JSZip from "jszip";
 import { buildManhuaAssembleSubtitleSource } from "./manhuaAssembleSubtitleSource";
 import type { ManhuaSubtitleSource } from "@shared/manhuaRenderedSubtitle";
+import { formatManhuaSubtitleSrt, sanitizeBurnSubtitleText } from "@shared/manhuaEditSubtitle";
 import {
   getManhuaDemoAssetPublicUrl,
   listManhuaDemoAssetsForSceneTemplate,
@@ -454,6 +455,8 @@ export type ManhuaProjectExportManifest = {
     path?: string;
     source?: ManhuaDockHistorySource;
   }>;
+  /** 交付包写入记录（成片/字幕/音轨/清单） */
+  delivery?: Array<{ episodeIndex: number; kind: "video" | "srt" | "audio" | "doc"; path: string }>;
   failed: Array<{ blockId: string; url?: string; error: string }>;
 };
 
@@ -484,6 +487,13 @@ export type ExportManhuaProjectZipOpts = {
   finalVideoBlocks?: CanvasBlock[];
   /** 画布全部块：读各节点 outputUrls 历史（含历史版本导出用） */
   blocks?: CanvasBlock[];
+  /**
+   * 交付包（0910）：为 true 时把每集整集成片的当前版整理进 交付/epXX/：
+   * 成片.mp4 + 字幕.srt（合成时冻结的真实时间轴）+ 音轨.m4a（deliveryAudioByFinalUrl 给到时）+ 交付清单.md
+   */
+  includeDelivery?: boolean;
+  /** 整集成片 URL → 已抽出的音轨（由成片坞先跑 audio_extract 后期任务得到） */
+  deliveryAudioByFinalUrl?: Record<string, { url: string; ext: "m4a" | "wav" }>;
   /** 默认 false：为 true 时把每个节点的历史版本写进 epXX/历史/ 并附 版本清单.md */
   includeHistory?: boolean;
 };
@@ -496,6 +506,8 @@ export type ExportManhuaProjectZipResult = {
   failCount: number;
   /** 本次写入的历史版本文件数（开关关闭时为 0） */
   historyCount: number;
+  /** 交付包写入的集数（未开交付包时为 0） */
+  deliveryCount: number;
 };
 
 async function fetchAsArrayBuffer(url: string): Promise<ArrayBuffer> {
@@ -565,6 +577,21 @@ function triggerDownload(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(href), 30_000);
 }
 
+/**
+ * 交付 SRT 用：淡变转场时上段末 cue 终点可能压过下段首 cue 起点（最多 1 秒，与烧字行为一致）。
+ * 烧字滤镜能叠显，但外部剪辑软件导入重叠 cue 会报错，交付前把前一条终点压到后一条起点。
+ */
+export function clampManhuaSubtitleCueOverlap<T extends { startSec: number; endSec: number }>(cues: T[]): T[] {
+  const sorted = [...cues].sort((a, b) => a.startSec - b.startSec || a.endSec - b.endSec);
+  return sorted
+    .map((cue, i) => {
+      const next = sorted[i + 1];
+      const endSec = next && cue.endSec > next.startSec ? next.startSec : cue.endSec;
+      return { ...cue, endSec };
+    })
+    .filter((cue) => cue.endSec > cue.startSec);
+}
+
 /** 勾选产物 → zip（manifest + epXX/…）；失败项写入 manifest.failed */
 export async function exportManhuaProjectZip(
   opts: ExportManhuaProjectZipOpts,
@@ -573,7 +600,8 @@ export async function exportManhuaProjectZip(
   const selected = opts.items.filter(
     (it) => selectedSet.has(it.blockId) && manhuaClipDockItemHasExportableOutput(it),
   );
-  const finalVideoBlocks = (opts.finalVideoBlocks || []).filter(
+  // 成片坞只传 blocks：整集成片块从 blocks 里自己找，不再要求调用方另传（此前坞内导出一直漏掉整集成片）
+  const finalVideoBlocks = (opts.finalVideoBlocks || opts.blocks || []).filter(
     (block) =>
       isManhuaFinalVideoBlockId(block.id) &&
       !block.archivedFromPreviousScript &&
@@ -711,6 +739,8 @@ export async function exportManhuaProjectZip(
   }
 
   const finalVideos: NonNullable<ManhuaProjectExportManifest["finalVideos"]> = [];
+  const deliveryMeta: NonNullable<ManhuaProjectExportManifest["delivery"]> = [];
+  let deliveryCount = 0;
   for (const block of finalVideoBlocks) {
     const episodeIndex = getBlockEpisodeIndex(block) ?? 1;
     const epFolder = `ep${String(episodeIndex).padStart(2, "0")}`;
@@ -754,6 +784,74 @@ export async function exportManhuaProjectZip(
           error: e instanceof Error ? e.message : "下载失败",
         });
         versions.push(version);
+      }
+    }
+    if (opts.includeDelivery) {
+      const active = versions.find((v) => v.active) || versions[0];
+      const deliveryFolder = `交付/${epFolder}`;
+      if (active && !active.path) {
+        // 当前版 mp4 没下下来（常见：过期签名链）：清单照写，用户在 zip 里能看到是哪一集缺成片，
+        // 而不是整个 交付/epXX/ 目录凭空消失
+        const docPath = uniqueZipPath(deliveryFolder, "交付清单", undefined, "md");
+        zip.file(
+          docPath,
+          [
+            `# 第${episodeIndex}集 交付包${block.episodeTitle ? ` · ${block.episodeTitle}` : ""}`,
+            "",
+            "- 成片：下载失败（见 manifest.failed；成片链接可能已过期，回成片坞重新打开本集后再导）",
+            "- 字幕 / 音轨：随成片一起跳过",
+          ].join("\n"),
+        );
+        deliveryMeta.push({ episodeIndex, kind: "doc", path: docPath });
+      }
+      if (active?.path) {
+        deliveryMeta.push({ episodeIndex, kind: "video", path: active.path });
+        const lines: string[] = [
+          `# 第${episodeIndex}集 交付包${block.episodeTitle ? ` · ${block.episodeTitle}` : ""}`,
+          "",
+          `- 成片：\`${active.path}\`（${active.origin === "burn_subtitle" ? "已烧字幕" : "合成版，未烧字"}）`,
+        ];
+        // 与片内烧字同一套清洗：去 \r、{}、-->、行内空行，防台词伪造 cue/时间码
+        const cues = clampManhuaSubtitleCueOverlap(
+          (active.subtitleTimeline?.cues || [])
+            .map((c) => ({ ...c, textZh: sanitizeBurnSubtitleText(c.textZh) }))
+            .filter((c) => c.textZh),
+        );
+        if (cues.length) {
+          const srtPath = uniqueZipPath(deliveryFolder, "字幕", undefined, "srt");
+          zip.file(srtPath, formatManhuaSubtitleSrt(cues));
+          lines.push(`- 字幕：\`${srtPath}\`（${cues.length} 条，合成时按真实裁切/淡变冻结的时间轴，${active.subtitleTimeline!.durationSec.toFixed(1)} 秒）`);
+          deliveryMeta.push({ episodeIndex, kind: "srt", path: srtPath });
+        } else {
+          lines.push(
+            active.subtitleTimeline?.cues?.length
+              ? "- 字幕：无（本版成片的字幕时间轴台词清洗后为空）"
+              : "- 字幕：无（该集有分段缺分镜台词结构，合成时没能冻结字幕时间轴；重新合成不会补上，需先在分镜把该段台词补齐再合成）",
+          );
+        }
+        const audio = opts.deliveryAudioByFinalUrl?.[active.url];
+        if (audio?.url) {
+          try {
+            const buf = await fetchAsArrayBuffer(audio.url);
+            const audioPath = uniqueZipPath(deliveryFolder, "音轨", undefined, audio.ext);
+            zip.file(audioPath, buf);
+            lines.push(`- 音轨：\`${audioPath}\`（从成片抽出，未重混）`);
+            deliveryMeta.push({ episodeIndex, kind: "audio", path: audioPath });
+            okCount += 1;
+          } catch (e: unknown) {
+            failed.push({ blockId: `${block.id}#audio`, url: audio.url, error: e instanceof Error ? e.message : "下载失败" });
+            lines.push("- 音轨：下载失败（见 manifest.failed）");
+          }
+        } else {
+          lines.push("- 音轨：未抽取（成片坞「生成交付包」会先抽音轨；直接导出则不含）");
+        }
+        if (opts.deliveryPackageMarkdown) {
+          lines.push("", "## 交付要求（与剪辑台同源）", "", opts.deliveryPackageMarkdown.trim());
+        }
+        const docPath = uniqueZipPath(deliveryFolder, "交付清单", undefined, "md");
+        zip.file(docPath, lines.join("\n"));
+        deliveryMeta.push({ episodeIndex, kind: "doc", path: docPath });
+        deliveryCount += 1;
       }
     }
     finalVideos.push({
@@ -804,6 +902,7 @@ export async function exportManhuaProjectZip(
     selected: selectedMeta,
     history: opts.includeHistory ? historyMeta : undefined,
     failed,
+    ...(deliveryMeta.length ? { delivery: deliveryMeta } : {}),
   };
   zip.file("manifest.json", JSON.stringify(manifest, null, 2));
   if (opts.includeHistory) {
@@ -925,6 +1024,7 @@ export async function exportManhuaProjectZip(
     okCount,
     failCount: failed.length,
     historyCount: historyMeta.filter((h) => h.path).length,
+    deliveryCount,
   };
 }
 
