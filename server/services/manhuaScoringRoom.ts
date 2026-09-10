@@ -75,6 +75,8 @@ export type ScoringRoomResult = {
   variants: ScoringRoomVariant[];
   elapsedMs: number;
   brief: BgmBrief;
+  /** 桥来源：上游少出了几条（另一条 error 或轮询到点没等到）；网关来源恒为 0 */
+  missingVariants: number;
 };
 
 function abortError(signal?: AbortSignal): Error {
@@ -273,9 +275,17 @@ export async function resumeManhuaBgmTask(input: {
   const isBridgeTask = Boolean(decodeSunoBridgeTaskId(taskId));
   let raw: unknown;
   let bridgeUrls: string[] = [];
+  let bridgeMissing = 0;
+  let bridgeReadyUrls: string[] = [];
   for (;;) {
     assertNotAborted(input.abortSignal);
     if (Date.now() > deadlineMs) {
+      if (isBridgeTask && bridgeReadyUrls.length) {
+        // 桥少回一条、另一条早就 complete：到点就按已出的收，不让已占额度的那首作废
+        bridgeUrls = bridgeReadyUrls;
+        bridgeMissing = Math.max(0, (decodeSunoBridgeTaskId(taskId)?.length ?? 0) - bridgeReadyUrls.length);
+        break;
+      }
       throw new Error(
         `配乐任务 ${taskId} 超过 ${Math.ceil(pollTimeoutMs / 60_000)} 分钟未完成`
       );
@@ -285,9 +295,11 @@ export async function resumeManhuaBgmTask(input: {
       const state = await getSunoBridgeTask(taskId, { abortSignal: input.abortSignal });
       if (state.status === "completed") {
         bridgeUrls = state.audioUrls;
+        bridgeMissing = state.missing;
         break;
       }
       if (state.status === "failed") throw new Error(`配乐任务 ${taskId} failed：${state.reason}`);
+      bridgeReadyUrls = state.readyUrls;
     } else {
       const polled = await getEvolinkSunoTask(taskId, {
         abortSignal: input.abortSignal,
@@ -379,6 +391,7 @@ export async function resumeManhuaBgmTask(input: {
     variants,
     elapsedMs: Math.max(0, Date.now() - startedAtMs),
     brief,
+    missingVariants: isBridgeTask ? bridgeMissing : 0,
   };
 }
 

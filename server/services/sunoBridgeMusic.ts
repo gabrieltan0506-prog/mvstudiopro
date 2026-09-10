@@ -131,7 +131,7 @@ export async function createSunoBridgeTask(
 }
 
 export type SunoBridgeTaskState =
-  | { status: "pending"; clips: SunoBridgeClip[] }
+  | { status: "pending"; clips: SunoBridgeClip[]; /** 已经 complete 的那几条，轮询超时时可先收 */ readyUrls: string[] }
   | { status: "completed"; clips: SunoBridgeClip[]; audioUrls: string[]; missing: number }
   | { status: "failed"; clips: SunoBridgeClip[]; reason: string };
 
@@ -146,7 +146,10 @@ export async function getSunoBridgeTask(taskId: string, opts: { abortSignal?: Ab
   const clips = pickClips(raw).filter((c) => ids.includes(c.id));
   const byId = new Map(clips.map((c) => [c.id, c] as const));
   const terminal = (c: SunoBridgeClip | undefined) => Boolean(c && (c.status === "error" || (c.status === "complete" && c.audio_url)));
-  if (!ids.every((id) => terminal(byId.get(id)))) return { status: "pending", clips };
+  if (!ids.every((id) => terminal(byId.get(id)))) {
+    const readyUrls = ids.map((id) => byId.get(id)).filter((c): c is SunoBridgeClip => Boolean(c && c.status === "complete" && c.audio_url)).map((c) => c.audio_url!);
+    return { status: "pending", clips, readyUrls };
+  }
   const done = ids.map((id) => byId.get(id)!).filter((c) => c.status === "complete" && c.audio_url);
   if (!done.length) {
     const first = clips.find((c) => c.status === "error");

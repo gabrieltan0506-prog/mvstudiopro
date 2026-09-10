@@ -72,7 +72,7 @@ describe("sunoBridgeMusic（内部专用 cookie 桥客户端）", () => {
   it("轮询：全部终态才结算；一 complete 一 error 算完成并记 missing；全 error 才失败；缺 clip 继续 pending", async () => {
     const id = encodeSunoBridgeTaskId([A, B]);
     reply = () => ({ status: 200, body: [{ id: B, status: "complete", audio_url: "https://cdn/b.mp3" }, { id: A, status: "streaming", audio_url: "https://cdn/a-partial.mp3" }] });
-    expect((await getSunoBridgeTask(id)).status).toBe("pending");
+    expect(await getSunoBridgeTask(id)).toMatchObject({ status: "pending", readyUrls: ["https://cdn/b.mp3"] });
     expect(calls.at(-1)!.url).toContain(`/api/get?ids=${encodeURIComponent(`${A},${B}`)}`);
     reply = () => ({ status: 200, body: [{ id: B, status: "complete", audio_url: "https://cdn/b.mp3" }, { id: A, status: "complete", audio_url: "https://cdn/a.mp3" }] });
     const done = await getSunoBridgeTask(id);

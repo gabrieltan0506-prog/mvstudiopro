@@ -159,4 +159,6 @@ export type ManhuaBgmJobOutput = {
   }>;
   elapsedMs: number;
   providerCost: { unit: "per_call"; calls: 1 };
+  /** 桥来源：上游少出了几条变体（另一条 error / 轮询到点没等到）；网关来源为 0 或不带 */
+  missingVariants?: number;
 };

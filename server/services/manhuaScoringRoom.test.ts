@@ -143,7 +143,7 @@ describe("漫剧配乐建单与恢复", () => {
   it("桥来源：恢复按桥任务号轮询到两条 complete，不碰网关，变体照常转存本人前缀", async () => {
     bridge.get.mockReset();
     bridge.get
-      .mockResolvedValueOnce({ status: "pending", clips: [] })
+      .mockResolvedValueOnce({ status: "pending", clips: [], readyUrls: [] })
       .mockResolvedValueOnce({ status: "completed", clips: [], audioUrls: ["https://cdn.example/a.mp3", "https://cdn.example/b.mp3"], missing: 0 });
     const taskId = "sunobridge:aaaaaaaa-0000-4000-8000-000000000001,aaaaaaaa-0000-4000-8000-000000000002";
     const out = await resumeManhuaBgmTask({ taskId, userId: "42", brief: { ...brief, model: "suno-bridge-v6-mini" }, pollIntervalMs: 1 });
@@ -152,6 +152,14 @@ describe("漫剧配乐建单与恢复", () => {
     expect(upstream.pick).not.toHaveBeenCalled();
     expect(out.variants).toHaveLength(2);
     expect(storage.upload).toHaveBeenCalledTimes(2);
+    expect(out.missingVariants).toBe(0);
+    // 轮询到点但一条早已 complete：按已出的收，missingVariants=1
+    bridge.get.mockReset();
+    bridge.get.mockResolvedValue({ status: "pending", clips: [], readyUrls: ["https://cdn.example/a.mp3"] });
+    storage.upload.mockClear();
+    const partial = await resumeManhuaBgmTask({ taskId, userId: "42", brief: { ...brief, model: "suno-bridge-v6-mini" }, pollIntervalMs: 1, pollTimeoutMs: 5 });
+    expect(partial.variants).toHaveLength(1);
+    expect(partial.missingVariants).toBe(1);
     bridge.get.mockReset();
     bridge.get.mockResolvedValue({ status: "failed", clips: [], reason: "moderation" });
     await expect(resumeManhuaBgmTask({ taskId, userId: "42", brief: { ...brief, model: "suno-bridge-v6-mini" }, pollIntervalMs: 1 })).rejects.toThrow(/failed：moderation/);

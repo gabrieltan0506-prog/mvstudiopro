@@ -1890,6 +1890,7 @@ async function processManhuaBgmJob(params: {
         briefDigest: resumed.briefDigest,
         variants: resumed.variants,
         elapsedMs: resumed.elapsedMs,
+        ...(resumed.missingVariants ? { missingVariants: resumed.missingVariants } : {}),
         providerCost: { unit: "per_call", calls: 1 },
       });
     }
@@ -1957,6 +1958,7 @@ async function processManhuaBgmJob(params: {
       briefDigest: resumed.briefDigest,
       variants: resumed.variants,
       elapsedMs: resumed.elapsedMs,
+      ...(resumed.missingVariants ? { missingVariants: resumed.missingVariants } : {}),
       providerCost: { unit: "per_call", calls: 1 },
     });
   } finally {
