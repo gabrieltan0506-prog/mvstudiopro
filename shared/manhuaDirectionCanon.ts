@@ -73,9 +73,10 @@ export function classifyManhuaDirectionSceneType(text: string): ManhuaDirectionS
   const reveal = count(/真相|原来是|原来他|原来她|认出|露出真面目|露出真容|识破|竟是|身份暴露|揭开面|揭开面具|揭穿|真面目|水落石出|恍然|竟然是/g);
   const emotion = count(/哭泣|落泪|泪落|泪水|流泪|拥抱|抱住|告白|颤抖|哽咽|心碎|告别|跪下|泣不成声|凝视着|沉默不语|失声|崩溃|悲鸣|相拥/g);
   // 引号按成对计：一句台词算一次，不让「」“”各算一次把打戏压成对白；剧本体「阿菁：你来了」与 "…" / 『…』 也算
+  // 剧本体「名：台词」只认人名，场头/技术标签（场景：时间：镜头：字幕：注：…）不算；标签后面跟的引号也不算台词
   const dialogue =
-    count(/「[^」]{1,200}」|“[^”]{1,200}”|"[^"\n]{1,200}"|『[^』]{1,200}』/g) +
-    count(/(?:^|\s)[\u4e00-\u9fff]{1,6}[：:](?=\S)/g) +
+    count(/(?<!(?:字幕|镜头|景别|注|备注|特写|全景|中景|近景|远景|标题|音乐|音效))(?:「[^」]{1,200}」|“[^”]{1,200}”|"[^"\n]{1,200}"|『[^』]{1,200}』)/g) +
+    count(/(?:^|\s)(?!(?:场景|时间|地点|人物|镜头|景别|光线|情绪|字幕|旁白|画外音|注|备注|特写|全景|中景|近景|远景|动作|台词|内景|外景|音乐|音效|道具|服装|标题|镜号|时长|秒|意图)[：:])[\u4e00-\u9fff]{1,6}[：:](?=\S)/g) +
     count(/低声问|问道|答道|说道|回答|反问|喊道|开口道|对白/g);
   // 「次日清晨」是场头常见写法，只算一次
   const transition = count(/转场|过场|赶路|奔赴|次日清晨|次日|清晨|夜幕|空镜|时间流逝|数日后|天亮|翌日|黄昏时/g);
@@ -219,6 +220,8 @@ function denameGuard(lines: string[], card: ManhuaDirectionCard): string[] {
 function marker(card: ManhuaDirectionCard): string {
   return `【导演法典·v1·${card.id}·${card.version}】${card.labelZh}`;
 }
+/** 闭合哨兵：剥离时以它定边界，不靠「下一个 【」猜（审查 P2：猜边界会吞掉块后面的用户正文） */
+export const MANHUA_DIRECTION_BLOCK_END = "【/导演法典】";
 
 /**
  * 唯一编译入口：按场景类型选卡（副卡只覆盖其声明的阶段），只取正式规律，五块互相隔离。
@@ -267,14 +270,14 @@ export function resolveDirectorStyleBlocks(
   const avoid = denameGuard(main.avoidZh || [], main);
 
   const block = (t: { card: ManhuaDirectionCard; lines: string[] }, headZh: string) =>
-    t.lines.length ? [marker(t.card), headZh, ...t.lines.map((l) => `- ${l}`)].join("\n") : "";
+    t.lines.length ? [marker(t.card), headZh, ...t.lines.map((l) => `- ${l}`), MANHUA_DIRECTION_BLOCK_END].join("\n") : "";
   return {
     story: block(story, "剧本层：戏核、信息揭示与冲突取舍按下列规律处理，只借方法不借外观。"),
     storyboard: block(storyboard, "分镜层：构图、调度、景别与剪辑节奏按下列规律处理。"),
     keyframe: block(keyframe, "关键帧层：只写静态构图终态、光影与材质；运镜一律不写。"),
-    clip: clip.lines.length ? `${marker(clip.card)}｜${clip.lines.join("；")}` : "",
+    clip: clip.lines.length ? `${marker(clip.card)}｜${clip.lines.join("；")}${MANHUA_DIRECTION_BLOCK_END}` : "",
     review: reviewLines.length || avoid.length
-      ? [marker(main), "审查提示（仅供参考，不作硬门禁）：", ...reviewLines, ...avoid.map((a) => `- 明确不用：${a}`)].join("\n")
+      ? [marker(main), "审查提示（仅供参考，不作硬门禁）：", ...reviewLines, ...avoid.map((a) => `- 明确不用：${a}`), MANHUA_DIRECTION_BLOCK_END].join("\n")
       : "",
     usedCardLabelZh: main.labelZh,
     audit: { cardId: main.id, version: main.version, ruleIds: Array.from(usedRuleIds) },

@@ -120,9 +120,12 @@ export function readManhuaDirectionCanonFromBlocks(blocks: Array<{ prompt?: stri
  */
 export function stripManhuaDirectionStyleBlocks(prompt: string | null | undefined): string {
   return String(prompt || "")
+    // 新格式：以闭合哨兵定边界（多行/单行通吃），不吞块后正文
+    .replace(/\s?【导演法典·v1·[\s\S]*?【\/导演法典】/g, "")
+    .replace(/ ?【导演法典选卡·v1·[^】]*】/g, "")
+    // 旧格式（没有哨兵的历史节点）：多行形态按行首；单行形态只到下一个 【 为止
     .replace(/(?:^|\n)【导演法典·v1·[^\n]*(?:\n(?!\n)[^\n]*)*/g, "")
     .replace(/(?:^|\n)【导演法典选卡·v1·[^\n]*/g, "")
-    .replace(/ ?【导演法典选卡·v1·[^】]*】/g, "")
     .replace(/ ?【导演法典·v1·[^【]*/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .replace(/ {2,}/g, " ")

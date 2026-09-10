@@ -3164,6 +3164,7 @@ export default function OmniCanvas() {
     const timer = window.setTimeout(() => {
       setBlocks((prev) => {
         const next = applyFactoryPrefsToBlocks(prev, {
+          directionCanon: activeDirectionCanon,
           craftShotIds: selectedCraftShotIds,          pathCameraRecipeIds: selectedPathRecipeIds,
           narrativeLightingIds: selectedNarrativeLightingIds,
           maleHairstyleIds: selectedMaleHairstyleIds,
@@ -4632,7 +4633,7 @@ export default function OmniCanvas() {
                 undefined
               : undefined,
           directionSelection: directionSelection
-            ? { mainCardId: directionSelection.mainCardId, sceneOverrides: directionSelection.sceneOverrides as Record<string, never> | undefined }
+            ? { mainCardId: directionSelection.mainCardId, sceneOverrides: directionSelection.sceneOverrides }
             : undefined,
         }),
         new Promise<never>((_, reject) => {
@@ -7651,6 +7652,7 @@ export default function OmniCanvas() {
             return;
           }
           workingBlocks = applyFactoryPrefsToBlocks(workingBlocks, {
+            directionCanon: activeDirectionCanon,
             craftShotIds: selectedCraftShotIds,            pathCameraRecipeIds: selectedPathRecipeIds,
             narrativeLightingIds: selectedNarrativeLightingIds,
             maleHairstyleIds: selectedMaleHairstyleIds,
@@ -9007,7 +9009,7 @@ export default function OmniCanvas() {
                   videoModel={activePilotVideoModel}
                   directorStrategyContract={directorStrategyContract}
                   directionCanon={activeDirectionCanon}
-                  directionLocked={Boolean(projectBible?.directionCanon)}
+                  directionLocked={Boolean(projectBible)}
                   onSelectDirectionCard={(mainCardId) => setDirectionSelection(mainCardId ? { mainCardId } : null)}
                   onSelectDirectionSceneCard={(scene, cardId) =>
                     setDirectionSelection((prev) => {
@@ -9448,6 +9450,7 @@ export default function OmniCanvas() {
                     // 出图前把角色/场景/服装/运镜锁进每镜静帧提示词
                     setBlocks((prev) => {
                       const next = applyFactoryPrefsToBlocks(prev, {
+          directionCanon: activeDirectionCanon,
                         craftShotIds: selectedCraftShotIds,                        pathCameraRecipeIds: selectedPathRecipeIds,
                         narrativeLightingIds: selectedNarrativeLightingIds,
                         maleHairstyleIds: selectedMaleHairstyleIds,

@@ -275,6 +275,28 @@ describe("classifyManhuaDirectionSceneType", () => {
     expect(classifyManhuaDirectionSceneType("阿菁：你来了 墨屠：嗯，来了")).toBe("dialogue");
     expect(classifyManhuaDirectionSceneType('她说 "你走吧"，他答 "我不走"')).toBe("dialogue");
     expect(classifyManhuaDirectionSceneType("『你是谁』『护你的人』")).toBe("dialogue");
+    // 审查 P2-2：场头/技术标签不是对白
+    expect(classifyManhuaDirectionSceneType("场景：客栈内 时间：夜")).toBe("default");
+    expect(classifyManhuaDirectionSceneType("地点：客栈 时间：次日清晨 人物：阿菁、墨屠")).toBe("default");
+    expect(classifyManhuaDirectionSceneType("镜头：仰拍 光线：逆光 情绪：压抑")).toBe("default");
+    expect(classifyManhuaDirectionSceneType("特写：阿菁的手指在发抖 全景：雨夜街口")).toBe("default");
+    expect(classifyManhuaDirectionSceneType("注：此处不要出现刀。 备注：换成夜景")).toBe("default");
+    expect(classifyManhuaDirectionSceneType("字幕「三年后」 镜头「仰拍」")).toBe("default");
+    expect(classifyManhuaDirectionSceneType("时间：夜 地点：城门 家丁拔刀砍来，墨屠挥拳击退")).toBe("action");
+  });
+
+  it("剥离：闭合哨兵定边界，块后面的用户正文不被吞（审查 P2-1）", async () => {
+    const lib = await import("./manhuaDirectionCanonLibrary");
+    const { resolveDirectorStyleBlocks } = await import("./manhuaDirectionCanon");
+    const canon = lib.buildManhuaDirectionCanonFromSelection({ mainCardId: "parallel_action_editing" })!;
+    const blocks = resolveDirectorStyleBlocks(canon);
+    expect(blocks.storyboard.endsWith("【/导演法典】")).toBe(true);
+    const multi = `前文 A\n\n${blocks.storyboard}\n\n用户手写：第三镜要慢。`;
+    expect(lib.stripManhuaDirectionStyleBlocks(multi)).toBe("前文 A\n\n用户手写：第三镜要慢。");
+    const single = `前文 A ${blocks.storyboard.replace(/\s+/g, " ")} 用户手写：第三镜要慢。`;
+    expect(lib.stripManhuaDirectionStyleBlocks(single)).toBe("前文 A 用户手写：第三镜要慢。");
+    const clipLine = `镜头说明 ${blocks.clip} 用户备注`;
+    expect(lib.stripManhuaDirectionStyleBlocks(clipLine)).toBe("镜头说明 用户备注");
   });
 });
 

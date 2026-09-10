@@ -1298,6 +1298,8 @@ export function applyFactoryPrefsToBlocks(
     videoReverseOutputMode?: "zh" | "en" | "compact";
     customRefs?: ManhuaCustomAssetRef[];
     assetCanon?: ManhuaWriterAssetCanon | null;
+    /** 导演法典：显式传入优先（换卡后「同步设置」要用新卡）；不传才从已铺节点的选卡标记回读 */
+    directionCanon?: ManhuaDirectionCanon | null;
   },
 ): CanvasBlock[] {
   const directorStrategyContract = blocks
@@ -1315,8 +1317,8 @@ export function applyFactoryPrefsToBlocks(
   const directorKeyframeBlock = directorStrategyContract
     ? formatManhuaDirectorStrategyStage(directorStrategyContract, "keyframe")
     : "";
-  // 导演法典从已铺节点回读（选卡标记）；重写时先剥旧投影再加，幂等
-  const prefsDirectionCanon = readManhuaDirectionCanonFromBlocks(blocks);
+  // 导演法典：显式入参优先（审查 P1：换卡后同步设置必须用新卡），缺省才从已铺节点回读选卡标记；重写先剥旧投影再加，幂等
+  const prefsDirectionCanon = opts.directionCanon !== undefined ? opts.directionCanon : readManhuaDirectionCanonFromBlocks(blocks);
   const prefsDirection = resolveDirectorStyleBlocks(prefsDirectionCanon);
   const prefsDirectionMarker = prefsDirectionCanon ? formatManhuaDirectionSelectionMarker(prefsDirectionCanon) : "";
   const craftBlock = buildCraftShotInjectBlock(opts.craftShotIds || []);
@@ -2361,8 +2363,15 @@ export function ensureManhuaFragmentClips(
         ? sceneSlot.tag
         : "";
     // 审阅可见：场景锁 + 光影景别氛围 + 秒轴轨迹；身份锁写本段 Image 对照
+    // 表格/秒表格式的台词单元格常无引号（解析时被剥掉）：这里补成「」再判，不然对白副卡永远触发不了
     const directionSceneType = classifyManhuaDirectionSceneType(
-      hydratedShots.map((sh) => `${sh.actionZh || ""} ${sh.dialogueZh || ""} ${sh.intentZh || ""}`).join("\n"),
+      hydratedShots
+        .map((sh) => {
+          const d = String(sh.dialogueZh || "").trim();
+          const quoted = d && !/[「」“”"『』]/.test(d) ? `「${d}」` : d;
+          return `${sh.actionZh || ""} ${quoted} ${sh.intentZh || ""}`;
+        })
+        .join("\n"),
     );
     const directionClipLine = directionCanon ? resolveDirectorStyleBlocks(directionCanon, directionSceneType).clip : "";
     const timelineBlock = formatWorkbenchSegmentClipInjectBlock({

@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { manhuaDirectionSelectionInputSchema } from "./manhuaDirectionSelectionSchema.js";
 import { WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT } from "../shared/weixinChannelsRules.js";
 import {
   MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS,
@@ -9876,17 +9877,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           /** 起点那一集的旧正文，供锁稿比对 */
           lockedEpisodeBody: z.string().max(6000).optional(),
           /** 导演包选卡：主卡 + 场次副卡；服务端按内置卡库校验，未知卡 = 没选 */
-          directionSelection: z
-            .object({
-              mainCardId: z.string().max(80),
-              sceneOverrides: z
-                .record(
-                  z.enum(["action", "dialogue", "reveal", "emotion", "transition"]),
-                  z.object({ cardId: z.string().max(80), stages: z.array(z.enum(["story", "assets", "storyboard", "keyframe", "clip", "review"])).max(6).optional() }),
-                )
-                .optional(),
-            })
-            .optional(),
+          directionSelection: manhuaDirectionSelectionInputSchema.optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
