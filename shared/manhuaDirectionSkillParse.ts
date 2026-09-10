@@ -123,7 +123,10 @@ export function parseManhuaDirectionSkillMarkdown(md: string, opts?: { slug?: st
       // 「先…，再…」「多单元…」这类第一子句没有谓语、太短就没意义：退回整句截 30 字
       const clauseUsable = firstClause.length >= 6 && !/^(先|多|当|在|若|如果)/.test(firstClause);
       const base = clauseUsable ? firstClause : firstSentence;
-      const title = base.length > 30 ? `${base.slice(0, 30)}…` : base;
+      // 超长时回退到 30 字内最近的逗号/顿号再加省略号，不在词中间截断
+      const head = base.slice(0, 30);
+      const cutAt = Math.max(head.lastIndexOf("，"), head.lastIndexOf("、"), head.lastIndexOf(","));
+      const title = base.length > 30 ? `${cutAt >= 10 ? head.slice(0, cutAt) : head}…` : base;
       cur = { id: uniqueId(inline[1]), titleZh: suffix ? `${title}${suffix.replace(/^的/, "·")}` : title || inline[1], nonFormal: false, ruleZh: ruleText };
       continue;
     }

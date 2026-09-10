@@ -258,6 +258,9 @@ describe("classifyManhuaDirectionSceneType", () => {
     expect(classifyManhuaDirectionSceneType("踹开大门，长剑直刺咽喉，侧身躲过，反手一掌拍向胸口")).toBe("action");
     expect(classifyManhuaDirectionSceneType("屋顶追逐，飞身跃过瓦檐，回身甩出飞镖")).toBe("action");
     expect(classifyManhuaDirectionSceneType("刀光一闪，手臂被划开，鲜血喷出，趁势夺刀")).toBe("action");
+    // 日常高频词两个同现不算打戏
+    expect(classifyManhuaDirectionSceneType("他侧身让路，反手关上门")).toBe("default");
+    expect(classifyManhuaDirectionSceneType("她翻身下床，一脚踢开被子，鲜血渗出，「疼」她说道")).not.toBe("action");
     // 打戏夹一句台词：引号按成对计，仍是动作场
     expect(classifyManhuaDirectionSceneType("家丁拔刀砍来，墨屠挥拳击退，阿菁问道「你没事吧」")).toBe("action");
     expect(classifyManhuaDirectionSceneType("")).toBe("default");
