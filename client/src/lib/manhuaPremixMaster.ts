@@ -64,6 +64,13 @@ export function buildPremixTimelineClips(input: {
     if (take.durationSec > cue.endSec - cue.startSec + 0.02) {
       throw new Error("对白或音乐长于秒窗，请调整结束秒；不会截断对白。");
     }
+    // 服务端 audioTimelineParamsSchema 容差 1e-9：秒窗恰好顶到段尾而音频多出几毫秒时，
+    // 本地不能放行后让服务端拒「片段超出秒锁时间轴」；这里按同一把尺先拦，不截断对白
+    if (cue.startSec + take.durationSec > input.durationSec + 1e-9) {
+      throw new Error(
+        `「${cue.labelZh || cue.textZh || cue.id}」的音频 ${take.durationSec.toFixed(2)} 秒从第 ${cue.startSec} 秒起会超出本段 ${input.durationSec} 秒，请把起点提前或换更短的一条。`,
+      );
+    }
     const isBgm = cue.kind === "bgm";
     // 淡入淡出总和不能超过片长（服务端 checkAudioClip 会拒）：各自封顶到片长的三分之一
     const fadeIn = isBgm ? Math.min(PREMIX_BGM_FADE_IN_SEC, take.durationSec / 3) : 0;
