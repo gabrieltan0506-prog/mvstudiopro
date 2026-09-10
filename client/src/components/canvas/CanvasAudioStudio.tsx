@@ -1208,6 +1208,7 @@ export function CanvasAudioStudioView({
               {bgmModel !== "suno-v5.5-beta" ? (
                 <span className="mt-1 block text-[10px] text-amber-200/80">
                   直连走你自己的 Suno 账号 cookie，仅内部使用；不支持精确时长，整曲出来后按段表裁。
+                  {bgmModel === "suno-bridge-v6" ? "免费号用 v6 只出 1 分钟预览，整曲需 Pro。" : ""}
                 </span>
               ) : null}
             </label>
