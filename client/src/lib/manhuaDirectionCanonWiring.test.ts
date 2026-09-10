@@ -87,6 +87,29 @@ describe("导演包接线：提示词真的带了导演法典", () => {
     expect(readManhuaDirectionCanonFromBlocks(p.ensured.blocks)).toEqual(canon);
   });
 
+  it("场次副卡真的被消费：动作段的 clip 行走 relational_action_rhythm，其它段走主卡", () => {
+    const spawned = spawnManhuaDramaStudio({ topic: "雨夜守护", episodeIndex: 1, videoModel: "seedance-2.5", includeDirectorCraft: true, directionCanon: canon });
+    const reverse = spawned.blocks.find((b) => b.id.startsWith("reverse-"))!;
+    // 前 6 镜是打斗（动作场），后 6 镜是对白
+    const outputText = Array.from({ length: 12 }, (_, i) =>
+      i < 6 ? `${i + 1}. 第 ${i + 1} 镜：家丁拔刀砍来，墨屠挥拳击退，阿菁翻滚闪避` : `${i + 1}. 第 ${i + 1} 镜：阿菁低声问「你是谁」，墨屠答「护你的人」`,
+    ).join("\n");
+    const expanded = expandManhuaShotKeyartsAfterReverse(
+      spawned.blocks.map((b) => (b.id === reverse.id ? { ...b, status: "done" as const, outputText } : b)),
+      spawned.edges,
+      reverse.id,
+    );
+    const ready = expanded.blocks.map((b) => (b.id.startsWith("keyart-") ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` } : b));
+    const ensured = ensureManhuaFragmentClips(ready, expanded.edges, 1, { videoModel: "seedance-2.5" });
+    const clips = ensured.blocks.filter((b) => b.id.startsWith("clip-"));
+    expect(clips.length).toBeGreaterThanOrEqual(2);
+    const lineOf = (c: (typeof clips)[number]) => c.prompt.split("\n").find((l) => l.startsWith("【导演法典·v1·")) || "";
+    expect(lineOf(clips[0]!)).toContain("relational_action_rhythm");
+    expect(lineOf(clips[clips.length - 1]!)).toContain("parallel_action_editing");
+    // 剧本/分镜块仍是主卡（副卡只声明了 clip）
+    expect(ensured.blocks.find((b) => b.id.startsWith("beats-"))!.prompt).toContain("【导演法典·v1·parallel_action_editing·");
+  });
+
   it("已铺节点同步设置：剥旧投影再加，重写两次不重复", () => {
     const p = pipeline(true);
     const once = applyFactoryPrefsToBlocks(p.ensured.blocks, { craftShotIds: [] });

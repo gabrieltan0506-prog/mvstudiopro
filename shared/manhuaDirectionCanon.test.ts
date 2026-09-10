@@ -240,6 +240,19 @@ describe("ManhuaProjectBible.directionCanon", () => {
   });
 });
 
+describe("classifyManhuaDirectionSceneType", () => {
+  it("按动词判场景；判不出走 default", async () => {
+    const { classifyManhuaDirectionSceneType } = await import("./manhuaDirectionCanon");
+    expect(classifyManhuaDirectionSceneType("家丁拔刀砍来，墨屠挥拳击退")).toBe("action");
+    expect(classifyManhuaDirectionSceneType("阿菁低声问「你是谁」，墨屠答「护你的人」")).toBe("dialogue");
+    expect(classifyManhuaDirectionSceneType("面具落地，原来他就是失踪的兄长，众人认出")).toBe("reveal");
+    expect(classifyManhuaDirectionSceneType("她哽咽着拥抱他，泪落")).toBe("emotion");
+    expect(classifyManhuaDirectionSceneType("次日清晨，二人赶路")).toBe("transition");
+    expect(classifyManhuaDirectionSceneType("墨屠护住阿菁")).toBe("default");
+    expect(classifyManhuaDirectionSceneType("")).toBe("default");
+  });
+});
+
 describe("manhuaDirectionCanonLibrary（内置卡库 + 标记往返）", () => {
   it("卡库只含过准入的卡，且不含任何导演名/作品名", async () => {
     const lib = await import("./manhuaDirectionCanonLibrary");

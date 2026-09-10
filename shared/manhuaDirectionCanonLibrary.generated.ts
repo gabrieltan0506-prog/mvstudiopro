@@ -41,10 +41,7 @@ export const MANHUA_DIRECTION_CARDS_GENERATED: ManhuaDirectionCard[] = [
         "predictZh": "面对演员主动要求额外尝试，会在场面条件允许时保留一次尝试；面对两位演员不同的排练偏好，会为双方安排不同准备并协调交会点。",
         "failZh": "当同场演员的偏好互相冲突，不能把“按人调整”理解为无条件满足单方；证据只支持平衡过程，不支持固定条数、固定排练时长或统一表演风格。",
         "status": "verified",
-        "stages": [
-          "storyboard",
-          "clip"
-        ],
+        "stages": [],
         "sourceIds": [
           "I-02",
           "P-02",
@@ -60,10 +57,7 @@ export const MANHUA_DIRECTION_CARDS_GENERATED: ManhuaDirectionCard[] = [
         "predictZh": "面对尚无成熟做法的摄影或音乐任务，会先向对应协作者说明希望观众处于何种故事或情绪位置，再共同评估可执行方案。",
         "failZh": "若任务只是执行已冻结的技术规格，或抽象目标无法被具体镜头、声音或场面结果检验，就不能仅凭情绪词代替制作指令；现有证据也不支持把声音、摄影、美术、特效概括成同一固定先后顺序。",
         "status": "verified",
-        "stages": [
-          "story",
-          "storyboard"
-        ],
+        "stages": [],
         "sourceIds": [
           "P-05",
           "D-05",
@@ -229,10 +223,7 @@ export const MANHUA_DIRECTION_CARDS_GENERATED: ManhuaDirectionCard[] = [
       "否决 C（正式依据 CN-DM-05、10）：从固定外观标签倒推故事任务，或把实体与数字方法设成互斥阵营并抹去协作者贡献。",
       "否决 D（证据边界）：把固定高反差、冷暖、建筑压迫、焦段、慢推、复杂长镜、静默、硬切或冻结机位写成作者默认手法。",
       "平台 QA｜CN-QA-01：当说明对白承担理解任务时，必须验收对白可听、关键信息可辨与人物动机可复述；这是由外部批评转成的通用质量门禁，不是作者规律。"
-    ],
-    "internal": {
-      "slug": "christopher-nolan"
-    }
+    ]
   },
   {
     "id": "embodied_fable_system",
@@ -358,10 +349,7 @@ export const MANHUA_DIRECTION_CARDS_GENERATED: ManhuaDirectionCard[] = [
       "反对把单部逐格动画的低运动密度外推为所有题材的固定表演或运镜配方；该观察已隔离为【待深蒸】。",
       "反对用制作设计掩盖人物目标：触发 GDT-003／GDT-005 的失效条件。",
       "反对迷信单一长镜或不肯更换实现：若一刀切或混合媒介能保住戏核，应按安全、成本与结果取舍。"
-    ],
-    "internal": {
-      "slug": "guillermo-del-toro"
-    }
+    ]
   },
   {
     "id": "human_scale_causal_staging",
@@ -462,10 +450,7 @@ export const MANHUA_DIRECTION_CARDS_GENERATED: ManhuaDirectionCard[] = [
       "否决“强预想等于预先锁死一切”：HSCS-004 要求明确标准，同时允许拍摄与试验中的发现。",
       "否决“虚拟结果可以取消眼线、接触和物理参照”：违背 HSCS-003。",
       "否决“用高速碎切替代动作设计”：若起点、方向、过程或结果缺失，应补覆盖或降维，而不是继续加速。"
-    ],
-    "internal": {
-      "slug": "james-cameron"
-    }
+    ]
   },
   {
     "id": "relational_action_rhythm",
@@ -548,20 +533,17 @@ export const MANHUA_DIRECTION_CARDS_GENERATED: ManhuaDirectionCard[] = [
       "只给局部冲击，不交代目标、威胁方向、路线与结果。",
       "把现场即兴理解为可以跳过安全预演、连续性和协作分工。",
       "为追求“真实”要求演员或特技人员承担不可控风险。"
-    ],
-    "internal": {
-      "slug": "john-woo"
-    }
+    ]
   },
   {
     "id": "kinetic_ensemble",
-    "labelZh": "KE-01-character-pov-before-scale",
+    "labelZh": "大场面先从角色视点与人物弧线建立戏核",
     "tier": "standard",
     "version": "standard-1",
     "rules": [
       {
         "id": "KE-01-character-pov-before-scale",
-        "titleZh": "KE-01-character-pov-before-scale",
+        "titleZh": "大场面先从角色视点与人物弧线建立戏核",
         "ruleZh": "大场面先从角色视点与人物弧线建立戏核；动作规模只能放大角色当下的目标、失衡或选择，不能替代它。",
         "whyZh": "群像动作可用叙事空间有限。若观众不知道此刻跟随谁、谁要完成什么、结果改变了谁，运动再多也只剩连续刺激。",
         "predictZh": "面对多角色高强度场景，先指定一个主视点、一个当下目标、一个结果承受者；每个动作 beat 都至少改变三者之一。",
@@ -591,7 +573,7 @@ export const MANHUA_DIRECTION_CARDS_GENERATED: ManhuaDirectionCard[] = [
       },
       {
         "id": "KE-03-spatial-tactile-causality",
-        "titleZh": "KE-03-spatial-tactile-causality",
+        "titleZh": "复杂动作先建立主体、目标、方向和危险点，再让碰撞、破坏或数量",
         "ruleZh": "复杂动作先建立主体、目标、方向和危险点，再让碰撞、破坏或数量升级；物理触感用于让空间变化落到身体反应上。",
         "whyZh": "高速、多单位和视效会迅速消耗观众的空间记忆。先给稳定坐标，随后每次切换只更新一项关键关系，观众才能理解动作结果而不是只感到噪声。",
         "predictZh": "面对三方以上互动，先给一镜可读的空间关系，再按“动作发起→路径/障碍→命中或落空→角色反应”分配信息；能安全实拍的接触、倾斜或惯性优先留下可见反应。",
@@ -620,7 +602,7 @@ export const MANHUA_DIRECTION_CARDS_GENERATED: ManhuaDirectionCard[] = [
       },
       {
         "id": "KE-03-spatial-tactile-causality#2",
-        "titleZh": "KE-03-spatial-tactile-causality 的调度应用",
+        "titleZh": "调度应用",
         "ruleZh": "每个 beat 只突出当前执行者与直接受影响者；其他角色用视线、重心和短反应维持群像连续性。",
         "whyZh": "多主体同时完成大动作会稀释因果，也会让表演失去共同刺激。明确方向和受力条件后，反应不必靠解释台词补足。",
         "predictZh": "面对群像危机，先排“谁发现→谁行动→谁承受→谁改变计划”的反应链；必要时用可控倾斜、接触点或道具状态触发一致的身体反应。",
@@ -637,7 +619,7 @@ export const MANHUA_DIRECTION_CARDS_GENERATED: ManhuaDirectionCard[] = [
       },
       {
         "id": "KE-02-beat-contract-before-scale",
-        "titleZh": "KE-02-beat-contract-before-scale",
+        "titleZh": "多单元、多供应商或高风险动作先锁定每个 beat 的意图、连",
         "ruleZh": "多单元、多供应商或高风险动作先锁定每个 beat 的意图、连续性和必要技术规则，让预演与剪辑在拍摄前检验；准备的目的不是锁死现场，而是保护可控的自发调整。",
         "whyZh": "分组自由收集素材会把不一致推迟到后期，届时空间方向、动作因果和摄影条件往往无法补救。共同契约减少返工，也让现场知道哪些变量可以改。",
         "predictZh": "面对复杂制作，先交付 beat 表、方向轴、镜头/快门等必要规则、责任人与验收条件；同时列出可变项，让表演、机位细节和偶发真实反应在不破坏核心意图的范围内调整。",
@@ -678,10 +660,7 @@ export const MANHUA_DIRECTION_CARDS_GENERATED: ManhuaDirectionCard[] = [
       "反对只有能量、没有角色与因果连接：动作段落若脱离角色目标与结果承受者，就失去完整叙事约束。依据 `KE-01`；“长预告片感”仅为外部评论边界。",
       "反对工具自我展示：数字无缝、视效、实拍装置或格式选择都必须服务当前信息与角色，不因工具可用就使用。依据 `KE-03`。",
       "反对无共同契约的第二单元自由拍摄：现场负责人可以被授权，但不能脱离已定义的核心意图与技术连续性。依据 `KE-02`。"
-    ],
-    "internal": {
-      "slug": "justin-lin"
-    }
+    ]
   },
   {
     "id": "audience_aligned_discovery",
@@ -803,9 +782,6 @@ export const MANHUA_DIRECTION_CARDS_GENERATED: ManhuaDirectionCard[] = [
       "反对以危险实景证明真实感；这是跨部门制作安全边界，不反推为 AAD-004 正式作者规律。",
       "鼓励编辑提出可观看异稿只保留为 AAD-005 协作工作流观察，不反推固定剪辑语法。",
       "反对把单片红色、低机位、背光、暖色、宽幅或长镜提升为跨片默认配方。"
-    ],
-    "internal": {
-      "slug": "steven-spielberg"
-    }
+    ]
   }
 ];

@@ -3,7 +3,7 @@
  * 目标：阿硕级「脚本进、成片出」分步编排核（按阶段跑；不引导一键全自动）。
  */
 
-import { resolveDirectorStyleBlocks, type ManhuaDirectionCanon } from "@shared/manhuaDirectionCanon";
+import { classifyManhuaDirectionSceneType, resolveDirectorStyleBlocks, type ManhuaDirectionCanon } from "@shared/manhuaDirectionCanon";
 import {
   formatManhuaDirectionSelectionMarker,
   readManhuaDirectionCanonFromBlocks,
@@ -2123,7 +2123,8 @@ export function ensureManhuaFragmentClips(
   const directorStrategyClipLine = directorStrategyContract
     ? formatManhuaDirectorStrategyClipLine(directorStrategyContract)
     : "";
-  const directionClipLine = resolveDirectorStyleBlocks(readManhuaDirectionCanonFromBlocks(blocks.filter(sameEpisode))).clip;
+  // 导演法典：每段按自己的动作/对白文本判场景类型，副卡（如动作场）只盖它声明的阶段
+  const directionCanon = readManhuaDirectionCanonFromBlocks(blocks.filter(sameEpisode));
   const shots = resolveShotsForEpisodeKeyarts(blocks, ep);
   /**
    * 引擎优先级：显式入参 > 本集已有 clip 节点上盖的引擎（spawn 时按用户选择写入）
@@ -2360,6 +2361,10 @@ export function ensureManhuaFragmentClips(
         ? sceneSlot.tag
         : "";
     // 审阅可见：场景锁 + 光影景别氛围 + 秒轴轨迹；身份锁写本段 Image 对照
+    const directionSceneType = classifyManhuaDirectionSceneType(
+      hydratedShots.map((sh) => `${sh.actionZh || ""} ${sh.dialogueZh || ""} ${sh.intentZh || ""}`).join("\n"),
+    );
+    const directionClipLine = directionCanon ? resolveDirectorStyleBlocks(directionCanon, directionSceneType).clip : "";
     const timelineBlock = formatWorkbenchSegmentClipInjectBlock({
       segmentIndex: seg.index,
       totalSegments: segments.length,

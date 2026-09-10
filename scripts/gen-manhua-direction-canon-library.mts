@@ -51,7 +51,8 @@ for (const slug of readdirSync(root).sort()) {
   if (skipped.length) console.error(`${slug}：跳过 ${skipped.join("；")}`);
   const { internal: _internal, ...rest } = card;
   // 仅研究的规律不进代码快照：它们永远不进生产，也是来源名最容易残留的地方
-  cards.push({ ...rest, rules: card.rules.filter((r) => r.status !== "research_only"), internal: { slug } });
+  // 导演名/作品名/目录 slug 一律不进代码快照；溯源只留在蒸馏目录
+  cards.push({ ...rest, rules: card.rules.filter((r) => r.status !== "research_only") });
 }
 const body = [
   "// 由 scripts/gen-manhua-direction-canon-library.mts 生成，勿手改。",

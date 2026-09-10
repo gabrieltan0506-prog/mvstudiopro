@@ -58,6 +58,27 @@ export type ManhuaDirectionCanon = {
   authorizedCardIds: string[];
 };
 
+/**
+ * 按段文本（动作/对白/意图）判场景类型，给副卡用。规则只认动词与关键词，不猜情绪；判不出就是 default（走主卡）。
+ */
+export function classifyManhuaDirectionSceneType(text: string): ManhuaDirectionSceneType {
+  const t = String(text || "");
+  if (!t.trim()) return "default";
+  const action = (t.match(/打|追|逃|爆|撞|冲|挥|刀|剑|拳|枪|砍|扑|摔|跃|搏|厮杀|交手|翻滚|拔|射|闪避/g) || []).length;
+  const reveal = (t.match(/揭|真相|原来|发现|认出|露出|识破|竟是|身份/g) || []).length;
+  const emotion = (t.match(/哭|泪|拥抱|告白|颤抖|沉默|哽咽|凝视|心碎|告别|跪/g) || []).length;
+  const dialogue = (t.match(/说|问|答|道：|「|」|“|”|对白|回应|低声|喊/g) || []).length;
+  const transition = (t.match(/转场|过场|赶路|奔赴|次日|清晨|夜幕|远景空镜|时间流逝/g) || []).length;
+  const best = [
+    ["action", action * 2],
+    ["reveal", reveal * 2],
+    ["emotion", emotion * 2],
+    ["transition", transition * 2],
+    ["dialogue", dialogue],
+  ].sort((a, b) => (b[1] as number) - (a[1] as number))[0]!;
+  return (best[1] as number) >= 2 ? (best[0] as ManhuaDirectionSceneType) : "default";
+}
+
 export const MANHUA_DIRECTION_STAGES: ManhuaDirectorStrategyStage[] = ["story", "assets", "storyboard", "keyframe", "clip", "review"];
 
 const STAGE_SET = new Set<string>(MANHUA_DIRECTION_STAGES);

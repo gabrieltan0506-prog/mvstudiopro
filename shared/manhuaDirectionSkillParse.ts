@@ -32,6 +32,8 @@ function stagesFor(id: string, titleZh: string): ManhuaDirectorStrategyStage[] {
     if (/适用场景/.test(t)) return ["story"];
     return ["storyboard"];
   }
+  // 真人片场流程（排练/协作/工作过程/演员沟通）对 AI 生成没有可执行含义：不投影到任何阶段
+  if (/排练|协作|工作过程|按演员|演员所需|沟通/.test(t)) return [];
   // 决策模型（DM / 三位数编号）：戏核/信息策略→剧本；调度/切与停→分镜+视频；取舍→剧本
   if (/切点|切与停|剪辑|并行|覆盖|节奏|伸缩时间|慢动作|运镜|微动作/.test(t)) return ["storyboard", "clip"];
   if (/调度|排练|表演|演员|群像/.test(t)) return ["storyboard", "clip"];
@@ -113,7 +115,10 @@ export function parseManhuaDirectionSkillMarkdown(md: string, opts?: { slug?: st
       flush();
       inAvoid = false;
       const suffix = inline[2].trim();
-      cur = { id: uniqueId(inline[1]), titleZh: suffix ? `${inline[1]} ${suffix}` : inline[1], nonFormal: false, ruleZh: stripName(inline[3]) };
+      // 林诣彬式规律没有中文标题：用「的调度应用」这类后缀，否则取规律首句（≤30 字）当标题，不让英文 id 直出到 UI/提示词
+      const ruleText = stripName(inline[3]);
+      const firstSentence = ruleText.split(/[。；;]/)[0]?.trim().slice(0, 30) || "";
+      cur = { id: uniqueId(inline[1]), titleZh: suffix ? suffix.replace(/^的/, "") : firstSentence || inline[1], nonFormal: false, ruleZh: ruleText };
       continue;
     }
     if (/^###\s/.test(line)) {
