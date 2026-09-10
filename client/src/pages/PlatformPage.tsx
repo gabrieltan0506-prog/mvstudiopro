@@ -3050,7 +3050,14 @@ export default function PlatformPage() {
    * 两档到最后阶段仍可切，不设页数上限，页数与积分随当前视图重算。
    */
   const [customNoteFullMarkdown, setCustomNoteFullMarkdown] = useState<string | null>(null);
-  const [customNoteCompactMarkdown, setCustomNoteCompactMarkdown] = useState<string | null>(null);
+  const [customNoteCompactMarkdownState, setCustomNoteCompactMarkdownState] = useState<string | null>(null);
+  // 审查 P0：派生缓存用 ref 读——上传回调的闭包里 state 还是上一本书的精华版，会把 A 书的精华版写进 B 书
+  const customNoteCompactMarkdownRef = useRef<string | null>(null);
+  const customNoteCompactMarkdown = customNoteCompactMarkdownState;
+  const setCustomNoteCompactMarkdown = (next: string | null) => {
+    customNoteCompactMarkdownRef.current = next;
+    setCustomNoteCompactMarkdownState(next);
+  };
   const [customNoteLevelSwitching, setCustomNoteLevelSwitching] = useState(false);
   /** 用戶自選生成類型：單頁連貫圖文知識卡片 or 2×4 分鏡圖 or 深度优化文案（自定義文案專用） */
   const [customNoteKind, setCustomNoteKind] = useState<
@@ -8004,7 +8011,8 @@ export default function PlatformPage() {
    */
   /** 完整版长稿 → 精华版：后台任务（DeepSeek，几美分，不扣积分），带进度；结果缓存，切回完整版不再重算 */
   const deriveCompactFromFull = async (full: string): Promise<string> => {
-    if (customNoteCompactMarkdown) return customNoteCompactMarkdown;
+    const cached = customNoteCompactMarkdownRef.current;
+    if (cached) return cached;
     setCustomNoteLevelSwitching(true);
     setCustomNoteProgress({ status: "running", percent: 1, label: "派生精华版…" });
     try {
@@ -8014,7 +8022,8 @@ export default function PlatformPage() {
       });
       const job = await pollJobUntilTerminal(queued.progressJobId, {
         intervalMs: 3000,
-        maxWaitMs: 60 * 60_000,
+        // 服务端不设总时长（只按连续无进度判死），前端也不设：轮询到终态为止
+        maxWaitMs: Number.MAX_SAFE_INTEGER,
         onPoll: ({ output }) => {
           const out = (output || {}) as { distillPercent?: number; distillStageDone?: number; distillStageTotal?: number };
           const total = Number(out.distillStageTotal) || 0;
@@ -8045,6 +8054,7 @@ export default function PlatformPage() {
       const ok = window.confirm("文本框里有你手改的内容，切换成稿档会用另一档的稿子覆盖它。继续吗？");
       if (!ok) return;
     }
+    const previousLevel = customNoteDetailLevel;
     setCustomNoteDetailLevel(next);
     try { localStorage.setItem("mvs-knowledge-card-detail-level", next); } catch { /* ignore */ }
     if (!customNoteFullMarkdown) return;
@@ -8058,8 +8068,12 @@ export default function PlatformPage() {
       const plan = planKnowledgeCardPages(compact, customNoteDistillModel);
       toast.success(`精华版已写入文本框 · 约 ${Math.max(1, plan.pageCount || 1)} 页 · 约 ${plan.credits || knowledgeCardCreditsForPages(plan.pageCount || 0, customNoteDistillModel)} 积分`);
     } catch (err) {
+      // 审查 P1：派生失败时下拉不能停在「精华版」而文本框是完整版——档位回退，与上传路径一致
       const msg = String((err as { message?: string })?.message || "精华版派生失败");
-      toast.error(msg);
+      setCustomNoteDetailLevel(previousLevel);
+      try { localStorage.setItem("mvs-knowledge-card-detail-level", previousLevel); } catch { /* ignore */ }
+      setCustomNoteText(customNoteFullMarkdown);
+      toast.error(`${msg}；已保持完整版`);
       setCustomNoteProgress((prev) => ({ status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
     }
   };
@@ -8102,7 +8116,7 @@ export default function PlatformPage() {
       const total = Number(out.distillStageTotal) || 0;
       if (stage === "converting") return `EPUB 转 PDF · ${out.distillFileName || ""}`;
       if (stage === "reading") return total ? `读原稿 ${done}/${total} 页` : "读原稿…";
-      if (stage === "selecting") return "挑选值得参考的原稿页…";
+      if (stage === "selecting") return total ? `挑选参考页 ${done}/${total} 张目录页` : "挑选值得参考的原稿页…";
       if (stage === "rendering") return total ? `渲染参考页 ${done}/${total}` : "渲染参考页…";
       if (stage === "refining") return "统稿合并…";
       if (stage === "finishing") return "写入结果…";
@@ -8112,7 +8126,8 @@ export default function PlatformPage() {
     };
     const job = await pollJobUntilTerminal(queued.progressJobId, {
       intervalMs: 3000,
-      maxWaitMs: 90 * 60_000,
+      // 服务端不设总时长（只按连续无进度判死），前端也不设：轮询到终态为止
+      maxWaitMs: Number.MAX_SAFE_INTEGER,
       adaptiveBackoffAfterAttempts: 40,
       maxIntervalMs: 8000,
       onPoll: ({ output }) => {

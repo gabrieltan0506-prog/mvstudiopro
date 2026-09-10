@@ -111,8 +111,11 @@ export async function reapStaleJobsOnce(
 
     // 漫剧学习与配乐都有持久检查点/上游 taskId 恢复。创作顾问 running 行还承担
     // 成功结果与退款 CAS 证据，必须交给 paidJobLedger 的专用回收器，不能先删。
+    // 知识卡提炼/派生不设总时长（用户 0910 拍板），卡死只由 runner 的活动心跳判（连续无进度 20 分钟），
+    // 心跳每分钟刷 updatedAt；这里再豁免一层，避免心跳落盘失败时整本结果被删。
     const nonRecoverableRunningJob = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
-      'manhua_template_learn', 'manhua_bgm_v55', 'manhua_advisor_qa', 'manhua_assemble_final', 'canvas_dialogue_line'
+      'manhua_template_learn', 'manhua_bgm_v55', 'manhua_advisor_qa', 'manhua_assemble_final', 'canvas_dialogue_line',
+      'knowledge_card_distill', 'knowledge_card_derive_level'
     )`;
     // 尚未付费确认的顾问 queued 占位没有扣分；过期后仍按通用规则清理，避免永久堆积。
     const nonRecoverableQueuedJob = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (

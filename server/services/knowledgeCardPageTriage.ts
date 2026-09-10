@@ -62,7 +62,7 @@ async function visionChatOnce(gw: TriageGateway, params: { system: string; userT
       response_format: { type: "json_object" },
       // 0910 用户令：思考一律打开、不准关闭，档位 high
       ...(gw.name === "evolink"
-        ? { thinking: { type: "enabled", reasoning_effort: "high" } }
+        ? { thinking: { type: "enabled" }, reasoning_effort: "high" }
         : { reasoning: { effort: "high" } }),
     }),
     signal: params.abortSignal ?? AbortSignal.timeout(TRIAGE_TIMEOUT_MS),

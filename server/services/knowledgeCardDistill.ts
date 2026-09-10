@@ -562,12 +562,12 @@ function distillFetchTimeoutMs(
   modelName: KnowledgeCardDistillModelId,
   timeoutOverrideMs?: number,
 ): number {
-  const override = Number(process.env.KNOWLEDGE_CARD_DISTILL_TIMEOUT_MS);
-  if (Number.isFinite(override) && override >= 60_000) return Math.min(override, 480_000);
   if (Number.isFinite(timeoutOverrideMs) && Number(timeoutOverrideMs) > 0) {
-    // 调用方显式给的超时（最终统稿 15 分钟）允许超过默认 8 分钟上限
+    // 调用方显式给的超时（最终统稿 15 分钟）优先于环境变量，允许超过默认 8 分钟上限
     return Math.min(Number(timeoutOverrideMs), 60 * 60_000);
   }
+  const override = Number(process.env.KNOWLEDGE_CARD_DISTILL_TIMEOUT_MS);
+  if (Number.isFinite(override) && override >= 60_000) return Math.min(override, 480_000);
   return DISTILL_PROFILES[modelName].requestTimeoutMs;
 }
 
@@ -684,7 +684,9 @@ async function invokeDistillViaGateway(params: {
       body.model = hasImages ? DEEPSEEK_EVOLINK_VISION_MODEL : DEEPSEEK_EVOLINK_TEXT_MODEL;
       // Vision 版走 api.evolink.ai（direct 只给纯文本模型）
       if (body.model === DEEPSEEK_EVOLINK_VISION_MODEL) url = EVOLINK_CHAT_URL;
-      body.thinking = { type: "enabled", reasoning_effort: deepseekReasoningEffort(params.effort) };
+      // DeepSeek 官方：thinking 只开关，档位是顶层 reasoning_effort（low/high/max）
+      body.thinking = { type: "enabled" };
+      body.reasoning_effort = deepseekReasoningEffort(params.effort);
       body.max_tokens = deepseekMaxTokens(params.maxTokens ?? DISTILL_MAX_TOKENS);
     } else {
       body.reasoning_effort = params.effort;
@@ -1430,7 +1432,8 @@ export function makeKnowledgeCardPageSelector(_modelName: KnowledgeCardDistillMo
               imageUrls,
               modelName: KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
               minSections: 1,
-              effort: envStr("KNOWLEDGE_CARD_PAGE_TRIAGE_EFFORT", "low"),
+              // 用户 0910 令：思考一律 high（Qwen 走 EvoLink 时映射 medium 是 0909 拍板）
+              effort: envStr("KNOWLEDGE_CARD_PAGE_TRIAGE_EFFORT", "high"),
               systemOverride: buildPageTriageSystem(),
               timeoutMs: 180_000,
             }),

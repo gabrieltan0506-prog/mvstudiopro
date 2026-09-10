@@ -1164,6 +1164,16 @@ export async function markJobFailed(id: string, error: string): Promise<void> {
   await maybeDeleteDrProSecondaryStagingForTerminalPlatformJob(id);
 }
 
+/**
+ * 只刷 running 行的 updatedAt（不动 output）：长任务在模型调用之间可能几十分钟没有进度写入，
+ * 僵尸行清理器按 updatedAt 判死，心跳必须落到 DB，不能只在内存。
+ */
+export async function touchJobRunningUpdatedAt(jobId: string): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(jobs).set({ updatedAt: new Date() }).where(and(eq(jobs.id, jobId), eq(jobs.status, "running")));
+}
+
 /** platform_topic_image 等長任務：running 時把部分 output 寫入 DB，供 GET /api/jobs 輪詢看到即時步驟 */
 const PLATFORM_JOB_PROGRESS_LOG_MAX = 240;
 

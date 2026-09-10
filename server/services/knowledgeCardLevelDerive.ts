@@ -1,26 +1,30 @@
 /**
  * 知识卡成稿档派生（用户 0910 拍板）：
  * 提炼只做一次、以「完整版」长稿为真源；「精华版」从长稿按需派生，两档到最后阶段仍可切换，不设页数上限。
- * 派生是纯文本压缩，交给便宜的大模型（DeepSeek V4 Flash：EvoLink `deepseek-v4-flash` 优先、OpenRouter `deepseek/deepseek-v4-flash-0731` 兜底；约 $0.09/M 进、$0.18/M 出），
- * 23 万字长稿派生一次约 3 美分；Sol 只管首轮提炼。
+ * 派生是纯文本压缩，交给便宜的大模型（DeepSeek V4 Flash：EvoLink `deepseek-v4-flash` 优先 → 新加坡 Qwen3.8 token plan → OpenRouter `deepseek/deepseek-v4-flash-0731`；
+ * 约 $0.09/M 进、$0.18/M 出），23 万字长稿派生一次约 3 美分。与读档链同序（0910 用户令：EvoLink 与新加坡任一失效都可落 OpenRouter）。
  */
 import { countMarkdownSections, mergeDistilledMarkdownChunks } from "./knowledgeCardDistill.js";
 import { touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivity.js";
 
-/** 网关顺序：EvoLink（现成钥匙，direct.evolink.ai）→ OpenRouter 兜底；两家都是 DeepSeek V4 Flash */
+/** 网关顺序：EvoLink（direct.evolink.ai，DeepSeek）→ 新加坡 Qwen3.8 token plan → OpenRouter（DeepSeek）兜底 */
 export const KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK || "deepseek-v4-flash").trim();
 export const KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER || "deepseek/deepseek-v4-flash-0731").trim();
+export const KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG || "qwen3.8-max").trim();
 const EVOLINK_DIRECT_CHAT_URL = String(process.env.EVOLINK_DIRECT_CHAT_URL || "https://direct.evolink.ai/v1/chat/completions").trim();
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
+const DASHSCOPE_SG_PLAN_CHAT_URL = "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions";
 /** 每批最多喂多少字（DeepSeek 上下文 100 万 token，8 万字一批留足输出与推理余量） */
 const DERIVE_BATCH_MAX_CHARS = Math.max(20_000, Number(process.env.KNOWLEDGE_CARD_DERIVE_BATCH_CHARS) || 80_000);
 const DERIVE_TIMEOUT_MS = Math.max(120_000, Number(process.env.KNOWLEDGE_CARD_DERIVE_TIMEOUT_MS) || 15 * 60_000);
 
-type DeriveGateway = { name: "evolink" | "openrouter"; url: string; key: string; model: string };
+type DeriveGateway = { name: "evolink" | "dashscope_sg" | "openrouter"; url: string; key: string; model: string };
 function deriveGateways(): DeriveGateway[] {
   const out: DeriveGateway[] = [];
   const evo = String(process.env.EVOLINK_API_KEY || "").trim();
   if (evo) out.push({ name: "evolink", url: EVOLINK_DIRECT_CHAT_URL, key: evo, model: KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK });
+  const sg = String(process.env.DASHSCOPE_SG_PLAN_KEY || "").trim();
+  if (sg) out.push({ name: "dashscope_sg", url: DASHSCOPE_SG_PLAN_CHAT_URL, key: sg, model: KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG });
   const or = String(process.env.OPENROUTER_API_KEY || "").trim();
   if (or) out.push({ name: "openrouter", url: OPENROUTER_CHAT_URL, key: or, model: KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER });
   return out;
@@ -86,10 +90,12 @@ async function chatOnce(gw: DeriveGateway, params: { system: string; user: strin
       ],
       temperature: 0.2,
       max_tokens: params.maxTokens,
-      // 0910 用户令：思考一律打开、不准关闭，档位 high
+      // 0910 用户令：思考一律打开、不准关闭，档位 high（新加坡 compatible-mode 只认 enable_thinking）
       ...(gw.name === "evolink"
-        ? { thinking: { type: "enabled", reasoning_effort: "high" } }
-        : { reasoning: { effort: "high" } }),
+        ? { thinking: { type: "enabled" }, reasoning_effort: "high" }
+        : gw.name === "dashscope_sg"
+          ? { enable_thinking: true }
+          : { reasoning: { effort: "high" } }),
     }),
     signal: params.abortSignal ?? AbortSignal.timeout(DERIVE_TIMEOUT_MS),
   });

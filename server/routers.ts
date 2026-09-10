@@ -4435,7 +4435,8 @@ export const appRouter = router({
     enqueueKnowledgeCardLevelDerive: protectedProcedure
       .input(
         z.object({
-          fullMarkdown: z.string().min(200).max(600_000),
+          // 页数不设上限（0910 拍板）：只挡明显不是稿子的体积（约 2000 页书的完整版也在 100 万字内）
+          fullMarkdown: z.string().min(200, "完整版稿子太短").max(5_000_000, "完整版稿子超过 500 万字，请分册提炼"),
           distillModel: z.string().max(64).optional(),
           targetSections: z.number().int().min(3).max(300).optional(),
         }),

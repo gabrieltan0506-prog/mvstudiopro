@@ -73,6 +73,7 @@ import {
   markManhuaLearnJobSucceededWithRetry,
   markJobSucceeded,
   patchJobRunningProgress,
+  touchJobRunningUpdatedAt,
   patchJobRunningProgressStrict,
   requeueJob,
   upsertManhuaNativeModelReceiptForJob,
@@ -298,11 +299,27 @@ type JobTimeoutErrorWithPartial<T> = Error & { partialResult?: T };
  * 文件多大、多少页都不用猜一个墙钟数字。
  */
 const jobHeartbeats = new Map<string, number>();
+/** 上次把心跳刷进 DB 的时刻；僵尸行清理器按 updatedAt 判死（默认 20 分钟），内存心跳必须定期落盘 */
+const jobHeartbeatDbFlushed = new Map<string, number>();
+const HEARTBEAT_DB_FLUSH_MS = 60_000;
 export function touchJobHeartbeat(jobId: string | null | undefined): void {
-  if (jobId) jobHeartbeats.set(jobId, Date.now());
+  if (!jobId) return;
+  const now = Date.now();
+  jobHeartbeats.set(jobId, now);
+  const last = jobHeartbeatDbFlushed.get(jobId) ?? 0;
+  if (now - last < HEARTBEAT_DB_FLUSH_MS) return;
+  jobHeartbeatDbFlushed.set(jobId, now);
+  // 审查 P0：统稿/派生阶段可能 >20 分钟没有进度写入，reaper 会把 running 行整行删掉。
+  // 失败只记日志：心跳落盘失败不该打断任务，下一次 touch 会再试。
+  void touchJobRunningUpdatedAt(jobId).catch((err) => {
+    jobHeartbeatDbFlushed.set(jobId, last);
+    console.warn(`[runner] heartbeat db touch failed job=${jobId}: ${err instanceof Error ? err.message : String(err)}`);
+  });
 }
 function clearJobHeartbeat(jobId: string | null | undefined): void {
-  if (jobId) jobHeartbeats.delete(jobId);
+  if (!jobId) return;
+  jobHeartbeats.delete(jobId);
+  jobHeartbeatDbFlushed.delete(jobId);
 }
 const STALL_CHECK_INTERVAL_MS = 15_000;
 
@@ -3188,7 +3205,14 @@ async function processPlatformJob(
       const { planKnowledgeCardPages } = await import("../../shared/knowledgeCardPagination.js");
       const fullMarkdown = String(params.fullMarkdown || "");
       if (fullMarkdown.trim().length < 200) throw new Error("完整版稿子太短，无需派生精华版");
-      const distillModel = typeof params.distillModel === "string" && params.distillModel ? params.distillModel : undefined;
+      // 审查 P1：派生稿的页费档位跟着完整版的提炼 receipt 走，不信客户端声明；
+      // 查不到 receipt（手写/未走提炼）就拒绝派生（fail-closed），否则换低档出图的洞会从这里重开。
+      const { lookupKnowledgeCardDistillReceiptModel, recordKnowledgeCardDistillReceipt } = await import(
+        "../services/knowledgeCardDistillReceipt.js"
+      );
+      const receiptModel = await lookupKnowledgeCardDistillReceiptModel(Number(jobUserId), fullMarkdown);
+      if (!receiptModel) throw new Error("找不到这份完整版的提炼记录，无法派生精华版；请重新提炼后再切档");
+      const distillModel = receiptModel;
       const targetSections = Number.isFinite(Number(params.targetSections)) && Number(params.targetSections) > 0 ? Number(params.targetSections) : undefined;
       const patchProgress = async (patch: Record<string, unknown>) => {
         touchJobHeartbeat(platformJobId);
@@ -3211,12 +3235,15 @@ async function processPlatformJob(
         },
       }));
       await patchProgress({ distillStage: "finishing", distillPercent: 98 });
+      // 派生稿记同档 receipt：出图按完整版的档位结算
+      await recordKnowledgeCardDistillReceipt(Number(jobUserId), distillModel, derived.markdown);
       const plan = planKnowledgeCardPages(derived.markdown, distillModel);
       return {
         provider: "evolink",
         output: {
           success: true,
           distilledMarkdown: derived.markdown,
+          distillModel,
           detailLevel: "concise",
           sections: derived.sections,
           targetSections: derived.targetSections,
