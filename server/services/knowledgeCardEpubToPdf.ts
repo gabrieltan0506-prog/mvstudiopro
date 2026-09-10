@@ -6,6 +6,8 @@
  * 依赖：jszip（已在依赖里）、puppeteer（Fly 镜像 `PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium`）。
  */
 import path from "node:path";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import JSZip from "jszip";
 
 type SpineItem = { href: string; mediaType: string };
@@ -65,14 +67,18 @@ async function shrinkBitmap(data: Buffer, mime: string, opts: Required<Pick<Pars
   if (!BITMAP_MIME_RE.test(mime) || data.length <= opts.imageReencodeBytes) return { data, mime, changed: false };
   try {
     const sharp = (await import("sharp")).default;
-    const img = sharp(data, { limitInputPixels: false }).rotate();
+    // 像素上限保留 sharp 默认（2.68 亿）：超限直接 throw → 原图内联 → 崩了走剥图，不为像素炸弹开门
+    const img = sharp(data).rotate();
     const meta = await img.metadata();
     const longest = Math.max(meta.width || 0, meta.height || 0);
     const out = await (longest > opts.imageMaxPx ? img.resize({ width: opts.imageMaxPx, height: opts.imageMaxPx, fit: "inside", withoutEnlargement: true }) : img)
+      // 透明底压白：JPEG 没有 alpha，不压会把透明区变成黑底，黑字示意图整张糊成黑块
+      .flatten({ background: "#ffffff" })
       .jpeg({ quality: 72, mozjpeg: true })
       .toBuffer();
     return out.length < data.length ? { data: out, mime: "image/jpeg", changed: true } : { data, mime, changed: false };
-  } catch {
+  } catch (error) {
+    console.warn(`[knowledgeCardEpubToPdf] 缩图失败，原图内联（${mime}，${Math.round(data.length / 1024)} KB）：`, error instanceof Error ? error.message : error);
     return { data, mime, changed: false };
   }
 }
@@ -199,9 +205,13 @@ export async function renderHtmlToPdf(html: string): Promise<Buffer> {
     executablePath,
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--disable-extensions", "--no-zygote"],
   });
+  // HTML 落临时文件再 goto file://：几百张图的整本 HTML 走 setContent 会撞 CDP 单条消息上限
+  const dir = await mkdtemp(path.join(tmpdir(), "kc-epub-"));
+  const htmlPath = path.join(dir, "book.html");
   try {
+    await writeFile(htmlPath, html, "utf8");
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: "load", timeout: 120_000 });
+    await page.goto(`file://${htmlPath}`, { waitUntil: "load", timeout: 120_000 });
     const pdf = await page.pdf({ format: "A4", printBackground: true, preferCSSPageSize: true, timeout: 300_000 });
     return Buffer.from(pdf);
   } catch (error) {
@@ -214,6 +224,7 @@ export async function renderHtmlToPdf(html: string): Promise<Buffer> {
     throw error;
   } finally {
     await browser.close().catch(() => undefined);
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 

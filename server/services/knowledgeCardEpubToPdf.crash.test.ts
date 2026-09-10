@@ -29,6 +29,31 @@ describe("EPUB 大图与 Chromium 崩溃兜底", () => {
     expect(Math.max(meta.width!, meta.height!)).toBe(1400);
   }, 60_000);
 
+  it("透明 PNG 缩图后底色压白，不变黑", async () => {
+    const zip = new JSZip();
+    zip.file("mimetype", "application/epub+zip");
+    zip.file("META-INF/container.xml", `<?xml version="1.0"?><container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`);
+    zip.file("OEBPS/content.opf", `<?xml version="1.0"?><package xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata><dc:title>透明</dc:title></metadata><manifest><item id="c0" href="c0.xhtml" media-type="application/xhtml+xml"/><item id="a" href="a.png" media-type="image/png"/></manifest><spine><itemref idref="c0"/></spine></package>`);
+    // 3000×3000：透明区 RGB 是噪点（PNG 压不小）+ 中间一块不透明黑；alpha=0 处压白后必须是白
+    const rgba = Buffer.alloc(3000 * 3000 * 4);
+    for (let i = 0; i < 3000 * 3000; i++) {
+      const x = i % 3000, y = Math.floor(i / 3000);
+      const inBox = x > 1200 && x < 1800 && y > 1200 && y < 1800;
+      const n = (i * 2654435761) >>> 24;
+      rgba[i * 4] = inBox ? 0 : n; rgba[i * 4 + 1] = inBox ? 0 : n ^ 0x5a; rgba[i * 4 + 2] = inBox ? 0 : n ^ 0xa5;
+      rgba[i * 4 + 3] = inBox ? 255 : 0;
+    }
+    zip.file("OEBPS/a.png", await sharp(rgba, { raw: { width: 3000, height: 3000, channels: 4 } }).png().toBuffer());
+    zip.file("OEBPS/c0.xhtml", `<html><body><img src="a.png"/></body></html>`);
+    const parsed = await parseEpub(await zip.generateAsync({ type: "nodebuffer" }));
+    expect(parsed.images.downscaled).toBe(1);
+    const jpeg = /data:image\/jpeg;base64,([A-Za-z0-9+/=]+)/.exec(parsed.chapters[0]!)![1]!;
+    const { data, info } = await sharp(Buffer.from(jpeg, "base64")).raw().toBuffer({ resolveWithObject: true });
+    const px = (x: number, y: number) => [data[(y * info.width + x) * 3]!, data[(y * info.width + x) * 3 + 1]!, data[(y * info.width + x) * 3 + 2]!];
+    expect(px(2, 2).every((v) => v > 200)).toBe(true); // 透明角 → 白
+    expect(px(Math.floor(info.width / 2), Math.floor(info.height / 2)).every((v) => v < 60)).toBe(true); // 中间黑块仍黑
+  }, 60_000);
+
   it("stripImages：图片换成 1×1 占位，不再解码", async () => {
     const parsed = await parseEpub(await makeEpubWithBigImage(), { stripImages: true });
     expect(parsed.images).toMatchObject({ total: 2, stripped: 2 });

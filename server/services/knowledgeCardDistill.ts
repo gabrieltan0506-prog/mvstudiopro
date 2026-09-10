@@ -384,6 +384,10 @@ export async function extractKnowledgeCardUploads(
       const converted = await convertEpubToPdf(buffer);
       pdfBuffer = converted.pdf;
       mimeType = "application/pdf";
+      if (converted.mode === "stripped") {
+        // 让用户知道插图被剥了，不只藏在 methods 里
+        methods.push(`${name}:notice:插图过多导致转换崩溃，已只保留文字重新转换（${converted.images.stripped} 张插图未进知识卡）`);
+      }
       methods.push(
         `${name}:epub_to_pdf(${converted.chapterCount} chapters, images ${converted.images.total}/downscaled ${converted.images.downscaled}${converted.mode === "stripped" ? `/stripped ${converted.images.stripped} after chromium crash` : ""})`,
       );
