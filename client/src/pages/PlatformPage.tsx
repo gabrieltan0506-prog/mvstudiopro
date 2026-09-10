@@ -8039,6 +8039,8 @@ export default function PlatformPage() {
         // 服务端不设总时长（只按连续无进度判死），前端也不设：轮询到终态为止
         maxWaitMs: Number.MAX_SAFE_INTEGER,
         onPoll: ({ output }) => {
+          // 稿子已经换过：这条派生的进度与当前文本框无关，不许再动进度条
+          if (revision !== customNoteRevisionRef.current) return;
           const out = (output || {}) as { distillPercent?: number; distillStageDone?: number; distillStageTotal?: number };
           const total = Number(out.distillStageTotal) || 0;
           setCustomNoteProgress({
@@ -8059,6 +8061,13 @@ export default function PlatformPage() {
       setCustomNoteCompactMarkdown(compact);
       setCustomNoteProgress({ status: "running", percent: 60, label: "精华版已就绪，等待出图" });
       return compact;
+    } catch (error) {
+      // 审查 P2：稿子换过之后才失败的，同样与当前文本框无关——统一标成 stale，
+      // 否则「失败回退」会把上一本的完整版写回来
+      if (revision !== customNoteRevisionRef.current) {
+        throw new Error(KNOWLEDGE_CARD_DERIVE_STALE_MESSAGE);
+      }
+      throw error;
     } finally {
       setCustomNoteLevelSwitching(false);
     }
@@ -8079,13 +8088,18 @@ export default function PlatformPage() {
       return await deriveCompactFromFull(distilled);
     } catch (deriveErr) {
       const msg = String((deriveErr as { message?: string })?.message || "精华版派生失败");
-      if (msg === KNOWLEDGE_CARD_DERIVE_STALE_MESSAGE) return distilled;
+      // 审查 P2：稿子已换，这份 distilled 也是旧的——往上抛，调用方不许把它当成功稿写回文本框
+      if (msg === KNOWLEDGE_CARD_DERIVE_STALE_MESSAGE) throw deriveErr;
       setCustomNoteDetailLevel("full");
       try { localStorage.setItem("mvs-knowledge-card-detail-level", "full"); } catch { /* ignore */ }
       toast.warning(`精华版派生失败（${msg.slice(0, 60)}），已先写入完整版；稍后可再切精华版`, { duration: 10_000 });
       return distilled;
     }
   };
+
+  /** adopt 抛 stale＝稿子已被换掉：整条流程静默收手，不写文本框、不报错 */
+  const isKnowledgeCardDeriveStale = (err: unknown) =>
+    String((err as { message?: string })?.message || "") === KNOWLEDGE_CARD_DERIVE_STALE_MESSAGE;
 
   /** 成稿档切换：有完整版真源时直接换视图（精华版首次切需派生一次） */
   const switchKnowledgeCardLevel = async (next: KnowledgeCardDetailLevel) => {
@@ -8377,7 +8391,12 @@ export default function PlatformPage() {
             onStatus: setCustomNoteUploadStatus,
           });
           if (!distilled) throw new Error("提炼结果为空，请调整文案后重试");
-          distilled = await adoptDistilledFullMarkdown(distilled);
+          try {
+            distilled = await adoptDistilledFullMarkdown(distilled);
+          } catch (adoptErr) {
+            if (isKnowledgeCardDeriveStale(adoptErr)) return;
+            throw adoptErr;
+          }
           setCustomNoteText(distilled);
           customNotePendingFilesRef.current = [];
           setCustomNotePendingMeta([]);
@@ -8419,7 +8438,12 @@ export default function PlatformPage() {
                 chargeDistillFee: true,
               });
               if (!refined) throw new Error("提炼结果为空，请调整文案后重试");
-              distilled = await adoptDistilledFullMarkdown(refined);
+              try {
+                distilled = await adoptDistilledFullMarkdown(refined);
+              } catch (adoptErr) {
+                if (isKnowledgeCardDeriveStale(adoptErr)) return;
+                throw adoptErr;
+              }
               setCustomNoteText(distilled);
               setCustomNoteUploadStatus(null);
               setCustomNoteDistillPhase("ready");
@@ -15407,7 +15431,13 @@ export default function PlatformPage() {
                             if (!distilled) {
                               throw new Error("提炼结果为空，请换文件或改用可选中文字的 PDF / 关键页图片");
                             }
-                            const shown = await adoptDistilledFullMarkdown(distilled);
+                            let shown: string;
+                            try {
+                              shown = await adoptDistilledFullMarkdown(distilled);
+                            } catch (adoptErr) {
+                              if (isKnowledgeCardDeriveStale(adoptErr)) return;
+                              throw adoptErr;
+                            }
                             setCustomNoteText(shown);
                             customNotePendingFilesRef.current = [];
                             setCustomNotePendingMeta([]);
@@ -15585,7 +15615,10 @@ export default function PlatformPage() {
                 {(customNoteImageUpper || customNoteImageLower || customNoteError || customOptimizeResult) && !customNoteBusy && (
                   <button
                     type="button"
+                    // 审查 P2：派生/提炼进行中不许清除——清了之后迟到的响应会往空稿上写
+                    disabled={customNoteUploadBusy || customNoteLevelSwitching || customNoteDistillPhase === "distilling"}
                     onClick={() => {
+                      if (customNoteUploadBusy || customNoteLevelSwitching || customNoteDistillPhase === "distilling") return;
                       setCustomNoteImageUpper(null);
                       setCustomNoteImageLower(null);
                       setCustomNoteImages([]);

@@ -17,6 +17,7 @@ const COMPACT = ["# 财务自由精华版", ...Array.from({ length: 7 }, (_, i) 
 
 const f = ((globalThis as any).fixture = {
   FULL, COMPACT,
+  acceptImageGen: false,
   deriveStatus: "running" as "running" | "succeeded" | "failed",
   deriveCalls: 0,
   jobPolls: 0,
@@ -31,10 +32,19 @@ const ok = (json: unknown) =>
 if (localStorage.getItem("mvs-knowledge-card-detail-level") === null) {
   localStorage.setItem("mvs-knowledge-card-detail-level", "full");
 }
-window.confirm = (msg?: string) => /先提炼/.test(String(msg || ""));
+// 默认：先提炼、不出图。测试要让「清除」按钮出现时，把 acceptImageGen 打开——
+// 出图会因为 /api/jobs 建单失败而报错，错误态下清除按钮才渲染。
+window.confirm = (msg?: string) => {
+  const text = String(msg || "");
+  if (/先提炼/.test(text)) return true;
+  if (/继续出图/.test(text)) return Boolean(f.acceptImageGen);
+  return false;
+};
 window.fetch = (async (input: any, init?: any) => {
   const url = String(typeof input === "string" ? input : input?.url || "");
   if (/prepareKnowledgeCardCopy/.test(url)) return ok({ isAsync: false, distilledMarkdown: FULL });
+  // 出图建单一律失败：把页面推进「有错误」状态，清除按钮才会出现
+  if (/\/api\/jobs(\?|$)/.test(url)) return new Response(JSON.stringify({ message: "出图建单失败（测试桩）" }), { status: 500, headers: { "content-type": "application/json" } });
   if (/enqueueKnowledgeCardLevelDerive/.test(url)) { f.deriveCalls++; return ok({ progressJobId: "derive-1" }); }
   if (/\/api\/jobs\/derive-1/.test(url)) {
     f.jobPolls++;

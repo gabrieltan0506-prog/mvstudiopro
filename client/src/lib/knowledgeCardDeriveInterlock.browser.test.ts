@@ -114,6 +114,20 @@ async function switchLevel(v: string) {
   await new Promise((r) => setTimeout(r, 900));
 }
 
+/** 让页面进入「有错误结果」态，清除按钮才渲染 */
+async function distillThenFailedImageGen() {
+  await page.evaluate(() => ((globalThis as never as { fixture: { acceptImageGen: boolean } }).fixture.acceptImageGen = true));
+  await distillOnly();
+  await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll("button")).find((x) => /生成图文笔记/.test(x.textContent || ""));
+    (b as HTMLButtonElement | undefined)?.click();
+  });
+  await page.waitForFunction(
+    () => Array.from(document.querySelectorAll("button")).some((b) => (b.textContent || "").trim() === "清除"),
+    { timeout: 30_000 },
+  );
+}
+
 describe("知识卡精华版派生（真实 PlatformPage）", () => {
   it("派生中：生成按钮锁住、点它也不出图，文本框与档位下拉都锁住", async () => {
     page = await mount();
@@ -168,6 +182,46 @@ describe("知识卡精华版派生（真实 PlatformPage）", () => {
     expect(afterCredits).toBeLessThan(beforeCredits);
     // 报价与正文同一份：按钮上的页数必须是精华版算出来的
     expect(await taValue()).toContain("# 财务自由精华版");
+  }, 180_000);
+
+  it("派生中：清除按钮被锁；即便绕过 disabled 强行点，handler 也拒绝，稿子不被清空", async () => {
+    page = await mount();
+    await distillThenFailedImageGen();
+    // 有错误态 → 清除按钮已渲染，且此刻可用
+    expect(
+      await page.evaluate(() => {
+        const b = Array.from(document.querySelectorAll("button")).find((x) => (x.textContent || "").trim() === "清除") as HTMLButtonElement | undefined;
+        return b ? b.disabled : null;
+      }),
+    ).toBe(false);
+
+    await switchLevel("concise");
+    const disabledDuring = await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll("button")).find((x) => (x.textContent || "").trim() === "清除") as HTMLButtonElement | undefined;
+      return b ? b.disabled : null;
+    });
+    expect(disabledDuring).toBe(true);
+
+    // 绕过按钮层的锁：把 disabled 摘掉再点，handler 内的拦截必须仍然生效
+    await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll("button")).find((x) => (x.textContent || "").trim() === "清除") as HTMLButtonElement | undefined;
+      if (b) {
+        b.disabled = false;
+        b.click();
+      }
+    });
+    await new Promise((r) => setTimeout(r, 500));
+    expect(await taValue()).toContain("# 财务自由完整版");
+
+    // 派生结束后清除才生效，且此时清的是当前稿
+    await page.evaluate(() => ((globalThis as never as { fixture: { deriveStatus: string } }).fixture.deriveStatus = "succeeded"));
+    await page.waitForFunction((sel) => (document.querySelector(sel) as HTMLTextAreaElement | null)?.value?.startsWith("# 财务自由精华版"), { timeout: 30_000 }, TA);
+    await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll("button")).find((x) => (x.textContent || "").trim() === "清除") as HTMLButtonElement | undefined;
+      b?.click();
+    });
+    await new Promise((r) => setTimeout(r, 500));
+    expect(await taValue()).toBe("");
   }, 180_000);
 
   it("派生失败：档位退回高级版，完整版留在文本框，不留半截状态", async () => {
