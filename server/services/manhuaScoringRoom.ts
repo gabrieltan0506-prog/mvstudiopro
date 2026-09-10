@@ -224,10 +224,10 @@ export async function createManhuaBgmTask(
   assertNotAborted(opts.abortSignal);
   const brief = manhuaBgmBriefSchema.parse(briefInput) as BgmBrief;
   if (isBgmV6Model(brief.model)) {
-    // Suno v6 走 TTAPI：无 duration 参数，整曲生成后仍按段表裁
+    // Suno v6 走 TTAPI：duration 同样 10–360，段表时长直接传；成品仍按段表裁
     if (!isTtapiSunoReady()) throw new Error("配乐 v6 通道未配置（TTAPI_KEY），请改选 v5.5");
     const created = await createTtapiSunoTask(
-      { model: brief.model, prompt: brief.prompt, style: brief.style, title: brief.title, instrumental: brief.instrumental, negative_tags: brief.negative_tags },
+      { model: brief.model, prompt: brief.prompt, style: brief.style, title: brief.title, instrumental: brief.instrumental, negative_tags: brief.negative_tags, duration: brief.duration },
       { abortSignal: opts.abortSignal },
     );
     return { taskId: created.taskId, briefDigest: digestManhuaBgmBrief(brief) };

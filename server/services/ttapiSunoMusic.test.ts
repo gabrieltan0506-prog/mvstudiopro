@@ -65,7 +65,21 @@ describe("ttapiSunoMusic（Suno v6 · TTAPI 网关客户端）", () => {
     expect((calls[0]!.init?.headers as Record<string, string>)["TT-API-KEY"]).toBe("test-key");
     const body = JSON.parse(String(calls[0]!.init?.body));
     expect(body).toMatchObject({ mv: "chirp-v6-mini", prompt: "[Intro] 蓄力 [Build] 冲突", tags: "国风弦乐，战鼓，纯器乐", title: "剧情配乐", custom: true, instrumental: true, negative_tags: "vocals", audio_format: "mp3" });
+    expect(body).not.toHaveProperty("duration");
     expect(out).toEqual({ taskId: `ttapi:${JOB}`, jobId: JOB, mv: "chirp-v6-mini" });
+  });
+
+  const request = { model: "suno-v6" as const, prompt: "结构要求", style: "弦乐", title: "测试", instrumental: true };
+
+  it("duration / vocal_gender 原样带上；duration 越界在发请求前就拦", async () => {
+    reply = () => ({ status: 200, body: { status: "SUCCESS", data: { jobId: JOB } } });
+    await createTtapiSunoTask({ ...request, duration: 200, vocal_gender: "Male" });
+    expect(JSON.parse(String(calls[0]!.init?.body))).toMatchObject({ duration: 200, vocal_gender: "Male" });
+    calls.length = 0;
+    await expect(createTtapiSunoTask({ ...request, duration: 5 })).rejects.toThrow(/10–360/);
+    await expect(createTtapiSunoTask({ ...request, duration: 361 })).rejects.toThrow(/10–360/);
+    await expect(createTtapiSunoTask({ ...request, title: "" })).rejects.toThrow(/title/);
+    expect(calls).toHaveLength(0);
   });
 
   it("轮询：ON_QUEUE 继续等；SUCCESS 取全部 audioUrl，少于两首记 missing；FAILED 失败；SUCCESS 没地址也算失败", async () => {
@@ -93,8 +107,6 @@ describe("ttapiSunoMusic（Suno v6 · TTAPI 网关客户端）", () => {
     reply = () => ({ status: 200, body: "<html>oops</html>" });
     await expect(getTtapiSunoTask(encodeTtapiSunoTaskId(JOB))).rejects.toMatchObject({ code: "invalid_response", submissionUnknown: false });
   });
-
-  const request = { model: "suno-v6" as const, prompt: "结构要求", style: "弦乐", title: "测试", instrumental: true };
 
   it("带人声请求不被改成纯器乐，中文歌名与歌词保持原样", async () => {
     reply = () => ({ status: 200, body: { status: "SUCCESS", data: { jobId: JOB } } });

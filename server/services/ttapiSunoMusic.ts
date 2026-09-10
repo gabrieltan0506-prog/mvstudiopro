@@ -6,10 +6,11 @@
  * 与 EvoLink Suno 同属一类，用户全程不出工作流。EvoLink 上了 v6 再切回去只改模型 id。
  *
  * 端点与字段照文档 https://docs.ttapi.io/api/en/suno ：
- *   POST https://api.ttapi.io/suno/v1/music     头 `TT-API-KEY`；body { mv, prompt, tags, title, custom, instrumental, negative_tags, audio_format }
+ *   POST https://api.ttapi.io/suno/v1/music     头 `TT-API-KEY`；body { mv, prompt, tags, title, custom, instrumental, negative_tags, duration, vocal_gender, audio_format }
+ *   （`duration` 10–360 秒、`vocal_gender` Male/Female 只在 OpenAPI 规格 /openapi/en/suno.json 里，网页文档漏列；0910 实测生效）
  *   GET  https://api.ttapi.io/suno/v2/fetch?jobId=…  → { status: ON_QUEUE|SUCCESS|…, data: { musics: [{ musicId, audioUrl, title, duration, imageUrl }] } }
  *   价格：每次生成 6 quota ≈ $0.06，三档同价；max_mode 翻倍（不开）。
- * - 没有 duration 参数（v6 网页也没有）；整曲生成后仍按段表裁。
+ * - duration 是目标时长，上游按段落尽量贴近；成品仍按段表裁。
  * - 429 需退避重试：只在**轮询**时退避；建单绝不自动重发（与 EvoLink 通道同一纪律）。
  */
 
@@ -48,7 +49,19 @@ export type TtapiSunoCustomRequest = {
   title: string;
   instrumental: boolean;
   negative_tags?: string;
+  /** 目标时长（秒），10–360；越界直接抛，不让上游静默忽略 */
+  duration?: number;
+  vocal_gender?: "Male" | "Female";
 };
+
+export function assertTtapiSunoRequest(req: TtapiSunoCustomRequest): void {
+  if (req.duration != null && (!Number.isInteger(req.duration) || req.duration < 10 || req.duration > 360)) {
+    throw new Error(`duration 必须是 10–360 的整数，收到 ${req.duration}`);
+  }
+  if (!String(req.style || "").trim()) throw new Error("custom 模式下 style（tags）必填");
+  if (!String(req.title || "").trim()) throw new Error("custom 模式下 title 必填");
+  if (!String(req.prompt || "").trim()) throw new Error("custom 模式下 prompt（歌词或段落结构）必填");
+}
 
 export type TtapiSunoMusic = {
   musicId: string;
@@ -166,6 +179,7 @@ export async function createTtapiSunoTask(
   req: TtapiSunoCustomRequest,
   opts: { abortSignal?: AbortSignal } = {},
 ): Promise<{ taskId: string; jobId: string; mv: string }> {
+  assertTtapiSunoRequest(req);
   const mv = resolveTtapiSunoMv(req.model);
   const raw = await ttapiFetch(TTAPI_SUNO_SUBMIT_PATH, {
     method: "POST",
@@ -177,6 +191,8 @@ export async function createTtapiSunoTask(
       custom: true,
       instrumental: Boolean(req.instrumental),
       negative_tags: req.negative_tags || "",
+      ...(req.duration != null ? { duration: req.duration } : {}),
+      ...(req.vocal_gender ? { vocal_gender: req.vocal_gender } : {}),
       audio_format: "mp3",
     }),
     abortSignal: opts.abortSignal,
