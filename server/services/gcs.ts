@@ -277,6 +277,53 @@ export async function uploadBufferToGcs(params: {
 }
 
 /**
+ * 流式上传：Content-Length 由调用方给出，请求体是可读流，进程内不整份驻留。
+ * 0911 事故后新增：几十上百 MB 的成品（如 4K 知识卡整套 PDF）走 Buffer 会在内存里存三份。
+ */
+export async function uploadStreamToGcs(params: {
+  objectName: string;
+  stream: ReadableStream<Uint8Array>;
+  contentLength: number;
+  contentType: string;
+  bucket?: string;
+  signal?: AbortSignal;
+}): Promise<{ bucket: string; objectName: string; gcsUri: string }> {
+  params.signal?.throwIfAborted();
+  const bucket = params.bucket || getGcsBucketName();
+  if (!bucket) throw new Error("GCS bucket is not configured");
+  if (!Number.isFinite(params.contentLength) || params.contentLength <= 0) {
+    throw new Error("gcs_upload_stream_needs_length");
+  }
+
+  const objectName = normalizeObjectName(params.objectName);
+  const accessToken = await getVertexAccessToken();
+  const uploadUrl = new URL(`https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o`);
+  uploadUrl.searchParams.set("uploadType", "media");
+  uploadUrl.searchParams.set("name", objectName);
+  const userProject = getGcsUserProject();
+  if (userProject) uploadUrl.searchParams.set("userProject", userProject);
+
+  const response = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": params.contentType || "application/octet-stream",
+      "Content-Length": String(params.contentLength),
+    },
+    body: params.stream,
+    // Node fetch 传流式 body 必须声明；否则 undici 拒绝
+    duplex: "half",
+    signal: params.signal,
+  } as RequestInit & { duplex: "half" });
+
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(`gcs_upload_failed:${response.status}:${JSON.stringify(json || {})}`);
+  }
+  return { bucket, objectName, gcsUri: `gs://${bucket}/${objectName}` };
+}
+
+/**
  * 条件创建:仅当对象不存在时写入(ifGenerationMatch=0)。
  * 已存在返回 { created:false }(GCS 412 Precondition Failed),其余错误照抛。
  * 供所有权登记簿等"先到先得"场景做真原子创建——get→put 两步在并发下必被覆盖。

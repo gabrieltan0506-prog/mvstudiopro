@@ -627,11 +627,16 @@ function buildDistillUserContent(params: {
 
 type DistillGateway = "evolink" | "openai_official" | "dashscope_sg" | "openrouter";
 
-function gatewayLabel(g: DistillGateway): string {
-  if (g === "evolink") return "EvoLink";
-  if (g === "openai_official") return "OpenAI 官方";
-  if (g === "openrouter") return "OpenRouter";
-  return "百炼新加坡";
+/**
+ * 读档鏈的一跳：网关 + 该跳真正执行的模型档。
+ * 0911 用户拍板：同一个模型先换供应商，换不动才降档——所以 OpenRouter 会出现两次
+ * （第二跳跑 DeepSeek、第四跳跑 Qwen），必须把「这一跳用什么模型」写进链里。
+ */
+export type DistillGatewayStep = { gateway: DistillGateway; tier: "deepseek" | "qwen" };
+
+function gatewayLabel(g: DistillGateway, tier?: "deepseek" | "qwen"): string {
+  const base = g === "evolink" ? "EvoLink" : g === "openai_official" ? "OpenAI 官方" : g === "openrouter" ? "OpenRouter" : "百炼新加坡";
+  return tier ? `${base}(${tier === "qwen" ? "Qwen" : "DeepSeek"})` : base;
 }
 
 /**
@@ -644,6 +649,8 @@ function gatewayLabel(g: DistillGateway): string {
  */
 async function invokeDistillViaGateway(params: {
   gateway: DistillGateway;
+  /** 该跳的模型档（见 DistillGatewayStep）；缺省按 modelName 推 */
+  tier?: "deepseek" | "qwen";
   sourceText: string;
   imageUrls: string[];
   pageImages?: DistillPageImage[];
@@ -660,6 +667,9 @@ async function invokeDistillViaGateway(params: {
 }): Promise<string> {
   const userContent = buildDistillUserContent(params);
   const hasImages = params.imageUrls.length > 0 || (params.pageImages?.length ?? 0) > 0;
+  // 这一跳实际执行的模型档：链里给了就用链里的；没给（旧调用/测试）按请求档位
+  const tier: "deepseek" | "qwen" =
+    params.tier ?? (params.modelName === KNOWLEDGE_CARD_DISTILL_MODEL_QWEN ? "qwen" : "deepseek");
   const body: Record<string, unknown> = {
     model: params.modelName,
     messages: [
@@ -675,12 +685,13 @@ async function invokeDistillViaGateway(params: {
   if (params.gateway === "evolink") {
     key = getEvolinkApiKey();
     url = hasImages ? EVOLINK_CHAT_URL : EVOLINK_DIRECT_CHAT_URL;
-    if (params.modelName === KNOWLEDGE_CARD_DISTILL_MODEL_QWEN) {
+    if (tier === "qwen") {
       // Evolink Qwen：档位只认 low|medium|xhigh（无 high/max）；用户令不上 xhigh，high 映射为 medium
+      body.model = KNOWLEDGE_CARD_DISTILL_MODEL_QWEN;
       body.enable_thinking = true;
       body.reasoning_effort = params.effort === "high" || params.effort === "max" ? "medium" : params.effort;
       body.max_completion_tokens = params.maxTokens ?? DISTILL_MAX_TOKENS;
-    } else if (params.modelName === KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK) {
+    } else {
       body.model = hasImages ? DEEPSEEK_EVOLINK_VISION_MODEL : DEEPSEEK_EVOLINK_TEXT_MODEL;
       // Vision 版走 api.evolink.ai（direct 只给纯文本模型）
       if (body.model === DEEPSEEK_EVOLINK_VISION_MODEL) url = EVOLINK_CHAT_URL;
@@ -688,9 +699,6 @@ async function invokeDistillViaGateway(params: {
       body.thinking = { type: "enabled" };
       body.reasoning_effort = deepseekReasoningEffort(params.effort);
       body.max_tokens = deepseekMaxTokens(params.maxTokens ?? DISTILL_MAX_TOKENS);
-    } else {
-      body.reasoning_effort = params.effort;
-      body.max_tokens = params.maxTokens ?? DISTILL_MAX_TOKENS;
     }
   } else if (params.gateway === "openai_official") {
     key = getOfficialOpenAiApiKey();
@@ -700,7 +708,7 @@ async function invokeDistillViaGateway(params: {
   } else if (params.gateway === "openrouter") {
     key = getOpenRouterApiKey();
     url = OPENROUTER_CHAT_URL;
-    body.model = params.modelName === KNOWLEDGE_CARD_DISTILL_MODEL_QWEN ? QWEN_OPENROUTER_MODEL : DEEPSEEK_OPENROUTER_VISION_MODEL;
+    body.model = tier === "qwen" ? QWEN_OPENROUTER_MODEL : DEEPSEEK_OPENROUTER_VISION_MODEL;
     body.reasoning = { effort: deepseekReasoningEffort(params.effort) };
     body.max_tokens = deepseekMaxTokens(params.maxTokens ?? DISTILL_MAX_TOKENS);
   } else {
@@ -756,20 +764,25 @@ async function invokeDistillViaGateway(params: {
 }
 
 /**
- * 各档通道顺序（0910 用户拍板：EvoLink 与新加坡任一失效都可落到 OpenRouter）：
- * - DeepSeek V4 Flash Vision（精细）：EvoLink 主 → 百炼新加坡 Qwen3.8-Max → OpenRouter
- * - Qwen3.8 Max（轻量，0909 拍板）：百炼新加坡 token plan 主 → EvoLink → OpenRouter
+ * 各档通道顺序（0911 用户拍板：同模型先换供应商，换不动才降档）：
+ * - 精细档：EvoLink(DeepSeek) → OpenRouter(DeepSeek) → 新加坡(Qwen) → OpenRouter(Qwen)
+ * - 轻量档：新加坡(Qwen) → OpenRouter(Qwen) → EvoLink(Qwen)
  */
-export function distillGatewayChain(modelName: KnowledgeCardDistillModelId): DistillGateway[] {
-  const chain: DistillGateway[] = [];
+export function distillGatewayChain(modelName: KnowledgeCardDistillModelId): DistillGatewayStep[] {
+  const evo = Boolean(getEvolinkApiKey());
+  const sg = Boolean(getDashscopeSgPlanKey());
+  const or = Boolean(getOpenRouterApiKey());
+  const chain: DistillGatewayStep[] = [];
   if (modelName === KNOWLEDGE_CARD_DISTILL_MODEL_QWEN) {
-    if (getDashscopeSgPlanKey()) chain.push("dashscope_sg");
-    if (getEvolinkApiKey()) chain.push("evolink");
-  } else {
-    if (getEvolinkApiKey()) chain.push("evolink");
-    if (getDashscopeSgPlanKey()) chain.push("dashscope_sg");
+    if (sg) chain.push({ gateway: "dashscope_sg", tier: "qwen" });
+    if (or) chain.push({ gateway: "openrouter", tier: "qwen" });
+    if (evo) chain.push({ gateway: "evolink", tier: "qwen" });
+    return chain;
   }
-  if (getOpenRouterApiKey()) chain.push("openrouter");
+  if (evo) chain.push({ gateway: "evolink", tier: "deepseek" });
+  if (or) chain.push({ gateway: "openrouter", tier: "deepseek" });
+  if (sg) chain.push({ gateway: "dashscope_sg", tier: "qwen" });
+  if (or) chain.push({ gateway: "openrouter", tier: "qwen" });
   return chain;
 }
 
@@ -805,10 +818,10 @@ async function invokeDistillLlm(params: {
   if (!chain.length) throw new Error("提炼通道未配置，请稍后重试");
   let lastError: Error | null = null;
   for (let i = 0; i < chain.length; i++) {
-    const gateway = chain[i]!;
+    const step = chain[i]!;
     touchKnowledgeCardDistillActivity();
     try {
-      const out = await distillGatewayInvoker({ ...params, gateway, modelName: params.modelName });
+      const out = await distillGatewayInvoker({ ...params, gateway: step.gateway, tier: step.tier, modelName: params.modelName });
       const problem = params.validate?.(out);
       if (problem) throw new Error(`坏输出：${problem}`);
       return out;
@@ -817,8 +830,9 @@ async function invokeDistillLlm(params: {
       // 额度/配置/安全拒答等确定性失败不换通道（换了也一样，还可能双花）
       if (isFatalDistillError(lastError.message) && !/未配置/.test(lastError.message)) throw lastError;
       if (i < chain.length - 1) {
+        const next = chain[i + 1]!;
         console.warn(
-          `[knowledgeCardDistill] ${gatewayLabel(gateway)} 失败 → 改走 ${gatewayLabel(chain[i + 1]!)}：${lastError.message.slice(0, 160)}`,
+          `[knowledgeCardDistill] ${gatewayLabel(step.gateway, step.tier)} 失败 → 改走 ${gatewayLabel(next.gateway, next.tier)}：${lastError.message.slice(0, 160)}`,
         );
       }
     }

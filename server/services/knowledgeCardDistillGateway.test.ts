@@ -18,26 +18,38 @@ afterEach(() => {
   __setKnowledgeCardDistillGatewayInvokerForTest(null);
 });
 
-describe("distillGatewayChain（EvoLink 主通道，各档自带兜底）", () => {
-  it("DeepSeek: EvoLink → 新加坡 Qwen → OpenRouter；Qwen: 新加坡 → EvoLink → OpenRouter（0910 拍板）", () => {
+describe("distillGatewayChain（0911：同模型先换供应商，换不动才降档）", () => {
+  it("精细档：EvoLink(DS) → OpenRouter(DS) → 新加坡(Qwen) → OpenRouter(Qwen)；轻量档：新加坡 → OpenRouter → EvoLink 全 Qwen", () => {
     vi.stubEnv("EVOLINK_API_KEY", "ev-key");
     vi.stubEnv("OPENROUTER_API_KEY", "sk-or-123");
     vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "sg-key");
-    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK)).toEqual(["evolink", "dashscope_sg", "openrouter"]);
-    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual(["dashscope_sg", "evolink", "openrouter"]);
+    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK)).toEqual([
+      { gateway: "evolink", tier: "deepseek" },
+      { gateway: "openrouter", tier: "deepseek" },
+      { gateway: "dashscope_sg", tier: "qwen" },
+      { gateway: "openrouter", tier: "qwen" },
+    ]);
+    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual([
+      { gateway: "dashscope_sg", tier: "qwen" },
+      { gateway: "openrouter", tier: "qwen" },
+      { gateway: "evolink", tier: "qwen" },
+    ]);
   });
 
   it("missing keys shrink the chain instead of pointing at an unconfigured channel", () => {
     vi.stubEnv("EVOLINK_API_KEY", "");
     vi.stubEnv("OPENROUTER_API_KEY", "sk-or-123");
     vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "");
-    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK)).toEqual(["openrouter"]);
-    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual(["openrouter"]);
+    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK)).toEqual([
+      { gateway: "openrouter", tier: "deepseek" },
+      { gateway: "openrouter", tier: "qwen" },
+    ]);
+    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual([{ gateway: "openrouter", tier: "qwen" }]);
     vi.stubEnv("OPENROUTER_API_KEY", "");
     expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK)).toEqual([]);
     expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual([]);
     vi.stubEnv("EVOLINK_API_KEY", "ev-key");
-    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual(["evolink"]);
+    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual([{ gateway: "evolink", tier: "qwen" }]);
   });
 });
 
@@ -57,6 +69,7 @@ describe("目录页扫读挑页（makeKnowledgeCardPageSelector）", () => {
       select([{ index: 1, pageNumbers: Array.from({ length: 48 }, (_, i) => i + 1), imageUrl: "https://signed/sheet-1.jpg", gcsUri: "gs://b/sheet-1.jpg" }], 48),
     );
     expect(calls).toEqual([`dashscope_sg:${KNOWLEDGE_CARD_DISTILL_MODEL_QWEN}`, `evolink:${KNOWLEDGE_CARD_DISTILL_MODEL_QWEN}`]);
+    // 0911：OPENROUTER 未配（本用例 stub 为空），Qwen 链只剩 新加坡 → EvoLink
     expect(picked).toEqual([{ pageNumber: 41, reason: "分式图解" }, { pageNumber: 2, reason: undefined }]);
   });
 

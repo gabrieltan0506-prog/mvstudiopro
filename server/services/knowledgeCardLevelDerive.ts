@@ -7,7 +7,7 @@
 import { countMarkdownSections, mergeDistilledMarkdownChunks } from "./knowledgeCardDistill.js";
 import { touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivity.js";
 
-/** 网关顺序：EvoLink（direct.evolink.ai，DeepSeek）→ 新加坡 Qwen3.8 token plan → OpenRouter（DeepSeek）兜底 */
+/** 网关顺序（0911：同模型先换供应商）：EvoLink(DeepSeek) → OpenRouter(DeepSeek) → 新加坡(Qwen) → OpenRouter(Qwen) */
 export const KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK || "deepseek-v4-flash").trim();
 export const KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER || "deepseek/deepseek-v4-flash-0731").trim();
 export const KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG || "qwen3.8-max").trim();
@@ -22,11 +22,12 @@ type DeriveGateway = { name: "evolink" | "dashscope_sg" | "openrouter"; url: str
 function deriveGateways(): DeriveGateway[] {
   const out: DeriveGateway[] = [];
   const evo = String(process.env.EVOLINK_API_KEY || "").trim();
-  if (evo) out.push({ name: "evolink", url: EVOLINK_DIRECT_CHAT_URL, key: evo, model: KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK });
   const sg = String(process.env.DASHSCOPE_SG_PLAN_KEY || "").trim();
-  if (sg) out.push({ name: "dashscope_sg", url: DASHSCOPE_SG_PLAN_CHAT_URL, key: sg, model: KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG });
   const or = String(process.env.OPENROUTER_API_KEY || "").trim();
+  if (evo) out.push({ name: "evolink", url: EVOLINK_DIRECT_CHAT_URL, key: evo, model: KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK });
   if (or) out.push({ name: "openrouter", url: OPENROUTER_CHAT_URL, key: or, model: KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER });
+  if (sg) out.push({ name: "dashscope_sg", url: DASHSCOPE_SG_PLAN_CHAT_URL, key: sg, model: KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG });
+  if (or) out.push({ name: "openrouter", url: OPENROUTER_CHAT_URL, key: or, model: "qwen/qwen3.8-max" });
   return out;
 }
 

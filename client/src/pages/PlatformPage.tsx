@@ -8000,7 +8000,16 @@ export default function PlatformPage() {
       window.open(res.url, "_blank", "noopener,noreferrer");
       toast.success(`PDF 已生成（${res.pageCount} 页），可点「打开 / 下载 PDF」`);
     } catch (e) {
-      toast.error(`PDF 导出失败：${String((e as { message?: string })?.message || "").slice(0, 120)}`);
+      const raw = String((e as { message?: string })?.message || "");
+      // 服务端被中断（重启 / 内存不足 / 网关截断）时回的是 HTML 或纯文本，
+      // tRPC 解析失败抛出的「Unexpected token …is not valid JSON」对用户毫无意义，换成人话
+      const broken = /is not valid JSON|Unexpected token|Failed to fetch|NetworkError|ECONNRESET|terminated/i.test(raw);
+      toast.error(
+        broken
+          ? "PDF 导出中断了，服务端没能返回结果。已生成的卡片还在，可以先用每页右下角单张下载，或稍后重试整套导出。"
+          : `PDF 导出失败：${raw.slice(0, 120)}`,
+        { duration: 10_000 },
+      );
     } finally {
       setKnowledgeCardPdfBusy(false);
     }

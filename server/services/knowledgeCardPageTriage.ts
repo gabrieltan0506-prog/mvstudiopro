@@ -1,7 +1,7 @@
 /**
  * 挑参考页（目录页缩略图 → JSON 页码表）的模型链（用户 0910 拍板）：
- * 读图 + 出 JSON 的活（0910 用户令）：主力 DeepSeek V4 Flash Vision（EvoLink api）
- * → 新加坡 Qwen3.8-Max token plan（能读图）→ 最后 OpenRouter 同款 DeepSeek Vision 兜底；不用 GPT-5.6 Sol（太贵）。
+ * 读图 + 出 JSON 的活（0911 用户令：同模型先换供应商）：EvoLink DeepSeek Vision
+ * → OpenRouter 同款 DeepSeek Vision → 新加坡 Qwen3.8-Max（能读图，经调用方 fallback 走完整 Qwen 链）。
  * 每次网关尝试前 touch 活动心跳；输出不是合法 JSON 视为坏输出换下一家。
  */
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -96,14 +96,16 @@ export async function invokePageTriageJson(params: {
   abortSignal?: AbortSignal;
 }): Promise<string> {
   const chat = pageTriageTestHooks.getStore()?.chat || visionChatOnce;
-  // 顺序：EvoLink DeepSeek Vision → 新加坡 Qwen（调用方传入）→ OpenRouter DeepSeek Vision
+  // 顺序（0911）：EvoLink DeepSeek Vision → OpenRouter DeepSeek Vision → Qwen 兜底（调用方传入，内部再走 Qwen 全链）
   const attempts: Array<{ label: string; run: () => Promise<string> }> = [];
   const evo = evolinkVisionGateway();
   if (evo) attempts.push({ label: `${evo.name}/${evo.model}`, run: () => chat(evo, params) });
+  const or = openRouterVisionGateway();
+  if (or) attempts.push({ label: `${or.name}/${or.model}`, run: () => chat(or, params) });
   if (params.fallback) {
     const fallback = params.fallback;
     attempts.push({
-      label: "dashscope_sg/qwen3.8-max",
+      label: "qwen-fallback",
       run: async () => {
         const out = await fallback();
         if (!looksLikeTriageJson(out)) throw new Error(`triage_bad_output:qwen:${out.slice(0, 80)}`);
@@ -111,8 +113,6 @@ export async function invokePageTriageJson(params: {
       },
     });
   }
-  const or = openRouterVisionGateway();
-  if (or) attempts.push({ label: `${or.name}/${or.model}`, run: () => chat(or, params) });
   let lastError: Error | null = null;
   for (let i = 0; i < attempts.length; i++) {
     const attempt = attempts[i]!;

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { readFile, rm, stat } from "node:fs/promises";
 import sharp from "sharp";
 import {
-  buildKnowledgeCardPdf,
+  buildKnowledgeCardPdfFile,
   checkKnowledgeCardExportRate,
   normalizeKnowledgeCardPage,
   resolveKnowledgeCardImageObjectName,
@@ -71,11 +72,39 @@ describe("knowledgeCardPdfExport", () => {
     expect(Math.abs(corner.channels[0]!.mean - 0xf0)).toBeLessThan(6);
   });
 
-  it("builds a multi-page PDF", async () => {
+  it("builds a multi-page PDF into a temp file (0911：不再整份驻留内存)", async () => {
     const a = await sharp({ create: { width: 3840, height: 2160, channels: 3, background: "#ffffff" } }).png().toBuffer();
     const b = await sharp({ create: { width: 1536, height: 1024, channels: 3, background: "#cccccc" } }).png().toBuffer();
-    const pdf = await buildKnowledgeCardPdf([async () => a, async () => b]);
-    expect(pdf.subarray(0, 4).toString()).toBe("%PDF");
-    expect((pdf.toString("latin1").match(/\/Type\s*\/Page[^s]/g) || []).length).toBe(2);
+    const { filePath, dir, bytes } = await buildKnowledgeCardPdfFile([async () => a, async () => b]);
+    try {
+      expect(bytes).toBeGreaterThan(0);
+      expect((await stat(filePath)).size).toBe(bytes);
+      const pdf = await readFile(filePath);
+      expect(pdf.subarray(0, 4).toString()).toBe("%PDF");
+      expect((pdf.toString("latin1").match(/\/Type\s*\/Page[^s]/g) || []).length).toBe(2);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   }, 60_000);
+
+  it("一页失败即清理临时目录，不留垃圾文件", async () => {
+    const a = await sharp({ create: { width: 3840, height: 2160, channels: 3, background: "#ffffff" } }).png().toBuffer();
+    let leaked = "";
+    await expect(
+      buildKnowledgeCardPdfFile([
+        async () => a,
+        async () => {
+          throw new Error("读取成品图失败（404）");
+        },
+      ]).then((r) => {
+        leaked = r.dir;
+        return r;
+      }),
+    ).rejects.toThrow(/读取成品图失败/);
+    expect(leaked).toBe("");
+  }, 60_000);
+
+  it("空页列表直接拒绝", async () => {
+    await expect(buildKnowledgeCardPdfFile([])).rejects.toThrow(/没有可导出的页面/);
+  });
 });
