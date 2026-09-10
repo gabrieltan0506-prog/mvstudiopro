@@ -1,10 +1,10 @@
-import { isBgmV6Model } from "../shared/manhuaBgmBrief.js";
-import { isTtapiSunoReady } from "./services/ttapiSunoMusic.js";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT } from "../shared/weixinChannelsRules.js";
+import { isBgmV6Model } from "../shared/manhuaBgmBrief.js";
+import { isTtapiSunoReady } from "./services/ttapiSunoMusic.js";
 import {
   MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS,
   manhuaCreativeAdvisorContextSchema,
