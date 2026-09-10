@@ -75,6 +75,7 @@ import {
   patchJobRunningProgress,
   patchJobRunningProgressStrict,
   requeueJob,
+  requeueManhuaBgmRefundStrict,
   upsertManhuaNativeModelReceiptForJob,
   type JobType,
 } from "./repository";
@@ -85,7 +86,10 @@ import {
 } from "./manhuaBgmJobInput.js";
 import {
   persistManhuaBgmCheckpointWithRetry,
+  MANHUA_BGM_REFUND_RETRY_MAX,
+  manhuaBgmRefundRetryDelayMs,
   planInterruptedManhuaBgmRecovery,
+  readManhuaBgmPersistedDeduct,
 } from "./manhuaBgmRecovery.js";
 import {
   createManhuaBgmTask,
@@ -1885,11 +1889,13 @@ async function processManhuaBgmJob(params: {
             await refundCreditsForDeductAmount(
               refundUserId,
               "配乐建单失败退回",
-              recovery.deduct as never,
+              recovery.deduct,
               "manhuaBgm",
               { refundKey: recovery.refundKey },
             );
-            await patchJobRunningProgressStrict(params.jobId, { bgmStage: "refund_completed" }).catch(() => {});
+            await persistManhuaBgmCheckpointWithRetry(() =>
+              patchJobRunningProgressStrict(params.jobId, { bgmStage: "refund_completed" }),
+            );
           } catch (refundError) {
             console.warn(
               "[manhua-bgm] 补退仍未成功，保持 refund_pending:",
@@ -1976,22 +1982,25 @@ async function processManhuaBgmJob(params: {
         (bgmDeduct as { success?: unknown }).success === true &&
         Number((bgmDeduct as { cost?: unknown }).cost) > 0;
       if (bgmCharged && Number.isFinite(numericUserId)) {
-        await patchJobRunningProgressStrict(params.jobId, {
-          bgmStage: "refund_pending",
-          bgmDeduct: {
-            success: true,
-            cost: Number((bgmDeduct as { cost?: unknown }).cost) || 0,
-            source: String((bgmDeduct as { source?: unknown }).source || ""),
-            remainingBalance: Number((bgmDeduct as { remainingBalance?: unknown }).remainingBalance) || 0,
-          },
-          bgmRefundKey,
-        }).catch(() => {});
+        // 审查 P1：凭据必须完整（团队来源要带 teamId/teamMemberId），并且**必须写进去**——
+        // 检查点写失败还继续，等于没有恢复依据，补退再也找不回来
+        const refundDeduct = readManhuaBgmPersistedDeduct(bgmDeduct);
+        if (!refundDeduct) throw new Error("实际扣费凭据不完整，请人工核对退款");
+        await persistManhuaBgmCheckpointWithRetry(() =>
+          patchJobRunningProgressStrict(params.jobId, {
+            bgmStage: "refund_pending",
+            bgmDeduct: refundDeduct,
+            bgmRefundKey,
+          }),
+        );
         const { refundCreditsForDeductAmount } = await import("../credits");
         try {
           await refundCreditsForDeductAmount(numericUserId, "配乐建单失败退回", bgmDeduct!, "manhuaBgm", {
             refundKey: bgmRefundKey,
           });
-          await patchJobRunningProgressStrict(params.jobId, { bgmStage: "refund_completed" }).catch(() => {});
+          await persistManhuaBgmCheckpointWithRetry(() =>
+            patchJobRunningProgressStrict(params.jobId, { bgmStage: "refund_completed" }),
+          );
         } catch (refundError) {
           // 留在 refund_pending：下次处理这条任务只做幂等补退，文案也不会谎称已退
           console.warn(
@@ -3673,14 +3682,32 @@ async function runClaimedJob(
         bgmStage === "refund_completed"
           ? "；上游明确拒单，积分已退回"
           : bgmStage === "refund_pending"
-            ? "；上游明确拒单，积分退回尚未完成，系统会自动补退"
+            ? ((job.attempts ?? 0) < MANHUA_BGM_REFUND_RETRY_MAX
+                ? "；上游明确拒单，积分退回尚未完成，将只重试退款"
+                : "；上游明确拒单，自动补退未成功，请人工核对退款")
             : bgmStage === "submit_rejected"
               ? "；上游明确拒单，本次未扣积分"
               : "";
       const explicitTerminalFailure = /\b(failed|cancelled)\b/.test(
         error instanceof Error ? error.message : String(error)
       );
-      if (
+      if (bgmStage === "refund_pending" && (job.attempts ?? 0) < MANHUA_BGM_REFUND_RETRY_MAX) {
+        // 审查 P1：待补退必须真的回到队列，让正常 worker 领取补退——
+        // 只标 failed 的话「系统会自动补退」是空话。退避一次再重排，避免数据库故障时热循环。
+        await sleep(manhuaBgmRefundRetryDelayMs());
+        try {
+          await persistManhuaBgmCheckpointWithRetry(() =>
+            requeueManhuaBgmRefundStrict(job.id, `${message}${bgmSettlementNoteZh}`),
+          );
+        } catch (requeueError) {
+          // 重排确实没落库：不吞错，但也不能把整个 worker 拖垮——本条转人工，队列继续跑
+          console.error(
+            "[manhua-bgm] 补退重排未持久化，转人工:",
+            requeueError instanceof Error ? requeueError.message : requeueError,
+          );
+          await markJobFailed(job.id, `${message}；补退重排未持久化，请人工核对退款`);
+        }
+      } else if (
         hasUpstreamTaskId &&
         !explicitTerminalFailure &&
         (job.attempts ?? 0) < 4

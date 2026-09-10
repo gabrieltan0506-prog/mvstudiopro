@@ -237,7 +237,7 @@ export async function recoverInterruptedManhuaBgmJobsOnStartup(): Promise<{
         sql`(${jobs.input}::jsonb->>'action') = 'manhua_bgm_v55'`,
       ),
     );
-  const { planInterruptedManhuaBgmRecovery } = await import("./manhuaBgmRecovery.js");
+  const { planInterruptedManhuaBgmRecovery, MANHUA_BGM_REFUND_RETRY_MAX } = await import("./manhuaBgmRecovery.js");
   const result = { resumed: 0, completed: 0, manual: 0 };
   for (const row of rows) {
     const decision = planInterruptedManhuaBgmRecovery(parseMaybeJson(row.output));
@@ -255,12 +255,19 @@ export async function recoverInterruptedManhuaBgmJobsOnStartup(): Promise<{
       result.completed += updated.length;
       continue;
     }
-    if (decision.kind === "resume") {
+    // 审查 P1：待补退的行也要回队列，让正常 worker 领取补退；尝试次数用尽才转人工
+    if (
+      decision.kind === "resume" ||
+      (decision.kind === "refund_pending" && (row.attempts ?? 0) < MANHUA_BGM_REFUND_RETRY_MAX)
+    ) {
       const updated = await db
         .update(jobs)
         .set({
           status: "queued",
-          error: "服务重启，继续查询原配乐任务",
+          error:
+            decision.kind === "refund_pending"
+              ? "服务重启，仅恢复原配乐退款"
+              : "服务重启，继续查询原配乐任务",
           updatedAt: new Date(),
         })
         .where(and(eq(jobs.id, row.id), eq(jobs.status, "running")))
@@ -270,7 +277,14 @@ export async function recoverInterruptedManhuaBgmJobsOnStartup(): Promise<{
     }
     const updated = await db
       .update(jobs)
-      .set({ status: "failed", error: decision.reason, updatedAt: new Date() })
+      .set({
+        status: "failed",
+        error:
+          decision.kind === "refund_pending"
+            ? "自动补退未成功，请人工核对退款"
+            : decision.reason,
+        updatedAt: new Date(),
+      })
       .where(and(eq(jobs.id, row.id), eq(jobs.status, "running")))
       .returning({ id: jobs.id });
     result.manual += updated.length;
@@ -1210,6 +1224,32 @@ export async function patchJobRunningProgressStrict(
     .where(and(eq(jobs.id, jobId), eq(jobs.status, "running")))
     .returning({ id: jobs.id });
   if (updated.length !== 1) throw new Error(`Job ${jobId} progress was not persisted`);
+}
+
+/**
+ * 仅配乐补退使用：CAS 到「running 且 refund_pending」才算重排成功，并核验结果，不吞数据库错误。
+ * 审查 P1：通用 requeueJob 会吞错，用它证明不了「已回到队列等补退」。
+ */
+export async function requeueManhuaBgmRefundStrict(id: string, error: string): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable — cannot requeue refund");
+  const updated = await db
+    .update(jobs)
+    .set({ status: "queued", error, updatedAt: new Date() })
+    .where(
+      and(
+        eq(jobs.id, id),
+        eq(jobs.status, "running"),
+        sql`(${jobs.output}::jsonb->>'bgmStage') = 'refund_pending'`,
+      ),
+    )
+    .returning({ id: jobs.id });
+  if (updated.length === 1) return;
+  // 上一次写入其实成功、只是回执断了：只接受「已在队列且仍待补退」这一种状态
+  const current = await getJobByIdStrict(id);
+  const output = parseMaybeJson(current?.output) as { bgmStage?: unknown } | null;
+  if (current?.status === "queued" && output?.bgmStage === "refund_pending") return;
+  throw new Error("配乐退款重排未持久化，请人工核对原任务");
 }
 
 export async function requeueJob(id: string, error: string): Promise<void> {

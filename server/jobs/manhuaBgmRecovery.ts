@@ -9,6 +9,15 @@
  * 失败时留 `refund_pending` 并把实际扣费凭据一起落盘，下次处理只做幂等补退，不再扣费、不再 POST。
  */
 
+/** 补退最多自动重试几轮；用尽转人工。runner 与启动恢复共用同一个上限 */
+export const MANHUA_BGM_REFUND_RETRY_MAX = 4;
+
+/** 补退前的退避（毫秒）：默认 30 秒，避免数据库故障时队列热循环；回归可置 0 */
+export function manhuaBgmRefundRetryDelayMs(): number {
+  const raw = Number(process.env.MANHUA_BGM_REFUND_RETRY_DELAY_MS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 30_000;
+}
+
 export type ManhuaBgmRecoveryDecision =
   | {
       kind: "complete";
@@ -31,27 +40,35 @@ export type ManhuaBgmRecoveryDecision =
       reason: string;
     };
 
-/** 落盘的扣费凭据：只存结算需要的字段，不含任何密钥或鉴权信息 */
+/**
+ * 落盘的扣费凭据：只存结算需要的字段，不含任何密钥或鉴权信息。
+ * 审查 P1：团队扣费退款必须带 teamId / teamMemberId，缺了真实退款函数会抛 team_refund_metadata_missing，
+ * 所以类型按来源分叉——团队来源没有这两个字段就不是一份可用凭据。
+ */
 export type ManhuaBgmPersistedDeduct = {
   success: true;
   cost: number;
-  source: string;
-  remainingBalance?: number;
-};
+  remainingBalance: number;
+} & ({ source: "personal" } | { source: "team"; teamId: number; teamMemberId: number });
 
 export function readManhuaBgmPersistedDeduct(value: unknown): ManhuaBgmPersistedDeduct | null {
   const row = asRecord(value);
   if (!row || row.success !== true) return null;
   const cost = Number(row.cost);
   const source = String(row.source || "").trim();
-  if (!Number.isFinite(cost) || cost <= 0 || !source) return null;
-  const remainingBalance = Number(row.remainingBalance);
-  return {
-    success: true,
-    cost,
-    source,
-    ...(Number.isFinite(remainingBalance) ? { remainingBalance } : {}),
-  };
+  if (!Number.isSafeInteger(cost) || cost <= 0) return null;
+  if (source !== "personal" && source !== "team") return null;
+  const balance = Number(row.remainingBalance);
+  // 余额只作日志用；读不出来记 -1，不因为它把整份凭据判废
+  const remainingBalance = Number.isFinite(balance) ? balance : -1;
+  if (source === "team") {
+    const teamId = Number(row.teamId);
+    const teamMemberId = Number(row.teamMemberId);
+    if (!Number.isSafeInteger(teamId) || teamId <= 0) return null;
+    if (!Number.isSafeInteger(teamMemberId) || teamMemberId <= 0) return null;
+    return { success: true, cost, source, remainingBalance, teamId, teamMemberId };
+  }
+  return { success: true, cost, source, remainingBalance };
 }
 
 /**
@@ -127,6 +144,7 @@ export function planInterruptedManhuaBgmRecovery(
   }
 
   // 退款没做完：只补退，不重新扣费、不再向上游 POST（审查 P1）
+  // 凭据不全（尤其团队缺 teamId/teamMemberId）宁可转人工，也不发一笔退不掉的补退
   if (output.bgmStage === "refund_pending") {
     const deduct = readManhuaBgmPersistedDeduct(output.bgmDeduct);
     const refundKey = String(output.bgmRefundKey || "").trim();
