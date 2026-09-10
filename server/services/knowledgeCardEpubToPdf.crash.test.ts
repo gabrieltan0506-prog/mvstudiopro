@@ -1,7 +1,9 @@
 import JSZip from "jszip";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
-import { EpubChromiumCrashError, convertEpubToPdf, isChromiumCrashError, parseEpub } from "./knowledgeCardEpubToPdf";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { EpubChromiumCrashError, convertEpubToPdf, formatEpubShardLabel, isChromiumCrashError, mergePdfShards, parseEpub, renderHtmlToPdf, splitEpubChaptersIntoShards, stripInlineImagesFromHtml } from "./knowledgeCardEpubToPdf";
 
 async function makeEpubWithBigImage(): Promise<Buffer> {
   const zip = new JSZip();
@@ -61,27 +63,86 @@ describe("EPUB 大图与 Chromium 崩溃兜底", () => {
     expect(parsed.chapters[0]!.length).toBeLessThan(2000);
   }, 60_000);
 
-  it("Chromium 崩一次 → 剥图重打；崩两次 → 给用户能照办的中文错误，不是 Protocol error", async () => {
+  it("分片：按累计字节切，单章超限自成一片，顺序不变", () => {
+    const ch = (n: number) => "x".repeat(n);
+    expect(splitEpubChaptersIntoShards([ch(10), ch(10), ch(10)], 25)).toEqual([[0, 1], [2]]);
+    expect(splitEpubChaptersIntoShards([ch(100), ch(5), ch(5)], 25)).toEqual([[0], [1, 2]]);
+    expect(splitEpubChaptersIntoShards([ch(5)], 25)).toEqual([[0]]);
+    expect(splitEpubChaptersIntoShards([], 25)).toEqual([]);
+  });
+
+  it("stripInlineImagesFromHtml 只换掉内联位图，占位符不重复替换", () => {
+    const html = '<img src="data:image/jpeg;base64,AAAA"/><img src="data:image/png;base64,BBBB"/><p>字</p>';
+    const once = stripInlineImagesFromHtml(html);
+    expect(once.stripped).toBe(2);
+    expect(stripInlineImagesFromHtml('<img src="data:image/JPEG;base64,CCCC"/>').stripped).toBe(1);
+    expect(once.html).not.toContain("image/jpeg");
+    expect(once.html).toContain("<p>字</p>");
+    expect(stripInlineImagesFromHtml(once.html).stripped).toBe(0);
+  });
+
+  it("三片里只有第 2 片崩：只剥第 2 片的图重打，其它片保留插图；两次都崩报出是哪几章", async () => {
     const buffer = await makeEpubWithBigImage();
-    let calls = 0;
-    const crashOnce = async (html: string) => {
-      calls += 1;
-      if (calls === 1) throw new EpubChromiumCrashError("Chromium 转 PDF 时崩溃：Protocol error (Runtime.callFunctionOn): Target closed");
-      expect(html).not.toContain("image/jpeg");
-      return Buffer.from("%PDF-fake");
+    // 把同一章复制成 3 章，用极小 shardMaxBytes 逼成 3 片
+    const parsed = await parseEpub(buffer);
+    const parse3 = async () => ({ ...parsed, chapters: [parsed.chapters[0]!, parsed.chapters[0]!, parsed.chapters[0]!] });
+    const seen: string[] = [];
+    let shard2Calls = 0;
+    const render = async (html: string) => {
+      seen.push(html);
+      if (seen.length === 2) { shard2Calls += 1; throw new EpubChromiumCrashError("Target closed"); }
+      return Buffer.from(`%PDF-shard-${seen.length}`);
     };
-    const out = await convertEpubToPdf(buffer, { render: crashOnce });
+    const merged: Buffer[][] = [];
+    const out = await convertEpubToPdf(buffer, { render, parse: parse3 as never, shardMaxBytes: 1, merge: async (pdfs) => { merged.push(pdfs); return Buffer.concat(pdfs); } });
+    expect(out.shardCount).toBe(3);
+    expect(out.strippedShards).toEqual([2]);
     expect(out.mode).toBe("stripped");
-    expect(out.images.stripped).toBe(2);
-    expect(calls).toBe(2);
+    expect(seen).toHaveLength(4); // 片1、片2(崩)、片2 剥图、片3
+    expect(seen[0]).toContain("image/jpeg");
+    expect(seen[2]).not.toContain("image/jpeg");
+    expect(seen[3]).toContain("image/jpeg");
+    expect(merged[0]).toHaveLength(3);
 
     const alwaysCrash = async () => { throw new EpubChromiumCrashError("Target closed"); };
-    await expect(convertEpubToPdf(buffer, { render: alwaysCrash })).rejects.toThrow(/太大.*崩溃两次.*Calibre/);
+    expect(out.shardLabels[1]).toMatch(/^第 2\/3 片 · 第 2 节 · 从「章」起$/);
+    await expect(convertEpubToPdf(buffer, { render: alwaysCrash, parse: parse3 as never, shardMaxBytes: 1 })).rejects.toThrow(/第 1\/3 片 · 第 1 节 · 从「章」起：转 PDF 时浏览器崩溃两次.*Calibre/);
+    expect(formatEpubShardLabel(0, 2, [11, 17], "<h1>第三章 <em>夜行</em></h1>")).toBe("第 1/2 片 · 第 12–18 节 · 从「第三章 夜行」起");
+    expect(formatEpubShardLabel(1, 2, [3], "<p>无标题</p>")).toBe("第 2/2 片 · 第 4 节");
+    expect(formatEpubShardLabel(0, 1, [0], "<h1></h1><h2>后备 &amp; 实体&nbsp;X</h2>")).toBe("第 1/1 片 · 第 1 节 · 从「后备 & 实体 X」起");
+    expect(formatEpubShardLabel(0, 1, [0], `<h1>${"长".repeat(60)}</h1>`)).toBe(`第 1/1 片 · 第 1 节 · 从「${"长".repeat(40)}…」起`);
 
     // 非崩溃错误不重试，原样抛
     const other = async () => { throw new Error("磁盘满"); };
     await expect(convertEpubToPdf(buffer, { render: other })).rejects.toThrow("磁盘满");
   }, 60_000);
+
+  it("真 Chromium + 真 pdfunite：4 章逼成 4 片，合并后页数 ≥ 4 且是合法 PDF", async () => {
+    const zip = new JSZip();
+    zip.file("mimetype", "application/epub+zip");
+    zip.file("META-INF/container.xml", `<?xml version="1.0"?><container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`);
+    const items = Array.from({ length: 4 }, (_, i) => `<item id="c${i}" href="c${i}.xhtml" media-type="application/xhtml+xml"/>`).join("");
+    const refs = Array.from({ length: 4 }, (_, i) => `<itemref idref="c${i}"/>`).join("");
+    zip.file("OEBPS/content.opf", `<?xml version="1.0"?><package xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata><dc:title>分片书</dc:title></metadata><manifest>${items}</manifest><spine>${refs}</spine></package>`);
+    for (let i = 0; i < 4; i++) zip.file(`OEBPS/c${i}.xhtml`, `<html><body><h1>第${i + 1}章</h1><p>${"分片打印。".repeat(80)}</p></body></html>`);
+    const out = await convertEpubToPdf(await zip.generateAsync({ type: "nodebuffer" }), { shardMaxBytes: 1, render: renderHtmlToPdf, merge: mergePdfShards });
+    expect(out.shardCount).toBe(4);
+    expect(out.mode).toBe("normal");
+    expect(out.pdf.subarray(0, 4).toString()).toBe("%PDF");
+    const { writeFile: wf, mkdtemp: md, rm: rmdir } = await import("node:fs/promises");
+    const { tmpdir: td } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = await md(join(td(), "kc-epub-test-"));
+    try {
+      const file = join(dir, "m.pdf");
+      await wf(file, out.pdf);
+      const { stdout } = await promisify(execFile)("pdfinfo", [file]);
+      const pages = Number(/Pages:\s+(\d+)/.exec(stdout)?.[1] || 0);
+      expect(pages).toBeGreaterThanOrEqual(4);
+    } finally {
+      await rmdir(dir, { recursive: true, force: true });
+    }
+  }, 90_000);
 
   it("崩溃特征识别", () => {
     expect(isChromiumCrashError(new Error("Protocol error (Runtime.callFunctionOn): Target closed"))).toBe(true);
