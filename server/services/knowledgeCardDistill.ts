@@ -387,7 +387,7 @@ export async function extractKnowledgeCardUploads(
       if (converted.mode === "stripped") {
         // 让用户知道哪几片的插图被剥了，不只藏在 methods 里
         methods.push(
-          `${name}:notice:第 ${converted.strippedShards.join("、")} 片插图过多导致转换崩溃，这几片已只保留文字重新转换（共 ${converted.shardCount} 片，${converted.images.stripped} 张插图未进知识卡）`,
+          `${name}:notice:${converted.strippedShards.map((n) => converted.shardLabels[n - 1] || `第 ${n} 片`).join("；")} 插图过多导致转换崩溃，这几片已只保留文字重新转换（共 ${converted.shardCount} 片，${converted.images.stripped} 张插图未进知识卡）`,
         );
       }
       methods.push(

@@ -238,7 +238,23 @@ export type ConvertEpubToPdfResult = {
   /** 分了几片、哪些片剥了图（按片序号，从 1 起） */
   shardCount: number;
   strippedShards: number[];
+  /** 每片的人话标签：「第 2 片 · 第 12–18 节 · 从「第三章 …」起」，notice 与错误文案共用 */
+  shardLabels: string[];
 };
+
+/** 片内首章的标题文本（h1/h2/title），给标签用；spine 序号不等于目录章号，所以要带标题 */
+export function epubChapterHeading(html: string): string {
+  const m = /<(?:h1|h2|title)\b[^>]*>([\s\S]*?)<\/(?:h1|h2|title)>/i.exec(html);
+  const text = String(m?.[1] || "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+  return text.slice(0, 40);
+}
+
+export function formatEpubShardLabel(index: number, total: number, spineRange: number[], firstChapterHtml: string): string {
+  const from = spineRange[0]! + 1;
+  const to = spineRange[spineRange.length - 1]! + 1;
+  const heading = epubChapterHeading(firstChapterHtml);
+  return `第 ${index + 1}/${total} 片 · 第 ${from}${to !== from ? `–${to}` : ""} 节${heading ? ` · 从「${heading}」起` : ""}`;
+}
 
 /** 单片 HTML 上限：几百章的书按这个切，一片一片打，崩了只重打那一片 */
 export const EPUB_SHARD_MAX_BYTES_DEFAULT = 6 * 1024 * 1024;
@@ -267,7 +283,7 @@ const PLACEHOLDER_GIF = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAA
 /** 只剥这一片的内联图（换 1×1 占位），其它片的图不受影响 */
 export function stripInlineImagesFromHtml(html: string): { html: string; stripped: number } {
   let stripped = 0;
-  const out = html.replace(/data:image\/(?!gif;base64,R0lGODlhAQABAIAAAAAAAP)[a-z+.-]+;base64,[A-Za-z0-9+/=]+/g, () => {
+  const out = html.replace(/data:image\/(?!gif;base64,R0lGODlhAQABAIAAAAAAAP)[a-z+.-]+;base64,[A-Za-z0-9+/=]+/gi, () => {
     stripped += 1;
     return PLACEHOLDER_GIF;
   });
@@ -289,7 +305,10 @@ export async function mergePdfShards(pdfs: Buffer[]): Promise<Buffer> {
     const { execFile } = await import("node:child_process");
     await new Promise<void>((resolve, reject) => {
       execFile("pdfunite", [...inputs, out], { maxBuffer: 4 * 1024 * 1024 }, (error, _stdout, stderr) => {
-        if (error) reject(new Error(`pdfunite 合并分片失败：${stderr || error.message}`));
+        if (error) {
+          const missing = (error as NodeJS.ErrnoException).code === "ENOENT";
+          reject(new Error(missing ? "镜像缺 poppler-utils（pdfunite），无法合并分片；请在 Dockerfile 安装后重试" : `pdfunite 合并分片失败：${stderr || error.message}`));
+        }
         else resolve();
       });
     });
@@ -320,30 +339,32 @@ export async function convertEpubToPdf(
   const shards = splitEpubChaptersIntoShards(parsed.chapters, deps.shardMaxBytes);
   const pdfs: Buffer[] = [];
   const strippedShards: number[] = [];
+  const shardLabels: string[] = [];
   let strippedImages = 0;
   for (let i = 0; i < shards.length; i++) {
     const chapters = shards[i]!.map((idx) => parsed.chapters[idx]!);
     const shardHtml = buildEpubPrintHtml({ ...parsed, chapters });
-    const label = `第 ${i + 1}/${shards.length} 片（第 ${shards[i]![0]! + 1}–${shards[i]![shards[i]!.length - 1]! + 1} 章）`;
+    const label = formatEpubShardLabel(i, shards.length, shards[i]!, chapters[0]!);
+    shardLabels.push(label);
     let pdf: Buffer;
     try {
       pdf = await render(shardHtml);
     } catch (error) {
       if (!(error instanceof EpubChromiumCrashError)) throw error;
-      console.warn(`[knowledgeCardEpubToPdf] ${label} 打印崩溃，剥图重打：${error.message}`);
+      console.warn(`[knowledgeCardEpubToPdf] ${label}打印崩溃，剥图重打：${error.message}`);
       const stripped = stripInlineImagesFromHtml(shardHtml);
       try {
         pdf = await render(stripped.html);
       } catch (again) {
         if (!(again instanceof EpubChromiumCrashError)) throw again;
         throw new Error(
-          `这本 EPUB ${label} 转 PDF 时浏览器崩溃两次（已试过只保文字）。请先用 Calibre 等工具转成 PDF，或把这几章拆出来单独上传。`,
+          `这本 EPUB ${label}转 PDF 时浏览器崩溃两次（已试过只保文字）。请先用 Calibre 等工具转成 PDF，或把这几节拆出来单独上传。`,
         );
       }
       strippedShards.push(i + 1);
       strippedImages += stripped.stripped;
     }
-    if (!pdf.length) throw new Error(`EPUB ${label} 转 PDF 结果为空`);
+    if (!pdf.length) throw new Error(`EPUB ${label}转 PDF 结果为空`);
     pdfs.push(pdf);
   }
   const pdf = await merge(pdfs);
@@ -355,6 +376,7 @@ export async function convertEpubToPdf(
     images: { ...parsed.images, stripped: parsed.images.stripped + strippedImages },
     shardCount: shards.length,
     strippedShards,
+    shardLabels,
   };
 }
 

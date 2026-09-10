@@ -3,7 +3,7 @@ import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { EpubChromiumCrashError, convertEpubToPdf, isChromiumCrashError, mergePdfShards, parseEpub, renderHtmlToPdf, splitEpubChaptersIntoShards, stripInlineImagesFromHtml } from "./knowledgeCardEpubToPdf";
+import { EpubChromiumCrashError, convertEpubToPdf, formatEpubShardLabel, isChromiumCrashError, mergePdfShards, parseEpub, renderHtmlToPdf, splitEpubChaptersIntoShards, stripInlineImagesFromHtml } from "./knowledgeCardEpubToPdf";
 
 async function makeEpubWithBigImage(): Promise<Buffer> {
   const zip = new JSZip();
@@ -75,6 +75,7 @@ describe("EPUB 大图与 Chromium 崩溃兜底", () => {
     const html = '<img src="data:image/jpeg;base64,AAAA"/><img src="data:image/png;base64,BBBB"/><p>字</p>';
     const once = stripInlineImagesFromHtml(html);
     expect(once.stripped).toBe(2);
+    expect(stripInlineImagesFromHtml('<img src="data:image/JPEG;base64,CCCC"/>').stripped).toBe(1);
     expect(once.html).not.toContain("image/jpeg");
     expect(once.html).toContain("<p>字</p>");
     expect(stripInlineImagesFromHtml(once.html).stripped).toBe(0);
@@ -104,7 +105,10 @@ describe("EPUB 大图与 Chromium 崩溃兜底", () => {
     expect(merged[0]).toHaveLength(3);
 
     const alwaysCrash = async () => { throw new EpubChromiumCrashError("Target closed"); };
-    await expect(convertEpubToPdf(buffer, { render: alwaysCrash, parse: parse3 as never, shardMaxBytes: 1 })).rejects.toThrow(/第 1\/3 片（第 1–1 章）.*崩溃两次.*Calibre/);
+    expect(out.shardLabels[1]).toMatch(/^第 2\/3 片 · 第 2 节 · 从「章」起$/);
+    await expect(convertEpubToPdf(buffer, { render: alwaysCrash, parse: parse3 as never, shardMaxBytes: 1 })).rejects.toThrow(/第 1\/3 片 · 第 1 节 · 从「章」起.*崩溃两次.*Calibre/);
+    expect(formatEpubShardLabel(0, 2, [11, 17], "<h1>第三章 <em>夜行</em></h1>")).toBe("第 1/2 片 · 第 12–18 节 · 从「第三章 夜行」起");
+    expect(formatEpubShardLabel(1, 2, [3], "<p>无标题</p>")).toBe("第 2/2 片 · 第 4 节");
 
     // 非崩溃错误不重试，原样抛
     const other = async () => { throw new Error("磁盘满"); };
