@@ -387,6 +387,9 @@ import VoiceInputButton from "@/components/VoiceInputButton";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { copyText, copyTextWithToast } from "@/lib/copyText";
 
+/** 派生结果回写前的版本校验失败标记：稿子已被换掉，这份结果作废（审查 P1） */
+const KNOWLEDGE_CARD_DERIVE_STALE_MESSAGE = "__knowledge_card_derive_stale__";
+
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 
 type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_3_flash_preview";
@@ -3059,6 +3062,15 @@ export default function PlatformPage() {
     setCustomNoteCompactMarkdownState(next);
   };
   const [customNoteLevelSwitching, setCustomNoteLevelSwitching] = useState(false);
+  /**
+   * 稿件版本号：每次换稿（新提炼、清空、上传新书）+1。
+   * 审查 P1：派生是异步的，迟到的响应必须先比对版本，否则会把上一本/上一版的精华版写进当前文本框。
+   */
+  const customNoteRevisionRef = useRef(0);
+  const bumpCustomNoteRevision = () => {
+    customNoteRevisionRef.current += 1;
+    return customNoteRevisionRef.current;
+  };
   /** 用戶自選生成類型：單頁連貫圖文知識卡片 or 2×4 分鏡圖 or 深度优化文案（自定義文案專用） */
   const [customNoteKind, setCustomNoteKind] = useState<
     "single_page_knowledge_card" | "storyboard_sheet_landscape" | "optimize_custom_copy"
@@ -8013,6 +8025,8 @@ export default function PlatformPage() {
   const deriveCompactFromFull = async (full: string): Promise<string> => {
     const cached = customNoteCompactMarkdownRef.current;
     if (cached) return cached;
+    // 本次派生绑定的稿件版本；回写前比对，旧响应一律作废
+    const revision = customNoteRevisionRef.current;
     setCustomNoteLevelSwitching(true);
     setCustomNoteProgress({ status: "running", percent: 1, label: "派生精华版…" });
     try {
@@ -8038,6 +8052,10 @@ export default function PlatformPage() {
       const out = (job.output || {}) as { distilledMarkdown?: string };
       const compact = String(out.distilledMarkdown || "").trim();
       if (!compact) throw new Error("精华版派生结果为空");
+      // 审查 P1：稿子在派生期间被换过（清空/重新提炼/换书）→ 这份结果作废，不许覆盖新稿
+      if (revision !== customNoteRevisionRef.current) {
+        throw new Error(KNOWLEDGE_CARD_DERIVE_STALE_MESSAGE);
+      }
       setCustomNoteCompactMarkdown(compact);
       setCustomNoteProgress({ status: "running", percent: 60, label: "精华版已就绪，等待出图" });
       return compact;
@@ -8061,6 +8079,7 @@ export default function PlatformPage() {
       return await deriveCompactFromFull(distilled);
     } catch (deriveErr) {
       const msg = String((deriveErr as { message?: string })?.message || "精华版派生失败");
+      if (msg === KNOWLEDGE_CARD_DERIVE_STALE_MESSAGE) return distilled;
       setCustomNoteDetailLevel("full");
       try { localStorage.setItem("mvs-knowledge-card-detail-level", "full"); } catch { /* ignore */ }
       toast.warning(`精华版派生失败（${msg.slice(0, 60)}），已先写入完整版；稍后可再切精华版`, { duration: 10_000 });
@@ -8070,6 +8089,10 @@ export default function PlatformPage() {
 
   /** 成稿档切换：有完整版真源时直接换视图（精华版首次切需派生一次） */
   const switchKnowledgeCardLevel = async (next: KnowledgeCardDetailLevel) => {
+    if (customNoteLevelSwitching) {
+      toast.info("精华版还在派生中，等它结束再切档");
+      return;
+    }
     // 文本框被手改过：切档会覆盖，先问一句
     const currentView = customNoteDetailLevel === "concise" ? customNoteCompactMarkdown : customNoteFullMarkdown;
     if (customNoteFullMarkdown && currentView && customNoteText.trim() !== currentView.trim()) {
@@ -8092,6 +8115,8 @@ export default function PlatformPage() {
     } catch (err) {
       // 审查 P1：派生失败时下拉不能停在「精华版」而文本框是完整版——档位回退，与上传路径一致
       const msg = String((err as { message?: string })?.message || "精华版派生失败");
+      // 稿子已经被换掉：这次派生的成败都与当前文本框无关，静默收手，不回写不改档
+      if (msg === KNOWLEDGE_CARD_DERIVE_STALE_MESSAGE) return;
       setCustomNoteDetailLevel(previousLevel);
       try { localStorage.setItem("mvs-knowledge-card-detail-level", previousLevel); } catch { /* ignore */ }
       setCustomNoteText(customNoteFullMarkdown);
@@ -8108,7 +8133,8 @@ export default function PlatformPage() {
     chargeDistillFee?: boolean;
   }): Promise<string> => {
     setCustomNoteProgress((prev) => ({ status: "running", percent: Math.max(prev.status === "running" ? prev.percent : 0, 1), label: "提交提炼任务…" }));
-    // 新一轮提炼开始：旧书的真源作废，避免切档把上一本写回来
+    // 新一轮提炼开始：旧书的真源作废，避免切档把上一本写回来；版本 +1 让在途派生的回写失效
+    bumpCustomNoteRevision();
     setCustomNoteFullMarkdown(null);
     setCustomNoteCompactMarkdown(null);
     const queued = await prepareKnowledgeCardCopyMutation.mutateAsync({
@@ -8293,6 +8319,11 @@ export default function PlatformPage() {
     }
     if (knowledgeCardInflight.length > 0) {
       toast.info(`还有 ${knowledgeCardInflight.length} 页在生成中，等它们结束再重新生成`);
+      return;
+    }
+    // 审查 P1：精华版还在派生时，文本框里还是完整版——此时出图会按完整版页数计费、出的也是另一档
+    if (customNoteLevelSwitching) {
+      toast.info("精华版还在派生中，等它写进文本框再生成");
       return;
     }
     const kind = overrides?.kind ?? customNoteKind;
@@ -15288,11 +15319,12 @@ export default function PlatformPage() {
                 }
                 value={customNoteText}
                 onChange={(e) => setCustomNoteText(e.target.value)}
-                disabled={customNoteBusy}
+                // 派生中文本框只读：此刻框里是完整版，编辑会被派生结果覆盖（审查 P1）
+                disabled={customNoteBusy || customNoteLevelSwitching}
               />
               {customNoteKind === "single_page_knowledge_card" ? (
                 <div className="mt-3 flex flex-wrap items-center gap-3">
-                  <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-white/15 bg-black/30 px-3 py-1.5 text-xs font-semibold text-[#c9c0e6] transition hover:border-[#ff4fb8]/40 hover:text-white ${customNoteBusy || customNoteUploadBusy ? "opacity-50 pointer-events-none" : ""}`}>
+                  <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-white/15 bg-black/30 px-3 py-1.5 text-xs font-semibold text-[#c9c0e6] transition hover:border-[#ff4fb8]/40 hover:text-white ${customNoteBusy || customNoteUploadBusy || customNoteLevelSwitching ? "opacity-50 pointer-events-none" : ""}`}>
                     <Upload className="h-3.5 w-3.5" />
                     {customNoteUploadBusy ? "读取中…" : "上传文档/图片（可多选）"}
                     <input
@@ -15300,9 +15332,14 @@ export default function PlatformPage() {
                       className="hidden"
                       multiple
                       accept=".pptx,.docx,.pdf,.epub,.png,.jpg,.jpeg,.webp,application/pdf,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/png,image/jpeg,image/webp"
-                      disabled={customNoteBusy || customNoteUploadBusy}
+                      disabled={customNoteBusy || customNoteUploadBusy || customNoteLevelSwitching}
                       onChange={(e) => {
                         const list = Array.from(e.target.files || []);
+                        if (customNoteLevelSwitching) {
+                          e.target.value = "";
+                          toast.info("精华版还在派生中，等它结束再上传新文件");
+                          return;
+                        }
                         e.target.value = "";
                         if (!list.length) return;
                         void (async () => {
@@ -15523,6 +15560,7 @@ export default function PlatformPage() {
                   disabled={
                     customNoteBusy ||
                     customNoteUploadBusy ||
+                    customNoteLevelSwitching ||
                     customNoteDistillPhase === "distilling" ||
                     !customNoteText.trim()
                   }
@@ -15556,6 +15594,7 @@ export default function PlatformPage() {
                       setCustomOptimizeResult(null);
                       setCustomOptimizeSummary(null);
                       setCustomNoteText("");
+                      bumpCustomNoteRevision();
                       setCustomNoteFullMarkdown(null);
                       setCustomNoteCompactMarkdown(null);
                       setCustomOptimizeBrief("");

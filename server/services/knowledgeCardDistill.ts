@@ -870,7 +870,10 @@ async function distillOneChunkWithRetry(params: {
       console.warn(
         `[knowledgeCardDistill] ${params.chunkLabel} attempt ${attempt + 1}/${params.retries + 1} failed: ${lastError.message.slice(0, 160)}`,
       );
-      if (attempt < params.retries) await sleep(2_000 * (attempt + 1));
+      // 退避基数按调用时读，测试可置 0（生产默认 2 秒起）
+      const backoffMs = Number(process.env.KNOWLEDGE_CARD_DISTILL_RETRY_BACKOFF_MS);
+      const base = Number.isFinite(backoffMs) && backoffMs >= 0 ? backoffMs : 2_000;
+      if (attempt < params.retries && base > 0) await sleep(base * (attempt + 1));
     }
   }
 
@@ -911,24 +914,43 @@ async function distillOneChunkWithRetry(params: {
  * 致命错误（额度/通道/拒答）照旧整本失败——那不是「一段抽风」而是全书都过不去。
  * 0910 一本 1957 页的书上百段，任何一段模型返回垃圾就整本作废，用户只看到「算力紧张」。
  */
+/**
+ * 分段结果：成功才带正文。
+ * 审查 P1：上一版把「未能提炼」占位当正文返回，15 段全失败也能拼出「成稿」并照常分页出图。
+ * 失败必须是结构化记录，不进正文，也不参与字数/内容门槛。
+ */
+export type DistillChunkResult =
+  | { ok: true; markdown: string }
+  | { ok: false; whereZh: string; reasonZh: string };
+
 async function distillOneChunkOrSkip(
   onNotice: ((noticeZh: string) => void) | undefined,
   totalChunks: number,
   idx: number,
   label: string,
   run: () => Promise<string>,
-): Promise<string> {
+): Promise<DistillChunkResult> {
   try {
-    return await run();
+    const markdown = String(await run() || "").trim();
+    if (!markdown) {
+      const where = `第 ${idx + 1}/${totalChunks} 段（${label}）`;
+      onNotice?.(`${where}提炼返回空稿已跳过，这一段内容不在本次知识卡里`);
+      return { ok: false, whereZh: where, reasonZh: "模型返回空稿" };
+    }
+    return { ok: true, markdown };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (isFatalDistillError(message)) throw err;
     const where = `第 ${idx + 1}/${totalChunks} 段（${label}）`;
     console.warn(`[knowledgeCardDistill] ${where} 重试与细切后仍失败，跳过该段：${message.slice(0, 160)}`);
     onNotice?.(`${where}提炼失败已跳过（${message.slice(0, 60)}），这一段内容不在本次知识卡里`);
-    return `## ${where}未能提炼\n\n（模型对这一段连续返回异常，已跳过；可只把这一段文字重新上传补提。）`;
+    return { ok: false, whereZh: where, reasonZh: message.slice(0, 120) };
   }
 }
+
+/** 全部分段都失败时抛这个：调用方按失败结算，不许当成稿往下走 */
+export const KNOWLEDGE_CARD_ALL_CHUNKS_FAILED_MESSAGE =
+  "全部分段都没能提炼成功（模型连续返回异常），本次未产出知识卡稿；请稍后重试或换文件";
 
 type RefineStage = "group" | "final" | "tighten";
 
@@ -1275,8 +1297,8 @@ export function buildPageAlignedChunks(
   return chunks;
 }
 
-/** 短文一次直出（顶档）；长文按模型 profile 分段（中档）→ 合并 → 顶档统稿。 */
-async function invokeDistillLlmPossiblyChunked(params: {
+/** 短文一次直出（顶档）；长文按模型 profile 分段（中档）→ 合并 → 顶档统稿。（导出供分段失败回归用） */
+export async function invokeDistillLlmPossiblyChunked(params: {
   sourceText: string;
   /** 逐页文档之外的文字（docx/pptx 抽字 + 用户贴的文本）；有逐页文档时只把它当补充段，不与逐页正文重复 */
   extraText: string;
@@ -1320,7 +1342,7 @@ async function invokeDistillLlmPossiblyChunked(params: {
       `(model=${params.modelName} chunkChars=${profile.chunkChars} concurrency=${profile.concurrency} effort=${profile.effortChunk} level=${params.detailLevel} refPages=${allPageImages.length} docs=${params.documents.length})`,
   );
 
-  const outputs: string[] = new Array(chunks.length);
+  const outputs: DistillChunkResult[] = new Array(chunks.length);
   // 分段只是给统稿备料：按总目标节数分摊 + 六成冗余留出取舍空间（高级版不留冗余，全部保留）
   const minSectionsPerChunk = Math.max(
     profile.minSectionsPerChunk,
@@ -1354,7 +1376,16 @@ async function invokeDistillLlmPossiblyChunked(params: {
     await params.onProgress?.({ doneChunks: done, totalChunks: chunks.length, phase: "distilling" });
   }
 
-  const merged = mergeDistilledMarkdownChunks(outputs);
+  // 审查 P1：只有真正成功的段进正文；全失败＝本次没有稿子，按失败结算
+  const failedChunks = outputs.filter((o): o is Extract<DistillChunkResult, { ok: false }> => !o?.ok);
+  const successMarkdowns = outputs.filter((o): o is Extract<DistillChunkResult, { ok: true }> => Boolean(o?.ok)).map((o) => o.markdown);
+  if (!successMarkdowns.length) throw new Error(KNOWLEDGE_CARD_ALL_CHUNKS_FAILED_MESSAGE);
+  if (failedChunks.length) {
+    params.onNotice?.(
+      `本次有 ${failedChunks.length}/${chunks.length} 段未能提炼，成稿只包含成功的 ${successMarkdowns.length} 段（部分提炼）`,
+    );
+  }
+  const merged = mergeDistilledMarkdownChunks(successMarkdowns);
   await params.onProgress?.({
     doneChunks: chunks.length,
     totalChunks: chunks.length,
