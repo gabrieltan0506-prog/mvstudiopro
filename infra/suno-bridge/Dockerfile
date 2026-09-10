@@ -6,6 +6,14 @@ ARG SUNO_API_COMMIT=a2e6a823428903af715d3835d1cb44ffa336021d
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 RUN git clone https://github.com/gcui-art/suno-api.git . && git checkout ${SUNO_API_COMMIT}
+# 0910 实测：Suno v6 改版后 create 页输入框没有 .custom-textarea 类名、Create 按钮无障碍名改为 "Create song"，
+# 上游 3 月的选择器找不到元素 → 验证码流程 30 秒超时。构建时打补丁（两处选择器都保留旧值兼容）。
+RUN sed -i \
+  -e "s|page.locator('.custom-textarea')|page.locator('.custom-textarea, textarea').first()|" \
+  -e "s|page.locator('button\[aria-label=\"Create\"\]').locator('div.flex')|page.locator('button[aria-label=\"Create song\"], button[aria-label=\"Create\"]').first()|" \
+  src/lib/SunoApi.ts \
+ && grep -q "custom-textarea, textarea" src/lib/SunoApi.ts \
+ && grep -q "Create song" src/lib/SunoApi.ts
 RUN npm ci
 RUN npm run build
 

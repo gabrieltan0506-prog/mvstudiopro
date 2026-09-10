@@ -19,4 +19,4 @@
 ## 已知限制
 - 没有 duration 参数（网页 v2 接口无此字段）；仍整曲生成后按段表裁。
 - cookie 会过期，桥 502/401 时换新 cookie 重设 secret。
-- 上游钉死提交，Suno 前端一改可能失效；升级时改 Dockerfile 的 SUNO_API_COMMIT 再 deploy。
+- 上游钉死提交，Suno 前端一改可能失效；升级时改 Dockerfile 的 SUNO_API_COMMIT 再 deploy。0910 已为 v6 改版打了两处选择器补丁（textarea / "Create song"），再改版就改 Dockerfile 里那段 sed。
