@@ -336,7 +336,7 @@ export default function ManhuaClipDock({
       window.alert(
         `已导出交付包 ${result.filename}：${result.deliveryCount} 集（成片 + 字幕 + 音轨 + 清单）${
           missingSrt ? `，其中 ${missingSrt} 集无字幕` : ""
-        }${missingAudio ? `，${missingAudio} 集音轨未抽出${timedOut ? `（其中 ${timedOut} 集是抽音轨超时）` : ""}` : ""}${
+        }${missingAudio ? `，${missingAudio} 集音轨未抽出${timedOut ? `（${timedOut} 集为超时）` : ""}` : ""}${
           missingVideo ? `，${missingVideo} 集成片下载失败` : ""
         }${missingSrt || missingAudio || missingVideo ? "（详见各集 交付清单.md）" : ""}${
           result.failCount ? `，失败 ${result.failCount}` : ""
