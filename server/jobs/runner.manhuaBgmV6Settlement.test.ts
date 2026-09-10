@@ -101,3 +101,107 @@ describe("配乐 v6（TTAPI）真实 worker 控制流：未知建单不退不重
     expect(state.requeue).not.toHaveBeenCalled();
   });
 });
+
+describe("配乐 v6 退款一致性（审查 P1：submit_rejected ≠ 已退款）", () => {
+  const freshJob = () => ({
+    id: "bgm-refund", userId: "7", type: "audio", status: "running", attempts: 1,
+    output: null as any,
+    input: buildManhuaBgmJobInput({
+      billingRequestId: "22222222-3333-4444-8555-666666666666",
+      brief: buildManhuaBgmBrief({ model: "suno-v6", laneZh: "测试", durationSec: 30, moods: ["蓄力"] }),
+    }),
+  });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv("TTAPI_KEY", "test-key");
+    vi.stubGlobal("fetch", state.fetch);
+    state.job = freshJob();
+    state.claim.mockResolvedValueOnce(state.job).mockResolvedValue(null);
+    state.patch.mockImplementation(async (_id, patch) => { state.job.output = { ...state.job.output, ...patch }; });
+    state.deduct.mockResolvedValue({ success: true, cost: 20, source: "personal", remainingBalance: 80 });
+    state.refund.mockResolvedValue(undefined);
+    state.failed.mockResolvedValue(true);
+    // 上游明确拒单（403）：钱该退
+    state.fetch.mockResolvedValue(new Response("rejected", { status: 403 }));
+  });
+  afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+
+  it("退款成功：状态推进到 refund_completed，失败文案说「已退回」", async () => {
+    await processJobsOnce();
+    expect(state.refund).toHaveBeenCalledTimes(1);
+    expect(state.job.output.bgmStage).toBe("refund_completed");
+    expect(JSON.stringify(state.failed.mock.calls)).toContain("积分已退回");
+  });
+
+  it("退款失败：留 refund_pending，文案不得说已退回；再次处理只补退一次、不重扣不重发", async () => {
+    state.refund.mockRejectedValueOnce(new Error("db down"));
+    await processJobsOnce();
+    expect(state.job.output.bgmStage).toBe("refund_pending");
+    expect(state.job.output.bgmDeduct).toMatchObject({ success: true, cost: 20, source: "personal" });
+    expect(state.job.output.bgmRefundKey).toBe("manhua-bgm-refund:bgm-refund");
+    const firstMsg = JSON.stringify(state.failed.mock.calls);
+    expect(firstMsg).toContain("尚未完成");
+    expect(firstMsg).not.toContain("积分已退回");
+    const postsAfterFirst = state.fetch.mock.calls.length;
+    const deductsAfterFirst = state.deduct.mock.calls.length;
+
+    // 第二轮：同一条任务被重新处理 → 只补退，不再扣费、不再 POST
+    state.claim.mockReset();
+    state.claim.mockResolvedValueOnce(state.job).mockResolvedValue(null);
+    state.refund.mockResolvedValue(undefined);
+    await processJobsOnce();
+    expect(state.fetch.mock.calls.length).toBe(postsAfterFirst);
+    expect(state.deduct.mock.calls.length).toBe(deductsAfterFirst);
+    expect(state.refund).toHaveBeenCalledTimes(2);
+    expect(state.refund.mock.calls[1]![4]).toMatchObject({ refundKey: "manhua-bgm-refund:bgm-refund" });
+    expect(state.job.output.bgmStage).toBe("refund_completed");
+  });
+
+  it("补退再失败：仍留 refund_pending，可继续补；补退用幂等键不会重复给分", async () => {
+    state.refund.mockRejectedValue(new Error("db down"));
+    await processJobsOnce();
+    expect(state.job.output.bgmStage).toBe("refund_pending");
+    state.claim.mockReset();
+    state.claim.mockResolvedValueOnce(state.job).mockResolvedValue(null);
+    await processJobsOnce();
+    expect(state.job.output.bgmStage).toBe("refund_pending");
+    expect(state.refund).toHaveBeenCalledTimes(2);
+    for (const call of state.refund.mock.calls) {
+      expect(call[4]).toMatchObject({ refundKey: "manhua-bgm-refund:bgm-refund" });
+    }
+  });
+
+  it("退款成功但完成状态写库失败：下轮仍按 refund_pending 幂等补退，不会重复扣费", async () => {
+    state.patch.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+      if (patch.bgmStage === "refund_completed") throw new Error("db write failed");
+      state.job.output = { ...state.job.output, ...patch };
+    });
+    await processJobsOnce();
+    expect(state.job.output.bgmStage).toBe("refund_pending");
+    expect(state.refund).toHaveBeenCalledTimes(1);
+    state.claim.mockReset();
+    state.claim.mockResolvedValueOnce(state.job).mockResolvedValue(null);
+    await processJobsOnce();
+    expect(state.refund).toHaveBeenCalledTimes(2);
+    expect(state.deduct).toHaveBeenCalledTimes(1);
+  });
+
+  it("企业额度扣费按同一来源退；管理员免扣时不进退款流程，文案说未扣积分", async () => {
+    state.deduct.mockResolvedValue({ success: true, cost: 20, source: "enterprise", remainingBalance: 500 });
+    await processJobsOnce();
+    expect(state.refund.mock.calls[0]![2]).toMatchObject({ source: "enterprise", cost: 20 });
+
+    // 管理员：没扣过费 → 不退款，阶段停在 submit_rejected
+    vi.clearAllMocks();
+    state.job = freshJob();
+    state.claim.mockResolvedValueOnce(state.job).mockResolvedValue(null);
+    state.patch.mockImplementation(async (_id, patch) => { state.job.output = { ...state.job.output, ...patch }; });
+    state.deduct.mockResolvedValue({ success: false, cost: 0, source: "none" });
+    state.failed.mockResolvedValue(true);
+    state.fetch.mockResolvedValue(new Response("rejected", { status: 403 }));
+    await processJobsOnce();
+    expect(state.refund).not.toHaveBeenCalled();
+    expect(state.job.output.bgmStage).toBe("submit_rejected");
+    expect(JSON.stringify(state.failed.mock.calls)).toContain("本次未扣积分");
+  });
+});

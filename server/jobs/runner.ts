@@ -1876,6 +1876,29 @@ async function processManhuaBgmJob(params: {
           provider: manhuaBgmProviderLabel(parsed.params.brief.model),
         };
       }
+      if (recovery.kind === "refund_pending") {
+        // 只补退，不扣费、不 POST；补退成功才把状态推进到 refund_completed
+        const refundUserId = Number(params.userId);
+        if (Number.isFinite(refundUserId)) {
+          const { refundCreditsForDeductAmount } = await import("../credits");
+          try {
+            await refundCreditsForDeductAmount(
+              refundUserId,
+              "配乐建单失败退回",
+              recovery.deduct as never,
+              "manhuaBgm",
+              { refundKey: recovery.refundKey },
+            );
+            await patchJobRunningProgressStrict(params.jobId, { bgmStage: "refund_completed" }).catch(() => {});
+          } catch (refundError) {
+            console.warn(
+              "[manhua-bgm] 补退仍未成功，保持 refund_pending:",
+              refundError instanceof Error ? refundError.message : refundError,
+            );
+          }
+        }
+        throw new Error(recovery.reason);
+      }
       if (recovery.kind === "reconcile_manual") {
         throw new Error(recovery.reason);
       }
@@ -1944,17 +1967,40 @@ async function processManhuaBgmJob(params: {
         throw createError;
       }
       // 上游没建成单＝钱没烧出去，退回；建成单之后失败按「已烧对账」不退（与视频任务同口径）。
-      // 先把阶段改成「已拒单」，别让 output 停在 submitting 误导人工对账
-      await patchJobRunningProgressStrict(params.jobId, { bgmStage: "submit_rejected" }).catch(() => {});
-      // 按实际扣费结果退：admin/none 没扣过就不退，否则 v6 来源失败一次白给 20 分
-      if (bgmDeduct && Number.isFinite(numericUserId)) {
+      // 审查 P1：提交状态与退款状态分开——submit_rejected ≠ 已退款。
+      // 没扣过费（admin / 未扣）直接标 submit_rejected；扣过费则先落 refund_pending 与扣费凭据，退成功再标 refund_completed。
+      const bgmRefundKey = `manhua-bgm-refund:${params.jobId}`;
+      // 只有真扣到分才进退款流程：admin 免扣、扣费未成功都属于「本次未扣积分」
+      const bgmCharged =
+        Boolean(bgmDeduct) &&
+        (bgmDeduct as { success?: unknown }).success === true &&
+        Number((bgmDeduct as { cost?: unknown }).cost) > 0;
+      if (bgmCharged && Number.isFinite(numericUserId)) {
+        await patchJobRunningProgressStrict(params.jobId, {
+          bgmStage: "refund_pending",
+          bgmDeduct: {
+            success: true,
+            cost: Number((bgmDeduct as { cost?: unknown }).cost) || 0,
+            source: String((bgmDeduct as { source?: unknown }).source || ""),
+            remainingBalance: Number((bgmDeduct as { remainingBalance?: unknown }).remainingBalance) || 0,
+          },
+          bgmRefundKey,
+        }).catch(() => {});
         const { refundCreditsForDeductAmount } = await import("../credits");
-        await refundCreditsForDeductAmount(numericUserId, "配乐建单失败退回", bgmDeduct, "manhuaBgm", {
-          refundKey: `manhua-bgm-refund:${params.jobId}`,
-        }).catch((refundError) => console.warn(
-          "[manhua-bgm] 建单失败退款未完成（幂等键在，可补退）:",
-          refundError instanceof Error ? refundError.message : refundError,
-        ));
+        try {
+          await refundCreditsForDeductAmount(numericUserId, "配乐建单失败退回", bgmDeduct!, "manhuaBgm", {
+            refundKey: bgmRefundKey,
+          });
+          await patchJobRunningProgressStrict(params.jobId, { bgmStage: "refund_completed" }).catch(() => {});
+        } catch (refundError) {
+          // 留在 refund_pending：下次处理这条任务只做幂等补退，文案也不会谎称已退
+          console.warn(
+            "[manhua-bgm] 建单失败退款未完成（已留 refund_pending，可补退）:",
+            refundError instanceof Error ? refundError.message : refundError,
+          );
+        }
+      } else {
+        await patchJobRunningProgressStrict(params.jobId, { bgmStage: "submit_rejected" }).catch(() => {});
       }
       throw createError;
     }
@@ -3621,7 +3667,16 @@ async function runClaimedJob(
       const hasUpstreamTaskId = Boolean(
         String(output?.upstreamTaskId || "").trim()
       );
-      const submitRejected = output?.bgmStage === "submit_rejected";
+      const bgmStage = String(output?.bgmStage || "");
+      // 审查 P1：未扣费 / 已退款 / 退款待处理，三种状态文案必须分开，退款失败不得显示「已退回」
+      const bgmSettlementNoteZh =
+        bgmStage === "refund_completed"
+          ? "；上游明确拒单，积分已退回"
+          : bgmStage === "refund_pending"
+            ? "；上游明确拒单，积分退回尚未完成，系统会自动补退"
+            : bgmStage === "submit_rejected"
+              ? "；上游明确拒单，本次未扣积分"
+              : "";
       const explicitTerminalFailure = /\b(failed|cancelled)\b/.test(
         error instanceof Error ? error.message : String(error)
       );
@@ -3637,8 +3692,8 @@ async function runClaimedJob(
           job.id,
           hasUpstreamTaskId
             ? `${message}；原配乐任务号已保留，可人工核对`
-            : submitRejected
-              ? `${message}；上游明确拒单，已按实扣退回`
+            : bgmSettlementNoteZh
+              ? `${message}${bgmSettlementNoteZh}`
               : `${message}；建单结果待核对，未自动重新提交`
         );
       }

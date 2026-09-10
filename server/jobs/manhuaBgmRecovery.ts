@@ -4,6 +4,9 @@
  * repository/startup 负责读写数据库；本模块只决定下一步，方便把最危险的语义用
  * 单测钉住：有上游 task ID 才能安全续轮询；没有 ID 时不知道 POST 是否已成功，
  * 必须转人工核对，绝不能自动重提；GCS 终态已经在手时直接收敛成功。
+ *
+ * 退款是独立于提交的一段状态（审查 P1）：上游明确拒单＝钱该退，但退款本身可能因为数据库抖动失败。
+ * 失败时留 `refund_pending` 并把实际扣费凭据一起落盘，下次处理只做幂等补退，不再扣费、不再 POST。
  */
 
 export type ManhuaBgmRecoveryDecision =
@@ -17,9 +20,39 @@ export type ManhuaBgmRecoveryDecision =
       startedAtMs?: number;
     }
   | {
+      kind: "refund_pending";
+      /** 上游明确拒单时记下的实际扣费凭据；只用于幂等补退 */
+      deduct: ManhuaBgmPersistedDeduct;
+      refundKey: string;
+      reason: string;
+    }
+  | {
       kind: "reconcile_manual";
       reason: string;
     };
+
+/** 落盘的扣费凭据：只存结算需要的字段，不含任何密钥或鉴权信息 */
+export type ManhuaBgmPersistedDeduct = {
+  success: true;
+  cost: number;
+  source: string;
+  remainingBalance?: number;
+};
+
+export function readManhuaBgmPersistedDeduct(value: unknown): ManhuaBgmPersistedDeduct | null {
+  const row = asRecord(value);
+  if (!row || row.success !== true) return null;
+  const cost = Number(row.cost);
+  const source = String(row.source || "").trim();
+  if (!Number.isFinite(cost) || cost <= 0 || !source) return null;
+  const remainingBalance = Number(row.remainingBalance);
+  return {
+    success: true,
+    cost,
+    source,
+    ...(Number.isFinite(remainingBalance) ? { remainingBalance } : {}),
+  };
+}
 
 /**
  * 只重试同一份数据库检查点写入，不重新执行建单、轮询、下载或转存。
@@ -91,6 +124,21 @@ export function planInterruptedManhuaBgmRecovery(
   // 兼容终态 payload 已写进 output、但 status 写入前实例退出的窗口。
   if (isPersistedManhuaBgmTerminalOutput(output)) {
     return { kind: "complete", terminalOutput: output };
+  }
+
+  // 退款没做完：只补退，不重新扣费、不再向上游 POST（审查 P1）
+  if (output.bgmStage === "refund_pending") {
+    const deduct = readManhuaBgmPersistedDeduct(output.bgmDeduct);
+    const refundKey = String(output.bgmRefundKey || "").trim();
+    if (deduct && refundKey) {
+      return {
+        kind: "refund_pending",
+        deduct,
+        refundKey,
+        reason: "配乐建单被上游拒绝，正在补退积分",
+      };
+    }
+    return { kind: "reconcile_manual", reason: "配乐建单被上游拒绝，退款凭据不全，请人工核对" };
   }
 
   const upstreamTaskId = String(output.upstreamTaskId || "").trim();
