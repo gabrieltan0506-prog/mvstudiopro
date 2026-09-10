@@ -118,8 +118,12 @@ export function parseManhuaDirectionSkillMarkdown(md: string, opts?: { slug?: st
       // 林诣彬式规律没有中文标题：用「的调度应用」这类后缀，否则取规律首句（≤30 字）当标题，不让英文 id 直出到 UI/提示词
       const ruleText = stripName(inline[3]);
       // 先按句号再按逗号/顿号切子句，取第一子句当标题，不在半句中间硬截
-      const firstClause = (ruleText.split(/[。；;]/)[0] || "").split(/[，、,]/)[0]?.trim() || "";
-      const title = firstClause.length > 30 ? `${firstClause.slice(0, 30)}…` : firstClause;
+      const firstSentence = (ruleText.split(/[。；;]/)[0] || "").trim();
+      const firstClause = firstSentence.split(/[，、,]/)[0]?.trim() || "";
+      // 「先…，再…」「多单元…」这类第一子句没有谓语、太短就没意义：退回整句截 30 字
+      const clauseUsable = firstClause.length >= 6 && !/^(先|多|当|在|若|如果)/.test(firstClause);
+      const base = clauseUsable ? firstClause : firstSentence;
+      const title = base.length > 30 ? `${base.slice(0, 30)}…` : base;
       cur = { id: uniqueId(inline[1]), titleZh: suffix ? `${title}${suffix.replace(/^的/, "·")}` : title || inline[1], nonFormal: false, ruleZh: ruleText };
       continue;
     }

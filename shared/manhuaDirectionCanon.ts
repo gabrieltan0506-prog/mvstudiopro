@@ -64,13 +64,16 @@ export type ManhuaDirectionCanon = {
 export function classifyManhuaDirectionSceneType(text: string): ManhuaDirectionSceneType {
   const t = String(text || "");
   if (!t.trim()) return "default";
-  // 只认双字以上的动作词组，单字「拔」「冲」「追」会把「拔腿」「冲泡」「追问」误判成打戏
   const count = (re: RegExp) => (t.match(re) || []).length;
-  const action = count(/拔刀|挥拳|挥刀|砍来|砍去|劈下|扑上|扑来|翻滚|闪避|交手|厮杀|搏斗|打斗|开枪|射出|射向|撞开|撞飞|踢飞|摔倒|摔出|跃起|跃下|追击|追杀|逃命|逃跑|爆炸|爆开|格挡|反击|出招|拼杀|缠斗|近身|刺来|刺向|拳脚/g);
-  const reveal = count(/真相|原来是|原来他|原来她|认出|露出真|识破|竟是|身份暴露|揭开|揭穿|真面目/g);
-  const emotion = count(/哭泣|落泪|泪落|泪水|拥抱|告白|颤抖|哽咽|心碎|告别|跪下|抱住|泣不成声|凝视着|沉默不语/g);
-  const dialogue = count(/低声问|问道|答道|说道|回答|反问|「|」|“|”|对白|喊道|开口/g);
-  const transition = count(/转场|过场|赶路|奔赴|次日|清晨|夜幕|空镜|时间流逝|数日后|天亮/g);
+  // 只认双字以上词组：单字「拔」「冲」「追」会把「拔腿」「冲泡」「追问」误判成打戏
+  const action = count(
+    /拔刀|拔剑|挥拳|挥刀|挥剑|砍来|砍去|砍向|劈下|劈向|直刺|刺来|刺向|刺入|扑上|扑来|扑向|翻滚|闪避|躲过|侧身|交手|厮杀|搏斗|打斗|开枪|射出|射向|撞开|撞飞|踢飞|踹开|踹向|一脚|一掌|拍向|摔倒|摔出|跃起|跃过|跃下|飞身|追击|追杀|追逐|逃命|逃跑|爆炸|爆开|格挡|反击|反手|出招|拼杀|缠斗|近身|拳脚|甩出|飞镖|暗器|夺刀|夺剑|划开|刀光|剑锋|剑气|掌风|鲜血|喷出|击中|击退|击落|扼住|掐住|勒住|锁喉|翻身|扫腿|肘击/g,
+  );
+  const reveal = count(/真相|原来是|原来他|原来她|认出|露出真|识破|竟是|身份暴露|揭开|揭穿|真面目|水落石出|恍然|竟然是/g);
+  const emotion = count(/哭泣|落泪|泪落|泪水|流泪|拥抱|抱住|告白|颤抖|哽咽|心碎|告别|跪下|泣不成声|凝视着|沉默不语|失声|崩溃|悲鸣|相拥/g);
+  // 引号按成对计：一句台词算一次，不让「」“”各算一次把打戏压成对白
+  const dialogue = count(/「[^」]{1,200}」|“[^”]{1,200}”/g) + count(/低声问|问道|答道|说道|回答|反问|喊道|开口道|对白/g);
+  const transition = count(/转场|过场|赶路|奔赴|次日|清晨|夜幕|空镜|时间流逝|数日后|天亮|翌日|黄昏时/g);
   const scored: Array<[ManhuaDirectionSceneType, number]> = [
     ["action", action],
     ["reveal", reveal],

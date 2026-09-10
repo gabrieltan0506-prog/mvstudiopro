@@ -254,6 +254,12 @@ describe("classifyManhuaDirectionSceneType", () => {
     expect(classifyManhuaDirectionSceneType("墨屠冲泡一壶茶，递给她")).toBe("default");
     expect(classifyManhuaDirectionSceneType("她追问他为何撒谎，他沉默不语")).toBe("default");
     expect(classifyManhuaDirectionSceneType("她发现钥匙不见了")).toBe("default");
+    // 常见武打写法（审查第三轮给的三句）
+    expect(classifyManhuaDirectionSceneType("踹开大门，长剑直刺咽喉，侧身躲过，反手一掌拍向胸口")).toBe("action");
+    expect(classifyManhuaDirectionSceneType("屋顶追逐，飞身跃过瓦檐，回身甩出飞镖")).toBe("action");
+    expect(classifyManhuaDirectionSceneType("刀光一闪，手臂被划开，鲜血喷出，趁势夺刀")).toBe("action");
+    // 打戏夹一句台词：引号按成对计，仍是动作场
+    expect(classifyManhuaDirectionSceneType("家丁拔刀砍来，墨屠挥拳击退，阿菁问道「你没事吧」")).toBe("action");
     expect(classifyManhuaDirectionSceneType("")).toBe("default");
   });
 });
