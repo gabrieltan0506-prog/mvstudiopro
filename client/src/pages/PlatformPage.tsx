@@ -8145,6 +8145,9 @@ export default function PlatformPage() {
 
   const mapCustomNoteError = (error: unknown): string => {
     const message = String((error as { message?: string })?.message || "");
+    // EPUB 转换崩溃的文案自带办法（Calibre 转 PDF / 拆本），剥掉 runner 的「请稍后重试 [原始错误: …]」外壳，不自相矛盾
+    const epubHint = /\[原始错误:\s*((?:这本 EPUB 太大|EPUB )[^\]]*)\]/.exec(message)?.[1] || (/EPUB 太大|崩溃两次/.test(message) ? message : "");
+    if (epubHint) return epubHint.trim();
     if (message.includes("文档较长") || message.includes("提炼超时")) {
       return message.includes("超时") ? message : "文档较长，提炼超时，请稍后重试";
     }
