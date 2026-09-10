@@ -1832,6 +1832,7 @@ async function processManhuaBgmJob(params: {
   jobId: string;
 }): Promise<{ output: ManhuaBgmJobOutput; provider: string }> {
   const parsed = manhuaBgmJobInputSchema.parse(params.input);
+  const manhuaBgmProviderLabel = (model: string) => (model.startsWith("suno-bridge-") ? `suno-bridge:${model}` : "evolink:suno-v5.5");
   const job = await getJobByIdStrict(params.jobId);
   if (
     !job ||
@@ -1862,7 +1863,7 @@ async function processManhuaBgmJob(params: {
         terminalOutput: output,
       })
     );
-    return { output, provider: "evolink:suno-v5.5" };
+    return { output, provider: manhuaBgmProviderLabel(parsed.params.brief.model) };
   };
 
   try {
@@ -1871,7 +1872,7 @@ async function processManhuaBgmJob(params: {
       if (recovery.kind === "complete") {
         return {
           output: recovery.terminalOutput as ManhuaBgmJobOutput,
-          provider: "evolink:suno-v5.5",
+          provider: manhuaBgmProviderLabel(parsed.params.brief.model),
         };
       }
       if (recovery.kind === "reconcile_manual") {

@@ -297,6 +297,8 @@ type Props = {
   videoModel?: string | null;
   /** 已冻结的去名导演策略；前台只展示中性策略名与批准修订。 */
   directorStrategyContract?: ManhuaDirectorStrategyContract | null;
+  /** 配乐来源可选项（内部账号才有：Suno 直连桥） */
+  bgmModels?: Array<{ model: "suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6"; labelZh: string }>;
   topic: string;
   seriesTitle?: string;
   logline?: string;
@@ -918,6 +920,7 @@ export default function ManhuaScriptWorkbench({
   blocks,
   videoModel,
   directorStrategyContract,
+  bgmModels,
   topic,
   seriesTitle,
   logline,
@@ -3182,7 +3185,8 @@ export default function ManhuaScriptWorkbench({
               {activeClip ? <CanvasAudioStudio key={activeClip.id} block={activeClip}
                 disabled={Boolean(factoryBusy) || activeClip.status === "running" || activeClip.videoTaskStatus === "queued"}
                 onChange={studio => onUpdateClipAudioStudio(activeClip.id, studio)}
-                onMasterTrackReady={onSetClipSegmentReference ? (entry) => onSetClipSegmentReference(activeClip.id, "master", entry) : undefined} /> : (
+                onMasterTrackReady={onSetClipSegmentReference ? (entry) => onSetClipSegmentReference(activeClip.id, "master", entry) : undefined}
+                bgmModels={bgmModels} /> : (
                 <p className="text-xs text-amber-100">当前段尚未建立成片节点。请先确认分段剧本；本入口不生成视频、不扣费，也不切换工作区。</p>
               )}
             </section>

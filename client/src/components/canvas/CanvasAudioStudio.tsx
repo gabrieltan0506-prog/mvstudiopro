@@ -40,7 +40,7 @@ const buttonClass =
   "rounded border border-white/20 px-2 py-1.5 text-xs text-white hover:bg-white/10 disabled:opacity-40";
 
 type MusicBrief = {
-  model: "suno-v5.5-beta";
+  model: "suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6";
   custom_mode: true;
   instrumental: true;
   style: string;
@@ -107,6 +107,7 @@ export type CanvasAudioStudioServices = {
   }): Promise<JobResult>;
   getDialogue(input: { jobId: string }): Promise<JobResult | null>;
   draftMusic(input: {
+    model?: "suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6";
     laneZh: string;
     durationSec: number;
     moods: Array<"蓄力" | "冲突" | "反转" | "收束">;
@@ -132,6 +133,11 @@ type Props = {
    * 由上层挂到本段 manhuaSegmentRefs.master（出片时作唯一 @音频1）。不传则不显示按钮。
    */
   onMasterTrackReady?: (entry: ManhuaSegmentReferenceEntry) => void;
+  /**
+   * 配乐来源可选项（内部账号才传）：Suno 直连桥 v6-mini / v6。不传只有网关 v5.5。
+   * 桥违反 Suno 条款、会封号，只给 admin/supervisor；服务端同样把关。
+   */
+  bgmModels?: Array<{ model: "suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6"; labelZh: string }>;
 };
 
 
@@ -162,6 +168,7 @@ export function CanvasAudioStudioView({
   disabled = false,
   onChange,
   onMasterTrackReady,
+  bgmModels,
   services,
 }: Props & { services: CanvasAudioStudioServices }) {
   const state = block.audioStudio || emptyCanvasAudioStudio();
@@ -180,6 +187,7 @@ export function CanvasAudioStudioView({
   const [musicPrompt, setMusicPrompt] = useState("");
   const [musicDuration, setMusicDuration] = useState(30);
   const [brief, setBrief] = useState<MusicBrief | null>(null);
+  const [bgmModel, setBgmModel] = useState<"suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6">("suno-v5.5-beta");
   const [resumable, setResumable] = useState<Record<string, JobResult>>({});
   const [confirmation, setConfirmation] = useState<
     | { kind: "dialogue"; cueId: string; inputKey: string }
@@ -1176,6 +1184,34 @@ export function CanvasAudioStudioView({
               }}
             />
           </label>
+          {bgmModels?.length ? (
+            <label className="block text-xs">
+              配乐来源
+              <select
+                aria-label="配乐来源"
+                className={fieldClass}
+                value={bgmModel}
+                disabled={disabled || busy}
+                onChange={event => {
+                  setBgmModel(event.target.value as typeof bgmModel);
+                  setBrief(null);
+                  setConfirmation(null);
+                }}
+              >
+                <option value="suno-v5.5-beta">Suno v5.5（网关）</option>
+                {bgmModels.map(item => (
+                  <option key={item.model} value={item.model}>
+                    {item.labelZh}
+                  </option>
+                ))}
+              </select>
+              {bgmModel !== "suno-v5.5-beta" ? (
+                <span className="mt-1 block text-[10px] text-amber-200/80">
+                  直连走你自己的 Suno 账号 cookie，仅内部使用；不支持精确时长，整曲出来后按段表裁。
+                </span>
+              ) : null}
+            </label>
+          ) : null}
           <button
             className={buttonClass}
             disabled={disabled || busy || !musicPrompt.trim()}
@@ -1187,6 +1223,7 @@ export function CanvasAudioStudioView({
                   moods: ["蓄力", "冲突", "反转", "收束"],
                   moodArcZh: musicPrompt,
                   titleZh: "剧情配乐",
+                  ...(bgmModels?.length && bgmModel !== "suno-v5.5-beta" ? { model: bgmModel } : {}),
                 });
                 setBrief(result.brief);
               })
@@ -1196,6 +1233,9 @@ export function CanvasAudioStudioView({
           </button>
           {brief && (
             <>
+              {brief.model !== "suno-v5.5-beta" ? (
+                <p className="text-[10px] text-amber-200/80">来源：{brief.model === "suno-bridge-v6" ? "Suno v6（直连·内部）" : "Suno v6-mini（直连·内部）"}</p>
+              ) : null}
               <label className="block text-xs">
                 配乐要求
                 <textarea

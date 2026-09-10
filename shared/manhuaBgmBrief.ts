@@ -121,6 +121,8 @@ export function deriveManhuaBgmBriefSeed(input: {
 }
 
 export type BgmBriefInput = {
+  /** 缺省 suno-v5.5-beta；桥模型只有内部账号能选（路由层把关） */
+  model?: BgmBriefModel;
   laneZh: string;
   /** 画面时长（秒）。BGM 会在此基础上加余量 */
   durationSec: number;
@@ -145,8 +147,20 @@ export type BgmBriefInput = {
   hasSilenceBreak?: boolean;
 };
 
+/** 配乐来源：EvoLink 网关 v5.5（默认，全员）；Suno 直连桥 v6-mini / v6（内部账号专用，见 server/services/sunoBridgeMusic.ts） */
+export type BgmBriefModel = "suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6";
+export const BGM_BRIEF_MODELS: readonly BgmBriefModel[] = ["suno-v5.5-beta", "suno-bridge-v6-mini", "suno-bridge-v6"];
+export const BGM_BRIEF_MODEL_LABEL_ZH: Record<BgmBriefModel, string> = {
+  "suno-v5.5-beta": "Suno v5.5（网关）",
+  "suno-bridge-v6-mini": "Suno v6-mini（直连·内部）",
+  "suno-bridge-v6": "Suno v6（直连·内部）",
+};
+export function isBgmBridgeModel(model: unknown): model is "suno-bridge-v6-mini" | "suno-bridge-v6" {
+  return model === "suno-bridge-v6-mini" || model === "suno-bridge-v6";
+}
+
 export type BgmBrief = {
-  model: "suno-v5.5-beta";
+  model: BgmBriefModel;
   custom_mode: true;
   instrumental: true;
   style: string;
@@ -288,7 +302,7 @@ export function buildManhuaBgmBrief(input: BgmBriefInput): BgmBrief {
       );
 
   return {
-    model: "suno-v5.5-beta",
+    model: (BGM_BRIEF_MODELS as readonly string[]).includes(String(input.model || "")) ? (input.model as BgmBriefModel) : "suno-v5.5-beta",
     custom_mode: true,
     instrumental: true,
     style,

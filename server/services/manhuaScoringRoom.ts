@@ -33,6 +33,8 @@ import {
   getEvolinkSunoTask,
   pickEvolinkSunoAudioUrls,
 } from "./evolinkSunoMusic.js";
+import { createSunoBridgeTask, decodeSunoBridgeTaskId, getSunoBridgeTask, isSunoBridgeReady } from "./sunoBridgeMusic.js";
+import { isBgmBridgeModel, type BgmBriefModel } from "../../shared/manhuaBgmBrief.js";
 import { signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs.js";
 import { probeBgmLevels } from "./manhuaBgmLevelProbe.js";
 import { postProdOutputPrefix } from "./postProdMediaSource.js";
@@ -44,6 +46,7 @@ export const MANHUA_BGM_POLL_TIMEOUT_MS = 6 * 60_000;
 export const MANHUA_BGM_POLL_INTERVAL_MS = 5_000;
 
 export type ScoringRoomRequest = {
+  model?: BgmBriefModel;
   laneZh: string;
   durationSec: number;
   moods: readonly BgmBeatMood[];
@@ -220,7 +223,16 @@ export async function createManhuaBgmTask(
   const brief = manhuaBgmBriefSchema.parse(briefInput) as BgmBrief;
   // 在付费 POST 之前拦住上游会静默拒绝的音乐家姓名。
   assertBgmStyleSubmittable(brief);
-  const task = await createEvolinkSunoTask(brief, {
+  if (isBgmBridgeModel(brief.model)) {
+    // Suno 直连桥（内部专用）：无 duration 参数，整曲生成后仍按段表裁
+    if (!isSunoBridgeReady()) throw new Error("配乐直连未配置（SUNO_BRIDGE_URL），请改用网关来源");
+    const created = await createSunoBridgeTask(
+      { model: brief.model, prompt: brief.prompt, style: brief.style, title: brief.title, instrumental: brief.instrumental, negative_tags: brief.negative_tags },
+      { abortSignal: opts.abortSignal },
+    );
+    return { taskId: created.taskId, briefDigest: digestManhuaBgmBrief(brief) };
+  }
+  const task = await createEvolinkSunoTask({ ...brief, model: "suno-v5.5-beta" }, {
     abortSignal: opts.abortSignal,
   });
   const taskId = String(task.id || "").trim();
@@ -258,7 +270,9 @@ export async function resumeManhuaBgmTask(input: {
   );
   const deadlineMs = Date.now() + pollTimeoutMs;
 
+  const isBridgeTask = Boolean(decodeSunoBridgeTaskId(taskId));
   let raw: unknown;
+  let bridgeUrls: string[] = [];
   for (;;) {
     assertNotAborted(input.abortSignal);
     if (Date.now() > deadlineMs) {
@@ -266,15 +280,25 @@ export async function resumeManhuaBgmTask(input: {
         `配乐任务 ${taskId} 超过 ${Math.ceil(pollTimeoutMs / 60_000)} 分钟未完成`
       );
     }
-    const polled = await getEvolinkSunoTask(taskId, {
-      abortSignal: input.abortSignal,
-    });
-    if (polled.task.status === "completed") {
-      raw = polled.raw;
-      break;
-    }
-    if (polled.task.status === "failed" || polled.task.status === "cancelled") {
-      throw new Error(`配乐任务 ${taskId} ${polled.task.status}`);
+    if (isBridgeTask) {
+      // 桥的 task id 编码了两条 clip；两条都 complete 才算完成，任一 error 即失败
+      const state = await getSunoBridgeTask(taskId, { abortSignal: input.abortSignal });
+      if (state.status === "completed") {
+        bridgeUrls = state.audioUrls;
+        break;
+      }
+      if (state.status === "failed") throw new Error(`配乐任务 ${taskId} failed：${state.reason}`);
+    } else {
+      const polled = await getEvolinkSunoTask(taskId, {
+        abortSignal: input.abortSignal,
+      });
+      if (polled.task.status === "completed") {
+        raw = polled.raw;
+        break;
+      }
+      if (polled.task.status === "failed" || polled.task.status === "cancelled") {
+        throw new Error(`配乐任务 ${taskId} ${polled.task.status}`);
+      }
     }
     await sleep(
       input.pollIntervalMs ?? MANHUA_BGM_POLL_INTERVAL_MS,
@@ -282,7 +306,7 @@ export async function resumeManhuaBgmTask(input: {
     );
   }
 
-  const urls = pickEvolinkSunoAudioUrls(raw);
+  const urls = isBridgeTask ? bridgeUrls : pickEvolinkSunoAudioUrls(raw);
   if (!urls.length) throw new Error(`配乐任务 ${taskId} 完成但没有音频地址`);
 
   /**

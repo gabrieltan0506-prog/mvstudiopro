@@ -8978,6 +8978,14 @@ export default function OmniCanvas() {
                   blocks={blocks}
                   videoModel={activePilotVideoModel}
                   directorStrategyContract={directorStrategyContract}
+                  bgmModels={
+                    user?.role === "admin" || user?.role === "supervisor"
+                      ? [
+                          { model: "suno-bridge-v6-mini", labelZh: "Suno v6-mini（直连·内部）" },
+                          { model: "suno-bridge-v6", labelZh: "Suno v6（直连·内部）" },
+                        ]
+                      : undefined
+                  }
                   topic={factoryTopic}
                   shotContinuity={shotContinuity}
                   onShotContinuityChange={(next) => {

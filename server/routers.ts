@@ -1,3 +1,5 @@
+import { isBgmBridgeModel } from "../shared/manhuaBgmBrief.js";
+import { isSunoBridgeReady } from "./services/sunoBridgeMusic.js";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -4443,9 +4445,15 @@ export const appRouter = router({
           styleAnchorZh: z.string().trim().max(300).optional(),
           titleZh: z.string().trim().max(80).optional(),
           hasSilenceBreak: z.boolean().optional(),
+          /** 桥模型只对 admin/supervisor 生效；普通账号传了也回落网关 */
+          model: z.enum(["suno-v5.5-beta", "suno-bridge-v6-mini", "suno-bridge-v6"]).optional(),
         }),
       )
-      .mutation(({ input }) => ({ brief: buildScoringRoomBrief(input) })),
+      .mutation(({ ctx, input }) => {
+        const internalRole = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const model = internalRole && input.model ? input.model : "suno-v5.5-beta";
+        return { brief: buildScoringRoomBrief({ ...input, model }) };
+      }),
 
     /** 同一次确认只建一条任务；相同编号只有内容摘要一致时才能恢复。 */
     queueManhuaBgm: protectedProcedure
@@ -4456,6 +4464,16 @@ export const appRouter = router({
         }),
       )
       .mutation(async ({ ctx, input }) => {
+        const bridgeModel = isBgmBridgeModel(input.brief.model);
+        if (bridgeModel) {
+          // Suno 直连桥违反 Suno 条款、会封号：只给内部账号，且必须已配置桥
+          if (ctx.user.role !== "admin" && ctx.user.role !== "supervisor") {
+            throw new TRPCError({ code: "FORBIDDEN", message: "Suno 直连只对内部账号开放，请选网关来源" });
+          }
+          if (!isSunoBridgeReady()) {
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Suno 直连未配置（SUNO_BRIDGE_URL）" });
+          }
+        }
         const jobInput = buildManhuaBgmJobInput(input);
         const jobId = `bgm_${input.billingRequestId.replace(/-/g, "")}`;
         try {
@@ -4463,7 +4481,7 @@ export const appRouter = router({
             id: jobId,
             userId: String(ctx.user.id),
             type: "audio",
-            provider: "evolink-suno-v55",
+            provider: bridgeModel ? `suno-bridge:${input.brief.model}` : "evolink-suno-v55",
             input: jobInput,
           });
         } catch (error) {
