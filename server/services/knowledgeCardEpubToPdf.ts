@@ -232,41 +232,130 @@ export type ConvertEpubToPdfResult = {
   pdf: Buffer;
   title: string;
   chapterCount: number;
-  /** 走了哪条路：normal = 缩图后一次过；stripped = 崩过一次，剥图重来 */
+  /** normal = 每片都带图一次过；stripped = 至少一片崩过、剥图重打 */
   mode: "normal" | "stripped";
   images: ParsedEpub["images"];
+  /** 分了几片、哪些片剥了图（按片序号，从 1 起） */
+  shardCount: number;
+  strippedShards: number[];
 };
 
+/** 单片 HTML 上限：几百章的书按这个切，一片一片打，崩了只重打那一片 */
+export const EPUB_SHARD_MAX_BYTES_DEFAULT = 6 * 1024 * 1024;
+
+/** 按章顺序切片：累计字节到上限就开新片；单章超限自成一片（不拆章，页眉/脚注不断） */
+export function splitEpubChaptersIntoShards(chapters: string[], maxBytes = EPUB_SHARD_MAX_BYTES_DEFAULT): number[][] {
+  const shards: number[][] = [];
+  let cur: number[] = [];
+  let curBytes = 0;
+  chapters.forEach((html, i) => {
+    const bytes = Buffer.byteLength(html, "utf8");
+    if (cur.length && curBytes + bytes > maxBytes) {
+      shards.push(cur);
+      cur = [];
+      curBytes = 0;
+    }
+    cur.push(i);
+    curBytes += bytes;
+  });
+  if (cur.length) shards.push(cur);
+  return shards;
+}
+
+const PLACEHOLDER_GIF = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+
+/** 只剥这一片的内联图（换 1×1 占位），其它片的图不受影响 */
+export function stripInlineImagesFromHtml(html: string): { html: string; stripped: number } {
+  let stripped = 0;
+  const out = html.replace(/data:image\/(?!gif;base64,R0lGODlhAQABAIAAAAAAAP)[a-z+.-]+;base64,[A-Za-z0-9+/=]+/g, () => {
+    stripped += 1;
+    return PLACEHOLDER_GIF;
+  });
+  return { html: out, stripped };
+}
+
+/** pdfunite 合并分片（poppler-utils，Fly 镜像已装）；单片直接返回 */
+export async function mergePdfShards(pdfs: Buffer[]): Promise<Buffer> {
+  if (pdfs.length === 1) return pdfs[0]!;
+  const dir = await mkdtemp(path.join(tmpdir(), "kc-epub-merge-"));
+  try {
+    const inputs: string[] = [];
+    for (let i = 0; i < pdfs.length; i++) {
+      const file = path.join(dir, `shard-${String(i + 1).padStart(3, "0")}.pdf`);
+      await writeFile(file, pdfs[i]!);
+      inputs.push(file);
+    }
+    const out = path.join(dir, "merged.pdf");
+    const { execFile } = await import("node:child_process");
+    await new Promise<void>((resolve, reject) => {
+      execFile("pdfunite", [...inputs, out], { maxBuffer: 4 * 1024 * 1024 }, (error, _stdout, stderr) => {
+        if (error) reject(new Error(`pdfunite 合并分片失败：${stderr || error.message}`));
+        else resolve();
+      });
+    });
+    const { readFile } = await import("node:fs/promises");
+    return await readFile(out);
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 /**
- * 缩图内联 → Chromium 打印；渲染进程崩了就整本剥图只保文字再打一次，两次都崩才报错，
- * 报错文案告诉用户怎么办，不再把 Protocol error 直接甩给前端。
+ * 缩图内联 → 按章分片 → 每片 Chromium 打印 → 崩的那片剥图重打（其它片的图保留）→ pdfunite 合并。
+ * 一片剥图后仍崩才报错，报错文案告诉用户怎么办，不再把 Protocol error 直接甩给前端。
  */
 export async function convertEpubToPdf(
   buffer: Buffer,
-  deps: { render?: (html: string) => Promise<Buffer>; parse?: typeof parseEpub } = {},
+  deps: {
+    render?: (html: string) => Promise<Buffer>;
+    parse?: typeof parseEpub;
+    merge?: (pdfs: Buffer[]) => Promise<Buffer>;
+    shardMaxBytes?: number;
+  } = {},
 ): Promise<ConvertEpubToPdfResult> {
   const render = deps.render || renderHtmlToPdf;
   const parse = deps.parse || parseEpub;
+  const merge = deps.merge || mergePdfShards;
   const parsed = await parse(buffer);
-  try {
-    const pdf = await render(buildEpubPrintHtml(parsed));
-    if (!pdf.length) throw new Error("EPUB 转 PDF 结果为空");
-    return { pdf, title: parsed.title, chapterCount: parsed.chapters.length, mode: "normal", images: parsed.images };
-  } catch (error) {
-    if (!(error instanceof EpubChromiumCrashError)) throw error;
-    console.warn(`[knowledgeCardEpubToPdf] 首次打印崩溃，剥图重试：${error.message}`);
+  const shards = splitEpubChaptersIntoShards(parsed.chapters, deps.shardMaxBytes);
+  const pdfs: Buffer[] = [];
+  const strippedShards: number[] = [];
+  let strippedImages = 0;
+  for (let i = 0; i < shards.length; i++) {
+    const chapters = shards[i]!.map((idx) => parsed.chapters[idx]!);
+    const shardHtml = buildEpubPrintHtml({ ...parsed, chapters });
+    const label = `第 ${i + 1}/${shards.length} 片（第 ${shards[i]![0]! + 1}–${shards[i]![shards[i]!.length - 1]! + 1} 章）`;
+    let pdf: Buffer;
+    try {
+      pdf = await render(shardHtml);
+    } catch (error) {
+      if (!(error instanceof EpubChromiumCrashError)) throw error;
+      console.warn(`[knowledgeCardEpubToPdf] ${label} 打印崩溃，剥图重打：${error.message}`);
+      const stripped = stripInlineImagesFromHtml(shardHtml);
+      try {
+        pdf = await render(stripped.html);
+      } catch (again) {
+        if (!(again instanceof EpubChromiumCrashError)) throw again;
+        throw new Error(
+          `这本 EPUB ${label} 转 PDF 时浏览器崩溃两次（已试过只保文字）。请先用 Calibre 等工具转成 PDF，或把这几章拆出来单独上传。`,
+        );
+      }
+      strippedShards.push(i + 1);
+      strippedImages += stripped.stripped;
+    }
+    if (!pdf.length) throw new Error(`EPUB ${label} 转 PDF 结果为空`);
+    pdfs.push(pdf);
   }
-  const stripped = await parse(buffer, { stripImages: true });
-  try {
-    const pdf = await render(buildEpubPrintHtml(stripped));
-    if (!pdf.length) throw new Error("EPUB 转 PDF 结果为空");
-    return { pdf, title: stripped.title, chapterCount: stripped.chapters.length, mode: "stripped", images: stripped.images };
-  } catch (error) {
-    if (!(error instanceof EpubChromiumCrashError)) throw error;
-    throw new Error(
-      `这本 EPUB 太大，转 PDF 时浏览器崩溃两次（${stripped.chapters.length} 章，已试过只保文字）。请先用 Calibre 等工具转成 PDF，或拆成几本再上传。`,
-    );
-  }
+  const pdf = await merge(pdfs);
+  return {
+    pdf,
+    title: parsed.title,
+    chapterCount: parsed.chapters.length,
+    mode: strippedShards.length ? "stripped" : "normal",
+    images: { ...parsed.images, stripped: parsed.images.stripped + strippedImages },
+    shardCount: shards.length,
+    strippedShards,
+  };
 }
 
 export function isEpubFile(mimeType: string, fileName?: string): boolean {
