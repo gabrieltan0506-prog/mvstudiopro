@@ -14,6 +14,14 @@ import type { ManhuaDirectorStrategyStage } from "./manhuaDirectorStrategy.js";
 import { MANHUA_DIRECTION_CARDS_GENERATED } from "./manhuaDirectionCanonLibrary.generated.js";
 
 export const MANHUA_DIRECTION_SCENE_TYPES: ManhuaDirectionSceneType[] = ["action", "dialogue", "reveal", "emotion", "transition"];
+export const MANHUA_DIRECTION_SCENE_TYPE_LABEL_ZH: Record<ManhuaDirectionSceneType, string> = {
+  action: "打戏",
+  dialogue: "对白戏",
+  reveal: "揭露戏",
+  emotion: "情感戏",
+  transition: "过场",
+  default: "其他",
+};
 export const MANHUA_DIRECTION_SCENE_LABEL_ZH: Record<ManhuaDirectionSceneType, string> = {
   action: "动作场",
   dialogue: "对话场",
@@ -105,11 +113,18 @@ export function readManhuaDirectionCanonFromBlocks(blocks: Array<{ prompt?: stri
   return null;
 }
 
-/** 去掉旧的导演法典投影段（含选卡标记），供「已铺节点同步设置」幂等重写 */
+/**
+ * 去掉旧的导演法典投影段（含选卡标记），供「已铺节点同步设置」幂等重写。
+ * 两种形态都要剥：多行形态（story/keyart，块在行首）；单行形态（beats/reverse 过了 stripManhuaPromptSlop，
+ * `\n\n` 被压成一个空格，块夹在同一行里）。审查 P1：只认行首时 beats/reverse 每同步一次就多一份。
+ */
 export function stripManhuaDirectionStyleBlocks(prompt: string | null | undefined): string {
   return String(prompt || "")
     .replace(/(?:^|\n)【导演法典·v1·[^\n]*(?:\n(?!\n)[^\n]*)*/g, "")
     .replace(/(?:^|\n)【导演法典选卡·v1·[^\n]*/g, "")
+    .replace(/ ?【导演法典选卡·v1·[^】]*】/g, "")
+    .replace(/ ?【导演法典·v1·[^【]*/g, "")
     .replace(/\n{3,}/g, "\n\n")
+    .replace(/ {2,}/g, " ")
     .trim();
 }

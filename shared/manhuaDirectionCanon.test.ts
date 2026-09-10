@@ -264,6 +264,17 @@ describe("classifyManhuaDirectionSceneType", () => {
     // 打戏夹一句台词：引号按成对计，仍是动作场
     expect(classifyManhuaDirectionSceneType("家丁拔刀砍来，墨屠挥拳击退，阿菁问道「你没事吧」")).toBe("action");
     expect(classifyManhuaDirectionSceneType("")).toBe("default");
+    // 审查 P2-1：引申义/灯光词/争吵动作不算打戏；「露出真诚」不算揭露；「次日清晨」只算一次
+    expect(classifyManhuaDirectionSceneType("他一掌拍向桌面，「够了！」")).not.toBe("action");
+    expect(classifyManhuaDirectionSceneType("月光射出一道冷光，他的目光射向远处")).toBe("default");
+    expect(classifyManhuaDirectionSceneType("这句话击中了她，她反击道「你才是骗子」")).not.toBe("action");
+    expect(classifyManhuaDirectionSceneType("她露出真诚的笑容，揭开锅盖")).toBe("default");
+    expect(classifyManhuaDirectionSceneType("次日清晨，他推门进来。「你来了。」")).not.toBe("transition");
+    expect(classifyManhuaDirectionSceneType("近身侍女端茶进来，一脚踹开门")).toBe("default");
+    // 剧本体对白、ASCII 双引号、『』 都能判成对白戏
+    expect(classifyManhuaDirectionSceneType("阿菁：你来了 墨屠：嗯，来了")).toBe("dialogue");
+    expect(classifyManhuaDirectionSceneType('她说 "你走吧"，他答 "我不走"')).toBe("dialogue");
+    expect(classifyManhuaDirectionSceneType("『你是谁』『护你的人』")).toBe("dialogue");
   });
 });
 

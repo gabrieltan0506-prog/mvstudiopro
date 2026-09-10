@@ -9009,6 +9009,15 @@ export default function OmniCanvas() {
                   directionCanon={activeDirectionCanon}
                   directionLocked={Boolean(projectBible?.directionCanon)}
                   onSelectDirectionCard={(mainCardId) => setDirectionSelection(mainCardId ? { mainCardId } : null)}
+                  onSelectDirectionSceneCard={(scene, cardId) =>
+                    setDirectionSelection((prev) => {
+                      if (!prev?.mainCardId) return prev;
+                      const overrides = { ...(prev.sceneOverrides || {}) };
+                      if (cardId && cardId !== prev.mainCardId) overrides[scene] = { cardId };
+                      else delete overrides[scene];
+                      return { mainCardId: prev.mainCardId, ...(Object.keys(overrides).length ? { sceneOverrides: overrides } : {}) };
+                    })
+                  }
                   topic={factoryTopic}
                   shotContinuity={shotContinuity}
                   onShotContinuityChange={(next) => {

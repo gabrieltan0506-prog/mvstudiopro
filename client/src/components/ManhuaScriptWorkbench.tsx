@@ -3,8 +3,8 @@
  * 原稿按真实秒位与引擎单段上限自动分段；每段一条成片，关键静帧按原镜一镜一张。
  */
 import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference";
-import type { ManhuaDirectionCanon } from "@shared/manhuaDirectionCanon";
-import { listManhuaDirectionCards } from "@shared/manhuaDirectionCanonLibrary";
+import type { ManhuaDirectionCanon, ManhuaDirectionSceneType } from "@shared/manhuaDirectionCanon";
+import { listManhuaDirectionCards, MANHUA_DIRECTION_SCENE_TYPES, MANHUA_DIRECTION_SCENE_TYPE_LABEL_ZH } from "@shared/manhuaDirectionCanonLibrary";
 import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
 import { isManhuaKeyartLookCurrent } from "@shared/manhuaKeyartLookState";
@@ -304,6 +304,8 @@ type Props = {
   /** 编剧确认后随 Bible 冻结，不再改卡（改卡等于换整套手法，需重铺） */
   directionLocked?: boolean;
   onSelectDirectionCard?: (mainCardId: string | null) => void;
+  /** 场次副卡：某类场景（打戏/对白/揭露/情感/过场）改用另一张卡；null=该类场景走主卡 */
+  onSelectDirectionSceneCard?: (scene: ManhuaDirectionSceneType, cardId: string | null) => void;
   topic: string;
   seriesTitle?: string;
   logline?: string;
@@ -927,6 +929,7 @@ export default function ManhuaScriptWorkbench({
   directorStrategyContract,
   directionCanon,
   directionLocked,
+  onSelectDirectionSceneCard,
   onSelectDirectionCard,
   topic,
   seriesTitle,
@@ -3056,6 +3059,36 @@ export default function ManhuaScriptWorkbench({
                   ))}
                 </select>
                 {directionCanon ? <span className="text-emerald-200/70">{directionLocked ? "已锁定" : "确认剧本后锁定"}</span> : null}
+                {directionCanon && !directionLocked && blocks.some((b) => b.id.startsWith("story-")) ? (
+                  <span className="text-amber-200/80" title="已铺的剧本/分镜/关键帧/成片节点不会自动跟着换卡；用「已铺节点同步设置」重铺一次才生效">
+                    换卡后已铺节点需同步设置
+                  </span>
+                ) : null}
+                {directionCanon && onSelectDirectionSceneCard ? (
+                  <div data-manhua-direction-scene-cards className="flex w-full flex-wrap items-center gap-1 pl-2">
+                    <span className="text-violet-100/60">场次副卡</span>
+                    {MANHUA_DIRECTION_SCENE_TYPES.map((scene) => (
+                      <label key={scene} className="flex items-center gap-0.5">
+                        <span>{MANHUA_DIRECTION_SCENE_TYPE_LABEL_ZH[scene]}</span>
+                        <select
+                          aria-label={`场次副卡·${MANHUA_DIRECTION_SCENE_TYPE_LABEL_ZH[scene]}`}
+                          value={directionCanon.sceneOverrides?.[scene]?.cardId || ""}
+                          disabled={Boolean(directionLocked)}
+                          onChange={(e) => onSelectDirectionSceneCard(scene, e.target.value || null)}
+                          className="max-w-[150px] rounded border border-violet-300/25 bg-violet-500/10 px-1 py-px text-[9px] text-violet-50 disabled:opacity-70"
+                          title="这类场景改用另一张卡的手法；不选＝走主卡。按段文本自动判场景类型，判不出也走主卡"
+                        >
+                          <option value="">同主卡</option>
+                          {listManhuaDirectionCards()
+                            .filter((card) => card.id !== directionCanon.mainCardId)
+                            .map((card) => (
+                              <option key={card.id} value={card.id}>{card.labelZh}</option>
+                            ))}
+                        </select>
+                      </label>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             ) : null}
             {directorStrategyContract ? (

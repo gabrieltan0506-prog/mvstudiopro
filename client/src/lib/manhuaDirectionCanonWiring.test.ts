@@ -110,16 +110,24 @@ describe("导演包接线：提示词真的带了导演法典", () => {
     expect(ensured.blocks.find((b) => b.id.startsWith("beats-"))!.prompt).toContain("【导演法典·v1·parallel_action_editing·");
   });
 
-  it("已铺节点同步设置：剥旧投影再加，重写两次不重复", () => {
+  it("已铺节点同步设置：剥旧投影再加，连写三轮 story/keyart/beats/reverse 都不重复（审查 P1：beats/reverse 过 slop 后块不在行首）", () => {
     const p = pipeline(true);
     const once = applyFactoryPrefsToBlocks(p.ensured.blocks, { craftShotIds: [] });
     const twice = applyFactoryPrefsToBlocks(once, { craftShotIds: [] });
+    const thrice = applyFactoryPrefsToBlocks(twice, { craftShotIds: [] });
     const count = (text: string, needle: string) => text.split(needle).length - 1;
-    const story2 = twice.find((b) => b.id.startsWith("story-"))!;
-    const key2 = twice.find((b) => b.id.startsWith("keyart-"))!;
-    expect(count(story2.prompt, "剧本层：")).toBe(1);
-    expect(count(story2.prompt, SELECT)).toBe(1);
-    expect(count(key2.prompt, "关键帧层：")).toBe(1);
+    for (const round of [once, twice, thrice]) {
+      const story = round.find((b) => b.id.startsWith("story-"))!;
+      const key = round.find((b) => b.id.startsWith("keyart-"))!;
+      const beats = round.find((b) => b.id.startsWith("beats-"))!;
+      const reverse = round.find((b) => b.id.startsWith("reverse-"))!;
+      expect(count(story.prompt, "剧本层：")).toBe(1);
+      expect(count(story.prompt, SELECT)).toBe(1);
+      expect(count(key.prompt, "关键帧层：")).toBe(1);
+      expect(count(beats.prompt, "分镜层：")).toBe(1);
+      expect(count(beats.prompt, "【导演法典选卡·v1·")).toBe(1);
+      expect(count(reverse.prompt, "【导演法典·v1·")).toBe(1);
+    }
   });
 
   it("质检 expectedContext 带审查块（失效条件 + 明确不用）", () => {
