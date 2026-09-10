@@ -40,7 +40,7 @@ const buttonClass =
   "rounded border border-white/20 px-2 py-1.5 text-xs text-white hover:bg-white/10 disabled:opacity-40";
 
 type MusicBrief = {
-  model: "suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6";
+  model: "suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6" | "suno-bridge-v6-wild";
   custom_mode: true;
   instrumental: true;
   style: string;
@@ -107,7 +107,7 @@ export type CanvasAudioStudioServices = {
   }): Promise<JobResult>;
   getDialogue(input: { jobId: string }): Promise<JobResult | null>;
   draftMusic(input: {
-    model?: "suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6";
+    model?: "suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6" | "suno-bridge-v6-wild";
     laneZh: string;
     durationSec: number;
     moods: Array<"蓄力" | "冲突" | "反转" | "收束">;
@@ -137,7 +137,7 @@ type Props = {
    * 配乐来源可选项（内部账号才传）：Suno 直连桥 v6-mini / v6。不传只有网关 v5.5。
    * 桥违反 Suno 条款、会封号，只给 admin/supervisor；服务端同样把关。
    */
-  bgmModels?: Array<{ model: "suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6"; labelZh: string }>;
+  bgmModels?: Array<{ model: "suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6" | "suno-bridge-v6-wild"; labelZh: string }>;
 };
 
 
@@ -187,7 +187,7 @@ export function CanvasAudioStudioView({
   const [musicPrompt, setMusicPrompt] = useState("");
   const [musicDuration, setMusicDuration] = useState(30);
   const [brief, setBrief] = useState<MusicBrief | null>(null);
-  const [bgmModel, setBgmModel] = useState<"suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6">("suno-v5.5-beta");
+  const [bgmModel, setBgmModel] = useState<"suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6" | "suno-bridge-v6-wild">("suno-v5.5-beta");
   const [resumable, setResumable] = useState<Record<string, JobResult>>({});
   const [confirmation, setConfirmation] = useState<
     | { kind: "dialogue"; cueId: string; inputKey: string }
@@ -1235,7 +1235,9 @@ export function CanvasAudioStudioView({
           {brief && (
             <>
               {brief.model !== "suno-v5.5-beta" ? (
-                <p className="text-[10px] text-amber-200/80">来源：{brief.model === "suno-bridge-v6" ? "Suno v6（直连·内部）" : "Suno v6-mini（直连·内部）"}</p>
+                <p className="text-[10px] text-amber-200/80">
+                  来源：{brief.model === "suno-bridge-v6" ? "Suno v6（直连·内部）" : brief.model === "suno-bridge-v6-wild" ? "Suno v6-wild（直连·内部·实验）" : "Suno v6-mini（直连·内部）"}
+                </p>
               ) : null}
               <label className="block text-xs">
                 配乐要求

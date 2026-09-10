@@ -4446,7 +4446,7 @@ export const appRouter = router({
           titleZh: z.string().trim().max(80).optional(),
           hasSilenceBreak: z.boolean().optional(),
           /** 桥模型只对 admin/supervisor 生效；普通账号传了也回落网关 */
-          model: z.enum(["suno-v5.5-beta", "suno-bridge-v6-mini", "suno-bridge-v6"]).optional(),
+          model: z.enum(["suno-v5.5-beta", "suno-bridge-v6-mini", "suno-bridge-v6", "suno-bridge-v6-wild"]).optional(),
         }),
       )
       .mutation(({ ctx, input }) => {

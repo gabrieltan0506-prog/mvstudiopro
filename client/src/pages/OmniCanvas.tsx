@@ -8983,6 +8983,7 @@ export default function OmniCanvas() {
                       ? [
                           { model: "suno-bridge-v6-mini", labelZh: "Suno v6-mini（直连·内部）" },
                           { model: "suno-bridge-v6", labelZh: "Suno v6（直连·内部）" },
+                          { model: "suno-bridge-v6-wild", labelZh: "Suno v6-wild（直连·内部·实验）" },
                         ]
                       : undefined
                   }

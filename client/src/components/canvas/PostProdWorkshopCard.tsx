@@ -112,7 +112,7 @@ type PostProdWorkshopCardProps = {
 };
 
 type EditableBgmBrief = {
-  model: "suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6";
+  model: "suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6" | "suno-bridge-v6-wild";
   custom_mode: true;
   instrumental: true;
   style: string;

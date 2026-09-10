@@ -46,6 +46,7 @@ describe("sunoBridgeMusic（内部专用 cookie 桥客户端）", () => {
   it("网页代号默认 v6-mini=chirp-goose / v6=chirp-hawk，环境变量可改", () => {
     expect(resolveSunoBridgeChirpModel("suno-bridge-v6-mini")).toBe("chirp-goose");
     expect(resolveSunoBridgeChirpModel("suno-bridge-v6")).toBe("chirp-hawk");
+    expect(resolveSunoBridgeChirpModel("suno-bridge-v6-wild")).toBe("chirp-hawk-wild");
     process.env.SUNO_BRIDGE_MODEL_V6 = "chirp-fenix";
     expect(resolveSunoBridgeChirpModel("suno-bridge-v6")).toBe("chirp-fenix");
   });

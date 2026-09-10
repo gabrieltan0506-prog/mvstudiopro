@@ -9,7 +9,7 @@
    fly secrets set -a mvstudiopro-suno-bridge SUNO_COOKIE='…' TWOCAPTCHA_KEY='…'
 2. 部署：cd infra/suno-bridge && fly deploy -a mvstudiopro-suno-bridge
 3. 主站 mvstudiopro 加 secret：SUNO_BRIDGE_URL=http://mvstudiopro-suno-bridge.internal:3000
-   （可选）SUNO_BRIDGE_MODEL_V6_MINI=chirp-goose  SUNO_BRIDGE_MODEL_V6=chirp-hawk
+   （可选，网页代号 0910 已对照确认）SUNO_BRIDGE_MODEL_V6_MINI=chirp-goose  SUNO_BRIDGE_MODEL_V6=chirp-hawk  SUNO_BRIDGE_MODEL_V6_WILD=chirp-hawk-wild
 
 ## 主站怎么用
 配乐间「Suno 直连（内部）」来源，只对 admin/supervisor 显示；服务 `server/services/sunoBridgeMusic.ts`。

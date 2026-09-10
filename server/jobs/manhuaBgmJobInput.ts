@@ -15,7 +15,7 @@ export const MANHUA_BGM_BRIEF_DIGEST_RE = /^[a-f0-9]{64}$/;
 
 export const manhuaBgmBriefSchema = z
   .object({
-    model: z.enum(["suno-v5.5-beta", "suno-bridge-v6-mini", "suno-bridge-v6"]),
+    model: z.enum(["suno-v5.5-beta", "suno-bridge-v6-mini", "suno-bridge-v6", "suno-bridge-v6-wild"]),
     custom_mode: z.literal(true),
     instrumental: z.literal(true),
     style: z.string().trim().min(1).max(1000),

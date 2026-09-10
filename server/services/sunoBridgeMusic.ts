@@ -4,12 +4,12 @@
  * 与 EvoLink 通道并列的第二来源：用户 0910 拍板走 cookie 桥出 v6（选项 3）。
  * - 桥接口：POST /api/custom_generate → 两条 clip；GET /api/get?ids=… 轮询到 complete 取 audio_url。
  * - 模型代号从已登录网页 React 状态读到（0910 用户对照下拉确认）：v6-mini = chirp-goose，v6 = chirp-hawk；
- *   免费号用 chirp-hawk 只出 1 分钟预览（网页标 V6 PREVIEW），整曲需 Pro；v6-wild 代号待升级后再抓。
+ *   v6-wild = chirp-hawk-wild（Pro 下拉打开后读到）。免费号用 chirp-hawk 只出 1 分钟预览，整曲需 Pro（用户 0910 已升）。
  * - 无 duration 参数（网页 v2 接口没有）；整曲生成后仍按段表裁。
  * - 违反 Suno 条款、会封号：只给 admin/supervisor 用，普通用户看不到这个来源。
  */
 
-export const SUNO_BRIDGE_MODELS = ["suno-bridge-v6-mini", "suno-bridge-v6"] as const;
+export const SUNO_BRIDGE_MODELS = ["suno-bridge-v6-mini", "suno-bridge-v6", "suno-bridge-v6-wild"] as const;
 export type SunoBridgeModel = (typeof SUNO_BRIDGE_MODELS)[number];
 
 export function isSunoBridgeModel(model: unknown): model is SunoBridgeModel {
@@ -27,6 +27,7 @@ export function isSunoBridgeReady(): boolean {
 /** 网页内部代号；页面改版后只改 env，不改代码 */
 export function resolveSunoBridgeChirpModel(model: SunoBridgeModel): string {
   if (model === "suno-bridge-v6") return String(process.env.SUNO_BRIDGE_MODEL_V6 || "chirp-hawk").trim();
+  if (model === "suno-bridge-v6-wild") return String(process.env.SUNO_BRIDGE_MODEL_V6_WILD || "chirp-hawk-wild").trim();
   return String(process.env.SUNO_BRIDGE_MODEL_V6_MINI || "chirp-goose").trim();
 }
 
