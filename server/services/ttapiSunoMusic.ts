@@ -11,7 +11,7 @@
  *   GET  https://api.ttapi.io/suno/v2/fetch?jobId=…  → { status: ON_QUEUE|SUCCESS|…, data: { musics: [{ musicId, audioUrl, title, duration, imageUrl }] } }
  *   价格：每次生成 6 quota ≈ $0.06，三档同价；max_mode 翻倍（不开）。
  * - duration 是目标时长，上游按段落尽量贴近；成品仍按段表裁。
- * - 429 需退避重试：只在**轮询**时退避；建单绝不自动重发（与 EvoLink 通道同一纪律）。
+ * - 429 这里一律抛 rejected(429)；轮询方（manhuaScoringRoom）看到 429 多等一个间隔再问；建单绝不自动重发（与 EvoLink 通道同一纪律）。
  */
 
 export const TTAPI_SUNO_MODELS = ["suno-v6-mini", "suno-v6", "suno-v6-wild"] as const;

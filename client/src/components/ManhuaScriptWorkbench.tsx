@@ -3,6 +3,7 @@
  * 原稿按真实秒位与引擎单段上限自动分段；每段一条成片，关键静帧按原镜一镜一张。
  */
 import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference";
+import type { BgmBriefModel } from "@shared/manhuaBgmBrief";
 import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
 import { isManhuaKeyartLookCurrent } from "@shared/manhuaKeyartLookState";
@@ -298,7 +299,7 @@ type Props = {
   /** 已冻结的去名导演策略；前台只展示中性策略名与批准修订。 */
   directorStrategyContract?: ManhuaDirectorStrategyContract | null;
   /** 配乐来源可选项（Suno v6 三档，走 TTAPI 网关） */
-  bgmModels?: Array<{ model: "suno-v5.5-beta" | "suno-v6-mini" | "suno-v6" | "suno-v6-wild"; labelZh: string }>;
+  bgmModels?: Array<{ model: BgmBriefModel; labelZh: string }>;
   topic: string;
   seriesTitle?: string;
   logline?: string;

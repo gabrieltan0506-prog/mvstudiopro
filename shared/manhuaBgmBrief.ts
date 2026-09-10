@@ -237,18 +237,6 @@ export function looksLikeArtistName(text: string): boolean {
   return ARTIST_NAME_PATTERNS.some((re) => re.test(t));
 }
 
-/**
- * 提交前的最终 style 校验。**必须在 createJob 之前调用** ——
- * 上一版这个函数只有定义没人调，styleOverrideZh 可以原样绕过。
- */
-export function assertBgmStyleSubmittable(brief: Pick<BgmBrief, "style">): void {
-  if (looksLikeArtistName(brief.style)) {
-    throw new Error(
-      "配乐风格里出现了在世音乐家姓名，Suno 会拦。请改成可听特征描述："
-      + "乐器与演奏法、速度、节奏走向、氛围（例：大提琴音色温暖醇厚、弓法绵长如歌唱）",
-    );
-  }
-}
 
 /** 结构标签：段落数是时长的主要杠杆，`[End]` 强制终止 */
 export function buildBgmStructurePrompt(input: {

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference";
+import type { BgmBriefModel } from "@shared/manhuaBgmBrief";
 import { buildPremixTimelineClips, isPremixPendingKey, PREMIX_PENDING_PREFIX } from "@/lib/manhuaPremixMaster";
 import { resolveCanvasMaterialUrl } from "@/lib/omniCanvasApi";
 import { compileCanvasDialogueInput } from "@shared/canvasDialogueControls";
@@ -135,11 +136,8 @@ type Props = {
    * 由上层挂到本段 manhuaSegmentRefs.master（出片时作唯一 @音频1）。不传则不显示按钮。
    */
   onMasterTrackReady?: (entry: ManhuaSegmentReferenceEntry) => void;
-  /**
-   * 配乐来源可选项（内部账号才传）：Suno 直连桥 v6-mini / v6。不传只有网关 v5.5。
-   * 桥违反 Suno 条款、会封号，只给 admin/supervisor；服务端同样把关。
-   */
-  bgmModels?: Array<{ model: "suno-v5.5-beta" | "suno-v6-mini" | "suno-v6" | "suno-v6-wild"; labelZh: string }>;
+  /** 配乐来源可选项：Suno v6 / v6-wild / v6-mini（TTAPI 网关，全员可选）。不传则缺省 v6，不显示下拉。 */
+  bgmModels?: Array<{ model: BgmBriefModel; labelZh: string }>;
 };
 
 
@@ -189,7 +187,7 @@ export function CanvasAudioStudioView({
   const [musicPrompt, setMusicPrompt] = useState("");
   const [musicDuration, setMusicDuration] = useState(30);
   const [brief, setBrief] = useState<MusicBrief | null>(null);
-  // 内部账号（有桥）默认直出 Suno v6（用户 0910 已升 Pro，不用 mini）；普通账号只有网关 v5.5
+  // 缺省 Suno v6（v5.5 0910 已下架）；有下拉时取第一项
   const [bgmModel, setBgmModel] = useState<"suno-v5.5-beta" | "suno-v6-mini" | "suno-v6" | "suno-v6-wild">(
     bgmModels?.[0]?.model ?? "suno-v6",
   );

@@ -106,7 +106,7 @@ export const CANVAS_FREEFORM_RETAIL_MULTIPLIER = 1.1;
 export const CANVAS_TTS_CREDITS_PER_LINE = 3;
 
 /**
- * Suno 配乐（0902 解锁给创作者）：EvoLink suno-v5.5-beta 一发出 2 条变体。
+ * Suno 配乐（0902 解锁给创作者；0910 起走 TTAPI Suno v6，每发 ≈$0.06）：一发出 2 条变体。
  * 成本一发几毛人民币，零售 20 积分/发（≈¥13）覆盖成本＋转存＋量测。
  * 按「发」计费：一发不论时长、不论变体数，固定价。
  */

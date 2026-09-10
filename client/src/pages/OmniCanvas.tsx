@@ -1,4 +1,5 @@
 import { capManhuaMediaHistory } from "@shared/manhuaMediaHistoryCap";
+import { BGM_BRIEF_MODELS, BGM_BRIEF_MODEL_LABEL_ZH } from "@shared/manhuaBgmBrief";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import OpenAiImageVariantSwitch from "@/components/OpenAiImageVariantSwitch";
 import { flushSync } from "react-dom";
@@ -8978,11 +8979,7 @@ export default function OmniCanvas() {
                   blocks={blocks}
                   videoModel={activePilotVideoModel}
                   directorStrategyContract={directorStrategyContract}
-                  bgmModels={[
-                    { model: "suno-v6", labelZh: "Suno v6（TTAPI·默认）" },
-                    { model: "suno-v6-wild", labelZh: "Suno v6-wild（TTAPI·实验）" },
-                    { model: "suno-v6-mini", labelZh: "Suno v6-mini（TTAPI·快）" },
-                  ]}
+                  bgmModels={BGM_BRIEF_MODELS.map(model => ({ model, labelZh: BGM_BRIEF_MODEL_LABEL_ZH[model] }))}
                   topic={factoryTopic}
                   shotContinuity={shotContinuity}
                   onShotContinuityChange={(next) => {

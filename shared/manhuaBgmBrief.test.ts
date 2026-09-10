@@ -11,7 +11,6 @@ import {
   clampBgmDurationSec,
   deriveManhuaBgmBriefSeed,
   countBgmStyleDescriptors,
-  assertBgmStyleSubmittable,
   looksLikeArtistName,
   resolveBgmDurationSec,
 } from "./manhuaBgmBrief";
@@ -144,14 +143,9 @@ describe("艺人名检测与提交前校验", () => {
     expect(looksLikeArtistName("琵琶十面埋伏拨弦三次")).toBe(false);
   });
 
-  it("提交前校验：人名拒、普通风格过", () => {
-    expect(() => assertBgmStyleSubmittable({ style: "Hans Zimmer 风格" })).toThrow("可听特征");
-    expect(() => assertBgmStyleSubmittable({ style: "悬疑电影风格" })).not.toThrow();
-  });
-
-  it("styleOverrideZh 绕不过校验 —— 上一版这个函数没人调", () => {
-    const b = buildManhuaBgmBrief({ ...base, styleOverrideZh: "cello 是 Yo Yo Ma 的悠扬" });
-    expect(() => assertBgmStyleSubmittable(b)).toThrow();
+  it("v6 不再拦艺人名（0910：Suno 不挡人名，混合风格算二次创作），styleOverrideZh 原样进 brief", () => {
+    const b = buildManhuaBgmBrief({ ...base, styleOverrideZh: "王力宏30%與汪蘇瀧70% 風格" });
+    expect(b.style).toContain("王力宏30%");
   });
 });
 

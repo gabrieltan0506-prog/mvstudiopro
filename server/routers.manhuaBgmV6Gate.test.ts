@@ -1,5 +1,5 @@
 /**
- * Suno v6（TTAPI）的路由把关：全员可用，但未配 TTAPI_KEY 时起草回落 v5.5、queue 直接拦。
+ * Suno v6（TTAPI）的路由把关：全员可用；v5.5 已下架，起草一律落 v6（不回落），未配 TTAPI_KEY 时 queue 直接拦。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 

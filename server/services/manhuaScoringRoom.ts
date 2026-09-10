@@ -1,5 +1,5 @@
 /**
- * 漫剧配乐异步核心：brief → EvoLink Suno V5.5 task → 全变体即时转存 GCS。
+ * 漫剧配乐异步核心：brief → TTAPI Suno v6 task（v5.5/EvoLink 已下架，只剩旧任务恢复）→ 全变体即时转存 GCS。
  *
  * 建单和收单刻意分开。建单成功后调用方必须先把 task ID 写进 jobs.output，随后
  * 才能轮询；部署重启只带原 task ID 进入 `resumeManhuaBgmTask`，绝不再次 POST。
@@ -31,7 +31,7 @@ import {
   getEvolinkSunoTask,
   pickEvolinkSunoAudioUrls,
 } from "./evolinkSunoMusic.js";
-import { createTtapiSunoTask, decodeTtapiSunoTaskId, getTtapiSunoTask, isTtapiSunoReady } from "./ttapiSunoMusic.js";
+import { TtapiSunoRequestError, createTtapiSunoTask, decodeTtapiSunoTaskId, getTtapiSunoTask, isTtapiSunoReady } from "./ttapiSunoMusic.js";
 import { isBgmV6Model, type BgmBriefModel } from "../../shared/manhuaBgmBrief.js";
 import { signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs.js";
 import { probeBgmLevels } from "./manhuaBgmLevelProbe.js";
@@ -73,7 +73,7 @@ export type ScoringRoomResult = {
   variants: ScoringRoomVariant[];
   elapsedMs: number;
   brief: BgmBrief;
-  /** 桥来源：上游少出了几条（另一条 error 或轮询到点没等到）；网关来源恒为 0 */
+  /** v6（TTAPI）：上游少出了几首（惯例两首）；旧 v5.5 任务恒为 0 */
   missingVariants: number;
 };
 
@@ -275,8 +275,18 @@ export async function resumeManhuaBgmTask(input: {
       );
     }
     if (isV6Task) {
-      // TTAPI 整单 SUCCESS 才结算；少于两首记 missing，不把已出的丢掉
-      const state = await getTtapiSunoTask(taskId, { abortSignal: input.abortSignal });
+      // TTAPI 整单 SUCCESS 才结算；少于两首记 missing，不把已出的丢掉。
+      // 轮询遇 429（限流）不算失败：多等一个间隔再问，别把一次限流烧成整单 requeue。
+      let state: Awaited<ReturnType<typeof getTtapiSunoTask>>;
+      try {
+        state = await getTtapiSunoTask(taskId, { abortSignal: input.abortSignal });
+      } catch (error) {
+        if (error instanceof TtapiSunoRequestError && error.httpStatus === 429) {
+          await sleep(input.pollIntervalMs ?? MANHUA_BGM_POLL_INTERVAL_MS, input.abortSignal);
+          continue;
+        }
+        throw error;
+      }
       if (state.status === "completed") {
         v6Urls = state.audioUrls;
         v6Missing = state.missing;
