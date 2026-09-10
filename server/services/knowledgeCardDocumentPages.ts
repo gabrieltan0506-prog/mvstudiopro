@@ -164,7 +164,12 @@ export async function prepareKnowledgeCardDocumentPages(params: {
   buffer: Buffer;
   fileName: string;
   userId: number;
-  selectPages: (sheets: KnowledgeCardContactSheet[], pageCount: number) => Promise<KnowledgeCardPageSelection[]>;
+  selectPages: (
+    sheets: KnowledgeCardContactSheet[],
+    pageCount: number,
+    /** 每扫完一组目录页回报一次——用户要求每一步都有百分比 */
+    onProgress?: (doneSheets: number, totalSheets: number) => void | Promise<void>,
+  ) => Promise<KnowledgeCardPageSelection[]>;
   onProgress?: (stage: "text" | "thumbs" | "select" | "render", done: number, total: number) => void | Promise<void>;
   /** 测试注入：不传则真实上传 GCS 并返回 { gcsUri, url(签名 https) } */
   uploadPage?: (objectName: string, jpeg: Buffer) => Promise<{ gcsUri: string; url: string }>;
@@ -209,7 +214,9 @@ export async function prepareKnowledgeCardDocumentPages(params: {
     }
 
     await params.onProgress?.("select", 0, sheets.length);
-    const picked = await params.selectPages(sheets, total);
+    const picked = await params.selectPages(sheets, total, async (doneSheets, totalSheets) => {
+      await params.onProgress?.("select", Math.min(doneSheets, totalSheets), totalSheets);
+    });
     const selectedMap = new Map<number, string | undefined>();
     for (const item of picked) {
       const n = Math.floor(Number(item.pageNumber));

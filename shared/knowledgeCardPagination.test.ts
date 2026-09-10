@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
+  KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
   KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
 } from "./knowledgeCardDistillModels";
 import {
@@ -32,8 +33,10 @@ describe("knowledgeCardCreditsForPages", () => {
     expect(knowledgeCardCreditsForPages(15)).toBe(240 + 7 * 24);
   });
 
-  it("tiers by distill model", () => {
+  it("tiers by distill model；旧 Sol 输入仍迁到精细档、历史页价不变", () => {
     expect(knowledgeCardCreditsForPages(4, KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toBe(96);
+    expect(knowledgeCardCreditsForPages(4, KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK)).toBe(120);
+    // 0910 起 Sol 下架：作为输入仍解析，页价按历史档保持 30/页
     expect(knowledgeCardCreditsForPages(4, KNOWLEDGE_CARD_DISTILL_MODEL_SOL)).toBe(120);
   });
 
@@ -142,7 +145,7 @@ describe("planKnowledgeCardPages", () => {
       pageCount: 0,
       credits: 0,
       roundText: "",
-      distillModel: KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
+      distillModel: KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
     });
   });
 

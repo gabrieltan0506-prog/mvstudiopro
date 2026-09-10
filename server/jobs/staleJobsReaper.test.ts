@@ -76,6 +76,11 @@ describe("reapStaleJobsOnce 与 post_prod 记录保留", () => {
       kind: "update",
       payload: { status: "failed", error: "后期任务已停止,请重新提交" },
     });
+    // 知识卡提炼/派生：心跳落后即改判 failed 保留行（前端拿终态可重提），不删、不豁免
+    const kc = calls.find((c) => c.kind === "update" && /知识卡任务进程已中断/.test(String(c.payload?.error)));
+    expect(kc).toBeTruthy();
+    expect(sqlStringValues(kc!.condition).join("\n")).toContain("knowledge_card_distill");
+    expect(sqlStringValues(kc!.condition).join("\n")).toContain("knowledge_card_derive_level");
     // 其他任务保持当前清理规则:running + queued 两次删除照常
     const deletes = calls.filter((c) => c.kind === "delete");
     expect(deletes).toHaveLength(2);
@@ -96,7 +101,7 @@ describe("reapStaleJobsOnce 与 post_prod 记录保留", () => {
     getDb.mockResolvedValue(fakeDb(calls, [{ id: "asm-7", userId: "7", status: "running", updatedAt: new Date(0) }]));
     ledger.readActiveJob.mockResolvedValue({ userId: 7, status: "active", lastHeartbeatAt: new Date(0).toISOString() } as never);
     await reapStaleJobsOnce({ bypassDisable: true });
-    const assembleUpdate = calls.filter(call => call.kind === "update")[1];
+    const assembleUpdate = calls.filter(call => call.kind === "update" && !/知识卡/.test(String(call.payload?.error)))[1];
     expect(assembleUpdate.payload).toEqual({ status: "failed", error: expect.stringContaining("回执已保留"), updatedAt: expect.any(Date) });
     expect(assembleUpdate.payload).not.toHaveProperty("input"); expect(assembleUpdate.payload).not.toHaveProperty("output");
     expect(ledger.refundCreditsOnFailure).toHaveBeenCalledWith("asm-7", "manhuaFinalAssemble", "process_crashed", expect.any(String));
@@ -107,7 +112,7 @@ describe("reapStaleJobsOnce 与 post_prod 记录保留", () => {
     getDb.mockResolvedValue(fakeDb(calls, [{ id: "asm-7", userId: "7", status: "running", updatedAt: new Date(0) }]));
     ledger.readActiveJob.mockResolvedValue({ userId: 7, status: "active", lastHeartbeatAt: new Date().toISOString() } as never);
     await reapStaleJobsOnce({ bypassDisable: true });
-    expect(calls.filter(call => call.kind === "update")).toHaveLength(1);
+    expect(calls.filter(call => call.kind === "update" && !/知识卡/.test(String(call.payload?.error)))).toHaveLength(1);
     expect(ledger.refundCreditsOnFailure).not.toHaveBeenCalled();
   });
 

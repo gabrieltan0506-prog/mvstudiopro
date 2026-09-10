@@ -4435,6 +4435,48 @@ export const appRouter = router({
         return rows.map((row) => buildPostProdJobResponse(row)).filter(Boolean);
       }),
 
+    /**
+     * 知识卡成稿档切换（用户 0910）：完整版长稿是真源，精华版按需派生（DeepSeek V4，几美分），
+     * 两档到最后阶段仍可切，不设页数上限。不收积分：出图时按页计费已够。
+     */
+    enqueueKnowledgeCardLevelDerive: protectedProcedure
+      .input(
+        z.object({
+          // 页数不设上限（0910 拍板）：只挡明显不是稿子的体积（约 2000 页书的完整版也在 100 万字内）
+          fullMarkdown: z.string().min(200, "完整版稿子太短").max(5_000_000, "完整版稿子超过 500 万字，请分册提炼"),
+          distillModel: z.string().max(64).optional(),
+          targetSections: z.number().int().min(3).max(300).optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const { isKnowledgeCardDeriveReady } = await import("./services/knowledgeCardLevelDerive.js");
+        if (!isKnowledgeCardDeriveReady()) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "精华版派生未配置（EVOLINK_API_KEY / OPENROUTER_API_KEY）" });
+        }
+        // 入队前就查 receipt：查不到直接拒，别把几百万字先写进 jobs.input 再在 worker 里失败
+        const { lookupKnowledgeCardDistillReceiptModel } = await import("./services/knowledgeCardDistillReceipt.js");
+        const receiptModel = await lookupKnowledgeCardDistillReceiptModel(Number(ctx.user.id), input.fullMarkdown);
+        if (!receiptModel) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "找不到这份完整版的提炼记录，无法派生精华版；请重新提炼后再切档" });
+        }
+        const jobId = nanoid(16);
+        await createJobRecord({
+          id: jobId,
+          userId: String(ctx.user.id),
+          type: "platform",
+          provider: "evolink",
+          input: {
+            action: "knowledge_card_derive_level",
+            params: {
+              fullMarkdown: input.fullMarkdown,
+              distillModel: input.distillModel || "",
+              targetSections: input.targetSections ?? null,
+            },
+          },
+        });
+        return { success: true as const, progressJobId: jobId };
+      }),
+
     /** 配乐 brief 为纯确定性编译，零上游调用；计费口径拍板前仅内部账号可见。 */
     // 0902 补解锁：queueManhuaBgm 已降 protected，起草是纯函数零成本，同步放开。
     draftManhuaBgmBrief: protectedProcedure
@@ -8135,7 +8177,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
            * 提炼后 4 页 120 积分保住 4K）。上传文档的提炼是抽文的必要环节，成本已含页费，不另收。
            */
           chargeDistillFee: z.boolean().optional(),
-          /** 两档：gpt-5.6-sol / qwen3.8-max；旧值（terra / OR-qwen / claude / kimi）服务端迁到两档 */
+          /** 两档：deepseek-v4-flash / qwen3.8-max；旧值（sol / terra / OR-qwen / claude / kimi）服务端迁到两档 */
           distillModel: z.string().max(64).optional(),
           /** 成稿档：精华版（主要重点）/ 高级版（主要+次要重点） */
           detailLevel: z.enum(["concise", "full"]).optional(),

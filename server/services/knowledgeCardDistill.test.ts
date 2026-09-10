@@ -14,44 +14,48 @@ import {
   KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS,
   KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
   KNOWLEDGE_CARD_DISTILL_MODEL_QWEN_OR,
+  KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
   KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
   KNOWLEDGE_CARD_DISTILL_MODEL_TERRA,
   resolveKnowledgeCardDistillModel,
 } from "../../shared/knowledgeCardDistillModels";
 
 describe("knowledgeCardDistill model", () => {
-  it("defaults to Evolink GPT-5.6 Sol", () => {
-    expect(resolveKnowledgeCardDistillModel(undefined)).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_SOL);
-    expect(KNOWLEDGE_CARD_DISTILL_MODEL).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_SOL);
+  it("defaults to DeepSeek V4 Flash (0910 拍板：不用 Sol)", () => {
+    expect(resolveKnowledgeCardDistillModel(undefined)).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
+    expect(KNOWLEDGE_CARD_DISTILL_MODEL).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
   });
 
-  it("only two tiers remain: Sol and Qwen (0908 拍板)", () => {
+  it("only two tiers remain: DeepSeek and Qwen", () => {
     expect(KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS.map((o) => o.id)).toEqual([
-      KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
+      KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
       KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
     ]);
   });
 
-  it("migrates retired Claude / Kimi tiers to Sol; legacy terra / OR-qwen kept", () => {
+  it("migrates retired Sol / Claude / Kimi tiers to DeepSeek; legacy terra / OR-qwen kept", () => {
+    expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_SOL)).toBe(
+      KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
+    );
     expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_CLAUDE_RETIRED)).toBe(
-      KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
+      KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
     );
     expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_KIMI_RETIRED)).toBe(
-      KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
+      KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
     );
     expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toBe(
       KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
     );
     expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_TERRA)).toBe(
-      KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
+      KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
     );
     expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN_OR)).toBe(
       KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
     );
   });
 
-  it("falls back on unknown id to Sol", () => {
-    expect(resolveKnowledgeCardDistillModel("not-a-model")).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_SOL);
+  it("falls back on unknown id to DeepSeek", () => {
+    expect(resolveKnowledgeCardDistillModel("not-a-model")).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
   });
 });
 
@@ -97,20 +101,21 @@ describe("splitSourceTextForDistill", () => {
 
 describe("per-model distill profiles", () => {
   it("gives each model its own chunking + effort tuning", () => {
-    const sol = knowledgeCardDistillProfile(KNOWLEDGE_CARD_DISTILL_MODEL_SOL);
+    const deepseek = knowledgeCardDistillProfile(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
     const qwen = knowledgeCardDistillProfile(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN);
 
-    // Qwen 最慢且压缩过度 → 段最小、最少小节最高
-    expect(sol.chunkChars).toBeGreaterThan(qwen.chunkChars);
-    expect(qwen.minSectionsPerChunk).toBeGreaterThan(sol.minSectionsPerChunk);
+    // Qwen 最慢且压缩过度 → 段最小、最少小节最高；DeepSeek 便宜且 1M 上下文 → 段大、并发高
+    expect(deepseek.chunkChars).toBeGreaterThan(qwen.chunkChars);
+    expect(deepseek.concurrency).toBeGreaterThanOrEqual(qwen.concurrency);
+    expect(qwen.minSectionsPerChunk).toBeGreaterThan(deepseek.minSectionsPerChunk);
 
-    // 0908/0909 用户令：Sol 只开 medium；Qwen 用 high，不上 xhigh
-    expect(sol.effortChunk).toBe("medium");
-    expect(sol.effortFinal).toBe("medium");
+    // 0910 用户令：DeepSeek 思考 high（不用 low）；0909：Qwen 用 high，不上 xhigh
+    expect(deepseek.effortChunk).toBe("high");
+    expect(deepseek.effortFinal).toBe("high");
     expect(qwen.effortChunk).toBe("high");
     expect(qwen.effortFinal).toBe("high");
 
-    for (const p of [sol, qwen]) {
+    for (const p of [deepseek, qwen]) {
       expect(p.chunkRetries).toBeGreaterThanOrEqual(1);
       expect(p.requestTimeoutMs).toBeGreaterThanOrEqual(60_000);
     }
@@ -123,10 +128,10 @@ describe("per-model distill profiles", () => {
   });
 
   it("estimates chunk count per model", () => {
-    expect(estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_SOL, 3_000)).toBe(1);
-    const solChunks = estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_SOL, 95_000);
+    expect(estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK, 3_000)).toBe(1);
+    const deepseekChunks = estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK, 95_000);
     const qwenChunks = estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN, 95_000);
-    expect(qwenChunks).toBeGreaterThan(solChunks);
+    expect(qwenChunks).toBeGreaterThan(deepseekChunks);
   });
 });
 
@@ -142,5 +147,31 @@ describe("mergeDistilledMarkdownChunks", () => {
     expect(merged).toContain("## B");
     expect(merged).toContain("## C");
     expect(merged.match(/^# /gm)?.length).toBe(1);
+  });
+});
+
+describe("长书单段失败不拖垮整本（0910）", () => {
+  it("失败段是结构化记录不是正文（审查 P1：占位文字不得算成功）；致命错误照旧整本抛", async () => {
+    const { distillOneChunkOrSkip } = await import("./knowledgeCardDistill");
+    const notices: string[] = [];
+    const out = await distillOneChunkOrSkip(n => notices.push(n), 120, 11, "第12章", async () => {
+      throw new Error("模型返回格式异常：Unexpected token <");
+    });
+    expect(out.ok).toBe(false);
+    expect(out).toMatchObject({ ok: false, whereZh: "第 12/120 段（第12章）" });
+    expect(JSON.stringify(out)).not.toContain("未能提炼");
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("第 12/120 段（第12章）提炼失败已跳过");
+    // 空稿也算失败，不许当成功正文
+    const empty = await distillOneChunkOrSkip(n => notices.push(n), 3, 0, "x", async () => "   ");
+    expect(empty.ok).toBe(false);
+    expect(notices).toHaveLength(2);
+    await expect(
+      distillOneChunkOrSkip(n => notices.push(n), 120, 0, "x", async () => {
+        throw new Error("额度不足");
+      }),
+    ).rejects.toThrow("额度不足");
+    expect(notices).toHaveLength(2);
+    expect(await distillOneChunkOrSkip(undefined, 3, 0, "x", async () => "## 正常")).toEqual({ ok: true, markdown: "## 正常" });
   });
 });

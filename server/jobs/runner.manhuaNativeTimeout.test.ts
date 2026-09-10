@@ -90,3 +90,30 @@ describe("原生学习墙钟中止", () => {
     }
   });
 });
+
+describe("withTimeout heartbeat（0910：知识卡提炼不设总时长上限，只按无进度判卡死）", () => {
+  it("有心跳就不超时：总时长远超 timeoutMs 也照常完成", async () => {
+    const { touchJobHeartbeat } = await import("./runner.js");
+    const jobId = "hb-alive";
+    const work = new Promise<string>((resolve) => {
+      let n = 0;
+      const t = setInterval(() => {
+        touchJobHeartbeat(jobId);
+        if (++n >= 6) { clearInterval(t); resolve("done"); }
+      }, 20);
+    });
+    // timeoutMs=10 远小于实际 120ms；stallMs=200 > 心跳间隔 → 不应超时
+    await expect(withTimeout(work, 10, "should-not-fire", { heartbeat: { jobId, stallMs: 200 } })).resolves.toBe("done");
+  }, 5_000);
+
+  it("连续无心跳超过 stallMs 才判卡死，文案说明是卡死不是总时长", async () => {
+    const jobId = "hb-stalled";
+    const never = new Promise<never>(() => {});
+    const onTimeout = vi.fn();
+    const started = Date.now();
+    await expect(withTimeout(never, 60_000, "提炼任务", { heartbeat: { jobId, stallMs: 50 }, onTimeout, cleanupGraceMs: 0 })).rejects.toThrow(/判为卡死/);
+    expect(onTimeout).toHaveBeenCalledTimes(1);
+    // 判死发生在 stall 检查节拍上（15 s 一查），不是 60 s 总时长
+    expect(Date.now() - started).toBeLessThan(30_000);
+  }, 40_000);
+});

@@ -1,0 +1,277 @@
+/**
+ * 真实组件回归（终审 P1）：渲染真的 PlatformPage，走真的「粘贴长文 → 提炼 → 切成稿档 → 派生」。
+ *
+ * 钉两件事：
+ * 1) 派生没结束之前不许出图——此刻文本框里还是完整版，按完整版页数计费、出的也是另一档；
+ *    生成按钮、文本框、上传、档位下拉都必须锁住，且 handler 内也拦（不只是禁按钮）。
+ * 2) 派生结束后正文与报价一起更新；派生失败要退回高级版并保住完整版。
+ *
+ * 全离线：tRPC 与 job 轮询都被拦成本地桩回包。
+ */
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { build } from "esbuild";
+import puppeteer, { type Browser, type Page } from "puppeteer";
+
+let browser: Browser;
+let context: Awaited<ReturnType<Browser["createBrowserContext"]>>;
+let page: Page;
+let bundle: string;
+
+const TA = 'textarea[placeholder*="粘贴中文正文"]';
+const LEVEL = '[aria-label="成稿档"]';
+const SOURCE_TEXT = "这是一段足够长的原始文案，讲现金流、负债与投资比例。".repeat(1200);
+
+beforeAll(async () => {
+  const result = await build({
+    entryPoints: ["client/src/lib/knowledgeCardDeriveInterlock.fixture.tsx"],
+    bundle: true,
+    write: false,
+    format: "iife",
+    platform: "browser",
+    jsx: "automatic",
+    alias: { "@": `${process.cwd()}/client/src`, "@shared": `${process.cwd()}/shared` },
+    loader: { ".png": "dataurl", ".svg": "dataurl", ".jpg": "dataurl", ".css": "text" },
+    define: { "process.env.NODE_ENV": '"production"', "import.meta.env": "__VITE_ENV__" },
+    banner: { js: 'var __VITE_ENV__ = {DEV:false,PROD:true,MODE:"production",SSR:false};' },
+    logLevel: "silent",
+  });
+  bundle = result.outputFiles[0]!.text;
+  browser = await puppeteer.launch({ args: ["--no-sandbox"] });
+}, 180_000);
+
+afterAll(async () => {
+  await context?.close().catch(() => {});
+  await browser?.close();
+});
+
+afterEach(async () => {
+  await page?.close().catch(() => {});
+  await context?.close().catch(() => {});
+});
+
+/** 每个用例一个全新浏览器上下文：localStorage（含成稿档偏好）不串味 */
+async function mount(): Promise<Page> {
+  context = await browser.createBrowserContext();
+  const p = await context.newPage();
+  await p.setRequestInterception(true);
+  p.on("request", (q) => (q.url().startsWith("data:") ? q.continue() : q.respond({ status: 200, body: "" })));
+  await p.goto("http://localhost/", { waitUntil: "domcontentloaded" }).catch(() => {});
+  await p.setContent("<div id=root></div>");
+  await p.evaluate(bundle);
+  await p.waitForSelector(TA, { timeout: 30_000 });
+  return p;
+}
+
+const genButton = () =>
+  page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll("button")).find((x) =>
+      /生成图文笔记|提炼中|生成中/.test(x.textContent || ""),
+    ) as HTMLButtonElement | undefined;
+    return b ? { text: (b.textContent || "").trim(), disabled: b.disabled } : null;
+  });
+
+const taValue = () => page.evaluate((sel) => (document.querySelector(sel) as HTMLTextAreaElement | null)?.value || "", TA);
+
+/** 粘贴长文并点生成：确认框选「先提炼」，出图确认选「取消」，停在提炼稿上 */
+async function distillOnly() {
+  await page.evaluate(
+    (sel, v) => {
+      const el = document.querySelector(sel) as HTMLTextAreaElement;
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(el, v);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    },
+    TA,
+    SOURCE_TEXT,
+  );
+  await new Promise((r) => setTimeout(r, 300));
+  await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll("button")).find((x) => /生成图文笔记/.test(x.textContent || ""));
+    (b as HTMLButtonElement | undefined)?.click();
+  });
+  await page.waitForFunction((sel) => (document.querySelector(sel) as HTMLTextAreaElement | null)?.value?.startsWith("# 财务自由完整版"), { timeout: 30_000 }, TA);
+  // 等按钮回到空闲态再读报价，否则读到的是「提炼中…」
+  await page.waitForFunction(
+    () =>
+      Array.from(document.querySelectorAll("button")).some(
+        (b) => /生成图文笔记（约 \d+ 页/.test(b.textContent || "") && !(b as HTMLButtonElement).disabled,
+      ),
+    { timeout: 30_000 },
+  );
+}
+
+async function switchLevel(v: string) {
+  await page.evaluate(
+    (sel, val) => {
+      const el = document.querySelector(sel) as HTMLSelectElement;
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+      setter.call(el, val);
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    LEVEL,
+    v,
+  );
+  await new Promise((r) => setTimeout(r, 900));
+}
+
+/** 让页面进入「有错误结果」态，清除按钮才渲染 */
+async function distillThenFailedImageGen() {
+  await page.evaluate(() => ((globalThis as never as { fixture: { acceptImageGen: boolean } }).fixture.acceptImageGen = true));
+  await distillOnly();
+  await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll("button")).find((x) => /生成图文笔记/.test(x.textContent || ""));
+    (b as HTMLButtonElement | undefined)?.click();
+  });
+  await page.waitForFunction(
+    () => Array.from(document.querySelectorAll("button")).some((b) => (b.textContent || "").trim() === "清除"),
+    { timeout: 30_000 },
+  );
+}
+
+describe("知识卡精华版派生（真实 PlatformPage）", () => {
+  it("派生中：生成按钮锁住、点它也不出图，文本框与档位下拉都锁住", async () => {
+    page = await mount();
+    await distillOnly();
+    const fullQuote = await genButton();
+    expect(fullQuote?.disabled).toBe(false);
+
+    await switchLevel("concise");
+    const during = await page.evaluate(
+      (ta, lv) => ({
+        taDisabled: (document.querySelector(ta) as HTMLTextAreaElement | null)?.disabled,
+        levelDisabled: (document.querySelector(lv) as HTMLSelectElement | null)?.disabled,
+        uploadDisabled: (document.querySelector('input[type="file"][accept*="epub"]') as HTMLInputElement | null)?.disabled,
+      }),
+      TA,
+      LEVEL,
+    );
+    const btn = await genButton();
+    expect(btn?.disabled).toBe(true);
+    expect(during.taDisabled).toBe(true);
+    expect(during.levelDisabled).toBe(true);
+    expect(during.uploadDisabled).toBe(true);
+
+    // 文本框此刻仍是完整版：这正是「此时出图会按完整版计费」的现场
+    expect(await taValue()).toContain("# 财务自由完整版");
+
+    // 强行点生成（绕过 disabled）：handler 必须自己拦住，不发起任何出图
+    await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll("button")).find((x) => /生成图文笔记|提炼中|生成中/.test(x.textContent || ""));
+      (b as HTMLButtonElement | undefined)?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await new Promise((r) => setTimeout(r, 600));
+    expect(await taValue()).toContain("# 财务自由完整版");
+  }, 180_000);
+
+  it("派生成功：正文换成精华版，报价按精华版重算（页数与积分都变小）", async () => {
+    page = await mount();
+    await distillOnly();
+    const before = await genButton();
+    const beforePages = Number(/约 (\d+) 页/.exec(before?.text || "")?.[1]);
+    const beforeCredits = Number(/· (\d+) 积分/.exec(before?.text || "")?.[1]);
+
+    await switchLevel("concise");
+    await page.evaluate(() => ((globalThis as never as { fixture: { deriveStatus: string } }).fixture.deriveStatus = "succeeded"));
+    await page.waitForFunction((sel) => (document.querySelector(sel) as HTMLTextAreaElement | null)?.value?.startsWith("# 财务自由精华版"), { timeout: 30_000 }, TA);
+
+    const after = await genButton();
+    const afterPages = Number(/约 (\d+) 页/.exec(after?.text || "")?.[1]);
+    const afterCredits = Number(/· (\d+) 积分/.exec(after?.text || "")?.[1]);
+    expect(after?.disabled).toBe(false);
+    expect(afterPages).toBeLessThan(beforePages);
+    expect(afterCredits).toBeLessThan(beforeCredits);
+    // 报价与正文同一份：按钮上的页数必须是精华版算出来的
+    expect(await taValue()).toContain("# 财务自由精华版");
+  }, 180_000);
+
+  it("派生中：清除按钮被锁；即便绕过 disabled 强行点，handler 也拒绝，稿子不被清空", async () => {
+    page = await mount();
+    await distillThenFailedImageGen();
+    // 有错误态 → 清除按钮已渲染，且此刻可用
+    expect(
+      await page.evaluate(() => {
+        const b = Array.from(document.querySelectorAll("button")).find((x) => (x.textContent || "").trim() === "清除") as HTMLButtonElement | undefined;
+        return b ? b.disabled : null;
+      }),
+    ).toBe(false);
+
+    await switchLevel("concise");
+    const disabledDuring = await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll("button")).find((x) => (x.textContent || "").trim() === "清除") as HTMLButtonElement | undefined;
+      return b ? b.disabled : null;
+    });
+    expect(disabledDuring).toBe(true);
+
+    // 绕过按钮层的锁：把 disabled 摘掉再点，handler 内的拦截必须仍然生效
+    await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll("button")).find((x) => (x.textContent || "").trim() === "清除") as HTMLButtonElement | undefined;
+      if (b) {
+        b.disabled = false;
+        b.click();
+      }
+    });
+    await new Promise((r) => setTimeout(r, 500));
+    expect(await taValue()).toContain("# 财务自由完整版");
+
+    // 派生结束后清除才生效，且此时清的是当前稿
+    await page.evaluate(() => ((globalThis as never as { fixture: { deriveStatus: string } }).fixture.deriveStatus = "succeeded"));
+    await page.waitForFunction((sel) => (document.querySelector(sel) as HTMLTextAreaElement | null)?.value?.startsWith("# 财务自由精华版"), { timeout: 30_000 }, TA);
+    await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll("button")).find((x) => (x.textContent || "").trim() === "清除") as HTMLButtonElement | undefined;
+      b?.click();
+    });
+    await new Promise((r) => setTimeout(r, 500));
+    expect(await taValue()).toBe("");
+  }, 180_000);
+
+  it("提炼在途：摘掉 disabled 强行切档，handler 也拒绝——档位不变、不派生", async () => {
+    page = await mount();
+    // 让提炼慢下来，制造「提炼中」窗口
+    await page.evaluate(() => ((globalThis as never as { fixture: { prepareDelayMs: number } }).fixture.prepareDelayMs = 2500));
+    await page.evaluate(
+      (sel, v) => {
+        const el = document.querySelector(sel) as HTMLTextAreaElement;
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      },
+      TA,
+      SOURCE_TEXT,
+    );
+    await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll("button")).find((x) => /生成图文笔记/.test(x.textContent || ""));
+      (b as HTMLButtonElement | undefined)?.click();
+    });
+    await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some((b) => /提炼中/.test(b.textContent || "")), { timeout: 15_000 });
+    await page.evaluate((lv) => {
+      const el = document.querySelector(lv) as HTMLSelectElement;
+      el.disabled = false;
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+      setter.call(el, "concise");
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    }, LEVEL);
+    await page.waitForFunction((sel) => (document.querySelector(sel) as HTMLTextAreaElement | null)?.value?.startsWith("# 财务自由完整版"), { timeout: 30_000 }, TA);
+    await new Promise((r) => setTimeout(r, 600));
+    const after = await page.evaluate(
+      (lv) => ({ level: (document.querySelector(lv) as HTMLSelectElement | null)?.value, enqueues: (globalThis as never as { fixture: { deriveCalls: number } }).fixture.deriveCalls }),
+      LEVEL,
+    );
+    expect(after.level).toBe("full");
+    expect(after.enqueues).toBe(0);
+  }, 180_000);
+
+  it("派生失败：档位退回高级版，完整版留在文本框，不留半截状态", async () => {
+    page = await mount();
+    await distillOnly();
+    await page.evaluate(() => ((globalThis as never as { fixture: { deriveStatus: string } }).fixture.deriveStatus = "failed"));
+    await switchLevel("concise");
+    await page.waitForFunction(
+      (lv) => (document.querySelector(lv) as HTMLSelectElement | null)?.value === "full",
+      { timeout: 30_000 },
+      LEVEL,
+    );
+    expect(await taValue()).toContain("# 财务自由完整版");
+    const btn = await genButton();
+    expect(btn?.disabled).toBe(false);
+  }, 180_000);
+});

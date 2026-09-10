@@ -73,6 +73,7 @@ import {
   markManhuaLearnJobSucceededWithRetry,
   markJobSucceeded,
   patchJobRunningProgress,
+  touchJobRunningUpdatedAt,
   patchJobRunningProgressStrict,
   requeueJob,
   requeueManhuaBgmRefundStrict,
@@ -297,6 +298,42 @@ function sleep(ms: number): Promise<void> {
 
 type JobTimeoutErrorWithPartial<T> = Error & { partialResult?: T };
 
+/**
+ * 任务心跳：长任务（如上千页的知识卡提炼）每推进一步就 touch 一次。
+ * 有心跳的任务不按总时长判死，只在「连续 stallMs 没有任何进度」时才判卡死——
+ * 文件多大、多少页都不用猜一个墙钟数字。
+ */
+const jobHeartbeats = new Map<string, number>();
+/** 上次把心跳刷进 DB 的时刻；僵尸行清理器按 updatedAt 判死（默认 20 分钟），内存心跳必须定期落盘 */
+const jobHeartbeatDbFlushed = new Map<string, number>();
+const HEARTBEAT_DB_FLUSH_MS = 60_000;
+export function touchJobHeartbeat(jobId: string | null | undefined): void {
+  if (!jobId) return;
+  const now = Date.now();
+  jobHeartbeats.set(jobId, now);
+  const last = jobHeartbeatDbFlushed.get(jobId) ?? 0;
+  if (now - last < HEARTBEAT_DB_FLUSH_MS) return;
+  jobHeartbeatDbFlushed.set(jobId, now);
+  // 审查 P0：统稿/派生阶段可能 >20 分钟没有进度写入，reaper 会把 running 行整行删掉。
+  // 失败只记日志：心跳落盘失败不该打断任务，下一次 touch 会再试。
+  void touchJobRunningUpdatedAt(jobId).catch((err) => {
+    jobHeartbeatDbFlushed.set(jobId, last);
+    console.warn(`[runner] heartbeat db touch failed job=${jobId}: ${err instanceof Error ? err.message : String(err)}`);
+  });
+}
+function clearJobHeartbeat(jobId: string | null | undefined): void {
+  if (!jobId) return;
+  jobHeartbeats.delete(jobId);
+  jobHeartbeatDbFlushed.delete(jobId);
+}
+const STALL_CHECK_INTERVAL_MS = 15_000;
+
+/** 连续多久没有进度算卡死；LLM 单次最长 8 分钟、目录页扫读 3 分钟，默认 20 分钟留足余量 */
+function resolveKnowledgeCardDistillStallMs(): number {
+  const raw = Number(process.env.KNOWLEDGE_CARD_DISTILL_STALL_MS);
+  return Number.isFinite(raw) && raw >= 60_000 ? raw : 20 * 60_000;
+}
+
 export async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -304,6 +341,8 @@ export async function withTimeout<T>(
   opts: {
     onTimeout?: () => void | Promise<void>;
     cleanupGraceMs?: number;
+    /** 传了就按心跳判卡死：连续 stallMs 无 touch 才超时；timeoutMs 不再生效（不设总时长上限） */
+    heartbeat?: { jobId: string; stallMs: number };
   } = {},
 ): Promise<T> {
   let timeoutHandle: NodeJS.Timeout | null = null;
@@ -313,22 +352,42 @@ export async function withTimeout<T>(
     (value) => ({ status: "fulfilled" as const, value }),
     (reason) => ({ status: "rejected" as const, reason }),
   );
+  const heartbeat = opts.heartbeat;
+  if (heartbeat) touchJobHeartbeat(heartbeat.jobId);
+  const startedAt = Date.now();
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutHandle = setTimeout(() => {
+    const fire = (reason: string) => {
       timeoutTriggered = true;
       // 先把墙钟结果锁成失败，再通知底层中止。若 onTimeout 同步令原任务
       // resolve，而这里后 reject，Promise.race 会把已超时任务误报为成功。
-      reject(new Error(message));
+      reject(new Error(reason));
       try {
         timeoutHook = Promise.resolve(opts.onTimeout?.()).then(() => undefined);
       } catch (error) {
         timeoutHook = Promise.reject(error);
       }
-    }, timeoutMs);
+    };
+    if (heartbeat) {
+      const tick = () => {
+        const idleMs = Date.now() - (jobHeartbeats.get(heartbeat.jobId) ?? startedAt);
+        if (idleMs >= heartbeat.stallMs) {
+          fire(`${message}（连续 ${Math.round(idleMs / 60_000)} 分钟没有任何进度，判为卡死）`);
+          return;
+        }
+        // 有心跳的任务不设总时长上限：文件不限大小，时间就不能限（用户 0910 拍板）
+        timeoutHandle = setTimeout(tick, STALL_CHECK_INTERVAL_MS);
+      };
+      timeoutHandle = setTimeout(tick, STALL_CHECK_INTERVAL_MS);
+    } else {
+      timeoutHandle = setTimeout(() => fire(message), timeoutMs);
+    }
   });
   try {
-    return await Promise.race([promise, timeoutPromise]);
+    const value = await Promise.race([promise, timeoutPromise]);
+    if (heartbeat) clearJobHeartbeat(heartbeat.jobId);
+    return value;
   } catch (error) {
+    if (heartbeat) clearJobHeartbeat(heartbeat.jobId);
     if (!timeoutTriggered) throw error;
     await timeoutHook.catch(() => undefined);
     const cleanupGraceMs = Math.max(0, opts.cleanupGraceMs ?? 30_000);
@@ -1727,14 +1786,10 @@ export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
         // 13 页双段 Sol（含 reasoning 重试）默认 22min，避免墙钟砍半稿
         return 22 * 60_000;
       }
-      if (input.action === "knowledge_card_distill") {
-        const raw = Number(process.env.KNOWLEDGE_CARD_DISTILL_JOB_TIMEOUT_MS);
-        if (Number.isFinite(raw) && raw >= 300_000) return raw;
-        // 纯文本：整本约 10 万字十余段，默认 40min；
-        // 带文件（0908）：任务里还有 EPUB 转换、缩略目录页扫读、选中页渲染，默认 120min
-        const hasFiles = Array.isArray((input.params as Record<string, unknown>)?.files)
-          && ((input.params as Record<string, unknown>).files as unknown[]).length > 0;
-        return (hasFiles ? 120 : 40) * 60_000;
+      if (input.action === "knowledge_card_distill" || input.action === "knowledge_card_derive_level") {
+        // 知识卡提炼/派生没有总时长上限：只按心跳判卡死（withTimeout heartbeat，连续无进度才判死）。
+        // 「不限页数与大小」是产品口径，时间也不能限；这里不读任何超时环境变量。
+        return Number.MAX_SAFE_INTEGER;
       }
       if (input.action === "platform_topic_expand") {
         const raw = Number(process.env.PLATFORM_TOPIC_EXPAND_JOB_TIMEOUT_MS);
@@ -3226,6 +3281,61 @@ async function processPlatformJob(
       };
     }
 
+    // ── knowledge_card_derive_level：完整版长稿 → 精华版（DeepSeek，按批挑节压缩） ──
+    if (input.action === "knowledge_card_derive_level") {
+      const { deriveKnowledgeCardCompact } = await import("../services/knowledgeCardLevelDerive.js");
+      const { planKnowledgeCardPages } = await import("../../shared/knowledgeCardPagination.js");
+      const fullMarkdown = String(params.fullMarkdown || "");
+      if (fullMarkdown.trim().length < 200) throw new Error("完整版稿子太短，无需派生精华版");
+      // 审查 P1：派生稿的页费档位跟着完整版的提炼 receipt 走，不信客户端声明；
+      // 查不到 receipt（手写/未走提炼）就拒绝派生（fail-closed），否则换低档出图的洞会从这里重开。
+      const { lookupKnowledgeCardDistillReceiptModel, recordKnowledgeCardDistillReceipt } = await import(
+        "../services/knowledgeCardDistillReceipt.js"
+      );
+      const receiptModel = await lookupKnowledgeCardDistillReceiptModel(Number(jobUserId), fullMarkdown);
+      if (!receiptModel) throw new Error("找不到这份完整版的提炼记录，无法派生精华版；请重新提炼后再切档");
+      const distillModel = receiptModel;
+      const targetSections = Number.isFinite(Number(params.targetSections)) && Number(params.targetSections) > 0 ? Number(params.targetSections) : undefined;
+      const patchProgress = async (patch: Record<string, unknown>) => {
+        touchJobHeartbeat(platformJobId);
+        if (!platformJobId) return;
+        await patchJobRunningProgress(platformJobId, patch).catch(() => {});
+      };
+      await patchProgress({ distillStage: "deriving", distillPercent: 1 });
+      const { knowledgeCardDistillActivity } = await import("../services/knowledgeCardDistillActivity.js");
+      const derived = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), () => deriveKnowledgeCardCompact({
+        fullMarkdown,
+        targetSections,
+        onProgress: async (p) => {
+          const frac = p.totalBatches > 0 ? Math.min(1, p.doneBatches / p.totalBatches) : 0;
+          await patchProgress({
+            distillStage: "deriving",
+            distillStageDone: p.doneBatches,
+            distillStageTotal: p.totalBatches,
+            distillPercent: Math.round(5 + 90 * frac),
+          });
+        },
+      }));
+      await patchProgress({ distillStage: "finishing", distillPercent: 98 });
+      // 派生稿记同档 receipt：出图按完整版的档位结算
+      await recordKnowledgeCardDistillReceipt(Number(jobUserId), distillModel, derived.markdown);
+      const plan = planKnowledgeCardPages(derived.markdown, distillModel);
+      return {
+        provider: "evolink",
+        output: {
+          success: true,
+          distilledMarkdown: derived.markdown,
+          distillModel,
+          detailLevel: "concise",
+          sections: derived.sections,
+          targetSections: derived.targetSections,
+          passes: derived.passes,
+          pageCount: plan.pageCount,
+          credits: plan.credits,
+        },
+      };
+    }
+
     // ── knowledge_card_distill ───────────────────────────────────────────────
     // 长书提炼：整本 10 万字要分十几段跑数分钟，放同步 HTTP 会被网关掐断且拖死健康检查。
     if (input.action === "knowledge_card_distill") {
@@ -3253,10 +3363,12 @@ async function processPlatformJob(
        * 分段提炼 40–90 → 统稿 90–98；终态由 job 状态给出成功/失败。
        */
       const patchProgress = async (patch: Record<string, unknown>) => {
+        touchJobHeartbeat(platformJobId);
         if (!platformJobId) return;
         await patchJobRunningProgress(platformJobId, patch).catch(() => {});
       };
-      const prepared = await prepareKnowledgeCardCopy({
+      const { knowledgeCardDistillActivity } = await import("../services/knowledgeCardDistillActivity.js");
+      const prepared = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), () => prepareKnowledgeCardCopy({
         sourceText,
         files: jobFiles,
         forceDistill: true,
@@ -3288,7 +3400,7 @@ async function processPlatformJob(
             distillPercent: p.phase === "refining" ? 90 : Math.round(40 + 50 * frac),
           });
         },
-      });
+      }));
       await patchProgress({ distillStage: "finishing", distillPercent: 98 });
       const plan = planKnowledgeCardPages(prepared.distilledMarkdown, prepared.distillModel);
 
@@ -3469,6 +3581,11 @@ async function runClaimedJob(
       jobType === "audio" &&
       isRecord(job.input) &&
       job.input.action === MANHUA_BGM_ACTION;
+    // 知识卡提炼：按心跳判卡死（每读一页/每提一段都 touch），不按总时长；timeoutMs 只是硬上限兜底
+    const distillHeartbeat =
+      isRecord(job.input) && (job.input.action === "knowledge_card_distill" || job.input.action === "knowledge_card_derive_level")
+        ? { jobId: job.id, stallMs: resolveKnowledgeCardDistillStallMs() }
+        : undefined;
     const { output, provider } = await withTimeout(
       executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id),
       timeoutMs,
@@ -3480,7 +3597,9 @@ async function runClaimedJob(
             },
             cleanupGraceMs: 30_000,
           }
-        : undefined
+        : distillHeartbeat
+          ? { heartbeat: distillHeartbeat }
+          : undefined
     );
     const succeededPersisted = manhuaLearnJob
       ? await markManhuaLearnJobSucceededWithRetry(job.id, output, provider)
