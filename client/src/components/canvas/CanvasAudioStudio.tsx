@@ -187,7 +187,10 @@ export function CanvasAudioStudioView({
   const [musicPrompt, setMusicPrompt] = useState("");
   const [musicDuration, setMusicDuration] = useState(30);
   const [brief, setBrief] = useState<MusicBrief | null>(null);
-  const [bgmModel, setBgmModel] = useState<"suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6" | "suno-bridge-v6-wild">("suno-v5.5-beta");
+  // 内部账号（有桥）默认直出 Suno v6（用户 0910 已升 Pro，不用 mini）；普通账号只有网关 v5.5
+  const [bgmModel, setBgmModel] = useState<"suno-v5.5-beta" | "suno-bridge-v6-mini" | "suno-bridge-v6" | "suno-bridge-v6-wild">(
+    bgmModels?.some(item => item.model === "suno-bridge-v6") ? "suno-bridge-v6" : "suno-v5.5-beta",
+  );
   const [resumable, setResumable] = useState<Record<string, JobResult>>({});
   const [confirmation, setConfirmation] = useState<
     | { kind: "dialogue"; cueId: string; inputKey: string }

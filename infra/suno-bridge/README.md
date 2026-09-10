@@ -12,7 +12,7 @@
    （可选，网页代号 0910 已对照确认）SUNO_BRIDGE_MODEL_V6_MINI=chirp-goose  SUNO_BRIDGE_MODEL_V6=chirp-hawk  SUNO_BRIDGE_MODEL_V6_WILD=chirp-hawk-wild
 
 ## 主站怎么用
-配乐间「Suno 直连（内部）」来源，只对 admin/supervisor 显示；服务 `server/services/sunoBridgeMusic.ts`。
+配乐间「配乐来源」下拉只对 admin/supervisor 显示，默认 Suno v6（Pro 账号）；服务 `server/services/sunoBridgeMusic.ts`。
 桥接口：POST /api/custom_generate {prompt, tags, title, make_instrumental, model, wait_audio:false, negative_tags}
 → 返回两条 clip；GET /api/get?ids=a,b 轮询到 status=complete 取 audio_url。
 
