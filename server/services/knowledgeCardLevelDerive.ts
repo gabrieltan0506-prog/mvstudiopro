@@ -6,6 +6,7 @@
  */
 import { countMarkdownSections, mergeDistilledMarkdownChunks } from "./knowledgeCardDistill.js";
 import { touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivity.js";
+import { KNOWLEDGE_CARD_LIGHT_ORDER, KNOWLEDGE_CARD_PREMIUM_ORDER } from "./knowledgeCardGatewayOrder.js";
 
 /** 网关顺序（0911：同模型先换供应商）：EvoLink(DeepSeek) → OpenRouter(DeepSeek) → 新加坡(Qwen) → OpenRouter(Qwen) */
 export const KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK || "deepseek-v4-flash").trim();
@@ -19,15 +20,33 @@ const DERIVE_BATCH_MAX_CHARS = Math.max(20_000, Number(process.env.KNOWLEDGE_CAR
 const DERIVE_TIMEOUT_MS = Math.max(120_000, Number(process.env.KNOWLEDGE_CARD_DERIVE_TIMEOUT_MS) || 15 * 60_000);
 
 type DeriveGateway = { name: "evolink" | "dashscope_sg" | "openrouter"; url: string; key: string; model: string };
-function deriveGateways(): DeriveGateway[] {
-  const out: DeriveGateway[] = [];
+function deriveGateways(model?: string): DeriveGateway[] {
   const evo = String(process.env.EVOLINK_API_KEY || "").trim();
   const sg = String(process.env.DASHSCOPE_SG_PLAN_KEY || "").trim();
   const or = String(process.env.OPENROUTER_API_KEY || "").trim();
-  if (evo) out.push({ name: "evolink", url: EVOLINK_DIRECT_CHAT_URL, key: evo, model: KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK });
-  if (or) out.push({ name: "openrouter", url: OPENROUTER_CHAT_URL, key: or, model: KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER });
-  if (sg) out.push({ name: "dashscope_sg", url: DASHSCOPE_SG_PLAN_CHAT_URL, key: sg, model: KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG });
-  if (or) out.push({ name: "openrouter", url: OPENROUTER_CHAT_URL, key: or, model: "qwen/qwen3.8-max" });
+  // 终审第五条：派生与主链共用同一份顺序；轻量档 receipt 的稿子走轻量链，不从 DeepSeek 起跳
+  const lightTier = String(model || "").trim() === "qwen3.8-max";
+  const order = lightTier ? KNOWLEDGE_CARD_LIGHT_ORDER : KNOWLEDGE_CARD_PREMIUM_ORDER;
+  const out: DeriveGateway[] = [];
+  for (const step of order) {
+    if (step.gateway === "evolink" && evo) {
+      out.push({
+        name: "evolink",
+        url: EVOLINK_DIRECT_CHAT_URL,
+        key: evo,
+        model: step.tier === "qwen" ? KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG : KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK,
+      });
+    } else if (step.gateway === "dashscope_sg" && sg) {
+      out.push({ name: "dashscope_sg", url: DASHSCOPE_SG_PLAN_CHAT_URL, key: sg, model: KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG });
+    } else if (step.gateway === "openrouter" && or) {
+      out.push({
+        name: "openrouter",
+        url: OPENROUTER_CHAT_URL,
+        key: or,
+        model: step.tier === "qwen" ? "qwen/qwen3.8-max" : KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER,
+      });
+    }
+  }
   return out;
 }
 
@@ -100,8 +119,12 @@ async function chatOnceInner(gw: DeriveGateway, params: { system: string; user: 
         { role: "user", content: params.user },
       ],
       temperature: 0.2,
-      // DeepSeek 思考 high 的推理 token 也计入 max_tokens：翻倍留给思维链；新加坡 Qwen 输出上限按 32k 收
-      max_tokens: gw.name === "dashscope_sg" ? Math.min(params.maxTokens, 32_768) : Math.min(params.maxTokens * 2, 384_000),
+      // DeepSeek 思考 high 的推理 token 也计入 max_tokens：翻倍留给思维链；
+      // Qwen 跳（新加坡与 OpenRouter 第四跳 qwen/*）按 32k 输出上限同口径收，不吃翻倍（审查 P1）
+      max_tokens:
+        gw.name === "dashscope_sg" || gw.model.startsWith("qwen")
+          ? Math.min(params.maxTokens, 32_768)
+          : Math.min(params.maxTokens * 2, 384_000),
       // 0910 用户令：思考一律打开、不准关闭，档位 high（新加坡 compatible-mode 只认 enable_thinking）
       ...(gw.name === "evolink"
         ? { thinking: { type: "enabled" }, reasoning_effort: "high" }
@@ -128,7 +151,8 @@ async function chatOnceInner(gw: DeriveGateway, params: { system: string; user: 
 
 /** 按网关链调用：一家坏了（HTTP 错 / 空内容 / 截断）换下一家 */
 async function deriveChat(params: { system: string; user: string; model?: string; maxTokens: number; abortSignal?: AbortSignal }): Promise<string> {
-  const gateways = deriveGateways();
+  // 终审第五条：model（来自服务端 receipt）决定链序，不再丢弃
+  const gateways = deriveGateways(params.model);
   if (!gateways.length) throw new Error("精华版派生未配置（EVOLINK_API_KEY / OPENROUTER_API_KEY）");
   let lastError: Error | null = null;
   for (let i = 0; i < gateways.length; i++) {
@@ -143,6 +167,9 @@ async function deriveChat(params: { system: string; user: string; model?: string
   }
   throw lastError || new Error("精华版派生失败");
 }
+
+/** 仅测试用：暴露链构造（不带凭证真值，只反映顺序与模型选择） */
+export const __testDeriveGateways = deriveGateways;
 
 export type DeriveProgress = { doneBatches: number; totalBatches: number; pass: number };
 

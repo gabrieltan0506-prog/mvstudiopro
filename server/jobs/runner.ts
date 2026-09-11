@@ -3306,6 +3306,8 @@ async function processPlatformJob(
       const derived = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), () => deriveKnowledgeCardCompact({
         fullMarkdown,
         targetSections,
+        // 终审第五条：链序按服务端 receipt 档位走，不信客户端声明
+        model: receiptModel,
         onProgress: async (p) => {
           const frac = p.totalBatches > 0 ? Math.min(1, p.doneBatches / p.totalBatches) : 0;
           await patchProgress({

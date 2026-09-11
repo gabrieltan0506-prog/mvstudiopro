@@ -54,13 +54,13 @@ describe("distillGatewayChain（0911：同模型先换供应商，换不动才�
 });
 
 describe("目录页扫读挑页（makeKnowledgeCardPageSelector）", () => {
-  it("vision tiers down → Qwen fallback chain (新加坡 → EvoLink), keeps only pages present on the sheets", async () => {
+  it("精细档兜底只走精细序的 Qwen 尾段（新加坡→OpenRouter），绝不出现第 5 跳 EvoLink Qwen（0911 终审）", async () => {
     vi.stubEnv("EVOLINK_API_KEY", "ev-key");
-    vi.stubEnv("OPENROUTER_API_KEY", "");
+    vi.stubEnv("OPENROUTER_API_KEY", "sk-or-1");
     vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "sg-key");
     const calls: string[] = [];
     __setKnowledgeCardDistillGatewayInvokerForTest(async (p) => {
-      calls.push(`${p.gateway}:${p.modelName}`);
+      calls.push(`${p.gateway}:${p.tier ?? "?"}`);
       if (p.gateway === "dashscope_sg") throw new Error("算力紧张，请稍后再试");
       return `选好了：{"pages":[{"page":41,"reason":"分式图解"},{"page":999,"reason":"不存在"},{"page":2}]}`;
     });
@@ -68,9 +68,17 @@ describe("目录页扫读挑页（makeKnowledgeCardPageSelector）", () => {
     const picked = await triageVisionDown(() =>
       select([{ index: 1, pageNumbers: Array.from({ length: 48 }, (_, i) => i + 1), imageUrl: "https://signed/sheet-1.jpg", gcsUri: "gs://b/sheet-1.jpg" }], 48),
     );
-    expect(calls).toEqual([`dashscope_sg:${KNOWLEDGE_CARD_DISTILL_MODEL_QWEN}`, `evolink:${KNOWLEDGE_CARD_DISTILL_MODEL_QWEN}`]);
-    // 0911：OPENROUTER 未配（本用例 stub 为空），Qwen 链只剩 新加坡 → EvoLink
+    expect(calls).toEqual(["dashscope_sg:qwen", "openrouter:qwen"]);
     expect(picked).toEqual([{ pageNumber: 41, reason: "分式图解" }, { pageNumber: 2, reason: undefined }]);
+
+    // OpenRouter 未配时尾段只剩新加坡：它挂了本组就放弃，不去打 EvoLink Qwen（那是轻量档的跳）
+    calls.length = 0;
+    vi.stubEnv("OPENROUTER_API_KEY", "");
+    const none = await triageVisionDown(() =>
+      select([{ index: 1, pageNumbers: [1, 2, 3], imageUrl: "https://signed/sheet-1.jpg", gcsUri: "gs://b/sheet-1.jpg" }], 3),
+    );
+    expect(calls).toEqual(["dashscope_sg:qwen"]);
+    expect(none).toEqual([]);
   });
 
   it("fatal quota errors do not fall over; triage failure yields no pages instead of breaking distill", async () => {

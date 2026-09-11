@@ -30,6 +30,12 @@ import {
   type KnowledgeCardDistillModelId,
 } from "../../shared/knowledgeCardDistillModels.js";
 import {
+  KNOWLEDGE_CARD_LIGHT_ORDER,
+  KNOWLEDGE_CARD_PREMIUM_ORDER,
+  filterConfiguredSteps,
+  type KnowledgeCardGatewayStep,
+} from "./knowledgeCardGatewayOrder.js";
+import {
   getEvolinkApiKey,
   getOfficialOpenAiApiKey,
   OPENAI_OFFICIAL_CHAT_COMPLETIONS_URL,
@@ -43,7 +49,7 @@ import {
   type KnowledgeCardPageSelection,
 } from "./knowledgeCardDocumentPages.js";
 import { convertEpubToPdf, isEpubFile } from "./knowledgeCardEpubToPdf.js";
-import { invokePageTriageJson } from "./knowledgeCardPageTriage.js";
+import { looksLikeTriageJson, invokePageTriageJson } from "./knowledgeCardPageTriage.js";
 
 /** 百炼新加坡 Token Plan（Qwen 官方兜底）；与整形链 `plan_sg_qwen` 同一端点与密钥 */
 const DASHSCOPE_SG_PLAN_CHAT_URL =
@@ -628,9 +634,8 @@ function buildDistillUserContent(params: {
 type DistillGateway = "evolink" | "openai_official" | "dashscope_sg" | "openrouter";
 
 /**
- * 读档鏈的一跳：网关 + 该跳真正执行的模型档。
- * 0911 用户拍板：同一个模型先换供应商，换不动才降档——所以 OpenRouter 会出现两次
- * （第二跳跑 DeepSeek、第四跳跑 Qwen），必须把「这一跳用什么模型」写进链里。
+ * 读档鏈的一跳：网关 + 该跳真正执行的模型档。顺序唯一定义在 knowledgeCardGatewayOrder.ts，
+ * 这里只按已配置钥匙过滤（0911 终审第五条：三条链共用同一份顺序）。
  */
 export type DistillGatewayStep = { gateway: DistillGateway; tier: "deepseek" | "qwen" };
 
@@ -651,6 +656,8 @@ async function invokeDistillViaGateway(params: {
   gateway: DistillGateway;
   /** 该跳的模型档（见 DistillGatewayStep）；缺省按 modelName 推 */
   tier?: "deepseek" | "qwen";
+  /** 输出最短字数（默认 20）；JSON 任务（挑页）传小值，别把合法空表当算力异常 */
+  minOutputChars?: number;
   sourceText: string;
   imageUrls: string[];
   pageImages?: DistillPageImage[];
@@ -710,14 +717,19 @@ async function invokeDistillViaGateway(params: {
     url = OPENROUTER_CHAT_URL;
     body.model = tier === "qwen" ? QWEN_OPENROUTER_MODEL : DEEPSEEK_OPENROUTER_VISION_MODEL;
     body.reasoning = { effort: deepseekReasoningEffort(params.effort) };
-    body.max_tokens = deepseekMaxTokens(params.maxTokens ?? DISTILL_MAX_TOKENS);
+    // 审查 P1：Qwen 跳不能沿用 DeepSeek 的翻倍逻辑——统稿 120k×2=240k 超 Qwen 输出上限，
+    // 兜底末跳会确定性 400；与新加坡跳同口径收 32k
+    body.max_tokens =
+      tier === "qwen"
+        ? Math.min(params.maxTokens ?? DISTILL_MAX_TOKENS, 32_768)
+        : deepseekMaxTokens(params.maxTokens ?? DISTILL_MAX_TOKENS);
   } else {
     key = getDashscopeSgPlanKey();
     url = DASHSCOPE_SG_PLAN_CHAT_URL;
     // 新加坡通道只有 Qwen；DeepSeek 档兜底到这里时模型也要换成 Qwen
     body.model = KNOWLEDGE_CARD_DISTILL_MODEL_QWEN;
     body.enable_thinking = true;
-    body.max_tokens = params.maxTokens ?? DISTILL_MAX_TOKENS;
+    body.max_tokens = Math.min(params.maxTokens ?? DISTILL_MAX_TOKENS, 32_768);
   }
   if (!key) throw new Error(`提炼通道未配置（${gatewayLabel(params.gateway)}），请稍后重试`);
 
@@ -740,7 +752,7 @@ async function invokeDistillViaGateway(params: {
   }
   if (!res.ok) {
     console.warn(
-      `[knowledgeCardDistill] ${gatewayLabel(params.gateway)} ${params.modelName} HTTP ${res.status}: ${raw.slice(0, 400)}`,
+      `[knowledgeCardDistill] ${gatewayLabel(params.gateway, tier)} ${String(body.model || params.modelName)} HTTP ${res.status}: ${raw.slice(0, 400)}`,
     );
     throw mapDistillUpstreamError(res.status, raw);
   }
@@ -757,7 +769,9 @@ async function invokeDistillViaGateway(params: {
   // 截断不当成功：半截稿会顺利通过下游长度检查并照常收费
   if (finish === "length" || finish === "max_tokens") throw new Error(KNOWLEDGE_CARD_DISTILL_TIMEOUT_MESSAGE);
   const out = extractFirstChoicePlainText(json as Parameters<typeof extractFirstChoicePlainText>[0]).trim();
-  if (!out || out.length < 20) {
+  // 正文默认 20 字下限；挑页这类 JSON 任务由调用方降门槛——合法的 {"pages":[]} 只有 13 字（终审第五条）
+  const minOut = params.minOutputChars ?? 20;
+  if (!out || out.length < minOut) {
     throw new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
   }
   return out;
@@ -769,21 +783,13 @@ async function invokeDistillViaGateway(params: {
  * - 轻量档：新加坡(Qwen) → OpenRouter(Qwen) → EvoLink(Qwen)
  */
 export function distillGatewayChain(modelName: KnowledgeCardDistillModelId): DistillGatewayStep[] {
-  const evo = Boolean(getEvolinkApiKey());
-  const sg = Boolean(getDashscopeSgPlanKey());
-  const or = Boolean(getOpenRouterApiKey());
-  const chain: DistillGatewayStep[] = [];
-  if (modelName === KNOWLEDGE_CARD_DISTILL_MODEL_QWEN) {
-    if (sg) chain.push({ gateway: "dashscope_sg", tier: "qwen" });
-    if (or) chain.push({ gateway: "openrouter", tier: "qwen" });
-    if (evo) chain.push({ gateway: "evolink", tier: "qwen" });
-    return chain;
-  }
-  if (evo) chain.push({ gateway: "evolink", tier: "deepseek" });
-  if (or) chain.push({ gateway: "openrouter", tier: "deepseek" });
-  if (sg) chain.push({ gateway: "dashscope_sg", tier: "qwen" });
-  if (or) chain.push({ gateway: "openrouter", tier: "qwen" });
-  return chain;
+  const configured = {
+    evolink: Boolean(getEvolinkApiKey()),
+    dashscope_sg: Boolean(getDashscopeSgPlanKey()),
+    openrouter: Boolean(getOpenRouterApiKey()),
+  };
+  const order = modelName === KNOWLEDGE_CARD_DISTILL_MODEL_QWEN ? KNOWLEDGE_CARD_LIGHT_ORDER : KNOWLEDGE_CARD_PREMIUM_ORDER;
+  return filterConfiguredSteps(order, configured);
 }
 
 /** 测试可注入的单通道执行器 */
@@ -813,8 +819,18 @@ async function invokeDistillLlm(params: {
   validate?: (text: string) => string | null;
   /** 覆盖默认输出上限（最终统稿用） */
   maxTokens?: number;
+  /** 输出最短字数（透传单跳；挑页 JSON 传小值） */
+  minOutputChars?: number;
+  /** 覆盖链序（挑页的降档尾段用：只走精细档的 Qwen 尾跳，不多出第 5 跳） */
+  chainOverride?: readonly KnowledgeCardGatewayStep[];
 }): Promise<string> {
-  const chain = distillGatewayChain(params.modelName);
+  const chain = params.chainOverride
+    ? filterConfiguredSteps(params.chainOverride, {
+        evolink: Boolean(getEvolinkApiKey()),
+        dashscope_sg: Boolean(getDashscopeSgPlanKey()),
+        openrouter: Boolean(getOpenRouterApiKey()),
+      })
+    : distillGatewayChain(params.modelName);
   if (!chain.length) throw new Error("提炼通道未配置，请稍后重试");
   let lastError: Error | null = null;
   for (let i = 0; i < chain.length; i++) {
@@ -1457,7 +1473,12 @@ const TRIAGE_SHEETS_PER_CALL = 8;
  * 目录页扫读挑页：用所选档位模型看缩略图目录，返回值得参考的页码。
  * 扫读失败不阻断整体提炼（退回无参考页）。
  */
-export function makeKnowledgeCardPageSelector(_modelName: KnowledgeCardDistillModelId) {
+export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillModelId) {
+  // 终审第五条：挑页也按档位走同一份顺序——
+  // 轻量档不从 DeepSeek 视觉起跳，直接走轻量 Qwen 全链；
+  // 精细档降档尾段只走精细顺序里的 Qwen 两跳（新加坡→OpenRouter），不多出第 5 跳。
+  const lightTier = resolveKnowledgeCardDistillModel(modelName) === KNOWLEDGE_CARD_DISTILL_MODEL_QWEN;
+  const qwenChain = lightTier ? KNOWLEDGE_CARD_LIGHT_ORDER : KNOWLEDGE_CARD_PREMIUM_ORDER.filter((s) => s.tier === "qwen");
   return async (
     sheets: KnowledgeCardContactSheet[],
     pageCount: number,
@@ -1471,23 +1492,30 @@ export function makeKnowledgeCardPageSelector(_modelName: KnowledgeCardDistillMo
       try {
         const userText = `全书共 ${pageCount} 页；本次目录页覆盖第 ${pageNumbers[0]}–${pageNumbers[pageNumbers.length - 1]} 页（共 ${group.length} 张目录页）。`;
         const imageUrls = group.map((sheet) => sheet.imageUrl);
-        // 主力 DeepSeek 视觉档（JSON 模式），兜底新加坡 Qwen3.8-Max；不用 Sol（用户 0910：太贵）
-        const raw = await invokePageTriageJson({
-          system: buildPageTriageSystem(),
-          userText,
-          imageUrls,
-          fallback: () =>
-            invokeDistillLlm({
-              sourceText: userText,
+        const qwenFallback = () =>
+          invokeDistillLlm({
+            sourceText: userText,
+            imageUrls,
+            modelName: KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
+            minSections: 1,
+            // 用户 0910 令：思考一律 high（Qwen 走 EvoLink 时映射 medium 是 0909 拍板）
+            effort: envStr("KNOWLEDGE_CARD_PAGE_TRIAGE_EFFORT", "high"),
+            systemOverride: buildPageTriageSystem(),
+            timeoutMs: 180_000,
+            chainOverride: qwenChain,
+            // 终审第五条：JSON 校验放进每一跳——新加坡回非 JSON 要在跳内判失败换下一跳，
+            // 而不是整个 fallback 回来才发现；合法的 {"pages":[]} 是成功，降门槛放行
+            minOutputChars: 2,
+            validate: (out) => (looksLikeTriageJson(out) ? null : `挑页回包不是合法 JSON：${out.slice(0, 60)}`),
+          });
+        const raw = lightTier
+          ? await qwenFallback()
+          : await invokePageTriageJson({
+              system: buildPageTriageSystem(),
+              userText,
               imageUrls,
-              modelName: KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
-              minSections: 1,
-              // 用户 0910 令：思考一律 high（Qwen 走 EvoLink 时映射 medium 是 0909 拍板）
-              effort: envStr("KNOWLEDGE_CARD_PAGE_TRIAGE_EFFORT", "high"),
-              systemOverride: buildPageTriageSystem(),
-              timeoutMs: 180_000,
-            }),
-        });
+              fallback: qwenFallback,
+            });
         const allowed = new Set(pageNumbers);
         for (const item of parsePageTriage(raw)) if (allowed.has(item.pageNumber)) picked.push(item);
       } catch (err) {

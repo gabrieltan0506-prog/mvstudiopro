@@ -288,15 +288,35 @@ export async function uploadStreamToGcs(params: {
   bucket?: string;
   signal?: AbortSignal;
 }): Promise<{ bucket: string; objectName: string; gcsUri: string }> {
-  params.signal?.throwIfAborted();
+  // 终审 P2：流一旦传进来，所有前置失败（取消/参数/鉴权）都要 cancel 掉它，
+  // 否则底层 fd 挂在一个没人消费的流上泄漏
+  const cancelStream = async () => {
+    await params.stream.cancel().catch(() => {});
+  };
+  try {
+    params.signal?.throwIfAborted();
+  } catch (err) {
+    await cancelStream();
+    throw err;
+  }
   const bucket = params.bucket || getGcsBucketName();
-  if (!bucket) throw new Error("GCS bucket is not configured");
+  if (!bucket) {
+    await cancelStream();
+    throw new Error("GCS bucket is not configured");
+  }
   if (!Number.isFinite(params.contentLength) || params.contentLength <= 0) {
+    await cancelStream();
     throw new Error("gcs_upload_stream_needs_length");
   }
 
   const objectName = normalizeObjectName(params.objectName);
-  const accessToken = await getVertexAccessToken();
+  let accessToken: string;
+  try {
+    accessToken = await getVertexAccessToken();
+  } catch (err) {
+    await cancelStream();
+    throw err;
+  }
   const uploadUrl = new URL(`https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o`);
   uploadUrl.searchParams.set("uploadType", "media");
   uploadUrl.searchParams.set("name", objectName);
