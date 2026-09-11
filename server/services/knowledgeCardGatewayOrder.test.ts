@@ -162,7 +162,7 @@ describe("派生链按 receipt 档位走同一份顺序", () => {
     const deepseek = build(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
     expect(deepseek.map((g) => `${g.name}:${g.tier}`)).toEqual(KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER.map(label));
     expect(deepseek[0]).toMatchObject({ name: "openrouter", model: "deepseek/deepseek-v4.1-flash" });
-    expect(deepseek[1]).toMatchObject({ name: "evolink", model: "deepseek-v4.1-flash" });
+    expect(deepseek[1]).toMatchObject({ name: "evolink", model: "deepseek-v4-flash-vision-exp" });
     expect(deepseek[deepseek.length - 1]).toMatchObject({ name: "openrouter", model: "qwen/qwen3.8-max" });
 
     // 历史 receipt 里的旧档位值（Qwen 轻量档 / DeepSeek V4）也要迁到现行两档，不掉回旧链

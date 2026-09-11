@@ -8,7 +8,7 @@ import {
   OPENROUTER_GLM_PROVIDER_LOCK,
   glm53ReasoningEffort,
 } from "./glmModels.js";
-import { isSseResponse, readGlmSseStream } from "./sseChatStream.js";
+import { isSseIncompleteStreamError, isSseResponse, readGlmSseStream } from "./sseChatStream.js";
 import { extractFirstChoicePlainText, invokeLLM, isTransientLlmError } from "../_core/llm.js";
 import { getPlatformStage2OpenAiModel } from "../config/platformSwitches.js";
 import { TRPCError } from "@trpc/server";
@@ -772,8 +772,11 @@ export async function invokeDeepSeekJsonChatRaw(params: {
   const evolinkKey = String(process.env.EVOLINK_API_KEY || "").trim();
   if (!key && !evolinkKey) {
     const err = new Error("经济档通道未配置") as Error & { gatewayTrace?: EconomyGatewayTrace[] };
-    // 复审五轮 P1-1:fetch 未发生,标记 skipped 供外呼计数排除
-    err.gatewayTrace = [{ gateway: "openrouter", model: ECONOMY_MODEL, outcome: "skipped_not_configured" }];
+    // 复审五轮 P1-1:fetch 未发生,标记 skipped 供外呼计数排除（两家口径一致）
+    err.gatewayTrace = [
+      { gateway: "openrouter", model: ECONOMY_MODEL, outcome: "skipped_not_configured" },
+      { gateway: "evolink", model: ECONOMY_MODEL_EVOLINK, outcome: "skipped_not_configured" },
+    ];
     throw err;
   }
   /**
@@ -813,7 +816,7 @@ export async function invokeDeepSeekJsonChatRaw(params: {
       });
       const canFallback = i < plan.length - 1 && isEconomyFallbackWorthy(err, params.abortSignal);
       if (!canFallback) break;
-      console.warn(`[economy] OpenRouter GLM 5.3 失败 → 改走 EvoLink：${String((err as Error)?.message || err).slice(0, 160)}`);
+      console.warn(`[economy] ${gateway} GLM 5.3 失败 → 改走 ${plan[i + 1]}：${String((err as Error)?.message || err).slice(0, 160)}`);
     }
   }
   const failure = lastErr instanceof Error ? lastErr : new Error(String(lastErr));
@@ -821,17 +824,19 @@ export async function invokeDeepSeekJsonChatRaw(params: {
 }
 
 /**
- * 审查 P2：回落只对「换一家可能就好」的失败——上游 5xx/429/网络/坏 JSON。
- * 调用方已取消、钥匙/额度类 401/402/403、输出被截断（预算问题换家也一样）都不再打第二家，
- * 否则报表三攻 × 两家最多 6 次付费外呼。
+ * 回落判定（0911 复审 P2 修正）：两跳是**两家厂商、两把钥匙、两个账户**，
+ * OpenRouter 的 401/402/403 对 EvoLink 没有预测力，而且这类请求本来就不计费——
+ * 拿它当「省钱」理由不成立，反而比旧代码更容易交白卷。所以只有两种情况不打第二家：
+ * · 调用方已取消（再打也没人要结果）；
+ * · 输出被截断（预算耗尽，换家一样截断）。
+ * 流没跑完（SSE 断流）恒可恢复：按类型短路，绝不按上游原文猜（复审 P1）。
  */
 function isEconomyFallbackWorthy(err: unknown, abortSignal?: AbortSignal): boolean {
   if (abortSignal?.aborted) return false;
   const e = err as { name?: string; message?: string } | null;
   if (e?.name === "AbortError") return false;
-  const msg = String(e?.message || "");
-  if (/HTTP 40[123]\b/.test(msg)) return false;
-  if (/截断/.test(msg)) return false;
+  if (isSseIncompleteStreamError(err)) return true;
+  if (/截断/.test(String(e?.message || ""))) return false;
   return true;
 }
 
@@ -859,7 +864,8 @@ async function callEconomyGateway(
       body: JSON.stringify(buildDeepSeekExpandRequestBody({ ...params, gateway })),
     },
   );
-  const raw = isSseResponse(res) && res.body
+  // 非 200 一律按文本读：HTTP 错误文案要留给上层判定，别被 strict 先抛掉（复审 P2）
+  const raw = res.ok && isSseResponse(res) && res.body
     ? await readGlmSseStream(res.body, undefined, { strictCompletion: true })
     : await res.text();
   if (!res.ok) throw new Error(`经济档 HTTP ${res.status}: ${raw.slice(0, 160)}`);

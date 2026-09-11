@@ -57,6 +57,8 @@ function stubFetch(responses: Array<() => Response>) {
   return { calls, spy };
 }
 
+const payload = JSON.stringify({ reportTitle: "标题够长", insightSummary: ["一条洞察"], trackGrowth: [{ a: 1 }] });
+
 const distillOnce = (opts?: { minSections?: number }) =>
   invokeDistillLlmPossiblyChunked({
     sourceText: "一段足够短的原稿，直接单发不切段。".repeat(8),
@@ -208,8 +210,75 @@ describe("P2 锁定自营供应商无端点：换下一跳；安全拒绝：终�
   });
 });
 
+describe("P1 分类不看上游原文 / 非 200 走状态码映射", () => {
+  it("error 帧文案含「HTTP 401」：主提炼照样换下一跳，不被当确定性失败", async () => {
+    const poisoned = sseBody([
+      ...deltas(SECTIONS.slice(0, 60)),
+      dataFrame({ error: { code: 502, message: "upstream says HTTP 401" } }),
+      DONE,
+    ]);
+    const { calls } = stubFetch([() => poisoned, () => okStream(SECTIONS)]);
+    const out = await distillOnce();
+    expect(out).toContain("## 第3节");
+    expect(calls).toHaveLength(2);
+  });
+
+  it("402 额度不足即使以 SSE 回：按状态码判确定性失败，一跳就停", async () => {
+    const paymentRequired = () =>
+      new Response("data: {\"error\":{\"message\":\"insufficient credits\"}}\n\n", {
+        status: 402, headers: { "content-type": "text/event-stream" },
+      });
+    const { calls } = stubFetch([paymentRequired]);
+    await expect(distillOnce()).rejects.toThrow(/额度不足/);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("429 的 body 里带 safety 字样：仍是可恢复，不误判成安全拒答", async () => {
+    const rateLimited = () =>
+      new Response(JSON.stringify({ error: { message: "rate limited by safety throttler" } }), {
+        status: 429, headers: { "content-type": "application/json" },
+      });
+    const { calls } = stubFetch([rateLimited, () => okStream(SECTIONS)]);
+    const out = await distillOnce();
+    expect(out).toContain("## 第1节");
+    expect(calls).toHaveLength(2);
+  });
+
+  it("finish_reason=content_filter：内容安全拦截是确定性失败，不再换跳", async () => {
+    const filtered = () =>
+      sseBody([...deltas(SECTIONS.slice(0, 40)), dataFrame({ choices: [{ delta: {}, finish_reason: "content_filter" }] }), DONE]);
+    const { calls } = stubFetch([filtered]);
+    await expect(distillOnce()).rejects.toThrow(/内容被安全策略拦截/);
+    expect(calls).toHaveLength(1);
+  });
+});
+
+describe("P1 挑页链也吃严格完整性", () => {
+  it("挑页：断流换下一跳；finish_reason 在倒数第二帧、末帧空 choices 带 usage 仍算成功", async () => {
+    const { invokePageTriageJson } = await import("./knowledgeCardPageTriage");
+    const pages = '{"pages":[{"page":7,"reason":"表格"}]}';
+    const tailUsage = sseBody([
+      ...deltas(pages),
+      dataFrame({ choices: [{ delta: {}, finish_reason: "stop" }] }),
+      dataFrame({ choices: [], usage: { completion_tokens: 5 } }),
+      DONE,
+    ]);
+    const { calls } = stubFetch([() => missingTerminalStream(pages), () => tailUsage]);
+    const out = await invokePageTriageJson({ system: "s", userText: "u", imageUrls: ["https://x/1.jpg"] });
+    expect(out).toContain('"page":7');
+    expect(calls).toHaveLength(2);
+  });
+
+  it("挑页：合法空表 {\"pages\":[]} 这种极短输出不被 strict 误杀", async () => {
+    const { invokePageTriageJson } = await import("./knowledgeCardPageTriage");
+    const { calls } = stubFetch([() => okStream('{"pages":[]}')]);
+    const out = await invokePageTriageJson({ system: "s", userText: "u", imageUrls: ["https://x/1.jpg"] });
+    expect(out).toBe('{"pages":[]}');
+    expect(calls).toHaveLength(1);
+  });
+});
+
 describe("P2 经济档跨网关回执：实际外呼次数与成功网关记真账", () => {
-  const payload = JSON.stringify({ reportTitle: "标题够长", insightSummary: ["一条洞察"], trackGrowth: [{ a: 1 }] });
 
   it("OpenRouter 直接成功：1 次外呼，gateway=openrouter", async () => {
     const { calls } = stubFetch([() => okStream(payload)]);
@@ -263,9 +332,29 @@ describe("P2 经济档跨网关回执：实际外呼次数与成功网关记真�
     )).toHaveLength(0);
   });
 
-  it("401 钥匙错：确定性失败不再打第二家", async () => {
-    const { calls } = stubFetch([() => new Response("bad key", { status: 401 })]);
-    await expect(invokeDeepSeekJsonChatRaw({ system: "s", user: "u" })).rejects.toThrow(/401/);
+  it("OpenRouter 401：换的是另一家厂商另一把钥匙，照样回落 EvoLink（复审 P2 修正）", async () => {
+    const { calls } = stubFetch([() => new Response("bad key", { status: 401 }), () => okStream(payload)]);
+    const json = await invokeDeepSeekJsonChatRaw({ system: "s", user: "u" });
+    expect(calls).toHaveLength(2);
+    expect(json.gateway).toBe("evolink");
+  });
+
+  it("输出被截断：换家也一样截断，不打第二家", async () => {
+    const truncated = sseBody([...deltas(payload), dataFrame({ choices: [{ delta: {}, finish_reason: "length" }] }), DONE]);
+    const { calls } = stubFetch([() => truncated]);
+    await expect(invokeDeepSeekJsonChatRaw({ system: "s", user: "u" })).rejects.toThrow(/截断/);
     expect(calls).toHaveLength(1);
+  });
+
+  it("上游 error 帧里写「HTTP 401」也不能把链路判死（复审 P1：分类不看上游原文）", async () => {
+    const poisoned = sseBody([
+      ...deltas(payload.slice(0, 40)),
+      dataFrame({ error: { code: 502, message: "provider returned HTTP 401 unauthorized" } }),
+      DONE,
+    ]);
+    const { calls } = stubFetch([() => poisoned, () => okStream(payload)]);
+    const json = await invokeDeepSeekJsonChatRaw({ system: "s", user: "u" });
+    expect(calls).toHaveLength(2);
+    expect(json.gateway).toBe("evolink");
   });
 });

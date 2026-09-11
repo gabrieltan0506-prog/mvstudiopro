@@ -142,7 +142,7 @@ describe("派生链真实适配层参数契约（终审 P2）", () => {
     expect(r.sections).toBe(3);
     expect(new URL(calls[1]!.url).hostname).toBe("direct.evolink.ai");
     const body = calls[1]!.body;
-    expect(body.model).toBe("deepseek-v4.1-flash");
+    expect(body.model).toBe("deepseek-v4-flash-vision-exp");
     expect(body.thinking).toEqual({ type: "enabled" });
     expect(body.reasoning_effort).toBe("high");
     // maxTokens=8000（小样本下限）→ DeepSeek 档翻倍 16000 留给思维链

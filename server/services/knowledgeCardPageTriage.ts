@@ -10,7 +10,8 @@ import { OPENROUTER_DEEPSEEK_PROVIDER_LOCK } from "./knowledgeCardGatewayOrder.j
 import { isSseResponse, readGlmSseStream } from "./sseChatStream.js";
 
 
-export const PAGE_TRIAGE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_TRIAGE_MODEL_EVOLINK || "deepseek-v4.1-flash").trim();
+// 带图：EvoLink 侧只有 vision-exp（钥匙里没有 V4.1，0911 实弹核过）；OpenRouter 侧 V4.1 原生多模态
+export const PAGE_TRIAGE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_TRIAGE_MODEL_EVOLINK || "deepseek-v4-flash-vision-exp").trim();
 export const PAGE_TRIAGE_MODEL_OPENROUTER = String(process.env.KNOWLEDGE_CARD_TRIAGE_MODEL_OPENROUTER || "deepseek/deepseek-v4.1-flash").trim();
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 // 带图的请求走 api.evolink.ai（direct 只给纯文本，仓库既有约定见 knowledgeCardDistill.ts）
@@ -74,7 +75,8 @@ async function visionChatOnce(gw: TriageGateway, params: { system: string; userT
     }),
     signal: params.abortSignal ?? AbortSignal.timeout(TRIAGE_TIMEOUT_MS),
   });
-  const text = isSseResponse(res) && res.body
+  // 非 200 一律按文本读：错误正文要留给下面的状态码判定，别被 strict 先抛掉（复审 P2）
+  const text = res.ok && isSseResponse(res) && res.body
     ? await readGlmSseStream(res.body, undefined, { strictCompletion: true })
     : await res.text();
   if (!res.ok) throw new Error(`triage_upstream_failed:${gw.name}:${res.status}:${text.slice(0, 200)}`);

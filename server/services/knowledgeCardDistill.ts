@@ -31,7 +31,7 @@ import {
   type KnowledgeCardDistillModelId,
 } from "../../shared/knowledgeCardDistillModels.js";
 import { GLM_53_FLASH_EVOLINK_MODEL, GLM_53_FLASH_OPENROUTER_MODEL, glm53ReasoningEffort } from "./glmModels.js";
-import { isSseResponse, readGlmSseStream } from "./sseChatStream.js";
+import { isSseIncompleteStreamError, isSseResponse, readGlmSseStream } from "./sseChatStream.js";
 import {
   KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER,
   KNOWLEDGE_CARD_GLM_FIRST_ORDER,
@@ -297,11 +297,14 @@ function officialFallbackKey(_modelName: KnowledgeCardDistillModelId): string {
 }
 
 /**
- * DeepSeek 在 EvoLink 的真实 id。0911 换 V4.1 Flash：官方文档写明它原生多模态、
- * 图文用同一个模型（旧的 vision-exp 只在环境变量显式指定时才回去用）。
+ * DeepSeek 在 EvoLink 的真实 id（0911 实弹核过，别再照 OpenRouter 的 slug 猜）：
+ * · `deepseek-v4.1-flash` 在 EvoLink 是 404 model_not_found（我们这把钥匙没开通，永久性不要重试）；
+ * · EvoLink 侧的同一款就是 `deepseek-v4-flash-vision-exp`——原生多模态、1M 上下文、384K 输出、
+ *   带思考模式，官方页面标的就是 V4.1 Flash 那款（回包里 model 字段回 `deepseek-flash`）。
+ * 所以图文都用它：带图走 api.evolink.ai，纯文本走 direct（两条都实测 200，流式也回 SSE）。
  */
-const DEEPSEEK_EVOLINK_TEXT_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_EVOLINK_MODEL", "deepseek-v4.1-flash");
-const DEEPSEEK_EVOLINK_VISION_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_EVOLINK_VISION_MODEL", DEEPSEEK_EVOLINK_TEXT_MODEL);
+const DEEPSEEK_EVOLINK_VISION_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_EVOLINK_VISION_MODEL", "deepseek-v4-flash-vision-exp");
+const DEEPSEEK_EVOLINK_TEXT_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_EVOLINK_MODEL", DEEPSEEK_EVOLINK_VISION_MODEL);
 /** OpenRouter 同款（锁 DeepSeek 自营，见 openRouterProviderLockForTier）：一样图文同模型 */
 const DEEPSEEK_OPENROUTER_TEXT_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_OPENROUTER_TEXT_MODEL", "deepseek/deepseek-v4.1-flash");
 const DEEPSEEK_OPENROUTER_VISION_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_OPENROUTER_VISION_MODEL", DEEPSEEK_OPENROUTER_TEXT_MODEL);
@@ -313,11 +316,15 @@ const GLM_EVOLINK_MODEL = envStr("KNOWLEDGE_CARD_GLM_EVOLINK_MODEL", GLM_53_FLAS
 /** GLM 官方输出上限 131,072（含思维链）；Qwen 跳仍是 32k */
 const GLM_MAX_TOKENS = 131_072;
 const QWEN_MAX_TOKENS = 32_768;
-/** 读档链温度（0911 用户拍板 0.7）：全链同一个值，免得换跳换出另一种文风 */
-const KNOWLEDGE_CARD_DISTILL_TEMPERATURE = Math.min(
-  1,
-  Math.max(0, Number(process.env.KNOWLEDGE_CARD_DISTILL_TEMPERATURE) || 0.7),
-);
+/**
+ * 读档链温度（0911 用户拍板 0.7）：全链同一个值，免得换跳换出另一种文风。
+ * 夹在 [0,1]（按四家里最窄的 GLM 取值域）；`|| 0.7` 会把合法的 0 吞掉，所以按 isFinite 判（复审 P2）。
+ * 与本文件其它 env 常量一样在模块加载期求值，运行期改环境变量要重启才生效。
+ */
+const KNOWLEDGE_CARD_DISTILL_TEMPERATURE = (() => {
+  const raw = Number(process.env.KNOWLEDGE_CARD_DISTILL_TEMPERATURE);
+  return Number.isFinite(raw) ? Math.min(1, Math.max(0, raw)) : 0.7;
+})();
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 function getOpenRouterApiKey(): string {
   return String(process.env.OPENROUTER_API_KEY || "").trim();
@@ -582,7 +589,9 @@ function mapDistillUpstreamError(status: number, body: string): Error {
   if (status === 404 && /No endpoints/i.test(t)) {
     return new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
   }
-  if (/guardrail|moderation|flagged|content policy|safety/i.test(t)) {
+  // 限定状态码（复审 P2）：不限定的话，429/503 的 body 里带上 "safety" 这类词
+  // （上游文案、模型名、文档链接都可能带）就会误判成确定性拒答、整链终止
+  if ((status === 400 || status === 403 || status === 404) && /guardrail|moderation|flagged|content policy|safety/i.test(t)) {
     return new Error("当前提炼通道不可用，请改用其他提炼档位后重试");
   }
   if (isTimeoutUpstream(status, t)) {
@@ -711,6 +720,12 @@ async function invokeDistillViaGateway(params: {
   const tier: KnowledgeCardTier =
     params.tier ?? (params.modelName === KNOWLEDGE_CARD_DISTILL_MODEL_GLM ? "glm" : "deepseek");
   const body: Record<string, unknown> = {
+    /**
+     * 占位而已：下面每条网关分支都会按 (gateway, tier) 覆盖成该家真实的模型 id。
+     * `params.modelName` 是**档位 id**（下拉选单、计费与 receipt 用），不是任何一家的模型名——
+     * 0911 实弹教训：档位 id 叫 deepseek-v4.1-flash，而我们这把 EvoLink 钥匙只有 deepseek-v4-flash，
+     * 档位 id 若漏网发上去就是永久性 404。下面的断言兜住这条。
+     */
     model: params.modelName,
     /**
      * 0911 用户令：读档链温度 0.7。
@@ -790,6 +805,10 @@ async function invokeDistillViaGateway(params: {
     body.max_tokens = Math.min(params.maxTokens ?? DISTILL_MAX_TOKENS, QWEN_MAX_TOKENS);
   }
   if (!key) throw new Error(`提炼通道未配置（${gatewayLabel(params.gateway)}），请稍后重试`);
+  // 档位 id 绝不能当模型名发出去（见上面 body.model 的说明）
+  if (body.model === params.modelName && params.gateway !== "openai_official") {
+    throw new Error(`提炼链内部错误：${gatewayLabel(params.gateway, tier)} 没有为本跳选定真实模型`);
+  }
   // 0911 用户令：全链流式。非流式时长输入 + 强制思考的首字节会撞 Cloudflare ~100 秒与
   // undici 写死的 300 秒 headersTimeout（漫剧学习链 0830 实弹），开流后两个计时器都不触发。
   body.stream = true;
@@ -807,9 +826,12 @@ async function invokeDistillViaGateway(params: {
       body: JSON.stringify(body),
     });
     // 按**响应类型**决定读法：上游忽略 stream 直接回 JSON 时用 SSE 读取器会读出空正文
+    // 先看状态码再决定读法（复审 P2）：上游用 text/event-stream 回非 200 时，
+    // strict 会先抛断流错误，mapDistillUpstreamError 根本轮不到——402「额度不足」
+    // 这种确定性失败会被当可恢复，白烧完整条链还叠上重试细切。
     // 严格完整性：断流（error 帧 / 畸形帧 / 没有结束帧）一律判本跳失败换下一家，
     // 不把半截正文当成稿（终审 P1）
-    raw = isSseResponse(res) && res.body
+    raw = res.ok && isSseResponse(res) && res.body
       ? await readGlmSseStream(res.body, undefined, { strictCompletion: true })
       : await res.text();
   } catch (err) {
@@ -914,8 +936,11 @@ async function invokeDistillLlm(params: {
       return out;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      // 额度/配置/安全拒答等确定性失败不换通道（换了也一样，还可能双花）
-      if (isFatalDistillError(lastError.message) && !/未配置/.test(lastError.message)) throw lastError;
+      // 流没跑完＝本跳不可用，恒可恢复：先短路，别让上游原文落进下面的文本正则（复审 P1）
+      if (!isSseIncompleteStreamError(err)) {
+        // 额度/配置/安全拒答等确定性失败不换通道（换了也一样，还可能双花）
+        if (isFatalDistillError(lastError.message) && !/未配置/.test(lastError.message)) throw lastError;
+      }
       if (i < chain.length - 1) {
         const next = chain[i + 1]!;
         console.warn(
@@ -929,8 +954,9 @@ async function invokeDistillLlm(params: {
 
 /** 提炼无法靠重试救回的错（额度/配置/通道），不必再退避。 */
 function isFatalDistillError(message: string): boolean {
-  // 401/403/安全拒答/未配置是确定性失败：重试+递归细切只会放大请求量
-  return /额度不足|通道不可用|未配置|请先输入|未能从文件|HTTP 40[13]|安全分类器拒答/.test(message);
+  // 401/403/安全拒答/未配置是确定性失败：重试+递归细切只会放大请求量。
+  // 注意：这把尺子只量**我们自己造的**错误文案；上游原文一律不许拼进 message（复审 P1）。
+  return /额度不足|通道不可用|未配置|请先输入|未能从文件|HTTP 40[13]|安全分类器拒答|内容被安全策略拦截/.test(message);
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -967,7 +993,7 @@ async function distillOneChunkWithRetry(params: {
       });
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      if (isFatalDistillError(lastError.message)) throw lastError;
+      if (!isSseIncompleteStreamError(lastError) && isFatalDistillError(lastError.message)) throw lastError;
       console.warn(
         `[knowledgeCardDistill] ${params.chunkLabel} attempt ${attempt + 1}/${params.retries + 1} failed: ${lastError.message.slice(0, 160)}`,
       );
@@ -1041,7 +1067,7 @@ async function distillOneChunkOrSkip(
     return { ok: true, markdown };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (isFatalDistillError(message)) throw err;
+    if (!isSseIncompleteStreamError(err) && isFatalDistillError(message)) throw err;
     const where = `第 ${idx + 1}/${totalChunks} 段（${label}）`;
     console.warn(`[knowledgeCardDistill] ${where} 重试与细切后仍失败，跳过该段：${message.slice(0, 160)}`);
     onNotice?.(`${where}提炼失败已跳过（${message.slice(0, 60)}），这一段内容不在本次知识卡里`);

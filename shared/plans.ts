@@ -273,7 +273,8 @@ export const CREDIT_COSTS = {
   platformXhsDualNote: 72,
   /**
    * 单页连贯图文知识卡片默认展示价（读档 DeepSeek 档）；
-   * 实际扣费按模型：超凡 36/29、精细 30/24、均衡 27/22、轻量 24/19（前 8 满价 / 其后折扣）。
+   * 实际扣费按读档档位：DeepSeek V4.1 Flash 30/24、GLM 5.3 Flash 24/19（前 8 满价 / 其后折扣）；
+   * 已下架档位（超凡 36/29、均衡 27/22、旧轻量 Qwen 24/19）的历史 receipt 仍按原价结算。
    */
   platformSinglePageKnowledgeCard: 30,
   /** 自定义文案 · 深度优化（纯 LLM，无出图；GPT-5.5 结构化改写） */

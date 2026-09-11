@@ -25,7 +25,8 @@ export const KNOWLEDGE_CARD_DERIVE_MODEL_GLM_EVOLINK = String(process.env.KNOWLE
 export const KNOWLEDGE_CARD_DERIVE_MODEL_GLM_OPENROUTER = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_GLM_OPENROUTER || GLM_53_FLASH_OPENROUTER_MODEL).trim();
 
 /** 网关顺序（0911：同模型先换供应商）：EvoLink(DeepSeek) → OpenRouter(DeepSeek) → 新加坡(Qwen) → OpenRouter(Qwen) */
-export const KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK || "deepseek-v4.1-flash").trim();
+// EvoLink 侧 V4.1 Flash 的 id 就是 deepseek-v4-flash-vision-exp（0911 实弹：写 deepseek-v4.1-flash 会 404）
+export const KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK || "deepseek-v4-flash-vision-exp").trim();
 export const KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER || "deepseek/deepseek-v4.1-flash").trim();
 export const KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG || "qwen3.8-max").trim();
 const EVOLINK_DIRECT_CHAT_URL = String(process.env.EVOLINK_DIRECT_CHAT_URL || "https://direct.evolink.ai/v1/chat/completions").trim();
@@ -199,7 +200,8 @@ async function chatOnceInner(gw: DeriveGateway, params: { system: string; user: 
     signal: params.abortSignal ?? AbortSignal.timeout(DERIVE_TIMEOUT_MS),
   });
   // 上游忽略 stream 时按普通 JSON 读，不能只看「我发了 stream:true」
-  const text = isSseResponse(res) && res.body
+  // 非 200 一律按文本读：错误正文要留给下面的状态码判定，别被 strict 先抛掉（复审 P2）
+  const text = res.ok && isSseResponse(res) && res.body
     ? await readGlmSseStream(res.body, undefined, { strictCompletion: true })
     : await res.text();
   if (!res.ok) throw new Error(`derive_upstream_failed:${gw.name}:${res.status}:${text.slice(0, 200)}`);

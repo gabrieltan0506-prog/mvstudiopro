@@ -48,19 +48,33 @@ export class SseIncompleteStreamError extends Error {
   readonly code = "sse_incomplete_stream";
   constructor(
     message: string,
-    /** 断流前已经收到的证据：不写成成品，只进日志与错误回执 */
+    /**
+     * 断流前已经收到的证据：不写成成品，只进日志与错误回执。
+     * `detail` 是上游原文——**只能待在这里**，绝不能拼进 `message`：
+     * 上层的确定性/可恢复分类是按 message 文本正则判的（isFatalDistillError / isEconomyFallbackWorthy），
+     * 上游在 error 帧里写一句 "HTTP 401" 就能让整条六跳链当场终止（0911 复审 P1 实测）。
+     */
     readonly evidence: {
       model?: string;
       provider?: string;
       usage?: Record<string, unknown>;
       finishReason?: string | null;
       partialChars: number;
+      detail?: string;
     },
   ) {
     super(message);
     this.name = "SseIncompleteStreamError";
   }
 }
+
+/** 这个错是不是「流没跑完」——可恢复，按链序换下一跳，别按文本猜 */
+export function isSseIncompleteStreamError(err: unknown): boolean {
+  return (err as { code?: string } | null)?.code === "sse_incomplete_stream";
+}
+
+/** 被内容安全策略拦下的结束原因：换谁都一样，属确定性失败 */
+const SSE_CONTENT_FILTER_FINISH_REASONS = new Set(["content_filter", "sensitive"]);
 
 export async function readGlmSseStream(
   body: ReadableStream<Uint8Array>,
@@ -110,14 +124,14 @@ export async function readGlmSseStream(
       // 严格模式：业务 data 帧解析不了就判失败——悄悄丢帧会拼出**缺字**的正文，
       // 而缺字正文照样能过 JSON 解析与节数检查（终审 P1）。
       // SSE 注释（以 ":" 开头）与空行在上面就被 `startsWith("data:")` 挡掉了，不会走到这里。
-      if (strict) throw incomplete(`上游流出现无法解析的数据帧：${payload.slice(0, 120)}`);
+      if (strict) throw incomplete("上游流出现无法解析的数据帧", payload);
       return;
     }
     // 0911 审查 P2：OpenRouter 在 200 + SSE 下会把上游错误当成 {"error":…} 帧发回，
     // 不抛出去就变成「空正文」，四条链各报自己的模糊错误、看不到真实原因
     if (chunk.error && typeof chunk.error === "object") {
       sawErrorFrame = true;
-      throw incomplete(`上游流内错误：${JSON.stringify(chunk.error).slice(0, 200)}`);
+      throw incomplete("上游流中途返回错误帧", JSON.stringify(chunk.error));
     }
     const delta = chunk.choices?.[0]?.delta?.content;
     if (typeof delta === "string") content += delta;
@@ -131,13 +145,14 @@ export async function readGlmSseStream(
   };
   let parseFailures = 0;
   let sawErrorFrame = false;
-  const incomplete = (message: string) =>
+  const incomplete = (message: string, detail?: string) =>
     new SseIncompleteStreamError(message, {
       model: model || undefined,
       provider: provider || undefined,
       usage,
       finishReason,
       partialChars: content.length,
+      detail: detail ? detail.slice(0, 300) : undefined,
     });
   try {
     for (;;) {
@@ -170,8 +185,18 @@ export async function readGlmSseStream(
   if (strict) {
     if (sawErrorFrame) throw incomplete("上游流以错误帧结束");
     if (!finishReason) throw incomplete("上游流没有结束帧就断开（已收正文视为半截，不予采信）");
+    // 截断＝预算耗尽：文案由我们自己定（不带上游原文），让上层按「截断」这条尺子判，
+    // 经济档那种「换家也一样截断」的场景才不会白打第二枪
+    if (finishReason === "length" || finishReason === "max_tokens") {
+      throw new Error("上游输出被截断（预算耗尽）");
+    }
+    // 内容安全拦截是确定性失败：换供应商也一样，别把六跳全烧一遍（0911 复审建议 7）
+    if (SSE_CONTENT_FILTER_FINISH_REASONS.has(String(finishReason))) {
+      throw new Error(`内容被安全策略拦截（finish_reason=${finishReason}）`);
+    }
     if (!SSE_SUCCESS_FINISH_REASONS.has(String(finishReason))) {
-      throw incomplete(`上游流非正常结束：finish_reason=${finishReason}`);
+      // 结束原因只进 evidence，不拼进 message（见 SseIncompleteStreamError 的说明）
+      throw incomplete("上游流非正常结束", `finish_reason=${finishReason}`);
     }
   }
   return JSON.stringify({

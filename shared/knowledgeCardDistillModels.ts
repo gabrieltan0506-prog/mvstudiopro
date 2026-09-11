@@ -1,7 +1,8 @@
 /**
  * 图文卡读档（提炼/读图）模型：用户二选一，Qwen 只做最后一手兜底（0911 用户令）。
- * - DeepSeek V4.1 Flash：EvoLink `deepseek-v4.1-flash` 原生多模态（图文同一个模型）→ OpenRouter
- *   `deepseek/deepseek-v4.1-flash`（锁 DeepSeek 自营，不落转售方）
+ * - DeepSeek V4.1 Flash：主路 OpenRouter `deepseek/deepseek-v4.1-flash`（锁 DeepSeek 自营），
+ *   兜底 EvoLink 同款——EvoLink 侧的 id 叫 `deepseek-v4-flash-vision-exp`，
+ *   直接写 `deepseek-v4.1-flash` 会 404（0911 实弹核过）。两边都原生多模态，图文同一个模型
  * - GLM 5.3 Flash：EvoLink `glm-5.3-flash` 原生视觉、100 万上下文 → OpenRouter `z-ai/glm-5.3-flash`
  * - 选中的那档两家供应商都打不通，才换另一档；两档都失败，最后才走 Qwen3.8 Max
  *   （百炼新加坡 token plan → OpenRouter），Qwen 不再出现在下拉选单里。
