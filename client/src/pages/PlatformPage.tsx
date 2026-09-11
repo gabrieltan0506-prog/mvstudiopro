@@ -6613,6 +6613,7 @@ export default function PlatformPage() {
       const mapped = mapGenerateVisualReportResult(job.output || {}, {
         windowDays: pending.windowDays,
         theme: pending.theme,
+        createdAt: pending.createdAt,
       });
       if (!mapped) {
         writePlatformVisualReportPendingJob(null);
@@ -6694,7 +6695,7 @@ export default function PlatformPage() {
       hasCurrentError: Boolean(visualReportError),
       busy: trendStandaloneBusy,
     })) return;
-    const mapped = mapGenerateVisualReportResult(latest.result, { windowDays, theme });
+    const mapped = mapGenerateVisualReportResult(latest.result, { windowDays, theme, createdAt: latest.createdAt });
     if (mapped) {
       visualReportOwnerRef.current = userId;
       setVisualReportData(mapped);
@@ -13273,7 +13274,7 @@ export default function PlatformPage() {
                   <div>
                     <div className="text-sm font-semibold text-[#6fffb0]">浅色趋势分析报表已就绪</div>
                     <p className="mt-1 text-[11px] text-[#c9c0e6]/60">
-                      右侧为摘要卡；下方为完整长图（含蓝海词）。
+                      右侧为摘要卡；下方为完整长图（含选题关键词）。
                     </p>
                   </div>
                   <button
@@ -13304,7 +13305,7 @@ export default function PlatformPage() {
             !isDashboardLoading &&
             !isVisualReportLoading ? (
               <p className="mt-4 text-xs leading-relaxed text-[#c9c0e6]/45">
-                启动后任务在后台持续生成；完成后右侧出现摘要，下方可下载含蓝海词的 PNG 长图。
+                启动后任务在后台持续生成；完成后右侧出现摘要，下方可下载含选题关键词的 PNG 长图。
               </p>
             ) : null}
 
@@ -19399,7 +19400,7 @@ export default function PlatformPage() {
                     <div className="font-semibold mb-0.5">分析结果具有时效性</div>
                     <div className="text-xs text-amber-200/80">
                       平台数据每日更新，本次分析基于当前时间点快照。建议立即下载 PDF 保存，下载后快照记录将同步保存至「我的作品」。
-                      PDF <strong className="text-amber-100">不含</strong>决策智库全景（另购另存）；趋势含蓝海词请用上方「PNG 图文报表」。
+                      PDF <strong className="text-amber-100">不含</strong>决策智库全景（另购另存）；趋势含选题关键词请用上方「PNG 图文报表」。
                       2×4 编导分镜／八格图文请用上方画廊「一键导出全部」单独下载原图（PDF 不含编导分镜图，避免长图被截断）。
                     </div>
                   </div>

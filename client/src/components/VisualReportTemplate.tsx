@@ -1,4 +1,5 @@
 import React from "react";
+import type { TrackGrowthEvidence } from "@shared/visualReportEvidence";
 
 export type VisualReportData = {
   reportTitle: string;
@@ -6,15 +7,15 @@ export type VisualReportData = {
   theme: "dark" | "light";
   // insightSummary: 判断/热点/结构/建议 四栏；兼容旧 string / {title, description}
   insightSummary: Array<string | { role?: string; title: string; description: string }>;
-  trackGrowth?: Array<{ name: string; growth: string; isHot?: boolean }>;
+  trackGrowth?: Array<{ name: string; growth: string; isHot?: boolean; evidence?: TrackGrowthEvidence }>;
   audiencesAndBiz?: Array<{ audience: string; bizDirection: string }>;
   topicExamples?: Array<{ structure: string; concept: string; realCase: string }>;
   // New global fields from upgraded prompt
   trafficSupport?: string[];
   hotFestivals?: string[];
   /**
-   * 全局蓝海词（一/二级分级）：在核心洞察下方展示，每条平台 2-4 组。
-   * 格式：[{ primary: "一级蓝海词", secondary: ["二级词1","二级词2",...] }]
+   * 全局选题关键词（一/二级分级）：在核心洞察下方展示，每条平台 2-4 组。
+   * 格式：[{ primary: "一级选题关键词", secondary: ["二级词1","二级词2",...] }]
    * 不区分平台，聚合各平台高价值词条。
    */
   globalBlueOceanWords?: Array<{ primary: string; secondary: string[] }>;
@@ -41,7 +42,7 @@ export type VisualReportData = {
     trafficBoosters: string[];
     cashRewards: string[];
     hotTopics: string[];
-    /** 蓝海词：一级词（父级大词）+ 二级词（子词，从评论区/下拉联想词挖掘） */
+    /** 选题关键词：一级词（父级大词）+ 二级词（子词，从评论区/下拉联想词挖掘） */
     blueOceanWords?: Array<{ primary: string; secondary: string[] }>;
   }>;
 };
@@ -188,15 +189,6 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
       </div>
     );
 
-    const STATUS_CYCLE = [
-      { label: "高热", bg: "rgba(190,40,90,0.12)", color: "#be185d" },
-      { label: "高热", bg: "rgba(190,40,90,0.12)", color: "#be185d" },
-      { label: "偏强", bg: "rgba(160,120,20,0.14)", color: "#a16207" },
-      { label: "升温", bg: "rgba(20,120,80,0.12)", color: "#047857" },
-      { label: "新爆", bg: "rgba(100,40,160,0.12)", color: "#6d28d9" },
-      { label: "稳态", bg: "rgba(30,80,160,0.12)", color: "#1d4ed8" },
-    ];
-
     return (
       <div ref={ref} style={wrap}>
 
@@ -204,12 +196,12 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
         <div style={{ display: "flex", alignItems: "baseline", gap: "16px", marginBottom: "6px", paddingBottom: "14px", borderBottom: `1px solid ${border}` }}>
           <h1 style={{ fontSize: "26px", fontWeight: 800, letterSpacing: "0.5px" }}>{data.reportTitle}</h1>
           <span style={{ fontSize: "12px", color: muted }}>数据区间 · {data.dateRange}</span>
-          <span style={{ display: "inline-block", fontSize: "11px", background: tagBg, color: tagClr, border: `1px solid ${tagBdr}`, borderRadius: "4px", padding: "2px 8px", marginLeft: "6px" }}>实时数据版</span>
+          <span style={{ display: "inline-block", fontSize: "11px", background: tagBg, color: tagClr, border: `1px solid ${tagBdr}`, borderRadius: "4px", padding: "2px 8px", marginLeft: "6px" }}>周期样本报告</span>
         </div>
 
         {/* TAG ROW */}
         <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "22px" }}>
-          {["平台趋势","蓝海词","赛道判断","流量扶持","热门赛道","算法推荐信号"].map((t) => (
+          {["平台趋势","选题关键词","赛道判断","流量扶持","热门赛道","内容表现观察"].map((t) => (
             <span key={t} style={{ fontSize: "11px", background: tagBg, color: tagClr, border: `1px solid ${tagBdr}`, borderRadius: "4px", padding: "3px 10px" }}>{t}</span>
           ))}
         </div>
@@ -249,9 +241,9 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
           </>
         )}
 
-        {/* ── 蓝海词 · Blue Ocean Keywords（全局；空时仍占位，避免整栏消失）── */}
+        {/* ── 选题关键词 · Topic Keywords（全局；空时仍占位，避免整栏消失）── */}
         <>
-          <div style={sec}>🌊 蓝海词 · Blue Ocean Keywords</div>
+          <div style={sec}>🌊 选题关键词 · Topic Keywords</div>
           <div style={{ background: "rgba(184,92,56,0.06)", border: `1px solid rgba(184,92,56,0.22)`, borderRadius: "12px", padding: "16px 18px", marginBottom: "16px" }}>
             {(data.globalBlueOceanWords?.length || 0) > 0 ? (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "14px" }}>
@@ -297,7 +289,7 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
               </div>
             ) : (
               <div style={{ fontSize: "12px", color: muted, lineHeight: 1.7 }}>
-                本窗暂无可用蓝海词种子；请换更长窗口或更多平台后重跑「平台趋势分析」。下方赛道与热词仍可作选题参考。
+                本窗暂无可用选题关键词种子；请换更长窗口或更多平台后重跑「平台趋势分析」。下方赛道与热词仍可作选题参考。
               </div>
             )}
           </div>
@@ -419,16 +411,19 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
         {/* ── trackGrowth + audiencesAndBiz (g2) ── */}
         {((data.trackGrowth?.length || 0) > 0 || (data.audiencesAndBiz?.length || 0) > 0) && (
           <>
-            <div style={sec}>赛道增长 + 目标人群与商业方向</div>
+            <div style={sec}>赛道样本变化 + 目标人群与商业方向</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px", marginBottom: "16px" }}>
 
               {/* Track growth */}
               {(data.trackGrowth?.length || 0) > 0 && (
                 <div style={card()}>
-                  <div style={ct(C[4])}><div style={dot(C[4])} />热门赛道 · 样本热度增速</div>
+                  <div style={ct(C[4])}><div style={dot(C[4])} />热门赛道 · 采集样本条数变化</div>
+                  <p style={{ fontSize: 11, color: muted, lineHeight: 1.6 }}>按所选平台已采集样本及分类统计，与前一同长度上海日历窗口比较；采集覆盖可能不同，本期含今日未结束时段。百分比不代表播放量或平台整体流量增长。条形长度最高显示100%，具体变化以数值为准。</p>
                   {(data.trackGrowth || []).map((t, i) => {
                     const color = C[i % C.length];
-                    const gStr = safeTxt(t.growth || "");
+                    const e = t.evidence;
+                    const hasEvidence = e?.metric === "sample_count" && e.sampleScope === "collected_items" && Array.isArray(e.platforms) && e.platforms.length > 0 && [3, 7, 15, 30].includes(e.windowDays) && Number.isInteger(e.currentCount) && Number.isInteger(e.priorCount) && e.currentCount >= 0 && e.priorCount >= 0;
+                    const gStr = hasEvidence ? (e.priorCount > 0 ? `${Math.round((e.currentCount - e.priorCount) / e.priorCount * 100)}%` : "缺少对照") : "口径未记录";
                     const isHighHeat = gStr === "高热";
                     const parsed = parseGrowthPercentString(gStr);
                     let fillPct: number;
@@ -444,26 +439,28 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                       const v = Math.round(parsed);
                       if (v > 100) {
                         fillPct = 100;
-                        valueTxt = "高热";
+                        valueTxt = `+${v}%`;
                       } else {
                         const compactG = gStr.replace(/\s/g, "");
                         const isTimesForm = /^增长\d+(\.\d+)?倍$/.test(compactG);
                         valueTxt = isTimesForm ? gStr.trim() : `+${v}%`;
-                        fillPct = Math.max(8, v);
+                        fillPct = Math.max(0, v);
                       }
                     } else {
-                      fillPct = 8;
+                      fillPct = 0;
                       valueTxt = gStr.trim() || "无匹配样本";
                     }
                     const barColor = isNeg ? muted : parsed != null || isHighHeat ? color : muted;
-                    return barRow(
+                    return <div key={`${t.name}-${i}`}>{barRow(
                       safeTxt(t.name || t),
                       isNeg ? 10 : fillPct,
                       barColor,
                       valueTxt,
-                      t.isHot ? "热" : undefined,
-                      t.isHot ? { bg: "#3a0e2a", color: "#ff4fb8" } : undefined
-                    );
+                      undefined,
+                      undefined
+                    )}
+                      {hasEvidence && <div style={{ fontSize: 10, color: muted, marginBottom: 12 }}>本期 {e.currentCount} 条 / 前期 {e.priorCount} 条 · 前后各 {e.windowDays} 天 · {e.platforms.map((p) => PLATFORM_DISPLAY_NAMES[p] || p).join("、")}</div>}
+                    </div>;
                   })}
                 </div>
               )}
@@ -509,15 +506,11 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
               <div style={ct(C[1])}><div style={dot(C[1])} />近期选题结构 · 实例分析</div>
               {(data.topicExamples || []).map((ex, i) => {
                 const color = C[i % C.length];
-                const barW = Math.max(96 - i * 14, 30);
                 const conceptAccent = C[(i + 2) % C.length];
                 return (
                   <div key={i} style={{ marginBottom: "13px", borderLeft: `3px solid ${color}`, paddingLeft: "10px" }}>
                     <div style={{ fontSize: "13px", fontWeight: 800, color, marginBottom: "5px" }}>
                       {i < 2 ? "★ " : ""}{safeTxt(ex.structure)}
-                    </div>
-                    <div style={{ height: "5px", background: trackBg, borderRadius: "99px", overflow: "hidden", marginBottom: "4px" }}>
-                      <div style={{ height: "100%", borderRadius: "99px", background: color, width: `${barW}%` }} />
                     </div>
                     <div style={{ fontSize: "11px", color: bodyTxt, lineHeight: "1.6" }}>
                       {renderRichText(safeTxt(ex.concept), conceptAccent)}
@@ -580,10 +573,8 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                 )}
                 {pl.hotTopics.length > 0 && (
                   <>
-                    <div style={{ fontSize: "11px", fontWeight: 700, color: C[3], marginTop: "10px", marginBottom: "8px" }}>🔥 热门赛道</div>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: C[3], marginTop: "10px", marginBottom: "8px" }}>选题参考</div>
                     {pl.hotTopics.map((tp, ti) => {
-                      const st = STATUS_CYCLE[ti % STATUS_CYCLE.length];
-                      const barW = Math.max(100 - ti * 8, 40);
                       const color = C[ti % C.length];
                       const top = ti < 3;
                       return (
@@ -600,23 +591,16 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                           }}>
                             {top ? "★ " : ""}{safeTxt(tp)}
                           </div>
-                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                            <div style={{ flex: 1, height: "8px", background: trackBg, borderRadius: "99px", overflow: "hidden" }}>
-                              <div style={{ height: "100%", borderRadius: "99px", background: color, width: `${barW}%` }} />
-                            </div>
-                            <span style={{ fontSize: "11px", fontWeight: 700, color, minWidth: "36px", textAlign: "right" }}>#{ti + 1}</span>
-                            <span style={{ fontSize: "10px", padding: "1px 6px", borderRadius: "99px", background: st.bg, color: st.color, flexShrink: 0 }}>{st.label}</span>
-                          </div>
                         </div>
                       );
                     })}
                   </>
                 )}
-                {/* ── 蓝海词 · Blue Ocean Keywords ── */}
+                {/* ── 选题关键词 · Topic Keywords ── */}
                 {pl.blueOceanWords && pl.blueOceanWords.length > 0 && (
                   <div style={{ marginTop: "14px", borderTop: "1px solid rgba(140,90,70,0.22)", paddingTop: "12px" }}>
                     <div style={{ fontSize: "11px", fontWeight: 700, color: HERMES_ACCENT, marginBottom: "8px" }}>
-                      🌊 蓝海词 · Blue Ocean Keywords
+                      🌊 选题关键词 · Topic Keywords
                     </div>
                     {pl.blueOceanWords.map((bow, bi) => {
                       const catColor = C[bi % C.length];
@@ -723,10 +707,8 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                     )}
                     {pl.hotTopics.length > 0 && (
                       <>
-                        <div style={{ fontSize: "11px", fontWeight: 700, color: C[3], marginTop: "10px", marginBottom: "8px" }}>🔥 热门赛道</div>
+                        <div style={{ fontSize: "11px", fontWeight: 700, color: C[3], marginTop: "10px", marginBottom: "8px" }}>选题参考</div>
                         {pl.hotTopics.map((tp, ti) => {
-                          const st = STATUS_CYCLE[ti % STATUS_CYCLE.length];
-                          const barW = Math.max(100 - ti * 8, 40);
                           const color = C[ti % C.length];
                           const top = ti < 3;
                           return (
@@ -743,23 +725,16 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                               }}>
                                 {top ? "★ " : ""}{safeTxt(tp)}
                               </div>
-                              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                                <div style={{ flex: 1, height: "8px", background: trackBg, borderRadius: "99px", overflow: "hidden" }}>
-                                  <div style={{ height: "100%", borderRadius: "99px", background: color, width: `${barW}%` }} />
-                                </div>
-                                <span style={{ fontSize: "11px", fontWeight: 700, color, minWidth: "36px", textAlign: "right" }}>#{ti + 1}</span>
-                                <span style={{ fontSize: "10px", padding: "1px 6px", borderRadius: "99px", background: st.bg, color: st.color, flexShrink: 0 }}>{st.label}</span>
-                              </div>
                             </div>
                           );
                         })}
                       </>
                     )}
-                    {/* ── 蓝海词 · Blue Ocean Keywords ── */}
+                    {/* ── 选题关键词 · Topic Keywords ── */}
                     {pl.blueOceanWords && pl.blueOceanWords.length > 0 && (
                       <div style={{ marginTop: "12px", borderTop: "1px solid rgba(140,90,70,0.22)", paddingTop: "10px" }}>
                         <div style={{ fontSize: "11px", fontWeight: 700, color: HERMES_ACCENT, marginBottom: "7px" }}>
-                          🌊 蓝海词
+                          🌊 选题关键词
                         </div>
                         {pl.blueOceanWords.map((bow, bi) => {
                           const catColor = C[bi % C.length];
@@ -805,7 +780,7 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
 
         {/* ── FOOTER ── */}
         <div style={{ marginTop: "24px", paddingTop: "14px", borderTop: `1px solid ${border}`, fontSize: "11px", color: muted, textAlign: "center" }}>
-          由 mvstudiopro Platform Intelligence 生成 · 数据基于近期平台真实趋势 · {data.dateRange}
+          由 mvstudiopro Platform Intelligence 生成 · 数据基于所选平台采集样本；选题建议不代表已核实搜索量或竞争度 · {data.dateRange}
         </div>
       </div>
     );

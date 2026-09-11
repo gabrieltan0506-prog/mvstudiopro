@@ -5571,7 +5571,7 @@ export const appRouter = router({
         // Fully dynamic prompt — windowDays drives all time references, no hardcoded day counts
         const totalDays = wd * 2;
         const currentDateStr = todayStr; // ISO-style date already computed above
-        const systemPrompt = `你是一位顶级的新媒体数据分析师，专注于发现平台算法逻辑与赛道流量趋势。今天是 ${currentDateStr}（时间一律按 Asia/Shanghai 北京时间 UTC+8）。
+        const systemPrompt = `你是一位顶级的新媒体数据分析师，专注于分析已采集内容的表现与赛道样本变化。今天是 ${currentDateStr}（时间一律按 Asia/Shanghai 北京时间 UTC+8）。
 
 【人设口径】此处「人设」指创作者可辨识的真实画像：**职业、身份、兴趣、爱好、专长** 等；不是泛化「博主」「达人」。本报告中的 insightSummary、topicExamples、hotTopics、trafficSupport、audiencesAndBiz 等，应写得让**某一类具体身份的人**能对号入座——说明「谁更适合借这条趋势发力、怎样用自身维度解释该热点」，避免与任何人都无关的纯大盘词云或空泛平台运营套话。若 user JSON 中含 personaContext，你必须以其为主轴收紧解读与选题示例，热点只可参考、**须改写为可落在该人设上的表达**，禁止硬套无关梗。
 
@@ -5597,16 +5597,16 @@ ${JSON.stringify(
 )}
 
 【赛道口径 — 须与历史分类对齐】
-下方「行业样本推断」JSON 的每个 **key** 来自趋势样本入库时的 **正式分类**（industryLabels / contentLabels；缺省时为与增长评分一致的规则化大类兜底），**不是**从标题或评论里切出来的热词碎片。trackGrowth[].name **必须**优先 **逐字**使用该 JSON 的某一 key；若要「主赛道 · 子切口」式合并，**建议**两段均取自该 JSON 的不同 key。**不建议**使用与表中 key 无语义包含/对应关系的碎词、纯地名或账号梗充当整条赛道名。
+下方「行业样本推断」JSON 的每个 **key** 来自趋势样本入库时的 **正式分类**（industryLabels / contentLabels；缺省时为与增长评分一致的规则化大类兜底），**不是**从标题或评论里切出来的热词碎片。trackGrowth[].name **必须逐字使用该 JSON 的某一完整 key，不得组合、扩写或缩短分类名**。**不建议**使用与表中 key 无语义包含/对应关系的碎词、纯地名或账号梗充当整条赛道名。
 
-【行业样本推断（近 ${wd} 天 vs 前 ${wd} 天，Asia/Shanghai 连续日对照）：**有前窗对照**用样本量推算增速，表中 **至 +100% 写「+N%」**；**若推算超过 +100% 则该 key 对应文案必须为「高热」**，禁止写百分比或「增长X倍」。**无前窗对照**用排序刻度 +12%～+98%（见下表数值）。热门赛道列表不得含负向样本桶。trackGrowth.growth 必须与下表一致；禁止 N/A 与长句】
+【行业样本推断（近 ${wd} 天 vs 前 ${wd} 天，Asia/Shanghai 连续日对照）：**有前窗对照**用样本量推算增速，表中 **至 +100% 写「+N%」**；**若推算超过 +100% 则该 key 对应文案必须为「高热」**，禁止写百分比或「增长X倍」。**无前窗对照**必须写「缺少对照」，不得将样本排序换算成百分比。热门赛道列表不得含负向样本桶。trackGrowth.growth 必须与下表一致；禁止 N/A 与长句】
 ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
 【核心要求】针对每个选定的平台给出（在 platformDetails 内）：
 1. trafficBoosters：官方流量扶持活动 + **创作者中心官方话题活动**，每个平台至少 2-3 条。必须结合当前日期 ${currentDateStr}、snapshot.supportActivities、以及 user JSON 中的 officialCampaigns.byPlatform。优先仍在进行中的活动与话题（如小红书 #我的暑假生活 / #城市漫步指南 / #好物测评、RED 新生代、中长视频激励、B 站任务中心、快手光合），禁止写已过期活动。${wd <= 7 ? " 【极速窗口：" + wd + " 天】重点关注短期爆发信号（当日热点、突发推流、节假日驱动）。" : wd <= 15 ? " 【短窗：" + wd + " 天】优先近两周仍可报名的征稿/激励。" : ""} 格式要求：每条注明平台活动名称 + 参与门槛或奖励。
 2. cashRewards：现金奖励任务，每个平台至少 2 条，必须包含激励金额或门槛。
 3. hotTopics：**【强制数量：5-8个】** 每条须为**可读的一句式细分赛道**，**优先**能在上文「行业样本推断」JSON 的 **key** 中找到词汇锚点，或与全局 **trackGrowth[].name** 使用同一套正式分类口径；亦可吸收 officialCampaigns.topicExamples 的官方话题切口（须人设改写）。附带简短内容说明。**不建议**纯热搜词云、与表中 key 无语义对应关系的碎片标签或碎词充当整条赛道名。**禁止**与本报告全局 trackGrowth 中 growth 已为负值（如 -60%）的赛道语义重复；热榜应体现仍能加码的方向。
-4. blueOceanWords：**蓝海词（分级）**，每个平台 2-4 组，每组格式为 { "primary": "一级搜索词（2–12字）", "secondary": ["二级词1", "二级词2", "二级词3"]}。优先：用户意图清晰、可发笔记/短视频的长尾搜索词。一级词须从 platformEvidence.topTitles、**dramaMixNames / dramaRising（AI漫剧合集）**、行业样本 key、hotTopics 提炼；二级词可为更细切口（题材/人设/爽点）。抖音若有 dramaRising，至少 1 组 primary 贴近漫剧/短剧蓝海。**禁止输出空数组**；无法核实搜索量时仍须输出 2–4 组，不得写「尚未检索到」类占位句。
+4. blueOceanWords：**选题关键词（分级，仅沿用历史字段名）**，每个平台 2-4 组，每组格式为 { "primary": "一级搜索词（2–12字）", "secondary": ["二级词1", "二级词2", "二级词3"]}。优先：用户意图清晰、可发笔记/短视频的长尾搜索词。一级词须从 platformEvidence.topTitles、**dramaMixNames / dramaRising（AI漫剧合集）**、行业样本 key、hotTopics 提炼；二级词可为更细切口（题材/人设/爽点）。抖音若有 dramaRising，至少 1 组 primary 贴近漫剧/短剧选题。**禁止输出空数组**；无法核实搜索量时仍须输出 2–4 组，不得写「尚未检索到」类占位句。
 
 报告全局层级（不在 platformDetails 内）必须输出以下维度（不得省略）：
 - reportTitle：精准标题，包含时间段（${pastStr} – ${todayStr}）
@@ -5619,12 +5619,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
   - title：结论型短句，可读完整，不要写成「判断1」占位。
   - description：30–80 字完整论述，引用标题痕迹、赛道名或官方活动名；**禁止**与 title 同义反复。
   - **严禁**：样本条数、ItemCount、AvgLike、mediaPlayCount、sample=0、BusinessType、空库/超时诊断等后台字段或运维话术。
-- trackGrowth：**【强制数量：5-8条】** 仅含**非负向**热门赛道（服务端会剔除负增长/无匹配）；**growth** 与下表完全一致：**+100% 及以下写「+N%」**；**超过 +100% 的格子表里会是「高热」，你必须写「高热」**，禁止自造百分比或倍数。**name** 与上表 JSON 的 key 对齐（见「赛道口径」）。勿编造。**严禁** N/A、括号长句。
+- trackGrowth：从上表选择最多8条完整分类，数量不得超过实际可用分类，不足时按实际数量输出；保留非负变化及「缺少对照」观察项（服务端会剔除负增长/无匹配）；**growth** 与下表完全一致：**+100% 及以下写「+N%」**；**超过 +100% 的格子表里会是「高热」，你必须写「高热」**，禁止自造百分比或倍数。**name** 与上表 JSON 的 key 对齐（见「赛道口径」）。勿编造。**严禁** N/A、括号长句。
 - audiencesAndBiz：目标人群与商业方向（2-3条）。格式：{"audience": "人群描述", "bizDirection": "商业方向"}
 - topicExamples：针对排名前三赛道设计选题公式与案例（3-5条）。格式：{"structure": "标题公式", "concept": "内容说明", "realCase": "接地气的真实感文章标题"}。**realCase 必须高反差/反常识/猎奇缺口**（例：「每天十碗饭反而瘦十斤」「到了上海以为到了美国」「天天打游戏怎么考上北大」），禁止正确但无聊的论文题；可蹭官方活动名时写在结构旁，勿冲淡反差。
 - trafficSupport：扫描当前平台正在进行的官方流量扶持活动（全局跨平台维度，2-4条）。**必须优先采用** user JSON 字段 officialCampaigns.globalTrafficSupport 中的条目（可略压缩说明），格式：["活动名称：详细说明"]
 - hotFestivals：根據今天 ${currentDateStr} 及前后 ${wd} 天范围，指出当下正在爆发或即将到来的节日、节气或社会热点（2-3个）。格式：["节日/热点：简要说明与内容切入角度"]
-- globalBlueOceanWords：**【必须输出 4–6 组，禁止空数组】** 聚合选定平台的高意图搜索词，一/二级分级。格式：[{"primary":"一级词","secondary":["二级词1","二级词2"]}]。须从 platformEvidence.topTitles、dramaMixNames、dramaRising、行业样本 key、各平台 hotTopics 提炼；含抖音漫剧样本时可输出「AI漫剧/重生漫剧」类一级词。无法核实月搜索量时仍须输出，**禁止**「尚未检索到蓝海词」等空话。
+- globalBlueOceanWords：**【必须输出 4–6 组，禁止空数组】** 聚合选定平台的选题关键词，一/二级分级。这些是创作建议，不代表已核实搜索量或低竞争。格式：[{"primary":"一级词","secondary":["二级词1","二级词2"]}]。须从 platformEvidence.topTitles、dramaMixNames、dramaRising、行业样本 key、各平台 hotTopics 提炼；含抖音漫剧样本时可输出「AI漫剧/重生漫剧」类一级词。无法核实月搜索量时仍须输出，**禁止**「尚未检索到蓝海词」等空话。
+【证据口径】百分比仅表示已采集赛道样本条数对前一同长度窗口的变化，不是播放量、平台全量流量或算法推荐率；采集覆盖可能不同，本期含今日未结束时段。无对照不推算增长。关键词统一称为「选题关键词」，不得称低竞争蓝海或宣称搜索量；算法相关判断统一为「内容表现观察」，不得宣称已验证算法机制。
 【绝对警告 — JSON 输出规范】请直接且仅输出合法的 JSON 对象，不要包含任何 Markdown 标记。第一个字符必须是 {，最后一个字符必须是 }。`;
 
         /**
@@ -5897,7 +5898,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               attempt: llmResult.attempt,
             },
             report: {
-              reportTitle: safeStr(parsed.reportTitle || `平台趋势看板 · ${pastStr}–${todayStr}`),
+              reportTitle: `${input.platforms.map((platform) => PLATFORM_NAMES[platform] || platform).join("、")}趋势报告 · 近${wd}天 · ${pastStr} – ${todayStr}`,
+              dateRange: `${pastStr} – ${todayStr}`,
+              windowDays: wd,
+              generatedAt: new Date(anchorMs).toISOString(),
               // insightSummary：固定 判断/热点/结构/建议 四栏；清洗后台条数口径
               insightSummary: normalizeInsightSummary(parsed.insightSummary),
               trackGrowth: displayTrackGrowth,
