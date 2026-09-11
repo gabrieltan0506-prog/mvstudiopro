@@ -10,14 +10,9 @@
  * reasoning_effort 只有 low / high / max 真正生效（medium→high、xhigh→max、minimal/none→low，
  * 不报错但会被降级）；输出上限 131,072（思维链计入）；只有 glm-5.3-flash 吃图。
  *
- * 第三家（阿里云百炼「ZHIPU/GLM-5.3」，智谱直供）参数同口径：`enable_thinking: true` +
- * `reasoning_effort`（max 默认 / high / low），支持 `stream: true` 与 `stream_options.include_usage`，
- * 思考过程走 `delta.reasoning_content`。它只在**华北 2（北京）**地域可用，本仓已验证北京域读不到
- * 我们的 GCS 签名图，所以读图链不接它；纯文本档要接的话另配北京 Key 与业务空间域名。
- * 本仓现有调用一律非流式（要整份 JSON 一次解析），流式是可用能力、不是当前口径。
+ * 只走这两家：OpenRouter（锁 Z.AI 自营）与 EvoLink。阿里云百炼的智谱 GLM 不接（0911 用户令）。
  *
  * @see https://evolink.ai/docs/en/api-manual/language-series/glm/chat-completions/chat-completions-reference
- * @see https://help.aliyun.com/zh/model-studio/glm-zhipu
  */
 
 /** OpenRouter 主路（文本旗舰，131 万上下文） */
