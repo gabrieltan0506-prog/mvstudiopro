@@ -1,5 +1,29 @@
 # 动作白模工厂接入：分批证据与断点
 
+## 2026-09-11 19:28 · 最后重构复验
+
+最后抽取相同CAS函数后，`pnpm check`退出0；4文件66项专项通过（渲染22／恢复36／任务4／路由4），3.42秒。完整diff及`git diff --check`通过。本批按用户要求提交推送原PR1444；不合并、不正式部署。真实数据库独立记录已获授权，单独执行并补回执，不将其未完成隐藏为已验证。
+
+## 2026-09-11 19:17 · Linux与单次模型验证（部分验证，未上线）
+
+Linux隔离真渲染已通过：Blender3.4.1，120帧／110168字节／16骨，13个GCS对象逐个读回SHA一致。单次EvoLink Seedance2.0 Mini参考生视频已完成，任务`task-unified-1789124925-8s45i72b`；5.041667秒、864×496、121帧、1058120字节，实际上游USD0.113／7.668credits。16份原始与16份解析JSON永久保存；白模与成片同步对比已交付，整体动作跟随但姿态／时序不逐帧一致，不外推其他能力。
+
+全仓616文件5833项通过／0失败／5跳过；非增量类型、build、Vite退出0。恢复链已实现并有36项专项＋4项任务测试通过；随后仅抽出相同CAS函数供隔离验收，最后该小重构待复验。用户已授权一条独立失败态数据库验收记录，截至本条尚未插入、未实跑。PR1444仍OPEN草稿／远端54310b69，本轮改动未提交，不合并或正式部署。正式UI全链、真实用户扣退、生产重启与Linux峰值未验。
+
+产物与准确续工断点：[最新进度-0911.md](/Users/tangenjie/Downloads/2026Sep11/blender%20motions/最新进度-0911.md)。本节更新此前“未验Linux/GCS/付费”与“21项失败”的历史口径，旧记录保留。
+
+## 五项验收复查 · 2026-09-11 18:29
+
+**仍为部分验证。** 自动绑骨／剧本动作编排、复杂打斗／变身／四尾黑翼／细腻表演属于尚未实现的新能力，建议后续功能PR；模型跟随、Linux／正式队列／UI验收和21项测试维护属于PR1444现有能力收口，不应转移给下一功能PR后宣称当前版完整验收。
+
+- 本轮实跑能力schema12组（3接收、9拒绝）、能力／离线消费26项、工作台／权限／失败保全24项，均符合预期。
+- 新增真实本机渲染：单人5秒120帧76,556字节；三角色竖屏5秒120帧76,121字节；六角色30秒720帧417,677字节。均通过解码和关节检查，但竖屏人物偏小；本机通过不代表生产Linux或构图质量全过。
+- Fly健康200，当前旧版白模接口404，新服务与Blender/xvfb未部署。真实DB只读复查通过；独立GCS诊断JSON165字节上传回读SHA一致，永久保留。数据库首轮探针调用方式错误保留，已用当前驱动接口更正复查。没有用户任务写入、付费调用或生产重启。
+- 21项修正仅在隔离副本验证：原6文件131项通过，加45项邻接共176项通过，生产代码未改；尚未迁回或推送PR。全仓不能改报全绿。
+- 当前PR收口工程估算20–40人时（不是本轮实耗或墙钟承诺）；后续功能需按受限动作、标准骨架、尾翼等模块单独选范围。没有合并、部署或另开PR。
+
+完整五项分类、全部模块工时、工程示意图、原始回执和视频位于用户指定的 `/Users/tangenjie/Downloads/2026Sep11/blender motions/五项验收-0911/`，入口为 `五项验收与工程排期.md`。下文保留此前验收快照，冲突处以本节最新复查及实际远端状态为准。
+
 ## 最终本地验收与交付 · 2026-09-11
 
 **状态：部分验证，未上线。** 第一批 `dd7a18ad` 与第二批 `be0beec1` 已推送统一草稿 [PR #1444](https://github.com/gabrieltan0506-prog/mvstudiopro/pull/1444)；本节为第三批验收与交接记录。没有合并、生产部署或新增付费模型调用。
@@ -20,6 +44,32 @@
 - `manhuaAssembleAccess.test.ts`：1项，测试上下文缺少取消错误判定函数。
 - `manhuaSegmentCapacityWiring.test.ts`：1项，文本断言要求容量字段是旧依赖数组末项，与已有追加字段不符。
 - `manhuaNativeDeepReadBatchCli.test.ts`、`manhuaNativeDeepReadProbeCli.test.ts`：各1项，7201边界断言与本轮前代码不符；未改冻结读片参数。
+
+### 21项失败分类、影响与处理状态（18:17复查）
+
+**状态：未修复，相关回归验收仍有缺口。** “修改前也失败”只证明不是本次白模增量新增，不能据此忽略失败，也不能证明相关线上功能正常。以下分类与原因已核查，修复方案尚未实施；本次仅补充报告，没有修改业务、测试断言、读片参数或发起付费调用。
+
+| 分类与测试文件 | 失败数 | 原因及实际证据 | 验收影响 | 后续处理（未实施） |
+| --- | ---: | --- | --- | --- |
+| 编剧确认／转导演：`client/src/lib/manhuaWriterTimedGate.test.ts` | 3 | 测试抽取真实回调后，未注入 `activeDirectionCanon`、`buildManhuaDirectionCanonFromSelection`，运行报未定义；正式页面存在对应定义／导入。 | 确认成功、缺资产拒绝、旧付费产物保留及云恢复的相关测试未跑到底；不能据此认定正式页面同样缺变量。 | 补齐测试执行上下文，保留原有状态、门禁和旧产物断言，再复验完整路径。 |
+| 资产编辑／去字／标准化：`client/src/lib/manhuaAssetEditSubmit.test.ts` | 14 | 抽取回调的测试依赖表遗漏 `readOpenAiImageVariantPref`；真实回调已使用该函数，提前异常使预期建单调用为0，连带产生返回值及请求读取断言失败。 | 防重复建单、确认取消、失败保留旧图、续签原图、质量档与成功回写等回归保护没有被这些测试有效验证；不等于已证实线上发生重复扣费或丢图。 | 补齐偏好读取依赖并断言实际请求；保留失败、重入、取消及旧图恢复测试，不削弱断言凑绿。 |
+| 合成超时／退款：`server/services/manhuaAssembleAccess.test.ts` | 1 | 抽取 worker 的测试上下文缺少 `isKnowledgeCardCancelledJobError`，报未定义；正式 `server/jobs/runner.ts` 有该函数。 | 超时后的落库、退款和不重新排队验证中断，属于必须补验的资金与恢复风险；本轮未验证真实账本退款。 | 补齐取消错误判定依赖，复验超时、取消、落库、退款与不重排；离线通过仍不能替代真实账本验收。 |
+| 分段容量接线：`client/src/lib/manhuaSegmentCapacityWiring.test.ts` | 1 | 第33行文本断言要求 `segmentCapacityModeByEpisode` 紧邻依赖数组结尾；实际其后已有 `activeDirectionCanon`。 | 是依赖数组位置的脆弱断言，不能据此认定容量参数未接通；该项完整接线验证仍未通过。 | 改为检查依赖和参数实际存在，不要求固定末项，并保留超容量扣费前拒绝断言。 |
+| 读片CLI时长契约：`server/services/manhuaNativeDeepReadBatchCli.test.ts`、`server/services/manhuaNativeDeepReadProbeCli.test.ts` | 2（各1） | 两项均要求拒绝7201秒；共享上限 `MANHUA_LEARN_MAX_DURATION_SEC = 240 * 60`，当前与修改前版本均为14400秒，故实际预检接受并退出0。 | 测试仍按旧7200秒边界判断，与当前代码契约不一致；不代表生产模型对所有合法长片的处理质量已验收。 | 核对既有时长契约后，补合法上界与越界断言；不得为通过测试擅改冻结读片参数或业务上限。 |
+| 合计 | **21** | **18项测试上下文依赖缺失＋1项脆弱文本断言＋2项时长契约不一致。** | **全仓回归仍为失败状态，不能称整厂验收通过。** | **全部待修复／复验。** |
+
+#### 本次对照复跑回执
+
+2026-09-11 18:17 对下列两个目录执行相同命令；不是仅引用此前报告：
+
+- 当前白模版本：`/private/tmp/growth-release-fix-0911.o7K6II/repo`，提交 `54310b69`。
+- 修改前隔离源码：`/private/tmp/previs-writer-gate-before.84QNHx`，基于 `edeb254d9610728212d741b62ed8864b87e03ab4`。
+
+```sh
+pnpm exec vitest run client/src/lib/manhuaWriterTimedGate.test.ts client/src/lib/manhuaAssetEditSubmit.test.ts server/services/manhuaAssembleAccess.test.ts client/src/lib/manhuaSegmentCapacityWiring.test.ts server/services/manhuaNativeDeepReadBatchCli.test.ts server/services/manhuaNativeDeepReadProbeCli.test.ts --maxWorkers=2 --minWorkers=1 --reporter=dot
+```
+
+两边原始汇总均为 `Test Files 6 failed (6)`、`Tests 21 failed | 106 passed (127)`、退出码1。当前版46.86秒，修改前46.62秒；失败名称与原因一致。该命令只复跑上述6个文件，不是再次执行全仓5758项测试；本节不覆盖前述全仓回执。
 
 首轮施工中全仓为5730过／23失败／5跳过，其中另2条新白模断言与运行期间源码变更交叠；停止源码改动后的本次完整复验已确认这2条通过，不再列为残余失败，也不冒称它们是基线问题。没有为通过测试删除断言或修改无关业务。
 

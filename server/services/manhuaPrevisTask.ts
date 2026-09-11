@@ -13,6 +13,10 @@ import {
   type PostProdJobRow,
 } from "./postProdJobResponse";
 import { signGsUriV4ReadUrl } from "./gcs";
+import {
+  recoverPrevisResult,
+  previsRecoveryStorage,
+} from "./manhuaPrevisRecovery";
 
 export function previsTaskId(userId: number, requestId: string) {
   return `prv_${createHash("sha256").update(`${userId}:${requestId}`).digest("hex").slice(0, 48)}`;
@@ -26,13 +30,58 @@ export type PrevisTaskDeps = {
     input: ManhuaPrevisRequest
   ) => Promise<void>;
   sign: (uri: string, seconds: number) => string;
+  recover?: (row: RecordRow, userId: number) => Promise<RecordRow>;
 };
 async function database() {
   const db = await getDb();
   if (!db) throw new Error("白模任务记录暂不可用");
   return db;
 }
+async function recover(row: RecordRow, userId: number) {
+  return recoverPrevisResult(row, userId, {
+    ...previsRecoveryStorage,
+    async save(previous, output) {
+      return saveRecoveredPrevisResult(await database(), previous, output);
+    },
+  });
+}
+/** 复用相同 CAS；隔离验收可注入现有连接，不运行全站首次建表逻辑。 */
+export async function saveRecoveredPrevisResult(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  previous: RecordRow,
+  output: Record<string, unknown>
+) {
+  const [saved] = await db
+    .update(jobs)
+    .set({
+      status: "succeeded",
+      output,
+      error: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(jobs.id, previous.id),
+        eq(jobs.userId, previous.userId),
+        eq(jobs.type, "post_prod"),
+        eq(jobs.provider, "blender-previs"),
+        eq(jobs.status, "failed"),
+        sql`${jobs.input}::jsonb = ${JSON.stringify(previous.input)}::jsonb`,
+        sql`${jobs.output}::jsonb IS NOT DISTINCT FROM ${previous.output == null ? null : JSON.stringify(previous.output)}::jsonb`,
+        sql`${jobs.error} IS NOT DISTINCT FROM ${previous.error}`
+      )
+    )
+    .returning();
+  // 竞争中取消或另一查询先恢复时，返回当前真实记录，不返回过时的失败。
+  if (saved) return saved;
+  const [current] = await db
+    .select()
+    .from(jobs)
+    .where(and(eq(jobs.id, previous.id), eq(jobs.userId, previous.userId)));
+  return current ?? null;
+}
 const real: PrevisTaskDeps = {
+  recover,
   async load(id) {
     const db = await database();
     const [row] = await db.select().from(jobs).where(eq(jobs.id, id));
@@ -86,7 +135,9 @@ export async function submitPrevisTask(
   const response = present(row, userId, d);
   if (JSON.stringify(response.params) !== JSON.stringify(input))
     throw new Error("同一请求编号不能用于不同配置");
-  return response;
+  return d.recover
+    ? present(await d.recover(row, userId), userId, d)
+    : response;
 }
 export async function getPrevisTask(
   userId: number,
@@ -94,7 +145,9 @@ export async function getPrevisTask(
   d: PrevisTaskDeps = real
 ) {
   const row = await d.load(previsTaskId(userId, requestId));
-  return row ? present(row, userId, d) : null;
+  if (!row) return null;
+  present(row, userId, d);
+  return present(d.recover ? await d.recover(row, userId) : row, userId, d);
 }
 const cursorValueSchema = z
   .object({
@@ -124,8 +177,10 @@ export type PrevisListDeps = {
     cursor?: z.infer<typeof cursorValueSchema>
   ) => Promise<RecordRow[]>;
   sign: PrevisTaskDeps["sign"];
+  recover?: PrevisTaskDeps["recover"];
 };
 const realList: PrevisListDeps = {
+  recover,
   sign: signGsUriV4ReadUrl,
   async list(userId, scopeId, clipId, cursor) {
     const db = await database();
@@ -162,8 +217,28 @@ export async function listPrevisTasks(
       ? undefined
       : parsePrevisCursor(previsCursorSchema.parse(before));
   const rows = await d.list(userId, scopeId, clipId, cursor);
+  const page = rows.slice(0, 30);
+  const items: ReturnType<typeof present>[] = [];
+  // 每页最多三条并行验回，避免历史恢复占满服务器连接和内存。
+  for (let offset = 0; offset < page.length; offset += 3) {
+    items.push(
+      ...(await Promise.all(
+        page.slice(offset, offset + 3).map(async row => {
+          const response = present(row, userId, d);
+          if (
+            response.params.scopeId !== scopeId ||
+            response.params.clipId !== clipId
+          )
+            throw new Error("白模历史范围不一致");
+          return d.recover
+            ? present(await d.recover(row, userId), userId, d)
+            : response;
+        })
+      ))
+    );
+  }
   return {
-    items: rows.slice(0, 30).map(row => present(row, userId, d)),
+    items,
     nextCursor:
       rows.length > 30
         ? JSON.stringify({

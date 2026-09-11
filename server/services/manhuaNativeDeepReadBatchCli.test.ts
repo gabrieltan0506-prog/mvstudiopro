@@ -100,7 +100,7 @@ describe("原生读片批处理CLI凭证边界与参数投影", () => {
     ]);
   });
 
-  it.each([undefined, 281, 300, 7200])("清单分片上限=%s进入两次预检与正式执行，缺省显式锁300", async (segmentSeconds) => {
+  it.each([undefined, 281, 300, 7200, 7201, 14400])("清单分片上限=%s进入两次预检与正式执行，缺省显式锁300", async (segmentSeconds) => {
     mocks.readFile.mockResolvedValue(JSON.stringify([episode(10, segmentSeconds)]));
     await expect(runCli(["--go", "--confirm=test-confirmation", "--max-calls=2"], "mvstudiopro"))
       .rejects.toThrow("测试拦截执行，未调用模型");
@@ -122,7 +122,7 @@ describe("原生读片批处理CLI凭证边界与参数投影", () => {
     expect(mocks.runBatch).not.toHaveBeenCalled();
   });
 
-  it.each([null, "", false, 0, -1, 1.5, 7201])("非法分片上限=%s在列GCS前拒绝，不绕过到付费入口", async (segmentSeconds) => {
+  it.each([null, "", false, 0, -1, 1.5, 14401])("非法分片上限=%s在列GCS前拒绝，不绕过到付费入口", async (segmentSeconds) => {
     mocks.readFile.mockResolvedValue(JSON.stringify([episode(10, segmentSeconds)]));
     await expect(runCli(["--dry-run"], "mvstudiopro")).rejects.toThrow("测试退出:1");
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("分片时长"));

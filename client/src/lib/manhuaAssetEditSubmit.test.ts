@@ -10,6 +10,8 @@ import {
   prepareAssetImageEdit,
 } from "./manhuaAssetImageSource";
 import { resolveCanvasMaterialUrl } from "./omniCanvasApi";
+import { readOpenAiImageVariantPref } from "./openaiImageVariantPref";
+import { OPENAI_IMAGE_VARIANT_STORAGE_KEY } from "@shared/openaiImageVariant";
 
 vi.mock("./omniCanvasApi", () => ({ resolveCanvasMaterialUrl: vi.fn() }));
 afterEach(() => {
@@ -82,6 +84,7 @@ function setup(failure = false) {
   }));
   const busy = vi.fn();
   const deps = {
+    readOpenAiImageVariantPref,
     assetStandardizeBusyId: null,
     assetActionLocked: { current: false },
     confirmAssetAction: vi.fn(
@@ -117,6 +120,23 @@ function setup(failure = false) {
 }
 
 describe("真实资产按钮到队列与新图回写", () => {
+  it.each(["editCustomAsset", "detextCustomAsset", "standardizeCustomAsset"])(
+    "%s 消费三档实际偏好，双档选择仍只提交一张且不重复建单",
+    async name => {
+      for (const mode of ["flare", "sunburst", "both"] as const) {
+        const read = vi.fn((key: string) => key === OPENAI_IMAGE_VARIANT_STORAGE_KEY ? mode : null);
+        vi.stubGlobal("localStorage", { getItem: read });
+        const state = setup();
+        await callback(name, state.deps)("original", name === "standardizeCustomAsset" ? "medium" : "保留黑翼");
+        expect(read).toHaveBeenCalledWith(OPENAI_IMAGE_VARIANT_STORAGE_KEY);
+        expect(state.queue).toHaveBeenCalledOnce();
+        expect((state.queue.mock.calls[0] as any)[0].input.params.openaiImageVariant).toBe(mode === "both" ? "flare" : mode);
+        expect(state.poll).toHaveBeenCalledOnce();
+        expect(state.getRefs()).toHaveLength(2);
+        expect(state.getRefs()[0]).toEqual(normalizeManhuaCustomAssetRefs([state.original])[0]);
+      }
+    }
+  );
   it.each(["editCustomAsset", "detextCustomAsset", "standardizeCustomAsset"])(
     "%s 建单失败、任务失败和空产物不追加旧图，不自动重试",
     async name => {

@@ -50,8 +50,16 @@ describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("白模真实渲染", () => {
       "request.json",
       "report.json",
       "evidence.json",
+      "report.parsed.json",
+      "report.parsed-evidence.json",
       "scene.blend",
+      "probe.json",
+      "probe-evidence.json",
+      "probe.parsed.json",
+      "validation-evidence.json",
       "preview.mp4",
+      "result.json",
+      "result-evidence.json",
     ]);
     await writeFile(
       path.join(out, "验收结果.json"),

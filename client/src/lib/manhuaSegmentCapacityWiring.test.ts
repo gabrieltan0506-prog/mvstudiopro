@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import {
   buildManhuaWriterSession,
@@ -30,7 +31,17 @@ describe("漫剧分镜容量模式接线（manhuaSegmentCapacityMode）", () => 
     expect(factory).toMatch(
       /segmentCapacityMode: getManhuaSegmentCapacityMode\(\s*segmentCapacityModeByEpisode,\s*episodeIndex,\s*\)/,
     );
-    expect(factory).toContain("segmentCapacityModeByEpisode,\n    ],");
+    const tree = ts.createSourceFile("OmniCanvas.tsx", omniSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    let dependencies: string[] = [];
+    const visit = (node: ts.Node) => {
+      if (ts.isVariableDeclaration(node) && node.name.getText(tree) === "runFactory" && node.initializer && ts.isCallExpression(node.initializer)) {
+        const values = node.initializer.arguments[1];
+        if (values && ts.isArrayLiteralExpression(values)) dependencies = values.elements.map(value => value.getText(tree));
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(tree);
+    expect(dependencies).toContain("segmentCapacityModeByEpisode");
     expect(pipelineSource).toContain("segmentCapacityMode?: ManhuaSegmentCapacityMode | null;");
     expect(pipelineSource).toMatch(
       /planManhuaSegmentCapacity\(\{[\s\S]*?mode: opts\.segmentCapacityMode,[\s\S]*?\}\);\s*if \(!capacityPlan\.ok\) throw new Error\(capacityPlan\.errorZh\);/,

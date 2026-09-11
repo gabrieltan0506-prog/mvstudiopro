@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   createManhuaPrevisStudio,
+  manhuaPrevisDraftSchema,
   manhuaPrevisSpecSchema,
   manhuaPrevisStudioSchema,
   formatPrevisMotionGuide,
@@ -10,7 +11,195 @@ import {
   formatManhuaSegmentReferenceGuideZh,
 } from "./manhuaSegmentReference";
 const scope = "11111111-1111-4111-8111-111111111111";
+const boundarySpec = createManhuaPrevisStudio(5, scope).spec;
+const boundaryActor = boundarySpec.actors[0];
+const actorInput = (patch: Record<string, unknown>) => ({
+  ...boundarySpec,
+  actors: [{ ...boundaryActor, ...patch }],
+});
+const capabilityCases = [
+  { name: "默认配置", input: boundarySpec, accepted: true },
+  {
+    name: "项目角色编号只作映射",
+    input: actorInput({ assetRef: "character-1" }),
+    accepted: true,
+  },
+  {
+    name: "人体出手",
+    input: actorInput({
+      actions: [{ kind: "strike", startSec: 1, endSec: 3 }],
+    }),
+    accepted: true,
+  },
+  {
+    name: "直接加载GLB",
+    input: actorInput({ glbGcsUri: "gs://test/model.glb" }),
+    accepted: false,
+    path: ["actors", 0],
+    code: "unrecognized_keys",
+  },
+  {
+    name: "自动绑骨",
+    input: { ...boundarySpec, autoRig: true },
+    accepted: false,
+    path: [],
+    code: "unrecognized_keys",
+  },
+  {
+    name: "剧本自动编排",
+    input: { ...boundarySpec, scriptZh: "角色出拳，对手闪避" },
+    accepted: false,
+    path: [],
+    code: "unrecognized_keys",
+  },
+  {
+    name: "四尾",
+    input: actorInput({ tails: 4 }),
+    accepted: false,
+    path: ["actors", 0],
+    code: "unrecognized_keys",
+  },
+  {
+    name: "翼",
+    input: actorInput({ wings: true }),
+    accepted: false,
+    path: ["actors", 0],
+    code: "unrecognized_keys",
+  },
+  {
+    name: "面部表情",
+    input: actorInput({ expression: "微笑" }),
+    accepted: false,
+    path: ["actors", 0],
+    code: "unrecognized_keys",
+  },
+  ...["transform", "combo"].map(kind => ({
+    name: kind === "transform" ? "变身" : "连击",
+    input: actorInput({ actions: [{ kind, startSec: 1, endSec: 3 }] }),
+    accepted: false,
+    path: ["actors", 0, "actions", 0, "kind"],
+    code: "invalid_value",
+  })),
+  {
+    name: "四足出手",
+    input: actorInput({
+      shape: "horse",
+      actions: [{ kind: "strike", startSec: 1, endSec: 3 }],
+    }),
+    accepted: false,
+    path: ["actors", 0, "actions"],
+    code: "custom",
+  },
+];
+
 describe("白模配置与旧引用兼容", () => {
+  it.each(capabilityCases)(
+    "能力边界：$name",
+    ({ input, accepted, path, code }) => {
+      const result = manhuaPrevisSpecSchema.safeParse(input);
+      expect(result.success).toBe(accepted);
+      if (result.success) expect(result.data).toEqual(input);
+      else
+        expect(result.error.issues).toEqual(
+          expect.arrayContaining([expect.objectContaining({ path, code })])
+        );
+    }
+  );
+  it("草稿不把未实现的能力静默剥掉", () => {
+    for (const entry of capabilityCases.filter(
+      c => !c.accepted && c.code !== "custom"
+    )) {
+      expect(
+        manhuaPrevisDraftSchema.safeParse(entry.input).success,
+        entry.name
+      ).toBe(false);
+    }
+  });
+  it("六角色八机位十二动作保持全量，超限明确拒绝", () => {
+    const spec = createManhuaPrevisStudio(30, scope).spec;
+    spec.actors = Array.from({ length: 6 }, (_, i) => ({
+      ...spec.actors[0],
+      id: `actor-${i}`,
+      nameZh: `角色${i}`,
+      actions: Array.from({ length: 12 }, (_, j) => ({
+        kind: "guard" as const,
+        startSec: j * 2,
+        endSec: j * 2 + 1,
+      })),
+    }));
+    spec.cameras = Array.from({ length: 8 }, (_, i) => ({
+      ...spec.cameras[0],
+      startSec: i * 3.75,
+      endSec: (i + 1) * 3.75,
+    }));
+    expect(manhuaPrevisSpecSchema.parse(spec)).toEqual(spec);
+    expect(manhuaPrevisDraftSchema.parse(spec)).toEqual(spec);
+    expect(formatPrevisMotionGuide(spec)).toContain("白模角色6对应角色5：");
+    expect(
+      formatPrevisMotionGuide(spec).match(/22—23秒抬臂保护/g)
+    ).toHaveLength(6);
+    const excess = [
+      {
+        ...spec,
+        actors: [...spec.actors, { ...spec.actors[0], id: "actor-7" }],
+      },
+      { ...spec, cameras: [...spec.cameras, spec.cameras[0]] },
+      {
+        ...spec,
+        actors: [
+          {
+            ...spec.actors[0],
+            actions: [
+              ...spec.actors[0].actions,
+              { kind: "idle", startSec: 24, endSec: 25 },
+            ],
+          },
+        ],
+      },
+    ];
+    for (const value of excess) {
+      expect(manhuaPrevisSpecSchema.safeParse(value).success).toBe(false);
+      expect(manhuaPrevisDraftSchema.safeParse(value).success).toBe(false);
+    }
+  });
+  it("编辑中零值与空数组可保存，生产提交必须拒绝", () => {
+    const studio = createManhuaPrevisStudio(5, scope);
+    studio.spec.actors[0].actions = [{ kind: "guard", startSec: 0, endSec: 0 }];
+    studio.spec.cameras[0] = {
+      startSec: 0,
+      endSec: 0,
+      position: [0, 0, 0],
+      target: [0, 0, 0],
+      lens: 0,
+    };
+    expect(manhuaPrevisStudioSchema.parse(studio)).toEqual(studio);
+    expect(manhuaPrevisSpecSchema.safeParse(studio.spec).success).toBe(false);
+    studio.spec.actors = [];
+    studio.spec.cameras = [];
+    expect(manhuaPrevisStudioSchema.parse(studio)).toEqual(studio);
+    expect(manhuaPrevisSpecSchema.safeParse(studio.spec).success).toBe(false);
+  });
+  it.each([NaN, Infinity, -Infinity])(
+    "草稿和提交都拒绝非有限数值 %s",
+    value => {
+      const spec = { ...boundarySpec, durationSec: value };
+      expect(manhuaPrevisDraftSchema.safeParse(spec).success).toBe(false);
+      expect(manhuaPrevisSpecSchema.safeParse(spec).success).toBe(false);
+    }
+  );
+  it("片长边界只接收二到三十整秒，不以裁切静默接收", () => {
+    for (const duration of [2, 30])
+      expect(
+        manhuaPrevisSpecSchema.parse(
+          createManhuaPrevisStudio(duration, scope).spec
+        ).durationSec
+      ).toBe(duration);
+    for (const durationSec of [0, 1, 2.5, 31])
+      expect(
+        manhuaPrevisSpecSchema.safeParse({ ...boundarySpec, durationSec })
+          .success
+      ).toBe(false);
+  });
   it("引用说明完整保存，不以固定字符数截掉末尾动作", () => {
     const motionGuideZh = "动作说明".repeat(1200) + "最后角色最后动作";
     const refs = normalizeManhuaSegmentReferences({

@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { z } from "zod";
 import {
   manhuaPrevisRequestSchema,
   type ManhuaPrevisRequest,
@@ -36,6 +37,7 @@ export function runPrevisProcess(
       },
     });
     let output = "";
+    let outputBytes = 0;
     let failure: Error | undefined;
     const stop = () => {
       try {
@@ -47,22 +49,25 @@ export function runPrevisProcess(
       }
     };
     const abort = () => {
-      failure = new DOMException("白模渲染已停止", "AbortError");
+      failure ??= new DOMException("白模渲染已停止", "AbortError");
       stop();
     };
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) abort();
-    child.stdout.on("data", chunk => {
-      output += chunk.toString();
-      if (Buffer.byteLength(output) > 4 * 1024 * 1024) {
+    const receive = (chunk: Buffer, capture: boolean) => {
+      if (failure) return;
+      outputBytes += chunk.length;
+      if (outputBytes > 4 * 1024 * 1024) {
         failure = new Error("白模渲染日志超过上限");
         stop();
-      }
-    });
+      } else if (capture) output += chunk.toString();
+    };
+    child.stdout.on("data", chunk => receive(chunk, true));
     // 不把内部路径与依赖错误直接返给普通用户。
-    child.stderr.on("data", () => {});
-    child.on("error", error => {
-      failure = error;
+    child.stderr.on("data", chunk => receive(chunk, false));
+    child.on("error", () => {
+      failure ??= new Error("白模渲染程序暂不可用");
+      stop();
     });
     child.on("close", code => {
       signal.removeEventListener("abort", abort);
@@ -100,6 +105,43 @@ const deps: PrevisRenderDeps = {
   useXvfb: process.platform === "linux",
 };
 const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
+const reportSchema = z
+  .object({
+    frames: z.number().int().min(48).max(720),
+    fps: z.literal(24),
+    actors: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1),
+            nameZh: z.string().min(1),
+            bones: z.number().int().min(12),
+            contactError: z.number().finite().nonnegative().max(0.005),
+            stanceDrift: z.number().finite().nonnegative().max(0.005),
+            offscreenFrames: z.array(z.number().int().min(1).max(720)).max(720),
+          })
+          .passthrough()
+      )
+      .min(1)
+      .max(6),
+    warnings: z.array(z.string()),
+  })
+  .passthrough();
+
+/** 固定脚本退出后才读取产物，先查大小，避免损坏产物一次性耗尽 worker 内存。 */
+async function readBoundedArtifact(
+  file: string,
+  min: number,
+  max: number,
+  message: string
+) {
+  const info = await stat(file);
+  if (!info.isFile() || info.size < min || info.size > max)
+    throw new Error(message);
+  const bytes = await readFile(file);
+  if (bytes.length !== info.size) throw new Error(message);
+  return bytes;
+}
 
 export async function renderManhuaPrevis(
   raw: ManhuaPrevisRequest,
@@ -150,7 +192,12 @@ export async function renderManhuaPrevis(
       // 报告在渲染前产生。失败或超时也先永久保存原字节，再做解析和门禁。
       // 不复用已经中止的媒体信号；保全独立限时，不重跑渲染。
       try {
-        reportBytes = await readFile(path.join(dir, "report.json"));
+        reportBytes = await readBoundedArtifact(
+          path.join(dir, "report.json"),
+          0,
+          4 * 1024 * 1024,
+          "白模报告体积异常，原文件保留待检查"
+        );
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
@@ -188,7 +235,33 @@ export async function renderManhuaPrevis(
       }
     }
     if (!reportBytes || !reportObject) throw new Error("白模检查报告缺失");
-    const report = JSON.parse(reportBytes.toString()) as PrevisRenderReport;
+    const parsedReport: unknown = JSON.parse(reportBytes.toString());
+    const parsedReportBytes = Buffer.from(JSON.stringify(parsedReport));
+    const parsedReportObject = await d.upload({
+      objectName: `${prefix}/report.parsed.json`,
+      buffer: parsedReportBytes,
+      contentType: "application/json",
+      signal: AbortSignal.timeout(30_000),
+    });
+    await d.upload({
+      objectName: `${prefix}/report.parsed-evidence.json`,
+      buffer: Buffer.from(
+        JSON.stringify({
+          requestId: input.requestId,
+          clipId: input.clipId,
+          parsedReport: {
+            gcsUri: parsedReportObject.gcsUri,
+            bytes: parsedReportBytes.length,
+            sha256: sha(parsedReportBytes),
+          },
+        })
+      ),
+      contentType: "application/json",
+      signal: AbortSignal.timeout(30_000),
+    });
+    const checkedReport = reportSchema.safeParse(parsedReport);
+    if (!checkedReport.success) throw new Error("白模检查报告格式不正确");
+    const report = checkedReport.data as PrevisRenderReport;
     if (
       report.frames !== input.spec.durationSec * 24 ||
       report.fps !== 24 ||
@@ -199,6 +272,8 @@ export async function renderManhuaPrevis(
       const actor = report.actors[index];
       if (
         actor.id !== input.spec.actors[index].id ||
+        actor.nameZh !== input.spec.actors[index].nameZh ||
+        actor.offscreenFrames.some(frame => frame > report.frames) ||
         actor.bones < 12 ||
         !Number.isFinite(actor.contactError) ||
         !Number.isFinite(actor.stanceDrift) ||
@@ -207,9 +282,12 @@ export async function renderManhuaPrevis(
       )
         throw new Error("白模关节检查未通过");
     }
-    const blend = await readFile(path.join(dir, "scene.blend"));
-    if (blend.length < 1000 || blend.length > 64 * 1024 * 1024)
-      throw new Error("白模场景体积不正确");
+    const blend = await readBoundedArtifact(
+      path.join(dir, "scene.blend"),
+      1000,
+      64 * 1024 * 1024,
+      "白模场景体积不正确"
+    );
     const sceneObject = await d.upload({
       objectName: `${prefix}/scene.blend`,
       buffer: blend,
@@ -271,38 +349,112 @@ export async function renderManhuaPrevis(
       ],
       options.signal
     );
-    const probe = JSON.parse(
-      await d.run(
-        "ffprobe",
-        [
-          "-v",
-          "error",
-          "-count_frames",
-          "-show_entries",
-          "stream=width,height,nb_read_frames:format=duration",
-          "-of",
-          "json",
-          mp4,
-        ],
-        options.signal
-      )
+    const probeRaw = await d.run(
+      "ffprobe",
+      [
+        "-v",
+        "error",
+        "-count_frames",
+        "-show_entries",
+        "stream=width,height,nb_read_frames:format=duration",
+        "-of",
+        "json",
+        mp4,
+      ],
+      options.signal
     );
-    const stream = probe.streams?.[0];
+    // 解码探针也是质量证据：先保全原始 JSON，再解析或拒收。
+    const probeBytes = Buffer.from(probeRaw);
+    const probeObject = await d.upload({
+      objectName: `${prefix}/probe.json`,
+      buffer: probeBytes,
+      contentType: "application/json",
+      signal: AbortSignal.timeout(30_000),
+    });
+    await d.upload({
+      objectName: `${prefix}/probe-evidence.json`,
+      buffer: Buffer.from(
+        JSON.stringify({
+          requestId: input.requestId,
+          clipId: input.clipId,
+          probe: {
+            gcsUri: probeObject.gcsUri,
+            bytes: probeBytes.length,
+            sha256: sha(probeBytes),
+          },
+        })
+      ),
+      contentType: "application/json",
+      signal: AbortSignal.timeout(30_000),
+    });
+    const probe = JSON.parse(probeRaw);
+    const parsedProbeBytes = Buffer.from(JSON.stringify(probe));
+    const parsedProbeObject = await d.upload({
+      objectName: `${prefix}/probe.parsed.json`,
+      buffer: parsedProbeBytes,
+      contentType: "application/json",
+      signal: AbortSignal.timeout(30_000),
+    });
+    await d.upload({
+      objectName: `${prefix}/validation-evidence.json`,
+      buffer: Buffer.from(
+        JSON.stringify({
+          requestId: input.requestId,
+          clipId: input.clipId,
+          report: {
+            gcsUri: reportObject.gcsUri,
+            bytes: reportBytes.length,
+            sha256: sha(reportBytes),
+            actors: report.actors.length,
+          },
+          parsedReport: {
+            gcsUri: parsedReportObject.gcsUri,
+            bytes: parsedReportBytes.length,
+            sha256: sha(parsedReportBytes),
+            actors: report.actors.length,
+          },
+          probe: {
+            gcsUri: probeObject.gcsUri,
+            bytes: probeBytes.length,
+            sha256: sha(probeBytes),
+          },
+          parsedProbe: {
+            gcsUri: parsedProbeObject.gcsUri,
+            bytes: parsedProbeBytes.length,
+            sha256: sha(parsedProbeBytes),
+          },
+        })
+      ),
+      contentType: "application/json",
+      signal: AbortSignal.timeout(30_000),
+    });
+    const stream = probe?.streams?.[0];
+    const [width, height] =
+      input.spec.aspect === "16:9" ? [960, 540] : [540, 960];
     if (
+      probe?.streams?.length !== 1 ||
+      stream?.width !== width ||
+      stream?.height !== height ||
+      !Number.isFinite(Number(probe?.format?.duration)) ||
       Number(stream?.nb_read_frames) !== report.frames ||
-      Math.abs(Number(probe.format?.duration) - input.spec.durationSec) > 0.05
+      Math.abs(Number(probe?.format?.duration) - input.spec.durationSec) > 0.05
     )
       throw new Error("白模视频解码校验未通过");
-    const video = await readFile(mp4);
-    if (video.length < 1000 || video.length > 64 * 1024 * 1024)
-      throw new Error("白模产物体积不正确");
+    const video = await readBoundedArtifact(
+      mp4,
+      1000,
+      64 * 1024 * 1024,
+      "白模产物体积不正确"
+    );
     const videoObject = await d.upload({
       objectName: `${prefix}/preview.mp4`,
       buffer: video,
       contentType: "video/mp4",
       signal: options.signal,
     });
-    return {
+    const result = {
+      userId,
+      scopeId: input.scopeId,
       gcsUri: videoObject.gcsUri,
       durationSec: input.spec.durationSec,
       bytes: video.length,
@@ -314,11 +466,41 @@ export async function renderManhuaPrevis(
       reportGcsUri: reportObject.gcsUri,
       requestSha256: sha(requestBytes),
       reportSha256: sha(reportBytes),
+      probeSha256: sha(probeBytes),
+      sceneSha256: sha(blend),
+      probeGcsUri: probeObject.gcsUri,
       report,
       clipId: input.clipId,
       requestId: input.requestId,
       spec: input.spec,
     };
+    // 先把完整回执存证，再交给 worker 落库；数据库暂时失败不应丢掉已生成产物。
+    const resultBytes = Buffer.from(JSON.stringify(result));
+    const resultObject = await d.upload({
+      objectName: `${prefix}/result.json`,
+      buffer: resultBytes,
+      contentType: "application/json",
+      signal: AbortSignal.timeout(30_000),
+    });
+    await d.upload({
+      objectName: `${prefix}/result-evidence.json`,
+      buffer: Buffer.from(
+        JSON.stringify({
+          userId,
+          requestId: input.requestId,
+          scopeId: input.scopeId,
+          clipId: input.clipId,
+          result: {
+            gcsUri: resultObject.gcsUri,
+            bytes: resultBytes.length,
+            sha256: sha(resultBytes),
+          },
+        })
+      ),
+      contentType: "application/json",
+      signal: AbortSignal.timeout(30_000),
+    });
+    return result;
   } finally {
     // 仅清理由本次 mkdtemp 产生的媒体；JSON 永久证据不随临时媒体删除。
     await rm(path.join(dir, "frames"), { recursive: true, force: true }).catch(
