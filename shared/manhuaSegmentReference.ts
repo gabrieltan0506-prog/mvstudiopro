@@ -26,6 +26,8 @@ export type ManhuaSegmentReferenceEntry = {
   fileName?: string;
   /** 上传时探到的媒体时长；各引擎按它做上限判断（2.5 ≤30 s，Wan 3.0 ≤15 s） */
   durationSec?: number;
+  /** 只有工厂生成的骨骼动作白模才声明动作职责；旧上传参考保持旧语义。 */
+  motionGuideZh?: string;
   updatedAt: string;
 };
 
@@ -81,6 +83,7 @@ export function normalizeManhuaSegmentReferenceEntry(
         ? Math.round(r.durationSec * 1000) / 1000
         : undefined,
     updatedAt: updatedAt || new Date(0).toISOString(),
+    ...(typeof r.motionGuideZh === "string" && r.motionGuideZh.trim() ? {motionGuideZh:r.motionGuideZh.trim()} : {}),
   };
 }
 
@@ -117,12 +120,14 @@ export function setManhuaSegmentReference<
 export function formatManhuaSegmentReferenceGuideZh(input: {
   previsVideoIndex?: number;
   masterAudioIndex?: number;
+  motionGuideZh?: string;
 }): string {
   const lines: string[] = [];
   if (input.previsVideoIndex && input.previsVideoIndex > 0) {
     lines.push(
       `【段参考·白模】@视频${input.previsVideoIndex}是本段站位白模：严格按它的秒位复刻人物走位、全景近景特写的景别切换与推拉摇移环绕切镜的机位运动；灰色人偶、空白场景与网格一律不进画面，人物外观、服装、场景只按@图片N与正文。`,
     );
+    if(input.motionGuideZh?.trim()) lines.push(`【白模动作】${input.motionGuideZh.trim()}`);
   }
   if (input.masterAudioIndex && input.masterAudioIndex > 0) {
     lines.push(

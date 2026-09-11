@@ -104,6 +104,7 @@ import { klingRouter } from "./routers/kling";
 import { hunyuan3dRouter } from "./routers/hunyuan3d";
 import { sunoRouter } from "./routers/suno";
 import { canvasAudioRouter } from "./routers/canvasAudio";
+import { manhuaPrevisRouter } from "./routers/manhuaPrevis";
 import { enterpriseAgentsRouter } from "./routers/enterpriseAgents";
 import { buildAuthorAnalysis, buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, buildPlatformSupportActivities, normalizePlatforms } from "./growth/growthSchema";
 import { analyzeDocument } from "./growth/analyzeDocument";
@@ -3022,6 +3023,7 @@ export const appRouter = router({
   hunyuan3d: hunyuan3dRouter,
   suno: sunoRouter,
   canvasAudio: canvasAudioRouter,
+  manhuaPrevis: manhuaPrevisRouter,
   creations: creationsRouter,
   enterpriseAgents: enterpriseAgentsRouter,
   workflow: workflowRouter,
@@ -4389,6 +4391,7 @@ export const appRouter = router({
     queuePostProd: protectedProcedure
       .input(postProdJobInputSchema)
       .mutation(async ({ ctx, input }) => {
+        if(input.action === "manhua_previs") throw new TRPCError({code:"FORBIDDEN",message:"请从本段动作白模入口提交"});
         let normalizedInput;
         try {
           normalizedInput = await resolvePostProdInputSources({

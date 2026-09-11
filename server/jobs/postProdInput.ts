@@ -4,6 +4,7 @@
  * 不信任队列里已存的形状(强 schema 是防"半格式任务"进 ffmpeg 的第一道闸)。
  */
 import { z } from "zod";
+import { manhuaPrevisRequestSchema } from "../../shared/manhuaPrevis";
 
 const mediaSourceSchema = z.string().trim().min(1).max(2048);
 
@@ -157,6 +158,7 @@ export type AudioExtractParams = z.infer<typeof audioExtractParamsSchema>;
 export type RawAudioExtractParams = z.input<typeof audioExtractParamsSchema>;
 
 export const postProdJobInputSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("manhua_previs"), params: manhuaPrevisRequestSchema }).strict(),
   z.object({ action: z.literal("audio_extract"), params: audioExtractParamsSchema }).strict(),
   z.object({ action: z.literal("audio_trim"), params: audioTrimParamsSchema }).strict(),
   z.object({ action: z.literal("audio_timeline"), params: audioTimelineParamsSchema }).strict(),

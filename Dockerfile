@@ -6,6 +6,7 @@ WORKDIR /app
 RUN apt-get update \
  && apt-get install --no-install-recommends -y \
     ffmpeg python3 python3-pip curl \
+    blender xvfb xauth libgl1-mesa-dri \
     unzip binutils poppler-utils \
     chromium \
     fonts-noto-cjk \
@@ -26,6 +27,11 @@ RUN apt-get update \
     libgbm1 \
  && pip3 install --break-system-packages yt-dlp \
  && rm -rf /var/lib/apt/lists/*
+
+# 白模由确定性脚本在无显示服务器上渲染；使用软件 GL，不要求生产 GPU。
+RUN blender --background --factory-startup --version \
+ && command -v xvfb-run
+ENV LIBGL_ALWAYS_SOFTWARE=1
 
 RUN npm install -g pnpm@10.4.1
 
