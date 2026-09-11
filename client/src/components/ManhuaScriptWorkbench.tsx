@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { VIDEO_MODEL_OPTIONS, type CanvasBlock } from "@/lib/canvasTypes";
 import { CanvasAudioStudio } from "@/components/canvas/CanvasAudioStudio";
+import { ManhuaPrevisStudio } from "@/components/canvas/ManhuaPrevisStudio";
 import {
   collectManhuaCharacterSheetUrlById,
   collectManhuaEpisodeSegmentPromptsForVoiceGate,
@@ -586,6 +587,7 @@ type Props = {
   onUpdateClipPrompt?: (clipId: string, prompt: string) => void;
   /** 在工厂内按当前段保存声音，不跳转到自由画布。 */
   onUpdateClipAudioStudio?: (clipId: string, studio: NonNullable<CanvasBlock["audioStudio"]>) => void;
+  onUpdateClipPrevisStudio?: (clipId:string,studio:NonNullable<CanvasBlock["previsStudio"]>,reference?:ManhuaSegmentReferenceEntry)=>void|boolean;
   /** 配音间「一键预混母轨」出好后挂到本段 manhuaSegmentRefs（slot 固定 master） */
   onSetClipSegmentReference?: (clipId: string, slot: "master", entry: ManhuaSegmentReferenceEntry) => void;
   onResumeFromFailure?: () => void;
@@ -1067,6 +1069,7 @@ export default function ManhuaScriptWorkbench({
   onReviewClipPromptsOnCanvas,
   onUpdateClipPrompt,
   onUpdateClipAudioStudio,
+  onUpdateClipPrevisStudio,
   onSetClipSegmentReference,
   onResumeFromFailure,
   onRerunKeyartsFromReverse,
@@ -1096,6 +1099,7 @@ export default function ManhuaScriptWorkbench({
   const [shotIndex, setShotIndex] = useState(0);
   const [clipPromptReviewOpen, setClipPromptReviewOpen] = useState(false);
   const [audioStudioOpen, setAudioStudioOpen] = useState(false);
+  const [previsStudioOpen,setPrevisStudioOpen] = useState(false);
   /** 免费裁字弹层：拖框选保留区，框外（含烧字边缘）裁掉 */
   const [cropTarget, setCropTarget] = useState<{ id: string; url: string; labelZh: string } | null>(null);
   const [cropRect, setCropRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -3229,6 +3233,17 @@ export default function ManhuaScriptWorkbench({
               </button>
             </>
           )}
+          {onUpdateClipPrevisStudio ? <button type="button" data-manhua-action="open-previs-studio" disabled={Boolean(factoryBusy)}
+            className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] text-cyan-50 disabled:opacity-45"
+            onClick={()=>{setPrevisStudioOpen(value=>!value);if(!activeClip)onEnsureSegmentClips?.();}}>本段动作白模</button> : null}
+          {previsStudioOpen&&onUpdateClipPrevisStudio ? <div className="w-full">
+            <p className="mb-2 text-xs text-cyan-100">第 {focusEpisode} 集 · 第 {activeSegNo} 段 · 动作白模</p>
+            {activeClip?<ManhuaPrevisStudio key={`${activeClip.id}:${activeClip.previsStudio?.scopeId??"new"}`} block={activeClip}
+              characters={assetLockRegistry.byRole.character.map(a=>({id:a.id,label:a.labelZh}))}
+              disabled={Boolean(factoryBusy)||activeClip.status==="running"||activeClip.videoTaskStatus==="queued"}
+              onChange={(studio,reference)=>onUpdateClipPrevisStudio(activeClip.id,studio,reference)}/>
+              :<p className="text-xs text-amber-100">请先确认分段剧本并建立本段成片节点；此操作不会生成付费成片。</p>}
+          </div>:null}
           {onUpdateClipAudioStudio ? (
             <button type="button" data-manhua-action="open-audio-studio"
               disabled={Boolean(factoryBusy)}

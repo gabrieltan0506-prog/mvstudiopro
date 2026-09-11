@@ -5,6 +5,7 @@
 import { capManhuaMediaHistory } from "./manhuaMediaHistoryCap";
 import { normalizeManhuaTimelineOrder } from "./manhuaEditOrder.js";
 import { canvasAudioStudioSchema } from "./canvasAudioStudio.js";
+import { manhuaPrevisStudioSchema, type ManhuaPrevisStudio } from "./manhuaPrevis";
 import { normalizeManhuaKeyartLookState } from "./manhuaKeyartLookState";
 import { normalizeManhuaAutoSegmentBinding, type ManhuaAutoSegmentBinding } from "./manhuaAutoSegment";
 import {
@@ -113,6 +114,7 @@ export type ManhuaCloudDraftCanvasBlock = {
   seedance25RefVideoUrls?: string[];
   seedance25RefAudioUrls?: string[];
   manhuaSegmentRefs?: import("./manhuaSegmentReference").ManhuaSegmentReferences;
+  previsStudio?: ManhuaPrevisStudio;
   audioStudio?: import("./canvasAudioStudio").CanvasAudioStudio;
   seedance25TimestampStoryboard?: string;
   seedance25ReshootFromSec?: number;
@@ -443,6 +445,7 @@ export function sanitizeManhuaCloudDraftBlock(
       // 段级白模/母轨/登记成片：与付费成片同级，云备份丢了就要重传重签
       manhuaSegmentRefs: normalizeManhuaSegmentReferences(b.manhuaSegmentRefs),
       audioStudio: b.audioStudio == null ? undefined : canvasAudioStudioSchema.parse(b.audioStudio),
+      previsStudio: b.previsStudio == null ? undefined : manhuaPrevisStudioSchema.parse(b.previsStudio),
       seedance25TimestampStoryboard:
         typeof b.seedance25TimestampStoryboard === "string"
           ? b.seedance25TimestampStoryboard
