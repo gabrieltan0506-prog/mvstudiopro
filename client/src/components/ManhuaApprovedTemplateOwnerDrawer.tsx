@@ -4,6 +4,7 @@ import type {
   ManhuaViralTemplateEvidenceFrame,
   ManhuaViralTemplateOptimizeField,
   ManhuaViralTemplateOptimizeModel,
+  ManhuaViralTemplateOptimizeRequestModel,
 } from "@shared/manhuaViralTemplateBank";
 import { formatManhuaTemplateNativeBeatZh } from "@/lib/manhuaTemplateNativeBeat";
 import { X } from "lucide-react";
@@ -243,7 +244,7 @@ export function ManhuaApprovedTemplateOwnerDrawer(props: {
   optimizePending: boolean;
   result: OptimizeResult | null;
   onClose: () => void;
-  onModelChange: (model: ManhuaViralTemplateOptimizeModel) => void;
+  onModelChange: (model: ManhuaViralTemplateOptimizeRequestModel) => void;
   onPromptChange: (value: string) => void;
   onOptimize: () => void;
 }) {
@@ -290,7 +291,7 @@ export function ManhuaApprovedTemplateOwnerDrawer(props: {
               <select
                 value={props.selectedModel}
                 onChange={(event) =>
-                  props.onModelChange(event.target.value as ManhuaViralTemplateOptimizeModel)
+                  props.onModelChange(event.target.value as ManhuaViralTemplateOptimizeRequestModel)
                 }
                 className="mt-1 w-full rounded-lg border border-emerald-300/20 bg-black/45 px-3 py-2 text-xs text-white outline-none"
               >

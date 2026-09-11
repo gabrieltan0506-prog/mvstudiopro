@@ -59,8 +59,8 @@ const revisionCard = {
   revision: {
     parentTemplateId: secretCard.id,
     requestId: "request_owner_1234",
-    model: "deepseek_v4_0813_high",
-    modelName: "deepseek/deepseek-v4-pro-0813",
+    model: "glm_53_high",
+    modelName: "z-ai/glm-5.3",
     reasoningEffort: "high",
     promptZh: "强化钩子。",
     changedFields: ["hook3sZh"],

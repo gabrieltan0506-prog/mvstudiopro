@@ -1,14 +1,16 @@
 /**
  * 挑参考页（目录页缩略图 → JSON 页码表）的模型链（用户 0910 拍板）：
- * 读图 + 出 JSON 的活（0911 用户令：同模型先换供应商）：EvoLink DeepSeek Vision
- * → OpenRouter 同款 DeepSeek Vision → 新加坡 Qwen3.8-Max（能读图，经调用方 fallback 走完整 Qwen 链）。
+ * 读图 + 出 JSON 的活（0911 用户令：同模型先换供应商，OpenRouter 优先、EvoLink 兜底）：
+ * OpenRouter DeepSeek V4.1 Flash → EvoLink 同款 → 降档尾段（GLM 5.3 Flash 两家 → Qwen 两家）。
  * 每次网关尝试前 touch 活动心跳；输出不是合法 JSON 视为坏输出换下一家。
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivity.js";
+import { OPENROUTER_DEEPSEEK_PROVIDER_LOCK } from "./knowledgeCardGatewayOrder.js";
 
-export const PAGE_TRIAGE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_TRIAGE_MODEL_EVOLINK || "deepseek-v4-flash-vision-exp").trim();
-export const PAGE_TRIAGE_MODEL_OPENROUTER = String(process.env.KNOWLEDGE_CARD_TRIAGE_MODEL_OPENROUTER || "deepseek/deepseek-v4-flash-vision-exp").trim();
+
+export const PAGE_TRIAGE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_TRIAGE_MODEL_EVOLINK || "deepseek-v4.1-flash").trim();
+export const PAGE_TRIAGE_MODEL_OPENROUTER = String(process.env.KNOWLEDGE_CARD_TRIAGE_MODEL_OPENROUTER || "deepseek/deepseek-v4.1-flash").trim();
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 // 带图的请求走 api.evolink.ai（direct 只给纯文本，仓库既有约定见 knowledgeCardDistill.ts）
 const EVOLINK_VISION_CHAT_URL = String(process.env.EVOLINK_CHAT_URL || "https://api.evolink.ai/v1/chat/completions").trim();
@@ -63,7 +65,8 @@ async function visionChatOnce(gw: TriageGateway, params: { system: string; userT
       // 0910 用户令：思考一律打开、不准关闭，档位 high
       ...(gw.name === "evolink"
         ? { thinking: { type: "enabled" }, reasoning_effort: "high" }
-        : { reasoning: { effort: "high" } }),
+        // OpenRouter 的 DeepSeek 视觉跳锁自营，不落到转售方（0911 用户令）
+        : { reasoning: { effort: "high" }, provider: OPENROUTER_DEEPSEEK_PROVIDER_LOCK }),
     }),
     signal: params.abortSignal ?? AbortSignal.timeout(TRIAGE_TIMEOUT_MS),
   });
@@ -98,10 +101,11 @@ export async function invokePageTriageJson(params: {
   const chat = pageTriageTestHooks.getStore()?.chat || visionChatOnce;
   // 顺序（0911）：EvoLink DeepSeek Vision → OpenRouter DeepSeek Vision → Qwen 兜底（调用方传入，内部再走 Qwen 全链）
   const attempts: Array<{ label: string; run: () => Promise<string> }> = [];
-  const evo = evolinkVisionGateway();
-  if (evo) attempts.push({ label: `${evo.name}/${evo.model}`, run: () => chat(evo, params) });
+  // 0911 用户令：同模型先走 OpenRouter 路由，失败才落 EvoLink
   const or = openRouterVisionGateway();
   if (or) attempts.push({ label: `${or.name}/${or.model}`, run: () => chat(or, params) });
+  const evo = evolinkVisionGateway();
+  if (evo) attempts.push({ label: `${evo.name}/${evo.model}`, run: () => chat(evo, params) });
   if (params.fallback) {
     const fallback = params.fallback;
     attempts.push({

@@ -22,11 +22,23 @@ describe("normalizePlatformTopicExpandEngine", () => {
 
 describe("buildDeepSeekExpandRequestBody（缰绳纪律固化）", () => {
   const body = buildDeepSeekExpandRequestBody({ system: "s", user: "u" });
-  it("65K 预算 + 推理 high + json_object + require_parameters 一个不少", () => {
+  it("OpenRouter 主路：GLM 5.3 + 65K 预算 + 推理 high + json_object + 锁 Z.AI 自营", () => {
     expect(body.max_tokens).toBe(65_536);
     expect(body.reasoning).toEqual({ effort: "high" });
     expect(body.response_format).toEqual({ type: "json_object" });
-    expect(body.provider).toEqual({ require_parameters: true });
-    expect(body.model).toBe("deepseek/deepseek-v4-pro-0813");
+    // 0911 用户令：锁 Z.AI 自营且不许回落；require_parameters 仍在，防参数被静默忽略
+    expect(body.provider).toEqual({ order: ["Z.AI"], allow_fallbacks: false, require_parameters: true });
+    // 长文本旗舰 GLM 5.3，不是读图的 GLM 5.3 Flash
+    expect(body.model).toBe("z-ai/glm-5.3");
+  });
+
+  it("EvoLink 兜底：同款 glm-5.3，档位走顶层 reasoning_effort、不带 provider", () => {
+    const evo = buildDeepSeekExpandRequestBody({ system: "s", user: "u", gateway: "evolink" });
+    expect(evo.model).toBe("glm-5.3");
+    expect(evo.reasoning_effort).toBe("high");
+    expect(evo.max_tokens).toBe(65_536);
+    expect(evo.response_format).toEqual({ type: "json_object" });
+    expect("provider" in evo).toBe(false);
+    expect("reasoning" in evo).toBe(false);
   });
 });

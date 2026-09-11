@@ -312,7 +312,10 @@ export async function uploadStreamToGcs(params: {
   const objectName = normalizeObjectName(params.objectName);
   let accessToken: string;
   try {
-    accessToken = await getVertexAccessToken();
+    // 终审 P2：鉴权等待也要听 signal——OAuth 停滞时上传必须能退出，
+    // 否则调用方 finally 关不了文件流、删不了临时目录。
+    // 注意：这只让本次上传的等待可取消，不取消底层鉴权网络请求本身。
+    accessToken = await awaitWithAbortSignal(getVertexAccessToken(), params.signal);
   } catch (err) {
     await cancelStream();
     throw err;

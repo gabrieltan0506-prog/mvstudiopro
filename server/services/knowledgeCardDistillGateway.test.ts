@@ -5,11 +5,11 @@ import {
   distillGatewayChain,
   makeKnowledgeCardPageSelector,
 } from "./knowledgeCardDistill";
-import { KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK, KNOWLEDGE_CARD_DISTILL_MODEL_QWEN } from "../../shared/knowledgeCardDistillModels";
+import { KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK, KNOWLEDGE_CARD_DISTILL_MODEL_GLM } from "../../shared/knowledgeCardDistillModels";
 import { pageTriageTestHooks } from "./knowledgeCardPageTriage";
 import type { KnowledgeCardDocumentPageSet } from "./knowledgeCardDocumentPages";
 
-/** 让 DeepSeek 视觉档两家网关都失败，逼挑页走 Qwen 兜底链 */
+/** 让 DeepSeek 视觉档两家网关都失败，逼挑页走降档尾段（GLM → Qwen） */
 const triageVisionDown = <T,>(fn: () => Promise<T>) =>
   pageTriageTestHooks.run({ chat: (async () => { throw new Error("vision down"); }) as never }, fn);
 
@@ -18,21 +18,26 @@ afterEach(() => {
   __setKnowledgeCardDistillGatewayInvokerForTest(null);
 });
 
-describe("distillGatewayChain（0911：同模型先换供应商，换不动才降档）", () => {
-  it("精细档：EvoLink(DS) → OpenRouter(DS) → 新加坡(Qwen) → OpenRouter(Qwen)；轻量档：新加坡 → OpenRouter → EvoLink 全 Qwen", () => {
+describe("distillGatewayChain（0911：选中档两家 → 另一档两家 → Qwen 最后）", () => {
+  it("选 DeepSeek：DS 两家 → GLM 两家 → Qwen 两家；选 GLM：GLM 两家 → DS 两家 → Qwen 两家", () => {
     vi.stubEnv("EVOLINK_API_KEY", "ev-key");
     vi.stubEnv("OPENROUTER_API_KEY", "sk-or-123");
     vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "sg-key");
     expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK)).toEqual([
-      { gateway: "evolink", tier: "deepseek" },
       { gateway: "openrouter", tier: "deepseek" },
+      { gateway: "evolink", tier: "deepseek" },
+      { gateway: "openrouter", tier: "glm" },
+      { gateway: "evolink", tier: "glm" },
       { gateway: "dashscope_sg", tier: "qwen" },
       { gateway: "openrouter", tier: "qwen" },
     ]);
-    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual([
+    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_GLM)).toEqual([
+      { gateway: "openrouter", tier: "glm" },
+      { gateway: "evolink", tier: "glm" },
+      { gateway: "openrouter", tier: "deepseek" },
+      { gateway: "evolink", tier: "deepseek" },
       { gateway: "dashscope_sg", tier: "qwen" },
       { gateway: "openrouter", tier: "qwen" },
-      { gateway: "evolink", tier: "qwen" },
     ]);
   });
 
@@ -42,43 +47,52 @@ describe("distillGatewayChain（0911：同模型先换供应商，换不动才�
     vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "");
     expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK)).toEqual([
       { gateway: "openrouter", tier: "deepseek" },
+      { gateway: "openrouter", tier: "glm" },
       { gateway: "openrouter", tier: "qwen" },
     ]);
-    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual([{ gateway: "openrouter", tier: "qwen" }]);
+    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_GLM)).toEqual([
+      { gateway: "openrouter", tier: "glm" },
+      { gateway: "openrouter", tier: "deepseek" },
+      { gateway: "openrouter", tier: "qwen" },
+    ]);
     vi.stubEnv("OPENROUTER_API_KEY", "");
     expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK)).toEqual([]);
-    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual([]);
+    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_GLM)).toEqual([]);
     vi.stubEnv("EVOLINK_API_KEY", "ev-key");
-    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual([{ gateway: "evolink", tier: "qwen" }]);
+    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_GLM)).toEqual([
+      { gateway: "evolink", tier: "glm" },
+      { gateway: "evolink", tier: "deepseek" },
+    ]);
+
   });
 });
 
 describe("目录页扫读挑页（makeKnowledgeCardPageSelector）", () => {
-  it("精细档兜底只走精细序的 Qwen 尾段（新加坡→OpenRouter），绝不出现第 5 跳 EvoLink Qwen（0911 终审）", async () => {
+  it("选 DeepSeek 时兜底只走本序尾段（GLM 两家 → Qwen 两家），不自造别的跳（0911）", async () => {
     vi.stubEnv("EVOLINK_API_KEY", "ev-key");
     vi.stubEnv("OPENROUTER_API_KEY", "sk-or-1");
     vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "sg-key");
     const calls: string[] = [];
     __setKnowledgeCardDistillGatewayInvokerForTest(async (p) => {
       calls.push(`${p.gateway}:${p.tier ?? "?"}`);
-      if (p.gateway === "dashscope_sg") throw new Error("算力紧张，请稍后再试");
+      if (p.tier === "glm") throw new Error("算力紧张，请稍后再试");
       return `选好了：{"pages":[{"page":41,"reason":"分式图解"},{"page":999,"reason":"不存在"},{"page":2}]}`;
     });
     const select = makeKnowledgeCardPageSelector(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
     const picked = await triageVisionDown(() =>
       select([{ index: 1, pageNumbers: Array.from({ length: 48 }, (_, i) => i + 1), imageUrl: "https://signed/sheet-1.jpg", gcsUri: "gs://b/sheet-1.jpg" }], 48),
     );
-    expect(calls).toEqual(["dashscope_sg:qwen", "openrouter:qwen"]);
+    expect(calls).toEqual(["openrouter:glm", "evolink:glm", "dashscope_sg:qwen"]);
     expect(picked).toEqual([{ pageNumber: 41, reason: "分式图解" }, { pageNumber: 2, reason: undefined }]);
 
-    // OpenRouter 未配时尾段只剩新加坡：它挂了本组就放弃，不去打 EvoLink Qwen（那是轻量档的跳）
+    // OpenRouter 未配时尾段只剩 EvoLink GLM 与新加坡 Qwen：GLM 挂了落 Qwen 接住，没有别的跳
     calls.length = 0;
     vi.stubEnv("OPENROUTER_API_KEY", "");
-    const none = await triageVisionDown(() =>
+    const tail = await triageVisionDown(() =>
       select([{ index: 1, pageNumbers: [1, 2, 3], imageUrl: "https://signed/sheet-1.jpg", gcsUri: "gs://b/sheet-1.jpg" }], 3),
     );
-    expect(calls).toEqual(["dashscope_sg:qwen"]);
-    expect(none).toEqual([]);
+    expect(calls).toEqual(["evolink:glm", "dashscope_sg:qwen"]);
+    expect(tail).toEqual([{ pageNumber: 2, reason: undefined }]);
   });
 
   it("fatal quota errors do not fall over; triage failure yields no pages instead of breaking distill", async () => {
@@ -94,7 +108,8 @@ describe("目录页扫读挑页（makeKnowledgeCardPageSelector）", () => {
     const picked = await triageVisionDown(() =>
       select([{ index: 1, pageNumbers: [1, 2, 3], imageUrl: "https://signed/sheet-1.jpg", gcsUri: "gs://b/sheet-1.jpg" }], 3),
     );
-    expect(calls).toEqual(["dashscope_sg"]);
+    // 本例没配 OpenRouter 钥匙：降档尾段只剩 EvoLink GLM 一跳
+    expect(calls).toEqual(["evolink"]);
     expect(picked).toEqual([]);
   });
 });

@@ -1,16 +1,31 @@
 /**
  * 知识卡成稿档派生（用户 0910 拍板）：
  * 提炼只做一次、以「完整版」长稿为真源；「精华版」从长稿按需派生，两档到最后阶段仍可切换，不设页数上限。
- * 派生是纯文本压缩，交给便宜的大模型（DeepSeek V4 Flash：EvoLink `deepseek-v4-flash` 优先 → 新加坡 Qwen3.8 token plan → OpenRouter `deepseek/deepseek-v4-flash-0731`；
+ * 派生是纯文本压缩，链序与读档链同一份定义（0911：选中的档两家供应商 → 另一档两家 → 最后才 Qwen3.8）；
  * 约 $0.09/M 进、$0.18/M 出），23 万字长稿派生一次约 3 美分。与读档链同序（0910 用户令：EvoLink 与新加坡任一失效都可落 OpenRouter）。
  */
 import { countMarkdownSections, mergeDistilledMarkdownChunks } from "./knowledgeCardDistill.js";
 import { touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivity.js";
-import { KNOWLEDGE_CARD_LIGHT_ORDER, KNOWLEDGE_CARD_PREMIUM_ORDER } from "./knowledgeCardGatewayOrder.js";
+import {
+  KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER,
+  KNOWLEDGE_CARD_GLM_FIRST_ORDER,
+  openRouterProviderLockForTier,
+  type KnowledgeCardTier,
+} from "./knowledgeCardGatewayOrder.js";
+import { GLM_53_FLASH_EVOLINK_MODEL, GLM_53_FLASH_OPENROUTER_MODEL } from "./glmModels.js";
+import {
+  KNOWLEDGE_CARD_DISTILL_MODEL_GLM,
+  resolveKnowledgeCardDistillModel,
+} from "../../shared/knowledgeCardDistillModels.js";
+
+/** 0911 用户令：降档第一手 GLM 5.3 Flash（两家供应商），Qwen 3.8 退到最后 */
+// 派生跟着读档档位走同一个模型（该档是 Flash：能读图的那个），不换成纯文本的 GLM 5.3
+export const KNOWLEDGE_CARD_DERIVE_MODEL_GLM_EVOLINK = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_GLM_EVOLINK || GLM_53_FLASH_EVOLINK_MODEL).trim();
+export const KNOWLEDGE_CARD_DERIVE_MODEL_GLM_OPENROUTER = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_GLM_OPENROUTER || GLM_53_FLASH_OPENROUTER_MODEL).trim();
 
 /** 网关顺序（0911：同模型先换供应商）：EvoLink(DeepSeek) → OpenRouter(DeepSeek) → 新加坡(Qwen) → OpenRouter(Qwen) */
-export const KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK || "deepseek-v4-flash").trim();
-export const KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER || "deepseek/deepseek-v4-flash-0731").trim();
+export const KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK || "deepseek-v4.1-flash").trim();
+export const KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER || "deepseek/deepseek-v4.1-flash").trim();
 export const KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG || "qwen3.8-max").trim();
 const EVOLINK_DIRECT_CHAT_URL = String(process.env.EVOLINK_DIRECT_CHAT_URL || "https://direct.evolink.ai/v1/chat/completions").trim();
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
@@ -19,31 +34,52 @@ const DASHSCOPE_SG_PLAN_CHAT_URL = "https://token-plan.ap-southeast-1.maas.aliyu
 const DERIVE_BATCH_MAX_CHARS = Math.max(20_000, Number(process.env.KNOWLEDGE_CARD_DERIVE_BATCH_CHARS) || 80_000);
 const DERIVE_TIMEOUT_MS = Math.max(120_000, Number(process.env.KNOWLEDGE_CARD_DERIVE_TIMEOUT_MS) || 15 * 60_000);
 
-type DeriveGateway = { name: "evolink" | "dashscope_sg" | "openrouter"; url: string; key: string; model: string };
+type DeriveGateway = {
+  name: "evolink" | "dashscope_sg" | "openrouter";
+  /** 该跳的模型档：参数契约按 (name, tier) 定，不靠 model 名前缀猜（环境别名会破坏判断） */
+  tier: KnowledgeCardTier;
+  url: string;
+  key: string;
+  model: string;
+};
 function deriveGateways(model?: string): DeriveGateway[] {
   const evo = String(process.env.EVOLINK_API_KEY || "").trim();
   const sg = String(process.env.DASHSCOPE_SG_PLAN_KEY || "").trim();
   const or = String(process.env.OPENROUTER_API_KEY || "").trim();
-  // 终审第五条：派生与主链共用同一份顺序；轻量档 receipt 的稿子走轻量链，不从 DeepSeek 起跳
-  const lightTier = String(model || "").trim() === "qwen3.8-max";
-  const order = lightTier ? KNOWLEDGE_CARD_LIGHT_ORDER : KNOWLEDGE_CARD_PREMIUM_ORDER;
+  // 终审第五条：派生与主链共用同一份顺序；receipt 选了哪档，派生就从哪档起跳
+  const order =
+    resolveKnowledgeCardDistillModel(model) === KNOWLEDGE_CARD_DISTILL_MODEL_GLM
+      ? KNOWLEDGE_CARD_GLM_FIRST_ORDER
+      : KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER;
   const out: DeriveGateway[] = [];
   for (const step of order) {
     if (step.gateway === "evolink" && evo) {
       out.push({
         name: "evolink",
+        tier: step.tier,
         url: EVOLINK_DIRECT_CHAT_URL,
         key: evo,
-        model: step.tier === "qwen" ? KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG : KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK,
+        model:
+          step.tier === "qwen"
+            ? KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG
+            : step.tier === "glm"
+              ? KNOWLEDGE_CARD_DERIVE_MODEL_GLM_EVOLINK
+              : KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK,
       });
     } else if (step.gateway === "dashscope_sg" && sg) {
-      out.push({ name: "dashscope_sg", url: DASHSCOPE_SG_PLAN_CHAT_URL, key: sg, model: KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG });
+      out.push({ name: "dashscope_sg", tier: step.tier, url: DASHSCOPE_SG_PLAN_CHAT_URL, key: sg, model: KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG });
     } else if (step.gateway === "openrouter" && or) {
       out.push({
         name: "openrouter",
+        tier: step.tier,
         url: OPENROUTER_CHAT_URL,
         key: or,
-        model: step.tier === "qwen" ? "qwen/qwen3.8-max" : KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER,
+        model:
+          step.tier === "qwen"
+            ? "qwen/qwen3.8-max"
+            : step.tier === "glm"
+              ? KNOWLEDGE_CARD_DERIVE_MODEL_GLM_OPENROUTER
+              : KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER,
       });
     }
   }
@@ -105,6 +141,39 @@ async function chatOnce(gw: DeriveGateway, params: { system: string; user: strin
 }
 
 async function chatOnceInner(gw: DeriveGateway, params: { system: string; user: string; maxTokens: number; abortSignal?: AbortSignal }): Promise<string> {
+  // 参数契约按 (name, tier) 定（终审 P2）：EvoLink 的 Qwen 末跳必须走 EvoLink-Qwen 契约
+  // （enable_thinking / high→medium / max_completion_tokens，对照 knowledgeCardDistill 的 evolink-qwen 分支），
+  // 不能只换模型名、参数还发 DeepSeek 那套
+  const qwenTier = gw.tier === "qwen";
+  const outputTokens =
+    gw.tier === "deepseek"
+      ? Math.min(params.maxTokens * 2, 384_000)
+      : Math.min(params.maxTokens, qwenTier ? 32_768 : 131_072);
+  const generationOptions: Record<string, unknown> =
+    gw.name === "evolink" && qwenTier
+      ? {
+          enable_thinking: true,
+          // EvoLink Qwen 档位只认 low|medium|xhigh：0909 拍板 high 映射 medium
+          reasoning_effort: "medium",
+          max_completion_tokens: outputTokens,
+        }
+      : {
+          max_tokens: outputTokens,
+          // 0910 用户令：思考一律打开、档位 high（新加坡 compatible-mode 只认 enable_thinking）
+          ...(gw.name === "evolink"
+            ? gw.tier === "glm"
+              // EvoLink GLM 5.3：恒开思考关不掉，档位只有 low/high/max 真正生效，不发 thinking 开关
+              ? { reasoning_effort: "high" }
+              : { thinking: { type: "enabled" }, reasoning_effort: "high" }
+            : gw.name === "dashscope_sg"
+              ? { enable_thinking: true }
+              : { reasoning: { effort: "high" } }),
+        };
+  // OpenRouter 的 DeepSeek / GLM 跳各锁各的自营，不落到转售方（0911 用户令）
+  if (gw.name === "openrouter") {
+    const providerLock = openRouterProviderLockForTier(gw.tier);
+    if (providerLock) generationOptions.provider = providerLock;
+  }
   const res = await fetch(gw.url, {
     method: "POST",
     headers: {
@@ -119,18 +188,7 @@ async function chatOnceInner(gw: DeriveGateway, params: { system: string; user: 
         { role: "user", content: params.user },
       ],
       temperature: 0.2,
-      // DeepSeek 思考 high 的推理 token 也计入 max_tokens：翻倍留给思维链；
-      // Qwen 跳（新加坡与 OpenRouter 第四跳 qwen/*）按 32k 输出上限同口径收，不吃翻倍（审查 P1）
-      max_tokens:
-        gw.name === "dashscope_sg" || gw.model.startsWith("qwen")
-          ? Math.min(params.maxTokens, 32_768)
-          : Math.min(params.maxTokens * 2, 384_000),
-      // 0910 用户令：思考一律打开、不准关闭，档位 high（新加坡 compatible-mode 只认 enable_thinking）
-      ...(gw.name === "evolink"
-        ? { thinking: { type: "enabled" }, reasoning_effort: "high" }
-        : gw.name === "dashscope_sg"
-          ? { enable_thinking: true }
-          : { reasoning: { effort: "high" } }),
+      ...generationOptions,
     }),
     signal: params.abortSignal ?? AbortSignal.timeout(DERIVE_TIMEOUT_MS),
   });

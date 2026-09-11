@@ -1,14 +1,16 @@
 /**
- * 终审第五条回归：三条链（主提炼 / 挑页 / 派生）消费**同一份**顺序定义；
- * 轻量挑页不从 DeepSeek 起跳；精细挑页降档尾段不多出第 5 跳；
- * 新加坡坏 JSON 在跳内判失败 → OpenRouter Qwen 接住整组参考页。
+ * 读档链回归（0911 用户令）：三条链（主提炼 / 挑页 / 派生）消费**同一份**顺序定义；
+ * 读档二选一（DeepSeek V4.1 Flash / GLM 5.3 Flash），选中的那档两家供应商先跑完，
+ * 再换另一档两家，Qwen3.8 Max 永远最后；OpenRouter 的 DeepSeek / GLM 跳各锁各的自营。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  KNOWLEDGE_CARD_LIGHT_ORDER,
-  KNOWLEDGE_CARD_PREMIUM_ORDER,
-  KNOWLEDGE_CARD_PREMIUM_QWEN_TAIL,
+  KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER,
+  KNOWLEDGE_CARD_GLM_FIRST_ORDER,
+  KNOWLEDGE_CARD_PREMIUM_FALLBACK_TAIL,
   filterConfiguredSteps,
+  openRouterProviderLockForTier,
+  type KnowledgeCardGatewayStep,
 } from "./knowledgeCardGatewayOrder";
 import {
   __setKnowledgeCardDistillGatewayInvokerForTest,
@@ -18,7 +20,7 @@ import {
 import { pageTriageTestHooks } from "./knowledgeCardPageTriage";
 import {
   KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
-  KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
+  KNOWLEDGE_CARD_DISTILL_MODEL_GLM,
 } from "../../shared/knowledgeCardDistillModels";
 
 afterEach(() => {
@@ -27,46 +29,72 @@ afterEach(() => {
 });
 
 const ALL = { evolink: true, dashscope_sg: true, openrouter: true };
+const label = (s: KnowledgeCardGatewayStep) => `${s.gateway}:${s.tier}`;
+const allKeys = () => {
+  vi.stubEnv("EVOLINK_API_KEY", "e");
+  vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "s");
+  vi.stubEnv("OPENROUTER_API_KEY", "o");
+};
 
 describe("唯一顺序定义", () => {
-  it("精细四跳 / 轻量三跳；OpenRouter 两跳不按供应商名去重；尾段等于精细序里的 Qwen 跳", () => {
-    expect(KNOWLEDGE_CARD_PREMIUM_ORDER.map((s) => `${s.gateway}:${s.tier}`)).toEqual([
-      "evolink:deepseek",
+  it("两条链各六跳：选中档两家 → 另一档两家 → Qwen 两家；同一家网关多次出现不去重", () => {
+    // 0911 用户令：同模型 OpenRouter 先、EvoLink 兜底；Qwen 例外（新加坡是预付套餐，排在前面）
+    expect(KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER.map(label)).toEqual([
       "openrouter:deepseek",
+      "evolink:deepseek",
+      "openrouter:glm",
+      "evolink:glm",
       "dashscope_sg:qwen",
       "openrouter:qwen",
     ]);
-    expect(KNOWLEDGE_CARD_LIGHT_ORDER.map((s) => `${s.gateway}:${s.tier}`)).toEqual([
+    expect(KNOWLEDGE_CARD_GLM_FIRST_ORDER.map(label)).toEqual([
+      "openrouter:glm",
+      "evolink:glm",
+      "openrouter:deepseek",
+      "evolink:deepseek",
       "dashscope_sg:qwen",
       "openrouter:qwen",
-      "evolink:qwen",
     ]);
-    expect(KNOWLEDGE_CARD_PREMIUM_QWEN_TAIL.map((s) => `${s.gateway}:${s.tier}`)).toEqual([
+    // Qwen 永远最后两跳，任何一条链都不许把它提前
+    for (const order of [KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER, KNOWLEDGE_CARD_GLM_FIRST_ORDER]) {
+      expect(order.slice(-2).map((s) => s.tier)).toEqual(["qwen", "qwen"]);
+      expect(order.slice(0, -2).some((s) => s.tier === "qwen")).toBe(false);
+    }
+  });
+
+  it("选 DeepSeek 的降档尾段就是本链去掉 DeepSeek 两跳的部分，不自造新跳（选 GLM 时直接走整条 GLM 链）", () => {
+    expect(KNOWLEDGE_CARD_PREMIUM_FALLBACK_TAIL.map(label)).toEqual([
+      "openrouter:glm",
+      "evolink:glm",
       "dashscope_sg:qwen",
       "openrouter:qwen",
     ]);
-    expect(filterConfiguredSteps(KNOWLEDGE_CARD_PREMIUM_ORDER, { evolink: false, dashscope_sg: false, openrouter: true }).map((s) => s.tier)).toEqual([
+    // 只配了 OpenRouter 钥匙时，三档各留一跳、顺序不变
+    expect(filterConfiguredSteps(KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER, { evolink: false, dashscope_sg: false, openrouter: true }).map((s) => s.tier)).toEqual([
       "deepseek",
+      "glm",
       "qwen",
     ]);
   });
 
+  it("OpenRouter provider 锁：DeepSeek 跳锁 DeepSeek、GLM 跳锁 Z.AI、Qwen 跳不锁", () => {
+    expect(openRouterProviderLockForTier("deepseek")).toEqual({ order: ["DeepSeek"], allow_fallbacks: false });
+    expect(openRouterProviderLockForTier("glm")).toEqual({ order: ["Z.AI"], allow_fallbacks: false, require_parameters: true });
+    expect(openRouterProviderLockForTier("qwen")).toBeNull();
+  });
+
   it("主提炼链就是共享顺序按钥匙过滤的结果", () => {
-    vi.stubEnv("EVOLINK_API_KEY", "e");
-    vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "s");
-    vi.stubEnv("OPENROUTER_API_KEY", "o");
-    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK)).toEqual(filterConfiguredSteps(KNOWLEDGE_CARD_PREMIUM_ORDER, ALL));
-    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toEqual(filterConfiguredSteps(KNOWLEDGE_CARD_LIGHT_ORDER, ALL));
+    allKeys();
+    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK)).toEqual(filterConfiguredSteps(KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER, ALL));
+    expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_GLM)).toEqual(filterConfiguredSteps(KNOWLEDGE_CARD_GLM_FIRST_ORDER, ALL));
   });
 });
 
 const SHEET = [{ index: 1, pageNumbers: [1, 2, 3], imageUrl: "https://signed/s1.jpg", gcsUri: "gs://b/s1.jpg" }];
 
-describe("挑页按档位走同一份顺序", () => {
-  it("轻量档：不打 DeepSeek 视觉，直接走轻量 Qwen 链（首跳新加坡）", async () => {
-    vi.stubEnv("EVOLINK_API_KEY", "e");
-    vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "s");
-    vi.stubEnv("OPENROUTER_API_KEY", "o");
+describe("挑页按所选档位走同一份顺序", () => {
+  it("选 GLM：不打 DeepSeek 视觉专链，直接从 OpenRouter GLM 起跳", async () => {
+    allKeys();
     const visionCalls: string[] = [];
     const hops: string[] = [];
     __setKnowledgeCardDistillGatewayInvokerForTest(async (p) => {
@@ -75,35 +103,31 @@ describe("挑页按档位走同一份顺序", () => {
     });
     const picked = await pageTriageTestHooks.run(
       { chat: (async (gw: { name: string }) => { visionCalls.push(gw.name); throw new Error("不该走视觉跳"); }) as never },
-      () => makeKnowledgeCardPageSelector(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)(SHEET as never, 3),
+      () => makeKnowledgeCardPageSelector(KNOWLEDGE_CARD_DISTILL_MODEL_GLM)(SHEET as never, 3),
     );
     expect(visionCalls).toEqual([]);
-    expect(hops).toEqual(["dashscope_sg:qwen"]);
+    expect(hops).toEqual(["openrouter:glm"]);
     expect(picked).toEqual([{ pageNumber: 2, reason: "表格" }]);
   });
 
-  it("精细档：新加坡回坏 JSON 在跳内判失败 → OpenRouter Qwen 接住；不出现第 5 跳 EvoLink Qwen", async () => {
-    vi.stubEnv("EVOLINK_API_KEY", "e");
-    vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "s");
-    vi.stubEnv("OPENROUTER_API_KEY", "o");
+  it("选 DeepSeek：两家 DeepSeek 视觉都挂 → 降档尾段从 OpenRouter GLM 起跳，坏 JSON 跳内判失败换下一跳", async () => {
+    allKeys();
     const hops: string[] = [];
     __setKnowledgeCardDistillGatewayInvokerForTest(async (p) => {
       hops.push(`${p.gateway}:${p.tier ?? "?"}`);
-      if (p.gateway === "dashscope_sg") return "抱歉，我看不清这些图片";
+      if (p.gateway === "openrouter") return "抱歉，我看不清这些图片";
       return '{"pages":[{"page":3,"reason":"图解"}]}';
     });
     const picked = await pageTriageTestHooks.run(
       { chat: (async () => { throw new Error("vision down"); }) as never },
       () => makeKnowledgeCardPageSelector(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK)(SHEET as never, 3),
     );
-    expect(hops).toEqual(["dashscope_sg:qwen", "openrouter:qwen"]);
+    expect(hops).toEqual(["openrouter:glm", "evolink:glm"]);
     expect(picked).toEqual([{ pageNumber: 3, reason: "图解" }]);
   });
 
   it("合法空表 {\"pages\":[]} 是成功：不套 20 字下限、不再换跳", async () => {
-    vi.stubEnv("EVOLINK_API_KEY", "e");
-    vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "s");
-    vi.stubEnv("OPENROUTER_API_KEY", "o");
+    allKeys();
     const hops: string[] = [];
     __setKnowledgeCardDistillGatewayInvokerForTest(async (p) => {
       hops.push(p.gateway);
@@ -113,35 +137,36 @@ describe("挑页按档位走同一份顺序", () => {
       { chat: (async () => { throw new Error("vision down"); }) as never },
       () => makeKnowledgeCardPageSelector(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK)(SHEET as never, 3),
     );
-    expect(hops).toEqual(["dashscope_sg"]);
+    expect(hops).toEqual(["openrouter"]);
     expect(picked).toEqual([]);
   });
 });
 
 describe("派生链按 receipt 档位走同一份顺序", () => {
-  it("轻量 receipt：首跳新加坡 Qwen；精细 receipt：首跳 EvoLink DeepSeek、第四跳 OpenRouter Qwen", async () => {
-    vi.stubEnv("EVOLINK_API_KEY", "e");
-    vi.stubEnv("DASHSCOPE_SG_PLAN_KEY", "s");
-    vi.stubEnv("OPENROUTER_API_KEY", "o");
+  it("GLM receipt 从 EvoLink GLM 起跳；DeepSeek receipt 从 EvoLink DeepSeek 起跳；两者末跳都是 OpenRouter Qwen", async () => {
+    allKeys();
     vi.resetModules();
     const mod = await import("./knowledgeCardLevelDerive");
-    const seen: Array<{ name: string; model: string }> = [];
-    const fakeChat = (async (gw: { name: string; model: string }) => {
-      seen.push({ name: gw.name, model: gw.model });
-      throw new Error("stop");
-    }) as never;
-    // 通过 chat 注入观察网关序（deriveChat 内部构链）——直接调内部不可见，改走 compact 入口需长稿；
-    // 这里用 deriveGateways 的行为出口：制造全部失败读 warn 序太绕，退而验证模块导出的链构造。
-    const anyMod = mod as unknown as { __testDeriveGateways?: (m?: string) => Array<{ name: string; model: string }> };
-    if (anyMod.__testDeriveGateways) {
-      expect(anyMod.__testDeriveGateways("qwen3.8-max")[0]).toMatchObject({ name: "dashscope_sg" });
-      const premium = anyMod.__testDeriveGateways("deepseek-v4-flash");
-      expect(premium[0]).toMatchObject({ name: "evolink", model: "deepseek-v4-flash" });
-      expect(premium[3]).toMatchObject({ name: "openrouter", model: "qwen/qwen3.8-max" });
-    } else {
+    const build = (mod as unknown as {
+      __testDeriveGateways?: (m?: string) => Array<{ name: string; tier: string; model: string }>;
+    }).__testDeriveGateways;
+    if (!build) {
       expect.fail("缺少 __testDeriveGateways 导出");
+      return;
     }
-    void fakeChat;
-    void seen;
+    const glm = build(KNOWLEDGE_CARD_DISTILL_MODEL_GLM);
+    expect(glm.map((g) => `${g.name}:${g.tier}`)).toEqual(KNOWLEDGE_CARD_GLM_FIRST_ORDER.map(label));
+    expect(glm[0]).toMatchObject({ name: "openrouter", model: "z-ai/glm-5.3-flash" });
+    expect(glm[1]).toMatchObject({ name: "evolink", model: "glm-5.3-flash" });
+
+    const deepseek = build(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
+    expect(deepseek.map((g) => `${g.name}:${g.tier}`)).toEqual(KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER.map(label));
+    expect(deepseek[0]).toMatchObject({ name: "openrouter", model: "deepseek/deepseek-v4.1-flash" });
+    expect(deepseek[1]).toMatchObject({ name: "evolink", model: "deepseek-v4.1-flash" });
+    expect(deepseek[deepseek.length - 1]).toMatchObject({ name: "openrouter", model: "qwen/qwen3.8-max" });
+
+    // 历史 receipt 里的旧档位值（Qwen 轻量档 / DeepSeek V4）也要迁到现行两档，不掉回旧链
+    expect(build("qwen3.8-max").map((g) => `${g.name}:${g.tier}`)).toEqual(KNOWLEDGE_CARD_GLM_FIRST_ORDER.map(label));
+    expect(build("deepseek-v4-flash").map((g) => `${g.name}:${g.tier}`)).toEqual(KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER.map(label));
   });
 });

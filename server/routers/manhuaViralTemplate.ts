@@ -1,4 +1,5 @@
 import { NATIVE_REPORT_THEME_CHOICES } from "../../shared/manhuaNativeReportThemeChoice.js";
+import { MANHUA_VIRAL_TEMPLATE_OPTIMIZE_REQUEST_MODELS } from "@shared/manhuaViralTemplateBank";
 /**
  * 漫剧节奏模板：动态提案 / 批准进库 / 合并列表（GCS ∪ 种子库）。
  */
@@ -309,12 +310,8 @@ export const manhuaViralTemplateRouter = router({
   optimizeApproved: protectedProcedure
     .input(z.object({
       id: z.string().regex(/^tpl_[a-z0-9_-]{1,60}$/i),
-      model: z.enum([
-        "terra_high",
-        "kimi_k3_max",
-        "claude_opus_5_high",
-        "deepseek_v4_0813_high",
-      ]),
+      // 0911：DeepSeek V4 Pro 0813 下架，新请求只接受在架四档（历史记录仍可解析旧档名）
+      model: z.enum(MANHUA_VIRAL_TEMPLATE_OPTIMIZE_REQUEST_MODELS),
       promptZh: z.string().trim().min(2).max(2_000),
       requestId: z.string().regex(/^[a-zA-Z0-9_-]{8,80}$/),
       confirmPaidCall: z.literal(true),

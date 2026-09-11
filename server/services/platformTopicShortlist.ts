@@ -2,6 +2,12 @@
  * 选题初选（20）与勾选扩写（5–6）LLM 服务。
  */
 import { nanoid } from "nanoid";
+import {
+  GLM_53_EVOLINK_MODEL,
+  GLM_53_OPENROUTER_MODEL,
+  OPENROUTER_GLM_PROVIDER_LOCK,
+  glm53ReasoningEffort,
+} from "./glmModels.js";
 import { extractFirstChoicePlainText, invokeLLM, isTransientLlmError } from "../_core/llm.js";
 import { getPlatformStage2OpenAiModel } from "../config/platformSwitches.js";
 import { TRPCError } from "@trpc/server";
@@ -670,10 +676,16 @@ const EXPAND_MAX_COMPLETION_TOKENS = 32_000;
 /** Qwen 3.8 Max 输出上限（2026-08-12 用户拍板 65k）：单价低（$5.295/M），给足思考与长稿余量 */
 const EXPAND_QWEN_MAX_COMPLETION_TOKENS = 65_536;
 
-/** 经济档模型：$0.435/$0.87 per M，输出价约为 Kimi K3 的 1/17（2026-08-15 同题 PK 质量过关） */
-/** DeepSeek 经济档唯一模型常量（审查 2026-08-18 建议2：请求与遥测必须同源，禁止双份定义） */
-export const DEEPSEEK_ECONOMY_MODEL = "deepseek/deepseek-v4-pro-0813";
-const EXPAND_DEEPSEEK_OR_MODEL = DEEPSEEK_ECONOMY_MODEL;
+/**
+ * 经济档唯一模型常量（审查 2026-08-18 建议2：请求与遥测必须同源，禁止双份定义）。
+ * 0911 用户令：原来的 `deepseek/deepseek-v4-pro-0813` 三天后下架，换 GLM 5.3（长文本旗舰，
+ * 不是读图的 GLM 5.3 Flash）；OpenRouter 主路锁 Z.AI 自营，换不动落 EvoLink 同款 `glm-5.3`。
+ */
+export const ECONOMY_MODEL = GLM_53_OPENROUTER_MODEL;
+/** EvoLink 兜底同款（OpenRouter 打不通时走这家） */
+export const ECONOMY_MODEL_EVOLINK = GLM_53_EVOLINK_MODEL;
+/** @deprecated 旧名（曾是 DeepSeek 档）；遥测与测试统一读 ECONOMY_MODEL */
+export const DEEPSEEK_ECONOMY_MODEL = ECONOMY_MODEL;
 
 /**
  * 经济档直连 OpenRouter。口径修正（2026-08-15 用户复核）：推理要开（high，与稳定/轻快档
@@ -686,24 +698,39 @@ export function buildDeepSeekExpandRequestBody(params: {
   user: string;
   /** 可选输出预算；缺省 65_536 维持扩写既有口径（审查 P1-2：报表须传自己的运维配置值） */
   maxTokens?: number;
+  /** 走哪家：默认 OpenRouter 主路，`evolink` 是 0911 新增的同款兜底 */
+  gateway?: "openrouter" | "evolink";
 }): Record<string, unknown> {
+  const maxTokens = Math.max(8_192, Math.min(65_536, Math.floor(Number(params.maxTokens) || 65_536)));
+  const messages = [
+    { role: "system", content: params.system },
+    { role: "user", content: params.user },
+  ];
+  if (params.gateway === "evolink") {
+    // EvoLink GLM：恒开思考关不掉，档位走顶层 reasoning_effort（只有 low/high/max 真正生效）
+    return {
+      model: ECONOMY_MODEL_EVOLINK,
+      messages,
+      temperature: 0.55,
+      max_tokens: maxTokens,
+      response_format: { type: "json_object" },
+      reasoning_effort: glm53ReasoningEffort("high"),
+    };
+  }
   return {
-    model: EXPAND_DEEPSEEK_OR_MODEL,
-    messages: [
-      { role: "system", content: params.system },
-      { role: "user", content: params.user },
-    ],
+    model: ECONOMY_MODEL,
+    messages,
     temperature: 0.55,
-    max_tokens: Math.max(8_192, Math.min(65_536, Math.floor(Number(params.maxTokens) || 65_536))),
+    max_tokens: maxTokens,
     response_format: { type: "json_object" },
     reasoning: { effort: "high" },
-    // 审查返工 6：不带此标志时 OpenRouter 可能把请求路由给不支持 reasoning/response_format
-    // 的供应商并静默忽略参数——强制只选支持全部参数的供应商
-    provider: { require_parameters: true },
+    // 审查返工 6：不带 require_parameters 时 OpenRouter 会把请求路由给不支持 reasoning/
+    // response_format 的供应商并静默忽略参数；0911 再加 Z.AI 自营锁，不落转售方
+    provider: { ...OPENROUTER_GLM_PROVIDER_LOCK },
   };
 }
 
-/** DeepSeek 经济档 OpenRouter 响应（choices/usage/model 供上层遥测与解析复用） */
+/** 经济档 OpenRouter 响应（choices/usage/model 供上层遥测与解析复用） */
 export type DeepSeekJsonChatResponse = {
   choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
@@ -712,7 +739,7 @@ export type DeepSeekJsonChatResponse = {
 };
 
 /**
- * 通用 DeepSeek 经济档 JSON 对话（扩写与趋势报表共用；2026-08-18 用户拍板报表切经济档）。
+ * 通用 经济档 JSON 对话（扩写与趋势报表共用；2026-08-18 用户拍板报表切经济档）。
  * 返回完整响应对象，content 已通过业务 JSON 验真（截断/过短/非对象一律抛错，不流空壳给下游）。
  */
 export async function invokeDeepSeekJsonChatRaw(params: {
@@ -723,43 +750,66 @@ export async function invokeDeepSeekJsonChatRaw(params: {
   abortSignal?: AbortSignal;
 }): Promise<DeepSeekJsonChatResponse> {
   const key = String(process.env.OPENROUTER_API_KEY || "").trim();
-  if (!key) {
+  const evolinkKey = String(process.env.EVOLINK_API_KEY || "").trim();
+  if (!key && !evolinkKey) {
     const err = new Error("经济档通道未配置") as Error & { gatewayTrace?: unknown };
     // 复审五轮 P1-1:fetch 未发生,标记 skipped 供外呼计数排除
-    err.gatewayTrace = [{ gateway: "openrouter", model: DEEPSEEK_ECONOMY_MODEL, outcome: "skipped_not_configured" }];
+    err.gatewayTrace = [{ gateway: "openrouter", model: ECONOMY_MODEL, outcome: "skipped_not_configured" }];
     throw err;
   }
+  // 0911 用户令：OpenRouter 主路（锁 Z.AI）打不通，落 EvoLink 同款 GLM 5.3
+  if (!key) return callEconomyGateway("evolink", params);
+  try {
+    return await callEconomyGateway("openrouter", params);
+  } catch (err) {
+    if (!evolinkKey) throw err;
+    console.warn(`[economy] OpenRouter GLM 5.3 失败 → 改走 EvoLink：${String((err as Error)?.message || err).slice(0, 160)}`);
+    return await callEconomyGateway("evolink", params);
+  }
+}
+
+async function callEconomyGateway(
+  gateway: "openrouter" | "evolink",
+  params: { system: string; user: string; maxTokens?: number; abortSignal?: AbortSignal },
+): Promise<DeepSeekJsonChatResponse> {
+  const key = String(
+    (gateway === "openrouter" ? process.env.OPENROUTER_API_KEY : process.env.EVOLINK_API_KEY) || "",
+  ).trim();
   const timeoutSignal = AbortSignal.timeout(240_000);
   const signal = params.abortSignal ? AbortSignal.any([params.abortSignal, timeoutSignal]) : timeoutSignal;
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "https://www.mvstudiopro.com",
-      "X-OpenRouter-Title": "MVStudioPro",
+  const res = await fetch(
+    gateway === "openrouter" ? "https://openrouter.ai/api/v1/chat/completions" : EXPAND_EVOLINK_DIRECT_CHAT_URL,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        ...(gateway === "openrouter"
+          ? { "HTTP-Referer": "https://www.mvstudiopro.com", "X-OpenRouter-Title": "MVStudioPro" }
+          : {}),
+      },
+      signal,
+      body: JSON.stringify(buildDeepSeekExpandRequestBody({ ...params, gateway })),
     },
-    signal,
-    body: JSON.stringify(buildDeepSeekExpandRequestBody(params)),
-  });
+  );
   const raw = await res.text();
-  if (!res.ok) throw new Error(`DeepSeek 经济档 HTTP ${res.status}: ${raw.slice(0, 160)}`);
+  if (!res.ok) throw new Error(`经济档 HTTP ${res.status}: ${raw.slice(0, 160)}`);
   let json: DeepSeekJsonChatResponse;
   try {
     json = JSON.parse(raw) as DeepSeekJsonChatResponse;
   } catch {
-    throw new Error(`DeepSeek 经济档非 JSON 响应：${raw.slice(0, 120)}`);
+    throw new Error(`经济档非 JSON 响应：${raw.slice(0, 120)}`);
   }
   if (String(json.choices?.[0]?.finish_reason || "") === "length") {
-    throw new Error("DeepSeek 经济档输出被截断（65K 预算耗尽，异常长输出）");
+    throw new Error("经济档输出被截断（65K 预算耗尽，异常长输出）");
   }
   const content = json.choices?.[0]?.message?.content;
   const text = typeof content === "string" ? content.trim() : "";
-  if (text.length < 20) throw new Error(`DeepSeek 经济档内容过短（${text.length} 字符）`);
+  if (text.length < 20) throw new Error(`经济档内容过短（${text.length} 字符）`);
   // 审查返工 4：外层 200 不代表业务 JSON 合法——content 解析不出对象就抛错换通道，
   // 不许让非 JSON 文本流到下游被拼成骨架空壳还照常收费
   if (!extractJsonObject(text)) {
-    throw new Error(`DeepSeek 经济档业务 JSON 解析失败：${text.slice(0, 120)}`);
+    throw new Error(`经济档业务 JSON 解析失败：${text.slice(0, 120)}`);
   }
   return json;
 }

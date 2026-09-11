@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { WEIXIN_CHANNELS_BATCH_MODEL_V2 } from "./weixinChannelsMiner.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { GrowthPlatform } from "@shared/growth";
@@ -278,7 +279,7 @@ function createJob(
     // 旧字段保留给已落盘状态迁移；新任务不再创建 Luna 批次。
     lunaBatchIds: [],
     status: "pending",
-    terraModel: "deepseek/deepseek-v4-pro-0813",
+    terraModel: WEIXIN_CHANNELS_BATCH_MODEL_V2,
     reasoningEffort: "medium",
     createdAt: now,
     updatedAt: now,

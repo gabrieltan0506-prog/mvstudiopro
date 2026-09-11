@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { GLM_53_OPENROUTER_MODEL } from "./glmModels.js";
 import { z } from "zod";
 import {
   MANHUA_VIRAL_TEMPLATE_LANE_ORDER,
@@ -58,10 +59,11 @@ export const MANHUA_VIRAL_TEMPLATE_OPTIMIZE_MODELS: readonly OptimizeModelConfig
     maxTokens: 32_768,
   },
   {
-    id: "deepseek_v4_0813_high",
-    labelZh: "DeepSeek V4 Pro 0813 · High",
+    // 0911 用户令：DeepSeek V4 Pro 0813 三天后下架，这一档换 GLM 5.3（OpenRouter 锁 Z.AI 自营）
+    id: "glm_53_high",
+    labelZh: "GLM 5.3 · High",
     provider: "openai",
-    modelName: "deepseek/deepseek-v4-pro-0813",
+    modelName: GLM_53_OPENROUTER_MODEL,
     reasoningEffort: "high",
     maxTokens: 65_536,
     responseFormat: { type: "json_object" },

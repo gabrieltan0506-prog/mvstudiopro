@@ -15,6 +15,7 @@ import nodePath from "node:path";
 import sharp from "sharp";
 import {
   buildKnowledgeCardPdfFile,
+  normalizeKnowledgeCardPage,
 } from "./knowledgeCardPdfExport";
 
 const page = async () =>
@@ -26,33 +27,60 @@ afterEach(() => {
 });
 
 describe("PDF 生产端背压（终审 P2）", () => {
-  it("sink 停滞：readable 积压保持有界，页生产停在首页附近，最终按超时报错并清目录", async () => {
+  it("sink 停滞：头先落盘、首页写完后停滞，页生产被挡住、缓冲有界、超时报错并清目录（终审第三条：真实测量替换恒真断言）", async () => {
+    const jpeg = await page();
+    const norm = await normalizeKnowledgeCardPage(jpeg);
+    // 放行 PDF 头 + 第一页的体量，之后停滞：既证明"能落盘的都落了"，又证明"落不动时生产停下"
+    const stallAfter = norm.length + 16_384;
+    let acked = 0;
     let maxBuffered = 0;
     let loads = 0;
+    let capturedPath = "";
     const stalled = new Writable({
       highWaterMark: 65_536,
-      write(_c, _e, _cb) {
-        /* 永不回调：模拟停滞的文件系统 */
+      write(chunk: Buffer, _e, cb) {
+        maxBuffered = Math.max(maxBuffered, stalled.writableLength);
+        if (acked + chunk.length <= stallAfter) {
+          acked += chunk.length;
+          cb();
+          return;
+        }
+        /* 预算用完：不再回调，模拟停滞的文件系统 */
       },
     });
+    const sampler = setInterval(() => {
+      maxBuffered = Math.max(maxBuffered, stalled.writableLength);
+    }, 5);
     const loaders = Array.from({ length: 8 }, () => async () => {
       loads += 1;
-      return page();
+      return jpeg;
     });
-    let observedDoc: { readableLength: number } | null = null;
-    const origBuild = buildKnowledgeCardPdfFile;
-    await expect(
-      origBuild(loaders, {
-        timeoutMs: 1_200,
-        makeOut: () => {
-          // 包一层以便读取积压（通过 stalled 的 writableLength 观察不到 doc 侧，直接靠 loads 断言）
-          return stalled;
-        },
-      }),
-    ).rejects.toThrow(/写入无进展|提前关闭/);
-    // 背压生效：第一页排空等待挡住了后续生产，8 个 loader 至多消费了 1 个
-    expect(loads).toBeLessThanOrEqual(1);
-    expect(maxBuffered).toBeLessThanOrEqual(65_536 * 4);
+    try {
+      await expect(
+        buildKnowledgeCardPdfFile(loaders, {
+          timeoutMs: 1_200,
+          makeOut: (filePath) => {
+            capturedPath = filePath;
+            return stalled;
+          },
+        }),
+      ).rejects.toThrow(/写入无进展|提前关闭/);
+    } finally {
+      clearInterval(sampler);
+    }
+    // 有进展：PDF 头与首页确实经过了 sink（预算大头被消费掉）
+    expect(acked).toBeGreaterThan(norm.length / 2);
+    // 背压生效：停滞后页生产被挡住，8 个 loader 远消费不完（PDFKit 逐页 flush 有一页相位差，放宽到 4）
+    expect(loads).toBeGreaterThanOrEqual(1);
+    expect(loads).toBeLessThanOrEqual(4);
+    // 缓冲有界：writable 侧最多滞留 hwm + 一个整页大小的 chunk，绝不是此前的多页无界积压
+    expect(maxBuffered).toBeGreaterThan(0);
+    expect(maxBuffered).toBeLessThanOrEqual(65_536 + norm.length + 16_384);
+    // 失败收尾：临时目录已删、sink 已被 destroy
+    expect(capturedPath).not.toBe("");
+    const { stat } = await import("node:fs/promises");
+    await expect(stat(nodePath.dirname(capturedPath))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(stalled.destroyed).toBe(true);
   }, 60_000);
 
   it("正常 sink：全部页写完、文件字节可 stat、目录由调用方清理", async () => {
@@ -149,6 +177,63 @@ describe("uploadStreamToGcs 前置失败不泄漏 fd（终审 P2）", () => {
     expect(cancelled).toBe(true);
     vi.doUnmock("../utils/vertex");
     vi.resetModules();
+  }, 30_000);
+
+  it("鉴权挂起 + 取消：及时拒绝、cancel 文件流、不发 GCS POST、调用方可关 fd 删目录（终审 P2）", async () => {
+    vi.resetModules();
+    let lateReject: ((e: unknown) => void) | undefined;
+    const pendingAuth = new Promise<string>((_, rej) => {
+      lateReject = rej;
+    });
+    vi.doMock("../utils/vertex", () => ({ getVertexAccessToken: () => pendingAuth }));
+    const fetchSpy = vi.fn(async () => {
+      throw new Error("鉴权未过不应发起 GCS POST");
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    const rejections: unknown[] = [];
+    const onR = (e: unknown) => rejections.push(e);
+    process.on("unhandledRejection", onR);
+    const dir = await mkdtemp(nodePath.join(tmpdir(), "kc-up-auth-"));
+    try {
+      const fp = nodePath.join(dir, "c.pdf");
+      await writeFile(fp, Buffer.alloc(4096, 2));
+      const source = createReadStream(fp);
+      const closed = finished(source, { cleanup: true }).catch(() => {});
+      const { uploadStreamToGcs } = await import("./gcs");
+      const ac = new AbortController();
+      const uploading = uploadStreamToGcs({
+        objectName: "x/c.pdf",
+        stream: Readable.toWeb(source) as ReadableStream<Uint8Array>,
+        contentLength: 4096,
+        contentType: "application/pdf",
+        bucket: "test-bucket",
+        signal: ac.signal,
+      });
+      // 鉴权永远悬着；50ms 后取消——此前实现会一直 await 下去，超时形同虚设
+      setTimeout(() => ac.abort(new Error("上传超时（含鉴权等待）")), 50);
+      const started = performance.now();
+      await expect(uploading).rejects.toThrow(/上传超时（含鉴权等待）/);
+      expect(performance.now() - started).toBeLessThan(5_000);
+      // 前置失败：流被 cancel，fd 不吊着
+      await closed;
+      expect(source.destroyed).toBe(true);
+      // 没碰网络
+      expect(fetchSpy).not.toHaveBeenCalled();
+      // 调用方 finally 语义可走通：关流、删目录
+      source.destroy();
+      await rm(dir, { recursive: true, force: true });
+      const { stat } = await import("node:fs/promises");
+      await expect(stat(dir)).rejects.toMatchObject({ code: "ENOENT" });
+      // 迟到的鉴权失败不产生 unhandledRejection（awaitWithAbortSignal 已挂了处理器）
+      lateReject?.(new Error("late auth failure"));
+      await new Promise((r) => setTimeout(r, 50));
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onR);
+      vi.doUnmock("../utils/vertex");
+      vi.resetModules();
+      await rm(dir, { recursive: true, force: true }).catch(() => {});
+    }
   }, 30_000);
 });
 

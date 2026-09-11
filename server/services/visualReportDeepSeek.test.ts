@@ -47,7 +47,7 @@ describe("invokeDeepSeekJsonChatRaw（报表/扩写共用经济档通道）", ()
     mockFetchOnce({
       choices: [{ message: { content: VALID_CONTENT }, finish_reason: "stop" }],
       usage: { prompt_tokens: 123, completion_tokens: 456 },
-      model: "deepseek/deepseek-v4-pro-0813",
+      model: "z-ai/glm-5.3",
     });
     const res = await invokeDeepSeekJsonChatRaw({ system: "s", user: "u" });
     expect(res.usage?.prompt_tokens).toBe(123);

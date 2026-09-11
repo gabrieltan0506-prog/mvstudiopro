@@ -52,7 +52,7 @@ describe("runVisualReportLlmAttempts（三攻路由）", () => {
 
   it("前两攻 GLM 链失败后,第三攻只调 DeepSeek 兜底且成功交卷,attempt=3", async () => {
     const glm = vi.fn(async () => { throw new Error("GLM 链挂了"); });
-    const ds = vi.fn(async () => asResp(GOOD, { model: "deepseek/deepseek-v4-pro-0813" }));
+    const ds = vi.fn(async () => asResp(GOOD, { model: "z-ai/glm-5.3" }));
     const r = await runVisualReportLlmAttempts({
       systemPrompt: "s", userPrompt: "u", maxTokens: 40_000, primaryModelName: "glm-5.3",
       deepSeekInvoke: ds, primaryInvoke: glm as any, sleepMs: noSleep,
@@ -130,7 +130,7 @@ describe("parseVisualReportJson(两路共用同一把尺)", () => {
 describe("兜底引擎标签与失败遥测(复审 P1-1/P1-4)", () => {
   it("默认兜底标签为 DeepSeek 经济档(openrouter_deepseek)", async () => {
     const glm = vi.fn(async () => { throw new Error("GLM炸"); });
-    const ds = vi.fn(async () => asResp(GOOD, { model: "deepseek/deepseek-v4-pro-0813" }));
+    const ds = vi.fn(async () => asResp(GOOD, { model: "z-ai/glm-5.3" }));
     const r = await runVisualReportLlmAttempts({
       systemPrompt: "s", userPrompt: "u", maxTokens: 40_000, primaryModelName: "glm-5.3",
       deepSeekInvoke: ds, primaryInvoke: glm as any, sleepMs: noSleep,
@@ -154,7 +154,7 @@ describe("兜底引擎标签与失败遥测(复审 P1-1/P1-4)", () => {
     const err = new VisualReportAttemptsError("msg", [
       { attempt: 1, engine: "glm_5_3", modelName: "glm-5.3" },
       { attempt: 2, engine: "glm_5_3", modelName: "glm-5.3" },
-      { attempt: 3, engine: "openrouter_deepseek", modelName: "deepseek/deepseek-v4-pro-0813" },
+      { attempt: 3, engine: "openrouter_deepseek", modelName: "z-ai/glm-5.3" },
     ], false);
     const t = buildVisualReportFailureTelemetry({ error: err, llmResult: null, stage: "llm" });
     expect(t.attemptsPerformed).toBe(3);
@@ -168,7 +168,7 @@ describe("兜底引擎标签与失败遥测(复审 P1-1/P1-4)", () => {
       error: new Error("转换崩了"),
       llmResult: {
         parsed: {}, rawBody: "", engine: "openrouter_deepseek",
-        modelName: "deepseek/deepseek-v4-pro-0813", attempt: 1,
+        modelName: "z-ai/glm-5.3", attempt: 1,
         finishReason: "stop", promptTokens: 1, completionTokens: 2,
         upstreamModel: null, upstreamProvider: null,
         gateway: "openrouter", gatewayAttemptsPerformed: 4,
@@ -244,7 +244,7 @@ describe("DeepSeek 未配置零外呼(复审五轮 P1-1)", () => {
   it("两攻 DeepSeek 均 skipped + GLM 首网关成功 → gatewayAttemptsPerformed=1", async () => {
     const ds = vi.fn(async () => {
       const err = new Error("经济档通道未配置") as Error & { gatewayTrace?: unknown };
-      err.gatewayTrace = [{ gateway: "openrouter", model: "deepseek/deepseek-v4-pro-0813", outcome: "skipped_not_configured" }];
+      err.gatewayTrace = [{ gateway: "openrouter", model: "z-ai/glm-5.3", outcome: "skipped_not_configured" }];
       throw err;
     });
     const glm = vi.fn(async () => ({

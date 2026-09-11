@@ -215,7 +215,7 @@ import type {
   ManhuaViralTemplateCard,
   ManhuaViralTemplateChangeReason,
   ManhuaViralTemplateOptimizeField,
-  ManhuaViralTemplateOptimizeModel,
+  ManhuaViralTemplateOptimizeRequestModel,
 } from "@shared/manhuaViralTemplateBank";
 import type {
   GrowthAnalysisScores,
@@ -3017,13 +3017,13 @@ export default function PlatformPage() {
   const [customNoteDistillModel, setCustomNoteDistillModel] = useState<KnowledgeCardDistillModelId>(() => {
     try {
       const raw = localStorage.getItem("mvs-knowledge-card-distill-model");
-      // 旧 Sol / terra / OR-qwen 由 resolve 迁到 DeepSeek / Evolink Qwen
+      // 旧值（Sol / Terra / OR-qwen / 已下架的 Qwen 轻量档 / DeepSeek V4）由 resolve 迁到现行两档
       return resolveKnowledgeCardDistillModel(raw);
     } catch {
       return KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK;
     }
   });
-  /** 成稿档：精华版（提炼主要重点）/ 高级版（主要+次要重点，不限页数）；0908 用户拍板 */
+  /** 成稿档：精华版（优先重点+简单解说）/ 完整版（第一重点+详细解说，不限页数）；0911 用户定名 */
   const [customNoteDetailLevel, setCustomNoteDetailLevel] = useState<KnowledgeCardDetailLevel>(() => {
     try {
       return resolveKnowledgeCardDetailLevel(localStorage.getItem("mvs-knowledge-card-detail-level") || KNOWLEDGE_CARD_DEFAULT_DETAIL_LEVEL);
@@ -3856,7 +3856,7 @@ export default function PlatformPage() {
   }, [manhuaLearnServerJobs, selectedManhuaProposal?.id]);
   const [ownerTemplateDetailId, setOwnerTemplateDetailId] = useState<string | null>(null);
   const [ownerTemplateOptimizeModel, setOwnerTemplateOptimizeModel] =
-    useState<ManhuaViralTemplateOptimizeModel>("terra_high");
+    useState<ManhuaViralTemplateOptimizeRequestModel>("terra_high");
   const [ownerTemplateOptimizePrompt, setOwnerTemplateOptimizePrompt] = useState("");
   const [ownerTemplateOptimizeResult, setOwnerTemplateOptimizeResult] = useState<null | {
     original: ManhuaViralTemplateCard;
@@ -8091,7 +8091,7 @@ export default function PlatformPage() {
     setCustomNoteFullMarkdown(distilled);
     setCustomNoteCompactMarkdown(null);
     if (customNoteDetailLevel !== "concise") return distilled;
-    // 派生失败不连累已到手的完整版：写入完整版、切档回高级版，稍后可再切
+    // 派生失败不连累已到手的完整版：写入完整版、切档回完整版档，稍后可再切
     setCustomNoteUploadStatus("完整版已提炼，正在派生精华版…");
     try {
       return await deriveCompactFromFull(distilled);
@@ -14477,7 +14477,7 @@ export default function PlatformPage() {
                                             value={ownerTemplateOptimizeModel}
                                             onChange={(event) => {
                                               setOwnerTemplateOptimizeModel(
-                                                event.target.value as ManhuaViralTemplateOptimizeModel,
+                                                event.target.value as ManhuaViralTemplateOptimizeRequestModel,
                                               );
                                               setOwnerTemplateOptimizeResult(null);
                                             }}
@@ -15513,7 +15513,7 @@ export default function PlatformPage() {
                   ) : null}
                   {canChooseKnowledgeCardDistillModel ? (
                     <label className="inline-flex items-center gap-1.5 text-[11px] text-[#c9c0e6]/70">
-                      <span className="shrink-0">提炼档位</span>
+                      <span className="shrink-0">读档模型</span>
                       <select
                         className="rounded-md border border-white/15 bg-black/50 px-2 py-1 text-[11px] font-semibold text-white focus:border-[#ff4fb8]/50 focus:outline-none"
                         value={customNoteDistillModel}
@@ -15524,7 +15524,7 @@ export default function PlatformPage() {
                         }
                         title={
                           customNoteDistillPhase !== "idle"
-                            ? "本次提炼按当前档位计费，出图完成后才能换档"
+                            ? "本次读档按当前档位计费，出图完成后才能换档"
                             : undefined
                         }
                         onChange={(e) => {
@@ -15553,7 +15553,7 @@ export default function PlatformPage() {
                       className="rounded-md border border-white/15 bg-black/50 px-2 py-1 text-[11px] font-semibold text-white focus:border-[#ff4fb8]/50 focus:outline-none"
                       value={customNoteDetailLevel}
                       disabled={customNoteBusy || customNoteUploadBusy || customNoteLevelSwitching || customNoteDistillPhase === "distilling"}
-                      title="精华版：从完整版长稿派生主要重点，页数少；高级版：主要与次要重点都包含，不限页数、按页计费。提炼完成后仍可随时切换，页数与积分随当前档重算"
+                      title="精华版：从完整版长稿派生优先重点 + 简单解说，页数少；完整版：第一重点 + 详细解说，不限页数、按页计费。读档完成后仍可随时切换，页数与积分随当前档重算"
                       onChange={(e) => {
                         const next = resolveKnowledgeCardDetailLevel(e.target.value);
                         void switchKnowledgeCardLevel(next);

@@ -206,7 +206,7 @@ describe("weixinChannelsMinerStore", () => {
     const state = await getWeixinChannelsMinerState();
     expect(state.jobs.filter((job) => job.kind === "formal")).toHaveLength(1);
     expect(state.jobs.find((job) => job.kind === "formal")?.analysisObservationIds).toHaveLength(1_000);
-    expect(state.jobs[0]).toMatchObject({ stage: "deepseek_batch", terraModel: "deepseek/deepseek-v4-pro-0813", threshold: 1_000 });
+    expect(state.jobs[0]).toMatchObject({ stage: "deepseek_batch", terraModel: "z-ai/glm-5.3", threshold: 1_000 });
     expect(state.lunaBatches).toHaveLength(0);
   }, 20_000);
 
@@ -245,7 +245,7 @@ describe("weixinChannelsMinerStore", () => {
     await seed(Array.from({ length: 5 }, (_, index) => persisted(index, "probe")));
     const { job } = await createWeixinChannelsProbeJob();
     const result = classifiedBatchResult();
-    const invoke = vi.fn().mockResolvedValueOnce({ id: "deepseek", created: 1, model: "deepseek/deepseek-v4-pro-0813", provider: "DeepSeek", choices: [{ message: { content: JSON.stringify(result) } }] });
+    const invoke = vi.fn().mockResolvedValueOnce({ id: "deepseek", created: 1, model: "z-ai/glm-5.3", provider: "DeepSeek", choices: [{ message: { content: JSON.stringify(result) } }] });
     const completed = await processWeixinChannelsAggregationJob(job.jobId, { invoke: invoke as never });
     expect(completed.status).toBe("completed");
     expect(invoke).toHaveBeenCalledTimes(1);
@@ -282,7 +282,7 @@ describe("weixinChannelsMinerStore", () => {
     const oldJobs = Array.from({ length: 7 }, (_, index) => ({
       jobId: `ds-old-${index}`, kind: "formal", stage: "deepseek_batch", threshold: 1_000,
       rawCount: 1_000, locallyDedupedCount: 1_000, observationIds: [], analysisObservationIds: [], lunaBatchIds: [],
-      status: "completed", terraProvider: "openrouter", terraModel: "deepseek/deepseek-v4-pro-0813", reasoningEffort: "high",
+      status: "completed", terraProvider: "openrouter", terraModel: "z-ai/glm-5.3", reasoningEffort: "high",
       finalResult: eightFields, createdAt: `2026-08-0${index + 1}T00:00:00.000Z`, updatedAt: `2026-08-0${index + 1}T00:00:00.000Z`, completedAt: `2026-08-0${index + 1}T00:00:00.000Z`,
     }));
     const observations = Array.from({ length: 1_000 }, (_, index) => persisted(index));
@@ -293,7 +293,7 @@ describe("weixinChannelsMinerStore", () => {
     const eighth = state.jobs.find((job) => job.stage === "deepseek_batch" && job.status === "pending")!;
     const cleanResult = { ...eightFields, cleaningReport: { removedNoise: ["UI"], downgradedClaims: [], preservedEvidence: ["obs"] } };
     const invoke = vi.fn()
-      .mockResolvedValueOnce({ id: "ds-8", model: "deepseek/deepseek-v4-pro-0813", provider: "DeepSeek", choices: [{ message: { content: JSON.stringify(eightFields) } }] })
+      .mockResolvedValueOnce({ id: "ds-8", model: "z-ai/glm-5.3", provider: "DeepSeek", choices: [{ message: { content: JSON.stringify(eightFields) } }] })
       .mockResolvedValueOnce({ id: "terra-clean", model: "gpt-5.6-terra", provider: "evolink", choices: [{ message: { content: JSON.stringify(cleanResult) } }] });
     await processWeixinChannelsAggregationJob(eighth.jobId, { invoke: invoke as never });
     state = await getWeixinChannelsMinerState();

@@ -224,10 +224,10 @@ describe("weixinChannelsMiner", () => {
     const result = classifiedBatchResult();
     const invoke = vi.fn().mockResolvedValueOnce({ provider: "DeepSeek", usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30, cost: 0.01, completion_tokens_details: { reasoning_tokens: 5 } }, choices: [{ message: { content: JSON.stringify(result) }, finish_reason: "stop" }] });
     const persisted = persistableWeixinChannelsObservation(observation({ likes: 3_000, shares: 2_000, comments: 10 }));
-    const job: FinalAnalysisJob = { jobId: "ds-1", kind: "formal", stage: "deepseek_batch", threshold: 1_000, rawCount: 1_000, locallyDedupedCount: 1_000, observationIds: [persisted.observationId], analysisObservationIds: [persisted.observationId], lunaBatchIds: [], status: "processing", terraModel: "deepseek/deepseek-v4-pro-0813", reasoningEffort: "medium", createdAt: "2026-08-14T00:00:00.000Z", updatedAt: "2026-08-14T00:00:00.000Z" };
+    const job: FinalAnalysisJob = { jobId: "ds-1", kind: "formal", stage: "deepseek_batch", threshold: 1_000, rawCount: 1_000, locallyDedupedCount: 1_000, observationIds: [persisted.observationId], analysisObservationIds: [persisted.observationId], lunaBatchIds: [], status: "processing", terraModel: "z-ai/glm-5.3", reasoningEffort: "medium", createdAt: "2026-08-14T00:00:00.000Z", updatedAt: "2026-08-14T00:00:00.000Z" };
     const output = await invokeWeixinChannelsDeepSeekBatch({ job, observations: [persisted], invoke: invoke as never });
     expect(invoke.mock.calls[0][0]).toMatchObject({
-      modelName: "deepseek/deepseek-v4-pro-0813", reasoningEffort: "medium", requestId: "ds-1",
+      modelName: "z-ai/glm-5.3", reasoningEffort: "medium", requestId: "ds-1",
       max_tokens: WEIXIN_CHANNELS_DEEPSEEK_MAX_COMPLETION_TOKENS,
       response_format: { type: "json_object" },
       openRouterProviderPreferences: { require_parameters: true },
@@ -243,7 +243,7 @@ describe("weixinChannelsMiner", () => {
       .mockResolvedValueOnce({ provider: "DeepSeek", usage: { prompt_tokens: 3, completion_tokens: 4, cost: 0.01 }, choices: [{ message: { content: JSON.stringify(valid) }, finish_reason: "length" }] })
       .mockResolvedValueOnce({ provider: "DeepSeek", usage: { prompt_tokens: 5, completion_tokens: 6, cost: 0.02 }, choices: [{ message: { content: JSON.stringify(valid) }, finish_reason: "stop" }] });
     const persisted = persistableWeixinChannelsObservation(observation({ likes: 3_000, shares: 2_000 }));
-    const job: FinalAnalysisJob = { jobId: "ds-retry", kind: "formal", stage: "deepseek_batch", threshold: 1_000, rawCount: 1_000, locallyDedupedCount: 1_000, observationIds: [persisted.observationId], analysisObservationIds: [persisted.observationId], lunaBatchIds: [], status: "processing", terraModel: "deepseek/deepseek-v4-pro-0813", reasoningEffort: "medium", createdAt: "2026-08-14T00:00:00.000Z", updatedAt: "2026-08-14T00:00:00.000Z" };
+    const job: FinalAnalysisJob = { jobId: "ds-retry", kind: "formal", stage: "deepseek_batch", threshold: 1_000, rawCount: 1_000, locallyDedupedCount: 1_000, observationIds: [persisted.observationId], analysisObservationIds: [persisted.observationId], lunaBatchIds: [], status: "processing", terraModel: "z-ai/glm-5.3", reasoningEffort: "medium", createdAt: "2026-08-14T00:00:00.000Z", updatedAt: "2026-08-14T00:00:00.000Z" };
     const output = await invokeWeixinChannelsDeepSeekBatch({ job, observations: [persisted], invoke: invoke as never });
     expect(invoke).toHaveBeenCalledTimes(2);
     expect(invoke.mock.calls[1][0].requestId).toBe("ds-retry:validation-retry");
@@ -261,7 +261,7 @@ describe("weixinChannelsMiner", () => {
       .mockResolvedValueOnce({ provider: "DeepSeek", choices: [{ message: { content: JSON.stringify(invalid) }, finish_reason: "stop" }] })
       .mockResolvedValueOnce({ provider: "DeepSeek", choices: [{ message: { content: JSON.stringify(invalid) }, finish_reason: "stop" }] });
     const persisted = persistableWeixinChannelsObservation(observation({ likes: 3_000, shares: 2_000 }));
-    const job: FinalAnalysisJob = { jobId: "ds-invalid", kind: "formal", stage: "deepseek_batch", threshold: 1_000, rawCount: 1_000, locallyDedupedCount: 1_000, observationIds: [persisted.observationId], analysisObservationIds: [persisted.observationId], lunaBatchIds: [], status: "processing", terraModel: "deepseek/deepseek-v4-pro-0813", reasoningEffort: "medium", createdAt: "2026-08-14T00:00:00.000Z", updatedAt: "2026-08-14T00:00:00.000Z" };
+    const job: FinalAnalysisJob = { jobId: "ds-invalid", kind: "formal", stage: "deepseek_batch", threshold: 1_000, rawCount: 1_000, locallyDedupedCount: 1_000, observationIds: [persisted.observationId], analysisObservationIds: [persisted.observationId], lunaBatchIds: [], status: "processing", terraModel: "z-ai/glm-5.3", reasoningEffort: "medium", createdAt: "2026-08-14T00:00:00.000Z", updatedAt: "2026-08-14T00:00:00.000Z" };
     await expect(invokeWeixinChannelsDeepSeekBatch({ job, observations: [persisted], invoke: invoke as never }))
       .rejects.toThrow("weixin_channels_deepseek_validation_failed");
     expect(invoke).toHaveBeenCalledTimes(2);

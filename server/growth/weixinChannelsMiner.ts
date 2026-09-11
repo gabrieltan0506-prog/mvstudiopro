@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { GLM_53_OPENROUTER_MODEL } from "../services/glmModels.js";
 import { z } from "zod";
 import type { GrowthPlatform } from "@shared/growth";
 import {
@@ -34,7 +35,8 @@ export const WEIXIN_CHANNELS_BATCH_MODEL = "gpt-5.6-luna" as const;
 export const WEIXIN_CHANNELS_BATCH_REASONING = "low" as const;
 export const WEIXIN_CHANNELS_FINAL_MODEL = "gpt-5.6-terra" as const;
 export const WEIXIN_CHANNELS_FINAL_REASONING = "high" as const;
-export const WEIXIN_CHANNELS_BATCH_MODEL_V2 = "deepseek/deepseek-v4-pro-0813" as const;
+// 0911 用户令：deepseek/deepseek-v4-pro-0813 三天后下架，批量档换 GLM 5.3（OpenRouter 锁 Z.AI 自营）
+export const WEIXIN_CHANNELS_BATCH_MODEL_V2 = GLM_53_OPENROUTER_MODEL;
 export const WEIXIN_CHANNELS_BATCH_REASONING_V2 = "medium" as const;
 /** 视频号量级小于来源平台，搜索候选按用户确认放宽到最近十五天。 */
 export const WEIXIN_CHANNELS_SEARCH_WINDOW_DAYS = 15;
