@@ -42,6 +42,14 @@ jobs:
             exit 1
           fi
           echo "FLY_MACHINE_ID=$MACHINE_ID" >> "$GITHUB_ENV"
+      - name: Verify deployed cold-store routing
+        timeout-minutes: 2
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          # 新工作流先于服务器上线时明确暂停，不能发布旧读取器无法恢复的新归档。
+          timeout --kill-after=5s 60s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+            -C "node /app/scripts/growth-cold-store-routing-check.mjs" </dev/null
       - name: Create leased archive snapshot on Fly
         timeout-minutes: 15
         env:
@@ -187,12 +195,7 @@ jobs:
           else
             test "$completed" -eq "$planned"
           fi
-      - name: Prune superseded batch snapshot assets from cold-store release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        # 0826 事故：Release 撞 1000 资产上限后所有上传 422。上传前先清旧批次快照分片；
-        # archive-* 冷存档（Fly 已删数据唯一副本）与稳定名资产不在清理范围。
-        run: bash scripts/prune-growth-release-batch-assets.sh
+      # 旧备份不删除；新增分片与归档使用独立 Release，避免 1000 附件上限。
       - name: Publish and read back archive bundles
         timeout-minutes: 30
         env:
@@ -206,14 +209,20 @@ jobs:
             local asset="$1"
             local asset_name expected_bytes expected_sha verify_dir actual_bytes actual_sha
             asset_name=$(basename "$asset")
+            local release_tag
+            release_tag=$(node scripts/growth-release-tag.mjs "$asset_name")
+            if ! gh release view "$release_tag" >/dev/null 2>&1; then
+              gh release create "$release_tag" --target "$GITHUB_SHA" --latest=false \
+                --title "$release_tag" --notes "Growth 冷备分仓；原始归档保留" || return 1
+            fi
             expected_bytes=$(stat -c%s "$asset")
             expected_sha=$(sha256sum "$asset" | awk '{print $1}')
             verify_dir=/tmp/growth-archive-offload/release-readback
             mkdir -p "$verify_dir"
             for attempt in 1 2 3 4 5; do
-              if gh release upload growth-cold-store-latest "$asset#$asset_name" --clobber; then
+              if gh release upload "$release_tag" "$asset#$asset_name" --clobber; then
                 rm -f "$verify_dir/$asset_name"
-                if gh release download growth-cold-store-latest -p "$asset_name" -D "$verify_dir" --clobber; then
+                if gh release download "$release_tag" -p "$asset_name" -D "$verify_dir" --clobber; then
                   actual_bytes=$(stat -c%s "$verify_dir/$asset_name")
                   actual_sha=$(sha256sum "$verify_dir/$asset_name" | awk '{print $1}')
                   if [ "$actual_bytes" = "$expected_bytes" ] && [ "$actual_sha" = "$expected_sha" ]; then
@@ -246,6 +255,7 @@ jobs:
           }));
           const archives = parse("/tmp/growth-archive-offload/archives.tsv").map(([dir, asset, bytes, sha256, sourceFingerprint, sourceBytes, partCount]) => ({
             dir, asset, bytes: Number(bytes), sha256, sourceFingerprint, sourceBytes: Number(sourceBytes),
+            baseUrl: `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${require("./shared/growthColdStoreRelease.mjs").growthColdStoreReleaseTag(asset)}`,
             parts: parts.filter((entry) => entry.dir === dir).sort((a, b) => a.partIndex - b.partIndex).map(({ asset: partAsset, bytes: partBytes, sha256: partSha, partIndex }) => ({ asset: partAsset, bytes: partBytes, sha256: partSha, partIndex })),
             partCount: Number(partCount),
           }));

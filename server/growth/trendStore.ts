@@ -20,6 +20,7 @@ import type { PlatformTrendCollection, TrendItem } from "./trendCollector";
 import { nowShanghaiIso, toShanghaiIso } from "./time";
 import { normalizeStringList } from "./trendNormalize";
 import { withGrowthStoreMutationLock } from "./growthStoreMutationLock";
+import { fetchGrowthColdStoreAsset } from "../../shared/growthColdStoreRelease.mjs";
 const execFileAsync = promisify(execFile);
 const FLYCTL_BIN = process.env.FLYCTL_BIN || path.join(process.env.HOME || "", ".fly/bin/flyctl");
 const FLY_APP_NAME = String(process.env.FLY_APP || "mvstudiopro").trim() || "mvstudiopro";
@@ -525,11 +526,11 @@ async function downloadPlatformCurrentBatchAsset(
       }
       for (let attempt = 1; !raw && attempt <= 3; attempt += 1) {
         try {
-          const response = await fetch(`${getColdStoreAssetUrl(part.assetName)}?batch=${encodeURIComponent(manifest.batchId)}`, {
+          const response = await fetchGrowthColdStoreAsset(GITHUB_COLD_STORE_BASE_URL, part.assetName, {
             cache: "no-store",
             signal: AbortSignal.timeout(timeoutMs),
           });
-          if (!response.ok) continue;
+          if (!response?.ok) continue;
           const candidate = Buffer.from(await response.arrayBuffer());
           assertGrowthColdStoreChunkIntegrity(part.assetName, candidate, part);
           await writeBufferAtomic(partPath, candidate);
@@ -558,6 +559,7 @@ async function downloadColdStoreAsset(
   assetName: string,
   cacheRelativePath: string,
   timeoutMs = 15_000,
+  legacyOnly = false,
 ) {
   if (!canUseGithubColdStore()) return null;
   const batchAsset = await downloadPlatformCurrentBatchAsset(assetName, timeoutMs);
@@ -569,8 +571,12 @@ async function downloadColdStoreAsset(
     await fs.access(cachePath);
     return cachePath;
   } catch {}
-  const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
-  if (!response.ok) return null;
+  const options = { signal: AbortSignal.timeout(timeoutMs) };
+  const response = legacyOnly
+    ? await fetch(url, options)
+    : await fetchGrowthColdStoreAsset(GITHUB_COLD_STORE_BASE_URL, assetName, options);
+  if (!response || response.status === 404) return null;
+  if (!response.ok) throw new Error(`growth_cold_store_download_failed:${assetName}:${response.status}`);
   const bytes = Buffer.from(await response.arrayBuffer());
   await fs.mkdir(path.dirname(cachePath), { recursive: true });
   const nextPath = `${cachePath}.next-${process.pid}-${Date.now()}`;
@@ -645,13 +651,14 @@ export async function ensureOffloadedArchiveDir(dirName: string) {
       return null;
     }
   }
-  let bundle = await downloadColdStoreAsset(archiveAsset, path.join("bundles", archiveAsset));
+  // 新日仓必须有清单才能消费；上传中途只有 tar 时不得沿旧格式旁路跳过 SHA 验证。
+  let bundle = await downloadColdStoreAsset(archiveAsset, path.join("bundles", archiveAsset), 15_000, !manifest);
   if (!bundle) return null;
   if (manifest) {
     let integrity = await hashLocalFile(bundle).catch(() => null);
     if (integrity?.bytes !== manifest.archive.bytes || integrity.sha256 !== manifest.archive.sha256) {
       await fs.unlink(bundle).catch(() => {});
-      bundle = await downloadColdStoreAsset(archiveAsset, path.join("bundles", archiveAsset));
+      bundle = await downloadColdStoreAsset(archiveAsset, path.join("bundles", archiveAsset), 15_000, !manifest);
       integrity = bundle ? await hashLocalFile(bundle).catch(() => null) : null;
     }
     if (!bundle || integrity?.bytes !== manifest.archive.bytes || integrity.sha256 !== manifest.archive.sha256) {
