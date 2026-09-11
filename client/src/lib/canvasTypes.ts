@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import { canvasAudioStudioSchema, type CanvasAudioStudio } from "@shared/canvasAudioStudio";
+import { manhuaPrevisStudioSchema, type ManhuaPrevisStudio } from "@shared/manhuaPrevis";
 import { normalizeManhuaTimelineOrder } from "@shared/manhuaEditOrder";
 import { Clapperboard, FileText, Image as ImageIcon, LayoutTemplate, Video } from "lucide-react";
 import type { ManhuaClipQualityReport } from "@shared/manhuaClipQuality";
@@ -216,6 +217,7 @@ export type CanvasBlock = {
   manhuaSegmentRefs?: import("@shared/manhuaSegmentReference").ManhuaSegmentReferences;
   /** 逐句对白、原曲/裁片候选与显式采用状态；不依赖临时上传列表。 */
   audioStudio?: CanvasAudioStudio;
+  previsStudio?: ManhuaPrevisStudio;
   /** Seedance 2.5 官方五模式；兼容历史 XYQ 草稿值 */
   seedance25WorkMode?: CanvasSeedance25WorkMode;
   /** 局部重拍起止秒 */
@@ -516,6 +518,7 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
   return {
     ...withVideo,
     audioStudio: block.audioStudio == null ? undefined : canvasAudioStudioSchema.parse(block.audioStudio),
+    previsStudio: block.previsStudio == null ? undefined : manhuaPrevisStudioSchema.parse(block.previsStudio),
     manhuaKeyartLookState: normalizeManhuaKeyartLookState(block.manhuaKeyartLookState),
     manhuaKeyartSourceState: normalizeManhuaKeyartLookState(block.manhuaKeyartSourceState),
     textModel: normalizeCanvasTextModel(block.textModel),

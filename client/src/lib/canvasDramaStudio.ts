@@ -630,7 +630,8 @@ export function manhuaBlockHasPaidOutput(block: CanvasBlock): boolean {
 /** 音频工作不是空壳：旧候选、用户逐句编辑与在途单均须保留，不能随重分段删除。 */
 export function hasManhuaAudioWork(block: CanvasBlock): boolean {
   const studio = block.audioStudio;
-  return Boolean(studio && (studio.cues.length || studio.musicJobIds.length || studio.pendingOperations.length || studio.previewTake))
+  return Boolean(block.previsStudio || block.manhuaSegmentRefs?.previs)
+    || Boolean(studio && (studio.cues.length || studio.musicJobIds.length || studio.pendingOperations.length || studio.previewTake))
     || Boolean(block.seedance25RefAudioUrls?.length)
     || Boolean(block.uploadedAssets?.some(asset => asset.kind === "audio"));
 }
@@ -2669,6 +2670,7 @@ export function ensureManhuaFragmentClips(
       manhuaSegmentRefs: undefined,
       // 模板只借布局与引擎；新段/新原稿不能继承另一段的对白、配乐或在途单。
       audioStudio: undefined,
+      previsStudio: undefined,
       seedance25TimestampStoryboard: undefined,
       seedance25ReshootFromSec: undefined,
       seedance25ReshootToSec: undefined,

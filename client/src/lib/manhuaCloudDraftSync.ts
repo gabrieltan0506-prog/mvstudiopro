@@ -498,6 +498,7 @@ export function cloudDraftBlocksToCanvas(
       seedance25RefAudioUrls: raw.seedance25RefAudioUrls,
       // 段级白模/母轨/登记成片：回读漏掉就是刷新即丢、登记片过期后无 gcsUri 可重签
       manhuaSegmentRefs: normalizeManhuaSegmentReferences(raw.manhuaSegmentRefs),
+      previsStudio: raw.previsStudio,
       audioStudio: raw.audioStudio,
       seedance25TimestampStoryboard: raw.seedance25TimestampStoryboard,
       seedance25ReshootFromSec: raw.seedance25ReshootFromSec,

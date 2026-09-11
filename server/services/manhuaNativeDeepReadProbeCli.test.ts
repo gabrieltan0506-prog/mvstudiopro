@@ -71,14 +71,14 @@ describe("真实探针 CLI 零付费入口", () => {
       segmentPlans: [{ segmentIndex: 0, startSec: 0, endSec: 300.3, durationSec: 300.3, fps: 12 }],
     });
   });
-  it.each([1, 180, 600, 7200])("显式%is分片沿生产解析且默认12fps，仍不解析或下载源片", (seconds) => {
+  it.each([1, 180, 600, 7200, 7201, 14400])("显式%is分片沿生产解析且默认12fps，仍不解析或下载源片", (seconds) => {
     const result = probe([`--segment-seconds=${seconds}`]);
     expect(result.status).toBe(0);
     expect(preflightSummary(result)).toMatchObject({ segmentSeconds: seconds, requestedSegmentSeconds: seconds, fps: 12 });
     expect(result.stdout).toContain('"paidCalls": 0');
     expect(result.stdout).not.toContain("片源解析");
   });
-  it.each(["", "0", "-1", "1.5", "7201", "NaN", "Infinity", "false"])("非法分片长度%s在离线预检即拒绝，不能回落300秒", (value) => {
+  it.each(["", "0", "-1", "1.5", "14401", "NaN", "Infinity", "false"])("非法分片长度%s在离线预检即拒绝，不能回落300秒", (value) => {
     const result = probe([`--segment-seconds=${value}`]);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("--segment-seconds");

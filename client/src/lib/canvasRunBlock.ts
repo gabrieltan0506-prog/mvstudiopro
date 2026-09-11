@@ -1019,7 +1019,7 @@ export function resolveWan30CanvasVideoUrls(input: {
 /** 与 videoUrls 数组同序生成唯一职责，保证 Reference video N 不悬空、不串位。 */
 export function buildWanVideoReferenceRoleBlock(
   videoUrls: string[],
-  opts?: { continuityVideoUrl?: string; previsVideoUrl?: string },
+  opts?: { continuityVideoUrl?: string; previsVideoUrl?: string; motionGuideZh?: string },
 ): string {
   if (!videoUrls.length) return "";
   const continuity = String(opts?.continuityVideoUrl || "").trim();
@@ -1031,7 +1031,7 @@ export function buildWanVideoReferenceRoleBlock(
         ? `Reference video ${index + 1}:上一段成片，仅用于承接起幅、人物状态与空间连续性`
         : `Reference video ${index + 1}:用户选定的视频参考，仅继承明确相关的动作、节奏或镜头信息`,
   );
-  return `【参考视频职责】\n${lines.join("\n")}\n每条参考视频只承担上述职责，禁止把无关人物、服装、文字或背景迁移到本段。`;
+  return `【参考视频职责】\n${lines.join("\n")}\n每条参考视频只承担上述职责，禁止把无关人物、服装、文字或背景迁移到本段。${previs && opts?.motionGuideZh ? `\n【白模动作】${opts.motionGuideZh}` : ""}`;
 }
 
 /** Wan 音频职责与实际 audioUrls 同序编号；相同声样供多人共用时合并点名。 */
@@ -1967,6 +1967,12 @@ export async function runCanvasBlock(
       const segmentCapSec = useWan30
         ? MANHUA_SEGMENT_REFERENCE_CAP_SEC.wan30
         : MANHUA_SEGMENT_REFERENCE_CAP_SEC.seedance;
+      if(segmentRefs?.previs?.motionGuideZh && (useHappyHorse||useHailuoH3)){
+        throw new Error("当前生成档不支持动作白模视频参考；请切换支持视频参考的生成档，或明确移除本段白模。本次未提交。");
+      }
+      if(segmentRefs?.previs?.motionGuideZh && !manhuaSegmentReferenceFitsCap(segmentRefs.previs,segmentCapSec)){
+        throw new Error(`已采用的动作白模超过当前参考视频 ${segmentCapSec} 秒上限；请缩短白模后重新采用。本次未提交，旧参考保留。`);
+      }
       const segmentPrevisUrl = manhuaSegmentReferenceFitsCap(segmentRefs?.previs, segmentCapSec)
         ? await freshManhuaSegmentReferenceUrl(segmentRefs.previs)
         : undefined;
@@ -2019,6 +2025,7 @@ export async function runCanvasBlock(
           buildWanVideoReferenceRoleBlock(wanVideoUrls, {
             continuityVideoUrl: wanContinuityVideoUrl,
             previsVideoUrl: segmentPrevisUrl,
+            motionGuideZh: segmentPrevisUrl ? segmentRefs?.previs?.motionGuideZh : undefined,
           }),
           buildWanAudioReferenceRoleBlock(wanAudioUrls, voicePlan.attached, {
             accentFallbackUrl,
@@ -2141,6 +2148,7 @@ export async function runCanvasBlock(
         const candidateVideoUrls = Array.from(new Set([...userVideoUrls, ...ownOutputAsSource]));
         const segmentGuide = formatManhuaSegmentReferenceGuideZh({
           previsVideoIndex: segmentPrevisUrl ? candidateVideoUrls.indexOf(segmentPrevisUrl) + 1 : 0,
+          motionGuideZh: segmentPrevisUrl ? segmentRefs?.previs?.motionGuideZh : undefined,
           masterAudioIndex: segmentMasterUrl ? candidateAudioUrls.indexOf(segmentMasterUrl) + 1 : 0,
         });
         const storyboard = String(block.seedance25TimestampStoryboard || "").trim();

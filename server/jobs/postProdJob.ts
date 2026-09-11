@@ -20,6 +20,11 @@ export async function processPostProdJob(
   const input = await resolvePostProdInputSources({ userId, input: parsed });
   const runOptions = { signal: options?.signal };
   switch (input.action) {
+    case "manhua_previs": {
+      const { renderManhuaPrevis } = await import("../services/manhuaPrevisRender");
+      const output = await renderManhuaPrevis(input.params,userId,{signal:options?.signal ?? AbortSignal.timeout(600_000)});
+      return {output,provider:"blender-previs"};
+    }
     case "audio_trim": {
       const output = await trimAudio(input.params, userId, runOptions);
       return { output, provider: "ffmpeg-post-prod" };

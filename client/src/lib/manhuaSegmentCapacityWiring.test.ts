@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import {
   buildManhuaWriterSession,
@@ -30,13 +31,20 @@ describe("漫剧分镜容量模式接线（manhuaSegmentCapacityMode）", () => 
     expect(factory).toMatch(
       /segmentCapacityMode: getManhuaSegmentCapacityMode\(\s*segmentCapacityModeByEpisode,\s*episodeIndex,\s*\)/,
     );
-    // 只断言「它在依赖数组里」，不断言它排第几（0911：有人往数组尾部追加依赖，
-    // 这条按位置写死的断言就红了，但接线其实没坏）。依赖漏了才是真问题——
+    // 只断言「它在依赖数组里」，不断言排第几：0911 有人往数组尾部追加依赖，
+    // 旧的按位置写死的断言就红了，但接线其实没坏。依赖真漏了才是问题——
     // 回调会闭包住旧的容量模式，换集后按上一集的容量扣费。
-    const deps = factory.slice(factory.lastIndexOf("\n    ["), factory.lastIndexOf("]"));
-    expect(deps.split("\n").map((line) => line.trim().replace(/,$/, ""))).toContain(
-      "segmentCapacityModeByEpisode",
-    );
+    const tree = ts.createSourceFile("OmniCanvas.tsx", omniSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    let dependencies: string[] = [];
+    const visit = (node: ts.Node) => {
+      if (ts.isVariableDeclaration(node) && node.name.getText(tree) === "runFactory" && node.initializer && ts.isCallExpression(node.initializer)) {
+        const values = node.initializer.arguments[1];
+        if (values && ts.isArrayLiteralExpression(values)) dependencies = values.elements.map(value => value.getText(tree));
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(tree);
+    expect(dependencies).toContain("segmentCapacityModeByEpisode");
     expect(pipelineSource).toContain("segmentCapacityMode?: ManhuaSegmentCapacityMode | null;");
     expect(pipelineSource).toMatch(
       /planManhuaSegmentCapacity\(\{[\s\S]*?mode: opts\.segmentCapacityMode,[\s\S]*?\}\);\s*if \(!capacityPlan\.ok\) throw new Error\(capacityPlan\.errorZh\);/,

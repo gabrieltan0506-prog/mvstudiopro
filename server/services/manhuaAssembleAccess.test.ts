@@ -152,6 +152,7 @@ describe("合成真实入口鉴权（执行源码，不发网络）", () => {
     const output = { finalVideoUrl: "https://example.test/final.mp4", subtitleTimeline: { id: "timeline-7" } };
     const save = vi.fn(async () => mode !== "save_failed"); const failed = vi.fn(async () => {}); const requeue = vi.fn();
     const worker = runtime(`${code}\nreturn runClaimedJob;`, {
+      isKnowledgeCardCancelledJobError: runtime(`${extract("../jobs/runner.ts", node => ts.isFunctionDeclaration(node) && node.name?.text === "isKnowledgeCardCancelledJobError").replace(/^export\s+/, "")}\nreturn isKnowledgeCardCancelledJobError;`, {}, false),
       isRecord: record, resolveJobTimeoutMs: () => 10, resolveJobGrowthInteractiveLeaseLabel: () => undefined,
       MANHUA_BGM_ACTION: "manhua_bgm", MANHUA_ASSEMBLE_LEDGER_TYPE,
       executeJob: () => mode === "timeout" ? new Promise(() => {}) : Promise.resolve({ output, provider: "manhua-assemble" }),

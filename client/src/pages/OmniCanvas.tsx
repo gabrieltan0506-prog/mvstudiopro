@@ -9773,6 +9773,22 @@ export default function OmniCanvas() {
                       return next;
                     });
                   }}
+                  onUpdateClipPrevisStudio={canUseManhua3d ? (clipId,previsStudio,reference)=>{
+                    const current=blocksRef.current;
+                    const target=current.find(block=>block.id===clipId);
+                    if(!target||(target.previsStudio&&target.previsStudio.scopeId!==previsStudio.scopeId))return false;
+                    if(reference&&(factoryBusy||target.status==="running"||target.videoTaskStatus==="queued"))return false;
+                    const next=current.map(block=>{
+                      if(block!==target)return block;
+                      const updated={...block,previsStudio};
+                      return reference?setManhuaSegmentReference(updated,"previs",reference):updated;
+                    });
+                    // 编号真正保存成功才允许入队；不能在 React updater 里启动网络副作用。
+                    if(!saveCanvasState(next,edges))return false;
+                    blocksRef.current=next;
+                    setBlocks(next);
+                    return true;
+                  }:undefined}
                   onLayoutReadableChain={() => {
                     setBlocks((prev) => {
                       try {

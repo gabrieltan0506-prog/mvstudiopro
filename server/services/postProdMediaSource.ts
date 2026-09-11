@@ -319,6 +319,8 @@ export async function resolvePostProdInputSources(
   input: { userId: string; input: RawPostProdJobInput },
   deps: PostProdMediaDeps = realDeps,
 ): Promise<PostProdJobInput> {
+  // 白模没有外部素材地址；共享 schema 拒绝 URL、脚本或未知字段。
+  if(input.input.action === "manhua_previs") return postProdJobInputSchema.parse(input.input);
   const userId = String(input.userId);
   const bucket = deps.getBucket();
   const context: PostProdMediaContext = await buildPostProdMediaContext(userId, bucket, deps);

@@ -6,8 +6,8 @@ import * as studio from "./canvasDramaStudio";
 import * as writer from "@shared/manhuaWriterRoom";
 import * as assetCanon from "@shared/manhuaWriterAssetCanon";
 import * as bible from "@shared/manhuaProjectBible";
-import { buildManhuaDirectionCanonFromSelection } from "@shared/manhuaDirectionCanonLibrary";
 import * as layout from "@shared/manhuaSeedanceLayout";
+import { buildManhuaDirectionCanonFromSelection, listManhuaDirectionCards, type ManhuaDirectionSelection } from "@shared/manhuaDirectionCanonLibrary";
 import { shouldAttachManhuaPreviouslyOn } from "@shared/manhuaEpisodeRecap";
 import { consumableManhuaCustomAssetRefsForCanon } from "@shared/manhuaAssetScriptSync";
 import {
@@ -92,7 +92,7 @@ function readConfirmCallback(name: string) {
   return callback;
 }
 
-function confirmHarness(name: string, allowBatch = true) {
+function confirmHarness(name: string, allowBatch = true, directionSelection: ManhuaDirectionSelection | null = null) {
   const callback = readConfirmCallback(name);
   const original = pack();
   const old = spawnManhuaDramaStudio({
@@ -127,6 +127,9 @@ function confirmHarness(name: string, allowBatch = true) {
   );
   const saved = vi.fn();
   const context = {
+    buildManhuaDirectionCanonFromSelection,
+    directionSelection,
+    activeDirectionCanon: buildManhuaDirectionCanonFromSelection(directionSelection),
     ...studio,
     ...writer,
     ...assetCanon,
@@ -181,14 +184,6 @@ function confirmHarness(name: string, allowBatch = true) {
     pushDebug: vi.fn(),
     window: { confirm: vi.fn(() => allowBatch), setTimeout: vi.fn() },
     toast: { error: vi.fn(), success: vi.fn() },
-    /**
-     * 0911 补注入：真实回调会读导演卡口径，漏了就在 vm 里抛 ReferenceError，
-     * 被回调自己的 try/catch 吞成「确认失败」，三条断言静默变红却看不出原因。
-     * 用真实实现，不是空壳——断言的载荷才作数。
-     */
-    directionSelection: undefined,
-    buildManhuaDirectionCanonFromSelection,
-    activeDirectionCanon: null as ReturnType<typeof buildManhuaDirectionCanonFromSelection>,
   };
   const run = runInNewContext(
     ts.transpileModule(`(${callback})`, {
@@ -200,6 +195,31 @@ function confirmHarness(name: string, allowBatch = true) {
 }
 
 describe("原稿导入至确认门禁", () => {
+  it.each(["confirmWriterToDirector", "confirmWriterSeriesSpawn"])(
+    "真实%s使用非空当前导演选择并在本机/云草稿恢复后保持",
+    name => {
+      const cards = listManhuaDirectionCards();
+      expect(cards.length).toBeGreaterThan(0);
+      const selection = { mainCardId: cards[0]!.id };
+      const canon = buildManhuaDirectionCanonFromSelection(selection);
+      expect(canon?.cards.length).toBeGreaterThan(0);
+      const h = confirmHarness(name, true, selection);
+      h.run();
+      expect(h.context.toast.error).not.toHaveBeenCalled();
+      const project = h.state.projectBible as bible.ManhuaProjectBible;
+      expect(project.directionCanon).toEqual(canon);
+      const session = buildManhuaWriterSession({ writerPack: h.original, writerConfirmed: true, projectBible: project, directionSelection: selection });
+      const recovered = parseManhuaWriterSession(serializeManhuaWriterSession(session));
+      expect(recovered?.projectBible?.directionCanon).toEqual(canon);
+      const snapshot = buildLocalCloudDraftSnapshot({ writerSession: session, blocks: h.state.blocks as CanvasBlock[], edges: h.state.edges as CanvasEdge[] });
+      const serialized = serializeCloudDraftForUpload(snapshot);
+      expect(serialized).not.toBeNull();
+      if (!serialized) throw new Error("导演确认后的云草稿不可为空");
+      const cloud = parseManhuaCloudDraftPayload(serialized);
+      expect(cloud?.writerSession.projectBible?.directionCanon).toEqual(canon);
+      expect((h.state.blocks as CanvasBlock[]).find(block => block.id === h.previousId)?.outputUrl).toBe("https://test.example/paid-before.mp4");
+    }
+  );
   it.each(["confirmWriterToDirector", "confirmWriterSeriesSpawn"])(
     "真实%s成功确认使用当前资产与完整原稿，保留旧付费片并经云恢复",
     name => {
@@ -495,6 +515,7 @@ describe("原稿导入至确认门禁", () => {
         }).outputText,
         {
           writerPack: pack(false),
+          activeDirectionCanon: buildManhuaDirectionCanonFromSelection(null),
           writerPackLooksReady,
           writerVideoModel: "seedance-2.0-mini",
           hasManhuaSeedanceLayoutChoice: () => true,
@@ -507,11 +528,6 @@ describe("原稿导入至确认门禁", () => {
           toast: { error: vi.fn() },
           pushDebug: vi.fn(),
           window: { setTimeout: vi.fn() },
-          // 0911 补注入：真实回调会读导演卡口径；漏了会在 vm 里抛 ReferenceError，
-          // 被回调的 try/catch 吞掉，断言就看不出真实原因
-          directionSelection: undefined,
-          buildManhuaDirectionCanonFromSelection,
-          activeDirectionCanon: null,
         }
       );
       action();
