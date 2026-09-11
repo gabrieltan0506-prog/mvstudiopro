@@ -10,10 +10,8 @@ type Props = {
   downloading?: boolean;
 };
 
-const BAR_COLORS = ["#0ea5b7", "#db2777", "#ca8a04", "#7c3aed", "#059669", "#2563eb"];
-
 /**
- * 趋势模式右侧浅色报表卡（对齐参考图右侧「平台热门赛道 / 蓝海词」栏）。
+ * 趋势模式右侧浅色报表卡（对齐参考图右侧「平台热门赛道 / 选题关键词」栏）。
  * 完整长图仍在主栏 VisualReportTemplate。
  */
 export function PlatformTrendReportRail({
@@ -60,26 +58,13 @@ export function PlatformTrendReportRail({
 
         {topics.length ? (
           <div>
-            <div className="mb-1.5 text-[11px] font-bold text-[#1f4e79]">热门搜索榜</div>
+            <div className="mb-1.5 text-[11px] font-bold text-[#1f4e79]">选题参考</div>
             <div className="space-y-1.5">
               {topics.map((topic, i) => {
-                const pct = Math.max(92 - i * 12, 28);
-                const color = BAR_COLORS[i % BAR_COLORS.length]!;
                 return (
                   <div key={`${topic}-${i}`}>
                     <div className="mb-0.5 truncate text-[10px] font-semibold text-[#3f342c]">
                       {topic}
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#ddd4cb]">
-                        <div
-                          className="h-full rounded-full"
-                          style={{ width: `${pct}%`, background: color }}
-                        />
-                      </div>
-                      <span className="w-5 text-right text-[9px] font-bold tabular-nums" style={{ color }}>
-                        #{i + 1}
-                      </span>
                     </div>
                   </div>
                 );
@@ -90,7 +75,7 @@ export function PlatformTrendReportRail({
 
         {blue.length ? (
           <div>
-            <div className="mb-1.5 text-[11px] font-bold text-[#1f4e79]">蓝海词</div>
+            <div className="mb-1.5 text-[11px] font-bold text-[#1f4e79]">选题关键词</div>
             <div className="flex flex-wrap gap-1">
               {blue.flatMap((b, i) => {
                 const tags = [b.primary, ...(b.secondary || []).slice(0, 2)].filter(Boolean);

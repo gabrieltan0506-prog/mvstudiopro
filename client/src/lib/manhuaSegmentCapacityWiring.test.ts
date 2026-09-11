@@ -31,6 +31,9 @@ describe("漫剧分镜容量模式接线（manhuaSegmentCapacityMode）", () => 
     expect(factory).toMatch(
       /segmentCapacityMode: getManhuaSegmentCapacityMode\(\s*segmentCapacityModeByEpisode,\s*episodeIndex,\s*\)/,
     );
+    // 只断言「它在依赖数组里」，不断言排第几：0911 有人往数组尾部追加依赖，
+    // 旧的按位置写死的断言就红了，但接线其实没坏。依赖真漏了才是问题——
+    // 回调会闭包住旧的容量模式，换集后按上一集的容量扣费。
     const tree = ts.createSourceFile("OmniCanvas.tsx", omniSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
     let dependencies: string[] = [];
     const visit = (node: ts.Node) => {

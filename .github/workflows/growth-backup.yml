@@ -57,14 +57,33 @@ jobs:
           echo "使用正式机 $MACHINE_ID"
           echo "FLY_MACHINE_ID=$MACHINE_ID" >> "$GITHUB_ENV"
       - name: Verify deployed cold-store routing
-        timeout-minutes: 2
+        timeout-minutes: 14
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           # 新工作流先于服务器上线时明确暂停，不能发布旧读取器无法恢复的新清单。
-          timeout --kill-after=5s 60s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
-            -C "node /app/scripts/growth-cold-store-routing-check.mjs" </dev/null
+          #
+          # 0911：这道闸门本身是对的，但「立刻标红」是错的——合并到 main 后部署要跑约 7 分钟，
+          # 定时冷备只要在这段窗口里起跑就必红一次（实测 07:41 合并、07:42 冷备起跑）。
+          # 现在给它 10 分钟等部署落地；仍未就绪就本轮让路，由 defer 脚本按
+          # 「多久没成功备份」决定是让路还是标红，不会无声停摆。
+          ROUTING_READY=false
+          for attempt in $(seq 1 20); do
+            if timeout --kill-after=5s 60s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+              -C "node /app/scripts/growth-cold-store-routing-check.mjs" </dev/null; then
+              ROUTING_READY=true
+              break
+            fi
+            echo "正式机冷备读取版本尚未就绪（可能部署在途），30 秒后重试（${attempt}/20）"
+            sleep 30
+          done
+          if [ "$ROUTING_READY" != "true" ]; then
+            node scripts/growth-backup-defer.mjs "正式机镜像比工作流旧，等待部署落地超时"
+            echo "BACKUP_DEFERRED=true" >> "$GITHUB_ENV"
+          fi
       - name: Cleanup stale growth temp files from Fly
+        if: env.BACKUP_DEFERRED != 'true'
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
@@ -103,6 +122,7 @@ jobs:
           echo "::warning::Cleanup stale growth temp files skipped after retries (VM busy/restarting)"
           exit 0
       - name: Assess Fly growth storage pressure
+        if: env.BACKUP_DEFERRED != 'true'
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
@@ -137,7 +157,14 @@ jobs:
             echo "前台平台任务运行中，冷备评估暂停 30 秒（${attempt}/60）"
             sleep 30
           done
-          test "$PRIORITY_READY" = "true"
+          # 0911：等满 30 分钟仍被前台占用，不再直接标红——那是让路，不是备份故障
+          # （0910 18:00 那轮就是知识卡长跑占着机器）。由 defer 脚本按
+          # 「最近一次成功备份多久以前」决定让路还是标红。
+          if [ "$PRIORITY_READY" != "true" ]; then
+            node scripts/growth-backup-defer.mjs "前台平台任务持续占用，等待 30 分钟仍未让开"
+            echo "BACKUP_DEFERRED=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
 
           for attempt in 1 2 3 4 5; do
             if wait_for_started_vm && node scripts/growth-archive-transfer.mjs --max-ms 60000 -- flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
@@ -177,6 +204,7 @@ jobs:
           echo "EXTERNALIZE_HISTORY_LEDGER=$EXTERNALIZE_HISTORY_LEDGER" >> /tmp/growth-backup/storage.env
           cat /tmp/growth-backup/storage.env
       - name: Fetch growth store files from Fly
+        if: env.BACKUP_DEFERRED != 'true'
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           GH_TOKEN: ${{ github.token }}
@@ -528,6 +556,7 @@ jobs:
             tar -czf /tmp/growth-backup/growth-restore-bundle.tar.gz $FILES
           )
       - name: Upload GitHub backup artifact
+        if: env.BACKUP_DEFERRED != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: growth-backup-${{ github.run_id }}
@@ -535,7 +564,16 @@ jobs:
           if-no-files-found: error
           retention-days: 30
       # 旧备份不删除；新增分片与归档使用独立 Release，避免 1000 附件上限。
+      - name: Ensure cold-store release headroom
+        if: env.BACKUP_DEFERRED != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # 0911：把「神秘 422」变成看得懂的容量数字，并回收已被分仓取代的旧批次分片。
+        # archive-* 冷存档是 Fly 端已删数据的唯一副本，永不在回收范围内。
+        run: bash scripts/growth-release-headroom.sh
+
       - name: Publish cold-store restore assets
+        if: env.BACKUP_DEFERRED != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -631,6 +669,7 @@ jobs:
           esac
           flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -lc 'rm -rf -- \"$REMOTE_BATCH_DIR\"'"
       - name: Create leased archive snapshot on Fly
+        if: env.BACKUP_DEFERRED != 'true'
         timeout-minutes: 15
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -682,6 +721,7 @@ jobs:
             touch /tmp/growth-archive-offload/EMPTY
           fi
       - name: Plan bounded incremental archive batch
+        if: env.BACKUP_DEFERRED != 'true'
         timeout-minutes: 5
         env:
           GH_TOKEN: ${{ github.token }}
@@ -689,6 +729,7 @@ jobs:
           if [ -f /tmp/growth-backup/OFFLOAD_SKIP ] || [ -f /tmp/growth-archive-offload/EMPTY ]; then exit 0; fi
           node scripts/growth-archive-plan.mjs /tmp/growth-archive-offload
       - name: Download and verify archive bundles locally
+        if: env.BACKUP_DEFERRED != 'true'
         timeout-minutes: 30
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -787,6 +828,7 @@ jobs:
             test "$completed" -eq "$planned"
           fi
       - name: Publish and read back archive bundles
+        if: env.BACKUP_DEFERRED != 'true'
         timeout-minutes: 30
         env:
           GH_TOKEN: ${{ github.token }}
@@ -887,6 +929,7 @@ jobs:
           sha256sum /tmp/growth-archive-offload/offload-manifest.json > /tmp/growth-archive-offload/DELETE_READY
           printf '本批实际已上传并回读验证归档：%s 个。源数据保留；剩余数量见规划与延期记录。\n' "$(wc -l < /tmp/growth-archive-offload/archives.tsv)" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
       - name: Delete only release-verified unchanged archive shards from Fly
+        if: env.BACKUP_DEFERRED != 'true'
         # 0901 用户冻结：当前冷备只上传/验真，不自动删除任何平台源数据。
         # 后续释放空间必须另走“仅 B站 + 冻结抓取 + 显式授权”的专用流程。
         if: ${{ false }}
@@ -943,11 +986,13 @@ jobs:
             -C "sh -s -- cleanup '$BATCH_ID'" \
             < scripts/growth-archive-offload-remote.sh
       - name: Retain platform-current on Fly after cold backup
+        if: env.BACKUP_DEFERRED != 'true'
         run: |
           # 四平台 current 本轮只执行“Fly → 本机校验 → Release 回读”的冷备。
           # 禁止自动删除后再依赖 GitHub → Fly 恢复；空间回收只处理已逐包验真的 archive 分片。
           echo "platform-current retained on Fly; no automatic GitHub-to-Fly recovery path was invoked"
       - name: Always release archive hardlink snapshot
+        if: env.BACKUP_DEFERRED != 'true'
         timeout-minutes: 2
         if: always()
         env:

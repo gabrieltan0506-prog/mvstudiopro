@@ -25,6 +25,44 @@ const source = ts.createSourceFile(
   true,
   ts.ScriptKind.TSX
 );
+/**
+ * 真实回调里出现、但 deps 没提供的标识符 = 注入过期。
+ * 必须在执行前显式报错：回调内部 try/catch 会把 ReferenceError 吞成一句 toast，
+ * 于是「建单一次都没发生」被误读成护栏生效（0911 就是这样红了十四条还没人看出原因）。
+ */
+function assertNoMissingDeps(name: string, source: string, deps: Record<string, unknown>) {
+  const provided = new Set([...Object.keys(deps), "callback"]);
+  const globals = new Set([
+    "String", "Number", "Boolean", "Object", "Array", "JSON", "Math", "Date", "Promise",
+    "Error", "Set", "Map", "console", "undefined", "null", "true", "false", "async", "await",
+  ]);
+  const missing = new Set<string>();
+  const sf = ts.createSourceFile(`${name}.ts`, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const declared = new Set<string>();
+  const collectDeclared = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) declared.add(node.name.text);
+    if (ts.isParameter(node) && ts.isIdentifier(node.name)) declared.add(node.name.text);
+    if (ts.isFunctionDeclaration(node) && node.name) declared.add(node.name.text);
+    if (ts.isBindingElement(node) && ts.isIdentifier(node.name)) declared.add(node.name.text);
+    ts.forEachChild(node, collectDeclared);
+  };
+  collectDeclared(sf);
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      const id = node.expression.text;
+      if (!provided.has(id) && !globals.has(id) && !declared.has(id)) missing.add(id);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  if (missing.size > 0) {
+    throw new Error(
+      `真实回调 ${name} 用到了未注入的依赖：${Array.from(missing).join("、")}。`
+      + "请把它们加进 deps（用真实实现），否则回调会在 try/catch 里静默失败，测试变成空跑。",
+    );
+  }
+}
+
 function callback(name: string, deps: Record<string, unknown>) {
   let text = "";
   function visit(node: ts.Node) {
@@ -45,6 +83,7 @@ function callback(name: string, deps: Record<string, unknown>) {
       module: ts.ModuleKind.None,
     },
   }).outputText;
+  assertNoMissingDeps(name, text, deps);
   return new Function(...Object.keys(deps), `${compiled}\nreturn callback;`)(
     ...Object.values(deps)
   );
@@ -101,6 +140,7 @@ function setup(failure = false) {
     prepareAssetImageEdit,
     assetImageGcsUri,
     manhuaAssetStandardizeCredits,
+    readOpenAiImageVariantPref,
     window: {
       confirm: () => {
         throw new Error("禁止原生费用确认");
@@ -347,4 +387,23 @@ describe("真实资产按钮到队列与新图回写", () => {
       expect(state.busy).toHaveBeenLastCalledWith(null);
     }
   );
+});
+
+describe("测试挂架自身的护栏（0911）", () => {
+  it("真实回调用到未注入的依赖时，当场报错而不是静默空跑", () => {
+    const state = setup();
+    const { readOpenAiImageVariantPref: _drop, ...withoutVariant } = state.deps as Record<string, unknown>;
+    expect(() => callback("editCustomAsset", withoutVariant)).toThrow(/未注入的依赖：readOpenAiImageVariantPref/);
+  });
+
+  it("出图载荷带上官方档位字段（0909 双档开关），不是悄悄丢掉", async () => {
+    const state = setup();
+    await callback("editCustomAsset", state.deps)("original", "把衣服换成红色");
+    expect(state.queue).toHaveBeenCalledOnce();
+    const calls = state.queue.mock.calls as unknown as Array<Array<{ input?: { params?: Record<string, unknown> } }>>;
+    const payload = calls[0]?.[0];
+    expect(payload.input?.params).toMatchObject({
+      openaiImageVariant: readOpenAiImageVariantPref(),
+    });
+  });
 });
