@@ -7,7 +7,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivity.js";
 import { OPENROUTER_DEEPSEEK_PROVIDER_LOCK } from "./knowledgeCardGatewayOrder.js";
-import { isSseResponse, readGlmSseStream } from "./sseChatStream.js";
+import { assertSseContentSafety, isSseContentSafetyError, isSseResponse, readGlmSseStream } from "./sseChatStream.js";
 
 
 // 带图：EvoLink 侧只有 vision-exp（钥匙里没有 V4.1，0911 实弹核过）；OpenRouter 侧 V4.1 原生多模态
@@ -80,12 +80,13 @@ async function visionChatOnce(gw: TriageGateway, params: { system: string; userT
     ? await readGlmSseStream(res.body, undefined, { strictCompletion: true })
     : await res.text();
   if (!res.ok) throw new Error(`triage_upstream_failed:${gw.name}:${res.status}:${text.slice(0, 200)}`);
-  let json: { choices?: Array<{ message?: { content?: unknown } }> };
+  let json: { choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }> };
   try {
     json = JSON.parse(text);
   } catch {
     throw new Error(`triage_bad_json:${gw.name}:${text.slice(0, 120)}`);
   }
+  assertSseContentSafety(json.choices?.[0]?.finish_reason);
   const content = json.choices?.[0]?.message?.content;
   const out = typeof content === "string" ? content.trim() : "";
   if (!looksLikeTriageJson(out)) throw new Error(`triage_bad_output:${gw.name}:${out.slice(0, 80)}`);
@@ -127,11 +128,13 @@ export async function invokePageTriageJson(params: {
   }
   let lastError: Error | null = null;
   for (let i = 0; i < attempts.length; i++) {
+    params.abortSignal?.throwIfAborted();
     const attempt = attempts[i]!;
     touchKnowledgeCardDistillActivity();
     try {
       return await attempt.run();
     } catch (err) {
+      if (isSseContentSafetyError(err) || params.abortSignal?.aborted) throw err;
       lastError = err instanceof Error ? err : new Error(String(err));
       const next = attempts[i + 1];
       console.warn(`[knowledgeCardPageTriage] ${attempt.label} 失败 → ${next ? `改走 ${next.label}` : "无兜底"}：${lastError.message.slice(0, 160)}`);

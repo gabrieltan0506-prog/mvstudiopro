@@ -8,7 +8,7 @@ import {
   OPENROUTER_GLM_PROVIDER_LOCK,
   glm53ReasoningEffort,
 } from "./glmModels.js";
-import { isSseIncompleteStreamError, isSseResponse, readGlmSseStream } from "./sseChatStream.js";
+import { assertSseContentSafety, isSseContentSafetyError, isSseIncompleteStreamError, isSseResponse, readGlmSseStream } from "./sseChatStream.js";
 import { extractFirstChoicePlainText, invokeLLM, isTransientLlmError } from "../_core/llm.js";
 import { getPlatformStage2OpenAiModel } from "../config/platformSwitches.js";
 import { TRPCError } from "@trpc/server";
@@ -826,13 +826,15 @@ export async function invokeDeepSeekJsonChatRaw(params: {
 /**
  * 回落判定（0911 复审 P2 修正）：两跳是**两家厂商、两把钥匙、两个账户**，
  * OpenRouter 的 401/402/403 对 EvoLink 没有预测力，而且这类请求本来就不计费——
- * 拿它当「省钱」理由不成立，反而比旧代码更容易交白卷。所以只有两种情况不打第二家：
+ * 拿它当「省钱」理由不成立，反而比旧代码更容易交白卷。以下情况不打第二家：
  * · 调用方已取消（再打也没人要结果）；
  * · 输出被截断（预算耗尽，换家一样截断）。
+ * · 内容安全拒绝（必须保留拒绝语义，不跨供应商重试）。
  * 流没跑完（SSE 断流）恒可恢复：按类型短路，绝不按上游原文猜（复审 P1）。
  */
 function isEconomyFallbackWorthy(err: unknown, abortSignal?: AbortSignal): boolean {
   if (abortSignal?.aborted) return false;
+  if (isSseContentSafetyError(err)) return false;
   const e = err as { name?: string; message?: string } | null;
   if (e?.name === "AbortError") return false;
   if (isSseIncompleteStreamError(err)) return true;
@@ -875,7 +877,8 @@ async function callEconomyGateway(
   } catch {
     throw new Error(`经济档非 JSON 响应：${raw.slice(0, 120)}`);
   }
-  if (String(json.choices?.[0]?.finish_reason || "") === "length") {
+  assertSseContentSafety(json.choices?.[0]?.finish_reason);
+  if (["length", "max_tokens"].includes(String(json.choices?.[0]?.finish_reason || ""))) {
     throw new Error("经济档输出被截断（65K 预算耗尽，异常长输出）");
   }
   const content = json.choices?.[0]?.message?.content;
@@ -1171,6 +1174,8 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
         break;
       } catch (e) {
         lastErr = e;
+        // 内层拒绝必须穿透外层重试，保留本条失败清单与既有退款路径。
+        if (isSseContentSafetyError(e)) break;
         console.warn(
           `[expandPlatformTopicPicks] ${step.gateway} 失败（${attempt}/${attempts.length}）· ${i + 1}/${uniquePicks.length} · ${
             e instanceof Error ? e.message.slice(0, 160) : e

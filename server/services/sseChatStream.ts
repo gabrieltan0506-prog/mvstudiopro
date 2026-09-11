@@ -76,6 +76,26 @@ export function isSseIncompleteStreamError(err: unknown): boolean {
 /** 被内容安全策略拦下的结束原因：换谁都一样，属确定性失败 */
 const SSE_CONTENT_FILTER_FINISH_REASONS = new Set(["content_filter", "sensitive"]);
 
+/** 安全拦截不得当成传输故障重试另一供应商。 */
+export class SseContentSafetyError extends Error {
+  readonly code = "sse_content_safety";
+  constructor() {
+    super("内容被安全策略拦截");
+    this.name = "SseContentSafetyError";
+  }
+}
+
+export function isSseContentSafetyError(err: unknown): boolean {
+  return (err as { code?: string } | null)?.code === "sse_content_safety";
+}
+
+/** SSE 与普通 JSON 兼容响应使用同一安全结束原因判定。 */
+export function assertSseContentSafety(finishReason: unknown): void {
+  if (typeof finishReason === "string" && SSE_CONTENT_FILTER_FINISH_REASONS.has(finishReason)) {
+    throw new SseContentSafetyError();
+  }
+}
+
 export async function readGlmSseStream(
   body: ReadableStream<Uint8Array>,
   maxResponseBytes?: number,
@@ -129,7 +149,7 @@ export async function readGlmSseStream(
     }
     // 0911 审查 P2：OpenRouter 在 200 + SSE 下会把上游错误当成 {"error":…} 帧发回，
     // 不抛出去就变成「空正文」，四条链各报自己的模糊错误、看不到真实原因
-    if (chunk.error && typeof chunk.error === "object") {
+    if (strict && chunk.error && typeof chunk.error === "object") {
       sawErrorFrame = true;
       throw incomplete("上游流中途返回错误帧", JSON.stringify(chunk.error));
     }
@@ -191,9 +211,7 @@ export async function readGlmSseStream(
       throw new Error("上游输出被截断（预算耗尽）");
     }
     // 内容安全拦截是确定性失败：换供应商也一样，别把六跳全烧一遍（0911 复审建议 7）
-    if (SSE_CONTENT_FILTER_FINISH_REASONS.has(String(finishReason))) {
-      throw new Error(`内容被安全策略拦截（finish_reason=${finishReason}）`);
-    }
+    assertSseContentSafety(finishReason);
     if (!SSE_SUCCESS_FINISH_REASONS.has(String(finishReason))) {
       // 结束原因只进 evidence，不拼进 message（见 SseIncompleteStreamError 的说明）
       throw incomplete("上游流非正常结束", `finish_reason=${finishReason}`);

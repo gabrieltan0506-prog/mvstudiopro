@@ -31,7 +31,7 @@ import {
   type KnowledgeCardDistillModelId,
 } from "../../shared/knowledgeCardDistillModels.js";
 import { GLM_53_FLASH_EVOLINK_MODEL, GLM_53_FLASH_OPENROUTER_MODEL, glm53ReasoningEffort } from "./glmModels.js";
-import { isSseIncompleteStreamError, isSseResponse, readGlmSseStream } from "./sseChatStream.js";
+import { assertSseContentSafety, isSseContentSafetyError, isSseIncompleteStreamError, isSseResponse, readGlmSseStream } from "./sseChatStream.js";
 import {
   KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER,
   KNOWLEDGE_CARD_GLM_FIRST_ORDER,
@@ -628,6 +628,7 @@ function distillRefineTimeoutMs(modelName: KnowledgeCardDistillModelId): number 
 }
 
 function mapFetchAbortError(err: unknown): Error {
+  if (isSseContentSafetyError(err)) throw err;
   const name = err instanceof Error ? err.name : "";
   const msg = err instanceof Error ? err.message : String(err);
   if (name === "TimeoutError" || name === "AbortError" || /aborted due to timeout|The operation was aborted/i.test(msg)) {
@@ -724,7 +725,7 @@ async function invokeDistillViaGateway(params: {
      * 占位而已：下面每条网关分支都会按 (gateway, tier) 覆盖成该家真实的模型 id。
      * `params.modelName` 是**档位 id**（下拉选单、计费与 receipt 用），不是任何一家的模型名——
      * 0911 实弹教训：档位 id 叫 deepseek-v4.1-flash，而我们这把 EvoLink 钥匙只有 deepseek-v4-flash，
-     * 档位 id 若漏网发上去就是永久性 404。下面的断言兜住这条。
+     * 每个分支必须选择对应供应商的模型；合法模型可能与档位同名，不能只比较字符串。
      */
     model: params.modelName,
     /**
@@ -805,10 +806,7 @@ async function invokeDistillViaGateway(params: {
     body.max_tokens = Math.min(params.maxTokens ?? DISTILL_MAX_TOKENS, QWEN_MAX_TOKENS);
   }
   if (!key) throw new Error(`提炼通道未配置（${gatewayLabel(params.gateway)}），请稍后重试`);
-  // 档位 id 绝不能当模型名发出去（见上面 body.model 的说明）
-  if (body.model === params.modelName && params.gateway !== "openai_official") {
-    throw new Error(`提炼链内部错误：${gatewayLabel(params.gateway, tier)} 没有为本跳选定真实模型`);
-  }
+  // GLM 的档位 id 与 EvoLink 真实模型名可以合法同名，不能据此判定未接线。
   // 0911 用户令：全链流式。非流式时长输入 + 强制思考的首字节会撞 Cloudflare ~100 秒与
   // undici 写死的 300 秒 headersTimeout（漫剧学习链 0830 实弹），开流后两个计时器都不触发。
   body.stream = true;
@@ -855,6 +853,7 @@ async function invokeDistillViaGateway(params: {
   const finish = String(
     (json as { choices?: Array<{ finish_reason?: string | null }> })?.choices?.[0]?.finish_reason || "",
   );
+  assertSseContentSafety(finish);
   // 截断不当成功：半截稿会顺利通过下游长度检查并照常收费
   if (finish === "length" || finish === "max_tokens") throw new Error(KNOWLEDGE_CARD_DISTILL_TIMEOUT_MESSAGE);
   const out = extractFirstChoicePlainText(json as Parameters<typeof extractFirstChoicePlainText>[0]).trim();
@@ -936,10 +935,11 @@ async function invokeDistillLlm(params: {
       return out;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
+      if (isSseContentSafetyError(err)) throw err;
       // 流没跑完＝本跳不可用，恒可恢复：先短路，别让上游原文落进下面的文本正则（复审 P1）
       if (!isSseIncompleteStreamError(err)) {
         // 额度/配置/安全拒答等确定性失败不换通道（换了也一样，还可能双花）
-        if (isFatalDistillError(lastError.message) && !/未配置/.test(lastError.message)) throw lastError;
+        if (isFatalDistillError(lastError) && !/未配置/.test(lastError.message)) throw lastError;
       }
       if (i < chain.length - 1) {
         const next = chain[i + 1]!;
@@ -953,7 +953,9 @@ async function invokeDistillLlm(params: {
 }
 
 /** 提炼无法靠重试救回的错（额度/配置/通道），不必再退避。 */
-function isFatalDistillError(message: string): boolean {
+function isFatalDistillError(error: unknown): boolean {
+  if (isSseContentSafetyError(error)) return true;
+  const message = error instanceof Error ? error.message : String(error);
   // 401/403/安全拒答/未配置是确定性失败：重试+递归细切只会放大请求量。
   // 注意：这把尺子只量**我们自己造的**错误文案；上游原文一律不许拼进 message（复审 P1）。
   return /额度不足|通道不可用|未配置|请先输入|未能从文件|HTTP 40[13]|安全分类器拒答|内容被安全策略拦截/.test(message);
@@ -993,7 +995,8 @@ async function distillOneChunkWithRetry(params: {
       });
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      if (!isSseIncompleteStreamError(lastError) && isFatalDistillError(lastError.message)) throw lastError;
+      if (isSseContentSafetyError(err)) throw err;
+      if (!isSseIncompleteStreamError(lastError) && isFatalDistillError(lastError)) throw lastError;
       console.warn(
         `[knowledgeCardDistill] ${params.chunkLabel} attempt ${attempt + 1}/${params.retries + 1} failed: ${lastError.message.slice(0, 160)}`,
       );
@@ -1067,7 +1070,8 @@ async function distillOneChunkOrSkip(
     return { ok: true, markdown };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (!isSseIncompleteStreamError(err) && isFatalDistillError(message)) throw err;
+    if (isSseContentSafetyError(err)) throw err;
+    if (!isSseIncompleteStreamError(err) && isFatalDistillError(err)) throw err;
     const where = `第 ${idx + 1}/${totalChunks} 段（${label}）`;
     console.warn(`[knowledgeCardDistill] ${where} 重试与细切后仍失败，跳过该段：${message.slice(0, 160)}`);
     onNotice?.(`${where}提炼失败已跳过（${message.slice(0, 60)}），这一段内容不在本次知识卡里`);
@@ -1215,6 +1219,7 @@ async function refineOnce(params: {
     });
     return refined;
   } catch (err) {
+    if (isSseContentSafetyError(err)) throw err;
     console.warn(
       `[knowledgeCardDistill] refine(${params.stage}) failed, keep input: ${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`,
     );
@@ -1620,6 +1625,7 @@ export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillMod
         const allowed = new Set(pageNumbers);
         for (const item of parsePageTriage(raw)) if (allowed.has(item.pageNumber)) picked.push(item);
       } catch (err) {
+        if (isSseContentSafetyError(err)) throw err;
         console.warn(`[knowledgeCardDistill] 目录页扫读失败（第 ${Math.floor(i / TRIAGE_SHEETS_PER_CALL) + 1}/${Math.ceil(sheets.length / TRIAGE_SHEETS_PER_CALL)} 组，目录页 ${i + 1}–${Math.min(sheets.length, i + TRIAGE_SHEETS_PER_CALL)}），本组不选参考页：${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`);
       }
     }
@@ -1721,6 +1727,7 @@ export async function prepareKnowledgeCardCopy(input: {
       documents: documentsSummary,
     };
   } catch (err) {
+    if (isSseContentSafetyError(err)) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     console.warn("[knowledgeCardDistill] failed:", msg.slice(0, 320));
     if (/过短|未能从文件|请先输入|额度不足|通道不可用|未配置|超时/.test(msg)) {

@@ -13,7 +13,7 @@ import {
   type KnowledgeCardTier,
 } from "./knowledgeCardGatewayOrder.js";
 import { GLM_53_FLASH_EVOLINK_MODEL, GLM_53_FLASH_OPENROUTER_MODEL } from "./glmModels.js";
-import { isSseResponse, readGlmSseStream } from "./sseChatStream.js";
+import { assertSseContentSafety, isSseContentSafetyError, isSseResponse, readGlmSseStream } from "./sseChatStream.js";
 import {
   KNOWLEDGE_CARD_DISTILL_MODEL_GLM,
   resolveKnowledgeCardDistillModel,
@@ -211,6 +211,7 @@ async function chatOnceInner(gw: DeriveGateway, params: { system: string; user: 
   } catch {
     throw new Error(`derive_bad_json:${gw.name}:${text.slice(0, 120)}`);
   }
+  assertSseContentSafety(json.choices?.[0]?.finish_reason);
   const content = json.choices?.[0]?.message?.content;
   const out = typeof content === "string" ? content.trim() : "";
   if (!out) throw new Error(`精华版派生：${gw.name} 没有返回内容`);
@@ -225,11 +226,13 @@ async function deriveChat(params: { system: string; user: string; model?: string
   if (!gateways.length) throw new Error("精华版派生未配置（EVOLINK_API_KEY / OPENROUTER_API_KEY）");
   let lastError: Error | null = null;
   for (let i = 0; i < gateways.length; i++) {
+    params.abortSignal?.throwIfAborted();
     const gw = gateways[i]!;
     touchKnowledgeCardDistillActivity();
     try {
       return await chatOnce(gw, params);
     } catch (err) {
+      if (isSseContentSafetyError(err) || params.abortSignal?.aborted) throw err;
       lastError = err instanceof Error ? err : new Error(String(err));
       if (i < gateways.length - 1) console.warn(`[knowledgeCardLevelDerive] ${gw.name} 失败 → 改走 ${gateways[i + 1]!.name}：${lastError.message.slice(0, 160)}`);
     }

@@ -7,6 +7,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invokeDistillLlmPossiblyChunked } from "./knowledgeCardDistill";
 import { deriveKnowledgeCardCompact } from "./knowledgeCardLevelDerive";
+import { invokePageTriageJson } from "./knowledgeCardPageTriage";
+import { readGlmSseStream } from "./sseChatStream";
 import { invokeDeepSeekJsonChatRaw } from "./platformTopicShortlist";
 import { KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK } from "../../shared/knowledgeCardDistillModels";
 
@@ -58,6 +60,61 @@ function stubFetch(responses: Array<() => Response>) {
 }
 
 const payload = JSON.stringify({ reportTitle: "标题够长", insightSummary: ["一条洞察"], trackGrowth: [{ a: 1 }] });
+
+describe("安全终止与旧读取器契约", () => {
+  for (const finishReason of ["content_filter", "sensitive"]) {
+    for (const transport of ["sse", "json"]) {
+      for (const adapter of ["derive", "triage"]) {
+        it(`${adapter} ${transport} ${finishReason} 不切下一供应商`, async () => {
+          const content = adapter === "derive" ? SECTIONS : '{"pages":[1]}';
+          const { calls } = stubFetch([() => transport === "sse"
+            ? sseBody([...deltas(content), dataFrame({ choices: [{ finish_reason: finishReason }] }), DONE])
+            : new Response(JSON.stringify({ choices: [{ message: { content }, finish_reason: finishReason }] }), {
+              headers: { "content-type": "application/json" },
+            })]);
+          const fallback = vi.fn(async () => '{"pages":[1]}');
+          const result = adapter === "derive"
+            ? deriveKnowledgeCardCompact({ fullMarkdown: SECTIONS + SECTIONS.replace(/第([123])节/g, (_, n) => `第${Number(n) + 3}节`), targetSections: 3 })
+            : invokePageTriageJson({ system: "挑页", userText: "选择参考页", imageUrls: [], fallback });
+          await expect(result).rejects.toMatchObject({ code: "sse_content_safety" });
+          expect(calls).toHaveLength(1);
+          expect(fallback).not.toHaveBeenCalled();
+        });
+      }
+    }
+  }
+
+  it("旧默认模式仍忽略 error 帧，严格模式拒绝半稿", async () => {
+    const legacy = JSON.parse(await readGlmSseStream(errorFrameStream("原有正文").body!));
+    expect(legacy.choices[0].message.content).toBe("原有正文");
+    await expect(readGlmSseStream(errorFrameStream("半稿").body!, undefined, { strictCompletion: true }))
+      .rejects.toMatchObject({ code: "sse_incomplete_stream" });
+  });
+
+  it("挑页开始前取消不发送请求或运行兜底", async () => {
+    const { calls } = stubFetch([]);
+    const fallback = vi.fn(async () => '{"pages":[1]}');
+    const controller = new AbortController();
+    const reason = new Error("用户取消");
+    controller.abort(reason);
+    await expect(invokePageTriageJson({ system: "挑页", userText: "选择", imageUrls: [], fallback, abortSignal: controller.signal }))
+      .rejects.toBe(reason);
+    expect(calls).toHaveLength(0);
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it("挑页请求中取消不切下一供应商", async () => {
+    const controller = new AbortController();
+    const reason = new Error("用户取消");
+    const fetchSpy = vi.fn(async () => { controller.abort(reason); throw reason; });
+    vi.stubGlobal("fetch", fetchSpy);
+    const fallback = vi.fn(async () => '{"pages":[1]}');
+    await expect(invokePageTriageJson({ system: "挑页", userText: "选择", imageUrls: [], fallback, abortSignal: controller.signal }))
+      .rejects.toBe(reason);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fallback).not.toHaveBeenCalled();
+  });
+});
 
 const distillOnce = (opts?: { minSections?: number }) =>
   invokeDistillLlmPossiblyChunked({
