@@ -6,7 +6,6 @@ import * as studio from "./canvasDramaStudio";
 import * as writer from "@shared/manhuaWriterRoom";
 import * as assetCanon from "@shared/manhuaWriterAssetCanon";
 import * as bible from "@shared/manhuaProjectBible";
-import { buildManhuaDirectionCanonFromSelection } from "@shared/manhuaDirectionCanonLibrary";
 import * as layout from "@shared/manhuaSeedanceLayout";
 import { buildManhuaDirectionCanonFromSelection, listManhuaDirectionCards, type ManhuaDirectionSelection } from "@shared/manhuaDirectionCanonLibrary";
 import { shouldAttachManhuaPreviouslyOn } from "@shared/manhuaEpisodeRecap";
@@ -185,14 +184,6 @@ function confirmHarness(name: string, allowBatch = true, directionSelection: Man
     pushDebug: vi.fn(),
     window: { confirm: vi.fn(() => allowBatch), setTimeout: vi.fn() },
     toast: { error: vi.fn(), success: vi.fn() },
-    /**
-     * 0911 补注入：真实回调会读导演卡口径，漏了就在 vm 里抛 ReferenceError，
-     * 被回调自己的 try/catch 吞成「确认失败」，三条断言静默变红却看不出原因。
-     * 用真实实现，不是空壳——断言的载荷才作数。
-     */
-    directionSelection: undefined,
-    buildManhuaDirectionCanonFromSelection,
-    activeDirectionCanon: null as ReturnType<typeof buildManhuaDirectionCanonFromSelection>,
   };
   const run = runInNewContext(
     ts.transpileModule(`(${callback})`, {
@@ -537,11 +528,6 @@ describe("原稿导入至确认门禁", () => {
           toast: { error: vi.fn() },
           pushDebug: vi.fn(),
           window: { setTimeout: vi.fn() },
-          // 0911 补注入：真实回调会读导演卡口径；漏了会在 vm 里抛 ReferenceError，
-          // 被回调的 try/catch 吞掉，断言就看不出真实原因
-          directionSelection: undefined,
-          buildManhuaDirectionCanonFromSelection,
-          activeDirectionCanon: null,
         }
       );
       action();

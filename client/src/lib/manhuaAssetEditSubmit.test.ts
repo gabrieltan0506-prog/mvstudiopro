@@ -140,7 +140,6 @@ function setup(failure = false) {
     prepareAssetImageEdit,
     assetImageGcsUri,
     manhuaAssetStandardizeCredits,
-    readOpenAiImageVariantPref,
     window: {
       confirm: () => {
         throw new Error("禁止原生费用确认");
