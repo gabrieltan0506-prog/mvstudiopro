@@ -76,6 +76,8 @@ describe("P1 流式完整性：断流不得当成稿（主提炼真实链路）"
     expect(out).toContain("## 第3节");
     expect(calls).toHaveLength(1);
     expect(calls[0]!.body.stream).toBe(true);
+    // 0911 用户令：读档链显式发 0.7，不许省略这个键落到供应商默认 1.0
+    expect(calls[0]!.body.temperature).toBe(0.7);
   });
 
   it("末帧不带换行也算完整（收尾解析拿得到 finish_reason）", async () => {

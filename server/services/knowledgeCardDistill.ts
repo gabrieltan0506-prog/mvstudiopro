@@ -313,6 +313,11 @@ const GLM_EVOLINK_MODEL = envStr("KNOWLEDGE_CARD_GLM_EVOLINK_MODEL", GLM_53_FLAS
 /** GLM 官方输出上限 131,072（含思维链）；Qwen 跳仍是 32k */
 const GLM_MAX_TOKENS = 131_072;
 const QWEN_MAX_TOKENS = 32_768;
+/** 读档链温度（0911 用户拍板 0.7）：全链同一个值，免得换跳换出另一种文风 */
+const KNOWLEDGE_CARD_DISTILL_TEMPERATURE = Math.min(
+  1,
+  Math.max(0, Number(process.env.KNOWLEDGE_CARD_DISTILL_TEMPERATURE) || 0.7),
+);
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 function getOpenRouterApiKey(): string {
   return String(process.env.OPENROUTER_API_KEY || "").trim();
@@ -707,6 +712,13 @@ async function invokeDistillViaGateway(params: {
     params.tier ?? (params.modelName === KNOWLEDGE_CARD_DISTILL_MODEL_GLM ? "glm" : "deepseek");
   const body: Record<string, unknown> = {
     model: params.modelName,
+    /**
+     * 0911 用户令：读档链温度 0.7。
+     * 之前这里**一个温度都没发**——省略这个键等于落到供应商默认（GLM 官方默认 1.0），
+     * 提炼这种「照着原稿压实」的活跑在 1.0 上会自由发挥（漫剧学习链 0830 也踩过同一脚，
+     * 那边的结论就是「永远显式发温度」）。
+     */
+    temperature: KNOWLEDGE_CARD_DISTILL_TEMPERATURE,
     messages: [
       {
         role: "system",
