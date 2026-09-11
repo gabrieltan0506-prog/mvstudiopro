@@ -107,8 +107,63 @@ export const manhuaPrevisDraftSchema = manhuaPrevisSpecBaseSchema.extend({
     )
     .max(8),
 });
+/**
+ * 单作业渲染预算（0911 实测定的能力边界，不是拍脑袋的数字）。
+ *
+ * 成本近似为「帧数 × 角色数」：白模用 Blender WORKBENCH 逐帧出 PNG，
+ * 每帧代价随场景里的角色数近似线性增长。
+ *
+ * 实测锚点（隔离机 2 核 8GB、Blender 3.4.1，与生产同源）：
+ * · 六角色 30 秒 = 720 帧 × 6 = 4320 单位 → 构建 75 秒、渲染 506 秒后触发 600 秒生产时限，
+ *   没有产出完整视频（验收判失败，见五项验收-0911/Linux高负载与扣退费验收报告）。
+ * · 单角色 5 秒 = 120 帧 × 1 = 120 单位 → 含 13 个云对象上传读回共 190 秒，完整交付。
+ *
+ * 按 4320 单位耗时 506 秒折算约 0.117 秒/单位；600 秒预算里要留出场景构建与编码上传，
+ * 渲染可用约 420 秒，即约 3600 单位。再留 25% 余量定 2700。
+ *
+ * 这条边界是**事前拒绝**，不是把超时调长冒充性能达标：超出就当场说清楚，
+ * 不让用户等满十分钟再拿到一个空结果。性能改进后按新实测调这个数字。
+ */
+export const PREVIS_RENDER_UNIT_BUDGET = 2700;
+
+/** 该 spec 的渲染成本单位：帧数 × 角色数 */
+export function previsRenderCostUnits(spec: {
+  durationSec: number;
+  actors: unknown[];
+}): number {
+  return Math.round(spec.durationSec * 24 * spec.actors.length);
+}
+
+/** 同角色数下、预算内允许的最长片长（秒），至少 2 秒 */
+export function previsMaxDurationSec(actorCount: number, budget = PREVIS_RENDER_UNIT_BUDGET): number {
+  const count = Math.max(1, Math.floor(actorCount));
+  return Math.max(2, Math.floor(budget / (24 * count)));
+}
+
+/** 超预算时给一句能照做的中文；在预算内返回 null */
+export function previsCapacityIssueZh(
+  spec: { durationSec: number; actors: unknown[] },
+  budget = PREVIS_RENDER_UNIT_BUDGET,
+): string | null {
+  const units = previsRenderCostUnits(spec);
+  if (units <= budget) return null;
+  const actorCount = spec.actors.length;
+  const maxSec = previsMaxDurationSec(actorCount, budget);
+  const maxActors = Math.max(1, Math.floor(budget / (24 * spec.durationSec)));
+  return (
+    `超出单次白模渲染能力：${actorCount} 个角色 × ${spec.durationSec} 秒，`
+    + `约 ${units} 单位，上限 ${budget} 单位。`
+    + `同样 ${actorCount} 个角色最多 ${maxSec} 秒；`
+    + (maxActors >= 1 ? `${spec.durationSec} 秒最多 ${maxActors} 个角色。` : "请缩短片长。")
+    + "请拆成多段分别预演。"
+  );
+}
+
 export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
   (spec, ctx) => {
+    // 能力边界先判：超预算的作业会在 600 秒生产时限里烧满十分钟还交不出视频（0911 实测）
+    const capacityIssue = previsCapacityIssueZh(spec);
+    if (capacityIssue) ctx.addIssue({ code: "custom", message: capacityIssue });
     if (new Set(spec.actors.map(a => a.id)).size !== spec.actors.length)
       ctx.addIssue({ code: "custom", message: "角色编号不能重复" });
     spec.actors.forEach((actor, i) => {

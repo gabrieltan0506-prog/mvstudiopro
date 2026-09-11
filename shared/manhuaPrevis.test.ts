@@ -5,6 +5,10 @@ import {
   manhuaPrevisSpecSchema,
   manhuaPrevisStudioSchema,
   formatPrevisMotionGuide,
+  PREVIS_RENDER_UNIT_BUDGET,
+  previsCapacityIssueZh,
+  previsMaxDurationSec,
+  previsRenderCostUnits,
 } from "./manhuaPrevis";
 import {
   normalizeManhuaSegmentReferences,
@@ -116,27 +120,29 @@ describe("白模配置与旧引用兼容", () => {
     }
   });
   it("六角色八机位十二动作保持全量，超限明确拒绝", () => {
-    const spec = createManhuaPrevisStudio(30, scope).spec;
+    // 0911 实测：六角色 30 秒在隔离机烧满 600 秒生产时限也交不出视频，
+    // 现在按渲染预算事前拒绝；同样六角色在预算内的片长仍要保持全量能力。
+    const spec = createManhuaPrevisStudio(18, scope).spec;
     spec.actors = Array.from({ length: 6 }, (_, i) => ({
       ...spec.actors[0],
       id: `actor-${i}`,
       nameZh: `角色${i}`,
       actions: Array.from({ length: 12 }, (_, j) => ({
         kind: "guard" as const,
-        startSec: j * 2,
-        endSec: j * 2 + 1,
+        startSec: j * 1.5,
+        endSec: j * 1.5 + 1,
       })),
     }));
     spec.cameras = Array.from({ length: 8 }, (_, i) => ({
       ...spec.cameras[0],
-      startSec: i * 3.75,
-      endSec: (i + 1) * 3.75,
+      startSec: i * 2.25,
+      endSec: (i + 1) * 2.25,
     }));
     expect(manhuaPrevisSpecSchema.parse(spec)).toEqual(spec);
     expect(manhuaPrevisDraftSchema.parse(spec)).toEqual(spec);
     expect(formatPrevisMotionGuide(spec)).toContain("白模角色6对应角色5：");
     expect(
-      formatPrevisMotionGuide(spec).match(/22—23秒抬臂保护/g)
+      formatPrevisMotionGuide(spec).match(/16\.5—17\.5秒抬臂保护|17—18秒抬臂保护/g)
     ).toHaveLength(6);
     const excess = [
       {
@@ -151,7 +157,7 @@ describe("白模配置与旧引用兼容", () => {
             ...spec.actors[0],
             actions: [
               ...spec.actors[0].actions,
-              { kind: "idle", startSec: 24, endSec: 25 },
+              { kind: "idle", startSec: 17, endSec: 17.5 },
             ],
           },
         ],
@@ -291,5 +297,57 @@ describe("白模配置与旧引用兼容", () => {
     expect(
       formatManhuaSegmentReferenceGuideZh({ previsVideoIndex: 1 })
     ).not.toContain("【白模动作】");
+  });
+});
+
+describe("单次渲染预算：按实测定的能力边界（0911）", () => {
+  const specOf = (actorCount: number, durationSec: number) => {
+    const base = createManhuaPrevisStudio(durationSec, scope).spec;
+    return {
+      ...base,
+      actors: Array.from({ length: actorCount }, (_, i) => ({
+        ...base.actors[0],
+        id: `actor-${i}`,
+        nameZh: `角色${i}`,
+        actions: base.actors[0].actions.filter(a => a.endSec <= durationSec),
+        moveStartSec: 0,
+        moveEndSec: Math.min(base.actors[0].moveEndSec, durationSec),
+      })),
+      cameras: base.cameras.map(c => ({ ...c, endSec: Math.min(c.endSec, durationSec) })),
+    };
+  };
+
+  it("成本按帧数×角色数算；六角色30秒就是那次烧满十分钟没出片的规格", () => {
+    expect(previsRenderCostUnits({ durationSec: 30, actors: new Array(6) })).toBe(4320);
+    expect(previsRenderCostUnits({ durationSec: 5, actors: new Array(1) })).toBe(120);
+    expect(PREVIS_RENDER_UNIT_BUDGET).toBe(2700);
+  });
+
+  it("超预算给的是能照做的中文：说清上限、同角色数最长几秒、同片长最多几个角色", () => {
+    const issue = previsCapacityIssueZh({ durationSec: 30, actors: new Array(6) });
+    expect(issue).toContain("6 个角色 × 30 秒");
+    expect(issue).toContain("4320");
+    expect(issue).toContain("2700");
+    expect(issue).toContain("最多 18 秒");
+    expect(issue).toContain("请拆成多段");
+  });
+
+  it("预算内不拦：单角色30秒、三角色30秒、六角色18秒都照常通过", () => {
+    expect(previsCapacityIssueZh({ durationSec: 30, actors: new Array(1) })).toBeNull();
+    expect(previsCapacityIssueZh({ durationSec: 30, actors: new Array(3) })).toBeNull();
+    expect(previsCapacityIssueZh({ durationSec: 18, actors: new Array(6) })).toBeNull();
+    expect(manhuaPrevisSpecSchema.safeParse(specOf(3, 20)).success).toBe(true);
+  });
+
+  it("schema 事前拒绝超预算作业，不让它进渲染烧满时限", () => {
+    const parsed = manhuaPrevisSpecSchema.safeParse(specOf(6, 30));
+    expect(parsed.success).toBe(false);
+    expect(JSON.stringify(parsed.error?.issues)).toContain("超出单次白模渲染能力");
+  });
+
+  it("同角色数的最长片长随预算算出来，至少给 2 秒", () => {
+    expect(previsMaxDurationSec(1)).toBeGreaterThanOrEqual(30);
+    expect(previsMaxDurationSec(6)).toBe(18);
+    expect(previsMaxDurationSec(60)).toBe(2);
   });
 });
