@@ -4,8 +4,13 @@
  * 纯展示组件；百分比由父级按阶段折算，本组件不猜测。
  */
 export type KnowledgeCardProgressState = {
-  status: "idle" | "running" | "succeeded" | "failed";
-  /** 0–100；running/failed 时为当前进度，succeeded 固定 100 */
+  /**
+   * stopped＝用户中途终止（复审 P2）：不许冒用 succeeded。
+   * 冒用的后果是子组件把进度强拉到 100%、还把「已停止」说明藏掉——
+   * 实测 7 页批次停在 4 页，界面却显示「成功 · 100%」，另外 3 页的补出入口还开着。
+   */
+  status: "idle" | "running" | "succeeded" | "stopped" | "failed";
+  /** 0–100；running/stopped/failed 时为当前真实进度，succeeded 固定 100 */
   percent: number;
   /** 阶段短语，如「读原稿 12/276 页」「出图 2/5 页」 */
   label?: string;
@@ -26,10 +31,30 @@ export function KnowledgeCardProgress({
   const percent = Math.max(0, Math.min(100, Math.round(Number.isFinite(state.percent) ? state.percent : 0)));
   const failed = state.status === "failed";
   const succeeded = state.status === "succeeded";
+  const stopped = state.status === "stopped";
+  // 只有真的全部完成才显示 100%；停止状态如实显示停在哪
   const shown = succeeded ? 100 : percent;
-  const headline = failed ? `失败 · 停在 ${shown}%` : succeeded ? "成功 · 100%" : `${shown}%`;
-  const color = failed ? "text-red-300" : succeeded ? "text-emerald-300" : "text-violet-100";
-  const fill = failed ? "bg-red-400" : succeeded ? "bg-emerald-400" : "bg-violet-400";
+  const headline = failed
+    ? `失败 · 停在 ${shown}%`
+    : succeeded
+      ? "成功 · 100%"
+      : stopped
+        ? `已停止 · ${shown}%`
+        : `${shown}%`;
+  const color = failed
+    ? "text-red-300"
+    : succeeded
+      ? "text-emerald-300"
+      : stopped
+        ? "text-amber-200"
+        : "text-violet-100";
+  const fill = failed
+    ? "bg-red-400"
+    : succeeded
+      ? "bg-emerald-400"
+      : stopped
+        ? "bg-amber-400"
+        : "bg-violet-400";
   return (
     <div className="mt-3 space-y-1.5 text-sm" aria-label="知识卡进度">
       <p role={failed ? "alert" : "status"} className={`flex flex-wrap items-center gap-2 ${color}`}>
@@ -59,6 +84,7 @@ export function KnowledgeCardProgress({
         <div className={`h-full rounded-full transition-[width] duration-300 ${fill}`} style={{ width: `${shown}%` }} />
       </div>
       {failed && state.error ? <p className="text-xs text-red-300/85">{state.error}</p> : null}
+      {stopped && state.error ? <p className="text-xs text-amber-200/85">{state.error}</p> : null}
     </div>
   );
 }

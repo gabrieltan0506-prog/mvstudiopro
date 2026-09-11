@@ -587,15 +587,41 @@ export async function requestPlatformJobCancel(input: {
   if (current.status === "succeeded" || current.status === "failed") return current;
 
   const requestedAt = new Date().toISOString();
-  const nextInput = rawInput && typeof rawInput === "object" && !Array.isArray(rawInput)
-    ? { ...(rawInput as Record<string, unknown>), cancelRequestedAt: requestedAt }
-    : { action, cancelRequestedAt: requestedAt };
+  /**
+   * 复审 P2·A：不能拿旧快照决定终态。读到 queued、worker 随即领走、我们再写 failed「未开始执行」——
+   * 任务其实已经在跑了。所以 queued 分支走状态 CAS（WHERE status='queued'），
+   * 没命中就重读一次按 running 处理：只登记取消请求，终态交给 worker 写，两边不抢。
+   *
+   * input 用 SQL 里的 jsonb 合并写，不拿旧快照整体覆盖——worker 同时在写进度字段。
+   */
+  const mergeCancelFlag = sql`coalesce(${jobs.input}::jsonb, '{}'::jsonb) || ${JSON.stringify({ cancelRequestedAt: requestedAt })}::jsonb`;
+
+  if (current.status === "queued") {
+    const casRows = await db
+      .update(jobs)
+      .set({
+        input: mergeCancelFlag as unknown as InsertJob["input"],
+        status: "failed",
+        error: input.queuedError,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(jobs.id, input.jobId),
+          eq(jobs.userId, String(input.userId)),
+          eq(jobs.status, "queued"),
+        ),
+      )
+      .returning({ id: jobs.id });
+    if (casRows.length > 0) return getJobByIdStrict(input.jobId);
+    // CAS 没命中＝这中间被领走了：按 running 再来一次
+  }
+
+  // running（或刚被领走）：只登记取消请求，不碰 status / error
   await db
     .update(jobs)
     .set({
-      input: nextInput as InsertJob["input"],
-      status: current.status === "queued" ? "failed" : "running",
-      error: current.status === "queued" ? input.queuedError : current.error,
+      input: mergeCancelFlag as unknown as InsertJob["input"],
       updatedAt: new Date(),
     })
     .where(
@@ -605,12 +631,17 @@ export async function requestPlatformJobCancel(input: {
         inArray(jobs.status, ["queued", "running"]),
       ),
     );
-  return getJobById(input.jobId);
+  return getJobByIdStrict(input.jobId);
 }
 
-/** 任务是否被请求停止（任何 action 通用；查不到行也按「停」处理，免得孤儿任务空转） */
+/**
+ * 任务是否被请求停止（任何 action 通用）。
+ * 复审 P2：必须用严格版读——宽松版把「数据库不可用 / 查询抛错」吞成 null，
+ * 再被这里解释成「取消」，等于数据库一抖就把用户跑了半小时的活判死。
+ * 现在故障原样抛给 watcher，由它暂缓判断继续盯；只有**查询成功且确实没有这行**才算孤儿任务。
+ */
 export async function isPlatformJobCancelRequested(jobId: string): Promise<boolean> {
-  const job = await getJobById(jobId);
+  const job = await getJobByIdStrict(jobId);
   if (!job) return true;
   const raw = parseMaybeJson(job.input);
   return Boolean(

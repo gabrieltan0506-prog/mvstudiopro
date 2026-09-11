@@ -42,6 +42,8 @@ export function looksLikeTriageJson(raw: string): boolean {
 }
 
 async function visionChatOnce(gw: TriageGateway, params: { system: string; userText: string; imageUrls: string[]; abortSignal?: AbortSignal }): Promise<string> {
+  // 进网关之前先看有没有被叫停：已取消不许再发请求（复审 P1·A 的实测反例）
+  params.abortSignal?.throwIfAborted();
   const res = await fetch(gw.url, {
     method: "POST",
     headers: {
@@ -73,7 +75,10 @@ async function visionChatOnce(gw: TriageGateway, params: { system: string; userT
         // OpenRouter 的 DeepSeek 视觉跳锁自营，不落到转售方（0911 用户令）
         : { reasoning: { effort: "high" }, provider: OPENROUTER_DEEPSEEK_PROVIDER_LOCK }),
     }),
-    signal: params.abortSignal ?? AbortSignal.timeout(TRIAGE_TIMEOUT_MS),
+    // 取消与超时合并：以前传了 abortSignal 就把超时保护顶掉了（复审 P1）
+    signal: params.abortSignal
+      ? AbortSignal.any([params.abortSignal, AbortSignal.timeout(TRIAGE_TIMEOUT_MS)])
+      : AbortSignal.timeout(TRIAGE_TIMEOUT_MS),
   });
   // 非 200 一律按文本读：错误正文要留给下面的状态码判定，别被 strict 先抛掉（复审 P2）
   const text = res.ok && isSseResponse(res) && res.body

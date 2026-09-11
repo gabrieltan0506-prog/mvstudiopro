@@ -659,14 +659,25 @@ async function startServer() {
         queuedError: "已按你的要求停止读档（未开始执行）",
       });
       if (!job) return res.status(404).json({ error: "读档任务不存在或不属于当前用户" });
+      // 已经跑完的任务：如实说「已完成，无法取消」，不许承诺「未开始计费」（复审 P2）
+      if (job.status === "succeeded") {
+        return res.status(200).json({
+          jobId: job.id,
+          status: job.status,
+          cancelled: false,
+          messageZh: "任务已完成，无法取消；结果与已产生的计费保留",
+        });
+      }
       return res.status(200).json({
         jobId: job.id,
         status: job.status,
+        cancelled: true,
         messageZh: job.status === "failed" ? "已停止读档（未开始计费）" : "已请求停止，正在收口…",
       });
     } catch (error) {
+      // 复审 P2：读库失败不许伪装成 404「任务不存在」——那会让用户以为任务没了
       console.error("[Jobs] cancel knowledge card failed:", error);
-      return res.status(500).json({ error: "停止读档失败，请稍后重试" });
+      return res.status(503).json({ error: "暂时读不到任务状态，停止请求没有生效，请稍后重试" });
     }
   });
 

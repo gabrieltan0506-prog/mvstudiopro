@@ -18,6 +18,10 @@ const COMPACT = ["# 财务自由精华版", ...Array.from({ length: 7 }, (_, i) 
 const f = ((globalThis as any).fixture = {
   FULL, COMPACT,
   acceptImageGen: false,
+  /** 出图建单是否放行（默认失败，用来把页面推进错误态）；放行时逐页返回图，用于验「停止出图」 */
+  imageJobsSucceed: false,
+  imageJobCalls: 0,
+  cancelCalls: [] as string[],
   prepareDelayMs: 0,
   deriveStatus: "running" as "running" | "succeeded" | "failed",
   deriveCalls: 0,
@@ -43,12 +47,40 @@ window.confirm = (msg?: string) => {
 };
 window.fetch = (async (input: any, init?: any) => {
   const url = String(typeof input === "string" ? input : input?.url || "");
+  // 逐页出图（tRPC）：慢一点，好让测试在中途点「终止」。
+  // 注意 httpBatchLink 会把并发的几页合成**一个**请求，必须按批里的调用数逐条回结果，
+  // 只回一条会让客户端报 "Missing result"。
+  if (/generatePlatformCompositeSheet/.test(url)) {
+    let batchSize = 1;
+    try {
+      const parsed = JSON.parse(String(init?.body || "{}"));
+      batchSize = Array.isArray(parsed) ? parsed.length : Object.keys(parsed).length || 1;
+    } catch { /* 单条 */ }
+    await new Promise((r) => setTimeout(r, 150));
+    const results = Array.from({ length: batchSize }, () => {
+      f.imageJobCalls += 1;
+      return { result: { data: { json: { imageUrl: `https://storage.googleapis.com/test/page-${f.imageJobCalls}.png` } } } };
+    });
+    return new Response(JSON.stringify(results), { status: 200, headers: { "content-type": "application/json" } });
+  }
   if (/prepareKnowledgeCardCopy/.test(url)) {
     if (f.prepareDelayMs > 0) await new Promise((r) => setTimeout(r, f.prepareDelayMs));
     return ok({ isAsync: false, distilledMarkdown: FULL });
   }
-  // 出图建单一律失败：把页面推进「有错误」状态，清除按钮才会出现
-  if (/\/api\/jobs(\?|$)/.test(url)) return new Response(JSON.stringify({ message: "出图建单失败（测试桩）" }), { status: 500, headers: { "content-type": "application/json" } });
+  // 读档任务的终止接口
+  const cancelMatch = url.match(/\/api\/jobs\/knowledge-card\/([^/]+)\/cancel/);
+  if (cancelMatch) {
+    f.cancelCalls.push(decodeURIComponent(cancelMatch[1]!));
+    return new Response(JSON.stringify({ jobId: cancelMatch[1], status: "running", cancelled: true, messageZh: "已请求停止，正在收口…" }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+  }
+  // 出图建单：默认失败（把页面推进错误态）；imageJobsSucceed 时逐页成功，用来验停止出图
+  if (/\/api\/jobs(\?|$)/.test(url)) {
+    if (!f.imageJobsSucceed) return new Response(JSON.stringify({ message: "出图建单失败（测试桩）" }), { status: 500, headers: { "content-type": "application/json" } });
+    f.imageJobCalls += 1;
+    return new Response(JSON.stringify({ id: `img-${f.imageJobCalls}` }), { status: 200, headers: { "content-type": "application/json" } });
+  }
   if (/enqueueKnowledgeCardLevelDerive/.test(url)) { f.deriveCalls++; return ok({ progressJobId: "derive-1" }); }
   if (/\/api\/jobs\/derive-1/.test(url)) {
     f.jobPolls++;

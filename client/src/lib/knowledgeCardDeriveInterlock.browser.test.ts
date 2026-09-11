@@ -143,6 +143,67 @@ async function distillThenFailedImageGen() {
   );
 }
 
+describe("确认弹窗互锁与快照（真实 PlatformPage · 0911 复审 P1）", () => {
+  it("等确认期间：正文与档位被锁住，键盘改不动，也点不了第二次生成", async () => {
+    page = await mount();
+    await page.evaluate(() => ((globalThis as never as { fixture: { acceptImageGen: boolean } }).fixture.acceptImageGen = true));
+    await distillOnly();
+    await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll("button")).find((x) => /生成图文笔记/.test(x.textContent || ""));
+      (b as HTMLButtonElement | undefined)?.click();
+    });
+    await page.waitForFunction(
+      () => Array.from(document.querySelectorAll("button")).some((b) => (b.textContent || "").trim() === "确认出图"),
+      { timeout: 30_000 },
+    );
+    const locked = await page.evaluate(
+      (ta, lv) => ({
+        taDisabled: (document.querySelector(ta) as HTMLTextAreaElement | null)?.disabled,
+        levelDisabled: (document.querySelector(lv) as HTMLSelectElement | null)?.disabled,
+        genDisabled: Array.from(document.querySelectorAll("button"))
+          .filter((b) => /生成图文笔记|生成中/.test(b.textContent || ""))
+          .every((b) => (b as HTMLButtonElement).disabled),
+      }),
+      TA,
+      LEVEL,
+    );
+    expect(locked.taDisabled).toBe(true);
+    expect(locked.levelDisabled).toBe(true);
+    expect(locked.genDisabled).toBe(true);
+
+    // 键盘绕行：直接往底层输入框塞字也不会改掉稿子（受控 + disabled）
+    const before = await taValue();
+    await page.evaluate((sel) => {
+      const el = document.querySelector(sel) as HTMLTextAreaElement;
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(el, "【偷改的稿子】");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    }, TA);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(await taValue()).toBe(before);
+
+    await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll("button")).find((x) => (x.textContent || "").trim() === "返回修改");
+      (b as HTMLButtonElement | undefined)?.click();
+    });
+  }, 120_000);
+
+  it("「返回修改」零出图请求，提炼稿与旧产物都在", async () => {
+    page = await mount();
+    await page.evaluate(() => {
+      const fx = (globalThis as never as { fixture: { acceptImageGen: boolean; imageJobCalls: number } }).fixture;
+      fx.acceptImageGen = true;
+      fx.imageJobCalls = 0;
+    });
+    await distillOnly();
+    const calls = await page.evaluate(
+      () => (globalThis as never as { fixture: { imageJobCalls: number } }).fixture.imageJobCalls,
+    );
+    expect(calls).toBe(0);
+    expect(await taValue()).toContain("完整版第 1 节");
+  }, 120_000);
+});
+
 describe("出图前确认弹窗（真实 PlatformPage · 0911 用户令）", () => {
   it("弹窗列出成稿档 / 版式 / 模板类型；「返回修改」不出图，稿子还在", async () => {
     page = await mount();
@@ -182,6 +243,96 @@ describe("出图前确认弹窗（真实 PlatformPage · 0911 用户令）", () 
     expect(after.hasClear).toBe(false);
     expect(after.text).toContain("完整版第 1 节");
   }, 120_000);
+});
+
+describe("停止出图与派生终止（真实 PlatformPage · 0911 复审 P2）", () => {
+  it("7 页批次中途停止：只收尾在途页，显示「已停止 · 出图 n/7 页」，不写 100%", async () => {
+    page = await mount();
+    await page.evaluate(() => {
+      const fx = (globalThis as never as { fixture: { acceptImageGen: boolean; imageJobsSucceed: boolean; imageJobCalls: number } }).fixture;
+      fx.acceptImageGen = true;
+      fx.imageJobsSucceed = true;
+      fx.imageJobCalls = 0;
+    });
+    await distillOnly();
+    await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll("button")).find((x) => /生成图文笔记/.test(x.textContent || ""));
+      (b as HTMLButtonElement | undefined)?.click();
+    });
+    await page.waitForFunction(
+      () => Array.from(document.querySelectorAll("button")).some((b) => (b.textContent || "").trim() === "确认出图"),
+      { timeout: 30_000 },
+    );
+    await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll("button")).find((x) => (x.textContent || "").trim() === "确认出图");
+      (b as HTMLButtonElement | undefined)?.click();
+    });
+    // 出图跑起来后点「终止」
+    await page.waitForFunction(
+      () => Array.from(document.querySelectorAll("button")).some((b) => (b.textContent || "").trim() === "终止"),
+      { timeout: 30_000 },
+    );
+    await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll("button")).find((x) => (x.textContent || "").trim() === "终止");
+      (b as HTMLButtonElement | undefined)?.click();
+    });
+    await page.waitForFunction(
+      () => /已停止/.test((document.querySelector('[aria-label="知识卡进度"]') as HTMLElement | null)?.innerText || ""),
+      { timeout: 60_000 },
+    );
+    const state = await page.evaluate(() => {
+      const box = document.querySelector('[aria-label="知识卡进度"]') as HTMLElement | null;
+      const bar = document.querySelector('[role="progressbar"]') as HTMLElement | null;
+      return {
+        text: box?.innerText || "",
+        valueNow: Number(bar?.getAttribute("aria-valuenow") || "0"),
+        valueText: bar?.getAttribute("aria-valuetext") || "",
+        pagesRequested: (globalThis as never as { fixture: { imageJobCalls: number } }).fixture.imageJobCalls,
+      };
+    });
+    // 不许冒充成功：文字、aria 值、进度都要如实
+    expect(state.text).toContain("已停止");
+    expect(state.text).not.toContain("成功 · 100%");
+    expect(state.valueNow).toBeLessThan(100);
+    expect(state.valueText).toContain("已停止");
+    // 停止后不再领新页：实际请求数小于总页数
+    expect(state.pagesRequested).toBeGreaterThan(0);
+    expect(state.pagesRequested).toBeLessThan(7);
+    // 已出的页保留，缺页的补出入口照常开着
+    const kept = await page.evaluate(() => ({
+      images: document.querySelectorAll('img[src*="storage.googleapis.com/test/page-"]').length,
+      refill: Array.from(document.querySelectorAll("button")).filter((b) => /补出/.test(b.textContent || "")).length,
+    }));
+    expect(kept.images).toBeGreaterThan(0);
+    expect(kept.refill).toBeGreaterThan(0);
+  }, 180_000);
+
+  it("派生精华版跑起来时也有终止按钮，且打到派生那一单", async () => {
+    page = await mount();
+    await page.evaluate(() => {
+      const fx = (globalThis as never as { fixture: { deriveStatus: string; cancelCalls: string[] } }).fixture;
+      fx.deriveStatus = "running";
+      fx.cancelCalls = [];
+    });
+    await distillOnly();
+    await switchLevel("concise");
+    await page.waitForFunction(
+      () => Array.from(document.querySelectorAll("button")).some((b) => (b.textContent || "").trim() === "终止"),
+      { timeout: 30_000 },
+    );
+    await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll("button")).find((x) => (x.textContent || "").trim() === "终止");
+      (b as HTMLButtonElement | undefined)?.click();
+    });
+    await page.waitForFunction(
+      () => (globalThis as never as { fixture: { cancelCalls: string[] } }).fixture.cancelCalls.length > 0,
+      { timeout: 30_000 },
+    );
+    const calls = await page.evaluate(
+      () => (globalThis as never as { fixture: { cancelCalls: string[] } }).fixture.cancelCalls,
+    );
+    expect(calls).toEqual(["derive-1"]);
+  }, 180_000);
 });
 
 describe("知识卡精华版派生（真实 PlatformPage）", () => {

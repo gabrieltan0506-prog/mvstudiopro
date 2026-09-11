@@ -3060,8 +3060,24 @@ export default function PlatformPage() {
    * resolve 存在 ref 里——弹窗的两个按钮要把等待中的生成流程接回去。
    */
   const [customNotePreflight, setCustomNotePreflight] = useState<KnowledgeCardPreflightSummary | null>(null);
+  /**
+   * 等确认期间的互锁（复审 P1）：state 用来锁 UI，ref 用来在 handler 里同步判断——
+   * 光靠按钮 disabled 挡不住键盘绕行与同帧重入。
+   */
+  const customNotePendingConfirmRef = useRef(false);
+  /** 本次派生登记的任务号：finally 里按归属清理 */
+  const deriveOwnedJobIdRef = useRef("");
   const customNotePreflightResolveRef = useRef<((ok: boolean) => void) | null>(null);
-  const askKnowledgeCardPreflight = (summary: KnowledgeCardPreflightSummary): Promise<boolean> => {
+  /** 确认这一刻的稿件版本：版本变了（换稿/切档/卸载）就作废这次确认 */
+  const customNotePreflightRevisionRef = useRef(0);
+  const askKnowledgeCardPreflight = (
+    summary: KnowledgeCardPreflightSummary,
+    revision: number,
+  ): Promise<boolean> => {
+    // 已有一个在等：不许第二次确认顶掉前一个 resolver（会留下悬挂 Promise）
+    if (customNotePendingConfirmRef.current) return Promise.resolve(false);
+    customNotePendingConfirmRef.current = true;
+    customNotePreflightRevisionRef.current = revision;
     setCustomNotePreflight(summary);
     return new Promise<boolean>((resolve) => {
       customNotePreflightResolveRef.current = resolve;
@@ -3069,10 +3085,16 @@ export default function PlatformPage() {
   };
   const closeKnowledgeCardPreflight = (ok: boolean) => {
     setCustomNotePreflight(null);
+    customNotePendingConfirmRef.current = false;
     const resolve = customNotePreflightResolveRef.current;
     customNotePreflightResolveRef.current = null;
     resolve?.(ok);
   };
+  /** 卸载时撤销等待中的确认，不留悬挂 Promise */
+  useEffect(() => () => {
+    if (customNotePendingConfirmRef.current) closeKnowledgeCardPreflight(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   /** 待随「生成」一并提炼的上传文件（含图片 OCR）。 */
   const customNotePendingFilesRef = useRef<KnowledgeCardPendingFile[]>([]);
   /** 上传区可见状态（成功/失败），避免只靠 toast */
@@ -8075,6 +8097,10 @@ export default function PlatformPage() {
         fullMarkdown: full,
         distillModel: customNoteDistillModel,
       });
+      // 复审 P2：派生也要登记任务身份，否则「派生精华版…」跑着却看不到终止按钮
+      const derivedJobId = String(queued.progressJobId || "");
+      setCustomNoteDistillJobId(derivedJobId);
+      deriveOwnedJobIdRef.current = derivedJobId;
       const job = await pollJobUntilTerminal(queued.progressJobId, {
         intervalMs: 3000,
         // 服务端不设总时长（只按连续无进度判死），前端也不设：轮询到终态为止
@@ -8111,6 +8137,12 @@ export default function PlatformPage() {
       throw error;
     } finally {
       setCustomNoteLevelSwitching(false);
+      // 只清自己那单（迟到的旧派生不许抹掉新任务的终止按钮）
+      const owned = deriveOwnedJobIdRef.current;
+      if (owned) {
+        setCustomNoteDistillJobId((prev) => (prev === owned ? "" : prev));
+        deriveOwnedJobIdRef.current = "";
+      }
     }
   };
 
@@ -8144,6 +8176,11 @@ export default function PlatformPage() {
 
   /** 成稿档切换：有完整版真源时直接换视图（精华版首次切需派生一次） */
   const switchKnowledgeCardLevel = async (next: KnowledgeCardDetailLevel) => {
+    // 等出图确认期间不许切档：确认弹窗上写的成稿档必须等于真正出图用的那一档
+    if (customNotePendingConfirmRef.current) {
+      toast.info("正在等你确认出图，先点「返回修改」再切档");
+      return;
+    }
     if (customNoteLevelSwitching) {
       toast.info("精华版还在派生中，等它结束再切档");
       return;
@@ -8237,6 +8274,8 @@ export default function PlatformPage() {
       return `分段提炼 ${dc}/${tc} 段`;
     };
     setCustomNoteDistillJobId(String(queued.progressJobId || ""));
+    const ownedJobId = String(queued.progressJobId || "");
+    try {
     const job = await pollJobUntilTerminal(queued.progressJobId, {
       intervalMs: 3000,
       // 服务端不设总时长（只按连续无进度判死），前端也不设：轮询到终态为止
@@ -8258,11 +8297,14 @@ export default function PlatformPage() {
         });
       },
     });
-    setCustomNoteDistillJobId("");
     if (job.status === "failed") throw new Error(job.error || "提炼失败，请稍后重试");
     setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromDistill(98), label: "提炼完成" });
     const out = (job.output || {}) as { distilledMarkdown?: string };
     return String(out.distilledMarkdown || "").trim();
+    } finally {
+      // 只清自己那单：迟到的旧轮询不许把新任务的终止按钮抹掉
+      setCustomNoteDistillJobId((prev) => (prev === ownedJobId ? "" : prev));
+    }
   };
 
   /**
@@ -8270,11 +8312,19 @@ export default function PlatformPage() {
    * 它在下一次进度回调看到取消标记就断掉在途请求并把任务判失败，
    * 轮询随即拿到 failed，走既有失败分支。中途停不计费（扣费点在提炼返回之后）。
    */
+  /** 等确认期间禁止改动影响出图的任何参数（handler 级，与按钮 disabled 同口径） */
+  const blockedByPendingConfirm = (whatZh: string): boolean => {
+    if (!customNotePendingConfirmRef.current) return false;
+    toast.info(`正在等你确认出图，先点「返回修改」再改${whatZh}`);
+    return true;
+  };
+
   const cancelCustomNoteDistill = async () => {
     // 出图阶段：停发新页即可，在途那张跑完；已出的页已计费、保留
     if (customNoteRendering) {
       customNoteStopRenderRef.current = true;
-      toast.message("正在停止出图：在途的这页会出完，之后不再发新页");
+      // 并发是 KNOWLEDGE_CARD_RENDER_CONCURRENCY 路，在途可能不止一页，别说成「这页」
+      toast.message(`正在停止出图：在途的页（最多 ${KNOWLEDGE_CARD_RENDER_CONCURRENCY} 页）会出完并计费，之后不再发新页`);
       return;
     }
     const jobId = customNoteDistillJobId;
@@ -8305,6 +8355,15 @@ export default function PlatformPage() {
     notePart?: "upper" | "lower",
     notePage?: { index: number; total: number },
     imageProvider?: "evolink" | "openai",
+    /**
+     * 确认弹窗那一刻冻住的参数（复审 P1）。传了就用它，不再读实时 state——
+     * 实测：确认期间改了正文/版式，付费请求发的仍是旧闭包的稿，用户看到的和买到的对不上。
+     */
+    snapshot?: {
+      distillModel: typeof customNoteDistillModel;
+      subjectPosition: typeof customNoteSubjectPosition;
+      infographicTemplateId: string | null;
+    },
   ): Promise<string> => {
     const sceneId = `custom-note-${notePage?.index ?? notePart ?? "single"}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const progressJobId = newPlatformCompositeProgressJobId();
@@ -8329,14 +8388,14 @@ export default function PlatformPage() {
           : {}),
       ...(kind === "single_page_knowledge_card"
         ? {
-            distillModel: customNoteDistillModel,
-            subjectPosition: customNoteSubjectPosition,
+            distillModel: snapshot?.distillModel ?? customNoteDistillModel,
+            subjectPosition: snapshot?.subjectPosition ?? customNoteSubjectPosition,
             ...(imageProvider ? { imageProvider } : {}),
             // 0909：OpenAI 官方优先，档位随开关；WaveSpeed / EvoLink 由服务端按固定序兜底
             openaiImageVariant: readOpenAiImageVariantPref(),
             // 版式走独立字段进出图指令；拼进 scriptContext 会被当正文印出来
-            ...(customNoteInfographicTemplateId
-              ? { infographicTemplateId: customNoteInfographicTemplateId }
+            ...((snapshot ? snapshot.infographicTemplateId : customNoteInfographicTemplateId)
+              ? { infographicTemplateId: (snapshot ? snapshot.infographicTemplateId : customNoteInfographicTemplateId)! }
               : {}),
           }
         : {}),
@@ -8535,25 +8594,52 @@ export default function PlatformPage() {
         const total = pages.length;
         const qLabel = "4K";
         const credits = plan.credits || knowledgeCardCreditsForPages(total, customNoteDistillModel);
-        setCustomNoteBusy(false);
-        const continueGen = await askKnowledgeCardPreflight({
-          levelZh: KNOWLEDGE_CARD_DETAIL_LEVEL_LABEL_ZH[customNoteDetailLevel],
-          layoutZh: KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH[customNoteSubjectPosition],
-          templateZh: customNoteInfographicLabelZh || "未选（按正文自动）",
-          distillModelZh:
-            KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS.find((o) => o.id === customNoteDistillModel)?.labelZh
-            || String(customNoteDistillModel),
+        /**
+         * 复审 P1：等确认期间**不解锁** busy。以前这里 setCustomNoteBusy(false) 之后才 await，
+         * 正文、成稿档、版式、模板、生成按钮全是活的，改完再点确认，
+         * 付费请求发的还是旧闭包里的稿——用户看到的和买到的对不上。
+         */
+        const confirmRevision = customNoteRevisionRef.current;
+        const pendingSnapshot = {
+          distilled,
+          revision: confirmRevision,
+          distillModel: customNoteDistillModel,
+          detailLevel: customNoteDetailLevel,
+          subjectPosition: customNoteSubjectPosition,
+          infographicTemplateId: customNoteInfographicTemplateId,
           pageCount: total,
           qualityZh: qLabel,
           credits,
-        });
+        } as const;
+        const continueGen = await askKnowledgeCardPreflight({
+          levelZh: KNOWLEDGE_CARD_DETAIL_LEVEL_LABEL_ZH[pendingSnapshot.detailLevel],
+          layoutZh: KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH[pendingSnapshot.subjectPosition],
+          templateZh: customNoteInfographicLabelZh || "未选（按正文自动）",
+          distillModelZh:
+            KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS.find((o) => o.id === pendingSnapshot.distillModel)?.labelZh
+            || String(pendingSnapshot.distillModel),
+          pageCount: pendingSnapshot.pageCount,
+          qualityZh: pendingSnapshot.qualityZh,
+          credits: pendingSnapshot.credits,
+        }, confirmRevision);
         if (!continueGen) {
           toast.success(`已保留提炼稿（约 ${total} 页），未出图`);
           setCustomNoteDistillPhase("idle");
           setCustomNoteProgress({ status: "idle", percent: 0 });
           return;
         }
-        setCustomNoteBusy(true);
+        // 确认期间稿件版本变了（换了稿/切了档）：这次确认作废，不拿旧快照去付费出图
+        if (customNoteRevisionRef.current !== confirmRevision) {
+          toast.message("稿件已变化，这次确认作废；请重新点生成");
+          setCustomNoteDistillPhase("idle");
+          setCustomNoteProgress({ status: "idle", percent: 0 });
+          return;
+        }
+        const renderSnapshot = {
+          distillModel: pendingSnapshot.distillModel,
+          subjectPosition: pendingSnapshot.subjectPosition,
+          infographicTemplateId: pendingSnapshot.infographicTemplateId,
+        };
         toast.success(`开始出图 · ${total} 页 · ${qLabel} · ${KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH[customNoteSubjectPosition]}`);
         /**
          * 0908 用户令：多页并发出图。页按序轮流分给 EvoLink（奇数页）与 OpenAI 官方（偶数页）同时打，
@@ -8592,7 +8678,14 @@ export default function PlatformPage() {
             setCustomNotePageProgress({ i: Math.min(total, done + 1), n: total });
             markInflight(runId, i, true);
             try {
-              const url = await generateCustomNoteOne(distilled, "single_page_knowledge_card", undefined, { index: i + 1, total });
+              const url = await generateCustomNoteOne(
+                pendingSnapshot.distilled,
+                "single_page_knowledge_card",
+                undefined,
+                { index: i + 1, total },
+                undefined,
+                renderSnapshot,
+              );
               urls[i] = url;
             } finally {
               markInflight(runId, i, false);
@@ -8611,11 +8704,13 @@ export default function PlatformPage() {
         customNoteStopRenderRef.current = false;
         const madePages = urls.filter(Boolean).length;
         if (stoppedByUser && madePages < total) {
-          // 已出的页保留下来（它们已经计费），进度条停在实际完成度，不谎报 100%
+          // 复审 P2：这里以前写 succeeded，子组件就把进度强拉 100%、还藏掉停止说明。
+          // 停止是独立终态：已出的页保留（已计费），进度条如实停在完成度，缺页的补出入口照常开着。
           setCustomNoteProgress({
-            status: "succeeded",
+            status: "stopped",
             percent: knowledgeCardProgressFromRender(madePages, total),
             label: `已停止 · 出图 ${madePages}/${total} 页`,
+            error: `未出的 ${total - madePages} 页不扣费；需要的话可以逐页补出`,
           });
           toast.message(`已停止出图：完成 ${madePages}/${total} 页，按已出页计费（未出的页不扣）`);
         } else {
@@ -15420,6 +15515,7 @@ export default function PlatformPage() {
                       disabled={customNoteBusy}
                       selectedTemplateId={customNoteInfographicTemplateId}
                       onSelect={(t) => {
+                        if (blockedByPendingConfirm("模板类型")) return;
                         setCustomNoteInfographicTemplateId(t?.id ?? null);
                         setCustomNoteInfographicLabelZh(t?.labelZh ?? null);
                         if (t) {
@@ -15448,7 +15544,11 @@ export default function PlatformPage() {
                       : "输入中文文案或分镜脚本，系统自动翻译并生成 2×4 编导分镜图…（建议 100–800 字）"
                 }
                 value={customNoteText}
-                onChange={(e) => setCustomNoteText(e.target.value)}
+                onChange={(e) => {
+                  // 复审 P1：光靠 disabled 挡不住键盘/脚本绕行——等确认期间 handler 自己也要拒
+                  if (customNotePendingConfirmRef.current) return;
+                  setCustomNoteText(e.target.value);
+                }}
                 // 派生中文本框只读：此刻框里是完整版，编辑会被派生结果覆盖（审查 P1）
                 disabled={customNoteBusy || customNoteLevelSwitching}
               />
@@ -15664,6 +15764,7 @@ export default function PlatformPage() {
                       disabled={customNoteBusy}
                       title="横版 16:9 固定；只改主体视觉在画面中的位置"
                       onChange={(e) => {
+                        if (blockedByPendingConfirm("版式")) return;
                         const next = resolveKnowledgeCardSubjectPosition(e.target.value);
                         setCustomNoteSubjectPosition(next);
                         try { localStorage.setItem("mvs-knowledge-card-subject-position", next); } catch { /* ignore */ }

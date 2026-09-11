@@ -334,41 +334,116 @@ function resolveKnowledgeCardDistillStallMs(): number {
   return Number.isFinite(raw) && raw >= 60_000 ? raw : 20 * 60_000;
 }
 
-export const KNOWLEDGE_CARD_CANCELLED_MESSAGE = "已按你的要求停止读档（未开始计费）";
 
 /**
  * 读档 / 派生的「终止」：worker 侧的取消监视（0911 用户令：面板要有终止按钮）。
- * · 信号源是 jobs.input.cancelRequestedAt，由路由写入，跨进程有效；
- * · 每次进度回调查一次（读档本就按段回调，等于秒级响应），不额外起轮询；
- * · 查库失败按「没取消」处理——宁可多跑一会儿，也不能因为一次抖动把用户的活判死；
- * · 计费点在 prepare 返回之后，所以中途停＝一分不扣，不存在退款问题。
+ *
+ * 复审 P1 的教训：监视**不能挂在业务进度上**。短文单发根本没有进度回调，
+ * 长请求也可能好几分钟没有段落进度——用户点了停，任务照跑照出稿。
+ * 现在是每个任务一条独立的定时轮询：
+ * · 启动即查一次，之后按 CANCEL_POLL_MS 查，不等业务进度；
+ * · 同一任务最多一条查询在途（inFlight 自锁），慢库不会把轮询堆起来；
+ * · 查到取消就 abort 整条链共用的 controller，在途 fetch 立刻断；
+ * · 定时器里的异常全部吞进日志，绝不产生未处理拒绝；
+ * · 数据库故障不算取消（isPlatformJobCancelRequested 会抛错），暂缓判断继续盯；
+ * · 结算前用 check({ force: true }) 强制查一次，不吃轮询间隔的缓存；
+ * · dispose 在任务 finally 里调用，定时器与监听器一起清掉。
  */
-function makeKnowledgeCardCancelWatcher(platformJobId?: string | null): {
+export const KNOWLEDGE_CARD_CANCELLED_MESSAGE = "已按你的要求停止读档";
+const KNOWLEDGE_CARD_CANCEL_POLL_MS = Math.max(
+  500,
+  Number(process.env.KNOWLEDGE_CARD_CANCEL_POLL_MS) || 2_000,
+);
+
+/** 用户主动终止：与超时、供应商故障区分开，worker 据此直接进终态、不重排 */
+export class KnowledgeCardCancelledError extends Error {
+  readonly code = "knowledge_card_cancelled";
+  constructor(message = KNOWLEDGE_CARD_CANCELLED_MESSAGE) {
+    super(message);
+    this.name = "KnowledgeCardCancelledError";
+  }
+}
+
+export function isKnowledgeCardCancelledJobError(err: unknown): boolean {
+  return (err as { code?: string } | null)?.code === "knowledge_card_cancelled";
+}
+
+export type KnowledgeCardCancelWatcher = {
   signal: AbortSignal;
-  check: () => Promise<void>;
-} {
+  /** 业务侧顺手查一次；force 跳过轮询间隔缓存（结算前必须 force） */
+  check: (options?: { force?: boolean }) => Promise<void>;
+  dispose: () => void;
+};
+
+export function makeKnowledgeCardCancelWatcher(
+  platformJobId?: string | null,
+  options: { pollMs?: number; read?: (jobId: string) => Promise<boolean> } = {},
+): KnowledgeCardCancelWatcher {
   const controller = new AbortController();
-  let lastCheckedAt = 0;
-  const check = async () => {
-    if (controller.signal.aborted) throw new Error(KNOWLEDGE_CARD_CANCELLED_MESSAGE);
-    if (!platformJobId) return;
-    // 进度回调可能很密（逐页读稿）：最多每 2 秒查一次库
-    const now = Date.now();
-    if (now - lastCheckedAt < 2_000) return;
-    lastCheckedAt = now;
-    let cancelled = false;
-    try {
+  const pollMs = Math.max(200, options.pollMs ?? KNOWLEDGE_CARD_CANCEL_POLL_MS);
+  const readCancelled =
+    options.read
+    ?? (async (jobId: string) => {
       const { isPlatformJobCancelRequested } = await import("./repository.js");
-      cancelled = await isPlatformJobCancelRequested(platformJobId);
-    } catch {
-      return;
-    }
-    if (cancelled) {
-      controller.abort(new Error(KNOWLEDGE_CARD_CANCELLED_MESSAGE));
-      throw new Error(KNOWLEDGE_CARD_CANCELLED_MESSAGE);
+      return isPlatformJobCancelRequested(jobId);
+    });
+
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let inFlight = false;
+  let lastCheckedAt = 0;
+  let disposed = false;
+
+  const abortNow = () => {
+    if (!controller.signal.aborted) controller.abort(new KnowledgeCardCancelledError());
+  };
+
+  /** 真正查库；同一任务同时只允许一条在途，返回是否已取消 */
+  const readOnce = async (): Promise<boolean> => {
+    if (!platformJobId || inFlight) return controller.signal.aborted;
+    inFlight = true;
+    try {
+      const cancelled = await readCancelled(platformJobId);
+      lastCheckedAt = Date.now();
+      if (cancelled) abortNow();
+      return cancelled;
+    } finally {
+      inFlight = false;
     }
   };
-  return { signal: controller.signal, check };
+
+  const check: KnowledgeCardCancelWatcher["check"] = async (opts) => {
+    if (controller.signal.aborted) throw new KnowledgeCardCancelledError();
+    if (!platformJobId) return;
+    if (!opts?.force && Date.now() - lastCheckedAt < pollMs) return;
+    // 业务线程上的查库失败不许把用户的活判死：咽掉，交给定时器继续盯
+    const cancelled = await readOnce().catch(() => false);
+    if (cancelled) throw new KnowledgeCardCancelledError();
+  };
+
+  if (platformJobId) {
+    // 启动即查一次（用户可能在 worker 领单前就点了停）
+    void readOnce().catch((err) => {
+      console.warn("[knowledgeCardCancel] 首次查询失败，继续监视：", String((err as Error)?.message || err).slice(0, 120));
+    });
+    timer = setInterval(() => {
+      void readOnce().catch((err) => {
+        console.warn("[knowledgeCardCancel] 轮询查询失败，继续监视：", String((err as Error)?.message || err).slice(0, 120));
+      });
+    }, pollMs);
+    // 不要因为这条定时器把进程留住
+    (timer as unknown as { unref?: () => void }).unref?.();
+  }
+
+  return {
+    signal: controller.signal,
+    check,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      if (timer) clearInterval(timer);
+      timer = undefined;
+    },
+  };
 }
 
 export async function withTimeout<T>(
@@ -475,6 +550,8 @@ function getPlatformJobErrorMessage(error: unknown): string {
 
 /** Preserve the original error message inside the thrown error so job.error field is diagnostic. */
 function buildPlatformJobError(error: unknown): Error {
+  // 用户终止原样上抛：包一层会丢掉错误码，终态判定就只能回去猜文案（复审 P2）
+  if (isKnowledgeCardCancelledJobError(error)) return error as Error;
   const originalMsg = error instanceof Error ? error.message : String(error ?? "unknown");
   const userMsg = getPlatformJobErrorMessage(error);
   // Embed original message (≤400 chars) so operators can see actual cause in job.error
@@ -3340,6 +3417,7 @@ async function processPlatformJob(
         if (!platformJobId) return;
         await patchJobRunningProgress(platformJobId, patch).catch(() => {});
       };
+      try {
       await patchProgress({ distillStage: "deriving", distillPercent: 1 });
       const { knowledgeCardDistillActivity } = await import("../services/knowledgeCardDistillActivity.js");
       const derived = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), () => deriveKnowledgeCardCompact({
@@ -3359,6 +3437,8 @@ async function processPlatformJob(
         },
       }));
       await patchProgress({ distillStage: "finishing", distillPercent: 98 });
+      // 落库之前强制查一次（跳过轮询间隔缓存）：取消赢了就不写 receipt、不交稿
+      await cancel.check({ force: true });
       // 派生稿记同档 receipt：出图按完整版的档位结算
       await recordKnowledgeCardDistillReceipt(Number(jobUserId), distillModel, derived.markdown);
       const plan = planKnowledgeCardPages(derived.markdown, distillModel);
@@ -3376,6 +3456,9 @@ async function processPlatformJob(
           credits: plan.credits,
         },
       };
+      } finally {
+        cancel.dispose();
+      }
     }
 
     // ── knowledge_card_distill ───────────────────────────────────────────────
@@ -3411,6 +3494,7 @@ async function processPlatformJob(
         if (!platformJobId) return;
         await patchJobRunningProgress(platformJobId, patch).catch(() => {});
       };
+      try {
       const { knowledgeCardDistillActivity } = await import("../services/knowledgeCardDistillActivity.js");
       const prepared = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), () => prepareKnowledgeCardCopy({
         sourceText,
@@ -3447,6 +3531,12 @@ async function processPlatformJob(
         },
       }));
       await patchProgress({ distillStage: "finishing", distillPercent: 98 });
+      /**
+       * 结算闸门（复审 P2）：落 receipt 与扣费之前强制查一次取消，**不吃轮询间隔缓存**。
+       * 这一刻之后就进入不可取消阶段：取消接口那边看到 running 只登记请求，
+       * 由 worker 按已完成结算；用户拿到的是「已完成，无法取消」，不是假的「未开始计费」。
+       */
+      await cancel.check({ force: true });
       const plan = planKnowledgeCardPages(prepared.distilledMarkdown, prepared.distillModel);
 
       // 服务端账本（审查必须修 P0·6）：真实提炼产出的稿子绑档位，出图页费按此结算
@@ -3541,6 +3631,9 @@ async function processPlatformJob(
           pages: plan.pages,
         },
       };
+      } finally {
+        cancel.dispose();
+      }
     }
 
     throw new Error(`不支持的平台任务动作：${input.action}`);
@@ -3815,6 +3908,11 @@ async function runClaimedJob(
       error instanceof Error &&
       (error.name === "ManhuaLearnCancelledError" ||
         /用户已停止学习/.test(error.message));
+    // 读档 / 派生的用户终止：按稳定错误码认（不靠文案），直接进终态，绝不重排——
+    // 重排等于用户点了停、任务又自己跑起来（复审 P2）
+    const knowledgeCardCancelled = isKnowledgeCardCancelledJobError(error)
+      || (error instanceof Error && (error as { cause?: unknown }).cause !== undefined
+        && isKnowledgeCardCancelledJobError((error as { cause?: unknown }).cause));
     const message =
       job.type === "platform" && error instanceof Error
         ? error.message
@@ -3967,6 +4065,9 @@ async function runClaimedJob(
       await refundCreditsOnFailure(job.id, MANHUA_ASSEMBLE_LEDGER_TYPE, "task_failed", "合成失败或超时·退回积分")
         .catch(refundError => console.error("[Jobs] assemble refund pending:", refundError));
       await markJobFailed(job.id, message);
+    } else if (knowledgeCardCancelled) {
+      // 文案按读档说，不套用学习链那句无关的「已停止学习」
+      await markJobFailed(job.id, KNOWLEDGE_CARD_CANCELLED_MESSAGE);
     } else if (userCancelled) {
       await markJobFailed(job.id, "用户已停止学习；已落盘内容保留");
     } else if (

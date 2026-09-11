@@ -933,6 +933,8 @@ async function invokeDistillLlm(params: {
   if (!chain.length) throw new Error("提炼通道未配置，请稍后重试");
   let lastError: Error | null = null;
   for (let i = 0; i < chain.length; i++) {
+    // 进网关之前先看有没有被叫停（复审 P1：已取消的信号进主路，以前仍会打一枪）
+    params.abortSignal?.throwIfAborted();
     const step = chain[i]!;
     touchKnowledgeCardDistillActivity();
     try {
@@ -1251,6 +1253,9 @@ async function refineOnce(params: {
     });
     return refined;
   } catch (err) {
+    // 复审 P1：取消必须先判。否则统稿期间点停 → 这里「保留输入稿」→ prepare 一路返回成功，
+    // 用户点了终止，服务层却交了一份稿
+    if (isKnowledgeCardCancelledError(err, params.abortSignal)) throw err;
     if (isSseContentSafetyError(err)) throw err;
     console.warn(
       `[knowledgeCardDistill] refine(${params.stage}) failed, keep input: ${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`,
@@ -1633,6 +1638,8 @@ export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillMod
   ): Promise<KnowledgeCardPageSelection[]> => {
     const picked: KnowledgeCardPageSelection[] = [];
     for (let i = 0; i < sheets.length; i += TRIAGE_SHEETS_PER_CALL) {
+      // 每组开始前先看有没有被叫停：不靠进度回调，也不等本组跑完
+      abortSignal?.throwIfAborted();
       if (i > 0) await onProgress?.(i, sheets.length);
       const group = sheets.slice(i, i + TRIAGE_SHEETS_PER_CALL);
       const pageNumbers = group.flatMap((sheet) => sheet.pageNumbers);
@@ -1664,11 +1671,15 @@ export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillMod
               system: buildPageTriageSystem(),
               userText,
               imageUrls,
+              // 复审 P1：主通道以前根本没拿到取消信号，已取消还会照打一次 fetch
+              abortSignal,
               fallback: chainFallback,
             });
         const allowed = new Set(pageNumbers);
         for (const item of parsePageTriage(raw)) if (allowed.has(item.pageNumber)) picked.push(item);
       } catch (err) {
+        // 取消原样抛：不能被「本组不选参考页」这条容错吞掉（复审 P1）
+        if (isKnowledgeCardCancelledError(err, abortSignal)) throw err;
         if (isSseContentSafetyError(err)) throw err;
         console.warn(`[knowledgeCardDistill] 目录页扫读失败（第 ${Math.floor(i / TRIAGE_SHEETS_PER_CALL) + 1}/${Math.ceil(sheets.length / TRIAGE_SHEETS_PER_CALL)} 组，目录页 ${i + 1}–${Math.min(sheets.length, i + TRIAGE_SHEETS_PER_CALL)}），本组不选参考页：${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`);
       }
@@ -1697,6 +1708,8 @@ export async function prepareKnowledgeCardCopy(input: {
   /** 用户点「终止」：在途请求立刻断，段与段之间也不再往下跑 */
   abortSignal?: AbortSignal;
 }): Promise<PrepareKnowledgeCardCopyResult> {
+  // 已经取消就别起步：抽取、挑页、提炼一律不做
+  input.abortSignal?.throwIfAborted();
   const modelName = resolveKnowledgeCardDistillModel(input.distillModel);
   const detailLevel = resolveKnowledgeCardDetailLevel(input.detailLevel);
   const files = Array.isArray(input.files) ? input.files : [];
@@ -1764,6 +1777,8 @@ export async function prepareKnowledgeCardCopy(input: {
     if (mergedRaw.length >= 8000 && distilled.length < Math.min(800, mergedRaw.length * 0.02)) {
       throw new Error("提炼结果过短，疑似过度压缩，请重试");
     }
+    // 交稿前最后一道：取消赢了就不交（复审 P1·B 的实测反例——signal 已 aborted 仍返回 11225 字）
+    input.abortSignal?.throwIfAborted();
     return {
       distilledMarkdown: distilled,
       skippedDistill: false,
