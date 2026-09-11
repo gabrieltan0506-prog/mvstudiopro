@@ -13,6 +13,7 @@ import {
   type KnowledgeCardTier,
 } from "./knowledgeCardGatewayOrder.js";
 import { GLM_53_FLASH_EVOLINK_MODEL, GLM_53_FLASH_OPENROUTER_MODEL } from "./glmModels.js";
+import { isSseResponse, readGlmSseStream } from "./sseChatStream.js";
 import {
   KNOWLEDGE_CARD_DISTILL_MODEL_GLM,
   resolveKnowledgeCardDistillModel,
@@ -188,11 +189,15 @@ async function chatOnceInner(gw: DeriveGateway, params: { system: string; user: 
         { role: "user", content: params.user },
       ],
       temperature: 0.2,
+      // 0911 用户令：全链流式（首字节太久会被 Cloudflare 524 / undici 300 秒掐断）
+      stream: true,
+      stream_options: { include_usage: true },
       ...generationOptions,
     }),
     signal: params.abortSignal ?? AbortSignal.timeout(DERIVE_TIMEOUT_MS),
   });
-  const text = await res.text();
+  // 上游忽略 stream 时按普通 JSON 读，不能只看「我发了 stream:true」
+  const text = isSseResponse(res) && res.body ? await readGlmSseStream(res.body) : await res.text();
   if (!res.ok) throw new Error(`derive_upstream_failed:${gw.name}:${res.status}:${text.slice(0, 200)}`);
   let json: { choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }> };
   try {

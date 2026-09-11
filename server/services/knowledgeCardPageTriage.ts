@@ -7,6 +7,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivity.js";
 import { OPENROUTER_DEEPSEEK_PROVIDER_LOCK } from "./knowledgeCardGatewayOrder.js";
+import { isSseResponse, readGlmSseStream } from "./sseChatStream.js";
 
 
 export const PAGE_TRIAGE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_TRIAGE_MODEL_EVOLINK || "deepseek-v4.1-flash").trim();
@@ -62,6 +63,9 @@ async function visionChatOnce(gw: TriageGateway, params: { system: string; userT
       temperature: 0.1,
       max_tokens: 16_384,
       response_format: { type: "json_object" },
+      // 0911 用户令：全链流式
+      stream: true,
+      stream_options: { include_usage: true },
       // 0910 用户令：思考一律打开、不准关闭，档位 high
       ...(gw.name === "evolink"
         ? { thinking: { type: "enabled" }, reasoning_effort: "high" }
@@ -70,7 +74,7 @@ async function visionChatOnce(gw: TriageGateway, params: { system: string; userT
     }),
     signal: params.abortSignal ?? AbortSignal.timeout(TRIAGE_TIMEOUT_MS),
   });
-  const text = await res.text();
+  const text = isSseResponse(res) && res.body ? await readGlmSseStream(res.body) : await res.text();
   if (!res.ok) throw new Error(`triage_upstream_failed:${gw.name}:${res.status}:${text.slice(0, 200)}`);
   let json: { choices?: Array<{ message?: { content?: unknown } }> };
   try {

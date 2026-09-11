@@ -42,6 +42,40 @@ function recordFetch(responses: Array<() => Response>) {
   return { calls, spy };
 }
 
+/** 造一条与上游同形的 SSE 流：逐 token 发 delta，末帧带 finish_reason 与 usage */
+const sse = (content: string) => {
+  const frames = [...content.match(/[\s\S]{1,40}/g) || []].map((piece) =>
+    `data: ${JSON.stringify({ model: "m", choices: [{ delta: { content: piece } }] })}\n\n`,
+  );
+  frames.push(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }], usage: { completion_tokens: 9 } })}\n\n`);
+  frames.push("data: [DONE]\n\n");
+  return new Response(frames.join(""), {
+    status: 200,
+    headers: { "content-type": "text/event-stream; charset=utf-8" },
+  });
+};
+
+describe("派生链流式输出（0911 用户令：全链改流式）", () => {
+  it("发 stream:true + stream_options，SSE 分帧正文被还原成整份稿子", async () => {
+    stubKeys();
+    const { calls } = recordFetch([() => sse(PICKED)]);
+    const r = await deriveKnowledgeCardCompact({ fullMarkdown: FULL, targetSections: 3 });
+    expect(r.sections).toBe(3);
+    expect(r.markdown).toContain("## 第1节");
+    expect(r.markdown).toContain("## 第3节");
+    expect(calls[0]!.body.stream).toBe(true);
+    expect(calls[0]!.body.stream_options).toEqual({ include_usage: true });
+  });
+
+  it("上游忽略 stream 直接回 JSON 时照常解析，不交白卷", async () => {
+    stubKeys();
+    const { calls } = recordFetch([() => ok(PICKED)]);
+    const r = await deriveKnowledgeCardCompact({ fullMarkdown: FULL, targetSections: 3 });
+    expect(r.sections).toBe(3);
+    expect(calls[0]!.body.stream).toBe(true);
+  });
+});
+
 describe("派生链真实适配层参数契约（终审 P2）", () => {
   it("选 GLM：OpenRouter GLM 503 → EvoLink GLM 503 → OpenRouter DeepSeek 成功；各跳参数契约分别正确", async () => {
     stubKeys();
@@ -132,3 +166,45 @@ describe("派生链真实适配层参数契约（终审 P2）", () => {
     expect(body.max_tokens).toBe(16_000);
   });
 });
+
+describe("挑页与经济档也走流式（0911 用户令）", () => {
+  it("挑页：SSE 还原出合法 JSON 页表，请求带 stream:true", async () => {
+    stubKeys();
+    const { invokePageTriageJson } = await import("./knowledgeCardPageTriage");
+    const { calls } = recordFetch([() => sse('{"pages":[{"page":5,"reason":"图解"}]}')]);
+    const out = await invokePageTriageJson({ system: "s", userText: "u", imageUrls: ["https://x/1.jpg"] });
+    expect(out).toContain('"page":5');
+    expect(calls[0]!.body.stream).toBe(true);
+    expect(calls[0]!.body.stream_options).toEqual({ include_usage: true });
+  });
+
+  it("经济档 JSON 通道：SSE 还原出业务 JSON，请求带 stream:true", async () => {
+    stubKeys();
+    const { invokeDeepSeekJsonChatRaw } = await import("./platformTopicShortlist");
+    const payload = JSON.stringify({ items: [{ title: "一个够长的业务标题", reason: "够长的理由文本" }] });
+    const { calls } = recordFetch([() => sse(payload)]);
+    const json = await invokeDeepSeekJsonChatRaw({ system: "s", user: "u" });
+    expect(String(json.choices?.[0]?.message?.content)).toContain("业务标题");
+    expect(calls[0]!.body.stream).toBe(true);
+    expect(new URL(calls[0]!.url).hostname).toBe("openrouter.ai");
+  });
+
+  it("经济档：OpenRouter 挂了落 EvoLink 同款 glm-5.3（0911 用户令：OpenRouter 优先）", async () => {
+    stubKeys();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const payload = JSON.stringify({ items: [{ title: "一个够长的业务标题", reason: "够长的理由文本" }] });
+    const { calls } = recordFetch([
+      () => new Response("or down", { status: 503 }),
+      () => sse(payload),
+    ]);
+    await invokeEconomy();
+    expect(calls.map((c) => new URL(c.url).hostname)).toEqual(["openrouter.ai", "direct.evolink.ai"]);
+    expect(calls[1]!.body.model).toBe("glm-5.3");
+    expect(calls[1]!.body.stream).toBe(true);
+  });
+});
+
+async function invokeEconomy() {
+  const { invokeDeepSeekJsonChatRaw } = await import("./platformTopicShortlist");
+  return invokeDeepSeekJsonChatRaw({ system: "s", user: "u" });
+}

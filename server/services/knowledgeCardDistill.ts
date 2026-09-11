@@ -31,6 +31,7 @@ import {
   type KnowledgeCardDistillModelId,
 } from "../../shared/knowledgeCardDistillModels.js";
 import { GLM_53_FLASH_EVOLINK_MODEL, GLM_53_FLASH_OPENROUTER_MODEL } from "./glmModels.js";
+import { isSseResponse, readGlmSseStream } from "./sseChatStream.js";
 import {
   KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER,
   KNOWLEDGE_CARD_GLM_FIRST_ORDER,
@@ -762,6 +763,10 @@ async function invokeDistillViaGateway(params: {
     body.max_tokens = Math.min(params.maxTokens ?? DISTILL_MAX_TOKENS, QWEN_MAX_TOKENS);
   }
   if (!key) throw new Error(`提炼通道未配置（${gatewayLabel(params.gateway)}），请稍后重试`);
+  // 0911 用户令：全链流式。非流式时长输入 + 强制思考的首字节会撞 Cloudflare ~100 秒与
+  // undici 写死的 300 秒 headersTimeout（漫剧学习链 0830 实弹），开流后两个计时器都不触发。
+  body.stream = true;
+  body.stream_options = { include_usage: true };
 
   let res: Response;
   // 单次统稿可达 15 分钟，超过卡死阈值：请求在途也按分钟 touch 心跳，别把自己判死
@@ -774,7 +779,8 @@ async function invokeDistillViaGateway(params: {
       signal: AbortSignal.timeout(distillFetchTimeoutMs(params.modelName, params.timeoutMs)),
       body: JSON.stringify(body),
     });
-    raw = await res.text();
+    // 按**响应类型**决定读法：上游忽略 stream 直接回 JSON 时用 SSE 读取器会读出空正文
+    raw = isSseResponse(res) && res.body ? await readGlmSseStream(res.body) : await res.text();
   } catch (err) {
     throw mapFetchAbortError(err);
   } finally {

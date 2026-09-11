@@ -8,6 +8,7 @@ import {
   OPENROUTER_GLM_PROVIDER_LOCK,
   glm53ReasoningEffort,
 } from "./glmModels.js";
+import { isSseResponse, readGlmSseStream } from "./sseChatStream.js";
 import { extractFirstChoicePlainText, invokeLLM, isTransientLlmError } from "../_core/llm.js";
 import { getPlatformStage2OpenAiModel } from "../config/platformSwitches.js";
 import { TRPCError } from "@trpc/server";
@@ -715,6 +716,9 @@ export function buildDeepSeekExpandRequestBody(params: {
       max_tokens: maxTokens,
       response_format: { type: "json_object" },
       reasoning_effort: glm53ReasoningEffort("high"),
+      // 0911 用户令：全链流式
+      stream: true,
+      stream_options: { include_usage: true },
     };
   }
   return {
@@ -724,6 +728,9 @@ export function buildDeepSeekExpandRequestBody(params: {
     max_tokens: maxTokens,
     response_format: { type: "json_object" },
     reasoning: { effort: "high" },
+    // 0911 用户令：全链流式
+    stream: true,
+    stream_options: { include_usage: true },
     // 审查返工 6：不带 require_parameters 时 OpenRouter 会把请求路由给不支持 reasoning/
     // response_format 的供应商并静默忽略参数；0911 再加 Z.AI 自营锁，不落转售方
     provider: { ...OPENROUTER_GLM_PROVIDER_LOCK },
@@ -792,7 +799,7 @@ async function callEconomyGateway(
       body: JSON.stringify(buildDeepSeekExpandRequestBody({ ...params, gateway })),
     },
   );
-  const raw = await res.text();
+  const raw = isSseResponse(res) && res.body ? await readGlmSseStream(res.body) : await res.text();
   if (!res.ok) throw new Error(`经济档 HTTP ${res.status}: ${raw.slice(0, 160)}`);
   let json: DeepSeekJsonChatResponse;
   try {
