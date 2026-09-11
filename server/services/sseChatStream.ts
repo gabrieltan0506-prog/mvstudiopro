@@ -30,10 +30,44 @@ export async function readWithIdleTimeout<T>(
   }
 }
 
+/**
+ * 严格完整性模式（0911 终审 P1）：只有本次新接流式的四条链启用，漫剧学习链维持旧契约。
+ * 旧契约只管「把 delta 拼起来」，中途 error 帧 / 畸形业务帧 / 没有结束帧就 EOF 这三种断流
+ * 都会带着**半截正文**返回，下游看「有正文、JSON 能解析、节数够」就当成稿——这正是要堵的口子。
+ */
+export type SseReadOptions = {
+  /** 断流一律判失败（抛错→网关层换下一跳），不把半截正文当成功 */
+  strictCompletion?: boolean;
+};
+
+/** 成功的结束原因：只有这些才算生成正常收口 */
+const SSE_SUCCESS_FINISH_REASONS = new Set(["stop", "end_turn", "eos", "complete"]);
+
+/** 断流错误统一带这个标记，便于上层分类（可恢复 → 换下一跳） */
+export class SseIncompleteStreamError extends Error {
+  readonly code = "sse_incomplete_stream";
+  constructor(
+    message: string,
+    /** 断流前已经收到的证据：不写成成品，只进日志与错误回执 */
+    readonly evidence: {
+      model?: string;
+      provider?: string;
+      usage?: Record<string, unknown>;
+      finishReason?: string | null;
+      partialChars: number;
+    },
+  ) {
+    super(message);
+    this.name = "SseIncompleteStreamError";
+  }
+}
+
 export async function readGlmSseStream(
   body: ReadableStream<Uint8Array>,
   maxResponseBytes?: number,
+  options: SseReadOptions = {},
 ): Promise<string> {
+  const strict = options.strictCompletion === true;
   const cap = Math.max(
     1_024,
     Math.min(16 * 1024 * 1024, Math.floor(Number(maxResponseBytes) || 4 * 1024 * 1024)),
@@ -63,6 +97,7 @@ export async function readGlmSseStream(
     let chunk: {
       model?: string;
       provider?: string;
+      error?: unknown;
       choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
       usage?: Record<string, unknown>;
     };
@@ -72,7 +107,17 @@ export async function readGlmSseStream(
       // 注：**不是**半包重试——半包由下面 lines.pop() 留到下一轮处理。
       // 这里丢弃的是心跳、注释行等不可解析内容。
       parseFailures += 1;
+      // 严格模式：业务 data 帧解析不了就判失败——悄悄丢帧会拼出**缺字**的正文，
+      // 而缺字正文照样能过 JSON 解析与节数检查（终审 P1）。
+      // SSE 注释（以 ":" 开头）与空行在上面就被 `startsWith("data:")` 挡掉了，不会走到这里。
+      if (strict) throw incomplete(`上游流出现无法解析的数据帧：${payload.slice(0, 120)}`);
       return;
+    }
+    // 0911 审查 P2：OpenRouter 在 200 + SSE 下会把上游错误当成 {"error":…} 帧发回，
+    // 不抛出去就变成「空正文」，四条链各报自己的模糊错误、看不到真实原因
+    if (chunk.error && typeof chunk.error === "object") {
+      sawErrorFrame = true;
+      throw incomplete(`上游流内错误：${JSON.stringify(chunk.error).slice(0, 200)}`);
     }
     const delta = chunk.choices?.[0]?.delta?.content;
     if (typeof delta === "string") content += delta;
@@ -85,6 +130,15 @@ export async function readGlmSseStream(
     if (chunk.provider) provider = String(chunk.provider);
   };
   let parseFailures = 0;
+  let sawErrorFrame = false;
+  const incomplete = (message: string) =>
+    new SseIncompleteStreamError(message, {
+      model: model || undefined,
+      provider: provider || undefined,
+      usage,
+      finishReason,
+      partialChars: content.length,
+    });
   try {
     for (;;) {
       const { done, value } = await readWithIdleTimeout(reader);
@@ -107,6 +161,18 @@ export async function readGlmSseStream(
   }
   if (!content && parseFailures > 0) {
     throw new Error(`GLM 链流式响应无法解析（${parseFailures} 帧解析失败）`);
+  }
+  /**
+   * 严格模式的完整性门禁（终审 P1）：`[DONE]` 本身不证明生成成功，
+   * 必须真见到成功的 finish_reason。缺失＝连接在结束帧之前断了，
+   * length / max_tokens ＝预算耗尽的半截稿，两者都不许当成品交出去。
+   */
+  if (strict) {
+    if (sawErrorFrame) throw incomplete("上游流以错误帧结束");
+    if (!finishReason) throw incomplete("上游流没有结束帧就断开（已收正文视为半截，不予采信）");
+    if (!SSE_SUCCESS_FINISH_REASONS.has(String(finishReason))) {
+      throw incomplete(`上游流非正常结束：finish_reason=${finishReason}`);
+    }
   }
   return JSON.stringify({
     model: model || undefined,

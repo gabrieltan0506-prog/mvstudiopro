@@ -1407,7 +1407,8 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
   }
   if (isGlm53) {
     // OpenRouter 上锁 Z.AI 自营；调用方给了偏好就并进去（0911 用户令：不落转售方）
-    payload.provider = { ...OPENROUTER_GLM_PROVIDER_LOCK, ...(params.openRouterProviderPreferences || {}) };
+    // 锁放在后面：调用方偏好只能补 require_parameters / max_price 之类，不能解开 order / allow_fallbacks
+    payload.provider = { ...(params.openRouterProviderPreferences || {}), ...OPENROUTER_GLM_PROVIDER_LOCK };
   } else if (params.openRouterProviderPreferences) {
     payload.provider = params.openRouterProviderPreferences;
   }

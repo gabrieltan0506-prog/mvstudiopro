@@ -58,12 +58,21 @@ describe("invokeDeepSeekJsonChatRaw（报表/扩写共用经济档通道）", ()
   it("fetch 契约:maxTokens 进请求体、外部 abort 信号并入 fetch signal(复审建议3)", async () => {
     mockFetchOnce({ choices: [{ message: { content: VALID_CONTENT }, finish_reason: "stop" }] });
     const ac = new AbortController();
-    ac.abort();
     await invokeDeepSeekJsonChatRaw({ system: "s", user: "u", maxTokens: 12_345, abortSignal: ac.signal }).catch(() => null);
     const fetchMock = vi.mocked(fetch as any);
     const [, init] = fetchMock.mock.calls[0];
     expect(JSON.parse(String(init?.body)).max_tokens).toBe(12_345);
     expect(init?.signal).toBeInstanceOf(AbortSignal);
+    // 外部信号并入后一起取消
+    ac.abort();
     expect((init?.signal as AbortSignal).aborted).toBe(true);
+  });
+
+  it("调用前已取消：一次外呼都不发（终审 P2：不虚增次数）", async () => {
+    mockFetchOnce({ choices: [{ message: { content: VALID_CONTENT }, finish_reason: "stop" }] });
+    const ac = new AbortController();
+    ac.abort(new Error("任务已截止"));
+    await expect(invokeDeepSeekJsonChatRaw({ system: "s", user: "u", abortSignal: ac.signal })).rejects.toThrow();
+    expect(vi.mocked(fetch as any).mock.calls).toHaveLength(0);
   });
 });

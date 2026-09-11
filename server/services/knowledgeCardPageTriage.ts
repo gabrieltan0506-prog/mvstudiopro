@@ -74,7 +74,9 @@ async function visionChatOnce(gw: TriageGateway, params: { system: string; userT
     }),
     signal: params.abortSignal ?? AbortSignal.timeout(TRIAGE_TIMEOUT_MS),
   });
-  const text = isSseResponse(res) && res.body ? await readGlmSseStream(res.body) : await res.text();
+  const text = isSseResponse(res) && res.body
+    ? await readGlmSseStream(res.body, undefined, { strictCompletion: true })
+    : await res.text();
   if (!res.ok) throw new Error(`triage_upstream_failed:${gw.name}:${res.status}:${text.slice(0, 200)}`);
   let json: { choices?: Array<{ message?: { content?: unknown } }> };
   try {

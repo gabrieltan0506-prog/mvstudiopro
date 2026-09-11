@@ -30,9 +30,6 @@ export const KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER: readonly KnowledgeCardGatewayS
   { gateway: "openrouter", tier: "qwen" },
 ];
 
-/** @deprecated 旧名（档位曾叫「精细」）；等同 DEEPSEEK_FIRST */
-export const KNOWLEDGE_CARD_PREMIUM_ORDER = KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER;
-
 /** 选 GLM 5.3 Flash：GLM 两家 → DeepSeek 两家 → Qwen 两家（同上：OpenRouter 先、EvoLink 兜底） */
 export const KNOWLEDGE_CARD_GLM_FIRST_ORDER: readonly KnowledgeCardGatewayStep[] = [
   { gateway: "openrouter", tier: "glm" },
@@ -42,9 +39,6 @@ export const KNOWLEDGE_CARD_GLM_FIRST_ORDER: readonly KnowledgeCardGatewayStep[]
   { gateway: "dashscope_sg", tier: "qwen" },
   { gateway: "openrouter", tier: "qwen" },
 ];
-
-/** @deprecated 旧名（档位曾叫「轻量」= Qwen 主力）；0911 起轻量档就是 GLM 档 */
-export const KNOWLEDGE_CARD_LIGHT_ORDER = KNOWLEDGE_CARD_GLM_FIRST_ORDER;
 
 /**
  * 选 DeepSeek 时的降档尾段（挑页 fallback 用：不重复 DeepSeek 两跳，也不自造新跳）。

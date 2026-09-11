@@ -114,7 +114,7 @@ describe("派生链真实适配层参数契约（终审 P2）", () => {
     expect(orDs.temperature).toBe(0.2);
   });
 
-  it("EvoLink 的 Qwen 末跳（两档都挂之后）发 EvoLink-Qwen 契约，不是 DeepSeek 那套（终审 P2）", async () => {
+  it("末跳 OpenRouter Qwen（两档四跳都挂之后）：max_tokens 不吃 DeepSeek 翻倍、不带 provider 锁", async () => {
     stubKeys();
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const { calls } = recordFetch([
@@ -127,7 +127,7 @@ describe("派生链真实适配层参数契约（终审 P2）", () => {
     ]);
     const r = await deriveKnowledgeCardCompact({ fullMarkdown: FULL, targetSections: 3 });
     expect(r.sections).toBe(3);
-    // 末跳是 OpenRouter Qwen；EvoLink Qwen 只在轻量历史链里出现，这里验的是 Qwen 跳不吃 DeepSeek 翻倍
+    // 共享顺序里没有 evolink:qwen 跳；这里验的是真实末跳 OpenRouter Qwen 的契约
     const lastBody = calls[calls.length - 1]!.body;
     expect(lastBody.model).toBe("qwen/qwen3.8-max");
     expect(lastBody.max_tokens).toBe(8_000);

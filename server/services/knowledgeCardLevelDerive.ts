@@ -150,6 +150,8 @@ async function chatOnceInner(gw: DeriveGateway, params: { system: string; user: 
     gw.tier === "deepseek"
       ? Math.min(params.maxTokens * 2, 384_000)
       : Math.min(params.maxTokens, qwenTier ? 32_768 : 131_072);
+  // 注意：两条共享顺序里都没有 evolink:qwen 跳，这个分支只在环境变量改序时可达；
+  // 保留是为了契约完整（EvoLink Qwen 的参数与其它跳不同），不是活路径
   const generationOptions: Record<string, unknown> =
     gw.name === "evolink" && qwenTier
       ? {
@@ -197,7 +199,9 @@ async function chatOnceInner(gw: DeriveGateway, params: { system: string; user: 
     signal: params.abortSignal ?? AbortSignal.timeout(DERIVE_TIMEOUT_MS),
   });
   // 上游忽略 stream 时按普通 JSON 读，不能只看「我发了 stream:true」
-  const text = isSseResponse(res) && res.body ? await readGlmSseStream(res.body) : await res.text();
+  const text = isSseResponse(res) && res.body
+    ? await readGlmSseStream(res.body, undefined, { strictCompletion: true })
+    : await res.text();
   if (!res.ok) throw new Error(`derive_upstream_failed:${gw.name}:${res.status}:${text.slice(0, 200)}`);
   let json: { choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }> };
   try {

@@ -8177,7 +8177,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
            * 提炼后 4 页 120 积分保住 4K）。上传文档的提炼是抽文的必要环节，成本已含页费，不另收。
            */
           chargeDistillFee: z.boolean().optional(),
-          /** 两档：deepseek-v4-flash / qwen3.8-max；旧值（sol / terra / OR-qwen / claude / kimi）服务端迁到两档 */
+          /** 两档：deepseek-v4.1-flash / glm-5.3-flash；旧值（sol / terra / qwen / OR-qwen / deepseek-v4 / claude / kimi）服务端迁到两档 */
           distillModel: z.string().max(64).optional(),
           /** 成稿档：精华版（优先重点+简单解说）/ 完整版（第一重点+详细解说） */
           detailLevel: z.enum(["concise", "full"]).optional(),

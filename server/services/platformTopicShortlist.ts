@@ -737,12 +737,24 @@ export function buildDeepSeekExpandRequestBody(params: {
   };
 }
 
+/** 经济档一次真实外呼的痕迹（终审 P2：跨网关回退要记真账） */
+export type EconomyGatewayTrace = {
+  gateway: "openrouter" | "evolink";
+  model: string;
+  outcome: "ok" | "failed" | "skipped_not_configured";
+  detail?: string;
+};
+
 /** 经济档 OpenRouter 响应（choices/usage/model 供上层遥测与解析复用） */
 export type DeepSeekJsonChatResponse = {
   choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
   model?: string;
   provider?: string;
+  /** 我方实际成功的网关（不等于上游 provider） */
+  gateway?: "openrouter" | "evolink";
+  /** 本次调用累计的真实外呼轨迹 */
+  gatewayTrace?: EconomyGatewayTrace[];
 };
 
 /**
@@ -759,20 +771,68 @@ export async function invokeDeepSeekJsonChatRaw(params: {
   const key = String(process.env.OPENROUTER_API_KEY || "").trim();
   const evolinkKey = String(process.env.EVOLINK_API_KEY || "").trim();
   if (!key && !evolinkKey) {
-    const err = new Error("经济档通道未配置") as Error & { gatewayTrace?: unknown };
+    const err = new Error("经济档通道未配置") as Error & { gatewayTrace?: EconomyGatewayTrace[] };
     // 复审五轮 P1-1:fetch 未发生,标记 skipped 供外呼计数排除
     err.gatewayTrace = [{ gateway: "openrouter", model: ECONOMY_MODEL, outcome: "skipped_not_configured" }];
     throw err;
   }
-  // 0911 用户令：OpenRouter 主路（锁 Z.AI）打不通，落 EvoLink 同款 GLM 5.3
-  if (!key) return callEconomyGateway("evolink", params);
-  try {
-    return await callEconomyGateway("openrouter", params);
-  } catch (err) {
-    if (!evolinkKey) throw err;
-    console.warn(`[economy] OpenRouter GLM 5.3 失败 → 改走 EvoLink：${String((err as Error)?.message || err).slice(0, 160)}`);
-    return await callEconomyGateway("evolink", params);
+  /**
+   * 0911 用户令：OpenRouter 主路（锁 Z.AI）打不通，落 EvoLink 同款 GLM 5.3。
+   * 终审 P2：跨网关回退必须记真账——实际打了几家、最后是谁成功的，
+   * 都要随响应/错误带回去，否则下游把两次外呼记成一次、还可能把 EvoLink 记成 OpenRouter。
+   */
+  const trace: EconomyGatewayTrace[] = [];
+  const plan: Array<"openrouter" | "evolink"> = [];
+  if (key) plan.push("openrouter");
+  if (evolinkKey) plan.push("evolink");
+  // 未配置的通道只记 skipped，不算真实外呼
+  if (!key) trace.push({ gateway: "openrouter", model: ECONOMY_MODEL, outcome: "skipped_not_configured" });
+  if (!evolinkKey) trace.push({ gateway: "evolink", model: ECONOMY_MODEL_EVOLINK, outcome: "skipped_not_configured" });
+
+  let lastErr: unknown;
+  for (let i = 0; i < plan.length; i++) {
+    const gateway = plan[i]!;
+    const model = gateway === "openrouter" ? ECONOMY_MODEL : ECONOMY_MODEL_EVOLINK;
+    // 调用前已取消：一次都不发，也不虚增次数
+    if (params.abortSignal?.aborted) {
+      const err = Object.assign(new Error("经济档调用已取消"), { gatewayTrace: trace });
+      throw err;
+    }
+    try {
+      const json = await callEconomyGateway(gateway, params);
+      trace.push({ gateway, model, outcome: "ok" });
+      // 保留上游 model/provider/usage 原样，只补「我方实际是哪家网关」与累计轨迹
+      return { ...json, gateway, gatewayTrace: trace };
+    } catch (err) {
+      lastErr = err;
+      trace.push({
+        gateway,
+        model,
+        outcome: "failed",
+        detail: String((err as Error)?.message || err).slice(0, 200),
+      });
+      const canFallback = i < plan.length - 1 && isEconomyFallbackWorthy(err, params.abortSignal);
+      if (!canFallback) break;
+      console.warn(`[economy] OpenRouter GLM 5.3 失败 → 改走 EvoLink：${String((err as Error)?.message || err).slice(0, 160)}`);
+    }
   }
+  const failure = lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  throw Object.assign(failure, { gatewayTrace: trace });
+}
+
+/**
+ * 审查 P2：回落只对「换一家可能就好」的失败——上游 5xx/429/网络/坏 JSON。
+ * 调用方已取消、钥匙/额度类 401/402/403、输出被截断（预算问题换家也一样）都不再打第二家，
+ * 否则报表三攻 × 两家最多 6 次付费外呼。
+ */
+function isEconomyFallbackWorthy(err: unknown, abortSignal?: AbortSignal): boolean {
+  if (abortSignal?.aborted) return false;
+  const e = err as { name?: string; message?: string } | null;
+  if (e?.name === "AbortError") return false;
+  const msg = String(e?.message || "");
+  if (/HTTP 40[123]\b/.test(msg)) return false;
+  if (/截断/.test(msg)) return false;
+  return true;
 }
 
 async function callEconomyGateway(
@@ -799,7 +859,9 @@ async function callEconomyGateway(
       body: JSON.stringify(buildDeepSeekExpandRequestBody({ ...params, gateway })),
     },
   );
-  const raw = isSseResponse(res) && res.body ? await readGlmSseStream(res.body) : await res.text();
+  const raw = isSseResponse(res) && res.body
+    ? await readGlmSseStream(res.body, undefined, { strictCompletion: true })
+    : await res.text();
   if (!res.ok) throw new Error(`经济档 HTTP ${res.status}: ${raw.slice(0, 160)}`);
   let json: DeepSeekJsonChatResponse;
   try {

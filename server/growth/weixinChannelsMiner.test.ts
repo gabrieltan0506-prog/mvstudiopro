@@ -220,14 +220,14 @@ describe("weixinChannelsMiner", () => {
     expect(projected.commentSamples?.every((sample) => sample.text.length <= 80)).toBe(true);
   });
 
-  it("千条批次固定使用 DeepSeek 0813 Medium、JSON、65K，且不传采样参数", async () => {
+  it("千条批次固定使用 GLM 5.3 High、JSON、65K，且不传采样参数（0911 换档：GLM 无 medium 档）", async () => {
     const result = classifiedBatchResult();
     const invoke = vi.fn().mockResolvedValueOnce({ provider: "DeepSeek", usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30, cost: 0.01, completion_tokens_details: { reasoning_tokens: 5 } }, choices: [{ message: { content: JSON.stringify(result) }, finish_reason: "stop" }] });
     const persisted = persistableWeixinChannelsObservation(observation({ likes: 3_000, shares: 2_000, comments: 10 }));
     const job: FinalAnalysisJob = { jobId: "ds-1", kind: "formal", stage: "deepseek_batch", threshold: 1_000, rawCount: 1_000, locallyDedupedCount: 1_000, observationIds: [persisted.observationId], analysisObservationIds: [persisted.observationId], lunaBatchIds: [], status: "processing", terraModel: "z-ai/glm-5.3", reasoningEffort: "medium", createdAt: "2026-08-14T00:00:00.000Z", updatedAt: "2026-08-14T00:00:00.000Z" };
     const output = await invokeWeixinChannelsDeepSeekBatch({ job, observations: [persisted], invoke: invoke as never });
     expect(invoke.mock.calls[0][0]).toMatchObject({
-      modelName: "z-ai/glm-5.3", reasoningEffort: "medium", requestId: "ds-1",
+      modelName: "z-ai/glm-5.3", reasoningEffort: "high", requestId: "ds-1",
       max_tokens: WEIXIN_CHANNELS_DEEPSEEK_MAX_COMPLETION_TOKENS,
       response_format: { type: "json_object" },
       openRouterProviderPreferences: { require_parameters: true },

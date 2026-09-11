@@ -2518,7 +2518,7 @@ export default function PlatformPage() {
   });
 
   /**
-   * 图文知识卡提炼三档（精细 / 均衡 / 轻量）：用户 2026-08-05 明文开放给所有登录用户自选，
+   * 图文知识卡读档两档（DeepSeek V4.1 Flash / GLM 5.3 Flash）：用户 2026-08-05 明文开放给所有登录用户自选，
    * 不再只对 supervisor 可见（页费按档位不同，见 KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS）。
    */
   const canChooseKnowledgeCardDistillModel = Boolean(isAuthenticated);

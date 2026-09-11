@@ -30,7 +30,7 @@ import {
   resolveKnowledgeCardDistillModel,
   type KnowledgeCardDistillModelId,
 } from "../../shared/knowledgeCardDistillModels.js";
-import { GLM_53_FLASH_EVOLINK_MODEL, GLM_53_FLASH_OPENROUTER_MODEL } from "./glmModels.js";
+import { GLM_53_FLASH_EVOLINK_MODEL, GLM_53_FLASH_OPENROUTER_MODEL, glm53ReasoningEffort } from "./glmModels.js";
 import { isSseResponse, readGlmSseStream } from "./sseChatStream.js";
 import {
   KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER,
@@ -563,7 +563,21 @@ function mapDistillUpstreamError(status: number, body: string): Error {
   if (status === 402 || /insufficient|credit|余额|积分不足|quota/i.test(t)) {
     return new Error("提炼账户额度不足，请稍后重试或联系管理员");
   }
-  if (status === 404 && /guardrail|privacy|data policy|No endpoints/i.test(t)) {
+  /**
+   * 404 的两种含义必须分开（终审 P2）：
+   * 1) 「No endpoints found…」= 这一跳当下没有可用端点。锁了自营供应商（allow_fallbacks:false）时
+   *    这是正常表现，连 OpenRouter 最常见的那句 "No endpoints found matching your data policy"
+   *    说的也是**这家 OpenRouter 账号策略下选不出供应商**，换 EvoLink 这种另一家网关照样能跑。
+   *    → 归可恢复，按链序换下一跳。
+   * 2) 真正的安全/内容策略拒答（guardrail / moderation / flagged）= 换谁都一样，
+   *    → 归确定性失败，isFatalDistillError 终止整链，不靠换供应商绕过。
+   * 判定顺序：先认「No endpoints」，再认安全拒答；反过来会把第 1 种误判成第 2 种，
+   * 首跳 404 就把六跳链掐死（这正是终审复现出来的 bug）。
+   */
+  if (status === 404 && /No endpoints/i.test(t)) {
+    return new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
+  }
+  if (/guardrail|moderation|flagged|content policy|safety/i.test(t)) {
     return new Error("当前提炼通道不可用，请改用其他提炼档位后重试");
   }
   if (isTimeoutUpstream(status, t)) {
@@ -710,8 +724,7 @@ async function invokeDistillViaGateway(params: {
       // EvoLink GLM 5.3 Flash：恒开思考（关不掉），reasoning_effort 只有 low/high/max 真正生效；
       // 原生视觉，图文一条模型吃下（带图仍走 api.evolink.ai）
       body.model = GLM_EVOLINK_MODEL;
-      if (hasImages) url = EVOLINK_CHAT_URL;
-      body.reasoning_effort = params.effort === "max" ? "max" : params.effort === "low" ? "low" : "high";
+      body.reasoning_effort = glm53ReasoningEffort(params.effort);
       body.max_tokens = Math.min(params.maxTokens ?? DISTILL_MAX_TOKENS, GLM_MAX_TOKENS);
     } else if (tier === "qwen") {
       // Evolink Qwen：档位只认 low|medium|xhigh（无 high/max）；用户令不上 xhigh，high 映射为 medium
@@ -721,8 +734,9 @@ async function invokeDistillViaGateway(params: {
       body.max_completion_tokens = params.maxTokens ?? DISTILL_MAX_TOKENS;
     } else {
       body.model = hasImages ? DEEPSEEK_EVOLINK_VISION_MODEL : DEEPSEEK_EVOLINK_TEXT_MODEL;
-      // Vision 版走 api.evolink.ai（direct 只给纯文本模型）
-      if (body.model === DEEPSEEK_EVOLINK_VISION_MODEL) url = EVOLINK_CHAT_URL;
+      // 带图走 api.evolink.ai（direct 只给纯文本）。按 hasImages 判，不按模型名——
+      // V4.1 起文本与视觉是同一个 id，比名字会把纯文本请求也推去多模态端点（审查建议）。
+      // 上面 url 已按 hasImages 选好，这里不再二次改写。
       // DeepSeek 官方：thinking 只开关，档位是顶层 reasoning_effort（low/high/max）
       body.thinking = { type: "enabled" };
       body.reasoning_effort = deepseekReasoningEffort(params.effort);
@@ -747,7 +761,8 @@ async function invokeDistillViaGateway(params: {
     // OpenRouter 的 DeepSeek / GLM 跳各锁各的自营，不落到转售方（0911 用户令）
     const providerLock = openRouterProviderLockForTier(tier);
     if (providerLock) body.provider = providerLock;
-    body.reasoning = { effort: deepseekReasoningEffort(params.effort) };
+    // 档位按 tier 各自映射：GLM 只认 low/high/max（medium 会被静默降级），DeepSeek 走自己的表
+    body.reasoning = { effort: tier === "glm" ? glm53ReasoningEffort(params.effort) : deepseekReasoningEffort(params.effort) };
     // 审查 P1：降档跳（GLM / Qwen）不能沿用 DeepSeek 的翻倍逻辑——统稿 120k×2=240k 超其输出上限，
     // 兜底末跳会确定性 400；与新加坡跳同口径收 32k
     body.max_tokens =
@@ -780,7 +795,11 @@ async function invokeDistillViaGateway(params: {
       body: JSON.stringify(body),
     });
     // 按**响应类型**决定读法：上游忽略 stream 直接回 JSON 时用 SSE 读取器会读出空正文
-    raw = isSseResponse(res) && res.body ? await readGlmSseStream(res.body) : await res.text();
+    // 严格完整性：断流（error 帧 / 畸形帧 / 没有结束帧）一律判本跳失败换下一家，
+    // 不把半截正文当成稿（终审 P1）
+    raw = isSseResponse(res) && res.body
+      ? await readGlmSseStream(res.body, undefined, { strictCompletion: true })
+      : await res.text();
   } catch (err) {
     throw mapFetchAbortError(err);
   } finally {
