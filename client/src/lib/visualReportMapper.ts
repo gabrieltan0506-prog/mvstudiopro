@@ -53,18 +53,27 @@ export function toVisualReportPlatforms(
   return platforms.filter((p): p is VisualReportPlatformKey => allowed.has(p as VisualReportPlatformKey));
 }
 
-export function buildVisualReportDateRange(windowDays: VisualReportWindowDays): string {
-  const today = new Date();
-  const end = today.toLocaleDateString("zh-CN", { month: "long", day: "numeric" });
-  const startDate = new Date(today);
-  startDate.setDate(startDate.getDate() - Number(windowDays));
-  const start = startDate.toLocaleDateString("zh-CN", { month: "long", day: "numeric" });
-  return `${start} – ${end}`;
+/** 旧任务仅用已保存的时间恢复上海日历窗口，不能随查看日期漂移。 */
+export function buildVisualReportDateRange(
+  windowDays: VisualReportWindowDays,
+  anchor?: string | number | null,
+): string {
+  if (anchor == null || anchor === "") return "日期区间未记录";
+  const anchorMs = typeof anchor === "number" ? anchor : Date.parse(anchor);
+  if (!Number.isFinite(anchorMs)) return "日期区间未记录";
+  const format = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const startMs = anchorMs - (Number(windowDays) - 1) * 86_400_000;
+  return `${format.format(new Date(startMs))} – ${format.format(new Date(anchorMs))}`;
 }
 
 export function mapGenerateVisualReportResult(
   result: { report?: Record<string, unknown> | null; error?: string },
-  opts: { windowDays: VisualReportWindowDays; theme: VisualReportTheme },
+  opts: { windowDays: VisualReportWindowDays; theme: VisualReportTheme; createdAt?: string | number | null },
 ): VisualReportData | null {
   if (!result.report) return null;
   const report = result.report;
@@ -133,11 +142,11 @@ export function mapGenerateVisualReportResult(
       .slice(0, 6);
     platformDetails = [
       {
-        platform: "xiaohongshu",
-        displayName: PLATFORM_NAMES.xiaohongshu,
+        platform: "",
+        displayName: "所选平台",
         trafficBoosters: [],
         cashRewards: [],
-        hotTopics: hotFromTracks.length ? hotFromTracks : ["本窗热点待补充"],
+        hotTopics: hotFromTracks,
         blueOceanWords: [],
       },
     ];
@@ -196,9 +205,16 @@ export function mapGenerateVisualReportResult(
         }
       : null;
 
+  const savedDateRange = typeof report.dateRange === "string" ? report.dateRange.trim() : "";
+  const restoredDateRange = savedDateRange ? "" : buildVisualReportDateRange(windowDays, opts.createdAt);
+
   return {
-    reportTitle: String(report.reportTitle || `平台趋势看板 · 近${windowDays}天`),
-    dateRange: buildVisualReportDateRange(windowDays),
+    reportTitle: savedDateRange
+      ? String(report.reportTitle || `平台趋势报告 · 近${windowDays}天`)
+      : `平台趋势报告 · 近${windowDays}天`,
+    dateRange: savedDateRange || (restoredDateRange === "日期区间未记录"
+      ? restoredDateRange
+      : `${restoredDateRange}（按任务创建日期恢复）`),
     theme: opts.theme,
     insightSummary: Array.isArray(report.insightSummary)
       ? (report.insightSummary as VisualReportData["insightSummary"])

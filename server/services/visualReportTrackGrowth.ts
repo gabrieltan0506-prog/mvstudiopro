@@ -1,5 +1,5 @@
 /**
- * Visual report「赛道热度」：有前窗對照時為樣本增速（>+100% 僅顯示「高热」）；前窗為 0 時用排序刻度 +12%～+98%，避免假峰值。
+ * 趋势报告赛道观察：仅用真实样本条数计算变化，无前窗时明确缺少对照。
  */
 
 import { getShanghaiVisualReportWindows } from "../growth/time.js";
@@ -7,7 +7,13 @@ import { normalizeStringList } from "../growth/trendNormalize";
 import type { TrendItem } from "../growth/trendCollector";
 import { inferTrendTrackBucketForVisualReport } from "../growth/trendGrowthScoring";
 
-export type TrackGrowthRow = { name: string; growth: string; isHot?: boolean };
+import type { TrackGrowthEvidence } from "../../shared/visualReportEvidence";
+
+export type TrackGrowthRow = { name: string; growth: string; isHot?: boolean; evidence?: TrackGrowthEvidence };
+export type IndustryGrowthHintMap = Map<string, string> & {
+  evidenceByLabel?: Map<string, TrackGrowthEvidence>;
+};
+export const TRACK_GROWTH_NO_BASELINE_LABEL = "缺少对照";
 const MAX_LEGACY_UNDATED_EVIDENCE_ITEMS = 200;
 
 export function resolveVisualReportEvidenceTimeMs(
@@ -141,19 +147,19 @@ function formatGrowthPct(pct: number): string {
 /**
  * 由抓取样本推算展示用文案：
  * - 前窗 p>0：增速 (c-p)/p×100；**>100% 只显示「高热」**
- * - 前窗 p=0：多条时用 +12%～+98% 递减刻度；单条用 c/maxC 映射到约 +10%～+98%（与旧版一致）
+ * - 前窗 p=0：只标记缺少对照，不将排序或当前样本数映射成百分比。
  */
 export function buildIndustryGrowthHintMap(
   store: { collections?: Partial<Record<string, { items?: any[]; collectedAt?: string }>> },
   platforms: string[],
   windowDays: number,
   anchorMs?: number,
-): Map<string, string> {
+): IndustryGrowthHintMap {
   const bounds = getShanghaiVisualReportWindows(windowDays, anchorMs ?? Date.now());
   const mergedCurrent = new Map<string, number>();
   const mergedPrior = new Map<string, number>();
 
-  for (const platform of platforms) {
+  for (const platform of Array.from(new Set(platforms))) {
     const col = store.collections?.[platform];
     const items: any[] = col?.items || [];
     const { current, prior } = collectIndustryWindowCounts(items, bounds);
@@ -175,32 +181,22 @@ export function buildIndustryGrowthHintMap(
     rows.push({ label, c, p });
   }
 
-  const maxC = Math.max(...rows.map((r) => r.c), 0);
-
-  const hintMap = new Map<string, string>();
-
+  const hintMap: IndustryGrowthHintMap = new Map();
+  hintMap.evidenceByLabel = new Map();
   for (const { label, c, p } of rows) {
-    if (p <= 0) continue;
-    let pct = Math.round(((c - p) / p) * 100);
-    pct = Math.max(-99, pct);
-    hintMap.set(label, formatGrowthPct(pct));
-  }
-
-  const zeroPrior = rows.filter((r) => r.p <= 0 && r.c > 0);
-  zeroPrior.sort((a, b) => b.c - a.c || a.label.localeCompare(b.label, "zh-Hans-CN"));
-
-  if (zeroPrior.length === 1) {
-    const { label, c } = zeroPrior[0];
-    let pct = maxC > 0 ? Math.round(10 + 88 * (c / maxC)) : 88;
-    pct = Math.max(-99, Math.min(400, pct));
-    hintMap.set(label, formatGrowthPct(pct));
-  } else if (zeroPrior.length > 1) {
-    const m = zeroPrior.length;
-    for (let i = 0; i < m; i++) {
-      const pct = Math.round(12 + 86 * ((m - 1 - i) / Math.max(m - 1, 1)));
-      const clamped = Math.max(-99, Math.min(400, pct));
-      hintMap.set(zeroPrior[i].label, formatGrowthPct(clamped));
-    }
+    hintMap.set(label, p > 0 ? formatGrowthPct(((c - p) / p) * 100) : TRACK_GROWTH_NO_BASELINE_LABEL);
+    hintMap.evidenceByLabel.set(label, {
+      metric: "sample_count",
+      currentCount: c,
+      priorCount: p,
+      sampleScope: "collected_items",
+      platforms: Array.from(new Set(platforms)),
+      windowDays,
+      currentStart: new Date(bounds.currentStart).toISOString(),
+      currentEndExclusive: new Date(bounds.currentEndExclusive).toISOString(),
+      priorStart: new Date(bounds.priorStart).toISOString(),
+      priorEndExclusive: new Date(bounds.priorEndExclusive).toISOString(),
+    });
   }
 
   return hintMap;
@@ -213,6 +209,14 @@ function normCompact(s: string): string {
   return s.replace(/\s+/g, "").toLowerCase();
 }
 
+/** 只匹配完整分类；组合赛道不能借用其中一个分类的计数冒充自身增速。 */
+function matchingTrackLabel(name: string, hintMap: Map<string, string>): string | null {
+  const normalized = normCompact(name);
+  if (!normalized) return null;
+  return Array.from(hintMap.keys()).find((label) => normCompact(label) === normalized) ?? null;
+}
+
+/** 热门话题仅用模糊匹配排除负向分类，不用于给组合赛道赋数值或证据。 */
 function bestHintForTrackName(name: string, hintMap: Map<string, string>): string | null {
   const n = normCompact(name);
   if (!n) return null;
@@ -254,7 +258,7 @@ export function isValidGrowthString(g: string): boolean {
   if (/^n\/?a\b/i.test(s)) return false;
   if (/漏掉|缺失|无法计算|暂无|不明|未知|对比.*前\s*\d+|本[^\n]{0,6}数据/i.test(s)) return false;
 
-  if (s === TRACK_GROWTH_HIGH_HEAT_LABEL) return true;
+  if (s === TRACK_GROWTH_HIGH_HEAT_LABEL || s === TRACK_GROWTH_NO_BASELINE_LABEL) return true;
   const compact = s.replace(/\s/g, "");
   if (/^增长\d+(\.\d+)?倍$/.test(compact)) return true;
   return /^[+-]?\d+(\.\d+)?%?$/.test(compact);
@@ -313,7 +317,7 @@ function passesHotTopicSampleHint(name: string, hintMap?: Map<string, string>): 
 }
 
 /**
- * 全局「熱門賽道」展示：僅保留樣本統計為非負增長/熱度的列（剔除負增長與無匹配）。
+ * 观察赛道保留非负样本变化及缺少对照项，剔除负增长与无匹配项。
  */
 export function filterTrackGrowthHotOnly(rows: TrackGrowthRow[]): TrackGrowthRow[] {
   return rows
@@ -321,8 +325,8 @@ export function filterTrackGrowthHotOnly(rows: TrackGrowthRow[]): TrackGrowthRow
       row,
       g: parseGrowthPercentToSignedInt(String(row.growth || "").trim()),
     }))
-    .filter((x) => x.g != null && x.g >= 0)
-    .sort((a, b) => (b.g ?? 0) - (a.g ?? 0))
+    .filter((x) => (x.g != null && x.g >= 0) || x.row.growth === TRACK_GROWTH_NO_BASELINE_LABEL)
+    .sort((a, b) => (b.g ?? -1) - (a.g ?? -1))
     .map((x) => x.row);
 }
 
@@ -390,12 +394,20 @@ export function finalizeTrackGrowthDisplayString(growth: string): string {
   return formatGrowthPct(n);
 }
 
-export function repairTrackGrowthRows(rows: TrackGrowthRow[], hintMap: Map<string, string>): TrackGrowthRow[] {
+export function repairTrackGrowthRows(rows: TrackGrowthRow[], hintMap: IndustryGrowthHintMap): TrackGrowthRow[] {
   return rows.map((row) => {
     const name = String(row.name || "").trim();
-    const fromHint = name ? bestHintForTrackName(name, hintMap) : null;
-    const growth =
-      fromHint != null ? finalizeTrackGrowthDisplayString(fromHint) : TRACK_GROWTH_NO_MATCH_LABEL;
-    return { ...row, growth };
+    const label = matchingTrackLabel(name, hintMap);
+    const fromHint = label == null ? null : hintMap.get(label);
+    const growth = fromHint != null ? finalizeTrackGrowthDisplayString(fromHint) : TRACK_GROWTH_NO_MATCH_LABEL;
+    // 输入可能是模型输出或旧缓存，只能采用当前统计生产者的证据。
+    const { evidence: _oldEvidence, ...rest } = row;
+    const evidence = label == null ? undefined : hintMap.evidenceByLabel?.get(label);
+    return {
+      ...rest,
+      growth,
+      isHot: growth === TRACK_GROWTH_HIGH_HEAT_LABEL,
+      ...(evidence ? { evidence } : {}),
+    };
   });
 }
