@@ -651,7 +651,7 @@ async function startServer() {
     try {
       const ctx = await createContext({ req: req as any, res: res as any } as any);
       if (!ctx.user) return res.status(401).json({ error: "请先登录" });
-      const { requestPlatformJobCancel } = await import("../jobs/repository");
+      const { requestPlatformJobCancel, getKnowledgeCardSettlement } = await import("../jobs/repository");
       const job = await requestPlatformJobCancel({
         jobId: String(req.params.id || ""),
         userId: String(ctx.user.id),
@@ -668,16 +668,21 @@ async function startServer() {
           messageZh: "任务已完成，无法取消；结果与已产生的计费保留",
         });
       }
+      if (getKnowledgeCardSettlement(job.output)) {
+        return res.status(200).json({ jobId: job.id, status: job.status, cancelled: false,
+          messageZh: "成稿已生成，正在保存结果与结算，无法取消" });
+      }
+      const requested = Boolean((job.input as { cancelRequestedAt?: unknown })?.cancelRequestedAt);
       return res.status(200).json({
-        jobId: job.id,
-        status: job.status,
-        cancelled: true,
-        messageZh: job.status === "failed" ? "已停止读档（未开始计费）" : "已请求停止，正在收口…",
+        jobId: job.id, status: job.status, cancelled: requested,
+        messageZh: requested
+          ? job.status === "failed" ? "已停止读档（未开始计费）" : "已请求停止，正在收口…"
+          : "任务已结束，请查看原任务结果与错误信息",
       });
     } catch (error) {
       // 复审 P2：读库失败不许伪装成 404「任务不存在」——那会让用户以为任务没了
       console.error("[Jobs] cancel knowledge card failed:", error);
-      return res.status(503).json({ error: "暂时读不到任务状态，停止请求没有生效，请稍后重试" });
+      return res.status(503).json({ error: "暂时无法确认停止状态，请稍后重试或查看原任务；请勿重复提交读档" });
     }
   });
 

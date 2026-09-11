@@ -9,6 +9,7 @@ import path from "node:path";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import JSZip from "jszip";
+import { awaitKnowledgeCardAbort, execKnowledgeCardFile } from "./knowledgeCardCancellation.js";
 
 type SpineItem = { href: string; mediaType: string };
 
@@ -47,6 +48,7 @@ export type ParsedEpub = {
 };
 
 export type ParseEpubOptions = {
+  abortSignal?: AbortSignal;
   /** 位图长边超过此像素就缩到此值再内联（A4 打印 1400px 已足够）。 */
   imageMaxPx?: number;
   /** 位图超过此字节数才重新编码；小图原样内联。 */
@@ -85,6 +87,7 @@ async function shrinkBitmap(data: Buffer, mime: string, opts: Required<Pick<Pars
 
 /** 解包 EPUB：container.xml → OPF → manifest/spine → 章节 XHTML，资源一律内联。 */
 export async function parseEpub(buffer: Buffer, options: ParseEpubOptions = {}): Promise<ParsedEpub> {
+  options.abortSignal?.throwIfAborted();
   const imageMaxPx = Math.max(200, Math.floor(options.imageMaxPx || IMAGE_MAX_PX_DEFAULT));
   const imageReencodeBytes = Math.max(0, Math.floor(options.imageReencodeBytes ?? IMAGE_REENCODE_BYTES_DEFAULT));
   const images = { total: 0, downscaled: 0, stripped: 0 };
@@ -136,6 +139,7 @@ export async function parseEpub(buffer: Buffer, options: ParseEpubOptions = {}):
 
   const chapters: string[] = [];
   for (const item of spine) {
+    options.abortSignal?.throwIfAborted();
     const raw = await zip.file(item.href)?.async("string");
     if (!raw) continue;
     const dir = path.posix.dirname(item.href);
@@ -197,7 +201,8 @@ export class EpubChromiumCrashError extends Error {
 }
 
 /** Chromium 打印：Fly 用系统 chromium；本机用 puppeteer 自带浏览器。 */
-export async function renderHtmlToPdf(html: string): Promise<Buffer> {
+export async function renderHtmlToPdf(html: string, abortSignal?: AbortSignal): Promise<Buffer> {
+  abortSignal?.throwIfAborted();
   const puppeteer = (await import("puppeteer")).default;
   const executablePath = String(process.env.PUPPETEER_EXECUTABLE_PATH || "").trim() || undefined;
   const browser = await puppeteer.launch({
@@ -205,16 +210,21 @@ export async function renderHtmlToPdf(html: string): Promise<Buffer> {
     executablePath,
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--disable-extensions", "--no-zygote"],
   });
+  const onAbort = () => { void browser.close().catch(() => undefined); };
+  abortSignal?.addEventListener("abort", onAbort, { once: true });
+  if (abortSignal?.aborted) onAbort();
   // HTML 落临时文件再 goto file://：几百张图的整本 HTML 走 setContent 会撞 CDP 单条消息上限
   const dir = await mkdtemp(path.join(tmpdir(), "kc-epub-"));
   const htmlPath = path.join(dir, "book.html");
   try {
+    abortSignal?.throwIfAborted();
     await writeFile(htmlPath, html, "utf8");
     const page = await browser.newPage();
     await page.goto(`file://${htmlPath}`, { waitUntil: "load", timeout: 120_000 });
     const pdf = await page.pdf({ format: "A4", printBackground: true, preferCSSPageSize: true, timeout: 300_000 });
     return Buffer.from(pdf);
   } catch (error) {
+    abortSignal?.throwIfAborted();
     if (isChromiumCrashError(error)) {
       throw new EpubChromiumCrashError(
         `Chromium 转 PDF 时崩溃（HTML ${(html.length / 1024 / 1024).toFixed(1)} MB）：${error instanceof Error ? error.message : String(error)}`,
@@ -223,6 +233,7 @@ export async function renderHtmlToPdf(html: string): Promise<Buffer> {
     }
     throw error;
   } finally {
+    abortSignal?.removeEventListener("abort", onAbort);
     await browser.close().catch(() => undefined);
     await rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -296,7 +307,8 @@ export function stripInlineImagesFromHtml(html: string): { html: string; strippe
 }
 
 /** pdfunite 合并分片（poppler-utils，Fly 镜像已装）；单片直接返回 */
-export async function mergePdfShards(pdfs: Buffer[]): Promise<Buffer> {
+export async function mergePdfShards(pdfs: Buffer[], abortSignal?: AbortSignal): Promise<Buffer> {
+  abortSignal?.throwIfAborted();
   if (pdfs.length === 1) return pdfs[0]!;
   const dir = await mkdtemp(path.join(tmpdir(), "kc-epub-merge-"));
   try {
@@ -307,16 +319,7 @@ export async function mergePdfShards(pdfs: Buffer[]): Promise<Buffer> {
       inputs.push(file);
     }
     const out = path.join(dir, "merged.pdf");
-    const { execFile } = await import("node:child_process");
-    await new Promise<void>((resolve, reject) => {
-      execFile("pdfunite", [...inputs, out], { maxBuffer: 4 * 1024 * 1024 }, (error, _stdout, stderr) => {
-        if (error) {
-          const missing = (error as NodeJS.ErrnoException).code === "ENOENT";
-          reject(new Error(missing ? "镜像缺 poppler-utils（pdfunite），无法合并分片；请在 Dockerfile 安装后重试" : `pdfunite 合并分片失败：${stderr || error.message}`));
-        }
-        else resolve();
-      });
-    });
+    await execKnowledgeCardFile("pdfunite", [...inputs, out], { maxBuffer: 4 * 1024 * 1024, signal: abortSignal });
     const { readFile } = await import("node:fs/promises");
     return await readFile(out);
   } finally {
@@ -331,16 +334,18 @@ export async function mergePdfShards(pdfs: Buffer[]): Promise<Buffer> {
 export async function convertEpubToPdf(
   buffer: Buffer,
   deps: {
+    abortSignal?: AbortSignal;
     render?: (html: string) => Promise<Buffer>;
     parse?: typeof parseEpub;
     merge?: (pdfs: Buffer[]) => Promise<Buffer>;
     shardMaxBytes?: number;
   } = {},
 ): Promise<ConvertEpubToPdfResult> {
-  const render = deps.render || renderHtmlToPdf;
+  deps.abortSignal?.throwIfAborted();
+  const render = deps.render || ((html: string) => renderHtmlToPdf(html, deps.abortSignal));
   const parse = deps.parse || parseEpub;
-  const merge = deps.merge || mergePdfShards;
-  const parsed = await parse(buffer);
+  const merge = deps.merge || ((pdfs: Buffer[]) => mergePdfShards(pdfs, deps.abortSignal));
+  const parsed = await awaitKnowledgeCardAbort(parse(buffer, { abortSignal: deps.abortSignal }), deps.abortSignal);
   const shards = splitEpubChaptersIntoShards(parsed.chapters, deps.shardMaxBytes);
   if (!shards.length) throw new Error("EPUB 章节内容为空");
   const pdfs: Buffer[] = [];
@@ -348,20 +353,23 @@ export async function convertEpubToPdf(
   const shardLabels: string[] = [];
   let strippedImages = 0;
   for (let i = 0; i < shards.length; i++) {
+    deps.abortSignal?.throwIfAborted();
     const chapters = shards[i]!.map((idx) => parsed.chapters[idx]!);
     const shardHtml = buildEpubPrintHtml({ ...parsed, chapters });
     const label = formatEpubShardLabel(i, shards.length, shards[i]!, chapters[0]!);
     shardLabels.push(label);
     let pdf: Buffer;
     try {
-      pdf = await render(shardHtml);
+      pdf = await awaitKnowledgeCardAbort(render(shardHtml), deps.abortSignal);
     } catch (error) {
+      deps.abortSignal?.throwIfAborted();
       if (!(error instanceof EpubChromiumCrashError)) throw error;
       console.warn(`[knowledgeCardEpubToPdf] ${label}：打印崩溃，剥图重打：${error.message}`);
       const stripped = stripInlineImagesFromHtml(shardHtml);
       try {
-        pdf = await render(stripped.html);
+        pdf = await awaitKnowledgeCardAbort(render(stripped.html), deps.abortSignal);
       } catch (again) {
+        deps.abortSignal?.throwIfAborted();
         if (!(again instanceof EpubChromiumCrashError)) throw again;
         throw new Error(
           `这本 EPUB ${label}：转 PDF 时浏览器崩溃两次（已试过只保文字）。请先用 Calibre 等工具转成 PDF，或把这几节拆出来单独上传。`,
@@ -376,7 +384,7 @@ export async function convertEpubToPdf(
     if (!pdf.length) throw new Error(`EPUB ${label}：转 PDF 结果为空`);
     pdfs.push(pdf);
   }
-  const pdf = await merge(pdfs);
+  const pdf = await awaitKnowledgeCardAbort(merge(pdfs), deps.abortSignal);
   return {
     pdf,
     title: parsed.title,

@@ -93,8 +93,11 @@ export async function reapStaleJobsOnce(
     await db
       .update(jobs)
       .set({
-        status: "failed",
-        error: "知识卡任务进程已中断（超过阈值无心跳），请重新提交",
+        status: sql`case when coalesce(${jobs.output}::jsonb, '{}'::jsonb) ? 'knowledgeCardSettlement' then 'queued' else 'failed' end`,
+        error: sql`case
+          when coalesce(${jobs.output}::jsonb, '{}'::jsonb) ? 'knowledgeCardSettlement' then '成稿已保留，正在恢复结算'
+          when coalesce(${jobs.input}::jsonb->>'cancelRequestedAt', '') <> '' then '已按你的要求停止读档'
+          else '知识卡任务进程已中断（超过阈值无心跳），请重新提交' end`,
         updatedAt: new Date(),
       })
       .where(
@@ -135,7 +138,8 @@ export async function reapStaleJobsOnce(
     )`;
     // 尚未付费确认的顾问 queued 占位没有扣分；过期后仍按通用规则清理，避免永久堆积。
     const nonRecoverableQueuedJob = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
-      'manhua_template_learn', 'manhua_bgm_v55', 'manhua_assemble_final'
+      'manhua_template_learn', 'manhua_bgm_v55', 'manhua_assemble_final',
+      'knowledge_card_distill', 'knowledge_card_derive_level'
     )`;
     const runningRows = await db
       .delete(jobs)

@@ -352,6 +352,7 @@ export async function uploadStreamToGcs(params: {
  * 供所有权登记簿等"先到先得"场景做真原子创建——get→put 两步在并发下必被覆盖。
  */
 export async function uploadBufferToGcsIfAbsent(params: {
+  signal?: AbortSignal;
   objectName: string;
   buffer: Buffer;
   contentType: string;
@@ -362,7 +363,9 @@ export async function uploadBufferToGcsIfAbsent(params: {
   const bucket = params.bucket || getGcsBucketName();
   if (!bucket) throw new Error("GCS bucket is not configured");
   const objectName = normalizeObjectName(params.objectName);
-  const accessToken = await getVertexAccessToken();
+  params.signal?.throwIfAborted();
+  const accessToken = await awaitWithAbortSignal(getVertexAccessToken(), params.signal);
+  params.signal?.throwIfAborted();
   const uploadUrl = new URL(
     `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o`,
   );
@@ -390,6 +393,7 @@ export async function uploadBufferToGcsIfAbsent(params: {
     : params.buffer;
   const response = await fetch(uploadUrl, {
     method: "POST",
+    signal: params.signal,
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": hasMetadata

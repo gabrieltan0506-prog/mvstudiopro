@@ -33,6 +33,22 @@ afterEach(() => {
 });
 
 describe("取消监视独立于业务进度（复审 P1）", () => {
+  it("强制检查等待在途查询，不提前结算", async () => {
+    let finish!: (value: boolean) => void;
+    const watcher = makeKnowledgeCardCancelWatcher("test-pending", {
+      pollMs: 60_000, read: () => new Promise<boolean>(resolve => { finish = resolve; }),
+    });
+    try {
+      let settled = false;
+      const gate = watcher.check({ force: true });
+      const checked = expect(gate).rejects.toBeInstanceOf(KnowledgeCardCancelledError);
+      void gate.then(() => { settled = true; }, () => { settled = true; });
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(settled).toBe(false);
+      finish(true);
+      await checked;
+    } finally { watcher.dispose(); }
+  });
   it("没有任何进度回调，也能在约定时限内 abort", async () => {
     let reads = 0;
     const watcher = makeKnowledgeCardCancelWatcher("job-1", {
@@ -96,7 +112,8 @@ describe("取消监视独立于业务进度（复审 P1）", () => {
       await new Promise((r) => setTimeout(r, 250));
       expect(watcher.signal.aborted).toBe(false);
       // 业务线程上顺手查也不许把活判死
-      await expect(watcher.check({ force: true })).resolves.toBeUndefined();
+      await expect(watcher.check()).resolves.toBeUndefined();
+      await expect(watcher.check({ force: true })).rejects.toThrow("db down");
       expect(rejections).toEqual([]);
     } finally {
       watcher.dispose();

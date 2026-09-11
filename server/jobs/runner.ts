@@ -66,6 +66,10 @@ import {
   consumeManhuaTemplateLearnEpisodeSkip,
   getJobById,
   getJobByIdStrict,
+  beginKnowledgeCardSettlement,
+  getKnowledgeCardSettlement,
+  markKnowledgeCardSettlementSucceeded,
+  type KnowledgeCardSettlementCheckpoint,
   isManhuaTemplateLearnJobCancelRequested,
   markJobFailed,
   markJobSucceededWithRetry,
@@ -389,7 +393,7 @@ export function makeKnowledgeCardCancelWatcher(
     });
 
   let timer: ReturnType<typeof setInterval> | undefined;
-  let inFlight = false;
+  let inFlight: Promise<boolean> | undefined;
   let lastCheckedAt = 0;
   let disposed = false;
 
@@ -399,15 +403,18 @@ export function makeKnowledgeCardCancelWatcher(
 
   /** 真正查库；同一任务同时只允许一条在途，返回是否已取消 */
   const readOnce = async (): Promise<boolean> => {
-    if (!platformJobId || inFlight) return controller.signal.aborted;
-    inFlight = true;
-    try {
+    if (!platformJobId || disposed) return controller.signal.aborted;
+    if (inFlight) return inFlight;
+    inFlight = (async () => {
       const cancelled = await readCancelled(platformJobId);
       lastCheckedAt = Date.now();
       if (cancelled) abortNow();
       return cancelled;
+    })();
+    try {
+      return await inFlight;
     } finally {
-      inFlight = false;
+      inFlight = undefined;
     }
   };
 
@@ -416,7 +423,9 @@ export function makeKnowledgeCardCancelWatcher(
     if (!platformJobId) return;
     if (!opts?.force && Date.now() - lastCheckedAt < pollMs) return;
     // 业务线程上的查库失败不许把用户的活判死：咽掉，交给定时器继续盯
-    const cancelled = await readOnce().catch(() => false);
+    const cancelled = opts?.force
+      ? await readOnce()
+      : await readOnce().catch(() => false);
     if (cancelled) throw new KnowledgeCardCancelledError();
   };
 
@@ -444,6 +453,24 @@ export function makeKnowledgeCardCancelWatcher(
       timer = undefined;
     },
   };
+}
+
+/** 成稿先原子登记，再进入不可取消的幂等结算；竞争失败永远消费库内原稿。 */
+async function finishKnowledgeCardProduction(
+  jobId: string,
+  userId: number,
+  checkpoint: KnowledgeCardSettlementCheckpoint,
+  cancel: KnowledgeCardCancelWatcher,
+) {
+  await cancel.check({ force: true });
+  const accepted = await beginKnowledgeCardSettlement(jobId, checkpoint);
+  if (accepted === "cancelled") throw new KnowledgeCardCancelledError();
+  cancel.dispose();
+  const current = await getJobByIdStrict(jobId);
+  const persisted = getKnowledgeCardSettlement(current?.output);
+  if (!persisted) throw new Error("知识卡结算检查点尚未确认，禁止扣费");
+  const { settleKnowledgeCardCheckpoint } = await import("./knowledgeCardSettlementRunner.js");
+  return { provider: "evolink", output: await settleKnowledgeCardCheckpoint(jobId, userId, persisted) };
 }
 
 export async function withTimeout<T>(
@@ -2351,6 +2378,17 @@ async function processPlatformJob(
 ): Promise<{ output: unknown; provider?: string }> {
   const params = input.params ?? {};
   try {
+    // 结算恢复先于所有抽取/模型工作：同一任务只重放 receipt 与幂等账本。
+    if (input.action === "knowledge_card_distill" || input.action === "knowledge_card_derive_level") {
+      if (!platformJobId || !jobUserId) throw new Error("知识卡任务缺少持久化身份");
+      const existing = await getJobByIdStrict(platformJobId);
+      if (!existing || String(existing.userId) !== String(jobUserId)) throw new Error("知识卡任务身份不匹配");
+      const checkpoint = getKnowledgeCardSettlement(existing.output);
+      if (checkpoint) {
+        const { settleKnowledgeCardCheckpoint } = await import("./knowledgeCardSettlementRunner.js");
+        return { provider: "evolink", output: await settleKnowledgeCardCheckpoint(platformJobId, Number(jobUserId), checkpoint) };
+      }
+    }
     if (input.action === "platform_composite_sheet_progress") {
       throw new Error(
         "[jobs] platform_composite_sheet_progress 僅為寬幅合成 TRPC 旁路進度占位（插入時即 running），不應進入 worker；請檢查 jobs 是否被誤改為 queued。",
@@ -3418,6 +3456,7 @@ async function processPlatformJob(
         await patchJobRunningProgress(platformJobId, patch).catch(() => {});
       };
       try {
+      await cancel.check({ force: true });
       await patchProgress({ distillStage: "deriving", distillPercent: 1 });
       const { knowledgeCardDistillActivity } = await import("../services/knowledgeCardDistillActivity.js");
       const derived = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), () => deriveKnowledgeCardCompact({
@@ -3439,12 +3478,8 @@ async function processPlatformJob(
       await patchProgress({ distillStage: "finishing", distillPercent: 98 });
       // 落库之前强制查一次（跳过轮询间隔缓存）：取消赢了就不写 receipt、不交稿
       await cancel.check({ force: true });
-      // 派生稿记同档 receipt：出图按完整版的档位结算
-      await recordKnowledgeCardDistillReceipt(Number(jobUserId), distillModel, derived.markdown);
       const plan = planKnowledgeCardPages(derived.markdown, distillModel);
-      return {
-        provider: "evolink",
-        output: {
+      const output = {
           success: true,
           distilledMarkdown: derived.markdown,
           distillModel,
@@ -3454,8 +3489,13 @@ async function processPlatformJob(
           passes: derived.passes,
           pageCount: plan.pageCount,
           credits: plan.credits,
-        },
       };
+      return await finishKnowledgeCardProduction(platformJobId!, Number(jobUserId), {
+        version: 1, output, fee: 0, receiptModel: distillModel, markdown: derived.markdown,
+      }, cancel);
+      } catch (error) {
+        cancel.signal.throwIfAborted();
+        throw error;
       } finally {
         cancel.dispose();
       }
@@ -3495,6 +3535,7 @@ async function processPlatformJob(
         await patchJobRunningProgress(platformJobId, patch).catch(() => {});
       };
       try {
+      await cancel.check({ force: true });
       const { knowledgeCardDistillActivity } = await import("../services/knowledgeCardDistillActivity.js");
       const prepared = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), () => prepareKnowledgeCardCopy({
         sourceText,
@@ -3539,98 +3580,30 @@ async function processPlatformJob(
       await cancel.check({ force: true });
       const plan = planKnowledgeCardPages(prepared.distilledMarkdown, prepared.distillModel);
 
-      // 服务端账本（审查必须修 P0·6）：真实提炼产出的稿子绑档位，出图页费按此结算
-      if (!prepared.skippedDistill && prepared.distillModel) {
-        const { recordKnowledgeCardDistillReceipt } = await import(
-          "../services/knowledgeCardDistillReceipt.js"
-        );
-        // fail-closed：receipt 落不了盘就让 job 报错重试——吞错会让后续出图按客户端声明档计费
-        await recordKnowledgeCardDistillReceipt(
-          Number(jobUserId),
-          prepared.distillModel,
-          prepared.distilledMarkdown,
-        );
-      }
-
-      /**
-       * 提炼费：只有前端明确带 `chargeDistillFee` 才收，也就是「纯文本长文，
-       * 用户在弹窗里选了先提炼」那条路。上传文档的提炼是抽文的必要环节，成本已含在页费里，不另收。
-       * 扣在**提炼成功之后**：失败连扣都没扣过，不必写退款。
-       */
-      let distillFeeCharged = 0;
-      const uidForDistillFee = Number(jobUserId);
-      if (
-        params.chargeDistillFee === true &&
-        !prepared.skippedDistill &&
-        Number.isFinite(uidForDistillFee) &&
-        uidForDistillFee > 0
-      ) {
-        const { knowledgeCardDistillFeeForModel } = await import(
-          "../../shared/knowledgeCardDistillModels.js"
-        );
-        const fee = knowledgeCardDistillFeeForModel(prepared.distillModel);
-        /**
-         * 幂等（审查必须修）：withTimeout 只是 Promise.race，超时后原执行仍在跑，
-         * job 重排后新旧两次执行都会走到这里——按 jobId 查账，已扣过就不再扣第二次。
-         */
-        const chargeMarker = `[chargeKey:kcdistill/${String(platformJobId || "nojob")}]`;
-        const { getDb } = await import("../db.js");
-        let alreadyCharged = false;
-        try {
-          const db = await getDb();
-          if (db) {
-            const { stripeUsageLogs } = await import("../../drizzle/schema.js");
-            const { and, eq, like } = await import("drizzle-orm");
-            const [row] = await db
-              .select({ creditsCost: stripeUsageLogs.creditsCost })
-              .from(stripeUsageLogs)
-              .where(
-                and(
-                  eq(stripeUsageLogs.userId, uidForDistillFee),
-                  like(stripeUsageLogs.description, `%${chargeMarker}%`),
-                ),
-              )
-              .limit(1);
-            if (row) {
-              alreadyCharged = true;
-              distillFeeCharged = Math.max(0, Number(row.creditsCost) || 0);
-            }
-          }
-        } catch (e) {
-          // 审查修正：查账失败时不许盲扣（可能已扣过）——报错让 job 稍后重试
-          console.warn("[knowledgeCardDistill] 幂等查账失败，停账重试：", e);
-          throw new Error("计费对账暂不可用，请稍后重试");
-        }
-        if (!alreadyCharged) {
-          const deducted = await deductCreditsAmount(
-            uidForDistillFee,
-            fee,
-            "knowledgeCardDistill",
-            `图文知识卡·提炼（${prepared.sourceChars.toLocaleString()} 字 → ${plan.pageCount} 页）${chargeMarker}`,
-            // DB 唯一索引兜底并发双扣（超时旧执行 vs 重排新执行都过了上面的 SELECT 查账）
-            { chargeKey: chargeMarker },
-          );
-          distillFeeCharged = deducted.cost;
-        }
-      }
-
-      return {
-        provider: "evolink",
-        output: {
-          success: true,
-          distillFeeCharged,
-          detailLevel: prepared.detailLevel,
-          documents: prepared.documents,
-          distilledMarkdown: prepared.distilledMarkdown,
-          skippedDistill: prepared.skippedDistill,
-          extractionMethods: extractionMethods.length ? extractionMethods : prepared.extractionMethods,
-          sourceChars: prepared.sourceChars,
-          distillModel: prepared.distillModel,
-          pageCount: plan.pageCount,
-          credits: plan.credits,
-          pages: plan.pages,
-        },
+      const { knowledgeCardDistillFeeForModel } = await import("../../shared/knowledgeCardDistillModels.js");
+      const output = {
+        success: true,
+        detailLevel: prepared.detailLevel,
+        documents: prepared.documents,
+        distilledMarkdown: prepared.distilledMarkdown,
+        skippedDistill: prepared.skippedDistill,
+        extractionMethods: extractionMethods.length ? extractionMethods : prepared.extractionMethods,
+        sourceChars: prepared.sourceChars,
+        distillModel: prepared.distillModel,
+        pageCount: plan.pageCount,
+        credits: plan.credits,
+        pages: plan.pages,
       };
+      return await finishKnowledgeCardProduction(platformJobId!, Number(jobUserId), {
+        version: 1, output,
+        fee: params.chargeDistillFee === true && !prepared.skippedDistill
+          ? knowledgeCardDistillFeeForModel(prepared.distillModel) : 0,
+        receiptModel: !prepared.skippedDistill ? prepared.distillModel : null,
+        markdown: prepared.distilledMarkdown,
+      }, cancel);
+      } catch (error) {
+        cancel.signal.throwIfAborted();
+        throw error;
       } finally {
         cancel.dispose();
       }
@@ -3739,7 +3712,11 @@ async function runClaimedJob(
           ? { heartbeat: distillHeartbeat }
           : undefined
     );
-    const succeededPersisted = manhuaLearnJob
+    const knowledgeCardJob = jobType === "platform" && isRecord(job.input)
+      && (job.input.action === "knowledge_card_distill" || job.input.action === "knowledge_card_derive_level");
+    const succeededPersisted = knowledgeCardJob
+      ? (await markKnowledgeCardSettlementSucceeded(job.id, output as Record<string, unknown>, provider), true)
+      : manhuaLearnJob
       ? await markManhuaLearnJobSucceededWithRetry(job.id, output, provider)
       : manhuaBgmJob || manhuaAssembleJob
         ? await markJobSucceededWithRetry(job.id, output, provider)
@@ -3904,6 +3881,20 @@ async function runClaimedJob(
       }
     }
   } catch (error) {
+    // 结算已登记时保留原稿，不走通用重排模型或失败路径。失活回收只重排结算。
+    if (job.type === "platform" && isRecord(job.input)
+      && (job.input.action === "knowledge_card_distill" || job.input.action === "knowledge_card_derive_level")) {
+      try {
+        const latest = await getJobByIdStrict(job.id);
+        if (getKnowledgeCardSettlement(latest?.output)) {
+          console.error("[Jobs] 知识卡结算待恢复，原稿已保留:", job.id, error);
+          return;
+        }
+      } catch (readError) {
+        console.error("[Jobs] 知识卡状态未知，保留任务等待恢复:", job.id, readError);
+        return;
+      }
+    }
     const userCancelled =
       error instanceof Error &&
       (error.name === "ManhuaLearnCancelledError" ||

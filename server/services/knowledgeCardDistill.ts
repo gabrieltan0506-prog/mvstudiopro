@@ -363,10 +363,12 @@ function isImageFile(mimeType: string, fileName?: string): boolean {
  * 从 GCS 取回直传的文件（文档抽字用；图片不下载，直接签名给模型）。
  * 所有上传不论大小一律前端直传 GCS（0908 用户令；媒体传输铁律禁止 base64 塞请求体）。
  */
-async function readGcsUploadBuffer(gcsUri: string): Promise<Buffer> {
+async function readGcsUploadBuffer(gcsUri: string, abortSignal?: AbortSignal): Promise<Buffer> {
+  abortSignal?.throwIfAborted();
   const { signGsUriV4ReadUrl } = await import("./gcs.js");
   const url = await signGsUriV4ReadUrl(gcsUri, 3600);
-  const res = await fetch(url, { signal: AbortSignal.timeout(180_000) });
+  abortSignal?.throwIfAborted();
+  const res = await fetch(url, { signal: abortSignal ? AbortSignal.any([abortSignal, AbortSignal.timeout(180_000)]) : AbortSignal.timeout(180_000) });
   if (!res.ok) throw new Error(`读取上传文件失败（${res.status}）`);
   return Buffer.from(await res.arrayBuffer());
 }
@@ -408,6 +410,7 @@ export async function extractKnowledgeCardUploads(
   files: KnowledgeCardUploadFile[],
   options: {
     userId?: number;
+    abortSignal?: AbortSignal;
     selectPages?: (sheets: KnowledgeCardContactSheet[], pageCount: number) => Promise<KnowledgeCardPageSelection[]>;
     onProgress?: (p: KnowledgeCardExtractProgress) => void | Promise<void>;
   } = {},
@@ -421,6 +424,7 @@ export async function extractKnowledgeCardUploads(
   const fileTotal = files.length;
 
   for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+    options.abortSignal?.throwIfAborted();
     const file = files[fileIndex]!;
     const name = String(file.fileName || "upload");
     const report = (stage: KnowledgeCardExtractProgress["stage"], done: number, total: number) =>
@@ -441,9 +445,10 @@ export async function extractKnowledgeCardUploads(
 
     let buffer: Buffer;
     try {
-      buffer = await readGcsUploadBuffer(gcsUri);
+      buffer = await readGcsUploadBuffer(gcsUri, options.abortSignal);
       methods.push(`${name}:gcs_direct`);
     } catch (e) {
+      options.abortSignal?.throwIfAborted();
       methods.push(`${name}:gcs_read_failed`);
       console.warn(`[knowledgeCardDistill] 取回文档失败 ${gcsUri}:`, e);
       continue;
@@ -457,7 +462,7 @@ export async function extractKnowledgeCardUploads(
     let mimeType = file.mimeType;
     if (isEpubFile(file.mimeType, file.fileName)) {
       await report("converting", 0, 1);
-      const converted = await convertEpubToPdf(buffer);
+      const converted = await convertEpubToPdf(buffer, { abortSignal: options.abortSignal });
       pdfBuffer = converted.pdf;
       mimeType = "application/pdf";
       if (converted.mode === "stripped") {
@@ -476,6 +481,7 @@ export async function extractKnowledgeCardUploads(
 
     if (pdfBuffer && pagesEnabled) {
       const set = await prepareKnowledgeCardDocumentPages({
+        abortSignal: options.abortSignal,
         buffer: pdfBuffer,
         fileName: name,
         userId: options.userId!,
@@ -497,6 +503,7 @@ export async function extractKnowledgeCardUploads(
     }
 
     const extracted = await extractDocumentText({
+      abortSignal: options.abortSignal,
       buffer: pdfBuffer || buffer,
       mimeType,
       fileName: pdfBuffer ? `${name}.pdf` : file.fileName,
@@ -1717,12 +1724,14 @@ export async function prepareKnowledgeCardCopy(input: {
     input.extracted ??
     (files.length
       ? await extractKnowledgeCardUploads(files, {
+          abortSignal: input.abortSignal,
           userId: input.userId,
           selectPages: input.userId ? makeKnowledgeCardPageSelector(modelName, input.abortSignal) : undefined,
           onProgress: input.onExtractProgress,
         })
       : { documentText: "", nonPageDocumentText: "", imageUrls: [], methods: [], documents: [] });
 
+  input.abortSignal?.throwIfAborted();
   const pasted = String(input.sourceText || "").trim();
   // 有上传时：以本次抽文+附图为准；文本框旧「生 OCR」不重复灌入（避免 100+ 页原文假分页）
   const hasUploads = files.length > 0 || extracted.documents.length > 0 || extracted.imageUrls.length > 0 || Boolean(extracted.documentText);
