@@ -363,10 +363,12 @@ function isImageFile(mimeType: string, fileName?: string): boolean {
  * 从 GCS 取回直传的文件（文档抽字用；图片不下载，直接签名给模型）。
  * 所有上传不论大小一律前端直传 GCS（0908 用户令；媒体传输铁律禁止 base64 塞请求体）。
  */
-async function readGcsUploadBuffer(gcsUri: string): Promise<Buffer> {
+async function readGcsUploadBuffer(gcsUri: string, abortSignal?: AbortSignal): Promise<Buffer> {
+  abortSignal?.throwIfAborted();
   const { signGsUriV4ReadUrl } = await import("./gcs.js");
   const url = await signGsUriV4ReadUrl(gcsUri, 3600);
-  const res = await fetch(url, { signal: AbortSignal.timeout(180_000) });
+  abortSignal?.throwIfAborted();
+  const res = await fetch(url, { signal: abortSignal ? AbortSignal.any([abortSignal, AbortSignal.timeout(180_000)]) : AbortSignal.timeout(180_000) });
   if (!res.ok) throw new Error(`读取上传文件失败（${res.status}）`);
   return Buffer.from(await res.arrayBuffer());
 }
@@ -408,6 +410,7 @@ export async function extractKnowledgeCardUploads(
   files: KnowledgeCardUploadFile[],
   options: {
     userId?: number;
+    abortSignal?: AbortSignal;
     selectPages?: (sheets: KnowledgeCardContactSheet[], pageCount: number) => Promise<KnowledgeCardPageSelection[]>;
     onProgress?: (p: KnowledgeCardExtractProgress) => void | Promise<void>;
   } = {},
@@ -421,6 +424,7 @@ export async function extractKnowledgeCardUploads(
   const fileTotal = files.length;
 
   for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+    options.abortSignal?.throwIfAborted();
     const file = files[fileIndex]!;
     const name = String(file.fileName || "upload");
     const report = (stage: KnowledgeCardExtractProgress["stage"], done: number, total: number) =>
@@ -441,9 +445,10 @@ export async function extractKnowledgeCardUploads(
 
     let buffer: Buffer;
     try {
-      buffer = await readGcsUploadBuffer(gcsUri);
+      buffer = await readGcsUploadBuffer(gcsUri, options.abortSignal);
       methods.push(`${name}:gcs_direct`);
     } catch (e) {
+      options.abortSignal?.throwIfAborted();
       methods.push(`${name}:gcs_read_failed`);
       console.warn(`[knowledgeCardDistill] 取回文档失败 ${gcsUri}:`, e);
       continue;
@@ -457,7 +462,7 @@ export async function extractKnowledgeCardUploads(
     let mimeType = file.mimeType;
     if (isEpubFile(file.mimeType, file.fileName)) {
       await report("converting", 0, 1);
-      const converted = await convertEpubToPdf(buffer);
+      const converted = await convertEpubToPdf(buffer, { abortSignal: options.abortSignal });
       pdfBuffer = converted.pdf;
       mimeType = "application/pdf";
       if (converted.mode === "stripped") {
@@ -476,6 +481,7 @@ export async function extractKnowledgeCardUploads(
 
     if (pdfBuffer && pagesEnabled) {
       const set = await prepareKnowledgeCardDocumentPages({
+        abortSignal: options.abortSignal,
         buffer: pdfBuffer,
         fileName: name,
         userId: options.userId!,
@@ -497,6 +503,7 @@ export async function extractKnowledgeCardUploads(
     }
 
     const extracted = await extractDocumentText({
+      abortSignal: options.abortSignal,
       buffer: pdfBuffer || buffer,
       mimeType,
       fileName: pdfBuffer ? `${name}.pdf` : file.fileName,
@@ -699,6 +706,8 @@ async function invokeDistillViaGateway(params: {
   gateway: DistillGateway;
   /** 该跳的模型档（见 DistillGatewayStep）；缺省按 modelName 推 */
   tier?: KnowledgeCardTier;
+  /** 用户点「终止」时 abort：在途请求立刻断 */
+  abortSignal?: AbortSignal;
   /** 输出最短字数（默认 20）；JSON 任务（挑页）传小值，别把合法空表当算力异常 */
   minOutputChars?: number;
   sourceText: string;
@@ -820,7 +829,10 @@ async function invokeDistillViaGateway(params: {
     res = await fetch(url, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(distillFetchTimeoutMs(params.modelName, params.timeoutMs)),
+      // 终止信号与超时合并：用户点停要立刻断在途请求，超时保护同时保留
+      signal: params.abortSignal
+        ? AbortSignal.any([params.abortSignal, AbortSignal.timeout(distillFetchTimeoutMs(params.modelName, params.timeoutMs))])
+        : AbortSignal.timeout(distillFetchTimeoutMs(params.modelName, params.timeoutMs)),
       body: JSON.stringify(body),
     });
     // 按**响应类型**决定读法：上游忽略 stream 直接回 JSON 时用 SSE 读取器会读出空正文
@@ -913,6 +925,8 @@ async function invokeDistillLlm(params: {
   maxTokens?: number;
   /** 输出最短字数（透传单跳；挑页 JSON 传小值） */
   minOutputChars?: number;
+  /** 用户点「终止」时 abort：在途请求立刻断 */
+  abortSignal?: AbortSignal;
   /** 覆盖链序（挑页的降档尾段用：只走精细档的 Qwen 尾跳，不多出第 5 跳） */
   chainOverride?: readonly KnowledgeCardGatewayStep[];
 }): Promise<string> {
@@ -926,6 +940,8 @@ async function invokeDistillLlm(params: {
   if (!chain.length) throw new Error("提炼通道未配置，请稍后重试");
   let lastError: Error | null = null;
   for (let i = 0; i < chain.length; i++) {
+    // 进网关之前先看有没有被叫停（复审 P1：已取消的信号进主路，以前仍会打一枪）
+    params.abortSignal?.throwIfAborted();
     const step = chain[i]!;
     touchKnowledgeCardDistillActivity();
     try {
@@ -935,6 +951,8 @@ async function invokeDistillLlm(params: {
       return out;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
+      // 用户终止：立刻收口，不再换下一跳
+      if (isKnowledgeCardCancelledError(err, params.abortSignal)) throw lastError;
       if (isSseContentSafetyError(err)) throw err;
       // 流没跑完＝本跳不可用，恒可恢复：先短路，别让上游原文落进下面的文本正则（复审 P1）
       if (!isSseIncompleteStreamError(err)) {
@@ -950,6 +968,18 @@ async function invokeDistillLlm(params: {
     }
   }
   throw lastError || new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
+}
+
+/**
+ * 用户点了终止（或外部 abort）：这不是「这家挂了」，绝不能当成换跳理由——
+ * 否则一次取消会把六跳全试一遍、每跳还退避重试，最后报「算力紧张」，
+ * 既慢又误导（0911 回归测试抓到）。
+ */
+export function isKnowledgeCardCancelledError(err: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  const e = err as { name?: string; message?: string } | null;
+  if (e?.name === "AbortError") return true;
+  return /停止读档|已取消|The operation was aborted/i.test(String(e?.message || ""));
 }
 
 /** 提炼无法靠重试救回的错（额度/配置/通道），不必再退避。 */
@@ -968,6 +998,8 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  * 用户口径：个别失败的重新提炼，然后合并写框（不接受半途整批废）。
  */
 async function distillOneChunkWithRetry(params: {
+  /** 用户点「终止」：在途请求立刻断 */
+  abortSignal?: AbortSignal;
   chunk: string;
   imageUrls: string[];
   pageImages?: DistillPageImage[];
@@ -983,6 +1015,7 @@ async function distillOneChunkWithRetry(params: {
   for (let attempt = 0; attempt <= params.retries; attempt++) {
     try {
       return await invokeDistillLlm({
+        abortSignal: params.abortSignal,
         sourceText: params.chunk,
         imageUrls: params.imageUrls,
         pageImages: params.pageImages,
@@ -995,6 +1028,8 @@ async function distillOneChunkWithRetry(params: {
       });
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
+      // 用户终止：不退避、不细切，直接收口
+      if (isKnowledgeCardCancelledError(err, params.abortSignal)) throw lastError;
       if (isSseContentSafetyError(err)) throw err;
       if (!isSseIncompleteStreamError(lastError) && isFatalDistillError(lastError)) throw lastError;
       console.warn(
@@ -1018,6 +1053,7 @@ async function distillOneChunkWithRetry(params: {
       for (let i = 0; i < halves.length; i++) {
         finer.push(
           await distillOneChunkWithRetry({
+            abortSignal: params.abortSignal,
             chunk: halves[i]!,
             imageUrls: i === 0 ? params.imageUrls : [],
             pageImages: i === 0 ? params.pageImages : [],
@@ -1070,6 +1106,8 @@ async function distillOneChunkOrSkip(
     return { ok: true, markdown };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    // 用户终止不能被「跳过该段」吞掉：整本立刻停
+    if (isKnowledgeCardCancelledError(err)) throw err;
     if (isSseContentSafetyError(err)) throw err;
     if (!isSseIncompleteStreamError(err) && isFatalDistillError(err)) throw err;
     const where = `第 ${idx + 1}/${totalChunks} 段（${label}）`;
@@ -1192,10 +1230,13 @@ async function refineOnce(params: {
   minSections: number;
   stage: RefineStage;
   detailLevel?: KnowledgeCardDetailLevel;
+  /** 用户点「终止」：统稿这步也要能立刻断 */
+  abortSignal?: AbortSignal;
 }): Promise<string> {
   const profile = DISTILL_PROFILES[params.modelName];
   try {
     const refined = await invokeDistillLlm({
+      abortSignal: params.abortSignal,
       sourceText: params.body,
       imageUrls: [],
       modelName: params.modelName,
@@ -1219,6 +1260,9 @@ async function refineOnce(params: {
     });
     return refined;
   } catch (err) {
+    // 复审 P1：取消必须先判。否则统稿期间点停 → 这里「保留输入稿」→ prepare 一路返回成功，
+    // 用户点了终止，服务层却交了一份稿
+    if (isKnowledgeCardCancelledError(err, params.abortSignal)) throw err;
     if (isSseContentSafetyError(err)) throw err;
     console.warn(
       `[knowledgeCardDistill] refine(${params.stage}) failed, keep input: ${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`,
@@ -1240,6 +1284,8 @@ const DISTILL_TIGHTEN_MAX_ROUNDS = 2;
  * 现在改为：喂不下就按 `##` 分组各自压缩，逐层收敛，最后必定做一次全局统稿。
  */
 async function refineMergedDistill(params: {
+  /** 用户点「终止」：统稿各轮都要能立刻断 */
+  abortSignal?: AbortSignal;
   merged: string;
   modelName: KnowledgeCardDistillModelId;
   minSections: number;
@@ -1278,6 +1324,7 @@ async function refineMergedDistill(params: {
       await Promise.all(
         idxs.map(async (idx) => {
           reduced[idx] = await refineOnce({
+            abortSignal: params.abortSignal,
             body: groups[idx]!,
             modelName: params.modelName,
             minSections: perGroupTarget,
@@ -1316,6 +1363,7 @@ async function refineMergedDistill(params: {
       await Promise.all(
         idxs.map(async (idx) => {
           tightened[idx] = await refineOnce({
+            abortSignal: params.abortSignal,
             body: groups[idx]!,
             modelName: params.modelName,
             minSections: perGroupTarget,
@@ -1338,6 +1386,7 @@ async function refineMergedDistill(params: {
   let final = params.detailLevel === "full" && !fitsOnePass()
     ? current
     : await refineOnce({
+    abortSignal: params.abortSignal,
     body: current,
     modelName: params.modelName,
     // 完整版：目标节数不低于合并稿节数（统稿不压缩）
@@ -1355,6 +1404,7 @@ async function refineMergedDistill(params: {
       `[knowledgeCardDistill] tighten round ${round + 1}: ${before} sections > cap ${hardCap}`,
     );
     const tightened = await refineOnce({
+      abortSignal: params.abortSignal,
       body: final,
       modelName: params.modelName,
       minSections: params.minSections,
@@ -1442,6 +1492,8 @@ export async function invokeDistillLlmPossiblyChunked(params: {
   onProgress?: (p: KnowledgeCardDistillProgress) => void | Promise<void>;
   /** 单段提炼跳过等非致命情况的提醒；上层写进 extractionMethods 的 `:notice:`，前端会弹 */
   onNotice?: (noticeZh: string) => void;
+  /** 用户点「终止」：在途请求立刻断，段与段之间也不再往下跑 */
+  abortSignal?: AbortSignal;
 }): Promise<string> {
   const profile = DISTILL_PROFILES[params.modelName];
   const text = String(params.sourceText || "").trim();
@@ -1453,6 +1505,7 @@ export async function invokeDistillLlmPossiblyChunked(params: {
   // 短文单发；但参考页图超过单请求上限时仍走分段，避免整本页图塞进一个请求
   if ((!text || text.length <= profile.chunkThreshold) && allPageImages.length <= DISTILL_MAX_PAGE_IMAGES_PER_CALL) {
     return invokeDistillLlm({
+      abortSignal: params.abortSignal,
       sourceText: text,
       imageUrls: urls,
       pageImages: allPageImages,
@@ -1489,6 +1542,7 @@ export async function invokeDistillLlmPossiblyChunked(params: {
       batchIdx.map(async (idx) => {
         const chunk = chunks[idx]!;
         outputs[idx] = await distillOneChunkOrSkip(params.onNotice, chunks.length, idx, chunk.label, () => distillOneChunkWithRetry({
+          abortSignal: params.abortSignal,
           chunk: chunk.text,
           // 用户附图只挂第一段；原稿参考页跟随所在段
           imageUrls: idx === 0 ? urls : [],
@@ -1524,6 +1578,7 @@ export async function invokeDistillLlmPossiblyChunked(params: {
     phase: "refining",
   });
   return refineMergedDistill({
+    abortSignal: params.abortSignal,
     merged,
     modelName: params.modelName,
     minSections: params.minSectionsTotal,
@@ -1575,7 +1630,7 @@ const TRIAGE_SHEETS_PER_CALL = 8;
  * 目录页扫读挑页：用所选档位模型看缩略图目录，返回值得参考的页码。
  * 扫读失败不阻断整体提炼（退回无参考页）。
  */
-export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillModelId) {
+export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillModelId, abortSignal?: AbortSignal) {
   // 终审第五条：挑页也按档位走同一份顺序——
   // 轻量档不从 DeepSeek 视觉起跳，直接走轻量 Qwen 全链；
   // 精细档降档尾段只走精细顺序里的 Qwen 两跳（新加坡→OpenRouter），不多出第 5 跳。
@@ -1590,6 +1645,8 @@ export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillMod
   ): Promise<KnowledgeCardPageSelection[]> => {
     const picked: KnowledgeCardPageSelection[] = [];
     for (let i = 0; i < sheets.length; i += TRIAGE_SHEETS_PER_CALL) {
+      // 每组开始前先看有没有被叫停：不靠进度回调，也不等本组跑完
+      abortSignal?.throwIfAborted();
       if (i > 0) await onProgress?.(i, sheets.length);
       const group = sheets.slice(i, i + TRIAGE_SHEETS_PER_CALL);
       const pageNumbers = group.flatMap((sheet) => sheet.pageNumbers);
@@ -1598,6 +1655,7 @@ export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillMod
         const imageUrls = group.map((sheet) => sheet.imageUrl);
         const chainFallback = () =>
           invokeDistillLlm({
+            abortSignal,
             sourceText: userText,
             imageUrls,
             modelName: resolveKnowledgeCardDistillModel(modelName),
@@ -1620,11 +1678,15 @@ export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillMod
               system: buildPageTriageSystem(),
               userText,
               imageUrls,
+              // 复审 P1：主通道以前根本没拿到取消信号，已取消还会照打一次 fetch
+              abortSignal,
               fallback: chainFallback,
             });
         const allowed = new Set(pageNumbers);
         for (const item of parsePageTriage(raw)) if (allowed.has(item.pageNumber)) picked.push(item);
       } catch (err) {
+        // 取消原样抛：不能被「本组不选参考页」这条容错吞掉（复审 P1）
+        if (isKnowledgeCardCancelledError(err, abortSignal)) throw err;
         if (isSseContentSafetyError(err)) throw err;
         console.warn(`[knowledgeCardDistill] 目录页扫读失败（第 ${Math.floor(i / TRIAGE_SHEETS_PER_CALL) + 1}/${Math.ceil(sheets.length / TRIAGE_SHEETS_PER_CALL)} 组，目录页 ${i + 1}–${Math.min(sheets.length, i + TRIAGE_SHEETS_PER_CALL)}），本组不选参考页：${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`);
       }
@@ -1650,7 +1712,11 @@ export async function prepareKnowledgeCardCopy(input: {
   extracted?: KnowledgeCardExtractResult;
   onProgress?: (p: KnowledgeCardDistillProgress) => void | Promise<void>;
   onExtractProgress?: (p: KnowledgeCardExtractProgress) => void | Promise<void>;
+  /** 用户点「终止」：在途请求立刻断，段与段之间也不再往下跑 */
+  abortSignal?: AbortSignal;
 }): Promise<PrepareKnowledgeCardCopyResult> {
+  // 已经取消就别起步：抽取、挑页、提炼一律不做
+  input.abortSignal?.throwIfAborted();
   const modelName = resolveKnowledgeCardDistillModel(input.distillModel);
   const detailLevel = resolveKnowledgeCardDetailLevel(input.detailLevel);
   const files = Array.isArray(input.files) ? input.files : [];
@@ -1658,12 +1724,14 @@ export async function prepareKnowledgeCardCopy(input: {
     input.extracted ??
     (files.length
       ? await extractKnowledgeCardUploads(files, {
+          abortSignal: input.abortSignal,
           userId: input.userId,
-          selectPages: input.userId ? makeKnowledgeCardPageSelector(modelName) : undefined,
+          selectPages: input.userId ? makeKnowledgeCardPageSelector(modelName, input.abortSignal) : undefined,
           onProgress: input.onExtractProgress,
         })
       : { documentText: "", nonPageDocumentText: "", imageUrls: [], methods: [], documents: [] });
 
+  input.abortSignal?.throwIfAborted();
   const pasted = String(input.sourceText || "").trim();
   // 有上传时：以本次抽文+附图为准；文本框旧「生 OCR」不重复灌入（避免 100+ 页原文假分页）
   const hasUploads = files.length > 0 || extracted.documents.length > 0 || extracted.imageUrls.length > 0 || Boolean(extracted.documentText);
@@ -1704,6 +1772,7 @@ export async function prepareKnowledgeCardCopy(input: {
 
   try {
     const distilled = await invokeDistillLlmPossiblyChunked({
+      abortSignal: input.abortSignal,
       sourceText: mergedRaw,
       extraText: [extracted.nonPageDocumentText, pasted.length <= 3200 ? pasted : ""].filter(Boolean).join("\n\n").trim(),
       imageUrls: urls,
@@ -1717,6 +1786,8 @@ export async function prepareKnowledgeCardCopy(input: {
     if (mergedRaw.length >= 8000 && distilled.length < Math.min(800, mergedRaw.length * 0.02)) {
       throw new Error("提炼结果过短，疑似过度压缩，请重试");
     }
+    // 交稿前最后一道：取消赢了就不交（复审 P1·B 的实测反例——signal 已 aborted 仍返回 11225 字）
+    input.abortSignal?.throwIfAborted();
     return {
       distilledMarkdown: distilled,
       skippedDistill: false,
@@ -1727,6 +1798,9 @@ export async function prepareKnowledgeCardCopy(input: {
       documents: documentsSummary,
     };
   } catch (err) {
+    // 用户终止：原样上抛，别被下面的兜底改写成「算力紧张」——
+    // 那会让用户以为是系统故障，也会让 worker 把主动取消记成失败原因
+    if (isKnowledgeCardCancelledError(err, input.abortSignal)) throw err;
     if (isSseContentSafetyError(err)) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     console.warn("[knowledgeCardDistill] failed:", msg.slice(0, 320));

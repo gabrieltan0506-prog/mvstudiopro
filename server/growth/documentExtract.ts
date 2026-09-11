@@ -1,10 +1,7 @@
-import { execFile } from "child_process";
 import os from "os";
 import path from "path";
 import fs from "fs/promises";
-import { promisify } from "util";
-
-const execFileAsync = promisify(execFile);
+import { execKnowledgeCardFile as execFileAsync } from "../services/knowledgeCardCancellation.js";
 
 function decodeXmlEntities(value: string): string {
   return value
@@ -43,10 +40,12 @@ async function withTempFile<T>(
   }
 }
 
-export async function extractDocxText(buffer: Buffer): Promise<string> {
+export async function extractDocxText(buffer: Buffer, abortSignal?: AbortSignal): Promise<string> {
+  abortSignal?.throwIfAborted();
   return withTempFile(buffer, "docx", async (filePath) => {
     const { stdout } = await execFileAsync("unzip", ["-p", filePath, "word/document.xml"], {
       maxBuffer: 32 * 1024 * 1024,
+      signal: abortSignal,
     });
 
     return normalizeText(decodeXmlEntities(stdout));
@@ -56,36 +55,42 @@ export async function extractDocxText(buffer: Buffer): Promise<string> {
 /** 优先 pdftotext（整书可选中文字）；失败再退 strings。 */
 export async function extractPdfText(
   buffer: Buffer,
+  abortSignal?: AbortSignal,
 ): Promise<{ text: string; method: "pdf_pdftotext" | "pdf_strings" | "none" }> {
   return withTempFile(buffer, "pdf", async (filePath) => {
     try {
       const { stdout } = await execFileAsync(
         "pdftotext",
         ["-layout", "-enc", "UTF-8", filePath, "-"],
-        { maxBuffer: 64 * 1024 * 1024 },
+        { maxBuffer: 64 * 1024 * 1024, signal: abortSignal },
       );
       const text = normalizeText(stdout);
       if (text.length >= 40) return { text, method: "pdf_pdftotext" };
     } catch {
+      abortSignal?.throwIfAborted();
       /* fall through */
     }
     try {
       const { stdout } = await execFileAsync("strings", ["-n", "3", filePath], {
         maxBuffer: 64 * 1024 * 1024,
+        signal: abortSignal,
       });
       const text = normalizeText(stdout);
       return { text, method: text ? "pdf_strings" : "none" };
     } catch {
+      abortSignal?.throwIfAborted();
       return { text: "", method: "none" };
     }
   });
 }
 
 /** pptx：unzip 抽 ppt/slides/slide*.xml 内 `<a:t>` 文本。 */
-export async function extractPptxText(buffer: Buffer): Promise<string> {
+export async function extractPptxText(buffer: Buffer, abortSignal?: AbortSignal): Promise<string> {
+  abortSignal?.throwIfAborted();
   return withTempFile(buffer, "pptx", async (filePath) => {
     const { stdout: listing } = await execFileAsync("unzip", ["-l", filePath], {
       maxBuffer: 16 * 1024 * 1024,
+      signal: abortSignal,
     });
     const slideMatches = Array.from(listing.matchAll(/ppt\/slides\/slide\d+\.xml/g)).map((m) => m[0]);
     const slides = Array.from(new Set(slideMatches)).sort((a, b) => {
@@ -96,8 +101,10 @@ export async function extractPptxText(buffer: Buffer): Promise<string> {
 
     const parts: string[] = [];
     for (const slide of slides) {
+      abortSignal?.throwIfAborted();
       const { stdout } = await execFileAsync("unzip", ["-p", filePath, slide], {
         maxBuffer: 16 * 1024 * 1024,
+        signal: abortSignal,
       });
       const texts = Array.from(stdout.matchAll(/<a:t[^>]*>([^<]*)<\/a:t>/g)).map((m) =>
         decodeXmlEntities(m[1] || ""),
@@ -115,7 +122,9 @@ export async function extractDocumentText(params: {
   buffer: Buffer;
   mimeType: string;
   fileName?: string;
+  abortSignal?: AbortSignal;
 }): Promise<{ text: string; method: DocumentExtractMethod }> {
+  params.abortSignal?.throwIfAborted();
   const fileName = String(params.fileName || "").toLowerCase();
   const mime = String(params.mimeType || "").toLowerCase();
 
@@ -123,13 +132,13 @@ export async function extractDocumentText(params: {
     mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
     fileName.endsWith(".docx")
   ) {
-    const text = await extractDocxText(params.buffer).catch(() => "");
+    const text = await extractDocxText(params.buffer, params.abortSignal).catch(() => { params.abortSignal?.throwIfAborted(); return ""; });
     return { text, method: text ? "docx_xml" : "none" };
   }
 
   if (mime === "application/pdf" || fileName.endsWith(".pdf")) {
-    const pdf = await extractPdfText(params.buffer).catch(
-      () => ({ text: "", method: "none" as const }),
+    const pdf = await extractPdfText(params.buffer, params.abortSignal).catch(
+      () => { params.abortSignal?.throwIfAborted(); return { text: "", method: "none" as const }; },
     );
     return { text: pdf.text, method: pdf.method };
   }
@@ -138,7 +147,7 @@ export async function extractDocumentText(params: {
     mime === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
     fileName.endsWith(".pptx")
   ) {
-    const text = await extractPptxText(params.buffer).catch(() => "");
+    const text = await extractPptxText(params.buffer, params.abortSignal).catch(() => { params.abortSignal?.throwIfAborted(); return ""; });
     return { text, method: text ? "pptx_xml" : "none" };
   }
 

@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
+import { isDeepStrictEqual } from "node:util";
 import { jobs, type Job, type InsertJob } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { omitChineseStagingFromJobOutput } from "../services/platformImageChineseStaging.js";
@@ -561,6 +562,189 @@ export async function requestManhuaTemplateLearnJobCancel(input: {
       ),
     );
   return getJobById(input.jobId);
+}
+
+/**
+ * 通用「请求停止」：把 cancelRequestedAt 写进 jobs.input，worker 在下一次进度回调时看到就 abort。
+ * 与漫剧学习那套是同一个字段，只是不再限定 action——读档/派生也要有终止按钮（0911 用户令）。
+ * queued（还没开跑）直接判失败，running 保持 running 交给 worker 收口，避免两边同时写终态。
+ */
+export async function requestPlatformJobCancel(input: {
+  jobId: string;
+  userId: string;
+  actions: readonly string[];
+  queuedError: string;
+}): Promise<NormalizedJob | null> {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable — cannot cancel job");
+  const current = await getJobByIdStrict(input.jobId);
+  if (!current) return null;
+  const rawInput = parseMaybeJson(current.input);
+  const action = rawInput && typeof rawInput === "object" && !Array.isArray(rawInput)
+    ? String((rawInput as Record<string, unknown>).action || "")
+    : "";
+  if (!input.actions.includes(action)) return null;
+  if (String(current.userId) !== String(input.userId)) return null;
+  if (current.status === "succeeded" || current.status === "failed") return current;
+  if (getKnowledgeCardSettlement(current.output)) return current;
+
+  const requestedAt = new Date().toISOString();
+  /**
+   * 复审 P2·A：不能拿旧快照决定终态。读到 queued、worker 随即领走、我们再写 failed「未开始执行」——
+   * 任务其实已经在跑了。所以 queued 分支走状态 CAS（WHERE status='queued'），
+   * 没命中就重读一次按 running 处理：只登记取消请求，终态交给 worker 写，两边不抢。
+   *
+   * input 用 SQL 里的 jsonb 合并写，不拿旧快照整体覆盖——worker 同时在写进度字段。
+   */
+  const mergeCancelFlag = sql`coalesce(${jobs.input}::jsonb, '{}'::jsonb) || ${JSON.stringify({ cancelRequestedAt: requestedAt })}::jsonb`;
+  const readCancelReceipt = async () => {
+    const result = await getJobByIdStrict(input.jobId);
+    if (!result) throw new Error("停止请求回执暂不可确认，请查看原任务");
+    return result;
+  };
+
+  if (current.status === "queued") {
+    const casRows = await db
+      .update(jobs)
+      .set({
+        input: mergeCancelFlag as unknown as InsertJob["input"],
+        status: "failed",
+        error: input.queuedError,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(jobs.id, input.jobId),
+          eq(jobs.userId, String(input.userId)),
+          eq(jobs.status, "queued"),
+          sql`not (coalesce(${jobs.output}::jsonb, '{}'::jsonb) ? 'knowledgeCardSettlement')`,
+        ),
+      )
+      .returning({ id: jobs.id });
+    if (casRows.length > 0) return readCancelReceipt();
+    // CAS 没命中＝这中间被领走了：按 running 再来一次
+  }
+
+  // running（或刚被领走）：只登记取消请求，不碰 status / error
+  await db
+    .update(jobs)
+    .set({
+      input: mergeCancelFlag as unknown as InsertJob["input"],
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(jobs.id, input.jobId),
+        eq(jobs.userId, String(input.userId)),
+        inArray(jobs.status, ["queued", "running"]),
+        sql`not (coalesce(${jobs.output}::jsonb, '{}'::jsonb) ? 'knowledgeCardSettlement')`,
+      ),
+    );
+  return readCancelReceipt();
+}
+
+export type KnowledgeCardSettlementCheckpoint = {
+  version: 1;
+  output: Record<string, unknown>;
+  fee: number;
+  receiptModel: string | null;
+  markdown: string;
+};
+
+/** 无检查点兼容旧任务；坏检查点必须停账，不能当成不存在重新调用模型。 */
+export function getKnowledgeCardSettlement(output: unknown): KnowledgeCardSettlementCheckpoint | null {
+  const parsed = parseMaybeJson(output);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)
+    || !Object.prototype.hasOwnProperty.call(parsed, "knowledgeCardSettlement")) return null;
+  const raw = (parsed as Record<string, unknown>).knowledgeCardSettlement;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("知识卡结算检查点无效");
+  const cp = raw as KnowledgeCardSettlementCheckpoint;
+  if (cp.version !== 1 || !cp.output || typeof cp.output !== "object" || Array.isArray(cp.output)
+    || cp.output.success !== true || typeof cp.markdown !== "string" || !cp.markdown.trim()
+    || cp.output.distilledMarkdown !== cp.markdown
+    || !Number.isFinite(cp.fee) || cp.fee < 0
+    || !(cp.receiptModel === null || (typeof cp.receiptModel === "string" && cp.receiptModel.trim()))
+    || Object.prototype.hasOwnProperty.call(cp.output, "knowledgeCardSettlement")) {
+    throw new Error("知识卡结算检查点无效");
+  }
+  return cp;
+}
+
+/** 与取消 UPDATE 在同一行互斥；进闸前先持久保存完整稿件，重启只续结算。 */
+export async function beginKnowledgeCardSettlement(
+  jobId: string,
+  checkpoint: KnowledgeCardSettlementCheckpoint,
+): Promise<"accepted" | "cancelled" | "existing"> {
+  getKnowledgeCardSettlement({ knowledgeCardSettlement: checkpoint });
+  const db = await getDb();
+  if (!db) throw new Error("暂时无法保存知识卡结算检查点");
+  const rows = await db.update(jobs).set({
+    output: sql`coalesce(${jobs.output}::jsonb, '{}'::jsonb) || ${JSON.stringify({ knowledgeCardSettlement: checkpoint })}::jsonb` as unknown as InsertJob["output"],
+    updatedAt: new Date(),
+  }).where(and(
+    eq(jobs.id, jobId),
+    eq(jobs.type, "platform"),
+    eq(jobs.status, "running"),
+    sql`(${jobs.input}::jsonb->>'action') in ('knowledge_card_distill', 'knowledge_card_derive_level')`,
+    sql`coalesce(${jobs.input}::jsonb->>'cancelRequestedAt', '') = ''`,
+    sql`not (coalesce(${jobs.output}::jsonb, '{}'::jsonb) ? 'knowledgeCardSettlement')`,
+  )).returning({ id: jobs.id });
+  if (rows.length === 1) return "accepted";
+  const current = await getJobByIdStrict(jobId);
+  if (!current) throw new Error("知识卡任务不存在，无法结算");
+  if (getKnowledgeCardSettlement(current.output)) return "existing";
+  const input = parseMaybeJson(current.input) as Record<string, unknown> | null;
+  if (current.status === "failed" || input?.cancelRequestedAt) return "cancelled";
+  throw new Error("知识卡任务状态已变化，未进入结算");
+}
+
+/** 只补原稿的终态，不覆盖检查点；写入故障抛出，交给原任务恢复结算。 */
+export async function markKnowledgeCardSettlementSucceeded(
+  jobId: string,
+  output: Record<string, unknown>,
+  provider?: string,
+): Promise<void> {
+  const current = await getJobByIdStrict(jobId);
+  const checkpoint = getKnowledgeCardSettlement(current?.output);
+  if (!current || !checkpoint) throw new Error("知识卡结算检查点缺失，未写入成功状态");
+  const { distillFeeCharged: _charged, ...result } = output;
+  const { distillFeeCharged: _expected, ...prepared } = checkpoint.output;
+  if (!isDeepStrictEqual(result, prepared)) throw new Error("知识卡结算结果与原检查点不一致");
+  const finalOutput = { ...output, knowledgeCardSettlement: checkpoint };
+  if (current.status === "succeeded") {
+    if (!isDeepStrictEqual(parseMaybeJson(current.output), finalOutput)) throw new Error("知识卡已完成结果不一致");
+    return;
+  }
+  const db = await getDb();
+  if (!db) throw new Error("暂时无法保存知识卡结算结果");
+  const rows = await db.update(jobs).set({
+    status: "succeeded", output: finalOutput, error: null,
+    updatedAt: new Date(), ...(provider ? { provider } : {}),
+  }).where(and(
+    eq(jobs.id, jobId), eq(jobs.status, "running"),
+    sql`${jobs.output}::jsonb->'knowledgeCardSettlement' = ${JSON.stringify(checkpoint)}::jsonb`,
+  )).returning({ id: jobs.id });
+  if (rows.length === 1) return;
+  const reread = await getJobByIdStrict(jobId);
+  if (reread?.status === "succeeded" && isDeepStrictEqual(parseMaybeJson(reread.output), finalOutput)) return;
+  throw new Error("知识卡结算结果未持久化，请继续原任务结算");
+}
+
+/**
+ * 任务是否被请求停止（任何 action 通用）。
+ * 复审 P2：必须用严格版读——宽松版把「数据库不可用 / 查询抛错」吞成 null，
+ * 再被这里解释成「取消」，等于数据库一抖就把用户跑了半小时的活判死。
+ * 现在故障原样抛给 watcher，由它暂缓判断继续盯；只有**查询成功且确实没有这行**才算孤儿任务。
+ */
+export async function isPlatformJobCancelRequested(jobId: string): Promise<boolean> {
+  const job = await getJobByIdStrict(jobId);
+  if (!job) return true;
+  const raw = parseMaybeJson(job.input);
+  return Boolean(
+    job.status === "failed"
+    || (raw && typeof raw === "object" && !Array.isArray(raw)
+      && (raw as Record<string, unknown>).cancelRequestedAt),
+  );
 }
 
 export async function isManhuaTemplateLearnJobCancelRequested(jobId: string): Promise<boolean> {
@@ -1205,7 +1389,11 @@ export async function patchJobRunningProgress(jobId: string, patch: Record<strin
     if (Array.isArray(next.imageGenFlowLog)) {
       next.imageGenFlowLog = (next.imageGenFlowLog as string[]).slice(-PLATFORM_JOB_PROGRESS_LOG_MAX);
     }
-    await db.update(jobs).set({ output: next as any, updatedAt: new Date() }).where(eq(jobs.id, jobId));
+    // 迟到的进度快照不能抹掉已原子写入的结算检查点，也不能覆盖最终稿件。
+    await db.update(jobs).set({ output: next as any, updatedAt: new Date() }).where(and(
+      eq(jobs.id, jobId), eq(jobs.status, "running"),
+      sql`not (coalesce(${jobs.output}::jsonb, '{}'::jsonb) ? 'knowledgeCardSettlement')`,
+    ));
   } catch (error) {
     console.warn("[JobsRepo] patchJobRunningProgress failed:", error);
   }
@@ -1231,7 +1419,9 @@ export async function patchJobRunningProgressStrict(
   const updated = await db
     .update(jobs)
     .set({ output: { ...previous, ...patch } as Job["output"], updatedAt: new Date() })
-    .where(and(eq(jobs.id, jobId), eq(jobs.status, "running")))
+    .where(and(eq(jobs.id, jobId), eq(jobs.status, "running"),
+      sql`not (coalesce(${jobs.output}::jsonb, '{}'::jsonb) ? 'knowledgeCardSettlement')`,
+    ))
     .returning({ id: jobs.id });
   if (updated.length !== 1) throw new Error(`Job ${jobId} progress was not persisted`);
 }

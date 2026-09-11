@@ -12,14 +12,11 @@
  *
  * 需要 poppler-utils（Fly 镜像已装）。
  */
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
+import { awaitKnowledgeCardAbort, execKnowledgeCardFile as execFileAsync } from "./knowledgeCardCancellation.js";
 
 /** 选中页渲染宽度：横向 1000px 足以看清表格/导图结构 */
 const PAGE_RENDER_WIDTH = Math.min(
@@ -95,19 +92,19 @@ async function withTempDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   }
 }
 
-async function pdfPageCount(filePath: string): Promise<number> {
-  const { stdout } = await execFileAsync("pdfinfo", [filePath], { maxBuffer: 4 * 1024 * 1024 });
+async function pdfPageCount(filePath: string, signal?: AbortSignal): Promise<number> {
+  const { stdout } = await execFileAsync("pdfinfo", [filePath], { maxBuffer: 4 * 1024 * 1024, signal });
   const m = /^Pages:\s+(\d+)/m.exec(stdout);
   const n = m ? Number(m[1]) : 0;
   if (!Number.isFinite(n) || n <= 0) throw new Error("无法读取 PDF 页数");
   return n;
 }
 
-async function renderPdfPagesToJpeg(pdfPath: string, outDir: string, prefix: string, width: number, range?: { first: number; last: number }): Promise<Map<number, Buffer>> {
+async function renderPdfPagesToJpeg(pdfPath: string, outDir: string, prefix: string, width: number, range?: { first: number; last: number }, signal?: AbortSignal): Promise<Map<number, Buffer>> {
   const args = ["-jpeg", "-jpegopt", "quality=78", "-scale-to-x", String(width), "-scale-to-y", "-1"];
   if (range) args.push("-f", String(range.first), "-l", String(range.last));
   args.push(pdfPath, path.join(outDir, prefix));
-  await execFileAsync("pdftoppm", args, { maxBuffer: 16 * 1024 * 1024 });
+  await execFileAsync("pdftoppm", args, { maxBuffer: 16 * 1024 * 1024, signal });
   const out = new Map<number, Buffer>();
   for (const file of await fs.readdir(outDir)) {
     const m = new RegExp(`^${prefix}-(\\d+)\\.jpg$`).exec(file);
@@ -164,6 +161,7 @@ export async function prepareKnowledgeCardDocumentPages(params: {
   buffer: Buffer;
   fileName: string;
   userId: number;
+  abortSignal?: AbortSignal;
   selectPages: (
     sheets: KnowledgeCardContactSheet[],
     pageCount: number,
@@ -174,13 +172,14 @@ export async function prepareKnowledgeCardDocumentPages(params: {
   /** 测试注入：不传则真实上传 GCS 并返回 { gcsUri, url(签名 https) } */
   uploadPage?: (objectName: string, jpeg: Buffer) => Promise<{ gcsUri: string; url: string }>;
 }): Promise<KnowledgeCardDocumentPageSet> {
+  params.abortSignal?.throwIfAborted();
   const docKey = knowledgeCardDocumentKey(params.buffer);
   const uploadPage =
     params.uploadPage ||
     (async (objectName: string, jpeg: Buffer) => {
       const { uploadBufferToGcsIfAbsent, getGcsBucketName, signGsUriV4ReadUrl } = await import("./gcs.js");
       // 同一原件重复上传时对象已存在（ifGenerationMatch=0 冲突），按已存在处理
-      await uploadBufferToGcsIfAbsent({ objectName, buffer: jpeg, contentType: "image/jpeg" });
+      await uploadBufferToGcsIfAbsent({ objectName, buffer: jpeg, contentType: "image/jpeg", signal: params.abortSignal });
       const gcsUri = `gs://${getGcsBucketName()}/${objectName}`;
       return { gcsUri, url: signGsUriV4ReadUrl(gcsUri, PAGE_URL_TTL_SECONDS) };
     });
@@ -188,11 +187,12 @@ export async function prepareKnowledgeCardDocumentPages(params: {
   return withTempDir(async (dir) => {
     const pdfPath = path.join(dir, "source.pdf");
     await fs.writeFile(pdfPath, params.buffer);
-    const total = await pdfPageCount(pdfPath);
+    const total = await pdfPageCount(pdfPath, params.abortSignal);
 
     await params.onProgress?.("text", 0, total);
     const { stdout: textRaw } = await execFileAsync("pdftotext", ["-layout", "-enc", "UTF-8", pdfPath, "-"], {
       maxBuffer: 256 * 1024 * 1024,
+      signal: params.abortSignal,
     });
     const texts = splitPdfTextByPage(textRaw);
     const pages: KnowledgeCardDocumentPage[] = Array.from({ length: total }, (_, i) => ({ pageNumber: i + 1, text: texts[i] || "" }));
@@ -202,11 +202,13 @@ export async function prepareKnowledgeCardDocumentPages(params: {
     const sheets: KnowledgeCardContactSheet[] = [];
     let thumbsDone = 0;
     for (let first = 1; first <= total; first += THUMB_BATCH_PAGES) {
+      params.abortSignal?.throwIfAborted();
       const last = Math.min(total, first + THUMB_BATCH_PAGES - 1);
-      const thumbs = await renderPdfPagesToJpeg(pdfPath, dir, `t${first}`, THUMB_WIDTH, { first, last });
+      const thumbs = await renderPdfPagesToJpeg(pdfPath, dir, `t${first}`, THUMB_WIDTH, { first, last }, params.abortSignal);
       if (thumbs.size !== last - first + 1) throw new Error(`原稿缩略图页数不符：第 ${first}–${last} 页应 ${last - first + 1} 页，实得 ${thumbs.size} 页`);
-      for (const sheet of await buildContactSheets(thumbs, sheets.length)) {
-        const uploaded = await uploadPage(knowledgeCardSheetObjectName(params.userId, docKey, sheet.index), sheet.jpeg);
+      for (const sheet of await awaitKnowledgeCardAbort(buildContactSheets(thumbs, sheets.length), params.abortSignal)) {
+        params.abortSignal?.throwIfAborted();
+        const uploaded = await awaitKnowledgeCardAbort(uploadPage(knowledgeCardSheetObjectName(params.userId, docKey, sheet.index), sheet.jpeg), params.abortSignal);
         sheets.push({ index: sheet.index, pageNumbers: sheet.pageNumbers, imageUrl: uploaded.url, gcsUri: uploaded.gcsUri });
       }
       thumbsDone += thumbs.size;
@@ -214,10 +216,12 @@ export async function prepareKnowledgeCardDocumentPages(params: {
     }
 
     await params.onProgress?.("select", 0, sheets.length);
+    params.abortSignal?.throwIfAborted();
     const picked = await params.selectPages(sheets, total, async (doneSheets, totalSheets) => {
       await params.onProgress?.("select", Math.min(doneSheets, totalSheets), totalSheets);
     });
     const selectedMap = new Map<number, string | undefined>();
+    params.abortSignal?.throwIfAborted();
     for (const item of picked) {
       const n = Math.floor(Number(item.pageNumber));
       if (Number.isInteger(n) && n >= 1 && n <= total && !selectedMap.has(n)) selectedMap.set(n, item.reason);
@@ -228,13 +232,15 @@ export async function prepareKnowledgeCardDocumentPages(params: {
     await params.onProgress?.("render", 0, selectedPages.length);
     let done = 0;
     for (let i = 0; i < selectedPages.length; i += PAGE_UPLOAD_CONCURRENCY) {
+      params.abortSignal?.throwIfAborted();
       const batch = selectedPages.slice(i, i + PAGE_UPLOAD_CONCURRENCY);
-      await Promise.all(
+      const batchResults = await Promise.allSettled(
         batch.map(async (pageNumber) => {
-          const rendered = await renderPdfPagesToJpeg(pdfPath, dir, `r${pageNumber}`, PAGE_RENDER_WIDTH, { first: pageNumber, last: pageNumber });
+          const rendered = await renderPdfPagesToJpeg(pdfPath, dir, `r${pageNumber}`, PAGE_RENDER_WIDTH, { first: pageNumber, last: pageNumber }, params.abortSignal);
           const jpeg = rendered.get(pageNumber) ?? Array.from(rendered.values())[0];
           if (!jpeg) throw new Error(`原稿第 ${pageNumber} 页渲染失败`);
-          const uploaded = await uploadPage(knowledgeCardPageObjectName(params.userId, docKey, pageNumber), jpeg);
+          params.abortSignal?.throwIfAborted();
+          const uploaded = await awaitKnowledgeCardAbort(uploadPage(knowledgeCardPageObjectName(params.userId, docKey, pageNumber), jpeg), params.abortSignal);
           const page = pages[pageNumber - 1]!;
           page.imageUrl = uploaded.url;
           page.imageGcsUri = uploaded.gcsUri;
@@ -242,8 +248,11 @@ export async function prepareKnowledgeCardDocumentPages(params: {
           done += 1;
         }),
       );
+      params.abortSignal?.throwIfAborted();
+      for (const result of batchResults) if (result.status === "rejected") throw result.reason;
       await params.onProgress?.("render", done, selectedPages.length);
     }
+    params.abortSignal?.throwIfAborted();
     return { docKey, fileName: params.fileName, pageCount: total, pages, selectedPages };
   });
 }

@@ -197,7 +197,10 @@ async function chatOnceInner(gw: DeriveGateway, params: { system: string; user: 
       stream_options: { include_usage: true },
       ...generationOptions,
     }),
-    signal: params.abortSignal ?? AbortSignal.timeout(DERIVE_TIMEOUT_MS),
+    // 取消与超时合并：以前传了 abortSignal 就没有超时保护了
+    signal: params.abortSignal
+      ? AbortSignal.any([params.abortSignal, AbortSignal.timeout(DERIVE_TIMEOUT_MS)])
+      : AbortSignal.timeout(DERIVE_TIMEOUT_MS),
   });
   // 上游忽略 stream 时按普通 JSON 读，不能只看「我发了 stream:true」
   // 非 200 一律按文本读：错误正文要留给下面的状态码判定，别被 strict 先抛掉（复审 P2）
@@ -253,6 +256,8 @@ export async function deriveKnowledgeCardCompact(params: {
   fullMarkdown: string;
   targetSections?: number;
   model?: string;
+  /** 用户点「终止」时 abort：在途请求立刻断，批与批之间也不再往下跑 */
+  abortSignal?: AbortSignal;
   onProgress?: (p: DeriveProgress) => void | Promise<void>;
   chat?: typeof deriveChat;
 }): Promise<{ markdown: string; sections: number; targetSections: number; passes: number }> {
@@ -274,10 +279,12 @@ export async function deriveKnowledgeCardCompact(params: {
       await params.onProgress?.({ doneBatches: i, totalBatches: batches.length, pass: passes });
       const batch = batches[i]!;
       const keep = Math.max(2, Math.ceil((target * batch.length) / current.length));
+      params.abortSignal?.throwIfAborted();
       const raw = await chat({
         system: buildDeriveSystem(keep, batch.length),
         user: batch.join("\n\n"),
         model,
+        abortSignal: params.abortSignal,
         maxTokens: Math.min(120_000, Math.max(8_000, Math.ceil(batch.join("").length / 2))),
       });
       const got = countMarkdownSections(raw);
