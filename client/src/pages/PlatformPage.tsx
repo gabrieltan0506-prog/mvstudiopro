@@ -3041,6 +3041,9 @@ export default function PlatformPage() {
   });
   /** 一条进度条贯穿上传→转换→读原稿→提炼→出图；终态成功/失败 */
   const [customNoteProgress, setCustomNoteProgress] = useState<KnowledgeCardProgressState>({ status: "idle", percent: 0 });
+  /** 正在跑的后台读档/派生任务：有值才显示「终止」按钮（出图阶段不给停） */
+  const [customNoteDistillJobId, setCustomNoteDistillJobId] = useState<string>("");
+  const [customNoteCancelBusy, setCustomNoteCancelBusy] = useState(false);
   /** 待随「生成」一并提炼的上传文件（含图片 OCR）。 */
   const customNotePendingFilesRef = useRef<KnowledgeCardPendingFile[]>([]);
   /** 上传区可见状态（成功/失败），避免只靠 toast */
@@ -8204,6 +8207,7 @@ export default function PlatformPage() {
       const tc = Number(out.distillTotalChunks) || totalHint;
       return `分段提炼 ${dc}/${tc} 段`;
     };
+    setCustomNoteDistillJobId(String(queued.progressJobId || ""));
     const job = await pollJobUntilTerminal(queued.progressJobId, {
       intervalMs: 3000,
       // 服务端不设总时长（只按连续无进度判死），前端也不设：轮询到终态为止
@@ -8225,10 +8229,35 @@ export default function PlatformPage() {
         });
       },
     });
+    setCustomNoteDistillJobId("");
     if (job.status === "failed") throw new Error(job.error || "提炼失败，请稍后重试");
     setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromDistill(98), label: "提炼完成" });
     const out = (job.output || {}) as { distilledMarkdown?: string };
     return String(out.distilledMarkdown || "").trim();
+  };
+
+  /**
+   * 终止后台读档（0911 用户令）。只发停止请求，真正收口由 worker 做：
+   * 它在下一次进度回调看到取消标记就断掉在途请求并把任务判失败，
+   * 轮询随即拿到 failed，走既有失败分支。中途停不计费（扣费点在提炼返回之后）。
+   */
+  const cancelCustomNoteDistill = async () => {
+    const jobId = customNoteDistillJobId;
+    if (!jobId || customNoteCancelBusy) return;
+    setCustomNoteCancelBusy(true);
+    try {
+      const res = await fetch(`/api/jobs/knowledge-card/${encodeURIComponent(jobId)}/cancel`, {
+        method: "POST",
+        credentials: "include",
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(String((body as { error?: string }).error || "停止失败，请稍后重试"));
+      toast.message(String((body as { messageZh?: string }).messageZh || "已请求停止读档"));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "停止失败，请稍后重试");
+    } finally {
+      setCustomNoteCancelBusy(false);
+    }
   };
 
   /**
@@ -15586,7 +15615,11 @@ export default function PlatformPage() {
                   <span className="text-[11px] text-[#c9c0e6]/45">
                     支持 pdf / epub / pptx / docx / png / jpg，不限页数与大小；EPUB 后台自动转 PDF；上传文档的提炼含在页费中，超长纯文本主动提炼另收一次性提炼费
                   </span>
-                  <KnowledgeCardProgress state={customNoteProgress} />
+                  <KnowledgeCardProgress
+                    state={customNoteProgress}
+                    onCancel={customNoteDistillJobId ? cancelCustomNoteDistill : undefined}
+                    cancelBusy={customNoteCancelBusy}
+                  />
                 </div>
               ) : null}
               {customNoteKind === "optimize_custom_copy" ? (

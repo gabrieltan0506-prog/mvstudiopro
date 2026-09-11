@@ -641,6 +641,35 @@ async function startServer() {
     }
   });
 
+  /**
+   * 读档 / 精华版派生的「终止」（0911 用户令：面板要有终止按钮）。
+   * 只标记 jobs.input.cancelRequestedAt，真正收口交给 worker——它在下一次进度回调
+   * （读档本就按段回调）看到就 abort 在途请求并把任务判失败。
+   * 计费点在提炼返回之后，所以中途停＝一分不扣，不存在退款。
+   */
+  app.post("/api/jobs/knowledge-card/:id/cancel", async (req, res) => {
+    try {
+      const ctx = await createContext({ req: req as any, res: res as any } as any);
+      if (!ctx.user) return res.status(401).json({ error: "请先登录" });
+      const { requestPlatformJobCancel } = await import("../jobs/repository");
+      const job = await requestPlatformJobCancel({
+        jobId: String(req.params.id || ""),
+        userId: String(ctx.user.id),
+        actions: ["knowledge_card_distill", "knowledge_card_derive_level"],
+        queuedError: "已按你的要求停止读档（未开始执行）",
+      });
+      if (!job) return res.status(404).json({ error: "读档任务不存在或不属于当前用户" });
+      return res.status(200).json({
+        jobId: job.id,
+        status: job.status,
+        messageZh: job.status === "failed" ? "已停止读档（未开始计费）" : "已请求停止，正在收口…",
+      });
+    } catch (error) {
+      console.error("[Jobs] cancel knowledge card failed:", error);
+      return res.status(500).json({ error: "停止读档失败，请稍后重试" });
+    }
+  });
+
   app.post("/api/jobs/manhua-learn/:id/skip", async (req, res) => {
     try {
       const ctx = await createContext({ req: req as any, res: res as any } as any);

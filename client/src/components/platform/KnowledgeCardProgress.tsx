@@ -12,7 +12,16 @@ export type KnowledgeCardProgressState = {
   error?: string;
 };
 
-export function KnowledgeCardProgress({ state }: { state: KnowledgeCardProgressState }) {
+export function KnowledgeCardProgress({
+  state,
+  onCancel,
+  cancelBusy,
+}: {
+  state: KnowledgeCardProgressState;
+  /** 传了才显示「终止」按钮（只在后台读档任务在跑时可停；出图阶段不给停） */
+  onCancel?: () => void;
+  cancelBusy?: boolean;
+}) {
   if (state.status === "idle") return null;
   const percent = Math.max(0, Math.min(100, Math.round(Number.isFinite(state.percent) ? state.percent : 0)));
   const failed = state.status === "failed";
@@ -26,6 +35,17 @@ export function KnowledgeCardProgress({ state }: { state: KnowledgeCardProgressS
       <p role={failed ? "alert" : "status"} className={`flex flex-wrap items-center gap-2 ${color}`}>
         <span className="font-semibold tabular-nums">{headline}</span>
         {state.label && !succeeded ? <span className="text-xs opacity-80">{state.label}</span> : null}
+        {onCancel && state.status === "running" ? (
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={cancelBusy}
+            title="停止读档；中途停不计费"
+            className="ml-auto rounded-md border border-red-400/35 px-2 py-0.5 text-[11px] font-semibold text-red-200 transition hover:border-red-400/70 hover:bg-red-400/10 disabled:opacity-50"
+          >
+            {cancelBusy ? "正在停止…" : "终止"}
+          </button>
+        ) : null}
       </p>
       <div
         role="progressbar"

@@ -699,6 +699,8 @@ async function invokeDistillViaGateway(params: {
   gateway: DistillGateway;
   /** 该跳的模型档（见 DistillGatewayStep）；缺省按 modelName 推 */
   tier?: KnowledgeCardTier;
+  /** 用户点「终止」时 abort：在途请求立刻断 */
+  abortSignal?: AbortSignal;
   /** 输出最短字数（默认 20）；JSON 任务（挑页）传小值，别把合法空表当算力异常 */
   minOutputChars?: number;
   sourceText: string;
@@ -820,7 +822,10 @@ async function invokeDistillViaGateway(params: {
     res = await fetch(url, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(distillFetchTimeoutMs(params.modelName, params.timeoutMs)),
+      // 终止信号与超时合并：用户点停要立刻断在途请求，超时保护同时保留
+      signal: params.abortSignal
+        ? AbortSignal.any([params.abortSignal, AbortSignal.timeout(distillFetchTimeoutMs(params.modelName, params.timeoutMs))])
+        : AbortSignal.timeout(distillFetchTimeoutMs(params.modelName, params.timeoutMs)),
       body: JSON.stringify(body),
     });
     // 按**响应类型**决定读法：上游忽略 stream 直接回 JSON 时用 SSE 读取器会读出空正文
@@ -913,6 +918,8 @@ async function invokeDistillLlm(params: {
   maxTokens?: number;
   /** 输出最短字数（透传单跳；挑页 JSON 传小值） */
   minOutputChars?: number;
+  /** 用户点「终止」时 abort：在途请求立刻断 */
+  abortSignal?: AbortSignal;
   /** 覆盖链序（挑页的降档尾段用：只走精细档的 Qwen 尾跳，不多出第 5 跳） */
   chainOverride?: readonly KnowledgeCardGatewayStep[];
 }): Promise<string> {
@@ -935,6 +942,8 @@ async function invokeDistillLlm(params: {
       return out;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
+      // 用户终止：立刻收口，不再换下一跳
+      if (isKnowledgeCardCancelledError(err, params.abortSignal)) throw lastError;
       if (isSseContentSafetyError(err)) throw err;
       // 流没跑完＝本跳不可用，恒可恢复：先短路，别让上游原文落进下面的文本正则（复审 P1）
       if (!isSseIncompleteStreamError(err)) {
@@ -950,6 +959,18 @@ async function invokeDistillLlm(params: {
     }
   }
   throw lastError || new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
+}
+
+/**
+ * 用户点了终止（或外部 abort）：这不是「这家挂了」，绝不能当成换跳理由——
+ * 否则一次取消会把六跳全试一遍、每跳还退避重试，最后报「算力紧张」，
+ * 既慢又误导（0911 回归测试抓到）。
+ */
+export function isKnowledgeCardCancelledError(err: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  const e = err as { name?: string; message?: string } | null;
+  if (e?.name === "AbortError") return true;
+  return /停止读档|已取消|The operation was aborted/i.test(String(e?.message || ""));
 }
 
 /** 提炼无法靠重试救回的错（额度/配置/通道），不必再退避。 */
@@ -968,6 +989,8 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  * 用户口径：个别失败的重新提炼，然后合并写框（不接受半途整批废）。
  */
 async function distillOneChunkWithRetry(params: {
+  /** 用户点「终止」：在途请求立刻断 */
+  abortSignal?: AbortSignal;
   chunk: string;
   imageUrls: string[];
   pageImages?: DistillPageImage[];
@@ -983,6 +1006,7 @@ async function distillOneChunkWithRetry(params: {
   for (let attempt = 0; attempt <= params.retries; attempt++) {
     try {
       return await invokeDistillLlm({
+        abortSignal: params.abortSignal,
         sourceText: params.chunk,
         imageUrls: params.imageUrls,
         pageImages: params.pageImages,
@@ -995,6 +1019,8 @@ async function distillOneChunkWithRetry(params: {
       });
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
+      // 用户终止：不退避、不细切，直接收口
+      if (isKnowledgeCardCancelledError(err, params.abortSignal)) throw lastError;
       if (isSseContentSafetyError(err)) throw err;
       if (!isSseIncompleteStreamError(lastError) && isFatalDistillError(lastError)) throw lastError;
       console.warn(
@@ -1018,6 +1044,7 @@ async function distillOneChunkWithRetry(params: {
       for (let i = 0; i < halves.length; i++) {
         finer.push(
           await distillOneChunkWithRetry({
+            abortSignal: params.abortSignal,
             chunk: halves[i]!,
             imageUrls: i === 0 ? params.imageUrls : [],
             pageImages: i === 0 ? params.pageImages : [],
@@ -1070,6 +1097,8 @@ async function distillOneChunkOrSkip(
     return { ok: true, markdown };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    // 用户终止不能被「跳过该段」吞掉：整本立刻停
+    if (isKnowledgeCardCancelledError(err)) throw err;
     if (isSseContentSafetyError(err)) throw err;
     if (!isSseIncompleteStreamError(err) && isFatalDistillError(err)) throw err;
     const where = `第 ${idx + 1}/${totalChunks} 段（${label}）`;
@@ -1192,10 +1221,13 @@ async function refineOnce(params: {
   minSections: number;
   stage: RefineStage;
   detailLevel?: KnowledgeCardDetailLevel;
+  /** 用户点「终止」：统稿这步也要能立刻断 */
+  abortSignal?: AbortSignal;
 }): Promise<string> {
   const profile = DISTILL_PROFILES[params.modelName];
   try {
     const refined = await invokeDistillLlm({
+      abortSignal: params.abortSignal,
       sourceText: params.body,
       imageUrls: [],
       modelName: params.modelName,
@@ -1240,6 +1272,8 @@ const DISTILL_TIGHTEN_MAX_ROUNDS = 2;
  * 现在改为：喂不下就按 `##` 分组各自压缩，逐层收敛，最后必定做一次全局统稿。
  */
 async function refineMergedDistill(params: {
+  /** 用户点「终止」：统稿各轮都要能立刻断 */
+  abortSignal?: AbortSignal;
   merged: string;
   modelName: KnowledgeCardDistillModelId;
   minSections: number;
@@ -1278,6 +1312,7 @@ async function refineMergedDistill(params: {
       await Promise.all(
         idxs.map(async (idx) => {
           reduced[idx] = await refineOnce({
+            abortSignal: params.abortSignal,
             body: groups[idx]!,
             modelName: params.modelName,
             minSections: perGroupTarget,
@@ -1316,6 +1351,7 @@ async function refineMergedDistill(params: {
       await Promise.all(
         idxs.map(async (idx) => {
           tightened[idx] = await refineOnce({
+            abortSignal: params.abortSignal,
             body: groups[idx]!,
             modelName: params.modelName,
             minSections: perGroupTarget,
@@ -1338,6 +1374,7 @@ async function refineMergedDistill(params: {
   let final = params.detailLevel === "full" && !fitsOnePass()
     ? current
     : await refineOnce({
+    abortSignal: params.abortSignal,
     body: current,
     modelName: params.modelName,
     // 完整版：目标节数不低于合并稿节数（统稿不压缩）
@@ -1355,6 +1392,7 @@ async function refineMergedDistill(params: {
       `[knowledgeCardDistill] tighten round ${round + 1}: ${before} sections > cap ${hardCap}`,
     );
     const tightened = await refineOnce({
+      abortSignal: params.abortSignal,
       body: final,
       modelName: params.modelName,
       minSections: params.minSections,
@@ -1442,6 +1480,8 @@ export async function invokeDistillLlmPossiblyChunked(params: {
   onProgress?: (p: KnowledgeCardDistillProgress) => void | Promise<void>;
   /** 单段提炼跳过等非致命情况的提醒；上层写进 extractionMethods 的 `:notice:`，前端会弹 */
   onNotice?: (noticeZh: string) => void;
+  /** 用户点「终止」：在途请求立刻断，段与段之间也不再往下跑 */
+  abortSignal?: AbortSignal;
 }): Promise<string> {
   const profile = DISTILL_PROFILES[params.modelName];
   const text = String(params.sourceText || "").trim();
@@ -1453,6 +1493,7 @@ export async function invokeDistillLlmPossiblyChunked(params: {
   // 短文单发；但参考页图超过单请求上限时仍走分段，避免整本页图塞进一个请求
   if ((!text || text.length <= profile.chunkThreshold) && allPageImages.length <= DISTILL_MAX_PAGE_IMAGES_PER_CALL) {
     return invokeDistillLlm({
+      abortSignal: params.abortSignal,
       sourceText: text,
       imageUrls: urls,
       pageImages: allPageImages,
@@ -1489,6 +1530,7 @@ export async function invokeDistillLlmPossiblyChunked(params: {
       batchIdx.map(async (idx) => {
         const chunk = chunks[idx]!;
         outputs[idx] = await distillOneChunkOrSkip(params.onNotice, chunks.length, idx, chunk.label, () => distillOneChunkWithRetry({
+          abortSignal: params.abortSignal,
           chunk: chunk.text,
           // 用户附图只挂第一段；原稿参考页跟随所在段
           imageUrls: idx === 0 ? urls : [],
@@ -1524,6 +1566,7 @@ export async function invokeDistillLlmPossiblyChunked(params: {
     phase: "refining",
   });
   return refineMergedDistill({
+    abortSignal: params.abortSignal,
     merged,
     modelName: params.modelName,
     minSections: params.minSectionsTotal,
@@ -1575,7 +1618,7 @@ const TRIAGE_SHEETS_PER_CALL = 8;
  * 目录页扫读挑页：用所选档位模型看缩略图目录，返回值得参考的页码。
  * 扫读失败不阻断整体提炼（退回无参考页）。
  */
-export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillModelId) {
+export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillModelId, abortSignal?: AbortSignal) {
   // 终审第五条：挑页也按档位走同一份顺序——
   // 轻量档不从 DeepSeek 视觉起跳，直接走轻量 Qwen 全链；
   // 精细档降档尾段只走精细顺序里的 Qwen 两跳（新加坡→OpenRouter），不多出第 5 跳。
@@ -1598,6 +1641,7 @@ export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillMod
         const imageUrls = group.map((sheet) => sheet.imageUrl);
         const chainFallback = () =>
           invokeDistillLlm({
+            abortSignal,
             sourceText: userText,
             imageUrls,
             modelName: resolveKnowledgeCardDistillModel(modelName),
@@ -1650,6 +1694,8 @@ export async function prepareKnowledgeCardCopy(input: {
   extracted?: KnowledgeCardExtractResult;
   onProgress?: (p: KnowledgeCardDistillProgress) => void | Promise<void>;
   onExtractProgress?: (p: KnowledgeCardExtractProgress) => void | Promise<void>;
+  /** 用户点「终止」：在途请求立刻断，段与段之间也不再往下跑 */
+  abortSignal?: AbortSignal;
 }): Promise<PrepareKnowledgeCardCopyResult> {
   const modelName = resolveKnowledgeCardDistillModel(input.distillModel);
   const detailLevel = resolveKnowledgeCardDetailLevel(input.detailLevel);
@@ -1659,7 +1705,7 @@ export async function prepareKnowledgeCardCopy(input: {
     (files.length
       ? await extractKnowledgeCardUploads(files, {
           userId: input.userId,
-          selectPages: input.userId ? makeKnowledgeCardPageSelector(modelName) : undefined,
+          selectPages: input.userId ? makeKnowledgeCardPageSelector(modelName, input.abortSignal) : undefined,
           onProgress: input.onExtractProgress,
         })
       : { documentText: "", nonPageDocumentText: "", imageUrls: [], methods: [], documents: [] });
@@ -1704,6 +1750,7 @@ export async function prepareKnowledgeCardCopy(input: {
 
   try {
     const distilled = await invokeDistillLlmPossiblyChunked({
+      abortSignal: input.abortSignal,
       sourceText: mergedRaw,
       extraText: [extracted.nonPageDocumentText, pasted.length <= 3200 ? pasted : ""].filter(Boolean).join("\n\n").trim(),
       imageUrls: urls,
@@ -1727,6 +1774,9 @@ export async function prepareKnowledgeCardCopy(input: {
       documents: documentsSummary,
     };
   } catch (err) {
+    // 用户终止：原样上抛，别被下面的兜底改写成「算力紧张」——
+    // 那会让用户以为是系统故障，也会让 worker 把主动取消记成失败原因
+    if (isKnowledgeCardCancelledError(err, input.abortSignal)) throw err;
     if (isSseContentSafetyError(err)) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     console.warn("[knowledgeCardDistill] failed:", msg.slice(0, 320));

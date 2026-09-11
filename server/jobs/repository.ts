@@ -563,6 +563,63 @@ export async function requestManhuaTemplateLearnJobCancel(input: {
   return getJobById(input.jobId);
 }
 
+/**
+ * 通用「请求停止」：把 cancelRequestedAt 写进 jobs.input，worker 在下一次进度回调时看到就 abort。
+ * 与漫剧学习那套是同一个字段，只是不再限定 action——读档/派生也要有终止按钮（0911 用户令）。
+ * queued（还没开跑）直接判失败，running 保持 running 交给 worker 收口，避免两边同时写终态。
+ */
+export async function requestPlatformJobCancel(input: {
+  jobId: string;
+  userId: string;
+  actions: readonly string[];
+  queuedError: string;
+}): Promise<NormalizedJob | null> {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable — cannot cancel job");
+  const current = await getJobById(input.jobId);
+  if (!current) return null;
+  const rawInput = parseMaybeJson(current.input);
+  const action = rawInput && typeof rawInput === "object" && !Array.isArray(rawInput)
+    ? String((rawInput as Record<string, unknown>).action || "")
+    : "";
+  if (!input.actions.includes(action)) return null;
+  if (String(current.userId) !== String(input.userId)) return null;
+  if (current.status === "succeeded" || current.status === "failed") return current;
+
+  const requestedAt = new Date().toISOString();
+  const nextInput = rawInput && typeof rawInput === "object" && !Array.isArray(rawInput)
+    ? { ...(rawInput as Record<string, unknown>), cancelRequestedAt: requestedAt }
+    : { action, cancelRequestedAt: requestedAt };
+  await db
+    .update(jobs)
+    .set({
+      input: nextInput as InsertJob["input"],
+      status: current.status === "queued" ? "failed" : "running",
+      error: current.status === "queued" ? input.queuedError : current.error,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(jobs.id, input.jobId),
+        eq(jobs.userId, String(input.userId)),
+        inArray(jobs.status, ["queued", "running"]),
+      ),
+    );
+  return getJobById(input.jobId);
+}
+
+/** 任务是否被请求停止（任何 action 通用；查不到行也按「停」处理，免得孤儿任务空转） */
+export async function isPlatformJobCancelRequested(jobId: string): Promise<boolean> {
+  const job = await getJobById(jobId);
+  if (!job) return true;
+  const raw = parseMaybeJson(job.input);
+  return Boolean(
+    job.status === "failed"
+    || (raw && typeof raw === "object" && !Array.isArray(raw)
+      && (raw as Record<string, unknown>).cancelRequestedAt),
+  );
+}
+
 export async function isManhuaTemplateLearnJobCancelRequested(jobId: string): Promise<boolean> {
   const job = await getJobById(jobId);
   if (!job) return true;

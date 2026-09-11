@@ -334,6 +334,43 @@ function resolveKnowledgeCardDistillStallMs(): number {
   return Number.isFinite(raw) && raw >= 60_000 ? raw : 20 * 60_000;
 }
 
+export const KNOWLEDGE_CARD_CANCELLED_MESSAGE = "已按你的要求停止读档（未开始计费）";
+
+/**
+ * 读档 / 派生的「终止」：worker 侧的取消监视（0911 用户令：面板要有终止按钮）。
+ * · 信号源是 jobs.input.cancelRequestedAt，由路由写入，跨进程有效；
+ * · 每次进度回调查一次（读档本就按段回调，等于秒级响应），不额外起轮询；
+ * · 查库失败按「没取消」处理——宁可多跑一会儿，也不能因为一次抖动把用户的活判死；
+ * · 计费点在 prepare 返回之后，所以中途停＝一分不扣，不存在退款问题。
+ */
+function makeKnowledgeCardCancelWatcher(platformJobId?: string | null): {
+  signal: AbortSignal;
+  check: () => Promise<void>;
+} {
+  const controller = new AbortController();
+  let lastCheckedAt = 0;
+  const check = async () => {
+    if (controller.signal.aborted) throw new Error(KNOWLEDGE_CARD_CANCELLED_MESSAGE);
+    if (!platformJobId) return;
+    // 进度回调可能很密（逐页读稿）：最多每 2 秒查一次库
+    const now = Date.now();
+    if (now - lastCheckedAt < 2_000) return;
+    lastCheckedAt = now;
+    let cancelled = false;
+    try {
+      const { isPlatformJobCancelRequested } = await import("./repository.js");
+      cancelled = await isPlatformJobCancelRequested(platformJobId);
+    } catch {
+      return;
+    }
+    if (cancelled) {
+      controller.abort(new Error(KNOWLEDGE_CARD_CANCELLED_MESSAGE));
+      throw new Error(KNOWLEDGE_CARD_CANCELLED_MESSAGE);
+    }
+  };
+  return { signal: controller.signal, check };
+}
+
 export async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -3296,8 +3333,10 @@ async function processPlatformJob(
       if (!receiptModel) throw new Error("找不到这份完整版的提炼记录，无法派生精华版；请重新提炼后再切档");
       const distillModel = receiptModel;
       const targetSections = Number.isFinite(Number(params.targetSections)) && Number(params.targetSections) > 0 ? Number(params.targetSections) : undefined;
+      const cancel = makeKnowledgeCardCancelWatcher(platformJobId);
       const patchProgress = async (patch: Record<string, unknown>) => {
         touchJobHeartbeat(platformJobId);
+        await cancel.check();
         if (!platformJobId) return;
         await patchJobRunningProgress(platformJobId, patch).catch(() => {});
       };
@@ -3306,6 +3345,7 @@ async function processPlatformJob(
       const derived = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), () => deriveKnowledgeCardCompact({
         fullMarkdown,
         targetSections,
+        abortSignal: cancel.signal,
         // 终审第五条：链序按服务端 receipt 档位走，不信客户端声明
         model: receiptModel,
         onProgress: async (p) => {
@@ -3364,8 +3404,10 @@ async function processPlatformJob(
        * 进度百分比（0908 用户要求）：转换 0–5 → 读页/目录 5–20 → 挑页 20–30 → 渲染选中页 30–40 →
        * 分段提炼 40–90 → 统稿 90–98；终态由 job 状态给出成功/失败。
        */
+      const cancel = makeKnowledgeCardCancelWatcher(platformJobId);
       const patchProgress = async (patch: Record<string, unknown>) => {
         touchJobHeartbeat(platformJobId);
+        await cancel.check();
         if (!platformJobId) return;
         await patchJobRunningProgress(platformJobId, patch).catch(() => {});
       };
@@ -3373,6 +3415,7 @@ async function processPlatformJob(
       const prepared = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), () => prepareKnowledgeCardCopy({
         sourceText,
         files: jobFiles,
+        abortSignal: cancel.signal,
         forceDistill: true,
         distillModel,
         detailLevel,
