@@ -90,6 +90,12 @@ async function distillOnly() {
     (b as HTMLButtonElement | undefined)?.click();
   });
   await page.waitForFunction((sel) => (document.querySelector(sel) as HTMLTextAreaElement | null)?.value?.startsWith("# 财务自由完整版"), { timeout: 30_000 }, TA);
+  // 0911 起出图前有确认弹窗：这里只要提炼稿，点「返回修改」停在稿子上（等同旧的「出图确认选取消」）
+  await page.waitForFunction(() => Boolean(document.querySelector('[aria-label="出图前确认"]')), { timeout: 30_000 });
+  await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll("button")).find((x) => (x.textContent || "").trim() === "返回修改");
+    (b as HTMLButtonElement | undefined)?.click();
+  });
   // 等按钮回到空闲态再读报价，否则读到的是「提炼中…」
   await page.waitForFunction(
     () =>
@@ -122,11 +128,61 @@ async function distillThenFailedImageGen() {
     const b = Array.from(document.querySelectorAll("button")).find((x) => /生成图文笔记/.test(x.textContent || ""));
     (b as HTMLButtonElement | undefined)?.click();
   });
+  // 0911 起出图前有确认弹窗（版式 / 成稿档 / 模板类型），走真实路径：点「确认出图」
+  await page.waitForFunction(
+    () => Array.from(document.querySelectorAll("button")).some((b) => (b.textContent || "").trim() === "确认出图"),
+    { timeout: 30_000 },
+  );
+  await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll("button")).find((x) => (x.textContent || "").trim() === "确认出图");
+    (b as HTMLButtonElement | undefined)?.click();
+  });
   await page.waitForFunction(
     () => Array.from(document.querySelectorAll("button")).some((b) => (b.textContent || "").trim() === "清除"),
     { timeout: 30_000 },
   );
 }
+
+describe("出图前确认弹窗（真实 PlatformPage · 0911 用户令）", () => {
+  it("弹窗列出成稿档 / 版式 / 模板类型；「返回修改」不出图，稿子还在", async () => {
+    page = await mount();
+    await page.evaluate(() => ((globalThis as never as { fixture: { acceptImageGen: boolean } }).fixture.acceptImageGen = true));
+    await distillOnly();
+    await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll("button")).find((x) => /生成图文笔记/.test(x.textContent || ""));
+      (b as HTMLButtonElement | undefined)?.click();
+    });
+    await page.waitForFunction(
+      () => Array.from(document.querySelectorAll("button")).some((b) => (b.textContent || "").trim() === "确认出图"),
+      { timeout: 30_000 },
+    );
+    const dialogText = await page.evaluate(
+      () => (document.querySelector('[aria-label="出图前确认"]') as HTMLElement | null)?.innerText || "",
+    );
+    expect(dialogText).toContain("成稿档");
+    expect(dialogText).toContain("版式");
+    expect(dialogText).toContain("模板类型");
+    expect(dialogText).toContain("页");
+    // 完整版是 fixture 的默认档，弹窗要如实显示，不能写死
+    expect(dialogText).toContain("完整版");
+
+    await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll("button")).find((x) => (x.textContent || "").trim() === "返回修改");
+      (b as HTMLButtonElement | undefined)?.click();
+    });
+    await page.waitForFunction(
+      () => !document.querySelector('[aria-label="出图前确认"]'),
+      { timeout: 10_000 },
+    );
+    // 没有出图：不会出现失败态的「清除」按钮；提炼稿仍在文本框
+    const after = await page.evaluate((sel) => ({
+      hasClear: Array.from(document.querySelectorAll("button")).some((b) => (b.textContent || "").trim() === "清除"),
+      text: (document.querySelector(sel) as HTMLTextAreaElement | null)?.value || "",
+    }), TA);
+    expect(after.hasClear).toBe(false);
+    expect(after.text).toContain("完整版第 1 节");
+  }, 120_000);
+});
 
 describe("知识卡精华版派生（真实 PlatformPage）", () => {
   it("派生中：生成按钮锁住、点它也不出图，文本框与档位下拉都锁住", async () => {

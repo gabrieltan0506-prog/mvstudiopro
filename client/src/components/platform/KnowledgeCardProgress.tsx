@@ -40,7 +40,7 @@ export function KnowledgeCardProgress({
             type="button"
             onClick={onCancel}
             disabled={cancelBusy}
-            title="停止读档；中途停不计费"
+            title="停止本次任务；读档中途停不计费，出图停了按已出页计费"
             className="ml-auto rounded-md border border-red-400/35 px-2 py-0.5 text-[11px] font-semibold text-red-200 transition hover:border-red-400/70 hover:bg-red-400/10 disabled:opacity-50"
           >
             {cancelBusy ? "正在停止…" : "终止"}

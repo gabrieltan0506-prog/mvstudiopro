@@ -277,6 +277,10 @@ import {
   type KnowledgeCardProgressState,
 } from "@/components/platform/KnowledgeCardProgress";
 import {
+  KnowledgeCardPreflight,
+  type KnowledgeCardPreflightSummary,
+} from "@/components/platform/KnowledgeCardPreflight";
+import {
   KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
   knowledgeCardDistillFeeForModel,
   resolveKnowledgeCardDistillModel,
@@ -3041,9 +3045,34 @@ export default function PlatformPage() {
   });
   /** 一条进度条贯穿上传→转换→读原稿→提炼→出图；终态成功/失败 */
   const [customNoteProgress, setCustomNoteProgress] = useState<KnowledgeCardProgressState>({ status: "idle", percent: 0 });
-  /** 正在跑的后台读档/派生任务：有值才显示「终止」按钮（出图阶段不给停） */
+  /** 正在跑的后台读档/派生任务：有值＝停这个后台任务 */
   const [customNoteDistillJobId, setCustomNoteDistillJobId] = useState<string>("");
   const [customNoteCancelBusy, setCustomNoteCancelBusy] = useState(false);
+  /**
+   * 出图阶段的停止标记（0911 用户令：中途停了，出几张就扣几张）。
+   * 用 ref 而不是 state：并发 worker 在循环里每轮都要读最新值，state 快照会读到旧的。
+   * 已出的页留着、已扣的不退——页费本就是逐页成功才扣，停下只是不再发新页。
+   */
+  const customNoteStopRenderRef = useRef(false);
+  const [customNoteRendering, setCustomNoteRendering] = useState(false);
+  /**
+   * 出图前确认弹窗（0911 用户令）：把版式、成稿档、模板类型摆出来核一遍再出图。
+   * resolve 存在 ref 里——弹窗的两个按钮要把等待中的生成流程接回去。
+   */
+  const [customNotePreflight, setCustomNotePreflight] = useState<KnowledgeCardPreflightSummary | null>(null);
+  const customNotePreflightResolveRef = useRef<((ok: boolean) => void) | null>(null);
+  const askKnowledgeCardPreflight = (summary: KnowledgeCardPreflightSummary): Promise<boolean> => {
+    setCustomNotePreflight(summary);
+    return new Promise<boolean>((resolve) => {
+      customNotePreflightResolveRef.current = resolve;
+    });
+  };
+  const closeKnowledgeCardPreflight = (ok: boolean) => {
+    setCustomNotePreflight(null);
+    const resolve = customNotePreflightResolveRef.current;
+    customNotePreflightResolveRef.current = null;
+    resolve?.(ok);
+  };
   /** 待随「生成」一并提炼的上传文件（含图片 OCR）。 */
   const customNotePendingFilesRef = useRef<KnowledgeCardPendingFile[]>([]);
   /** 上传区可见状态（成功/失败），避免只靠 toast */
@@ -8242,6 +8271,12 @@ export default function PlatformPage() {
    * 轮询随即拿到 failed，走既有失败分支。中途停不计费（扣费点在提炼返回之后）。
    */
   const cancelCustomNoteDistill = async () => {
+    // 出图阶段：停发新页即可，在途那张跑完；已出的页已计费、保留
+    if (customNoteRendering) {
+      customNoteStopRenderRef.current = true;
+      toast.message("正在停止出图：在途的这页会出完，之后不再发新页");
+      return;
+    }
     const jobId = customNoteDistillJobId;
     if (!jobId || customNoteCancelBusy) return;
     setCustomNoteCancelBusy(true);
@@ -8501,9 +8536,17 @@ export default function PlatformPage() {
         const qLabel = "4K";
         const credits = plan.credits || knowledgeCardCreditsForPages(total, customNoteDistillModel);
         setCustomNoteBusy(false);
-        const continueGen = window.confirm(
-          `约 ${total} 页图文笔记（出图 ${qLabel}，约 ${credits} 积分）。\n\n是否继续出图？\n选「取消」将保留上方提炼稿，不出图。`,
-        );
+        const continueGen = await askKnowledgeCardPreflight({
+          levelZh: KNOWLEDGE_CARD_DETAIL_LEVEL_LABEL_ZH[customNoteDetailLevel],
+          layoutZh: KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH[customNoteSubjectPosition],
+          templateZh: customNoteInfographicLabelZh || "未选（按正文自动）",
+          distillModelZh:
+            KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS.find((o) => o.id === customNoteDistillModel)?.labelZh
+            || String(customNoteDistillModel),
+          pageCount: total,
+          qualityZh: qLabel,
+          credits,
+        });
         if (!continueGen) {
           toast.success(`已保留提炼稿（约 ${total} 页），未出图`);
           setCustomNoteDistillPhase("idle");
@@ -8539,8 +8582,11 @@ export default function PlatformPage() {
         let next = 0;
         // 某页失败即停发新页（在途的跑完），不让其它 worker 继续扣费出图
         let aborted = false;
+        customNoteStopRenderRef.current = false;
+        setCustomNoteRendering(true);
         const worker = async () => {
-          while (next < total && !aborted) {
+          // 用户点「终止」同样只停发新页：在途那张跑完并计费，不制造「扣了钱没图」
+          while (next < total && !aborted && !customNoteStopRenderRef.current) {
             const i = next++;
             try {
             setCustomNotePageProgress({ i: Math.min(total, done + 1), n: total });
@@ -8560,8 +8606,22 @@ export default function PlatformPage() {
           }
         };
         await Promise.all(Array.from({ length: Math.min(KNOWLEDGE_CARD_RENDER_CONCURRENCY, total) }, () => worker()));
-        setCustomNoteProgress({ status: "succeeded", percent: 100 });
-        toast.success(`已生成 ${total} 页图文笔记（${qLabel} · 约 ${credits} 积分）`);
+        setCustomNoteRendering(false);
+        const stoppedByUser = customNoteStopRenderRef.current;
+        customNoteStopRenderRef.current = false;
+        const madePages = urls.filter(Boolean).length;
+        if (stoppedByUser && madePages < total) {
+          // 已出的页保留下来（它们已经计费），进度条停在实际完成度，不谎报 100%
+          setCustomNoteProgress({
+            status: "succeeded",
+            percent: knowledgeCardProgressFromRender(madePages, total),
+            label: `已停止 · 出图 ${madePages}/${total} 页`,
+          });
+          toast.message(`已停止出图：完成 ${madePages}/${total} 页，按已出页计费（未出的页不扣）`);
+        } else {
+          setCustomNoteProgress({ status: "succeeded", percent: 100 });
+          toast.success(`已生成 ${total} 页图文笔记（${qLabel} · 约 ${credits} 积分）`);
+        }
         setCustomNoteDistillPhase("idle");
       } else {
         setCustomNotePartInFlight(null);
@@ -8589,6 +8649,8 @@ export default function PlatformPage() {
       setCustomNotePartInFlight(null);
       setCustomNotePageProgress(null);
       setCustomNoteDistillPhase("idle");
+      setCustomNoteRendering(false);
+      customNoteStopRenderRef.current = false;
     }
   };
 
@@ -15615,9 +15677,14 @@ export default function PlatformPage() {
                   <span className="text-[11px] text-[#c9c0e6]/45">
                     支持 pdf / epub / pptx / docx / png / jpg，不限页数与大小；EPUB 后台自动转 PDF；上传文档的提炼含在页费中，超长纯文本主动提炼另收一次性提炼费
                   </span>
+                  <KnowledgeCardPreflight
+                    summary={customNotePreflight}
+                    onConfirm={() => closeKnowledgeCardPreflight(true)}
+                    onCancel={() => closeKnowledgeCardPreflight(false)}
+                  />
                   <KnowledgeCardProgress
                     state={customNoteProgress}
-                    onCancel={customNoteDistillJobId ? cancelCustomNoteDistill : undefined}
+                    onCancel={customNoteDistillJobId || customNoteRendering ? cancelCustomNoteDistill : undefined}
                     cancelBusy={customNoteCancelBusy}
                   />
                 </div>
