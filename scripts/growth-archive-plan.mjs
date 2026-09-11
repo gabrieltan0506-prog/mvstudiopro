@@ -3,6 +3,10 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import {
+  growthColdStoreReleaseTag,
+  LEGACY_GROWTH_RELEASE,
+} from "../shared/growthColdStoreRelease.mjs";
 
 // 只复用已发布清单且 GitHub 资产摘要仍一致的归档；旧清单无源指纹时重新备份。
 export function planArchiveBatch(snapshot, assets, manifests) {
@@ -82,6 +86,63 @@ export function planArchiveBatch(snapshot, assets, manifests) {
   };
 }
 
+export function loadArchiveInventory(directory, snapshot, repo, gh) {
+  const wanted = new Set(
+    snapshot
+      .trim()
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map(line =>
+        growthColdStoreReleaseTag(
+          `archive-${line.split("\t")[0]}.manifest.json`
+        )
+      )
+  );
+  wanted.add(LEGACY_GROWTH_RELEASE);
+  // 分页枚举实际存在的仓，不能把鉴权/网络失败误判为新仓不存在。
+  const releases = JSON.parse(
+    gh(["api", "--paginate", "--slurp", `repos/${repo}/releases?per_page=100`])
+  ).flat();
+  if (!releases.some(release => release.tag_name === LEGACY_GROWTH_RELEASE))
+    throw new Error("缺少旧冷备 Release，停止规划");
+  const assets = [],
+    manifests = new Map();
+  const selected = releases.filter(release => wanted.has(release.tag_name));
+  selected.sort(
+    (a, b) =>
+      Number(b.tag_name === LEGACY_GROWTH_RELEASE) -
+      Number(a.tag_name === LEGACY_GROWTH_RELEASE)
+  );
+  for (const release of selected) {
+    const entries = JSON.parse(
+      gh([
+        "api",
+        "--paginate",
+        "--slurp",
+        `repos/${repo}/releases/${release.id}/assets?per_page=100`,
+      ])
+    ).flat();
+    assets.push(...entries);
+    const names = entries
+      .filter(asset => /^archive-.+\.manifest\.json$/.test(asset.name))
+      .map(asset => asset.name);
+    if (!names.length) continue;
+    const cached = fs.mkdtempSync(path.join(directory, "previous-manifests-"));
+    gh([
+      "release",
+      "download",
+      release.tag_name,
+      "--pattern",
+      "archive-*.manifest.json",
+      "--dir",
+      cached,
+    ]);
+    for (const name of names)
+      manifests.set(name, fs.readFileSync(path.join(cached, name), "utf8"));
+  }
+  return { assets, manifests };
+}
+
 function main(directory) {
   if (!directory) throw new Error("缺少归档工作目录");
   const gh = args =>
@@ -94,41 +155,17 @@ function main(directory) {
   const repo = JSON.parse(
     gh(["repo", "view", "--json", "nameWithOwner"])
   ).nameWithOwner;
-  const { id } = JSON.parse(
-    gh(["api", `repos/${repo}/releases/tags/growth-cold-store-latest`])
+  const snapshot = fs.readFileSync(
+    path.join(directory, "snapshot.tsv"),
+    "utf8"
   );
-  const assets = JSON.parse(
-    gh([
-      "api",
-      "--paginate",
-      "--slurp",
-      `repos/${repo}/releases/${id}/assets?per_page=100`,
-    ])
-  ).flat();
-  const cached = path.join(directory, "previous-manifests");
-  fs.mkdirSync(cached, { recursive: true });
-  if (assets.some(asset => /^archive-.+\.manifest\.json$/.test(asset.name))) {
-    gh([
-      "release",
-      "download",
-      "growth-cold-store-latest",
-      "--pattern",
-      "archive-*.manifest.json",
-      "--dir",
-      cached,
-      "--clobber",
-    ]);
-  }
-  const manifests = new Map(
-    fs
-      .readdirSync(cached)
-      .map(name => [name, fs.readFileSync(path.join(cached, name), "utf8")])
+  const { assets, manifests } = loadArchiveInventory(
+    directory,
+    snapshot,
+    repo,
+    gh
   );
-  const plan = planArchiveBatch(
-    fs.readFileSync(path.join(directory, "snapshot.tsv"), "utf8"),
-    assets,
-    manifests
-  );
+  const plan = planArchiveBatch(snapshot, assets, manifests);
   fs.writeFileSync(
     path.join(directory, "selected.tsv"),
     plan.selected.length ? plan.selected.join("\n") + "\n" : ""

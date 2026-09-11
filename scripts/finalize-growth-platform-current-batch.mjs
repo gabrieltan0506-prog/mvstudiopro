@@ -5,6 +5,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { growthColdStoreReleaseTag } from "../shared/growthColdStoreRelease.mjs";
 
 const execFileAsync = promisify(execFile);
 const [snapshotManifestArg, platformDirArg, outputDirArg] = process.argv.slice(2);
@@ -83,6 +84,8 @@ await fs.unlink(bundlePath);
 const releaseManifest = {
   ...manifest,
   finalizedAt: new Date().toISOString(),
+  // 清单仍在旧固定入口，但本批所有分片位于独立 Release，便于人工按清单恢复。
+  baseUrl: `https://github.com/${process.env.GITHUB_REPOSITORY || "gabrieltan0506-prog/mvstudiopro"}/releases/download/${growthColdStoreReleaseTag(bundleParts[0].assetName)}`,
   bundle: {
     logicalAssetName: "growth-platform-current-complete.tar",
     bytes: bundleBytes,

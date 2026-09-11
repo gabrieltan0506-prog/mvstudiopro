@@ -15,3 +15,9 @@ export function planArchiveBatch(
   assets: ArchiveReleaseAsset[],
   manifests: Map<string, string>
 ): ArchiveBatchPlan;
+export function loadArchiveInventory(
+  directory: string,
+  snapshot: string,
+  repo: string,
+  gh: (args: string[]) => string
+): { assets: ArchiveReleaseAsset[]; manifests: Map<string, string> };
