@@ -30,7 +30,13 @@ describe("漫剧分镜容量模式接线（manhuaSegmentCapacityMode）", () => 
     expect(factory).toMatch(
       /segmentCapacityMode: getManhuaSegmentCapacityMode\(\s*segmentCapacityModeByEpisode,\s*episodeIndex,\s*\)/,
     );
-    expect(factory).toContain("segmentCapacityModeByEpisode,\n    ],");
+    // 只断言「它在依赖数组里」，不断言它排第几（0911：有人往数组尾部追加依赖，
+    // 这条按位置写死的断言就红了，但接线其实没坏）。依赖漏了才是真问题——
+    // 回调会闭包住旧的容量模式，换集后按上一集的容量扣费。
+    const deps = factory.slice(factory.lastIndexOf("\n    ["), factory.lastIndexOf("]"));
+    expect(deps.split("\n").map((line) => line.trim().replace(/,$/, ""))).toContain(
+      "segmentCapacityModeByEpisode",
+    );
     expect(pipelineSource).toContain("segmentCapacityMode?: ManhuaSegmentCapacityMode | null;");
     expect(pipelineSource).toMatch(
       /planManhuaSegmentCapacity\(\{[\s\S]*?mode: opts\.segmentCapacityMode,[\s\S]*?\}\);\s*if \(!capacityPlan\.ok\) throw new Error\(capacityPlan\.errorZh\);/,
