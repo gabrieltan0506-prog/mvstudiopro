@@ -277,6 +277,76 @@ export async function uploadBufferToGcs(params: {
 }
 
 /**
+ * 流式上传：Content-Length 由调用方给出，请求体是可读流，进程内不整份驻留。
+ * 0911 事故后新增：几十上百 MB 的成品（如 4K 知识卡整套 PDF）走 Buffer 会在内存里存三份。
+ */
+export async function uploadStreamToGcs(params: {
+  objectName: string;
+  stream: ReadableStream<Uint8Array>;
+  contentLength: number;
+  contentType: string;
+  bucket?: string;
+  signal?: AbortSignal;
+}): Promise<{ bucket: string; objectName: string; gcsUri: string }> {
+  // 终审 P2：流一旦传进来，所有前置失败（取消/参数/鉴权）都要 cancel 掉它，
+  // 否则底层 fd 挂在一个没人消费的流上泄漏
+  const cancelStream = async () => {
+    await params.stream.cancel().catch(() => {});
+  };
+  try {
+    params.signal?.throwIfAborted();
+  } catch (err) {
+    await cancelStream();
+    throw err;
+  }
+  const bucket = params.bucket || getGcsBucketName();
+  if (!bucket) {
+    await cancelStream();
+    throw new Error("GCS bucket is not configured");
+  }
+  if (!Number.isFinite(params.contentLength) || params.contentLength <= 0) {
+    await cancelStream();
+    throw new Error("gcs_upload_stream_needs_length");
+  }
+
+  const objectName = normalizeObjectName(params.objectName);
+  let accessToken: string;
+  try {
+    // 终审 P2：鉴权等待也要听 signal——OAuth 停滞时上传必须能退出，
+    // 否则调用方 finally 关不了文件流、删不了临时目录。
+    // 注意：这只让本次上传的等待可取消，不取消底层鉴权网络请求本身。
+    accessToken = await awaitWithAbortSignal(getVertexAccessToken(), params.signal);
+  } catch (err) {
+    await cancelStream();
+    throw err;
+  }
+  const uploadUrl = new URL(`https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o`);
+  uploadUrl.searchParams.set("uploadType", "media");
+  uploadUrl.searchParams.set("name", objectName);
+  const userProject = getGcsUserProject();
+  if (userProject) uploadUrl.searchParams.set("userProject", userProject);
+
+  const response = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": params.contentType || "application/octet-stream",
+      "Content-Length": String(params.contentLength),
+    },
+    body: params.stream,
+    // Node fetch 传流式 body 必须声明；否则 undici 拒绝
+    duplex: "half",
+    signal: params.signal,
+  } as RequestInit & { duplex: "half" });
+
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(`gcs_upload_failed:${response.status}:${JSON.stringify(json || {})}`);
+  }
+  return { bucket, objectName, gcsUri: `gs://${bucket}/${objectName}` };
+}
+
+/**
  * 条件创建:仅当对象不存在时写入(ifGenerationMatch=0)。
  * 已存在返回 { created:false }(GCS 412 Precondition Failed),其余错误照抛。
  * 供所有权登记簿等"先到先得"场景做真原子创建——get→put 两步在并发下必被覆盖。

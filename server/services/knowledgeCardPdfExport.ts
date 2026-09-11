@@ -3,9 +3,25 @@
  * - 只接受本桶 `generated/platform_knowledge_card/u{userId}/` 下、属于**当前用户**的成品图（签名 https 或 gs://）
  * - 全部页归一 3840×2160：比例不同的页等比缩放后按图边缘平均色补边，不裁不拉伸
  * - pdfkit 拼页 → 落 GCS → 返回签名 https（媒体一律走 GCS URL，不回 base64）
+ *
+ * 0911 事故：23 页 4K 导出把进程打到 7.7 GB 被 OOM 杀掉，整站重启。两处根因：
+ * 1) libvips 默认开缓存 + 多线程，每张 4K 图都留驻内存；
+ * 2) 整份 PDF 先堆 chunks、再 Buffer.concat、上传时又转 Uint8Array，同一份数据在内存里存在三次。
+ * 现在：sharp 关缓存单线程；PDF 边生成边写临时文件，再以文件流上传，内存只过一页。
  */
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdtemp, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import nodePath from "node:path";
+import { pipeline, finished } from "node:stream/promises";
+import { Readable, type Writable } from "node:stream";
+import { setTimeout as delay } from "node:timers/promises";
 import PDFDocument from "pdfkit";
 import sharp from "sharp";
+
+// sharp/libvips 的内存约束统一在 sharpLimits（这里 import 保证独立加载本模块时也生效，
+ // 且不覆盖 SHARP_CONCURRENCY 旋钮）
+import "../_core/sharpLimits.js";
 
 export const KNOWLEDGE_CARD_PDF_PAGE = { width: 3840, height: 2160 } as const;
 const KNOWLEDGE_CARD_IMAGE_PREFIX = "generated/platform_knowledge_card/";
@@ -79,24 +95,119 @@ export async function normalizeKnowledgeCardPage(input: Buffer): Promise<Buffer>
     .toBuffer();
 }
 
-/** 逐页取图→归一→写入 PDF，同一时刻内存里只有一页原图（19 页 4K 在 2 核机上不整批驻留） */
-export async function buildKnowledgeCardPdf(loadPage: Array<() => Promise<Buffer>>): Promise<Buffer> {
+type PdfPipeResult = { ok: true } | { ok: false; error: unknown };
+
+/**
+ * pipeline 创建时就把成败转成已处理结果——不能等到 doc.end() 才 attach catch，
+ * 中途任何一步失败都会变成 unhandledRejection 崩进程（终审 P1）。
+ */
+export function observeKnowledgeCardPdfPipeline(doc: NodeJS.ReadableStream, out: Writable): {
+  done: Promise<PdfPipeResult>;
+  check: () => void;
+} {
+  let result: PdfPipeResult | undefined;
+  const done: Promise<PdfPipeResult> = pipeline(doc, out).then(
+    () => (result = { ok: true }),
+    (error) => (result = { ok: false, error }),
+  );
+  return {
+    done,
+    check() {
+      if (result && !result.ok) throw result.error;
+    },
+  };
+}
+
+/**
+ * 等本页真正落盘再生产下一页（终审 P2：PDFKit 忽略 push() 返回值，文件 sink 停滞时
+ * readable 队列会无界积压——实测第 8 页前已积压 13 MB）。
+ * 10ms 轮询公开队列长度，避开 drain 事件竞态；传播 pipeline 失败；有界超时。
+ */
+export async function waitKnowledgeCardPdfPageDrained(
+  doc: NodeJS.ReadableStream & { readableLength: number; destroyed: boolean },
+  out: Writable,
+  pipe: { done: Promise<PdfPipeResult>; check: () => void },
+  options: { timeoutMs?: number; signal?: AbortSignal } = {},
+): Promise<void> {
+  const deadline = performance.now() + (options.timeoutMs ?? 30_000);
+  for (;;) {
+    options.signal?.throwIfAborted();
+    pipe.check();
+    if (doc.destroyed || out.destroyed) throw new Error("PDF 写入流提前关闭");
+    if (doc.readableLength === 0 && out.writableLength === 0) return;
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) throw new Error("PDF 文件写入无进展，停止导出");
+    const raced = await Promise.race([
+      pipe.done,
+      delay(Math.min(10, Math.max(1, remaining)), undefined, { signal: options.signal }).then(() => undefined),
+    ]);
+    if (raced && !raced.ok) throw raced.error;
+    if (raced?.ok) throw new Error("PDF 写入流提前结束");
+  }
+}
+
+/**
+ * 逐页取图→归一→写入 PDF **文件**；每页写完等两端队列排空才取下一页，
+ * 内存里同一时刻只有一页图 + 有界的流缓冲。返回临时文件路径与字节数；调用方负责用完删除。
+ */
+export async function buildKnowledgeCardPdfFile(
+  loadPage: Array<() => Promise<Buffer>>,
+  options: { timeoutMs?: number; signal?: AbortSignal; makeOut?: (filePath: string) => Writable } = {},
+): Promise<{ filePath: string; dir: string; bytes: number }> {
   if (!loadPage.length) throw new Error("没有可导出的页面");
   const { width, height } = KNOWLEDGE_CARD_PDF_PAGE;
-  const doc = new PDFDocument({ autoFirstPage: false, size: [width, height], margin: 0 });
-  const chunks: Buffer[] = [];
-  doc.on("data", (c: Buffer) => chunks.push(c));
-  const done = new Promise<Buffer>((resolve, reject) => {
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-  });
-  for (const load of loadPage) {
-    const jpeg = await normalizeKnowledgeCardPage(await load());
-    doc.addPage({ size: [width, height], margin: 0 });
-    doc.image(jpeg, 0, 0, { width, height });
+  const dir = await mkdtemp(nodePath.join(tmpdir(), "kc-pdf-"));
+  const filePath = nodePath.join(dir, "knowledge-card.pdf");
+  let doc: PDFKit.PDFDocument | undefined;
+  let out: Writable | undefined;
+  let pipe: ReturnType<typeof observeKnowledgeCardPdfPipeline> | undefined;
+  try {
+    out = options.makeOut?.(filePath) ?? createWriteStream(filePath);
+    doc = new PDFDocument({ autoFirstPage: false, size: [width, height], margin: 0 });
+    pipe = observeKnowledgeCardPdfPipeline(doc as unknown as NodeJS.ReadableStream, out);
+    const readable = doc as unknown as NodeJS.ReadableStream & { readableLength: number; destroyed: boolean };
+    // 先排空 PDF 头，随后每页尾排空本页
+    await waitKnowledgeCardPdfPageDrained(readable, out, pipe, options);
+    for (const load of loadPage) {
+      options.signal?.throwIfAborted();
+      pipe.check();
+      const jpeg = await normalizeKnowledgeCardPage(await load());
+      options.signal?.throwIfAborted();
+      pipe.check();
+      doc.addPage({ size: [width, height], margin: 0 });
+      doc.image(jpeg, 0, 0, { width, height });
+      await waitKnowledgeCardPdfPageDrained(readable, out, pipe, options);
+    }
+    doc.end();
+    // 收尾同样有界：不能无限等一个停滞的文件系统
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
+    try {
+      options.signal?.throwIfAborted();
+      const result = await Promise.race([
+        pipe.done,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("PDF 收尾写入超时")), options.timeoutMs ?? 30_000);
+          onAbort = () => reject(options.signal?.reason ?? new Error("PDF 导出已取消"));
+          options.signal?.addEventListener("abort", onAbort, { once: true });
+        }),
+      ]);
+      if (!result.ok) throw result.error;
+    } finally {
+      clearTimeout(timer);
+      if (onAbort) options.signal?.removeEventListener("abort", onAbort);
+    }
+    const { size } = await stat(filePath);
+    return { filePath, dir, bytes: size };
+  } catch (error) {
+    (doc as unknown as { destroy?: () => void } | undefined)?.destroy?.();
+    out?.destroy();
+    // pipeline 等 fs WriteStream close 后才能删目录；拒绝已在 observe 里转成结果，不会再抛
+    if (pipe) await pipe.done;
+    else if (out) await finished(out).catch(() => {});
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+    throw error;
   }
-  doc.end();
-  return done;
 }
 
 /** 下载本桶成品图（服务端内部取回，不经客户端） */
@@ -105,7 +216,7 @@ export async function exportKnowledgeCardPdfToGcs(params: {
   imageUrls: string[];
   title?: string;
 }): Promise<{ gcsUri: string; url: string; pageCount: number }> {
-  const { getGcsBucketName, signGsUriV4ReadUrl, uploadBufferToGcs } = await import("./gcs.js");
+  const { getGcsBucketName, signGsUriV4ReadUrl, uploadStreamToGcs } = await import("./gcs.js");
   const bucket = getGcsBucketName();
   const objectNames = params.imageUrls.map((u) => resolveKnowledgeCardImageObjectName(u, bucket, params.userId));
   if (objectNames.some((n) => !n)) {
@@ -116,9 +227,25 @@ export async function exportKnowledgeCardPdfToGcs(params: {
     if (!res.ok) throw new Error(`读取成品图失败（${res.status}）`);
     return Buffer.from(await res.arrayBuffer());
   });
-  const pdf = await buildKnowledgeCardPdf(loaders);
-  const safeTitle = String(params.title || "知识卡").replace(/[^\w一-鿿-]+/g, "_").slice(0, 60);
-  const objectName = `${KNOWLEDGE_CARD_IMAGE_PREFIX}pdf/u${params.userId}/${Date.now()}-${safeTitle}.pdf`;
-  const uploaded = await uploadBufferToGcs({ objectName, buffer: pdf, contentType: "application/pdf" });
-  return { gcsUri: uploaded.gcsUri, url: signGsUriV4ReadUrl(uploaded.gcsUri, 7 * 24 * 3600), pageCount: loaders.length };
+  const { filePath, dir, bytes } = await buildKnowledgeCardPdfFile(loaders);
+  // 终审 P2：调用方持有 Node 流的所有权——上传前置失败时 fd 不能靠 GC，
+  // finally 里 destroy 并等它真正关闭，之后才删临时目录
+  const source = createReadStream(filePath);
+  const closed = finished(source, { cleanup: true }).catch(() => {});
+  try {
+    const safeTitle = String(params.title || "知识卡").replace(/[^\w一-鿿-]+/g, "_").slice(0, 60);
+    const objectName = `${KNOWLEDGE_CARD_IMAGE_PREFIX}pdf/u${params.userId}/${Date.now()}-${safeTitle}.pdf`;
+    const uploaded = await uploadStreamToGcs({
+      objectName,
+      stream: Readable.toWeb(source) as ReadableStream<Uint8Array>,
+      contentLength: bytes,
+      contentType: "application/pdf",
+      signal: AbortSignal.timeout(10 * 60_000),
+    });
+    return { gcsUri: uploaded.gcsUri, url: signGsUriV4ReadUrl(uploaded.gcsUri, 7 * 24 * 3600), pageCount: loaders.length };
+  } finally {
+    source.destroy();
+    await closed;
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
 }

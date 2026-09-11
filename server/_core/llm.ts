@@ -15,6 +15,7 @@ import {
   normalizeEvolinkChatModel,
   toOpenAiCompatibleChatUserMessage,
 } from "../services/evolinkChatModel";
+import { OPENROUTER_GLM_PROVIDER_LOCK, glm53ReasoningEffort, isGlm53Model } from "../services/glmModels";
 import {
   isOhMyGptChatEndpoint,
   isOhMyGptGpt56FamilyModel,
@@ -1326,11 +1327,12 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
   const normalizedResponseFormat = normalizeResponseFormat(params);
   const modelId = String(target.modelName || "").trim();
   const isKimiK3 = isOpenRouterKimiK3Model(modelId);
-  const isDeepSeekV4Pro0813 = modelId === "deepseek/deepseek-v4-pro-0813";
-  /** Kimi K3、DeepSeek V4 Pro reasoning 与 GPT-5 系均不发送 temperature/top_p。 */
+  // 0911：deepseek/deepseek-v4-pro-0813 三天后下架，这条 reasoning 型分支改由 GLM 5.3 系走
+  const isGlm53 = isGlm53Model(modelId);
+  /** Kimi K3、GLM 5.3 reasoning 与 GPT-5 系均不发送 temperature/top_p。 */
   const supportsSamplingControls =
     !isKimiK3
-    && !isDeepSeekV4Pro0813
+    && !isGlm53
     && !/^gpt-5(?:[.-]|$)/i.test(modelId)
     && !/^openai\/gpt-5/i.test(modelId);
   const isGpt5Family = /^gpt-5(?:[.-]|$)/i.test(modelId) || /^openai\/gpt-5/i.test(modelId);
@@ -1348,12 +1350,9 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     } else {
       reasoningEffort = OPENROUTER_KIMI_K3_REASONING_EFFORT;
     }
-  } else if (isDeepSeekV4Pro0813) {
-    const requested = String(params.reasoningEffort || "high").trim().toLowerCase();
-    reasoningEffort = requested === "low" || requested === "medium"
-      || requested === "high" || requested === "max"
-      ? requested
-      : "high";
+  } else if (isGlm53) {
+    // GLM 5.3 恒开思考关不掉，只有 low/high/max 真正生效（medium/xhigh 会被静默降级）
+    reasoningEffort = glm53ReasoningEffort(params.reasoningEffort);
   } else if (isGpt5Family) {
     if (params.reasoningEffort) {
       reasoningEffort = params.reasoningEffort;
@@ -1368,7 +1367,7 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     model: target.modelName,
     messages: params.messages.map(normalizeMessage),
   };
-  if (isDeepSeekV4Pro0813 && reasoningEffort) {
+  if (isGlm53 && reasoningEffort) {
     payload.reasoning = { effort: reasoningEffort };
   } else if (reasoningEffort) {
     payload.reasoning_effort = reasoningEffort;
@@ -1382,7 +1381,7 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
         : undefined;
 
   if (typeof maxCompletionTokens === "number" && maxCompletionTokens > 0) {
-    if (isDeepSeekV4Pro0813) payload.max_tokens = Math.floor(maxCompletionTokens);
+    if (isGlm53) payload.max_tokens = Math.floor(maxCompletionTokens);
     else payload.max_completion_tokens = Math.floor(maxCompletionTokens);
   }
 
@@ -1406,7 +1405,11 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
   if (normalizedResponseFormat) {
     payload.response_format = normalizedResponseFormat;
   }
-  if (isDeepSeekV4Pro0813 && params.openRouterProviderPreferences) {
+  if (isGlm53) {
+    // OpenRouter 上锁 Z.AI 自营；调用方给了偏好就并进去（0911 用户令：不落转售方）
+    // 锁放在后面：调用方偏好只能补 require_parameters / max_price 之类，不能解开 order / allow_fallbacks
+    payload.provider = { ...(params.openRouterProviderPreferences || {}), ...OPENROUTER_GLM_PROVIDER_LOCK };
+  } else if (params.openRouterProviderPreferences) {
     payload.provider = params.openRouterProviderPreferences;
   }
 

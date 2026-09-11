@@ -9,6 +9,7 @@ import {
   invokeDeepSeekJsonChatRaw,
   type DeepSeekJsonChatResponse,
 } from "./platformTopicShortlist";
+import { isSseContentSafetyError } from "./sseChatStream";
 
 export type VisualReportEngine = "glm_5_3" | "openrouter_deepseek";
 
@@ -251,6 +252,8 @@ export async function runVisualReportLlmAttempts(params: {
       lastErr = attemptErr instanceof Error ? attemptErr.message : String(attemptErr);
       const gwTrace = (attemptErr as { gatewayTrace?: VisualReportAttemptTrace["gatewayTrace"] })?.gatewayTrace;
       if (gwTrace) attempts[attempts.length - 1].gatewayTrace = gwTrace;
+      // 内容安全拒绝不能被报表外层重试吞掉；仍由既有错误包装承接退款和遥测。
+      if (isSseContentSafetyError(attemptErr)) throw buildErr(false);
       console.warn(`[generateVisualReport] LLM 第 ${attempt}/${maxAttempts} 次失败: ${lastErr.slice(0, 240)}`);
       // 硬截止已触发时立即放弃（复审 P1-2/P1-3）：真实次数入错误,退避可被截止打断
       if (params.abortSignal?.aborted) throw buildErr(true);

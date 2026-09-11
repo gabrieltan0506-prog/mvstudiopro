@@ -1,4 +1,6 @@
 import "dotenv/config";
+// 必须在任何图像处理模块之前载入：全局限制 sharp/libvips 内存（0911 OOM 事故）
+import "./sharpLimits.js";
 import express from "express";
 import { createServer } from "http";
 import net from "net";

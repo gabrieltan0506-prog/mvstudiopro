@@ -80,8 +80,8 @@ describe("optimizeApprovedManhuaViralTemplate", () => {
     { model: "kimi_k3_max", modelName: "moonshotai/kimi-k3", effort: "max", maxTokens: 32_768 },
     { model: "claude_opus_5_high", modelName: "claude-opus-5", effort: "high", maxTokens: 32_768 },
     {
-      model: "deepseek_v4_0813_high",
-      modelName: "deepseek/deepseek-v4-pro-0813",
+      model: "glm_53_high",
+      modelName: "z-ai/glm-5.3",
       effort: "high",
       maxTokens: 65_536,
     },
@@ -111,7 +111,7 @@ describe("optimizeApprovedManhuaViralTemplate", () => {
       });
       expect(calls[0]).not.toHaveProperty("temperature");
       expect(calls[0]).not.toHaveProperty("topP");
-      if (item.model === "deepseek_v4_0813_high") {
+      if (item.model === "glm_53_high") {
         expect(calls[0]?.response_format).toEqual({ type: "json_object" });
         expect(calls[0]?.openRouterProviderPreferences).toEqual({ require_parameters: true });
       }
@@ -134,7 +134,7 @@ describe("optimizeApprovedManhuaViralTemplate", () => {
     invalid.reasons = [{ field: "summaryZh", reasonZh: "错误字段原因" }];
     await expect(optimizeApprovedManhuaViralTemplate({
       card: approvedCard(),
-      model: "deepseek_v4_0813_high",
+      model: "glm_53_high",
       promptZh: "强化穿越异象。",
       requestId: "request_owner_bad1",
       userId: 7,
@@ -147,7 +147,7 @@ describe("optimizeApprovedManhuaViralTemplate", () => {
     truncated.choices[0]!.finish_reason = "length";
     await expect(optimizeApprovedManhuaViralTemplate({
       card: approvedCard(),
-      model: "deepseek_v4_0813_high",
+      model: "glm_53_high",
       promptZh: "强化穿越异象。",
       requestId: "request_owner_len1",
       userId: 7,
@@ -215,7 +215,7 @@ function nativeOutput(
 const runNative = (out: unknown, requestId: string) =>
   optimizeApprovedManhuaViralTemplate({
     card: nativeCard(),
-    model: "deepseek_v4_0813_high",
+    model: "glm_53_high",
     promptZh: "优化节奏。",
     requestId,
     userId: 7,
@@ -254,7 +254,7 @@ describe("原生精读模板防丢门禁（复审 P0-1）", () => {
 
     const out = await optimizeApprovedManhuaViralTemplate({
       card,
-      model: "deepseek_v4_0813_high",
+      model: "glm_53_high",
       promptZh: "只优化摘要。",
       requestId: "req_native_160",
       userId: 7,

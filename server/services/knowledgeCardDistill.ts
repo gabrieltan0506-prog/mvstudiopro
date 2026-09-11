@@ -24,11 +24,23 @@ import {
 } from "../../shared/knowledgeCardDistillSections.js";
 import {
   KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
+  KNOWLEDGE_CARD_DISTILL_MODEL_GLM,
   KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
   KNOWLEDGE_CARD_DISTILL_MODEL_QWEN_OR,
   resolveKnowledgeCardDistillModel,
   type KnowledgeCardDistillModelId,
 } from "../../shared/knowledgeCardDistillModels.js";
+import { GLM_53_FLASH_EVOLINK_MODEL, GLM_53_FLASH_OPENROUTER_MODEL, glm53ReasoningEffort } from "./glmModels.js";
+import { assertSseContentSafety, isSseContentSafetyError, isSseIncompleteStreamError, isSseResponse, readGlmSseStream } from "./sseChatStream.js";
+import {
+  KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER,
+  KNOWLEDGE_CARD_GLM_FIRST_ORDER,
+  KNOWLEDGE_CARD_PREMIUM_FALLBACK_TAIL,
+  filterConfiguredSteps,
+  openRouterProviderLockForTier,
+  type KnowledgeCardGatewayStep,
+  type KnowledgeCardTier,
+} from "./knowledgeCardGatewayOrder.js";
 import {
   getEvolinkApiKey,
   getOfficialOpenAiApiKey,
@@ -43,7 +55,7 @@ import {
   type KnowledgeCardPageSelection,
 } from "./knowledgeCardDocumentPages.js";
 import { convertEpubToPdf, isEpubFile } from "./knowledgeCardEpubToPdf.js";
-import { invokePageTriageJson } from "./knowledgeCardPageTriage.js";
+import { looksLikeTriageJson, invokePageTriageJson } from "./knowledgeCardPageTriage.js";
 
 /** 百炼新加坡 Token Plan（Qwen 官方兜底）；与整形链 `plan_sg_qwen` 同一端点与密钥 */
 const DASHSCOPE_SG_PLAN_CHAT_URL =
@@ -66,7 +78,7 @@ const DISTILL_MAX_TOKENS = Math.min(
   Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_MAX_TOKENS) || 32_768, 4096),
   65_536,
 );
-/** 最终统稿一次要吐出整份成稿（高级版 96 节约 4–6 万 token）：输出上限给到模型允许的高位，超时放到 15 分钟 */
+/** 最终统稿一次要吐出整份成稿（完整版 96 节约 4–6 万 token）：输出上限给到模型允许的高位，超时放到 15 分钟 */
 const DISTILL_FINAL_MAX_TOKENS = Math.min(
   Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_FINAL_MAX_TOKENS) || 65_536, DISTILL_MAX_TOKENS),
   120_000,
@@ -134,7 +146,7 @@ function envStr(key: string, fallback: string): string {
 }
 
 const DISTILL_PROFILES: Record<KnowledgeCardDistillModelId, KnowledgeCardDistillProfile> = {
-  // 精细：DeepSeek V4 Flash（0910 替掉 Sol）。单价约 Sol 的 1/20，段切大到 2.4 万字、并发 4；
+  // DeepSeek V4.1 Flash（0911 由 V4 Flash 升版，原生多模态）。单价约 Sol 的 1/20，段切大到 2.4 万字、并发 4；
   // 思考档 high（用户令：不用 low，差不了多少钱）；1M 上下文，统稿分组可放到 4.8 万字
   [KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK]: {
     chunkThreshold: envNum("KNOWLEDGE_CARD_DISTILL_DEEPSEEK_CHUNK_THRESHOLD", 24_000, 6_000, 60_000),
@@ -148,19 +160,19 @@ const DISTILL_PROFILES: Record<KnowledgeCardDistillModelId, KnowledgeCardDistill
     refineMaxChars: envNum("KNOWLEDGE_CARD_DISTILL_DEEPSEEK_REFINE_MAX_CHARS", 48_000, 0, 200_000),
     bulletsPerSection: { min: 2, max: 4 },
   },
-  // 轻量：单价最低，压缩倾向最强 → 段切小到 8k、抬每段节数下限与节内条数，单次统稿输入压到最小
-  [KNOWLEDGE_CARD_DISTILL_MODEL_QWEN]: {
-    chunkThreshold: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_CHUNK_THRESHOLD", 9_000, 4_000, 40_000),
-    chunkChars: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_CHUNK_CHARS", 8_000, 3_000, 20_000),
-    concurrency: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_CONCURRENCY", 2, 1, 4),
-    // 0909 用户令：Qwen 用 high，不上 xhigh（sg 套餐走 enable_thinking，档位只对 EvoLink 兜底生效）
-    effortChunk: envStr("KNOWLEDGE_CARD_DISTILL_QWEN_EFFORT_CHUNK", "high"),
-    effortFinal: envStr("KNOWLEDGE_CARD_DISTILL_QWEN_EFFORT_FINAL", "high"),
-    requestTimeoutMs: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_TIMEOUT_MS", 240_000, 60_000, 480_000),
-    chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_CHUNK_RETRIES", 2, 0, 4),
-    minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_MIN_SECTIONS", 5, 2, 24),
-    refineMaxChars: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_REFINE_MAX_CHARS", 14_000, 0, 120_000),
-    // 轻量档便宜，放宽写满：节内条数比 Sol 抬 1 条，别把一节压成两条干标题
+  // GLM 5.3 Flash（0911 替掉 Qwen 轻量档）：100 万上下文、原生视觉，段切与并发按 DeepSeek 同口径；
+  // 便宜档保留「写满」倾向：节内条数比 DeepSeek 抬 1 条，别把一节压成两条干标题
+  [KNOWLEDGE_CARD_DISTILL_MODEL_GLM]: {
+    chunkThreshold: envNum("KNOWLEDGE_CARD_DISTILL_GLM_CHUNK_THRESHOLD", 24_000, 6_000, 60_000),
+    chunkChars: envNum("KNOWLEDGE_CARD_DISTILL_GLM_CHUNK_CHARS", 24_000, 4_000, 48_000),
+    concurrency: envNum("KNOWLEDGE_CARD_DISTILL_GLM_CONCURRENCY", 4, 1, 8),
+    // GLM 5.3 恒开思考关不掉，档位只有 low/high/max 真正生效：用户令 high
+    effortChunk: envStr("KNOWLEDGE_CARD_DISTILL_GLM_EFFORT_CHUNK", "high"),
+    effortFinal: envStr("KNOWLEDGE_CARD_DISTILL_GLM_EFFORT_FINAL", "high"),
+    requestTimeoutMs: envNum("KNOWLEDGE_CARD_DISTILL_GLM_TIMEOUT_MS", 240_000, 60_000, 480_000),
+    chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_GLM_CHUNK_RETRIES", 2, 0, 4),
+    minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_GLM_MIN_SECTIONS", 3, 2, 24),
+    refineMaxChars: envNum("KNOWLEDGE_CARD_DISTILL_GLM_REFINE_MAX_CHARS", 48_000, 0, 200_000),
     bulletsPerSection: { min: 3, max: 5 },
   },
 };
@@ -237,7 +249,7 @@ function resolveDistillBullets(modelName?: string | null): { min: number; max: n
   const profile = modelName
     ? DISTILL_PROFILES[modelName as KnowledgeCardDistillModelId]
     : undefined;
-  // 高级版：内容靠表格/图表压实，要点条数与精华版同档（多出来的信息进表格，不进长列表）
+  // 完整版：内容靠表格/图表压实，要点条数与精华版同档（多出来的信息进表格，不进长列表）
   return profile?.bulletsPerSection ?? DISTILL_DEFAULT_BULLETS;
 }
 
@@ -247,8 +259,8 @@ const DISTILL_NO_META_ZH = `**不要写审稿旁白**：不得出现「材料认
 function buildDistillSystem(minSections: number, modelName?: string | null, docKeys?: string[], detailLevel?: KnowledgeCardDetailLevel): string {
   const bullets = resolveDistillBullets(modelName);
   const levelRule = detailLevel === "full"
-    ? `\n0. **成稿档：高级版（主要重点 + 次要重点都包含）**：本材料的每个章节、方法、表格/清单都要落进成稿，主要重点和次要重点一并保留，不因「取重点」舍弃次要内容；数字、步骤、条件全部保留。**优先级**：要点条数仍按第 3 条（每条 ≤16 字、条数不超上限），装不下的信息**一律进 Markdown 表格或「图：」行**，不靠加长列表。**能表格化的一律表格化**：分类/对比/参数/时辰-经脉-做法这类多维内容写成 Markdown 表格（表头清楚、每格一句短语，不超过 6 列）；步骤/流程写成「A → B → C」一行流程链；同类清单合并成一张表而不是散成多节。表格承载信息量，小节数量不要为了铺开而增加。`
-    : "";
+    ? `\n0. **成稿档：完整版（第一重点 + 详细解说）**：本材料的每个章节、方法、表格/清单都要落进成稿，第一重点逐条给出详细解说（为什么、怎么做、什么条件下成立），次要内容也不因「取重点」被舍弃；数字、步骤、条件全部保留。**优先级**：要点条数仍按第 3 条（每条 ≤16 字、条数不超上限），装不下的信息**一律进 Markdown 表格或「图：」行**，不靠加长列表。**能表格化的一律表格化**：分类/对比/参数/时辰-经脉-做法这类多维内容写成 Markdown 表格（表头清楚、每格一句短语，不超过 6 列）；步骤/流程写成「A → B → C」一行流程链；同类清单合并成一张表而不是散成多节。表格承载信息量，小节数量不要为了铺开而增加。`
+    : `\n0. **成稿档：精华版（优先重点 + 简单解说）**：只取优先级最高的重点，每条配一句到位的简单解说（说清是什么、怎么用即可），不铺陈次要分支、不展开长论证；篇幅短、页数少是这档的目的。`;
   const refRule = docKeys?.length
     ? `\n7. **参考原页标记**：用户会附上原稿中版式有特色的页（表格、思维导图、分式图解、左右对比），每张图前都标了「原稿 docKey 第 N 页」。某小节的内容对应这些页时，在该小节末尾单独一行写标记，格式 \`${docKeys.map((k) => formatKnowledgeCardPageRef(k, [1])).join("\` 或 \`")}\`（docKey 照抄该图前标注的那个，页码写该图标注的真实页码，多页用逗号）。只能引用本次附带的图；没有对应参考页的小节不写标记；不得编造 docKey 或页码。`
     : "";
@@ -285,14 +297,34 @@ function officialFallbackKey(_modelName: KnowledgeCardDistillModelId): string {
 }
 
 /**
- * DeepSeek 在 EvoLink 的真实 id。读档案优先走 Vision 版（用户 0910 令）：带图段一定走 Vision；
- * 纯文字段默认也走 Vision（同一家、同价位，一条链路少一个变量），可用环境变量切回纯文本版。
+ * DeepSeek 在 EvoLink 的真实 id（0911 实弹核过，别再照 OpenRouter 的 slug 猜）：
+ * · `deepseek-v4.1-flash` 在 EvoLink 是 404 model_not_found（我们这把钥匙没开通，永久性不要重试）；
+ * · EvoLink 侧的同一款就是 `deepseek-v4-flash-vision-exp`——原生多模态、1M 上下文、384K 输出、
+ *   带思考模式，官方页面标的就是 V4.1 Flash 那款（回包里 model 字段回 `deepseek-flash`）。
+ * 所以图文都用它：带图走 api.evolink.ai，纯文本走 direct（两条都实测 200，流式也回 SSE）。
  */
 const DEEPSEEK_EVOLINK_VISION_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_EVOLINK_VISION_MODEL", "deepseek-v4-flash-vision-exp");
 const DEEPSEEK_EVOLINK_TEXT_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_EVOLINK_MODEL", DEEPSEEK_EVOLINK_VISION_MODEL);
-/** OpenRouter 末位兜底（EvoLink 与新加坡都失效时）：DeepSeek 档同款 Vision；Qwen 档用 OpenRouter 的 Qwen3.8-Max */
-const DEEPSEEK_OPENROUTER_VISION_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_OPENROUTER_VISION_MODEL", "deepseek/deepseek-v4-flash-vision-exp");
+/** OpenRouter 同款（锁 DeepSeek 自营，见 openRouterProviderLockForTier）：一样图文同模型 */
+const DEEPSEEK_OPENROUTER_TEXT_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_OPENROUTER_TEXT_MODEL", "deepseek/deepseek-v4.1-flash");
+const DEEPSEEK_OPENROUTER_VISION_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_OPENROUTER_VISION_MODEL", DEEPSEEK_OPENROUTER_TEXT_MODEL);
 const QWEN_OPENROUTER_MODEL = envStr("KNOWLEDGE_CARD_QWEN_OPENROUTER_MODEL", KNOWLEDGE_CARD_DISTILL_MODEL_QWEN_OR);
+/** 0911 用户令：降档第一手换成 GLM 5.3 Flash（原生视觉、图文都吃，Qwen 退到最后） */
+// 读档要吃图：这里只能用 **Flash**（GLM 5.3 是纯长文本，不收图；两者不可混用）
+const GLM_OPENROUTER_MODEL = envStr("KNOWLEDGE_CARD_GLM_OPENROUTER_MODEL", GLM_53_FLASH_OPENROUTER_MODEL);
+const GLM_EVOLINK_MODEL = envStr("KNOWLEDGE_CARD_GLM_EVOLINK_MODEL", GLM_53_FLASH_EVOLINK_MODEL);
+/** GLM 官方输出上限 131,072（含思维链）；Qwen 跳仍是 32k */
+const GLM_MAX_TOKENS = 131_072;
+const QWEN_MAX_TOKENS = 32_768;
+/**
+ * 读档链温度（0911 用户拍板 0.7）：全链同一个值，免得换跳换出另一种文风。
+ * 夹在 [0,1]（按四家里最窄的 GLM 取值域）；`|| 0.7` 会把合法的 0 吞掉，所以按 isFinite 判（复审 P2）。
+ * 与本文件其它 env 常量一样在模块加载期求值，运行期改环境变量要重启才生效。
+ */
+const KNOWLEDGE_CARD_DISTILL_TEMPERATURE = (() => {
+  const raw = Number(process.env.KNOWLEDGE_CARD_DISTILL_TEMPERATURE);
+  return Number.isFinite(raw) ? Math.min(1, Math.max(0, raw)) : 0.7;
+})();
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 function getOpenRouterApiKey(): string {
   return String(process.env.OPENROUTER_API_KEY || "").trim();
@@ -543,7 +575,23 @@ function mapDistillUpstreamError(status: number, body: string): Error {
   if (status === 402 || /insufficient|credit|余额|积分不足|quota/i.test(t)) {
     return new Error("提炼账户额度不足，请稍后重试或联系管理员");
   }
-  if (status === 404 && /guardrail|privacy|data policy|No endpoints/i.test(t)) {
+  /**
+   * 404 的两种含义必须分开（终审 P2）：
+   * 1) 「No endpoints found…」= 这一跳当下没有可用端点。锁了自营供应商（allow_fallbacks:false）时
+   *    这是正常表现，连 OpenRouter 最常见的那句 "No endpoints found matching your data policy"
+   *    说的也是**这家 OpenRouter 账号策略下选不出供应商**，换 EvoLink 这种另一家网关照样能跑。
+   *    → 归可恢复，按链序换下一跳。
+   * 2) 真正的安全/内容策略拒答（guardrail / moderation / flagged）= 换谁都一样，
+   *    → 归确定性失败，isFatalDistillError 终止整链，不靠换供应商绕过。
+   * 判定顺序：先认「No endpoints」，再认安全拒答；反过来会把第 1 种误判成第 2 种，
+   * 首跳 404 就把六跳链掐死（这正是终审复现出来的 bug）。
+   */
+  if (status === 404 && /No endpoints/i.test(t)) {
+    return new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
+  }
+  // 限定状态码（复审 P2）：不限定的话，429/503 的 body 里带上 "safety" 这类词
+  // （上游文案、模型名、文档链接都可能带）就会误判成确定性拒答、整链终止
+  if ((status === 400 || status === 403 || status === 404) && /guardrail|moderation|flagged|content policy|safety/i.test(t)) {
     return new Error("当前提炼通道不可用，请改用其他提炼档位后重试");
   }
   if (isTimeoutUpstream(status, t)) {
@@ -580,6 +628,7 @@ function distillRefineTimeoutMs(modelName: KnowledgeCardDistillModelId): number 
 }
 
 function mapFetchAbortError(err: unknown): Error {
+  if (isSseContentSafetyError(err)) throw err;
   const name = err instanceof Error ? err.name : "";
   const msg = err instanceof Error ? err.message : String(err);
   if (name === "TimeoutError" || name === "AbortError" || /aborted due to timeout|The operation was aborted/i.test(msg)) {
@@ -627,11 +676,15 @@ function buildDistillUserContent(params: {
 
 type DistillGateway = "evolink" | "openai_official" | "dashscope_sg" | "openrouter";
 
-function gatewayLabel(g: DistillGateway): string {
-  if (g === "evolink") return "EvoLink";
-  if (g === "openai_official") return "OpenAI 官方";
-  if (g === "openrouter") return "OpenRouter";
-  return "百炼新加坡";
+/**
+ * 读档鏈的一跳：网关 + 该跳真正执行的模型档。顺序唯一定义在 knowledgeCardGatewayOrder.ts，
+ * 这里只按已配置钥匙过滤（0911 终审第五条：三条链共用同一份顺序）。
+ */
+export type DistillGatewayStep = { gateway: DistillGateway; tier: KnowledgeCardTier };
+
+function gatewayLabel(g: DistillGateway, tier?: KnowledgeCardTier): string {
+  const base = g === "evolink" ? "EvoLink" : g === "openai_official" ? "OpenAI 官方" : g === "openrouter" ? "OpenRouter" : "百炼新加坡";
+  return tier ? `${base}(${tier === "qwen" ? "Qwen" : tier === "glm" ? "GLM" : "DeepSeek"})` : base;
 }
 
 /**
@@ -644,6 +697,10 @@ function gatewayLabel(g: DistillGateway): string {
  */
 async function invokeDistillViaGateway(params: {
   gateway: DistillGateway;
+  /** 该跳的模型档（见 DistillGatewayStep）；缺省按 modelName 推 */
+  tier?: KnowledgeCardTier;
+  /** 输出最短字数（默认 20）；JSON 任务（挑页）传小值，别把合法空表当算力异常 */
+  minOutputChars?: number;
   sourceText: string;
   imageUrls: string[];
   pageImages?: DistillPageImage[];
@@ -660,8 +717,24 @@ async function invokeDistillViaGateway(params: {
 }): Promise<string> {
   const userContent = buildDistillUserContent(params);
   const hasImages = params.imageUrls.length > 0 || (params.pageImages?.length ?? 0) > 0;
+  // 这一跳实际执行的模型档：链里给了就用链里的；没给（旧调用/测试）按请求档位
+  const tier: KnowledgeCardTier =
+    params.tier ?? (params.modelName === KNOWLEDGE_CARD_DISTILL_MODEL_GLM ? "glm" : "deepseek");
   const body: Record<string, unknown> = {
+    /**
+     * 占位而已：下面每条网关分支都会按 (gateway, tier) 覆盖成该家真实的模型 id。
+     * `params.modelName` 是**档位 id**（下拉选单、计费与 receipt 用），不是任何一家的模型名——
+     * 0911 实弹教训：档位 id 叫 deepseek-v4.1-flash，而我们这把 EvoLink 钥匙只有 deepseek-v4-flash，
+     * 每个分支必须选择对应供应商的模型；合法模型可能与档位同名，不能只比较字符串。
+     */
     model: params.modelName,
+    /**
+     * 0911 用户令：读档链温度 0.7。
+     * 之前这里**一个温度都没发**——省略这个键等于落到供应商默认（GLM 官方默认 1.0），
+     * 提炼这种「照着原稿压实」的活跑在 1.0 上会自由发挥（漫剧学习链 0830 也踩过同一脚，
+     * 那边的结论就是「永远显式发温度」）。
+     */
+    temperature: KNOWLEDGE_CARD_DISTILL_TEMPERATURE,
     messages: [
       {
         role: "system",
@@ -675,22 +748,27 @@ async function invokeDistillViaGateway(params: {
   if (params.gateway === "evolink") {
     key = getEvolinkApiKey();
     url = hasImages ? EVOLINK_CHAT_URL : EVOLINK_DIRECT_CHAT_URL;
-    if (params.modelName === KNOWLEDGE_CARD_DISTILL_MODEL_QWEN) {
+    if (tier === "glm") {
+      // EvoLink GLM 5.3 Flash：恒开思考（关不掉），reasoning_effort 只有 low/high/max 真正生效；
+      // 原生视觉，图文一条模型吃下（带图仍走 api.evolink.ai）
+      body.model = GLM_EVOLINK_MODEL;
+      body.reasoning_effort = glm53ReasoningEffort(params.effort);
+      body.max_tokens = Math.min(params.maxTokens ?? DISTILL_MAX_TOKENS, GLM_MAX_TOKENS);
+    } else if (tier === "qwen") {
       // Evolink Qwen：档位只认 low|medium|xhigh（无 high/max）；用户令不上 xhigh，high 映射为 medium
+      body.model = KNOWLEDGE_CARD_DISTILL_MODEL_QWEN;
       body.enable_thinking = true;
       body.reasoning_effort = params.effort === "high" || params.effort === "max" ? "medium" : params.effort;
       body.max_completion_tokens = params.maxTokens ?? DISTILL_MAX_TOKENS;
-    } else if (params.modelName === KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK) {
+    } else {
       body.model = hasImages ? DEEPSEEK_EVOLINK_VISION_MODEL : DEEPSEEK_EVOLINK_TEXT_MODEL;
-      // Vision 版走 api.evolink.ai（direct 只给纯文本模型）
-      if (body.model === DEEPSEEK_EVOLINK_VISION_MODEL) url = EVOLINK_CHAT_URL;
+      // 带图走 api.evolink.ai（direct 只给纯文本）。按 hasImages 判，不按模型名——
+      // V4.1 起文本与视觉是同一个 id，比名字会把纯文本请求也推去多模态端点（审查建议）。
+      // 上面 url 已按 hasImages 选好，这里不再二次改写。
       // DeepSeek 官方：thinking 只开关，档位是顶层 reasoning_effort（low/high/max）
       body.thinking = { type: "enabled" };
       body.reasoning_effort = deepseekReasoningEffort(params.effort);
       body.max_tokens = deepseekMaxTokens(params.maxTokens ?? DISTILL_MAX_TOKENS);
-    } else {
-      body.reasoning_effort = params.effort;
-      body.max_tokens = params.maxTokens ?? DISTILL_MAX_TOKENS;
     }
   } else if (params.gateway === "openai_official") {
     key = getOfficialOpenAiApiKey();
@@ -700,18 +778,39 @@ async function invokeDistillViaGateway(params: {
   } else if (params.gateway === "openrouter") {
     key = getOpenRouterApiKey();
     url = OPENROUTER_CHAT_URL;
-    body.model = params.modelName === KNOWLEDGE_CARD_DISTILL_MODEL_QWEN ? QWEN_OPENROUTER_MODEL : DEEPSEEK_OPENROUTER_VISION_MODEL;
-    body.reasoning = { effort: deepseekReasoningEffort(params.effort) };
-    body.max_tokens = deepseekMaxTokens(params.maxTokens ?? DISTILL_MAX_TOKENS);
+    body.model =
+      tier === "qwen"
+        ? QWEN_OPENROUTER_MODEL
+        : tier === "glm"
+          ? GLM_OPENROUTER_MODEL
+          : hasImages
+            ? DEEPSEEK_OPENROUTER_VISION_MODEL
+            : DEEPSEEK_OPENROUTER_TEXT_MODEL;
+    // OpenRouter 的 DeepSeek / GLM 跳各锁各的自营，不落到转售方（0911 用户令）
+    const providerLock = openRouterProviderLockForTier(tier);
+    if (providerLock) body.provider = providerLock;
+    // 档位按 tier 各自映射：GLM 只认 low/high/max（medium 会被静默降级），DeepSeek 走自己的表
+    body.reasoning = { effort: tier === "glm" ? glm53ReasoningEffort(params.effort) : deepseekReasoningEffort(params.effort) };
+    // 审查 P1：降档跳（GLM / Qwen）不能沿用 DeepSeek 的翻倍逻辑——统稿 120k×2=240k 超其输出上限，
+    // 兜底末跳会确定性 400；与新加坡跳同口径收 32k
+    body.max_tokens =
+      tier === "deepseek"
+        ? deepseekMaxTokens(params.maxTokens ?? DISTILL_MAX_TOKENS)
+        : Math.min(params.maxTokens ?? DISTILL_MAX_TOKENS, tier === "glm" ? GLM_MAX_TOKENS : QWEN_MAX_TOKENS);
   } else {
     key = getDashscopeSgPlanKey();
     url = DASHSCOPE_SG_PLAN_CHAT_URL;
     // 新加坡通道只有 Qwen；DeepSeek 档兜底到这里时模型也要换成 Qwen
     body.model = KNOWLEDGE_CARD_DISTILL_MODEL_QWEN;
     body.enable_thinking = true;
-    body.max_tokens = params.maxTokens ?? DISTILL_MAX_TOKENS;
+    body.max_tokens = Math.min(params.maxTokens ?? DISTILL_MAX_TOKENS, QWEN_MAX_TOKENS);
   }
   if (!key) throw new Error(`提炼通道未配置（${gatewayLabel(params.gateway)}），请稍后重试`);
+  // GLM 的档位 id 与 EvoLink 真实模型名可以合法同名，不能据此判定未接线。
+  // 0911 用户令：全链流式。非流式时长输入 + 强制思考的首字节会撞 Cloudflare ~100 秒与
+  // undici 写死的 300 秒 headersTimeout（漫剧学习链 0830 实弹），开流后两个计时器都不触发。
+  body.stream = true;
+  body.stream_options = { include_usage: true };
 
   let res: Response;
   // 单次统稿可达 15 分钟，超过卡死阈值：请求在途也按分钟 touch 心跳，别把自己判死
@@ -724,7 +823,15 @@ async function invokeDistillViaGateway(params: {
       signal: AbortSignal.timeout(distillFetchTimeoutMs(params.modelName, params.timeoutMs)),
       body: JSON.stringify(body),
     });
-    raw = await res.text();
+    // 按**响应类型**决定读法：上游忽略 stream 直接回 JSON 时用 SSE 读取器会读出空正文
+    // 先看状态码再决定读法（复审 P2）：上游用 text/event-stream 回非 200 时，
+    // strict 会先抛断流错误，mapDistillUpstreamError 根本轮不到——402「额度不足」
+    // 这种确定性失败会被当可恢复，白烧完整条链还叠上重试细切。
+    // 严格完整性：断流（error 帧 / 畸形帧 / 没有结束帧）一律判本跳失败换下一家，
+    // 不把半截正文当成稿（终审 P1）
+    raw = res.ok && isSseResponse(res) && res.body
+      ? await readGlmSseStream(res.body, undefined, { strictCompletion: true })
+      : await res.text();
   } catch (err) {
     throw mapFetchAbortError(err);
   } finally {
@@ -732,7 +839,7 @@ async function invokeDistillViaGateway(params: {
   }
   if (!res.ok) {
     console.warn(
-      `[knowledgeCardDistill] ${gatewayLabel(params.gateway)} ${params.modelName} HTTP ${res.status}: ${raw.slice(0, 400)}`,
+      `[knowledgeCardDistill] ${gatewayLabel(params.gateway, tier)} ${String(body.model || params.modelName)} HTTP ${res.status}: ${raw.slice(0, 400)}`,
     );
     throw mapDistillUpstreamError(res.status, raw);
   }
@@ -746,31 +853,35 @@ async function invokeDistillViaGateway(params: {
   const finish = String(
     (json as { choices?: Array<{ finish_reason?: string | null }> })?.choices?.[0]?.finish_reason || "",
   );
+  assertSseContentSafety(finish);
   // 截断不当成功：半截稿会顺利通过下游长度检查并照常收费
   if (finish === "length" || finish === "max_tokens") throw new Error(KNOWLEDGE_CARD_DISTILL_TIMEOUT_MESSAGE);
   const out = extractFirstChoicePlainText(json as Parameters<typeof extractFirstChoicePlainText>[0]).trim();
-  if (!out || out.length < 20) {
+  // 正文默认 20 字下限；挑页这类 JSON 任务由调用方降门槛——合法的 {"pages":[]} 只有 13 字（终审第五条）
+  const minOut = params.minOutputChars ?? 20;
+  if (!out || out.length < minOut) {
     throw new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
   }
   return out;
 }
 
 /**
- * 各档通道顺序（0910 用户拍板：EvoLink 与新加坡任一失效都可落到 OpenRouter）：
- * - DeepSeek V4 Flash Vision（精细）：EvoLink 主 → 百炼新加坡 Qwen3.8-Max → OpenRouter
- * - Qwen3.8 Max（轻量，0909 拍板）：百炼新加坡 token plan 主 → EvoLink → OpenRouter
+ * 各档通道顺序（0911 用户拍板：同模型先换供应商，换不动才降档）：
+ * - 精细档：EvoLink(DeepSeek) → OpenRouter(DeepSeek) → 新加坡(Qwen) → OpenRouter(Qwen)
+ * - 轻量档：新加坡(Qwen) → OpenRouter(Qwen) → EvoLink(Qwen)
  */
-export function distillGatewayChain(modelName: KnowledgeCardDistillModelId): DistillGateway[] {
-  const chain: DistillGateway[] = [];
-  if (modelName === KNOWLEDGE_CARD_DISTILL_MODEL_QWEN) {
-    if (getDashscopeSgPlanKey()) chain.push("dashscope_sg");
-    if (getEvolinkApiKey()) chain.push("evolink");
-  } else {
-    if (getEvolinkApiKey()) chain.push("evolink");
-    if (getDashscopeSgPlanKey()) chain.push("dashscope_sg");
-  }
-  if (getOpenRouterApiKey()) chain.push("openrouter");
-  return chain;
+export function distillGatewayChain(modelName: KnowledgeCardDistillModelId): DistillGatewayStep[] {
+  const configured = {
+    evolink: Boolean(getEvolinkApiKey()),
+    dashscope_sg: Boolean(getDashscopeSgPlanKey()),
+    openrouter: Boolean(getOpenRouterApiKey()),
+  };
+  // 0911：读档二选一——选谁谁先跑，另一档接力，Qwen 永远最后
+  const order =
+    resolveKnowledgeCardDistillModel(modelName) === KNOWLEDGE_CARD_DISTILL_MODEL_GLM
+      ? KNOWLEDGE_CARD_GLM_FIRST_ORDER
+      : KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER;
+  return filterConfiguredSteps(order, configured);
 }
 
 /** 测试可注入的单通道执行器 */
@@ -800,25 +911,40 @@ async function invokeDistillLlm(params: {
   validate?: (text: string) => string | null;
   /** 覆盖默认输出上限（最终统稿用） */
   maxTokens?: number;
+  /** 输出最短字数（透传单跳；挑页 JSON 传小值） */
+  minOutputChars?: number;
+  /** 覆盖链序（挑页的降档尾段用：只走精细档的 Qwen 尾跳，不多出第 5 跳） */
+  chainOverride?: readonly KnowledgeCardGatewayStep[];
 }): Promise<string> {
-  const chain = distillGatewayChain(params.modelName);
+  const chain = params.chainOverride
+    ? filterConfiguredSteps(params.chainOverride, {
+        evolink: Boolean(getEvolinkApiKey()),
+        dashscope_sg: Boolean(getDashscopeSgPlanKey()),
+        openrouter: Boolean(getOpenRouterApiKey()),
+      })
+    : distillGatewayChain(params.modelName);
   if (!chain.length) throw new Error("提炼通道未配置，请稍后重试");
   let lastError: Error | null = null;
   for (let i = 0; i < chain.length; i++) {
-    const gateway = chain[i]!;
+    const step = chain[i]!;
     touchKnowledgeCardDistillActivity();
     try {
-      const out = await distillGatewayInvoker({ ...params, gateway, modelName: params.modelName });
+      const out = await distillGatewayInvoker({ ...params, gateway: step.gateway, tier: step.tier, modelName: params.modelName });
       const problem = params.validate?.(out);
       if (problem) throw new Error(`坏输出：${problem}`);
       return out;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      // 额度/配置/安全拒答等确定性失败不换通道（换了也一样，还可能双花）
-      if (isFatalDistillError(lastError.message) && !/未配置/.test(lastError.message)) throw lastError;
+      if (isSseContentSafetyError(err)) throw err;
+      // 流没跑完＝本跳不可用，恒可恢复：先短路，别让上游原文落进下面的文本正则（复审 P1）
+      if (!isSseIncompleteStreamError(err)) {
+        // 额度/配置/安全拒答等确定性失败不换通道（换了也一样，还可能双花）
+        if (isFatalDistillError(lastError) && !/未配置/.test(lastError.message)) throw lastError;
+      }
       if (i < chain.length - 1) {
+        const next = chain[i + 1]!;
         console.warn(
-          `[knowledgeCardDistill] ${gatewayLabel(gateway)} 失败 → 改走 ${gatewayLabel(chain[i + 1]!)}：${lastError.message.slice(0, 160)}`,
+          `[knowledgeCardDistill] ${gatewayLabel(step.gateway, step.tier)} 失败 → 改走 ${gatewayLabel(next.gateway, next.tier)}：${lastError.message.slice(0, 160)}`,
         );
       }
     }
@@ -827,9 +953,12 @@ async function invokeDistillLlm(params: {
 }
 
 /** 提炼无法靠重试救回的错（额度/配置/通道），不必再退避。 */
-function isFatalDistillError(message: string): boolean {
-  // 401/403/安全拒答/未配置是确定性失败：重试+递归细切只会放大请求量
-  return /额度不足|通道不可用|未配置|请先输入|未能从文件|HTTP 40[13]|安全分类器拒答/.test(message);
+function isFatalDistillError(error: unknown): boolean {
+  if (isSseContentSafetyError(error)) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  // 401/403/安全拒答/未配置是确定性失败：重试+递归细切只会放大请求量。
+  // 注意：这把尺子只量**我们自己造的**错误文案；上游原文一律不许拼进 message（复审 P1）。
+  return /额度不足|通道不可用|未配置|请先输入|未能从文件|HTTP 40[13]|安全分类器拒答|内容被安全策略拦截/.test(message);
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -866,7 +995,8 @@ async function distillOneChunkWithRetry(params: {
       });
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      if (isFatalDistillError(lastError.message)) throw lastError;
+      if (isSseContentSafetyError(err)) throw err;
+      if (!isSseIncompleteStreamError(lastError) && isFatalDistillError(lastError)) throw lastError;
       console.warn(
         `[knowledgeCardDistill] ${params.chunkLabel} attempt ${attempt + 1}/${params.retries + 1} failed: ${lastError.message.slice(0, 160)}`,
       );
@@ -940,7 +1070,8 @@ async function distillOneChunkOrSkip(
     return { ok: true, markdown };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (isFatalDistillError(message)) throw err;
+    if (isSseContentSafetyError(err)) throw err;
+    if (!isSseIncompleteStreamError(err) && isFatalDistillError(err)) throw err;
     const where = `第 ${idx + 1}/${totalChunks} 段（${label}）`;
     console.warn(`[knowledgeCardDistill] ${where} 重试与细切后仍失败，跳过该段：${message.slice(0, 160)}`);
     onNotice?.(`${where}提炼失败已跳过（${message.slice(0, 60)}），这一段内容不在本次知识卡里`);
@@ -963,11 +1094,11 @@ function buildRefineSystem(
 ): string {
   const bullets = resolveDistillBullets(modelName);
   if (detailLevel === "full" && stage !== "tighten") {
-    // 高级版：只去重、理主线，不压缩（0908 探针 79 节被压到 60 节、字数少四成，用户判「比纯文字还少」）
+    // 完整版：只去重、理主线，不压缩（0908 探针 79 节被压到 60 节、字数少四成，用户判「比纯文字还少」）
     return `你是知识卡片内容主编。下面这份 Markdown 由同一份长文档**分段提炼后机械拼接**而成，段与段之间可能重复、粒度不齐、缺少全局主线。请把它整理成一份连贯的**完整版**知识卡片 Markdown。
 
 硬性要求：
-1. **不压缩**：这是高级版，内容要完整。只合并**讲同一件事**的重复小节，其余小节全部保留；合并后总节数不少于 ${Math.max(2, Math.floor((currentSections || minSections) * 0.9))} 个 \`## 小节\`（当前 ${currentSections || "?"} 个）。
+1. **不压缩**：这是完整版，内容要完整。只合并**讲同一件事**的重复小节，其余小节全部保留；合并后总节数不少于 ${Math.max(2, Math.floor((currentSections || minSections) * 0.9))} 个 \`## 小节\`（当前 ${currentSections || "?"} 个）。
 2. **不删要点，但要压实**：每节的要点、数字、步骤、条件、例子一条不少；合并小节时把两边要点合在一起，不挑选。能表格化的一律改成 Markdown 表格（分类/对比/参数/时辰-经脉-做法等多维内容），步骤写成「A → B → C」流程链，同类清单并成一张表；用表格承载而不是拉长列表。
 3. **理主线**：\`# 总标题\` 点出主旨，小节按「是什么 → 为什么 → 怎么做 → 边界与例外」之类的自然顺序重排，读下来是一条线。
 4. ${distillSectionShape(bullets)}
@@ -1020,7 +1151,7 @@ function refinedOutputLooksBroken(refined: string, minSections: number, inputSec
   const body = refined.trim();
   if (body.length < 400) return true;
   const sections = (body.match(/^##\s+\S/gm) || []).length;
-  // 高级版目标节数大（68–96），阈值同时受输入稿节数约束，正常压缩不会被误判为崩塌
+  // 完整版目标节数大（68–96），阈值同时受输入稿节数约束，正常压缩不会被误判为崩塌
   const byTarget = Math.floor(minSections / 2);
   const byInput = Number.isFinite(inputSections) && (inputSections as number) > 0 ? Math.floor((inputSections as number) * 0.3) : byTarget;
   return sections < Math.max(2, Math.min(byTarget, byInput));
@@ -1088,6 +1219,7 @@ async function refineOnce(params: {
     });
     return refined;
   } catch (err) {
+    if (isSseContentSafetyError(err)) throw err;
     console.warn(
       `[knowledgeCardDistill] refine(${params.stage}) failed, keep input: ${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`,
     );
@@ -1208,13 +1340,13 @@ async function refineMergedDistill(params: {
     : await refineOnce({
     body: current,
     modelName: params.modelName,
-    // 高级版：目标节数不低于合并稿节数（统稿不压缩）
+    // 完整版：目标节数不低于合并稿节数（统稿不压缩）
     minSections: params.detailLevel === "full" ? Math.max(params.minSections, countMarkdownSections(current)) : params.minSections,
     stage: "final",
     detailLevel: params.detailLevel,
   });
   // 有些模型一次统稿只肯降一点（探针：Kimi 36 → 41 节）。超标就再压，压不动即停，不空烧。
-  // 高级版要的是完整覆盖，不做收紧轮（统稿只负责去重复、理主线）
+  // 完整版要的是完整覆盖，不做收紧轮（统稿只负责去重复、理主线）
   const hardCap = params.detailLevel === "full" ? Number.MAX_SAFE_INTEGER : Math.ceil(params.minSections * 1.35);
   for (let round = 0; round < DISTILL_TIGHTEN_MAX_ROUNDS; round += 1) {
     const before = countMarkdownSections(final);
@@ -1343,7 +1475,7 @@ export async function invokeDistillLlmPossiblyChunked(params: {
   );
 
   const outputs: DistillChunkResult[] = new Array(chunks.length);
-  // 分段只是给统稿备料：按总目标节数分摊 + 六成冗余留出取舍空间（高级版不留冗余，全部保留）
+  // 分段只是给统稿备料：按总目标节数分摊 + 六成冗余留出取舍空间（完整版不留冗余，全部保留）
   const minSectionsPerChunk = Math.max(
     profile.minSectionsPerChunk,
     Math.ceil((params.minSectionsTotal * (params.detailLevel === "full" ? 1.1 : 1.6)) / chunks.length),
@@ -1443,7 +1575,14 @@ const TRIAGE_SHEETS_PER_CALL = 8;
  * 目录页扫读挑页：用所选档位模型看缩略图目录，返回值得参考的页码。
  * 扫读失败不阻断整体提炼（退回无参考页）。
  */
-export function makeKnowledgeCardPageSelector(_modelName: KnowledgeCardDistillModelId) {
+export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillModelId) {
+  // 终审第五条：挑页也按档位走同一份顺序——
+  // 轻量档不从 DeepSeek 视觉起跳，直接走轻量 Qwen 全链；
+  // 精细档降档尾段只走精细顺序里的 Qwen 两跳（新加坡→OpenRouter），不多出第 5 跳。
+  // 选 GLM：不打 DeepSeek 视觉专链，整条 GLM 起跳的链自己走完（GLM 两家 → DeepSeek 两家 → Qwen 两家）；
+  // 选 DeepSeek：视觉专链已经打过两家 DeepSeek，这里只接它之后的尾段，不重复起跳
+  const glmTier = resolveKnowledgeCardDistillModel(modelName) === KNOWLEDGE_CARD_DISTILL_MODEL_GLM;
+  const fallbackChain = glmTier ? KNOWLEDGE_CARD_GLM_FIRST_ORDER : KNOWLEDGE_CARD_PREMIUM_FALLBACK_TAIL;
   return async (
     sheets: KnowledgeCardContactSheet[],
     pageCount: number,
@@ -1457,26 +1596,36 @@ export function makeKnowledgeCardPageSelector(_modelName: KnowledgeCardDistillMo
       try {
         const userText = `全书共 ${pageCount} 页；本次目录页覆盖第 ${pageNumbers[0]}–${pageNumbers[pageNumbers.length - 1]} 页（共 ${group.length} 张目录页）。`;
         const imageUrls = group.map((sheet) => sheet.imageUrl);
-        // 主力 DeepSeek 视觉档（JSON 模式），兜底新加坡 Qwen3.8-Max；不用 Sol（用户 0910：太贵）
-        const raw = await invokePageTriageJson({
-          system: buildPageTriageSystem(),
-          userText,
-          imageUrls,
-          fallback: () =>
-            invokeDistillLlm({
-              sourceText: userText,
+        const chainFallback = () =>
+          invokeDistillLlm({
+            sourceText: userText,
+            imageUrls,
+            modelName: resolveKnowledgeCardDistillModel(modelName),
+            minSections: 1,
+            // 用户 0910 令：思考一律 high（Qwen 走 EvoLink 时映射 medium 是 0909 拍板）
+            effort: envStr("KNOWLEDGE_CARD_PAGE_TRIAGE_EFFORT", "high"),
+            systemOverride: buildPageTriageSystem(),
+            timeoutMs: 180_000,
+            chainOverride: fallbackChain,
+            // 终审第五条：JSON 校验放进每一跳——新加坡回非 JSON 要在跳内判失败换下一跳，
+            // 而不是整个 fallback 回来才发现；合法的 {"pages":[]} 是成功，降门槛放行
+            minOutputChars: 2,
+            validate: (out) => (looksLikeTriageJson(out) ? null : `挑页回包不是合法 JSON：${out.slice(0, 60)}`),
+          });
+        // 选 GLM 时不打 DeepSeek 视觉专链，直接走 GLM 起跳的整条链；
+        // 选 DeepSeek 时先打两家 DeepSeek 视觉，失败再落降档尾段
+        const raw = glmTier
+          ? await chainFallback()
+          : await invokePageTriageJson({
+              system: buildPageTriageSystem(),
+              userText,
               imageUrls,
-              modelName: KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
-              minSections: 1,
-              // 用户 0910 令：思考一律 high（Qwen 走 EvoLink 时映射 medium 是 0909 拍板）
-              effort: envStr("KNOWLEDGE_CARD_PAGE_TRIAGE_EFFORT", "high"),
-              systemOverride: buildPageTriageSystem(),
-              timeoutMs: 180_000,
-            }),
-        });
+              fallback: chainFallback,
+            });
         const allowed = new Set(pageNumbers);
         for (const item of parsePageTriage(raw)) if (allowed.has(item.pageNumber)) picked.push(item);
       } catch (err) {
+        if (isSseContentSafetyError(err)) throw err;
         console.warn(`[knowledgeCardDistill] 目录页扫读失败（第 ${Math.floor(i / TRIAGE_SHEETS_PER_CALL) + 1}/${Math.ceil(sheets.length / TRIAGE_SHEETS_PER_CALL)} 组，目录页 ${i + 1}–${Math.min(sheets.length, i + TRIAGE_SHEETS_PER_CALL)}），本组不选参考页：${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`);
       }
     }
@@ -1578,6 +1727,7 @@ export async function prepareKnowledgeCardCopy(input: {
       documents: documentsSummary,
     };
   } catch (err) {
+    if (isSseContentSafetyError(err)) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     console.warn("[knowledgeCardDistill] failed:", msg.slice(0, 320));
     if (/过短|未能从文件|请先输入|额度不足|通道不可用|未配置|超时/.test(msg)) {

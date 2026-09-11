@@ -227,7 +227,7 @@ async function runPaidAnalysis(events: ObservationEvent[], startedAt: string) {
     analysisObservationIds: observations.map((item) => item.observationId),
     lunaBatchIds: [],
     status: "processing",
-    terraModel: "deepseek/deepseek-v4-pro-0813",
+    terraModel: "z-ai/glm-5.3",
     reasoningEffort: "high",
     createdAt: now,
     updatedAt: now,

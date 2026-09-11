@@ -204,7 +204,23 @@ export type ManhuaViralTemplateOptimizeModel =
   | "terra_high"
   | "kimi_k3_max"
   | "claude_opus_5_high"
+  /** 0911：DeepSeek V4 Pro 0813 下架，这一档换成 GLM 5.3 */
+  | "glm_53_high"
+  /** @deprecated 历史修订记录里的旧档名，仍要能解析；新请求不再接受 */
   | "deepseek_v4_0813_high";
+
+/**
+ * 新请求可选的优化档（0911：DeepSeek V4 Pro 0813 下架后只剩这四档）。
+ * 历史修订记录里的旧档名仍属于 ManhuaViralTemplateOptimizeModel，只是不能再发起。
+ */
+export const MANHUA_VIRAL_TEMPLATE_OPTIMIZE_REQUEST_MODELS = [
+  "terra_high",
+  "kimi_k3_max",
+  "claude_opus_5_high",
+  "glm_53_high",
+] as const;
+export type ManhuaViralTemplateOptimizeRequestModel =
+  (typeof MANHUA_VIRAL_TEMPLATE_OPTIMIZE_REQUEST_MODELS)[number];
 
 export type ManhuaViralTemplateChangeReason = {
   field: ManhuaViralTemplateOptimizeField;
@@ -646,6 +662,8 @@ function parseManhuaViralTemplateRevision(
     "terra_high",
     "kimi_k3_max",
     "claude_opus_5_high",
+    "glm_53_high",
+    // 历史修订记录里的旧档名照样解析，不因下架把老数据判坏
     "deepseek_v4_0813_high",
   ];
   const effort = o.reasoningEffort;

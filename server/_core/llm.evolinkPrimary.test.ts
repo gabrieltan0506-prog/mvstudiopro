@@ -22,14 +22,14 @@ afterEach(() => {
 });
 
 describe("invokeLLM evolink_primary", () => {
-  it("DeepSeek 千条分类透传 Medium 且不自行补 temperature/top_p", async () => {
+  it("GLM 5.3 千条分类：medium 按官方口径降为 high，不自行补 temperature/top_p", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      ...completion("deepseek/deepseek-v4-pro-0813"),
+      ...completion("z-ai/glm-5.3"),
       provider: "DeepSeek",
     }), { status: 200, headers: { "content-type": "application/json" } }));
     global.fetch = fetchMock as typeof fetch;
     await invokeLLM({
-      model: "pro", provider: "openai", modelName: "deepseek/deepseek-v4-pro-0813",
+      model: "pro", provider: "openai", modelName: "z-ai/glm-5.3",
       reasoningEffort: "medium", max_tokens: 65_536,
       response_format: { type: "json_object" },
       openRouterProviderPreferences: { require_parameters: true },
@@ -37,25 +37,27 @@ describe("invokeLLM evolink_primary", () => {
     });
     const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
     expect(body).toMatchObject({
-      model: "deepseek/deepseek-v4-pro-0813",
+      model: "z-ai/glm-5.3",
       max_tokens: 65_536,
       response_format: { type: "json_object" },
-      provider: { require_parameters: true },
+      // 0911：GLM 跳锁 Z.AI 自营，调用方偏好并进去
+      provider: { order: ["Z.AI"], allow_fallbacks: false, require_parameters: true },
     });
-    expect(body.reasoning).toEqual({ effort: "medium" });
+    // GLM 5.3 只认 low/high/max：medium 按官方口径发 high，不发一个会被静默降级的值
+    expect(body.reasoning).toEqual({ effort: "high" });
     expect(body.temperature).toBeUndefined();
     expect(body.top_p).toBeUndefined();
   });
 
-  it("DeepSeek V4 Pro 0813 明确开启 High thinking，并忽略不兼容采样参数", async () => {
+  it("GLM 5.3 明确开启 High thinking、锁 Z.AI 自营，并忽略不兼容采样参数", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      ...completion("deepseek/deepseek-v4-pro-0813"),
+      ...completion("z-ai/glm-5.3"),
       provider: "DeepSeek",
       usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30, cost: 0.01, completion_tokens_details: { reasoning_tokens: 5 } },
     }), { status: 200, headers: { "content-type": "application/json" } }));
     global.fetch = fetchMock as typeof fetch;
     const result = await invokeLLM({
-      model: "pro", provider: "openai", modelName: "deepseek/deepseek-v4-pro-0813",
+      model: "pro", provider: "openai", modelName: "z-ai/glm-5.3",
       reasoningEffort: "high", requestId: "ds-stable-id", max_tokens: 100_000, temperature: 1,
       response_format: { type: "json_object" },
       openRouterProviderPreferences: { require_parameters: true, data_collection: "allow", max_price: { prompt: 0.5, completion: 1 } },
@@ -64,10 +66,16 @@ describe("invokeLLM evolink_primary", () => {
     const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
     expect(fetchMock.mock.calls[0][0]).toContain("openrouter.ai");
     expect(body).toMatchObject({
-      model: "deepseek/deepseek-v4-pro-0813",
+      model: "z-ai/glm-5.3",
       max_tokens: 100_000,
       response_format: { type: "json_object" },
-      provider: { require_parameters: true, data_collection: "allow", max_price: { prompt: 0.5, completion: 1 } },
+      provider: {
+        order: ["Z.AI"],
+        allow_fallbacks: false,
+        require_parameters: true,
+        data_collection: "allow",
+        max_price: { prompt: 0.5, completion: 1 },
+      },
     });
     expect(body.reasoning).toEqual({ effort: "high" });
     expect(body.reasoning_effort).toBeUndefined();

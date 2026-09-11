@@ -112,8 +112,8 @@ describe("manhuaViralTemplateBank", () => {
     const revision = {
       parentTemplateId: "tpl_series_fixture01",
       requestId: "request_owner_1234",
-      model: "deepseek_v4_0813_high",
-      modelName: "deepseek/deepseek-v4-pro-0813",
+      model: "glm_53_high",
+      modelName: "z-ai/glm-5.3",
       reasoningEffort: "high",
       promptZh: "强化前三秒。",
       changedFields: ["hook3sZh"],

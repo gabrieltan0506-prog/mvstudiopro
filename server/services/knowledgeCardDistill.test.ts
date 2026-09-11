@@ -12,6 +12,7 @@ import {
   KNOWLEDGE_CARD_DISTILL_MODEL_CLAUDE_RETIRED,
   KNOWLEDGE_CARD_DISTILL_MODEL_KIMI_RETIRED,
   KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS,
+  KNOWLEDGE_CARD_DISTILL_MODEL_GLM,
   KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
   KNOWLEDGE_CARD_DISTILL_MODEL_QWEN_OR,
   KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
@@ -26,10 +27,10 @@ describe("knowledgeCardDistill model", () => {
     expect(KNOWLEDGE_CARD_DISTILL_MODEL).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
   });
 
-  it("only two tiers remain: DeepSeek and Qwen", () => {
+  it("only two tiers remain: DeepSeek V4.1 Flash and GLM 5.3 Flash", () => {
     expect(KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS.map((o) => o.id)).toEqual([
       KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
-      KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
+      KNOWLEDGE_CARD_DISTILL_MODEL_GLM,
     ]);
   });
 
@@ -44,13 +45,13 @@ describe("knowledgeCardDistill model", () => {
       KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
     );
     expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toBe(
-      KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
+      KNOWLEDGE_CARD_DISTILL_MODEL_GLM,
     );
     expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_TERRA)).toBe(
       KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
     );
     expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN_OR)).toBe(
-      KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
+      KNOWLEDGE_CARD_DISTILL_MODEL_GLM,
     );
   });
 
@@ -100,22 +101,22 @@ describe("splitSourceTextForDistill", () => {
 });
 
 describe("per-model distill profiles", () => {
-  it("gives each model its own chunking + effort tuning", () => {
+  it("两档各有自己的切段与思考档；便宜档写得更满", () => {
     const deepseek = knowledgeCardDistillProfile(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
-    const qwen = knowledgeCardDistillProfile(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN);
+    const glm = knowledgeCardDistillProfile(KNOWLEDGE_CARD_DISTILL_MODEL_GLM);
 
-    // Qwen 最慢且压缩过度 → 段最小、最少小节最高；DeepSeek 便宜且 1M 上下文 → 段大、并发高
-    expect(deepseek.chunkChars).toBeGreaterThan(qwen.chunkChars);
-    expect(deepseek.concurrency).toBeGreaterThanOrEqual(qwen.concurrency);
-    expect(qwen.minSectionsPerChunk).toBeGreaterThan(deepseek.minSectionsPerChunk);
+    // 两档都是 100 万上下文：段大、并发高；GLM 便宜档节内条数更宽
+    expect(glm.chunkChars).toBe(deepseek.chunkChars);
+    expect(glm.concurrency).toBe(deepseek.concurrency);
+    expect(glm.bulletsPerSection.max).toBeGreaterThan(deepseek.bulletsPerSection.max);
 
-    // 0910 用户令：DeepSeek 思考 high（不用 low）；0909：Qwen 用 high，不上 xhigh
+    // 0910 用户令：思考一律 high（GLM 5.3 恒开思考，档位只有 low/high/max 生效）
     expect(deepseek.effortChunk).toBe("high");
     expect(deepseek.effortFinal).toBe("high");
-    expect(qwen.effortChunk).toBe("high");
-    expect(qwen.effortFinal).toBe("high");
+    expect(glm.effortChunk).toBe("high");
+    expect(glm.effortFinal).toBe("high");
 
-    for (const p of [deepseek, qwen]) {
+    for (const p of [deepseek, glm]) {
       expect(p.chunkRetries).toBeGreaterThanOrEqual(1);
       expect(p.requestTimeoutMs).toBeGreaterThanOrEqual(60_000);
     }
@@ -130,8 +131,8 @@ describe("per-model distill profiles", () => {
   it("estimates chunk count per model", () => {
     expect(estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK, 3_000)).toBe(1);
     const deepseekChunks = estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK, 95_000);
-    const qwenChunks = estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN, 95_000);
-    expect(qwenChunks).toBeGreaterThan(deepseekChunks);
+    const glmChunks = estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_GLM, 95_000);
+    expect(glmChunks).toBe(deepseekChunks);
   });
 });
 
