@@ -77,3 +77,66 @@ describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("白模真实渲染", () => {
     );
   }, 150_000);
 });
+
+/**
+ * 竖屏构图（0912 实测定案）。需要真 Blender：`PREVIS_BLENDER_TEST=1` 才跑。
+ *
+ * 0911 验收记的「竖屏人物偏小」在这里量成了数字：Blender 默认 AUTO 传感器拟合把 36mm
+ * 套在较长边，竖屏于是套在高上，垂直视场从 32.3° 张到 54.4°，人物占画面高度 33.1% → 18.6%。
+ *
+ * 直接改成竖向拟合会把多角色挤出画（实测三角色 2/3 出画、六角色紧凑站位 3/6 出画），
+ * 所以只在收紧后所有人仍在画内时才收紧。这条测试钉住两侧：单人要收紧，多角色不许被挤出画。
+ */
+describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("竖屏构图按人数自适应", () => {
+  const buildSpec = (aspect: "16:9" | "9:16", xs: number[]) => {
+    const base = createManhuaPrevisStudio(2, "11111111-1111-4111-8111-111111111111").spec;
+    const actor = base.actors[0]!;
+    return {
+      ...base,
+      aspect,
+      actors: xs.map((x, i) => ({
+        ...actor,
+        id: `a${i}`,
+        nameZh: `角色${i}`,
+        start: [x, 0] as [number, number],
+        end: [x, 0] as [number, number],
+        moveEndSec: 2,
+        actions: actor.actions.filter(a => a.endSec <= 2),
+      })),
+      cameras: base.cameras
+        .filter(c => c.startSec < 2)
+        .map((c, i, arr) => ({ ...c, endSec: i === arr.length - 1 ? 2 : Math.min(c.endSec, 2) })),
+    };
+  };
+
+  const runPrevis = async (aspect: "16:9" | "9:16", xs: number[]) => {
+    const { mkdtemp, readFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(path.join(tmpdir(), "previs-framing-"));
+    await writeFile(path.join(dir, "spec.json"), JSON.stringify(buildSpec(aspect, xs)));
+    await runPrevisProcess(
+      process.env.PREVIS_BLENDER_TEST!,
+      ["--background", "--factory-startup", "--disable-autoexec", "--threads", "2",
+        "--python-exit-code", "1", "--python", path.resolve("server/scripts/render-manhua-previs.py"),
+        "--", path.join(dir, "spec.json"), dir],
+      AbortSignal.timeout(300_000)
+    );
+    return JSON.parse(await readFile(path.join(dir, "report.json"), "utf8")) as {
+      portraitFraming: string;
+      actors: Array<{ offscreenFrames?: number[] }>;
+    };
+  };
+
+  it("单人竖屏收紧；三角色退回原口径且不出画；横屏不受影响", async () => {
+    const solo = await runPrevis("9:16", [0]);
+    expect(solo.portraitFraming).toBe("tight");
+    expect(solo.actors.flatMap(a => a.offscreenFrames ?? [])).toEqual([]);
+
+    const trio = await runPrevis("9:16", [-1.6, 0, 1.6]);
+    expect(trio.portraitFraming).toBe("auto");
+    expect(trio.actors.flatMap(a => a.offscreenFrames ?? [])).toEqual([]);
+
+    const landscape = await runPrevis("16:9", [0]);
+    expect(landscape.portraitFraming).toBe("landscape");
+  }, 900_000);
+});

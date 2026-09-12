@@ -224,7 +224,37 @@ for obj in (camera,camera.data):
     for fc in curves(obj.animation_data.action):
         for key in fc.keyframe_points:key.interpolation='CONSTANT'
 
-report={'frames':scene.frame_end,'fps':24,'actors':[],'warnings':[]}
+# 竖屏构图（0911 验收实测「人物偏小」→ 0912 实测定案）：
+# Blender 默认 AUTO 传感器拟合把 36mm 套在**较长边**上，横屏套宽、竖屏套高，
+# 于是同一个镜头在竖屏的垂直视场从 32.3° 张到 54.4°，人物占画面高度从 33.1% 掉到 18.6%。
+#
+# 但直接改成竖向拟合会把多角色挤出画：实测三角色（±1.6m）2/3 出画、
+# 六角色紧凑站位（±2m）3/6 出画，都是从「全在画内」变坏。
+# 所以只在**收紧后所有人仍在画内**时才收紧；挤得下就给更饱满的构图，挤不下就维持原样。
+# 决策在渲染前做完，写进 scene.blend，渲染端不需要知道这件事。
+def _bones_in_frame():
+    for frame in range(1,scene.frame_end+1):
+        scene.frame_set(frame)
+        bpy.context.view_layer.update()
+        for actor,rig,_c,_s,_e in rigs:
+            for name in ['head']+['foot'+key for key in foot_offsets(actor)]:
+                p=world_to_camera_view(scene,camera,rig.matrix_world @ rig.pose.bones[name].tail)
+                if not (.02 <= p.x <= .98 and .02 <= p.y <= .98 and p.z>0): return False
+    return True
+
+if scene.render.resolution_y > scene.render.resolution_x:
+    _before_fit,_before_h = camera.data.sensor_fit, camera.data.sensor_height
+    _fit_before = _bones_in_frame()
+    camera.data.sensor_fit='VERTICAL'
+    camera.data.sensor_height=36*9/16
+    # 只有「原本全在画内、收紧后仍全在画内」才采用；原本就出画的场景不改口径，免得掩盖既有问题
+    if not (_fit_before and _bones_in_frame()):
+        camera.data.sensor_fit,camera.data.sensor_height=_before_fit,_before_h
+    scene.frame_set(1)
+    bpy.context.view_layer.update()
+
+report={'frames':scene.frame_end,'fps':24,'actors':[],'warnings':[],
+        'portraitFraming':('tight' if camera.data.sensor_fit=='VERTICAL' else 'auto') if scene.render.resolution_y>scene.render.resolution_x else 'landscape'}
 for actor,rig,contacts,stance,error in rigs:
     offscreen=[]
     drift=0.
