@@ -54,16 +54,24 @@ describe("公开媒体真实 handler 离线回归", () => {
     expect(mocks.get).not.toHaveBeenCalled();
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
-  it("旧Blob路径沿用get读取和200原始字节", async () => {
-    const bytes = Buffer.from("test-legacy-media");
-    mocks.get.mockResolvedValue({ statusCode: 200, stream: new Response(bytes).body,
-      blob: { contentType: "video/mp4", cacheControl: "public, max-age=300" } });
+  it("旧Blob路径直接410，不再假装还能读", async () => {
     const res = response();
     await handler({ method: "GET", query: { op: "blobMedia", blobPath: "renders/old.mp4" } } as unknown as VercelRequest, res as unknown as VercelResponse);
-    expect(res.status).toHaveBeenLastCalledWith(200);
-    expect(res.send).toHaveBeenCalledWith(bytes);
-    expect(mocks.get).toHaveBeenCalledWith("renders/old.mp4", { token: "test-key", access: "public" });
+    expect(res.status).toHaveBeenLastCalledWith(410);
+    expect(res.json).toHaveBeenCalledWith({ ok: false, error: "vercel_blob_retired" });
+    // 关键：一次 Blob SDK 都不许再调——对象已删，重试只会把必然失败拖成三次
+    expect(mocks.get).not.toHaveBeenCalled();
     expect(mocks.sign).not.toHaveBeenCalled();
     expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+
+  it("Blob 主机的 url 参数也拒绝，不带令牌重试", async () => {
+    const res = response();
+    await handler({
+      method: "GET",
+      query: { op: "blobMedia", url: "https://abc.public.blob.vercel-storage.com/refs/x.webp" },
+    } as unknown as VercelRequest, res as unknown as VercelResponse);
+    expect(mocks.get).not.toHaveBeenCalled();
+    expect(mocks.sign).not.toHaveBeenCalled();
   });
 });

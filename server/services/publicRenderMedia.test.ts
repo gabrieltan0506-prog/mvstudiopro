@@ -48,7 +48,9 @@ describe("API真实公开跳转分支", () => {
   it("合法路径302，不读取媒体；非法路径400且不签名", async () => {
     const source = await fs.readFile(new URL("../../api/jobs.ts", import.meta.url), "utf8");
     const start = source.indexOf('        if (blobPath.startsWith("gcs-renders/"))');
-    const end = source.indexOf('        const asset = await proxyBlobAssetByPath(blobPath);', start);
+    // 结束标记：gcs-renders 分支之后就是「老 Blob 路径一律 410」那一行。
+    // 0912 Blob 退场后原来的 proxyBlobAssetByPath 已删除，标记跟着改。
+    const end = source.indexOf('        // 非 gcs- 前缀只可能是 Vercel Blob 时代的老路径', start);
     expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
     const branch = new Function("blobPath", "res", "isPublicRenderObjectPath", "signPublicRenderMediaRedirect", source.slice(start, end));
     const res = { setHeader: vi.fn(), status: vi.fn(), end: vi.fn(), json: vi.fn() };

@@ -7,7 +7,6 @@ import { resolveManhuaAssembleAccess } from "../server/services/manhuaAssembleAc
 import { CREDIT_COSTS } from "../server/plans.js";
 import type { PaidJobDeductSnapshot } from "../server/services/paidJobLedger.js";
 import sharp from "sharp";
-import { get } from "@vercel/blob";
 import { putPublicStoredMedia as put, isPublicStoredObjectPath, signPublicStoredMediaRedirect } from "../server/services/publicStoredMedia";
 import { env, getEnvStatus } from "../server/vercel-api-core/env.js";
 import { renderWorkflowFinalVideo } from "../server/vercel-api-core/render.js";
@@ -1862,115 +1861,27 @@ function buildBlobMediaUrlFromPath(pathname: string) {
   return `${getPublicAssetBaseUrl()}/api/jobs?op=blobMedia&blobPath=${encodeURIComponent(normalized)}`;
 }
 
-async function proxyBlobAssetByPath(pathname: string) {
-  const normalizedPath = s(pathname).replace(/^\/+/, "").trim();
-  if (!normalizedPath) throw new Error("blobPath is required");
-  const tokens = Array.from(
-    new Set(
-      [
-        env.mvspReadWriteToken,
-        process.env.MVSP_READ_WRITE_TOKEN,
-        process.env.BLOB_READ_WRITE_TOKEN,
-      ].map((value) => s(value).trim()).filter(Boolean),
-    ),
-  );
-  if (!tokens.length) throw new Error("MVSP_READ_WRITE_TOKEN is required for blob proxy");
-  const errors: string[] = [];
-
-  for (const token of tokens) {
-    try {
-      const byPath = await get(normalizedPath, { token, access: "public" });
-      const statusCode = byPath?.statusCode ?? 0;
-      if (byPath && statusCode === 200 && byPath.stream) {
-        return {
-          buffer: Buffer.from(await new Response(byPath.stream).arrayBuffer()),
-          contentType: byPath.blob.contentType || "application/octet-stream",
-          cacheControl: byPath.blob.cacheControl || "public, max-age=300",
-        };
-      }
-      errors.push(`get-path:${statusCode}`);
-    } catch (error: any) {
-      errors.push(`get-path:${error?.message || String(error)}`);
-    }
-  }
-
-  throw new Error(`blob_path_proxy_failed:${errors.join("|")}`);
-}
-
-async function proxyBlobAsset(url: string) {
+/**
+ * 通用远端取图：只做普通 fetch。
+ *
+ * 0912 起 Vercel Blob 已全面退场——公共媒体写入走 GCS（`putPublicStoredMedia`），
+ * 读取由本路由的 `gcs-public/` / `gcs-renders/` 分支签名后 302 跳转。
+ * 这里**不再带 Blob 令牌重试**，也明确拒绝 Blob 主机：那些对象已经删除，
+ * 继续留着重试只会把一次必然失败拖成三次，并让「还能读到 Blob」的错觉留在代码里。
+ */
+async function fetchRemoteAsset(url: string) {
   const target = s(url).trim();
   if (!target) throw new Error("url is required");
-  if (!/\.blob\.vercel-storage\.com\//i.test(target)) {
-    const response = await fetch(target, { redirect: "follow" });
-    if (!response.ok) throw new Error(`asset_fetch_failed:${response.status}`);
-    return {
-      buffer: Buffer.from(await response.arrayBuffer()),
-      contentType: response.headers.get("content-type") || "application/octet-stream",
-      cacheControl: response.headers.get("cache-control") || "public, max-age=300",
-    };
+  if (/\.blob\.vercel-storage\.com\//i.test(target)) {
+    throw new Error("vercel_blob_retired");
   }
-  const tokens = Array.from(
-    new Set(
-      [
-        env.mvspReadWriteToken,
-        process.env.MVSP_READ_WRITE_TOKEN,
-        process.env.BLOB_READ_WRITE_TOKEN,
-      ].map((value) => s(value).trim()).filter(Boolean),
-    ),
-  );
-  if (!tokens.length) throw new Error("MVSP_READ_WRITE_TOKEN is required for blob proxy");
-  const errors: string[] = [];
-
-  for (const token of tokens) {
-    try {
-      const direct = await fetch(target, {
-        headers: { authorization: `Bearer ${token}` },
-        redirect: "follow",
-      });
-      if (direct.ok) {
-        return {
-          buffer: Buffer.from(await direct.arrayBuffer()),
-          contentType: direct.headers.get("content-type") || "application/octet-stream",
-          cacheControl: direct.headers.get("cache-control") || "public, max-age=300",
-        };
-      }
-      errors.push(`direct:${direct.status}`);
-    } catch (error: any) {
-      errors.push(`direct:${error?.message || String(error)}`);
-    }
-
-    try {
-      const byUrl = await get(target, { token, access: "public" });
-      const statusCode = byUrl?.statusCode ?? 0;
-      if (byUrl && statusCode === 200 && byUrl.stream) {
-        return {
-          buffer: Buffer.from(await new Response(byUrl.stream).arrayBuffer()),
-          contentType: byUrl.blob.contentType || "application/octet-stream",
-          cacheControl: byUrl.blob.cacheControl || "public, max-age=300",
-        };
-      }
-      errors.push(`get-url:${statusCode}`);
-    } catch (error: any) {
-      errors.push(`get-url:${error?.message || String(error)}`);
-    }
-
-    try {
-      const byPath = await get(getBlobPathname(target), { token, access: "public" });
-      const statusCode = byPath?.statusCode ?? 0;
-      if (byPath && statusCode === 200 && byPath.stream) {
-        return {
-          buffer: Buffer.from(await new Response(byPath.stream).arrayBuffer()),
-          contentType: byPath.blob.contentType || "application/octet-stream",
-          cacheControl: byPath.blob.cacheControl || "public, max-age=300",
-        };
-      }
-      errors.push(`get-path:${statusCode}`);
-    } catch (error: any) {
-      errors.push(`get-path:${error?.message || String(error)}`);
-    }
-  }
-
-  throw new Error(`blob_proxy_failed:${errors.join("|")}`);
+  const response = await fetch(target, { redirect: "follow" });
+  if (!response.ok) throw new Error(`asset_fetch_failed:${response.status}`);
+  return {
+    buffer: Buffer.from(await response.arrayBuffer()),
+    contentType: response.headers.get("content-type") || "application/octet-stream",
+    cacheControl: response.headers.get("cache-control") || "public, max-age=300",
+  };
 }
 
 function callGeminiScriptGateway(prompt: string) {
@@ -2529,16 +2440,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           res.setHeader("Location", signPublicRenderMediaRedirect(blobPath));
           return res.status(302).end();
         }
-        const asset = await proxyBlobAssetByPath(blobPath);
-        res.setHeader("Content-Type", asset.contentType);
-        res.setHeader("Cache-Control", asset.cacheControl);
-        return res.status(200).send(asset.buffer);
+        // 非 gcs- 前缀只可能是 Vercel Blob 时代的老路径，对象已删除、令牌已不需要。
+        // 直接给 410 说清楚，不要伪装成还能读。
+        return res.status(410).json({ ok: false, error: "vercel_blob_retired" });
       }
       const targetUrl = s(q.url || b.url).trim();
       if (!targetUrl) {
         return res.status(400).json({ ok: false, error: "url or blobPath is required" });
       }
-      const asset = await proxyBlobAsset(targetUrl);
+      const asset = await fetchRemoteAsset(targetUrl);
       res.setHeader("Content-Type", asset.contentType);
       res.setHeader("Cache-Control", asset.cacheControl);
       return res.status(200).send(asset.buffer);
