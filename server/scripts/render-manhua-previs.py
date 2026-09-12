@@ -232,13 +232,18 @@ for obj in (camera,camera.data):
 # 六角色紧凑站位（±2m）3/6 出画，都是从「全在画内」变坏。
 # 所以只在**收紧后所有人仍在画内**时才收紧；挤得下就给更饱满的构图，挤不下就维持原样。
 # 决策在渲染前做完，写进 scene.blend，渲染端不需要知道这件事。
+# 这里扫**全部骨骼**，不是报告口径的头+脚。收紧会把横向半宽从 2.31m 压到 1.30m
+# （8m 处 lens 35），出手动作的手臂伸展量约 0.6m 正好落在头脚与画框之间：
+# 只看头脚会判「全在画内」而把手臂切出去，并且报告也看不见（审查实测：两角色 ±1.0m
+# 做 strike，hand 出画 25 帧、forearm 24 帧、upper_arm 17 帧，报告却是 offscreenFrames 全 0）。
+# 收紧是可选的增益，判据必须比报告更严——宁可不收紧，不能切掉手。
 def _bones_in_frame():
     for frame in range(1,scene.frame_end+1):
         scene.frame_set(frame)
         bpy.context.view_layer.update()
         for actor,rig,_c,_s,_e in rigs:
-            for name in ['head']+['foot'+key for key in foot_offsets(actor)]:
-                p=world_to_camera_view(scene,camera,rig.matrix_world @ rig.pose.bones[name].tail)
+            for bone in rig.pose.bones:
+                p=world_to_camera_view(scene,camera,rig.matrix_world @ bone.tail)
                 if not (.02 <= p.x <= .98 and .02 <= p.y <= .98 and p.z>0): return False
     return True
 

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterAll, describe, it, expect } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createManhuaPrevisStudio } from "../../shared/manhuaPrevis";
@@ -88,7 +88,17 @@ describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("白模真实渲染", () => {
  * 所以只在收紧后所有人仍在画内时才收紧。这条测试钉住两侧：单人要收紧，多角色不许被挤出画。
  */
 describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("竖屏构图按人数自适应", () => {
-  const buildSpec = (aspect: "16:9" | "9:16", xs: number[]) => {
+  const framingTempDirs: string[] = [];
+  afterAll(async () => {
+    const { rm } = await import("node:fs/promises");
+    await Promise.all(framingTempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  const buildSpec = (
+    aspect: "16:9" | "9:16",
+    xs: number[],
+    actionKind?: "strike" | "guard",
+  ) => {
     const base = createManhuaPrevisStudio(2, "11111111-1111-4111-8111-111111111111").spec;
     const actor = base.actors[0]!;
     return {
@@ -101,7 +111,9 @@ describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("竖屏构图按人数自适�
         start: [x, 0] as [number, number],
         end: [x, 0] as [number, number],
         moveEndSec: 2,
-        actions: actor.actions.filter(a => a.endSec <= 2),
+        actions: actionKind
+          ? [{ kind: actionKind, startSec: 0, endSec: 2 }]
+          : actor.actions.filter(a => a.endSec <= 2),
       })),
       cameras: base.cameras
         .filter(c => c.startSec < 2)
@@ -109,11 +121,16 @@ describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("竖屏构图按人数自适�
     };
   };
 
-  const runPrevis = async (aspect: "16:9" | "9:16", xs: number[]) => {
+  const runPrevis = async (
+    aspect: "16:9" | "9:16",
+    xs: number[],
+    actionKind?: "strike" | "guard",
+  ) => {
     const { mkdtemp, readFile } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const dir = await mkdtemp(path.join(tmpdir(), "previs-framing-"));
-    await writeFile(path.join(dir, "spec.json"), JSON.stringify(buildSpec(aspect, xs)));
+    framingTempDirs.push(dir);
+    await writeFile(path.join(dir, "spec.json"), JSON.stringify(buildSpec(aspect, xs, actionKind)));
     await runPrevisProcess(
       process.env.PREVIS_BLENDER_TEST!,
       ["--background", "--factory-startup", "--disable-autoexec", "--threads", "2",
@@ -138,5 +155,18 @@ describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("竖屏构图按人数自适�
 
     const landscape = await runPrevis("16:9", [0]);
     expect(landscape.portraitFraming).toBe("landscape");
+  }, 900_000);
+
+  /**
+   * 审查实测的回归：收紧把横向半宽从 2.31m 压到 1.30m（8m 处 lens 35），
+   * 出手动作的手臂伸展约 0.6m 正好落在头脚与画框之间。
+   * 只按报告口径（头+脚）判定会报「全在画内」并收紧，实际 hand 出画 25 帧、
+   * forearm 24 帧、upper_arm 17 帧，而报告的 offscreenFrames 全是 0 ——
+   * 画面被切了，证据面还说没切。所以收紧判据必须扫全部骨骼，比报告更严。
+   */
+  it("两角色出手时手臂会被收紧切掉，应当退回原口径而不是谎报全在画内", async () => {
+    const strike = await runPrevis("9:16", [-1, 1], "strike");
+    expect(strike.portraitFraming).toBe("auto");
+    expect(strike.actors.flatMap(a => a.offscreenFrames ?? [])).toEqual([]);
   }, 900_000);
 });

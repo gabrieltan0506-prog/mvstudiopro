@@ -91,6 +91,8 @@ export type PrevisRenderReport = {
     offscreenFrames: number[];
   }>;
   warnings: string[];
+  /** 竖屏构图决策留证：tight=已收紧、auto=挤不下回退、landscape=横屏不进这段 */
+  portraitFraming?: "tight" | "auto" | "landscape";
 };
 export type PrevisRenderDeps = {
   upload: typeof uploadBufferToGcs;
