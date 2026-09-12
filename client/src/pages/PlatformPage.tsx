@@ -3703,6 +3703,15 @@ export default function PlatformPage() {
   const manhuaLearnLagProbeRef = useRef("");
   /** 轮询退避后的唤醒钩子：入队/停止/重整形/跳过本集之后立刻回到最密档 */
   const manhuaLearnWakeRef = useRef<null | (() => void)>(null);
+  /**
+   * 快照查询的退避基线。`dataUpdateCount` 是这条 query 缓存条目的累计成功次数，
+   * 只增不减——不重置的话，面板开久了再起新任务，快照开局就是 60 秒封顶。
+   * 这里记下「本段活跃开始时」的计数，退避按差值算。
+   */
+  const manhuaLearnSnapshotBaselineRef = useRef(0);
+  const bumpManhuaLearnSnapshotBaseline = useCallback(() => {
+    manhuaLearnSnapshotBaselineRef.current = Number.MAX_SAFE_INTEGER;
+  }, []);
   const wakeManhuaLearnSync = useCallback(() => {
     manhuaLearnWakeRef.current?.();
   }, []);
@@ -3871,6 +3880,9 @@ export default function PlatformPage() {
     let disposed = false;
     let timer: number | undefined;
     let inFlight = false;
+    // 唤醒标记：唤醒时若正好有一条 sync 在途，它的 finally 会拿「发请求时还没有新任务」
+    // 的回包把刚置好的活跃档覆盖掉，唤醒就静默作废了。用这个标记让在途那条认账。
+    let wakePending = false;
     let state = MANHUA_LEARN_SYNC_INITIAL;
     const schedule = () => {
       if (disposed) return;
@@ -3896,9 +3908,15 @@ export default function PlatformPage() {
       } finally {
         inFlight = false;
         if (!disposed) {
-          // 失败不清零轮次：被 Vercel 质询时这里回的是 HTML、json() 必然抛错，
-          // 那正是最该退让的时刻，退回最密的节奏只会继续撞墙。
-          state = nextManhuaLearnSyncState(state, { ok, hasActive });
+          if (wakePending) {
+            // 这一轮在途期间发生过唤醒：以唤醒为准，不让旧回包把档位压回去。
+            wakePending = false;
+            state = { tier: "active", rounds: 0 };
+          } else {
+            // 失败不清零轮次：被 Vercel 质询时这里回的是 HTML、json() 必然抛错，
+            // 那正是最该退让的时刻，退回最密的节奏只会继续撞墙。
+            state = nextManhuaLearnSyncState(state, { ok, hasActive });
+          }
           schedule();
         }
       }
@@ -3907,6 +3925,12 @@ export default function PlatformPage() {
     manhuaLearnWakeRef.current = () => {
       if (disposed) return;
       state = { tier: "active", rounds: 0 };
+      bumpManhuaLearnSnapshotBaseline();
+      if (inFlight) {
+        // 在途那条的 finally 会认这个标记并接手排程，这里不抢定时器。
+        wakePending = true;
+        return;
+      }
       if (timer !== undefined) window.clearTimeout(timer);
       timer = window.setTimeout(() => void sync(), 800);
     };
@@ -4048,10 +4072,19 @@ export default function PlatformPage() {
       // 同面板恒定 15 秒的兄弟轮询：四小时任务约 960 次，比列表同步还高近两倍。
       // 必须返回同一状态下的稳定值——含随机数会让 react-query 每 render 重建定时器，
       // 该查询第 4 次更新后静默停更（0912 审查抓到的坑）。
-      refetchInterval: (query) =>
-        focusedManhuaLearnJobActive
-          ? manhuaLearnSnapshotIntervalMs(query.state.dataUpdateCount, isPageHidden())
-          : false,
+      refetchInterval: (query) => {
+        if (!focusedManhuaLearnJobActive) {
+          // 没有活跃任务：下次活跃时从头退避，不继承上一段的轮次。
+          manhuaLearnSnapshotBaselineRef.current = query.state.dataUpdateCount;
+          return false;
+        }
+        if (manhuaLearnSnapshotBaselineRef.current > query.state.dataUpdateCount) {
+          // 唤醒过（基线被顶到最大）：以当前计数为新基线，重新从 15 秒起退。
+          manhuaLearnSnapshotBaselineRef.current = query.state.dataUpdateCount;
+        }
+        const rounds = query.state.dataUpdateCount - manhuaLearnSnapshotBaselineRef.current;
+        return manhuaLearnSnapshotIntervalMs(rounds, isPageHidden());
+      },
       retry: false,
     },
   );
@@ -6306,8 +6339,6 @@ export default function PlatformPage() {
           await refreshManhuaLearnServerJobs();
         } catch {
           // 入队/接管已经成功；列表瞬时刷新失败不能把真实运行任务改画成“入队失败”。
-          // 降级路径更要唤醒：任务真在跑，只是这一次列表没刷上。
-          wakeManhuaLearnSync();
           setManhuaLearnJobPollTrace((prev) => prev ? ({
             ...prev,
             lines: appendPollDebugLine(
@@ -6315,6 +6346,10 @@ export default function PlatformPage() {
               `${new Date().toISOString()} 任务已接管，列表刷新暂时失败，稍后自动重试`,
             ),
           }) : prev);
+        } finally {
+          // 成功路径也要唤醒：那一次直接刷新只改了列表数据，不会动调度器的档位，
+          // 空闲档退到顶时下一跳最长 75 秒，点完「开始学习」进度会僵着不动。
+          wakeManhuaLearnSync();
         }
         toast.message(reusedExactNativePlan ? "已接管同参数的已有任务" : reused ? "已接管同源已有任务" : "已交给服务器学习", {
           description: reusedExactNativePlan

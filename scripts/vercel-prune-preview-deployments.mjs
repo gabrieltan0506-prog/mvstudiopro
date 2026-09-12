@@ -34,7 +34,16 @@ const call = (p, init) =>
   fetch(API + q(p), { ...init, headers: { Authorization: `Bearer ${TOKEN}`, ...(init?.headers || {}) } });
 
 const DAY = 86_400_000;
-const isProduction = (d) => (d.target || "preview") === "production";
+/**
+ * 白名单极性：只有明确认得出是预览的才可能被删。
+ * 现网 v6 对预览返回 `target: null`、对生产返回 `"production"`。
+ * 万一将来多出别的 target（staging 之类）或字段消失，一律判为「认不出」→ 不删。
+ * 删除不可逆，失败方向必须是「少删」而不是「误删生产」。
+ */
+const isProduction = (d) => d.target === "production";
+const isKnownPreview = (d) =>
+  Object.prototype.hasOwnProperty.call(d, "target")
+  && (d.target === null || d.target === undefined || d.target === "preview");
 const fmtDate = (t) => new Date(t).toISOString().slice(0, 10);
 
 async function listAllDeployments() {
@@ -50,14 +59,22 @@ async function listAllDeployments() {
     const batch = j.deployments || [];
     out.push(...batch);
     if (batch.length < 100) break;
-    until = batch[batch.length - 1].created;
+    // 优先用官方分页游标；拿不到才退回按 created 自造（`until` 是严格早于，
+    // 同毫秒并发部署跨页时会漏项，方向是少删）。两者都没有就停，避免重复拉同一页。
+    const next = j.pagination?.next ?? batch[batch.length - 1]?.created;
+    if (!next || next === until) break;
+    until = next;
   }
   return out;
 }
 
 async function resolveLiveProductionIds() {
   const r = await call(`/v9/projects/${PROJECT}`);
-  if (!r.ok) return new Set();
+  if (!r.ok) {
+    // 这是第二道闸。查不到就等于闸门消失，宁可整轮不跑，也不能带着半套闸删东西。
+    console.error("读取项目当前线上生产部署失败，停手", r.status, (await r.text()).slice(0, 200));
+    process.exit(1);
+  }
   const proj = await r.json();
   const prod = proj?.targets?.production || {};
   return new Set([prod.id, prod.deploymentId].filter(Boolean));
@@ -68,6 +85,7 @@ const live = await resolveLiveProductionIds();
 const now = Date.now();
 
 const targets = all
+  .filter(isKnownPreview)
   .filter((d) => !isProduction(d))
   .filter((d) => !live.has(d.uid))
   .filter((d) => now - d.created > KEEP_DAYS * DAY || d.readyState === "ERROR" || d.readyState === "CANCELED")
@@ -81,8 +99,10 @@ const lines = [
 if (targets.length) lines.push(`时间范围 ${fmtDate(targets[0].created)} → ${fmtDate(targets[targets.length - 1].created)}`);
 
 // 闸门自检：目标集合里出现生产或线上部署，立刻停手，绝不继续
-const breach = targets.filter((d) => isProduction(d) || live.has(d.uid));
-lines.push(`闸门自检：目标里生产或线上部署 ${breach.length} 个（必须为 0）`);
+const breach = targets.filter((d) => isProduction(d) || live.has(d.uid) || !isKnownPreview(d));
+const unknown = all.filter((d) => !isProduction(d) && !isKnownPreview(d)).length;
+lines.push(`闸门自检：目标里生产、线上或认不出类型的部署 ${breach.length} 个（必须为 0）`);
+if (unknown) lines.push(`另有 ${unknown} 个部署的 target 认不出，已整体跳过（不删）`);
 console.log(lines.join("\n"));
 if (breach.length) {
   console.error("闸门不通过，停手");
