@@ -32,6 +32,13 @@ def material(name, color):
     mat.diffuse_color = (*color, 1)
     return mat
 
+def bone_radius(actor, name):
+    """骨骼对应实体的半径。建模与出画判定共用，免得两边各写一份日后走样。"""
+    if name in ('spine','head'): return .15
+    if name=='body': return .33
+    if name=='neck': return .15 if actor['shape']=='horse' else .065
+    return .065
+
 def mesh(name, a, b, radius, mat, sphere=False):
     a, b = Vector(a), Vector(b)
     if sphere:
@@ -169,10 +176,7 @@ for index,actor in enumerate(spec['actors']):
     bpy.ops.object.mode_set(mode='OBJECT')
     color=material(actor['nameZh'],[(.65,.72,.75),(.72,.58,.55),(.60,.64,.51),(.63,.59,.72),(.65,.69,.54),(.55,.65,.69)][index])
     for name,(a,b) in rest.items():
-        radius=.065
-        if name in ('spine','head'): radius=.15
-        if name=='body': radius=.33
-        if name=='neck': radius=.15 if actor['shape']=='horse' else .065
+        radius=bone_radius(actor,name)
         obj=mesh(actor['id']+'_'+name,a,b,radius,color,name in ('head','body'))
         bpy.ops.object.select_all(action='DESELECT')
         obj.select_set(True);bpy.context.view_layer.objects.active=obj
@@ -237,18 +241,49 @@ for obj in (camera,camera.data):
 # 只看头脚会判「全在画内」而把手臂切出去，并且报告也看不见（审查实测：两角色 ±1.0m
 # 做 strike，hand 出画 25 帧、forearm 24 帧、upper_arm 17 帧，报告却是 offscreenFrames 全 0）。
 # 收紧是可选的增益，判据必须比报告更严——宁可不收紧，不能切掉手。
-# 已知盲区（审查提示，当前未证实有实例）：这里只采样 bone.tail，不采样 head、不算 mesh 半径。
-# human 的极值点（手尖/脚尖/头顶）恰好都是某根骨的 tail，覆盖完整；horse 的 body 骨 head
-# 在 x=-0.7、半径 .33，实体最远到 x≈-1.03，而最远的腿骨 tail 只到 -0.60，理论上有约 0.4m
-# 够不到的尾部。五个站位探过都是腿骨先触发，造不出反例。以后加形态或改 mesh 半径要重估这里。
+def _ndc_per_meter():
+    """
+    世界系 1 米在画面 NDC 上占多宽 × 深度。透视投影下 NDC 偏移 = 半径 × 本系数 ÷ 深度，
+    所以每帧算一次（相机是动画的，逐镜会跳），逐骨骼只做乘除，不再多投影。
+    """
+    basis=camera.matrix_world.to_3x3()
+    right=(basis @ Vector((1,0,0))).normalized()
+    up=(basis @ Vector((0,1,0))).normalized()
+    forward=(basis @ Vector((0,0,-1))).normalized()
+    ref=camera.matrix_world.translation+forward*8.
+    p0=world_to_camera_view(scene,camera,ref)
+    if p0.z<=0: return 0.,0.
+    px=world_to_camera_view(scene,camera,ref+right)
+    py=world_to_camera_view(scene,camera,ref+up)
+    return abs(px.x-p0.x)*p0.z, abs(py.y-p0.y)*p0.z
+
 def _bones_in_frame():
+    """
+    收紧是否会切到人。三点比报告口径更严，因为收紧只是可选增益，切掉肢体的代价高得多：
+    ① 扫全部骨骼，不只头和脚——出手时手臂伸展约 0.6m，正好落在头脚与收紧后画框之间，
+       只看头脚会判「全在画内」而把手切出去，报告同样口径所以也看不见（0912 审查实测：
+       两角色 ±1.0m 出手，hand 出画 25 帧、forearm 24、upper_arm 17，报告却是零出画）。
+    ② 首尾两端都采样，不只 tail。这些骨没有父子关系，head 是独立端点。
+    ③ 按实体粗细留边距。骨骼是中轴线，模型有半径，只看中轴线会漏掉外壳那一圈。
+       实测盲区（网格世界包围盒 vs 被采样的骨骼端点）：马头顶 0.15m 最大，车尾 0.10m、
+       侧向 0.087m；human 两侧各约 0.076–0.079m——**human 也不是「极值点都在骨骼端点上」**。
+       注意车尾不是 0.4m：`mesh()` 把球缩到 length/2，沿骨轴正好从 head 张到 tail 不外凸，
+       半径只作用在侧向。边距对两个屏幕轴一律用该骨半径，沿轴方向属于保守多留，方向安全。
+       实证：马站 x=-0.35 竖屏，只看中轴线判 tight，带粗细判 auto。
+    """
     for frame in range(1,scene.frame_end+1):
         scene.frame_set(frame)
         bpy.context.view_layer.update()
+        kx,ky=_ndc_per_meter()
         for actor,rig,_c,_s,_e in rigs:
             for bone in rig.pose.bones:
-                p=world_to_camera_view(scene,camera,rig.matrix_world @ bone.tail)
-                if not (.02 <= p.x <= .98 and .02 <= p.y <= .98 and p.z>0): return False
+                radius=bone_radius(actor,bone.name)
+                for point in (bone.head,bone.tail):
+                    p=world_to_camera_view(scene,camera,rig.matrix_world @ point)
+                    if p.z<=0: return False
+                    mx,my=radius*kx/p.z,radius*ky/p.z
+                    if not (.02 <= p.x-mx and p.x+mx <= .98): return False
+                    if not (.02 <= p.y-my and p.y+my <= .98): return False
     return True
 
 if scene.render.resolution_y > scene.render.resolution_x:

@@ -98,6 +98,7 @@ describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("竖屏构图按人数自适�
     aspect: "16:9" | "9:16",
     xs: number[],
     actionKind?: "strike" | "guard",
+    shape: "human" | "horse" = "human",
   ) => {
     const base = createManhuaPrevisStudio(2, "11111111-1111-4111-8111-111111111111").spec;
     const actor = base.actors[0]!;
@@ -108,12 +109,16 @@ describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("竖屏构图按人数自适�
         ...actor,
         id: `a${i}`,
         nameZh: `角色${i}`,
+        shape,
         start: [x, 0] as [number, number],
         end: [x, 0] as [number, number],
         moveEndSec: 2,
-        actions: actionKind
-          ? [{ kind: actionKind, startSec: 0, endSec: 2 }]
-          : actor.actions.filter(a => a.endSec <= 2),
+        // 马只允许 idle（schema 硬判），所以这里不给它派动作
+        actions: shape === "horse"
+          ? []
+          : actionKind
+            ? [{ kind: actionKind, startSec: 0, endSec: 2 }]
+            : actor.actions.filter(a => a.endSec <= 2),
       })),
       cameras: base.cameras
         .filter(c => c.startSec < 2)
@@ -125,12 +130,16 @@ describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("竖屏构图按人数自适�
     aspect: "16:9" | "9:16",
     xs: number[],
     actionKind?: "strike" | "guard",
+    shape: "human" | "horse" = "human",
   ) => {
     const { mkdtemp, readFile } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const dir = await mkdtemp(path.join(tmpdir(), "previs-framing-"));
     framingTempDirs.push(dir);
-    await writeFile(path.join(dir, "spec.json"), JSON.stringify(buildSpec(aspect, xs, actionKind)));
+    await writeFile(
+      path.join(dir, "spec.json"),
+      JSON.stringify(buildSpec(aspect, xs, actionKind, shape)),
+    );
     await runPrevisProcess(
       process.env.PREVIS_BLENDER_TEST!,
       ["--background", "--factory-startup", "--disable-autoexec", "--threads", "2",
@@ -164,6 +173,25 @@ describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("竖屏构图按人数自适�
    * forearm 24 帧、upper_arm 17 帧，而报告的 offscreenFrames 全是 0 ——
    * 画面被切了，证据面还说没切。所以收紧判据必须扫全部骨骼，比报告更严。
    */
+  /**
+   * 骨骼是中轴线，模型有半径——只看中轴线会漏掉外壳那一圈。
+   * 实测盲区（网格包围盒 vs 被采样的骨骼端点）：马头顶 0.15m、车尾 0.10m、侧向 0.087m；
+   * human 两侧各约 0.076–0.079m。马的 body 半径 .33 最大，是最容易露馅的形态，
+   * 而此前 previs 的竖屏用例全是 human，马零覆盖。
+   *
+   * 这条钉住「按实体粗细留边距」：马站 x=-0.35，只看中轴线判 tight（实测），
+   * 带粗细判 auto。把边距去掉这条就会红。
+   */
+  it("马的实体比骨骼粗，竖屏不该按中轴线误判成收得下", async () => {
+    const horse = await runPrevis("9:16", [-0.35], undefined, "horse");
+    expect(horse.portraitFraming).toBe("auto");
+    expect(horse.actors.flatMap(a => a.offscreenFrames ?? [])).toEqual([]);
+
+    // 横屏不进这段代码，形态换成马也一样
+    const landscapeHorse = await runPrevis("16:9", [0], undefined, "horse");
+    expect(landscapeHorse.portraitFraming).toBe("landscape");
+  }, 900_000);
+
   it("两角色出手时手臂会被收紧切掉，应当退回原口径而不是谎报全在画内", async () => {
     const strike = await runPrevis("9:16", [-1, 1], "strike");
     // 钉住 bug 的是这一行：换回只扫头+脚的实现，这里会拿到 "tight"（审查实测复现过）。
