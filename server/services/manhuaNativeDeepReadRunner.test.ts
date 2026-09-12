@@ -4310,8 +4310,9 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
     expect(postVertex).toHaveBeenCalledTimes(2);
   });
 
-  it("全缓存命中不伪造模型回执；历史路由恢复后 GLM 整形仍按本轮真实计费", async () => {
-    const episode = makeEpisode([{ startSec: 0, endSec: 60 }]);
+  it.each([false, true])("全缓存命中不伪造模型回执；历史路由恢复后 GLM 整形仍按本轮真实计费（本地上传=%s）", async (local) => {
+    const episode = { ...makeEpisode([{ startSec: 0, endSec: 60 }]),
+      ...(local ? { localVideoUpload: { userId: "1", uploadId: "12345678-1234-4123-8123-123456789abc", sha256: "a".repeat(64) } } : {}) };
     const entry = makeCacheEntry({ episode, segmentIndex: 0, route: "evolink_gemini_video" });
     const receipts: Array<Record<string, unknown>> = [];
     const deps = makeRunnerDeps({

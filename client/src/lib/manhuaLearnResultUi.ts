@@ -7,6 +7,7 @@ import {
   MANHUA_LEARN_ANALYSIS_MIN,
   MANHUA_LEARN_ANALYSIS_TARGET,
 } from "@shared/manhuaTemplateLearnSeries";
+import { isManhuaLocalVideoSource, readManhuaLocalVideoSource } from "./manhuaLocalVideoUpload";
 import {
   MANHUA_LEARN_STAGE,
   appendManhuaLearnProgressLine,
@@ -231,6 +232,7 @@ export type ManhuaLearnActiveJobRecord = {
     row: {
       url?: string | null;
       gcsUri?: string | null;
+      localVideoUploadId?: string | null;
       fileName?: string | null;
       localFileName?: string | null;
       learnLlm?: "claude" | "gpt" | "deepseek";
@@ -709,7 +711,7 @@ export function manhuaLearnResultFromFailure(input: {
 }): ManhuaLearnResultUi {
   const errorZh = String(input.errorZh || "云端学习失败").trim().slice(0, 400);
   const titleHint = String(input.title || "").trim().slice(0, 40);
-  const urlHint = String(input.url || "").trim().slice(0, 80);
+  const urlHint = readManhuaLocalVideoSource(input.url) ? "本地上传视频" : String(input.url || "").trim().slice(0, 80);
   const seriesKey =
     String(input.seriesKey || input.prev?.seriesKey || "").trim() ||
     `fail_${Date.now().toString(36)}`;
@@ -890,7 +892,8 @@ export function readManhuaLearnActiveJob(userKey: string): ManhuaLearnActiveJobR
     const gcsUri = String(row?.gcsUri || "").trim();
     const jobId = String(parsed.jobId || "").trim();
     const savedAt = Number(parsed.savedAt);
-    const validSource = /^https?:\/\//i.test(url) || /^gs:\/\//i.test(gcsUri);
+    const localSource = isManhuaLocalVideoSource(row || {}, userKey);
+    const validSource = /^https?:\/\//i.test(url) || /^gs:\/\//i.test(gcsUri) || localSource;
     if (!jobId || !validSource || !Number.isFinite(savedAt)) {
       localStorage.removeItem(storageKey);
       return null;
@@ -906,6 +909,7 @@ export function readManhuaLearnActiveJob(userKey: string): ManhuaLearnActiveJobR
         row: {
           url: url || undefined,
           gcsUri: gcsUri || undefined,
+          ...(localSource ? { localVideoUploadId: row?.localVideoUploadId } : {}),
           fileName: String(row?.fileName || "").trim() || undefined,
           localFileName: String(row?.localFileName || "").trim() || undefined,
           learnLlm,
@@ -1028,7 +1032,7 @@ export function readManhuaLearnBasket(userKey: string): ManhuaLearnBasketItem[] 
         const sourceUrl = String(item.continuation?.row?.url || "").trim();
         return Boolean(
           String(item.seriesKey || "").trim()
-          && /^https?:\/\//i.test(sourceUrl)
+          && (/^https?:\/\//i.test(sourceUrl) || isManhuaLocalVideoSource(item.continuation?.row || {}, userKey))
           && item.result
           && item.result.pipelineMode === "native_deep_read"
           && (
@@ -1058,7 +1062,8 @@ export function writeManhuaLearnBasket(userKey: string, items: ManhuaLearnBasket
   try {
     const pending = (items || [])
       .filter(
-        (item) => /^https?:\/\//i.test(String(item.continuation.row.url || "").trim())
+        (item) => (/^https?:\/\//i.test(String(item.continuation.row.url || "").trim())
+          || isManhuaLocalVideoSource(item.continuation.row, userKey))
           && item.result.pipelineMode === "native_deep_read"
           && (
             typeof item.result.pendingCount !== "number"
@@ -1296,6 +1301,7 @@ export function mergeManhuaLearnServerJobsIntoBasket(
       row: {
         url: url || null,
         gcsUri: gcsUri || null,
+        localVideoUploadId: String(params.localVideoUploadId || "").trim() || null,
         fileName: String(params.fileName || "").trim() || null,
         mixName: title || null,
         mixId: String(params.mixId || "").trim() || null,

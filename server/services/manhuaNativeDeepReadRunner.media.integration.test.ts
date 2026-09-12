@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { buildManhuaLocalVideoSourceRef } from "../../shared/manhuaLocalVideoUpload.js";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -77,7 +79,7 @@ function audioCorrelation(source: Buffer, slice: Buffer, sourceStartSec: number)
 }
 
 describe("生产同源精确切片：本地真实 ffmpeg，无云、无模型", () => {
-  it.each([true, false])("非关键帧切点逐帧无前滚/重复/漏尾，原尺寸原帧率，hasAudio=%s", async (hasAudio) => {
+  it.each([{ hasAudio: true, local: false }, { hasAudio: false, local: false }, { hasAudio: true, local: true }])("非关键帧切点逐帧无前滚/重复/漏尾，原尺寸原帧率，%j", async ({ hasAudio, local }) => {
     const directory = await mkdtemp(join(tmpdir(), "native-cut-integration-"));
     try {
       const source = join(directory, "source.mp4");
@@ -87,8 +89,11 @@ describe("生产同源精确切片：本地真实 ffmpeg，无云、无模型", 
         "-of", "json", source])) as { frames: Array<{ best_effort_timestamp_time: string }> };
       expect(keyframes.frames.map((frame) => Number(frame.best_effort_timestamp_time))).toEqual([0]);
       const uploadedPaths = new Map<string, string>();
+      const sourceBytes = await readFile(source);
+      const localIdentity = { userId: "1", uploadId: "12345678-1234-4123-8123-123456789abc", sha256: createHash("sha256").update(sourceBytes).digest("hex") };
       const deps: NativeDeepReadMediaPreparationDeps = {
-        runMedia: media, statLocal: stat, readLocal: readFile, unlinkLocal: unlink,
+        resolveLocalUpload: vi.fn(async () => ({ sourceRef: buildManhuaLocalVideoSourceRef(localIdentity), sha256: localIdentity.sha256, localPath: source, bytes: sourceBytes.length, durationSec: 8.4 })),
+        runMedia: vi.fn(media), statLocal: stat, readLocal: readFile, unlinkLocal: vi.fn(unlink),
         statfsTmp: async () => ({ freeBytes: 2 * 1024 ** 3 }),
         remove: vi.fn(async () => undefined),
         upload: vi.fn(async ({ objectName, buffer }) => {
@@ -99,7 +104,11 @@ describe("生产同源精确切片：本地真实 ffmpeg，无云、无模型", 
         }) as NativeDeepReadMediaPreparationDeps["upload"],
       };
       const rows = await prepareEpisodeVideos({
-        episodeIndex: 1, resolveNodes: async () => [{ url: source }],
+        episodeIndex: 1, resolveNodes: async () => {
+          if (local) throw new Error("本地上传不得下载原片");
+          return [{ url: source }];
+        },
+        ...(local ? { localVideoUpload: localIdentity } : {}),
         segments: [{ startSec: 0, endSec: 3.2 }, { startSec: 3.2, endSec: 6.4 }, { startSec: 6.4, endSec: 8 }],
         // 原片 8.4 秒，计划为整数 8 秒：末片必须读到真实 EOF，不能裁掉最后十帧。
         sourceDurationSec: 8,
@@ -132,6 +141,14 @@ describe("生产同源精确切片：本地真实 ffmpeg，无云、无模型", 
       expect(allFrames).toEqual(Array.from({ length: 210 }, (_, index) => index));
       expect(deps.upload).toHaveBeenCalledTimes(3);
       expect(deps.remove).not.toHaveBeenCalled();
+      if (local) {
+        expect(deps.resolveLocalUpload).toHaveBeenCalledWith(localIdentity);
+        expect(vi.mocked(deps.runMedia).mock.calls.filter(([cmd]) => cmd === "ffmpeg")).toHaveLength(3);
+        expect(vi.mocked(deps.runMedia).mock.calls.some(([, args]) => args.includes("-progress"))).toBe(false);
+        expect(deps.unlinkLocal).not.toHaveBeenCalledWith(source);
+        expect(await readFile(source)).toEqual(sourceBytes);
+        for (const [, uploadedPath] of Array.from(uploadedPaths)) expect(await readFile(uploadedPath)).not.toEqual(sourceBytes);
+      }
     } finally {
       // 只清理本测试创建的无凭证合成媒体；没有任何模型 JSON 或真实资产。
       await rm(directory, { recursive: true, force: true });

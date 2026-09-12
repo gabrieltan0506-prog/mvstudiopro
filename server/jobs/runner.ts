@@ -824,6 +824,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
     let result: Awaited<ReturnType<typeof runManhuaTemplateLearn>>;
     const nativeConfirmed = params.nativeDeepReadConfirmed === true;
     try {
+      let localVideoUpload: import("../services/manhuaNativeDeepReadPlan.js").NativeDeepReadLocalVideoSource | undefined;
       let nativeReadModel: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeDeepReadModelId | undefined;
       let nativeStructuringModel: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeStructuringModelId | undefined;
       let nativeStructuringSource: import("../services/manhuaNativeStructuringOnly.js").NativeStructuringStoredSource | undefined;
@@ -834,6 +835,14 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         const confirmation = parseNativeDeepReadJobConfirmation(params, {
           extraSourceHosts: readManhuaLearnExtraSourceHosts(),
         });
+        if (confirmation.localVideoUploadId && !confirmation.structuringOnly) {
+          const { resolveOwnedManhuaLocalVideoUpload } = await import("../services/manhuaLocalVideoUploadService.js");
+          const resolved = await resolveOwnedManhuaLocalVideoUpload({ userId: String(userId || ""), uploadId: confirmation.localVideoUploadId });
+          if (resolved.sourceRef !== confirmation.url) throw new Error("本地上传来源身份已变化，未发出模型请求");
+          // 只传稳定身份和已核元数据；磁盘路径不得进入任务回执或永久卡。
+          const { userId: ownerId, uploadId, sha256, durationSec, fileName, sourceRef } = resolved;
+          localVideoUpload = { userId: ownerId, uploadId, sha256, durationSec, fileName, sourceRef };
+        }
         if (confirmation.structuringOnly) {
           const { assertNativeStructuringPreviousJob } = await import("../../shared/manhuaNativeStructuringOnly.js");
           const { resolveSiteOwnerOnlyAllowed } = await import("../services/access-policy.js");
@@ -869,6 +878,8 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         );
         nativePlanPreview = await buildNativeDeepReadPlanPreviewFromServices({
           url: confirmation.url,
+          localVideoUploadId: confirmation.localVideoUploadId,
+          userId: String(userId || ""),
           limit: confirmation.planLimit,
           structuringEpisodeIndex: confirmation.structuringEpisodeIndex,
           segmentSeconds: confirmation.segmentSeconds,
@@ -927,6 +938,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       nativeStructuringOnly: params.nativeStructuringOnly === true,
       nativeStructuringSource,
       nativePlanPreview,
+      localVideoUpload,
       nativeStandaloneSource: params.nativeStandaloneSource === true
         || params.nativeStandaloneSource === "true",
       onProgress: reportLearnProgress,

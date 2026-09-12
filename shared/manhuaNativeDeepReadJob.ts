@@ -1,3 +1,4 @@
+import { parseManhuaLocalVideoSourceRef } from "./manhuaLocalVideoUpload.js";
 /** 原生精读单任务墙钟与调用数契约；客户端、入队端和 worker 共用。 */
 import { isManhua0996SourceUrl } from "./manhuaLearn0996Source.js";
 import { MANHUA_LEARN_MAX_DURATION_SEC } from "./manhuaTemplateLearnSeries.js";
@@ -120,6 +121,7 @@ export function parseNativeDeepReadSegmentSeconds(value: unknown): number {
 
 export const NATIVE_DEEP_READ_JOB_FIELDS = [
   "nativeDeepReadConfirmed",
+  "localVideoUploadId",
   "nativePlanHash",
   "nativeMaxCalls",
   "nativePlanLimit",
@@ -136,6 +138,7 @@ export const NATIVE_DEEP_READ_JOB_FIELDS = [
 
 export type NativeDeepReadJobConfirmation = {
   url: string;
+  localVideoUploadId?: string;
   /** 旧任务的精确计划指纹；新面板直接入队时为空，由 worker 在任务内生成执行计划。 */
   planHash?: string;
   maxCalls: number;
@@ -165,6 +168,7 @@ export function sameNativeDeepReadJobConfirmation(
   right: NativeDeepReadJobConfirmation,
 ): boolean {
   return left.url === right.url
+    && left.localVideoUploadId === right.localVideoUploadId
     && left.planHash === right.planHash
     && left.maxCalls === right.maxCalls
     && left.planLimit === right.planLimit
@@ -191,6 +195,12 @@ export function parseNativeDeepReadJobConfirmation(
   options: { extraSourceHosts?: readonly string[] } = {},
 ): NativeDeepReadJobConfirmation {
   const url = String(params.url || "").trim();
+  if (Object.prototype.hasOwnProperty.call(params, "localVideoUploadId")
+    && (typeof params.localVideoUploadId !== "string" || !params.localVideoUploadId.trim())) {
+    throw new Error("本地上传标识必须是非空字符串");
+  }
+  const localVideoUploadId = String(params.localVideoUploadId || "").trim();
+  const localSource = parseManhuaLocalVideoSourceRef(url);
   const planHash = String(params.nativePlanHash || "").trim();
   const maxCalls = Number(params.nativeMaxCalls);
   const planLimit = Number(params.nativePlanLimit);
@@ -224,11 +234,12 @@ export function parseNativeDeepReadJobConfirmation(
   }
   if (
     params.nativeDeepReadConfirmed !== true
-    || parsedUrl.protocol !== "https:"
-    || (
-      !/(?:^|\.)douyin\.com$/i.test(parsedUrl.hostname)
-      && !isManhua0996SourceUrl(url, options.extraSourceHosts)
-    )
+    || (localVideoUploadId
+      ? !localSource || localSource.uploadId !== localVideoUploadId || planLimit !== 1 || !standaloneSource
+      : parsedUrl.protocol !== "https:" || (
+        !/(?:^|\.)douyin\.com$/i.test(parsedUrl.hostname)
+        && !isManhua0996SourceUrl(url, options.extraSourceHosts)
+      ))
     || !Number.isInteger(maxCalls)
     || maxCalls < 1
     || maxCalls > NATIVE_DEEP_READ_JOB_MAX_CALLS
@@ -248,6 +259,7 @@ export function parseNativeDeepReadJobConfirmation(
   }
   return {
     url,
+    ...(localVideoUploadId ? { localVideoUploadId } : {}),
     planHash: planHash || undefined,
     maxCalls,
     planLimit,

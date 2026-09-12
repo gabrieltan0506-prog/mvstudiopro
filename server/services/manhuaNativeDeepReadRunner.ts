@@ -1,3 +1,5 @@
+import { buildManhuaLocalVideoSourceRef } from "../../shared/manhuaLocalVideoUpload.js";
+import type { NativeDeepReadLocalVideoUpload } from "./manhuaNativeDeepReadPlan.js";
 import { writeNativeStructuredCard } from "./manhuaNativeDeepReadStructuredCard.js";
 import { mergeNativeDeepReadRetryDrafts, type NativeDeepReadRetryDraft } from "./manhuaNativeDeepReadRetryDraftMerge.js";
 import { hasNativeAttemptSelection, nativeAttemptRawSha256, scoreNativeAttempt, type NativeDeepReadAttemptSelection } from "./manhuaNativeDeepReadAttemptSelection.js";
@@ -771,6 +773,7 @@ export type NativeDeepReadSegmentSnapshot = {
 };
 
 export type NativeDeepReadBatchRunEpisode = {
+  localVideoUpload?: NativeDeepReadLocalVideoUpload;
   episodeIndex: number;
   resolveNodes: () => Promise<NativeDeepReadMediaNode[]>;
   segments: readonly NativeDeepReadSegmentSpec[];
@@ -2086,6 +2089,9 @@ export type PreparedNativeVideo = {
 };
 
 export type NativeDeepReadMediaPreparationDeps = {
+  resolveLocalUpload?: (input: { userId: string; uploadId: string }) => Promise<{
+    sourceRef: string; sha256: string; localPath: string; bytes: number; durationSec: number;
+  }>;
   runMedia: (
     cmd: string,
     args: string[],
@@ -2104,6 +2110,10 @@ export type NativeDeepReadMediaPreparationDeps = {
 };
 
 const defaultMediaPreparationDeps: NativeDeepReadMediaPreparationDeps = {
+  resolveLocalUpload: async (input) => {
+    const { resolveOwnedManhuaLocalVideoUpload } = await import("./manhuaLocalVideoUploadService.js");
+    return resolveOwnedManhuaLocalVideoUpload(input);
+  },
   runMedia: run,
   statLocal: async (path) => stat(path),
   readLocal: async (path) => readFile(path),
@@ -2231,8 +2241,21 @@ export async function prepareEpisodeVideos(
   // 整片一条顺序连接落盘：小站 CDN 扛不住并发长连接，也不支持范围续传；
   // 一次拉完后所有分段改从本地切，网络故障面从 9 段收敛到 1 次抓取。
   const sourceRunId = crypto.randomUUID();
-  const localSourcePath = `/tmp/manhua-native-source-${sourceRunId}.mp4`;
-  {
+  let localSourcePath = `/tmp/manhua-native-source-${sourceRunId}.mp4`;
+  const ownsTemporarySource = !episode.localVideoUpload;
+  if (episode.localVideoUpload) {
+    abortSignal?.throwIfAborted();
+    if (!deps.resolveLocalUpload) throw new Error("本地上传读取器缺失，已停止切片");
+    const source = await deps.resolveLocalUpload(episode.localVideoUpload);
+    if (source.sourceRef !== buildManhuaLocalVideoSourceRef(episode.localVideoUpload)
+      || source.sha256 !== episode.localVideoUpload.sha256
+      || !Number.isFinite(source.bytes) || source.bytes <= 0
+      || !Number.isFinite(source.durationSec) || Math.abs(source.durationSec - episode.sourceDurationSec) > 1) {
+      throw new Error("本地上传原片已变化，已停止且未发出模型请求");
+    }
+    localSourcePath = source.localPath;
+    await reportMedia(`第${episode.episodeIndex}集 · 已核验本地原片 ${(source.bytes / 1048576).toFixed(0)}MB · 开始切 ${segments.length} 段`);
+  } else {
     let fetched = false;
     let lastFetchError: unknown;
     for (let attempt = 0; attempt < 3 && !fetched; attempt += 1) {
@@ -2408,8 +2431,11 @@ export async function prepareEpisodeVideos(
           );
         } catch (error) {
           await deps.unlinkLocal(localPath).catch(() => undefined);
-          lastError = error;
-          if (abortSignal?.aborted) throw error;
+          // ffmpeg 错误可能含输入绝对路径；持久原片路径不得进入任务日志或公开回执。
+          lastError = episode.localVideoUpload
+            ? new Error((error instanceof Error ? error.message : String(error)).split(localSourcePath).join("[本地原片]"))
+            : error;
+          if (abortSignal?.aborted) throw lastError;
           if (attempt < 2) {
             console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集第${index + 1}段本地切段失败，重试`);
           }
@@ -2508,7 +2534,7 @@ export async function prepareEpisodeVideos(
     throw error;
   } finally {
     await Promise.allSettled([
-      deps.unlinkLocal(localSourcePath),
+      ...(ownsTemporarySource ? [deps.unlinkLocal(localSourcePath)] : []),
       ...cutRows.flatMap((row) => row ? [deps.unlinkLocal(row.localPath)] : []),
     ]);
   }
@@ -7307,6 +7333,7 @@ export async function runManhuaNativeDeepRead(params: {
   seriesKey: string;
   episodeIndex?: number;
   sourceDigest: string;
+  localVideoUpload?: NativeDeepReadLocalVideoUpload;
   resolveNodes: () => Promise<NativeDeepReadMediaNode[]>;
   segments: readonly NativeDeepReadSegmentSpec[];
   sourceDurationSec?: number;
@@ -7337,6 +7364,7 @@ export async function runManhuaNativeDeepRead(params: {
     episodes: [{
       episodeIndex: params.episodeIndex || 1,
       resolveNodes: params.resolveNodes,
+      localVideoUpload: params.localVideoUpload,
       segments: params.segments,
       sourceDurationSec: duration,
       videoFps: params.videoFps,

@@ -91,7 +91,7 @@ describe("原生精读页面接线", () => {
     const createAt = LEARN_FLOW.indexOf("createJob");
     expect(unsupportedAt).toBeGreaterThan(0);
     expect(createAt).toBeGreaterThan(unsupportedAt);
-    expect(LEARN_FLOW).toContain("本次未建立任务；请使用可解析的抖音单集或合集链接。");
+    expect(LEARN_FLOW).toContain("本次未建立任务；请使用可解析的抖音链接，或上传并校验本地视频。");
     expect(LEARN_FLOW).toContain('pipelineMode: "native_deep_read"');
     expect(LEARN_FLOW).not.toContain('pipelineMode: nativeGate === "ready" ? "native_deep_read" : "audio_dense_frames"');
   });
