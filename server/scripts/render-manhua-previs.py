@@ -32,12 +32,25 @@ def material(name, color):
     mat.diffuse_color = (*color, 1)
     return mat
 
+def is_sphere_bone(name):
+    """建模时 head / body 用球，其余用立方体——见 mesh() 的 sphere 参数。"""
+    return name in ('head','body')
+
 def bone_radius(actor, name):
     """骨骼对应实体的半径。建模与出画判定共用，免得两边各写一份日后走样。"""
     if name in ('spine','head'): return .15
     if name=='body': return .33
     if name=='neck': return .15 if actor['shape']=='horse' else .065
     return .065
+
+def bone_margin_radius(actor, name):
+    """
+    出画判定要留的边距。球骨各方向都是 radius；**立方体骨的角点到骨轴是 radius×√2**，
+    只按 radius 留边会漏掉那 0.41×radius 的角（0912 审查实测：单人竖屏收紧后网格最多
+    超出判据边界 0.0046 NDC，当时是靠 .02 安全边巧合兜住的，不是判据本身安全）。
+    """
+    radius = bone_radius(actor, name)
+    return radius if is_sphere_bone(name) else radius * 2 ** .5
 
 def mesh(name, a, b, radius, mat, sphere=False):
     a, b = Vector(a), Vector(b)
@@ -230,7 +243,9 @@ for obj in (camera,camera.data):
 
 # 竖屏构图（0911 验收实测「人物偏小」→ 0912 实测定案）：
 # Blender 默认 AUTO 传感器拟合把 36mm 套在**较长边**上，横屏套宽、竖屏套高，
-# 于是同一个镜头在竖屏的垂直视场从 32.3° 张到 54.4°，人物占画面高度从 33.1% 掉到 18.6%。
+# 于是同一个镜头在竖屏的垂直视场从 32.3° 张到 54.4°（lens 35 解析可验），
+# 人物占画面高度按骨骼端点（头顶到脚尖）量是 33.1% → 18.6%，按网格包围盒量是
+# 34.8% → 19.6%；两种口径的比值都是 1.78，即 36 / (36×9/16)。
 #
 # 但直接改成竖向拟合会把多角色挤出画：实测三角色（±1.6m）2/3 出画、
 # 六角色紧凑站位（±2m）3/6 出画，都是从「全在画内」变坏。
@@ -252,7 +267,9 @@ def _ndc_per_meter():
     forward=(basis @ Vector((0,0,-1))).normalized()
     ref=camera.matrix_world.translation+forward*8.
     p0=world_to_camera_view(scene,camera,ref)
-    if p0.z<=0: return 0.,0.
+    # 取不到比例就等于边距失效。返回 0 会让判定变**松**，与整段「宁可不收紧」的取向相反，
+    # 所以返回 None 让调用方直接判「收不下」。ref 恒在相机正前方 8m，正常走不到这里。
+    if p0.z<=0: return None
     px=world_to_camera_view(scene,camera,ref+right)
     py=world_to_camera_view(scene,camera,ref+up)
     return abs(px.x-p0.x)*p0.z, abs(py.y-p0.y)*p0.z
@@ -265,19 +282,21 @@ def _bones_in_frame():
        两角色 ±1.0m 出手，hand 出画 25 帧、forearm 24、upper_arm 17，报告却是零出画）。
     ② 首尾两端都采样，不只 tail。这些骨没有父子关系，head 是独立端点。
     ③ 按实体粗细留边距。骨骼是中轴线，模型有半径，只看中轴线会漏掉外壳那一圈。
-       实测盲区（网格世界包围盒 vs 被采样的骨骼端点）：马头顶 0.15m 最大，车尾 0.10m、
-       侧向 0.087m；human 两侧各约 0.076–0.079m——**human 也不是「极值点都在骨骼端点上」**。
-       注意车尾不是 0.4m：`mesh()` 把球缩到 length/2，沿骨轴正好从 head 张到 tail 不外凸，
-       半径只作用在侧向。边距对两个屏幕轴一律用该骨半径，沿轴方向属于保守多留，方向安全。
-       实证：马站 x=-0.35 竖屏，只看中轴线判 tight，带粗细判 auto。
+       human 也不例外——它的极值点并不都落在骨骼端点上。
+       边距按 {@link bone_margin_radius}：球骨用 radius，立方体骨用 radius×√2（角点距离）。
+       对两个屏幕轴一律用同一个值，沿骨轴方向属于保守多留。
+       实证：马站 x=-0.35 竖屏，只看中轴线判 tight，带粗细判 auto——推翻收紧的是
+       `body` 骨（半径 .33）端点那一圈余量。
     """
     for frame in range(1,scene.frame_end+1):
         scene.frame_set(frame)
         bpy.context.view_layer.update()
-        kx,ky=_ndc_per_meter()
+        scale=_ndc_per_meter()
+        if scale is None: return False
+        kx,ky=scale
         for actor,rig,_c,_s,_e in rigs:
             for bone in rig.pose.bones:
-                radius=bone_radius(actor,bone.name)
+                radius=bone_margin_radius(actor,bone.name)
                 for point in (bone.head,bone.tail):
                     p=world_to_camera_view(scene,camera,rig.matrix_world @ point)
                     if p.z<=0: return False
@@ -299,6 +318,11 @@ if scene.render.resolution_y > scene.render.resolution_x:
 
 report={'frames':scene.frame_end,'fps':24,'actors':[],'warnings':[],
         'portraitFraming':('tight' if camera.data.sensor_fit=='VERTICAL' else 'auto') if scene.render.resolution_y>scene.render.resolution_x else 'landscape'}
+# 收紧与否是 1.78 倍的二值跳变，站位或动作跨过临界点画面会整体突变。
+# 这个决定原本只落在 report.json 里、前端看不到，用户会看到「有的竖屏变大了、有的没变」
+# 却拿不到任何解释——所以退回时写一条人话进 warnings（前端已在展示 warnings）。
+if report['portraitFraming']=='auto':
+    report['warnings'].append('竖屏未收紧构图：按当前站位与动作，收紧后会有人物被切出画，已保持原画幅。想要更饱满的竖屏构图，可让角色更靠近画面中心或缩小彼此间距。')
 for actor,rig,contacts,stance,error in rigs:
     offscreen=[]
     drift=0.

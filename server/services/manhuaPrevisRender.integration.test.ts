@@ -181,11 +181,17 @@ describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("竖屏构图按人数自适�
    *
    * 这条钉住「按实体粗细留边距」：马站 x=-0.35，只看中轴线判 tight（实测），
    * 带粗细判 auto。把边距去掉这条就会红。
+   *
+   * 归因要说准：推翻收紧的是 `body` 骨（半径 .33）端点上那一圈余量，
+   * 不是「侧向实体粗细」——边距对两个屏幕轴用的是同一个值，沿骨轴方向属于保守多留。
+   * 若有人把实现改成只在垂直骨轴方向留边距，这条会红，但画面并没有变得更不安全。
    */
   it("马的实体比骨骼粗，竖屏不该按中轴线误判成收得下", async () => {
     const horse = await runPrevis("9:16", [-0.35], undefined, "horse");
     expect(horse.portraitFraming).toBe("auto");
     expect(horse.actors.flatMap(a => a.offscreenFrames ?? [])).toEqual([]);
+    // 退回时必须给用户一句人话，否则他只看到「有的竖屏变大了、有的没变」
+    expect(horse.warnings.some(w => w.includes("竖屏未收紧构图"))).toBe(true);
 
     // 横屏不进这段代码，形态换成马也一样
     const landscapeHorse = await runPrevis("16:9", [0], undefined, "horse");
