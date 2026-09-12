@@ -91,6 +91,8 @@ export type PrevisRenderReport = {
     offscreenFrames: number[];
   }>;
   warnings: string[];
+  /** 竖屏构图决策留证：tight=已收紧、auto=挤不下回退、landscape=横屏不进这段 */
+  portraitFraming?: "tight" | "auto" | "landscape";
 };
 export type PrevisRenderDeps = {
   upload: typeof uploadBufferToGcs;
@@ -125,6 +127,9 @@ const reportSchema = z
       .min(1)
       .max(6),
     warnings: z.array(z.string()),
+    // 这个值会落进 result.json 并参与恢复链的深比较，所以要真校验，
+    // 不能只靠 passthrough 透传 + `as` 断言骗过类型。
+    portraitFraming: z.enum(["tight", "auto", "landscape"]).optional(),
   })
   .passthrough();
 
