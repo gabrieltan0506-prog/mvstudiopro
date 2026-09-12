@@ -929,7 +929,6 @@ jobs:
           sha256sum /tmp/growth-archive-offload/offload-manifest.json > /tmp/growth-archive-offload/DELETE_READY
           printf '本批实际已上传并回读验证归档：%s 个。源数据保留；剩余数量见规划与延期记录。\n' "$(wc -l < /tmp/growth-archive-offload/archives.tsv)" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
       - name: Delete only release-verified unchanged archive shards from Fly
-        if: env.BACKUP_DEFERRED != 'true'
         # 0901 用户冻结：当前冷备只上传/验真，不自动删除任何平台源数据。
         # 后续释放空间必须另走“仅 B站 + 冻结抓取 + 显式授权”的专用流程。
         if: ${{ false }}
@@ -992,7 +991,6 @@ jobs:
           # 禁止自动删除后再依赖 GitHub → Fly 恢复；空间回收只处理已逐包验真的 archive 分片。
           echo "platform-current retained on Fly; no automatic GitHub-to-Fly recovery path was invoked"
       - name: Always release archive hardlink snapshot
-        if: env.BACKUP_DEFERRED != 'true'
         timeout-minutes: 2
         if: always()
         env:
