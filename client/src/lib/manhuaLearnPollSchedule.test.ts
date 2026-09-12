@@ -6,11 +6,14 @@ import {
   MANHUA_LEARN_HIDDEN_IDLE_MS,
   MANHUA_LEARN_IDLE_BASE_MS,
   MANHUA_LEARN_IDLE_MAX_MS,
+  MANHUA_LEARN_SNAPSHOT_BASELINE_INITIAL,
+  MANHUA_LEARN_SNAPSHOT_WAKE_SENTINEL,
   MANHUA_LEARN_SYNC_INITIAL,
   type ManhuaLearnSyncState,
   manhuaLearnSnapshotIntervalMs,
   manhuaLearnSyncDelayMs,
   nextManhuaLearnSyncState,
+  resolveManhuaLearnSnapshotSchedule,
 } from "./manhuaLearnPollSchedule";
 
 const noJitter = () => 0;
@@ -132,5 +135,67 @@ describe("请求量（纯函数推算，非线上）", () => {
 
   it("面板空开一天从 5760 次降到 1600 次以内", () => {
     expect(countCalls(24 * 60 * 60_000, "idle")).toBeLessThan(1600);
+  });
+});
+
+describe("resolveManhuaLearnSnapshotSchedule", () => {
+  const run = (over: Partial<Parameters<typeof resolveManhuaLearnSnapshotSchedule>[0]> = {}) =>
+    resolveManhuaLearnSnapshotSchedule({
+      prev: MANHUA_LEARN_SNAPSHOT_BASELINE_INITIAL,
+      seriesKey: "剧A",
+      dataUpdateCount: 0,
+      active: true,
+      hidden: false,
+      ...over,
+    });
+
+  it("换剧时基线跟着换归属，不拿上一部剧的基线去减这一部的计数", () => {
+    // 剧A 已经退到很后面；切到剧B 时它自己的缓存条目计数是 40
+    const prev = { seriesKey: "剧A", baseline: 3 };
+    const { next, intervalMs } = run({ prev, seriesKey: "剧B", dataUpdateCount: 40 });
+    expect(next).toEqual({ seriesKey: "剧B", baseline: 40 });
+    // 不换归属的话 rounds 会是 37，直接跳 60 秒封顶
+    expect(intervalMs).toBe(MANHUA_LEARN_IDLE_BASE_MS);
+  });
+
+  it("同一部剧内按差值退避", () => {
+    const prev = { seriesKey: "剧A", baseline: 10 };
+    expect(run({ prev, dataUpdateCount: 10, seriesKey: "剧A" }).intervalMs)
+      .toBe(MANHUA_LEARN_IDLE_BASE_MS);
+    expect(run({ prev, dataUpdateCount: 13, seriesKey: "剧A" }).intervalMs)
+      .toBeGreaterThan(MANHUA_LEARN_IDLE_BASE_MS);
+    expect(run({ prev, dataUpdateCount: 60, seriesKey: "剧A" }).intervalMs)
+      .toBe(MANHUA_LEARN_IDLE_MAX_MS);
+  });
+
+  it("没有活跃任务时不轮询，并把基线归到当前计数", () => {
+    const { next, intervalMs } = run({
+      prev: { seriesKey: "剧A", baseline: 2 },
+      dataUpdateCount: 9,
+      active: false,
+    });
+    expect(intervalMs).toBe(false);
+    expect(next).toEqual({ seriesKey: "剧A", baseline: 9 });
+  });
+
+  it("唤醒哨兵让它从 15 秒重新起退", () => {
+    const prev = { seriesKey: "剧A", baseline: MANHUA_LEARN_SNAPSHOT_WAKE_SENTINEL };
+    const { next, intervalMs } = run({ prev, dataUpdateCount: 27 });
+    expect(next).toEqual({ seriesKey: "剧A", baseline: 27 });
+    expect(intervalMs).toBe(MANHUA_LEARN_IDLE_BASE_MS);
+  });
+
+  it("对同一组入参稳定——值一变 react-query 就重建定时器", () => {
+    const prev = { seriesKey: "剧A", baseline: 4 };
+    const a = run({ prev, dataUpdateCount: 7 });
+    const b = run({ prev: a.next, dataUpdateCount: 7 });
+    expect(b.intervalMs).toBe(a.intervalMs);
+    expect(b.next).toEqual(a.next);
+  });
+
+  it("换剧那一次收敛后，紧接着的调用返回同一个值（没有先错后对的中间态）", () => {
+    const first = run({ prev: { seriesKey: "剧A", baseline: 3 }, seriesKey: "剧B", dataUpdateCount: 40 });
+    const second = run({ prev: first.next, seriesKey: "剧B", dataUpdateCount: 40 });
+    expect(second.intervalMs).toBe(first.intervalMs);
   });
 });

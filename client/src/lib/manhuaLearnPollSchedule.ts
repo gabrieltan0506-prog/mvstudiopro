@@ -87,6 +87,41 @@ export function nextManhuaLearnSyncState(
  * 该查询第 4 次更新后静默停更——请求量是降了，靠把功能弄坏降的（0912 审查抓到）。
  * 所以这里拿 `dataUpdateCount` 当轮次，不抖动。
  */
+export type ManhuaLearnSnapshotBaseline = { seriesKey: string; baseline: number };
+export const MANHUA_LEARN_SNAPSHOT_BASELINE_INITIAL: ManhuaLearnSnapshotBaseline = {
+  seriesKey: "",
+  baseline: 0,
+};
+/** 唤醒时用的哨兵：下一次回调会把它收敛成当前计数，等于「从 15 秒重新起退」 */
+export const MANHUA_LEARN_SNAPSHOT_WAKE_SENTINEL = Number.MAX_SAFE_INTEGER;
+
+/**
+ * 快照查询的退避基线与间隔（纯函数）。
+ *
+ * `dataUpdateCount` 是**每个 seriesKey 各自**缓存条目的累计成功次数，而基线只有一份。
+ * 切剧时必须跟着换归属，否则拿 A 剧的基线去减 B 剧的计数，轮次虚高、直接跳到 60 秒封顶。
+ *
+ * 返回值必须对同一组入参稳定：react-query 会在每次 setOptions 时重算，
+ * 值一变就重建定时器；第一次返 A、第二次返 B 会让它反复重建。
+ * 所以这里的收敛都发生在**算 rounds 之前**，同一次调用内就已经稳定。
+ */
+export function resolveManhuaLearnSnapshotSchedule(params: {
+  prev: ManhuaLearnSnapshotBaseline;
+  seriesKey: string;
+  dataUpdateCount: number;
+  active: boolean;
+  hidden: boolean;
+}): { next: ManhuaLearnSnapshotBaseline; intervalMs: number | false } {
+  const { prev, seriesKey, dataUpdateCount, active, hidden } = params;
+  const rebased: ManhuaLearnSnapshotBaseline = { seriesKey, baseline: dataUpdateCount };
+  // 换剧、没有活跃任务、或基线被唤醒顶成哨兵，三种情况都重新以当前计数为基线
+  if (prev.seriesKey !== seriesKey || !active || prev.baseline > dataUpdateCount) {
+    return { next: rebased, intervalMs: active ? manhuaLearnSnapshotIntervalMs(0, hidden) : false };
+  }
+  const rounds = dataUpdateCount - prev.baseline;
+  return { next: prev, intervalMs: manhuaLearnSnapshotIntervalMs(rounds, hidden) };
+}
+
 export function manhuaLearnSnapshotIntervalMs(dataUpdateCount: number, hidden = false): number {
   const rounds = Math.max(0, Math.floor(dataUpdateCount));
   const grown = Math.min(

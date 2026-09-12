@@ -388,11 +388,14 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import {
+  MANHUA_LEARN_SNAPSHOT_BASELINE_INITIAL,
+  MANHUA_LEARN_SNAPSHOT_WAKE_SENTINEL,
   MANHUA_LEARN_SYNC_INITIAL,
+  type ManhuaLearnSnapshotBaseline,
   isPageHidden,
-  manhuaLearnSnapshotIntervalMs,
   manhuaLearnSyncDelayMs,
   nextManhuaLearnSyncState,
+  resolveManhuaLearnSnapshotSchedule,
 } from "@/lib/manhuaLearnPollSchedule";
 import VoiceInputButton from "@/components/VoiceInputButton";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -3708,9 +3711,14 @@ export default function PlatformPage() {
    * 只增不减——不重置的话，面板开久了再起新任务，快照开局就是 60 秒封顶。
    * 这里记下「本段活跃开始时」的计数，退避按差值算。
    */
-  const manhuaLearnSnapshotBaselineRef = useRef(0);
+  const manhuaLearnSnapshotBaselineRef = useRef<ManhuaLearnSnapshotBaseline>(
+    MANHUA_LEARN_SNAPSHOT_BASELINE_INITIAL,
+  );
   const bumpManhuaLearnSnapshotBaseline = useCallback(() => {
-    manhuaLearnSnapshotBaselineRef.current = Number.MAX_SAFE_INTEGER;
+    manhuaLearnSnapshotBaselineRef.current = {
+      ...manhuaLearnSnapshotBaselineRef.current,
+      baseline: MANHUA_LEARN_SNAPSHOT_WAKE_SENTINEL,
+    };
   }, []);
   const wakeManhuaLearnSync = useCallback(() => {
     manhuaLearnWakeRef.current?.();
@@ -3940,7 +3948,7 @@ export default function PlatformPage() {
       manhuaLearnWakeRef.current = null;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [refreshManhuaLearnServerJobs, hasSupervisorOpsAccess, trendInsightTab, user?.id]);
+  }, [refreshManhuaLearnServerJobs, hasSupervisorOpsAccess, trendInsightTab, user?.id, bumpManhuaLearnSnapshotBaseline]);
   /** owner 专用完整库；先通过能力查询再请求，其他监管账号不会触发私有列表请求。 */
   const manhuaViralApprovedQuery = trpc.manhuaViralTemplate.listApprovedPrivate.useQuery(
     undefined,
@@ -4073,17 +4081,15 @@ export default function PlatformPage() {
       // 必须返回同一状态下的稳定值——含随机数会让 react-query 每 render 重建定时器，
       // 该查询第 4 次更新后静默停更（0912 审查抓到的坑）。
       refetchInterval: (query) => {
-        if (!focusedManhuaLearnJobActive) {
-          // 没有活跃任务：下次活跃时从头退避，不继承上一段的轮次。
-          manhuaLearnSnapshotBaselineRef.current = query.state.dataUpdateCount;
-          return false;
-        }
-        if (manhuaLearnSnapshotBaselineRef.current > query.state.dataUpdateCount) {
-          // 唤醒过（基线被顶到最大）：以当前计数为新基线，重新从 15 秒起退。
-          manhuaLearnSnapshotBaselineRef.current = query.state.dataUpdateCount;
-        }
-        const rounds = query.state.dataUpdateCount - manhuaLearnSnapshotBaselineRef.current;
-        return manhuaLearnSnapshotIntervalMs(rounds, isPageHidden());
+        const { next, intervalMs } = resolveManhuaLearnSnapshotSchedule({
+          prev: manhuaLearnSnapshotBaselineRef.current,
+          seriesKey: manhuaLearnFocusSeriesKey,
+          dataUpdateCount: query.state.dataUpdateCount,
+          active: focusedManhuaLearnJobActive,
+          hidden: isPageHidden(),
+        });
+        manhuaLearnSnapshotBaselineRef.current = next;
+        return intervalMs;
       },
       retry: false,
     },
