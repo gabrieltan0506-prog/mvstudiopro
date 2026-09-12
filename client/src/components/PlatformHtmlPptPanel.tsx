@@ -183,7 +183,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
         intervalMs: 2500,
         maxWaitMs: 24 * 60_000,
         adaptiveBackoffAfterAttempts: 36,
-        maxIntervalMs: 8000,
+        maxIntervalMs: 30_000,
         onPoll: ({ status, elapsedMs }) => {
           setAiBusyLabel(
             formatWaitLabel(status === "queued" ? "排队中" : "生成中", elapsedMs),

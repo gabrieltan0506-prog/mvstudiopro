@@ -103,6 +103,10 @@ import {
   clearOtherManhuaLearnSeries,
   isManhuaNativeDeepReadParamsConflict,
   listManhuaLearnServerJobs,
+  manhuaLearnSyncDelayMs,
+  nextManhuaLearnSyncState,
+  isDocumentHidden,
+  type ManhuaLearnSyncRegime,
   pollJobUntilTerminal,
   skipManhuaLearnServerEpisode,
   type ManhuaLearnServerJob,
@@ -3686,6 +3690,13 @@ export default function PlatformPage() {
   }, [pendingManhuaViralProposals, selectedManhuaProposalId]);
 
   const manhuaLearnLagProbeRef = useRef("");
+  /**
+   * 唤醒同步调度器（审查 P1-D）。
+   * 空闲档退避到 60 秒后，点「开始学习」若只等调度器自己醒，进度最长 60 秒才动——
+   * 正好卡在最需要即时反馈的那一刻。入队/停止/重整形之后调它：清掉待发的定时器、立刻同步一次。
+   * 若此刻有请求在途，在途闸会挡下，由它的 finally 续期，不会分裂成两条链。
+   */
+  const manhuaLearnKickRef = useRef<(() => void) | null>(null);
   const refreshManhuaLearnServerJobs = useCallback(async () => {
     const requestUserKey = manhuaLearnUserKeyRef.current;
     if (!requestUserKey) return { items: [] as ManhuaLearnServerJob[] };
@@ -3779,6 +3790,7 @@ export default function PlatformPage() {
       toast.error("停止失败", { description: sanitizePlatformUserMessage(error instanceof Error ? error.message : String(error)) });
     } finally {
       setManhuaLearnControlBusy(null);
+      manhuaLearnKickRef.current?.(); // 唤醒调度器（审查 P2-G：降级路径也要唤醒）
     }
   }, [manhuaLearnControlBusy, refreshManhuaLearnServerJobs]);
 
@@ -3806,6 +3818,8 @@ export default function PlatformPage() {
       } catch (error) {
         console.warn("[manhua-learn] 已入队，任务列表暂未刷新", error);
         if (manhuaLearnUserKeyRef.current === ownerKey) toast.info("任务已入队，列表暂未刷新，请稍后查看");
+      } finally {
+        manhuaLearnKickRef.current?.(); // 唤醒调度器（审查 P2-G：降级路径也要唤醒）
       }
     } catch (error) {
       if (manhuaLearnUserKeyRef.current !== ownerKey) return;
@@ -3836,6 +3850,8 @@ export default function PlatformPage() {
       toast.error("跳过失败", { description: sanitizePlatformUserMessage(error instanceof Error ? error.message : String(error)) });
     } finally {
       setManhuaLearnControlBusy(null);
+      // 审查 P2-H：跳过本集之后也要唤醒，否则长任务处在 30 秒稳态时，点了要等半分钟画面才动
+      manhuaLearnKickRef.current?.();
     }
   }, [focusedManhuaLearnServerJob?.jobId, focusedManhuaLearnServerJob?.status, focusedManhuaLearnBasketItem?.jobId, focusedManhuaLearnBasketItem?.jobStatus, focusedManhuaLearnEpisodeIndex, manhuaLearnControlBusy]);
 
@@ -3846,20 +3862,70 @@ export default function PlatformPage() {
     if (!allowed || trendInsightTab !== "ai_manhua") return;
     let disposed = false;
     let timer: number | undefined;
+    /**
+     * 0912 事故：这条轮询打的 /api/jobs/manhua-learn 是防火墙 Top Request Paths 第一名
+     * （一天 1.7k、比第二名高近二十倍），触发 Vercel 自动 DDoS 缓解、整站发 JS 质询。
+     * 旧口径活跃 3 秒、空闲 15 秒，都是恒定值；现在两档都退避，后台再放缓。
+     */
+    let attempt = 0;
+    let regime: ManhuaLearnSyncRegime = "idle";
+    /**
+     * 在途闸（审查 P1-A）：sync 是 async，从发请求到 finally 给 timer 赋值之间有一段空窗，
+     * 这期间 clearTimeout 清不到东西。若此刻再起一条链，两条从此并行、请求率翻倍，
+     * 每切一次标签再翻一倍——净效果比不做优化还糟。有链在跑就直接返回，由它续期。
+     */
+    let running = false;
     const sync = async () => {
+      if (running) return;
+      running = true;
       let hasActive = false;
+      let ok = false;
       try {
         const listed = await refreshManhuaLearnServerJobs();
         hasActive = listed.items.some((job) => job.status === "queued" || job.status === "running");
+        ok = true;
       } catch (error) {
         if (!disposed) console.warn("[manhua-learn] refresh server jobs failed", error);
       } finally {
-        if (!disposed) timer = window.setTimeout(() => void sync(), hasActive ? 3_000 : 15_000);
+        running = false;
+        // 失败不清零（审查 P1-B）：被质询时列表接口回的是 HTML、json() 会抛错，
+        // 那正是最该退让的时刻，不能反而回到最密的节奏去撞墙。
+        const next = nextManhuaLearnSyncState({ attempt, regime, ok, hasActive });
+        attempt = next.attempt;
+        regime = next.regime;
+        if (!disposed) {
+          if (timer !== undefined) window.clearTimeout(timer);
+          timer = window.setTimeout(
+            () => void sync(),
+            manhuaLearnSyncDelayMs({ attempt, regime, hidden: isDocumentHidden() }),
+          );
+        }
       }
     };
     void sync();
+    const onVisible = () => {
+      // 切回前台立刻补一次，不让用户等满后台那一轮；有链在跑时交给它续，不另起一条
+      if (disposed || isDocumentHidden()) return;
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+        timer = undefined;
+      }
+      void sync();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    manhuaLearnKickRef.current = () => {
+      if (disposed) return;
+      // 回到起点：新任务刚入队，下一轮该是快档而不是 60 秒稳态。
+      // 预置 idle 而不是 active——入队后同步若失败（正被质询），退到 15 秒重试才对，
+      // 预置 active 会在挨打时以 3 秒节奏撞墙（审查 Q1）。
+      attempt = 0;
+      regime = "idle";
+      onVisible();
+    };
     return () => {
       disposed = true;
+      manhuaLearnKickRef.current = null;
+      document.removeEventListener("visibilitychange", onVisible);
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [refreshManhuaLearnServerJobs, hasSupervisorOpsAccess, trendInsightTab, user?.id]);
@@ -5657,7 +5723,7 @@ export default function PlatformPage() {
       intervalMs: 2500,
       maxWaitMs: 25 * 60_000,
       adaptiveBackoffAfterAttempts: 36,
-      maxIntervalMs: 8000,
+      maxIntervalMs: 30_000,
       onPoll: ({ attempt, status, output }) => {
         setContentJobPollTrace((prev) =>
           prev && prev.jobId === jobId
@@ -6253,6 +6319,8 @@ export default function PlatformPage() {
               `${new Date().toISOString()} 任务已接管，列表刷新暂时失败，稍后自动重试`,
             ),
           }) : prev);
+        } finally {
+          manhuaLearnKickRef.current?.(); // 唤醒调度器（审查 P2-G：降级路径也要唤醒）
         }
         toast.message(reusedExactNativePlan ? "已接管同参数的已有任务" : reused ? "已接管同源已有任务" : "已交给服务器学习", {
           description: reusedExactNativePlan
@@ -6307,6 +6375,8 @@ export default function PlatformPage() {
             await refreshManhuaLearnServerJobs();
           } catch {
             // 旧卡已恢复；列表刷新失败时由既有轮询重试，不改写为失败。
+          } finally {
+            manhuaLearnKickRef.current?.(); // 唤醒调度器（审查 P2-G：降级路径也要唤醒）
           }
           toast.error("同一来源已有另一组参数的任务", {
             description: `${msg} 可先在面板停止原任务，再按当前设置提交。`,
@@ -7744,6 +7814,7 @@ export default function PlatformPage() {
           intervalMs: compositeSheetLivePollIntervalMs,
           maxWaitMs: 28 * 60_000,
           adaptiveBackoffAfterAttempts: 36,
+          // 实时流水看板要的是高频刷新，不跟长任务一起压到 30s（审查 P1-3）
           maxIntervalMs: 8000,
           onPoll: ({ attempt, output, status }) => {
             const log = Array.isArray((output as { imageGenFlowLog?: string[] })?.imageGenFlowLog)
@@ -8106,6 +8177,9 @@ export default function PlatformPage() {
         intervalMs: 3000,
         // 服务端不设总时长（只按连续无进度判死），前端也不设：轮询到终态为止
         maxWaitMs: Number.MAX_SAFE_INTEGER,
+        // 与同链路的分段提炼同口径（审查 P2-A）：长书派生动辄十几分钟，别一直 8 秒一发
+        adaptiveBackoffAfterAttempts: 40,
+        maxIntervalMs: 30_000,
         onPoll: ({ output }) => {
           // 稿子已经换过：这条派生的进度与当前文本框无关，不许再动进度条
           if (revision !== customNoteRevisionRef.current) return;
@@ -8282,7 +8356,7 @@ export default function PlatformPage() {
       // 服务端不设总时长（只按连续无进度判死），前端也不设：轮询到终态为止
       maxWaitMs: Number.MAX_SAFE_INTEGER,
       adaptiveBackoffAfterAttempts: 40,
-      maxIntervalMs: 8000,
+      maxIntervalMs: 30_000,
       onPoll: ({ output }) => {
         const out = (output || {}) as {
           distillPercent?: number;
@@ -9353,6 +9427,7 @@ export default function PlatformPage() {
                 intervalMs: compositeSheetLivePollIntervalMs,
                 maxWaitMs: 18 * 60_000,
                 adaptiveBackoffAfterAttempts: 36,
+                // 同上：这也是实时流水看板（审查 P1-3）
                 maxIntervalMs: 8000,
                 onPoll: ({ attempt, output }) => {
                   const flow = Array.isArray((output as { imageGenFlowLog?: string[] })?.imageGenFlowLog)

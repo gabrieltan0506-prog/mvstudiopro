@@ -337,17 +337,146 @@ export type PollJobTick = {
 const MAX_POLL_DEBUG_LINES = 120;
 
 /** Fly jobs 队列（含 platform 文案 / 封面生图）：轮询直到终态 */
+/** 页面是否在后台（SSR / 测试环境里当作前台） */
+export function isDocumentHidden(): boolean {
+  return typeof document !== "undefined" && document.visibilityState === "hidden";
+}
+
+/**
+ * 下一次轮询该等多久（纯函数，便于直接测）。
+ *
+ * · 前 adaptiveAfter 轮保持起始间隔，保证刚提交时反馈够快；
+ * · 之后按 backoffFactor 逐轮递增，直到 maxInterval 封顶——长任务后半程不必每几秒问一次；
+ * · 页面切到后台时至少等 hiddenInterval；
+ * · 加 ±15% 抖动：多个标签页同时打开时不会挤在同一刻齐发（同步齐发最像攻击流量）。
+ */
+export function nextPollSpacingMs(params: {
+  attempt: number;
+  interval: number;
+  adaptiveAfter: number;
+  maxInterval: number;
+  backoffFactor: number;
+  hiddenInterval: number;
+  hidden: boolean;
+  /** 仅测试注入；缺省用 Math.random */
+  random?: () => number;
+}): number {
+  const steps = Math.max(0, params.attempt - params.adaptiveAfter + 1);
+  const grown = params.interval * params.backoffFactor ** steps;
+  // 上限低于起始间隔是无意义配置：按起始间隔兜底，绝不算出比起始还短的间隔。
+  // 这条守在纯函数里，不能只守在调用方——否则直接调用它的地方（如学习列表同步）没有保护。
+  const cap = Math.max(params.interval, params.maxInterval);
+  let spacing = Math.min(cap, Math.max(params.interval, grown));
+  if (params.hidden) spacing = Math.max(spacing, params.hiddenInterval);
+  // 首段不抖（审查 P2-2）：抖动会把 2.5s 压到 2.1s，比改前更密，与「前段照旧」不符
+  if (spacing <= params.interval) return Math.round(spacing);
+  const rand = params.random ?? Math.random;
+  // 后台档：以 hiddenInterval 为硬下限、只向上抖 0–30%（审查 P2-B）。
+  // 双向抖会把下限打到 51s，与「后台至少一分钟」自相矛盾；完全不抖又会让多标签同相齐发。
+  if (params.hidden && spacing <= params.hiddenInterval) {
+    return Math.round(params.hiddenInterval * (1 + rand() * 0.3));
+  }
+  // 前台：先抖再夹（审查 P2-1）——夹完再抖会让上限变成 34.5s
+  const jittered = Math.round(spacing * (0.85 + rand() * 0.3));
+  return Math.min(cap, Math.max(params.interval, jittered));
+}
+
+/**
+ * 漫剧学习任务列表（`/api/jobs/manhua-learn`）的同步间隔。
+ *
+ * 0912 事故的真凶就是这条：它不走 pollJobUntilTerminal，而是自己定时硬轮，
+ * 活跃时 3 秒、空闲时 15 秒，都是恒定值。它是 Vercel 防火墙 Top Request Paths 的第一名
+ * （一天 1.7k、比第二名高近二十倍），最终触发自动 DDoS 缓解、整站发 JS 质询。
+ *
+ * 现在按档位退避：
+ * · 活跃档：3 秒起，20 轮后逐步拉长，30 秒封顶；后台至少 60 秒。
+ * · 空闲档：15 秒起，4 轮后逐步拉长，60 秒封顶；后台至少 120 秒。
+ *   （面板开着不关一天，旧的恒定 15 秒就是 5760 次——量级上它才是大头。）
+ *
+ * 轮次与换档由 `nextManhuaLearnSyncState` 决定：**请求失败不清零**，沿用上一档继续退避；
+ * 只有「成功且档位真的变了」才从 1 重新计。新任务入队后由调用方调 kick 立即唤醒，
+ * 不靠等满空闲档那一轮。
+ */
+export type ManhuaLearnSyncRegime = "active" | "idle";
+
+export function manhuaLearnSyncDelayMs(params: {
+  /** 当前档位内的轮次（换档时从 1 重新计） */
+  attempt: number;
+  regime: ManhuaLearnSyncRegime;
+  hidden: boolean;
+  random?: () => number;
+}): number {
+  // 空闲档同样要退避（审查 P1-C）。它打的是同一个接口，而且面板开着不关就一直打：
+  // 旧的恒定 15 秒＝240 次/小时，开七小时就是 1680 次，与防火墙看到的 1.7k 同一量级。
+  // 恒定间隔、无抖动、多标签同相位，正是最像机器流量的形状。
+  if (params.regime === "idle") {
+    return nextPollSpacingMs({
+      attempt: params.attempt,
+      interval: 15_000,
+      adaptiveAfter: 4,
+      maxInterval: 60_000,
+      backoffFactor: 1.5,
+      hiddenInterval: 120_000,
+      hidden: params.hidden,
+      random: params.random,
+    });
+  }
+  return nextPollSpacingMs({
+    attempt: params.attempt,
+    interval: 3000,
+    adaptiveAfter: 20,
+    maxInterval: 30_000,
+    backoffFactor: 1.35,
+    hiddenInterval: 60_000,
+    hidden: params.hidden,
+    random: params.random,
+  });
+}
+
+/**
+ * 同步轮次与档位的推进（纯函数，便于直接测——审查 P2-C）。
+ *
+ * 失败不许清零（审查 P1-B）：被 Vercel 质询时列表接口拿回的是 HTML，`response.json()` 抛错；
+ * 若把失败当成「空闲、从头再来」，就会在**正被限流的时候**反而以最密的节奏撞墙。
+ * 失败沿用上一档并继续累加轮次，让间隔越拉越长。
+ */
+export function nextManhuaLearnSyncState(params: {
+  attempt: number;
+  regime: ManhuaLearnSyncRegime;
+  ok: boolean;
+  hasActive: boolean;
+}): { attempt: number; regime: ManhuaLearnSyncRegime } {
+  if (!params.ok) return { attempt: params.attempt + 1, regime: params.regime };
+  const regime: ManhuaLearnSyncRegime = params.hasActive ? "active" : "idle";
+  if (regime !== params.regime) return { attempt: 1, regime };
+  return { attempt: params.attempt + 1, regime };
+}
+
 export async function pollJobUntilTerminal(
   jobId: string,
   opts?: {
     intervalMs?: number;
     maxWaitMs?: number;
     /**
-     * 自第几次轮询起拉长间隔（预设 36 ≈ 首段约 1.5min×2.5s），避免长任务下 GET 过于密集、计数暴涨。
+     * 自第几次轮询起开始拉长间隔（预设 36 ≈ 首段约 1.5min×2.5s）。
+     * 之后每轮按 backoffFactor 递增，直到 maxIntervalMs 封顶。
      */
     adaptiveBackoffAfterAttempts?: number;
-    /** 拉长后的间隔上限（预设 8s） */
+    /**
+     * 间隔上限（预设 30s）。
+     * 0912 事故：漫剧学习任务一跑几小时，固定 2.5s→8s 的两段式轮询一天打出 1.7k 次
+     * `/api/jobs/manhua-learn`，成了 Vercel 自动 DDoS 缓解眼里最像机器流量的那一条，
+     * 整站被发 JS 质询、接口拿回 HTML，前端报「算力紧张」。
+     */
     maxIntervalMs?: number;
+    /** 每轮递增倍数（预设 1.35）；1 表示不递增 */
+    backoffFactor?: number;
+    /**
+     * 页面切到后台时的最小间隔（预设 60s）。
+     * 用户常开十几个标签页，每个进过工作台的都在各自轮询；没人看的页面不该继续密集打接口。
+     * 不是完全停轮询——停了会错过完成时刻，回到前台还要等一轮。
+     */
+    hiddenIntervalMs?: number;
     /** 每次拉取 job 后触发（含尚未进入终态的中间状态） */
     onPoll?: (tick: PollJobTick) => void;
   },
@@ -355,7 +484,11 @@ export async function pollJobUntilTerminal(
   const interval = opts?.intervalMs ?? 2500;
   const maxWait = opts?.maxWaitMs ?? 14 * 60_000;
   const adaptiveAfter = opts?.adaptiveBackoffAfterAttempts ?? 36;
-  const maxInterval = opts?.maxIntervalMs ?? 8000;
+  // 默认不动（审查 P1-2）：全仓 30 个调用点里只有 8 处显式传值，抬默认等于顺手改掉
+  // 二十多个没评估过的出图/看板链路。要压量就在那条链路上显式传 maxIntervalMs。
+  const maxInterval = Math.max(interval, opts?.maxIntervalMs ?? 8000);
+  const backoffFactor = Math.max(1, opts?.backoffFactor ?? 1.35);
+  const hiddenInterval = Math.max(0, opts?.hiddenIntervalMs ?? 60_000);
   const t0 = Date.now();
   let attempt = 0;
   let lastStatus: JobStatus = "queued";
@@ -375,9 +508,27 @@ export async function pollJobUntilTerminal(
       output: out,
     });
     if (j.status === "succeeded" || j.status === "failed") return j;
-    const spacing =
-      attempt >= adaptiveAfter ? Math.min(maxInterval, interval * 2) : interval;
-    await sleep(spacing);
+    const spacing = nextPollSpacingMs({
+      attempt,
+      interval,
+      adaptiveAfter,
+      maxInterval,
+      backoffFactor,
+      hiddenInterval,
+      hidden: isDocumentHidden(),
+    });
+    /**
+     * 审查 P1-1：睡眠必须钳在剩余墙钟预算内。
+     * 否则后台标签页里 maxWaitMs=60s 的调用点会「第一次 GET → 睡 60s → 超时」，
+     * 只轮一次就报「任务轮询已等待 1 分 0 秒（1 次）」，改前能轮二十多次。
+     * 留 250ms 余量，保证到点之前还来得及再查一次。
+     */
+    const remaining = maxWait - (Date.now() - t0);
+    // 预算已经见底：直接收口，不要用 sleep(0) 在最后 250ms 里以 RTT 为周期空转（审查 P2-D）
+    if (remaining <= 250) break;
+    // 不要再给下限（审查 P2-I）：上面的 break 已保证 remaining-250 > 0，
+    // 加 Math.max(interval, …) 反而会睡过 maxWait，把「到点前最后一次补轮」吃掉。
+    await sleep(Math.min(spacing, remaining - 250));
   }
   const elapsedSec = Math.max(1, Math.round((Date.now() - t0) / 1000));
   const elapsedMin = Math.floor(elapsedSec / 60);
