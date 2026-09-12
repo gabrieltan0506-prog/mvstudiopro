@@ -8,17 +8,24 @@
  * 三道硬闸，任何一条不满足就不删：
  *   ① 只删 target 不是 production 的部署——生产一律不动，回滚点不受影响；
  *   ② 显式排除项目当前的线上生产部署（双保险）；
- *   ③ 必须是超过 KEEP_DAYS 天的，或状态为 ERROR / CANCELED 的。
+ *   ③ 必须是超过 KEEP_DAYS 天的；ERROR / CANCELED 另按 FAILED_KEEP_DAYS（默认 1 天）——
+ *     今早刚炸的构建，它的 inspect 页与日志正是排查要用的，不能当天就删。
  *
  * 默认空跑。只有 APPLY=1 才真删。
  * Vercel 删除接口限速为每 10 分钟 200 个（错误码 now-rm），因此分轮执行、轮间等待。
  */
 
+import { normalizeKeepDays, selectPrunableDeployments } from "./vercelPruneSelect.mjs";
+
 const TOKEN = process.env.VERCEL_TOKEN;
 const PROJECT = process.env.VERCEL_PROJECT || "mvstudiopro";
 const TEAM_ID = process.env.VERCEL_TEAM_ID || "";
-const KEEP_DAYS = Number(process.env.KEEP_DAYS || 7);
-const APPLY = process.env.APPLY === "1";
+// 下限钉 1 天：`KEEP_DAYS=0` 会把一分钟前刚建、PR 还开着的预览也删掉，
+// 而 workflow 把它定义成自由文本输入，手一抖就出事。非数字回落默认值。
+const KEEP_DAYS = normalizeKeepDays(process.env.KEEP_DAYS, 7);
+const FAILED_KEEP_DAYS = normalizeKeepDays(process.env.FAILED_KEEP_DAYS, 1);
+// 同时认 "1" 与 "true"：工作流表达式两种写法都很容易写出，口径对不上会让定时班静默空跑
+const APPLY = ["1", "true"].includes(String(process.env.APPLY || "").trim().toLowerCase());
 const ROUND_SIZE = Number(process.env.ROUND_SIZE || 190);
 const ROUND_WAIT_MS = Number(process.env.ROUND_WAIT_MS || 11 * 60_000);
 const MAX_ROUNDS = Number(process.env.MAX_ROUNDS || 3);
@@ -33,17 +40,7 @@ const q = (extra = "") => (TEAM_ID ? `${extra}${extra.includes("?") ? "&" : "?"}
 const call = (p, init) =>
   fetch(API + q(p), { ...init, headers: { Authorization: `Bearer ${TOKEN}`, ...(init?.headers || {}) } });
 
-const DAY = 86_400_000;
-/**
- * 白名单极性：只有明确认得出是预览的才可能被删。
- * 现网 v6 对预览返回 `target: null`、对生产返回 `"production"`。
- * 万一将来多出别的 target（staging 之类）或字段消失，一律判为「认不出」→ 不删。
- * 删除不可逆，失败方向必须是「少删」而不是「误删生产」。
- */
-const isProduction = (d) => d.target === "production";
-const isKnownPreview = (d) =>
-  Object.prototype.hasOwnProperty.call(d, "target")
-  && (d.target === null || d.target === undefined || d.target === "preview");
+// 三道闸与白名单极性都收口在 scripts/vercelPruneSelect.mjs（纯函数，有独立测试）
 const fmtDate = (t) => new Date(t).toISOString().slice(0, 10);
 
 async function listAllDeployments() {
@@ -84,23 +81,20 @@ const all = await listAllDeployments();
 const live = await resolveLiveProductionIds();
 const now = Date.now();
 
-const targets = all
-  .filter(isKnownPreview)
-  .filter((d) => !isProduction(d))
-  .filter((d) => !live.has(d.uid))
-  .filter((d) => now - d.created > KEEP_DAYS * DAY || d.readyState === "ERROR" || d.readyState === "CANCELED")
-  .sort((a, b) => a.created - b.created);
-
-const productionCount = all.filter(isProduction).length;
+const { targets, breach, unknown, productionCount } = selectPrunableDeployments({
+  deployments: all,
+  liveProductionIds: live,
+  keepDays: KEEP_DAYS,
+  failedKeepDays: FAILED_KEEP_DAYS,
+  now,
+});
 const lines = [
   `项目 ${PROJECT}：共 ${all.length} 个部署（生产 ${productionCount}，预览 ${all.length - productionCount}）`,
-  `保留天数 ${KEEP_DAYS}，符合清理条件的预览 ${targets.length} 个`,
+  `保留天数 ${KEEP_DAYS}（失败/取消另按 ${FAILED_KEEP_DAYS} 天），符合清理条件的预览 ${targets.length} 个`,
 ];
 if (targets.length) lines.push(`时间范围 ${fmtDate(targets[0].created)} → ${fmtDate(targets[targets.length - 1].created)}`);
 
-// 闸门自检：目标集合里出现生产或线上部署，立刻停手，绝不继续
-const breach = targets.filter((d) => isProduction(d) || live.has(d.uid) || !isKnownPreview(d));
-const unknown = all.filter((d) => !isProduction(d) && !isKnownPreview(d)).length;
+// 闸门自检：目标集合里出现生产、线上或认不出类型的部署，立刻停手，绝不继续
 lines.push(`闸门自检：目标里生产、线上或认不出类型的部署 ${breach.length} 个（必须为 0）`);
 if (unknown) lines.push(`另有 ${unknown} 个部署的 target 认不出，已整体跳过（不删）`);
 console.log(lines.join("\n"));

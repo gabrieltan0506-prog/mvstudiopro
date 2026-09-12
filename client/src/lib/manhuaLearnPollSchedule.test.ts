@@ -111,9 +111,6 @@ describe("manhuaLearnSnapshotIntervalMs", () => {
     expect(manhuaLearnSnapshotIntervalMs(50)).toBe(MANHUA_LEARN_IDLE_MAX_MS);
   });
 
-  it("后台至少 120 秒", () => {
-    expect(manhuaLearnSnapshotIntervalMs(0, true)).toBe(MANHUA_LEARN_HIDDEN_IDLE_MS);
-  });
 });
 
 describe("请求量（纯函数推算，非线上）", () => {
@@ -143,16 +140,15 @@ describe("resolveManhuaLearnSnapshotSchedule", () => {
     resolveManhuaLearnSnapshotSchedule({
       prev: MANHUA_LEARN_SNAPSHOT_BASELINE_INITIAL,
       seriesKey: "剧A",
-      dataUpdateCount: 0,
+      updateCount: 0,
       active: true,
-      hidden: false,
       ...over,
     });
 
   it("换剧时基线跟着换归属，不拿上一部剧的基线去减这一部的计数", () => {
     // 剧A 已经退到很后面；切到剧B 时它自己的缓存条目计数是 40
     const prev = { seriesKey: "剧A", baseline: 3 };
-    const { next, intervalMs } = run({ prev, seriesKey: "剧B", dataUpdateCount: 40 });
+    const { next, intervalMs } = run({ prev, seriesKey: "剧B", updateCount: 40 });
     expect(next).toEqual({ seriesKey: "剧B", baseline: 40 });
     // 不换归属的话 rounds 会是 37，直接跳 60 秒封顶
     expect(intervalMs).toBe(MANHUA_LEARN_IDLE_BASE_MS);
@@ -160,18 +156,18 @@ describe("resolveManhuaLearnSnapshotSchedule", () => {
 
   it("同一部剧内按差值退避", () => {
     const prev = { seriesKey: "剧A", baseline: 10 };
-    expect(run({ prev, dataUpdateCount: 10, seriesKey: "剧A" }).intervalMs)
+    expect(run({ prev, updateCount: 10, seriesKey: "剧A" }).intervalMs)
       .toBe(MANHUA_LEARN_IDLE_BASE_MS);
-    expect(run({ prev, dataUpdateCount: 13, seriesKey: "剧A" }).intervalMs)
+    expect(run({ prev, updateCount: 13, seriesKey: "剧A" }).intervalMs)
       .toBeGreaterThan(MANHUA_LEARN_IDLE_BASE_MS);
-    expect(run({ prev, dataUpdateCount: 60, seriesKey: "剧A" }).intervalMs)
+    expect(run({ prev, updateCount: 60, seriesKey: "剧A" }).intervalMs)
       .toBe(MANHUA_LEARN_IDLE_MAX_MS);
   });
 
   it("没有活跃任务时不轮询，并把基线归到当前计数", () => {
     const { next, intervalMs } = run({
       prev: { seriesKey: "剧A", baseline: 2 },
-      dataUpdateCount: 9,
+      updateCount: 9,
       active: false,
     });
     expect(intervalMs).toBe(false);
@@ -180,22 +176,22 @@ describe("resolveManhuaLearnSnapshotSchedule", () => {
 
   it("唤醒哨兵让它从 15 秒重新起退", () => {
     const prev = { seriesKey: "剧A", baseline: MANHUA_LEARN_SNAPSHOT_WAKE_SENTINEL };
-    const { next, intervalMs } = run({ prev, dataUpdateCount: 27 });
+    const { next, intervalMs } = run({ prev, updateCount: 27 });
     expect(next).toEqual({ seriesKey: "剧A", baseline: 27 });
     expect(intervalMs).toBe(MANHUA_LEARN_IDLE_BASE_MS);
   });
 
   it("对同一组入参稳定——值一变 react-query 就重建定时器", () => {
     const prev = { seriesKey: "剧A", baseline: 4 };
-    const a = run({ prev, dataUpdateCount: 7 });
-    const b = run({ prev: a.next, dataUpdateCount: 7 });
+    const a = run({ prev, updateCount: 7 });
+    const b = run({ prev: a.next, updateCount: 7 });
     expect(b.intervalMs).toBe(a.intervalMs);
     expect(b.next).toEqual(a.next);
   });
 
   it("换剧那一次收敛后，紧接着的调用返回同一个值（没有先错后对的中间态）", () => {
-    const first = run({ prev: { seriesKey: "剧A", baseline: 3 }, seriesKey: "剧B", dataUpdateCount: 40 });
-    const second = run({ prev: first.next, seriesKey: "剧B", dataUpdateCount: 40 });
+    const first = run({ prev: { seriesKey: "剧A", baseline: 3 }, seriesKey: "剧B", updateCount: 40 });
+    const second = run({ prev: first.next, seriesKey: "剧B", updateCount: 40 });
     expect(second.intervalMs).toBe(first.intervalMs);
   });
 });
@@ -219,11 +215,46 @@ describe("模块级初值必须冻结", () => {
     const { next } = resolveManhuaLearnSnapshotSchedule({
       prev: MANHUA_LEARN_SNAPSHOT_BASELINE_INITIAL,
       seriesKey: "剧A",
-      dataUpdateCount: 5,
+      updateCount: 5,
       active: true,
-      hidden: false,
     });
     expect(next).not.toBe(MANHUA_LEARN_SNAPSHOT_BASELINE_INITIAL);
     expect(MANHUA_LEARN_SNAPSHOT_BASELINE_INITIAL).toEqual({ seriesKey: "", baseline: 0 });
+  });
+});
+
+describe("列表真的变了就回到最密档", () => {
+  it("任务跑着且有新进展时保持 3 秒，不会一路退到 30 秒", () => {
+    let state: ManhuaLearnSyncState = { tier: "active", rounds: 9 };
+    expect(manhuaLearnSyncDelayMs({ ...state, hidden: false, random: noJitter }))
+      .toBe(MANHUA_LEARN_ACTIVE_MAX_MS);
+    state = nextManhuaLearnSyncState(state, { ok: true, hasActive: true, changed: true });
+    expect(state).toEqual({ tier: "active", rounds: 0 });
+    expect(manhuaLearnSyncDelayMs({ ...state, hidden: false, random: maxJitter }))
+      .toBe(MANHUA_LEARN_ACTIVE_BASE_MS);
+  });
+
+  it("没有新进展才退避——停滞时用户本来就感知不到延迟", () => {
+    let state: ManhuaLearnSyncState = { tier: "active", rounds: 0 };
+    state = nextManhuaLearnSyncState(state, { ok: true, hasActive: true, changed: false });
+    expect(state.rounds).toBe(1);
+    state = nextManhuaLearnSyncState(state, { ok: true, hasActive: true });
+    expect(state.rounds).toBe(2);
+  });
+
+  it("失败仍然不清零：即使这一轮被当成「有变化」也不行", () => {
+    const state = nextManhuaLearnSyncState({ tier: "idle", rounds: 4 }, { ok: false, changed: true });
+    expect(state).toEqual({ tier: "idle", rounds: 5 });
+  });
+});
+
+describe("快照退避要把失败也算进轮次", () => {
+  it("被质询时只数成功会让退避永远不启动", () => {
+    const prev = { seriesKey: "剧A", baseline: 0 };
+    // 成功 0 次、失败 6 次：如果只数成功，rounds 恒为 0、间隔原地不动地一直撞
+    const { intervalMs } = resolveManhuaLearnSnapshotSchedule({
+      prev, seriesKey: "剧A", updateCount: 0 + 6, active: true,
+    });
+    expect(intervalMs).toBe(MANHUA_LEARN_IDLE_MAX_MS);
   });
 });

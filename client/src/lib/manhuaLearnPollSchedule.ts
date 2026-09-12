@@ -18,7 +18,11 @@ export const MANHUA_LEARN_ACTIVE_MAX_MS = 30_000;
 /** 没有任务在跑：起始 15 秒，退到 60 秒封顶 */
 export const MANHUA_LEARN_IDLE_BASE_MS = 15_000;
 export const MANHUA_LEARN_IDLE_MAX_MS = 60_000;
-/** 页面切到后台时的下限：没人看的面板不该继续按前台节奏打接口 */
+/**
+ * 页面切到后台时的下限。**只对自己递归 `setTimeout` 的列表同步有意义**——
+ * react-query 的查询在页面隐藏时本来就不发请求（`refetchIntervalInBackground` 默认关），
+ * 那边不需要也不该判 hidden。
+ */
 export const MANHUA_LEARN_HIDDEN_ACTIVE_MS = 60_000;
 export const MANHUA_LEARN_HIDDEN_IDLE_MS = 120_000;
 
@@ -76,13 +80,19 @@ export function manhuaLearnSyncDelayMs(params: {
  *
  * **请求失败不清零轮次**：被质询时列表接口回的是 HTML、`json()` 必然抛错，
  * 那正是最该退让的时刻；旧写法会退回最密的节奏继续撞墙。
+ *
+ * **列表真的变了则清零**：有新进展就回到 3 秒，停滞才退避。
  */
 export function nextManhuaLearnSyncState(
   prev: ManhuaLearnSyncState,
-  outcome: { ok: boolean; hasActive?: boolean },
+  outcome: { ok: boolean; hasActive?: boolean; changed?: boolean },
 ): ManhuaLearnSyncState {
   if (!outcome.ok) return { tier: prev.tier, rounds: prev.rounds + 1 };
   const tier: ManhuaLearnSyncTier = outcome.hasActive ? "active" : "idle";
+  // 列表真的变了就回到最密档：任务跑着且有进展时保持 3 秒，停滞了才退。
+  // 这样「活跃档也会退到 30 秒」只发生在本来就没有新进展的时候——用户感知不到延迟，
+  // 该省的请求量仍然省下来，比单纯压低封顶值两头都好。
+  if (outcome.changed) return { tier, rounds: 0 };
   return tier === prev.tier
     ? { tier, rounds: prev.rounds + 1 }
     : { tier, rounds: 0 };
@@ -92,8 +102,11 @@ export function nextManhuaLearnSyncState(
  * 同面板的系列快照查询（react-query）的刷新间隔。
  *
  * 必须对同一状态返回稳定值：含 `Math.random()` 会让 react-query 每 render 重建定时器，
- * 该查询第 4 次更新后静默停更——请求量是降了，靠把功能弄坏降的（0912 审查抓到）。
- * 所以这里拿 `dataUpdateCount` 当轮次，不抖动。
+ * 该查询第 4 次更新后静默停更——请求量是降了，靠把功能弄坏降的。所以不抖动。
+ *
+ * 这里**不判页面是否在后台**：react-query 的 `refetchIntervalInBackground` 默认关着，
+ * 页面隐藏时定时器根本不发请求；而这个回调只在 render 与 fetch 完成时重算，
+ * `visibilitychange` 不会触发重算——判了也是拿上一次碰巧的状态，等于随机。
  */
 export type ManhuaLearnSnapshotBaseline = { seriesKey: string; baseline: number };
 /** 冻结理由同 {@link MANHUA_LEARN_SYNC_INITIAL}：共享对象当 useRef 初值，就地改会污染所有实例。 */
@@ -117,25 +130,27 @@ export const MANHUA_LEARN_SNAPSHOT_WAKE_SENTINEL = Number.MAX_SAFE_INTEGER;
 export function resolveManhuaLearnSnapshotSchedule(params: {
   prev: ManhuaLearnSnapshotBaseline;
   seriesKey: string;
-  dataUpdateCount: number;
+  /**
+   * **成功与失败次数之和**。只数成功会漏掉最该退避的那个场景：被质询时接口回的是 HTML、
+   * `json()` 必然抛错，走的是 error 分支，成功计数纹丝不动，退避永远不启动、原地一直撞。
+   */
+  updateCount: number;
   active: boolean;
-  hidden: boolean;
 }): { next: ManhuaLearnSnapshotBaseline; intervalMs: number | false } {
-  const { prev, seriesKey, dataUpdateCount, active, hidden } = params;
-  const rebased: ManhuaLearnSnapshotBaseline = { seriesKey, baseline: dataUpdateCount };
+  const { prev, seriesKey, updateCount, active } = params;
+  const rebased: ManhuaLearnSnapshotBaseline = { seriesKey, baseline: updateCount };
   // 换剧、没有活跃任务、或基线被唤醒顶成哨兵，三种情况都重新以当前计数为基线
-  if (prev.seriesKey !== seriesKey || !active || prev.baseline > dataUpdateCount) {
-    return { next: rebased, intervalMs: active ? manhuaLearnSnapshotIntervalMs(0, hidden) : false };
+  if (prev.seriesKey !== seriesKey || !active || prev.baseline > updateCount) {
+    return { next: rebased, intervalMs: active ? manhuaLearnSnapshotIntervalMs(0) : false };
   }
-  const rounds = dataUpdateCount - prev.baseline;
-  return { next: prev, intervalMs: manhuaLearnSnapshotIntervalMs(rounds, hidden) };
+  const rounds = updateCount - prev.baseline;
+  return { next: prev, intervalMs: manhuaLearnSnapshotIntervalMs(rounds) };
 }
 
-export function manhuaLearnSnapshotIntervalMs(dataUpdateCount: number, hidden = false): number {
-  const rounds = Math.max(0, Math.floor(dataUpdateCount));
-  const grown = Math.min(
+export function manhuaLearnSnapshotIntervalMs(updateCount: number): number {
+  const rounds = Math.max(0, Math.floor(updateCount));
+  return Math.min(
     MANHUA_LEARN_IDLE_MAX_MS,
     Math.round(MANHUA_LEARN_IDLE_BASE_MS * GROWTH ** rounds),
   );
-  return hidden ? Math.max(grown, MANHUA_LEARN_HIDDEN_IDLE_MS) : grown;
 }

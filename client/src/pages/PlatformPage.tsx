@@ -388,6 +388,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import {
+  type ManhuaLearnSyncState,
   MANHUA_LEARN_SNAPSHOT_BASELINE_INITIAL,
   MANHUA_LEARN_SNAPSHOT_WAKE_SENTINEL,
   MANHUA_LEARN_SYNC_INITIAL,
@@ -2525,10 +2526,10 @@ export default function PlatformPage() {
       // 采集器关着时状态只会因为用户自己点这个开关而变，而那个 mutation 成功后本来就会
       // 主动 refetch 一次——所以关着就完全不轮询（用户确认：视频号采集从未开启）。
       // 开着时才需要盯心跳与安全熔断；页面切到后台再放缓一档。
-      refetchInterval: (query) => {
-        if (!query.state.data?.capture.enabled) return false;
-        return isPageHidden() ? 120_000 : 15_000;
-      },
+      // 采集器关着时状态只会因为用户自己点这个开关而变，而那个 mutation 成功后本来就会
+      // 主动 refetch 一次——所以关着就完全不轮询（用户确认：视频号采集长期没开）。
+      // 不判后台：react-query 在页面隐藏时本就不发请求，而这个回调也不会因切换可见性重算。
+      refetchInterval: (query) => (query.state.data?.capture.enabled ? 15_000 : false),
       refetchOnWindowFocus: false,
       retry: false,
     },
@@ -3891,7 +3892,10 @@ export default function PlatformPage() {
     // 唤醒标记：唤醒时若正好有一条 sync 在途，它的 finally 会拿「发请求时还没有新任务」
     // 的回包把刚置好的活跃档覆盖掉，唤醒就静默作废了。用这个标记让在途那条认账。
     let wakePending = false;
-    let state = MANHUA_LEARN_SYNC_INITIAL;
+    // 上一轮列表的指纹：用来判断「这一轮真的有新进展」——有进展就回到最密档，
+    // 停滞才退避。否则活跃档也会一路退到 30 秒，任务跑着进度却半分钟才跳一次。
+    let lastSignature = "";
+    let state: ManhuaLearnSyncState = MANHUA_LEARN_SYNC_INITIAL;
     const schedule = () => {
       if (disposed) return;
       if (timer !== undefined) window.clearTimeout(timer);
@@ -3907,9 +3911,15 @@ export default function PlatformPage() {
       inFlight = true;
       let ok = false;
       let hasActive = false;
+      let changed = false;
       try {
         const listed = await refreshManhuaLearnServerJobs();
         hasActive = listed.items.some((job) => job.status === "queued" || job.status === "running");
+        const signature = listed.items
+          .map((job) => `${job.jobId}:${job.status}:${job.updatedAt ?? ""}`)
+          .join("|");
+        changed = signature !== lastSignature;
+        lastSignature = signature;
         ok = true;
       } catch (error) {
         if (!disposed) console.warn("[manhua-learn] refresh server jobs failed", error);
@@ -3923,7 +3933,7 @@ export default function PlatformPage() {
           } else {
             // 失败不清零轮次：被 Vercel 质询时这里回的是 HTML、json() 必然抛错，
             // 那正是最该退让的时刻，退回最密的节奏只会继续撞墙。
-            state = nextManhuaLearnSyncState(state, { ok, hasActive });
+            state = nextManhuaLearnSyncState(state, { ok, hasActive, changed });
           }
           schedule();
         }
@@ -3942,10 +3952,18 @@ export default function PlatformPage() {
       if (timer !== undefined) window.clearTimeout(timer);
       timer = window.setTimeout(() => void sync(), 800);
     };
+    // 回前台唤醒：这个 effect 自己递归 setTimeout，不受 react-query 的可见性门管束，
+    // 后台会一路退到 120 秒。没有这一条，用户切走再切回来最长要等两分钟列表才动，
+    // 比改前的恒定 15 秒还糟——退避必须配唤醒，这是其中最容易漏的一处。
+    const onVisibilityChange = () => {
+      if (!isPageHidden()) manhuaLearnWakeRef.current?.();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
     void sync();
     return () => {
       disposed = true;
       manhuaLearnWakeRef.current = null;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [refreshManhuaLearnServerJobs, hasSupervisorOpsAccess, trendInsightTab, user?.id, bumpManhuaLearnSnapshotBaseline]);
@@ -4084,9 +4102,9 @@ export default function PlatformPage() {
         const { next, intervalMs } = resolveManhuaLearnSnapshotSchedule({
           prev: manhuaLearnSnapshotBaselineRef.current,
           seriesKey: manhuaLearnFocusSeriesKey,
-          dataUpdateCount: query.state.dataUpdateCount,
+          // 成功 + 失败：被质询时走的是 error 分支，只数成功会让退避永远不启动
+          updateCount: query.state.dataUpdateCount + query.state.errorUpdateCount,
           active: focusedManhuaLearnJobActive,
-          hidden: isPageHidden(),
         });
         manhuaLearnSnapshotBaselineRef.current = next;
         return intervalMs;

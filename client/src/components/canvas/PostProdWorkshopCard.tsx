@@ -5,7 +5,6 @@
  * 未接通的工序(改画面保声/重拍一镜)按反空壳约定画成灰禁用,不冒充可用。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { isPageHidden } from "@/lib/manhuaLearnPollSchedule";
 import { toast } from "sonner";
 import { Film, Layers, Loader2,
   Maximize2,
@@ -274,11 +273,12 @@ export default function PostProdWorkshopCard({
       retry: false,
       // 0912：原本恒定 5 秒、没有「有任务在跑」的门，720 次/小时。
       // 有任务才需要秒级反馈；没有任务时靠切回窗口刷新即可。
+      // 不判后台：react-query 在页面隐藏时本就不发请求，而这个回调只在 render 与
+      // fetch 完成时重算，切换可见性不会触发重算——判了也是拿上一次碰巧的状态。
       refetchInterval: (query) => {
         const rows = query.state.data;
         const running = Array.isArray(rows)
           && rows.some((row) => row.status === "queued" || row.status === "running");
-        if (isPageHidden()) return running ? 30_000 : false;
         return running ? 5_000 : 60_000;
       },
       refetchOnWindowFocus: true,
