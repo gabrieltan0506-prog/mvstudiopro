@@ -1,3 +1,4 @@
+import { isPublicRenderObjectPath, signPublicRenderMediaRedirect } from "../server/services/publicRenderMedia.js";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import fs from "node:fs/promises";
 import crypto from "node:crypto";
@@ -6,7 +7,8 @@ import { resolveManhuaAssembleAccess } from "../server/services/manhuaAssembleAc
 import { CREDIT_COSTS } from "../server/plans.js";
 import type { PaidJobDeductSnapshot } from "../server/services/paidJobLedger.js";
 import sharp from "sharp";
-import { get, put } from "@vercel/blob";
+import { get as getLegacyPublicBlob } from "@vercel/blob";
+import { putPublicStoredMedia as put, isPublicStoredObjectPath, signPublicStoredMediaRedirect } from "../server/services/publicStoredMedia";
 import { env, getEnvStatus } from "../server/vercel-api-core/env.js";
 import { renderWorkflowFinalVideo } from "../server/vercel-api-core/render.js";
 import { generateImageWithBanana } from "../server/vercel-api-core/banana.js";
@@ -111,9 +113,6 @@ async function uploadWorkflowImageToBlob(imageUrl: string, filenameBase = "workf
   const sourceUrl = s(imageUrl).trim();
   if (!sourceUrl) throw new Error("missing_image_url");
 
-  const token = s(process.env.MVSP_READ_WRITE_TOKEN).trim();
-  if (!token) throw new Error("missing_env_MVSP_READ_WRITE_TOKEN");
-
   const asset = await fetchImageAsset(sourceUrl);
   const safeName = filenameBase.replace(/[^a-zA-Z0-9_-]+/g, "-") || "workflow-scene";
   let out = asset.buffer;
@@ -152,7 +151,6 @@ async function uploadWorkflowImageToBlob(imageUrl: string, filenameBase = "workf
 
   const blob = await put(`refs/${Date.now()}-${safeName}.${ext}`, out, {
     access: "public",
-    token,
     contentType,
   });
   return buildBlobMediaUrlFromPath(s(blob.pathname).trim());
@@ -170,9 +168,6 @@ async function uploadWorkflowImagesToBlob(imageUrls: string[], filenameBase: str
 async function uploadWorkflowAudioToBlob(sourceUrl: string, filenameBase = "workflow-audio") {
   const target = s(sourceUrl).trim();
   if (!target) throw new Error("missing_audio_url");
-
-  const token = s(process.env.MVSP_READ_WRITE_TOKEN).trim();
-  if (!token) throw new Error("missing_env_MVSP_READ_WRITE_TOKEN");
 
   const resp = await fetch(target, {
     redirect: "follow",
@@ -193,7 +188,6 @@ async function uploadWorkflowAudioToBlob(sourceUrl: string, filenameBase = "work
   const safeName = filenameBase.replace(/[^a-zA-Z0-9_-]+/g, "-") || "workflow-audio";
   const blob = await put(`music/${Date.now()}-${safeName}.${ext}`, buffer, {
     access: "public",
-    token,
     contentType,
   });
   return buildBlobMediaUrlFromPath(s(blob.pathname).trim());
@@ -396,16 +390,10 @@ async function generateSceneVoice(input: { dialogueText: string; voicePrompt?: s
     }
 
     const blobKey = `voices/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${synthesized.extension}`;
-    const blob = env.mvspReadWriteToken
-      ? await put(blobKey, synthesized.audioBuffer, {
-          access: "public",
-          contentType: synthesized.contentType,
-          token: env.mvspReadWriteToken,
-        })
-      : await put(blobKey, synthesized.audioBuffer, {
-          access: "public",
-          contentType: synthesized.contentType,
-        });
+    const blob = await put(blobKey, synthesized.audioBuffer, {
+      access: "public",
+      contentType: synthesized.contentType,
+    });
 
     return {
       voiceProvider: synthesized.provider,
@@ -1874,115 +1862,53 @@ function buildBlobMediaUrlFromPath(pathname: string) {
   return `${getPublicAssetBaseUrl()}/api/jobs?op=blobMedia&blobPath=${encodeURIComponent(normalized)}`;
 }
 
+/** 旧公开媒体只读兼容；新产物继续写入 GCS，令牌始终只在服务端使用。 */
 async function proxyBlobAssetByPath(pathname: string) {
-  const normalizedPath = s(pathname).replace(/^\/+/, "").trim();
-  if (!normalizedPath) throw new Error("blobPath is required");
-  const tokens = Array.from(
-    new Set(
-      [
-        env.mvspReadWriteToken,
-        process.env.MVSP_READ_WRITE_TOKEN,
-        process.env.BLOB_READ_WRITE_TOKEN,
-      ].map((value) => s(value).trim()).filter(Boolean),
-    ),
-  );
-  if (!tokens.length) throw new Error("MVSP_READ_WRITE_TOKEN is required for blob proxy");
-  const errors: string[] = [];
-
+  const target = s(pathname).trim().replace(/^\/+/, "");
+  if (!target) throw new Error("legacy_media_unavailable");
+  // URL 入口只允许公开 Blob 主机，不能借旧媒体兼容读取私有对象或转发令牌。
+  if (/^[a-z][a-z0-9+.-]*:/i.test(target)) {
+    const url = new URL(target);
+    if (url.protocol !== "https:" || !/^[a-z0-9-]+\.public\.blob\.vercel-storage\.com$/i.test(url.hostname)
+      || url.username || url.password || url.port) throw new Error("legacy_media_unavailable");
+  }
+  const tokens = Array.from(new Set([env.mvspReadWriteToken, process.env.MVSP_READ_WRITE_TOKEN,
+    process.env.BLOB_READ_WRITE_TOKEN].map(value => s(value).trim()).filter(Boolean)));
+  if (!tokens.length) throw new Error("legacy_media_unavailable");
+  const abortSignal = AbortSignal.timeout(30_000);
+  let uncertain = false;
   for (const token of tokens) {
     try {
-      const byPath = await get(normalizedPath, { token, access: "public" });
-      const statusCode = byPath?.statusCode ?? 0;
-      if (byPath && statusCode === 200 && byPath.stream) {
-        return {
-          buffer: Buffer.from(await new Response(byPath.stream).arrayBuffer()),
-          contentType: byPath.blob.contentType || "application/octet-stream",
-          cacheControl: byPath.blob.cacheControl || "public, max-age=300",
-        };
-      }
-      errors.push(`get-path:${statusCode}`);
-    } catch (error: any) {
-      errors.push(`get-path:${error?.message || String(error)}`);
+      const asset = await getLegacyPublicBlob(target, { token, access: "public", useCache: true, abortSignal });
+      if (asset === null) continue;
+      if (asset.statusCode !== 200 || !asset.stream) { uncertain = true; continue; }
+      return {
+        buffer: Buffer.from(await new Response(asset.stream).arrayBuffer()),
+        contentType: asset.blob.contentType || "application/octet-stream",
+        cacheControl: asset.blob.cacheControl || "public, max-age=300",
+      };
+    } catch {
+      // 不把上游错误、令牌或 URL 放进公开响应；一个 store 失败仍可查另一 store。
+      uncertain = true;
+      if (abortSignal.aborted) break;
     }
   }
-
-  throw new Error(`blob_path_proxy_failed:${errors.join("|")}`);
+  if (uncertain) throw new Error("legacy_media_unavailable");
+  return null;
 }
 
-async function proxyBlobAsset(url: string) {
+/** 普通远端取图沿用 fetch；旧 Blob URL 通过受限的公开读取兼容入口。 */
+async function fetchRemoteAsset(url: string) {
   const target = s(url).trim();
   if (!target) throw new Error("url is required");
-  if (!/\.blob\.vercel-storage\.com\//i.test(target)) {
-    const response = await fetch(target, { redirect: "follow" });
-    if (!response.ok) throw new Error(`asset_fetch_failed:${response.status}`);
-    return {
-      buffer: Buffer.from(await response.arrayBuffer()),
-      contentType: response.headers.get("content-type") || "application/octet-stream",
-      cacheControl: response.headers.get("cache-control") || "public, max-age=300",
-    };
-  }
-  const tokens = Array.from(
-    new Set(
-      [
-        env.mvspReadWriteToken,
-        process.env.MVSP_READ_WRITE_TOKEN,
-        process.env.BLOB_READ_WRITE_TOKEN,
-      ].map((value) => s(value).trim()).filter(Boolean),
-    ),
-  );
-  if (!tokens.length) throw new Error("MVSP_READ_WRITE_TOKEN is required for blob proxy");
-  const errors: string[] = [];
-
-  for (const token of tokens) {
-    try {
-      const direct = await fetch(target, {
-        headers: { authorization: `Bearer ${token}` },
-        redirect: "follow",
-      });
-      if (direct.ok) {
-        return {
-          buffer: Buffer.from(await direct.arrayBuffer()),
-          contentType: direct.headers.get("content-type") || "application/octet-stream",
-          cacheControl: direct.headers.get("cache-control") || "public, max-age=300",
-        };
-      }
-      errors.push(`direct:${direct.status}`);
-    } catch (error: any) {
-      errors.push(`direct:${error?.message || String(error)}`);
-    }
-
-    try {
-      const byUrl = await get(target, { token, access: "public" });
-      const statusCode = byUrl?.statusCode ?? 0;
-      if (byUrl && statusCode === 200 && byUrl.stream) {
-        return {
-          buffer: Buffer.from(await new Response(byUrl.stream).arrayBuffer()),
-          contentType: byUrl.blob.contentType || "application/octet-stream",
-          cacheControl: byUrl.blob.cacheControl || "public, max-age=300",
-        };
-      }
-      errors.push(`get-url:${statusCode}`);
-    } catch (error: any) {
-      errors.push(`get-url:${error?.message || String(error)}`);
-    }
-
-    try {
-      const byPath = await get(getBlobPathname(target), { token, access: "public" });
-      const statusCode = byPath?.statusCode ?? 0;
-      if (byPath && statusCode === 200 && byPath.stream) {
-        return {
-          buffer: Buffer.from(await new Response(byPath.stream).arrayBuffer()),
-          contentType: byPath.blob.contentType || "application/octet-stream",
-          cacheControl: byPath.blob.cacheControl || "public, max-age=300",
-        };
-      }
-      errors.push(`get-path:${statusCode}`);
-    } catch (error: any) {
-      errors.push(`get-path:${error?.message || String(error)}`);
-    }
-  }
-
-  throw new Error(`blob_proxy_failed:${errors.join("|")}`);
+  if (/\.blob\.vercel-storage\.com\//i.test(target)) return proxyBlobAssetByPath(target);
+  const response = await fetch(target, { redirect: "follow" });
+  if (!response.ok) throw new Error(`asset_fetch_failed:${response.status}`);
+  return {
+    buffer: Buffer.from(await response.arrayBuffer()),
+    contentType: response.headers.get("content-type") || "application/octet-stream",
+    cacheControl: response.headers.get("cache-control") || "public, max-age=300",
+  };
 }
 
 function callGeminiScriptGateway(prompt: string) {
@@ -2524,17 +2450,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
       const blobPath = s(q.blobPath || b.blobPath).trim();
+      if (blobPath.startsWith("gcs-public/")) {
+        if (!isPublicStoredObjectPath(blobPath)) {
+          return res.status(400).json({ ok: false, error: "invalid_media_path" });
+        }
+        res.setHeader("Cache-Control", "no-store");
+        res.setHeader("Location", signPublicStoredMediaRedirect(blobPath));
+        return res.status(302).end();
+      }
       if (blobPath) {
-        const asset = await proxyBlobAssetByPath(blobPath);
-        res.setHeader("Content-Type", asset.contentType);
-        res.setHeader("Cache-Control", asset.cacheControl);
-        return res.status(200).send(asset.buffer);
+        if (blobPath.startsWith("gcs-renders/")) {
+          if (!isPublicRenderObjectPath(blobPath)) {
+            return res.status(400).json({ ok: false, error: "invalid_public_render_path" });
+          }
+          res.setHeader("Cache-Control", "no-store");
+          res.setHeader("Location", signPublicRenderMediaRedirect(blobPath));
+          return res.status(302).end();
+        }
+        try {
+          const asset = await proxyBlobAssetByPath(blobPath);
+          if (!asset) return res.status(410).json({ ok: false, error: "media_not_found" });
+          res.setHeader("Content-Type", asset.contentType);
+          res.setHeader("Cache-Control", asset.cacheControl);
+          return res.status(200).send(asset.buffer);
+        } catch {
+          return res.status(503).json({ ok: false, error: "legacy_media_unavailable" });
+        }
       }
       const targetUrl = s(q.url || b.url).trim();
       if (!targetUrl) {
         return res.status(400).json({ ok: false, error: "url or blobPath is required" });
       }
-      const asset = await proxyBlobAsset(targetUrl);
+      const asset = await fetchRemoteAsset(targetUrl);
+      if (!asset) return res.status(410).json({ ok: false, error: "media_not_found" });
       res.setHeader("Content-Type", asset.contentType);
       res.setHeader("Cache-Control", asset.cacheControl);
       return res.status(200).send(asset.buffer);

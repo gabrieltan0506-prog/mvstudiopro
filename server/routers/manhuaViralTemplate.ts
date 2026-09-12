@@ -154,13 +154,24 @@ export const manhuaViralTemplateRouter = router({
 
   /** owner 全量（真名/来源/出处可见；其他监管角色也不可读取） */
   listApprovedPrivate: protectedProcedure
-    .query(async ({ ctx }) => {
+    .input(z.object({ compact: z.boolean().optional() }).optional())
+    .query(async ({ ctx, input }) => {
       assertSiteOwner(ctx.user);
       try {
-        const { listMergedApprovedManhuaViralTemplatesGrouped } = await import(
-          "../services/manhuaViralTemplateStore"
-        );
-        return { groups: await listMergedApprovedManhuaViralTemplatesGrouped() };
+        const [{ listMergedApprovedManhuaViralTemplatesGrouped }, { toManhuaViralTemplateListItem }] =
+          await Promise.all([
+            import("../services/manhuaViralTemplateStore"),
+            import("../../shared/manhuaViralTemplateBank"),
+          ]);
+        const groups = await listMergedApprovedManhuaViralTemplatesGrouped();
+        // 旧页面依靠整卡字段判断原生卡；只有主动选择精简响应的新页面才投影。
+        if (input?.compact !== true) return { groups };
+        return {
+          groups: groups.map((group) => ({
+            laneZh: group.laneZh,
+            items: group.items.map(toManhuaViralTemplateListItem),
+          })),
+        };
       } catch (e) {
         console.warn(
           "[manhuaViralTemplate.listApprovedPrivate] gcs failed, return empty:",

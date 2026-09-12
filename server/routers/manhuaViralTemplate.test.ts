@@ -4,7 +4,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TrpcContext } from "../_core/context";
-import type { ManhuaViralTemplateCard } from "../../shared/manhuaViralTemplateBank";
+import { isNativeVideoLearnedTemplate, type ManhuaViralTemplateCard, type ManhuaViralTemplateListItem } from "../../shared/manhuaViralTemplateBank";
 
 const secretCard = {
   id: "tpl_series_deadbeef0001",
@@ -275,6 +275,48 @@ describe("listApprovedPrivate：owner-only 鉴权矩阵", () => {
     const caller = (await loadRouter()).createCaller(makeCtx("user", undefined, "owner-open-id"));
     expect(JSON.stringify(await caller.listApprovedPrivate())).toContain("某爆款剧真名节奏");
     expect(JSON.stringify(await caller.listApprovedGcsOnly())).toContain("某爆款剧真名节奏");
+  });
+
+  it("列表只下发列表用得到的字段，整卡的重字段不随列表下发", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const caller = (await loadRouter()).createCaller(makeCtx("user", undefined, "owner-open-id"));
+    const listed = JSON.stringify(await caller.listApprovedPrivate({ compact: true }));
+
+    // 列表要用的：卡名与一句话用途照常下发
+    expect(listed).toContain("某爆款剧真名节奏");
+    expect(listed).toContain("SECRET_SUMMARY");
+
+    // 列表用不到的重字段：逐个确认没跟着走
+    for (const marker of [
+      "SECRET_HOOK",        // hook3sZh
+      "SECRET_STORY",       // storyStructure
+      "SECRET_CONFLICT",
+      "SECRET_RELATION",
+      "SECRET_PROGRESS",
+      "SECRET_VARIATION",
+      "SECRET_BEAT",        // beatGrid
+      "SECRET_VISUAL",
+      "秘密原帧",            // evidenceFrames
+    ]) {
+      expect(listed).not.toContain(marker);
+    }
+
+    // 同一份数据走整卡接口时仍然完整——瘦身只发生在列表这一条路径上
+    const full = JSON.stringify(await caller.listApprovedGcsOnly());
+    expect(full).toContain("SECRET_BEAT");
+    // 未刷新的旧页面仍能用完整卡字段判定，避免将原生卡误选进批量下架。
+    const { listMergedApprovedManhuaViralTemplatesGrouped } = await import("../services/manhuaViralTemplateStore");
+    const nativeCard = { ...secretCard, reusableZh: "原生镜头手法" };
+    vi.mocked(listMergedApprovedManhuaViralTemplatesGrouped)
+      .mockResolvedValueOnce([{ laneZh: "爽文逆袭", items: [nativeCard, noCodeCard] }])
+      .mockResolvedValueOnce([{ laneZh: "爽文逆袭", items: [nativeCard, noCodeCard] }]);
+    const legacy = await caller.listApprovedPrivate();
+    const explicitFull = await caller.listApprovedPrivate({ compact: false });
+    expect(JSON.stringify(legacy)).toContain("SECRET_BEAT");
+    expect(explicitFull).toEqual(legacy);
+    expect(legacy.groups.flatMap<ManhuaViralTemplateCard | ManhuaViralTemplateListItem>((g) => g.items).map((card) => isNativeVideoLearnedTemplate(card as ManhuaViralTemplateCard)))
+      .toEqual([true, false]);
+
   });
 });
 

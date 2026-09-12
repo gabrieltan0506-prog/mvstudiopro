@@ -107,7 +107,7 @@ import {
   skipManhuaLearnServerEpisode,
   type ManhuaLearnServerJob,
 } from "@/lib/jobs";
-import { flattenManhuaTemplateClassification, isNativeVideoLearnedTemplate } from "@shared/manhuaViralTemplateBank";
+import { flattenManhuaTemplateClassification, isNativeManhuaViralTemplateListItem, type ManhuaViralTemplateListItem } from "@shared/manhuaViralTemplateBank";
 import {
   buildApprovedNativeTemplateBadge,
   buildPendingNativeTemplateProgressCopy,
@@ -387,6 +387,17 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
+import {
+  type ManhuaLearnSyncState,
+  MANHUA_LEARN_SNAPSHOT_BASELINE_INITIAL,
+  MANHUA_LEARN_SNAPSHOT_WAKE_SENTINEL,
+  MANHUA_LEARN_SYNC_INITIAL,
+  type ManhuaLearnSnapshotBaseline,
+  isPageHidden,
+  manhuaLearnSyncDelayMs,
+  nextManhuaLearnSyncState,
+  resolveManhuaLearnSnapshotRefetch,
+} from "@/lib/manhuaLearnPollSchedule";
 import VoiceInputButton from "@/components/VoiceInputButton";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { copyText, copyTextWithToast } from "@/lib/copyText";
@@ -2510,7 +2521,12 @@ export default function PlatformPage() {
     undefined,
     {
       enabled: canManageWeixinChannelsCollector && isAuthenticated,
-      refetchInterval: 15_000,
+      // 0912：这条原本只 gate 在监管权限 + 登录，页面开着就恒定 15 秒一发。
+      // 采集器关着时状态只会因为用户自己点这个开关而变，而那个 mutation 的 onSuccess
+      // 本来就会 refetch 一次——所以关着就完全不轮询（用户确认：只在当初测试时开过）。
+      // 开着时才需要盯心跳与安全熔断。
+      // 不判后台：react-query 在页面隐藏时本就不发请求，而这个回调也不会因切换可见性重算。
+      refetchInterval: (query) => (query.state.data?.capture.enabled ? 15_000 : false),
       refetchOnWindowFocus: false,
       retry: false,
     },
@@ -3686,6 +3702,25 @@ export default function PlatformPage() {
   }, [pendingManhuaViralProposals, selectedManhuaProposalId]);
 
   const manhuaLearnLagProbeRef = useRef("");
+  /** 轮询退避后的唤醒钩子：入队/停止/重整形/跳过本集之后立刻回到最密档 */
+  const manhuaLearnWakeRef = useRef<null | (() => void)>(null);
+  /**
+   * 快照查询的退避基线。`dataUpdateCount` 是这条 query 缓存条目的累计成功次数，
+   * 只增不减——不重置的话，面板开久了再起新任务，快照开局就是 60 秒封顶。
+   * 这里记下「本段活跃开始时」的计数，退避按差值算。
+   */
+  const manhuaLearnSnapshotBaselineRef = useRef<ManhuaLearnSnapshotBaseline>(
+    MANHUA_LEARN_SNAPSHOT_BASELINE_INITIAL,
+  );
+  const bumpManhuaLearnSnapshotBaseline = useCallback(() => {
+    manhuaLearnSnapshotBaselineRef.current = {
+      ...manhuaLearnSnapshotBaselineRef.current,
+      baseline: MANHUA_LEARN_SNAPSHOT_WAKE_SENTINEL,
+    };
+  }, []);
+  const wakeManhuaLearnSync = useCallback(() => {
+    manhuaLearnWakeRef.current?.();
+  }, []);
   const refreshManhuaLearnServerJobs = useCallback(async () => {
     const requestUserKey = manhuaLearnUserKeyRef.current;
     if (!requestUserKey) return { items: [] as ManhuaLearnServerJob[] };
@@ -3779,8 +3814,10 @@ export default function PlatformPage() {
       toast.error("停止失败", { description: sanitizePlatformUserMessage(error instanceof Error ? error.message : String(error)) });
     } finally {
       setManhuaLearnControlBusy(null);
+      // 写在 finally：降级路径（任务真在跑、只是列表刷新失败）最需要唤醒
+      wakeManhuaLearnSync();
     }
-  }, [manhuaLearnControlBusy, refreshManhuaLearnServerJobs]);
+  }, [manhuaLearnControlBusy, refreshManhuaLearnServerJobs, wakeManhuaLearnSync]);
 
   const restructureManhuaEpisode = useCallback(async (job: ManhuaLearnServerJob, episodeIndex: number, model: ManhuaNativeStructuringModelId) => {
     if (manhuaRestructureBusyRef.current || !ownerTemplateOptimizeAllowed || !user?.id) return;
@@ -3813,8 +3850,9 @@ export default function PlatformPage() {
     } finally {
       manhuaRestructureBusyRef.current = false;
       setManhuaRestructureBusy(false);
+      wakeManhuaLearnSync();
     }
-  }, [manhuaRestructureBusy, ownerTemplateOptimizeAllowed, user?.id, manhuaLearnUserKey, refreshManhuaLearnServerJobs]);
+  }, [manhuaRestructureBusy, ownerTemplateOptimizeAllowed, user?.id, manhuaLearnUserKey, refreshManhuaLearnServerJobs, wakeManhuaLearnSync]);
 
   const stopFocusedManhuaLearnJob = useCallback(async () => {
     const jobId = focusedManhuaLearnServerJob?.jobId || focusedManhuaLearnBasketItem?.jobId;
@@ -3836,8 +3874,9 @@ export default function PlatformPage() {
       toast.error("跳过失败", { description: sanitizePlatformUserMessage(error instanceof Error ? error.message : String(error)) });
     } finally {
       setManhuaLearnControlBusy(null);
+      wakeManhuaLearnSync();
     }
-  }, [focusedManhuaLearnServerJob?.jobId, focusedManhuaLearnServerJob?.status, focusedManhuaLearnBasketItem?.jobId, focusedManhuaLearnBasketItem?.jobStatus, focusedManhuaLearnEpisodeIndex, manhuaLearnControlBusy]);
+  }, [focusedManhuaLearnServerJob?.jobId, focusedManhuaLearnServerJob?.status, focusedManhuaLearnBasketItem?.jobId, focusedManhuaLearnBasketItem?.jobStatus, focusedManhuaLearnEpisodeIndex, manhuaLearnControlBusy, wakeManhuaLearnSync]);
 
   useEffect(() => {
     const allowed = Boolean(
@@ -3846,26 +3885,93 @@ export default function PlatformPage() {
     if (!allowed || trendInsightTab !== "ai_manhua") return;
     let disposed = false;
     let timer: number | undefined;
+    let inFlight = false;
+    // 唤醒标记：唤醒时若正好有一条 sync 在途，它的 finally 会拿「发请求时还没有新任务」
+    // 的回包把刚置好的活跃档覆盖掉，唤醒就静默作废了。用这个标记让在途那条认账。
+    let wakePending = false;
+    // 上一轮列表的指纹：用来判断「这一轮真的有新进展」——有进展就回到最密档，
+    // 停滞才退避。否则活跃档也会一路退到 30 秒，任务跑着进度却半分钟才跳一次。
+    let lastSignature = "";
+    let state: ManhuaLearnSyncState = MANHUA_LEARN_SYNC_INITIAL;
+    const schedule = () => {
+      if (disposed) return;
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(
+        () => void sync(),
+        manhuaLearnSyncDelayMs({ ...state, hidden: isPageHidden() }),
+      );
+    };
     const sync = async () => {
+      // 在途闸：sync 是 async，从发请求到给 timer 赋值之间有空窗。
+      // 此刻若再起一条链，两条从此永久并行，请求量翻倍，每唤醒一次再翻一倍。
+      //
+      // 这里直接 return 不会让链条死掉：在途那条的 finally 只要没 disposed 就一定 schedule()，
+      // 所以最多是这一次不发。**不要**改成在这里置 wakePending——那是「当作用户唤醒」的语义，
+      // 会把档位拉回 3 秒，而定时器撞上在途只是排程重叠，不该加速。
+      // 将来若新增调用点，要保证的是它进来前已判过 inFlight，或由在途那条负责排程。
+      if (disposed || inFlight) return;
+      inFlight = true;
+      let ok = false;
       let hasActive = false;
+      let changed = false;
       try {
         const listed = await refreshManhuaLearnServerJobs();
         hasActive = listed.items.some((job) => job.status === "queued" || job.status === "running");
+        const signature = listed.items
+          .map((job) => `${job.jobId}:${job.status}:${job.updatedAt ?? ""}`)
+          .join("|");
+        changed = signature !== lastSignature;
+        lastSignature = signature;
+        ok = true;
       } catch (error) {
         if (!disposed) console.warn("[manhua-learn] refresh server jobs failed", error);
       } finally {
-        if (!disposed) timer = window.setTimeout(() => void sync(), hasActive ? 3_000 : 15_000);
+        inFlight = false;
+        if (!disposed) {
+          if (wakePending) {
+            // 这一轮在途期间发生过唤醒：以唤醒为准，不让旧回包把档位压回去。
+            wakePending = false;
+            state = { tier: "active", rounds: 0 };
+          } else {
+            // 失败不清零轮次：被 Vercel 质询时这里回的是 HTML、json() 必然抛错，
+            // 那正是最该退让的时刻，退回最密的节奏只会继续撞墙。
+            state = nextManhuaLearnSyncState(state, { ok, hasActive, changed });
+          }
+          schedule();
+        }
       }
     };
+    // 退避之后必须配唤醒：空闲退到 60 秒时点「开始学习」，否则最长要等一分钟进度才动。
+    manhuaLearnWakeRef.current = () => {
+      if (disposed) return;
+      state = { tier: "active", rounds: 0 };
+      bumpManhuaLearnSnapshotBaseline();
+      if (inFlight) {
+        // 在途那条的 finally 会认这个标记并接手排程，这里不抢定时器。
+        wakePending = true;
+        return;
+      }
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(() => void sync(), 800);
+    };
+    // 回前台唤醒：这个 effect 自己递归 setTimeout，不受 react-query 的可见性门管束，
+    // 后台会一路退到 120 秒。没有这一条，用户切走再切回来最长要等两分钟列表才动，
+    // 比改前的恒定 15 秒还糟——退避必须配唤醒，这是其中最容易漏的一处。
+    const onVisibilityChange = () => {
+      if (!isPageHidden()) manhuaLearnWakeRef.current?.();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
     void sync();
     return () => {
       disposed = true;
+      manhuaLearnWakeRef.current = null;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [refreshManhuaLearnServerJobs, hasSupervisorOpsAccess, trendInsightTab, user?.id]);
+  }, [refreshManhuaLearnServerJobs, hasSupervisorOpsAccess, trendInsightTab, user?.id, bumpManhuaLearnSnapshotBaseline]);
   /** owner 专用完整库；先通过能力查询再请求，其他监管账号不会触发私有列表请求。 */
   const manhuaViralApprovedQuery = trpc.manhuaViralTemplate.listApprovedPrivate.useQuery(
-    undefined,
+    { compact: true },
     {
       enabled:
         trendInsightTab === "ai_manhua" &&
@@ -3876,7 +3982,7 @@ export default function PlatformPage() {
   );
   const approvedManhuaTemplateById = useMemo(() => {
     const entries = (manhuaViralApprovedQuery.data?.groups || [])
-      .flatMap((group) => group.items)
+      .flatMap<ManhuaViralTemplateCard | ManhuaViralTemplateListItem>((group) => group.items)
       .map((card) => [card.id, card] as const);
     return new Map(entries);
   }, [manhuaViralApprovedQuery.data?.groups]);
@@ -3991,7 +4097,19 @@ export default function PlatformPage() {
         manhuaLearnFocusSeriesKey.length >= 4 &&
         hasSupervisorOpsAccess,
       staleTime: 15_000,
-      refetchInterval: focusedManhuaLearnJobActive ? 15_000 : false,
+      // 同面板恒定 15 秒的兄弟轮询：四小时任务约 960 次，比列表同步还高近两倍。
+      // 必须返回同一状态下的稳定值——含随机数会让 react-query 每 render 重建定时器，
+      // 该查询第 4 次更新后静默停更（0912 审查抓到的坑）。
+      refetchInterval: (query) => {
+        const { next, intervalMs } = resolveManhuaLearnSnapshotRefetch({
+          prev: manhuaLearnSnapshotBaselineRef.current,
+          seriesKey: manhuaLearnFocusSeriesKey,
+          active: focusedManhuaLearnJobActive,
+          queryState: query.state,
+        });
+        manhuaLearnSnapshotBaselineRef.current = next;
+        return intervalMs;
+      },
       retry: false,
     },
   );
@@ -6253,6 +6371,10 @@ export default function PlatformPage() {
               `${new Date().toISOString()} 任务已接管，列表刷新暂时失败，稍后自动重试`,
             ),
           }) : prev);
+        } finally {
+          // 成功路径也要唤醒：那一次直接刷新只改了列表数据，不会动调度器的档位，
+          // 空闲档退到顶时下一跳最长 75 秒，点完「开始学习」进度会僵着不动。
+          wakeManhuaLearnSync();
         }
         toast.message(reusedExactNativePlan ? "已接管同参数的已有任务" : reused ? "已接管同源已有任务" : "已交给服务器学习", {
           description: reusedExactNativePlan
@@ -6308,6 +6430,7 @@ export default function PlatformPage() {
           } catch {
             // 旧卡已恢复；列表刷新失败时由既有轮询重试，不改写为失败。
           }
+          wakeManhuaLearnSync();
           toast.error("同一来源已有另一组参数的任务", {
             description: `${msg} 可先在面板停止原任务，再按当前设置提交。`,
           });
@@ -14498,8 +14621,9 @@ export default function PlatformPage() {
                                 onClick={() => {
                                   // 一步达：旧抽帧组整组勾上（精读是现役形态，不进批量默认选集）
                                   const legacyIds = (manhuaViralApprovedQuery.data?.groups ?? [])
-                                    .flatMap((g) => g.items)
-                                    .filter((tpl) => !isNativeVideoLearnedTemplate(tpl))
+                                    .flatMap<ManhuaViralTemplateCard | ManhuaViralTemplateListItem>((g) => g.items)
+                                    // 服务端已算好，不再为一个布尔值把 beatGrid/audioStory 整包拉下来
+                                    .filter((tpl) => !isNativeManhuaViralTemplateListItem(tpl))
                                     .map((tpl) => tpl.id);
                                   setBatchArchiveIds(new Set(legacyIds));
                                   setBatchArchiveConfirm(false);
@@ -14612,7 +14736,7 @@ export default function PlatformPage() {
                                         />
                                       ) : null}
                                       <span className="font-semibold">{tpl.nameZh}</span>
-                                      {isNativeVideoLearnedTemplate(tpl) ? (
+                                      {isNativeManhuaViralTemplateListItem(tpl) ? (
                                         <span
                                           title="原生视频精读：含逐镜构图、运镜、角色站位、肢体/道具、微表情、视线呼吸、关系反应、光影与转场证据"
                                           className="shrink-0 rounded border border-cyan-300/45 bg-cyan-400/15 px-1 text-[9px] font-bold text-cyan-100"

@@ -17,6 +17,14 @@ export type DownloadRemoteFileResult = {
 
 /** 从 URL 猜个像样的文件名；签名参数不能进文件名 */
 export function guessRemoteFileName(url: string, fallbackBase: string): string {
+  // 稳定代理把真实文件名放在查询参数；去掉查询前先取回，避免成片下载缺少扩展名。
+  try {
+    const parsed = new URL(url);
+    if (parsed.pathname === "/api/jobs" && parsed.searchParams.get("op")?.toLowerCase() === "blobmedia") {
+      const tail = (parsed.searchParams.get("blobPath") || "").split("/").pop() || "";
+      if (/^[a-zA-Z0-9_-]+\.(mp4|mp3|webm|mov|png|jpg|jpeg|webp)$/i.test(tail)) return tail;
+    }
+  } catch { /* 非绝对地址沿用原文件名推断。 */ }
   const clean = String(url || "").split(/[?#]/)[0] || "";
   const tail = clean.slice(clean.lastIndexOf("/") + 1).trim();
   if (tail && /\.[a-z0-9]{2,5}$/i.test(tail)) return decodeURIComponent(tail);

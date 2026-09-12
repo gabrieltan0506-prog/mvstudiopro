@@ -1,4 +1,4 @@
-import { put } from "@vercel/blob";
+import { putPublicStoredMedia as put } from "../services/publicStoredMedia";
 import { synthesizeVoiceAudio } from "./voiceSynthesis.js";
 
 export async function generateVoiceWithOpenAI(input: {

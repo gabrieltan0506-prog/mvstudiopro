@@ -1,0 +1,22 @@
+name: Vercel 清理器离线验证
+# 真实清理在 Fly 维护窗口内执行；CI 不接收生产凭证、不调用上游、不定时删除。
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/vercel-prune-preview-deployments*"
+      - "scripts/vercelPruneSelect*"
+      - ".github/workflows/vercel-deployment-prune.yml"
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: 纯离线安全回归
+        run: node --test scripts/vercel-prune-preview-deployments.test.mjs

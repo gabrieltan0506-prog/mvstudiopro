@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   mkdtemp: vi.fn(),
 }));
 vi.mock("./renderSourceAudio.js", () => ({ renderSourceAudioFinal: mocks.render }));
-vi.mock("@vercel/blob", () => ({ put: mocks.put }));
+vi.mock("../services/publicRenderMedia.js", () => ({ uploadFileToPublicRenderMedia: mocks.put }));
 vi.mock("node:fs", () => ({ promises: { readFile: mocks.readFile, rm: mocks.rm, mkdtemp: mocks.mkdtemp } }));
 import { renderWorkflowFinalVideo } from "./render";
 
@@ -19,7 +19,7 @@ describe("原声合成的上传与失败清理", () => {
     mocks.mkdtemp.mockResolvedValue("/test-only/manhua-render-job");
     mocks.render.mockResolvedValue("/test-only/manhua-render-job/final.mp4");
     mocks.readFile.mockResolvedValue(Buffer.from("test-media"));
-    mocks.put.mockResolvedValue({ url: "https://test.invalid/final.mp4" });
+    mocks.put.mockResolvedValue("https://test.invalid/final.mp4");
     mocks.rm.mockResolvedValue(undefined);
   });
   afterEach(() => vi.unstubAllEnvs());
@@ -28,7 +28,7 @@ describe("原声合成的上传与失败清理", () => {
     const input = { preserveSourceAudio: true, sceneVideos: [{ sceneIndex: 1, url: "https://test.invalid/input.mp4", duration: "10s" }], resolution: "720x1280" };
     expect(await renderWorkflowFinalVideo(input)).toBe("https://test.invalid/final.mp4");
     expect(mocks.render).toHaveBeenCalledWith(input, { width: 720, height: 1280 }, "/test-only/manhua-render-job");
-    expect(mocks.put).toHaveBeenCalledWith(expect.stringMatching(/^renders\//), Buffer.from("test-media"), expect.objectContaining({ token: "test-key", contentType: "video/mp4" }));
+    expect(mocks.put).toHaveBeenCalledWith("/test-only/manhua-render-job/final.mp4", "rendered-video.mp4");
     expect(mocks.rm).toHaveBeenCalledOnce();
     expect(mocks.rm).toHaveBeenCalledWith("/test-only/manhua-render-job", { recursive: true, force: true });
   });

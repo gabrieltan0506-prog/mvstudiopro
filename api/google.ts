@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { put } from "@vercel/blob";
+import { putPublicStoredMedia as put } from "../server/services/publicStoredMedia";
 import { getVertexAccessToken } from "../server/utils/vertex";
 import { runVertexUpscaleImage, type VertexUpscaleResult } from "../server/services/vertexImage";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "../server/services/gcs";
@@ -158,14 +158,6 @@ async function materializeGeneratedVideo(taskId: string, raw:any) {
   const extracted = extractGeneratedVideo(raw);
   if (!extracted) return { videoUrl: "", materialized: false };
 
-  const token = s(process.env.MVSP_READ_WRITE_TOKEN).trim();
-  if (!token) {
-    return {
-      videoUrl: `data:${extracted.mimeType};base64,${extracted.data}`,
-      materialized: false,
-    };
-  }
-
   const safeTaskId = s(taskId).split("/").pop() || `veo-${Date.now()}`;
   const extension = extracted.mimeType.includes("quicktime")
     ? "mov"
@@ -175,7 +167,6 @@ async function materializeGeneratedVideo(taskId: string, raw:any) {
 
   const blob = await put(`videos/${Date.now()}-${safeTaskId}.${extension}`, Buffer.from(extracted.data, "base64"), {
     access: "public",
-    token,
     contentType: extracted.mimeType,
   });
 
@@ -1262,12 +1253,10 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
             const download = await fetch(polled.videoUri);
             if (download.ok) {
               const buf = Buffer.from(await download.arrayBuffer());
-              const token = s(process.env.MVSP_READ_WRITE_TOKEN).trim();
-              if (token && buf.length) {
+              if (buf.length) {
                 const safeTaskId = taskId.split("/").pop() || `omni-${Date.now()}`;
                 const blob = await put(`videos/${Date.now()}-${safeTaskId}.mp4`, buf, {
                   access: "public",
-                  token,
                   contentType: polled.mimeType,
                 });
                 videoUrl = buildBlobMediaUrlFromPath(String(blob.pathname || ""));
@@ -1390,11 +1379,9 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
           const download = await fetch(outputs.videoUri);
           if (download.ok) {
             const buf = Buffer.from(await download.arrayBuffer());
-            const token = s(process.env.MVSP_READ_WRITE_TOKEN).trim();
-            if (token && buf.length) {
+            if (buf.length) {
               const blob = await put(`videos/${Date.now()}-omni-${interactionId.slice(-8)}.mp4`, buf, {
                 access: "public",
-                token,
                 contentType: outputs.videoMimeType,
               });
               videoUrl = buildBlobMediaUrlFromPath(String(blob.pathname || ""));

@@ -1,6 +1,6 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
-import { put } from "@vercel/blob";
+import { uploadFileToPublicRenderMedia } from "../services/publicRenderMedia.js";
 import type { RenderWorkflowInput } from "./renderTypes.js";
 import { renderSourceAudioFinal } from "./renderSourceAudio.js";
 import {
@@ -13,18 +13,6 @@ import {
   resolveSceneClipDurationSec,
 } from "./renderUtils.js";
 
-async function uploadFileToPublicBlob(filePath: string, fileName: string, contentType: string) {
-  const token = String(process.env.MVSP_READ_WRITE_TOKEN || "").trim();
-  if (!token) throw new Error("missing_env_MVSP_READ_WRITE_TOKEN");
-  const buf = await fs.readFile(filePath);
-  const blob = await put(`renders/${Date.now()}-${fileName}`, buf, {
-    access: "public",
-    token,
-    contentType,
-  });
-  return blob.url;
-}
-
 export async function renderWorkflowFinalVideo(input: RenderWorkflowInput) {
   const tmpDir = await makeTempDir();
   const transition = String(input.transition || "cut").trim().toLowerCase();
@@ -32,7 +20,7 @@ export async function renderWorkflowFinalVideo(input: RenderWorkflowInput) {
   if (input.preserveSourceAudio) {
     try {
       const finalPath = await renderSourceAudioFinal(input, size, tmpDir);
-      return await uploadFileToPublicBlob(finalPath, "rendered-video.mp4", "video/mp4");
+      return await uploadFileToPublicRenderMedia(finalPath, "rendered-video.mp4");
     } finally {
       // 此目录由本次合成独占，只含临时媒体；任务回执及模型 JSON 不在此目录。
       await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {
@@ -273,11 +261,11 @@ export async function renderWorkflowFinalVideo(input: RenderWorkflowInput) {
       "128k",
       mergedVoicePath,
     ]);
-    effectiveVoiceUrl = await uploadFileToPublicBlob(mergedVoicePath, "scene-voice-track.mp3", "audio/mpeg");
+    effectiveVoiceUrl = await uploadFileToPublicRenderMedia(mergedVoicePath, "scene-voice-track.mp3");
   }
 
   if (!musicUrl && !effectiveVoiceUrl) {
-    return uploadFileToPublicBlob(mergedPath, "rendered-video.mp4", "video/mp4");
+    return uploadFileToPublicRenderMedia(mergedPath, "rendered-video.mp4");
   }
 
   const cmd = ["-y", "-i", mergedPath];
@@ -370,5 +358,5 @@ export async function renderWorkflowFinalVideo(input: RenderWorkflowInput) {
 
   await runFfmpeg(cmd);
 
-  return uploadFileToPublicBlob(finalPath, "rendered-video.mp4", "video/mp4");
+  return uploadFileToPublicRenderMedia(finalPath, "rendered-video.mp4");
 }

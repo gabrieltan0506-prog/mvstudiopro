@@ -13928,7 +13928,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           return { ok: false as const, error: errMsg };
         }
         const items: Array<{ b64_json?: string; url?: string }> = Array.isArray(json?.data) ? json.data : [];
-        const { put } = await import("@vercel/blob");
+        const { putPublicStoredMedia: put } = await import("./services/publicStoredMedia");
         const imageUrls: string[] = [];
         for (const item of items) {
           if (item.url) { imageUrls.push(item.url); continue; }
@@ -14099,7 +14099,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         }
 
         const items: Array<{ b64_json?: string; url?: string }> = Array.isArray(json?.data) ? json.data : [];
-        const { put } = await import("@vercel/blob");
+        const { putPublicStoredMedia: put } = await import("./services/publicStoredMedia");
         const resultImageUrls: string[] = [];
         for (const item of items) {
           if (item.url) { resultImageUrls.push(item.url); continue; }

@@ -323,6 +323,14 @@ describe("本人上传前缀(第四类放行)", () => {
       ),
     ).rejects.toThrow(/尚未登记/);
   });
+  it("GCS公开稳定产物保持本人任务登记边界，云草稿可保存同一永久URL", async () => {
+    const url = "https://mvstudiopro.com/api/jobs?op=blobMedia&blobPath=gcs-renders%2F12345678-1234-4123-8123-123456789abc%2Frendered-video.mp4";
+    const persisted = JSON.parse(JSON.stringify({ finalVideoUrl: url, videoUrl: url }));
+    expect(collectDeclaredMediaSources(persisted)).toEqual([url]);
+    const d = deps({ loadSucceededJobOutputUrls: vi.fn(async () => new Set([url])) });
+    await expect(resolveRegisteredPostProdMediaSource({ userId: "7", source: url }, d)).resolves.toBe(url);
+    await expect(resolveRegisteredPostProdMediaSource({ userId: "8", source: url }, deps())).rejects.toThrow(/尚未登记/);
+  });
   it("本人 succeeded 任务的 https 产物直链（合成版成片）全等命中才放行；不在集合里的外链仍拒", async () => {
     const d = deps({
       loadSucceededJobOutputObjects: vi.fn(async () => new Set<string>()),
