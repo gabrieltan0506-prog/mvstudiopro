@@ -300,7 +300,11 @@ def _bones_in_frame():
                 for point in (bone.head,bone.tail):
                     p=world_to_camera_view(scene,camera,rig.matrix_world @ point)
                     if p.z<=0: return False
-                    mx,my=radius*kx/p.z,radius*ky/p.z
+                    # 实体厚度也会改变相机深度；r*k/z 只覆盖与成像面平行的圆盘，
+                    # 斜视时会漏掉靠近相机的角点。用四个视锥侧平面的法向长度
+                    # 检查端点包围球，保证整条骨骼胶囊都落在 2% 安全边内。
+                    mx=radius*math.hypot(kx,.48)/p.z
+                    my=radius*math.hypot(ky,.48)/p.z
                     if not (.02 <= p.x-mx and p.x+mx <= .98): return False
                     if not (.02 <= p.y-my and p.y+my <= .98): return False
     return True
