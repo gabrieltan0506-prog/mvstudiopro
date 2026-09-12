@@ -237,6 +237,10 @@ for obj in (camera,camera.data):
 # 只看头脚会判「全在画内」而把手臂切出去，并且报告也看不见（审查实测：两角色 ±1.0m
 # 做 strike，hand 出画 25 帧、forearm 24 帧、upper_arm 17 帧，报告却是 offscreenFrames 全 0）。
 # 收紧是可选的增益，判据必须比报告更严——宁可不收紧，不能切掉手。
+# 已知盲区（审查提示，当前未证实有实例）：这里只采样 bone.tail，不采样 head、不算 mesh 半径。
+# human 的极值点（手尖/脚尖/头顶）恰好都是某根骨的 tail，覆盖完整；horse 的 body 骨 head
+# 在 x=-0.7、半径 .33，实体最远到 x≈-1.03，而最远的腿骨 tail 只到 -0.60，理论上有约 0.4m
+# 够不到的尾部。五个站位探过都是腿骨先触发，造不出反例。以后加形态或改 mesh 半径要重估这里。
 def _bones_in_frame():
     for frame in range(1,scene.frame_end+1):
         scene.frame_set(frame)

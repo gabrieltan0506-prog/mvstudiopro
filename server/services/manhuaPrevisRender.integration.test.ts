@@ -166,7 +166,11 @@ describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("竖屏构图按人数自适�
    */
   it("两角色出手时手臂会被收紧切掉，应当退回原口径而不是谎报全在画内", async () => {
     const strike = await runPrevis("9:16", [-1, 1], "strike");
+    // 钉住 bug 的是这一行：换回只扫头+脚的实现，这里会拿到 "tight"（审查实测复现过）。
     expect(strike.portraitFraming).toBe("auto");
+    // 下面这条**没有区分力**——报告口径本来就只看头+脚，有 bug 的版本同样报零出画
+    //（那正是当初没发现问题的原因）。留着只是声明「退回之后不该出画」，不要当成
+    // 证据面也被钉住了。
     expect(strike.actors.flatMap(a => a.offscreenFrames ?? [])).toEqual([]);
   }, 900_000);
 });
