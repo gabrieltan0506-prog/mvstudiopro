@@ -42,10 +42,19 @@ if [ "$free" -lt "$WANT_FREE" ]; then
   echo "回收后占用：${used}/${LIMIT}（余量 ${free}）"
 fi
 
+# 0912：回收后仍不宽裕就轮转存量归档到日仓（验真后才删旧仓，见脚本头注释）。
+# 每轮限时限量，随每 3 小时的冷备逐步把余量补到 GROWTH_ROTATE_TARGET_FREE。
+if [ "$free" -lt "$WANT_FREE" ] || [ "$free" -lt "${GROWTH_ROTATE_TARGET_FREE:-200}" ]; then
+  bash scripts/growth-release-rotate-legacy-archives.sh     || echo "::warning::存量归档轮转未完成，继续按现有余量判断"
+  used=$(count_assets)
+  free=$((LIMIT - used))
+  echo "轮转后占用：${used}/${LIMIT}（余量 ${free}）"
+fi
+
 if [ "$free" -lt "$MIN_FREE" ]; then
   echo "::error::冷备旧 Release 已满（${used}/${LIMIT}），新增资产会被 GitHub 以 HTTP 422 拒绝。" >&2
-  echo "::error::可回收的旧批次分片已清完，其余是 archive-* 冷存档（Fly 端已删数据的唯一副本，不能删）。" >&2
-  echo "::error::需要人工决定：把固定名资产也迁到新 Release，或把历史归档转存到对象存储后再回收。" >&2
+  echo "::error::批次分片回收与存量归档轮转都没能腾出位置（轮转日志见上）。" >&2
+  echo "::error::请查看轮转 warning 的具体资产；固定名资产迁仓需人工拍板。" >&2
   exit 1
 fi
 echo "容量足够，继续发布"
