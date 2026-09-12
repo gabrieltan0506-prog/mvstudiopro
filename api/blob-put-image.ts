@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { put } from "@vercel/blob";
+import { putPublicStoredMedia as put } from "../server/services/publicStoredMedia";
 
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
 function getBody(req: VercelRequest): any {
@@ -35,15 +35,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!raw.length) return res.status(400).json({ ok: false, error: "empty_file" });
     if (raw.length > 20 * 1024 * 1024) return res.status(400).json({ ok: false, error: "file_too_large_raw" });
 
-    const token = String(process.env.MVSP_READ_WRITE_TOKEN || "").trim();
-    if (!token) return res.status(500).json({ ok: false, error: "missing_env_MVSP_READ_WRITE_TOKEN" });
-
     const contentType = String(m[1] || "image/jpeg").trim() || "image/jpeg";
     const ext = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : contentType.includes("gif") ? "gif" : "jpg";
     const safeName = filename.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9_-]+/g, "-") || "ref";
     const blob = await put(`refs/${Date.now()}-${safeName}.${ext}`, raw, {
       access: "public",
-      token,
       contentType,
     });
 

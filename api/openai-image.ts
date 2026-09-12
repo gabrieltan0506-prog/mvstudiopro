@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { put } from "@vercel/blob";
+import { putPublicStoredMedia as put } from "../server/services/publicStoredMedia";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });

@@ -998,6 +998,72 @@ export function listApprovedManhuaViralTemplates(
   );
 }
 
+/**
+ * owner 私有正式库**列表用**的精简卡（0912 加）。
+ *
+ * 精简响应只服务列表，完整内容仍通过既有详情接口读取。
+ * 不据静态测试推断线上传输量。
+ *
+ * 两个派生判断改在服务端算好：
+ * - `isNativeLearned` 替代前端调 {@link isNativeVideoLearnedTemplate}（它要读 beatGrid /
+ *   audioStory / reusableZh / genPromptHintZh 四个重字段，只为得到一个布尔值）。
+ * - `provenance.nativeVideoDeepRead` 只保留进度徽章要的四项，其余 provenance 不下发。
+ *
+ * 详情仍走各自的单卡接口，列表不再承担「顺带把整卡带过去」的职责。
+ */
+export type ManhuaViralTemplateListItem = {
+  id: string;
+  nameZh: string;
+  summaryZh: string;
+  classification?: ManhuaViralTemplateClassification;
+  /** 是否原生精读形态（服务端算好，替代下发 beatGrid/audioStory/reusableZh/genPromptHintZh） */
+  isNativeLearned: boolean;
+  /** 进度徽章专用；字段名与嵌套形状保持不变，前端读取函数无需改口径 */
+  provenance?: {
+    nativeVideoDeepRead?: {
+      successSegments?: number;
+      attemptedSegments?: number;
+      assemblyComplete?: boolean;
+      completedSegmentIndexes?: number[];
+    };
+  };
+};
+
+/** 整卡 → 列表用精简卡。**只挑不删**：新增重字段不会因为忘记维护而泄漏进列表回包。 */
+export function toManhuaViralTemplateListItem(
+  card: ManhuaViralTemplateCard,
+): ManhuaViralTemplateListItem {
+  const native = card.provenance?.nativeVideoDeepRead;
+  const item: ManhuaViralTemplateListItem = {
+    id: card.id,
+    nameZh: card.nameZh,
+    summaryZh: card.summaryZh,
+    isNativeLearned: isNativeVideoLearnedTemplate(card),
+  };
+  if (card.classification) item.classification = card.classification;
+  if (native) {
+    item.provenance = {
+      nativeVideoDeepRead: {
+        successSegments: native.successSegments,
+        attemptedSegments: native.attemptedSegments,
+        assemblyComplete: native.assemblyComplete,
+        completedSegmentIndexes: native.completedSegmentIndexes,
+      },
+    };
+  }
+  return item;
+}
+
+/** 新页面兼容尚未升级的服务端整卡；不能把字段缺失当成旧抽帧卡。 */
+export function isNativeManhuaViralTemplateListItem(
+  card: ManhuaViralTemplateListItem | ManhuaViralTemplateCard,
+): boolean {
+  if ("isNativeLearned" in card && typeof card.isNativeLearned === "boolean") {
+    return card.isNativeLearned;
+  }
+  return isNativeVideoLearnedTemplate(card as ManhuaViralTemplateCard);
+}
+
 export function listApprovedManhuaViralTemplatesGrouped(
   extras?: readonly ManhuaViralTemplateCard[] | null,
 ): Array<{

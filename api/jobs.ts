@@ -1,3 +1,4 @@
+import { isPublicRenderObjectPath, signPublicRenderMediaRedirect } from "../server/services/publicRenderMedia.js";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import fs from "node:fs/promises";
 import crypto from "node:crypto";
@@ -6,7 +7,8 @@ import { resolveManhuaAssembleAccess } from "../server/services/manhuaAssembleAc
 import { CREDIT_COSTS } from "../server/plans.js";
 import type { PaidJobDeductSnapshot } from "../server/services/paidJobLedger.js";
 import sharp from "sharp";
-import { get, put } from "@vercel/blob";
+import { get } from "@vercel/blob";
+import { putPublicStoredMedia as put, isPublicStoredObjectPath, signPublicStoredMediaRedirect } from "../server/services/publicStoredMedia";
 import { env, getEnvStatus } from "../server/vercel-api-core/env.js";
 import { renderWorkflowFinalVideo } from "../server/vercel-api-core/render.js";
 import { generateImageWithBanana } from "../server/vercel-api-core/banana.js";
@@ -111,9 +113,6 @@ async function uploadWorkflowImageToBlob(imageUrl: string, filenameBase = "workf
   const sourceUrl = s(imageUrl).trim();
   if (!sourceUrl) throw new Error("missing_image_url");
 
-  const token = s(process.env.MVSP_READ_WRITE_TOKEN).trim();
-  if (!token) throw new Error("missing_env_MVSP_READ_WRITE_TOKEN");
-
   const asset = await fetchImageAsset(sourceUrl);
   const safeName = filenameBase.replace(/[^a-zA-Z0-9_-]+/g, "-") || "workflow-scene";
   let out = asset.buffer;
@@ -152,7 +151,6 @@ async function uploadWorkflowImageToBlob(imageUrl: string, filenameBase = "workf
 
   const blob = await put(`refs/${Date.now()}-${safeName}.${ext}`, out, {
     access: "public",
-    token,
     contentType,
   });
   return buildBlobMediaUrlFromPath(s(blob.pathname).trim());
@@ -170,9 +168,6 @@ async function uploadWorkflowImagesToBlob(imageUrls: string[], filenameBase: str
 async function uploadWorkflowAudioToBlob(sourceUrl: string, filenameBase = "workflow-audio") {
   const target = s(sourceUrl).trim();
   if (!target) throw new Error("missing_audio_url");
-
-  const token = s(process.env.MVSP_READ_WRITE_TOKEN).trim();
-  if (!token) throw new Error("missing_env_MVSP_READ_WRITE_TOKEN");
 
   const resp = await fetch(target, {
     redirect: "follow",
@@ -193,7 +188,6 @@ async function uploadWorkflowAudioToBlob(sourceUrl: string, filenameBase = "work
   const safeName = filenameBase.replace(/[^a-zA-Z0-9_-]+/g, "-") || "workflow-audio";
   const blob = await put(`music/${Date.now()}-${safeName}.${ext}`, buffer, {
     access: "public",
-    token,
     contentType,
   });
   return buildBlobMediaUrlFromPath(s(blob.pathname).trim());
@@ -396,16 +390,10 @@ async function generateSceneVoice(input: { dialogueText: string; voicePrompt?: s
     }
 
     const blobKey = `voices/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${synthesized.extension}`;
-    const blob = env.mvspReadWriteToken
-      ? await put(blobKey, synthesized.audioBuffer, {
-          access: "public",
-          contentType: synthesized.contentType,
-          token: env.mvspReadWriteToken,
-        })
-      : await put(blobKey, synthesized.audioBuffer, {
-          access: "public",
-          contentType: synthesized.contentType,
-        });
+    const blob = await put(blobKey, synthesized.audioBuffer, {
+      access: "public",
+      contentType: synthesized.contentType,
+    });
 
     return {
       voiceProvider: synthesized.provider,
@@ -2524,7 +2512,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
       const blobPath = s(q.blobPath || b.blobPath).trim();
+      if (blobPath.startsWith("gcs-public/")) {
+        if (!isPublicStoredObjectPath(blobPath)) {
+          return res.status(400).json({ ok: false, error: "invalid_media_path" });
+        }
+        res.setHeader("Cache-Control", "no-store");
+        res.setHeader("Location", signPublicStoredMediaRedirect(blobPath));
+        return res.status(302).end();
+      }
       if (blobPath) {
+        if (blobPath.startsWith("gcs-renders/")) {
+          if (!isPublicRenderObjectPath(blobPath)) {
+            return res.status(400).json({ ok: false, error: "invalid_public_render_path" });
+          }
+          res.setHeader("Cache-Control", "no-store");
+          res.setHeader("Location", signPublicRenderMediaRedirect(blobPath));
+          return res.status(302).end();
+        }
         const asset = await proxyBlobAssetByPath(blobPath);
         res.setHeader("Content-Type", asset.contentType);
         res.setHeader("Cache-Control", asset.cacheControl);

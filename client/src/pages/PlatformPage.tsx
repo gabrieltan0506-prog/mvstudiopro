@@ -107,7 +107,7 @@ import {
   skipManhuaLearnServerEpisode,
   type ManhuaLearnServerJob,
 } from "@/lib/jobs";
-import { flattenManhuaTemplateClassification, isNativeVideoLearnedTemplate } from "@shared/manhuaViralTemplateBank";
+import { flattenManhuaTemplateClassification, isNativeManhuaViralTemplateListItem, type ManhuaViralTemplateListItem } from "@shared/manhuaViralTemplateBank";
 import {
   buildApprovedNativeTemplateBadge,
   buildPendingNativeTemplateProgressCopy,
@@ -3971,7 +3971,7 @@ export default function PlatformPage() {
   }, [refreshManhuaLearnServerJobs, hasSupervisorOpsAccess, trendInsightTab, user?.id, bumpManhuaLearnSnapshotBaseline]);
   /** owner 专用完整库；先通过能力查询再请求，其他监管账号不会触发私有列表请求。 */
   const manhuaViralApprovedQuery = trpc.manhuaViralTemplate.listApprovedPrivate.useQuery(
-    undefined,
+    { compact: true },
     {
       enabled:
         trendInsightTab === "ai_manhua" &&
@@ -3982,7 +3982,7 @@ export default function PlatformPage() {
   );
   const approvedManhuaTemplateById = useMemo(() => {
     const entries = (manhuaViralApprovedQuery.data?.groups || [])
-      .flatMap((group) => group.items)
+      .flatMap<ManhuaViralTemplateCard | ManhuaViralTemplateListItem>((group) => group.items)
       .map((card) => [card.id, card] as const);
     return new Map(entries);
   }, [manhuaViralApprovedQuery.data?.groups]);
@@ -14621,8 +14621,9 @@ export default function PlatformPage() {
                                 onClick={() => {
                                   // 一步达：旧抽帧组整组勾上（精读是现役形态，不进批量默认选集）
                                   const legacyIds = (manhuaViralApprovedQuery.data?.groups ?? [])
-                                    .flatMap((g) => g.items)
-                                    .filter((tpl) => !isNativeVideoLearnedTemplate(tpl))
+                                    .flatMap<ManhuaViralTemplateCard | ManhuaViralTemplateListItem>((g) => g.items)
+                                    // 服务端已算好，不再为一个布尔值把 beatGrid/audioStory 整包拉下来
+                                    .filter((tpl) => !isNativeManhuaViralTemplateListItem(tpl))
                                     .map((tpl) => tpl.id);
                                   setBatchArchiveIds(new Set(legacyIds));
                                   setBatchArchiveConfirm(false);
@@ -14735,7 +14736,7 @@ export default function PlatformPage() {
                                         />
                                       ) : null}
                                       <span className="font-semibold">{tpl.nameZh}</span>
-                                      {isNativeVideoLearnedTemplate(tpl) ? (
+                                      {isNativeManhuaViralTemplateListItem(tpl) ? (
                                         <span
                                           title="原生视频精读：含逐镜构图、运镜、角色站位、肢体/道具、微表情、视线呼吸、关系反应、光影与转场证据"
                                           className="shrink-0 rounded border border-cyan-300/45 bg-cyan-400/15 px-1 text-[9px] font-bold text-cyan-100"

@@ -1,19 +1,5 @@
 import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { put } from "@vercel/blob";
-import { ENV } from "./_core/env";
-
-function buildLocalDataUrl(
-  data: Buffer | Uint8Array | string,
-  contentType: string,
-): string {
-  if (typeof data === "string") {
-    const isInlineUrl = /^data:|^https?:\/\//.test(data);
-    if (isInlineUrl) return data;
-    return `data:${contentType};base64,${Buffer.from(data).toString("base64")}`;
-  }
-
-  return `data:${contentType};base64,${Buffer.from(data).toString("base64")}`;
-}
+import { putPublicStoredMedia as put } from "./services/publicStoredMedia";
 
 function normalizeKey(relKey: string): string {
   return relKey.replace(/^\/+/, "");
@@ -76,18 +62,8 @@ export async function storagePut(
     };
   }
 
-  const token = String(process.env.MVSP_READ_WRITE_TOKEN || ENV.blobReadWriteToken || "").trim();
-
-  if (!token) {
-    return {
-      key,
-      url: buildLocalDataUrl(data, contentType),
-    };
-  }
-
   const blob = await put(key, body, {
     access: "public",
-    token,
     contentType,
   });
 
