@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NativeDeepReadKeyMoment } from "../../shared/manhuaNativeDeepRead.js";
 import type { ManhuaViralTemplateEvidenceFrame } from "../../shared/manhuaViralTemplateBank.js";
+import { buildManhuaLocalVideoSourceRef, parseManhuaLocalVideoSourceRef } from "../../shared/manhuaLocalVideoUpload.js";
 import { getGcsBucketName, uploadBufferToGcsIfAbsent } from "./gcs.js";
 
 const KEY_MOMENT_FRAME_MAX_CONCURRENCY = 4;
@@ -26,6 +27,9 @@ type UploadFrame = (params: {
 }) => Promise<{ created: boolean; generation?: string }>;
 
 export type NativeKeyMomentFrameDeps = {
+  resolveLocalUpload?: (input: { userId: string; uploadId: string }) => Promise<{
+    localPath: string; sourceRef: string; sha256: string;
+  }>;
   runFfmpeg: (args: string[], abortSignal?: AbortSignal) => Promise<void>;
   makeTempDir: () => Promise<string>;
   readFrame: (path: string) => Promise<Buffer>;
@@ -52,6 +56,10 @@ function runFfmpeg(args: string[], abortSignal?: AbortSignal): Promise<void> {
 }
 
 const defaultDeps: NativeKeyMomentFrameDeps = {
+  resolveLocalUpload: async (input) => {
+    const { resolveOwnedManhuaLocalVideoUpload } = await import("./manhuaLocalVideoUploadService.js");
+    return resolveOwnedManhuaLocalVideoUpload(input);
+  },
   runFfmpeg,
   makeTempDir: () => mkdtemp(join(tmpdir(), "native-key-moments-")),
   readFrame: readFile,
@@ -107,9 +115,13 @@ export function buildNativeKeyMomentFrameArgs(input: {
   atSec: number;
   outputPath: string;
   seek: "fast" | "accurate";
+  trustedLocalSource?: boolean;
 }): string[] {
   const seekArgs = ["-ss", String(input.atSec)];
-  const sourceArgs = [...mediaInputArgs(input.node), "-i", input.node.url];
+  const sourceArgs = [
+    ...(input.trustedLocalSource ? ["-protocol_whitelist", "file,pipe"] : mediaInputArgs(input.node)),
+    "-i", input.node.url,
+  ];
   return [
     "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
     ...(input.seek === "fast" ? [...seekArgs, ...sourceArgs] : [...sourceArgs, ...seekArgs]),
@@ -163,12 +175,22 @@ export async function extractNativeKeyMomentEvidenceFrames(input: {
   episodeIndex: number;
   sourceDigest?: string;
   mediaNodes: readonly NativeKeyMomentFrameMediaNode[];
+  localVideoUpload?: NonNullable<ReturnType<typeof parseManhuaLocalVideoSourceRef>>;
   keyMoments?: readonly NativeDeepReadKeyMoment[];
   abortSignal?: AbortSignal;
 }, deps: NativeKeyMomentFrameDeps = defaultDeps): Promise<ManhuaViralTemplateEvidenceFrame[]> {
   const moments = mergeNativeKeyMomentsBySecond(input.keyMoments || []);
-  const node = input.mediaNodes.find((candidate) => /^https?:\/\//i.test(String(candidate?.url || "")));
-  if (!moments.length || !node) return [];
+  if (!moments.length) return [];
+  let node = input.mediaNodes.find((candidate) => /^https?:\/\//i.test(String(candidate?.url || "")));
+  if (input.localVideoUpload) {
+    // 仅内部核验后取得的路径进入 ffmpeg；外部媒体节点仍只接受 HTTP(S)。
+    if (!deps.resolveLocalUpload) throw new Error("本地视频抽帧读取器缺失");
+    const source = await deps.resolveLocalUpload(input.localVideoUpload);
+    if (source.sourceRef !== buildManhuaLocalVideoSourceRef(input.localVideoUpload)
+      || source.sha256 !== input.localVideoUpload.sha256) throw new Error("本地视频抽帧来源已改变");
+    node = { url: source.localPath };
+  }
+  if (!node) return [];
 
   let tempDir: string;
   try {
@@ -190,6 +212,7 @@ export async function extractNativeKeyMomentEvidenceFrames(input: {
             atSec: moment.atSec,
             outputPath,
             seek,
+            trustedLocalSource: Boolean(input.localVideoUpload),
           }), input.abortSignal);
           const candidate = await deps.readFrame(outputPath);
           assertJpeg(candidate);

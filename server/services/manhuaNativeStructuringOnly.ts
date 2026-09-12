@@ -1,3 +1,4 @@
+import { parseManhuaLocalVideoSourceRef } from "../../shared/manhuaLocalVideoUpload.js";
 import { downloadGcsObjectVersioned, getGcsBucketName } from "./gcs.js";
 import { parseManhuaViralTemplateCard } from "../../shared/manhuaViralTemplateBank.js";
 import { nativeDeepReadProposalId } from "./manhuaNativeDeepReadIngest.js";
@@ -33,7 +34,9 @@ export async function loadNativeStructuringOnlyEpisode(input: NativeStructuringS
     const storedEpisode = plan?.seriesKey === input.seriesKey && Array.isArray(plan.episodes)
       ? plan.episodes.find(row => row.episodeIndex === input.episodeIndex) : undefined;
     if (!storedEpisode || storedEpisode.videoFps !== input.videoFps || !Array.isArray(storedEpisode.segments) || !storedEpisode.segments.length
-      || typeof storedEpisode.sourceUrl !== "string" || !storedEpisode.sourceUrl.startsWith("https://") || !(storedEpisode.durationSec > 0)) {
+      || typeof storedEpisode.sourceUrl !== "string"
+      || (!storedEpisode.sourceUrl.startsWith("https://") && !parseManhuaLocalVideoSourceRef(storedEpisode.sourceUrl))
+      || !(storedEpisode.durationSec > 0)) {
       throw new Error("原任务持久计划身份或分片不完整，未读取视频");
     }
     const sourceDigest = await resolveNativeDeepReadCacheSourceDigest({ sourceRef: storedEpisode.sourceUrl,
@@ -41,7 +44,8 @@ export async function loadNativeStructuringOnlyEpisode(input: NativeStructuringS
     const matchingCard = [proposal, approved].find(row => row?.provenance?.nativeVideoDeepRead?.sourceDigest === sourceDigest
       && row.provenance.nativeVideoDeepRead.videoFps === input.videoFps
       && row.provenance.nativeVideoDeepRead.sourceDurationSec === storedEpisode.durationSec && row.evidenceFrames?.length);
-    return { ...storedEpisode, seriesKey: input.seriesKey, segmentSeconds: input.segmentSeconds,
+    return { ...storedEpisode, localVideoUpload: parseManhuaLocalVideoSourceRef(storedEpisode.sourceUrl) || undefined,
+      seriesKey: input.seriesKey, segmentSeconds: input.segmentSeconds,
       retainedEvidenceFrames: matchingCard?.evidenceFrames,
       resolveNodes: async () => { throw new Error("仅重新整形禁止读取源视频"); } };
   }
@@ -59,6 +63,7 @@ export async function loadNativeStructuringOnlyEpisode(input: NativeStructuringS
       }
       const segments = entries.map(entry => ({ startSec: entry.startSec, endSec: entry.endSec }));
       return { seriesKey: input.seriesKey, episodeIndex: input.episodeIndex, sourceUrl,
+        localVideoUpload: parseManhuaLocalVideoSourceRef(sourceUrl) || undefined,
         durationSec: segments.at(-1)!.endSec, videoFps: input.videoFps, segmentSeconds: input.segmentSeconds, segments,
         resolveNodes: async () => { throw new Error("仅重新整形禁止读取源视频"); } };
     }
@@ -71,6 +76,7 @@ export async function loadNativeStructuringOnlyEpisode(input: NativeStructuringS
   const frames = card.evidenceFrames?.length ? card.evidenceFrames
     : approved?.provenance?.nativeVideoDeepRead?.sourceDigest === native.sourceDigest ? approved.evidenceFrames : undefined;
   return { seriesKey: input.seriesKey, episodeIndex: input.episodeIndex, sourceUrl: card.sourceRefs[0].url,
+    localVideoUpload: parseManhuaLocalVideoSourceRef(card.sourceRefs[0].url) || undefined,
     durationSec: native.sourceDurationSec, segments: native.segmentSpans.map(row => ({ ...row })),
     segmentSeconds: input.segmentSeconds, videoFps: native.videoFps, retainedEvidenceFrames: frames,
     sourceMarkers: card.provenance?.sourceMarkers,

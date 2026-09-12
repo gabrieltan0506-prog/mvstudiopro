@@ -1,3 +1,8 @@
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildNativeKeyMomentFrameArgs,
@@ -152,3 +157,66 @@ describe("关键时刻抽帧纯函数", () => {
     expect(fast.indexOf("-ss")).toBeLessThan(fast.indexOf("-i"));
   });
 });
+
+
+describe("本地原片关键时刻证据", () => {
+  const identity = { userId: "7", uploadId: "11111111-1111-4111-8111-111111111111", sha256: "a".repeat(64) };
+  const sourceRef = `manhua-upload://u7/${identity.uploadId}/${identity.sha256}`;
+  const base = { seriesKey: "local-series", episodeIndex: 1, mediaNodes: [], localVideoUpload: identity,
+    keyMoments: [{ atSec: 1, kindZh: "动作", noteZh: "人物转身" }] };
+  it("核验本人源后抽帧，保持证据非空且不清理原片", async () => {
+    const localPath = "/data/private-test/source.video";
+    const deps = fakeDeps({ resolveLocalUpload: vi.fn(async () => ({ sourceRef, sha256: identity.sha256, localPath })) });
+    const rows = await extractNativeKeyMomentEvidenceFrames(base, deps);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].bytes).toBeGreaterThan(0);
+    expect(deps.resolveLocalUpload).toHaveBeenCalledWith(identity);
+    const args = vi.mocked(deps.runFfmpeg).mock.calls[0][0];
+    expect(args).toContain(localPath);
+    expect(args).toContain("-protocol_whitelist");
+    expect(args).not.toContain("-user_agent");
+    expect(deps.removePath).not.toHaveBeenCalledWith(localPath);
+    expect(JSON.stringify(rows)).not.toContain(localPath);
+  });
+  it("源身份改变时不抽帧、不上传", async () => {
+    const deps = fakeDeps({ resolveLocalUpload: vi.fn(async () => ({ sourceRef, sha256: "b".repeat(64), localPath: "/data/private-test/source.video" })) });
+    await expect(extractNativeKeyMomentEvidenceFrames(base, deps)).rejects.toThrow("来源已改变");
+    expect(deps.runFfmpeg).not.toHaveBeenCalled();
+    expect(deps.uploadFrame).not.toHaveBeenCalled();
+  });
+  it("普通节点不能指定本机路径", async () => {
+    const deps = fakeDeps();
+    const rows = await extractNativeKeyMomentEvidenceFrames({ ...base, localVideoUpload: undefined,
+      mediaNodes: [{ url: "/data/private-test/source.video" }] }, deps);
+    expect(rows).toEqual([]);
+    expect(deps.runFfmpeg).not.toHaveBeenCalled();
+  });
+});
+
+
+it("真实本地视频产生可解码JPEG，保留原片", async () => {
+  const exec = promisify(execFile);
+  const directory = await mkdtemp(join(tmpdir(), "local-video-frame-test-"));
+  try {
+    const localPath = join(directory, "source.mp4");
+    await exec("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "testsrc2=size=160x96:rate=10:duration=2", "-c:v", "libx264", "-threads", "1", localPath]);
+    const sha256 = "a".repeat(64);
+    const localVideoUpload = { userId: "7", uploadId: "11111111-1111-4111-8111-111111111111", sha256 };
+    const sourceRef = `manhua-upload://u7/${localVideoUpload.uploadId}/${sha256}`;
+    const uploaded: Buffer[] = [];
+    const deps = fakeDeps({
+      resolveLocalUpload: async () => ({ sourceRef, sha256, localPath }),
+      runFfmpeg: async args => { await exec("ffmpeg", args); },
+      makeTempDir: () => mkdtemp(join(directory, "frames-")),
+      readFrame: readFile,
+      removePath: async (path, recursive = false) => { await rm(path, { force: true, recursive }); },
+      uploadFrame: async ({ buffer }) => { uploaded.push(buffer); return { created: true }; },
+    });
+    const rows = await extractNativeKeyMomentEvidenceFrames({ seriesKey: "local-real", episodeIndex: 1,
+      mediaNodes: [], localVideoUpload, keyMoments: [{ atSec: 1, kindZh: "动作", noteZh: "真实测试画面" }] }, deps);
+    expect(rows).toHaveLength(1);
+    expect(uploaded[0].length).toBeGreaterThan(100);
+    expect(rows[0].bytes).toBe(uploaded[0].length);
+    expect((await stat(localPath)).size).toBeGreaterThan(0);
+  } finally { await rm(directory, { force: true, recursive: true }); }
+}, 30_000);

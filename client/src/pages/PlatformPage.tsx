@@ -10,6 +10,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toPng } from "html-to-image";
 import { AnimatePresence, motion } from "framer-motion";
 import PlatformAssetAnalysisPanel from "@/components/platform/PlatformAssetAnalysisPanel";
+import { ManhuaLocalVideoUploadPanel } from "@/components/platform/ManhuaLocalVideoUploadPanel";
+import {
+  assertCompletedManhuaLocalVideoUpload,
+  getManhuaLocalVideoUpload,
+  isManhuaLocalVideoSource,
+  readManhuaLocalVideoSource,
+  type CompletedManhuaLocalVideoUpload,
+} from "@/lib/manhuaLocalVideoUpload";
 import { GrowthSystemDebugPanel } from "@/components/platform/GrowthSystemDebugPanel";
 import { PlatformWorkspaceStepHint } from "@/components/platform/PlatformWorkspaceStepHint";
 import { PlatformModeShell } from "@/components/platform/PlatformModeShell";
@@ -2185,6 +2193,7 @@ type KnowledgeCardPendingFile = {
 type ManhuaLearnSourceRow = {
   url?: string | null;
   gcsUri?: string | null;
+  localVideoUploadId?: string | null;
   fileName?: string | null;
   localFileName?: string | null;
   learnLlm?: "claude" | "gpt" | "deepseek";
@@ -2308,13 +2317,16 @@ function readManhuaLearnContinuation(userKey: string): ManhuaLearnContinuation |
     const parsed = JSON.parse(raw) as Partial<ManhuaLearnContinuation>;
     const url = String(parsed.row?.url || "").trim();
     const savedAt = Number(parsed.savedAt);
-    if (!/^https?:\/\//i.test(url) || !Number.isFinite(savedAt)) {
+    const localSource = isManhuaLocalVideoSource(parsed.row || {}, userKey);
+    if ((!/^https?:\/\//i.test(url) && !localSource) || !Number.isFinite(savedAt)) {
       window.localStorage.removeItem(storageKey);
       return null;
     }
     return {
       row: {
         url,
+        ...(localSource ? { localVideoUploadId: parsed.row!.localVideoUploadId,
+          fileName: parsed.row!.fileName, localFileName: parsed.row!.localFileName } : {}),
         mixName: String(parsed.row?.mixName || "").trim() || null,
         mixId: String(parsed.row?.mixId || "").trim() || null,
         platform: String(parsed.row?.platform || "").trim() || null,
@@ -2338,8 +2350,9 @@ function writeManhuaLearnContinuation(
   if (!storageKey) return;
   try {
     const url = String(value?.row.url || "").trim();
-    // 手动上传的 gs:// 路径不持久化；刷新后需重新选择素材，避免长期留下用户素材路径。
-    if (!value || !/^https?:\/\//i.test(url)) {
+    // 私有上传只保存不含服务器路径的来源引用，恢复时仍须向服务端校验本人上传。
+    const localSource = value && isManhuaLocalVideoSource(value.row, userKey);
+    if (!value || (!/^https?:\/\//i.test(url) && !localSource)) {
       window.localStorage.removeItem(storageKey);
       return;
     }
@@ -2348,6 +2361,8 @@ function writeManhuaLearnContinuation(
       JSON.stringify({
         row: {
           url,
+          ...(localSource ? { localVideoUploadId: value.row.localVideoUploadId,
+            fileName: value.row.fileName, localFileName: value.row.localFileName } : {}),
           mixName: value.row.mixName || null,
           mixId: value.row.mixId || null,
           platform: value.row.platform || null,
@@ -2646,6 +2661,14 @@ export default function PlatformPage() {
   const [manhuaLearnFocusSeriesKey, setManhuaLearnFocusSeriesKey] = useState("");
   const [manhuaLearnPanelCollapsed, setManhuaLearnPanelCollapsed] = useState(false);
   const [manhuaLearnResult, setManhuaLearnResult] = useState<ManhuaLearnResultUi | null>(null);
+  const [manhuaPreparedLocalVideo, setManhuaPreparedLocalVideo] = useState<CompletedManhuaLocalVideoUpload | null>(null);
+  const manhuaLocalVideoSubmitRef = useRef<object | null>(null);
+  const prepareManhuaLocalVideo = useCallback((upload: CompletedManhuaLocalVideoUpload) => {
+    const completed = assertCompletedManhuaLocalVideoUpload(upload, manhuaLearnUserKey);
+    setManhuaPreparedLocalVideo(completed);
+    setTrendInsightTab("ai_manhua");
+    setManhuaLearnPanelCollapsed(false);
+  }, [manhuaLearnUserKey]);
   /** 单批完成后由用户决定是否续学；同一 row/rank 复用，服务端按 GCS 检查点跳过已学集。 */
   const manhuaLearnContinueRef = useRef<ManhuaLearnContinuation | null>(null);
   const [manhuaLearnBasket, setManhuaLearnBasket] = useState<ManhuaLearnBasketItem[]>([]);
@@ -2714,6 +2737,8 @@ export default function PlatformPage() {
 
   useEffect(() => {
     manhuaLearnUserKeyRef.current = manhuaLearnUserKey;
+    setManhuaPreparedLocalVideo(null);
+    manhuaLocalVideoSubmitRef.current = null;
     setManhuaLearnBusyKey(null);
     setManhuaPasteUrl("");
     setManhuaPasteTitle("");
@@ -4123,13 +4148,16 @@ export default function PlatformPage() {
       || manhuaLearnHydratedUserKey !== manhuaLearnUserKey
     ) return;
     const persistedSourceUrl = String(snap.progress?.sourceUrl || "").trim();
-    if (/^https?:\/\//i.test(persistedSourceUrl)) {
+    const localSnapshotSource = readManhuaLocalVideoSource(persistedSourceUrl);
+    if (/^https?:\/\//i.test(persistedSourceUrl)
+      || (localSnapshotSource && localSnapshotSource.userKey === manhuaLearnUserKey)) {
       const continuation: ManhuaLearnContinuation = {
         row: {
           url: persistedSourceUrl,
+          ...(localSnapshotSource ? { localVideoUploadId: localSnapshotSource.uploadId } : {}),
           mixName: String(snap.progress?.titleHint || "").trim() || null,
           mixId: String(snap.progress?.mixId || "").trim() || null,
-          platform: /kuaishou\.com/i.test(persistedSourceUrl) ? "kuaishou" : "douyin",
+          platform: localSnapshotSource ? "upload" : /kuaishou\.com/i.test(persistedSourceUrl) ? "kuaishou" : "douyin",
         },
         rank: 0,
         seriesKey: manhuaLearnFocusSeriesKey,
@@ -6155,6 +6183,8 @@ export default function PlatformPage() {
       // 0826 回归修复：modal_id 搜索页先规范化成 /video/ 单集形态再进任何闸与提交
       const url = normalizeDouyinVideoUrl(String(row.url || "").trim());
       const gcsUri = String(row.gcsUri || "").trim();
+      const localVideoUploadId = String(row.localVideoUploadId || "").trim();
+      const localVideoSource = isManhuaLocalVideoSource(row, requestUserKey);
       const title = String(row.mixName || "").trim();
       const source = gcsUri || url;
       const previousSourceItem = manhuaLearnBasket.find((item) => String(
@@ -6194,13 +6224,13 @@ export default function PlatformPage() {
       }
       let nativeConfirmedParams: Record<string, unknown> = {};
       const nativePlanCandidate =
-        (row.platform === "douyin" || /(?:^|\.)douyin\.com/i.test((() => {
+        (localVideoSource || (row.platform === "douyin" || /(?:^|\.)douyin\.com/i.test((() => {
           try {
             return new URL(url).hostname;
           } catch {
             return "";
           }
-        })()))
+        })())))
         && Boolean(url)
         && !gcsUri
         && options?.refreshPreviewFrames !== true
@@ -6227,7 +6257,7 @@ export default function PlatformPage() {
       }
       if (nativeGate === "unsupported_source") {
         toast.error("当前素材不能进入原生精读", {
-          description: "本次未建立任务；请使用可解析的抖音单集或合集链接。",
+          description: "本次未建立任务；请使用可解析的抖音链接，或上传并校验本地视频。",
         });
         setManhuaLearnBusyKey(null);
         return;
@@ -6252,6 +6282,28 @@ export default function PlatformPage() {
         return;
       }
       setManhuaLearnVideoFpsError("");
+      const localSubmitToken = localVideoUploadId ? {} : null;
+      if (localSubmitToken) {
+        if (manhuaLocalVideoSubmitRef.current) return;
+        manhuaLocalVideoSubmitRef.current = localSubmitToken;
+        setManhuaLearnBusyKey(busyKey);
+      }
+      try {
+      if (localVideoUploadId) {
+        try {
+          const uploaded = assertCompletedManhuaLocalVideoUpload(
+            await getManhuaLocalVideoUpload(localVideoUploadId), requestUserKey,
+          );
+          if (uploaded.sourceRef !== url || manhuaLearnUserKeyRef.current !== requestUserKey) {
+            throw new Error("上传来源或登录账号已变化，请重新选择已上传视频。");
+          }
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : "视频上传状态尚未确认", {
+            description: "本次未建立学习任务。",
+          });
+          return;
+        }
+      }
       writeManhuaLearnSegmentSeconds(requestUserKey, nativeSegmentSeconds);
       writeManhuaLearnVideoFps(requestUserKey, nativeVideoFps);
       if (nativeGate === "ready") {
@@ -6260,10 +6312,10 @@ export default function PlatformPage() {
         nativeConfirmedParams = {
           nativeDeepReadConfirmed: true,
           nativeMaxCalls: NATIVE_DEEP_READ_JOB_MAX_CALLS,
-          nativePlanLimit: manhuaLearnBatchSize,
+          nativePlanLimit: localVideoSource ? 1 : manhuaLearnBatchSize,
           nativeSegmentSeconds,
           nativeVideoFps,
-          nativeStandaloneSource: manhuaLearnStandaloneSource,
+          nativeStandaloneSource: localVideoSource || manhuaLearnStandaloneSource,
           nativeReadModel: manhuaLearnReadModel,
           nativeStructuringModel: manhuaLearnStructuringModel,
         };
@@ -6321,6 +6373,7 @@ export default function PlatformPage() {
             params: {
               url,
               gcsUri: gcsUri || undefined,
+              localVideoUploadId: localVideoUploadId || undefined,
               fileName: String(row.fileName || "").trim() || undefined,
               title,
               mixId: String(row.mixId || "").trim() || undefined,
@@ -6328,7 +6381,7 @@ export default function PlatformPage() {
               rank,
               seriesKey: startUi.seriesKey,
               dedupeKey: source,
-              batchSize: options?.refreshPreviewFrames ? 8 : manhuaLearnBatchSize,
+              batchSize: localVideoSource ? 1 : options?.refreshPreviewFrames ? 8 : manhuaLearnBatchSize,
               refreshPreviewFrames: options?.refreshPreviewFrames === true,
               retrySkippedEpisodes: options?.retrySkippedEpisodes === true,
               learnLlm: row.learnLlm,
@@ -6456,6 +6509,12 @@ export default function PlatformPage() {
         }
       }
       return;
+      } finally {
+        if (localSubmitToken && manhuaLocalVideoSubmitRef.current === localSubmitToken) {
+          manhuaLocalVideoSubmitRef.current = null;
+          if (manhuaLearnUserKeyRef.current === requestUserKey) setManhuaLearnBusyKey(null);
+        }
+      }
     },
     [
       hasSupervisorOpsAccess,
@@ -12843,6 +12902,7 @@ export default function PlatformPage() {
                         const row: ManhuaLearnSourceRow = basketItem?.continuation.row || {
                           url: url || null,
                           gcsUri: String(params.gcsUri || "").trim() || null,
+                          localVideoUploadId: String(params.localVideoUploadId || "").trim() || null,
                           fileName: String(params.fileName || "").trim() || null,
                           mixName: String(params.titleHint || params.title || "").trim() || null,
                           mixId: String(params.mixId || "").trim() || null,
@@ -13753,6 +13813,37 @@ export default function PlatformPage() {
                           {manhuaLearnReadModel !== MANHUA_NATIVE_DEEP_READ_MODEL ? " · 对照版单独成剧，两版各审后留一版入库" : ""}
                         </span>
                       </div>
+
+                      {ownerTemplateOptimizeAllowed && hasSupervisorOpsAccess ? (
+                        <div id="manhua-local-video-learning" className="scroll-mt-24">
+                          <ManhuaLocalVideoUploadPanel
+                            key={manhuaLearnUserKey}
+                            userKey={manhuaLearnUserKey}
+                            disabled={Boolean(manhuaLearnBusyKey)}
+                            onSourceReset={() => setManhuaPreparedLocalVideo(null)}
+                            onReady={prepareManhuaLocalVideo}
+                          />
+                          {manhuaPreparedLocalVideo ? (
+                            <div className="mt-2 rounded-lg border border-cyan-300/25 bg-black/25 p-3 text-xs text-cyan-50">
+                              <p>待学习：{manhuaPreparedLocalVideo.fileName} · {manhuaPreparedLocalVideo.durationSec.toFixed(1)} 秒</p>
+                              <p className="mt-1 text-[11px] text-cyan-50/65">本地视频按一集处理，使用上方当前的每片秒数和采样设置；点击后才建立学习任务。</p>
+                              <button type="button"
+                                disabled={Boolean(manhuaLearnBusyKey) || activeManhuaLearnSources.has(manhuaPreparedLocalVideo.sourceRef)}
+                                onClick={() => void runManhuaTemplateLearnCloud({
+                                  url: manhuaPreparedLocalVideo.sourceRef,
+                                  localVideoUploadId: manhuaPreparedLocalVideo.uploadId,
+                                  fileName: manhuaPreparedLocalVideo.fileName,
+                                  localFileName: manhuaPreparedLocalVideo.fileName,
+                                  mixName: manhuaPreparedLocalVideo.fileName.replace(/\.[^.]+$/, ""),
+                                  platform: "upload",
+                                }, 0)}
+                                className="mt-2 rounded-lg border border-cyan-300/40 bg-cyan-400/10 px-3 py-1.5 font-semibold disabled:opacity-40">
+                                学节奏
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
 
                       {aiManhuaPlatformTab === "douyin" ? (
                         <div className="mt-3 rounded-xl border border-white/10 bg-black/25 px-3 py-2.5">
@@ -16562,19 +16653,8 @@ export default function PlatformPage() {
                 onShootingTechniqueReady={(brief) => {
                   lastShootingTechniqueBriefRef.current = brief;
                 }}
-                onLearnVideoRhythm={async ({ gcsUri, fileName, title }) => {
-                  await runManhuaTemplateLearnCloud(
-                    {
-                      gcsUri,
-                      fileName,
-                      localFileName: fileName,
-                      mixName: title,
-                      platform: "upload",
-                      learnLlm: "gpt",
-                    },
-                    0,
-                  );
-                }}
+                onPrepareVideoRhythm={ownerTemplateOptimizeAllowed ? prepareManhuaLocalVideo : undefined}
+                onVideoRhythmSourceReset={() => setManhuaPreparedLocalVideo(null)}
                 onGenerateFromText={handleAssetGenerateFromText}
                 optimizeCopyCost={customOptimizeCopyCost}
               />

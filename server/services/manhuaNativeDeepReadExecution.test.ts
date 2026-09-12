@@ -1,3 +1,4 @@
+import { buildManhuaLocalVideoSourceRef } from "../../shared/manhuaLocalVideoUpload.js";
 import { hasNativeAttemptSelection, nativeAttemptRawSha256 } from "./manhuaNativeDeepReadAttemptSelection.js";
 /**
  * 协调器行为。全部注入假实现，**不调用任何付费接口**。
@@ -1178,5 +1179,22 @@ describe("0906 AI Studio 兜底段的音轨路由", () => {
     expect(build({ visualRoutes: ["vertex_gcs_video", "gemini_api_files_video"] }).resolverRoute).toBe("gemini_api_files_video");
     expect(build({}).resolverRoute).toBe("vertex_gcs_video");
     expect(build({ visualRoutes: ["gemini_api_files_video"], degradedFpsSegmentIndexes: [1] }).resolverRoute).toBe("evolink_gemini_video");
+  });
+});
+
+
+describe("本地原片执行与证据消费者", () => {
+  it("服务端身份传到批次读片和关键帧，不调用远端节点解析", async () => {
+    const localVideoUpload = { userId: "1", uploadId: "12345678-1234-4123-8123-123456789abc", sha256: "a".repeat(64) };
+    const sourceRef = buildManhuaLocalVideoSourceRef(localVideoUpload);
+    const resolveNodes = vi.fn(async () => { throw new Error("禁止本地原片走远端下载"); });
+    const result = await runNativeDeepReadBatch({ seriesKey: "s", episodes: [{ ...episode,
+      sourceUrl: sourceRef, provenanceSourceRef: sourceRef, localVideoUpload, resolveNodes }] }, deps);
+    expect(result.ingestedCount).toBe(1);
+    expect(deps.runBatch).toHaveBeenCalledWith(expect.objectContaining({ episodes: [expect.objectContaining({ localVideoUpload })] }));
+    expect(deps.extractKeyMomentFrames).toHaveBeenCalledWith(expect.objectContaining({ localVideoUpload, mediaNodes: [] }));
+    expect(resolveNodes).not.toHaveBeenCalled();
+    expect(deps.ingest).toHaveBeenCalledWith(expect.objectContaining({ sourceUrl: sourceRef }));
+    expect(JSON.stringify(result)).not.toContain("localPath");
   });
 });

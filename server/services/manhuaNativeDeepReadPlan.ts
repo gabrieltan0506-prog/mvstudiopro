@@ -1,3 +1,4 @@
+import { buildManhuaLocalVideoSourceRef, parseManhuaLocalVideoSourceRef } from "../../shared/manhuaLocalVideoUpload.js";
 /**
  * 原生精读**发车计划预览**：抖音链接 → 这次要跑几集、几次模型请求、多少分钟。
  *
@@ -87,7 +88,14 @@ function sleepForDetailRetry(ms: number, signal?: AbortSignal): Promise<void> {
 
 export type NativeDeepReadPlanSegment = { startSec: number; endSec: number };
 
+/** 只在服务端解析归属后构造；不含可由客户端指定的磁盘路径。 */
+export type NativeDeepReadLocalVideoUpload = NonNullable<ReturnType<typeof parseManhuaLocalVideoSourceRef>>;
+export type NativeDeepReadLocalVideoSource = NativeDeepReadLocalVideoUpload & {
+  sourceRef: string; durationSec: number; fileName: string;
+};
+
 export type NativeDeepReadPlanEpisode = {
+  localVideoUpload?: NativeDeepReadLocalVideoUpload;
   episodeIndex: number;
   sourceUrl: string;
   durationSec: number;
@@ -580,6 +588,7 @@ export type NativeDeepReadPlanDeps = {
 export async function buildNativeDeepReadPlanPreview(
   input: {
     url: string;
+    localVideoUpload?: NativeDeepReadLocalVideoSource;
     limit: number;
     structuringEpisodeIndex?: number;
     segmentSeconds?: number;
@@ -605,6 +614,15 @@ export async function buildNativeDeepReadPlanPreview(
    * （modal_id 弹层链 → 单集页；其余原样返回），下游只见规范 URL。
    */
   let rawUrl = String(input.url || "").trim();
+  const localSource = input.localVideoUpload;
+  if (localSource && (rawUrl !== buildManhuaLocalVideoSourceRef(localSource)
+    || localSource.sourceRef !== rawUrl || input.limit !== 1
+    || !Number.isFinite(localSource.durationSec) || localSource.durationSec <= 0)) {
+    throw new Error("本地上传来源或计划参数不一致，未发出模型请求");
+  }
+  if (!localSource && parseManhuaLocalVideoSourceRef(rawUrl)) {
+    throw new Error("本地上传来源尚未由服务端核验归属");
+  }
   // 0902：App 分享短链先展开成 /share/video/<id> 形态，用户不用再开浏览器倒一手
   if (deps.resolveShortLink && isDouyinShortLinkUrl(rawUrl)) {
     const expandedUrl = await deps.resolveShortLink(rawUrl).catch(() => null);
@@ -612,7 +630,11 @@ export async function buildNativeDeepReadPlanPreview(
   }
   const isExternal = deps.isExternalSource?.(rawUrl) === true
     || isManhua0996SourceUrl(rawUrl);
-  const external = isExternal && deps.resolveExternalSeries
+  const external = localSource ? {
+    sourceIdentity: localSource.sourceRef, seriesId: "", titleZh: localSource.fileName,
+    currentEpisodeIndex: 1,
+    episodes: [{ index: 1, url: localSource.sourceRef, title: localSource.fileName, access: "free" as const }],
+  } : isExternal && deps.resolveExternalSeries
     ? await deps.resolveExternalSeries(rawUrl, input.abortSignal)
     : null;
   const url = external?.sourceIdentity || normalizeDouyinVideoUrl(rawUrl);
@@ -629,7 +651,7 @@ export async function buildNativeDeepReadPlanPreview(
     : external?.seriesId || extractDouyinMixIdFromUrl(url) || "";
   let dramaNameZh = external?.titleZh || "";
   let detailEpisodeIndex: number | undefined = external?.currentEpisodeIndex;
-  let standaloneSource = false;
+  let standaloneSource = Boolean(localSource);
   let listed: {
     episodes: DouyinListedEpisode[];
     mixNameZh?: string;
@@ -857,7 +879,7 @@ export async function buildNativeDeepReadPlanPreview(
   const episodes: NativeDeepReadPlanEpisode[] = [];
   for (const e of executable) {
     throwIfNativePlanAborted(input.abortSignal);
-    const probedDurationSec = await probeEpisodeDurationWithCandidateFailover(
+    const probedDurationSec = localSource?.durationSec ?? await probeEpisodeDurationWithCandidateFailover(
       e,
       deps,
       input.abortSignal,
@@ -885,6 +907,9 @@ export async function buildNativeDeepReadPlanPreview(
       );
     }
     episodes.push({
+      ...(localSource ? { localVideoUpload: {
+        userId: localSource.userId, uploadId: localSource.uploadId, sha256: localSource.sha256,
+      } } : {}),
       episodeIndex: e.index,
       sourceUrl: e.url,
       durationSec,

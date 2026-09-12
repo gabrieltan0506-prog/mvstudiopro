@@ -33,6 +33,8 @@ import { isManhua0996SourceUrl } from "../../shared/manhuaLearn0996Source.js";
 
 export type NativeDeepReadPlanRuntimeInput = {
   url: string;
+  localVideoUploadId?: string;
+  userId?: string;
   limit: number;
   structuringEpisodeIndex?: number;
   segmentSeconds?: number;
@@ -50,7 +52,15 @@ export type NativeDeepReadPlanRuntimeInput = {
 export async function buildNativeDeepReadPlanPreviewFromServices(
   input: NativeDeepReadPlanRuntimeInput,
 ): Promise<NativeDeepReadPlanPreview> {
-  return buildNativeDeepReadPlanPreview(input, {
+  let localVideoUpload;
+  if (input.localVideoUploadId) {
+    const { resolveOwnedManhuaLocalVideoUpload } = await import("./manhuaLocalVideoUploadService.js");
+    const resolved = await resolveOwnedManhuaLocalVideoUpload({ userId: String(input.userId || ""), uploadId: input.localVideoUploadId });
+    if (resolved.sourceRef !== input.url) throw new Error("本地上传来源身份已变化，未生成学习计划");
+    const { userId, uploadId, sha256, durationSec, fileName, sourceRef } = resolved;
+    localVideoUpload = { userId, uploadId, sha256, durationSec, fileName, sourceRef };
+  }
+  return buildNativeDeepReadPlanPreview({ ...input, localVideoUpload }, {
     resolveShortLink: resolveDouyinShortLinkViaRedirect,
     fetchAwemeDetail: fetchDouyinAwemeDetailViaWebApi,
     listMixEpisodes: listDouyinMixEpisodesViaWebApi,

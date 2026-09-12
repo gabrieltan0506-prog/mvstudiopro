@@ -1,3 +1,5 @@
+import { buildManhuaLocalVideoSourceRef, parseManhuaLocalVideoSourceRef } from "../../shared/manhuaLocalVideoUpload.js";
+import type { NativeDeepReadLocalVideoUpload } from "./manhuaNativeDeepReadPlan.js";
 import { hasNativeAttemptSelection } from "./manhuaNativeDeepReadAttemptSelection.js";
 /**
  * 原生精读的**生产协调器**：runner 与入库之间那段接线。
@@ -82,6 +84,7 @@ import {
 } from "./manhuaNativeSeriesAggregation.js";
 
 export type NativeDeepReadEpisodeExecution = {
+  localVideoUpload?: NativeDeepReadLocalVideoUpload;
   seriesKey: string;
   episodeIndex: number;
   /**
@@ -169,12 +172,13 @@ async function extractFullResultEvidenceFrames(input: {
   if (input.result.assemblyComplete !== true) return undefined;
   if (!input.result.keyMoments?.length) return [];
   try {
-    const mediaNodes = await input.episode.resolveNodes();
+    const mediaNodes = input.episode.localVideoUpload ? [] : await input.episode.resolveNodes();
     return await input.deps.extractKeyMomentFrames({
       seriesKey: input.episode.seriesKey,
       episodeIndex: input.episode.episodeIndex,
       sourceDigest: input.result.sourceDigest,
       mediaNodes,
+      ...(input.episode.localVideoUpload ? { localVideoUpload: input.episode.localVideoUpload } : {}),
       keyMoments: input.result.keyMoments,
       abortSignal: input.episode.abortSignal,
     });
@@ -515,6 +519,7 @@ export async function executeAndIngestNativeDeepReadEpisode(
       episodeIndex: input.episodeIndex,
       sourceDigest,
       resolveNodes: input.resolveNodes,
+      localVideoUpload: input.localVideoUpload,
       segments: input.segments,
       sourceDurationSec: input.durationSec,
       hintZh: input.laneHintZh,
@@ -689,7 +694,14 @@ export function validateNativeDeepReadBatchPlan(
     } catch {
       throw new Error(`第${ep}集来源地址无效`);
     }
-    if (source.protocol !== "https:") throw new Error(`第${ep}集来源必须是 HTTPS`);
+    if (episode.localVideoUpload) {
+      if (episode.sourceUrl !== buildManhuaLocalVideoSourceRef(episode.localVideoUpload)
+        || (episode.provenanceSourceRef && episode.provenanceSourceRef !== episode.sourceUrl)) {
+        throw new Error(`第${ep}集本地上传身份不一致`);
+      }
+    } else if (source.protocol !== "https:" || parseManhuaLocalVideoSourceRef(episode.sourceUrl)) {
+      throw new Error(`第${ep}集来源必须是 HTTPS 或服务端核验的本地上传`);
+    }
     const duration = Number(episode.durationSec);
     const configuredSegmentSeconds = opts.segmentSeconds ?? episode.segmentSeconds;
     const segmentSeconds = configuredSegmentSeconds == null
@@ -1001,6 +1013,7 @@ export async function runNativeDeepReadBatch(input: {
         episodes: [{
           episodeIndex: episode.episodeIndex,
           resolveNodes: episode.resolveNodes,
+          localVideoUpload: episode.localVideoUpload,
           segments: episode.segments,
           sourceDurationSec: episode.durationSec,
           hintZh: episode.laneHintZh,

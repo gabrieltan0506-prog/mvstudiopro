@@ -1,3 +1,4 @@
+import { buildManhuaLocalVideoSourceRef } from "../../shared/manhuaLocalVideoUpload.js";
 /**
  * 漫剧节奏模板 · 单集或合集学习。
  * 每轮按剧集顺序采（短合集有几集采几集；长合集约 8–10）→ 远程语音+高密度抽帧+读帧；
@@ -34,6 +35,7 @@ import {
   normalizeNativeDeepReadDurationSec,
   splitNativeDeepReadSegments,
   type NativeDeepReadPlanEpisode,
+  type NativeDeepReadLocalVideoSource,
   type NativeDeepReadPlanPreview,
 } from "./manhuaNativeDeepReadPlan.js";
 import {
@@ -175,6 +177,7 @@ export type ManhuaTemplateLearnInput = {
    */
   nativeDeepReadConfirmed?: boolean;
   nativePlanPreview?: NativeDeepReadPlanPreview;
+  localVideoUpload?: NativeDeepReadLocalVideoSource;
   /** 0903 双模型：读片主模型；缺省＝3.1 Pro。 */
   nativeReadModel?: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeDeepReadModelId;
   /** 0905 整形开关 */
@@ -1710,6 +1713,7 @@ export async function buildNativeDeepReadEpisodeExecution(
     laneHintZh?: string;
     /** 永久溯源标识：GCS 导入传稳定 gs://，抖音来源留空即用 ep.url */
     provenanceSourceRef?: string;
+    localVideoUpload?: NativeDeepReadLocalVideoSource;
     abortSignal?: AbortSignal;
     /** worker 已复核的本集计划；在 claim 与模型调用前再次核对时长和分段。 */
     confirmedPlanEpisode?: NativeDeepReadPlanEpisode;
@@ -1719,7 +1723,12 @@ export async function buildNativeDeepReadEpisodeExecution(
   deps: NativeDeepReadEpisodeSourceDeps = defaultNativeDeepReadSourceDeps,
 ): Promise<NativeDeepReadEpisodeExecution> {
   const probeState: EpisodeSourceState = { playbackUrl: input.ep.playbackUrl };
-  const durationSec = await deps.probeDuration(input.ep, probeState);
+  const localSource = input.localVideoUpload;
+  if (localSource && (input.ep.url !== localSource.sourceRef
+    || localSource.sourceRef !== buildManhuaLocalVideoSourceRef(localSource))) {
+    throw new Error("本地上传执行来源与确认身份不一致");
+  }
+  const durationSec = localSource?.durationSec ?? await deps.probeDuration(input.ep, probeState);
   if (!(durationSec > 0)) throw new Error(`第 ${input.ep.index} 集未取得可用时长`);
   if (durationSec > MANHUA_LEARN_MAX_DURATION_SEC) {
     throw new Error(
@@ -1727,7 +1736,7 @@ export async function buildNativeDeepReadEpisodeExecution(
     );
   }
   // 先探一次确认这一集真的可读；读不到就别建 claim、别进付费流程
-  deps.mediaSource(input.ep, probeState);
+  if (!localSource) deps.mediaSource(input.ep, probeState);
 
   const resumeStoredSegmentPlan = input.confirmedPlanEpisode?.resumeStoredSegmentPlan === true;
   const segmentSeconds = parseNativeDeepReadSegmentSeconds(input.segmentSeconds);
@@ -1766,6 +1775,9 @@ export async function buildNativeDeepReadEpisodeExecution(
   }
 
   const execution: NativeDeepReadEpisodeExecution = {
+    ...(localSource ? { localVideoUpload: {
+      userId: localSource.userId, uploadId: localSource.uploadId, sha256: localSource.sha256,
+    } } : {}),
     seriesKey: input.seriesKey,
     episodeIndex: input.ep.index,
     sourceUrl: input.ep.url,
@@ -1786,6 +1798,7 @@ export async function buildNativeDeepReadEpisodeExecution(
       : {}),
     abortSignal: input.abortSignal,
     resolveNodes: async () => {
+      if (localSource) throw new Error("本地上传不得进入远端媒体解析");
       const fresh: EpisodeSourceState = { playbackUrl: input.ep.playbackUrl };
       await deps.probeDuration(input.ep, fresh);
       const media = deps.mediaSource(input.ep, fresh);
@@ -2090,8 +2103,15 @@ export async function runManhuaTemplateLearn(
       batchLearned: 1, batchIndexes: [source.episodeIndex], listedEpisodeCount: 1, paywallFields: {}, nativeUsage,
       skippedHintZh: "仅重新整形，原始JSON与原帧保留；新结果需批准后才替换正式模板。" });
   }
+  const localSource = input.localVideoUpload;
+  if (localSource && (!input.nativeDeepReadConfirmed || input.gcsUri
+    || input.url !== localSource.sourceRef || localSource.sourceRef !== buildManhuaLocalVideoSourceRef(localSource))) {
+    throw new Error("本地上传必须绑定已确认的原生学习来源");
+  }
   const title = stripBookTitleMarks(cleanManhuaLearnTitle(input.title));
-  const normalizedSource = normalizeManhuaTemplateLearnSourceInput(input);
+  const normalizedSource = localSource
+    ? { rawSourceUrl: localSource.sourceRef, sourceGcsUri: "", sourceUrl: localSource.sourceRef }
+    : normalizeManhuaTemplateLearnSourceInput(input);
   const sourceGcsUri = normalizedSource.sourceGcsUri;
   let sourceUrl = normalizedSource.sourceUrl;
   // 0902：App 分享短链（v./vm.douyin.com）服务端自动展开，不再要求用户开浏览器倒一手
@@ -2214,8 +2234,10 @@ export async function runManhuaTemplateLearn(
       MANHUA_LEARN_STAGE.list,
       manhuaLearnStageLabelZh(MANHUA_LEARN_STAGE.list),
     );
-    const listedRes: ListedEpisodesResult = sourceGcsUri
-      ? {
+    const listedRes: ListedEpisodesResult = localSource
+      ? { listed: listedSingleEpisodeFromUrl(localSource.sourceRef, title || localSource.fileName, 1)
+          .map(episode => ({ ...episode, access: "free" as const })), reliable: true }
+      : sourceGcsUri ? {
           listed: listedSingleEpisodeFromUrl(
             url,
             title || String(input.fileName || "").replace(/\.[^.]+$/, "") || "手动导入视频",
@@ -2237,7 +2259,7 @@ export async function runManhuaTemplateLearn(
       await resolveManhuaSeriesKey({
         sourceIdentity,
         mixId,
-        title: resolveManhuaLearnSeriesIdentityTitle({
+        title: localSource ? undefined : resolveManhuaLearnSeriesIdentityTitle({
           titleHint,
           nativeDeepReadMode,
           sourceAwemeId,
@@ -2663,7 +2685,8 @@ export async function runManhuaTemplateLearn(
           ),
           segmentSeconds: confirmedNativePlan?.segmentSeconds,
           videoFps: confirmedNativePlan?.videoFps,
-          provenanceSourceRef: sourceGcsUri || undefined,
+          provenanceSourceRef: localSource?.sourceRef || sourceGcsUri || undefined,
+          localVideoUpload: localSource,
           abortSignal: input.abortSignal,
         }));
       }

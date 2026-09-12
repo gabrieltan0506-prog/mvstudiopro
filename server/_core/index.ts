@@ -9,6 +9,7 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import uploadRouter from "../upload";
+import manhuaLocalVideoUploadRouter from "../manhuaLocalVideoUpload.js";
 import { registerStripeWebhook } from "../stripe-webhook";
 import { sweepOrphanNativeDeepReadClaimsOnStartup } from "../services/manhuaNativeDeepReadClaimAdmin";
 import { createContext } from "./context";
@@ -223,6 +224,8 @@ async function startServer() {
   server.headersTimeout = 3_460_000;
   // Stripe webhook MUST be registered BEFORE express.json() for signature verification
   registerStripeWebhook(app);
+  // 视频分块入口先鉴权并自行限制请求体，不能经过通用大 JSON 解析器。
+  app.use(manhuaLocalVideoUploadRouter);
   // Keep JSON/urlencoded limits aligned with larger creator uploads and long debug payloads.
   app.use(express.json({ limit: "650mb" }));
   app.use(express.urlencoded({ limit: "650mb", extended: true }));
@@ -373,6 +376,27 @@ async function startServer() {
             const confirmation = parseNativeDeepReadJobConfirmation(learnParams, {
               extraSourceHosts: readManhuaLearnExtraSourceHosts(),
             });
+            if (learnParams.localVideoUploadId !== undefined) {
+              const { parseManhuaLocalVideoSourceRef } = await import("../../shared/manhuaLocalVideoUpload.js");
+              const source = parseManhuaLocalVideoSourceRef(confirmation.url);
+              if (source?.userId !== resolvedUserId) {
+                return res.status(403).json({ error: "上传来源不属于当前账号" });
+              }
+              // 仅重新整形复用原任务 JSON，由下方本人同源任务门禁验证；不依赖原视频仍在盘上。
+              if (!confirmation.structuringOnly) {
+                const { resolveOwnedManhuaLocalVideoUpload } = await import("../services/manhuaLocalVideoUploadService.js");
+                const uploaded = await resolveOwnedManhuaLocalVideoUpload({
+                  userId: resolvedUserId,
+                  uploadId: String(learnParams.localVideoUploadId),
+                });
+                if (confirmation.url !== uploaded.sourceRef) {
+                  return res.status(400).json({ error: "上传来源与已完成文件不一致，请重新选择已上传视频" });
+                }
+                learnParams.fileName = uploaded.fileName;
+              }
+              // 同源并发门禁必须使用核验后的身份，不能由客户端另填去重键绕过。
+              learnParams.dedupeKey = confirmation.url;
+            }
             if (confirmation.structuringOnly) {
               const { getJobByIdStrict } = await import("../jobs/repository.js");
               const { assertNativeStructuringPreviousJob } = await import("../../shared/manhuaNativeStructuringOnly.js");
