@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI都这么能干了，公司为什么还在加班？聊聊FDE的真本事 · MV Studio Pro</title>
+<meta name="description" content="AI能写方案、做图、写代码，团队为什么还在找文件、等确认、反复改稿？用一个小场景认识FDE，文末可注册并加作者微信领取FDE学习资料包与39积分。">
+<meta name="keywords" content="FDE,FDE是什么,前线部署工程师,企业AI落地,FDE入门,FDE资料包,AI工作流">
+<link rel="canonical" href="https://www.mvstudiopro.com/blog/fde-real-work-starter">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="MV Studio Pro">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:url" content="https://www.mvstudiopro.com/blog/fde-real-work-starter">
+<meta property="og:title" content="AI都这么能干了，公司为什么还在加班？聊聊FDE的真本事 · MV Studio Pro">
+<meta property="og:description" content="AI能写方案、做图、写代码，团队为什么还在找文件、等确认、反复改稿？用一个小场景认识FDE，文末可注册并加作者微信领取FDE学习资料包与39积分。">
+<meta property="og:image" content="https://www.mvstudiopro.com/blog-assets/fde-real-work-starter/fde-cover-sunburst-watermarked.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AI都这么能干了，公司为什么还在加班？聊聊FDE的真本事 · MV Studio Pro">
+<meta name="twitter:description" content="AI能写方案、做图、写代码，团队为什么还在找文件、等确认、反复改稿？用一个小场景认识FDE，文末可注册并加作者微信领取FDE学习资料包与39积分。">
+<meta name="twitter:image" content="https://www.mvstudiopro.com/blog-assets/fde-real-work-starter/fde-cover-sunburst-watermarked.jpg">
+<link rel="icon" type="image/svg+xml" href="/pwa-icon.svg">
+<link rel="alternate" type="application/rss+xml" title="MV Studio Pro 博客" href="https://www.mvstudiopro.com/blog/rss.xml">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg0: #141a22;
+    --bg1: #1a2430;
+    --surface: #1e2834;
+    --surface-2: #243041;
+    --line: #2c3848;
+    --text: #e8edf2;
+    --muted: #93a0b0;
+    --soft: #b7c2cf;
+    --accent: #6ec8ff;
+    --accent-soft: rgba(110, 200, 255, 0.14);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; color: var(--text);
+    font: 16px/1.85 -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background-color: var(--bg0);
+    background-image:
+      radial-gradient(1200px 520px at 12% -8%, rgba(78, 140, 180, 0.22), transparent 60%),
+      radial-gradient(900px 480px at 92% 8%, rgba(56, 110, 150, 0.16), transparent 55%),
+      linear-gradient(180deg, var(--bg1) 0%, var(--bg0) 42%, #121820 100%);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 40px 22px 96px; }
+  nav.top { font-size: 13px; color: var(--muted); margin-bottom: 32px; }
+  nav.top a { color: var(--accent); text-decoration: none; }
+  nav.top a:hover { text-decoration: underline; }
+  h1 { font-size: 30px; line-height: 1.35; margin: 0 0 12px; letter-spacing: -.01em; color: #f4f7fa; }
+  h2 { font-size: 21px; margin: 44px 0 14px; padding-top: 8px; border-top: 1px solid var(--line); color: #f1f5f8; }
+  h3 { font-size: 17px; margin: 28px 0 10px; color: #edf2f6; }
+  .meta { font-size: 13px; color: var(--muted); margin-bottom: 36px; }
+  p { margin: 0 0 18px; }
+  ul, ol { margin: 0 0 18px; padding-left: 24px; }
+  li { margin: 6px 0; }
+  strong { color: #fff; }
+  a { color: var(--accent); }
+  blockquote {
+    margin: 0 0 22px; padding: 12px 18px; border-left: 3px solid var(--accent);
+    background: var(--accent-soft); color: var(--soft); font-size: 15px;
+    border-radius: 0 8px 8px 0;
+  }
+  blockquote p { margin: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 24px; font-size: 14.5px; }
+  th, td { padding: 9px 12px; border-bottom: 1px solid var(--line); text-align: left; }
+  th { color: #fff; background: var(--surface); font-weight: 600; }
+  code {
+    background: var(--surface-2); padding: 2px 6px; border-radius: 4px;
+    font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  pre {
+    background: var(--surface); padding: 16px 18px; border-radius: 8px; overflow-x: auto;
+    margin: 0 0 22px; border: 1px solid var(--line);
+  }
+  pre code { background: none; padding: 0; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+  em { color: var(--soft); }
+
+  /* 图片与视频：不加 max-width 的话，一张成片截图就能把版面撑破 */
+  img, video { max-width: 100%; height: auto; display: block;
+               border-radius: 8px; border: 1px solid var(--line); margin: 0 0 8px; }
+  /* 自有样片：尽量藏下载按钮（非 DRM，只挡控件一键另存） */
+  video::-webkit-media-controls-download-button { display: none !important; }
+  video::-internal-media-controls-download-button { display: none !important; }
+  figure { margin: 24px 0; }
+  figure img, figure video { margin-bottom: 8px; }
+  figcaption { font-size: 13px; color: var(--muted); text-align: center; }
+  /* B 站 / YouTube 等外链视频：按 16:9 自适应，手机上也不会溢出 */
+  .video-embed { position: relative; padding-bottom: 56.25%; height: 0;
+                 margin: 24px 0; border-radius: 8px; overflow: hidden;
+                 border: 1px solid var(--line); }
+  .video-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--line);
+           font-size: 13px; color: var(--muted); }
+  footer a { margin-right: 16px; }
+  .cards { display: grid; gap: 14px; margin: 28px 0 0; }
+  .card { display: block; padding: 18px 20px; background: var(--surface);
+          border: 1px solid var(--line);
+          border-radius: 10px; text-decoration: none; color: inherit; }
+  .card:hover { border-color: rgba(110, 200, 255, 0.45); background: var(--surface-2); }
+  .card h2 { margin: 0 0 8px; font-size: 18px; border: 0; padding: 0; color: #fff; }
+  .card p { margin: 0; font-size: 14px; color: var(--soft); }
+  .card .meta { margin: 10px 0 0; font-size: 12px; }
+</style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Article",
+      "headline": "AI都这么能干了，公司为什么还在加班？聊聊FDE的真本事",
+      "description": "AI能写方案、做图、写代码，团队为什么还在找文件、等确认、反复改稿？用一个小场景认识FDE，文末可注册并加作者微信领取FDE学习资料包与39积分。",
+      "datePublished": "2026-09-13",
+      "dateModified": "2026-09-13",
+      "inLanguage": "zh-CN",
+      "mainEntityOfPage": {
+        "@type": "WebPage",
+        "@id": "https://www.mvstudiopro.com/blog/fde-real-work-starter"
+      },
+      "author": {
+        "@type": "Organization",
+        "name": "MV Studio Pro",
+        "url": "https://www.mvstudiopro.com"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "MV Studio Pro",
+        "url": "https://www.mvstudiopro.com",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://www.mvstudiopro.com/pwa-icon-512.png"
+        }
+      },
+      "keywords": "FDE,FDE是什么,前线部署工程师,企业AI落地,FDE入门,FDE资料包,AI工作流",
+      "image": "https://www.mvstudiopro.com/blog-assets/fde-real-work-starter/fde-cover-sunburst-watermarked.jpg"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "首页",
+          "item": "https://www.mvstudiopro.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "文章",
+          "item": "https://www.mvstudiopro.com/blog/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "AI都这么能干了，公司为什么还在加班？聊聊FDE的真本事",
+          "item": "https://www.mvstudiopro.com/blog/fde-real-work-starter"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "不会写代码，也值得了解FDE吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "值得先了解工作方法，尤其是你本来就懂某个行业或流程。真正承担FDE岗位通常还需要工程能力，可以从自己的优势开始补，而不用假装已经什么都会。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "资料包适合谁？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "想了解FDE的转型者，以及正在尝试把AI用进工作里的产品、运营、交付和小团队负责人。它是入门与练习资料，不是就业承诺，也不是装好就能自动经营公司的软件。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "资料包和39积分怎么领取？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "先注册MV Studio Pro账号，再扫码添加作者微信，联系领取FDE资料包与本次活动的39积分。积分通过微信联系领取，不是扫码后自动到账。"
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<div class="wrap">
+<nav class="top"><a href="/">首页</a> › <a href="/blog/">文章</a></nav>
+<article>
+<h1>AI都这么能干了，公司为什么还在加班？聊聊FDE的真本事</h1>
+<p class="meta">2026-09-13 · 约 7 分钟</p>
+<p>AI写方案越来越快，出图越来越漂亮，连代码也能一大段一大段地写。</p>
+<p>可一到交稿，工作群里还是那几句话：</p>
+<blockquote>
+<p>“这不是最新版吧？”<br>“昨天谁说可以的？”<br>“先别发，我再确认一下。”</p>
+</blockquote>
+<p>电脑里的本事越来越大，人的时间却还耗在找文件、等回复、重新解释上。工具明明添了不少，怎么下班还是没早？</p>
+<p>最近重新翻看以前做的FDE图文知识卡，又把几套开源资料放在一起梳理，我对这个问题有了一个更具体的认识：<strong>我们花了很多心思教AI怎么干活，却容易忘记，一家公司究竟是怎么把一件事做完的。</strong></p>
+<p><img src="/blog-assets/fde-real-work-starter/fde-cover-sunburst-watermarked.jpg" alt="FDE学习卡摘图：让现场经验留在团队里" oncontextmenu="return false" draggable="false"></p>
+<p><em>本图属于本站图文知识卡整理的相关内容，制作请参考<a href="https://www.mvstudiopro.com/platform?mode=create&tab=copy">“单页图文卡片”</a>。</em></p>
+<h2>FDE是什么？它最爱追问一句“然后呢”</h2>
+<p>FDE是Forward Deployed Engineer，通常译为“前线部署工程师”。用简单的话说，就是走进业务现场，动手把技术接进日常工作，并跟着看它到底有没有用的人。<a href="https://jobs.lever.co/palantir/2e6b0ac8-83e9-4be5-a3aa-cf319f751728">Palantir官方岗位说明</a>把工程实现和实际结果放在了重要位置。</p>
+<p>“AI已经会写报告了。”</p>
+<p>然后呢？谁来核对？交给谁？如果那份数字错了，谁能发现？</p>
+<p>这些问题听起来很琐碎，偏偏最容易把一个漂亮的演示拦在门外。</p>
+<p>你可以把FDE想成那位愿意搬把椅子坐到使用者旁边的同事。他会看你怎么找资料，也得在必要时改代码、接系统。最后要弄明白：今天多装的这个工具，究竟替你省了哪一段麻烦。</p>
+<p><strong>演示时的掌声很好听，日常愿不愿意继续用，更值得听。</strong></p>
+<h2>在中国有没有机会？先别急着换工牌</h2>
+<p>我更愿意从自己熟悉的工作里找答案。</p>
+<p>如果你很清楚某个部门为什么总在返工，知道哪张表大家才信，也知道一句“按老规矩办”背后到底藏着什么，你已经有了一份很有用的行业经验。</p>
+<p>接下来要补的，是把这些经验变成别人也能用的办法，并和工程实现接起来。反过来，技术很好的人，也得走出自己的屏幕，看看同事到底卡在哪里。</p>
+<p>所以，我看好的是这类解决问题的能力。至于工牌上写FDE、交付、产品还是解决方案，先不用为几个字母着急。真要应聘，仍要看具体岗位的工程和交付要求，读完几份资料当然不算入行。</p>
+<p>这里有个值得留在心里的问题：<strong>同样的事做第二遍，团队有没有轻松一点？</strong></p>
+<p>如果每次都要原班人马重新解释一遍，经验大概还没有真正留下来。</p>
+<p><img src="/blog-assets/fde-real-work-starter/fde-maps-sunburst-watermarked.jpg" alt="FDE知识卡选段：五张地图，从熟悉的工作里找到切入点" oncontextmenu="return false" draggable="false"></p>
+<p><em>本图属于本站图文知识卡整理的相关内容，制作请参考<a href="https://www.mvstudiopro.com/platform?mode=create&tab=copy">“单页图文卡片”</a>。</em></p>
+<h2>我拿一家小小的漫剧工作室试着拆了一下</h2>
+<p>今天的资料里，我放了一个虚构的12人漫剧工作室，先围绕一集90秒的试播内容做练习。</p>
+<p>没有铺开讲拍摄技术，只埋了一个很眼熟的问题：女主角的新造型已经确认，有个镜头却还在用旧版。谁该发现？哪些东西要跟着改？已经做过的内容怎么办？</p>
+<p>光这一件事，就足够把“会做图”和“会交付”之间那段距离照出来。</p>
+<p>这是教学案例，没有真实拍片。具体怎么拆、怎样检查，我放进了资料包，读的时候可以自己先找问题，再对照参考答案。</p>
+<h2>这次整理资料，我最后做的是减法</h2>
+<p>有趣的是，八套开源来源摆在一起，最开始让人兴奋的是“好多工具”；继续往下看，才发现不少内容在反复讲同一件事。</p>
+<p>于是，我把重复方法合起来，最后留了一个统一的使用入口。与其记住一长串名字，我更想知道：眼前这件事，应该先看哪一页。</p>
+<p>这轮整理也落成了<strong>36页中文课程、14份可填写模板，以及一个能跟着做的小案例</strong>。先讲FDE是什么、不同背景怎么开始，再进入练习。里面既有空白表，也有参考答案，不用对着一堆概念猜作业怎么交。</p>
+<p><img src="/blog-assets/fde-real-work-starter/fde-packet-sunburst-watermarked.jpg" alt="FDE学习卡摘图：项目为什么总要从头再来" oncontextmenu="return false" draggable="false"></p>
+<p><em>本图属于本站图文知识卡整理的相关内容，制作请参考<a href="https://www.mvstudiopro.com/platform?mode=create&tab=copy">“单页图文卡片”</a>。</em></p>
+<p>我没有把整套内容塞进这篇文章。你可以先带着一个自己的问题去翻：一份总被打回的报告、一场反复确认的交接，或者那个没人说得清“到底做完没有”的项目。</p>
+<p>当资料能帮你看清手头这件事，它才开始有用。</p>
+<h2>常见问题</h2>
+<h3>不会写代码，也值得了解FDE吗？</h3>
+<p>值得先了解工作方法，尤其是你本来就懂某个行业或流程。真正承担FDE岗位通常还需要工程能力，可以从自己的优势开始补，而不用假装已经什么都会。</p>
+<h3>资料包适合谁？</h3>
+<p>想了解FDE的转型者，以及正在尝试把AI用进工作里的产品、运营、交付和小团队负责人。它是入门与练习资料，不是就业承诺，也不是装好就能自动经营公司的软件。</p>
+<h3>资料包和39积分怎么领取？</h3>
+<p>先注册MV Studio Pro账号，再扫码添加作者微信，联系领取FDE资料包与本次活动的39积分。积分通过微信联系领取，不是扫码后自动到账。</p>
+<h2>别让它又躺进收藏夹</h2>
+<p>如果你也在琢磨“AI明明很厉害，工作怎么还是这么累”，欢迎把这份资料拿回去，从自己的一个小问题开始。</p>
+<p>MV Studio Pro是我做的AI漫剧与视频创作工作室。今天先不展开介绍功能，欢迎你注册后亲自逛逛。</p>
+<p><strong>这次一起准备了FDE资料包和39积分。注册账号后，加我微信来领，也欢迎聊聊你正在卡的那一步。</strong></p>
+<p><a href="https://www.mvstudiopro.com/" style="display:inline-block;padding:12px 24px;border-radius:10px;background:#6ec8ff;color:#102330;font-weight:700;text-decoration:none">前往 MV Studio Pro 注册账号</a></p><p>註冊帳號後，掃二維碼，添加作者微信，可領取FDE資料包</p>
+<img src="/blog-assets/fde-real-work-starter/wechat-qr-watermarked.png" alt="扫码添加作者微信，联系领取FDE资料包与39积分" width="350" style="display:block;width:min(350px,100%);height:auto;margin:20px auto 0;background:white;border-radius:12px" / oncontextmenu="return false" draggable="false">
+
+</article>
+<footer>
+  <a href="/">MV Studio Pro 首页</a>
+  <a href="/blog/">全部文章</a>
+  <a href="/pricing">定价</a>
+</footer>
+</div>
+<script>
+/* 博客样片均为站内自生成：挡右键菜单与拖拽另存；无法阻止抓包，只提高随手拿走成本 */
+(function () {
+  function isOwnedMedia(t) {
+    return t && (t.tagName === "VIDEO" || t.tagName === "IMG" || (t.closest && (t.closest("video") || t.closest("figure"))));
+  }
+  document.addEventListener("contextmenu", function (e) {
+    if (isOwnedMedia(e.target)) e.preventDefault();
+  }, true);
+  document.addEventListener("dragstart", function (e) {
+    if (isOwnedMedia(e.target)) e.preventDefault();
+  }, true);
+})();
+</script>
+</body>
+</html>
