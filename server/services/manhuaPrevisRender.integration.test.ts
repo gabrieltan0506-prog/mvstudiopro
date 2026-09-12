@@ -1,8 +1,8 @@
-import { afterAll, describe, it, expect } from "vitest";
+import { describe, it, expect } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createManhuaPrevisStudio } from "../../shared/manhuaPrevis";
-import { renderManhuaPrevis, runPrevisProcess } from "./manhuaPrevisRender";
+import { renderManhuaPrevis, runPrevisProcess, type PrevisRenderReport } from "./manhuaPrevisRender";
 
 // 显式 opt-in，只跑本机渲染；存储替身写临时验收目录，不访问任何生产凭证。
 describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("白模真实渲染", () => {
@@ -88,11 +88,7 @@ describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("白模真实渲染", () => {
  * 所以只在收紧后所有人仍在画内时才收紧。这条测试钉住两侧：单人要收紧，多角色不许被挤出画。
  */
 describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("竖屏构图按人数自适应", () => {
-  const framingTempDirs: string[] = [];
-  afterAll(async () => {
-    const { rm } = await import("node:fs/promises");
-    await Promise.all(framingTempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
-  });
+  // 真实渲染输入与报告永久保留，失败时也不删除验收目录。
 
   const buildSpec = (
     aspect: "16:9" | "9:16",
@@ -133,9 +129,12 @@ describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("竖屏构图按人数自适�
     shape: "human" | "horse" = "human",
   ) => {
     const { mkdtemp, readFile } = await import("node:fs/promises");
-    const { tmpdir } = await import("node:os");
-    const dir = await mkdtemp(path.join(tmpdir(), "previs-framing-"));
-    framingTempDirs.push(dir);
+    const evidenceRoot = path.resolve(
+      process.env.PREVIS_TEST_OUTPUT || "artifacts/previs-framing",
+    );
+    await mkdir(evidenceRoot, { recursive: true });
+    const dir = await mkdtemp(path.join(evidenceRoot, "previs-framing-"));
+    console.log("PREVIS_FRAMING_EVIDENCE", dir);
     await writeFile(
       path.join(dir, "spec.json"),
       JSON.stringify(buildSpec(aspect, xs, actionKind, shape)),
@@ -147,10 +146,9 @@ describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("竖屏构图按人数自适�
         "--", path.join(dir, "spec.json"), dir],
       AbortSignal.timeout(300_000)
     );
-    return JSON.parse(await readFile(path.join(dir, "report.json"), "utf8")) as {
-      portraitFraming: string;
-      actors: Array<{ offscreenFrames?: number[] }>;
-    };
+    return JSON.parse(
+      await readFile(path.join(dir, "report.json"), "utf8")
+    ) as PrevisRenderReport;
   };
 
   it("单人竖屏收紧；三角色退回原口径且不出画；横屏不受影响", async () => {

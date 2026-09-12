@@ -116,3 +116,7 @@ gcp-speech-key.json
 
 # Local download scratch (do not commit)
 downloads/
+
+# 真 Blender 验收证据（PREVIS_TEST_OUTPUT，默认 artifacts/previs-framing）
+# 故意不删以便失败时查现场，但不进版本库
+artifacts/
