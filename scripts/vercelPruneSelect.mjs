@@ -14,7 +14,7 @@ export function isKnownPreviewDeployment(deployment) {
   if (!deployment || typeof deployment !== "object") return false;
   if (!Object.prototype.hasOwnProperty.call(deployment, "target")) return false;
   const target = deployment.target;
-  return target === null || target === undefined || target === "preview";
+  return target === null || target === "preview";
 }
 
 export function isProductionDeployment(deployment) {

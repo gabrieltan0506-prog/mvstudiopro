@@ -7,6 +7,7 @@ import { resolveManhuaAssembleAccess } from "../server/services/manhuaAssembleAc
 import { CREDIT_COSTS } from "../server/plans.js";
 import type { PaidJobDeductSnapshot } from "../server/services/paidJobLedger.js";
 import sharp from "sharp";
+import { get as getLegacyPublicBlob } from "@vercel/blob";
 import { putPublicStoredMedia as put, isPublicStoredObjectPath, signPublicStoredMediaRedirect } from "../server/services/publicStoredMedia";
 import { env, getEnvStatus } from "../server/vercel-api-core/env.js";
 import { renderWorkflowFinalVideo } from "../server/vercel-api-core/render.js";
@@ -1861,20 +1862,46 @@ function buildBlobMediaUrlFromPath(pathname: string) {
   return `${getPublicAssetBaseUrl()}/api/jobs?op=blobMedia&blobPath=${encodeURIComponent(normalized)}`;
 }
 
-/**
- * 通用远端取图：只做普通 fetch。
- *
- * 0912 起 Vercel Blob 已全面退场——公共媒体写入走 GCS（`putPublicStoredMedia`），
- * 读取由本路由的 `gcs-public/` / `gcs-renders/` 分支签名后 302 跳转。
- * 这里**不再带 Blob 令牌重试**，也明确拒绝 Blob 主机：那些对象已经删除，
- * 继续留着重试只会把一次必然失败拖成三次，并让「还能读到 Blob」的错觉留在代码里。
- */
+/** 旧公开媒体只读兼容；新产物继续写入 GCS，令牌始终只在服务端使用。 */
+async function proxyBlobAssetByPath(pathname: string) {
+  const target = s(pathname).trim().replace(/^\/+/, "");
+  if (!target) throw new Error("legacy_media_unavailable");
+  // URL 入口只允许公开 Blob 主机，不能借旧媒体兼容读取私有对象或转发令牌。
+  if (/^[a-z][a-z0-9+.-]*:/i.test(target)) {
+    const url = new URL(target);
+    if (url.protocol !== "https:" || !/^[a-z0-9-]+\.public\.blob\.vercel-storage\.com$/i.test(url.hostname)
+      || url.username || url.password || url.port) throw new Error("legacy_media_unavailable");
+  }
+  const tokens = Array.from(new Set([env.mvspReadWriteToken, process.env.MVSP_READ_WRITE_TOKEN,
+    process.env.BLOB_READ_WRITE_TOKEN].map(value => s(value).trim()).filter(Boolean)));
+  if (!tokens.length) throw new Error("legacy_media_unavailable");
+  const abortSignal = AbortSignal.timeout(30_000);
+  let uncertain = false;
+  for (const token of tokens) {
+    try {
+      const asset = await getLegacyPublicBlob(target, { token, access: "public", useCache: true, abortSignal });
+      if (asset === null) continue;
+      if (asset.statusCode !== 200 || !asset.stream) { uncertain = true; continue; }
+      return {
+        buffer: Buffer.from(await new Response(asset.stream).arrayBuffer()),
+        contentType: asset.blob.contentType || "application/octet-stream",
+        cacheControl: asset.blob.cacheControl || "public, max-age=300",
+      };
+    } catch {
+      // 不把上游错误、令牌或 URL 放进公开响应；一个 store 失败仍可查另一 store。
+      uncertain = true;
+      if (abortSignal.aborted) break;
+    }
+  }
+  if (uncertain) throw new Error("legacy_media_unavailable");
+  return null;
+}
+
+/** 普通远端取图沿用 fetch；旧 Blob URL 通过受限的公开读取兼容入口。 */
 async function fetchRemoteAsset(url: string) {
   const target = s(url).trim();
   if (!target) throw new Error("url is required");
-  if (/\.blob\.vercel-storage\.com\//i.test(target)) {
-    throw new Error("vercel_blob_retired");
-  }
+  if (/\.blob\.vercel-storage\.com\//i.test(target)) return proxyBlobAssetByPath(target);
   const response = await fetch(target, { redirect: "follow" });
   if (!response.ok) throw new Error(`asset_fetch_failed:${response.status}`);
   return {
@@ -2440,15 +2467,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           res.setHeader("Location", signPublicRenderMediaRedirect(blobPath));
           return res.status(302).end();
         }
-        // 非 gcs- 前缀只可能是 Vercel Blob 时代的老路径，对象已删除、令牌已不需要。
-        // 直接给 410 说清楚，不要伪装成还能读。
-        return res.status(410).json({ ok: false, error: "vercel_blob_retired" });
+        try {
+          const asset = await proxyBlobAssetByPath(blobPath);
+          if (!asset) return res.status(410).json({ ok: false, error: "media_not_found" });
+          res.setHeader("Content-Type", asset.contentType);
+          res.setHeader("Cache-Control", asset.cacheControl);
+          return res.status(200).send(asset.buffer);
+        } catch {
+          return res.status(503).json({ ok: false, error: "legacy_media_unavailable" });
+        }
       }
       const targetUrl = s(q.url || b.url).trim();
       if (!targetUrl) {
         return res.status(400).json({ ok: false, error: "url or blobPath is required" });
       }
       const asset = await fetchRemoteAsset(targetUrl);
+      if (!asset) return res.status(410).json({ ok: false, error: "media_not_found" });
       res.setHeader("Content-Type", asset.contentType);
       res.setHeader("Cache-Control", asset.cacheControl);
       return res.status(200).send(asset.buffer);

@@ -92,6 +92,15 @@ test("删除数上限保持，剩余明确报告", async () => {
   const f = fixture(); const result = await f.run({ maxDeletes: 1 });
   assert.equal(result.deleted, 1); assert.equal(result.remaining, 1);
 });
+test("DELETE返回404仍消耗请求预算，不继续删除剩余项", async () => {
+  const f = fixture({ deleteStatus: 404 });
+  const result = await f.run({ maxDeletes: 1 });
+  assert.equal(f.deletes().length, 1);
+  assert.equal(result.attempted, 1);
+  assert.equal(result.deleted, 0);
+  assert.equal(result.skipped, 1);
+  assert.equal(result.remaining, 1);
+});
 test("本机CLI拒绝执行，测试key不会发网络", () => {
   const result = spawnSync(process.execPath, [new URL("./vercel-prune-preview-deployments.mjs", import.meta.url).pathname],
     { encoding: "utf8", env: { VERCEL_TOKEN: "test-key" } });

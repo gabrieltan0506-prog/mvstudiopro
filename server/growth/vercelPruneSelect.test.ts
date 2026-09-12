@@ -50,7 +50,7 @@ describe("三道闸", () => {
   it("target 为 null 或 \"preview\" 都认得出（现网返回的是 null）", () => {
     expect(isKnownPreviewDeployment(dep({ target: null }))).toBe(true);
     expect(isKnownPreviewDeployment(dep({ target: "preview" }))).toBe(true);
-    expect(isKnownPreviewDeployment(dep({ target: undefined }))).toBe(true);
+    expect(isKnownPreviewDeployment(dep({ target: undefined }))).toBe(false);
   });
 
   it("当前线上生产部署被显式排除", () => {

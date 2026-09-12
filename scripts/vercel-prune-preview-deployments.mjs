@@ -74,10 +74,10 @@ export async function runPrune({ request, audit, project = "mvstudiopro", apply 
   const candidates = selection.targets.filter(preview).map(d => ({ uid: d.uid, created: d.created }));
   await audit({ event: "plan", projectId: expectedProjectId, apply, total: all.size,
     keepDays, failedKeepDays, candidates });
-  const result = { candidates: candidates.length, deleted: 0, skipped: 0, remaining: 0, dryRun: !apply };
+  const result = { candidates: candidates.length, attempted: 0, deleted: 0, skipped: 0, remaining: 0, dryRun: !apply };
   if (!apply) return result;
   for (let i = 0; i < candidates.length; i++) {
-    if (result.deleted >= maxDeletes) { result.remaining = candidates.length - i; break; }
+    if (result.attempted >= maxDeletes) { result.remaining = candidates.length - i; break; }
     const d = candidates[i];
     // 必须紧邻每次删除重读，不能沿用枚举前、上一轮或前一个对象的保护集。
     const live = await resolveLiveProductionIds();
@@ -109,6 +109,8 @@ export async function runPrune({ request, audit, project = "mvstudiopro", apply 
       continue;
     }
     await audit({ event: "delete-intent", uid: d.uid });
+    // 404 也消耗一次上游请求预算，不能只统计成功删除而继续无界调用。
+    result.attempted++;
     // GET 与 DELETE 之间仍非原子；必须另行保持维护窗口，不能宣称消灭全部竞态。
     const response = await request(`/v13/deployments/${encodeURIComponent(d.uid)}`, { method: "DELETE" });
     await audit({ event: "delete-result", uid: d.uid, status: response.status });

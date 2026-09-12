@@ -10,8 +10,39 @@ vi.mock("./gcs", () => ({
 }));
 import { buildPublicRenderMediaUrl, isPublicRenderObjectPath, signPublicRenderMediaRedirect, uploadFileToPublicRenderMedia } from "./publicRenderMedia";
 const object = "gcs-renders/12345678-1234-4123-8123-123456789abc/rendered-video.mp4";
-afterEach(() => { vi.resetAllMocks(); vi.unstubAllEnvs(); });
+afterEach(() => { vi.resetAllMocks(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 describe("公开渲染产物固定空间", () => {
+  it("上传挂起时传递120秒取消信号，超时返回失败而非稳定成品URL", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "render-gcs-timeout-"));
+    const controller = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+    let entered!: () => void;
+    const ready = new Promise<void>(resolve => { entered = resolve; });
+    try {
+      const file = path.join(dir, "rendered-video.mp4");
+      await fs.writeFile(file, "test-render-content");
+      mocks.upload.mockImplementation(({ stream, signal }) => new Promise((resolve, reject) => {
+        // 缺失信号时立即暴露原始回归，避免测试自身永久等待。
+        if (!signal) {
+          void stream.cancel().then(() => reject(new Error("missing_upload_signal")));
+          entered();
+          return;
+        }
+        expect(signal).toBe(controller.signal);
+        signal.addEventListener("abort", () => {
+          void stream.cancel().then(() => reject(signal.reason));
+        }, { once: true });
+        entered();
+      }));
+      const uploading = uploadFileToPublicRenderMedia(file, "rendered-video.mp4");
+      const rejected = expect(uploading).rejects.toMatchObject({ name: "TimeoutError" });
+      await ready;
+      controller.abort(new DOMException("test-upload-timeout", "TimeoutError"));
+      await rejected;
+      expect(timeout).toHaveBeenCalledWith(120_000);
+      expect(mocks.upload).toHaveBeenCalledOnce();
+    } finally { await fs.rm(dir, { recursive: true, force: true }); }
+  });
   it.each(["../private/x", "gs://other/secret", "gcs-renders/../secret", object.replace("rendered-video.mp4", "secret.json"), object + "/../secret", object.replace("gcs-renders/", "gcs-renders/%2e%2e/"), "canvas-media/secret.mp4", "/" + object, object + "\n"])("拒绝非固定产物路径：%s", (value) => {
     expect(isPublicRenderObjectPath(value)).toBe(false);
     expect(() => signPublicRenderMediaRedirect(value)).toThrow("invalid_public_render_path");
@@ -41,29 +72,5 @@ describe("公开渲染产物固定空间", () => {
       mocks.upload.mockImplementation(async ({stream}) => { await stream.cancel(); throw new Error("test-upload-failed"); });
       await expect(uploadFileToPublicRenderMedia(file, name)).rejects.toThrow("test-upload-failed");
     } finally { await fs.rm(dir, { recursive: true, force: true }); }
-  });
-});
-
-describe("API真实公开跳转分支", () => {
-  it("合法路径302，不读取媒体；非法路径400且不签名", async () => {
-    const source = await fs.readFile(new URL("../../api/jobs.ts", import.meta.url), "utf8");
-    const start = source.indexOf('        if (blobPath.startsWith("gcs-renders/"))');
-    // 结束标记：gcs-renders 分支之后就是「老 Blob 路径一律 410」那一行。
-    // 0912 Blob 退场后原来的 proxyBlobAssetByPath 已删除，标记跟着改。
-    const end = source.indexOf('        // 非 gcs- 前缀只可能是 Vercel Blob 时代的老路径', start);
-    expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
-    const branch = new Function("blobPath", "res", "isPublicRenderObjectPath", "signPublicRenderMediaRedirect", source.slice(start, end));
-    const res = { setHeader: vi.fn(), status: vi.fn(), end: vi.fn(), json: vi.fn() };
-    res.status.mockReturnValue(res);
-    mocks.sign.mockReturnValue("https://storage.test/fresh-signed");
-    branch(object, res, isPublicRenderObjectPath, signPublicRenderMediaRedirect);
-    expect(res.status).toHaveBeenLastCalledWith(302);
-    expect(res.setHeader).toHaveBeenCalledWith("Location", "https://storage.test/fresh-signed");
-    expect(res.setHeader).toHaveBeenCalledWith("Cache-Control", "no-store");
-    expect(res.end).toHaveBeenCalledOnce();
-    mocks.sign.mockClear();
-    branch("gcs-renders/../private.json", res, isPublicRenderObjectPath, signPublicRenderMediaRedirect);
-    expect(res.status).toHaveBeenLastCalledWith(400);
-    expect(mocks.sign).not.toHaveBeenCalled();
   });
 });

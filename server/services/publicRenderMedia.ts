@@ -33,6 +33,8 @@ export async function uploadFileToPublicRenderMedia(filePath: string, fileName: 
     stream: Readable.toWeb(createReadStream(filePath)) as ReadableStream<Uint8Array>,
     contentLength: stat.size,
     contentType: fileName === "rendered-video.mp4" ? "video/mp4" : "audio/mpeg",
+    // 与公开媒体上传共用120秒边界，鉴权或网络停滞时让调用方退出并清理临时文件。
+    signal: AbortSignal.timeout(120_000),
   });
   return stableUrl;
 }

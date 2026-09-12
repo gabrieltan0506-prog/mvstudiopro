@@ -272,14 +272,15 @@ export default function PostProdWorkshopCard({
       enabled: canUseScoringRoom,
       retry: false,
       // 0912：原本恒定 5 秒、没有「有任务在跑」的门，720 次/小时。
-      // 有任务才需要秒级反馈；没有任务时靠切回窗口刷新即可。
+      // 有任务时保持秒级反馈；空闲时每分钟检查，也支持切回窗口刷新。
       // 不判后台：react-query 在页面隐藏时本就不发请求，而这个回调只在 render 与
       // fetch 完成时重算，切换可见性不会触发重算——判了也是拿上一次碰巧的状态。
       refetchInterval: (query) => {
         const rows = query.state.data;
         const running = Array.isArray(rows)
           && rows.some((row) => row.status === "queued" || row.status === "running");
-        return running ? 5_000 : 60_000;
+        // 提交已成功而列表刷新失败时，本地单号仍证明有任务，不能被旧空列表降到空闲档。
+        return running || bgmPending ? 5_000 : 60_000;
       },
       refetchOnWindowFocus: true,
     }
