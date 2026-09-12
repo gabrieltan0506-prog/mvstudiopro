@@ -79,7 +79,7 @@ describe.skipIf(!process.env.PREVIS_BLENDER_TEST)("白模真实渲染", () => {
 });
 
 /**
- * 竖屏构图（0912 实测定案）。需要真 Blender：`PREVIS_BLENDER_TEST=1` 才跑。
+ * 竖屏构图（0912 实测定案）。需要真 Blender：`PREVIS_BLENDER_TEST=<blender 可执行文件路径>` 才跑（它被当作路径直接传给 Blender，写 =1 会整组报「白模渲染程序暂不可用」）。
  *
  * 0911 验收记的「竖屏人物偏小」在这里量成了数字：Blender 默认 AUTO 传感器拟合把 36mm
  * 套在较长边，竖屏于是套在高上，垂直视场从 32.3° 张到 54.4°，人物占画面高度 33.1% → 18.6%。
