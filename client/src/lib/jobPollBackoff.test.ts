@@ -315,3 +315,51 @@ describe("同步调度：在途闸、失败语义与唤醒", () => {
     expect(s.calls).toHaveLength(2);
   });
 });
+
+/**
+ * 默认值口径（审查 P1-1）：hiddenIntervalMs 与 maxIntervalMs 一样，不给非零默认值。
+ * 否则全仓三十多个没评估过的调用点在后台会被无差别放缓——实测危害是
+ * `maxWaitMs: 60_000` 的调用点从约 24 次轮询压到 2 次，最坏整个流程超时作废。
+ */
+describe("默认值不许无差别改掉未评估的调用点", () => {
+  it("不传 hiddenIntervalMs 时，后台行为与前台一致（默认 0）", () => {
+    const noHidden = {
+      attempt: 1, interval: 2500, adaptiveAfter: 36,
+      maxInterval: 8000, backoffFactor: 1.35, hiddenInterval: 0,
+      random: () => 0.5,
+    };
+    expect(nextPollSpacingMs({ ...noHidden, hidden: true })).toBe(2500);
+    expect(nextPollSpacingMs({ ...noHidden, hidden: false })).toBe(2500);
+  });
+
+  it("60 秒预算的调用点在后台仍能轮询多次，而不是一次就判超时", () => {
+    // 复刻 pollJobUntilTerminal 的钳位：睡眠不超过剩余预算，预算见底即收口
+    const countPolls = (hiddenInterval: number) => {
+      const maxWait = 60_000;
+      let elapsed = 0;
+      let attempt = 0;
+      while (elapsed < maxWait) {
+        attempt += 1;
+        const spacing = nextPollSpacingMs({
+          attempt, interval: 2500, adaptiveAfter: 36, maxInterval: 8000,
+          backoffFactor: 1.35, hiddenInterval, hidden: true, random: () => 0.5,
+        });
+        const remaining = maxWait - elapsed;
+        if (remaining <= 250) break;
+        elapsed += Math.min(spacing, remaining - 250);
+      }
+      return attempt;
+    };
+    expect(countPolls(0)).toBeGreaterThan(20);   // 默认：与改前持平
+    expect(countPolls(60_000)).toBeLessThan(4);  // 若给了非零默认值就是这个下场
+  });
+
+  it("后台下限不会被向上抖动之外的路径打破（审查 P2-1）", () => {
+    // maxInterval > hiddenInterval 的配置：spacing 走前台分支，下限仍须是 hiddenInterval
+    const v = nextPollSpacingMs({
+      attempt: 200, interval: 2500, adaptiveAfter: 36, maxInterval: 65_000,
+      backoffFactor: 1.35, hiddenInterval: 60_000, hidden: true, random: () => 0,
+    });
+    expect(v).toBeGreaterThanOrEqual(60_000);
+  });
+});

@@ -4057,7 +4057,19 @@ export default function PlatformPage() {
         manhuaLearnFocusSeriesKey.length >= 4 &&
         hasSupervisorOpsAccess,
       staleTime: 15_000,
-      refetchInterval: focusedManhuaLearnJobActive ? 15_000 : false,
+      /**
+       * 审查 P1-2：这条以前是恒定 15 秒，四小时任务约 960 次——比隔壁那条被修掉的
+       * 学习列表同步还高近两倍。只压一条等于把流量让给它。
+       * 现在跟同一档位退避：用 react-query 自己的更新计数当轮次，15s 起、退到 60s 封顶。
+       */
+      refetchInterval: (query) =>
+        focusedManhuaLearnJobActive
+          ? manhuaLearnSyncDelayMs({
+              attempt: query.state.dataUpdateCount,
+              regime: "idle",
+              hidden: isDocumentHidden(),
+            })
+          : false,
       retry: false,
     },
   );

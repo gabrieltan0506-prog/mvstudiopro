@@ -378,7 +378,10 @@ export function nextPollSpacingMs(params: {
   }
   // 前台：先抖再夹（审查 P2-1）——夹完再抖会让上限变成 34.5s
   const jittered = Math.round(spacing * (0.85 + rand() * 0.3));
-  return Math.min(cap, Math.max(params.interval, jittered));
+  // 下限：hidden 时不得低于 hiddenInterval（spacing 已超过它时也一样），否则注释里承诺的
+  // 「后台至少 N 秒」在 maxInterval > hiddenInterval 的配置下会被向下抖破（审查 P2-1）
+  const floor = params.hidden ? Math.max(params.interval, params.hiddenInterval) : params.interval;
+  return Math.max(floor, Math.min(cap, jittered));
 }
 
 /**
@@ -472,9 +475,12 @@ export async function pollJobUntilTerminal(
     /** 每轮递增倍数（预设 1.35）；1 表示不递增 */
     backoffFactor?: number;
     /**
-     * 页面切到后台时的最小间隔（预设 60s）。
-     * 用户常开十几个标签页，每个进过工作台的都在各自轮询；没人看的页面不该继续密集打接口。
-     * 不是完全停轮询——停了会错过完成时刻，回到前台还要等一轮。
+     * 页面切到后台时的最小间隔。**默认 0（＝不改变既有行为）**。
+     *
+     * 与 maxIntervalMs 同一口径（审查 P1-1）：全仓 31 个调用点里只有少数评估过，
+     * 给它一个非零默认值等于无差别改掉其余所有链路的 hidden 行为。实测危害：
+     * `maxWaitMs: 60_000` 的调用点在后台会从约 24 次轮询压到 2 次，重整形等停那条
+     * 最坏直接超时抛错、整个流程作废。要压后台流量就在那条链路上显式传。
      */
     hiddenIntervalMs?: number;
     /** 每次拉取 job 后触发（含尚未进入终态的中间状态） */
@@ -488,7 +494,7 @@ export async function pollJobUntilTerminal(
   // 二十多个没评估过的出图/看板链路。要压量就在那条链路上显式传 maxIntervalMs。
   const maxInterval = Math.max(interval, opts?.maxIntervalMs ?? 8000);
   const backoffFactor = Math.max(1, opts?.backoffFactor ?? 1.35);
-  const hiddenInterval = Math.max(0, opts?.hiddenIntervalMs ?? 60_000);
+  const hiddenInterval = Math.max(0, opts?.hiddenIntervalMs ?? 0);
   const t0 = Date.now();
   let attempt = 0;
   let lastStatus: JobStatus = "queued";
