@@ -199,3 +199,31 @@ describe("resolveManhuaLearnSnapshotSchedule", () => {
     expect(second.intervalMs).toBe(first.intervalMs);
   });
 });
+
+describe("模块级初值必须冻结", () => {
+  it("就地改共享初值会当场抛错，而不是静默污染此后所有实例", () => {
+    expect(Object.isFrozen(MANHUA_LEARN_SYNC_INITIAL)).toBe(true);
+    expect(Object.isFrozen(MANHUA_LEARN_SNAPSHOT_BASELINE_INITIAL)).toBe(true);
+    expect(() => {
+      (MANHUA_LEARN_SYNC_INITIAL as { rounds: number }).rounds = 99;
+    }).toThrow();
+    expect(() => {
+      (MANHUA_LEARN_SNAPSHOT_BASELINE_INITIAL as { baseline: number }).baseline = 99;
+    }).toThrow();
+  });
+
+  it("正常路径仍然只产出新对象，不动初值", () => {
+    const after = nextManhuaLearnSyncState(MANHUA_LEARN_SYNC_INITIAL, { ok: true, hasActive: true });
+    expect(after).not.toBe(MANHUA_LEARN_SYNC_INITIAL);
+    expect(MANHUA_LEARN_SYNC_INITIAL).toEqual({ tier: "idle", rounds: 0 });
+    const { next } = resolveManhuaLearnSnapshotSchedule({
+      prev: MANHUA_LEARN_SNAPSHOT_BASELINE_INITIAL,
+      seriesKey: "剧A",
+      dataUpdateCount: 5,
+      active: true,
+      hidden: false,
+    });
+    expect(next).not.toBe(MANHUA_LEARN_SNAPSHOT_BASELINE_INITIAL);
+    expect(MANHUA_LEARN_SNAPSHOT_BASELINE_INITIAL).toEqual({ seriesKey: "", baseline: 0 });
+  });
+});

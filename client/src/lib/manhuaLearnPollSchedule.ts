@@ -29,7 +29,15 @@ const JITTER_MAX = 0.25;
 export type ManhuaLearnSyncTier = "active" | "idle";
 export type ManhuaLearnSyncState = { tier: ManhuaLearnSyncTier; rounds: number };
 
-export const MANHUA_LEARN_SYNC_INITIAL: ManhuaLearnSyncState = { tier: "idle", rounds: 0 };
+/**
+ * 冻结：它是模块级共享对象，却被当作每个组件实例的初值。
+ * 现在所有写法都是整体替换新对象，安全；但只要有人写 `state.rounds = x`
+ * 就会就地改掉这份共享初值，污染此后所有实例。冻上让这种写法当场抛错，而不是静默串档。
+ */
+export const MANHUA_LEARN_SYNC_INITIAL: ManhuaLearnSyncState = Object.freeze({
+  tier: "idle",
+  rounds: 0,
+});
 
 /** 页面是否在后台（SSR / 测试环境按前台处理） */
 export function isPageHidden(): boolean {
@@ -88,10 +96,11 @@ export function nextManhuaLearnSyncState(
  * 所以这里拿 `dataUpdateCount` 当轮次，不抖动。
  */
 export type ManhuaLearnSnapshotBaseline = { seriesKey: string; baseline: number };
-export const MANHUA_LEARN_SNAPSHOT_BASELINE_INITIAL: ManhuaLearnSnapshotBaseline = {
+/** 冻结理由同 {@link MANHUA_LEARN_SYNC_INITIAL}：共享对象当 useRef 初值，就地改会污染所有实例。 */
+export const MANHUA_LEARN_SNAPSHOT_BASELINE_INITIAL: ManhuaLearnSnapshotBaseline = Object.freeze({
   seriesKey: "",
   baseline: 0,
-};
+});
 /** 唤醒时用的哨兵：下一次回调会把它收敛成当前计数，等于「从 15 秒重新起退」 */
 export const MANHUA_LEARN_SNAPSHOT_WAKE_SENTINEL = Number.MAX_SAFE_INTEGER;
 
