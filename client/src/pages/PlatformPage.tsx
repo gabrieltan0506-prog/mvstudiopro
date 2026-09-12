@@ -387,6 +387,13 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
+import {
+  MANHUA_LEARN_SYNC_INITIAL,
+  isPageHidden,
+  manhuaLearnSnapshotIntervalMs,
+  manhuaLearnSyncDelayMs,
+  nextManhuaLearnSyncState,
+} from "@/lib/manhuaLearnPollSchedule";
 import VoiceInputButton from "@/components/VoiceInputButton";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { copyText, copyTextWithToast } from "@/lib/copyText";
@@ -2510,7 +2517,15 @@ export default function PlatformPage() {
     undefined,
     {
       enabled: canManageWeixinChannelsCollector && isAuthenticated,
-      refetchInterval: 15_000,
+      // 0912：这条原本只 gate 在监管权限 + 登录，页面开着就恒定 15 秒一发，
+      // 前台八小时约 1920 次，是最可能顶替 manhua-learn 成为第一名的路径。
+      // 采集器关着时状态只会因为用户自己点这个开关而变，而那个 mutation 成功后本来就会
+      // 主动 refetch 一次——所以关着就完全不轮询（用户确认：视频号采集从未开启）。
+      // 开着时才需要盯心跳与安全熔断；页面切到后台再放缓一档。
+      refetchInterval: (query) => {
+        if (!query.state.data?.capture.enabled) return false;
+        return isPageHidden() ? 120_000 : 15_000;
+      },
       refetchOnWindowFocus: false,
       retry: false,
     },
@@ -3686,6 +3701,11 @@ export default function PlatformPage() {
   }, [pendingManhuaViralProposals, selectedManhuaProposalId]);
 
   const manhuaLearnLagProbeRef = useRef("");
+  /** 轮询退避后的唤醒钩子：入队/停止/重整形/跳过本集之后立刻回到最密档 */
+  const manhuaLearnWakeRef = useRef<null | (() => void)>(null);
+  const wakeManhuaLearnSync = useCallback(() => {
+    manhuaLearnWakeRef.current?.();
+  }, []);
   const refreshManhuaLearnServerJobs = useCallback(async () => {
     const requestUserKey = manhuaLearnUserKeyRef.current;
     if (!requestUserKey) return { items: [] as ManhuaLearnServerJob[] };
@@ -3779,8 +3799,10 @@ export default function PlatformPage() {
       toast.error("停止失败", { description: sanitizePlatformUserMessage(error instanceof Error ? error.message : String(error)) });
     } finally {
       setManhuaLearnControlBusy(null);
+      // 写在 finally：降级路径（任务真在跑、只是列表刷新失败）最需要唤醒
+      wakeManhuaLearnSync();
     }
-  }, [manhuaLearnControlBusy, refreshManhuaLearnServerJobs]);
+  }, [manhuaLearnControlBusy, refreshManhuaLearnServerJobs, wakeManhuaLearnSync]);
 
   const restructureManhuaEpisode = useCallback(async (job: ManhuaLearnServerJob, episodeIndex: number, model: ManhuaNativeStructuringModelId) => {
     if (manhuaRestructureBusyRef.current || !ownerTemplateOptimizeAllowed || !user?.id) return;
@@ -3813,8 +3835,9 @@ export default function PlatformPage() {
     } finally {
       manhuaRestructureBusyRef.current = false;
       setManhuaRestructureBusy(false);
+      wakeManhuaLearnSync();
     }
-  }, [manhuaRestructureBusy, ownerTemplateOptimizeAllowed, user?.id, manhuaLearnUserKey, refreshManhuaLearnServerJobs]);
+  }, [manhuaRestructureBusy, ownerTemplateOptimizeAllowed, user?.id, manhuaLearnUserKey, refreshManhuaLearnServerJobs, wakeManhuaLearnSync]);
 
   const stopFocusedManhuaLearnJob = useCallback(async () => {
     const jobId = focusedManhuaLearnServerJob?.jobId || focusedManhuaLearnBasketItem?.jobId;
@@ -3836,8 +3859,9 @@ export default function PlatformPage() {
       toast.error("跳过失败", { description: sanitizePlatformUserMessage(error instanceof Error ? error.message : String(error)) });
     } finally {
       setManhuaLearnControlBusy(null);
+      wakeManhuaLearnSync();
     }
-  }, [focusedManhuaLearnServerJob?.jobId, focusedManhuaLearnServerJob?.status, focusedManhuaLearnBasketItem?.jobId, focusedManhuaLearnBasketItem?.jobStatus, focusedManhuaLearnEpisodeIndex, manhuaLearnControlBusy]);
+  }, [focusedManhuaLearnServerJob?.jobId, focusedManhuaLearnServerJob?.status, focusedManhuaLearnBasketItem?.jobId, focusedManhuaLearnBasketItem?.jobStatus, focusedManhuaLearnEpisodeIndex, manhuaLearnControlBusy, wakeManhuaLearnSync]);
 
   useEffect(() => {
     const allowed = Boolean(
@@ -3846,20 +3870,50 @@ export default function PlatformPage() {
     if (!allowed || trendInsightTab !== "ai_manhua") return;
     let disposed = false;
     let timer: number | undefined;
+    let inFlight = false;
+    let state = MANHUA_LEARN_SYNC_INITIAL;
+    const schedule = () => {
+      if (disposed) return;
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(
+        () => void sync(),
+        manhuaLearnSyncDelayMs({ ...state, hidden: isPageHidden() }),
+      );
+    };
     const sync = async () => {
+      // 在途闸：sync 是 async，从发请求到给 timer 赋值之间有空窗。
+      // 此刻若再起一条链，两条从此永久并行，请求量翻倍，每唤醒一次再翻一倍。
+      if (disposed || inFlight) return;
+      inFlight = true;
+      let ok = false;
       let hasActive = false;
       try {
         const listed = await refreshManhuaLearnServerJobs();
         hasActive = listed.items.some((job) => job.status === "queued" || job.status === "running");
+        ok = true;
       } catch (error) {
         if (!disposed) console.warn("[manhua-learn] refresh server jobs failed", error);
       } finally {
-        if (!disposed) timer = window.setTimeout(() => void sync(), hasActive ? 3_000 : 15_000);
+        inFlight = false;
+        if (!disposed) {
+          // 失败不清零轮次：被 Vercel 质询时这里回的是 HTML、json() 必然抛错，
+          // 那正是最该退让的时刻，退回最密的节奏只会继续撞墙。
+          state = nextManhuaLearnSyncState(state, { ok, hasActive });
+          schedule();
+        }
       }
+    };
+    // 退避之后必须配唤醒：空闲退到 60 秒时点「开始学习」，否则最长要等一分钟进度才动。
+    manhuaLearnWakeRef.current = () => {
+      if (disposed) return;
+      state = { tier: "active", rounds: 0 };
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(() => void sync(), 800);
     };
     void sync();
     return () => {
       disposed = true;
+      manhuaLearnWakeRef.current = null;
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [refreshManhuaLearnServerJobs, hasSupervisorOpsAccess, trendInsightTab, user?.id]);
@@ -3991,7 +4045,13 @@ export default function PlatformPage() {
         manhuaLearnFocusSeriesKey.length >= 4 &&
         hasSupervisorOpsAccess,
       staleTime: 15_000,
-      refetchInterval: focusedManhuaLearnJobActive ? 15_000 : false,
+      // 同面板恒定 15 秒的兄弟轮询：四小时任务约 960 次，比列表同步还高近两倍。
+      // 必须返回同一状态下的稳定值——含随机数会让 react-query 每 render 重建定时器，
+      // 该查询第 4 次更新后静默停更（0912 审查抓到的坑）。
+      refetchInterval: (query) =>
+        focusedManhuaLearnJobActive
+          ? manhuaLearnSnapshotIntervalMs(query.state.dataUpdateCount, isPageHidden())
+          : false,
       retry: false,
     },
   );
@@ -6246,6 +6306,8 @@ export default function PlatformPage() {
           await refreshManhuaLearnServerJobs();
         } catch {
           // 入队/接管已经成功；列表瞬时刷新失败不能把真实运行任务改画成“入队失败”。
+          // 降级路径更要唤醒：任务真在跑，只是这一次列表没刷上。
+          wakeManhuaLearnSync();
           setManhuaLearnJobPollTrace((prev) => prev ? ({
             ...prev,
             lines: appendPollDebugLine(
@@ -6308,6 +6370,7 @@ export default function PlatformPage() {
           } catch {
             // 旧卡已恢复；列表刷新失败时由既有轮询重试，不改写为失败。
           }
+          wakeManhuaLearnSync();
           toast.error("同一来源已有另一组参数的任务", {
             description: `${msg} 可先在面板停止原任务，再按当前设置提交。`,
           });

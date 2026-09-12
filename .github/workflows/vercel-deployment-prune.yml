@@ -1,0 +1,45 @@
+name: Vercel Deployment Prune
+
+# 每天清一次旧预览部署。默认只在 02:40 UTC（上海 10:40）跑一班；
+# 手动触发时可以自己决定空跑还是真删。
+on:
+  schedule:
+    - cron: "40 2 * * *"
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "真删（不勾选只做空跑）"
+        type: boolean
+        default: false
+      keep_days:
+        description: "保留最近多少天的预览部署"
+        type: string
+        default: "7"
+
+concurrency:
+  group: vercel-deployment-prune
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 清理旧预览部署
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT: mvstudiopro
+          VERCEL_TEAM_ID: ${{ secrets.VERCEL_TEAM_ID }}
+          # 定时班直接真删；手动触发按勾选决定，默认空跑
+          APPLY: ${{ (github.event_name == 'schedule' || inputs.apply) && '1' || '0' }}
+          KEEP_DAYS: ${{ inputs.keep_days || '7' }}
+        run: node scripts/vercel-prune-preview-deployments.mjs
