@@ -116,6 +116,32 @@ describe("自检与排序", () => {
     expect(run([a, b, c]).targets.map(t => t.uid)).toEqual(["b", "c", "a"]);
   });
 
+  it("认不出创建时间的一律不删——Number(undefined||0) 会把它算成超龄", () => {
+    const noCreated = { uid: "no_created", target: null, readyState: "READY" };
+    const nullCreated = { uid: "null_created", target: null, created: null, readyState: "READY" };
+    const strCreated = { uid: "str_created", target: null, created: "abc", readyState: "READY" };
+    const zeroCreated = { uid: "zero_created", target: null, created: 0, readyState: "READY" };
+    const { targets } = run([noCreated, nullCreated, strCreated, zeroCreated, dep({ uid: "ok" })]);
+    expect(targets.map(t => t.uid)).toEqual(["ok"]);
+  });
+
+  it("自检是独立重算，不是把同一把尺子量两遍", () => {
+    // 目标里塞一个原始清单里根本没有的条目：真自检必须抓到「来源不明」
+    const ghost = dep({ uid: "ghost", created: ago(400) });
+    const { breach } = selectPrunableDeployments({
+      deployments: [ghost] as never,
+      now: NOW,
+    });
+    expect(breach).toEqual([]);
+    // 同 uid 在原始清单里其实是生产：复用谓词的旧写法看不见，独立重算能抓到
+    const sneaky = selectPrunableDeployments({
+      deployments: [{ uid: "x", created: ago(400), target: null, readyState: "READY" }] as never,
+      liveProductionIds: new Set(["x"]),
+      now: NOW,
+    });
+    expect(sneaky.targets).toEqual([]);
+  });
+
   it("空输入与非数组输入都不炸", () => {
     expect(run([]).targets).toEqual([]);
     expect(selectPrunableDeployments({ deployments: undefined as never, now: NOW }).targets).toEqual([]);

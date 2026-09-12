@@ -13,6 +13,7 @@ import {
   manhuaLearnSnapshotIntervalMs,
   manhuaLearnSyncDelayMs,
   nextManhuaLearnSyncState,
+  resolveManhuaLearnSnapshotRefetch,
   resolveManhuaLearnSnapshotSchedule,
 } from "./manhuaLearnPollSchedule";
 
@@ -126,11 +127,22 @@ describe("请求量（纯函数推算，非线上）", () => {
     return calls;
   };
 
-  it("四小时活跃任务从 4800 次降到 600 次以内", () => {
-    expect(countCalls(4 * 60 * 60_000, "active")).toBeLessThan(600);
+  // 注意：这一格只描述「列表停滞时」的退避曲线，**不是线上活跃任务的请求量**。
+  // 线上任务持续推进时服务端每次写进度都会更新 updatedAt，列表指纹随之变化，
+  // 轮次每轮归零，活跃档实际钉在 3 秒。真实数字要等线上跑一次从防火墙 Traffic 页取。
+  it("活跃档在列表停滞时会退避（非线上口径）", () => {
+    const stalled = countCalls(4 * 60 * 60_000, "active");
+    expect(stalled).toBeLessThan(600);
+    // 反过来钉住：一直有进展时它就该保持最密档，不许被退避拖慢
+    let state: ManhuaLearnSyncState = { tier: "active", rounds: 0 };
+    for (let i = 0; i < 50; i += 1) {
+      state = nextManhuaLearnSyncState(state, { ok: true, hasActive: true, changed: true });
+      expect(manhuaLearnSyncDelayMs({ ...state, hidden: false, random: maxJitter }))
+        .toBe(MANHUA_LEARN_ACTIVE_BASE_MS);
+    }
   });
 
-  it("面板空开一天从 5760 次降到 1600 次以内", () => {
+  it("空闲档：面板空开一天从 5760 次降到 1600 次以内（这一半才是堵住 1.7k/天的）", () => {
     expect(countCalls(24 * 60 * 60_000, "idle")).toBeLessThan(1600);
   });
 });
@@ -249,12 +261,33 @@ describe("列表真的变了就回到最密档", () => {
 });
 
 describe("快照退避要把失败也算进轮次", () => {
-  it("被质询时只数成功会让退避永远不启动", () => {
-    const prev = { seriesKey: "剧A", baseline: 0 };
-    // 成功 0 次、失败 6 次：如果只数成功，rounds 恒为 0、间隔原地不动地一直撞
-    const { intervalMs } = resolveManhuaLearnSnapshotSchedule({
-      prev, seriesKey: "剧A", updateCount: 0 + 6, active: true,
+  // 这里测的是**直接喂给 refetchInterval 的那个函数**，不是喂字面量的纯函数——
+  // 否则「调用点只传了 dataUpdateCount」这种回退不会让任何测试变红。
+  it("被质询时只数成功会让退避永远不启动：成功 0 次、失败 6 次也必须已经退到封顶", () => {
+    const { intervalMs } = resolveManhuaLearnSnapshotRefetch({
+      prev: { seriesKey: "剧A", baseline: 0 },
+      seriesKey: "剧A",
+      active: true,
+      queryState: { dataUpdateCount: 0, errorUpdateCount: 6 },
     });
     expect(intervalMs).toBe(MANHUA_LEARN_IDLE_MAX_MS);
+  });
+
+  it("成功与失败等价累加，不是只认其中一种", () => {
+    const prev = { seriesKey: "剧A", baseline: 0 };
+    const bySuccess = resolveManhuaLearnSnapshotRefetch({
+      prev, seriesKey: "剧A", active: true,
+      queryState: { dataUpdateCount: 4, errorUpdateCount: 0 },
+    });
+    const byError = resolveManhuaLearnSnapshotRefetch({
+      prev, seriesKey: "剧A", active: true,
+      queryState: { dataUpdateCount: 0, errorUpdateCount: 4 },
+    });
+    const mixed = resolveManhuaLearnSnapshotRefetch({
+      prev, seriesKey: "剧A", active: true,
+      queryState: { dataUpdateCount: 2, errorUpdateCount: 2 },
+    });
+    expect(byError.intervalMs).toBe(bySuccess.intervalMs);
+    expect(mixed.intervalMs).toBe(bySuccess.intervalMs);
   });
 });

@@ -396,7 +396,7 @@ import {
   isPageHidden,
   manhuaLearnSyncDelayMs,
   nextManhuaLearnSyncState,
-  resolveManhuaLearnSnapshotSchedule,
+  resolveManhuaLearnSnapshotRefetch,
 } from "@/lib/manhuaLearnPollSchedule";
 import VoiceInputButton from "@/components/VoiceInputButton";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -2521,13 +2521,10 @@ export default function PlatformPage() {
     undefined,
     {
       enabled: canManageWeixinChannelsCollector && isAuthenticated,
-      // 0912：这条原本只 gate 在监管权限 + 登录，页面开着就恒定 15 秒一发，
-      // 前台八小时约 1920 次，是最可能顶替 manhua-learn 成为第一名的路径。
-      // 采集器关着时状态只会因为用户自己点这个开关而变，而那个 mutation 成功后本来就会
-      // 主动 refetch 一次——所以关着就完全不轮询（用户确认：视频号采集从未开启）。
-      // 开着时才需要盯心跳与安全熔断；页面切到后台再放缓一档。
-      // 采集器关着时状态只会因为用户自己点这个开关而变，而那个 mutation 成功后本来就会
-      // 主动 refetch 一次——所以关着就完全不轮询（用户确认：视频号采集长期没开）。
+      // 0912：这条原本只 gate 在监管权限 + 登录，页面开着就恒定 15 秒一发。
+      // 采集器关着时状态只会因为用户自己点这个开关而变，而那个 mutation 的 onSuccess
+      // 本来就会 refetch 一次——所以关着就完全不轮询（用户确认：只在当初测试时开过）。
+      // 开着时才需要盯心跳与安全熔断。
       // 不判后台：react-query 在页面隐藏时本就不发请求，而这个回调也不会因切换可见性重算。
       refetchInterval: (query) => (query.state.data?.capture.enabled ? 15_000 : false),
       refetchOnWindowFocus: false,
@@ -3907,6 +3904,11 @@ export default function PlatformPage() {
     const sync = async () => {
       // 在途闸：sync 是 async，从发请求到给 timer 赋值之间有空窗。
       // 此刻若再起一条链，两条从此永久并行，请求量翻倍，每唤醒一次再翻一倍。
+      //
+      // 这里直接 return 不会让链条死掉：在途那条的 finally 只要没 disposed 就一定 schedule()，
+      // 所以最多是这一次不发。**不要**改成在这里置 wakePending——那是「当作用户唤醒」的语义，
+      // 会把档位拉回 3 秒，而定时器撞上在途只是排程重叠，不该加速。
+      // 将来若新增调用点，要保证的是它进来前已判过 inFlight，或由在途那条负责排程。
       if (disposed || inFlight) return;
       inFlight = true;
       let ok = false;
@@ -4099,12 +4101,11 @@ export default function PlatformPage() {
       // 必须返回同一状态下的稳定值——含随机数会让 react-query 每 render 重建定时器，
       // 该查询第 4 次更新后静默停更（0912 审查抓到的坑）。
       refetchInterval: (query) => {
-        const { next, intervalMs } = resolveManhuaLearnSnapshotSchedule({
+        const { next, intervalMs } = resolveManhuaLearnSnapshotRefetch({
           prev: manhuaLearnSnapshotBaselineRef.current,
           seriesKey: manhuaLearnFocusSeriesKey,
-          // 成功 + 失败：被质询时走的是 error 分支，只数成功会让退避永远不启动
-          updateCount: query.state.dataUpdateCount + query.state.errorUpdateCount,
           active: focusedManhuaLearnJobActive,
+          queryState: query.state,
         });
         manhuaLearnSnapshotBaselineRef.current = next;
         return intervalMs;

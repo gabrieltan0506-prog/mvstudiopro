@@ -46,17 +46,28 @@ export function selectPrunableDeployments({
     .filter((d) => !isProductionDeployment(d))
     .filter((d) => !live.has(d.uid))
     .filter((d) => {
-      const ageMs = now - Number(d.created || 0);
+      // 年龄闸也要白名单极性：`Number(undefined || 0)` 是 0，会让「没有 created 的部署」
+      // 算出约 1.79e12 毫秒的年龄，任何保留天数都判超龄 → 无条件进删除队列，方向是多删。
+      // 认不出创建时间就不删。
+      const created = Number(d.created);
+      if (!Number.isFinite(created) || created <= 0) return false;
+      const ageMs = now - created;
       if (ageMs > keepDays * DAY) return true;
       const broken = d.readyState === "ERROR" || d.readyState === "CANCELED";
       return broken && ageMs > failedKeepDays * DAY;
     })
     .sort((a, b) => Number(a.created || 0) - Number(b.created || 0));
 
-  // 自检：目标集合里混进生产、线上部署或认不出类型的，一律视为闸门失效
-  const breach = targets.filter(
-    (d) => isProductionDeployment(d) || live.has(d.uid) || !isKnownPreviewDeployment(d),
-  );
+  // 自检必须**独立重算**，不能复用上面那三个谓词——复用等于用同一把尺子量两遍，
+  // `targets` 本来就是它们的交集，`breach` 在构造上恒为空数组，是个永远不会触发的假闸门。
+  // 这里改成按 uid 反查原始清单：凡是进了目标集、但在原始清单里是生产 / 是线上部署 /
+  // 认不出类型的，一律算闸门失效。
+  const byUid = new Map(list.filter((d) => d && d.uid).map((d) => [d.uid, d]));
+  const breach = targets.filter((t) => {
+    const raw = byUid.get(t.uid);
+    if (!raw) return true; // 目标不在原始清单里，来源不明
+    return isProductionDeployment(raw) || live.has(raw.uid) || !isKnownPreviewDeployment(raw);
+  });
   const unknown = list.filter((d) => !isProductionDeployment(d) && !isKnownPreviewDeployment(d)).length;
   return { targets, breach, unknown, productionCount: list.filter(isProductionDeployment).length };
 }

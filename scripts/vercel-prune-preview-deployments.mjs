@@ -26,9 +26,15 @@ const KEEP_DAYS = normalizeKeepDays(process.env.KEEP_DAYS, 7);
 const FAILED_KEEP_DAYS = normalizeKeepDays(process.env.FAILED_KEEP_DAYS, 1);
 // 同时认 "1" 与 "true"：工作流表达式两种写法都很容易写出，口径对不上会让定时班静默空跑
 const APPLY = ["1", "true"].includes(String(process.env.APPLY || "").trim().toLowerCase());
-const ROUND_SIZE = Number(process.env.ROUND_SIZE || 190);
-const ROUND_WAIT_MS = Number(process.env.ROUND_WAIT_MS || 11 * 60_000);
-const MAX_ROUNDS = Number(process.env.MAX_ROUNDS || 3);
+// 这几个也要清洗：裸 Number("abc") 得 NaN，`splice(0, NaN)` 取空批，
+// 结果是三轮空转、每轮还等 11 分钟、一个都没删。
+const positive = (raw, fallback) => {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+const ROUND_SIZE = Math.floor(positive(process.env.ROUND_SIZE, 190));
+const ROUND_WAIT_MS = positive(process.env.ROUND_WAIT_MS, 11 * 60_000);
+const MAX_ROUNDS = Math.floor(positive(process.env.MAX_ROUNDS, 3));
 
 if (!TOKEN) {
   console.error("缺少 VERCEL_TOKEN。请在仓库 Secrets 里配置后再跑。");
@@ -73,8 +79,10 @@ async function resolveLiveProductionIds() {
     process.exit(1);
   }
   const proj = await r.json();
-  const prod = proj?.targets?.production || {};
-  return new Set([prod.id, prod.deploymentId].filter(Boolean));
+  // 项目的 targets 里**同时有 preview**（现网实测：`targets.preview` 存在且带别名）。
+  // 只排 production 的话，一条超过保留期的长期预览分支的当前部署会被删掉，那个预览别名随之失效。
+  const targets = proj?.targets || {};
+  return new Set([targets.production?.id, targets.preview?.id].filter(Boolean));
 }
 
 const all = await listAllDeployments();

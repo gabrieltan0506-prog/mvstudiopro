@@ -89,9 +89,13 @@ export function nextManhuaLearnSyncState(
 ): ManhuaLearnSyncState {
   if (!outcome.ok) return { tier: prev.tier, rounds: prev.rounds + 1 };
   const tier: ManhuaLearnSyncTier = outcome.hasActive ? "active" : "idle";
-  // 列表真的变了就回到最密档：任务跑着且有进展时保持 3 秒，停滞了才退。
-  // 这样「活跃档也会退到 30 秒」只发生在本来就没有新进展的时候——用户感知不到延迟，
-  // 该省的请求量仍然省下来，比单纯压低封顶值两头都好。
+  // 列表真的变了就回到最密档：有进展时保持 3 秒，停滞了才退。
+  //
+  // **说清楚这条省不了活跃档的量**：服务端每次写进度都会更新任务行的 `updatedAt`，
+  // 而列表指纹里含它，所以任务持续推进时这里近乎每轮都归零，活跃档实际就钉在 3 秒。
+  // 这是有意的取舍——进度是用户盯着看的东西，不能为了省请求把它拖慢；
+  // 真正堵住 1.7k/天的是空闲档（面板空开一天 5760 → 约 1450 次），那一半的收益是实打实的。
+  // 想再降活跃档的量只能换传输方式（长轮询 / SSE），不在这条改动范围内。
   if (outcome.changed) return { tier, rounds: 0 };
   return tier === prev.tier
     ? { tier, rounds: prev.rounds + 1 }
@@ -145,6 +149,28 @@ export function resolveManhuaLearnSnapshotSchedule(params: {
   }
   const rounds = updateCount - prev.baseline;
   return { next: prev, intervalMs: manhuaLearnSnapshotIntervalMs(rounds) };
+}
+
+/**
+ * 直接给 react-query 的 `refetchInterval` 用：把 query 状态里的**成功与失败次数相加**
+ * 再交给 {@link resolveManhuaLearnSnapshotSchedule}。
+ *
+ * 求和放在这里而不是调用点，是为了让它落在测试覆盖之内——放在组件里的话，
+ * 「只传了 dataUpdateCount」这种回退没有任何测试会红。
+ */
+export function resolveManhuaLearnSnapshotRefetch(params: {
+  prev: ManhuaLearnSnapshotBaseline;
+  seriesKey: string;
+  active: boolean;
+  queryState: { dataUpdateCount: number; errorUpdateCount: number };
+}): { next: ManhuaLearnSnapshotBaseline; intervalMs: number | false } {
+  const { dataUpdateCount, errorUpdateCount } = params.queryState;
+  return resolveManhuaLearnSnapshotSchedule({
+    prev: params.prev,
+    seriesKey: params.seriesKey,
+    active: params.active,
+    updateCount: Math.max(0, dataUpdateCount) + Math.max(0, errorUpdateCount),
+  });
 }
 
 export function manhuaLearnSnapshotIntervalMs(updateCount: number): number {
