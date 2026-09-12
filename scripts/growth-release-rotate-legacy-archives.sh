@@ -15,6 +15,7 @@
 # 只动名字能被 growth-release-tag.mjs 路由到非旧仓的资产；
 # 固定名资产（growth-platforms.tar.gz / *.json.gz 等 33 个）永不在范围内。
 set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 TAG=growth-cold-store-latest
 LIMIT=1000
@@ -73,14 +74,14 @@ download_exact() { # $1=tag $2=name $3=dir → 0 且文件存在；不存在返�
   local tag="$1" name="$2" dir="$3"
   rm -f "$dir/$name"
   mkdir -p "$dir"
-  gh release download "$tag" -p "$name" -D "$dir" --clobber 2>/dev/null || true
+  gh release download "$tag" -p "$name" -D "$dir" --clobber </dev/null 2>/dev/null || true
   [ -f "$dir/$name" ]
 }
 
 deadline=$((SECONDS + TIME_BUDGET_S))
 moved=0
 skipped=0
-while IFS=$'\t' read -r size asset_id name target_tag; do
+while IFS=$'\t' read -r -u 3 size asset_id name target_tag; do
   [ "$moved" -ge "$MAX_MOVES" ] && break
   [ "$need" -le 0 ] && break
   [ "$SECONDS" -ge "$deadline" ] && { echo "时间预算用尽，本轮到此"; break; }
@@ -99,23 +100,30 @@ while IFS=$'\t' read -r size asset_id name target_tag; do
 
   if ! gh release view "$target_tag" >/dev/null 2>&1; then
     gh release create "$target_tag" ${GITHUB_SHA:+--target "$GITHUB_SHA"} --latest=false \
-      --title "$target_tag" --notes "Growth 冷备分仓；由旧仓存量轮转而来" || {
+      --title "$target_tag" --notes "Growth 冷备分仓；由旧仓存量轮转而来" </dev/null || {
         echo "::warning::目标仓创建失败，保留旧仓副本：$name"; skipped=$((skipped+1)); continue
       }
   fi
 
+  # 目标仓同名判定必须走只读清单：download 的失败分不清 404 和网络故障，
+  # 误判「不存在」会让上传覆盖日仓那份唯一副本（审查 P1）。清单拉不到就跳过保留旧仓。
+  if ! target_names=$(gh api --paginate "repos/$REPO/releases/tags/$target_tag" --jq '.assets[].name' </dev/null 2>/dev/null); then
+    echo "::warning::目标仓资产清单读取失败，保留旧仓副本：$name @ $target_tag"
+    rm -f "$WORK/dl/$name"; skipped=$((skipped+1)); continue
+  fi
   VERIFIED=false
-  if download_exact "$target_tag" "$name" "$WORK/tv"; then
+  if printf '%s\n' "$target_names" | grep -qxF "$name"; then
     # 目标仓已有同名：SHA 相同视为重复副本，直接清旧仓；不同则人工看，绝不覆盖
-    if [ "$(sha_of "$WORK/tv/$name")" = "$expected_sha" ]; then
+    if download_exact "$target_tag" "$name" "$WORK/tv" && [ "$(sha_of "$WORK/tv/$name")" = "$expected_sha" ]; then
       VERIFIED=true
     else
-      echo "::warning::目标仓已有同名但内容不同，跳过并保留两份：$name @ $target_tag"
+      echo "::warning::目标仓已有同名但内容不同或读取失败，跳过并保留两份：$name @ $target_tag"
       rm -f "$WORK/dl/$name" "$WORK/tv/$name"; skipped=$((skipped+1)); continue
     fi
   else
     for attempt in 1 2 3; do
-      if gh release upload "$target_tag" "$WORK/dl/$name#$name" --clobber \
+      # 不带 --clobber：同名已被上面清单分支接管，这里只允许全新上传
+      if gh release upload "$target_tag" "$WORK/dl/$name#$name" </dev/null \
         && download_exact "$target_tag" "$name" "$WORK/tv" \
         && [ "$(stat -c%s "$WORK/tv/$name" 2>/dev/null || stat -f%z "$WORK/tv/$name")" = "$size" ] \
         && [ "$(sha_of "$WORK/tv/$name")" = "$expected_sha" ]; then
@@ -123,7 +131,7 @@ while IFS=$'\t' read -r size asset_id name target_tag; do
         break
       fi
       echo "上传/回读重试：$name -> $target_tag（${attempt}/3）"
-      sleep 15
+      [ "$attempt" -lt 3 ] && sleep 15
     done
   fi
   if [ "$VERIFIED" != "true" ]; then
@@ -131,11 +139,11 @@ while IFS=$'\t' read -r size asset_id name target_tag; do
     rm -f "$WORK/dl/$name" "$WORK/tv/$name"; skipped=$((skipped+1)); continue
   fi
 
-  gh api -X DELETE "repos/$REPO/releases/assets/$asset_id" >/dev/null
+  gh api -X DELETE "repos/$REPO/releases/assets/$asset_id" </dev/null >/dev/null
   moved=$((moved + 1))
   need=$((need - 1))
   echo "已轮转（${moved}）：$name -> $target_tag（${size} bytes，旧仓副本已删）"
   rm -f "$WORK/dl/$name" "$WORK/tv/$name"
-done < "$WORK/movable.tsv"
+done 3< "$WORK/movable.tsv"
 
 echo "本轮轮转完成：搬走 ${moved} 个，跳过 ${skipped} 个"

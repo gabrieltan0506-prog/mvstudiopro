@@ -44,7 +44,7 @@ fi
 
 # 0912：回收后仍不宽裕就轮转存量归档到日仓（验真后才删旧仓，见脚本头注释）。
 # 每轮限时限量，随每 3 小时的冷备逐步把余量补到 GROWTH_ROTATE_TARGET_FREE。
-if [ "$free" -lt "$WANT_FREE" ] || [ "$free" -lt "${GROWTH_ROTATE_TARGET_FREE:-200}" ]; then
+if [ "$free" -lt "${GROWTH_ROTATE_TARGET_FREE:-200}" ]; then
   bash scripts/growth-release-rotate-legacy-archives.sh     || echo "::warning::存量归档轮转未完成，继续按现有余量判断"
   used=$(count_assets)
   free=$((LIMIT - used))
