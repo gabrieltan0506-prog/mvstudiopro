@@ -8,6 +8,7 @@ import {
   type ManhuaPrevisRequest,
 } from "../../shared/manhuaPrevis";
 import { getDb } from "../db";
+import { resolvePrevisModels } from "./manhuaPrevisModels";
 import {
   buildPostProdJobResponse,
   type PostProdJobRow,
@@ -88,6 +89,8 @@ const real: PrevisTaskDeps = {
     return row ?? null;
   },
   async insert(id, userId, input) {
+    // 入队前核对本人已成功模型，worker读取字节时再次验同一任务与SHA。
+    await resolvePrevisModels(input.spec,userId);
     const db = await database();
     await db
       .insert(jobs)

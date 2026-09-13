@@ -3,7 +3,12 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
 import * as databaseModule from "../db";
 import { describe, expect, it, vi } from "vitest";
-import { createManhuaPrevisStudio } from "../../shared/manhuaPrevis";
+import {
+  createManhuaPrevisStudio,
+  manhuaPrevisRequestSchema,
+} from "../../shared/manhuaPrevis";
+import type { PrevisRenderReport } from "./manhuaPrevisReport";
+import { PREVIS_BODY_BONES } from "../../shared/manhuaPrevisRig";
 import {
   recoverPrevisResult,
   previsRecoveryStorage,
@@ -19,7 +24,7 @@ import {
 } from "./manhuaPrevisTask";
 
 const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
-function fixture() {
+function fixture(withInteractions = false) {
   const studio = createManhuaPrevisStudio(
     2,
     "11111111-1111-4111-8111-111111111111"
@@ -30,8 +35,29 @@ function fixture() {
     clipId: "clip-1",
     spec: studio.spec,
   };
+  if (withInteractions) {
+    input.spec.actors.push({
+      ...structuredClone(input.spec.actors[0]),
+      id: "actor-2",
+      nameZh: "角色 2",
+      start: [0.5, 0],
+      end: [0.5, 0],
+    });
+    input.spec.interactions = [
+      {
+        id: "pair-1",
+        kind: "strike_recoil",
+        actorId: "actor-1",
+        targetActorId: "actor-2",
+        startSec: 0,
+        contactSec: 1,
+        endSec: 2,
+      },
+    ];
+  }
+  input.spec = manhuaPrevisRequestSchema.parse(input).spec;
   const prefix = `gs://test-bucket/post-prod/7/previs/${input.requestId}/`;
-  const report = {
+  const report: PrevisRenderReport = {
     frames: 48,
     fps: 24,
     actors: [
@@ -46,6 +72,25 @@ function fixture() {
     ],
     warnings: [],
   };
+  if (withInteractions) {
+    report.actors.push({
+      ...structuredClone(report.actors[0]),
+      id: "actor-2",
+      nameZh: "角色 2",
+    });
+    report.interactions = [
+      {
+        id: "pair-1",
+        kind: "strike_recoil",
+        actorId: "actor-1",
+        targetActorId: "actor-2",
+        contactFrame: 25,
+        contactError: 0,
+        actualPoint: [0, 0, 1],
+        targetPoint: [0, 0, 1],
+      },
+    ];
+  }
   const probe = {
     streams: [{ width: 960, height: 540, nb_read_frames: "48" }],
     format: { duration: "2.000" },
@@ -134,6 +179,122 @@ function fixture() {
   return { input, prefix, objects, result, seal, row, d };
 }
 describe("白模永久产物恢复", () => {
+  it.each([
+    "valid",
+    "custom-valid",
+    "missing",
+    "source",
+    "false-contact",
+    "map-missing",
+    "map-truncated",
+    "map-duplicate",
+    "map-unknown",
+    "map-explicit-mismatch",
+  ])("恢复带骨角色必须复核同一配置且不夸大接地：%s", async mode => {
+    const f = fixture();
+    const actor = f.input.spec.actors[0];
+    actor.assetRef = "asset-1";
+    actor.riggedModel = {
+      sourceJobId: "m3d_saved",
+      forwardAxis: "+X",
+      targetHeight: 1.7,
+      boneMap: { pelvis: mode === "custom-valid" ? "实际骨盆" : "pelvis" },
+    };
+    f.input.spec = manhuaPrevisRequestSchema.parse(f.input).spec;
+    f.result.spec = f.input.spec;
+    if (mode !== "missing")
+      f.result.report.models = [
+        {
+          actorId: actor.id,
+          sourceJobId: mode === "source" ? "m3d_other" : "m3d_saved",
+          sha256: "a".repeat(64),
+          bytes: 2048,
+          vertices: 100,
+          meshVertices: 100,
+          accessorComponents: 1500,
+          instanceComponents: 1500,
+          instanceIndices: 300,
+          imagePixels: 0,
+          meshes: 1,
+          jointNames: [...PREVIS_BODY_BONES],
+          morphNames: [],
+          mappedBones: 16,
+          boneMap: Object.fromEntries(
+            PREVIS_BODY_BONES.map(name => [name, name])
+          ) as Record<(typeof PREVIS_BODY_BONES)[number], string>,
+          forwardAxis: "+X",
+          targetHeight: 1.7,
+          weightedVertices: 100,
+          retargetFrames: 48,
+          retargetMode: "rest-corrected-rotation-preserve-target-lengths",
+          contactValidated: false,
+          boundaryZh: "角色网格接地未验证",
+          offscreenFrames: [],
+        },
+      ];
+    if (mode === "false-contact")
+      Object.assign(f.result.report.models![0], { contactValidated: true });
+    const model = f.result.report.models?.[0];
+    if (model) {
+      if (mode === "custom-valid") {
+        model.boneMap.pelvis = "实际骨盆";
+        model.jointNames[0] = "实际骨盆";
+      } else if (mode === "map-missing")
+        Reflect.deleteProperty(model, "boneMap");
+      else if (mode === "map-truncated")
+        Reflect.deleteProperty(model.boneMap, "head");
+      else if (mode === "map-duplicate") model.boneMap.head = "neck";
+      else if (mode === "map-unknown") model.boneMap.head = "未知骨骼";
+      else if (mode === "map-explicit-mismatch") {
+        model.boneMap.pelvis = "spine";
+        model.boneMap.spine = "pelvis";
+      }
+    }
+    for (const [name, value] of [
+      ["request.json", f.input],
+      ["report.json", f.result.report],
+    ] as const) {
+      const bytes = Buffer.from(JSON.stringify(value));
+      f.objects.set(f.prefix + name, bytes);
+      if (name === "request.json") f.result.requestSha256 = sha(bytes);
+      else f.result.reportSha256 = sha(bytes);
+    }
+    f.seal();
+    const result = await recoverPrevisResult(f.row, 7, f.d);
+    expect(f.d.inspect).toHaveBeenCalled();
+    if (mode === "valid" || mode === "custom-valid") {
+      expect(result.status).toBe("succeeded");
+      expect(f.d.save).toHaveBeenCalledOnce();
+    } else {
+      expect(result).toBe(f.row);
+      expect(f.d.save).not.toHaveBeenCalled();
+    }
+  });
+  it("双人交互完整存证可恢复", async () => {
+    const f = fixture(true);
+    expect((await recoverPrevisResult(f.row, 7, f.d)).status).toBe("succeeded");
+    expect(f.d.save).toHaveBeenCalledOnce();
+  });
+  it.each(["missing", "duplicate", "actor", "frame", "point", "error"])(
+    "哈希重新封存也拒绝语义损坏的交互报告：%s",
+    async mode => {
+      const f = fixture(true);
+      const event = f.result.report.interactions![0];
+      if (mode === "missing") delete f.result.report.interactions;
+      else if (mode === "duplicate")
+        f.result.report.interactions!.push({ ...event });
+      else if (mode === "actor") event.actorId = "actor-2";
+      else if (mode === "frame") event.contactFrame = 24;
+      else if (mode === "point") event.actualPoint[0] = 1;
+      else event.contactError = 0.001;
+      const bytes = Buffer.from(JSON.stringify(f.result.report));
+      f.result.reportSha256 = sha(bytes);
+      f.objects.set(f.prefix + "report.json", bytes);
+      f.seal();
+      expect(await recoverPrevisResult(f.row, 7, f.d)).toBe(f.row);
+      expect(f.d.save).not.toHaveBeenCalled();
+    }
+  );
   it("失败状态的取消或隐藏标记也必须阻止恢复", async () => {
     for (const flag of ["cancelRequestedAt", "hiddenAt"]) {
       const f = fixture();
@@ -162,12 +323,10 @@ describe("白模永久产物恢复", () => {
       },
       returning: async () => [],
     };
-    const db = vi
-      .spyOn(databaseModule, "getDb")
-      .mockResolvedValue({
-        select: () => select,
-        update: () => update,
-      } as never);
+    const db = vi.spyOn(databaseModule, "getDb").mockResolvedValue({
+      select: () => select,
+      update: () => update,
+    } as never);
     const inspect = vi
       .spyOn(previsRecoveryStorage, "inspect")
       .mockImplementation(f.d.inspect);

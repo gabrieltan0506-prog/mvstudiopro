@@ -3239,7 +3239,14 @@ export default function ManhuaScriptWorkbench({
           {previsStudioOpen&&onUpdateClipPrevisStudio ? <div className="w-full">
             <p className="mb-2 text-xs text-cyan-100">第 {focusEpisode} 集 · 第 {activeSegNo} 段 · 动作白模</p>
             {activeClip?<ManhuaPrevisStudio key={`${activeClip.id}:${activeClip.previsStudio?.scopeId??"new"}`} block={activeClip}
-              characters={assetLockRegistry.byRole.character.map(a=>({id:a.id,label:a.labelZh}))}
+              characters={assetLockRegistry.byRole.character.map(a=>{
+                const ref=customAssetRefs.find(ref=>ref.id===a.id);
+                const eligibility=ref?evaluateManhuaAsset3dEligibility(ref):undefined;
+                const model=eligibility?.eligible&&eligibility.currentModel3d?.status==="succeeded"
+                  ? {taskId:eligibility.currentModel3d.taskId}:undefined;
+                return {id:a.id,label:a.labelZh,tag:a.tag,model};
+              })}
+              sourceShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,actionZh:shot.actionZh}))}
               disabled={Boolean(factoryBusy)||activeClip.status==="running"||activeClip.videoTaskStatus==="queued"}
               onChange={(studio,reference)=>onUpdateClipPrevisStudio(activeClip.id,studio,reference)}/>
               :<p className="text-xs text-amber-100">请先确认分段剧本并建立本段成片节点；此操作不会生成付费成片。</p>}

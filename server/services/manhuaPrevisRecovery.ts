@@ -5,6 +5,7 @@ import { z } from "zod";
 import { manhuaPrevisRequestSchema } from "../../shared/manhuaPrevis";
 import { getGcsBucketName, inspectGcsObjectBounded } from "./gcs";
 import type { PostProdJobRow } from "./postProdJobResponse";
+import { previsReportSchema, validatePrevisReport } from "./manhuaPrevisReport";
 
 export type PrevisRecoveryRow = NonNullable<PostProdJobRow> & {
   userId: string;
@@ -65,28 +66,7 @@ const resultSchema = z
     reportSha256: digest,
     probeSha256: digest,
     sceneSha256: digest,
-    report: z
-      .object({
-        frames: z.number().int(),
-        fps: z.literal(24),
-        actors: z
-          .array(
-            z
-              .object({
-                id: z.string(),
-                nameZh: z.string(),
-                bones: z.number().int().min(12),
-                contactError: z.number().finite().nonnegative().max(0.005),
-                stanceDrift: z.number().finite().nonnegative().max(0.005),
-                offscreenFrames: z.array(z.number().int().min(1).max(720)),
-              })
-              .passthrough()
-          )
-          .min(1)
-          .max(6),
-        warnings: z.array(z.string()),
-      })
-      .passthrough(),
+    report: previsReportSchema,
   })
   .strict();
 
@@ -159,6 +139,7 @@ export async function recoverPrevisResult(
     )
       return row;
     const result = resultSchema.parse(JSON.parse(bytes.toString()));
+    validatePrevisReport(result.report, input.spec);
     if (
       result.userId !== row.userId ||
       result.requestId !== input.requestId ||

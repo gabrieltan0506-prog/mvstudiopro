@@ -21,7 +21,7 @@ beforeAll(async () => {
       f.makeBlock=(scope='11111111-1111-4111-8111-111111111111')=>({id:'clip-e01-g01',previsStudio:createManhuaPrevisStudio(10,scope),manhuaSegmentRefs:{previs:f.old}});
       f.response=(input)=>({jobId:'prv_test_job',status:'succeeded',params:input,output:{requestId:input.requestId,clipId:input.clipId,spec:input.spec,durationSec:input.spec.durationSec,gcsUri:'gs://test/unrelated-storage-folder/output.mp4',url:'https://offline.invalid/new.mp4',report:{warnings:['离线测试，不代表动作质量验收']}}});
       const services={submit:async input=>{f.submits.push(structuredClone(input));if(f.mode==='defer')return new Promise(resolve=>f.resolveSubmit=resolve);if(f.mode==='unknown')throw Error('离线模拟断网');const response=f.response(input);if(globalThis.keyedFixture)f.getResult=response;return response;},get:async id=>{f.gets.push(id);return f.getResult;},list:async (...args)=>{f.lists.push(args);if(f.mode==='defer-list')return new Promise(resolve=>f.resolveList=resolve);return {items:[],nextCursor:null};}};
-      function App(){const [block,setBlock]=useState(()=>globalThis.keyedFixture?{...f.makeBlock(),previsStudio:undefined}:f.makeBlock());f.block=block;f.setBlock=setBlock;return <ManhuaPrevisStudioView key={globalThis.keyedFixture?block.id+':'+(block.previsStudio?.scopeId??'new'):undefined} block={block} characters={[{id:'character-mo',label:'墨屠'}]} services={services} onChange={(studio,reference)=>{f.updates.push({studio:structuredClone(studio),reference});if(f.rejectSave)return false;setBlock(current=>({...current,previsStudio:studio,manhuaSegmentRefs:reference?{...current.manhuaSegmentRefs,previs:reference}:current.manhuaSegmentRefs}));return true;}}/>;}
+      function App(){const [block,setBlock]=useState(()=>globalThis.keyedFixture?{...f.makeBlock(),previsStudio:undefined}:f.makeBlock());const [characters,setCharacters]=useState([{id:'character-mo',label:'墨屠'}]);const [shots,setShots]=useState([]);f.block=block;f.setBlock=setBlock;f.characters=characters;f.setCharacters=setCharacters;f.shots=shots;f.setShots=setShots;return <ManhuaPrevisStudioView key={globalThis.keyedFixture?block.id+':'+(block.previsStudio?.scopeId??'new'):undefined} block={block} characters={characters} sourceShots={shots} services={services} onChange={(studio,reference)=>{f.updates.push({studio:structuredClone(studio),reference});if(f.rejectSave)return false;setBlock(current=>({...current,previsStudio:studio,manhuaSegmentRefs:reference?{...current.manhuaSegmentRefs,previs:reference}:current.manhuaSegmentRefs}));return true;}}/>;}
       createRoot(document.getElementById('root')).render(globalThis.strictFixture?<StrictMode><App/></StrictMode>:<App/>);
       `,
     },
@@ -443,4 +443,106 @@ it("提交期间切换 scope，旧生成回执不能成为新项目候选", asyn
   } finally {
     await page.close();
   }
+});
+
+async function setupScript(page: Page) {
+  await page.evaluate(() => {
+    const f=(window as any).fixture;
+    f.beforeSpec=structuredClone(f.block.previsStudio.spec);
+    f.setCharacters([{id:'qing',label:'阿菁',tag:'@人物1'},{id:'guard',label:'家丁',tag:'@人物2'}]);
+    f.setShots([{index:7,durationSec:4,actionZh:'阿菁一拳击中家丁，家丁受击后仰。'}]);
+  });
+  await page.waitForSelector('[data-previs-script-draft]');
+}
+async function toggleLabel(page: Page, text: string) {
+  await page.evaluate(text => {
+    const label=Array.from(document.querySelectorAll('label')).find(el=>el.textContent?.includes(text));
+    const input=label?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    if(!input||input.disabled)throw Error('复选框不可用：'+text);
+    input.click();
+  },text);
+  await settle(page);
+}
+
+it('剧本草案先预览再确认，仅改配置，撤销精确恢复旧spec与旧参考',async()=>{
+  const page=await open();
+  try {
+    await setupScript(page);await click(page,'从本段剧本生成动作草案');await settle(page);
+    expect(await page.$eval('[data-previs-script-draft]',e=>e.textContent)).toContain('双人事件 1 个');
+    const before=await page.evaluate(()=>{const f=(window as any).fixture;return {old:f.beforeSpec,current:f.block.previsStudio.spec,submits:f.submits,updates:f.updates};});
+    expect(before.current).toEqual(before.old);expect(before.submits).toEqual([]);expect(before.updates).toEqual([]);
+    await toggleLabel(page,'我已审阅动作');await click(page,'采用动作草案');await settle(page);
+    const adopted=await page.evaluate(()=>{const f=(window as any).fixture;return {studio:f.block.previsStudio,reference:f.block.manhuaSegmentRefs.previs,submits:f.submits};});
+    expect(adopted.studio.spec.interactions).toHaveLength(1);
+    expect(adopted.studio.spec.actors.map((a:any)=>a.assetRef)).toEqual(['qing','guard']);
+    expect(adopted.studio.specHistory[0].spec).toEqual(before.old);
+    expect(adopted.reference.gcsUri).toBe('gs://test/old.mp4');expect(adopted.submits).toEqual([]);
+    await click(page,'恢复上一份动作配置（不改已采用参考）');await settle(page);
+    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec)).toEqual(before.old);
+    expect(await page.evaluate(()=>(window as any).fixture.block.manhuaSegmentRefs.previs.gcsUri)).toBe('gs://test/old.mp4');
+  }finally{await page.close();}
+});
+
+it('草案预览后原镜改变，已勾选审阅也不能采用旧草案',async()=>{
+  const page=await open();
+  try {
+    await setupScript(page);await click(page,'从本段剧本生成动作草案');await toggleLabel(page,'我已审阅动作');
+    await page.evaluate(()=>{const f=(window as any).fixture;f.setShots([{...f.shots[0],actionZh:'阿菁静立。'}]);});await settle(page);
+    expect(await page.$eval('[data-previs-script-draft]',e=>e.textContent)).toContain('原剧本或角色已变化');
+    expect(await page.evaluate(()=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='采用动作草案')?.disabled)).toBe(true);
+    expect(await page.evaluate(()=>(window as any).fixture.updates)).toEqual([]);
+    expect(await page.evaluate(()=>(window as any).fixture.submits)).toEqual([]);
+  }finally{await page.close();}
+});
+
+it('草案预览后手工编辑配置，旧草案禁采用且不覆盖新朝向',async()=>{
+  const page=await open();
+  try {
+    await setupScript(page);await click(page,'从本段剧本生成动作草案');await toggleLabel(page,'我已审阅动作');
+    await page.focus('[aria-label="朝向角度"]');await page.$eval('[aria-label="朝向角度"]',e=>(e as HTMLInputElement).select());
+    await page.keyboard.type('45');await settle(page);
+    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.actors[0].facingDeg)).toBe(45);
+    expect(await page.$eval('[data-previs-script-draft]',e=>e.textContent)).toContain('当前动作配置已变化');
+    expect(await page.evaluate(()=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='采用动作草案')?.disabled)).toBe(true);
+    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.specHistory)).toBeUndefined();
+    expect(await page.evaluate(()=>(window as any).fixture.submits)).toEqual([]);
+    await click(page,'从本段剧本生成动作草案');await settle(page);
+    expect(await page.$eval('[data-previs-script-draft]',e=>e.textContent)).not.toContain('当前动作配置已变化');
+    expect(await page.evaluate(()=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='采用动作草案')?.disabled)).toBe(true);
+  }finally{await page.close();}
+});
+
+it('尾翼勾选与取消真实编辑，不提交渲染，不替换旧参考',async()=>{
+  const page=await open();
+  try {
+    await page.select('[aria-label="角色1形体"]','horse');await page.click('[aria-label="角色1四尾黑翼"]');await settle(page);
+    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.actors[0].creature.preset)).toBe('four_tail_black_wings');
+    await page.focus('[aria-label="显形结束"]');await page.$eval('[aria-label="显形结束"]',e=>(e as HTMLInputElement).select());
+    await page.keyboard.press('Backspace');await settle(page);
+    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.actors[0].creature.transformEndSec)).toBe(0);
+    await page.click('[aria-label="角色1四尾黑翼"]');await settle(page);
+    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.actors[0].creature)).toBeUndefined();
+    expect(await page.evaluate(()=>(window as any).fixture.submits)).toEqual([]);
+    expect(await page.evaluate(()=>(window as any).fixture.block.manhuaSegmentRefs.previs.gcsUri)).toBe('gs://test/old.mp4');
+  }finally{await page.close();}
+});
+
+it('已有模型表单先取消再应用，无自动提交且停用后保留来源模型',async()=>{
+  const page=await open();
+  try {
+    await page.evaluate(()=>{const f=(window as any).fixture;f.setCharacters([{id:'character-mo',label:'墨屠',model:{taskId:'m3d_test'}}]);});
+    await settle(page);await page.select('[aria-label="角色1项目资产"]','character-mo');
+    await page.evaluate(()=>Array.from(document.querySelectorAll('summary')).find(e=>e.textContent?.includes('角色模型与表演'))?.click());
+    await toggleLabel(page,'启用当前角色的已有带骨模型');
+    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.actors[0].riggedModel)).toBeUndefined();
+    await click(page,'取消编辑');await settle(page);
+    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.actors[0].riggedModel)).toBeUndefined();
+    await toggleLabel(page,'启用当前角色的已有带骨模型');await click(page,'应用角色配置');await settle(page);
+    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.actors[0].riggedModel)).toMatchObject({sourceJobId:'m3d_test',targetHeight:1.7});
+    expect(await page.evaluate(()=>(window as any).fixture.submits)).toEqual([]);
+    await toggleLabel(page,'启用当前角色的已有带骨模型');await click(page,'应用角色配置');await settle(page);
+    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.actors[0].riggedModel)).toBeUndefined();
+    expect(await page.evaluate(()=>(window as any).fixture.characters[0].model.taskId)).toBe('m3d_test');
+    expect(await page.evaluate(()=>(window as any).fixture.block.manhuaSegmentRefs.previs.gcsUri)).toBe('gs://test/old.mp4');
+  }finally{await page.close();}
 });

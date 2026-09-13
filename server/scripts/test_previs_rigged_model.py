@@ -1,0 +1,385 @@
+"""离线真 Blender 验证；自造几何体只用于测试，绝非已验收人物资产。
+
+运行：blender -b --factory-startup --python-exit-code 1 --python 此脚本 -- 输出目录
+不渲染视频、不联网；保留 GLB、blend 与 JSON 证据供复核。
+"""
+import importlib.util
+import json
+import math
+import struct
+from pathlib import Path
+import sys
+from types import SimpleNamespace
+import bpy
+from mathutils import Matrix, Vector
+
+spec = importlib.util.spec_from_file_location("previs_rigged_model", Path(__file__).with_name("previs_rigged_model.py"))
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+out = Path(sys.argv[sys.argv.index("--") + 1])
+out.mkdir(parents=True, exist_ok=True)
+checks = []
+
+
+def check(condition, label):
+    if not condition:
+        raise AssertionError(label)
+    checks.append(label)
+
+
+def rejects(fn, message):
+    try:
+        fn()
+    except ValueError as error:
+        check(message in str(error), "明确拒绝：" + message)
+    else:
+        raise AssertionError("没有拒绝：" + message)
+
+
+def rest_points():
+    p = {"pelvis": ((0, 0, .85), (0, 0, .95)), "spine": ((0, 0, .95), (0, 0, 1.35)),
+         "neck": ((0, 0, 1.35), (0, 0, 1.5)), "head": ((0, 0, 1.5), (0, 0, 1.75))}
+    for side in (-1, 1):
+        s = str(side)
+        p.update({"upper_arm" + s: ((0, side * .2, 1.35), (0, side * .5, 1.35)),
+                  "forearm" + s: ((0, side * .5, 1.35), (0, side * .8, 1.35)),
+                  "hand" + s: ((0, side * .8, 1.35), (0, side * .9, 1.35)),
+                  "upper_leg" + s: ((0, side * .14, .85), (0, side * .14, .46)),
+                  "lower_leg" + s: ((0, side * .14, .46), (0, side * .14, .08)),
+                  "foot" + s: ((0, side * .14, .08), (.18, side * .14, .08))})
+    return p
+
+
+def create_rig(name, with_eyes=True, parented=True):
+    points = rest_points()
+    if with_eyes:
+        points.update({"Eye.L": ((.055, .065, 1.64), (.135, .065, 1.64)),
+                       "Eye.R": ((.055, -.065, 1.64), (.135, -.065, 1.64))})
+    data = bpy.data.armatures.new(name)
+    rig = bpy.data.objects.new(name, data)
+    bpy.context.scene.collection.objects.link(rig)
+    bpy.ops.object.select_all(action="DESELECT")
+    rig.select_set(True)
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.mode_set(mode="EDIT")
+    for name, (head, tail) in points.items():
+        b = data.edit_bones.new(name)
+        b.head, b.tail = head, tail
+    if parented:
+        for child, parent in module.PARENTS.items():
+            data.edit_bones[child].parent = data.edit_bones[parent]
+        if with_eyes:
+            data.edit_bones["Eye.L"].parent = data.edit_bones["head"]
+            data.edit_bones["Eye.R"].parent = data.edit_bones["head"]
+    bpy.ops.object.mode_set(mode="OBJECT")
+    return rig, points
+
+
+def create_test_mesh(rig, points):
+    vertices, faces, groups = [], [], {}
+    for name, (head, tail) in points.items():
+        center = (Vector(head) + Vector(tail)) / 2
+        # 测试方块刻意不对称，旋转眼骨时必须能观察到实际网格变化。
+        begin = len(vertices)
+        for x, y, z in ((-.04, -.025, -.03), (.07, -.025, -.03), (.07, .025, -.03), (-.04, .025, -.03),
+                        (-.04, -.025, .03), (.07, -.025, .03), (.07, .025, .03), (-.04, .025, .03)):
+            vertices.append(tuple(center + Vector((x, y, z))))
+        groups[name] = list(range(begin, begin + 8))
+        faces.extend(tuple(begin + v for v in face) for face in ((0, 1, 2, 3), (4, 7, 6, 5), (0, 4, 5, 1), (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)))
+    data = bpy.data.meshes.new("仅测试用途几何体")
+    data.from_pydata(vertices, [], faces)
+    obj = bpy.data.objects.new("仅测试用途角色", data)
+    bpy.context.scene.collection.objects.link(obj)
+    for name, indexes in groups.items():
+        obj.vertex_groups.new(name=name).add(indexes, 1.0, "REPLACE")
+    mod = obj.modifiers.new("真实蒙皮", "ARMATURE")
+    mod.object = rig
+    obj.parent = rig
+    obj.shape_key_add(name="Basis")
+    for name, vector in (("Relax", (.03, 0, 0)), ("Tense", (0, .035, 0)), ("Surprise", (0, 0, .04))):
+        key = obj.shape_key_add(name=name)
+        for index in groups["head"]:
+            key.data[index].co += Vector(vector)
+    return obj
+
+
+def positions(obj):
+    graph = bpy.context.evaluated_depsgraph_get()
+    evaluated = obj.evaluated_get(graph)
+    mesh = evaluated.to_mesh()
+    result = [evaluated.matrix_world @ v.co for v in mesh.vertices]
+    evaluated.to_mesh_clear()
+    return result
+
+
+bpy.ops.object.select_all(action="SELECT")
+bpy.ops.object.delete(use_global=False)
+fixture_rig, points = create_rig("仅测试用途带骨模型")
+fixture_mesh = create_test_mesh(fixture_rig, points)
+bpy.ops.object.select_all(action="DESELECT")
+fixture_rig.select_set(True)
+fixture_mesh.select_set(True)
+path = out / "TEST_ONLY-rigged-with-morph.glb"
+bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", use_selection=True, export_animations=False)
+meta = module.inspect_glb(path)
+check(len(meta["jointNames"]) == 18, "真实GLB含18骨")
+check(set(meta["morphNames"]) == {"Relax", "Tense", "Surprise"}, "真实GLB含三组命名形变")
+rejects(lambda: module.inspect_glb(path, "0" * 64), "SHA不一致")
+# 仅修改测试夹具的JSON，确认导入器执行前阻断无骨与外链资源。
+raw = path.read_bytes()
+json_length = struct.unpack_from("<I", raw, 12)[0]
+fixture_doc = json.loads(raw[20:20 + json_length])
+def malformed_glb(label, mutate, expected, mutate_binary=None):
+    doc = json.loads(json.dumps(fixture_doc))
+    mutate(doc)
+    binary = bytearray(raw[28 + json_length:])
+    if mutate_binary:
+        mutate_binary(doc, binary)
+    encoded = json.dumps(doc).encode("utf8")
+    encoded += b" " * ((-len(encoded)) % 4)
+    binary += b"\0" * ((-len(binary)) % 4)
+    body = struct.pack("<II", len(encoded), 0x4E4F534A) + encoded + struct.pack("<II", len(binary), 0x004E4942) + binary
+    bad_path = out / ("TEST_ONLY-rejected-" + label + ".glb")
+    bad_path.write_bytes(struct.pack("<4sII", b"glTF", 2, 12 + len(body)) + body)
+    rejects(lambda: module.inspect_glb(bad_path), expected)
+    calls = []
+    def forbidden_import(**kwargs):
+        calls.append(kwargs)
+        raise AssertionError("畸形GLB不应调用Blender导入器")
+    original_bpy = module._bpy
+    module._bpy = lambda: SimpleNamespace(data=bpy.data, ops=SimpleNamespace(import_scene=SimpleNamespace(gltf=forbidden_import)))
+    try:
+        rejects(lambda: module.import_rigged_model(bad_path, "must-not-import"), expected)
+        check(not calls, "导入器调用前拒绝：" + label)
+    finally:
+        module._bpy = original_bpy
+malformed_glb("external-uri", lambda doc: doc["buffers"][0].update(uri="file:///not-allowed.bin"), "不能引用外链")
+malformed_glb("no-skin", lambda doc: doc.update(skins=[]), "无骨模型不能直接重定向")
+malformed_glb("indices-billion", lambda d: d["accessors"][4].update(count=1_000_000_000), "accessor数量")
+malformed_glb("weights-missing-accessor", lambda d: d["meshes"][0]["primitives"][0]["attributes"].update(WEIGHTS_0=999), "accessor")
+malformed_glb("bad-buffer-ref", lambda d: d["bufferViews"][0].update(buffer=1), "buffer")
+malformed_glb("view-overflow", lambda d: d["bufferViews"][0].update(byteLength=10_000_000), "bufferView长度")
+malformed_glb("view-end-overflow", lambda d: d["bufferViews"][0].update(byteOffset=20_000), "二进制边界")
+malformed_glb("accessor-offset", lambda d: d["accessors"][0].update(byteOffset=4096), "accessor越过")
+malformed_glb("accessor-unaligned", lambda d: d["accessors"][0].update(byteOffset=1), "对齐")
+malformed_glb("stride-short", lambda d: d["bufferViews"][0].update(byteStride=4), "步长")
+malformed_glb("weights-count", lambda d: d["accessors"][3].update(count=431), "数量不一致")
+malformed_glb("joints-type", lambda d: d["accessors"][2].update(type="SCALAR"), "语义类型")
+malformed_glb("joints-normalized", lambda d: d["accessors"][2].update(normalized=True), "归一化契约")
+malformed_glb("morph-count", lambda d: d["accessors"][5].update(count=433), "数量不一致")
+malformed_glb("sparse-overcount", lambda d: d["accessors"][5]["sparse"].update(count=433), "sparse数量")
+malformed_glb("sparse-index-view", lambda d: d["accessors"][5]["sparse"]["indices"].update(bufferView=999), "bufferView")
+malformed_glb("sparse-value-offset", lambda d: d["accessors"][5]["sparse"]["values"].update(byteOffset=4), "accessor越过")
+malformed_glb("optional-draco", lambda d: d.update(extensionsUsed=["KHR_draco_mesh_compression"]), "扩展当前全部关闭")
+malformed_glb("hidden-meshopt", lambda d: d["bufferViews"][0].update(extensions={"EXT_meshopt_compression": {}}), "扩展当前全部关闭")
+malformed_glb("unknown-extension", lambda d: d.update(extensionsRequired=["TEST_unknown"]), "扩展当前全部关闭")
+malformed_glb("animation", lambda d: d.update(animations=[{}]), "无内嵌动画")
+malformed_glb("node-cycle", lambda d: d["nodes"][0].update(children=[19]), "存在环")
+malformed_glb("node-repeat", lambda d: d["nodes"][19]["children"].append(18), "多父级")
+malformed_glb("node-no-skin", lambda d: d["nodes"][18].pop("skin"), "缺少真实skin")
+malformed_glb("node-skin-ref", lambda d: d["nodes"][18].update(skin=99), "缺少真实skin")
+malformed_glb("node-transform", lambda d: d["nodes"][18].update(scale=[1, 1, float("inf")]), "非有限数字")
+malformed_glb("node-detached", lambda d: d["nodes"][19]["children"].remove(18), "孤立节点")
+malformed_glb("bone-name-duplicate", lambda d: d["nodes"][0].update(name=d["nodes"][1]["name"]), "名称缺失或重复")
+malformed_glb("skeleton-not-ancestor", lambda d: d["skins"][0].update(skeleton=18), "共同祖先")
+def disconnected_joints(doc):
+    doc["nodes"][2]["children"].remove(0)
+    doc["scenes"][0]["nodes"].append(0)
+malformed_glb("joints-no-common-root", disconnected_joints, "共同根节点")
+malformed_glb("zero-quaternion", lambda d: d["nodes"][0].update(rotation=[0, 0, 0, 0]), "单位旋转")
+malformed_glb("composed-world-overflow", lambda d: (d["nodes"][19].update(scale=[1e6] * 3), d["nodes"][17].update(scale=[1e6] * 3)), "合成世界变换")
+def many_instances(doc):
+    for i in range(600):
+        index = len(doc["nodes"])
+        doc["nodes"].append({"mesh": 0, "skin": 0})
+        doc["scenes"][0]["nodes"].append(index)
+malformed_glb("instance-vertices", many_instances, "实例总顶点")
+def repeated_morphs(doc):
+    primitive = doc["meshes"][0]["primitives"][0]
+    primitive["targets"] = [primitive["targets"][0]] * 64
+    doc["meshes"][0].pop("extras")
+    doc["meshes"][0].pop("weights")
+    for i in range(50):
+        index = len(doc["nodes"])
+        doc["nodes"].append({"mesh": 0, "skin": 0})
+        doc["scenes"][0]["nodes"].append(index)
+malformed_glb("instance-morph-budget", repeated_morphs, "实例展开分量")
+def poke_accessor(index, fmt, value):
+    def mutate(doc, binary):
+        accessor = doc["accessors"][index]
+        start = doc["bufferViews"][accessor["bufferView"]].get("byteOffset", 0) + accessor.get("byteOffset", 0)
+        struct.pack_into(fmt, binary, start, value)
+    return mutate
+malformed_glb("actual-joint-oob", lambda d: None, "JOINTS实际索引", poke_accessor(2, "<B", 255))
+malformed_glb("actual-index-oob", lambda d: None, "实际indices越界", poke_accessor(4, "<H", 65535))
+malformed_glb("actual-weight-negative", lambda d: None, "实际蒙皮权重", poke_accessor(3, "<f", -.5))
+malformed_glb("actual-weight-nan", lambda d: None, "非有限", poke_accessor(3, "<f", float("nan")))
+malformed_glb("actual-position-nan", lambda d: None, "非有限", poke_accessor(0, "<f", float("nan")))
+def non_affine_bind(doc, binary):
+    accessor = doc["accessors"][doc["skins"][0]["inverseBindMatrices"]]
+    start = doc["bufferViews"][accessor["bufferView"]].get("byteOffset", 0)
+    struct.pack_into("<f", binary, start + 12, .5)
+malformed_glb("inverse-bind-not-affine", lambda d: None, "仿射矩阵", non_affine_bind)
+def zero_weights(doc, binary):
+    view = doc["bufferViews"][doc["accessors"][3]["bufferView"]]
+    start = view.get("byteOffset", 0)
+    binary[start:start + view["byteLength"]] = bytes(view["byteLength"])
+malformed_glb("actual-weights-empty", lambda d: None, "实际蒙皮权重", zero_weights)
+def sparse_duplicate(doc, binary):
+    index = doc["accessors"][5]["sparse"]["indices"]["bufferView"]
+    start = doc["bufferViews"][index]["byteOffset"]
+    binary[start + 1] = binary[start]
+malformed_glb("actual-sparse-duplicate", lambda d: None, "未严格递增", sparse_duplicate)
+def attach_png(width, height):
+    def mutate(doc, binary):
+        import zlib
+        def chunk(kind, payload):
+            return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload))
+        payload = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(b"\0\xff\0\0\xff")) + chunk(b"IEND", b"")
+        start = len(binary)
+        binary.extend(payload)
+        doc["buffers"][0]["byteLength"] = len(binary)
+        index = len(doc["bufferViews"])
+        doc["bufferViews"].append({"buffer": 0, "byteOffset": start, "byteLength": len(payload)})
+        doc["images"] = [{"mimeType": "image/png", "bufferView": index}]
+    return mutate
+malformed_glb("image-bomb", lambda d: None, "图片像素", attach_png(100_000, 100_000))
+malformed_glb("image-total", lambda d: None, "总像素", lambda d, b: (attach_png(4096, 4096)(d, b), d["images"].extend([dict(d["images"][0]), dict(d["images"][0])])))
+malformed_glb("image-external", lambda d: d.update(images=[{"uri": "https://not-allowed.example/a.png"}]), "不能引用外链")
+malformed_glb("image-view-missing", lambda d: d.update(images=[{"mimeType": "image/png", "bufferView": 999}]), "image bufferView")
+def jpeg_bomb(doc, binary):
+    payload = b"\xff\xd8\xff\xc0" + struct.pack(">HBHHB", 11, 8, 65535, 65535, 1) + b"\1\x11\0" + b"\xff\xda\0\x08\x01\x01\0\0\x3f\0\x01\xff\xd9"
+    start = len(binary)
+    binary.extend(payload)
+    doc["buffers"][0]["byteLength"] = len(binary)
+    index = len(doc["bufferViews"])
+    doc["bufferViews"].append({"buffer": 0, "byteOffset": start, "byteLength": len(payload)})
+    doc["images"] = [{"mimeType": "image/jpeg", "bufferView": index}]
+malformed_glb("jpeg-bomb", lambda d: None, "图片像素", jpeg_bomb)
+def empty_jpeg_scan(doc, binary):
+    jpeg_bomb(doc, binary)
+    view = doc["bufferViews"][-1]
+    start = view["byteOffset"]
+    struct.pack_into(">HH", binary, start + 7, 1, 1)
+    binary[start + 15:] = b"\xff\xda\x00\x02\xff\xd9"
+    view["byteLength"] = len(binary) - start
+    doc["buffers"][0]["byteLength"] = len(binary)
+malformed_glb("jpeg-empty-scan", lambda d: None, "扫描头无效", empty_jpeg_scan)
+malformed_glb("unsupported-image", lambda d: None, "仅支持PNG/JPEG", lambda d, b: (attach_png(1, 1)(d, b), d["images"][0].update(mimeType="image/ktx2")))
+small_doc, small_binary = json.loads(json.dumps(fixture_doc)), bytearray(raw[28 + json_length:])
+attach_png(1, 1)(small_doc, small_binary)
+small_view = small_doc["bufferViews"][-1]
+small_png = bytes(small_binary[small_view["byteOffset"]:])
+check(module._image_dimensions(small_png, "image/png") == (1, 1), "真实1像素PNG容器尺寸通过")
+check(module._validate_resources(small_doc, bytes(small_binary))["imagePixels"] == 1, "内嵌1像素PNG进入资源回执")
+malformed_glb("png-corrupt-crc", lambda d: None, "校验和", lambda d, b: (attach_png(1, 1)(d, b), b.__setitem__(-1, b[-1] ^ 1)))
+malformed_glb("texture-ref", lambda d: d.update(textures=[{"source": 999}]), "texture source")
+malformed_glb("material-ref", lambda d: d["meshes"][0]["primitives"][0].update(material=999), "material")
+check(module.MAX_GLB_BYTES == 64 * 1024 * 1024, "脚本GLB字节上限与服务端64MB一致")
+rejects(lambda: module.resolve_bone_map(["head"]), "请明确映射")
+bad = {name: "head" for name in module.SEMANTIC_BONES}
+rejects(lambda: module.resolve_bone_map(meta["jointNames"], bad), "同一根骨骼")
+check(len(module.resolve_bone_map(meta["jointNames"])) == 16, "规范16骨严格映射")
+bpy.data.objects.remove(fixture_mesh, do_unlink=True)
+bpy.data.objects.remove(fixture_rig, do_unlink=True)
+model = module.import_rigged_model(path, "test-actor", forward_axis="+X", target_height=1.7, expected_sha256=meta["sha256"])
+check(model["report"]["weightedVertices"] > 0, "导入后每顶点有实际蒙皮")
+check(model["report"]["boneMap"] == model["boneMap"] and len(model["report"]["boneMap"]) == 16, "报告包含完整真实16骨映射")
+source, _ = create_rig("测试源预演16骨", with_eyes=False, parented=False)
+scene = bpy.context.scene
+scene.frame_start, scene.frame_end = 1, 48
+for frame in range(1, 49):
+    scene.frame_set(frame)
+    source.location = ((frame - 1) / 48, 0, 0)
+    source.keyframe_insert("location", frame=frame)
+    source.rotation_euler.z = .4 * (frame - 1) / 47
+    source.keyframe_insert("rotation_euler", frame=frame)
+    for bone in source.pose.bones:
+        bone.rotation_mode = "QUATERNION"
+        rest = bone.bone.matrix_local
+        turn = math.radians(40) * (frame - 1) / 47 if bone.name == "upper_arm-1" else 0
+        bone.matrix = Matrix.Translation(rest.translation) @ Matrix.Rotation(turn, 4, "X") @ rest.to_quaternion().to_matrix().to_4x4()
+        for prop in ("location", "rotation_quaternion", "scale"):
+            bone.keyframe_insert(prop, frame=frame)
+module.retarget_from_source(source, model, 1, 48)
+rig = model["rig"]
+scene.frame_set(1)
+before = positions(model["meshes"][0])
+q1 = rig.pose.bones[model["boneMap"]["upper_arm-1"]].matrix.to_quaternion().copy()
+scene.frame_set(48)
+after = positions(model["meshes"][0])
+q2 = rig.pose.bones[model["boneMap"]["upper_arm-1"]].matrix.to_quaternion().copy()
+check(q1.rotation_difference(q2).angle > .6, "真实目标上臂旋转超过0.6弧度")
+check(max((a - b).length for a, b in zip(before, after)) > .8, "真实目标蒙皮顶点随路径移动")
+check(abs(rig.location.x - source.location.x) < 1e-6, "目标角色路径来自源rig")
+for frame in (1, 8, 24, 48):
+    scene.frame_set(frame)
+    check(rig.matrix_world.to_quaternion().rotation_difference(source.matrix_world.to_quaternion()).angle < .00001,
+          "角色世界转向烘焙正确：" + str(frame))
+joint_gaps = {}
+for side in ("-1", "1"):
+    for parent, child in (("upper_arm", "forearm"), ("forearm", "hand"), ("upper_leg", "lower_leg"), ("lower_leg", "foot")):
+        gap = (rig.pose.bones[parent + side].tail - rig.pose.bones[child + side].head).length
+        joint_gaps[parent + side] = gap
+        check(gap < .00001, "接头连续：" + parent + side)
+for name in module.SEMANTIC_BONES:
+    bone = rig.pose.bones[model["boneMap"][name]]
+    check(abs(bone.length - bone.bone.length) < .00001, "保留目标骨长：" + name)
+controller = {"eyeBones": {"left": "Eye.L", "right": "Eye.R"}, "expressions": {
+    "calm": {"Relax": 1}, "tense": {"Tense": 1}, "surprised": {"Surprise": 1}}}
+rejects(lambda: module.validate_performance_controller(model, {**controller, "eyeBones": {"left": "missing", "right": "Eye.R"}}), "眼骨不存在")
+rejects(lambda: module.validate_performance_controller(model, {**controller, "expressions": {"calm": {"Relax": 0}, "tense": {"Tense": 1}, "surprised": {"Surprise": 1}}}), "全部为零")
+module.validate_performance_controller(model, controller)
+mesh = model["meshes"][0]
+eye_group = mesh.vertex_groups["Eye.L"]
+eye_weights = [(v.index, g.weight) for v in mesh.data.vertices for g in v.groups if g.group == eye_group.index]
+eye_group.remove([index for index, _ in eye_weights])
+rejects(lambda: module.validate_performance_controller(model, controller), "眼骨没有实际蒙皮顶点")
+for index, weight in eye_weights:
+    eye_group.add([index], weight, "REPLACE")
+relax = mesh.data.shape_keys.key_blocks["Relax"]
+relax_saved = [p.co.copy() for p in relax.data]
+for p, basis in zip(relax.data, relax.relative_key.data):
+    p.co = basis.co
+rejects(lambda: module.validate_performance_controller(model, controller), "无实际变化")
+for p, saved in zip(relax.data, relax_saved):
+    p.co = saved
+body_index = next(v.index for v in mesh.data.vertices if any(g.group == mesh.vertex_groups["pelvis"].index for g in v.groups))
+relax.data[body_index].co.x += .1
+rejects(lambda: module.validate_performance_controller(model, controller), "影响非头部顶点")
+relax.data[body_index].co = relax_saved[body_index]
+cues = [{"startSec": i * 2 / 3, "endSec": (i + 1) * 2 / 3, "gazeTarget": [3, 1, 1.8],
+         "headYawDeg": 25, "headPitchDeg": 10, "breathAmplitude": .025, "breathHz": .5,
+         "expression": expression, "intensity": .8} for i, expression in enumerate(module.EXPRESSION_LABELS)]
+rejects(lambda: module.apply_performance(model, controller, [cues[0], cues[0]], 1, 48), "不重叠")
+rejects(lambda: module.apply_performance(model, controller, [{**cues[0], "gazeTarget": [float("nan"), 0, 1]}], 1, 48), "视线目标必须")
+base = {}
+for frame in (8, 24, 40):
+    scene.frame_set(frame)
+    base[frame] = {"head": rig.pose.bones["head"].matrix.copy(), "eye": rig.pose.bones["Eye.L"].matrix.copy(),
+                   "spine": rig.pose.bones["spine"].scale.copy(), "vertices": positions(model["meshes"][0])}
+module.apply_performance(model, controller, cues, 1, 48)
+samples = []
+for frame, shape in ((8, "Relax"), (24, "Tense"), (40, "Surprise")):
+    scene.frame_set(frame)
+    bpy.context.view_layer.update()
+    shape_value = model["meshes"][0].data.shape_keys.key_blocks[shape].value
+    head_delta = base[frame]["head"].to_quaternion().rotation_difference(rig.pose.bones["head"].matrix.to_quaternion()).angle
+    eye_delta = base[frame]["eye"].to_quaternion().rotation_difference(rig.pose.bones["Eye.L"].matrix.to_quaternion()).angle
+    vertex_delta = max((a - b).length for a, b in zip(base[frame]["vertices"], positions(model["meshes"][0])))
+    check(shape_value > .5, "真实表情关键帧非零：" + shape)
+    check(head_delta > .1, "真实头骨旋转：" + shape)
+    check(eye_delta > .05, "真实眼骨旋转：" + shape)
+    check(vertex_delta > .01, "真实表演网格形变：" + shape)
+    check((rig.pose.bones["neck"].tail - rig.pose.bones["head"].head).length < .00001, "表演头颈接头连续：" + shape)
+    samples.append({"frame": frame, "shape": shape, "shapeValue": shape_value, "headDeltaRad": head_delta,
+                    "eyeDeltaRad": eye_delta, "maxVertexDelta": vertex_delta})
+scene.frame_set(8)
+check(abs(rig.pose.bones["spine"].scale.x - base[8]["spine"].x) > .005, "真实呼吸控制改变胸部径向比例")
+report = {"testOnly": True, "blender": bpy.app.version_string, "checksPassed": len(checks), "checks": checks,
+          "model": model["report"], "performanceSamples": samples,
+          "jointGaps": joint_gaps,
+          "limits": ["自造测试模型，不等于用户角色验收", "未渲染视频", "未做双人接触/足底质量验收", "无生产UI/API/扣费调用"]}
+(out / "rigged-model-test-receipt.json").write_text(json.dumps(report, ensure_ascii=False, indent=2))
+bpy.ops.wm.save_as_mainfile(filepath=str(out / "TEST_ONLY-rigged-performance.blend"))
+print("RIGGED_MODEL_TEST_RESULT=" + json.dumps(report, ensure_ascii=False))

@@ -11,12 +11,14 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { z } from "zod";
 import {
   manhuaPrevisRequestSchema,
   type ManhuaPrevisRequest,
 } from "../../shared/manhuaPrevis";
 import { uploadBufferToGcs } from "./gcs";
+import { validatePrevisReport } from "./manhuaPrevisReport";
+import { preparePrevisModels } from "./manhuaPrevisModels";
+export type { PrevisRenderReport } from "./manhuaPrevisReport";
 
 /** 超时杀整个 xvfb/Blender 进程组，不只杀 shell 留下后台渲染。 */
 export function runPrevisProcess(
@@ -79,26 +81,12 @@ export function runPrevisProcess(
   });
 }
 
-export type PrevisRenderReport = {
-  frames: number;
-  fps: number;
-  actors: Array<{
-    id: string;
-    nameZh: string;
-    bones: number;
-    contactError: number;
-    stanceDrift: number;
-    offscreenFrames: number[];
-  }>;
-  warnings: string[];
-  /** 竖屏构图决策留证：tight=已收紧、auto=挤不下回退、landscape=横屏不进这段 */
-  portraitFraming?: "tight" | "auto" | "landscape";
-};
 export type PrevisRenderDeps = {
   upload: typeof uploadBufferToGcs;
   run: typeof runPrevisProcess;
   blender: string;
   useXvfb: boolean;
+  prepareModels?: typeof preparePrevisModels;
 };
 const deps: PrevisRenderDeps = {
   upload: uploadBufferToGcs,
@@ -107,31 +95,6 @@ const deps: PrevisRenderDeps = {
   useXvfb: process.platform === "linux",
 };
 const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
-const reportSchema = z
-  .object({
-    frames: z.number().int().min(48).max(720),
-    fps: z.literal(24),
-    actors: z
-      .array(
-        z
-          .object({
-            id: z.string().min(1),
-            nameZh: z.string().min(1),
-            bones: z.number().int().min(12),
-            contactError: z.number().finite().nonnegative().max(0.005),
-            stanceDrift: z.number().finite().nonnegative().max(0.005),
-            offscreenFrames: z.array(z.number().int().min(1).max(720)).max(720),
-          })
-          .passthrough()
-      )
-      .min(1)
-      .max(6),
-    warnings: z.array(z.string()),
-    // 这个值会落进 result.json 并参与恢复链的深比较，所以要真校验，
-    // 不能只靠 passthrough 透传 + `as` 断言骗过类型。
-    portraitFraming: z.enum(["tight", "auto", "landscape"]).optional(),
-  })
-  .passthrough();
 
 /** 固定脚本退出后才读取产物，先查大小，避免损坏产物一次性耗尽 worker 内存。 */
 async function readBoundedArtifact(
@@ -171,6 +134,17 @@ export async function renderManhuaPrevis(
   await writeFile(specPath, specBytes);
   let reportArchived = false;
   try {
+    const models = input.spec.actors.some(actor => actor.riggedModel)
+      ? await (d.prepareModels ?? preparePrevisModels)(
+          input.spec,
+          Number(userId),
+          dir,
+          options.signal
+        )
+      : [];
+    const modelsPath = path.join(dir, "models.json");
+    if (models.length)
+      await writeFile(modelsPath, JSON.stringify(models), { flag: "wx" });
     const args = [
       "--background",
       "--factory-startup",
@@ -184,6 +158,7 @@ export async function renderManhuaPrevis(
       "--",
       specPath,
       dir,
+      ...(models.length ? [modelsPath] : []),
     ];
     let reportBytes: Buffer | undefined;
     let reportObject: Awaited<ReturnType<typeof uploadBufferToGcs>> | undefined;
@@ -264,29 +239,7 @@ export async function renderManhuaPrevis(
       contentType: "application/json",
       signal: AbortSignal.timeout(30_000),
     });
-    const checkedReport = reportSchema.safeParse(parsedReport);
-    if (!checkedReport.success) throw new Error("白模检查报告格式不正确");
-    const report = checkedReport.data as PrevisRenderReport;
-    if (
-      report.frames !== input.spec.durationSec * 24 ||
-      report.fps !== 24 ||
-      report.actors.length !== input.spec.actors.length
-    )
-      throw new Error("白模帧数或角色数量不一致");
-    for (let index = 0; index < report.actors.length; index++) {
-      const actor = report.actors[index];
-      if (
-        actor.id !== input.spec.actors[index].id ||
-        actor.nameZh !== input.spec.actors[index].nameZh ||
-        actor.offscreenFrames.some(frame => frame > report.frames) ||
-        actor.bones < 12 ||
-        !Number.isFinite(actor.contactError) ||
-        !Number.isFinite(actor.stanceDrift) ||
-        actor.contactError > 0.005 ||
-        actor.stanceDrift > 0.005
-      )
-        throw new Error("白模关节检查未通过");
-    }
+    const report = validatePrevisReport(parsedReport, input.spec, models);
     const blend = await readBoundedArtifact(
       path.join(dir, "scene.blend"),
       1000,
