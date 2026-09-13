@@ -4078,16 +4078,22 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       if (!target || target === "1080p") {
         return res.status(400).json({ ok: false, error: "高清放大目标只支持 2K 或 4K" });
       }
-      const sourceResolution = s(b.sourceResolution || q.sourceResolution || "720p").trim();
-      if (!canWavespeedUpscale(sourceResolution, target)) {
-        return res.status(400).json({
-          ok: false,
-          error: `${sourceResolution} 无法放大到 ${target.toUpperCase()}；已是该档或更高时无需放大`,
-        });
+      const viewer = await resolveJobUser(req);
+      if (!viewer) return res.status(401).json({ ok: false, error: "请先登录后再使用高清放大" });
+      const declaredDuration = Number(b.durationSec ?? q.durationSec);
+      if (!Number.isFinite(declaredDuration) || declaredDuration <= 0 || declaredDuration > 600) {
+        return res.status(400).json({ ok: false, error: "请提供1至600秒的有效视频时长" });
       }
-      const durationSec = Math.max(1, Math.round(Number(b.durationSec ?? q.durationSec) || 0));
-      if (!durationSec) {
-        return res.status(400).json({ ok: false, error: "请提供视频时长（秒）" });
+      const { probePhotoVideoInput } = await import("../server/services/photoMediaInput.js");
+      let measured;
+      try { measured = await probePhotoVideoInput(videoUrl); }
+      catch { return res.status(400).json({ ok: false, error: "无法核验视频，请重新上传可播放且不超过600秒的视频" }); }
+      const { durationSec, sourceResolution } = measured;
+      if (durationSec !== Math.round(declaredDuration)) {
+        return res.status(409).json({ ok: false, error: "视频实际时长与报价不同，请重新选择原片确认费用" });
+      }
+      if (!canWavespeedUpscale(sourceResolution, target)) {
+        return res.status(400).json({ ok: false, error: "原片已达到目标档位，或不支持继续放大" });
       }
 
       /**
@@ -4097,8 +4103,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       const isFreeform = !(Number(b.episodeIndex) > 0);
       const credits = canvasVideoUpscaleCredits(target, durationSec, { freeform: isFreeform });
       const label = `高清放大·${target.toUpperCase()}（${durationSec}s）`;
-      const viewer = await resolveJobUser(req);
-      if (!viewer) return res.status(401).json({ ok: false, error: "请先登录后再使用高清放大" });
+
 
       /**
        * 异步任务化（原先同步等上游 3–10+ 分钟，部署重启会「钱扣了、退款逻辑随进程
@@ -4157,7 +4162,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           resolution: target,
           idempotencyKey: idemKey,
           deduct,
-          upscaleSourceUrl: videoUrl,
+          upscaleSourceUrl: measured.verifiedSourceUrl,
           upscaleTarget: target,
         });
         return res.status(200).json({
@@ -4658,6 +4663,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         HOME_PHOTO_ANIMATE_DEFAULT_RESOLUTION,
         isHomePhotoAnimateDuration,
         isHomePhotoAnimateResolution,
+        isHomePhotoVideoModel,
       } = await import("../shared/homePhotoTools.js");
       if (!isHomePhotoAnimateDuration(duration)) {
         return res.status(400).json({ ok: false, error: "照片动起来只支持 5、10 或 15 秒" });
@@ -4666,6 +4672,13 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       if (!isHomePhotoAnimateResolution(resolutionRaw)) {
         return res.status(400).json({ ok: false, error: "照片动起来只支持 720p 或 1080p" });
       }
+      const modelChoice = b.modelChoice ?? "seedance-2.0";
+      if (!isHomePhotoVideoModel(modelChoice)) {
+        return res.status(400).json({ ok: false, error: "请选择可用的照片动画模型" });
+      }
+      if (resolutionRaw !== "720p") {
+        return res.status(400).json({ ok: false, error: "照片动画当前提供720p，请刷新页面重新选择" });
+      }
       const resolution = resolutionRaw;
       const prompt =
         s(b.prompt || "").trim().slice(0, 500) ||
@@ -4673,11 +4686,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       const aspectRatio = s(b.aspectRatio || "16:9").trim() || "16:9";
 
       try {
-        // 0825 拆百炼三通道:EvoLink → OpenRouter → WaveSpeed,任一在配即可开闸
-        const { isAnyHappyHorseChannelConfigured } = await import(
-          "../server/services/happyHorseChannels.js"
-        );
-        if (!isAnyHappyHorseChannelConfigured()) {
+        const { isHomePhotoVideoConfigured, validateHomePhotoVideoImage } = await import("../server/services/homePhotoVideo.js");
+        if (!isHomePhotoVideoConfigured()) {
           return res.status(503).json({ ok: false, error: "视频服务暂不可用，请稍后重试" });
         }
 
@@ -4701,8 +4711,19 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             .json({ ok: false, error: access.message || "成片功能仅向正式会员开放" });
         }
 
+        const requestKey = s(b.requestKey || "").trim();
+        if (!/^[a-zA-Z0-9_-]{16,100}$/.test(requestKey)) {
+          return res.status(400).json({ ok: false, error: "请刷新页面后重新提交照片动画" });
+        }
+        const stableTaskId = `hpa_${crypto.createHash("sha256").update(`${viewer.userId}:${requestKey}`).digest("hex")}`;
+        const { getHomePhotoAnimateTask } = await import("../server/services/homePhotoAnimateTask.js");
+        const existing = await getHomePhotoAnimateTask(stableTaskId, viewer.userId);
+        if (existing) return res.status(200).json({ ok: true, async: true, taskId: existing.taskId, status: existing.status,
+          duration: existing.duration, resolution: existing.resolution, creditsUsed: existing.creditsCharged, videoUrl: existing.videoUrl });
+        // 在鉴权、会员检查之后，扣费之前按实际文件字节与像素校验；不压缩。
+        const inputImage = await validateHomePhotoVideoImage(imageUrl, modelChoice);
         const creditsNeeded = homePhotoAnimateCredits(duration, resolution);
-        const hpaChargeKey = `hpanim:${viewer.userId}:${Date.now().toString(36)}:${randomUUID().slice(0, 8)}`;
+        const hpaChargeKey = `hpanim:${stableTaskId}`;
         let creditsCharged = 0;
         let hpaDeduct: PaidJobDeductSnapshot | undefined;
         try {
@@ -4737,10 +4758,13 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             "../server/services/homePhotoAnimateTask.js"
           );
           const task = await createHomePhotoAnimateTask({
+            taskId: stableTaskId,
             deduct: hpaDeduct,
             userId: viewer.userId,
             creditsCharged,
             imageUrl,
+            modelChoice,
+            inputImage,
             prompt,
             duration,
             resolution,
@@ -4788,14 +4812,16 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       if (req.method !== "GET" && req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
-      const taskId = s(b.taskId || q.taskId || "").trim();
-      if (!taskId) {
+      let taskId = s(b.taskId || q.taskId || "").trim();
+      const requestKey = s(b.requestKey || q.requestKey || "").trim();
+      if (!taskId && !/^[a-zA-Z0-9_-]{16,100}$/.test(requestKey)) {
         return res.status(400).json({ ok: false, error: "缺少任务编号" });
       }
       const viewer = await resolveJobUser(req);
       if (!viewer) {
         return res.status(401).json({ ok: false, error: "请先登录后再查询进度" });
       }
+      if (!taskId) taskId = `hpa_${crypto.createHash("sha256").update(`${viewer.userId}:${requestKey}`).digest("hex")}`;
       try {
         const { getHomePhotoAnimateTask } = await import(
           "../server/services/homePhotoAnimateTask.js"

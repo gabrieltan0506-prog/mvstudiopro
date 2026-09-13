@@ -2,6 +2,7 @@ import "dotenv/config";
 // 必须在任何图像处理模块之前载入：全局限制 sharp/libvips 内存（0911 OOM 事故）
 import "./sharpLimits.js";
 import express from "express";
+import { registerPhotoTemporaryMedia } from "../routers/photoTemporaryMedia";
 import { createServer } from "http";
 import net from "net";
 import { nanoid } from "nanoid";
@@ -244,6 +245,7 @@ async function startServer() {
   // File upload
   app.use(uploadRouter);
   registerAuthApiRoutes(app);
+  registerPhotoTemporaryMedia(app);
   registerSmsAuthRoutes(app);
   registerSpeechApiRoutes(app);
   registerEnterpriseAgentUploadRoutes(app);

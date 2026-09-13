@@ -1,3 +1,7 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import { randomUUID, createHash } from "node:crypto";
+import { SubmitRejectedError, SubmitUnknownError } from "./submitOutcomeErrors.js";
 /**
  * WaveSpeed · ByteDance Video Upscaler：提交 + 轮询。
  *
@@ -10,6 +14,18 @@ import {
   WAVESPEED_VIDEO_UPSCALE_PATH,
   type WavespeedUpscaleTarget,
 } from "../../shared/wavespeedVideoUpscaleModels.js";
+
+async function saveUpscaleEvidence(id: string, phase: string, raw: string) {
+  const dir = path.join(process.env.PHOTO_UPSCALE_EVIDENCE_DIR || "/data/growth/photo-upscale-evidence", createHash("sha256").update(id).digest("hex"));
+  await fs.mkdir(dir, { recursive: true });
+  const name = `${phase}-${Date.now()}-${randomUUID()}`;
+  await fs.writeFile(path.join(dir, `${name}-raw.json`), raw, { flag: "wx" });
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { parsed = { unparsed: true }; }
+  await fs.writeFile(path.join(dir, `${name}-parsed.json`), JSON.stringify(parsed), { flag: "wx" });
+  await fs.writeFile(path.join(dir, `${name}-receipt.json`), JSON.stringify({ id, phase, bytes: Buffer.byteLength(raw), sha256: createHash("sha256").update(raw).digest("hex") }), { flag: "wx" });
+  return parsed as WavespeedPrediction;
+}
 
 const POLL_INTERVAL_MS = 2000;
 // 实测 5s 片超分要 163–187s（约 35 倍片长）；漫剧整集（120s 档）按同比例约 70 分钟。
@@ -65,28 +81,37 @@ export type WavespeedUpscalePollSnapshot =
  * `wavespeedUpscaleUsdCost` 决定，别在这里二次判断，免得两处口径漂移。
  */
 export async function submitWavespeedVideoUpscale(input: {
+  taskId?: string;
   videoUrl: string;
   target: WavespeedUpscaleTarget;
 }): Promise<{ predictionId: string }> {
   const apiKey = getWavespeedApiKey();
-  if (!apiKey) throw new Error("视频高清放大暂不可用，请稍后重试");
+  if (!apiKey) throw new SubmitRejectedError("视频高清放大暂不可用，请稍后重试");
 
   const source = String(input.videoUrl || "").trim();
-  if (!/^https?:\/\//i.test(source)) throw new Error("需要一条可公开访问的视频地址");
+  if (!/^https?:\/\//i.test(source)) throw new SubmitRejectedError("需要一条可公开访问的视频地址");
 
-  const createRes = await fetch(`${apiBase()}${WAVESPEED_VIDEO_UPSCALE_PATH}`, {
+  const evidenceId = input.taskId || `ws_${randomUUID()}`;
+  const requestBody = JSON.stringify({ video: source, target_resolution: input.target });
+  try { await saveUpscaleEvidence(evidenceId, "request", requestBody); }
+  catch { throw new SubmitRejectedError("提交前证据保存失败，未发送超分请求"); }
+  let createRes: Response;
+  try { createRes = await fetch(`${apiBase()}${WAVESPEED_VIDEO_UPSCALE_PATH}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ video: source, target_resolution: input.target }),
+    body: requestBody,
     signal: AbortSignal.timeout(60_000),
-  });
-  const createJson = (await createRes.json().catch(() => ({}))) as WavespeedPrediction;
+  }); } catch { throw new SubmitUnknownError("超分提交结果尚未确认"); }
+  let createJson: WavespeedPrediction;
+  try { createJson = await saveUpscaleEvidence(evidenceId, "submit", await createRes.text()); }
+  catch { throw new SubmitUnknownError("超分提交回执尚未保存，已转对账"); }
   const created = pickPrediction(createJson);
   if (!createRes.ok || !created.id) {
-    throw new Error(created.error || `超分任务创建失败 (${createRes.status})`);
+    if ([400, 401, 403, 404, 413, 415, 422].includes(createRes.status)) throw new SubmitRejectedError("超分请求未被接受");
+    throw new SubmitUnknownError("超分提交结果尚未确认");
   }
   return { predictionId: created.id };
 }
@@ -114,7 +139,9 @@ export async function pollWavespeedUpscaleOnce(
       status: `transient_fetch_error:${e instanceof Error ? e.name : "unknown"}`,
     };
   }
-  const json = (await res.json().catch(() => ({}))) as WavespeedPrediction;
+  let json: WavespeedPrediction;
+  try { json = await saveUpscaleEvidence(predictionId, "poll", await res.text()); }
+  catch { return { state: "running", status: "transient_evidence_error" }; }
   if (!res.ok) {
     return { state: "running", status: `transient_http_${res.status}` };
   }

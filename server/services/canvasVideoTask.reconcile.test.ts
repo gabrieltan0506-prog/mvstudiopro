@@ -53,10 +53,11 @@ vi.mock("./openrouterVideoCore.js", () => ({
   isOpenRouterSubmitUnknown: vi.fn(() => false),
 }));
 
+const upscaleSubmit = vi.hoisted(() => vi.fn());
 vi.mock("./wavespeedVideoUpscale.js", () => ({
   WAVESPEED_UPSCALE_MAX_POLL_MS: 3_600_000,
   pollWavespeedUpscaleOnce: vi.fn(),
-  submitWavespeedVideoUpscale: vi.fn(),
+  submitWavespeedVideoUpscale: upscaleSubmit,
 }));
 
 vi.mock("./openrouterSeedanceVideo.js", () => ({ buildOpenRouterSeedanceSubmitBody: vi.fn() }));
@@ -102,6 +103,7 @@ describe("canvasVideoTask 超时对账 + 幂等", () => {
   beforeEach(async () => {
     vi.resetModules();
     evolinkSubmit.mockReset();
+    upscaleSubmit.mockReset();
     evolinkPoll.mockReset();
     registerActiveJob.mockClear();
     wan30Submit.mockReset();
@@ -178,6 +180,32 @@ describe("canvasVideoTask 超时对账 + 幂等", () => {
     );
     return taskId;
   }
+
+  it("超分提交后断线只转对账，不退款不重投", async () => {
+    const m = await mod();
+    upscaleSubmit.mockRejectedValue(Object.assign(new Error("lost response"), { kind: "unknown" }));
+    const taskId = await seedRunningTask({ engine: "wavespeed-upscale", status: "queued", evolinkTaskId: undefined, upscaleSourceUrl: "https://example.com/video.mp4", upscaleTarget: "2k" });
+    const out = await m.getCanvasVideoTask(taskId, 7);
+    expect(out?.status).toBe("reconcile_manual");
+    expect((await readTaskFile(taskId)).upscaleSubmissionStartedAt).toBeTruthy();
+    await m.getCanvasVideoTask(taskId, 7);
+    expect(upscaleSubmit).toHaveBeenCalledTimes(1);
+    expect(refundCreditsOnFailure).not.toHaveBeenCalled();
+  });
+  it("重启读取超分提交标记但无句柄，不发第二单", async () => {
+    const m = await mod();
+    const taskId = await seedRunningTask({ engine: "wavespeed-upscale", evolinkTaskId: undefined, upscaleSubmissionStartedAt: new Date().toISOString(), upscaleTarget: "4k" });
+    expect((await m.getCanvasVideoTask(taskId, 7))?.status).toBe("reconcile_manual");
+    expect(upscaleSubmit).not.toHaveBeenCalled();
+    expect(refundCreditsOnFailure).not.toHaveBeenCalled();
+  });
+  it("超分明确拒绝仍执行原路径退款", async () => {
+    const m = await mod();
+    upscaleSubmit.mockRejectedValue(Object.assign(new Error("rejected"), { kind: "rejected" }));
+    const taskId = await seedRunningTask({ engine: "wavespeed-upscale", status: "queued", evolinkTaskId: undefined, upscaleSourceUrl: "https://example.com/video.mp4", upscaleTarget: "2k" });
+    expect((await m.getCanvasVideoTask(taskId, 7))?.status).toBe("failed");
+    expect(refundCreditsOnFailure).toHaveBeenCalledTimes(1);
+  });
 
   it("试片预留 taskId 与项目身份原样落盘，旧任务仍可不带该字段", async () => {
     const m = await mod();
