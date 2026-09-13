@@ -828,6 +828,20 @@ export async function getManhua3dTask(
   return advanced ? toView(advanced) : null;
 }
 
+/** 白模只读消费已成功的本人模型；不推进任务、不签URL、不启动轮询或新生成。 */
+export async function getCompletedManhua3dSource(taskId: string, userId: number, assetRef: string) {
+  if (!/^m3d_[a-zA-Z0-9_.-]{1,150}$/.test(taskId) || !Number.isSafeInteger(userId) || userId <= 0)
+    throw new Error("角色模型身份无效");
+  const record = await readRecord(taskId);
+  if (!record || record.taskId !== taskId || record.userId !== userId ||
+      record.assetRef !== assetRef || record.status !== "succeeded" ||
+      !record.glbGcsUri?.startsWith(`gs://${dependencies.getBucketName()}/`) ||
+      !record.glbSha256 || !/^[a-f0-9]{64}$/.test(record.glbSha256) ||
+      !Number.isSafeInteger(record.glbBytes) || record.glbBytes! < 20)
+    throw new Error("本人已完成角色模型或完整来源回执不存在");
+  return { taskId, assetRef, gcsUri:record.glbGcsUri, sha256:record.glbSha256, bytes:record.glbBytes! };
+}
+
 export function ensureManhua3dWorker(): void {
   if (workerTimer || process.env.NODE_ENV === "test") return;
   workerTimer = setInterval(() => {

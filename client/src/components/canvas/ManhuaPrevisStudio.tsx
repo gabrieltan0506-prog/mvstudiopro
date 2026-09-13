@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ManhuaPrevisRigControls } from "./ManhuaPrevisRigControls";
 import { trpc } from "@/lib/trpc";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference";
@@ -12,6 +13,12 @@ import {
   type ManhuaPrevisSpec,
   type ManhuaPrevisStudio as Studio,
 } from "@shared/manhuaPrevis";
+import {
+  compilePrevisScriptDraft,
+  previsScriptSourceKey,
+  type PrevisSourceShot,
+  type PrevisScriptDraft,
+} from "@shared/manhuaPrevisScript";
 
 type Result = {
   gcsUri: string;
@@ -41,7 +48,13 @@ export type PrevisServices = {
 type Props = {
   block: CanvasBlock;
   disabled?: boolean;
-  characters: Array<{ id: string; label: string }>;
+  characters: Array<{
+    id: string;
+    label: string;
+    tag?: string;
+    model?: { taskId: string };
+  }>;
+  sourceShots?: PrevisSourceShot[];
   onChange: (
     studio: Studio,
     reference?: ManhuaSegmentReferenceEntry
@@ -74,6 +87,7 @@ export function ManhuaPrevisStudioView({
   characters,
   onChange,
   services,
+  sourceShots = [],
 }: Props & { services: PrevisServices }) {
   const [initial] = useState(
     () => block.previsStudio ?? createManhuaPrevisStudio()
@@ -85,6 +99,11 @@ export function ManhuaPrevisStudioView({
   const [status, setStatus] = useState("");
   const [preview, setPreview] = useState<Result | null>(null);
   const [busy, setBusy] = useState(false);
+  const [scriptDraft, setScriptDraft] = useState<PrevisScriptDraft | null>(
+    null
+  );
+  const draftBaseKey = useRef("");
+  const [reviewedDraft, setReviewedDraft] = useState(false);
   const lock = useRef(false);
   const mounted = useRef(true);
   useEffect(() => {
@@ -341,6 +360,149 @@ export function ManhuaPrevisStudioView({
         本段动作白模 ·
         简化人体关节／四足站位，不是角色模型自动绑定。渲染不调用付费生成模型；预览后再采用，不会自动出成片。
       </p>
+      {sourceShots.length > 0 ? (
+        <section
+          className="space-y-2 rounded border border-cyan-300/20 p-2"
+          data-previs-script-draft
+        >
+          <p className="text-xs text-cyan-100">
+            本段原镜动作草案 · 不调用付费模型
+          </p>
+          <button
+            className={button}
+            disabled={disabled || Boolean(pendingId) || busy}
+            onClick={() => {
+              draftBaseKey.current = previsSpecKey(studio.spec);
+              setScriptDraft(
+                compilePrevisScriptDraft({
+                  shots: sourceShots,
+                  characters,
+                  currentSpec: studio.spec,
+                })
+              );
+              setReviewedDraft(false);
+            }}
+          >
+            从本段剧本生成动作草案
+          </button>
+          {scriptDraft ? (
+            <>
+              <p className="text-xs text-white/70">
+                已映射 {scriptDraft.mappedShotIndices.length}/
+                {sourceShots.length} 镜；双人事件{" "}
+                {scriptDraft.spec?.interactions?.length ?? 0}{" "}
+                个。草案尚未采用，也未提交渲染。
+              </p>
+              {scriptDraft.notes.map((note, i) => (
+                <p key={i} className="text-xs text-amber-100">
+                  {note}
+                </p>
+              ))}
+              {scriptDraft.errors.map((message, i) => (
+                <p key={i} role="alert" className="text-xs text-red-200">
+                  {message}
+                </p>
+              ))}
+              {scriptDraft.unmapped.map(row => (
+                <p key={row.index} className="text-xs text-amber-100">
+                  原镜{row.index}未映射：{row.reasonZh}。原文：{row.text}
+                </p>
+              ))}
+              {scriptDraft.spec ? (
+                <pre className="max-h-60 overflow-auto whitespace-pre-wrap text-xs text-white/80">
+                  {formatPrevisMotionGuide(scriptDraft.spec)}
+                </pre>
+              ) : null}
+              {scriptDraft.sourceKey !==
+              previsScriptSourceKey(sourceShots, characters) ? (
+                <p role="alert" className="text-xs text-amber-100">
+                  原剧本或角色已变化，请重新生成草案。
+                </p>
+              ) : null}
+              {draftBaseKey.current !== previsSpecKey(studio.spec) ? (
+                <p role="alert" className="text-xs text-amber-100">
+                  当前动作配置已变化，请重新生成草案，避免覆盖刚才的编辑。
+                </p>
+              ) : null}
+              <label className="flex gap-2 text-xs text-white/80">
+                <input
+                  type="checkbox"
+                  checked={reviewedDraft}
+                  disabled={disabled || Boolean(pendingId) || busy}
+                  onChange={e => setReviewedDraft(e.target.checked)}
+                />
+                我已审阅动作、建议站位及未映射原文；仅采用当前草案，旧配置保留
+              </label>
+              <button
+                className={button}
+                disabled={
+                  !reviewedDraft ||
+                  !scriptDraft.spec ||
+                  disabled ||
+                  Boolean(pendingId) ||
+                  busy ||
+                  scriptDraft.sourceKey !==
+                    previsScriptSourceKey(sourceShots, characters) ||
+                  draftBaseKey.current !== previsSpecKey(studio.spec)
+                }
+                onClick={() => {
+                  if (
+                    !scriptDraft.spec ||
+                    !reviewedDraft ||
+                    scriptDraft.sourceKey !==
+                      previsScriptSourceKey(sourceShots, characters) ||
+                    disabled ||
+                    pendingId ||
+                    lock.current ||
+                    draftBaseKey.current !== previsSpecKey(studio.spec)
+                  )
+                    return;
+                  if (
+                    publish({
+                      ...studio,
+                      spec: scriptDraft.spec,
+                      specHistory: [
+                        ...(studio.specHistory ?? []),
+                        {
+                          spec: studio.spec,
+                          createdAt: new Date().toISOString(),
+                          reasonZh: "采用剧本动作草案前的配置",
+                        },
+                      ],
+                    })
+                  ) {
+                    setScriptDraft(null);
+                    setReviewedDraft(false);
+                    setStatus(
+                      "动作草案已采用为可编辑配置，尚未提交渲染；旧参考未改变"
+                    );
+                  }
+                }}
+              >
+                采用动作草案
+              </button>
+            </>
+          ) : null}
+        </section>
+      ) : null}
+      {studio.specHistory?.length ? (
+        <button
+          className={button}
+          disabled={disabled || Boolean(pendingId) || busy}
+          onClick={() => {
+            const history = studio.specHistory ?? [];
+            const old = history.at(-1);
+            if (old && !disabled && !pendingId && !lock.current)
+              publish({
+                ...studio,
+                spec: old.spec,
+                specHistory: history.slice(0, -1),
+              });
+          }}
+        >
+          恢复上一份动作配置（不改已采用参考）
+        </button>
+      ) : null}
       <div className="flex flex-wrap gap-3">
         {numeric(
           "片长（秒）",
@@ -393,6 +555,7 @@ export function ManhuaPrevisStudioView({
                 actorEdit(index, {
                   assetRef: selected?.id,
                   nameZh: selected?.label ?? actor.nameZh,
+                  riggedModel: undefined,
                 });
               }}
             >
@@ -412,6 +575,8 @@ export function ManhuaPrevisStudioView({
                 actorEdit(index, {
                   shape: e.target.value as "human" | "horse",
                   actions: [],
+                  creature: undefined,
+                  riggedModel: undefined,
                 })
               }
             >
@@ -462,6 +627,66 @@ export function ManhuaPrevisStudioView({
               actorEdit(index, { moveEndSec: n })
             )}
           </div>
+          {actor.shape === "horse" ? (
+            <div className="space-y-2 rounded border border-white/15 p-2">
+              <label className="flex gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  aria-label={`角色${index + 1}四尾黑翼`}
+                  disabled={disabled || Boolean(pendingId)}
+                  checked={Boolean(actor.creature)}
+                  onChange={e =>
+                    actorEdit(index, {
+                      creature: e.target.checked
+                        ? {
+                            preset: "four_tail_black_wings",
+                            transformStartSec: 0,
+                            transformEndSec: Math.min(
+                              1,
+                              (studio.spec.durationSec * 24 - 1) / 24
+                            ),
+                          }
+                        : undefined,
+                    })
+                  }
+                />
+                四尾黑翼 · 同一马体附件显形
+              </label>
+              {actor.creature ? (
+                <div className="flex gap-2">
+                  {numeric(
+                    "显形开始",
+                    actor.creature.transformStartSec,
+                    n =>
+                      actorEdit(index, {
+                        creature: { ...actor.creature!, transformStartSec: n },
+                      }),
+                    1 / 24
+                  )}
+                  {numeric(
+                    "显形结束",
+                    actor.creature.transformEndSec,
+                    n =>
+                      actorEdit(index, {
+                        creature: { ...actor.creature!, transformEndSec: n },
+                      }),
+                    1 / 24
+                  )}
+                </div>
+              ) : null}
+              <p className="text-xs text-white/60">
+                固定四尾与双翼，不改变主体体型；显形须在最后实际帧前完成。
+              </p>
+            </div>
+          ) : (
+            <ManhuaPrevisRigControls
+              actor={actor}
+              model={characters.find(c => c.id === actor.assetRef)?.model}
+              durationSec={studio.spec.durationSec}
+              disabled={disabled || Boolean(pendingId)}
+              onChange={riggedModel => actorEdit(index, { riggedModel })}
+            />
+          )}
           {actor.actions.map((action, j) => (
             <div key={j} className="flex flex-wrap gap-2">
               <select
@@ -561,6 +786,124 @@ export function ManhuaPrevisStudioView({
       >
         添加角色
       </button>
+      <section
+        className="space-y-2 rounded border border-white/15 p-2"
+        data-previs-interactions
+      >
+        <p className="text-xs text-cyan-100">
+          双人短打 · 同一事件驱动出手与接触反应
+        </p>
+        {(studio.spec.interactions ?? []).map((event, index) => {
+          const patch = (value: Partial<typeof event>) =>
+            edit({
+              ...studio.spec,
+              interactions: studio.spec.interactions!.map((item, i) =>
+                i === index ? { ...item, ...value } : item
+              ),
+            });
+          return (
+            <div key={event.id} className="flex flex-wrap items-center gap-2">
+              {(["actorId", "targetActorId"] as const).map(key => (
+                <label key={key} className="text-xs text-white/70">
+                  {key === "actorId" ? "出手者" : "受方"}
+                  <select
+                    className={field}
+                    aria-label={`互动${index + 1}${key === "actorId" ? "出手者" : "受方"}`}
+                    value={event[key]}
+                    disabled={disabled || Boolean(pendingId)}
+                    onChange={e => patch({ [key]: e.target.value })}
+                  >
+                    {studio.spec.actors.map(actor => (
+                      <option key={actor.id} value={actor.id}>
+                        {actor.nameZh}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+              <select
+                className={field}
+                aria-label={`互动${index + 1}反应`}
+                value={event.kind}
+                disabled={disabled || Boolean(pendingId)}
+                onChange={e =>
+                  patch({ kind: e.target.value as typeof event.kind })
+                }
+              >
+                <option value="strike_recoil">胸前接触后缩</option>
+                <option value="strike_guard">抬手接触格挡</option>
+              </select>
+              {numeric(
+                "互动开始",
+                event.startSec,
+                n => patch({ startSec: Math.round(n * 24) / 24 }),
+                1 / 24
+              )}
+              {numeric(
+                "接触秒位",
+                event.contactSec,
+                n => patch({ contactSec: Math.round(n * 24) / 24 }),
+                1 / 24
+              )}
+              {numeric(
+                "互动结束",
+                event.endSec,
+                n => patch({ endSec: Math.round(n * 24) / 24 }),
+                1 / 24
+              )}
+              <button
+                className={button}
+                disabled={disabled || Boolean(pendingId)}
+                onClick={() =>
+                  edit({
+                    ...studio.spec,
+                    interactions: studio.spec.interactions!.filter(
+                      (_, i) => i !== index
+                    ),
+                  })
+                }
+              >
+                移除互动
+              </button>
+            </div>
+          );
+        })}
+        <button
+          className={button}
+          disabled={
+            disabled ||
+            Boolean(pendingId) ||
+            (studio.spec.interactions?.length ?? 0) >= 24 ||
+            studio.spec.actors.filter(a => a.shape === "human").length < 2
+          }
+          onClick={() => {
+            const [actor, target] = studio.spec.actors.filter(
+              a => a.shape === "human"
+            );
+            if (!actor || !target) return;
+            edit({
+              ...studio.spec,
+              interactions: [
+                ...(studio.spec.interactions ?? []),
+                {
+                  id: crypto.randomUUID(),
+                  kind: "strike_recoil",
+                  actorId: actor.id,
+                  targetActorId: target.id,
+                  startSec: 0,
+                  contactSec: Math.round(studio.spec.durationSec * 12) / 24,
+                  endSec: studio.spec.durationSec,
+                },
+              ],
+            });
+          }}
+        >
+          添加双人互动
+        </button>
+        <p className="text-xs text-white/60">
+          请人工审阅双方距离和朝向。不可达接触会明确失败；同一时段不能叠加该角色的独立动作。
+        </p>
+      </section>
       <details>
         <summary className="text-xs text-cyan-100">
           机位与切镜（世界坐标）

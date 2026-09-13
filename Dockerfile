@@ -5,7 +5,7 @@ WORKDIR /app
 # 安装 ffmpeg + python3 + yt-dlp + Chromium（PDF 原生渲染，Puppeteer 无 bundled 下载）
 RUN apt-get update \
  && apt-get install --no-install-recommends -y \
-    ffmpeg python3 python3-pip curl \
+    ffmpeg python3 python3-pip python3-numpy curl \
     blender xvfb xauth libgl1-mesa-dri \
     unzip binutils poppler-utils \
     chromium \
@@ -30,6 +30,8 @@ RUN apt-get update \
 
 # 白模由确定性脚本在无显示服务器上渲染；使用软件 GL，不要求生产 GPU。
 RUN blender --background --factory-startup --version \
+ && blender --background --factory-startup --python-exit-code 1 \
+    --python-expr "import numpy; import io_scene_gltf2.blender.imp.gltf2_blender_mesh; print('GLTF_DEPENDENCIES_IMPORTED', numpy.__version__)" \
  && command -v xvfb-run
 ENV LIBGL_ALWAYS_SOFTWARE=1
 
@@ -41,6 +43,16 @@ ARG CACHEBUST=0
 RUN test -n "${CACHEBUST:-}" && echo "CACHEBUST=${CACHEBUST}"
 
 COPY . .
+
+# 依赖导入成功不代表旧版 glTF 插件能运行；必须真实导出并经生产入口重新导入带骨/表情 GLB。
+# 离线自造夹具，不联网、不渲染视频；同时验证拒绝路径、蒙皮、动作与表演数据。
+RUN blender --background --factory-startup --python-exit-code 1 \
+    --python server/scripts/test_previs_rigged_model.py -- /tmp/previs-gltf-build-smoke
+
+# 在实际软件渲染环境验证基础色、UV采样、旧无材质夹具及异常回滚；只渲染自造静帧。
+RUN xvfb-run -a blender --background --factory-startup --disable-autoexec --threads 1 --python-exit-code 1 \
+    --python server/scripts/test_previs_workbench_appearance.py -- /tmp/previs-appearance-build-smoke \
+    --legacy-fixture /tmp/previs-gltf-build-smoke/TEST_ONLY-rigged-with-morph.glb
 
 # 跳过 postinstall 脚本（youtube-dl-exec 不再自行下载二进制）
 # 并告知 youtube-dl-exec 使用系统 yt-dlp

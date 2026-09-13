@@ -16,6 +16,93 @@ import {
   type PrevisRenderDeps,
 } from "./manhuaPrevisRender";
 
+it("带骨角色使用本次临时侧载清单，报告缺失时在长时渲染前停止并存证", async () => {
+  const studio = createManhuaPrevisStudio(
+    2,
+    "11111111-1111-4111-8111-111111111111"
+  );
+  studio.spec.actors[0].assetRef = "asset-1";
+  studio.spec.actors[0].riggedModel = {
+    sourceJobId: "m3d_saved",
+    forwardAxis: "+X",
+    targetHeight: 1.7,
+  };
+  const stored: string[] = [];
+  let prepares = 0,
+    runs = 0;
+  const deps: PrevisRenderDeps = {
+    blender: "test-blender",
+    useXvfb: false,
+    prepareModels: async (spec, userId, dir, signal) => {
+      prepares++;
+      expect(userId).toBe(7);
+      expect(signal.aborted).toBe(false);
+      return [
+        {
+          actorId: spec.actors[0].id,
+          sourceJobId: "m3d_saved",
+          sha256: "a".repeat(64),
+          bytes: 2048,
+          localPath: path.join(dir, "actor-model-0.glb"),
+        },
+      ];
+    },
+    run: async (_, args) => {
+      runs++;
+      const modelsPath = args.at(-1)!,
+        dir = args.at(-2)!;
+      expect(modelsPath).toBe(path.join(dir, "models.json"));
+      expect(
+        JSON.parse(await readFile(modelsPath, "utf8"))[0].sourceJobId
+      ).toBe("m3d_saved");
+      await writeFile(
+        path.join(dir, "report.json"),
+        JSON.stringify({
+          frames: 48,
+          fps: 24,
+          actors: [
+            {
+              id: "actor-1",
+              nameZh: "角色 1",
+              bones: 16,
+              contactError: 0,
+              stanceDrift: 0,
+              offscreenFrames: [],
+            },
+          ],
+          warnings: [],
+        })
+      );
+      return "";
+    },
+    upload: async ({ objectName }) => {
+      stored.push(path.basename(objectName));
+      return {
+        bucket: "test-bucket",
+        objectName,
+        gcsUri: `gs://test-bucket/${objectName}`,
+      };
+    },
+  };
+  await expect(
+    renderManhuaPrevis(
+      {
+        requestId: "22222222-2222-4222-8222-222222222222",
+        scopeId: studio.scopeId,
+        clipId: "clip-test",
+        spec: studio.spec,
+      },
+      "7",
+      { signal: new AbortController().signal },
+      deps
+    )
+  ).rejects.toThrow("带骨角色报告缺失");
+  expect(prepares).toBe(1);
+  expect(runs).toBe(1);
+  expect(stored).toContain("report.json");
+  expect(stored).not.toContain("preview.mp4");
+});
+
 for (const failure of [
   "准备失败",
   "准备超时",

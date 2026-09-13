@@ -1,10 +1,48 @@
 /** 动作白模配置：只有数据，没有用户 Python／命令／任意素材 URL。 */
 import { z } from "zod";
+import { previsRiggedModelSchema } from "./manhuaPrevisRig";
 
 const point = z.tuple([
   z.number().finite().min(-12).max(12),
   z.number().finite().min(-12).max(12),
 ]);
+export const previsInteractionSchema = z
+  .object({
+    id: z.string().min(1).max(100),
+    kind: z.enum(["strike_recoil", "strike_guard"]),
+    actorId: z.string().min(1).max(100),
+    targetActorId: z.string().min(1).max(100),
+    startSec: z.number().finite().min(0).max(30),
+    contactSec: z.number().finite().min(0).max(30),
+    endSec: z.number().finite().positive().max(30),
+  })
+  .strict();
+export type PrevisInteraction = z.infer<typeof previsInteractionSchema>;
+export const previsCreatureSchema = z
+  .object({
+    preset: z.literal("four_tail_black_wings"),
+    transformStartSec: z.number().finite().min(0).max(30),
+    transformEndSec: z.number().finite().positive().max(30),
+  })
+  .strict();
+export const previsScriptSourceSchema = z
+  .object({
+    compilerVersion: z.literal(1),
+    shots: z
+      .array(
+        z
+          .object({
+            index: z.number().int().positive(),
+            durationSec: z.number().finite().positive(),
+            actionZh: z.string().max(20000),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(120),
+    unmappedShotIndices: z.array(z.number().int().positive()).max(120),
+  })
+  .strict();
 export const PREVIS_ACTION_LABELS = {
   idle: "待机",
   strike: "蓄力出手",
@@ -17,6 +55,8 @@ export const previsActorSchema = z
     nameZh: z.string().trim().min(1).max(80),
     /** 仅标明对应的项目角色；不声称为无骨骼 GLB 自动蒙皮。 */
     assetRef: z.string().max(160).optional(),
+    creature: previsCreatureSchema.optional(),
+    riggedModel: previsRiggedModelSchema.optional(),
     shape: z.enum(["human", "horse"]),
     start: point,
     end: point,
@@ -47,6 +87,8 @@ const manhuaPrevisSpecBaseSchema = z
     durationSec: z.number().int().min(2).max(30),
     aspect: z.enum(["16:9", "9:16"]),
     actors: z.array(previsActorSchema).min(1).max(6),
+    interactions: z.array(previsInteractionSchema).max(24).optional(),
+    scriptSource: previsScriptSourceSchema.optional(),
     cameras: z
       .array(
         z
@@ -70,6 +112,16 @@ const draftPoint = z.tuple([draftNumber, draftNumber]);
 const draftCameraPoint = z.tuple([draftNumber, draftNumber, draftNumber]);
 export const manhuaPrevisDraftSchema = manhuaPrevisSpecBaseSchema.extend({
   durationSec: draftNumber,
+  interactions: z
+    .array(
+      previsInteractionSchema.extend({
+        startSec: draftNumber,
+        contactSec: draftNumber,
+        endSec: draftNumber,
+      })
+    )
+    .max(24)
+    .optional(),
   actors: z
     .array(
       previsActorSchema.extend({
@@ -79,6 +131,15 @@ export const manhuaPrevisDraftSchema = manhuaPrevisSpecBaseSchema.extend({
         moveStartSec: draftNumber,
         moveEndSec: draftNumber,
         facingDeg: draftNumber,
+        creature: previsCreatureSchema
+          .extend({
+            transformStartSec: draftNumber,
+            transformEndSec: draftNumber,
+          })
+          .optional(),
+        riggedModel: previsRiggedModelSchema
+          .extend({ targetHeight: draftNumber })
+          .optional(),
         actions: z
           .array(
             z
@@ -135,7 +196,10 @@ export function previsRenderCostUnits(spec: {
 }
 
 /** 同角色数下、预算内允许的最长片长（秒），至少 2 秒 */
-export function previsMaxDurationSec(actorCount: number, budget = PREVIS_RENDER_UNIT_BUDGET): number {
+export function previsMaxDurationSec(
+  actorCount: number,
+  budget = PREVIS_RENDER_UNIT_BUDGET
+): number {
   const count = Math.max(1, Math.floor(actorCount));
   return Math.max(2, Math.floor(budget / (24 * count)));
 }
@@ -143,7 +207,7 @@ export function previsMaxDurationSec(actorCount: number, budget = PREVIS_RENDER_
 /** 超预算时给一句能照做的中文；在预算内返回 null */
 export function previsCapacityIssueZh(
   spec: { durationSec: number; actors: unknown[] },
-  budget = PREVIS_RENDER_UNIT_BUDGET,
+  budget = PREVIS_RENDER_UNIT_BUDGET
 ): string | null {
   const units = previsRenderCostUnits(spec);
   if (units <= budget) return null;
@@ -151,11 +215,13 @@ export function previsCapacityIssueZh(
   const maxSec = previsMaxDurationSec(actorCount, budget);
   const maxActors = Math.max(1, Math.floor(budget / (24 * spec.durationSec)));
   return (
-    `超出单次白模渲染能力：${actorCount} 个角色 × ${spec.durationSec} 秒，`
-    + `约 ${units} 单位，上限 ${budget} 单位。`
-    + `同样 ${actorCount} 个角色最多 ${maxSec} 秒；`
-    + (maxActors >= 1 ? `${spec.durationSec} 秒最多 ${maxActors} 个角色。` : "请缩短片长。")
-    + "请拆成多段分别预演。"
+    `超出单次白模渲染能力：${actorCount} 个角色 × ${spec.durationSec} 秒，` +
+    `约 ${units} 单位，上限 ${budget} 单位。` +
+    `同样 ${actorCount} 个角色最多 ${maxSec} 秒；` +
+    (maxActors >= 1
+      ? `${spec.durationSec} 秒最多 ${maxActors} 个角色。`
+      : "请缩短片长。") +
+    "请拆成多段分别预演。"
   );
 }
 
@@ -167,6 +233,38 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
     if (new Set(spec.actors.map(a => a.id)).size !== spec.actors.length)
       ctx.addIssue({ code: "custom", message: "角色编号不能重复" });
     spec.actors.forEach((actor, i) => {
+      if (
+        actor.creature &&
+        (actor.shape !== "horse" ||
+          actor.creature.transformEndSec > (spec.durationSec * 24 - 1) / 24 ||
+          actor.creature.transformEndSec - actor.creature.transformStartSec <
+            0.5)
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          message: "四尾黑翼显形只用于四足角色，区间须在片长内且至少半秒",
+          path: ["actors", i, "creature"],
+        });
+      }
+      if (actor.riggedModel && (actor.shape !== "human" || !actor.assetRef))
+        ctx.addIssue({
+          code: "custom",
+          message: "带骨角色须绑定项目人物并使用人体动作",
+          path: ["actors", i, "riggedModel"],
+        });
+      const cues = actor.riggedModel?.performance?.cues ?? [];
+      cues.forEach((cue, j) => {
+        if (
+          cue.endSec > spec.durationSec ||
+          cue.endSec - cue.startSec < 0.5 ||
+          (j > 0 && cue.startSec < cues[j - 1].endSec)
+        )
+          ctx.addIssue({
+            code: "custom",
+            message: "表演须在片长内、每段至少半秒且顺序不重叠",
+            path: ["actors", i, "riggedModel", "performance", "cues", j],
+          });
+      });
       if (
         actor.moveEndSec > spec.durationSec ||
         actor.moveStartSec >= actor.moveEndSec
@@ -209,6 +307,85 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
           code: "custom",
           message: "白模行走速度过快，请延长移动时间或缩短路线",
           path: ["actors", i],
+        });
+    });
+    const interactions = spec.interactions ?? [];
+    if (
+      new Set(interactions.map(event => event.id)).size !== interactions.length
+    )
+      ctx.addIssue({
+        code: "custom",
+        message: "双人事件编号不能重复",
+        path: ["interactions"],
+      });
+    interactions.forEach((event, index) => {
+      const path = ["interactions", index];
+      const actor = spec.actors.find(a => a.id === event.actorId);
+      const target = spec.actors.find(a => a.id === event.targetActorId);
+      if (
+        !actor ||
+        !target ||
+        actor === target ||
+        actor.shape !== "human" ||
+        target.shape !== "human"
+      )
+        ctx.addIssue({
+          code: "custom",
+          message: "双人互动必须绑定两个不同的现有人体角色",
+          path,
+        });
+      if (actor?.riggedModel || target?.riggedModel)
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "当前角色重定向尚未校正双人接触，不能用白模接触结果代替角色验收",
+          path,
+        });
+      // 接触点在实际视频帧上；片尾duration秒对应下一帧，不能作为命中帧。
+      if (
+        event.endSec > spec.durationSec ||
+        event.contactSec >= spec.durationSec ||
+        event.contactSec - event.startSec < 0.25 ||
+        event.endSec - event.contactSec < 0.25 ||
+        [event.startSec, event.contactSec, event.endSec].some(
+          t => Math.abs(t * 24 - Math.round(t * 24)) > 1e-6
+        )
+      )
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "互动秒位须对齐24帧，接触前后各留至少四分之一秒且覆盖在片长内",
+          path,
+        });
+      for (const participant of [actor, target]) {
+        if (
+          participant?.actions.some(
+            action =>
+              action.startSec < event.endSec && action.endSec > event.startSec
+          )
+        )
+          ctx.addIssue({
+            code: "custom",
+            message: "双人事件期间不能叠加该角色的独立动作",
+            path,
+          });
+      }
+      if (
+        interactions
+          .slice(0, index)
+          .some(
+            previous =>
+              [previous.actorId, previous.targetActorId].some(
+                id => id === event.actorId || id === event.targetActorId
+              ) &&
+              previous.startSec < event.endSec &&
+              previous.endSec > event.startSec
+          )
+      )
+        ctx.addIssue({
+          code: "custom",
+          message: "同一角色的双人互动时间不能重叠",
+          path,
         });
     });
     spec.cameras.forEach((camera, i) => {
@@ -277,6 +454,17 @@ export const manhuaPrevisStudioSchema = z
         })
         .strict()
     ),
+    specHistory: z
+      .array(
+        z
+          .object({
+            spec: manhuaPrevisDraftSchema,
+            createdAt: z.string(),
+            reasonZh: z.string(),
+          })
+          .strict()
+      )
+      .optional(),
     history: z.array(
       z
         .object({
@@ -346,5 +534,25 @@ export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
       (a, index) =>
         `白模角色${index + 1}对应${a.nameZh}${a.assetRef ? `（${a.assetRef}）` : ""}：${a.actions.length ? a.actions.map(x => `${x.startSec}—${x.endSec}秒${PREVIS_ACTION_LABELS[x.kind]}`).join("；") : "按参考站位和步态"}。`
     ),
+    ...(spec.interactions ?? []).map(event => {
+      const actor = spec.actors.find(a => a.id === event.actorId)!;
+      const target = spec.actors.find(a => a.id === event.targetActorId)!;
+      return `${event.startSec}—${event.endSec}秒，${actor.nameZh}向${target.nameZh}出手，${event.contactSec}秒${event.kind === "strike_guard" ? "双手接触格挡" : "触及胸前后受方后缩"}；双方按同一事件时序，不拆成无关动作。`;
+    }),
+    ...spec.actors
+      .filter(actor => actor.creature)
+      .map(
+        actor =>
+          `${actor.nameZh}在${actor.creature!.transformStartSec}—${actor.creature!.transformEndSec}秒由同一四足身体显现四条尾与一对黑翼；保持角色身份，尾翼按参考展开。`
+      ),
+    ...spec.actors
+      .filter(actor => actor.riggedModel)
+      .flatMap(actor => [
+        `${actor.nameZh}（${actor.assetRef}）使用本人角色模型${actor.riggedModel!.sourceJobId}提供身体姿态；角色身份仍以项目绑定人物为准，不继承测试网格或改变服装。模型接地和双人接触不能按源白模误差推定通过。`,
+        ...(actor.riggedModel!.performance?.cues ?? []).map(
+          cue =>
+            `${actor.nameZh}在${cue.startSec}—${cue.endSec}秒：视线朝参考世界目标（${cue.gazeTarget.join("，")}）；头部左右${cue.headYawDeg}度、俯仰${cue.headPitchDeg}度，按参考方向读取；呼吸幅度${cue.breathAmplitude}、每秒${cue.breathHz}周期；${({ calm: "平静", tense: "紧张", surprised: "惊讶" } as const)[cue.expression]}表情强度${cue.intensity}。仅跟随参考中实际可见变化，不凭参数额外夸张表情。`
+        ),
+      ]),
   ].join("\n");
 }

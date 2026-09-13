@@ -174,6 +174,20 @@ def plan_contacts(actor):
         if moving: anchors[chosen]=goal
     return result,stance
 
+events=[]
+interaction_poses={}
+if spec.get('interactions'):
+    # Blender --python 不保证脚本所在目录位于sys.path；只添加服务器固定目录。
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from previs_interaction import validate_interactions, apply_interactions, measure_interactions
+    events=validate_interactions(spec)
+    interaction_contacts={a['id']:plan_contacts(a) for a in spec['actors']}
+    for frame in range(1,scene.frame_end+1):
+        poses={a['id']:points(a,frame,interaction_contacts[a['id']][0][frame]) for a in spec['actors']}
+        transforms={a['id']:transform(a,frame) for a in spec['actors']}
+        apply_interactions(events,frame,poses,transforms,ik)
+        interaction_poses[frame]=poses
+
 rigs=[]
 for index,actor in enumerate(spec['actors']):
     contacts,stance=plan_contacts(actor)
@@ -186,6 +200,10 @@ for index,actor in enumerate(spec['actors']):
     bpy.ops.object.mode_set(mode='EDIT')
     for name,(a,b) in rest.items():
         bone=data.edit_bones.new(name);bone.head=a;bone.tail=b
+        if actor.get('riggedModel'):
+            # 带骨来源的静止轴与下方动画轴一致，避免默认roll被当作动作传给真实蒙皮。
+            # 只依据rest端点建轴，不拿已烘焙的首帧归零；旧白模、互动和尾翼路径保持原样。
+            bone.matrix=Matrix.Translation(a) @ (b-a).to_track_quat('Y','Z').to_matrix().to_4x4()
     bpy.ops.object.mode_set(mode='OBJECT')
     color=material(actor['nameZh'],[(.65,.72,.75),(.72,.58,.55),(.60,.64,.51),(.63,.59,.72),(.65,.69,.54),(.55,.65,.69)][index])
     for name,(a,b) in rest.items():
@@ -203,7 +221,8 @@ for index,actor in enumerate(spec['actors']):
         scene.frame_set(frame)
         rig.matrix_world=transform(actor,frame)
         rig.keyframe_insert('location',frame=frame);rig.keyframe_insert('rotation_euler',frame=frame)
-        for name,(a,b) in points(actor,frame,contacts[frame]).items():
+        frame_points=interaction_poses[frame][actor['id']] if events else points(actor,frame,contacts[frame])
+        for name,(a,b) in frame_points.items():
             pb=rig.pose.bones[name]
             d=b-a
             pb.rotation_mode='QUATERNION'
@@ -214,6 +233,89 @@ for index,actor in enumerate(spec['actors']):
                 max_error=max(max_error,(rig.matrix_world @ b-contacts[frame][key]).length)
     if max_error>.005: raise ValueError('关节落点不可达，请缩短路线或延长移动区间')
     rigs.append((actor,rig,contacts,stance,max_error))
+
+# 附件/角色只从受控配置和服务端侧载清单构建；无配置不改变旧场景。
+creatures=[]
+models=[]
+if any(actor.get('creature') or actor.get('riggedModel') for actor in spec['actors']):
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from previs_projection import make_projector, validate_projection_work
+if any(actor.get('creature') for actor in spec['actors']):
+    from previs_creature import build_creature, world_vertices as creature_vertices, summarize as summarize_creature
+    for actor,rig,contacts,_stance,_error in rigs:
+        if actor.get('creature'):
+            handle=build_creature(actor,rig,scene,lambda f,a=actor,c=contacts:
+                interaction_poses[f][a['id']] if events else points(a,f,c[f]))
+            creatures.append(handle)
+if any(actor.get('riggedModel') for actor in spec['actors']):
+    from previs_rigged_model import inspect_glb, import_rigged_model, retarget_from_source, apply_performance
+    from previs_workbench_appearance import prepare_workbench_appearance
+    if len(args)!=3: raise ValueError('角色模型服务端侧载清单缺失')
+    manifest_path=Path(args[2]).resolve()
+    if manifest_path.parent!=out.resolve(): raise ValueError('角色清单不在本次工作目录')
+    manifests=json.loads(manifest_path.read_text())
+    expected=[actor['id'] for actor in spec['actors'] if actor.get('riggedModel')]
+    if not isinstance(manifests,list) or sorted(row['actorId'] for row in manifests)!=sorted(expected):
+        raise ValueError('角色模型侧载身份不完整或重复')
+    topology_vertices=sum(len(obj.data.vertices) for handle in creatures for obj in handle['meshes'])
+    for row in manifests:
+        source_path=Path(row['localPath']).resolve()
+        if source_path.parent!=out.resolve(): raise ValueError('角色文件不在本次工作目录')
+        inspection=inspect_glb(source_path,row['sha256'])
+        if inspection['bytes']!=row['bytes'] or inspection['bytes']>64*1024*1024:
+            raise ValueError('角色侧载字节数无效或超过64MB')
+        topology_vertices+=inspection['vertices']
+    validate_projection_work(topology_vertices,scene.frame_end,spec['aspect']=='9:16')
+    for actor,source_rig,_contacts,_stance,_error in rigs:
+        config=actor.get('riggedModel')
+        if not config: continue
+        if actor['shape']!='human' or not actor.get('assetRef'):
+            raise ValueError('带骨角色须绑定项目人体角色')
+        if any(actor['id'] in (e['actorId'],e['targetActorId']) for e in events):
+            raise ValueError('带骨角色尚未经过双人接触校正，不得冒用源白模接触报告')
+        row=next(item for item in manifests if item['actorId']==actor['id'])
+        model_path=Path(row['localPath']).resolve()
+        if model_path.parent!=out.resolve() or row['sourceJobId']!=config['sourceJobId']:
+            raise ValueError('角色文件不在本次工作目录或任务不一致')
+        model=import_rigged_model(model_path,actor['id'],config.get('boneMap'),
+            config['forwardAxis'],config['targetHeight'],row['sha256'])
+        if model['inspection']['bytes']!=row['bytes']: raise ValueError('角色字节数与侧载回执不同')
+        if model['report']['weightedVertices']>model['inspection']['vertices']:
+            raise ValueError('角色导入后实际顶点数超过预检，未开始动画与渲染')
+        appearance=prepare_workbench_appearance(model)
+        retarget_from_source(source_rig,model,scene.frame_start,scene.frame_end)
+        if config.get('performance'):
+            apply_performance(model,config['performance']['controller'],config['performance']['cues'],
+                scene.frame_start,scene.frame_end,24)
+        # 原白模仅作驱动证据；显示真实导入网格，不在画面中叠加替身。
+        for obj in list(source_rig.children):
+            if obj.type=='MESH': obj.hide_render=True
+        model['actorId']=actor['id']
+        model['report'].update({'actorId':actor['id'],'sourceJobId':row['sourceJobId'],
+            'boundaryZh':'真实带骨网格旋转与路径重定向，保留模型原始静止姿态，不自动生成自然站姿；源白模脚底误差不代表角色网格接地，尚未验证双人接触；'+appearance['boundaryZh']})
+        models.append(model)
+    # 只有真实模型进入基础色预演；无贴图的白模/地面继续使用原材质色。
+    scene.display.shading.color_type='TEXTURE'
+
+if creatures and not models:
+    validate_projection_work(sum(len(obj.data.vertices) for handle in creatures for obj in handle['meshes']),
+        scene.frame_end,spec['aspect']=='9:16')
+
+def model_vertices(model):
+    depsgraph=bpy.context.evaluated_depsgraph_get()
+    for obj in model['meshes']:
+        if obj.hide_render: continue
+        evaluated=obj.evaluated_get(depsgraph)
+        mesh=evaluated.to_mesh()
+        try:
+            for vertex in mesh.vertices: yield evaluated.matrix_world @ vertex.co
+        finally: evaluated.to_mesh_clear()
+
+def extra_vertices():
+    if creatures:
+        depsgraph=bpy.context.evaluated_depsgraph_get()
+        for handle in creatures: yield from creature_vertices(handle,depsgraph)
+    for model in models: yield from model_vertices(model)
 
 bpy.ops.object.camera_add()
 camera=bpy.context.object
@@ -307,6 +409,11 @@ def _bones_in_frame():
                     my=radius*math.hypot(ky,.48)/p.z
                     if not (.02 <= p.x-mx and p.x+mx <= .98): return False
                     if not (.02 <= p.y-my and p.y+my <= .98): return False
+        # 新模型及尾翼按实际变形顶点检查，不能拿原白模中轴线代替。
+        project=make_projector(scene,camera) if creatures or models else None
+        for point in extra_vertices():
+            p=project(point)
+            if not (p.z>0 and .02<=p.x<=.98 and .02<=p.y<=.98): return False
     return True
 
 if scene.render.resolution_y > scene.render.resolution_x:
@@ -343,7 +450,38 @@ for actor,rig,contacts,stance,error in rigs:
         if any(not (.02 <= (p:=world_to_camera_view(scene,camera,rig.matrix_world @ rig.pose.bones[name].tail)).x <= .98 and .02 <= p.y <= .98 and p.z>0) for name in names): offscreen.append(frame)
     report['actors'].append({'id':actor['id'],'nameZh':actor['nameZh'],'bones':len(rig.pose.bones),'contactError':error,'stanceDrift':drift,'offscreenFrames':offscreen})
     if offscreen:report['warnings'].append(actor['nameZh']+'存在头或脚出画，请人工审查镜头覆盖')
+if events:
+    report['interactions']=measure_interactions(events,rigs,scene,bpy.context.view_layer.update)
+if creatures or models:
+    def offscreen_frames(vertices):
+        outside=[]
+        for frame in range(1,scene.frame_end+1):
+            scene.frame_set(frame)
+            bpy.context.view_layer.update()
+            project=make_projector(scene,camera)
+            if any(not (p.z>0 and .02<=p.x<=.98 and .02<=p.y<=.98)
+                   for p in (project(point) for point in vertices())):
+                outside.append(frame)
+        return outside
+    if creatures:
+        report['creatures']=[]
+        for handle in creatures:
+            item=summarize_creature(handle)
+            item['offscreenFrames']=offscreen_frames(lambda h=handle: creature_vertices(h))
+            report['creatures'].append(item)
+            report['warnings'].append(item['boundaryZh'])
+            if item['offscreenFrames']: report['warnings'].append('尾翼存在出画，请调整机位后重新预演')
+    if models:
+        report['models']=[]
+        for model in models:
+            item=dict(model['report'])
+            item['offscreenFrames']=offscreen_frames(lambda m=model: model_vertices(m))
+            report['models'].append(item)
+            report['warnings'].append(item['boundaryZh'])
+            if item['offscreenFrames']: report['warnings'].append('带骨角色网格存在出画，请调整机位后重新预演')
 (out/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
+if any(row['contactError']>.005 for row in report.get('interactions',[])):
+    raise ValueError('双人互动实际接触误差未过验收')
 if any(actor['stanceDrift']>.005 for actor in report['actors']):
     raise ValueError('支撑脚漂移未过验收')
 frames=out/'frames';frames.mkdir(exist_ok=True)
