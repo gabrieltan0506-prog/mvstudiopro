@@ -24,6 +24,11 @@ vi.mock("../growth/growthWorkloadPriority", async load => ({
   beginGrowthInteractiveWorkload: vi.fn(async () => async () => {}),
 }));
 
+vi.mock("../services/gcs.js", async load => ({
+  ...await load<Record<string, unknown>>(),
+  uploadBufferToGcs: vi.fn(async (input: { objectName: string }) => ({ gcsUri: `gs://test/${input.objectName}` })),
+}));
+
 import { processJobsOnce } from "./runner";
 import { buildManhuaBgmJobInput } from "./manhuaBgmJobInput";
 import { buildManhuaBgmBrief } from "../../shared/manhuaBgmBrief";

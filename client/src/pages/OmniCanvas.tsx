@@ -11641,7 +11641,7 @@ export default function OmniCanvas() {
             <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
               <div className="text-sm font-semibold text-white/85">自由画布</div>
               <span className="text-[11px] text-white/40">
-                多任务节点自由接线 · 文生图 / 视频 / 提文字 / 文案
+                多任务节点自由接线 · 图片 / 视频 / 音乐与 MV / 文案
               </span>
             </div>
           <FreeformCanvas

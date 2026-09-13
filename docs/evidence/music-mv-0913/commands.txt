@@ -1,0 +1,9 @@
+工作目录：/private/tmp/mvs-music-mv-canvas-0913
+pnpm install --frozen-lockfile --offline
+pnpm check
+NODE_OPTIONS=--max-old-space-size=4096 pnpm build --incremental false
+pnpm exec vite build
+pnpm exec vitest run client/src/lib/canvasMusicMv*.test.ts client/src/lib/canvasTypes.test.ts client/src/lib/canvasVideoTaskResume.test.ts client/src/lib/manhuaCloudDraftSync.test.ts client/src/lib/canvasDramaStudio.test.ts client/src/lib/manhuaCanvasLayout.test.ts client/src/lib/canvasRunBlock.referenceIntent.test.ts client/src/lib/canvasRunBlock.segmentRefs.test.ts client/src/lib/canvasRunBlock.videoEdit.test.ts shared/manhuaCloudDraft*.test.ts shared/manhuaAssembleJobInput.test.ts server/routers/canvasMusicMv*.test.ts server/services/canvasMusicMvMedia.test.ts server/services/ttapiSunoMusic.test.ts server/services/manhuaScoringRoom.test.ts server/jobs/manhuaBgmJobInput.test.ts server/jobs/manhuaBgmRefundRecovery.test.ts server/jobs/runner.manhuaBgmV6Settlement.test.ts server/vercel-api-core/renderMusicOnly.integration.test.ts server/vercel-api-core/renderSourceAudio.test.ts server/services/manhuaAssembleFinalService.audio.test.ts server/services/manhuaAssembleBilling.test.ts server/services/manhuaAssembleAccess.test.ts
+pnpm exec vitest run server/services/postProdMediaSource.test.ts server/services/manhuaAssembleFinalService.completeness.test.ts
+pnpm exec vitest run client/src/lib/canvasMusicMvGuards.test.ts client/src/lib/canvasVideoTaskResume.test.ts
+git diff --check
