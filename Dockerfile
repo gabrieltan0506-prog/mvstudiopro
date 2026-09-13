@@ -5,7 +5,7 @@ WORKDIR /app
 # 安装 ffmpeg + python3 + yt-dlp + Chromium（PDF 原生渲染，Puppeteer 无 bundled 下载）
 RUN apt-get update \
  && apt-get install --no-install-recommends -y \
-    ffmpeg python3 python3-pip curl \
+    ffmpeg python3 python3-pip python3-numpy curl \
     blender xvfb xauth libgl1-mesa-dri \
     unzip binutils poppler-utils \
     chromium \
@@ -30,6 +30,8 @@ RUN apt-get update \
 
 # 白模由确定性脚本在无显示服务器上渲染；使用软件 GL，不要求生产 GPU。
 RUN blender --background --factory-startup --version \
+ && blender --background --factory-startup --python-exit-code 1 \
+    --python-expr "import numpy; import io_scene_gltf2.blender.imp.gltf2_blender_mesh; print('GLTF_NUMPY_READY', numpy.__version__)" \
  && command -v xvfb-run
 ENV LIBGL_ALWAYS_SOFTWARE=1
 

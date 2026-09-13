@@ -21,6 +21,10 @@
 
 编译器原先仅检索动作种类，导致否定“甲不出拳”、同类重复动作、站定后转身等剩余动作被误记为整镜已映射。真实入口仍为工作台sourceShots→compilePrevisScriptDraft→显式采用→共享spec/scriptSource→云草稿/预演；修正范围仅本地编译与回归，不改模型、账本或队列。改为完整句式匹配，无法完整消费的原文进入unmapped，旧配置不覆盖。验证须覆盖单人和双人、否定/重复/残余动作，正反核对mappedShotIndices与scriptSource.unmappedShotIndices、原文及用户采用路径。
 
+### Linux运行依赖修正前证据（11:31）
+
+隔离Fly Blender3.4.1真实运行带骨测试时，glTF addon缺numpy，exit1；dpkg确认python3-numpy未安装。生产import_scene.gltf也依赖该addon，不只是测试导出问题。用户明确提出安装，最小改Dockerfile显式安装发行版python3-numpy并用Blender自身import numpy及glTF导入模块做构建smoke；隔离机同样补包验证，生产机不原地安装。后续必须重跑真实Linux带骨测试和独立复审；未做干净容器构建前不得标此依赖全层验证。
+
 正向逐镜保留来源与未识别文本，角色明确绑定，草案预览后显式采用；不凭文本出现两个人名自动制造命中。反向从报告事件ID、actorId/targetActorId、contactFrame与误差回到提交spec和原镜。旧无新字段输入必须保持原行为；新字段绝不静默丢弃。剧本修改不自动覆盖已采用参考或在途任务。
 
 ## 并行所有权
