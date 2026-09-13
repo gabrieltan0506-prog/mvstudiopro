@@ -1,3 +1,4 @@
+import { collectPreparedRigProfiles } from "@/lib/manhuaPrevisProfiles";
 /**
  * 剧本工作台：左=本集资产 · 中=一集剧本+按段静帧 · 右=预览 · 底=集/段时间线
  * 原稿按真实秒位与引擎单段上限自动分段；每段一条成片，关键静帧按原镜一镜一张。
@@ -3246,6 +3247,11 @@ export default function ManhuaScriptWorkbench({
                   ? {taskId:eligibility.currentModel3d.taskId}:undefined;
                 return {id:a.id,label:a.labelZh,tag:a.tag,model};
               })}
+              profiles={collectPreparedRigProfiles(blocks, assetLockRegistry.byRole.character.map(a => {
+                const ref = customAssetRefs.find(ref => ref.id === a.id);
+                const eligibility = ref ? evaluateManhuaAsset3dEligibility(ref) : undefined;
+                return { id: a.id, label: a.labelZh, model: eligibility?.eligible && eligibility.currentModel3d?.status === "succeeded" ? { taskId: eligibility.currentModel3d.taskId } : undefined };
+              }))}
               sourceShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,actionZh:shot.actionZh}))}
               disabled={Boolean(factoryBusy)||activeClip.status==="running"||activeClip.videoTaskStatus==="queued"}
               onChange={(studio,reference)=>onUpdateClipPrevisStudio(activeClip.id,studio,reference)}/>
