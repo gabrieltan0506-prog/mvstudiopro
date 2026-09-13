@@ -65,3 +65,12 @@ export async function refreshMusicCandidate(
     throw new Error("音乐地址续期失败，请查询原音乐任务");
   return { ...candidate, url };
 }
+
+/** 状态文案可因网络错误变化，但未知分镜的原请求身份仍需锁定。 */
+export function hasPendingMusicMvPlan(
+  state: CanvasMusicMvState | undefined
+): boolean {
+  return Boolean(
+    state?.planRequestId && !state.plan && !state.planTerminalStatus
+  );
+}

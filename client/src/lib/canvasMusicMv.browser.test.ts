@@ -533,6 +533,26 @@ it("分镜网络未知不允许新轮，服务器确认失败后保留原输入�
     const original = await page.evaluate(
       () => (window as any).fixture.state.planRequestId
     );
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      f.update(
+        f.current.map((b: any, index: number) =>
+          index === 0 ? { ...b, prompt: "外层或云同步改成新创意" } : b
+        )
+      );
+    });
+    await page.waitForFunction(
+      () =>
+        (window as any).fixture.current[0].prompt === "外层或云同步改成新创意"
+    );
+    expect(
+      await page.evaluate(() => (window as any).fixture.state.planRequestId)
+    ).toBe(original);
+    expect(
+      await page.evaluate(
+        () => (window as any).fixture.state.planInput.creativePrompt
+      )
+    ).toBe("中国风叙事音乐，温暖弦乐");
     await reload();
     expect(
       await page.$$eval("button", buttons =>

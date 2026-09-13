@@ -1,6 +1,18 @@
 # 音乐 MV 独立审查 · 2026-09-13
 
-状态：发现三项 P2，待修复与复审；不能据本审查合并。
+最新状态：`aa8b26fe` 原三项 P2 修复复验通过，另发现未知分镜请求被外层提示词编辑清掉的 P2，待修复；仍不能据本审查合并。下文原发现保留为历史。
+
+## 2026-09-13 11:41:53 CST · 独立子代理复审
+
+被审 HEAD `aa8b26feb101260154cf2e56c7b8a07e12a6b16d`；实时查询 PR #1456 为 OPEN，HEAD 与本机相同：`https://github.com/gabrieltan0506-prog/mvstudiopro/pull/1456`。已读取 `3261afa2...aa8b26fe` 新增差异及受影响路径，并读取新增十分钟知识库/发布闭环规则。
+
+原三项闭合证据：合成终态后显式新版本重新采集当前镜头，旧输入、任务和最终节点保留；分镜 request 带固定截止时间，resolution 原子对象约束迟到执行，过期原 parsed 可恢复，403 等存储错误不冒充不存在；MV 子镜不再合入父节点整首歌词与计划，真实离线出站 prompt 由 504/507 字降至 60/63 字，并断言不包含另一镜动作。
+
+复验命令：`pnpm exec vitest run server/routers/canvasMusicMv.test.ts server/routers/canvasMusicMvAssemble.test.ts client/src/lib/canvasMusicMv.browser.test.ts client/src/lib/canvasMusicMvWorkflow.test.ts client/src/lib/canvasMusicMv.persistence.test.ts client/src/lib/canvasMusicMvRecovery.test.ts`。原始结果 `Test Files 6 passed (6)`、`Tests 35 passed (35)`、`Duration 9.64s`，退出 0，包含 6 项真实离线浏览器测试。
+
+新增 P2：`CanvasMusicMvStudio.tsx:420–429` 对输入变化无条件执行 `invalidateMusicMvPlan`；`FreeformCanvas.tsx:3340–3354` 外层 `block.prompt` textarea 没有 pendingPlan/busy 锁。默认 creativePrompt 为空时提交分镜，再修改外层音乐提示词，effect 会清空原 planRequestId/planInput 并停止查询。若原请求断网待确认，busy 解锁后允许使用新编号生成，旧服务端执行仍可成功扣费，但旧回包会因身份不符被丢弃。应在未知请求期间保留原身份/快照，处理完原任务再显式开始下一轮；不能只锁 Studio 内的创意文本框。该路径现有浏览器 fixture 未渲染 FreeformCanvas 外层输入，尚未动态执行；结论依据两端真实 handler/effect 的赋值链。
+
+此轮只读代码/PR与运行隔离测试，仅更新本记录。未新增付费、生产调用、提交或远程写操作。等待主代理修复后复验新 HEAD。
 
 - 被审分支：`feat/music-mv-canvas-0913`。
 - 被审 HEAD：`3261afa24cdb9e50e7a4794ef9b8c3cb1d4a229e`；基线 `origin/main`：`9d15eadb39174a148419072138bbdca68a37a3b7`。

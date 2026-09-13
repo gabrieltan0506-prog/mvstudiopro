@@ -9,6 +9,7 @@ import { resolveCanvasMaterialUrl } from "@/lib/omniCanvasApi";
 import { pollJobUntilTerminal } from "@/lib/jobs";
 import {
   invalidateMusicMvPlan,
+  hasPendingMusicMvPlan,
   mergeMusicCandidates,
   musicPlanInputKey,
   refreshMusicCandidate,
@@ -144,9 +145,7 @@ export function CanvasMusicMvStudio({
   const selected = state.candidates.find(
     row => row.id === state.selectedCandidateId
   );
-  const pendingPlan = Boolean(
-    state.planRequestId && !state.plan && !state.planTerminalStatus
-  );
+  const pendingPlan = hasPendingMusicMvPlan(state);
   const importJob = async (jobId: string) => {
     const previous = latest.current;
     if (
@@ -420,6 +419,8 @@ export function CanvasMusicMvStudio({
   const referenceInputKey = musicPlanInputKey(state, block.prompt);
   useEffect(() => {
     if (!latest.current.planInput || !latest.current.planRequestId) return;
+    // 外层提示词、云同步或其他入口更新也不能使未知付费请求丢失身份。
+    if (hasPendingMusicMvPlan(latest.current)) return;
     const expected = latest.current.planInput;
     if (
       expected.lyrics !== (latest.current.lyrics || "") ||
@@ -924,6 +925,34 @@ export function CanvasMusicMvStudio({
           >
             原请求已失败，准备新一轮分镜
           </button>
+        )}
+      {state.plan &&
+        state.planInput &&
+        (state.planInput.creativePrompt !==
+          (state.creativePrompt || block.prompt) ||
+          state.planInput.lyrics !== (state.lyrics || "")) && (
+          <div className="text-xs text-amber-200">
+            原分镜基于提交时的创意，已保留原稿；当前说明已有变化。
+            <button
+              className={button}
+              disabled={busy}
+              onClick={() => {
+                const previous = latest.current;
+                patch({
+                  ...invalidateMusicMvPlan(previous),
+                  planHistory: [
+                    ...(previous.planHistory || []),
+                    {
+                      requestId: previous.planRequestId!,
+                      input: previous.planInput,
+                    },
+                  ],
+                });
+              }}
+            >
+              按当前创意准备新分镜
+            </button>
+          </div>
         )}
       {state.plan && (
         <>

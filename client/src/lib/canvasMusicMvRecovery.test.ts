@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   invalidateMusicMvPlan,
+  hasPendingMusicMvPlan,
   mergeMusicCandidates,
   musicPlanInputKey,
   refreshMusicCandidate,
@@ -115,4 +116,12 @@ describe("MV 导入与分镜恢复", () => {
     ).rejects.toThrow("权限不足");
     expect(audio.url).toBe("https://test.invalid/old");
   });
+});
+
+it("外层编辑与状态错误不能释放未知分镜身份，仅明确终态解锁", () => {
+  expect(hasPendingMusicMvPlan(state)).toBe(true);
+  expect(hasPendingMusicMvPlan({ ...state, status: "error" })).toBe(true);
+  expect(
+    hasPendingMusicMvPlan({ ...state, planTerminalStatus: "failed" })
+  ).toBe(false);
 });

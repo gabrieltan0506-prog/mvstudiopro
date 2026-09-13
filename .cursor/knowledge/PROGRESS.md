@@ -1,5 +1,21 @@
 # 开发进度（滚动）
 
+## 2026-09-13 11:53 CST · 复审第四项已本地验证，待推送复验
+
+外层prompt变更导致未知分镜丢失身份的问题已修正：共享门禁锁输入，effect保留未知requestId，恢复旧稿后提示输入差异并显式开始新稿。3文件15项/5.68秒通过，类型及非增量服务端构建退出0，Vite35.04秒退出0，日志复制docs/evidence/music-mv-0913。下一步推送同PR1456并请原独立代理复验；尚未合并，紧邻合并重新读取正式与隔离机器任务/进程和部署。
+
+Vercel用户最新明确确认昨天删除的Blob已消失；这属于用户观察，不误称我本轮执行删除。当前原Chrome页Deployment Storage显示312.32GB、Updated16m ago，属于部署存储指标，不能据此否认Blob删除。当前没有执行部署删除。此前03:46UTC隔离机复查未见Blender/ffmpeg，仍必须合并前重新确认，不沿用旧在途或空闲结论。
+
+## 2026-09-13 11:44:12 CST · PR1456复审与Vercel用量诊断
+
+音乐MV PR1456已创建，HEAD aa8b26fe，31文件400项回归、类型、非增量服务端和Vite通过。独立代理复审确认原3项P2修复，但新增1项P2：音乐节点外层prompt在未知分镜期间修改可通过effect清掉原请求。主代理正补hasPendingMusicMvPlan共享门禁、外层textarea禁编辑、effect保留未知请求以及旧稿提示；未提交，待定向浏览器与复审。
+
+本轮正式Fly机器d892541f602228于03:35:31 UTC实际SQL queued/running为空、canvas-video9条无在途、deep-research23条无在途；隔离机器0801696b2d6e38 metadata=previs-audit仍运行Blender。初次未指定machine的只读SSH落到了隔离机，未用其空目录冒充生产；后续脚本明确指定并断言正式机ID。合并前必须再次检查两机器及流水线，当前未合并。
+
+用户询问Vercel313.13GB不下降。已读昨天真实发布回执：没有执行真实清理器删除。今日正式Fly检查VERCEL_TOKEN存在性=false，/data/vercel-prune-audit回执文件0；无密钥导出、无删除。用户把防火墙deny改allow后重试，www正式站HTTP200，GitHub所载Production6414675378 state=success。不能把Overview的Denied指标误说成部署失败；已向用户纠正。最新官方Deployment Storage文档确认计量部署输出，需按同一日期范围/项目核对retention；当前没有可用账户API令牌，未查到313.13GB项目分布。
+
+规则已写全局与项目：发布闭环、至少1独立子代理复审、合并前实时任务/进程/部署门禁；每10分钟知识库落档；压缩冲突以最新知识库为准。下一次主档更新须在本时间后10分钟内；当前新增用户查询与复审并行处理，不暂停原PR流程。
+
 ## 2026-09-13 11:31:45 CST · 音乐 MV 发布与独立审查进行中
 
 用户已授权提交、推送、开 PR、独立子代理审查、修复并复审，无问题且紧邻合并确认无在途任务/冲突部署才合并。本轮代码 176e58eb、原始日志 3261afa2 已推 origin/feat/music-mv-canvas-0913；未开 PR，另一预演 PR1455 建于 03:06:41 UTC，遵守30分钟开PR间隔，本批最早03:36:41 UTC。origin/main 当前9d15eadb。

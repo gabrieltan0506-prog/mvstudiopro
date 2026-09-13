@@ -1,3 +1,4 @@
+import { hasPendingMusicMvPlan } from "@/lib/canvasMusicMvRecovery";
 import { finishEditedMusicMvShot } from "@/lib/canvasMusicMvGuards";
 import { rememberMusicMvOutput } from "@/lib/canvasMusicMvWorkflow";
 import { CanvasMusicMvStudio } from "./CanvasMusicMvStudio";
@@ -3338,6 +3339,7 @@ export default function FreeformCanvas({
                       />
                     ) : (
                     <textarea
+                      disabled={block.kind === "music" && hasPendingMusicMvPlan(block.musicMv)}
                       value={
                         block.id.startsWith("clip-")
                           ? sanitizeManhuaClipPromptForUi(block.prompt)
