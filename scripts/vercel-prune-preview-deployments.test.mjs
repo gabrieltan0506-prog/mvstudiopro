@@ -106,3 +106,12 @@ test("本机CLI拒绝执行，测试key不会发网络", () => {
     { encoding: "utf8", env: { VERCEL_TOKEN: "test-key" } });
   assert.equal(result.status, 1); assert.match(result.stderr, /清理中止/);
 });
+test("没有当前preview时仍能清理历史预览，生产保护继续生效", async () => {
+  const f = fixture({ project: () => ({ id: "prj_test", name: "mvstudiopro", targets: { production: { id: "prod" } } }) });
+  assert.equal((await f.run()).deleted, 2);
+});
+test("每项删除之前的在途部署门禁会停止后续删除", async () => {
+  const f = fixture(); let reads = 0;
+  await assert.rejects(f.run({ beforeDelete: async () => { if (++reads === 2) throw Error("active-deployment"); } }), /active-deployment/);
+  assert.equal(f.deletes().length, 1);
+});
