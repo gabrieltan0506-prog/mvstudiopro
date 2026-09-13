@@ -21,9 +21,9 @@ describe("gpt-image 供应商顺序接线（0910：OpenAI 官方 → EvoLink 2.5
     expect(src).toContain('provider !== "openai"');
     expect(src).toContain("停止回落");
   });
-  it("改图带 input_fidelity；xhigh/max 只给官方，其余家折回 high", () => {
+  it("官方改图省略 input_fidelity；质量与供应商接线保留", () => {
     const openai = readFileSync(new URL("./openaiGptImage2.ts", import.meta.url), "utf8");
-    expect(openai).toContain('addField("input_fidelity", inputFidelity)');
+    expect(openai).not.toContain('addField("input_fidelity"');
     expect((src.match(/quality: openaiQuality \?\? qualityForCall/g) || []).length).toBe(2);
     const evo = readFileSync(new URL("./evolinkGptImage2.ts", import.meta.url), "utf8");
     expect(evo).toContain("resolveEvolinkGptImageModel(opts.variant)");
