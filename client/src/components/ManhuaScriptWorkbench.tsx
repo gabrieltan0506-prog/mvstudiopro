@@ -4289,7 +4289,7 @@ export default function ManhuaScriptWorkbench({
                   className="fixed inset-0 z-[80] flex flex-col items-center justify-center gap-2 bg-black/85 px-4 py-6"
                   onClick={() => setCropTarget(null)}
                 >
-                  <p className="text-[12px] font-semibold text-white/90">
+                  <p data-manhua-media-controls className="text-[12px] font-semibold text-white/90">
                     裁字：在图上拖一个框，框内保留、框外裁掉（烧字通常在边缘）
                   </p>
                   <div
@@ -4340,7 +4340,7 @@ export default function ManhuaScriptWorkbench({
                       />
                     ) : null}
                   </div>
-                  <div className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                  <div data-manhua-media-controls className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
                     <button
                       type="button"
                       disabled={!cropRect || cropRect.w < 0.05 || cropRect.h < 0.05}
@@ -4416,6 +4416,7 @@ export default function ManhuaScriptWorkbench({
                   />
                     <div
                       onClick={(e) => e.stopPropagation()}
+                      data-manhua-media-controls
                       className="flex flex-wrap items-center gap-2 rounded-lg bg-black/70 px-3 py-1.5"
                     >
                     <span className="text-[12px] font-semibold text-white/90">

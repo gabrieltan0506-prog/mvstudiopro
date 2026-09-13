@@ -138,6 +138,11 @@ it("米白主题覆盖真实预演表单与门户，退出漫剧模式后恢复�
       hint.dataset.themePreviewHint = "";
       preview.append(hint);
       document.getElementById("root")!.append(preview);
+      const overlay = document.createElement("div");
+      overlay.className = "bg-black/85";
+      overlay.innerHTML =
+        '<p data-manhua-media-controls class="text-white/90">裁字说明</p><div data-manhua-media-controls><button class="bg-emerald-500/25 text-emerald-50">确认裁字</button></div><div class="bg-[#101417]"><p data-theme-card-text class="text-white/90">三维预览卡片</p></div>';
+      document.getElementById("root")!.append(overlay);
     });
     const styled = await page.evaluate(() => ({
       page: getComputedStyle(document.getElementById("root")!).backgroundColor,
@@ -151,6 +156,15 @@ it("米白主题覆盖真实预演表单与门户，退出漫剧模式后恢复�
       previewText: getComputedStyle(
         document.querySelector("[data-theme-preview-hint]")!
       ).color,
+      cropHint: getComputedStyle(
+        document.querySelector("p[data-manhua-media-controls]")!
+      ).color,
+      cropAction: getComputedStyle(
+        document.querySelector("[data-manhua-media-controls] button")!
+      ).color,
+      nestedCard: getComputedStyle(
+        document.querySelector("[data-theme-card-text]")!
+      ).color,
     }));
     expect(styled).toEqual({
       page: "rgb(238, 233, 223)",
@@ -158,6 +172,9 @@ it("米白主题覆盖真实预演表单与门户，退出漫剧模式后恢复�
       portal: "rgb(247, 242, 232)",
       portalText: "rgb(32, 50, 71)",
       previewText: "rgb(233, 227, 217)",
+      cropHint: "rgb(255, 250, 241)",
+      cropAction: "rgb(255, 250, 241)",
+      nestedCard: "rgb(32, 50, 71)",
     });
     await page.evaluate(() =>
       document.getElementById("root")!.removeAttribute("data-manhua-theme")

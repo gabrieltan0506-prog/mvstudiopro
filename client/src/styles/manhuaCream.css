@@ -194,6 +194,20 @@
       color: #e9e3d9;
     }
   }
+  /* 只标记实际媒体说明与工具条，不反转同一遮罩内的米白卡片。 */
+  & [data-manhua-media-controls] {
+    color: #fffaf1;
+    & :is(span, button) {
+      color: #fffaf1;
+    }
+    & button {
+      background-color: rgb(255 250 241 / 8%);
+      border-color: rgb(255 250 241 / 40%);
+    }
+    & button:hover {
+      background-color: rgb(255 250 241 / 18%);
+    }
+  }
 }
 
 /* 门户节点自身也可能带旧的text-white和固定深底。 */
