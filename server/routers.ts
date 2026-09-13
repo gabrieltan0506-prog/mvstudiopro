@@ -104,6 +104,7 @@ import { klingRouter } from "./routers/kling";
 import { hunyuan3dRouter } from "./routers/hunyuan3d";
 import { sunoRouter } from "./routers/suno";
 import { canvasAudioRouter } from "./routers/canvasAudio";
+import { manhuaAutoRigRouter } from "./routers/manhuaAutoRig";
 import { manhuaPrevisRouter } from "./routers/manhuaPrevis";
 import { enterpriseAgentsRouter } from "./routers/enterpriseAgents";
 import { buildAuthorAnalysis, buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, buildPlatformSupportActivities, normalizePlatforms } from "./growth/growthSchema";
@@ -3024,6 +3025,7 @@ export const appRouter = router({
   suno: sunoRouter,
   canvasAudio: canvasAudioRouter,
   manhuaPrevis: manhuaPrevisRouter,
+  manhuaAutoRig: manhuaAutoRigRouter,
   creations: creationsRouter,
   enterpriseAgents: enterpriseAgentsRouter,
   workflow: workflowRouter,
@@ -4391,7 +4393,7 @@ export const appRouter = router({
     queuePostProd: protectedProcedure
       .input(postProdJobInputSchema)
       .mutation(async ({ ctx, input }) => {
-        if(input.action === "manhua_previs") throw new TRPCError({code:"FORBIDDEN",message:"请从本段动作白模入口提交"});
+        if(input.action === "manhua_previs" || input.action === "manhua_auto_rig") throw new TRPCError({code:"FORBIDDEN",message:input.action === "manhua_auto_rig" ? "请从人物模型绑骨入口提交" : "请从本段动作白模入口提交"});
         let normalizedInput;
         try {
           normalizedInput = await resolvePostProdInputSources({

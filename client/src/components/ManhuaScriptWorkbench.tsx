@@ -1,4 +1,6 @@
 import { collectPreparedRigProfiles } from "@/lib/manhuaPrevisProfiles";
+import ManhuaAutoRigEditor from "@/components/canvas/ManhuaAutoRigEditor";
+import type { AutoRigAdoptedModel } from "@shared/manhuaAutoRig";
 /**
  * 剧本工作台：左=本集资产 · 中=一集剧本+按段静帧 · 右=预览 · 底=集/段时间线
  * 原稿按真实秒位与引擎单段上限自动分段；每段一条成片，关键静帧按原镜一镜一张。
@@ -455,6 +457,7 @@ type Props = {
   onGenerateAsset3d?: (id: string) => void | Promise<void>;
   /** 导入用户已有 GLB；不调用建模服务，仍绑定当前人物图版本。 */
   onImportAsset3d?: (id: string, file: File) => void | Promise<void>;
+  onApplyRiggedModel?: (model: AutoRigAdoptedModel, expectedTaskId: string) => boolean | Promise<boolean>;
   asset3dBusyIds?: readonly string[];
   assetStandardizeBusyId?: string | null;
   onRemoveCustomAsset?: (id: string) => void;
@@ -1017,6 +1020,7 @@ export default function ManhuaScriptWorkbench({
   onStandardizeCustomAsset,
   onGenerateAsset3d,
   onImportAsset3d,
+  onApplyRiggedModel,
   asset3dBusyIds = [],
   assetStandardizeBusyId = null,
   onRemoveCustomAsset,
@@ -2855,6 +2859,9 @@ export default function ManhuaScriptWorkbench({
     url: string;
     labelZh: string;
   } | null>(null);
+  const [autoRigAssetId, setAutoRigAssetId] = useState<string | null>(null);
+  const autoRigAsset = customAssetRefs.find(ref => ref.id === autoRigAssetId);
+  const autoRigEligibility = autoRigAsset ? evaluateManhuaAsset3dEligibility(autoRigAsset) : undefined;
   const [model3dPreview, setModel3dPreview] = useState<{
     url: string;
     labelZh: string;
@@ -4368,6 +4375,20 @@ export default function ManhuaScriptWorkbench({
                       取消
                     </button>
                   </div>
+                </div>
+              ) : null}
+              {autoRigAsset && autoRigEligibility?.eligible && autoRigEligibility.currentModel3d?.status === "succeeded" && onApplyRiggedModel ? (
+                <div className="fixed inset-0 z-[81] flex items-center justify-center bg-black/80 p-4">
+                  <ManhuaAutoRigEditor
+                    key={`${autoRigAsset.id}:${autoRigEligibility.sourceVersion}`}
+                    assetRef={autoRigAsset.id}
+                    label={autoRigAsset.labelZh || "当前人物"}
+                    sourceJobId={autoRigEligibility.currentModel3d.taskId}
+                    sourceVersion={autoRigEligibility.sourceVersion}
+                    disabled={Boolean(factoryBusy) || asset3dBusyIds.includes(autoRigAsset.id)}
+                    onApply={onApplyRiggedModel}
+                    onClose={() => setAutoRigAssetId(null)}
+                  />
                 </div>
               ) : null}
               {model3dPreview ? (
@@ -6276,6 +6297,13 @@ export default function ManhuaScriptWorkbench({
                                       />
                                       {asset3dBusyIds.includes(ref.id) ? "3D 参考处理中…" : "导入已有 GLB（免建模）"}
                                     </label>
+                                  ) : null}
+                                  {model3dEligibility.eligible && currentModel3d?.status === "succeeded" && onApplyRiggedModel ? (
+                                    <button type="button" className="w-full rounded border border-cyan-300/30 bg-cyan-500/10 px-1.5 py-1 text-[9px] font-medium text-cyan-100 disabled:opacity-40"
+                                      disabled={Boolean(factoryBusy) || asset3dBusyIds.includes(ref.id)}
+                                      onClick={() => setAutoRigAssetId(ref.id)}>
+                                      人体绑骨 · 校正与另存
+                                    </button>
                                   ) : null}
                                   {!model3dEligibility.eligible ? (
                                     <p className="text-[9px] leading-3 text-amber-100/75">

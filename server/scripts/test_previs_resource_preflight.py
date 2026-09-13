@@ -122,13 +122,38 @@ cases=[
     ('png-large-header-no-decompression',png_large_header,False),
     ('multi-primitive-morph-mismatch',multi_morph_mismatch,False),('mesh-two-instances-counted',repeated_mesh,True),
 ]
+def without_skin(doc, binary):
+    doc.pop('skins')
+    doc['nodes'][1].pop('skin')
+    attrs = doc['meshes'][0]['primitives'][0]['attributes']
+    attrs.pop('JOINTS_0')
+    attrs.pop('WEIGHTS_0')
+
+
+def unrigged_then(mutation):
+    def apply(doc, binary):
+        without_skin(doc, binary)
+        mutation(doc, binary)
+    return apply
+
+
+cases = [(name, mutate, expected, False) for name, mutate, expected in cases] + [
+    ('unrigged-explicit-mode', without_skin, True, True),
+    ('unrigged-default-still-rejects', without_skin, False, False),
+    ('unrigged-existing-skin-rejected', lambda d,b: None, False, True),
+    ('unrigged-old-weights-rejected', unrigged_then(lambda d,b:d['meshes'][0]['primitives'][0]['attributes'].update(WEIGHTS_0=2)), False, True),
+    ('unrigged-morph-rejected', unrigged_then(lambda d,b:d['meshes'][0]['primitives'][0].update(targets=[{'POSITION':0}])), False, True),
+    ('unrigged-external-buffer-rejected', unrigged_then(lambda d,b:d['buffers'][0].update(uri='https://offline.invalid/model.bin')), False, True),
+    ('unrigged-invalid-index-rejected', unrigged_then(lambda d,b:d['meshes'][0]['primitives'][0].update(indices=999)), False, True),
+    ('unrigged-large-image-rejected', unrigged_then(png_large_header), False, True),
+]
 results=[]
-for name,mutate,expected in cases:
+for name,mutate,expected,unrigged in cases:
     doc,binary=fixture();mutate(doc,binary)
     target=out/('TEST_ONLY-'+name+'.glb');target.write_bytes(encode(doc,binary))
     row={'case':name,'bytes':target.stat().st_size,'expectedAccepted':expected}
     try:
-        report=module.inspect_glb(target)
+        report=module.inspect_glb(target, unrigged=unrigged)
         row.update(accepted=True,vertices=report['vertices'],instanceComponents=report['instanceComponents'])
     except ValueError as error:
         row.update(accepted=False,error=str(error))

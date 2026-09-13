@@ -1,3 +1,4 @@
+import { autoRigRequestSchema } from "../../shared/manhuaAutoRig";
 /**
  * 后期工坊任务输入契约:路由与 worker 共用同一份 Zod Schema。
  * 字段、数组长度、数值范围在创建任务前统一整理;worker 对旧任务数据再解析一次,
@@ -158,6 +159,7 @@ export type AudioExtractParams = z.infer<typeof audioExtractParamsSchema>;
 export type RawAudioExtractParams = z.input<typeof audioExtractParamsSchema>;
 
 export const postProdJobInputSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("manhua_auto_rig"), params: autoRigRequestSchema }).strict(),
   z.object({ action: z.literal("manhua_previs"), params: manhuaPrevisRequestSchema }).strict(),
   z.object({ action: z.literal("audio_extract"), params: audioExtractParamsSchema }).strict(),
   z.object({ action: z.literal("audio_trim"), params: audioTrimParamsSchema }).strict(),
