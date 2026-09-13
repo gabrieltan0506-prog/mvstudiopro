@@ -135,6 +135,8 @@ export function compilePrevisScriptDraft(input: {
       end = cursor + shot.durationSec;
     cursor = end;
     const text = shot.actionZh.trim();
+    // 仅忽略排版符号，不能删除否定词、连接词或未支持的动作后假装整镜已映射。
+    const sentence = text.replace(/[\s，,。.!！；;]/g, "");
     const reject = (reasonZh: string) =>
       result.unmapped.push({ index: shot.index, text, reasonZh });
     if (
@@ -202,6 +204,17 @@ export function compilePrevisScriptDraft(input: {
         reject("同镜同时格挡与受击，需人工明确接触结果");
         continue;
       }
+      const attackPattern =
+        mention(a) + "(?:向|朝|对)" + targetPattern +
+        "(?:的胸前|胸前)?(?:出拳|出手|挥拳|攻击|击打)|" +
+        mention(a) + "(?:出拳击中|挥拳击中|一拳打向|一拳击中)" + targetPattern;
+      const reactionPattern = guard
+        ? targetPattern + "(?:抬臂|举手|抬手)?(?:格挡|挡住)"
+        : targetPattern + "(?:(?:受击|中拳|被击中)(?:后缩|后仰|踉跄)?|后缩|后仰|踉跄)";
+      if (!new RegExp("^(?:" + attackPattern + ")(?:随后|接着|然后)?" + reactionPattern + "$").test(sentence)) {
+        reject("同镜还有未支持或重复的动作，不能将部分匹配当作整镜完成");
+        continue;
+      }
       const actor = actorFor(a),
         target = actorFor(b);
       if (actor.shape !== "human" || target.shape !== "human") {
@@ -230,6 +243,14 @@ export function compilePrevisScriptDraft(input: {
     const matches = kinds.filter(([, re]) => re.test(text));
     if (present.length !== 1 || matches.length !== 1) {
       reject("动作或角色无法唯一匹配当前动作库");
+      continue;
+    }
+    const wholeAction = new RegExp(
+      "^" + mention(present[0]) + "(?:缓慢|缓缓|轻轻|迅速|快速|原地)?" +
+      matches[0][1].source + "(?:一次)?$"
+    );
+    if (!wholeAction.test(sentence)) {
+      reject("含否定、重复或未支持动作，不能将部分匹配当作整镜完成");
       continue;
     }
     const actor = actorFor(present[0]);

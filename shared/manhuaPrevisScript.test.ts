@@ -97,6 +97,27 @@ describe("原镜动作草案的实际生产与身份", () => {
 
 describe("不能把未发生、模糊动作或独立后仰编成击中", () => {
   it.each([
+    "阿菁不出拳。",
+    "阿菁未出拳。",
+    "阿菁出拳，随后连续出拳。",
+    "阿菁站定，随后转身离开。",
+    "阿菁向家丁出拳，家丁格挡，随后阿菁转身离开。",
+    "阿菁向家丁出拳，家丁格挡，随后再次格挡。",
+  ])("完整消费原句，否则保留未映射而不是部分冒充：%s", text => {
+    const result = compile(text);
+    expect(result.spec).toBeNull();
+    expect(result.mappedShotIndices).toEqual([]);
+    expect(result.unmapped).toEqual([expect.objectContaining({ index: 7, text })]);
+  });
+  it("简单肯定句仍生成动作，角色姓名含不字不视作否定", () => {
+    const result = compile("杨不悔缓缓出拳一次。", {
+      characters: [{ id: "yang", label: "杨不悔" }],
+    });
+    expect(result.spec?.actors[0].actions).toEqual([{ kind: "strike", startSec: 0, endSec: 4 }]);
+    expect(result.mappedShotIndices).toEqual([7]);
+    expect(result.unmapped).toEqual([]);
+  });
+  it.each([
     "阿菁没有出拳。",
     "如果阿菁向家丁出拳，家丁后仰。",
     "阿菁试图向家丁出拳，家丁受击后仰。",

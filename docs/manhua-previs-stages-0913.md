@@ -17,6 +17,10 @@
 
 ## 双向追链要求
 
+### 独立审查修正前证据（11:24）
+
+编译器原先仅检索动作种类，导致否定“甲不出拳”、同类重复动作、站定后转身等剩余动作被误记为整镜已映射。真实入口仍为工作台sourceShots→compilePrevisScriptDraft→显式采用→共享spec/scriptSource→云草稿/预演；修正范围仅本地编译与回归，不改模型、账本或队列。改为完整句式匹配，无法完整消费的原文进入unmapped，旧配置不覆盖。验证须覆盖单人和双人、否定/重复/残余动作，正反核对mappedShotIndices与scriptSource.unmappedShotIndices、原文及用户采用路径。
+
 正向逐镜保留来源与未识别文本，角色明确绑定，草案预览后显式采用；不凭文本出现两个人名自动制造命中。反向从报告事件ID、actorId/targetActorId、contactFrame与误差回到提交spec和原镜。旧无新字段输入必须保持原行为；新字段绝不静默丢弃。剧本修改不自动覆盖已采用参考或在途任务。
 
 ## 并行所有权
