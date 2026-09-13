@@ -34,6 +34,21 @@ def bounds_of(mesh):
             [max(v.co[i] for v in mesh.data.vertices) for i in range(3)]]
 
 
+def weld_identical_vertices(bm):
+    """只合并完全相同坐标，避免旧Blender距离搜索漏掉重合接缝；逐角UV保持。"""
+    import bmesh
+    first = {}
+    targets = {}
+    for vertex in bm.verts:
+        coordinate = tuple(vertex.co)
+        if coordinate in first:
+            targets[vertex] = first[coordinate]
+        else:
+            first[coordinate] = vertex
+    if targets:
+        bmesh.ops.weld_verts(bm, targetmap=targets)
+
+
 def load_source(file, expected_sha, settings):
     import bpy
     import bmesh
@@ -71,7 +86,7 @@ def load_source(file, expected_sha, settings):
     try:
         bm.from_mesh(source.data)
         count = len(bm.verts)
-        bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=1e-8)
+        weld_identical_vertices(bm)
         merged = count - len(bm.verts)
         if any(not edge.is_manifold for edge in bm.edges):
             raise ValueError("人物网格有开口或非流形边，当前无法可靠绑骨")
