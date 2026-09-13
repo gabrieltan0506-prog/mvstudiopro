@@ -40,7 +40,7 @@ vi.mock("node:child_process", async loadOriginal => {
         error: null,
         result: { stdout: string; stderr: string }
       ) => void
-    ) => callback(null, { stdout: "audio\n", stderr: "" }),
+    ) => callback(null, { stdout: JSON.stringify({ streams: [{ codec_type: "audio" }], format: { duration: "41.25" } }), stderr: "" }),
   };
 });
 
@@ -378,4 +378,38 @@ describe("配乐结果 → bgm_mount 卡点参数", () => {
     expect(params.bgmSeekSec).toBe(0);
     expect("volumeExpr" in params).toBe(false);
   });
+});
+
+it("歌曲完整歌词进入正式建单，候选保留实际时长、身份及校验值", async () => {
+  const song = { ...brief, model: "suno-v6" as const, instrumental: false, negative_tags: "", prompt: "[Verse]\n夜雨落在旧城墙" };
+  bridge.create.mockResolvedValue({ taskId: "ttapi:song123" });
+  await createManhuaBgmTask(song);
+  expect(bridge.create.mock.calls.at(-1)![0]).toMatchObject({ instrumental: false, prompt: song.prompt, negative_tags: "" });
+  bridge.get.mockResolvedValue({ status: "completed", musics: [{ musicId: "song-a", audioUrl: "https://audio.test/a.mp3" }, { musicId: "song-b", audioUrl: "https://audio.test/b.mp3" }], audioUrls: ["https://audio.test/a.mp3", "https://audio.test/b.mp3"], missing: 0 });
+  const result = await resumeManhuaBgmTask({ taskId: "ttapi:song123", userId: "42", brief: song });
+  expect(result.variants).toHaveLength(2);
+  expect(result.variants.map(v => v.musicId)).toEqual(["song-a", "song-b"]);
+  for (const v of result.variants) {
+    expect(v.durationSec).toBe(41.25);
+    expect(v.sha256).toMatch(/^[a-f0-9]{64}$/);
+  }
+});
+
+it("正式建单归档器分别持久化请求、原文、解析及字节校验回执", async () => {
+  bridge.create.mockImplementationOnce(async (_request, options) => {
+    for (const kind of ["request", "raw", "parsed"] as const) {
+      await options.evidence({ kind, body: '{"musics":[{"musicId":"a"},{"musicId":"b"}]}', path: "/suno/v1/music", httpStatus: 200 });
+    }
+    return { taskId: "ttapi:proof123" };
+  });
+  await createManhuaBgmTask({ ...brief, model: "suno-v6" }, { userId: "42", jobId: "bgm-proof" });
+  expect(storage.upload).toHaveBeenCalledTimes(6);
+  const receipts = storage.upload.mock.calls.map(([v]) => v).filter(v => v.objectName.endsWith(".receipt.json"));
+  expect(receipts).toHaveLength(3);
+  for (const receipt of receipts) {
+    const value = JSON.parse(receipt.buffer.toString());
+    expect(value.bytes).toBeGreaterThan(0);
+    expect(value.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(value.objectName).toContain("post-prod/42/music-evidence/");
+  }
 });

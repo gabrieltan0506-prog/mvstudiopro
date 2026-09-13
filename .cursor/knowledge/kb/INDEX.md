@@ -18,3 +18,5 @@
 
 - [每十分钟复核知识库及冲突裁决](./knowledge-refresh-0912.md)
 - [PR1451 / PR1452 终审即时记录](./pr1451-pr1452-review-0912.md)
+
+- [音乐生成变体约定：默认两版与完整回执](./music-generation-variants.md)

@@ -1,0 +1,27 @@
+
+ RUN  v2.1.9 /private/tmp/mvs-music-mv-canvas-0913
+
+ ✓ server/routers/canvasMusicMv.test.ts (9 tests) 13ms
+stdout | client/src/lib/canvasMusicMvWorkflow.test.ts > MV 分镜编译到真实视频出站请求（全离线） > 5.2秒与5.1秒镜头均提交6秒，只带各自指定图且不带整首音频
+[canvasRunBlock] video · id=mvshot-music-root-00000000-0000-4000-8000-000000000001-1 · videoModel=seedance-2.0-mini · stills=2 · continuity=false · directorPass=false · promptChars=60
+
+stdout | client/src/lib/canvasMusicMvWorkflow.test.ts > MV 分镜编译到真实视频出站请求（全离线） > 5.2秒与5.1秒镜头均提交6秒，只带各自指定图且不带整首音频
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=1 · bind=
+[canvasRunBlock] video · id=mvshot-music-root-00000000-0000-4000-8000-000000000001-2 · videoModel=seedance-2.0-mini · stills=2 · continuity=false · directorPass=false · promptChars=63
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=1 · bind=
+
+stdout | client/src/lib/canvasMusicMvWorkflow.test.ts > MV 分镜编译到真实视频出站请求（全离线） > 未选参考的镜头不会静默采用音乐父节点的任意图片
+[canvasRunBlock] video · id=mvshot-music-root-00000000-0000-4000-8000-000000000001-1 · videoModel=seedance-2.0-mini · stills=0 · continuity=false · directorPass=false · promptChars=60
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=0 · bind=
+
+stdout | client/src/lib/canvasMusicMvWorkflow.test.ts > MV 分镜编译到真实视频出站请求（全离线） > 完整云恢复后凭选定图的GCS身份续签，过期URL不得进入POST
+[canvasRunBlock] video · id=mvshot-music-root-00000000-0000-4000-8000-000000000001-1 · videoModel=seedance-2.0-mini · stills=2 · continuity=false · directorPass=false · promptChars=60
+[canvasRunBlock] clip image-bind · assets=0 · kept=0 · urls=1 · bind=
+
+ ✓ client/src/lib/canvasMusicMvWorkflow.test.ts (4 tests) 26ms
+
+ Test Files  2 passed (2)
+      Tests  13 passed (13)
+   Start at  11:29:06
+   Duration  1.20s (transform 777ms, setup 0ms, collect 1.60s, tests 38ms, environment 0ms, prepare 140ms)
+

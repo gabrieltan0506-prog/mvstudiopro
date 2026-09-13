@@ -46,6 +46,7 @@ const CANVAS_LS_KEY = "mv-freeform-canvas-v1";
 const FACTORY_PREFS_LS_KEY = "mv-manhua-factory-character-prefs-v1";
 
 const KIND_OK = new Set<CanvasBlockKind>([
+  "music",
   "text",
   "image",
   "video",
@@ -139,7 +140,7 @@ export function slimBlocksForLocalPersist(
 ): CanvasBlock[] {
   const pointed = applyLocalMediaPointersToBlocks(blocks);
   return pointed.map(b => {
-    if (isManhuaCloudDraftVideoBlock(b)) {
+    if (isManhuaCloudDraftVideoBlock(b) || b.kind === "music") {
       const outputUrls = (b.outputUrls || [])
         .map(u => resolveUrlForCloudSync(u))
         .filter(u => isHttpUrl(u))
@@ -229,7 +230,7 @@ function localFirstThenCloud(u: unknown): string | undefined {
 /** 云同步前：blob:/local-media: → 溯源 https（有则带上；无则留给本机库）;GCS 签名链一律换永久链 */
 export function blocksForCloudDraftSync(blocks: CanvasBlock[]): CanvasBlock[] {
   return blocks.map(b => {
-    if (isManhuaCloudDraftVideoBlock(b)) {
+    if (isManhuaCloudDraftVideoBlock(b) || b.kind === "music") {
       const outputUrls = (b.outputUrls || [])
         .map(u => stableOrUndefined(resolveUrlForCloudSync(u)))
         .filter((u): u is string => Boolean(u));
@@ -300,7 +301,7 @@ export function trySaveLocalCanvas(
       const shell = slim.map(b => {
         const isKeyart = String(b.id || "").startsWith("keyart-");
         const isVideo = isManhuaCloudDraftVideoBlock(b);
-        if (isKeyart || isVideo) {
+        if (isKeyart || isVideo || b.kind === "music") {
           return {
             ...b,
             outputText: undefined,
@@ -499,6 +500,8 @@ export function cloudDraftBlocksToCanvas(
       // 段级白模/母轨/登记成片：回读漏掉就是刷新即丢、登记片过期后无 gcsUri 可重签
       manhuaSegmentRefs: normalizeManhuaSegmentReferences(raw.manhuaSegmentRefs),
       previsStudio: raw.previsStudio,
+      musicMv: raw.musicMv,
+      musicMvShot: raw.musicMvShot,
       audioStudio: raw.audioStudio,
       seedance25TimestampStoryboard: raw.seedance25TimestampStoryboard,
       seedance25ReshootFromSec: raw.seedance25ReshootFromSec,

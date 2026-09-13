@@ -2,6 +2,7 @@
  * 漫剧云端草稿：剧本、静帧与已有视频的恢复元数据；不存视频字节。
  */
 
+import { canvasMusicMvShotBindingSchema, type CanvasMusicMvShotBinding, normalizeCanvasMusicMvState, type CanvasMusicMvState } from "./canvasMusicMv";
 import { capManhuaMediaHistory } from "./manhuaMediaHistoryCap";
 import { normalizeManhuaTimelineOrder } from "./manhuaEditOrder.js";
 import { canvasAudioStudioSchema } from "./canvasAudioStudio.js";
@@ -48,6 +49,8 @@ export const MANHUA_DRAFT_EXPORT_HINT_ZH =
 export type ManhuaCloudDraftCanvasBlock = {
   id: string;
   kind: string;
+  musicMv?: CanvasMusicMvState;
+  musicMvShot?: CanvasMusicMvShotBinding;
   x: number;
   y: number;
   width: number;
@@ -344,6 +347,8 @@ export function sanitizeManhuaCloudDraftBlock(
   const base: ManhuaCloudDraftCanvasBlock = {
     id,
     kind,
+    musicMv: b.musicMv == null ? undefined : normalizeCanvasMusicMvState(b.musicMv),
+    musicMvShot: b.musicMvShot == null ? undefined : canvasMusicMvShotBindingSchema.parse(b.musicMvShot),
     x: Math.round(Number(b.x) || 0),
     y: Math.round(Number(b.y) || 0),
     width: Math.max(120, Math.round(Number(b.width) || 420)),
@@ -417,6 +422,22 @@ export function sanitizeManhuaCloudDraftBlock(
           }
         : undefined,
   };
+
+  // 音乐历史与任务身份不能走图片裁剪分支，旧候选也须可恢复。
+  if (kind === "music") {
+    const outputUrls = keepHttpUrls(b.outputUrls);
+    const outputUrl = isHttpUrl(b.outputUrl) ? String(b.outputUrl).trim() : outputUrls[0];
+    return {
+      ...base,
+      outputUrl,
+      outputUrls: outputUrl && !outputUrls.includes(outputUrl) ? [outputUrl, ...outputUrls] : outputUrls,
+      outputText: typeof b.outputText === "string" ? b.outputText : undefined,
+      error: typeof b.error === "string" ? b.error : undefined,
+      status: base.status === "done" && !outputUrl ? "idle" : base.status,
+      refImageUrl: isPersistableAssetUrl(b.refImageUrl) ? String(b.refImageUrl).trim() : undefined,
+      editFusionUrls: keepImageUrls(b.editFusionUrls, 16),
+    };
+  }
 
   if (isManhuaCloudDraftVideoBlock(base)) {
     const outputUrls = keepHttpUrls(b.outputUrls);

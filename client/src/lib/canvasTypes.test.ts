@@ -18,6 +18,7 @@ import {
 describe("canvas spawn + defaults", () => {
   it("hides text/copy_organize from spawn menu but keeps kinds for factory", () => {
     expect(SPAWN_KIND_OPTIONS.map((o) => o.kind)).toEqual([
+      "music",
       "image",
       "video",
       "video_reverse",

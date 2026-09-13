@@ -17,7 +17,7 @@ export const manhuaBgmBriefSchema = z
   .object({
     model: z.enum(["suno-v5.5-beta", "suno-v6-mini", "suno-v6", "suno-v6-wild"]),
     custom_mode: z.literal(true),
-    instrumental: z.literal(true),
+    instrumental: z.boolean(),
     style: z.string().trim().min(1).max(1000),
     prompt: z.string().trim().min(1).max(5000),
     title: z.string().trim().min(1).max(80),
@@ -156,6 +156,9 @@ export type ManhuaBgmJobOutput = {
     previewUrl: string;
     bytes: number;
     structure: ManhuaBgmStructure | null;
+    durationSec?: number;
+    sha256?: string;
+    musicId?: string;
   }>;
   elapsedMs: number;
   providerCost: { unit: "per_call"; calls: 1 };

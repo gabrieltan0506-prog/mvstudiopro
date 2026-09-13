@@ -2166,6 +2166,8 @@ async function processManhuaBgmJob(params: {
         );
       }
       created = await createManhuaBgmTask(parsed.params.brief, {
+        userId: params.userId,
+        jobId: params.jobId,
         abortSignal: controller.signal,
       });
     } catch (createError) {

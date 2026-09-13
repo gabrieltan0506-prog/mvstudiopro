@@ -5,7 +5,7 @@
  * 才能轮询；部署重启只带原 task ID 进入 `resumeManhuaBgmTask`，绝不再次 POST。
  */
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import nodePath from "node:path";
@@ -26,12 +26,13 @@ import {
   digestManhuaBgmBrief,
   manhuaBgmBriefSchema,
   type ManhuaBgmStructure,
+  type ManhuaBgmBriefPayload,
 } from "../jobs/manhuaBgmJobInput.js";
 import {
   getEvolinkSunoTask,
   pickEvolinkSunoAudioUrls,
 } from "./evolinkSunoMusic.js";
-import { TtapiSunoRequestError, createTtapiSunoTask, decodeTtapiSunoTaskId, getTtapiSunoTask, isTtapiSunoReady } from "./ttapiSunoMusic.js";
+import { TtapiSunoRequestError, createTtapiSunoTask, decodeTtapiSunoTaskId, getTtapiSunoTask, isTtapiSunoReady, type TtapiSunoEvidenceSink } from "./ttapiSunoMusic.js";
 import { isBgmV6Model, type BgmBriefModel } from "../../shared/manhuaBgmBrief.js";
 import { signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs.js";
 import { probeBgmLevels } from "./manhuaBgmLevelProbe.js";
@@ -65,6 +66,9 @@ export type ScoringRoomVariant = {
   previewUrl: string;
   bytes: number;
   structure: ManhuaBgmStructure | null;
+  durationSec: number;
+  sha256: string;
+  musicId?: string;
 };
 
 export type ScoringRoomResult = {
@@ -72,7 +76,7 @@ export type ScoringRoomResult = {
   briefDigest: string;
   variants: ScoringRoomVariant[];
   elapsedMs: number;
-  brief: BgmBrief;
+  brief: ManhuaBgmBriefPayload;
   /** v6（TTAPI）：上游少出了几首（惯例两首）；旧 v5.5 任务恒为 0 */
   missingVariants: number;
 };
@@ -101,6 +105,23 @@ const sleep = (ms: number, signal?: AbortSignal) =>
     }
     signal?.addEventListener("abort", onAbort, { once: true });
   });
+
+/** 独立对象永久存证；原始正文不经过解析或截断。失败不删除既有证据。 */
+function musicEvidenceSink(userId: string, identity: string): TtapiSunoEvidenceSink {
+  const digest = createHash("sha256").update(identity).digest("hex");
+  const callId = randomUUID();
+  return async entry => {
+    const body = Buffer.from(entry.body, "utf8");
+    const sha256 = createHash("sha256").update(body).digest("hex");
+    const objectName = `${postProdOutputPrefix(userId)}music-evidence/${digest}/${callId}-${entry.kind}.json`;
+    await uploadBufferToGcs({ objectName, buffer: body, contentType: "application/json" });
+    await uploadBufferToGcs({
+      objectName: `${objectName}.receipt.json`,
+      buffer: Buffer.from(JSON.stringify({ objectName, bytes: body.byteLength, sha256, kind: entry.kind, path: entry.path, httpStatus: entry.httpStatus, identity, callId })),
+      contentType: "application/json",
+    });
+  };
+}
 
 /** 路由的零成本起草入口也可复用这一生产者。 */
 export function buildScoringRoomBrief(input: ScoringRoomRequest): BgmBrief {
@@ -146,7 +167,7 @@ export async function readBgmAudioWithLimit(
 export async function assertBgmAudioPlayable(
   buffer: Buffer,
   abortSignal?: AbortSignal
-): Promise<void> {
+): Promise<number> {
   assertNotAborted(abortSignal);
   const directory = await mkdtemp(nodePath.join(tmpdir(), "mvbgm-probe-"));
   const filePath = nodePath.join(directory, "variant.mp3");
@@ -161,15 +182,19 @@ export async function assertBgmAudioPlayable(
         "-select_streams",
         "a",
         "-show_entries",
-        "stream=codec_type",
+        "stream=codec_type:format=duration",
         "-of",
-        "csv=p=0",
+        "json",
         filePath,
       ],
       { timeout: 60_000, signal: abortSignal }
     );
-    if (!String(stdout).includes("audio"))
+    const probe = JSON.parse(String(stdout));
+    if (!probe.streams?.some((stream: { codec_type?: string }) => stream.codec_type === "audio"))
       throw new Error("配乐文件里没有音轨");
+    const durationSec = Number(probe.format?.duration);
+    if (!Number.isFinite(durationSec) || durationSec <= 0) throw new Error("配乐实际时长不可用");
+    return durationSec;
   } finally {
     await rm(directory, { recursive: true, force: true }).catch(() => {});
   }
@@ -216,11 +241,11 @@ export function scoringBgmObjectName(
 
 /** 只发一次付费 POST；调用方拿到 task ID 后必须先严格持久化。 */
 export async function createManhuaBgmTask(
-  briefInput: BgmBrief,
-  opts: { abortSignal?: AbortSignal } = {}
+  briefInput: ManhuaBgmBriefPayload,
+  opts: { abortSignal?: AbortSignal; userId?: string; jobId?: string } = {}
 ): Promise<{ taskId: string; briefDigest: string }> {
   assertNotAborted(opts.abortSignal);
-  const brief = manhuaBgmBriefSchema.parse(briefInput) as BgmBrief;
+  const brief = manhuaBgmBriefSchema.parse(briefInput);
   // v5.5（EvoLink）0910 下架：不再建单、不做兜底；旧任务只走下面的恢复轮询
   if (!isBgmV6Model(brief.model)) throw new Error("Suno v5.5 已下架，配乐只走 v6");
   // Suno v6 走 TTAPI：duration 同样 10–360，段表时长直接传；成品仍按段表裁。
@@ -228,7 +253,7 @@ export async function createManhuaBgmTask(
   if (!isTtapiSunoReady()) throw new Error("配乐 v6 通道未配置（TTAPI_KEY）");
   const created = await createTtapiSunoTask(
     { model: brief.model, prompt: brief.prompt, style: brief.style, title: brief.title, instrumental: brief.instrumental, negative_tags: brief.negative_tags, duration: brief.duration },
-    { abortSignal: opts.abortSignal },
+    { abortSignal: opts.abortSignal, evidence: opts.userId && opts.jobId ? musicEvidenceSink(opts.userId, opts.jobId) : undefined },
   );
   return { taskId: created.taskId, briefDigest: digestManhuaBgmBrief(brief) };
 }
@@ -240,7 +265,7 @@ export async function createManhuaBgmTask(
 export async function resumeManhuaBgmTask(input: {
   taskId: string;
   userId: string;
-  brief: BgmBrief;
+  brief: ManhuaBgmBriefPayload;
   startedAtMs?: number;
   abortSignal?: AbortSignal;
   /** 测试与专用 worker 可覆盖；生产默认 5 秒。 */
@@ -252,7 +277,7 @@ export async function resumeManhuaBgmTask(input: {
   if (!taskId) throw new Error("配乐缺少上游任务号，不能恢复轮询");
   if (!userId) throw new Error("配乐缺少会话用户，无法落本人后期前缀");
   assertNotAborted(input.abortSignal);
-  const brief = manhuaBgmBriefSchema.parse(input.brief) as BgmBrief;
+  const brief = manhuaBgmBriefSchema.parse(input.brief);
   const briefDigest = digestManhuaBgmBrief(brief);
   const startedAtMs = Number.isFinite(input.startedAtMs)
     ? Number(input.startedAtMs)
@@ -267,6 +292,7 @@ export async function resumeManhuaBgmTask(input: {
   let raw: unknown;
   let v6Urls: string[] = [];
   let v6Missing = 0;
+  let v6Musics: Array<{ musicId: string; audioUrl?: string }> = [];
   for (;;) {
     assertNotAborted(input.abortSignal);
     if (Date.now() > deadlineMs) {
@@ -279,7 +305,7 @@ export async function resumeManhuaBgmTask(input: {
       // 轮询遇 429（限流）不算失败：等一个间隔再问（deadline 照旧生效），别把一次限流烧成整单 requeue。
       let state: Awaited<ReturnType<typeof getTtapiSunoTask>>;
       try {
-        state = await getTtapiSunoTask(taskId, { abortSignal: input.abortSignal });
+        state = await getTtapiSunoTask(taskId, { abortSignal: input.abortSignal, evidence: musicEvidenceSink(userId, taskId) });
       } catch (error) {
         if (error instanceof TtapiSunoRequestError && error.httpStatus === 429) {
           await sleep(input.pollIntervalMs ?? MANHUA_BGM_POLL_INTERVAL_MS, input.abortSignal);
@@ -289,6 +315,7 @@ export async function resumeManhuaBgmTask(input: {
       }
       if (state.status === "completed") {
         v6Urls = state.audioUrls;
+        v6Musics = state.musics.filter(m => m.audioUrl?.startsWith("https://"));
         v6Missing = state.missing;
         break;
       }
@@ -322,6 +349,7 @@ export async function resumeManhuaBgmTask(input: {
   const persisted: Array<{
     index: number;
     audio: Buffer;
+    durationSec: number;
     gcsUri: string;
     previewUrl: string;
   }> = [];
@@ -333,7 +361,7 @@ export async function resumeManhuaBgmTask(input: {
     const audio = await readBgmAudioWithLimit(response, {
       abortSignal: input.abortSignal,
     });
-    await assertBgmAudioPlayable(audio, input.abortSignal);
+    const durationSec = await assertBgmAudioPlayable(audio, input.abortSignal);
 
     // 72 小时临时链不能进入持久任务；每条验真后立刻转存，不等其余变体。
     const { gcsUri } = await uploadBufferToGcs({
@@ -346,6 +374,7 @@ export async function resumeManhuaBgmTask(input: {
     persisted.push({
       index,
       audio,
+      durationSec,
       gcsUri,
       previewUrl: signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600),
     });
@@ -357,7 +386,7 @@ export async function resumeManhuaBgmTask(input: {
     try {
       structure = await probeVariantStructure(
         row.audio,
-        brief.duration,
+        row.durationSec,
         input.abortSignal
       );
     } catch (error) {
@@ -374,6 +403,9 @@ export async function resumeManhuaBgmTask(input: {
       gcsUri: row.gcsUri,
       previewUrl: row.previewUrl,
       bytes: row.audio.byteLength,
+      durationSec: row.durationSec,
+      sha256: createHash("sha256").update(row.audio).digest("hex"),
+      musicId: v6Musics[row.index]?.musicId,
       structure,
     });
   }

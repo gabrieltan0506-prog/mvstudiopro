@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /private/tmp/mvs-music-mv-canvas-0913
+
+ ✓ server/services/manhuaAssembleFinalService.completeness.test.ts (1 test) 7ms
+ ✓ server/services/postProdMediaSource.test.ts (28 tests) 32ms
+
+ Test Files  2 passed (2)
+      Tests  29 passed (29)
+   Start at  10:57:52
+   Duration  2.33s (transform 609ms, setup 0ms, collect 1.90s, tests 39ms, environment 1ms, prepare 282ms)
+

@@ -1,3 +1,7 @@
+import { hasPendingMusicMvPlan } from "@/lib/canvasMusicMvRecovery";
+import { finishEditedMusicMvShot } from "@/lib/canvasMusicMvGuards";
+import { rememberMusicMvOutput } from "@/lib/canvasMusicMvWorkflow";
+import { CanvasMusicMvStudio } from "./CanvasMusicMvStudio";
 import { capManhuaMediaHistory } from "@shared/manhuaMediaHistoryCap";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { readOpenAiImageVariantMode } from "@/lib/openaiImageVariantPref";
@@ -8,6 +12,7 @@ import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 import { mergeManhuaMediaVersions } from "@/lib/manhuaMediaVersions";
 import { recordManhuaKeyartLookOutput } from "@shared/manhuaKeyartLookState";
 import {
+  canvasVideoTaskInputFingerprint,
   retainCanvasVideoTaskResumeSnapshots,
   resolveCanvasVideoTaskResume,
   type CanvasVideoTaskResumeSnapshot,
@@ -1232,10 +1237,10 @@ export default function FreeformCanvas({
           ? `${block.prompt.trim()}\n\n${snippet}`
           : snippet;
       }
-      if (parent?.outputUrl && (kind === "image" || kind === "video")) {
+      if (parent?.kind === "image" && parent.outputUrl && (kind === "image" || kind === "video")) {
         block.refImageUrl = parent.outputUrl;
       } else if (
-        parent?.outputUrls?.[0] &&
+        parent?.kind === "image" && parent.outputUrls?.[0] &&
         (kind === "image" || kind === "video")
       ) {
         block.refImageUrl = parent.outputUrls[0];
@@ -1623,8 +1628,8 @@ export default function FreeformCanvas({
           return;
         }
       }
-      const visionImages = collectVisionImages(blockId, safeBlocks, safeEdges);
-      const nearestRef =
+      const visionImages = workingBlock.musicMvShot ? [] : collectVisionImages(blockId, safeBlocks, safeEdges);
+      const nearestRef = workingBlock.musicMvShot ? workingBlock.refImageUrl :
         workingBlock.kind === "image" || workingBlock.kind === "video"
           ? workingBlock.refImageUrl ||
             resolveNearestUpstreamImageUrl(blockId, safeBlocks, safeEdges)
@@ -1665,6 +1670,7 @@ export default function FreeformCanvas({
         item.seedance25WorkMode, item.seedance25RefVideoUrls, item.seedance25RefAudioUrls, item.audioStudio,
         item.seedance25TimestampStoryboard, item.seedance25ReshootFromSec, item.seedance25ReshootToSec,
         item.pathCameraRecipeId, item.parentId, item.manhuaRetake,
+        item.musicMvShot ? { ...item.musicMvShot, outputs: undefined, activeTask: undefined } : undefined,
       ]);
       const originalInput = inputFingerprint(block);
       const contextStillCurrent = () => referenceMountedRef.current &&
@@ -1695,9 +1701,36 @@ export default function FreeformCanvas({
             ? await loadCanvasDocumentTexts(collectDocumentAssets(blockId, safeBlocks, safeEdges))
             : [];
         const texts = [...collectUpstreamTexts(blockId, safeBlocks, safeEdges), ...docTexts];
-        const out = await runCanvasBlock(runDepsWithPlan, runBlockPayload, { visionImages, texts });
+        // 提交输入在请求发出前固定；收到 taskId 时不能用已经被编辑的新 prompt 认领旧任务。
+        const submittedBlock = runBlockPayload;
+        const submittedDeps = submittedBlock.musicMvShot ? {
+          ...runDepsWithPlan,
+          onVideoTaskCreated: (createdBlockId: string, info: { taskId: string; engine: string }) => {
+            const inputFingerprint = canvasVideoTaskInputFingerprint({ ...submittedBlock, videoTaskEngine: info.engine });
+            runDeps.onVideoTaskCreated?.(createdBlockId, info);
+            onBlocksChange(prev => prev.map(row => row.id === createdBlockId && row.musicMvShot &&
+              row.musicMvShot.planRequestId === submittedBlock.musicMvShot?.planRequestId &&
+              row.musicMvShot.shotId === submittedBlock.musicMvShot?.shotId ? {
+                ...row, videoTaskId: info.taskId, videoTaskEngine: info.engine, videoTaskStatus: "running" as const,
+                musicMvShot: { ...row.musicMvShot, activeTask: { taskId: info.taskId, inputFingerprint } },
+              } : row));
+          },
+        } : runDepsWithPlan;
+        const out = await runCanvasBlock(submittedDeps, runBlockPayload, { visionImages, texts });
+        // MV镜头允许编辑，但旧请求结果只进入历史，不能覆盖已改过的新稿。
+        if (blockId.startsWith("mvshot-")) {
+          const current = blocksRef.current.find(row => row.id === blockId);
+          if (!current || inputFingerprint(current) !== originalInput) {
+            onBlocksChange(prev => prev.map(row => row.id === blockId ? {
+              ...row, ...finishEditedMusicMvShot(row, out.outputUrl, out.outputUrls),
+            } : row));
+            toast.message("原镜头已返回并保存在历史中，当前输入已变化，未替换当前结果");
+            return false;
+          }
+        }
         const stashUrls = Array.isArray(workingBlock.outputUrls) ? workingBlock.outputUrls : [];
         patchOne(blockId, {
+          ...rememberMusicMvOutput(blocksRef.current.find(row => row.id === blockId) || workingBlock, out.outputUrl, blocksRef.current.find(row => row.id === blockId)?.videoTaskId),
           status: "done",
           outputText: out.outputText,
           outputUrl: out.outputUrl,
@@ -1725,6 +1758,7 @@ export default function FreeformCanvas({
             : {}),
         });
         toast.success("生成完成");
+        return true;
       } catch (e: unknown) {
         const failure = projectVideoReferenceFailurePatch({
           guarded: guardProjectReferences,
@@ -2279,7 +2313,7 @@ export default function FreeformCanvas({
                   </select>
                   <button
                     type="button"
-                    disabled={block.status === "running" || preparingReferenceIds.has(block.id)}
+                    disabled={block.kind === "music" || block.status === "running" || preparingReferenceIds.has(block.id)}
                     onClick={() => void runBlock(block.id)}
                     className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary/90 px-2.5 py-1 text-[11px] font-semibold text-white disabled:opacity-50"
                   >
@@ -2457,8 +2491,15 @@ export default function FreeformCanvas({
                   {/* 左：设置 + 提示词（主区） */}
                   <div className="flex min-h-0 flex-col overflow-hidden p-3">
                     {!mediaOnly ? (
-                    <div className="mb-2 space-y-2 rounded-xl border border-white/10 bg-black/25 p-2">
+                    <div className="mb-2 space-y-2 overflow-auto rounded-xl border border-white/10 bg-black/25 p-2">
                       <div className="text-[10px] tracking-wider text-white/40">节点设置</div>
+                      {block.kind === "music" && <CanvasMusicMvStudio key={block.id} block={block} blocks={blocks}
+                        onPatch={patch => patchOne(block.id, patch)} getBlocks={() => blocksRef.current}
+                        runShot={runBlock}
+                        onAdd={(added, links) => {
+                          onBlocksChange(prev => [...prev, ...added.filter(item => !prev.some(row => item.id === row.id))]);
+                          onEdgesChange([...edges.filter(edge => !links.some(link => link.fromId === edge.fromId && link.toId === edge.toId)), ...links]);
+                        }} />}
                       {block.kind === "text" || block.kind === "copy_organize" ? (
                         <label className="flex items-center gap-2 text-[11px] text-white/70">
                           <span className="shrink-0 text-white/45">模型</span>
@@ -3298,6 +3339,7 @@ export default function FreeformCanvas({
                       />
                     ) : (
                     <textarea
+                      disabled={block.kind === "music" && hasPendingMusicMvPlan(block.musicMv)}
                       value={
                         block.id.startsWith("clip-")
                           ? sanitizeManhuaClipPromptForUi(block.prompt)
