@@ -88,6 +88,11 @@ export function registerPhotoTemporaryMedia(app: Express) {
     } catch {
       return void res.status(503).json({ error: "暂存空间繁忙，请稍后重试" });
     }
+    // 鉴权/磁盘检查期间连接可能已经断开，multer尚未接管事件。
+    if (req.aborted || req.destroyed) {
+      reservation.release();
+      return;
+    }
     upload(req, res, async error => {
       const file = req.file;
       try {

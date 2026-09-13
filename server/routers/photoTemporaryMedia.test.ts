@@ -156,3 +156,64 @@ it("真实HTTP并发上传拒绝重复空间预算，中断关闭文件后释放
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+it("磁盘额度尚未申请完成就断开，不遗留无文件的预留", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "photo-early-abort-"));
+  vi.stubEnv("PHOTO_TEMP_MEDIA_DIR", dir);
+  let allow!: () => void;
+  let entered!: () => void;
+  const gate = new Promise<void>(r => {
+    allow = r;
+  });
+  const start = new Promise<void>(r => {
+    entered = r;
+  });
+  let calls = 0;
+  const disk = vi.spyOn(fs, "statfs").mockImplementation(async () => {
+    if (++calls === 1) {
+      entered();
+      await gate;
+    }
+    return { bavail: 1024, bsize: 1024 * 1024 } as any;
+  });
+  const app = express();
+  const dispose = registerPhotoTemporaryMedia(app);
+  let serverAborted!: () => void;
+  const aborted = new Promise<void>(r => {
+    serverAborted = r;
+  });
+  const server = await new Promise<Server>(resolve => {
+    const s = app.listen(0, "127.0.0.1", () => resolve(s));
+    s.on("request", req => req.once("aborted", serverAborted));
+  });
+  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const slow = request(`${origin}/api/photo-media/upload`, {
+    method: "POST",
+    headers: { "Content-Type": "multipart/form-data; boundary=b" },
+  });
+  slow.on("error", () => {});
+  try {
+    slow.write(
+      '--b\r\nContent-Disposition: form-data; name="file"; filename="a.mp4"\r\nContent-Type: video/mp4\r\n\r\nfragment'
+    );
+    await start;
+    slow.destroy();
+    await aborted;
+    allow();
+    await vi.waitFor(async () =>
+      expect(
+        (await fetch(`${origin}/api/photo-media/upload`, { method: "POST" }))
+          .status
+      ).toBe(400)
+    );
+    expect(await fs.readdir(dir)).toEqual([]);
+  } finally {
+    allow();
+    slow.destroy();
+    dispose();
+    await new Promise<void>(r => server.close(() => r()));
+    disk.mockRestore();
+    vi.unstubAllEnvs();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
