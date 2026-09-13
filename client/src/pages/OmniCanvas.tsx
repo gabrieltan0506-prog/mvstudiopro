@@ -1,3 +1,4 @@
+import "@/styles/manhuaCream.css";
 import { capManhuaMediaHistory } from "@shared/manhuaMediaHistoryCap";
 import { BGM_BRIEF_MODELS, BGM_BRIEF_MODEL_LABEL_ZH } from "@shared/manhuaBgmBrief";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -8623,6 +8624,7 @@ export default function OmniCanvas() {
 
   return (
     <div
+      data-manhua-theme={canvasMode === "manhua" ? "cream" : undefined}
       className={
         immersiveWorkbench
           ? "flex h-dvh flex-col overflow-hidden bg-transparent text-white"

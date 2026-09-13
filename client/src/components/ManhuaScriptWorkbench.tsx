@@ -1,3 +1,4 @@
+import { collectPreparedRigProfiles } from "@/lib/manhuaPrevisProfiles";
 /**
  * 剧本工作台：左=本集资产 · 中=一集剧本+按段静帧 · 右=预览 · 底=集/段时间线
  * 原稿按真实秒位与引擎单段上限自动分段；每段一条成片，关键静帧按原镜一镜一张。
@@ -3246,6 +3247,11 @@ export default function ManhuaScriptWorkbench({
                   ? {taskId:eligibility.currentModel3d.taskId}:undefined;
                 return {id:a.id,label:a.labelZh,tag:a.tag,model};
               })}
+              profiles={collectPreparedRigProfiles(blocks, assetLockRegistry.byRole.character.map(a => {
+                const ref = customAssetRefs.find(ref => ref.id === a.id);
+                const eligibility = ref ? evaluateManhuaAsset3dEligibility(ref) : undefined;
+                return { id: a.id, label: a.labelZh, model: eligibility?.eligible && eligibility.currentModel3d?.status === "succeeded" ? { taskId: eligibility.currentModel3d.taskId } : undefined };
+              }))}
               sourceShots={activeSegment?.shots.map(shot=>({index:shot.index,durationSec:shot.durationSec,actionZh:shot.actionZh}))}
               disabled={Boolean(factoryBusy)||activeClip.status==="running"||activeClip.videoTaskStatus==="queued"}
               onChange={(studio,reference)=>onUpdateClipPrevisStudio(activeClip.id,studio,reference)}/>
@@ -4283,7 +4289,7 @@ export default function ManhuaScriptWorkbench({
                   className="fixed inset-0 z-[80] flex flex-col items-center justify-center gap-2 bg-black/85 px-4 py-6"
                   onClick={() => setCropTarget(null)}
                 >
-                  <p className="text-[12px] font-semibold text-white/90">
+                  <p data-manhua-media-controls className="text-[12px] font-semibold text-white/90">
                     裁字：在图上拖一个框，框内保留、框外裁掉（烧字通常在边缘）
                   </p>
                   <div
@@ -4334,7 +4340,7 @@ export default function ManhuaScriptWorkbench({
                       />
                     ) : null}
                   </div>
-                  <div className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                  <div data-manhua-media-controls className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
                     <button
                       type="button"
                       disabled={!cropRect || cropRect.w < 0.05 || cropRect.h < 0.05}
@@ -4410,6 +4416,7 @@ export default function ManhuaScriptWorkbench({
                   />
                     <div
                       onClick={(e) => e.stopPropagation()}
+                      data-manhua-media-controls
                       className="flex flex-wrap items-center gap-2 rounded-lg bg-black/70 px-3 py-1.5"
                     >
                     <span className="text-[12px] font-semibold text-white/90">

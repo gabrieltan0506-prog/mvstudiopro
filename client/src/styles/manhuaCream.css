@@ -1,0 +1,227 @@
+/* 米白主题仅作用于漫剧模式；门户以当前页面标记为准，切换后自动恢复。 */
+:is(
+  [data-manhua-theme="cream"],
+  body:has([data-manhua-theme="cream"])
+    :is(
+      [data-slot="dialog-content"],
+      [data-slot="sheet-content"],
+      [data-slot="popover-content"],
+      [data-slot="select-content"],
+      [data-slot="dropdown-menu-content"],
+      [data-slot="dropdown-menu-sub-content"],
+      [data-slot="tooltip-content"]
+    )
+) {
+  color-scheme: light;
+  --background: #eee9df;
+  --foreground: #203247;
+  --card: #f7f2e8;
+  --card-foreground: #203247;
+  --popover: #f7f2e8;
+  --popover-foreground: #203247;
+  --primary: #086c60;
+  --primary-foreground: #fffaf1;
+  --secondary: #e7e0d4;
+  --secondary-foreground: #304458;
+  --muted: #e9e3d9;
+  --muted-foreground: #526071;
+  --accent: #d6e8df;
+  --accent-foreground: #085e53;
+  --destructive: #ad3438;
+  --destructive-foreground: #fffaf1;
+  --border: #c5bdaf;
+  --input: #b8afa0;
+  --ring: #087669;
+  background-color: var(--background);
+  color: var(--foreground);
+}
+
+/* 将历史深色工具类映射到同一套语义色，不改变布局、透明遮罩或媒体内容。 */
+:is(
+  [data-manhua-theme="cream"],
+  body:has([data-manhua-theme="cream"])
+    :is(
+      [data-slot="dialog-content"],
+      [data-slot="sheet-content"],
+      [data-slot="popover-content"],
+      [data-slot="select-content"],
+      [data-slot="dropdown-menu-content"],
+      [data-slot="dropdown-menu-sub-content"],
+      [data-slot="tooltip-content"]
+    )
+) {
+  &
+    :is(
+      [class~="text-white"],
+      [class*="text-white/"],
+      [class*="text-slate-"],
+      [class*="text-gray-"],
+      [class*="text-zinc-"],
+      [class*="text-[#"]
+    ) {
+    color: var(--foreground);
+  }
+  &
+    :is(
+      [class*="text-white/4"],
+      [class*="text-white/5"],
+      [class*="text-white/6"]
+    ) {
+    color: var(--muted-foreground);
+  }
+  &
+    :is(
+      [class*="text-cyan-"],
+      [class*="text-teal-"],
+      [class*="text-emerald-"],
+      [class*="text-green-"]
+    ) {
+    color: #086456;
+  }
+  & :is([class*="text-sky-"], [class*="text-blue-"], [class*="text-indigo-"]) {
+    color: #215b83;
+  }
+  &
+    :is(
+      [class*="text-purple-"],
+      [class*="text-violet-"],
+      [class*="text-fuchsia-"]
+    ) {
+    color: #6b4184;
+  }
+  &
+    :is(
+      [class*="text-amber-"],
+      [class*="text-yellow-"],
+      [class*="text-orange-"]
+    ) {
+    color: #805019;
+  }
+  & :is([class*="text-red-"], [class*="text-rose-"]) {
+    color: #a02e3b;
+  }
+  & :is([class*="border-white"], [class*="divide-white"]) {
+    border-color: var(--border);
+  }
+  & :is([class*="bg-white/"], [class~="bg-white"]) {
+    background-color: var(--muted);
+  }
+  &
+    :is(
+      [class*="bg-[#0"],
+      [class*="bg-[#1"],
+      [class*="bg-[#2"],
+      [class*="bg-slate-9"],
+      [class*="bg-gray-9"],
+      [class*="bg-zinc-9"]
+    ) {
+    background-color: var(--card);
+  }
+  &
+    :is(
+      [class*="via-[#0"],
+      [class*="via-[#1"],
+      [class*="from-[#0"],
+      [class*="from-[#1"],
+      [class*="to-[#0"],
+      [class*="to-[#1"]
+    ) {
+    background-image: none;
+    background-color: var(--card);
+  }
+  &
+    :is(
+      [class~="bg-black/5"],
+      [class~="bg-black/10"],
+      [class~="bg-black/20"],
+      [class~="bg-black/25"],
+      [class~="bg-black/30"],
+      [class~="bg-black/35"],
+      [class~="bg-black/40"],
+      [class~="bg-black/45"]
+    ) {
+    background-color: #e6dfd3;
+  }
+  &
+    :is(
+      input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(
+          [type="color"]
+        ),
+      textarea,
+      select
+    ) {
+    background-color: #f0ebe2;
+    color: var(--foreground);
+    border-color: var(--input);
+  }
+  & :is(input, textarea)::placeholder {
+    color: #626b76;
+    opacity: 1;
+  }
+  & option {
+    background-color: var(--card);
+    color: var(--foreground);
+  }
+  & :is(button, a, input, select, textarea, summary):focus-visible {
+    outline: 2px solid #087669;
+    outline-offset: 2px;
+  }
+  &
+    :is(
+      [class~="bg-primary"],
+      [class~="bg-primary/90"],
+      [class~="bg-destructive"]
+    ) {
+    color: var(--primary-foreground);
+  }
+  &
+    :is([class~="bg-primary"], [class~="bg-destructive"])
+    :is([class~="text-white"], [class~="text-primary-foreground"]) {
+    color: var(--primary-foreground);
+  }
+  /* 视频底色与其提示保持暗底浅字，不对图片或视频使用滤镜。 */
+  &
+    :is(
+      [class~="bg-black"],
+      [class~="bg-black/60"],
+      [class~="bg-black/65"],
+      [class~="bg-black/70"],
+      [class~="bg-black/75"],
+      [class~="bg-black/80"]
+    ) {
+    color: #fffaf1;
+    & :is([class~="text-white"], [class*="text-white/"]) {
+      color: #e9e3d9;
+    }
+  }
+  /* 只标记实际媒体说明与工具条，不反转同一遮罩内的米白卡片。 */
+  & [data-manhua-media-controls] {
+    color: #fffaf1;
+    & :is(span, button) {
+      color: #fffaf1;
+    }
+    & button {
+      background-color: rgb(255 250 241 / 8%);
+      border-color: rgb(255 250 241 / 40%);
+    }
+    & button:hover {
+      background-color: rgb(255 250 241 / 18%);
+    }
+  }
+}
+
+/* 门户节点自身也可能带旧的text-white和固定深底。 */
+body:has([data-manhua-theme="cream"])
+  :is(
+    [data-slot="dialog-content"],
+    [data-slot="sheet-content"],
+    [data-slot="popover-content"],
+    [data-slot="select-content"],
+    [data-slot="dropdown-menu-content"],
+    [data-slot="dropdown-menu-sub-content"],
+    [data-slot="tooltip-content"]
+  ) {
+  background-color: var(--popover);
+  color: var(--popover-foreground);
+  border-color: var(--border);
+}

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, it as test } from "vitest";
 import { build } from "esbuild";
 import puppeteer, { type Browser, type Page } from "puppeteer";
 import path from "node:path";
+import { readFile } from "node:fs/promises";
 
 let browser: Browser;
 let bundle: string;
@@ -106,6 +107,90 @@ async function settle(page: Page) {
       )
   );
 }
+
+it("米白主题覆盖真实预演表单与门户，退出漫剧模式后恢复原样式", async () => {
+  const page = await open();
+  try {
+    await page.addStyleTag({
+      content:
+        '.text-white{color:rgb(255,255,255)} [data-slot="dialog-content"]{background-color:rgb(20,26,36)}',
+    });
+    await page.addStyleTag({
+      content: await readFile(
+        path.resolve("client/src/styles/manhuaCream.css"),
+        "utf8"
+      ),
+    });
+    await page.evaluate(() => {
+      document
+        .getElementById("root")!
+        .setAttribute("data-manhua-theme", "cream");
+      const portal = document.createElement("div");
+      portal.dataset.slot = "dialog-content";
+      portal.className = "text-white";
+      portal.textContent = "人物设置";
+      document.body.append(portal);
+      const preview = document.createElement("section");
+      preview.className = "bg-black";
+      const hint = document.createElement("p");
+      hint.className = "text-white/40";
+      hint.textContent = "静帧 / 成片在此预览";
+      hint.dataset.themePreviewHint = "";
+      preview.append(hint);
+      document.getElementById("root")!.append(preview);
+      const overlay = document.createElement("div");
+      overlay.className = "bg-black/85";
+      overlay.innerHTML =
+        '<p data-manhua-media-controls class="text-white/90">裁字说明</p><div data-manhua-media-controls><button class="bg-emerald-500/25 text-emerald-50">确认裁字</button></div><div class="bg-[#101417]"><p data-theme-card-text class="text-white/90">三维预览卡片</p></div>';
+      document.getElementById("root")!.append(overlay);
+    });
+    const styled = await page.evaluate(() => ({
+      page: getComputedStyle(document.getElementById("root")!).backgroundColor,
+      input: getComputedStyle(document.querySelector("select")!).color,
+      portal: getComputedStyle(
+        document.querySelector('[data-slot="dialog-content"]')!
+      ).backgroundColor,
+      portalText: getComputedStyle(
+        document.querySelector('[data-slot="dialog-content"]')!
+      ).color,
+      previewText: getComputedStyle(
+        document.querySelector("[data-theme-preview-hint]")!
+      ).color,
+      cropHint: getComputedStyle(
+        document.querySelector("p[data-manhua-media-controls]")!
+      ).color,
+      cropAction: getComputedStyle(
+        document.querySelector("[data-manhua-media-controls] button")!
+      ).color,
+      nestedCard: getComputedStyle(
+        document.querySelector("[data-theme-card-text]")!
+      ).color,
+    }));
+    expect(styled).toEqual({
+      page: "rgb(238, 233, 223)",
+      input: "rgb(32, 50, 71)",
+      portal: "rgb(247, 242, 232)",
+      portalText: "rgb(32, 50, 71)",
+      previewText: "rgb(233, 227, 217)",
+      cropHint: "rgb(255, 250, 241)",
+      cropAction: "rgb(255, 250, 241)",
+      nestedCard: "rgb(32, 50, 71)",
+    });
+    await page.evaluate(() =>
+      document.getElementById("root")!.removeAttribute("data-manhua-theme")
+    );
+    expect(
+      await page.evaluate(
+        () =>
+          getComputedStyle(
+            document.querySelector('[data-slot="dialog-content"]')!
+          ).backgroundColor
+      )
+    ).toBe("rgb(20, 26, 36)");
+  } finally {
+    await page.close();
+  }
+});
 
 it("编辑真实角色和动作后提交当前配置，候选不自动采用，采用与旧参考恢复闭合", async () => {
   const page = await open();
@@ -447,104 +532,432 @@ it("提交期间切换 scope，旧生成回执不能成为新项目候选", asyn
 
 async function setupScript(page: Page) {
   await page.evaluate(() => {
-    const f=(window as any).fixture;
-    f.beforeSpec=structuredClone(f.block.previsStudio.spec);
-    f.setCharacters([{id:'qing',label:'阿菁',tag:'@人物1'},{id:'guard',label:'家丁',tag:'@人物2'}]);
-    f.setShots([{index:7,durationSec:4,actionZh:'阿菁一拳击中家丁，家丁受击后仰。'}]);
+    const f = (window as any).fixture;
+    f.beforeSpec = structuredClone(f.block.previsStudio.spec);
+    f.setCharacters([
+      { id: "qing", label: "阿菁", tag: "@人物1" },
+      { id: "guard", label: "家丁", tag: "@人物2" },
+    ]);
+    f.setShots([
+      {
+        index: 7,
+        durationSec: 4,
+        actionZh: "阿菁一拳击中家丁，家丁受击后仰。",
+      },
+    ]);
   });
-  await page.waitForSelector('[data-previs-script-draft]');
+  await page.waitForSelector("[data-previs-script-draft]");
 }
 async function toggleLabel(page: Page, text: string) {
   await page.evaluate(text => {
-    const label=Array.from(document.querySelectorAll('label')).find(el=>el.textContent?.includes(text));
-    const input=label?.querySelector<HTMLInputElement>('input[type="checkbox"]');
-    if(!input||input.disabled)throw Error('复选框不可用：'+text);
+    const label = Array.from(document.querySelectorAll("label")).find(el =>
+      el.textContent?.includes(text)
+    );
+    const input = label?.querySelector<HTMLInputElement>(
+      'input[type="checkbox"]'
+    );
+    if (!input || input.disabled) throw Error("复选框不可用：" + text);
     input.click();
-  },text);
+  }, text);
   await settle(page);
 }
 
-it('剧本草案先预览再确认，仅改配置，撤销精确恢复旧spec与旧参考',async()=>{
-  const page=await open();
+it("剧本草案先预览再确认，仅改配置，撤销精确恢复旧spec与旧参考", async () => {
+  const page = await open();
   try {
-    await setupScript(page);await click(page,'从本段剧本生成动作草案');await settle(page);
-    expect(await page.$eval('[data-previs-script-draft]',e=>e.textContent)).toContain('双人事件 1 个');
-    const before=await page.evaluate(()=>{const f=(window as any).fixture;return {old:f.beforeSpec,current:f.block.previsStudio.spec,submits:f.submits,updates:f.updates};});
-    expect(before.current).toEqual(before.old);expect(before.submits).toEqual([]);expect(before.updates).toEqual([]);
-    await toggleLabel(page,'我已审阅动作');await click(page,'采用动作草案');await settle(page);
-    const adopted=await page.evaluate(()=>{const f=(window as any).fixture;return {studio:f.block.previsStudio,reference:f.block.manhuaSegmentRefs.previs,submits:f.submits};});
+    await setupScript(page);
+    await click(page, "从本段剧本生成动作草案");
+    await settle(page);
+    expect(
+      await page.$eval("[data-previs-script-draft]", e => e.textContent)
+    ).toContain("双人事件 1 个");
+    const before = await page.evaluate(() => {
+      const f = (window as any).fixture;
+      return {
+        old: f.beforeSpec,
+        current: f.block.previsStudio.spec,
+        submits: f.submits,
+        updates: f.updates,
+      };
+    });
+    expect(before.current).toEqual(before.old);
+    expect(before.submits).toEqual([]);
+    expect(before.updates).toEqual([]);
+    await toggleLabel(page, "我已审阅动作");
+    await click(page, "采用动作草案");
+    await settle(page);
+    const adopted = await page.evaluate(() => {
+      const f = (window as any).fixture;
+      return {
+        studio: f.block.previsStudio,
+        reference: f.block.manhuaSegmentRefs.previs,
+        submits: f.submits,
+      };
+    });
     expect(adopted.studio.spec.interactions).toHaveLength(1);
-    expect(adopted.studio.spec.actors.map((a:any)=>a.assetRef)).toEqual(['qing','guard']);
+    expect(adopted.studio.spec.actors.map((a: any) => a.assetRef)).toEqual([
+      "qing",
+      "guard",
+    ]);
     expect(adopted.studio.specHistory[0].spec).toEqual(before.old);
-    expect(adopted.reference.gcsUri).toBe('gs://test/old.mp4');expect(adopted.submits).toEqual([]);
-    await click(page,'恢复上一份动作配置（不改已采用参考）');await settle(page);
-    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec)).toEqual(before.old);
-    expect(await page.evaluate(()=>(window as any).fixture.block.manhuaSegmentRefs.previs.gcsUri)).toBe('gs://test/old.mp4');
-  }finally{await page.close();}
+    expect(adopted.reference.gcsUri).toBe("gs://test/old.mp4");
+    expect(adopted.submits).toEqual([]);
+    await click(page, "恢复上一份动作配置（不改已采用参考）");
+    await settle(page);
+    expect(
+      await page.evaluate(() => (window as any).fixture.block.previsStudio.spec)
+    ).toEqual(before.old);
+    expect(
+      await page.evaluate(
+        () => (window as any).fixture.block.manhuaSegmentRefs.previs.gcsUri
+      )
+    ).toBe("gs://test/old.mp4");
+  } finally {
+    await page.close();
+  }
 });
 
-it('草案预览后原镜改变，已勾选审阅也不能采用旧草案',async()=>{
-  const page=await open();
+it("草案预览后原镜改变，已勾选审阅也不能采用旧草案", async () => {
+  const page = await open();
   try {
-    await setupScript(page);await click(page,'从本段剧本生成动作草案');await toggleLabel(page,'我已审阅动作');
-    await page.evaluate(()=>{const f=(window as any).fixture;f.setShots([{...f.shots[0],actionZh:'阿菁静立。'}]);});await settle(page);
-    expect(await page.$eval('[data-previs-script-draft]',e=>e.textContent)).toContain('原剧本或角色已变化');
-    expect(await page.evaluate(()=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='采用动作草案')?.disabled)).toBe(true);
-    expect(await page.evaluate(()=>(window as any).fixture.updates)).toEqual([]);
-    expect(await page.evaluate(()=>(window as any).fixture.submits)).toEqual([]);
-  }finally{await page.close();}
+    await setupScript(page);
+    await click(page, "从本段剧本生成动作草案");
+    await toggleLabel(page, "我已审阅动作");
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      f.setShots([{ ...f.shots[0], actionZh: "阿菁静立。" }]);
+    });
+    await settle(page);
+    expect(
+      await page.$eval("[data-previs-script-draft]", e => e.textContent)
+    ).toContain("原剧本或角色已变化");
+    expect(
+      await page.evaluate(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            b => b.textContent === "采用动作草案"
+          )?.disabled
+      )
+    ).toBe(true);
+    expect(await page.evaluate(() => (window as any).fixture.updates)).toEqual(
+      []
+    );
+    expect(await page.evaluate(() => (window as any).fixture.submits)).toEqual(
+      []
+    );
+  } finally {
+    await page.close();
+  }
 });
 
-it('草案预览后手工编辑配置，旧草案禁采用且不覆盖新朝向',async()=>{
-  const page=await open();
+it("草案预览后手工编辑配置，旧草案禁采用且不覆盖新朝向", async () => {
+  const page = await open();
   try {
-    await setupScript(page);await click(page,'从本段剧本生成动作草案');await toggleLabel(page,'我已审阅动作');
-    await page.focus('[aria-label="朝向角度"]');await page.$eval('[aria-label="朝向角度"]',e=>(e as HTMLInputElement).select());
-    await page.keyboard.type('45');await settle(page);
-    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.actors[0].facingDeg)).toBe(45);
-    expect(await page.$eval('[data-previs-script-draft]',e=>e.textContent)).toContain('当前动作配置已变化');
-    expect(await page.evaluate(()=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='采用动作草案')?.disabled)).toBe(true);
-    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.specHistory)).toBeUndefined();
-    expect(await page.evaluate(()=>(window as any).fixture.submits)).toEqual([]);
-    await click(page,'从本段剧本生成动作草案');await settle(page);
-    expect(await page.$eval('[data-previs-script-draft]',e=>e.textContent)).not.toContain('当前动作配置已变化');
-    expect(await page.evaluate(()=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='采用动作草案')?.disabled)).toBe(true);
-  }finally{await page.close();}
+    await setupScript(page);
+    await click(page, "从本段剧本生成动作草案");
+    await toggleLabel(page, "我已审阅动作");
+    await page.$eval(
+      '[aria-label="朝向角度"]',
+      e => (e.closest("details")!.open = true)
+    );
+    await page.focus('[aria-label="朝向角度"]');
+    await page.$eval('[aria-label="朝向角度"]', e =>
+      (e as HTMLInputElement).select()
+    );
+    await page.keyboard.type("45");
+    await settle(page);
+    expect(
+      await page.evaluate(
+        () =>
+          (window as any).fixture.block.previsStudio.spec.actors[0].facingDeg
+      )
+    ).toBe(45);
+    expect(
+      await page.$eval("[data-previs-script-draft]", e => e.textContent)
+    ).toContain("当前动作配置已变化");
+    expect(
+      await page.evaluate(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            b => b.textContent === "采用动作草案"
+          )?.disabled
+      )
+    ).toBe(true);
+    expect(
+      await page.evaluate(
+        () => (window as any).fixture.block.previsStudio.specHistory
+      )
+    ).toBeUndefined();
+    expect(await page.evaluate(() => (window as any).fixture.submits)).toEqual(
+      []
+    );
+    await click(page, "从本段剧本生成动作草案");
+    await settle(page);
+    expect(
+      await page.$eval("[data-previs-script-draft]", e => e.textContent)
+    ).not.toContain("当前动作配置已变化");
+    expect(
+      await page.evaluate(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            b => b.textContent === "采用动作草案"
+          )?.disabled
+      )
+    ).toBe(true);
+  } finally {
+    await page.close();
+  }
 });
 
-it('尾翼勾选与取消真实编辑，不提交渲染，不替换旧参考',async()=>{
-  const page=await open();
+it("尾翼勾选与取消真实编辑，不提交渲染，不替换旧参考", async () => {
+  const page = await open();
   try {
-    await page.select('[aria-label="角色1形体"]','horse');await page.click('[aria-label="角色1四尾黑翼"]');await settle(page);
-    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.actors[0].creature.preset)).toBe('four_tail_black_wings');
-    await page.focus('[aria-label="显形结束"]');await page.$eval('[aria-label="显形结束"]',e=>(e as HTMLInputElement).select());
-    await page.keyboard.press('Backspace');await settle(page);
-    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.actors[0].creature.transformEndSec)).toBe(0);
-    await page.click('[aria-label="角色1四尾黑翼"]');await settle(page);
-    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.actors[0].creature)).toBeUndefined();
-    expect(await page.evaluate(()=>(window as any).fixture.submits)).toEqual([]);
-    expect(await page.evaluate(()=>(window as any).fixture.block.manhuaSegmentRefs.previs.gcsUri)).toBe('gs://test/old.mp4');
-  }finally{await page.close();}
+    await page.select('[aria-label="角色1形体"]', "horse");
+    await page.click('[aria-label="角色1四尾黑翼"]');
+    await settle(page);
+    expect(
+      await page.evaluate(
+        () =>
+          (window as any).fixture.block.previsStudio.spec.actors[0].creature
+            .preset
+      )
+    ).toBe("four_tail_black_wings");
+    await page.focus('[aria-label="显形结束"]');
+    await page.$eval('[aria-label="显形结束"]', e =>
+      (e as HTMLInputElement).select()
+    );
+    await page.keyboard.press("Backspace");
+    await settle(page);
+    expect(
+      await page.evaluate(
+        () =>
+          (window as any).fixture.block.previsStudio.spec.actors[0].creature
+            .transformEndSec
+      )
+    ).toBe(0);
+    await page.click('[aria-label="角色1四尾黑翼"]');
+    await settle(page);
+    expect(
+      await page.evaluate(
+        () => (window as any).fixture.block.previsStudio.spec.actors[0].creature
+      )
+    ).toBeUndefined();
+    expect(await page.evaluate(() => (window as any).fixture.submits)).toEqual(
+      []
+    );
+    expect(
+      await page.evaluate(
+        () => (window as any).fixture.block.manhuaSegmentRefs.previs.gcsUri
+      )
+    ).toBe("gs://test/old.mp4");
+  } finally {
+    await page.close();
+  }
 });
 
-it('已有模型表单先取消再应用，无自动提交且停用后保留来源模型',async()=>{
-  const page=await open();
+it("已有模型表单先取消再应用，无自动提交且停用后保留来源模型", async () => {
+  const page = await open();
   try {
-    await page.evaluate(()=>{const f=(window as any).fixture;f.setCharacters([{id:'character-mo',label:'墨屠',model:{taskId:'m3d_test'}}]);});
-    await settle(page);await page.select('[aria-label="角色1项目资产"]','character-mo');
-    await page.evaluate(()=>Array.from(document.querySelectorAll('summary')).find(e=>e.textContent?.includes('角色模型与表演'))?.click());
-    expect(await page.$eval('body',e=>e.textContent)).toContain('保留模型原始静止姿态，不会自动变成自然站姿');
-    expect(await page.$eval('body',e=>e.textContent)).toContain('复杂材质会明确拒绝');
-    await toggleLabel(page,'启用当前角色的已有带骨模型');
-    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.actors[0].riggedModel)).toBeUndefined();
-    await click(page,'取消编辑');await settle(page);
-    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.actors[0].riggedModel)).toBeUndefined();
-    await toggleLabel(page,'启用当前角色的已有带骨模型');await click(page,'应用角色配置');await settle(page);
-    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.actors[0].riggedModel)).toMatchObject({sourceJobId:'m3d_test',targetHeight:1.7});
-    expect(await page.evaluate(()=>(window as any).fixture.submits)).toEqual([]);
-    await toggleLabel(page,'启用当前角色的已有带骨模型');await click(page,'应用角色配置');await settle(page);
-    expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.actors[0].riggedModel)).toBeUndefined();
-    expect(await page.evaluate(()=>(window as any).fixture.characters[0].model.taskId)).toBe('m3d_test');
-    expect(await page.evaluate(()=>(window as any).fixture.block.manhuaSegmentRefs.previs.gcsUri)).toBe('gs://test/old.mp4');
-  }finally{await page.close();}
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      f.setCharacters([
+        { id: "character-mo", label: "墨屠", model: { taskId: "m3d_test" } },
+      ]);
+    });
+    await settle(page);
+    await page.select('[aria-label="角色1项目资产"]', "character-mo");
+    await click(page, "角色准备");
+    await settle(page);
+    expect(await page.$eval("body", e => e.textContent)).toContain(
+      "模型原始姿态和接地仍需检查"
+    );
+    expect(await page.$eval("body", e => e.textContent)).toContain(
+      "复杂材质可能无法预演"
+    );
+    await toggleLabel(page, "启用当前角色的已有带骨模型");
+    expect(
+      await page.evaluate(
+        () =>
+          (window as any).fixture.block.previsStudio.spec.actors[0].riggedModel
+      )
+    ).toBeUndefined();
+    await click(page, "取消编辑");
+    await settle(page);
+    expect(
+      await page.evaluate(
+        () =>
+          (window as any).fixture.block.previsStudio.spec.actors[0].riggedModel
+      )
+    ).toBeUndefined();
+    await toggleLabel(page, "启用当前角色的已有带骨模型");
+    await click(page, "保存角色配置");
+    await settle(page);
+    expect(
+      await page.evaluate(
+        () =>
+          (window as any).fixture.block.previsStudio.spec.actors[0].riggedModel
+      )
+    ).toMatchObject({ sourceJobId: "m3d_test", targetHeight: 1.7 });
+    expect(await page.evaluate(() => (window as any).fixture.submits)).toEqual(
+      []
+    );
+    await toggleLabel(page, "启用当前角色的已有带骨模型");
+    await click(page, "保存角色配置");
+    await settle(page);
+    expect(
+      await page.evaluate(
+        () =>
+          (window as any).fixture.block.previsStudio.spec.actors[0].riggedModel
+      )
+    ).toBeUndefined();
+    expect(
+      await page.evaluate(
+        () => (window as any).fixture.characters[0].model.taskId
+      )
+    ).toBe("m3d_test");
+    expect(
+      await page.evaluate(
+        () => (window as any).fixture.block.manhuaSegmentRefs.previs.gcsUri
+      )
+    ).toBe("gs://test/old.mp4");
+  } finally {
+    await page.close();
+  }
+});
+
+it("角色配置保存被拒时不显示已保存且保留原状态", async () => {
+  const page = await open();
+  try {
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      f.setCharacters([
+        { id: "character-mo", label: "墨屠", model: { taskId: "m3d_test" } },
+      ]);
+    });
+    await settle(page);
+    await page.select('[aria-label="角色1项目资产"]', "character-mo");
+    await click(page, "角色准备");
+    await toggleLabel(page, "启用当前角色的已有带骨模型");
+    await page.evaluate(() => {
+      (window as any).fixture.rejectSave = true;
+    });
+    await click(page, "保存角色配置");
+    await settle(page);
+    expect(
+      await page.$eval("[data-previs-role-editor]", e => e.textContent)
+    ).toContain("配置未保存");
+    expect(
+      await page.$eval("[data-previs-role-editor]", e => e.textContent)
+    ).not.toContain("角色配置已保存到本段");
+    expect(
+      await page.evaluate(
+        () =>
+          (window as any).fixture.block.previsStudio.spec.actors[0].riggedModel
+      )
+    ).toBeUndefined();
+    expect(await page.evaluate(() => (window as any).fixture.submits)).toEqual(
+      []
+    );
+  } finally {
+    await page.close();
+  }
+});
+
+it("日常表演修改保留旧坐标与专业参数，移动注视选项不可选", async () => {
+  const page = await open();
+  try {
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      f.setCharacters([
+        { id: "character-mo", label: "墨屠", model: { taskId: "m3d_test" } },
+      ]);
+      const b = f.makeBlock();
+      const a = b.previsStudio.spec.actors[0];
+      a.assetRef = "character-mo";
+      a.riggedModel = {
+        sourceJobId: "m3d_test",
+        forwardAxis: "+Y",
+        targetHeight: 1.8,
+        boneMap: { head: "Head" },
+        performance: {
+          controller: {
+            eyeBones: { left: "EyeL", right: "EyeR" },
+            expressions: {
+              calm: { Calm: 1 },
+              tense: { Tense: 1 },
+              surprised: { Surprise: 1 },
+            },
+          },
+          cues: [
+            {
+              startSec: 0,
+              endSec: 2,
+              gazeTarget: [7, 8, 9],
+              headYawDeg: 12,
+              headPitchDeg: -3,
+              breathAmplitude: 0.02,
+              breathHz: 0.3,
+              expression: "tense",
+              intensity: 0.6,
+            },
+          ],
+        },
+      };
+      b.previsStudio.spec.actors.push({
+        ...a,
+        id: "moving",
+        nameZh: "移动对手",
+        assetRef: undefined,
+        riggedModel: undefined,
+        start: [0, 0],
+        end: [4, 0],
+        moveStartSec: 0,
+        moveEndSec: 4,
+      });
+      f.setBlock(b);
+    });
+    await settle(page);
+    expect(
+      await page.$eval(
+        "[data-rig-professional]",
+        e => (e as HTMLDetailsElement).open
+      )
+    ).toBe(false);
+    expect(
+      await page.$eval(
+        '[aria-label="表演1看向谁"]',
+        e => (e as HTMLSelectElement).value
+      )
+    ).toBe("saved");
+    expect(
+      await page.$eval(
+        '[aria-label="表演1看向谁"] option[value="actor:moving"]',
+        e => (e as HTMLOptionElement).disabled
+      )
+    ).toBe(true);
+    const old = await page.evaluate(
+      () =>
+        (window as any).fixture.block.previsStudio.spec.actors[0].riggedModel
+    );
+    await page.select('[aria-label="表演1表情"]', "surprised");
+    await click(page, "应用本段表演");
+    await settle(page);
+    expect(
+      await page.evaluate(
+        () =>
+          (window as any).fixture.block.previsStudio.spec.actors[0].riggedModel
+      )
+    ).toEqual({
+      ...old,
+      performance: {
+        ...old.performance,
+        cues: [{ ...old.performance.cues[0], expression: "surprised" }],
+      },
+    });
+    expect(await page.evaluate(() => (window as any).fixture.submits)).toEqual(
+      []
+    );
+  } finally {
+    await page.close();
+  }
 });

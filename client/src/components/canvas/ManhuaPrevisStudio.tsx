@@ -1,3 +1,4 @@
+import type { PreparedRigProfile } from "@/lib/manhuaPrevisProfiles";
 import { useEffect, useRef, useState } from "react";
 import { ManhuaPrevisRigControls } from "./ManhuaPrevisRigControls";
 import { trpc } from "@/lib/trpc";
@@ -55,6 +56,7 @@ type Props = {
     model?: { taskId: string };
   }>;
   sourceShots?: PrevisSourceShot[];
+  profiles?: PreparedRigProfile[];
   onChange: (
     studio: Studio,
     reference?: ManhuaSegmentReferenceEntry
@@ -88,6 +90,7 @@ export function ManhuaPrevisStudioView({
   onChange,
   services,
   sourceShots = [],
+  profiles = [],
 }: Props & { services: PrevisServices }) {
   const [initial] = useState(
     () => block.previsStudio ?? createManhuaPrevisStudio()
@@ -127,7 +130,8 @@ export function ManhuaPrevisStudioView({
     latest.current.studio.scopeId === scopeId &&
     latest.current.block.id === clipId;
   const edit = (spec: ManhuaPrevisSpec) => {
-    if (!disabled && !pendingId && !lock.current) publish({ ...studio, spec });
+    if (disabled || pendingId || lock.current) return false;
+    return publish({ ...studio, spec });
   };
   function consume(response: PrevisResponse) {
     if (!mounted.current) return;
@@ -566,29 +570,6 @@ export function ManhuaPrevisStudioView({
                 </option>
               ))}
             </select>
-            <select
-              aria-label={`角色${index + 1}形体`}
-              className={field}
-              disabled={disabled || Boolean(pendingId)}
-              value={actor.shape}
-              onChange={e =>
-                actorEdit(index, {
-                  shape: e.target.value as "human" | "horse",
-                  actions: [],
-                  creature: undefined,
-                  riggedModel: undefined,
-                })
-              }
-            >
-              <option value="human">人体关节</option>
-              <option value="horse">四足白模</option>
-            </select>
-            {numeric(
-              "朝向角度",
-              actor.facingDeg,
-              n => actorEdit(index, { facingDeg: n }),
-              5
-            )}
             <button
               className={button}
               disabled={
@@ -606,27 +587,56 @@ export function ManhuaPrevisStudioView({
               移除角色
             </button>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {(["start", "end"] as const).flatMap(key =>
-              [0, 1].map(axis =>
-                numeric(
-                  `${key === "start" ? "起点" : "终点"}${axis === 0 ? "X" : "Y"}`,
-                  actor[key][axis],
-                  n => {
-                    const p = [...actor[key]] as [number, number];
-                    p[axis] = n;
-                    actorEdit(index, { [key]: p });
-                  }
+          <details className="rounded border border-white/10 bg-white/[0.025] p-2">
+            <summary className="cursor-pointer text-xs text-white/60">
+              专业调度 · 形体、朝向与走位
+            </summary>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {" "}
+              <select
+                aria-label={`角色${index + 1}形体`}
+                className={field}
+                disabled={disabled || Boolean(pendingId)}
+                value={actor.shape}
+                onChange={e =>
+                  actorEdit(index, {
+                    shape: e.target.value as "human" | "horse",
+                    actions: [],
+                    creature: undefined,
+                    riggedModel: undefined,
+                  })
+                }
+              >
+                <option value="human">人体关节</option>
+                <option value="horse">四足白模</option>
+              </select>
+              {numeric(
+                "朝向角度",
+                actor.facingDeg,
+                n => actorEdit(index, { facingDeg: n }),
+                5
+              )}
+              {(["start", "end"] as const).flatMap(key =>
+                [0, 1].map(axis =>
+                  numeric(
+                    `${key === "start" ? "起点" : "终点"}${axis === 0 ? "X" : "Y"}`,
+                    actor[key][axis],
+                    n => {
+                      const p = [...actor[key]] as [number, number];
+                      p[axis] = n;
+                      actorEdit(index, { [key]: p });
+                    }
+                  )
                 )
-              )
-            )}
-            {numeric("移动开始", actor.moveStartSec, n =>
-              actorEdit(index, { moveStartSec: n })
-            )}
-            {numeric("移动结束", actor.moveEndSec, n =>
-              actorEdit(index, { moveEndSec: n })
-            )}
-          </div>
+              )}
+              {numeric("移动开始", actor.moveStartSec, n =>
+                actorEdit(index, { moveStartSec: n })
+              )}
+              {numeric("移动结束", actor.moveEndSec, n =>
+                actorEdit(index, { moveEndSec: n })
+              )}
+            </div>
+          </details>
           {actor.shape === "horse" ? (
             <div className="space-y-2 rounded border border-white/15 p-2">
               <label className="flex gap-2 text-xs">
@@ -681,6 +691,8 @@ export function ManhuaPrevisStudioView({
           ) : (
             <ManhuaPrevisRigControls
               actor={actor}
+              spec={studio.spec}
+              profiles={profiles}
               model={characters.find(c => c.id === actor.assetRef)?.model}
               durationSec={studio.spec.durationSec}
               disabled={disabled || Boolean(pendingId)}
@@ -790,9 +802,12 @@ export function ManhuaPrevisStudioView({
         className="space-y-2 rounded border border-white/15 p-2"
         data-previs-interactions
       >
-        <p className="text-xs text-cyan-100">
-          双人短打 · 同一事件驱动出手与接触反应
-        </p>
+        <p className="text-xs text-cyan-100">双人短打 · 白模角色互动</p>
+        {studio.spec.actors.some(actor => actor.riggedModel) && (
+          <p className="text-xs text-amber-100">
+            已绑定角色暂不参与双人短打，请使用角色动作与表演。既有互动保留，可移除或改选未绑定的人体白模。
+          </p>
+        )}
         {(studio.spec.interactions ?? []).map((event, index) => {
           const patch = (value: Partial<typeof event>) =>
             edit({
@@ -811,11 +826,28 @@ export function ManhuaPrevisStudioView({
                     aria-label={`互动${index + 1}${key === "actorId" ? "出手者" : "受方"}`}
                     value={event[key]}
                     disabled={disabled || Boolean(pendingId)}
-                    onChange={e => patch({ [key]: e.target.value })}
+                    onChange={e => {
+                      const chosen = studio.spec.actors.find(
+                        actor => actor.id === e.target.value
+                      );
+                      if (chosen?.shape === "human" && !chosen.riggedModel)
+                        patch({ [key]: chosen.id });
+                    }}
                   >
                     {studio.spec.actors.map(actor => (
-                      <option key={actor.id} value={actor.id}>
+                      <option
+                        key={actor.id}
+                        value={actor.id}
+                        disabled={
+                          actor.shape !== "human" || Boolean(actor.riggedModel)
+                        }
+                      >
                         {actor.nameZh}
+                        {actor.riggedModel
+                          ? "（绑定角色暂不支持短打）"
+                          : actor.shape !== "human"
+                            ? "（非双人短打角色）"
+                            : ""}
                       </option>
                     ))}
                   </select>
@@ -874,11 +906,13 @@ export function ManhuaPrevisStudioView({
             disabled ||
             Boolean(pendingId) ||
             (studio.spec.interactions?.length ?? 0) >= 24 ||
-            studio.spec.actors.filter(a => a.shape === "human").length < 2
+            studio.spec.actors.filter(
+              a => a.shape === "human" && !a.riggedModel
+            ).length < 2
           }
           onClick={() => {
             const [actor, target] = studio.spec.actors.filter(
-              a => a.shape === "human"
+              a => a.shape === "human" && !a.riggedModel
             );
             if (!actor || !target) return;
             edit({
@@ -906,7 +940,7 @@ export function ManhuaPrevisStudioView({
       </section>
       <details>
         <summary className="text-xs text-cyan-100">
-          机位与切镜（世界坐标）
+          专业调度 · 相机与切镜
         </summary>
         <div className="space-y-2 pt-2">
           {studio.spec.cameras.map((camera, i) => {
