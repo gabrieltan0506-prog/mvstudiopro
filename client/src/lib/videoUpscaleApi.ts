@@ -26,7 +26,9 @@ export type VideoUpscaleStatusSnapshot = {
 };
 
 /** 用户可读的状态文案；对账态必须让用户知道「不会白扣」 */
-export function videoUpscaleStatusLabel(status: VideoUpscaleTaskStatus): string {
+export function videoUpscaleStatusLabel(
+  status: VideoUpscaleTaskStatus
+): string {
   switch (status) {
     case "queued":
       return "排队中";
@@ -43,13 +45,19 @@ export function videoUpscaleStatusLabel(status: VideoUpscaleTaskStatus): string 
   }
 }
 
-export function isVideoUpscaleTerminal(status: VideoUpscaleTaskStatus): boolean {
-  return status === "succeeded" || status === "failed" || status === "reconcile_manual";
+export function isVideoUpscaleTerminal(
+  status: VideoUpscaleTaskStatus
+): boolean {
+  return (
+    status === "succeeded" ||
+    status === "failed" ||
+    status === "reconcile_manual"
+  );
 }
 
-/** 读视频真实时长（秒，向上取整）——计费按秒，展示与提交都用真实元数据 */
+/** 读视频真实时长（秒，四舍五入且至少1秒）——计费按秒，展示与提交都用真实元数据 */
 export function probeVideoDurationSec(url: string): Promise<number | null> {
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     let settled = false;
     const done = (v: number | null) => {
       if (settled) return;
@@ -61,7 +69,11 @@ export function probeVideoDurationSec(url: string): Promise<number | null> {
       video.preload = "metadata";
       video.crossOrigin = "anonymous";
       video.onloadedmetadata = () =>
-        done(Number.isFinite(video.duration) && video.duration > 0 ? Math.ceil(video.duration) : null);
+        done(
+          Number.isFinite(video.duration) && video.duration > 0
+            ? Math.max(1, Math.round(video.duration))
+            : null
+        );
       video.onerror = () => done(null);
       video.src = url;
       window.setTimeout(() => done(null), 15_000);
@@ -71,6 +83,16 @@ export function probeVideoDurationSec(url: string): Promise<number | null> {
   });
 }
 
+export class VideoUpscaleSubmitError extends Error {
+  constructor(
+    message: string,
+    readonly httpStatus: number,
+    readonly definitelyNotStarted: boolean
+  ) {
+    super(message);
+  }
+}
+
 export async function startVideoUpscale(input: {
   videoUrl: string;
   target: "2k" | "4k";
@@ -78,7 +100,11 @@ export async function startVideoUpscale(input: {
   /** 漫剧集号：有值走整集批发价；缺省按自由画布零售 ×1.1 */
   episodeIndex?: number;
   sourceResolution?: string;
-}): Promise<{ taskId: string; status: VideoUpscaleTaskStatus; creditsUsed: number }> {
+}): Promise<{
+  taskId: string;
+  status: VideoUpscaleTaskStatus;
+  creditsUsed: number;
+}> {
   const res = await fetch(withLongJobsFlyDirect("/api/jobs?op=videoUpscale"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -99,7 +125,13 @@ export async function startVideoUpscale(input: {
     error?: string;
   };
   if (!res.ok || !json.ok || !json.taskId) {
-    throw new Error(json.error || "高清放大任务创建失败");
+    throw new VideoUpscaleSubmitError(
+      json.error || "高清放大任务创建失败",
+      res.status,
+      !res.ok &&
+        json.ok === false &&
+        [400, 401, 402, 403, 409].includes(res.status)
+    );
   }
   return {
     taskId: String(json.taskId),
@@ -108,10 +140,14 @@ export async function startVideoUpscale(input: {
   };
 }
 
-export async function fetchVideoUpscaleStatus(taskId: string): Promise<VideoUpscaleStatusSnapshot> {
+export async function fetchVideoUpscaleStatus(
+  taskId: string
+): Promise<VideoUpscaleStatusSnapshot> {
   const res = await fetch(
-    withLongJobsFlyDirect(`/api/jobs?op=canvasVideoStatus&taskId=${encodeURIComponent(taskId)}`),
-    { method: "GET", credentials: "include", cache: "no-store" },
+    withLongJobsFlyDirect(
+      `/api/jobs?op=canvasVideoStatus&taskId=${encodeURIComponent(taskId)}`
+    ),
+    { method: "GET", credentials: "include", cache: "no-store" }
   );
   const json = (await res.json().catch(() => ({}))) as {
     ok?: boolean;
@@ -132,6 +168,11 @@ export async function fetchVideoUpscaleStatus(taskId: string): Promise<VideoUpsc
     error: json.error,
     creditsUsed: Number(json.creditsUsed) || undefined,
     upscaleSourceUrl: json.upscaleSourceUrl,
-    upscaleTarget: json.upscaleTarget === "4k" ? "4k" : json.upscaleTarget === "2k" ? "2k" : undefined,
+    upscaleTarget:
+      json.upscaleTarget === "4k"
+        ? "4k"
+        : json.upscaleTarget === "2k"
+          ? "2k"
+          : undefined,
   };
 }

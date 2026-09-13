@@ -2,8 +2,7 @@ import http from "node:http";
 import https from "node:https";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { mkdtemp, open, rm, copyFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { open, rm, rename } from "node:fs/promises";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -144,9 +143,17 @@ export function parsePhotoVideoMetadata(raw: string) {
 
 /** 服务端实读原片，扣费前验证时长和分辨率；ffprobe只可读取本地文件。 */
 export async function probePhotoVideoInput(url: string) {
-  const dir = await mkdtemp(path.join(tmpdir(), "photo-video-probe-"));
+  const {
+    reservePhotoTempSpace,
+    photoTempDir,
+    photoTempName,
+    photoTempUrl,
+    schedulePhotoTempRemoval,
+  } = await import("./photoTemporaryMedia.js");
+  const reservation = await reservePhotoTempSpace();
+  const pendingName = photoTempName("upload");
+  const file = path.join(photoTempDir(), pendingName);
   try {
-    const file = path.join(dir, "source");
     await downloadPhotoMedia(url, 512 * 1024 * 1024, file);
     const { stdout } = await promisify(execFile)(
       "ffprobe",
@@ -165,19 +172,15 @@ export async function probePhotoVideoInput(url: string) {
     );
     const metadata = parsePhotoVideoMetadata(stdout);
     // 计费所验的字节与上游消费同一个只读副本，防止外部URL在检查后换成另一条长片。
-    const {
-      ensurePhotoTempSpace,
-      photoTempDir,
-      photoTempName,
-      photoTempUrl,
-      schedulePhotoTempRemoval,
-    } = await import("./photoTemporaryMedia.js");
-    await ensurePhotoTempSpace();
-    const name = photoTempName("mp4");
-    await copyFile(file, path.join(photoTempDir(), name));
+    const name = pendingName.replace(/upload$/, "mp4");
+    await rename(file, path.join(photoTempDir(), name));
     schedulePhotoTempRemoval(name);
     return { ...metadata, verifiedSourceUrl: photoTempUrl(name) };
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    try {
+      await rm(file, { force: true });
+    } finally {
+      reservation.release();
+    }
   }
 }

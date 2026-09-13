@@ -26,11 +26,42 @@ export function photoTempUrl(name: string) {
   ).replace(/\/+$/, "");
   return `${base}/api/photo-media/${name}`;
 }
-export async function ensurePhotoTempSpace() {
-  await fs.mkdir(photoTempDir(), { recursive: true });
-  const disk = await fs.statfs(photoTempDir());
-  if (disk.bavail * disk.bsize < PHOTO_TEMP_MAX_BYTES + 256 * 1024 * 1024)
-    throw new Error("临时下载空间繁忙，请稍后再试");
+const PHOTO_TEMP_RESERVE_BYTES = 256 * 1024 * 1024;
+const reservedByDevice = new Map<number, number>();
+let reservationQueue: Promise<unknown> = Promise.resolve();
+
+/** 当前服务进程内按实际设备串行预留；在途写入也计入预算，宁可少放行。 */
+export async function reservePhotoTempSpace(maxBytes = PHOTO_TEMP_MAX_BYTES) {
+  const operation = reservationQueue.then(async () => {
+    await fs.mkdir(photoTempDir(), { recursive: true });
+    const [disk, stat] = await Promise.all([
+      fs.statfs(photoTempDir()),
+      fs.stat(photoTempDir()),
+    ]);
+    const reserved = reservedByDevice.get(stat.dev) || 0;
+    const available = Math.max(
+      0,
+      disk.bavail * disk.bsize - PHOTO_TEMP_RESERVE_BYTES - reserved
+    );
+    const bytes = maxBytes === Infinity ? available : maxBytes;
+    if (bytes <= 0 || available < bytes)
+      throw new Error("临时下载空间繁忙，请稍后再试");
+    reservedByDevice.set(stat.dev, reserved + bytes);
+    let released = false;
+    return {
+      maxBytes: bytes,
+      release() {
+        if (released) return;
+        released = true;
+        reservedByDevice.set(
+          stat.dev,
+          Math.max(0, (reservedByDevice.get(stat.dev) || 0) - bytes)
+        );
+      },
+    };
+  });
+  reservationQueue = operation.catch(() => {});
+  return operation;
 }
 export async function cleanupPhotoTemp(now = Date.now()) {
   await fs.mkdir(photoTempDir(), { recursive: true });
@@ -70,17 +101,13 @@ export async function mirrorPhotoTemp(
     await fs.access(path.join(photoTempDir(), name));
     return { url, expiresAt: new Date(photoTempExpires(name)).toISOString() };
   }
-  await ensurePhotoTempSpace();
+  const reservation = await reservePhotoTempSpace(
+    kind === "pdf" ? Infinity : PHOTO_TEMP_MAX_BYTES
+  );
   const pendingName = photoTempName("upload");
   const pendingPath = path.join(photoTempDir(), pendingName);
   try {
-    const disk = await fs.statfs(photoTempDir());
-    const available = Math.max(0, disk.bavail * disk.bsize - 256 * 1024 * 1024);
-    await downloadPhotoMedia(
-      url,
-      kind === "pdf" ? available : PHOTO_TEMP_MAX_BYTES,
-      pendingPath
-    );
+    await downloadPhotoMedia(url, reservation.maxBytes, pendingPath);
     let ext = "mp4";
     if (kind === "image") {
       const sharp = (await import("sharp")).default;
@@ -114,5 +141,6 @@ export async function mirrorPhotoTemp(
     };
   } finally {
     await fs.unlink(pendingPath).catch(() => {});
+    reservation.release();
   }
 }

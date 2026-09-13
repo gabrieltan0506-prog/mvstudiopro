@@ -4721,7 +4721,13 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         if (existing) return res.status(200).json({ ok: true, async: true, taskId: existing.taskId, status: existing.status,
           duration: existing.duration, resolution: existing.resolution, creditsUsed: existing.creditsCharged, videoUrl: existing.videoUrl });
         // 在鉴权、会员检查之后，扣费之前按实际文件字节与像素校验；不压缩。
-        const inputImage = await validateHomePhotoVideoImage(imageUrl, modelChoice);
+        let inputImage;
+        try {
+          inputImage = await validateHomePhotoVideoImage(imageUrl, modelChoice);
+        } catch (error) {
+          return res.status(400).json({ ok: false, submission: "not_started",
+            error: error instanceof Error ? error.message : "照片校验失败，请重新选择照片" });
+        }
         const creditsNeeded = homePhotoAnimateCredits(duration, resolution);
         const hpaChargeKey = `hpanim:${stableTaskId}`;
         let creditsCharged = 0;

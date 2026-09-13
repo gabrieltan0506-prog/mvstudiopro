@@ -1,5 +1,5 @@
 import express from "express";
-import type { Server } from "node:http";
+import { request, type Server } from "node:http";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -108,4 +108,51 @@ describe("Fly临时空间真实HTTP链", () => {
       await fs.rm(dir, { recursive: true, force: true });
     }
   });
+});
+
+it("真实HTTP并发上传拒绝重复空间预算，中断关闭文件后释放", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "photo-abort-"));
+  vi.stubEnv("PHOTO_TEMP_MEDIA_DIR", dir);
+  const disk = vi
+    .spyOn(fs, "statfs")
+    .mockResolvedValue({ bavail: 1024, bsize: 1024 * 1024 } as any);
+  const app = express();
+  app.use(express.json());
+  const dispose = registerPhotoTemporaryMedia(app);
+  const server = await new Promise<Server>(resolve => {
+    const s = app.listen(0, "127.0.0.1", () => resolve(s));
+  });
+  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const slow = request(`${origin}/api/photo-media/upload`, {
+    method: "POST",
+    headers: { "Content-Type": "multipart/form-data; boundary=boundary" },
+  });
+  slow.on("error", () => {});
+  try {
+    slow.write(
+      '--boundary\r\nContent-Disposition: form-data; name="file"; filename="a.mp4"\r\nContent-Type: video/mp4\r\n\r\nsmall fragment'
+    );
+    await vi.waitFor(async () =>
+      expect((await fs.readdir(dir)).length).toBe(1)
+    );
+    const denied = await fetch(`${origin}/api/photo-media/upload`, {
+      method: "POST",
+    });
+    expect(denied.status).toBe(503);
+    slow.destroy();
+    await vi.waitFor(async () => expect(await fs.readdir(dir)).toEqual([]));
+    await vi.waitFor(async () => {
+      const resumed = await fetch(`${origin}/api/photo-media/upload`, {
+        method: "POST",
+      });
+      expect(resumed.status).toBe(400);
+    });
+  } finally {
+    slow.destroy();
+    dispose();
+    await new Promise<void>(r => server.close(() => r()));
+    disk.mockRestore();
+    vi.unstubAllEnvs();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });

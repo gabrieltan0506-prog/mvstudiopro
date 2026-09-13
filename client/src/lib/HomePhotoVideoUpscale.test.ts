@@ -9,6 +9,7 @@ vi.mock("@/lib/canvasUpload", () => ({
 vi.mock("@/lib/videoUpscaleApi", () => ({
   fetchVideoUpscaleStatus: vi.fn(),
   startVideoUpscale: vi.fn(),
+  VideoUpscaleSubmitError: class extends Error {},
 }));
 
 import {
@@ -141,7 +142,7 @@ it("浏览器挂载：确认后单次提交、刷新只查原ID、用户隔离�
       "export const uploadPhotoTemporaryMedia=async()=>({url:'https://test.invalid/upload.mp4'});export const cachePhotoTemporaryMedia=async url=>url;",
     "@/lib/canvasUpload":
       "export const inferCanvasAssetKind=()=> 'video'; export const uploadOneCanvasAsset=async()=>({url:'https://test.invalid/upload.mp4'});",
-    "@/lib/videoUpscaleApi": `export const startVideoUpscale=async input=>{fixture.posts.push(input);if(fixture.fail)throw new Error('离线断线');return {taskId:'task-'+input.target,status:'running',creditsUsed:1}};
+    "@/lib/videoUpscaleApi": `export class VideoUpscaleSubmitError extends Error {constructor(message){super(message);this.definitelyNotStarted=true;}};export const startVideoUpscale=async input=>{fixture.posts.push(input);if(fixture.denied)throw new VideoUpscaleSubmitError("积分不足");if(fixture.fail)throw new Error('离线断线');return {taskId:'task-'+input.target,status:'running',creditsUsed:1}};
     export const fetchVideoUpscaleStatus=async id=>{fixture.queries.push(id);return {taskId:id,status:fixture.status,...(fixture.status==='succeeded'?{videoUrl:'https://test.invalid/'+id+'.mp4'}:{})}};`,
   };
   const result = await build({
@@ -281,6 +282,24 @@ it("浏览器挂载：确认后单次提交、刷新只查原ID、用户隔离�
       () => !(document.querySelector("button") as HTMLButtonElement).disabled
     );
     await page.evaluate(() => {
+      (window as any).fixture.denied = true;
+      (document.querySelector("button") as HTMLButtonElement).click();
+    });
+    await page.waitForFunction(
+      () =>
+        document.body.innerText.includes("积分不足") &&
+        !(document.querySelector("button") as HTMLButtonElement).disabled
+    );
+    await page.evaluate(() => {
+      (window as any).fixture.denied = false;
+      (window as any).fixture.render();
+    });
+    await page.waitForSelector('select[aria-label="视频来源"]');
+    await page.select('select[aria-label="视频来源"]', "generated");
+    await page.waitForFunction(
+      () => !(document.querySelector("button") as HTMLButtonElement).disabled
+    );
+    await page.evaluate(() => {
       (window as any).fixture.fail = true;
       (document.querySelector("button") as HTMLButtonElement).click();
     });
@@ -299,7 +318,7 @@ it("浏览器挂载：确认后单次提交、刷新只查原ID、用户隔离�
     ).toBe(true);
     expect(
       await page.evaluate(() => (window as any).fixture.posts.length)
-    ).toBe(3);
+    ).toBe(4);
   } finally {
     await browser.close();
   }

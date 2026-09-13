@@ -8,16 +8,16 @@ it("动画提交断线后按同一请求键恢复，刷新不再POST，账户隔
       resolveDir: process.cwd(),
       loader: "tsx",
       contents: `
-    import React from 'react';import {createRoot} from 'react-dom/client';
+    import React from 'react';import {flushSync} from 'react-dom';import {createRoot} from 'react-dom/client';
     import {usePhotoAnimationTask} from './client/src/lib/usePhotoAnimationTask';
     window.fixture={user:7,posts:[],queries:[],success:false,results:[]};
     window.fetch=async(url,init)=>{
       if(url==='/api/me')return{ok:true,json:async()=>({id:fixture.user})};
-      if(init?.method==='POST'){fixture.posts.push(JSON.parse(init.body));throw new Error('断线');}
+      if(init?.method==='POST'){fixture.posts.push(JSON.parse(init.body));if(fixture.denied)return{ok:false,status:400,json:async()=>({ok:false,error:'照片超出模型上限',submission:'not_started'})};throw new Error('断线');}
       fixture.queries.push(url);return{ok:true,json:async()=>({ok:true,taskId:'hpa_existing',status:fixture.success?'succeeded':'running',videoUrl:fixture.success?'https://example.com/video.mp4':null})};
     };
     function App(){const t=usePhotoAnimationTask(fixture.user,(...r)=>fixture.results.push(r));return <><button disabled={!t.ready||!!t.pending} onClick={()=>t.submit({imageUrl:'https://example.com/a.png'},79,10).catch(()=>{})}>生成</button><p>{t.message}</p></>}
-    const root=createRoot(document.getElementById('root'));let n=0;fixture.render=()=>root.render(<App key={++n}/>);fixture.render();
+    const root=createRoot(document.getElementById('root'));let n=0;fixture.render=()=>flushSync(()=>root.render(<App key={++n}/>));fixture.render();
   `,
     },
     bundle: true,
@@ -63,6 +63,29 @@ it("动画提交断线后按同一请求键恢复，刷新不再POST，账户隔
     await page.addScriptTag({ content: result.outputFiles[0].text });
     await page.waitForFunction(
       () => !(document.querySelector("button") as HTMLButtonElement)?.disabled
+    );
+    await page.evaluate(() => {
+      (window as any).fixture.denied = true;
+    });
+    await page.click("button");
+    await page.waitForFunction(
+      () =>
+        document.body.innerText.includes("照片超出模型上限") &&
+        !(document.querySelector("button") as HTMLButtonElement).disabled
+    );
+    expect(
+      await page.evaluate(() =>
+        localStorage.getItem("home-photo-animation:v1:7")
+      )
+    ).toBeNull();
+    await page.evaluate(() => {
+      (window as any).fixture.denied = false;
+      (window as any).fixture.posts = [];
+      (window as any).fixture.queries = [];
+      (window as any).fixture.render();
+    });
+    await page.waitForFunction(
+      () => !(document.querySelector("button") as HTMLButtonElement).disabled
     );
     await page.click("button");
     await page.waitForFunction(

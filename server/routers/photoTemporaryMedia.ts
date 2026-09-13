@@ -1,5 +1,7 @@
 import type { Express } from "express";
 import multer from "multer";
+import { createWriteStream } from "node:fs";
+import { pipeline } from "node:stream/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { sdk } from "../_core/sdk";
@@ -8,7 +10,7 @@ import {
   photoTempName,
   photoTempExpires,
   photoTempUrl,
-  ensurePhotoTempSpace,
+  reservePhotoTempSpace,
   cleanupPhotoTemp,
   schedulePhotoTempRemoval,
   mirrorPhotoTemp,
@@ -16,11 +18,42 @@ import {
 } from "../services/photoTemporaryMedia";
 
 export function registerPhotoTemporaryMedia(app: Express) {
+  const writes = new WeakMap<object, Promise<void>>();
   const upload = multer({
-    storage: multer.diskStorage({
-      destination: (_req, _file, done) => done(null, photoTempDir()),
-      filename: (_req, _file, done) => done(null, photoTempName("upload")),
-    }),
+    storage: {
+      _handleFile(req, file, done) {
+        const filename = photoTempName("upload");
+        const destination = path.join(photoTempDir(), filename);
+        const output = createWriteStream(destination, { flags: "wx" });
+        const abort = () => {
+          file.stream.destroy(new Error("上传已中断"));
+          output.destroy();
+        };
+        req.once("aborted", abort);
+        const writing = pipeline(file.stream, output)
+          .then(
+            () =>
+              done(null, {
+                filename,
+                path: destination,
+                size: output.bytesWritten,
+              }),
+            async error => {
+              await fs.unlink(destination).catch(() => {});
+              done(error);
+            }
+          )
+          .finally(() => req.off("aborted", abort));
+        writes.set(req, writing);
+        if (req.aborted) abort();
+      },
+      _removeFile(_req, file, done) {
+        fs.unlink(file.path).then(
+          () => done(null),
+          error => done(error.code === "ENOENT" ? null : error)
+        );
+      },
+    },
     limits: { fileSize: PHOTO_TEMP_MAX_BYTES, files: 1, fields: 1 },
   }).single("file");
   app.get("/api/photo-media/:name", async (req, res) => {
@@ -49,18 +82,16 @@ export function registerPhotoTemporaryMedia(app: Express) {
     } catch {
       return void res.status(401).json({ error: "请先登录" });
     }
+    let reservation;
     try {
-      await ensurePhotoTempSpace();
+      reservation = await reservePhotoTempSpace();
     } catch {
       return void res.status(503).json({ error: "暂存空间繁忙，请稍后重试" });
     }
     upload(req, res, async error => {
       const file = req.file;
-      if (error || !file)
-        return void res
-          .status(400)
-          .json({ error: "上传失败，视频不能超过512MB" });
       try {
+        if (error || !file) throw new Error("上传失败，视频不能超过512MB");
         const image = file.mimetype.startsWith("image/");
         if (!image && !file.mimetype.startsWith("video/"))
           throw new Error("请选择图片或视频");
@@ -88,10 +119,15 @@ export function registerPhotoTemporaryMedia(app: Express) {
           expiresAt: new Date(photoTempExpires(name)).toISOString(),
         });
       } catch (e) {
-        await fs.unlink(file.path).catch(() => {});
+        if (file) await fs.unlink(file.path).catch(() => {});
         res
           .status(400)
           .json({ error: e instanceof Error ? e.message : "上传失败" });
+      } finally {
+        // 断线时multer可先回调，必须等文件流关闭才释放占盘额度。
+        await writes.get(req)?.catch(() => {});
+        writes.delete(req);
+        reservation.release();
       }
     });
   });
@@ -137,11 +173,20 @@ export function registerPhotoTemporaryMedia(app: Express) {
             pdfObject = candidate.slice(bucket.length + 1);
         }
         if (object || pdfObject) {
-          source = signGsUriV4ReadUrl(`gs://${bucket}/${object || pdfObject}`, 600);
+          source = signGsUriV4ReadUrl(
+            `gs://${bucket}/${object || pdfObject}`,
+            600
+          );
         } else {
           const pathname = decodeURIComponent(new URL(source).pathname);
-          if (/generated\/platform_knowledge_card\/(?:pdf\/)?u\d+\//.test(pathname)) {
-            return void res.status(403).json({ error: "只能下载本人生成的知识卡" });
+          if (
+            /generated\/platform_knowledge_card\/(?:pdf\/)?u\d+\//.test(
+              pathname
+            )
+          ) {
+            return void res
+              .status(403)
+              .json({ error: "只能下载本人生成的知识卡" });
           }
           // 旧卡没有归属前缀：只使用用户已持有且仍有效的原读链，不扩大签名权限。
         }

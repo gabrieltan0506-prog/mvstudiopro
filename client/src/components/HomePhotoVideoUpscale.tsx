@@ -8,6 +8,7 @@ import { inferCanvasAssetKind } from "@/lib/canvasUpload";
 import {
   fetchVideoUpscaleStatus,
   startVideoUpscale,
+  VideoUpscaleSubmitError,
   type VideoUpscaleTaskStatus,
 } from "@/lib/videoUpscaleApi";
 import { canvasVideoUpscaleCredits } from "@shared/canvasGenerationPricing";
@@ -393,17 +394,21 @@ function UpscalePanel({
         )
       );
     } catch (e) {
-      save(
-        recordsRef.current.map(r =>
-          r.id === record.id
-            ? {
-                ...r,
-                status: "submission_unknown",
-                error: e instanceof Error ? e.message : String(e),
-              }
-            : r
-        )
-      );
+      if (e instanceof VideoUpscaleSubmitError && e.definitelyNotStarted) {
+        save(recordsRef.current.filter(r => r.id !== record.id));
+        if (mounted.current) setError(e.message);
+      } else
+        save(
+          recordsRef.current.map(r =>
+            r.id === record.id
+              ? {
+                  ...r,
+                  status: "submission_unknown",
+                  error: e instanceof Error ? e.message : String(e),
+                }
+              : r
+          )
+        );
     } finally {
       lock.current = false;
       if (mounted.current) setBusy(false);

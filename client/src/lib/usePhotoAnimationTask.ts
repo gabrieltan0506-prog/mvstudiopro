@@ -79,14 +79,22 @@ export function usePhotoAnimationTask(
           cache: "no-store",
         });
         const data = await response.json();
-        if (cancelled) return;
+        if (cancelled || pendingRef.current?.requestKey !== current.requestKey)
+          return;
         if (response.ok && data.ok) {
           if (
             data.status === "succeeded" &&
             /^https?:\/\//.test(data.videoUrl || "")
           ) {
-            const localUrl = await cachePhotoTemporaryMedia(data.videoUrl, "video");
-            if (cancelled) return;
+            const localUrl = await cachePhotoTemporaryMedia(
+              data.videoUrl,
+              "video"
+            );
+            if (
+              cancelled ||
+              pendingRef.current?.requestKey !== current.requestKey
+            )
+              return;
             resultRef.current(
               localUrl,
               Number(data.creditsUsed ?? current.credits),
@@ -101,7 +109,10 @@ export function usePhotoAnimationTask(
             setMessage(data.error || "任务已停止，请核对退款或对账记录");
             return;
           }
-          if (data.taskId && (data.taskId !== current.taskId || data.status !== current.status)) {
+          if (
+            data.taskId &&
+            (data.taskId !== current.taskId || data.status !== current.status)
+          ) {
             save({ ...current, taskId: data.taskId, status: data.status });
           }
           setMessage("照片动画正在生成，刷新后会继续查询同一任务");
