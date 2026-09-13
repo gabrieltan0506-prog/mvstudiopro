@@ -1436,7 +1436,7 @@ export async function runCanvasBlock(
   const isClipBlock = block.id.startsWith("clip-");
   const mergedPrompt = formatCanvasUpstreamPrompt(
     prompt || "请根据上游内容完成本步骤生成。",
-    isKeyartBlock || isClipBlock ? [] : effectiveTexts,
+    isKeyartBlock || isClipBlock || block.musicMvShot ? [] : effectiveTexts,
   );
 
   if (block.kind === "text" || block.kind === "copy_organize") {

@@ -145,7 +145,7 @@ export function CanvasMusicMvStudio({
     row => row.id === state.selectedCandidateId
   );
   const pendingPlan = Boolean(
-    state.planRequestId && !state.plan && state.status === "planning"
+    state.planRequestId && !state.plan && !state.planTerminalStatus
   );
   const importJob = async (jobId: string) => {
     const previous = latest.current;
@@ -235,7 +235,7 @@ export function CanvasMusicMvStudio({
       if (
         latest.current.planRequestId &&
         !latest.current.plan &&
-        latest.current.status === "planning"
+        !latest.current.planTerminalStatus
       )
         throw new Error("请先查询原分镜结果，再切换歌曲");
       const previousSelection = latest.current.selectedCandidateId;
@@ -337,7 +337,7 @@ export function CanvasMusicMvStudio({
     if (
       latest.current.planRequestId &&
       !latest.current.plan &&
-      latest.current.status === "planning"
+      !latest.current.planTerminalStatus
     )
       return;
     const shouldSync = shouldSyncMusicUploadedReferences(
@@ -397,6 +397,7 @@ export function CanvasMusicMvStudio({
         patch({
           planRequestId: input.requestId,
           planInput: input,
+          planTerminalStatus: undefined,
           status: "planning",
           error: undefined,
         });
@@ -428,8 +429,7 @@ export function CanvasMusicMvStudio({
       patch(invalidateMusicMvPlan(latest.current));
   }, [referenceInputKey]);
   useEffect(() => {
-    if (!state.planRequestId || state.plan || state.status !== "planning")
-      return;
+    if (!state.planRequestId || state.plan || state.planTerminalStatus) return;
     const requestId = state.planRequestId;
     let stopped = false;
     const check = async () => {
@@ -453,7 +453,8 @@ export function CanvasMusicMvStudio({
         else if (result.status === "failed")
           patch({
             status: "error",
-            error: "原分镜未能交付，已保留请求；请先处理原任务",
+            planTerminalStatus: "failed",
+            error: "原分镜已确认未交付，证据保留；可主动开始新一轮分镜",
           });
       } catch (error) {
         if (
@@ -472,7 +473,7 @@ export function CanvasMusicMvStudio({
       stopped = true;
       window.clearInterval(timer);
     };
-  }, [state.planRequestId, state.plan, state.status]);
+  }, [state.planRequestId, state.plan, state.planTerminalStatus]);
   const previewIdentityKey = JSON.stringify(
     state.candidates.map(row => [row.id, row.gcsUri])
   );
@@ -570,12 +571,14 @@ export function CanvasMusicMvStudio({
       }
       patch({ status: "planned" });
     });
-  const finish = () =>
+  const finish = (newVersion = false) =>
     perform(async () => {
       const source = latest.current;
-      let submission = source.assembleInput;
+      if (newVersion && !source.assembleTerminalStatus)
+        throw new Error("原合成尚无明确终态，请先查询原任务，未提交新版本");
+      let submission = newVersion ? undefined : source.assembleInput;
       if (!submission) {
-        if (source.assembleRequestId)
+        if (!newVersion && source.assembleRequestId)
           throw new Error("原合成缺少输入快照，请查询已保存任务，未重新提交");
         const song = source.candidates.find(
           row => row.id === source.selectedCandidateId
@@ -598,6 +601,24 @@ export function CanvasMusicMvStudio({
         patch({
           assembleRequestId: submission.requestId,
           assembleInput: submission,
+          assembleJobId: undefined,
+          assembleTerminalStatus: undefined,
+          finalBlockId: undefined,
+          assembleHistory:
+            newVersion &&
+            source.assembleRequestId &&
+            source.assembleTerminalStatus
+              ? [
+                  ...(source.assembleHistory || []),
+                  {
+                    requestId: source.assembleRequestId,
+                    jobId: source.assembleJobId,
+                    status: source.assembleTerminalStatus,
+                    input: source.assembleInput,
+                    finalBlockId: source.finalBlockId,
+                  },
+                ]
+              : source.assembleHistory,
           status: "assembling",
           error: undefined,
         });
@@ -607,7 +628,8 @@ export function CanvasMusicMvStudio({
         alive.current && latest.current.assembleRequestId === request.requestId;
       // 已收到任务号时仅查询，画布改稿也不重建原合成。
       const jobId =
-        source.assembleJobId || (await assemble.mutateAsync(request)).jobId;
+        (!newVersion && source.assembleJobId) ||
+        (await assemble.mutateAsync(request)).jobId;
       if (identityCurrent())
         patch({ assembleJobId: jobId, status: "assembling" });
       const job = await pollJobUntilTerminal(jobId, {
@@ -618,9 +640,15 @@ export function CanvasMusicMvStudio({
         },
       });
       if (job.status !== "succeeded") {
-        if (identityCurrent()) patch({ status: "error" });
+        if (identityCurrent())
+          patch({
+            status: "error",
+            assembleTerminalStatus:
+              job.status === "failed" ? "failed" : undefined,
+          });
         throw new Error(job.error || "合成未成功，请查看原任务");
       }
+      if (identityCurrent()) patch({ assembleTerminalStatus: "succeeded" });
       const output = job.output as { finalVideoUrl?: string };
       if (!output?.finalVideoUrl) throw new Error("合成缺少可播放地址");
       if (!alive.current) return;
@@ -874,15 +902,29 @@ export function CanvasMusicMvStudio({
         {state.planRequestId && !state.plan ? "恢复原分镜请求" : "生成 MV 分镜"}{" "}
         · {CREDIT_COSTS.storyboard} 积分
       </button>
-      {state.planRequestId && state.status === "error" && !state.plan && (
-        <button
-          className={button}
-          disabled={busy}
-          onClick={() => patch(invalidateMusicMvPlan(latest.current))}
-        >
-          原请求已失败，准备新一轮分镜
-        </button>
-      )}
+      {state.planRequestId &&
+        state.planTerminalStatus === "failed" &&
+        !state.plan && (
+          <button
+            className={button}
+            disabled={busy}
+            onClick={() => {
+              const previous = latest.current;
+              patch({
+                ...invalidateMusicMvPlan(previous),
+                planHistory: [
+                  ...(previous.planHistory || []),
+                  {
+                    requestId: previous.planRequestId!,
+                    input: previous.planInput,
+                  },
+                ],
+              });
+            }}
+          >
+            原请求已失败，准备新一轮分镜
+          </button>
+        )}
       {state.plan && (
         <>
           <details open>
@@ -914,12 +956,21 @@ export function CanvasMusicMvStudio({
           <button
             className={button}
             disabled={busy || !state.shotBlockIds?.length}
-            onClick={finish}
+            onClick={() => finish()}
           >
             {state.assembleRequestId
               ? "查询／恢复原合成"
               : `合成完整 MV · ${CREDIT_COSTS.workflowFinalRender} 积分`}
           </button>
+          {state.assembleTerminalStatus && (
+            <button
+              className={button}
+              disabled={busy || !state.shotBlockIds?.length}
+              onClick={() => finish(true)}
+            >
+              合成新版本 · {CREDIT_COSTS.workflowFinalRender} 积分
+            </button>
+          )}
         </>
       )}
       <p role="status" className="text-xs">

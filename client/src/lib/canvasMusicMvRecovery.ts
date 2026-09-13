@@ -19,6 +19,7 @@ export function invalidateMusicMvPlan(
 ): CanvasMusicMvState {
   return {
     ...state,
+    planTerminalStatus: undefined,
     plan: undefined,
     planRequestId: undefined,
     planInput: undefined,
@@ -26,6 +27,7 @@ export function invalidateMusicMvPlan(
     assembleRequestId: undefined,
     assembleJobId: undefined,
     assembleInput: undefined,
+    assembleTerminalStatus: undefined,
     finalBlockId: undefined,
     status: state.selectedCandidateId ? "music_ready" : "idle",
     error: undefined,

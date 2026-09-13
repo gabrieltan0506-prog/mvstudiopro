@@ -63,14 +63,14 @@ beforeAll(async () => {
         const f=()=>globalThis.fixture;
         const utils={mvAnalysis:{
           getManhuaBgmJob:{fetch:async({jobId})=>{f().queries.push(jobId);if(f().musicError)throw new Error('missing job');return {jobId,status:f().musicReady?'succeeded':'running',titleZh:'虚构音乐',durationSec:10,missingVariants:f().missingVariants||0,variants:f().musicReady?(f().missingVariants?[0]:[0,1]).map(index=>({index,gcsUri:'gs://test-bucket/post-prod/7/candidate-'+index+'.mp3',durationSec:10,bytes:1000})):[]};}},
-          listManhuaBgmJobs:{fetch:async()=>[]}},canvasMusicMv:{getPlan:{fetch:async()=>({status:'running'})}}};
+          listManhuaBgmJobs:{fetch:async()=>[]}},canvasMusicMv:{getPlan:{fetch:async()=>({status:localStorage.getItem('plan-query-status')||'pending_or_unconfirmed'})}}};
         export const trpc={useUtils:()=>utils,mvAnalysis:{queueManhuaBgm:{useMutation:()=>({mutateAsync:async input=>{f().record('music',input);if(f().musicError)throw f().musicError;return {jobId:'bgm_'+input.billingRequestId.replaceAll('-',''),status:'queued'};}})}},
-          canvasMusicMv:{draftPlan:{useMutation:()=>({mutateAsync:async input=>{f().record('plan',input);return {plan:f().makePlan(input)};}})}},
+          canvasMusicMv:{draftPlan:{useMutation:()=>({mutateAsync:async input=>{f().record('plan',input);if(f().planError)throw new Error(f().planError);return {plan:f().makePlan(input)};}})}},
           canvasMusicMvAssemble:{queue:{useMutation:()=>({mutateAsync:async input=>{f().record('assemble',input);return {jobId:'assemble-fictional'};}})}}};
       `
                 : args.path === "omniCanvasApi"
                   ? `export async function resolveCanvasMaterialUrl(uri){return uri.startsWith('gs://')?'https://test.invalid/'+encodeURIComponent(uri):uri;}`
-                  : `export async function pollJobUntilTerminal(jobId,opts){globalThis.fixture.record('poll',jobId);opts?.onPoll?.({status:'succeeded'});return {status:'succeeded',output:{finalVideoUrl:'https://test.invalid/final.mp4'}};}`,
+                  : `export async function pollJobUntilTerminal(jobId,opts){globalThis.fixture.record('poll',jobId);if(globalThis.fixture.assembleError)throw new Error('unknown network');const status=globalThis.fixture.assembleStatus||'succeeded';opts?.onPoll?.({status});return {status,output:{finalVideoUrl:'https://test.invalid/final.mp4'}};}`,
           }));
         },
       },
@@ -87,6 +87,7 @@ afterAll(async () => {
 async function open() {
   const context = await browser.createBrowserContext();
   const page = await context.newPage();
+  page.setDefaultTimeout(5000);
   await page.setRequestInterception(true);
   page.on("request", request => {
     if (request.isNavigationRequest())
@@ -210,6 +211,89 @@ describe("独立音乐MV真实视图（虚构任务边界）", () => {
       expect(await page.evaluate(() => (window as any).fixture.calls)).toEqual(
         result.calls
       );
+      await page.evaluate(() => {
+        const f = (window as any).fixture;
+        f.update(
+          f.current.map((b: any) =>
+            b.id === f.state.shotBlockIds[0]
+              ? {
+                  ...b,
+                  outputUrl: "https://test.invalid/new-selected-shot.mp4",
+                }
+              : b
+          )
+        );
+      });
+      await click("合成新版本");
+      await page.waitForFunction(
+        () => (window as any).fixture.state.status === "done"
+      );
+      const newer = await page.evaluate(() => {
+        const f = (window as any).fixture;
+        return {
+          calls: f.calls.filter((c: any) => c.kind === "assemble"),
+          state: f.state,
+          finals: f.current.filter((b: any) => b.id.startsWith("mvfinal-")),
+        };
+      });
+      expect(newer.calls).toHaveLength(2);
+      expect(newer.calls[1].input.requestId).not.toBe(
+        newer.calls[0].input.requestId
+      );
+      expect(newer.calls[1].input.clips[0].url).toBe(
+        "https://test.invalid/new-selected-shot.mp4"
+      );
+      expect(newer.state.assembleHistory[0].requestId).toBe(
+        newer.calls[0].input.requestId
+      );
+      expect(newer.finals).toHaveLength(2);
+      await page.evaluate(() => {
+        (window as any).fixture.assembleStatus = "failed";
+      });
+      await click("合成新版本");
+      await page.waitForFunction(
+        () => (window as any).fixture.state.assembleTerminalStatus === "failed"
+      );
+      await page.evaluate(() => {
+        (window as any).fixture.assembleStatus = "succeeded";
+      });
+      await click("合成新版本");
+      await page.waitForFunction(
+        () => (window as any).fixture.state.status === "done"
+      );
+      expect(
+        await page.evaluate(() =>
+          (window as any).fixture.state.assembleHistory.map(
+            (h: any) => h.status
+          )
+        )
+      ).toEqual(["succeeded", "succeeded", "failed"]);
+      await page.evaluate(() => {
+        (window as any).fixture.assembleError = true;
+      });
+      await click("合成新版本");
+      await page.waitForFunction(() => !!(window as any).fixture.state.error);
+      expect(
+        await page.$$eval("button", buttons =>
+          buttons.some(b => b.textContent?.includes("合成新版本"))
+        )
+      ).toBe(false);
+      const beforeQuery = await page.evaluate(
+        () =>
+          (window as any).fixture.calls.filter(
+            (c: any) => c.kind === "assemble"
+          ).length
+      );
+      await click("查询／恢复原合成");
+      await page.waitForFunction(() => !!(window as any).fixture.state.error);
+      expect(
+        await page.evaluate(
+          () =>
+            (window as any).fixture.calls.filter(
+              (c: any) => c.kind === "assemble"
+            ).length
+        )
+      ).toBe(beforeQuery);
     } finally {
       await context.close();
     }
@@ -427,3 +511,51 @@ it("缺失候选提示持久显示，不隐式重发补单", async () => {
     await context.close();
   }
 }, 15000);
+
+it("分镜网络未知不允许新轮，服务器确认失败后保留原输入并显式开始新轮", async () => {
+  const { context, page, click, reload } = await open();
+  try {
+    await click("生成音乐");
+    await page.waitForFunction(
+      () => (window as any).fixture.state.candidates.length === 2
+    );
+    await click("采用 虚构音乐 · 版本 1");
+    await page.evaluate(() => {
+      (window as any).fixture.planError = "unknown network";
+    });
+    await click("生成 MV 分镜");
+    await page.waitForFunction(() => !!(window as any).fixture.state.error);
+    expect(
+      await page.$$eval("button", buttons =>
+        buttons.some(b => b.textContent?.includes("原请求已失败"))
+      )
+    ).toBe(false);
+    const original = await page.evaluate(
+      () => (window as any).fixture.state.planRequestId
+    );
+    await reload();
+    expect(
+      await page.$$eval("button", buttons =>
+        buttons.some(b => b.textContent?.includes("原请求已失败"))
+      )
+    ).toBe(false);
+    await page.evaluate(() =>
+      localStorage.setItem("plan-query-status", "failed")
+    );
+    await reload();
+    await click("原请求已失败，准备新一轮分镜");
+    expect(
+      await page.evaluate(
+        () => (window as any).fixture.state.planHistory[0].requestId
+      )
+    ).toBe(original);
+    await page.evaluate(() => localStorage.removeItem("plan-query-status"));
+    await click("生成 MV 分镜");
+    await page.waitForFunction(() => !!(window as any).fixture.state.plan);
+    expect(
+      await page.evaluate(() => (window as any).fixture.state.planRequestId)
+    ).not.toBe(original);
+  } finally {
+    await context.close();
+  }
+}, 30_000);

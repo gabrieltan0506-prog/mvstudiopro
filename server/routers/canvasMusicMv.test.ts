@@ -1,5 +1,10 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { draftCanvasMusicMvPlan, type MusicMvPlanDeps } from "./canvasMusicMv";
+import {
+  draftCanvasMusicMvPlan,
+  getCanvasMusicMvPlan,
+  type MusicMvPlanDeps,
+} from "./canvasMusicMv";
 import {
   canvasMusicMvStateSchema,
   validateCanvasMusicMvPlan,
@@ -61,7 +66,7 @@ function fixture(invalid = false) {
     ),
     download: vi.fn(async ({ gcsUri }: { gcsUri: string }) => {
       const buffer = records.get(gcsUri.replace("gs://test-bucket/", ""));
-      if (!buffer) throw new Error("missing");
+      if (!buffer) throw new Error("gcs_stat_failed:404");
       return { buffer };
     }),
     balance: vi.fn(async () => ({ totalAvailable: 100 })),
@@ -100,6 +105,7 @@ describe("音乐 MV 分镜门禁与持久恢复", () => {
       "request.json",
       "raw-1.json",
       "parsed.json",
+      "resolution.json",
       "result.json",
       "settled.json",
     ]);
@@ -178,5 +184,117 @@ describe("音乐 MV 分镜门禁与持久恢复", () => {
       canvasMusicMvStateSchema.parse({ status: "music_ready", candidates })
         .candidates
     ).toHaveLength(5);
+  });
+});
+
+describe("分镜进程中断与迟到回包", () => {
+  function request(
+    f: ReturnType<typeof fixture>,
+    extra: Record<string, unknown> = {}
+  ) {
+    const root = `canvas-music-mv/evidence/7/${input.requestId}`;
+    f.records.set(
+      `${root}/request.json`,
+      Buffer.from(
+        JSON.stringify({
+          input,
+          inputDigest: createHash("sha256")
+            .update(JSON.stringify(input))
+            .digest("hex"),
+          expiresAtMs: Date.now() - 1,
+          ...extra,
+        })
+      )
+    );
+    return root;
+  }
+  it("进程消失后 request-only 到期明确失败，原编号不重买；网络读失败不冒充终态", async () => {
+    const f = fixture();
+    const root = request(f);
+    expect((await getCanvasMusicMvPlan(7, input.requestId, f.d)).status).toBe(
+      "failed"
+    );
+    await expect(draftCanvasMusicMvPlan(7, "user", input, f.d)).rejects.toThrow(
+      "已确认未交付"
+    );
+    expect(f.mocks.llm).not.toHaveBeenCalled();
+    expect(f.mocks.charge).not.toHaveBeenCalled();
+    expect(f.records.has(`${root}/request.json`)).toBe(true);
+    const g = fixture();
+    request(g);
+    g.mocks.download.mockRejectedValue(new Error("gcs_stat_failed:403"));
+    await expect(getCanvasMusicMvPlan(7, input.requestId, g.d)).rejects.toThrow(
+      "403"
+    );
+    expect(g.records.has(`${root}/resolution.json`)).toBe(false);
+  });
+  it("重启后从已保存解析稿恢复原结果，查询不扣费，同编号仅结算", async () => {
+    const f = fixture();
+    const root = request(f);
+    f.records.set(
+      `${root}/parsed.json`,
+      Buffer.from(
+        JSON.stringify({
+          parsed: plan(),
+          raw: [
+            {
+              objectName: `${root}/raw-1.json`,
+              bytes: 100,
+              sha256: "test-sha",
+            },
+          ],
+          gateway: "test",
+          model: "test",
+        })
+      )
+    );
+    expect((await getCanvasMusicMvPlan(7, input.requestId, f.d)).status).toBe(
+      "settlement_pending"
+    );
+    expect(f.mocks.charge).not.toHaveBeenCalled();
+    expect(
+      (await draftCanvasMusicMvPlan(7, "user", input, f.d)).plan.shots
+    ).toHaveLength(2);
+    expect(f.mocks.llm).not.toHaveBeenCalled();
+    expect(f.mocks.charge).toHaveBeenCalledTimes(1);
+  });
+  it("查询确认失败后迟到旧执行仅留证据，不交付、不扣分", async () => {
+    const f = fixture();
+    let release!: () => void;
+    let started!: () => void;
+    const waiting = new Promise<void>(r => {
+      release = r;
+    });
+    const ready = new Promise<void>(r => {
+      started = r;
+    });
+    const original = f.mocks.llm.getMockImplementation()!;
+    f.mocks.llm.mockImplementation(async params => {
+      started();
+      await waiting;
+      return original(params);
+    });
+    const running = draftCanvasMusicMvPlan(7, "user", input, f.d);
+    const rejected = expect(running).rejects.toThrow();
+    await ready;
+    const root = `canvas-music-mv/evidence/7/${input.requestId}`;
+    const stored = JSON.parse(
+      f.records.get(`${root}/request.json`)!.toString()
+    );
+    // 模拟服务时钟越过既定执行截止时间，不修改任何生产数据。
+    const clock = vi.spyOn(Date, "now").mockReturnValue(stored.expiresAtMs + 1);
+    try {
+      expect((await getCanvasMusicMvPlan(7, input.requestId, f.d)).status).toBe(
+        "failed"
+      );
+      release();
+      await rejected;
+    } finally {
+      clock.mockRestore();
+      release();
+    }
+    expect(f.mocks.charge).not.toHaveBeenCalled();
+    expect(f.records.has(`${root}/parsed.json`)).toBe(true);
+    expect(f.records.has(`${root}/result.json`)).toBe(false);
   });
 });

@@ -154,6 +154,14 @@ describe("MV 分镜编译到真实视频出站请求（全离线）", () => {
     for (const [index, shot] of Array.from(shots.entries()))
       await execute(shot, blocks, edges, `mv-operation-${index}`);
     expect(requests.map(row => row.duration)).toEqual([6, 6]);
+    expect(String(requests[0].prompt)).toContain(plan.shots[0].visualPrompt);
+    expect(String(requests[0].prompt)).not.toContain(
+      plan.shots[1].visualPrompt
+    );
+    expect(String(requests[1].prompt)).toContain(plan.shots[1].visualPrompt);
+    expect(String(requests[1].prompt)).not.toContain(
+      plan.shots[0].visualPrompt
+    );
     expect(requests.map(row => row.imageUrls)).toEqual([
       ["https://test.invalid/scene.png?signature=fresh"],
       ["https://test.invalid/hero.png?signature=fresh"],

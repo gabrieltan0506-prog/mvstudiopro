@@ -43,6 +43,14 @@ const deps: MusicMvPlanDeps = {
   balance: getCredits,
   charge: deductCreditsAmount,
 };
+type PlanRequest = {
+  input: CanvasMusicMvDraftInput;
+  inputDigest: string;
+  expiresAtMs: number;
+};
+type Resolution =
+  | { status: "succeeded"; result: SavedPlan }
+  | { status: "failed" };
 const digest = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function prefix(userId: number, requestId: string) {
@@ -55,8 +63,13 @@ async function read<T>(d: MusicMvPlanDeps, path: string): Promise<T | null> {
         await d.download({ gcsUri: `gs://${d.bucket()}/${path}.json` })
       ).buffer.toString("utf8")
     ) as T;
-  } catch {
-    return null;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      /^gcs_(?:stat|download)_failed:404(?:$|:)/.test(error.message)
+    )
+      return null;
+    throw error;
   }
 }
 async function save(
@@ -107,6 +120,103 @@ async function settle(
   };
 }
 
+/** 唯一终态对象隔离迟到进程：失效请求不得在确认失败后扣费或发布另一结果。 */
+async function resolvePlan(
+  d: MusicMvPlanDeps,
+  path: string,
+  proposed: Resolution
+): Promise<Resolution> {
+  const claim = await save(d, `${path}/resolution`, proposed);
+  const chosen = claim.created
+    ? proposed
+    : await read<Resolution>(d, `${path}/resolution`);
+  if (!chosen) throw new Error("分镜终态暂时不可核对");
+  if (chosen.status === "succeeded") {
+    validateCanvasMusicMvPlan(chosen.result.plan, chosen.result.input);
+    await save(d, `${path}/result`, chosen.result);
+  }
+  return chosen;
+}
+
+/** 只恢复原证据与明确终态，查询绝不重新调用模型或扣费。 */
+export async function getCanvasMusicMvPlan(
+  userId: number,
+  requestId: string,
+  d: MusicMvPlanDeps = deps
+) {
+  const path = prefix(userId, requestId);
+  let result = await read<SavedPlan>(d, `${path}/result`);
+  if (!result) {
+    const resolution = await read<Resolution>(d, `${path}/resolution`);
+    if (resolution) {
+      if (resolution.status === "failed")
+        return { status: "failed" as const, requestId };
+      await resolvePlan(d, path, resolution);
+      result = resolution.result;
+    }
+  }
+  if (!result) {
+    const request = await read<PlanRequest>(d, `${path}/request`);
+    const interrupted = await read<{ interrupted: boolean }>(
+      d,
+      `${path}/interrupted`
+    );
+    if (
+      interrupted?.interrupted ||
+      (request?.expiresAtMs && Date.now() >= request.expiresAtMs)
+    ) {
+      const parsed = await read<{ parsed: unknown; raw: Receipt[] }>(
+        d,
+        `${path}/parsed`
+      );
+      let recovered: SavedPlan | undefined;
+      if (request && parsed?.raw?.length) {
+        try {
+          const plan = validateCanvasMusicMvPlan(parsed.parsed, request.input);
+          const receipt = (name: string, value: unknown): Receipt => ({
+            objectName: `${path}/${name}.json`,
+            bytes: Buffer.byteLength(JSON.stringify(value)),
+            sha256: digest(value),
+          });
+          recovered = {
+            plan,
+            input: request.input,
+            evidence: {
+              request: receipt("request", request),
+              raw: parsed.raw,
+              parsed: receipt("parsed", parsed),
+            },
+          };
+        } catch {
+          /* 不合格稿保留原证据，不能作为可交付结果。 */
+        }
+      }
+      const chosen = await resolvePlan(
+        d,
+        path,
+        recovered
+          ? { status: "succeeded", result: recovered }
+          : { status: "failed" }
+      );
+      if (chosen.status === "failed")
+        return { status: "failed" as const, requestId };
+      result = chosen.result;
+    }
+  }
+  if (result) {
+    const settled = await read<{ settled: boolean }>(d, `${path}/settled`);
+    if (settled?.settled)
+      return {
+        status: "succeeded" as const,
+        requestId,
+        plan: validateCanvasMusicMvPlan(result.plan, result.input),
+        evidence: result.evidence,
+      };
+    return { status: "settlement_pending" as const, requestId };
+  }
+  return { status: "pending_or_unconfirmed" as const, requestId };
+}
+
 export async function draftCanvasMusicMvPlan(
   userId: number,
   role: string,
@@ -121,7 +231,11 @@ export async function draftCanvasMusicMvPlan(
     });
   const path = prefix(userId, input.requestId);
   // 音频 URL 不交模型：本接口只根据歌词和用户说明规划，绝不宣称已听取音频。
-  const request = { input, inputDigest: digest(input) };
+  const request: PlanRequest = {
+    input,
+    inputDigest: digest(input),
+    expiresAtMs: Date.now() + 300000,
+  };
   // 余额不足时不占用确认编号；已存在请求可以绕过余额预检恢复幂等结算。
   const existingRequest = await read<typeof request>(d, `${path}/request`);
   if (
@@ -142,6 +256,12 @@ export async function draftCanvasMusicMvPlan(
       throw new TRPCError({
         code: "CONFLICT",
         message: "原编号内容不同或暂时无法核对，请查询原任务",
+      });
+    const state = await getCanvasMusicMvPlan(userId, input.requestId, d);
+    if (state.status === "failed")
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "原分镜已确认未交付，证据保留；可主动开始新一轮分镜",
       });
     const existing = await read<SavedPlan>(d, `${path}/result`);
     if (existing) {
@@ -196,9 +316,10 @@ export async function draftCanvasMusicMvPlan(
       input,
       evidence: { request: claim, raw: rawReceipts, parsed: parsedReceipt },
     };
-    const saved = await save(d, `${path}/result`, result);
-    if (!saved.created) throw new Error("分镜结果已存在");
-    return await settle(d, userId, input.requestId, result);
+    const chosen = await resolvePlan(d, path, { status: "succeeded", result });
+    if (chosen.status === "failed")
+      throw new Error("原请求已确认失效，迟到结果只保留证据，不扣费");
+    return await settle(d, userId, input.requestId, chosen.result);
   } catch (error) {
     // 上游失败未扣分；合格结果已经保存时，原编号可仅恢复幂等结算，不再调用模型。
     await save(d, `${path}/interrupted`, {
@@ -221,31 +342,7 @@ export const canvasMusicMvRouter = router({
     ),
   getPlan: protectedProcedure
     .input(z.object({ requestId: z.string().uuid() }).strict())
-    .query(async ({ ctx, input }) => {
-      const path = prefix(ctx.user.id, input.requestId);
-      const result = await read<SavedPlan>(deps, `${path}/result`);
-      const settled = await read<{ settled: boolean }>(deps, `${path}/settled`);
-      if (result && settled?.settled)
-        return {
-          status: "succeeded" as const,
-          requestId: input.requestId,
-          plan: validateCanvasMusicMvPlan(result.plan, result.input),
-          evidence: result.evidence,
-        };
-      if (result)
-        return {
-          status: "settlement_pending" as const,
-          requestId: input.requestId,
-        };
-      const interrupted = await read<{ interrupted: boolean }>(
-        deps,
-        `${path}/interrupted`
-      );
-      return {
-        status: interrupted?.interrupted
-          ? ("failed" as const)
-          : ("pending_or_unconfirmed" as const),
-        requestId: input.requestId,
-      };
-    }),
+    .query(({ ctx, input }) =>
+      getCanvasMusicMvPlan(ctx.user.id, input.requestId)
+    ),
 });

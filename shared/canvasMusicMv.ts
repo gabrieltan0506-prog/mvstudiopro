@@ -212,6 +212,31 @@ export const canvasMusicMvStateSchema = z
     assembleRequestId: z.string().uuid().optional(),
     assembleJobId: text.max(200).optional(),
     assembleInput: canvasMusicMvAssembleSnapshotSchema.optional(),
+    assembleTerminalStatus: z.enum(["succeeded", "failed"]).optional(),
+    assembleHistory: z
+      .array(
+        z
+          .object({
+            requestId: z.string().uuid(),
+            jobId: text.optional(),
+            status: z.enum(["succeeded", "failed"]),
+            input: canvasMusicMvAssembleSnapshotSchema.optional(),
+            finalBlockId: text.optional(),
+          })
+          .strict()
+      )
+      .optional(),
+    planTerminalStatus: z.literal("failed").optional(),
+    planHistory: z
+      .array(
+        z
+          .object({
+            requestId: z.string().uuid(),
+            input: canvasMusicMvDraftInputSchema.optional(),
+          })
+          .strict()
+      )
+      .optional(),
     finalBlockId: text.max(200).optional(),
     error: z.string().max(2000).optional(),
   })
