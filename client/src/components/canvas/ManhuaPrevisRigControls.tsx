@@ -110,6 +110,7 @@ export function ManhuaPrevisRigControls({
       </summary>
       <p className="my-2 text-amber-200/80">
         仅接受真实带骨、已蒙皮的人形GLB；无骨模型会被拒绝。原3D预览保留，不生成模型、不调用付费模型。尚不保证接地，角色替换暂不兼容双人接触。
+        保留模型原始静止姿态，不会自动变成自然站姿。仅预演基础颜色，复杂材质会明确拒绝；透明与遮挡效果不代表成片质量。
       </p>
       <fieldset disabled={disabled} className="space-y-3 disabled:opacity-50">
         <label className="flex items-center gap-2">

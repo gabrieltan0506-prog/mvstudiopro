@@ -200,6 +200,10 @@ for index,actor in enumerate(spec['actors']):
     bpy.ops.object.mode_set(mode='EDIT')
     for name,(a,b) in rest.items():
         bone=data.edit_bones.new(name);bone.head=a;bone.tail=b
+        if actor.get('riggedModel'):
+            # 带骨来源的静止轴与下方动画轴一致，避免默认roll被当作动作传给真实蒙皮。
+            # 只依据rest端点建轴，不拿已烘焙的首帧归零；旧白模、互动和尾翼路径保持原样。
+            bone.matrix=Matrix.Translation(a) @ (b-a).to_track_quat('Y','Z').to_matrix().to_4x4()
     bpy.ops.object.mode_set(mode='OBJECT')
     color=material(actor['nameZh'],[(.65,.72,.75),(.72,.58,.55),(.60,.64,.51),(.63,.59,.72),(.65,.69,.54),(.55,.65,.69)][index])
     for name,(a,b) in rest.items():
@@ -245,6 +249,7 @@ if any(actor.get('creature') for actor in spec['actors']):
             creatures.append(handle)
 if any(actor.get('riggedModel') for actor in spec['actors']):
     from previs_rigged_model import inspect_glb, import_rigged_model, retarget_from_source, apply_performance
+    from previs_workbench_appearance import prepare_workbench_appearance
     if len(args)!=3: raise ValueError('角色模型服务端侧载清单缺失')
     manifest_path=Path(args[2]).resolve()
     if manifest_path.parent!=out.resolve(): raise ValueError('角色清单不在本次工作目录')
@@ -277,6 +282,7 @@ if any(actor.get('riggedModel') for actor in spec['actors']):
         if model['inspection']['bytes']!=row['bytes']: raise ValueError('角色字节数与侧载回执不同')
         if model['report']['weightedVertices']>model['inspection']['vertices']:
             raise ValueError('角色导入后实际顶点数超过预检，未开始动画与渲染')
+        appearance=prepare_workbench_appearance(model)
         retarget_from_source(source_rig,model,scene.frame_start,scene.frame_end)
         if config.get('performance'):
             apply_performance(model,config['performance']['controller'],config['performance']['cues'],
@@ -286,8 +292,10 @@ if any(actor.get('riggedModel') for actor in spec['actors']):
             if obj.type=='MESH': obj.hide_render=True
         model['actorId']=actor['id']
         model['report'].update({'actorId':actor['id'],'sourceJobId':row['sourceJobId'],
-            'boundaryZh':'真实带骨网格旋转与路径重定向；源白模脚底误差不代表角色网格接地，尚未验证双人接触'})
+            'boundaryZh':'真实带骨网格旋转与路径重定向，保留模型原始静止姿态，不自动生成自然站姿；源白模脚底误差不代表角色网格接地，尚未验证双人接触；'+appearance['boundaryZh']})
         models.append(model)
+    # 只有真实模型进入基础色预演；无贴图的白模/地面继续使用原材质色。
+    scene.display.shading.color_type='TEXTURE'
 
 if creatures and not models:
     validate_projection_work(sum(len(obj.data.vertices) for handle in creatures for obj in handle['meshes']),

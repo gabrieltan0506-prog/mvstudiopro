@@ -62,6 +62,28 @@ def check_numpy_compat_scope():
 check_numpy_compat_scope()
 
 
+def check_import_engine_failure():
+    # 使用真实场景与引擎属性；只替换导入动作，模拟插件已改引擎后中途失败。
+    scene = bpy.context.scene
+    scene.render.engine = "BLENDER_WORKBENCH"
+    expected_error = RuntimeError("仅测试的glTF中途失败")
+    def failed_import(**kwargs):
+        scene.render.engine = "CYCLES"
+        raise expected_error
+    test_bpy = SimpleNamespace(context=bpy.context, app=bpy.app,
+                              ops=SimpleNamespace(import_scene=SimpleNamespace(gltf=failed_import)))
+    try:
+        module._import_gltf_asset(test_bpy, "TEST_ONLY-failed-import.glb")
+    except RuntimeError as error:
+        check(error is expected_error, "导入异常原样向上传播")
+    else:
+        raise AssertionError("导入异常被吞掉")
+    check(scene.render.engine == "BLENDER_WORKBENCH", "导入中途失败也恢复原WORKBENCH引擎")
+
+
+check_import_engine_failure()
+
+
 def rest_points():
     p = {"pelvis": ((0, 0, .85), (0, 0, .95)), "spine": ((0, 0, .95), (0, 0, 1.35)),
          "neck": ((0, 0, 1.35), (0, 0, 1.5)), "head": ((0, 0, 1.5), (0, 0, 1.75))}
@@ -397,6 +419,7 @@ rejects(lambda: module.resolve_bone_map(["head"]), "请明确映射")
 bad = {name: "head" for name in module.SEMANTIC_BONES}
 rejects(lambda: module.resolve_bone_map(meta["jointNames"], bad), "同一根骨骼")
 check(len(module.resolve_bone_map(meta["jointNames"])) == 16, "规范16骨严格映射")
+fixture_mesh_data = fixture_mesh.data
 bpy.data.objects.remove(fixture_mesh, do_unlink=True)
 bpy.data.objects.remove(fixture_rig, do_unlink=True)
 import numpy
@@ -406,7 +429,9 @@ else:
     import io_scene_gltf2.blender.imp.mesh as actual_gltf_mesh
 original_gltf_numpy = actual_gltf_mesh.np
 original_numpy_bool = numpy.__dict__.get("bool")
+bpy.context.scene.render.engine = "BLENDER_WORKBENCH"
 model = module.import_rigged_model(path, "test-actor", forward_axis="+X", target_height=1.7, expected_sha256=meta["sha256"])
+check(bpy.context.scene.render.engine == "BLENDER_WORKBENCH", "真实GLB经生产入口导入后保留WORKBENCH引擎")
 check(actual_gltf_mesh.np is original_gltf_numpy, "真实生产导入后glTF插件NumPy引用已恢复")
 check(numpy.__dict__.get("bool") is original_numpy_bool, "真实生产导入未改动全局NumPy别名")
 check(model["report"]["weightedVertices"] > 0, "导入后每顶点有实际蒙皮")
@@ -503,12 +528,54 @@ for frame, shape in ((8, "Relax"), (24, "Tense"), (40, "Surprise")):
 scene.frame_set(8)
 check(abs(rig.pose.bones["spine"].scale.x - base[8]["spine"].x) > .005, "真实呼吸控制改变胸部径向比例")
 check(module.hashlib.sha256(path.read_bytes()).hexdigest() == meta["sha256"], "测试结束原GLB字节未覆盖")
+check(scene.render.engine == "BLENDER_WORKBENCH", "重定向与表演结束仍保留WORKBENCH引擎")
+saved_target = {"rig": rig.name, "meshes": [obj.name for obj in model["meshes"]],
+                "shapeKeyNames": [obj.data.shape_keys.name for obj in model["meshes"]]}
+shape_key_ownership = [{"key": key.name, "users": key.users,
+                       "owner": key.user.name if key.user else None,
+                       "ownerUsers": key.user.users if key.user else None,
+                       "testFixture": key == fixture_mesh_data.shape_keys} for key in bpy.data.shape_keys]
+print("SHAPE_KEY_OWNERSHIP_BEFORE_SAVE=" + json.dumps(shape_key_ownership, ensure_ascii=False))
+check(fixture_mesh_data.users == 0 and all(obj.data != fixture_mesh_data for obj in model["meshes"]), "仅清理已知自造且零用户的源夹具网格")
+fixture_key_name = fixture_mesh_data.shape_keys.name
+check(fixture_mesh_data.shape_keys.user == fixture_mesh_data, "孤儿Key归属源夹具而非导入目标")
+# 仅删除本测试创建且对象已移除的原始网格；不执行全局孤儿清理，不碰导入目标。
+bpy.data.meshes.remove(fixture_mesh_data)
+check(bpy.data.shape_keys.get(fixture_key_name) is None, "移除零用户源夹具后其孤儿Key同步释放")
+bpy.ops.wm.save_as_mainfile(filepath=str(out / "TEST_ONLY-rigged-performance.blend"))
+model_report = model["report"]
+bpy.ops.wm.open_mainfile(filepath=str(out / "TEST_ONLY-rigged-performance.blend"))
+check(bpy.context.scene.render.engine == "BLENDER_WORKBENCH", "保存并重新打开真实blend仍为WORKBENCH引擎")
+restored_rig = bpy.data.objects.get(saved_target["rig"])
+check(restored_rig is not None and restored_rig.type == "ARMATURE", "重开后实际目标骨架存在")
+restored_meshes = [bpy.data.objects.get(name) for name in saved_target["meshes"]]
+check(all(obj is not None and obj.type == "MESH" and len(obj.data.vertices) > 0 for obj in restored_meshes), "重开后全部实际目标网格非空")
+check([obj.data.shape_keys.name for obj in restored_meshes] == saved_target["shapeKeyNames"], "重开后目标形态键数据块身份未丢失")
+for eye in ("Eye.L", "Eye.R"):
+    check(restored_rig.pose.bones.get(eye) is not None, "重开后真实眼骨存在：" + eye)
+restored_samples = []
+for frame, shape in ((8, "Relax"), (24, "Tense"), (40, "Surprise")):
+    bpy.context.scene.frame_set(frame)
+    bpy.context.view_layer.update()
+    obj = restored_meshes[0]
+    key = obj.data.shape_keys.key_blocks.get(shape)
+    check(key is not None and len(key.data) == len(obj.data.vertices), "重开后目标表情数据非空：" + shape)
+    check(max((a.co - b.co).length for a, b in zip(key.data, obj.data.shape_keys.key_blocks["Basis"].data)) > .001, "重开后目标表情形变量非零：" + shape)
+    check(key.value > .5, "重开后目标表情对应帧仍非零：" + shape)
+    actual_positions = positions(obj)
+    vertex_delta = max((a - b).length for a, b in zip(base[frame]["vertices"], actual_positions))
+    check(vertex_delta > .01 and all(math.isfinite(v) for point in actual_positions for v in point), "重开后真实表演网格仍形变且有限：" + shape)
+    eye_delta = base[frame]["eye"].to_quaternion().rotation_difference(restored_rig.pose.bones["Eye.L"].matrix.to_quaternion()).angle
+    check(eye_delta > .05, "重开后真实眼骨动作保留：" + shape)
+    restored_samples.append({"frame": frame, "shape": shape, "value": key.value,
+                             "maxVertexDelta": vertex_delta, "eyeDeltaRad": eye_delta})
 report = {"testOnly": True, "blender": bpy.app.version_string, "checksPassed": len(checks), "checks": checks,
           "fixture": {"path": str(path), "generator": fixture_doc["asset"].get("generator"), "sourceSha256": meta["sha256"],
                       "originalSparseAccessors": sum("sparse" in item for item in fixture_doc["accessors"])},
-          "model": model["report"], "performanceSamples": samples,
+          "model": model_report, "performanceSamples": samples,
+          "savedRenderEngine": bpy.context.scene.render.engine,
+          "shapeKeyOwnershipBeforeSave": shape_key_ownership, "restoredPerformanceSamples": restored_samples,
           "jointGaps": joint_gaps,
           "limits": ["自造测试模型，不等于用户角色验收", "未渲染视频", "未做双人接触/足底质量验收", "无生产UI/API/扣费调用"]}
 (out / "rigged-model-test-receipt.json").write_text(json.dumps(report, ensure_ascii=False, indent=2))
-bpy.ops.wm.save_as_mainfile(filepath=str(out / "TEST_ONLY-rigged-performance.blend"))
 print("RIGGED_MODEL_TEST_RESULT=" + json.dumps(report, ensure_ascii=False))

@@ -591,14 +591,20 @@ def _legacy_numpy_bool_scope(numpy_module, mesh_module):
 
 
 def _import_gltf_asset(bpy, local_path):
-    """Blender3.4旧插件在NORMALS网格导入时使用被NumPy1.24删除的np.bool。"""
-    if tuple(bpy.app.version[:2]) == (3, 4):
-        import numpy
-        from io_scene_gltf2.blender.imp import gltf2_blender_mesh
-        # 仅包围真实导入，成功/异常均恢复；不改变着色模式绕过法线读取。
-        with _legacy_numpy_bool_scope(numpy, gltf2_blender_mesh):
-            return bpy.ops.import_scene.gltf(filepath=str(local_path), import_pack_images=True)
-    return bpy.ops.import_scene.gltf(filepath=str(local_path), import_pack_images=True)
+    """隔离glTF插件副作用：保持调用者引擎，并兼容3.4旧NumPy别名。"""
+    scene = bpy.context.scene
+    render_engine = scene.render.engine
+    try:
+        if tuple(bpy.app.version[:2]) == (3, 4):
+            import numpy
+            from io_scene_gltf2.blender.imp import gltf2_blender_mesh
+            # 仅包围真实导入，成功/异常均恢复；不改变着色模式绕过法线读取。
+            with _legacy_numpy_bool_scope(numpy, gltf2_blender_mesh):
+                return bpy.ops.import_scene.gltf(filepath=str(local_path), import_pack_images=True)
+        return bpy.ops.import_scene.gltf(filepath=str(local_path), import_pack_images=True)
+    finally:
+        # 旧插件会强制切到EEVEE；任何版本都恢复原场景，不依赖导入后的活动上下文。
+        scene.render.engine = render_engine
 
 
 def _validate_hierarchy(rig, mapping):

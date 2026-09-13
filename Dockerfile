@@ -49,6 +49,11 @@ COPY . .
 RUN blender --background --factory-startup --python-exit-code 1 \
     --python server/scripts/test_previs_rigged_model.py -- /tmp/previs-gltf-build-smoke
 
+# 在实际软件渲染环境验证基础色、UV采样、旧无材质夹具及异常回滚；只渲染自造静帧。
+RUN xvfb-run -a blender --background --factory-startup --disable-autoexec --threads 1 --python-exit-code 1 \
+    --python server/scripts/test_previs_workbench_appearance.py -- /tmp/previs-appearance-build-smoke \
+    --legacy-fixture /tmp/previs-gltf-build-smoke/TEST_ONLY-rigged-with-morph.glb
+
 # 跳过 postinstall 脚本（youtube-dl-exec 不再自行下载二进制）
 # 并告知 youtube-dl-exec 使用系统 yt-dlp
 RUN pnpm install --ignore-scripts

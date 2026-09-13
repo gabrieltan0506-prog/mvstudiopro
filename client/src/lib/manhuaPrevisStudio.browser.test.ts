@@ -533,6 +533,8 @@ it('已有模型表单先取消再应用，无自动提交且停用后保留来�
     await page.evaluate(()=>{const f=(window as any).fixture;f.setCharacters([{id:'character-mo',label:'墨屠',model:{taskId:'m3d_test'}}]);});
     await settle(page);await page.select('[aria-label="角色1项目资产"]','character-mo');
     await page.evaluate(()=>Array.from(document.querySelectorAll('summary')).find(e=>e.textContent?.includes('角色模型与表演'))?.click());
+    expect(await page.$eval('body',e=>e.textContent)).toContain('保留模型原始静止姿态，不会自动变成自然站姿');
+    expect(await page.$eval('body',e=>e.textContent)).toContain('复杂材质会明确拒绝');
     await toggleLabel(page,'启用当前角色的已有带骨模型');
     expect(await page.evaluate(()=>(window as any).fixture.block.previsStudio.spec.actors[0].riggedModel)).toBeUndefined();
     await click(page,'取消编辑');await settle(page);
