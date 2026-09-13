@@ -283,6 +283,27 @@ export function ManhuaAutoRigEditorView({
       mounted.current = false;
     };
   }, []);
+  // 异步回执只能更新发起时所属的视图和请求，迟到结果仍保留在历史。
+  const activity = useRef(0);
+  const pendingRef = useRef<AutoRigRequest | null>(null);
+  const taskRef = useRef<AutoRigView | null>(null);
+  function track(request: AutoRigRequest | null) {
+    pendingRef.current = request;
+    setPending(request);
+  }
+  function show(value: AutoRigView | null) {
+    taskRef.current = value;
+    setTask(value);
+  }
+  function clearSaved(requestId: string) {
+    try {
+      const saved = localStorage.getItem(key);
+      if (saved && JSON.parse(saved).requestId === requestId)
+        localStorage.removeItem(key);
+    } catch {
+      /* 服务端历史仍可读取，不能删除无法确认身份的本机记录。 */
+    }
+  }
   const active =
     busy || Boolean(pending && (!task || !terminal(task))) || disabled;
   const inspection = inspectionTask?.output?.inspection;
@@ -296,17 +317,39 @@ export function ManhuaAutoRigEditorView({
     setJoints(null);
     setNotice("人物模型已更新，请重新检查当前模型；既有候选仍可查看或恢复。");
   }, [sourceJobId]);
-  function consume(value: AutoRigView) {
-    if (!mounted.current || value.params.assetRef !== assetRef) return;
-    setTask(value);
+  function consume(value: AutoRigView, epoch: number, requestId: string) {
+    if (
+      !mounted.current ||
+      value.params.assetRef !== assetRef ||
+      value.params.requestId !== requestId
+    )
+      return;
+    setHistory(items => {
+      const previous = items.find(item => item.params.requestId === requestId);
+      if (previous && terminal(previous) && !terminal(value)) return items;
+      return [
+        value,
+        ...items.filter(item => item.params.requestId !== requestId),
+      ];
+    });
+    if (
+      activity.current !== epoch ||
+      (pendingRef.current && pendingRef.current.requestId !== requestId)
+    )
+      return;
+    if (
+      taskRef.current?.params.requestId === requestId &&
+      terminal(taskRef.current) &&
+      !terminal(value)
+    )
+      return;
+    show(value);
     setError(value.error || "");
     if (terminal(value)) {
-      setPending(null);
-      try {
-        localStorage.removeItem(key);
-      } catch {
-        /* 服务端历史仍可读取。 */
-      }
+      if (pendingRef.current?.requestId === requestId) track(null);
+      clearSaved(requestId);
+    } else {
+      track(value.params);
     }
     if (
       value.status === "succeeded" &&
@@ -327,13 +370,10 @@ export function ManhuaAutoRigEditorView({
     if (value.status === "succeeded" && value.output?.stage === "bind") {
       setQuality(false);
     }
-    setHistory(items => [
-      value,
-      ...items.filter(item => item.params.requestId !== value.params.requestId),
-    ]);
   }
   useEffect(() => {
     let cancelled = false;
+    const epoch = activity.current;
     void (async () => {
       try {
         let request: AutoRigRequest | null = null;
@@ -349,21 +389,31 @@ export function ManhuaAutoRigEditorView({
             );
         }
         if (request && request.assetRef === assetRef) {
-          setPending(request);
+          if (activity.current === epoch) track(request);
           const current = await latest.current.services.get(request.requestId);
-          if (!cancelled && current) consume(current);
+          if (!cancelled && current) consume(current, epoch, request.requestId);
         }
         const result = await latest.current.services.list(assetRef);
         if (cancelled) return;
-        setHistory(result.items);
+        setHistory(old => [
+          ...old,
+          ...result.items.filter(
+            row =>
+              !old.some(item => item.params.requestId === row.params.requestId)
+          ),
+        ]);
         setCursor(result.nextCursor);
         const running = result.items.find(item => !terminal(item));
-        if (running) {
-          setPending(running.params);
-          setTask(running);
+        if (
+          running &&
+          activity.current === epoch &&
+          !pendingRef.current &&
+          taskRef.current?.params.requestId !== running.params.requestId
+        ) {
+          consume(running, epoch, running.params.requestId);
         }
       } catch (e) {
-        if (!cancelled)
+        if (!cancelled && activity.current === epoch)
           setError(
             e instanceof Error ? e.message : "历史读取失败，未提交新任务"
           );
@@ -374,15 +424,25 @@ export function ManhuaAutoRigEditorView({
     };
   }, [key, assetRef]);
   async function query() {
-    if (!pending || polling.current) return;
+    const request = pendingRef.current;
+    if (!request || polling.current) return;
+    const epoch = activity.current;
     polling.current = true;
     try {
-      const value = await latest.current.services.get(pending.requestId);
-      if (value) consume(value);
-      else if (mounted.current)
+      const value = await latest.current.services.get(request.requestId);
+      if (value) consume(value, epoch, request.requestId);
+      else if (
+        mounted.current &&
+        activity.current === epoch &&
+        pendingRef.current?.requestId === request.requestId
+      )
         setNotice("暂未查到该编号，保持原编号等待确认；没有创建第二个任务。");
     } catch (e) {
-      if (mounted.current)
+      if (
+        mounted.current &&
+        activity.current === epoch &&
+        pendingRef.current?.requestId === request.requestId
+      )
         setError(e instanceof Error ? e.message : "查询暂不可用，未重新提交");
     } finally {
       polling.current = false;
@@ -393,8 +453,20 @@ export function ManhuaAutoRigEditorView({
     const timer = setInterval(() => void query(), 5000);
     return () => clearInterval(timer);
   }, [pending]);
+  function terminalResult(requestId: string) {
+    return (
+      taskRef.current?.params.requestId === requestId &&
+      terminal(taskRef.current)
+    );
+  }
   async function submit(request: AutoRigRequest) {
-    if (lock.current || disabled) return;
+    if (
+      lock.current ||
+      disabled ||
+      (pendingRef.current && pendingRef.current.requestId !== request.requestId)
+    )
+      return;
+    const epoch = ++activity.current;
     lock.current = true;
     setBusy(true);
     setError("");
@@ -402,23 +474,27 @@ export function ManhuaAutoRigEditorView({
     try {
       const parsed = autoRigRequestSchema.parse(request);
       localStorage.setItem(key, JSON.stringify(parsed));
-      setPending(parsed);
-      setTask(null);
-      consume(await latest.current.services.submit(parsed));
+      track(parsed);
+      show(null);
+      consume(
+        await latest.current.services.submit(parsed),
+        epoch,
+        parsed.requestId
+      );
     } catch (e) {
-      if (mounted.current) {
+      if (
+        mounted.current &&
+        activity.current === epoch &&
+        !terminalResult(request.requestId)
+      ) {
         const code = (e as { data?: { code?: string } })?.data?.code;
         if (
           code === "BAD_REQUEST" ||
           code === "FORBIDDEN" ||
           code === "UNAUTHORIZED"
         ) {
-          setPending(null);
-          try {
-            localStorage.removeItem(key);
-          } catch {
-            /* 保留的请求仍只查同编号。 */
-          }
+          if (pendingRef.current?.requestId === request.requestId) track(null);
+          clearSaved(request.requestId);
         }
         setError(
           e instanceof Error ? e.message : "提交结果未确认，请查询原编号"
@@ -440,6 +516,7 @@ export function ManhuaAutoRigEditorView({
     lock.current = true;
     setBusy(true);
     setError("");
+    ++activity.current;
     const expected = latest.current.sourceJobId;
     try {
       const model = await (
@@ -776,11 +853,14 @@ export function ManhuaAutoRigEditorView({
               className={button}
               disabled={active}
               onClick={async () => {
+                if (lock.current || pendingRef.current || disabled) return;
+                const epoch = ++activity.current;
                 try {
                   const value = await services.get(row.params.requestId);
-                  if (value) consume(value);
+                  if (value) consume(value, epoch, row.params.requestId);
                 } catch (e) {
-                  setError(e instanceof Error ? e.message : "读取失败");
+                  if (mounted.current && activity.current === epoch)
+                    setError(e instanceof Error ? e.message : "读取失败");
                 }
               }}
             >
@@ -803,8 +883,10 @@ export function ManhuaAutoRigEditorView({
             className={`${button} mt-2`}
             disabled={active}
             onClick={async () => {
+              const epoch = activity.current;
               try {
                 const page = await services.list(assetRef, cursor);
+                if (!mounted.current) return;
                 setHistory(old => [
                   ...old,
                   ...page.items.filter(
@@ -813,7 +895,8 @@ export function ManhuaAutoRigEditorView({
                 ]);
                 setCursor(page.nextCursor);
               } catch (e) {
-                setError(e instanceof Error ? e.message : "读取失败");
+                if (mounted.current && activity.current === epoch)
+                  setError(e instanceof Error ? e.message : "读取失败");
               }
             }}
           >

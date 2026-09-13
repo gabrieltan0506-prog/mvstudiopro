@@ -2,6 +2,12 @@
 
 当前已实现本人无骨人体检查、前/侧视图人工关节校正、真实热权重候选、五张变形检查图、明确另存采用及恢复原模型。正式登录、正式数据库/GCS、Linux本批新入口及真实用户人物美术质量尚未验收，不能称线上完成。候选一直保留 `qualityAccepted=false`，用户界面的明确接受不冒充客观美术验收。
 
+## 17:32 独立审查回执竞态修正
+
+独立审查在原HEAD `3ab8da8a` 复现P2：较慢的历史查询返回终态，会清除随后新建任务的追踪编号。此次统一检查当前操作代际和requestId；旧回执只更新历史，终态不会被迟到queued回执倒退。本机记录删除前比对同一requestId，避免清掉另一页面保存的新编号；首次历史列表合并保留较新结果，不恢复同编号的过期排队状态。采用/恢复使此前历史读取失效。服务端幂等、队列、归档和计费未改。
+
+正向由历史按钮/提交/首次恢复/轮询进入带身份的consume，再到当前task/pending及同编号本机记录；反向由本机编号、当前显示任务和历史requestId核对各异步生产者。四类可控迟到回归连同既有人工校正/采用/恢复共12项浏览器测试通过；服务/路由合计4文件42项通过（14.16秒），类型检查及TypeScript构建退出0；Vite构建30.84秒通过，仅既有大chunk提示。原始日志为 `mvs-rig-p2-browser-01.log`、`mvs-rig-p2-regression-02.log`、`mvs-rig-p2-check-01.log`，永久副本随本次交付保存。修正待同一独立代理复验，不沿用旧HEAD的审查结论；生产未验边界保持。
+
 ## 本批双向追链
 
 正向：人物卡已有成功GLB → `ManhuaAutoRigEditor` 保存请求UUID后提交 → 专用管理员路由 → `submitAutoRigTask` 核对本人sourceJobId/assetRef/SHA、同编号幂等与同人物在途互斥 → 既有post_prod单并发worker与十分钟终止信号 → `renderManhuaAutoRig` 读同源字节、固定无凭证Blender子进程 → 检查回执及前/侧PNG → 人工点位确认 → 真实热权重、最多四骨影响与逐顶点裁剪证据 → 16骨候选GLB重导入及四肢实际位移 → 五图人工检查 → `adoptAutoRigTask` 核对本人候选字节 → 既有 `importExistingManhua3dAsset` 独占持久记录 → `applyManhua3dBinding` 按当前任务和原图版本比较后回写 → 既有writer session保存/规范化 → 第四步 `preparePrevisModels` 读同一来源和GLB摘要。

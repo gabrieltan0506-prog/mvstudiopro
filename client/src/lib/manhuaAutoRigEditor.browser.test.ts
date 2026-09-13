@@ -15,7 +15,8 @@ beforeAll(async () => {
  const f=globalThis.fixture={submits:[],gets:[],applies:[],lists:0,mode:'success',current:null};
  const png='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="640"><rect width="640" height="640" fill="gray"/></svg>');
  f.response=r=>({jobId:'rig_test',status:'succeeded',params:r,error:null,createdAt:null,updatedAt:null,output:{stage:r.stage,requestId:r.requestId,sourceJobId:r.sourceJobId,assetRef:r.assetRef,sha256:'a'.repeat(64),sourceDigest:'b'.repeat(64),previewUrls:Array.from({length:r.stage==='inspect'?2:5},(_,i)=>png+'#'+i),...(r.stage==='inspect'?{inspection:{version:1,stage:'inspect',sourceDigest:'b'.repeat(64),sourceSha256:'a'.repeat(64),vertices:500,bounds:[[-.3,-1,0],[.3,1,2]],settings:r.settings,joints:Object.fromEntries(AUTO_RIG_JOINTS.map((k,i)=>[k,[0,(i-10)/20,1+(i%3)*.05]])),limitations:['离线夹具不验美术']}}:{})}});
- const services={submit:async r=>{f.submits.push(structuredClone(r));if(f.mode==='unknown')throw Error('离线模拟断网');return f.current=f.response(r);},get:async id=>{f.gets.push(id);return f.current;},list:async()=>{f.lists++;return {items:[],nextCursor:null}},adopt:async()=>({taskId:'m3d_adopted'}),restore:async()=>({taskId:'m3d_original'})};
+ const services={submit:async r=>{f.submits.push(structuredClone(r));if(f.submit)return f.submit(r);if(f.mode==='unknown')throw Error('离线模拟断网');return f.current=f.response(r);},get:async id=>{f.gets.push(id);return f.get?f.get(id):f.current;},list:async()=>{f.lists++;if(f.list)return f.list();return {items:[],nextCursor:null}},adopt:async()=>({taskId:'m3d_adopted'}),restore:async()=>({taskId:'m3d_original'})};
+ globalThis.fixtureSetup?.(f);
  const root=createRoot(document.getElementById('root'));f.mount=()=>root.render(<StrictMode><ManhuaAutoRigEditorView assetRef="person" label="测试人物" sourceJobId={f.source??"m3d_original"} sourceVersion="v1" services={services} onApply={(model,id)=>{f.applies.push({model,id});return true;}} onClose={()=>root.render(null)}/></StrictMode>);f.mount();
  `,
     },
@@ -54,7 +55,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await browser?.close();
 });
-async function open() {
+async function open(setup?: string) {
   const p = await browser.newPage();
   p.setDefaultTimeout(5000);
   await p.setRequestInterception(true);
@@ -70,6 +71,8 @@ async function open() {
   });
   await p.goto("http://localhost:41829/");
   await p.evaluate(() => localStorage.clear());
+  if (setup)
+    await p.addScriptTag({ content: `globalThis.fixtureSetup=${setup}` });
   await p.addScriptTag({ content: bundle });
   await p.waitForSelector('[aria-label="人体模型绑骨"]');
   return p;
@@ -308,6 +311,148 @@ it("当前模型变化撤销旧关节确认，新检查使用新模型身份", a
     expect(
       await p.evaluate(() => (window as any).fixture.submits[1].sourceJobId)
     ).toBe("m3d_new_source");
+  } finally {
+    await p.close();
+  }
+}, 15000);
+
+it("迟到的历史终态不能清除新任务编号或停止追踪", async () => {
+  const p = await open();
+  try {
+    await click(p, "检查当前模型");
+    await p.waitForSelector("circle");
+    await p.evaluate(() => {
+      const f = (window as any).fixture;
+      const old = f.current;
+      f.get = () =>
+        new Promise(resolve => {
+          f.release = () => resolve(old);
+        });
+      f.submit = (r: any) =>
+        (f.current = { ...f.response(r), status: "queued", output: null });
+      document.querySelector("details")!.open = true;
+      document.querySelector<HTMLButtonElement>("details button")!.click();
+    });
+    await p.waitForFunction(() => Boolean((window as any).fixture.release));
+    await click(p, "检查当前模型");
+    await p.waitForFunction(() => (window as any).fixture.submits.length === 2);
+    await p.evaluate(() => (window as any).fixture.release());
+    await p.waitForFunction(() =>
+      Array.from(document.querySelectorAll("button")).some(
+        b => b.textContent === "查询原任务"
+      )
+    );
+    expect(
+      await p.evaluate(() => ({
+        stored: JSON.parse(localStorage.getItem("manhua-auto-rig:person:v1")!)
+          .requestId,
+        expected: (window as any).fixture.submits[1].requestId,
+        disabled: Array.from(document.querySelectorAll("button")).find(
+          b => b.textContent === "检查当前模型"
+        )!.disabled,
+      }))
+    ).toEqual(
+      expect.objectContaining({ disabled: true, stored: expect.any(String) })
+    );
+    const ids = await p.evaluate(() => [
+      JSON.parse(localStorage.getItem("manhua-auto-rig:person:v1")!).requestId,
+      (window as any).fixture.submits[1].requestId,
+    ]);
+    expect(ids[0]).toBe(ids[1]);
+  } finally {
+    await p.close();
+  }
+}, 15000);
+
+it("首次历史列表迟到不能把已完成请求恢复为排队", async () => {
+  const p = await open(
+    `f=>{f.releases=[];f.list=()=>new Promise(resolve=>f.releases.push(resolve));}`
+  );
+  try {
+    await click(p, "检查当前模型");
+    await p.waitForSelector("circle");
+    await p.evaluate(() => {
+      const f = (window as any).fixture;
+      for (const resolve of f.releases)
+        resolve({
+          items: [{ ...f.current, status: "queued", output: null }],
+          nextCursor: null,
+        });
+    });
+    await p.waitForFunction(
+      () =>
+        Array.from(document.querySelectorAll("button")).find(
+          b => b.textContent === "检查当前模型"
+        )?.disabled === false
+    );
+    expect(
+      await p.evaluate(() => localStorage.getItem("manhua-auto-rig:person:v1"))
+    ).toBeNull();
+    expect(await p.$$("circle")).toHaveLength(42);
+  } finally {
+    await p.close();
+  }
+}, 15000);
+
+it("查询已完成后迟到的提交排队回执不能倒退状态或重新保留编号", async () => {
+  const p = await open();
+  try {
+    await p.evaluate(() => {
+      const f = (window as any).fixture;
+      f.submit = (r: any) =>
+        new Promise(resolve => {
+          f.current = f.response(r);
+          f.release = () =>
+            resolve({ ...f.current, status: "queued", output: null });
+        });
+    });
+    await click(p, "检查当前模型");
+    await p.waitForFunction(() => Boolean((window as any).fixture.release));
+    // 提交响应未返回时，既有轮询仍查询同一编号。
+    await p.waitForSelector("circle", { timeout: 8000 });
+    await p.evaluate(() => (window as any).fixture.release());
+    await p.waitForFunction(
+      () =>
+        Array.from(document.querySelectorAll("button")).find(
+          b => b.textContent === "检查当前模型"
+        )?.disabled === false
+    );
+    expect(
+      await p.evaluate(() => localStorage.getItem("manhua-auto-rig:person:v1"))
+    ).toBeNull();
+    expect(await p.evaluate(() => (window as any).fixture.submits.length)).toBe(
+      1
+    );
+  } finally {
+    await p.close();
+  }
+}, 15000);
+
+it("当前任务结束不能删除其他页面后来保存的请求编号", async () => {
+  const p = await open();
+  try {
+    await p.evaluate(() => {
+      const f = (window as any).fixture;
+      f.submit = (r: any) => {
+        localStorage.setItem(
+          "manhua-auto-rig:person:v1",
+          JSON.stringify({
+            ...r,
+            requestId: "55555555-5555-4555-8555-555555555555",
+          })
+        );
+        return (f.current = f.response(r));
+      };
+    });
+    await click(p, "检查当前模型");
+    await p.waitForSelector("circle");
+    expect(
+      await p.evaluate(
+        () =>
+          JSON.parse(localStorage.getItem("manhua-auto-rig:person:v1")!)
+            .requestId
+      )
+    ).toBe("55555555-5555-4555-8555-555555555555");
   } finally {
     await p.close();
   }
