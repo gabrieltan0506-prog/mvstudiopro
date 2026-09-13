@@ -36,6 +36,32 @@ def rejects(fn, message):
         raise AssertionError("没有拒绝：" + message)
 
 
+def check_numpy_compat_scope():
+    import numpy
+    original_bool = numpy.__dict__.get("bool")
+    # 仅测试用视图模拟NumPy1.24缺少旧别名，实际empty/dtype仍来自当前真实NumPy。
+    missing_bool = SimpleNamespace(bool_=numpy.bool_, empty=numpy.empty)
+    legacy_mesh = SimpleNamespace(np=missing_bool)
+    with module._legacy_numpy_bool_scope(missing_bool, legacy_mesh):
+        check(legacy_mesh.np.empty(4, dtype=legacy_mesh.np.bool).dtype == numpy.dtype(numpy.bool_), "旧glTF bool兼容仍创建真实布尔数组")
+        check("bool" not in missing_bool.__dict__, "兼容不修改NumPy模块命名空间")
+    check(legacy_mesh.np is missing_bool, "成功导入后恢复旧插件np引用")
+    try:
+        with module._legacy_numpy_bool_scope(missing_bool, legacy_mesh):
+            raise RuntimeError("仅测试的导入失败")
+    except RuntimeError:
+        pass
+    check(legacy_mesh.np is missing_bool, "异常导入后也恢复旧插件np引用")
+    existing = SimpleNamespace(bool=numpy.bool_, bool_=numpy.bool_)
+    modern_mesh = SimpleNamespace(np=existing)
+    with module._legacy_numpy_bool_scope(existing, modern_mesh):
+        check(modern_mesh.np is existing, "已有bool类型的NumPy不加代理")
+    check(numpy.__dict__.get("bool") is original_bool, "真实全局NumPy别名完全未改变")
+
+
+check_numpy_compat_scope()
+
+
 def rest_points():
     p = {"pelvis": ((0, 0, .85), (0, 0, .95)), "spine": ((0, 0, .95), (0, 0, 1.35)),
          "neck": ((0, 0, 1.35), (0, 0, 1.5)), "head": ((0, 0, 1.5), (0, 0, 1.75))}
@@ -120,7 +146,12 @@ bpy.ops.object.select_all(action="DESELECT")
 fixture_rig.select_set(True)
 fixture_mesh.select_set(True)
 path = out / "TEST_ONLY-rigged-with-morph.glb"
-bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", use_selection=True, export_animations=False)
+if "--fixture" in sys.argv:
+    path = Path(sys.argv[sys.argv.index("--fixture") + 1])
+    if not path.is_file() or not path.name.startswith("TEST_ONLY-"):
+        raise ValueError("外部夹具必须为已存在且明确TEST_ONLY的GLB；只读不覆盖")
+else:
+    bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", use_selection=True, export_animations=False)
 meta = module.inspect_glb(path)
 check(len(meta["jointNames"]) == 18, "真实GLB含18骨")
 check(set(meta["morphNames"]) == {"Relax", "Tense", "Surprise"}, "真实GLB含三组命名形变")
@@ -129,6 +160,72 @@ rejects(lambda: module.inspect_glb(path, "0" * 64), "SHA不一致")
 raw = path.read_bytes()
 json_length = struct.unpack_from("<I", raw, 12)[0]
 fixture_doc = json.loads(raw[20:20 + json_length])
+
+
+def primitive(doc):
+    """按实际蒙皮网格寻找属性，不能假定不同导出器的accessor序号。"""
+    node = next(node for node in doc["nodes"] if "mesh" in node and "skin" in node)
+    return doc["meshes"][node["mesh"]]["primitives"][0]
+
+
+def accessor(doc, semantic):
+    item = primitive(doc)
+    index = item["indices"] if semantic == "indices" else item["targets"][0]["POSITION"] if semantic == "morph" else item["attributes"][semantic]
+    return doc["accessors"][index]
+
+
+def view_for(doc, semantic):
+    return doc["bufferViews"][accessor(doc, semantic)["bufferView"]]
+
+
+def node_id(doc, name):
+    return next(i for i, node in enumerate(doc["nodes"]) if node.get("name") == name)
+
+
+def mesh_node_id(doc):
+    return next(i for i, node in enumerate(doc["nodes"]) if "mesh" in node and "skin" in node)
+
+
+def parent_id(doc, child):
+    return next(i for i, node in enumerate(doc["nodes"]) if child in node.get("children", []))
+
+
+def append_view(doc, binary, data):
+    binary.extend(b"\0" * ((-len(binary)) % 4))
+    index = len(doc["bufferViews"])
+    doc["bufferViews"].append({"buffer": 0, "byteOffset": len(binary), "byteLength": len(data)})
+    binary.extend(data)
+    doc["buffers"][0]["byteLength"] = len(binary)
+    return index
+
+
+def prepare_sparse(doc, binary):
+    """从真实形变值建立等价、先验通过的dense+sparse布局，不要求导出器默认稀疏。"""
+    item = accessor(doc, "morph")
+    assert item["componentType"] == 5126 and item["type"] == "VEC3" and item["count"] >= 2
+    values = [(0., 0., 0.) for _ in range(item["count"])]
+    if "bufferView" in item:
+        view = doc["bufferViews"][item["bufferView"]]
+        start = view.get("byteOffset", 0) + item.get("byteOffset", 0)
+        values = [struct.unpack_from("<3f", binary, start + i * view.get("byteStride", 12)) for i in range(item["count"])]
+    if "sparse" in item:
+        sparse = item["sparse"]
+        index_view = doc["bufferViews"][sparse["indices"]["bufferView"]]
+        data_view = doc["bufferViews"][sparse["values"]["bufferView"]]
+        code = {5121: "B", 5123: "H", 5125: "I"}[sparse["indices"]["componentType"]]
+        for i in range(sparse["count"]):
+            index = struct.unpack_from("<" + code, binary, index_view.get("byteOffset", 0) + sparse["indices"].get("byteOffset", 0) + i * struct.calcsize(code))[0]
+            values[index] = struct.unpack_from("<3f", binary, data_view.get("byteOffset", 0) + sparse["values"].get("byteOffset", 0) + i * 12)
+    item["bufferView"] = append_view(doc, binary, b"".join(struct.pack("<3f", *row) for row in values))
+    item["byteOffset"] = 0
+    item["sparse"] = {"count": 2,
+                      "indices": {"bufferView": append_view(doc, binary, struct.pack("<2H", 0, 1)), "componentType": 5123},
+                      "values": {"bufferView": append_view(doc, binary, struct.pack("<6f", *(values[0] + values[1])))}}
+    module._validate_resources(doc, bytes(binary))
+    check(True, "稀疏负例先验证等价合法基线")
+    return item["sparse"]
+
+
 def malformed_glb(label, mutate, expected, mutate_binary=None):
     doc = json.loads(json.dumps(fixture_doc))
     mutate(doc)
@@ -155,80 +252,100 @@ def malformed_glb(label, mutate, expected, mutate_binary=None):
         module._bpy = original_bpy
 malformed_glb("external-uri", lambda doc: doc["buffers"][0].update(uri="file:///not-allowed.bin"), "不能引用外链")
 malformed_glb("no-skin", lambda doc: doc.update(skins=[]), "无骨模型不能直接重定向")
-malformed_glb("indices-billion", lambda d: d["accessors"][4].update(count=1_000_000_000), "accessor数量")
-malformed_glb("weights-missing-accessor", lambda d: d["meshes"][0]["primitives"][0]["attributes"].update(WEIGHTS_0=999), "accessor")
-malformed_glb("bad-buffer-ref", lambda d: d["bufferViews"][0].update(buffer=1), "buffer")
-malformed_glb("view-overflow", lambda d: d["bufferViews"][0].update(byteLength=10_000_000), "bufferView长度")
-malformed_glb("view-end-overflow", lambda d: d["bufferViews"][0].update(byteOffset=20_000), "二进制边界")
-malformed_glb("accessor-offset", lambda d: d["accessors"][0].update(byteOffset=4096), "accessor越过")
-malformed_glb("accessor-unaligned", lambda d: d["accessors"][0].update(byteOffset=1), "对齐")
-malformed_glb("stride-short", lambda d: d["bufferViews"][0].update(byteStride=4), "步长")
-malformed_glb("weights-count", lambda d: d["accessors"][3].update(count=431), "数量不一致")
-malformed_glb("joints-type", lambda d: d["accessors"][2].update(type="SCALAR"), "语义类型")
-malformed_glb("joints-normalized", lambda d: d["accessors"][2].update(normalized=True), "归一化契约")
-malformed_glb("morph-count", lambda d: d["accessors"][5].update(count=433), "数量不一致")
-malformed_glb("sparse-overcount", lambda d: d["accessors"][5]["sparse"].update(count=433), "sparse数量")
-malformed_glb("sparse-index-view", lambda d: d["accessors"][5]["sparse"]["indices"].update(bufferView=999), "bufferView")
-malformed_glb("sparse-value-offset", lambda d: d["accessors"][5]["sparse"]["values"].update(byteOffset=4), "accessor越过")
+malformed_glb("indices-billion", lambda d: accessor(d, "indices").update(count=1_000_000_000), "accessor数量")
+malformed_glb("weights-missing-accessor", lambda d: primitive(d)["attributes"].update(WEIGHTS_0=len(d["accessors"])), "accessor")
+malformed_glb("bad-buffer-ref", lambda d: view_for(d, "POSITION").update(buffer=len(d["buffers"])), "buffer")
+malformed_glb("view-overflow", lambda d: view_for(d, "POSITION").update(byteLength=d["buffers"][0]["byteLength"] + 1), "bufferView长度")
+malformed_glb("view-end-overflow", lambda d: view_for(d, "POSITION").update(byteOffset=d["buffers"][0]["byteLength"]), "二进制边界")
+malformed_glb("accessor-offset", lambda d: accessor(d, "POSITION").update(byteOffset=view_for(d, "POSITION")["byteLength"]), "accessor越过")
+malformed_glb("accessor-unaligned", lambda d: accessor(d, "POSITION").update(byteOffset=1), "对齐")
+malformed_glb("stride-short", lambda d: view_for(d, "POSITION").update(byteStride=4), "步长")
+malformed_glb("weights-count", lambda d: accessor(d, "WEIGHTS_0").update(count=accessor(d, "POSITION")["count"] - 1), "数量不一致")
+malformed_glb("joints-type", lambda d: accessor(d, "JOINTS_0").update(type="SCALAR"), "语义类型")
+malformed_glb("joints-normalized", lambda d: accessor(d, "JOINTS_0").update(normalized=True), "归一化契约")
+def shorter_morph(doc, binary):
+    # 同时收紧真实sparse索引，避免另一个越界掩盖“形变数量不一致”这个目标断言。
+    prepare_sparse(doc, binary)
+    accessor(doc, "morph")["count"] = accessor(doc, "POSITION")["count"] - 1
+malformed_glb("morph-count", lambda d: None, "数量不一致", shorter_morph)
+malformed_glb("sparse-overcount", lambda d: None, "sparse数量", lambda d, b: prepare_sparse(d, b).update(count=accessor(d, "morph")["count"] + 1))
+malformed_glb("sparse-index-view", lambda d: None, "bufferView", lambda d, b: prepare_sparse(d, b)["indices"].update(bufferView=len(d["bufferViews"])))
+def sparse_offset(doc, binary):
+    sparse = prepare_sparse(doc, binary)
+    sparse["values"]["byteOffset"] = doc["bufferViews"][sparse["values"]["bufferView"]]["byteLength"]
+malformed_glb("sparse-value-offset", lambda d: None, "accessor越过", sparse_offset)
 malformed_glb("optional-draco", lambda d: d.update(extensionsUsed=["KHR_draco_mesh_compression"]), "扩展当前全部关闭")
-malformed_glb("hidden-meshopt", lambda d: d["bufferViews"][0].update(extensions={"EXT_meshopt_compression": {}}), "扩展当前全部关闭")
+malformed_glb("hidden-meshopt", lambda d: view_for(d, "POSITION").update(extensions={"EXT_meshopt_compression": {}}), "扩展当前全部关闭")
 malformed_glb("unknown-extension", lambda d: d.update(extensionsRequired=["TEST_unknown"]), "扩展当前全部关闭")
 malformed_glb("animation", lambda d: d.update(animations=[{}]), "无内嵌动画")
-malformed_glb("node-cycle", lambda d: d["nodes"][0].update(children=[19]), "存在环")
-malformed_glb("node-repeat", lambda d: d["nodes"][19]["children"].append(18), "多父级")
-malformed_glb("node-no-skin", lambda d: d["nodes"][18].pop("skin"), "缺少真实skin")
-malformed_glb("node-skin-ref", lambda d: d["nodes"][18].update(skin=99), "缺少真实skin")
-malformed_glb("node-transform", lambda d: d["nodes"][18].update(scale=[1, 1, float("inf")]), "非有限数字")
-malformed_glb("node-detached", lambda d: d["nodes"][19]["children"].remove(18), "孤立节点")
-malformed_glb("bone-name-duplicate", lambda d: d["nodes"][0].update(name=d["nodes"][1]["name"]), "名称缺失或重复")
-malformed_glb("skeleton-not-ancestor", lambda d: d["skins"][0].update(skeleton=18), "共同祖先")
+malformed_glb("node-cycle", lambda d: d["nodes"][node_id(d, "Eye.L")].update(children=[d["scenes"][0]["nodes"][0]]), "存在环")
+malformed_glb("node-repeat", lambda d: d["nodes"][parent_id(d, mesh_node_id(d))]["children"].append(mesh_node_id(d)), "多父级")
+malformed_glb("node-no-skin", lambda d: d["nodes"][mesh_node_id(d)].pop("skin"), "缺少真实skin")
+malformed_glb("node-skin-ref", lambda d: d["nodes"][mesh_node_id(d)].update(skin=len(d["skins"])), "缺少真实skin")
+malformed_glb("node-transform", lambda d: d["nodes"][mesh_node_id(d)].update(scale=[1, 1, float("inf")]), "非有限数字")
+malformed_glb("node-detached", lambda d: d["nodes"][parent_id(d, mesh_node_id(d))]["children"].remove(mesh_node_id(d)), "孤立节点")
+malformed_glb("bone-name-duplicate", lambda d: d["nodes"][node_id(d, "Eye.L")].update(name="Eye.R"), "名称缺失或重复")
+malformed_glb("skeleton-not-ancestor", lambda d: d["skins"][0].update(skeleton=mesh_node_id(d)), "共同祖先")
 def disconnected_joints(doc):
-    doc["nodes"][2]["children"].remove(0)
-    doc["scenes"][0]["nodes"].append(0)
+    eye = node_id(doc, "Eye.L")
+    doc["nodes"][parent_id(doc, eye)]["children"].remove(eye)
+    doc["scenes"][0]["nodes"].append(eye)
 malformed_glb("joints-no-common-root", disconnected_joints, "共同根节点")
-malformed_glb("zero-quaternion", lambda d: d["nodes"][0].update(rotation=[0, 0, 0, 0]), "单位旋转")
-malformed_glb("composed-world-overflow", lambda d: (d["nodes"][19].update(scale=[1e6] * 3), d["nodes"][17].update(scale=[1e6] * 3)), "合成世界变换")
+malformed_glb("zero-quaternion", lambda d: d["nodes"][node_id(d, "Eye.L")].update(rotation=[0, 0, 0, 0]), "单位旋转")
+malformed_glb("composed-world-overflow", lambda d: (d["nodes"][node_id(d, "head")].update(scale=[1e6] * 3), d["nodes"][node_id(d, "Eye.L")].update(scale=[1e6] * 3)), "合成世界变换")
 def many_instances(doc):
-    for i in range(600):
+    count = accessor(doc, "POSITION")["count"]
+    source_node = doc["nodes"][mesh_node_id(doc)]
+    for i in range(module.MAX_VERTICES // count + 1):
         index = len(doc["nodes"])
-        doc["nodes"].append({"mesh": 0, "skin": 0})
+        doc["nodes"].append({"mesh": source_node["mesh"], "skin": source_node["skin"]})
         doc["scenes"][0]["nodes"].append(index)
 malformed_glb("instance-vertices", many_instances, "实例总顶点")
 def repeated_morphs(doc):
-    primitive = doc["meshes"][0]["primitives"][0]
-    primitive["targets"] = [primitive["targets"][0]] * 64
-    doc["meshes"][0].pop("extras")
-    doc["meshes"][0].pop("weights")
-    for i in range(50):
+    item = primitive(doc)
+    item["targets"] = [item["targets"][0]] * 64
+    source_node = doc["nodes"][mesh_node_id(doc)]
+    doc["meshes"][source_node["mesh"]].pop("extras", None)
+    doc["meshes"][source_node["mesh"]].pop("weights", None)
+    widths = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4}
+    used = list(item["attributes"].values()) + [index for target in item["targets"] for index in target.values()] + [item["indices"]]
+    per_instance = sum(doc["accessors"][index]["count"] * widths[doc["accessors"][index]["type"]] for index in used)
+    for i in range(module.MAX_ACCESSOR_COMPONENTS // per_instance + 1):
         index = len(doc["nodes"])
-        doc["nodes"].append({"mesh": 0, "skin": 0})
+        doc["nodes"].append({"mesh": source_node["mesh"], "skin": source_node["skin"]})
         doc["scenes"][0]["nodes"].append(index)
 malformed_glb("instance-morph-budget", repeated_morphs, "实例展开分量")
-def poke_accessor(index, fmt, value):
+def poke_accessor(semantic, value):
     def mutate(doc, binary):
-        accessor = doc["accessors"][index]
-        start = doc["bufferViews"][accessor["bufferView"]].get("byteOffset", 0) + accessor.get("byteOffset", 0)
-        struct.pack_into(fmt, binary, start, value)
+        item = accessor(doc, semantic)
+        start = doc["bufferViews"][item["bufferView"]].get("byteOffset", 0) + item.get("byteOffset", 0)
+        fmt = "<" + {5121: "B", 5123: "H", 5125: "I", 5126: "f"}[item["componentType"]]
+        struct.pack_into(fmt, binary, start, value(doc) if callable(value) else value)
     return mutate
-malformed_glb("actual-joint-oob", lambda d: None, "JOINTS实际索引", poke_accessor(2, "<B", 255))
-malformed_glb("actual-index-oob", lambda d: None, "实际indices越界", poke_accessor(4, "<H", 65535))
-malformed_glb("actual-weight-negative", lambda d: None, "实际蒙皮权重", poke_accessor(3, "<f", -.5))
-malformed_glb("actual-weight-nan", lambda d: None, "非有限", poke_accessor(3, "<f", float("nan")))
-malformed_glb("actual-position-nan", lambda d: None, "非有限", poke_accessor(0, "<f", float("nan")))
+malformed_glb("actual-joint-oob", lambda d: None, "JOINTS实际索引", poke_accessor("JOINTS_0", lambda d: len(d["skins"][0]["joints"])))
+malformed_glb("actual-index-oob", lambda d: None, "实际indices越界", poke_accessor("indices", lambda d: accessor(d, "POSITION")["count"]))
+malformed_glb("actual-weight-negative", lambda d: None, "实际蒙皮权重", poke_accessor("WEIGHTS_0", -.5))
+malformed_glb("actual-weight-nan", lambda d: None, "非有限", poke_accessor("WEIGHTS_0", float("nan")))
+malformed_glb("actual-position-nan", lambda d: None, "非有限", poke_accessor("POSITION", float("nan")))
 def non_affine_bind(doc, binary):
-    accessor = doc["accessors"][doc["skins"][0]["inverseBindMatrices"]]
-    start = doc["bufferViews"][accessor["bufferView"]].get("byteOffset", 0)
+    item = doc["accessors"][doc["skins"][0]["inverseBindMatrices"]]
+    start = doc["bufferViews"][item["bufferView"]].get("byteOffset", 0) + item.get("byteOffset", 0)
     struct.pack_into("<f", binary, start + 12, .5)
 malformed_glb("inverse-bind-not-affine", lambda d: None, "仿射矩阵", non_affine_bind)
 def zero_weights(doc, binary):
-    view = doc["bufferViews"][doc["accessors"][3]["bufferView"]]
-    start = view.get("byteOffset", 0)
-    binary[start:start + view["byteLength"]] = bytes(view["byteLength"])
+    view = view_for(doc, "WEIGHTS_0")
+    item = accessor(doc, "WEIGHTS_0")
+    size = {5121: 1, 5123: 2, 5126: 4}[item["componentType"]] * 4
+    start = view.get("byteOffset", 0) + item.get("byteOffset", 0)
+    for i in range(item["count"]):
+        offset = start + i * view.get("byteStride", size)
+        binary[offset:offset + size] = bytes(size)
 malformed_glb("actual-weights-empty", lambda d: None, "实际蒙皮权重", zero_weights)
 def sparse_duplicate(doc, binary):
-    index = doc["accessors"][5]["sparse"]["indices"]["bufferView"]
+    sparse = prepare_sparse(doc, binary)
+    index = sparse["indices"]["bufferView"]
     start = doc["bufferViews"][index]["byteOffset"]
-    binary[start + 1] = binary[start]
+    struct.pack_into("<2H", binary, start, 0, 0)
 malformed_glb("actual-sparse-duplicate", lambda d: None, "未严格递增", sparse_duplicate)
 def attach_png(width, height):
     def mutate(doc, binary):
@@ -246,7 +363,7 @@ def attach_png(width, height):
 malformed_glb("image-bomb", lambda d: None, "图片像素", attach_png(100_000, 100_000))
 malformed_glb("image-total", lambda d: None, "总像素", lambda d, b: (attach_png(4096, 4096)(d, b), d["images"].extend([dict(d["images"][0]), dict(d["images"][0])])))
 malformed_glb("image-external", lambda d: d.update(images=[{"uri": "https://not-allowed.example/a.png"}]), "不能引用外链")
-malformed_glb("image-view-missing", lambda d: d.update(images=[{"mimeType": "image/png", "bufferView": 999}]), "image bufferView")
+malformed_glb("image-view-missing", lambda d: d.update(images=[{"mimeType": "image/png", "bufferView": len(d["bufferViews"])}]), "image bufferView")
 def jpeg_bomb(doc, binary):
     payload = b"\xff\xd8\xff\xc0" + struct.pack(">HBHHB", 11, 8, 65535, 65535, 1) + b"\1\x11\0" + b"\xff\xda\0\x08\x01\x01\0\0\x3f\0\x01\xff\xd9"
     start = len(binary)
@@ -273,8 +390,8 @@ small_png = bytes(small_binary[small_view["byteOffset"]:])
 check(module._image_dimensions(small_png, "image/png") == (1, 1), "真实1像素PNG容器尺寸通过")
 check(module._validate_resources(small_doc, bytes(small_binary))["imagePixels"] == 1, "内嵌1像素PNG进入资源回执")
 malformed_glb("png-corrupt-crc", lambda d: None, "校验和", lambda d, b: (attach_png(1, 1)(d, b), b.__setitem__(-1, b[-1] ^ 1)))
-malformed_glb("texture-ref", lambda d: d.update(textures=[{"source": 999}]), "texture source")
-malformed_glb("material-ref", lambda d: d["meshes"][0]["primitives"][0].update(material=999), "material")
+malformed_glb("texture-ref", lambda d: d.update(textures=[{"source": len(d.get("images", []))}]), "texture source")
+malformed_glb("material-ref", lambda d: primitive(d).update(material=len(d.get("materials", []))), "material")
 check(module.MAX_GLB_BYTES == 64 * 1024 * 1024, "脚本GLB字节上限与服务端64MB一致")
 rejects(lambda: module.resolve_bone_map(["head"]), "请明确映射")
 bad = {name: "head" for name in module.SEMANTIC_BONES}
@@ -282,7 +399,16 @@ rejects(lambda: module.resolve_bone_map(meta["jointNames"], bad), "同一根骨�
 check(len(module.resolve_bone_map(meta["jointNames"])) == 16, "规范16骨严格映射")
 bpy.data.objects.remove(fixture_mesh, do_unlink=True)
 bpy.data.objects.remove(fixture_rig, do_unlink=True)
+import numpy
+if tuple(bpy.app.version[:2]) == (3, 4):
+    import io_scene_gltf2.blender.imp.gltf2_blender_mesh as actual_gltf_mesh
+else:
+    import io_scene_gltf2.blender.imp.mesh as actual_gltf_mesh
+original_gltf_numpy = actual_gltf_mesh.np
+original_numpy_bool = numpy.__dict__.get("bool")
 model = module.import_rigged_model(path, "test-actor", forward_axis="+X", target_height=1.7, expected_sha256=meta["sha256"])
+check(actual_gltf_mesh.np is original_gltf_numpy, "真实生产导入后glTF插件NumPy引用已恢复")
+check(numpy.__dict__.get("bool") is original_numpy_bool, "真实生产导入未改动全局NumPy别名")
 check(model["report"]["weightedVertices"] > 0, "导入后每顶点有实际蒙皮")
 check(model["report"]["boneMap"] == model["boneMap"] and len(model["report"]["boneMap"]) == 16, "报告包含完整真实16骨映射")
 source, _ = create_rig("测试源预演16骨", with_eyes=False, parented=False)
@@ -376,7 +502,10 @@ for frame, shape in ((8, "Relax"), (24, "Tense"), (40, "Surprise")):
                     "eyeDeltaRad": eye_delta, "maxVertexDelta": vertex_delta})
 scene.frame_set(8)
 check(abs(rig.pose.bones["spine"].scale.x - base[8]["spine"].x) > .005, "真实呼吸控制改变胸部径向比例")
+check(module.hashlib.sha256(path.read_bytes()).hexdigest() == meta["sha256"], "测试结束原GLB字节未覆盖")
 report = {"testOnly": True, "blender": bpy.app.version_string, "checksPassed": len(checks), "checks": checks,
+          "fixture": {"path": str(path), "generator": fixture_doc["asset"].get("generator"), "sourceSha256": meta["sha256"],
+                      "originalSparseAccessors": sum("sparse" in item for item in fixture_doc["accessors"])},
           "model": model["report"], "performanceSamples": samples,
           "jointGaps": joint_gaps,
           "limits": ["自造测试模型，不等于用户角色验收", "未渲染视频", "未做双人接触/足底质量验收", "无生产UI/API/扣费调用"]}

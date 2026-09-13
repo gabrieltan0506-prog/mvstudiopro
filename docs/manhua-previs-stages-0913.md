@@ -2,6 +2,21 @@
 
 2026-09-13，基线 9d15eadb。用户要求持续推进至第五阶段、第六阶段先做部分，每十分钟更新知识库；状态不因目标日期升级。
 
+## 最新验收增量（11:56，以下旧快照按其时间保留）
+
+当前仍为部分验证，不放行合并。两条原生 Linux 白模与云恢复技术通过，Mini 生成完成但外形验收失败；真实带骨 Linux 兼容修复待复验，正式 UI/数据库/账户扣退未验。
+
+- PR #1455，已推送头为 28133dd6；后续兼容修正目前本地未提交。没有合并或部署。
+- Linux Blender 3.4.1 双人/四尾黑翼各 5 秒 120 帧主渲染通过，分别耗时 166832/146970ms；真实 GCS 视频/报告回读与同 requestId 恢复通过。恢复只注入 diagnostics 内存行，不冒充正式 DB。
+- Mini A/B 均各创建一次，原任务分别 `task-unified-1789270804-grttmz8g`、`task-unified-1789270973-2fnt9kqr`。B SSH 中断后同 ID 恢复仅查询、creates=0。实际每条 1280×720、24fps、121 帧、5.041667 秒、无音轨。供应商原始终态 usage 为每条 16.443 credits / USD 0.242，总 USD 0.484；不等于用户产品账本扣退验收。
+- 主代理和独立审查均看 3fps 联系表及原生关键帧：A 左红右蓝、一次接触回收轮廓可辨，但保留球头方块肢体；B 单四足、四尾双翼展开可辨，但保留分色杆尾和梳齿翼。均违反确认提示词不继承低模几何的要求，视觉验收不通过。没有自动重试、没有第三条付费；采样不证明完整逐帧连续性。
+- A 视频 SHA `e4eecceb62f20c2be700716e94f1794835e59880e2a3b86e23a636c8682f1391`，1481390B；B SHA `8b7072de6091b8f29ab0855810050bec0df44dd17ec9717346b83b3c9f86e4db`，1510188B。B 已在原 probe diagnostics 前缀永久归档并云回读同 SHA。原始回执和失效前源文件保留，不用新产物覆盖失败证据。
+- 修正前证据：安装 NumPy 1.24.2 后，实际 glTF 导入在 Blender3.4 插件 `gltf2_blender_mesh.py:612` 因 `np.bool` 已移除报错。旧 Docker 只 import 模块未覆盖该调用。生产唯一入口 `import_rigged_model → _import_gltf_asset → bpy.ops.import_scene.gltf` 在原资源预检后仅对 3.4 做局部插件 NumPy 视图兼容，正常/异常均恢复，不改全局 NumPy、不改系统插件、不丢弃法线、不放宽安全检查。
+- 测试负例改为依实际语义、真实 BIN/accessor 边界构造，保留 52 项畸形 GLB 导入前拒绝；加入兼容恢复检查。本机 5.2 实际导出→生产导入→重定向/表演 235 项通过。Docker 在 COPY 后加入同一真实带骨测试，Linux 和新构建仍待执行，不能沿用旧 28133 镜像声称新兼容已验。
+- 每次合并前独立子代理必须复审最终 SHA 和新证据；即时学习/队列/部署查询门禁保持。真实人物及正式入口未验，不能宣称阶段五完成。
+
+11:56 补验：同一源码包 SHA `beec5e2a7e88edf79ae3ac013ca33b59584aa2350e7425ed2f872eaaed81feeb` 本机/Fly一致，Linux3.4.1真实带骨回归 exit0、235项通过，实际蒙皮432顶点、16骨、48帧非零表演，原52畸形GLB均导入前拒绝。输出 `/tmp/previs-numpy-compat-0913-linux235`；Draco可选压缩库缺失提示保留，当前合同明确拒绝Draco扩展，实际core导入成功。`pnpm exec vitest run server/services/manhuaPrevisModels.test.ts server/services/manhuaPrevisReport.test.ts server/services/manhuaPrevisRender.test.ts server/services/manhuaPrevisRecovery.test.ts`：4文件147/147，4.99秒，exit0。独立审查三文件diff无新增问题，待提交SHA绑定与新镜像构建；视觉失败门禁保持。
+
 | 检查项 | 当前证据与本轮边界 |
 |---|---|
 | 最终结果 | 剧本动作可审阅生成双人互动白模，随后接四尾黑翼、标准带骨角色和真实表演控制；必须有可见产物 |

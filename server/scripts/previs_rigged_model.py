@@ -4,6 +4,7 @@
 inspect_glb 可用普通 Python；其余函数须在 Blender 后台进程中运行。
 """
 import hashlib
+from contextlib import contextmanager
 import json
 import math
 from pathlib import Path
@@ -570,6 +571,36 @@ def _bpy():
     return bpy
 
 
+@contextmanager
+def _legacy_numpy_bool_scope(numpy_module, mesh_module):
+    """仅替换旧glTF网格模块的np引用；不修改全局NumPy或系统插件文件。"""
+    if "bool" in numpy_module.__dict__:
+        yield
+        return
+    if mesh_module.np is not numpy_module:
+        raise ValueError("旧glTF网格模块NumPy引用异常，停止导入")
+    class LegacyNumpyView:
+        def __getattr__(self, name):
+            return numpy_module.bool_ if name == "bool" else getattr(numpy_module, name)
+    original = mesh_module.np
+    mesh_module.np = LegacyNumpyView()
+    try:
+        yield
+    finally:
+        mesh_module.np = original
+
+
+def _import_gltf_asset(bpy, local_path):
+    """Blender3.4旧插件在NORMALS网格导入时使用被NumPy1.24删除的np.bool。"""
+    if tuple(bpy.app.version[:2]) == (3, 4):
+        import numpy
+        from io_scene_gltf2.blender.imp import gltf2_blender_mesh
+        # 仅包围真实导入，成功/异常均恢复；不改变着色模式绕过法线读取。
+        with _legacy_numpy_bool_scope(numpy, gltf2_blender_mesh):
+            return bpy.ops.import_scene.gltf(filepath=str(local_path), import_pack_images=True)
+    return bpy.ops.import_scene.gltf(filepath=str(local_path), import_pack_images=True)
+
+
 def _validate_hierarchy(rig, mapping):
     for child, parent in PARENTS.items():
         bone = rig.data.bones[mapping[child]].parent
@@ -593,7 +624,7 @@ def import_rigged_model(local_path, actor_id, bone_map=None, forward_axis="-Y", 
     target_height = _finite(target_height, 0.5, 3.0, "角色高度")
     before = set(bpy.data.objects)
     try:
-        bpy.ops.import_scene.gltf(filepath=str(local_path), import_pack_images=True)
+        _import_gltf_asset(bpy, local_path)
         # glTF导入器会创建骨骼显示辅助体；只排除真正被custom_shape引用的对象，不按名字猜。
         objects = [o for o in bpy.context.scene.objects if o not in before]
         rigs = [o for o in objects if o.type == "ARMATURE"]
